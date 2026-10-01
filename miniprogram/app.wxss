@@ -1,0 +1,14 @@
+/**
+ * 全局样式基线
+ * ------------------------------------------------------------
+ * 仅保留最小可用样式，保证工程可编译、观感统一。
+ * 配色、字号、圆角等设计令牌待策划案与设计稿确定后在此统一补充。
+ */
+
+page {
+  background-color: #F4F9F4;
+  color: #1B2B1E;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+  font-size: 30rpx;
+  line-height: 1.6;
+}
