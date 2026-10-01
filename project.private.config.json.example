@@ -1,9 +1,0 @@
-{
-  "description": "个人本地配置模板：复制为 project.private.config.json 后填写自己的 AppID。该文件已被 .gitignore 忽略，不会提交到仓库。",
-  "appid": "在此填写你的小程序 AppID",
-  "projectname": "challenge_cup",
-  "setting": {
-    "compileHotReLoad": true,
-    "urlCheck": false
-  }
-}
