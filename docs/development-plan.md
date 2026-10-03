@@ -47,6 +47,8 @@ Codex 的职责是监工：核对大方向、架构、具体实现与证据，�
 
 GY-I01交数据字典、关系与索引、迁移版本及状态枚举，GY-I03交四作物八杂草与标签资料样例。默认查询使用登记号／中文药名词典和结构化过滤；向量检索是可选适配，只有增加有来源问答评估收益且不破坏条件过滤才引入。
 
+GY-I01写手提交的[架构与契约提案](architecture/adr-001-initial-architecture.md)、[数据字典](architecture/data-dictionary.md)、[状态协议](architecture/state-contract.md)及[OpenAPI](../packages/contracts/openapi.json)处于待监工确认状态。下游可按提案做替身联调，确认并合并后才冻结生效；契约检查不表示任何应用AC已通过。
+
 ### 3.2 HTTP接口组
 
 下表是GY-I01落实OpenAPI的分组，不是已经可调用的地址。统一前缀/api/v1，实际路径和schema经契约PR冻结。

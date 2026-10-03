@@ -52,6 +52,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 - [GitHub 类似项目参考](docs/github-project-references.md)：核查源码后的经验、适用边界和采用决定。
 - [初版任务及远端 issues](docs/initial-issues.md)、[调整记录](docs/issue-revision-log.md)、[实际进度](docs/development-progress.md)：27 项任务仅到初版目标。
 - [PR 审查与合并规范](docs/pr-review-policy.md)：协作者实现，Codex 负责监工、验证与合并；每 12 小时巡检或用户消息触发。
+- [GY-I01 架构与契约提案](docs/architecture/adr-001-initial-architecture.md)：数据字典、HTTP OpenAPI、状态及F／AC映射，待监工确认冻结；接口尚未实现。可运行 `python tools/validate_contracts.py` 与 `python tools/test_contracts.py` 检查设计一致性，不代表应用验收。
 
 首版包含拍草识别、药剂标签 OCR、普通话语音转写向大模型提问、科普查询、真实 AI 审核社区、收藏历史、应用内消息和独立后台。定位只用于选地区；人工审核板块首版为空。识别与问答实时调用，预设资料必须标明；来源不足不生成用量处方或承诺绝对安全。
 
