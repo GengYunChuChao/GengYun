@@ -102,7 +102,7 @@ check(len(pids) == 17 and len(cids) == 12 and not set(pids) & set(cids)
 check(ids(index, "Q", r"^\| (PREFIX\d+) \|") == [f"Q{i:02d}" for i in range(1, 30)], "Requirement navigation incomplete")
 
 markdown_files = [ROOT / "README.md", ROOT / "AGENTS.md", ROOT / ".github/PULL_REQUEST_TEMPLATE.md"]
-markdown_files += list((ROOT / "docs").glob("*.md"))
+markdown_files += list((ROOT / "docs").rglob("*.md"))
 for path in markdown_files:
     text = path.read_text(encoding="utf-8")
     check("\ufffd" not in text, f"{path.name}: invalid character")

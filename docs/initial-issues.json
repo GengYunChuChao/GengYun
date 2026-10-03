@@ -40,7 +40,7 @@
         "ADR、数据字典、接口定义与失败状态示例",
         "首版F／AC到模块的对应及变更影响清单"
       ],
-      "status": "待领取",
+      "status": "待审PR",
       "github_number": 1,
       "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/1",
       "start_phase": "M1"
