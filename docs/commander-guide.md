@@ -1,6 +1,6 @@
 # 耕云指挥角色与写手交接
 
-版本：v0.5\
+版本：v0.6\
 建立日期：2026-10-03\
 角色来源：用户要求增加独立子代理负责撰写提示词、指挥写手作业；监工继续独立审查、验证与合并。
 
@@ -169,3 +169,13 @@ PR提交后交监工独立审查；指挥可以准备尚不越过前置的工作
 随后白名单核查个人配置为libVersion=3.17.3、setting.urlCheck=false，app.json只有pages/index/index和pages/example/index且没有tabBar；已补充发给写手，要求核对工具实际采用配置，不拷入原个人配置、不以模板或个人不校验算正常体验／比赛验收。
 
 写手已明确确认“收到更正”，复述实际GengYun目录及正式注册账号，并说明只读比较原模板、不回写；wait_threads回执消息ID为msg_0531b28c5a7a16e0016ac135b08f3c87d0848e76533eca89df。配置差异补充已发送，实际比较及运行仍以写手证据为准。完整更正提示与输入存于指挥忽略缓存.supervisor/path-correction-dispatch-record.json。GY-I01新SHA仍由监工复审，GY-I02只推进已派发的局部开发调试，最终域名／权限和比赛门槛保持。
+
+## 11 已合并契约组件与局部准备基线同步
+
+日期：2026-10-04（UTC+8）。指挥已fetch并核对origin/main=f40f09167869f2a2d8aa563f8c8ffdf44ccf244f，GitHub确认PR #33 merged=true、merge_commit_sha相同，issue #1仍open。监工[复审记录](https://github.com/Sek1ro-oka/GengYun/pull/33#pullrequestreview-5401812928)绑定0e97702cbc4a847b347834b1c429477febfa8ee5，原两条P2已解决；[整项进度说明](https://github.com/Sek1ro-oka/GengYun/issues/1#issuecomment-5971514609)保留未验部分。
+
+本次是架构／HTTP／状态提案组件合并，已审设计可供参考；GY-I01整项及运行版本未冻结，0／27软件完成数保持。监工报告其独立文档、112操作／29fixture／30媒体trace／8资料往返、8组检查器测试和官方schema／对象验证通过，指挥未将这些转记为自己运行或真实服务器／应用／真机通过。原安装兼容、数据库、真实媒体ACL、供应商与手机等缺项仍列待验证。
+
+GY-I02已由写手[领取局部准备](https://github.com/Sek1ro-oka/GengYun/issues/2#issuecomment-5971357427)，分支codex/gy-i02-local-wechat-debug，保留原成果。写手报告诊断进程启停及4组局部测试、继续尝试工具CLI，工具编译／登录和手机证据另记。指挥要求保护未提交修改后按正常方式同步最新main，继续Refs #2局部PR，不接管GY-I25或自动扩为完整工程验收。
+
+基线补充提示已于2026-10-03 17:15:32 UTC发送给真实写手聊天，工具回执成功；明确正确本地路径已可读、账号类型已确认，以及组件合并不等于整项完成。写手已明确确认“收到新基线”，复述组件已合并、整项未冻结，并将保存修改后正常合入main；wait_threads消息ID为msg_0531b28c5a7a16e0016ac13889ed5887d0a7967e91f9a39a13。写手同时报告模拟器开始渲染、实际基础库3.17.3与公共配置3.5.5不同，须在其局部PR分别留证据，指挥未独立验收。完整提示、遠端核查与收到证据保存在指挥忽略缓存.supervisor/merged-baseline-dispatch-record.json。

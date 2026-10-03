@@ -1,7 +1,7 @@
 # 开发进度与监工台账
 
 版本：v1.1\
-更新时间：2026-10-03\
+更新时间：2026-10-04\
 当前阶段：M1 基础与契约；只推进初版；软件已验证完成0／27。
 
 ## 1 已完成的治理工作
@@ -15,12 +15,12 @@
 
 ## 2 初版实现进度
 
-GY-I01已由“耕云写手”聊天领取（[领取记录](https://github.com/Sek1ro-oka/GengYun/issues/1#issuecomment-5969562241)），分支codex/gy-i01-contracts，提交架构与契约提案供监工审查；0项通过软件验收。远端已有chore/project-scaffold工程壳提交9ce307fe6745b49b89774a380c37b748822df934，属于待整合准备，不记GY-I02完成。后续领取和PR以远端实际状态为准。
+GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)已经监工绑定SHA复审并合并main=f40f09167869f2a2d8aa563f8c8ffdf44ccf244f；整项运行兼容仍有未验内容，issue #1保持open，0项通过完整软件验收。GY-I02已由写手领取局部无自有域名开发调试准备；正式工程／API／后台与真实能力未据此完成。既有chore/project-scaffold为待整合准备，后续状态以远端和实际证据为准。
 
 | 任务 | issue | 完成阶段 | 状态 | 负责人／PR与证据 |
 | --- | --- | --- | --- | --- |
-| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待审PR | 耕云写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)；提案修订2待复审，远端ready不代表冻结/通过；候选安装兼容仍阻塞，无监工新HEAD已验SHA |
-| GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 待领取 | 未领取／无已验PR |
+| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待验证 | 耕云写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)组件已合并；[已验SHA 0e97702](https://github.com/Sek1ro-oka/GengYun/pull/33#pullrequestreview-5401812928)；整项运行版本未冻结，安装兼容、构建／数据库／真实媒体ACL／服务／手机仍未验 |
+| GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 进行中 | 耕云写手／[局部领取](https://github.com/Sek1ro-oka/GengYun/issues/2#issuecomment-5971357427)，codex/gy-i02-local-wechat-debug；无自有域名原生工程／local诊断准备，Refs #2，不计整项完成 |
 | GY-I03 建立浙江首批资料清单与可替换数据库适配 | [#3](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I04 实现微信登录、游客限制与服务端归属权限 | [#4](https://github.com/Sek1ro-oka/GengYun/issues/4) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I05 实现单作物地区档案及授权定位／手动选择 | [#5](https://github.com/Sek1ro-oka/GengYun/issues/5) | M2 | 待领取 | 未领取／无已验PR |
