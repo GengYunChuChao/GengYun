@@ -23,6 +23,13 @@
       "version_required": false
     },
     {
+      "id": "getAdminSession",
+      "path": "/admin/auth/session",
+      "method": "get",
+      "scope": "session:read",
+      "version_required": false
+    },
+    {
       "id": "getUserSession",
       "path": "/auth/session",
       "method": "get",
@@ -34,13 +41,6 @@
       "path": "/auth/logout",
       "method": "post",
       "scope": "user",
-      "version_required": false
-    },
-    {
-      "id": "getAdminSession",
-      "path": "/admin/auth/session",
-      "method": "get",
-      "scope": "session:read",
       "version_required": false
     },
     {
@@ -156,16 +156,16 @@
       "version_required": false
     },
     {
-      "id": "grantMediaAccess",
-      "path": "/media/{id}/access",
-      "method": "post",
+      "id": "deleteMedia",
+      "path": "/media/{id}",
+      "method": "delete",
       "scope": "user",
       "version_required": true
     },
     {
-      "id": "deleteMedia",
-      "path": "/media/{id}",
-      "method": "delete",
+      "id": "grantMediaAccess",
+      "path": "/media/{id}/access",
+      "method": "post",
       "scope": "user",
       "version_required": true
     },
@@ -233,16 +233,16 @@
       "version_required": false
     },
     {
-      "id": "selectSpecies",
-      "path": "/recognitions/{id}/selection",
-      "method": "patch",
+      "id": "deleteRecognition",
+      "path": "/recognitions/{id}",
+      "method": "delete",
       "scope": "user",
       "version_required": true
     },
     {
-      "id": "deleteRecognition",
-      "path": "/recognitions/{id}",
-      "method": "delete",
+      "id": "selectSpecies",
+      "path": "/recognitions/{id}/selection",
+      "method": "patch",
       "scope": "user",
       "version_required": true
     },
@@ -261,6 +261,13 @@
       "version_required": false
     },
     {
+      "id": "deleteOCR",
+      "path": "/ocr/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
       "id": "correctOCR",
       "path": "/ocr/{id}/correction",
       "method": "patch",
@@ -271,13 +278,6 @@
       "id": "verifyOCR",
       "path": "/ocr/{id}/verify",
       "method": "post",
-      "scope": "user",
-      "version_required": true
-    },
-    {
-      "id": "deleteOCR",
-      "path": "/ocr/{id}",
-      "method": "delete",
       "scope": "user",
       "version_required": true
     },
@@ -296,16 +296,16 @@
       "version_required": false
     },
     {
-      "id": "confirmTranscription",
-      "path": "/speech/transcriptions/{id}/confirmation",
-      "method": "patch",
+      "id": "deleteTranscription",
+      "path": "/speech/transcriptions/{id}",
+      "method": "delete",
       "scope": "user",
       "version_required": true
     },
     {
-      "id": "deleteTranscription",
-      "path": "/speech/transcriptions/{id}",
-      "method": "delete",
+      "id": "confirmTranscription",
+      "path": "/speech/transcriptions/{id}/confirmation",
+      "method": "patch",
       "scope": "user",
       "version_required": true
     },
@@ -770,6 +770,21 @@
       "method": "get",
       "scope": "audit:read",
       "version_required": false
+    },
+    {
+      "id": "grantCommunityMediaAccess",
+      "path": "/community/media-access",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "readCommunityMediaContent",
+      "path": "/community/media/{grant_id}/content",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
     }
-  ]
+  ],
+  "proposal_revision": 2
 }

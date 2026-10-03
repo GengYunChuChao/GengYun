@@ -2,6 +2,8 @@
 
 GY-I01 / #1；契约 `1.0.0` 待审。[ADR](adr-001-initial-architecture.md)、[数据字典](data-dictionary.md)、[状态协议](state-contract.md)、[OpenAPI](../../packages/contracts/openapi.json)组成同一提案。
 
+提案修订2对应PR #33旧HEAD的两项P2：F05/F13、AC08/09/16/19的已发布媒体读取与资料关联往返。新增社区上下文授权/二进制取图、Post媒体实际版本/Author头像版本、资料可用/不可用投影；消费者影响见ADR。所有新正反例仍为合成设计断言，不是HTTP服务或真实权限/AI验收。
+
 ## F / AC 到模块
 
 下表是设计覆盖，不是运行 AC 通过。GY-I01台账acceptance_ids为空，保持不变；验收实现由对应任务提交真实证据。

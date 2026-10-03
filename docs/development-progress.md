@@ -19,7 +19,7 @@ GY-I01已由“耕云写手”聊天领取（[领取记录](https://github.com/S
 
 | 任务 | issue | 完成阶段 | 状态 | 负责人／PR与证据 |
 | --- | --- | --- | --- | --- |
-| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待审PR | 耕云写手／codex/gy-i01-contracts；Draft契约提案，独立规范检查通过，候选安装兼容阻塞；无监工已验SHA |
+| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待审PR | 耕云写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)；提案修订2待复审，远端ready不代表冻结/通过；候选安装兼容仍阻塞，无监工新HEAD已验SHA |
 | GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I03 建立浙江首批资料清单与可替换数据库适配 | [#3](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I04 实现微信登录、游客限制与服务端归属权限 | [#4](https://github.com/Sek1ro-oka/GengYun/issues/4) | M1 | 待领取 | 未领取／无已验PR |

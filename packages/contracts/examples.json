@@ -77,7 +77,9 @@
           "display_name": "合成作者",
           "display_id": "fixture-author",
           "state": "active",
-          "avatar_media_id": null
+          "avatar_media_id": null,
+          "revision": 3,
+          "avatar_media": null
         },
         "title": "设计示例",
         "body": "无真实内容或审核证据",
@@ -87,7 +89,10 @@
         "visibility": "published",
         "audit_state": "approved",
         "created_at": "2026-10-03T08:00:00Z",
-        "updated_at": "2026-10-03T08:00:00Z"
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
       }
     },
     {
@@ -307,6 +312,5932 @@
           "execution_mode": "stub"
         }
       }
+    },
+    {
+      "name": "published_post_media",
+      "schema": "Post",
+      "value": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      }
+    },
+    {
+      "name": "post_with_knowledge",
+      "schema": "Post",
+      "value": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      }
+    },
+    {
+      "name": "post_unavailable_knowledge",
+      "schema": "Post",
+      "value": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      }
+    },
+    {
+      "name": "create_post_knowledge",
+      "schema": "PostInput",
+      "value": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      }
+    },
+    {
+      "name": "edit_post_keep_unavailable",
+      "schema": "PostInput",
+      "value": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      }
+    },
+    {
+      "name": "edit_post_unlink",
+      "schema": "PostInput",
+      "value": {
+        "title": "编辑设计示例",
+        "body": "解除关联",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": null
+      }
+    },
+    {
+      "name": "community_attachment_request",
+      "schema": "CommunityMediaAccessInput",
+      "value": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      }
+    },
+    {
+      "name": "community_avatar_request",
+      "schema": "CommunityMediaAccessInput",
+      "value": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      }
+    },
+    {
+      "name": "community_attachment_grant",
+      "schema": "CommunityMediaGrant",
+      "value": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      }
+    },
+    {
+      "name": "community_avatar_grant",
+      "schema": "CommunityMediaGrant",
+      "value": {
+        "grant_id": "00000000-0000-4000-8000-000000000041",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      }
+    },
+    {
+      "name": "comment_avatar",
+      "schema": "Comment",
+      "value": {
+        "id": "00000000-0000-4000-8000-000000000012",
+        "revision": 9,
+        "post_id": "00000000-0000-4000-8000-000000000010",
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "body": "合成评论",
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z"
+      }
+    },
+    {
+      "name": "community_comment_avatar_request",
+      "schema": "CommunityMediaAccessInput",
+      "value": {
+        "content_ref": {
+          "type": "comment",
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      }
+    },
+    {
+      "name": "community_comment_avatar_grant",
+      "schema": "CommunityMediaGrant",
+      "value": {
+        "grant_id": "00000000-0000-4000-8000-000000000042",
+        "content_ref": {
+          "type": "comment",
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000042/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      }
+    }
+  ],
+  "proposal_revision": 2,
+  "community_media_traces": [
+    {
+      "name": "author_attachment",
+      "actor": "author",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-author",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-author",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 200,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "other_reader_attachment",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 200,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "other_reader_author_avatar",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000041",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 200,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "comment_reader_avatar",
+      "actor": "other_reader",
+      "if_match": "\"9\"",
+      "request": {
+        "content_ref": {
+          "type": "comment",
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9,
+          "post_id": "00000000-0000-4000-8000-000000000010",
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "body": "合成评论",
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z"
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000042",
+        "content_ref": {
+          "type": "comment",
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000042/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000012",
+          "revision": 9,
+          "post_id": "00000000-0000-4000-8000-000000000010",
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "body": "合成评论",
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z"
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 200,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000042/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "old_content",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 8,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "hidden_content",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "hidden",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "private_content",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "private",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "pending_review",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "pending",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "private_recognition",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "weed_recognition",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "purpose_withdrawn",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": false,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "media_deleted",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "deleted",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "session_revoked",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": false,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 401,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "parent_hidden",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": false,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "parent_edited",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 8,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "avatar_anonymized",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000041",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "anonymized",
+            "avatar_media_id": null,
+            "revision": 6,
+            "avatar_media": null
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "avatar_version_changed",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000041",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 6,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "old_media_version",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 12
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "reader_hidden_at_grant",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "hidden",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 404,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "reader_private_at_grant",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "private",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 404,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "reader_unreviewed_at_grant",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "pending",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 404,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "reader_recognition_at_grant",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "weed_recognition",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 404,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "reader_question_at_grant",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "voice_question",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 404,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "post_revision_used_as_media",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 7
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 409,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "media_revision_used_as_etag",
+      "actor": "other_reader",
+      "if_match": "\"11\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": null,
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 409,
+      "consume_status": null,
+      "consume_request": null
+    },
+    {
+      "name": "requester_id_changed",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-third-user",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "requester_auth_epoch_changed",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 3,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "public_posting_epoch_changed",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 5,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "content_owner_epoch_changed",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 9,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "avatar_unapproved",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000041",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000021",
+          "media_revision": 13
+        },
+        "slot": "author_avatar",
+        "author_revision": 5,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": false,
+        "owner_active": true
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000041/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    },
+    {
+      "name": "owner_deletion_pending",
+      "actor": "other_reader",
+      "if_match": "\"7\"",
+      "request": {
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null
+      },
+      "snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": true
+      },
+      "grant": {
+        "grant_id": "00000000-0000-4000-8000-000000000040",
+        "content_ref": {
+          "type": "post",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7
+        },
+        "media_ref": {
+          "media_id": "00000000-0000-4000-8000-000000000020",
+          "media_revision": 11
+        },
+        "slot": "attachment",
+        "author_revision": null,
+        "access": {
+          "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+          "expires_at": "2026-10-03T08:05:00Z",
+          "method": "GET",
+          "access_token": "design-fixture-not-a-real-token"
+        }
+      },
+      "consume_snapshot": {
+        "session_active": true,
+        "public_posting_current": true,
+        "parent_published": true,
+        "parent_revision": 7,
+        "media_purpose": "community_image",
+        "media_state": "ready",
+        "media_owner_matches_content": true,
+        "content": {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "revision": 7,
+          "author": {
+            "display_name": "合成作者",
+            "display_id": "fixture-author",
+            "state": "active",
+            "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+            "revision": 5,
+            "avatar_media": {
+              "media_id": "00000000-0000-4000-8000-000000000021",
+              "media_revision": 13
+            }
+          },
+          "title": "设计示例",
+          "body": "无真实内容或审核证据",
+          "crop_id": null,
+          "region_code": null,
+          "media_ids": [
+            "00000000-0000-4000-8000-000000000020"
+          ],
+          "visibility": "published",
+          "audit_state": "approved",
+          "created_at": "2026-10-03T08:00:00Z",
+          "updated_at": "2026-10-03T08:00:00Z",
+          "media": [
+            {
+              "media_id": "00000000-0000-4000-8000-000000000020",
+              "media_revision": 11
+            }
+          ],
+          "linked_knowledge_ref": null,
+          "linked_knowledge": null
+        },
+        "requester_id": "fixture-other-reader",
+        "requester_auth_epoch": 2,
+        "public_posting_epoch": 4,
+        "content_owner_epoch": 8,
+        "avatar_review_approved": true,
+        "owner_active": false
+      },
+      "grant_status": 200,
+      "consume_status": 404,
+      "consume_request": {
+        "url": "https://example.invalid/api/v1/community/media/00000000-0000-4000-8000-000000000040/content",
+        "access_token": "design-fixture-not-a-real-token"
+      }
+    }
+  ],
+  "knowledge_roundtrips": [
+    {
+      "name": "no_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": []
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 3,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 3,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 3,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      },
+      "edit_input": {
+        "title": "设计示例",
+        "body": "合成编辑",
+        "media_ids": [],
+        "linked_knowledge_ref": null
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 2,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 3,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成编辑",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "valid_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "edit_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "expired_or_hidden_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "edit_input": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "withdrawn_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "edit_input": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "expired_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "edit_input": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "not_visible_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "edit_input": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "edit_clear_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "edit_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": null
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": null,
+        "linked_knowledge": null
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
+    },
+    {
+      "name": "edit_omit_keep_link",
+      "create_input": {
+        "title": "设计示例",
+        "body": "合成文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        }
+      },
+      "created": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "设计示例",
+        "body": "合成文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "private",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "available",
+          "unavailable_reason": null,
+          "summary": {
+            "title": "合成资料关联，无真实登记或用量"
+          }
+        }
+      },
+      "detail": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "listed": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 7,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": "00000000-0000-4000-8000-000000000021",
+          "revision": 5,
+          "avatar_media": {
+            "media_id": "00000000-0000-4000-8000-000000000021",
+            "media_revision": 13
+          }
+        },
+        "title": "设计示例",
+        "body": "无真实内容或审核证据",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "published",
+        "audit_state": "approved",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [
+          {
+            "media_id": "00000000-0000-4000-8000-000000000020",
+            "media_revision": 11
+          }
+        ],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "edit_input": {
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ]
+      },
+      "edited": {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "revision": 8,
+        "author": {
+          "display_name": "合成作者",
+          "display_id": "fixture-author",
+          "state": "active",
+          "avatar_media_id": null,
+          "revision": 5,
+          "avatar_media": null
+        },
+        "title": "编辑设计示例",
+        "body": "合成编辑文字",
+        "crop_id": null,
+        "region_code": null,
+        "media_ids": [
+          "00000000-0000-4000-8000-000000000020"
+        ],
+        "visibility": "hidden",
+        "audit_state": "pending",
+        "created_at": "2026-10-03T08:00:00Z",
+        "updated_at": "2026-10-03T08:00:00Z",
+        "media": [],
+        "linked_knowledge_ref": {
+          "type": "herbicide",
+          "id": "00000000-0000-4000-8000-000000000030",
+          "revision": 4
+        },
+        "linked_knowledge": {
+          "target_ref": {
+            "type": "herbicide",
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 4
+          },
+          "reference_state": "unavailable",
+          "unavailable_reason": "TARGET_UNAVAILABLE",
+          "summary": null
+        }
+      },
+      "audit_transition": "合成审核步骤：created pending/private → detail approved/published；不是已运行AI审核"
     }
   ]
 }

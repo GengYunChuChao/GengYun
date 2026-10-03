@@ -1903,7 +1903,7 @@
       "get": {
         "operationId": "getMedia",
         "summary": "getMedia",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "仅媒体owner读取私有元数据，非本人统一404。公开读者版本来源是Post.media或Author.avatar_media，不借此放宽归属。",
         "tags": [
           "media"
         ],
@@ -2089,7 +2089,7 @@
       "post": {
         "operationId": "grantMediaAccess",
         "summary": "grantMediaAccess",
-        "description": "动态访问网关每次核对账号/用途/当前帖子版本，≤300秒，不返回不可撤销裸对象存储签名。",
+        "description": "仅媒体owner私有访问，If-Match仍对应媒体revision；他人不得通过media_id或社区公开状态扩大该接口权限。其他登录读者使用带公开内容上下文的/community/media-access。",
         "tags": [
           "media"
         ],
@@ -5001,7 +5001,7 @@
       "get": {
         "operationId": "listPosts",
         "summary": "listPosts",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。 关联回传linked_knowledge_ref及linked_knowledge安全投影，统一使用Post响应；不存在/不可用目标不返回旧正文、标题、附件或用量。",
         "tags": [
           "posts"
         ],
@@ -5111,7 +5111,7 @@
       "post": {
         "operationId": "createPost",
         "summary": "createPost",
-        "description": "只创建private/pending，不代表发布；文字图片当前版本筛查完成才发布。",
+        "description": "只创建private/pending，不代表发布；文字图片当前版本筛查完成才发布。 关联回传linked_knowledge_ref及linked_knowledge安全投影，统一使用Post响应；不存在/不可用目标不返回旧正文、标题、附件或用量。",
         "tags": [
           "posts"
         ],
@@ -5206,7 +5206,7 @@
       "get": {
         "operationId": "getPost",
         "summary": "getPost",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。 关联回传linked_knowledge_ref及linked_knowledge安全投影，统一使用Post响应；不存在/不可用目标不返回旧正文、标题、附件或用量。",
         "tags": [
           "posts"
         ],
@@ -5295,7 +5295,7 @@
       "patch": {
         "operationId": "editPost",
         "summary": "editPost",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。 关联回传linked_knowledge_ref及linked_knowledge安全投影，统一使用Post响应；不存在/不可用目标不返回旧正文、标题、附件或用量。",
         "tags": [
           "posts"
         ],
@@ -10628,6 +10628,229 @@
         "x-version-required": false,
         "x-task": "GY-I01"
       }
+    },
+    "/community/media-access": {
+      "post": {
+        "operationId": "grantCommunityMediaAccess",
+        "summary": "grantCommunityMediaAccess",
+        "description": "登录用户基于当前published且approved的帖子附件或帖子/评论作者头像授权。If-Match对应content_ref.revision，媒体revision来自Post.media/Author.avatar_media，头像另核Author.revision；三者不混用。不扩大私有媒体接口。回放/读取重新校验当前账号/用途/版本/审核/父帖。",
+        "tags": [
+          "community"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunityMediaGrantEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": true,
+        "x-task": "GY-I01",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommunityMediaAccessInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/community/media/{grant_id}/content": {
+      "get": {
+        "operationId": "readCommunityMediaContent",
+        "summary": "readCommunityMediaContent",
+        "description": "按照CommunityMediaGrant.access.url读取二进制。同时携带userSession和X-Media-Access-Token，不将token放URL；grant绑定同一登录主体、内容/媒体/头像版本及用途epoch，最长300秒。每次取图复核全部当前条件，失效统一404，无原桶URL重定向；Cache-Control:no-store。",
+        "tags": [
+          "community"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "grant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Media-Access-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前仍有权限的已清除EXIF衍生图片内容；不是授权后永久可读。",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "私有/授权访问no-store"
+              },
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Execution-Mode": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionMode"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
     }
   },
   "components": {
@@ -13104,14 +13327,31 @@
                 "type": "null"
               }
             ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "avatar_media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommunityMediaRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "display_name",
           "display_id",
           "state",
-          "avatar_media_id"
-        ]
+          "avatar_media_id",
+          "revision",
+          "avatar_media"
+        ],
+        "description": "revision来自public_authors，不是post或media revision。只有当前公开且头像独立筛查通过/公开用途有效时avatar_media非null；avatar_media_id与投影一致，否则均null。"
       },
       "PostInput": {
         "type": "object",
@@ -13146,14 +13386,22 @@
             "uniqueItems": true
           },
           "linked_knowledge_ref": {
-            "$ref": "#/components/schemas/TargetRef"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "title",
           "body",
           "media_ids"
-        ]
+        ],
+        "description": "创建遗漏关联等于无关联；编辑遗漏关联保留旧值，显式null解除关联。新增/替换引用需当前可用，原已保存失效引用可原样保留，但只输出不可用投影。"
       },
       "Post": {
         "type": "object",
@@ -13224,6 +13472,33 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommunityMediaRef"
+            },
+            "maxItems": 3
+          },
+          "linked_knowledge_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "linked_knowledge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -13238,8 +13513,12 @@
           "visibility",
           "audit_state",
           "created_at",
-          "updated_at"
-        ]
+          "updated_at",
+          "media",
+          "linked_knowledge_ref",
+          "linked_knowledge"
+        ],
+        "description": "所有创建/详情/列表/编辑响应共用此形状。media为当前已发布且筛查通过的附件安全版本投影，按media_ids顺序；作者草稿/隐藏版本media为空，仍可从私有owner接口预览。关联不可用只保留目标ref和粗粒度状态。"
       },
       "CommentInput": {
         "type": "object",
@@ -16085,6 +16364,227 @@
           "data",
           "meta"
         ]
+      },
+      "CommunityMediaRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "media_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "media_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "media_id",
+          "media_revision"
+        ]
+      },
+      "PublishedContentRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "post",
+              "comment"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "revision"
+        ]
+      },
+      "CommunityMediaAccessInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "content_ref": {
+            "$ref": "#/components/schemas/PublishedContentRef"
+          },
+          "media_ref": {
+            "$ref": "#/components/schemas/CommunityMediaRef"
+          },
+          "slot": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "author_avatar"
+            ]
+          },
+          "author_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "content_ref",
+          "media_ref",
+          "slot",
+          "author_revision"
+        ]
+      },
+      "CommunityMediaGrant": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "grant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "content_ref": {
+            "$ref": "#/components/schemas/PublishedContentRef"
+          },
+          "media_ref": {
+            "$ref": "#/components/schemas/CommunityMediaRef"
+          },
+          "slot": {
+            "type": "string",
+            "enum": [
+              "attachment",
+              "author_avatar"
+            ]
+          },
+          "author_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "access": {
+            "$ref": "#/components/schemas/AccessGrant"
+          }
+        },
+        "required": [
+          "grant_id",
+          "content_ref",
+          "media_ref",
+          "slot",
+          "author_revision",
+          "access"
+        ]
+      },
+      "CommunityMediaGrantEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CommunityMediaGrant"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "KnowledgeTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "species",
+              "herbicide",
+              "scheme"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "revision"
+        ]
+      },
+      "KnowledgeLinkSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "KnowledgeLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target_ref": {
+            "$ref": "#/components/schemas/KnowledgeTarget"
+          },
+          "reference_state": {
+            "$ref": "#/components/schemas/ReferenceState"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "const": "TARGET_UNAVAILABLE"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeLinkSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target_ref",
+          "reference_state",
+          "unavailable_reason",
+          "summary"
+        ]
       }
     },
     "responses": {
@@ -16368,5 +16868,6 @@
       "PROVIDER_TIMEOUT"
     ]
   },
-  "x-contract-status": "proposed"
+  "x-contract-status": "proposed",
+  "x-proposal-revision": 2
 }

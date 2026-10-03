@@ -63,11 +63,12 @@
 
 | 表 / 归属 | 字段与类型 | 约束、索引与删除 |
 | --- | --- | --- |
-| public_authors / 展示 | id; display_name; avatar_ref?; state enum(active/anonymized); revision | 无openid/user FK；注销显示已注销用户+默认头像；随机逐作者注销引用，不共用一个主键 |
+| public_authors / 展示 | id; display_name; avatar_media_id?; avatar_media_revision?; avatar_audit_state enum; public_posting_epoch; state enum(active/anonymized); revision | 无openid/user FK；头像两字段同空/同有，替换递增作者revision并重审；未审/撤回/注销不投影头像。注销显示已注销用户+默认头像；随机逐作者注销引用，不共用一个主键 |
 | author_links / 私有 | user_id; public_author_id | unique(user_id)，unique(public_author_id)，注销销毁映射；日志/审计不留逆向映射 |
 | posts / 作者 | id; author_ref; current_revision; visibility; revision | index(visibility,created_at,id)，归属通过author_links；编辑即时hidden，注销脱敏处理后保留 |
-| post_versions / 不可变 | post_id; revision; title; body; crop_id?; region_code?; linked_knowledge_ref?; audit_state; created_at | PK(post_id,revision)，展示AI筛查标签，不能专业标签；身份正文脱敏生成新版本，旧私有版本按删除策略清理 |
-| content_media_refs / 作者 | target_type; target_id; content_revision; media_id; purpose_epoch | unique(target_type,target_id,content_revision,media_id)，3张限制，当前revision筛查+用途+父对象可见性联动 |
+| post_versions / 不可变 | post_id; revision; title; body; crop_id?; region_code?; linked_knowledge_ref? KnowledgeTarget(type/id/revision); audit_state; created_at | PK(post_id,revision)，index(linked_target_type/id/revision)用于失效；关联类型限定species/herbicide/scheme，新增/替换验当前权限/版本，原失效引用可原样保留。reference_state与summary逐次派生不存旧正文。展示AI筛查标签，不能专业标签；身份正文脱敏生成新版本，旧私有版本按删除策略清理 |
+| content_media_refs / 作者 | target_type; target_id; content_revision; media_id; media_revision; purpose_epoch | unique(target_type,target_id,content_revision,media_id)，3张限制；revision是实际审核媒体版本，变化立即撤公开并重审。Post.media逐次派生版本投影，不能用content_revision代media_revision；当前revision筛查+用途+父对象可见性联动 |
+| community_media_grants / 短期受控 | id; requester_id; session_ref; requester_auth_epoch; content_type/id/revision; slot enum(attachment/author_avatar); media_id/revision; author_ref/revision?; parent_post_id/revision; public_posting_epoch; content_owner_epoch; token_hash; expires_at; revoked_at? | token与同一登录主体/session绑定，hash存储；index(content_id,media_id,expires_at)，最多300秒，取图逐次查当前状态/删除清单，不能用公开投影放宽owner私有接口。只允许当前公开已审community_image；旧版本/下架/头像替换/注销即撤销，到期清理，注销处理纳入在线handler |
 | comments / 作者 | id; post_id; author_ref; current_revision; visibility; revision | 父帖不可见时不可读，索引(post_id,created_at,id)，注销去身份 |
 | comment_versions / 不可变 | comment_id; revision; body; audit_state | PK(comment_id,revision)，修改重审，不复用旧审核 |
 | moderation_decisions / 系统 | id; target_type/id/revision; job_id; decision enum; reason_codes jsonb; checked_media_hashes jsonb; rule/prompt/model_version; hard_rule_passed boolean | unique(target_type,target_id,revision,job_id)，旧版本不能发布；失败quarantined；受限证据删除最小化 |

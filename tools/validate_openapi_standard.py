@@ -32,7 +32,17 @@ Draft202012Validator.check_schema(schema)
 Draft202012Validator(schema, format_checker=FormatChecker()).validate(spec)
 for name, component in spec['components']['schemas'].items():
     Draft202012Validator.check_schema(component)
-fixtures = json.loads((root / 'packages/contracts/examples.json').read_text(encoding='utf-8'))['fixtures']
+examples = json.loads((root / 'packages/contracts/examples.json').read_text(encoding='utf-8'))
+fixtures = list(examples['fixtures'])
+for trace in examples.get('community_media_traces', []):
+    fixtures.append({'schema': 'CommunityMediaAccessInput', 'value': trace['request']})
+    if trace['grant'] is not None:
+        fixtures.append({'schema': 'CommunityMediaGrant', 'value': trace['grant']})
+for trace in examples.get('knowledge_roundtrips', []):
+    for key in ('create_input', 'edit_input'):
+        fixtures.append({'schema': 'PostInput', 'value': trace[key]})
+    for key in ('created', 'detail', 'listed', 'edited'):
+        fixtures.append({'schema': 'Post', 'value': trace[key]})
 for fixture in fixtures:
     standalone = {'$ref': '#/components/schemas/' + fixture['schema'], 'components': spec['components']}
     Draft202012Validator(standalone, format_checker=FormatChecker()).validate(fixture['value'])

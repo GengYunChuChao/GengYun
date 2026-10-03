@@ -1,6 +1,6 @@
 # 初版 HTTP、任务与隐私状态契约
 
-契约 `1.0.0`，GY-I01 待审。字段和路径以 [OpenAPI](../../packages/contracts/openapi.json)为机器入口；表及索引见[数据字典](data-dictionary.md)。以下是实施必须遵循的行为，不是已运行证据。
+契约 `1.0.0`，提案修订2（`x-proposal-revision=2`），GY-I01 待审。字段和路径以 [OpenAPI](../../packages/contracts/openapi.json)为机器入口；表及索引见[数据字典](data-dictionary.md)。以下是实施必须遵循的行为，不是已运行证据。
 
 ## HTTP 与身份
 
@@ -64,6 +64,33 @@ LLM只生成不含用量数字的说明，引用必须为本轮检索白名单�
 TTS请求只接受服务器 checked_content_ref（答案/资料/用量卡片）与 revision，不接受自由文本；生成和播放时都重查来源/授权/可见性。同一页同一版本自动播报一次，离页/隐藏停止，取消录音丢弃临时文件并解绑监听；录音状态与播放状态由 GY-I11/13/26 客户端实现。播放成功不记为理解或已读；消息已读须单独操作。
 
 ## 社区与引用
+
+### 已发布附件和作者头像读取
+
+私有 `GET /media/{id}` 与 `POST /media/{id}/access` **仍仅owner可用**；后者If-Match仍指媒体revision，社区读者不能靠该接口读别人的媒体。新增公开内容上下文授权，避免把“媒体已上传”当作“媒体可公开”。
+
+所有Post响应（创建、详情、列表、编辑）新增 `media: [{media_id,media_revision}]`，保留 `media_ids` 供作者编辑，已发布时两者同序同ID。公开media只包含当前帖子版本已审核、公开用途有效、ready且属于该作者的图片；私有/隐藏帖子投影为空，作者预览仍走私有接口。没有通过全部媒体检查的版本不得published，因此不得在公开响应偷偷省略未审图片然后继续公开正文。媒体变化须撤当前版本并重审，不能保留旧投影。
+
+Author新增独立 `revision` 与 `avatar_media: {media_id,media_revision} | null`，原 `avatar_media_id` 与投影同步，无头像两者均null。头像只在可见的已发布帖子/评论上下文、头像独立筛查通过且公开用途有效时投影；来源为public_authors的当前头像revision，不是帖子revision。注销、撤回、头像替换或未审时返回默认头像/空投影，不能回传旧头像。此处只补现有可选头像的读取，不增加头像配置业务或强制采集。
+
+作者与其他登录读者均可按以下链读取已发布附件；评论只有同类作者头像，不新增评论图片上传：
+
+1. `GET /posts/{id}` 或列表取得Post.revision、media列表、Author.revision/avatar_media；评论头像从 `GET /comments/{id}` 或评论列表取得相同Author投影。例：帖子revision=7、图片media_revision=11、作者revision=5、头像media_revision=13，四者独立。
+2. `POST /community/media-access`，userSession + Idempotency-Key + **If-Match: "7"（对应content_ref.revision）**。正文引用当前内容和实际媒体版本：`content_ref={type:post,id,revision:7}`、`media_ref={media_id,media_revision:11}`、`slot=attachment`、`author_revision=null`；头像slot=author_avatar，media_revision=13、author_revision=5。评论头像content_ref.type=comment，If-Match为该评论revision；父帖当前版本由服务端获取并绑定，不让客户端猜。
+3. 返回CommunityMediaGrant：grant_id、与请求一致的内容/媒体/slot/author版本，以及 `access={url,expires_at,method:GET,access_token}`。最大300秒，URL路径为 `/api/v1/community/media/{grant_id}/content`，token不放URL；不返回桶地址或301/302裸存储跳转。
+4. GET该url时同时携带当前userSession（Authorization）和 `X-Media-Access-Token`（返回的access_token）。服务器验真实签名/受控grant记录、绑定登录主体与session/auth epoch，逐次重新检查下列条件，返回已去EXIF二进制图片及Cache-Control:no-store。该图片成功响应是二进制而非JSON data/meta例外，X-Request-Id与X-Execution-Mode响应头保留请求/模式标记；错误仍返回JSON error/meta。授权不等于后续可无条件读取。
+
+授权与每次取图均须核对：当前内容id/revision、published+approved、文字图片全部审核、slot属于该当前版本或当前作者头像、实际media_id/revision/ready/community_image用途、媒体作者关联、public_posting用途epoch、账号及删除清单。头像另验当前Author.revision、active、独立审核与公开授权；评论另验父帖当前revision/published。句柄绑定签发时这些版本与epoch以及请求者，不允许换人/换slot/换媒体复用。签发时版本不符409；不存在、非公开、用途失效、私有识别/问答媒体或slot无关联统一404。取图时版本/epoch/授权变化统一404（会话失效401），即使尚未到expires_at也拒绝；重放同幂等键也先重查，不能返回旧可用grant。
+
+作者查看草稿可用原私有链，**草稿不能使用新社区链**。已下架、编辑重审、旧版附件、头像更换、注销去身份、撤回用途和被删媒体立即撤销旧grant；处理后的保留帖子只能重新投影已审核脱敏内容，不能从旧媒体ID或句柄恢复身份。私有识别图若显式新用途授权后供发帖，须形成新的community_image引用/衍生对象及本内容版本审核，原私有ID本身仍不可读。签名与服务器短期记录都必须支持上述即时撤销，不能只依赖过期。
+
+### 关联资料的创建、读取和编辑
+
+PostInput的 `linked_knowledge_ref` 收窄为KnowledgeTarget（species/herbicide/scheme），可为null。Post的四种响应统一**必含** `linked_knowledge_ref` 和 `linked_knowledge`：无关联两者null；有可用关联时前者是原目标type/id/revision，后者为 `{target_ref,reference_state:available,unavailable_reason:null,summary:{title}}`；不可用时仍保留同一target_ref，后者 `reference_state:unavailable,unavailable_reason:TARGET_UNAVAILABLE,summary:null`。
+
+每次创建/读取/列表/编辑投影都核对目标类型、已保存版本与当前可见版本、来源有效性/审核、权限和下架状态。无来源、过期、版本已替换或不再可见统一不可用，不泄露目标曾有的标题、正文、图片、URL或用量；状态不透露“隐藏还是不存在”。有效summary只是公开标题，不含适用/用量结论，进入详情仍执行原资料/制剂/条件规则；关联不能作为推荐、安全或处方依据。
+
+创建省略/null表示无关联；新增或替换关联必须为当前有权限、可用的目标，否则409 OBJECT_UNAVAILABLE（无权限/不存在统一404）。编辑省略字段保留旧关联，显式null解除；已有失效关联可原样保留供追溯，响应仍是不可用投影，不允许借此新增其他失效目标或恢复资格。改变引用仍生成新帖子版本、隐藏重审；创建先private/pending，编辑先hidden/pending，之后才可能经真实筛查发布。下游编辑页从Post.linked_knowledge_ref还原输入，不能从摘要猜目标或从旧缓存回填失效资料正文。
 
 audit_state `pending → approved / rejected / quarantined`；content visibility独立为 private/published/hidden/deleted。只有当前 revision approved、文字图片全部完成、硬规则通过及用途有效才能同事务发布。AI超时/异常/不明为 quarantined，没有人审放行兜底。approved只说明AI筛查，不等于专业审核。编辑任何正文/标签/附件生成新 revision 并立即将公开视图hidden，再审后发布；旧快照不能继续作为当前帖子公开。
 

@@ -1,4 +1,4 @@
-# 耕云初版 HTTP 契约 1.0.0（提案）
+# 耕云初版 HTTP 契约 1.0.0（提案修订2）
 
 GY-I01 / #1，待监工冻结；没有已运行API。业务v1.0、开发v1.1。
 
@@ -13,14 +13,16 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 
 版本变化须同PR更新消费者、枚举、索引、行为说明与示例；不能通过接口增加二月模块。所有写接口幂等；下表版本列“是”表示If-Match强ETag必需。身份和权限必须由服务端实现，标注不代表已经强制。
 
+修订2补齐社区受控媒体读取与关联往返，Post.media提供媒体revision，Author提供独立revision/avatar_media；关联通过linked_knowledge_ref/linked_knowledge返回安全状态。新增请求链与失效断言见examples.json；API尚未实现。
+
 | operationId | 方法与路径（前缀/api/v1） | 权限 | 版本 |
 | --- | --- | --- | --- |
 | getPublicHome | `GET /public/home` | public | 否 |
 | loginWechat | `POST /auth/wechat` | public | 否 |
 | loginAdmin | `POST /admin/auth/session` | public | 否 |
+| getAdminSession | `GET /admin/auth/session` | session:read | 否 |
 | getUserSession | `GET /auth/session` | user | 否 |
 | logoutUser | `POST /auth/logout` | user | 否 |
-| getAdminSession | `GET /admin/auth/session` | session:read | 否 |
 | logoutAdmin | `POST /admin/auth/logout` | session:logout | 否 |
 | getProfile | `GET /me/profile` | user | 否 |
 | putProfile | `PUT /me/profile` | user | 是 |
@@ -37,8 +39,8 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 | createUpload | `POST /media/uploads` | user | 否 |
 | completeUpload | `POST /media/uploads/{id}/complete` | user | 是 |
 | getMedia | `GET /media/{id}` | user | 否 |
-| grantMediaAccess | `POST /media/{id}/access` | user | 是 |
 | deleteMedia | `DELETE /media/{id}` | user | 是 |
+| grantMediaAccess | `POST /media/{id}/access` | user | 是 |
 | getJob | `GET /jobs/{id}` | user | 否 |
 | cancelJob | `POST /jobs/{id}/cancel` | user | 是 |
 | listKnowledge | `GET /knowledge` | user | 否 |
@@ -48,17 +50,17 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 | verifyRegistration | `POST /registrations/verify` | user | 否 |
 | createRecognition | `POST /recognitions` | user | 否 |
 | getRecognition | `GET /recognitions/{id}` | user | 否 |
-| selectSpecies | `PATCH /recognitions/{id}/selection` | user | 是 |
 | deleteRecognition | `DELETE /recognitions/{id}` | user | 是 |
+| selectSpecies | `PATCH /recognitions/{id}/selection` | user | 是 |
 | createOCR | `POST /ocr` | user | 否 |
 | getOCR | `GET /ocr/{id}` | user | 否 |
+| deleteOCR | `DELETE /ocr/{id}` | user | 是 |
 | correctOCR | `PATCH /ocr/{id}/correction` | user | 是 |
 | verifyOCR | `POST /ocr/{id}/verify` | user | 是 |
-| deleteOCR | `DELETE /ocr/{id}` | user | 是 |
 | createTranscription | `POST /speech/transcriptions` | user | 否 |
 | getTranscription | `GET /speech/transcriptions/{id}` | user | 否 |
-| confirmTranscription | `PATCH /speech/transcriptions/{id}/confirmation` | user | 是 |
 | deleteTranscription | `DELETE /speech/transcriptions/{id}` | user | 是 |
+| confirmTranscription | `PATCH /speech/transcriptions/{id}/confirmation` | user | 是 |
 | createSynthesis | `POST /speech/synthesis` | user | 否 |
 | createConversation | `POST /conversations` | user | 否 |
 | listConversations | `GET /conversations` | user | 否 |
@@ -125,3 +127,5 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 | setFlag | `PUT /admin/feature-flags/{key}` | flags:write | 是 |
 | hidePost | `POST /admin/posts/{id}/hide` | sources:write | 是 |
 | listAuditEvents | `GET /admin/audit-events` | audit:read | 否 |
+| grantCommunityMediaAccess | `POST /community/media-access` | user | 是 |
+| readCommunityMediaContent | `GET /community/media/{grant_id}/content` | user | 否 |

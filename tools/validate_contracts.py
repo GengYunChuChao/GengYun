@@ -112,6 +112,42 @@ def validate_value(spec, schema, value, path='$'):
 
 
 def validate_semantics(name, value):
+    if name == 'Author':
+        avatar = value['avatar_media']
+        if (avatar is None) != (value['avatar_media_id'] is None) or avatar and avatar['media_id'] != value['avatar_media_id']:
+            raise ValueError('Author: avatar ID/projection mismatch')
+        if value['state'] == 'anonymized' and avatar is not None:
+            raise ValueError('Author: anonymized avatar exposed')
+    if name == 'KnowledgeLink':
+        available = value['reference_state'] == 'available'
+        if available and (value['summary'] is None or value['unavailable_reason'] is not None):
+            raise ValueError('KnowledgeLink: incomplete available projection')
+        if not available and (value['summary'] is not None or value['unavailable_reason'] != 'TARGET_UNAVAILABLE'):
+            raise ValueError('KnowledgeLink: restricted summary/reason exposed')
+    if name == 'Comment' and value['visibility'] != 'published' and value['author']['avatar_media'] is not None:
+        raise ValueError('Comment: unpublished avatar exposed through public projection')
+    if name == 'Post':
+        media = value['media']
+        projected_ids = [item['media_id'] for item in media]
+        if len(projected_ids) != len(set(projected_ids)):
+            raise ValueError('Post: duplicate media projection')
+        if value['visibility'] == 'published':
+            if projected_ids != value['media_ids']:
+                raise ValueError('Post: public media projection missing/mismatched')
+        elif media or value['author']['avatar_media'] is not None:
+            raise ValueError('Post: unpublished media exposed through public projection')
+        link = value['linked_knowledge']
+        if (link is None) != (value['linked_knowledge_ref'] is None) or link and link['target_ref'] != value['linked_knowledge_ref']:
+            raise ValueError('Post: link input/response reference mismatch')
+    if name in ('CommunityMediaAccessInput', 'CommunityMediaGrant'):
+        avatar = value['slot'] == 'author_avatar'
+        if avatar == (value['author_revision'] is None):
+            raise ValueError('Community media: slot/author revision mismatch')
+        if not avatar and value['content_ref']['type'] != 'post':
+            raise ValueError('Community media: comment attachment not supported')
+    if name == 'CommunityMediaGrant':
+        if value['access']['method'] != 'GET' or not value['access']['url'].endswith('/community/media/' + value['grant_id'] + '/content'):
+            raise ValueError('Community media: grant read route mismatch')
     if name == 'DoseCard':
         source = value['source']
         if (source['source_kind'] == 'simulation' or source['evidence_kind'] == 'experience'
@@ -156,7 +192,89 @@ def validate_semantics(name, value):
         raise ValueError('Favorite: unsupported target type')
 
 
-def check_contract(spec, states, manifest, fixtures):
+def community_media_status(request, if_match, snapshot, issued_snapshot=None):
+    """Design-only guard assertions for synthetic transcripts, not API code.
+
+    No database, real principal, signed token, server or media bytes are used.
+    Implementations must later prove these expectations with HTTP/ACL tests.
+    """
+    if not snapshot['session_active']:
+        return 401
+    content = snapshot['content']
+    if (content['visibility'] != 'published' or content['audit_state'] != 'approved'
+            or not snapshot['parent_published'] or not snapshot['public_posting_current']
+            or not snapshot['owner_active']
+            or snapshot['media_purpose'] != 'community_image' or snapshot['media_state'] != 'ready'
+            or not snapshot['media_owner_matches_content']):
+        return 404
+    context = request['content_ref']
+    if context['id'] != content['id'] or context['type'] != ('comment' if 'post_id' in content else 'post'):
+        return 404
+    conflict = 404 if issued_snapshot is not None else 409
+    if if_match != '"' + str(context['revision']) + '"' or context['revision'] != content['revision']:
+        return conflict
+    if request['slot'] == 'attachment':
+        if context['type'] != 'post':
+            return 404
+        projection = next((m for m in content['media'] if m['media_id'] == request['media_ref']['media_id']), None)
+    else:
+        author = content['author']
+        if author['state'] != 'active' or not snapshot['avatar_review_approved']:
+            return 404
+        projection = author['avatar_media']
+        if author['revision'] != request['author_revision']:
+            return conflict
+    if projection is None or projection['media_id'] != request['media_ref']['media_id']:
+        return 404
+    if projection['media_revision'] != request['media_ref']['media_revision']:
+        return conflict
+    if issued_snapshot is not None:
+        for key in ('requester_id', 'requester_auth_epoch', 'public_posting_epoch', 'content_owner_epoch', 'parent_revision'):
+            if snapshot[key] != issued_snapshot[key]:
+                return 404
+    return 200
+
+
+def validate_media_trace(spec, trace):
+    request = trace['request']
+    validate_value(spec, {'$ref': '#/components/schemas/CommunityMediaAccessInput'}, request)
+    status = community_media_status(request, trace['if_match'], trace['snapshot'])
+    if status != trace['grant_status']:
+        raise ValueError('media trace ' + trace['name'] + ': grant guard expectation differs')
+    if status != 200:
+        if trace['grant'] is not None or trace['consume_status'] is not None:
+            raise ValueError('media trace: denied request grants access')
+        return
+    content_schema = 'Comment' if request['content_ref']['type'] == 'comment' else 'Post'
+    validate_value(spec, {'$ref': '#/components/schemas/' + content_schema}, trace['snapshot']['content'])
+    grant = trace['grant']
+    validate_value(spec, {'$ref': '#/components/schemas/CommunityMediaGrant'}, grant)
+    for key in ('content_ref', 'media_ref', 'slot', 'author_revision'):
+        if grant[key] != request[key]:
+            raise ValueError('media trace: granted context/version differs')
+    consumption = trace['consume_request']
+    if consumption['url'] != grant['access']['url'] or consumption['access_token'] != grant['access']['access_token']:
+        raise ValueError('media trace: consumer uses another grant')
+    status = community_media_status(request, trace['if_match'], trace['consume_snapshot'], trace['snapshot'])
+    if status != trace['consume_status']:
+        raise ValueError('media trace ' + trace['name'] + ': stale/hidden/private grant accepted')
+
+
+def validate_knowledge_roundtrip(spec, trace):
+    for key in ('create_input', 'edit_input'):
+        validate_value(spec, {'$ref': '#/components/schemas/PostInput'}, trace[key])
+    for key in ('created', 'detail', 'listed', 'edited'):
+        validate_value(spec, {'$ref': '#/components/schemas/Post'}, trace[key])
+    reference = trace['create_input'].get('linked_knowledge_ref')
+    for key in ('created', 'detail', 'listed'):
+        if trace[key]['linked_knowledge_ref'] != reference:
+            raise ValueError('knowledge roundtrip: lost create/read/list reference')
+    edited_reference = trace['edit_input'].get('linked_knowledge_ref', trace['detail']['linked_knowledge_ref'])
+    if trace['edited']['linked_knowledge_ref'] != edited_reference:
+        raise ValueError('knowledge roundtrip: lost edit/clear reference')
+
+
+def check_contract(spec, states, manifest, fixtures, media_traces=(), knowledge_roundtrips=()):
     errors = []
 
     def check(condition, message):
@@ -165,6 +283,7 @@ def check_contract(spec, states, manifest, fixtures):
 
     check(spec['openapi'] == '3.1.1', 'OpenAPI version')
     check(spec['info']['version'] == states['contract_version'] == manifest['contract_version'] == '1.0.0', 'Contract version drift')
+    check(spec.get('x-proposal-revision') == manifest.get('proposal_revision') == 2, 'Proposal revision drift')
     check(spec['servers'] == [{'url': '/api/v1', 'description': '相对地址，部署由GY-I25确认；不是已在线服务'}], 'Unexpected live server')
     for node in walk(spec):
         if isinstance(node, dict) and '$ref' in node:
@@ -219,13 +338,26 @@ def check_contract(spec, states, manifest, fixtures):
             validate_value(spec, {'$ref': '#/components/schemas/' + fixture['schema']}, fixture['value'])
         except (ValueError, KeyError, TypeError) as exc:
             errors.append('Fixture ' + fixture['name'] + ': ' + str(exc))
+    for trace in media_traces:
+        try:
+            validate_media_trace(spec, trace)
+        except (ValueError, KeyError, TypeError) as exc:
+            errors.append(str(exc))
+    for trace in knowledge_roundtrips:
+        try:
+            validate_knowledge_roundtrip(spec, trace)
+        except (ValueError, KeyError, TypeError) as exc:
+            errors.append('Roundtrip ' + trace['name'] + ': ' + str(exc))
+    read = spec['paths'].get('/community/media/{grant_id}/content', {}).get('get', {})
+    headers = {p.get('name'): p for p in read.get('parameters', [])}
+    check(headers.get('X-Media-Access-Token', {}).get('required') is True, 'Missing scoped media token header')
     return errors
 
 
 if __name__ == '__main__':
     spec, states, manifest, fixtures = (load(name) for name in ('openapi.json', 'states.json', 'operations.json', 'examples.json'))
-    problems = check_contract(spec, states, manifest, fixtures['fixtures'])
+    problems = check_contract(spec, states, manifest, fixtures['fixtures'], fixtures['community_media_traces'], fixtures['knowledge_roundtrips'])
     if problems:
         print('\n'.join('ERROR: ' + p for p in problems))
         raise SystemExit(1)
-    print(f"PASS: {len(manifest['operations'])} operations; references/security/idempotency/version/state/error consistency; {len(fixtures['fixtures'])} sanitized design fixtures (not runtime tests)")
+    print(f"PASS: {len(manifest['operations'])} operations; contract consistency; {len(fixtures['fixtures'])} fixtures; {len(fixtures['community_media_traces'])} media traces; {len(fixtures['knowledge_roundtrips'])} knowledge roundtrips (design only, not runtime tests)")
