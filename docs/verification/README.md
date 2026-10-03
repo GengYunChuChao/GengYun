@@ -15,6 +15,7 @@
 | `config.example.json` | 配置模板（**不含任何密钥**），复制为 `config.local.json` 后填写 |
 | `quota-estimate.md` | 按需求样本量估算调用额度，供团队申请预算 |
 | [接续证据](continuation-evidence.md) | 原PR #32来源、两条修复、实际微信鉴权及剩余资源清单 |
+| [产品就绪清单](product-readiness.md) | 开通/调用/查询权限与已有额度分层、精确只读动作、首轮费用参考及用途契约对照；不是新增实测 |
 
 ## 2 使用步骤
 
