@@ -6,6 +6,7 @@ on:
       - 'project*.json*'
       - 'config/**'
       - 'tools/*wechat*.mjs'
+      - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
       - 'tests/local-debug.test.mjs'
       - '.gitignore'
@@ -17,6 +18,7 @@ on:
       - 'project*.json*'
       - 'config/**'
       - 'tools/*wechat*.mjs'
+      - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
       - 'tests/local-debug.test.mjs'
       - '.gitignore'
@@ -34,6 +36,7 @@ jobs:
         with:
           node-version: '24.16.0'
       - run: node tools/check-wechat-project.mjs
+      - run: node --check tools/smoke-wechat.cjs
       - run: node --test tests/local-debug.test.mjs
       - run: git check-ignore project.private.config.json config/debug.local.json .local/wechat-local/project.config.json .env
       - run: if git check-ignore project.private.config.json.example config/debug.local.json.example .env.example; then exit 1; fi

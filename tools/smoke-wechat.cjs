@@ -9,9 +9,24 @@ async function main() {
   assert.equal(args.length, 2, 'Usage: node tools/smoke-wechat.cjs <SDK module directory> <local|release>')
   assert.ok(['local', 'release'].includes(args[1]))
   const automator = require(path.resolve(args[0]))
-  const mini = await automator.connect({ wsEndpoint: 'ws://127.0.0.1:9420' })
+  let mini
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try { mini = await automator.connect({ wsEndpoint: 'ws://127.0.0.1:9420' }); break } catch (error) {
+      if (attempt === 29) throw error
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
   let server
   try {
+    let ready = false
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const page = await mini.currentPage()
+        if (page && await page.$('.title')) { ready = true; break }
+      } catch (_) {}
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    assert.ok(ready, 'Simulator did not render a page within 30 seconds')
     const info = await mini.systemInfo()
     console.log(JSON.stringify({ platform: info.platform, SDKVersion: info.SDKVersion }))
     const routes = ['home', 'identify', 'community', 'messages', 'profile']
