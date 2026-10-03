@@ -1,0 +1,4 @@
+{
+  "description": "个人设置样例；不覆盖AppID。公共工程及正常体验保持urlCheck=true。仅在隔离local项目的工具UI按需关闭，完成后恢复并重新核验。",
+  "setting": { "urlCheck": true, "compileHotReLoad": true }
+}

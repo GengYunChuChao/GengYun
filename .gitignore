@@ -40,3 +40,7 @@ project.private.config.json
 
 # GY-I25 server-side local verification configuration
 /docs/verification/config.local.json
+# Isolated local-debug projects and private configuration
+/.local/
+/config/*.local.json
+!/config/*.local.json.example
