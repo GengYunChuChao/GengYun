@@ -1,0 +1,71 @@
+{
+  "_comment": "GY-I25 接入验证配置模板。复制为 config.local.json 后填写；config.local.json 已被忽略，绝不提交。此文件不含任何真实密钥。",
+  "env": "dev",
+  "appid": "",
+  "domain": {
+    "apiBase": "",
+    "note": "必须是已在小程序后台配置的 HTTPS 合法域名"
+  },
+  "database": {
+    "url": "",
+    "schema": "public",
+    "note": "比赛前接入；未接入时相关验证项记为阻塞"
+  },
+  "storage": {
+    "endpoint": "",
+    "bucket": "",
+    "region": "",
+    "privateOnly": true,
+    "signedUrlTtlSeconds": 300
+  },
+  "providers": {
+    "weedRecognition": {
+      "vendor": "",
+      "endpoint": "",
+      "model": "",
+      "apiKeyEnv": "VENDOR_WEED_API_KEY",
+      "timeoutMs": 8000,
+      "maxImageBytes": 2097152
+    },
+    "ocr": {
+      "vendor": "",
+      "endpoint": "",
+      "apiKeyEnv": "VENDOR_OCR_API_KEY",
+      "timeoutMs": 8000
+    },
+    "asr": {
+      "vendor": "",
+      "endpoint": "",
+      "apiKeyEnv": "VENDOR_ASR_API_KEY",
+      "timeoutMs": 10000,
+      "maxAudioSeconds": 60
+    },
+    "tts": {
+      "vendor": "",
+      "endpoint": "",
+      "voice": "",
+      "apiKeyEnv": "VENDOR_TTS_API_KEY",
+      "timeoutMs": 8000
+    },
+    "llm": {
+      "vendor": "",
+      "endpoint": "",
+      "model": "",
+      "apiKeyEnv": "VENDOR_LLM_API_KEY",
+      "timeoutMs": 20000,
+      "supportsJsonOutput": null,
+      "supportsCitation": null
+    },
+    "moderation": {
+      "vendor": "",
+      "endpoint": "",
+      "apiKeyEnv": "VENDOR_MODERATION_API_KEY",
+      "timeoutMs": 8000
+    }
+  },
+  "privacy": {
+    "allowUserDataForTraining": false,
+    "sendRealUserDataBeforeConsent": false,
+    "note": "未取得用户用途授权前，只允许使用获准的非个人测试资料"
+  }
+}
