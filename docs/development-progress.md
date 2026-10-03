@@ -9,7 +9,7 @@
 - 需求v1.0业务范围维持；开发计划v1.1依据原生微信形态、既有工程壳及5个GitHub项目核查重写，README补环境。
 - 原24项远端issue原地更新，新建3项，共27项均归属[初版里程碑](https://github.com/Sek1ro-oka/GengYun/milestone/1)；无删除／关闭，二月只保留规划。
 - 监工职责、SHA绑定审查与合并继续有效；每12小时自动巡检任务ID为pr，用户消息也可触发。
-- 原文档基线[PR #25](https://github.com/Sek1ro-oka/GengYun/pull/25)及状态[PR #26](https://github.com/Sek1ro-oka/GengYun/pull/26)已合并；本次修订发布状态以对应新PR和main为准。
+- 原文档基线[PR #25](https://github.com/Sek1ro-oka/GengYun/pull/25)及状态[PR #26](https://github.com/Sek1ro-oka/GengYun/pull/26)已合并；本次v1.1修订由[PR #30](https://github.com/Sek1ro-oka/GengYun/pull/30)发布，已验SHA、CI与最终合并状态见该PR的监工记录和main。
 
 本轮没有实现应用或调用付费供应商。文档／任务覆盖与依赖检查不代表真实识别、语音、AI审核、真机或删除恢复已通过。
 
