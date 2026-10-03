@@ -4,7 +4,7 @@
 
 ## 私密交接
 
-用户授权在E盘选择位置，已创建 `E:\GengYunPrivate`，仓库外，关闭继承，仅当前用户和SYSTEM可访问。`credentials.local.json`已有微信账号、DeepSeek及腾讯云凭据；原始交接文件均保留。后续可在该私密文件添加 `tencentSecretId`、`tencentSecretKey`、`databaseUrl`，不要贴聊天或填进配置样例。这个文件不进客户端/Git/CI；ACL不等于磁盘加密或凭据轮换。
+用户授权在E盘选择位置，已创建 `E:\GengYunPrivate`，仓库外，关闭继承，仅当前用户和SYSTEM可访问。`credentials.local.json`已有微信账号、DeepSeek及腾讯云凭据；原始交接文件均保留。无需重复交接腾讯密钥；后续数据库连接使用 `databaseUrl`，不要贴聊天或填进配置样例。这个文件不进客户端/Git/CI；ACL不等于磁盘加密或凭据轮换。
 
 腾讯凭据应来自测试子账号，限定获准API动作；不要交接管理员权限。候选动作草案：OCR GeneralAccurateOCR、ASR SentenceRecognition、TTS TextToVoice、TMS TextModeration、IMS ImageModeration。实际CAM动作名、支持的资源范围及环境权限必须在[CAM控制台](https://console.cloud.tencent.com/cam)核查后配置；本轮没有创建或附加策略。混元旧平台迁移期间不假定ChatCompletions权限可用。
 
@@ -34,3 +34,5 @@ PostgreSQL17候选需只读测试连接（私密文件）、VPC/安全组/TLS以
 剩余交接：腾讯已获准服务及额度；已有CloudBase环境/服务标识或HTTPS地址；只读数据库与脱敏资料；获准非个人图片/录音/文本及Android/iOS测试设备；调用次数/费用上限。预算模板默认生成许可false、调用上限0；只读鉴权不授权购买额度或无限推理。
 
 腾讯凭据已完成STS身份鉴权。TTS两项只读查询均被AuthFailure.UnauthorizedOperation拒绝，额度无法核实；详见[实测记录](continuation-evidence.md)。当前无需重复交接密钥，需提供已有额度证明/获准只读查询范围。
+
+PR #37局部成果已审合入，原PR #32由监工关闭替代。后续按[产品清单](product-readiness.md)交接：分开核对开通、调用权限与已有额度，TTS可选精确两个只读动作；首轮请求上限、公开费用参考及现有用途契约设计对照均列在该清单。它们不构成预算批准或新增实测。
