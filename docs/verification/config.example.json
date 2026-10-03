@@ -1,13 +1,14 @@
 {
-  "_comment": "GY-I25 接入验证配置模板。复制为 config.local.json 后填写；config.local.json 已被忽略，绝不提交。此文件不含任何真实密钥。",
+  "_comment": "GY-I25安全候选样例，不含密钥。config.local.json有精确忽略；所有账号权限、地域/模型、云环境、留存、费用与真机均需实际验证。禁止默认计费调用。",
   "env": "dev",
-  "appid": "",
+  "appid": "wx4407a4b908a69a54",
+  "appSecretEnv": "WECHAT_APP_SECRET",
   "domain": {
     "apiBase": "",
     "note": "必须是已在小程序后台配置的 HTTPS 合法域名"
   },
   "database": {
-    "url": "",
+    "urlEnv": "GENGYUN_DATABASE_URL",
     "schema": "public",
     "note": "比赛前接入；未接入时相关验证项记为阻塞"
   },
@@ -20,52 +21,135 @@
   },
   "providers": {
     "weedRecognition": {
-      "vendor": "",
-      "endpoint": "",
-      "model": "",
-      "apiKeyEnv": "VENDOR_WEED_API_KEY",
+      "vendor": "TencentCloud candidate",
+      "endpoint": "https://hunyuan.ai.tencentcloudapi.com",
+      "model": "hunyuan-vision-1.5-instruct",
+      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
       "timeoutMs": 8000,
-      "maxImageBytes": 2097152
+      "maxImageBytes": 2097152,
+      "action": "ChatCompletions",
+      "apiVersion": "2023-09-01",
+      "authentication": "TC3-HMAC-SHA256",
+      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
+      "region": "ap-shanghai",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false,
+      "availabilityVerified": false,
+      "note": "旧TC3对话接口预下线2026-12-21；仅历史候选。新接入需验证TokenHub/兼容接口、视觉模型权限和独立API Key，不默认可用。"
     },
     "ocr": {
-      "vendor": "",
-      "endpoint": "",
-      "apiKeyEnv": "VENDOR_OCR_API_KEY",
-      "timeoutMs": 8000
+      "vendor": "TencentCloud candidate",
+      "endpoint": "https://ocr.tencentcloudapi.com",
+      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
+      "timeoutMs": 8000,
+      "action": "GeneralAccurateOCR",
+      "apiVersion": "2018-11-19",
+      "authentication": "TC3-HMAC-SHA256",
+      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
+      "region": "ap-shanghai",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false
     },
     "asr": {
-      "vendor": "",
-      "endpoint": "",
-      "apiKeyEnv": "VENDOR_ASR_API_KEY",
+      "vendor": "TencentCloud candidate",
+      "endpoint": "https://asr.tencentcloudapi.com",
+      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
       "timeoutMs": 10000,
-      "maxAudioSeconds": 60
+      "maxAudioSeconds": 60,
+      "action": "SentenceRecognition",
+      "apiVersion": "2019-06-14",
+      "authentication": "TC3-HMAC-SHA256",
+      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
+      "region": "ap-shanghai",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false,
+      "model": "16k_zh"
     },
     "tts": {
-      "vendor": "",
-      "endpoint": "",
+      "vendor": "TencentCloud candidate",
+      "endpoint": "https://tts.tencentcloudapi.com",
       "voice": "",
-      "apiKeyEnv": "VENDOR_TTS_API_KEY",
-      "timeoutMs": 8000
+      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
+      "timeoutMs": 8000,
+      "action": "TextToVoice",
+      "apiVersion": "2019-08-23",
+      "authentication": "TC3-HMAC-SHA256",
+      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
+      "region": "ap-shanghai",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false,
+      "codec": "mp3",
+      "voiceType": null
     },
     "llm": {
-      "vendor": "",
-      "endpoint": "",
-      "model": "",
-      "apiKeyEnv": "VENDOR_LLM_API_KEY",
+      "vendor": "DeepSeek existing credential candidate",
+      "endpoint": "https://api.deepseek.com/chat/completions",
+      "model": "deepseek-flash",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
       "timeoutMs": 20000,
       "supportsJsonOutput": null,
-      "supportsCitation": null
+      "supportsCitation": null,
+      "authentication": "Bearer",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false,
+      "alternative": {
+        "vendor": "TencentCloud Hunyuan conditional existing entitlement",
+        "endpoint": "https://hunyuan.ai.tencentcloudapi.com",
+        "action": "ChatCompletions",
+        "apiVersion": "2023-09-01",
+        "model": "hunyuan-turbos",
+        "entitlementVerified": false,
+        "note": "旧TC3对话接口预下线2026-12-21；仅历史候选。新接入需验证TokenHub/兼容接口、视觉模型权限和独立API Key，不默认可用。",
+        "availabilityVerified": false
+      }
     },
     "moderation": {
-      "vendor": "",
-      "endpoint": "",
-      "apiKeyEnv": "VENDOR_MODERATION_API_KEY",
-      "timeoutMs": 8000
+      "vendor": "TencentCloud candidate",
+      "endpoint": "https://tms.tencentcloudapi.com",
+      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
+      "timeoutMs": 8000,
+      "action": "TextModeration",
+      "apiVersion": "2020-12-29",
+      "authentication": "TC3-HMAC-SHA256",
+      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
+      "region": "ap-shanghai",
+      "retentionVerified": false,
+      "trainingDisabledVerified": false,
+      "deletionVerified": false,
+      "bizType": "",
+      "image": {
+        "endpoint": "https://ims.tencentcloudapi.com",
+        "action": "ImageModeration",
+        "apiVersion": "2020-12-29",
+        "bizType": "",
+        "required": true
+      }
     }
   },
   "privacy": {
     "allowUserDataForTraining": false,
     "sendRealUserDataBeforeConsent": false,
     "note": "未取得用户用途授权前，只允许使用获准的非个人测试资料"
+  },
+  "cloudbase": {
+    "envId": "",
+    "serviceName": "",
+    "region": "ap-shanghai",
+    "associatedWithAppidVerified": false,
+    "serviceDeployedVerified": false,
+    "transportCandidate": "wx.cloud.callContainer",
+    "adminHttpsGateway": "",
+    "privateStorageVerified": false
+  },
+  "budget": {
+    "liveInferenceAllowed": false,
+    "maxVerificationCalls": 0,
+    "currency": "CNY",
+    "maximumCharge": 0
   }
 }

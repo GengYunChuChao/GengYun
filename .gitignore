@@ -37,3 +37,6 @@ Desktop.ini
 # WeChat developer tools personal settings
 project.private.config.json
 !project.private.config.json.example
+
+# GY-I25 server-side local verification configuration
+/docs/verification/config.local.json
