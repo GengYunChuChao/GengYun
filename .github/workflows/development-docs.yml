@@ -7,6 +7,10 @@ on:
       - 'README.md'
       - '.github/**'
       - 'tools/validate_development_docs.py'
+      - 'tools/validate_contracts.py'
+      - 'tools/test_contracts.py'
+      - 'tools/validate_openapi_standard.py'
+      - 'packages/contracts/**'
   push:
     branches: [main]
     paths:
@@ -15,6 +19,10 @@ on:
       - 'README.md'
       - '.github/**'
       - 'tools/validate_development_docs.py'
+      - 'tools/validate_contracts.py'
+      - 'tools/test_contracts.py'
+      - 'tools/validate_openapi_standard.py'
+      - 'packages/contracts/**'
 permissions:
   contents: read
 jobs:
@@ -27,3 +35,5 @@ jobs:
           persist-credentials: false
       - run: python3 --version
       - run: python3 tools/validate_development_docs.py
+      - run: python3 tools/validate_contracts.py
+      - run: python3 tools/test_contracts.py
