@@ -1,0 +1,6 @@
+page { background: #f4f9f4; color: #25352a; font-size: 36rpx; }
+.page { padding: 40rpx 32rpx; }
+.title { font-size: 52rpx; font-weight: bold; margin-bottom: 24rpx; }
+.card { background: white; border-radius: 20rpx; padding: 28rpx; margin: 24rpx 0; line-height: 1.7; }
+.status { color: #52665a; margin-top: 24rpx; }
+button { margin-top: 28rpx; font-size: 36rpx; }

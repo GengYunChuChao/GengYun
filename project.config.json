@@ -1,0 +1,10 @@
+{
+  "description": "耕云原生工程；账号与工具编译资格待验证",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "miniprogram/",
+  "appid": "wx4407a4b908a69a54",
+  "projectname": "GengYun",
+  "libVersion": "3.5.5",
+  "setting": { "urlCheck": true, "es6": true, "minified": true },
+  "packOptions": { "ignore": [], "include": [] }
+}
