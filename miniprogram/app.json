@@ -1,0 +1,16 @@
+{
+  "pages": ["pages/home/home", "pages/identify/identify", "pages/community/community", "pages/messages/messages", "pages/profile/profile"],
+  "window": { "navigationBarTitleText": "耕云", "navigationBarBackgroundColor": "#2E7D32", "navigationBarTextStyle": "white", "backgroundColor": "#F4F9F4" },
+  "tabBar": {
+    "color": "#555555", "selectedColor": "#2E7D32",
+    "list": [
+      { "pagePath": "pages/home/home", "text": "首页" },
+      { "pagePath": "pages/identify/identify", "text": "识别" },
+      { "pagePath": "pages/community/community", "text": "社区" },
+      { "pagePath": "pages/messages/messages", "text": "消息" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2"
+}

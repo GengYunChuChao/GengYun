@@ -37,3 +37,8 @@ Desktop.ini
 # WeChat developer tools personal settings
 project.private.config.json
 !project.private.config.json.example
+
+# Isolated local-debug projects and private configuration
+/.local/
+/config/*.local.json
+!/config/*.local.json.example
