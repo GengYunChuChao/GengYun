@@ -1,0 +1,35 @@
+# Local Word documents and document folder
+*.doc
+*.docx
+*.docm
+/doc/
+
+# Microsoft Office temporary files
+~$*
+
+# Local secrets (keep sanitized examples trackable)
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Dependencies, caches, and generated output
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+coverage/
+*.log
+
+# Local editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local supervisor cache and publishing helpers (never credentials in repo)
+/.supervisor/

@@ -1,0 +1,29 @@
+name: Development documentation
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'AGENTS.md'
+      - 'README.md'
+      - '.github/**'
+      - 'tools/validate_development_docs.py'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'AGENTS.md'
+      - 'README.md'
+      - '.github/**'
+      - 'tools/validate_development_docs.py'
+permissions:
+  contents: read
+jobs:
+  development-docs:
+    name: development-docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 --version
+      - run: python3 tools/validate_development_docs.py
