@@ -1,6 +1,6 @@
 # 耕云指挥角色与写手交接
 
-版本：v0.4\
+版本：v0.5\
 建立日期：2026-10-03\
 角色来源：用户要求增加独立子代理负责撰写提示词、指挥写手作业；监工继续独立审查、验证与合并。
 
@@ -157,3 +157,15 @@ PR提交后交监工独立审查；指挥可以准备尚不越过前置的工作
 | 仍需用户／团队操作 | 确认真实工程路径和AppID账号类型；微信工具登录及开发／手机调试权限按实际账号核查。无须先购买域名 |
 
 完整独立提示词与收到证据保存于指挥忽略缓存.supervisor/no-domain-dispatch-record.json。指挥已派发并确认收到，未实现工程、代验AppID／真机或宣布准备已完成；本轮不接管GY-I25，写手后续交付仍由监工按新SHA独立审查。
+
+## 10 用户路径与账号澄清补充
+
+日期：2026-10-04（UTC+8）。用户澄清实际路径为E:\WeChatProjects\GengYun，AppID wx4407a4b908a69a54是正式注册的小程序账户。第9节GenYun不存在、账号类型待确认是澄清前的历史核查；当前不再将这两项列为等待用户选择，账号类型来自用户确认，实际成员／工具登录和联网仍须验证。
+
+指挥在自己的worktree中只读核查新路径，Test-Path返回True。顶层有cloudfunctions、miniprogram、project.config.json、project.private.config.json、README.md及uploadCloudFunction.sh，未观察到.git。公开配置appid与用户提供一致，compileType=miniprogram、miniprogramRoot=miniprogram/、urlCheck=true、projectname=quickstart-wx-cloud、libVersion=2.20.1。仅核查这些字段，不把模板、脚本或AppID当成云环境／手机／服务已运行。
+
+补充提示已在2026-10-03 17:02:43 UTC发送到原写手聊天，send_message_to_thread成功返回真实threadId；要求保留当前分支和成果，只读比较原模板与已版本管理工程、说明基础库差异，并在写手worktree实施和提交。原目录不回写／清理，原云上传脚本不执行；路径和账号澄清不扩大部署、付费、真实媒体外发或验收授权。
+
+随后白名单核查个人配置为libVersion=3.17.3、setting.urlCheck=false，app.json只有pages/index/index和pages/example/index且没有tabBar；已补充发给写手，要求核对工具实际采用配置，不拷入原个人配置、不以模板或个人不校验算正常体验／比赛验收。
+
+写手已明确确认“收到更正”，复述实际GengYun目录及正式注册账号，并说明只读比较原模板、不回写；wait_threads回执消息ID为msg_0531b28c5a7a16e0016ac135b08f3c87d0848e76533eca89df。配置差异补充已发送，实际比较及运行仍以写手证据为准。完整更正提示与输入存于指挥忽略缓存.supervisor/path-correction-dispatch-record.json。GY-I01新SHA仍由监工复审，GY-I02只推进已派发的局部开发调试，最终域名／权限和比赛门槛保持。
