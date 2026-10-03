@@ -1,6 +1,6 @@
 # 耕云指挥角色与写手交接
 
-版本：v0.7\
+版本：v0.8\
 建立日期：2026-10-03\
 角色来源：用户要求增加独立子代理负责撰写提示词、指挥写手作业；监工继续独立审查、验证与合并。
 
@@ -191,3 +191,26 @@ GY-I02已由写手[领取局部准备](https://github.com/Sek1ro-oka/GengYun/iss
 交付约束包括：本地私密配置实际被Git忽略且安全示例保留；无效／非HTTPS地址零网络请求；六类服务真实成功与受控失败、数据库来源与字段匹配、平台与真机、额度和第三方删除证据。已有AppID不再重复索取，也不等于已具备AppSecret、服务密钥或真机权限。缺资源时先完成独立检查并汇总最小缺项，局部PR使用Refs #27，不以模拟调用或模拟器通过宣布整项完成。
 
 完整提示与确认记录保存在指挥忽略缓存.supervisor/gy-i25-dispatch-record.json。指挥只派发和记录，未代写业务实现、调用供应商或独立验证写手运行结果。
+
+
+## 13 用户委托供应商与正式连接选型
+
+日期：2026-10-04（UTC+8）。用户授权指挥选择六类AI、数据库及正式连接方案，无法自行处理的资源须告知获取入口并请用户协作。按需求和官方资料选择下表首选候选；未实测权限、模型质量、费用或条款，尚未冻结生产配置。
+
+| 能力 | 首选候选 | 门槛与官方依据 |
+| --- | --- | --- |
+| 识草 | 混元图像理解，优先核查hunyuan-vision-1.5-instruct | 浙江目标杂草真实评估后接受；通用视觉不等于专用识草，不能生成校准置信度；[模型列表](https://cloud.tencent.cn/document/product/1729/104753) |
+| 标签OCR | 腾讯GeneralAccurateOCR | 原文核对、登记证号／制剂精确匹配另做；[官方接口](https://cloud.tencent.com/document/product/866/34937) |
+| 普通话ASR | SentenceRecognition／16k_zh | 短语音、录音格式与私有音频实测；[官方接口](https://cloud.tencent.com/document/api/1093/35646) |
+| 普通话TTS | TextToVoice | 已审核文本、MP3和实际音色／版本再核；[官方接口](https://cloud.tencent.cn/document/product/1073/37995) |
+| 问答 | 混元ChatCompletions／hunyuan-turbos候选 | 账户可用模型固定后记版本，来源检索与确定性安全规则保留；[官方接口](https://cloud.tencent.com/document/product/1729/105701) |
+| 社区AI筛查 | TMS TextModeration＋IMS ImageModeration | 两项都验证，广告／交易业务规则补充，失败／Review不发布；[文本](https://cloud.tencent.com/document/product/1124/51860)、[图片](https://cloud.tencent.com/document/product/1125/53273) |
+| 正式后端连接 | CloudBase云托管／wx.cloud.callContainer | 官方说明免小程序服务器域名配置；环境关联、真机、上传下载与网页后台HTTPS／CORS分别验证，不以本地不校验代验；[小程序接入](https://docs.cloudbase.net/run/develop/access/mini)、[服务设置](https://docs.cloudbase.net/run/deploy/service-setting) |
+| 业务数据库 | TencentDB for PostgreSQL17；开发本地PG17 | 优先复用现有实例，地域与VPC实际核对；不改Mongo，不公开数据库；[支持版本](https://cloud.tencent.com/document/product/409/127570) |
+| 私有媒体 | CloudBase私有存储 | 服务器／受控读取、旧版与撤销ACL、删除证据再验；不得用公开永久URL替代 |
+
+本次是首选方案决定，不是账号开通、部署或费用授权，也不变更现行验收。业务数据库不等于农业药剂资料源；后者仍需来源版本与脱敏字段。已提供AppID／AppSecret不代表腾讯云SecretId／SecretKey和服务权限。SDK、精确模型及超时／额度须通过实际账户验证，供应商个人数据留存、训练和删除条款未核时，只使用授权非个人测试材料。
+
+现有可用浏览器未列出腾讯云会话；尝试打开控制台超时，无法取得账户可用性证据。没有指定云凭据，不能自行创建云资源。用户协作入口为[腾讯云控制台](https://console.cloud.tencent.com/)、[访问管理CAM](https://console.cloud.tencent.com/cam)、[CloudBase](https://console.cloud.tencent.com/tcb)；登录／实名与服务开通由账户所有者处理。写手先准备最小API动作权限清单，用户创建受限子账号凭据，避免主账号管理员密钥；[密钥获取说明](https://cloud.tencent.com/document/product/598/37140)。配置模板在指挥忽略缓存.supervisor/tencent-cloud-credentials.local.json，密钥不得进入聊天／Git／客户端。需费用的环境、数据库或按量调用须先给规格和价格，不假定免费额度或无限扣费。
+
+首选方案提示已于2026-10-03 17:43:51 UTC成功派发原写手聊天，要求继续GY-I25候选矩阵、配置示例、最小权限与预算说明，完成可独立推进的检查。实测缺项保留，局部Refs #27，不扩成其他任务全部实现。工具发送成功不等于写手已确认收到。
