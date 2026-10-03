@@ -1,0 +1,85 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, cpSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import vm from 'node:vm';
+import { once } from 'node:events';
+import { readLocalConfig, privateIPv4 } from '../tools/local-debug-config.mjs';
+import { startLocalServer } from '../tools/local-debug-server.mjs';
+
+const root = resolve(import.meta.dirname, '..');
+const fixture = mkdtempSync(join(tmpdir(), 'gengyun-local-test-'));
+function config(overrides = {}) {
+  const path = join(fixture, 'config.json');
+  writeFileSync(path, JSON.stringify({ mode: 'local', bindHost: '127.0.0.1', port: 4318, apiBaseUrl: 'http://127.0.0.1:4318', ...overrides }));
+  return path;
+}
+test('missing, public, wildcard, credential and mismatched configs fail', () => {
+  assert.throws(() => readLocalConfig());
+  assert.throws(() => readLocalConfig(join(fixture, 'absent')));
+  for (const overrides of [ { mode: 'production' }, { bindHost: '0.0.0.0' }, { apiBaseUrl: 'https://example.com' }, { apiBaseUrl: 'http://127.0.0.1:9999' }, { apiBaseUrl: 'http://user:pass@127.0.0.1:4318' }, { apiBaseUrl: 'http://127.0.0.1:4318/private' }, { apiBaseUrl: 'http://127.0.0.1:4318?secret=1' }, { secret: 'synthetic' } ]) assert.throws(() => readLocalConfig(config(overrides)));
+  assert.equal(privateIPv4('172.32.1.1'), false);
+  assert.equal(privateIPv4('192.168.1.2'), true);
+  assert.equal(readLocalConfig(config()).mode, 'local');
+});
+test('actual HTTP service is synthetic, no-store and has no business routes', async () => {
+  const server = startLocalServer({ bindHost: '127.0.0.1', port: 0 });
+  try {
+    await once(server, 'listening');
+    const base = 'http://127.0.0.1:' + server.address().port;
+    const response = await fetch(base + '/__local__/status');
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { service: 'gengyun-local-diagnostic', execution_mode: 'local_stub', synthetic: true, capabilities: [] });
+    for (const path of ['/api/v1/auth/login', '/__local__/status?token=x', '/media']) assert.equal((await fetch(base + path)).status, 404);
+    assert.equal((await fetch(base + '/__local__/status', { method: 'POST' })).status, 404);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+test('client blocks trial/release/unknown environments and labels stub or failure', () => {
+  const script = readFileSync(join(root, 'miniprogram/utils/debug.js'), 'utf8');
+  function load(runtime) {
+    const box = { module: { exports: {} }, require: () => runtime };
+    vm.runInNewContext(script, box); return box.module.exports;
+  }
+  const local = load({ mode: 'local', apiBaseUrl: 'http://127.0.0.1:4318' });
+  let requests = 0;
+  const api = env => ({ getAccountInfoSync: () => ({ miniProgram: { envVersion: env } }), request: () => requests++ });
+  for (const env of ['trial', 'release', undefined]) local.diagnose(api(env), () => {});
+  load({ mode: 'disabled' }).diagnose(api('develop'), () => {});
+  assert.equal(requests, 0);
+  let message;
+  const run = handler => local.diagnose({ ...api('develop'), request: handler }, text => { message = text; });
+  run(options => options.success({ statusCode: 200, data: { execution_mode: 'real', synthetic: true } }));
+  assert.match(message, /不符合/);
+  run(options => options.fail({ errMsg: 'sensitive mock diagnostic' }));
+  assert.match(message, /连接失败/); assert.doesNotMatch(message, /sensitive/);
+  run(options => options.success({ statusCode: 200, data: { service: 'gengyun-local-diagnostic', execution_mode: 'local_stub', synthetic: true } }));
+  assert.match(message, /未接入/);
+});
+test('isolated packaging excludes private files and rejects release overrides/stale output', () => {
+  const project = join(fixture, 'project'); mkdirSync(project);
+  cpSync(join(root, 'tools'), join(project, 'tools'), { recursive: true });
+  cpSync(join(root, 'miniprogram'), join(project, 'miniprogram'), { recursive: true });
+  cpSync(join(root, 'project.config.json'), join(project, 'project.config.json'));
+  writeFileSync(join(project, 'project.private.config.json'), '{"setting":{"urlCheck":false}}');
+  writeFileSync(join(project, 'miniprogram/private.local.json'), '{"secret":"synthetic"}');
+  const run = args => spawnSync(process.execPath, [join(project, 'tools/prepare-wechat.mjs'), ...args], { encoding: 'utf8' });
+  assert.notEqual(run(['local']).status, 0);
+  assert.notEqual(run(['release', '--config', config()]).status, 0);
+  assert.equal(run(['local', '--config', config()]).status, 0);
+  const local = join(project, '.local/wechat-local');
+  assert.equal(existsSync(join(local, 'project.private.config.json')), false);
+  assert.equal(existsSync(join(local, 'miniprogram/private.local.json')), false);
+  assert.match(readFileSync(join(local, 'miniprogram/config/runtime.js'), 'utf8'), /"mode":"local"/);
+  assert.notEqual(run(['local', '--config', config()]).status, 0);
+  assert.equal(run(['release']).status, 0);
+  const release = join(project, '.local/wechat-release');
+  assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
+  assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
+  writeFileSync(join(project, 'miniprogram/config/runtime.js'), "module.exports = {mode:'local',apiBaseUrl:'http://127.0.0.1:4318'}");
+  const unsafe = run(['release']);
+  assert.notEqual(unsafe.status, 0);
+  assert.match(unsafe.stderr, /Shared runtime changed/);
+});

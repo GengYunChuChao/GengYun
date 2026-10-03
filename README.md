@@ -4,13 +4,13 @@
 
 ## 开发环境与开始方式
 
-当前 `main` 是需求和开发文档基线，尚无可运行应用。协作者的 `chore/project-scaffold` 分支已有 `miniprogram/` 最小工程壳，尚未通过 PR 合并；它的旧策划描述不能替代本仓库需求。工程壳并不表示识别、登录或语音已实现。
+本分支提供 GY-I02 局部开发准备：原生五Tab空态工程和明确标注的本地诊断替身；登录、识别、语音、社区、独立后台及业务API尚未实现。GY-I01 / [PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33) 的提案组件已独立审查并合入main，整项及运行版本仍未冻结，不代表前置整项验收完成。已只读比较旧 `chore/project-scaffold` 与用户的 `E:\WeChatProjects\GengYun` 云模板，未修改原目录。详细差异、工具阻塞及操作见[本地微信调试说明](docs/local-wechat-debug.md)。
 
 | 工具／资源 | 用途与约定 |
 | --- | --- |
 | Git、GitHub 仓库访问权限 | 从最新 main 开分支，经 PR 提交；不要直接推 main |
 | 微信开发者工具 Windows／macOS 稳定版 | 原生小程序编译、模拟器和真机调试；在任务中记录实际工具版本 |
-| 团队正式小程序 AppID、开发者／体验成员权限 | 测试号只能用于有限界面调试；微信登录、接口权限及比赛体验必须提前实测 |
+| 团队正式小程序 AppID、开发者／体验成员权限 | 用户确认正式注册账号 wx4407a4b908a69a54；工具已登录且该AppID项目自动化可用，更多接口/成员与手机权限未验。测试号、模拟器、预览、真机调试、普通体验版需分别核实 |
 | 小程序基础库 | 沿用待审工程壳的 3.5.5 作为兼容性起点，GY-I02／25 实测后冻结；不是“最新版本”声明 |
 | Node.js 24 LTS 与 npm | 工程检查、自动化测试、计划中的服务端和后台工具链；原生页面编译本身不需要 npm 构建。精确版本及锁文件由 GY-I01／02 固定。[版本依据](https://nodejs.org/en/about/previous-releases) |
 | Python 3.11 或以上 | 当前文档检查，只用标准库；不代表后端采用 Python |
@@ -29,9 +29,21 @@ python --version
 python tools/validate_development_docs.py
 ```
 
-已在本地仓库的成员先核对并保存自己的改动，再从最新 main 开任务分支。当前没有 `package.json`，不要执行不存在的 `npm install`／`npm run dev`。GY-I02 合并后提供锁定版本的安装、启动、构建和测试命令，并同步这里。
+已在本地仓库的成员先核对并保存自己的改动，再从最新 main 开任务分支。当前没有 `package.json`，不要执行不存在的 `npm install`／`npm run dev`。诊断运行使用 Node24 标准库；工具实测另在忽略目录隔离安装官方自动化SDK0.12.1（忽略安装脚本，TLS校验开启），不是业务依赖。实测 Node24.16.0/npm11.13.0。完整GY-I02的框架安装/锁文件、后台/API/数据库迁移及统一命令仍未交付。
 
-小程序工程合并后，在微信开发者工具导入**含 `project.config.json` 的仓库根目录**，选择“小程序”；`miniprogramRoot` 指向 `miniprogram/`。按团队 AppID 和已审服务配置编译，首次应看到五个入口及明确的开发状态。基础界面可在无后端情况下调试；真实业务接入后端 HTTPS API。比赛版开启合法域名校验，不能以本地“忽略域名校验”作为真机验收结果。自动化测试如需 CLI，按任务说明开启工具相应权限。
+在微信开发者工具导入**含 `project.config.json` 的仓库根目录**，选择“小程序”；`miniprogramRoot` 指向 `miniprogram/`。共享工程默认无网络且开启域名校验。工具2.02.2608080初次因服务端口关闭阻塞；用户开启62154后已登录并加载本工程，五Tab及本地成功/停服失败在模拟器实测通过，实际基础库3.17.3。公共3.5.5仍仅为兼容起点，未证明该版本兼容；手机、真实业务未验。
+
+初期可先准备隔离本地调试，无须先购买自有域名：
+
+```powershell
+if (!(Test-Path config/debug.local.json)) { Copy-Item config/debug.local.json.example config/debug.local.json }
+node tools/prepare-wechat.mjs local --config config/debug.local.json
+node tools/local-debug-server.mjs --config config/debug.local.json
+```
+
+导入生成的 `.local/wechat-local/` 根目录。诊断服务只返回合成状态，不提供业务接口；服务终端Ctrl+C停止。HTTP“不校验合法域名”如有需要，仅在这个隔离工程的个人工具UI启用；手机不能使用电脑localhost，实际同网地址、账号权限和工具模式按[说明](docs/local-wechat-debug.md)核查。正常体验/比赛必须恢复校验并验证真实HTTPS，不把本地成功算真机通过。`node tools/prepare-wechat.mjs release`生成关闭网络、拒绝local配置的安全准备副本，并非可用比赛版。原工程/云函数不自动部署。
+
+本轮检查：`node tools/check-wechat-project.mjs`、`node --test tests/local-debug.test.mjs`；仅工程静态和局部诊断测试，不能替代微信编译或应用AC。
 
 ## 需求、进度与协作
 
