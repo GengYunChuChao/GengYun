@@ -6,6 +6,7 @@
 
 - docs/requirements.md及两份需求文档：业务基线v1.0，含首版普通话语音识别向大模型提问。
 - docs/development-plan.md：整个周期到暂定2027-02-28；当前仅推进暂定2026-11-15初版。
+- docs/github-project-references.md、docs/issue-revision-log.md：v1.1的源码参考及任务调整依据；原生微信小程序miniprogram/已经确定，参考不改变需求。
 - docs/development-progress.md、docs/initial-issues.json：实际进度与issue依赖。
 - docs/pr-review-policy.md：审查与基于提交验证的合并门槛。
 
@@ -26,4 +27,6 @@
 
 文档改动运行文档／链接／任务依赖检查；代码改动按GY-I02冻结的命令构建测试，补相应F／AC及真实服务证据。没有运行过的检查不得写通过。GitHub分支保护的实际状态另查，不把CODEOWNERS视作自动强制。
 
-本次初始化只发布开发治理与初版任务，不视为应用功能已实现。GitHub作者无法批准自己的PR时按审查规范记录，不伪造独立review。
+当前27项初版任务按开发文档v1.1推进：GY-I25服务接入、GY-I27隐私与GY-I26页面前置，原24编号保持。既有chore/project-scaffold只是待审工程壳，其旧策划不能替代当前需求。GY-I21从M1准备，每个能力实现时就实测，不等M4。
+
+文档修订只发布开发治理与初版任务，不视为应用功能已实现。GitHub作者无法批准自己的PR时按审查规范记录，不伪造独立review。

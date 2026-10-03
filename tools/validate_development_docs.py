@@ -18,8 +18,13 @@ def ids(text, prefix, pattern):
 
 manifest = json.loads((ROOT / "docs/initial-issues.json").read_text(encoding="utf-8"))
 tasks = manifest["tasks"]
-expected = [f"GY-I{i:02d}" for i in range(1, 25)]
-check([item["id"] for item in tasks] == expected, "Initial task IDs must be GY-I01..24")
+expected = [f"GY-I{i:02d}" for i in range(1, 28)]
+check(manifest.get("schema_version") == 2, "Expected task schema v2")
+check(manifest.get("development_version") == "v1.1", "Expected development baseline v1.1")
+check(manifest.get("requirements_version") == "v1.0", "Do not silently change the requirement baseline")
+check(manifest.get("platform") == "wechat-native", "User application must be a native WeChat Mini Program")
+check(manifest.get("task_count") == len(tasks) == 27, "Initial baseline must contain 27 tasks")
+check([item["id"] for item in tasks] == expected, "Initial task IDs must be GY-I01..27")
 check(manifest["stage"] == "initial", "Only initial-stage issues may be published")
 check(manifest["due_date"] == "2026-11-15", "Initial target must match the requirement baseline")
 task_map = {item["id"]: item for item in tasks}
@@ -27,10 +32,14 @@ for item in tasks:
     for field in ("title", "description", "scope", "acceptance", "evidence"):
         check(bool(item.get(field)), f"{item['id']}: missing {field}")
     check(item["phase"] in ("M1", "M2", "M3", "M4"), f"{item['id']}: not initial phase")
+    start_phase = item.get("start_phase", item["phase"])
+    check(start_phase in ("M1", "M2", "M3", "M4") and start_phase <= item["phase"],
+          f"{item['id']}: invalid start phase")
     check(item["status"] in ("待领取", "进行中", "待审PR", "需修改", "待验证", "依赖阻塞", "已验证合并"),
           f"{item['id']}: unsupported progress state")
     for dependency in item["dependencies"]:
         check(dependency in task_map and dependency != item["id"], f"{item['id']}: invalid dependency {dependency}")
+    check(len(item["dependencies"]) == len(set(item["dependencies"])), f"{item['id']}: duplicate dependency")
     for fid in item["function_ids"]:
         check(re.fullmatch(r"F(?:0[1-9]|1[0-9]|20)", fid) is not None, f"{item['id']}: invalid function {fid}")
     for aid in item["acceptance_ids"]:
@@ -61,6 +70,14 @@ def visit(task_id):
 
 for task_id in task_map:
     visit(task_id)
+
+for task_id in ("GY-I04", "GY-I06", "GY-I12", "GY-I19"):
+    check("GY-I27" in task_map[task_id]["dependencies"], f"{task_id}: privacy foundation must precede acceptance")
+for task_id in ("GY-I04", "GY-I09", "GY-I10", "GY-I11", "GY-I12", "GY-I13", "GY-I14"):
+    check("GY-I25" in task_map[task_id]["dependencies"], f"{task_id}: real integration feasibility gate missing")
+check("GY-I11" not in task_map["GY-I12"]["dependencies"], "Text questions must not wait for the complete ASR feature")
+check(task_map["GY-I26"]["dependencies"] == ["GY-I02"], "Base pages must be independent of AI and voice features")
+check(task_map["GY-I21"].get("start_phase") == "M1", "Evaluation preparation must start in M1")
 
 initial_functions = {"F01", "F02", "F03", "F04", "F05", "F08", "F12", "F13",
                      "F14", "F15", "F16", "F18", "F19", "F20"}

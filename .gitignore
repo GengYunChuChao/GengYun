@@ -33,3 +33,7 @@ Desktop.ini
 
 # Local supervisor cache and publishing helpers (never credentials in repo)
 /.supervisor/
+
+# WeChat developer tools personal settings
+project.private.config.json
+!project.private.config.json.example
