@@ -1,0 +1,30 @@
+{
+  "contract_version": "1.0.0",
+  "status": "candidate_pending_GY-I02_GY-I25",
+  "checked_on": "2026-10-03",
+  "runtime_observed": {
+    "node": "24.16.0",
+    "npm": "11.13.0",
+    "python": "3.14.3",
+    "platform": "Windows x64"
+  },
+  "candidates": [
+    {"name": "fastify", "version": "5.12.5", "released_at": "2026-09-16T07:37:06.302Z", "engines": null, "source": "https://registry.npmjs.org/fastify/5.12.5"},
+    {"name": "typescript", "version": "5.9.3", "released_at": "2025-09-30T21:19:38.784Z", "engines": {"node": ">=14.17"}, "source": "https://registry.npmjs.org/typescript/5.9.3"},
+    {"name": "vue", "version": "3.5.43", "released_at": "2026-09-17T08:39:03.208Z", "peer_dependencies": {"typescript": "*"}, "source": "https://registry.npmjs.org/vue/3.5.43"},
+    {"name": "@vue/compiler-sfc", "version": "3.5.43", "requirement": "same exact version as vue", "source": "https://registry.npmjs.org/@vue%2fcompiler-sfc/3.5.43"},
+    {"name": "vite", "version": "7.3.6", "released_at": "2026-06-25T01:51:49.605Z", "engines": {"node": "^20.19.0 || >=22.12.0"}, "source": "https://registry.npmjs.org/vite/7.3.6"},
+    {"name": "@vitejs/plugin-vue", "version": "6.0.9", "released_at": "2026-09-14T07:00:40.002Z", "engines": {"node": "^20.19.0 || >=22.12.0"}, "peer_dependencies": {"vue": "^3.2.25", "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"}, "source": "https://registry.npmjs.org/@vitejs%2fplugin-vue/6.0.9"},
+    {"name": "pg", "version": "8.23.1", "released_at": "2026-09-30T15:39:58.489Z", "engines": {"node": ">= 16.0.0"}, "peer_dependencies": {"pg-native": ">=3.0.1 (optional, not selected)"}, "source": "https://registry.npmjs.org/pg/8.23.1"},
+    {"name": "postgresql", "version": "17.11", "source": "https://www.postgresql.org/docs/release/17.11/", "verification": "release metadata only; no server connected"}
+  ],
+  "verification": {
+    "registry_metadata": "observed for fastify/typescript/vue/vite/plugin-vue/pg; compiler-sfc must be checked in clean install",
+    "node_engine_comparison": "candidate ranges include Node 24.16.0; not a runtime or plugin compatibility result",
+    "clean_install": "pending",
+    "application_build": "not present in this PR",
+    "database_migration": "not executed",
+    "wechat_tools_and_devices": "not executed",
+    "providers_and_AppID": "pending GY-I25"
+  }
+}

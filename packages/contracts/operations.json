@@ -1,0 +1,790 @@
+{
+  "contract_version": "1.0.0",
+  "operations": [
+    {
+      "id": "getPublicHome",
+      "path": "/public/home",
+      "method": "get",
+      "scope": "public",
+      "version_required": false
+    },
+    {
+      "id": "loginWechat",
+      "path": "/auth/wechat",
+      "method": "post",
+      "scope": "public",
+      "version_required": false
+    },
+    {
+      "id": "loginAdmin",
+      "path": "/admin/auth/session",
+      "method": "post",
+      "scope": "public",
+      "version_required": false
+    },
+    {
+      "id": "getAdminSession",
+      "path": "/admin/auth/session",
+      "method": "get",
+      "scope": "session:read",
+      "version_required": false
+    },
+    {
+      "id": "getUserSession",
+      "path": "/auth/session",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "logoutUser",
+      "path": "/auth/logout",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "logoutAdmin",
+      "path": "/admin/auth/logout",
+      "method": "post",
+      "scope": "session:logout",
+      "version_required": false
+    },
+    {
+      "id": "getProfile",
+      "path": "/me/profile",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "putProfile",
+      "path": "/me/profile",
+      "method": "put",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listCrops",
+      "path": "/catalog/crops",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listRegions",
+      "path": "/catalog/regions",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listSpecies",
+      "path": "/catalog/species",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getPrivacyPolicy",
+      "path": "/me/privacy-policy",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listConsents",
+      "path": "/me/consents",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "grantConsent",
+      "path": "/me/consents",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "withdrawConsent",
+      "path": "/me/consents/{purpose}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listExports",
+      "path": "/me/exports",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "requestAccountDeletion",
+      "path": "/me/account/deletion",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getDeletionReceipt",
+      "path": "/account/deletions/{id}",
+      "method": "get",
+      "scope": "receipt",
+      "version_required": false
+    },
+    {
+      "id": "createUpload",
+      "path": "/media/uploads",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "completeUpload",
+      "path": "/media/uploads/{id}/complete",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "getMedia",
+      "path": "/media/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteMedia",
+      "path": "/media/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "grantMediaAccess",
+      "path": "/media/{id}/access",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "getJob",
+      "path": "/jobs/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "cancelJob",
+      "path": "/jobs/{id}/cancel",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listKnowledge",
+      "path": "/knowledge",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getKnowledge",
+      "path": "/knowledge/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listHerbicides",
+      "path": "/herbicides",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getHerbicide",
+      "path": "/herbicides/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "verifyRegistration",
+      "path": "/registrations/verify",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "createRecognition",
+      "path": "/recognitions",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getRecognition",
+      "path": "/recognitions/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteRecognition",
+      "path": "/recognitions/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "selectSpecies",
+      "path": "/recognitions/{id}/selection",
+      "method": "patch",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "createOCR",
+      "path": "/ocr",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getOCR",
+      "path": "/ocr/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteOCR",
+      "path": "/ocr/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "correctOCR",
+      "path": "/ocr/{id}/correction",
+      "method": "patch",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "verifyOCR",
+      "path": "/ocr/{id}/verify",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "createTranscription",
+      "path": "/speech/transcriptions",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getTranscription",
+      "path": "/speech/transcriptions/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteTranscription",
+      "path": "/speech/transcriptions/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "confirmTranscription",
+      "path": "/speech/transcriptions/{id}/confirmation",
+      "method": "patch",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "createSynthesis",
+      "path": "/speech/synthesis",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "createConversation",
+      "path": "/conversations",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listConversations",
+      "path": "/conversations",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getConversation",
+      "path": "/conversations/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteConversation",
+      "path": "/conversations/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "createTurn",
+      "path": "/conversations/{id}/turns",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listTurns",
+      "path": "/conversations/{id}/turns",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteTurn",
+      "path": "/conversations/{id}/turns/{turn_id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listPosts",
+      "path": "/posts",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "createPost",
+      "path": "/posts",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getPost",
+      "path": "/posts/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "editPost",
+      "path": "/posts/{id}",
+      "method": "patch",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "deletePost",
+      "path": "/posts/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listComments",
+      "path": "/posts/{id}/comments",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "createComment",
+      "path": "/posts/{id}/comments",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "getComment",
+      "path": "/comments/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "editComment",
+      "path": "/comments/{id}",
+      "method": "patch",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "deleteComment",
+      "path": "/comments/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "likePosts",
+      "path": "/posts/{id}/like",
+      "method": "put",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "unlikePosts",
+      "path": "/posts/{id}/like",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "likeComments",
+      "path": "/comments/{id}/like",
+      "method": "put",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "unlikeComments",
+      "path": "/comments/{id}/like",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "createReport",
+      "path": "/reports",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getOwnReport",
+      "path": "/reports/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "listFavorites",
+      "path": "/favorites",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "createFavorite",
+      "path": "/favorites",
+      "method": "post",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteFavorite",
+      "path": "/favorites/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listHistory",
+      "path": "/history",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "deleteHistory",
+      "path": "/history/{id}",
+      "method": "delete",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listMessages",
+      "path": "/messages",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "getUnreadCount",
+      "path": "/messages/unread-count",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
+      "id": "markMessageRead",
+      "path": "/messages/{id}/read",
+      "method": "put",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "listAdminSources",
+      "path": "/admin/sources",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "createSourceDraft",
+      "path": "/admin/sources",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": false
+    },
+    {
+      "id": "getAdminSource",
+      "path": "/admin/sources/{id}",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "editSourceDraft",
+      "path": "/admin/sources/{id}",
+      "method": "patch",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "publishSource",
+      "path": "/admin/sources/{id}/publish",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "withdrawSource",
+      "path": "/admin/sources/{id}/withdraw",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAdminKnowledge",
+      "path": "/admin/knowledge",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "createKnowledgeDraft",
+      "path": "/admin/knowledge",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": false
+    },
+    {
+      "id": "getAdminKnowledge",
+      "path": "/admin/knowledge/{id}",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "editKnowledgeDraft",
+      "path": "/admin/knowledge/{id}",
+      "method": "patch",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "publishKnowledge",
+      "path": "/admin/knowledge/{id}/publish",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "withdrawKnowledge",
+      "path": "/admin/knowledge/{id}/withdraw",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAdminRegistration",
+      "path": "/admin/registrations",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "createRegistrationDraft",
+      "path": "/admin/registrations",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": false
+    },
+    {
+      "id": "getAdminRegistration",
+      "path": "/admin/registrations/{id}",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "editRegistrationDraft",
+      "path": "/admin/registrations/{id}",
+      "method": "patch",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "publishRegistration",
+      "path": "/admin/registrations/{id}/publish",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "withdrawRegistration",
+      "path": "/admin/registrations/{id}/withdraw",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAdminRestriction",
+      "path": "/admin/restrictions",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "createRestrictionDraft",
+      "path": "/admin/restrictions",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": false
+    },
+    {
+      "id": "getAdminRestriction",
+      "path": "/admin/restrictions/{id}",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "editRestrictionDraft",
+      "path": "/admin/restrictions/{id}",
+      "method": "patch",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "publishRestriction",
+      "path": "/admin/restrictions/{id}/publish",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "withdrawRestriction",
+      "path": "/admin/restrictions/{id}/withdraw",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAdminCategories",
+      "path": "/admin/categories",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "editCategory",
+      "path": "/admin/categories/{id}",
+      "method": "patch",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAdminUsers",
+      "path": "/admin/accounts",
+      "method": "get",
+      "scope": "accounts:read",
+      "version_required": false
+    },
+    {
+      "id": "suspendUser",
+      "path": "/admin/accounts/{id}/suspend",
+      "method": "post",
+      "scope": "accounts:suspend",
+      "version_required": true
+    },
+    {
+      "id": "listAdminJobs",
+      "path": "/admin/jobs",
+      "method": "get",
+      "scope": "jobs:read",
+      "version_required": false
+    },
+    {
+      "id": "cancelAdminJob",
+      "path": "/admin/jobs/{id}/cancel",
+      "method": "post",
+      "scope": "jobs:cancel",
+      "version_required": true
+    },
+    {
+      "id": "listFlags",
+      "path": "/admin/feature-flags",
+      "method": "get",
+      "scope": "flags:read",
+      "version_required": false
+    },
+    {
+      "id": "setFlag",
+      "path": "/admin/feature-flags/{key}",
+      "method": "put",
+      "scope": "flags:write",
+      "version_required": true
+    },
+    {
+      "id": "hidePost",
+      "path": "/admin/posts/{id}/hide",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "listAuditEvents",
+      "path": "/admin/audit-events",
+      "method": "get",
+      "scope": "audit:read",
+      "version_required": false
+    },
+    {
+      "id": "grantCommunityMediaAccess",
+      "path": "/community/media-access",
+      "method": "post",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "readCommunityMediaContent",
+      "path": "/community/media/{grant_id}/content",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    }
+  ],
+  "proposal_revision": 2
+}
