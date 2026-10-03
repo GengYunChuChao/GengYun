@@ -36,7 +36,7 @@ GY-I02局部[PR #36](https://github.com/Sek1ro-oka/GengYun/pull/36)已由监工�
 ```powershell
 node --check tools/verify-env.mjs
 node --check tools/verify-wechat-account.cjs
-node --test tests/verify-env.test.mjs tests/wechat-account.test.cjs
+node --test tests/verify-env.test.mjs tests/wechat-account.test.cjs tests/deepseek-account.test.cjs tests/tencent-identity.test.cjs
 git check-ignore -v docs/verification/config.local.json
 git check-ignore docs/verification/config.example.json
 node tools/verify-env.mjs --json
@@ -45,7 +45,7 @@ python tools/validate_contracts.py
 python tools/test_contracts.py
 ```
 
-本轮10组Node测试：5组验证器守卫/状态测试、3组微信账号检查及2组DeepSeek只读检查敏感信息/输入守卫测试；全部合成、无外网。示例已填候选供应商端点，但尚缺腾讯凭据/API正式地址/数据库，所以复制后配置检查预期exit1；不存在时也exit1，不能因为AppID和AppSecret可用标整个环境PASS。真实密钥文件仅明确带授权参数的检查命令在进程内读取，CI不读取凭据/SDK或执行真实接口。正式HTTPS不允许local HTTP；后续存在已关联、已部署云环境才评估callContainer，不擅自付费或改架构。
+本轮13组Node测试：5组验证器守卫/状态测试、3组微信账号、2组DeepSeek及3组腾讯身份/额度查询守卫测试；全部合成、无外网。示例已填候选供应商端点，但尚缺API正式地址/数据库；腾讯凭据存在不证明服务权限或额度，所以复制后配置检查预期exit1；不存在时也exit1，不能因为AppID和AppSecret可用标整个环境PASS。真实密钥文件仅明确带授权参数的检查命令在进程内读取，CI不读取凭据/SDK或执行真实接口。正式HTTPS不允许local HTTP；后续存在已关联、已部署云环境才评估callContainer，不擅自付费或改架构。
 
 尚未获得以下获准资源，已在本写手聊天集中询问；可并行交接，不用重复AppID/AppSecret：六类供应商/版本/安全服务端配置及获准非个人样本；已有可验证HTTPS测试地址或已部署关联云环境；只读测试数据库及登记号/成分含量剂型/来源版本的脱敏字段；Android/iOS设备与体验成员。六类能力推理调用0（DeepSeek另有3次只读GET），数据库连接0，域名/私有桶/留存删除/用户外发守卫/真实手机请求上传录音未验。收到前仅提交修复和真实账号局部证据，保持issue #27开放；完整验收不能用Closes或标GY-I25完成。
 
@@ -54,8 +54,19 @@ python tools/test_contracts.py
 
 ## 实际DeepSeek只读验证及私密交接
 
-用户明确指定桌面精确文件后，读取其中唯一格式合法的API key，不扫描其他文件、不输出原文。用户另授权选择E盘交接位置；已创建仓库外 `E:\GengYunPrivate`，限制ACL为当前用户和SYSTEM。原凭据源均保留；私密JSON不进入Git/CI/客户端。当前保存微信账号和DeepSeek凭据，不代表腾讯云凭据已提供。
+用户明确指定桌面精确文件后，读取其中唯一格式合法的API key，不扫描其他文件、不输出原文。用户另授权选择E盘交接位置；已创建仓库外 `E:\GengYunPrivate`，限制ACL为当前用户和SYSTEM。原凭据源均保留；私密JSON不进入Git/CI/客户端。当前保存微信账号、DeepSeek及获准腾讯云凭据。
 
 批次DS-20261004-01（本地批次号，不是上游请求号）实际执行三次GET：`/user/balance` HTTP200、AUTHENTICATED、is_available=true，仅记录schema，不记录金额；`/models` HTTP200、LISTED，模型ID deepseek-flash和deepseek-v4-pro；一次合成无效key访问`/models` HTTP401、REJECTED。未发送生成请求；inferenceRequests=0、capabilityVerified=false。没有上游request ID/性能/真实业务输出证据。
 
 官方依据：[余额接口](https://api-docs.deepseek.com/api/get-user-balance/)、[模型列表](https://api-docs.deepseek.com/api/list-models/)。模型ID是观察值，不能当作不可变权重版本；[官方别名升级公告](https://api-docs.deepseek.com/news/news260910/)表明别名可能变更。候选Tencent API/SDK与资源阻塞见[资源交接](resource-handoff.md)。
+
+
+## 腾讯云身份与查询权限实际结果
+
+用户经指挥授权读取精确忽略的腾讯测试凭据文件；字段已有效填写，region=ap-shanghai。复制到上述受限私密文件且不覆盖不同已有值；原文件保留。TC3手动签名仅用于固定只读查询，依据[官方Node签名说明](https://intl.cloud.tencent.com/zh/document/product/1080/38767)，不代替正式业务SDK兼容核验。
+
+实际 `sts:GetCallerIdentity` API2018-08-13两次HTTP200、AUTHENTICATED，响应身份值不记录，仅schema。第二次携带显式--tts-quota，分别尝试 `tts:DescribeOpenStatus` 与 `tts:DescribePidOrders`：均HTTP200、业务错误AuthFailure.UnauthorizedOperation，归类QUERY_FORBIDDEN，不能当凭据无效。查询动作依据[官方TTS授权资源表](https://cloud.tencent.com/document/product/1073/95483)。未自动扩权、未调用TextToVoice、未领取免费包、未设置后付费。
+
+本轮腾讯只读请求合计4次，AI能力调用0。腾讯身份已验；六个调用动作的实际权限、产品开通、免费/预付额度及模型均未验。用户可在控制台交接已有服务及剩余额度的脱敏证明，或限定授权只读查询动作；不能仅凭身份成功启动计费推理。数据库与云部署/真机仍无实测。issue #27保持开放。
+
+实际本机默认零网络检查（带获准私密文件）为24 PASS、2 FAIL、6 INFO；两项FAIL是正式API HTTPS地址与数据库连接变量未设置。候选配置存在与能力验证分层仍保持taskVerified=false/capabilityVerified=false。本机config.local.json已精确忽略，未提交。

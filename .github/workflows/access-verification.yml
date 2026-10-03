@@ -1,10 +1,10 @@
 name: Access verification guards
 on:
   pull_request:
-    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
   push:
     branches: [main]
-    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
 permissions:
   contents: read
 jobs:
@@ -23,5 +23,7 @@ jobs:
       - run: node --test tests/wechat-account.test.cjs
       - run: node --check tools/verify-deepseek.cjs
       - run: node --test tests/deepseek-account.test.cjs
+      - run: node --check tools/verify-tencent-identity.cjs
+      - run: node --test tests/tencent-identity.test.cjs
       - run: git check-ignore docs/verification/config.local.json
       - run: if git check-ignore docs/verification/config.example.json; then exit 1; fi

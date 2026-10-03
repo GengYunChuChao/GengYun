@@ -44,7 +44,7 @@
 
 2026-10-04：用户正式AppID与AppSecret已安全交接，工具登录/项目模拟器及服务端token/code交换已有实际证据；DeepSeek密钥已安全交接并通过只读鉴权；腾讯云服务、数据库、正常体验HTTPS和双平台手机仍待资源，不标整项完成。接续PR采用Refs #27，原PR #32由监工决定处置，保留原作者贡献。
 
-离线回归：`node --test tests/verify-env.test.mjs tests/wechat-account.test.cjs tests/deepseek-account.test.cjs`，合成fetch桩不联网、不读取真实凭据。可选真实账号检查 `node tools/verify-wechat-account.cjs --credentials <已获准且已确认忽略的本机文件> --sdk <官方SDK模块目录>`；只在服务端运行，必需字段appid/appsecret，不改写凭据源。真实脚本仅验证稳定token（force_refresh=false）、一次合成错误secret拒绝与工具wx.login code交换；仅输出状态/字段名，不输出秘密、身份值或会话值。缺凭据与AppID不匹配应零请求。这个命令不部署、不在CI执行、不替GY-I04业务登录或供应商接入。
+离线回归：`node --test tests/verify-env.test.mjs tests/wechat-account.test.cjs tests/deepseek-account.test.cjs tests/tencent-identity.test.cjs`，合成fetch桩不联网、不读取真实凭据。可选真实账号检查 `node tools/verify-wechat-account.cjs --credentials <已获准且已确认忽略的本机文件> --sdk <官方SDK模块目录>`；只在服务端运行，必需字段appid/appsecret，不改写凭据源。真实脚本仅验证稳定token（force_refresh=false）、一次合成错误secret拒绝与工具wx.login code交换；仅输出状态/字段名，不输出秘密、身份值或会话值。缺凭据与AppID不匹配应零请求。这个命令不部署、不在CI执行、不替GY-I04业务登录或供应商接入。
 
 
 私密交接目录为用户授权的 `E:\GengYunPrivate`（Git仓库外、仅当前用户及SYSTEM权限）。`credentials.local.json` 保管服务端凭据，保持原始文件不变。验证器可用 `--credentials <私密文件>` 仅在进程内映射环境变量。DeepSeek只读检查：`node tools/verify-deepseek.cjs --credentials <私密文件>`，仅余额可用布尔值/字段名、模型名与受控无效密钥拒绝；不输出余额金额，不生成文本，不在CI运行。详情及剩余资源见[资源交接](resource-handoff.md)。
