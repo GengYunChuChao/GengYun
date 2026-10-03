@@ -14,6 +14,8 @@
 
 文档基线发布／CI／合并状态以对应GitHub PR和main为准；任务进度依据下表与远端实际记录。
 
+M0治理基线已完成：[PR #25](https://github.com/Sek1ro-oka/GengYun/pull/25)的当前提交通过本地文档检查与远端development-docs，已合并main，提交为[4d4426d](https://github.com/Sek1ro-oka/GengYun/commit/4d4426d355d8afe91e32cc9a5a10707cb07dd3a2)。[监工验证记录](https://github.com/Sek1ro-oka/GengYun/pull/25#issuecomment-5967835600)保留已审SHA和证据。M1应用实现尚未开始。
+
 ## 2 初版实现进度
 
 当前24项均待领取，软件完成数0／24。GY-I01可首先领取；其余遵循前置依赖。
@@ -53,7 +55,7 @@
 | 实际资料／接口配置 | 用户声明资源具备，数据库比赛前接入；具体字段、AppID、识草OCR／ASR／TTS／大模型和AI配置实施时安全交接 |
 | 评估 | GY-I20早期冻结样本；无独立样本或未真实运行不得报模型通过 |
 | 当前待审协作者PR | 初始化查询为0；后续巡检读取远端，不以此静态行当永久事实 |
-| main平台保护 | 初始化查询未保护；CODEOWNERS／模板只是流程。平台保护设置与GitHub套餐能力需实际核验，后续更新此行 |
+| main平台保护 | 2026-10-03已重试保护API，GitHub返回403，要求升级Pro或公开仓库。当前仍未强制保护，CODEOWNERS／模板只是流程；不自动改变可见性或套餐 |
 | CI | 本次增加development-docs文档与任务图检查；应用构建测试由GY-I02提供，文档绿灯不代表应用通过 |
 | 自动任务条件 | 本地运行、联网、认证与服务额度可影响巡检；无变化保持安静，失败或有效结果才通知 |
 
