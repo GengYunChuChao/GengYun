@@ -38,6 +38,8 @@ Desktop.ini
 project.private.config.json
 !project.private.config.json.example
 
+# GY-I25 server-side local verification configuration
+/docs/verification/config.local.json
 # Isolated local-debug projects and private configuration
 /.local/
 /config/*.local.json

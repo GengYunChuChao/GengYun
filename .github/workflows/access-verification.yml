@@ -1,0 +1,29 @@
+name: Access verification guards
+on:
+  pull_request:
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+  push:
+    branches: [main]
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+permissions:
+  contents: read
+jobs:
+  access-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+      - run: node --check tools/verify-env.mjs
+      - run: node --test tests/verify-env.test.mjs
+      - run: node --check tools/verify-wechat-account.cjs
+      - run: node --test tests/wechat-account.test.cjs
+      - run: node --check tools/verify-deepseek.cjs
+      - run: node --test tests/deepseek-account.test.cjs
+      - run: node --check tools/verify-tencent-identity.cjs
+      - run: node --test tests/tencent-identity.test.cjs
+      - run: git check-ignore docs/verification/config.local.json
+      - run: if git check-ignore docs/verification/config.example.json; then exit 1; fi
