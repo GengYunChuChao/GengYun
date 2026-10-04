@@ -11,7 +11,7 @@ export const AI_ENDPOINTS = Object.freeze({
   moderationText: { group: 'moderation', endpoint: 'https://tms.tencentcloudapi.com', auth: 'TC3-HMAC-SHA256', action: 'TextModeration', version: '2020-12-29', sdk: 'tms', sdkVersion: '4.1.311' },
   moderationImage: { group: 'moderation', endpoint: 'https://ims.tencentcloudapi.com', auth: 'TC3-HMAC-SHA256', action: 'ImageModeration', version: '2020-12-29', sdk: 'ims', sdkVersion: '4.1.321' }
 });
-const ENV_FIELDS = Object.freeze({ appsecret: 'WECHAT_APP_SECRET', deepseekApiKey: 'DEEPSEEK_API_KEY', tencentSecretId: 'TENCENTCLOUD_SECRET_ID', tencentSecretKey: 'TENCENTCLOUD_SECRET_KEY', tencentSessionToken: 'TENCENTCLOUD_SESSION_TOKEN', tokenhubApiKey: 'TOKENHUB_API_KEY', databaseUrl: 'GENGYUN_DATABASE_URL' });
+const ENV_FIELDS = Object.freeze({ appsecret: 'WECHAT_APP_SECRET', deepseekApiKey: 'DEEPSEEK_API_KEY', tencentSecretId: 'TENCENTCLOUD_SECRET_ID', tencentSecretKey: 'TENCENTCLOUD_SECRET_KEY', tencentAsrSecretId: 'TENCENTCLOUD_ASR_SECRET_ID', tencentAsrSecretKey: 'TENCENTCLOUD_ASR_SECRET_KEY', tencentAsrSessionToken: 'TENCENTCLOUD_ASR_SESSION_TOKEN', tencentSessionToken: 'TENCENTCLOUD_SESSION_TOKEN', tokenhubApiKey: 'TOKENHUB_API_KEY', databaseUrl: 'GENGYUN_DATABASE_URL' });
 const validText = value => typeof value === 'string' && Boolean(value.trim());
 const fail = code => { throw new Error(code); };
 
@@ -44,7 +44,7 @@ export function configurationIssues(config, key) {
   check(p?.maxVerificationCalls === 2, 'INVALID_PLANNED_CALL_LIMIT');
   if (spec.sdk) {
     check(p?.action === spec.action && p?.apiVersion === spec.version, 'API_ACTION_OR_VERSION_MISMATCH');
-    check(p?.apiKeyEnv === 'TENCENTCLOUD_SECRET_KEY' && p?.secretIdEnv === 'TENCENTCLOUD_SECRET_ID', 'TC3_CREDENTIAL_NAMES_REQUIRED');
+    check((p?.apiKeyEnv === 'TENCENTCLOUD_SECRET_KEY' && p?.secretIdEnv === 'TENCENTCLOUD_SECRET_ID') || (key === 'asr' && p?.apiKeyEnv === 'TENCENTCLOUD_ASR_SECRET_KEY' && p?.secretIdEnv === 'TENCENTCLOUD_ASR_SECRET_ID'), 'TC3_CREDENTIAL_NAMES_REQUIRED');
     check(p?.sdkVersion === spec.sdkVersion, 'SDK_VERSION_NOT_PINNED');
     check(p?.region === 'ap-shanghai', 'REGION_MISMATCH');
   } else {
@@ -63,7 +63,7 @@ export function auditAIConfiguration(config, env = {}) {
   const endpoints = {};
   for (const [key, spec] of Object.entries(AI_ENDPOINTS)) {
     const p = providerFor(config, key), issues = configurationIssues(config, key);
-    const credentialPresent = spec.sdk ? validText(env.TENCENTCLOUD_SECRET_ID) && validText(env.TENCENTCLOUD_SECRET_KEY) : validText(env[spec.keyEnv]);
+    const credentialPresent = spec.sdk ? validText(env[p?.secretIdEnv]) && validText(env[p?.apiKeyEnv]) : validText(env[spec.keyEnv]);
     endpoints[key] = { parameterConfigurationComplete: issues.length === 0, credentialPresent, issues,
       authenticationVerifiedThisRun: false, serviceActivationVerified: false, quotaVerified: false, capabilityVerified: false,
       policySelectionVerified: key.startsWith('moderation') ? false : undefined, executionAllowed: false };

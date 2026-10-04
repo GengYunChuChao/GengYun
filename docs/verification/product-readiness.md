@@ -8,12 +8,12 @@
 
 | 产品/入口 | 调用动作或认证 | 开通与调用权限 | 已有额度需核对 | 当前阻塞 |
 | --- | --- | --- | --- | --- |
-| [TokenHub资料](https://cloud.tencent.com/document/product/1823/136956) | 新平台Bearer；hy-vision-2.0-instruct | 用户确认Key来源；模型列表鉴权已测，视觉推理资格/条款未验 | 精确模型支持的免费/预付token，生效与到期 | 识草推理0，额度/能力未验；已移出旧混元TC3候选 |
-| [OCR](https://console.cloud.tencent.com/ocr) | ocr:GeneralAccurateOCR | 服务已开通、测试子账号获准该动作 | 高精度接口专用或可抵扣资源包、剩余次数、有效期；其他OCR包不可直接代替 | 开通/调用权限/适用剩余额度均未验 |
-| [ASR](https://console.cloud.tencent.com/asr) | asr:SentenceRecognition | 一句话识别已开通，16k_zh与该动作可用 | 一句话识别剩余次数与本月有效性，不拿录音文件识别小时包代替 | 同上；实际手机录音格式另待验 |
-| [TTS](https://console.cloud.tencent.com/tts) | tts:TextToVoice | 通用基础语音合成已开通、获准动作及具体VoiceType | 所选音色类别可抵扣字符数与有效期；资源包不可跨音色类别默认抵扣 | 两项查询被拒绝，开通/调用/额度均不能推定 |
-| [文本审核](https://console.cloud.tencent.com/cms) | tms:TextModeration | 文本服务已开通、动作获准、已有业务策略/BizType | 文本审核适用次数、有效期；普通审核与AI生成识别分开 | 用户声明已开通并交接BizType；服务类别/策略启用/调用权限/额度未实测 |
-| [图片审核](https://console.cloud.tencent.com/cms) | ims:ImageModeration | 图片服务独立已开通、动作获准、已有策略/BizType | 图片审核适用张数、有效期；不能用文本包代替 | 图片BizType独立已交接；文字成功不能计图片成功 |
+| [TokenHub资料](https://cloud.tencent.com/document/product/1823/136956) | 新平台Bearer；hy-vision-2.0-instruct | 用户确认Key来源；模型列表鉴权已测，视觉推理资格/条款未验 | 精确模型支持的免费/预付token，生效与到期 | 新增单次合成图视觉响应；草种能力/额度存量未验 |
+| [OCR](https://console.cloud.tencent.com/ocr) | ocr:GeneralAccurateOCR | 服务已开通、测试子账号获准该动作 | 高精度接口专用或可抵扣资源包、剩余次数、有效期；其他OCR包不可直接代替 | 原ResourcePackageRunOut保留；用户新后付费状态后唯一追加OCR成功，长期额度/账单未核 |
+| [ASR](https://console.cloud.tencent.com/asr) | asr:SentenceRecognition | 一句话识别已开通，16k_zh与该动作可用 | 一句话识别剩余次数与本月有效性，不拿录音文件识别小时包代替 | 新ASR专用凭据已转写合成短句；手机录音及长期额度未验 |
+| [TTS](https://console.cloud.tencent.com/tts) | tts:TextToVoice | 通用基础语音合成已开通、获准动作及具体VoiceType | 所选音色类别可抵扣字符数与有效期；资源包不可跨音色类别默认抵扣 | 历史两项只读查询拒绝；新资源状态下101001合成成功，长期额度未核 |
+| [文本审核](https://console.cloud.tencent.com/cms) | tms:TextModeration | 文本服务已开通、动作获准、已有业务策略/BizType | 文本审核适用次数、有效期；普通审核与AI生成识别分开 | 已传BizType取得合成Pass及参数失败；完整规则/长期额度未核 |
+| [图片审核](https://console.cloud.tencent.com/cms) | ims:ImageModeration | 图片服务独立已开通、动作获准、已有策略/BizType | 图片审核适用张数、有效期；不能用文本包代替 | 图片BizType取得独立合成Pass及参数失败；文字成功不替代图片 |
 | [DeepSeek](https://platform.deepseek.com) | 已有Bearer key；/chat/completions | 只读已鉴权，不证明生成/引用/留存条款 | 现有预付额度是否足够首轮，有无账户侧硬限额 | 缺获准生成额度/预算和非个人文本；不能把余额可用布尔当预算授权 |
 
 额度证明可只提供“对应产品/接口或音色、足够本轮、未到期、核验时间、费用模式”的脱敏记录；余额、账号ID和密钥不贴聊天或Git。详细数量及证据存仓库外 `E:\GengYunPrivate`。公开免费权益描述不等于此账号当前仍有可用额度。
@@ -72,3 +72,5 @@
 1. 在上述产品控制台核对“已开通、对应接口/音色额度足够本轮、有效期和费用模式”；脱敏记录存E盘交接目录。TTS可选人工证明或仅两个查询动作增量，无需重复交密钥。
 2. 提供已有CloudBase的envId/服务名/AppID关联与部署证明，或已有HTTPS测试地址；私有媒体HTTPS/存储与管理后台访问分别核查。没有就注明，本轮不要求购买域名或创建付费环境。
 3. 交接只读PostgreSQL连接及脱敏权威来源字段、获准非个人标签/草图/录音/文本、可用Android/iOS设备；选定允许的首轮调用次数/费用上限。费用方案与真实输出待授权后执行，当前推理仍0。
+
+后续用户新增2元人工最小测试授权，最新12请求的逐项成功/业务错误、费用预留与专用ASR交接见[真实接续证据](tencent-live-evidence.md)。此前调用0记录属于PR #40配置准备批次，不覆盖新批次；整项仍未完成。
