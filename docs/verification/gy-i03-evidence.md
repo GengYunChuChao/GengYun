@@ -2,7 +2,7 @@
 
 - 日期：2026-10-04
 - 分支：`feature/gy-i03-zhejiang-data`；worktree：`E:/worktrees/gengyun-i03-data`
-- base：`main` = `9743a122edb7ac1c55a68cbdceb77a64928029d9`
+- base：`main` = `59e5315aa8030071bd6cd2c5ded3a00a9bdc3ac3`
 - 说明：本文件只记录**实际运行**的命令与结果；未运行、未接入的项明确写为未完成。
 
 ## 1. 已运行检查
@@ -72,7 +72,8 @@ ICAMA 查询接口本轮程序化访问失败（无论按证号/名称/成分类
 
 ## 4. 未完成与阻塞（不虚构）
 
-- **未接入真实数据库，未执行迁移**：无 PostgreSQL、无 0001。SQL 为静态产物；适配层为内存逻辑演示。
+- **未接入真实 PostgreSQL 实例**：迁移与种子已在 PGlite 内存引擎实测通过（0001→0002→种子→回滚，
+  无 42804/23503），但尚未在真实 PG 服务端落库运行；适配层业务逻辑为内存演示。
 - **20 条记录字段不完整**：缺用药量、施用方法、注意事项、登记有效期起止、禁限用状态，
   故 `record_status=partial`、`card_ready=false`、`usable_as_dose=false`，**不得作为用药依据**。
 - `real` 模式可用记录为 0（无 `verified` 来源）——**接入缺项**，非“已接入”。
@@ -90,3 +91,62 @@ python tools/knowledge/adapter_demo.py --root .
 python tools/knowledge/build_regions.py --url https://www.mca.gov.cn/mzsj/xzqh/2023/202301xzqh.html --out /tmp/regions.json
 git diff --check
 ```
+
+## 6. 修复轮（监工 3×P1 + 1×P2 审查响应）
+
+### 6.1 P1-1：0002 对齐 0001 的 uuid 类型与列集（方案 a）
+
+采用**方案 (a)**：`db/migrations/0002_knowledge_catalog.sql` 删除对共享字典表
+（`crops/species/regions/sources/source_versions`）的重复 `CREATE TABLE IF NOT EXISTS`，
+只保留业务表并直接引用 0001 的真实定义。关键修正：
+
+- `sources.id` → `uuid`（0001 `DEFAULT gen_random_uuid()`）；种子改用 `uuid5` 确定性派生。
+- `source_versions.source_id` → `uuid REFERENCES sources(id)`。
+- `catalog_source_update_events.source_id` → `uuid REFERENCES sources(id)`。
+- `source_versions.reviewed_by` / `valid_from`/`valid_to` / `sources.publisher varchar(120)` /
+  `sources.revision`/`current_version_id` / `regions` 无 `level` 列 —— 均以 0001 为准，不再覆盖。
+- 种子同步：`sources` 不写 `license_status/licensed`（0001 无此列，许可调查结论保留在
+  `sources.json` 的 `license` 字段与报告，不落库）；`regions` 不写 `level`；
+  `crops/species` 不写 `updated_at`。
+
+**实测（PGlite 0.5.8，内存 PostgreSQL 引擎）**：依次执行 `0001 → 0002 → 种子`，
+无 42804 / 23503；`public` schema 表数量 = 30（0001 的 20 + 0002 业务/适配 10）；
+关键 FK 均成立（见 `tools/knowledge/pglite_verify.mjs` 全量输出）。
+
+### 6.2 P1-2：种子注释吞 INSERT
+
+`tools/knowledge/build_seeds.py` 中所有 `ref.append("-- …")` 注释改为以 `\n` 结尾，
+重新生成全部种子；PGlite 实测种子导入成功且幂等（二次导入行数不变）。
+
+### 6.3 P1-3：回滚范围限定
+
+`db/seeds/rollback_seed.sql`（生成器同步）：
+- `DELETE FROM formulations` 从「无 registrations 引用即删」改为「`WHERE id IN (本次种子
+  写入的 formulation id 列表)`」，不再误删无关批次。
+- 依赖顺序：先解除 `sources.current_version_id` → 删 `applicability` → `registrations`
+  → `formulations` → `catalog_source_update_events` → `source_versions` → `sources`。
+- 实测用例：混合批次保留（无关来源/版本/制剂/登记在回滚后保留）、重复回滚（幂等）、
+  FK 约束（引用不存在 source_version 被 23503 拒绝）。
+
+### 6.4 P2-4：缺登记有效期 status=unknown
+
+公告附表无登记有效期起止，`registrations` 的 `status` 由 `'valid'` 改为 `'unknown'`
+（JSON→SQL 映射同步；模拟数据本就用 `'unknown'`）。
+
+### 6.5 修复轮实测命令
+
+```bash
+# 种子重新生成
+python tools/knowledge/build_seeds.py --root .
+# 校验 / 负例 / 演示
+python tools/knowledge/validate_knowledge.py --root .
+python tools/knowledge/test_knowledge.py --root .
+python tools/knowledge/adapter_demo.py --root .
+# PGlite 内存引擎实测 0001→0002→种子→回滚（含幂等/混合批次/重复回滚/FK）
+cd /tmp/pgtest && node verify.mjs
+git diff --check
+```
+
+PGlite 实测结论：`ALL CHECKS PASSED`（表数量 30、种子行数 sources=3/versions=5/crops=4/
+species=8/regions=102/formulations=22/registrations=22/applicability=22、幂等、回滚只删本次
+22 制剂保留无关批次、重复回滚无副作用、FK 23503 正确拒绝）。

@@ -218,14 +218,21 @@ def validate(root: str, mode: str | None) -> tuple[list[str], dict]:
             "v_active_source_version",
             "v_queryable_seed_version",
             "v_simulation_only",
+            "v_knowledge_applicability",
             "card_ready",
-            "source_kind IN ('database','verified_seed','simulation')",
-            "review_status IN ('unverified','verified','rejected')",
-            "validity IN ('valid','expired','conflicting','unknown','withdrawn')",
-            "license_status",
+            "CREATE TABLE IF NOT EXISTS formulations",
+            "CREATE TABLE IF NOT EXISTS registrations",
+            "CREATE TABLE IF NOT EXISTS applicability",
+            "CREATE TABLE IF NOT EXISTS restriction_rules",
+            "CREATE TABLE IF NOT EXISTS knowledge_versions",
+            "CREATE TABLE IF NOT EXISTS catalog_import_runs",
         ):
             if token not in sql:
-                errors.append(f"迁移缺少关键约束/视图：{token}")
+                errors.append(f"迁移缺少关键对象：{token}")
+        # 共享字典表由 0001 拥有，0002 不得重复创建（否则会与 0001 的 uuid 列集冲突）
+        for shared in ("crops", "species", "regions", "sources", "source_versions"):
+            if f"CREATE TABLE IF NOT EXISTS {shared}" in sql:
+                errors.append(f"迁移不得重复创建共享字典表 {shared}（应由 0001 拥有）")
         if sql.count("BEGIN;") != 1 or sql.count("COMMIT;") != 1:
             errors.append("迁移 BEGIN/COMMIT 不配对")
     if not os.path.exists(down):

@@ -1,17 +1,31 @@
 -- ============================================================================
 -- GY-I03 / #3  资料清单与可替换数据库适配 — 迁移 0002
 -- ----------------------------------------------------------------------------
--- 依赖：001（GY-I02 初始迁移，编号 0001 归 GY-I02）拥有身份/隐私等基础表。
---      本迁移只处理“资料/字典/制剂/适用/限制”子域，以及 GY-I03 的适配审计表。
+-- 依赖：0001（GY-I02 初始迁移）已创建共享字典表与枚举类型。本迁移**不重复创建**
+-- 下列共享字典表，而是直接引用 0001 的真实定义（docs/architecture/data-dictionary.md
+-- 与 0001 为唯一真相）：
+--   * crops(id varchar(40) PK, name varchar(80), active boolean)
+--   * species(id varchar(40) PK, canonical_name, scientific_name, aliases jsonb,
+--     coverage_state varchar(20) DEFAULT 'unknown')
+--   * regions(code varchar(6) PK, parent_code, name varchar(80), catalog_version,
+--     supported boolean DEFAULT false)  -- 注意：无 level 列
+--   * sources(id uuid PK DEFAULT gen_random_uuid(), title, canonical_url,
+--     publisher varchar(120), source_kind source_kind ENUM, evidence_kind
+--     evidence_kind ENUM, current_version_id uuid, revision integer,
+--     created_at timestamptz)  -- 注意：无 license_status/licensed 列
+--   * source_versions(id uuid PK, source_id uuid REFERENCES sources(id),
+--     version, content_hash char(64), locator, retrieved_at timestamptz,
+--     valid_from/valid_to timestamptz, validity source_validity ENUM,
+--     review_status review_status ENUM, reviewed_by uuid REFERENCES
+--     admin_accounts(id), reviewed_at, created_at)
 --
--- 合并顺序：0002 必须在 0001 之后执行。若 0001 已按 docs/architecture/
--- data-dictionary.md 创建了同名表，下面对共享字典表的 CREATE TABLE IF NOT EXISTS
--- 为 no-op；若列定义不同，以 0001（数据字典权威实现）为准，合并时须对齐列集，
--- 本迁移不覆盖、不删除 0001 的对象。
+-- 本迁移只负责：业务表（制剂/登记/适用/限制/知识版本）、GY-I03 适配层审计表、
+-- 以及只读投影视图。所有对 sources/source_versions 的引用均使用 0001 的 uuid 类型，
+-- 确保 0001 → 0002 顺序执行无 42804/23503。
 --
--- 约束来源：docs/architecture/data-dictionary.md（crops/species/regions/sources/
--- source_versions/formulations/registrations/knowledge_versions/applicability/
--- restriction_rules）。契约枚举只消费，不修改 packages/contracts/*。
+-- 合并顺序：0002 必须在 0001 之后执行。
+-- 约束来源：docs/architecture/data-dictionary.md。契约枚举只消费，不修改
+-- packages/contracts/*。
 --
 -- 关键安全约束：
 --   * applicability.card_ready 只有全部原文条件与用量字段非空才可为 true，
@@ -22,80 +36,9 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 1. 共享字典表（与 0001 共源；IF NOT EXISTS 保证幂等/不覆盖）
+-- 1. 业务表（制剂/登记/适用/限制/知识版本）
+--    所有引用共享字典表的列均与 0001 的类型一致：uuid ↔ uuid，varchar(40) ↔ varchar(40)。
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS crops (
-    id          varchar(40) PRIMARY KEY,
-    name        varchar(80) NOT NULL,
-    active      boolean     NOT NULL DEFAULT true,
-    updated_at  timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS species (
-    id               varchar(40) PRIMARY KEY,
-    canonical_name   varchar(120) NOT NULL,
-    scientific_name  varchar(160),
-    aliases          jsonb NOT NULL DEFAULT '[]'::jsonb,
-    coverage_state   varchar(20) NOT NULL
-        CHECK (coverage_state IN ('planned','supported','unsupported')),
-    updated_at       timestamptz NOT NULL DEFAULT now(),
-    CHECK (jsonb_typeof(aliases) = 'array')
-);
-
-CREATE TABLE IF NOT EXISTS regions (
-    code             varchar(6) NOT NULL,
-    parent_code      varchar(6),
-    name             varchar(120) NOT NULL,
-    catalog_version  varchar(40) NOT NULL,
-    level            varchar(20) NOT NULL
-        CHECK (level IN ('province','prefecture','county')),
-    supported        boolean NOT NULL DEFAULT true,
-    PRIMARY KEY (code),
-    UNIQUE (code, catalog_version),
-    CHECK (code ~ '^33[0-9]{4}$'),
-    CHECK (parent_code IS NULL OR parent_code ~ '^33[0-9]{4}$')
-);
-
-CREATE TABLE IF NOT EXISTS sources (
-    id                varchar(80) PRIMARY KEY,
-    title             varchar(200) NOT NULL,
-    canonical_url     text NOT NULL,
-    publisher         varchar(200) NOT NULL,
-    source_kind       varchar(20) NOT NULL
-        CHECK (source_kind IN ('database','verified_seed','simulation')),
-    evidence_kind     varchar(20) NOT NULL
-        CHECK (evidence_kind IN ('research','experience','mixed')),
-    -- 许可：本轮一律 deferred；未经显式核查不得置 licensed=true
-    license_status    varchar(24) NOT NULL DEFAULT 'deferred'
-        CHECK (license_status IN ('deferred','licensed_explicit','not_applicable','unknown')),
-    licensed          boolean NOT NULL DEFAULT false,
-    current_version_id uuid,
-    revision          integer NOT NULL DEFAULT 1 CHECK (revision >= 1)
-);
-
-CREATE TABLE IF NOT EXISTS source_versions (
-    id             uuid PRIMARY KEY,
-    source_id      varchar(80) NOT NULL REFERENCES sources(id),
-    version        varchar(40) NOT NULL,
-    content_hash   char(64) NOT NULL CHECK (content_hash ~ '^[0-9a-f]{64}$'),
-    locator        text NOT NULL,
-    retrieved_at   timestamptz NOT NULL,
-    valid_from     date NOT NULL,
-    valid_to       date,
-    validity       varchar(20) NOT NULL
-        CHECK (validity IN ('valid','expired','conflicting','unknown','withdrawn')),
-    review_status  varchar(20) NOT NULL
-        CHECK (review_status IN ('unverified','verified','rejected')),
-    reviewed_by    varchar(80),
-    reviewed_at    timestamptz,
-    UNIQUE (source_id, version),
-    CHECK (valid_to IS NULL OR valid_to >= valid_from),
-    -- 只有被审阅通过的版本才能标记 reviewed_by
-    CHECK (review_status = 'unverified' OR reviewed_by IS NOT NULL)
-);
-CREATE INDEX IF NOT EXISTS ix_source_versions_source_validity
-    ON source_versions (source_id, validity);
-
 CREATE TABLE IF NOT EXISTS formulations (
     id                   uuid PRIMARY KEY,
     registration_number  varchar(80) NOT NULL,
@@ -249,7 +192,7 @@ CREATE INDEX IF NOT EXISTS ix_conflicts_run ON catalog_import_conflicts (run_id)
 
 CREATE TABLE IF NOT EXISTS catalog_source_update_events (
     id                uuid PRIMARY KEY,
-    source_id         varchar(80) NOT NULL REFERENCES sources(id),
+    source_id         uuid NOT NULL REFERENCES sources(id),
     source_version_id uuid REFERENCES source_versions(id),
     event             varchar(20) NOT NULL
         CHECK (event IN ('imported','validity_changed','withdrawn','rolled_back')),
