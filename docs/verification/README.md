@@ -59,3 +59,7 @@
 离线回归新增 `tests/ai-config.test.mjs` 与 `tests/tokenhub-account.test.mjs`，加原四文件共21组。TokenHub真实只读检查仅在明确需要时运行 `node tools/verify-tokenhub.mjs --credentials <已授权私密JSON>`，固定两次模型列表GET（含合成无效key）；不生成、不查或输出账户金额、不在CI使用真实凭据。已有鉴权不需重复请求。审核资源入口修正为[统一CMS](https://console.cloud.tencent.com/cms)，按[交接说明](resource-handoff.md)查看已有策略。
 
 最新本机交接：用户提供两个审核BizType并已分别私密配置，七端点参数及凭据离线检查全齐（exit0）；公开模板仍留空。这个结果只证明本机参数齐备，不证明服务/策略启用、额度、能力或预算获准。
+
+## 2元范围真实接入接续
+
+用户新增一次性腾讯云2元最小调用授权后，独立人工CLI进行了11次合成请求；文本/图片审核各正常Pass+受控失败，TTS/ASR新状态复核成功，TokenHub单图响应成功，OCR第二次仍资源包耗尽。保守预留1.2224元，实际账单未知；详情及RequestId见[真实调用证据](tencent-live-evidence.md)。应用配置仍false/0，CLI不进入生产流、不代表GY-I27已运行。

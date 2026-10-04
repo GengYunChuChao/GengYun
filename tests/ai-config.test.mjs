@@ -35,6 +35,14 @@ test('real example preserves missing TokenHub key and both BizTypes as blockers'
   for (const key of ['moderationText', 'moderationImage']) { assert.equal(report.endpoints[key].parameterConfigurationComplete, false); assert.ok(report.endpoints[key].issues.includes('MISSING_OR_INVALID_BIZTYPE')); }
   assert.equal(report.executionAllowed, false);
 });
+test('ASR-only TC3 credentials are selected explicitly without falling back to the shared pair', () => {
+  const config=fixture();config.providers.asr.secretIdEnv='TENCENTCLOUD_ASR_SECRET_ID';config.providers.asr.apiKeyEnv='TENCENTCLOUD_ASR_SECRET_KEY';
+  assert.equal(auditAIConfiguration(config,env).endpoints.asr.credentialPresent,false);
+  const separate={...env,TENCENTCLOUD_ASR_SECRET_ID:'synthetic-asr-id',TENCENTCLOUD_ASR_SECRET_KEY:'synthetic-asr-key'};
+  assert.equal(auditAIConfiguration(config,separate).endpoints.asr.credentialPresent,true);assert.equal(auditAIConfiguration(config,separate).endpoints.ocr.credentialPresent,true);
+  assert.equal(prepareOfflineRequest(config,'asr',{wav:wav()}).body.EngSerViceType,'16k_zh');
+  config.providers.ocr.apiKeyEnv='TENCENTCLOUD_ASR_SECRET_KEY';assert.throws(()=>prepareOfflineRequest(config,'ocr',{image}),/TC3_CREDENTIAL_NAMES_REQUIRED/);
+});
 test('endpoint credential exfiltration, old vision API, model substitution and automatic retries are rejected', () => {
   for (const endpoint of ['http://tokenhub.tencentmaas.com/v1/chat/completions', 'https://attacker.invalid', 'https://tokenhub.tencentmaas.com/v1/chat/completions?secret=synthetic', 'https://hunyuan.ai.tencentcloudapi.com']) {
     const config = fixture(); config.providers.weedRecognition.endpoint = endpoint;
