@@ -31,12 +31,12 @@
 
 | 能力 | 供应商 | 版本/型号 | 认证方式 | 状态 | 阻塞说明 |
 | --- | --- | --- | --- | --- | --- |
-| 识草 | 腾讯TokenHub候选 | hy-vision-2.0-instruct；新Bearer端点 | 独立TokenHub API Key | 鉴权局部已测 | 两次只读GET包含合成无效key拒绝，视觉模型列出；推理/额度/草种结果未验 |
-| 标签 OCR | 腾讯云候选 | GeneralAccurateOCR / 2018-11-19 | TC3 | 阻塞 | 凭据已交接，额度及样本未验，调用0 |
-| 普通话 ASR | 腾讯云候选 | SentenceRecognition / 2019-06-14 / 16k_zh | TC3 | 阻塞 | 凭据已交接，额度及录音未验，调用0 |
-| 语音合成 TTS | 腾讯云候选 | TextToVoice / 2019-08-23；101001候选未实测 | TC3 | 阻塞 | 凭据已交接，额度未验，调用0 |
+| 识草 | 腾讯TokenHub候选 | hy-vision-2.0-instruct；新Bearer端点 | 独立TokenHub API Key | 鉴权局部已测 | 既有只读鉴权；新增1次合成图片视觉响应/usage成功，草种结果和准确率未验 |
+| 标签 OCR | 腾讯云候选 | GeneralAccurateOCR / 2018-11-19 | TC3 | 资源阻塞 | 2次合成真实请求：UnOpenError后新状态复核ResourcePackageRunOut，未识别成功 |
+| 普通话 ASR | 腾讯云候选 | SentenceRecognition / 2019-06-14 / 16k_zh | ASR专用TC3 | 接入局部已测 | 第一次UserNotRegistered；新凭据复核准确转写合成短句，非真机/独立评估 |
+| 语音合成 TTS | 腾讯云候选 | TextToVoice / 2019-08-23；精品101001 | TC3 | 接入局部已测 | 第一次PkgExhausted；新状态复核成功MP3并本地解码，未验真机/适老/长期额度 |
 | 大模型 | DeepSeek已有密钥 | 实际模型列表：deepseek-flash、deepseek-v4-pro | Bearer | 鉴权局部已测 | 三次只读GET；生成0，结构化输出/预算/留存未验 |
-| 文字/图片 AI 筛查 | 腾讯云候选 | TMS+IMS / 2020-12-29 | TC3 | 阻塞 | 两个独立接口均需测；腾讯身份鉴权已测，服务权限/额度未验及样本，调用0 |
+| 文字/图片 AI 筛查 | 腾讯云候选 | TMS+IMS / 2020-12-29 | TC3 | 接入局部已测 | 各1次安全合成样例Pass+1次受控参数失败；规则配置有效性/召回率/用途删除运行未验 |
 | 关系数据库 | 腾讯云PostgreSQL候选 | PostgreSQL17；实例未交接 | 连接秘密仅服务端 | 阻塞 | 无获准连接及脱敏样例，实际连接0 |
 | 对象存储 | CloudBase私有存储候选 | 环境未交接 | 环境/桶权限未验 | 阻塞 | ACL/签名/删除均未实测 |
 
