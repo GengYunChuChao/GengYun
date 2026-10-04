@@ -1,0 +1,85 @@
+{
+  "schema": "gengyun.knowledge.sources.v1",
+  "note": "本轮实际使用的来源登记。URL 均为本轮真实访问、可复核的公开页面；未核对可访问性的 URL 不入库。许可调查本轮暂缓，所有来源 licensed 均为 false，不得写为已许可。review_status 一律 unverified：开发侧不是法定审核责任人。",
+  "sources": [
+    {
+      "id": "src_moa_pd_2026",
+      "title": "农药登记信息（农业农村部农药管理司公告，2026年第1/7/9期）",
+      "canonical_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+      "publisher": "农业农村部农药管理司",
+      "source_kind": "verified_seed",
+      "evidence_kind": "research",
+      "validity": "valid",
+      "review_status": "unverified",
+      "retrieved_at": "2026-10-04",
+      "index_url": "http://www.chinapesticide.org.cn/zwb/dataCenter?hash=reg-info",
+      "issues": [
+        {
+          "issue": "农药登记信息（2026年第9期）",
+          "published_at": "2026-06-04",
+          "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+          "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+          "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+          "icama_detail_url": "http://www.chinapesticide.org.cn/zwb/detail/32599"
+        },
+        {
+          "issue": "农药登记信息（2026年第7期）",
+          "published_at": "2026-06-04",
+          "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484757.htm",
+          "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604734015232729.xls",
+          "attachment_sha256": "e60f0e4777f79e2566b77cc4df84983cf306797a7125d0871bf6832429b11d18",
+          "icama_detail_url": "http://www.chinapesticide.org.cn/zwb/detail/32591"
+        },
+        {
+          "issue": "农药登记信息（2026年第1期）",
+          "published_at": "2026-03-26",
+          "page_url": "https://zzys.moa.gov.cn/gzdt/202603/t20260325_6482643.htm",
+          "attachment_url": "https://zzys.moa.gov.cn/gzdt/202603/P020260325742775767461.xls",
+          "attachment_sha256": "c82c43361c0b75303287de7cf92f91a3574bdde58f3d63fcde93719ab6d5462d",
+          "icama_detail_url": "http://www.chinapesticide.org.cn/zwb/detail/32280"
+        }
+      ],
+      "license": {
+        "survey_status": "deferred",
+        "licensed": false,
+        "note": "许可调查本轮暂缓；未获许可，不得写为已许可。政府公开公告附表的再分发许可未单独核查。"
+      },
+      "note": "公告为登记延续信息；附表字段含登记证号/名称/持有人/剂型/毒性/有效成分及其含量/农药类别/作物场所/防治对象。无用药量、施用方法、登记有效期起止字段。"
+    },
+    {
+      "id": "src_mca_xzqh_2023",
+      "title": "2023年中华人民共和国县以上行政区划代码",
+      "canonical_url": "https://www.mca.gov.cn/mzsj/xzqh/2023/202301xzqh.html",
+      "publisher": "中华人民共和国民政部",
+      "source_kind": "database",
+      "evidence_kind": "research",
+      "validity": "valid",
+      "review_status": "unverified",
+      "retrieved_at": "2026-10-04",
+      "retrieved_content_sha256": "4909c8bc2384429a5da76c954c13bc3c7dec4bf2153b4a6dabaf0d1ce332771f",
+      "license": {
+        "survey_status": "deferred",
+        "licensed": false,
+        "note": "许可调查本轮暂缓；未获许可，不得写为已许可。"
+      },
+      "note": "用于浙江（33 前缀）省市县区划代码，共102条。"
+    },
+    {
+      "id": "src_sim_demo_gyi03",
+      "title": "耕云 GY-I03 明显模拟演示数据（合成）",
+      "canonical_url": "https://example.invalid/gengyun/simulation",
+      "publisher": "耕云项目开发侧（合成）",
+      "source_kind": "simulation",
+      "evidence_kind": "mixed",
+      "validity": "unknown",
+      "review_status": "unverified",
+      "retrieved_at": "2026-10-04",
+      "license": {
+        "survey_status": "not_applicable",
+        "licensed": false,
+        "note": "合成模拟数据，无许可议题，但绝非真实资料。"
+      },
+      "note": "登记证号为 SIM- 前缀的合成占位，非真实登记号；仅用于演示模式链路与失败/边界测试，禁止作为真实用量依据。"
+    }
+  ]
+}
