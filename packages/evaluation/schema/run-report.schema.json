@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gengyun.local/schema/evaluation-run-report-1.0.0.json",
+  "title": "耕云评估运行报告（预期输出结构）",
+  "description": "评估命令的结构化输出。dataKind=synthetic_placeholder 或样本数低于第6节目标时，isRealEvaluation=false 且所有门禁不得标记为 pass。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "dataKind",
+    "isRealEvaluation",
+    "generatedAt",
+    "indexSha256",
+    "predictionSha256",
+    "tasks",
+    "gaps",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "dataKind": {
+      "enum": ["real_frozen", "synthetic_placeholder", "mixed"],
+      "description": "本次输入的数据性质。只有 real_frozen 且样本达标才可能产生真实结论。"
+    },
+    "isRealEvaluation": {
+      "type": "boolean",
+      "description": "是否构成真实评估（真实冻结样本且样本达标）。false 时不得作为达标证据。"
+    },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "indexSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "predictionSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "frozenIndexVersion": { "type": "string", "description": "冻结样本集版本号。" },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sampleCount", "metrics", "gates", "gateStatus"],
+        "properties": {
+          "sampleCount": { "type": "integer", "minimum": 0 },
+          "metrics": { "type": "object", "additionalProperties": true },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["metric", "observed", "target", "direction", "status", "claimable"],
+              "properties": {
+                "metric": { "type": "string" },
+                "observed": { "type": ["number", "null"] },
+                "target": { "type": "number" },
+                "direction": { "enum": ["gte", "lte", "eq"] },
+                "status": { "enum": ["pass", "fail", "not_evaluated"] },
+                "claimable": { "type": "boolean" },
+                "reason": { "type": "string" }
+              }
+            }
+          },
+          "gateStatus": { "enum": ["pass", "fail", "not_evaluated"] }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task", "bucket", "required", "present", "missing"],
+        "properties": {
+          "task": { "type": "string" },
+          "bucket": { "type": "string" },
+          "required": { "type": "integer", "minimum": 0 },
+          "present": { "type": "integer", "minimum": 0 },
+          "missing": { "type": "integer", "minimum": 0 },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}
