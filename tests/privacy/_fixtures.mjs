@@ -6,6 +6,9 @@
 /**
  * 合成账号提供者：{ userId: { state, authEpoch } }。
  * 不依赖微信真实登录，可模拟注销（state 变化 / auth_epoch 递增）。
+ *
+ * `identityOf` 为**同步**一致快照（提交一致性契约）：同一 tick 内一次性读取
+ * 当前状态与 auth_epoch，供提交门禁的原子临界区使用。
  */
 export function createAccountProvider(initial = {}) {
   const accounts = new Map(Object.entries(initial));
@@ -13,8 +16,13 @@ export function createAccountProvider(initial = {}) {
     const cur = accounts.get(userId) ?? { state: 'active', authEpoch: 1 };
     accounts.set(userId, { ...cur, ...patch });
   }
+  function identityOf(userId) {
+    const cur = accounts.get(userId) ?? { state: 'active', authEpoch: 1 };
+    return { state: cur.state ?? 'active', authEpoch: cur.authEpoch ?? 1 };
+  }
   return {
     set,
+    identityOf,
     async stateOf(userId) {
       return accounts.get(userId)?.state ?? 'active';
     },
@@ -26,6 +34,7 @@ export function createAccountProvider(initial = {}) {
 
 /**
  * 合成接收方存储。
+ * `currentOf` 为**同步**一致快照（提交一致性契约）：同一 tick 内读取当前接收方资格与版本。
  */
 export function createRecipientStore(initial = {}) {
   const recipients = new Map(Object.entries(initial));
@@ -44,6 +53,9 @@ export function createRecipientStore(initial = {}) {
         config_version: '1.0.0',
       };
       recipients.set(id, { ...cur, ...patch });
+    },
+    currentOf(id) {
+      return recipients.has(id) ? { ...recipients.get(id) } : null;
     },
     async get(id) {
       return recipients.has(id) ? { ...recipients.get(id) } : null;

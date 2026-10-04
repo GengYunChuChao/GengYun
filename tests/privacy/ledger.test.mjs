@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createConsentStore } from '../../packages/privacy/consent.mjs';
 import { createExportLedger } from '../../packages/privacy/ledger.mjs';
+import { createCommitGate } from '../../packages/privacy/commit-gate.mjs';
 import { PrivacyError } from '../../packages/privacy/errors.mjs';
 import { createAccountProvider, createRecipientStore, VERIFIED_RECIPIENT } from './_fixtures.mjs';
 
@@ -315,37 +316,30 @@ test('P1-3 预留后接收方删除确认能力失效，guardWriteback 阻断', 
 
 // ---- 修复轮 2 · P1 撤回竞态：await 期间终态不可复活 ----
 
-test('R2 派发竞态：受控暂停 get 期间撤回，markSent 不得把记录复活为 sent', async () => {
+test('R2 派发竞态：原子提交在途期间 revokeInFlight → markSent 不得把记录复活为 sent', async () => {
   const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
   const consentStore = createConsentStore();
-  let releaseGet;
-  const gate = new Promise((res) => {
-    releaseGet = res;
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const pausable = createPausableGate({ account, consentStore, recipientStore });
+  const ledger = createExportLedger({
+    consentStore,
+    account,
+    recipientStore,
+    commitGate: pausable.gate,
   });
-  let pauseNext = false;
-  const recipientStore = {
-    async get() {
-      if (pauseNext) {
-        pauseNext = false;
-        await gate; // 受控暂停最后一次 get，模拟撤回发生在派发 await 期间
-      }
-      return { ...VERIFIED_RECIPIENT };
-    },
-  };
-  const ledger = createExportLedger({ consentStore, account, recipientStore });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
 
-  pauseNext = true;
+  pausable.pauseNext();
   const sending = ledger.markSent(rec.id);
-  // 让 markSent 推进到受控暂停点（此时已通过账号/授权核对，卡在接收方 get）
+  // 让 markSent 推进到原子提交的在途等待点
   await new Promise((r) => setTimeout(r, 0));
   // 撤回：revokeInFlight 同步终结在途记录
   const count = ledger.revokeInFlight({ userId: 'u1', purpose: 'recording' });
   assert.equal(count, 1);
   assert.equal(ledger.get(rec.id).state, 'failed');
 
-  releaseGet(); // 释放暂停的 get：markSent 继续，但其同步原子复核必须失败
+  pausable.release(); // 释放：原子提交的同步临界区必须看到 failed 并拒绝
   await assert.rejects(
     () => sending,
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
@@ -383,11 +377,11 @@ test('R2 缺 authEpochOf 的适配器在构造时被拒绝（不再静默跳过�
   );
 });
 
-test('R2 身份版本查询失败时拒绝派发（不静默放行）', async () => {
+test('R2 身份快照读取失败时拒绝派发（不静默放行）', async () => {
   const { ledger, consentStore, account } = await setup();
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
-  account.authEpochOf = async () => {
+  account.identityOf = () => {
     throw new Error('synthetic auth store down');
   };
   await assert.rejects(
@@ -396,28 +390,28 @@ test('R2 身份版本查询失败时拒绝派发（不静默放行）', async ()
   );
 });
 
-test('R2 身份版本返回非法值时拒绝派发', async () => {
+test('R2 身份快照返回非法值时拒绝派发', async () => {
   const { ledger, consentStore, account } = await setup();
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
-  account.authEpochOf = async () => 0;
+  account.identityOf = () => ({ state: 'active', authEpoch: 0 });
   await assert.rejects(
     () => ledger.markSent(rec.id),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
-  account.authEpochOf = async () => '1';
+  account.identityOf = () => ({ state: 'active', authEpoch: '1' });
   await assert.rejects(
     () => ledger.markSent(rec.id),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
 });
 
-test('R2 身份版本查询失败时 guardWriteback 阻断回写', async () => {
+test('R2 身份快照读取失败时 guardWriteback 阻断回写', async () => {
   const { ledger, consentStore, account } = await setup();
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
-  account.authEpochOf = async () => {
+  account.identityOf = () => {
     throw new Error('synthetic auth store down');
   };
   await assert.rejects(
@@ -466,46 +460,101 @@ test('R2 经 get() 返回值删掉 recording 后撤回 recording，markSent 仍�
   );
 });
 
-// ---- 修复轮 3 · P1-B：提交门闩（账号失效/用途撤回与任务取消不可分离）----
+// ---- 修复轮 4 · P1 原子提交协议：账号/全部必需用途/接收方 与 派发/回写 不可分离 ----
 
-/** 可受控暂停的接收方存储：pauseNext() 后，下一次 get 会阻塞到 release()。 */
-function createPausedRecipientStore(recipient) {
-  let paused = false;
-  let release;
-  const gate = new Promise((res) => {
-    release = res;
-  });
+/**
+ * 可受控暂停的提交门禁：模拟「异步适配器（如数据库事务）的在途阶段」。
+ * pauseNext() 后，下一次 commit 会先阻塞到 release()，随后仍委托内存参考实现——
+ * 其 verify+apply 为**单次同步临界区**，暂停期间发生的任何写入都会被一致重读捕获。
+ */
+function createPausableGate(deps) {
+  const inner = createCommitGate(deps);
+  let armed = false;
+  let releaseFn = () => {};
   return {
-    store: {
-      async get() {
-        if (paused) {
-          paused = false;
-          await gate;
+    gate: {
+      async commit(expected, hooks) {
+        if (armed) {
+          armed = false;
+          await new Promise((res) => {
+            releaseFn = res;
+          });
         }
-        return { ...recipient };
+        return inner.commit(expected, hooks);
       },
+      verify: (e) => inner.verify(e),
     },
     pauseNext() {
-      paused = true;
+      armed = true;
     },
     release() {
-      release();
+      releaseFn();
     },
   };
 }
 
-test('R3 最后 await 期间注销（deletion_pending + auth_epoch 2，不经 revokeInFlight）→ markSent 不派发', async () => {
+function setupPausable() {
   const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
   const consentStore = createConsentStore();
-  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
-  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const pausable = createPausableGate({ account, consentStore, recipientStore });
+  const ledger = createExportLedger({
+    consentStore,
+    account,
+    recipientStore,
+    commitGate: pausable.gate,
+  });
+  return { account, consentStore, recipientStore, pausable, ledger };
+}
+
+test('R4 门闩内部撤回记录用途（不经 revokeInFlight）→ markSent 拒绝且不置 sent', async () => {
+  const { consentStore, pausable, ledger } = setupPausable();
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
 
   pausable.pauseNext();
   const sending = ledger.markSent(rec.id);
-  await new Promise((r) => setTimeout(r, 0)); // 推进到最后一次 await（recipientStore.get）处暂停
-  account.set('u1', { state: 'deletion_pending', authEpoch: 2 }); // 直接注销，未调用 revokeInFlight
+  await new Promise((r) => setTimeout(r, 0)); // markSent 推进到原子提交在途等待
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' }); // 仅撤回用途
+
+  pausable.release();
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'reserved', '原子提交必须拒绝，不得置 sent');
+  assert.equal(ledger.get(rec.id).revision, 1, '未提交则 revision 不变（apply 未执行）');
+});
+
+test('R4 门闩内部撤回记录用途（不经 revokeInFlight）→ guardWriteback 拒绝', async () => {
+  const { consentStore, pausable, ledger } = setupPausable();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  pausable.pauseNext();
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  await new Promise((r) => setTimeout(r, 0));
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+
+  pausable.release();
+  await assert.rejects(
+    () => writing,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+test('R4 最终 epoch 读取期间注销（deletion_pending + auth_epoch 2，不经 revokeInFlight）→ markSent 拒绝', async () => {
+  const { account, consentStore, pausable, ledger } = setupPausable();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+
+  pausable.pauseNext();
+  const sending = ledger.markSent(rec.id);
+  await new Promise((r) => setTimeout(r, 0));
+  // 提交在途时直接注销：即使适配器的异步 epoch 读取会返回旧值，同步快照也必须看到新值
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+
   pausable.release();
   await assert.rejects(
     () => sending,
@@ -514,31 +563,8 @@ test('R3 最后 await 期间注销（deletion_pending + auth_epoch 2，不经 re
   assert.equal(ledger.get(rec.id).state, 'reserved', '不得派发（终态未被置 sent）');
 });
 
-test('R3 最后 await 期间用途撤回（不经 revokeInFlight）→ markSent 不派发', async () => {
-  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
-  const consentStore = createConsentStore();
-  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
-  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
-  await grantVoiceConsent(consentStore);
-  const rec = await ledger.reserve(baseExport);
-
-  pausable.pauseNext();
-  const sending = ledger.markSent(rec.id);
-  await new Promise((r) => setTimeout(r, 0));
-  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
-  pausable.release();
-  await assert.rejects(
-    () => sending,
-    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
-  );
-  assert.equal(ledger.get(rec.id).state, 'reserved');
-});
-
-test('R3 最后 await 期间注销 → guardWriteback（同一暂停点）被阻断', async () => {
-  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
-  const consentStore = createConsentStore();
-  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
-  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
+test('R4 最终 epoch 读取期间注销（不经 revokeInFlight）→ guardWriteback 拒绝', async () => {
+  const { account, consentStore, pausable, ledger } = setupPausable();
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
@@ -547,11 +573,246 @@ test('R3 最后 await 期间注销 → guardWriteback（同一暂停点）被阻
   const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
   await new Promise((r) => setTimeout(r, 0));
   account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+
   pausable.release();
   await assert.rejects(
     () => writing,
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
+});
+
+/** 接收方存储：第 n 次 get 调用会先暂停，直到 release()。 */
+function createPausingRecipientStore(recipient) {
+  const store = createRecipientStore({ [recipient.id]: recipient });
+  const rawGet = store.get.bind(store);
+  let count = 0;
+  let pauseOnCall = null;
+  let releaseFn = () => {};
+  store.get = async (id) => {
+    count += 1;
+    if (count === pauseOnCall) {
+      await new Promise((res) => {
+        releaseFn = res;
+      });
+    }
+    return rawGet(id);
+  };
+  return {
+    store,
+    pauseOnGetCall(n) {
+      pauseOnCall = n;
+    },
+    release() {
+      releaseFn();
+    },
+  };
+}
+
+/**
+ * 账号适配器：第 n 次 authEpochOf 调用会「先读旧值 → 暂停 → 返回该旧值」，
+ * 模拟监工复现 2「适配器先取 epoch=1 再异步返回旧值」。同步 identityOf 始终读当前值。
+ */
+function createStalePausingAccount(initial = {}) {
+  const accounts = new Map(Object.entries(initial));
+  let count = 0;
+  let pauseOnCall = null;
+  let releaseFn = () => {};
+  return {
+    set(userId, patch) {
+      const cur = accounts.get(userId) ?? { state: 'active', authEpoch: 1 };
+      accounts.set(userId, { ...cur, ...patch });
+    },
+    identityOf(userId) {
+      const cur = accounts.get(userId) ?? { state: 'active', authEpoch: 1 };
+      return { state: cur.state ?? 'active', authEpoch: cur.authEpoch ?? 1 };
+    },
+    async stateOf(userId) {
+      return accounts.get(userId)?.state ?? 'active';
+    },
+    async authEpochOf(userId) {
+      count += 1;
+      const stale = accounts.get(userId)?.authEpoch ?? 1; // 先读旧值
+      if (count === pauseOnCall) {
+        await new Promise((res) => {
+          releaseFn = res;
+        });
+      }
+      return stale; // 异步延迟后返回过期快照
+    },
+    pauseOnAuthEpochCall(n) {
+      pauseOnCall = n;
+    },
+    release() {
+      releaseFn();
+    },
+  };
+}
+
+test('R4 门闩内部撤回：暂停第 2 次 recipientStore.get 期间撤回用途（不经 revokeInFlight）→ markSent 拒绝', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const pausing = createPausingRecipientStore(VERIFIED_RECIPIENT);
+  const ledger = createExportLedger({ consentStore, account, recipientStore: pausing.store });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport); // recipientStore.get 调用 #1
+
+  pausing.pauseOnGetCall(2); // 卡在 markSent 预检的接收方读取（此时已读完全部用途）
+  const sending = ledger.markSent(rec.id);
+  await new Promise((r) => setTimeout(r, 0));
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' }); // 仅撤回用途
+
+  pausing.release();
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'reserved', '原子提交必须拒绝，不得置 sent');
+});
+
+test('R4 门闩内部撤回：暂停第 2 次 recipientStore.get 期间撤回用途 → guardWriteback 拒绝', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const pausing = createPausingRecipientStore(VERIFIED_RECIPIENT);
+  const ledger = createExportLedger({ consentStore, account, recipientStore: pausing.store });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  pausing.pauseOnGetCall(3); // reserve #1 + markSent #2 → 本次为 #3
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  await new Promise((r) => setTimeout(r, 0));
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+
+  pausing.release();
+  await assert.rejects(
+    () => writing,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+test('R4 最终 epoch 读取期间注销（适配器返回过期 epoch=1）→ markSent 拒绝', async () => {
+  const account = createStalePausingAccount({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const ledger = createExportLedger({ consentStore, account, recipientStore });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport); // authEpochOf 调用 #1
+
+  account.pauseOnAuthEpochCall(2); // 暂停 markSent 预检的最终 epoch 读取
+  const sending = ledger.markSent(rec.id);
+  await new Promise((r) => setTimeout(r, 0));
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 }); // 注销，未经 revokeInFlight
+
+  account.release(); // 预检拿到过期 epoch=1 并通过；原子提交必须用同步快照重新判定
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'reserved', '过期预检放行不得导致实际派发');
+});
+
+test('R4 最终 epoch 读取期间注销（适配器返回过期 epoch=1）→ guardWriteback 拒绝', async () => {
+  const account = createStalePausingAccount({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const ledger = createExportLedger({ consentStore, account, recipientStore });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id); // authEpochOf 调用 #2（markSent 预检）
+
+  account.pauseOnAuthEpochCall(3); // 暂停 guardWriteback 预检的 epoch 读取
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  await new Promise((r) => setTimeout(r, 0));
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+
+  account.release();
+  await assert.rejects(
+    () => writing,
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+test('R4 缺提交一致性契约（account 无同步 identityOf）→ 构造即拒绝投入使用', () => {
+  const account = {
+    async stateOf() {
+      return 'active';
+    },
+    async authEpochOf() {
+      return 1;
+    },
+  };
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore: createConsentStore(),
+        account,
+        recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+      }),
+    /identityOf/,
+  );
+});
+
+test('R4 缺提交一致性契约（consentStore 无同步 snapshotOf）→ 构造即拒绝投入使用', () => {
+  const consentStore = {
+    async isGranted() {
+      return true;
+    },
+    async currentEpoch() {
+      return 1;
+    },
+    async getConsent() {
+      return null;
+    },
+  };
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore,
+        account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
+        recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+      }),
+    /snapshotOf/,
+  );
+});
+
+test('R4 缺提交一致性契约（recipientStore 无同步 currentOf）→ 构造即拒绝投入使用', () => {
+  const recipientStore = {
+    async get() {
+      return null;
+    },
+  };
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore: createConsentStore(),
+        account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
+        recipientStore,
+      }),
+    /currentOf/,
+  );
+});
+
+test('R4 显式注入的 commitGate 缺 commit 原语 → 构造即拒绝投入使用', () => {
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore: createConsentStore(),
+        account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
+        recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+        commitGate: { verify() {} },
+      }),
+    /commit/,
+  );
+});
+
+test('R4 原子提交不误伤：账号/用途/接收方均未变时正常派发与回写', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  const sent = await ledger.markSent(rec.id);
+  assert.equal(sent.state, 'sent');
+  const back = await ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  assert.equal(back.state, 'sent');
 });
 
 test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInFlight）', async () => {
@@ -564,12 +825,4 @@ test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInF
     () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
-});
-
-test('R3 提交门闩不误伤：账号/用途均未变时正常派发', async () => {
-  const { ledger, consentStore } = await setup();
-  await grantVoiceConsent(consentStore);
-  const rec = await ledger.reserve(baseExport);
-  const sent = await ledger.markSent(rec.id);
-  assert.equal(sent.state, 'sent');
 });

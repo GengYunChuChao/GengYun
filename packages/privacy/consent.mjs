@@ -45,6 +45,17 @@ export function createConsentStore({ now = () => new Date() } = {}) {
   }
 
   /**
+   * **同步**一致快照（提交一致性契约用）：返回该 (userId, purpose) 当前 epoch 与是否授予。
+   * 同步读取内存状态、无 await，供提交门禁的原子临界区一次性读取（不产生新的异步窗口）。
+   */
+  function snapshotOf({ userId, purpose } = {}) {
+    assertPurpose(purpose);
+    const cur = epochs.get(key(userId, purpose));
+    if (!cur) return { epoch: 0, granted: false };
+    return { epoch: cur.currentEpoch, granted: cur.state === 'granted' };
+  }
+
+  /**
    * 授予用途授权：新 epoch，历史行保留，recipient_ids 绑定接收方。
    * @returns {Promise<object>} 新建的 consent record
    */
@@ -135,6 +146,7 @@ export function createConsentStore({ now = () => new Date() } = {}) {
     withdraw,
     currentEpoch,
     isGranted,
+    snapshotOf,
     getConsent,
     list,
   };

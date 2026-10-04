@@ -8,6 +8,7 @@ export * from './constants.mjs';
 export * from './errors.mjs';
 export * from './consent.mjs';
 export * from './guard.mjs';
+export * from './commit-gate.mjs';
 export * from './ledger.mjs';
 export * from './deletion.mjs';
 export * from './redact.mjs';

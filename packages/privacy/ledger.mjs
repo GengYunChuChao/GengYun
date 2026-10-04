@@ -11,20 +11,23 @@
  *   - 无授权 / 错用途不能触发实际外发（reserve 即拦截）。
  *   - 不默认第三方训练：external_inference 外发要求 recipient.no_training_verified 为真。
  *   - 撤回/注销立即禁止新外发；已提交外部请求视为在途，禁止回写。
- *   - 取消/撤回后的版本不可被回调复活（guardWriteback 阻断）。
+ *   - 取消/撤回后的版本不可被回调复活（guardWriteback / markSent 通过原子提交阻断）。
  *
- * 快照语义（本轮监工 P1 修复）：
+ * 快照语义：
  *   - reserve 保存「全部必需用途的 epoch」+「外发时固定的账号 auth_epoch」+「接收方 config_version」；
- *   - 派发（markSent）与回写（guardWriteback）始终以这些快照为准重查，不接收调用方覆盖的新上下文。
+ *   - 派发（markSent）与回写（guardWriteback）始终以这些快照为准，不接收调用方覆盖的新上下文。
  *
- * 并发安全（修复轮 2 + 3）：
- *   - 每条记录带单调递增 revision，任何状态迁移都递增；
- *   - markSent 在全部异步核对完成后，做**同步原子复核**（状态仍为在途 + revision 未变），
- *     确保 await 期间被 revokeInFlight/markFailed 置为终态的记录不会被重新置为 sent（终态不可复活）；
- *   - **提交门闩** assertCommitFence：在最后一次 await 之后全量重读「用途 epoch + 接收方 + 账号身份」
- *     快照。调用方即使**不经** revokeInFlight，只要在 await 期间注销/停用账号、前进 auth_epoch 或
- *     撤回用途，也会被这道最后重读捕获；读后到提交之间无 await 间隙，杜绝
- *     「以一次早先查询证明最终提交安全」的临界漏洞。
+ * 并发安全（修复轮 2/3/4）：
+ *   - 每条记录带单调递增 revision；终态（failed/outcome_unknown）不可复活。
+ *   - 派发与回写的**唯一提交边界**是 `commitGate.commit(expected, { precondition, apply })`
+ *     （见 commit-gate.mjs）：`commit` 体内**不含任何 await**，在同一个不可分割的同步临界区内
+ *     一次性重读「账号身份/auth_epoch + 全部必需用途 epoch/授予 + 接收方 enabled/版本/训练条款」，
+ *     逐项与 reserve 快照比对，全部通过才执行 `apply`。
+ *   - 因此提交判定**不再**依赖「顺序异步重读」：不存在「读 A 与读 B 之间被插入」或「适配器先取
+ *     旧值再异步返回」的窗口——校验与提交在同一 tick 内原子完成。调用方即使**不经** revokeInFlight，
+ *     只要在提交临界区之前注销/停用账号、前进 auth_epoch 或撤回用途，都会被这道同步重读捕获。
+ *   - markSent / guardWriteback 之前仍保留一段**非权威异步预检**（早退 + 细化错误码）：它读到的是
+ *     某一时刻的快照，可能过期，**不构成安全保证**；权威判定一律由 `commit` 给出。
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -34,22 +37,43 @@ import {
 } from './constants.mjs';
 import { PrivacyError } from './errors.mjs';
 import { createPrivacyGuard } from './guard.mjs';
+import { createCommitGate, COMMIT_REASON_ERROR_CODES } from './commit-gate.mjs';
 
 /**
  * @param {{
  *   consentStore: object,
  *   account: object,
- *   recipientStore: { get: (id: string) => Promise<object|null> },
+ *   recipientStore: { get: (id: string) => Promise<object|null>, currentOf?: (id: string) => object|null },
+ *   commitGate?: { commit: (expected: object, hooks: object) => Promise<{committed: boolean, reason?: string}> },
  *   now?: () => Date,
  * }} deps
  */
-export function createExportLedger({ consentStore, account, recipientStore, now = () => new Date() } = {}) {
+export function createExportLedger({
+  consentStore,
+  account,
+  recipientStore,
+  commitGate,
+  now = () => new Date(),
+} = {}) {
   // 强制要求「身份版本」能力：缺少 authEpochOf 的适配器会绕过账号版本核对，
   // 使旧任务在账号已注销/停用（auth_epoch 前进）后仍被放行。此处直接拒绝构造。
   if (!account || typeof account.stateOf !== 'function' || typeof account.authEpochOf !== 'function') {
     throw new Error('createExportLedger 需要注入带 stateOf 与 authEpochOf 的 account 提供者');
   }
   const guard = createPrivacyGuard({ account, consentStore, now });
+
+  // 强制要求「提交一致性契约」能力：派发/回写的原子边界由 commitGate 提供。
+  // 未显式注入时用内存参考实现包裹同步适配器；若适配器缺少同步一致快照方法，
+  // createCommitGate 会**构造即抛错**——绝不允许「漏实现即静默放行」。
+  const gate =
+    commitGate ?? createCommitGate({ account, consentStore, recipientStore });
+  if (!gate || typeof gate.commit !== 'function') {
+    throw new Error(
+      'createExportLedger 需要实现「提交一致性契约」(commit) 的 commitGate，' +
+        '或提供带同步快照方法 identityOf/snapshotOf/currentOf 的 account/consentStore/recipientStore',
+    );
+  }
+
   /** @type {Map<string, object>} */
   const rows = new Map();
 
@@ -64,11 +88,43 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     }
   }
 
+  function isInFlight(record) {
+    return record.state === 'reserved' || record.state === 'sent';
+  }
+
   function assertInFlight(record) {
-    if (record.state !== 'reserved' && record.state !== 'sent') {
+    if (!isInFlight(record)) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}），不可变更`);
     }
   }
+
+  /** 提交被拒时按失败原因映射为契约错误码（未知原因兜底 OBJECT_UNAVAILABLE）。 */
+  function commitError(reason, action) {
+    const code = COMMIT_REASON_ERROR_CODES[reason] ?? 'OBJECT_UNAVAILABLE';
+    return new PrivacyError(code, `${action}被拒（${reason ?? 'unknown'}）`);
+  }
+
+  /**
+   * 从外发记录派生提交期望快照：账号版本 / 全部必需用途 epoch / 接收方版本与训练条款要求。
+   * 只读记录内已冻结的字段，不接收调用方覆盖。
+   */
+  function commitExpectedOf(record) {
+    return {
+      userId: record.userId,
+      authEpoch: record.authEpoch,
+      requiredConsents: record.requiredConsents,
+      recipientId: record.recipientId,
+      recipientConfigVersion: record.recipientConfigVersion,
+      requireRecipientIntegrity: record.purpose === 'external_inference',
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 「预检」：best-effort 早退 + 细化错误码。**不构成任何安全保证**——它们与旧版「提交门闩」
+  // 的关键区别在于：预检读到的是**某一时刻的异步快照**，可能已过期（如适配器先取旧值再异步返回）；
+  // 因此预检通过**不代表**可以提交。真正决定「是否派发/回写」的唯一边界是下方 `gate.commit`
+  // 的**同步原子临界区**（见 commit-gate.mjs）。预检仅为尽早失败与错误码细化而保留。
+  // ---------------------------------------------------------------------------
 
   /** 读取当前身份版本；缺失能力、查询失败或非法值一律拒绝（不静默放行）。 */
   async function readAuthEpochOrThrow(userId) {
@@ -84,7 +140,7 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     return current;
   }
 
-  /** 重查账号快照：始终用 record.authEpoch（外发时固定的账号版本），不接受调用方覆盖。 */
+  /** 预检账号快照（异步，非权威）。 */
   async function assertAccountIntact(record) {
     const state = await account.stateOf(record.userId);
     if (state !== 'active') {
@@ -96,7 +152,7 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     }
   }
 
-  /** 重查全部必需用途的 epoch 与授予状态：任一撤回/变更即阻断。 */
+  /** 预检全部必需用途的 epoch 与授予状态（异步，非权威）。 */
   async function assertAllConsentsIntact(record) {
     for (const [p, epoch] of Object.entries(record.requiredConsents ?? {})) {
       const cur = await consentStore.currentEpoch({ userId: record.userId, purpose: p });
@@ -109,7 +165,7 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     }
   }
 
-  /** 重查当前接收方资格与绑定版本：停用/版本变化/训练条款失效均阻断新外发与回写。 */
+  /** 预检接收方资格与绑定版本（异步，非权威）。 */
   async function assertRecipientIntact(record) {
     const recipient = recipientStore ? await recipientStore.get(record.recipientId) : null;
     if (!recipient || !recipient.enabled) {
@@ -129,24 +185,8 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
   }
 
   /**
-   * 提交门闩（原子协议，修复轮 3）：在**最后一次 await 之后**再全量重读快照
-   * （用途 epoch / 接收方版本 / 账号状态与 auth_epoch），随后调用方立即**同步**提交/返回。
-   *
-   * 为什么要「bookend」：若只在前面查一次，调用方可在某次 await（如 recipientStore.get）
-   * 期间把账号改为 deletion_pending / 前进 auth_epoch，或撤回用途——而**不经过** revokeInFlight，
-   * 使外发行 revision 不变，先前的检查看不到真实失效。门闩把账号身份读放到最后，
-   * 保证「最后一次异步读取」就是最终一致性证据；读后到提交之间无 await 间隙，杜绝临界窗口。
-   *
-   * 顺序有意为之：先用途、再接收方、最后账号身份（把最关键的注销/停用放在最后读）。
-   */
-  async function assertCommitFence(record) {
-    await assertAllConsentsIntact(record);
-    await assertRecipientIntact(record);
-    await assertAccountIntact(record);
-  }
-
-  /**
    * 预留外发：无授权/错用途/账号非活跃/接收方未验证均在此拦截，不产生实际外发。
+   * 这里读取并冻结提交期望快照；**真正的原子提交边界在 markSent / guardWriteback**。
    * @returns {Promise<object>} export 记录（state=reserved）
    */
   async function reserve({
@@ -258,30 +298,36 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
   }
 
   /**
-   * 实际派发前二次核对（账号快照 / 全部必需用途 / 接收方资格），然后置 sent。
-   * 不接受调用方覆盖 authEpoch。
-   * 异步核对完成后先过**提交门闩**（最后 await 之后全量重读快照），再做同步原子复核
-   * （在途状态 + revision 未变），使 await 期间被撤回/失败/注销的记录不可被置为 sent。
+   * 实际派发：先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照为期望，
+   * 通过 `commitGate.commit` 在**单次同步临界区**内原子完成「账号 / 全部必需用途 / 接收方」
+   * 重读校验 + 在途/revision 前置检查 + 置 sent。
+   *
+   * 安全性来自 `commit`（校验+apply 无 await），**不来自**预检：即使预检读到过期的旧快照
+   * 而放行，原子提交仍会用同一 tick 的同步一致快照重新判定，过期即拒绝。
+   * @returns {Promise<object>} 通过原子提交的 export 记录（state=sent）
    */
   async function markSent(id) {
     const record = rows.get(id);
     if (!record) throw new PrivacyError('NOT_FOUND', '外发记录不存在');
-    assertInFlight(record);
+    // 记录当前 revision：precondition 在同一临界区内核对，确保 await 期间不被迁移。
     const startRevision = record.revision;
+    // 非权威预检（best-effort）：只影响错误码与失败时机，不决定能否提交。
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
-    // 提交门闩：最后一次 await 之后再全量重读快照（捕获 await 期间的账号变更/用途撤回）。
-    await assertCommitFence(record);
-    // 原子复核（无 await 间隙）：在途检查 + 版本号未被他方迁移。
-    assertInFlight(record);
-    if (record.revision !== startRevision) {
-      throw new PrivacyError('OBJECT_UNAVAILABLE', '外发在派发前已被变更，禁止派发');
+    // 唯一提交边界：同步原子 CAS 提交。
+    const result = await gate.commit(commitExpectedOf(record), {
+      precondition: () => isInFlight(record) && record.revision === startRevision,
+      apply: () => {
+        record.state = 'sent';
+        record.sentAt = now();
+        record.revision += 1;
+        record.updatedAt = now();
+      },
+    });
+    if (!result || result.committed !== true) {
+      throw commitError(result?.reason, '派发');
     }
-    record.state = 'sent';
-    record.sentAt = now();
-    record.revision += 1;
-    record.updatedAt = now();
     return projectRecord(record);
   }
 
@@ -331,13 +377,15 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
 
   /**
    * 在途结果回写守卫：任务保存前/回调落库前调用。
-   * 始终以 reserve 时的快照（账号版本 / 全部必需用途 epoch / 接收方版本）重查，
-   * 不依赖调用方是否提供 authEpoch；满足以下任一即阻断（不落库、不可复活）：
+   * 先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照（账号版本 / 全部必需用途 epoch /
+   * 接收方版本与条款）为期望，通过 `commitGate.commit` 在单次同步临界区内原子校验；满足以下任一
+   * 即阻断（不落库、不可复活）：
    *   - 账号非活跃 / auth_epoch 已变更（注销/停用/会话失效）
    *   - 任一必需用途 epoch 已前进（撤回或重新授权）
    *   - 接收方停用 / 版本变化 / 训练或删除条款失效
    *   - 外发记录已终态（取消/失败/结果未知）
-   * @returns {Promise<object>} 通过校验的 export 记录
+   * 与 markSent 同理：安全性来自原子提交，不来自可能过期的预检。
+   * @returns {Promise<object>} 通过原子校验的 export 记录
    */
   async function guardWriteback({ exportId, userId } = {}) {
     const record = rows.get(exportId);
@@ -347,10 +395,12 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
-    // 提交门闩：最后一次 await 之后再全量重读快照（捕获 await 期间的账号变更/用途撤回）。
-    await assertCommitFence(record);
-    if (record.state !== 'reserved' && record.state !== 'sent') {
-      throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终止（${record.state}），禁止回写`);
+    const result = await gate.commit(commitExpectedOf(record), {
+      precondition: () => isInFlight(record),
+      apply: () => {}, // 只读授权守卫：校验通过即“提交”该授权，无副作用
+    });
+    if (!result || result.committed !== true) {
+      throw commitError(result?.reason, '回写');
     }
     return projectRecord(record);
   }
