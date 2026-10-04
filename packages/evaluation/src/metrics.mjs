@@ -1,9 +1,12 @@
 // 指标计算（第6.1节口径）。所有比例类返回 Wilson 95% 区间；CER 返回 bootstrap 区间。
-// 关键口径（修复轮 1）：
+// 关键口径（修复轮 1 + 修复轮 2）：
 //   - 拒识口径：覆盖内集合中拒绝/不确定一律计为未命中，且**统一检查最终 decision**，
 //     拒绝/不确定即便携带正确候选也不得算命中（候选数组可能保留用于诊断）。
 //   - 模型评估**仅消费原始模型输出**：手工校正结果单独报告，不进入模型准确率分母，
 //     也不得用校正稿补模型成绩；原始输出缺失按缺口处理（不缩分母过门槛）。
+//   - 修复轮 2：筛查决策**闭集校验**（unknown/服务错误/非法枚举不得算正常通过）；
+//     TTS 六项判定必须明确存在且为布尔值（缺失记未测，只有 true 计通过）；
+//     OCR 固定可见字段保留**原始评估分母**（缺原始输出按缺口计，不对子集声明完整准确率）。
 
 import { wilsonInterval, bootstrapRatioInterval, levenshtein, normalizeForCER } from './ci.mjs';
 
@@ -24,7 +27,32 @@ export const WEED_DECISIONS = ['candidate', 'uncertain', 'retake', 'rejected'];
 /** 视为"拒识/不确定"的最终决策（占分母但计未命中）。 */
 export const REJECT_DECISIONS = ['uncertain', 'retake', 'rejected'];
 
+/**
+ * AI 社区筛查最终决策闭集（真实映射枚举）。
+ * 发布=published（audit approved + visibility published）；拦截/待复核/隔离=blocked/pending_review/
+ * rejected/quarantined/hidden。**其它任何值（unknown、UNVALIDATED_SERVICE_ERROR、服务错误、非法枚举）
+ * 都不属于正常通过**，必须拒绝而非按"正常"计。
+ */
+export const MODERATION_RELEASE_DECISIONS = ['published'];
+export const MODERATION_HOLD_DECISIONS = ['blocked', 'pending_review', 'rejected', 'quarantined', 'hidden'];
+export const MODERATION_DECISIONS = [...MODERATION_RELEASE_DECISIONS, ...MODERATION_HOLD_DECISIONS];
+
 const isAcceptedCandidate = (output) => output?.decision === 'candidate';
+const isModerationReleased = (output) => MODERATION_RELEASE_DECISIONS.includes(output?.decision);
+const isModerationHeld = (output) => MODERATION_HOLD_DECISIONS.includes(output?.decision);
+
+/**
+ * TTS 固定样例六项判定字段（数字/单位/否定/条件/停止重播/文字替代）。
+ * 六项缺一不可：缺失不得默认成功，只有明确为 true 才计通过。
+ */
+export const TTS_JUDGEMENT_FIELDS = [
+  'numbersCorrect',
+  'unitsCorrect',
+  'negationCorrect',
+  'conditionsCorrect',
+  'stopReplayCorrect',
+  'textFallbackCorrect',
+];
 
 /** 拍草：Top1/Top3、逐类、覆盖外高置信率、低质量不确定率。 */
 export function weedPhotoMetrics(pairs) {
@@ -86,21 +114,32 @@ export function originalOcrFields(p) {
   return isObject(o.fields) ? o.fields : null;
 }
 
-/** 标签 OCR：清晰组逐字段完全正确率；原始输出缺失单独计缺口，校正结果单独报告。 */
+/**
+ * 标签 OCR：清晰组逐字段完全正确率；原始输出缺失单独计缺口，校正结果单独报告。
+ * 分母口径（修复轮 2）：**固定可见字段的原始评估分母 = 冻结评估集全部清晰样本**；
+ * 缺原始输出的样本按缺口/未评估计（不得从分母剔除后仍以子集虚报 100%）；
+ * 当且仅当全部清晰样本都有原始输出时，`completeModelAccuracy=true`，否则不得声明完整模型准确率。
+ */
 export function labelOcrMetrics(pairs) {
   const { yes: clear } = partition(pairs, (r) => r.quality === 'clear');
   const { no: lowQuality } = partition(pairs, (r) => r.quality === 'clear');
 
-  // 分母 = 全部清晰样本（冻结评估集官方分母）；原始输出缺失只标缺口，绝不缩分母。
-  const scored = clear.filter((p) => originalOcrFields(p) !== null);
+  // 每条清晰样本先取原始模型输出；缺失（null）按缺口计，不缩分母。
+  const observed = clear.map((p) => ({ p, fields: originalOcrFields(p) }));
+  const scored = observed.filter((x) => x.fields !== null);
   const originalMissingCount = clear.length - scored.length;
+  const originalEvaluationDenominator = clear.length; // 冻结评估集官方分母（固定可见字段）
+  const hasModelObservation = scored.length > 0;
 
   const fieldExact = {};
   for (const field of OCR_FIELDS) {
-    const ok = scored.filter((p) => originalOcrFields(p)[field] !== undefined && originalOcrFields(p)[field] === p.record.gold?.[field]).length;
-    fieldExact[field] = rate(ok, scored.length);
+    const ok = observed.filter(
+      (x) => x.fields !== null && x.fields[field] !== undefined && x.fields[field] === x.p.record.gold?.[field],
+    ).length;
+    // 分母固定为全部清晰样本；缺原始输出的样本自然计未命中（不虚报子集准确率）。
+    fieldExact[field] = hasModelObservation ? rate(ok, originalEvaluationDenominator) : rate(0, 0);
   }
-  const regOk = scored.filter((p) => originalOcrFields(p).registrationNumber === p.record.gold?.registrationNumber).length;
+  const regOk = observed.filter((x) => x.fields !== null && x.fields.registrationNumber === x.p.record.gold?.registrationNumber).length;
   const distinctRecords = new Set(clear.map((p) => p.record.gold?.registrationNumber).filter(Boolean)).size;
 
   // 校正结果单独报告（不进模型准确率分母）。
@@ -117,9 +156,13 @@ export function labelOcrMetrics(pairs) {
     clearCount: clear.length,
     modelScoredCount: scored.length,
     originalMissingCount,
+    originalEvaluationDenominator,
+    consideredForModelAccuracy: originalEvaluationDenominator,
+    originalDenominatorComplete: originalMissingCount === 0,
+    // 只有当全部清晰样本都有原始输出时才可声明"完整模型准确率"。
+    completeModelAccuracy: originalMissingCount === 0 && hasModelObservation,
     correctedCount: corrected.length,
-    consideredForModelAccuracy: scored.length,
-    registrationNumberExact: rate(regOk, scored.length),
+    registrationNumberExact: hasModelObservation ? rate(regOk, originalEvaluationDenominator) : rate(0, 0),
     fieldExact,
     correctedFieldReport,
     distinctRegistrationRecords: distinctRecords,
@@ -142,14 +185,18 @@ export function registrationMatchMetrics(pairs) {
   return { scenarioPass: rate(passed, pairs.length), scenarioCount: pairs.length, perClass };
 }
 
-/** AI社区筛查：风险召回（拦截或待复核）、正常误隔离率。 */
+/** AI社区筛查：风险召回（拦截或待复核）、正常误隔离率。
+ * 口径（修复轮 2）：正常样本只有最终 decision 为**发布类**才算正常通过；
+ * unknown/服务错误/非法枚举一律**不算正常通过**（按误隔离计），闭集见 MODERATION_DECISIONS。 */
 export function aiModerationMetrics(pairs) {
   const { yes: risk } = partition(pairs, (r) => r.expectation === 'risk');
   const { yes: normal } = partition(pairs, (r) => r.expectation === 'normal');
-  const isHeld = (p) => p.output?.decision === 'blocked' || p.output?.decision === 'pending_review';
-  const riskHeld = risk.filter(isHeld).length;
-  const normalIsolated = normal.filter(isHeld).length;
+  // 风险召回：只认明确的拦截/待复核/隔离决策；unknown/非法枚举不得计入命中。
+  const riskHeld = risk.filter((p) => isModerationHeld(p.output)).length;
+  // 正常误隔离：非"发布类"决策（含 unknown/服务错误/非法枚举）一律计误隔离，绝不按正常通过。
+  const normalIsolated = normal.filter((p) => !isModerationReleased(p.output)).length;
   return {
+    decisionSet: MODERATION_DECISIONS,
     riskCount: risk.length,
     normalCount: normal.length,
     riskRecall: rate(riskHeld, risk.length),
@@ -157,13 +204,26 @@ export function aiModerationMetrics(pairs) {
   };
 }
 
-/** 普通话自动播报：固定样例全部准确（数字、单位、否定词、条件、停止重播/文字替代）。 */
+/**
+ * 普通话自动播报：固定样例六项全部准确（数字、单位、否定词、条件、停止重播/文字替代）。
+ * 口径（修复轮 2）：六项判定必须**明确存在且为布尔值**，缺失记未测、只有 true 计通过；
+ * 不得把四项准确外推为六项均已测。
+ */
 export function ttsMetrics(pairs) {
-  const ok = pairs.filter((p) => {
-    const o = p.output ?? {};
-    return o.numbersCorrect && o.unitsCorrect && o.negationCorrect && o.conditionsCorrect && o.stopReplayCorrect !== false && o.textFallbackCorrect !== false;
-  }).length;
-  return { count: pairs.length, ttsAllCorrect: rate(ok, pairs.length), allCorrect: ok === pairs.length && pairs.length > 0 };
+  const ok = pairs.filter((p) => TTS_JUDGEMENT_FIELDS.every((k) => p.output?.[k] === true)).length;
+  const perFieldMissing = {};
+  for (const field of TTS_JUDGEMENT_FIELDS) {
+    perFieldMissing[field] = pairs.filter((p) => typeof p.output?.[field] !== 'boolean').length;
+  }
+  const untestedCount = pairs.filter((p) => TTS_JUDGEMENT_FIELDS.some((k) => typeof p.output?.[k] !== 'boolean')).length;
+  return {
+    count: pairs.length,
+    judgementFields: TTS_JUDGEMENT_FIELDS,
+    untestedCount,
+    perFieldMissing,
+    ttsAllCorrect: rate(ok, pairs.length),
+    allCorrect: ok === pairs.length && pairs.length > 0,
+  };
 }
 
 /**

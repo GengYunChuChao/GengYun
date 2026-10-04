@@ -17,6 +17,7 @@
   "frozenIndexVersion": "<冻结版本号>",
   "frozenVerified": false,
   "frozenVerification": { "verified": false, "reasons": [], "indexSha256": "<64hex>", "manifestSha256": "<64hex|null>" },
+  "coverageBinding": { "verified": false, "reasons": [], "boundClasses": [], "coverageSha256": "<64hex|null>", "basisRef": "<GY-I03 承诺依据>" },
   "splits": { "train": 0, "validation": 0, "test": 0, "total": 0 },
   "duplicatesExcluded": 0,
   "coverageManifestPresent": false,
@@ -28,7 +29,8 @@
 ```
 
 > 最终验收只使用经冻结清单校验的独立 `test` 集（`splits.test`）；`train`/`validation` 另列统计、不参与评分。
-> `frozenVerified=false`、`predictionEvidence.complete=false` 或任一样本缺口 `missing>0` 时，`isRealEvaluation` 恒为 `false`。
+> `frozenVerified=false`、`coverageBinding.verified=false`（承诺覆盖清单未绑定/被缩减或修改）、`predictionEvidence.complete=false`
+> 或任一样本缺口 `missing>0` 时，`isRealEvaluation` 恒为 `false`。
 
 ## 2 门禁对象
 
@@ -66,8 +68,10 @@ dataKind=synthetic_placeholder  isRealEvaluation=false  frozenIndexVersion=unfro
 
 ## 4 真实评估报告（样本交接后）必填项
 
-- 冻结清单（`indexVersion` + `testIndexSha256` 与清单 `indexSha256` 一致）与冻结覆盖清单；模型/规则/prompt 实际版本（对接 GY-I21）。
-- 各任务**总体与逐类**指标 + 95% 置信区间（比例类 Wilson；CER bootstrap）；模型指标仅取**原始输出**。
+- 冻结清单（`indexVersion` + `testIndexSha256` 与清单 `indexSha256` 一致）与**绑定进冻结清单的冻结覆盖清单**
+  （`coverageBinding`：`boundClasses`/`coverageSha256`/`basisRef`）；模型/规则/prompt 实际版本（对接 GY-I21）。
+- 各任务**总体与逐类**指标 + 95% 置信区间（比例类 Wilson；CER bootstrap）；模型指标仅取**原始输出**；
+  OCR 固定可见字段保留**原始评估分母**（缺原始输出按缺口计，不对缺口后子集声明完整准确率）。
 - 预测完整性证据（`predictionEvidence`：期望/有效/缺失/非法/多余）；重复预测一律拒绝。
 - 独立对象去重后的样本量与覆盖范围（`duplicatesExcluded`）；明确"有限样本不证明现实零风险"。
 - 拒识样本计数与处理口径；手工校正结果单独报告；排除条件与未达标项。

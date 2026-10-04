@@ -5,9 +5,29 @@
 // --json 输出机器可读报告；默认输出报告 JSON 到 stdout，并附人类可读摘要到 stderr。
 // 关键：只有**经冻结清单校验的独立 test 集**、真实来源、达第6节目标且预测完整时才可能 isRealEvaluation=true；
 //       合成/占位/未冻结/样本不足/预测缺失的输入恒为 false，全部门禁 not_evaluated。
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { evaluateRun, METRIC_GATES, validateSampleIndex } from '../../packages/evaluation/index.mjs';
 import { loadJson, toPredictionMap, formatSummary, parseArgs } from './lib.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * 读取 GY-I03 承诺覆盖范围（物种组），用于核对冻结承诺类是否落在首批承诺范围内。
+ * 缺失时返回 null（不阻断：绑定校验仍要求内嵌 coverage 与外部清单一致）。
+ */
+function loadKnowledgeScope() {
+  const file = join(HERE, '..', '..', 'packages', 'knowledge', 'coverage-report.json');
+  if (!existsSync(file)) return null;
+  try {
+    const report = JSON.parse(readFileSync(file, 'utf8'));
+    const required = report?.species_groups?.required;
+    return Array.isArray(required) && required.length > 0 ? required : null;
+  } catch {
+    return null;
+  }
+}
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -19,6 +39,7 @@ function main() {
   const predictions = toPredictionMap(loadJson(args.predictions));
   const frozenManifest = args.manifest ? loadJson(args.manifest) : null;
   const coverageManifest = args.coverage ? loadJson(args.coverage) : null;
+  const knowledgeScope = loadKnowledgeScope();
 
   const validation = validateSampleIndex(records);
   if (!validation.ok) {
@@ -31,6 +52,7 @@ function main() {
     gateDefs: METRIC_GATES,
     frozenManifest,
     coverageManifest,
+    knowledgeScope,
     seed: args.seed ? Number(args.seed) : undefined,
   });
 

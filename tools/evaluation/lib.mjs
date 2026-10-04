@@ -35,7 +35,10 @@ export function formatSummary(report) {
   lines.push(`dataKind=${report.dataKind}  isRealEvaluation=${report.isRealEvaluation}  frozenVerified=${report.frozenVerified}  frozenIndexVersion=${report.frozenIndexVersion}`);
   lines.push(`indexSha256=${report.indexSha256.slice(0, 16)}…  testIndexSha256=${(report.testIndexSha256 ?? '').slice(0, 16)}…  predictionSha256=${report.predictionSha256.slice(0, 16)}…`);
   if (report.splits) lines.push(`划分：train=${report.splits.train}  validation=${report.splits.validation}  test=${report.splits.test}（最终验收仅用 test）`);
-  lines.push(`独立对象去重排除=${report.duplicatesExcluded ?? 0}  覆盖清单=${report.coverageManifestPresent ? '有' : '缺'}`);
+  lines.push(`独立对象去重排除=${report.duplicatesExcluded ?? 0}  覆盖清单=${report.coverageManifestPresent ? '有' : '缺'}  覆盖绑定=${report.coverageBinding?.verified ? '通过' : '未通过'}`);
+  if (report.coverageBinding && !report.coverageBinding.verified) {
+    lines.push(`    覆盖绑定依据=${report.coverageBinding.basisRef ?? '—'}  承诺类=${JSON.stringify(report.coverageBinding.boundClasses ?? [])}`);
+  }
   if (report.predictionEvidence) {
     const pe = report.predictionEvidence;
     lines.push(`预测完整性：期望=${pe.expected} 有效=${pe.present} 缺失=${pe.missing.length} 非法=${pe.invalid.length} 多余=${pe.extra.length} complete=${pe.complete}`);
@@ -52,8 +55,8 @@ export function formatSummary(report) {
     if (m.cer) lines.push(`    CER=${fmt({ ...m.cer, n: m.utteranceCount })}  说话者=${m.speakerCount}  原始缺失=${m.originalMissingCount ?? 0}`);
     if (m.answerableCorrectWithSource) lines.push(`    answerable=${fmt(m.answerableCorrectWithSource)}  expectedBehaviorPass=${fmt(m.expectedBehaviorPass)}`);
     if (m.scenarioPass) lines.push(`    scenarioPass=${fmt(m.scenarioPass)}`);
-    if (m.ttsAllCorrect) lines.push(`    ttsAllCorrect=${fmt(m.ttsAllCorrect)}`);
-    if (m.registrationNumberExact) lines.push(`    登记号完全正确=${fmt(m.registrationNumberExact)}  原始缺失=${m.originalMissingCount ?? 0}  校正样本=${m.correctedCount ?? 0}`);
+    if (m.ttsAllCorrect) lines.push(`    ttsAllCorrect=${fmt(m.ttsAllCorrect)}  未测段=${m.untestedCount ?? 0}`);
+    if (m.registrationNumberExact) lines.push(`    登记号完全正确=${fmt(m.registrationNumberExact)}  原始分母=${m.originalEvaluationDenominator ?? m.consideredForModelAccuracy ?? '—'}  原始缺失=${m.originalMissingCount ?? 0}  完整模型准确率可主张=${m.completeModelAccuracy ?? false}  校正样本=${m.correctedCount ?? 0}`);
   }
   const missing = report.gaps.filter((g) => g.missing > 0);
   lines.push(`样本缺口桶：${missing.length}/${report.gaps.length} 未达标`);

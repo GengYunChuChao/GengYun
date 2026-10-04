@@ -4,7 +4,8 @@
 //   2. 训练/验证样本另列统计，不参与最终评分。
 //   3. 评分与计数**按独立对象去重**（同簇裁剪/连拍/重复 hash 不重复计分）。
 //   4. 预测必须完整、结构合法、与索引 ID 对应；缺失/非法保留 not_evaluated 与缺口，不当成功。
-//   5. 任一条件不满足即 isRealEvaluation=false、全部门禁 claimable=false、状态保持 not_evaluated，
+//   5. 承诺覆盖清单必须**绑定进经核实的冻结清单**并与外部清单一致；缩减/修改一律拒绝（变化须新冻结版本）。
+//   6. 任一条件不满足即 isRealEvaluation=false、全部门禁 claimable=false、状态保持 not_evaluated，
 //      绝不把合成/占位/不足/未冻结/预测缺失的输入写成"通过"。
 
 import { createHash } from 'node:crypto';
@@ -12,7 +13,7 @@ import { SCORERS } from './metrics.mjs';
 import { computeGaps } from './gaps.mjs';
 import { wilsonInterval } from './ci.mjs';
 import { dedupeByIndependentObject } from './grouping.mjs';
-import { verifyFrozenManifest, validatePredictionCoverage, validatePredictionOutput, computeRecordsSha256 } from './frozen.mjs';
+import { verifyFrozenManifest, verifyCoverageBinding, validatePredictionCoverage, validatePredictionOutput, computeRecordsSha256 } from './frozen.mjs';
 
 export const REPORT_SCHEMA_VERSION = '1.0.0';
 
@@ -71,12 +72,15 @@ export function buildGates(task, metrics, gateDefs, claimable, notClaimableReaso
  * 主入口。
  * @param {Array} records 脱敏样本索引（含 gold，含 train/validation/test）
  * @param {Map<string, object>} predictions sampleId -> 模型/规则输出
- * @param {object} options { gateDefs, frozenManifest, coverageManifest, seed, generatedAt }
- *   frozenManifest: 经核实的冻结清单（indexVersion/split/recordCount/indexSha256/frozenAt）；缺失即不可主张。
- *   coverageManifest: 冻结覆盖清单（weedPhotoCoveredClasses）；缺失则逐类达标按未满足计。
+ * @param {object} options { gateDefs, frozenManifest, coverageManifest, knowledgeScope, seed, generatedAt }
+ *   frozenManifest: 经核实的冻结清单（indexVersion/split/recordCount/indexSha256/frozenAt +
+ *     **内嵌 coverage 绑定块**）；缺失或覆盖未绑定即不可主张。
+ *   coverageManifest: 外部承诺覆盖清单（weedPhotoCoveredClasses）；必须与冻结清单内嵌绑定一致，
+ *     缩减/修改/新增一律拒绝（变化须成为新冻结版本）。
+ *   knowledgeScope: 可选 GY-I03 承诺范围（允许的覆盖类全集），提供时承诺类须落在其内。
  */
 export function evaluateRun(records, predictions, options = {}) {
-  const { gateDefs, frozenManifest = null, coverageManifest = null, seed = 20261004, generatedAt = new Date().toISOString() } = options;
+  const { gateDefs, frozenManifest = null, coverageManifest = null, knowledgeScope = null, seed = 20261004, generatedAt = new Date().toISOString() } = options;
   const warnings = [];
 
   // 1. 按 split 划分：最终验收只用 test；train/validation 另列统计。
@@ -87,6 +91,11 @@ export function evaluateRun(records, predictions, options = {}) {
   // 2. 冻结清单校验（针对 test 集）。
   const frozen = verifyFrozenManifest(frozenManifest, testRecordsAll);
   const frozenIndexVersion = frozenManifest && typeof frozenManifest.indexVersion === 'string' ? frozenManifest.indexVersion : 'unfrozen';
+
+  // 2b. 承诺覆盖清单与冻结清单的绑定校验（防事后缩减/修改覆盖清单改变达标结论）。
+  const coverageBinding = verifyCoverageBinding(frozenManifest, coverageManifest, { scopeClasses: knowledgeScope });
+  // 只有绑定通过时，冻结内嵌的承诺覆盖类才可信；否则逐类达标一律按未满足计。
+  const boundCoverageManifest = coverageBinding.verified ? { weedPhotoCoveredClasses: coverageBinding.boundClasses } : null;
 
   // 3. 数据性质（只看参与验收的 test 集）。
   const syntheticCount = testRecordsAll.filter((r) => r.sourceKind === 'synthetic_placeholder').length;
@@ -101,13 +110,18 @@ export function evaluateRun(records, predictions, options = {}) {
   const predictionEvidence = validatePredictionCoverage(testRecords, predictions);
 
   // 6. 缺口（原始 test 集；computeGaps 内部按真实样本去重并如实报重复数）。
-  const gaps = computeGaps(testRecordsAll, { coverageManifest });
+  const gaps = computeGaps(testRecordsAll, { coverageManifest: boundCoverageManifest });
   const gapsSatisfied = gaps.every((g) => g.missing === 0);
   const coverageManifestPresent = gaps.some((g) => g.bucket === 'weed_photo_covered_per_class' && g.coverageManifestPresent === true);
 
   // 7. 是否构成可主张的真实评估。
   const isRealEvaluation =
-    testRecords.length > 0 && frozen.verified && dataKind === 'real_frozen' && gapsSatisfied && predictionEvidence.complete;
+    testRecords.length > 0 &&
+    frozen.verified &&
+    coverageBinding.verified &&
+    dataKind === 'real_frozen' &&
+    gapsSatisfied &&
+    predictionEvidence.complete;
 
   // 8. 警告。
   if (testRecordsAll.length === 0) warnings.push('没有 split=test 的样本：缺少冻结独立测试集，评估未完成，不得主张真实评估。');
@@ -115,6 +129,7 @@ export function evaluateRun(records, predictions, options = {}) {
   if (!frozen.verified) warnings.push(`冻结清单校验未通过：${frozen.reasons.join('；')}`);
   if (!gapsSatisfied) warnings.push('真实样本数量未达第6节标准，评估未完成，不得标记达标。');
   if (!coverageManifestPresent) warnings.push('未提供冻结覆盖清单：覆盖内逐类达标不可推断。');
+  if (!coverageBinding.verified) warnings.push(`承诺覆盖清单未与冻结清单绑定：${coverageBinding.reasons.join('；')}；覆盖达标按未满足计，变化须作为新冻结版本。`);
   if (duplicatesExcluded > 0) warnings.push(`已按独立对象去重：排除近重复/同源记录 ${duplicatesExcluded} 条（不计入评分与缺口）。`);
   if (!predictionEvidence.complete) {
     warnings.push(`预测不完整：缺失 ${predictionEvidence.missing.length} 条，非法/失败 ${predictionEvidence.invalid.length} 条；相关任务保持 not_evaluated。`);
@@ -157,6 +172,13 @@ export function evaluateRun(records, predictions, options = {}) {
     frozenIndexVersion,
     frozenVerified: frozen.verified,
     frozenVerification: { verified: frozen.verified, reasons: frozen.reasons, indexSha256: frozen.computedSha256, manifestSha256: frozen.manifestSha256 },
+    coverageBinding: {
+      verified: coverageBinding.verified,
+      reasons: coverageBinding.reasons,
+      boundClasses: coverageBinding.boundClasses,
+      coverageSha256: coverageBinding.coverageSha256,
+      basisRef: coverageBinding.basisRef,
+    },
     splits: { train: trainCount, validation: validationCount, test: testRecordsAll.length, total: records.length },
     duplicatesExcluded,
     coverageManifestPresent,

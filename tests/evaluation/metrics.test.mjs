@@ -120,6 +120,26 @@ test('标签 OCR：corrected=true 但缺原始输出 → 原始缺失计缺口�
   assert.equal(m.registrationNumberExact.p, null);
 });
 
+test('标签 OCR：2 清晰样本（1 原始正确 + 1 校正缺原始）→ 保留原始分母，不得虚报 100%/n=1', () => {
+  const pairs = [
+    { record: { quality: 'clear', gold: { registrationNumber: 'R1', content: '10%' } }, output: { fields: { registrationNumber: 'R1', content: '10%' }, corrected: false } },
+    { record: { quality: 'clear', gold: { registrationNumber: 'R2', content: '20%' } }, output: { corrected: true, fields: { registrationNumber: 'R2', content: '20%' } } },
+  ];
+  const m = labelOcrMetrics(pairs);
+  assert.equal(m.clearCount, 2);
+  assert.equal(m.modelScoredCount, 1);
+  assert.equal(m.originalMissingCount, 1);
+  // 分母固定为原始评估集分母 2，不是缺口后的子集 1
+  assert.equal(m.originalEvaluationDenominator, 2);
+  assert.equal(m.consideredForModelAccuracy, 2);
+  assert.equal(m.originalDenominatorComplete, false);
+  assert.equal(m.completeModelAccuracy, false);
+  assert.equal(m.registrationNumberExact.n, 2);
+  near(m.registrationNumberExact.p, 0.5);
+  assert.equal(m.fieldExact.content.n, 2);
+  near(m.fieldExact.content.p, 0.5);
+});
+
 test('ASR：仅消费原始转写，手改稿不得补成绩', () => {
   const gold = { reference: '草甘膦一百毫升', keyFields: { drugNames: ['草甘膦'] } };
   const pairs = [
@@ -147,7 +167,7 @@ test('ASR：纯校正输入（无原始转写）→ 原始缺失，不计 CER、
   assert.equal(m.cer.p, null);
 });
 
-test('AI 筛查：风险召回与正常误隔离率', () => {
+test('AI 筛查：风险召回与正常误隔离率；unknown/非法枚举不算正常通过', () => {
   const pairs = [
     { record: { expectation: 'risk' }, output: { decision: 'blocked' } },
     { record: { expectation: 'risk' }, output: { decision: 'pending_review' } },
@@ -158,14 +178,37 @@ test('AI 筛查：风险召回与正常误隔离率', () => {
   const m = aiModerationMetrics(pairs);
   near(m.riskRecall.p, 2 / 3);
   near(m.normalFalseIsolationRate.p, 0.5);
+  // 非法/服务错误枚举：正常样本不得算正常通过（计误隔离），风险样本不得计入命中。
+  const tampered = aiModerationMetrics([
+    { record: { expectation: 'normal' }, output: { decision: 'UNVALIDATED_SERVICE_ERROR' } },
+    { record: { expectation: 'normal' }, output: { decision: 'unknown' } },
+    { record: { expectation: 'risk' }, output: { decision: 'UNVALIDATED_SERVICE_ERROR' } },
+  ]);
+  near(tampered.normalFalseIsolationRate.p, 1);
+  near(tampered.riskRecall.p, 0);
 });
 
-test('TTS：全部准确才 allCorrect', () => {
-  const ok = { numbersCorrect: true, unitsCorrect: true, negationCorrect: true, conditionsCorrect: true };
+test('TTS：六项全部准确才 allCorrect（缺项记未测，不得默认成功）', () => {
+  const ok = {
+    numbersCorrect: true,
+    unitsCorrect: true,
+    negationCorrect: true,
+    conditionsCorrect: true,
+    stopReplayCorrect: true,
+    textFallbackCorrect: true,
+  };
   const pairs = [{ output: ok }, { output: { ...ok, unitsCorrect: false } }];
   const m = ttsMetrics(pairs);
   near(m.ttsAllCorrect.p, 0.5);
   assert.equal(m.allCorrect, false);
+  assert.equal(m.untestedCount, 0);
+  // 只有四项（缺停止重播/文字替代）→ 记未测，不按通过
+  const partial = ttsMetrics([{ output: { numbersCorrect: true, unitsCorrect: true, negationCorrect: true, conditionsCorrect: true } }]);
+  assert.equal(partial.ttsAllCorrect.p, 0);
+  assert.equal(partial.allCorrect, false);
+  assert.equal(partial.untestedCount, 1);
+  assert.equal(partial.perFieldMissing.stopReplayCorrect, 1);
+  assert.equal(partial.perFieldMissing.textFallbackCorrect, 1);
 });
 
 test('ASR：总体 CER 与关键字段、说话者计数', () => {

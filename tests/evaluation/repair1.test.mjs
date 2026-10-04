@@ -114,14 +114,16 @@ test('[负例2b] 缺冻结覆盖清单：逐类达标不可推断，门禁不通
   assert.equal(report.isRealEvaluation, false);
 });
 
-test('[负例2c] 覆盖清单承诺类别未到位：逐类取清单最小值，漏类即缺口', () => {
+test('[负例2c] 覆盖清单承诺类别未到位（冻结承诺含未采集类）：逐类取清单最小值，漏类即缺口', () => {
   const { records, predictions, classes } = buildValidationSet();
+  const promised = [...classes, 'CLS_NOT_COLLECTED'];
   const report = evaluateRun(records, toMap(predictions), {
     gateDefs: METRIC_GATES,
-    frozenManifest: frozenManifestFor(records),
-    coverageManifest: { weedPhotoCoveredClasses: [...classes, 'CLS_NOT_COLLECTED'] },
+    frozenManifest: frozenManifestFor(records, { coverage: { weedPhotoCoveredClasses: promised } }),
+    coverageManifest: coverageManifestFor(promised),
   });
   const perClass = report.gaps.find((g) => g.bucket === 'weed_photo_covered_per_class');
+  assert.equal(report.coverageBinding.verified, true);
   assert.equal(perClass.present, 0);
   assert.equal(perClass.missing, 30);
   assert.equal(report.isRealEvaluation, false);

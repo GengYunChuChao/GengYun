@@ -53,6 +53,9 @@
 
 1. **先冻结再调参**：最终测试集在模型调参前冻结；冻结清单须含 `indexVersion`、`split=test`、`recordCount`、
    `indexSha256`（与 test 集逐字节一致）与 `frozenAt`，来源标签或手填版本号不能代替冻结清单校验。
+   冻结清单还须**内嵌承诺覆盖清单绑定块** `coverage = { weedPhotoCoveredClasses, coverageSha256, basisRef }`：
+   外部 `--coverage` 必须与内嵌绑定一致，**缩减/修改/新增一律拒绝**；覆盖口径的任何变化**必须成为新的冻结版本**
+   （新的 `indexVersion`/`manifestSha256`），并与 GY-I03 承诺范围核对（承诺类须落在首批承诺范围内）。
 2. **同簇不跨 split**：同一 `clusterId` 的所有样本必须落在同一 `split`（校验器报错阻断）。
 3. **连拍不跨 split**：同一 `captureSeriesId` 必须同簇、同 split。
 4. **文本近重复不跨 split**：问答/ASR 中标准答案文本完全相同的样本必须同 split。

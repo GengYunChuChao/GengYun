@@ -3,9 +3,28 @@
 // 来源标签（sourceKind）或手填版本号**不能**代替冻结清单校验。
 
 import { createHash } from 'node:crypto';
-import { originalOcrFields, originalAsrOutput, isObject, WEED_DECISIONS } from './metrics.mjs';
+import {
+  originalOcrFields,
+  originalAsrOutput,
+  isObject,
+  WEED_DECISIONS,
+  MODERATION_DECISIONS,
+  TTS_JUDGEMENT_FIELDS,
+} from './metrics.mjs';
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+
+/** 规范化覆盖类清单（去空、去非字符串，保持顺序）。返回 null 表示非数组。 */
+function normalizeCoveredClasses(value) {
+  if (!Array.isArray(value)) return null;
+  return value.filter((c) => typeof c === 'string' && c.trim() !== '');
+}
+
+/** 承诺覆盖清单的规范化 SHA-256（用于与冻结清单绑定核对）。 */
+export function computeCoverageSha256(coverage) {
+  const classes = normalizeCoveredClasses(coverage?.weedPhotoCoveredClasses) ?? [];
+  return sha256(JSON.stringify({ weedPhotoCoveredClasses: classes }));
+}
 
 /** 计算一组记录（保持给定顺序）的规范化 SHA-256。 */
 export function computeRecordsSha256(records) {
@@ -37,6 +56,50 @@ export function verifyFrozenManifest(manifest, testRecords) {
 }
 
 /**
+ * 承诺覆盖清单与冻结清单的**绑定校验**（修复轮 2）。
+ * 冻结清单须内嵌 `coverage = { weedPhotoCoveredClasses, coverageSha256, basisRef }`；
+ * 外部 `coverageManifest` 必须与内嵌绑定逐字节一致——**缩减/修改/新增一律拒绝**，
+ * 变更只能通过产出新的冻结版本（新的 indexVersion / manifestSha256）来表达。
+ * 可选 `scopeClasses`（GY-I03 承诺范围）用于核对承诺类是否落在首批承诺范围内。
+ * 返回 { verified, reasons, boundClasses, coverageSha256, frozenCoverageSha256, basisRef }。
+ */
+export function verifyCoverageBinding(frozenManifest, coverageManifest, { scopeClasses = null } = {}) {
+  const empty = { verified: false, reasons: [], boundClasses: null, coverageSha256: null, frozenCoverageSha256: null, basisRef: null };
+  if (!isObject(frozenManifest)) {
+    return { ...empty, reasons: ['缺少冻结清单：承诺覆盖清单无法与冻结版本绑定'] };
+  }
+  const embedded = frozenManifest.coverage;
+  const boundClasses = normalizeCoveredClasses(embedded?.weedPhotoCoveredClasses);
+  if (!isObject(embedded) || boundClasses === null || boundClasses.length === 0) {
+    return { ...empty, reasons: ['冻结清单未内嵌承诺覆盖类清单（coverage.weedPhotoCoveredClasses），逐类达标不可推断'] };
+  }
+  const frozenCoverageSha256 = computeCoverageSha256({ weedPhotoCoveredClasses: boundClasses });
+  const reasons = [];
+  if (embedded.coverageSha256 !== frozenCoverageSha256) reasons.push('冻结清单 coverageSha256 与其内嵌覆盖类不一致（冻结覆盖块被改动）');
+  if (typeof embedded.basisRef !== 'string' || embedded.basisRef.trim() === '') reasons.push('冻结清单未标注覆盖承诺依据（coverage.basisRef，应指向 GY-I03 承诺范围）');
+
+  const externalClasses = normalizeCoveredClasses(coverageManifest?.weedPhotoCoveredClasses);
+  if (externalClasses === null || externalClasses.length === 0) {
+    reasons.push('未提供外部覆盖清单：与冻结绑定的承诺类无法核对（逐类达标按未满足计）');
+  } else {
+    const externalSha = computeCoverageSha256({ weedPhotoCoveredClasses: externalClasses });
+    if (externalSha !== frozenCoverageSha256) {
+      reasons.push(
+        `外部覆盖清单与冻结清单绑定不一致（外部 ${externalClasses.length} 类 ≠ 冻结 ${boundClasses.length} 类）：覆盖清单被缩减/修改，须作为新冻结版本重新冻结`,
+      );
+    }
+  }
+
+  if (Array.isArray(scopeClasses) && scopeClasses.length > 0) {
+    const scope = new Set(scopeClasses);
+    const outside = boundClasses.filter((c) => !scope.has(c));
+    if (outside.length > 0) reasons.push(`冻结承诺覆盖类超出 GY-I03 已承诺范围：${outside.join(', ')}`);
+  }
+
+  return { verified: reasons.length === 0, reasons, boundClasses, coverageSha256: frozenCoverageSha256, frozenCoverageSha256, basisRef: embedded.basisRef ?? null };
+}
+
+/**
  * 单条预测的结构/失败标记校验。
  * 返回 { ok, reason }：ok=false 表示该预测不可用于评分（缺失/结构非法/服务失败）。
  * 注意：`decision=uncertain` 等拒识是**合法结果**，不是失败；这里只看结构完整性与失败标记。
@@ -59,11 +122,15 @@ export function validatePredictionOutput(task, output) {
       if (typeof output.status !== 'string') return { ok: false, reason: '缺少 status' };
       return { ok: true };
     case 'ai_moderation':
-      if (typeof output.decision !== 'string') return { ok: false, reason: '缺少 decision' };
+      if (!MODERATION_DECISIONS.includes(output.decision)) {
+        return { ok: false, reason: `缺少合法最终 decision（需 ${MODERATION_DECISIONS.join('/')}；unknown/服务错误/非法枚举不得算正常通过）` };
+      }
       return { ok: true };
     case 'tts':
-      if (['numbersCorrect', 'unitsCorrect', 'negationCorrect', 'conditionsCorrect'].some((k) => typeof output[k] !== 'boolean')) {
-        return { ok: false, reason: '缺少 TTS 布尔判定字段' };
+      // 六项判定必须明确存在且为布尔值；缺失记未测，不得默认成功。
+      if (TTS_JUDGEMENT_FIELDS.some((k) => typeof output[k] !== 'boolean')) {
+        const missing = TTS_JUDGEMENT_FIELDS.filter((k) => typeof output[k] !== 'boolean');
+        return { ok: false, reason: `缺少 TTS 布尔判定字段（未测）：${missing.join('/')}` };
       }
       return { ok: true };
     case 'asr':

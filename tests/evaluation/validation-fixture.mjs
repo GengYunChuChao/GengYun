@@ -4,7 +4,7 @@
 // 红线：本文件**不得**被当作真实评估样本，也不得产出任何真实结论；
 //   它只用于断言"条件不满足时程序必须拒绝主张"。真实样本须由真实采集/标注另行交接。
 import { createHash } from 'node:crypto';
-import { computeRecordsSha256 } from '../../packages/evaluation/index.mjs';
+import { computeRecordsSha256, computeCoverageSha256 } from '../../packages/evaluation/index.mjs';
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -121,9 +121,19 @@ export function buildValidationSet({ classes = VALIDATION_CLASSES } = {}) {
   return { records, predictions, classes };
 }
 
-/** 由记录（默认 test 划分）构造匹配的冻结清单；可覆盖字段用于负例。 */
+/** 由记录（默认 test 划分）构造匹配的冻结清单；可覆盖字段用于负例。
+ *  修复轮 2：冻结清单内嵌承诺覆盖清单绑定块（coverage.weedPhotoCoveredClasses + coverageSha256 + basisRef），
+ *  使覆盖口径与冻结版本绑定；可用 overrides.coverage.weedPhotoCoveredClasses 产出新的冻结版本。 */
 export function frozenManifestFor(records, overrides = {}) {
   const testRecords = records.filter((r) => r.split === 'test');
+  const coveredClasses = overrides.coverage?.weedPhotoCoveredClasses ?? VALIDATION_CLASSES;
+  const basisRef = overrides.coverage?.basisRef ?? 'GY-I03#species_groups';
+  const coverageBlock = {
+    weedPhotoCoveredClasses: [...coveredClasses],
+    coverageSha256: computeCoverageSha256({ weedPhotoCoveredClasses: coveredClasses }),
+    basisRef,
+  };
+  const { coverage: _coverage, ...rest } = overrides;
   return {
     manifestVersion: '1.0.0',
     indexVersion: 'validation-v1',
@@ -131,7 +141,8 @@ export function frozenManifestFor(records, overrides = {}) {
     recordCount: testRecords.length,
     indexSha256: computeRecordsSha256(testRecords),
     frozenAt: '2026-10-04T00:00:00Z',
-    ...overrides,
+    coverage: coverageBlock,
+    ...rest,
   };
 }
 

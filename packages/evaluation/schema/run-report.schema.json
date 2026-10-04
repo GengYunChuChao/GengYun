@@ -47,6 +47,19 @@
         "manifestSha256": { "type": ["string", "null"] }
       }
     },
+    "coverageBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "承诺覆盖清单与冻结清单的绑定校验；verified=false 表示覆盖清单未绑定/被缩减或修改，覆盖达标按未满足计。",
+      "required": ["verified", "reasons"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "boundClasses": { "type": ["array", "null"], "items": { "type": "string" } },
+        "coverageSha256": { "type": ["string", "null"] },
+        "basisRef": { "type": ["string", "null"] }
+      }
+    },
     "splits": {
       "type": "object",
       "additionalProperties": true,

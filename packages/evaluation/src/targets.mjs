@@ -33,7 +33,7 @@ export const METRIC_GATES = [
   { metric: 'scenarioPass', task: 'registration_match', target: 1, direction: 'eq', note: '100组标准场景全部通过' },
   { metric: 'riskRecall', task: 'ai_moderation', target: 0.95, direction: 'gte', note: '风险拦截或待复核召回率≥95%' },
   { metric: 'normalFalseIsolationRate', task: 'ai_moderation', target: 0.1, direction: 'lte', note: '正常误隔离率≤10%' },
-  { metric: 'ttsAllCorrect', task: 'tts', target: 1, direction: 'eq', note: '数字单位、否定词、条件在固定样例全部准确' },
+  { metric: 'ttsAllCorrect', task: 'tts', target: 1, direction: 'eq', note: '数字单位、否定词、条件、停止重播/文字替代六项在固定样例全部准确（六项须明确为布尔值，缺失记未测）' },
   { metric: 'cer', task: 'asr', target: 0.15, direction: 'lte', note: '总体字符错误率≤15%' },
   { metric: 'keyFieldExact', task: 'asr', target: 0.95, direction: 'gte', note: '关键药名/数字/单位字段完全正确率≥95%' },
   { metric: 'answerableCorrectWithSource', task: 'qa', target: 0.95, direction: 'gte', note: '可答经独立复核正确且有来源支持≥95%' },
