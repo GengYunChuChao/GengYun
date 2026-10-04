@@ -56,6 +56,12 @@ const PRESETS = {
     title: '示例数据',
     desc: '当前为开发模式下的替身数据，不是真实识别结果，不能作为用药依据。',
     actionText: ''
+  },
+  ready: {
+    icon: '',
+    title: '',
+    desc: '',
+    actionText: ''
   }
 };
 
