@@ -88,13 +88,21 @@ python tools/test_contracts.py
 
 上文记录的 `2.02.2608080` 为当时版本。2026-10-04 实测当前为 **`2.02.2609231 RC win32-x64`**，调试基础库 `3.17.3`（灰度中）。原始版本号保留，不代表当前环境。
 
-### 3 配置与正式 AppID 的一致性缺陷（已修）
+### 3 本地配置漂移与工具改写（已修，含一次误判更正）
 
-`project.config.json` 原将 `appid` 写为 **`wx004043e9a9d2feab`（测试号）**，与本文件记录的正式 AppID `wx4407a4b908a69a54` 不一致——即配置侧仍指向测试号，而账号侧已完成正式号鉴权。
+事实需分清两层，以下为 2026-10-04 实测结论：
 
-2026-10-04 已将 `project.config.json` 与 `project.private.config.json` 的 `appid` 统一更正为 `wx4407a4b908a69a54`，`libVersion` 统一为 `3.17.3`，`project.private.config.json` 的 `projectname` 由 `challenge_cup` 改为 `GengYun`。工具侧实测 AppID 已生效并完成编译。
+**仓库侧从未出错。** `main:project.config.json` 一直为正式 AppID `wx4407a4b908a69a54` 与 `libVersion: 3.5.5`，并被 `tools/check-wechat-project.mjs` 冻结断言。远端配置与冻结契约一致。
 
-此缺陷属配置漂移，不影响已完成的 `stable_token` 与 `jscode2session` 实测——那两项走的是 `E:\GengYunPrivate` 中的私密凭据文件，与仓库内 `appid` 字段无关。
+**漂移发生在本地工作区且未提交。** 本地 `project.config.json` 的 `appid` 被写为测试号 `wx004043e9a9d2feab`（项目已开发阶段 2026-10-04 上午实测），该改动始终未进入任何提交，因此 `tools/check-wechat-project.mjs` 在 `main` 上是 PASS 的。
+
+**开发过程中的一次误判（记录以备复查）。** 我最初把本地这个未提交状态读作「仓库配置指向测试号」并提交，同时误将 `libVersion` 改为开发者工具本地显示的 `3.17.3`（灰度中）、把中文 `description` 改为英文。这直接导致 PR #39 的 CI 在 `assert.equal(project.libVersion, '3.5.5')` 处失败（报错 `'3.17.3' !== '3.5.5'`）。已全部回退：`project.config.json` 恢复为与 `main` 逐字一致，CI 复跑 PASS。
+
+**结论与规范。** `libVersion: 3.5.5` 是冻结契约的一部分，不得依据本地工具显示值（含灰度版本）改动；工具「调试基础库」下拉是本机调试选择，与仓库锁定值是两层概念，走查证据须分别记录。
+
+**工具自动改写 `project.config.json`。** 微信开发者工具打开项目后会把 `setting` 从紧凑单行展开并追加 `postcss`、`compileWorklet`、`uploadWithSourceMap`、`simulatorPluginLibVersion`、`editorSetting` 等约 20 个字段，且写入后无行尾换行。该改写每次打开项目都会产生，属本地工具痕迹，**不得提交**，否则与队友产生无关冲突。
+
+**未入库的私有配置。** `project.private.config.json` 已被精确忽略，本次仅将 `appid` 补为正式号、`projectname` 由 `challenge_cup` 改为 `GengYun`、`libVersion` 设为 `3.5.5`；本地登录信息与工具偏好留在该文件，不进 Git。
 
 ### 4 本节新增的实测范围
 

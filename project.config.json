@@ -1,38 +1,10 @@
 {
-  "description": "GengYun native miniprogram; official AppID bound",
+  "description": "耕云原生工程；账号与工具编译资格待验证",
   "compileType": "miniprogram",
   "miniprogramRoot": "miniprogram/",
   "appid": "wx4407a4b908a69a54",
   "projectname": "GengYun",
-  "libVersion": "3.17.3",
-  "setting": {
-    "urlCheck": true,
-    "es6": true,
-    "minified": true,
-    "postcss": false,
-    "compileWorklet": false,
-    "uglifyFileName": false,
-    "uploadWithSourceMap": true,
-    "enhance": false,
-    "packNpmManually": false,
-    "packNpmRelationList": [],
-    "minifyWXSS": true,
-    "minifyWXML": true,
-    "localPlugins": false,
-    "disableUseStrict": false,
-    "useCompilerPlugins": false,
-    "condition": false,
-    "babelSetting": {
-      "ignore": [],
-      "disablePlugins": [],
-      "outputPath": ""
-    }
-  },
-  "packOptions": {
-    "ignore": [],
-    "include": []
-  },
-  "isGameTourist": false,
-  "simulatorPluginLibVersion": {},
-  "editorSetting": {}
+  "libVersion": "3.5.5",
+  "setting": { "urlCheck": true, "es6": true, "minified": true },
+  "packOptions": { "ignore": [], "include": [] }
 }
