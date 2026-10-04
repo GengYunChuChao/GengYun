@@ -1,1 +1,43 @@
-<view class="page"><view class="title">社区</view><view class="card">微信登录尚未接入。发帖、评论与每版AI审核尚未实现；没有公开测试投稿。</view><view class="status">仅开发准备空态，不能作为业务验收。</view></view>
+<view class="page">
+  <view class="page-title">社区</view>
+  <view class="page-subtitle">农户互助问答与经验分享</view>
+
+  <view class="notice" wx:if="{{guest}}">
+    <text class="notice__icon">🔒</text>
+    <text class="notice__text">登录后才能浏览和发布社区内容。</text>
+  </view>
+
+  <state-view
+    wx:if="{{guest}}"
+    status="guest"
+    title="请先登录"
+    desc="社区需要登录后才能查看。游客无法浏览帖子，也无法发布或评论。"
+  ></state-view>
+
+  <block wx:else>
+    <state-view
+      status="empty"
+      title="还没有帖子"
+      desc="社区尚未开放，发布、评论与点赞功能均未接入。后续开放时，每条内容都会先经审核再对外展示。"
+      action-text="发布经验"
+      bind:action="onPublish"
+    ></state-view>
+
+    <view class="section-title">功能规划</view>
+    <view class="card">
+      <view class="card-title">人工审核</view>
+      <view class="card-text">
+        人工审核入口正在建设中，当前不提供人工审核功能，也不接受任何投稿。
+        审核团队、专家身份与举报处理都会在后续任务中落地，现在不会显示任何已审核通过的假内容。
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">内容安全</view>
+      <view class="card-text">
+        社区内容将先经过机器筛查，必要时进入人工复核。涉及用药的内容会额外核对来源，
+        未经核实的信息不会以"专家建议"的形式展示。
+      </view>
+    </view>
+  </block>
+</view>

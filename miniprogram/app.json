@@ -1,8 +1,8 @@
 {
   "pages": ["pages/home/home", "pages/identify/identify", "pages/community/community", "pages/messages/messages", "pages/profile/profile"],
-  "window": { "navigationBarTitleText": "耕云", "navigationBarBackgroundColor": "#2E7D32", "navigationBarTextStyle": "white", "backgroundColor": "#F4F9F4" },
+  "window": { "navigationBarTitleText": "耕云", "navigationBarBackgroundColor": "#1F7A45", "navigationBarTextStyle": "white", "backgroundColor": "#F4F9F4" },
   "tabBar": {
-    "color": "#555555", "selectedColor": "#2E7D32",
+    "color": "#555555", "selectedColor": "#1F7A45",
     "list": [
       { "pagePath": "pages/home/home", "text": "首页" },
       { "pagePath": "pages/identify/identify", "text": "识别" },

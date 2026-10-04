@@ -1,8 +1,43 @@
 <view class="page">
-  <view class="title">耕云</view>
-  <view>识草查药与除草科普社区</view>
-  <view class="card">科普内容尚未接入。当前仅用于原生工程导入和调试准备。</view>
-  <view class="card">首版规划：拍草识别、标签OCR、普通话语音与文字提问。当前没有相机、录音、登录或AI调用。</view>
-  <button wx:if="{{local}}" bindtap="diagnose" loading="{{busy}}" disabled="{{busy}}">检查本地替身连接</button>
-  <view class="status">{{status}}</view>
+  <view class="hero">
+    <view class="hero__brand">耕云</view>
+    <view class="hero__title">识草查药，除草不求人</view>
+    <view class="hero__sub">拍照识别 · 语音提问 · 用药提醒</view>
+    <view class="hero__badge" wx:if="{{guest}}">游客浏览 · 登录后可保存记录</view>
+  </view>
+
+  <view class="section-title">常用功能</view>
+
+  <view
+    class="entry"
+    wx:for="{{entries}}"
+    wx:key="key"
+    hover-class="entry--hover"
+    bindtap="onEntryTap"
+  >
+    <view class="entry__icon">{{item.icon}}</view>
+    <view class="entry__body">
+      <view class="entry__title">{{item.title}}</view>
+      <view class="entry__desc">{{item.desc}}</view>
+    </view>
+    <view class="badge badge--stub">未接入</view>
+  </view>
+
+  <view class="section-title">当前状态</view>
+  <state-view
+    status="stub"
+    title="功能尚未接入"
+    desc="拍草识别、标签识别、语音提问与社区均未接入真实服务。本页仅用于界面与导航走查，所列内容不能作为用药依据。"
+  ></state-view>
+
+  <block wx:if="{{local}}">
+    <view class="section-title">开发工具</view>
+    <button
+      class="btn btn--ghost dev-btn"
+      bindtap="diagnose"
+      loading="{{busy}}"
+      disabled="{{busy}}"
+    >检查本地替身连接</button>
+    <view class="dev-status">{{status}}</view>
+  </block>
 </view>

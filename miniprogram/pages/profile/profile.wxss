@@ -1,0 +1,47 @@
+.guest-card {
+  padding: 32rpx 28rpx;
+  border-radius: var(--radius-lg, 28rpx);
+  background: var(--color-surface, #fff);
+  border: 2rpx solid var(--color-border, #D8E4DC);
+}
+
+.guest-card__title {
+  font-size: 38rpx;
+  font-weight: 700;
+}
+
+.guest-card__desc {
+  margin-top: 14rpx;
+  font-size: 30rpx;
+  line-height: 1.7;
+  color: var(--color-text-sub, #4A5A4E);
+}
+
+.guest-card__btn {
+  width: 100%;
+  margin-top: 28rpx;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  padding: 22rpx 0;
+  border-bottom: 2rpx solid var(--color-bg, #F4F9F4);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row__label {
+  flex: 0 0 220rpx;
+  font-size: 32rpx;
+  color: var(--color-text-sub, #4A5A4E);
+}
+
+.row__value {
+  flex: 1;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--color-text, #1B2B1E);
+}

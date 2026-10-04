@@ -1,1 +1,5 @@
-{"navigationBarTitleText": "消息"}
+{
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view"
+  }
+}

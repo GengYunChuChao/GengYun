@@ -1,1 +1,45 @@
-<view class="page"><view class="title">识别</view><view class="card">微信登录尚未接入。拍草识别、标签OCR、普通话语音及文字问答均未实现；本页不采集图片或录音。</view><view class="status">仅开发准备空态，不能作为业务验收。</view></view>
+<view class="page">
+  <view class="page-title">识别</view>
+  <view class="page-subtitle">拍照或说话，查找杂草与农药资料</view>
+
+  <view class="notice" wx:if="{{guest}}">
+    <text class="notice__icon">🔒</text>
+    <text class="notice__text">您正在以游客身份浏览，登录后才能实际使用识别与语音功能。</text>
+  </view>
+
+  <view class="mode" wx:for="{{modes}}" wx:key="key">
+    <view class="mode__head">
+      <text class="mode__icon">{{item.icon}}</text>
+      <view class="mode__body">
+        <view class="mode__title">{{item.title}}</view>
+        <view class="mode__desc">{{item.desc}}</view>
+      </view>
+    </view>
+    <button class="btn btn--primary mode__btn" disabled="{{guest}}" bindtap="onShoot">
+      {{item.action}}
+    </button>
+  </view>
+
+  <view class="card">
+    <view class="card-title">语音提问</view>
+    <view class="card-text">
+      录音与播放分成两个按钮：先点录音，说完再点播放回听。这样不会在说话时误触覆盖，也不会把录音直接发出去。
+    </view>
+    <view class="voice-row">
+      <button class="btn btn--primary voice-btn" disabled="{{guest}}" bindtap="onRecord">
+        {{recording ? '录音中…' : '开始录音'}}
+      </button>
+      <button class="btn btn--secondary voice-btn" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
+        播放录音
+      </button>
+    </view>
+    <view class="voice-hint" wx:if="{{!hasRecording}}">还没有录音。录音功能尚未接入，此处仅演示按钮布局。</view>
+  </view>
+
+  <view class="section-title">服务状态</view>
+  <state-view
+    status="stub"
+    title="识别能力未接入"
+    desc="拍草识别、标签识别、语音转写与大模型问答均未接入真实服务，页面不会采集照片或录音。识别结果将在后续任务中逐项替换。"
+  ></state-view>
+</view>

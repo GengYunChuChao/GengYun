@@ -1,6 +1,166 @@
-page { background: #f4f9f4; color: #25352a; font-size: 36rpx; }
-.page { padding: 40rpx 32rpx; }
-.title { font-size: 52rpx; font-weight: bold; margin-bottom: 24rpx; }
-.card { background: white; border-radius: 20rpx; padding: 28rpx; margin: 24rpx 0; line-height: 1.7; }
-.status { color: #52665a; margin-top: 24rpx; }
-button { margin-top: 28rpx; font-size: 36rpx; }
+/**
+ * 全局样式基线（GY-I26）
+ * ------------------------------------------------------------
+ * 指标依据任务书：主题绿 #1F7A45、正文优先 18px、44px 等效触控区。
+ * 换算关系：小程序 rpx 以 750 为设计稿宽度，375px 机型下 1px = 2rpx。
+ *   正文 18px  -> 36rpx
+ *   触控 44px  -> 88rpx
+ *
+ * 可访问性约定：
+ *   1. 任何状态都不只用颜色表达，必须同时有文字或图标；
+ *   2. 风险提示不得使用"绝对安全""零风险"等表述；
+ *   3. 录音与播放按钮分离，避免误触。
+ */
+
+page {
+  /* 主题绿 */
+  --color-primary: #1F7A45;
+  --color-primary-deep: #145C34;
+  --color-primary-soft: #E8F3EC;
+
+  /* 背景与文字 */
+  --color-bg: #F4F9F4;
+  --color-surface: #FFFFFF;
+  --color-text: #1B2B1E;
+  --color-text-sub: #4A5A4E;
+  --color-text-muted: #6F7F72;
+  --color-border: #D8E4DC;
+
+  /* 状态色（均配合文字使用） */
+  --color-loading: #1F6FB2;
+  --color-error: #C62828;
+  --color-invalid: #8A6D1F;
+  --color-stub: #5B4B8A;
+
+  /* 触控与间距 */
+  --tap-min: 88rpx;
+  --gap-xs: 16rpx;
+  --gap: 28rpx;
+  --gap-lg: 40rpx;
+  --radius: 20rpx;
+  --radius-lg: 28rpx;
+
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 36rpx;
+  line-height: 1.7;
+}
+
+/* ============================ 布局 ============================ */
+
+.page {
+  min-height: 100vh;
+  padding: 32rpx 28rpx calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.page-title {
+  font-size: 48rpx;
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: 12rpx;
+}
+
+.page-subtitle {
+  font-size: 32rpx;
+  color: var(--color-text-sub);
+  margin-bottom: 32rpx;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  font-size: 36rpx;
+  font-weight: 600;
+  margin: 36rpx 0 20rpx;
+}
+
+.section-title::before {
+  content: '';
+  width: 8rpx;
+  height: 32rpx;
+  border-radius: 999rpx;
+  background: var(--color-primary);
+  margin-right: 14rpx;
+}
+
+/* ============================ 卡片 ============================ */
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 32rpx 28rpx;
+  margin-bottom: 24rpx;
+  border: 2rpx solid var(--color-border);
+}
+
+.card-title {
+  font-size: 36rpx;
+  font-weight: 600;
+  margin-bottom: 16rpx;
+}
+
+.card-text {
+  font-size: 32rpx;
+  color: var(--color-text-sub);
+  line-height: 1.7;
+}
+
+/* ============================ 按钮 ============================ */
+
+/* 触控高度不小于 88rpx（44px 等效） */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
+  padding: 0 32rpx;
+  border-radius: 999rpx;
+  font-size: 36rpx;
+  font-weight: 600;
+  line-height: 1.4;
+  border: none;
+  box-sizing: border-box;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.btn--secondary {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-deep);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--color-primary);
+  border: 2rpx solid var(--color-primary);
+}
+
+.btn[disabled] {
+  opacity: 0.5;
+}
+
+/* 供各页复用的行内标签 */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48rpx;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-deep);
+}
+
+.badge--stub {
+  background: #EFEAF7;
+  color: var(--color-stub);
+}
