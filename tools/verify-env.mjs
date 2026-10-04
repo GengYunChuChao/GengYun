@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
+import { configurationIssues, loadPrivateEnvironment } from './ai-config.mjs';
 
 export const PROVIDERS = [
   ['weedRecognition', '识草'], ['ocr', '标签 OCR'], ['asr', '普通话 ASR'],
@@ -71,7 +72,10 @@ export async function verifyEnvironment({ config, env = process.env, nodeVersion
       const imageEndpoint = key === 'moderation' ? validatedHTTPS(p?.image?.endpoint) : null;
       const imageConfigured = key !== 'moderation' || Boolean(imageEndpoint);
       if (key === 'moderation') add(imageConfigured ? 'PASS' : 'FAIL', '供应商配置', '图片审核', imageConfigured ? '图片审核HTTPS端点已填写；未认证/未调用' : '缺少独立图片审核HTTPS端点；文字接口不能代替图片审核');
-      const complete = Boolean(endpoint && vendor && credential && identity && imageConfigured);
+      const typedKeys = key === 'moderation' ? ['moderationText', 'moderationImage'] : [key];
+      const typedIssues = typedKeys.flatMap(k => configurationIssues(config, k));
+      add(typedIssues.length ? 'FAIL' : 'PASS', '调用参数', label, typedIssues.length ? '未完成：' + [...new Set(typedIssues)].join(', ') : '固定端点/认证/参数/时限/次数配置已核对；非业务成功');
+      const complete = Boolean(endpoint && vendor && credential && identity && imageConfigured && typedIssues.length === 0);
       const network = !endpoint || !vendor || !canProbe
         ? { state: 'SKIPPED_INVALID_CONFIG', capabilityVerified: false }
         : probe ? await probeHTTPS(p.endpoint, fetchImpl) : { state: 'NOT_REQUESTED', capabilityVerified: false };
@@ -97,12 +101,7 @@ async function main() {
     if (!file || file.startsWith('--')) { console.error('Missing credential file path.'); process.exitCode = 1; return; }
     args.splice(credentialOption, 2);
     try {
-      const privateConfig = JSON.parse(readFileSync(file, 'utf8'));
-      if (privateConfig.appid !== 'wx4407a4b908a69a54') throw new Error('mismatch');
-      env = { ...process.env };
-      for (const [field, variable] of [['appsecret', 'WECHAT_APP_SECRET'], ['deepseekApiKey', 'DEEPSEEK_API_KEY'], ['tencentSecretId', 'TENCENTCLOUD_SECRET_ID'], ['tencentSecretKey', 'TENCENTCLOUD_SECRET_KEY'], ['databaseUrl', 'GENGYUN_DATABASE_URL']]) {
-        if (typeof privateConfig[field] === 'string' && privateConfig[field]) env[variable] = privateConfig[field];
-      }
+      env = loadPrivateEnvironment(file, process.env);
     } catch (_) { console.error('Private credential file unavailable or mismatched; no content logged.'); process.exitCode = 1; return; }
   }
   if (args.some(arg => !['--json', '--probe'].includes(arg))) { console.error('Usage: node tools/verify-env.mjs [--json] [--probe] [--credentials <private file>]'); process.exitCode = 1; return; }
