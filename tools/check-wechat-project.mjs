@@ -11,7 +11,7 @@ assert.equal(project.compileType, 'miniprogram');
 assert.equal(project.miniprogramRoot, 'miniprogram/');
 assert.equal(project.appid, 'wx4407a4b908a69a54');
 assert.equal(project.setting.urlCheck, true);
-assert.equal(project.libVersion, '3.5.5');
+assert.equal(project.libVersion, '3.17.3');
 const app = readJSON('miniprogram/app.json');
 assert.deepEqual(app.tabBar.list.map(x => x.text), ['首页', '识别', '社区', '消息', '我的']);
 assert.deepEqual(app.pages, app.tabBar.list.map(x => x.pagePath));
