@@ -43,7 +43,7 @@ GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https
 | GY-I22 完成权限、安全规则及首版端到端失败回归 | [#22](https://github.com/Sek1ro-oka/GengYun/issues/22) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
-| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 待验证 | 写手按用户授权[接续PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)局部已合并；[已验SHA f1d4078](https://github.com/Sek1ro-oka/GengYun/pull/37#pullrequestreview-5402107827)；原PR #32关闭未合并且保留原作者贡献；[脱敏证据](verification/continuation-evidence.md)，微信最小鉴权/真实code交换、DeepSeek只读鉴权及腾讯身份通过，TTS查询权限不足；六类业务/额度/条款/数据库/正式云链路/真机及整项仍未验，issue开放 |
+| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 待验证 | 写手按用户授权[接续PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)局部已合并；[已验SHA f1d4078](https://github.com/Sek1ro-oka/GengYun/pull/37#pullrequestreview-5402107827)；原PR #32关闭未合并且保留原作者贡献；[脱敏证据](verification/continuation-evidence.md)、[PR #38交接清单](verification/product-readiness.md)已审合入910aec33；微信最小鉴权/真实code交换、DeepSeek只读鉴权及腾讯身份通过，TTS查询权限不足；六类业务/额度/条款/数据库/正式云链路/真机及整项仍未验，issue开放 |
 | GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 未领取／无已验PR |
 
