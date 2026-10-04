@@ -11,6 +11,16 @@ export const PRICES = Object.freeze({ ocr: 0.5, asr: 0.0032, tts: 0.003, moderat
 const root = new URL('../.supervisor/gy25-live/', import.meta.url);
 const hash = s => createHash('sha256').update(s).digest('hex');
 const hmac = (k, s, encoding) => createHmac('sha256', k).update(s).digest(encoding);
+export function resolveTc3Credentials(env, provider) {
+  const shared = provider?.secretIdEnv === 'TENCENTCLOUD_SECRET_ID' && provider?.apiKeyEnv === 'TENCENTCLOUD_SECRET_KEY';
+  const dedicated = provider?.secretIdEnv === 'TENCENTCLOUD_ASR_SECRET_ID' && provider?.apiKeyEnv === 'TENCENTCLOUD_ASR_SECRET_KEY';
+  if (!shared && !dedicated) throw Error('TC3_CREDENTIAL_NAMES_REQUIRED');
+  const id = env[provider.secretIdEnv], secret = env[provider.apiKeyEnv];
+  if (typeof id !== 'string' || !id.trim() || typeof secret !== 'string' || !secret.trim()) throw Error('MISSING_TC3_CREDENTIAL_PAIR');
+  const token = env[dedicated ? 'TENCENTCLOUD_ASR_SESSION_TOKEN' : 'TENCENTCLOUD_SESSION_TOKEN'];
+  if (token !== undefined && typeof token !== 'string') throw Error('INVALID_TC3_SESSION_TOKEN');
+  return { TENCENTCLOUD_SECRET_ID: id, TENCENTCLOUD_SECRET_KEY: secret, TENCENTCLOUD_SESSION_TOKEN: token?.trim() ? token : '' };
+}
 export function signRequest(env, request, body, timestamp) {
   const service = new URL(request.endpoint).hostname.split('.')[0], host = service + '.tencentcloudapi.com';
   const date = new Date(timestamp * 1000).toISOString().slice(0, 10), scope = date + '/' + service + '/tc3_request';
@@ -59,23 +69,38 @@ export async function attempt({ env, request, key, controlledFailure = false, fe
       return { ...report, state: 'BUSINESS_RESPONSE', responseFields: ['model', 'choices.message.content', 'usage'], model: data.model, nonemptyVisualResponse: true, syntheticTextMentioned: content.includes('12345') || content.includes('合成测试'), usage: { prompt_tokens: usage.prompt_tokens, completion_tokens: usage.completion_tokens }, usagePricedCny: Number((usage.prompt_tokens * 7.5 / 1000000 + usage.completion_tokens * 17.5 / 1000000).toFixed(6)), grassRecognitionVerified: false };
     }
     const result = data?.Response;
-    if (typeof result?.RequestId === 'string' && /^[a-fA-F0-9-]{16,64}$/.test(result.RequestId)) report.requestId = result.RequestId;
+    const verifiedFields = [];
+    const requestIdPresent = typeof result?.RequestId === 'string' && Boolean(result.RequestId.trim());
+    const requestIdSafe = requestIdPresent && /^[a-fA-F0-9-]{16,64}$/.test(result.RequestId);
+    if (requestIdSafe) { report.requestId = result.RequestId; verifiedFields.push('RequestId'); }
+    report.responseFields = verifiedFields;
     const code = result?.Error?.Code;
     if (typeof code === 'string') return { ...report, state: 'SERVICE_ERROR', errorCode: /^[A-Za-z0-9.]{1,100}$/.test(code) ? code : 'UNRECOGNIZED_ERROR' };
+    if (!requestIdSafe) return { ...report, state: 'RESPONSE_EVIDENCE_INCOMPLETE', evidenceIssue: requestIdPresent ? 'REQUEST_ID_FORMAT_INVALID' : 'REQUEST_ID_MISSING_OR_INVALID', resultMayHaveBeenProcessed: true };
     if (controlledFailure) return { ...report, state: 'UNEXPECTED_CONTROL_ACCEPTED' };
     if (key === 'ocr' && Array.isArray(result?.TextDetections) && result.TextDetections.length && result.TextDetections.every(x => typeof x?.DetectedText === 'string')) {
       const text = result.TextDetections.map(x => x.DetectedText).join('');
-      return { ...report, state: 'BUSINESS_RESPONSE', responseFields: ['TextDetections', 'RequestId'], detectionCount: result.TextDetections.length, expectedSyntheticTextMatched: normalized(text) === '合成测试你好编号12345' };
+      return { ...report, state: 'BUSINESS_RESPONSE', responseFields: [...verifiedFields, 'TextDetections'], detectionCount: result.TextDetections.length, expectedSyntheticTextMatched: normalized(text) === '合成测试你好编号12345' };
     }
     if (key === 'asr' && typeof result?.Result === 'string' && result.Result.trim()) {
       const matched = normalized(result.Result) === '你好这是语音测试';
-      return { ...report, state: 'BUSINESS_RESPONSE', responseFields: ['Result', 'RequestId'], expectedSyntheticTextMatched: matched, ...(matched ? { syntheticTranscript: '你好，这是语音测试。' } : { transcriptNotPublished: true }) };
+      return { ...report, state: 'BUSINESS_RESPONSE', responseFields: [...verifiedFields, 'Result'], expectedSyntheticTextMatched: matched, ...(matched ? { syntheticTranscript: '你好，这是语音测试。' } : { transcriptNotPublished: true }) };
     }
-    if (key === 'tts' && typeof result?.Audio === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(result.Audio) && result.Audio.length < 3000000) {
+    if (key === 'tts') {
+      // Official TextToVoice returns the caller's SessionId as-is; verify that echo.
+      const sessionPresent = typeof result?.SessionId === 'string' && Boolean(result.SessionId.trim());
+      const sessionValid = sessionPresent && typeof request.body.SessionId === 'string' && Boolean(request.body.SessionId.trim()) && result.SessionId === request.body.SessionId;
+      if (sessionValid) verifiedFields.push('SessionId');
+      const audioValid = typeof result?.Audio === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(result.Audio) && result.Audio.length < 3000000;
+      if (!audioValid) return { ...report, state: 'BUSINESS_SCHEMA_OR_EMPTY_ERROR' };
       const audio = Buffer.from(result.Audio, 'base64');
-      if (audio.length) { saveAudio(audio); return { ...report, state: 'BUSINESS_RESPONSE', responseFields: ['Audio', 'SessionId', 'RequestId'], audioBytes: audio.length, playbackVerified: false }; }
+      if (audio.length) {
+        verifiedFields.push('Audio');
+        if (!sessionValid) return { ...report, state: 'RESPONSE_EVIDENCE_INCOMPLETE', evidenceIssue: sessionPresent ? 'SESSION_ID_MISMATCH' : 'SESSION_ID_MISSING_OR_INVALID', resultMayHaveBeenProcessed: true, audioBytes: audio.length };
+        saveAudio(audio); return { ...report, state: 'BUSINESS_RESPONSE', audioBytes: audio.length, playbackVerified: false };
+      }
     }
-    if (key.startsWith('moderation') && ['Pass', 'Review', 'Block'].includes(result?.Suggestion) && typeof result?.Label === 'string') return { ...report, state: 'BUSINESS_RESPONSE', responseFields: ['Suggestion', 'Label', 'RequestId'], suggestion: result.Suggestion, safeSamplePassed: result.Suggestion === 'Pass' };
+    if (key.startsWith('moderation') && ['Pass', 'Review', 'Block'].includes(result?.Suggestion) && typeof result?.Label === 'string') return { ...report, state: 'BUSINESS_RESPONSE', responseFields: [...verifiedFields, 'Suggestion', 'Label'], suggestion: result.Suggestion, safeSamplePassed: result.Suggestion === 'Pass' };
     return { ...report, state: 'BUSINESS_SCHEMA_OR_EMPTY_ERROR' };
   } catch (_) { return { state: 'OUTCOME_UNKNOWN', actualChargeCny: null }; }
 }
@@ -86,10 +111,10 @@ async function main() {
   const authorized = postpaidRecheck ? args[1] === OCR_POSTPAID_AUTHORIZATION && key === 'ocr' : resourceStateRecheck ? (args[1] === TTS_RECHECK_AUTHORIZATION && key === 'tts') || (args[1] === RESOURCE_RECHECK_AUTHORIZATION && ['tts','ocr','asr'].includes(key)) : args[1] === AUTHORIZATION;
   if (!authorized || !Object.hasOwn(PRICES, key)) throw Error('MANUAL_AUTHORIZATION_REQUIRED');
   const config = JSON.parse(readFileSync(new URL('../docs/verification/config.local.json', import.meta.url), 'utf8'));
-  const env = loadPrivateEnvironment(args[5]);
+  let env = loadPrivateEnvironment(args[5]);
   const p = providerFor(config, key);
   if (key === 'weedRecognition') { if (!env.TOKENHUB_API_KEY) throw Error('MISSING_CREDENTIALS'); }
-  else { if (!env[p?.secretIdEnv] || !env[p?.apiKeyEnv]) throw Error('MISSING_CREDENTIALS'); env.TENCENTCLOUD_SECRET_ID = env[p.secretIdEnv]; env.TENCENTCLOUD_SECRET_KEY = env[p.apiKeyEnv]; }
+  else env = resolveTc3Credentials(env, p);
   // Only fixed local synthetic fixtures; no arbitrary media, remote URLs or application data.
   const input = { text: '你好，这是语音测试。' };
   if (['ocr', 'moderationImage', 'weedRecognition'].includes(key)) input.image = readFileSync(new URL('synthetic.png', root));

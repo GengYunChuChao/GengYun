@@ -11,7 +11,7 @@ export const AI_ENDPOINTS = Object.freeze({
   moderationText: { group: 'moderation', endpoint: 'https://tms.tencentcloudapi.com', auth: 'TC3-HMAC-SHA256', action: 'TextModeration', version: '2020-12-29', sdk: 'tms', sdkVersion: '4.1.311' },
   moderationImage: { group: 'moderation', endpoint: 'https://ims.tencentcloudapi.com', auth: 'TC3-HMAC-SHA256', action: 'ImageModeration', version: '2020-12-29', sdk: 'ims', sdkVersion: '4.1.321' }
 });
-const ENV_FIELDS = Object.freeze({ appsecret: 'WECHAT_APP_SECRET', deepseekApiKey: 'DEEPSEEK_API_KEY', tencentSecretId: 'TENCENTCLOUD_SECRET_ID', tencentSecretKey: 'TENCENTCLOUD_SECRET_KEY', tencentAsrSecretId: 'TENCENTCLOUD_ASR_SECRET_ID', tencentAsrSecretKey: 'TENCENTCLOUD_ASR_SECRET_KEY', tencentSessionToken: 'TENCENTCLOUD_SESSION_TOKEN', tokenhubApiKey: 'TOKENHUB_API_KEY', databaseUrl: 'GENGYUN_DATABASE_URL' });
+const ENV_FIELDS = Object.freeze({ appsecret: 'WECHAT_APP_SECRET', deepseekApiKey: 'DEEPSEEK_API_KEY', tencentSecretId: 'TENCENTCLOUD_SECRET_ID', tencentSecretKey: 'TENCENTCLOUD_SECRET_KEY', tencentAsrSecretId: 'TENCENTCLOUD_ASR_SECRET_ID', tencentAsrSecretKey: 'TENCENTCLOUD_ASR_SECRET_KEY', tencentAsrSessionToken: 'TENCENTCLOUD_ASR_SESSION_TOKEN', tencentSessionToken: 'TENCENTCLOUD_SESSION_TOKEN', tokenhubApiKey: 'TOKENHUB_API_KEY', databaseUrl: 'GENGYUN_DATABASE_URL' });
 const validText = value => typeof value === 'string' && Boolean(value.trim());
 const fail = code => { throw new Error(code); };
 

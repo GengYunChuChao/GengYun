@@ -56,3 +56,15 @@ GY-I27运行用途/预算/删除守卫仍未实现；准备库原executionAllowe
 ## 唯一OCR后付费状态追加授权
 
 此前用户声明后付费未开，原11次停止后，用户直接明确“已开启，允许再测一次”。精确独立授权标识gy25-20261004-cny2-ocr-postpaid-confirmed-once，只接受OCR正常请求和此前ResourcePackageRunOut账本证据，固定同一合成图片；在原账本中预留0.5元再发送，累计12次/1.7224元。返回HTTP200、无Response.Error、TextDetections长度2且归一化匹配已知合成字句。这个追加不重新授权其他端点、不自动重试、不改变实际账单未知状态；完成后全部停止。5组人工工具回归覆盖新标识必需/一次限额/旧账本保留。
+
+## PR #42独立审查后的离线整改
+
+[独立审查](https://github.com/Sek1ro-oka/GengYun/pull/42#pullrequestreview-5405331825)针对旧HEAD `79013bb91dc1e49499071c0423bc3e517aee0939`发现两项工具缺陷。本次只修改凭据选择、响应证据校验和离线回归；未读取真实密钥、未调用供应商、未改写历史账本，12次调用及1.7224元保守预留保持。实际费用仍未知，任务整体未完成。
+
+TC3凭据按完整来源选择SecretId/SecretKey/SessionToken三元组。共享配对仅读取共享token；ASR专用配对仅读取专用token，长期专用密钥没有token时明确为空，不继承共享token。专用配对缺任一字段立即拒绝，不逐字段混配或回退。可选私密字段tencentAsrSessionToken映射TENCENTCLOUD_ASR_SESSION_TOKEN，仅支持同源专用临时凭据；公共端点配置、应用执行与预算开关保持原契约。
+
+五项TC3正常业务成功必须先有非空字符串RequestId；工具沿用原有16至64位十六进制/连字符安全输出格式。这是本工具的保守输出限制，不声称官方要求UUID。缺失、类型错误或格式超出限制返回RESPONSE_EVIDENCE_INCOMPLETE，不列为已验证RequestId，不补造编号。TTS另按[TextToVoice接口](https://cloud.tencent.com/document/api/1073/37995)及已安装SDK的“SessionId原样返回”说明，核对非空字符串与请求值完全一致；单有非空Audio不足以成功。responseFields只列实际通过校验的字段，SessionId异常不保存音频。供应商Response.Error仍优先分类SERVICE_ERROR，不改写为成功或丢失原错误分类。
+
+历史TTS音频字节、完整本地解码及已保存RequestId保持原证据；旧工具曾无条件声明SessionId字段，未核验其原样回传且未保存完整原响应，因此历史SessionId回传一致性未验证，不能用本次离线修复追认。保留历史业务状态是记录当时工具输出，不代表旧响应已通过新门槛。不追加真实请求来补该证据。
+
+新增4组离线回归，使用虚构凭据与注入响应，并封锁fetch/http/https真实网络入口检查实际签名头。覆盖共享临时token与专用长期密钥隔离、专用临时token、缺半对拒绝；五端点RequestId缺失/空值/类型/格式异常；TTS SessionId缺失/类型/不一致与Audio校验；SERVICE_ERROR分类及证据字段。证据不完整仍保留次数、费用预留和actualChargeCny=null，阻止自动重发与受控负例。全套31组离线测试用于整改验证，CI不接触私密文件或收费端点。

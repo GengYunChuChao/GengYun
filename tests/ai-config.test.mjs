@@ -86,7 +86,7 @@ test('private loading uses explicit account and allowlisted fields, suppressing 
     const file = join(dir, 'synthetic.json'); writeFileSync(file, '{"secret":"sensitive-malformed');
     assert.throws(() => loadPrivateEnvironment(file), /^Error: PRIVATE_FILE_UNAVAILABLE$/);
     writeFileSync(file, JSON.stringify({ appid: 'wrong', tokenhubApiKey: 'synthetic-key' })); assert.throws(() => loadPrivateEnvironment(file), /PRIVATE_ACCOUNT_MISMATCH/);
-    writeFileSync(file, JSON.stringify({ appid: 'wx4407a4b908a69a54', tokenhubApiKey: 'synthetic-tokenhub', tencentSessionToken: 'synthetic-session', unexpectedSecret: 'ignore-me' }));
-    const loaded = loadPrivateEnvironment(file); assert.equal(loaded.TOKENHUB_API_KEY, 'synthetic-tokenhub'); assert.equal(loaded.TENCENTCLOUD_SESSION_TOKEN, 'synthetic-session'); assert.equal(loaded.unexpectedSecret, undefined);
+    writeFileSync(file, JSON.stringify({ appid: 'wx4407a4b908a69a54', tokenhubApiKey: 'synthetic-tokenhub', tencentSessionToken: 'synthetic-session', tencentAsrSessionToken: 'synthetic-asr-session', unexpectedSecret: 'ignore-me' }));
+    const loaded = loadPrivateEnvironment(file); assert.equal(loaded.TOKENHUB_API_KEY, 'synthetic-tokenhub'); assert.equal(loaded.TENCENTCLOUD_SESSION_TOKEN, 'synthetic-session'); assert.equal(loaded.TENCENTCLOUD_ASR_SESSION_TOKEN, 'synthetic-asr-session'); assert.equal(loaded.unexpectedSecret, undefined);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
