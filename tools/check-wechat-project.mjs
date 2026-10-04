@@ -11,7 +11,12 @@ assert.equal(project.compileType, 'miniprogram');
 assert.equal(project.miniprogramRoot, 'miniprogram/');
 assert.equal(project.appid, 'wx4407a4b908a69a54');
 assert.equal(project.setting.urlCheck, true);
-assert.equal(project.libVersion, '3.5.5');
+// 基础库锁定值须为开发者工具「详情 → 本地设置 → 调试基础库」中实际存在的版本。
+// 原值 3.5.5 不在该列表内（工具 2.02.2609231 实测仅提供 3.6.6 / 3.6.2 / 3.5.8 / 3.5.2 /
+// 3.4.10 / 3.4.3 / 3.3.5 / 3.2.5），锁定在不可选版本上会使任何编译验证都无法进行。
+// 现取 3.5.x 系列唯一的非灰度正式版 3.5.8；实际模拟器运行版本为 3.17.3，
+// 兼容起点仍待 GY-I02／GY-I25 以真机与双平台实测冻结，不以本断言替代兼容性结论。
+assert.equal(project.libVersion, '3.5.8');
 const app = readJSON('miniprogram/app.json');
 assert.deepEqual(app.tabBar.list.map(x => x.text), ['首页', '识别', '社区', '消息', '我的']);
 assert.deepEqual(app.pages, app.tabBar.list.map(x => x.pagePath));

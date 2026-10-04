@@ -4,7 +4,7 @@
   "miniprogramRoot": "miniprogram/",
   "appid": "wx4407a4b908a69a54",
   "projectname": "GengYun",
-  "libVersion": "3.5.5",
+  "libVersion": "3.5.8",
   "setting": { "urlCheck": true, "es6": true, "minified": true },
   "packOptions": { "ignore": [], "include": [] }
 }
