@@ -208,8 +208,8 @@ def validate(root: str, mode: str | None) -> tuple[list[str], dict]:
         errors.append("缺少 coverage-report.json")
 
     # ---- 迁移/SQL 结构检查（静态）----
-    mig = os.path.join(root, "db", "migrations", "0002_knowledge_catalog.sql")
-    down = os.path.join(root, "db", "migrations", "0002_knowledge_catalog.down.sql")
+    mig = os.path.join(root, "services", "api", "db", "migrations", "0002_knowledge_catalog.sql")
+    down = os.path.join(root, "services", "api", "db", "migrations", "rollback", "0002_knowledge_catalog.down.sql")
     if not os.path.exists(mig):
         errors.append(f"缺少迁移文件：{mig}")
     else:

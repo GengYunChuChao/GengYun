@@ -2,7 +2,7 @@
 
 - 日期：2026-10-04
 - 分支：`feature/gy-i03-zhejiang-data`；worktree：`E:/worktrees/gengyun-i03-data`
-- base：`main` = `59e5315aa8030071bd6cd2c5ded3a00a9bdc3ac3`
+- base：`main` = `b60652c346fc0efccc0fe71b959e39f475669a9f`（PR #43 GY-I02 已合并）
 - 说明：本文件只记录**实际运行**的命令与结果；未运行、未接入的项明确写为未完成。
 
 ## 1. 已运行检查
@@ -14,6 +14,8 @@
 | 适配层逻辑演示 | `python tools/knowledge/adapter_demo.py --root .` | PASS：active视图=0、可查询种子版本=4、模拟视图=1、卡片=0、冲突阻断、回滚与幂等通过 |
 | 真实模式负例 | `python tools/knowledge/validate_knowledge.py --root . --mode real` | 预期 FAIL（`usable_as_dose=0`，未接入真实库） |
 | 种子 SQL 一致性 | 校验脚本内 `JSON↔SQL` 交叉检查 | PASS：20 证号均在 `seed_herbicides_verified.sql` |
+| 单元/回归测试 | `node --test "tests/unit/*.test.mjs"` | PASS：30/30（含迁移发现、脱敏样例、回滚、down） |
+| 数据库全链路回归 | `node tools/knowledge/pglite_verify.mjs`（PGlite 0.5.8） | ALL CHECKS PASSED（见 §7） |
 | 空白差异 | `git diff --check` | PASS |
 
 ### 关键输出摘录
@@ -79,8 +81,10 @@ ICAMA 查询接口本轮程序化访问失败（无论按证号/名称/成分类
 - `real` 模式可用记录为 0（无 `verified` 来源）——**接入缺项**，非“已接入”。
 - 未逐条与 ICAMA 登记详情/核准标签原文复核。
 - 8 组杂草尚无逐对象科普知识内容与识别评估标注。
-- **许可调查本轮暂缓，所有来源 `licensed=false`**，不得写为已许可。
-- `0002` 依赖 `0001`（GY-I02）；合并顺序须在 GY-I02 之后。
+- **许可调查本轮暂缓，所有来源 `licensed=false`**，不得写为已许可；
+  共享 `sources` 表无 `license_status/licensed` 列，许可结论只在资料/报告层。
+- `0002`（`services/api/db/migrations/0002_knowledge_catalog.sql`）依赖 GY-I02 的
+  `0001`（同目录）；合并顺序须在 0001 之后。
 
 ## 5. 复现
 
@@ -150,3 +154,49 @@ git diff --check
 PGlite 实测结论：`ALL CHECKS PASSED`（表数量 30、种子行数 sources=3/versions=5/crops=4/
 species=8/regions=102/formulations=22/registrations=22/applicability=22、幂等、回滚只删本次
 22 制剂保留无关批次、重复回滚无副作用、FK 23503 正确拒绝）。
+
+## 7. 修复轮 2（监工第二轮：脱敏样例 P2 + 迁移落位）
+
+### 7.1 P2：`db/samples/desensitized-sample.sql` 对齐共享 schema
+
+原样例引用共享 schema 不存在的列/类型：`regions.level`（0001 无）、`sources.license_status/
+licensed`（0001 无）、`sources.id` 用文本键 `src_sim_demo_gyi03`（实为 uuid）。修复：
+
+- `regions` 去掉 `level` 列；`sources` 去掉 `license_status/licensed`（许可结论只留资料/报告层）。
+- 来源 id 改为 **uuid5**：`uuid5("source:src_sim_demo_gyi03") = e3b756bf-b047-51b8-9607-e6f898f96743`
+  （与 `tools/knowledge/build_seeds.py` 的 `src_db_id` 一致）。
+- 同步 `db/samples/field-mapping.md`（去除 level/license 行、补 UUID 转换说明）与
+  `db/README.md`（迁移/种子/样例执行入口与顺序、down 位置）。
+
+### 7.2 迁移落位与运行器
+
+`services/api/src/db/migrate.ts` 的 `DEFAULT_MIGRATIONS_DIR = services/api/db/migrations/`，
+pattern `/^(\d{4,})_([a-z0-9_]+)\.sql$/`：
+
+- `0002_knowledge_catalog.sql` 移入 `services/api/db/migrations/`（运行器可发现）。
+- `.down.sql` 含 `.down` 段**不匹配 pattern**，放入运行器顶层会使 `discoverMigrations` 抛
+  「迁移文件名不合规」；故按 I27 约定放 `services/api/db/migrations/rollback/`（`isFile()` 过滤子目录）。
+- 未提交 `0001`（由 GY-I02/main 拥有）。
+
+### 7.3 实测（PGlite 0.5.8 / PostgreSQL 18.x 内核；≠ PG17.11 实库验收）
+
+```
+运行器发现 = 0001:0001_initial_schema.sql, 0002:0002_knowledge_catalog.sql
+PASS exec 0001 / 0002 / 0003_privacy_consent(I27, 不在本分支)
+PASS 种子 ×2 幂等（sources=3/versions=5/crops=4/species=8/regions=102/formulations=22/registrations=22/applicability=22）
+PASS 样例 ×2 幂等（无 42703；formulations 22→23，重复后仍 23）
+PASS 回滚 ×2 幂等（种子行清零，样例制剂 00000000-…-301 保留；crops/regions 保留）
+PASS 0002 down（删除 0002 对象，0001 共享表保留）
+ALL CHECKS PASSED
+```
+
+另：样例**独立执行**（仅 0001→0002→0003 之后直接跑样例，监工原始复现路径）通过且幂等
+（formulations=1、sources=1，重复后不变）。
+
+复现命令：
+
+```bash
+node tests/unit/gy-i03-db.test.mjs            # 等价：node --test "tests/unit/*.test.mjs"
+node tools/knowledge/pglite_verify.mjs
+# 保真含 I27 的 0003：GY_M0003=/path/0003_privacy_consent.sql node tools/knowledge/pglite_verify.mjs
+```

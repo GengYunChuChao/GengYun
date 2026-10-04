@@ -44,6 +44,18 @@ test('仓库迁移目录至少包含 0001 且校验和为 64 位十六进制', (
   for (const migration of migrations) assert.match(migration.checksum, /^[0-9a-f]{64}$/);
 });
 
+test('运行器发现 GY-I03 的 0002 迁移（与 0001 同目录，升序在 0001 之后）', () => {
+  const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
+  const versions = migrations.map((m) => m.version);
+  assert.ok(versions.includes('0002'), `应发现 0002，实际：${versions.join(',')}`);
+  assert.equal(versions.indexOf('0001') < versions.indexOf('0002'), true, '0001 必须排在 0002 之前');
+  const m0002 = migrations.find((m) => m.version === '0002');
+  assert.equal(m0002.filename, '0002_knowledge_catalog.sql');
+  assert.match(m0002.checksum, /^[0-9a-f]{64}$/);
+  // down 文件不在运行器目录（否则文件名不合规会抛错）；此处能发现即证明目录只含合规上迁移。
+  assert.ok(!migrations.some((m) => m.filename.includes('.down.')), '运行器目录不得含 .down.sql');
+});
+
 test('迁移文件按版本号升序，且校验和稳定', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gy-mig-'));
   try {
@@ -95,20 +107,26 @@ test('planMigrations 识别 drift 与待应用集合', () => {
 
 test('applyMigrations 空台账时应用迁移，重复执行幂等跳过', async () => {
   const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
+  const allVersions = migrations.map((m) => m.version);
+  // 容错断言：只要求仓库迁移包含 0001 与 0002；其它 PR 的迁移（如 0003）先后合入都不打破。
+  assert.ok(
+    allVersions.includes('0001') && allVersions.includes('0002'),
+    `仓库迁移应含 0001 与 0002，实际：${allVersions.join(',')}`,
+  );
   const client = makeFakeClient();
 
   const first = await applyMigrations(client, migrations);
-  assert.deepEqual(first.applied, ['0001']);
+  assert.deepEqual(first.applied, allVersions);
   assert.deepEqual(first.skipped, []);
   const began = client.queries.filter((q) => q.text === 'BEGIN');
   const committed = client.queries.filter((q) => q.text === 'COMMIT');
-  assert.equal(began.length, 1);
-  assert.equal(committed.length, 1);
+  assert.equal(began.length, allVersions.length, '每个待应用迁移独立事务');
+  assert.equal(committed.length, allVersions.length);
 
   const second = await applyMigrations(client, migrations);
   assert.deepEqual(second.applied, []);
-  assert.deepEqual(second.skipped, ['0001']);
-  assert.equal(client.queries.filter((q) => q.text === 'BEGIN').length, 1, '第二次不应再执行迁移事务');
+  assert.deepEqual(second.skipped, allVersions);
+  assert.equal(client.queries.filter((q) => q.text === 'BEGIN').length, allVersions.length, '第二次不应再执行迁移事务');
 });
 
 test('applyMigrations 遇校验和 drift 抛错且不写入新迁移', async () => {

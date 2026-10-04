@@ -2,12 +2,13 @@
 """GY-I03 可替换数据库适配层逻辑演示（仅标准库，无真实数据库）。
 
 说明（诚实边界）：本脚本**不是** PostgreSQL 运行证据。它用一个内存模型复现
-`db/migrations/0002_knowledge_catalog.sql` 的读取投影语义（v_active_source_version /
+`services/api/db/migrations/0002_knowledge_catalog.sql` 的读取投影语义（v_active_source_version /
 v_queryable_seed_version / v_simulation_only）与约束意图（card_ready 门、模式-来源匹配），
 并对 db/seeds 的数据做导入→冲突→回滚演练，输出确定性报告。
 
-真实建库/迁移执行证据见 docs/verification/gy-i03-evidence.md 的“未完成”一节：
-本轮**未接入真实数据库，未执行迁移**。
+真实建库/迁移执行证据见 docs/verification/gy-i03-evidence.md：
+迁移与种子已在内存引擎 PGlite 0.5.8（PostgreSQL 18.x 内核）实测（tools/knowledge/pglite_verify.mjs），
+但**未接入真实 PostgreSQL 实例**，内存引擎验证不等于目标 PostgreSQL 17.11 实库验收。
 
 用法：
     python tools/knowledge/adapter_demo.py --root . [--emit-report out.json]
