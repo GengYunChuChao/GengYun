@@ -7,12 +7,15 @@
 - PR：[#39](https://github.com/Sek1ro-oka/GengYun/pull/39)
 - 记录人：尹一（开发者端）
 
+> **机器归属**：本文件全部实测数据来自**作者本机（尹一）**，工具版本、基础库选值与目录路径不适用于监工或协作者机器。跨机结论须各自取证。
+> 监工 2026-10-04 审查以独立 checkout 在其自身环境执行，未运行微信工具编译与真机，本文件不代其声明。
+
 > **截图存放说明**：本轮走查截图**只贴入 PR #39 描述，不入仓库**（含 iOS 模拟器截图与开发者工具设置面板）。
 > 合并后仓库内不保留图片，需复查时请向 PR 作者索取。
 
 ---
 
-## 1 编译环境（实测）
+## 1 编译环境（作者本机实测）
 
 | 项 | 实测值 | 来源 |
 | --- | --- | --- |
@@ -89,21 +92,36 @@ TabBar 为**纯文字形态**（项目内无图片资源，`tabBar.list` 未配�
 
 ```
 node --test tests/ui-adaptive.test.mjs
-→ tests 11 / pass 11 / fail 0
+→ tests 14 / pass 14 / fail 0（作者本机 Node v24.19.0）
 ```
 
-覆盖：主题色与正文字号、五个 Tab 注册完整性、五页统一状态组件、录音与播放按钮分离、文案无绝对化风险表述、游客入口控制、人审空入口、替身边界（共享源码禁网络）、未改动冻结契约与本地配置隔离。
-
-本机 Node `v24.19.0`。
+覆盖：八种状态完整性、44px 触控区与 18px 正文（禁 rpx）、主题色、五 Tab 注册、五页统一状态组件、录音与播放分离、无绝对化风险表述、游客入口控制、人审空入口、替身边界、未接入真实会话前恒为游客（合成 wx 行为回归）、首版范围文案、冻结契约与本地配置隔离。
 
 ---
 
-## 5 未完成／待办
+## 5 监工 2026-10-04 审查意见与处置
+
+监工以 `reviewed_sha=c487761`、`inspected_diff_base=910aec3` 独立审查，结论为需修改、保持 Draft、不合并。五条意见与处置：
+
+| # | 意见摘要 | 处置 |
+| --- | --- | --- |
+| 1 | 把作者本机 `D:\challenge_cup` 写成唯一目录并据此否定监工侧 `E:\WeChatProjects\GengYun`；「全账号从未预览/上传」超出证据范围 | 撤回全局结论。continuation-evidence 改为两台机器并存记录、`Test-Path` 不跨机推广；「从未上传」限定为本机工具本地字段，并注明须由 GY-I25 在平台侧核实 |
+| 2 | 88rpx 仅在 375px 视口等于 44px，320px 视口约 37.55px；36rpx 正文缩为 15.36px；`.btn` 的 padding:0 与 line-height:1.4 无法靠原生默认高度补足 | 触控区与字号令牌由 rpx 改为 px（`--tap-min: 44px`、正文 `18px`、辅助 `16px`、标题 `24px`）；全项目 font-size/min-height 的 rpx 残留已批量转换；新增断言禁止回退为 rpx。**窄屏与最大字体走查仍待补** |
+| 3 | `read()` 接受 `gengyun_session` 任意真值，`isGuest()` 使占位字符串或 `{demo:true}` 进入登录态，监工以合成 `wx.getStorageSync` 复现 `isGuest=false` | `session.js` 引入 `SESSION_ENABLED`（当前 false），关闭时 `isGuest()` 无条件返回 true 且不读存储；置 true 后 `read()` 仍要求对象形态、非 `__devPreview`、含字符串 token。新增合成 wx 行为回归覆盖 10 种取值 |
+| 4 | 首页副标题被替换并加入「用药提醒」；`messages.wxml` 把按使用时间填写反馈列为将支持的消息，而 B01/B05/B12 已后置到 2027-02 | 副标题恢复为已确认文案「识草查药与除草科普社区」；`messages.wxml` 副标题改为「互动通知与审核结果」，删除「用药提醒」类目，「将支持的消息类型」改为「首版消息类型」；顺带修正 `class="desc"` 为 `kind__desc`。新增断言防止后置能力回流 |
+| 5 | `local-wechat.yml` 未运行新增界面检查，三项 CI success 不含这 11 项；测试中 `git diff` 失败直接 return，使基线缺失被记成 PASS | workflow 补 `tests/ui-adaptive.test.mjs` 的 paths 触发与执行步骤，并加 `fetch-depth: 0` 使 origin/main 基线可用；测试改为区分「无基线」(t.skip，黄灯) 与其他 git 失败(throw，红灯) |
+
+本轮新增提交后需重新审查。
+
+---
+
+## 6 未完成／待办
 
 | 项 | 归属 | 说明 |
 | --- | --- | --- |
-| 放大字号走查截图 | 本项 | 补齐后本项证据完整 |
+| 锁定基础库 3.5.5 下的编译与五 Tab 复测 | 本项 | 当前走查在作者本机 3.17.3（灰度中）下完成 |
+| 窄屏（320px）与最大字号走查截图 | 本项 | 触控区与字号已改为 px，需实测确认无遮挡 |
 | 登录态界面走查 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) | 三页登录态内容区 |
 | Android 末屏遮挡复测 | [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23) | 验证 `.page` 底部内边距调整 |
-| 真机预览与体验版上传 | [GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27) | 正式号尚无任何上传记录 |
+| 真机预览与体验版上传 | [GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27) | 本机工具显示无预览与上传记录；平台侧状态待 GY-I25 核实 |
 | TTS 语音播报 | [GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13) | 本任务不重复验收语音服务准确率；腾讯云 TTS 只读查询仍被 `AuthFailure.UnauthorizedOperation` 拒绝 |

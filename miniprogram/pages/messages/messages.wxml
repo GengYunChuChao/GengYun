@@ -1,6 +1,6 @@
 <view class="page">
   <view class="page-title">消息</view>
-  <view class="page-subtitle">互动通知与用药提醒</view>
+  <view class="page-subtitle">互动通知与审核结果</view>
 
   <state-view
     wx:if="{{guest}}"
@@ -16,7 +16,7 @@
       desc="消息中心尚未接入，不会生成任何模拟通知。后续开放后，真实互动与系统提醒会显示在这里。"
     ></state-view>
 
-    <view class="section-title">将支持的消息类型</view>
+    <view class="section-title">首版消息类型</view>
     <view class="card">
       <view class="kind">
         <text class="kind__name">评论与点赞</text>
@@ -27,12 +27,8 @@
         <text class="kind__desc">投稿通过、需修改或被驳回的原因</text>
       </view>
       <view class="kind">
-        <text class="kind__name">用药提醒</text>
-        <text class="kind__desc">按记录的时间提醒填写使用反馈</text>
-      </view>
-      <view class="kind">
         <text class="kind__name">系统通知</text>
-        <text class="desc">资料下架、来源失效等重要变更</text>
+        <text class="kind__desc">资料下架、来源失效等重要变更</text>
       </view>
     </view>
   </block>

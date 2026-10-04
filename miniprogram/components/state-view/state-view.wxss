@@ -16,7 +16,7 @@
 }
 
 .state__title {
-  font-size: 38rpx;
+  font-size: 19px;
   font-weight: 700;
   color: var(--color-text, #1B2B1E);
   line-height: 1.4;
@@ -41,7 +41,7 @@
 
 .state__desc {
   margin-top: 16rpx;
-  font-size: 32rpx;
+  font-size: 16px;
   line-height: 1.7;
   color: var(--color-text-sub, #4A5A4E);
   max-width: 560rpx;

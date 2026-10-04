@@ -9,7 +9,7 @@
 }
 
 .notice__icon {
-  font-size: 32rpx;
+  font-size: 16px;
   margin-right: 14rpx;
   line-height: 1.5;
 }

@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -51,17 +52,28 @@ test('八种状态齐全，且每种都带图标、标题与说明', () => {
   assert.ok(block.includes('ready'), '缺少 ready 正常态定义');
 });
 
-test('触控区不小于 88rpx 等效 44px', () => {
-  assert.ok(/--tap-min:\s*88rpx/.test(appWxss), '未定义 88rpx 触控区令牌');
+test('触控区为 44px 且使用 px 单位，320px 窄屏下仍成立', () => {
+  assert.ok(/--tap-min:\s*44px/.test(appWxss), '触控区令牌必须为 44px');
+  // rpx 为屏宽 750 等分：88rpx 仅在 375px 视口等于 44px，320px 视口只有约 37.55px，不满足门槛
+  assert.ok(!/--tap-min:\s*[\d.]+rpx/.test(appWxss), '触控区不得使用 rpx，窄屏会缩水至 44px 以下');
   const btn = appWxss.slice(appWxss.indexOf('.btn {'), appWxss.indexOf('.btn--block'));
-  assert.ok(/min-height:\s*var\(--tap-min/.test(btn), '.btn 未使用触控区令牌');
+  assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未使用触控区令牌');
+  // .btn 已将 padding 归零、line-height 1.4，不能依赖原生按钮默认高度补足
+  assert.ok(/padding:\s*0\s+16px/.test(btn), '.btn 横向内边距应为 px');
   const homeWxss = read('miniprogram/pages/home/home.wxss');
   assert.ok(/min-height:\s*var\(--tap-min/.test(homeWxss), '首页入口触控区不足');
+  assert.ok(!/var\(--tap-min,\s*[\d.]+rpx\)/.test(homeWxss), '首页入口触控区 fallback 不得为 rpx');
 });
 
-test('主题绿为 #1F7A45，正文优先 18px 等效 36rpx', () => {
+test('正文为 18px 且不随屏宽缩放', () => {
+  const root = appWxss.slice(0, appWxss.indexOf('/* ============================ 布局'));
+  assert.ok(/font-size:\s*18px/.test(root), '正文未使用 18px');
+  // 36rpx 在 375px 视口等于 18px，但 320px 视口只有 15.36px，低于 18px 正文门槛
+  assert.ok(!/font-size:\s*36rpx/.test(root), '正文不得使用 36rpx，窄屏会缩至 18px 以下');
+});
+
+test('主题绿为 #1F7A45', () => {
   assert.ok(/--color-primary:\s*#1F7A45/i.test(appWxss), '主题绿未使用 #1F7A45');
-  assert.ok(/font-size:\s*36rpx/.test(appWxss), '正文字号未使用 36rpx');
   assert.equal(appJson.window.navigationBarBackgroundColor, '#1F7A45');
   assert.equal(appJson.tabBar.selectedColor, '#1F7A45');
 });
@@ -131,7 +143,38 @@ test('替身边界：共享源码保持禁用网络', () => {
   assert.ok(!/wx\.login|getPhoneNumber/.test(session), '会话占位不得调用登录或手机号能力');
 });
 
-test('本任务未改动冻结契约与本地配置隔离规则', () => {
+test('未接入真实会话前恒为游客：任意缓存值不得进入登录态', () => {
+  const sessionSrc = read('miniprogram/utils/session.js');
+  assert.ok(/const SESSION_ENABLED = false/.test(sessionSrc), 'SESSION_ENABLED 必须为 false');
+  assert.ok(!/wx\.login|getPhoneNumber/.test(sessionSrc), '会话占位不得调用登录或手机号能力');
+
+  // 行为回归：以合成 wx 实际加载模块，逐个喂入监工复现的越界取值
+  const cases = ['占位字符串', { demo: true }, '', { token: '' }, { __devPreview: true }, 0, 1, [], true, { token: 'real-looking' }];
+  let reads = 0;
+  globalThis.wx = { getStorageSync: () => cases[reads++] };
+  const session = createRequire(import.meta.url)('../miniprogram/utils/session.js');
+  for (let i = 0; i < cases.length; i += 1) {
+    assert.equal(session.isGuest(), true, `缓存值 ${JSON.stringify(cases[i])} 不得被当成登录态`);
+  }
+  assert.equal(reads, 0, 'SESSION_ENABLED 关闭时不应读取存储，否则 isGuest 会受缓存影响');
+  assert.equal(session.read(), null, '关闭状态下不得返回任何会话对象');
+  delete globalThis.wx;
+});
+
+test('首页副标题与消息范围不把后置能力写成本版目标', () => {
+  const home = read('miniprogram/pages/home/home.wxml');
+  assert.ok(home.includes('识草查药与除草科普社区'), '首页副标题须为已确认文案');
+  assert.ok(!home.includes('用药提醒'), '首版副标题不得出现 2027-02 后置的用药提醒');
+
+  const messages = read('miniprogram/pages/messages/messages.wxml');
+  assert.ok(!messages.includes('用药提醒'), '消息页不得把后置的用药提醒列为本版消息类型');
+  for (const kind of ['评论与点赞', '内容审核结果', '系统通知']) {
+    assert.ok(messages.includes(kind), `首版消息类型缺失：${kind}`);
+  }
+  assert.ok(!/<text class="desc">/.test(messages), '消息描述类名应与 kind__desc 一致');
+});
+
+test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
   let changed = [];
   try {
     changed = execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD'], { cwd: ROOT, encoding: 'utf8' })
@@ -139,7 +182,14 @@ test('本任务未改动冻结契约与本地配置隔离规则', () => {
       .map((s) => s.trim())
       .filter(Boolean);
   } catch (err) {
-    return; // 无远端基线时跳过，不影响其他断言
+    const detail = `${err.stderr || ''}${err.message || ''}`;
+    // 仅在确实没有远端基线时显式跳过；其余失败（权限、仓库损坏等）必须暴露为失败，
+    // 不能静默 return 让 node:test 把未验证的检查记成 PASS
+    if (/unknown revision|bad revision|ambiguous argument/i.test(detail)) {
+      t.skip(`无 origin/main 基线，冻结契约未验证：${detail.trim().split('\n')[0]}`);
+      return;
+    }
+    throw err;
   }
   assert.ok(!changed.some((f) => f.startsWith('packages/contracts/')), '不得修改冻结契约');
   assert.ok(!changed.includes('miniprogram/config/runtime.js'), '不得修改共享运行配置');

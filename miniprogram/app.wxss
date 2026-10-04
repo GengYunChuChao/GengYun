@@ -33,7 +33,10 @@ page {
   --color-stub: #5B4B8A;
 
   /* 触控与间距 */
-  --tap-min: 88rpx;
+  /* 触控区与字号使用 px 而非 rpx：rpx 为屏宽 750 等分，
+     88rpx 仅在 375px 视口等于 44px，320px 窄屏只有约 37.55px，
+     36rpx 正文在 320px 视口只有 15.36px，均不满足 44px 触控区与 18px 正文门槛。 */
+  --tap-min: 44px;
   --gap-xs: 16rpx;
   --gap: 28rpx;
   --gap-lg: 40rpx;
@@ -42,7 +45,7 @@ page {
 
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 36rpx;
+  font-size: 18px;
   line-height: 1.7;
 }
 
@@ -58,14 +61,14 @@ page {
 }
 
 .page-title {
-  font-size: 48rpx;
+  font-size: 24px;
   font-weight: 700;
   line-height: 1.35;
   margin-bottom: 12rpx;
 }
 
 .page-subtitle {
-  font-size: 32rpx;
+  font-size: 16px;
   color: var(--color-text-sub);
   margin-bottom: 32rpx;
 }
@@ -73,7 +76,7 @@ page {
 .section-title {
   display: flex;
   align-items: center;
-  font-size: 36rpx;
+  font-size: 18px;
   font-weight: 600;
   margin: 36rpx 0 20rpx;
 }
@@ -98,28 +101,28 @@ page {
 }
 
 .card-title {
-  font-size: 36rpx;
+  font-size: 18px;
   font-weight: 600;
   margin-bottom: 16rpx;
 }
 
 .card-text {
-  font-size: 32rpx;
+  font-size: 16px;
   color: var(--color-text-sub);
   line-height: 1.7;
 }
 
 /* ============================ 按钮 ============================ */
 
-/* 触控高度不小于 88rpx（44px 等效） */
+/* 触控高度不小于 44px（px 单位，窄屏 320px 下仍成立；padding 归零且 line-height 1.4，不依赖原生默认高度补足） */
 .btn {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: var(--tap-min);
-  padding: 0 32rpx;
+  padding: 0 16px;
   border-radius: 999rpx;
-  font-size: 36rpx;
+  font-size: 18px;
   font-weight: 600;
   line-height: 1.4;
   border: none;
@@ -154,7 +157,7 @@ page {
 .badge {
   display: inline-flex;
   align-items: center;
-  min-height: 48rpx;
+  min-height: 24px;
   padding: 0 20rpx;
   border-radius: 999rpx;
   font-size: 28rpx;

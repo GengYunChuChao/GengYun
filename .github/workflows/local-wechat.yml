@@ -34,6 +34,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          # 完整历史：界面检查需比对 origin/main 基线，浅克隆会使冻结契约检查被跳过
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.16.0'

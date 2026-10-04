@@ -9,7 +9,7 @@
 }
 
 .notice__icon {
-  font-size: 32rpx;
+  font-size: 16px;
   margin-right: 14rpx;
   line-height: 1.5;
 }
@@ -53,7 +53,7 @@
 }
 
 .mode__title {
-  font-size: 36rpx;
+  font-size: 18px;
   font-weight: 600;
 }
 

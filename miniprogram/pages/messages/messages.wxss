@@ -11,7 +11,7 @@
 
 .kind__name {
   flex: 0 0 260rpx;
-  font-size: 32rpx;
+  font-size: 16px;
   font-weight: 600;
   color: var(--color-text, #1B2B1E);
 }

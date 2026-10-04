@@ -2,7 +2,7 @@
   <view class="hero">
     <view class="hero__brand">耕云</view>
     <view class="hero__title">识草查药，除草不求人</view>
-    <view class="hero__sub">拍照识别 · 语音提问 · 用药提醒</view>
+    <view class="hero__sub">识草查药与除草科普社区</view>
     <view class="hero__badge" wx:if="{{guest}}">游客浏览 · 登录后可保存记录</view>
   </view>
 

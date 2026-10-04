@@ -21,14 +21,14 @@
 
 .hero__sub {
   margin-top: 12rpx;
-  font-size: 30rpx;
+  font-size: 16px;
   opacity: 0.92;
 }
 
 .hero__badge {
   display: inline-flex;
   align-items: center;
-  min-height: 52rpx;
+  min-height: 26px;
   margin-top: 24rpx;
   padding: 0 22rpx;
   border-radius: 999rpx;
@@ -41,7 +41,7 @@
 .entry {
   display: flex;
   align-items: center;
-  min-height: var(--tap-min, 88rpx);
+  min-height: var(--tap-min, 44px);
   padding: 24rpx 24rpx;
   margin-bottom: 20rpx;
   border-radius: var(--radius-lg, 28rpx);
@@ -64,7 +64,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 48rpx;
+  font-size: 24px;
 }
 
 .entry__body {
@@ -73,7 +73,7 @@
 }
 
 .entry__title {
-  font-size: 36rpx;
+  font-size: 18px;
   font-weight: 600;
 }
 
