@@ -1,0 +1,1040 @@
+{
+  "schema": "gengyun.knowledge.regions.v1",
+  "catalog_version": "mca-xzqh-2023",
+  "generated_from": "mca.gov.cn/2023 county-level administrative division codes",
+  "source": {
+    "title": "2023年中华人民共和国县以上行政区划代码",
+    "canonical_url": "https://www.mca.gov.cn/mzsj/xzqh/2023/202301xzqh.html",
+    "publisher": "中华人民共和国民政部",
+    "retrieved_at": "2026-10-04",
+    "source_kind": "database",
+    "evidence_kind": "research"
+  },
+  "coverage_state": "supported",
+  "note": "仅浙江（33 前缀）；代码为县以上行政区划代码，市县选择用。省级/市级/县级均登记，不代表每个县都有独立除草资料。",
+  "region_count": 102,
+  "county_level_count": 90,
+  "content_sha256": "5f6df1ada78836dd73e8812af78885c24fb3996a1b6b8b4948394de25fe7a2a7",
+  "regions": [
+    {
+      "code": "330000",
+      "name": "浙江省",
+      "parent_code": null,
+      "level": "province",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330100",
+      "name": "杭州市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330102",
+      "name": "上城区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330105",
+      "name": "拱墅区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330106",
+      "name": "西湖区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330108",
+      "name": "滨江区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330109",
+      "name": "萧山区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330110",
+      "name": "余杭区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330111",
+      "name": "富阳区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330112",
+      "name": "临安区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330113",
+      "name": "临平区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330114",
+      "name": "钱塘区",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330122",
+      "name": "桐庐县",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330127",
+      "name": "淳安县",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330182",
+      "name": "建德市",
+      "parent_code": "330100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330200",
+      "name": "宁波市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330203",
+      "name": "海曙区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330205",
+      "name": "江北区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330206",
+      "name": "北仑区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330211",
+      "name": "镇海区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330212",
+      "name": "鄞州区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330213",
+      "name": "奉化区",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330225",
+      "name": "象山县",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330226",
+      "name": "宁海县",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330281",
+      "name": "余姚市",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330282",
+      "name": "慈溪市",
+      "parent_code": "330200",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330300",
+      "name": "温州市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330302",
+      "name": "鹿城区",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330303",
+      "name": "龙湾区",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330304",
+      "name": "瓯海区",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330305",
+      "name": "洞头区",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330324",
+      "name": "永嘉县",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330326",
+      "name": "平阳县",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330327",
+      "name": "苍南县",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330328",
+      "name": "文成县",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330329",
+      "name": "泰顺县",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330381",
+      "name": "瑞安市",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330382",
+      "name": "乐清市",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330383",
+      "name": "龙港市",
+      "parent_code": "330300",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330400",
+      "name": "嘉兴市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330402",
+      "name": "南湖区",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330411",
+      "name": "秀洲区",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330421",
+      "name": "嘉善县",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330424",
+      "name": "海盐县",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330481",
+      "name": "海宁市",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330482",
+      "name": "平湖市",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330483",
+      "name": "桐乡市",
+      "parent_code": "330400",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330500",
+      "name": "湖州市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330502",
+      "name": "吴兴区",
+      "parent_code": "330500",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330503",
+      "name": "南浔区",
+      "parent_code": "330500",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330521",
+      "name": "德清县",
+      "parent_code": "330500",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330522",
+      "name": "长兴县",
+      "parent_code": "330500",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330523",
+      "name": "安吉县",
+      "parent_code": "330500",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330600",
+      "name": "绍兴市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330602",
+      "name": "越城区",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330603",
+      "name": "柯桥区",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330604",
+      "name": "上虞区",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330624",
+      "name": "新昌县",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330681",
+      "name": "诸暨市",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330683",
+      "name": "嵊州市",
+      "parent_code": "330600",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330700",
+      "name": "金华市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330702",
+      "name": "婺城区",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330703",
+      "name": "金东区",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330723",
+      "name": "武义县",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330726",
+      "name": "浦江县",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330727",
+      "name": "磐安县",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330781",
+      "name": "兰溪市",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330782",
+      "name": "义乌市",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330783",
+      "name": "东阳市",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330784",
+      "name": "永康市",
+      "parent_code": "330700",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330800",
+      "name": "衢州市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330802",
+      "name": "柯城区",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330803",
+      "name": "衢江区",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330822",
+      "name": "常山县",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330824",
+      "name": "开化县",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330825",
+      "name": "龙游县",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330881",
+      "name": "江山市",
+      "parent_code": "330800",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330900",
+      "name": "舟山市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330902",
+      "name": "定海区",
+      "parent_code": "330900",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330903",
+      "name": "普陀区",
+      "parent_code": "330900",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330921",
+      "name": "岱山县",
+      "parent_code": "330900",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "330922",
+      "name": "嵊泗县",
+      "parent_code": "330900",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331000",
+      "name": "台州市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331002",
+      "name": "椒江区",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331003",
+      "name": "黄岩区",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331004",
+      "name": "路桥区",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331022",
+      "name": "三门县",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331023",
+      "name": "天台县",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331024",
+      "name": "仙居县",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331081",
+      "name": "温岭市",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331082",
+      "name": "临海市",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331083",
+      "name": "玉环市",
+      "parent_code": "331000",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331100",
+      "name": "丽水市",
+      "parent_code": "330000",
+      "level": "prefecture",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331102",
+      "name": "莲都区",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331121",
+      "name": "青田县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331122",
+      "name": "缙云县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331123",
+      "name": "遂昌县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331124",
+      "name": "松阳县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331125",
+      "name": "云和县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331126",
+      "name": "庆元县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331127",
+      "name": "景宁畲族自治县",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    },
+    {
+      "code": "331181",
+      "name": "龙泉市",
+      "parent_code": "331100",
+      "level": "county",
+      "catalog_version": "mca-xzqh-2023",
+      "selectable": true,
+      "supported": true,
+      "verification": "cross_checked_against_source"
+    }
+  ]
+}

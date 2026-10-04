@@ -1,0 +1,1134 @@
+{
+  "schema": "gengyun.knowledge.herbicides.v1",
+  "notice": "登记证号与字段均取自农业农村部农药管理司公开公告附表（登记延续信息），非编造；用药量/施用方法/禁限用状态本轮未采集，记录状态为 partial，不可作为用药依据。",
+  "retrieved_at": "2026-10-04",
+  "target": 20,
+  "achieved": 20,
+  "gap": 0,
+  "missing_registration_numbers": [],
+  "records": [
+    {
+      "record_id": "gy-i03-hb-001",
+      "registration_number": "PD20161371",
+      "registered_name": "唑草酮",
+      "producer": "山东胜邦绿野化学有限公司",
+      "dosage_form": "水分散粒剂",
+      "toxicity": "微毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "唑草酮 40%",
+      "product_standard": "Q/370181SLH 156-2018",
+      "use_scene": "水稻移栽田、小麦田",
+      "target_original": "一年生阔叶杂草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-002",
+      "registration_number": "PD20211218",
+      "registered_name": "吡酰·二甲戊",
+      "producer": "天津博克百胜科技有限公司",
+      "dosage_form": "悬乳剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "吡氟酰草胺 2%、二甲戊灵 22%",
+      "product_standard": "Q/12 BKBS 0042-2022",
+      "use_scene": "水稻旱直播田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-003",
+      "registration_number": "PD20211629",
+      "registered_name": "苯·吡·西草净",
+      "producer": "天津博克百胜科技有限公司",
+      "dosage_form": "颗粒剂",
+      "toxicity": "微毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "苯噻酰草胺 20.5%、吡嘧磺隆 1%、西草净 8.5%",
+      "product_standard": "Q/12 BKBS 0044-2022",
+      "use_scene": "水稻移栽田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-004",
+      "registration_number": "PD20212142",
+      "registered_name": "丙噁酮·丁草胺·噁嗪酮",
+      "producer": "华丰作物科技（黑龙江）有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "丁草胺 30%、噁嗪草酮 2%、丙炔噁草酮 5%",
+      "product_standard": "Q/HF019-2021",
+      "use_scene": "水稻移栽田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-005",
+      "registration_number": "PD20212101",
+      "registered_name": "乙氧氟草醚",
+      "producer": "佛山市盈辉作物科学有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "乙氧氟草醚 240克/升",
+      "product_standard": "Q/YH 246-2021",
+      "use_scene": "水稻移栽田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-006",
+      "registration_number": "PD20212271",
+      "registered_name": "噁唑草·二氯喹",
+      "producer": "江西正邦作物保护股份有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "微毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "噁唑酰草胺 10%、二氯喹啉酸 15%",
+      "product_standard": "Q/ZBSH 129-2020",
+      "use_scene": "水稻田(直播)",
+      "target_original": "稗草",
+      "crop_ids": [
+        "crop_rice"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-007",
+      "registration_number": "PD20161376",
+      "registered_name": "辛·烟·莠去津",
+      "producer": "辽宁壮苗生化科技股份有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "莠去津 20%、辛酰溴苯腈 15%、烟嘧磺隆 4%",
+      "product_standard": "Q/BZM 050-2024",
+      "use_scene": "玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-008",
+      "registration_number": "PD20211624",
+      "registered_name": "硝·烟·莠去津",
+      "producer": "山东东远生物科技有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "莠去津 26%、硝磺草酮 6%、烟嘧磺隆 4%",
+      "product_standard": "Q/370921SDY 028-2020",
+      "use_scene": "玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-009",
+      "registration_number": "PD20161175",
+      "registered_name": "硝·烟·辛酰溴",
+      "producer": "陕西美邦药业集团股份有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "中等毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "辛酰溴苯腈 15%、硝磺草酮 5%、烟嘧磺隆 2%",
+      "product_standard": "Q/PMB 157-2018",
+      "use_scene": "玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-010",
+      "registration_number": "PD20110805",
+      "registered_name": "磺草·莠去津",
+      "producer": "沈阳科创化学品有限公司",
+      "dosage_form": "悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "莠去津 24%、磺草酮 14%",
+      "product_standard": "Q/210106 SSCC 154-2023",
+      "use_scene": "玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-011",
+      "registration_number": "PD20212226",
+      "registered_name": "硝磺草酮",
+      "producer": "张掖市大弓农化有限公司",
+      "dosage_form": "悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "硝磺草酮 40%",
+      "product_standard": "Q/DGNH059-2025",
+      "use_scene": "玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-012",
+      "registration_number": "PD20211628",
+      "registered_name": "烯草酮",
+      "producer": "天津博克百胜科技有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "烯草酮 30%",
+      "product_standard": "GB/T22614-2023",
+      "use_scene": "大豆田、花生田、马铃薯田、油菜田",
+      "target_original": "一年生禾本科杂草",
+      "crop_ids": [
+        "crop_soybean",
+        "crop_rapeseed"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-013",
+      "registration_number": "PD20212137",
+      "registered_name": "嗪酮·乙草胺",
+      "producer": "华丰作物科技（黑龙江）有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "乙草胺 60%、嗪草酮 15%",
+      "product_standard": "Q/HF018-2021",
+      "use_scene": "春大豆田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_soybean"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-014",
+      "registration_number": "PD20212138",
+      "registered_name": "丙炔氟·乙草胺",
+      "producer": "华丰作物科技（黑龙江）有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "乙草胺 70.5%、丙炔氟草胺 2.5%",
+      "product_standard": "Q/HF020-2021",
+      "use_scene": "春大豆田、花生田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_soybean"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-015",
+      "registration_number": "PD20211640",
+      "registered_name": "氟·松·烯草酮",
+      "producer": "哈尔滨汇丰生物农化有限公司",
+      "dosage_form": "可分散油悬浮剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "烯草酮 7%、异噁草松 15%、氟磺胺草醚 15%",
+      "product_standard": "Q/HRBHF 017-2020",
+      "use_scene": "春大豆田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_soybean"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-016",
+      "registration_number": "PD20111018",
+      "registered_name": "氨氯·二氯吡",
+      "producer": "四川利尔作物科学有限公司",
+      "dosage_form": "水剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "二氯吡啶酸 22.9%、氨氯吡啶酸 5.7%",
+      "product_standard": "Q/915107037866879317·25-2021",
+      "use_scene": "油菜田",
+      "target_original": "一年生阔叶杂草",
+      "crop_ids": [
+        "crop_rapeseed"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-017",
+      "registration_number": "PD20161375",
+      "registered_name": "烯草酮",
+      "producer": "安徽久易农业股份有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "烯草酮 240克/升",
+      "product_standard": "GB/T 22615-2008",
+      "use_scene": "油菜田",
+      "target_original": "一年生禾本科杂草",
+      "crop_ids": [
+        "crop_rapeseed"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-018",
+      "registration_number": "PD20260472",
+      "registered_name": "氨氯·二氯吡",
+      "producer": "天津博克百胜科技有限公司",
+      "dosage_form": "可溶液剂",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "二氯吡啶酸 24%,氨氯吡啶酸 6%",
+      "product_standard": "Q/12 BKBS 0093—2022",
+      "use_scene": "冬油菜田",
+      "target_original": "一年生阔叶杂草",
+      "crop_ids": [
+        "crop_rapeseed"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第1期）",
+        "published_at": "2026-03-26",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202603/t20260325_6482643.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202603/P020260325742775767461.xls",
+        "attachment_sha256": "c82c43361c0b75303287de7cf92f91a3574bdde58f3d63fcde93719ab6d5462d",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32280",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-019",
+      "registration_number": "PD20212148",
+      "registered_name": "乙草·滴辛酯",
+      "producer": "黑龙江谱农丰生物科技开发有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "乙草胺 60%、2,4-滴异辛酯 18%",
+      "product_standard": "Q/HPNF017-2021",
+      "use_scene": "春大豆田、春玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_soybean",
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    },
+    {
+      "record_id": "gy-i03-hb-020",
+      "registration_number": "PD20211636",
+      "registered_name": "乙·嗪·滴辛酯",
+      "producer": "天津博克百胜科技有限公司",
+      "dosage_form": "乳油",
+      "toxicity": "低毒",
+      "pesticide_class": "除草剂",
+      "ingredients_text": "乙草胺 55.3%、2,4-滴异辛酯 20.2%、嗪草酮 6.5%",
+      "product_standard": "Q/12 BKBS 0037-2022",
+      "use_scene": "春大豆田、春玉米田",
+      "target_original": "一年生杂草",
+      "crop_ids": [
+        "crop_soybean",
+        "crop_corn"
+      ],
+      "source": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "original_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "publisher": "农业农村部农药管理司",
+        "source_kind": "verified_seed",
+        "evidence_kind": "research",
+        "retrieved_at": "2026-10-04",
+        "source_validity": "valid"
+      },
+      "record_status": "partial",
+      "verification": {
+        "source_checked": true,
+        "source_checked_scope": [
+          "登记证号",
+          "农药名称",
+          "登记证持有人",
+          "剂型",
+          "毒性",
+          "有效成分及其含量",
+          "农药类别",
+          "作物/场所",
+          "防治对象"
+        ],
+        "not_collected": [
+          "用药量（制剂量/亩）",
+          "施用方法",
+          "注意事项",
+          "登记有效期起止日期",
+          "禁限用状态"
+        ],
+        "review_status": "unverified",
+        "card_eligible": false,
+        "usable_as_dose": false,
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+      }
+    }
+  ]
+}
