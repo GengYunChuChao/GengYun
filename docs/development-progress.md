@@ -43,8 +43,8 @@
 | GY-I22 完成权限、安全规则及首版端到端失败回归 | [#22](https://github.com/Sek1ro-oka/GengYun/issues/22) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
-| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；TTS查询权限拒绝，六类能力/数据库/真机未验，issue保持open |
-| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待审PR | 尹一／[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39) feat(ui)+test(ui)两提交；工具2.02.2609231／基础库3.17.3／正式AppID已生效；五Tab游客态截图、常见字号走查、node --test 11项全过；[证据](verification/gui-adaptive-evidence.md)；登录态走查待GY-I04、Android复测待GY-I23，issue保持open |
+| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；[六类配置接续](verification/ai-configuration-evidence.md)：TokenHub只读鉴权、五SDK局部兼容、七端点离线准备；两审核BizType已私密配置，七端点参数/凭据齐；额度/授权与策略有效性未验，六类真实能力/数据库/真机未验，issue保持open |
+| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待审PR／监工要求修改 | 尹一／[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)；工具2.02.2609231、正式AppID wx4407a4b908a69a54已生效编译；五Tab游客态走查、界面自动化11项PASS；走查时本机调试基础库3.17.3（灰度中）与仓库锁定3.5.5不一致，锁定值下编译与五Tab复测待补；[证据](verification/gui-adaptive-evidence.md)；截图仅贴PR描述未入库；放大字号走查、登录态走查(GY-I04)、Android复测(GY-I23)未做；监工2026-10-04审查结论需修改，issue保持open |
 | GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 未领取／无已验PR |
 
 ## 3 当前实施约束
