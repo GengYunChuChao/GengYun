@@ -17,10 +17,14 @@
  *   - reserve 保存「全部必需用途的 epoch」+「外发时固定的账号 auth_epoch」+「接收方 config_version」；
  *   - 派发（markSent）与回写（guardWriteback）始终以这些快照为准重查，不接收调用方覆盖的新上下文。
  *
- * 并发安全（修复轮 2）：
+ * 并发安全（修复轮 2 + 3）：
  *   - 每条记录带单调递增 revision，任何状态迁移都递增；
  *   - markSent 在全部异步核对完成后，做**同步原子复核**（状态仍为在途 + revision 未变），
- *     确保 await 期间被 revokeInFlight/markFailed 置为终态的记录不会被重新置为 sent（终态不可复活）。
+ *     确保 await 期间被 revokeInFlight/markFailed 置为终态的记录不会被重新置为 sent（终态不可复活）；
+ *   - **提交门闩** assertCommitFence：在最后一次 await 之后全量重读「用途 epoch + 接收方 + 账号身份」
+ *     快照。调用方即使**不经** revokeInFlight，只要在 await 期间注销/停用账号、前进 auth_epoch 或
+ *     撤回用途，也会被这道最后重读捕获；读后到提交之间无 await 间隙，杜绝
+ *     「以一次早先查询证明最终提交安全」的临界漏洞。
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -122,6 +126,23 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
         throw new PrivacyError('SCOPE_DENIED', `接收方 ${record.recipientId} 未验证删除确认能力`);
       }
     }
+  }
+
+  /**
+   * 提交门闩（原子协议，修复轮 3）：在**最后一次 await 之后**再全量重读快照
+   * （用途 epoch / 接收方版本 / 账号状态与 auth_epoch），随后调用方立即**同步**提交/返回。
+   *
+   * 为什么要「bookend」：若只在前面查一次，调用方可在某次 await（如 recipientStore.get）
+   * 期间把账号改为 deletion_pending / 前进 auth_epoch，或撤回用途——而**不经过** revokeInFlight，
+   * 使外发行 revision 不变，先前的检查看不到真实失效。门闩把账号身份读放到最后，
+   * 保证「最后一次异步读取」就是最终一致性证据；读后到提交之间无 await 间隙，杜绝临界窗口。
+   *
+   * 顺序有意为之：先用途、再接收方、最后账号身份（把最关键的注销/停用放在最后读）。
+   */
+  async function assertCommitFence(record) {
+    await assertAllConsentsIntact(record);
+    await assertRecipientIntact(record);
+    await assertAccountIntact(record);
   }
 
   /**
@@ -239,8 +260,8 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
   /**
    * 实际派发前二次核对（账号快照 / 全部必需用途 / 接收方资格），然后置 sent。
    * 不接受调用方覆盖 authEpoch。
-   * 异步核对完成后做同步原子复核（在途状态 + revision 未变），
-   * 使 await 期间被撤回/失败置为终态的记录不可被重新置为 sent。
+   * 异步核对完成后先过**提交门闩**（最后 await 之后全量重读快照），再做同步原子复核
+   * （在途状态 + revision 未变），使 await 期间被撤回/失败/注销的记录不可被置为 sent。
    */
   async function markSent(id) {
     const record = rows.get(id);
@@ -250,6 +271,8 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
+    // 提交门闩：最后一次 await 之后再全量重读快照（捕获 await 期间的账号变更/用途撤回）。
+    await assertCommitFence(record);
     // 原子复核（无 await 间隙）：在途检查 + 版本号未被他方迁移。
     assertInFlight(record);
     if (record.revision !== startRevision) {
@@ -324,6 +347,8 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
+    // 提交门闩：最后一次 await 之后再全量重读快照（捕获 await 期间的账号变更/用途撤回）。
+    await assertCommitFence(record);
     if (record.state !== 'reserved' && record.state !== 'sent') {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终止（${record.state}），禁止回写`);
     }

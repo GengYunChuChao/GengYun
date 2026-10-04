@@ -89,3 +89,72 @@ test('requireConsent 缺少身份上下文触发 SESSION_REQUIRED', async () => 
     (err) => err instanceof PrivacyError && err.code === 'SESSION_REQUIRED',
   );
 });
+
+// ---- 修复轮 3 · P1-A：已认证执行入口强制身份版本（不得省略 epoch）----
+
+async function grantVoice(consentStore) {
+  for (const p of ['recording', 'media_processing', 'external_inference']) {
+    await consentStore.grant({ userId: 'u1', purpose: p, policyVersion: '1.0.0', recipientIds: [] });
+  }
+}
+
+test('R3 requireConsent 缺 authEpoch（仅 userId）→ SESSION_REQUIRED，且不放行', async () => {
+  const { guard, consentStore } = await setup();
+  await grantVoice(consentStore);
+  const middleware = guard.requireConsent({ purpose: 'recording', dataType: 'voice_question' });
+  await assert.rejects(
+    () => middleware({ userId: 'u1' }),
+    (err) => err instanceof PrivacyError && err.code === 'SESSION_REQUIRED' && err.status === 401,
+  );
+});
+
+test('R3 requireConsent authEpoch 为 null → SESSION_REQUIRED', async () => {
+  const { guard, consentStore } = await setup();
+  await grantVoice(consentStore);
+  const middleware = guard.requireConsent({ purpose: 'recording', dataType: 'voice_question' });
+  await assert.rejects(
+    () => middleware({ userId: 'u1', authEpoch: null }),
+    (err) => err instanceof PrivacyError && err.code === 'SESSION_REQUIRED',
+  );
+});
+
+test('R3 requireConsent 非正整数 authEpoch → INVALID_REQUEST', async () => {
+  const { guard, consentStore } = await setup();
+  await grantVoice(consentStore);
+  const middleware = guard.requireConsent({ purpose: 'recording', dataType: 'voice_question' });
+  for (const bad of [0, -1, 1.5, '1', NaN]) {
+    await assert.rejects(
+      () => middleware({ userId: 'u1', authEpoch: bad }),
+      (err) => err instanceof PrivacyError && err.code === 'INVALID_REQUEST',
+      `authEpoch=${String(bad)} 应被拒绝`,
+    );
+  }
+});
+
+test('R3 requireConsent 旧版本（账号 active 但 auth_epoch 1→2）→ ACCOUNT_INACTIVE，新版本可过', async () => {
+  const { guard, consentStore, account } = await setup();
+  await grantVoice(consentStore);
+  account.set('u1', { state: 'active', authEpoch: 2 }); // 仍 active 但版本已前进
+  const middleware = guard.requireConsent({ purpose: 'recording', dataType: 'voice_question' });
+  await assert.rejects(
+    () => middleware({ userId: 'u1', authEpoch: 1 }),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+  const ok = await middleware({ userId: 'u1', authEpoch: 2 });
+  assert.equal(ok.consentEpoch, 1);
+});
+
+test('R3 requireConsent 正确版本通过（已认证执行入口放行）', async () => {
+  const { guard, consentStore } = await setup();
+  await grantVoice(consentStore);
+  const middleware = guard.requireConsent({ purpose: 'recording', dataType: 'voice_question' });
+  const res = await middleware({ userId: 'u1', authEpoch: 1 });
+  assert.equal(res.consentEpoch, 1);
+});
+
+test('R3 纯用途查询 assertConsent 与执行入口分开：无 epoch 仍可查（不代表可执行）', async () => {
+  const { guard, consentStore } = await setup();
+  await grantVoice(consentStore);
+  const res = await guard.assertConsent({ userId: 'u1', purpose: 'recording', dataType: 'voice_question' });
+  assert.equal(res.consentEpoch, 1);
+});

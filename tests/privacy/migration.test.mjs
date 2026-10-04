@@ -20,11 +20,12 @@ test('迁移运行器（services/api/src/db/migrate.ts）能发现 0003_privacy_
   assert.ok(found, '运行器未发现 0003 迁移（文件不在扫描目录或文件名不合规）');
   assert.equal(found.name, 'privacy_consent');
   assert.equal(found.filename, '0003_privacy_consent.sql');
-  // 运行器扫描目录应同时含 0001，顺序为 0001 → 0003
-  assert.deepEqual(
-    migrations.map((m) => m.version),
-    ['0001', '0003'],
-  );
+  // 容错断言：只要求扫描目录含 0001 与 0003，且 0001 在 0003 之前；
+  // 其它 PR 的迁移（如 GY-I03 的 0002）先后合入都不打破（不写死完整列表）。
+  const versions = migrations.map((m) => m.version);
+  assert.ok(versions.includes('0001'), `应含 0001，实际：${versions.join(',')}`);
+  assert.ok(versions.includes('0003'), `应含 0003，实际：${versions.join(',')}`);
+  assert.equal(versions.indexOf('0001') < versions.indexOf('0003'), true, '0001 必须排在 0003 之前');
 });
 
 test('回滚脚本放在 rollback/ 子目录，不进入运行器发现集', () => {

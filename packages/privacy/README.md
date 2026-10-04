@@ -10,8 +10,8 @@
 | `constants.mjs` | 冻结枚举 + `error_status_map` + `statusForErrorCode`（与 states.json 逐项一致） |
 | `errors.mjs` | `PrivacyError` + `toErrorEnvelope`（错误封套与 services/api 的 ErrorEnvelope 同形） |
 | `consent.mjs` | 用途授权存储（内存实现，可插拔 Postgres）：grant/withdraw/currentEpoch |
-| `guard.mjs` | 授权守卫：`assertConsent` / `assertAccountActive` / `requireConsent`（可注入身份上下文） |
-| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `revokeInFlight` |
+| `guard.mjs` | 授权守卫：**已认证执行入口** `requireConsent`（强制正整数 `auth_epoch` + 核对当前版本）与**纯用途查询** `assertConsent` / `assertAccountActive`（二者分开，不可混用） |
+| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `revokeInFlight`（原子版本提交 + 提交门闩） |
 | `deletion.mjs` | 模块删除处理器注册协议 + 第三方删除请求/确认/失败（不把请求当完成） |
 | `redact.mjs` | 日志脱敏：私有正文/图片/音频/精确坐标/凭据 |
 | `index.mjs` | 统一出口 |
@@ -30,7 +30,10 @@
 ## 授权中间件挂载说明（GY-I02 已合并，接线由后续任务完成）
 
 `packages/privacy/guard.mjs` 的 `requireConsent` 是**纯模块**，不直接改 `services/api/src/app.ts`
-（该文件归 GY-I02）。按以下方式挂载到 Fastify 路由 preHandler：
+（该文件归 GY-I02）。它是**已认证执行入口**：挂到 Fastify 路由 preHandler 时必须由会话层填充
+`authEpoch`——缺失/null 得到 `SESSION_REQUIRED`，非正整数得到 `INVALID_REQUEST`，
+与当前 `auth_epoch` 不一致（旧会话/注销/停用）得到 `ACCOUNT_INACTIVE`。**纯用途查询**请用
+`assertConsent`（不做身份版本核对，**不代表可执行**）。挂载方式：
 
 ```js
 import { createPrivacyGuard } from '../packages/privacy/guard.mjs';
@@ -55,9 +58,11 @@ app.route({
 
 `services/api/db/migrations/0003_privacy_consent.sql` 位于迁移运行器
 （`services/api/src/db/migrate.ts` 的 `DEFAULT_MIGRATIONS_DIR`）的扫描目录，可被 `npm run db:migrate`
-发现（回归断言见 `tests/privacy/migration.test.mjs`：运行器发现 `0001 → 0003`）。其
+发现（回归断言见 `tests/privacy/migration.test.mjs`：运行器发现含 `0001` 与 `0003`，且 `0001` 在 `0003`
+之前；`0002` 由 GY-I03 提供）。其
 `consent_records` / `privacy_epochs` / `exports` 以 `users(id)` 为外键，**必须在 0001（GY-I02
-初始迁移）之后执行**；对 0002 无硬依赖，建议整体顺序 `0001 → 0002 → 0003`。本 PR 不包含 0001/0002。
+初始迁移）之后执行**；对 0002 无硬依赖，建议整体顺序 `0001 → 0002 → 0003`。本 PR 不包含/不修改
+0001、0002（分别由 GY-I02、GY-I03 提供）。
 
 回滚脚本置于 `services/api/db/migrations/rollback/0003_privacy_consent.down.sql`：运行器文件模式为
 `NNNN_name.sql`，`.down.sql` 不合规、`..._down.sql` 会与 0003 版本号重复，故回滚脚本单独放在子目录，
@@ -80,3 +85,8 @@ app.route({
   且所有第三方均 `confirmed`（有证据）时置 `completed`；`failed` / `unsupported` 一律保留阻塞——
   「已证实完成」与「无法删除/无法证实」不等价。
 - 错误出口只出固定安全分类：`deletion` 的 handler 异常/返回码经白名单映射，原始 SDK 文本不进入用户回执。
+- 身份与用途不可分离：`ledger.markSent` / `guardWriteback` 在**最后一次 await 之后**过**提交门闩**
+  （全量重读「用途 epoch + 接收方 + 账号身份/auth_epoch」快照），读后到提交无 await 间隙；
+  即使调用方**不用** `revokeInFlight`，await 期间的注销/停用/用途撤回也会被捕获（不派发、不准回写）。
+- 执行入口不接受省略身份版本：`guard.requireConsent` 强制正整数 `auth_epoch` 并核对当前版本，
+  与纯用途查询 `assertConsent` 分开，杜绝「不传 epoch 即绕过」。

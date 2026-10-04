@@ -465,3 +465,111 @@ test('R2 经 get() 返回值删掉 recording 后撤回 recording，markSent 仍�
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
 });
+
+// ---- 修复轮 3 · P1-B：提交门闩（账号失效/用途撤回与任务取消不可分离）----
+
+/** 可受控暂停的接收方存储：pauseNext() 后，下一次 get 会阻塞到 release()。 */
+function createPausedRecipientStore(recipient) {
+  let paused = false;
+  let release;
+  const gate = new Promise((res) => {
+    release = res;
+  });
+  return {
+    store: {
+      async get() {
+        if (paused) {
+          paused = false;
+          await gate;
+        }
+        return { ...recipient };
+      },
+    },
+    pauseNext() {
+      paused = true;
+    },
+    release() {
+      release();
+    },
+  };
+}
+
+test('R3 最后 await 期间注销（deletion_pending + auth_epoch 2，不经 revokeInFlight）→ markSent 不派发', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
+  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+
+  pausable.pauseNext();
+  const sending = ledger.markSent(rec.id);
+  await new Promise((r) => setTimeout(r, 0)); // 推进到最后一次 await（recipientStore.get）处暂停
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 }); // 直接注销，未调用 revokeInFlight
+  pausable.release();
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'reserved', '不得派发（终态未被置 sent）');
+});
+
+test('R3 最后 await 期间用途撤回（不经 revokeInFlight）→ markSent 不派发', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
+  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+
+  pausable.pauseNext();
+  const sending = ledger.markSent(rec.id);
+  await new Promise((r) => setTimeout(r, 0));
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+  pausable.release();
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'reserved');
+});
+
+test('R3 最后 await 期间注销 → guardWriteback（同一暂停点）被阻断', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const pausable = createPausedRecipientStore(VERIFIED_RECIPIENT);
+  const ledger = createExportLedger({ consentStore, account, recipientStore: pausable.store });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  pausable.pauseNext();
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  await new Promise((r) => setTimeout(r, 0));
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+  pausable.release();
+  await assert.rejects(
+    () => writing,
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInFlight）', async () => {
+  const { ledger, consentStore, account } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+test('R3 提交门闩不误伤：账号/用途均未变时正常派发', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  const sent = await ledger.markSent(rec.id);
+  assert.equal(sent.state, 'sent');
+});
