@@ -1,15 +1,49 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { discoverMigrations, DEFAULT_MIGRATIONS_DIR } from '../../services/api/src/db/migrate.ts';
 
 const sql = readFileSync(
-  new URL('../../db/migrations/0003_privacy_consent.sql', import.meta.url),
+  new URL('../../services/api/db/migrations/0003_privacy_consent.sql', import.meta.url),
   'utf8',
 );
 
 // 注：本文件为静态结构回归（依赖无关，不要求本机安装 Postgres）。
 // 实际 SQL 负例已用 @electric-sql/pglite（Postgres WASM）逐条执行验证，
 // 输出见 PR 正文「迁移 0003 实际 SQL 负例」节。
+
+// ---- 追加项 A：0003 必须位于运行器扫描目录 services/api/db/migrations/ 且能被发现 ----
+
+test('迁移运行器（services/api/src/db/migrate.ts）能发现 0003_privacy_consent.sql', () => {
+  const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
+  const found = migrations.find((m) => m.version === '0003');
+  assert.ok(found, '运行器未发现 0003 迁移（文件不在扫描目录或文件名不合规）');
+  assert.equal(found.name, 'privacy_consent');
+  assert.equal(found.filename, '0003_privacy_consent.sql');
+  // 运行器扫描目录应同时含 0001，顺序为 0001 → 0003
+  assert.deepEqual(
+    migrations.map((m) => m.version),
+    ['0001', '0003'],
+  );
+});
+
+test('回滚脚本放在 rollback/ 子目录，不进入运行器发现集', () => {
+  // 运行器模式为 NNNN_name.sql：`.down.sql` 不合规、`..._down.sql` 会与 0003 版本号重复。
+  // 因此 down 脚本置于子目录，避免运行器 discoverMigrations 抛错。
+  const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
+  assert.equal(
+    migrations.some((m) => m.filename.toLowerCase().includes('down')),
+    false,
+  );
+  // 回滚脚本确实存在于 rollback/ 子目录（与 up 同源）
+  const downSql = readFileSync(
+    new URL('../../services/api/db/migrations/rollback/0003_privacy_consent.down.sql', import.meta.url),
+    'utf8',
+  );
+  assert.ok(downSql.includes('DROP TYPE IF EXISTS consent_purpose'));
+});
+
+// ---- 迁移内容结构回归 ----
 
 test('third_party_deletions 的 confirmed 证据约束覆盖 online 与 backup 两侧', () => {
   assert.ok(sql.includes('third_party_confirmed_evidence'), '缺少 confirmed 证据约束');

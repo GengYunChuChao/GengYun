@@ -2,7 +2,7 @@
  * GY-I27 隐私模块 · 外发账本。
  *
  * 登记真实图片/录音/转写/会话/任务的外发：userid / purpose / recipient / source_version。
- * 对应 db/migrations/0003_privacy_consent.sql 的 exports 表 + recipients 表。
+ * 对应 services/api/db/migrations/0003_privacy_consent.sql 的 exports 表 + recipients 表。
  *
  * 生命周期：reserved（预留，锁定账号版本/全部必需用途 epoch/接收方版本）→
  *           sent（已发出）｜ failed（失败/撤回/取消）｜ outcome_unknown（供应商结果未知）。
@@ -16,6 +16,11 @@
  * 快照语义（本轮监工 P1 修复）：
  *   - reserve 保存「全部必需用途的 epoch」+「外发时固定的账号 auth_epoch」+「接收方 config_version」；
  *   - 派发（markSent）与回写（guardWriteback）始终以这些快照为准重查，不接收调用方覆盖的新上下文。
+ *
+ * 并发安全（修复轮 2）：
+ *   - 每条记录带单调递增 revision，任何状态迁移都递增；
+ *   - markSent 在全部异步核对完成后，做**同步原子复核**（状态仍为在途 + revision 未变），
+ *     确保 await 期间被 revokeInFlight/markFailed 置为终态的记录不会被重新置为 sent（终态不可复活）。
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -35,9 +40,19 @@ import { createPrivacyGuard } from './guard.mjs';
  * }} deps
  */
 export function createExportLedger({ consentStore, account, recipientStore, now = () => new Date() } = {}) {
+  // 强制要求「身份版本」能力：缺少 authEpochOf 的适配器会绕过账号版本核对，
+  // 使旧任务在账号已注销/停用（auth_epoch 前进）后仍被放行。此处直接拒绝构造。
+  if (!account || typeof account.stateOf !== 'function' || typeof account.authEpochOf !== 'function') {
+    throw new Error('createExportLedger 需要注入带 stateOf 与 authEpochOf 的 account 提供者');
+  }
   const guard = createPrivacyGuard({ account, consentStore, now });
   /** @type {Map<string, object>} */
   const rows = new Map();
+
+  /** 对外投影：深拷贝授权快照，调用方改写返回值不得影响内部记录。 */
+  function projectRecord(record) {
+    return { ...record, requiredConsents: { ...(record.requiredConsents ?? {}) } };
+  }
 
   function assertValidPurpose(purpose) {
     if (!CONSENT_PURPOSES.includes(purpose)) {
@@ -51,17 +66,29 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     }
   }
 
+  /** 读取当前身份版本；缺失能力、查询失败或非法值一律拒绝（不静默放行）。 */
+  async function readAuthEpochOrThrow(userId) {
+    let current;
+    try {
+      current = await account.authEpochOf(userId);
+    } catch {
+      throw new PrivacyError('ACCOUNT_INACTIVE', '身份版本查询失败，禁止操作');
+    }
+    if (!Number.isInteger(current) || current < 1) {
+      throw new PrivacyError('ACCOUNT_INACTIVE', '身份版本非法，禁止操作');
+    }
+    return current;
+  }
+
   /** 重查账号快照：始终用 record.authEpoch（外发时固定的账号版本），不接受调用方覆盖。 */
   async function assertAccountIntact(record) {
     const state = await account.stateOf(record.userId);
     if (state !== 'active') {
       throw new PrivacyError('ACCOUNT_INACTIVE', `账号状态为 ${state}，禁止操作`);
     }
-    if (typeof account.authEpochOf === 'function') {
-      const cur = await account.authEpochOf(record.userId);
-      if (cur !== record.authEpoch) {
-        throw new PrivacyError('ACCOUNT_INACTIVE', '账号状态已变更，禁止操作');
-      }
+    const current = await readAuthEpochOrThrow(record.userId);
+    if (current !== record.authEpoch) {
+      throw new PrivacyError('ACCOUNT_INACTIVE', '账号状态已变更，禁止操作');
     }
   }
 
@@ -185,11 +212,13 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
       objectRevision,
       purpose,
       consentEpoch: requiredConsents[purpose],
-      requiredConsents,
+      // 冻结内部快照：调用方经公开返回值无法改写（对外返回深拷贝投影）。
+      requiredConsents: Object.freeze({ ...requiredConsents }),
       recipientId,
       recipientConfigVersion: recipient.config_version,
       sourceVersion,
       state: 'reserved',
+      revision: 1,
       requestedAt: now(),
       sentAt: null,
       providerRequestRefCipher: null,
@@ -199,29 +228,38 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
       updatedAt: now(),
     };
     rows.set(record.id, record);
-    return { ...record };
+    return projectRecord(record);
   }
 
   function get(id) {
     const r = rows.get(id);
-    return r ? { ...r } : null;
+    return r ? projectRecord(r) : null;
   }
 
   /**
    * 实际派发前二次核对（账号快照 / 全部必需用途 / 接收方资格），然后置 sent。
    * 不接受调用方覆盖 authEpoch。
+   * 异步核对完成后做同步原子复核（在途状态 + revision 未变），
+   * 使 await 期间被撤回/失败置为终态的记录不可被重新置为 sent。
    */
   async function markSent(id) {
     const record = rows.get(id);
     if (!record) throw new PrivacyError('NOT_FOUND', '外发记录不存在');
     assertInFlight(record);
+    const startRevision = record.revision;
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
+    // 原子复核（无 await 间隙）：在途检查 + 版本号未被他方迁移。
+    assertInFlight(record);
+    if (record.revision !== startRevision) {
+      throw new PrivacyError('OBJECT_UNAVAILABLE', '外发在派发前已被变更，禁止派发');
+    }
     record.state = 'sent';
     record.sentAt = now();
+    record.revision += 1;
     record.updatedAt = now();
-    return { ...record };
+    return projectRecord(record);
   }
 
   function markFailed(id, { errorCode = null } = {}) {
@@ -230,8 +268,9 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     assertInFlight(record);
     record.state = 'failed';
     record.errorCode = errorCode;
+    record.revision += 1;
     record.updatedAt = now();
-    return { ...record };
+    return projectRecord(record);
   }
 
   function markOutcomeUnknown(id, { errorCode = null } = {}) {
@@ -240,8 +279,9 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     assertInFlight(record);
     record.state = 'outcome_unknown';
     record.errorCode = errorCode;
+    record.revision += 1;
     record.updatedAt = now();
-    return { ...record };
+    return projectRecord(record);
   }
 
   /**
@@ -258,6 +298,7 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
       if (record.state === 'reserved' || record.state === 'sent') {
         record.state = 'failed';
         record.errorCode = 'CONSENT_WITHDRAWN';
+        record.revision += 1;
         record.updatedAt = now();
         count += 1;
       }
@@ -286,7 +327,7 @@ export function createExportLedger({ consentStore, account, recipientStore, now 
     if (record.state !== 'reserved' && record.state !== 'sent') {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终止（${record.state}），禁止回写`);
     }
-    return { ...record };
+    return projectRecord(record);
   }
 
   return {

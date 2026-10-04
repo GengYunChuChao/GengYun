@@ -312,3 +312,156 @@ test('P1-3 预留后接收方删除确认能力失效，guardWriteback 阻断', 
     (err) => err instanceof PrivacyError && err.code === 'SCOPE_DENIED',
   );
 });
+
+// ---- 修复轮 2 · P1 撤回竞态：await 期间终态不可复活 ----
+
+test('R2 派发竞态：受控暂停 get 期间撤回，markSent 不得把记录复活为 sent', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  let releaseGet;
+  const gate = new Promise((res) => {
+    releaseGet = res;
+  });
+  let pauseNext = false;
+  const recipientStore = {
+    async get() {
+      if (pauseNext) {
+        pauseNext = false;
+        await gate; // 受控暂停最后一次 get，模拟撤回发生在派发 await 期间
+      }
+      return { ...VERIFIED_RECIPIENT };
+    },
+  };
+  const ledger = createExportLedger({ consentStore, account, recipientStore });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+
+  pauseNext = true;
+  const sending = ledger.markSent(rec.id);
+  // 让 markSent 推进到受控暂停点（此时已通过账号/授权核对，卡在接收方 get）
+  await new Promise((r) => setTimeout(r, 0));
+  // 撤回：revokeInFlight 同步终结在途记录
+  const count = ledger.revokeInFlight({ userId: 'u1', purpose: 'recording' });
+  assert.equal(count, 1);
+  assert.equal(ledger.get(rec.id).state, 'failed');
+
+  releaseGet(); // 释放暂停的 get：markSent 继续，但其同步原子复核必须失败
+  await assert.rejects(
+    () => sending,
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(ledger.get(rec.id).state, 'failed', '终态不可被复活为 sent');
+});
+
+test('R2 派发竞态：终态（failed/outcome_unknown）记录标记 revision，markSent 复核失败', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  ledger.markOutcomeUnknown(rec.id, { errorCode: 'PROVIDER_OUTCOME_UNKNOWN' });
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+// ---- 修复轮 2 · P1 身份版本能力强制 ----
+
+test('R2 缺 authEpochOf 的适配器在构造时被拒绝（不再静默跳过版本核对）', () => {
+  const account = {
+    async stateOf() {
+      return 'active';
+    },
+  };
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore: createConsentStore(),
+        account,
+        recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+      }),
+    /authEpochOf/,
+  );
+});
+
+test('R2 身份版本查询失败时拒绝派发（不静默放行）', async () => {
+  const { ledger, consentStore, account } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  account.authEpochOf = async () => {
+    throw new Error('synthetic auth store down');
+  };
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+test('R2 身份版本返回非法值时拒绝派发', async () => {
+  const { ledger, consentStore, account } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  account.authEpochOf = async () => 0;
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+  account.authEpochOf = async () => '1';
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+test('R2 身份版本查询失败时 guardWriteback 阻断回写', async () => {
+  const { ledger, consentStore, account } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  account.authEpochOf = async () => {
+    throw new Error('synthetic auth store down');
+  };
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+// ---- 修复轮 2 · P2 公开返回值不得泄露可变授权快照 ----
+
+test('R2 reserve 返回值为深拷贝（改写返回值后 get 仍返回完整快照）', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  delete rec.requiredConsents.recording; // 公开返回值改写
+  const again = ledger.get(rec.id);
+  assert.deepEqual(again.requiredConsents, {
+    recording: 1,
+    media_processing: 1,
+    external_inference: 1,
+  });
+});
+
+test('R2 经 reserve 返回值删掉 recording 后撤回 recording，markSent 仍被阻断', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  delete rec.requiredConsents.recording; // 若内部共用对象，此处会绕过 recording 检查
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+test('R2 经 get() 返回值删掉 recording 后撤回 recording，markSent 仍被阻断', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  const fetched = ledger.get(rec.id);
+  delete fetched.requiredConsents.recording;
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+  await assert.rejects(
+    () => ledger.markSent(rec.id),
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+});

@@ -21,10 +21,10 @@ test('模块删除处理器注册协议：重复注册拒绝', () => {
   assert.throws(() => reg.registerModule('media', async () => ({})), (e) => e instanceof PrivacyError);
 });
 
-test('所有 handler 完成才可完结；有 blocked 则整体 blocked', async () => {
+test('所有 handler 完成（含证据）才可完结；有 blocked 则整体 blocked', async () => {
   const reg = createDeletionRegistry();
-  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed' }));
-  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed' }));
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-media' }));
+  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-session' }));
   const req = reg.createDeletionRequest({ generation: 1 });
   await reg.executeHandlers(req.id);
   assert.equal(reg.completionStatus(req.id).completed, true);
@@ -71,7 +71,7 @@ test('未发起第三方请求时确认报 NOT_FOUND', () => {
 
 test('第三方失败导致整体未完成；不支持状态可追溯', async () => {
   const reg = createDeletionRegistry();
-  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed' }));
+  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-session' }));
   const req = reg.createDeletionRequest({ generation: 1 });
   reg.requestThirdPartyDeletion({ requestId: req.id, recipientId: 'provider-llm' });
   reg.failThirdPartyDeletion({ requestId: req.id, recipientId: 'provider-llm', errorCode: 'PROVIDER_TIMEOUT' });
@@ -122,7 +122,7 @@ test('P1-4 handler 失败后可重试至完成', async () => {
   reg.registerModule('media', async () => {
     attempts += 1;
     if (attempts === 1) throw new PrivacyError('HANDLER_FAILED', 'first attempt fails');
-    return { onlineState: 'completed', backupState: 'completed' };
+    return { onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-media' };
   });
   const req = reg.createDeletionRequest({ generation: 1 });
   await reg.executeHandlers(req.id);
@@ -137,7 +137,7 @@ test('P1-4 handler 失败后可重试至完成', async () => {
 
 test('P1-5 唯一第三方 unsupported 保留阻塞（无法删除≠已证实完成）', async () => {
   const reg = createDeletionRegistry();
-  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed' }));
+  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-session' }));
   const req = reg.createDeletionRequest({ generation: 1 });
   reg.requestThirdPartyDeletion({ requestId: req.id, recipientId: 'provider-llm' });
   reg.markUnsupported({ requestId: req.id, recipientId: 'provider-llm' });
@@ -173,4 +173,117 @@ test('回执投影不含私有正文/图片/音频/坐标/凭据', async () => {
       ['backupState', 'errorCode', 'module', 'onlineState', 'thirdPartyState'],
     );
   }
+});
+
+// ---- 修复轮 2 · 删除完成证据（缺证据/空白证据不可判定完成） ----
+
+test('R2 报称 completed 但缺 evidenceRef 不记完成（阻塞待验证）', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  const row = reg._handlerRows[0];
+  assert.equal(row.status, 'blocked');
+  assert.equal(row.errorCode, 'EVIDENCE_REQUIRED');
+  assert.equal(row.evidenceRef, null);
+  assert.equal(reg.completionStatus(req.id).completed, false);
+  assert.equal(reg.completionStatus(req.id).state, 'blocked');
+});
+
+test('R2 空白（纯空格）evidenceRef 不算证据，不记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: '   ' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].status, 'blocked');
+  assert.equal(reg.completionStatus(req.id).completed, false);
+});
+
+test('R2 完成证据齐全才记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'deletion-receipt-abc' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].status, 'completed');
+  assert.equal(reg.completionStatus(req.id).completed, true);
+});
+
+test('R2 仅有在线完成（backup 仍在跑）不记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'running', evidenceRef: 'ev-online' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg.completionStatus(req.id).completed, false);
+});
+
+// ---- 修复轮 2 · 原始错误码不入用户回执（映射到固定安全分类） ----
+
+test('R2 处理器抛出的私密原文错误码被映射到固定安全分类，不进回执', async () => {
+  const secret = 'synthetic-private-marker-9c1f';
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => {
+    const err = new Error('upstream failed');
+    err.code = secret;
+    throw err;
+  });
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].errorCode, 'HANDLER_FAILED');
+  const projection = reg.receiptProjection(req.id);
+  assert.equal(JSON.stringify(projection).includes(secret), false);
+  assert.equal(projection.handlers[0].errorCode, 'HANDLER_FAILED');
+});
+
+test('R2 处理器返回的未知 errorCode 也映射到固定安全分类', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({
+    onlineState: 'blocked',
+    backupState: 'blocked',
+    errorCode: 'RAW_SDK_TEXT_leak_should_not_appear',
+  }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].errorCode, 'HANDLER_FAILED');
+  assert.equal(
+    JSON.stringify(reg.receiptProjection(req.id)).includes('leak_should_not_appear'),
+    false,
+  );
+});
+
+test('R2 处理器返回非字符串（嵌套/对象）errorCode 被映射到固定安全分类', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({
+    onlineState: 'blocked',
+    backupState: 'blocked',
+    errorCode: { nested: 'text', token: 'tk-synthetic' },
+  }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].errorCode, 'HANDLER_FAILED');
+  const json = JSON.stringify(reg.receiptProjection(req.id));
+  assert.equal(json.includes('tk-synthetic'), false);
+});
+
+test('R2 处理器抛出的嵌套错误（cause 原文）不外泄', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => {
+    const err = new TypeError('outer');
+    err.code = undefined;
+    err.cause = { body: 'synthetic-private-body', token: 'tk-nested' };
+    throw err;
+  });
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].errorCode, 'HANDLER_FAILED');
+  const json = JSON.stringify(reg.receiptProjection(req.id));
+  assert.equal(json.includes('synthetic-private-body'), false);
+  assert.equal(json.includes('tk-nested'), false);
+});
+
+test('R2 白名单内的安全错误码按原样保留', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'blocked', backupState: 'blocked', errorCode: 'STORE_UNREACHABLE' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].errorCode, 'STORE_UNREACHABLE');
 });

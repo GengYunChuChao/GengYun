@@ -1,7 +1,7 @@
 /**
  * GY-I27 隐私模块 · 用途授权存储（可插拔，内存实现用于单元测试与契约验证）。
  *
- * 数据模型对应 db/migrations/0003_privacy_consent.sql：
+ * 数据模型对应 services/api/db/migrations/0003_privacy_consent.sql：
  *   - consent_records：每次授予一行（epoch 唯一），历史可追溯，撤回只改 state。
  *   - privacy_epochs：每 (user_id, purpose) 当前 epoch；授予与撤回都原子递增，
  *     使在途外发/回写持有的旧 epoch 失效。

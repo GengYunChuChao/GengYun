@@ -27,10 +27,10 @@
 | `EXPORT_STATES` | openapi `Export.state` | `export_state` |
 | `ERROR_STATUS_MAP` | `error_status_map` | — |
 
-## 授权中间件挂载说明（待 #43 合并后接线）
+## 授权中间件挂载说明（GY-I02 已合并，接线由后续任务完成）
 
 `packages/privacy/guard.mjs` 的 `requireConsent` 是**纯模块**，不直接改 `services/api/src/app.ts`
-（该文件归 GY-I02 / PR #43）。合并后按以下方式挂载到 Fastify 路由 preHandler：
+（该文件归 GY-I02）。按以下方式挂载到 Fastify 路由 preHandler：
 
 ```js
 import { createPrivacyGuard } from '../packages/privacy/guard.mjs';
@@ -51,11 +51,17 @@ app.route({
 身份上下文 `{ userId, authEpoch }` 由调用方注入；`account` / `consentStore` 为可插拔接口。
 单元测试注入合成账号与内存 consentStore，**不依赖微信真实登录**，避免与 GY-I04 形成依赖循环。
 
-## 迁移 0003 依赖顺序
+## 迁移 0003 位置与依赖顺序
 
-`db/migrations/0003_privacy_consent.sql` 的 `consent_records` / `privacy_epochs` / `exports`
-以 `users(id)` 为外键，**必须在 0001（GY-I02 初始迁移）之后执行**；对 0002 无硬依赖，
-建议整体顺序 `0001 → 0002 → 0003`。本 PR 不包含 0001/0002。
+`services/api/db/migrations/0003_privacy_consent.sql` 位于迁移运行器
+（`services/api/src/db/migrate.ts` 的 `DEFAULT_MIGRATIONS_DIR`）的扫描目录，可被 `npm run db:migrate`
+发现（回归断言见 `tests/privacy/migration.test.mjs`：运行器发现 `0001 → 0003`）。其
+`consent_records` / `privacy_epochs` / `exports` 以 `users(id)` 为外键，**必须在 0001（GY-I02
+初始迁移）之后执行**；对 0002 无硬依赖，建议整体顺序 `0001 → 0002 → 0003`。本 PR 不包含 0001/0002。
+
+回滚脚本置于 `services/api/db/migrations/rollback/0003_privacy_consent.down.sql`：运行器文件模式为
+`NNNN_name.sql`，`.down.sql` 不合规、`..._down.sql` 会与 0003 版本号重复，故回滚脚本单独放在子目录，
+不进入正向发现集。
 
 ## 边界（不实现）
 
@@ -70,4 +76,7 @@ app.route({
 
 - 不默认第三方训练：`ledger.reserve` 对 `external_inference` 外发要求接收方 `no_training_verified`。
 - 日志脱敏：所有日志/审计出口复用 `redactForLog`，不含私有正文、图片、音频、精确坐标、凭据。
-- 不把请求当完成：`deletion.completionStatus` 只在 handler 全完成 + 第三方全 confirmed/unsupported 时置 completed。
+- 不把请求当完成：`deletion.completionStatus` 只在**所有 handler 在线/备份均 `completed` 且完成证据齐全**、
+  且所有第三方均 `confirmed`（有证据）时置 `completed`；`failed` / `unsupported` 一律保留阻塞——
+  「已证实完成」与「无法删除/无法证实」不等价。
+- 错误出口只出固定安全分类：`deletion` 的 handler 异常/返回码经白名单映射，原始 SDK 文本不进入用户回执。

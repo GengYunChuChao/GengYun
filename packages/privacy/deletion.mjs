@@ -15,6 +15,40 @@ import { PrivacyError } from './errors.mjs';
 const ONLINE_HOURS = 7 * 24; // 在线 7×24 小时
 const BACKUP_HOURS = 30 * 24; // 备份 30×24 小时
 
+/**
+ * handler / 第三方可写入错误码的**固定安全分类白名单**。
+ * 处理器异常或返回码里的「原始 SDK 文本」一律映射到白名单内的固定值，
+ * 不把原文（可能含私有正文/坐标/凭据）改名后放进 errorCode 进入用户回执。
+ */
+export const SAFE_ERROR_CODES = Object.freeze([
+  'HANDLER_FAILED',
+  'HANDLER_TIMEOUT',
+  'EVIDENCE_REQUIRED',
+  'INVALID_HANDLER_RESULT',
+  'STORE_UNREACHABLE',
+  'STORE_REJECTED',
+  'POLICY_BLOCKED',
+  'THIRD_PARTY_FAILED',
+  'PROVIDER_TIMEOUT',
+  'PROVIDER_UNAVAILABLE',
+]);
+const SAFE_ERROR_CODE_SET = new Set(SAFE_ERROR_CODES);
+
+function sanitizeErrorCode(value, fallback = 'HANDLER_FAILED') {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return SAFE_ERROR_CODE_SET.has(trimmed) ? trimmed : fallback;
+}
+
+function sanitizeOrNull(value) {
+  return value === undefined || value === null ? null : sanitizeErrorCode(value);
+}
+
+/** 有效且非空的完成证据（空串/纯空白不算证据）。 */
+function hasEvidence(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function addHours(date, hours) {
   return new Date(date.getTime() + hours * 3600 * 1000);
 }
@@ -126,19 +160,28 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
           row.onlineState = 'blocked';
           row.backupState = 'blocked';
           row.status = 'blocked';
+          row.evidenceRef = null;
           row.errorCode = 'INVALID_HANDLER_RESULT';
           anyBlocked = true;
         } else {
+          const evidenceRef = hasEvidence(result?.evidenceRef) ? result.evidenceRef.trim() : null;
           row.onlineState = online;
           row.backupState = backup;
-          row.evidenceRef =
-            typeof result?.evidenceRef === 'string' && result.evidenceRef ? result.evidenceRef : null;
-          row.errorCode = result?.errorCode ?? null;
+          row.evidenceRef = evidenceRef;
+          row.errorCode = sanitizeOrNull(result?.errorCode);
           if (online === 'blocked' || backup === 'blocked') {
             row.status = 'blocked';
             anyBlocked = true;
           } else if (online === 'completed' && backup === 'completed') {
-            row.status = 'completed';
+            // 冻结契约（state-contract.md）：各阶段「完成证据齐全」才算完成。
+            // 报称 completed 但缺证据/空白证据 → 不可判定完成，保持阻塞待验证。
+            if (evidenceRef === null) {
+              row.status = 'blocked';
+              row.errorCode = 'EVIDENCE_REQUIRED';
+              anyBlocked = true;
+            } else {
+              row.status = 'completed';
+            }
           } else {
             row.status = 'running'; // pending/running 均保持未完成
           }
@@ -147,7 +190,9 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
         row.onlineState = 'blocked';
         row.backupState = 'blocked';
         row.status = 'blocked';
-        row.errorCode = (err && err.code) || 'HANDLER_FAILED';
+        row.evidenceRef = null;
+        // 原始异常文本/嵌套错误一律映射到固定安全分类，不进入用户回执。
+        row.errorCode = sanitizeErrorCode(err && err.code);
         anyBlocked = true;
       }
       row.updatedAt = now();
@@ -209,7 +254,7 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
     if (!row) throw new PrivacyError('NOT_FOUND', '第三方删除请求不存在');
     row.onlineStatus = 'failed';
     row.backupStatus = 'failed';
-    row.errorCode = errorCode;
+    row.errorCode = sanitizeErrorCode(errorCode, 'THIRD_PARTY_FAILED');
     return { ...row };
   }
 
@@ -241,9 +286,12 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
       return { state: 'requested', completed: false };
     }
 
-    // handler 完成：online 与 backup 分别 completed（缺一即未完成；空集合由 hasWork 兜底）。
+    // handler 完成：online 与 backup 均 completed 且**完成证据齐全**（缺证据/空白证据不算）。
     const handlersDone = rows.every(
-      (r) => r.onlineState === 'completed' && r.backupState === 'completed',
+      (r) =>
+        r.onlineState === 'completed' &&
+        r.backupState === 'completed' &&
+        hasEvidence(r.evidenceRef),
     );
     // 第三方完成：仅 confirmed 算完成；failed/unsupported 均不算（区分「无法删除」与「已证实完成」）。
     const tpDone = thirdParties.every(

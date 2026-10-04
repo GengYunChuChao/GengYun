@@ -31,8 +31,10 @@ import { PrivacyError } from './errors.mjs';
  * }} deps
  */
 export function createPrivacyGuard({ account, consentStore, now = () => new Date() } = {}) {
-  if (!account || typeof account.stateOf !== 'function') {
-    throw new Error('createPrivacyGuard 需要注入 account 提供者');
+  // 强制要求「身份版本」能力：缺少 authEpochOf 的适配器无法核对账号版本，
+  // 会让注销/停用（auth_epoch 前进）后的旧会话继续放行。此处直接拒绝构造。
+  if (!account || typeof account.stateOf !== 'function' || typeof account.authEpochOf !== 'function') {
+    throw new Error('createPrivacyGuard 需要注入带 stateOf 与 authEpochOf 的 account 提供者');
   }
   if (!consentStore || typeof consentStore.isGranted !== 'function') {
     throw new Error('createPrivacyGuard 需要注入 consentStore');
@@ -46,7 +48,7 @@ export function createPrivacyGuard({ account, consentStore, now = () => new Date
     if (state !== 'active') {
       throw new PrivacyError('ACCOUNT_INACTIVE', `账号状态为 ${state}，禁止操作`);
     }
-    if (authEpoch !== undefined && typeof account.authEpochOf === 'function') {
+    if (authEpoch !== undefined) {
       const current = await account.authEpochOf(userId);
       if (current !== authEpoch) {
         throw new PrivacyError('ACCOUNT_INACTIVE', '账号状态已变更，请重新登录');
