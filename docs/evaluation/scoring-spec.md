@@ -83,6 +83,9 @@
   （`frozenManifest.coverage = { weedPhotoCoveredClasses, coverageSha256, basisRef }`），外部 `--coverage` 必须与之一致；
   **缩减/修改/新增一律拒绝**（`coverageBinding.verified=false`）。覆盖口径变化**必须产出新的冻结版本**（新的
   `indexVersion`/`manifestSha256`），并与 GY-I03 承诺范围核对（承诺类须落在首批承诺范围内）。
+  **范围口径（修复轮 3）**：`weedPhotoCoveredClasses`/`labelClass`/`gold`/`candidates` 一律为**规范物种 ID**；
+  GY-I03 承诺范围的中文组名须经 `catalog/species.json` 的 `group_name ↔ id` 映射为规范 ID 再比较，
+  映射依据（`catalog_version`/文件 SHA-256）记入报告 `coverageBinding.scopeBasis`。
 - **原始输出契约**：
   - `label_ocr`：原始模型输出放在 `output.fields`；若 `output.corrected=true`，原始输出必须放在 `output.originalFields`（否则视为原始缺失）；校正稿放 `output.correctedFields`，单独报告。
   - `asr`：原始转写放 `output.hypothesis`；若 `output.corrected=true`，原始转写放 `output.originalHypothesis`、原始关键字段放 `output.originalKeyFieldsExact`。

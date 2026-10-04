@@ -57,3 +57,5 @@ node --test tests/evaluation/*.test.mjs
 7. 拒识/不确定**统一检查最终 `decision`**，即使携带正确候选也计未命中。
 8. 任一条件不满足（无 `test` 集/冻结未过/样本不足/预测不完整/非真实来源）即 `isRealEvaluation=false`、门禁 `not_evaluated`。
 9. 原始媒体与令牌不进入仓库；只提交脱敏索引与 hash。
+10. **范围口径统一为规范物种 ID**：`weedPhotoCoveredClasses`/`labelClass`/`gold`/`candidates` 一律用 `catalog/species.json` 的 `id`；
+    GY-I03 承诺范围（中文展示组名）须经 `group_name ↔ id` 映射为 ID 再核对，映射依据（`catalog_version`/SHA-256）记入 `coverageBinding.scopeBasis`。

@@ -56,6 +56,10 @@
    冻结清单还须**内嵌承诺覆盖清单绑定块** `coverage = { weedPhotoCoveredClasses, coverageSha256, basisRef }`：
    外部 `--coverage` 必须与内嵌绑定一致，**缩减/修改/新增一律拒绝**；覆盖口径的任何变化**必须成为新的冻结版本**
    （新的 `indexVersion`/`manifestSha256`），并与 GY-I03 承诺范围核对（承诺类须落在首批承诺范围内）。
+   **范围口径（修复轮 3）**：`weedPhotoCoveredClasses` 与 `labelClass`/`gold`/`candidates` 一律使用**规范物种 ID**
+   （`catalog/species.json` 的 `id`）。GY-I03 承诺范围（`coverage-report.json#species_groups.required`）为展示用中文组名，
+   须先经同一目录的 `group_name ↔ id` 映射为规范 ID 再比较；映射依据（`catalog_version`/文件 SHA-256）记入报告
+   `coverageBinding.scopeBasis`，采样方**不得**把 `speciesId` 改成展示名称。
 2. **同簇不跨 split**：同一 `clusterId` 的所有样本必须落在同一 `split`（校验器报错阻断）。
 3. **连拍不跨 split**：同一 `captureSeriesId` 必须同簇、同 split。
 4. **文本近重复不跨 split**：问答/ASR 中标准答案文本完全相同的样本必须同 split。

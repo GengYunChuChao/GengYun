@@ -5,48 +5,44 @@
 // --json 输出机器可读报告；默认输出报告 JSON 到 stdout，并附人类可读摘要到 stderr。
 // 关键：只有**经冻结清单校验的独立 test 集**、真实来源、达第6节目标且预测完整时才可能 isRealEvaluation=true；
 //       合成/占位/未冻结/样本不足/预测缺失的输入恒为 false，全部门禁 not_evaluated。
-import { writeFileSync, existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// 范围口径：GY-I03 承诺范围的展示用中文组名会经 species.json 映射为规范物种 ID 后再核对，
+//       labelClass/gold/candidates 一律使用规范 ID（映射依据记入报告 coverageBinding.scopeBasis）。
+import { writeFileSync, realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { evaluateRun, METRIC_GATES, validateSampleIndex } from '../../packages/evaluation/index.mjs';
 import { loadJson, toPredictionMap, formatSummary, parseArgs } from './lib.mjs';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
+import { loadKnowledgeScope } from './knowledge-scope.mjs';
 
 /**
- * 读取 GY-I03 承诺覆盖范围（物种组），用于核对冻结承诺类是否落在首批承诺范围内。
- * 缺失时返回 null（不阻断：绑定校验仍要求内嵌 coverage 与外部清单一致）。
+ * 运行一次评估（CLI 核心，便于集成测试在进程内驱动——本环境禁止派生子进程）。
+ * @returns { exitCode, report }；仅向给定 stdout/stderr 写输出，不调用 process.exit。
  */
-function loadKnowledgeScope() {
-  const file = join(HERE, '..', '..', 'packages', 'knowledge', 'coverage-report.json');
-  if (!existsSync(file)) return null;
-  try {
-    const report = JSON.parse(readFileSync(file, 'utf8'));
-    const required = report?.species_groups?.required;
-    return Array.isArray(required) && required.length > 0 ? required : null;
-  } catch {
-    return null;
-  }
-}
-
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+export function runEvaluation(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+  const args = parseArgs(argv);
   if (!args.index || !args.predictions) {
-    process.stderr.write('用法: node tools/evaluation/run-evaluation.mjs --index <index.json> --predictions <predictions.json> [--manifest <frozen-manifest.json>] [--coverage <coverage-manifest.json>] [--out report.json] [--seed N] [--json]\n');
-    process.exit(2);
+    stderr.write('用法: node tools/evaluation/run-evaluation.mjs --index <index.json> --predictions <predictions.json> [--manifest <frozen-manifest.json>] [--coverage <coverage-manifest.json>] [--out report.json] [--seed N] [--json]\n');
+    return { exitCode: 2, report: null };
   }
   const records = loadJson(args.index);
   const predictions = toPredictionMap(loadJson(args.predictions));
   const frozenManifest = args.manifest ? loadJson(args.manifest) : null;
   const coverageManifest = args.coverage ? loadJson(args.coverage) : null;
-  const knowledgeScope = loadKnowledgeScope();
+
+  // GY-I03 承诺范围：中文展示组名 → 规范物种 ID（依据 packages/knowledge/catalog/species.json）。
+  let knowledgeScope = null;
+  try {
+    knowledgeScope = loadKnowledgeScope();
+  } catch (err) {
+    stderr.write(`范围口径解析失败：${err.message}\n`);
+    return { exitCode: 3, report: null };
+  }
 
   const validation = validateSampleIndex(records);
   if (!validation.ok) {
-    process.stderr.write(`索引校验失败，共 ${validation.errors.length} 项错误：\n${validation.errors.map((e) => `  - ${e}`).join('\n')}\n`);
-    process.exit(1);
+    stderr.write(`索引校验失败，共 ${validation.errors.length} 项错误：\n${validation.errors.map((e) => `  - ${e}`).join('\n')}\n`);
+    return { exitCode: 1, report: null };
   }
-  for (const w of validation.warnings) process.stderr.write(`! ${w}\n`);
+  for (const w of validation.warnings) stderr.write(`! ${w}\n`);
 
   const report = evaluateRun(records, predictions, {
     gateDefs: METRIC_GATES,
@@ -59,10 +55,25 @@ function main() {
   const json = `${JSON.stringify(report, null, 2)}\n`;
   if (args.out) {
     writeFileSync(String(args.out), json);
-    process.stderr.write(`报告已写入 ${args.out}\n`);
+    stderr.write(`报告已写入 ${args.out}\n`);
   }
-  process.stdout.write(json);
-  process.stderr.write(`${formatSummary(report)}\n`);
+  stdout.write(json);
+  stderr.write(`${formatSummary(report)}\n`);
+  return { exitCode: 0, report };
 }
 
-main();
+function main() {
+  const { exitCode } = runEvaluation(process.argv.slice(2));
+  process.exit(exitCode);
+}
+
+// 仅在作为脚本直接执行时进入 CLI；被测试 import 时不得触发 main（否则会解析测试进程 argv 并退出）。
+const invokedDirectly = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url;
+  } catch {
+    return false;
+  }
+})();
+if (invokedDirectly) main();

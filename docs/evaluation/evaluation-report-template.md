@@ -17,7 +17,7 @@
   "frozenIndexVersion": "<冻结版本号>",
   "frozenVerified": false,
   "frozenVerification": { "verified": false, "reasons": [], "indexSha256": "<64hex>", "manifestSha256": "<64hex|null>" },
-  "coverageBinding": { "verified": false, "reasons": [], "boundClasses": [], "coverageSha256": "<64hex|null>", "basisRef": "<GY-I03 承诺依据>" },
+  "coverageBinding": { "verified": false, "reasons": [], "boundClasses": [], "coverageSha256": "<64hex|null>", "basisRef": "<GY-I03 承诺依据>", "scopeBasis": { "basisRef": "GY-I03#species_groups", "catalogRef": "packages/knowledge/catalog/species.json", "catalogVersion": "<目录版本>", "catalogSha256": "<64hex>", "sourceGroups": ["<展示用中文组名>"] } },
   "splits": { "train": 0, "validation": 0, "test": 0, "total": 0 },
   "duplicatesExcluded": 0,
   "coverageManifestPresent": false,
@@ -31,6 +31,10 @@
 > 最终验收只使用经冻结清单校验的独立 `test` 集（`splits.test`）；`train`/`validation` 另列统计、不参与评分。
 > `frozenVerified=false`、`coverageBinding.verified=false`（承诺覆盖清单未绑定/被缩减或修改）、`predictionEvidence.complete=false`
 > 或任一样本缺口 `missing>0` 时，`isRealEvaluation` 恒为 `false`。
+>
+> **范围口径（修复轮 3）**：GY-I03 承诺范围的展示用中文组名（`coverage-report.json#species_groups.required`）先经
+> `packages/knowledge/catalog/species.json` 的 `group_name ↔ id` 映射为**规范物种 ID** 再核对；`boundClasses`/`labelClass`/`gold`/`candidates`
+> 一律为规范 ID。映射依据记入 `coverageBinding.scopeBasis`（`catalogVersion`/`catalogSha256`/`sourceGroups`），可追溯。
 
 ## 2 门禁对象
 

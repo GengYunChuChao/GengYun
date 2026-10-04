@@ -18,6 +18,34 @@ import { verifyFrozenManifest, verifyCoverageBinding, validatePredictionCoverage
 export const REPORT_SCHEMA_VERSION = '1.0.0';
 
 const at = (obj, path) => path.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), obj);
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * 归一化 GY-I03 承诺范围（范围口径，修复轮 3）。
+ * 支持两种入参：
+ *   - 字符串数组：直接作为允许的覆盖类集合（旧口径，无依据元数据）。
+ *   - 对象 { classes, basisRef, catalogRef, catalogVersion, catalogSha256, sourceGroups }：
+ *     由物种目录（species.json 的 id ↔ group_name）映射得到规范物种 ID，并携带可追溯依据。
+ * 返回 { classes: string[]|null, basis: object|null }。范围校验只使用规范 ID（classes）。
+ */
+function normalizeKnowledgeScope(knowledgeScope) {
+  if (Array.isArray(knowledgeScope)) {
+    const classes = knowledgeScope.filter((c) => typeof c === 'string' && c.trim() !== '');
+    return { classes: classes.length > 0 ? classes : null, basis: null };
+  }
+  if (isObject(knowledgeScope) && Array.isArray(knowledgeScope.classes)) {
+    const classes = knowledgeScope.classes.filter((c) => typeof c === 'string' && c.trim() !== '');
+    const basis = {
+      basisRef: typeof knowledgeScope.basisRef === 'string' ? knowledgeScope.basisRef : null,
+      catalogRef: typeof knowledgeScope.catalogRef === 'string' ? knowledgeScope.catalogRef : null,
+      catalogVersion: typeof knowledgeScope.catalogVersion === 'string' ? knowledgeScope.catalogVersion : null,
+      catalogSha256: typeof knowledgeScope.catalogSha256 === 'string' ? knowledgeScope.catalogSha256 : null,
+      sourceGroups: Array.isArray(knowledgeScope.sourceGroups) ? [...knowledgeScope.sourceGroups] : null,
+    };
+    return { classes: classes.length > 0 ? classes : null, basis };
+  }
+  return { classes: null, basis: null };
+}
 const minFieldExact = (m) => {
   const values = Object.values(m.fieldExact ?? {}).map((r) => r.p).filter((v) => v !== null);
   return values.length ? Math.min(...values) : null;
@@ -77,7 +105,10 @@ export function buildGates(task, metrics, gateDefs, claimable, notClaimableReaso
  *     **内嵌 coverage 绑定块**）；缺失或覆盖未绑定即不可主张。
  *   coverageManifest: 外部承诺覆盖清单（weedPhotoCoveredClasses）；必须与冻结清单内嵌绑定一致，
  *     缩减/修改/新增一律拒绝（变化须成为新冻结版本）。
- *   knowledgeScope: 可选 GY-I03 承诺范围（允许的覆盖类全集），提供时承诺类须落在其内。
+ *   knowledgeScope: 可选 GY-I03 承诺范围（允许的覆盖类全集）。可传字符串数组，或
+ *     { classes, basisRef, catalogRef, catalogVersion, catalogSha256, sourceGroups }：
+ *     后者由 GY-I03 物种目录（中文组名 → 规范物种 ID）映射得到，并把映射依据记入报告
+ *     `coverageBinding.scopeBasis` 供审计。范围校验一律以**规范物种 ID**比较。
  */
 export function evaluateRun(records, predictions, options = {}) {
   const { gateDefs, frozenManifest = null, coverageManifest = null, knowledgeScope = null, seed = 20261004, generatedAt = new Date().toISOString() } = options;
@@ -93,7 +124,9 @@ export function evaluateRun(records, predictions, options = {}) {
   const frozenIndexVersion = frozenManifest && typeof frozenManifest.indexVersion === 'string' ? frozenManifest.indexVersion : 'unfrozen';
 
   // 2b. 承诺覆盖清单与冻结清单的绑定校验（防事后缩减/修改覆盖清单改变达标结论）。
-  const coverageBinding = verifyCoverageBinding(frozenManifest, coverageManifest, { scopeClasses: knowledgeScope });
+  //     范围口径统一为**规范物种 ID**：knowledgeScope 的展示名称须先由物种目录映射为 ID 再核对。
+  const scope = normalizeKnowledgeScope(knowledgeScope);
+  const coverageBinding = verifyCoverageBinding(frozenManifest, coverageManifest, { scopeClasses: scope.classes });
   // 只有绑定通过时，冻结内嵌的承诺覆盖类才可信；否则逐类达标一律按未满足计。
   const boundCoverageManifest = coverageBinding.verified ? { weedPhotoCoveredClasses: coverageBinding.boundClasses } : null;
 
@@ -178,6 +211,7 @@ export function evaluateRun(records, predictions, options = {}) {
       boundClasses: coverageBinding.boundClasses,
       coverageSha256: coverageBinding.coverageSha256,
       basisRef: coverageBinding.basisRef,
+      scopeBasis: scope.basis,
     },
     splits: { train: trainCount, validation: validationCount, test: testRecordsAll.length, total: records.length },
     duplicatesExcluded,

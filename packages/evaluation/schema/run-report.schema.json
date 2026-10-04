@@ -57,7 +57,19 @@
         "reasons": { "type": "array", "items": { "type": "string" } },
         "boundClasses": { "type": ["array", "null"], "items": { "type": "string" } },
         "coverageSha256": { "type": ["string", "null"] },
-        "basisRef": { "type": ["string", "null"] }
+        "basisRef": { "type": ["string", "null"] },
+        "scopeBasis": {
+          "type": ["object", "null"],
+          "description": "GY-I03 承诺范围口径的映射依据（展示用中文组名 → 规范物种 ID）。范围校验一律以规范 ID 比较。",
+          "additionalProperties": true,
+          "properties": {
+            "basisRef": { "type": ["string", "null"] },
+            "catalogRef": { "type": ["string", "null"] },
+            "catalogVersion": { "type": ["string", "null"] },
+            "catalogSha256": { "type": ["string", "null"] },
+            "sourceGroups": { "type": ["array", "null"], "items": { "type": "string" } }
+          }
+        }
       }
     },
     "splits": {

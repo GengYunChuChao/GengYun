@@ -39,6 +39,10 @@ export function formatSummary(report) {
   if (report.coverageBinding && !report.coverageBinding.verified) {
     lines.push(`    覆盖绑定依据=${report.coverageBinding.basisRef ?? '—'}  承诺类=${JSON.stringify(report.coverageBinding.boundClasses ?? [])}`);
   }
+  if (report.coverageBinding?.scopeBasis) {
+    const sb = report.coverageBinding.scopeBasis;
+    lines.push(`    范围口径依据=${sb.basisRef ?? '—'}  catalog=${sb.catalogRef ?? '—'}@${sb.catalogVersion ?? '—'} sha256=${(sb.catalogSha256 ?? '').slice(0, 16)}…  映射组=${JSON.stringify(sb.sourceGroups ?? [])}`);
+  }
   if (report.predictionEvidence) {
     const pe = report.predictionEvidence;
     lines.push(`预测完整性：期望=${pe.expected} 有效=${pe.present} 缺失=${pe.missing.length} 非法=${pe.invalid.length} 多余=${pe.extra.length} complete=${pe.complete}`);
