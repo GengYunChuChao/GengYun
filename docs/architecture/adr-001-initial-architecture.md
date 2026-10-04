@@ -34,7 +34,7 @@ flowchart LR
 | TypeScript / Fastify | TS 编译服务端；Fastify 5。[官方迁移约束](https://fastify.dev/docs/v5.0.x/Guides/Migration-Guide-V5/) 要求 Node 20+；[支持策略](https://fastify.dev/docs/v5.10.x/Reference/LTS/) | 精确包版本及锁文件见后续兼容记录；必须干净安装、类型检查、API inject、插件验证后冻结，未声称 Node24 与所有插件已实测 |
 | Vue / Vite | Vue 3 独立后台；Vite。[Vite Node 要求](https://vite.dev/guide/) 与本机 Node24 主版本相容 | `vue` / `@vue/compiler-sfc` 必须同补丁版本，plugin-vue 的 peer 必须满足；候选版本不是已构建证明 |
 | PostgreSQL | 候选 `17.11`，官方[发布日期 2026-08-13](https://www.postgresql.org/docs/release/17.11/)；不宣称已连接 | GY-I25 确认实际数据库版本、备份及删除能力；GY-I02 执行迁移；外部资料数据库通过适配器，不假定与业务库同型 |
-| 微信 | 基础库 `3.5.5` 兼容起点；原生工程 | GY-I02/25 实测工具精确版本、AppID、隐私声明、域名及双平台录音播放，测试号和关闭校验不能替代 |
+| 微信 | 基础库目标 `3.17.3`，用户确认当前可选最新版本；原生工程；`3.5.5`保留为历史未验证候选 | 正式稳定标签仍待独立工具核查；GY-I02/25 实测工具精确版本、SDKVersion、编译、AppID、隐私声明、域名及双平台录音播放，配置目标、测试号和关闭校验不能替代完整冻结 |
 | OpenAPI | `3.1.1`，JSON Schema 2020-12；[官方规范](https://spec.openapis.org/oas/v3.1.1.html) | [Fastify 验证机制](https://fastify.dev/docs/v5.10.x/Reference/Validation-and-Serialization/)与 OpenAPI 文件不是直接互换；GY-I02 使用受控转换或支持2020-12的validator并验 nullable/oneOf；禁止把不可信 schema 编译执行 |
 
 配置值只在服务端安全配置：`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`DATABASE_URL`、`OBJECT_STORAGE_*`、`SESSION_SIGNING_KEY`、`DELETION_LEDGER_KEY`、`PROVIDER_<CAPABILITY>_*`。客户端只有 API base URL 和公开 AppID。配置 schema、锁文件和运行命令归 GY-I02；具体供应商版本、格式、签名、额度、留存及确认删除能力归 GY-I25。无安全外发守卫 GY-I27 时不得接真实用户媒体。
