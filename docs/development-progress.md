@@ -44,8 +44,8 @@ GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项待验 | 写手PR #37／#40贡献与实测保留；[PR #42审查](https://github.com/Sek1ro-oka/GengYun/pull/42#pullrequestreview-5405463662)绑定3776421，合入main 59e5315；[有限实测](verification/tencent-live-evidence.md)累计12请求、保守预留1.7224元、实际账单未知；OCR唯一追加成功，真实请求停止；历史TTS SessionId未核验不能追认；真实草种／语音样本、手机与听感、数据库、用途／撤回／注销运行守卫仍缺，issue保持open |
-| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 需修改 | 原协作者cxhhandsome的[领取请求](https://github.com/Sek1ro-oka/GengYun/issues/28#issuecomment-5975823731)保留；[Draft PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39) HEAD 80b6f076，[新审查](https://github.com/Sek1ro-oka/GengYun/pull/39#pullrequestreview-5405428046)；触控／游客／副标题代码整改获局部验证，旧冲突已无；文档CI失败、EOF空行、版本与资源文档事实及实际编译／窄屏／最大字体／截图待补，未验收，不接管 |
-| GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 本次核查无assignee／评论／对应开放PR，暂无已核实领取凭据；后续派发前复核 |
+| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 需修改 | 原协作者cxhhandsome的[领取请求](https://github.com/Sek1ro-oka/GengYun/issues/28#issuecomment-5975823731)保留；[Draft PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39) HEAD 3c05e2ceba5e3fed1480bd6fc512189ed94387a2；监工18项UI／诊断、文档／diff通过，EOF空行已去；当前dirty冲突且新SHA无CI，编译／窄屏／最大字体截图、12次实测与识草供应商的资源事实仍待修；旧HEAD审查保留历史，未验收、不接管 |
+| GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 已有PR待审／领取未核实 | [PR #45](https://github.com/Sek1ro-oka/GengYun/pull/45) HEAD 5bde81d2952d417d81e100261d48965a604f26c6，Refs #29，开放未合并／本次无CI或正式审查记录；issue无assignee和领取评论；GitHub作者Sek1ro-oka不能据此认定为既有写手，保留成果、不重复派发 |
 
 ## 3 当前实施约束
 
@@ -56,7 +56,7 @@ GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https
 | 平台及供应商 | 用户声明资源具备，GY-I25核查AppID、真机域名和六类服务；具体配置安全交接，数据库比赛前接入 |
 | 隐私与评估 | GY-I27在真实媒体和外发前完成，GY-I20调参前冻样本，各模型PR提交实测，GY-I19验完整注销删除 |
 | main平台保护 | 2026-10-03保护API返回403：当前私有仓库套餐要求升级Pro或公开仓库；仍无强制保护，CODEOWNERS只作流程，不自动改可见性或套餐 |
-| 当前CI | development-docs检查文档和任务图；PR #36新增local-wechat局部工程／配置／诊断测试；PR #43远端六CI通过仍有实现缺陷；PR #39文档CI失败；完整应用、真机及真实能力评估仍待验 |
+| 当前CI | development-docs检查文档和任务图；PR #36新增local-wechat局部工程／配置／诊断测试；PR #43远端六CI通过仍有实现缺陷；PR #39旧HEAD文档CI失败，新HEAD3c05e2ce无CI记录；PR #45本次无CI记录；完整应用、真机及真实能力评估仍待验 |
 | 自动巡检 | 每12小时，读取最新v1.1及27项任务；无变化安静，审查、合并、失败、阻塞和期限风险才通知；依赖本机联网认证与额度 |
 
 ## 4 状态和证据更新
@@ -84,4 +84,12 @@ PR #43 HEAD 00fe0d887ccde96deb65a6c2bcb7d5818e770af1：[审查](https://github.c
 
 PR #44 HEAD 5d2f7f9b6d81b68d24c981bd6d22cbe54c7b91c8：[审查](https://github.com/Sek1ro-oka/GengYun/pull/44#pullrequestreview-5405427807)要求修订。监工报告102地区／4作物／8组／20partial、6负例、内存演示及两CI通过；实跑仍有0001→0002 uuid／varchar外键42804、单独0002后种子注释吞掉首INSERT导致23503、回滚删除无关无登记制剂、无登记有效期却强写valid违反unknown字典。卡片／用量均0，不能用于真实建议；未连接真实DB、Refs #3未完成。两PR须按已审字典协调，原作者及工作区保留，不因CI通过合并。
 
-PR #39最新状态见GY-I26行；旧HEAD审查仍作历史，不再把已无旧冲突列当前阻塞。3.5.5是开发计划兼容起点、未实测未冻结，工具不可选时不设其必测阻塞；3.5.8单版本0.16%仅为用户观察，不能推算旧版本总体。首版联网比赛演示优先工具可选正式稳定版本，记录实际SDKVersion、机器／配置／SHA，再用比赛Android／iOS设备、窄屏及最大字体确定支持范围。3.17.3只有既有模拟器证据，不自动冻结正式基线、不证明3.5.5／3.5.8兼容。指挥已独立派发写手兼容文档／配置一致性后续，先同步main并检查PR #43的README重叠，保持原PR #39职责；没有凭版本号码改配置或降低验收。
+PR #39最新状态见GY-I26行；旧HEAD审查与旧冲突闭合仍作历史；新HEAD3c05e2ce重新出现dirty，须据最新提交处理。3.5.5是开发计划兼容起点、未实测未冻结，工具不可选时不设其必测阻塞；3.5.8单版本0.16%仅为用户观察，不能推算旧版本总体。首版联网比赛演示用户已明确选择最新版本，优先工具可选的最新正式稳定版本，记录实际SDKVersion、机器／配置／SHA，再用比赛Android／iOS设备、窄屏及最大字体确定支持范围。3.17.3只有既有模拟器证据，不自动冻结正式基线、不证明3.5.5／3.5.8兼容。指挥已独立派发写手兼容文档／配置一致性后续，先同步main并检查PR #43的README重叠，保持原PR #39职责；没有凭版本号码改配置或降低验收。
+
+## 8 新PR与版本指令核查
+
+2026-10-04（UTC+8），指挥在自己的目录／codex/commander-live-followup分支只读GitHub API核实PR #45开放、HEAD5bde81d2952d417d81e100261d48965a604f26c6、Refs #29，issue #29无负责人和领取评论。因此“有PR”与“负责人身份／领取未核实”分开记录。监工正在独立审查；其初步全合成复现报告多用途撤回、旧authEpoch、接收方失效漏验，以及删除pending／不支持仍记completed。正式固定SHA审查尚待，不冒称已发布或已通过，也不凭同一GitHub账户归给现写手。
+
+PR #39新HEAD3c05e2ce本次API确认Draft、mergeable=false／dirty、无CI记录。监工报告18项UI／诊断、文档及diff通过，EOF空行消除；资源清单仍错写真实推理0次、把DeepSeek只读鉴权放在识草行，须保留已审#42的12次与TokenHub视觉事实。新绑定SHA审查链接尚待；#43／#44原HEAD未变，维持原需修改结论，不重复审查。
+
+用户明确“告诉写手选择最新的版本”，指挥已发送并收到写手明确回执msg_0531b28c5a7a16e0016ac228cda88887d09cb5543add7a16e2：优先最新正式稳定版本。写手报告官方发布记录最高3.17.3（2026-08-20）、本机工具2.02.2608080，但工具列表正式稳定标签／可选状态和新编译证据仍缺；该报告不是指挥独立版本冻结。公开配置暂未改、手机／最大字体验收保持、真实AI请求停止；只需补当前工具列表中正式稳定最高版本的实际信息，不重复索取账号或密钥。
