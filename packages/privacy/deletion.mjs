@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
+import { HANDLER_STATES } from './constants.mjs';
 import { PrivacyError } from './errors.mjs';
 
 const ONLINE_HOURS = 7 * 24; // 在线 7×24 小时
@@ -82,40 +83,65 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
   }
 
   /**
-   * 执行已注册模块的删除处理器。所有 handler 完成才可推进 state；任一 blocked 则整体 blocked。
+   * 执行已注册模块的删除处理器（幂等可重试：已完成的行不重跑，blocked/pending/running 重跑）。
+   * 每个 handler 须返回合法 online_state/backup_state（缺值或非法值视为 blocked）；
+   * 只有当 online 与 backup 均 completed 才记 completed，pending/running 保持未完成。
    * @returns {Promise<object>} 更新后的 request
    */
   async function executeHandlers(requestId) {
     const request = requests.get(requestId);
     if (!request) throw new PrivacyError('NOT_FOUND', '删除请求不存在');
-    request.state = 'processing';
-    request.revision += 1;
+    if (request.state === 'requested') {
+      request.state = 'processing';
+      request.revision += 1;
+    }
 
     let anyBlocked = false;
     for (const [module, fn] of handlers.entries()) {
-      const row = {
-        requestId,
-        module,
-        objectRefCipher: `opaque:${module}:${request.id}`,
-        status: 'running',
-        onlineState: 'running',
-        backupState: 'running',
-        evidenceRef: null,
-        errorCode: null,
-        updatedAt: now(),
-      };
-      handlerRows.push(row);
+      let row = handlerRows.find((r) => r.requestId === requestId && r.module === module);
+      if (!row) {
+        row = {
+          requestId,
+          module,
+          objectRefCipher: `opaque:${module}:${request.id}`,
+          status: 'pending',
+          onlineState: 'pending',
+          backupState: 'pending',
+          evidenceRef: null,
+          errorCode: null,
+          updatedAt: now(),
+        };
+        handlerRows.push(row);
+      }
+      if (row.status === 'completed') continue; // 已完成不重跑
+      row.status = 'running';
+      row.onlineState = 'running';
+      row.backupState = 'running';
       try {
         const result = await fn({ requestId: request.id, module });
-        row.onlineState = result?.onlineState ?? 'completed';
-        row.backupState = result?.backupState ?? 'completed';
-        row.evidenceRef = result?.evidenceRef ?? null;
-        row.errorCode = result?.errorCode ?? null;
-        if (row.onlineState === 'blocked' || row.backupState === 'blocked') {
+        const online = result?.onlineState;
+        const backup = result?.backupState;
+        // 缺返回值 / 非法状态 → blocked，不默认 completed。
+        if (!HANDLER_STATES.includes(online) || !HANDLER_STATES.includes(backup)) {
+          row.onlineState = 'blocked';
+          row.backupState = 'blocked';
           row.status = 'blocked';
+          row.errorCode = 'INVALID_HANDLER_RESULT';
           anyBlocked = true;
         } else {
-          row.status = 'completed';
+          row.onlineState = online;
+          row.backupState = backup;
+          row.evidenceRef =
+            typeof result?.evidenceRef === 'string' && result.evidenceRef ? result.evidenceRef : null;
+          row.errorCode = result?.errorCode ?? null;
+          if (online === 'blocked' || backup === 'blocked') {
+            row.status = 'blocked';
+            anyBlocked = true;
+          } else if (online === 'completed' && backup === 'completed') {
+            row.status = 'completed';
+          } else {
+            row.status = 'running'; // pending/running 均保持未完成
+          }
         }
       } catch (err) {
         row.onlineState = 'blocked';
@@ -127,12 +153,9 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
       row.updatedAt = now();
     }
 
-    // 所有 handler 完成才算 processing 完成；有 blocked 则整体 blocked。
-    const allCompleted = handlerRows
-      .filter((r) => r.requestId === requestId)
-      .every((r) => r.status === 'completed');
-    request.state = anyBlocked ? 'blocked' : allCompleted ? 'processing' : 'processing';
+    // 有 blocked 则整体 blocked；否则保持 processing，最终完成由 completionStatus 判定。
     if (anyBlocked) request.state = 'blocked';
+    else request.state = 'processing';
     return { ...request };
   }
 
@@ -201,7 +224,9 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
   /**
    * 删除完成状态（派生，不回写不推断）：
    *   completed 仅当：请求已进入处理（非 requested）、存在实际工作（handler 或第三方）、
-   *   所有 handler completed、所有第三方 confirmed/unsupported、无 failed/blocked。
+   *   所有 handler 的 online 与 backup 均 completed、所有第三方均 confirmed（有证据）、
+   *   无 failed/blocked/unsupported。
+   *   unsupported（无法删除/无法证实）与 failed 一样保留阻塞——「已证实完成」与「无法删除」不等价。
    *   到期不等于完成（不把时钟到期当完成）。
    */
   function completionStatus(requestId) {
@@ -216,18 +241,26 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
       return { state: 'requested', completed: false };
     }
 
-    const handlersDone = rows.every((r) => r.status === 'completed');
-    const tpDone = thirdParties.every((r) =>
-      ['confirmed', 'unsupported'].includes(r.onlineStatus) &&
-      ['confirmed', 'unsupported'].includes(r.backupStatus),
+    // handler 完成：online 与 backup 分别 completed（缺一即未完成；空集合由 hasWork 兜底）。
+    const handlersDone = rows.every(
+      (r) => r.onlineState === 'completed' && r.backupState === 'completed',
     );
-    const tpFailed = thirdParties.some((r) =>
-      r.onlineStatus === 'failed' || r.backupStatus === 'failed',
+    // 第三方完成：仅 confirmed 算完成；failed/unsupported 均不算（区分「无法删除」与「已证实完成」）。
+    const tpDone = thirdParties.every(
+      (r) => r.onlineStatus === 'confirmed' && r.backupStatus === 'confirmed',
+    );
+    const tpBlocked = thirdParties.some(
+      (r) =>
+        r.onlineStatus === 'failed' || r.backupStatus === 'failed' ||
+        r.onlineStatus === 'unsupported' || r.backupStatus === 'unsupported',
+    );
+    const handlerBlocked = rows.some(
+      (r) => r.onlineState === 'blocked' || r.backupState === 'blocked',
     );
     // 无任何 handler 与第三方工作：不能判定完成（避免空集合的真空真）。
     const hasWork = rows.length > 0 || thirdParties.length > 0;
 
-    if (request.state !== 'blocked' && handlersDone && tpDone && !tpFailed && hasWork) {
+    if (request.state !== 'blocked' && handlersDone && tpDone && !tpBlocked && !handlerBlocked && hasWork) {
       if (request.state !== 'completed') {
         request.state = 'completed';
         request.completedAt = now();
@@ -236,7 +269,7 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
       return { state: 'completed', completed: true };
     }
 
-    const state = request.state === 'blocked' || tpFailed || !handlersDone || !tpDone
+    const state = request.state === 'blocked' || tpBlocked || handlerBlocked || !handlersDone || !tpDone
       ? 'blocked'
       : 'processing';
     return { state, completed: false };

@@ -33,10 +33,17 @@ const VALUE_PATTERNS = [
   /^[-+]?\d{1,3}\.\d{5,}\s*[,;]\s*[-+]?\d{1,3}\.\d{5,}$/, // 高精度坐标对
 ];
 
+function toSnakeCase(key) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2') // camelCase 边界：appSecret -> app_Secret
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2') // 连续大写缩写边界：HTTPServer -> HTTP_Server
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '_');
+}
+
 function isSensitiveKey(key) {
   if (typeof key !== 'string') return false;
-  const lower = key.toLowerCase().replace(/[^a-z0-9]/g, '_');
-  return SENSITIVE_KEYS.has(lower);
+  return SENSITIVE_KEYS.has(toSnakeCase(key));
 }
 
 function isCoordinatePair(value) {

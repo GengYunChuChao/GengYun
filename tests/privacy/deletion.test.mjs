@@ -85,6 +85,68 @@ test('第三方失败导致整体未完成；不支持状态可追溯', async ()
   assert.equal(reg.completionStatus(req.id).completed, false);
 });
 
+// ---- P1-4：删除处理器缺返回值、pending/running 都不能记完成 ----
+
+test('P1-4 handler 缺返回值（undefined）不记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => undefined);
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  const status = reg.completionStatus(req.id);
+  assert.equal(status.completed, false);
+  assert.equal(status.state, 'blocked');
+  assert.equal(reg._handlerRows[0].errorCode, 'INVALID_HANDLER_RESULT');
+});
+
+test('P1-4 handler 异步（running/pending）不记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'running', backupState: 'pending' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].status, 'running');
+  assert.equal(reg.completionStatus(req.id).completed, false);
+});
+
+test('P1-4 handler 非法状态值不记完成', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'bogus', backupState: 'completed' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg._handlerRows[0].status, 'blocked');
+  assert.equal(reg.completionStatus(req.id).completed, false);
+});
+
+test('P1-4 handler 失败后可重试至完成', async () => {
+  const reg = createDeletionRegistry();
+  let attempts = 0;
+  reg.registerModule('media', async () => {
+    attempts += 1;
+    if (attempts === 1) throw new PrivacyError('HANDLER_FAILED', 'first attempt fails');
+    return { onlineState: 'completed', backupState: 'completed' };
+  });
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg.completionStatus(req.id).completed, false);
+  // 重试：已完成/未完成的 blocked 行被重跑
+  await reg.executeHandlers(req.id);
+  assert.equal(attempts, 2);
+  assert.equal(reg.completionStatus(req.id).completed, true);
+});
+
+// ---- P1-5：第三方 unsupported 必须保留阻塞 ----
+
+test('P1-5 唯一第三方 unsupported 保留阻塞（无法删除≠已证实完成）', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('session', async () => ({ onlineState: 'completed', backupState: 'completed' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  reg.requestThirdPartyDeletion({ requestId: req.id, recipientId: 'provider-llm' });
+  reg.markUnsupported({ requestId: req.id, recipientId: 'provider-llm' });
+  await reg.executeHandlers(req.id);
+  const status = reg.completionStatus(req.id);
+  assert.equal(status.completed, false);
+  assert.equal(status.state, 'blocked');
+});
+
 test('回执投影不含私有正文/图片/音频/坐标/凭据', async () => {
   const reg = createDeletionRegistry();
   reg.registerModule('identity', async () => ({

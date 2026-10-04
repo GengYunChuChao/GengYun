@@ -90,3 +90,21 @@ test('Bearer token 与高精度坐标对字符串值被脱敏', () => {
   assert.equal(out.a, '[REDACTED]');
   assert.equal(out.b, '[REDACTED]');
 });
+
+// ---- P2-6：camelCase 字段脱敏 ----
+
+test('P2-6 camelCase 字段命中脱敏（appSecret/rawText/providerRequestRefCipher 等）', () => {
+  const input = {
+    appSecret: 'synthetic-app-secret',
+    rawText: 'synthetic-private-transcript',
+    providerRequestRefCipher: 'opaque://provider/request',
+    accessToken: 'tk-synthetic',
+    wechatSubjectCipher: 'cipher-synthetic',
+  };
+  const out = redactForLog(input);
+  assert.equal(out.appSecret, '[REDACTED]');
+  assert.equal(out.rawText, '[REDACTED]');
+  assert.equal(out.providerRequestRefCipher, '[REDACTED]');
+  assert.equal(out.accessToken, '[REDACTED]');
+  assert.equal(out.wechatSubjectCipher, '[REDACTED]');
+});

@@ -122,6 +122,8 @@ CREATE TABLE exports (
   purpose                   consent_purpose NOT NULL,
   consent_id                uuid,
   consent_epoch             bigint NOT NULL CHECK (consent_epoch >= 1),
+  required_consents         jsonb NOT NULL DEFAULT '{}'::jsonb
+      CHECK (jsonb_typeof(required_consents) = 'object'),
   recipient_id              varchar(80) NOT NULL,
   recipient_config_version  varchar(40) NOT NULL,
   source_version            varchar(40),
@@ -190,17 +192,27 @@ CREATE TABLE third_party_deletions (
   confirmed_at    timestamptz,
   evidence_ref    text,
   error_code      varchar(80),
-  -- confirmed 要求证据与确认时间（requested 绝不等于 confirmed）
+  -- online 与 backup 各自独立约束：confirmed 必须有证据与确认时间（requested 绝不等于 confirmed）
   CONSTRAINT third_party_confirmed_evidence CHECK (
     (online_status <> 'confirmed' OR (confirmed_at IS NOT NULL AND evidence_ref IS NOT NULL))
+    AND
+    (backup_status <> 'confirmed' OR (confirmed_at IS NOT NULL AND evidence_ref IS NOT NULL))
   ),
-  -- 已发请求必有 requested_at
+  -- online 与 backup 各自独立约束：已发请求（requested/confirmed/failed）必有 requested_at
   CONSTRAINT third_party_requested_time CHECK (
     (online_status NOT IN ('requested', 'confirmed', 'failed') OR requested_at IS NOT NULL)
+    AND
+    (backup_status NOT IN ('requested', 'confirmed', 'failed') OR requested_at IS NOT NULL)
   )
 );
+-- NULL 唯一语义：export_ref 为空时按 (request_id, recipient_id) 唯一；非空时按三元组唯一。
+-- 避免 UNIQUE(request_id, recipient_id, export_ref) 对 NULL 不去重导致同一请求/接收方插多行。
 CREATE UNIQUE INDEX third_party_deletions_key
-  ON third_party_deletions (request_id, recipient_id, export_ref);
+  ON third_party_deletions (request_id, recipient_id, export_ref)
+  WHERE export_ref IS NOT NULL;
+CREATE UNIQUE INDEX third_party_deletions_null_key
+  ON third_party_deletions (request_id, recipient_id)
+  WHERE export_ref IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- 9. 用户训练开关（首版默认关闭；启用前需独立同意 + 模型谱系验收）

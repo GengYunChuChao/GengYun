@@ -55,10 +55,11 @@ export function toErrorEnvelope(error, meta = {}) {
       },
     };
   }
-  // 非契约错误不伪造错误码；如实透出 message（调用方负责脱敏）。
+  // 非契约错误不伪造错误码，也不透出原始 message（可能含私有正文/坐标/凭据，
+  // 或 SDK/第三方嵌套错误原文）。只投影安全元数据：错误类型名与固定兜底文案。
   return {
     error: {
-      message: String(error?.message ?? error),
+      message: '服务器内部错误',
       retryable: false,
       details: [],
     },
@@ -66,6 +67,7 @@ export function toErrorEnvelope(error, meta = {}) {
       request_id: meta.request_id ?? null,
       contract_version: '1.0.0',
       execution_mode: meta.execution_mode ?? 'real',
+      error_type: error?.name ?? (typeof error === 'string' ? 'string' : 'unknown'),
     },
   };
 }
