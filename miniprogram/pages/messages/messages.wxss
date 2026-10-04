@@ -18,7 +18,7 @@
 
 .kind__desc {
   flex: 1;
-  font-size: 28rpx;
+  font-size: 16px;
   line-height: 1.6;
   color: var(--color-text-sub, #4A5A4E);
 }

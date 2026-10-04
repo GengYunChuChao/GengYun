@@ -38,6 +38,14 @@ function pxValue(css, prop) {
   const m = css.match(new RegExp(`${prop}:\\s*(\\d+(?:\\.\\d+)?)px`));
   return m ? Number(m[1]) : null;
 }
+/** 按选择器块精确取值，避免取到同文件其它选择器的字号 */
+function pxOf(css, selector, prop) {
+  const i = css.indexOf(`${selector} {`);
+  if (i < 0) return null;
+  const block = css.slice(i, css.indexOf('}', i));
+  const m = block.match(new RegExp(`${prop}:\\s*(\\d+(?:\\.\\d+)?)px`));
+  return m ? Number(m[1]) : null;
+}
 function rpxValue(css, prop) {
   const m = css.match(new RegExp(`${prop}:\\s*(\\d+(?:\\.\\d+)?)rpx`));
   return m ? Number(m[1]) : null;
@@ -46,7 +54,9 @@ function rpxValue(css, prop) {
 const tapMin = pxValue(appWxss, '--tap-min');
 const bodyFont = pxValue(appWxss, 'font-size');
 const heroPadX = rpxValue(homeWxss, 'padding');
-const titleFont = pxValue(homeWxss, 'font-size');
+const titleFont = pxOf(homeWxss, '.hero__title', 'font-size');
+const subFont = pxOf(homeWxss, '.hero__sub', 'font-size');
+const entryDescFont = pxOf(homeWxss, '.entry__desc', 'font-size');
 /** .page 的 padding-bottom 声明（不含 env()）：须支持 calc(Npx) 与 calc(Nrpx) */
 const padBottomVal = (() => {
   const m = appWxss.match(/padding:\s*\d+rpx\s+\d+rpx\s+calc\((\d+)(px|rpx)/);
@@ -60,6 +70,9 @@ const rows = [];
 if (tapMin === null) problems.push('未能从 app.wxss 解析 --tap-min，触控区门槛未验证');
 if (bodyFont === null) problems.push('未能从 app.wxss 解析正文字号，正文门槛未验证');
 if (!padBottomVal) problems.push('未能从 app.wxss 解析 .page 的 padding-bottom，末屏预留门槛未验证');
+if (titleFont === null) problems.push('未能定位 .hero__title 的字号，主标题换行估算未验证');
+if (subFont === null) problems.push('未能定位 .hero__sub 的字号，副标题换行估算未验证');
+if (entryDescFont === null) problems.push('未能定位 .entry__desc 的字号，入口描述换行估算未验证');
 if (padBottomVal && padBottomVal.unit !== 'px') {
   problems.push(`末屏预留以 ${padBottomVal.unit} 声明（${padBottomVal.value}${padBottomVal.unit}），会随视口缩放，应改用 px`);
 }
@@ -96,8 +109,8 @@ for (const { w, label } of VIEWPORTS) {
     bodyFont,
     bottomPad,
     titleLines: est('识草查药，除草不求人', titleFont, heroInner),
-    subLines: est('识草查药与除草科普社区', 16, heroInner),
-    entryDescLines: est('拍一张照片，识别田里的杂草', 16, contentW - rpx(24, w) * 2 - rpx(96, w))
+    subLines: est('识草查药与除草科普社区', subFont, heroInner),
+    entryDescLines: est('拍一张照片，识别田里的杂草', entryDescFont, contentW - rpx(24, w) * 2 - rpx(96, w))
   });
 }
 

@@ -161,7 +161,7 @@ page {
   min-height: 24px;
   padding: 0 20rpx;
   border-radius: 999rpx;
-  font-size: 28rpx;
+  font-size: 16px;
   font-weight: 600;
   background: var(--color-primary-soft);
   color: var(--color-primary-deep);
