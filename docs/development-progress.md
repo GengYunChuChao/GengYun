@@ -15,12 +15,12 @@
 
 ## 2 初版实现进度
 
-0项通过软件验收。GY-I01已由写手领取（[记录](https://github.com/Sek1ro-oka/GengYun/issues/1#issuecomment-5969562241)）；PR #33组件已合入main，但整项及运行版本未冻结。2026-10-04写手已在[#2领取评论](https://github.com/Sek1ro-oka/GengYun/issues/2#issuecomment-5971357427)记录GY-I02局部调试准备，前置整项未验收；本轮原生空态/诊断替身不记整项完成。旧chore/project-scaffold工程壳9ce307fe6745b49b89774a380c37b748822df934未整支合并，本轮只读比较后按需求重写。2026-10-04开发者领取GY-I26并开[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)（待审）：五Tab编译、正式AppID生效、游客态五页截图与常见字号走查已实测，登录态走查待GY-I04、Android末屏复测待GY-I23，整项未验收。其他领取/PR以当前远端为准，未核查行保留既有记录。
+0项通过完整软件验收。GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)已经监工绑定SHA复审并合并main=f40f09167869f2a2d8aa563f8c8ffdf44ccf244f；整项运行兼容仍有未验内容，issue #1保持open。GY-I02局部原生工程与隔离开发调试准备PR #36已独立审查合并main=e3c709e82674eb351f337c7b769da89dfd0b1e79；正式工程／API／后台与真实能力未据此完成。旧chore/project-scaffold工程壳9ce307fe6745b49b89774a380c37b748822df934未整支合并，仅只读比较后按需求重写。GY-I26由开发者2026-10-04领取并开[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)（Draft，待审）：五Tab骨架、适老视觉与统一失败状态已实现，界面自动化14项、冻结契约与文档校验均PASS；监工2026-10-04审查提出五项意见已全部处置，登录态走查待GY-I04、真机与字体缩放待GY-I23，整项未验收。其他领取/PR以当前远端为准，未核查行保留既有记录。
 
 | 任务 | issue | 完成阶段 | 状态 | 负责人／PR与证据 |
 | --- | --- | --- | --- | --- |
-| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 组件已审合入／整项未验收 | 写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)，0e97702经独立复审合入f40f091；候选安装兼容仍待验证，issue仍open |
-| GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 局部准备待审 | 写手／codex/gy-i02-local-wechat-debug；[证据与缺项](local-wechat-debug.md)，原生空态和本地诊断通过局部检查，工具/手机证据分别记录；后台/API/迁移与前置未验收 |
+| GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待验证 | 耕云写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)组件已合并；[已验SHA 0e97702](https://github.com/Sek1ro-oka/GengYun/pull/33#pullrequestreview-5401812928)；整项运行版本未冻结，安装兼容、构建／数据库／真实媒体ACL／服务／手机仍未验 |
+| GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 待验证 | 写手／[PR #36](https://github.com/Sek1ro-oka/GengYun/pull/36)局部准备已合并；[已验SHA 6d0dc95](https://github.com/Sek1ro-oka/GengYun/pull/36#pullrequestreview-5401932042)；模拟器local/release及本地诊断通过，完整工程／运行版本／真实身份／API／后台／手机／数据库／供应商仍未验 |
 | GY-I03 建立浙江首批资料清单与可替换数据库适配 | [#3](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I04 实现微信登录、游客限制与服务端归属权限 | [#4](https://github.com/Sek1ro-oka/GengYun/issues/4) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I05 实现单作物地区档案及授权定位／手动选择 | [#5](https://github.com/Sek1ro-oka/GengYun/issues/5) | M2 | 待领取 | 未领取／无已验PR |
@@ -43,9 +43,9 @@
 | GY-I22 完成权限、安全规则及首版端到端失败回归 | [#22](https://github.com/Sek1ro-oka/GengYun/issues/22) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
-| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；[六类配置接续](verification/ai-configuration-evidence.md)：TokenHub只读鉴权、五SDK局部兼容、七端点离线准备；两审核BizType已私密配置，七端点参数/凭据齐；额度/授权与策略有效性未验，六类真实能力/数据库/真机未验，issue保持open |
-| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待审PR／监工要求修改 | 尹一／[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)；工具2.02.2609231、正式AppID wx4407a4b908a69a54已生效编译；五Tab游客态走查、界面自动化11项PASS；走查时本机调试基础库3.17.3（灰度中）与仓库锁定3.5.5不一致，锁定值下编译与五Tab复测待补；[证据](verification/gui-adaptive-evidence.md)；截图仅贴PR描述未入库；放大字号走查、登录态走查(GY-I04)、Android复测(GY-I23)未做；监工2026-10-04审查结论需修改，issue保持open |
-| GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 未领取／无已验PR |
+| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；[PR #40已审SHA 86e0581](https://github.com/Sek1ro-oka/GengYun/pull/40#pullrequestreview-5404464599)合入95b14d3；[六类配置接续](verification/ai-configuration-evidence.md)：TokenHub只读鉴权、五SDK局部兼容、七端点离线准备；两审核BizType已私密配置，七端点参数/凭据齐；额度/授权与策略有效性未验，六类真实能力/数据库/真机未验，issue保持open |
+| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待审PR／监工要求修改 | 尹一／已有[领取请求](https://github.com/Sek1ro-oka/GengYun/issues/28#issuecomment-5975823731)；[Draft PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)；工具2.02.2609231、正式AppID wx4407a4b908a69a54已生效编译；五Tab游客态走查、界面自动化14项PASS；监工2026-10-04审查五项意见已处置（触控区与字号改px、未接入会话前恒游客、副标题与消息范围回归首版、CI接入界面检查、证据口径按机器限定）；冻结基础库由不存在的3.5.5修正为3.5.8待确认；[证据](verification/gui-adaptive-evidence.md)未附截图；登录态走查待GY-I04、真机与字体缩放待GY-I23、窄视口布局待补，整项未验收，issue保持open，避免重复派发 |
+| GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 本次核查无assignee／评论／对应开放PR，暂无已核实领取凭据；后续派发前复核 |
 
 ## 3 当前实施约束
 
@@ -56,7 +56,7 @@
 | 平台及供应商 | 用户声明资源具备，GY-I25核查AppID、真机域名和六类服务；具体配置安全交接，数据库比赛前接入 |
 | 隐私与评估 | GY-I27在真实媒体和外发前完成，GY-I20调参前冻样本，各模型PR提交实测，GY-I19验完整注销删除 |
 | main平台保护 | 2026-10-03保护API返回403：当前私有仓库套餐要求升级Pro或公开仓库；仍无强制保护，CODEOWNERS只作流程，不自动改可见性或套餐 |
-| 当前CI | development-docs只验文档和任务图；工程CI和微信工具自动化由GY-I02建立，真机与供应商分开 |
+| 当前CI | development-docs检查文档和任务图；PR #36新增local-wechat局部工程／配置／诊断测试；后台API分层CI、真机及供应商仍待验 |
 | 自动巡检 | 每12小时，读取最新v1.1及27项任务；无变化安静，审查、合并、失败、阻塞和期限风险才通知；依赖本机联网认证与额度 |
 
 ## 4 状态和证据更新
