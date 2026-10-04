@@ -11,7 +11,7 @@
 | Git、GitHub 仓库访问权限 | 从最新 main 开分支，经 PR 提交；不要直接推 main |
 | 微信开发者工具 Windows／macOS 稳定版 | 原生小程序编译、模拟器和真机调试；在任务中记录实际工具版本 |
 | 团队正式小程序 AppID、开发者／体验成员权限 | 用户确认正式注册账号 wx4407a4b908a69a54；工具已登录且该AppID项目自动化可用，更多接口/成员与手机权限未验。测试号与正式账号是**不同资格**：测试号、模拟器、预览、真机调试、普通体验版的能力需各自核实，测试号通过不能替代正式账号验证 |
-| 小程序基础库 | 沿用待审工程壳的 3.5.5 作为兼容性起点，GY-I02／25 实测后冻结；不是“最新版本”声明 |
+| 小程序基础库 | 目标 `3.17.3`（用户确认当前可选最新版本）；`3.5.5` 保留为历史未验证候选，GY-I02／25 实测后冻结；正式稳定标签与双平台兼容仍待独立核验 |
 | Node.js 24 LTS 与 npm | 工程检查、自动化测试、服务端和后台工具链；原生页面编译本身不需要 npm 构建。**锁文件已提交**（`package.json` 精确版本 + `package-lock.json`），实测 fastify 5.12.5 / typescript 5.9.3 / vue 3.5.43 / @vue/compiler-sfc 3.5.43 / vite 7.3.6 / @vitejs/plugin-vue 6.0.9 / pg 8.23.1。本机 Node `24.16.0` / npm `11.13.0`。[版本依据](https://nodejs.org/en/about/previous-releases) |
 | Python 3.11 或以上 | 当前文档检查，只用标准库；不代表后端采用 Python |
 | HTTPS 测试服务、私有对象存储、关系数据库和供应商测试配置 | 按 GY-I25 验证域名、证书、额度、权限和删除能力，配置由服务端保管 |
@@ -31,7 +31,7 @@ python tools/validate_development_docs.py
 
 已在本地仓库的成员先核对并保存自己的改动，再从最新 main 开任务分支。工程壳已提供 `package.json`（npm workspaces）与锁文件：先 `npm install`，再按需运行 `npm run dev:api` / `npm run dev:admin` / `npm run lint` / `npm run test:unit` / `npm run test:contract` / `npm run build` / `npm run test:mini`。本机若 npm 直连超时，可按[工程壳说明](docs/engineering-shell.md)在**单条命令**加 `--proxy=http://127.0.0.1:7897`；不要改全局 npm/git 配置，不要关闭 TLS 校验。诊断运行使用 Node24 标准库；工具实测另在忽略目录隔离安装官方自动化SDK0.12.1（忽略安装脚本，TLS校验开启），不是业务依赖。实测 Node24.16.0/npm11.13.0。数据库迁移（`db:migrate`）需要真实 `DATABASE_URL`，本机无 PostgreSQL 未执行真实迁移；业务 API、真实登录、供应商与用户端页面仍未交付。
 
-在微信开发者工具导入**含 `project.config.json` 的仓库根目录**，选择“小程序”；`miniprogramRoot` 指向 `miniprogram/`。共享工程默认无网络且开启域名校验。工具2.02.2608080初次因服务端口关闭阻塞；用户开启62154后已登录并加载本工程，五Tab及本地成功/停服失败在模拟器实测通过，实际基础库3.17.3。公共3.5.5仍仅为兼容起点，未证明该版本兼容；手机、真实业务未验。
+在微信开发者工具导入**含 `project.config.json` 的仓库根目录**，选择“小程序”；`miniprogramRoot` 指向 `miniprogram/`。共享工程默认无网络且开启域名校验。工具2.02.2608080初次因服务端口关闭阻塞；用户开启62154后已登录并加载本工程，五Tab及本地成功/停服失败在模拟器实测通过，实际基础库3.17.3。公共配置目标现为3.17.3，历史3.5.5仅为候选、未证明兼容；手机、真实业务未验。
 
 初期可先准备隔离本地调试，无须先购买自有域名：
 
