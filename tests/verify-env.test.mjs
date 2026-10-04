@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { verifyEnvironment, probeHTTPS, PROVIDERS } from '../tools/verify-env.mjs';
 
-function fixture(endpoint = 'https://vendor.invalid/api') {
-  return { env: 'dev', appid: 'wx4407a4b908a69a54', appSecretEnv: 'WECHAT_APP_SECRET', domain: { apiBase: 'https://api.invalid' }, database: { urlEnv: 'DB_URL' }, privacy: { allowUserDataForTraining: false, sendRealUserDataBeforeConsent: false }, providers: Object.fromEntries(PROVIDERS.map(([key]) => [key, { vendor: 'synthetic vendor', endpoint, apiKeyEnv: 'TEST_KEY', ...(key === 'moderation' ? { image: { endpoint } } : {}) }])) };
+function fixture(endpoint) {
+  const config = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
+  config.domain.apiBase = 'https://api.invalid'; config.database.urlEnv = 'DB_URL';
+  config.providers.moderation.bizType = 'synthetic_text'; config.providers.moderation.image.bizType = 'synthetic_image';
+  if (endpoint !== undefined) for (const [key] of PROVIDERS) { config.providers[key].endpoint = endpoint; if (key === 'moderation') config.providers[key].image.endpoint = endpoint; }
+  return config;
 }
-const env = { WECHAT_APP_SECRET: 'synthetic-secret-value', DB_URL: 'synthetic-db-secret', TEST_KEY: 'synthetic-key-value' };
+const env = { WECHAT_APP_SECRET: 'synthetic-secret-value', DB_URL: 'synthetic-db-secret', TOKENHUB_API_KEY: 'synthetic-tokenhub', DEEPSEEK_API_KEY: 'synthetic-deepseek', TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-key' };
 test('six non-HTTPS or invalid endpoints yield zero requests even with probe', async () => {
   for (const endpoint of ['http://vendor.invalid/not-an-api', 'not a URL', 'https://user:synthetic@vendor.invalid', 'https://vendor.invalid?token=synthetic', 'ftp://vendor.invalid', 'https://vendor.invalid/#secret']) {
     let requests = 0;
@@ -29,7 +34,7 @@ test('HTTPS host HEAD is unauthenticated, manual redirect, and not API verificat
   const calls = [];
   const report = await verifyEnvironment({ config: fixture(), env, probe: true, fetchImpl: async (url, options) => { calls.push({ url, options }); return { status: 401 }; } });
   assert.equal(calls.length, 7);
-  for (const { url, options } of calls) { assert.equal(url, 'https://vendor.invalid'); assert.equal(options.method, 'HEAD'); assert.equal(options.redirect, 'manual'); assert.equal(options.headers, undefined); }
+  for (const { url, options } of calls) { assert.ok(url.startsWith('https://')); assert.equal(new URL(url).pathname, '/'); assert.equal(options.method, 'HEAD'); assert.equal(options.redirect, 'manual'); assert.equal(options.headers, undefined); }
   assert.equal(report.taskVerified, false);
   for (const result of Object.values(report.providers)) { assert.equal(result.reachability.state, 'HOST_RESPONDED'); assert.equal(result.capabilityVerified, false); }
   const redirect = await probeHTTPS('https://vendor.invalid', async () => ({ status: 302 }));
