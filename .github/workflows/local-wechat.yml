@@ -8,6 +8,7 @@ on:
       - 'tools/*wechat*.mjs'
       - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
+      - 'tools/verify-layout.mjs'
       - 'tests/local-debug.test.mjs'
       - 'tests/ui-adaptive.test.mjs'
       - '.gitignore'
@@ -21,6 +22,7 @@ on:
       - 'tools/*wechat*.mjs'
       - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
+      - 'tools/verify-layout.mjs'
       - 'tests/local-debug.test.mjs'
       - 'tests/ui-adaptive.test.mjs'
       - '.gitignore'
@@ -43,5 +45,6 @@ jobs:
       - run: node --check tools/smoke-wechat.cjs
       - run: node --test tests/local-debug.test.mjs
       - run: node --test tests/ui-adaptive.test.mjs
+      - run: node tools/verify-layout.mjs
       - run: git check-ignore project.private.config.json config/debug.local.json .local/wechat-local/project.config.json .env
       - run: if git check-ignore project.private.config.json.example config/debug.local.json.example .env.example; then exit 1; fi
