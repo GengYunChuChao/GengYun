@@ -50,7 +50,10 @@ page {
 
 .page {
   min-height: 100vh;
-  padding: 32rpx 28rpx calc(48rpx + env(safe-area-inset-bottom));
+  /* tabBar 为 fixed 覆盖层不占文档流：预留其高度 100rpx。
+     iPhone 的 env(safe-area-inset-bottom) 可再补足 home indicator 区域；
+     Android 常为 0，若沿用 48rpx 会被 tabBar 压住末屏内容。 */
+  padding: 32rpx 28rpx calc(100rpx + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 

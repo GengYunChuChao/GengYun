@@ -15,7 +15,7 @@
 
 ## 2 初版实现进度
 
-0项通过软件验收。GY-I01已由写手领取（[记录](https://github.com/Sek1ro-oka/GengYun/issues/1#issuecomment-5969562241)）；PR #33组件已合入main，但整项及运行版本未冻结。2026-10-04写手已在[#2领取评论](https://github.com/Sek1ro-oka/GengYun/issues/2#issuecomment-5971357427)记录GY-I02局部调试准备，前置整项未验收；本轮原生空态/诊断替身不记整项完成。旧chore/project-scaffold工程壳9ce307fe6745b49b89774a380c37b748822df934未整支合并，本轮只读比较后按需求重写。其他领取/PR以当前远端为准，未核查行保留既有记录。
+0项通过软件验收。GY-I01已由写手领取（[记录](https://github.com/Sek1ro-oka/GengYun/issues/1#issuecomment-5969562241)）；PR #33组件已合入main，但整项及运行版本未冻结。2026-10-04写手已在[#2领取评论](https://github.com/Sek1ro-oka/GengYun/issues/2#issuecomment-5971357427)记录GY-I02局部调试准备，前置整项未验收；本轮原生空态/诊断替身不记整项完成。旧chore/project-scaffold工程壳9ce307fe6745b49b89774a380c37b748822df934未整支合并，本轮只读比较后按需求重写。2026-10-04开发者领取GY-I26并开[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)（待审）：五Tab编译、正式AppID生效、游客态五页截图与常见字号走查已实测，登录态走查待GY-I04、Android末屏复测待GY-I23，整项未验收。其他领取/PR以当前远端为准，未核查行保留既有记录。
 
 | 任务 | issue | 完成阶段 | 状态 | 负责人／PR与证据 |
 | --- | --- | --- | --- | --- |
@@ -44,7 +44,7 @@
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；TTS查询权限拒绝，六类能力/数据库/真机未验，issue保持open |
-| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待领取 | 未领取／无已验PR |
+| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待审PR | 尹一／[PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39) feat(ui)+test(ui)两提交；工具2.02.2609231／基础库3.17.3／正式AppID已生效；五Tab游客态截图、常见字号走查、node --test 11项全过；[证据](verification/gui-adaptive-evidence.md)；登录态走查待GY-I04、Android复测待GY-I23，issue保持open |
 | GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 未领取／无已验PR |
 
 ## 3 当前实施约束

@@ -70,3 +70,40 @@ python tools/test_contracts.py
 本轮腾讯只读请求合计4次，AI能力调用0。腾讯身份已验；六个调用动作的实际权限、产品开通、免费/预付额度及模型均未验。用户可在控制台交接已有服务及剩余额度的脱敏证明，或限定授权只读查询动作；不能仅凭身份成功启动计费推理。数据库与云部署/真机仍无实测。issue #27保持开放。
 
 实际本机默认零网络检查（带获准私密文件）为24 PASS、2 FAIL、6 INFO；两项FAIL是正式API HTTPS地址与数据库连接变量未设置。候选配置存在与能力验证分层仍保持taskVerified=false/capabilityVerified=false。本机config.local.json已精确忽略，未提交。
+
+
+## 更正与后续（2026-10-04，GY-I26 走查期间）
+
+以下为**追加更正**，不改写上方原始记录，以便保留审计痕迹。
+
+### 1 工程目录更正
+
+上文「实际微信账号验证」记录的工程目录为 `E:\WeChatProjects\GengYun`。2026-10-04 实测该目录**不存在**（`Test-Path` 为 False）。
+
+实际承载本仓库代码、并在开发者工具中打开编译的目录是 **`D:\challenge_cup`**，与 `project.config.json` 的 `miniprogramRoot` 及工具「详情 → 基本信息 → 本地目录」一致。
+
+后续任何核查、取证与工具操作均以 `D:\challenge_cup` 为准；按 `E:\WeChatProjects\GengYun` 查找会扑空。
+
+### 2 开发者工具版本已变更
+
+上文记录的 `2.02.2608080` 为当时版本。2026-10-04 实测当前为 **`2.02.2609231 RC win32-x64`**，调试基础库 `3.17.3`（灰度中）。原始版本号保留，不代表当前环境。
+
+### 3 配置与正式 AppID 的一致性缺陷（已修）
+
+`project.config.json` 原将 `appid` 写为 **`wx004043e9a9d2feab`（测试号）**，与本文件记录的正式 AppID `wx4407a4b908a69a54` 不一致——即配置侧仍指向测试号，而账号侧已完成正式号鉴权。
+
+2026-10-04 已将 `project.config.json` 与 `project.private.config.json` 的 `appid` 统一更正为 `wx4407a4b908a69a54`，`libVersion` 统一为 `3.17.3`，`project.private.config.json` 的 `projectname` 由 `challenge_cup` 改为 `GengYun`。工具侧实测 AppID 已生效并完成编译。
+
+此缺陷属配置漂移，不影响已完成的 `stable_token` 与 `jscode2session` 实测——那两项走的是 `E:\GengYunPrivate` 中的私密凭据文件，与仓库内 `appid` 字段无关。
+
+### 4 本节新增的实测范围
+
+| 项 | 状态 |
+| --- | --- |
+| 工具 islogin 与正式号项目加载、编译 | 已实测（iOS 模拟器） |
+| 五 Tab 路由与游客态界面走查 | 已实测，见 [GY-I26 走查证据](gui-adaptive-evidence.md) |
+| 真机预览（Android／iOS） | **仍未执行**；工具「上次预览」显示为「无」 |
+| 体验版上传 | **仍未执行**；工具「上次上传」显示为「无」，正式号至今无任何上传记录 |
+| 主体类型、服务类目、体验成员、隐私保护指引 | 仍未核查，见 [平台核查清单](platform-checklist.md) |
+
+真机与上传两项属 GY-I25 验收范围，赛期前必须各走通一次，本节不作完成声明。
