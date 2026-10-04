@@ -125,7 +125,7 @@ node --test tests/ui-adaptive.test.mjs
 | # | 意见摘要 | 处置 |
 | --- | --- | --- |
 | 1 | 把作者本机 `D:\challenge_cup` 写成唯一目录并据此否定监工侧 `E:\WeChatProjects\GengYun`；「全账号从未预览/上传」超出证据范围 | 撤回全局结论。continuation-evidence 改为两台机器并存记录、`Test-Path` 不跨机推广；「从未上传」限定为本机工具本地字段，并注明须由 GY-I25 在平台侧核实 |
-| 2 | 88rpx 仅在 375px 视口等于 44px，320px 视口约 37.55px；36rpx 正文缩为 15.36px；`.btn` 的 padding:0 与 line-height:1.4 无法靠原生默认高度补足 | 触控区与字号令牌由 rpx 改为 px（`--tap-min: 44px`、正文 `18px`、辅助 `16px`、标题 `24px`）；全项目 font-size/min-height 的 rpx 残留已批量转换；新增断言禁止回退为 rpx。**模拟器字号调试项对 px 失效，放大字号改由真机系统字体验证（见 3.2）** |
+| 2 | 88rpx 仅在 375px 视口等于 44px，320px 视口约 37.55px；36rpx 正文缩为 15.36px；`.btn` 的 padding:0 与 line-height:1.4 无法靠原生默认高度补足 | 触控区与字号令牌由 rpx 改为 px（`--tap-min: 44px`、正文 `18px`、辅助 `16px`、页面标题 `24px`、首页主标题 `28px`）；文字类 font-size 与 min-height 的 rpx 残留已全部转换，图标类 `.state__icon` 72rpx 与 `.mode__icon` 44rpx 有意保留；新增断言禁止 `--tap-min` 与正文回退为 rpx。**模拟器字号调试项对 px 失效，放大字号改由真机系统字体验证（见 3.2）** |
 | 3 | `read()` 接受 `gengyun_session` 任意真值，`isGuest()` 使占位字符串或 `{demo:true}` 进入登录态，监工以合成 `wx.getStorageSync` 复现 `isGuest=false` | `session.js` 引入 `SESSION_ENABLED`（当前 false），关闭时 `isGuest()` 无条件返回 true 且不读存储；置 true 后 `read()` 仍要求对象形态、非 `__devPreview`、含字符串 token。新增合成 wx 行为回归覆盖 10 种取值 |
 | 4 | 首页副标题被替换并加入「用药提醒」；`messages.wxml` 把按使用时间填写反馈列为将支持的消息，而 B01/B05/B12 已后置到 2027-02 | 副标题恢复为已确认文案「识草查药与除草科普社区」；`messages.wxml` 副标题改为「互动通知与审核结果」，删除「用药提醒」类目，「将支持的消息类型」改为「首版消息类型」；顺带修正 `class="desc"` 为 `kind__desc`。新增断言防止后置能力回流 |
 | 5 | `local-wechat.yml` 未运行新增界面检查，三项 CI success 不含这 11 项；测试中 `git diff` 失败直接 return，使基线缺失被记成 PASS | workflow 补 `tests/ui-adaptive.test.mjs` 的 paths 触发与执行步骤，并加 `fetch-depth: 0` 使 origin/main 基线可用；测试改为区分「无基线」(t.skip，黄灯) 与其他 git 失败(throw，红灯) |
