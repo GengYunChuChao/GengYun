@@ -17,6 +17,8 @@
 
 已尝试读取微信官方[兼容性说明](https://developers.weixin.qq.com/miniprogram/dev/framework/compatibility.html)、[基础库发布记录](https://developers.weixin.qq.com/miniprogram/dev/framework/release/)、[工具稳定版记录](https://developers.weixin.qq.com/miniprogram/dev/devtools/stable.html)及[应用基础信息接口](https://developers.weixin.qq.com/miniprogram/dev/api/base/system/wx.getAppBaseInfo.html)，浏览工具均报告不可打开。以上链接仅记录核查入口，不声称已读取正文或证实当前版本。没有采用第三方转载推断最新版本。
 
+后续用户明确选择最新版本：优先当前工具可用的最新正式稳定基础库及适用工具环境，核查依赖兼容后同步配置与文档。备用Python urllib只读请求随后取得官方基础库发布页HTTP200，页面列出的最高版本为v3.17.3（2026-08-20）；这属于本次新取得的官方发布记录，不是沿用历史模拟器值推断。工具稳定版页面也返回HTTP200，但未取得可确认的精确版本内容。安装目录公开package.json独立核对工具版本2.02.2608080，exe资源仅显示2.02.0，不能取代完整包版本。当前仍未取得工具下拉列表、正式稳定标签、新编译或SDKVersion证据，尚未选定或冻结公共libVersion。
+
 已有官方自动化SDK可用于读取运行信息，但当前连接失败；它未提供本次可用的版本选择列表证据。本次没有启动、关闭或切换用户工具工程，没有修改个人配置或公共libVersion。后续需要工具中当前可选版本及其标签、所选版本、实际SDKVersion、编译结果和对应工程提交；可由用户在已登录工具中提供文字记录，再按可用自动化独立复核。不重复索取正式账号、AppID或密钥。
 
 ## 候选修订清单与等待条件
