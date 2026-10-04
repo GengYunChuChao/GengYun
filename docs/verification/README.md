@@ -49,3 +49,13 @@
 
 
 私密交接目录为用户授权的 `E:\GengYunPrivate`（Git仓库外、仅当前用户及SYSTEM权限）。`credentials.local.json` 保管服务端凭据，保持原始文件不变。验证器可用 `--credentials <私密文件>` 仅在进程内映射环境变量。DeepSeek只读检查：`node tools/verify-deepseek.cjs --credentials <私密文件>`，仅余额可用布尔值/字段名、模型名与受控无效密钥拒绝；不输出余额金额，不生成文本，不在CI运行。详情及剩余资源见[资源交接](resource-handoff.md)。
+
+## 六类AI配置接续
+
+配置版本gy25-20261004-02：七个端点的供应商、鉴权、动作/模型、超时、输出与媒体上限已分别列明；TokenHub凭据与TC3分开，审核两个BizType保持空值。当前SDK和只读鉴权证据见[配置记录](ai-configuration-evidence.md)。
+
+服务端离线准备：`node tools/prepare-ai-verification.mjs --credentials <已授权私密JSON>`；不联网，仅输出参数/凭据是否存在，缺项exit1，不输出值。纯准备库没有执行器，当前预算false/0。SDK隔离检查：`node tools/check-ai-sdk.cjs --modules <忽略目录下的官方SDK模块目录>`，HTTP/HTTPS/fetch被禁止。
+
+离线回归新增 `tests/ai-config.test.mjs` 与 `tests/tokenhub-account.test.mjs`，加原四文件共21组。TokenHub真实只读检查仅在明确需要时运行 `node tools/verify-tokenhub.mjs --credentials <已授权私密JSON>`，固定两次模型列表GET（含合成无效key）；不生成、不查或输出账户金额、不在CI使用真实凭据。已有鉴权不需重复请求。审核资源入口修正为[统一CMS](https://console.cloud.tencent.com/cms)，按[交接说明](resource-handoff.md)查看已有策略。
+
+最新本机交接：用户提供两个审核BizType并已分别私密配置，七端点参数及凭据离线检查全齐（exit0）；公开模板仍留空。这个结果只证明本机参数齐备，不证明服务/策略启用、额度、能力或预算获准。

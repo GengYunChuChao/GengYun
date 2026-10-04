@@ -21,22 +21,36 @@
   },
   "providers": {
     "weedRecognition": {
-      "vendor": "TencentCloud candidate",
-      "endpoint": "https://hunyuan.ai.tencentcloudapi.com",
-      "model": "hunyuan-vision-1.5-instruct",
-      "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
-      "timeoutMs": 8000,
+      "vendor": "Tencent TokenHub candidate",
+      "endpoint": "https://tokenhub.tencentmaas.com/v1/chat/completions",
+      "model": "hy-vision-2.0-instruct",
+      "authentication": "Bearer",
+      "apiKeyEnv": "TOKENHUB_API_KEY",
+      "timeoutMs": 20000,
       "maxImageBytes": 2097152,
-      "action": "ChatCompletions",
-      "apiVersion": "2023-09-01",
-      "authentication": "TC3-HMAC-SHA256",
-      "secretIdEnv": "TENCENTCLOUD_SECRET_ID",
-      "region": "ap-shanghai",
+      "mediaTransport": "inlineBase64",
+      "maxOutputTokens": 128,
+      "stream": false,
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "visionDocumented": true,
+      "availabilityVerified": false,
+      "compatibilityTarget": "2027-02-28",
+      "compatibilityVerifiedThroughTarget": false,
       "retentionVerified": false,
       "trainingDisabledVerified": false,
       "deletionVerified": false,
-      "availabilityVerified": false,
-      "note": "旧TC3对话接口预下线2026-12-21；仅历史候选。新接入需验证TokenHub/兼容接口、视觉模型权限和独立API Key，不默认可用。"
+      "alternative": {
+        "vendor": "DeepSeek multimodal documented candidate",
+        "endpoint": "https://api.deepseek.com/chat/completions",
+        "model": "deepseek-flash",
+        "authentication": "Bearer",
+        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "visionDocumented": true,
+        "capabilityVerified": false,
+        "automaticallySelected": false
+      },
+      "note": "2026-10-04官方TokenHub图片理解给出此视觉模型和端点；独立API Key未交接，不能用TC3 SecretKey代替。不再采用旧混元TC3接口；跨2027-02仍需复核模型/端点/条款。"
     },
     "ocr": {
       "vendor": "TencentCloud candidate",
@@ -50,7 +64,12 @@
       "region": "ap-shanghai",
       "retentionVerified": false,
       "trainingDisabledVerified": false,
-      "deletionVerified": false
+      "deletionVerified": false,
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "sdkVersion": "4.1.322",
+      "maxImageBytes": 2097152,
+      "mediaTransport": "inlineBase64"
     },
     "asr": {
       "vendor": "TencentCloud candidate",
@@ -66,12 +85,21 @@
       "retentionVerified": false,
       "trainingDisabledVerified": false,
       "deletionVerified": false,
-      "model": "16k_zh"
+      "model": "16k_zh",
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "sdkVersion": "4.1.315",
+      "voiceFormat": "wav",
+      "sampleRate": 16000,
+      "channels": 1,
+      "maxAudioBase64Bytes": 3145728,
+      "mediaTransport": "inlineBase64",
+      "note": "首轮仅PCM16位单声道16kHz WAV；Base64≤3MiB，≤60秒。小程序10MB上传上限不代表该供应商可接10MB；不隐式转码。"
     },
     "tts": {
       "vendor": "TencentCloud candidate",
       "endpoint": "https://tts.tencentcloudapi.com",
-      "voice": "",
+      "voice": "智瑜（精品）候选",
       "apiKeyEnv": "TENCENTCLOUD_SECRET_KEY",
       "timeoutMs": 8000,
       "action": "TextToVoice",
@@ -83,7 +111,13 @@
       "trainingDisabledVerified": false,
       "deletionVerified": false,
       "codec": "mp3",
-      "voiceType": null
+      "voiceType": 101001,
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "sdkVersion": "4.1.237",
+      "voiceSelectionVerified": false,
+      "sampleRate": 16000,
+      "maxTextCharacters": 100
     },
     "llm": {
       "vendor": "DeepSeek existing credential candidate",
@@ -97,16 +131,12 @@
       "retentionVerified": false,
       "trainingDisabledVerified": false,
       "deletionVerified": false,
-      "alternative": {
-        "vendor": "TencentCloud Hunyuan conditional existing entitlement",
-        "endpoint": "https://hunyuan.ai.tencentcloudapi.com",
-        "action": "ChatCompletions",
-        "apiVersion": "2023-09-01",
-        "model": "hunyuan-turbos",
-        "entitlementVerified": false,
-        "note": "旧TC3对话接口预下线2026-12-21；仅历史候选。新接入需验证TokenHub/兼容接口、视觉模型权限和独立API Key，不默认可用。",
-        "availabilityVerified": false
-      }
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "maxOutputTokens": 128,
+      "stream": false,
+      "thinking": "disabled",
+      "maxTextCharacters": 200
     },
     "moderation": {
       "vendor": "TencentCloud candidate",
@@ -127,8 +157,21 @@
         "action": "ImageModeration",
         "apiVersion": "2020-12-29",
         "bizType": "",
-        "required": true
-      }
+        "required": true,
+        "authentication": "TC3-HMAC-SHA256",
+        "sdkVersion": "4.1.321",
+        "maxImageBytes": 2097152,
+        "mediaTransport": "inlineBase64",
+        "timeoutMs": 8000,
+        "maxRetries": 0,
+        "maxVerificationCalls": 2,
+        "policySelectionVerified": false
+      },
+      "maxRetries": 0,
+      "maxVerificationCalls": 2,
+      "sdkVersion": "4.1.311",
+      "policySelectionVerified": false,
+      "maxTextCharacters": 200
     }
   },
   "privacy": {
@@ -151,5 +194,6 @@
     "maxVerificationCalls": 0,
     "currency": "CNY",
     "maximumCharge": 0
-  }
+  },
+  "configurationVersion": "gy25-20261004-02"
 }

@@ -43,7 +43,7 @@
 | GY-I22 完成权限、安全规则及首版端到端失败回归 | [#22](https://github.com/Sek1ro-oka/GengYun/issues/22) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
-| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；TTS查询权限拒绝，六类能力/数据库/真机未验，issue保持open |
+| GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；[六类配置接续](verification/ai-configuration-evidence.md)：TokenHub只读鉴权、五SDK局部兼容、七端点离线准备；两审核BizType已私密配置，七端点参数/凭据齐；额度/授权与策略有效性未验，六类真实能力/数据库/真机未验，issue保持open |
 | GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 未领取／无已验PR |
 
