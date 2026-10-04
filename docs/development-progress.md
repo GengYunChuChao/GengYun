@@ -44,7 +44,7 @@ GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https
 | GY-I23 执行Android／iOS真机、时延容量及完整演示验收 | [#23](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I24 部署联网比赛版、备份恢复并交付完整材料 | [#24](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | 待领取 | 未领取／无已验PR |
 | GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入 | [#27](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | 局部已审合入／整项缺资源 | 写手[PR #37](https://github.com/Sek1ro-oka/GengYun/pull/37)经监工审入b499b338，原PR #32关闭替代且贡献保留；[实测](verification/continuation-evidence.md)、[产品/额度与操作清单](verification/product-readiness.md)；[PR #40已审SHA 86e0581](https://github.com/Sek1ro-oka/GengYun/pull/40#pullrequestreview-5404464599)合入95b14d3；[六类配置接续](verification/ai-configuration-evidence.md)：TokenHub只读鉴权、五SDK局部兼容、七端点离线准备；两审核BizType已私密配置，七端点参数/凭据齐；额度/授权与策略有效性未验，六类真实能力/数据库/真机未验，issue保持open |
-| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 进行中 | 已有[领取请求](https://github.com/Sek1ro-oka/GengYun/issues/28#issuecomment-5975823731)和[Draft PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)，HEAD c487761；当前有合并冲突，工具截图／最大字体／编译版本证据待补，未验收，避免重复派发 |
+| GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态 | [#28](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | 需修改 | 已有[领取请求](https://github.com/Sek1ro-oka/GengYun/issues/28#issuecomment-5975823731)和[Draft PR #39](https://github.com/Sek1ro-oka/GengYun/pull/39)，HEAD c487761；[监工要求修改](https://github.com/Sek1ro-oka/GengYun/pull/39#pullrequestreview-5404532177)，环境事实／触控下限／游客权限／首页范围／CI需修；冲突及工具／最大字体证据未补，原协作者继续，未验收 |
 | GY-I27 前置用途授权、外发账本与隐私撤回接口守卫 | [#29](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | 待领取 | 本次核查无assignee／评论／对应开放PR，暂无已核实领取凭据；后续派发前复核 |
 
 ## 3 当前实施约束
@@ -68,3 +68,10 @@ GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https
 ## 5 当前推荐推进
 
 先准备GY-I01契约与GY-I25平台服务验证；架构通过后GY-I02／03可并行，随后GY-I27授权基础、GY-I26页面及GY-I20样本先行。普通话ASR和文本问答按同一文本契约并行开发，后续集成，不跳过来源与安全规则。
+
+
+## 6 腾讯云本轮有限实测待独立审查
+
+2026-10-04，用户充值2元并授权核查能否调用，写手回报累计11请求（腾讯五项10次＋TokenHub视觉1次），保守费用预留1.2224元、实际扣费未核。TMS与IMS均Pass且各受控失败有明确错误；TTS第二次成功并本地完整解码单声道16kHz、2.196秒非空音频，ASR第二次成功转写短普通话测试句，TokenHub单次合成图响应成功。它们是写手待审回报，不是监工独立验收；视觉不计草种评估、短语音不计完整ASR样本或真机验收。
+
+OCR第一次UnOpenError，第二次ResourceUnavailable.ResourcePackageRunOut；用户随后在指挥聊天明确“后付费尚未开启”，尚无可用高精度资源证据。调用上限已用尽，真实请求停止；等待用户开启并明确新的限次复测，不购买资源包或扩权。DeepSeek独立账户本轮未调用。应用用途／删除运行守卫、隐私条款、权威数据库／云链路／Android和iOS等仍待验，GY-I25开放，0／27保持。
