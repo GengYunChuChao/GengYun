@@ -6,6 +6,7 @@ import { loadPrivateEnvironment, prepareOfflineRequest, providerFor } from './ai
 export const AUTHORIZATION = 'gy25-20261004-cny2';
 export const TTS_RECHECK_AUTHORIZATION = 'gy25-20261004-cny2-tts-state-confirmed';
 export const RESOURCE_RECHECK_AUTHORIZATION = 'gy25-20261004-cny2-all-state-confirmed';
+export const OCR_POSTPAID_AUTHORIZATION = 'gy25-20261004-cny2-ocr-postpaid-confirmed-once';
 export const PRICES = Object.freeze({ ocr: 0.5, asr: 0.0032, tts: 0.003, moderationText: 0.0025, moderationImage: 0.0025, weedRecognition: 0.2 });
 const root = new URL('../.supervisor/gy25-live/', import.meta.url);
 const hash = s => createHash('sha256').update(s).digest('hex');
@@ -20,17 +21,19 @@ export function signRequest(env, request, body, timestamp) {
     'X-TC-Action': request.action, 'X-TC-Version': request.apiVersion, 'X-TC-Region': 'ap-shanghai', 'X-TC-Timestamp': String(timestamp),
     ...(env.TENCENTCLOUD_SESSION_TOKEN ? { 'X-TC-Token': env.TENCENTCLOUD_SESSION_TOKEN } : {}) };
 }
-export function reserve(ledger, key, controlledFailure, authorization, resourceStateRecheck = false) {
+export function reserve(ledger, key, controlledFailure, authorization, resourceStateRecheck = false, postpaidRecheck = false) {
   const recheckAuthorized = (authorization === TTS_RECHECK_AUTHORIZATION && key === 'tts') || (authorization === RESOURCE_RECHECK_AUTHORIZATION && ['tts', 'ocr', 'asr'].includes(key));
-  if ((resourceStateRecheck ? !recheckAuthorized || controlledFailure : authorization !== AUTHORIZATION) || ledger.authorization !== AUTHORIZATION || !Object.hasOwn(PRICES, key) || (key === 'weedRecognition' && controlledFailure)) throw Error('MANUAL_AUTHORIZATION_REQUIRED');
+  const authorized = postpaidRecheck ? authorization === OCR_POSTPAID_AUTHORIZATION && key === 'ocr' && !controlledFailure && !resourceStateRecheck : resourceStateRecheck ? recheckAuthorized && !controlledFailure : authorization === AUTHORIZATION;
+  if (!authorized || ledger.authorization !== AUTHORIZATION || !Object.hasOwn(PRICES, key) || (key === 'weedRecognition' && controlledFailure)) throw Error('MANUAL_AUTHORIZATION_REQUIRED');
   if (!Array.isArray(ledger.entries) || !Number.isFinite(ledger.reservedCny) || ledger.reservedCny < 0 || ledger.entries.some(x => !Object.hasOwn(PRICES, x.key) || typeof x.controlledFailure !== 'boolean' || x.reservedCny !== PRICES[x.key]) || Math.abs(ledger.entries.reduce((sum, x) => sum + x.reservedCny, 0) - ledger.reservedCny) > 0.000001) throw Error('LEDGER_INTEGRITY_REQUIRED');
-  if (ledger.entries.some(x => x.key === key && x.controlledFailure === controlledFailure && Boolean(x.resourceStateRecheck) === resourceStateRecheck)) throw Error('ATTEMPT_ALREADY_RESERVED');
+  if (ledger.entries.some(x => x.key === key && x.controlledFailure === controlledFailure && Boolean(x.resourceStateRecheck) === resourceStateRecheck && Boolean(x.postpaidRecheck) === postpaidRecheck)) throw Error('ATTEMPT_ALREADY_RESERVED');
+  if (postpaidRecheck && !ledger.entries.some(x => x.key === 'ocr' && x.resourceStateRecheck && x.state === 'SERVICE_ERROR' && x.errorCode === 'ResourceUnavailable.ResourcePackageRunOut')) throw Error('PRIOR_OCR_QUOTA_ERROR_REQUIRED');
   if (resourceStateRecheck && !ledger.entries.some(x => x.key === key && !x.controlledFailure && !x.resourceStateRecheck && x.state === 'SERVICE_ERROR')) throw Error('PRIOR_SERVICE_ERROR_REQUIRED');
   if (controlledFailure && !ledger.entries.some(x => x.key === key && !x.controlledFailure && x.state === 'BUSINESS_RESPONSE')) throw Error('NORMAL_SUCCESS_REQUIRED');
   const cost = PRICES[key];
-  if (ledger.entries.length >= 11 || (key !== 'weedRecognition' && ledger.entries.filter(x => x.key !== 'weedRecognition').length >= 10) || ledger.entries.filter(x => x.key === key).length >= (key === 'weedRecognition' ? 1 : 2) || ledger.reservedCny + cost > 2) throw Error('BUDGET_OR_COUNT_EXCEEDED');
+  if (ledger.entries.length >= (postpaidRecheck ? 12 : 11) || (key !== 'weedRecognition' && ledger.entries.filter(x => x.key !== 'weedRecognition').length >= (postpaidRecheck ? 11 : 10)) || ledger.entries.filter(x => x.key === key).length >= (postpaidRecheck ? 3 : key === 'weedRecognition' ? 1 : 2) || ledger.reservedCny + cost > 2) throw Error('BUDGET_OR_COUNT_EXCEEDED');
   ledger.reservedCny = Number((ledger.reservedCny + cost).toFixed(6));
-  const entry = { key, controlledFailure, ...(resourceStateRecheck ? { resourceStateRecheck: true } : {}), reservedCny: cost, state: 'OUTCOME_UNKNOWN', actualChargeCny: null };
+  const entry = { key, controlledFailure, ...(resourceStateRecheck ? { resourceStateRecheck: true } : {}), ...(postpaidRecheck ? { postpaidRecheck: true } : {}), reservedCny: cost, state: 'OUTCOME_UNKNOWN', actualChargeCny: null };
   ledger.entries.push(entry); return entry;
 }
 const normalized = s => s.replace(/[\s，。,.！!]/g, '');
@@ -78,9 +81,10 @@ export async function attempt({ env, request, key, controlledFailure = false, fe
 }
 async function main() {
   const args = process.argv.slice(2);
-  if (![6, 7].includes(args.length) || args[0] !== '--manual-authorization' || args[2] !== '--endpoint' || args[4] !== '--credentials' || (args.length === 7 && !['--controlled-failure', '--resource-state-recheck'].includes(args[6]))) throw Error('MANUAL_ARGUMENTS_REQUIRED');
-  const key = args[3], controlledFailure = args[6] === '--controlled-failure', resourceStateRecheck = args[6] === '--resource-state-recheck';
-  if ((resourceStateRecheck ? !((args[1] === TTS_RECHECK_AUTHORIZATION && key === 'tts') || (args[1] === RESOURCE_RECHECK_AUTHORIZATION && ['tts','ocr','asr'].includes(key))) : args[1] !== AUTHORIZATION) || !Object.hasOwn(PRICES, key)) throw Error('MANUAL_AUTHORIZATION_REQUIRED');
+  if (![6, 7].includes(args.length) || args[0] !== '--manual-authorization' || args[2] !== '--endpoint' || args[4] !== '--credentials' || (args.length === 7 && !['--controlled-failure', '--resource-state-recheck', '--ocr-postpaid-recheck'].includes(args[6]))) throw Error('MANUAL_ARGUMENTS_REQUIRED');
+  const key = args[3], controlledFailure = args[6] === '--controlled-failure', resourceStateRecheck = args[6] === '--resource-state-recheck', postpaidRecheck = args[6] === '--ocr-postpaid-recheck';
+  const authorized = postpaidRecheck ? args[1] === OCR_POSTPAID_AUTHORIZATION && key === 'ocr' : resourceStateRecheck ? (args[1] === TTS_RECHECK_AUTHORIZATION && key === 'tts') || (args[1] === RESOURCE_RECHECK_AUTHORIZATION && ['tts','ocr','asr'].includes(key)) : args[1] === AUTHORIZATION;
+  if (!authorized || !Object.hasOwn(PRICES, key)) throw Error('MANUAL_AUTHORIZATION_REQUIRED');
   const config = JSON.parse(readFileSync(new URL('../docs/verification/config.local.json', import.meta.url), 'utf8'));
   const env = loadPrivateEnvironment(args[5]);
   const p = providerFor(config, key);
@@ -98,7 +102,7 @@ async function main() {
   const ledgerFile = new URL('ledger.json', root), lockFile = new URL('process.lock', root);
   writeFileSync(lockFile, AUTHORIZATION, { flag: 'wx' }); // Crash leaves a lock: no automatic resumption/retry.
   let ledger = existsSync(ledgerFile) ? JSON.parse(readFileSync(ledgerFile, 'utf8')) : { authorization: AUTHORIZATION, ceilingCny: 2, reservedCny: 0, entries: [] };
-  const entry = reserve(ledger, key, controlledFailure, args[1], resourceStateRecheck);
+  const entry = reserve(ledger, key, controlledFailure, args[1], resourceStateRecheck, postpaidRecheck);
   writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2)); // Reserve even unknown outcomes before sending.
   Object.assign(entry, await attempt({ env, request, key, controlledFailure, saveAudio: audio => writeFileSync(new URL('generated.mp3', root), audio) }));
   writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));

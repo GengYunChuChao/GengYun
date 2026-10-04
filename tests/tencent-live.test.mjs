@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reserve, attempt, signRequest, AUTHORIZATION, TTS_RECHECK_AUTHORIZATION, RESOURCE_RECHECK_AUTHORIZATION } from '../tools/verify-tencent-live.mjs';
+import { reserve, attempt, signRequest, AUTHORIZATION, TTS_RECHECK_AUTHORIZATION, RESOURCE_RECHECK_AUTHORIZATION, OCR_POSTPAID_AUTHORIZATION } from '../tools/verify-tencent-live.mjs';
 const env = { TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-secret' };
 const request = { endpoint: 'https://tts.tencentcloudapi.com', action: 'TextToVoice', apiVersion: '2019-08-23', timeoutMs: 8000, body: { Text: '你好，这是语音测试。' } };
 const ledger = () => ({ authorization: AUTHORIZATION, reservedCny: 0, entries: [] });
@@ -18,6 +18,10 @@ test('manual authorization, one reservation per case, unknown outcomes and cap p
   assert.throws(()=>reserve(retry,'tts',false,TTS_RECHECK_AUTHORIZATION,true),/ALREADY_RESERVED/);
   const updated=ledger(); reserve(updated,'asr',false,AUTHORIZATION).state='SERVICE_ERROR';reserve(updated,'asr',false,RESOURCE_RECHECK_AUTHORIZATION,true);
   assert.throws(()=>reserve(updated,'asr',false,RESOURCE_RECHECK_AUTHORIZATION,true),/ALREADY_RESERVED/);
+  const ocr=ledger();reserve(ocr,'ocr',false,AUTHORIZATION).state='SERVICE_ERROR';Object.assign(reserve(ocr,'ocr',false,RESOURCE_RECHECK_AUTHORIZATION,true),{state:'SERVICE_ERROR',errorCode:'ResourceUnavailable.ResourcePackageRunOut'});
+  assert.throws(()=>reserve(ocr,'ocr',false,RESOURCE_RECHECK_AUTHORIZATION,false,true),/MANUAL_AUTHORIZATION/);
+  reserve(ocr,'ocr',false,OCR_POSTPAID_AUTHORIZATION,false,true);assert.equal(ocr.reservedCny,1.5);
+  assert.throws(()=>reserve(ocr,'ocr',false,OCR_POSTPAID_AUTHORIZATION,false,true),/ALREADY_RESERVED/);
 });
 test('vision uses a separate Bearer key, checks bounded usage, and consumes only one shared-budget slot', async () => {
   const l=ledger();reserve(l,'weedRecognition',false,AUTHORIZATION);assert.throws(()=>reserve(l,'weedRecognition',true,AUTHORIZATION),/MANUAL_AUTHORIZATION/);

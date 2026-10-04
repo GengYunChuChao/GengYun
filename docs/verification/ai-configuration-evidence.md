@@ -57,4 +57,4 @@ python tools/validate_development_docs.py
 
 接续交接：用户明确文件中第一个是文本BizType、第二个是图片BizType；读取时按原顺序、排除已保存TokenHub key并校验格式，未覆盖既有Bearer凭据。两个字段不再是本机参数缺项，但审核策略有效性、服务类别、真实请求成功、额度和预算仍未核验，policySelectionVerified继续false。此批接续只有本地文件读取/配置与离线检查，没有新增网络请求。
 
-后续用户新增2元人工最小测试授权，最新11请求的逐项成功/业务错误、费用预留与专用ASR交接见[真实接续证据](tencent-live-evidence.md)。此前调用0记录属于PR #40配置准备批次，不覆盖新批次；整项仍未完成。
+后续用户新增2元人工最小测试授权，最新12请求的逐项成功/业务错误、费用预留与专用ASR交接见[真实接续证据](tencent-live-evidence.md)。此前调用0记录属于PR #40配置准备批次，不覆盖新批次；整项仍未完成。
