@@ -17,7 +17,7 @@
 | ASR | [SentenceRecognition](https://cloud.tencent.com/document/api/1093/35646) | API 2019-06-14，16k_zh候选；手机录音容器/编码与60秒实际兼容未测 |
 | TTS | [TextToVoice](https://cloud.tencent.com/document/api/1073/37995) | API 2019-08-23；音色、普通话剂量/单位/否定词读法与手机播放未测 |
 | 大模型 | [DeepSeek模型列表](https://api-docs.deepseek.com/api/list-models/) | 已鉴权，观察到deepseek-flash和deepseek-v4-pro；生成、JSON、引用、预算、留存/训练/删除均未测 |
-| 审核 | [TMS](https://cloud.tencent.com/document/product/1124/51860)、[IMS](https://cloud.tencent.com/document/product/1125/53273) | API均2020-12-29，文字和图片两个接口必须各测；业务策略/BizType尚未交接 |
+| 审核 | [TMS](https://cloud.tencent.com/document/product/1124/51860)、[IMS](https://cloud.tencent.com/document/product/1125/53273) | API均2020-12-29，文字和图片两个接口必须各测；两个BizType已交接并私密配置，策略启用/真实调用未验 |
 
 所有腾讯TC3候选同时需要SecretId和SecretKey。模板只填环境变量名，留存/训练/删除字段均false表示未验证；它们不控制供应商行为。未取得用途授权不外发真实个人资料。
 
@@ -42,3 +42,5 @@ PR #37局部成果已审合入，原PR #32由监工关闭替代。后续按[产�
 用户反馈旧tms/ims控制台链接无法访问；官方[2026年快速入门](https://cloud.tencent.com/document/product/1124/37119)及[统一控制台说明](https://cloud.tencent.com/act/solution-ai-application1-17592)确认两者共用[内容安全控制台](https://console.cloud.tencent.com/cms)。登录后在应用管理查看已有文本/图片策略及各自BizType，格式为1至32个英文、数字、下划线或中划线。只查看已有资源；若未开通或无策略，记录状态，不自动开通、接受服务角色授权、新建策略或购买。两个BizType可存私密交接目录并仅告知文件名。SDK当前仅导出审核调用动作，没有可用的策略列表查询动作，因此不通过实际审核请求猜测策略。
 
 最新用户声明已自行开通服务，但未看到策略；开通的服务类别尚未分别确认。控制台当前流程为应用管理→应用→新建策略，文本/图片分别选择普通内容审核并保存BizType。工具没有替用户开通或创建策略；未收到两个真实值前保持缺项。
+
+随后用户将文本、图片BizType按顺序放入授权腾讯云.txt，已仅配置本机忽略JSON的两个值，原TokenHub凭据保留。七端点参数/凭据离线检查现全齐；公开模板留空，策略启用、实际调用、额度及预算继续未验。

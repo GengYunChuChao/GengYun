@@ -13,10 +13,10 @@
 | 普通话ASR | TC3 SentenceRecognition / 2019-06-14；16k_zh；单声道16kHz、PCM16位WAV；≤60秒，Base64≤3MiB；10秒 | 同上；离线核对DataLen为编码前文件字节数、SourceType=1 | 真机录音格式/转码、供应商真实响应未验；不把小程序10MB媒体上限当供应商上限 |
 | 普通话TTS | TC3 TextToVoice / 2019-08-23；智瑜精品101001候选；16kHz mp3；文本≤100字符；8秒 | SDK局部通过；历史开通/资源包查询拒绝仍保留 | 音色适老、实际播放、开通与适用字符包未验；选择候选不是证明此账号已获准 |
 | LLM问答 | DeepSeek Bearer；deepseek-flash；20秒；单次文本≤200字符、输出128token、thinking disabled、非流式 | 历史只读鉴权通过；本轮仅离线字段准备 | 实际生成0，token上限须按真实usage复核；引用/来源规则与JSON输出尚未实现/验收 |
-| 文本审核 / TMS | TC3 TextModeration / 2020-12-29；UTF8 Base64；Type=TEXT、zh；≤200字符；8秒 | 官方SDK局部通过 | BizType为空，配置不完整；不擅自把示例TencentCloudDefault计为本账号策略 |
-| 图片审核 / IMS | TC3 ImageModeration / 2020-12-29；inline FileContent≤2MiB；8秒 | 官方SDK局部通过 | 独立BizType为空，配置不完整；文字通过不能替代图片通过 |
+| 文本审核 / TMS | TC3 TextModeration / 2020-12-29；UTF8 Base64；Type=TEXT、zh；≤200字符；8秒 | 官方SDK局部通过 | 用户后续交接真实BizType，已写入忽略的本机配置；策略存在/启用/调用尚未自动验证 |
+| 图片审核 / IMS | TC3 ImageModeration / 2020-12-29；inline FileContent≤2MiB；8秒 | 官方SDK局部通过 | 用户后续独立交接图片BizType并私密配置；文字通过不能替代图片通过 |
 
-所有端点拟定每端点最多2次、自动重试0；这是未获准首轮计划。当前全局budget仍false/0，实际生成/识别/审核请求0，准备库不含执行器，executionAllowed始终false。审核两个BizType已向用户提出精确获取问题；TTS已有额度证明尚未取得，提供新key不等于额度证明。
+所有端点拟定每端点最多2次、自动重试0；这是未获准首轮计划。当前全局budget仍false/0，实际生成/识别/审核请求0，准备库不含执行器，executionAllowed始终false。审核两个BizType已由用户后续交接并私密配置；TTS已有额度证明尚未取得，提供新key不等于额度证明。
 
 ## 视觉首选、备选与生命周期
 
@@ -36,7 +36,7 @@
 
 `prepareOfflineRequest`只生成内存请求对象，无fetch或SDK执行。图片仅做文件头/大小检查，**没有实现完整解码、EXIF删除或媒体授权**；WAV核RIFF/chunk/PCM采样、声道、字节数与时长，不隐式转码。仅脱敏describe返回字段名与编码大小，保留body和凭据在私有生命周期内。未替代GY-I27的用途同意、发送/回写epoch、留存训练删除条款或GY-I06媒体处理；后续真正执行前仍须按[已审产品清单](product-readiness.md)核验，recipients当前不自动启用。
 
-合成输入下7端点全部能离线准备；真实本机配置5端点参数齐、7端点凭据存在，TMS/IMS分别缺BizType，prepare CLI按预期exit1。审核策略验证false，开通/额度/能力均不能从样例声明自动变true。全局零预算不要求等待域名/数据库才做独立配置准备。
+合成输入下7端点全部能离线准备；最初真实本机配置5端点参数齐、7端点凭据存在，TMS/IMS分别缺BizType，prepare CLI按预期exit1。用户后续把两个真实BizType依次存入授权私密文件后，仅更新本机忽略配置的两个值；复查7端点参数/凭据均齐，CLI exit0，预算仍false/0、executionAllowed仍false。公开模板两个值继续为空，不提交真实策略值。审核策略验证false，开通/额度/能力均不能从样例声明自动变true。全局零预算不要求等待域名/数据库才做独立配置准备。
 
 ## 可复现检查
 
@@ -54,3 +54,5 @@ python tools/validate_development_docs.py
 用户反馈原tms/ims控制台链接均无法访问，已按[官方快速入门](https://cloud.tencent.com/document/product/1124/37119)和[统一控制台说明](https://cloud.tencent.com/act/solution-ai-application1-17592)改为 https://console.cloud.tencent.com/cms 。已有策略在应用管理查看；仅查看资源状态，不自动开通、授权新角色、建策略或购买。参数检查按当前文档支持英文、数字、下划线、中划线，最长32字符，保持空值为缺项。用户账号能否访问统一入口尚未验证；文档入口核实不能计为账号策略就绪。
 
 用户随后报告“显示服务未开通／没有策略，我开通了服务，没看见策略”。这是用户自行操作声明，未分别核验文本/图片服务，不计本工具开通或已验证。已说明新控制台需从应用管理选择/新建应用，再分别配置文本、图片普通审核策略；目前未收到真实BizType，两个配置值继续为空，也未发送审核请求。
+
+接续交接：用户明确文件中第一个是文本BizType、第二个是图片BizType；读取时按原顺序、排除已保存TokenHub key并校验格式，未覆盖既有Bearer凭据。两个字段不再是本机参数缺项，但审核策略有效性、服务类别、真实请求成功、额度和预算仍未核验，policySelectionVerified继续false。此批接续只有本地文件读取/配置与离线检查，没有新增网络请求。

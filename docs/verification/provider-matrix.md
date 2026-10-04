@@ -44,7 +44,7 @@
 
 ---
 
-当前七端点离线配置、五模块SDK局部兼容及TokenHub鉴权见[配置证据](ai-configuration-evidence.md)。真实配置五端点参数齐、七端点凭据存在，文字和图片审核仍各缺BizType；生成/识别/审核请求0。具体候选、官方接口来源、私密交接与SDK安装限制见[资源交接](resource-handoff.md)。DeepSeek只读鉴权不计大模型能力通过。
+当前七端点离线配置、五模块SDK局部兼容及TokenHub鉴权见[配置证据](ai-configuration-evidence.md)。真实配置七端点参数/凭据均齐；用户交接文本、图片两个BizType后已私密配置，实际策略/能力未验；生成/识别/审核请求0。具体候选、官方接口来源、私密交接与SDK安装限制见[资源交接](resource-handoff.md)。DeepSeek只读鉴权不计大模型能力通过。
 
 ## 3 逐能力验证明细
 

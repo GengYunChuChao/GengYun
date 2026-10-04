@@ -12,8 +12,8 @@
 | [OCR](https://console.cloud.tencent.com/ocr) | ocr:GeneralAccurateOCR | 服务已开通、测试子账号获准该动作 | 高精度接口专用或可抵扣资源包、剩余次数、有效期；其他OCR包不可直接代替 | 开通/调用权限/适用剩余额度均未验 |
 | [ASR](https://console.cloud.tencent.com/asr) | asr:SentenceRecognition | 一句话识别已开通，16k_zh与该动作可用 | 一句话识别剩余次数与本月有效性，不拿录音文件识别小时包代替 | 同上；实际手机录音格式另待验 |
 | [TTS](https://console.cloud.tencent.com/tts) | tts:TextToVoice | 通用基础语音合成已开通、获准动作及具体VoiceType | 所选音色类别可抵扣字符数与有效期；资源包不可跨音色类别默认抵扣 | 两项查询被拒绝，开通/调用/额度均不能推定 |
-| [文本审核](https://console.cloud.tencent.com/cms) | tms:TextModeration | 文本服务已开通、动作获准、已有业务策略/BizType | 文本审核适用次数、有效期；普通审核与AI生成识别分开 | 服务、调用权限、策略及额度未验 |
-| [图片审核](https://console.cloud.tencent.com/cms) | ims:ImageModeration | 图片服务独立已开通、动作获准、已有策略/BizType | 图片审核适用张数、有效期；不能用文本包代替 | 同上；文字成功不能计图片成功 |
+| [文本审核](https://console.cloud.tencent.com/cms) | tms:TextModeration | 文本服务已开通、动作获准、已有业务策略/BizType | 文本审核适用次数、有效期；普通审核与AI生成识别分开 | 用户声明已开通并交接BizType；服务类别/策略启用/调用权限/额度未实测 |
+| [图片审核](https://console.cloud.tencent.com/cms) | ims:ImageModeration | 图片服务独立已开通、动作获准、已有策略/BizType | 图片审核适用张数、有效期；不能用文本包代替 | 图片BizType独立已交接；文字成功不能计图片成功 |
 | [DeepSeek](https://platform.deepseek.com) | 已有Bearer key；/chat/completions | 只读已鉴权，不证明生成/引用/留存条款 | 现有预付额度是否足够首轮，有无账户侧硬限额 | 缺获准生成额度/预算和非个人文本；不能把余额可用布尔当预算授权 |
 
 额度证明可只提供“对应产品/接口或音色、足够本轮、未到期、核验时间、费用模式”的脱敏记录；余额、账号ID和密钥不贴聊天或Git。详细数量及证据存仓库外 `E:\GengYunPrivate`。公开免费权益描述不等于此账号当前仍有可用额度。

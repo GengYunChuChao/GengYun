@@ -57,3 +57,5 @@
 服务端离线准备：`node tools/prepare-ai-verification.mjs --credentials <已授权私密JSON>`；不联网，仅输出参数/凭据是否存在，缺项exit1，不输出值。纯准备库没有执行器，当前预算false/0。SDK隔离检查：`node tools/check-ai-sdk.cjs --modules <忽略目录下的官方SDK模块目录>`，HTTP/HTTPS/fetch被禁止。
 
 离线回归新增 `tests/ai-config.test.mjs` 与 `tests/tokenhub-account.test.mjs`，加原四文件共21组。TokenHub真实只读检查仅在明确需要时运行 `node tools/verify-tokenhub.mjs --credentials <已授权私密JSON>`，固定两次模型列表GET（含合成无效key）；不生成、不查或输出账户金额、不在CI使用真实凭据。已有鉴权不需重复请求。审核资源入口修正为[统一CMS](https://console.cloud.tencent.com/cms)，按[交接说明](resource-handoff.md)查看已有策略。
+
+最新本机交接：用户提供两个审核BizType并已分别私密配置，七端点参数及凭据离线检查全齐（exit0）；公开模板仍留空。这个结果只证明本机参数齐备，不证明服务/策略启用、额度、能力或预算获准。
