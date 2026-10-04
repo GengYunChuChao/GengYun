@@ -280,10 +280,12 @@ CREATE TABLE post_versions (
   audit_state             audit_state NOT NULL DEFAULT 'pending',
   created_at              timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (post_id, revision),
-  -- linked_knowledge 关联三列同空或同有（ADR-001 修订2）。
+  -- linked_knowledge 关联三列同空或同有（ADR-001 修订2）。第二分支显式要求 revision 非空，
+  -- 避免 revision IS NULL 时 `revision >= 1` 得到 UNKNOWN 而被 CHECK 放行。
   CONSTRAINT post_versions_link_triple CHECK (
     (linked_target_type IS NULL AND linked_target_id IS NULL AND linked_target_revision IS NULL)
-    OR (linked_target_type IS NOT NULL AND linked_target_id IS NOT NULL AND linked_target_revision >= 1)
+    OR (linked_target_type IS NOT NULL AND linked_target_id IS NOT NULL
+        AND linked_target_revision IS NOT NULL AND linked_target_revision >= 1)
   )
 );
 CREATE INDEX post_versions_linked_idx ON post_versions (linked_target_type, linked_target_id, linked_target_revision);

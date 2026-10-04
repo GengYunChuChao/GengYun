@@ -35,14 +35,34 @@ export function buildApp({ config, pool = null }: BuildAppOptions): FastifyInsta
   });
 
   app.setErrorHandler((error, request, reply) => {
+    const envelope = (apiError: ApiError) =>
+      buildErrorEnvelope(apiError, { request_id: request.id, execution_mode: config.executionMode });
+
     if (error instanceof ApiError) {
-      reply
-        .status(error.status)
-        .send(buildErrorEnvelope(error, { request_id: request.id, execution_mode: config.executionMode }));
+      reply.status(error.status).send(envelope(error));
       return;
     }
 
-    // Fastify 校验失败映射为契约 INVALID_REQUEST，保留字段明细。
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    const errorCode = (error as { code?: string }).code;
+
+    // Fastify 内容类型解析错误（非法 JSON / 内容类型 / 请求体过大）：
+    // 这些是客户端请求错误，映射到契约错误码，而不是 500 缺口。
+    if (typeof errorCode === 'string' && errorCode.startsWith('FST_ERR_CTP_')) {
+      if (statusCode === 413) {
+        reply.status(413).send(envelope(new ApiError('MEDIA_TOO_LARGE', '请求体超过大小限制')));
+        return;
+      }
+      if (statusCode === 415) {
+        reply.status(415).send(envelope(new ApiError('MEDIA_TYPE_UNSUPPORTED', '不支持的媒体类型')));
+        return;
+      }
+      // 400：非法 JSON 请求体、空请求体、非法 Content-Length 等。
+      reply.status(400).send(envelope(new ApiError('INVALID_REQUEST', '请求体格式错误')));
+      return;
+    }
+
+    // Fastify schema 校验失败映射为契约 INVALID_REQUEST，保留字段明细。
     const validation = (error as { validation?: Array<{ instancePath?: string; message?: string }> }).validation;
     if (Array.isArray(validation) && validation.length > 0) {
       const apiError = new ApiError('INVALID_REQUEST', '请求校验失败', {
@@ -51,9 +71,7 @@ export function buildApp({ config, pool = null }: BuildAppOptions): FastifyInsta
           code: (item.message ?? 'invalid').slice(0, 80),
         })),
       });
-      reply
-        .status(apiError.status)
-        .send(buildErrorEnvelope(apiError, { request_id: request.id, execution_mode: config.executionMode }));
+      reply.status(apiError.status).send(envelope(apiError));
       return;
     }
 

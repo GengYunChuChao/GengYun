@@ -45,7 +45,31 @@ test('/health 在 real 模式数据库不可达时返回 503 degraded，不假�
   const body = res.json();
   assert.equal(body.status, 'degraded');
   assert.equal(body.checks.database.status, 'error');
-  assert.equal(body.checks.database.code, 'ECONNREFUSED');
+  assert.equal(body.checks.database.category, 'connection_failed');
+  await app.close();
+});
+
+test('/health 不泄露数据库驱动异常原文（脱敏：不含用户名/主机/SQL 上下文）', async () => {
+  const sensitive = 'postgres://dbuser:supersecret@db.internal.example:5432/private';
+  const leakingPool = {
+    async query() {
+      const error = new Error(`connection failed to ${sensitive} near "SELECT"`);
+      error.code = 'ECONNREFUSED';
+      throw error;
+    },
+  };
+  const app = buildApp({ config: realConfig(), pool: leakingPool });
+  const res = await app.inject({ method: 'GET', url: '/health' });
+  assert.equal(res.statusCode, 503);
+  const raw = res.body;
+  for (const fragment of ['supersecret', 'dbuser', 'db.internal.example', '5432/private', 'near "SELECT"']) {
+    assert.ok(!raw.includes(fragment), `响应不应包含敏感片段：${fragment}`);
+  }
+  const body = res.json();
+  assert.equal(body.checks.database.status, 'error');
+  assert.equal(body.checks.database.category, 'connection_failed');
+  assert.equal(body.checks.database.detail, undefined);
+  assert.equal(body.checks.database.code, undefined);
   await app.close();
 });
 

@@ -69,7 +69,7 @@
 | `dev:admin` | `vite` 启动后台开发服务器（127.0.0.1:5173） | 已验证：VITE v7.3.6 ready，`GET /` 返回 HTTP 200 |
 | `build` | `tsc` 编译 API 到 `services/api/dist` + `vite build` 后台到 `apps/admin/dist` | PASS（`dist/` 产物不提交） |
 | `lint` | API/后台 `tsc --noEmit` + 仓库卫生扫描（禁用 TLS 写法、疑似硬编码密钥、真实 `.env`） | PASS |
-| `test:unit` | `node --test "tests/unit/*.test.mjs"`（配置校验、健康检查、迁移运行器逻辑） | PASS 17 |
+| `test:unit` | `node --test "tests/unit/*.test.mjs"`（配置校验、健康检查、迁移运行器逻辑、客户端错误映射、`0001` 约束负例） | PASS 23 |
 | `test:contract` | `node --test "tests/contract/*.test.mjs"`（API 常量与 `packages/contracts/*` 逐项比对） | PASS 6 |
 | `test:mini` | `node tools/check-wechat-project.mjs` + `tests/local-debug.test.mjs`；**仅 Node 静态检查，不是微信编译器或真机** | PASS（工程静态 + 4 组局部诊断测试） |
 | `test:docs` | `tools/run-python.mjs tools/validate_development_docs.py` | PASS（27 项任务/链接/依赖） |
@@ -96,15 +96,27 @@ API 子命令：`node services/api/src/db/migrate.ts up|status|list`。
 
 - `stub`/`preset_demo`：数据库未配置如实返回 `database.status = not_configured`，HTTP 200。
 - `real`：数据库不可达或未配置返回 `degraded` + HTTP 503；可达返回 `ok`。
+- 数据库失败只暴露**固定安全分类** `database.category`（`connection_failed` / `timeout` / `auth_failed` / `database_missing` / `unavailable`），不返回驱动异常原文（不泄露用户名/主机/SQL 上下文）；内部日志同样只记分类。
 - 响应含契约 `meta`（`request_id`、`contract_version=1.0.0`、`execution_mode`）。
-- **本机没有 PostgreSQL，因此真实连接、迁移执行、`/health` 数据库成功分支均未对真实数据库验证**；相关单元测试仅用内存替身验证控制流。
+- **本机无真实 PostgreSQL 服务，`/health` 数据库成功分支与真实迁移未对目标 PG17.11 验证**；健康检查控制流用内存替身测试，`0001` 约束负例用内存引擎 PGlite 0.5.8（PostgreSQL 18.x 内核）验证，均不等同目标库验收。
 
-### 5.3 迁移运行器与 `0001`
+### 5.3 客户端错误映射（不落入 500 缺口）
+
+Fastify 内容类型解析错误属于客户端请求错误，映射到契约错误码而非 500：
+
+- 非法 JSON / 空请求体 / 非法 Content-Length → `400 INVALID_REQUEST`
+- 请求体超过默认 1MiB → `413 MEDIA_TOO_LARGE`
+- 不支持的媒体类型 → `415 MEDIA_TYPE_UNSUPPORTED`
+
+只有真正无法归类的服务器异常才返回 500 并带 `contract_gap` 标记（契约缺口，见 §7）。
+
+### 5.4 迁移运行器与 `0001`
 
 - 运行器：`services/api/src/db/migrate.ts`。台账表 `schema_migrations(version, name, checksum, applied_at)`；每个迁移在独立事务执行；已应用迁移的校验和变化判为 drift 并拒绝继续；重复版本号在应用前失败；用 `pg_advisory_lock` 串行化并发迁移。
 - `0001_initial_schema.sql` 是数据字典的**最小 coherent 子集**：身份/后台会话、基础资料与来源版本、私有媒体、任务台账、社区内容与媒体授权（含 ADR-001 修订2 要求的 `content_media_refs.media_revision`、`public_authors.avatar_media_revision`、`post_versions.linked_target_*`、`community_media_grants`）。**不是数据字典的完整实现**，其余表在后续迁移按同一契约补齐。
 - 已验证：发现/排序/校验和、重复版本拒绝、drift 拒绝、幂等重复执行、无 `DATABASE_URL` 时明确失败（`tests/unit/migrations.test.mjs`）。
-- **未验证**：真实空库迁移、约束负例、回滚演练——本机无 PostgreSQL。数据字典要求 GY-I02 运行“空库迁移、重复执行版本拒绝、约束负例与回滚演练”，其中重复执行版本拒绝已在运行器逻辑层验证，其余三项因缺数据库未执行。
+- 约束负例：`post_versions.linked_target_*` 三列同空或同有，已用内存引擎 PGlite 0.5.8 实际执行 `0001` 并断言「type/id 非空而 revision=NULL」被 CHECK 拒绝（`tests/unit/migrations-constraint.test.mjs`）。这只证明 SQL 约束语义，**不是目标 PG17.11 的真实迁移验收**。
+- **未验证**：目标 PostgreSQL 17.11 上的真实空库迁移与回滚演练——本机无该服务。
 
 ## 6 分层 CI
 
