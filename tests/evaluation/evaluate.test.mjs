@@ -46,9 +46,34 @@ test('指标确实被计算（非空），证明程序可运行', () => {
   assert.equal(report.tasks.qa.metrics.answerableCount, 4);
 });
 
-test('预测缺失的样本按空输出处理，不抛错', () => {
+test('预测缺失：不得当成功，任务保持 not_evaluated 且报告缺口', () => {
   const { records } = buildSyntheticFixture();
   const report = evaluateRun(records, new Map(), { gateDefs: METRIC_GATES });
   assert.equal(report.isRealEvaluation, false);
-  assert.equal(report.tasks.weed_photo.metrics.top1.p, 0);
+  assert.equal(report.predictionEvidence.complete, false);
+  // 合成夹具全为 split=test，全部预测缺失
+  assert.equal(report.predictionEvidence.missing.length, records.filter((r) => r.split === 'test').length);
+  // 无有效预测不得伪造 0 分：观测值为空
+  assert.equal(report.tasks.weed_photo.metrics.top1.p, null);
+  assert.equal(report.tasks.weed_photo.gateStatus, 'not_evaluated');
+});
+
+test('非 synthetic 标签但全部 split=train：无独立 test 集，不得主张真实评估', () => {
+  const { records, predictions } = buildSyntheticFixture();
+  const trainOnly = records.map((r) => ({ ...r, split: 'train' }));
+  const report = evaluateRun(trainOnly, new Map(Object.entries(predictions)), { gateDefs: METRIC_GATES });
+  assert.equal(report.dataKind, 'no_test_split');
+  assert.equal(report.isRealEvaluation, false);
+  assert.equal(report.splits.test, 0);
+  assert.equal(report.splits.train, records.length);
+  for (const task of Object.values(report.tasks)) assert.equal(task.gateStatus, 'not_evaluated');
+});
+
+test('报告含冻结校验与预测完整性字段（synthetic 下冻结未通过）', () => {
+  const { records, predictions } = buildSyntheticFixture();
+  const report = evaluateRun(records, new Map(Object.entries(predictions)), { gateDefs: METRIC_GATES });
+  assert.equal(report.frozenVerified, false);
+  assert.equal(report.coverageManifestPresent, false);
+  assert.ok(report.predictionEvidence);
+  assert.ok(report.frozenVerification.reasons.length > 0);
 });

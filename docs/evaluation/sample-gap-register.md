@@ -3,6 +3,10 @@
 > 对照标准：`docs/implementation-requirements.md` 第6.1节；数量原文：`docs/initial-issues.md` GY-I20 范围段。
 > **状态：真实样本尚未交接。** 下表"实际到位"仅统计真实来源样本（`sourceKind != synthetic_placeholder`）；
 > 合成占位输入不计入，绝不充数。本清单由 `packages/evaluation/src/gaps.mjs` 从索引程序化产生，下为当前真实索引（尚无）的结果。
+>
+> **计数口径（修复轮 1）**：按**独立原始对象/近重复簇去重**——同一 `clusterId`（同源裁剪/连拍）或重复 `contentSha256`
+> 只计一次独立证据；报告出具 `duplicatesExcluded`。覆盖内**逐类**缺口对照**冻结覆盖清单**（`weedPhotoCoveredClasses`）
+> 逐类报告；**缺覆盖清单时逐类达标一律按未满足计**，不得推断通过。
 
 ## 1 逐项缺口
 
@@ -45,6 +49,10 @@
 | 评分规约（指标/口径/拒识/95%CI） | 已完成 |
 | 真实样本冻结清单与来源、划分、评估口径 | **未完成**（样本未交接） |
 | 真实样本上的实测指标与置信区间 | **未完成**（无真实样本） |
+
+> 程序层面已强化拒绝语义（修复轮 1）：冻结清单/覆盖清单缺失、预测缺失或非法、同源重复去重后不足、
+> 手改稿冒充原始输出等任一情况，均保持 `isRealEvaluation=false`、门禁 `not_evaluated`、`claimable=false`。
+> 上述为**程序验证夹具**上的确定性回归（`tests/evaluation/repair1.test.mjs`），**不是**真实样本实测。
 
 ## 4 解除阻塞所需输入（交接清单）
 

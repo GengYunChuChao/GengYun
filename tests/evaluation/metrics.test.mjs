@@ -77,16 +77,74 @@ test('拍草：拒识计入未命中，覆盖外高置信率与低质量不确�
   assert.equal(m.perClass.A.total, 2);
 });
 
-test('标签 OCR：手工校正样本从模型准确率剔除', () => {
+test('拍草：拒识/重拍即使携带正确候选也计未命中（统一检查最终 decision）', () => {
+  const mk = (decision) => ({
+    record: { coverage: 'covered', quality: 'clear', labelClass: 'A' },
+    output: { candidates: [{ speciesId: 'A' }], decision },
+  });
+  const m = weedPhotoMetrics([mk('candidate'), mk('uncertain'), mk('retake'), mk('rejected')]);
+  assert.equal(m.coveredCount, 4);
+  near(m.top1.p, 0.25);
+  near(m.top3.p, 0.25);
+  assert.equal(m.perClass.A.total, 4);
+  near(m.perClass.A.top1.p, 0.25);
+});
+
+test('标签 OCR：校正样本保留原始输出评分，分母不缩，校正结果单独报告', () => {
   const pairs = [
     { record: { quality: 'clear', gold: { registrationNumber: 'R1', content: '10%' } }, output: { fields: { registrationNumber: 'R1', content: '10%' }, corrected: false } },
-    { record: { quality: 'clear', gold: { registrationNumber: 'R1', content: '10%' } }, output: { fields: { registrationNumber: 'R1', content: '99%' }, corrected: true } },
+    {
+      record: { quality: 'clear', gold: { registrationNumber: 'R1', content: '10%' } },
+      output: { corrected: true, originalFields: { registrationNumber: 'R1', content: '99%' }, correctedFields: { registrationNumber: 'R1', content: '10%' } },
+    },
   ];
   const m = labelOcrMetrics(pairs);
   assert.equal(m.clearCount, 2);
-  assert.equal(m.correctedExcluded, 1);
-  assert.equal(m.consideredForModelAccuracy, 1);
+  assert.equal(m.correctedCount, 1);
+  assert.equal(m.originalMissingCount, 0);
+  // 分母保持冻结评估集官方分母 2，不因手改剔除而缩分母
+  assert.equal(m.consideredForModelAccuracy, 2);
   near(m.registrationNumberExact.p, 1);
+  near(m.fieldExact.content.p, 0.5);
+  near(m.correctedFieldReport.content.correctedExact.p, 1);
+});
+
+test('标签 OCR：corrected=true 但缺原始输出 → 原始缺失计缺口，不得用校正稿补成绩', () => {
+  const pairs = [
+    { record: { quality: 'clear', gold: { registrationNumber: 'R1' } }, output: { corrected: true, fields: { registrationNumber: 'R1' } } },
+  ];
+  const m = labelOcrMetrics(pairs);
+  assert.equal(m.clearCount, 1);
+  assert.equal(m.modelScoredCount, 0);
+  assert.equal(m.originalMissingCount, 1);
+  assert.equal(m.registrationNumberExact.p, null);
+});
+
+test('ASR：仅消费原始转写，手改稿不得补成绩', () => {
+  const gold = { reference: '草甘膦一百毫升', keyFields: { drugNames: ['草甘膦'] } };
+  const pairs = [
+    {
+      record: { labelClass: 'quiet', sourceRef: 'spk-1', gold },
+      // 改前错误、改后正确：模型成绩必须取原始转写
+      output: { corrected: true, originalHypothesis: '草甘磷一百毫升', originalKeyFieldsExact: { drugNames: false }, hypothesis: '草甘膦一百毫升', keyFieldsExact: { drugNames: true } },
+    },
+  ];
+  const m = asrMetrics(pairs, { resamples: 200 });
+  assert.equal(m.correctedCount, 1);
+  assert.equal(m.originalMissingCount, 0);
+  // 原始转写错误被计入 CER（1/7），而非用改后正确文本得 0
+  near(m.cer.p, 1 / 7, 0.001);
+  near(m.keyFields.drugNames.p, 0);
+});
+
+test('ASR：纯校正输入（无原始转写）→ 原始缺失，不计 CER、不给成绩', () => {
+  const pairs = [
+    { record: { labelClass: 'quiet', sourceRef: 'spk-1', gold: { reference: '草甘膦一百毫升', keyFields: { drugNames: ['草甘膦'] } } }, output: { corrected: true, hypothesis: '草甘膦一百毫升', keyFieldsExact: { drugNames: true } } },
+  ];
+  const m = asrMetrics(pairs, { resamples: 200 });
+  assert.equal(m.originalMissingCount, 1);
+  assert.equal(m.scoredUtteranceCount, 0);
+  assert.equal(m.cer.p, null);
 });
 
 test('AI 筛查：风险召回与正常误隔离率', () => {

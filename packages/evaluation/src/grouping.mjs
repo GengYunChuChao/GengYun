@@ -113,6 +113,43 @@ export function splitIsolationErrors(records, { hammingThreshold = DEFAULT_HAMMI
   return errors;
 }
 
+/**
+ * 独立对象计数（第6.1节："同一原图裁剪、连拍或近重复"只算一次独立证据）。
+ * 判定：以 `clusterId` 为一个独立对象；若两条不同簇记录 `contentSha256` 相同，
+ * 则视为同一对象（跨簇内容重复是数据问题，按重复处理），避免用同簇裁剪或重复 hash 充数。
+ */
+export function independentObjectKey(record) {
+  return `cluster:${record?.clusterId ?? record?.sampleId ?? ''}`;
+}
+
+/** 按独立对象去重；返回 { kept, excluded }，kept 每对象仅保留首条。 */
+export function dedupeByIndependentObject(records) {
+  const byContent = new Map();
+  const seen = new Set();
+  const kept = [];
+  const excluded = [];
+  for (const r of records) {
+    let key = independentObjectKey(r);
+    if (typeof r?.contentSha256 === 'string') {
+      const prior = byContent.get(r.contentSha256);
+      if (prior !== undefined) key = prior;
+      else byContent.set(r.contentSha256, key);
+    }
+    if (seen.has(key)) {
+      excluded.push(r);
+      continue;
+    }
+    seen.add(key);
+    kept.push(r);
+  }
+  return { kept, excluded };
+}
+
+/** 独立对象数 = 去重后保留的记录数。 */
+export function distinctObjectCount(rows) {
+  return dedupeByIndependentObject(rows).kept.length;
+}
+
 /** 拒识样本统计：按 task 与 expected reject/uncertain 计数。 */
 export function rejectionCounts(records) {
   const out = {};

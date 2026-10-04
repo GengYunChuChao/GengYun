@@ -32,7 +32,8 @@ node tools/evaluation/validate-evaluation-samples.mjs --index <index.json> --ham
 
 - **每类**：`labelClass` 记录具体类别；报告逐类指标（`perClass`），不合并掩盖。
 - **拒识**：`expectation=reject` 标注期望拒识样本；拍草覆盖内拒识计入未命中；覆盖外/低质量拒识是期望行为。
-- 近重复簇成员数、被排除数、各质量/覆盖分组计数由评估命令输出到报告的 `gaps` 与支持统计中。
+- **去重计数**：缺口统计、指标评分与报告**按独立对象去重**——同一 `clusterId`（同源裁剪/连拍）或重复 `contentSha256`
+  只计一次独立证据；报告出具 `duplicatesExcluded`。近重复簇成员数、被排除数、各质量/覆盖分组计数由评估命令输出。
 
 ## 5 操作流程
 

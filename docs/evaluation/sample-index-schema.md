@@ -51,7 +51,8 @@
 
 ## 4 训练 / 验证 / 测试隔离规则
 
-1. **先冻结再调参**：最终测试集在模型调参前冻结，版本号写入 `frozenIndexVersion`。
+1. **先冻结再调参**：最终测试集在模型调参前冻结；冻结清单须含 `indexVersion`、`split=test`、`recordCount`、
+   `indexSha256`（与 test 集逐字节一致）与 `frozenAt`，来源标签或手填版本号不能代替冻结清单校验。
 2. **同簇不跨 split**：同一 `clusterId` 的所有样本必须落在同一 `split`（校验器报错阻断）。
 3. **连拍不跨 split**：同一 `captureSeriesId` 必须同簇、同 split。
 4. **文本近重复不跨 split**：问答/ASR 中标准答案文本完全相同的样本必须同 split。

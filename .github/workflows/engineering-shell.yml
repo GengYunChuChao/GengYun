@@ -1,7 +1,8 @@
 name: Engineering shell gates
 
-# 分层 CI：文档检查 / 静态检查 / 确定性单元 / 契约测试 / 后台与 API 构建。
+# 分层 CI：文档检查 / 静态检查 / 确定性单元 / 契约测试 / 评估回归 / 后台与 API 构建。
 # 每层是独立 job，检查名固定，便于后续 PR 作为必需检查引用。
+# 评估回归（GY-I20）只用 Node 标准库、任何真实外部调用一律禁用（合成/程序验证夹具）。
 # 微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充。
 
 on:
@@ -66,6 +67,20 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run test:contract
+
+  evaluation:
+    name: evaluation-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:evaluation
 
   build:
     name: build

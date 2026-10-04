@@ -36,10 +36,13 @@ node tools/evaluation/make-synthetic-fixture.mjs
 # 2) 校验脱敏样本索引（schema + 硬红线 + 隔离）
 node tools/evaluation/validate-evaluation-samples.mjs --index <index.json>
 
-# 3) 运行评估，产出结构化报告
-node tools/evaluation/run-evaluation.mjs --index <index.json> --predictions <predictions.json> --out <report.json>
+# 3) 运行评估，产出结构化报告（真实验收须带冻结清单与覆盖清单）
+node tools/evaluation/run-evaluation.mjs \
+  --index <index.json> --predictions <predictions.json> \
+  --manifest <frozen-manifest.json> --coverage <coverage-manifest.json> \
+  --out <report.json>
 
-# 4) 单元测试
+# 4) 单元测试（亦接入工程 CI 的 evaluation-tests 层）
 node --test tests/evaluation/*.test.mjs
 ```
 
@@ -47,6 +50,10 @@ node --test tests/evaluation/*.test.mjs
 
 1. `rawMediaCommitted` 必须为 `false`：原始私有媒体不提交 Git。
 2. `annotation.modelGenerated` 必须为 `false`：模型不得作为自己的标准答案。
-3. 同簇（同源裁剪/连拍/近重复）不得跨 `split`。
-4. `dataKind != real_frozen` 或样本未达第6节标准时，门禁恒为 `not_evaluated`，不得声称达标。
-5. 原始媒体与令牌不进入仓库；只提交脱敏索引与 hash。
+3. 同簇（同源裁剪/连拍/近重复）不得跨 `split`；评分与缺口按**独立对象去重**计数。
+4. **最终验收只认经冻结清单校验的独立 `test` 集**；来源标签/手填版本号不能代替冻结清单。
+5. **预测必须完整、结构合法、与索引 ID 对应**；缺失/非法保留 `not_evaluated` 与缺口，重复预测被拒绝。
+6. **模型指标仅消费原始输出**；手工校正结果单独报告、不得补模型成绩、不得缩分母。
+7. 拒识/不确定**统一检查最终 `decision`**，即使携带正确候选也计未命中。
+8. 任一条件不满足（无 `test` 集/冻结未过/样本不足/预测不完整/非真实来源）即 `isRealEvaluation=false`、门禁 `not_evaluated`。
+9. 原始媒体与令牌不进入仓库；只提交脱敏索引与 hash。

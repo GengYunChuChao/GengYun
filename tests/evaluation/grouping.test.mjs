@@ -8,6 +8,8 @@ import {
   splitIsolationErrors,
   validateSample,
   validateSampleIndex,
+  dedupeByIndependentObject,
+  computeGaps,
 } from '../../packages/evaluation/index.mjs';
 
 const sha = (t) => createHash('sha256').update(t).digest('hex');
@@ -101,4 +103,30 @@ test('validateSampleIndex：真实与合成混合给出警告', () => {
     rec({ sampleId: 'B', sourceKind: 'synthetic_placeholder', annotation: { method: 'synthetic_placeholder', annotatorRef: 'gen', modelGenerated: false } }),
   ]);
   assert.ok(r.warnings.some((w) => w.includes('混合')));
+});
+
+test('dedupeByIndependentObject：同簇/同内容只算一个独立对象', () => {
+  const rows = [
+    rec({ sampleId: 'A', clusterId: 'c1', contentSha256: sha('x') }),
+    rec({ sampleId: 'B', clusterId: 'c1', contentSha256: sha('y') }), // 同簇去重
+    rec({ sampleId: 'C', clusterId: 'c2', contentSha256: sha('x') }), // 跨簇同内容去重
+    rec({ sampleId: 'D', clusterId: 'c3', contentSha256: sha('z') }),
+  ];
+  const { kept, excluded } = dedupeByIndependentObject(rows);
+  assert.equal(kept.length, 2);
+  assert.equal(excluded.length, 2);
+});
+
+test('computeGaps：按独立对象去重计数 + 依覆盖清单逐类报缺口', () => {
+  // 300 条覆盖内清晰，但全部同簇 → 去重后 1
+  const covered = Array.from({ length: 300 }, (_, i) =>
+    rec({ sampleId: `W${i}`, task: 'weed_photo', labelClass: 'A', coverage: 'covered', quality: 'clear', clusterId: 'one', contentSha256: sha('same') }),
+  );
+  const gaps = computeGaps(covered, { coverageManifest: { weedPhotoCoveredClasses: ['A', 'B'] } });
+  const coveredGap = gaps.find((g) => g.bucket === 'weed_photo_covered');
+  assert.equal(coveredGap.present, 1);
+  assert.equal(coveredGap.duplicatesExcluded, 299);
+  const perClass = gaps.find((g) => g.bucket === 'weed_photo_covered_per_class');
+  assert.equal(perClass.present, 0); // 承诺类 B 未到位
+  assert.equal(perClass.missing, 30);
 });

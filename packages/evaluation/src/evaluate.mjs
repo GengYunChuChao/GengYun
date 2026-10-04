@@ -1,11 +1,18 @@
 // 评估编排：读入脱敏索引 + 模型/规则输出，计算指标、门禁状态与缺口，产出结构化报告。
-// 关键安全语义：dataKind 非 real_frozen 或样本未达第6节目标时，isRealEvaluation=false，
-// 所有门禁 claimable=false，状态保持 not_evaluated——不得把合成/占位/不足输入写成"通过"。
+// 关键安全语义（修复轮 1 强化）：
+//   1. 最终验收**只使用经冻结清单校验的独立 test 集**；来源标签或手填版本号不能代替冻结清单。
+//   2. 训练/验证样本另列统计，不参与最终评分。
+//   3. 评分与计数**按独立对象去重**（同簇裁剪/连拍/重复 hash 不重复计分）。
+//   4. 预测必须完整、结构合法、与索引 ID 对应；缺失/非法保留 not_evaluated 与缺口，不当成功。
+//   5. 任一条件不满足即 isRealEvaluation=false、全部门禁 claimable=false、状态保持 not_evaluated，
+//      绝不把合成/占位/不足/未冻结/预测缺失的输入写成"通过"。
 
 import { createHash } from 'node:crypto';
 import { SCORERS } from './metrics.mjs';
 import { computeGaps } from './gaps.mjs';
 import { wilsonInterval } from './ci.mjs';
+import { dedupeByIndependentObject } from './grouping.mjs';
+import { verifyFrozenManifest, validatePredictionCoverage, validatePredictionOutput, computeRecordsSha256 } from './frozen.mjs';
 
 export const REPORT_SCHEMA_VERSION = '1.0.0';
 
@@ -33,8 +40,8 @@ const GATE_VALUE = {
   expectedBehaviorPass: (m) => m.expectedBehaviorPass?.p,
 };
 
-/** 由目标定义构造某 task 的门禁列表。 */
-export function buildGates(task, metrics, gateDefs, claimable) {
+/** 由目标定义构造某 task 的门禁列表。claimable=false 时一律 not_evaluated，不写通过。 */
+export function buildGates(task, metrics, gateDefs, claimable, notClaimableReason) {
   return gateDefs
     .filter((g) => g.task === task)
     .map((g) => {
@@ -49,7 +56,7 @@ export function buildGates(task, metrics, gateDefs, claimable) {
       let reason;
       if (!claimable) {
         status = 'not_evaluated';
-        reason = 'synthetic 或样本未达第6节目标/存在缺口，不得声称达标';
+        reason = notClaimableReason ?? '不可主张：非真实冻结 test 集 / 样本未达第6节目标 / 存在缺口或预测不完整，不得声称达标';
       } else if (pass === null) {
         status = 'not_evaluated';
         reason = '无可用观测值';
@@ -62,47 +69,79 @@ export function buildGates(task, metrics, gateDefs, claimable) {
 
 /**
  * 主入口。
- * @param {Array} records 脱敏样本索引（含 gold）
+ * @param {Array} records 脱敏样本索引（含 gold，含 train/validation/test）
  * @param {Map<string, object>} predictions sampleId -> 模型/规则输出
- * @param {object} options { gateDefs, frozenIndexVersion, seed }
+ * @param {object} options { gateDefs, frozenManifest, coverageManifest, seed, generatedAt }
+ *   frozenManifest: 经核实的冻结清单（indexVersion/split/recordCount/indexSha256/frozenAt）；缺失即不可主张。
+ *   coverageManifest: 冻结覆盖清单（weedPhotoCoveredClasses）；缺失则逐类达标按未满足计。
  */
 export function evaluateRun(records, predictions, options = {}) {
-  const {
-    gateDefs,
-    frozenIndexVersion = 'unfrozen',
-    seed = 20261004,
-    generatedAt = new Date().toISOString(),
-  } = options;
+  const { gateDefs, frozenManifest = null, coverageManifest = null, seed = 20261004, generatedAt = new Date().toISOString() } = options;
   const warnings = [];
 
-  const syntheticCount = records.filter((r) => r.sourceKind === 'synthetic_placeholder').length;
-  const dataKind = syntheticCount === 0 ? 'real_frozen' : syntheticCount === records.length ? 'synthetic_placeholder' : 'mixed';
+  // 1. 按 split 划分：最终验收只用 test；train/validation 另列统计。
+  const testRecordsAll = records.filter((r) => r.split === 'test');
+  const trainCount = records.filter((r) => r.split === 'train').length;
+  const validationCount = records.filter((r) => r.split === 'validation').length;
 
-  const gaps = computeGaps(records);
+  // 2. 冻结清单校验（针对 test 集）。
+  const frozen = verifyFrozenManifest(frozenManifest, testRecordsAll);
+  const frozenIndexVersion = frozenManifest && typeof frozenManifest.indexVersion === 'string' ? frozenManifest.indexVersion : 'unfrozen';
+
+  // 3. 数据性质（只看参与验收的 test 集）。
+  const syntheticCount = testRecordsAll.filter((r) => r.sourceKind === 'synthetic_placeholder').length;
+  const dataKind =
+    testRecordsAll.length === 0 ? 'no_test_split' : syntheticCount === 0 ? 'real_frozen' : syntheticCount === testRecordsAll.length ? 'synthetic_placeholder' : 'mixed';
+
+  // 4. 按独立对象去重：评分与计数排除同源/近重复，避免充数。
+  const { kept: testRecords, excluded: duplicateRecords } = dedupeByIndependentObject(testRecordsAll);
+  const duplicatesExcluded = duplicateRecords.length;
+
+  // 5. 预测完整性与结构校验。
+  const predictionEvidence = validatePredictionCoverage(testRecords, predictions);
+
+  // 6. 缺口（原始 test 集；computeGaps 内部按真实样本去重并如实报重复数）。
+  const gaps = computeGaps(testRecordsAll, { coverageManifest });
   const gapsSatisfied = gaps.every((g) => g.missing === 0);
+  const coverageManifestPresent = gaps.some((g) => g.bucket === 'weed_photo_covered_per_class' && g.coverageManifestPresent === true);
 
-  // 覆盖内逐类门槛：每个承诺覆盖的杂草至少30张，用缺口桶结果判定。
-  const perClassGap = gaps.find((g) => g.bucket === 'weed_photo_covered_per_class');
-  const perClassSatisfied = !perClassGap || perClassGap.missing === 0;
+  // 7. 是否构成可主张的真实评估。
+  const isRealEvaluation =
+    testRecords.length > 0 && frozen.verified && dataKind === 'real_frozen' && gapsSatisfied && predictionEvidence.complete;
 
-  const isRealEvaluation = dataKind === 'real_frozen' && gapsSatisfied && perClassSatisfied;
-  if (dataKind !== 'real_frozen') warnings.push('输入含 synthetic_placeholder：仅验证程序可运行，不构成真实评估。');
+  // 8. 警告。
+  if (testRecordsAll.length === 0) warnings.push('没有 split=test 的样本：缺少冻结独立测试集，评估未完成，不得主张真实评估。');
+  if (dataKind === 'synthetic_placeholder' || dataKind === 'mixed') warnings.push('输入含 synthetic_placeholder：仅验证程序可运行，不构成真实评估。');
+  if (!frozen.verified) warnings.push(`冻结清单校验未通过：${frozen.reasons.join('；')}`);
   if (!gapsSatisfied) warnings.push('真实样本数量未达第6节标准，评估未完成，不得标记达标。');
+  if (!coverageManifestPresent) warnings.push('未提供冻结覆盖清单：覆盖内逐类达标不可推断。');
+  if (duplicatesExcluded > 0) warnings.push(`已按独立对象去重：排除近重复/同源记录 ${duplicatesExcluded} 条（不计入评分与缺口）。`);
+  if (!predictionEvidence.complete) {
+    warnings.push(`预测不完整：缺失 ${predictionEvidence.missing.length} 条，非法/失败 ${predictionEvidence.invalid.length} 条；相关任务保持 not_evaluated。`);
+  }
+  if (predictionEvidence.extra.length > 0) warnings.push(`存在 ${predictionEvidence.extra.length} 条索引外的多余预测，已忽略且不参与评分。`);
+  if (!isRealEvaluation && frozen.verified) warnings.push('存在未满足的可主张条件（缺口/预测完整性/数据性质），门禁保持 not_evaluated。');
 
+  // 9. 逐任务评分（仅 test 集、去重后、结构合法预测）。
   const tasks = {};
   for (const task of Object.keys(SCORERS)) {
-    const pairs = records
-      .filter((r) => r.task === task)
-      .map((record) => ({ record, output: predictions.get(record.sampleId) ?? null }));
-    const metrics = SCORERS[task](pairs, { seed });
-    const gates = buildGates(task, metrics, gateDefs, isRealEvaluation);
+    const taskRecords = testRecords.filter((r) => r.task === task);
+    const scorablePairs = taskRecords
+      .map((record) => ({ record, output: predictions.get(record.sampleId) }))
+      .filter((p) => validatePredictionOutput(task, p.output).ok);
+    const metrics = SCORERS[task](scorablePairs, { seed });
+    const coverage = predictionEvidence.byTask[task] ?? { expected: 0, present: 0, missing: 0, invalid: 0 };
+    const taskComplete = coverage.missing === 0 && coverage.invalid === 0;
+    const claimable = isRealEvaluation && taskComplete;
+    const gates = buildGates(task, metrics, gateDefs, claimable);
     const hasFail = gates.some((g) => g.status === 'fail');
     const allPass = gates.length > 0 && gates.every((g) => g.status === 'pass');
-    const gateStatus = !isRealEvaluation ? 'not_evaluated' : hasFail ? 'fail' : allPass ? 'pass' : 'not_evaluated';
-    tasks[task] = { sampleCount: pairs.length, metrics, gates, gateStatus };
+    const gateStatus = !claimable ? 'not_evaluated' : hasFail ? 'fail' : allPass ? 'pass' : 'not_evaluated';
+    tasks[task] = { sampleCount: taskRecords.length, scoredCount: scorablePairs.length, predictionEvidence: coverage, metrics, gates, gateStatus };
   }
 
   const indexSha256 = createHash('sha256').update(JSON.stringify(records)).digest('hex');
+  const testIndexSha256 = computeRecordsSha256(testRecordsAll);
   const predictionSha256 = createHash('sha256')
     .update(JSON.stringify([...predictions.entries()].sort((a, b) => a[0].localeCompare(b[0]))))
     .digest('hex');
@@ -113,8 +152,23 @@ export function evaluateRun(records, predictions, options = {}) {
     isRealEvaluation,
     generatedAt,
     indexSha256,
+    testIndexSha256,
     predictionSha256,
     frozenIndexVersion,
+    frozenVerified: frozen.verified,
+    frozenVerification: { verified: frozen.verified, reasons: frozen.reasons, indexSha256: frozen.computedSha256, manifestSha256: frozen.manifestSha256 },
+    splits: { train: trainCount, validation: validationCount, test: testRecordsAll.length, total: records.length },
+    duplicatesExcluded,
+    coverageManifestPresent,
+    predictionEvidence: {
+      expected: predictionEvidence.expected,
+      present: predictionEvidence.present,
+      missing: predictionEvidence.missing,
+      invalid: predictionEvidence.invalid,
+      extra: predictionEvidence.extra,
+      complete: predictionEvidence.complete,
+      byTask: predictionEvidence.byTask,
+    },
     tasks,
     gaps,
     warnings,

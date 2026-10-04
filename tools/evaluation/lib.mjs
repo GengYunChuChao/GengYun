@@ -9,9 +9,14 @@ export function loadJson(path) {
 export function toPredictionMap(raw) {
   const map = new Map();
   if (Array.isArray(raw)) {
+    const duplicates = [];
     for (const entry of raw) {
       if (!entry || typeof entry.sampleId !== 'string') throw new Error('预测数组项缺少 sampleId');
+      if (map.has(entry.sampleId)) duplicates.push(entry.sampleId);
       map.set(entry.sampleId, entry.output ?? entry);
+    }
+    if (duplicates.length > 0) {
+      throw new Error(`预测数组存在重复 sampleId（模型评估禁止重复预测充数）：${[...new Set(duplicates)].join(', ')}`);
     }
     return map;
   }
@@ -27,21 +32,28 @@ const fmt = (r) => (r && r.p !== null && r.p !== undefined ? `${(r.p * 100).toFi
 /** 人类可读摘要（终端用）。 */
 export function formatSummary(report) {
   const lines = [];
-  lines.push(`dataKind=${report.dataKind}  isRealEvaluation=${report.isRealEvaluation}  frozenIndexVersion=${report.frozenIndexVersion}`);
-  lines.push(`indexSha256=${report.indexSha256.slice(0, 16)}…  predictionSha256=${report.predictionSha256.slice(0, 16)}…`);
+  lines.push(`dataKind=${report.dataKind}  isRealEvaluation=${report.isRealEvaluation}  frozenVerified=${report.frozenVerified}  frozenIndexVersion=${report.frozenIndexVersion}`);
+  lines.push(`indexSha256=${report.indexSha256.slice(0, 16)}…  testIndexSha256=${(report.testIndexSha256 ?? '').slice(0, 16)}…  predictionSha256=${report.predictionSha256.slice(0, 16)}…`);
+  if (report.splits) lines.push(`划分：train=${report.splits.train}  validation=${report.splits.validation}  test=${report.splits.test}（最终验收仅用 test）`);
+  lines.push(`独立对象去重排除=${report.duplicatesExcluded ?? 0}  覆盖清单=${report.coverageManifestPresent ? '有' : '缺'}`);
+  if (report.predictionEvidence) {
+    const pe = report.predictionEvidence;
+    lines.push(`预测完整性：期望=${pe.expected} 有效=${pe.present} 缺失=${pe.missing.length} 非法=${pe.invalid.length} 多余=${pe.extra.length} complete=${pe.complete}`);
+  }
   for (const [task, t] of Object.entries(report.tasks)) {
     if (t.sampleCount === 0) {
       lines.push(`- ${task}: 0 样本（未评估）`);
       continue;
     }
-    lines.push(`- ${task}: ${t.sampleCount} 样本  gateStatus=${t.gateStatus}`);
+    lines.push(`- ${task}: ${t.sampleCount} 样本 / 可评分 ${t.scoredCount ?? t.sampleCount}  gateStatus=${t.gateStatus}`);
     const m = t.metrics;
     if (m.top1) lines.push(`    top1=${fmt(m.top1)}  top3=${fmt(m.top3)}`);
     if (m.riskRecall) lines.push(`    riskRecall=${fmt(m.riskRecall)}  normalFalseIsolation=${fmt(m.normalFalseIsolationRate)}`);
-    if (m.cer) lines.push(`    CER=${fmt({ ...m.cer, n: m.utteranceCount })}  说话者=${m.speakerCount}`);
+    if (m.cer) lines.push(`    CER=${fmt({ ...m.cer, n: m.utteranceCount })}  说话者=${m.speakerCount}  原始缺失=${m.originalMissingCount ?? 0}`);
     if (m.answerableCorrectWithSource) lines.push(`    answerable=${fmt(m.answerableCorrectWithSource)}  expectedBehaviorPass=${fmt(m.expectedBehaviorPass)}`);
     if (m.scenarioPass) lines.push(`    scenarioPass=${fmt(m.scenarioPass)}`);
     if (m.ttsAllCorrect) lines.push(`    ttsAllCorrect=${fmt(m.ttsAllCorrect)}`);
+    if (m.registrationNumberExact) lines.push(`    登记号完全正确=${fmt(m.registrationNumberExact)}  原始缺失=${m.originalMissingCount ?? 0}  校正样本=${m.correctedCount ?? 0}`);
   }
   const missing = report.gaps.filter((g) => g.missing > 0);
   lines.push(`样本缺口桶：${missing.length}/${report.gaps.length} 未达标`);
