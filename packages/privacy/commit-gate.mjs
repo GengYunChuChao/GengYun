@@ -12,19 +12,23 @@
  *   - 内存参考实现：`commit` 的函数体内**不含任何 await**（同步临界区），
  *     在单线程模型下与任何 `await` 边界的写者不可交错——窗口被**真正**消除，而非再读一次。
  *   - 数据库部署：由部署方以**单事务 + 行锁 / 行版本 CAS** 实现同一 `commit` 契约
- *     （见 README「提交一致性契约」）。本模块不假装内存实现等价于实库事务。
+ *     （见 README「提交一致性契约」）。**校验读取与「实际结果写入」必须在同一事务内完成并一起提交**：
+ *     若只把校验放在事务里、而把 `INSERT` 结果放到事务之外，则「校验通过」与「结果落库」又被拆开，
+ *     撤回/注销仍可在两者之间发生——这正是本模块要消除的反模式。
  *
  * 契约（部署方必须实现；缺失即拒绝投入使用）：
  *   `commit(expected, { precondition, apply }) -> Promise<{ committed: boolean, reason?: CommitFailReason }>`
- *   在同一临界区内：
+ *   在同一临界区/事务内：
  *     1) 重读账号 `身份(状态 + 单调 auth_epoch)`；
  *     2) 重读 `expected.requiredConsents` 中每个用途的 `(epoch, granted)`（epoch 单调）；
  *     3) 重读接收方 `(enabled, config_version, no_training_verified, deletion_verified)`；
  *     4) 逐项与 `expected` 比对；
  *     5) `precondition()`（同步、调用方所有、如外发行的在途状态与 revision）也必须为真；
- *     6) 全部通过 → 执行 `apply()`（提交副作用）并返回 `{ committed: true }`；
+ *     6) 全部通过 → 执行 `apply()`（**提交副作用，含实际结果写入**）并返回 `{ committed: true }`；
  *        任一失败 → **不执行** `apply()`，返回 `{ committed: false, reason }`。
  *   **不得**在校验读取与 `apply` 之间插入任何 `await`/IO；否则临界区被撕开，窗口复现。
+ *   内存参考实现的 `apply()` **必须同步完成**（不得返回 Promise）；需要异步写入的部署请改用
+ *   单事务适配器。`apply` 即实际副作用本身，**不再**产出「可在临界区之外消费的授权结论」。
  */
 
 /** 允许的失败原因（固定枚举；账本据此映射为契约错误码，未知一律 OBJECT_UNAVAILABLE）。 */
@@ -120,13 +124,14 @@ export function createCommitGate({ account, consentStore, recipientStore } = {})
   /**
    * CAS 式提交原语。函数体内**无 await**：从校验到 apply 为单个同步临界区，
    * 任何在 await 边界发生的写者都不可能插入其中。
+   * `apply()` 是**实际副作用本身**（内存参考实现中必须同步完成）；其返回值不作提交结论使用。
    * @param {object} expected 预留时捕获的快照（见 ledger.reserve）
    * @param {{ precondition?: () => boolean, apply: () => void }} hooks
    * @returns {Promise<{ committed: boolean, reason?: string }>}
    */
   async function commit(expected, { precondition, apply } = {}) {
     if (typeof apply !== 'function') {
-      throw new Error('commit 需要 apply 回调');
+      throw new Error('commit 需要 apply 回调（实际副作用/结果写入）');
     }
     // —— 同步临界区开始（以下到 apply 之间严禁出现 await）——
     const reason = verify(expected);
@@ -134,7 +139,11 @@ export function createCommitGate({ account, consentStore, recipientStore } = {})
     if (typeof precondition === 'function' && precondition() !== true) {
       return { committed: false, reason: 'precondition' };
     }
-    apply();
+    const applied = apply();
+    // 非同步 apply 会把副作用拖到临界区之外 —— 直接拒绝，不静默降级。
+    if (applied && typeof applied.then === 'function') {
+      throw new Error('commit 的 apply 必须同步完成（不得返回 Promise）；异步结果写入请改用单事务适配器');
+    }
     // —— 同步临界区结束 ——
     return { committed: true };
   }

@@ -12,7 +12,7 @@
 | `consent.mjs` | 用途授权存储（内存实现，可插拔 Postgres）：grant/withdraw/currentEpoch |
 | `guard.mjs` | 授权守卫：**已认证执行入口** `requireConsent`（强制正整数 `auth_epoch` + 核对当前版本）与**纯用途查询** `assertConsent` / `assertAccountActive`（二者分开，不可混用） |
 | `commit-gate.mjs` | **提交一致性契约**：`createCommitGate` 内存参考实现（同步一致快照 + 无 await 原子临界区 CAS 提交原语 `commit`） |
-| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `revokeInFlight`（唯一提交边界 = 原子 `commitGate.commit`；另有非权威异步预检） |
+| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `revokeInFlight`。派发与**回写的实际结果写入**都在原子 `commitGate.commit` 的同一临界区内完成（另有非权威异步预检） |
 | `deletion.mjs` | 模块删除处理器注册协议 + 第三方删除请求/确认/失败（不把请求当完成） |
 | `redact.mjs` | 日志脱敏：私有正文/图片/音频/精确坐标/凭据 |
 | `index.mjs` | 统一出口 |
@@ -78,8 +78,9 @@ app.route({
   启用需独立同意 + 模型谱系验收（迁移 CHECK 强制），首版无放行训练路径。
 - 用户端页面（手选地区/文字替代交互）不实现，由 GY-I05/F12 消费 `CONSENT_REQUIRED` 错误码兜底。
 - **提交门禁的内存参考实现不等价于实库事务**：`createCommitGate` 依赖单线程同步临界区；生产部署须由
-  部署方以单事务 + 行锁 / 行版本 CAS 实现同一 `commit` 契约并注入。PGlite（0.5.8 / PG18.x）内存验证
-  **不等于** PG17.11 实库验收，实库验收由集成阶段（GY-I19 等）在真实 PG17.11 上完成。
+  部署方以单事务 + 行锁 / 行版本 CAS 实现同一 `commit` 契约（**校验读取与实际结果写入在同一事务内**
+  完成并一起提交）并注入。PGlite（0.5.8 / PG18.x）内存验证**不等于** PG17.11 实库验收，实库验收由
+  集成阶段（GY-I19 等）在真实 PG17.11 上完成。
 
 ## 硬红线落实
 
@@ -97,8 +98,14 @@ app.route({
   因为校验与提交之间没有 await，任何 `await` 边界上的写者（含**不经** `revokeInFlight` 的
   注销/停用/用途撤回）都无法被插入——窗口被**结构性消除**，而非「再读一次异步快照」。
   提交路径上另有一段**非权威异步预检**（仅早退 + 细化错误码）：它读到的是某一时刻的快照、可能过期，
-  **不构成安全保证**；即使预检因读到旧快照而放行，原子提交仍会用同一 tick 的同步快照重新判定并拒绝
-  （回归见 `tests/privacy/ledger.test.mjs` 的 R4「暂停第 2 次 get」「返回过期 epoch」两组用例）。
+  **不构成安全保证**；即使预检因读到旧快照而放行，原子提交仍会用同一 tick 的同步快照重新判定并拒绝。
+- **回写的实际结果写入在同一临界区**：`guardWriteback({ exportId, userId, write })` 的 `write`
+  就是 `apply`——**保存发生 ⟺ 校验通过，同一 tick 完成**；且**不再返回「可在临界区之外消费的
+  授权结论」**（只回 `{ written:true, exportId }`）。缺失/异步 `write` 直接拒绝（`INVALID_REQUEST`）。
+  回归见 `tests/privacy/ledger.test.mjs` 的 R5 用例（R5-1 临界区内写入、R5-2 校验前撤回/注销零写入、
+  R5-3 门禁异步返回暂停期间撤回/注销仍只在临界区内写一次、R5-4 缺同步保存入口即拒绝）。
+- **派发 at-least-once**：`markSent` 把 `reserved→sent` 放进同一临界区提交；真正的第三方网络派发
+  发生在临界区之外，**不因事后回滚撤销**（外部调用无法与本地事务绑定）。
 - 执行入口不接受省略身份版本：`guard.requireConsent` 强制正整数 `auth_epoch` 并核对当前版本，
   与纯用途查询 `assertConsent` 分开，杜绝「不传 epoch 即绕过」。
 
@@ -123,21 +130,28 @@ commit(expected, { precondition, apply }) -> Promise<{ committed: boolean, reaso
 
 契约要求（违反即视为不可用）：
 
-1. 在**同一临界区**内重读上述全部维度并逐项与 `expected` 比对；账号 `authEpoch` 与每个用途 `epoch`
-   必须**单调**（撤回/重新授权即前进，旧快照自然失效）。
-2. `precondition()`（同步、调用方所有）为假，或任一维度不一致 → **不得执行 `apply`**，
-   返回 `{ committed: false, reason }`；`reason ∈ { account, consent, recipient, recipient_policy, precondition }`。
+1. 在**同一临界区/事务**内重读上述全部维度并逐项与 `expected` 比对；账号 `authEpoch` 与每个用途
+   `epoch` 必须**单调**（撤回/重新授权即前进，旧快照自然失效）。
+2. `precondition()`（同步、调用方所有）为假，或任一维度不一致 → **不得执行 `apply`**（即不得发生
+   任何实际写入/状态迁移），返回 `{ committed: false, reason }`；`reason ∈ { account, consent,
+   recipient, recipient_policy, precondition }`。
 3. 校验读取与 `apply` 之间**不得**插入 `await`/IO；否则临界区被撕开，异步窗口复现。
-4. 记账方（`ledger`）据此映射错误码：`account → ACCOUNT_INACTIVE(403)`、`consent/recipient → OBJECT_UNAVAILABLE(409)`、
+4. `apply` 就是**实际副作用本身**（派发的状态迁移、回写的**结果写入**）。**不得**只把校验放进事务、
+   而把实际写入留到事务/临界区之外后置消费——那会把「校验通过」与「结果落库」重新拆开，撤回/注销
+   仍可在两者之间发生。记账方 **不返回可在以后使用的授权结论**。
+5. 记账方（`ledger`）据此映射错误码：`account → ACCOUNT_INACTIVE(403)`、`consent/recipient → OBJECT_UNAVAILABLE(409)`、
    `recipient_policy → SCOPE_DENIED(403)`、`precondition → OBJECT_UNAVAILABLE(409)`。
 
 两种实现路径：
 
 - **内存参考实现**（本模块 `createCommitGate`）：由同步访问器 `account.identityOf` /
   `consentStore.snapshotOf` / `recipientStore.currentOf` 构成一致快照，`commit` 体内无 await，
-  单线程模型下不可交错。**缺任一同步访问器即构造即抛错**（`ledger` 拒绝投入使用，漏实现不放行）。
-- **数据库部署**：由部署方以**单事务 + 行锁 / 行版本 CAS**实现同一 `commit` 契约（`SELECT ... FOR UPDATE`
-  于同一事务内读取并提交），并注入 `commitGate`。内存实现**不等价于**实库事务，见上方「边界（不实现）」。
+  单线程模型下不可交错；`apply()` **必须同步完成**（返回 Promise 即拒绝）。**缺任一同步访问器即
+  构造即抛错**（`ledger` 拒绝投入使用，漏实现不放行）。
+- **数据库部署**：由部署方以**单事务 + 行锁 / 行版本 CAS**实现同一 `commit` 契约——在同一事务内完成
+  校验读取（`SELECT ... FOR UPDATE` / 行版本 CAS）**与实际结果写入**（`INSERT/UPDATE`），最后一起
+  `COMMIT`；并注入 `commitGate`。**校验与写入必须同事务**，否则等价于把写入后置到事务之外，窗口复现。
+  内存实现**不等价于**实库事务，见上方「边界（不实现）」。
 
 > 覆盖不足时的红线：适配器只提供异步读取（无法给出「同一时刻」的一致快照）时必须**拒绝投入使用**——
 > `createExportLedger` 在未注入 `commitGate` 且适配器缺少任一同步快照方法时**构造即抛错**。

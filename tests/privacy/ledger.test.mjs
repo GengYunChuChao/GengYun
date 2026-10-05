@@ -132,7 +132,7 @@ test('撤回与任务竞争：撤回后旧结果回写被阻断（epoch 前进�
   await ledger.markSent(rec.id);
   await consentStore.withdraw({ userId: 'u1', purpose: 'external_inference' });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
 });
@@ -144,7 +144,7 @@ test('注销与任务竞争：auth_epoch 前进后旧结果回写被阻断', asy
   await ledger.markSent(rec.id);
   account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
 });
@@ -168,7 +168,7 @@ test('revokeInFlight 将撤回/注销用户的在途外发置 failed，回写被
   assert.equal(count, 1);
   assert.equal(ledger.get(rec.id).state, 'failed');
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
 });
@@ -204,7 +204,7 @@ test('P1-1 撤回非主用途（recording）后 guardWriteback 被阻断', async
   await ledger.markSent(rec.id);
   await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
 });
@@ -238,7 +238,7 @@ test('P1-2 guardWriteback 省略 authEpoch 仍核对账号版本快照（epoch �
   const rec = await ledger.reserve(baseExport); // 快照 authEpoch=1
   account.set('u1', { state: 'active', authEpoch: 2 }); // 仍 active 但 epoch 升为 2
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }), // 未传 authEpoch
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }), // 未传 authEpoch
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
 });
@@ -262,7 +262,7 @@ test('P1-2 停用后恢复（auth_epoch 前进）旧任务仍被阻断', async (
   account.set('u1', { state: 'suspended', authEpoch: 2 });
   account.set('u1', { state: 'active', authEpoch: 2 }); // 恢复但 epoch 已前进
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
 });
@@ -286,7 +286,7 @@ test('P1-3 预留后接收方版本变化，guardWriteback 阻断', async () => 
   const rec = await ledger.reserve(baseExport);
   recipientStore.set(VERIFIED_RECIPIENT.id, { config_version: '2.0.0' });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
 });
@@ -309,7 +309,7 @@ test('P1-3 预留后接收方删除确认能力失效，guardWriteback 阻断', 
   await ledger.markSent(rec.id);
   recipientStore.set(VERIFIED_RECIPIENT.id, { deletion_verified: false });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'SCOPE_DENIED',
   );
 });
@@ -415,7 +415,7 @@ test('R2 身份快照读取失败时 guardWriteback 阻断回写', async () => {
     throw new Error('synthetic auth store down');
   };
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
 });
@@ -533,7 +533,7 @@ test('R4 门闩内部撤回记录用途（不经 revokeInFlight）→ guardWrite
   await ledger.markSent(rec.id);
 
   pausable.pauseNext();
-  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} });
   await new Promise((r) => setTimeout(r, 0));
   await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
 
@@ -570,7 +570,7 @@ test('R4 最终 epoch 读取期间注销（不经 revokeInFlight）→ guardWrit
   await ledger.markSent(rec.id);
 
   pausable.pauseNext();
-  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} });
   await new Promise((r) => setTimeout(r, 0));
   account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
 
@@ -679,7 +679,7 @@ test('R4 门闩内部撤回：暂停第 2 次 recipientStore.get 期间撤回用
   await ledger.markSent(rec.id);
 
   pausing.pauseOnGetCall(3); // reserve #1 + markSent #2 → 本次为 #3
-  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} });
   await new Promise((r) => setTimeout(r, 0));
   await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
 
@@ -721,7 +721,7 @@ test('R4 最终 epoch 读取期间注销（适配器返回过期 epoch=1）→ g
   await ledger.markSent(rec.id); // authEpochOf 调用 #2（markSent 预检）
 
   account.pauseOnAuthEpochCall(3); // 暂停 guardWriteback 预检的 epoch 读取
-  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} });
   await new Promise((r) => setTimeout(r, 0));
   account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
 
@@ -811,8 +811,16 @@ test('R4 原子提交不误伤：账号/用途/接收方均未变时正常派发
   const rec = await ledger.reserve(baseExport);
   const sent = await ledger.markSent(rec.id);
   assert.equal(sent.state, 'sent');
-  const back = await ledger.guardWriteback({ exportId: rec.id, userId: 'u1' });
-  assert.equal(back.state, 'sent');
+  let saved = 0;
+  const back = await ledger.guardWriteback({
+    exportId: rec.id,
+    userId: 'u1',
+    write: () => {
+      saved += 1;
+    },
+  });
+  assert.equal(saved, 1, '写回调恰好执行一次');
+  assert.deepEqual(back, { written: true, exportId: rec.id }, '只返回写入回执，不返回可后置消费的授权结论');
 });
 
 test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInFlight）', async () => {
@@ -822,7 +830,244 @@ test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInF
   await ledger.markSent(rec.id);
   account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', write: () => {} }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+});
+
+// ---- 修复轮 5 · P1：实际结果写入必须与校验同处一个原子提交临界区 ----
+
+test('R5-1 正向：写回调在 gate 同步临界区内执行（gate Promise settle 之前，恰好一次）', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  let gateSettled = false;
+  let saved = 0;
+  const writing = ledger.guardWriteback({
+    exportId: rec.id,
+    userId: 'u1',
+    write: () => {
+      // 写回调执行时，guardWriteback 的 Promise 尚未 settle → 证明写入在临界区内完成。
+      assert.equal(gateSettled, false, '写回调必须在 gate Promise settle 之前执行');
+      saved += 1;
+    },
+  });
+  writing.finally(() => {
+    gateSettled = true;
+  });
+  const ack = await writing;
+  assert.equal(saved, 1, '写回调恰好执行一次');
+  assert.deepEqual(ack, { written: true, exportId: rec.id });
+});
+
+test('R5-2 负向：校验前撤回用途 → 写回调零次调用并抛 OBJECT_UNAVAILABLE', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+
+  let saved = 0;
+  await assert.rejects(
+    () =>
+      ledger.guardWriteback({
+        exportId: rec.id,
+        userId: 'u1',
+        write: () => {
+          saved += 1;
+        },
+      }),
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(saved, 0, '撤回后不得执行任何写入');
+});
+
+test('R5-2 负向：校验前注销（deletion_pending + authEpoch=2）→ 写回调零次调用并抛 ACCOUNT_INACTIVE', async () => {
+  const { ledger, consentStore, account } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+
+  let saved = 0;
+  await assert.rejects(
+    () =>
+      ledger.guardWriteback({
+        exportId: rec.id,
+        userId: 'u1',
+        write: () => {
+          saved += 1;
+        },
+      }),
+    (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
+  );
+  assert.equal(saved, 0, '注销后不得执行任何写入');
+});
+
+/** 复刻监工探针：gate 先同步完成参考 verify+apply，随后**仅**暂停异步返回（校验与 apply 之间未插 await）。 */
+function createSyncThenPauseGate({ account, consentStore, recipientStore, events }) {
+  const inner = createCommitGate({ account, consentStore, recipientStore });
+  let armed = false;
+  let releaseReturn = () => {};
+  let trace = false;
+  return {
+    gate: {
+      async commit(expected, hooks) {
+        const result = await inner.commit(expected, {
+          precondition: hooks.precondition,
+          apply: () => {
+            if (trace) events.push('apply');
+            hooks.apply(); // 实际写入在 inner.commit 的同步临界区内执行
+          },
+        });
+        if (armed) {
+          armed = false;
+          await new Promise((res) => {
+            releaseReturn = res;
+          });
+        }
+        if (trace) events.push('gate-returned');
+        return result;
+      },
+    },
+    pauseNext() {
+      armed = true;
+    },
+    release() {
+      releaseReturn();
+    },
+    setTrace(v) {
+      trace = v;
+    },
+  };
+}
+
+test('R5-3 边界：gate 同步 verify+apply 后仅暂停异步返回，期间撤回 → 写入只在临界区内发生一次、严格早于撤回', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const events = [];
+  const pausable = createSyncThenPauseGate({ account, consentStore, recipientStore, events });
+  const ledger = createExportLedger({
+    consentStore,
+    account,
+    recipientStore,
+    commitGate: pausable.gate,
+  });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  let saved = 0;
+  pausable.setTrace(true);
+  pausable.pauseNext();
+  const writing = ledger.guardWriteback({
+    exportId: rec.id,
+    userId: 'u1',
+    write: () => {
+      saved += 1;
+      events.push('write');
+    },
+  });
+  await new Promise((r) => setTimeout(r, 0)); // 推进到 gate 的异步返回暂停点
+
+  // 关键证据：此刻 inner.commit 的同步 verify+apply 已完成 —— 写入已在临界区内发生
+  assert.equal(saved, 1, '写入必须在临界区内完成，不得等释放后才写');
+  events.push('withdraw');
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+
+  pausable.release();
+  await writing;
+  assert.equal(saved, 1, '释放后不得再发生第二次写入');
+  assert.ok(events.indexOf('write') < events.indexOf('withdraw'), `写入必须早于撤回：${events.join(' -> ')}`);
+  assert.ok(events.indexOf('write') < events.indexOf('gate-returned'), '写入必须早于 gate 返回');
+});
+
+test('R5-3 边界：gate 同步 verify+apply 后仅暂停异步返回，期间注销 → 写入只在临界区内发生一次、严格早于注销', async () => {
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const consentStore = createConsentStore();
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+  const events = [];
+  const pausable = createSyncThenPauseGate({ account, consentStore, recipientStore, events });
+  const ledger = createExportLedger({
+    consentStore,
+    account,
+    recipientStore,
+    commitGate: pausable.gate,
+  });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  let saved = 0;
+  pausable.setTrace(true);
+  pausable.pauseNext();
+  const writing = ledger.guardWriteback({
+    exportId: rec.id,
+    userId: 'u1',
+    write: () => {
+      saved += 1;
+      events.push('write');
+    },
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(saved, 1, '写入必须在临界区内完成，不得等释放后才写');
+  events.push('logout');
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
+
+  pausable.release();
+  await writing;
+  assert.equal(saved, 1, '释放后不得再发生第二次写入');
+  assert.ok(events.indexOf('write') < events.indexOf('logout'), `写入必须早于注销：${events.join(' -> ')}`);
+  assert.ok(events.indexOf('write') < events.indexOf('gate-returned'), '写入必须早于 gate 返回');
+});
+
+test('R5-4 反向保护：未提供 write → 抛 INVALID_REQUEST（不落库、不返回可用结论）', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1' }),
+    (err) => err instanceof PrivacyError && err.code === 'INVALID_REQUEST',
+  );
+});
+
+test('R5-4 反向保护：write 为 async 声明 → 抛 INVALID_REQUEST，且不被调用', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  let saved = 0;
+  await assert.rejects(
+    () =>
+      ledger.guardWriteback({
+        exportId: rec.id,
+        userId: 'u1',
+        write: async () => {
+          saved += 1;
+        },
+      }),
+    (err) => err instanceof PrivacyError && err.code === 'INVALID_REQUEST',
+  );
+  assert.equal(saved, 0, 'async write 不得被调用');
+});
+
+test('R5-4 反向保护：write 返回 Promise（非 async 声明）→ 抛 INVALID_REQUEST', async () => {
+  const { ledger, consentStore } = await setup();
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+  await assert.rejects(
+    () =>
+      ledger.guardWriteback({
+        exportId: rec.id,
+        userId: 'u1',
+        write: () => Promise.resolve('late'),
+      }),
+    (err) => err instanceof PrivacyError && err.code === 'INVALID_REQUEST',
   );
 });

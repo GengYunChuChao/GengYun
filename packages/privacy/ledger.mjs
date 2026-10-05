@@ -11,18 +11,23 @@
  *   - 无授权 / 错用途不能触发实际外发（reserve 即拦截）。
  *   - 不默认第三方训练：external_inference 外发要求 recipient.no_training_verified 为真。
  *   - 撤回/注销立即禁止新外发；已提交外部请求视为在途，禁止回写。
- *   - 取消/撤回后的版本不可被回调复活（guardWriteback / markSent 通过原子提交阻断）。
+ *   - 取消/撤回后**实际结果写入**不可发生：`guardWriteback` 的保存动作在原子提交临界区内执行
+ *     （见下），不是「先拿授权结论、稍后再保存」。
+ *   - **派发 at-least-once**：`markSent` 把 reserved→sent 放进同一临界区提交；真正的第三方网络
+ *     派发发生在临界区之外，**不因事后回滚撤销**（外部调用无法与本地事务绑定）。
  *
  * 快照语义：
  *   - reserve 保存「全部必需用途的 epoch」+「外发时固定的账号 auth_epoch」+「接收方 config_version」；
  *   - 派发（markSent）与回写（guardWriteback）始终以这些快照为准，不接收调用方覆盖的新上下文。
  *
- * 并发安全（修复轮 2/3/4）：
+ * 并发安全（修复轮 2/3/4/5）：
  *   - 每条记录带单调递增 revision；终态（failed/outcome_unknown）不可复活。
  *   - 派发与回写的**唯一提交边界**是 `commitGate.commit(expected, { precondition, apply })`
  *     （见 commit-gate.mjs）：`commit` 体内**不含任何 await**，在同一个不可分割的同步临界区内
  *     一次性重读「账号身份/auth_epoch + 全部必需用途 epoch/授予 + 接收方 enabled/版本/训练条款」，
  *     逐项与 reserve 快照比对，全部通过才执行 `apply`。
+ *   - `guardWriteback` 的 `apply` **就是实际结果写入**（调用方传入的同步 `write`）：保存发生 ⟺
+ *     校验通过，同一 tick 完成；**不再**返回「可在临界区之外消费的授权结论」。
  *   - 因此提交判定**不再**依赖「顺序异步重读」：不存在「读 A 与读 B 之间被插入」或「适配器先取
  *     旧值再异步返回」的窗口——校验与提交在同一 tick 内原子完成。调用方即使**不经** revokeInFlight，
  *     只要在提交临界区之前注销/停用账号、前进 auth_epoch 或撤回用途，都会被这道同步重读捕获。
@@ -376,33 +381,51 @@ export function createExportLedger({
   }
 
   /**
-   * 在途结果回写守卫：任务保存前/回调落库前调用。
+   * 在途结果回写守卫：**校验与实际结果写入同处一个原子提交临界区**。
+   *
+   * 调用方必须提供**同步**保存动作 `write`（例如把结果落库的函数）。它以 `gate.commit` 的 `apply`
+   * 身份在同步临界区内执行——**保存发生 ⟺ 校验通过，二者同一 tick 完成**；因此不存在「先拿到
+   * 授权结论、稍后再保存」的窗口（那条旧路径正是本轮修复目标）。`write` 收到的是记录只读投影。
+   *
    * 先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照（账号版本 / 全部必需用途 epoch /
-   * 接收方版本与条款）为期望，通过 `commitGate.commit` 在单次同步临界区内原子校验；满足以下任一
-   * 即阻断（不落库、不可复活）：
+   * 接收方版本与条款）为期望原子提交；满足以下任一即阻断（**不执行 write**、不落库、不可复活）：
    *   - 账号非活跃 / auth_epoch 已变更（注销/停用/会话失效）
    *   - 任一必需用途 epoch 已前进（撤回或重新授权）
    *   - 接收方停用 / 版本变化 / 训练或删除条款失效
    *   - 外发记录已终态（取消/失败/结果未知）
-   * 与 markSent 同理：安全性来自原子提交，不来自可能过期的预检。
-   * @returns {Promise<object>} 通过原子校验的 export 记录
+   * 缺失/异步的 `write` → 直接拒绝（不静默放行、不返回可用授权结论）。
+   * @param {{ exportId: string, userId: string, write: (record: object) => void }} input
+   * @returns {Promise<{ written: true, exportId: string }>} 仅回执「已写入」，不返回可后置消费的授权结论
    */
-  async function guardWriteback({ exportId, userId } = {}) {
+  async function guardWriteback({ exportId, userId, write } = {}) {
     const record = rows.get(exportId);
     if (!record || record.userId !== userId) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '外发记录不存在或归属不符');
+    }
+    // 禁止静默降级：没有同步保存入口就拒绝，不产出「以后可用的授权结论」。
+    if (typeof write !== 'function') {
+      throw new PrivacyError('INVALID_REQUEST', 'guardWriteback 需要同步 write 保存动作');
+    }
+    if (write.constructor && write.constructor.name === 'AsyncFunction') {
+      throw new PrivacyError('INVALID_REQUEST', 'guardWriteback 的 write 必须同步，不得为 async');
     }
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
     const result = await gate.commit(commitExpectedOf(record), {
       precondition: () => isInFlight(record),
-      apply: () => {}, // 只读授权守卫：校验通过即“提交”该授权，无副作用
+      // 实际结果写入即提交副作用：在同步临界区内执行，保存与校验不可分离。
+      apply: () => {
+        const applied = write(projectRecord(record));
+        if (applied && typeof applied.then === 'function') {
+          throw new PrivacyError('INVALID_REQUEST', 'write 必须同步完成（不得返回 Promise）');
+        }
+      },
     });
     if (!result || result.committed !== true) {
       throw commitError(result?.reason, '回写');
     }
-    return projectRecord(record);
+    return { written: true, exportId: record.id };
   }
 
   return {
