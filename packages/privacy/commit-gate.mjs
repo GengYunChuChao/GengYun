@@ -28,8 +28,10 @@
  *        任一失败 → **不执行** `apply()`，返回 `{ committed: false, reason }`。
  *   **不得**在校验读取与 `apply` 之间插入任何 `await`/IO；否则临界区被撕开，窗口复现。
  *   `apply()` **必须同步完成、且不得启动任何异步副作用**（如返回 Promise 的保存链）；本模块**不做
- *   事后判错**（调用后再判返回值救不回已启动的异步任务）。结果写入由 `ledger` 通过**受控同步端口**
- *   完成（writeback.mjs）；异步写入的部署须在 `apply` 内的**同一事务**完成写入，而非后置到事务之外。
+ *   事后判错**（调用后再判返回值救不回已启动的异步任务）。结果写入由 `ledger` 通过**受控数据介质**
+ *   完成（writeback.mjs）：`apply` 内只执行账本自身的同步数据写入，**不调用任何调用方函数**。
+ *   实库（PostgreSQL 17）部署须在**单事务**内完成校验读取 + 实际写入，而非后置到事务之外
+ *   （见 README「提交一致性契约」）。
  */
 
 /** 允许的失败原因（固定枚举；账本据此映射为契约错误码，未知一律 OBJECT_UNAVAILABLE）。 */
@@ -128,9 +130,9 @@ export function createCommitGate({ account, consentStore, recipientStore } = {})
    *
    * `apply` **必须同步完成**，且**不得由它启动任何异步副作用**（如返回 Promise 的保存链）。
    * 本模块**不对 apply 的返回值做事后判错**——「先调用、再判错」救不回已启动的异步任务
-   * （修复轮 6 结论）。调用方须保证 apply 本身是**同步/原子**的：`ledger` 通过受控同步
-   * **writeback 端口**（见 writeback.mjs）写入结果，不把任意回调交进临界区。
-   * 异步/数据库部署由 `apply` 内的**同一事务**完成写入，而非把写入后置到事务之外。
+   * （修复轮 6 结论）。调用方须保证 apply 本身是**同步/原子**的：`ledger` 在 `apply` 内以自身同步
+   * 代码写入**受控数据介质**（见 writeback.mjs），**不调用任何调用方函数**（修复轮 7 结论）。
+   * 实库（PostgreSQL 17）部署须在**同一事务**内完成写入，而非把写入后置到事务之外。
    * @param {object} expected 预留时捕获的快照（见 ledger.reserve）
    * @param {{ precondition?: () => boolean, apply: () => void }} hooks
    * @returns {Promise<{ committed: boolean, reason?: string }>}

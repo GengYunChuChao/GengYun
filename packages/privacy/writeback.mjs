@@ -1,58 +1,89 @@
 /**
- * GY-I27 隐私模块 · 受控原子回写端口（writeback port）。
+ * GY-I27 隐私模块 · 受控回写介质（controlled writeback medium）。
  *
- * 为什么需要它（修复轮 6 结论）：
- *   上一轮把「保存动作」作为**任意回调** `write` 传进提交临界区，并在**调用之后**判断其返回值是否为
- *   Promise。普通函数 `() => pending.then(() => save())` 不是 `async` 声明、能通过构造名检查，
- *   但**调用即已启动异步保存链**——随后的 `INVALID_REQUEST` 无法取消它，释放 `pending` 后仍会落库。
- *   「先调用、再判错」在原理上救不回已启动的异步任务。
+ * 为什么「注入一个 write 函数」不是结构性保证（修复轮 7 结论）：
+ *   修复轮 6 把保存动作做成注入端口的方法 `write(entry)`，并在**构造期**检查
+ *   `write.constructor.name` 是否为 `AsyncFunction`/`GeneratorFunction`。该检查不成立：普通函数
+ *   `entry => pending.then(() => save(entry))` 的 constructor 是 `Function`，**通过校验**；
+ *   构造期放行后，`ledger` 在同步临界区内调用它即**启动了临界面之外的保存链**，返回值被忽略、
+ *   立即回 `written:true`——随后的撤回/注销 `revokeInFlight` 撤不掉已经在飞的写入。
+ *   即：**把任意函数从方法参数挪到构造参数，并未使「异步副作用无法进入临界区」成为结构性事实。**
  *
- * 结构性修复：**不再接受任意回调**。保存动作改为**受控同步写端口**——
- *   - 端口在 `ledger` **构造时**注入并被校验为同步（`assertSyncWritebackPort`）；缺方法或声明为
- *     `async` / `generator` 即**构造即抛错**（禁止静默降级）。
- *   - `guardWriteback` 只做「把**数据**（`result`）交给端口写入」，在**同步临界区内**执行：
- *     `write(entry)`。守卫拒绝 ⇒ 根本不调用端口 ⇒ **保存根本不会发生/生效**，
- *     不存在「启动了再报错」的窗口。
- *   - 异步/数据库部署由端口自身在**同一事务**内完成写入（端口即部署方的原子存储边界），
- *     不得把写入后置到事务之外。
+ * 结构性方案（本轮选定：**受控数据介质**，对应派发稿路径 (a)）：
+ *   写入口**不再是任意用户函数**。调用方只提供**纯数据容器** `{ rows: <native Map> }`，
+ *   写入由**账本自身的同步代码**以 Map 内建方法完成（`Map.prototype.set.call`）。于是：
+ *   - 调用方无法把任何函数放进写路径 → 不存在「被调用时启动异步任务」的可能；
+ *   - 结构上只接受 native Map（禁止子类/覆写）→ 写操作必然是内建同步数据操作；
+ *   - 违反即**构造期 / 调用前拒绝**——不依赖 `constructor.name` 猜测，也不做「调用后判 Promise」。
  *
- * 端口契约：
- *   `{ write(entry): void, get?(exportId): object|null }`
- *   `entry = { exportId, userId, revision, result, committedAt }`（已冻结）。
- *   `write` **必须同步完成**；其返回值被忽略（端口是受控部署代码，不参与「事后判错」）。
+ * 取舍说明（为何不选路径 (b)「事务内刷写契约」）：
+ *   路径 (b) 让部署方在**同一事务**内刷写账本产出的冻结提交包。但账本无法对「部署方是否真的在同一
+ *   事务内、是否后置到事务之外」作结构性判定——该职责落在部署方；且其「受控入口」若仍以函数承载，
+ *   会重复本轮被否的问题。故参考组件采用 (a)：写路径内**完全没有调用方代码**，可被本模块结构性保证；
+ *   实库的单事务义务作为**部署契约**在下方与 README 明确（见「实库契约」）。
+ *
+ * 实库契约（PostgreSQL 17，**部署义务**，模块无法对任意介质结构性强制）：
+ *   实库适配器必须在**单事务**内完成「校验读取（`SELECT ... FOR UPDATE` / 行版本 CAS）+ 实际写入
+ *   （`INSERT/UPDATE`）」并一起 `COMMIT`，**不得**把写入后置到事务之外。本模块的保证范围限定为：
+ *   「不向临界区注入任意函数」+「内存参考实现（native Map + 内建同步写入）为已验证安全路径」。
  */
 
 /**
- * 内存参考实现：纯同步写入，供单元测试与契约验证。
- * @returns {{ write: (entry: object) => object, get: (exportId: string) => object|null }}
+ * 内存参考介质：纯数据容器，无任何可执行函数。调用方持有引用即可观察写入。
+ * @returns {{ rows: Map<string, object> }}
  */
-export function createMemoryWritebackStore() {
-  /** @type {Map<string, object>} */
-  const rows = new Map();
-  return {
-    write(entry) {
-      rows.set(entry.exportId, entry);
-      return entry;
-    },
-    get(exportId) {
-      return rows.has(exportId) ? { ...rows.get(exportId) } : null;
-    },
-  };
+export function createMemoryWritebackMedium() {
+  return { rows: new Map() };
 }
 
 /**
- * 构造期校验：端口必须提供**同步** `write(entry)`；缺方法或声明为 async / generator 即抛错。
- * @param {object} port
- * @returns {object} 同一端口（便于链式）
+ * 构造/调用前校验：**只接受纯数据容器**。
+ *
+ * 结构性拒绝（非运行时启发式）：
+ *   1. 介质必须是普通对象；
+ *   2. 介质**不得包含任何函数属性**（如 `write`）——写路径内不允许存在可被调用的调用方代码；
+ *   3. `rows` 必须是**原生 Map**（`instanceof Map` 且原型严格为 `Map.prototype`），
+ *      以便账本以内建 `Map.prototype.set` 写入，杜绝被覆写的异步 `set`。
+ *
+ * @param {object} medium
+ * @returns {object} 同一介质
  */
-export function assertSyncWritebackPort(port) {
-  if (!port || typeof port.write !== 'function') {
-    throw new Error('writeback 端口必须提供 write(entry) 方法');
+export function assertWritebackMedium(medium) {
+  if (!medium || typeof medium !== 'object') {
+    throw new Error('回写介质必须是纯数据对象形如 { rows: Map }（不得为函数或空值）');
   }
-  const ctor = port.write.constructor;
-  const name = ctor && ctor.name;
-  if (name === 'AsyncFunction' || name === 'GeneratorFunction' || name === 'AsyncGeneratorFunction') {
-    throw new Error('writeback 端口的 write 必须同步完成（不得为 async / generator）');
+  for (const key of Object.keys(medium)) {
+    if (typeof medium[key] === 'function') {
+      throw new Error(
+        `回写介质不得包含可执行函数（${key}）；只接受纯数据容器，写入由账本自身同步代码完成`,
+      );
+    }
   }
-  return port;
+  const rows = medium.rows;
+  if (!(rows instanceof Map) || Object.getPrototypeOf(rows) !== Map.prototype) {
+    throw new Error('回写介质必须提供原生 Map 作为 rows 容器（不得为子类/覆写对象）');
+  }
+  return medium;
+}
+
+/**
+ * 账本自身的同步写入：调用 Map 内建方法，**不执行任何调用方代码**。
+ * @param {{ rows: Map<string, object> }} medium
+ * @param {object} entry
+ * @returns {object} 同一 entry
+ */
+export function writebackMediumWrite(medium, entry) {
+  Map.prototype.set.call(medium.rows, entry.exportId, entry);
+  return entry;
+}
+
+/**
+ * 账本自身的同步读取（供审计/测试）：返回浅拷贝，调用方改写不影响介质。
+ * @param {{ rows: Map<string, object> }} medium
+ * @param {string} exportId
+ * @returns {object|null}
+ */
+export function writebackMediumRead(medium, exportId) {
+  if (!Map.prototype.has.call(medium.rows, exportId)) return null;
+  return { ...Map.prototype.get.call(medium.rows, exportId) };
 }

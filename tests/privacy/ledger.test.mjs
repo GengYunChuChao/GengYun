@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createConsentStore } from '../../packages/privacy/consent.mjs';
 import { createExportLedger } from '../../packages/privacy/ledger.mjs';
 import { createCommitGate } from '../../packages/privacy/commit-gate.mjs';
+import { createMemoryWritebackMedium } from '../../packages/privacy/writeback.mjs';
 import { PrivacyError } from '../../packages/privacy/errors.mjs';
 import { createAccountProvider, createRecipientStore, VERIFIED_RECIPIENT } from './_fixtures.mjs';
 
@@ -806,14 +807,14 @@ test('R4 显式注入的 commitGate 缺 commit 原语 → 构造即拒绝投入�
 });
 
 test('R4 原子提交不误伤：账号/用途/接收方均未变时正常派发与回写', async () => {
-  let writes = 0;
-  const { ledger, consentStore } = await setup({ writeback: { write() { writes += 1; } } });
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   const sent = await ledger.markSent(rec.id);
   assert.equal(sent.state, 'sent');
   const back = await ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } });
-  assert.equal(writes, 1, '受控端口恰好写入一次');
+  assert.equal(medium.rows.size, 1, '受控介质恰好写入一次');
   assert.deepEqual(back, { written: true, exportId: rec.id }, '只返回写入回执，不返回可后置消费的授权结论');
 });
 
@@ -833,15 +834,8 @@ test('R3 并发旧回调：注销后 guardWriteback 阻断（不依赖 revokeInF
 
 test('R5-1 正向：结果写入在 gate 同步临界区内完成（gate Promise settle 之前，恰好一次）', async () => {
   let gateSettled = false;
-  let writes = 0;
-  const port = {
-    write() {
-      // 端口写入时，guardWriteback 的 Promise 尚未 settle → 证明写入在临界区内完成。
-      assert.equal(gateSettled, false, '端口写入必须在 gate Promise settle 之前执行');
-      writes += 1;
-    },
-  };
-  const { ledger, consentStore } = await setup({ writeback: port });
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
@@ -851,13 +845,15 @@ test('R5-1 正向：结果写入在 gate 同步临界区内完成（gate Promise
     gateSettled = true;
   });
   const ack = await writing;
-  assert.equal(writes, 1, '端口恰好写入一次');
+  assert.equal(gateSettled, true);
+  assert.equal(medium.rows.size, 1, '受控介质恰好写入一次');
+  assert.equal(ledger.getWriteback(rec.id).exportId, rec.id);
   assert.deepEqual(ack, { written: true, exportId: rec.id });
 });
 
-test('R5-2 负向：校验前撤回用途 → 端口零写入并抛 OBJECT_UNAVAILABLE', async () => {
-  let writes = 0;
-  const { ledger, consentStore } = await setup({ writeback: { write() { writes += 1; } } });
+test('R5-2 负向：校验前撤回用途 → 介质零写入并抛 OBJECT_UNAVAILABLE', async () => {
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
@@ -867,12 +863,12 @@ test('R5-2 负向：校验前撤回用途 → 端口零写入并抛 OBJECT_UNAVA
     () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } }),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
   );
-  assert.equal(writes, 0, '撤回后端口零写入');
+  assert.equal(medium.rows.size, 0, '撤回后介质零写入');
 });
 
-test('R5-2 负向：校验前注销（deletion_pending + authEpoch=2）→ 端口零写入并抛 ACCOUNT_INACTIVE', async () => {
-  let writes = 0;
-  const { ledger, consentStore, account } = await setup({ writeback: { write() { writes += 1; } } });
+test('R5-2 负向：校验前注销（deletion_pending + authEpoch=2）→ 介质零写入并抛 ACCOUNT_INACTIVE', async () => {
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore, account } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
@@ -882,7 +878,7 @@ test('R5-2 负向：校验前注销（deletion_pending + authEpoch=2）→ 端�
     () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
-  assert.equal(writes, 0, '注销后端口零写入');
+  assert.equal(medium.rows.size, 0, '注销后介质零写入');
 });
 
 /** 复刻监工探针：gate 先同步完成参考 verify+apply，随后**仅**暂停异步返回（校验与 apply 之间未插 await）。 */
@@ -1009,7 +1005,20 @@ test('R5-3 边界：gate 同步 verify+apply 后仅暂停异步返回，期间�
   assert.ok(events.indexOf('write') < events.indexOf('gate-returned'), '写入必须早于 gate 返回');
 });
 
-test('R5-4 反向保护：注入的 writeback 端口缺 write → 构造即拒绝（不静默降级）', () => {
+test('R5-4 反向保护：注入含函数属性的介质（如 write）→ 构造即拒绝（不静默降级）', () => {
+  assert.throws(
+    () =>
+      createExportLedger({
+        consentStore: createConsentStore(),
+        account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
+        recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+        writeback: { rows: new Map(), write() {} },
+      }),
+    /不得包含可执行函数/,
+  );
+});
+
+test('R5-4 反向保护：注入缺原生 Map 的介质 → 构造即拒绝（不静默降级）', () => {
   assert.throws(
     () =>
       createExportLedger({
@@ -1018,183 +1027,178 @@ test('R5-4 反向保护：注入的 writeback 端口缺 write → 构造即拒�
         recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
         writeback: {},
       }),
-    /write\(entry\)/,
+    /原生 Map/,
   );
 });
 
-test('R5-4 反向保护：注入的 writeback 端口 write 为 async → 构造即拒绝（不静默降级）', () => {
+test('R5-4 反向保护：rows 为 Map 子类（可覆写 set）→ 构造即拒绝（不静默降级）', () => {
+  class EvilMap extends Map {}
   assert.throws(
     () =>
       createExportLedger({
         consentStore: createConsentStore(),
         account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
         recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
-        writeback: {
-          async write() {},
-        },
+        writeback: { rows: new EvilMap() },
       }),
-    /同步/,
+    /原生 Map/,
   );
 });
 
-// ---- 修复轮 6 · P1：不得对「已启动的异步任务」事后判错 ----
+// ---- 修复轮 7 · P1：写入口不得是任意用户函数（结构性保证，非 constructor.name 猜测） ----
+
+/** 构造 ledger 依赖（供「注入即被拒绝」的断言使用）。 */
+function freshLedgerArgs(overrides = {}) {
+  return {
+    consentStore: createConsentStore(),
+    account: createAccountProvider({ u1: { state: 'active', authEpoch: 1 } }),
+    recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
+    ...overrides,
+  };
+}
 
 /**
- * 复刻监工探针的 **延迟保存攻击**：普通函数返回 `pending.then(() => save())`。
- * 旧实现（任意回调）会先调用它（启动保存链）再判错；新实现不再接受任意回调，
- * 该回调根本不会被调用 —— 释放 pending 后保存计数仍为 0。
+ * 复刻监工探针的**延迟保存攻击**：`{ write: entry => pending.then(() => save(entry)) }`。
+ * 其 `write.constructor.name === 'Function'`——修复轮 6 的 `constructor.name` 检查**放行**它；
+ * 且一旦被调用即启动保存链，释放 `pending` 后仍会落库。本轮要求该介质在**构造期**即被拒绝。
  */
-function createDelayedSaveAttack() {
-  let releasePending = () => {};
+function createDelayedSaveProbe() {
+  let release = () => {};
   const pending = new Promise((res) => {
-    releasePending = res;
+    release = res;
   });
-  const state = { attackCalls: 0, saves: 0 };
-  const attack = () => {
-    state.attackCalls += 1;
-    return pending.then(() => {
-      state.saves += 1;
-    });
+  const state = { calls: 0, saves: 0 };
+  const probe = {
+    write: (entry) => {
+      state.calls += 1;
+      return pending.then(() => {
+        state.saves += 1;
+      });
+    },
   };
-  return { attack, state, release: () => releasePending() };
+  return { probe, state, release: () => release() };
 }
 
 const settleMicrotasks = () => new Promise((r) => setTimeout(r, 0));
 
-test('R6-1 撤回后：旧式延迟写回调不被调用 → 释放 pending 后保存计数为 0', async () => {
-  let portWrites = 0;
-  const { ledger, consentStore } = await setup({ writeback: { write() { portWrites += 1; } } });
+test('R7-1 公开注入路径传入「普通函数返回延迟 Promise」→ 构造即拒绝，实际 save=0', async () => {
+  const { probe, state, release } = createDelayedSaveProbe();
+  assert.throws(
+    () => createExportLedger(freshLedgerArgs({ writeback: probe })),
+    /不得包含可执行函数/,
+    '含函数的回写介质必须在构造期被拒绝（非调用后判 Promise）',
+  );
+  release(); // 释放 pending：若该函数曾被接入写路径，此处会落库
+  await settleMicrotasks();
+  await settleMicrotasks();
+  assert.equal(state.calls, 0, '攻击函数不得被调用');
+  assert.equal(state.saves, 0, '释放 pending 后实际 save 计数必须为 0');
+});
+
+test('R7-2 撤回 recording + revokeInFlight：攻击注入被拒，释放 pending 后 save=0，记录 failed', async () => {
+  const { probe, state, release } = createDelayedSaveProbe();
+  assert.throws(
+    () => createExportLedger(freshLedgerArgs({ writeback: probe })),
+    /不得包含可执行函数/,
+  );
+
+  // 安全内存路径：撤回 + revokeInFlight 使记录 failed，且零写入
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
 
-  const atk = createDelayedSaveAttack();
-  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' }); // 校验前撤回
-  await assert.rejects(
-    () =>
-      ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' }, write: atk.attack }),
-    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
-  );
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
   const revoked = ledger.revokeInFlight({ userId: 'u1', purpose: 'recording' });
   assert.equal(revoked, 1);
   assert.equal(ledger.get(rec.id).state, 'failed');
 
-  atk.release(); // 释放 pending：若旧式回调曾被调用，此处会落库
+  release();
   await settleMicrotasks();
   await settleMicrotasks();
-  assert.equal(atk.state.attackCalls, 0, '任意 write 回调不得被调用（契约已移除）');
-  assert.equal(atk.state.saves, 0, '释放 pending 后保存计数必须为 0');
-  assert.equal(portWrites, 0, '受控端口零写入');
+  assert.equal(state.calls, 0, '攻击函数不得被调用');
+  assert.equal(state.saves, 0, '释放 pending 后实际 save 计数必须为 0');
+  assert.equal(medium.rows.size, 0, '安全内存路径零写入');
   assert.equal(ledger.getWriteback(rec.id), null, '无持久化效果');
 });
 
-test('R6-2 注销后：旧式延迟写回调不被调用 → 释放 pending 后保存计数为 0', async () => {
-  let portWrites = 0;
-  const { ledger, consentStore, account } = await setup({ writeback: { write() { portWrites += 1; } } });
+test('R7-3 账号 deletion_pending + auth_epoch 递增：攻击注入被拒，释放 pending 后 save=0，记录 failed', async () => {
+  const { probe, state, release } = createDelayedSaveProbe();
+  assert.throws(
+    () => createExportLedger(freshLedgerArgs({ writeback: probe })),
+    /不得包含可执行函数/,
+  );
+
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore, account } = await setup({ writeback: medium });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
 
-  const atk = createDelayedSaveAttack();
-  account.set('u1', { state: 'deletion_pending', authEpoch: 2 }); // 校验前注销
+  account.set('u1', { state: 'deletion_pending', authEpoch: 2 });
   await assert.rejects(
-    () =>
-      ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' }, write: atk.attack }),
+    () => ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } }),
     (err) => err instanceof PrivacyError && err.code === 'ACCOUNT_INACTIVE',
   );
   ledger.revokeInFlight({ userId: 'u1' });
   assert.equal(ledger.get(rec.id).state, 'failed');
 
-  atk.release();
+  release();
   await settleMicrotasks();
   await settleMicrotasks();
-  assert.equal(atk.state.attackCalls, 0, '任意 write 回调不得被调用（契约已移除）');
-  assert.equal(atk.state.saves, 0, '释放 pending 后保存计数必须为 0');
-  assert.equal(portWrites, 0, '受控端口零写入');
-  assert.equal(ledger.getWriteback(rec.id), null, '无持久化效果');
+  assert.equal(state.calls, 0, '攻击函数不得被调用');
+  assert.equal(state.saves, 0, '释放 pending 后实际 save 计数必须为 0');
+  assert.equal(medium.rows.size, 0, '安全内存路径零写入');
 });
 
-test('R6-3 正向：合法结果经受控端口在同一临界区内恰好写入一次，无延迟落库', async () => {
-  let portWrites = 0;
-  let lastEntry = null;
-  const port = {
-    write(entry) {
-      portWrites += 1;
-      lastEntry = entry;
-    },
-  };
-  const { ledger, consentStore } = await setup({ writeback: port });
-  await grantVoiceConsent(consentStore);
-  const rec = await ledger.reserve(baseExport);
-  await ledger.markSent(rec.id);
-
-  const atk = createDelayedSaveAttack();
-  const ack = await ledger.guardWriteback({
-    exportId: rec.id,
-    userId: 'u1',
-    result: { asr: 'ok' },
-    write: atk.attack, // 旧式回调：新契约下不得被调用
-  });
-  atk.release();
-  await settleMicrotasks();
-  await settleMicrotasks();
-
-  assert.equal(portWrites, 1, '受控端口恰好写入一次');
-  assert.equal(atk.state.attackCalls, 0, '旧式 write 回调不得被调用');
-  assert.equal(atk.state.saves, 0, '不存在延迟落库');
-  assert.equal(lastEntry.exportId, rec.id);
-  assert.deepEqual(lastEntry.result, { asr: 'ok' });
-  assert.deepEqual(ack, { written: true, exportId: rec.id });
-});
-
-test('R6-4 复刻监工探针：校验通过后仅暂停异步返回，期间撤回并 revokeInFlight → 释放 pending 保存计数为 0', async () => {
+test('R7-4 正向：合法数据介质写入在同一同步边界内恰好一次', async () => {
+  const medium = createMemoryWritebackMedium();
   const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
   const consentStore = createConsentStore();
   const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
-  let portWrites = 0;
-  const pausable = createSyncThenPauseGate({
-    account,
-    consentStore,
-    recipientStore,
-    events: [],
-    onApply: () => {
-      portWrites += 1;
-    },
-  });
+  const pausable = createSyncThenPauseGate({ account, consentStore, recipientStore, events: [] });
   const ledger = createExportLedger({
     consentStore,
     account,
     recipientStore,
     commitGate: pausable.gate,
+    writeback: medium,
   });
   await grantVoiceConsent(consentStore);
   const rec = await ledger.reserve(baseExport);
   await ledger.markSent(rec.id);
 
-  const atk = createDelayedSaveAttack();
-  pausable.setTrace(true);
-  pausable.pauseNext();
-  const writing = ledger.guardWriteback({
-    exportId: rec.id,
-    userId: 'u1',
-    result: { asr: 'ok' },
-    write: atk.attack,
-  });
-  await settleMicrotasks(); // 校验+apply 已同步完成，gate 卡在异步返回
-
-  // 监工探针：暂停期间撤回 + revokeInFlight
-  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
-  ledger.revokeInFlight({ userId: 'u1', purpose: 'recording' });
-  assert.equal(ledger.get(rec.id).state, 'failed');
-
-  pausable.release(); // 释放 gate 的异步返回
+  pausable.pauseNext(); // gate 同步 verify+apply 后仅暂停异步返回
+  const writing = ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } });
+  await settleMicrotasks();
+  assert.equal(medium.rows.size, 1, '暂停异步返回期间，写入已在同一同步边界内恰好一次');
+  pausable.release();
   const ack = await writing;
+  assert.equal(medium.rows.size, 1, '释放后不得再发生第二次写入');
+  assert.deepEqual(ack, { written: true, exportId: rec.id });
+  assert.deepEqual(ledger.getWriteback(rec.id).result, { asr: 'ok' });
+});
 
-  atk.release(); // 释放攻击的 pending
+test('R7-5 复刻监工探针：{ write: entry => pending.then(...) } 注入被拒（含 rows+函数混合介质）save=0', async () => {
+  const { probe, state, release } = createDelayedSaveProbe();
+
+  // (1) 纯函数介质：构造即拒绝
+  assert.throws(
+    () => createExportLedger(freshLedgerArgs({ writeback: probe })),
+    /不得包含可执行函数/,
+    '监工探针原形（普通函数）必须被构造期拒绝',
+  );
+  // (2) 混合介质：既有原生 rows、又夹带函数 → 仍拒绝（不存在「借 rows 混入函数」的旁路）
+  assert.throws(
+    () => createExportLedger(freshLedgerArgs({ writeback: { rows: new Map(), write: probe.write } })),
+    /不得包含可执行函数/,
+    '混合介质同样必须被构造期拒绝',
+  );
+
+  release();
   await settleMicrotasks();
   await settleMicrotasks();
-  assert.deepEqual(ack, { written: true, exportId: rec.id }, '提交在撤回之前完成，返回写入回执');
-  assert.equal(portWrites, 1, '本次提交只发生一次临界区内写入');
-  assert.equal(atk.state.attackCalls, 0, '旧式 write 回调不得被调用');
-  assert.equal(atk.state.saves, 0, '释放 pending 后保存计数必须为 0（无越界落库）');
+  assert.equal(state.calls, 0, '攻击函数不得被调用');
+  assert.equal(state.saves, 0, '释放 pending 后实际 save 计数必须为 0');
 });
