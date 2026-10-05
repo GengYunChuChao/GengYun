@@ -28,9 +28,10 @@
 .hero__badge {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
+  /* 随字体放大，且以 padding 允许文字换行时自然撑高，避免两行文字溢出圆角框 */
+  min-height: calc(26px * var(--font-scale, 1));
   margin-top: 24rpx;
-  padding: 0 22rpx;
+  padding: 6rpx 22rpx;
   border-radius: 999rpx;
   font-size: calc(16px * var(--font-scale, 1));
   font-weight: 600;

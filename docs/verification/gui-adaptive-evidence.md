@@ -327,4 +327,25 @@ node --test tests/ui-adaptive.test.mjs
 
 图标类 `font-size`（`.state__icon` 72rpx、`.mode__icon` 44rpx）不参与缩放，避免 emoji 变形。
 
+### 7.8 适配生效验证与随之发现的破版（模拟器）
+
+作者在开发者工具模拟器中调大字号后编译，界面字号随之放大、标题与描述换行——这是**适配生效的直接证据**（7.1–7.4 走查时字号为裸 `px`，同样操作不会产生任何变化）。
+
+![模拟器字号放大](assets/gui-adaptive-250c4d4/17-simulator-font-scale.png)
+
+**该截图同时暴露一处破版**：首页「游客浏览 · 登录后可保存记录」徽章在两行文字下，第二行文字掉到圆角框之外。原因是 `.hero__badge` 原为 `min-height: 26px` 固定值加 `padding: 0 22rpx`（上下无内边距），字号放大后文字换行而容器高度不变。
+
+**修复**（已提交）：
+
+| 选择器 | 原值 | 现值 |
+| --- | --- | --- |
+| `.hero__badge` | `min-height: 26px; padding: 0 22rpx` | `min-height: calc(26px * var(--font-scale, 1)); padding: 6rpx 22rpx` |
+| `.badge` | `min-height: 24px; padding: 0 20rpx` | `min-height: calc(24px * var(--font-scale, 1)); padding: 4rpx 20rpx` |
+
+原则：标签类容器**以 padding 允许文字换行时自然撑高**，而不是靠固定高度硬撑。`tests/ui-adaptive.test.mjs` 已加断言锁定这两处的高度与内边距写法。
+
+其余固定尺寸经排查无风险：`.entry__icon`（96rpx）与 `.mode__icon`（88rpx）不含文字；`.state-view` 内无 `min-height`。
+
+> 本节证据来自**模拟器**。真机上的微信字体设置适配仍待实测，见 7.7 结语。
+
 > 7.1–7.4 的真机走查证据是在**本节实现之前**取得的，当时系统显示大小最大档已使界面整体放大且不破版。微信字体设置适配实现后，**该档走查结论仍成立**（两种机制最终都体现为元素等比放大），但适配路径本身**尚未经真机实测**，保持待验证。

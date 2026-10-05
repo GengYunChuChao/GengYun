@@ -89,6 +89,14 @@ test('五个 Tab 注册完整且均在页面列表中', () => {
 });
 
 test('五个页面均注册统一状态组件', () => {
+  // 标签类容器：文字在字号放大后会换行，须能自然撑高而不溢出圆角
+  const heroWxss = read('miniprogram/pages/home/home.wxss');
+  const heroBadge = heroWxss.slice(heroWxss.indexOf('.hero__badge'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__badge')));
+  assert.ok(/min-height:\s*calc\(26px\s*\*\s*var\(--font-scale/.test(heroBadge), '.hero__badge 高度未随字体放大');
+  assert.ok(!/padding:\s*0\s+22rpx/.test(heroBadge), '.hero__badge 上下无内边距，换行会溢出圆角框');
+  const badge = appWxss.slice(appWxss.indexOf('.badge {'), appWxss.indexOf('}', appWxss.indexOf('.badge {')));
+  assert.ok(/min-height:\s*calc\(24px\s*\*\s*var\(--font-scale/.test(badge), '.badge 高度未随字体放大');
+  assert.ok(!/padding:\s*0\s+20rpx/.test(badge), '.badge 上下无内边距，换行会溢出');
   for (const page of appJson.pages) {
     const cfg = JSON.parse(read(`miniprogram/${page}.json`));
     assert.ok(cfg.usingComponents && cfg.usingComponents['state-view'], `${page} 未注册 state-view`);
