@@ -39,6 +39,28 @@
     </view>
   </block>
 
+  <view class="section-title">显示与字号</view>
+  <view class="card">
+    <view class="card-title">界面字号</view>
+    <view class="font-choices">
+      <view
+        wx:for="{{fontChoices}}"
+        wx:key="value"
+        class="font-choice {{item.value === fontScale ? 'font-choice--on' : ''}}"
+        style="--font-scale: {{item.value}}"
+        data-value="{{item.value}}"
+        bindtap="onFontScaleTap"
+      >
+        <text class="font-choice__label">{{item.label}}</text>
+        <text wx:if="{{item.value === fontScale}}" class="font-choice__mark">当前</text>
+      </view>
+    </view>
+    <view class="card-text">
+      文字太小看不清时，可在此放大。微信「设置 → 通用 → 字体大小」不会改变本应用字号，
+      因为小程序读不到该设置。
+    </view>
+  </view>
+
   <view class="section-title">隐私说明</view>
   <view class="card">
     <view class="card-text">

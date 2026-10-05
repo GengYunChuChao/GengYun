@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const appJson = JSON.parse(read('miniprogram/app.json'));
+const appJs = read('miniprogram/app.js');
 const appWxss = read('miniprogram/app.wxss');
 const stateJs = read('miniprogram/components/state-view/state-view.js');
 
@@ -88,18 +89,47 @@ test('五个 Tab 注册完整且均在页面列表中', () => {
   }
 });
 
-test('五个页面均注册统一状态组件', () => {
+test('字号适配：微信设置回落、应用内开关、标签容器不溢出', () => {
   // 标签类容器：文字在字号放大后会换行，须能自然撑高而不溢出圆角
   const heroWxss = read('miniprogram/pages/home/home.wxss');
   const heroBadge = heroWxss.slice(heroWxss.indexOf('.hero__badge'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__badge')));
   assert.ok(/min-height:\s*calc\(26px\s*\*\s*var\(--font-scale/.test(heroBadge), '.hero__badge 高度未随字体放大');
   assert.ok(!/padding:\s*0\s+22rpx/.test(heroBadge), '.hero__badge 上下无内边距，换行会溢出圆角框');
-  const badge = appWxss.slice(appWxss.indexOf('.badge {'), appWxss.indexOf('}', appWxss.indexOf('.badge {')));
+  const badgeStart = appWxss.indexOf(String.fromCharCode(10) + '.badge {');
+  const badge = appWxss.slice(badgeStart, appWxss.indexOf('}', badgeStart));
   assert.ok(/min-height:\s*calc\(24px\s*\*\s*var\(--font-scale/.test(badge), '.badge 高度未随字体放大');
   assert.ok(!/padding:\s*0\s+20rpx/.test(badge), '.badge 上下无内边距，换行会溢出');
+
+  // 应用内字号开关：真机上微信 fontSizeSetting 不反映用户设置，故必须提供可控途径
+  const fs = read('miniprogram/utils/font-scale.js');
+  assert.ok(/FONT_SCALE_KEY\s*=\s*'gengyun_font_scale'/.test(appJs), 'app.js 未定义字号存储键');
+  assert.ok(/function readSavedScale/.test(appJs), 'app.js 未读取应用内设置');
+  assert.ok(appJs.indexOf('const saved = readSavedScale()') < appJs.indexOf('info.fontSizeSetting'), '应用内设置必须优先于微信设置');
+  assert.ok(/function setFontScale/.test(fs), '缺少应用内字号写入能力');
+  assert.ok(/wx\.setStorageSync\(FONT_SCALE_KEY/.test(fs), 'setFontScale 未持久化');
+  assert.ok(/MAX_FONT_SCALE\s*=\s*1\.3/.test(fs), 'font-scale.js 封顶值与 app.js 不一致');
+
+  const profileJs = read('miniprogram/pages/profile/profile.js');
+  const profileWxml = read('miniprogram/pages/profile/profile.wxml');
+  const profileWxss = read('miniprogram/pages/profile/profile.wxss');
+  assert.ok(profileJs.includes('onFontScaleTap'), '我的页面缺少字号选择处理');
+  assert.ok(profileJs.includes('setFontScale'), '我的页面未调用 setFontScale');
+  assert.ok(/font-choices/.test(profileWxml), '我的页面缺少字号选择 UI');
+  assert.ok(/bindtap="onFontScaleTap"/.test(profileWxml), '字号选项未绑定点击');
+  assert.ok(/font-choice--on/.test(profileWxml), '选中态未用独立类名标记');
+  assert.ok(/min-height:\s*var\(--tap-min\)/.test(profileWxss), '字号按钮触控区不足 44px');
+  // 选中态不能只靠颜色区分（无障碍要求）
+  assert.ok(/font-choice__mark/.test(profileWxml) && /font-choice__mark/.test(profileWxss), '选中态缺少文字标记');
   for (const page of appJson.pages) {
     const cfg = JSON.parse(read(`miniprogram/${page}.json`));
     assert.ok(cfg.usingComponents && cfg.usingComponents['state-view'], `${page} 未注册 state-view`);
+  }
+});
+
+test('五个页面均注册统一状态组件', () => {
+  for (const page of appJson.pages) {
+    const cfg = JSON.parse(read('miniprogram/' + page + '.json'));
+    assert.ok(cfg.usingComponents && cfg.usingComponents['state-view'], page + ' 未注册 state-view');
   }
 });
 

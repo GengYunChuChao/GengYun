@@ -17,8 +17,38 @@ const session = require('./utils/session')
 const MAX_FONT_SCALE = 1.3
 /** 低于该值视为异常，忽略并按 1 处理 */
 const MIN_FONT_SCALE = 1
+/** 应用内字号设置的存储键 */
+const FONT_SCALE_KEY = 'gengyun_font_scale'
 
+/** 应用内可选档位（标准／大／特大），与「我的」页面的选择项一一对应 */
+const FONT_SCALE_CHOICES = [1, 1.15, 1.3]
+
+function clampScale(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return 1
+  if (value < MIN_FONT_SCALE) return 1
+  return Math.min(value, MAX_FONT_SCALE)
+}
+
+/** 读取应用内显式设置；未设置过返回 null */
+function readSavedScale() {
+  try {
+    const v = wx.getStorageSync(FONT_SCALE_KEY)
+    return v === '' || v === null || v === undefined ? null : clampScale(v)
+  } catch (err) {
+    return null
+  }
+}
+
+/**
+ * 计算生效的字号缩放系数。
+ * 优先级：应用内显式设置 > 微信 fontSizeSetting > 1。
+ *
+ * 微信的「设置→通用→字体大小」不会反映到 fontSizeSetting（真机实测恒为 1，
+ * 模拟器才有调试项），因此真机上唯一可控途径是应用内设置。
+ */
 function readFontScale() {
+  const saved = readSavedScale()
+  if (saved !== null) return saved
   let setting = null
   try {
     const info = wx.getSystemInfoSync()
@@ -26,9 +56,7 @@ function readFontScale() {
   } catch (err) {
     return 1
   }
-  if (typeof setting !== 'number' || !isFinite(setting)) return 1
-  if (setting < MIN_FONT_SCALE) return 1
-  return Math.min(setting, MAX_FONT_SCALE)
+  return clampScale(setting)
 }
 
 App({
@@ -44,3 +72,5 @@ App({
     this.globalData.fontScale = readFontScale()
   }
 })
+
+module.exports = { MAX_FONT_SCALE, FONT_SCALE_CHOICES, FONT_SCALE_KEY, readFontScale, readSavedScale }
