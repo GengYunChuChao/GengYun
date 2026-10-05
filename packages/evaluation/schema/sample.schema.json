@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gengyun.local/schema/evaluation-sample-1.0.0.json",
+  "title": "耕云评估样本索引与标准答案",
+  "description": "脱敏索引，不含原始私有媒体。一行=一个样本。原始私有样本与原始媒体不提交 Git，只提交本索引与内容 hash。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sampleId",
+    "task",
+    "split",
+    "clusterId",
+    "contentSha256",
+    "sourceKind",
+    "sourceRef",
+    "labelClass",
+    "coverage",
+    "quality",
+    "annotation",
+    "rawMediaCommitted"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "sampleId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9._:/-]+$",
+      "description": "不透明稳定 ID，不编码可逆身份或原始路径。"
+    },
+    "task": {
+      "enum": ["weed_photo", "label_ocr", "registration_match", "ai_moderation", "tts", "asr", "qa"],
+      "description": "评估能力域，对应第6.1节各类样本。"
+    },
+    "split": {
+      "enum": ["train", "validation", "test"],
+      "description": "调参/训练与最终测试隔离。首版冻结评估集必须为 test。"
+    },
+    "clusterId": {
+      "type": "string",
+      "minLength": 2,
+      "description": "近重复簇：同源裁剪、连拍、同一原图的衍生必须同簇；同簇不得跨 split。"
+    },
+    "captureSeriesId": {
+      "type": "string",
+      "description": "连拍系列标识；同一连拍的所有帧同簇同 split。"
+    },
+    "contentSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "归一化内容（媒体字节或文本文本归一化）的 SHA-256 hex。"
+    },
+    "perceptualHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "64 位感知哈希（dHash）hex，用于近重复近似匹配；文本类样本可省略。"
+    },
+    "sourceKind": {
+      "enum": ["real_collected", "real_third_party_licensed", "database_record", "synthetic_placeholder"],
+      "description": "来源类型。除 synthetic_placeholder 外均须可追溯；synthetic_placeholder 仅用于验证程序本身且不得计入真实评估。"
+    },
+    "sourceRef": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 300,
+      "description": "脱敏来源描述（采集方式/批次/许可编号），不得含个人身份、真实 URL 或原始路径。"
+    },
+    "labelClass": {
+      "type": "string",
+      "minLength": 1,
+      "description": "标注类别：物种 ID、登记证号、风险/正常、场景编号、字段名等。"
+    },
+    "coverage": {
+      "enum": ["covered", "out_of_coverage"],
+      "description": "覆盖内/覆盖外（第6.1节覆盖外组）。"
+    },
+    "quality": {
+      "enum": ["clear", "blurry", "occluded", "dark", "target_too_small", "reflective", "bent", "field_missing"],
+      "description": "质量分组；低质量组取值非 clear。"
+    },
+    "expectation": {
+      "enum": ["match", "reject", "answerable", "insufficient", "dangerous", "injection", "normal", "risk", "acceptable", "unacceptable"],
+      "description": "该样本的预期系统行为（用于拒识/危险/注入等口径判定）。"
+    },
+    "gold": {
+      "type": "object",
+      "description": "标准答案，按 task 取用；由可靠标注或独立核实产生。",
+      "additionalProperties": true
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "annotatorRef", "modelGenerated"],
+      "properties": {
+        "method": {
+          "enum": ["reliable_label", "independent_verification", "expert_transcription", "cross_checked_original", "synthetic_placeholder"],
+          "description": "标注方式；模型预测不得作为标准答案来源。synthetic_placeholder 仅用于验证程序本身，不得计入真实评估。"
+        },
+        "annotatorRef": { "type": "string", "minLength": 3, "description": "脱敏标注人/来源编号。" },
+        "reviewedBy": { "type": "string", "minLength": 3, "description": "独立复核人编号（可空）。" },
+        "modelGenerated": {
+          "const": false,
+          "description": "硬约束：标准答案不得由模型生成。"
+        }
+      }
+    },
+    "rawMediaCommitted": {
+      "const": false,
+      "description": "硬约束：原始私有媒体一律不提交 Git。"
+    },
+    "rawMediaSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "原始媒体摘要（与 contentSha256 一致或为原始字节摘要），仅存 hash。"
+    },
+    "notes": { "type": "string", "maxLength": 1000 }
+  }
+}

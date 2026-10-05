@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gengyun.local/schema/evaluation-run-report-1.0.0.json",
+  "title": "耕云评估运行报告（预期输出结构）",
+  "description": "评估命令的结构化输出。最终验收只使用经冻结清单校验的独立 test 集；dataKind != real_frozen、冻结校验未通过、存在样本缺口或预测不完整时，isRealEvaluation=false 且所有门禁不得标记为 pass。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "dataKind",
+    "isRealEvaluation",
+    "generatedAt",
+    "indexSha256",
+    "testIndexSha256",
+    "predictionSha256",
+    "frozenVerified",
+    "frozenVerification",
+    "splits",
+    "tasks",
+    "gaps",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "dataKind": {
+      "enum": ["real_frozen", "synthetic_placeholder", "mixed", "no_test_split"],
+      "description": "本次输入（只统计 split=test 的样本）的数据性质。只有 real_frozen 且冻结校验通过、样本达标、预测完整才可能产生真实结论。"
+    },
+    "isRealEvaluation": {
+      "type": "boolean",
+      "description": "是否构成真实评估（真实冻结 test 集 + 冻结清单校验通过 + 样本达标 + 预测完整）。false 时不得作为达标证据。"
+    },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "indexSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "testIndexSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$", "description": "冻结 test 集（按索引顺序）的规范化 SHA-256；须与冻结清单 indexSha256 一致。" },
+    "predictionSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "frozenIndexVersion": { "type": "string", "description": "冻结样本集版本号（来自已核实冻结清单）。" },
+    "frozenVerified": { "type": "boolean", "description": "冻结清单是否与 test 集一致（hash/版本/记录数/冻结时间均核对通过）。" },
+    "frozenVerification": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["verified", "reasons"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "indexSha256": { "type": ["string", "null"] },
+        "manifestSha256": { "type": ["string", "null"] }
+      }
+    },
+    "coverageBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "承诺覆盖清单与冻结清单的绑定校验；verified=false 表示覆盖清单未绑定/被缩减或修改，覆盖达标按未满足计。",
+      "required": ["verified", "reasons"],
+      "properties": {
+        "verified": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "boundClasses": { "type": ["array", "null"], "items": { "type": "string" } },
+        "coverageSha256": { "type": ["string", "null"] },
+        "basisRef": { "type": ["string", "null"] },
+        "scopeBasis": {
+          "type": ["object", "null"],
+          "description": "GY-I03 承诺范围口径的映射依据（展示用中文组名 → 规范物种 ID）。范围校验一律以规范 ID 比较。",
+          "additionalProperties": true,
+          "properties": {
+            "basisRef": { "type": ["string", "null"] },
+            "catalogRef": { "type": ["string", "null"] },
+            "catalogVersion": { "type": ["string", "null"] },
+            "catalogSha256": { "type": ["string", "null"] },
+            "sourceGroups": { "type": ["array", "null"], "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "splits": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "按 split 的样本统计；最终验收只用 test（train/validation 另列）。",
+      "properties": {
+        "train": { "type": "integer", "minimum": 0 },
+        "validation": { "type": "integer", "minimum": 0 },
+        "test": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "duplicatesExcluded": { "type": "integer", "minimum": 0, "description": "按独立对象/近重复簇去重排除的记录数（不计入评分与缺口）。" },
+    "coverageManifestPresent": { "type": "boolean", "description": "是否提供了冻结覆盖清单（逐类达标的推断前提）。" },
+    "predictionEvidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["expected", "present", "missing", "invalid", "extra", "complete"],
+      "properties": {
+        "expected": { "type": "integer", "minimum": 0 },
+        "present": { "type": "integer", "minimum": 0 },
+        "missing": { "type": "array", "items": { "type": "string" } },
+        "invalid": { "type": "array" },
+        "extra": { "type": "array", "items": { "type": "string" } },
+        "complete": { "type": "boolean" },
+        "byTask": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sampleCount", "metrics", "gates", "gateStatus"],
+        "properties": {
+          "sampleCount": { "type": "integer", "minimum": 0 },
+          "scoredCount": { "type": "integer", "minimum": 0, "description": "实际参与评分的样本数（预测完整且结构合法的子集）。" },
+          "predictionEvidence": { "type": "object", "additionalProperties": true },
+          "metrics": { "type": "object", "additionalProperties": true },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["metric", "observed", "target", "direction", "status", "claimable"],
+              "properties": {
+                "metric": { "type": "string" },
+                "observed": { "type": ["number", "null"] },
+                "target": { "type": "number" },
+                "direction": { "enum": ["gte", "lte", "eq"] },
+                "status": { "enum": ["pass", "fail", "not_evaluated"] },
+                "claimable": { "type": "boolean" },
+                "reason": { "type": "string" }
+              }
+            }
+          },
+          "gateStatus": { "enum": ["pass", "fail", "not_evaluated"] }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["task", "bucket", "required", "present", "missing"],
+        "properties": {
+          "task": { "type": "string" },
+          "bucket": { "type": "string" },
+          "required": { "type": "integer", "minimum": 0 },
+          "present": { "type": "integer", "minimum": 0 },
+          "missing": { "type": "integer", "minimum": 0 },
+          "duplicatesExcluded": { "type": "integer", "minimum": 0 },
+          "coverageManifestPresent": { "type": "boolean" },
+          "promisedClasses": { "type": "array", "items": { "type": "string" } },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}
