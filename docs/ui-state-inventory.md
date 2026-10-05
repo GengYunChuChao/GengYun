@@ -107,15 +107,15 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 界面自动化 | `node --test tests/ui-adaptive.test.mjs` → 14 项 PASS |
 | 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 4 项 PASS |
 | 布局静态核算 | `node tools/verify-layout.mjs` → 五档视口 PASS |
-| 五 Tab 导航 | 作者本机开发者工具逐一点击，五个页面均可打开 |
-| 截图 | **待补**。本项约定证据包含五 Tab 导航与字号走查的界面材料，监工 2026-10-04 明确不得由作者自行取消；材料清单见 `gui-adaptive-evidence.md` 第 7 节 |
+| 五 Tab 导航 | **真机预览逐一导航，五个页面均可打开**，截图已入库 |
+| 截图 | **五 Tab 真机截图已入库**（`assets/gui-adaptive-250c4d4/`，绑定提交 250c4d4）；工具详情面板与编译提示待补，放大字号实测未生效 |
 
 **未完成的走查项**：
 
 | 项目 | 原因 | 归属 |
 | --- | --- | --- |
-| 窄视口（320／360px）布局实测 | 作者本机模拟器机型列表无窄屏设备 | 本项待验证（执行环节归 [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)） |
-| 放大字号走查 | 字号改为绝对 px 后，开发者工具「字体大小」调试项（作用于 rpx 缩放比）无可见变化 | 本项待验证（执行环节归 [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)） |
+| 窄视口（320／360px）布局实测 | 真机机型逻辑宽度未知 | 本项待验证（执行环节归 [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)） |
+| 放大字号走查 | 开发者工具字号项无变化；真机将微信「设置→通用→字体大小」调至最大后界面亦未变 | 本项待验证（执行环节归 [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)） |
 | 登录态界面 | 登录能力依赖 GY-I04，尚未开始 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) |
 
 数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。
