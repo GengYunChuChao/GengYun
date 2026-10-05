@@ -1,10 +1,10 @@
 name: Access verification guards
 on:
   pull_request:
-    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tests/tencent-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tests/tencent-live.test.mjs', 'tools/verify-llm-live.mjs', 'tests/llm-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
   push:
     branches: [main]
-    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tests/tencent-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
+    paths: ['docs/verification/**', 'tools/verify-env.mjs', 'tools/ai-config.mjs', 'tools/prepare-ai-verification.mjs', 'tools/check-ai-sdk.cjs', 'tools/verify-tokenhub.mjs', 'tools/verify-tencent-live.mjs', 'tests/tencent-live.test.mjs', 'tools/verify-llm-live.mjs', 'tests/llm-live.test.mjs', 'tests/tokenhub-account.test.mjs', 'tests/ai-config.test.mjs', 'tools/verify-wechat-account.cjs', 'tools/verify-deepseek.cjs', 'tools/verify-tencent-identity.cjs', 'tests/tencent-identity.test.cjs', 'tests/deepseek-account.test.cjs', 'tests/verify-env.test.mjs', 'tests/wechat-account.test.cjs', '.gitignore', '.github/workflows/access-verification.yml']
 permissions:
   contents: read
 jobs:
@@ -20,6 +20,8 @@ jobs:
       - run: node --check tools/check-ai-sdk.cjs
       - run: node --check tools/verify-tencent-live.mjs
       - run: node --test tests/tencent-live.test.mjs
+      - run: node --check tools/verify-llm-live.mjs
+      - run: node --test tests/llm-live.test.mjs
       - run: node --check tools/verify-tokenhub.mjs
       - run: node --test tests/tokenhub-account.test.mjs
       - run: node --check tools/ai-config.mjs
