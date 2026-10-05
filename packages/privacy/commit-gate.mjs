@@ -27,8 +27,9 @@
  *     6) 全部通过 → 执行 `apply()`（**提交副作用，含实际结果写入**）并返回 `{ committed: true }`；
  *        任一失败 → **不执行** `apply()`，返回 `{ committed: false, reason }`。
  *   **不得**在校验读取与 `apply` 之间插入任何 `await`/IO；否则临界区被撕开，窗口复现。
- *   内存参考实现的 `apply()` **必须同步完成**（不得返回 Promise）；需要异步写入的部署请改用
- *   单事务适配器。`apply` 即实际副作用本身，**不再**产出「可在临界区之外消费的授权结论」。
+ *   `apply()` **必须同步完成、且不得启动任何异步副作用**（如返回 Promise 的保存链）；本模块**不做
+ *   事后判错**（调用后再判返回值救不回已启动的异步任务）。结果写入由 `ledger` 通过**受控同步端口**
+ *   完成（writeback.mjs）；异步写入的部署须在 `apply` 内的**同一事务**完成写入，而非后置到事务之外。
  */
 
 /** 允许的失败原因（固定枚举；账本据此映射为契约错误码，未知一律 OBJECT_UNAVAILABLE）。 */
@@ -124,7 +125,12 @@ export function createCommitGate({ account, consentStore, recipientStore } = {})
   /**
    * CAS 式提交原语。函数体内**无 await**：从校验到 apply 为单个同步临界区，
    * 任何在 await 边界发生的写者都不可能插入其中。
-   * `apply()` 是**实际副作用本身**（内存参考实现中必须同步完成）；其返回值不作提交结论使用。
+   *
+   * `apply` **必须同步完成**，且**不得由它启动任何异步副作用**（如返回 Promise 的保存链）。
+   * 本模块**不对 apply 的返回值做事后判错**——「先调用、再判错」救不回已启动的异步任务
+   * （修复轮 6 结论）。调用方须保证 apply 本身是**同步/原子**的：`ledger` 通过受控同步
+   * **writeback 端口**（见 writeback.mjs）写入结果，不把任意回调交进临界区。
+   * 异步/数据库部署由 `apply` 内的**同一事务**完成写入，而非把写入后置到事务之外。
    * @param {object} expected 预留时捕获的快照（见 ledger.reserve）
    * @param {{ precondition?: () => boolean, apply: () => void }} hooks
    * @returns {Promise<{ committed: boolean, reason?: string }>}
@@ -139,11 +145,7 @@ export function createCommitGate({ account, consentStore, recipientStore } = {})
     if (typeof precondition === 'function' && precondition() !== true) {
       return { committed: false, reason: 'precondition' };
     }
-    const applied = apply();
-    // 非同步 apply 会把副作用拖到临界区之外 —— 直接拒绝，不静默降级。
-    if (applied && typeof applied.then === 'function') {
-      throw new Error('commit 的 apply 必须同步完成（不得返回 Promise）；异步结果写入请改用单事务适配器');
-    }
+    apply();
     // —— 同步临界区结束 ——
     return { committed: true };
   }

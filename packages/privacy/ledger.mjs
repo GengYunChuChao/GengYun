@@ -26,8 +26,9 @@
  *     （见 commit-gate.mjs）：`commit` 体内**不含任何 await**，在同一个不可分割的同步临界区内
  *     一次性重读「账号身份/auth_epoch + 全部必需用途 epoch/授予 + 接收方 enabled/版本/训练条款」，
  *     逐项与 reserve 快照比对，全部通过才执行 `apply`。
- *   - `guardWriteback` 的 `apply` **就是实际结果写入**（调用方传入的同步 `write`）：保存发生 ⟺
- *     校验通过，同一 tick 完成；**不再**返回「可在临界区之外消费的授权结论」。
+ *   - `guardWriteback` 的结果写入由**受控同步 writeback 端口**在 `apply` 内完成：结果以**数据**
+ *     传入，端口在同步临界区内写入——**校验不通过 ⇒ 不调用端口 ⇒ 保存根本不会发生/生效**。
+ *     **不接受任意 `write` 回调**（回调被调用时可能启动异步保存链，事后判错无法取消）。
  *   - 因此提交判定**不再**依赖「顺序异步重读」：不存在「读 A 与读 B 之间被插入」或「适配器先取
  *     旧值再异步返回」的窗口——校验与提交在同一 tick 内原子完成。调用方即使**不经** revokeInFlight，
  *     只要在提交临界区之前注销/停用账号、前进 auth_epoch 或撤回用途，都会被这道同步重读捕获。
@@ -43,6 +44,7 @@ import {
 import { PrivacyError } from './errors.mjs';
 import { createPrivacyGuard } from './guard.mjs';
 import { createCommitGate, COMMIT_REASON_ERROR_CODES } from './commit-gate.mjs';
+import { createMemoryWritebackStore, assertSyncWritebackPort } from './writeback.mjs';
 
 /**
  * @param {{
@@ -50,6 +52,7 @@ import { createCommitGate, COMMIT_REASON_ERROR_CODES } from './commit-gate.mjs';
  *   account: object,
  *   recipientStore: { get: (id: string) => Promise<object|null>, currentOf?: (id: string) => object|null },
  *   commitGate?: { commit: (expected: object, hooks: object) => Promise<{committed: boolean, reason?: string}> },
+ *   writeback?: { write: (entry: object) => void, get?: (exportId: string) => object|null },
  *   now?: () => Date,
  * }} deps
  */
@@ -58,6 +61,7 @@ export function createExportLedger({
   account,
   recipientStore,
   commitGate,
+  writeback,
   now = () => new Date(),
 } = {}) {
   // 强制要求「身份版本」能力：缺少 authEpochOf 的适配器会绕过账号版本核对，
@@ -78,6 +82,11 @@ export function createExportLedger({
         '或提供带同步快照方法 identityOf/snapshotOf/currentOf 的 account/consentStore/recipientStore',
     );
   }
+
+  // 强制要求「受控同步回写端口」：结果写入必须经此端口在原子临界区内同步完成，
+  // **不再接受任意回调**（回调可在被调用时启动异步保存链，事后判错无法取消）。
+  // 未注入时用内存参考实现；注入的端口缺 write 或声明为 async/generator 即**构造即抛错**。
+  const writebackStore = assertSyncWritebackPort(writeback ?? createMemoryWritebackStore());
 
   /** @type {Map<string, object>} */
   const rows = new Map();
@@ -383,49 +392,52 @@ export function createExportLedger({
   /**
    * 在途结果回写守卫：**校验与实际结果写入同处一个原子提交临界区**。
    *
-   * 调用方必须提供**同步**保存动作 `write`（例如把结果落库的函数）。它以 `gate.commit` 的 `apply`
-   * 身份在同步临界区内执行——**保存发生 ⟺ 校验通过，二者同一 tick 完成**；因此不存在「先拿到
-   * 授权结论、稍后再保存」的窗口（那条旧路径正是本轮修复目标）。`write` 收到的是记录只读投影。
+   * 结果以**数据** `result` 传入，由**受控同步 writeback 端口**（构造时注入并校验，见 writeback.mjs）
+   * 在 `gate.commit` 的 `apply`（同步临界区）内写入。**不再接受任意 `write` 回调**——回调被调用时
+   * 可能启动异步保存链，事后判错无法取消（修复轮 6 结论）；结构性保证是：**校验不通过 ⇒ 根本不调用
+   * 端口 ⇒ 保存根本不会发生/生效**，而非「启动了再报错」。
    *
    * 先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照（账号版本 / 全部必需用途 epoch /
-   * 接收方版本与条款）为期望原子提交；满足以下任一即阻断（**不执行 write**、不落库、不可复活）：
+   * 接收方版本与条款）为期望原子提交；满足以下任一即阻断（**不写端口**、不落库、不可复活）：
    *   - 账号非活跃 / auth_epoch 已变更（注销/停用/会话失效）
    *   - 任一必需用途 epoch 已前进（撤回或重新授权）
    *   - 接收方停用 / 版本变化 / 训练或删除条款失效
    *   - 外发记录已终态（取消/失败/结果未知）
-   * 缺失/异步的 `write` → 直接拒绝（不静默放行、不返回可用授权结论）。
-   * @param {{ exportId: string, userId: string, write: (record: object) => void }} input
+   * @param {{ exportId: string, userId: string, result?: unknown }} input
    * @returns {Promise<{ written: true, exportId: string }>} 仅回执「已写入」，不返回可后置消费的授权结论
    */
-  async function guardWriteback({ exportId, userId, write } = {}) {
+  async function guardWriteback({ exportId, userId, result } = {}) {
     const record = rows.get(exportId);
     if (!record || record.userId !== userId) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '外发记录不存在或归属不符');
     }
-    // 禁止静默降级：没有同步保存入口就拒绝，不产出「以后可用的授权结论」。
-    if (typeof write !== 'function') {
-      throw new PrivacyError('INVALID_REQUEST', 'guardWriteback 需要同步 write 保存动作');
-    }
-    if (write.constructor && write.constructor.name === 'AsyncFunction') {
-      throw new PrivacyError('INVALID_REQUEST', 'guardWriteback 的 write 必须同步，不得为 async');
-    }
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
-    const result = await gate.commit(commitExpectedOf(record), {
+    const commitResult = await gate.commit(commitExpectedOf(record), {
       precondition: () => isInFlight(record),
-      // 实际结果写入即提交副作用：在同步临界区内执行，保存与校验不可分离。
+      // 实际结果写入即提交副作用：在同步临界区内由受控端口同步写入，保存与校验不可分离。
       apply: () => {
-        const applied = write(projectRecord(record));
-        if (applied && typeof applied.then === 'function') {
-          throw new PrivacyError('INVALID_REQUEST', 'write 必须同步完成（不得返回 Promise）');
-        }
+        writebackStore.write(
+          Object.freeze({
+            exportId: record.id,
+            userId: record.userId,
+            revision: record.revision,
+            result,
+            committedAt: now(),
+          }),
+        );
       },
     });
-    if (!result || result.committed !== true) {
-      throw commitError(result?.reason, '回写');
+    if (!commitResult || commitResult.committed !== true) {
+      throw commitError(commitResult?.reason, '回写');
     }
     return { written: true, exportId: record.id };
+  }
+
+  /** 读取已写入的回写条目（供测试/审计；端口未提供 get 时返回 null）。 */
+  function getWriteback(exportId) {
+    return typeof writebackStore.get === 'function' ? writebackStore.get(exportId) : null;
   }
 
   return {
@@ -436,6 +448,7 @@ export function createExportLedger({
     markOutcomeUnknown,
     revokeInFlight,
     guardWriteback,
+    getWriteback,
     _rows: rows,
   };
 }

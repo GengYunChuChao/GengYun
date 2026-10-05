@@ -11,8 +11,9 @@
 | `errors.mjs` | `PrivacyError` + `toErrorEnvelope`（错误封套与 services/api 的 ErrorEnvelope 同形） |
 | `consent.mjs` | 用途授权存储（内存实现，可插拔 Postgres）：grant/withdraw/currentEpoch |
 | `guard.mjs` | 授权守卫：**已认证执行入口** `requireConsent`（强制正整数 `auth_epoch` + 核对当前版本）与**纯用途查询** `assertConsent` / `assertAccountActive`（二者分开，不可混用） |
-| `commit-gate.mjs` | **提交一致性契约**：`createCommitGate` 内存参考实现（同步一致快照 + 无 await 原子临界区 CAS 提交原语 `commit`） |
-| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `revokeInFlight`。派发与**回写的实际结果写入**都在原子 `commitGate.commit` 的同一临界区内完成（另有非权威异步预检） |
+| `commit-gate.mjs` | **提交一致性契约**：`createCommitGate` 内存参考实现（同步一致快照 + 无 await 原子临界区 CAS 提交原语 `commit`）。**不做事后判错**：`apply` 必须同步完成，不得启动异步副作用 |
+| `writeback.mjs` | **受控同步写端口**：`createMemoryWritebackStore` 内存实现 + `assertSyncWritebackPort`（拒绝 async/generator 方法）。回写结果只经该端口的同步 `write(entry)` 落库，取代任意回调 |
+| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `getWriteback` / `revokeInFlight`。派发与**回写的实际结果写入**都在原子 `commitGate.commit` 的同一临界区内完成（另有非权威异步预检） |
 | `deletion.mjs` | 模块删除处理器注册协议 + 第三方删除请求/确认/失败（不把请求当完成） |
 | `redact.mjs` | 日志脱敏：私有正文/图片/音频/精确坐标/凭据 |
 | `index.mjs` | 统一出口 |
@@ -99,11 +100,26 @@ app.route({
   注销/停用/用途撤回）都无法被插入——窗口被**结构性消除**，而非「再读一次异步快照」。
   提交路径上另有一段**非权威异步预检**（仅早退 + 细化错误码）：它读到的是某一时刻的快照、可能过期，
   **不构成安全保证**；即使预检因读到旧快照而放行，原子提交仍会用同一 tick 的同步快照重新判定并拒绝。
-- **回写的实际结果写入在同一临界区**：`guardWriteback({ exportId, userId, write })` 的 `write`
-  就是 `apply`——**保存发生 ⟺ 校验通过，同一 tick 完成**；且**不再返回「可在临界区之外消费的
-  授权结论」**（只回 `{ written:true, exportId }`）。缺失/异步 `write` 直接拒绝（`INVALID_REQUEST`）。
-  回归见 `tests/privacy/ledger.test.mjs` 的 R5 用例（R5-1 临界区内写入、R5-2 校验前撤回/注销零写入、
-  R5-3 门禁异步返回暂停期间撤回/注销仍只在临界区内写一次、R5-4 缺同步保存入口即拒绝）。
+- **回写的实际结果写入在同一临界区，且只经受控同步写端口**：`guardWriteback({ exportId, userId, result })`
+  接收的是**数据** `result`（不再接收任意 `write` 回调），结果写入由注入的**受控同步写端口**
+  `writeback.write(entry)` 在 `apply` 内完成——**校验不通过 ⇒ 根本不调用端口 ⇒ 零写入**。
+  这是**结构性保证**（端口只在校验全过、进入临界区后才被调用），**不是**「调用后发现是 Promise 再拒绝」
+  的事后补救。写入端口在构造时经 `assertSyncWritebackPort` 校验，`write` 为 `async`/`generator`
+  即**构造即抛错**（拒绝投入使用）；`guardWriteback` 自身也**不再返回任何可后置消费的授权结论**
+  （只回 `{ written:true, exportId }`）。
+  回归见 `tests/privacy/ledger.test.mjs` 的 R5 与 R6 用例：
+  R5-1 临界区内写入、R5-2 校验前撤回/注销零写入、R5-3 门禁异步返回暂停期间撤回/注销仍只在临界区内写一次、
+  R5-4 注入端口缺 `write` 或 `write` 为 `async` → 构造即拒绝；**R6-1..R6-4** 用「延迟保存」攻击
+  （`write: () => pending.then(() => save())`，即先启动保存链、再用 Promise 拒绝）验证：旧形态 `saved=1`
+  越界落库、新实现 `attackCalls=0 / saved=0 / portWrites=0` 零写入，正向用例 `portWrites=1 / attackCalls=0`；
+  R6-4 复刻独立复核探针（校验通过后仅暂停异步返回，期间撤回 + `revokeInFlight` → 释放 pending 后保存计数为 0）。
+  > **保证范围与依据（纠正旧表述）**：此前 README/PR 表述为「Promise 拒绝即零写入」，该说法**不准确**——
+  > 一个 `() => pending.then(() => save())` 的普通函数其 `constructor` 仍是 `Function`，可绕过对
+  > `AsyncFunction` 的检查；**调用即已启动保存链**，此后即便判定为非法，也无法取消已经启动的异步写入。
+  > 本轮不再对已启动的异步任务事后判错，而是**让任意异步回调结构上无法进入写路径**：只接收数据、
+  > 写入只走受控同步端口。**本模块保证的零写入范围**：只要 `commit` 未返回 `committed:true`，
+  > 受控端口的 `write` 就不被调用（因此结果不落库）。**依据**：`writeback` 端口的同步性在构造期强制，
+  > 且是 `apply` 内唯一的写入出口——不存在「先调用、后判错」的窗口。
 - **派发 at-least-once**：`markSent` 把 `reserved→sent` 放进同一临界区提交；真正的第三方网络派发
   发生在临界区之外，**不因事后回滚撤销**（外部调用无法与本地事务绑定）。
 - 执行入口不接受省略身份版本：`guard.requireConsent` 强制正整数 `auth_epoch` 并核对当前版本，
@@ -138,16 +154,26 @@ commit(expected, { precondition, apply }) -> Promise<{ committed: boolean, reaso
 3. 校验读取与 `apply` 之间**不得**插入 `await`/IO；否则临界区被撕开，异步窗口复现。
 4. `apply` 就是**实际副作用本身**（派发的状态迁移、回写的**结果写入**）。**不得**只把校验放进事务、
    而把实际写入留到事务/临界区之外后置消费——那会把「校验通过」与「结果落库」重新拆开，撤回/注销
-   仍可在两者之间发生。记账方 **不返回可在以后使用的授权结论**。
-5. 记账方（`ledger`）据此映射错误码：`account → ACCOUNT_INACTIVE(403)`、`consent/recipient → OBJECT_UNAVAILABLE(409)`、
+   仍可在两者之间发生。`apply` **必须同步完成、不得启动任何异步副作用**：一旦启动（例如
+   `() => pending.then(() => save())`），事后再判错也**无法取消**已经启动的写链，故本模块**不做**
+   这类事后判错——回写的结果写入改为经**受控同步写端口** `write(entry)` 完成（见下）。记账方
+   **不返回可在以后使用的授权结论**。
+5. `apply` 内不得启动异步副作用（如上）。**尤其**：不得以「先调用、再检查返回值是否为 Promise/Promise
+   是否拒绝」作为保护——普通函数 `() => pending.then(...)` 的 `constructor` 是 `Function`，能绕过
+   `AsyncFunction` 检查，且调用即已启动写链。要保证零写入，唯一可靠的做法是**让非同步写入结构上无法
+   进入 `apply`**（只接收数据 + 受控同步端口），而不是事后补救。
+6. 记账方（`ledger`）据此映射错误码：`account → ACCOUNT_INACTIVE(403)`、`consent/recipient → OBJECT_UNAVAILABLE(409)`、
    `recipient_policy → SCOPE_DENIED(403)`、`precondition → OBJECT_UNAVAILABLE(409)`。
 
 两种实现路径：
 
 - **内存参考实现**（本模块 `createCommitGate`）：由同步访问器 `account.identityOf` /
   `consentStore.snapshotOf` / `recipientStore.currentOf` 构成一致快照，`commit` 体内无 await，
-  单线程模型下不可交错；`apply()` **必须同步完成**（返回 Promise 即拒绝）。**缺任一同步访问器即
-  构造即抛错**（`ledger` 拒绝投入使用，漏实现不放行）。
+  单线程模型下不可交错；`apply()` **必须同步完成、不得启动异步副作用**。`commit` **不检查 `apply`
+  的返回值**（不对「返回了 Promise」做事后判错），因为对**已启动**的异步写链事后拒绝并不能撤销它；
+  保护改由**结构约束**提供——回写只接收数据，结果写入只经受控同步端口，端口同步性在构造期强制。
+  **缺任一同步访问器、或注入的 `writeback` 端口缺 `write` / `write` 为 `async`，即构造即抛错**
+  （`ledger` 拒绝投入使用，漏实现不放行）。
 - **数据库部署**：由部署方以**单事务 + 行锁 / 行版本 CAS**实现同一 `commit` 契约——在同一事务内完成
   校验读取（`SELECT ... FOR UPDATE` / 行版本 CAS）**与实际结果写入**（`INSERT/UPDATE`），最后一起
   `COMMIT`；并注入 `commitGate`。**校验与写入必须同事务**，否则等价于把写入后置到事务之外，窗口复现。
