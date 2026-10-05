@@ -93,6 +93,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 - 不申请或上报任何权限（相机、麦克风、位置均未声明）
 - 不声称真机、真声音或真实识别已通过
 - 不改动 `project.config.json` 的 AppID（本 PR 仅改 `libVersion`）
+- 不接入第三方插件；`app.json` 仅新增 `lazyCodeLoading: requiredComponents` 以通过工具代码质量扫描
 
 ---
 
@@ -108,7 +109,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 4 项 PASS |
 | 布局静态核算 | `node tools/verify-layout.mjs` → 五档视口 PASS |
 | 五 Tab 导航 | **真机预览逐一导航，五个页面均可打开**，截图已入库 |
-| 截图 | **五 Tab 真机截图已入库**（`assets/gui-adaptive-250c4d4/`，绑定提交 250c4d4），含显示大小最大档的完整五页走查；工具详情面板与编译提示待补 |
+| 截图 | **15 张已入库**（`assets/gui-adaptive-250c4d4/`，绑定提交 250c4d4）：五 Tab 真机、显示大小最大档五页、工具基本信息与本地设置、代码质量扫描、编译成功 |
 
 **未完成的走查项**：
 
