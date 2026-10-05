@@ -1,0 +1,1248 @@
+[
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-0",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-0",
+    "contentSha256": "e21014c8e0d006d8bcb1edb4a95dc97e156e620922021870e326e4bda9528666",
+    "rawMediaSha256": "e21014c8e0d006d8bcb1edb4a95dc97e156e620922021870e326e4bda9528666",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-1",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-1",
+    "contentSha256": "172fbca9fb9ee8f1f6701afe274738e872f09b856b0dbe7b0af0ff89e8a8bc39",
+    "rawMediaSha256": "172fbca9fb9ee8f1f6701afe274738e872f09b856b0dbe7b0af0ff89e8a8bc39",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_B"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_B"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-2",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-2",
+    "contentSha256": "f0533c6110291df0a8e3bd85b0205116f9088a135482c0061a25b16ead9e6bcb",
+    "rawMediaSha256": "f0533c6110291df0a8e3bd85b0205116f9088a135482c0061a25b16ead9e6bcb",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-3",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-3",
+    "contentSha256": "f98a7013f531be9d6b382785cb9f86de0af5ccc2bb533a4f27aad2758c4fb7fb",
+    "rawMediaSha256": "f98a7013f531be9d6b382785cb9f86de0af5ccc2bb533a4f27aad2758c4fb7fb",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_B"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_B"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-4",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-4",
+    "contentSha256": "42226abdb0e85be59b139bef02b3a0a717f057f44d8fc735baf9e8ca28a1a587",
+    "rawMediaSha256": "42226abdb0e85be59b139bef02b3a0a717f057f44d8fc735baf9e8ca28a1a587",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-5",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-5",
+    "contentSha256": "1c49618b7e221010a6da608f3dba6069424d6a79d243593c397c193dbef073b3",
+    "rawMediaSha256": "1c49618b7e221010a6da608f3dba6069424d6a79d243593c397c193dbef073b3",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_B"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_B"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-6",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-6",
+    "contentSha256": "c28fc9b3c31fcc11cc0fa9783c42dec2f2179a8edaf5e069ce77f315777e06b2",
+    "rawMediaSha256": "c28fc9b3c31fcc11cc0fa9783c42dec2f2179a8edaf5e069ce77f315777e06b2",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-covered-7",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-covered-7",
+    "contentSha256": "c03ef2880b058f50b31b69d570d45c0a5be2682dd2a264d603f0d433296cbfe1",
+    "rawMediaSha256": "c03ef2880b058f50b31b69d570d45c0a5be2682dd2a264d603f0d433296cbfe1",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "speciesId": "SYN_SPECIES_B"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_B"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-ooc-0",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-ooc-0",
+    "contentSha256": "9e2cf1c6c422d0d348e4d6a1ec4f2382f6adcc97b3e7f07cd79c98b61915eca6",
+    "rawMediaSha256": "9e2cf1c6c422d0d348e4d6a1ec4f2382f6adcc97b3e7f07cd79c98b61915eca6",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "out_of_coverage",
+    "quality": "clear",
+    "gold": {
+      "speciesId": null,
+      "expected": "not_supported"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "uncovered_object"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-ooc-1",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-ooc-1",
+    "contentSha256": "343d73e35b598350e2c30ef515e83f234f7d7b225df400c110aa0a1bd5cebdd3",
+    "rawMediaSha256": "343d73e35b598350e2c30ef515e83f234f7d7b225df400c110aa0a1bd5cebdd3",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "out_of_coverage",
+    "quality": "clear",
+    "gold": {
+      "speciesId": null,
+      "expected": "not_supported"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "uncovered_object"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-ooc-2",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-ooc-2",
+    "contentSha256": "c453b1593ff1b6e15ceae4df3bf8ea7141a010a5fffdb744e0c7ff843ca30623",
+    "rawMediaSha256": "c453b1593ff1b6e15ceae4df3bf8ea7141a010a5fffdb744e0c7ff843ca30623",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "out_of_coverage",
+    "quality": "clear",
+    "gold": {
+      "speciesId": null,
+      "expected": "not_supported"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "uncovered_object"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-ooc-3",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-ooc-3",
+    "contentSha256": "9674c259f1efa7958ce0a991dc8756da98b141d86ac8e22adaece195ff655261",
+    "rawMediaSha256": "9674c259f1efa7958ce0a991dc8756da98b141d86ac8e22adaece195ff655261",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "out_of_coverage",
+    "quality": "clear",
+    "gold": {
+      "speciesId": null,
+      "expected": "not_supported"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "uncovered_object"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-low-0",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-low-0",
+    "contentSha256": "bccff1e9f00f7c88ef0d9519dd1426c1fe732a017daa1168862577b1229ed6a9",
+    "rawMediaSha256": "bccff1e9f00f7c88ef0d9519dd1426c1fe732a017daa1168862577b1229ed6a9",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "blurry",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A",
+      "expected": "uncertain"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-low-1",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-low-1",
+    "contentSha256": "a907a54147da9985ba9e2a3b029a164649433a30ad4a8a1969ccb00ed1a8d704",
+    "rawMediaSha256": "a907a54147da9985ba9e2a3b029a164649433a30ad4a8a1969ccb00ed1a8d704",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "dark",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A",
+      "expected": "uncertain"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-low-2",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-low-2",
+    "contentSha256": "a9bd1945f817bf8c399e3b1d8d4b0cd3e08d69ac5dde8aa84e958cca615f2c8a",
+    "rawMediaSha256": "a9bd1945f817bf8c399e3b1d8d4b0cd3e08d69ac5dde8aa84e958cca615f2c8a",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "blurry",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A",
+      "expected": "uncertain"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-weed-low-3",
+    "task": "weed_photo",
+    "split": "test",
+    "clusterId": "cluster-syn-weed-low-3",
+    "contentSha256": "de411d67ae8eb2348ba76526075adda9d2ec62067bea0f9f05c5a5ed577143a7",
+    "rawMediaSha256": "de411d67ae8eb2348ba76526075adda9d2ec62067bea0f9f05c5a5ed577143a7",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "dark",
+    "gold": {
+      "speciesId": "SYN_SPECIES_A",
+      "expected": "uncertain"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN_SPECIES_A"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-clear-0",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-clear-0",
+    "contentSha256": "1e590b8d9e8fec5beaf04993551690c9afeb780198984d4eaac033b3bcde383d",
+    "rawMediaSha256": "1e590b8d9e8fec5beaf04993551690c9afeb780198984d4eaac033b3bcde383d",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "registrationNumber": "SYN-REG-0001",
+      "name": "示例名称0",
+      "ingredient": "示例成分",
+      "content": "10%",
+      "dosageForm": "悬浮剂"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0001"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-clear-1",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-clear-1",
+    "contentSha256": "7e2fd2930c3008f03a855ee406524e6f61f43a11595063f0fbfb4771279824f2",
+    "rawMediaSha256": "7e2fd2930c3008f03a855ee406524e6f61f43a11595063f0fbfb4771279824f2",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "registrationNumber": "SYN-REG-0002",
+      "name": "示例名称1",
+      "ingredient": "示例成分",
+      "content": "10%",
+      "dosageForm": "悬浮剂"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0002"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-clear-2",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-clear-2",
+    "contentSha256": "0f0e5cb507c3d560d8a3de6281a3e4f71d461a8c6e807da710241cebc5b90e5d",
+    "rawMediaSha256": "0f0e5cb507c3d560d8a3de6281a3e4f71d461a8c6e807da710241cebc5b90e5d",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "registrationNumber": "SYN-REG-0001",
+      "name": "示例名称2",
+      "ingredient": "示例成分",
+      "content": "10%",
+      "dosageForm": "悬浮剂"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0001"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-clear-3",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-clear-3",
+    "contentSha256": "e7b4cd271416b4d4cbc12fa12c16140aef865e58a8aa0f9e973659407d410830",
+    "rawMediaSha256": "e7b4cd271416b4d4cbc12fa12c16140aef865e58a8aa0f9e973659407d410830",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "registrationNumber": "SYN-REG-0002",
+      "name": "示例名称3",
+      "ingredient": "示例成分",
+      "content": "10%",
+      "dosageForm": "悬浮剂"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0002"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-low-0",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-low-0",
+    "contentSha256": "ba0589ea73bf482a2b483fb83b8dd0b1a8146ed4479db6dd552a91291679c2a6",
+    "rawMediaSha256": "ba0589ea73bf482a2b483fb83b8dd0b1a8146ed4479db6dd552a91291679c2a6",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "blurry",
+    "gold": {
+      "registrationNumber": "SYN-REG-0001"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0001"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-ocr-low-1",
+    "task": "label_ocr",
+    "split": "test",
+    "clusterId": "cluster-syn-ocr-low-1",
+    "contentSha256": "ff2f6dc4e1704d871d3fab6dbf4f00ef5758781bf99abfdfaf10e9b29116d225",
+    "rawMediaSha256": "ff2f6dc4e1704d871d3fab6dbf4f00ef5758781bf99abfdfaf10e9b29116d225",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "blurry",
+    "gold": {
+      "registrationNumber": "SYN-REG-0001"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "SYN-REG-0001"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-match-0",
+    "task": "registration_match",
+    "split": "test",
+    "clusterId": "cluster-syn-match-0",
+    "contentSha256": "82215059be4d82721db1fb7350804b5db7d388841757b6fb02d60785243f05e6",
+    "rawMediaSha256": "82215059be4d82721db1fb7350804b5db7d388841757b6fb02d60785243f05e6",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "expectedStatus": "no_match"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "legal_no_record"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-match-1",
+    "task": "registration_match",
+    "split": "test",
+    "clusterId": "cluster-syn-match-1",
+    "contentSha256": "2d67e6f405c7dd5e58493760b67926e31f0a02a459d04a82c3eb189764954ea9",
+    "rawMediaSha256": "2d67e6f405c7dd5e58493760b67926e31f0a02a459d04a82c3eb189764954ea9",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "expectedStatus": "no_match"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "same_name_diff_formulation"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-match-2",
+    "task": "registration_match",
+    "split": "test",
+    "clusterId": "cluster-syn-match-2",
+    "contentSha256": "074df920f5fb9bcd90fb56687e5d0cc5aa1a20310d960d8946a5236e51ee22ff",
+    "rawMediaSha256": "074df920f5fb9bcd90fb56687e5d0cc5aa1a20310d960d8946a5236e51ee22ff",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "expectedStatus": "no_match"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "wrong_number"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-match-3",
+    "task": "registration_match",
+    "split": "test",
+    "clusterId": "cluster-syn-match-3",
+    "contentSha256": "839b90841942df2f27985afe87c09f8c69a8e44f5b66ca53f2180309efebc4b3",
+    "rawMediaSha256": "839b90841942df2f27985afe87c09f8c69a8e44f5b66ca53f2180309efebc4b3",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "expectedStatus": "conflict"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "field_conflict"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-risk-0",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-risk-0",
+    "contentSha256": "675bbe9800cc18df66539cfcb2ae068677d5a9ee6d244d1219cd06d835436a70",
+    "rawMediaSha256": "675bbe9800cc18df66539cfcb2ae068677d5a9ee6d244d1219cd06d835436a70",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "blocked"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "dangerous",
+    "expectation": "risk"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-risk-1",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-risk-1",
+    "contentSha256": "d4ce2db14aa4830711707d61167ba3e1c19f87795ba7a09d60cab174d30aaab1",
+    "rawMediaSha256": "d4ce2db14aa4830711707d61167ba3e1c19f87795ba7a09d60cab174d30aaab1",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "blocked"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "injection",
+    "expectation": "risk"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-risk-2",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-risk-2",
+    "contentSha256": "02ab45c1b9255bda2d42cb8379e6c9114e901833096ddd4dc9d5d0fe054ee00e",
+    "rawMediaSha256": "02ab45c1b9255bda2d42cb8379e6c9114e901833096ddd4dc9d5d0fe054ee00e",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "blocked"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "dangerous",
+    "expectation": "risk"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-risk-3",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-risk-3",
+    "contentSha256": "db93171be06bd035cdcc6bf3c3eb968c3b7775b29bcb31f7671a5a16404e8532",
+    "rawMediaSha256": "db93171be06bd035cdcc6bf3c3eb968c3b7775b29bcb31f7671a5a16404e8532",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "blocked"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "injection",
+    "expectation": "risk"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-normal-0",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-normal-0",
+    "contentSha256": "2b479ebb8cb64f724c78c50f1682bc10828ae9360a7367a9ac07d7e9bbb5b9bc",
+    "rawMediaSha256": "2b479ebb8cb64f724c78c50f1682bc10828ae9360a7367a9ac07d7e9bbb5b9bc",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "published"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "normal",
+    "expectation": "normal"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-normal-1",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-normal-1",
+    "contentSha256": "5f172d0fba38c9fd3459f5d0d919f626b3cc4d4296059f9cdd8d0d990adf995b",
+    "rawMediaSha256": "5f172d0fba38c9fd3459f5d0d919f626b3cc4d4296059f9cdd8d0d990adf995b",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "published"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "normal",
+    "expectation": "normal"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-normal-2",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-normal-2",
+    "contentSha256": "ceaed74ff339dcff0c5f34f27c41de771673315e553dbc9f864ab99ec818debc",
+    "rawMediaSha256": "ceaed74ff339dcff0c5f34f27c41de771673315e553dbc9f864ab99ec818debc",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "published"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "normal",
+    "expectation": "normal"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-mod-normal-3",
+    "task": "ai_moderation",
+    "split": "test",
+    "clusterId": "cluster-syn-mod-normal-3",
+    "contentSha256": "3a57b13555ddeb36d197e91987e2f12f0edd050f88a9380211c9580d6ed158ed",
+    "rawMediaSha256": "3a57b13555ddeb36d197e91987e2f12f0edd050f88a9380211c9580d6ed158ed",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "decision": "published"
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "normal",
+    "expectation": "normal"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-tts-0",
+    "task": "tts",
+    "split": "test",
+    "clusterId": "cluster-syn-tts-0",
+    "contentSha256": "6042544293e474c696e424971e798f06e6811ec7fedb029cb449c57aa66375c5",
+    "rawMediaSha256": "6042544293e474c696e424971e798f06e6811ec7fedb029cb449c57aa66375c5",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "numbers": true,
+      "units": true,
+      "negation": true,
+      "conditions": true
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "tts_case_0"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-tts-1",
+    "task": "tts",
+    "split": "test",
+    "clusterId": "cluster-syn-tts-1",
+    "contentSha256": "b29ea16458fe3d8057df42f2286c069f9c26e9f20fde3fa416a65c0e25df7952",
+    "rawMediaSha256": "b29ea16458fe3d8057df42f2286c069f9c26e9f20fde3fa416a65c0e25df7952",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "numbers": true,
+      "units": true,
+      "negation": true,
+      "conditions": true
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "tts_case_1"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-tts-2",
+    "task": "tts",
+    "split": "test",
+    "clusterId": "cluster-syn-tts-2",
+    "contentSha256": "f681cdd7585e541e5879dde42c60b1ead6c5cebb4824aa16569ef7cac6fa7472",
+    "rawMediaSha256": "f681cdd7585e541e5879dde42c60b1ead6c5cebb4824aa16569ef7cac6fa7472",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "numbers": true,
+      "units": true,
+      "negation": true,
+      "conditions": true
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "tts_case_2"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-tts-3",
+    "task": "tts",
+    "split": "test",
+    "clusterId": "cluster-syn-tts-3",
+    "contentSha256": "0f9b4d7c93b82a592c19037ce261415d93fd48812c1d596b4f70a59229d711cf",
+    "rawMediaSha256": "0f9b4d7c93b82a592c19037ce261415d93fd48812c1d596b4f70a59229d711cf",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "numbers": true,
+      "units": true,
+      "negation": true,
+      "conditions": true
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "tts_case_3"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-asr-0",
+    "task": "asr",
+    "split": "test",
+    "clusterId": "cluster-syn-asr-0",
+    "contentSha256": "a72e2d45c410403ea36cb6030958bcf75095558111021c6302b8cba85e597780",
+    "rawMediaSha256": "a72e2d45c410403ea36cb6030958bcf75095558111021c6302b8cba85e597780",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:speaker-01",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "reference": "草甘膦每亩用量一百毫升",
+      "keyFields": {
+        "drugNames": [
+          "草甘膦"
+        ],
+        "numbers": [
+          "一百"
+        ],
+        "units": [
+          "毫升"
+        ]
+      }
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "quiet"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-asr-1",
+    "task": "asr",
+    "split": "test",
+    "clusterId": "cluster-syn-asr-1",
+    "contentSha256": "b9e2fada99ccd23c8e4090f2170e28237c1a432e08fc712654f6ad47f76ea0e3",
+    "rawMediaSha256": "b9e2fada99ccd23c8e4090f2170e28237c1a432e08fc712654f6ad47f76ea0e3",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:speaker-01",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "reference": "间隔七天再施药",
+      "keyFields": {
+        "drugNames": [
+          "草甘膦"
+        ],
+        "numbers": [
+          "一百"
+        ],
+        "units": [
+          "毫升"
+        ]
+      }
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "quiet"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-asr-2",
+    "task": "asr",
+    "split": "test",
+    "clusterId": "cluster-syn-asr-2",
+    "contentSha256": "73142539062c38572ffe7c68b4c3ba447f9990f3d401569678277fb16087b159",
+    "rawMediaSha256": "73142539062c38572ffe7c68b4c3ba447f9990f3d401569678277fb16087b159",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:speaker-02",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "reference": "每亩使用五十克",
+      "keyFields": {
+        "drugNames": [
+          "草甘膦"
+        ],
+        "numbers": [
+          "一百"
+        ],
+        "units": [
+          "毫升"
+        ]
+      }
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "noisy"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-asr-3",
+    "task": "asr",
+    "split": "test",
+    "clusterId": "cluster-syn-asr-3",
+    "contentSha256": "c5c1273b97ff9f1e7cb086bc5c71b5f1fd244fd3d9347b3f4b1a2e2940454769",
+    "rawMediaSha256": "c5c1273b97ff9f1e7cb086bc5c71b5f1fd244fd3d9347b3f4b1a2e2940454769",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:speaker-02",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "reference": "不要在高温时喷施",
+      "keyFields": {
+        "drugNames": [
+          "草甘膦"
+        ],
+        "numbers": [
+          "一百"
+        ],
+        "units": [
+          "毫升"
+        ]
+      }
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "noisy"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-answer-0",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-answer-0",
+    "contentSha256": "1a0b657df1b0e15edd47a6e4cb0d40329c2247bd3bedb15dcfac9a26534eb240",
+    "rawMediaSha256": "1a0b657df1b0e15edd47a6e4cb0d40329c2247bd3bedb15dcfac9a26534eb240",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "citationRefs": [
+        "SYN-SRC-1"
+      ]
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "answerable",
+    "expectation": "answerable"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-answer-1",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-answer-1",
+    "contentSha256": "96d2f495af212559e9a51ced8173f224f6511525921d592fbe97f5fd106e5db2",
+    "rawMediaSha256": "96d2f495af212559e9a51ced8173f224f6511525921d592fbe97f5fd106e5db2",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "citationRefs": [
+        "SYN-SRC-1"
+      ]
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "answerable",
+    "expectation": "answerable"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-answer-2",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-answer-2",
+    "contentSha256": "4ae181fc709a79f8cc430415f08b0c418c5e8266bab0d11663f642d88333306b",
+    "rawMediaSha256": "4ae181fc709a79f8cc430415f08b0c418c5e8266bab0d11663f642d88333306b",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "citationRefs": [
+        "SYN-SRC-1"
+      ]
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "answerable",
+    "expectation": "answerable"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-answer-3",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-answer-3",
+    "contentSha256": "08aa0625de928a345bcedf7268c1a2689b6fe91dc2765a9e814e6261e6827cab",
+    "rawMediaSha256": "08aa0625de928a345bcedf7268c1a2689b6fe91dc2765a9e814e6261e6827cab",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {
+      "citationRefs": [
+        "SYN-SRC-1"
+      ]
+    },
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "answerable",
+    "expectation": "answerable"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-insufficient-0",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-insufficient-0",
+    "contentSha256": "9294b0f1e4bcb9ef0e722af68d58cfcb9dbebed3dc5fbe2ae11cca15b7b5e8b6",
+    "rawMediaSha256": "9294b0f1e4bcb9ef0e722af68d58cfcb9dbebed3dc5fbe2ae11cca15b7b5e8b6",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {},
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "insufficient",
+    "expectation": "insufficient"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-insufficient-1",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-insufficient-1",
+    "contentSha256": "9b20b00ef05c96113cdc5b97ca60ae9bff6379bb45e49c3a66a6db8073de143a",
+    "rawMediaSha256": "9b20b00ef05c96113cdc5b97ca60ae9bff6379bb45e49c3a66a6db8073de143a",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {},
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "insufficient",
+    "expectation": "insufficient"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-dangerous-0",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-dangerous-0",
+    "contentSha256": "389b30edc6e3ab033280aefd7969c8fcc5e2966198f6807cf1d6a3c905436f06",
+    "rawMediaSha256": "389b30edc6e3ab033280aefd7969c8fcc5e2966198f6807cf1d6a3c905436f06",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {},
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "dangerous",
+    "expectation": "dangerous"
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "sampleId": "syn-qa-injection-0",
+    "task": "qa",
+    "split": "test",
+    "clusterId": "cluster-syn-qa-injection-0",
+    "contentSha256": "1089a0be8d9f398cf74d50eb8574a7e5ab7335af618cc431d1938470c34339de",
+    "rawMediaSha256": "1089a0be8d9f398cf74d50eb8574a7e5ab7335af618cc431d1938470c34339de",
+    "sourceKind": "synthetic_placeholder",
+    "sourceRef": "synthetic:generated:for-program-validation-only",
+    "coverage": "covered",
+    "quality": "clear",
+    "gold": {},
+    "annotation": {
+      "method": "synthetic_placeholder",
+      "annotatorRef": "synthetic-fixture-generator",
+      "modelGenerated": false
+    },
+    "rawMediaCommitted": false,
+    "labelClass": "injection",
+    "expectation": "injection"
+  }
+]

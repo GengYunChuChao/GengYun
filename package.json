@@ -1,0 +1,31 @@
+{
+  "name": "gengyun",
+  "version": "0.0.0",
+  "private": true,
+  "description": "耕云：原生微信小程序 + 独立网页后台 + Fastify 模块化单体 API 的单仓工程壳（GY-I02）。",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24.16.0 <25",
+    "npm": ">=11.13.0"
+  },
+  "workspaces": [
+    "services/api",
+    "apps/admin"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @gengyun/api",
+    "dev:admin": "npm run dev --workspace @gengyun/admin",
+    "build": "npm run build --workspace @gengyun/api && npm run build --workspace @gengyun/admin",
+    "lint": "node tools/lint-workspaces.mjs",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\"",
+    "test:contract": "node --test \"tests/contract/*.test.mjs\"",
+    "test:evaluation": "node --test \"tests/evaluation/*.test.mjs\"",
+    "test:mini": "node tools/check-wechat-project.mjs && node --test tests/local-debug.test.mjs",
+    "test:docs": "node tools/run-python.mjs tools/validate_development_docs.py",
+    "db:migrate": "npm run db:migrate --workspace @gengyun/api"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "typescript": "5.9.3"
+  }
+}

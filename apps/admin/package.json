@@ -1,0 +1,25 @@
+{
+  "name": "@gengyun/admin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "耕云独立网页后台骨架：Vue 3 + Vite。仅有独立鉴权入口占位，无业务页。",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vue/compiler-sfc": "3.5.43",
+    "vite": "7.3.6"
+  }
+}

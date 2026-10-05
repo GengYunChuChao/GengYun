@@ -1,0 +1,72 @@
+{
+  "schema": "gengyun.knowledge.coverage.v1",
+  "generated_at": "2026-10-04",
+  "scope": "GY-I03 浙江首批资料覆盖",
+  "regions": {
+    "catalog": "packages/knowledge/catalog/regions-zhejiang.json",
+    "source": "src_mca_xzqh_2023",
+    "province": 1,
+    "prefecture": 11,
+    "county": 90,
+    "total": 102,
+    "target": "浙江省市县可检索",
+    "status": "achieved",
+    "note": "全省可检索不等于每个县都有独立验证资料；按资料覆盖显示。"
+  },
+  "crops": {
+    "catalog": "packages/knowledge/catalog/crops.json",
+    "required": ["水稻", "玉米", "大豆", "油菜"],
+    "achieved": 4,
+    "target": 4,
+    "status": "achieved"
+  },
+  "species_groups": {
+    "catalog": "packages/knowledge/catalog/species.json",
+    "required": ["稗草", "狗尾草", "荨麻类", "马唐", "牛筋草", "看麦娘", "藜", "空心莲子草"],
+    "achieved": 8,
+    "mapped": 8,
+    "target": 8,
+    "status": "achieved",
+    "note": "仅完成规范对象编号映射；coverage_state=planned，尚无逐对象科普内容或识别标注。"
+  },
+  "herbicide_records": {
+    "catalog": "packages/knowledge/herbicides/records-2026.json",
+    "target": 20,
+    "achieved_with_verified_source": 20,
+    "gap": 0,
+    "source": "src_moa_pd_2026",
+    "status": "achieved_but_partial_fields",
+    "field_coverage": {
+      "registration_number": "20/20",
+      "registered_name": "20/20",
+      "producer": "20/20",
+      "dosage_form": "20/20",
+      "ingredients_text": "20/20",
+      "toxicity": "20/20",
+      "use_scene": "20/20",
+      "target_original": "20/20",
+      "dose_text": "0/20",
+      "application_method": "0/20",
+      "precautions_text": "0/20",
+      "registration_valid_from": "0/20",
+      "registration_valid_to": "0/20",
+      "restriction_rules": "0/20"
+    },
+    "usable_as_dose": 0,
+    "card_eligible": 0,
+    "note": "20条登记证号均取自农业农村部农药管理司公开公告附表，非编造；但缺用药量/施用方法/注意事项/有效期起止/禁限用状态，记录状态 partial，禁止作为用药量依据。"
+  },
+  "gaps": [
+    "用药量、施用方法、注意事项未采集（公告附表无此列）",
+    "登记有效期起止日期未采集（公告仅述有效期延续5年）",
+    "禁限用/适用限制规则未采集，restriction 状态一律 unknown",
+    "未逐条与 ICAMA 登记详情/核准标签原文复核",
+    "ICAMA 登记查询接口本轮程序化访问返回服务器内部错误，未取得逐条详情",
+    "许可调查本轮暂缓，所有来源 licensed=false",
+    "无逐对象（8组杂草）科普知识内容与识别评估标注"
+  ],
+  "database": {
+    "connected": false,
+    "note": "未接入真实数据库；本轮只提供迁移+种子+适配层，未建库、未执行迁移。"
+  }
+}
