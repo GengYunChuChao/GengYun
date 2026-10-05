@@ -1,8 +1,10 @@
 /**
  * Fastify 应用装配。
  *
- * 范围：启动、/health、游客主页科普预览、契约错误封套、404。
- * 未知业务路径返回契约 NOT_FOUND 错误封套，不伪造成功。
+ * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
+ * /api/v1 下的认证与后台认证路由、契约错误封套、404。
+ * 其余业务路由（识别、问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
+ * 不伪造成功。
  */
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
@@ -13,21 +15,97 @@ import { ApiError, buildErrorEnvelope } from './errors.ts';
 import type { PgPool } from './db/pool.ts';
 import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
+import { registerUserAuthRoutes } from './routes/auth.ts';
+import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
+import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
+import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
+import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
+import { AuthService } from './auth/service.ts';
+import { createAuthGuards } from './auth/middleware.ts';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** 认证服务（供 server.ts 做管理员初始化与测试注入）。 */
+    authService: AuthService;
+  }
+}
 
 export interface BuildAppOptions {
   config: AppConfig;
   pool?: PgPool | null;
+  /** 可注入时钟，便于确定性回归。 */
+  now?: () => Date;
+  /** 测试注入：替换会话存储（默认按 pool 选择内存/持久化实现）。 */
+  store?: AuthStore;
+  /** 测试注入：替换幂等台账。 */
+  idempotency?: IdempotencyStore;
+  /** 测试注入：替换微信身份提供者（默认按 executionMode 选择 real/stub）。 */
+  wechat?: WechatIdentityProvider;
+}
+
+/** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
+function createSqlExecutor(pool: PgPool): SqlExecutor {
+  const run = pool.query.bind(pool) as unknown as (
+    text: string,
+    values?: unknown[],
+  ) => Promise<{ rows: Array<Record<string, unknown>> }>;
+  return {
+    query: async (text: string, values?: unknown[]) => {
+      const result = await run(text, values);
+      return { rows: result.rows };
+    },
+  };
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
+    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
+    // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
+    // 以确保「客户端不可指定 openid / 角色 / 用户 id」在 API 层被显式拦下（400）。
+    ajv: { customOptions: { removeAdditional: false } },
   });
+
+  const clock = now ?? (() => new Date());
+  const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;
+  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
+  const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
+  const wechatProvider =
+    wechat ??
+    createWechatIdentityProvider({
+      executionMode: config.executionMode,
+      appId: config.wechatAppId,
+      appSecret: config.wechatAppSecret,
+      // 真实模式用 SESSION_SIGNING_KEY 作为 HMAC 密钥；替身/演示用固定桩密钥。
+      lookupKey: config.sessionSigningKey ?? STUB_LOOKUP_KEY,
+    });
+
+  const service = new AuthService({
+    store: authStore,
+    wechat: wechatProvider,
+    idempotency: idempotencyStore,
+    executionMode: config.executionMode,
+    now: clock,
+    bootstrap: config.adminBootstrap,
+  });
+  const guards = createAuthGuards({ store: authStore, now: clock });
+
+  // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
+  app.decorateRequest('userId', null);
+  app.decorateRequest('authEpoch', null);
+  app.decorateRequest('role', null);
+  app.decorateRequest('sessionId', null);
+  app.decorateRequest('sessionExpiresAt', null);
+  app.decorateRequest('accountRevision', null);
+  app.decorateRequest('authScopes', null);
+  app.decorate('authService', service);
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
+  registerUserAuthRoutes(app, config, { service, guards, now: clock });
+  registerAdminAuthRoutes(app, config, { service, guards, now: clock });
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
