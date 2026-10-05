@@ -12,7 +12,7 @@ Page({
   },
 
   onShow: function () {
-    this.setData({ guest: session.isGuest() })
+    this.setData({ guest: session.isGuest(), fontScale: fontScale.currentFontScale() })
   },
 
   /** 发布入口占位：社区未接入，不写入任何数据 */

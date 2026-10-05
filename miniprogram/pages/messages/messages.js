@@ -12,6 +12,6 @@ Page({
   },
 
   onShow: function () {
-    this.setData({ guest: session.isGuest() })
+    this.setData({ guest: session.isGuest(), fontScale: fontScale.currentFontScale() })
   }
 })

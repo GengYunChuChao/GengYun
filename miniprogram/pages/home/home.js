@@ -21,6 +21,11 @@ Page({
     this.setData({ local: debug.localEnabled(wx), guest: session.isGuest() })
   },
 
+  /** 页面重新显示时刷新字号：应用内改字号后切页需立即生效 */
+  onShow: function () {
+    this.setData({ fontScale: fontScale.currentFontScale() })
+  },
+
   /** 识别页是 tabBar 页面，只能用 switchTab，不能传参 */
   onEntryTap: function () {
     wx.switchTab({ url: '/pages/identify/identify' })

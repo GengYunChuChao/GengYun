@@ -118,6 +118,13 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   assert.ok(/bindtap="onFontScaleTap"/.test(profileWxml), '字号选项未绑定点击');
   assert.ok(/font-choice--on/.test(profileWxml), '选中态未用独立类名标记');
   assert.ok(/min-height:\s*var\(--tap-min\)/.test(profileWxss), '字号按钮触控区不足 44px');
+  // 切换页面后字号必须立即生效：页面复用时 onLoad 不再执行，须由 onShow 刷新
+  for (const page of appJson.pages) {
+    const js = read('miniprogram/' + page + '.js');
+    assert.ok(/onShow/.test(js), page + ' 缺少 onShow，无法在切页时刷新字号');
+    assert.ok(/currentFontScale/.test(js), page + ' 的 onShow 未刷新字号，应用内改字号后切页会回退');
+  }
+
   // 选中态不能只靠颜色区分（无障碍要求）
   assert.ok(/font-choice__mark/.test(profileWxml) && /font-choice__mark/.test(profileWxss), '选中态缺少文字标记');
   for (const page of appJson.pages) {

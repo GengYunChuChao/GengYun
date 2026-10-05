@@ -19,7 +19,7 @@ Page({
   },
 
   onShow: function () {
-    this.setData({ guest: session.isGuest() })
+    this.setData({ guest: session.isGuest(), fontScale: fontScale.currentFontScale() })
   },
 
   /** 三个入口均为占位：不调相机、不调接口，仅提示未接入 */
