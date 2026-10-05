@@ -77,7 +77,9 @@
 
 .voice-btn {
   flex: 1;
-  padding: 0 16rpx;
+  /* 保留 .btn 的上下 padding，仅覆盖横向；字号放大后文字换行时按钮自然撑高 */
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .voice-hint {

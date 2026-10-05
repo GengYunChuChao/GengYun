@@ -59,9 +59,9 @@ test('触控区为 44px 且使用 px 单位，320px 窄屏下仍成立', () => {
   assert.ok(!/--tap-min:\s*[\d.]+rpx/.test(appWxss), '触控区不得使用 rpx，窄屏会缩水至 44px以下');
   const btn = appWxss.slice(appWxss.indexOf('.btn {'), appWxss.indexOf('.btn--block'));
   assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未使用触控区令牌');
-  // .btn 已将 padding 归零、line-height 1.4，不能依赖原生按钮默认高度补足
-  assert.ok(/padding:\s*0\s+16px/.test(btn), '.btn 横向内边距应为 px');
-  assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未引用触控区令牌');
+  // .btn 需保留上下内边距：字号放大后文字可能换行，min-height 只作下限
+  assert.ok(/padding:\s*10px\s+16px/.test(btn), '.btn 缺上下内边距，字号放大后文字换行会溢出门面');
+  assert.ok(!/padding:\s*0\s+16rpx/.test(read('miniprogram/pages/identify/identify.wxss')), 'voice-btn 覆盖了 .btn 的上下内边距');
   const homeWxss = read('miniprogram/pages/home/home.wxss');
   assert.ok(/min-height:\s*var\(--tap-min/.test(homeWxss), '首页入口触控区不足');
   assert.ok(!/var\(--tap-min,\s*[\d.]+rpx\)/.test(homeWxss), '首页入口触控区 fallback 不得为 rpx');
@@ -118,6 +118,8 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   assert.ok(/bindtap="onFontScaleTap"/.test(profileWxml), '字号选项未绑定点击');
   assert.ok(/font-choice--on/.test(profileWxml), '选中态未用独立类名标记');
   assert.ok(/min-height:\s*var\(--tap-min\)/.test(profileWxss), '字号按钮触控区不足 44px');
+  // 按钮在字号放大后文字可能换行：.btn 须有上下 padding，且子类不得覆盖为 0
+
   // 切换页面后字号必须立即生效：页面复用时 onLoad 不再执行，须由 onShow 刷新
   for (const page of appJson.pages) {
     const js = read('miniprogram/' + page + '.js');
@@ -263,3 +265,4 @@ test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
   const ignore = read('.gitignore');
   assert.ok(ignore.includes('config.local.json'), '本地配置未被忽略');
 });
+
