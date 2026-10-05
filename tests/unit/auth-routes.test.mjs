@@ -1,9 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
-import { createMemoryIdempotencyStore } from '../../services/api/src/auth/idempotency.ts';
+import {
+  createMemoryIdempotencyStore,
+  idempotencyKeyHashHex,
+  idempotencyScope,
+} from '../../services/api/src/auth/idempotency.ts';
 import { hashPassword } from '../../services/api/src/auth/password.ts';
 import {
   STUB_APP_ID,
@@ -29,6 +34,7 @@ function newApp(extra = {}) {
     config,
     store: extra.store ?? createMemoryAuthStore(),
     idempotency: extra.idempotency ?? createMemoryIdempotencyStore(),
+    now: extra.now,
   });
 }
 
@@ -49,6 +55,12 @@ async function subjectOf(store, code) {
   const user = await store.findUserBySubject(computeSubjectLookup(STUB_LOOKUP_KEY, STUB_APP_ID, `${STUB_OPENID_PREFIX}${code}`));
   assert.ok(user, `合成身份未建用户：${code}`);
   return user;
+}
+
+/** 读取某幂等键的台账记录（用于断言「台账不含凭据」）。 */
+function readIdempotencyRecord(store, subject, method, routePath, key) {
+  const scope = idempotencyScope(subject, method, routePath);
+  return store.find(scope, idempotencyKeyHashHex(scope, key));
 }
 
 // ---------------------------------------------------------------------------
@@ -222,17 +234,219 @@ test('幂等：缺/短路 Idempotency-Key → 400 IDEMPOTENCY_KEY_REQUIRED', asy
   await app.close();
 });
 
-test('幂等：同键同体重放首次响应；同键异体 → 409 IDEMPOTENCY_CONFLICT', async () => {
-  const app = newApp();
+test('幂等：同键同体重放重新签发（不回放旧令牌）；台账不含明文令牌；同键异体 → 409', async () => {
+  const idempotency = createMemoryIdempotencyStore();
+  const app = newApp({ idempotency });
   const first = await login(app, 'code-idem', 'idem-key-replay');
-  const replay = await login(app, 'code-idem', 'idem-key-replay');
   assert.equal(first.statusCode, 200);
+  const firstToken = first.json().data.access_token;
+
+  // P1-①：台账只保存不含凭据的结果引用，绝不写入明文 bearer。
+  const record = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/auth/wechat', 'idem-key-replay');
+  assert.ok(record !== null);
+  assert.equal(JSON.stringify(record).includes(firstToken), false, '台账不得包含明文令牌');
+  assert.equal(JSON.stringify(record).includes('access_token'), false, '台账不得包含令牌字段');
+  assert.equal(record.outcome.audience, 'user');
+  assert.equal(typeof record.outcome.sessionId, 'string');
+
+  const replay = await login(app, 'code-idem', 'idem-key-replay');
   assert.equal(replay.statusCode, 200);
-  assert.equal(replay.json().data.access_token, first.json().data.access_token, '重放应返回首次签发的令牌');
+  const replayToken = replay.json().data.access_token;
+  // 重放是「重新签发」而非回放旧令牌。
+  assert.notEqual(replayToken, firstToken, '重放应重新签发新令牌，而非回放旧令牌');
+  // 新旧令牌都指向同一 active 账号，均可访问会话。
+  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(firstToken) })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(replayToken) })).statusCode, 200);
 
   const conflict = await login(app, 'code-other', 'idem-key-replay');
   assert.equal(conflict.statusCode, 409);
   assert.equal(conflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+  await app.close();
+});
+
+test('幂等：重放窗口过后不再命中台账，且台账始终不含可用令牌（P1-①，注入时钟）', async () => {
+  let clockMs = Date.parse('2026-01-01T00:00:00Z');
+  const idempotency = createMemoryIdempotencyStore();
+  const app = newApp({ idempotency, now: () => new Date(clockMs) });
+  const first = await login(app, 'code-ttl', 'idem-key-ttl');
+  const firstToken = first.json().data.access_token;
+  const record = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/auth/wechat', 'idem-key-ttl');
+  assert.equal(JSON.stringify(record).includes(firstToken), false, '台账不含明文令牌');
+
+  // 越过重放窗口：台账条目到期，命中判定失效，按新请求处理。
+  clockMs += (5 * 60 + 1) * 1000;
+  const replay = await login(app, 'code-ttl', 'idem-key-ttl');
+  assert.equal(replay.statusCode, 200);
+  assert.notEqual(replay.json().data.access_token, firstToken);
+  // 到期条目已在本次请求开始时被实际清理（不是只写 TTL 字段）。
+  assert.equal(await idempotency.purgeExpired(new Date(clockMs)), 0, '到期条目应在请求处理时已清理');
+  await app.close();
+});
+
+// ---------------------------------------------------------------------------
+// P1-②：请求摘要必须带服务端密钥，避免台账成为廉价离线口令验证器
+// ---------------------------------------------------------------------------
+
+test('P1-② 幂等 request_hash 为带密钥 HMAC：仅有台账无法离线快速验证后台口令', async () => {
+  const signingKey = 'test-signing-key-for-idempotency-hmac';
+  const config = stubConfig({
+    SESSION_SIGNING_KEY: signingKey,
+    ADMIN_BOOTSTRAP_LOGIN_NAME: 'root',
+    ADMIN_BOOTSTRAP_PASSWORD: 'bootstrap-pass-123',
+  });
+  const idempotency = createMemoryIdempotencyStore();
+  const store = createMemoryAuthStore();
+  const app = newApp({ config, store, idempotency });
+  await app.authService.ensureBootstrapAdmin();
+
+  const body = { login_name: 'root', password: 'bootstrap-pass-123' };
+  const res = await app.inject({
+    method: 'POST',
+    url: ADMIN_SESSION_URL,
+    headers: { 'idempotency-key': 'admin-hmac-0001' },
+    payload: body,
+  });
+  assert.equal(res.statusCode, 200);
+
+  const record = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/admin/auth/session', 'admin-hmac-0001');
+  // 旧实现（无密钥 SHA-256）会允许用已知登录名+候选口令直接复算命中。
+  const keyless = createHash('sha256').update(JSON.stringify([body, null]), 'utf8').digest('hex');
+  assert.notEqual(record.requestHash, keyless, '台账摘要不得等于无密钥 SHA-256（否则可离线快速验证口令）');
+  // 只有持服务端密钥（process.env，不入库）才能复算。
+  const keyed = createHmac('sha256', signingKey).update(JSON.stringify([body, null]), 'utf8').digest('hex');
+  assert.equal(record.requestHash, keyed, '台账摘要应为带服务端密钥的 HMAC');
+  await app.close();
+});
+
+// ---------------------------------------------------------------------------
+// P2-③：重放前必须核对当前身份（账号状态 / epoch / 关联会话 / 凭据）
+// ---------------------------------------------------------------------------
+
+test('P2-③ 用户账号 suspended 后同键同体重放登录 → 403 ACCOUNT_INACTIVE（不回放旧令牌）', async () => {
+  const base = createMemoryAuthStore();
+  const store = {
+    ...base,
+    async getUser(userId) {
+      const user = await base.getUser(userId);
+      return user === null ? null : { ...user, state: 'suspended' };
+    },
+  };
+  const app = newApp({ store });
+  assert.equal((await login(app, 'code-susp', 'idem-key-susp')).statusCode, 200);
+  const replay = await login(app, 'code-susp', 'idem-key-susp');
+  assert.equal(replay.statusCode, 403);
+  assert.equal(replay.json().error.code, 'ACCOUNT_INACTIVE');
+  await app.close();
+});
+
+test('P2-③ 用户 auth_epoch 递增后同键同体重放登录 → 403 ACCOUNT_INACTIVE', async () => {
+  const store = createMemoryAuthStore();
+  const app = newApp({ store });
+  assert.equal((await login(app, 'code-epoch', 'idem-key-epoch')).statusCode, 200);
+  const user = await subjectOf(store, 'code-epoch');
+  await store.bumpUserAuthEpoch(user.id);
+  const replay = await login(app, 'code-epoch', 'idem-key-epoch');
+  assert.equal(replay.statusCode, 403);
+  assert.equal(replay.json().error.code, 'ACCOUNT_INACTIVE');
+  await app.close();
+});
+
+test('P2-③ 关联会话已撤销（退出）后同键同体重放登录 → 401 SESSION_EXPIRED', async () => {
+  const app = newApp();
+  const token = (await login(app, 'code-revoked', 'idem-key-revoked')).json().data.access_token;
+  const logout = await app.inject({
+    method: 'POST',
+    url: LOGOUT_URL,
+    headers: { ...bearer(token), 'idempotency-key': 'logout-revoked-0001' },
+  });
+  assert.equal(logout.statusCode, 200);
+  const replay = await login(app, 'code-revoked', 'idem-key-revoked');
+  assert.equal(replay.statusCode, 401);
+  assert.equal(replay.json().error.code, 'SESSION_EXPIRED');
+  await app.close();
+});
+
+/** 构造一个可切换“变更后”状态的后台存储，用于模拟账号变更/凭据轮换。 */
+function mutableAdminStore() {
+  const base = createMemoryAuthStore();
+  let mutation = {};
+  let mutated = false;
+  const store = {
+    ...base,
+    async findAdminByLoginName(loginName) {
+      const admin = await base.findAdminByLoginName(loginName);
+      if (admin === null || !mutated) return admin;
+      return { ...admin, ...mutation };
+    },
+  };
+  return {
+    store,
+    mutate(next) {
+      mutation = next;
+      mutated = true;
+    },
+  };
+}
+
+async function adminLogin(app, key, password = 'bootstrap-pass-123') {
+  return app.inject({
+    method: 'POST',
+    url: ADMIN_SESSION_URL,
+    headers: { 'idempotency-key': key },
+    payload: { login_name: 'root', password },
+  });
+}
+
+async function bootstrapAdminApp() {
+  const { store, mutate } = mutableAdminStore();
+  const config = stubConfig({ ADMIN_BOOTSTRAP_LOGIN_NAME: 'root', ADMIN_BOOTSTRAP_PASSWORD: 'bootstrap-pass-123' });
+  const app = newApp({ config, store });
+  await app.authService.ensureBootstrapAdmin();
+  return { app, store, mutate };
+}
+
+test('P2-③ 后台账号 suspended 后同键同体重放 → 403 ACCOUNT_INACTIVE', async () => {
+  const { app, mutate } = await bootstrapAdminApp();
+  assert.equal((await adminLogin(app, 'admin-susp-0001')).statusCode, 200);
+  mutate({ state: 'suspended' });
+  const replay = await adminLogin(app, 'admin-susp-0001');
+  assert.equal(replay.statusCode, 403);
+  assert.equal(replay.json().error.code, 'ACCOUNT_INACTIVE');
+  await app.close();
+});
+
+test('P2-③ 后台 auth_epoch 递增后同键同体重放 → 403 ACCOUNT_INACTIVE', async () => {
+  const { app, mutate } = await bootstrapAdminApp();
+  assert.equal((await adminLogin(app, 'admin-epoch-0001')).statusCode, 200);
+  mutate({ authEpoch: 2 });
+  const replay = await adminLogin(app, 'admin-epoch-0001');
+  assert.equal(replay.statusCode, 403);
+  assert.equal(replay.json().error.code, 'ACCOUNT_INACTIVE');
+  await app.close();
+});
+
+test('P2-③ 后台关联会话撤销后同键同体重放 → 401 SESSION_EXPIRED', async () => {
+  const { app } = await bootstrapAdminApp();
+  const token = (await adminLogin(app, 'admin-revoke-0001')).json().data.access_token;
+  const logout = await app.inject({
+    method: 'POST',
+    url: ADMIN_LOGOUT_URL,
+    headers: { ...bearer(token), 'idempotency-key': 'admin-logout-revoke-0001' },
+  });
+  assert.equal(logout.statusCode, 200);
+  const replay = await adminLogin(app, 'admin-revoke-0001');
+  assert.equal(replay.statusCode, 401);
+  assert.equal(replay.json().error.code, 'SESSION_EXPIRED');
+  await app.close();
+});
+
+test('P2-③ 后台凭据轮换后同键同体重放 → 401 SESSION_REQUIRED（重新校验当前凭据）', async () => {
+  const { app, mutate } = await bootstrapAdminApp();
+  assert.equal((await adminLogin(app, 'admin-rotate-0001')).statusCode, 200);
+  mutate({ credentialHash: hashPassword('rotated-pass-9999') });
+  const replay = await adminLogin(app, 'admin-rotate-0001');
+  assert.equal(replay.statusCode, 401);
+  assert.equal(replay.json().error.code, 'SESSION_REQUIRED');
   await app.close();
 });
 

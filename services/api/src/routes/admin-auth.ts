@@ -15,8 +15,10 @@
 import type { FastifyInstance } from 'fastify';
 import { API_PREFIX } from '../contract.ts';
 import type { AppConfig } from '../config.ts';
+import { ApiError } from '../errors.ts';
 import type { AuthService } from '../auth/service.ts';
 import { issuedSessionToSession, sessionInfo } from '../auth/service.ts';
+import { isLoginOutcomeReference } from '../auth/idempotency.ts';
 import type { AuthGuards } from '../auth/middleware.ts';
 import { currentIdentity } from '../auth/middleware.ts';
 import { buildMeta, runIdempotent } from './support.ts';
@@ -59,6 +61,22 @@ export function registerAdminAuthRoutes(app: FastifyInstance, config: AppConfig,
           return {
             status: 200,
             body: { data: issuedSessionToSession(issued), meta: buildMeta(request, config) },
+            // 台账只存不含凭据的结果引用；口令/令牌明文均不入库。
+            idempotencyOutcome: { sessionId: issued.sessionId, audience: 'admin' },
+            etag: `"${issued.revision}"`,
+            cacheControl: 'no-store',
+          };
+        },
+        replay: async (record) => {
+          if (!isLoginOutcomeReference(record.outcome)) {
+            throw new ApiError('IDEMPOTENCY_CONFLICT', '幂等台账结果引用与后台登录请求不一致');
+          }
+          // 重放前重新校验当前凭据有效 + 关联会话与账号当前状态，再重新签发。
+          const issued = await service.replayAdminLogin(record.outcome, body.login_name, body.password);
+          return {
+            status: 200,
+            body: { data: issuedSessionToSession(issued), meta: buildMeta(request, config) },
+            idempotencyOutcome: { sessionId: issued.sessionId, audience: 'admin' },
             etag: `"${issued.revision}"`,
             cacheControl: 'no-store',
           };
@@ -100,6 +118,7 @@ export function registerAdminAuthRoutes(app: FastifyInstance, config: AppConfig,
           return {
             status: 200,
             body: { data: { accepted: result.accepted }, meta: buildMeta(request, config) },
+            idempotencyOutcome: { accepted: true },
             cacheControl: 'no-store',
           };
         },

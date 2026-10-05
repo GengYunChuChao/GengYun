@@ -24,10 +24,16 @@ Page({
   logout: function () {
     const that = this
     auth.logout(function (result) {
-      that.setData({
-        loggedIn: false,
-        status: result.serverRevoked ? '已退出登录（服务端会话已撤销）。' : '已清除本地会话（联网未启用，服务端会话未撤销）。'
-      })
+      let status
+      if (result.serverRevoked) {
+        status = '已退出登录（服务端会话已撤销）。'
+      } else if (result.serverRevocationUnconfirmed) {
+        // 服务端撤销未被契约成功 Ack 确认：如实上报，不谎称已撤销。
+        status = '已清除本地会话（服务端会话撤销未确认，请稍后重试或检查网络）。'
+      } else {
+        status = '已清除本地会话（未联网，服务端会话未撤销）。'
+      }
+      that.setData({ loggedIn: false, status: status })
     })
   }
 })

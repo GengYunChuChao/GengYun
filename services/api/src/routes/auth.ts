@@ -12,8 +12,10 @@
 import type { FastifyInstance } from 'fastify';
 import { API_PREFIX } from '../contract.ts';
 import type { AppConfig } from '../config.ts';
+import { ApiError } from '../errors.ts';
 import type { AuthService } from '../auth/service.ts';
 import { issuedSessionToSession, sessionInfo } from '../auth/service.ts';
+import { isLoginOutcomeReference } from '../auth/idempotency.ts';
 import type { AuthGuards } from '../auth/middleware.ts';
 import { currentIdentity } from '../auth/middleware.ts';
 import { buildMeta, runIdempotent } from './support.ts';
@@ -56,6 +58,22 @@ export function registerUserAuthRoutes(app: FastifyInstance, config: AppConfig, 
           return {
             status: 200,
             body: { data: issuedSessionToSession(issued), meta: buildMeta(request, config) },
+            // 台账只存不含凭据的结果引用（会话 id + 受众），不存令牌明文。
+            idempotencyOutcome: { sessionId: issued.sessionId, audience: 'user' },
+            etag: `"${issued.revision}"`,
+            cacheControl: 'no-store',
+          };
+        },
+        replay: async (record) => {
+          if (!isLoginOutcomeReference(record.outcome)) {
+            throw new ApiError('IDEMPOTENCY_CONFLICT', '幂等台账结果引用与登录请求不一致');
+          }
+          // 重新执行含当前状态校验的路径（账号 active / epoch 未变），重新签发新会话。
+          const issued = await service.replayUserLogin(record.outcome);
+          return {
+            status: 200,
+            body: { data: issuedSessionToSession(issued), meta: buildMeta(request, config) },
+            idempotencyOutcome: { sessionId: issued.sessionId, audience: 'user' },
             etag: `"${issued.revision}"`,
             cacheControl: 'no-store',
           };
@@ -95,6 +113,8 @@ export function registerUserAuthRoutes(app: FastifyInstance, config: AppConfig, 
         return {
           status: 200,
           body: { data: { accepted: result.accepted }, meta: buildMeta(request, config) },
+          // 退出响应不含凭据：结果引用记为成功标记。
+          idempotencyOutcome: { accepted: true },
           cacheControl: 'no-store',
         };
       },

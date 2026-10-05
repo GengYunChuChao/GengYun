@@ -20,7 +20,7 @@ import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
-import { AuthService } from './auth/service.ts';
+import { AuthService, STUB_IDEMPOTENCY_HMAC_KEY } from './auth/service.ts';
 import { createAuthGuards } from './auth/middleware.ts';
 
 declare module 'fastify' {
@@ -89,6 +89,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat 
     executionMode: config.executionMode,
     now: clock,
     bootstrap: config.adminBootstrap,
+    // 幂等请求摘要用带服务端密钥的 HMAC：real 模式取 SESSION_SIGNING_KEY（不入库），
+    // 替身/演示用固定桩密钥。
+    idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
   });
   const guards = createAuthGuards({ store: authStore, now: clock });
 

@@ -56,6 +56,8 @@ export interface AuthStore {
 
   createSession(input: CreateSessionInput): Promise<string>;
   findSession(tokenHashHex: string, audience: SessionAudience): Promise<StoredSession | null>;
+  /** 按会话 id 查找（幂等重放核验关联会话用）；不含明文令牌。 */
+  findSessionById(sessionId: string, audience: SessionAudience): Promise<StoredSession | null>;
   revokeSession(sessionId: string, audience: SessionAudience): Promise<void>;
 
   findAdminByLoginName(loginName: string): Promise<AdminCredentialRecord | null>;
@@ -122,6 +124,12 @@ export function createMemoryAuthStore(): AuthStore {
     },
     async findSession(tokenHashHex, audience) {
       return sessions.get(sessionKey(tokenHashHex, audience)) ?? null;
+    },
+    async findSessionById(sessionId, audience) {
+      for (const session of sessions.values()) {
+        if (session.id === sessionId && session.audience === audience) return session;
+      }
+      return null;
     },
     async revokeSession(sessionId, audience) {
       for (const [key, session] of sessions) {
@@ -269,6 +277,17 @@ export function createPostgresAuthStore(sql: SqlExecutor): AuthStore {
                 ${audience === 'admin' ? 'admin_id' : 'user_id'} AS user_id
          FROM ${table} WHERE token_hash = decode($1, 'hex')`,
         [tokenHashHex],
+      );
+      const row = rows[0];
+      return row === undefined ? null : toSession(row);
+    },
+    async findSessionById(sessionId, audience) {
+      const table = audience === 'admin' ? 'admin_sessions' : 'sessions';
+      const { rows } = await sql.query(
+        `SELECT id, audience, auth_epoch, expires_at, revoked_at,
+                ${audience === 'admin' ? 'admin_id' : 'user_id'} AS user_id
+         FROM ${table} WHERE id = $1::uuid`,
+        [sessionId],
       );
       const row = rows[0];
       return row === undefined ? null : toSession(row);

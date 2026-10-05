@@ -50,7 +50,7 @@ test('0001→0004 在内存引擎可整体执行，幂等键台账结构齐备',
   );
   assert.deepEqual(
     cols.rows.map((r) => r.column_name),
-    ['created_at', 'expires_at', 'id', 'key_hash', 'request_hash', 'response_body', 'response_status', 'scope'],
+    ['created_at', 'expires_at', 'id', 'key_hash', 'outcome', 'request_hash', 'response_status', 'scope'],
   );
   // 0001 的身份表仍在
   for (const table of ['users', 'sessions', 'admin_accounts', 'admin_sessions', 'admin_scopes']) {
@@ -154,56 +154,65 @@ test('PostgreSQL 认证存储：后台账号与 scope（凭据只存摘要）', 
   await db.close();
 });
 
-test('PostgreSQL 幂等台账：保存/查找、同键不覆盖、过期后同键可重新写入', async () => {
+test('PostgreSQL 幂等台账：只存不含凭据的结果引用，同键不覆盖，到期可实际清理', async () => {
   const db = await freshDb();
   const store = createPostgresIdempotencyStore(db);
   assert.equal(store.persistent, true);
 
-  const scope = 'anonymous\nPOST\n/auth/wechat';
+  const scope = 'anonymous\nPOST\n/admin/auth/session';
   const keyHash = 'd'.repeat(64);
   assert.equal(await store.find(scope, keyHash), null);
 
+  // P1-①：台账只保存 sessionId + audience 这类结果引用，**绝不**保存令牌明文。
   await store.save(scope, keyHash, {
     requestHash: 'e'.repeat(64),
     responseStatus: 200,
-    responseBody: { data: { access_token: 'first' } },
+    outcome: { sessionId: '11111111-1111-4111-8111-111111111111', audience: 'admin' },
     expiresAt: future(),
   });
   const stored = await store.find(scope, keyHash);
   assert.equal(stored.requestHash, 'e'.repeat(64));
   assert.equal(stored.responseStatus, 200);
-  assert.equal(stored.responseBody.data.access_token, 'first');
+  assert.deepEqual(stored.outcome, { sessionId: '11111111-1111-4111-8111-111111111111', audience: 'admin' });
+
+  // 直查原表：列名不再是 response_body，且整行不含任何访问令牌字段。
+  const raw = await db.query('SELECT outcome::text AS outcome_text FROM idempotency_keys WHERE scope = $1', [scope]);
+  assert.equal(raw.rows[0].outcome_text.includes('access_token'), false, '台账行不得包含 access_token');
+  assert.equal(raw.rows[0].outcome_text.includes('Bearer'), false, '台账行不得包含 Bearer 令牌');
 
   // 同键再次保存不覆盖（ON CONFLICT DO NOTHING）
   await store.save(scope, keyHash, {
     requestHash: 'f'.repeat(64),
     responseStatus: 200,
-    responseBody: { data: { access_token: 'second' } },
+    outcome: { sessionId: '22222222-2222-4222-8222-222222222222', audience: 'admin' },
     expiresAt: future(),
   });
   assert.equal((await store.find(scope, keyHash)).requestHash, 'e'.repeat(64));
 
-  // 记录实际过期后，同键可重新写入（save 先清理过期行再插入）。
-  // 迁移的 CHECK 要求 expires_at > created_at，无法直接造“已过期”行，故用短 TTL + 等待。
+  // 到期清理：purgeExpired 做**实际删除**（而非只写 TTL 字段）。
   const shortTtlKey = '2'.repeat(64);
   await store.save(scope, shortTtlKey, {
     requestHash: 'a'.repeat(64),
     responseStatus: 200,
-    responseBody: { data: { access_token: 'stale' } },
+    outcome: { accepted: true },
     expiresAt: new Date(Date.now() + 40),
   });
   await new Promise((r) => setTimeout(r, 90));
-  const stale = await store.find(scope, shortTtlKey);
-  assert.equal(stale.expiresAt.getTime() < Date.now(), true, '短 TTL 记录应已过期');
+  const beforePurge = await store.find(scope, shortTtlKey);
+  assert.equal(beforePurge.expiresAt.getTime() < Date.now(), true, '短 TTL 记录应已过期');
+  const removed = await store.purgeExpired(new Date());
+  assert.ok(removed >= 1, 'purgeExpired 应实际删除已到期条目');
+  const gone = await db.query('SELECT count(*)::int AS c FROM idempotency_keys WHERE key_hash = decode($1, \'hex\')', [shortTtlKey]);
+  assert.equal(gone.rows[0].c, 0, '已到期条目应从表中物理删除');
 
+  // 清理后可重新写入同键（save 会先删过期行）
   await store.save(scope, shortTtlKey, {
     requestHash: 'b'.repeat(64),
     responseStatus: 200,
-    responseBody: { data: { access_token: 'fresh' } },
+    outcome: { accepted: true },
     expiresAt: future(),
   });
   const rewritten = await store.find(scope, shortTtlKey);
   assert.equal(rewritten.requestHash, 'b'.repeat(64));
-  assert.equal(rewritten.responseBody.data.access_token, 'fresh');
   await db.close();
 });
