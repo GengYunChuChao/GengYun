@@ -49,10 +49,11 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 
 - [需求总览](docs/requirements.md)、[产品需求](docs/product-requirements.md)、[代码需求](docs/implementation-requirements.md)：最高优先级的业务和验收基线。
 - [全周期开发文档 v1.1](docs/development-plan.md)：架构、接口、阶段、接入门槛和交付顺序。
+- [初版 27 项开发顺序与并行建议](docs/development-order.md)：推荐队列、可以并行的条件、当前优先事项及 PR 证据；协作者开始前先核对已有领取和成果。
 - [GitHub 类似项目参考](docs/github-project-references.md)：核查源码后的经验、适用边界和采用决定。
 - [初版任务及远端 issues](docs/initial-issues.md)、[调整记录](docs/issue-revision-log.md)、[实际进度](docs/development-progress.md)：27 项任务仅到初版目标。
 - [PR 审查与合并规范](docs/pr-review-policy.md)：协作者实现，Codex 负责监工、验证与合并；每 12 小时巡检或用户消息触发。
-- [GY-I01 架构与契约提案](docs/architecture/adr-001-initial-architecture.md)：数据字典、HTTP OpenAPI、状态及F／AC映射，待监工确认冻结；接口尚未实现。可运行 `python tools/validate_contracts.py` 与 `python tools/test_contracts.py` 检查设计一致性，不代表应用验收。
+- [GY-I01 架构与契约](docs/architecture/adr-001-initial-architecture.md)：提案组件经 PR #33 审入，可供下游开发；整项运行冻结与业务接口未因此完成。可运行 `python tools/validate_contracts.py` 与 `python tools/test_contracts.py` 检查设计一致性，不代表应用验收。
 - [工程壳说明](docs/engineering-shell.md)：GY-I02 的 API／后台骨架、toolchain、配置校验、迁移运行器、分层 CI、实际运行版本、逐命令结果与未运行项。
 
 首版包含拍草识别、药剂标签 OCR、普通话语音转写向大模型提问、科普查询、真实 AI 审核社区、收藏历史、应用内消息和独立后台。定位只用于选地区；人工审核板块首版为空。识别与问答实时调用，预设资料必须标明；来源不足不生成用量处方或承诺绝对安全。

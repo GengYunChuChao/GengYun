@@ -6,6 +6,8 @@
 
 27项任务归属[初版里程碑](https://github.com/Sek1ro-oka/GengYun/milestone/1)，原GY-I01至24及远端编号保留，新增25至27；[调整依据](issue-revision-log.md)。[全周期开发文档](development-plan.md)覆盖至2027-02-28，二月暂不发布issues。
 
+推荐工作队列、并行条件和当前优先事项见[初版开发顺序建议](development-order.md)。本文件和机器台账保留任务定义与正式依赖；下方初始化的“待领取”等字段不是实时看板，领取和完成须核对远端评论、PR、main 与[进度台账](development-progress.md)，不能重复领取已有工作。
+
 最先并行准备GY-I01契约和GY-I25接入验证；已冻结契约允许替身联调，完成验收按依赖。P0是关键路径、安全或验收门槛，P1同样必交。GY-I21从M1准备，各能力实现时实测，M4汇总签核。需求第6节的全部数值及样本标准不变。
 
 | 任务 | GitHub issue | 完成阶段 | 优先级 | 验收前置 |
