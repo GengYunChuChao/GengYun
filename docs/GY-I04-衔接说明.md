@@ -1,7 +1,7 @@
 # GY-I04 衔接说明（实现方交接用）
 
 > **文档定位**：在 [GY-I04 实现微信登录、游客限制与服务端归属权限](https://github.com/Sek1ro-oka/GengYun/issues/4) 开工前，梳理「已就绪」与「待实现」的分界，避免重复造轮子或误改他人成果。
-> **前置条件**：GY-I04 的前置为 GY-I02（已合入）、GY-I25（局部已审合入、整项缺资源）、**GY-I27（未合并）**。GY-I27 未合入前不要领取本任务。
+> **前置与领取条件**：GY-I04 的正式验收前置为 GY-I02（工程壳组件已合入，整项未验收）、GY-I25（局部已审合入、整项缺资源）、GY-I27（授权与外发守卫）。按 issue #4「接口冻结后可先用明确标注的替身并行开发；缺前置／真实调用证据不关闭整项」及 [development-order.md](development-order.md) 的口径，**组件就绪即可领取并并行实现**，本任务此前写成「GY-I27 未合入前不要领取」属自行收紧条件，现更正。需要与 GY-I27 协调的是 `miniprogram/utils/session.js` 的改动归属。
 > **本文档不代表验收结论**，也不改变任何冻结契约；实现方如需改动契约，走既有变更流程。
 
 ---
@@ -157,14 +157,14 @@ function isGuest() {
 3. **`session_key` 与 `access_token` 不进日志、不进仓库、不回客户端**。
 4. **不伪造登录成功**。`apps/admin/src/auth/session.ts` 已给出诚实占位的范例（`ADMIN_AUTH_IMPLEMENTED = false`、登录直接抛错），用户端沿用同等标准：拿不到真实会话就保持游客态。
 5. **权限判断只在服务端**。客户端的 `guest` 分支是展示逻辑，不构成任何访问控制。
-6. **`openid` 等标识视为个人信息**：采集范围、留存与删除遵循 GY-I19（注销去身份、7 日备份、30 日删除）的口径。
+6. **`openid` 等登录标识视为个人信息**，须纳入 GY-I19 的删除清单：注销后**在线数据 7 日内删除、备份 30 日内删除，并立即失效会话与外发**。本任务不实现 I19 的全部删除功能，但登录标识的纳入不得遗漏。
 
 ---
 
 ## 5 建议实施顺序
 
 ```
-1. 确认 GY-I27 已合并，且 session.js 归属清晰
+1. 确认 session.js 的改动归属（GY-I26／GY-I27／本任务三方），必要时以替身并行、待守卫合入后收口
 2. 与监工确认是否需要先冻结「鉴权中间件」形态（建议先定，避免 M2 各任务重复实现）
 3. 服务端：GET /auth/session → POST /auth/logout → POST /auth/wechat（由易到难）
 4. 迁移验证：sessions 表约束（audience='user'、expires>created、token_hash 唯一）在真实 PostgreSQL 上生效
@@ -178,6 +178,7 @@ function isGuest() {
 ## 6 相关文档
 
 - 任务台账：[development-progress.md](development-progress.md)
+- 领取与并行口径：[development-order.md](development-order.md)
 - 冻结契约校验：`python tools/validate_contracts.py`（112 操作）
 - 平台核查与正式 AppID 实测：[verification/platform-checklist.md](verification/platform-checklist.md)
 - 微信与供应商实测记录：[verification/continuation-evidence.md](verification/continuation-evidence.md)

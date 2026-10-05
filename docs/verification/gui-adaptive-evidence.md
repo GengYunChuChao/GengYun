@@ -311,3 +311,20 @@ node --test tests/ui-adaptive.test.mjs
 ### 7.6 关于静态核算的定位
 
 `tools/verify-layout.mjs` 对 320／360／375／414／768 五档视口的核算，证明的是**样式声明值**满足 44px 触控区、18px 正文与 54px 末屏预留，**不等于实际渲染**。7.3 与 7.3.1 的真机对照补上了 320px 量级的实际表现，其余档位仍待实测。
+
+### 7.7 微信字体设置适配（需求 4.1）
+
+监工 2026-10-05 指出：需求第 4.1 节将「适配微信字体设置」与「正文 18px」「触控区 44px」并列为初版要求，不能因实测微信的 `fontSizeSetting` 不放大 `px` 就记为超出范围。
+
+**实现方式**（`feat` 分支，本节代码已提交）：
+
+1. `app.js` 在 `onLaunch` 主动读取 `wx.getSystemInfoSync().fontSizeSetting`，换算为缩放系数存入 `globalData.fontScale`
+2. 系数**封顶 1.3**：字体放大后换行与容器宽度同步变化，不封顶会在窄视口下破版（显示大小最大档实测已出现换行增多）
+3. 各页面根节点以 `style="--font-scale: {{fontScale}}"` 注入 CSS 变量
+4. `app.wxss` 中所有 `px` 字号改为 `calc(Npx * var(--font-scale, 1))`；触控区令牌改为 `max(44px, 44px * var(--font-scale))`，放大时随之增大且**不低于 44px**
+5. `utils/font-scale.js` 提供 `applyFontScale(page)`，取不到系数时回落为 1
+6. `tests/ui-adaptive.test.mjs` 新增断言：必须读取 `fontSizeSetting`、必须封顶 1.3、**不得存在未乘缩放系数的裸 `px` 字号**、五页均须注入变量并调用
+
+图标类 `font-size`（`.state__icon` 72rpx、`.mode__icon` 44rpx）不参与缩放，避免 emoji 变形。
+
+> 7.1–7.4 的真机走查证据是在**本节实现之前**取得的，当时系统显示大小最大档已使界面整体放大且不破版。微信字体设置适配实现后，**该档走查结论仍成立**（两种机制最终都体现为元素等比放大），但适配路径本身**尚未经真机实测**，保持待验证。

@@ -9,14 +9,14 @@
 }
 
 .notice__icon {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   margin-right: 14rpx;
   line-height: 1.5;
 }
 
 .notice__text {
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   line-height: 1.6;
   color: #7A5A16;
 }
@@ -53,13 +53,13 @@
 }
 
 .mode__title {
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .mode__desc {
   margin-top: 6rpx;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-sub, #4A5A4E);
   line-height: 1.6;
 }
@@ -82,7 +82,7 @@
 
 .voice-hint {
   margin-top: 20rpx;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-muted, #6F7F72);
   line-height: 1.6;
 }

@@ -43,6 +43,9 @@ function pxOf(css, selector, prop) {
   const i = css.indexOf(`${selector} {`);
   if (i < 0) return null;
   const block = css.slice(i, css.indexOf('}', i));
+  // 标准字号写在 calc(Npx * var(--font-scale, 1)) 中，此处取 N 的裸值
+  const calc = block.match(new RegExp(`${prop}:\\s*calc\\((\\d+(?:\\.\\d+)?)px`));
+  if (calc) return Number(calc[1]);
   const m = block.match(new RegExp(`${prop}:\\s*(\\d+(?:\\.\\d+)?)px`));
   return m ? Number(m[1]) : null;
 }
@@ -51,8 +54,13 @@ function rpxValue(css, prop) {
   return m ? Number(m[1]) : null;
 }
 
-const tapMin = pxValue(appWxss, '--tap-min');
-const bodyFont = pxValue(appWxss, 'font-size');
+// --tap-min 写作 max(44px, 44px * var(--font-scale,1))，取其下限 44px
+const tapMin = (() => {
+  const m = appWxss.match(/--tap-min:\s*max\((\d+(?:\.\d+)?)px/);
+  if (m) return Number(m[1]);
+  return pxValue(appWxss, '--tap-min');
+})();
+const bodyFont = pxOf(appWxss, 'page', 'font-size');
 const heroPadX = rpxValue(homeWxss, 'padding');
 const titleFont = pxOf(homeWxss, '.hero__title', 'font-size');
 const subFont = pxOf(homeWxss, '.hero__sub', 'font-size');

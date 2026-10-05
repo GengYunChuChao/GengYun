@@ -35,8 +35,11 @@ page {
   /* 触控与间距 */
   /* 触控区与字号使用 px 而非 rpx：rpx 为屏宽 750 等分，
      88rpx 仅在 375px 视口等于 44px，320px 窄屏只有约 37.55px，
-     36rpx 正文在 320px 视口只有 15.36px，均不满足 44px 触控区与 18px 正文门槛。 */
-  --tap-min: 44px;
+     36rpx 正文在 320px 视口只有 15.36px，均不满足 44px 触控区与 18px 正文门槛。
+     --font-scale 由页面根节点按 wx.getSystemInfoSync().fontSizeSetting 注入，
+     实现需求 4.1 的「适配微信字体设置」；缺省 1 表示标准字号。 */
+  --font-scale: 1;
+  --tap-min: max(44px, 44px * var(--font-scale, 1));
   --gap-xs: 16rpx;
   --gap: 28rpx;
   --gap-lg: 40rpx;
@@ -45,7 +48,7 @@ page {
 
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
@@ -62,14 +65,14 @@ page {
 }
 
 .page-title {
-  font-size: 24px;
+  font-size: calc(24px * var(--font-scale, 1));
   font-weight: 700;
   line-height: 1.35;
   margin-bottom: 12rpx;
 }
 
 .page-subtitle {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-sub);
   margin-bottom: 32rpx;
 }
@@ -77,7 +80,7 @@ page {
 .section-title {
   display: flex;
   align-items: center;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
   margin: 36rpx 0 20rpx;
 }
@@ -102,13 +105,13 @@ page {
 }
 
 .card-title {
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
   margin-bottom: 16rpx;
 }
 
 .card-text {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-sub);
   line-height: 1.7;
 }
@@ -123,7 +126,7 @@ page {
   min-height: var(--tap-min);
   padding: 0 16px;
   border-radius: 999rpx;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
   line-height: 1.4;
   border: none;
@@ -161,7 +164,7 @@ page {
   min-height: 24px;
   padding: 0 20rpx;
   border-radius: 999rpx;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   font-weight: 600;
   background: var(--color-primary-soft);
   color: var(--color-primary-deep);

@@ -9,14 +9,14 @@
 }
 
 .notice__icon {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   margin-right: 14rpx;
   line-height: 1.5;
 }
 
 .notice__text {
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   line-height: 1.6;
   color: #7A5A16;
 }

@@ -53,13 +53,14 @@ test('八种状态齐全，且每种都带图标、标题与说明', () => {
 });
 
 test('触控区为 44px 且使用 px 单位，320px 窄屏下仍成立', () => {
-  assert.ok(/--tap-min:\s*44px/.test(appWxss), '触控区令牌必须为 44px');
+  assert.ok(/--tap-min:\s*max\(44px/.test(appWxss), '触控区令牌必须为 max(44px, ...) 形式');
   // rpx 为屏宽 750 等分：88rpx 仅在 375px 视口等于 44px，320px 视口只有约 37.55px，不满足门槛
-  assert.ok(!/--tap-min:\s*[\d.]+rpx/.test(appWxss), '触控区不得使用 rpx，窄屏会缩水至 44px 以下');
+  assert.ok(!/--tap-min:\s*[\d.]+rpx/.test(appWxss), '触控区不得使用 rpx，窄屏会缩水至 44px以下');
   const btn = appWxss.slice(appWxss.indexOf('.btn {'), appWxss.indexOf('.btn--block'));
   assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未使用触控区令牌');
   // .btn 已将 padding 归零、line-height 1.4，不能依赖原生按钮默认高度补足
   assert.ok(/padding:\s*0\s+16px/.test(btn), '.btn 横向内边距应为 px');
+  assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未引用触控区令牌');
   const homeWxss = read('miniprogram/pages/home/home.wxss');
   assert.ok(/min-height:\s*var\(--tap-min/.test(homeWxss), '首页入口触控区不足');
   assert.ok(!/var\(--tap-min,\s*[\d.]+rpx\)/.test(homeWxss), '首页入口触控区 fallback 不得为 rpx');
@@ -67,7 +68,7 @@ test('触控区为 44px 且使用 px 单位，320px 窄屏下仍成立', () => {
 
 test('正文为 18px 且不随屏宽缩放', () => {
   const root = appWxss.slice(0, appWxss.indexOf('/* ============================ 布局'));
-  assert.ok(/font-size:\s*18px/.test(root), '正文未使用 18px');
+  assert.ok(/font-size:\s*calc\(18px\s*\*\s*var\(--font-scale/.test(root), '正文未使用 18px 且未乘字体缩放');
   // 36rpx 在 375px 视口等于 18px，但 320px 视口只有 15.36px，低于 18px 正文门槛
   assert.ok(!/font-size:\s*36rpx/.test(root), '正文不得使用 36rpx，窄屏会缩至 18px 以下');
 });
@@ -115,6 +116,27 @@ test('界面文案不含绝对化风险表述', () => {
   }
 });
 
+test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节点注入缩放变量', () => {
+  const appJs = read('miniprogram/app.js');
+  assert.ok(/fontSizeSetting/.test(appJs), 'app.js 未读取 fontSizeSetting');
+  assert.ok(/MAX_FONT_SCALE\s*=\s*1\.3/.test(appJs), '缩放系数未封顶 1.3');
+  assert.ok(/globalData[\s\S]*fontScale/.test(appJs), 'globalData 未暴露 fontScale');
+
+  // 字号必须乘以缩放变量，否则微信字体设置对 px 无效（需求 4.1）
+  const sizes = appWxss.match(/font-size:\s*(\d+)px/g) || [];
+  assert.equal(sizes.length, 0, `仍有未乘缩放系数的 px 字号：${sizes.join(', ')}`);
+  assert.ok(/font-size:\s*calc\(\d+px\s*\*\s*var\(--font-scale/.test(appWxss), '正文字号未乘 --font-scale');
+  assert.ok(/--font-scale:\s*1/.test(appWxss), '未定义 --font-scale 默认值');
+  assert.ok(/--tap-min:\s*max\(44px/.test(appWxss), '触控区未随字体放大且保持 44px 下限');
+
+  for (const page of appJson.pages) {
+    const wxml = read(`miniprogram/${page}.wxml`);
+    const js = read(`miniprogram/${page}.js`);
+    assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
+    assert.ok(js.includes('fontScale'), `${page} 未引入 font-scale`);
+    assert.ok(/onLoad/.test(js), `${page} 缺少 onLoad 调用 applyFontScale`);
+  }
+});
 test('游客仅首页完全开放，其余页面拦截并提示登录', () => {
   const home = read('miniprogram/pages/home/home.wxml');
   assert.ok(home.includes('guest'), '首页未标识游客状态');

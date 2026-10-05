@@ -6,13 +6,13 @@
 }
 
 .guest-card__title {
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale, 1));
   font-weight: 700;
 }
 
 .guest-card__desc {
   margin-top: 14rpx;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   line-height: 1.7;
   color: var(--color-text-sub, #4A5A4E);
 }
@@ -35,13 +35,13 @@
 
 .row__label {
   flex: 0 0 220rpx;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-sub, #4A5A4E);
 }
 
 .row__value {
   flex: 1;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   font-weight: 600;
   color: var(--color-text, #1B2B1E);
 }

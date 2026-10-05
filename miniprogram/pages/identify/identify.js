@@ -1,7 +1,13 @@
 const session = require('../../utils/session')
+const fontScale = require('../../utils/font-scale')
 
 Page({
+  onLoad: function () {
+    fontScale.applyFontScale(this)
+  },
+
   data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
     modes: [
       { key: 'weed', icon: '🌿', title: '拍草识别', desc: '拍照片识别田里的杂草', action: '拍照识别' },
       { key: 'ocr', icon: '🏷️', title: '标签识别', desc: '拍包装读出药名与成分', action: '拍照识标签' },

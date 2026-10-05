@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page" style="--font-scale: {{fontScale}}">
   <view class="hero">
     <view class="hero__brand">耕云</view>
     <view class="hero__title">识草查药，除草不求人</view>
