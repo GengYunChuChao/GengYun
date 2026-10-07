@@ -64,10 +64,12 @@ erDiagram
 
 ## 验证与精确环境缺项
 
-实际Excel的本地抽取已完成；4组标准库离线测试覆盖OOXML关系定位/原行号、缺值与重名冲突、公式缓存/错误隔离、坏表头/宏外链拒绝、SQL原文转义和确定性批次，不发网络。私密输出路径为.local/workbook-intake-20261008-final，源文件SHA256不变。
+实际Excel的本地抽取已完成；4组标准库离线测试覆盖OOXML关系定位/原行号、缺值与重名冲突、公式缓存/错误隔离、坏表头/宏外链拒绝、SQL原文转义和确定性批次，不发网络。最终已提交导入器的私密输出路径为.local/workbook-intake-20261008-reviewed（先前辅助检查副本为.local/workbook-intake-20261008-final），源文件SHA256不变。
 
 30组原有工程单元检查、API/后台类型检查及仓库卫生扫描通过。PGlite辅助执行0001→0002→0004并将实际私密SQL执行两次，最终暂存116行（1行表头＋96行资料＋19行说明），未重复；该辅助检查不是目标PG17实库。本次不提交原始内容或该私密SQL。
 
 本机PATH未发现psql/postgres/initdb/docker，常见C盘Program Files及D/E PostgreSQL目录未发现可用安装；尚无本地真实PG17或获准私密连接，因此不声称本地入库成功。新增独立CI采用隔离PostgreSQL17服务，打印实际server_version精确patch，执行旧+新迁移、合成导入两次、FK/NULL/安全字段/行号负例、应用无权限及审查只读越权负例、只回滚自己批次且保留另一批次、结构down仍保留旧sources。CI用纯合成资料，不上传用户xlsx或原文。CI结果须以具体运行成功后记录，配置workflow本身不是实测证据；PGlite也不能替代真实PG17。
+
+实际CI证据：固定代码SHA `bf1fc726f4bfaf2821c4523a41bf4b1806a38083`，[真实PG17运行](https://github.com/Sek1ro-oka/GengYun/actions/runs/37651641219)已success，日志server_version为`17.11 (Debian 17.11-1.pgdg13+2)`，上述迁移/幂等/约束/权限/回滚检查全部通过；[工程六项检查](https://github.com/Sek1ro-oka/GengYun/actions/runs/37651641185)及[文档检查](https://github.com/Sek1ro-oka/GengYun/actions/runs/37651640948)全部success。这证明合成隔离CI的真实PG17结构与行为，不宣称本机已安装PG或已将用户原文上传到CI；本次仅文档补充不改变该代码证据。
 
 后续本地/部署接入的最小缺项是获准的隔离PG17运行环境及服务端安全连接位置；不要求购云资源。来源/登记/标签核验、原文再发布许可及完整安全验收仍缺，不以导入成功结项。
