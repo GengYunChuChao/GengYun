@@ -266,3 +266,93 @@ test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
   assert.ok(ignore.includes('config.local.json'), '本地配置未被忽略');
 });
 
+/**
+ * 以合成 wx 加载 app.js 并在 wx 存在期间执行 fn。
+ * 每次清理模块缓存后重新加载，避免模块级状态串味；
+ * fn 必须在此函数内部调用被测函数，否则 wx 已被清理、读不到字段。
+ */
+function withApp(wxOverrides, fn) {
+  const req = createRequire(import.meta.url);
+  for (const p of ['../miniprogram/app.js', '../miniprogram/utils/session.js']) {
+    delete req.cache[req.resolve(p)];
+  }
+  globalThis.App = () => {};
+  globalThis.wx = Object.assign(
+    { getStorageSync: () => '', getSystemInfoSync: () => ({}), getFontSizeManager: undefined },
+    wxOverrides
+  );
+  try {
+    return fn(req('../miniprogram/app.js'));
+  } finally {
+    delete globalThis.App;
+    delete globalThis.wx;
+  }
+}
+
+test('fontSizeSetting 的 px 值按 16px 基准换算，微信三档字号可区分', () => {
+  // 回归监工指出的缺陷：fontSizeSetting 单位为 px，早期实现直接当倍率传给 clampScale，
+  // 使 16/18/20 三档全部被截断到 1.3（标准档被强制放大 30%）。
+  const cases = [
+    { px: 16, expected: 1 },
+    { px: 18, expected: 1.125 },
+    { px: 20, expected: 1.25 }
+  ];
+  for (const { px, expected } of cases) {
+    withApp({ getSystemInfoSync: () => ({ fontSizeSetting: px }) }, (app) => {
+      assert.equal(app.readFontScale(), expected, `fontSizeSetting=${px}px 应换算为 ${expected}`);
+    });
+  }
+});
+
+test('优先读取 fontSizeScaleFactor 比例字段，不受 fontSizeSetting 的 px 值干扰', () => {
+  withApp({ getFontSizeManager: () => ({ fontSizeSetting: 20, fontSizeScaleFactor: 1.25 }) }, (app) => {
+    assert.equal(app.readFontScale(), 1.25, 'getFontSizeManager 的比例字段应生效');
+  });
+
+  withApp({ getSystemInfoSync: () => ({ fontSizeSetting: 20, fontSizeScaleFactor: 1.25 }) }, (app) => {
+    assert.equal(app.readFontScale(), 1.25, '系统信息上的比例字段应生效');
+  });
+
+  // getFontSizeManager 抛错时须继续下探，不得整体失败回落到 1
+  withApp(
+    {
+      getFontSizeManager: () => {
+        throw new Error('unsupported');
+      },
+      getSystemInfoSync: () => ({ fontSizeSetting: 20 })
+    },
+    (app) => {
+      assert.equal(app.readFontScale(), 1.25, '比例 API 不可用时应回落到 px 换算');
+    }
+  );
+});
+
+test('应用内显式档位优先于微信字段，非法与缺失值一律回落标准', () => {
+  withApp({ getStorageSync: () => 1.15, getSystemInfoSync: () => ({ fontSizeSetting: 20 }) }, (app) => {
+    assert.equal(app.readFontScale(), 1.15, '应用内档位应优先');
+  });
+
+  withApp({ getSystemInfoSync: () => ({}) }, (app) => {
+    assert.equal(app.readFontScale(), 1, '微信字段缺失应回落 1');
+  });
+
+  for (const bad of [0, -1, NaN, '20', null, undefined, {}]) {
+    withApp({ getSystemInfoSync: () => ({ fontSizeSetting: bad }) }, (app) => {
+      assert.equal(app.readFontScale(), 1, `fontSizeSetting=${String(bad)} 应回落为 1`);
+    });
+  }
+});
+
+test('源码不得把 fontSizeSetting 的 px 值直接当倍率，并锁定基准与比例字段', () => {
+  const src = read('miniprogram/app.js');
+  assert.ok(
+    !/clampScale\((?:info\s*&&\s*info\.)?fontSizeSetting\)/.test(src),
+    'fontSizeSetting 是 px，不得直接作为倍率传入 clampScale'
+  );
+  assert.ok(/fontSizeScaleFactor/.test(src), '必须读取 fontSizeScaleFactor 比例字段');
+  assert.ok(/BASE_FONT_SIZE_PX\s*=\s*16/.test(src), 'px 换算基准应为 16');
+  withApp({}, (app) => {
+    assert.equal(app.BASE_FONT_SIZE_PX, 16, '导出的基准字号应为 16px');
+  });
+});
+

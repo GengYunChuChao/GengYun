@@ -1,10 +1,12 @@
 /**
  * 字体缩放注入辅助（GY-I26）
  * ------------------------------------------------------------
- * 需求 4.1 要求「适配微信字体设置」。实测微信的 fontSizeSetting 不会自动放大
- * WXSS 中的 px，故由 app.js 读取该值换算为系数（封顶 1.3），页面根节点以
- * 内联 style 注入 CSS 变量 --font-scale，字号与触控区在 app.wxss 中用 calc()
- * 乘以该系数。
+ * 需求 4.1 要求「适配微信字体设置」。实测微信的字体设置不会自动放大 WXSS 中的 px，
+ * 故由 app.js 读取缩放系数（优先官方 fontSizeScaleFactor 比例字段，缺失时才用
+ * fontSizeSetting 的 px 值除以 16 换算；封顶 1.3），页面根节点以内联 style 注入
+ * CSS 变量 --font-scale，字号与触控区在 app.wxss 中用 calc() 乘以该系数。
+ *
+ * 本文件只负责应用内档位的读写与注入；微信侧字段的读取与单位换算在 app.js。
  *
  * 各页面在 data 中声明 fontScale，并在 onLoad 调用 applyFontScale(this)，
  * 根节点写法：<view class="page" style="--font-scale: {{fontScale}}">
@@ -53,7 +55,7 @@ function clamp(value) {
 
 /**
  * 写入应用内字号设置并立即生效。
- * 真机上微信的 fontSizeSetting 不反映用户设置，故这是唯一可控途径。
+ * 这是微信字体设置之外的独立可控途径（应用内不依赖系统字段，恒可用）。
  * 返回实际生效的系数；未登录也可使用，不涉及任何账号数据。
  */
 function setFontScale(page, value) {
