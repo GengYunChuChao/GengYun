@@ -1,5 +1,7 @@
 # 数据库适配层（GY-I03）
 
+用户Excel的未审核增量暂存使用0004与独立knowledge_staging schema；字段、质量、原文权限、导入/回滚及真实PG17验证边界见[Excel暂存设计](../docs/architecture/workbook-staging-design.md)。0001/0002和已有种子保持原成果；0003留给独立隐私迁移。
+
 可替换资料数据库适配：迁移、种子、明显模拟数据、导入校验、冲突报告、更新回滚，
 以及 `real` / `stub` / `preset_demo` 三模式与来源类型（`database` / `verified_seed` /
 `simulation`）分离。

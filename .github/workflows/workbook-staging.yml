@@ -1,0 +1,45 @@
+name: Workbook staging PostgreSQL 17
+on:
+  pull_request:
+    paths:
+      - 'tools/knowledge/import_workbook_staging.py'
+      - 'tests/knowledge/**'
+      - 'tests/integration/workbook-staging-pg.mjs'
+      - 'services/api/db/migrations/**'
+      - '.github/workflows/workbook-staging.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/knowledge/import_workbook_staging.py'
+      - 'services/api/db/migrations/**'
+permissions:
+  contents: read
+jobs:
+  staging-pg17:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: staging_test
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: gengyun_staging_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: python3 tests/knowledge/test_workbook_staging.py
+      - run: node tests/integration/workbook-staging-pg.mjs
+        env:
+          STAGING_PG_TEST_URL: postgresql://staging_test:synthetic-ci-only@127.0.0.1:5432/gengyun_staging_test
