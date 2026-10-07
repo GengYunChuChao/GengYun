@@ -6,6 +6,7 @@ import argparse
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -15,6 +16,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 VERSION = 'herbicide-summary-v1'
+MAX_WORKBOOK_BYTES = 25_000_000
 HEADERS = ['除草剂名称', '常见别称／商品名', '对环境危害等级',
            '对环境主要造成的危害', '常用于防除的对象（杂草）', '适用／常用地区']
 FIELDS = ['name_text', 'aliases_text', 'risk_grade_text', 'risk_text', 'weed_text', 'region_text']
@@ -28,11 +30,14 @@ def normalized(value):
 
 def inspect_workbook(path):
     """Preserve coordinates, stored values, types, formulas and cached results."""
-    content = Path(path).read_bytes()
-    if len(content) > 25_000_000:
+    # Never reopen the path: save/sync may replace it after this bounded read.
+    # Size, identity and all ZIP members describe this exact immutable snapshot.
+    with Path(path).open('rb') as source:
+        content = source.read(MAX_WORKBOOK_BYTES + 1)
+    if len(content) > MAX_WORKBOOK_BYTES:
         raise ValueError('WORKBOOK_TOO_LARGE')
     sheets = []
-    with zipfile.ZipFile(Path(path)) as archive:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
         if sum(i.file_size for i in archive.infolist()) > 100_000_000:
             raise ValueError('EXPANDED_WORKBOOK_TOO_LARGE')
         parts = archive.namelist()

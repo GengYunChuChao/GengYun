@@ -29,6 +29,14 @@ try {
   assert.equal((await client.query('SELECT count(*)::int AS n FROM knowledge_staging.workbook_batches')).rows[0].n, 1);
   assert.equal((await client.query('SELECT count(*)::int AS n FROM knowledge_staging.workbook_rows')).rows[0].n, 3);
   assert.equal((await client.query('SELECT count(*)::int AS n FROM v_active_source_version')).rows[0].n, 0);
+  // A failing new batch transaction must neither survive nor alter existing intake.
+  const beforeFailure = (await client.query('SELECT * FROM knowledge_staging.workbook_rows ORDER BY sheet_name,excel_row')).rows;
+  await client.query('BEGIN');
+  await client.query("INSERT INTO knowledge_staging.workbook_batches(id,file_sha256,filename,mapping_version,quality) VALUES ('00000000-0000-0000-0000-000000000003',repeat('c',64),'failed.xlsx','v1','{}')");
+  await rejected("INSERT INTO knowledge_staging.workbook_rows(batch_id,sheet_name,excel_row,row_hash,raw,mapped,state,issues) VALUES ('00000000-0000-0000-0000-000000000003','synthetic',1,repeat('c',64),NULL,'{}','context','[]')", '23502');
+  await client.query('ROLLBACK');
+  assert.equal((await client.query("SELECT count(*)::int AS n FROM knowledge_staging.workbook_batches WHERE file_sha256=repeat('c',64)")).rows[0].n, 0);
+  assert.deepEqual((await client.query('SELECT * FROM knowledge_staging.workbook_rows ORDER BY sheet_name,excel_row')).rows, beforeFailure);
   await rejected("UPDATE knowledge_staging.workbook_rows SET mapped='{}' WHERE state='unreviewed'", '23514');
   await rejected("UPDATE knowledge_staging.workbook_rows SET excel_row=0", '23514');
   await rejected("UPDATE knowledge_staging.workbook_batches SET source_version_id='00000000-0000-0000-0000-000000000001'", '23503');
@@ -45,5 +53,5 @@ try {
   assert.equal((await client.query('SELECT count(*)::int AS n FROM knowledge_staging.workbook_batches')).rows[0].n, 1);
   await client.query(read('services/api/db/migrations/rollback/0004_workbook_staging.down.sql'));
   assert.equal((await client.query("SELECT to_regclass('public.source_versions') AS relation")).rows[0].relation, 'source_versions');
-  console.log('PASS real PG17: migrations, repeat import, guarded fields, FK/NULL/row constraints, access negatives, scoped batch rollback, structural down');
+  console.log('PASS real PG17: migrations, repeat import, failed transaction rollback preserves existing rows, guarded fields, FK/NULL/row constraints, access negatives, scoped batch rollback, structural down');
 } finally { await client.end(); }

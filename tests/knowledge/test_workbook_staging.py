@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 from xml.sax.saxutils import escape
 
@@ -43,6 +44,67 @@ class IntakeTests(unittest.TestCase):
             book = intake.inspect_workbook(path)
             self.assertEqual(book['sheets'][0]['rows'][1]['cells']['A2']['value'], "合成'药")
             self.assertEqual(intake.build_import(book)['quality']['data_rows'], 1)
+
+    def test_path_replaced_after_read_still_binds_original_snapshot(self):
+        import hashlib
+        import io
+        def workbook_bytes(name):
+            buffer = io.BytesIO()
+            ns = intake.NS['m']
+            with zipfile.ZipFile(buffer, 'w') as z:
+                z.writestr('xl/workbook.xml', f'<workbook xmlns="{ns}" xmlns:r="{intake.REL}"><sheets><sheet name="除草剂汇总表" sheetId="1" r:id="s1"/></sheets></workbook>')
+                z.writestr('xl/_rels/workbook.xml.rels', '<Relationships><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>')
+                cells = ''.join(f'<c r="{chr(65+i)}1" t="inlineStr"><is><t>{escape(h)}</t></is></c>' for i, h in enumerate(intake.HEADERS))
+                cells2 = ''.join(f'<c r="{chr(65+i)}2" t="inlineStr"><is><t>{escape(v)}</t></is></c>' for i, v in enumerate([name, 'alias', 'grade', 'risk', 'weed', 'region']))
+                z.writestr('xl/worksheets/sheet1.xml', f'<worksheet xmlns="{ns}"><sheetData><row r="1">{cells}</row><row r="2">{cells2}</row></sheetData></worksheet>')
+            return buffer.getvalue()
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'synthetic.xlsx'
+            a, b = workbook_bytes('synthetic A'), workbook_bytes('synthetic B')
+            path.write_bytes(a)
+            golden = intake.build_import(intake.inspect_workbook(path))
+            original_open = Path.open
+            reads = []
+            class SwappingReader:
+                def __init__(self, handle): self.handle = handle
+                def __enter__(self): return self
+                def __exit__(self, *args): self.handle.close()
+                def read(self, size=-1):
+                    reads.append(size)
+                    snapshot = self.handle.read(size)
+                    path.write_bytes(b)  # Deterministic replacement before ZIP parsing.
+                    return snapshot
+            def swapping_open(current, mode='r', *args, **kwargs):
+                handle = original_open(current, mode, *args, **kwargs)
+                return SwappingReader(handle) if current == path and mode == 'rb' else handle
+            with patch.object(Path, 'open', swapping_open):
+                actual = intake.build_import(intake.inspect_workbook(path))
+            self.assertEqual(actual['sha256'], hashlib.sha256(a).hexdigest())
+            self.assertEqual(actual['rows'][1]['mapped']['name_text'], 'synthetic A')
+            self.assertEqual(reads, [intake.MAX_WORKBOOK_BYTES + 1])
+            self.assertEqual(actual['batch_id'], golden['batch_id'])
+            self.assertEqual(actual['rows'], golden['rows'])
+            self.assertEqual(path.read_bytes(), b)
+            later = intake.build_import(intake.inspect_workbook(path))
+            self.assertEqual(later['sha256'], hashlib.sha256(b).hexdigest())
+            self.assertEqual(later['rows'][1]['mapped']['name_text'], 'synthetic B')
+            self.assertNotEqual(later['batch_id'], actual['batch_id'])
+
+    def test_corrupt_and_oversized_inputs_create_no_success_output(self):
+        local = ROOT / '.local'
+        local.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=local) as d:
+            path = Path(d) / 'broken.xlsx'
+            path.write_bytes(b'not-a-zip')
+            out = Path(d) / 'failed-output'
+            original = path.read_bytes()
+            with patch.object(sys, 'argv', ['importer', str(path), '--output', str(out)]):
+                with self.assertRaises(zipfile.BadZipFile): intake.main()
+            self.assertFalse(out.exists())
+            self.assertEqual(path.read_bytes(), original)
+            with patch.object(intake, 'MAX_WORKBOOK_BYTES', 4):
+                with self.assertRaisesRegex(ValueError, 'WORKBOOK_TOO_LARGE'):
+                    intake.inspect_workbook(path)
 
     def test_missing_duplicates_and_formula_cache_stay_quarantined(self):
         book = fixture()
