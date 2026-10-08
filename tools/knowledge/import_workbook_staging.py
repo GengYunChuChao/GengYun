@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import unicodedata
@@ -17,6 +18,8 @@ import xml.etree.ElementTree as ET
 
 VERSION = 'herbicide-summary-v1'
 MAX_WORKBOOK_BYTES = 25_000_000
+MAX_INTAKE_ROWS = 10_000
+MAX_INTAKE_JSON_BYTES = 8_000_000
 HEADERS = ['除草剂名称', '常见别称／商品名', '对环境危害等级',
            '对环境主要造成的危害', '常用于防除的对象（杂草）', '适用／常用地区']
 FIELDS = ['name_text', 'aliases_text', 'risk_grade_text', 'risk_text', 'weed_text', 'region_text']
@@ -28,7 +31,7 @@ def normalized(value):
     return unicodedata.normalize('NFKC', str(value)).strip() if value is not None else None
 
 
-def inspect_workbook(path):
+def inspect_workbook(path, max_rows=None):
     """Preserve coordinates, stored values, types, formulas and cached results."""
     # Never reopen the path: save/sync may replace it after this bounded read.
     # Size, identity and all ZIP members describe this exact immutable snapshot.
@@ -37,6 +40,8 @@ def inspect_workbook(path):
     if len(content) > MAX_WORKBOOK_BYTES:
         raise ValueError('WORKBOOK_TOO_LARGE')
     sheets = []
+    row_count = 0
+    cell_count = 0
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         if sum(i.file_size for i in archive.infolist()) > 100_000_000:
             raise ValueError('EXPANDED_WORKBOOK_TOO_LARGE')
@@ -61,6 +66,9 @@ def inspect_workbook(path):
             for row in root.findall('m:sheetData/m:row', NS):
                 cells = {}
                 for cell in row.findall('m:c', NS):
+                    cell_count += 1
+                    if max_rows is not None and cell_count > 100_000:
+                        raise ValueError('INTAKE_LIMIT_EXCEEDED')
                     value_node = cell.find('m:v', NS)
                     stored = value_node.text if value_node is not None else None
                     kind = cell.attrib.get('t', 'n')
@@ -73,6 +81,9 @@ def inspect_workbook(path):
                                                'formula_attributes': formula.attrib if formula is not None else None,
                                                'style': cell.attrib.get('s')}
                 if any(c['value'] not in (None, '') or c['formula'] is not None for c in cells.values()):
+                    row_count += 1
+                    if max_rows is not None and row_count > max_rows:
+                        raise ValueError('INTAKE_LIMIT_EXCEEDED')
                     rows.append({'excel_row': int(row.attrib['r']), 'cells': cells})
             comments = []
             relpart = str(PurePosixPath(part).parent / '_rels' / (PurePosixPath(part).name + '.rels'))
@@ -171,8 +182,22 @@ def sql_for(payload):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('workbook')
-    parser.add_argument('--output', required=True, help='New ignored local directory; refuses overwrite')
+    parser.add_argument('--output', help='New ignored local directory; refuses overwrite')
+    parser.add_argument('--internal-json', action='store_true', help='Private subprocess pipe only; no output files')
     args = parser.parse_args()
+    if args.internal_json:
+        if any(os.environ.get(k) for k in ('DATABASE_URL', 'DATABASE_TEST_URL', 'STAGING_PG_TEST_URL', 'STAGING_INTAKE_TEST_URL')):
+            raise ValueError('PRIVATE_DATABASE_ENV_FORBIDDEN')
+        if args.output is not None:
+            parser.error('Internal pipe does not accept output files')
+        payload = build_import(inspect_workbook(args.workbook, max_rows=MAX_INTAKE_ROWS))
+        encoded = json.dumps(payload, ensure_ascii=False)
+        if len(payload['rows']) > MAX_INTAKE_ROWS or len(encoded.encode('utf-8')) > MAX_INTAKE_JSON_BYTES:
+            raise ValueError('INTAKE_LIMIT_EXCEEDED')
+        print(encoded)
+        return
+    if args.output is None:
+        parser.error('Output directory required')
     out = Path(args.output).resolve()
     root = Path(__file__).resolve().parents[2]
     if not out.is_relative_to(root / '.local'):

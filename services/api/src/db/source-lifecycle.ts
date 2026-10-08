@@ -13,13 +13,14 @@ export interface SourceOperation {
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** No pg query options: they can override the URL authority or read SSL files. */
-export function validateSourceDatabaseUrl(value: string | undefined): string {
+export function validateSourceDatabaseUrl(value: string | undefined,
+  databasePaths: readonly string[] = ['/gengyun_source_ops_test','/gengyun_local']): string {
   let url: URL;
   try { url = new URL(value ?? ''); }
   catch { throw new ApiError('INVALID_REQUEST','只允许显式的本机隔离来源操作数据库'); }
   if (!['postgres:','postgresql:'].includes(url.protocol)
     || !['127.0.0.1','localhost','[::1]'].includes(url.hostname)
-    || !['/gengyun_source_ops_test','/gengyun_local'].includes(url.pathname)
+    || !databasePaths.includes(url.pathname)
     || url.href.includes('?') || url.href.includes('#')) {
     throw new ApiError('INVALID_REQUEST','只允许无查询参数和片段的本机隔离来源操作数据库');
   }
