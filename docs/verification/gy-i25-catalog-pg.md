@@ -46,8 +46,8 @@ preview_reader 只 SELECT home_species；evidence_reader 只 SELECT registration
 回滚文件 `services/api/db/migrations/rollback/0005_catalog_read_views.down.sql` 只删除0005视图/schema
 和对应迁移台账，不 CASCADE、不删资料基表或角色。先停相应消费者再以迁移所有者执行；
 重新应用0005后需重新 GRANT 两个视图。组角色由运维在确认无其他使用者后独立撤销。
-既有0002 SQL自带 BEGIN/COMMIT，本轮没有改其已审校验和：成功重放已验证；失败原子性证据
-限于本轮由运行器管理事务的0005/合成失败迁移，不能据此承诺旧0002台账写入失败仍整体回滚。
+既有0002/0004 SQL自带 BEGIN/COMMIT，本轮没有改其已审校验和：成功重放已验证；失败原子性证据
+限于本轮由运行器管理事务的0005/合成失败迁移，不能据此承诺旧0002/0004台账写入失败仍整体回滚。
 
 ## 本机实测与重放
 
@@ -92,8 +92,8 @@ $taskPgRoot = Join-Path (Get-Location) '.local/pg17-window'
 
 | 场景 | 本机结果 | 证据 |
 | --- | --- | --- |
-| 0001/0002/0005真实执行、重复跳过、checksum drift拒绝、合成失败DDL及ledger回滚 | 通过 | `tests/integration/catalog-pg.mjs` 第1组 |
-| 真实LOGIN最小权限、默认PUBLIC、私有原表/跨投影/写/DDL/TEMP/升权负例 | 通过 | 第2组 |
+| 0001/0002/0004/0005真实执行、重复跳过、checksum drift拒绝、合成失败DDL及ledger回滚 | 通过 | `tests/integration/catalog-pg.mjs` 第1组 |
+| 真实LOGIN最小权限、默认PUBLIC、私有原表/已审暂存/跨投影/写/DDL/TEMP/升权负例 | 通过 | 第2组 |
 | 现有20条不完整公开登记 + 2条明确模拟，重复导入与按ID回滚 | 通过；可用登记证据0、DoseCard0 | 第3组；未修改种子审核/有效期 |
 | 真HTTP→API→PG空集合/12条上限10、字段封套、来源/日期/审核/内容反例、旧隐藏版本、配置模式切换、失效即时过滤 | 通过 | 第4组；合成正例仅验证机制，不是实际内容审核 |
 | 登记制剂/来源/哈希/ingredients映射，状态/日期缺失/身份及待解决冲突/注入/演示拒绝；失败导入保留此前行 | 通过 | 第5组；全合成登记正例 |
@@ -105,3 +105,16 @@ $taskPgRoot = Join-Path (Get-Location) '.local/pg17-window'
 
 本增量只交付查询/权限/数据追溯与回滚机制证据，#3/#27采用 Refs，不关闭整项。
 原供应商12次调用和1.7224元保守预留维持，账单未知；本轮真实供应商调用0。
+
+## 最新批复整改矩阵
+
+| 批复/缺项 | 整改提交/文件 | 验证与审查状态 |
+| --- | --- | --- |
+| #51 A哈希/B内容P2 | 2baedd1 单次bytes快照；已审main=2846c34 | [正式复审](https://github.com/Sek1ro-oka/GengYun/pull/51#pullrequestreview-5449910941)通过，[原线程](https://github.com/Sek1ro-oka/GengYun/pull/51#discussion_r4213318793)监工已解除；不重做旧修复 |
+| #3/#27 API→实际PG、受限应用角色运行/交接 | 本PR 0005、catalog.ts、public-home.ts、roles引导、真实PG测试和本文 | 作者本机正反例通过；提交固定HEAD后由CI/监工独立验证，不能用作者报告代审 |
+| #3/#27 规范药剂/标签/条件和可用用量卡 | 本PR仅字段映射与拒绝机制，不提升未审来源 | 原20条公开记录仍缺项、可用登记证据0/DoseCard0，整项未完成 |
+| #3/#27 用途/撤回/注销/第三方删除 | 不接管独立#45；运行角色不能读私有原表/暂存 | 缺完整业务接线与消费者证据，整项未完成 |
+
+完整当前批复：[issue #3](https://github.com/Sek1ro-oka/GengYun/issues/3#issuecomment-6049452253)、
+[issue #27](https://github.com/Sek1ro-oka/GengYun/issues/27#issuecomment-6049452452)。
+提交与修订前均重读最新正文、评论、review、行内/回复及未解决线程；PR正文记录完整SHA与当前CI。
