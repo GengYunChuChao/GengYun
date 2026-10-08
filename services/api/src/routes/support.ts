@@ -56,10 +56,22 @@ function send(outcome: RouteOutcome, reply: FastifyReply): void {
   reply.send(outcome.body);
 }
 
+/** 同键占位等待：步进与总预算（用真实时钟，避免受注入时钟影响）。 */
+const CLAIM_WAIT_STEP_MS = 2;
+const CLAIM_WAIT_BUDGET_MS = 1000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * 幂等执行：先校验 Idempotency-Key。
- * - 未命中台账：执行 produce，只把**不含凭据的结果引用**写入台账。
- * - 命中有效台账同键同体：走 replay（重新校验当前状态并重新签发），**不回放旧响应**。
+ * - 命中**已完成**台账同键同体：走 replay（按结果引用重新校验当前状态，并在同一会话上换发令牌），
+ *   **不回放旧响应**（其中可能含已失效或明文的 bearer）。
+ * - 未命中：原子 `claim` 占位成功后执行 produce，只把**不含凭据的结果引用** `complete` 进台账；
+ *   produce 失败则 `release` 占位（不把失败包当结果）。
+ * - 占位失败（同键请求正在 produce）：**有界等待**其完成后按结果重放，使并发同键收敛到同一
+ *   会话关系，而不是各自新建互不关联的会话；超预算返回 409 REQUEST_IN_PROGRESS。
  * - 同键异体判 409 IDEMPOTENCY_CONFLICT。
  *
  * 注意：调用方必须已在此之前完成鉴权（契约「重放前重新鉴权」）。
@@ -77,30 +89,60 @@ export async function runIdempotent(options: IdempotentOptions): Promise<void> {
   const scope = idempotencyScope(subject, method, routePath);
   const keyHashHex = idempotencyKeyHashHex(scope, key);
   const requestHash = service.hashIdempotencyRequest(request.body, request.headers['if-match']);
-  const at = now();
+  const replayOrProduce = replay ?? produce;
+  const ttlMs = service.idempotencyTtlSeconds * 1000;
+  const waitDeadline = Date.now() + CLAIM_WAIT_BUDGET_MS;
 
-  // 实际到期清理：每次幂等请求先物理删除已到期条目（不是只写 TTL 字段）。
-  await service.purgeExpiredIdempotent(at);
+  for (;;) {
+    const at = now();
 
-  const existing = await service.findIdempotent(scope, keyHashHex);
-  if (existing !== null && existing.expiresAt.getTime() > at.getTime()) {
-    if (existing.requestHash !== requestHash) {
-      throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
+    // 实际到期清理：每次幂等请求先物理删除已到期条目（不是只写 TTL 字段）。
+    await service.purgeExpiredIdempotent(at);
+
+    const existing = await service.findIdempotent(scope, keyHashHex);
+    if (existing !== null && existing.expiresAt.getTime() > at.getTime()) {
+      if (existing.requestHash !== requestHash) {
+        throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
+      }
+      // 命中台账：不回放旧响应（其中可能含已失效或明文的 bearer）；按结果引用重放。
+      const replayOutcome = await replayOrProduce(existing);
+      reply.header('Cache-Control', 'no-store');
+      send(replayOutcome, reply);
+      return;
     }
-    // 命中台账：不回放旧响应（其中可能含已失效或明文的 bearer）；重新执行重放路径。
-    const replayOutcome = await (replay ?? produce)(existing);
-    reply.header('Cache-Control', 'no-store');
-    send(replayOutcome, reply);
-    return;
+
+    // 原子占位：占位成功者才执行 produce，保证同键并发只产生一份会话/结果。
+    const claimed = await service.claimIdempotent(scope, keyHashHex, {
+      requestHash,
+      responseStatus: 200,
+      expiresAt: new Date(at.getTime() + ttlMs),
+    });
+    if (claimed) {
+      let outcome: RouteOutcome;
+      try {
+        outcome = await produce();
+      } catch (error) {
+        // produce 失败不落台账：释放占位，后续同键请求可重新尝试。
+        await service.releaseIdempotent(scope, keyHashHex);
+        throw error;
+      }
+      await service.completeIdempotent(scope, keyHashHex, {
+        requestHash,
+        responseStatus: outcome.status,
+        outcome: outcome.idempotencyOutcome,
+        expiresAt: new Date(at.getTime() + ttlMs),
+      });
+      send(outcome, reply);
+      return;
+    }
+
+    // 占位失败：同键请求正在 produce（占位中）。有界等待其完成后再按结果重放，
+    // 使并发同键收敛到同一会话关系，而不是各自新建互不关联的会话。
+    if (Date.now() >= waitDeadline) {
+      throw new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中，请稍后重试', {
+        retryable: true,
+      });
+    }
+    await delay(CLAIM_WAIT_STEP_MS);
   }
-
-  const outcome = await produce();
-  await service.saveIdempotent(scope, keyHashHex, {
-    requestHash,
-    responseStatus: outcome.status,
-    outcome: outcome.idempotencyOutcome,
-    expiresAt: new Date(at.getTime() + service.idempotencyTtlSeconds * 1000),
-  });
-
-  send(outcome, reply);
 }

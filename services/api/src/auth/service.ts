@@ -16,7 +16,12 @@ import type { ExecutionMode } from '../contract.ts';
 import type { AuthStore, AdminCredentialRecord } from './store.ts';
 import type { StoredSession, UserRecord } from './types.ts';
 import type { WechatIdentityProvider } from './wechat.ts';
-import type { IdempotencyStore, LoginOutcomeReference } from './idempotency.ts';
+import type {
+  IdempotencyClaim,
+  IdempotencyRecord,
+  IdempotencyStore,
+  LoginOutcomeReference,
+} from './idempotency.ts';
 import { idempotencyRequestHash } from './idempotency.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 import {
@@ -113,12 +118,24 @@ export class AuthService {
   // 幂等台账（供路由层使用；重放前鉴权由路由的 preHandler 保证）
   // -------------------------------------------------------------------------
 
+  /** 读取**已完成**的幂等台账记录（占位中 / 不存在 → null）。 */
   findIdempotent(scope: string, keyHashHex: string) {
     return this.idempotency.find(scope, keyHashHex);
   }
 
-  saveIdempotent(scope: string, keyHashHex: string, record: Parameters<IdempotencyStore['save']>[2]) {
-    return this.idempotency.save(scope, keyHashHex, record);
+  /** 原子占位（同键并发收敛）：true = 本次请求可执行 produce，其余同键请求需等待重放。 */
+  claimIdempotent(scope: string, keyHashHex: string, claim: IdempotencyClaim): Promise<boolean> {
+    return this.idempotency.claim(scope, keyHashHex, claim);
+  }
+
+  /** 占位者写入最终结果（仅当该行仍是未完成占位时成功）。 */
+  completeIdempotent(scope: string, keyHashHex: string, record: IdempotencyRecord): Promise<boolean> {
+    return this.idempotency.complete(scope, keyHashHex, record);
+  }
+
+  /** 放弃占位（produce 失败）：只删除未完成的占位行，使后续同键请求可重新尝试。 */
+  releaseIdempotent(scope: string, keyHashHex: string): Promise<void> {
+    return this.idempotency.release(scope, keyHashHex);
   }
 
   /** 请求摘要：HMAC-SHA256(服务端密钥, [请求体, If-Match])。密钥不入库。 */
@@ -156,16 +173,18 @@ export class AuthService {
 
   /**
    * 幂等重放（用户端登录）：**不重新消耗一次性微信 code**（real 模式下 code 已被首次交换占用）。
-   * 先核验关联会话未被撤销/未过期，且账号当前为 active 且 authEpoch 与建会话时一致；
-   * 任一不满足即拒绝——**不恢复旧会话、不把失效登录包当成功**。通过后重新签发新会话。
+   * 先核验台账锚定的关联会话未被撤销/未过期，且账号当前为 active 且 authEpoch 与建会话时一致；
+   * 任一不满足即拒绝——**不恢复旧会话、不把失效登录包当成功**。
+   * 通过后在**同一会话**上换发新令牌（保持原绝对时效），使同键重试收敛为同一可撤销的登录结果：
+   * 该会话一旦被撤销（含退出），旧 code/key 重放即被拒绝，不再签发可用凭据。
    */
   async replayUserLogin(reference: LoginOutcomeReference): Promise<IssuedSession> {
     this.assertPersistentSessions('微信登录');
     if (reference.audience !== 'user') {
       throw new ApiError('SESSION_REQUIRED', '幂等结果引用与用户会话不匹配');
     }
-    const user = await this.loadReplaySession(reference.sessionId, 'user');
-    return this.issueSession(user.id, 'user', user.authEpoch, user.revision, this.userSessionTtlSeconds);
+    const { session, user } = await this.loadReplaySession(reference.sessionId, 'user');
+    return this.rotateSession(session, user.revision);
   }
 
   // -------------------------------------------------------------------------
@@ -181,7 +200,8 @@ export class AuthService {
 
   /**
    * 幂等重放（后台登录）：除关联会话与账号当前状态外，**必须重新校验当前凭据有效**
-   * （口令已轮换/停用即拒绝），再重新签发新会话。
+   * （口令已轮换/停用即拒绝），再在**同一会话**上换发新令牌（保持原绝对时效）。
+   * 会话被撤销/过期或账号 epoch 变更 → 拒绝旧 code/key 重放。
    */
   async replayAdminLogin(reference: LoginOutcomeReference, loginName: string, password: string): Promise<IssuedSession> {
     this.assertPersistentSessions('后台登录');
@@ -197,7 +217,7 @@ export class AuthService {
     if (session.authEpoch !== admin.authEpoch) {
       throw new ApiError('ACCOUNT_INACTIVE', '会话已因账号变更失效');
     }
-    return this.issueSession(admin.id, 'admin', admin.authEpoch, admin.revision, this.adminSessionTtlSeconds);
+    return this.rotateSession(session, admin.revision);
   }
 
   /** 退出（后台）：撤销当前后台会话。 */
@@ -287,7 +307,10 @@ export class AuthService {
    * 重放核验（用户端）：会话未撤销/未过期 + 账号 active + authEpoch 与建会话时一致。
    * 任一不满足即拒绝，绝不恢复旧会话。
    */
-  private async loadReplaySession(sessionId: string, audience: 'user'): Promise<UserRecord> {
+  private async loadReplaySession(
+    sessionId: string,
+    audience: 'user',
+  ): Promise<{ session: StoredSession; user: UserRecord }> {
     const session = await this.loadLiveSession(sessionId, audience);
     const user = await this.store.getUser(session.userId);
     if (user === null) throw new ApiError('SESSION_EXPIRED', '关联账号不存在');
@@ -295,7 +318,28 @@ export class AuthService {
     if (session.authEpoch !== user.authEpoch) {
       throw new ApiError('ACCOUNT_INACTIVE', '会话已因账号变更失效');
     }
-    return user;
+    return { session, user };
+  }
+
+  /**
+   * 在同一会话上换发新令牌（幂等重放收敛）：会话 id 与**绝对到期时刻**保持不变，
+   * 只替换服务端保存的令牌摘要；旧令牌随之失效（同一会话只保留一个可用令牌）。
+   * 若会话在核验与换发之间被撤销 → 拒绝，不签发不可撤销的凭据。
+   */
+  private async rotateSession(session: StoredSession, revision: number): Promise<IssuedSession> {
+    const token = mintOpaqueToken();
+    const rotated = await this.store.rotateSessionToken(session.id, hashToken(token), session.audience);
+    if (!rotated) {
+      throw new ApiError('SESSION_EXPIRED', '关联会话已撤销，拒绝重复签发');
+    }
+    return {
+      accessToken: token,
+      tokenType: 'Bearer',
+      expiresAt: session.expiresAt,
+      audience: session.audience,
+      revision,
+      sessionId: session.id,
+    };
   }
 
   private assertUserActive(user: UserRecord): void {

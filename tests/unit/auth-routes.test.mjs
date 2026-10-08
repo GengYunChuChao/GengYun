@@ -63,6 +63,35 @@ function readIdempotencyRecord(store, subject, method, routePath, key) {
   return store.find(scope, idempotencyKeyHashHex(scope, key));
 }
 
+/**
+ * 包装内存存储，如实统计「会话记录数 / 活跃数」，用于校验同键幂等是否收敛到同一会话。
+ * 统计口径来自 store 的 createSession / revokeSession 调用，不读取实现内部结构。
+ */
+function trackingStore(base = createMemoryAuthStore()) {
+  const sessions = new Map(); // sessionId -> { revoked }
+  const store = {
+    ...base,
+    async createSession(input) {
+      const id = await base.createSession(input);
+      sessions.set(id, { revoked: false });
+      return id;
+    },
+    async revokeSession(sessionId, audience) {
+      await base.revokeSession(sessionId, audience);
+      const entry = sessions.get(sessionId);
+      if (entry !== undefined) entry.revoked = true;
+    },
+    rotateSessionToken(sessionId, newTokenHashHex, audience) {
+      return base.rotateSessionToken(sessionId, newTokenHashHex, audience);
+    },
+  };
+  return {
+    store,
+    sessionCount: () => sessions.size,
+    activeCount: () => [...sessions.values()].filter((s) => !s.revoked).length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 游客拦截 / 登录 / 会话
 // ---------------------------------------------------------------------------
@@ -234,9 +263,10 @@ test('幂等：缺/短路 Idempotency-Key → 400 IDEMPOTENCY_KEY_REQUIRED', asy
   await app.close();
 });
 
-test('幂等：同键同体重放重新签发（不回放旧令牌）；台账不含明文令牌；同键异体 → 409', async () => {
+test('幂等：同键同体收敛到同一会话（重放换发令牌、旧令牌失效）；台账不含明文令牌；同键异体 → 409', async () => {
   const idempotency = createMemoryIdempotencyStore();
-  const app = newApp({ idempotency });
+  const tracker = trackingStore();
+  const app = newApp({ idempotency, store: tracker.store });
   const first = await login(app, 'code-idem', 'idem-key-replay');
   assert.equal(first.statusCode, 200);
   const firstToken = first.json().data.access_token;
@@ -252,15 +282,86 @@ test('幂等：同键同体重放重新签发（不回放旧令牌）；台账�
   const replay = await login(app, 'code-idem', 'idem-key-replay');
   assert.equal(replay.statusCode, 200);
   const replayToken = replay.json().data.access_token;
-  // 重放是「重新签发」而非回放旧令牌。
-  assert.notEqual(replayToken, firstToken, '重放应重新签发新令牌，而非回放旧令牌');
-  // 新旧令牌都指向同一 active 账号，均可访问会话。
-  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(firstToken) })).statusCode, 200);
+  // 重放是「同一会话换发新令牌」而非回放旧令牌。
+  assert.notEqual(replayToken, firstToken, '重放应换发新令牌，而非回放旧令牌');
+  // 收敛到同一会话：绝对时效保持首次，且只创建了一条会话。
+  assert.equal(replay.json().data.expires_at, first.json().data.expires_at, '同键重放的绝对时效应保持首次');
+  assert.equal(tracker.sessionCount(), 1, '同键重放不得新建会话');
+  // 同一会话只保留一个可用令牌：换发后旧令牌失效。
+  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(firstToken) })).statusCode, 401);
   assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(replayToken) })).statusCode, 200);
 
   const conflict = await login(app, 'code-other', 'idem-key-replay');
   assert.equal(conflict.statusCode, 409);
   assert.equal(conflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+  await app.close();
+});
+
+test('R2-1 同键重试收敛同一会话；退出当前会话后重放原 code/key 必须拒绝（会话数 1、活跃 0）', async () => {
+  const tracker = trackingStore();
+  const app = newApp({ store: tracker.store });
+
+  // 1) 首次登录：建立会话（token1）。
+  const first = await login(app, 'code-r2-1', 'idem-r2-1');
+  assert.equal(first.statusCode, 200);
+  const token1 = first.json().data.access_token;
+
+  // 2) 同 code/key 重试：收敛到**同一会话**（换发 token2），不新建会话。
+  const second = await login(app, 'code-r2-1', 'idem-r2-1');
+  assert.equal(second.statusCode, 200);
+  const token2 = second.json().data.access_token;
+  assert.notEqual(token2, token1);
+  assert.equal(second.json().data.expires_at, first.json().data.expires_at, '绝对时效保持首次');
+  assert.equal(tracker.sessionCount(), 1, '同键重试不得新建会话');
+  assert.equal(tracker.activeCount(), 1);
+  // 同一会话只保留最新令牌：token1 已被换发失效。
+  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(token1) })).statusCode, 401);
+  assert.equal((await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(token2) })).statusCode, 200);
+
+  // 3) 退出「当前」会话（token2 所属的那条会话）。
+  const logout = await app.inject({
+    method: 'POST',
+    url: LOGOUT_URL,
+    headers: { ...bearer(token2), 'idempotency-key': 'logout-r2-1-0001' },
+  });
+  assert.equal(logout.statusCode, 200);
+  assert.deepEqual(logout.json().data, { accepted: true });
+
+  // 4) 再重放原 code/key：必须拒绝（不得再签发可用凭据）。
+  const replay = await login(app, 'code-r2-1', 'idem-r2-1');
+  assert.equal(replay.statusCode, 401);
+  assert.equal(replay.json().error.code, 'SESSION_EXPIRED');
+
+  // 会话记录数 / 活跃数如实断言：1 条、0 活跃（不得监工探针的 3 条 2 活跃）。
+  assert.equal(tracker.sessionCount(), 1, '同键重放不得新建会话（应为 1 条，而非 3 条）');
+  assert.equal(tracker.activeCount(), 0, '退出后该唯一会话已撤销，活跃数应为 0');
+  await app.close();
+});
+
+test('R2-2 并发同键重试收敛到同一会话（不产生互不关联多会话），绝对时效以首次为准', async () => {
+  const tracker = trackingStore();
+  const app = newApp({ store: tracker.store });
+
+  const [a, b] = await Promise.all([
+    login(app, 'code-r2-2', 'idem-r2-2'),
+    login(app, 'code-r2-2', 'idem-r2-2'),
+  ]);
+  assert.equal(a.statusCode, 200);
+  assert.equal(b.statusCode, 200);
+
+  // 收敛结果唯一：只创建一条会话、活跃数唯一。
+  assert.equal(tracker.sessionCount(), 1, '并发同键不得产生互不关联的多条会话');
+  assert.equal(tracker.activeCount(), 1);
+  // 绝对时效以首次为准：两次响应 expires_at 一致。
+  assert.equal(a.json().data.expires_at, b.json().data.expires_at, '并发同键的绝对时效应一致（以首次为准）');
+
+  // 两个令牌不同，且同一会话恰好保留一个可用令牌（换发使较早的那个失效）。
+  const ta = a.json().data.access_token;
+  const tb = b.json().data.access_token;
+  assert.notEqual(ta, tb);
+  const sa = (await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(ta) })).statusCode;
+  const sb = (await app.inject({ method: 'GET', url: USER_SESSION_URL, headers: bearer(tb) })).statusCode;
+  assert.deepEqual([sa, sb].sort(), [200, 401], '同一会话应恰好保留一个可用令牌');
   await app.close();
 });
 

@@ -246,3 +246,83 @@ test('P2-⑤ 退出：无本地会话且未联网时不谎称已撤销（unconfi
   assert.equal(result.serverRevoked, false);
   assert.equal(result.serverRevocationUnconfirmed, false);
 });
+
+// ---------------------------------------------------------------------------
+// 阻塞 2 / R2-3、R2-4：以会话世代 + 当前令牌绑定请求，使在途回调失效
+// ---------------------------------------------------------------------------
+
+test('R2-3 退出后释放迟到的 verifySession 成功响应不得复活会话，旧门禁回调不被放行', () => {
+  const b = makeWx();
+  b.storage.set(SESSION_KEY, validCache());
+  const auth = loadAuth(b.wx);
+
+  // 在途门禁核实：requireLogin 内部发起 GET /auth/session，先暂停其成功响应。
+  let gate = 'pending';
+  auth.requireLogin((ok) => { gate = ok; });
+  assert.equal(b.requests.length, 1, '应在途发起核实请求');
+  const paused = b.requests[0];
+  assert.match(paused.url, /\/auth\/session$/);
+
+  // 期间退出：logout 收到契约成功 Ack（200 + accepted）→ 清缓存、报已撤销。
+  let logoutResult;
+  auth.logout((r) => { logoutResult = r; });
+  assert.equal(b.requests.length, 2);
+  b.requests[1].success({ statusCode: 200, data: { data: { accepted: true } } });
+  assert.equal(logoutResult.serverRevoked, true);
+  assert.equal(b.storage.has(SESSION_KEY), false, '退出应清本地会话');
+
+  // 释放此前暂停的旧 GET200：不得复活会话、不得放行旧门禁回调。
+  paused.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: futureIso(), scopes: ['user'], revision: 1 } } });
+  assert.equal(auth.isLoggedIn(), false, '迟到成功不得复活已清除的会话');
+  assert.equal(auth.getSession(), null);
+  assert.equal(gate, false, '旧门禁回调不得被放行');
+});
+
+test('R2-4 期间完成新登录后，迟到的 verifySession 失败响应（401/网络失败）不得清掉新登录', () => {
+  const b = makeWx();
+  b.storage.set(SESSION_KEY, validCache({ accessToken: 'tok-old' }));
+  const auth = loadAuth(b.wx);
+
+  // 在途核实旧令牌：先暂停其响应。
+  let verified = 'pending';
+  auth.verifySession((ok) => { verified = ok; });
+  assert.equal(b.requests.length, 1);
+  const paused = b.requests[0];
+  assert.equal(paused.header.authorization, 'Bearer tok-old');
+
+  // 期间完成新登录（令牌变化 → 世代递增）。
+  let loginErr = 'pending';
+  auth.login((e) => { loginErr = e; });
+  assert.equal(b.requests.length, 2);
+  b.requests[1].success({
+    statusCode: 200,
+    data: { data: { access_token: 'tok-new', audience: 'user', expires_at: futureIso(), revision: 1 }, meta: { execution_mode: 'stub' } },
+  });
+  assert.equal(loginErr, null);
+  assert.equal(auth.isLoggedIn(), true, '新登录应生效');
+  assert.equal(auth.getSession().accessToken, 'tok-new');
+
+  // 释放旧 verifySession 的失败响应（401）：不得清掉新登录。
+  paused.success({ statusCode: 401, data: { error: { code: 'SESSION_EXPIRED' } } });
+  assert.equal(verified, false, '旧回调应如实返回未通过');
+  assert.equal(auth.isLoggedIn(), true, '迟到失败不得清掉新登录');
+  assert.equal(auth.getSession().accessToken, 'tok-new', '新登录令牌应保留');
+
+  // 另一路径：迟到的**网络失败**同样不得清掉更新的登录。
+  let verified2 = 'pending';
+  auth.verifySession((ok) => { verified2 = ok; });
+  const paused2 = b.requests[b.requests.length - 1];
+  assert.equal(paused2.header.authorization, 'Bearer tok-new');
+
+  let loginErr2 = 'pending';
+  auth.login((e) => { loginErr2 = e; });
+  b.requests[b.requests.length - 1].success({
+    statusCode: 200,
+    data: { data: { access_token: 'tok-newer', audience: 'user', expires_at: futureIso(), revision: 1 }, meta: { execution_mode: 'stub' } },
+  });
+  assert.equal(loginErr2, null);
+  paused2.fail({ errMsg: 'request:fail' });
+  assert.equal(verified2, false, '旧网络失败回调应如实返回未通过');
+  assert.equal(auth.isLoggedIn(), true, '迟到网络失败不得清掉更新的登录');
+  assert.equal(auth.getSession().accessToken, 'tok-newer');
+});

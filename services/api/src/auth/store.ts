@@ -59,6 +59,12 @@ export interface AuthStore {
   /** 按会话 id 查找（幂等重放核验关联会话用）；不含明文令牌。 */
   findSessionById(sessionId: string, audience: SessionAudience): Promise<StoredSession | null>;
   revokeSession(sessionId: string, audience: SessionAudience): Promise<void>;
+  /**
+   * 在同一会话上换发新令牌摘要（幂等重放收敛用）：同一行、同一会话 id，
+   * **不改变绝对到期时刻、不改 auth_epoch、不新建会话**。
+   * 已撤销的会话拒绝换发（返回 false），避免以旧重放复活失效会话。
+   */
+  rotateSessionToken(sessionId: string, newTokenHashHex: string, audience: SessionAudience): Promise<boolean>;
 
   findAdminByLoginName(loginName: string): Promise<AdminCredentialRecord | null>;
   getAdmin(adminId: string): Promise<AdminRecord | null>;
@@ -137,6 +143,17 @@ export function createMemoryAuthStore(): AuthStore {
           sessions.set(key, { ...session, revokedAt: new Date() });
         }
       }
+    },
+    async rotateSessionToken(sessionId, newTokenHashHex, audience) {
+      for (const [key, session] of sessions) {
+        if (session.id === sessionId && session.audience === audience && session.revokedAt === null) {
+          // 会话对象不变（id / authEpoch / expiresAt 保持首次），只换令牌摘要索引。
+          sessions.delete(key);
+          sessions.set(sessionKey(newTokenHashHex, audience), session);
+          return true;
+        }
+      }
+      return false;
     },
 
     async findAdminByLoginName(loginName) {
@@ -295,6 +312,15 @@ export function createPostgresAuthStore(sql: SqlExecutor): AuthStore {
     async revokeSession(sessionId, audience) {
       const table = audience === 'admin' ? 'admin_sessions' : 'sessions';
       await sql.query(`UPDATE ${table} SET revoked_at = now() WHERE id = $1::uuid AND revoked_at IS NULL`, [sessionId]);
+    },
+    async rotateSessionToken(sessionId, newTokenHashHex, audience) {
+      // 只换 token_hash：不改 id / expires_at / auth_epoch（绝对时效保持首次）。
+      const table = audience === 'admin' ? 'admin_sessions' : 'sessions';
+      const { rows } = await sql.query(
+        `UPDATE ${table} SET token_hash = decode($2, 'hex') WHERE id = $1::uuid AND revoked_at IS NULL RETURNING id`,
+        [sessionId, newTokenHashHex],
+      );
+      return rows.length === 1;
     },
 
     async findAdminByLoginName(loginName) {

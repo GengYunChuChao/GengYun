@@ -35,7 +35,7 @@ async function main(): Promise<void> {
       app.log.info('后台已完成初始化，跳过初始管理员创建');
     }
   } catch (error) {
-    app.log.error({ err: error }, '初始管理员创建失败（服务继续启动；请检查数据库与迁移 0004）');
+    app.log.error({ err: error }, '初始管理员创建失败（服务继续启动；请检查数据库与迁移 0008）');
   }
 
   const shutdown = async (signal: string): Promise<void> => {

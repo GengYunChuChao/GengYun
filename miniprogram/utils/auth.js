@@ -22,6 +22,11 @@ const KNOWN_EXECUTION_MODES = ['real', 'stub', 'preset_demo']
 // 进程启动时为 false —— 因此单靠一个本地缓存对象永远不等于已登录。
 let serverVerified = false
 
+// 会话世代：每次「清会话」或「切换/建立新令牌」时递增。
+// 在途的 verifySession 请求以发起时的世代 + 令牌绑定；两者任一变化即视为过期回调：
+// 迟到的成功不得复活已清除的会话，迟到的失败不得清掉更新的登录。
+let generation = 0
+
 function networkEnabled() {
   return runtime.mode === 'local' && typeof runtime.apiBaseUrl === 'string' && runtime.apiBaseUrl !== ''
 }
@@ -32,7 +37,18 @@ function isFutureIso(value) {
   return Number.isFinite(ms) && ms > Date.now()
 }
 
+/** 读取缓存中当前的访问令牌（不触发预检/清理），用于在途回调的绑定校验。 */
+function currentToken() {
+  try {
+    const value = wx.getStorageSync(SESSION_KEY)
+    if (value && typeof value === 'object' && typeof value.accessToken === 'string') return value.accessToken
+  } catch (_) {}
+  return null
+}
+
 function clearSession() {
+  // 世代递增：使此前在途的 verifySession 回调失效（退出/清会话/切账号）。
+  generation += 1
   serverVerified = false
   try {
     wx.removeStorageSync(SESSION_KEY)
@@ -69,6 +85,9 @@ function getSession() {
 }
 
 function setSession(session) {
+  // 令牌发生变化（登录/切换账号）即递增世代，使旧令牌的在途回调失效；
+  // 同一令牌仅刷新时效（verifySession 成功路径）不递增世代，避免误伤并发核实。
+  if (currentToken() !== session.accessToken) generation += 1
   try {
     wx.setStorageSync(SESSION_KEY, {
       accessToken: session.accessToken,
@@ -112,11 +131,22 @@ function verifySession(callback) {
     done(false)
     return
   }
+  // 以「会话世代 + 当前令牌」绑定本次请求：退出/清会话/切换账号后，在途回调一律失效。
+  const requestGeneration = generation
+  const requestToken = session.accessToken
+  const stale = function () {
+    return generation !== requestGeneration || currentToken() !== requestToken
+  }
   wx.request({
     url: runtime.apiBaseUrl + '/auth/session',
     method: 'GET',
     header: { authorization: 'Bearer ' + session.accessToken },
     success: function (response) {
+      if (stale()) {
+        // 会话在请求期间被撤销/清除或已切换账号：迟到的成功响应不得复活旧会话。
+        done(false)
+        return
+      }
       const body = response && response.data
       const data = body && body.data
       if (
@@ -141,6 +171,11 @@ function verifySession(callback) {
       done(false)
     },
     fail: function () {
+      if (stale()) {
+        // 迟到的失败响应不得清掉更新的登录（可能已切换账号/重新登录）。
+        done(false)
+        return
+      }
       // 网络失败：不能核实，也不谎称已登录（门禁保持关闭）。
       serverVerified = false
       done(false)
