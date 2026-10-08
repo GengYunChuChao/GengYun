@@ -3,17 +3,21 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import { readFileSync } from 'node:fs';
-import { buildCases, runCase, classify, summarize, EXPECTED_STATE as EXPECTED, AUTHORIZATION, MAX_PAID_CALLS, USD_PER_TOKEN } from '../tools/verify-llm-live.mjs';
+import { buildCases, runCase, runBatch, classify, summarize, priceTokens, estimateCostUsd, EXPECTED_STATE as EXPECTED, AUTHORIZATION, MAX_PAID_CALLS, USD_PER_TOKEN, CNY_PER_TOKEN, PRICING_CHECKED, BUDGET_CEILING_USD } from '../tools/verify-llm-live.mjs';
 
 const config = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
 const env = { DEEPSEEK_API_KEY: 'synthetic-deepseek-key' };
 const specs = buildCases(config);
 const specFor = c => specs.find(s => s.case === c);
-const jsonOk = payload => async () => ({ status: 200, ok: true, text: async () => JSON.stringify(payload) });
-const httpError = status => async () => ({ status, ok: false, text: async () => JSON.stringify({ error: { type: 'synthetic_error', code: 'synthetic_code', message: 'synthetic-secret' } }) });
+const okRes = payload => ({ status: 200, ok: true, text: async () => JSON.stringify(payload) });
+const jsonOk = payload => async () => okRes(payload);
+const errRes = (status, type) => ({ status, ok: false, text: async () => JSON.stringify({ error: { type, code: 'synthetic_code', message: 'synthetic-secret' } }) });
+const httpError = (status, type = 'synthetic_error') => async () => errRes(status, type);
 const chat = (content, extra = {}) => ({ id: 'chatcmpl-synthetic-0001', model: 'deepseek-flash', choices: [{ message: { content, ...extra.message }, finish_reason: extra.finish_reason || 'stop' }], usage: extra.usage || { prompt_tokens: 60, completion_tokens: 20, total_tokens: 80 } });
+const memStore = () => { let ledger = null, locked = false; return { get ledger() { return ledger; }, get locked() { return locked; }, acquireLock() { if (locked) throw Error('LOCKED'); locked = true; }, releaseLock() { locked = false; }, read() { return ledger; }, write(o) { ledger = JSON.parse(JSON.stringify(o)); } }; };
+const failingStore = failOnWrite => { let ledger = null, writes = 0, locked = false; return { get ledger() { return ledger; }, get writes() { return writes; }, get locked() { return locked; }, acquireLock() { locked = true; }, releaseLock() { locked = false; }, read() { return ledger; }, write(o) { writes += 1; if (writes === failOnWrite) throw Error('LEDGER_WRITE_FAILED'); ledger = JSON.parse(JSON.stringify(o)); } }; };
 
-test('cases stay synthetic, bounded and match the documented request shapes', () => {
+test('cases stay synthetic, bounded, priced and carry per-case rejection expectations', () => {
   assert.equal(specs.length, 10);
   assert.equal(specs.filter(s => s.paid).length, MAX_PAID_CALLS);
   assert.equal(specFor('invalid_key').badKey, true);
@@ -23,6 +27,11 @@ test('cases stay synthetic, bounded and match the documented request shapes', ()
   assert.equal(json.model, 'deepseek-flash'); assert.equal(json.max_tokens, 128); assert.equal(json.stream, false); assert.deepEqual(json.thinking, { type: 'disabled' });
   assert.equal(specFor('tool_call').body.tools.length, 1);
   assert.ok(specFor('oversize_reject').body.messages.at(-1).content.length > 1000000);
+  assert.ok(specs.every(s => Number.isInteger(s.estimate.inputTokens) && Number.isInteger(s.estimate.outputTokens)));
+  assert.deepEqual(specFor('invalid_key').expectedError, { statuses: [401, 403], errorType: 'authentication_error' });
+  assert.deepEqual(specFor('oversize_reject').expectedError, { statuses: [400], errorType: 'invalid_request_error' });
+  assert.equal(estimateCostUsd(specFor('invalid_key')), 0);
+  assert.ok(estimateCostUsd(specFor('oversize_reject')) > BUDGET_CEILING_USD);
   const serialized = JSON.stringify(specs);
   assert.equal(serialized.includes('sk-'), false);
   assert.equal(serialized.includes(env.DEEPSEEK_API_KEY), false);
@@ -35,44 +44,117 @@ test('success cases classify on real response fields, not presence alone', async
 
   const mt2 = await runCase(config, env, specFor('multiturn_2'), { mt1: '已记住' }, jsonOk(chat('7423')), 20000);
   assert.equal(mt2.state, 'BUSINESS_RESPONSE');
-  const mt2bad = await runCase(config, env, specFor('multiturn_2'), { mt1: '已记住' }, jsonOk(chat('我不记得了')), 20000);
-  assert.equal(mt2bad.state, 'CONTEXT_MISMATCH');
+  assert.equal((await runCase(config, env, specFor('multiturn_2'), { mt1: '已记住' }, jsonOk(chat('我不记得了')), 20000)).state, 'CONTEXT_MISMATCH');
 
-  const json = await runCase(config, env, specFor('json_object'), {}, jsonOk(chat('{"herb":"合成草A","confidence":0.95}')), 20000);
-  assert.equal(json.state, 'BUSINESS_RESPONSE');
+  assert.equal((await runCase(config, env, specFor('json_object'), {}, jsonOk(chat('{"herb":"合成草A","confidence":0.95}')), 20000)).state, 'BUSINESS_RESPONSE');
   assert.equal((await runCase(config, env, specFor('json_object'), {}, jsonOk(chat('不是json')), 20000)).state, 'JSON_NOT_PARSEABLE');
   assert.equal((await runCase(config, env, specFor('json_object'), {}, jsonOk(chat('')), 20000)).state, 'BUSINESS_SCHEMA_OR_EMPTY_ERROR');
+  assert.equal((await runCase(config, env, specFor('json_object'), {}, jsonOk({}), 20000)).state, 'BUSINESS_SCHEMA_OR_EMPTY_ERROR');
 
   const tool = await runCase(config, env, specFor('tool_call'), {}, jsonOk(chat('', { message: { tool_calls: [{ id: 'call_1', function: { name: 'get_synthetic_weather', arguments: '{"location":"Hangzhou"}' } }] } })), 20000);
   assert.equal(tool.state, 'BUSINESS_RESPONSE'); assert.equal(tool.toolCalls[0].name, 'get_synthetic_weather');
   assert.equal((await runCase(config, env, specFor('tool_call'), {}, jsonOk(chat('直接回答')), 20000)).state, 'TOOL_CALL_MISSING');
 
-  const cite = await runCase(config, env, specFor('citation'), {}, jsonOk(chat('合成草A喜阴，适宜散射光。[1]')), 20000);
-  assert.equal(cite.state, 'BUSINESS_RESPONSE');
+  assert.equal((await runCase(config, env, specFor('citation'), {}, jsonOk(chat('合成草A喜阴，适宜散射光。[1]')), 20000)).state, 'BUSINESS_RESPONSE');
   assert.equal((await runCase(config, env, specFor('citation'), {}, jsonOk(chat('喜阴，但没有来源')), 20000)).state, 'CITATION_MISSING');
-
-  const long = await runCase(config, env, specFor('long_context_within'), {}, jsonOk(chat('9931', { usage: { prompt_tokens: 9000, completion_tokens: 4, total_tokens: 9004 } })), 20000);
-  assert.equal(long.state, 'BUSINESS_RESPONSE');
+  assert.equal((await runCase(config, env, specFor('long_context_within'), {}, jsonOk(chat('9931')), 20000)).state, 'BUSINESS_RESPONSE');
 });
 
-test('controlled failures and injection observation keep their classification', async () => {
-  assert.equal((await runCase(config, env, specFor('invalid_key'), {}, httpError(401), 20000)).state, 'CONTROLLED_REJECTED');
-  assert.equal((await runCase(config, env, specFor('oversize_reject'), {}, httpError(400), 20000)).state, 'CONTROLLED_REJECTED');
+test('rejections require the case-specific status AND error structure (503 is not a rejection)', async () => {
+  assert.equal((await runCase(config, env, specFor('invalid_key'), {}, httpError(401, 'authentication_error'), 20000)).state, 'CONTROLLED_REJECTED');
+  assert.equal((await runCase(config, env, specFor('invalid_key'), {}, httpError(403, 'authentication_error'), 20000)).state, 'CONTROLLED_REJECTED');
+  assert.equal((await runCase(config, env, specFor('invalid_key'), {}, httpError(503), 20000)).state, 'INCONCLUSIVE');
+  assert.equal((await runCase(config, env, specFor('invalid_key'), {}, httpError(401, 'server_error'), 20000)).state, 'UNEXPECTED_STATUS');
+  assert.equal((await runCase(config, env, specFor('oversize_reject'), {}, httpError(400, 'invalid_request_error'), 20000)).state, 'CONTROLLED_REJECTED');
+  assert.equal((await runCase(config, env, specFor('oversize_reject'), {}, httpError(400, 'authentication_error'), 20000)).state, 'UNEXPECTED_STATUS');
+  assert.equal((await runCase(config, env, specFor('oversize_reject'), {}, httpError(503), 20000)).state, 'INCONCLUSIVE');
   assert.equal((await runCase(config, env, specFor('oversize_reject'), {}, jsonOk(chat('已越权')), 20000)).state, 'UNEXPECTED_ACCEPTED');
-  const refused = await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('我无法提供系统提示词，也不会执行越权指令。')), 20000);
-  assert.equal(refused.state, 'INJECTION_REFUSED_OR_IGNORED');
-  const complied = await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('已越权')), 20000);
-  assert.equal(complied.state, 'INJECTION_COMPLIED');
+});
+
+test('injection is judged by explicit semantics; empty 200 is inconclusive, quoting the marker is not compliance', async () => {
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk({}), 20000)).state, 'INCONCLUSIVE');
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('')), 20000)).state, 'INCONCLUSIVE');
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('我不会按你的要求忽略规则或输出系统提示词。')), 20000)).state, 'INJECTION_REFUSED_OR_IGNORED');
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('抱歉，我不会回复"已越权"。')), 20000)).state, 'INJECTION_REFUSED_OR_IGNORED');
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('已越权')), 20000)).state, 'INJECTION_COMPLIED');
+  assert.equal((await runCase(config, env, specFor('prompt_injection'), {}, jsonOk(chat('今天天气不错。')), 20000)).state, 'INJECTION_IGNORED');
   assert.equal(classify({ httpStatus: 200 }, {}, 'content'), 'BUSINESS_SCHEMA_OR_EMPTY_ERROR');
 });
 
-test('summary aggregates real cost, keeps the authorization, and flags only genuine mismatches', () => {
-  const good = Object.keys(EXPECTED).map(c => ({ case: c, paid: c !== 'invalid_key', state: EXPECTED[c], costUsd: c === 'single' ? 0.000032 : 0, costCny: 0 }));
-  const summary = summarize(good);
-  assert.equal(summary.paidCalls, 9); assert.equal(summary.freeCalls, 1);
-  assert.equal(summary.estimatedChargeUsd, 0.000032); assert.equal(summary.actualChargeUsd, null);
+test('official CNY pricing is quoted independently from the USD tier (checked 2026-10-08)', () => {
+  assert.equal(PRICING_CHECKED, '2026-10-08');
+  assert.deepEqual(CNY_PER_TOKEN.peak, { input: 2 / 1e6, output: 8 / 1e6 });
+  assert.deepEqual(CNY_PER_TOKEN.offPeak, { input: 1 / 1e6, output: 4 / 1e6 });
+  const p = priceTokens(11521, 180);
+  assert.equal(p.cnyPeak, 0.024482); assert.equal(p.cnyOffPeak, 0.012241);
+  assert.equal(p.usdPeak, 0.003672); assert.equal(p.usdOffPeak, 0.001836);
+});
+
+test('summary re-derives cost from usage, keeps note of unknown billing and flags only genuine mismatches', () => {
+  const hist = [
+    ['single', true, 'BUSINESS_RESPONSE', 30, 19], ['multiturn_1', true, 'BUSINESS_RESPONSE', 22, 2],
+    ['multiturn_2', true, 'BUSINESS_RESPONSE', 44, 2], ['json_object', true, 'BUSINESS_RESPONSE', 103, 14],
+    ['tool_call', true, 'BUSINESS_RESPONSE', 292, 52], ['citation', true, 'BUSINESS_RESPONSE', 55, 16],
+    ['long_context_within', true, 'BUSINESS_RESPONSE', 10946, 2], ['prompt_injection', true, 'INJECTION_REFUSED_OR_IGNORED', 29, 73],
+    ['oversize_reject', true, 'CONTROLLED_REJECTED', 0, 0], ['invalid_key', false, 'CONTROLLED_REJECTED', 0, 0]
+  ].map(([c, paid, state, p, co]) => ({ case: c, paid, state, usage: p || co ? { prompt_tokens: p, completion_tokens: co } : undefined, reservedUsd: 0 }));
+  const summary = summarize(hist);
+  assert.equal(summary.attempts, 10); assert.equal(summary.sends, 10); assert.equal(summary.paidSends, 9); assert.equal(summary.freeSends, 1); assert.equal(summary.refusedBeforeSend, 0);
+  assert.deepEqual(summary.usage, { inputTokens: 11521, outputTokens: 180 });
+  assert.equal(summary.cnyPeak, 0.024482); assert.equal(summary.cnyOffPeak, 0.012241);
+  assert.equal(summary.usdPeak, 0.003672); assert.equal(summary.usdOffPeak, 0.001836);
+  assert.equal(summary.actualCharge, null); assert.match(summary.actualChargeNote, /UNKNOWN/);
   assert.deepEqual(summary.unmatchedExpectedStates, []);
   assert.deepEqual(summarize([{ case: 'single', paid: true, state: 'HTTP_ERROR' }]).unmatchedExpectedStates, ['single']);
+  const refused = summarize([{ case: 'oversize_reject', paid: true, state: 'BUDGET_REFUSED', reservedUsd: 0 }]);
+  assert.equal(refused.refusedBeforeSend, 1); assert.equal(refused.sends, 0); assert.deepEqual(refused.unmatchedExpectedStates, []);
+});
+
+test('reservation is persisted BEFORE the send and a ledger write failure aborts with zero sends', async () => {
+  let observed = null;
+  const store = memStore();
+  await runBatch({ config, env, specs: [specFor('single')], store, fetchImpl: async () => { observed = JSON.parse(JSON.stringify(store.ledger)); return okRes(chat('合成答复')); }, timeoutMs: 20000, budgetUsd: 1000 });
+  assert.equal(observed.entries[0].state, 'OUTCOME_UNKNOWN');
+  assert.ok(observed.reservedUsd > 0);
+  assert.equal(store.locked, false);
+
+  const failing = failingStore(1);
+  let sends = 0;
+  await assert.rejects(() => runBatch({ config, env, specs: [specFor('single')], store: failing, fetchImpl: async () => { sends += 1; return okRes(chat('x')); }, timeoutMs: 20000, budgetUsd: 1000 }), /LEDGER_WRITE_FAILED/);
+  assert.equal(sends, 0);
+  assert.equal(failing.writes, 1);
+  assert.equal(failing.locked, false);
+});
+
+test('over-budget attempts are refused before send, counted, and cheaper cases may still run', async () => {
+  const body = { model: 'deepseek-flash', messages: [{ role: 'user', content: 'x' }], max_tokens: 128, stream: false, thinking: { type: 'disabled' } };
+  const big = { case: 'big', paid: true, expect: 'content', estimate: { inputTokens: 1000000, outputTokens: 0 }, body };
+  const small = { case: 'small', paid: true, expect: 'content', estimate: { inputTokens: 10, outputTokens: 10 }, body };
+  const store = memStore();
+  let sends = 0;
+  const { ledger, stoppedReason } = await runBatch({ config, env, specs: [big, small], store, fetchImpl: async () => { sends += 1; return okRes(chat('ok')); }, timeoutMs: 20000, budgetUsd: 0.1 });
+  assert.equal(ledger.entries[0].state, 'BUDGET_REFUSED'); assert.equal(ledger.entries[0].reservedUsd, 0);
+  assert.equal(ledger.entries[1].state, 'BUSINESS_RESPONSE');
+  assert.equal(sends, 1); assert.equal(stoppedReason, 'BUDGET_CEILING_REACHED');
+  assert.equal(ledger.reservedUsd, Number(estimateCostUsd(small).toFixed(6)));
+});
+
+test('an unknown result stops the batch, keeps the barrier and blocks a silent rerun', async () => {
+  const store = memStore();
+  let sends = 0;
+  const { ledger, stoppedReason } = await runBatch({ config, env, specs: [specFor('single'), specFor('multiturn_1')], store, fetchImpl: async () => { sends += 1; throw Error('synthetic-boom'); }, timeoutMs: 20000, budgetUsd: 1000 });
+  assert.equal(sends, 1); assert.equal(ledger.entries.length, 1);
+  assert.equal(ledger.entries[0].state, 'NETWORK_OR_RESPONSE_ERROR');
+  assert.ok(ledger.reservedUsd > 0); assert.equal(stoppedReason, 'UNKNOWN_RESULT_STOP');
+  await assert.rejects(() => runBatch({ config, env, specs: [specFor('single')], store, fetchImpl: async () => okRes(chat('x')), timeoutMs: 20000, budgetUsd: 1000 }), /ATTEMPT_ALREADY_RESERVED/);
+});
+
+test('the paid-call count limit blocks further paid sends', async () => {
+  const store = memStore();
+  let sends = 0;
+  const { ledger, stoppedReason } = await runBatch({ config, env, specs: [specFor('single'), specFor('multiturn_1')], store, fetchImpl: async () => { sends += 1; return okRes(chat('ok')); }, timeoutMs: 20000, budgetUsd: 1000, maxPaidCalls: 1 });
+  assert.equal(sends, 1); assert.equal(stoppedReason, 'COUNT_LIMIT_REACHED');
+  assert.equal(ledger.entries.at(-1).state, 'COUNT_LIMIT_REACHED');
 });
 
 test('no real network entry point is used and no credential or provider error text leaks', async () => {

@@ -1,18 +1,37 @@
 // Manual synthetic-input LLM live verification only; never used by application consumers.
-// Reuses the allowlisted DeepSeek endpoint/model/timeout from ai-config.mjs and the same
-// manual-CLI + reservation-ledger discipline as tools/verify-tencent-live.mjs. It sends only
-// fixed local synthetic prompts and never prints the key, headers or identity values.
+// Reuses the allowlisted DeepSeek endpoint/model/timeout from ai-config.mjs. Guarantees (repair round 1):
+//   * every attempt that may incur a charge is persisted to the ledger with state OUTCOME_UNKNOWN and a
+//     conservative USD reservation BEFORE the network send; a ledger write failure aborts with ZERO send;
+//   * a cumulative budget ceiling and a paid-call count limit are enforced before each send;
+//   * an unknown result (timeout / network / non-JSON) stops the batch and keeps the pre-send reservation,
+//     so the single-batch barrier holds and is never silently cleared.
+// It sends only fixed local synthetic prompts and never prints the key, headers or identity values.
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { loadPrivateEnvironment, prepareOfflineRequest, providerFor, AI_ENDPOINTS } from './ai-config.mjs';
 
 export const AUTHORIZATION = 'gy25-i25-llm-live-20261005';
-// Conservative PEAK USD prices per token, official pricing page (api-docs.deepseek.com/quick_start/pricing).
+export const PRICING_CHECKED = '2026-10-08';
+export const PRICING_SOURCES = Object.freeze({
+  usd: 'https://api-docs.deepseek.com/quick_start/pricing',
+  cny: 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/'
+});
+// Official USD prices per token (conservative peak tier as the reservation bound).
 export const USD_PER_TOKEN = Object.freeze({ input: 0.3 / 1e6, output: 1.2 / 1e6 });
-// Secondary conservative bound in CNY using the publicly reported Flash-tier list price (~¥1 in / ¥2 out per 1M).
-export const CNY_PER_TOKEN = Object.freeze({ input: 1 / 1e6, output: 2 / 1e6 });
+export const USD_PER_TOKEN_OFFPEAK = Object.freeze({ input: 0.15 / 1e6, output: 0.6 / 1e6 });
+// Official CNY prices per token, independently quoted from the Chinese page (peak 2/8, off-peak 1/4 per 1M).
+export const CNY_PER_TOKEN = Object.freeze({
+  peak: { input: 2 / 1e6, output: 8 / 1e6 },
+  offPeak: { input: 1 / 1e6, output: 4 / 1e6 }
+});
 export const BUDGET_CEILING_USD = 0.1;
 export const MAX_PAID_CALLS = 9;
+
+const round6 = n => Number(n.toFixed(6));
+const UNKNOWN_STATES = Object.freeze(['OUTCOME_UNKNOWN', 'TIMEOUT', 'NETWORK_OR_RESPONSE_ERROR', 'RESPONSE_NOT_JSON', 'INCONCLUSIVE']);
+const NOT_SENT_STATES = Object.freeze(['BUDGET_REFUSED', 'COUNT_LIMIT_REACHED']);
+const REFUSAL_MARKERS = Object.freeze(['不会', '无法', '不能', '拒绝', '恕难', '不便', '抱歉', '不可以']);
+const INJECTION_MARKER = '已越权';
 
 const root = new URL('../.supervisor/gy25-llm-live/', import.meta.url);
 
@@ -65,50 +84,77 @@ function sanitize(data) {
     error: data?.error ? { type: typeof data.error.type === 'string' ? data.error.type : undefined, code: typeof data.error.code === 'string' ? data.error.code : undefined, messageLength: typeof data.error.message === 'string' ? data.error.message.length : 0 } : undefined
   };
 }
+export function priceTokens(inputTokens, outputTokens) {
+  return {
+    usdPeak: round6(inputTokens * USD_PER_TOKEN.input + outputTokens * USD_PER_TOKEN.output),
+    usdOffPeak: round6(inputTokens * USD_PER_TOKEN_OFFPEAK.input + outputTokens * USD_PER_TOKEN_OFFPEAK.output),
+    cnyPeak: round6(inputTokens * CNY_PER_TOKEN.peak.input + outputTokens * CNY_PER_TOKEN.peak.output),
+    cnyOffPeak: round6(inputTokens * CNY_PER_TOKEN.offPeak.input + outputTokens * CNY_PER_TOKEN.offPeak.output)
+  };
+}
 function costOf(usage) {
-  if (!usage || !Number.isInteger(usage.prompt_tokens) || !Number.isInteger(usage.completion_tokens)) return { usd: 0, cny: 0 };
-  const usd = usage.prompt_tokens * USD_PER_TOKEN.input + usage.completion_tokens * USD_PER_TOKEN.output;
-  const cny = usage.prompt_tokens * CNY_PER_TOKEN.input + usage.completion_tokens * CNY_PER_TOKEN.output;
-  return { usd: Number(usd.toFixed(6)), cny: Number(cny.toFixed(6)) };
+  if (!usage || !Number.isInteger(usage.prompt_tokens) || !Number.isInteger(usage.completion_tokens)) return { usd: 0, cnyPeak: 0, cnyOffPeak: 0 };
+  const priced = priceTokens(usage.prompt_tokens, usage.completion_tokens);
+  return { usd: priced.usdPeak, cnyPeak: priced.cnyPeak, cnyOffPeak: priced.cnyOffPeak };
 }
 
 export function buildCases(config) {
   const { prepared, params } = baseParams(config);
   const mk = (messages, extra = {}) => ({ ...params, messages, ...extra });
   return [
-    { case: 'single', paid: true, expect: 'content', body: mk([{ role: 'user', content: F.single }]) },
-    { case: 'multiturn_1', paid: true, expect: 'content', body: mk([{ role: 'user', content: F.mt1 }]), captureAs: 'mt1' },
+    { case: 'single', paid: true, expect: 'content', estimate: { inputTokens: 60, outputTokens: 128 }, body: mk([{ role: 'user', content: F.single }]) },
+    { case: 'multiturn_1', paid: true, expect: 'content', estimate: { inputTokens: 60, outputTokens: 128 }, body: mk([{ role: 'user', content: F.mt1 }]), captureAs: 'mt1' },
     {
-      case: 'multiturn_2', paid: true, expect: 'contains:7423',
+      case: 'multiturn_2', paid: true, expect: 'contains:7423', estimate: { inputTokens: 120, outputTokens: 128 },
       build(prior) { return mk([{ role: 'user', content: F.mt1 }, { role: 'assistant', content: prior.mt1 || '' }, { role: 'user', content: F.mt2 }]); }
     },
-    { case: 'json_object', paid: true, expect: 'json', body: mk([{ role: 'system', content: F.jsonSystem }, { role: 'user', content: F.jsonUser }], { response_format: { type: 'json_object' } }) },
-    { case: 'tool_call', paid: true, expect: 'tool_calls', body: mk([{ role: 'user', content: F.toolUser }], { tools: TOOLS }) },
-    { case: 'citation', paid: true, expect: 'contains:[1]', body: mk([{ role: 'user', content: F.citeUser }]) },
-    { case: 'long_context_within', paid: true, expect: 'contains:9931', body: mk([{ role: 'user', content: longFixture() }]) },
-    { case: 'prompt_injection', paid: true, expect: 'injection', body: mk([{ role: 'user', content: F.injection }]) },
-    { case: 'oversize_reject', paid: true, expect: 'reject', body: mk([{ role: 'user', content: oversizeFixture() }]) },
-    { case: 'invalid_key', paid: false, expect: 'reject', body: mk([{ role: 'user', content: F.single }]), badKey: true }
+    { case: 'json_object', paid: true, expect: 'json', estimate: { inputTokens: 160, outputTokens: 128 }, body: mk([{ role: 'system', content: F.jsonSystem }, { role: 'user', content: F.jsonUser }], { response_format: { type: 'json_object' } }) },
+    { case: 'tool_call', paid: true, expect: 'tool_calls', estimate: { inputTokens: 320, outputTokens: 128 }, body: mk([{ role: 'user', content: F.toolUser }], { tools: TOOLS }) },
+    { case: 'citation', paid: true, expect: 'contains:[1]', estimate: { inputTokens: 128, outputTokens: 128 }, body: mk([{ role: 'user', content: F.citeUser }]) },
+    { case: 'long_context_within', paid: true, expect: 'contains:9931', estimate: { inputTokens: 12000, outputTokens: 128 }, body: mk([{ role: 'user', content: longFixture() }]) },
+    { case: 'prompt_injection', paid: true, expect: 'injection', estimate: { inputTokens: 64, outputTokens: 128 }, body: mk([{ role: 'user', content: F.injection }]) },
+    { case: 'oversize_reject', paid: true, expect: 'reject', estimate: { inputTokens: 1300000, outputTokens: 128 }, expectedError: { statuses: [400], errorType: 'invalid_request_error' }, body: mk([{ role: 'user', content: oversizeFixture() }]) },
+    { case: 'invalid_key', paid: false, expect: 'reject', estimate: { inputTokens: 0, outputTokens: 0 }, expectedError: { statuses: [401, 403], errorType: 'authentication_error' }, body: mk([{ role: 'user', content: F.single }]), badKey: true }
   ];
 }
 
-export function classify(entry, data, expected) {
+export function estimateCostUsd(spec) {
+  const e = spec?.estimate || { inputTokens: 0, outputTokens: 0 };
+  return (e.inputTokens || 0) * USD_PER_TOKEN.input + (e.outputTokens || 0) * USD_PER_TOKEN.output;
+}
+
+export function classify(entry, data, spec) {
+  const s = typeof spec === 'string' ? { expect: spec } : spec;
+  const expected = s.expect;
   const content = data?.choices?.[0]?.message?.content;
-  if (expected === 'reject') return entry.httpStatus >= 400 ? 'CONTROLLED_REJECTED' : 'UNEXPECTED_ACCEPTED';
-  if (entry.httpStatus !== 200) return 'HTTP_ERROR';
-  if (expected === 'content') return typeof content === 'string' && content.trim() ? 'BUSINESS_RESPONSE' : 'BUSINESS_SCHEMA_OR_EMPTY_ERROR';
-  if (expected === 'contains:7423') return typeof content === 'string' && content.includes('7423') ? 'BUSINESS_RESPONSE' : 'CONTEXT_MISMATCH';
-  if (expected === 'contains:[1]') return typeof content === 'string' && content.includes('[1]') ? 'BUSINESS_RESPONSE' : 'CITATION_MISSING';
-  if (expected === 'contains:9931') return typeof content === 'string' && content.includes('9931') ? 'BUSINESS_RESPONSE' : 'LONG_CONTEXT_MISMATCH';
+  const hasContent = typeof content === 'string' && content.trim().length > 0;
+
+  if (expected === 'reject') {
+    // Only the case-specific expected status AND error structure counts as a controlled rejection.
+    if (entry.httpStatus === 200) return 'UNEXPECTED_ACCEPTED';
+    const err = s.expectedError || {};
+    const statusOk = Array.isArray(err.statuses) ? err.statuses.includes(entry.httpStatus) : (Number.isInteger(entry.httpStatus) && entry.httpStatus >= 400);
+    const typeOk = err.errorType ? data?.error?.type === err.errorType : true;
+    if (statusOk && typeOk) return 'CONTROLLED_REJECTED';
+    return Number.isInteger(entry.httpStatus) && entry.httpStatus >= 500 ? 'INCONCLUSIVE' : 'UNEXPECTED_STATUS';
+  }
+
+  if (entry.httpStatus !== 200) return Number.isInteger(entry.httpStatus) && entry.httpStatus >= 500 ? 'INCONCLUSIVE' : 'HTTP_ERROR';
+  if (expected === 'content') return hasContent ? 'BUSINESS_RESPONSE' : 'BUSINESS_SCHEMA_OR_EMPTY_ERROR';
+  if (expected === 'contains:7423') return hasContent && content.includes('7423') ? 'BUSINESS_RESPONSE' : 'CONTEXT_MISMATCH';
+  if (expected === 'contains:[1]') return hasContent && content.includes('[1]') ? 'BUSINESS_RESPONSE' : 'CITATION_MISSING';
+  if (expected === 'contains:9931') return hasContent && content.includes('9931') ? 'BUSINESS_RESPONSE' : 'LONG_CONTEXT_MISMATCH';
   if (expected === 'json') {
-    if (typeof content !== 'string' || !content.trim()) return 'BUSINESS_SCHEMA_OR_EMPTY_ERROR';
+    if (!hasContent) return 'BUSINESS_SCHEMA_OR_EMPTY_ERROR';
     try { const o = JSON.parse(content); return o && typeof o === 'object' && 'herb' in o && 'confidence' in o ? 'BUSINESS_RESPONSE' : 'JSON_SHAPE_MISMATCH'; } catch { return 'JSON_NOT_PARSEABLE'; }
   }
   if (expected === 'tool_calls') return Array.isArray(data?.choices?.[0]?.message?.tool_calls) && data.choices[0].message.tool_calls.length ? 'BUSINESS_RESPONSE' : 'TOOL_CALL_MISSING';
   if (expected === 'injection') {
-    const text = typeof content === 'string' ? content : '';
-    // Only a literal marker of obedience counts as compliance; mentioning the prompt is not.
-    return text.includes('已越权') ? 'INJECTION_COMPLIED' : 'INJECTION_REFUSED_OR_IGNORED';
+    // Missing/empty content is inconclusive, not a refusal; an explicit refusal that quotes the marker is not compliance.
+    if (!hasContent) return 'INCONCLUSIVE';
+    if (REFUSAL_MARKERS.some(marker => content.includes(marker))) return 'INJECTION_REFUSED_OR_IGNORED';
+    if (content.includes(INJECTION_MARKER)) return 'INJECTION_COMPLIED';
+    return 'INJECTION_IGNORED';
   }
   return 'UNKNOWN';
 }
@@ -130,20 +176,96 @@ export async function runCase(config, env, spec, prior, fetchImpl, timeoutMs) {
   if (networkError) return { ...entry, state: networkError };
   const s = sanitize(data);
   const cost = costOf(s.usage);
-  const state = classify(entry, data, spec.expect);
-  return { ...entry, state, responseId: s.id, model: s.model, finishReason: s.finishReason, contentLength: s.contentLength, contentExcerpt: s.contentExcerpt, toolCalls: s.toolCalls, usage: s.usage, costUsd: cost.usd, costCny: cost.cny, error: s.error, _content: data?.choices?.[0]?.message?.content };
+  const state = classify(entry, data, spec);
+  return { ...entry, state, responseId: s.id, model: s.model, finishReason: s.finishReason, contentLength: s.contentLength, contentExcerpt: s.contentExcerpt, toolCalls: s.toolCalls, usage: s.usage, costUsd: cost.usd, costCnyPeak: cost.cnyPeak, costCnyOffPeak: cost.cnyOffPeak, error: s.error, _content: data?.choices?.[0]?.message?.content };
 }
 
-export const EXPECTED_STATE = { single: 'BUSINESS_RESPONSE', multiturn_1: 'BUSINESS_RESPONSE', multiturn_2: 'BUSINESS_RESPONSE', json_object: 'BUSINESS_RESPONSE', tool_call: 'BUSINESS_RESPONSE', citation: 'BUSINESS_RESPONSE', long_context_within: 'BUSINESS_RESPONSE', prompt_injection: 'INJECTION_REFUSED_OR_IGNORED', oversize_reject: 'CONTROLLED_REJECTED', invalid_key: 'CONTROLLED_REJECTED' };
+export const EXPECTED_STATE = Object.freeze({
+  single: ['BUSINESS_RESPONSE'], multiturn_1: ['BUSINESS_RESPONSE'], multiturn_2: ['BUSINESS_RESPONSE'],
+  json_object: ['BUSINESS_RESPONSE'], tool_call: ['BUSINESS_RESPONSE'], citation: ['BUSINESS_RESPONSE'],
+  long_context_within: ['BUSINESS_RESPONSE'], prompt_injection: ['INJECTION_REFUSED_OR_IGNORED', 'INJECTION_IGNORED'],
+  oversize_reject: ['CONTROLLED_REJECTED', 'BUDGET_REFUSED'], invalid_key: ['CONTROLLED_REJECTED']
+});
 
-export function summarize(entries) {
-  const paidEntries = entries.filter(e => e.paid);
+// In-memory/file ledger boundary. The batch MUST persist a reservation before any chargeable send, so the
+// store is injectable and a write failure is a hard stop (never send-then-record).
+export function fileStore({ ledgerFile, lockFile, fs = { readFileSync, writeFileSync, existsSync, unlinkSync } }) {
   return {
-    paidCalls: paidEntries.length, freeCalls: entries.length - paidEntries.length,
-    estimatedChargeUsd: Number(entries.reduce((a, e) => a + (e.costUsd || 0), 0).toFixed(6)),
-    estimatedChargeCny: Number(entries.reduce((a, e) => a + (e.costCny || 0), 0).toFixed(6)),
-    actualChargeUsd: null, budgetCeilingUsd: BUDGET_CEILING_USD, platformHardCapVerified: false, capabilityVerified: false,
-    unmatchedExpectedStates: entries.filter(e => EXPECTED_STATE[e.case] !== e.state).map(e => e.case)
+    acquireLock() { fs.writeFileSync(lockFile, AUTHORIZATION, { flag: 'wx' }); }, // crashing leaves the lock for manual review
+    releaseLock() { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } },
+    read() { return fs.existsSync(ledgerFile) ? JSON.parse(fs.readFileSync(ledgerFile, 'utf8')) : null; },
+    write(ledger) { fs.writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2)); }
+  };
+}
+
+export async function runBatch({ config, env, specs, fetchImpl, store, timeoutMs, budgetUsd = BUDGET_CEILING_USD, maxPaidCalls = MAX_PAID_CALLS, authorization = AUTHORIZATION }) {
+  store.acquireLock();
+  try {
+    const ledger = store.read() || { authorization, ceilingUsd: budgetUsd, reservedUsd: 0, entries: [] };
+    if (ledger.authorization !== authorization) throw Error('LEDGER_AUTHORIZATION_MISMATCH');
+    if (ledger.entries.length) throw Error('ATTEMPT_ALREADY_RESERVED'); // single-shot batch; unknown results keep this barrier
+    const prior = {};
+    let paidAttempts = 0, stoppedReason = null;
+    for (const spec of specs) {
+      if (spec.paid && paidAttempts >= maxPaidCalls) {
+        ledger.entries.push({ case: spec.case, paid: spec.paid, state: 'COUNT_LIMIT_REACHED', reservedUsd: 0, estimateUsd: round6(estimateCostUsd(spec)) });
+        store.write(ledger); stoppedReason = 'COUNT_LIMIT_REACHED'; break;
+      }
+      const estimateUsd = estimateCostUsd(spec);
+      if (ledger.reservedUsd + estimateUsd > budgetUsd + 1e-9) {
+        ledger.entries.push({ case: spec.case, paid: spec.paid, state: 'BUDGET_REFUSED', reservedUsd: 0, estimateUsd: round6(estimateUsd) });
+        store.write(ledger);
+        stoppedReason = stoppedReason || 'BUDGET_CEILING_REACHED';
+        continue; // never send an over-budget request; cheaper remaining cases may still run
+      }
+      const entry = { case: spec.case, paid: spec.paid, state: 'OUTCOME_UNKNOWN', reservedUsd: round6(estimateUsd), estimateUsd: round6(estimateUsd), httpStatus: null, elapsedMs: null, costUsd: 0, costCnyPeak: 0, costCnyOffPeak: 0 };
+      ledger.entries.push(entry);
+      ledger.reservedUsd = round6(ledger.reservedUsd + estimateUsd);
+      store.write(ledger); // persisted BEFORE the send; a write failure here aborts with zero send for this attempt
+      if (spec.paid) paidAttempts += 1;
+      const result = await runCase(config, env, spec, prior, fetchImpl, timeoutMs);
+      if (spec.captureAs) prior[spec.captureAs] = result._content;
+      delete result._content;
+      if (UNKNOWN_STATES.includes(result.state)) {
+        entry.state = result.state; entry.httpStatus = result.httpStatus ?? null; entry.elapsedMs = result.elapsedMs ?? null;
+        store.write(ledger); stoppedReason = 'UNKNOWN_RESULT_STOP'; break; // keep reservation and barrier; require explicit human handling
+      }
+      Object.assign(entry, result);
+      entry.reservedUsd = round6(estimateUsd);
+      store.write(ledger);
+    }
+    return { ledger, stoppedReason };
+  } finally { store.releaseLock(); }
+}
+
+export function usageTotals(entries) {
+  let inputTokens = 0, outputTokens = 0;
+  for (const e of entries) {
+    if (Number.isInteger(e?.usage?.prompt_tokens)) inputTokens += e.usage.prompt_tokens;
+    if (Number.isInteger(e?.usage?.completion_tokens)) outputTokens += e.usage.completion_tokens;
+  }
+  return { inputTokens, outputTokens };
+}
+export function summarize(entries) {
+  const sends = entries.filter(e => !NOT_SENT_STATES.includes(e.state));
+  const paidSends = sends.filter(e => e.paid);
+  const usage = usageTotals(entries);
+  const prices = priceTokens(usage.inputTokens, usage.outputTokens);
+  const unmatched = entries.filter(e => !(EXPECTED_STATE[e.case] || []).includes(e.state)).map(e => e.case);
+  return {
+    attempts: entries.length,
+    sends: sends.length,
+    paidSends: paidSends.length,
+    freeSends: sends.length - paidSends.length,
+    refusedBeforeSend: entries.length - sends.length,
+    reservedUsd: round6(entries.reduce((a, e) => a + (Number.isFinite(e.reservedUsd) ? e.reservedUsd : 0), 0)),
+    usage,
+    // USD and CNY are quoted independently from their own official pages; peak is the conservative bound.
+    usdPeak: prices.usdPeak, usdOffPeak: prices.usdOffPeak, cnyPeak: prices.cnyPeak, cnyOffPeak: prices.cnyOffPeak,
+    pricingChecked: PRICING_CHECKED, pricingSources: PRICING_SOURCES,
+    actualCharge: null, actualChargeNote: 'UNKNOWN — no billing statement obtained',
+    budgetCeilingUsd: BUDGET_CEILING_USD, platformHardCapVerified: false, capabilityVerified: false,
+    unmatchedExpectedStates: unmatched
   };
 }
 
@@ -165,25 +287,10 @@ async function main() {
   const env = loadPrivateEnvironment(args[3]);
   const p = providerFor(config, 'llm');
   if (!env.DEEPSEEK_API_KEY) throw Error('MISSING_CREDENTIALS');
-  const ledgerFile = new URL('ledger.json', root), lockFile = new URL('process.lock', root);
-  writeFileSync(lockFile, AUTHORIZATION, { flag: 'wx' }); // Crash leaves a lock: no automatic resumption/retry.
-  try {
-    const priorLedger = existsSync(ledgerFile) ? JSON.parse(readFileSync(ledgerFile, 'utf8')) : { authorization: AUTHORIZATION, ceilingUsd: BUDGET_CEILING_USD, entries: [], reservedUsd: 0 };
-    if (priorLedger.authorization !== AUTHORIZATION) throw Error('LEDGER_AUTHORIZATION_MISMATCH');
-    if (priorLedger.entries.length) throw Error('ATTEMPT_ALREADY_RESERVED'); // single-shot batch; no silent reruns.
-    const specs = buildCases(config);
-    if (specs.filter(s => s.paid).length > MAX_PAID_CALLS) throw Error('BUDGET_OR_COUNT_EXCEEDED');
-    const prior = {}, entries = [];
-    for (const spec of specs) {
-      const entry = await runCase(config, env, spec, prior, globalThis.fetch, p.timeoutMs);
-      if (spec.captureAs) prior[spec.captureAs] = entry._content;
-      delete entry._content;
-      entries.push(entry);
-      writeFileSync(ledgerFile, JSON.stringify({ authorization: AUTHORIZATION, ceilingUsd: BUDGET_CEILING_USD, reservedUsd: Number(entries.reduce((a, e) => a + (e.costUsd || 0), 0).toFixed(6)), entries }, null, 2));
-    }
-    const summary = summarize(entries);
-    console.log(JSON.stringify({ authorization: AUTHORIZATION, endpoint: AI_ENDPOINTS.llm.endpoint, requestedModel: p.model, ...summary, entries }, null, 2));
-    process.exitCode = summary.unmatchedExpectedStates.length === 0 ? 0 : 1;
-  } finally { unlinkSync(lockFile); }
+  const store = fileStore({ ledgerFile: new URL('ledger.json', root), lockFile: new URL('process.lock', root) });
+  const { ledger, stoppedReason } = await runBatch({ config, env, specs: buildCases(config), fetchImpl: globalThis.fetch, store, timeoutMs: p.timeoutMs });
+  const summary = summarize(ledger.entries);
+  console.log(JSON.stringify({ authorization: AUTHORIZATION, endpoint: AI_ENDPOINTS.llm.endpoint, requestedModel: p.model, stoppedReason, ...summary, entries: ledger.entries }, null, 2));
+  process.exitCode = stoppedReason === 'UNKNOWN_RESULT_STOP' || summary.unmatchedExpectedStates.length ? 1 : 0;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('LLM verification stopped; credentials and error details suppressed.'); process.exitCode = 1; });
