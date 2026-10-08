@@ -45,20 +45,21 @@
     <view class="font-choices">
       <view
         wx:for="{{fontChoices}}"
-        wx:key="value"
-        class="font-choice {{item.value === fontScale ? 'font-choice--on' : ''}}"
-        style="--font-scale: {{item.value}}"
+        wx:key="label"
+        class="font-choice {{item.value === savedScale ? 'font-choice--on' : ''}}"
+        style="--font-scale: {{item.render}}"
+        data-mode="{{item.value === null ? 'auto' : 'fixed'}}"
         data-value="{{item.value}}"
         bindtap="onFontScaleTap"
       >
         <text class="font-choice__label">{{item.label}}</text>
-        <text wx:if="{{item.value === fontScale}}" class="font-choice__mark">当前</text>
+        <text wx:if="{{item.value === savedScale}}" class="font-choice__mark">当前</text>
       </view>
     </view>
     <view class="card-text">
-      文字太小看不清时，可在此放大。微信「设置 → 通用 → 字体大小」也会被读取并应用
-      （标准 16px 约为 1.0 倍，特大 26px 放大到上限 1.3 倍），改动后重新进入本应用生效；
-      若需要超过 1.3 倍，请用下方选项。
+      默认「跟随系统」会读取微信「设置 → 通用 → 字体大小」并应用
+      （实测标准 16px 约为 1.0 倍、特大 26px 放大到上限 1.3 倍），
+      微信设置改动后需重新进入本应用才生效。若需要超过 1.3 倍，请在下方选择「大」或「特大」。
     </view>
   </view>
 

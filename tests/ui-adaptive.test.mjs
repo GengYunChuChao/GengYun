@@ -100,14 +100,18 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   assert.ok(/min-height:\s*calc\(24px\s*\*\s*var\(--font-scale/.test(badge), '.badge 高度未随字体放大');
   assert.ok(!/padding:\s*0\s+20rpx/.test(badge), '.badge 上下无内边距，换行会溢出');
 
-  // 应用内字号开关：真机上微信 fontSizeSetting 不反映用户设置，故必须提供可控途径
+  // 应用内字号开关：默认「跟随系统」，另提供可固定的「大／特大」档
   const fs = read('miniprogram/utils/font-scale.js');
   assert.ok(/FONT_SCALE_KEY\s*=\s*'gengyun_font_scale'/.test(appJs), 'app.js 未定义字号存储键');
   assert.ok(/function readSavedScale/.test(appJs), 'app.js 未读取应用内设置');
-  assert.ok(appJs.indexOf('const saved = readSavedScale()') < appJs.indexOf('info.fontSizeSetting'), '应用内设置必须优先于微信设置');
+  assert.ok(
+    appJs.indexOf('const saved = readSavedScale()') < appJs.indexOf('systemFont.readSystemScale()'),
+    '应用内设置必须优先于微信设置'
+  );
   assert.ok(/function setFontScale/.test(fs), '缺少应用内字号写入能力');
   assert.ok(/wx\.setStorageSync\(FONT_SCALE_KEY/.test(fs), 'setFontScale 未持久化');
-  assert.ok(/MAX_FONT_SCALE\s*=\s*1\.3/.test(fs), 'font-scale.js 封顶值与 app.js 不一致');
+  assert.ok(/wx\.removeStorageSync\(FONT_SCALE_KEY/.test(fs), '选择「跟随系统」须清除存储，否则遮蔽微信设置');
+  assert.ok(/systemFont\.MAX_FONT_SCALE/.test(fs), 'font-scale.js 封顶值应复用 system-font.js');
 
   const profileJs = read('miniprogram/pages/profile/profile.js');
   const profileWxml = read('miniprogram/pages/profile/profile.wxml');
@@ -165,8 +169,13 @@ test('界面文案不含绝对化风险表述', () => {
 
 test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节点注入缩放变量', () => {
   const appJs = read('miniprogram/app.js');
-  assert.ok(/fontSizeSetting/.test(appJs), 'app.js 未读取 fontSizeSetting');
-  assert.ok(/MAX_FONT_SCALE\s*=\s*1\.3/.test(appJs), '缩放系数未封顶 1.3');
+  const sysFont = read('miniprogram/utils/system-font.js');
+  // 字段读取与换算已抽到 utils/system-font.js（设置界面需绕过存储强制走该路径）
+  assert.ok(/fontSizeSetting/.test(sysFont), 'system-font.js 未读取 fontSizeSetting');
+  assert.ok(/fontSizeScaleFactor/.test(sysFont), '未优先读取 fontSizeScaleFactor 比例字段');
+  assert.ok(/BASE_FONT_SIZE_PX\s*=\s*16/.test(sysFont), 'px 换算基准应为 16');
+  assert.ok(/MAX_FONT_SCALE\s*=\s*1\.3/.test(sysFont), '缩放系数未封顶 1.3');
+  assert.ok(/systemFont\.MAX_FONT_SCALE/.test(appJs), 'app.js 未复用 system-font 的封顶值');
   assert.ok(/globalData[\s\S]*fontScale/.test(appJs), 'globalData 未暴露 fontScale');
 
   // 字号必须乘以缩放变量，否则微信字体设置对 px 无效（需求 4.1）
@@ -344,13 +353,21 @@ test('应用内显式档位优先于微信字段，非法与缺失值一律回�
 });
 
 test('源码不得把 fontSizeSetting 的 px 值直接当倍率，并锁定基准与比例字段', () => {
-  const src = read('miniprogram/app.js');
+  const src = read('miniprogram/utils/system-font.js');
   assert.ok(
     !/clampScale\((?:info\s*&&\s*info\.)?fontSizeSetting\)/.test(src),
     'fontSizeSetting 是 px，不得直接作为倍率传入 clampScale'
   );
   assert.ok(/fontSizeScaleFactor/.test(src), '必须读取 fontSizeScaleFactor 比例字段');
   assert.ok(/BASE_FONT_SIZE_PX\s*=\s*16/.test(src), 'px 换算基准应为 16');
+  // app.js 与 font-scale.js 均不得绕过该模块自行读取字段（注释中提及历史缺陷不计）
+  for (const p of ['miniprogram/app.js', 'miniprogram/utils/font-scale.js']) {
+    const body = read(p)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    assert.ok(!/fontSizeSetting/.test(body), `${p} 代码中不得直接处理 fontSizeSetting，应委托 system-font.js`);
+    assert.ok(!/getSystemInfoSync/.test(body), `${p} 不得自行读取系统信息中的字体字段`);
+  }
   withApp({}, (app) => {
     assert.equal(app.BASE_FONT_SIZE_PX, 16, '导出的基准字号应为 16px');
   });
@@ -366,5 +383,93 @@ test('界面文案不得声称读不到微信字体设置（真机已实测可�
   );
   assert.ok(/通用 → 字体大小/.test(profile), '应说明微信字体设置会被读取');
   assert.ok(/1\.3/.test(profile), '应说明放大上限 1.3 倍');
+  assert.ok(/跟随系统/.test(profile), '应说明默认档位为跟随系统');
+});
+
+/**
+ * 以合成 wx 加载 font-scale.js，返回其 module.exports。
+ * fn 必须在 wx 存在期间执行（getApp 需为全局）。
+ */
+function withFontScale(wxOverrides, appData, fn) {
+  const req = createRequire(import.meta.url);
+  for (const p of ['../miniprogram/utils/font-scale.js', '../miniprogram/utils/system-font.js']) {
+    delete req.cache[req.resolve(p)];
+  }
+  globalThis.wx = Object.assign({ getStorageSync: () => '', setStorageSync: () => {}, removeStorageSync: () => {} }, wxOverrides);
+  globalThis.getApp = () => ({ globalData: Object.assign({ fontScale: 1 }, appData) });
+  try {
+    return fn(req('../miniprogram/utils/font-scale.js'));
+  } finally {
+    delete globalThis.wx;
+    delete globalThis.getApp;
+  }
+}
+
+test('默认档位为「跟随系统」：不写存储，且不会被显式「标准」遮蔽微信设置', () => {
+  withFontScale({}, { fontScale: 1 }, (fs) => {
+    const labels = fs.FONT_SCALE_CHOICES.map((c) => c.label);
+    assert.deepEqual(labels, ['跟随系统', '大', '特大'], '档位应为 跟随系统／大／特大');
+
+    const follow = fs.FONT_SCALE_CHOICES[0];
+    assert.equal(follow.value, null, '「跟随系统」的 value 必须为 null（不写存储）');
+    assert.ok(
+      !fs.FONT_SCALE_CHOICES.some((c) => c.value === 1),
+      '不得保留显式「标准」档，否则会遮蔽微信字体设置'
+    );
+  });
+
+  // 未设置存储时 savedScale 为 null，即跟随系统
+  withFontScale({ getStorageSync: () => '' }, {}, (fs) => {
+    assert.equal(fs.savedScaleValue(), null, '未设置过应返回 null 表示跟随系统');
+  });
+
+  // 存储有值时返回该值
+  withFontScale({ getStorageSync: () => 1.15 }, {}, (fs) => {
+    assert.equal(fs.savedScaleValue(), 1.15);
+  });
+});
+
+test('选择「跟随系统」清除存储并按微信设置换算，而非压成 1', () => {
+  let removed = 0;
+  let written = null;
+  withFontScale(
+    {
+      getStorageSync: () => (written === null ? 1.3 : written),
+      setStorageSync: (k, v) => { written = v; },
+      removeStorageSync: () => { removed += 1; written = null; },
+      // 微信「特大」：fontSizeSetting = 26px
+      getSystemInfoSync: () => ({ fontSizeSetting: 26 })
+    },
+    { fontScale: 1.3 },
+    (fs) => {
+      const applied = fs.setFontScale(null, null);
+      assert.equal(removed, 1, '选择跟随系统必须清除应用内存储');
+      assert.equal(written, null, '不得写入档位');
+      assert.equal(applied, 1.3, '26px 应换算为 1.625 并封顶到 1.3');
+    }
+  );
+});
+
+test('选中态用 savedScale 判断，微信特大时不应误高亮「特大」档', () => {
+  withFontScale({}, { fontScale: 1.3 }, (fs) => {
+    // 用户一直保持「跟随系统」，微信设置为特大
+    const choices = fs.buildChoices(1.3);
+    assert.equal(choices[0].render, 1.3, '「跟随系统」以实际生效系数渲染，所见即所得');
+    assert.equal(choices[1].render, 1.15);
+    assert.equal(choices[2].render, 1.3);
+    // savedScale 为 null 时只应命中第一项
+    const saved = null;
+    assert.equal(choices.filter((c) => c.value === saved).length, 1);
+    assert.equal(choices[0].label, '跟随系统');
+  });
+});
+
+test('「跟随系统」项用 data-mode 传递，避开 null 作为 dataset 值的歧义', () => {
+  const wxml = read('miniprogram/pages/profile/profile.wxml');
+  assert.ok(/data-mode="\{\{item\.value === null \? 'auto' : 'fixed'\}\}"/.test(wxml), '须用 data-mode 区分跟随系统');
+  assert.ok(/item\.value === savedScale/.test(wxml), '选中态须用 savedScale 而非 fontScale');
+  assert.ok(/wx:key="label"/.test(wxml), 'wx:key 不可用可能为 null 的 value');
+  assert.ok(/--font-scale: \{\{item\.render\}\}/.test(wxml), '渲染须用 render 而非 value');
+  assert.ok(!/item\.value === fontScale/.test(wxml), '不得用生效系数判断选中态');
 });
 

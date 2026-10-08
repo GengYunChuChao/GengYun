@@ -326,6 +326,7 @@ node --test tests/ui-adaptive.test.mjs
 | `windowWidth` 直接测量值 | **已取** | 2026-10-08 实测：标准档 355（3.5）／最大档 320（3.875），系数约 1.109，见 7.3.2 |
 | 微信字体原始字段真机取值 | **已取** | 2026-10-08 实测：`fontSizeSetting` 16／26，`fontSizeScaleFactor` 与 `getFontSizeManager` 不可用，生效系数 1／1.3，见 7.7 |
 | 微信设置改动后自动重算 | **未做** | 已知限制：仅 `onLaunch` 计算一次，改设置后须重新进入小程序 |
+| 「跟随系统」档位的真机验证 | **未做** | 代码与行为回归已覆盖（跟随系统会清除存储并按微信设置换算），但真机上切换该档位的交互未走查 |
 | 体验版上传 | 未执行 | 属 GY-I25；工具「上次上传」为无 |
 | 登录态界面走查 | 未做 | 依赖 GY-I04 服务端登录能力，尚未开始 |
 
@@ -388,7 +389,29 @@ node --test tests/ui-adaptive.test.mjs
 
 **已知限制（实测发现）**：`readFontScale()` 仅在 `onLaunch` 调用一次。用户在微信「设置 → 通用 → 字体大小」改动后回到小程序，`globalData.fontScale` **不会自动重算**，须重新进入小程序才生效（实测：改设置后 `fontSizeSetting` 已为 26，但 `fontScale` 仍为旧的 1，重启后变为 1.3）。属已知限制，本轮未改行为；`profile` 页文案已注明「改动后重新进入本应用生效」。
 
-**行为回归**：`tests/ui-adaptive.test.mjs` 新增 5 项，以合成 wx 实际加载 `app.js`，覆盖三档 px 换算、比例字段优先、比例 API 抛错下探、应用内档位优先、非法值（`0`／`-1`／`NaN`／字符串／`null`／`undefined`／对象）回落、源码层锁定「不得把 `fontSizeSetting` 直接传入 `clampScale`」，以及锁定界面文案不得声称「读不到微信字体设置」。
+#### 档位设计变更：默认「跟随系统」（2026-10-08）
+
+实测同时暴露一个反直觉行为：原档位表第一项是「标准」（`value: 1`），选中后会 `setStorageSync(key, 1)`。而 `readFontScale()` 的优先级是「应用内设置优先」，`readSavedScale()` 读到 `1` 即直接返回——**微信设置的放大被完全忽略**。
+
+对老年用户而言这是错的：他们在微信里把字体调大，进入小程序却被「标准」压回小字，且文案还称「微信设置也会被应用」，说的与做的相反。
+
+**改为**：
+
+| 档位 | `value` | 行为 |
+| --- | --- | --- |
+| **跟随系统** | `null` | **不写存储**，直接走微信设置换算（默认） |
+| 大 | `1.15` | 写入存储，固定倍率 |
+| 特大 | `1.3` | 写入存储，固定倍率（与微信最大档同值，因微信侧亦封顶 1.3） |
+
+配套改动：
+
+- 新增 `utils/system-font.js`：把微信字段读取与 px 换算抽为独立模块。`app.js` 决定优先级并缓存；「跟随系统」需绕过存储强制走该路径，若仍留在 `app.js` 会造成 UI 反向依赖 `App` 生命周期
+- `font-scale.js`：`setFontScale(page, null)` 改为 `removeStorageSync` + `readSystemScale()`，不再写入
+- 页面 data 拆为 `fontScale`（生效系数，注入 CSS）与 `savedScale`（显式档位，仅判断选中态）。二者必须分开：微信特大时 `fontScale` 为 1.3 而 `savedScale` 为 null，若用 `fontScale` 判断会误高亮「特大」
+- `wx:key` 由 `value` 改为 `label`（`value` 可能为 `null`）；`data-value` 无法可靠传 `null`，改用 `data-mode="auto|fixed"` 区分
+- 文案改为说明默认跟随系统、实测倍率与「改动后需重新进入」
+
+**行为回归**：`tests/ui-adaptive.test.mjs` 新增 9 项（合计 25 项），其中 4 项覆盖本次变更：档位表含「跟随系统」且无显式「标准」、选择跟随系统会 `removeStorageSync` 并按微信设置换算（26px → 1.3）、`buildChoices` 使「跟随系统」以实际生效系数渲染、`data-mode` 与 `savedScale` 选中态写法。另新增「`app.js`／`font-scale.js` 代码中不得出现 `fontSizeSetting`／`getSystemInfoSync`」的守护断言（注释不计），防止绕过 `system-font.js` 自行换算。
 
 #### 实现方式（其余部分，`feat` 分支）
 

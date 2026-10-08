@@ -7,22 +7,37 @@ Page({
   },
 
   data: {
+    /** 实际生效系数，注入 --font-scale */
     fontScale: fontScale.DEFAULT_FONT_SCALE,
-    fontChoices: fontScale.FONT_SCALE_CHOICES,
+    /** 用户显式档位；null 表示「跟随系统」，仅用于判断选中态 */
+    savedScale: null,
+    fontChoices: fontScale.buildChoices(fontScale.DEFAULT_FONT_SCALE),
     guest: true
   },
 
   onShow: function () {
-    this.setData({ guest: session.isGuest(), fontScale: fontScale.currentFontScale() })
+    const applied = fontScale.currentFontScale()
+    this.setData({
+      guest: session.isGuest(),
+      fontScale: applied,
+      savedScale: fontScale.savedScaleValue(),
+      fontChoices: fontScale.buildChoices(applied)
+    })
   },
 
-  /** 应用内字号选择：写入本地并立即生效，无需登录、无需重启 */
+  /**
+   * 应用内字号选择：写入本地并立即生效，无需登录、无需重启。
+   * data-mode 为 auto 时表示「跟随系统」，此时不读 data-value（其值为 null）。
+   */
   onFontScaleTap: function (e) {
-    const value = Number(e.currentTarget.dataset.value)
-    const applied = fontScale.setFontScale(this, value)
-    // 同步刷新 globalData，其他页面在 onShow 时读取，无需重启即可全量生效
-    this.setData({ fontScale: applied })
-    wx.showToast({ title: '字号「' + fontScale.labelOf(applied) + '」已应用', icon: 'none', duration: 1200 })
+    const mode = e.currentTarget.dataset.mode
+    const applied =
+      mode === 'auto'
+        ? fontScale.setFontScale(this, null)
+        : fontScale.setFontScale(this, Number(e.currentTarget.dataset.value))
+    this.setData({ fontScale: applied, savedScale: fontScale.savedScaleValue() })
+    const label = fontScale.labelOf(mode === 'auto' ? null : applied)
+    wx.showToast({ title: '字号「' + label + '」已应用', icon: 'none', duration: 1200 })
   },
 
   /** 登录入口占位：不获取手机号，不调用任何授权接口 */
