@@ -9,11 +9,11 @@
  * --font-scale，字号与触控区再用 calc() 乘以该系数。取值的字段语义、单位换算与
  * 回退顺序见 utils/system-font.js。
  *
- * 优先级：应用内显式档位 > 微信系统设置 > 1。
- * 「跟随系统」档位不写应用内存储，readSavedScale() 返回 null 时即落到微信设置。
+ * 需求第 4.1 节未要求应用内字号开关，故**不设应用内档位、不读相关存储**，
+ * 始终跟随微信「设置 → 通用 → 字体大小」。
  *
  * 已知限制：系数只在 onLaunch 计算一次，用户改动微信字体设置后回到小程序不会
- * 自动重算，需重新进入才生效；profile 页文案已注明该前提。
+ * 自动重算，需重新进入才生效。
  */
 
 const session = require('./utils/session')
@@ -23,32 +23,9 @@ const systemFont = require('./utils/system-font')
 const MAX_FONT_SCALE = systemFont.MAX_FONT_SCALE
 /** fontSizeSetting 的基准字号（px） */
 const BASE_FONT_SIZE_PX = systemFont.BASE_FONT_SIZE_PX
-/** 应用内字号设置的存储键 */
-const FONT_SCALE_KEY = 'gengyun_font_scale'
 
 /**
- * 应用内可选档位（value 为 null 表示「跟随系统」，不写存储）。
- * 与「我的」页面的选择项一一对应，见 utils/font-scale.js 的 FONT_SCALE_CHOICES。
- */
-const FONT_SCALE_CHOICES = [null, 1.15, 1.3]
-
-function clampScale(value) {
-  return systemFont.clampScale(value)
-}
-
-/** 读取应用内显式设置；未设置过（含「跟随系统」）返回 null */
-function readSavedScale() {
-  try {
-    const v = wx.getStorageSync(FONT_SCALE_KEY)
-    return v === '' || v === null || v === undefined ? null : clampScale(v)
-  } catch (err) {
-    return null
-  }
-}
-
-/**
- * 计算生效的字号缩放系数。
- * 优先级：应用内显式设置 > 微信系统设置 > 1。
+ * 计算生效的字号缩放系数，仅取微信系统设置。
  *
  * 单位说明：fontSizeSetting 是 px，不能直接当倍率——早期实现把它直接喂给
  * clampScale，导致 16/18/20 三档微信字号全部被截断到 1.3，标准档被强制放大 30%。
@@ -59,8 +36,6 @@ function readSavedScale() {
  * 归 1，不做缩小。待真机确认微信是否有该方向后再决定是否放开。
  */
 function readFontScale() {
-  const saved = readSavedScale()
-  if (saved !== null) return saved
   return systemFont.readSystemScale()
 }
 
@@ -81,8 +56,5 @@ App({
 module.exports = {
   MAX_FONT_SCALE,
   BASE_FONT_SIZE_PX,
-  FONT_SCALE_CHOICES,
-  FONT_SCALE_KEY,
-  readFontScale,
-  readSavedScale
+  readFontScale
 }
