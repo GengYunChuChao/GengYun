@@ -356,3 +356,15 @@ test('源码不得把 fontSizeSetting 的 px 值直接当倍率，并锁定基�
   });
 });
 
+test('界面文案不得声称读不到微信字体设置（真机已实测可读）', () => {
+  // 真机实测：微信标准档 fontSizeSetting=16 → 系数 1；特大档 26 → 1.625 封顶 1.3。
+  // 早期文案称「读不到该设置」，与实测相反，会误导老年用户放弃系统级放大。
+  const profile = read('miniprogram/pages/profile/profile.wxml');
+  assert.ok(
+    !/读不到该设置|不会改变本应用字号/.test(profile),
+    '不得声称读不到微信字体设置'
+  );
+  assert.ok(/通用 → 字体大小/.test(profile), '应说明微信字体设置会被读取');
+  assert.ok(/1\.3/.test(profile), '应说明放大上限 1.3 倍');
+});
+

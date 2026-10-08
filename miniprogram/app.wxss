@@ -36,8 +36,9 @@ page {
   /* 触控区与字号使用 px 而非 rpx：rpx 为屏宽 750 等分，
      88rpx 仅在 375px 视口等于 44px，320px 窄屏只有约 37.55px，
      36rpx 正文在 320px 视口只有 15.36px，均不满足 44px 触控区与 18px 正文门槛。
-     --font-scale 由页面根节点按 wx.getSystemInfoSync().fontSizeSetting 注入，
-     实现需求 4.1 的「适配微信字体设置」；缺省 1 表示标准字号。 */
+     --font-scale 由页面根节点注入，取值由 app.js 计算：优先微信的
+         fontSizeScaleFactor 比例字段，缺失时才用 fontSizeSetting 的 px 值除以 16 换算，
+         实现需求 4.1 的「适配微信字体设置」；缺省 1 表示标准字号。 */
   --font-scale: 1;
   --tap-min: max(44px, 44px * var(--font-scale, 1));
   --gap-xs: 16rpx;
