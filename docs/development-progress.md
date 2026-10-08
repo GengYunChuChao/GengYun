@@ -1,7 +1,7 @@
 # 开发进度与监工台账
 
 版本：v1.1\
-更新时间：2026-10-05\
+更新时间：2026-10-08（数据库组件收口；其他历史条目未全面刷新）\
 当前阶段：M1 基础与契约；只推进初版；软件已验证完成0／27。
 
 0／27 指整项软件验收，不代表没有组件成果。2026-10-05、main=9b676cf022ccf3e668896887ece6cf34f630af7c 的组件与阻塞补记见[开发顺序建议的基线快照](development-order.md#4-当前基线与优先事项)；已有契约、工程壳、资料目录/种子、接入验证和评估程序已审入，剩余业务及真实资料/样本待验。下表保留早期逐项记录，不能把旧“待领取”、旧 PR HEAD 或旧冲突结论当成实时状态；开发前核对最新远端，完整状态修订另与实际证据同步。
@@ -17,13 +17,19 @@
 
 ## 2 初版实现进度
 
+2026-10-08数据库补记：PR #51/#52/#53/#54均已独立审查合入，远端main核对为
+`5c54dd53770e1a6465e7185a7e0f98c6fe735234`。原表暂存、受限公共科普/内部登记映射、
+来源撤回恢复、暂存直接导入与精确回滚是已验组件；[统一交接及SHA批复](verification/database-run-handoff.md)
+分列作者本机PG、CI真实PG和监工内存/离线证据。#3/#27保持open，DoseCard=0，整项软件验收仍0／27。
+本次仅补数据库状态，不刷新其他角色领取、PR或历史平台记录。
+
 GY-I01由“耕云写手”领取，其架构与契约提案组件[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)已经监工绑定SHA复审并合并main=f40f09167869f2a2d8aa563f8c8ffdf44ccf244f；整项运行兼容仍有未验内容，issue #1保持open，0项通过完整软件验收。GY-I02局部原生工程与隔离开发调试准备PR #36已独立审查合并main=e3c709e82674eb351f337c7b769da89dfd0b1e79；正式工程／API／后台与真实能力未据此完成。旧chore/project-scaffold工程壳9ce307fe6745b49b89774a380c37b748822df934未整支合并，仅只读比较后按需求重写。后续状态以远端和实际证据为准。
 
 | 任务 | issue | 完成阶段 | 状态 | 负责人／PR与证据 |
 | --- | --- | --- | --- | --- |
 | GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约 | [#1](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | 待验证 | 耕云写手／[PR #33](https://github.com/Sek1ro-oka/GengYun/pull/33)组件已合并；[已验SHA 0e97702](https://github.com/Sek1ro-oka/GengYun/pull/33#pullrequestreview-5401812928)；整项运行版本未冻结，安装兼容、构建／数据库／真实媒体ACL／服务／手机仍未验 |
 | GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI | [#2](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | 待验证 | 写手／[PR #36](https://github.com/Sek1ro-oka/GengYun/pull/36)局部准备已合并；[已验SHA 6d0dc95](https://github.com/Sek1ro-oka/GengYun/pull/36#pullrequestreview-5401932042)；模拟器local/release及本地诊断通过，完整工程／运行版本／真实身份／API／后台／手机／数据库／供应商仍未验 |
-| GY-I03 建立浙江首批资料清单与可替换数据库适配 | [#3](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | 待领取 | 未领取／无已验PR |
+| GY-I03 建立浙江首批资料清单与可替换数据库适配 | [#3](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | 局部已审合入／整项待验证 | 写手／PR #51—#54数据库组件已审合并；[运行交接与批复](verification/database-run-handoff.md)。20份完整核准标签、八组独立评估、通用规范导入/审核发布/审计归档未交付，旧96汇总暂存不提升，DoseCard=0；issue仍open |
 | GY-I04 实现微信登录、游客限制与服务端归属权限 | [#4](https://github.com/Sek1ro-oka/GengYun/issues/4) | M1 | 待领取 | 未领取／无已验PR |
 | GY-I05 实现单作物地区档案及授权定位／手动选择 | [#5](https://github.com/Sek1ro-oka/GengYun/issues/5) | M2 | 待领取 | 未领取／无已验PR |
 | GY-I06 实现私有媒体上传、访问权限及EXIF清除 | [#6](https://github.com/Sek1ro-oka/GengYun/issues/6) | M1 | 待领取 | 未领取／无已验PR |
