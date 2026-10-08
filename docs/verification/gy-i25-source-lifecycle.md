@@ -48,6 +48,8 @@ psql -v ON_ERROR_STOP=1 -f services/api/db/roles/source_operator.sql
 后续来源选择/预期修订由现有受限运维交接提供，本CLI不建立第二套登录/管理页面。
 
 CLI仅允许localhost/127.0.0.1/::1和数据库gengyun_local或gengyun_source_ops_test；
+连接URL不允许任何查询参数或片段，在创建连接池前拒绝；端口只能放在URL authority。
+pg查询参数可覆盖host/port，还可读取SSL文件，因此本工具不透传这些选项。
 不接受argv里的连接串、密钥或伪造actor。以下UUID为示例，须替换成获准隔离数据的实际ID：
 
 ```powershell
@@ -88,6 +90,7 @@ npm run build
 | 两个不同PG backend并发CAS只有一次生效；同ID并发一个执行一个回执；故障注入状态/事件/修订共同回滚 | 通过 |
 | 未知/过期/冲突、自然到期、失审、新版本、哈希变化、错目标/事件/参数及事件缺失前态拒绝 | 通过 |
 | CLI断连脱敏/actor伪造拒绝；非空审计阻止down，空审计限定down保留基表和旧事件 | 通过 |
+| 独立pg参数解析复现旧host/port覆盖；六种合规目标解析一致；CLI覆盖参数在socket守卫下连接前拒绝 | 通过（离线，网络0） |
 
 CI为独立postgres:17.11全合成服务；固定SHA/run及精确server_version由PR正文补实际结果。
 作者本机、CI及监工独立证据分开，配置工作流不等于通过。
@@ -97,6 +100,10 @@ CI为独立postgres:17.11全合成服务；固定SHA/run及精确server_version�
 #52公共查询/权限已独立审入：[正式批复](https://github.com/Sek1ro-oka/GengYun/pull/52#pullrequestreview-5450061177)。
 [当前#3批复](https://github.com/Sek1ro-oka/GengYun/issues/3#issuecomment-6049723047)、
 [当前#27批复](https://github.com/Sek1ro-oka/GengYun/issues/27#issuecomment-6049723453)均完整核对。
+[本PR初审P2](https://github.com/Sek1ro-oka/GengYun/pull/53#discussion_r4213663777)：
+旧CLI标准URL校验遗漏pg的host/port查询覆盖，当前修订禁止所有查询参数/片段；
+实际驱动只构造参数不连接，并用socket失败守卫验证实际CLI在任何连接前拒绝。
+单元回归6组，修订后需新完整SHA、全套CI及监工独立复审；旧SHA的成功CI不代替。
 本增量只补持久源操作审计/恢复命令，对应此前仅测试SQL/内存演示的操作缺口。
 原表unknown/unverified/card_ready=false不变，20公开缺项记录与2模拟可用证据/DoseCard均0。
 完整标签/八组科普评估、正式云DB/HTTPS/双手机/六类全面样例、#45隐私消费者仍未完成。

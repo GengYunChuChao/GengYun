@@ -4,13 +4,12 @@ import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import pg from 'pg';
 import { createPool } from '../../services/api/src/db/pool.ts';
-import { applySourceOperation } from '../../services/api/src/db/source-lifecycle.ts';
+import { applySourceOperation, validateSourceDatabaseUrl } from '../../services/api/src/db/source-lifecycle.ts';
 import { applyMigrations,discoverMigrations } from '../../services/api/src/db/migrate.ts';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 
-const url=new URL(process.env.DATABASE_TEST_URL??'');
-assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));
+const url=new URL(validateSourceDatabaseUrl(process.env.DATABASE_TEST_URL));
 assert.equal(url.pathname,'/gengyun_source_ops_test');
 const owner=new pg.Client({connectionString:url.href});await owner.connect();
 const groups=['gengyun_source_executor','gengyun_source_operator','gengyun_preview_reader','gengyun_evidence_reader'];

@@ -1,7 +1,7 @@
 /** Local isolated operations only. Credentials never accepted in argv/output. */
 import { parseArgs } from 'node:util';
 import { createPool } from '../../services/api/src/db/pool.ts';
-import { applySourceOperation } from '../../services/api/src/db/source-lifecycle.ts';
+import { applySourceOperation, validateSourceDatabaseUrl } from '../../services/api/src/db/source-lifecycle.ts';
 import { ApiError } from '../../services/api/src/errors.ts';
 
 let pool;
@@ -11,13 +11,8 @@ try {
     'source-version-id':{type:'string'}, 'expected-revision':{type:'string'},
     'expected-validity':{type:'string'}, reason:{type:'string'}, 'restores-operation-id':{type:'string'},
   }, strict:true, allowPositionals:false });
-  const url=new URL(process.env.DATABASE_URL??'');
-  if (!['postgres:','postgresql:'].includes(url.protocol)
-    || !['127.0.0.1','localhost','[::1]'].includes(url.hostname)
-    || !['/gengyun_source_ops_test','/gengyun_local'].includes(url.pathname)) {
-    throw new ApiError('INVALID_REQUEST','只允许显式的本机隔离来源操作数据库');
-  }
-  pool=createPool(url.href);
+  // Reject all connection-string options before constructing the pg pool.
+  pool=createPool(validateSourceDatabaseUrl(process.env.DATABASE_URL));
   const result=await applySourceOperation(pool, {
     operationId:values['operation-id'],action:values.action,sourceId:values['source-id'],
     sourceVersionId:values['source-version-id'],expectedRevision:Number(values['expected-revision']),
