@@ -90,9 +90,12 @@ export function createExportLedger({
   }
 
   // 强制要求「受控数据介质」：结果写入必须是**账本自身的同步代码**作用于**纯数据容器**，
-  // **写入口不是任意函数**（修复轮 7 结论）。未注入时用内存参考介质（native Map）；
-  // 注入物含任何函数属性（如 write）或 rows 非原生 Map 即**构造即抛错**——绝不放行任意回调。
-  const writebackMedium = assertWritebackMedium(writeback ?? createMemoryWritebackMedium());
+  // **写入口不是任意函数**（修复轮 7 结论）。未注入时用内存参考介质（native Map）。
+  // 修复轮 8：校验**不执行访问器**（只读 own data descriptor），并**一次性捕获**已验证的 Map 引用
+  // 到**冻结绑定** `{ rows }`；写/读只使用该绑定，**不再回读调用方的 medium.rows**（杜绝 armed getter
+  // 在校验与写入之间插入调用方代码）。注入物含函数/访问器、rows 非 own data descriptor 或非原生 Map、
+  // 或为 Proxy → **构造即抛错**。
+  const writebackBinding = assertWritebackMedium(writeback ?? createMemoryWritebackMedium());
 
   /** @type {Map<string, object>} */
   const rows = new Map();
@@ -401,7 +404,10 @@ export function createExportLedger({
    * 结果以**数据** `result` 传入，由**受控数据介质**（构造时注入并校验，见 writeback.mjs）在
    * `gate.commit` 的 `apply`（同步临界区）内、以**账本自身的同步代码**（`Map.prototype.set.call`）
    * 写入。**写入口不是任意函数**（修复轮 7 结论）——不注入 `write` 回调、也不以 `constructor.name`
-   * 判断同步性；调用方只能提供**纯数据容器**，故**不可能**在写路径内启动异步任务。结构性保证：
+   * 判断同步性；调用方只能提供**纯数据容器**，故**不可能**在写路径内启动异步任务。
+   * **修复轮 8**：校验**不执行访问器**（只读 own data descriptor），并**一次性捕获**已验证的 Map 引用；
+   * 写/读**只使用该冻结绑定**，**不读取调用方可变属性、不执行访问器**——故不存在「armed getter 在校验
+   * 与写入之间插入调用方代码」的窗口。结构性保证：
    * **校验不通过 ⇒ 根本不写入 ⇒ 保存不会发生/生效**（不返回 `written:true`），而非「启动了再报错」。
    *
    * 先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照（账号版本 / 全部必需用途 epoch /
@@ -427,7 +433,7 @@ export function createExportLedger({
       // 保存与校验不可分离；写路径内**无任何调用方代码**。
       apply: () => {
         writebackMediumWrite(
-          writebackMedium,
+          writebackBinding,
           Object.freeze({
             exportId: record.id,
             userId: record.userId,
@@ -444,9 +450,9 @@ export function createExportLedger({
     return { written: true, exportId: record.id };
   }
 
-  /** 读取已写入的回写条目（供测试/审计）：账本自身同步读取数据介质。 */
+  /** 读取已写入的回写条目（供测试/审计）：账本自身同步读取**已捕获的绑定引用**。 */
   function getWriteback(exportId) {
-    return writebackMediumRead(writebackMedium, exportId);
+    return writebackMediumRead(writebackBinding, exportId);
   }
 
   return {

@@ -1018,7 +1018,7 @@ test('R5-4 反向保护：注入含函数属性的介质（如 write）→ 构�
   );
 });
 
-test('R5-4 反向保护：注入缺原生 Map 的介质 → 构造即拒绝（不静默降级）', () => {
+test('R5-4 反向保护：注入缺 own rows（data descriptor）的介质 → 构造即拒绝（不静默降级）', () => {
   assert.throws(
     () =>
       createExportLedger({
@@ -1027,7 +1027,7 @@ test('R5-4 反向保护：注入缺原生 Map 的介质 → 构造即拒绝（�
         recipientStore: createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT }),
         writeback: {},
       }),
-    /原生 Map/,
+    /own data descriptor/,
   );
 });
 
@@ -1201,4 +1201,106 @@ test('R7-5 复刻监工探针：{ write: entry => pending.then(...) } 注入被�
   await settleMicrotasks();
   assert.equal(state.calls, 0, '攻击函数不得被调用');
   assert.equal(state.saves, 0, '释放 pending 后实际 save 计数必须为 0');
+});
+
+// ---- 修复轮 8 · P2：不得执行访问器；内部固定已验证的 Map 引用 ----
+
+test('R8-1 复刻监工 armed-getter 探针：rows 为 accessor → 构造期拒绝（不执行 getter），save=0', async () => {
+  const consentStore = createConsentStore();
+  await grantVoiceConsent(consentStore);
+  const account = createAccountProvider({ u1: { state: 'active', authEpoch: 1 } });
+  const recipientStore = createRecipientStore({ [VERIFIED_RECIPIENT.id]: VERIFIED_RECIPIENT });
+
+  let getterCalls = 0;
+  const nativeMap = new Map();
+  const medium = {};
+  // armed getter：一旦被「读取」即撤回 recording（模拟读取时插入调用方代码）
+  Object.defineProperty(medium, 'rows', {
+    enumerable: true,
+    configurable: false,
+    get() {
+      getterCalls += 1;
+      consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+      return nativeMap;
+    },
+  });
+
+  assert.throws(
+    () => createExportLedger({ consentStore, account, recipientStore, writeback: medium }),
+    /访问器|own data descriptor/,
+    'accessor 介质必须在构造期被拒绝',
+  );
+  assert.equal(getterCalls, 0, '构造期不得执行 rows 访问器（不读取属性值）');
+  assert.equal(nativeMap.size, 0, '实际 save=0（未写入）');
+});
+
+test('R8-2 构造后替换 medium.rows：写入仍只走已捕获引用，撤回后不可能落库', async () => {
+  const mapA = new Map();
+  const mapB = new Map();
+  const medium = { rows: mapA }; // 调用方可变（可写 data 属性）
+  const { ledger, consentStore } = await setup({ writeback: medium });
+  await grantVoiceConsent(consentStore);
+  const rec1 = await ledger.reserve(baseExport);
+  await ledger.markSent(rec1.id);
+
+  medium.rows = mapB; // 构造后替换调用方属性
+
+  const ack = await ledger.guardWriteback({ exportId: rec1.id, userId: 'u1', result: { asr: 'ok' } });
+  assert.deepEqual(ack, { written: true, exportId: rec1.id });
+  assert.equal(mapA.size, 1, '写入落到已捕获引用 mapA');
+  assert.equal(mapB.size, 0, '替换后的 mapB 未被写入');
+  assert.equal(ledger.getWriteback(rec1.id).exportId, rec1.id, '账本读取亦走已捕获引用');
+
+  // 撤回后：即便介质属性被替换，也不可能落库
+  const rec2 = await ledger.reserve(baseExport);
+  await ledger.markSent(rec2.id);
+  await consentStore.withdraw({ userId: 'u1', purpose: 'recording' });
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: rec2.id, userId: 'u1', result: { asr: 'x' } }),
+    (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.equal(mapA.size, 1, '撤回后 mapA 仍只有 1 条');
+  assert.equal(mapB.size, 0, 'mapB 始终为 0');
+  assert.equal(ledger.get(rec2.id).state, 'sent', 'rec2 未被回写');
+});
+
+test('R8-3 正向：合法受控介质在同一临界区内恰好一次 save=1', async () => {
+  const medium = createMemoryWritebackMedium();
+  const { ledger, consentStore } = await setup({ writeback: medium });
+  await grantVoiceConsent(consentStore);
+  const rec = await ledger.reserve(baseExport);
+  await ledger.markSent(rec.id);
+
+  const ack = await ledger.guardWriteback({ exportId: rec.id, userId: 'u1', result: { asr: 'ok' } });
+  assert.deepEqual(ack, { written: true, exportId: rec.id });
+  assert.equal(medium.rows.size, 1, '恰好一次写入');
+  assert.deepEqual(ledger.getWriteback(rec.id).result, { asr: 'ok' });
+});
+
+test('R8-4 构造期拒绝：函数属性 / Map 子类 / accessor / Proxy 任一 → 拒绝且不执行访问器', () => {
+  class EvilMap extends Map {}
+  let getterCalls = 0;
+  const accessorMedium = {};
+  Object.defineProperty(accessorMedium, 'rows', {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return new Map();
+    },
+  });
+
+  const cases = [
+    ['函数属性', { rows: new Map(), write() {} }, /不得包含可执行函数/],
+    ['Map 子类', { rows: new EvilMap() }, /原生 Map/],
+    ['accessor', accessorMedium, /访问器|own data descriptor/],
+    ['Proxy', new Proxy({ rows: new Map() }, {}), /Proxy/],
+  ];
+  for (const [label, medium, re] of cases) {
+    assert.throws(
+      () => createExportLedger(freshLedgerArgs({ writeback: medium })),
+      re,
+      label + ' 介质必须被构造期拒绝',
+    );
+  }
+  assert.equal(getterCalls, 0, 'accessor 不得被执行');
 });
