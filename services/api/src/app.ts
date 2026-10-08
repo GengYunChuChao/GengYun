@@ -1,7 +1,7 @@
 /**
  * Fastify 应用装配。
  *
- * 骨架范围：启动、/health、契约错误封套、404。业务路由未实现，
+ * 范围：启动、/health、游客主页科普预览、契约错误封套、404。
  * 未知业务路径返回契约 NOT_FOUND 错误封套，不伪造成功。
  */
 import { randomUUID } from 'node:crypto';
@@ -12,6 +12,7 @@ import type { AppConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope } from './errors.ts';
 import type { PgPool } from './db/pool.ts';
 import { registerHealthRoutes } from './routes/health.ts';
+import { registerPublicHomeRoute } from './routes/public-home.ts';
 
 export interface BuildAppOptions {
   config: AppConfig;
@@ -26,6 +27,7 @@ export function buildApp({ config, pool = null }: BuildAppOptions): FastifyInsta
   });
 
   registerHealthRoutes(app, config, pool);
+  registerPublicHomeRoute(app, config, pool);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);

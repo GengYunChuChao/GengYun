@@ -56,9 +56,12 @@ psql "$DATABASE_URL" -f db/seeds/rollback_seed.sql        # 回滚种子数据
 psql "$DATABASE_URL" -f services/api/db/migrations/rollback/0002_knowledge_catalog.down.sql   # 回滚 0002 结构
 ```
 
-**未接入真实 PostgreSQL 实例**：以上命令未对真实库执行。已在内存引擎 PGlite 0.5.8
+**GY-I03 原交付证据**：当时以上命令未对真实库执行。已在内存引擎 PGlite 0.5.8
 （基于 PostgreSQL 18.x 内核）实测 0001→0002→种子→脱敏样例→回滚，**不构成目标
 PostgreSQL 17.11 的实库验收**（见 `docs/verification/gy-i03-evidence.md`）。
+2026-10-08 的后续增量已在隔离的本机 PostgreSQL 17.11 执行迁移、种子重复导入、
+限定回滚和受限查询；范围及重放步骤见 [GY-I25 数据库实测](../docs/verification/gy-i25-catalog-pg.md)。
+这不代表用户云库、20份完整标签或整个 #3/#27 已验收。
 种子 SQL 由 `tools/knowledge/build_seeds.py` 从 `packages/knowledge/` 的 JSON 确定性生成，
 改 JSON 后重新生成即可，勿手工编辑。
 
