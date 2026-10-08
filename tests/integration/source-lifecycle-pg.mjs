@@ -52,6 +52,10 @@ try {
     "UPDATE public.sources SET source_kind='database'","UPDATE public.sources SET revision=revision+1",
     'SELECT * FROM public.users','SELECT * FROM knowledge_staging.workbook_rows','SELECT * FROM public.applicability',
     'INSERT INTO public.catalog_source_update_events(id) VALUES(gen_random_uuid())',
+    'UPDATE public.catalog_source_update_events SET reverted_at=now()',
+    'DELETE FROM catalog_ops.operations',
+    'INSERT INTO catalog_ops.operations(id) VALUES(gen_random_uuid())',
+    'ALTER FUNCTION catalog_ops.apply_source_operation(uuid,text,uuid,uuid,integer,text,text,uuid) RENAME TO bypass_source_operation',
     'SELECT * FROM catalog_ops.operations','CREATE TABLE public.ops_ddl(id int)','CREATE TEMP TABLE ops_temp(id int)',
     'SET ROLE gengyun_source_executor','CREATE ROLE ops_no_role'])await denied(ops,sql);
   const functionSql="SELECT catalog_ops.apply_source_operation(gen_random_uuid(),'withdraw',gen_random_uuid(),gen_random_uuid(),1,'valid','synthetic',NULL)";
