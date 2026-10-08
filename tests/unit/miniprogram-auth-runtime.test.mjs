@@ -328,7 +328,7 @@ test('R3-3 保留回归（原 R2-4）：期间完成新登录后，迟到的 ver
 });
 
 // ---------------------------------------------------------------------------
-// 修复轮 3 / 阻塞 A：login / logout 的世代（+ 操作序号）绑定
+// 修复轮 3 / 阻塞 A：login / logout 的世代绑定（这些用例在轮 4 作为 R4-5 保留）
 // ---------------------------------------------------------------------------
 
 /** 发起一次登录，返回其 POST 请求句柄（可对该响应调用 successWith）。 */
@@ -419,4 +419,105 @@ test('R3-2 旧退出的 503（success 分支）/ 网络失败（fail 分支）�
     assert.equal(auth.isLoggedIn(), true, '迟到网络失败不得清除新登录 B');
     assert.equal(auth.getSession().accessToken, 'tok-B2');
   }
+});
+
+// ---------------------------------------------------------------------------
+// 修复轮 4 / 核心：共享意图世代（发起点单调淘汰）——不依赖响应到达顺序
+//   R4-1/R4-2 覆盖监工新反例的**两种 Ack 顺序**；R4-3 退出后另发新登录仍成功；
+//   R4-4 真正旧退出的 200 Ack 迟到在新登录 B 之后不得清 B。
+//   R4-5 由上方保留的 R3-1（旧登录迟到不复活）、R3-2（旧退出迟到不清 B）、
+//   R3-3（GET verifySession 世代回归）共同覆盖。
+// ---------------------------------------------------------------------------
+
+/** 发起一次退出，返回其 POST 请求句柄 + 回调调用计数。 */
+function startLogout(b, auth, onResult) {
+  const handle = { calls: 0 };
+  auth.logout((r) => {
+    handle.calls += 1;
+    if (typeof onResult === 'function') onResult(r);
+  });
+  handle.req = b.requests[b.requests.length - 1];
+  handle.ack = () => handle.req.success({ statusCode: 200, data: { data: { accepted: true } } });
+  return handle;
+}
+
+test('R4-1 先放旧登录 B 的 200、后放退出 A 的 Ack：最终 isLoggedIn=false（不依赖到达顺序）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+
+  // 已登录 A。
+  startLogin(b, auth).successWith('tok-A');
+  assert.equal(auth.isLoggedIn(), true);
+
+  // 发起登录 B（暂扣 POST）→ 发起退出 A（暂扣 Ack）。退出是**更晚的意图**。
+  const loginB = startLogin(b, auth);
+  const logoutA = startLogout(b, auth);
+
+  // 先释放旧登录 B 的 200（若按到达顺序处理会写回 synthetic-B）……
+  loginB.successWith('synthetic-B');
+  // ……再释放退出 A 的 200(accepted=true)。
+  logoutA.ack();
+
+  assert.equal(auth.isLoggedIn(), false, '较新的退出意图应胜出：最终未登录');
+  assert.equal(auth.getSession(), null, '不得缓存 synthetic-B');
+  assert.ok(logoutA.calls >= 1, '退出回调应被调用（旧登录不得淘汰较新的退出）');
+});
+
+test('R4-2 先放退出 A 的 Ack、后放旧登录 B 的 200：同样不复活', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+
+  startLogin(b, auth).successWith('tok-A');
+  assert.equal(auth.isLoggedIn(), true);
+
+  const loginB = startLogin(b, auth);
+  const logoutA = startLogout(b, auth);
+
+  // 新顺序：先退出 Ack，后旧登录 200。
+  logoutA.ack();
+  assert.equal(auth.isLoggedIn(), false);
+  loginB.successWith('synthetic-B');
+
+  assert.equal(auth.isLoggedIn(), false, '迟到的旧登录不得复活已退出的会话');
+  assert.equal(auth.getSession(), null, '不得缓存 synthetic-B');
+  assert.ok(logoutA.calls >= 1, '退出回调应被调用');
+});
+
+test('R4-3 退出之后再另发新登录 B：新登录是更晚意图，仍成功', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+
+  startLogin(b, auth).successWith('tok-A');
+  assert.equal(auth.isLoggedIn(), true);
+
+  // 退出 A 完成。
+  const logoutA = startLogout(b, auth);
+  logoutA.ack();
+  assert.equal(auth.isLoggedIn(), false);
+  assert.ok(logoutA.calls >= 1);
+
+  // 之后另发新登录 B：应成功。
+  startLogin(b, auth).successWith('tok-B');
+  assert.equal(auth.isLoggedIn(), true, '退出之后另发的新登录应成功');
+  assert.equal(auth.getSession().accessToken, 'tok-B');
+});
+
+test('R4-4 真正旧退出的 200 Ack 迟到在新登录 B 之后：不得清除 B', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+
+  startLogin(b, auth).successWith('tok-A');
+  assert.equal(auth.isLoggedIn(), true);
+
+  // 退出 A（暂扣 Ack）→ 期间完成新登录 B。
+  const logoutA = startLogout(b, auth);
+  startLogin(b, auth).successWith('tok-B');
+  assert.equal(auth.isLoggedIn(), true);
+  assert.equal(auth.getSession().accessToken, 'tok-B');
+
+  // 释放旧退出的 200 accepted：不得清除更新的登录 B。
+  logoutA.ack();
+  assert.equal(auth.isLoggedIn(), true, '旧退出 Ack 迟到不得清除新登录 B');
+  assert.equal(auth.getSession().accessToken, 'tok-B');
+  assert.equal(logoutA.calls, 0, '失效的旧退出不应回调（避免误报新会话已退出）');
 });

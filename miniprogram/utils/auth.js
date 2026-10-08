@@ -23,16 +23,15 @@ const KNOWN_EXECUTION_MODES = ['real', 'stub', 'preset_demo']
 let serverVerified = false
 
 // 会话世代：每次「清会话」或「切换/建立新令牌」时递增。
-// 在途的 verifySession / login / logout 请求以发起时的世代（+ 令牌 / 操作序号）绑定；
-// 任一变化即视为过期回调：迟到的成功不得复活已清除的会话，迟到的失败/退出不得清掉
-// 更新的登录，也不得把旧登录结果覆盖到较新的退出意图之上。
+// 在途的 verifySession / login / logout 请求以发起时的世代绑定：迟到回调不得复活
+// 已清除的会话、不得清掉更新的登录。
 let generation = 0
 
-// 在途「登录 / 退出」操作序号：只有同种操作里**最新一次**的回调才有资格改变会话状态。
-// generation 覆盖跨类型失效（登录 ↔ 退出 ↔ 核实），序号覆盖同类型竞态（较早的一次登录
-// 即使其世代未变，也不得覆盖此后发起的登录意图）。
-let loginSequence = 0
-let logoutSequence = 0
+// 用户意图世代（登录 ↔ 退出的**共享**单调序号）：任何一次 login()/logout() 在**发起点**
+// 都推进它，并各自捕获本操作的世代。回调落地前若该世代已被更晚的意图推进，则整个操作
+// 过期（丢弃响应，不改变登录态）。这样「较新的退出意图」在**发起时**即淘汰更早的在途登录，
+// 最终登录态**不依赖两个响应到达的先后**。
+let intentEpoch = 0
 
 function networkEnabled() {
   return runtime.mode === 'local' && typeof runtime.apiBaseUrl === 'string' && runtime.apiBaseUrl !== ''
@@ -194,10 +193,10 @@ function verifySession(callback) {
  * 微信登录：wx.login 取 code → 服务端 /auth/wechat 换取会话。
  * 客户端不传 openid / 角色 / 用户 id。
  *
- * 世代绑定：**发起时**捕获 generation 与本次登录操作序号；成功回调在写会话
- * （`setSession` / `serverVerified`）**之前**校验二者未变。若期间发生退出 / 清会话 /
- * 切换账号 / 更新的登录，则丢弃该响应（不写会话、不放行），避免旧登录结果复活
- * 已被清除的会话或覆盖较新的退出意图。
+ * 世代绑定：**发起时**推进并捕获共享的意图世代（`intentEpoch`）与会话世代（`generation`）；
+ * 成功回调在写会话（`setSession` / `serverVerified`）**之前**校验二者未变。若期间发生
+ * 退出 / 清会话 / 切换账号 / 更新的登录，则丢弃该响应（不写会话、不放行），避免旧登录结果
+ * 复活已被清除的会话或覆盖较新的（尤其是**退出**）意图。
  * callback(errorMessageOrNull)
  */
 function login(callback) {
@@ -206,10 +205,10 @@ function login(callback) {
     done('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
     return
   }
+  const opIntent = ++intentEpoch
   const opGeneration = generation
-  const opId = ++loginSequence
   const stale = function () {
-    return generation !== opGeneration || opId !== loginSequence
+    return intentEpoch !== opIntent || generation !== opGeneration
   }
   wx.login({
     success: function (loginResult) {
@@ -277,9 +276,10 @@ function login(callback) {
  * 其他响应（503/500 等）或网络失败一律清理本地会话，但保留
  * 「服务端撤销未确认」状态，不谎称已撤销。
  *
- * 世代绑定：**发起时**捕获 generation、本次退出操作序号与目标令牌；success/fail 回调在
- * `clearSession` **之前**校验三者未变。若期间完成新登录 / 更新的一次退出，则该退出操作
- * 已失效——既不清除更新的会话，也不回调（避免以旧退出误报新会话状态）。
+ * 世代绑定：**发起时**推进并捕获共享的意图世代（`intentEpoch`）、会话世代（`generation`）
+ * 与目标令牌；success/fail 回调在 `clearSession` **之前**校验三者未变。若期间发生更新的一次
+ * 登录 / 退出 / 清会话，则该退出操作已失效——既不清除更新的会话，也不回调（避免以旧退出
+ * 误报新会话状态）。
  * callback({ serverRevoked, serverRevocationUnconfirmed })
  */
 function logout(callback) {
@@ -290,11 +290,11 @@ function logout(callback) {
     done({ serverRevoked: false, serverRevocationUnconfirmed: false })
     return
   }
+  const opIntent = ++intentEpoch
   const opGeneration = generation
-  const opId = ++logoutSequence
   const opToken = session.accessToken
   const stale = function () {
-    return generation !== opGeneration || opId !== logoutSequence || currentToken() !== opToken
+    return intentEpoch !== opIntent || generation !== opGeneration || currentToken() !== opToken
   }
   wx.request({
     url: runtime.apiBaseUrl + '/auth/logout',
