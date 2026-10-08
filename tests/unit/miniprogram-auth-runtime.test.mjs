@@ -248,10 +248,10 @@ test('P2-⑤ 退出：无本地会话且未联网时不谎称已撤销（unconfi
 });
 
 // ---------------------------------------------------------------------------
-// 阻塞 2 / R2-3、R2-4：以会话世代 + 当前令牌绑定请求，使在途回调失效
+// 修复轮 3 / R3-3（保留回归）：以会话世代 + 当前令牌绑定请求，使在途回调失效
 // ---------------------------------------------------------------------------
 
-test('R2-3 退出后释放迟到的 verifySession 成功响应不得复活会话，旧门禁回调不被放行', () => {
+test('R3-3 保留回归（原 R2-3）：退出后释放迟到的 verifySession 成功响应不得复活会话，旧门禁回调不被放行', () => {
   const b = makeWx();
   b.storage.set(SESSION_KEY, validCache());
   const auth = loadAuth(b.wx);
@@ -278,7 +278,7 @@ test('R2-3 退出后释放迟到的 verifySession 成功响应不得复活会话
   assert.equal(gate, false, '旧门禁回调不得被放行');
 });
 
-test('R2-4 期间完成新登录后，迟到的 verifySession 失败响应（401/网络失败）不得清掉新登录', () => {
+test('R3-3 保留回归（原 R2-4）：期间完成新登录后，迟到的 verifySession 失败响应（401/网络失败）不得清掉新登录', () => {
   const b = makeWx();
   b.storage.set(SESSION_KEY, validCache({ accessToken: 'tok-old' }));
   const auth = loadAuth(b.wx);
@@ -325,4 +325,98 @@ test('R2-4 期间完成新登录后，迟到的 verifySession 失败响应（401
   assert.equal(verified2, false, '旧网络失败回调应如实返回未通过');
   assert.equal(auth.isLoggedIn(), true, '迟到网络失败不得清掉更新的登录');
   assert.equal(auth.getSession().accessToken, 'tok-newer');
+});
+
+// ---------------------------------------------------------------------------
+// 修复轮 3 / 阻塞 A：login / logout 的世代（+ 操作序号）绑定
+// ---------------------------------------------------------------------------
+
+/** 发起一次登录，返回其 POST 请求句柄（可对该响应调用 successWith）。 */
+function startLogin(b, auth) {
+  auth.login(() => {});
+  const req = b.requests[b.requests.length - 1];
+  return {
+    req,
+    successWith: (token) => req.success({
+      statusCode: 200,
+      data: { data: { access_token: token, audience: 'user', expires_at: futureIso(), revision: 1 }, meta: { execution_mode: 'stub' } },
+    }),
+  };
+}
+
+test('R3-1 旧登录 200 迟到不得复活被退出清除的会话（login 世代/操作绑定）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+
+  // 已登录 A。
+  startLogin(b, auth).successWith('tok-A');
+  assert.equal(auth.isLoggedIn(), true);
+  assert.equal(auth.getSession().accessToken, 'tok-A');
+
+  // 启动第二次登录，**暂扣** POST 响应。
+  let errB = 'pending';
+  auth.login((e) => { errB = e; });
+  const pausedLogin = b.requests[b.requests.length - 1];
+  assert.match(pausedLogin.url, /\/auth\/wechat$/);
+
+  // 退出 A：收到契约成功 Ack，本地已退出。
+  let logoutResult;
+  auth.logout((r) => { logoutResult = r; });
+  b.requests[b.requests.length - 1].success({ statusCode: 200, data: { data: { accepted: true } } });
+  assert.equal(logoutResult.serverRevoked, true);
+  assert.equal(auth.isLoggedIn(), false, '退出后应已登出');
+  assert.equal(b.storage.has(SESSION_KEY), false, '退出应清本地缓存');
+
+  // 释放此前暂扣的旧登录 200：不得复活会话、不得保存旧登录结果。
+  pausedLogin.success({
+    statusCode: 200,
+    data: { data: { access_token: 'tok-B', audience: 'user', expires_at: futureIso(), revision: 1 }, meta: { execution_mode: 'stub' } },
+  });
+  assert.equal(auth.isLoggedIn(), false, '迟到的旧登录 200 不得复活已清除的会话');
+  assert.equal(auth.getSession(), null, '不得保存旧登录结果');
+  assert.ok(typeof errB === 'string' && errB !== '', '失效登录回调应报告失效，而非成功');
+});
+
+test('R3-2 旧退出的 503（success 分支）/ 网络失败（fail 分支）迟到不得清除新登录 B', () => {
+  // 子场景 1：旧退出的 503 走 success 分支。
+  {
+    const b = makeWx();
+    const auth = loadAuth(b.wx);
+
+    startLogin(b, auth).successWith('tok-A');
+    assert.equal(auth.getSession().accessToken, 'tok-A');
+
+    // 退出 A，暂扣响应。
+    auth.logout(() => {});
+    const pausedLogout = b.requests[b.requests.length - 1];
+    assert.match(pausedLogout.url, /\/auth\/logout$/);
+
+    // 新登录 B 成功。
+    startLogin(b, auth).successWith('tok-B');
+    assert.equal(auth.isLoggedIn(), true);
+    assert.equal(auth.getSession().accessToken, 'tok-B');
+
+    // 释放旧退出的 503：不得清除 B。
+    pausedLogout.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE' } } });
+    assert.equal(auth.isLoggedIn(), true, '迟到 503 不得清除新登录 B');
+    assert.equal(auth.getSession().accessToken, 'tok-B');
+  }
+
+  // 子场景 2：旧退出的网络失败走 fail 分支。
+  {
+    const b = makeWx();
+    const auth = loadAuth(b.wx);
+
+    startLogin(b, auth).successWith('tok-A2');
+
+    auth.logout(() => {});
+    const pausedLogout = b.requests[b.requests.length - 1];
+
+    startLogin(b, auth).successWith('tok-B2');
+    assert.equal(auth.getSession().accessToken, 'tok-B2');
+
+    pausedLogout.fail({ errMsg: 'request:fail' });
+    assert.equal(auth.isLoggedIn(), true, '迟到网络失败不得清除新登录 B');
+    assert.equal(auth.getSession().accessToken, 'tok-B2');
+  }
 });

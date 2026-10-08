@@ -23,9 +23,16 @@ const KNOWN_EXECUTION_MODES = ['real', 'stub', 'preset_demo']
 let serverVerified = false
 
 // 会话世代：每次「清会话」或「切换/建立新令牌」时递增。
-// 在途的 verifySession 请求以发起时的世代 + 令牌绑定；两者任一变化即视为过期回调：
-// 迟到的成功不得复活已清除的会话，迟到的失败不得清掉更新的登录。
+// 在途的 verifySession / login / logout 请求以发起时的世代（+ 令牌 / 操作序号）绑定；
+// 任一变化即视为过期回调：迟到的成功不得复活已清除的会话，迟到的失败/退出不得清掉
+// 更新的登录，也不得把旧登录结果覆盖到较新的退出意图之上。
 let generation = 0
+
+// 在途「登录 / 退出」操作序号：只有同种操作里**最新一次**的回调才有资格改变会话状态。
+// generation 覆盖跨类型失效（登录 ↔ 退出 ↔ 核实），序号覆盖同类型竞态（较早的一次登录
+// 即使其世代未变，也不得覆盖此后发起的登录意图）。
+let loginSequence = 0
+let logoutSequence = 0
 
 function networkEnabled() {
   return runtime.mode === 'local' && typeof runtime.apiBaseUrl === 'string' && runtime.apiBaseUrl !== ''
@@ -186,18 +193,29 @@ function verifySession(callback) {
 /**
  * 微信登录：wx.login 取 code → 服务端 /auth/wechat 换取会话。
  * 客户端不传 openid / 角色 / 用户 id。
+ *
+ * 世代绑定：**发起时**捕获 generation 与本次登录操作序号；成功回调在写会话
+ * （`setSession` / `serverVerified`）**之前**校验二者未变。若期间发生退出 / 清会话 /
+ * 切换账号 / 更新的登录，则丢弃该响应（不写会话、不放行），避免旧登录结果复活
+ * 已被清除的会话或覆盖较新的退出意图。
  * callback(errorMessageOrNull)
  */
 function login(callback) {
+  const done = typeof callback === 'function' ? callback : function () {}
   if (!networkEnabled()) {
-    callback('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
+    done('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
     return
+  }
+  const opGeneration = generation
+  const opId = ++loginSequence
+  const stale = function () {
+    return generation !== opGeneration || opId !== loginSequence
   }
   wx.login({
     success: function (loginResult) {
       const code = loginResult && loginResult.code
       if (typeof code !== 'string' || code === '') {
-        callback('微信未返回登录 code，请重试。')
+        done('微信未返回登录 code，请重试。')
         return
       }
       wx.request({
@@ -206,17 +224,22 @@ function login(callback) {
         header: { 'content-type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
         data: { code: code },
         success: function (response) {
+          if (stale()) {
+            // 本次登录已被更新的登录 / 退出 / 清会话取代：迟到响应不得写会话、不得放行。
+            done('登录结果已失效（会话状态已变更），请重试。')
+            return
+          }
           const body = response && response.data
           const data = body && body.data
           const meta = body && body.meta
           if (response.statusCode !== 200 || !data || typeof data.access_token !== 'string') {
-            callback('登录失败：' + statusText(response))
+            done('登录失败：' + statusText(response))
             return
           }
           const executionMode = meta && typeof meta.execution_mode === 'string' ? meta.execution_mode : ''
           if (KNOWN_EXECUTION_MODES.indexOf(executionMode) === -1) {
             // 缺少可解释的执行模式：不保存难以解释的会话。
-            callback('登录响应缺少可解释的执行模式，已拒绝。')
+            done('登录响应缺少可解释的执行模式，已拒绝。')
             return
           }
           setSession({
@@ -227,18 +250,23 @@ function login(callback) {
           })
           serverVerified = true
           if (!isLoggedIn()) {
-            callback('登录会话保存失败，请重试。')
+            done('登录会话保存失败，请重试。')
             return
           }
-          callback(null)
+          done(null)
         },
         fail: function () {
-          callback('网络请求失败，请检查地址与网络后重试。')
+          if (stale()) {
+            // 本次登录已被更新的会话操作取代：不得误报为当前登录失败。
+            done('登录结果已失效（会话状态已变更），请重试。')
+            return
+          }
+          done('网络请求失败，请检查地址与网络后重试。')
         }
       })
     },
     fail: function () {
-      callback('wx.login 调用失败，请重试。')
+      done('wx.login 调用失败，请重试。')
     }
   })
 }
@@ -248,34 +276,53 @@ function login(callback) {
  * **仅当契约成功 Ack**（HTTP 200 且 body.data.accepted === true）才报「服务端已撤销」；
  * 其他响应（503/500 等）或网络失败一律清理本地会话，但保留
  * 「服务端撤销未确认」状态，不谎称已撤销。
+ *
+ * 世代绑定：**发起时**捕获 generation、本次退出操作序号与目标令牌；success/fail 回调在
+ * `clearSession` **之前**校验三者未变。若期间完成新登录 / 更新的一次退出，则该退出操作
+ * 已失效——既不清除更新的会话，也不回调（避免以旧退出误报新会话状态）。
  * callback({ serverRevoked, serverRevocationUnconfirmed })
  */
 function logout(callback) {
+  const done = typeof callback === 'function' ? callback : function () {}
   const session = getSession()
   if (session === null || !networkEnabled()) {
     clearSession()
-    callback({ serverRevoked: false, serverRevocationUnconfirmed: false })
+    done({ serverRevoked: false, serverRevocationUnconfirmed: false })
     return
+  }
+  const opGeneration = generation
+  const opId = ++logoutSequence
+  const opToken = session.accessToken
+  const stale = function () {
+    return generation !== opGeneration || opId !== logoutSequence || currentToken() !== opToken
   }
   wx.request({
     url: runtime.apiBaseUrl + '/auth/logout',
     method: 'POST',
     header: { 'content-type': 'application/json', authorization: 'Bearer ' + session.accessToken, 'Idempotency-Key': newIdempotencyKey() },
     success: function (response) {
+      if (stale()) {
+        // 该退出操作已被更新的登录/退出取代：不得清除更新的会话，也不回调。
+        return
+      }
       const body = response && response.data
       const data = body && body.data
       const acked = response.statusCode === 200 && data && data.accepted === true
       clearSession()
       if (acked) {
-        callback({ serverRevoked: true, serverRevocationUnconfirmed: false })
+        done({ serverRevoked: true, serverRevocationUnconfirmed: false })
         return
       }
       // 收到响应但非契约成功 Ack：本地已清，服务端撤销未确认。
-      callback({ serverRevoked: false, serverRevocationUnconfirmed: true })
+      done({ serverRevoked: false, serverRevocationUnconfirmed: true })
     },
     fail: function () {
+      if (stale()) {
+        // 该退出操作已被更新的登录/退出取代：不得清除更新的会话，也不回调。
+        return
+      }
       clearSession()
-      callback({ serverRevoked: false, serverRevocationUnconfirmed: true })
+      done({ serverRevoked: false, serverRevocationUnconfirmed: true })
     }
   })
 }
