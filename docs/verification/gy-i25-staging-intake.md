@@ -51,6 +51,13 @@ source CLI原profile保持source_ops_test/local，新CLI不接source_ops_test。
 
 回滚必须指定batch/import ID/内容摘要，且与当前归属LOGIN及世代一致。
 函数锁定该批次及行，重构全部当前内容比较摘要；内容/来源版本关联改变则拒绝。
+回滚先比较实际全批行数，再用LEFT JOIN保留清单外工作表的所有实际行参与摘要；
+不能用原工作表清单的INNER JOIN过滤当前数据。真实PG负例覆盖追加清单外行和
+保持总行数的清单外替换：旧提交会误删，新实现拒绝并保留全部行、状态与审计。
+每类负例使用独立合成批次并保留污染状态，不由管理员删除新增行后冒称正常回滚。
+批次FOR UPDATE及行锁覆盖比较到删除：真实第二连接在比较完成后插行会被父行锁阻塞，
+正常回滚提交后该插入因FK缺父批次失败，不会先插入后被悄悄级联删除。
+回执row_count记录已实际核对的完整行数；旧历史回执继续保持原语义。
 只删除该批次与其级联行，保留其他批次和不含raw的审计。重复原回滚ID返回原回执。
 旧导入/回滚回执只是历史操作证明，**不承诺当前状态**，也不能重新写入或删除下一代。
 已回滚批次重入需要新操作ID、`--previous-import-id`精确指向上一代导入、同LOGIN及同摘要；
@@ -91,7 +98,8 @@ node tools/database/staging-intake.mjs --action import --operation-id 00000000-0
 | 合成XLSX字节哈希→环境隔离Python→真实CLI入库；未审状态、幂等、HTTP不泄raw | 通过 |
 | DB重算UUIDv5/raw SHA256；结构/重复/不完整/异内容/异actor/旧批次拒绝 | 通过 |
 | 两个不同PG backend同ID一写一回执、异ID一成功一冲突；中间行/审计失败使导入与回滚全事务保留原态 | 通过 |
-| 精确回滚；跨actor/批次/导入/摘要/内容/来源关联拒绝；旧回执不影响新世代 | 通过 |
+| 精确回滚；清单内/外追加、缺行、等数清单外替换、坐标和raw变化拒绝，逐项保留批次/全部行/世代/审计 | 通过 |
+| 实际两连接：全行比较后回滚保持父/行锁，后来插入不能逃逸后被级联误删；正常与历史/新世代语义 | 通过 |
 | 参数/文件/行数/JSON大小限制；非空down拒绝、空down保留0004及基础表 | 通过 |
 
 重放：`node --test tests/unit/staging-intake.test.mjs`；
@@ -104,7 +112,11 @@ CI使用独立postgres:17.11及全合成数据，精确当前SHA/run/version/PAS
 已审基线：[PR53正式复审](https://github.com/Sek1ro-oka/GengYun/pull/53#pullrequestreview-5450372614)，
 [当前#3批复](https://github.com/Sek1ro-oka/GengYun/issues/3#issuecomment-6050345566)，
 [当前#27批复](https://github.com/Sek1ro-oka/GengYun/issues/27#issuecomment-6050345879)。
+[PR54原P2](https://github.com/Sek1ro-oka/GengYun/pull/54#discussion_r4216227681)：
+作者已用真实PG17.11重放reviewed_sha=40fcf6653e3321fbbccec0a6903a53809186cc32的0007，
+正常对照和清单内新增拒绝通过，清单外新增却未拒绝（同负例测试退出1）。新实现全部13组PASS。
+监工此前PGlite18.3适配反例、作者原生17.11、新SHA CI及最终独立复审分开记录，不互相替代。
 启动/修订前完整核对正文、评论、review、行内/回复/线程及完整SHA。
 仅完成暂存入库机制，不完成通用导入/审核发布/完整标签/八组评估/云DB/HTTPS/双手机/
 六类全面能力/#45隐私消费者；旧96暂存及20缺项资料不读不提升，整#3/#27保持open。
-新增AI/供应商/外部DB/部署/支付0，授权截止2026-10-08香港13:06:23不延长。
+新增AI/供应商/外部DB/部署/支付0，用户最新授权截止2026-10-08香港17:00，到期未完停止等待。

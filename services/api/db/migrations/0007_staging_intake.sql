@@ -150,7 +150,7 @@ REVOKE ALL ON FUNCTION staging_intake.apply_import(uuid,jsonb,uuid) FROM PUBLIC;
 CREATE FUNCTION staging_intake.rollback_import(p_id uuid,p_batch uuid,p_import uuid,p_hash text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog SET TimeZone='UTC' AS $$
 DECLARE prior staging_intake.operations%ROWTYPE; owned staging_intake.batches%ROWTYPE;
-  rh text; current_payload jsonb; actual_hash text; receipt jsonb;
+  rh text; current_payload jsonb; actual_hash text; receipt jsonb; actual_count integer;
 BEGIN
   IF p_id IS NULL OR p_batch IS NULL OR p_import IS NULL OR coalesce(p_hash,'') !~ '^[0-9a-f]{64}$'
   THEN RAISE EXCEPTION USING ERRCODE='G0001',MESSAGE='INVALID_REQUEST'; END IF;
@@ -172,19 +172,22 @@ BEGIN
   IF EXISTS(SELECT 1 FROM knowledge_staging.workbook_batches WHERE id=p_batch AND source_version_id IS NOT NULL)
   THEN RAISE EXCEPTION USING ERRCODE='G0004',MESSAGE='BATCH_LINK_CHANGED'; END IF;
   PERFORM 1 FROM knowledge_staging.workbook_rows WHERE batch_id=p_batch FOR UPDATE;
+  SELECT count(*)::integer INTO actual_count FROM knowledge_staging.workbook_rows WHERE batch_id=p_batch;
+  IF actual_count<>owned.row_count
+  THEN RAISE EXCEPTION USING ERRCODE='G0004',MESSAGE='BATCH_CONTENT_CHANGED'; END IF;
   SELECT jsonb_build_object('batch_id',b.id,'sha256',trim(b.file_sha256),'filename',b.filename,
     'mapping_version',b.mapping_version,'quality',b.quality,'rows',
     (SELECT jsonb_agg(jsonb_build_object('sheet',r.sheet_name,'excel_row',r.excel_row,'row_hash',trim(r.row_hash),
-      'raw',r.raw,'mapped',r.mapped,'state',r.state,'issues',r.issues) ORDER BY s.ord,r.excel_row)
+      'raw',r.raw,'mapped',r.mapped,'state',r.state,'issues',r.issues) ORDER BY s.ord NULLS LAST,r.sheet_name COLLATE "C",r.excel_row)
      FROM knowledge_staging.workbook_rows r
-     JOIN jsonb_array_elements(b.quality->'sheets') WITH ORDINALITY s(value,ord) ON s.value->>'name'=r.sheet_name
+     LEFT JOIN jsonb_array_elements(b.quality->'sheets') WITH ORDINALITY s(value,ord) ON s.value->>'name'=r.sheet_name
      WHERE r.batch_id=b.id)) INTO current_payload FROM knowledge_staging.workbook_batches b WHERE id=p_batch;
   actual_hash:=encode(staging_intake.digest(convert_to(current_payload::text,'UTF8'),'sha256'),'hex');
   IF actual_hash IS DISTINCT FROM p_hash THEN RAISE EXCEPTION USING ERRCODE='G0004',MESSAGE='BATCH_CONTENT_CHANGED'; END IF;
   DELETE FROM knowledge_staging.workbook_batches WHERE id=p_batch;
   UPDATE staging_intake.batches SET state='reverted' WHERE batch_id=p_batch;
   receipt:=jsonb_build_object('operation_id',p_id,'action','rollback','batch_id',p_batch,'generation',owned.generation,
-    'payload_hash',p_hash,'row_count',owned.row_count,'state','reverted','import_id',p_import,'replayed',false);
+    'payload_hash',p_hash,'row_count',actual_count,'state','reverted','import_id',p_import,'replayed',false);
   INSERT INTO staging_intake.operations(id,batch_id,action,actor,request_hash,receipt)
     VALUES(p_id,p_batch,'rollback',session_user,rh,receipt);
   RETURN receipt;

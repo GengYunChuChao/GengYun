@@ -126,6 +126,55 @@ with zipfile.ZipFile(sys.argv[1],'w') as z:
   await assert.rejects(rollbackIntake(ops,randomUUID(),concurrent.batch_id,op,receipt.payload_hash),{code:'SOURCE_CONFLICT'});
   await assert.rejects(rollbackIntake(ops,randomUUID(),payload.batch_id,randomUUID(),receipt.payload_hash),{code:'SOURCE_CONFLICT'});
   await assert.rejects(rollbackIntake(ops,randomUUID(),payload.batch_id,op,'a'.repeat(64)),{code:'SOURCE_CONFLICT'});
+  const snapshot=async bid=>({
+    batch:(await owner.query('SELECT * FROM knowledge_staging.workbook_batches WHERE id=$1',[bid])).rows,
+    rows:(await owner.query('SELECT * FROM knowledge_staging.workbook_rows WHERE batch_id=$1 ORDER BY sheet_name COLLATE "C",excel_row',[bid])).rows,
+    ownership:(await owner.query('SELECT * FROM staging_intake.batches WHERE batch_id=$1',[bid])).rows,
+    audit:(await owner.query('SELECT * FROM staging_intake.operations WHERE batch_id=$1 ORDER BY id',[bid])).rows,
+    auditTotal:await count('staging_intake.operations'),
+  });
+  const probeBatch=async label=>{
+    const p=structuredClone(payload);p.sha256=createHash('sha256').update('synthetic rollback '+label).digest('hex');p.batch_id=stagingBatchId(p.sha256);
+    return {p,r:await importIntake(ops,randomUUID(),p)};
+  };
+  const addRow=(bid,sheet)=>owner.query("INSERT INTO knowledge_staging.workbook_rows(batch_id,sheet_name,excel_row,row_hash,raw,mapped,state,issues) VALUES($1,$2,99,repeat('a',64),'{\"synthetic_later_row\":true}','{}','context','[]')",[bid,sheet]);
+  for(const kind of ['listed-add','unlisted-add','missing','unlisted-replace','coordinate-change','content-change']){
+    const {p,r}=await probeBatch(kind);
+    if(kind==='listed-add'||kind==='unlisted-add')await addRow(p.batch_id,kind==='listed-add'?p.rows[0].sheet:'unlisted-later-sheet');
+    if(kind==='missing'||kind==='unlisted-replace'){
+      const note=p.rows[2];await owner.query('DELETE FROM knowledge_staging.workbook_rows WHERE batch_id=$1 AND sheet_name=$2 AND excel_row=$3',[p.batch_id,note.sheet,note.excel_row]);
+      if(kind==='unlisted-replace')await addRow(p.batch_id,'unlisted-later-sheet');
+    }
+    if(kind==='coordinate-change')await owner.query('UPDATE knowledge_staging.workbook_rows SET excel_row=98 WHERE batch_id=$1 AND excel_row=2',[p.batch_id]);
+    if(kind==='content-change')await owner.query("UPDATE knowledge_staging.workbook_rows SET raw=raw||'{\"synthetic_change\":true}'::jsonb WHERE batch_id=$1 AND excel_row=2",[p.batch_id]);
+    const before=await snapshot(p.batch_id);
+    await assert.rejects(rollbackIntake(ops,randomUUID(),p.batch_id,r.import_id,r.payload_hash),{code:'SOURCE_CONFLICT'});
+    assert.deepEqual(await snapshot(p.batch_id),before,kind+' must preserve ALL batch/rows/generation/audit');
+    // Leave this synthetic changed batch intact; never clean it to make rollback pass.
+    pass('rollback full-set '+kind+': SOURCE_CONFLICT; entire batch/all rows/ownership/generation/audit unchanged');
+  }
+
+  const {p:protectedPayload,r:protectedReceipt}=await probeBatch('concurrent-fk');
+  await owner.query("CREATE FUNCTION public.intake_rollback_gate() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(700700); RETURN OLD; END $$; CREATE TRIGGER intake_rollback_gate BEFORE DELETE ON knowledge_staging.workbook_batches FOR EACH ROW EXECUTE FUNCTION public.intake_rollback_gate()");
+  const rollbackClient=await ops.connect();const writer=new pg.Client({connectionString:url.href});await writer.connect();
+  const waitFor=async(pid,event)=>{for(let i=0;i<100;i++){const a=(await owner.query('SELECT wait_event FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0];if(event(a?.wait_event))return;await new Promise(r=>setTimeout(r,20));}assert.fail('expected deterministic database lock wait');};
+  await owner.query('SELECT pg_advisory_lock(700700)');
+  try{
+    const rp=(await rollbackClient.query('SELECT pg_backend_pid() AS p')).rows[0].p;
+    const wp=(await writer.query('SELECT pg_backend_pid() AS p')).rows[0].p;assert.notEqual(rp,wp);
+    const rollbackPromise=rollbackIntake(rollbackClient,randomUUID(),protectedPayload.batch_id,protectedReceipt.import_id,protectedReceipt.payload_hash);
+    await waitFor(rp,e=>e==='advisory'); // Function has compared full content and still holds parent/row locks.
+    const writerPromise=writer.query("INSERT INTO knowledge_staging.workbook_rows(batch_id,sheet_name,excel_row,row_hash,raw,mapped,state,issues) VALUES($1,'concurrent-unlisted',100,repeat('b',64),'{}','{}','context','[]')",[protectedPayload.batch_id]).then(()=>({code:'unexpected_success'}),e=>({code:e.code}));
+    await waitFor(wp,e=>e==='transactionid'||e==='tuple');
+    await owner.query('SELECT pg_advisory_unlock(700700)');
+    const validRollback=await rollbackPromise;assert.equal(validRollback.row_count,3);
+    assert.equal((await writerPromise).code,'23503'); // Writer cannot sneak a row through the locked parent.
+    assert.equal((await owner.query('SELECT count(*)::int AS n FROM knowledge_staging.workbook_rows WHERE batch_id=$1',[protectedPayload.batch_id])).rows[0].n,0);
+  }finally{
+    await owner.query('SELECT pg_advisory_unlock(700700)');rollbackClient.release();await writer.end();
+    await owner.query('DROP TRIGGER intake_rollback_gate ON knowledge_staging.workbook_batches; DROP FUNCTION public.intake_rollback_gate()');
+  }
+  pass('rollback full-set concurrency: after comparison, parent/row locks block actual extra-row INSERT; writer fails FK instead of being silently cascade-deleted');
   await owner.query("UPDATE knowledge_staging.workbook_rows SET raw=raw||'{\"synthetic_change\":true}'::jsonb WHERE batch_id=$1 AND excel_row=2",[payload.batch_id]);
   await assert.rejects(rollbackIntake(ops,randomUUID(),payload.batch_id,op,receipt.payload_hash),{code:'SOURCE_CONFLICT'});
   await owner.query('UPDATE knowledge_staging.workbook_rows SET raw=$1 WHERE batch_id=$2 AND excel_row=2',[payload.rows[1].raw,payload.batch_id]);
