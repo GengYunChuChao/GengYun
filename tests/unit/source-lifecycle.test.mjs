@@ -20,15 +20,18 @@ test('source CLI authority matches actual pg parser; all override options reject
     assert.equal(client.connectionParameters.database,database);
     assert.equal(client.connectionParameters.user,'synthetic');
   }
-  for(const suffix of ['?host=example.invalid&port=6432','?%68ost=example.invalid','?host=%2Ftmp','?port=6432','?user=other','?sslkey=DO_NOT_READ','?options=-c%20search_path%3Dpublic','?','#ignored']) {
+  for(const suffix of ['?host=example.invalid&port=6432','?%68ost=example.invalid','?HOST=example.invalid','?host=127.0.0.1&host=example.invalid','?hostaddr=192.0.2.1','?service=synthetic','?db=other','?database=other','?host=%2Ftmp','?port=6432','?user=other','?sslkey=DO_NOT_READ','?options=-c%20search_path%3Dpublic','?','#ignored']) {
     assert.throws(()=>validateSourceDatabaseUrl(base+suffix),(e)=>e.code==='INVALID_REQUEST'&&!e.message.includes('DO_NOT_PRINT'));
+  }
+  for(const value of [undefined,'not-a-url','postgres://synthetic@example.invalid/gengyun_source_ops_test','postgres://synthetic@127.0.0.1/other','postgres://synthetic@127.0.0.1:65536/gengyun_source_ops_test','postgres://synthetic@127.0.0.1:-1/gengyun_source_ops_test','postgres://synthetic@127.0.0.1:abc/gengyun_source_ops_test']) {
+    assert.throws(()=>validateSourceDatabaseUrl(value),{code:'INVALID_REQUEST'});
   }
 });
 
 test('actual source CLI rejects pg overrides before any socket connection',()=>{
   // A preload turns ANY socket attempt into an offline test failure, including localhost.
   const guard='data:text/javascript,'+encodeURIComponent("import net from 'node:net'; net.Socket.prototype.connect=function(){process.stderr.write('UNEXPECTED_NETWORK');process.exit(77);};");
-  for(const suffix of ['?host=example.invalid&port=6432','?%68ost=example.invalid','?host=%2Ftmp','?port=6432','?sslkey=DO_NOT_READ','#fragment']) {
+  for(const suffix of ['?host=example.invalid&port=6432','?%68ost=example.invalid','?HOST=example.invalid','?host=127.0.0.1&host=example.invalid','?hostaddr=192.0.2.1','?service=synthetic','?db=other','?database=other','?host=%2Ftmp','?port=6432','?sslkey=DO_NOT_READ','#fragment']) {
     const env=Object.fromEntries(['PATH','SystemRoot','WINDIR','TEMP','TMP'].filter(k=>process.env[k]!==undefined).map(k=>[k,process.env[k]]));
     env.DATABASE_URL='postgres://synthetic:DO_NOT_PRINT@127.0.0.1/gengyun_source_ops_test'+suffix;
     const p=spawnSync(process.execPath,['--import',guard,'tools/database/source-lifecycle.mjs','--action','withdraw','--operation-id',randomUUID(),'--source-id',randomUUID(),'--source-version-id',randomUUID(),'--expected-revision','1','--expected-validity','valid','--reason','synthetic'],{env,encoding:'utf8',windowsHide:true,timeout:10000});
