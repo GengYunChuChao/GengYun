@@ -1,6 +1,6 @@
 const debug = require('../../utils/debug')
 const fontScale = require('../../utils/font-scale')
-const session = require('../../utils/session')
+const auth = require('../../utils/auth')
 
 Page({
   data: {
@@ -18,16 +18,24 @@ Page({
 
   onLoad: function () {
     fontScale.applyFontScale(this)
-    this.setData({ local: debug.localEnabled(wx), guest: session.isGuest() })
+    this.setData({ local: debug.localEnabled(wx), guest: !auth.isLoggedIn() })
   },
 
-  /** 页面重新显示时刷新字号：应用内改字号后切页需立即生效 */
+  /** 页面重新显示时刷新微信字号与已核实的登录状态。 */
   onShow: function () {
-    this.setData({ fontScale: fontScale.currentFontScale() })
+    this.setData({ guest: !auth.isLoggedIn(), fontScale: fontScale.currentFontScale() })
   },
 
-  /** 识别页是 tabBar 页面，只能用 switchTab，不能传参 */
+  goLogin: function () {
+    wx.reLaunch({ url: '/pages/login/login' })
+  },
+
+  /** 游客先登录；识别页是 Tab 页面，已核实用户用 switchTab 进入。 */
   onEntryTap: function () {
+    if (!auth.isLoggedIn()) {
+      this.goLogin()
+      return
+    }
     wx.switchTab({ url: '/pages/identify/identify' })
   },
 

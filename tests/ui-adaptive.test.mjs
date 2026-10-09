@@ -18,6 +18,8 @@ import { dirname, join } from 'node:path';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const appJson = JSON.parse(read('miniprogram/app.json'));
+// GY-I26 检查五 Tab；main 的独立登录页另由登录与门禁回归验证。
+const TAB_PAGES = appJson.tabBar.list.map((item) => item.pagePath);
 const appJs = read('miniprogram/app.js');
 const appWxss = read('miniprogram/app.wxss');
 const stateJs = read('miniprogram/components/state-view/state-view.js');
@@ -115,20 +117,20 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   assert.ok(!/font-choice/.test(profileWxml), '不得残留应用内档位 UI');
 
   // 切换页面后字号必须立即生效：页面复用时 onLoad 不再执行，须由 onShow 刷新
-  for (const page of appJson.pages) {
+  for (const page of TAB_PAGES) {
     const js = read('miniprogram/' + page + '.js');
     assert.ok(/onShow/.test(js), page + ' 缺少 onShow，无法在切页时刷新字号');
     assert.ok(/currentFontScale/.test(js), page + ' 的 onShow 未刷新字号，切页会回退');
   }
 
-  for (const page of appJson.pages) {
+  for (const page of TAB_PAGES) {
     const cfg = JSON.parse(read(`miniprogram/${page}.json`));
     assert.ok(cfg.usingComponents && cfg.usingComponents['state-view'], `${page} 未注册 state-view`);
   }
 });
 
 test('五个页面均注册统一状态组件', () => {
-  for (const page of appJson.pages) {
+  for (const page of TAB_PAGES) {
     const cfg = JSON.parse(read('miniprogram/' + page + '.json'));
     assert.ok(cfg.usingComponents && cfg.usingComponents['state-view'], page + ' 未注册 state-view');
   }
@@ -173,7 +175,7 @@ test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节
   assert.ok(/--font-scale:\s*1/.test(appWxss), '未定义 --font-scale 默认值');
   assert.ok(/--tap-min:\s*max\(44px/.test(appWxss), '触控区未随字体放大且保持 44px 下限');
 
-  for (const page of appJson.pages) {
+  for (const page of TAB_PAGES) {
     const wxml = read(`miniprogram/${page}.wxml`);
     const js = read(`miniprogram/${page}.js`);
     assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
@@ -190,7 +192,8 @@ test('游客仅首页完全开放，其余页面拦截并提示登录', () => {
   }
   for (const page of ['community', 'messages', 'profile']) {
     const js = read(`miniprogram/pages/${page}/${page}.js`);
-    assert.ok(js.includes("utils/session"), `${page} 未按会话状态控制入口`);
+    assert.ok(js.includes("utils/auth"), `${page} 未复用 main 的会话门禁`);
+    assert.ok(js.includes("auth.requireLogin("), `${page} 未核实服务端会话`);
   }
 });
 

@@ -1,4 +1,4 @@
-const session = require('../../utils/session')
+const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 
 Page({
@@ -13,11 +13,31 @@ Page({
   },
 
   onShow: function () {
-    this.setData({ guest: session.isGuest(), fontScale: fontScale.currentFontScale() })
+    // 每次进入先关闭入口，服务端核实成功后才显示登录区。
+    const that = this
+    this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
+    auth.requireLogin(function (ok) {
+      if (!ok) return
+      that.setData({ guest: !auth.isLoggedIn() })
+    })
   },
 
-  /** 登录入口占位：不获取手机号，不调用任何授权接口 */
+  /** 复用 main 的独立登录页，不在界面层声明身份。 */
   onLogin: function () {
-    wx.showToast({ title: '登录功能尚未接入', icon: 'none' })
+    wx.reLaunch({ url: '/pages/login/login' })
+  },
+
+  logout: function () {
+    const that = this
+    auth.logout(function (result) {
+      that.setData({ guest: true })
+      wx.reLaunch({ url: '/pages/login/login' })
+      if (!result.serverRevoked) {
+        wx.showToast({
+          title: result.serverRevocationUnconfirmed ? '本地已清，服务端撤销未确认' : '已清除本地会话',
+          icon: 'none'
+        })
+      }
+    })
   }
 })

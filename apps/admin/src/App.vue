@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { ADMIN_AUTH_IMPLEMENTED, API_BASE_URL } from './auth/session';
+import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 </script>
 
 <template>
   <main class="shell">
     <h1>耕云 · 独立后台（工程骨架）</h1>
     <p class="notice">
-      这是<strong>后台骨架</strong>，只有独立鉴权入口占位<strong>没有业务页面</strong>。
+      这是<strong>后台骨架</strong>：后台鉴权接口已实现，但<strong>没有业务页面</strong>。
       分类、资料来源、药剂规则、账号、AI 状态与功能开关等由后续任务实现
       （见 F08 / F13 / GY-I18）。
     </p>
     <dl>
-      <dt>鉴权状态</dt>
-      <dd>{{ ADMIN_AUTH_IMPLEMENTED ? '已接入' : '未接入（占位，不伪造登录）' }}</dd>
+      <dt>后台鉴权接口</dt>
+      <dd>{{ ADMIN_AUTH_API_IMPLEMENTED ? '已实现（POST/GET /admin/auth/session、POST /admin/auth/logout）' : '未实现' }}</dd>
+      <dt>控制台页面</dt>
+      <dd>未实现（本骨架不提供可视登录入口，不伪造登录成功）</dd>
       <dt>API 基地址</dt>
       <dd>{{ API_BASE_URL }}</dd>
     </dl>
     <p class="footnote">
-      后台与小程序端分别鉴权；此骨架不提供任何登录成功路径，也不读取生产密钥。
+      后台与小程序端分别鉴权（audience=admin，独立令牌）；本骨架不读取任何生产密钥。
     </p>
   </main>
 </template>

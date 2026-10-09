@@ -1,5 +1,5 @@
 {
-  "pages": ["pages/home/home", "pages/identify/identify", "pages/community/community", "pages/messages/messages", "pages/profile/profile"],
+  "pages": ["pages/home/home", "pages/identify/identify", "pages/community/community", "pages/messages/messages", "pages/profile/profile", "pages/login/login"],
   "window": { "navigationBarTitleText": "耕云", "navigationBarBackgroundColor": "#1F7A45", "navigationBarTextStyle": "white", "backgroundColor": "#F4F9F4" },
   "tabBar": {
     "color": "#555555", "selectedColor": "#1F7A45",

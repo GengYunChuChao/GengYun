@@ -32,6 +32,12 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 /** packages/contracts/openapi.json -> components.schemas.Meta.properties.contract_version.const */
 export const CONTRACT_VERSION = '1.0.0';
 
+/**
+ * packages/contracts/openapi.json -> servers[0].url。
+ * 业务路由的挂载前缀；/health 属运营端点，不在该前缀下。
+ */
+export const API_PREFIX = '/api/v1';
+
 /** 契约错误码 -> HTTP 状态；错误码不跨状态复用。 */
 const ERROR_CODE_STATUS: ReadonlyMap<string, number> = new Map(
   Object.entries(ERROR_STATUS_MAP).flatMap(([status, codes]) =>

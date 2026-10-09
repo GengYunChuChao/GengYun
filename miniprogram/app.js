@@ -1,8 +1,8 @@
 /**
  * 应用入口（GY-I26）
  * ------------------------------------------------------------
- * 当前不接入任何业务服务：登录态固定为游客，识别、OCR、语音与社区
- * 均为未接入状态。真实登录会话由 GY-I04 服务端签发后接入。
+ * 保留 main 的 GY-I04 登录会话与门禁；共享运行配置仍默认关闭联网。
+ * 识别、OCR、语音与社区业务尚未接入，登录成功不代表这些能力完成。
  *
  * 字体适配（需求 4.1「适配微信字体设置」）：实测微信的字体设置不会自动放大
  * WXSS 中的 px，故这里主动读取缩放系数，由各页面根节点以 style 注入 CSS 变量
@@ -16,7 +16,7 @@
  * 自动重算，需重新进入才生效。
  */
 
-const session = require('./utils/session')
+const auth = require('./utils/auth')
 const systemFont = require('./utils/system-font')
 
 /** 缩放系数封顶倍数；标准值为 1 */
@@ -48,7 +48,7 @@ App({
   },
 
   onLaunch() {
-    this.globalData.session = session.read()
+    this.globalData.session = auth.getSession()
     this.globalData.fontScale = readFontScale()
   }
 })
