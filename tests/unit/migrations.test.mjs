@@ -56,6 +56,18 @@ test('运行器发现 GY-I03 的 0002 迁移（与 0001 同目录，升序在 00
   assert.ok(!migrations.some((m) => m.filename.includes('.down.')), '运行器目录不得含 .down.sql');
 });
 
+test('运行器发现 GY-I27 的 0003 迁移（与 0001/0002 同目录，升序在 0002 之后）', () => {
+  const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
+  const versions = migrations.map((m) => m.version);
+  assert.ok(versions.includes('0003'), `应发现 0003，实际：${versions.join(',')}`);
+  assert.equal(versions.indexOf('0002') < versions.indexOf('0003'), true, '0002 必须排在 0003 之前');
+  const m0003 = migrations.find((m) => m.version === '0003');
+  assert.equal(m0003.filename, '0003_privacy_consent.sql');
+  assert.match(m0003.checksum, /^[0-9a-f]{64}$/);
+  // 0003 的 down 脚本放在 rollback/ 子目录，不应被正向发现（.down.sql 不合文件名模式）。
+  assert.ok(!migrations.some((m) => m.filename.includes('.down.')), '运行器目录不得含 .down.sql');
+});
+
 test('迁移文件按版本号升序，且校验和稳定', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gy-mig-'));
   try {
@@ -108,10 +120,11 @@ test('planMigrations 识别 drift 与待应用集合', () => {
 test('applyMigrations 空台账时应用迁移，重复执行幂等跳过', async () => {
   const migrations = discoverMigrations(DEFAULT_MIGRATIONS_DIR);
   const allVersions = migrations.map((m) => m.version);
-  // 容错断言：只要求仓库迁移包含 0001 与 0002；其它 PR 的迁移（如 0003）先后合入都不打破。
+  // 容错断言：只要求仓库迁移包含 0001、0002（GY-I03）与 0003（GY-I27）；
+  // 其它 PR 的迁移先后合入都不打破（不写死完整列表）。
   assert.ok(
-    allVersions.includes('0001') && allVersions.includes('0002'),
-    `仓库迁移应含 0001 与 0002，实际：${allVersions.join(',')}`,
+    allVersions.includes('0001') && allVersions.includes('0002') && allVersions.includes('0003'),
+    `仓库迁移应含 0001/0002/0003，实际：${allVersions.join(',')}`,
   );
   const client = makeFakeClient();
 

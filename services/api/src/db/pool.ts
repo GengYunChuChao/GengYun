@@ -32,6 +32,9 @@ export function createPool(databaseUrl: string | null): PgPool | null {
     max: 4,
     connectionTimeoutMillis: 5000,
     idleTimeoutMillis: 30000,
+    // Server cancels expensive reads first; driver also bounds a stalled reply.
+    statement_timeout: 5000,
+    query_timeout: 6000,
   });
 }
 

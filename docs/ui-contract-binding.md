@@ -80,8 +80,8 @@
 | 微信登录 | `POST /auth/wechat` | **未接入**，登录按钮仅提示 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) |
 | 会话查询／退出 | `GET /auth/session`、`POST /auth/logout` | 未接入 | GY-I04 |
 | 档案（作物／地区） | `GET /me/profile`、`PUT /me/profile` | 替身·计数 0 条 | [GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5) |
-| 隐私说明 | `GET /me/privacy-policy` | 静态文案 | [GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/27) |
-| 用途授权与撤回 | `GET /me/consents`、`POST /me/consents`、`DELETE /me/consents/{purpose}` | 未接入 | GY-I27 |
+| 隐私说明 | `GET /me/privacy-policy` | 静态文案 | GY-I27 组件已由 [PR #45](https://github.com/Sek1ro-oka/GengYun/pull/45) 合入 main=bb3f20f（`packages/privacy/`）；界面读取待接入 |
+| 用途授权与撤回 | `GET /me/consents`、`POST /me/consents`、`DELETE /me/consents/{purpose}` | 未接入 | 服务端守卫已由 [PR #45](https://github.com/Sek1ro-oka/GengYun/pull/45) 合入；界面与接线待接入 |
 | 字体设置 | **无契约** | 本地读 `wx.getSystemInfoSync()`，不涉及网络 | 本任务 |
 
 > **无本地存储的字号档位**：需求第 4.1 节只要求「适配微信字体设置」，未要求应用内开关，故本任务不设档位、不写存储（详见 [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.7）。

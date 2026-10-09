@@ -1,5 +1,12 @@
 # 数据库适配层（GY-I03）
 
+2026-10-08最新已合数据库组件与运行顺序见[统一运行交接](../docs/verification/database-run-handoff.md)：
+PR #51—#54最终已验SHA、main、最小角色、迁移、合成重放、业务回滚与安全停止均在那里汇总。
+下面0001/0002示例保留GY-I03原交付上下文，不能当作当前全部迁移或正式部署验收；
+新增0004/0005/0006/0007的依赖与操作以统一入口及其链接的验证页为准。#3/#27仍open、DoseCard=0。
+
+用户Excel的未审核增量暂存使用0004与独立knowledge_staging schema；字段、质量、原文权限、导入/回滚及真实PG17验证边界见[Excel暂存设计](../docs/architecture/workbook-staging-design.md)。0001/0002和已有种子保持原成果；0003留给独立隐私迁移。
+
 可替换资料数据库适配：迁移、种子、明显模拟数据、导入校验、冲突报告、更新回滚，
 以及 `real` / `stub` / `preset_demo` 三模式与来源类型（`database` / `verified_seed` /
 `simulation`）分离。
@@ -54,9 +61,12 @@ psql "$DATABASE_URL" -f db/seeds/rollback_seed.sql        # 回滚种子数据
 psql "$DATABASE_URL" -f services/api/db/migrations/rollback/0002_knowledge_catalog.down.sql   # 回滚 0002 结构
 ```
 
-**未接入真实 PostgreSQL 实例**：以上命令未对真实库执行。已在内存引擎 PGlite 0.5.8
+**GY-I03 原交付证据**：当时以上命令未对真实库执行。已在内存引擎 PGlite 0.5.8
 （基于 PostgreSQL 18.x 内核）实测 0001→0002→种子→脱敏样例→回滚，**不构成目标
 PostgreSQL 17.11 的实库验收**（见 `docs/verification/gy-i03-evidence.md`）。
+2026-10-08 的后续增量已在隔离的本机 PostgreSQL 17.11 执行迁移、种子重复导入、
+限定回滚和受限查询；范围及重放步骤见 [GY-I25 数据库实测](../docs/verification/gy-i25-catalog-pg.md)。
+这不代表用户云库、20份完整标签或整个 #3/#27 已验收。
 种子 SQL 由 `tools/knowledge/build_seeds.py` 从 `packages/knowledge/` 的 JSON 确定性生成，
 改 JSON 后重新生成即可，勿手工编辑。
 

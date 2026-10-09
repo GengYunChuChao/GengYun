@@ -7,8 +7,8 @@
  * - 重复版本号拒绝（在应用前失败）。
  * - 无 DATABASE_URL 时明确失败，不假装迁移成功。
  *
- * 说明：本机无 PostgreSQL 服务，迁移只做了发现/排序/校验和/计划逻辑的确定性测试，
- * 未对真实数据库执行（见 docs/engineering-shell.md）。
+ * 骨架最初只做确定性测试；0001/0002/0005 的隔离 PostgreSQL 17.11
+ * 执行证据见 docs/verification/gy-i25-catalog-pg.md，不代表生产库已接入。
  */
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
