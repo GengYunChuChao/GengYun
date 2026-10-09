@@ -49,3 +49,4 @@ GY-I03 的完整标签、GY-I20 的真实独立样本、GY-I25 的正式 HTTPS�
 PR60 由 WorkBuddy 侧独立写手负责，最新已审 HEAD `ddcf6e91884b1f3ccc513532233783302922cc03`：[第二轮批复](https://github.com/GengYunChuChao/GengYun/pull/60#pullrequestreview-5468607488)。原幂等重放、PNG尾部和纯签名反例已修复；仍需处理篡改音频头／缺失帧或音轨、空或无效图像数据进入ready。指挥已在[PR修订安排](https://github.com/GengYunChuChao/GengYun/pull/60#issuecomment-6079690615)派发这两项，尚未取得该写手明确接收回执，不冒记已验收。新 HEAD 需监工复验，普通CI成功不能解除已知缺陷。
 
 私有 Fork CI 已启用，只读令牌、不提供服务 secrets/variables、必须维护者批准；不再沿用组织禁用的历史阻塞。写手和指挥均不代监工批准或合并，不删除旧 PR／批复。当前实际已开展身份授权与媒体两条代码流；其他资料／样本／页面／工程建议仍按真实领取记录判断，未创建的 agent 不登记为在开发。
+契约纠正：写手指出、指挥实际核对 `grantConsent` 的冻结 POST 只有 Idempotency-Key，`x-version-required=false`。此前派发给 POST 额外要求强 If-Match 不适用，已明确撤销该额外要求；DELETE 沿用既有条件。授予按冻结输入／响应实施，以服务端事务锁及用途 epoch／幂等维护竞争，不凭不存在的客户端 revision 要求冲突或制造契约修订。该修正已发送原写手；原历史派发不改写。
