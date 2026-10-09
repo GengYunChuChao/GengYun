@@ -26,6 +26,13 @@ export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '/api/v
 
 const STORAGE_KEY = 'gengyun.admin.session';
 
+// Login/logout share one intent sequence. Advance when the intent starts, before any await.
+let sessionIntent = 0;
+
+function isCurrentRequest(intent: number, token: string | null): boolean {
+  return intent === sessionIntent && readToken() === token;
+}
+
 /** 幂等键（>=8 字符，契约要求）；不含身份信息。 */
 function newIdempotencyKey(): string {
   const bytes = new Uint8Array(16);
@@ -77,10 +84,13 @@ async function fetchSession(token: string): Promise<AdminSession | null> {
 
 /** 读取当前后台会话：无令牌或服务端判定失效 → null（不猜测、不伪造）。 */
 export async function loadAdminSession(): Promise<AdminSession | null> {
+  const intent = sessionIntent;
   const token = readToken();
   if (token === null) return null;
   try {
     const session = await fetchSession(token);
+    // Also check after JSON parsing: an old success must not return an obsolete session.
+    if (!isCurrentRequest(intent, token)) return null;
     if (session === null) clearToken();
     return session;
   } catch {
@@ -90,26 +100,38 @@ export async function loadAdminSession(): Promise<AdminSession | null> {
 
 /** 后台登录：login_name + password；失败如实抛错，不返回假会话。 */
 export async function signInAdmin(credentials: { loginName: string; password: string }): Promise<AdminSession> {
-  const response = await fetch(`${API_BASE_URL}/admin/auth/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
-    credentials: 'omit',
-    body: JSON.stringify({ login_name: credentials.loginName, password: credentials.password }),
-  });
-  const body = (await response.json().catch(() => null)) as
-    | { data?: { access_token?: unknown; expires_at?: unknown }; error?: { code?: unknown } }
-    | null;
-  const data = body?.data;
-  if (!response.ok || data === undefined || typeof data.access_token !== 'string') {
-    const code = body?.error !== undefined && typeof body.error.code === 'string' ? body.error.code : `HTTP ${response.status}`;
-    throw new Error(`后台登录失败：${code}`);
-  }
-  writeToken(data.access_token);
-  return {
-    accessToken: data.access_token,
-    expiresAt: typeof data.expires_at === 'string' ? data.expires_at : '',
-    scopes: [],
+  const intent = ++sessionIntent;
+  const token = readToken();
+  const ensureCurrent = (): void => {
+    if (!isCurrentRequest(intent, token)) throw new Error('后台登录请求已失效');
   };
+  try {
+    const response = await fetch(`${API_BASE_URL}/admin/auth/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
+      credentials: 'omit',
+      body: JSON.stringify({ login_name: credentials.loginName, password: credentials.password }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | { data?: { access_token?: unknown; expires_at?: unknown }; error?: { code?: unknown } }
+      | null;
+    ensureCurrent();
+    const data = body?.data;
+    if (!response.ok || data === undefined || typeof data.access_token !== 'string') {
+      const code = body?.error !== undefined && typeof body.error.code === 'string' ? body.error.code : `HTTP ${response.status}`;
+      throw new Error(`后台登录失败：${code}`);
+    }
+    writeToken(data.access_token);
+    return {
+      accessToken: data.access_token,
+      expiresAt: typeof data.expires_at === 'string' ? data.expires_at : '',
+      scopes: [],
+    };
+  } catch (error) {
+    // A late failure also belongs to the superseded request, not the current login.
+    ensureCurrent();
+    throw error;
+  }
 }
 
 /**
@@ -117,6 +139,7 @@ export async function signInAdmin(credentials: { loginName: string; password: st
  * 服务端请求失败时本地已登出，但**不谎称服务端会话已撤销**（无返回值即未确认）。
  */
 export async function signOutAdmin(): Promise<void> {
+  ++sessionIntent;
   const token = readToken();
   clearToken();
   if (token === null) return;
