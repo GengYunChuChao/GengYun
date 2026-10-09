@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { inflateSync } from 'node:zlib';
 import { detectMediaType } from '../../packages/media/detect.mjs';
 import { stripImageMetadata } from '../../packages/media/exif.mjs';
 import {
@@ -16,10 +17,35 @@ import {
   pngSignatureOnly,
   pngWithTrailingExif,
   pngTruncated,
+  pngEmptyIdat,
+  pngBadIdat,
   jpegSignatureOnly,
   jpegWithTrailing,
   webpNoImage,
+  webpVp8xOnly,
+  webpVp8xWithLossless,
 } from './_fixtures.mjs';
+
+/** 从 PNG 字节中拼接全部 IDAT 负载，用于验证压缩流确实可解压。 */
+function pngIdatPayload(bytes) {
+  const parts = [];
+  let i = 8;
+  while (i + 12 <= bytes.length) {
+    const len = (bytes[i] << 24) | (bytes[i + 1] << 16) | (bytes[i + 2] << 8) | bytes[i + 3];
+    const type = String.fromCharCode(bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]);
+    if (type === 'IDAT') parts.push(bytes.subarray(i + 8, i + 8 + len));
+    i += 12 + len;
+    if (type === 'IEND') break;
+  }
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.length;
+  }
+  return out;
+}
 
 function containsBytes(haystack, needleAscii) {
   const needle = ascii(needleAscii);
@@ -150,4 +176,38 @@ test('B1 JPEG：EOI 之后的尾部字节 → 拒绝', () => {
 
 test('B1 WebP：无 VP8/VP8L/VP8X 图像块 → 拒绝', () => {
   assert.equal(stripImageMetadata(webpNoImage(), 'image/webp').ok, false);
+});
+
+// ------------------------------------------------ C2 回归：真实图像数据校验
+
+test('C2 PNG 正例：合成图片 IDAT 压缩流可被真实 zlib 解压（夹具可信度）', () => {
+  const input = pngWithExif();
+  const idat = pngIdatPayload(input);
+  assert.ok(idat.length > 0, 'IDAT 负载不应为空');
+  const raw = inflateSync(Buffer.from(idat));
+  assert.ok(raw.length > 0, 'IDAT 必须能解出非空扫描线数据');
+});
+
+test('C2 PNG：清元数据后 IDAT 仍可解压（输出仍为有效图像）', () => {
+  const out = stripImageMetadata(pngWithExif(), 'image/png');
+  assert.equal(out.ok, true);
+  const raw = inflateSync(Buffer.from(pngIdatPayload(out.data)));
+  assert.ok(raw.length > 0);
+});
+
+test('C2 PNG：IHDR + 空 IDAT + IEND（有块名无数据）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(pngEmptyIdat(), 'image/png').ok, false);
+});
+
+test('C2 PNG：IDAT 为不可解压垃圾 → 拒绝', () => {
+  assert.equal(stripImageMetadata(pngBadIdat(), 'image/png').ok, false);
+});
+
+test('C2 WebP：仅 10 字节 VP8X 扩展头（无实际帧）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8xOnly(), 'image/webp').ok, false);
+});
+
+test('C2 WebP：VP8X 扩展头 + 真实 VP8L 位流 → 接受', () => {
+  const out = stripImageMetadata(webpVp8xWithLossless(), 'image/webp');
+  assert.equal(out.ok, true);
 });

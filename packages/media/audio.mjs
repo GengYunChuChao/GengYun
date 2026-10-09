@@ -90,6 +90,16 @@ export function wavDurationMs(bytes) {
   if (!fmt || dataStart < 0) return { ok: false, reason: 'missing_fmt_or_data' };
   if (fmt.channels < 1 || fmt.sampleRate < 1 || fmt.byteRate < 1) return { ok: false, reason: 'bad_fmt_values' };
   if (dataStart + dataSize > bytes.length) return { ok: false, reason: 'truncated_data' };
+  if (dataSize < 1) return { ok: false, reason: 'empty_data' };
+  // C1：不得直接信任头里的 byteRate。fmt 各字段必须自洽，否则可篡改 byteRate 绕过 60s 上限。
+  if (fmt.bitsPerSample < 1 || fmt.blockAlign < 1) return { ok: false, reason: 'bad_fmt_values' };
+  const expectedBlockAlign = (fmt.channels * fmt.bitsPerSample) / 8;
+  if (!Number.isInteger(expectedBlockAlign) || expectedBlockAlign !== fmt.blockAlign) {
+    return { ok: false, reason: 'inconsistent_fmt_block_align' };
+  }
+  if (fmt.byteRate !== fmt.sampleRate * fmt.blockAlign) return { ok: false, reason: 'inconsistent_fmt_byte_rate' };
+  // data 块长度必须是 blockAlign 的整数倍（整帧对齐），否则无法可靠核对时长。
+  if (dataSize % fmt.blockAlign !== 0) return { ok: false, reason: 'data_not_frame_aligned' };
   const ms = (dataSize / fmt.byteRate) * 1000;
   return { ok: true, container: 'wav', durationMs: Math.max(0, Math.round(ms)), sampleRate: fmt.sampleRate };
 }
@@ -169,6 +179,8 @@ export function mpegDurationMs(bytes) {
     if (bytes[j] === 0xff && (bytes[j + 1] & 0xe0) === 0xe0 && (bytes[j + 1] & 0x06) !== 0) {
       const h = parseMpegFrame(bytes, j);
       if (h) {
+        // C1：帧头可解析 ≠ 帧负载存在。必须整帧落在缓冲区内，否则只是 4 字节伪头。
+        if (j + h.frameLength > bytes.length) return { ok: false, reason: 'truncated_mpeg_frame' };
         if (sampleRate === null) sampleRate = h.sampleRate;
         if (h.sampleRate !== sampleRate) return { ok: false, reason: 'inconsistent_mpeg' };
         frames += 1;
@@ -181,6 +193,7 @@ export function mpegDurationMs(bytes) {
     return { ok: false, reason: 'mpeg_garbage_after_frames' };
   }
   if (frames === 0) return { ok: false, reason: 'no_mpeg_frame' };
+  if (j !== bytes.length) return { ok: false, reason: 'mpeg_trailing' };
   return { ok: true, container: 'mpeg', durationMs: Math.round((samples / sampleRate) * 1000), sampleRate };
 }
 
@@ -210,6 +223,40 @@ export function m4aDurationMs(bytes) {
   if (!moov) return { ok: false, reason: 'no_moov' };
   const mvhd = findBox(moov.start, moov.end, 'mvhd');
   if (!mvhd) return { ok: false, reason: 'no_mvhd' };
+  // C1：mvhd 时长 ≠ 存在可解码音频。必须至少有一条音轨，且该音轨具备媒体数据描述。
+  // 结构：moov > trak > mdia > minf > stbl > stsd（样本描述表）。
+  let sawAudioTrack = false;
+  {
+    let t = moov.start;
+    while (t + 8 <= moov.end) {
+      const ttype = String.fromCharCode(bytes[t + 4], bytes[t + 5], bytes[t + 6], bytes[t + 7]);
+      let tlen = readU32be(bytes, t);
+      let theader = 8;
+      if (tlen === 1) {
+        if (t + 16 > moov.end) break;
+        tlen = readU32be(bytes, t + 8) * 4294967296 + readU32be(bytes, t + 12);
+        theader = 16;
+      } else if (tlen === 0) {
+        tlen = moov.end - t;
+      }
+      if (tlen < theader || t + tlen > moov.end) return { ok: false, reason: 'bad_moov_child' };
+      if (ttype === 'trak') {
+        const mdia = findBox(t + theader, t + tlen, 'mdia');
+        if (mdia) {
+          const minf = findBox(mdia.start, mdia.end, 'minf');
+          if (minf) {
+            const stbl = findBox(minf.start, minf.end, 'stbl');
+            if (stbl) {
+              const stsd = findBox(stbl.start, stbl.end, 'stsd');
+              if (stsd && stsd.end - stsd.start >= 8) sawAudioTrack = true;
+            }
+          }
+        }
+      }
+      t += tlen;
+    }
+  }
+  if (!sawAudioTrack) return { ok: false, reason: 'no_audio_track' };
   const version = bytes[mvhd.start];
   let timescale;
   let duration;

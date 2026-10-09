@@ -2,6 +2,8 @@
  * GY-I06 媒体测试夹具：构造**结构性最小但真实可解析**的图片/音频字节，
  * 用于魔数探测、EXIF 清除、真实时长与边界回归测试。全部为合成字节，不含任何个人原始媒体。
  */
+import { deflateSync } from 'node:zlib';
+
 export function u8(...parts) {
   const flat = parts.flat();
   return Uint8Array.from(flat);
@@ -70,26 +72,51 @@ export function jpegWithTrailing() {
 
 // ------------------------------------------------------------------- PNG
 
-function pngChunk(type, data) {
-  return concat(u32be(data.length), ascii(type), data, u32be(0));
+/** CRC32（PNG 规范使用，用于让合成 PNG 结构真实可校验）。 */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
 }
 
-/** PNG：签名 + IHDR + eXIf + tEXt + IDAT + IEND。 */
+function pngChunk(type, data) {
+  const typeAndData = concat(ascii(type), data);
+  return concat(u32be(data.length), typeAndData, u32be(crc32(typeAndData)));
+}
+
+/** 构造可被 zlib 解压的最小 PNG IDAT 数据（1x1 灰度图：filter + 1 字节像素）。 */
+function realIdatData() {
+  // 原始扫描线：filter(0) + 1 像素(0)，经真实 zlib deflate（含可校验的 zlib 头与 Adler32）。
+  const raw = u8([0x00, 0x7f]);
+  return deflateSync(raw);
+}
+
+/** PNG：签名 + IHDR + eXIf + tEXt + IDAT + IEND（IDAT 为真实可解压流）。 */
 export function pngWithExif() {
   const sig = u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
+  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]));
   const exif = pngChunk('eXIf', concat(ascii('MM\0*'), u8([0, 0, 0, 8])));
   const text = pngChunk('tEXt', concat(ascii('Comment\0'), ascii('gps:1.2345,103.9876')));
-  const idat = pngChunk('IDAT', u8([0x78, 0x9c, 0x01]));
+  const idat = pngChunk('IDAT', realIdatData());
   const iend = pngChunk('IEND', u8());
   return concat(sig, ihdr, exif, text, idat, iend);
 }
 
-/** PNG：无元数据。 */
+/** PNG：无元数据（IDAT 为真实可解压流）。 */
 export function pngPlain() {
   const sig = u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
-  const idat = pngChunk('IDAT', u8([0x78, 0x9c, 0x01]));
+  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]));
+  const idat = pngChunk('IDAT', realIdatData());
   const iend = pngChunk('IEND', u8());
   return concat(sig, ihdr, idat, iend);
 }
@@ -97,6 +124,24 @@ export function pngPlain() {
 /** PNG：仅 8 字节签名（无 IHDR/IDAT/IEND），无图像数据。 */
 export function pngSignatureOnly() {
   return u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+}
+
+/** PNG：IHDR + 空 IDAT + IEND（有块名但无图像数据，C2 回归）。 */
+export function pngEmptyIdat() {
+  const sig = u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]));
+  const idat = pngChunk('IDAT', u8());
+  const iend = pngChunk('IEND', u8());
+  return concat(sig, ihdr, idat, iend);
+}
+
+/** PNG：IHDR + IDAT(不可解压垃圾) + IEND（C2 回归）。 */
+export function pngBadIdat() {
+  const sig = u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = pngChunk('IHDR', u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]));
+  const idat = pngChunk('IDAT', u8([0x00, 0x01, 0x02, 0x03, 0x04]));
+  const iend = pngChunk('IEND', u8());
+  return concat(sig, ihdr, idat, iend);
 }
 
 /** PNG：IEND 之后附加合成的 eXIf 伪块（尾部元数据走私回归）。 */
@@ -131,6 +176,21 @@ export function webpWithExif() {
 /** WebP：仅 RIFF/WEBP 头（无 VP8 图像块）。 */
 export function webpNoImage() {
   const body = ascii('WEBP');
+  return concat(ascii('RIFF'), u32le(body.length), body);
+}
+
+/** WebP：仅 VP8X 扩展头（10 字节，无 VP8/VP8L/ANMF 帧）——空壳，C2 回归。 */
+export function webpVp8xOnly() {
+  const vp8x = webpChunk('VP8X', u8([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+  const body = concat(ascii('WEBP'), vp8x);
+  return concat(ascii('RIFF'), u32le(body.length), body);
+}
+
+/** WebP：VP8X 扩展头 + 真实 VP8L 位流（正常可接受）。 */
+export function webpVp8xWithLossless() {
+  const vp8x = webpChunk('VP8X', u8([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+  const vp8l = webpChunk('VP8L', u8([0x2f, 0x01, 0x00, 0x00, 0x00]));
+  const body = concat(ascii('WEBP'), vp8x, vp8l);
   return concat(ascii('RIFF'), u32le(body.length), body);
 }
 
@@ -174,6 +234,29 @@ export function wavTruncated() {
   return full.subarray(0, full.length - 1000);
 }
 
+/**
+ * WAV：篡改 fmt.byteRate 为更小值（不改动 data），
+ * 使「直接信头 → 时长虚高」的旧实现会误判为超 60s，而结构核对会发现字段不自洽（C1 回归）。
+ */
+export function wavTamperedByteRate() {
+  const bytes = pcmWav({ sampleRate: 8000, channels: 1, bitsPerSample: 16, dataBytes: 8000 * 2 * 1 });
+  // fmt 体起始 = 20（RIFF8 + 'WAVE'4 + 'fmt '4 + size4），byteRate 偏移 = 20 + 8。
+  const off = 20 + 8;
+  bytes[off] = 0x40; // 篡改 byteRate 低字节（原为 16000 = 0x3E80）
+  bytes[off + 1] = 0x1f;
+  return bytes;
+}
+
+/** WAV：fmt 自洽但 data 长度不是 blockAlign 整数倍（帧不对齐，C1 回归）。 */
+export function wavUnalignedData() {
+  return pcmWav({ sampleRate: 8000, channels: 2, bitsPerSample: 16, dataBytes: 101 });
+}
+
+/** WAV：只保留 RIFF/WAVE 头与 fmt，data 为空（C1 回归）。 */
+export function wavEmptyData() {
+  return pcmWav({ sampleRate: 8000, channels: 1, bitsPerSample: 16, dataBytes: 0 });
+}
+
 /** ADTS AAC 帧：protection_absent=1，7 字节头 + payload。 */
 function adtsFrame(sfIndex, payloadLen) {
   const frameLength = 7 + payloadLen;
@@ -198,7 +281,7 @@ export function aacBytes({ frames = 1, sfIndex = 4 } = {}) {
 /** MPEG1 Layer3 帧（44100Hz / 128kbps）。 */
 function mp3Frame() {
   const header = u8([0xff, 0xfb, 0x90, 0x00]);
-  const frameLength = Math.floor((1152 / 8) * ((128 * 1000) / 44100)) ; // 417
+  const frameLength = Math.floor((1152 / 8) * ((128 * 1000) / 44100)); // 417
   return concat(header, new Uint8Array(frameLength - 4));
 }
 
@@ -209,11 +292,39 @@ export function mp3Bytes({ frames = 5 } = {}) {
   return concat(...parts);
 }
 
-/** M4A/ISO BMFF：ftyp('M4A ') + moov>mvhd（timescale=1000, duration=ms）。 */
-export function m4aBytes({ durationMs = 1000 } = {}) {
+/** MP3：仅 4 字节合法帧头、无帧负载（伪头，C1 回归）。 */
+export function mp3FakeHeaderOnly() {
+  return u8([0xff, 0xfb, 0x90, 0x00]);
+}
+
+/** MP3：1 个完整帧 + 截断的第二帧负载（C1 回归）。 */
+export function mp3TruncatedFrame() {
+  const full = mp3Bytes({ frames: 2 });
+  return full.subarray(0, full.length - 100);
+}
+
+/** M4A/ISO BMFF：ftyp('M4A ') + moov>mvhd（timescale=1000, duration=ms）+ trak>mdia>minf>stbl>stsd。 */
+export function m4aBytes({ durationMs = 1000, withTrack = true } = {}) {
   const mvhdPayload = concat(u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
   const mvhd = concat(u32be(8 + mvhdPayload.length), ascii('mvhd'), mvhdPayload);
-  const moov = concat(u32be(8 + mvhd.length), ascii('moov'), mvhd);
+  const children = [mvhd];
+  if (withTrack) {
+    // 最小音轨：trak > mdia > minf > stbl > stsd（stsd 内含 1 个条目）。
+    const stsdPayload = concat(u32be(0), u32be(1)); // version/flags + entry_count
+    const stsd = concat(u32be(8 + stsdPayload.length), ascii('stsd'), stsdPayload);
+    const stbl = concat(u32be(8 + stsd.length), ascii('stbl'), stsd);
+    const minf = concat(u32be(8 + stbl.length), ascii('minf'), stbl);
+    const mdia = concat(u32be(8 + minf.length), ascii('mdia'), minf);
+    const trak = concat(u32be(8 + mdia.length), ascii('trak'), mdia);
+    children.push(trak);
+  }
+  const moovBody = concat(...children);
+  const moov = concat(u32be(8 + moovBody.length), ascii('moov'), moovBody);
   const ftyp = concat(u32be(16), ascii('ftyp'), ascii('M4A '), u32be(0));
   return concat(ftyp, moov);
+}
+
+/** M4A：有 mvhd 但无任何 trak（无音轨/媒体数据，C1 回归）。 */
+export function m4aNoTrack() {
+  return m4aBytes({ durationMs: 1000, withTrack: false });
 }

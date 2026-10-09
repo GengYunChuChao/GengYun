@@ -19,6 +19,8 @@
  * 因此不改变图像内容，也不声称能达到「重编码级」的像素级净化。
  */
 
+import { inflateSync } from 'node:zlib';
+
 function concat(chunks) {
   let total = 0;
   for (const c of chunks) total += c.length;
@@ -50,6 +52,19 @@ function readU32le(bytes, o) {
 /** PNG chunk 类型必须是 4 个 ASCII 字母。 */
 function isChunkType(type) {
   return /^[A-Za-z]{4}$/.test(type);
+}
+
+/**
+ * 尝试 zlib 解压；成功（能解出非空数据）返回 true。
+ * 用于校验 PNG IDAT 压缩流确实可解 —— 空/截断的 IDAT 不算有效图像数据（返修 C2）。
+ */
+function inflateOk(bytes) {
+  try {
+    const out = inflateSync(Buffer.from(bytes));
+    return out.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 const XMP_NS = 'http://ns.adobe.com/xap/1.0/';
@@ -150,6 +165,7 @@ function stripPng(bytes) {
   const out = [bytes.subarray(0, 8)];
   const removed = [];
   const dropTypes = new Set(['eXIf', 'tEXt', 'iTXt', 'zTXt']);
+  const idatParts = [];
   let i = 8;
   let sawIHDR = false;
   let sawIDAT = false;
@@ -166,7 +182,10 @@ function stripPng(bytes) {
       if (type !== 'IHDR' || len !== 13) return failed(bytes);
       sawIHDR = true;
     }
-    if (type === 'IDAT') sawIDAT = true;
+    if (type === 'IDAT') {
+      sawIDAT = true;
+      idatParts.push(bytes.subarray(i + 8, i + 8 + len));
+    }
     if (type === 'IEND') {
       if (len !== 0) return failed(bytes);
       out.push(bytes.subarray(i, end));
@@ -182,6 +201,11 @@ function stripPng(bytes) {
   // 必须完成 IHDR/IDAT/IEND，且 IEND 之后不得有尾部字节。
   if (!sawIHDR || !sawIDAT || !sawIEND) return failed(bytes);
   if (iendEnd !== bytes.length) return failed(bytes);
+  // C2：有 IDAT 块 ≠ 有图像数据。压缩流必须非空且可 zlib 解压，
+  // 否则「空 IDAT + IEND」的空壳也会被当作正常图片进入 ready。
+  const idat = concat(idatParts);
+  if (idat.length < 1) return failed(bytes);
+  if (!inflateOk(idat)) return failed(bytes);
   return { ok: true, data: concat(out), removed };
 }
 
@@ -194,7 +218,7 @@ function stripWebp(bytes) {
   if (riffSize + 8 !== bytes.length) return failed(bytes);
   const body = [bytes.subarray(0, 12)];
   const removed = [];
-  let sawImage = false;
+  let sawImageFrame = false;
   let i = 12;
   while (i + 8 <= bytes.length) {
     const fourcc = String.fromCharCode(bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
@@ -202,13 +226,18 @@ function stripWebp(bytes) {
     const total = 8 + size + (size % 2); // 奇数长度补齐到偶数
     const end = i + total;
     if (end > bytes.length) return failed(bytes); // 截断
-    if (fourcc === 'VP8 ' || fourcc === 'VP8L' || fourcc === 'VP8X') sawImage = true;
+    // C2：VP8X 只是扩展头（存 alpha/动画面标志与画布尺寸），本身**不含任何图像数据**。
+    // 仅 10 字节 VP8X 的空壳必须拒绝；必须存在真正的位流（VP8/VP8L）或动画帧（ANMF）。
+    if (fourcc === 'VP8 ' || fourcc === 'VP8L' || fourcc === 'ANMF') {
+      if (size < 1) return failed(bytes);
+      sawImageFrame = true;
+    }
     if (fourcc === 'EXIF' || fourcc === 'XMP ') removed.push(`WEBP:${fourcc.trim()}`);
     else body.push(bytes.subarray(i, end));
     i = end;
   }
   if (i !== bytes.length) return failed(bytes); // chunk 未恰好铺满 → 尾部残留
-  if (!sawImage) return failed(bytes); // 无图像数据（无 VP8/VP8L/VP8X）
+  if (!sawImageFrame) return failed(bytes); // 无实际图像帧（仅 VP8X 不够）
   const merged = concat(body);
   const newRiffSize = merged.length - 8;
   merged[4] = newRiffSize & 0xff;

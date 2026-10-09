@@ -8,7 +8,21 @@ import {
   m4aDurationMs,
 } from '../../packages/media/audio.mjs';
 import { assertBytesMatchDeclaration, sha256Hex } from '../../packages/media/validate.mjs';
-import { pcmWav, wavBytes, wav61Seconds, wavTruncated, aacBytes, mp3Bytes, m4aBytes } from './_fixtures.mjs';
+import {
+  pcmWav,
+  wavBytes,
+  wav61Seconds,
+  wavTruncated,
+  aacBytes,
+  mp3Bytes,
+  m4aBytes,
+  wavTamperedByteRate,
+  wavUnalignedData,
+  wavEmptyData,
+  mp3FakeHeaderOnly,
+  mp3TruncatedFrame,
+  m4aNoTrack,
+} from './_fixtures.mjs';
 
 function expectCode(fn, code) {
   try {
@@ -125,6 +139,83 @@ test('B2 无法验证：损坏/截断音频 → 受控拒绝', () => {
           sha256: sha256Hex(bytes),
           purpose: 'voice_question',
           duration_ms: 500,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
+  assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+// ------------------------------------------- C1：WAV/MP3/M4A 结构核对回归
+
+test('C1 WAV：篡改 fmt.byteRate 使字段不自洽 → 拒绝（不再直接信任头部 byteRate）', () => {
+  const bytes = wavTamperedByteRate();
+  const r = wavDurationMs(bytes);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'inconsistent_fmt_byte_rate');
+});
+
+test('C1 WAV：data 长度非 blockAlign 整数倍（帧不对齐）→ 拒绝', () => {
+  const r = wavDurationMs(wavUnalignedData());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'data_not_frame_aligned');
+});
+
+test('C1 WAV：data 为空 → 拒绝', () => {
+  const r = wavDurationMs(wavEmptyData());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'empty_data');
+});
+
+test('C1 MP3：仅 4 字节合法帧头（无帧负载）→ 拒绝，不得算出 26ms', () => {
+  const bytes = mp3FakeHeaderOnly();
+  const r = mpegDurationMs(bytes);
+  assert.equal(r.ok, false);
+});
+
+test('C1 MP3：第二帧被截断 → 拒绝', () => {
+  const bytes = mp3TruncatedFrame();
+  const r = mpegDurationMs(bytes);
+  assert.equal(r.ok, false);
+});
+
+test('C1 M4A：有 mvhd 但无任何音轨 → 拒绝', () => {
+  const r = m4aDurationMs(m4aNoTrack());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no_audio_track');
+});
+
+test('C1 接入：伪 MP3 头声明时长 → 受控拒绝（duration_unverifiable）', () => {
+  const bytes = mp3FakeHeaderOnly();
+  const err = expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/mpeg',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 26,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
+  assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+test('C1 接入：无音轨 M4A 声明时长 → 受控拒绝（duration_unverifiable）', () => {
+  const bytes = m4aNoTrack();
+  const err = expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/aac',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 1000,
         },
       }),
     'INVALID_REQUEST',
