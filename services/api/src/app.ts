@@ -2,7 +2,7 @@
  * Fastify 应用装配。
  *
  * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
- * /api/v1 下的认证与后台认证路由、契约错误封套、404。
+ * /api/v1 下的认证与后台认证、授权列表及受限撤回路由、契约错误封套、404。
  * 其余业务路由（识别、问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
  * 不伪造成功。
  */
@@ -17,6 +17,7 @@ import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
 import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
+import { registerConsentRoutes } from './routes/consents.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
@@ -109,6 +110,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat 
   registerPublicHomeRoute(app, config, pool);
   registerUserAuthRoutes(app, config, { service, guards, now: clock });
   registerAdminAuthRoutes(app, config, { service, guards, now: clock });
+  registerConsentRoutes(app, config, pool, guards);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
