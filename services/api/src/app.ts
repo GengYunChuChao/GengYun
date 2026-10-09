@@ -2,7 +2,7 @@
  * Fastify 应用装配。
  *
  * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
- * /api/v1 下的认证与后台认证、授权列表及受限撤回路由、契约错误封套、404。
+ * /api/v1 下的认证与后台认证、授权列表／授予及受限撤回路由、契约错误封套、404。
  * 其余业务路由（识别、问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
  * 不伪造成功。
  */
@@ -32,6 +32,8 @@ declare module 'fastify' {
 }
 
 export interface BuildAppOptions {
+  /** Test injection only; server.ts never enables synthetic policy publication. */
+  consentGrantTestOptions?: { allowSyntheticGrantPolicy?: boolean };
   config: AppConfig;
   pool?: PgPool | null;
   /** 可注入时钟，便于确定性回归。 */
@@ -59,7 +61,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -110,7 +112,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat 
   registerPublicHomeRoute(app, config, pool);
   registerUserAuthRoutes(app, config, { service, guards, now: clock });
   registerAdminAuthRoutes(app, config, { service, guards, now: clock });
-  registerConsentRoutes(app, config, pool, guards);
+  registerConsentRoutes(app, config, pool, guards, consentGrantTestOptions);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
