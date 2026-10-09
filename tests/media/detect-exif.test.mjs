@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { inflateSync } from 'node:zlib';
 import { detectMediaType } from '../../packages/media/detect.mjs';
 import { stripImageMetadata } from '../../packages/media/exif.mjs';
+import { decodeVp8l } from '../../packages/media/webp.mjs';
 import {
   jpegWithExif,
   jpegPlain,
@@ -28,6 +29,8 @@ import {
   pngOversizeDimension,
   pngRawSizeMismatch,
   pngRealRgb,
+  pngWithFilter,
+  pngBadFilterByte,
   webpVp8lShortHeader,
   webpVp8lBadSignature,
   webpVp8lBadVersion,
@@ -35,6 +38,10 @@ import {
   webpVp8KeyFrame,
   webpAnimFrames,
   webpAnmfWithoutAnim,
+  webpPlainLossless,
+  webpVp8xWithBareLosslessHeader,
+  webpVp8lTruncated,
+  webpVp8lDistanceSymbolOutOfRange,
 } from './_fixtures.mjs';
 
 /** 从 PNG 字节中拼接全部 IDAT 负载，用于验证压缩流确实可解压。 */
@@ -56,6 +63,18 @@ function pngIdatPayload(bytes) {
     off += p.length;
   }
   return out;
+}
+
+/** 从 WebP 字节中取出 VP8L chunk 负载（无则 null）。 */
+function findVp8lChunk(bytes) {
+  let i = 12;
+  while (i + 8 <= bytes.length) {
+    const fourcc = String.fromCharCode(bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
+    const size = bytes[i + 4] | (bytes[i + 5] << 8) | (bytes[i + 6] << 16) | (bytes[i + 7] << 24);
+    if (fourcc === 'VP8L') return bytes.subarray(i + 8, i + 8 + size);
+    i += 8 + size + (size % 2);
+  }
+  return null;
 }
 
 function containsBytes(haystack, needleAscii) {
@@ -275,12 +294,72 @@ test('D2 WebP：有 ANMF 但缺 ANIM 头 → 拒绝', () => {
   assert.equal(stripImageMetadata(webpAnmfWithoutAnim(), 'image/webp').ok, false);
 });
 
-test('D2 WebP 正例：VP8 关键帧（真实位流头）→ 接受', () => {
-  const out = stripImageMetadata(webpVp8KeyFrame({ width: 4, height: 4 }), 'image/webp');
-  assert.equal(out.ok, true);
+test('D2 WebP：VP8（有损）位流 → 受控拒绝（本模块无法核验其真实内容）', () => {
+  assert.equal(stripImageMetadata(webpVp8KeyFrame({ width: 4, height: 4 }), 'image/webp').ok, false);
 });
 
-test('D2 WebP 正例：VP8X + ANIM + ANMF 动画 → 接受', () => {
-  const out = stripImageMetadata(webpAnimFrames(), 'image/webp');
+test('D2 WebP：VP8X + ANIM + ANMF 动画 → 受控拒绝（本模块无法核验其真实内容）', () => {
+  assert.equal(stripImageMetadata(webpAnimFrames(), 'image/webp').ok, false);
+});
+
+// ------------------------------------------- E3 回归：PNG 扫描行滤波类型校验
+
+test('E3 PNG 反例（监工构造）：IDAT=zlib([0xff,0]) 长度精确但滤波字节非法 → 拒绝', () => {
+  const input = pngBadFilterByte();
+  // 前置：IDAT 确实可解压且长度精确（2 字节 = 1 行 filter + 1 像素），仅滤波字节非法
+  const raw = inflateSync(Buffer.from(pngIdatPayload(input)));
+  assert.equal(raw.length, 2, '前置：解压长度精确等于 IHDR 期望');
+  assert.equal(raw[0], 0xff, '前置：首字节 0xff 不是合法滤波类型（0..4）');
+  assert.equal(stripImageMetadata(input, 'image/png').ok, false);
+});
+
+test('E3 PNG 正例：每行使用合法非零滤波类型（1..4）→ 接受', () => {
+  for (const filter of [1, 2, 3, 4]) {
+    const out = stripImageMetadata(pngWithFilter({ width: 4, height: 3, filter }), 'image/png');
+    assert.equal(out.ok, true, `filter=${filter} 应被接受`);
+  }
+});
+
+// ------------------------------------------- E2 回归：WebP 真实帧内容校验
+
+test('E2 WebP 反例①（监工构造）：VP8X + VP8L 仅 5 字节位流头、无像素位流 → 拒绝', () => {
+  const input = webpVp8xWithBareLosslessHeader();
+  assert.equal(input.length, 44, `应复现监工 44 字节构造，实际 ${input.length}`);
+  assert.equal(stripImageMetadata(input, 'image/webp').ok, false);
+});
+
+test('E2 WebP 反例②：VP8L 位流被截断（像素位流不完整）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8lTruncated(), 'image/webp').ok, false);
+});
+
+test('E2 WebP 反例③：VP8L 前缀码越界（距离码符号 > 39）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8lDistanceSymbolOutOfRange(), 'image/webp').ok, false);
+});
+
+test('E2 WebP 正例：普通（无 VP8X）真实无损 VP8L 位流 → 接受', () => {
+  assert.equal(stripImageMetadata(webpPlainLossless({ width: 8, height: 8 }), 'image/webp').ok, true);
+});
+
+test('E2 WebP：清 EXIF 后源字节确为真实可解码 VP8L（输出仍可解码）', () => {
+  const out = stripImageMetadata(webpWithExif(), 'image/webp');
   assert.equal(out.ok, true);
+  const chunk = findVp8lChunk(out.data);
+  assert.ok(chunk, '输出应保留 VP8L chunk');
+  const decoded = decodeVp8l(chunk);
+  assert.equal(decoded.ok, true, `输出 VP8L 应可真实解码：${JSON.stringify(decoded)}`);
+  assert.equal(decoded.width, 4);
+  assert.equal(decoded.height, 4);
+});
+
+test('E2 WebP 正例：VP8X 画布与真实 VP8L 尺寸一致 → 接受（并保留 VP8X）', () => {
+  const out = stripImageMetadata(webpVp8xWithLossless(), 'image/webp');
+  assert.equal(out.ok, true);
+  const decoded = decodeVp8l(findVp8lChunk(out.data));
+  assert.deepEqual([decoded.width, decoded.height], [2, 1]);
+});
+
+test('E2 WebP：真实无损 VP8L 位流可被独立解码器读出正确尺寸（夹具可信度）', () => {
+  const decoded = decodeVp8l(findVp8lChunk(webpPlainLossless({ width: 8, height: 8 })));
+  assert.equal(decoded.ok, true);
+  assert.deepEqual([decoded.width, decoded.height], [8, 8]);
 });

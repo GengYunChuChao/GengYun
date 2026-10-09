@@ -28,6 +28,13 @@ import {
   m4aNoMdat,
   m4aNoStsz,
   m4aBareEmptyStsd,
+  m4aNoStco,
+  m4aNoStts,
+  m4aEmptyMdat,
+  m4aSttsEntryCountMismatch,
+  m4aSttsSampleCountMismatch,
+  m4aSamplesExceedMdat,
+  m4aChunkOffsetOutsideMdat,
 } from './_fixtures.mjs';
 
 function expectCode(fn, code) {
@@ -284,4 +291,114 @@ test('D1 复现监工原始构造：mvhd + 空 stsd（无 hdlr/mdhd/样本表/md
   const r = m4aDurationMs(m4aBareEmptyStsd());
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'no_mdat');
+});
+
+// ------------------------------------------- E1：样本表真实性与 mdat 内容一致性
+
+test('E1 M4A 正例：结构自洽（样本表互相一致且落在 mdat 内）→ 通过并给出真实时长', () => {
+  for (const durationMs of [500, 1000, 3000]) {
+    const r = m4aDurationMs(m4aBytes({ durationMs }));
+    assert.equal(r.ok, true, `durationMs=${durationMs} 应通过`);
+    assert.equal(r.durationMs, durationMs);
+  }
+});
+
+test('E1 M4A 反例①（监工构造）：mdat box 存在但负载被删空（size→8）→ 拒绝，不判 ready', () => {
+  const bytes = m4aEmptyMdat();
+  const r = m4aDurationMs(bytes);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'empty_mdat');
+});
+
+test('E1 M4A 反例②（监工构造）：stts.entry_count=2 却只有 1 条条目 → 时间表不可核验 → 拒绝', () => {
+  const r = m4aDurationMs(m4aSttsEntryCountMismatch());
+  assert.equal(r.ok, false, '不得回退信任 mvhd 时长');
+});
+
+test('E1 M4A：stts 累计样本数与 stsz.sample_count 不一致 → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aSttsSampleCountMismatch()).ok, false);
+});
+
+test('E1 M4A：样本总字节超过 mdat 负载 → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aSamplesExceedMdat()).ok, false);
+});
+
+test('E1 M4A：stco chunk 偏移落在 mdat 负载之外 → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aChunkOffsetOutsideMdat()).ok, false);
+});
+
+test('E1 M4A：缺 stco / stts → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aNoStco()).ok, false);
+  assert.equal(m4aDurationMs(m4aNoStts()).ok, false);
+});
+
+test('E1 接入：空 mdat 的 M4A 声明时长 → 受控拒绝（duration_unverifiable）', () => {
+  const bytes = m4aEmptyMdat();
+  const err = expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/aac',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 1000,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
+  assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+test('E1 接入：stts 条目数不符的 M4A 声明时长 → 受控拒绝（duration_unverifiable）', () => {
+  const bytes = m4aSttsEntryCountMismatch();
+  const err = expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/aac',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 1000,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
+  assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+test('E1 接入：结构自洽的 M4A → 通过并回传真实时长', () => {
+  const bytes = m4aBytes({ durationMs: 1500 });
+  const out = assertBytesMatchDeclaration({
+    bytes,
+    declared: {
+      mime: 'audio/aac',
+      bytes: bytes.length,
+      sha256: sha256Hex(bytes),
+      purpose: 'voice_question',
+      duration_ms: 1500,
+    },
+  });
+  assert.equal(out.durationMs, 1500);
+});
+
+test('E1 接入：真实时长 61s 的 M4A（声明 1000ms）→ 拒绝（真实时长参与上限判断）', () => {
+  const bytes = m4aBytes({ durationMs: 61000 });
+  expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/aac',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 1000,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
 });

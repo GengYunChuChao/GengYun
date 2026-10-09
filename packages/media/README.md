@@ -1,6 +1,6 @@
 # packages/media · 私有媒体上传、访问权限与 EXIF 清除（GY-I06 / #6）
 
-纯 ESM 模块，无第三方依赖（仅用 Node 内置 `node:crypto`），Node 18+ 可用。枚举、限额与
+纯 ESM 模块，**零第三方依赖**（仅用 Node 内置 `node:crypto`、`node:zlib`），Node 24 可用。枚举、限额与
 错误码只读消费 `packages/contracts/states.json` / `openapi.json`（契约 1.0.0），本模块是
 前后端一致的**媒体域唯一事实来源**。
 
@@ -23,8 +23,9 @@
 | `constants.mjs` | 冻结枚举 + 每用途限额 + 状态机 + `error_status_map`（与 contracts 逐项一致） |
 | `errors.mjs` | `MediaError` + `toErrorEnvelope`（与 services/api 的 ErrorEnvelope 同形） |
 | `detect.mjs` | **魔数探测**：jpeg/png/webp/mpeg/wav/aac（不信扩展名/声明 MIME） |
-| `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」 |
-| `audio.mjs` | **音频真实时长解析**（WAV/ADTS/MPEG/M4A 各自解码）；无法解析即受控拒绝 |
+| `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」；PNG 须可解压且**逐行滤波类型字节合法**（E3）；WebP 须**真实解码 VP8L**（E2） |
+| `webp.mjs` | **VP8L 无损位流真实解码器**（纯 ESM、零依赖）：位流头 → 变换/子图流 → 颜色缓存 → 前缀码（meta-Huffman）→ LZ77 回引 → W×H 像素；任何非法/越界构造 fail-closed |
+| `audio.mjs` | **音频真实时长解析**（WAV/ADTS/MPEG/M4A 各自解码）；M4A 须样本表自洽且与 `mdat` 内容一致（E1）；无法解析即受控拒绝 |
 | `validate.mjs` | 声明与真实字节校验（用途/类型/字节/**真实时长**/hash/伪扩展名/每帖 3 张） |
 | `tokens.mjs` | HMAC 短效句柄签名（token 不入 URL；服务端只存 hash） |
 | `store.mjs` | 私有对象存储（内存参考实现，可插拔真实对象存储；对外只出**不透明 object_ref**） |
@@ -98,6 +99,10 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 - **GY-I25 供应商适配**：音频编码/采样率与真实 ASR 供应商约束的“真实核实”依赖 GY-I25；
   本模块只按契约枚举核验，不把产品限额冒充官方接口限制。
 - 对象存储、CDN、访问网关为部署期接线；本模块提供内存参考实现与适配接口。
+- **WebP 覆盖边界（返修 E2，受控 fail-closed）**：本模块零依赖，仅内置 **VP8L（无损）** 真实解码器，
+  因此**只接受可真实解码的无损 WebP**；**有损 WebP（VP8）与动画 WebP（ANIM/ANMF）受控拒绝**。
+  这是「无法核验即拒绝」的有意取舍 —— 若要放开有损/动画支持，需引入标准解码库
+  （如 libwebp 绑定）作为依赖，属**变更依赖形态**，须先经维护者确认。
 
 ## 边界（不实现）
 
@@ -119,6 +124,15 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 - **短效句柄 ≠ 公开权限**：token 不入 URL、服务端只存 hash、每次取图重查账号/授权/媒体/内容当前版本；
   内容下架、媒体删除、版本变化、会话失效均即时拒绝（即使未到期）。
 - **私有对象不外露**：公开投影只含契约字段；日志经 `redactForLog` 脱敏，不含对象引用/字节。
+- **容器结构校验（返修 B1/C2/D3/E3）**：PNG 的 `IDAT` 须可真实解压、解压长度**精确等于** IHDR 期望、
+  且**逐行滤波类型字节 ∈ 0..4**（E3，支持非交错与 Adam7）；解压受预算约束（解压前按 IHDR 限尺寸、
+  解压中 `maxOutputLength` 强制上限），杜绝高压缩比炸弹。
+- **「结构形状」≠「可解码内容」（返修 E2）**：WebP 的 VP8L 位流必须由 `webp.mjs` **真实解码**并恰好产出
+  「仅 5 字节位流头、无像素位流」的空壳（44 字节）一律拒绝；VP8（有损）与动画（ANIM/ANMF）
+  因本模块**不具备核验其真实内容的解码能力**，按 fail-closed **受控拒绝**。
+- **音频样本表真实性（返修 E1）**：M4A 的 `mdat` 负载必须非空；`stts` 声明的 `entry_count` 必须有对应条目
+  （**绝不回退信任 mvhd 时长**）；`stts` 累计样本数须等于 `stsz.sample_count`，样本总字节须落在 `mdat` 负载内，
+  `stco`/`co64` 偏移须落在 `mdat` 区间内；无样本 / 时间表损坏 → 受控拒绝。
 - **不把请求当完成**：`completeUpload` 未通过核验即 `rejected` 并回收对象；`initiated` 超 24h 过期回收；
   `rejected`/`deleted` 对象与句柄统一清理。
 
@@ -130,6 +144,8 @@ node --test "tests/media/*.test.mjs"
 
 合成夹具覆盖：魔数探测、JPEG/PNG/WebP 去元数据（含 GPS）、**PNG IEND 后尾部走私 / JPEG EOI 后尾部 /
 无图像数据 / 截断（B1）**、伪扩展名 415、超限 413、**音频真实时长：虚报 / 真实超时长 / 截断（B2）**、
-**完成接口幂等原样重试回放与改请求冲突（B3）**、幂等与幂等冲突、If-Match 428/409、非本人 404、
-社区取图授权与撤销、过期回收、孤立对象清理、日志脱敏、schema 与契约一致性。
+**完成接口幂等原样重试回放与改请求冲突（B3）**、**PNG 解压预算与滤波字节校验（D3/E3）**、
+**WebP VP8L 真实解码与「无像素位流空壳」拒绝（E2）**、**M4A 样本表一致性与空 mdat 拒绝（E1）**、
+幂等与幂等冲突、If-Match 428/409、非本人 404、社区取图授权与撤销、过期回收、孤立对象清理、日志脱敏、
+schema 与契约一致性。
 **这些是模块级单元证据，不等于真实登录/对象存储/供应商验收。**

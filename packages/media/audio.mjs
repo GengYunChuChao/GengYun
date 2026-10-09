@@ -220,18 +220,61 @@ function stsdHasAudioEntry(bytes, stsd) {
   return M4A_AUDIO_SAMPLE_FORMATS.includes(format);
 }
 
-/** stts（time-to-sample）各条目 `sample_count × sample_delta` 之和（音轨时间粒度单位）；非法返回 null。 */
-function sttsTotal(bytes, stts) {
+/**
+ * stsz（样本大小表）摘要：`version/flags(4) + sample_size(4) + sample_count(4) [+ 每样本大小(4)]`。
+ * 返回 `{ sampleCount, totalBytes }`；**计数为 0 / 每样本条目被截断**返回 null（不可核验）。
+ */
+function stszSummary(bytes, stsz) {
+  if (stsz.end - stsz.start < 12) return null;
+  const sampleSize = readU32be(bytes, stsz.start + 4);
+  const sampleCount = readU32be(bytes, stsz.start + 8);
+  if (sampleCount < 1) return null;
+  if (sampleSize > 0) return { sampleCount, totalBytes: sampleSize * sampleCount };
+  // sample_size==0 → 必须紧跟 sample_count 个 4 字节样本大小，且恰好落在 box 内。
+  if (stsz.start + 12 + sampleCount * 4 > stsz.end) return null;
+  let total = 0;
+  for (let k = 0; k < sampleCount; k += 1) total += readU32be(bytes, stsz.start + 12 + k * 4);
+  return { sampleCount, totalBytes: total };
+}
+
+/**
+ * stts（time-to-sample）摘要：各条目 `sample_count × sample_delta`。
+ * 返回 `{ totalUnits, sampleCount }`；**声明的 entry_count 没有对应条目数据**（条目截断）
+ * 即返回 null —— E1：这正是监工「把 entry_count 从 1 改成 2 却不追加条目」的反例，
+ * 旧实现据此判 null 后**回退信任 mvhd 时长**，现已必须受控拒绝。
+ */
+function sttsSummary(bytes, stts) {
   if (stts.end - stts.start < 8) return null;
   const count = readU32be(bytes, stts.start + 4);
-  let p = stts.start + 8;
-  let total = 0;
+  if (count < 1) return null;
+  if (stts.start + 8 + count * 8 > stts.end) return null; // 条目数不符 / 截断
+  let totalUnits = 0;
+  let sampleCount = 0;
   for (let k = 0; k < count; k += 1) {
-    if (p + 8 > stts.end) return null;
-    total += readU32be(bytes, p) * readU32be(bytes, p + 4);
-    p += 8;
+    const sc = readU32be(bytes, stts.start + 8 + k * 8);
+    const sd = readU32be(bytes, stts.start + 12 + k * 8);
+    totalUnits += sc * sd;
+    sampleCount += sc;
   }
-  return total;
+  return { totalUnits, sampleCount };
+}
+
+/**
+ * stco / co64（chunk 偏移表）：返回**绝对文件偏移**数组。
+ * 条目数为 0 / 偏移表被截断返回 null（E1：仅检查 box 存在不足以证明样本定位有效）。
+ */
+function chunkOffsets(bytes, box, sixtyFour) {
+  if (box.end - box.start < 8) return null;
+  const count = readU32be(bytes, box.start + 4);
+  if (count < 1) return null;
+  const width = sixtyFour ? 8 : 4;
+  if (box.start + 8 + count * width > box.end) return null;
+  const offsets = [];
+  for (let k = 0; k < count; k += 1) {
+    const o = box.start + 8 + k * width;
+    offsets.push(sixtyFour ? readU32be(bytes, o) * 4294967296 + readU32be(bytes, o + 4) : readU32be(bytes, o));
+  }
+  return offsets;
 }
 
 /** mdhd（媒体头）的 timescale / duration；非法返回 null。 */
@@ -252,11 +295,18 @@ function mdhdTimescale(bytes, mdhd) {
  * 解析 M4A（ISO BMFF）真实时长。
  *
  * D1：`stsd` 存在 ≠ 有效音轨；`mvhd` 时长 ≠ 有音频。必须核对**实际音轨与样本结构**：
- *   1) 顶层存在 `mdat`（媒体数据）；
+ *   1) 顶层存在 `mdat`（媒体数据）**且负载非空**；
  *   2) 存在 `trak > mdia`，其 `hdlr.handler_type == 'soun'`（音轨，非视频）；
- *   3) 该音轨有 `mdhd`（取**音轨自身** timescale/duration，而非容器 mvhd）；
+ *   3) 该音轨有 `mdhd`（取**音轨自身** timescale，而非容器 mvhd）；
  *   4) `minf > stbl` 下 `stsd` 含**真实 sample entry**（如 `mp4a`）、并有样本表 `stsz`、`stts`、`stco`/`co64`。
- * 时长优先取 `stts` 样本累计（样本级真实时长），否则退回 `mdhd.duration`。
+ *
+ * E1：**没有样本 / 时间表损坏不能证明时长** —— 必须进一步核对样本结构与媒体内容一致：
+ *   - `mdat` 负载必须非空（size==8 的空壳不能证明任何样本存在）；
+ *   - `stts` 声明的 `entry_count` 必须有对应条目（截断 → 不可核验），**绝不回退信任 mvhd**；
+ *   - `stts` 累计样本数必须等于 `stsz.sample_count`；`stsz` 累计字节须 ≥1 且不超过 `mdat` 负载；
+ *   - `stco`/`co64` 每个 chunk 偏移必须落在 `mdat` 负载区间内。
+ *
+ * 时长一律取 `stts` 样本累计 / `mdhd.timescale`（不取容器 mvhd）。
  * 任一无法核对 → 受控拒绝（reason 供上层转 `duration_unverifiable`）。
  */
 export function m4aDurationMs(bytes) {
@@ -281,7 +331,10 @@ export function m4aDurationMs(bytes) {
   }
   if (!asciiAt(bytes, 4, 'ftyp')) return { ok: false, reason: 'not_ftyp' };
   // 必须存在媒体数据，否则不存在可解码样本。
-  if (!findBox(0, bytes.length, 'mdat')) return { ok: false, reason: 'no_mdat' };
+  const mdat = findBox(0, bytes.length, 'mdat');
+  if (!mdat) return { ok: false, reason: 'no_mdat' };
+  // E1：有 mdat box ≠ 有媒体数据。空负载（size==8）无法证明任何样本存在。
+  if (mdat.end - mdat.start < 1) return { ok: false, reason: 'empty_mdat' };
   const moov = findBox(0, bytes.length, 'moov');
   if (!moov) return { ok: false, reason: 'no_moov' };
 
@@ -317,14 +370,25 @@ export function m4aDurationMs(bytes) {
             const stsd = findBox(stbl.start, stbl.end, 'stsd');
             const stsz = findBox(stbl.start, stbl.end, 'stsz');
             const stts = findBox(stbl.start, stbl.end, 'stts');
-            const stco = findBox(stbl.start, stbl.end, 'stco') || findBox(stbl.start, stbl.end, 'co64');
-            if (stsd && stsz && stts && stco && stsdHasAudioEntry(bytes, stsd)) {
+            const stco = findBox(stbl.start, stbl.end, 'stco');
+            const co64 = stco ? null : findBox(stbl.start, stbl.end, 'co64');
+            const offsetsBox = stco || co64;
+            if (stsd && stsz && stts && offsetsBox && stsdHasAudioEntry(bytes, stsd)) {
               const head = mdhdTimescale(bytes, mdhd);
-              if (head && head.timescale >= 1) {
-                const sampleUnits = sttsTotal(bytes, stts);
-                const durationUnits = sampleUnits && sampleUnits > 0 ? sampleUnits : head.duration;
-                if (durationUnits > 0) {
-                  result = { timescale: head.timescale, durationUnits };
+              const sizes = stszSummary(bytes, stsz);
+              const times = sttsSummary(bytes, stts);
+              const offsets = chunkOffsets(bytes, offsetsBox, co64 !== null);
+              if (head && head.timescale >= 1 && sizes && times && offsets) {
+                const mdatPayload = mdat.end - mdat.start;
+                // E1：样本结构必须自洽，且与 mdat 真实内容一致，否则不能证明时长。
+                const consistent =
+                  sizes.sampleCount === times.sampleCount &&
+                  sizes.totalBytes >= 1 &&
+                  sizes.totalBytes <= mdatPayload &&
+                  times.totalUnits >= 1 &&
+                  offsets.every((o) => o >= mdat.start && o < mdat.end);
+                if (consistent) {
+                  result = { timescale: head.timescale, durationUnits: times.totalUnits };
                   break;
                 }
               }

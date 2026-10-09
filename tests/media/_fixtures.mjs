@@ -196,6 +196,28 @@ export function pngRealRgb({ width = 4, height = 3 } = {}) {
   return buildPng(ihdr, deflateSync(raw));
 }
 
+/**
+ * E3 正例：真实可解码 PNG，每行使用指定（合法 0..4）滤波类型字节。
+ * 全零扫描线数据对任意滤波类型都是自洽的（反滤波后仍为全零像素）。
+ */
+export function pngWithFilter({ width = 4, height = 3, filter = 1 } = {}) {
+  const ihdr = concat(u32be(width), u32be(height), u8([8, 2, 0, 0, 0]));
+  const rowBytes = width * 3;
+  const raw = new Uint8Array((rowBytes + 1) * height);
+  for (let y = 0; y < height; y += 1) raw[y * (rowBytes + 1)] = filter;
+  return buildPng(ihdr, deflateSync(raw));
+}
+
+/**
+ * E3 反例（**逐字复现监工构造**）：IHDR 1×1 灰度（期望原始长度 2），
+ * `IDAT = zlib([0xff, 0])` —— 长度精确等于期望值，但首字节 0xff 不是合法滤波类型（0..4）。
+ * 真实解码器（Pillow/libpng）报 `unrecognized data stream contents`。必须拒绝。
+ */
+export function pngBadFilterByte() {
+  const ihdr = u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]);
+  return buildPng(ihdr, deflateSync(u8([0xff, 0])));
+}
+
 // ------------------------------------------------------------------ WebP
 
 function webpChunk(fourcc, data) {
@@ -207,6 +229,102 @@ function webpChunk(fourcc, data) {
 function vp8lHeader(width, height) {
   const bits = (((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14)) >>> 0;
   return u8([0x2f, bits & 0xff, (bits >> 8) & 0xff, (bits >> 16) & 0xff, (bits >>> 24) & 0xff]);
+}
+
+/** LSB-first 位写入器（与 VP8L 位流字节序一致）。 */
+class BitWriter {
+  constructor() {
+    this.bytes = [];
+    this.cur = 0;
+    this.n = 0;
+  }
+
+  put(value, bits) {
+    for (let i = 0; i < bits; i += 1) {
+      this.cur |= ((value >> i) & 1) << this.n;
+      this.n += 1;
+      if (this.n === 8) {
+        this.bytes.push(this.cur);
+        this.cur = 0;
+        this.n = 0;
+      }
+    }
+  }
+
+  finish() {
+    if (this.n > 0) this.bytes.push(this.cur);
+    return Uint8Array.from(this.bytes);
+  }
+}
+
+/**
+ * 合成一个**真实可解码**的 VP8L 位流（棋盘图）。
+ *
+ * 构造方式（E2：正例必须确实可解码，而不是只有位流头）：
+ *   - 位流头（signature/宽高/alpha/version）；
+ *   - 无变换、无颜色缓存、无 meta-Huffman；
+ *   - green 用**双符号 simple code**（每符号 1 bit）；red/blue/alpha/dist 用单符号（0 bit）；
+ *   - 图像数据 = W×H 个 literal，每像素消耗 **1 bit**（green 符号），因此位流含真实像素位流。
+ * 生成的字节是**完整且可被真实解码器（libwebp/Pillow）读出 W×H 像素**的合法 VP8L 流；
+ * 由于像素位流真实存在，截断/损坏会破坏可解码性（可作 E2 反例）。
+ */
+function vp8lCheckerboard(width, height, { g0 = 0x00, g1 = 0xff, r = 0x80, b = 0x40, a = 255 } = {}) {
+  const bw = new BitWriter();
+  bw.put(0x2f, 8);
+  bw.put(width - 1, 14);
+  bw.put(height - 1, 14);
+  bw.put(a < 255 ? 1 : 0, 1); // alpha_is_used
+  bw.put(0, 3); // version = 0
+  bw.put(0, 1); // 无变换
+  bw.put(0, 1); // 无颜色缓存
+  bw.put(0, 1); // 无 meta-Huffman（单码组）
+  // green：双符号 simple code（两符号各 1 bit）
+  bw.put(1, 1); // 使用 simple code
+  bw.put(1, 1); // num_symbols - 1 = 1 → 2 个符号
+  bw.put(1, 1); // 首符号用 8 bit
+  bw.put(g0, 8);
+  bw.put(g1, 8);
+  const single = (symbol) => {
+    bw.put(1, 1); // simple code
+    bw.put(0, 1); // 1 个符号
+    bw.put(1, 1); // 8 bit
+    bw.put(symbol, 8);
+  };
+  single(r);
+  single(b);
+  single(a);
+  single(0); // 距离码
+  // 图像数据：每像素 1 bit（green 符号交替）→ 真实像素位流
+  for (let i = 0; i < width * height; i += 1) bw.put(i & 1, 1);
+  return bw.finish();
+}
+
+/**
+ * E2 反例：VP8L 前缀码**越界**（距离码单符号 = 200，而距离字母表仅 40）→ 解码立即失败 → 拒绝。
+ * 与「位流头正确但熵段非法」的构造对齐（不是仅头部可解析）。
+ */
+export function webpVp8lDistanceSymbolOutOfRange() {
+  const bw = new BitWriter();
+  bw.put(0x2f, 8);
+  bw.put(0, 14);
+  bw.put(0, 14);
+  bw.put(0, 1);
+  bw.put(0, 3);
+  bw.put(0, 1);
+  bw.put(0, 1);
+  bw.put(0, 1);
+  const single = (symbol) => {
+    bw.put(1, 1);
+    bw.put(0, 1);
+    bw.put(1, 1);
+    bw.put(symbol, 8);
+  };
+  single(0); // green
+  single(0); // red
+  single(0); // blue
+  single(0); // alpha
+  single(200); // dist：> 39（字母表 40）→ 越界，非法
+  return webpFile(webpChunk('VP8L', bw.finish()));
 }
 
 /** VP8X 扩展头负载（10 字节）：flags(1) + reserved(3) + canvas_w-1(3) + canvas_h-1(3)。 */
@@ -222,9 +340,9 @@ function webpFile(...chunks) {
   return concat(ascii('RIFF'), u32le(body.length), body);
 }
 
-/** WebP：RIFF/WEBP + VP8L(4×4 真实位流头) + EXIF + XMP。 */
+/** WebP：RIFF/WEBP + VP8L(4×4 真实可解码位流) + EXIF + XMP。 */
 export function webpWithExif() {
-  const vp8l = webpChunk('VP8L', vp8lHeader(4, 4));
+  const vp8l = webpChunk('VP8L', vp8lCheckerboard(4, 4, { g0: 0x10, g1: 0x30, r: 0x20, b: 0x30 }));
   const exif = webpChunk('EXIF', concat(ascii('MM\0*'), u8([0, 0, 0, 8])));
   const xmp = webpChunk('XMP ', ascii('<x:xmpmeta/>'));
   return webpFile(vp8l, exif, xmp);
@@ -240,9 +358,29 @@ export function webpVp8xOnly() {
   return webpFile(webpChunk('VP8X', vp8xPayload(1, 1)));
 }
 
-/** WebP：VP8X 画布 2×1 + 匹配的 VP8L(2×1) 位流 —— 正常可接受。 */
+/** WebP：VP8X 画布 2×1 + 匹配的 VP8L(2×1) **真实位流** —— 正常可接受。 */
 export function webpVp8xWithLossless() {
+  return webpFile(webpChunk('VP8X', vp8xPayload(2, 1)), webpChunk('VP8L', vp8lCheckerboard(2, 1)));
+}
+
+/** WebP：无 VP8X，直接 RIFF/WEBP + VP8L(W×H 真实位流) —— 常规无损正例。 */
+export function webpPlainLossless({ width = 8, height = 8 } = {}) {
+  return webpFile(webpChunk('VP8L', vp8lCheckerboard(width, height)));
+}
+
+/**
+ * E2 反例①（**逐字复现监工构造**）：VP8X(2×1) + VP8L 负载**只有 5 字节位流头、
+ * 无任何像素位流** —— 44 字节文件，旧实现判 ready，独立 Pillow `load` 报
+ * `failed to read next frame`。修复后必须拒绝。
+ */
+export function webpVp8xWithBareLosslessHeader() {
   return webpFile(webpChunk('VP8X', vp8xPayload(2, 1)), webpChunk('VP8L', vp8lHeader(2, 1)));
+}
+
+/** E2 反例②：VP8L 真实位流被**截断**（砍掉后半段）→ 无法完整解码 → 拒绝。 */
+export function webpVp8lTruncated() {
+  const full = vp8lCheckerboard(8, 8);
+  return webpFile(webpChunk('VP8L', full.subarray(0, 12)));
 }
 
 /** WebP：VP8L 负载仅 1 字节 0x2f（无完整位流头）——D2 回归（监工反例）。 */
@@ -261,12 +399,12 @@ export function webpVp8lBadVersion() {
   return webpFile(webpChunk('VP8L', u8([0x2f, 0, 0, 0, (bits >>> 24) & 0xff])));
 }
 
-/** WebP：VP8X 画布 8×8 但 VP8L 仅 2×1（尺寸不符）——D2 回归。 */
+/** WebP：VP8X 画布 8×8 但 VP8L 真实解码尺寸为 2×1（尺寸不符）——D2 回归。 */
 export function webpVp8xCanvasMismatch() {
-  return webpFile(webpChunk('VP8X', vp8xPayload(8, 8)), webpChunk('VP8L', vp8lHeader(2, 1)));
+  return webpFile(webpChunk('VP8X', vp8xPayload(8, 8)), webpChunk('VP8L', vp8lCheckerboard(2, 1)));
 }
 
-/** WebP：VP8 关键帧（4×4）——有损正常可接受。 */
+/** WebP：VP8 关键帧（4×4）——有损位流（本模块无法核验内容 → 受控拒绝）。 */
 export function webpVp8KeyFrame({ width = 4, height = 4 } = {}) {
   const tag = u8([0x10, 0x00, 0x00]); // keyframe(bit0=0) + show_frame(bit4=1)
   const startCode = u8([0x9d, 0x01, 0x2a]);
@@ -274,7 +412,7 @@ export function webpVp8KeyFrame({ width = 4, height = 4 } = {}) {
   return webpFile(webpChunk('VP8 ', concat(tag, startCode, dims, u8([0, 0, 0, 0]))));
 }
 
-/** WebP：VP8X 画布 4×4 + ANIM + ANMF(4×4) —— 动画正常可接受。 */
+/** WebP：VP8X 画布 4×4 + ANIM + ANMF(4×4) —— 动画（本模块无法核验内容 → 受控拒绝）。 */
 export function webpAnimFrames() {
   const anmfHeader = u8([0, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0, 0, 0, 0, 0, 0]); // x0 y0 w-1=3 h-1=3 dur0 flags0
   return webpFile(
@@ -405,16 +543,32 @@ function box(type, ...payload) {
   return concat(u32be(8 + body.length), ascii(type), body);
 }
 
+/** `ftyp('M4A ')` 的完整 box 长度为 16 字节。 */
+const M4A_FTYP_SIZE = 16;
+/** 紧随其后的 `mdat` 负载起始绝对偏移 = ftyp(16) + mdat 头(8)。 */
+const M4A_MDAT_PAYLOAD_OFFSET = M4A_FTYP_SIZE + 8;
+
 /**
- * 构造 M4A/ISO BMFF。可开关各结构件以生成 D1 负例。
+ * 构造 **结构自洽、可被真实核验** 的 M4A/ISO BMFF。
+ *
+ * 默认布局：`ftyp` + `mdat`（负载长度 = 声明样本总字节）+ `moov > trak > mdia > {mdhd, hdlr, minf > stbl}`。
+ * 样本表互相一致（E1）：`stsz.sample_count` 等于 `stts` 累计样本数；样本总字节等于 `mdat` 负载长度；
+ * `stco` chunk 偏移指向 `mdat` 负载区间内。各开关用于生成 D1/E1 负例。
+ *
  * @param {object} o
- * @param {number}  o.durationMs  音轨时长（ms）
- * @param {number}  o.sampleRate  采样率（mdhd.timescale）
- * @param {boolean} o.withTrack   是否含 trak
- * @param {string}  o.handlerType hdlr.handler_type（'soun'=音频）
- * @param {boolean} o.withHdlr / withMdhd / withStsz / withStco / withStts / withMdat
- * @param {boolean} o.stsdWithEntry  stsd 是否含真实 sample entry
- * @param {number}  o.stsdEntryCount stsd.entry_count
+ * @param {number}  o.durationMs       音轨时长（ms）
+ * @param {number}  o.sampleRate       mdhd.timescale（样本时间粒度）
+ * @param {boolean} o.withTrack        是否含 trak
+ * @param {string}  o.handlerType      hdlr.handler_type（'soun'=音频）
+ * @param {boolean} o.withHdlr/withMdhd/withStsz/withStco/withStts/withMdat
+ * @param {boolean} o.stsdWithEntry    stsd 是否含真实 sample entry
+ * @param {number}  o.stsdEntryCount   stsd.entry_count
+ * @param {number}  o.sampleCount      覆盖样本数（默认由时长×采样率推出）
+ * @param {number}  o.sampleSize       每样本字节数（stsz 常量大小）
+ * @param {number}  o.mdatBytes        覆盖 mdat 负载长度（0 → 空 mdat）
+ * @param {number}  o.stcoOffset       覆盖首个 chunk 偏移
+ * @param {Array}   o.sttsEntries      覆盖 stts 条目（[[sampleCount, sampleDelta], ...]）
+ * @param {number}  o.sttsDeclaredCount 覆盖 stts 写入的 entry_count（默认 = 实际条目数）
  */
 export function m4aBytes({
   durationMs = 1000,
@@ -429,17 +583,34 @@ export function m4aBytes({
   withMdat = true,
   stsdWithEntry = true,
   stsdEntryCount = 1,
+  sampleCount: sampleCountOpt = null,
+  sampleSize = 1,
+  mdatBytes = null,
+  stcoOffset = null,
+  sttsEntries = null,
+  sttsDeclaredCount = null,
 } = {}) {
-  const durationSamples = Math.max(1, Math.round((durationMs / 1000) * sampleRate));
+  const samples = sampleCountOpt ?? Math.max(1, Math.round((durationMs / 1000) * sampleRate));
+  const totalSampleBytes = sampleSize * samples;
+  const mdatPayloadLen = mdatBytes ?? totalSampleBytes;
+
   const ftyp = box('ftyp', ascii('M4A '), u32be(0));
-  const mdat = box('mdat', new Uint8Array(16));
+  const mdat = box('mdat', new Uint8Array(mdatPayloadLen));
   const mvhd = box('mvhd', u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
 
   const entry = box('mp4a', u8(new Array(20).fill(0)));
   const stsd = box('stsd', u8([0, 0, 0, 0]), u32be(stsdEntryCount), ...(stsdWithEntry ? [entry] : []));
-  const stsz = box('stsz', u8([0, 0, 0, 0]), u32be(0), u32be(durationSamples));
-  const stco = box('stco', u8([0, 0, 0, 0]), u32be(1), u32be(0));
-  const stts = box('stts', u8([0, 0, 0, 0]), u32be(1), u32be(durationSamples), u32be(1));
+  // sampleSize>0 → stsz 为「常量样本大小」形式，结构紧凑且可核验。
+  const stsz = box('stsz', u8([0, 0, 0, 0]), u32be(sampleSize), u32be(samples));
+  // 首个 chunk 指向 mdat 负载起始（绝对偏移）。
+  const stco = box('stco', u8([0, 0, 0, 0]), u32be(1), u32be(stcoOffset ?? M4A_MDAT_PAYLOAD_OFFSET));
+
+  const entries = sttsEntries ?? [[samples, 1]];
+  const declared = sttsDeclaredCount ?? entries.length;
+  const sttsParts = [u8([0, 0, 0, 0]), u32be(declared)];
+  for (const [sc, sd] of entries) sttsParts.push(u32be(sc), u32be(sd));
+  const stts = box('stts', ...sttsParts);
+
   const stblChildren = [];
   if (withStsz) stblChildren.push(stsz);
   if (withStco) stblChildren.push(stco);
@@ -453,7 +624,7 @@ export function m4aBytes({
     u32be(0),
     u32be(0),
     u32be(sampleRate),
-    u32be(durationSamples),
+    u32be(samples),
     u16be(0),
     u16be(0),
   );
@@ -497,6 +668,41 @@ export function m4aNoMdat() {
 /** D1：缺样本定位表 stsz → 拒绝。 */
 export function m4aNoStsz() {
   return m4aBytes({ withStsz: false });
+}
+
+/** E1：缺 chunk 偏移表 stco → 拒绝。 */
+export function m4aNoStco() {
+  return m4aBytes({ withStco: false });
+}
+
+/** E1：缺时间表 stts → 拒绝。 */
+export function m4aNoStts() {
+  return m4aBytes({ withStts: false });
+}
+
+/** E1 反例①（**逐字复现监工构造**）：mdat box 存在但负载被删空（size→8）→ 不能证明样本存在 → 拒绝。 */
+export function m4aEmptyMdat() {
+  return m4aBytes({ durationMs: 1000, mdatBytes: 0 });
+}
+
+/** E1 反例②（**逐字复现监工构造**）：stts.entry_count=2 却只有 1 条实际条目 → 时间表不可核验 → 拒绝。 */
+export function m4aSttsEntryCountMismatch() {
+  return m4aBytes({ durationMs: 1000, sttsDeclaredCount: 2 });
+}
+
+/** E1：stts 累计样本数与 stsz.sample_count 不一致 → 拒绝。 */
+export function m4aSttsSampleCountMismatch() {
+  return m4aBytes({ durationMs: 1000, sttsEntries: [[1, 1000]] });
+}
+
+/** E1：样本总字节超过 mdat 负载 → 拒绝。 */
+export function m4aSamplesExceedMdat() {
+  return m4aBytes({ durationMs: 1000, mdatBytes: 4 });
+}
+
+/** E1：stco chunk 偏移落在 mdat 负载之外 → 拒绝。 */
+export function m4aChunkOffsetOutsideMdat() {
+  return m4aBytes({ durationMs: 1000, stcoOffset: 2 });
 }
 
 /**

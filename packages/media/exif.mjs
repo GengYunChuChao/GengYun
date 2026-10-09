@@ -16,15 +16,25 @@
  *      不允许进入 ready；
  *   4) **解压必须受预算约束**（返修 D3）——PNG 解压前按 IHDR 计算期望原始长度，
  *      解压中强制输出上限，解压后精确核对，杜绝「小体积 IDAT 解出巨大缓冲」的资源耗尽；
- *   5) **有块名 ≠ 有可用图像数据**（返修 C2/D2）——PNG 的 IDAT 须可真实解压且长度精确，
- *      WebP 的 VP8/VP8L 位流头与尺寸须可解析（仅 VP8X 扩展头、或位流头非法一律拒绝）。
+ *   5) **有块名 ≠ 有可用图像数据**（返修 C2/D2）——PNG 的 IDAT 须可真实解压且长度精确；
+ *   6) **「结构形状」≠「可解码的真实内容」**（返修 E2/E3）——
+ *      - PNG（E3）：解压长度精确仍不够，**逐行扫描线的滤波类型字节**（0..4）须合法，
+ *        杜绝「IDAT=zlib([0xff,0])」这类长度恰好正确、真实解码器却报
+ *        `unrecognized data stream contents` 的构造；
+ *      - WebP（E2）：**VP8L 位流必须真实解码**（完整走通并恰好产出 W×H 像素，见 webp.mjs），
+ *        「只有 5 字节位流头、没有任何像素位流」的空壳一律拒绝；VP8（有损）与动画
+ *        （ANIM/ANMF）因**本模块不具备核验其真实内容的解码能力**，按「无法核验即拒绝」受控拒绝。
  *
  * 说明：本模块是**结构性段清除**，不做像素重编码。它移除元数据段但保留压缩数据，
  * 因此不改变图像内容，也不声称能达到「重编码级」的像素级净化。
+ *
+ * 覆盖范围（受控，fail-closed）：图片接受 JPEG / PNG / **可真实解码的 VP8L 无损 WebP**；
+ * 有损 WebP 与动画 WebP 受控拒绝（需引入标准解码库方可放开，见 README 的依赖说明）。
  */
 
 import { inflateSync } from 'node:zlib';
 import { MIB } from './constants.mjs';
+import { decodeVp8l } from './webp.mjs';
 
 /**
  * 单张图片**解码后原始字节**的硬上限（D3 资源耗尽防线，政策上界）。
@@ -65,6 +75,45 @@ function readU32le(bytes, o) {
 /** PNG chunk 类型必须是 4 个 ASCII 字母。 */
 function isChunkType(type) {
   return /^[A-Za-z]{4}$/.test(type);
+}
+
+/**
+ * 校验解压后扫描线的**逐行滤波类型字节**必须合法（0..4）。
+ *
+ * E3：解压长度精确匹配 ≠ 扫描线有效 —— `IDAT = zlib([0xff,0])` 的 1×1 图像长度恰好 2，
+ * 但首字节 0xff 不是合法滤波类型，真实解码器（libwebp/Pillow）会报
+ * `unrecognized data stream contents`。此处逐行核对：
+ *   - 非交错：height 行，每行 `1 + 行字节`；
+ *   - Adam7：七趟各自的 (pass_width × pass_height) 行。
+ * 任一滤波字节 > 4，或行数与预期不符（游标未恰好走完）→ 判否。
+ */
+function pngFiltersValid(raw, ihdr) {
+  const width = readU32be(ihdr, 0);
+  const height = readU32be(ihdr, 4);
+  const bitDepth = ihdr[8];
+  const colorType = ihdr[9];
+  const interlace = ihdr[12];
+  const channels = PNG_CHANNELS[colorType];
+  const bitsPerPixel = bitDepth * channels;
+  let p = 0;
+  const pass = (passWidth, passHeight) => {
+    if (passWidth < 1 || passHeight < 1) return true;
+    const rowBytes = Math.ceil((passWidth * bitsPerPixel) / 8);
+    for (let y = 0; y < passHeight; y += 1) {
+      if (p >= raw.length) return false;
+      if (raw[p] > 4) return false;
+      p += 1 + rowBytes;
+    }
+    return true;
+  };
+  if (interlace === 0) {
+    if (!pass(width, height)) return false;
+  } else {
+    for (const [x0, y0, dx, dy] of ADAM7_PASSES) {
+      if (!pass(Math.ceil((width - x0) / dx), Math.ceil((height - y0) / dy))) return false;
+    }
+  }
+  return p === raw.length;
 }
 
 /**
@@ -292,42 +341,26 @@ function stripPng(bytes) {
   if (idat.length < 1) return failed(bytes);
   const raw = inflateBounded(idat, expectedRaw);
   if (raw === null || raw.length !== expectedRaw) return failed(bytes);
+  // E3：解压长度精确 ≠ 扫描线有效。逐行核对滤波类型字节（0..4），损坏扫描行受控拒绝。
+  if (!pngFiltersValid(raw, ihdrData)) return failed(bytes);
   return { ok: true, data: concat(out), removed };
 }
 
 // ------------------------------------------------------------------ WebP
 
 /**
- * VP8L（无损）位流头（5 字节）：signature 0x2f + 14bit(w-1) + 14bit(h-1) + 1bit alpha + 3bit version。
- * 版本必须为 0；宽高至少为 1。返回 null 表示不是可用的 VP8L 位流（D2）。
+ * 清除 WebP 元数据（RIFF/WEBP + EXIF/XMP chunk）。
+ *
+ * E2：「有效头」**不等于**「有效媒体」——此前仅解析 5 字节 VP8L 位流头即判可用，
+ * 于是「只有头、没有任何像素位流」的空壳（如 44 字节文件）也能进入 ready，
+ * 独立解码器（libwebp/Pillow）对同一字节 load 失败。现改为**真实解码**：
+ *   - VP8L：必须由 webp.mjs 的 VP8L 解码器**完整走通并恰好产出 W×H 像素**才接受；
+ *   - VP8（有损）/ ANIM / ANMF（动画）：本模块**不具备核验其真实内容的能力**，
+ *     按「无法核验即拒绝」（fail-closed）一律受控拒绝 —— 绝不接受未经核验的媒体。
+ *
+ * 其余结构性约束保持不变：RIFF 声明长度须与文件等长（禁尾部走私）、chunk 须恰好铺满、
+ * VP8X 画布须与真实图像尺寸一致。
  */
-function vp8lDims(bytes, p, size) {
-  if (size < 5 || bytes[p] !== 0x2f) return null;
-  const bits = bytes[p + 1] | (bytes[p + 2] << 8) | (bytes[p + 3] << 16) | (bytes[p + 4] << 24);
-  if (((bits >>> 29) & 0x7) !== 0) return null;
-  return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
-}
-
-/** VP8（有损）关键帧头：frame tag(3) + start code `9d 01 2a` + 14bit(w) + 14bit(h)。 */
-function vp8Dims(bytes, p, size) {
-  if (size < 10) return null;
-  if ((bytes[p] & 0x01) !== 0) return null; // 必须为关键帧
-  if (!(bytes[p + 3] === 0x9d && bytes[p + 4] === 0x01 && bytes[p + 5] === 0x2a)) return null;
-  const width = (bytes[p + 6] | (bytes[p + 7] << 8)) & 0x3fff;
-  const height = (bytes[p + 8] | (bytes[p + 9] << 8)) & 0x3fff;
-  if (width < 1 || height < 1) return null;
-  return { width, height };
-}
-
-/** ANMF（动画帧）头（16 字节）：x(3) y(3) w-1(3) h-1(3) duration(3) flags(1)。 */
-function anmfDims(bytes, p, size) {
-  if (size < 16) return null;
-  const width = ((bytes[p + 6] | (bytes[p + 7] << 8) | (bytes[p + 8] << 16)) & 0xffffff) + 1;
-  const height = ((bytes[p + 9] | (bytes[p + 10] << 8) | (bytes[p + 11] << 16)) & 0xffffff) + 1;
-  if (width < 1 || height < 1) return null;
-  return { width, height };
-}
-
 function stripWebp(bytes) {
   if (!(asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP'))) return failed(bytes);
   const riffSize = readU32le(bytes, 4);
@@ -336,9 +369,10 @@ function stripWebp(bytes) {
   const body = [bytes.subarray(0, 12)];
   const removed = [];
   let canvas = null;
-  const simpleFrames = [];
-  const animFrames = [];
+  let simpleFrame = null; // 真实解码通过的 VP8L 尺寸
+  let sawLossy = false;
   let sawAnim = false;
+  let sawAnimFrame = false;
   let i = 12;
   while (i + 8 <= bytes.length) {
     const fourcc = String.fromCharCode(bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
@@ -347,16 +381,14 @@ function stripWebp(bytes) {
     const end = i + total;
     if (end > bytes.length) return failed(bytes); // 截断
     const p = i + 8;
-    // C2 + D2：有块名 ≠ 有可用位流。VP8X 只是扩展头（不含图像数据）；
-    // VP8/VP8L 必须能解析出**真实位流头**与合法尺寸；ANMF 必须是合法动画帧。
-    if (fourcc === 'VP8 ') {
-      const d = vp8Dims(bytes, p, size);
-      if (!d) return failed(bytes);
-      simpleFrames.push(d);
-    } else if (fourcc === 'VP8L') {
-      const d = vp8lDims(bytes, p, size);
-      if (!d) return failed(bytes);
-      simpleFrames.push(d);
+    if (fourcc === 'VP8L') {
+      // E2：必须**真实解码** —— 完整走通且恰好产出 W×H 像素才接受。
+      const decoded = decodeVp8l(bytes.subarray(p, p + size));
+      if (!decoded.ok) return failed(bytes);
+      if (simpleFrame) return failed(bytes); // 多个简单图像块 → 结构可疑
+      simpleFrame = { width: decoded.width, height: decoded.height };
+    } else if (fourcc === 'VP8 ') {
+      sawLossy = true; // 有损：无法核验真实像素内容，受控拒绝
     } else if (fourcc === 'VP8X') {
       if (size < 10) return failed(bytes);
       canvas = {
@@ -367,22 +399,19 @@ function stripWebp(bytes) {
     } else if (fourcc === 'ANIM') {
       sawAnim = true;
     } else if (fourcc === 'ANMF') {
-      const d = anmfDims(bytes, p, size);
-      if (!d) return failed(bytes);
-      animFrames.push(d);
+      sawAnimFrame = true; // 动画帧：无法核验内容，受控拒绝
     }
     if (fourcc === 'EXIF' || fourcc === 'XMP ') removed.push(`WEBP:${fourcc.trim()}`);
     else body.push(bytes.subarray(i, end));
     i = end;
   }
   if (i !== bytes.length) return failed(bytes); // chunk 未恰好铺满 → 尾部残留
-  // 必须存在**真实图像数据**：VP8/VP8L 位流或 ANMF 动画帧（仅 VP8X 扩展头不算）。
-  if (simpleFrames.length === 0 && animFrames.length === 0) return failed(bytes);
-  if (animFrames.length > 0 && !sawAnim) return failed(bytes); // 动画帧必须伴随 ANIM 头
-  if (canvas) {
-    // 简单图像尺寸必须与画布一致；动画帧不得超过画布。
-    for (const d of simpleFrames) if (d.width !== canvas.width || d.height !== canvas.height) return failed(bytes);
-    for (const d of animFrames) if (d.width > canvas.width || d.height > canvas.height) return failed(bytes);
+  // fail-closed：有损 / 动画一律拒绝（无法核验其真实内容）。
+  if (sawLossy || sawAnim || sawAnimFrame) return failed(bytes);
+  // 必须存在**真实可解码的图像数据**（仅 VP8X 扩展头不算）。
+  if (!simpleFrame) return failed(bytes);
+  if (canvas && (canvas.width !== simpleFrame.width || canvas.height !== simpleFrame.height)) {
+    return failed(bytes);
   }
   const merged = concat(body);
   const newRiffSize = merged.length - 8;
