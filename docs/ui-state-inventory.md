@@ -59,7 +59,9 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 **为什么字号与触控区用 px 而非 rpx**：rpx 为屏宽 750 等分，88rpx 仅在 375px 视口等于 44px，320px 视口只有 37.55px；36rpx 正文在 320px 视口只有 15.36px，均不满足门槛。改用 px 后数值为绝对值，窄屏不再缩水。
 
-**保留 rpx 的两处**：`.state__icon`（72rpx）与 `.mode__icon`（44rpx）为图标，图标随屏幕缩放是合理行为，且 320px 视口下仍有 30.7／18.8px，不违反门槛。
+**保留 rpx 的两处**：`.state__icon`（72rpx）与 `.mode__icon`（44rpx）为图标。18px 正文门槛只约束文字，图标随屏幕缩放是合理行为；且 320px 视口下分别为 30.7／18.8px，不会小到不可辨识。**已实测**：显示大小最大档真机`windowWidth` 为 320px（见 [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.3.2），该档位属实际覆盖而非仅静态核算。
+
+**字号来源**：只跟随微信「设置 → 通用 → 字体大小」。真机实测该设置可读（`fontSizeSetting` 标准 16px／特大 26px），换算为系数后注入 `--font-scale`；需求未要求应用内开关，故本任务不设档位、不写本地存储（同上 7.7）。
 
 **核算方式**：`tools/verify-layout.mjs` 对 320／360／375／414／768 五档视口做静态核算并接入 CI；`.page` 底部预留原为 `100rpx`，在 320／360px 视口仅 42.7／48px，小于 tabBar 的 50px，由该核算发现并改为 54px。
 
@@ -93,6 +95,22 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 - 不申请或上报任何权限（相机、麦克风、位置均未声明）
 - 不声称真机、真声音或真实识别已通过
 - 不改动 `project.config.json` 的 AppID（本 PR 仅改 `libVersion`）
+
+> **本 PR 实际未改`project.config.json`**：曾误将`libVersion` 改为本机工具显示的 3.17.3（灰度中），导致 CI 冻结断言失败，已回退至与 `origin/main` 逐字一致。冻结契约值 `3.5.5` 不存在于工具可选列表，已由监工在 PR #46 中对齐为 `3.17.3`。
+
+---
+
+## 6 交付物索引
+
+| 任务书证据要求 | 交付物 |
+| --- | --- |
+| 五 Tab 路由和状态清单 | 本文件（第 1、2 节） |
+| 视觉和字体走查 | [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) |
+| 替身开关隔离 | 本文件第 4 节 + `ui-contract-binding.md` 第 4 节 |
+| **接口契约绑定记录** | **[ui-contract-binding.md](ui-contract-binding.md)**（含界面↔端点映射与 9 条 AC 归属切分） |
+| 微信工具编译版本与截图 | [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.1、7.2、7.10 |
+
+**验收标准（AC）归属**：任务书引用 AC01／06／07／08／14／15／17／18／21 共 9 条，其中 AC06 属 GY-I13、AC17 属 GY-I16、AC21 属 GY-I05，AC18 跨 GY-I13 与GY-I17。逐条切分见 [ui-contract-binding.md](ui-contract-binding.md) 第 3 节，本任务不标整项完成。
 - 不接入第三方插件；`app.json` 仅新增 `lazyCodeLoading: requiredComponents` 以通过工具代码质量扫描
 
 ---
