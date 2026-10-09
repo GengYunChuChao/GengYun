@@ -71,6 +71,23 @@ test('小程序侧列表与详情使用同一 source_version', () => {
   }
 });
 
+// —— F5 回归：小程序 source_version 必须与域库**逐条一致**（此前 20/20 不一致） ——
+test('F5：小程序侧 source_version 与域库逐条一致（列表 = 详情 = 域库）', () => {
+  const doc = loadHerbicideRecords();
+  const domMap = new Map(doc.items.map((i) => [i.record_id, i.source_version]));
+  const list = miniReference.query({ limit: 50 });
+  assert.equal(list.items.length, 20);
+  for (const li of list.items) {
+    // 与域库一致
+    assert.equal(li.source_version, domMap.get(li.record_id), `${li.record_id} 列表 source_version 应与域库一致`);
+    // 与详情一致
+    const d = miniReference.detail(li.record_id);
+    assert.equal(d.source_version, li.source_version, `${li.record_id} 详情 source_version 应与列表一致`);
+    // 派生须含附件哈希前 12 位（与域库算法同源的特征）
+    assert.match(li.source_version, /#[0-9a-f]{12}$/, `${li.record_id} 应含附件哈希前 12 位`);
+  }
+});
+
 test('小程序侧种子检索按名称/别称精确匹配（不合并记录）', () => {
   assert.equal(miniReference.seedSearch('百草枯').length, 1);
   assert.equal(miniReference.seedSearch('克芜踪').length, 1);
@@ -87,4 +104,49 @@ test('小程序侧省份种子含中国台湾/中国香港/中国澳门（省级
 test('小程序侧记录数与域库一致（同源资料）', () => {
   const doc = loadHerbicideRecords();
   assert.equal(miniReference.records.length, doc.items.length);
+});
+
+// —— F4 回归：非法输入不得静默降级；match_state 口径须与域库一致 ——
+test('F4：小程序侧非法输入抛 INVALID_REQUEST（不得静默退回全量匹配）', () => {
+  const badInputs = [
+    { limit: 0 },
+    { limit: 999 },
+    { limit: -1 },
+    { limit: 'abc' },
+    { limit: 1.5 },
+    { crop_id: 'crop_nope' },
+    { species_id: 'sp_nope' },
+    { region_code: '999999' },
+    { q: 'x'.repeat(200) },
+  ];
+  for (const input of badInputs) {
+    assert.throws(
+      () => miniReference.query(input),
+      (err) => err && err.code === 'INVALID_REQUEST',
+      `非法输入 ${JSON.stringify(input)} 应抛 INVALID_REQUEST`,
+    );
+  }
+});
+
+test('F4：小程序侧 match_state 与域库逐项一致（合法 + 非法两类）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const cases = [
+    { label: '空条件', input: {} },
+    { label: '不存在关键词', input: { q: '绝不存在zzz' } },
+    { label: 'region 330100（条件不足）', input: { region_code: '330100' } },
+    { label: '作物水稻', input: { q: '水稻' } },
+    { label: '登记号不匹配', input: { registration_number: 'PD00000000' } },
+  ];
+  for (const { label, input } of cases) {
+    const dom = svc.listHerbicides({ ...input, q: input.q ?? undefined }, 'f4').body.query_state;
+    const mini = miniReference.query({ keyword: input.q, region_code: input.region_code, registration_number: input.registration_number });
+    assert.equal(mini.match_state, dom.match_state, `${label}：match_state 须与域库一致`);
+    assert.equal(mini.total, dom.total, `${label}：total 须与域库一致`);
+  }
+  // 非法类：两侧都必须拒绝。
+  for (const input of [{ q: 'x'.repeat(200) }]) {
+    assert.throws(() => svc.listHerbicides(input, 'f4'), (e) => e.code === 'INVALID_REQUEST');
+    assert.throws(() => miniReference.query({ keyword: input.q }), (e) => e.code === 'INVALID_REQUEST');
+  }
 });

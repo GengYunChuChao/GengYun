@@ -86,8 +86,10 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
   function listKnowledge(input = {}, requestId) {
     const query = normalizeQuery(input, catalog);
     const result = runQuery(herbicideDoc.items, query, catalog);
-    const items = result.items.map((li) => knowledgeListItem(li, result));
-    const etag = etagFor(result.items);
+    // 契约 KnowledgePage.items 为**纯 Knowledge 对象**（additionalProperties:false）。
+    // 不得塞入额外字段，也不得出现 undefined/null。
+    const items = result.matched_items.map((item) => item.knowledge);
+    const etag = etagFor(result.matched_items);
     return {
       body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId), query_state: queryStateOf(result) },
       headers: cacheHeaders(etag),
@@ -107,9 +109,12 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
   function listHerbicides(input = {}, requestId) {
     const query = normalizeQuery(input, catalog);
     const result = runQuery(herbicideDoc.items, query, catalog);
-    const etag = etagFor(result.items);
+    // 契约 HerbicidePage.items 为**纯 Herbicide 对象**（additionalProperties:false）：
+    // 必须含 id/revision/formulation/source/risk_text/reference_state，且不得有额外字段。
+    const items = result.matched_items.map((item) => item.contract);
+    const etag = etagFor(result.matched_items);
     return {
-      body: { data: { items: result.items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId), query_state: queryStateOf(result) },
+      body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId), query_state: queryStateOf(result) },
       headers: cacheHeaders(etag),
     };
   }
@@ -274,12 +279,6 @@ function simpleHash(text) {
 function findById(items, kind, id) {
   if (kind === 'knowledge') return items.find((x) => x.knowledge.id === id) ?? null;
   return items.find((x) => x.contract.id === id) ?? null;
-}
-
-/** 列表项 → 契约 Knowledge（保持与详情同源）。 */
-function knowledgeListItem(item, result) {
-  void result;
-  return item.knowledge;
 }
 
 /** 查询状态（**非错误**；用于 UI 展示无结果原因与重筛入口）。 */

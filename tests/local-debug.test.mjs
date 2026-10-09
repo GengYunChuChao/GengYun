@@ -78,6 +78,33 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
+  // —— F2 回归：打包允许清单须随 app.json（10 页）同步，且参考域依赖须一并复制 ——
+  const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
+  assert.equal(appJson.pages.length, 10);
+  for (const page of appJson.pages) {
+    for (const suffix of ['.js', '.json', '.wxml']) {
+      assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);
+    }
+    const sourceWxss = join(root, 'miniprogram', page + '.wxss');
+    if (existsSync(sourceWxss)) {
+      assert.equal(existsSync(join(release, 'miniprogram', page + '.wxss')), true, `打包缺失页面样式 ${page}.wxss`);
+    }
+  }
+  for (const dep of [
+    'utils/reference.js',
+    'data/crops.js',
+    'data/species.js',
+    'data/regions.js',
+    'data/sources.js',
+    'data/records-2026.js',
+    'data/seed-herbicides.js',
+    'data/seed-weeds.js',
+    'data/seed-weed-master.js',
+    'data/seed-province-index.js',
+    'data/seed-control-timing.js',
+  ]) {
+    assert.equal(existsSync(join(release, 'miniprogram', dep)), true, `打包缺失参考域依赖 ${dep}`);
+  }
   writeFileSync(join(project, 'miniprogram/config/runtime.js'), "module.exports = {mode:'local',apiBaseUrl:'http://127.0.0.1:4318'}");
   const unsafe = run(['release']);
   assert.notEqual(unsafe.status, 0);

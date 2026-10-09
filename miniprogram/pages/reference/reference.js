@@ -39,19 +39,31 @@ Page({
   },
 
   onLoad: function () {
-    this.setData({
-      crops: reference.crops,
-      species: reference.species,
-      regions: reference.regions,
-      modeNote: reference.modeNote(),
-      catalogVersion: reference.catalogVersionText()
+    // 门禁前置：会话须先经服务端核实，**核实通过前不加载任何资料**（避免越权预览窗口）。
+    const self = this
+    auth.requireLogin(function (loggedIn) {
+      if (!loggedIn) {
+        // 未通过：清空全部结果，确保不残留任何记录。
+        self.setData({ items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '' })
+        return
+      }
+      self.setData({
+        crops: reference.crops,
+        species: reference.species,
+        regions: reference.regions,
+        modeNote: reference.modeNote(),
+        catalogVersion: reference.catalogVersionText()
+      })
+      self.runQuery()
     })
-    this.runQuery()
   },
 
   onShow: function () {
-    // 非首页能力：未登录（或会话未获服务端核实）跳转登录页。
-    if (!auth.isLoggedIn()) auth.requireLogin()
+    // 重入兜底：离开期间会话可能已失效；未通过则先清空再跳转，不残留旧数据。
+    if (!auth.isLoggedIn()) {
+      this.setData({ items: [], total: 0, nextCursor: null, sourceVersionNote: '' })
+      auth.requireLogin()
+    }
   },
 
   onKeyword: function (event) {

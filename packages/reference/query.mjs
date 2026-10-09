@@ -213,7 +213,10 @@ export function runQuery(items, query, catalog) {
 
   return Object.freeze({
     match_state: matchState,
+    // 扁平投影（保持既有消费者与测试口径不变）。
     items: page.items.map(toListItem),
+    // 原始内部条目（供 service 层投影为**纯契约对象**；不对外泄漏）。
+    matched_items: Object.freeze(page.items.slice()),
     next_cursor: page.next_cursor,
     total: matched.length,
     reasons,

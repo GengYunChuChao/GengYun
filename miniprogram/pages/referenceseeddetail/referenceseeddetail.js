@@ -17,22 +17,34 @@ Page({
 
   onLoad: function (options) {
     const seedId = options && options.id ? decodeURIComponent(options.id) : ''
-    const item = reference.seedHerbicideDetail(seedId)
-    if (!item) {
-      this.setData({ found: false })
-      return
-    }
-    this.setData({
-      found: true,
-      item: item,
-      label: reference.seed.label,
-      labels: reference.seedLabels(),
-      notCollected: reference.seed.notCollected
+    // 门禁前置：会话经服务端核实通过后才加载种子详情（未通过不留任何数据）。
+    const self = this
+    auth.requireLogin(function (loggedIn) {
+      if (!loggedIn) {
+        self.setData({ found: false, item: null, label: '', labels: {}, notCollected: '' })
+        return
+      }
+      const item = reference.seedHerbicideDetail(seedId)
+      if (!item) {
+        self.setData({ found: false, item: null })
+        return
+      }
+      self.setData({
+        found: true,
+        item: item,
+        label: reference.seed.label,
+        labels: reference.seedLabels(),
+        notCollected: reference.seed.notCollected
+      })
     })
   },
 
   onShow: function () {
-    if (!auth.isLoggedIn()) auth.requireLogin()
+    // 重入兜底：会话失效则先清详情再跳转。
+    if (!auth.isLoggedIn()) {
+      this.setData({ found: false, item: null })
+      auth.requireLogin()
+    }
   },
 
   back: function () {

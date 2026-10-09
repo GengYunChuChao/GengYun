@@ -31,21 +31,33 @@ Page({
   },
 
   onLoad: function () {
-    this.setData({
-      counts: reference.seed.counts,
-      label: reference.seed.label,
-      dataOrigin: reference.seed.dataOrigin,
-      authority: reference.seed.authority,
-      disclaimer: reference.seed.disclaimer,
-      regionConvention: reference.seed.regionConvention,
-      notCollected: reference.seed.notCollected,
-      labels: reference.seedLabels()
+    // 门禁前置：会话经服务端核实通过后才装载种子资料（未通过不留任何数据）。
+    const self = this
+    auth.requireLogin(function (loggedIn) {
+      if (!loggedIn) {
+        self.setData({ list: [], total: 0 })
+        return
+      }
+      self.setData({
+        counts: reference.seed.counts,
+        label: reference.seed.label,
+        dataOrigin: reference.seed.dataOrigin,
+        authority: reference.seed.authority,
+        disclaimer: reference.seed.disclaimer,
+        regionConvention: reference.seed.regionConvention,
+        notCollected: reference.seed.notCollected,
+        labels: reference.seedLabels()
+      })
+      self.refresh()
     })
-    this.refresh()
   },
 
   onShow: function () {
-    if (!auth.isLoggedIn()) auth.requireLogin()
+    // 重入兜底：会话失效则先清列表再跳转。
+    if (!auth.isLoggedIn()) {
+      this.setData({ list: [], total: 0 })
+      auth.requireLogin()
+    }
   },
 
   switchTab: function (event) {

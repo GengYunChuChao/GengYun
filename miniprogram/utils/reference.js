@@ -41,10 +41,21 @@ const sourceById = {}
 for (const s of sources.sources) sourceById[s.id] = s
 
 // 记录规范化（与域库口径一致的可见性/有效期判定）。
+// F5：source_version 派生算法与域库 packages/reference/records.mjs deriveSourceVersion **逐字一致**：
+//     `<source_id>@<version|issue|retrieved_at|unknown>#<attachment_sha256|content_hash 前 12 位>`
+//     （哈希缺失时不追加 '#' 段）。列表 = 详情 = 域库，三处同源。
+function deriveSourceVersion(source) {
+  const s = source || {}
+  const versionPart = s.version !== undefined && s.version !== null ? s.version : (s.issue !== undefined && s.issue !== null ? s.issue : (s.retrieved_at !== undefined && s.retrieved_at !== null ? s.retrieved_at : 'unknown'))
+  const hashSource = s.attachment_sha256 || s.content_hash || ''
+  const hash12 = typeof hashSource === 'string' ? hashSource.slice(0, 12) : ''
+  return (s.source_id || 'unknown') + '@' + versionPart + (hash12 ? '#' + hash12 : '')
+}
+
 const normalized = records.records.map(function (r) {
   const simulated = String(r.registration_number || '').indexOf('SIM-') === 0 || (r.source && r.source.source_kind === 'simulation')
   const validity = (r.source && (r.source.source_validity || r.source.validity)) || 'unknown'
-  const sourceVersion = (r.source && r.source.source_id ? r.source.source_id : 'unknown') + '@' + ((r.source && (r.source.version || r.source.issue || r.source.retrieved_at)) || 'unknown')
+  const sourceVersion = deriveSourceVersion(r.source)
   return {
     record_id: r.record_id,
     registration_number: r.registration_number,
@@ -122,6 +133,9 @@ function labels(item) {
 //       仅请求非法（游标损坏）才抛错（与域库一致）。
 function query(params) {
   params = params || {}
+  // F4：与域库 packages/reference 同口径的**严格输入校验**——非法一律抛 INVALID_REQUEST，
+  // 不得静默降级为「全量匹配」或改写 match_state。
+  validateQueryInput(params)
   const cropId = resolveCropId(params.crop_id || params.crop)
   const speciesId = resolveSpeciesId(params.species_id || params.species)
   const regionCode = typeof params.region_code === 'string' ? params.region_code : ''
@@ -189,9 +203,45 @@ function query(params) {
 }
 
 function clampLimit(value) {
+  if (value === undefined || value === null || value === '') return 20
   const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return 20
-  return Math.min(Math.floor(n), 50)
+  if (!Number.isFinite(n) || Math.floor(n) !== n || n < 1 || n > 50) throw invalidRequest('limit 必须为 1..50 的整数')
+  return n
+}
+
+// F4：请求参数校验（与域库 normalizeQuery 口径一致）。
+// 非法输入必须显式失败（INVALID_REQUEST），不得静默丢弃条件或退回全量匹配。
+const MAX_QUERY_LENGTH = 80
+const REGION_CODE_PATTERN = /^33[0-9]{4}$/
+
+function invalidRequest(message) {
+  const error = new Error(message)
+  error.code = 'INVALID_REQUEST'
+  return error
+}
+
+function validateQueryInput(params) {
+  const rawQ = params.keyword !== undefined ? params.keyword : params.q
+  if (typeof rawQ === 'string' && rawQ.trim().length > MAX_QUERY_LENGTH) {
+    throw invalidRequest('关键词长度不得超过 ' + MAX_QUERY_LENGTH)
+  }
+  // 作物：提供了但不在目录中 → 非法（域库同样抛 INVALID_REQUEST）。
+  const cropTerm = params.crop_id !== undefined ? params.crop_id : params.crop
+  if (cropTerm !== undefined && cropTerm !== null && cropTerm !== '' && !resolveCropId(cropTerm)) {
+    throw invalidRequest('作物未在目录中登记')
+  }
+  // 杂草：同上。
+  const speciesTerm = params.species_id !== undefined ? params.species_id : params.species
+  if (speciesTerm !== undefined && speciesTerm !== null && speciesTerm !== '' && !resolveSpeciesId(speciesTerm)) {
+    throw invalidRequest('杂草未在目录中登记')
+  }
+  // 地区：非 33 开头 6 位码即非法（不静默忽略）。
+  const regionTerm = params.region_code !== undefined ? params.region_code : params.region
+  if (regionTerm !== undefined && regionTerm !== null && regionTerm !== '') {
+    if (typeof regionTerm !== 'string' || !REGION_CODE_PATTERN.test(regionTerm)) {
+      throw invalidRequest('地区须为浙江 33 开头的 6 位地区码')
+    }
+  }
 }
 
 // 游标（与域库同形：base64url('offset:<n>')）。损坏游标抛错，由页面兜底提示。

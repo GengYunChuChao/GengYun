@@ -115,3 +115,59 @@ test('Knowledge 约束：body ≤20000、dose_cards ≤10', () => {
   assert.equal(schemas.Knowledge.properties.body.maxLength, 20000);
   assert.equal(schemas.Knowledge.properties.dose_cards.maxItems, 10);
 });
+
+// —— F1 回归：列表项必须是**纯契约对象**（不得 undefined/null，不得含额外字段） ——
+test('F1：/knowledge 列表项为纯 Knowledge 对象（无 undefined/null、字段完备、无额外字段）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const { body } = svc.listKnowledge({}, 'f1-knowledge');
+  assert.equal(body.data.items.length, 20);
+  // 不得出现 undefined/null（JSON 序列化会变 null）
+  assert.equal(body.data.items.filter((x) => x === undefined || x === null).length, 0);
+  const allowed = new Set(Object.keys(schemas.Knowledge.properties));
+  for (const item of body.data.items) {
+    assert.ok(item && typeof item === 'object', '列表项不得为空');
+    for (const field of schemas.Knowledge.required) {
+      assert.notEqual(item[field], undefined, `Knowledge 缺必填字段 ${field}`);
+    }
+    for (const key of Object.keys(item)) {
+      assert.ok(allowed.has(key), `Knowledge 列表项含 schema 不允许字段 ${key}`);
+    }
+  }
+  assert.ok(!JSON.stringify(body).includes('undefined'), '响应体不得泄漏 undefined');
+});
+
+test('F1：/herbicides 列表项为纯 Herbicide 对象（含 formulation/risk_text，无额外字段）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const { body } = svc.listHerbicides({}, 'f1-herbicide');
+  assert.equal(body.data.items.length, 20);
+  const allowed = new Set(Object.keys(schemas.Herbicide.properties));
+  for (const item of body.data.items) {
+    assert.ok(item && typeof item === 'object', '列表项不得为空');
+    for (const field of schemas.Herbicide.required) {
+      assert.notEqual(item[field], undefined, `Herbicide 缺必填字段 ${field}`);
+    }
+    assert.ok(item.formulation && item.formulation.registration_number, 'formulation 须含登记号');
+    assert.equal(typeof item.risk_text, 'string');
+    assert.ok(item.risk_text.length >= 1);
+    for (const key of Object.keys(item)) {
+      assert.ok(allowed.has(key), `Herbicide 列表项含 schema 不允许字段 ${key}`);
+    }
+  }
+  assert.ok(!JSON.stringify(body).includes('undefined'), '响应体不得泄漏 undefined');
+});
+
+test('F1：列表项与详情为同一契约对象（列表 = 详情，同源）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const list = svc.listHerbicides({}, 'f1-same').body.data.items;
+  const first = list[0];
+  const detail = svc.getHerbicide(first.id, {}, 'f1-same-detail').body.data;
+  assert.deepEqual(detail, first, '列表项须与详情完全一致（同一契约对象）');
+  // 列表与详情使用同一 source_version（契约 SourceRef.version）
+  assert.equal(first.source.version, detail.source.version);
+  const kList = svc.listKnowledge({}, 'f1-k').body.data.items;
+  const kDetail = svc.getKnowledge(kList[0].id, {}, 'f1-k-detail').body.data;
+  assert.deepEqual(kDetail, kList[0], 'Knowledge 列表项须与详情一致');
+});

@@ -26,12 +26,24 @@ Page({
 
   onLoad: function (options) {
     const recordId = options && options.id ? decodeURIComponent(options.id) : ''
-    this.setData({ recordId: recordId, modeNote: reference.modeNote() })
-    this.load(recordId)
+    // 门禁前置：会话经服务端核实通过后才加载详情（未通过不残留任何记录）。
+    const self = this
+    auth.requireLogin(function (loggedIn) {
+      if (!loggedIn) {
+        self.setData({ recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true })
+        return
+      }
+      self.setData({ recordId: recordId, modeNote: reference.modeNote() })
+      self.load(recordId)
+    })
   },
 
   onShow: function () {
-    if (!auth.isLoggedIn()) auth.requireLogin()
+    // 重入兜底：会话失效则先清空详情再跳转。
+    if (!auth.isLoggedIn()) {
+      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })
+      auth.requireLogin()
+    }
   },
 
   load: function (recordId) {
