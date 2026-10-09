@@ -345,9 +345,13 @@ function decodeImageStream(br, xsize, ysize, isLevel0) {
   let transformX = xsize;
   let transformY = ysize;
   let transforms = 0;
+  let transformTypes = 0;
   if (isLevel0) {
     while (br.bits(1)) {
       const type = br.bits(2);
+      // WebP lossless specification §4: each transform type occurs at most once.
+      if (transformTypes & (1 << type)) throw new DecodeError('duplicate_transform');
+      transformTypes |= 1 << type;
       if (type === 0 || type === 1) {
         // PREDICTOR / CROSS_COLOR：3 bit 子采样位 + 一张子图流。
         const bits = br.bits(3) + 2;

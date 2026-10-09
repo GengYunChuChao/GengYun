@@ -268,13 +268,17 @@ class BitWriter {
  * 生成的字节是**完整且可被真实解码器（libwebp/Pillow）读出 W×H 像素**的合法 VP8L 流；
  * 由于像素位流真实存在，截断/损坏会破坏可解码性（可作 E2 反例）。
  */
-function vp8lCheckerboard(width, height, { g0 = 0x00, g1 = 0xff, r = 0x80, b = 0x40, a = 255 } = {}) {
+function vp8lCheckerboard(width, height, { g0 = 0x00, g1 = 0xff, r = 0x80, b = 0x40, a = 255, subtractGreenTransforms = 0 } = {}) {
   const bw = new BitWriter();
   bw.put(0x2f, 8);
   bw.put(width - 1, 14);
   bw.put(height - 1, 14);
   bw.put(a < 255 ? 1 : 0, 1); // alpha_is_used
   bw.put(0, 3); // version = 0
+  for (let i = 0; i < subtractGreenTransforms; i += 1) {
+    bw.put(1, 1);
+    bw.put(2, 2);
+  }
   bw.put(0, 1); // 无变换
   bw.put(0, 1); // 无颜色缓存
   bw.put(0, 1); // 无 meta-Huffman（单码组）
@@ -364,8 +368,8 @@ export function webpVp8xWithLossless() {
 }
 
 /** WebP：无 VP8X，直接 RIFF/WEBP + VP8L(W×H 真实位流) —— 常规无损正例。 */
-export function webpPlainLossless({ width = 8, height = 8 } = {}) {
-  return webpFile(webpChunk('VP8L', vp8lCheckerboard(width, height)));
+export function webpPlainLossless({ width = 8, height = 8, subtractGreenTransforms = 0 } = {}) {
+  return webpFile(webpChunk('VP8L', vp8lCheckerboard(width, height, { subtractGreenTransforms })));
 }
 
 /**
@@ -579,31 +583,47 @@ export function m4aBytes({
   withMdhd = true,
   withStsz = true,
   withStco = true,
+  withStsc = true,
   withStts = true,
   withMdat = true,
   stsdWithEntry = true,
   stsdEntryCount = 1,
+  sampleFormats = ['mp4a'],
   sampleCount: sampleCountOpt = null,
   sampleSize = 1,
   mdatBytes = null,
   stcoOffset = null,
+  chunkOffsets = null,
+  useCo64 = false,
+  sampleSizes = null,
+  stscEntries = null,
+  stscDeclaredCount = null,
   sttsEntries = null,
   sttsDeclaredCount = null,
 } = {}) {
   const samples = sampleCountOpt ?? Math.max(1, Math.round((durationMs / 1000) * sampleRate));
-  const totalSampleBytes = sampleSize * samples;
+  const totalSampleBytes = sampleSizes ? sampleSizes.reduce((a, b) => a + b, 0) : sampleSize * samples;
   const mdatPayloadLen = mdatBytes ?? totalSampleBytes;
 
   const ftyp = box('ftyp', ascii('M4A '), u32be(0));
   const mdat = box('mdat', new Uint8Array(mdatPayloadLen));
   const mvhd = box('mvhd', u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
 
-  const entry = box('mp4a', u8(new Array(20).fill(0)));
-  const stsd = box('stsd', u8([0, 0, 0, 0]), u32be(stsdEntryCount), ...(stsdWithEntry ? [entry] : []));
+  // Common audio sample-entry header only; mdat bytes are synthetic, not encoded AAC.
+  const descriptions = sampleFormats.map((format) => box(format, u8([0, 0, 0, 0, 0, 0]), u16be(1), u32be(0), u32be(0),
+    u16be(1), u16be(16), u32be(0), u32be(sampleRate * 65536)));
+  const stsd = box('stsd', u8([0, 0, 0, 0]), u32be(stsdEntryCount), ...(stsdWithEntry ? descriptions : []));
   // sampleSize>0 → stsz 为「常量样本大小」形式，结构紧凑且可核验。
-  const stsz = box('stsz', u8([0, 0, 0, 0]), u32be(sampleSize), u32be(samples));
+  const stsz = box('stsz', u8([0, 0, 0, 0]), u32be(sampleSizes ? 0 : sampleSize), u32be(samples),
+    ...(sampleSizes ? sampleSizes.map(u32be) : []));
   // 首个 chunk 指向 mdat 负载起始（绝对偏移）。
-  const stco = box('stco', u8([0, 0, 0, 0]), u32be(1), u32be(stcoOffset ?? M4A_MDAT_PAYLOAD_OFFSET));
+  const offsets = chunkOffsets ?? [stcoOffset ?? M4A_MDAT_PAYLOAD_OFFSET];
+  const stco = box(useCo64 ? 'co64' : 'stco', u8([0, 0, 0, 0]), u32be(offsets.length),
+    ...offsets.map((offset) => useCo64
+      ? concat(u32be(Math.floor(offset / 4294967296)), u32be(offset % 4294967296)) : u32be(offset)));
+  const mapping = stscEntries ?? [[1, samples, 1]];
+  const stsc = box('stsc', u8([0, 0, 0, 0]), u32be(stscDeclaredCount ?? mapping.length),
+    ...mapping.map(([first, count, description]) => concat(u32be(first), u32be(count), u32be(description))));
 
   const entries = sttsEntries ?? [[samples, 1]];
   const declared = sttsDeclaredCount ?? entries.length;
@@ -614,6 +634,7 @@ export function m4aBytes({
   const stblChildren = [];
   if (withStsz) stblChildren.push(stsz);
   if (withStco) stblChildren.push(stco);
+  if (withStsc) stblChildren.push(stsc);
   if (withStts) stblChildren.push(stts);
   stblChildren.push(stsd);
   const stbl = box('stbl', ...stblChildren);

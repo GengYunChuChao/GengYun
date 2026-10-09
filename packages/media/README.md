@@ -25,7 +25,7 @@
 | `detect.mjs` | **魔数探测**：jpeg/png/webp/mpeg/wav/aac（不信扩展名/声明 MIME） |
 | `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」；PNG 须可解压且**逐行滤波类型字节合法**（E3）；WebP 须**真实解码 VP8L**（E2） |
 | `webp.mjs` | **VP8L 无损位流真实解码器**（纯 ESM、零依赖）：位流头 → 变换/子图流 → 颜色缓存 → 前缀码（meta-Huffman）→ LZ77 回引 → W×H 像素；任何非法/越界构造 fail-closed |
-| `audio.mjs` | **音频真实时长解析**（WAV/ADTS/MPEG/M4A 各自解码）；M4A 须样本表自洽且与 `mdat` 内容一致（E1）；无法解析即受控拒绝 |
+| `audio.mjs` | 音频容器/帧时长解析（WAV/ADTS/MPEG/M4A）；M4A 逐块核对 `stsc`、`stsz`、`stco`/`co64` 与音频描述及 `mdat` 范围；不解码 AAC 等音频编码负载 |
 | `validate.mjs` | 声明与真实字节校验（用途/类型/字节/**真实时长**/hash/伪扩展名/每帖 3 张） |
 | `tokens.mjs` | HMAC 短效句柄签名（token 不入 URL；服务端只存 hash） |
 | `store.mjs` | 私有对象存储（内存参考实现，可插拔真实对象存储；对外只出**不透明 object_ref**） |
@@ -71,10 +71,11 @@ initiated → uploaded → processing → ready
 本模块只消费该结构；一致性由 `tests/media/schema.test.mjs` 断言（枚举、列、CHECK、
 300 秒 TTL）。生产部署须以对象存储适配器 + 单事务/行版本 CAS 实现同一 `commit` 契约（同 GY-I27）。
 
-## services/api 挂载说明（GY-I04 未合并，属**明确标注的替身边界**）
+## services/api 挂载示例（媒体 HTTP 路由尚未接线）
 
 `service.mjs` 是**纯模块**，不直接改 `services/api/src/app.ts`（该文件归 GY-I02）。
-会话层（GY-I04/#49 合并后）注入身份并挂载路由：
+认证与授权组件已通过 PR #59、#61、#63 合并；媒体模块仍须由服务端会话层注入身份并挂载路由。
+以下仅为接线示例，不代表已运行的 HTTP 接口：
 
 ```js
 import { createMediaService } from '../packages/media/service.mjs';
@@ -94,8 +95,8 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 
 ## 依赖与缺项
 
-- 前置：GY-I02(#2) ✓、GY-I27(#29) ✓ 已合入（复用 `packages/privacy/redact.mjs` 做日志脱敏）。
-- **GY-I04(#4) 登录未合并**：归属/鉴权的“真实登录态”证据待 #49 合并后补；本 PR 以替身 + 单元测试覆盖。
+- 前置工程与隐私组件已合入（复用 `packages/privacy/redact.mjs` 做日志脱敏），GY-I04/#4、GY-I27/#29 的完整 issue 验收仍未完成。
+- PR #59、#61、#63 已提供认证与授权组件；本媒体 PR 仍使用合成身份和内存替身，未提供真实登录态下的媒体 HTTP 验收证据。
 - **GY-I25 供应商适配**：音频编码/采样率与真实 ASR 供应商约束的“真实核实”依赖 GY-I25；
   本模块只按契约枚举核验，不把产品限额冒充官方接口限制。
 - 对象存储、CDN、访问网关为部署期接线；本模块提供内存参考实现与适配接口。
@@ -106,7 +107,7 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 
 ## 边界（不实现）
 
-- 不实现微信登录/会话（GY-I04）；不实现社区帖子与审核（GY-I08）——`contentProvider` 由上层注入。
+- 不实现微信登录/会话（GY-I04）；不实现社区帖子与审核（GY-I14 / GY-I15）——`contentProvider` 由上层注入。
 - 不做像素级重编码净化：EXIF 清除为**结构性段清除**，保留压缩数据，不声称重编码级净化。
 - 实库事务/对象存储事务性由部署方实现；内存实现不等价于实库验收（同 GY-I27 口径）。
 
@@ -130,9 +131,13 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 - **「结构形状」≠「可解码内容」（返修 E2）**：WebP 的 VP8L 位流必须由 `webp.mjs` **真实解码**并恰好产出
   「仅 5 字节位流头、无像素位流」的空壳（44 字节）一律拒绝；VP8（有损）与动画（ANIM/ANMF）
   因本模块**不具备核验其真实内容的解码能力**，按 fail-closed **受控拒绝**。
-- **音频样本表真实性（返修 E1）**：M4A 的 `mdat` 负载必须非空；`stts` 声明的 `entry_count` 必须有对应条目
-  （**绝不回退信任 mvhd 时长**）；`stts` 累计样本数须等于 `stsz.sample_count`，样本总字节须落在 `mdat` 负载内，
-  `stco`/`co64` 偏移须落在 `mdat` 区间内；无样本 / 时间表损坏 → 受控拒绝。
+- **音频样本表边界**：M4A 的 `mdat` 负载必须非空；`stts` 条目须完整（绝不回退信任 mvhd），累计样本数等于 `stsz.sample_count`。
+  `stsc` 的递增 run 从首块 1 开始，逐块消费定长或变长样本，引用存在的音频描述；所有完整块范围须在已定位的 `mdat` 内且不重叠。
+  缺表、截断、零长样本、计数不符或不安全整数均拒绝，失败上传回收对象。
+  这是容器与样本定位验证，不证明合成 `mdat` 字节或真实 AAC 可解码；多 `mdat`、分片 MP4 未作为支持范围验收。
+- **VP8L 变换唯一性**：同一主图中每种变换最多一次，重复类型在读取参数前拒绝；合法单次变换仍可通过。
+  依据 [WebP 官方位流规范](https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification#4-transforms)。
+  M4A 映射依据 [Apple sample-to-chunk table](https://developer.apple.com/documentation/quicktime-file-format/sample-to-chunk_atom/sample-to-chunk_table)。
 - **不把请求当完成**：`completeUpload` 未通过核验即 `rejected` 并回收对象；`initiated` 超 24h 过期回收；
   `rejected`/`deleted` 对象与句柄统一清理。
 
@@ -149,3 +154,7 @@ node --test "tests/media/*.test.mjs"
 幂等与幂等冲突、If-Match 428/409、非本人 404、社区取图授权与撤销、过期回收、孤立对象清理、日志脱敏、
 schema 与契约一致性。
 **这些是模块级单元证据，不等于真实登录/对象存储/供应商验收。**
+
+`chunk-transform-boundaries.test.mjs` 补查完整样本范围、定长/变长、多块/多 run、`co64`、描述索引、溢出、重叠与失败回收，
+并保留合法 VP8L 及单次 SUBTRACT_GREEN 正例。独立 Pillow/libwebp 的完整加载结果另记录在 PR 中。
+真实对象存储/网关、媒体 HTTP/PG 事务、第三方适配、Android/iOS 真机及 7/30 天删除闭环仍未验收。

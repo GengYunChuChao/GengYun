@@ -208,16 +208,22 @@ const M4A_AUDIO_SAMPLE_FORMATS = Object.freeze([
  * `version/flags(4) + entry_count(4) + entry[size(4) + format(4) + …]`。
  * 「entry_count=1 但没有任何 entry」的空壳必须判否（D1）。
  */
-function stsdHasAudioEntry(bytes, stsd) {
-  if (stsd.end - stsd.start < 8) return false;
+function audioDescriptions(bytes, stsd) {
+  if (stsd.end - stsd.start < 8 || readU32be(bytes, stsd.start) !== 0) return null;
   const count = readU32be(bytes, stsd.start + 4);
-  if (count < 1) return false;
-  const e = stsd.start + 8;
-  if (e + 8 > stsd.end) return false;
-  const entrySize = readU32be(bytes, e);
-  if (entrySize < 8 || e + entrySize > stsd.end) return false;
-  const format = String.fromCharCode(bytes[e + 4], bytes[e + 5], bytes[e + 6], bytes[e + 7]);
-  return M4A_AUDIO_SAMPLE_FORMATS.includes(format);
+  if (count < 1 || count > (stsd.end - stsd.start - 8) / 8) return null;
+  const descriptions = new Set();
+  let e = stsd.start + 8;
+  for (let index = 1; index <= count; index += 1) {
+    if (e + 8 > stsd.end) return null;
+    const entrySize = readU32be(bytes, e);
+    if (entrySize < 8 || e + entrySize > stsd.end) return null;
+    const format = String.fromCharCode(bytes[e + 4], bytes[e + 5], bytes[e + 6], bytes[e + 7]);
+    // Require the common audio sample-entry header; codec payloads are not decoded here.
+    if (M4A_AUDIO_SAMPLE_FORMATS.includes(format) && entrySize >= 36) descriptions.add(index);
+    e += entrySize;
+  }
+  return e === stsd.end ? descriptions : null;
 }
 
 /**
@@ -225,16 +231,26 @@ function stsdHasAudioEntry(bytes, stsd) {
  * 返回 `{ sampleCount, totalBytes }`；**计数为 0 / 每样本条目被截断**返回 null（不可核验）。
  */
 function stszSummary(bytes, stsz) {
-  if (stsz.end - stsz.start < 12) return null;
+  if (stsz.end - stsz.start < 12 || readU32be(bytes, stsz.start) !== 0) return null;
   const sampleSize = readU32be(bytes, stsz.start + 4);
   const sampleCount = readU32be(bytes, stsz.start + 8);
   if (sampleCount < 1) return null;
-  if (sampleSize > 0) return { sampleCount, totalBytes: sampleSize * sampleCount };
+  if (sampleSize > 0) {
+    if (stsz.start + 12 !== stsz.end) return null;
+    const totalBytes = sampleSize * sampleCount;
+    return Number.isSafeInteger(totalBytes) ? { sampleCount, totalBytes, sampleSize } : null;
+  }
   // sample_size==0 → 必须紧跟 sample_count 个 4 字节样本大小，且恰好落在 box 内。
-  if (stsz.start + 12 + sampleCount * 4 > stsz.end) return null;
+  if (stsz.start + 12 + sampleCount * 4 !== stsz.end) return null;
   let total = 0;
-  for (let k = 0; k < sampleCount; k += 1) total += readU32be(bytes, stsz.start + 12 + k * 4);
-  return { sampleCount, totalBytes: total };
+  const entries = [];
+  for (let k = 0; k < sampleCount; k += 1) {
+    const size = readU32be(bytes, stsz.start + 12 + k * 4);
+    if (size < 1) return null;
+    entries.push(size);
+    total += size;
+  }
+  return Number.isSafeInteger(total) ? { sampleCount, totalBytes: total, sampleSize, entries } : null;
 }
 
 /**
@@ -264,17 +280,59 @@ function sttsSummary(bytes, stts) {
  * 条目数为 0 / 偏移表被截断返回 null（E1：仅检查 box 存在不足以证明样本定位有效）。
  */
 function chunkOffsets(bytes, box, sixtyFour) {
-  if (box.end - box.start < 8) return null;
+  if (box.end - box.start < 8 || readU32be(bytes, box.start) !== 0) return null;
   const count = readU32be(bytes, box.start + 4);
   if (count < 1) return null;
   const width = sixtyFour ? 8 : 4;
-  if (box.start + 8 + count * width > box.end) return null;
+  if (box.start + 8 + count * width !== box.end) return null;
   const offsets = [];
   for (let k = 0; k < count; k += 1) {
     const o = box.start + 8 + k * width;
-    offsets.push(sixtyFour ? readU32be(bytes, o) * 4294967296 + readU32be(bytes, o + 4) : readU32be(bytes, o));
+    const offset = sixtyFour ? readU32be(bytes, o) * 4294967296 + readU32be(bytes, o + 4) : readU32be(bytes, o);
+    if (!Number.isSafeInteger(offset)) return null;
+    offsets.push(offset);
   }
   return offsets;
+}
+
+/** Expand stsc runs using stsz sizes; validate whole chunks, not only their starts. */
+function mappedChunksFit(bytes, stsc, sizes, offsets, descriptions, mdat) {
+  if (!stsc || stsc.end - stsc.start < 8 || readU32be(bytes, stsc.start) !== 0) return false;
+  const count = readU32be(bytes, stsc.start + 4);
+  if (count < 1 || stsc.start + 8 + count * 12 !== stsc.end) return false;
+  const runs = [];
+  let previous = 0;
+  for (let k = 0; k < count; k += 1) {
+    const e = stsc.start + 8 + k * 12;
+    const first = readU32be(bytes, e);
+    const samples = readU32be(bytes, e + 4);
+    const description = readU32be(bytes, e + 8);
+    if (first <= previous || first > offsets.length || samples < 1 || !descriptions.has(description)) return false;
+    runs.push({ first, samples });
+    previous = first;
+  }
+  if (runs[0].first !== 1) return false;
+  let sample = 0;
+  let run = 0;
+  const ranges = [];
+  for (let chunk = 0; chunk < offsets.length; chunk += 1) {
+    if (run + 1 < runs.length && runs[run + 1].first === chunk + 1) run += 1;
+    const n = runs[run].samples;
+    if (n > sizes.sampleCount - sample) return false;
+    let length = sizes.sampleSize * n;
+    if (!sizes.sampleSize) {
+      length = 0;
+      for (let k = 0; k < n; k += 1) length += sizes.entries[sample + k];
+    }
+    const start = offsets[chunk];
+    const end = start + length;
+    if (!Number.isSafeInteger(end) || length < 1 || start < mdat.start || end > mdat.end) return false;
+    ranges.push({ start, end });
+    sample += n;
+  }
+  if (sample !== sizes.sampleCount) return false;
+  ranges.sort((a, b) => a.start - b.start);
+  return ranges.every((range, i) => i === 0 || range.start >= ranges[i - 1].end);
 }
 
 /** mdhd（媒体头）的 timescale / duration；非法返回 null。 */
@@ -298,16 +356,16 @@ function mdhdTimescale(bytes, mdhd) {
  *   1) 顶层存在 `mdat`（媒体数据）**且负载非空**；
  *   2) 存在 `trak > mdia`，其 `hdlr.handler_type == 'soun'`（音轨，非视频）；
  *   3) 该音轨有 `mdhd`（取**音轨自身** timescale，而非容器 mvhd）；
- *   4) `minf > stbl` 下 `stsd` 含**真实 sample entry**（如 `mp4a`）、并有样本表 `stsz`、`stts`、`stco`/`co64`。
+ *   4) `minf > stbl` 下 `stsd` 含音频 sample entry、并有 `stsz`、`stts`、`stsc`、`stco`/`co64`。
  *
  * E1：**没有样本 / 时间表损坏不能证明时长** —— 必须进一步核对样本结构与媒体内容一致：
  *   - `mdat` 负载必须非空（size==8 的空壳不能证明任何样本存在）；
  *   - `stts` 声明的 `entry_count` 必须有对应条目（截断 → 不可核验），**绝不回退信任 mvhd**；
  *   - `stts` 累计样本数必须等于 `stsz.sample_count`；`stsz` 累计字节须 ≥1 且不超过 `mdat` 负载；
- *   - `stco`/`co64` 每个 chunk 偏移必须落在 `mdat` 负载区间内。
+ *   - `stsc` 逐块映射到 `stsz` 样本及有效音频描述，完整字节范围在 `mdat` 内且不重叠。
  *
  * 时长一律取 `stts` 样本累计 / `mdhd.timescale`（不取容器 mvhd）。
- * 任一无法核对 → 受控拒绝（reason 供上层转 `duration_unverifiable`）。
+ * 任一无法核对 → 受控拒绝（reason 供上层转 `duration_unverifiable`）。仅核验容器/样本定位，不证明 AAC 可解码。
  */
 export function m4aDurationMs(bytes) {
   function findBox(off, end, type) {
@@ -370,10 +428,12 @@ export function m4aDurationMs(bytes) {
             const stsd = findBox(stbl.start, stbl.end, 'stsd');
             const stsz = findBox(stbl.start, stbl.end, 'stsz');
             const stts = findBox(stbl.start, stbl.end, 'stts');
+            const stsc = findBox(stbl.start, stbl.end, 'stsc');
             const stco = findBox(stbl.start, stbl.end, 'stco');
             const co64 = stco ? null : findBox(stbl.start, stbl.end, 'co64');
             const offsetsBox = stco || co64;
-            if (stsd && stsz && stts && offsetsBox && stsdHasAudioEntry(bytes, stsd)) {
+            const descriptions = stsd ? audioDescriptions(bytes, stsd) : null;
+            if (descriptions && descriptions.size > 0 && stsz && stts && stsc && offsetsBox) {
               const head = mdhdTimescale(bytes, mdhd);
               const sizes = stszSummary(bytes, stsz);
               const times = sttsSummary(bytes, stts);
@@ -386,7 +446,7 @@ export function m4aDurationMs(bytes) {
                   sizes.totalBytes >= 1 &&
                   sizes.totalBytes <= mdatPayload &&
                   times.totalUnits >= 1 &&
-                  offsets.every((o) => o >= mdat.start && o < mdat.end);
+                  mappedChunksFit(bytes, stsc, sizes, offsets, descriptions, mdat);
                 if (consistent) {
                   result = { timescale: head.timescale, durationUnits: times.totalUnits };
                   break;
