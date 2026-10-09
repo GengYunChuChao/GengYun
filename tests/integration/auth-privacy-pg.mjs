@@ -264,7 +264,7 @@ try {
   assert.ok(ledger.every(row => row.outcome === null || !JSON.stringify(row.outcome).includes('access_token')));
   assert.ok(!JSON.stringify(ledger).includes(signingKey));
   say('idempotency receipts contain references, no bearer or server signing key');
-  console.log(`ALL ${passed} native PG17.11 integration groups passed; grant and business write/export consumers remain unimplemented.`);
+  console.log(`ALL ${passed} native PG17.11 integration groups passed; grant API is tested separately; business write/export consumers remain unimplemented.`);
 } finally {
   await app?.close();
   await pool?.end();

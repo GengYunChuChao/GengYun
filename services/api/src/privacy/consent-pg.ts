@@ -5,6 +5,7 @@ import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
 import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
+import { persistConsentGrant, type ConsentGrantRequest } from './grant-pg.ts';
 
 export const CONSENT_PURPOSES = ['recording', 'media_processing', 'external_inference', 'public_posting'] as const;
 type Row = Record<string, unknown>;
@@ -53,8 +54,8 @@ export function parseConsentCursor(cursor: string | undefined): string | null {
   return value;
 }
 
-/** Only consent reads/withdrawals. No exports, media writes, grants, or generic commit callbacks. */
-export function createPostgresConsentService(pool: PgPool, hmacKey: string) {
+/** No exports, media writes or generic commit callbacks. */
+export function createPostgresConsentService(pool: PgPool, hmacKey: string, options: { allowSyntheticGrantPolicy?: boolean } = {}) {
   async function transaction<T>(input: Identity, work: (client: PoolClient, user: Row) => Promise<T>): Promise<T> {
     let client: PoolClient | undefined;
     try {
@@ -109,6 +110,9 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string) {
   }
 
   return {
+    async grant(input: Identity, request: ConsentGrantRequest) {
+      return transaction(input, async client => dto(await persistConsentGrant(client, input.identity.userId, hmacKey, request, options.allowSyntheticGrantPolicy === true)));
+    },
     async list(input: Identity, options: { cursor?: string; limit: number }) {
       const after = parseConsentCursor(options.cursor);
       return transaction(input, async (client, user) => {

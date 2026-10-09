@@ -10,8 +10,8 @@ import { ApiError } from '../errors.ts';
 import { CONSENT_PURPOSES, createPostgresConsentService } from '../privacy/consent-pg.ts';
 import { buildMeta } from './support.ts';
 
-export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, pool: PgPool | null, guards: AuthGuards): void {
-  const service = pool === null ? null : createPostgresConsentService(pool, config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY);
+export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, pool: PgPool | null, guards: AuthGuards, testOptions: { allowSyntheticGrantPolicy?: boolean } = {}): void {
+  const service = pool === null ? null : createPostgresConsentService(pool, config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, testOptions);
   const input = (request: FastifyRequest) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) throw new ApiError('SESSION_REQUIRED', '需要用户会话');
@@ -21,6 +21,22 @@ export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, p
     if (service === null) throw new ApiError('PROVIDER_UNAVAILABLE', '授权数据库未配置');
     return service;
   };
+  app.post(`${API_PREFIX}/me/consents`, {
+    preHandler: guards.requireUser,
+    schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      body: { type: 'object', additionalProperties: false, required: ['purpose','policy_version','recipient_ids'], properties: {
+        purpose: { type: 'string', enum: CONSENT_PURPOSES },
+        policy_version: { type: 'string', minLength: 1, maxLength: 80 },
+        recipient_ids: { type: 'array', maxItems: 30, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 80 } },
+      } },
+    },
+  }, async (request, reply) => {
+    const key = request.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.length < 8 || key.length > 128) throw new ApiError('IDEMPOTENCY_KEY_REQUIRED', '缺少有效幂等键');
+    const data = await requireService().grant(input(request), { ...(request.body as { purpose: string; policy_version: string; recipient_ids: string[] }), idempotencyKey: key, ifMatch: request.headers['if-match'] });
+    return reply.status(201).header('ETag', `"${data.revision}"`).header('Cache-Control', 'no-store').send({ data, meta: buildMeta(request, config) });
+  });
   app.get(`${API_PREFIX}/me/consents`, {
     preHandler: guards.requireUser,
     schema: { querystring: { type: 'object', additionalProperties: false, properties: {
