@@ -157,6 +157,45 @@ export function pngTruncated() {
   return base.subarray(0, base.length - 4); // 砍掉 IEND 的 CRC
 }
 
+/** 用给定 IHDR 与 IDAT 负载拼一个无元数据 PNG（供 D3 回归构造）。 */
+function buildPng(ihdrBytes, idatPayload) {
+  const sig = u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return concat(sig, pngChunk('IHDR', ihdrBytes), pngChunk('IDAT', idatPayload), pngChunk('IEND', u8()));
+}
+
+/**
+ * D3：解压炸弹 —— IHDR 声明 1×1 灰度（期望原始长度仅 2 字节），
+ * 但 IDAT 是高压缩比流（deflate 全零 1 MiB，仅约 1 KB）。旧实现会**先解压出 1 MiB**
+ * 再判断，阻塞请求线程；现应在受限预算下立刻中止并拒绝。
+ */
+export function pngDecodedBomb() {
+  const ihdr = u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]); // 1×1 灰度 8bit
+  const idat = deflateSync(Buffer.alloc(1048576)); // 1 MiB -> ~1 KB
+  return buildPng(ihdr, idat);
+}
+
+/** D3：IHDR 声明超大尺寸（100000×100000 真彩）→ 期望原始长度远超政策上界，应在解压前拒绝。 */
+export function pngOversizeDimension() {
+  const ihdr = u8([0, 0x01, 0x86, 0xa0, 0, 0x01, 0x86, 0xa0, 8, 2, 0, 0, 0]); // 100000×100000 RGB8
+  const idat = deflateSync(u8([0, 1, 2]));
+  return buildPng(ihdr, idat);
+}
+
+/** D3：IHDR 声明 1×1 灰度（期望 2 字节），但 IDAT 解出 3 字节 → 长度不符，拒绝。 */
+export function pngRawSizeMismatch() {
+  const ihdr = u8([0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0, 0, 0]);
+  const idat = deflateSync(u8([0, 1, 2]));
+  return buildPng(ihdr, idat);
+}
+
+/** D3 正例：真实可解码的 W×H RGB(8bit) 图，每行首字节为 filter=0，长度精确匹配 IHDR。 */
+export function pngRealRgb({ width = 4, height = 3 } = {}) {
+  const ihdr = concat(u32be(width), u32be(height), u8([8, 2, 0, 0, 0]));
+  const rowBytes = width * 3;
+  const raw = new Uint8Array((rowBytes + 1) * height); // 全 0：filter=0 + 黑色像素
+  return buildPng(ihdr, deflateSync(raw));
+}
+
 // ------------------------------------------------------------------ WebP
 
 function webpChunk(fourcc, data) {

@@ -24,6 +24,10 @@ import {
   webpNoImage,
   webpVp8xOnly,
   webpVp8xWithLossless,
+  pngDecodedBomb,
+  pngOversizeDimension,
+  pngRawSizeMismatch,
+  pngRealRgb,
 } from './_fixtures.mjs';
 
 /** 从 PNG 字节中拼接全部 IDAT 负载，用于验证压缩流确实可解压。 */
@@ -210,4 +214,32 @@ test('C2 WebP：仅 10 字节 VP8X 扩展头（无实际帧）→ 拒绝', () =>
 test('C2 WebP：VP8X 扩展头 + 真实 VP8L 位流 → 接受', () => {
   const out = stripImageMetadata(webpVp8xWithLossless(), 'image/webp');
   assert.equal(out.ok, true);
+});
+
+// ------------------------------------------------ D3 回归：解压预算与资源耗尽
+
+test('D3 PNG：小体积 IDAT 高压缩比炸弹（1×1 声明 / 解出 1 MiB）→ 拒绝', () => {
+  const input = pngDecodedBomb();
+  // 前置：文件本身体积很小（~1 KB），却能解出 1 MiB —— 正是资源耗尽构造
+  assert.ok(input.length < 4096, `炸弹文件应很小，实际 ${input.length}`);
+  const raw = inflateSync(Buffer.from(pngIdatPayload(input)));
+  assert.equal(raw.length, 1048576, '前置：该 IDAT 不设预算时会解出 1 MiB');
+  // 修复后：按 IHDR 期望（2 字节）设预算 → 解压立即中止并拒绝
+  assert.equal(stripImageMetadata(input, 'image/png').ok, false);
+});
+
+test('D3 PNG：IHDR 声明超大尺寸（超出解码上界）→ 解压前拒绝', () => {
+  assert.equal(stripImageMetadata(pngOversizeDimension(), 'image/png').ok, false);
+});
+
+test('D3 PNG：解压长度与 IHDR 期望不符（2 期望 / 3 实际）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(pngRawSizeMismatch(), 'image/png').ok, false);
+});
+
+test('D3 PNG 正例：真实可解码图解压长度精确匹配 IHDR → 接受', () => {
+  const input = pngRealRgb({ width: 4, height: 3 });
+  const out = stripImageMetadata(input, 'image/png');
+  assert.equal(out.ok, true);
+  const raw = inflateSync(Buffer.from(pngIdatPayload(out.data)));
+  assert.equal(raw.length, (4 * 3 + 1) * 3, '解压原始长度应精确等于 (rowBytes+1)×height');
 });

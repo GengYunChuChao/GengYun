@@ -13,13 +13,24 @@
  *   2) **容器尾部的多余字节一律拒绝**（PNG IEND 之后、JPEG EOI 之后、WebP RIFF 声明之外），
  *      杜绝「写入 IEND/EOI 之后仍被下游读取」的走私通道；
  *   3) **无图像数据 / 结构损坏的容器一律拒绝**（如仅 PNG 签名、仅 SOI 的 JPEG），
- *      不允许进入 ready。
+ *      不允许进入 ready；
+ *   4) **解压必须受预算约束**（返修 D3）——PNG 解压前按 IHDR 计算期望原始长度，
+ *      解压中强制输出上限，解压后精确核对，杜绝「小体积 IDAT 解出巨大缓冲」的资源耗尽。
  *
  * 说明：本模块是**结构性段清除**，不做像素重编码。它移除元数据段但保留压缩数据，
  * 因此不改变图像内容，也不声称能达到「重编码级」的像素级净化。
  */
 
 import { inflateSync } from 'node:zlib';
+import { MIB } from './constants.mjs';
+
+/**
+ * 单张图片**解码后原始字节**的硬上限（D3 资源耗尽防线，政策上界）。
+ * 契约侧上传字节上限仅约束压缩后大小，解压比完全不受约束，故此处独立设界：
+ * 任何声明的 IHDR 尺寸若暗示解码结果超过该值，一律在**解压前**拒绝，
+ * 避免为恶意尺寸分配大缓冲。可按运营需要调整。
+ */
+const MAX_DECODED_IMAGE_BYTES = 64 * MIB;
 
 function concat(chunks) {
   let total = 0;
@@ -55,16 +66,82 @@ function isChunkType(type) {
 }
 
 /**
- * 尝试 zlib 解压；成功（能解出非空数据）返回 true。
- * 用于校验 PNG IDAT 压缩流确实可解 —— 空/截断的 IDAT 不算有效图像数据（返修 C2）。
+ * 有界 zlib 解压（D3 资源耗尽防线）。
+ *
+ * 旧实现 `inflateSync(bytes)` **先解压再判断**，对 1039 字节 IDAT 可解出 1 MiB
+ * 并阻塞请求线程。现改为：
+ *   - 调用方先按 IHDR 算出**期望原始长度** expectedRaw（见 pngRawSize）；
+ *   - 解压时以 `maxOutputLength = limit` **强制预算**，一旦输出将超出即抛
+ *     `ERR_BUFFER_TOO_LARGE` 中止（不会先分配出超限缓冲）；
+ *   - 解压后输出长度必须**精确等于**期望值，否则视为炸弹/结构不符。
+ * 失败时返回 null，且不保留任何解压缓冲（交由 GC 回收）。
+ *
+ * @param {Uint8Array} bytes 压缩流（IDAT 拼接）
+ * @param {number} limit 输出硬上限（= expectedRaw，取自 IHDR，已受政策上界约束）
+ * @returns {Buffer|null}
  */
-function inflateOk(bytes) {
+function inflateBounded(bytes, limit) {
+  if (!(limit >= 1)) return null;
   try {
-    const out = inflateSync(Buffer.from(bytes));
-    return out.length > 0;
+    return inflateSync(Buffer.from(bytes), { maxOutputLength: limit });
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** PNG colorType -> 每像素通道数。 */
+const PNG_CHANNELS = Object.freeze({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 });
+
+/** PNG colorType -> 合法位深集合（规范约束）。 */
+const PNG_BIT_DEPTHS = Object.freeze({
+  0: Object.freeze([1, 2, 4, 8, 16]),
+  2: Object.freeze([8, 16]),
+  3: Object.freeze([1, 2, 4, 8]),
+  4: Object.freeze([8, 16]),
+  6: Object.freeze([8, 16]),
+});
+
+/** Adam7 交错的 7 个 pass 起始与步长。 */
+const ADAM7_PASSES = Object.freeze([
+  Object.freeze([0, 0, 8, 8]),
+  Object.freeze([4, 0, 8, 8]),
+  Object.freeze([0, 4, 4, 8]),
+  Object.freeze([2, 0, 4, 4]),
+  Object.freeze([0, 2, 2, 4]),
+  Object.freeze([1, 0, 2, 2]),
+  Object.freeze([0, 1, 1, 2]),
+]);
+
+/**
+ * 由 13 字节 IHDR 计算**解码后原始字节数**（= 每行 1 字节 filter + 行字节）。
+ * 非交错：`(rowBytes + 1) × height`；交错：Adam7 七趟之和。
+ * 结构非法（尺寸为 0 / 位深-色型组合非法 / 压缩或滤波方法非 0 / 交错标志未知）返回 null。
+ * @param {Uint8Array} ihdr
+ * @returns {number|null}
+ */
+function pngRawSize(ihdr) {
+  if (!ihdr || ihdr.length < 13) return null;
+  const width = readU32be(ihdr, 0);
+  const height = readU32be(ihdr, 4);
+  const bitDepth = ihdr[8];
+  const colorType = ihdr[9];
+  const compression = ihdr[10];
+  const filterMethod = ihdr[11];
+  const interlace = ihdr[12];
+  if (width < 1 || height < 1) return null;
+  const channels = PNG_CHANNELS[colorType];
+  if (channels === undefined) return null;
+  if (!PNG_BIT_DEPTHS[colorType].includes(bitDepth)) return null;
+  if (compression !== 0 || filterMethod !== 0) return null;
+  if (interlace !== 0 && interlace !== 1) return null;
+  const bitsPerPixel = bitDepth * channels;
+  const passRaw = (pw, ph) => (pw < 1 || ph < 1 ? 0 : (Math.ceil((pw * bitsPerPixel) / 8) + 1) * ph);
+  if (interlace === 0) return passRaw(width, height);
+  let total = 0;
+  for (const [x0, y0, dx, dy] of ADAM7_PASSES) {
+    total += passRaw(Math.ceil((width - x0) / dx), Math.ceil((height - y0) / dy));
+  }
+  return total;
 }
 
 const XMP_NS = 'http://ns.adobe.com/xap/1.0/';
@@ -171,6 +248,7 @@ function stripPng(bytes) {
   let sawIDAT = false;
   let sawIEND = false;
   let iendEnd = -1;
+  let ihdrData = null;
   while (i + 12 <= bytes.length) {
     const len = readU32be(bytes, i);
     const type = String.fromCharCode(bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]);
@@ -181,6 +259,7 @@ function stripPng(bytes) {
       // 首块必须是 IHDR，且长度固定为 13。
       if (type !== 'IHDR' || len !== 13) return failed(bytes);
       sawIHDR = true;
+      ihdrData = bytes.subarray(i + 8, i + 8 + len);
     }
     if (type === 'IDAT') {
       sawIDAT = true;
@@ -201,11 +280,16 @@ function stripPng(bytes) {
   // 必须完成 IHDR/IDAT/IEND，且 IEND 之后不得有尾部字节。
   if (!sawIHDR || !sawIDAT || !sawIEND) return failed(bytes);
   if (iendEnd !== bytes.length) return failed(bytes);
-  // C2：有 IDAT 块 ≠ 有图像数据。压缩流必须非空且可 zlib 解压，
-  // 否则「空 IDAT + IEND」的空壳也会被当作正常图片进入 ready。
+  // D3：解压前先按 IHDR 算出**期望原始长度**，据此设预算（解压前限尺寸）。
+  const expectedRaw = pngRawSize(ihdrData);
+  if (expectedRaw === null || expectedRaw < 1) return failed(bytes);
+  if (expectedRaw > MAX_DECODED_IMAGE_BYTES) return failed(bytes);
+  // C2 + D3：压缩流必须非空，且**在受限预算内**解压出的长度精确等于期望值 ——
+  // 「空 IDAT + IEND」空壳、不可解压垃圾、以及「小尺寸 IHDR + 高压缩比炸弹」一律拒绝。
   const idat = concat(idatParts);
   if (idat.length < 1) return failed(bytes);
-  if (!inflateOk(idat)) return failed(bytes);
+  const raw = inflateBounded(idat, expectedRaw);
+  if (raw === null || raw.length !== expectedRaw) return failed(bytes);
   return { ok: true, data: concat(out), removed };
 }
 
