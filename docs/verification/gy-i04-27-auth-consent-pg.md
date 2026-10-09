@@ -4,7 +4,9 @@
 
 ## 依赖与本次边界
 
-独立 Fork 分支 `feat/auth-consent-pg-integration` 保留 PR #59 的认证实现与竞态修复，合入治理 main `8737539a87915664aa392515639b857e42e356c1`。PR #59 固定 HEAD 为 `c37244afd6e7a869ce9fb0bf045995840260a178`，独立批复见[当前 review](https://github.com/GengYunChuChao/GengYun/pull/59#pullrequestreview-5467263936)。该 PR 未合并，私有 Fork 工作流被上游策略禁止，没有 check；本增量依赖它，不复用旧 PR #49 的 CI。
+独立 Fork 分支 `feat/auth-consent-pg-integration` 保留原有成果，正常合入最新 main `74007d93ba7a11070bcd983212237f7b0f8f7d3e`。PR #59 固定 HEAD `c37244afd6e7a869ce9fb0bf045995840260a178` 已于香港时间 2026-10-09 17:01:53 合并；[批准与实核批复](https://github.com/GengYunChuChao/GengYun/pull/59#pullrequestreview-5467970500)记录该 SHA 实际 13 项 CI 成功。本分支对当前 main 的真实差异仅剩本次八文件授权增量，不再包含 #59 的导入范围。
+
+历史证据：[首次批复](https://github.com/GengYunChuChao/GengYun/pull/59#pullrequestreview-5467263936)时组织策略禁止 Fork 工作流、check 为零。该阻塞后来解除；现为允许 Fork run、只读令牌、不发送 secrets/variables、要求维护者批准。本 PR 的 CI 必须绑定自己的最新 HEAD，不复用 #59 或旧 #49 的结果；需要批准时仅报告 run，由维护者处理。
 
 复用已合并的 0003 隐私 schema／`packages/privacy/guard.mjs` 和 PR #59 的 0008 幂等台账，不新增迁移，不改冻结契约或隐私参考组件。本次增量文件为 API app 挂载、`routes/consents.ts`、`privacy/consent-pg.ts`／类型声明、运行角色 SQL、原生 PG 集成测试、专用 CI 和本文档。
 
@@ -44,11 +46,15 @@ node tests/integration/auth-privacy-pg.mjs
 
 最后一组授权撤回后的延迟读取竞态仅证明不会复用旧读取许可；**不是媒体任务旧回写／外发原子门禁通过的证据**。现有 PGlite/PG18 测试另列为单元证据，不替代这次原生 PG17。
 
-本轮还运行既有单元／隐私 275 项、契约 6 项、lint、API／后台构建、小程序静态及本地调试、开发文档和契约校验；结果在 PR 绑定最终提交列出。新增 CI 文件尚未有远端 run，不写 CI 通过。
+整理依赖后重新运行原生 PG17.11 集成、既有单元／隐私 275 项、契约 6 项、lint、API／后台构建、小程序静态及本地调试、开发文档和契约校验；结果在 PR 绑定最终提交列出。远端 workflow 状态在 PR 逐次记录，有 run 或获准运行均不等于验收通过。
 
 ## 剩余范围
 
 - POST `/me/consents` 授予仍未实现：生产当前政策版本来源、已验证 Recipient，以及同用途替换授权时取消旧消费者须一起接通；不能以测试夹具或任意字符串政策代替。
 - 此 PG 读取守卫不承诺现有内存 reference store 的全部接口，不具备 PG `commitGate`。返回结果不能授权后续异步写入或发请求，不能当 recipient/config 检查或对外推理许可；媒体／外发消费者必须在自己的写入事务重查账号、用途、对象版本并原子提交。
 - 媒体／任务／导出／公共作者关联的撤回、在途结果回写、Recipient 变更、第三方删除请求／确认、完整 7／30 日注销尚未完成；整项 GY-I04／27 及 M1 不因本增量完成。
-- PR #59 依赖及上游组织 Fork CI 策略仍待维护者处理；写手不调整权限、不批准 run、不借所有者凭据。
+- PR #59 依赖已合并，历史组织策略阻塞已解除；本增量仍需自己的 CI 和监工独立复验，写手不调整权限、不批准 run、不借所有者凭据。
+
+## 后续媒体接口消费约定
+
+权威身份来自认证中间件 `currentIdentity(request)`，包含 userId、authEpoch、role、sessionId；业务请求不能声明这些值。`requireConsent` 仅在自身事务内核对并返回读取快照，事务结束即不能担保之后的状态。媒体写入、外发与 complete 回调必须在各自实际副作用事务内重查账号／会话／所有必需用途和对象 revision，并遵守账号锁协议；不得把这份快照或客户端 epoch 当跨事务写许可。本 PR 不提供业务写入门禁，不修改 `packages/media`／`tests/media`，也不接管 PR #60。媒体消费及注销处理仍须协调下一独立增量。
