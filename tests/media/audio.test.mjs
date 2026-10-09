@@ -22,6 +22,12 @@ import {
   mp3FakeHeaderOnly,
   mp3TruncatedFrame,
   m4aNoTrack,
+  m4aNoSampleEntry,
+  m4aNoHdlr,
+  m4aVideoHandler,
+  m4aNoMdat,
+  m4aNoStsz,
+  m4aBareEmptyStsd,
 } from './_fixtures.mjs';
 
 function expectCode(fn, code) {
@@ -60,7 +66,7 @@ test('MPEG：逐帧累计样本数（MPEG1 L3 = 1152/帧）', () => {
   assert.equal(r.durationMs, Math.round((5 * 1152 * 1000) / 44100));
 });
 
-test('M4A：moov>mvhd 的 duration/timescale', () => {
+test('M4A：音轨 mdhd/stts 的真实时长（D1：不再取容器 mvhd）', () => {
   assert.equal(m4aDurationMs(m4aBytes({ durationMs: 3000 })).durationMs, 3000);
 });
 
@@ -221,4 +227,61 @@ test('C1 接入：无音轨 M4A 声明时长 → 受控拒绝（duration_unverif
     'INVALID_REQUEST',
   );
   assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+// ------------------------------------------- D1：M4A 有效音轨与样本结构回归
+
+test('D1 正例：mdat + 音频轨（hdlr=soun）+ mdhd + stsd 真实 entry + 样本表 → 通过', () => {
+  const r = m4aDurationMs(m4aBytes({ durationMs: 2000 }));
+  assert.equal(r.ok, true);
+  assert.equal(r.durationMs, 2000);
+});
+
+test('D1 M4A：stsd.entry_count=1 但无真实 sample entry（空壳）→ 拒绝', () => {
+  const r = m4aDurationMs(m4aNoSampleEntry());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no_audio_track');
+});
+
+test('D1 M4A：缺 hdlr → 无法确认音频轨道 → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aNoHdlr()).ok, false);
+});
+
+test('D1 M4A：hdlr=vide（视频轨）→ 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aVideoHandler()).ok, false);
+});
+
+test('D1 M4A：无 mdat（无媒体数据）→ 拒绝', () => {
+  const r = m4aDurationMs(m4aNoMdat());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no_mdat');
+});
+
+test('D1 M4A：缺样本定位表 stsz → 拒绝', () => {
+  assert.equal(m4aDurationMs(m4aNoStsz()).ok, false);
+});
+
+test('D1 接入：空壳 stsd（entry_count=1 无 entry）声明时长 → 受控拒绝', () => {
+  const bytes = m4aNoSampleEntry();
+  const err = expectCode(
+    () =>
+      assertBytesMatchDeclaration({
+        bytes,
+        declared: {
+          mime: 'audio/aac',
+          bytes: bytes.length,
+          sha256: sha256Hex(bytes),
+          purpose: 'voice_question',
+          duration_ms: 1000,
+        },
+      }),
+    'INVALID_REQUEST',
+  );
+  assert.ok(err.details.some((d) => d.code === 'duration_unverifiable'), `details=${JSON.stringify(err.details)}`);
+});
+
+test('D1 复现监工原始构造：mvhd + 空 stsd（无 hdlr/mdhd/样本表/mdat）→ 拒绝', () => {
+  const r = m4aDurationMs(m4aBareEmptyStsd());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no_mdat');
 });

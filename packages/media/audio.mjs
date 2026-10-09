@@ -8,7 +8,8 @@
  *   - WAV   （RIFF/WAVE，PCM 等，按 fmt.byteRate 与 data 块长度计算）
  *   - ADTS  （AAC，逐帧累计样本数 / 采样率）
  *   - MPEG  （MP3，逐帧累计样本数 / 采样率；支持跳过 ID3v2）
- *   - M4A   （ISO BMFF，moov>mvhd 的 duration / timescale）
+ *   - M4A   （ISO BMFF，D1：须有 mdat + 音频 trak（hdlr=soun）+ mdhd + stsd 真实 sample entry
+ *            + 样本表 stsz/stts/stco；时长取 stts 样本累计 / mdhd.timescale，不取容器 mvhd）
  *
  * 红线：**无法解析真实时长一律受控拒绝**（调用方转 INVALID_REQUEST），
  * 绝不回退到「信任调用方声明」。这样即便遇到未知编码变体，也不会出现绕过上限的通道。
@@ -197,7 +198,67 @@ export function mpegDurationMs(bytes) {
   return { ok: true, container: 'mpeg', durationMs: Math.round((samples / sampleRate) * 1000), sampleRate };
 }
 
-/** 解析 M4A（ISO BMFF）真实时长：moov > mvhd 的 duration / timescale。 */
+/** M4A 中可识别的音频 sample entry 格式码（fail-closed：仅接受已知音频编码）。 */
+const M4A_AUDIO_SAMPLE_FORMATS = Object.freeze([
+  'mp4a', 'alac', 'ac-3', 'ec-3', 'Opus', 'fLaC', 'lpcm', 'samr', 'sawb',
+]);
+
+/**
+ * stsd（样本描述表）是否含**真实 sample entry**：
+ * `version/flags(4) + entry_count(4) + entry[size(4) + format(4) + …]`。
+ * 「entry_count=1 但没有任何 entry」的空壳必须判否（D1）。
+ */
+function stsdHasAudioEntry(bytes, stsd) {
+  if (stsd.end - stsd.start < 8) return false;
+  const count = readU32be(bytes, stsd.start + 4);
+  if (count < 1) return false;
+  const e = stsd.start + 8;
+  if (e + 8 > stsd.end) return false;
+  const entrySize = readU32be(bytes, e);
+  if (entrySize < 8 || e + entrySize > stsd.end) return false;
+  const format = String.fromCharCode(bytes[e + 4], bytes[e + 5], bytes[e + 6], bytes[e + 7]);
+  return M4A_AUDIO_SAMPLE_FORMATS.includes(format);
+}
+
+/** stts（time-to-sample）各条目 `sample_count × sample_delta` 之和（音轨时间粒度单位）；非法返回 null。 */
+function sttsTotal(bytes, stts) {
+  if (stts.end - stts.start < 8) return null;
+  const count = readU32be(bytes, stts.start + 4);
+  let p = stts.start + 8;
+  let total = 0;
+  for (let k = 0; k < count; k += 1) {
+    if (p + 8 > stts.end) return null;
+    total += readU32be(bytes, p) * readU32be(bytes, p + 4);
+    p += 8;
+  }
+  return total;
+}
+
+/** mdhd（媒体头）的 timescale / duration；非法返回 null。 */
+function mdhdTimescale(bytes, mdhd) {
+  const v = bytes[mdhd.start];
+  if (v === 1) {
+    if (mdhd.start + 32 > mdhd.end) return null;
+    return {
+      timescale: readU32be(bytes, mdhd.start + 20),
+      duration: readU32be(bytes, mdhd.start + 24) * 4294967296 + readU32be(bytes, mdhd.start + 28),
+    };
+  }
+  if (mdhd.start + 20 > mdhd.end) return null;
+  return { timescale: readU32be(bytes, mdhd.start + 12), duration: readU32be(bytes, mdhd.start + 16) };
+}
+
+/**
+ * 解析 M4A（ISO BMFF）真实时长。
+ *
+ * D1：`stsd` 存在 ≠ 有效音轨；`mvhd` 时长 ≠ 有音频。必须核对**实际音轨与样本结构**：
+ *   1) 顶层存在 `mdat`（媒体数据）；
+ *   2) 存在 `trak > mdia`，其 `hdlr.handler_type == 'soun'`（音轨，非视频）；
+ *   3) 该音轨有 `mdhd`（取**音轨自身** timescale/duration，而非容器 mvhd）；
+ *   4) `minf > stbl` 下 `stsd` 含**真实 sample entry**（如 `mp4a`）、并有样本表 `stsz`、`stts`、`stco`/`co64`。
+ * 时长优先取 `stts` 样本累计（样本级真实时长），否则退回 `mdhd.duration`。
+ * 任一无法核对 → 受控拒绝（reason 供上层转 `duration_unverifiable`）。
+ */
 export function m4aDurationMs(bytes) {
   function findBox(off, end, type) {
     let i = off;
@@ -219,58 +280,63 @@ export function m4aDurationMs(bytes) {
     return null;
   }
   if (!asciiAt(bytes, 4, 'ftyp')) return { ok: false, reason: 'not_ftyp' };
+  // 必须存在媒体数据，否则不存在可解码样本。
+  if (!findBox(0, bytes.length, 'mdat')) return { ok: false, reason: 'no_mdat' };
   const moov = findBox(0, bytes.length, 'moov');
   if (!moov) return { ok: false, reason: 'no_moov' };
-  const mvhd = findBox(moov.start, moov.end, 'mvhd');
-  if (!mvhd) return { ok: false, reason: 'no_mvhd' };
-  // C1：mvhd 时长 ≠ 存在可解码音频。必须至少有一条音轨，且该音轨具备媒体数据描述。
-  // 结构：moov > trak > mdia > minf > stbl > stsd（样本描述表）。
-  let sawAudioTrack = false;
-  {
-    let t = moov.start;
-    while (t + 8 <= moov.end) {
-      const ttype = String.fromCharCode(bytes[t + 4], bytes[t + 5], bytes[t + 6], bytes[t + 7]);
-      let tlen = readU32be(bytes, t);
-      let theader = 8;
-      if (tlen === 1) {
-        if (t + 16 > moov.end) break;
-        tlen = readU32be(bytes, t + 8) * 4294967296 + readU32be(bytes, t + 12);
-        theader = 16;
-      } else if (tlen === 0) {
-        tlen = moov.end - t;
-      }
-      if (tlen < theader || t + tlen > moov.end) return { ok: false, reason: 'bad_moov_child' };
-      if (ttype === 'trak') {
-        const mdia = findBox(t + theader, t + tlen, 'mdia');
-        if (mdia) {
+
+  let result = null;
+  let t = moov.start;
+  while (t + 8 <= moov.end) {
+    const ttype = String.fromCharCode(bytes[t + 4], bytes[t + 5], bytes[t + 6], bytes[t + 7]);
+    let tlen = readU32be(bytes, t);
+    let theader = 8;
+    if (tlen === 1) {
+      if (t + 16 > moov.end) return { ok: false, reason: 'bad_moov_child' };
+      tlen = readU32be(bytes, t + 8) * 4294967296 + readU32be(bytes, t + 12);
+      theader = 16;
+    } else if (tlen === 0) {
+      tlen = moov.end - t;
+    }
+    if (tlen < theader || t + tlen > moov.end) return { ok: false, reason: 'bad_moov_child' };
+    if (ttype === 'trak') {
+      const mdia = findBox(t + theader, t + tlen, 'mdia');
+      if (mdia) {
+        // 音轨判定：hdlr.handler_type == 'soun'（排除视频/字幕等轨道）。
+        const hdlr = findBox(mdia.start, mdia.end, 'hdlr');
+        const isAudio =
+          hdlr &&
+          hdlr.end - hdlr.start >= 12 &&
+          String.fromCharCode(bytes[hdlr.start + 8], bytes[hdlr.start + 9], bytes[hdlr.start + 10], bytes[hdlr.start + 11]) ===
+            'soun';
+        if (isAudio) {
+          const mdhd = findBox(mdia.start, mdia.end, 'mdhd');
           const minf = findBox(mdia.start, mdia.end, 'minf');
-          if (minf) {
-            const stbl = findBox(minf.start, minf.end, 'stbl');
-            if (stbl) {
-              const stsd = findBox(stbl.start, stbl.end, 'stsd');
-              if (stsd && stsd.end - stsd.start >= 8) sawAudioTrack = true;
+          const stbl = minf ? findBox(minf.start, minf.end, 'stbl') : null;
+          if (mdhd && stbl) {
+            const stsd = findBox(stbl.start, stbl.end, 'stsd');
+            const stsz = findBox(stbl.start, stbl.end, 'stsz');
+            const stts = findBox(stbl.start, stbl.end, 'stts');
+            const stco = findBox(stbl.start, stbl.end, 'stco') || findBox(stbl.start, stbl.end, 'co64');
+            if (stsd && stsz && stts && stco && stsdHasAudioEntry(bytes, stsd)) {
+              const head = mdhdTimescale(bytes, mdhd);
+              if (head && head.timescale >= 1) {
+                const sampleUnits = sttsTotal(bytes, stts);
+                const durationUnits = sampleUnits && sampleUnits > 0 ? sampleUnits : head.duration;
+                if (durationUnits > 0) {
+                  result = { timescale: head.timescale, durationUnits };
+                  break;
+                }
+              }
             }
           }
         }
       }
-      t += tlen;
     }
+    t += tlen;
   }
-  if (!sawAudioTrack) return { ok: false, reason: 'no_audio_track' };
-  const version = bytes[mvhd.start];
-  let timescale;
-  let duration;
-  if (version === 1) {
-    if (mvhd.start + 32 > mvhd.end) return { ok: false, reason: 'bad_mvhd' };
-    timescale = readU32be(bytes, mvhd.start + 20);
-    duration = readU32be(bytes, mvhd.start + 24) * 4294967296 + readU32be(bytes, mvhd.start + 28);
-  } else {
-    if (mvhd.start + 20 > mvhd.end) return { ok: false, reason: 'bad_mvhd' };
-    timescale = readU32be(bytes, mvhd.start + 12);
-    duration = readU32be(bytes, mvhd.start + 16);
-  }
-  if (!timescale) return { ok: false, reason: 'bad_timescale' };
-  return { ok: true, container: 'm4a', durationMs: Math.round((duration / timescale) * 1000) };
+  if (!result) return { ok: false, reason: 'no_audio_track' };
+  return { ok: true, container: 'm4a', durationMs: Math.round((result.durationUnits / result.timescale) * 1000) };
 }
 
 /**

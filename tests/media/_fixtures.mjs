@@ -203,34 +203,91 @@ function webpChunk(fourcc, data) {
   return concat(ascii(fourcc), u32le(data.length), padded);
 }
 
-/** WebP：RIFF/WEBP + VP8 + EXIF + XMP。 */
+/** VP8L 位流头（5 字节）：signature 0x2f + 14bit(w-1) + 14bit(h-1) + alpha/version=0。 */
+function vp8lHeader(width, height) {
+  const bits = (((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14)) >>> 0;
+  return u8([0x2f, bits & 0xff, (bits >> 8) & 0xff, (bits >> 16) & 0xff, (bits >>> 24) & 0xff]);
+}
+
+/** VP8X 扩展头负载（10 字节）：flags(1) + reserved(3) + canvas_w-1(3) + canvas_h-1(3)。 */
+function vp8xPayload(width, height) {
+  const w = width - 1;
+  const h = height - 1;
+  return u8([0, 0, 0, 0, w & 0xff, (w >> 8) & 0xff, (w >> 16) & 0xff, h & 0xff, (h >> 8) & 0xff, (h >> 16) & 0xff]);
+}
+
+/** 组装 RIFF/WEBP 文件。 */
+function webpFile(...chunks) {
+  const body = concat(ascii('WEBP'), ...chunks);
+  return concat(ascii('RIFF'), u32le(body.length), body);
+}
+
+/** WebP：RIFF/WEBP + VP8L(4×4 真实位流头) + EXIF + XMP。 */
 export function webpWithExif() {
-  const vp8 = webpChunk('VP8 ', u8([1, 2, 3, 4]));
+  const vp8l = webpChunk('VP8L', vp8lHeader(4, 4));
   const exif = webpChunk('EXIF', concat(ascii('MM\0*'), u8([0, 0, 0, 8])));
   const xmp = webpChunk('XMP ', ascii('<x:xmpmeta/>'));
-  const body = concat(ascii('WEBP'), vp8, exif, xmp);
-  return concat(ascii('RIFF'), u32le(body.length), body);
+  return webpFile(vp8l, exif, xmp);
 }
 
-/** WebP：仅 RIFF/WEBP 头（无 VP8 图像块）。 */
+/** WebP：仅 RIFF/WEBP 头（无图像块）。 */
 export function webpNoImage() {
-  const body = ascii('WEBP');
-  return concat(ascii('RIFF'), u32le(body.length), body);
+  return webpFile();
 }
 
-/** WebP：仅 VP8X 扩展头（10 字节，无 VP8/VP8L/ANMF 帧）——空壳，C2 回归。 */
+/** WebP：仅 VP8X 扩展头（10 字节，无任何真实帧）——空壳，C2 回归。 */
 export function webpVp8xOnly() {
-  const vp8x = webpChunk('VP8X', u8([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
-  const body = concat(ascii('WEBP'), vp8x);
-  return concat(ascii('RIFF'), u32le(body.length), body);
+  return webpFile(webpChunk('VP8X', vp8xPayload(1, 1)));
 }
 
-/** WebP：VP8X 扩展头 + 真实 VP8L 位流（正常可接受）。 */
+/** WebP：VP8X 画布 2×1 + 匹配的 VP8L(2×1) 位流 —— 正常可接受。 */
 export function webpVp8xWithLossless() {
-  const vp8x = webpChunk('VP8X', u8([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
-  const vp8l = webpChunk('VP8L', u8([0x2f, 0x01, 0x00, 0x00, 0x00]));
-  const body = concat(ascii('WEBP'), vp8x, vp8l);
-  return concat(ascii('RIFF'), u32le(body.length), body);
+  return webpFile(webpChunk('VP8X', vp8xPayload(2, 1)), webpChunk('VP8L', vp8lHeader(2, 1)));
+}
+
+/** WebP：VP8L 负载仅 1 字节 0x2f（无完整位流头）——D2 回归（监工反例）。 */
+export function webpVp8lShortHeader() {
+  return webpFile(webpChunk('VP8L', u8([0x2f])));
+}
+
+/** WebP：VP8L 位流签名非法（首字节非 0x2f）——D2 回归。 */
+export function webpVp8lBadSignature() {
+  return webpFile(webpChunk('VP8L', u8([0x00, 0, 0, 0, 0])));
+}
+
+/** WebP：VP8L 位流版本非 0（bit29 置位）——D2 回归。 */
+export function webpVp8lBadVersion() {
+  const bits = 1 << 29;
+  return webpFile(webpChunk('VP8L', u8([0x2f, 0, 0, 0, (bits >>> 24) & 0xff])));
+}
+
+/** WebP：VP8X 画布 8×8 但 VP8L 仅 2×1（尺寸不符）——D2 回归。 */
+export function webpVp8xCanvasMismatch() {
+  return webpFile(webpChunk('VP8X', vp8xPayload(8, 8)), webpChunk('VP8L', vp8lHeader(2, 1)));
+}
+
+/** WebP：VP8 关键帧（4×4）——有损正常可接受。 */
+export function webpVp8KeyFrame({ width = 4, height = 4 } = {}) {
+  const tag = u8([0x10, 0x00, 0x00]); // keyframe(bit0=0) + show_frame(bit4=1)
+  const startCode = u8([0x9d, 0x01, 0x2a]);
+  const dims = concat(u16le(width & 0x3fff), u16le(height & 0x3fff));
+  return webpFile(webpChunk('VP8 ', concat(tag, startCode, dims, u8([0, 0, 0, 0]))));
+}
+
+/** WebP：VP8X 画布 4×4 + ANIM + ANMF(4×4) —— 动画正常可接受。 */
+export function webpAnimFrames() {
+  const anmfHeader = u8([0, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0, 0, 0, 0, 0, 0]); // x0 y0 w-1=3 h-1=3 dur0 flags0
+  return webpFile(
+    webpChunk('VP8X', vp8xPayload(4, 4)),
+    webpChunk('ANIM', u8([0, 0, 0, 0, 0, 0])),
+    webpChunk('ANMF', concat(anmfHeader, vp8lHeader(4, 4))),
+  );
+}
+
+/** WebP：有 ANMF 但缺 ANIM 头 —— D2 回归。 */
+export function webpAnmfWithoutAnim() {
+  const anmfHeader = u8([0, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0, 0, 0, 0, 0, 0]);
+  return webpFile(webpChunk('VP8X', vp8xPayload(4, 4)), webpChunk('ANMF', concat(anmfHeader, vp8lHeader(4, 4))));
 }
 
 // ------------------------------------------------------------------ 音频
@@ -342,28 +399,119 @@ export function mp3TruncatedFrame() {
   return full.subarray(0, full.length - 100);
 }
 
-/** M4A/ISO BMFF：ftyp('M4A ') + moov>mvhd（timescale=1000, duration=ms）+ trak>mdia>minf>stbl>stsd。 */
-export function m4aBytes({ durationMs = 1000, withTrack = true } = {}) {
-  const mvhdPayload = concat(u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
-  const mvhd = concat(u32be(8 + mvhdPayload.length), ascii('mvhd'), mvhdPayload);
-  const children = [mvhd];
-  if (withTrack) {
-    // 最小音轨：trak > mdia > minf > stbl > stsd（stsd 内含 1 个条目）。
-    const stsdPayload = concat(u32be(0), u32be(1)); // version/flags + entry_count
-    const stsd = concat(u32be(8 + stsdPayload.length), ascii('stsd'), stsdPayload);
-    const stbl = concat(u32be(8 + stsd.length), ascii('stbl'), stsd);
-    const minf = concat(u32be(8 + stbl.length), ascii('minf'), stbl);
-    const mdia = concat(u32be(8 + minf.length), ascii('mdia'), minf);
-    const trak = concat(u32be(8 + mdia.length), ascii('trak'), mdia);
-    children.push(trak);
-  }
-  const moovBody = concat(...children);
-  const moov = concat(u32be(8 + moovBody.length), ascii('moov'), moovBody);
-  const ftyp = concat(u32be(16), ascii('ftyp'), ascii('M4A '), u32be(0));
-  return concat(ftyp, moov);
+/** ISO BMFF box（32 位 size）。 */
+function box(type, ...payload) {
+  const body = concat(...payload);
+  return concat(u32be(8 + body.length), ascii(type), body);
 }
 
-/** M4A：有 mvhd 但无任何 trak（无音轨/媒体数据，C1 回归）。 */
+/**
+ * 构造 M4A/ISO BMFF。可开关各结构件以生成 D1 负例。
+ * @param {object} o
+ * @param {number}  o.durationMs  音轨时长（ms）
+ * @param {number}  o.sampleRate  采样率（mdhd.timescale）
+ * @param {boolean} o.withTrack   是否含 trak
+ * @param {string}  o.handlerType hdlr.handler_type（'soun'=音频）
+ * @param {boolean} o.withHdlr / withMdhd / withStsz / withStco / withStts / withMdat
+ * @param {boolean} o.stsdWithEntry  stsd 是否含真实 sample entry
+ * @param {number}  o.stsdEntryCount stsd.entry_count
+ */
+export function m4aBytes({
+  durationMs = 1000,
+  sampleRate = 44100,
+  withTrack = true,
+  handlerType = 'soun',
+  withHdlr = true,
+  withMdhd = true,
+  withStsz = true,
+  withStco = true,
+  withStts = true,
+  withMdat = true,
+  stsdWithEntry = true,
+  stsdEntryCount = 1,
+} = {}) {
+  const durationSamples = Math.max(1, Math.round((durationMs / 1000) * sampleRate));
+  const ftyp = box('ftyp', ascii('M4A '), u32be(0));
+  const mdat = box('mdat', new Uint8Array(16));
+  const mvhd = box('mvhd', u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
+
+  const entry = box('mp4a', u8(new Array(20).fill(0)));
+  const stsd = box('stsd', u8([0, 0, 0, 0]), u32be(stsdEntryCount), ...(stsdWithEntry ? [entry] : []));
+  const stsz = box('stsz', u8([0, 0, 0, 0]), u32be(0), u32be(durationSamples));
+  const stco = box('stco', u8([0, 0, 0, 0]), u32be(1), u32be(0));
+  const stts = box('stts', u8([0, 0, 0, 0]), u32be(1), u32be(durationSamples), u32be(1));
+  const stblChildren = [];
+  if (withStsz) stblChildren.push(stsz);
+  if (withStco) stblChildren.push(stco);
+  if (withStts) stblChildren.push(stts);
+  stblChildren.push(stsd);
+  const stbl = box('stbl', ...stblChildren);
+  const minf = box('minf', stbl);
+  const mdhd = box(
+    'mdhd',
+    u8([0, 0, 0, 0]),
+    u32be(0),
+    u32be(0),
+    u32be(sampleRate),
+    u32be(durationSamples),
+    u16be(0),
+    u16be(0),
+  );
+  const hdlr = box('hdlr', u8([0, 0, 0, 0]), u32be(0), ascii(handlerType), u8(new Array(12).fill(0)), ascii('Handler\0'));
+  const mdiaChildren = [];
+  if (withMdhd) mdiaChildren.push(mdhd);
+  if (withHdlr) mdiaChildren.push(hdlr);
+  mdiaChildren.push(minf);
+  const mdia = box('mdia', ...mdiaChildren);
+  const trak = box('trak', mdia);
+  const moov = box('moov', mvhd, ...(withTrack ? [trak] : []));
+
+  return concat(ftyp, withMdat ? mdat : new Uint8Array(0), moov);
+}
+
+/** M4A：有 mvhd 但无任何 trak（无音轨，C1/D1 回归）。 */
 export function m4aNoTrack() {
   return m4aBytes({ durationMs: 1000, withTrack: false });
+}
+
+/** D1：stsd.entry_count=1 但无任何真实 sample entry（空壳）→ 拒绝。 */
+export function m4aNoSampleEntry() {
+  return m4aBytes({ stsdEntryCount: 1, stsdWithEntry: false });
+}
+
+/** D1：音轨缺 hdlr → 无法确认音频轨道 → 拒绝。 */
+export function m4aNoHdlr() {
+  return m4aBytes({ withHdlr: false });
+}
+
+/** D1：hdlr=vide（视频轨，非音频）→ 拒绝。 */
+export function m4aVideoHandler() {
+  return m4aBytes({ handlerType: 'vide' });
+}
+
+/** D1：无 mdat（无媒体数据）→ 拒绝。 */
+export function m4aNoMdat() {
+  return m4aBytes({ withMdat: false });
+}
+
+/** D1：缺样本定位表 stsz → 拒绝。 */
+export function m4aNoStsz() {
+  return m4aBytes({ withStsz: false });
+}
+
+/**
+ * D1：**逐字复现监工的原始构造**——只有 mvhd + 空 stsd（entry_count=1、无 entry），
+ * 且无 hdlr / mdhd / 样本定位表 / mdat。旧实现据此判 ready。
+ */
+export function m4aBareEmptyStsd() {
+  return m4aBytes({
+    withHdlr: false,
+    withMdhd: false,
+    withStsz: false,
+    withStco: false,
+    withStts: false,
+    withMdat: false,
+    stsdEntryCount: 1,
+    stsdWithEntry: false,
+  });
 }

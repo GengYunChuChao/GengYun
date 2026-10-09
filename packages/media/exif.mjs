@@ -15,7 +15,9 @@
  *   3) **无图像数据 / 结构损坏的容器一律拒绝**（如仅 PNG 签名、仅 SOI 的 JPEG），
  *      不允许进入 ready；
  *   4) **解压必须受预算约束**（返修 D3）——PNG 解压前按 IHDR 计算期望原始长度，
- *      解压中强制输出上限，解压后精确核对，杜绝「小体积 IDAT 解出巨大缓冲」的资源耗尽。
+ *      解压中强制输出上限，解压后精确核对，杜绝「小体积 IDAT 解出巨大缓冲」的资源耗尽；
+ *   5) **有块名 ≠ 有可用图像数据**（返修 C2/D2）——PNG 的 IDAT 须可真实解压且长度精确，
+ *      WebP 的 VP8/VP8L 位流头与尺寸须可解析（仅 VP8X 扩展头、或位流头非法一律拒绝）。
  *
  * 说明：本模块是**结构性段清除**，不做像素重编码。它移除元数据段但保留压缩数据，
  * 因此不改变图像内容，也不声称能达到「重编码级」的像素级净化。
@@ -295,6 +297,37 @@ function stripPng(bytes) {
 
 // ------------------------------------------------------------------ WebP
 
+/**
+ * VP8L（无损）位流头（5 字节）：signature 0x2f + 14bit(w-1) + 14bit(h-1) + 1bit alpha + 3bit version。
+ * 版本必须为 0；宽高至少为 1。返回 null 表示不是可用的 VP8L 位流（D2）。
+ */
+function vp8lDims(bytes, p, size) {
+  if (size < 5 || bytes[p] !== 0x2f) return null;
+  const bits = bytes[p + 1] | (bytes[p + 2] << 8) | (bytes[p + 3] << 16) | (bytes[p + 4] << 24);
+  if (((bits >>> 29) & 0x7) !== 0) return null;
+  return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+}
+
+/** VP8（有损）关键帧头：frame tag(3) + start code `9d 01 2a` + 14bit(w) + 14bit(h)。 */
+function vp8Dims(bytes, p, size) {
+  if (size < 10) return null;
+  if ((bytes[p] & 0x01) !== 0) return null; // 必须为关键帧
+  if (!(bytes[p + 3] === 0x9d && bytes[p + 4] === 0x01 && bytes[p + 5] === 0x2a)) return null;
+  const width = (bytes[p + 6] | (bytes[p + 7] << 8)) & 0x3fff;
+  const height = (bytes[p + 8] | (bytes[p + 9] << 8)) & 0x3fff;
+  if (width < 1 || height < 1) return null;
+  return { width, height };
+}
+
+/** ANMF（动画帧）头（16 字节）：x(3) y(3) w-1(3) h-1(3) duration(3) flags(1)。 */
+function anmfDims(bytes, p, size) {
+  if (size < 16) return null;
+  const width = ((bytes[p + 6] | (bytes[p + 7] << 8) | (bytes[p + 8] << 16)) & 0xffffff) + 1;
+  const height = ((bytes[p + 9] | (bytes[p + 10] << 8) | (bytes[p + 11] << 16)) & 0xffffff) + 1;
+  if (width < 1 || height < 1) return null;
+  return { width, height };
+}
+
 function stripWebp(bytes) {
   if (!(asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP'))) return failed(bytes);
   const riffSize = readU32le(bytes, 4);
@@ -302,7 +335,10 @@ function stripWebp(bytes) {
   if (riffSize + 8 !== bytes.length) return failed(bytes);
   const body = [bytes.subarray(0, 12)];
   const removed = [];
-  let sawImageFrame = false;
+  let canvas = null;
+  const simpleFrames = [];
+  const animFrames = [];
+  let sawAnim = false;
   let i = 12;
   while (i + 8 <= bytes.length) {
     const fourcc = String.fromCharCode(bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]);
@@ -310,18 +346,44 @@ function stripWebp(bytes) {
     const total = 8 + size + (size % 2); // 奇数长度补齐到偶数
     const end = i + total;
     if (end > bytes.length) return failed(bytes); // 截断
-    // C2：VP8X 只是扩展头（存 alpha/动画面标志与画布尺寸），本身**不含任何图像数据**。
-    // 仅 10 字节 VP8X 的空壳必须拒绝；必须存在真正的位流（VP8/VP8L）或动画帧（ANMF）。
-    if (fourcc === 'VP8 ' || fourcc === 'VP8L' || fourcc === 'ANMF') {
-      if (size < 1) return failed(bytes);
-      sawImageFrame = true;
+    const p = i + 8;
+    // C2 + D2：有块名 ≠ 有可用位流。VP8X 只是扩展头（不含图像数据）；
+    // VP8/VP8L 必须能解析出**真实位流头**与合法尺寸；ANMF 必须是合法动画帧。
+    if (fourcc === 'VP8 ') {
+      const d = vp8Dims(bytes, p, size);
+      if (!d) return failed(bytes);
+      simpleFrames.push(d);
+    } else if (fourcc === 'VP8L') {
+      const d = vp8lDims(bytes, p, size);
+      if (!d) return failed(bytes);
+      simpleFrames.push(d);
+    } else if (fourcc === 'VP8X') {
+      if (size < 10) return failed(bytes);
+      canvas = {
+        width: ((bytes[p + 4] | (bytes[p + 5] << 8) | (bytes[p + 6] << 16)) & 0xffffff) + 1,
+        height: ((bytes[p + 7] | (bytes[p + 8] << 8) | (bytes[p + 9] << 16)) & 0xffffff) + 1,
+      };
+      if (canvas.width < 1 || canvas.height < 1) return failed(bytes);
+    } else if (fourcc === 'ANIM') {
+      sawAnim = true;
+    } else if (fourcc === 'ANMF') {
+      const d = anmfDims(bytes, p, size);
+      if (!d) return failed(bytes);
+      animFrames.push(d);
     }
     if (fourcc === 'EXIF' || fourcc === 'XMP ') removed.push(`WEBP:${fourcc.trim()}`);
     else body.push(bytes.subarray(i, end));
     i = end;
   }
   if (i !== bytes.length) return failed(bytes); // chunk 未恰好铺满 → 尾部残留
-  if (!sawImageFrame) return failed(bytes); // 无实际图像帧（仅 VP8X 不够）
+  // 必须存在**真实图像数据**：VP8/VP8L 位流或 ANMF 动画帧（仅 VP8X 扩展头不算）。
+  if (simpleFrames.length === 0 && animFrames.length === 0) return failed(bytes);
+  if (animFrames.length > 0 && !sawAnim) return failed(bytes); // 动画帧必须伴随 ANIM 头
+  if (canvas) {
+    // 简单图像尺寸必须与画布一致；动画帧不得超过画布。
+    for (const d of simpleFrames) if (d.width !== canvas.width || d.height !== canvas.height) return failed(bytes);
+    for (const d of animFrames) if (d.width > canvas.width || d.height > canvas.height) return failed(bytes);
+  }
   const merged = concat(body);
   const newRiffSize = merged.length - 8;
   merged[4] = newRiffSize & 0xff;

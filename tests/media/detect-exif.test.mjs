@@ -28,6 +28,13 @@ import {
   pngOversizeDimension,
   pngRawSizeMismatch,
   pngRealRgb,
+  webpVp8lShortHeader,
+  webpVp8lBadSignature,
+  webpVp8lBadVersion,
+  webpVp8xCanvasMismatch,
+  webpVp8KeyFrame,
+  webpAnimFrames,
+  webpAnmfWithoutAnim,
 } from './_fixtures.mjs';
 
 /** 从 PNG 字节中拼接全部 IDAT 负载，用于验证压缩流确实可解压。 */
@@ -125,7 +132,7 @@ test('WebP：EXIF / XMP chunk 被清除且 RIFF 长度更新', () => {
   assert.ok(out.removed.includes('WEBP:XMP'));
   assert.equal(containsBytes(out.data, 'EXIF'), false);
   assert.equal(containsBytes(out.data, 'XMP '), false);
-  assert.equal(containsBytes(out.data, 'VP8 '), true, 'VP8 帧应保留');
+  assert.equal(containsBytes(out.data, 'VP8L'), true, 'VP8L 位流应保留');
   const riffSize = out.data[4] | (out.data[5] << 8) | (out.data[6] << 16) | (out.data[7] << 24);
   assert.equal(riffSize, out.data.length - 8, 'RIFF 长度应与新体长一致');
 });
@@ -242,4 +249,38 @@ test('D3 PNG 正例：真实可解码图解压长度精确匹配 IHDR → 接受
   assert.equal(out.ok, true);
   const raw = inflateSync(Buffer.from(pngIdatPayload(out.data)));
   assert.equal(raw.length, (4 * 3 + 1) * 3, '解压原始长度应精确等于 (rowBytes+1)×height');
+});
+
+// ------------------------------------------------ D2 回归：WebP 真实位流可用性
+
+test('D2 WebP：VP8L 负载仅 1 字节（无完整位流头）→ 拒绝（监工反例）', () => {
+  const input = webpVp8lShortHeader();
+  assert.equal(input.length, 22, `应复现监工 22 字节构造，实际 ${input.length}`);
+  assert.equal(stripImageMetadata(input, 'image/webp').ok, false);
+});
+
+test('D2 WebP：VP8L 位流签名非法（非 0x2f）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8lBadSignature(), 'image/webp').ok, false);
+});
+
+test('D2 WebP：VP8L 位流版本非 0 → 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8lBadVersion(), 'image/webp').ok, false);
+});
+
+test('D2 WebP：VP8L 尺寸与 VP8X 画布不符 → 拒绝', () => {
+  assert.equal(stripImageMetadata(webpVp8xCanvasMismatch(), 'image/webp').ok, false);
+});
+
+test('D2 WebP：有 ANMF 但缺 ANIM 头 → 拒绝', () => {
+  assert.equal(stripImageMetadata(webpAnmfWithoutAnim(), 'image/webp').ok, false);
+});
+
+test('D2 WebP 正例：VP8 关键帧（真实位流头）→ 接受', () => {
+  const out = stripImageMetadata(webpVp8KeyFrame({ width: 4, height: 4 }), 'image/webp');
+  assert.equal(out.ok, true);
+});
+
+test('D2 WebP 正例：VP8X + ANIM + ANMF 动画 → 接受', () => {
+  const out = stripImageMetadata(webpAnimFrames(), 'image/webp');
+  assert.equal(out.ok, true);
 });
