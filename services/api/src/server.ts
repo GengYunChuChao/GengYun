@@ -26,6 +26,18 @@ async function main(): Promise<void> {
   const pool = createPool(config.databaseUrl);
   const app = buildApp({ config, pool });
 
+  // 管理员初始化：仅在后台账号表为空且配置了 bootstrap 凭据时创建；失败不静默。
+  try {
+    const bootstrap = await app.authService.ensureBootstrapAdmin();
+    if (bootstrap.created) {
+      app.log.info({ login_name: bootstrap.loginName }, '已创建初始管理员（口令只以 scrypt 摘要入库）');
+    } else if (bootstrap.reason === 'already_initialized') {
+      app.log.info('后台已完成初始化，跳过初始管理员创建');
+    }
+  } catch (error) {
+    app.log.error({ err: error }, '初始管理员创建失败（服务继续启动；请检查数据库与迁移 0008）');
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutting down');
     try {
@@ -40,7 +52,7 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
     { execution_mode: config.executionMode, database_configured: config.databaseUrl !== null },
-    'gengyun api 骨架已启动（业务路由未实现）',
+    'gengyun api 已启动（已装配认证与后台认证路由；其余业务路由未实现）',
   );
 }
 

@@ -89,3 +89,45 @@ test('非 postgres 连接串与非法端口被拒绝', () => {
     },
   );
 });
+
+test('替身模式不暴露微信凭据（未配置即为 null，不用默认值顶替）', () => {
+  const config = loadConfig({ APP_EXECUTION_MODE: 'stub' });
+  assert.equal(config.wechatAppId, null);
+  assert.equal(config.wechatAppSecret, null);
+  assert.equal(config.sessionSigningKey, null);
+  assert.equal(config.adminBootstrap, null);
+});
+
+test('初始管理员配置：要么都不设、要么同时设；口令至少 12 字符', () => {
+  const base = { APP_EXECUTION_MODE: 'stub' };
+  assert.equal(loadConfig(base).adminBootstrap, null);
+
+  assert.throws(
+    () => loadConfig({ ...base, ADMIN_BOOTSTRAP_PASSWORD: 'x'.repeat(12) }),
+    (error) => {
+      assert.ok(error instanceof ConfigError);
+      assert.equal(error.issues[0].field, 'ADMIN_BOOTSTRAP_LOGIN_NAME');
+      assert.equal(error.issues[0].code, 'MISSING');
+      return true;
+    },
+  );
+  assert.throws(
+    () => loadConfig({ ...base, ADMIN_BOOTSTRAP_LOGIN_NAME: 'root' }),
+    (error) => {
+      assert.equal(error.issues[0].field, 'ADMIN_BOOTSTRAP_PASSWORD');
+      assert.equal(error.issues[0].code, 'MISSING');
+      return true;
+    },
+  );
+  assert.throws(
+    () => loadConfig({ ...base, ADMIN_BOOTSTRAP_LOGIN_NAME: 'root', ADMIN_BOOTSTRAP_PASSWORD: 'short' }),
+    (error) => {
+      assert.equal(error.issues[0].field, 'ADMIN_BOOTSTRAP_PASSWORD');
+      assert.equal(error.issues[0].code, 'INVALID_VALUE');
+      return true;
+    },
+  );
+
+  const ok = loadConfig({ ...base, ADMIN_BOOTSTRAP_LOGIN_NAME: 'root', ADMIN_BOOTSTRAP_PASSWORD: 'bootstrap-pass-123' });
+  assert.deepEqual(ok.adminBootstrap, { loginName: 'root', password: 'bootstrap-pass-123' });
+});

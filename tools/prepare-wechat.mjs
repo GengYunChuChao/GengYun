@@ -18,8 +18,8 @@ try {
   if (existsSync(out)) throw new Error('Output already exists: ' + out + '. Keep it for inspection or remove that exact generated directory before preparing again.');
   mkdirSync(out, { recursive: true });
   const app = JSON.parse(readFileSync(join(root, 'miniprogram/app.json'), 'utf8'));
-  const files = ['app.js', 'app.json', 'app.wxss', 'sitemap.json', 'config/runtime.js', 'utils/debug.js'];
-  const pages = ['pages/home/home', 'pages/identify/identify', 'pages/community/community', 'pages/messages/messages', 'pages/profile/profile'];
+  const files = ['app.js', 'app.json', 'app.wxss', 'sitemap.json', 'config/runtime.js', 'utils/debug.js', 'utils/auth.js'];
+  const pages = ['pages/home/home', 'pages/identify/identify', 'pages/community/community', 'pages/messages/messages', 'pages/profile/profile', 'pages/login/login'];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) for (const suffix of ['.js', '.json', '.wxml']) files.push(page + suffix);
   for (const file of files) {
