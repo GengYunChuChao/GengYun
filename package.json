@@ -17,7 +17,7 @@
     "dev:admin": "npm run dev --workspace @gengyun/admin",
     "build": "npm run build --workspace @gengyun/api && npm run build --workspace @gengyun/admin",
     "lint": "node tools/lint-workspaces.mjs",
-    "test:unit": "node --test \"tests/unit/*.test.mjs\" \"tests/privacy/*.test.mjs\"",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\" \"tests/privacy/*.test.mjs\" \"tests/media/*.test.mjs\"",
     "test:contract": "node --test \"tests/contract/*.test.mjs\"",
     "test:evaluation": "node --test \"tests/evaluation/*.test.mjs\"",
     "test:mini": "node tools/check-wechat-project.mjs && node --test tests/local-debug.test.mjs",
