@@ -98,6 +98,8 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 
 ## 需求、进度与协作
 
+写手新协作规则：用户于2026-10-09要求免费组织私有上游＋个人私有 Fork、独立身份和 clone，上游仅 Read／必要时 Triage；[迁移状态与执行规范](docs/fork-collaboration.md)保留既有成果和审查。组织名为 GenYunChuCao，平台迁移尚待核验，不能将本文视为已完成权限隔离。
+
 - [需求总览](docs/requirements.md)、[产品需求](docs/product-requirements.md)、[代码需求](docs/implementation-requirements.md)：最高优先级的业务和验收基线。
 - [全周期开发文档 v1.1](docs/development-plan.md)：架构、接口、阶段、接入门槛和交付顺序。
 - [初版 27 项开发顺序与并行建议](docs/development-order.md)：推荐队列、可以并行的条件、当前优先事项及 PR 证据；协作者开始前先核对已有领取和成果。
