@@ -4,6 +4,8 @@
   <view class="card">首页可游客预览。识别、社区、消息与我的需要登录后才能使用。</view>
   <button wx:if="{{!loggedIn}}" bindtap="goLogin">微信登录</button>
   <view class="card">首版规划：拍草识别、标签OCR、普通话语音与文字提问。当前没有相机、录音或AI调用。</view>
+  <button bindtap="goReference">识草查药（科普资料查询）</button>
+  <button bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
   <button wx:if="{{local}}" bindtap="diagnose" loading="{{busy}}" disabled="{{busy}}">检查本地替身连接</button>
   <view class="status">{{status}}</view>
 </view>
