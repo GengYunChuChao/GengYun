@@ -14,7 +14,9 @@ assert.equal(project.setting.urlCheck, true);
 assert.equal(project.libVersion, '3.17.3');
 const app = readJSON('miniprogram/app.json');
 assert.deepEqual(app.tabBar.list.map(x => x.text), ['首页', '识别', '社区', '消息', '我的']);
-assert.deepEqual(app.pages, app.tabBar.list.map(x => x.pagePath));
+// 五个 Tab 页必须存在且必须注册在 pages 中；pages 允许额外注册非 Tab 页（如登录页）。
+const tabPages = app.tabBar.list.map(x => x.pagePath);
+for (const page of tabPages) assert.ok(app.pages.includes(page), `Tab 页未注册：${page}`);
 for (const page of app.pages) {
   assert.match(page, /^pages\/[a-z]+\/[a-z]+$/);
   for (const suffix of ['.js', '.json', '.wxml']) assert.ok(existsSync(join(root, 'miniprogram', page + suffix)));
