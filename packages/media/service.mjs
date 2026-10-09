@@ -59,10 +59,10 @@ function requireIdempotencyKey(key) {
 
 /** 解析 If-Match（契约：缺失 428，不匹配 409）。 */
 function requireIfMatch(ifMatch, currentRevision) {
-  if (ifMatch === undefined || ifMatch === null || ifMatch === '') {
+  const parsed = normalizeIfMatch(ifMatch);
+  if (parsed === null) {
     throw new MediaError('REVISION_REQUIRED', '缺少 If-Match 版本头');
   }
-  const parsed = Number(String(ifMatch).replaceAll('"', ''));
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new MediaError('INVALID_REQUEST', 'If-Match 版本非法');
   }
@@ -70,6 +70,14 @@ function requireIfMatch(ifMatch, currentRevision) {
     throw new MediaError('REVISION_CONFLICT', 'If-Match 版本与当前版本不一致');
   }
   return parsed;
+}
+
+/** 归一化 If-Match 值（去引号）；缺省返回 null。用于幂等请求 hash 的可比性。 */
+function normalizeIfMatch(ifMatch) {
+  if (ifMatch === undefined || ifMatch === null || ifMatch === '') return null;
+  const raw = String(ifMatch).replaceAll('"', '');
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) ? parsed : raw;
 }
 
 /**
@@ -96,7 +104,10 @@ export function createMediaService(options = {}) {
   } = options;
 
   const records = new Map(); // mediaId -> record
-  const idempotency = new Map(); // `${ownerId}:${key}` -> { requestHash, mediaId }
+  // 幂等：`${ownerId}:${op}:${key}` -> { requestHash, mediaId }
+  // 同一键同请求 → 回放首次结果；同一键不同请求 → IDEMPOTENCY_CONFLICT。
+  // 完成接口的请求 hash **包含原 If-Match**（返修 B3），使「原样重试」与「改请求」可区分。
+  const idempotency = new Map();
   const grants = new Map(); // grantId -> community grant record
 
   const expiresIso = (ms) => new Date(ms).toISOString();
@@ -162,7 +173,7 @@ export function createMediaService(options = {}) {
   function initiateUpload({ ownerId, authEpoch = 0, input, idempotencyKey, mediaCountForPost = 0 }) {
     requireSession({ ownerId });
     requireIdempotencyKey(idempotencyKey);
-    const key = `${ownerId}:${idempotencyKey}`;
+    const key = `${ownerId}:initiate:${idempotencyKey}`;
     const requestHash = requestHashOf(input);
     const prior = idempotency.get(key);
     if (prior) {
@@ -225,10 +236,34 @@ export function createMediaService(options = {}) {
     requireSession({ ownerId });
     requireIdempotencyKey(idempotencyKey);
     const record = records.get(mediaId);
-    // 非本人 / 不存在统一 404，不泄露存在性。
+    // 非本人 / 不存在统一 404，不泄露存在性（重放前**重新鉴权**）。
     if (!record || record.ownerId !== ownerId) {
       throw new MediaError('NOT_FOUND', '媒体不存在');
     }
+
+    // 幂等（返修 B3）：以「含原 If-Match 的请求 hash」为准，先于版本校验执行，
+    // 使「原样重试」回放首次成功结果，而非用已自增的 revision 命中 409。
+    const requestHash = requestHashOf({
+      op: 'complete',
+      mediaId,
+      ifMatch: normalizeIfMatch(ifMatch),
+      input,
+    });
+    const idemKey = `${ownerId}:complete:${idempotencyKey}`;
+    const prior = idempotency.get(idemKey);
+    if (prior) {
+      if (prior.requestHash !== requestHash) {
+        // 同一幂等键携带了不同的完成请求（改请求 / 改 If-Match）→ 冲突。
+        throw new MediaError('IDEMPOTENCY_CONFLICT', '同一幂等键携带了不同的完成请求');
+      }
+      // 同请求重放：重新鉴权后返回首次成功结果。
+      const replay = records.get(prior.mediaId);
+      if (!replay || replay.ownerId !== ownerId) {
+        throw new MediaError('NOT_FOUND', '媒体不存在');
+      }
+      return toMedia(replay);
+    }
+
     requireIfMatch(ifMatch, record.revision);
 
     const declared = validateCompleteInput(input);
@@ -236,8 +271,9 @@ export function createMediaService(options = {}) {
       throw new MediaError('INVALID_REQUEST', '完成上传声明与初始化声明不一致');
     }
 
-    // 幂等：已完成且声明一致 -> 直接回放。
+    // 已完成且声明一致 -> 记录幂等并回放（用于「换新键但对象已就绪」的重复提交）。
     if (record.state === 'ready') {
+      idempotency.set(idemKey, { requestHash, mediaId: record.id });
       return toMedia(record);
     }
     if (record.state !== 'initiated' && record.state !== 'uploaded') {
@@ -246,7 +282,13 @@ export function createMediaService(options = {}) {
 
     const detected = assertBytesMatchDeclaration({
       bytes: body,
-      declared: { mime: record.mime, bytes: record.bytes, sha256: record.sha256, purpose: record.purpose },
+      declared: {
+        mime: record.mime,
+        bytes: record.bytes,
+        sha256: record.sha256,
+        purpose: record.purpose,
+        duration_ms: record.duration_ms,
+      },
     });
 
     const at = clock();
@@ -268,9 +310,12 @@ export function createMediaService(options = {}) {
       transition(record, 'ready', at);
     } else {
       transition(record, 'processing', at);
+      // 音频以**真实时长**为准（B2）：覆盖调用方声明，避免虚报进入投影。
+      if (typeof detected.durationMs === 'number') record.duration_ms = detected.durationMs;
       transition(record, 'ready', at);
     }
     record.revision += 1;
+    idempotency.set(idemKey, { requestHash, mediaId: record.id });
     logger(logSafe({ evt: 'media.complete', id: record.id, state: record.state, removed: record.metadata_removed.length }));
     return toMedia(record);
   }

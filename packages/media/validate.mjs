@@ -16,6 +16,7 @@ import {
 } from './constants.mjs';
 import { MediaError } from './errors.mjs';
 import { detectMediaType } from './detect.mjs';
+import { computeAudioDurationMs } from './audio.mjs';
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
 
@@ -108,9 +109,16 @@ export function validateCompleteInput(input) {
 }
 
 /**
- * 核验实际字节与声明一致（长度、hash、真实类型），返回真实类型。
- * @param {{ bytes: Uint8Array, declared: {mime:string, bytes:number, sha256:string, purpose:string} }} args
- * @returns {{ mime:string, container:string }}
+ * 核验实际字节与声明一致（长度、hash、真实类型、音频真实时长），返回真实类型与真实时长。
+ *
+ * 音频（B2 返修）：真实时长以字节解析结果为准——
+ *   - 无法解析真实时长 → 受控拒绝（INVALID_REQUEST，field=/file）；
+ *   - 真实时长 > 60s   → 拒绝（INVALID_REQUEST，field=/duration_ms）；
+ *   - 声明时长与真实时长偏差超出容差 → 拒绝（虚报，INVALID_REQUEST，field=/duration_ms）。
+ * 绝不回退「信任调用方声明」。
+ *
+ * @param {{ bytes: Uint8Array, declared: {mime:string, bytes:number, sha256:string, purpose:string, duration_ms?:number|null} }} args
+ * @returns {{ mime:string, container:string, durationMs?:number }}
  */
 export function assertBytesMatchDeclaration({ bytes, declared }) {
   if (!bytes || typeof bytes.length !== 'number') {
@@ -152,5 +160,30 @@ export function assertBytesMatchDeclaration({ bytes, declared }) {
       details: [{ field: '/file', code: 'kind_mismatch' }],
     });
   }
-  return detected;
+
+  // 音频：依有效编码解析**真实时长**并参与上限判断；无法解析则受控拒绝。
+  let durationMs;
+  if (actualKind === 'audio') {
+    const real = computeAudioDurationMs(bytes);
+    if (!real.ok) {
+      throw invalidRequest('无法从字节验证音频真实时长', [
+        { field: '/file', code: 'duration_unverifiable' },
+      ]);
+    }
+    if (real.durationMs > MEDIA_MAX_DURATION_MS) {
+      throw invalidRequest(`音频真实时长超过上限（${MEDIA_MAX_DURATION_MS}ms）`, [
+        { field: '/duration_ms', code: 'out_of_range' },
+      ]);
+    }
+    const declaredMs = declared.duration_ms;
+    if (typeof declaredMs === 'number') {
+      const tolerance = Math.max(2000, Math.ceil(real.durationMs * 0.1));
+      if (Math.abs(declaredMs - real.durationMs) > tolerance) {
+        throw invalidRequest('声明时长与真实时长不符', [{ field: '/duration_ms', code: 'mismatch' }]);
+      }
+    }
+    durationMs = real.durationMs;
+  }
+
+  return { ...detected, durationMs };
 }

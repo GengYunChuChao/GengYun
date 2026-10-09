@@ -23,8 +23,9 @@
 | `constants.mjs` | 冻结枚举 + 每用途限额 + 状态机 + `error_status_map`（与 contracts 逐项一致） |
 | `errors.mjs` | `MediaError` + `toErrorEnvelope`（与 services/api 的 ErrorEnvelope 同形） |
 | `detect.mjs` | **魔数探测**：jpeg/png/webp/mpeg/wav/aac（不信扩展名/声明 MIME） |
-| `exif.mjs` | 图片元数据**结构性段清除**：JPEG(App1 Exif/XMP、App13)、PNG(eXIf/tEXt/iTXt/zTXt)、WebP(EXIF/XMP) |
-| `validate.mjs` | 声明与真实字节校验（用途/类型/字节/时长/hash/伪扩展名/每帖 3 张） |
+| `exif.mjs` | 图片元数据**结构性段清除**（JPEG App1 Exif/XMP+App13、PNG eXIf/tEXt/iTXt/zTXt、WebP EXIF/XMP）；**严格容器结构校验**：拒绝无图像数据、截断与「结束标记之后的尾部字节」 |
+| `audio.mjs` | **音频真实时长解析**（WAV/ADTS/MPEG/M4A 各自解码）；无法解析即受控拒绝 |
+| `validate.mjs` | 声明与真实字节校验（用途/类型/字节/**真实时长**/hash/伪扩展名/每帖 3 张） |
 | `tokens.mjs` | HMAC 短效句柄签名（token 不入 URL；服务端只存 hash） |
 | `store.mjs` | 私有对象存储（内存参考实现，可插拔真实对象存储；对外只出**不透明 object_ref**） |
 | `service.mjs` | 服务：生命周期、owner 访问、社区取图、过期与孤立对象清理 |
@@ -107,6 +108,13 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 ## 硬红线落实
 
 - **不信扩展名/声明 MIME**：完成上传以魔数 + hash + 字节数 + 用途核验；伪扩展名（声明与真实不符）→ 415。
+- **对外字节全部经过校验与清理（返修 B1）**：JPEG/PNG/WebP 均**逐块重建**输出，绝不回退返回原始输入；
+  容器结束标记（PNG `IEND`、JPEG `EOI`）之后**不得有尾部字节**，WebP 必须与 RIFF 声明长度一致；
+  无图像数据（仅 PNG 签名 / 仅 JPEG SOI / WebP 无 VP8* 块）或结构截断 → 拒绝。
+- **音频真实时长以字节为准（返修 B2）**：由 `audio.mjs` 按有效编码解析真实时长并参与上限判断；
+  无法解析、真实时长 > 60s、或声明与真实偏差超容差 → 受控拒绝；投影中的 `duration_ms` 为**真实值**。
+- **完成接口幂等重放（返修 B3）**：幂等键的请求 hash **包含原 `If-Match`**；同请求重放（含原 `If-Match`）
+  回放首次成功结果而非 409；同键改请求（改 `If-Match`/正文）→ `IDEMPOTENCY_CONFLICT`；重放前**重新鉴权**。
 - **非本人统一 404**：`getMedia` / `grantMediaAccess` 对非 owner 与不存在同形，不泄露存在性。
 - **短效句柄 ≠ 公开权限**：token 不入 URL、服务端只存 hash、每次取图重查账号/授权/媒体/内容当前版本；
   内容下架、媒体删除、版本变化、会话失效均即时拒绝（即使未到期）。
@@ -120,6 +128,8 @@ app.post('/media/uploads', { preHandler: attachSession }, async (req) =>
 node --test "tests/media/*.test.mjs"
 ```
 
-合成夹具覆盖：魔数探测、JPEG/PNG/WebP 去元数据（含 GPS）、伪扩展名 415、超限 413、
-语音时长、幂等与幂等冲突、If-Match 428/409、非本人 404、社区取图授权与撤销、过期回收、
-孤立对象清理、日志脱敏、schema 与契约一致性。**这些是模块级单元证据，不等于真实登录/对象存储/供应商验收。**
+合成夹具覆盖：魔数探测、JPEG/PNG/WebP 去元数据（含 GPS）、**PNG IEND 后尾部走私 / JPEG EOI 后尾部 /
+无图像数据 / 截断（B1）**、伪扩展名 415、超限 413、**音频真实时长：虚报 / 真实超时长 / 截断（B2）**、
+**完成接口幂等原样重试回放与改请求冲突（B3）**、幂等与幂等冲突、If-Match 428/409、非本人 404、
+社区取图授权与撤销、过期回收、孤立对象清理、日志脱敏、schema 与契约一致性。
+**这些是模块级单元证据，不等于真实登录/对象存储/供应商验收。**

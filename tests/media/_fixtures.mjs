@@ -1,6 +1,6 @@
 /**
  * GY-I06 媒体测试夹具：构造**结构性最小但真实可解析**的图片/音频字节，
- * 用于魔数探测与 EXIF 清除测试。全部为合成字节，不含任何个人原始媒体。
+ * 用于魔数探测、EXIF 清除、真实时长与边界回归测试。全部为合成字节，不含任何个人原始媒体。
  */
 export function u8(...parts) {
   const flat = parts.flat();
@@ -9,6 +9,10 @@ export function u8(...parts) {
 
 export function ascii(s) {
   return Uint8Array.from([...s].map((c) => c.charCodeAt(0)));
+}
+
+export function u16le(n) {
+  return Uint8Array.from([n & 0xff, (n >> 8) & 0xff]);
 }
 
 export function u16be(n) {
@@ -34,6 +38,8 @@ export function concat(...parts) {
   return out;
 }
 
+// ------------------------------------------------------------------ JPEG
+
 /** JPEG：SOI + APP1(Exif 含 GPS) + APP0(JFIF) + SOS + 熵数据 + EOI。 */
 export function jpegWithExif() {
   const exifPayload = concat(ascii('Exif\0\0'), ascii('MM\0*'), u8([0, 0, 0, 8]), ascii('GPSDATA-1.2345,103.9876'));
@@ -51,6 +57,18 @@ export function jpegPlain() {
   const sos = concat(u8(0xff, 0xda), u16be(8), u8([1, 1, 0, 0, 0x3f, 0x00]));
   return concat(u8(0xff, 0xd8), app0, sos, u8([0x11, 0x22]), u8(0xff, 0xd9));
 }
+
+/** JPEG：仅 SOI（无 SOS/EOI），无图像数据。 */
+export function jpegSignatureOnly() {
+  return u8(0xff, 0xd8);
+}
+
+/** JPEG：EOI 之后附加私密尾部字节（走私回归）。 */
+export function jpegWithTrailing() {
+  return concat(jpegPlain(), ascii('TRAILING-SECRET'));
+}
+
+// ------------------------------------------------------------------- PNG
 
 function pngChunk(type, data) {
   return concat(u32be(data.length), ascii(type), data, u32be(0));
@@ -76,6 +94,26 @@ export function pngPlain() {
   return concat(sig, ihdr, idat, iend);
 }
 
+/** PNG：仅 8 字节签名（无 IHDR/IDAT/IEND），无图像数据。 */
+export function pngSignatureOnly() {
+  return u8([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+}
+
+/** PNG：IEND 之后附加合成的 eXIf 伪块（尾部元数据走私回归）。 */
+export function pngWithTrailingExif() {
+  const base = pngPlain();
+  const smuggled = pngChunk('eXIf', concat(ascii('MM\0*'), ascii('SYNTHETIC-GPS-ONLY')));
+  return concat(base, smuggled);
+}
+
+/** PNG：声明长度超出实际（截断）。 */
+export function pngTruncated() {
+  const base = pngPlain();
+  return base.subarray(0, base.length - 4); // 砍掉 IEND 的 CRC
+}
+
+// ------------------------------------------------------------------ WebP
+
 function webpChunk(fourcc, data) {
   const padded = data.length % 2 === 1 ? concat(data, u8([0])) : data;
   return concat(ascii(fourcc), u32le(data.length), padded);
@@ -90,25 +128,92 @@ export function webpWithExif() {
   return concat(ascii('RIFF'), u32le(body.length), body);
 }
 
-/** WAV：RIFF/WAVE + fmt + data。 */
-export function wavBytes() {
-  const fmt = concat(ascii('fmt '), u32le(16), u8(new Array(16).fill(0)));
-  const data = concat(ascii('data'), u32le(4), u8([1, 2, 3, 4]));
+/** WebP：仅 RIFF/WEBP 头（无 VP8 图像块）。 */
+export function webpNoImage() {
+  const body = ascii('WEBP');
+  return concat(ascii('RIFF'), u32le(body.length), body);
+}
+
+// ------------------------------------------------------------------ 音频
+
+/**
+ * 构造合法的 PCM WAV（RIFF/WAVE + fmt + data）。
+ * @param {{ sampleRate?:number, channels?:number, bitsPerSample?:number, dataBytes:number }} opts
+ */
+export function pcmWav({ sampleRate = 8000, channels = 1, bitsPerSample = 16, dataBytes }) {
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const byteRate = sampleRate * blockAlign;
+  const fmt = concat(
+    ascii('fmt '),
+    u32le(16),
+    u16le(1), // PCM
+    u16le(channels),
+    u32le(sampleRate),
+    u32le(byteRate),
+    u16le(blockAlign),
+    u16le(bitsPerSample),
+  );
+  const data = concat(ascii('data'), u32le(dataBytes), new Uint8Array(dataBytes));
   const body = concat(ascii('WAVE'), fmt, data);
   return concat(ascii('RIFF'), u32le(body.length), body);
 }
 
-/** MP3：ID3v2 标签头 + 载荷。 */
-export function mp3Bytes() {
-  return concat(ascii('ID3'), u8([3, 0, 0]), u32be(0), u8([0xff, 0xfb, 0x90, 0x00]));
+/** 1 秒 PCM WAV（8kHz / 单声道 / 16bit），真实时长 = 1000ms。 */
+export function wavBytes() {
+  return pcmWav({ dataBytes: 8000 * 2 * 1 });
 }
 
-/** AAC：ADTS 帧同步 + 载荷。 */
-export function aacBytes() {
-  return concat(u8([0xff, 0xf1, 0x50, 0x80, 0x00, 0x1f, 0xfc]), u8([0, 0, 0, 0]));
+/** 61 秒 PCM WAV（8kHz / 单声道 / 16bit）= 976000 字节数据（<10MiB，但超 60s）。 */
+export function wav61Seconds() {
+  return pcmWav({ sampleRate: 8000, channels: 1, bitsPerSample: 16, dataBytes: 8000 * 2 * 61 });
 }
 
-/** M4A/ISO BMFF：size + ftyp + 'M4A '。 */
-export function m4aBytes() {
-  return concat(u32be(24), ascii('ftyp'), ascii('M4A '), u32be(0), ascii('M4A '));
+/** WAV：data 声明长度超出实际（截断回归）。 */
+export function wavTruncated() {
+  const full = wavBytes();
+  return full.subarray(0, full.length - 1000);
+}
+
+/** ADTS AAC 帧：protection_absent=1，7 字节头 + payload。 */
+function adtsFrame(sfIndex, payloadLen) {
+  const frameLength = 7 + payloadLen;
+  return concat(
+    u8([0xff, 0xf1]),
+    u8([(1 << 6) | (sfIndex << 2)]),
+    u8([0x40 | ((frameLength >> 11) & 0x03)]),
+    u8([(frameLength >> 3) & 0xff]),
+    u8([((frameLength & 0x07) << 5) | 0x1f]),
+    u8([0xfc]),
+    new Uint8Array(payloadLen),
+  );
+}
+
+/** 合法 ADTS AAC：默认 1 帧 @44100Hz（≈23ms）。 */
+export function aacBytes({ frames = 1, sfIndex = 4 } = {}) {
+  const parts = [];
+  for (let i = 0; i < frames; i += 1) parts.push(adtsFrame(sfIndex, 4));
+  return concat(...parts);
+}
+
+/** MPEG1 Layer3 帧（44100Hz / 128kbps）。 */
+function mp3Frame() {
+  const header = u8([0xff, 0xfb, 0x90, 0x00]);
+  const frameLength = Math.floor((1152 / 8) * ((128 * 1000) / 44100)) ; // 417
+  return concat(header, new Uint8Array(frameLength - 4));
+}
+
+/** MP3：ID3v2(空) + N 个合法帧。 */
+export function mp3Bytes({ frames = 5 } = {}) {
+  const parts = [ascii('ID3'), u8([3, 0, 0]), u32be(0)];
+  for (let i = 0; i < frames; i += 1) parts.push(mp3Frame());
+  return concat(...parts);
+}
+
+/** M4A/ISO BMFF：ftyp('M4A ') + moov>mvhd（timescale=1000, duration=ms）。 */
+export function m4aBytes({ durationMs = 1000 } = {}) {
+  const mvhdPayload = concat(u8([0, 0, 0, 0]), u32be(0), u32be(0), u32be(1000), u32be(durationMs));
+  const mvhd = concat(u32be(8 + mvhdPayload.length), ascii('mvhd'), mvhdPayload);
+  const moov = concat(u32be(8 + mvhd.length), ascii('moov'), mvhd);
+  const ftyp = concat(u32be(16), ascii('ftyp'), ascii('M4A '), u32be(0));
+  return concat(ftyp, moov);
 }

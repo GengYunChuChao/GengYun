@@ -13,6 +13,12 @@ import {
   aacBytes,
   m4aBytes,
   ascii,
+  pngSignatureOnly,
+  pngWithTrailingExif,
+  pngTruncated,
+  jpegSignatureOnly,
+  jpegWithTrailing,
+  webpNoImage,
 } from './_fixtures.mjs';
 
 function containsBytes(haystack, needleAscii) {
@@ -99,4 +105,49 @@ test('音频不做 EXIF 处理（原样返回）', () => {
   const out = stripImageMetadata(wav, 'audio/wav');
   assert.equal(out.changed, false);
   assert.deepEqual([...out.data], [...wav]);
+});
+
+// ------------------------------------------------ B1 回归：PNG 尾部与完整结构
+
+test('B1 PNG：仅 8 字节签名（无图像数据）→ 拒绝', () => {
+  const out = stripImageMetadata(pngSignatureOnly(), 'image/png');
+  assert.equal(out.ok, false, '仅签名不得判为可清理/可发布');
+});
+
+test('B1 PNG：IEND 之后的尾部 eXIf 走私 → 拒绝', () => {
+  const input = pngWithTrailingExif();
+  // 前置条件：尾部确实残留了合成 GPS 标记
+  assert.equal(containsBytes(input, 'SYNTHETIC-GPS-ONLY'), true);
+  const out = stripImageMetadata(input, 'image/png');
+  assert.equal(out.ok, false, 'IEND 之后有尾部字节必须拒绝');
+});
+
+test('B1 PNG：截断（长度域超出实际）→ 拒绝', () => {
+  const out = stripImageMetadata(pngTruncated(), 'image/png');
+  assert.equal(out.ok, false);
+});
+
+test('B1 PNG：合法文件对外字节不再原样回退，且逐块重建', () => {
+  const input = pngWithExif();
+  const out = stripImageMetadata(input, 'image/png');
+  assert.equal(out.ok, true);
+  assert.equal(containsBytes(out.data, 'eXIf'), false);
+  assert.equal(containsBytes(out.data, 'gps:'), false);
+  assert.equal(containsBytes(out.data, 'IHDR'), true);
+  assert.equal(containsBytes(out.data, 'IDAT'), true);
+  assert.equal(containsBytes(out.data, 'IEND'), true);
+});
+
+// ------------------------------------------------ B1 回归：JPEG / WebP 完整性
+
+test('B1 JPEG：仅 SOI（无图像数据）→ 拒绝', () => {
+  assert.equal(stripImageMetadata(jpegSignatureOnly(), 'image/jpeg').ok, false);
+});
+
+test('B1 JPEG：EOI 之后的尾部字节 → 拒绝', () => {
+  assert.equal(stripImageMetadata(jpegWithTrailing(), 'image/jpeg').ok, false);
+});
+
+test('B1 WebP：无 VP8/VP8L/VP8X 图像块 → 拒绝', () => {
+  assert.equal(stripImageMetadata(webpNoImage(), 'image/webp').ok, false);
 });

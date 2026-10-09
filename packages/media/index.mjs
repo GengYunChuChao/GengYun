@@ -8,6 +8,7 @@ export * from './constants.mjs';
 export * from './errors.mjs';
 export * from './detect.mjs';
 export * from './exif.mjs';
+export * from './audio.mjs';
 export * from './validate.mjs';
 export * from './tokens.mjs';
 export * from './store.mjs';
