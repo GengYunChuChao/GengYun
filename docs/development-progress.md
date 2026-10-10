@@ -24,3 +24,5 @@
 本次精简与视频需求确认不增加软件完成数，不关闭或重派 issue。
 
 [开发顺序](development-order.md) · [数据库组件交接](verification/database-run-handoff.md) · [旧进度存档](archive/development-2026-10-10/docs/development-progress.md)。
+
+2026-10-10 本机监工核查补记见[固定提交报告](verification/supervisor-audit-20261010.md)：main `c0069bb` 的 594 项回归、静态检查与构建通过；#68 三个既有阻断已独立复现，#69 部分界面证据与剩余范围分列，资料生成检查的 Windows 换行符误报尚未修订。报告是限定组件/环境证据，不增加整项完成数或表示 PR 已合并。
