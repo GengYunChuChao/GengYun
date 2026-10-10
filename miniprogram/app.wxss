@@ -56,6 +56,8 @@ page {
 /* ============================ 布局 ============================ */
 
 .page {
+  /* --font-scale 定义在本节点，须在本节点计算继承正文，不能依赖父级 page。 */
+  font-size: calc(18px * var(--font-scale, 1));
   min-height: 100vh;
   /* tabBar 为 fixed 覆盖层、不占文档流，页面须自行预留其高度。
      预留值用 px 而非 rpx：当前自定义 tabBar 居中按钮 64px 加上下间距 12px；rpx 随视口缩放，

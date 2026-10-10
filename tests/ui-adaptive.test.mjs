@@ -485,3 +485,8 @@ test('需求未要求应用内字号开关，故不得存在档位 UI 与本地�
   assert.ok(/function applyFontScale/.test(fontScale), '须保留 applyFontScale');
   assert.ok(/function currentFontScale/.test(fontScale), '须保留 currentFontScale');
 });
+
+test('字体变量在页面根节点计算，使普通正文继承实际微信倍率', () => {
+  const block = appWxss.slice(appWxss.indexOf('.page {'), appWxss.indexOf('}', appWxss.indexOf('.page {')));
+  assert.match(block, /font-size:\s*calc\(18px\s*\*\s*var\(--font-scale/);
+});
