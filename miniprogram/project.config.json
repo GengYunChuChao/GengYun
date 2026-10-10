@@ -1,5 +1,7 @@
 {
+  "description": "耕云原生工程（miniprogram/ 子目录导入入口）；与仓库根 project.config.json 保持同一口径：compileType=miniprogram、appid 相同、urlCheck=true、libVersion=3.17.3。此文件由微信开发者工具在 miniprogram/ 目录内打开项目时生成，本轮显式补齐 urlCheck/libVersion/miniprogramRoot 以消除与根入口的配置漂移；不含任何凭据。",
   "setting": {
+    "urlCheck": true,
     "es6": true,
     "postcss": true,
     "minified": true,
@@ -14,11 +16,14 @@
     "useCompilerPlugins": false
   },
   "compileType": "miniprogram",
+  "miniprogramRoot": "./",
   "simulatorPluginLibVersion": {},
   "packOptions": {
     "ignore": [],
     "include": []
   },
   "appid": "wx4407a4b908a69a54",
+  "projectname": "GengYun",
+  "libVersion": "3.17.3",
   "editorSetting": {}
 }
