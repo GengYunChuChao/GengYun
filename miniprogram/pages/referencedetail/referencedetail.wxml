@@ -1,0 +1,85 @@
+<view class="page">
+  <view class="banner">{{modeNote}}</view>
+
+  <view wx:if="{{!found}}" class="card">
+    <view class="title">未找到该记录</view>
+    <view>该记录不存在，或已被下架、失效而不在有效资料中。</view>
+    <button class="btn-primary" bindtap="backToList">返回继续查询</button>
+  </view>
+
+  <block wx:if="{{found}}">
+    <!-- 不可用状态（失效/下架/模拟等）明确展示，不静默隐藏、也不当作可用资料。 -->
+    <view wx:if="{{!queryable}}" class="state-bar state-unavailable">
+      当前不可用：{{unavailableReason}}。该记录不参与有效查询。
+    </view>
+
+    <view class="card">
+      <view class="item-head">
+        <text class="item-name">{{detail.registered_name}}</text>
+        <text class="item-reg">{{detail.registration_number}}</text>
+      </view>
+      <view class="tags">
+        <text class="tag">{{labels.source_kind}}</text>
+        <text class="tag">{{labels.evidence_kind}}</text>
+        <text class="tag">{{labels.review_status}}</text>
+        <text class="tag tag-warn">{{labels.record_status}}</text>
+      </view>
+    </view>
+
+    <!-- 制剂 -->
+    <view class="card">
+      <view class="section-title">制剂信息</view>
+      <view class="row"><text class="k">登记证号</text><text class="v">{{detail.registration_number}}</text></view>
+      <view class="row"><text class="k">登记名称</text><text class="v">{{detail.registered_name}}</text></view>
+      <view class="row"><text class="k">登记证持有人</text><text class="v">{{detail.producer}}</text></view>
+      <view class="row"><text class="k">剂型</text><text class="v">{{detail.dosage_form}}</text></view>
+      <view class="row"><text class="k">有效成分及含量</text><text class="v">{{detail.ingredients_text}}</text></view>
+    </view>
+
+    <!-- 条件 -->
+    <view class="card">
+      <view class="section-title">适用条件</view>
+      <view class="row"><text class="k">作物／场所</text><text class="v">{{detail.use_scene}}</text></view>
+      <view class="row"><text class="k">防治对象</text><text class="v">{{detail.target_original}}</text></view>
+    </view>
+
+    <!-- 风险 -->
+    <view class="card">
+      <view class="section-title">风险与注意事项</view>
+      <view class="row"><text class="k">毒性</text><text class="v">{{detail.toxicity}}</text></view>
+      <view class="row"><text class="k">用药量</text><text class="v">{{labels.dose}}</text></view>
+      <view class="note">{{detail.note}}</view>
+    </view>
+
+    <!-- 原文来源 -->
+    <view class="card">
+      <view class="section-title">原文来源</view>
+      <view class="row"><text class="k">发布机构</text><text class="v">{{detail.source.publisher}}</text></view>
+      <view class="row" wx:if="{{detail.source.issue}}"><text class="k">期号／文件</text><text class="v">{{detail.source.issue}}</text></view>
+      <view class="row"><text class="k">采集日期</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <view class="src-url" bindtap="copySource">{{detail.source.original_url}}</view>
+      <view class="src-hint">点击链接文本可复制原始来源地址</view>
+    </view>
+
+    <!-- 版本与已核对范围 -->
+    <view class="card">
+      <view class="section-title">来源版本与核对范围</view>
+      <view class="row"><text class="k">来源版本</text><text class="v mono">{{detail.source_version}}</text></view>
+      <view class="row"><text class="k">更新时间</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <view class="sub-title">已核对字段</view>
+      <view class="chips">
+        <text class="chip" wx:for="{{verifiedScope}}" wx:key="*this">{{item}}</text>
+      </view>
+      <view class="sub-title">未采集字段（如实列出，不代填）</view>
+      <view class="chips">
+        <text class="chip chip-muted" wx:for="{{notCollected}}" wx:key="*this">{{item}}</text>
+      </view>
+    </view>
+
+    <button class="btn-ghost" bindtap="backToList">返回继续查询</button>
+
+    <view class="disclaimer">
+      以上为农药登记信息摘录，未逐字段与登记详情／标签原文复核；本页不提供用药量建议，不得作为用药依据。
+    </view>
+  </block>
+</view>

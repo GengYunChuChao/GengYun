@@ -23,6 +23,14 @@ export interface AppConfig {
   databaseHealthTimeoutMs: number;
   /** 是否为真实模式（真实模式要求全部凭据齐备）。 */
   requiresRealCredentials: boolean;
+  /** 微信小程序 AppID；仅服务端读取，绝不进仓库、不下发客户端。real 模式必填。 */
+  wechatAppId: string | null;
+  /** 微信 AppSecret；仅服务端读取。real 模式必填，绝不回显、不记日志。 */
+  wechatAppSecret: string | null;
+  /** 会话签名密钥；real 模式必填。用作微信身份摘要（HMAC）的密钥。 */
+  sessionSigningKey: string | null;
+  /** 首次启动的管理员初始化凭据（可选；仅从环境变量读取，出库为 scrypt 摘要）。 */
+  adminBootstrap: { loginName: string; password: string } | null;
 }
 
 export interface ConfigIssue {
@@ -67,6 +75,45 @@ function trimmed(env: Env, key: string): string | undefined {
   if (value === undefined) return undefined;
   const t = value.trim();
   return t === '' ? undefined : t;
+}
+
+/** 后台初始管理员口令最小长度（防止把弱口令写进环境模板）。 */
+export const ADMIN_BOOTSTRAP_PASSWORD_MIN_LENGTH = 12;
+
+/** 解析可选的初始管理员配置：两者要么都不设，要么同时设；口令不写进任何输出。 */
+function asBootstrap(env: Env, issues: ConfigIssue[]): AppConfig['adminBootstrap'] {
+  const loginName = trimmed(env, 'ADMIN_BOOTSTRAP_LOGIN_NAME');
+  const password = trimmed(env, 'ADMIN_BOOTSTRAP_PASSWORD');
+  if (loginName === undefined && password === undefined) return null;
+  if (loginName === undefined) {
+    issues.push({
+      field: 'ADMIN_BOOTSTRAP_LOGIN_NAME',
+      code: 'MISSING',
+      reason: '设置 ADMIN_BOOTSTRAP_PASSWORD 时必须同时提供 ADMIN_BOOTSTRAP_LOGIN_NAME',
+    });
+    return null;
+  }
+  if (password === undefined) {
+    issues.push({
+      field: 'ADMIN_BOOTSTRAP_PASSWORD',
+      code: 'MISSING',
+      reason: '设置 ADMIN_BOOTSTRAP_LOGIN_NAME 时必须同时提供 ADMIN_BOOTSTRAP_PASSWORD',
+    });
+    return null;
+  }
+  if (password.length < ADMIN_BOOTSTRAP_PASSWORD_MIN_LENGTH) {
+    issues.push({
+      field: 'ADMIN_BOOTSTRAP_PASSWORD',
+      code: 'INVALID_VALUE',
+      reason: `至少 ${ADMIN_BOOTSTRAP_PASSWORD_MIN_LENGTH} 字符`,
+    });
+    return null;
+  }
+  if (loginName.length > 80) {
+    issues.push({ field: 'ADMIN_BOOTSTRAP_LOGIN_NAME', code: 'INVALID_VALUE', reason: '最长 80 字符' });
+    return null;
+  }
+  return { loginName, password };
 }
 
 function isPostgresUrl(value: string): boolean {
@@ -151,6 +198,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
   }
   const databaseUrl = databaseUrlRaw !== undefined && isPostgresUrl(databaseUrlRaw) ? databaseUrlRaw : null;
 
+  const wechatAppId = trimmed(env, 'WECHAT_APP_ID') ?? null;
+  const wechatAppSecret = trimmed(env, 'WECHAT_APP_SECRET') ?? null;
+  const sessionSigningKey = trimmed(env, 'SESSION_SIGNING_KEY') ?? null;
+  const adminBootstrap = asBootstrap(env, issues);
+
   if (executionMode === 'real') {
     for (const field of REQUIRED_WHEN_REAL) {
       const value = trimmed(env, field);
@@ -178,5 +230,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     databaseUrl,
     databaseHealthTimeoutMs,
     requiresRealCredentials: executionMode === 'real',
+    wechatAppId,
+    wechatAppSecret,
+    sessionSigningKey,
+    adminBootstrap,
   };
 }

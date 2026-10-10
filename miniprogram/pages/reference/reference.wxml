@@ -1,0 +1,74 @@
+<view class="page">
+  <view class="title">识草查药 · 科普资料查询</view>
+
+  <!-- 替身边界说明：未联网时给出的是本地资料读数，不是在线权威查询结果。 -->
+  <view class="banner">{{modeNote}}</view>
+  <view class="catalog-version">目录版本：{{catalogVersion}}</view>
+
+  <!-- 导航：作物 → 杂草 → 地区（除草方式由关键词/结构化条件表达） -->
+  <view class="card">
+    <view class="nav-row">
+      <text class="nav-label">作物</text>
+      <picker bindchange="onCrop" value="{{cropIndex}}" range="{{crops}}" range-key="name">
+        <view class="picker-value">{{cropIndex >= 0 ? crops[cropIndex].name : '全部作物'}}</view>
+      </picker>
+    </view>
+    <view class="nav-row">
+      <text class="nav-label">杂草</text>
+      <picker bindchange="onSpecies" value="{{speciesIndex}}" range="{{species}}" range-key="group_name">
+        <view class="picker-value">{{speciesIndex >= 0 ? species[speciesIndex].group_name : '全部杂草'}}</view>
+      </picker>
+    </view>
+    <view class="nav-row">
+      <text class="nav-label">地区</text>
+      <picker bindchange="onRegion" value="{{regionIndex}}" range="{{regions}}" range-key="name">
+        <view class="picker-value">{{regionIndex >= 0 ? regions[regionIndex].name : '全部地区'}}</view>
+      </picker>
+    </view>
+    <view class="nav-row">
+      <text class="nav-label">关键词</text>
+      <input class="keyword-input" value="{{keyword}}" placeholder="药名／登记证号／成分" bindinput="onKeyword" bindconfirm="onSearch" />
+    </view>
+    <view class="actions">
+      <button class="btn-primary" bindtap="onSearch">查询</button>
+      <button class="btn-ghost" bindtap="onReset">重置</button>
+    </view>
+  </view>
+
+  <!-- 结果状态（无结果/条件不足均如实展示，不用空白填充） -->
+  <view class="state-bar state-{{matchState}}">{{matchLabel}}</view>
+  <view class="reasons" wx:if="{{reasons.length}}">
+    <view wx:for="{{reasons}}" wx:key="*this" class="reason">· {{item}}</view>
+  </view>
+  <view class="reasons" wx:if="{{simulatedExcluded}}">
+    <view class="reason">· 已排除 {{simulatedExcluded}} 条模拟演示记录（非真实资料，不计入查询结果）</view>
+  </view>
+  <view class="result-count" wx:if="{{total}}">共 {{total}} 条符合条件</view>
+
+  <!-- 列表：每条展示同一 source_version；不合并不同含量的剂型 -->
+  <view class="card item" wx:for="{{items}}" wx:key="record_id" bindtap="goDetail" data-id="{{item.record_id}}">
+    <view class="item-head">
+      <text class="item-name">{{item.registered_name}}</text>
+      <text class="item-reg">{{item.registration_number}}</text>
+    </view>
+    <view class="item-line">剂型：{{item.dosage_form}} · 毒性：{{item.toxicity}}</view>
+    <view class="item-line">有效成分：{{item.ingredients_text}}</view>
+    <view class="item-line">作物／场所：{{item.use_scene}}</view>
+    <view class="tags">
+      <text class="tag">{{item.labels.source_kind}}</text>
+      <text class="tag">{{item.labels.review_status}}</text>
+      <text class="tag tag-warn">{{item.labels.record_status}}</text>
+    </view>
+    <view class="item-src">来源版本：{{item.source_version}}</view>
+  </view>
+
+  <view class="empty" wx:if="{{!items.length && matchState !== 'invalid'}}">
+    没有可展示的资料。可调整作物／杂草／地区或更换关键词继续查询。
+  </view>
+
+  <button wx:if="{{nextCursor}}" class="btn-ghost" bindtap="onLoadMore">加载更多</button>
+
+  <view class="disclaimer">
+    本页不提供用药量建议；资料为登记信息摘录，未逐字段复核标签原文，不得作为用药依据。
+  </view>
+</view>

@@ -1,0 +1,54 @@
+<view class="page">
+  <view wx:if="{{!found}}" class="card">
+    <view class="title">未找到该资料</view>
+    <view>该种子记录不存在。</view>
+    <button class="btn-ghost" bindtap="back">返回</button>
+  </view>
+
+  <block wx:if="{{found}}">
+    <view class="banner">
+      <text class="banner-tag">{{label}}</text>
+      <view class="banner-line">整理稿 · 无逐条权威出处 · 不得作为用药依据</view>
+    </view>
+
+    <view class="card">
+      <view class="item-head">
+        <text class="item-name">{{item.name}}</text>
+        <text class="tag tag-warn">{{label}}</text>
+      </view>
+      <view class="row" wx:if="{{item.aliases.length}}">
+        <text class="k">别称／商品名</text>
+        <text class="v">{{item.aliases}}</text>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">对环境的主要危害</view>
+      <view class="row"><text class="k">危害等级</text><text class="v">{{item.hazard_level}}</text></view>
+      <view class="note">{{item.hazard_detail}}</view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">常用于防除的对象</view>
+      <view class="v-block">{{item.target_weeds}}</view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">适用／常用地区</view>
+      <view class="v-block">{{item.regions}}</view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">用量与标注</view>
+      <view class="row"><text class="k">用药量</text><text class="v">{{item.dosage_note}}</text></view>
+      <view class="row"><text class="k">证据类型</text><text class="v">{{labels.evidence_kind}}</text></view>
+      <view class="row"><text class="k">审核状态</text><text class="v">{{labels.review_status}}</text></view>
+    </view>
+
+    <button class="btn-ghost" bindtap="back">返回</button>
+
+    <view class="disclaimer">
+      {{label}}：本资料为整理稿种子数据，未逐条标注权威出处，不提供用量建议，不得作为用药依据。
+    </view>
+  </block>
+</view>
