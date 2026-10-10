@@ -1,0 +1,36 @@
+/* GY-I07 列表页样式。沿用全局卡片风格。 */
+.banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: 28rpx; }
+.catalog-version { color: #52665a; font-size: 26rpx; margin-top: 8rpx; }
+
+.nav-row { display: flex; align-items: center; margin: 18rpx 0; }
+.nav-label { width: 140rpx; color: #52665a; }
+.picker-value { flex: 1; background: #F1F7F1; border-radius: 10rpx; padding: 18rpx 20rpx; color: #25352a; }
+.keyword-input { flex: 1; background: #F1F7F1; border-radius: 10rpx; padding: 18rpx 20rpx; }
+
+.actions { display: flex; gap: 20rpx; margin-top: 20rpx; }
+.btn-primary { flex: 1; background: #2E7D32; color: #fff; }
+.btn-ghost { flex: 1; background: #E8F1E8; color: #2E7D32; }
+
+.state-bar { border-radius: 12rpx; padding: 20rpx 24rpx; margin: 20rpx 0 8rpx; font-size: 30rpx; }
+.state-matched { background: #E8F5E9; color: #1B5E20; }
+.state-no_match { background: #ECEFF1; color: #37474F; }
+.state-insufficient { background: #FFF8E1; color: #6D4C00; }
+.state-invalid { background: #FDECEA; color: #B71C1C; }
+
+.reasons { padding: 0 8rpx; }
+.reason { color: #52665a; font-size: 27rpx; line-height: 1.6; }
+.result-count { color: #25352a; margin: 12rpx 8rpx; font-size: 28rpx; }
+
+.item { border-left: 8rpx solid #C8E6C9; }
+.item-head { display: flex; justify-content: space-between; align-items: baseline; }
+.item-name { font-size: 34rpx; font-weight: bold; }
+.item-reg { color: #2E7D32; font-size: 28rpx; }
+.item-line { color: #37474F; line-height: 1.7; font-size: 28rpx; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 14rpx; }
+.tag { background: #E8F1E8; color: #2E7D32; border-radius: 8rpx; padding: 6rpx 14rpx; font-size: 24rpx; }
+.tag-warn { background: #FFF3E0; color: #E65100; }
+
+.item-src { color: #78909C; font-size: 24rpx; margin-top: 12rpx; }
+.empty { color: #52665a; text-align: center; margin: 40rpx 0; line-height: 1.7; }
+.disclaimer { color: #78909C; font-size: 24rpx; margin-top: 32rpx; line-height: 1.7; }

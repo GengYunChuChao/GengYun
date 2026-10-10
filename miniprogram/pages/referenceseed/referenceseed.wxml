@@ -1,0 +1,80 @@
+<view class="page">
+  <view class="title">科普资料 · 种子资料库</view>
+
+  <!-- 强制合规标注：整理稿，待核实·非权威。 -->
+  <view class="banner">
+    <text class="banner-tag">{{label}}</text>
+    <view class="banner-line">数据来源：整理稿（data_origin={{dataOrigin}} · authority={{authority}}）</view>
+    <view class="banner-line" wx:if="{{disclaimer}}">{{disclaimer}}</view>
+  </view>
+
+  <view class="tabs">
+    <view wx:for="{{tabs}}" wx:key="key" class="tab {{tab === item.key ? 'tab-on' : ''}}" bindtap="switchTab" data-key="{{item.key}}">
+      {{item.name}}
+    </view>
+  </view>
+
+  <view class="counts">除草剂 {{counts.herbicides}} · 杂草 {{counts.weeds}} · 总表 {{counts.weedMaster}} · 省份 {{counts.provinces}} · 时期 {{counts.controlTiming}}</view>
+
+  <view class="search-row" wx:if="{{tab === 'herbicides'}}">
+    <input class="keyword-input" value="{{keyword}}" placeholder="按药名或别称检索（不合并不同记录）" bindinput="onKeyword" bindconfirm="onSearch" />
+    <button class="btn-primary" bindtap="onSearch">检索</button>
+  </view>
+
+  <view class="result-count">共 {{total}} 条</view>
+
+  <!-- 除草剂 -->
+  <block wx:if="{{tab === 'herbicides'}}">
+    <view class="card item" wx:for="{{list}}" wx:key="seed_id" bindtap="goSeedDetail" data-id="{{item.seed_id}}">
+      <view class="item-head">
+        <text class="item-name">{{item.name}}</text>
+        <text class="tag tag-warn">{{label}}</text>
+      </view>
+      <view class="item-line" wx:if="{{item.aliases.length}}">别称：{{item.aliases}}</view>
+      <view class="item-line">危害等级：{{item.hazard_level}}</view>
+      <view class="item-line">防除对象：{{item.target_weeds}}</view>
+      <view class="item-line">用量：{{item.dosage_note}}</view>
+    </view>
+  </block>
+
+  <!-- 杂草识别 -->
+  <block wx:if="{{tab === 'weeds'}}">
+    <view class="card item" wx:for="{{list}}" wx:key="seed_id">
+      <view class="item-head">
+        <text class="item-name">{{item.name}}</text>
+        <text class="tag tag-warn">{{label}}</text>
+      </view>
+      <view class="item-line">识别要点：{{item.identify_key}}</view>
+    </view>
+  </block>
+
+  <!-- 防除时期 -->
+  <block wx:if="{{tab === 'controlTiming'}}">
+    <view class="card item" wx:for="{{list}}" wx:key="seed_id">
+      <view class="item-head">
+        <text class="item-name">{{item.scene}}</text>
+        <text class="tag tag-warn">{{label}}</text>
+      </view>
+      <view class="item-line">防除关键期：{{item.control_period}}</view>
+      <view class="item-line">主要对象：{{item.target_weeds}}</view>
+      <view class="item-line">要点：{{item.tips}}</view>
+      <view class="item-line">用量：{{item.dosage_note}}</view>
+    </view>
+  </block>
+
+  <!-- 省份索引 -->
+  <block wx:if="{{tab === 'provinces'}}">
+    <view class="card item" wx:for="{{list}}" wx:key="seed_id">
+      <view class="item-head">
+        <text class="item-name">{{item.province}}</text>
+        <text class="tag tag-warn">{{label}}</text>
+      </view>
+      <view class="item-line">所属大区：{{item.region}}</view>
+      <view class="item-line">常见杂草（{{item.weed_count}}）：{{item.weed_list}}</view>
+      <view class="item-line">主要作物：{{item.main_crops}}</view>
+    </view>
+  </block>
+
+  <view class="region-note" wx:if="{{regionConvention}}">地区口径：{{regionConvention}}</view>
+  <view class="disclaimer">本页为整理稿种子资料，未逐条标注权威出处；不提供用量建议，不得作为用药依据。</view>
+</view>

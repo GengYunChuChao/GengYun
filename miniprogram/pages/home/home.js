@@ -7,6 +7,8 @@ Page({
   onShow: function () { this.setData({ loggedIn: auth.isLoggedIn() }) },
   onLoad: function () { this.setData({ local: debug.localEnabled(wx) }) },
   goLogin: function () { wx.reLaunch({ url: '/pages/login/login' }) },
+  goReference: function () { wx.navigateTo({ url: '/pages/reference/reference' }) },
+  goReferenceSeed: function () { wx.navigateTo({ url: '/pages/referenceseed/referenceseed' }) },
   diagnose: function () {
     if (this.data.busy) return
     this.setData({ busy: true, status: '正在连接本地诊断服务…' })

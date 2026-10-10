@@ -1,0 +1,51 @@
+{
+ "dataset": "GY-I07 种子数据（除草剂 / 杂草 / 各省防除时期）",
+ "source_kind": "seed_unverified",
+ "authority": "none",
+ "originals_committed": false,
+ "disclaimer": "整理稿，无逐条权威出处标注；仅作种子/模拟数据，展示须标注『待核实·非权威』。",
+ "region_convention": "中国台湾/中国香港/中国澳门 按省级行政区处理，不得视为国家。",
+ "usage_policy": {
+  "label_required": "待核实·非权威",
+  "must_not": [
+   "不得显示真实用量（剂量/浓度/施药量）",
+   "不得授予『专家认证』或用户经验认证标签",
+   "不得声称可追溯权威来源（本数据集为整理稿）",
+   "不得在缺项处用空白或模型补写填充"
+  ],
+  "ci_note": "普通 CI / 微信工具 / 真机 / 真实供应商证据须分别列出，不以 CI 成功写验收通过。"
+ },
+ "task": "GY-I07 (issue #7)",
+ "files": [
+  {
+   "name": "herbicides.json",
+   "count": 96,
+   "bytes": 54041
+  },
+  {
+   "name": "weeds.json",
+   "count": 172,
+   "bytes": 46647
+  },
+  {
+   "name": "weed_master.json",
+   "count": 175,
+   "bytes": 200117
+  },
+  {
+   "name": "province_index.json",
+   "count": 34,
+   "bytes": 47513
+  },
+  {
+   "name": "control_timing.json",
+   "count": 14,
+   "bytes": 6704
+  },
+  {
+   "name": "usage_notes.json",
+   "count": 23,
+   "bytes": 4116
+  }
+ ]
+}
