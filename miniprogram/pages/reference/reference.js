@@ -8,12 +8,14 @@
 // - 列表与详情必须展示**同一个 source_version**；不得因模糊药名合并不同含量的剂型。
 
 const auth = require('../../utils/auth')
+const fontScale = require('../../utils/font-scale')
 const reference = require('../../utils/reference')
 
 const PAGE_SIZE = 20
 
 Page({
   data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
     // 导航：作物 → 杂草 → 除草方式
     crops: [],
     species: [],
@@ -42,6 +44,7 @@ Page({
   },
 
   onLoad: function () {
+    fontScale.applyFontScale(this)
     // 门禁前置：会话须先经服务端核实，**核实通过前不加载任何资料**（避免越权预览窗口）。
     const self = this
     auth.requireLogin(function (loggedIn) {
@@ -63,6 +66,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     // 重入兜底：离开期间会话可能已失效；未通过则先清空再跳转，不残留旧数据。
     if (!auth.isLoggedIn()) {
       // 先关门禁再清数据：即便跳转未成功，处理器也无法再加载资料。

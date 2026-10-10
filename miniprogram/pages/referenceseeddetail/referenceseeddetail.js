@@ -4,10 +4,12 @@
 // **不显示真实用量**；缺项以「未采集」显式列出（不空白、不补写）；不出现专家认证标签。
 
 const auth = require('../../utils/auth')
+const fontScale = require('../../utils/font-scale')
 const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
     found: false,
     item: null,
     label: '',
@@ -18,6 +20,7 @@ Page({
   },
 
   onLoad: function (options) {
+    fontScale.applyFontScale(this)
     const seedId = options && options.id ? decodeURIComponent(options.id) : ''
     // 门禁前置：会话经服务端核实通过后才加载种子详情（未通过不留任何数据）。
     const self = this
@@ -32,6 +35,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     // 重入兜底：会话失效则先清详情再跳转。
     if (!auth.isLoggedIn()) {
       this.setData({ gatePassed: false, found: false, item: null })

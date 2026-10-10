@@ -9,10 +9,12 @@
 // - 失效/下架记录：不进入有效查询（列表）；直接访问详情时明确说明不可用原因并支持返回继续查询。
 
 const auth = require('../../utils/auth')
+const fontScale = require('../../utils/font-scale')
 const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
     recordId: '',
     found: false,
     detail: null,
@@ -27,6 +29,7 @@ Page({
   },
 
   onLoad: function (options) {
+    fontScale.applyFontScale(this)
     const recordId = options && options.id ? decodeURIComponent(options.id) : ''
     // 门禁前置：会话经服务端核实通过后才加载详情（未通过不残留任何记录）。
     const self = this
@@ -41,6 +44,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     // 重入兜底：会话失效则先清空详情再跳转。
     if (!auth.isLoggedIn()) {
       this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })

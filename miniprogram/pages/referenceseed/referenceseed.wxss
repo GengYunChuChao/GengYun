@@ -1,26 +1,26 @@
 /* GY-I07 种子资料浏览页样式。 */
-.banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: 27rpx; }
-.banner-tag { display: inline-block; background: #F9A825; color: #fff; border-radius: 8rpx; padding: 4rpx 14rpx; font-size: 25rpx; margin-bottom: 10rpx; }
+.banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: calc(16px * var(--font-scale, 1)); }
+.banner-tag { display: inline-block; background: #F9A825; color: #fff; border-radius: 8rpx; padding: 4rpx 14rpx; font-size: calc(16px * var(--font-scale, 1)); margin-bottom: 10rpx; }
 .banner-line { margin-top: 6rpx; }
 
 .tabs { display: flex; gap: 12rpx; margin: 18rpx 0; flex-wrap: wrap; }
-.tab { background: #E8F1E8; color: #2E7D32; border-radius: 999rpx; padding: 12rpx 26rpx; font-size: 27rpx; }
+.tab { background: #E8F1E8; color: #2E7D32; border-radius: 999rpx; padding: 12rpx 26rpx; font-size: calc(16px * var(--font-scale, 1)); }
 .tab-on { background: #2E7D32; color: #fff; }
 
-.counts { color: #52665a; font-size: 25rpx; margin: 8rpx 0 14rpx; }
+.counts { color: #52665a; font-size: calc(16px * var(--font-scale, 1)); margin: 8rpx 0 14rpx; }
 
 .search-row { display: flex; gap: 16rpx; margin: 12rpx 0; }
 .keyword-input { flex: 1; background: #F1F7F1; border-radius: 10rpx; padding: 18rpx 20rpx; }
 .btn-primary { background: #2E7D32; color: #fff; padding: 0 30rpx; }
 
-.result-count { color: #25352a; margin: 12rpx 8rpx; font-size: 28rpx; }
+.result-count { color: #25352a; margin: 12rpx 8rpx; font-size: calc(16px * var(--font-scale, 1)); }
 
 .item { border-left: 8rpx solid #FFE082; }
 .item-head { display: flex; justify-content: space-between; align-items: baseline; }
-.item-name { font-size: 33rpx; font-weight: bold; }
-.item-line { color: #37474F; line-height: 1.7; font-size: 27rpx; }
-.tag { border-radius: 8rpx; padding: 4rpx 12rpx; font-size: 23rpx; }
+.item-name { font-size: calc(16px * var(--font-scale, 1)); font-weight: bold; }
+.item-line { color: #37474F; line-height: 1.7; font-size: calc(16px * var(--font-scale, 1)); }
+.tag { border-radius: 8rpx; padding: 4rpx 12rpx; font-size: calc(16px * var(--font-scale, 1)); }
 .tag-warn { background: #FFF3E0; color: #E65100; }
 
-.region-note { color: #6D4C00; background: #FFF8E1; border-radius: 10rpx; padding: 16rpx 20rpx; margin-top: 20rpx; font-size: 26rpx; line-height: 1.6; }
-.disclaimer { color: #78909C; font-size: 24rpx; margin-top: 24rpx; line-height: 1.7; }
+.region-note { color: #6D4C00; background: #FFF8E1; border-radius: 10rpx; padding: 16rpx 20rpx; margin-top: 20rpx; font-size: calc(16px * var(--font-scale, 1)); line-height: 1.6; }
+.disclaimer { color: #78909C; font-size: calc(16px * var(--font-scale, 1)); margin-top: 24rpx; line-height: 1.7; }

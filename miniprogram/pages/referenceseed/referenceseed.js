@@ -6,10 +6,12 @@
 // - 缺项**不空白、不模型补写**，统一显示「未采集（种子整理稿无此栏）」。
 
 const auth = require('../../utils/auth')
+const fontScale = require('../../utils/font-scale')
 const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
     tab: 'herbicides',
     tabs: [
       { key: 'herbicides', name: '除草剂' },
@@ -33,6 +35,7 @@ Page({
   },
 
   onLoad: function () {
+    fontScale.applyFontScale(this)
     // 门禁前置：会话经服务端核实通过后才装载种子资料（未通过不留任何数据）。
     const self = this
     auth.requireLogin(function (loggedIn) {
@@ -56,6 +59,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     // 重入兜底：会话失效则先清列表再跳转。
     if (!auth.isLoggedIn()) {
       this.setData({ gatePassed: false, list: [], total: 0 })

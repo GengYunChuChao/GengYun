@@ -92,6 +92,12 @@ test('isolated packaging excludes private files and rejects release overrides/st
   }
   for (const dep of [
     'utils/reference.js',
+    'utils/font-scale.js',
+    'utils/system-font.js',
+    'components/state-view/state-view.js',
+    'components/state-view/state-view.json',
+    'components/state-view/state-view.wxml',
+    'components/state-view/state-view.wxss',
     'data/crops.js',
     'data/species.js',
     'data/regions.js',
