@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+const requireData = createRequire(import.meta.url);
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 const app = buildApp({ config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }) });
@@ -58,6 +60,38 @@ try {
   await new Promise((resolve) => auth.requireLogin((ok) => { assert.equal(ok, true); resolve(); }));
   assert.ok(requests.some((req) => req.method === 'GET' && req.path.endsWith('/auth/session')));
   pass('returned page requires actual GET session verification');
+  // Cold module + actual repository pages, not an isolated requireLogin callback.
+  for (const [name, id, resultKey] of [
+    ['referencedetail', 'gy-i03-hb-001', 'detail'],
+    ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item'],
+    ['reference', null, 'items'], ['referenceseed', null, 'list'],
+  ]) {
+    const cold = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
+    assert.equal(cold.isLoggedIn(), false);
+    const gate = load('utils/page-gate.js', { './auth': cold });
+    let definition;
+    vm.runInNewContext(source(`pages/${name}/${name}.js`), { Page: (value) => { definition = value; }, wx,
+      require: (dep) => {
+        if (dep.endsWith('/auth')) return cold;
+        if (dep.endsWith('/page-gate')) return gate;
+        if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
+        throw Error('Unexpected page dependency');
+      } });
+    const page = { ...definition, route: `pages/${name}/${name}`, options: id ? { id } : {},
+      data: { ...definition.data }, setData(patch) { Object.assign(this.data, patch); } };
+    pages = [page]; const before = requests.length;
+    page.onLoad(page.options); page.onShow();
+    assert.equal(page.data.gatePassed, false);
+    while (pending.size) await Promise.all([...pending]);
+    assert.equal(requests.length - before, 1);
+    assert.equal(cold.isLoggedIn(), true); assert.equal(page.data.gatePassed, true);
+    if (id) { assert.equal(page.data.found, true); assert.ok(page.data[resultKey]); }
+    else assert.ok(page.data[resultKey].length > 0);
+    page.onHide(); assert.equal(page.data.gatePassed, false); page.onShow();
+    while (pending.size) await Promise.all([...pending]);
+    assert.equal(page.data.gatePassed, true); assert.equal(requests.length - before, 2);
+    pass(`actual ${name} cold lifecycle renders catalog after HTTP verification and re-entry`);
+  }
   const headers = { authorization: 'Bearer ' + currentToken };
   await error('/admin/auth/session', 403, 'SCOPE_DENIED', { headers });
   await error('/me/consents?userId=00000000-0000-4000-8000-000000000001', 400, 'INVALID_REQUEST', { headers });

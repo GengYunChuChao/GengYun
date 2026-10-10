@@ -10,7 +10,12 @@ Page({
   onHide: function () {
     this._active = false
     this._operation = (this._operation || 0) + 1
-    if (!this._resuming) auth.cancelLogin()
+    if (!this._resuming) {
+      const wasBusy = this.data.busy
+      auth.cancelLogin()
+      this.setData({ busy: false, loggedIn: false,
+        status: wasBusy ? '登录已取消，可以重新尝试。' : this.data.status })
+    }
     this._resuming = false
   },
   onUnload: function () { if (this._active !== false) this.onHide() },

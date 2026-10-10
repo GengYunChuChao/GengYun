@@ -36,9 +36,11 @@ function fixture() {
   b.wx = wx;
   b.page = (name) => {
     let def;
+    const gateModule = { exports: {} };
+    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => b.auth });
     vm.runInNewContext(readFileSync(join(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
       Page: (value) => { def = value; }, wx, console,
-      require: (id) => id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
+      require: (id) => id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
     });
     const page = { ...def, route: `pages/${name}/${name}`, options: {}, data: { ...def.data }, setData(value) { Object.assign(this.data, value); } };
     b.pages = [page]; return page;
@@ -227,3 +229,93 @@ test('missing navigation dependency remains a diagnostic error, never swallowed 
   const source = readFileSync(join(root, 'miniprogram/utils/auth.js'), 'utf8');
   assert.throws(() => vm.runInNewContext(source, { require(id) { if (id === './navigation') throw Error('navigation missing'); return {}; } }), /navigation missing/);
 });
+
+const detailCases = [
+  ['referencedetail', 'gy-i03-hb-001', 'detail'],
+  ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item'],
+];
+for (const [name, id, resultKey] of detailCases) {
+  for (const order of [[0, 1], [1, 0]]) {
+    test(`${name}: cold cached onLoad→onShow retains one loader; response order ${order}`, () => {
+      const b = fixture(); b.storage.set('gengyun.session', cache());
+      const page = b.page(name); page.options = { id };
+      let loads = 0; const load = page.load; page.load = function (...args) { loads++; return load.apply(this, args); };
+      page.onLoad({ id }); page.onShow();
+      assert.equal(b.requests.length, 1, 'normal lifecycle must share the callback-bearing verification');
+      assert.equal(page.data.gatePassed, false); assert.equal(page.data[resultKey], null);
+      // An independent same-session verification may settle before or after the lifecycle request.
+      b.auth.verifySession(); assert.equal(b.requests.length, 2);
+      for (const n of order) verified(b.requests[n]);
+      assert.equal(b.auth.isLoggedIn(), true); assert.equal(page.data.gatePassed, true);
+      assert.equal(page.data.found, true); assert.ok(page.data[resultKey]); assert.equal(loads, 1);
+      assert.equal(b.routes.length, 0);
+    });
+  }
+  test(`${name}: hidden/unloaded late success cannot load; re-entry verifies and loads once`, () => {
+    for (const lifecycle of ['onHide', 'onUnload']) {
+      const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
+      let loads = 0; const load = page.load; page.load = function (...args) { loads++; return load.apply(this, args); };
+      page.onLoad({ id }); page.onShow(); const old = b.requests[0]; page[lifecycle]();
+      verified(old); assert.equal(page.data.gatePassed, false); assert.equal(page.data[resultKey], null); assert.equal(loads, 0);
+      page.onShow(); assert.equal(b.requests.length, 2); verified(b.requests[1]);
+      assert.equal(page.data.gatePassed, true); assert.equal(page.data.found, true); assert.equal(loads, 1);
+    }
+  });
+  test(`${name}: old failure after re-entry cannot clear the new verified detail`, () => {
+    const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
+    page.onLoad({ id }); page.onHide(); page.onShow(); verified(b.requests[1]);
+    b.requests[0].success({ statusCode: 401, data: {} });
+    assert.equal(page.data.gatePassed, true); assert.equal(page.data.found, true);
+    assert.ok(page.data[resultKey]); assert.equal(b.auth.isLoggedIn(), true); assert.equal(b.routes.length, 0);
+  });
+  test(`${name}: clear/account/logout/new intent invalidate pending actual-page load`, () => {
+    for (const action of ['clear', 'account', 'logout', 'new-intent']) {
+      const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
+      page.onLoad({ id }); page.onShow(); const old = b.requests[0];
+      if (action === 'clear') b.auth.clearSession();
+      else if (action === 'account') b.auth.setSession(cache('new-account'));
+      else if (action === 'logout') b.auth.logout();
+      else b.nav.beginReturnTo(SEED);
+      verified(old); assert.equal(page.data.gatePassed, false); assert.equal(page.data.found, false);
+      assert.equal(page.data[resultKey], null);
+    }
+  });
+  test(`${name}: rejected/network-failed startup keeps data gated and captures original ID`, () => {
+    for (const status of [401, 503, 'network']) {
+      const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
+      page.onLoad({ id }); page.onShow(); assert.equal(b.requests.length, 1);
+      if (status === 'network') b.requests[0].fail({}); else b.requests[0].success({ statusCode: status, data: {} });
+      assert.equal(page.data.gatePassed, false); assert.equal(page.data[resultKey], null);
+      assert.equal(b.nav.peekReturnTo(), `/pages/${name}/${name}?id=${id}`);
+      assert.equal(b.routes.at(-1).url, b.nav.LOGIN);
+    }
+  });
+}
+for (const [name, key] of [['reference', 'items'], ['referenceseed', 'list']]) {
+  test(`${name}: cached startup also shares verification and renders actual catalog`, () => {
+    const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name);
+    page.onLoad(); page.onShow(); assert.equal(b.requests.length, 1); assert.equal(page.data[key].length, 0);
+    verified(b.requests[0]); assert.equal(page.data.gatePassed, true); assert.ok(page.data[key].length > 0);
+    page.onHide(); assert.equal(page.data[key].length, 0); page.onShow(); verified(b.requests[1]); assert.ok(page.data[key].length > 0);
+  });
+}
+for (const stage of ['wx', 'server']) {
+  for (const oldFirst of [true, false]) {
+    test(`login hide/show retries after cancelled ${stage}; old completion first=${oldFirst}`, () => {
+      const b = fixture(); b.nav.beginReturnTo(REF); const page = b.page('login'); page.onShow(); page.login();
+      const oldWx = b.wxLogins[0]; if (stage === 'server') oldWx.success({ code: 'synthetic-old' });
+      const oldRequest = b.requests[0]; page.onHide(); assert.equal(page.data.busy, false);
+      page.onShow(); b.nav.beginReturnTo(SEED); page.login(); assert.equal(b.wxLogins.length, 2); assert.equal(page.data.busy, true);
+      const oldDone = () => stage === 'wx' ? oldWx.success({ code: 'synthetic-old' }) : oldRequest.success({ statusCode: 200, data: { data: { access_token: 'old', audience: 'user', expires_at: future() }, meta: { execution_mode: 'stub' } } });
+      const newDone = () => {
+        b.wxLogins[1].success({ code: 'synthetic-new' });
+        b.requests.at(-1).success({ statusCode: 200, data: { data: { access_token: 'new', audience: 'user', expires_at: future() }, meta: { execution_mode: 'stub' } } });
+      };
+      if (oldFirst) { oldDone(); assert.equal(page.data.busy, true); assert.equal(b.auth.isLoggedIn(), false); }
+      newDone(); if (!oldFirst) oldDone();
+      assert.equal(page.data.busy, false); assert.equal(page.data.loggedIn, true);
+      assert.equal(b.auth.getSession().accessToken, 'new'); assert.equal(b.routes.at(-1).url, SEED);
+      assert.equal(b.nav.peekReturnTo(), null);
+    });
+  }
+}
