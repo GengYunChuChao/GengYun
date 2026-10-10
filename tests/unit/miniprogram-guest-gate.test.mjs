@@ -13,8 +13,8 @@ const app = JSON.parse(read('miniprogram/app.json'));
 
 const TAB_PAGES = [
   'pages/home/home',
-  'pages/identify/identify',
   'pages/community/community',
+  'pages/identify/identify',
   'pages/messages/messages',
   'pages/profile/profile',
 ];
@@ -30,7 +30,8 @@ test('app.json：五个 Tab 页保留且已注册，登录页作为非 Tab 页�
 test('游客门禁：识别/社区/消息/我的接入 requireLogin，首页不拦截', () => {
   for (const page of ['identify', 'community', 'messages', 'profile']) {
     const source = read(`miniprogram/pages/${page}/${page}.js`);
-    assert.match(source, /requireLogin\(/, `${page} 应调用 requireLogin()`);
+    assert.match(source, /pageGate\.start\(/, `${page} 应调用生命周期门禁`);
+    assert.match(read('miniprogram/utils/page-gate.js'), /auth\.requireLogin\(/, '门禁仍核实服务端会话');
   }
   assert.ok(!read('miniprogram/pages/home/home.js').includes('requireLogin()'), '首页不应拦截游客');
 });

@@ -85,7 +85,7 @@ test('主题绿为 #1F7A45', () => {
 test('五个 Tab 注册完整且均在页面列表中', () => {
   assert.equal(appJson.tabBar.list.length, 5);
   const names = appJson.tabBar.list.map((i) => i.text);
-  assert.deepEqual(names, ['首页', '识别', '社区', '消息', '我的']);
+  assert.deepEqual(names, ['首页', '社区', '识别', '消息', '我的']);
   for (const item of appJson.tabBar.list) {
     assert.ok(appJson.pages.includes(item.pagePath), `${item.pagePath} 未注册为页面`);
   }
@@ -120,7 +120,7 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   for (const page of TAB_PAGES) {
     const js = read('miniprogram/' + page + '.js');
     assert.ok(/onShow/.test(js), page + ' 缺少 onShow，无法在切页时刷新字号');
-    assert.ok(/currentFontScale/.test(js), page + ' 的 onShow 未刷新字号，切页会回退');
+    assert.ok(/currentFontScale|applyFontScale/.test(js), page + ' 的 onShow 未刷新字号，切页会回退');
   }
 
   for (const page of TAB_PAGES) {
@@ -196,7 +196,7 @@ test('游客仅首页完全开放，其余页面拦截并提示登录', () => {
   for (const page of ['community', 'messages', 'profile']) {
     const js = read(`miniprogram/pages/${page}/${page}.js`);
     assert.ok(js.includes("utils/auth"), `${page} 未复用 main 的会话门禁`);
-    assert.ok(js.includes("auth.requireLogin("), `${page} 未核实服务端会话`);
+    assert.ok(js.includes("pageGate.start("), `${page} 未核实服务端会话`);
   }
 });
 

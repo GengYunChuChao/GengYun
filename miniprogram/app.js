@@ -12,8 +12,7 @@
  * 需求第 4.1 节未要求应用内字号开关，故**不设应用内档位、不读相关存储**，
  * 始终跟随微信「设置 → 通用 → 字体大小」。
  *
- * 已知限制：系数只在 onLaunch 计算一次，用户改动微信字体设置后回到小程序不会
- * 自动重算，需重新进入才生效。
+ * 启动与回到前台均读取微信设置；页面显示时再刷新并应用。
  */
 
 const auth = require('./utils/auth')
@@ -46,6 +45,13 @@ App({
     /** 字体缩放系数，页面根节点以 style 注入 --font-scale */
     fontScale: 1
   },
+
+  refreshFontScale() {
+    this.globalData.fontScale = readFontScale()
+    return this.globalData.fontScale
+  },
+
+  onShow() { this.refreshFontScale() },
 
   onLaunch() {
     this.globalData.session = auth.getSession()

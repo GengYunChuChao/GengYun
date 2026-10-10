@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 科普／除草剂详情页。
 //
 // 展示：制剂（登记号/持有人/剂型/成分）、条件（作物/场所/防治对象）、风险（毒性/注意事项）、
@@ -9,12 +10,12 @@
 // - 失效/下架记录：不进入有效查询（列表）；直接访问详情时明确说明不可用原因并支持返回继续查询。
 
 const auth = require('../../utils/auth')
-const fontScale = require('../../utils/font-scale')
+const pageGate = require('../../utils/page-gate')
 const reference = require('../../utils/reference')
 
 Page({
   data: {
-    fontScale: fontScale.DEFAULT_FONT_SCALE,
+    fontScale: 1,
     recordId: '',
     found: false,
     detail: null,
@@ -30,10 +31,14 @@ Page({
 
   onLoad: function (options) {
     fontScale.applyFontScale(this)
-    const recordId = options && options.id ? decodeURIComponent(options.id) : ''
-    // 门禁前置：会话经服务端核实通过后才加载详情（未通过不残留任何记录）。
+    this._detailId = options && options.id ? decodeURIComponent(options.id) : ''
+    this.checkGate()
+  },
+
+  checkGate: function () {
+    const recordId = this._detailId || ''
     const self = this
-    auth.requireLogin(function (loggedIn) {
+    pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
         self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true })
         return
@@ -45,12 +50,10 @@ Page({
 
   onShow: function () {
     fontScale.applyFontScale(this)
-    // 重入兜底：会话失效则先清空详情再跳转。
-    if (!auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })
-      auth.requireLogin()
-    }
+    if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
 
   load: function (recordId) {
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。

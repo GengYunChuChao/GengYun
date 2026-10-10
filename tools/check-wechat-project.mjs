@@ -30,7 +30,7 @@ const subProject = readJSON('miniprogram/project.config.json');
 assertSharedProjectConfig('miniprogram/project.config.json', subProject);
 assert.equal(subProject.compileType, 'miniprogram', 'miniprogram/project.config.json: compileType 必须为 miniprogram');
 const app = readJSON('miniprogram/app.json');
-assert.deepEqual(app.tabBar.list.map(x => x.text), ['首页', '识别', '社区', '消息', '我的']);
+assert.deepEqual(app.tabBar.list.map(x => x.text), ['首页', '社区', '识别', '消息', '我的']);
 // 五个 Tab 页必须存在且必须注册在 pages 中；pages 允许额外注册非 Tab 页（如登录页）。
 const tabPages = app.tabBar.list.map(x => x.pagePath);
 for (const page of tabPages) assert.ok(app.pages.includes(page), `Tab 页未注册：${page}`);

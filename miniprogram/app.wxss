@@ -58,10 +58,10 @@ page {
 .page {
   min-height: 100vh;
   /* tabBar 为 fixed 覆盖层、不占文档流，页面须自行预留其高度。
-     预留值用 px 而非 rpx：tabBar 恒为 50px，而 rpx 随视口缩放，
-     100rpx 仅在 375px 视口等于 50px，320/360px 窄屏下会缩到 43/48px 导致末屏被遮挡。
+     预留值用 px 而非 rpx：当前自定义 tabBar 居中按钮 64px 加上下间距 12px；rpx 随视口缩放，
+     预留 88px 加底部安全区，避免窄屏及放大字体时覆盖末屏。
      核算见 tools/verify-layout.mjs。 */
-  padding: 32rpx 28rpx calc(54px + env(safe-area-inset-bottom));
+  padding: 32rpx 28rpx calc(88px + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 

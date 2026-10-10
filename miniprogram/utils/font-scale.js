@@ -10,8 +10,7 @@
  *   <view class="page" style="--font-scale: {{fontScale}}">
  * 注入 CSS 变量，app.wxss 中字号与触控区再用 calc() 乘以该系数。
  *
- * 已知限制：系数只在 onLaunch 计算一次，用户改动微信字体设置后回到小程序不会
- * 自动重算，需重新进入才生效。
+ * 页面显示时调用 App.refreshFontScale() 重新读取实际微信接口。
  *
  * 各页面在 onLoad 调用 applyFontScale(this)。
  */
@@ -27,6 +26,7 @@ function applyFontScale(page) {
   let scale = DEFAULT_FONT_SCALE
   try {
     const app = getApp()
+    if (app && typeof app.refreshFontScale === 'function') app.refreshFontScale()
     const value = app && app.globalData && app.globalData.fontScale
     if (typeof value === 'number' && value >= 1) {
       scale = value
@@ -36,6 +36,8 @@ function applyFontScale(page) {
   }
   if (page && typeof page.setData === 'function') {
     page.setData({ fontScale: scale })
+    const bar = typeof page.getTabBar === 'function' ? page.getTabBar() : null
+    if (bar) bar.setData({ selected: page.route, fontScale: scale })
   }
   return scale
 }
@@ -44,6 +46,7 @@ function applyFontScale(page) {
 function currentFontScale() {
   try {
     const app = getApp()
+    if (app && typeof app.refreshFontScale === 'function') app.refreshFontScale()
     const value = app && app.globalData && app.globalData.fontScale
     if (typeof value === 'number' && value >= 1) return value
   } catch (err) {

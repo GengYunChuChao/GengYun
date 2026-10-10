@@ -28,8 +28,9 @@ const VIEWPORTS = [
   { w: 768, label: '平板' }
 ];
 
-/** 微信原生 tabBar 高度为固定值，不随屏宽变化 */
-const TABBAR_H = 50;
+/** 当前原生自定义 Tab：居中按钮 min-height 64px + 上下 padding 12px（安全区另计）。
+ * 此值仅核对声明，不代替实际渲染测量。 */
+const TABBAR_H = 76;
 
 const rpx = (v, w) => (v / 750) * w;
 const num = (n) => Number(n.toFixed(1));

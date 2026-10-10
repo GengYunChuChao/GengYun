@@ -26,12 +26,12 @@
         "text": "首页"
       },
       {
-        "pagePath": "pages/identify/identify",
-        "text": "识别"
-      },
-      {
         "pagePath": "pages/community/community",
         "text": "社区"
+      },
+      {
+        "pagePath": "pages/identify/identify",
+        "text": "识别"
       },
       {
         "pagePath": "pages/messages/messages",
@@ -41,7 +41,8 @@
         "pagePath": "pages/profile/profile",
         "text": "我的"
       }
-    ]
+    ],
+    "custom": true
   },
   "sitemapLocation": "sitemap.json",
   "lazyCodeLoading": "requiredComponents",

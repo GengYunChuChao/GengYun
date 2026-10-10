@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 科普资料 · 种子资料浏览页（除草剂名录 / 杂草识别 / 防除时期 / 省份索引）。
 //
 // 合规口径（强制展示）：
@@ -6,12 +7,12 @@
 // - 缺项**不空白、不模型补写**，统一显示「未采集（种子整理稿无此栏）」。
 
 const auth = require('../../utils/auth')
-const fontScale = require('../../utils/font-scale')
+const pageGate = require('../../utils/page-gate')
 const reference = require('../../utils/reference')
 
 Page({
   data: {
-    fontScale: fontScale.DEFAULT_FONT_SCALE,
+    fontScale: 1,
     tab: 'herbicides',
     tabs: [
       { key: 'herbicides', name: '除草剂' },
@@ -35,10 +36,11 @@ Page({
   },
 
   onLoad: function () {
-    fontScale.applyFontScale(this)
-    // 门禁前置：会话经服务端核实通过后才装载种子资料（未通过不留任何数据）。
+    fontScale.applyFontScale(this); this.checkGate() },
+
+  checkGate: function () {
     const self = this
-    auth.requireLogin(function (loggedIn) {
+    pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
         self.setData({ gatePassed: false, list: [], total: 0 })
         return
@@ -60,12 +62,10 @@ Page({
 
   onShow: function () {
     fontScale.applyFontScale(this)
-    // 重入兜底：会话失效则先清列表再跳转。
-    if (!auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, list: [], total: 0 })
-      auth.requireLogin()
-    }
+    if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
 
   switchTab: function (event) {
     this.setData({ tab: event.currentTarget.dataset.key, keyword: '' })

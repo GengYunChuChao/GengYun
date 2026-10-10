@@ -20,9 +20,12 @@ function harness() {
     request: (options) => requests.push(options),
     reLaunch: (options) => launches.push(options.url),
     switchTab: (options) => tabs.push(options.url),
+    showModal: (options) => options.success({ confirm: true }),
     showToast: (options) => toasts.push(options.title),
-    getSystemInfoSync: () => ({ fontSizeSetting: 20 })
+    getAppBaseInfo: () => ({ fontSizeSetting: systemPx }),
+    getSystemInfoSync: () => ({ fontSizeSetting: 16 })
   };
+  let systemPx = 20;
   let app = { globalData: { fontScale: 1.25 } };
   const context = { wx, getApp: () => app, App: (value) => { app = value; } };
   function load(path) {
@@ -57,7 +60,7 @@ function harness() {
     requests.at(-1).success({ statusCode: 200, data: { data: { access_token: 'synthetic-token', audience: 'user', expires_at: expires() }, meta: { execution_mode: 'stub' } } });
     assert.equal(auth.isLoggedIn(), true);
   }
-  return { auth, page, seedCache, acceptVerification, login, requests, launches, tabs, toasts, load, getApp: () => app };
+  return { auth, page, seedCache, acceptVerification, login, requests, launches, tabs, toasts, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
 }
 
 for (const name of ['identify', 'community', 'messages', 'profile']) {
@@ -108,8 +111,10 @@ test('首页已核实用户进入识别 Tab，退出后的 onShow 恢复游客',
   h.login();
   const page = h.page('home');
   page.onShow();
+  h.acceptVerification(h.requests.at(-1));
   assert.equal(page.data.guest, false);
   page.onEntryTap();
+  h.acceptVerification(h.requests.at(-1));
   assert.deepEqual(h.tabs, ['/pages/identify/identify']);
   h.auth.clearSession();
   page.onShow();
@@ -141,4 +146,41 @@ test('应用入口同时保留 main 会话读取及 PR 字体缩放', () => {
   assert.equal(h.getApp().globalData.session.accessToken, 'synthetic-token');
   assert.equal(h.getApp().globalData.fontScale, 1.25);
   assert.equal(h.auth.isLoggedIn(), false, '读取缓存不构成认证');
+});
+
+for (const name of ['identify', 'community', 'messages', 'profile']) {
+  test(`${name}: late verification after hide cannot revive protected UI`, () => {
+    const h = harness(); h.seedCache(); const page = h.page(name);
+    page.onLoad(); page.onShow(); const old = h.requests.at(-1);
+    page.onHide(); h.acceptVerification(old);
+    assert.equal(page.data.guest, true);
+    page.onShow(); assert.equal(h.requests.length, 2);
+    h.acceptVerification(h.requests.at(-1)); assert.equal(page.data.guest, false);
+    page.onUnload(); assert.equal(page.data.guest, true);
+  });
+}
+
+test('actual App and page modules refresh font from wx base-info, preserving auth gate and custom Tab', () => {
+  const h = harness(); h.load(resolve(root, 'miniprogram/app.js')); h.getApp().onLaunch();
+  const page = h.page('home'); const bar = { data: {}, setData(patch) { Object.assign(this.data, patch); } };
+  page.route = 'pages/home/home'; page.getTabBar = () => bar;
+  page.onLoad(); assert.equal(page.data.fontScale, 1.25);
+  h.setSystemPx(16); h.getApp().onShow(); page.onShow();
+  assert.equal(page.data.fontScale, 1); assert.equal(bar.data.fontScale, 1);
+  assert.equal(bar.data.selected, page.route); assert.equal(page.data.guest, true);
+  h.setSystemPx(26); page.onShow();
+  assert.equal(page.data.fontScale, 1.3); assert.equal(bar.data.fontScale, 1.3);
+  assert.equal(h.getApp().globalData.fontScale, 1.3);
+});
+test('actual custom Tab accepts only declared route and cannot grant authentication', () => {
+  let def; const tabs = [];
+  runInNewContext(readFileSync(resolve(root,'miniprogram/custom-tab-bar/index.js'),'utf8'), {
+    Component: value => { def = value; }, wx: { switchTab: options => tabs.push(options.url) }
+  });
+  assert.deepEqual(Array.from(def.data.tabs, tab => tab.text), ['首页','社区','识别','消息','我的']);
+  const bar = { ...def.methods };
+  for (const item of def.data.tabs) bar.switchTab({ currentTarget: { dataset: { path: item.pagePath } } });
+  assert.equal(tabs.length, 5);
+  bar.switchTab({ currentTarget: { dataset: { path: 'pages/login/login?token=synthetic' } } });
+  assert.equal(tabs.length, 5);
 });

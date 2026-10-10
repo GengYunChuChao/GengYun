@@ -91,6 +91,10 @@ test('isolated packaging excludes private files and rejects release overrides/st
     }
   }
   for (const dep of [
+    'custom-tab-bar/index.js',
+    'custom-tab-bar/index.json',
+    'custom-tab-bar/index.wxml',
+    'custom-tab-bar/index.wxss',
     'utils/reference.js',
     'utils/font-scale.js',
     'utils/system-font.js',
@@ -111,6 +115,25 @@ test('isolated packaging excludes private files and rejects release overrides/st
   ]) {
     assert.equal(existsSync(join(release, 'miniprogram', dep)), true, `打包缺失参考域依赖 ${dep}`);
   }
+  // Evaluate the real standard products, not a parallel local-dev copy or a mocked loader.
+  const loader = `const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+    const dir=process.argv[1],mode=process.argv[2];global.Page=()=>{};global.App=()=>{};global.Component=()=>{};
+    const auth=require(path.join(dir,'miniprogram/utils/auth.js'));
+    assert.equal(auth.networkEnabled(),mode==='local');
+    assert.equal(typeof require(path.join(dir,'miniprogram/utils/page-gate.js')).start,'function');
+    require(path.join(dir,'miniprogram/app.js'));
+    require(path.join(dir,'miniprogram/custom-tab-bar/index.js'));
+    for(const page of JSON.parse(fs.readFileSync(path.join(dir,'miniprogram/app.json'))).pages)require(path.join(dir,'miniprogram',page+'.js'));`;
+  for (const [product, mode] of [[local, 'local'], [release, 'disabled']]) {
+    const loaded = spawnSync(process.execPath, ['-e', loader, product, mode], { encoding: 'utf8' });
+    assert.equal(loaded.status, 0, `Standard ${mode} product must load auth/App/all pages: ${loaded.stderr}`);
+  }
+  // Negative control: a missing navigation dependency must remain a hard error.
+  const broken = join(fixture, 'broken-product'); mkdirSync(join(broken, 'utils'), { recursive: true }); mkdirSync(join(broken, 'config'));
+  cpSync(join(local, 'miniprogram/utils/auth.js'), join(broken, 'utils/auth.js'));
+  cpSync(join(local, 'miniprogram/config/runtime.js'), join(broken, 'config/runtime.js'));
+  const missing = spawnSync(process.execPath, ['-e', 'require(process.argv[1])', join(broken, 'utils/auth.js')], { encoding: 'utf8' });
+  assert.notEqual(missing.status, 0); assert.match(missing.stderr, /MODULE_NOT_FOUND/); assert.match(missing.stderr, /navigation/);
   writeFileSync(join(project, 'miniprogram/config/runtime.js'), "module.exports = {mode:'local',apiBaseUrl:'http://127.0.0.1:4318'}");
   const unsafe = run(['release']);
   assert.notEqual(unsafe.status, 0);

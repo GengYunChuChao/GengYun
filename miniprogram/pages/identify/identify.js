@@ -1,3 +1,4 @@
+const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 
@@ -19,14 +20,17 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     // 每次进入先关闭入口，服务端核实成功后才显示登录区。
     const that = this
     this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
-    auth.requireLogin(function (ok) {
-      if (!ok) return
-      that.setData({ guest: !auth.isLoggedIn() })
+    pageGate.start(this, function (ok) {
+      that.setData({ guest: !ok })
     })
   },
+
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
 
   /** 三个入口均为占位：不调相机、不调接口，仅提示未接入 */
   onShoot: function () {
