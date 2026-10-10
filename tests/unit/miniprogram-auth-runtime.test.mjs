@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -23,6 +23,7 @@ mkdirSync(join(workDir, 'config'), { recursive: true });
 mkdirSync(join(workDir, 'utils'), { recursive: true });
 writeFileSync(join(workDir, 'config/runtime.js'), "module.exports = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3000' }\n");
 writeFileSync(join(workDir, 'utils/auth.js'), AUTH_SOURCE);
+cpSync(resolve(root, 'miniprogram/utils/navigation.js'), join(workDir, 'utils/navigation.js'));
 const requireHere = createRequire(join(workDir, 'utils', 'auth.js'));
 const AUTH_PATH = join(workDir, 'utils', 'auth.js');
 
@@ -53,6 +54,7 @@ function makeWx() {
 function loadAuth(wx) {
   globalThis.wx = wx;
   delete requireHere.cache[requireHere.resolve(AUTH_PATH)];
+  delete requireHere.cache[requireHere.resolve(join(workDir, 'utils/navigation.js'))];
   return requireHere(AUTH_PATH);
 }
 

@@ -11,6 +11,7 @@
 //   缓存只做「形状 / 受众 / 时效 / 演示标记」的本地预检，不合格即清理并回登录页。
 
 const runtime = require('../config/runtime')
+const navigation = require('./navigation')
 
 const SESSION_KEY = 'gengyun.session'
 // 小程序只接受用户受众；后台受众（admin）令牌不得出现在小程序会话缓存里。
@@ -56,6 +57,7 @@ function clearSession() {
   // 世代递增：使此前在途的 verifySession 回调失效（退出/清会话/切账号）。
   generation += 1
   serverVerified = false
+  navigation.clearReturnTo()
   try {
     wx.removeStorageSync(SESSION_KEY)
   } catch (_) {}
@@ -90,10 +92,13 @@ function getSession() {
   return value
 }
 
-function setSession(session) {
+function setSession(session, preserveNavigation) {
   // 令牌发生变化（登录/切换账号）即递增世代，使旧令牌的在途回调失效；
   // 同一令牌仅刷新时效（verifySession 成功路径）不递增世代，避免误伤并发核实。
-  if (currentToken() !== session.accessToken) generation += 1
+  if (currentToken() !== session.accessToken) {
+    generation += 1
+    if (!preserveNavigation) navigation.clearReturnTo()
+  }
   try {
     wx.setStorageSync(SESSION_KEY, {
       accessToken: session.accessToken,
@@ -140,8 +145,11 @@ function verifySession(callback) {
   // 以「会话世代 + 当前令牌」绑定本次请求：退出/清会话/切换账号后，在途回调一律失效。
   const requestGeneration = generation
   const requestToken = session.accessToken
+  const requestIntent = intentEpoch
+  const requestNavigation = navigation.epoch()
   const stale = function () {
-    return generation !== requestGeneration || currentToken() !== requestToken
+    return generation !== requestGeneration || currentToken() !== requestToken ||
+      intentEpoch !== requestIntent || !navigation.isCurrent(requestNavigation)
   }
   wx.request({
     url: runtime.apiBaseUrl + '/auth/session',
@@ -150,7 +158,7 @@ function verifySession(callback) {
     success: function (response) {
       if (stale()) {
         // 会话在请求期间被撤销/清除或已切换账号：迟到的成功响应不得复活旧会话。
-        done(false)
+        done(false, true)
         return
       }
       const body = response && response.data
@@ -179,7 +187,7 @@ function verifySession(callback) {
     fail: function () {
       if (stale()) {
         // 迟到的失败响应不得清掉更新的登录（可能已切换账号/重新登录）。
-        done(false)
+        done(false, true)
         return
       }
       // 网络失败：不能核实，也不谎称已登录（门禁保持关闭）。
@@ -201,20 +209,23 @@ function verifySession(callback) {
  */
 function login(callback) {
   const done = typeof callback === 'function' ? callback : function () {}
+  const opNavigation = navigation.epoch()
+  const finishError = function (message) { navigation.clearReturnTo(opNavigation); done(message) }
   if (!networkEnabled()) {
-    done('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
+    finishError('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
     return
   }
   const opIntent = ++intentEpoch
   const opGeneration = generation
   const stale = function () {
-    return intentEpoch !== opIntent || generation !== opGeneration
+    return intentEpoch !== opIntent || generation !== opGeneration || !navigation.isCurrent(opNavigation)
   }
   wx.login({
     success: function (loginResult) {
+      if (stale()) { done('登录结果已失效（会话状态已变更），请重试。'); return }
       const code = loginResult && loginResult.code
       if (typeof code !== 'string' || code === '') {
-        done('微信未返回登录 code，请重试。')
+        finishError('微信未返回登录 code，请重试。')
         return
       }
       wx.request({
@@ -232,13 +243,13 @@ function login(callback) {
           const data = body && body.data
           const meta = body && body.meta
           if (response.statusCode !== 200 || !data || typeof data.access_token !== 'string') {
-            done('登录失败：' + statusText(response))
+            finishError('登录失败：' + statusText(response))
             return
           }
           const executionMode = meta && typeof meta.execution_mode === 'string' ? meta.execution_mode : ''
           if (KNOWN_EXECUTION_MODES.indexOf(executionMode) === -1) {
             // 缺少可解释的执行模式：不保存难以解释的会话。
-            done('登录响应缺少可解释的执行模式，已拒绝。')
+            finishError('登录响应缺少可解释的执行模式，已拒绝。')
             return
           }
           setSession({
@@ -246,13 +257,13 @@ function login(callback) {
             audience: data.audience,
             expiresAt: data.expires_at,
             executionMode: executionMode
-          })
+          }, true)
           serverVerified = true
           if (!isLoggedIn()) {
-            done('登录会话保存失败，请重试。')
+            finishError('登录会话保存失败，请重试。')
             return
           }
-          done(null)
+          done(null, opNavigation)
         },
         fail: function () {
           if (stale()) {
@@ -260,12 +271,13 @@ function login(callback) {
             done('登录结果已失效（会话状态已变更），请重试。')
             return
           }
-          done('网络请求失败，请检查地址与网络后重试。')
+          finishError('网络请求失败，请检查地址与网络后重试。')
         }
       })
     },
     fail: function () {
-      done('wx.login 调用失败，请重试。')
+      if (stale()) { done('登录结果已失效（会话状态已变更），请重试。'); return }
+      finishError('wx.login 调用失败，请重试。')
     }
   })
 }
@@ -284,6 +296,7 @@ function login(callback) {
  */
 function logout(callback) {
   const done = typeof callback === 'function' ? callback : function () {}
+  navigation.clearReturnTo()
   const session = getSession()
   if (session === null || !networkEnabled()) {
     clearSession()
@@ -334,19 +347,36 @@ function logout(callback) {
  */
 function requireLogin(callback) {
   const done = typeof callback === 'function' ? callback : function () {}
-  if (getSession() === null || !networkEnabled()) {
-    wx.reLaunch({ url: '/pages/login/login' })
+  const session = getSession()
+  const page = navigation.currentPage()
+  const target = navigation.captureCurrent()
+  const op = navigation.beginReturnTo(target)
+  const opIntent = intentEpoch
+  if (session === null || !networkEnabled()) {
+    navigation.goLogin(op.id)
     done(false)
     return
   }
-  verifySession(function (verified) {
+  verifySession(function (verified, stale) {
+    if (stale || intentEpoch !== opIntent || navigation.currentPage() !== page) { done(false); return }
     if (!verified) {
-      wx.reLaunch({ url: '/pages/login/login' })
+      // Current rejection may have cleared the session/intent; never resurrect a stale callback.
+      const pending = navigation.beginReturnTo(target)
+      navigation.goLogin(pending.id)
       done(false)
       return
     }
+    navigation.clearReturnTo(op.id)
     done(true)
   })
+}
+
+function cancelLogin() { intentEpoch += 1; clearSession() }
+function resumeAfterLogin(id, callback) {
+  if (!navigation.isCurrent(id) || !isLoggedIn()) return false
+  const target = navigation.consumeReturnTo(id)
+  navigation.openTarget(target, true, callback)
+  return true
 }
 
 module.exports = {
@@ -358,5 +388,7 @@ module.exports = {
   verifySession: verifySession,
   login: login,
   logout: logout,
-  requireLogin: requireLogin
+  requireLogin: requireLogin,
+  cancelLogin: cancelLogin,
+  resumeAfterLogin: resumeAfterLogin
 }
