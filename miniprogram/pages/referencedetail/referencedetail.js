@@ -21,7 +21,9 @@ Page({
     notCollected: [],
     unavailableReason: '',
     queryable: true,
-    modeNote: ''
+    modeNote: '',
+    // G2：会话门禁状态（未通过服务端核实前恒 false）。
+    gatePassed: false
   },
 
   onLoad: function (options) {
@@ -30,10 +32,10 @@ Page({
     const self = this
     auth.requireLogin(function (loggedIn) {
       if (!loggedIn) {
-        self.setData({ recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true })
+        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true })
         return
       }
-      self.setData({ recordId: recordId, modeNote: reference.modeNote() })
+      self.setData({ gatePassed: true, recordId: recordId, modeNote: reference.modeNote() })
       self.load(recordId)
     })
   },
@@ -41,12 +43,17 @@ Page({
   onShow: function () {
     // 重入兜底：会话失效则先清空详情再跳转。
     if (!auth.isLoggedIn()) {
-      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })
+      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })
       auth.requireLogin()
     }
   },
 
   load: function (recordId) {
+    // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。
+    if (!this.data.gatePassed || !auth.isLoggedIn()) {
+      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '' })
+      return
+    }
     const detail = reference.detail(recordId)
     if (!detail) {
       this.setData({ found: false, detail: null })

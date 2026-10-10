@@ -171,3 +171,80 @@ test('F1：列表项与详情为同一契约对象（列表 = 详情，同源）
   const kDetail = svc.getKnowledge(kList[0].id, {}, 'f1-k-detail').body.data;
   assert.deepEqual(kDetail, kList[0], 'Knowledge 列表项须与详情一致');
 });
+
+// ---------------------------------------------------------------------------
+// G1：冻结 schema **完整校验**（真实 Ajv + 实际序列化响应）
+//
+// 监工口径：原有回归只检查实体顶层 required/allowed，**未校验嵌套与完整封套**，
+// 故 75 项通过仍未发现 Conditions 内部 null、Ingredient 缺 unit_text、封套额外字段。
+// 本组用例用项目已有 ajv/dist/2020.js 加载冻结 openapi.json，
+// 对**实际列表/详情的完整序列化响应**（JSON 往返）直接校验。
+// ---------------------------------------------------------------------------
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const Ajv2020 = require('ajv/dist/2020.js');
+
+function ajvCompile() {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false, allErrors: true });
+  ajv.addSchema(openapi, 'openapi');
+  return (name) => ajv.compile({ $ref: `openapi#/components/schemas/${name}` });
+}
+const ser = (o) => JSON.parse(JSON.stringify(o)); // 模拟真实序列化（undefined 丢弃 / null 保留）
+
+function assertValid(validate, payload, label) {
+  const ok = validate(payload);
+  assert.ok(ok, `${label} 不满足冻结 schema：${JSON.stringify((validate.errors || []).slice(0, 4))}`);
+}
+
+test('G1：/knowledge 完整封套通过冻结 schema（真实 Ajv）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const compile = ajvCompile();
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const res = svc.listKnowledge({ limit: 20 }, 'g1-k');
+  assertValid(compile('KnowledgePageEnvelope'), ser(res.body), 'KnowledgePageEnvelope');
+  // 实体逐条亦须通过
+  const vK = compile('Knowledge');
+  for (const item of ser(res.body.data.items)) assertValid(vK, item, 'Knowledge 实体');
+  // 嵌套：Conditions 内部属性不得为 null（schema 类型 string）
+  for (const item of ser(res.body.data.items)) {
+    const c = item.conditions;
+    if (c === null) continue; // 契约允许整体 null
+    for (const f of ['crop_id', 'region_code', 'species_id', 'growth_stage', 'planting_method', 'use_scene']) {
+      if (f in c) assert.equal(typeof c[f], 'string', `Conditions.${f} 若存在必须为 string，不得为 null`);
+    }
+  }
+});
+
+test('G1：/herbicides 完整封套通过冻结 schema（含 Ingredient.unit_text）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const compile = ajvCompile();
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const res = svc.listHerbicides({ limit: 20 }, 'g1-h');
+  assertValid(compile('HerbicidePageEnvelope'), ser(res.body), 'HerbicidePageEnvelope');
+  const vH = compile('Herbicide');
+  let ingTotal = 0;
+  for (const item of ser(res.body.data.items)) {
+    assertValid(vH, item, 'Herbicide 实体');
+    for (const ing of item.formulation.ingredients) {
+      ingTotal += 1;
+      assert.equal(typeof ing.unit_text, 'string', 'Ingredient.unit_text 必填且为 string');
+      assert.ok(ing.unit_text.length >= 1);
+    }
+  }
+  assert.ok(ingTotal >= 44, `成分总数应 >= 44，实为 ${ingTotal}`);
+});
+
+test('G1：详情封套通过冻结 schema（不含额外字段 query_state/detail_state）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const compile = ajvCompile();
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const hList = svc.listHerbicides({ limit: 1 }, 'g1-d').body.data.items;
+  const hDet = svc.getHerbicide(hList[0].id, {}, 'g1-d2');
+  assertValid(compile('HerbicideEnvelope'), ser(hDet.body), 'HerbicideEnvelope');
+  assert.ok(!('detail_state' in hDet.body), '封套 body 不得含 detail_state');
+  // detail_state 仍可用于 UI（挂在响应顶层，不在契约封套内）
+  assert.ok(hDet.detail_state && typeof hDet.detail_state === 'object');
+  const kList = svc.listKnowledge({ limit: 1 }, 'g1-d3').body.data.items;
+  const kDet = svc.getKnowledge(kList[0].id, {}, 'g1-d4');
+  assertValid(compile('KnowledgeEnvelope'), ser(kDet.body), 'KnowledgeEnvelope');
+});

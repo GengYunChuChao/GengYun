@@ -12,7 +12,9 @@ Page({
     item: null,
     label: '',
     labels: {},
-    notCollected: ''
+    notCollected: '',
+    // G2：会话门禁状态（未通过服务端核实前恒 false）。
+    gatePassed: false
   },
 
   onLoad: function (options) {
@@ -21,30 +23,40 @@ Page({
     const self = this
     auth.requireLogin(function (loggedIn) {
       if (!loggedIn) {
-        self.setData({ found: false, item: null, label: '', labels: {}, notCollected: '' })
+        self.setData({ gatePassed: false, found: false, item: null, label: '', labels: {}, notCollected: '' })
         return
       }
-      const item = reference.seedHerbicideDetail(seedId)
-      if (!item) {
-        self.setData({ found: false, item: null })
-        return
-      }
-      self.setData({
-        found: true,
-        item: item,
-        label: reference.seed.label,
-        labels: reference.seedLabels(),
-        notCollected: reference.seed.notCollected
-      })
+      self.setData({ gatePassed: true })
+      self.load(seedId)
     })
   },
 
   onShow: function () {
     // 重入兜底：会话失效则先清详情再跳转。
     if (!auth.isLoggedIn()) {
-      this.setData({ found: false, item: null })
+      this.setData({ gatePassed: false, found: false, item: null })
       auth.requireLogin()
     }
+  },
+
+  load: function (seedId) {
+    // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。
+    if (!this.data.gatePassed || !auth.isLoggedIn()) {
+      this.setData({ gatePassed: false, found: false, item: null, label: '', labels: {}, notCollected: '' })
+      return
+    }
+    const item = reference.seedHerbicideDetail(seedId)
+    if (!item) {
+      this.setData({ found: false, item: null })
+      return
+    }
+    this.setData({
+      found: true,
+      item: item,
+      label: reference.seed.label,
+      labels: reference.seedLabels(),
+      notCollected: reference.seed.notCollected
+    })
   },
 
   back: function () {

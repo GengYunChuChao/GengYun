@@ -141,6 +141,10 @@ function query(params) {
   const regionCode = typeof params.region_code === 'string' ? params.region_code : ''
   const q = norm(params.keyword || params.q)
   const reg = norm(params.registration_number)
+  // G3：读取结构化条件 use_scene / growth_stage / planting_method（此前被忽略 → 静默放宽）。
+  const useScene = norm(params.use_scene)
+  const growthStage = norm(params.growth_stage)
+  const plantingMethod = norm(params.planting_method)
   const limit = clampLimit(params.limit)
   const offset = decodeCursor(params.cursor)
 
@@ -161,6 +165,13 @@ function query(params) {
     if ((params.species_id || params.species) && speciesId) reasons.push('记录未结构化标注杂草对象，无法按所选杂草确认')
     if (regionCode) reasons.push('记录未标注适用地区，无法确认是否适用该地区')
     if (reg && item.norm.registration !== reg) reasons.push('登记证号不符')
+    // G3：use_scene 做子串匹配（与域库 matchConditions 口径一致）。
+    if (useScene) {
+      if (item.norm.use_scene.indexOf(useScene) === -1) reasons.push('使用场景不符')
+    }
+    // G3：growth_stage / planting_method —— 首批资料**未采集**这两个条件，
+    //     与域库一致：保留「记录未采集」的真实不匹配状态（不得静默放宽为全量匹配）。
+    if (growthStage || plantingMethod) reasons.push('记录未采集生育期／种植方式条件')
     if (q) {
       const hay = [item.norm.name, item.norm.producer, item.norm.registration, item.norm.ingredients, item.norm.use_scene, item.norm.target].join(' ')
       if (hay.indexOf(q) === -1) reasons.push('关键词不匹配')
@@ -171,7 +182,7 @@ function query(params) {
 
   matched.sort(function (a, b) { return a.registration_number < b.registration_number ? -1 : a.registration_number > b.registration_number ? 1 : 0 })
 
-  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg)
+  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg || params.use_scene || params.growth_stage || params.planting_method)
   let matchState
   const reasonsOut = []
   if (matched.length > 0) {
@@ -240,6 +251,16 @@ function validateQueryInput(params) {
   if (regionTerm !== undefined && regionTerm !== null && regionTerm !== '') {
     if (typeof regionTerm !== 'string' || !REGION_CODE_PATTERN.test(regionTerm)) {
       throw invalidRequest('地区须为浙江 33 开头的 6 位地区码')
+    }
+  }
+  // G3：结构化条件类型校验（与域库一致——非字符串即非法，不静默丢弃）。
+  for (const key of ['use_scene', 'growth_stage', 'planting_method']) {
+    const v = params[key]
+    if (v !== undefined && v !== null && v !== '' && typeof v !== 'string') {
+      throw invalidRequest(key + ' 必须为字符串')
+    }
+    if (typeof v === 'string' && v.length > MAX_QUERY_LENGTH) {
+      throw invalidRequest(key + ' 长度不得超过 ' + MAX_QUERY_LENGTH)
     }
   }
 }

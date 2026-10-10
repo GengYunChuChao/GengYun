@@ -139,7 +139,7 @@ test('F4：小程序侧 match_state 与域库逐项一致（合法 + 非法两�
     { label: '登记号不匹配', input: { registration_number: 'PD00000000' } },
   ];
   for (const { label, input } of cases) {
-    const dom = svc.listHerbicides({ ...input, q: input.q ?? undefined }, 'f4').body.query_state;
+    const dom = svc.listHerbicides({ ...input, q: input.q ?? undefined }, 'f4').query_state;
     const mini = miniReference.query({ keyword: input.q, region_code: input.region_code, registration_number: input.registration_number });
     assert.equal(mini.match_state, dom.match_state, `${label}：match_state 须与域库一致`);
     assert.equal(mini.total, dom.total, `${label}：total 须与域库一致`);
@@ -149,4 +149,41 @@ test('F4：小程序侧 match_state 与域库逐项一致（合法 + 非法两�
     assert.throws(() => svc.listHerbicides(input, 'f4'), (e) => e.code === 'INVALID_REQUEST');
     assert.throws(() => miniReference.query({ keyword: input.q }), (e) => e.code === 'INVALID_REQUEST');
   }
+});
+
+// ---------------------------------------------------------------------------
+// G3：use_scene / growth_stage / planting_method 三个原始条件——**相同输入直接对照**。
+//
+// 监工口径：新 validateQueryInput 只加参数合法性检查，小程序 query() **仍未读取/匹配**
+// 这三个条件 → 静默放宽为全量匹配。本组用例用**批复明确列出的三个输入**逐项对照域库。
+// ---------------------------------------------------------------------------
+test('G3：use_scene/growth_stage/planting_method 与域库逐项一致（相同输入）', async () => {
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const cases = [
+    { label: 'use_scene=impossible-ZZZ', input: { use_scene: 'impossible-ZZZ' } },
+    { label: 'growth_stage=seedling', input: { growth_stage: 'seedling' } },
+    { label: 'planting_method=direct', input: { planting_method: 'direct' } },
+    // 补充：合法场景/组合/大小写/空白
+    { label: 'use_scene=水稻田', input: { use_scene: '水稻田' } },
+    { label: 'use_scene=水稻（子串）', input: { use_scene: '水稻' } },
+    { label: 'use_scene=非耕地', input: { use_scene: '非耕地' } },
+    { label: 'use_scene 帶空白', input: { use_scene: '  水稻  ' } },
+    { label: 'use_scene 大写', input: { use_scene: 'Impossible-ZZZ' } },
+    { label: 'growth_stage+use_scene 组合', input: { growth_stage: 'seedling', use_scene: '水稻田' } },
+    { label: 'planting_method+growth_stage 组合', input: { planting_method: 'transplant', growth_stage: 'tillering' } },
+  ];
+  for (const { label, input } of cases) {
+    const dom = svc.listHerbicides(input, 'g3').query_state;
+    const mini = miniReference.query(input);
+    assert.equal(mini.match_state, dom.match_state, `G3 ${label}：match_state 须与域库一致`);
+    assert.equal(mini.total, dom.total, `G3 ${label}：total 须与域库一致`);
+  }
+  // 监工三条反例的**具体期望**（防止口径回退为全量匹配）
+  assert.equal(miniReference.query({ use_scene: 'impossible-ZZZ' }).total, 0);
+  assert.equal(miniReference.query({ use_scene: 'impossible-ZZZ' }).match_state, 'no_match');
+  assert.equal(miniReference.query({ growth_stage: 'seedling' }).match_state, 'insufficient');
+  assert.equal(miniReference.query({ growth_stage: 'seedling' }).total, 0);
+  assert.equal(miniReference.query({ planting_method: 'direct' }).match_state, 'insufficient');
+  assert.equal(miniReference.query({ planting_method: 'direct' }).total, 0);
 });

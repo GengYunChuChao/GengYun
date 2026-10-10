@@ -27,7 +27,9 @@ Page({
     disclaimer: '',
     regionConvention: '',
     notCollected: '',
-    labels: {}
+    labels: {},
+    // G2：会话门禁状态（未通过服务端核实前恒 false）。
+    gatePassed: false
   },
 
   onLoad: function () {
@@ -35,10 +37,11 @@ Page({
     const self = this
     auth.requireLogin(function (loggedIn) {
       if (!loggedIn) {
-        self.setData({ list: [], total: 0 })
+        self.setData({ gatePassed: false, list: [], total: 0 })
         return
       }
       self.setData({
+        gatePassed: true,
         counts: reference.seed.counts,
         label: reference.seed.label,
         dataOrigin: reference.seed.dataOrigin,
@@ -55,7 +58,7 @@ Page({
   onShow: function () {
     // 重入兜底：会话失效则先清列表再跳转。
     if (!auth.isLoggedIn()) {
-      this.setData({ list: [], total: 0 })
+      this.setData({ gatePassed: false, list: [], total: 0 })
       auth.requireLogin()
     }
   },
@@ -75,6 +78,11 @@ Page({
 
   refresh: function () {
     const tab = this.data.tab
+    // G2：门禁未通过则**拒绝装载**——不依赖跳转是否成功。
+    if (!this.data.gatePassed || !auth.isLoggedIn()) {
+      this.setData({ gatePassed: false, list: [], total: 0 })
+      return
+    }
     if (tab === 'herbicides') {
       const list = this.data.keyword ? reference.seedSearch(this.data.keyword) : reference.seed.herbicides
       this.setData({ list: list, total: list.length })

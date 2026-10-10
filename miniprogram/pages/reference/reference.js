@@ -35,7 +35,10 @@ Page({
     catalogVersion: '',
     sourceVersionNote: '',
     busy: false,
-    detailId: ''
+    detailId: '',
+    // G2：会话门禁状态。**未通过服务端核实前恒为 false**，
+    // 资料加载/搜索处理器一律以该标志为准（不依赖跳转必然成功）。
+    gatePassed: false
   },
 
   onLoad: function () {
@@ -43,11 +46,12 @@ Page({
     const self = this
     auth.requireLogin(function (loggedIn) {
       if (!loggedIn) {
-        // 未通过：清空全部结果，确保不残留任何记录。
-        self.setData({ items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '' })
+        // 未通过：清空全部门禁标志与结果，确保不残留任何记录。
+        self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '' })
         return
       }
       self.setData({
+        gatePassed: true,
         crops: reference.crops,
         species: reference.species,
         regions: reference.regions,
@@ -61,7 +65,8 @@ Page({
   onShow: function () {
     // 重入兜底：离开期间会话可能已失效；未通过则先清空再跳转，不残留旧数据。
     if (!auth.isLoggedIn()) {
-      this.setData({ items: [], total: 0, nextCursor: null, sourceVersionNote: '' })
+      // 先关门禁再清数据：即便跳转未成功，处理器也无法再加载资料。
+      this.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, sourceVersionNote: '' })
       auth.requireLogin()
     }
   },
@@ -113,6 +118,11 @@ Page({
 
   runQuery: function (cursor) {
     const self = this
+    // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功（跳转可能被拦截/失败）。
+    if (!self.data.gatePassed || !auth.isLoggedIn()) {
+      self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '' })
+      return
+    }
     let result
     try {
       result = reference.query({

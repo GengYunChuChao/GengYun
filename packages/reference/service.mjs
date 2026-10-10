@@ -90,8 +90,11 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
     // 不得塞入额外字段，也不得出现 undefined/null。
     const items = result.matched_items.map((item) => item.knowledge);
     const etag = etagFor(result.matched_items);
+    // G1：冻结封套 KnowledgePageEnvelope 仅允许 data/meta → 响应除 `body` 外可挂载扩展字段，
+    // 但**不得**写入 `body`（否则 additionalProperties:false 拒绝）。
     return {
-      body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId), query_state: queryStateOf(result) },
+      body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId) },
+      query_state: queryStateOf(result),
       headers: cacheHeaders(etag),
     };
   }
@@ -114,7 +117,8 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
     const items = result.matched_items.map((item) => item.contract);
     const etag = etagFor(result.matched_items);
     return {
-      body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId), query_state: queryStateOf(result) },
+      body: { data: { items, next_cursor: result.next_cursor }, meta: buildMeta(executionMode, requestId) },
+      query_state: queryStateOf(result),
       headers: cacheHeaders(etag),
     };
   }
@@ -125,7 +129,8 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
     const verdict = evaluateEligibility(item, { includeSimulated: true });
     if (!verdict.queryable) throw new ReferenceError('NOT_FOUND', verdict.reason);
     const detail = toDetail(item, catalog);
-    return { body: { data: detail.contract, meta: buildMeta(executionMode, requestId), detail_state: detailStateOf(detail, item) }, headers: cacheHeaders(etagFor([item])) };
+    // G1：冻结封套 HerbicideEnvelope 仅允许 data/meta → detail_state 挂到响应顶层，不进 `body`。
+    return { body: { data: detail.contract, meta: buildMeta(executionMode, requestId) }, detail_state: detailStateOf(detail, item), headers: cacheHeaders(etagFor([item])) };
   }
 
   /**

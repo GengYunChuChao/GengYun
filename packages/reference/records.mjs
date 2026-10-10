@@ -143,6 +143,14 @@ export function toHerbicideContract(record) {
 /**
  * 将一条记录投影为契约 `Knowledge`（type='herbicide'），供 /knowledge 消费。
  * body 为**拼装的可追溯描述**（不写用量建议，不出现禁用标签）。
+ *
+ * G1 契约要点（冻结 schema `Conditions`，`additionalProperties:false`）：
+ *   - `crop_id`/`region_code` 为 **required**，类型 `string`；
+ *   - `region_code`/`species_id`/`growth_stage`/`planting_method`/`use_scene` 类型均为
+ *     `string`（**非 nullable**）；
+ *   - `Knowledge.conditions` 允许**整体**为 `null`，但**不能**把其内部非 nullable 属性设 `null`。
+ * 因此：仅当 `crop_id` 与 `region_code` 两个必填项**都真实具备**时才给出 `conditions` 对象，
+ * 否则整体置 `null`（缺失情况已在 `body` 文本中如实说明——不编造条件填满必填）。
  */
 export function toKnowledgeContract(record) {
   const h = toHerbicideContract(record);
@@ -153,31 +161,58 @@ export function toKnowledgeContract(record) {
     title: record.registered_name,
     body: buildKnowledgeBody(record),
     source: h.source,
-    conditions: {
-      crop_id: (record.crop_ids ?? [])[0] ?? null,
-      region_code: null,
-      species_id: null,
-      growth_stage: null,
-      planting_method: null,
-      use_scene: record.use_scene ?? null,
-    },
+    conditions: buildConditions(record),
     reference_state: h.reference_state,
     // 首批缺用量字段：不给 DoseCard（数组为空，不伪造条件完整卡）。
     dose_cards: [],
   };
 }
 
-/** 由 ingredients_text 解析有效成分（形如「唑草酮 40%」「吡氟酰草胺 2%、二甲戊灵 22%」）。 */
+/**
+ * 组装契约 `Conditions`。
+ * 首批资料（GY-I03 gap 已声明）**无地区码**，故必填 `region_code` 无法真实满足 →
+ * 返回 `null`（契约允许），**不编造**地区/生育期/种植方式以凑满必填。
+ */
+export function buildConditions(record) {
+  const cropId = (record.crop_ids ?? [])[0];
+  if (typeof cropId !== 'string' || cropId === '') return null;
+  const regionCode = typeof record.region_code === 'string' && /^33[0-9]{4}$/.test(record.region_code)
+    ? record.region_code
+    : null;
+  // region_code 为 required 且类型 string：缺失即整体不可表达 → null（不伪造）。
+  if (regionCode === null) return null;
+  const out = { crop_id: cropId, region_code: regionCode };
+  const optional = { species_id: record.species_id, growth_stage: record.growth_stage, planting_method: record.planting_method, use_scene: record.use_scene };
+  for (const [k, v] of Object.entries(optional)) {
+    if (typeof v === 'string' && v !== '') out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * 由 ingredients_text 解析有效成分（形如「唑草酮 40%」「吡氟酰草胺 2%、二甲戊灵 22%」）。
+ *
+ * G1 契约要点（冻结 schema `Ingredient`，`required: [name, content_text, unit_text]`）：
+ * `unit_text` 为必填 `string`。首批资料的原文文本**只含含量数值**（如 `40%`），未单列计量单位；
+ * 故按**原文如实**给出：`unit_text` 取含量表达式中的单位（如 `%`），无法判读时用
+ * `未采集`（显式缺项标记）——**不编造**计量单位，也不改写成用量。
+ */
 export function parseIngredients(text) {
-  if (typeof text !== 'string' || text.trim() === '') return [{ name: '未标注', content_text: '未标注' }];
+  if (typeof text !== 'string' || text.trim() === '') {
+    return [{ name: '未标注', content_text: '未标注', unit_text: '未采集' }];
+  }
   return text
     .split(/[、,]/)
     .map((seg) => seg.trim())
     .filter((seg) => seg !== '')
     .map((seg) => {
-      const m = seg.match(/^(.+?)\s*([\d.]+%?)\s*$/);
-      if (m) return { name: m[1].trim(), content_text: m[2].trim() };
-      return { name: seg, content_text: '未标注' };
+      const m = seg.match(/^(.+?)\s*([\d.]+)\s*(%|g\/L|g\/kg|mg\/kg|g|ml\/L|ml|mg|kg|L)?\s*$/);
+      if (m) {
+        const value = m[2].trim();
+        const unit = (m[3] ?? '%').trim();
+        return { name: m[1].trim(), content_text: `${value}${unit}`, unit_text: unit };
+      }
+      return { name: seg, content_text: '未标注', unit_text: '未采集' };
     });
 }
 

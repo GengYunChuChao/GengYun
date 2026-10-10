@@ -124,3 +124,70 @@ test('F3：onShow 兜底——会话失效时先清空再跳转（不残留旧�
     assert.ok(calls.reLaunch.length >= 1, `${rel} onShow 失效应跳登录页`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// G2：门禁**失败后**的搜索/加载处理器必须同样不可用。
+//
+// 监工口径：不能依赖「跳转必然成功」—— 跳转可能被拦截/失败，此时页面仍存活；
+// 若 onSearch/runQuery/refresh/load 不再校验门禁，未登录用户可直接调用处理器拿到数据。
+// 本组用例先让门禁失败（且跳转「未成功」——页面保持存活），**再直接调用**这些处理器，
+// 断言数据仍不得装载。
+// ---------------------------------------------------------------------------
+
+test('G2：门禁失败后调用 onSearch/runQuery 不得装载列表（reference）', () => {
+  const { page } = loadPage('pages/reference/reference.js', { verified: false, loggedInDirect: false });
+  page.onLoad();
+  page.onShow();
+  // 跳转「未成功」，页面存活 —— 直接调用实际搜索处理器。
+  const afterGate = page.data.items.length;
+  page.onSearch();
+  assert.equal(page.data.items.length, 0, 'reference：门禁失败后 onSearch 不得装载数据');
+  page.runQuery();
+  assert.equal(page.data.items.length, 0, 'reference：门禁失败后 runQuery 不得装载数据');
+  assert.equal(page.data.gatePassed, false, 'reference：门禁标志应保持 false');
+  assert.equal(afterGate, 0);
+});
+
+test('G2：门禁失败后调用 onSearch/refresh 不得装载种子列表（referenceseed）', () => {
+  const { page } = loadPage('pages/referenceseed/referenceseed.js', { verified: false, loggedInDirect: false });
+  page.onLoad();
+  page.onShow();
+  page.onSearch();
+  assert.equal(page.data.list.length, 0, 'referenceseed：门禁失败后 onSearch 不得装载数据');
+  page.refresh();
+  assert.equal(page.data.list.length, 0, 'referenceseed：门禁失败后 refresh 不得装载数据');
+  assert.equal(page.data.gatePassed, false);
+});
+
+test('G2：门禁失败后调用 load 不得装载详情（referencedetail / referenceseeddetail）', () => {
+  const d = loadPage('pages/referencedetail/referencedetail.js', { verified: false, loggedInDirect: false });
+  d.page.onLoad({ id: 'rec-1' });
+  d.page.onShow();
+  d.page.load('rec-1');
+  assert.equal(d.page.data.found, false, 'referencedetail：门禁失败后 load 不得装载详情');
+  assert.equal(d.page.data.detail, null);
+
+  const sd = loadPage('pages/referenceseeddetail/referenceseeddetail.js', { verified: false, loggedInDirect: false });
+  sd.page.onLoad({ id: 'seed-1' });
+  sd.page.onShow();
+  sd.page.load('seed-1');
+  assert.equal(sd.page.data.found, false, 'referenceseeddetail：门禁失败后 load 不得装载详情');
+  assert.equal(sd.page.data.item, null);
+});
+
+test('G2：onShow 令会话失效后，处理器立即不可用（reference / referencedetail）', () => {
+  // 先通过门禁装载数据，再令会话失效并重入 onShow → 处理器须失效。
+  const ref = loadPage('pages/reference/reference.js', { verified: true, loggedInDirect: true });
+  ref.page.onLoad();
+  assert.ok(ref.page.data.items.length > 0, '前置：门禁通过应已装载');
+  ref.page.data.gatePassed = false; // 模拟会话失效后 onShow 归零
+  ref.page.runQuery();
+  assert.equal(ref.page.data.items.length, 0, '会话失效后 runQuery 不得再装载');
+
+  const d = loadPage('pages/referencedetail/referencedetail.js', { verified: true, loggedInDirect: true });
+  d.page.onLoad({ id: 'r1' });
+  assert.equal(d.page.data.found, true, '前置：门禁通过应已装载详情');
+  d.page.data.gatePassed = false;
+  d.page.load('r1');
+  assert.equal(d.page.data.found, false, '会话失效后 load 不得再装载');
+});
