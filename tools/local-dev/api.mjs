@@ -1,0 +1,14 @@
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const settings=JSON.parse(readFileSync(new URL('./settings.json',import.meta.url),'utf8'));
+const {buildApp}=await import(pathToFileURL(settings.repoRoot+'/services/api/src/app.ts'));
+const {loadConfig}=await import(pathToFileURL(settings.repoRoot+'/services/api/src/config.ts'));
+const {createPool}=await import(pathToFileURL(settings.repoRoot+'/services/api/src/db/pool.ts'));
+const privateConfig=JSON.parse(readFileSync(new URL('./private/config.json',import.meta.url),'utf8'));
+const config=loadConfig({APP_EXECUTION_MODE:'stub',DATABASE_URL:'postgres://gengyun_local_runtime:'+privateConfig.runtimePassword+'@127.0.0.1:'+settings.pgPort+'/gengyun_local_dev',API_HOST:'127.0.0.1',API_PORT:String(settings.apiPort),LOG_LEVEL:'silent'});
+const pool=createPool(config.databaseUrl);
+const app=buildApp({config,pool});
+app.get('/__local__/status',async()=>({execution_mode:'local_stub',synthetic:true,service:'gengyun-local-diagnostic',database:'postgresql',wechat_identity:'synthetic'}));
+await app.listen({host:config.host,port:config.port});
+console.log('Local API ready: http://127.0.0.1:'+settings.apiPort+'; real PostgreSQL; synthetic WeChat identity.');
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await app.close();await pool.end();process.exit(0);});

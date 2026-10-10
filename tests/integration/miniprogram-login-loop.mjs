@@ -18,7 +18,7 @@ const wx = {
   request(opts) {
     requests.push({ method: opts.method, path: new URL(opts.url).pathname });
     const task = fetch(opts.url, { method: opts.method, headers: opts.header,
-      ...(opts.method === 'POST' ? { body: JSON.stringify(opts.data ?? {}) } : {}) })
+      ...(opts.data !== undefined ? { body: JSON.stringify(opts.data) } : {}) })
       .then(async (response) => opts.success({ statusCode: response.status, data: await response.json() }))
       .catch(() => opts.fail({})).finally(() => pending.delete(task));
     pending.add(task);

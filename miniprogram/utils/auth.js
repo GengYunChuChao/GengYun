@@ -312,6 +312,7 @@ function logout(callback) {
   wx.request({
     url: runtime.apiBaseUrl + '/auth/logout',
     method: 'POST',
+    data: {},
     header: { 'content-type': 'application/json', authorization: 'Bearer ' + session.accessToken, 'Idempotency-Key': newIdempotencyKey() },
     success: function (response) {
       if (stale()) {
