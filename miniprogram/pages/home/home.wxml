@@ -5,7 +5,7 @@
     <view class="hero__sub">识草查药与除草科普社区</view>
     <view class="hero__badge" wx:if="{{guest}}">游客仅可预览首页</view>
   </view>
-  <button wx:if="{{guest}}" class="btn btn--primary" bindtap="goLogin">微信登录</button>
+  <button wx:if="{{guest}}" class="btn btn--primary btn--block" bindtap="goLogin">微信登录</button>
 
   <view class="section-title">常用功能</view>
 
@@ -25,8 +25,8 @@
   </view>
 
   <view class="section-title">科普资料</view>
-  <button class="btn btn--primary" bindtap="goReference">识草查药（科普资料查询）</button>
-  <button class="btn btn--ghost" bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
+  <button class="btn btn--primary btn--block" bindtap="goReference">识草查药（科普资料查询）</button>
+  <button class="btn btn--ghost btn--block" bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
 
   <view class="section-title">当前状态</view>
   <state-view

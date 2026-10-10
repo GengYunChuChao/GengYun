@@ -99,3 +99,5 @@
   color: var(--color-text-muted, #6F7F72);
   line-height: 1.6;
 }
+
+.page > .btn { margin-bottom: 12px; }
