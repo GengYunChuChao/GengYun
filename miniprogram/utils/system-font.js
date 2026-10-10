@@ -2,7 +2,7 @@
  * 微信系统字体设置读取与换算（GY-I26）
  * ------------------------------------------------------------
  * 需求 4.1「适配微信字体设置」的取值层。app.js 负责决定优先级并把结果缓存到
- * globalData；「我的」页的「跟随系统」档位需要绕过应用内存储强制走本模块，
+ * globalData；「我的」页的设置界面需要绕过应用内存储强制走本模块，
  * 故独立成模块，避免 UI 反向依赖 App 生命周期。
  *
  * 单位说明（微信官方类型定义，types/wx/lib.wx.api.d.ts）：
@@ -39,45 +39,70 @@ function readFactorFromManager() {
   return manager ? readPositive(manager.fontSizeScaleFactor) : null
 }
 
-/** 次选 getSystemInfoSync().fontSizeScaleFactor（部分基础库版本直接挂在系统信息上） */
+/**
+ * 次选 wx.getAppBaseInfo()：官方基础信息接口，部分基础库版本把比例字段挂在这里。
+ * 监工 2026-10-09 指出此前未接入该接口，导致「官方比例存在但旧接口不可用」时错误回落 1。
+ */
+function readFactorFromAppBaseInfo() {
+  if (typeof wx.getAppBaseInfo !== 'function') return null
+  const base = wx.getAppBaseInfo()
+  return base ? readPositive(base.fontSizeScaleFactor) : null
+}
+
+/** 再次选 getSystemInfoSync().fontSizeScaleFactor（合并接口，部分版本直接挂比例） */
 function readFactorFromSystemInfo(info) {
   return info ? readPositive(info.fontSizeScaleFactor) : null
 }
 
-/** 末选：把 px 字号按 BASE_FONT_SIZE_PX 换算为倍率（16px → 1，26px → 1.625） */
+/** 把 px 字号按 BASE_FONT_SIZE_PX 换算为倍率（16px → 1，26px → 1.625） */
 function readFactorFromPx(fontSizeSetting) {
   const px = readPositive(fontSizeSetting)
   return px === null ? null : px / BASE_FONT_SIZE_PX
 }
 
+/** 依次尝试多个取值来源，任一抛错或缺失都返回 null，由调用方继续下探 */
+function tryEach(readers) {
+  for (const reader of readers) {
+    let value = null
+    try {
+      value = reader()
+    } catch (err) {
+      value = null
+    }
+    if (value !== null) return value
+  }
+  return null
+}
+
 /**
  * 只读微信系统设置并换算为系数，**不看应用内存储**。
- * 优先级：getFontSizeManager().fontSizeScaleFactor > getSystemInfoSync().fontSizeScaleFactor
- *        > fontSizeSetting / 16。
- * 比例 API 抛错时继续下探至 px 换算，全部不可用时回落 1。
+ *
+ * 两阶段取值，比例字段优先于 px 换算：
+ *   阶段一（比例）：getFontSizeManager().fontSizeScaleFactor
+ *                 > getAppBaseInfo().fontSizeScaleFactor
+ *                 > getSystemInfoSync().fontSizeScaleFactor
+ *   阶段二（px）：  getAppBaseInfo().fontSizeSetting ÷ 16
+ *                 > getSystemInfoSync().fontSizeSetting ÷ 16
+ *
+ * 任一接口缺失或抛错都继续下探，全部不可用时回落 1。
  *
  * @returns {number} 1 ～ MAX_FONT_SCALE 之间的系数
  */
 function readSystemScale() {
-  let factor = null
-  try {
-    factor = readFactorFromManager()
-  } catch (err) {
-    factor = null
-  }
+  const factor = tryEach([
+    readFactorFromManager,
+    readFactorFromAppBaseInfo,
+    () => readFactorFromSystemInfo(wx.getSystemInfoSync())
+  ])
   if (factor !== null) return clampScale(factor)
 
-  let info = null
-  try {
-    info = wx.getSystemInfoSync()
-  } catch (err) {
-    return 1
-  }
+  const fromPx = tryEach([
+    () => readFactorFromPx(wx.getAppBaseInfo && wx.getAppBaseInfo().fontSizeSetting),
+    () => readFactorFromPx(wx.getSystemInfoSync().fontSizeSetting)
+  ])
+  if (fromPx !== null) return clampScale(fromPx)
 
-  factor = readFactorFromSystemInfo(info)
-  if (factor !== null) return clampScale(factor)
-
-  return clampScale(readFactorFromPx(info && info.fontSizeSetting))
+  return 1
 }
 
 module.exports = {

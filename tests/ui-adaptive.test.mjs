@@ -273,12 +273,19 @@ test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
  */
 function withApp(wxOverrides, fn) {
   const req = createRequire(import.meta.url);
-  for (const p of ['../miniprogram/app.js', '../miniprogram/utils/session.js']) {
+  // app.js 现依赖 utils/auth.js（GY-I04 会话），一并清缓存以便注入合成实现
+  for (const p of ['../miniprogram/app.js', '../miniprogram/utils/auth.js', '../miniprogram/utils/session.js', '../miniprogram/utils/system-font.js']) {
     delete req.cache[req.resolve(p)];
   }
   globalThis.App = () => {};
   globalThis.wx = Object.assign(
-    { getStorageSync: () => '', getSystemInfoSync: () => ({}), getFontSizeManager: undefined },
+    {
+      getStorageSync: () => '',
+      removeStorageSync: () => {},
+      getSystemInfoSync: () => ({}),
+      getAppBaseInfo: undefined,
+      getFontSizeManager: undefined
+    },
     wxOverrides
   );
   try {
@@ -288,6 +295,71 @@ function withApp(wxOverrides, fn) {
     delete globalThis.wx;
   }
 }
+
+test('官方比例路径：getAppBaseInfo 必须接入（监工 2026-10-09 反例）', () => {
+  const sysFont = read('miniprogram/utils/system-font.js');
+  assert.ok(/getAppBaseInfo/.test(sysFont), 'system-font.js 未接入 wx.getAppBaseInfo()');
+
+  // 反例一：官方比例 1.25，旧接口全部抛错 → 应为 1.25，不得回落 1
+  withApp(
+    {
+      getFontSizeManager: () => {
+        throw new Error('unsupported');
+      },
+      getAppBaseInfo: () => ({ fontSizeSetting: 20, fontSizeScaleFactor: 1.25 }),
+      getSystemInfoSync: () => {
+        throw new Error('deprecated');
+      }
+    },
+    (app) => {
+      assert.equal(app.readFontScale(), 1.25, 'getAppBaseInfo 的比例字段应生效，不得回落 1');
+    }
+  );
+
+  // 反例二：官方比例 1.15，旧接口 px=18 → 应为 1.15，不得取 18÷16=1.125
+  withApp(
+    {
+      getFontSizeManager: undefined,
+      getAppBaseInfo: () => ({ fontSizeSetting: 20, fontSizeScaleFactor: 1.15 }),
+      getSystemInfoSync: () => ({ fontSizeSetting: 18 })
+    },
+    (app) => {
+      assert.equal(app.readFontScale(), 1.15, '官方比例应优先于旧接口的 px 换算，不得取 1.125');
+    }
+  );
+
+  // getAppBaseInfo 只有 px 无比例时，才轮到 px 换算
+  withApp(
+    { getFontSizeManager: undefined, getAppBaseInfo: () => ({ fontSizeSetting: 18 }) },
+    (app) => {
+      assert.equal(app.readFontScale(), 1.125, '无比例字段时按 getAppBaseInfo 的 px 换算');
+    }
+  );
+
+  // getAppBaseInfo 抛错须继续下探到 getSystemInfoSync
+  withApp(
+    {
+      getFontSizeManager: undefined,
+      getAppBaseInfo: () => {
+        throw new Error('unsupported');
+      },
+      getSystemInfoSync: () => ({ fontSizeSetting: 26 })
+    },
+    (app) => {
+      assert.equal(app.readFontScale(), 1.3, 'getAppBaseInfo 抛错时应下探到 getSystemInfoSync');
+    }
+  );
+});
+
+test('每个页面（含 GY-I04 的登录页）都注入 --font-scale', () => {
+  // login 页由 main 的 GY-I04 新增，需求 4.1 的适老化是全局要求，不应漏
+  for (const page of appJson.pages) {
+    const wxml = read(`miniprogram/${page}.wxml`);
+    const js = read(`miniprogram/${page}.js`);
+    assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
+    assert.ok(/applyFontScale|currentFontScale/.test(js), `${page} 未引入 font-scale`);
+  }
+});
 
 test('fontSizeSetting 的 px 值按 16px 基准换算，微信三档字号可区分', () => {
   // 回归监工指出的缺陷：fontSizeSetting 单位为 px，早期实现直接当倍率传给 clampScale，

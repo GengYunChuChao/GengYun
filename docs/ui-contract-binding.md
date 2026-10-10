@@ -58,7 +58,7 @@
 | 浏览帖子 | `GET /posts` | 游客拦截，未登录不可见 | [GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14) |
 | 发帖／评论（先审后发） | `POST /posts`、`POST /posts/{id}/comments` | 未实现，**不提供任何输入框** | GY-I14/15 |
 | 点赞 | `PUT /posts/{id}/like`、`DELETE /posts/{id}/like` | 未实现 | GY-I14 |
-| **人工审核空入口** | 后台 `GET /admin/posts` 等 | 用户端**不含任何后台入口** | [GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18) |
+| **人工审核空入口** | 后台仅 `POST /admin/posts/{id}/hide`（隐藏已发布内容）；**契约中无「帖子审核列表」类操作** | 用户端**不含任何后台入口** | [GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18) |
 
 > AC08 要求「人审入口建设中，无假任务／审核人」。用户端只保留空入口与说明，**未渲染任何审核人、任务或「已通过」字样**，符合范围「只保留人工审核的空入口」与「独立后台与用户端分开」。
 
@@ -129,6 +129,6 @@
 - 登录态界面未走查，依赖 [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)
 - 真实社区、消息、收藏、历史记录未实现
 - 语音播报未实现，依赖 [GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13)
-- 真机双平台与体验版上传未做，依赖 [GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/25) / [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)
+- 真机双平台与体验版上传未做，依赖 [GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27) / [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)
 
 因此 issue #28 保持 open，本任务不标整项完成。

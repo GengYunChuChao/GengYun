@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page" style="--font-scale: {{fontScale}}">
   <view class="title">登录耕云</view>
   <view class="card">登录后才能使用识别、社区、消息与我的。首页可以先以游客身份浏览。</view>
   <view class="card" wx:if="{{!network}}">当前未启用联网（共享源码默认关闭）。本地或正式环境启用网络后，微信登录才可用。</view>
