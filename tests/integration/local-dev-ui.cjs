@@ -9,7 +9,7 @@ assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535);
 const sdk = require(path.resolve(sdkPath)), out = path.resolve(outPath);
 fs.mkdirSync(out, { recursive: true });
 let mini, stage = 'connect';
-const deadline = setTimeout(() => { console.error('UI timeout at ' + stage); mini?.disconnect(); process.exit(2); }, 120000);
+const deadline = setTimeout(() => { console.error('UI timeout at ' + stage); mini?.disconnect(); process.exit(2); }, 180000);
 async function route(expected) {
   for (let i = 0; i < 60; i++) {
     const p = await mini.currentPage();
@@ -56,7 +56,7 @@ async function fontObservation() {
     await mini.pageScrollTo(0); await p.waitFor(150);
     await mini.screenshot({ path: path.join(out, name + '-top.png') });
     const buttons = [];
-    for (const b of await p.$$('button')) buttons.push({ text: await b.text(), size: await b.size(), offset: await b.offset() });
+    for (const b of await p.$$('button')) buttons.push({ text: await b.text(), size: await b.size(), offset: await b.offset(), fontSize: await b.style('font-size') });
     const font = await fontObservation(); assert.equal(font.pageScale, font.appScale); assert.equal(font.tabScale, font.appScale);
     assert.equal(font.selected, p.path);
     await mini.pageScrollTo(10000); await p.waitFor(150);

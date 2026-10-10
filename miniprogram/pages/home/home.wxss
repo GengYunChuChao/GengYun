@@ -100,4 +100,4 @@
   line-height: 1.6;
 }
 
-.page > .btn { margin-bottom: 12px; }
+.page > button.btn { width: 100%; margin: 0 0 12px; }
