@@ -39,6 +39,9 @@ Page({
     wx.switchTab({ url: '/pages/identify/identify' })
   },
 
+  goReference: function () { wx.navigateTo({ url: '/pages/reference/reference' }) },
+  goReferenceSeed: function () { wx.navigateTo({ url: '/pages/referenceseed/referenceseed' }) },
+
   diagnose: function () {
     if (this.data.busy) return
     this.setData({ busy: true, status: '正在连接本地诊断服务…' })

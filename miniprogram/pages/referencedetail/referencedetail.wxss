@@ -1,0 +1,30 @@
+/* GY-I07 详情页样式。 */
+.banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: 28rpx; }
+
+.state-bar { border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; font-size: 28rpx; line-height: 1.6; }
+.state-unavailable { background: #FDECEA; color: #B71C1C; }
+
+.section-title { font-size: 32rpx; font-weight: bold; color: #1B5E20; margin-bottom: 16rpx; }
+.sub-title { font-size: 28rpx; color: #52665a; margin: 20rpx 0 10rpx; }
+
+.row { display: flex; align-items: flex-start; line-height: 1.7; margin: 10rpx 0; }
+.k { width: 220rpx; color: #52665a; flex-shrink: 0; }
+.v { flex: 1; color: #25352a; word-break: break-all; }
+.mono { font-family: monospace; font-size: 26rpx; }
+
+.item-head { display: flex; justify-content: space-between; align-items: baseline; }
+.item-name { font-size: 36rpx; font-weight: bold; }
+.item-reg { color: #2E7D32; font-size: 28rpx; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 16rpx; }
+.tag { background: #E8F1E8; color: #2E7D32; border-radius: 8rpx; padding: 6rpx 14rpx; font-size: 24rpx; }
+.tag-warn { background: #FFF3E0; color: #E65100; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.chip { background: #E8F5E9; color: #1B5E20; border-radius: 8rpx; padding: 8rpx 16rpx; font-size: 24rpx; }
+.chip-muted { background: #ECEFF1; color: #546E7A; }
+
+.note { color: #6D4C00; background: #FFF8E1; border-radius: 10rpx; padding: 16rpx 20rpx; margin-top: 14rpx; font-size: 27rpx; line-height: 1.7; }
+.src-url { color: #1565C0; word-break: break-all; margin-top: 8rpx; font-size: 27rpx; }
+.src-hint { color: #90A4AE; font-size: 24rpx; margin-top: 6rpx; }
+.disclaimer { color: #78909C; font-size: 24rpx; margin-top: 32rpx; line-height: 1.7; }

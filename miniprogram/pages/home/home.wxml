@@ -24,6 +24,10 @@
     <view class="badge badge--stub">未接入</view>
   </view>
 
+  <view class="section-title">科普资料</view>
+  <button class="btn btn--primary" bindtap="goReference">识草查药（科普资料查询）</button>
+  <button class="btn btn--ghost" bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
+
   <view class="section-title">当前状态</view>
   <state-view
     status="stub"
