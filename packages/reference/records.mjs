@@ -19,11 +19,13 @@
 import { createHash } from 'node:crypto';
 import {
   CATALOG_PATHS,
+  EVIDENCE_KINDS,
   MATCH_STATES,
   QUERYABLE_VALIDITIES,
   QUERYABLE_VISIBILITIES,
   REFERENCE_STATES,
   SIMULATION_REGISTRATION_PREFIX,
+  SOURCE_KINDS,
   readJson,
 } from './constants.mjs';
 import { normalizeText } from './catalog.mjs';
@@ -46,6 +48,49 @@ export const MISSING_TEXT = '未采集';
 /** 返回原值（字符串且非空）；否则返回显式缺项标记 `未采集`（不编造）。 */
 function orNotCollected(value) {
   return typeof value === 'string' && value.trim() !== '' ? value : MISSING_TEXT;
+}
+
+/**
+ * H2 契约要点（**强枚举字段不得承载非枚举值**）。
+ *
+ * `SourceRef.source_kind` / `evidence_kind` 为 **$ref 冻结枚举**：
+ *   - `SourceKind ∈ {database, verified_seed, simulation}`
+ *   - `EvidenceKind ∈ {research, experience, mixed}`
+ * 二者**均不含**「未采集」这类缺项文案。因此原文缺失时**绝不能**填 `未采集`
+ * （会产出被 Ajv 拒绝的非法契约对象），也**不得**随便挑一个合法枚举（等于编造来源类型）。
+ * 正确做法是 **fail-closed**：该记录不具备可对外发布的来源类型 → 在**投影/查询前**
+ * 即判定为「来源元数据不满足契约必填枚举」，整体退出投影（见 `loadHerbicideRecords`），
+ * 并给出可读原因；缺项说明落在**能表达缺项的位置**（详情 `unavailable_reason`、
+ * 顶层 `eligibility_reason`、`body` 文本），而非强枚举字段。
+ */
+const OPAQUE_MISSING_ENUM = Symbol('missing-required-enum');
+
+/**
+ * 取值必须命中冻结枚举，否则返回缺项哨兵（**不填占位文案、不挑选合法值**）。
+ * @param {unknown} value 原文取值
+ * @param {readonly string[]} allowed 契约枚举
+ */
+function requireEnum(value, allowed) {
+  return typeof value === 'string' && allowed.includes(value) ? value : OPAQUE_MISSING_ENUM;
+}
+
+/**
+ * 记录是否满足「来源必填枚举」契约前提。
+ * `registration_number` 同为契约 `Formulation.required`，一并纳入（同族缺陷，一次性排查）。
+ * 返回 `{ ok, missing }`，`missing` 为**可读缺项字段名列表**（供缺项说明，不塞进枚举字段）。
+ */
+export function checkSourceContractReadiness(record) {
+  const src = record?.source ?? {};
+  const missing = [];
+  if (requireEnum(src.source_kind, SOURCE_KINDS) === OPAQUE_MISSING_ENUM) missing.push('来源类型（source_kind）');
+  if (requireEnum(src.evidence_kind, EVIDENCE_KINDS) === OPAQUE_MISSING_ENUM) missing.push('证据类型（evidence_kind）');
+  if (typeof record?.registration_number !== 'string' || record.registration_number === '') missing.push('登记证号（registration_number）');
+  return { ok: missing.length === 0, missing };
+}
+
+/** 登记证号是否为非空字符串（契约 Formulation.registration_number 必填）。 */
+function hasRegistrationNumber(record) {
+  return typeof record?.registration_number === 'string' && record.registration_number !== '';
 }
 
 /**
@@ -103,10 +148,13 @@ export function deriveSourceVersion(record) {
 /**
  * 派生参考可得性（ReferenceState）。
  * 仅当来源 validity 属于「可查询有效期」且记录具名时 available，否则 unavailable。
+ *
+ * H2 同族：`registration_number` 为契约 `Formulation` 必填 —— 缺失的记录**不可作为
+ * 可查询资料**（据此与 `evaluateEligibility` 的 `queryable` 判定保持一致）。
  */
 export function deriveReferenceState(record) {
   const validity = record?.source?.source_validity ?? record?.source?.validity ?? 'unknown';
-  const ok = QUERYABLE_VALIDITIES.includes(validity) && typeof record.registration_number === 'string' && record.registration_number !== '';
+  const ok = QUERYABLE_VALIDITIES.includes(validity) && hasRegistrationNumber(record);
   return ok ? 'available' : 'unavailable';
 }
 
@@ -122,36 +170,52 @@ export function deriveVisibility(record) {
 /**
  * 将一条 GY-I03 记录投影为契约 `Herbicide`（制剂 + 来源 + 风险 + 参考状态）。
  * `formulation.id` 用确定性 UUIDv5 风格占位（由 identity_hash 派生，稳定可复现）。
+ *
+ * H2 契约要点：`source.source_kind` / `evidence_kind` 为**冻结枚举**，缺失时
+ * **不得**填 `未采集`（非法枚举）、也**不得**挑合法值（编造）→ 取 `requireEnum`，
+ * 命中枚举才写入（见 `checkSourceContractReadiness`：不满足前提的记录在
+ * `loadHerbicideRecords` 中已**整体退出投影**，故此处命中路径恒成立）。
+ * `registration_number` 同为必填 → 缺失时以**空串**保证「字段存在 + 类型 string」，
+ * 该记录同样已被 fail-closed 拦在查询集合之外。
  */
 export function toHerbicideContract(record) {
   const identityHash = formulationIdentityHash(record);
   const src = record.source ?? {};
   const validity = src.source_validity ?? src.validity ?? 'unknown';
+  const sourceKind = requireEnum(src.source_kind, SOURCE_KINDS);
+  const evidenceKind = requireEnum(src.evidence_kind, EVIDENCE_KINDS);
+  const source = {
+    id: deterministicUuid(src.source_id ?? 'unknown'),
+    version: deriveSourceVersion(record),
+    title: orNotCollected(src.issue ?? src.publisher),
+    // 契约要求 url 为 https 且 pattern ^https://，取 original_url 优先
+    url: pickHttpsUrl(src),
+    // H1 同原则：**不编造**权威发布方 —— 原文缺失即显式标「未采集」。
+    // （publisher 为普通 string 字段，缺项文案合法；枚举字段见下。）
+    publisher: orNotCollected(src.publisher),
+    validity,
+    review_status: record?.verification?.review_status ?? 'unverified',
+    updated_at: toIsoDate(src.published_at ?? src.retrieved_at),
+  };
+  // H2：强枚举字段**只写命中冻结枚举的值**；未命中即**不写该字段**
+  // （绝不填「未采集」这类非枚举值、也绝不挑一个合法值来编造来源类型）。
+  // 该类记录已在 `loadHerbicideRecords` 的契约前提门禁处 fail-closed 排除，
+  // 不会进入任何对外契约封套；此处保证「即使被直接调用，也不会产出非法枚举值」。
+  if (sourceKind !== OPAQUE_MISSING_ENUM) source.source_kind = sourceKind;
+  if (evidenceKind !== OPAQUE_MISSING_ENUM) source.evidence_kind = evidenceKind;
   return {
     id: deterministicUuid(record.record_id),
     revision: 1,
     formulation: {
       id: deterministicUuid(identityHash),
-      registration_number: record.registration_number,
+      // 必填 string：缺失登记证号时以空串占位（**不编造**一个看似合法的证号）。
+      registration_number: hasRegistrationNumber(record) ? record.registration_number : '',
       // H1 同原则：必填但原文缺失时，用显式缺项标记，**不编造**持有人/剂型。
       producer: orNotCollected(record.producer),
       dosage_form: orNotCollected(record.dosage_form),
       ingredients: parseIngredients(record.ingredients_text),
     },
-    source: {
-      id: deterministicUuid(src.source_id ?? 'unknown'),
-      version: deriveSourceVersion(record),
-      title: orNotCollected(src.issue ?? src.publisher),
-      // 契约要求 url 为 https 且 pattern ^https://，取 original_url 优先
-      url: pickHttpsUrl(src),
-      // H1 同原则：**不编造**权威发布方/来源类型/证据类型 —— 原文缺失即显式标「未采集」。
-      publisher: orNotCollected(src.publisher),
-      source_kind: src.source_kind ?? MISSING_TEXT,
-      evidence_kind: src.evidence_kind ?? MISSING_TEXT,
-      validity,
-      review_status: record?.verification?.review_status ?? 'unverified',
-      updated_at: toIsoDate(src.published_at ?? src.retrieved_at),
-    },
+    source,
     risk_text: buildRiskText(record),
     reference_state: deriveReferenceState(record),
   };
@@ -175,7 +239,8 @@ export function toKnowledgeContract(record) {
     id: deterministicUuid('knowledge:' + record.record_id),
     revision: 1,
     type: 'herbicide',
-    title: record.registered_name,
+    // H2 同族：`title` 为必填 string(minLength 1) —— 缺失时以显式缺项标记占位（**不编造**药名）。
+    title: orNotCollected(record.registered_name),
     body: buildKnowledgeBody(record),
     source: h.source,
     conditions: buildConditions(record),
@@ -299,52 +364,76 @@ export function deterministicUuid(seed) {
 
 /**
  * 装载全部除草剂记录并投影。
- * 返回 { raw, items }，items 为增强后的内部条目（含契约投影与检索所需的规范化字段）。
+ * 返回 `{ raw, items, skipped }`：
+ *   - `items` 为满足契约必填枚举前提、可对外投影的内部条目；
+ *   - `skipped` 为**在投影/查询前**被 fail-closed 排除的记录（附可读缺项原因），
+ *     使「不可发布的记录」既不进入契约封套、也不进入有效查询集合。
+ *
+ * H2 口径：`source_kind`/`evidence_kind` 为冻结枚举、`registration_number` 为必填 ——
+ * 任一缺失即**不满足契约前提** → 携带缺项说明退出投影（**不编造枚举、不填非法占位**）。
  */
 export function loadHerbicideRecords() {
   const doc = readJson(CATALOG_PATHS.herbicides);
   const raw = doc.records ?? [];
-  const items = raw.map((record, index) => {
+  const skipped = [];
+  const items = [];
+  raw.forEach((record, index) => {
+    const readiness = checkSourceContractReadiness(record);
+    if (!readiness.ok) {
+      skipped.push(
+        Object.freeze({
+          index,
+          record_id: record.record_id ?? null,
+          registration_number: record.registration_number ?? null,
+          registered_name: record.registered_name ?? null,
+          missing: Object.freeze(readiness.missing.slice()),
+          reason: `来源元数据缺项，无法满足契约必填：${readiness.missing.join('、')}（不编造枚举值，已退出投影）`,
+        }),
+      );
+      return;
+    }
     const identityHash = formulationIdentityHash(record);
     const sourceVersion = deriveSourceVersion(record);
     const visibility = deriveVisibility(record);
     const referenceState = deriveReferenceState(record);
     const simulated = isSimulated(record);
-    return Object.freeze({
-      index,
-      record_id: record.record_id,
-      registration_number: record.registration_number,
-      registered_name: record.registered_name,
-      producer: record.producer,
-      dosage_form: record.dosage_form,
-      toxicity: record.toxicity,
-      ingredients_text: record.ingredients_text,
-      use_scene: record.use_scene ?? null,
-      target_original: record.target_original ?? null,
-      crop_ids: record.crop_ids ?? [],
-      record_status: record.record_status ?? 'partial',
-      // 身份与来源版本（列表/详情同源）
-      identity_hash: identityHash,
-      identity_key: `${record.registration_number}::${identityHash}`,
-      source_version: sourceVersion,
-      content_hash: recordContentHash(record),
-      visibility,
-      reference_state: referenceState,
-      simulated,
-      source: record.source ?? {},
-      verification: record.verification ?? {},
-      // 检索用规范字段
-      norm: Object.freeze({
-        name: normalizeText(record.registered_name),
-        producer: normalizeText(record.producer),
-        registration: normalizeText(record.registration_number),
-        ingredients: normalizeText(record.ingredients_text),
-        use_scene: normalizeText(record.use_scene ?? ''),
-        target: normalizeText(record.target_original ?? ''),
+    items.push(
+      Object.freeze({
+        index,
+        record_id: record.record_id,
+        registration_number: record.registration_number,
+        registered_name: record.registered_name,
+        producer: record.producer,
+        dosage_form: record.dosage_form,
+        toxicity: record.toxicity,
+        ingredients_text: record.ingredients_text,
+        use_scene: record.use_scene ?? null,
+        target_original: record.target_original ?? null,
+        crop_ids: record.crop_ids ?? [],
+        record_status: record.record_status ?? 'partial',
+        // 身份与来源版本（列表/详情同源）
+        identity_hash: identityHash,
+        identity_key: `${record.registration_number}::${identityHash}`,
+        source_version: sourceVersion,
+        content_hash: recordContentHash(record),
+        visibility,
+        reference_state: referenceState,
+        simulated,
+        source: record.source ?? {},
+        verification: record.verification ?? {},
+        // 检索用规范字段
+        norm: Object.freeze({
+          name: normalizeText(record.registered_name),
+          producer: normalizeText(record.producer),
+          registration: normalizeText(record.registration_number),
+          ingredients: normalizeText(record.ingredients_text),
+          use_scene: normalizeText(record.use_scene ?? ''),
+          target: normalizeText(record.target_original ?? ''),
+        }),
+        contract: Object.freeze(toHerbicideContract(record)),
+        knowledge: Object.freeze(toKnowledgeContract(record)),
       }),
-      contract: Object.freeze(toHerbicideContract(record)),
-      knowledge: Object.freeze(toKnowledgeContract(record)),
-    });
+    );
   });
   return Object.freeze({
     docMeta: Object.freeze({
@@ -356,6 +445,8 @@ export function loadHerbicideRecords() {
       missing_registration_numbers: doc.missing_registration_numbers ?? [],
     }),
     items: Object.freeze(items),
+    /** H2：被 fail-closed 排除的记录（缺项说明落在此处，不塞进契约枚举字段）。 */
+    skipped: Object.freeze(skipped),
   });
 }
 

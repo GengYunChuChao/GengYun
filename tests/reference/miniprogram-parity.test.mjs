@@ -187,3 +187,41 @@ test('G3：use_scene/growth_stage/planting_method 与域库逐项一致（相同
   assert.equal(miniReference.query({ planting_method: 'direct' }).match_state, 'insufficient');
   assert.equal(miniReference.query({ planting_method: 'direct' }).total, 0);
 });
+
+// ---------------------------------------------------------------------------
+// H2：小程序侧**同口径 fail-closed** —— 缺来源枚举的记录不得投影、不得可查询。
+// ---------------------------------------------------------------------------
+
+test('H2：小程序侧记录均命中冻结枚举（契约枚举字段不承载非枚举值）', () => {
+  const SOURCE_KINDS = ['database', 'verified_seed', 'simulation'];
+  const EVIDENCE_KINDS = ['research', 'experience', 'mixed'];
+  assert.equal(miniReference.skippedRecords.length, 0, '真实 20 条来源齐备，不应被排除');
+  for (const r of miniReference.records) {
+    assert.ok(SOURCE_KINDS.includes(r.source.source_kind), `source_kind 非法：${r.source.source_kind}`);
+    assert.ok(EVIDENCE_KINDS.includes(r.source.evidence_kind), `evidence_kind 非法：${r.source.evidence_kind}`);
+    assert.notEqual(r.source.source_kind, '未采集', '缺项文案不得塞进强枚举字段');
+    assert.notEqual(r.source.evidence_kind, '未采集', '缺项文案不得塞进强枚举字段');
+  }
+});
+
+test('H2：小程序侧 contractReadiness 与域库 checkSourceContractReadiness 同口径', async () => {
+  const { checkSourceContractReadiness: domCheck } = await import('../../packages/reference/records.mjs');
+  const variants = [
+    ['基线', () => {}],
+    ['仅缺 source_kind', (r) => { delete r.source.source_kind; }],
+    ['仅缺 evidence_kind', (r) => { delete r.source.evidence_kind; }],
+    ['两者都缺', (r) => { delete r.source.source_kind; delete r.source.evidence_kind; }],
+    ['缺登记证号', (r) => { delete r.registration_number; }],
+    ['非法 source_kind', (r) => { r.source.source_kind = 'made_up'; }],
+  ];
+  const { readFileSync } = await import('node:fs');
+  const first = JSON.parse(readFileSync(new URL('../../packages/knowledge/herbicides/records-2026.json', import.meta.url), 'utf8')).records[0];
+  for (const [label, mutate] of variants) {
+    const rec = JSON.parse(JSON.stringify(first));
+    mutate(rec);
+    const dom = domCheck(rec);
+    const mini = miniReference.contractReadiness(rec);
+    assert.equal(mini.ok, dom.ok, `H2 ${label}：ok 判定须与域库一致`);
+    assert.deepEqual(mini.missing, dom.missing, `H2 ${label}：缺项明细须与域库一致`);
+  }
+});

@@ -1,7 +1,7 @@
 // GY-I07 契约一致性：本地枚举与 packages/contracts/openapi.json + states.json 对齐。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import {
   CONTRACT_VERSION,
   SOURCE_KINDS,
@@ -304,24 +304,187 @@ test('H1：真实 20 条记录的成分 unit_text 均非编造（原文单位或
   assert.ok(total >= 42, `成分总数应 >= 42（H1 修复逗号误切后为 42），实为 ${total}`);
 });
 
-test('H1：来源缺失的必填字段以「未采集」占位，不编造权威发布方/来源类型', async () => {
+test('H2：来源/剂型缺失时，普通 string 必填字段以「未采集」占位（不编造发布方/生产企业）', async () => {
   const { toHerbicideContract } = await import('../../packages/reference/records.mjs');
-  // 构造一条缺 publisher / source_kind / evidence_kind / producer / dosage_form 的记录
+  const compile = ajvCompile();
+  // 构造一条缺 publisher / producer / dosage_form（普通 string 必填）的记录。
+  // 注意：source_kind / evidence_kind 为**冻结枚举**，缺项处理见下方 H2 枚举用例。
   const rec = {
-    record_id: 'H1-TEST',
+    record_id: 'H2-TEXT',
     registration_number: 'PD99999999',
     registered_name: '测试药剂',
     ingredients_text: '唑草酮 40',
-    source: { source_id: 'src_test', issue: '测试期', published_at: '2026-01-01' },
+    source: { source_id: 'src_test', issue: '测试期', published_at: '2026-01-01', source_kind: 'verified_seed', evidence_kind: 'research' },
   };
   const c = toHerbicideContract(rec);
   assert.equal(c.source.publisher, '未采集', '不得编造权威发布方');
-  assert.equal(c.source.source_kind, '未采集', '不得编造来源类型');
-  assert.equal(c.source.evidence_kind, '未采集', '不得编造证据类型');
   assert.equal(c.formulation.producer, '未采集', '不得编造生产企业');
   assert.equal(c.formulation.dosage_form, '未采集', '不得编造剂型');
   // 不得出现原先硬编码的权威名称
   assert.notEqual(c.source.publisher, '农业农村部农药管理司');
+  // 且产物仍须为**合法契约对象**（完整 Ajv）
+  assertValid(compile('Herbicide'), ser(c), 'Herbicide（缺 publisher/producer/dosage_form）');
+});
+
+// ---------------------------------------------------------------------------
+// H2：缺来源类型**不得**用中文占位填入冻结枚举
+// 监工复现：仅删 source.source_kind → toHerbicideContract 产物 source_kind="未采集"
+// 被 Ajv 以 `/source/source_kind · enum` 拒绝；仅删 evidence_kind 同理；
+// 而 evaluateEligibility 仍判 queryable=true（矛盾）。
+// 口径：契约枚举字段不得承载非枚举值；缺项须在可表达缺项的位置如实说明；
+//       不可确认时 fail-closed（在投影/查询前排除，并保持 queryable 与契约合法性一致）。
+// ---------------------------------------------------------------------------
+
+/** 构造缺字段变体记录（基于首条真实记录，**逐字节复制后仅删指定字段**）。 */
+function variantOfFirstRecord(mutate) {
+  const first = JSON.parse(
+    readFileSync(new URL('../../packages/knowledge/herbicides/records-2026.json', import.meta.url), 'utf8'),
+  ).records[0];
+  const rec = JSON.parse(JSON.stringify(first));
+  mutate(rec);
+  return rec;
+}
+
+test('H2：仅缺 source_kind / 仅缺 evidence_kind 的记录不满足契约前提（fail-closed，不编造枚举）', async () => {
+  const { checkSourceContractReadiness } = await import('../../packages/reference/records.mjs');
+  const onlyKind = checkSourceContractReadiness(variantOfFirstRecord((r) => delete r.source.source_kind));
+  assert.equal(onlyKind.ok, false, '仅缺 source_kind 应判定为不满足契约前提');
+  assert.deepEqual(onlyKind.missing, ['来源类型（source_kind）']);
+  const onlyEvidence = checkSourceContractReadiness(variantOfFirstRecord((r) => delete r.source.evidence_kind));
+  assert.equal(onlyEvidence.ok, false, '仅缺 evidence_kind 应判定为不满足契约前提');
+  assert.deepEqual(onlyEvidence.missing, ['证据类型（evidence_kind）']);
+  const both = checkSourceContractReadiness(
+    variantOfFirstRecord((r) => {
+      delete r.source.source_kind;
+      delete r.source.evidence_kind;
+    }),
+  );
+  assert.deepEqual(both.missing, ['来源类型（source_kind）', '证据类型（evidence_kind）']);
+  // 非法枚举取值同判（不得因「像枚举」而放行）
+  const bogus = checkSourceContractReadiness(variantOfFirstRecord((r) => { r.source.source_kind = 'made_up'; }));
+  assert.equal(bogus.ok, false);
+  // 基线记录满足前提
+  assert.equal(checkSourceContractReadiness(variantOfFirstRecord(() => {})).ok, true);
+});
+
+test('H2：缺枚举字段的记录在投影前被排除（items 不含、skipped 如实说明缺项）', async () => {
+  const { loadHerbicideRecords } = await import('../../packages/reference/records.mjs');
+  const dataPath = new URL('../../packages/knowledge/herbicides/records-2026.json', import.meta.url);
+  const backup = readFileSync(dataPath, 'utf8');
+  const baseline = loadHerbicideRecords();
+  assert.equal(baseline.items.length, 20);
+  assert.equal(baseline.skipped.length, 0, '真实 20 条来源齐备，不应被排除');
+  const variant = JSON.parse(backup);
+  delete variant.records[0].source.source_kind; // 仅缺 source_kind
+  try {
+    writeFileSync(dataPath, JSON.stringify(variant), 'utf8');
+    const loaded = loadHerbicideRecords();
+    assert.equal(loaded.items.length, 19, '缺枚举字段的记录不得进入投影集合');
+    assert.equal(loaded.skipped.length, 1);
+    assert.deepEqual(loaded.skipped[0].missing, ['来源类型（source_kind）']);
+    assert.ok(loaded.skipped[0].reason.includes('来源类型（source_kind）'), '缺项说明须如实列出缺失字段');
+    // 被排除的记录不得出现在任何对外投影中
+    assert.ok(!loaded.items.some((it) => it.contract.source.source_kind === '未采集'), '契约为外部消费者所依赖，不得含非枚举占位');
+  } finally {
+    writeFileSync(dataPath, backup, 'utf8');
+  }
+  assert.equal(loadHerbicideRecords().items.length, 20, '数据文件须已复原');
+});
+
+test('H2：直接投影时枚举字段**永不**承载非枚举值（缺失则整体不写出，绝不编造）', async () => {
+  const { toHerbicideContract, toKnowledgeContract } = await import('../../packages/reference/records.mjs');
+  const { SOURCE_KINDS, EVIDENCE_KINDS } = await import('../../packages/reference/constants.mjs');
+  const vH = ajvCompile()('Herbicide');
+  const vK = ajvCompile()('Knowledge');
+  const variants = [
+    ['仅缺 source_kind', (r) => delete r.source.source_kind],
+    ['仅缺 evidence_kind', (r) => delete r.source.evidence_kind],
+    ['两者都缺', (r) => { delete r.source.source_kind; delete r.source.evidence_kind; }],
+    ['source 整体缺失', (r) => { delete r.source; }],
+  ];
+  for (const [label, mutate] of variants) {
+    const rec = variantOfFirstRecord(mutate);
+    for (const [name, contract] of [
+      ['Herbicide', toHerbicideContract(rec)],
+      ['Knowledge', toKnowledgeContract(rec)],
+    ]) {
+      const payload = ser(contract);
+      const kind = payload.source?.source_kind;
+      const evidence = payload.source?.evidence_kind;
+      // 核心判据：枚举字段**要么命中冻结枚举，要么不含该字段** ——
+      // 绝不出现 `未采集` 这类非枚举值（也不挑一个合法值来编造来源类型）。
+      assert.ok(
+        kind === undefined || SOURCE_KINDS.includes(kind),
+        `${label} / ${name}：source_kind 不得为非枚举值（实为 ${JSON.stringify(kind)}）`,
+      );
+      assert.ok(
+        evidence === undefined || EVIDENCE_KINDS.includes(evidence),
+        `${label} / ${name}：evidence_kind 不得为非枚举值（实为 ${JSON.stringify(evidence)}）`,
+      );
+      assert.notEqual(kind, '未采集', '缺项文案不得塞进强枚举字段');
+      // 产物若整体合法（未被 fail-closed 拦下）须通过**完整** Ajv；
+      // 若因缺必填枚举而整体不合法，则必须是「字段缺失」而非「字段写错值」。
+      const validate = name === 'Herbicide' ? vH : vK;
+      if (!validate(payload)) {
+        const errs = validate.errors || [];
+        const onlyMissingRequired = errs.every(
+          (e) => e.keyword === 'required' && ['source_kind', 'evidence_kind'].includes(e.params.missingProperty),
+        );
+        assert.ok(
+          onlyMissingRequired,
+          `${name}（${label}）若被拒绝，原因只能是缺失必填枚举字段（不得是写入了非法枚举值）：${JSON.stringify(errs.slice(0, 4))}`,
+        );
+      }
+    }
+  }
+});
+
+test('H2：契约前提齐备的投影必须通过完整 Ajv（真实数据零回归）', async () => {
+  const { loadHerbicideRecords } = await import('../../packages/reference/records.mjs');
+  const vH = ajvCompile()('Herbicide');
+  const vK = ajvCompile()('Knowledge');
+  const { items, skipped } = loadHerbicideRecords();
+  assert.equal(skipped.length, 0, '真实 20 条来源齐备，不得有记录被 fail-closed 排除');
+  assert.equal(items.length, 20);
+  for (const it of items) {
+    assertValid(vH, ser(it.contract), `Herbicide ${it.registration_number}`);
+    assertValid(vK, ser(it.knowledge), `Knowledge ${it.registration_number}`);
+    // 枚举字段必须是契约枚举（真实资料齐备）
+    assert.ok(SOURCE_KINDS.includes(it.contract.source.source_kind));
+    assert.ok(EVIDENCE_KINDS.includes(it.contract.source.evidence_kind));
+  }
+});
+
+test('H2：evaluateEligibility 的 queryable 与契约合法性一致（不得「Ajv 拒绝但 queryable=true」）', async () => {
+  const { evaluateEligibility } = await import('../../packages/reference/query.mjs');
+  const { toHerbicideContract } = await import('../../packages/reference/records.mjs');
+  const vH = ajvCompile()('Herbicide');
+  const variants = [
+    ['基线', () => {}],
+    ['仅缺 source_kind', (r) => delete r.source.source_kind],
+    ['仅缺 evidence_kind', (r) => delete r.source.evidence_kind],
+    ['两者都缺', (r) => { delete r.source.source_kind; delete r.source.evidence_kind; }],
+    ['缺 registration_number', (r) => delete r.registration_number],
+    ['非法 source_kind', (r) => { r.source.source_kind = 'made_up'; }],
+  ];
+  for (const [label, mutate] of variants) {
+    const rec = variantOfFirstRecord(mutate);
+    const verdict = evaluateEligibility(
+      { visibility: 'published', registration_number: rec.registration_number, source: rec.source ?? {}, simulated: false },
+      { includeSimulated: false },
+    );
+    const legal = vH(ser(toHerbicideContract(rec)));
+    if (!legal) {
+      assert.equal(verdict.queryable, false, `${label}：契约为非法对象时 queryable 必须为 false（否则自相矛盾）`);
+      assert.ok(typeof verdict.reason === 'string' && verdict.reason.length > 0, `${label}：须给出可读原因`);
+    }
+  }
+  // 基线仍可查询（不误伤）
+  const okVerdict = evaluateEligibility(
+    { visibility: 'published', registration_number: 'PD20161371', source: { source_kind: 'verified_seed', evidence_kind: 'research', source_validity: 'valid' }, simulated: false },
+    {},
+  );
+  assert.equal(okVerdict.queryable, true);
 });
 
 test('H1：药品名内含逗号不得被误切（2,4-滴异辛酯 为单一成分，不凭空产生假成分）', async () => {

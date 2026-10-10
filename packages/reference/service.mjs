@@ -234,6 +234,8 @@ export function createReferenceService({ executionMode = 'stub' } = {}) {
         catalog_versions: catalog.catalogVersions,
         herbicide_meta: herbicideDoc.docMeta,
         version_index_size: versionIndex.size,
+        // H2：因来源元数据缺项被 fail-closed 排除的记录（缺项说明落于此，不在契约枚举字段）。
+        skipped_records: herbicideDoc.skipped,
         seed_counts: {
           herbicides: seedBundle.herbicides.count,
           weeds: seedBundle.weeds.count,

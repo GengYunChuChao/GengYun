@@ -18,11 +18,13 @@
 
 import {
   DEFAULT_LIMIT,
+  EVIDENCE_KINDS,
   MAX_LIMIT,
   MAX_QUERY_LENGTH,
   QUERYABLE_VALIDITIES,
   QUERYABLE_VISIBILITIES,
   REGION_CODE_PATTERN,
+  SOURCE_KINDS,
 } from './constants.mjs';
 import { normalizeText, resolveNavTerm } from './catalog.mjs';
 import { ReferenceError, FieldError } from './errors.mjs';
@@ -94,8 +96,25 @@ export function normalizeQuery(input = {}, catalog) {
 /**
  * 单条记录的可见性/有效性判定（**列表与详情共用**，保证一致）。
  * 返回 { queryable, reason }。
+ *
+ * H2 口径（**契约合法性与 queryable 判定必须一致**）：
+ * 契约 `SourceRef.source_kind`/`evidence_kind` 为冻结枚举、`Formulation.registration_number`
+ * 为必填 —— 任一缺失即无法产出合法契约对象。此时若判 `queryable=true`，就会出现
+ * 「Ajv 拒绝但可查询」的自相矛盾。故此处显式 fail-closed：**先判契约前提，再做可见性判定**。
+ * （这类记录已在投影阶段被排除，不会出现在 `items` 中；此处保留兜底，防止绕过。）
  */
 export function evaluateEligibility(item, { includeSimulated = false } = {}) {
+  // 契约前提：来源枚举字段必须命中冻结枚举（不得为非枚举占位），登记证号必须存在。
+  if (!SOURCE_KINDS.includes(item.source?.source_kind)) {
+    return { queryable: false, reason: '来源类型缺失或非法枚举，无法满足契约必填（不编造来源类型）' };
+  }
+  if (!EVIDENCE_KINDS.includes(item.source?.evidence_kind)) {
+    return { queryable: false, reason: '证据类型缺失或非法枚举，无法满足契约必填（不编造证据类型）' };
+  }
+  if (typeof item.registration_number !== 'string' || item.registration_number === '') {
+    return { queryable: false, reason: '登记证号缺失，无法满足契约必填' };
+  }
+
   if (item.visibility === 'hidden') return { queryable: false, reason: '该记录已下架' };
   if (item.visibility === 'deleted') return { queryable: false, reason: '该记录已删除' };
   if (!QUERYABLE_VISIBILITIES.includes(item.visibility)) return { queryable: false, reason: '该记录当前不可见' };

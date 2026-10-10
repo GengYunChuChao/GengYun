@@ -52,11 +52,41 @@ function deriveSourceVersion(source) {
   return (s.source_id || 'unknown') + '@' + versionPart + (hash12 ? '#' + hash12 : '')
 }
 
-const normalized = records.records.map(function (r) {
+// H2 契约前提（与域库同口径）：`SourceRef.source_kind`/`evidence_kind` 为**冻结枚举**，
+// `Formulation.registration_number` 为必填 —— 任一缺失即无法产出合法契约对象。
+// 这类记录**在投影/查询前 fail-closed**：既不进入可查询集合，也不被投影为契约形状，
+// 缺项说明落在 labels/查询原因（可表达缺项的位置），**绝不**用「未采集」填强枚举字段。
+const SOURCE_KINDS = ['database', 'verified_seed', 'simulation']
+const EVIDENCE_KINDS = ['research', 'experience', 'mixed']
+
+function contractReadiness(r) {
+  const s = r.source || {}
+  const missing = []
+  if (SOURCE_KINDS.indexOf(s.source_kind) === -1) missing.push('来源类型（source_kind）')
+  if (EVIDENCE_KINDS.indexOf(s.evidence_kind) === -1) missing.push('证据类型（evidence_kind）')
+  if (typeof r.registration_number !== 'string' || r.registration_number === '') missing.push('登记证号（registration_number）')
+  return { ok: missing.length === 0, missing: missing }
+}
+
+const normalized = []
+const skippedRecords = []
+records.records.forEach(function (r, index) {
+  const readiness = contractReadiness(r)
+  if (!readiness.ok) {
+    // fail-closed：不满足契约前提 → 退出投影（缺项说明如实保留，不编造枚举值）。
+    skippedRecords.push({
+      index: index,
+      record_id: r.record_id || null,
+      registration_number: r.registration_number || null,
+      missing: readiness.missing.slice(),
+      reason: '来源元数据缺项，无法满足契约必填：' + readiness.missing.join('、') + '（不编造枚举值，已退出投影）'
+    })
+    return
+  }
   const simulated = String(r.registration_number || '').indexOf('SIM-') === 0 || (r.source && r.source.source_kind === 'simulation')
   const validity = (r.source && (r.source.source_validity || r.source.validity)) || 'unknown'
   const sourceVersion = deriveSourceVersion(r.source)
-  return {
+  normalized.push({
     record_id: r.record_id,
     registration_number: r.registration_number,
     registered_name: r.registered_name,
@@ -82,11 +112,18 @@ const normalized = records.records.map(function (r) {
       use_scene: norm(r.use_scene || ''),
       target: norm(r.target_original || '')
     }
-  }
+  })
 })
 
 // 有效判定（列表与详情同源同判）：仅 validity=valid 且 visibility=published 且非模拟。
+// H2：**先判契约前提**（来源枚举字段必须命中冻结枚举、登记证号必须存在），
+// 否则会出现「产物非法但可查询」的自相矛盾（域库 evaluateEligibility 同口径）。
 function isEligible(item) {
+  const missing = []
+  if (SOURCE_KINDS.indexOf(item.source && item.source.source_kind) === -1) missing.push('来源类型（source_kind）')
+  if (EVIDENCE_KINDS.indexOf(item.source && item.source.evidence_kind) === -1) missing.push('证据类型（evidence_kind）')
+  if (typeof item.registration_number !== 'string' || item.registration_number === '') missing.push('登记证号（registration_number）')
+  if (missing.length > 0) return { ok: false, reason: '来源元数据缺项，无法满足契约必填：' + missing.join('、') }
   if (item.visibility !== 'published') return { ok: false, reason: item.visibility === 'hidden' ? '该记录已下架' : '该记录当前不可见' }
   if (item.validity !== 'valid') {
     const map = { expired: '来源已过期', withdrawn: '来源已撤回', conflicting: '来源相互冲突', unknown: '来源有效期未知' }
@@ -503,6 +540,9 @@ module.exports = {
   sources: sources.sources,
   regions: require('../data/regions.js').regions,
   records: normalized,
+  // H2：不满足契约前提（缺源类型/证据类型/登记证号）而被 fail-closed 排除的记录。
+  skippedRecords: skippedRecords,
+  contractReadiness: contractReadiness,
   query: query,
   detail: detail,
   resolveCropId: resolveCropId,
