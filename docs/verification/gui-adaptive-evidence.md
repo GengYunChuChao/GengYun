@@ -491,11 +491,11 @@ node --test tests/ui-adaptive.test.mjs
 | 检查点 | 结果 |
 | --- | --- |
 | 末屏卡片 | **20 号图仅首页可见区域，未含末屏**；末屏（首页「当前状态」卡片、「我的」页「去登录」按钮）**仍缺当前版本画面**，待补 |
-| TabBar | 五项完整、当前页高亮正常，未被挤压 |
+| TabBar | 图 20 中首页的五项可见、首页高亮；不能代表其余页当前版本 |
 | `.btn`（去登录、开始录音等） | **未验证** —— 20 号图未含「去登录」按钮，待补 |
-| `.badge`（替身数据 · 仅开发模式可见、未接入） | 完整显示，圆角框未被文字撑破 |
+| `.badge` | 图 20 仅覆盖首页可见标签；不含底部「替身数据」标签，不能据此验收末屏标签 |
 | 长文本 | 图 [11](assets/gui-adaptive-250c4d4/11-profile-display-max.jpg) 在 `250c4d4` 的历史「我的」页完整显示隐私说明；图 20 不含隐私说明或底部状态描述，不能证明 `3007d76` 或当前版本长文本表现 |
-| 置灰态 | 未登录入口为置灰，符合游客态预期 |
+| 置灰态 | 图 20 只记录外观；实际游客门禁另由真实页面/鉴权回归验证 |
 
 **截图**（绑定提交 `3007d76`）：
 
@@ -532,3 +532,23 @@ node --test tests/ui-adaptive.test.mjs
 - **比例 API 在该设备不可用**：`fontSizeScaleFactor` 与 `wx.getFontSizeManager` 均为 `undefined`，故实际走 px 换算路径。
 - **已知限制**：微信设置改动后 `globalData.fontScale` 不自动重算，须重新进入小程序（实测确认）。
 - **系统显示大小**：走 dp 缩放，对 px 生效而对 rpx 不生效，这是本项目字号改为绝对 px 后视觉变大的原因。该机制已实测（标准档 355 → 最大档 320，系数约 1.109）；与应用内 `--font-scale` 的**叠加效果仍未验证**。
+
+## 8 写手接续：当前模拟器证据（2026-10-10）
+
+来源 `8c20261bed16b97676591a045f8f16ba09a5d414`，基础库 3.17.3、官方 miniprogram-automator 0.12.1；实际模拟设备 iPhone 12/13 (Pro)，逻辑视口 390px、pixelRatio 3。截图由微信原生渲染生成；[源文件哈希](assets/gui-adaptive-writer-8c20261/sources.json)核对五页、App、字号工具与状态组件和来源提交一致（仅归一化 CRLF/LF 换行）。[读取值和按钮尺寸](assets/gui-adaptive-writer-8c20261/capture.json)为 SDK 原始结果。
+
+这是**受控游客布局走查**：在忽略的副本中，仅把 `auth.requireLogin` 替换为回调 false、保留游客卡片而不跳转；App 的 fontScale 注入 1.3。共享源码的鉴权未修改，runtime 仍 disabled，urlCheck 仍 true。模拟器原始 fontSizeSetting=16，故本组**不证明实际微信字体设置响应或真实登录**。真实鉴权/门禁另由页面回归验证。
+
+首次连接错误工程的画面已丢弃；第二次发现门禁实际跳到登录页的截图也已替换。最终逐页断言实际路由，才保留本组图片。
+
+| 页面 | 最大字号顶部／主要内容 | 最大字号末屏与 TabBar |
+| --- | --- | --- |
+| 首页 | [顶部](assets/gui-adaptive-writer-8c20261/home-top.png) | [末屏](assets/gui-adaptive-writer-8c20261/home-bottom.png) |
+| 识别 | [顶部](assets/gui-adaptive-writer-8c20261/identify-top.png) | [末屏](assets/gui-adaptive-writer-8c20261/identify-bottom.png) |
+| 社区 | [游客状态与去登录](assets/gui-adaptive-writer-8c20261/community-top.png) | [末屏](assets/gui-adaptive-writer-8c20261/community-bottom.png) |
+| 消息 | [游客状态与去登录](assets/gui-adaptive-writer-8c20261/messages-top.png) | [末屏](assets/gui-adaptive-writer-8c20261/messages-bottom.png) |
+| 我的 | [主要登录按钮](assets/gui-adaptive-writer-8c20261/profile-top.png) | [隐私说明、状态及去登录](assets/gui-adaptive-writer-8c20261/profile-bottom.png) |
+
+五页的末屏均留出空白再接 TabBar，当前截图中末屏文字及状态按钮未被覆盖。主要按钮的单独画面见同目录 `home-button-1..3.png`、`identify-button-1..5.png`、`profile-button-1.png`；换行后容器随内容撑高，最低实测高度 52.75px。社区、消息的去登录在状态组件中，须看组件渲染截图，不能因页面级 `$$('button')` 为空而写成没有按钮。
+
+受控 390px 最大字号五 Tab 画面已补；320px 的当前渲染、Android/iOS 双平台真机、真实微信设置字段到页面效果的完整链路仍未补齐，不能据本组关闭 #28 或 #23。
