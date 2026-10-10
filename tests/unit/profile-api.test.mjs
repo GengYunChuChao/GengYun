@@ -23,8 +23,9 @@ async function fixture() {
     assert.match(url.username, /^gy_i05_test_[a-z0-9_]+$/);
     pool = new pg.Pool({connectionString: url.href, max: 5, statement_timeout: 5000});
     assert.equal((await pool.query("SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")).rows[0].n, 0, 'only a new empty dedicated local test database is allowed');
-    db = {exec: sql => pool.query(sql), query: (sql, values) => pool.query(sql, values)};
-    release = () => pool.end();
+    const nativePool = pool;
+    db = {exec: sql => nativePool.query(sql), query: (sql, values) => nativePool.query(sql, values)};
+    release = () => nativePool.end();
   } else {
     db = new PGlite();
     let tail = Promise.resolve();
@@ -35,12 +36,48 @@ async function fixture() {
       await before;
       return {query: (...args) => db.query(...args), release: () => unlock()};
     }};
-    release = () => db.close();
+    const engine = db;
+    release = () => engine.close();
   }
   await db.exec(read('services/api/db/migrations/0001_initial_schema.sql'));
+  await db.exec(read('services/api/db/migrations/0002_knowledge_catalog.sql'));
+  await db.exec(read('services/api/db/migrations/0003_privacy_consent.sql'));
   await db.exec(read('services/api/db/migrations/0008_auth_session.sql'));
+  await db.exec(read('services/api/db/migrations/0009_consent_policy.sql'));
   for (const row of crops) await db.query('INSERT INTO crops(id,name,active) VALUES($1,$2,true)', [row.id, row.name]);
   for (const row of regions) await db.query('INSERT INTO regions(code,name,parent_code,catalog_version,supported) VALUES($1,$2,$3,$4,true)', [row.code,row.name,row.parent_code,row.catalog_version]);
+  await db.exec(read('services/api/db/roles/auth_privacy.sql'));
+  await db.exec(read('services/api/db/roles/profile_runtime.sql'));
+  await db.exec('CREATE ROLE gy_i05_test_runtime NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT gengyun_auth_privacy,gengyun_profile_runtime TO gy_i05_test_runtime');
+  let runtimeRole = 'gy_i05_test_runtime';
+  const originalPool = pool;
+  const ownerDb = db;
+  // PGlite has one session: serialize the complete transaction, not individual
+  // statements, so fixture-owner queries cannot leak privileges into API work.
+  let queue = Promise.resolve();
+  async function acquire() {
+    const previous = queue; let unlock;
+    queue = new Promise(resolve => {unlock = resolve;});
+    await previous;
+    return unlock;
+  }
+  pool = {
+    async connect() {
+      const unlock = await acquire();
+      const client = process.env.GY_PROFILE_TEST_DATABASE_URL ? await originalPool.connect() : {query: (...args) => ownerDb.query(...args),release() {}};
+      try { await client.query(`SET ROLE ${runtimeRole}`); }
+      catch (error) {client.release();unlock();throw error;}
+      return {query: (...args) => client.query(...args), release() { client.query('RESET ROLE').finally(() => {client.release();unlock();}); }};
+    },
+    async query(...args) {
+      const client = await this.connect();
+      try { return await client.query(...args); } finally {client.release();}
+    },
+  };
+  db = {async query(...args) {
+    const unlock = await acquire();
+    try {return await ownerDb.query(...args);} finally {unlock();}
+  }};
   const app = buildApp({config: loadConfig({APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent'}), pool});
   async function login(code) {
     const result = await app.inject({method: 'POST', url: '/api/v1/auth/wechat', headers: {'idempotency-key': `login-key-${code}`}, payload: {code}});
@@ -50,13 +87,34 @@ async function fixture() {
   const a = await login('profile-a'), b = await login('profile-b');
   const headers = token => ({authorization: `Bearer ${token}`});
   const put = (token, body = input, key = 'profile-key-0001', revision = '"1"') => app.inject({method:'PUT',url:route,headers:{...headers(token),'idempotency-key':key,'if-match':revision},payload:body});
-  return {app, db, pool, a, b, headers, put, async close() {await app.close(); await release();}};
+  return {app, db, pool, a, b, headers, put, useRole(role) {runtimeRole=role;}, async close() {await app.close(); await queue; await release();}};
 }
 
 test('GY-I05 persistent profile/catalog HTTP and SQL regression (synthetic identity)', async t => {
   const f = await fixture();
   t.after(() => f.close());
   const {app,db,a,b,headers,put} = f;
+  await t.test('old auth-only role reproduces42501/HTTP503; new composed role has explicit limited rights', async () => {
+    f.useRole('gengyun_auth_privacy');
+    for (const sql of ['SELECT user_id FROM single_profiles','SELECT id FROM crops','SELECT code FROM regions']) {
+      await assert.rejects(f.pool.query(sql),error=>error.code==='42501');
+    }
+    for (const url of [route,'/api/v1/catalog/crops','/api/v1/catalog/regions']) {
+      const response=await app.inject({url,headers:headers(a)});
+      assert.equal(response.statusCode,503); assert.equal(response.json().error.code,'PROVIDER_UNAVAILABLE');
+    }
+    f.useRole('gy_i05_test_runtime');
+    assert.equal((await f.pool.query('SELECT current_user AS role')).rows[0].role,'gy_i05_test_runtime');
+    const flags=(await f.pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls,rolcanlogin FROM pg_roles WHERE rolname=current_user')).rows[0];
+    assert.ok(Object.values(flags).every(value=>value===false));
+    for (const sql of [
+      'CREATE TABLE public.profile_forbidden(id int)', 'CREATE ROLE profile_forbidden_role',
+      'DELETE FROM crops', 'DELETE FROM regions', 'DELETE FROM single_profiles',
+      "UPDATE crops SET active=false", "UPDATE regions SET supported=false", "UPDATE regions SET catalog_version='forged'",
+      'UPDATE single_profiles SET user_id=user_id', "UPDATE users SET state='suspended'", 'UPDATE users SET auth_epoch=auth_epoch+1',
+      'SELECT wechat_subject_cipher FROM users', 'SELECT object_ref_cipher FROM media', 'SELECT object_id FROM exports',
+    ]) await assert.rejects(f.pool.query(sql),error=>error.code==='42501',sql);
+  });
   await t.test('all four endpoints reject guests; no database does not fake profile success', async () => {
     for (const url of [route,'/api/v1/catalog/crops','/api/v1/catalog/regions']) assert.equal((await app.inject({url})).statusCode,401);
     assert.equal((await app.inject({method:'PUT',url:route,payload:input})).statusCode,401);
