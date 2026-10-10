@@ -69,7 +69,9 @@ function main() {
     const target = resolve(outDir, m.out);
     if (check) {
       const actual = existsSync(target) ? readFileSync(target, 'utf8') : '';
-      if (actual !== expected) {
+      // Git may check out generated text as CRLF on Windows. Only normalize
+      // CRLF pairs: retain whitespace, bare CR, BOM, ordering and escaped data.
+      if (actual.replace(/\r\n/g, '\n') !== expected) {
         console.error(`[drift] miniprogram/data/${m.out} 与 ${m.src} 不同步`);
         drift += 1;
       }
