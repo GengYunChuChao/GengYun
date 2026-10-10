@@ -178,6 +178,9 @@ test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节
   for (const page of TAB_PAGES) {
     const wxml = read(`miniprogram/${page}.wxml`);
     const js = read(`miniprogram/${page}.js`);
+    for (const button of wxml.matchAll(/<button\b[^>]*>/g)) {
+      assert.match(button[0], /class="[^"]*\bbtn\b/, `${page} 按钮缺少字号与高度样式`);
+    }
     assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
     assert.ok(js.includes('fontScale'), `${page} 未引入 font-scale`);
     assert.ok(/onLoad/.test(js), `${page} 缺少 onLoad 调用 applyFontScale`);
@@ -356,6 +359,9 @@ test('每个页面（含 GY-I04 的登录页）都注入 --font-scale', () => {
   for (const page of appJson.pages) {
     const wxml = read(`miniprogram/${page}.wxml`);
     const js = read(`miniprogram/${page}.js`);
+    for (const button of wxml.matchAll(/<button\b[^>]*>/g)) {
+      assert.match(button[0], /class="[^"]*\bbtn\b/, `${page} 按钮缺少字号与高度样式`);
+    }
     assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
     assert.ok(/applyFontScale|currentFontScale/.test(js), `${page} 未引入 font-scale`);
   }
