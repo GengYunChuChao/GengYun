@@ -34,6 +34,21 @@ export function sha256Hex(input) {
 }
 
 /**
+ * 缺项显式标记（H1 同原则）。
+ * 用于「契约必填但来源原文缺失」的字符串字段：以显式缺项文案占位，
+ * **不编造**权威主体（如发布方）、来源类型、单位等来源没有的信息。
+ *
+ * 命名注意：与 `seed.mjs` 的 `NOT_COLLECTED` 语义不同（后者专指种子整理稿缺栏），
+ * 故此处用 `MISSING_TEXT` 以避免 `index.mjs` 星号导出的名称冲突。
+ */
+export const MISSING_TEXT = '未采集';
+
+/** 返回原值（字符串且非空）；否则返回显式缺项标记 `未采集`（不编造）。 */
+function orNotCollected(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : MISSING_TEXT;
+}
+
+/**
  * 制剂身份哈希：**名称 + 剂型 + 有效成分含量文本**。
  * 关键：把 `dosage_form` 与 `ingredients_text`（含含量）纳入哈希，
  * 使「同名不同含量或不同剂型」产生不同身份，从而**不被合并**。
@@ -118,19 +133,21 @@ export function toHerbicideContract(record) {
     formulation: {
       id: deterministicUuid(identityHash),
       registration_number: record.registration_number,
-      producer: record.producer,
-      dosage_form: record.dosage_form,
+      // H1 同原则：必填但原文缺失时，用显式缺项标记，**不编造**持有人/剂型。
+      producer: orNotCollected(record.producer),
+      dosage_form: orNotCollected(record.dosage_form),
       ingredients: parseIngredients(record.ingredients_text),
     },
     source: {
       id: deterministicUuid(src.source_id ?? 'unknown'),
       version: deriveSourceVersion(record),
-      title: src.issue ?? src.publisher ?? '农药登记信息',
+      title: orNotCollected(src.issue ?? src.publisher),
       // 契约要求 url 为 https 且 pattern ^https://，取 original_url 优先
       url: pickHttpsUrl(src),
-      publisher: src.publisher ?? '农业农村部农药管理司',
-      source_kind: src.source_kind ?? 'verified_seed',
-      evidence_kind: src.evidence_kind ?? 'research',
+      // H1 同原则：**不编造**权威发布方/来源类型/证据类型 —— 原文缺失即显式标「未采集」。
+      publisher: orNotCollected(src.publisher),
+      source_kind: src.source_kind ?? MISSING_TEXT,
+      evidence_kind: src.evidence_kind ?? MISSING_TEXT,
       validity,
       review_status: record?.verification?.review_status ?? 'unverified',
       updated_at: toIsoDate(src.published_at ?? src.retrieved_at),
@@ -192,33 +209,42 @@ export function buildConditions(record) {
 /**
  * 由 ingredients_text 解析有效成分（形如「唑草酮 40%」「吡氟酰草胺 2%、二甲戊灵 22%」）。
  *
- * G1 契约要点（冻结 schema `Ingredient`，`required: [name, content_text, unit_text]`）：
- * `unit_text` 为必填 `string`。首批资料的原文文本**只含含量数值**（如 `40%`），未单列计量单位；
- * 故按**原文如实**给出：`unit_text` 取含量表达式中的单位（如 `%`），无法判读时用
- * `未采集`（显式缺项标记）——**不编造**计量单位，也不改写成用量。
+ * H1 契约要点（冻结 schema `Ingredient`，`required: [name, content_text, unit_text]`）：
+ * `unit_text` 为必填 `string`。**原文含显式单位**（如 `40%` / `200 g/L`）时，按原文如实给出
+ * 该单位；**原文只给数值、未给单位**（如 `唑草酮 40`）时，**不得**补成 `%` 或任何量纲 ——
+ * 否则等于给来源没有的信息补了单位，违反「缺项如实标记 / 不编造来源条件」。
+ * 此时 `content_text` 保留原文数值本身，`unit_text` 显式标为 `未采集`。
+ * 完全无法解析出名值对时，整体标 `未标注` / `未采集`。
  */
 export function parseIngredients(text) {
   if (typeof text !== 'string' || text.trim() === '') {
-    return [{ name: '未标注', content_text: '未标注', unit_text: '未采集' }];
+    return [{ name: MISSING_TEXT, content_text: MISSING_TEXT, unit_text: MISSING_TEXT }];
   }
   return text
-    .split(/[、,]/)
+    // H1 同原则（不编造）：分隔符为顿号；半角逗号仅在**后接非数字**时才作分隔符 ——
+    // 否则「2,4-滴异辛酯」这类名称内的逗号会被误切，凭空产生 `2` 这样的假成分。
+    .split(/、|,(?![0-9])/)
     .map((seg) => seg.trim())
     .filter((seg) => seg !== '')
     .map((seg) => {
-      const m = seg.match(/^(.+?)\s*([\d.]+)\s*(%|g\/L|g\/kg|mg\/kg|g|ml\/L|ml|mg|kg|L)?\s*$/);
+      const m = seg.match(/^(.+?)\s*([\d.]+)\s*(%|g\/L|g\/kg|mg\/kg|g|ml\/L|ml|mg|kg|L|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤)?\s*$/);
       if (m) {
+        const name = m[1].trim();
         const value = m[2].trim();
-        const unit = (m[3] ?? '%').trim();
-        return { name: m[1].trim(), content_text: `${value}${unit}`, unit_text: unit };
+        const explicitUnit = (m[3] ?? '').trim();
+        // H1：仅当原文出现显式单位时才写入；缺单位时**保留原文数值**、单位标「未采集」（不补 `%`）。
+        if (explicitUnit === '') {
+          return { name, content_text: value, unit_text: MISSING_TEXT };
+        }
+        return { name, content_text: `${value}${explicitUnit}`, unit_text: explicitUnit };
       }
-      return { name: seg, content_text: '未标注', unit_text: '未采集' };
+      return { name: seg, content_text: MISSING_TEXT, unit_text: MISSING_TEXT };
     });
 }
 
 /** 组装风险提示文字（**不含**任何绝对安全/专家认证表述）。 */
 export function buildRiskText(record) {
-  const toxicity = record.toxicity ?? '未知';
+  const toxicity = orNotCollected(record.toxicity);
   const missing = record?.verification?.not_collected ?? [];
   const missNote = missing.length > 0 ? `；本轮未采集：${missing.join('、')}` : '';
   return `毒性：${toxicity}。记录状态：${record.record_status ?? 'partial'}。来源为公开登记公告附表，未逐条复核标签原文${missNote}。不可作为用药量依据。`;
@@ -226,16 +252,17 @@ export function buildRiskText(record) {
 
 /** 组装知识正文（可追溯描述，无用量建议）。 */
 export function buildKnowledgeBody(record) {
-  const crops = (record.crop_ids ?? []).join('、') || '未标注';
+  const crops = (record.crop_ids ?? []).join('、') || MISSING_TEXT;
   return [
-    `登记证号：${record.registration_number}`,
-    `登记名称：${record.registered_name}`,
-    `剂型：${record.dosage_form}`,
-    `有效成分及其含量：${record.ingredients_text}`,
+    `登记证号：${orNotCollected(record.registration_number)}`,
+    `登记名称：${orNotCollected(record.registered_name)}`,
+    `剂型：${orNotCollected(record.dosage_form)}`,
+    `有效成分及其含量：${orNotCollected(record.ingredients_text)}`,
     `作物条目：${crops}`,
-    `使用场景：${record.use_scene}`,
-    `防治对象（原文）：${record.target_original}`,
-    `来源：${record?.source?.publisher ?? '农业农村部农药管理司'}（${record?.source?.issue ?? '公告附表'}）`,
+    `使用场景：${orNotCollected(record.use_scene)}`,
+    `防治对象（原文）：${orNotCollected(record.target_original)}`,
+    // H1 同原则：**不编造**发布方 —— 原文缺失即显式标「未采集」。
+    `来源：${orNotCollected(record?.source?.publisher)}（${orNotCollected(record?.source?.issue)}）`,
     '说明：字段取自公开公告附表，未采集用药量／施用方法／禁限用状态，不可作为用药量依据。',
   ].join('\n');
 }
