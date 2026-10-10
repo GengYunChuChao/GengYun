@@ -26,6 +26,12 @@ try {
     'config/runtime.js',
     'utils/debug.js',
     'utils/auth.js',
+    'utils/font-scale.js',
+    'utils/system-font.js',
+    'components/state-view/state-view.js',
+    'components/state-view/state-view.json',
+    'components/state-view/state-view.wxml',
+    'components/state-view/state-view.wxss',
     // 参考查询域适配层与数据（GY-I07）：随页面一同打包。
     'utils/reference.js',
     'data/crops.js',
