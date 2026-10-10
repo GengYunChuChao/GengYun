@@ -6,6 +6,7 @@
 // - 缺项**不空白、不模型补写**，统一显示「未采集（种子整理稿无此栏）」。
 
 const auth = require('../../utils/auth')
+const pageGate = require('../../utils/page-gate')
 const reference = require('../../utils/reference')
 
 Page({
@@ -32,10 +33,11 @@ Page({
     gatePassed: false
   },
 
-  onLoad: function () {
-    // 门禁前置：会话经服务端核实通过后才装载种子资料（未通过不留任何数据）。
+  onLoad: function () { this.checkGate() },
+
+  checkGate: function () {
     const self = this
-    auth.requireLogin(function (loggedIn) {
+    pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
         self.setData({ gatePassed: false, list: [], total: 0 })
         return
@@ -56,12 +58,10 @@ Page({
   },
 
   onShow: function () {
-    // 重入兜底：会话失效则先清列表再跳转。
-    if (!auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, list: [], total: 0 })
-      auth.requireLogin()
-    }
+    if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
 
   switchTab: function (event) {
     this.setData({ tab: event.currentTarget.dataset.key, keyword: '' })

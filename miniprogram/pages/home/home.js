@@ -1,14 +1,67 @@
 const auth = require('../../utils/auth')
 const debug = require('../../utils/debug')
+const navigation = require('../../utils/navigation')
 
 // 首页是唯一允许游客预览的页面；其他页面与接口需登录。
 Page({
   data: { local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、社区、消息与我的等业务尚未接入。' },
-  onShow: function () { this.setData({ loggedIn: auth.isLoggedIn() }) },
+  onShow: function () {
+    this._active = true
+    const action = this._action = (this._action || 0) + 1
+    this.setData({ loggedIn: false })
+    auth.verifySession((verified) => {
+      if (this._active && this._action === action) this.setData({ loggedIn: verified })
+    })
+  },
   onLoad: function () { this.setData({ local: debug.localEnabled(wx) }) },
-  goLogin: function () { wx.reLaunch({ url: '/pages/login/login' }) },
-  goReference: function () { wx.navigateTo({ url: '/pages/reference/reference' }) },
-  goReferenceSeed: function () { wx.navigateTo({ url: '/pages/referenceseed/referenceseed' }) },
+  onHide: function () {
+    this._active = false
+    this._action = (this._action || 0) + 1
+    if (!this._handoff) navigation.clearReturnTo(this._navigation)
+    this._handoff = false
+  },
+  onUnload: function () { if (this._active !== false) this.onHide() },
+  goLogin: function () {
+    this._action = (this._action || 0) + 1
+    const op = navigation.beginReturnTo(null)
+    this._navigation = op.id
+    this._handoff = true
+    navigation.goLogin(op.id)
+  },
+  goReference: function () { this.openGated('/pages/reference/reference') },
+  goReferenceSeed: function () { this.openGated('/pages/referenceseed/referenceseed') },
+  openGated: function (target) {
+    const op = navigation.beginReturnTo(target)
+    const action = this._action = (this._action || 0) + 1
+    this._navigation = op.id
+    this._handoff = false
+    const current = () => this._active !== false && this._action === action
+    auth.verifySession((verified, stale) => {
+      if (!current() || stale) return
+      // A current rejected session may have cleared its old intent.
+      if (!navigation.isCurrent(op.id)) {
+        op.id = navigation.beginReturnTo(op.target).id
+        this._navigation = op.id
+      }
+      this.setData({ loggedIn: verified })
+      if (verified) {
+        const destination = navigation.consumeReturnTo(op.id)
+        navigation.openTarget(destination, false, (error) => {
+          if (current() && error) this.setData({ status: error })
+        })
+        return
+      }
+      wx.showModal({ title: '需要登录', content: '该功能需要微信登录后使用，现在去登录吗？',
+        confirmText: '去登录', cancelText: '暂不',
+        success: (result) => {
+          if (!current() || !navigation.isCurrent(op.id)) return
+          if (result.confirm) { this._handoff = true; navigation.goLogin(op.id) }
+          else navigation.clearReturnTo(op.id)
+        },
+        fail: () => { if (current()) navigation.clearReturnTo(op.id) }
+      })
+    })
+  },
   diagnose: function () {
     if (this.data.busy) return
     this.setData({ busy: true, status: '正在连接本地诊断服务…' })
