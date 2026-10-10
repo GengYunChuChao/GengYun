@@ -4,6 +4,7 @@
 // **不显示真实用量**；缺项以「未采集」显式列出（不空白、不补写）；不出现专家认证标签。
 
 const auth = require('../../utils/auth')
+const pageGate = require('../../utils/page-gate')
 const reference = require('../../utils/reference')
 
 Page({
@@ -18,10 +19,14 @@ Page({
   },
 
   onLoad: function (options) {
-    const seedId = options && options.id ? decodeURIComponent(options.id) : ''
-    // 门禁前置：会话经服务端核实通过后才加载种子详情（未通过不留任何数据）。
+    this._detailId = options && options.id ? decodeURIComponent(options.id) : ''
+    this.checkGate()
+  },
+
+  checkGate: function () {
+    const seedId = this._detailId || ''
     const self = this
-    auth.requireLogin(function (loggedIn) {
+    pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
         self.setData({ gatePassed: false, found: false, item: null, label: '', labels: {}, notCollected: '' })
         return
@@ -32,12 +37,10 @@ Page({
   },
 
   onShow: function () {
-    // 重入兜底：会话失效则先清详情再跳转。
-    if (!auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, found: false, item: null })
-      auth.requireLogin()
-    }
+    if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
 
   load: function (seedId) {
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。

@@ -61,6 +61,8 @@ function loadPage(rel, { verified, loggedInDirect }) {
       if (typeof callback === 'function') callback(true);
     },
   };
+  const gateModule = { exports: {} };
+  vm.runInNewContext(readFileSync(pagePath('utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => auth });
   const sandbox = {
     Page(def) { Object.assign(page, def); },
     wx: {
@@ -70,7 +72,7 @@ function loadPage(rel, { verified, loggedInDirect }) {
       setClipboardData() {},
     },
     console,
-    require: (id) => (id.indexOf('auth') !== -1 ? auth : id.indexOf('reference') !== -1 ? fakeReference() : {}),
+    require: (id) => (id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('reference') !== -1 ? fakeReference() : {}),
   };
   vm.runInNewContext(readFileSync(pagePath(rel), 'utf8'), sandbox);
   return { page, calls };
