@@ -1,0 +1,63 @@
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 56rpx 32rpx;
+  border-radius: var(--radius-lg, 28rpx);
+  background: var(--color-surface, #fff);
+  border: 2rpx solid var(--color-border, #D8E4DC);
+}
+
+.state__icon {
+  font-size: 72rpx;
+  line-height: 1.2;
+  margin-bottom: 20rpx;
+}
+
+.state__title {
+  font-size: calc(19px * var(--font-scale, 1));
+  font-weight: 700;
+  color: var(--color-text, #1B2B1E);
+  line-height: 1.4;
+}
+
+/* 状态色仅作辅助，识别主要依赖上方图标与标题文字 */
+.state--error .state__title {
+  color: var(--color-error, #C62828);
+}
+
+.state--invalid .state__title {
+  color: var(--color-invalid, #8A6D1F);
+}
+
+.state--loading .state__title {
+  color: var(--color-loading, #1F6FB2);
+}
+
+.state--stub .state__title {
+  color: var(--color-stub, #5B4B8A);
+}
+
+.state__desc {
+  margin-top: 16rpx;
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.7;
+  color: var(--color-text-sub, #4A5A4E);
+  max-width: 560rpx;
+}
+
+.state__tag {
+  margin-top: 20rpx;
+  padding: 8rpx 24rpx;
+  border-radius: 999rpx;
+  font-size: calc(16px * var(--font-scale, 1));
+  font-weight: 600;
+  color: var(--color-stub, #5B4B8A);
+  background: #efeaf7;
+}
+
+.state__btn {
+  margin-top: 32rpx;
+  min-width: 280rpx;
+}

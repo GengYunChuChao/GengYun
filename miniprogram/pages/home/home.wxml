@@ -1,11 +1,48 @@
-<view class="page">
-  <view class="title">耕云</view>
-  <view>识草查药与除草科普社区</view>
-  <view class="card">首页可游客预览。识别、社区、消息与我的需要登录后才能使用。</view>
-  <button wx:if="{{!loggedIn}}" bindtap="goLogin">微信登录</button>
-  <view class="card">首版规划：拍草识别、标签OCR、普通话语音与文字提问。当前没有相机、录音或AI调用。</view>
-  <button bindtap="goReference">识草查药（科普资料查询）</button>
-  <button bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
-  <button wx:if="{{local}}" bindtap="diagnose" loading="{{busy}}" disabled="{{busy}}">检查本地替身连接</button>
-  <view class="status">{{status}}</view>
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="hero">
+    <view class="hero__brand">耕云</view>
+    <view class="hero__title">识草查药，除草不求人</view>
+    <view class="hero__sub">识草查药与除草科普社区</view>
+    <view class="hero__badge" wx:if="{{guest}}">游客仅可预览首页</view>
+  </view>
+  <button wx:if="{{guest}}" class="btn btn--primary btn--block" bindtap="goLogin">微信登录</button>
+
+  <view class="section-title">常用功能</view>
+
+  <view
+    class="entry"
+    wx:for="{{entries}}"
+    wx:key="key"
+    hover-class="entry--hover"
+    bindtap="onEntryTap"
+  >
+    <view class="entry__icon">{{item.icon}}</view>
+    <view class="entry__body">
+      <view class="entry__title">{{item.title}}</view>
+      <view class="entry__desc">{{item.desc}}</view>
+    </view>
+    <view class="badge badge--stub">未接入</view>
+  </view>
+
+  <view class="section-title">科普资料</view>
+  <button class="btn btn--primary btn--block" bindtap="goReference">识草查药（科普资料查询）</button>
+  <button class="btn btn--ghost btn--block" bindtap="goReferenceSeed">科普种子资料库（待核实·非权威）</button>
+
+  <view class="section-title">当前状态</view>
+  <state-view
+    status="stub"
+    title="功能尚未接入"
+    desc="拍草识别、标签识别、语音提问与社区均未接入真实服务。本页仅用于界面与导航走查，所列内容不能作为用药依据。"
+  ></state-view>
+
+  <block wx:if="{{local}}">
+    <view class="section-title">开发工具</view>
+    <button
+      class="btn btn--ghost dev-btn"
+      bindtap="diagnose"
+      loading="{{busy}}"
+      disabled="{{busy}}"
+    >检查本地替身连接</button>
+    <view class="dev-status">{{status}}</view>
+  </block>
 </view>

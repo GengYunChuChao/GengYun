@@ -1,0 +1,185 @@
+{
+  "source": "8c20261bed16b97676591a045f8f16ba09a5d414",
+  "kind": "WeChat simulator; injected font scale 1.3; guest UI; isolated requireLogin harness retains guest cards without navigation; no network/auth proof",
+  "system": {
+    "brand": "devtools",
+    "model": "iPhone 12/13 (Pro)",
+    "system": "iOS 10.0.1",
+    "platform": "devtools",
+    "benchmarkLevel": -1,
+    "pixelRatio": 3,
+    "screenWidth": 390,
+    "screenHeight": 844,
+    "windowWidth": 390,
+    "windowHeight": 671,
+    "statusBarHeight": 47,
+    "safeArea": {
+      "top": 47,
+      "left": 0,
+      "right": 390,
+      "bottom": 810,
+      "width": 390,
+      "height": 763
+    },
+    "language": "zh_CN",
+    "version": "8.0.5",
+    "fontSizeSetting": 16,
+    "SDKVersion": "3.17.3",
+    "host": {
+      "env": "WeChat"
+    },
+    "enableDebug": false,
+    "mode": "default",
+    "deviceOrientation": "portrait",
+    "bluetoothEnabled": true,
+    "locationEnabled": true,
+    "wifiEnabled": true,
+    "albumAuthorized": true,
+    "cameraAuthorized": true,
+    "locationAuthorized": true,
+    "microphoneAuthorized": true,
+    "notificationAuthorized": true,
+    "notificationAlertAuthorized": true,
+    "notificationBadgeAuthorized": true,
+    "notificationSoundAuthorized": true,
+    "phoneCalendarAuthorized": true,
+    "bluetoothAuthorized": true,
+    "locationReducedAccuracy": true,
+    "devicePixelRatio": 3
+  },
+  "pages": [
+    {
+      "name": "home",
+      "fontScale": 1.3,
+      "buttons": [
+        {
+          "text": "微信登录",
+          "size": {
+            "width": 184,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 103,
+            "top": 290.0208435058594
+          }
+        },
+        {
+          "text": "识草查药（科普资料查询）",
+          "size": {
+            "width": 184,
+            "height": 85.5
+          },
+          "offset": {
+            "left": 103,
+            "top": 914.75
+          }
+        },
+        {
+          "text": "科普种子资料库（待核实·非权威）",
+          "size": {
+            "width": 184,
+            "height": 119.58333587646484
+          },
+          "offset": {
+            "left": 103,
+            "top": 1000.25
+          }
+        }
+      ],
+      "scrollTop": 0
+    },
+    {
+      "name": "identify",
+      "fontScale": 1.3,
+      "buttons": [
+        {
+          "text": "\n      拍照识别\n    ",
+          "size": {
+            "width": 184,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 103,
+            "top": 324.0833435058594
+          }
+        },
+        {
+          "text": "\n      拍照识标签\n    ",
+          "size": {
+            "width": 184,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 103,
+            "top": 506.21875
+          }
+        },
+        {
+          "text": "\n      去提问\n    ",
+          "size": {
+            "width": 184,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 103,
+            "top": 688.3541870117188
+          }
+        },
+        {
+          "text": "\n        开始录音\n      ",
+          "size": {
+            "width": 161.33334350585938,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 28.666667938232422,
+            "top": 985.625
+          }
+        },
+        {
+          "text": "\n        播放录音\n      ",
+          "size": {
+            "width": 161.33334350585938,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 200,
+            "top": 985.625
+          }
+        }
+      ],
+      "scrollTop": 1002.6666870117188
+    },
+    {
+      "name": "community",
+      "fontScale": 1.3,
+      "buttons": [],
+      "scrollTop": 0
+    },
+    {
+      "name": "messages",
+      "fontScale": 1.3,
+      "buttons": [],
+      "scrollTop": 0
+    },
+    {
+      "name": "profile",
+      "fontScale": 1.3,
+      "buttons": [
+        {
+          "text": "\n      前往微信登录\n    ",
+          "size": {
+            "width": 184,
+            "height": 52.75
+          },
+          "offset": {
+            "left": 103,
+            "top": 371.88543701171875
+          }
+        }
+      ],
+      "scrollTop": 499.3333435058594
+    }
+  ],
+  "components": []
+}

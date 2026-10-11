@@ -1,1 +1,5 @@
-{ "navigationBarTitleText": "耕云" }
+{
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view"
+  }
+}

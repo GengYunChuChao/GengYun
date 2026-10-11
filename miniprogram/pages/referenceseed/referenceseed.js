@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 科普资料 · 种子资料浏览页（除草剂名录 / 杂草识别 / 防除时期 / 省份索引）。
 //
 // 合规口径（强制展示）：
@@ -11,6 +12,7 @@ const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: 1,
     tab: 'herbicides',
     tabs: [
       { key: 'herbicides', name: '除草剂' },
@@ -33,7 +35,8 @@ Page({
     gatePassed: false
   },
 
-  onLoad: function () { this.checkGate() },
+  onLoad: function () {
+    fontScale.applyFontScale(this); this.checkGate() },
 
   checkGate: function () {
     const self = this
@@ -58,6 +61,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
   onHide: function () { pageGate.cancel(this) },

@@ -91,7 +91,17 @@ test('isolated packaging excludes private files and rejects release overrides/st
     }
   }
   for (const dep of [
+    'custom-tab-bar/index.js',
+    'custom-tab-bar/index.json',
+    'custom-tab-bar/index.wxml',
+    'custom-tab-bar/index.wxss',
     'utils/reference.js',
+    'utils/font-scale.js',
+    'utils/system-font.js',
+    'components/state-view/state-view.js',
+    'components/state-view/state-view.json',
+    'components/state-view/state-view.wxml',
+    'components/state-view/state-view.wxss',
     'data/crops.js',
     'data/species.js',
     'data/regions.js',
@@ -107,11 +117,12 @@ test('isolated packaging excludes private files and rejects release overrides/st
   }
   // Evaluate the real standard products, not a parallel local-dev copy or a mocked loader.
   const loader = `const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-    const dir=process.argv[1],mode=process.argv[2];global.Page=()=>{};global.App=()=>{};
+    const dir=process.argv[1],mode=process.argv[2];global.Page=()=>{};global.App=()=>{};global.Component=()=>{};
     const auth=require(path.join(dir,'miniprogram/utils/auth.js'));
     assert.equal(auth.networkEnabled(),mode==='local');
     assert.equal(typeof require(path.join(dir,'miniprogram/utils/page-gate.js')).start,'function');
     require(path.join(dir,'miniprogram/app.js'));
+    require(path.join(dir,'miniprogram/custom-tab-bar/index.js'));
     for(const page of JSON.parse(fs.readFileSync(path.join(dir,'miniprogram/app.json'))).pages)require(path.join(dir,'miniprogram',page+'.js'));`;
   for (const [product, mode] of [[local, 'local'], [release, 'disabled']]) {
     const loaded = spawnSync(process.execPath, ['-e', loader, product, mode], { encoding: 'utf8' });

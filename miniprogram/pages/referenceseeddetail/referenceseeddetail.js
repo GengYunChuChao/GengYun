@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 种子资料 · 除草剂详情页。
 //
 // 强制合规展示：待核实·非权威；危害等级/主要危害/防除对象/适用地区；
@@ -9,6 +10,7 @@ const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: 1,
     found: false,
     item: null,
     label: '',
@@ -19,6 +21,7 @@ Page({
   },
 
   onLoad: function (options) {
+    fontScale.applyFontScale(this)
     this._detailId = options && options.id ? decodeURIComponent(options.id) : ''
     this.checkGate()
   },
@@ -37,6 +40,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
   onHide: function () { pageGate.cancel(this) },

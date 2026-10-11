@@ -1,0 +1,241 @@
+{
+  "kind": "actual native WeChat simulator; no auth override or injected font scale; loopback server uses synthetic identity",
+  "width": 320,
+  "height": 504,
+  "SDKVersion": "3.17.3",
+  "pages": [
+    {
+      "name": "home",
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": 1.11,
+        "selected": "pages/home/home",
+        "route": "pages/home/home",
+        "rootFontSize": "19.98px"
+      },
+      "buttons": [
+        {
+          "text": "识草查药（科普资料查询）",
+          "size": {
+            "width": 298,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 11,
+            "top": 679.1041870117188
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "科普种子资料库（待核实·非权威）",
+          "size": {
+            "width": 298,
+            "height": 77.27083587646484
+          },
+          "offset": {
+            "left": 11,
+            "top": 739.0729370117188
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "检查本地替身连接",
+          "size": {
+            "width": 298,
+            "height": 49.302085876464844
+          },
+          "offset": {
+            "left": 11,
+            "top": 1222.0625
+          },
+          "fontSize": "19.98px"
+        }
+      ],
+      "scrollTop": 924
+    },
+    {
+      "name": "community",
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": 1.11,
+        "selected": "pages/community/community",
+        "route": "pages/community/community",
+        "rootFontSize": "19.98px"
+      },
+      "buttons": [],
+      "scrollTop": 503.3333435058594
+    },
+    {
+      "name": "identify",
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": 1.11,
+        "selected": "pages/identify/identify",
+        "route": "pages/identify/identify",
+        "rootFontSize": "19.98px"
+      },
+      "buttons": [
+        {
+          "text": "\n      拍照识别\n    ",
+          "size": {
+            "width": 184,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 68,
+            "top": 183.17709350585938
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "\n      拍照识标签\n    ",
+          "size": {
+            "width": 184,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 68,
+            "top": 338.85418701171875
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "\n      去提问\n    ",
+          "size": {
+            "width": 184,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 68,
+            "top": 494.53125
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "\n        开始录音\n      ",
+          "size": {
+            "width": 133.33334350585938,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 22.666667938232422,
+            "top": 748.5416870117188
+          },
+          "fontSize": "19.98px"
+        },
+        {
+          "text": "\n        播放录音\n      ",
+          "size": {
+            "width": 133.33334350585938,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 164,
+            "top": 748.5416870117188
+          },
+          "fontSize": "19.98px"
+        }
+      ],
+      "scrollTop": 838
+    },
+    {
+      "name": "messages",
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": 1.11,
+        "selected": "pages/messages/messages",
+        "route": "pages/messages/messages",
+        "rootFontSize": "19.98px"
+      },
+      "buttons": [],
+      "scrollTop": 242.6666717529297
+    },
+    {
+      "name": "profile",
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": 1.11,
+        "selected": "pages/profile/profile",
+        "route": "pages/profile/profile",
+        "rootFontSize": "19.98px"
+      },
+      "buttons": [
+        {
+          "text": "退出登录",
+          "size": {
+            "width": 184,
+            "height": 47.96875
+          },
+          "offset": {
+            "left": 68,
+            "top": 445.8020935058594
+          },
+          "fontSize": "19.98px"
+        }
+      ],
+      "scrollTop": 601.3333129882812
+    }
+  ],
+  "details": [
+    {
+      "name": "referencedetail",
+      "id": "gy-i03-hb-001",
+      "gatePassed": true,
+      "found": true,
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": null,
+        "selected": null,
+        "route": "pages/referencedetail/referencedetail"
+      }
+    },
+    {
+      "name": "referenceseeddetail",
+      "id": "gy-i07-seed-hb-001",
+      "gatePassed": true,
+      "found": true,
+      "font": {
+        "managerSupported": false,
+        "basePx": 16,
+        "baseFactor": 1.11,
+        "systemPx": 16,
+        "appScale": 1.11,
+        "pageScale": 1.11,
+        "tabScale": null,
+        "selected": null,
+        "route": "pages/referenceseeddetail/referenceseeddetail"
+      }
+    }
+  ],
+  "guestRedirectAndReturn": true
+}

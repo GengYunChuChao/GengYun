@@ -1,9 +1,12 @@
+const fontScale = require('../../utils/font-scale')
 const auth = require('../../utils/auth')
 const navigation = require('../../utils/navigation')
 
 Page({
-  data: { busy: false, loggedIn: false, network: false, status: '' },
+  data: { fontScale: 1, busy: false, loggedIn: false, network: false, status: '' },
+  onLoad: function () { fontScale.applyFontScale(this) },
   onShow: function () {
+    fontScale.applyFontScale(this)
     this._active = true
     this.setData({ loggedIn: auth.isLoggedIn(), network: auth.networkEnabled() })
   },

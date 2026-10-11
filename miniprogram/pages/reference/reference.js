@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 科普／除草剂查询 · 列表页（作物—杂草—除草方式导航 + 关键词／地区筛选）。
 //
 // 数据形态说明（务必如实展示，不夸大）：
@@ -15,6 +16,7 @@ const PAGE_SIZE = 20
 
 Page({
   data: {
+    fontScale: 1,
     // 导航：作物 → 杂草 → 除草方式
     crops: [],
     species: [],
@@ -42,7 +44,8 @@ Page({
     gatePassed: false
   },
 
-  onLoad: function () { this.checkGate() },
+  onLoad: function () {
+    fontScale.applyFontScale(this); this.checkGate() },
 
   checkGate: function () {
     const self = this
@@ -65,6 +68,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
   onHide: function () { pageGate.cancel(this) },

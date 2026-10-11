@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page" style="--font-scale: {{fontScale}}">
   <view class="title">科普资料 · 种子资料库</view>
 
   <!-- 强制合规标注：整理稿，待核实·非权威。 -->
@@ -18,7 +18,7 @@
 
   <view class="search-row" wx:if="{{tab === 'herbicides'}}">
     <input class="keyword-input" value="{{keyword}}" placeholder="按药名或别称检索（不合并不同记录）" bindinput="onKeyword" bindconfirm="onSearch" />
-    <button class="btn-primary" bindtap="onSearch">检索</button>
+    <button class="btn btn-primary" bindtap="onSearch">检索</button>
   </view>
 
   <view class="result-count">共 {{total}} 条</view>

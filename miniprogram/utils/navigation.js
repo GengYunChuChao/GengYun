@@ -5,7 +5,7 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/reference/re
   'pages/referencedetail/referencedetail', 'pages/referenceseed/referenceseed',
   'pages/referenceseeddetail/referenceseeddetail', 'pages/community/community',
   'pages/messages/messages', 'pages/profile/profile', 'pages/login/login']
-const TAB_PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/community/community',
+const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'
 const LOGIN = '/pages/login/login'

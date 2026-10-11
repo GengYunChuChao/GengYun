@@ -1,0 +1,24 @@
+.kind {
+  display: flex;
+  align-items: flex-start;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid var(--color-bg, #F4F9F4);
+}
+
+.kind:last-child {
+  border-bottom: none;
+}
+
+.kind__name {
+  flex: 0 0 260rpx;
+  font-size: calc(16px * var(--font-scale, 1));
+  font-weight: 600;
+  color: var(--color-text, #1B2B1E);
+}
+
+.kind__desc {
+  flex: 1;
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.6;
+  color: var(--color-text-sub, #4A5A4E);
+}

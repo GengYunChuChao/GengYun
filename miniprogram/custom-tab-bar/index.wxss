@@ -1,0 +1,7 @@
+.tab-bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid #D8E4DC; box-sizing: border-box; }
+.tab { flex: 1; min-width: 0; min-height: 52px; margin: 0; padding: 4px 0; border-radius: 10px; background: #fff; color: #555; line-height: 1.2; }
+.tab::after { border: none; }
+.tab__icon { font-size: 23px; line-height: 26px; }
+.tab__text { font-size: calc(12px * var(--font-scale, 1)); line-height: 1.5; }
+.tab--selected { color: #1F7A45; background: #E8F3EC; }
+.tab--identify { min-height: 64px; background: #1F7A45; color: #fff; margin: 0 3px; }

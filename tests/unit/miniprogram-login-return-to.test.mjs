@@ -36,11 +36,13 @@ function fixture() {
   b.wx = wx;
   b.page = (name) => {
     let def;
+    const fontModule = { exports: {} };
+    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.25 } }) });
     const gateModule = { exports: {} };
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => b.auth });
     vm.runInNewContext(readFileSync(join(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
       Page: (value) => { def = value; }, wx, console,
-      require: (id) => id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
+      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
     });
     const page = { ...def, route: `pages/${name}/${name}`, options: {}, data: { ...def.data }, setData(value) { Object.assign(this.data, value); } };
     b.pages = [page]; return page;

@@ -1,0 +1,35 @@
+{
+  "kind": "CONTROLLED temporary substitution of wx.getAppBaseInfo; not real user font setting; no auth override, no direct App/page scale injection",
+  "width": 320,
+  "basePx": 26,
+  "baseFactor": 1.625,
+  "appScale": 1.3,
+  "pageScale": 1.3,
+  "rootFontSize": "23.4px",
+  "buttons": [
+    {
+      "text": "识草查药（科普资料查询）",
+      "fontSize": "23.4px",
+      "size": {
+        "width": 298,
+        "height": 85.5
+      }
+    },
+    {
+      "text": "科普种子资料库（待核实·非权威）",
+      "fontSize": "23.4px",
+      "size": {
+        "width": 298,
+        "height": 86.83333587646484
+      }
+    },
+    {
+      "text": "检查本地替身连接",
+      "fontSize": "23.4px",
+      "size": {
+        "width": 298,
+        "height": 54.083335876464844
+      }
+    }
+  ]
+}

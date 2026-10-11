@@ -8,7 +8,9 @@ on:
       - 'tools/*wechat*.mjs'
       - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
+      - 'tools/verify-layout.mjs'
       - 'tests/local-debug.test.mjs'
+      - 'tests/ui-adaptive.test.mjs'
       - '.gitignore'
       - '.github/workflows/local-wechat.yml'
   push:
@@ -20,7 +22,9 @@ on:
       - 'tools/*wechat*.mjs'
       - 'tools/*wechat*.cjs'
       - 'tools/local-debug*.mjs'
+      - 'tools/verify-layout.mjs'
       - 'tests/local-debug.test.mjs'
+      - 'tests/ui-adaptive.test.mjs'
       - '.gitignore'
       - '.github/workflows/local-wechat.yml'
 permissions:
@@ -32,11 +36,15 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          # 完整历史：界面检查需比对 origin/main 基线，浅克隆会使冻结契约检查被跳过
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.16.0'
       - run: node tools/check-wechat-project.mjs
       - run: node --check tools/smoke-wechat.cjs
       - run: node --test tests/local-debug.test.mjs
+      - run: node --test tests/ui-adaptive.test.mjs
+      - run: node tools/verify-layout.mjs
       - run: git check-ignore project.private.config.json config/debug.local.json .local/wechat-local/project.config.json .env
       - run: if git check-ignore project.private.config.json.example config/debug.local.json.example .env.example; then exit 1; fi

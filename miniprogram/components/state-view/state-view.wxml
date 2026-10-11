@@ -1,0 +1,17 @@
+<view class="state state--{{status}}" wx:if="{{status !== 'ready'}}">
+  <view class="state__icon">{{preset.icon}}</view>
+  <view class="state__title">{{resolvedTitle}}</view>
+  <view class="state__desc">{{resolvedDesc}}</view>
+
+  <!-- 替身数据额外加文字标识，不只靠颜色区分 -->
+  <view class="state__tag" wx:if="{{status === 'stub'}}">替身数据 · 仅开发模式可见</view>
+
+  <button
+    wx:if="{{resolvedAction}}"
+    class="btn btn--secondary state__btn"
+    bindtap="onAction"
+    disabled="{{busy}}"
+  >{{resolvedAction}}</button>
+
+  <slot name="extra"></slot>
+</view>

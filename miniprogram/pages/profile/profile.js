@@ -1,22 +1,42 @@
+const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
+const fontScale = require('../../utils/font-scale')
 
-// 游客门禁：我的属非首页能力，未登录（或会话未经服务端核实）跳转登录页。
 Page({
-  data: { loggedIn: false, status: '' },
+  onLoad: function () {
+    fontScale.applyFontScale(this)
+  },
+
+  data: {
+    /** 生效的缩放系数，注入 --font-scale；取自微信字体设置 */
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
+    guest: true
+  },
+
   onShow: function () {
+    fontScale.applyFontScale(this)
+    // 每次进入先关闭入口，服务端核实成功后才显示登录区。
     const that = this
-    auth.requireLogin(function (ok) {
-      if (!ok) return
-      that.setData({ loggedIn: auth.isLoggedIn() })
+    this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
+    pageGate.start(this, function (ok) {
+      that.setData({ guest: !ok })
     })
   },
+
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
+
+  /** 复用 main 的独立登录页，不在界面层声明身份。 */
+  onLogin: function () {
+    wx.reLaunch({ url: '/pages/login/login' })
+  },
+
   logout: function () {
     const that = this
     auth.logout(function (result) {
-      that.setData({ loggedIn: false })
+      that.setData({ guest: true })
       wx.reLaunch({ url: '/pages/login/login' })
       if (!result.serverRevoked) {
-        // 不在页面上谎称服务端会话已撤销：区分「未联网」与「撤销未确认」。
         wx.showToast({
           title: result.serverRevocationUnconfirmed ? '本地已清，服务端撤销未确认' : '已清除本地会话',
           icon: 'none'

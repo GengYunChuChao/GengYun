@@ -1,19 +1,25 @@
+const fontScale = require('../../utils/font-scale')
 const auth = require('../../utils/auth')
 const debug = require('../../utils/debug')
 const navigation = require('../../utils/navigation')
 
 // 首页是唯一允许游客预览的页面；其他页面与接口需登录。
 Page({
-  data: { local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、社区、消息与我的等业务尚未接入。' },
+  data: { fontScale: 1, guest: true, entries: [
+      { key: 'weed', icon: '🌿', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
+      { key: 'ocr', icon: '🏷️', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
+      { key: 'voice', icon: '🎤', title: '语音提问', desc: '说话提问，也可打字' }
+    ], local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、社区、消息与我的等业务尚未接入。' },
   onShow: function () {
     this._active = true
     const action = this._action = (this._action || 0) + 1
-    this.setData({ loggedIn: false })
+    fontScale.applyFontScale(this)
+    this.setData({ loggedIn: false, guest: true })
     auth.verifySession((verified) => {
-      if (this._active && this._action === action) this.setData({ loggedIn: verified })
+      if (this._active && this._action === action) this.setData({ loggedIn: verified, guest: !verified })
     })
   },
-  onLoad: function () { this.setData({ local: debug.localEnabled(wx) }) },
+  onLoad: function () { fontScale.applyFontScale(this); this.setData({ local: debug.localEnabled(wx) }) },
   onHide: function () {
     this._active = false
     this._action = (this._action || 0) + 1
@@ -28,6 +34,7 @@ Page({
     this._handoff = true
     navigation.goLogin(op.id)
   },
+  onEntryTap: function () { this.openGated('/pages/identify/identify') },
   goReference: function () { this.openGated('/pages/reference/reference') },
   goReferenceSeed: function () { this.openGated('/pages/referenceseed/referenceseed') },
   openGated: function (target) {
@@ -43,7 +50,7 @@ Page({
         op.id = navigation.beginReturnTo(op.target).id
         this._navigation = op.id
       }
-      this.setData({ loggedIn: verified })
+      this.setData({ loggedIn: verified, guest: !verified })
       if (verified) {
         const destination = navigation.consumeReturnTo(op.id)
         navigation.openTarget(destination, false, (error) => {

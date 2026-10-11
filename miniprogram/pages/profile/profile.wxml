@@ -1,1 +1,57 @@
-<view class="page"><view class="title">我的</view><view class="card">账号与角色、私有档案、收藏历史、授权与注销功能尚未实现。</view><button bindtap="logout">退出登录</button><view class="status">仅开发准备空态，不能作为业务验收。</view></view>
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-title">我的</view>
+  <view class="page-subtitle">作物、地区与记录</view>
+
+  <view class="guest-card" wx:if="{{guest}}">
+    <view class="guest-card__title">尚未登录</view>
+    <view class="guest-card__desc">
+      登录后才能保存我的作物与地区、收藏资料和识别记录。账号登录沿用已接入的独立登录页，
+      作物档案、收藏和识别记录尚未接入；登录不要求手机号。
+    </view>
+    <button class="btn btn--primary guest-card__btn" bindtap="onLogin">
+      前往微信登录
+    </button>
+  </view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="card-title">我的档案</view>
+      <view class="row">
+        <text class="row__label">所在地区</text>
+        <text class="row__value">未设置</text>
+      </view>
+      <view class="row">
+        <text class="row__label">种植作物</text>
+        <text class="row__value">未设置</text>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">我的记录</view>
+      <view class="row">
+        <text class="row__label">收藏</text>
+        <text class="row__value">0 条</text>
+      </view>
+      <view class="row">
+        <text class="row__label">识别历史</text>
+        <text class="row__value">0 条</text>
+      </view>
+    </view>
+    <button class="btn btn--secondary" bindtap="logout">退出登录</button>
+  </block>
+
+  <view class="section-title">隐私说明</view>
+  <view class="card">
+    <view class="card-text">
+      平台不会默认保存原始照片的拍摄位置，也不会把您的资料用于模型训练。
+      拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回。
+    </view>
+  </view>
+
+  <view class="section-title">当前状态</view>
+  <state-view
+    status="{{guest ? 'guest' : 'stub'}}"
+    title="{{guest ? '请先登录' : '记录功能尚未接入'}}"
+    desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '收藏与历史功能将在对应任务中接入，当前显示为空。'}}"
+  ></state-view>
+</view>

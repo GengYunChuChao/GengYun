@@ -1,8 +1,8 @@
-<view class="page">
+<view class="page" style="--font-scale: {{fontScale}}">
   <view wx:if="{{!found}}" class="card">
     <view class="title">未找到该资料</view>
     <view>该种子记录不存在。</view>
-    <button class="btn-ghost" bindtap="back">返回</button>
+    <button class="btn btn-ghost" bindtap="back">返回</button>
   </view>
 
   <block wx:if="{{found}}">
@@ -45,7 +45,7 @@
       <view class="row"><text class="k">审核状态</text><text class="v">{{labels.review_status}}</text></view>
     </view>
 
-    <button class="btn-ghost" bindtap="back">返回</button>
+    <button class="btn btn-ghost" bindtap="back">返回</button>
 
     <view class="disclaimer">
       {{label}}：本资料为整理稿种子数据，未逐条标注权威出处，不提供用量建议，不得作为用药依据。

@@ -1,16 +1,50 @@
 {
-  "pages": ["pages/home/home", "pages/identify/identify", "pages/reference/reference", "pages/referencedetail/referencedetail", "pages/referenceseed/referenceseed", "pages/referenceseeddetail/referenceseeddetail", "pages/community/community", "pages/messages/messages", "pages/profile/profile", "pages/login/login"],
-  "window": { "navigationBarTitleText": "耕云", "navigationBarBackgroundColor": "#2E7D32", "navigationBarTextStyle": "white", "backgroundColor": "#F4F9F4" },
+  "pages": [
+    "pages/home/home",
+    "pages/identify/identify",
+    "pages/reference/reference",
+    "pages/referencedetail/referencedetail",
+    "pages/referenceseed/referenceseed",
+    "pages/referenceseeddetail/referenceseeddetail",
+    "pages/community/community",
+    "pages/messages/messages",
+    "pages/profile/profile",
+    "pages/login/login"
+  ],
+  "window": {
+    "navigationBarTitleText": "耕云",
+    "navigationBarBackgroundColor": "#1F7A45",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F4F9F4"
+  },
   "tabBar": {
-    "color": "#555555", "selectedColor": "#2E7D32",
+    "color": "#555555",
+    "selectedColor": "#1F7A45",
     "list": [
-      { "pagePath": "pages/home/home", "text": "首页" },
-      { "pagePath": "pages/identify/identify", "text": "识别" },
-      { "pagePath": "pages/community/community", "text": "社区" },
-      { "pagePath": "pages/messages/messages", "text": "消息" },
-      { "pagePath": "pages/profile/profile", "text": "我的" }
-    ]
+      {
+        "pagePath": "pages/home/home",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/community/community",
+        "text": "社区"
+      },
+      {
+        "pagePath": "pages/identify/identify",
+        "text": "识别"
+      },
+      {
+        "pagePath": "pages/messages/messages",
+        "text": "消息"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ],
+    "custom": true
   },
   "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents",
   "style": "v2"
 }

@@ -61,6 +61,8 @@ function loadPage(rel, { verified, loggedInDirect }) {
       if (typeof callback === 'function') callback(true);
     },
   };
+  const fontModule = { exports: {} };
+  vm.runInNewContext(readFileSync(pagePath('utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.3 } }) });
   const gateModule = { exports: {} };
   vm.runInNewContext(readFileSync(pagePath('utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => auth });
   const sandbox = {
@@ -72,7 +74,7 @@ function loadPage(rel, { verified, loggedInDirect }) {
       setClipboardData() {},
     },
     console,
-    require: (id) => (id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('reference') !== -1 ? fakeReference() : {}),
+    require: (id) => (id.indexOf('font-scale') !== -1 ? fontModule.exports : id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('reference') !== -1 ? fakeReference() : {}),
   };
   vm.runInNewContext(readFileSync(pagePath(rel), 'utf8'), sandbox);
   return { page, calls };
@@ -192,4 +194,15 @@ test('G2：onShow 令会话失效后，处理器立即不可用（reference / re
   d.page.data.gatePassed = false;
   d.page.load('r1');
   assert.equal(d.page.data.found, false, '会话失效后 load 不得再装载');
+});
+
+test('F3：资料页随全局字号放大，门禁未通过时仍保持空数据', () => {
+  for (const { rel, load, listKey } of PAGES) {
+    const { page } = loadPage(rel, { verified: false, loggedInDirect: false });
+    load(page);
+    assert.equal(page.data.fontScale, 1.3);
+    page.onShow();
+    assert.equal(page.data.fontScale, 1.3);
+    assertEmpty(page, rel, listKey);
+  }
 });

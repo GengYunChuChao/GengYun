@@ -72,6 +72,7 @@ try {
     let definition;
     vm.runInNewContext(source(`pages/${name}/${name}.js`), { Page: (value) => { definition = value; }, wx,
       require: (dep) => {
+        if (dep.endsWith('/font-scale')) return load('utils/font-scale.js', {});
         if (dep.endsWith('/auth')) return cold;
         if (dep.endsWith('/page-gate')) return gate;
         if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');

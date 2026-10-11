@@ -1,3 +1,4 @@
+const fontScale = require('../../utils/font-scale')
 // GY-I07 科普／除草剂详情页。
 //
 // 展示：制剂（登记号/持有人/剂型/成分）、条件（作物/场所/防治对象）、风险（毒性/注意事项）、
@@ -14,6 +15,7 @@ const reference = require('../../utils/reference')
 
 Page({
   data: {
+    fontScale: 1,
     recordId: '',
     found: false,
     detail: null,
@@ -28,6 +30,7 @@ Page({
   },
 
   onLoad: function (options) {
+    fontScale.applyFontScale(this)
     this._detailId = options && options.id ? decodeURIComponent(options.id) : ''
     this.checkGate()
   },
@@ -46,6 +49,7 @@ Page({
   },
 
   onShow: function () {
+    fontScale.applyFontScale(this)
     if (!auth.isLoggedIn() || !this.data.gatePassed) this.checkGate()
   },
   onHide: function () { pageGate.cancel(this) },
