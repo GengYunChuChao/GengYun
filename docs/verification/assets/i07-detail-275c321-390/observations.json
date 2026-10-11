@@ -1,0 +1,25 @@
+{
+  "kind": "actual WeChat simulator routes/navigation; real wx.login and loopback HTTP; server identity synthetic; no auth/font override",
+  "width": 390,
+  "height": 753,
+  "SDKVersion": "3.17.3",
+  "cases": [
+    {
+      "page": "referencedetail",
+      "malformedFound": false,
+      "coldStackDepth": 1,
+      "backRoute": "pages/reference/reference",
+      "validFound": true,
+      "sourceVersion": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219"
+    },
+    {
+      "page": "referenceseeddetail",
+      "malformedFound": false,
+      "coldStackDepth": 1,
+      "backRoute": "pages/referenceseed/referenceseed",
+      "validFound": true,
+      "seedLabel": "待核实·非权威"
+    }
+  ],
+  "guestLoginAndSafeHomeReturn": true
+}
