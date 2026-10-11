@@ -1,0 +1,15 @@
+// Controlled interface fixture, not real WeChat font settings. Always restore it.
+const fs=require('node:fs'),assert=require('node:assert/strict'),path=require('node:path');
+if(!process.argv[2]||!process.argv[3])throw Error('Usage: node tests/integration/local-dev-ui-controls.cjs <SDK directory> <output directory> [automation port=9422]');
+const sdk=require(path.resolve(process.argv[2]));
+const automationPort=Number(process.argv[4]||9422);assert.ok(Number.isInteger(automationPort)&&automationPort>=1024&&automationPort<=65535);
+(async()=>{const m=await sdk.connect({wsEndpoint:'ws://127.0.0.1:'+automationPort}),out=path.resolve(process.argv[3]);fs.mkdirSync(out,{recursive:true});try{
+assert.equal((await m.systemInfo()).windowWidth,320);const p=await m.switchTab('/pages/identify/identify');await p.waitFor(async()=>!(await p.data('guest')));let n=0;
+for(const b of await p.$$('button')){await m.pageScrollTo(0);await p.waitFor(100);const pos=await b.offset();await m.pageScrollTo(Math.max(0,pos.top-80));await p.waitFor(100);await m.screenshot({path:out+'/identify-button-'+(++n)+'.png'});}
+const home=await m.switchTab('/pages/home/home');await home.waitFor(async()=>!(await home.data('guest')));await m.pageScrollTo(0);
+const controlled=await m.evaluate(()=>{const app=getApp(),original=wx.getAppBaseInfo,base=original();app._fontFixtureRestore=original;wx.getAppBaseInfo=()=>Object.assign({},base,{fontSizeScaleFactor:1.625,fontSizeSetting:26});getCurrentPages().slice(-1)[0].onShow();return {scale:app.globalData.fontScale,substitutionApplied:wx.getAppBaseInfo!==original}});
+assert.equal(controlled.scale,1.3);assert.equal(controlled.substitutionApplied,true);await home.waitFor(150);const root=await home.$('.page');const rootFontSize=await root.style('font-size');assert.ok(Math.abs(parseFloat(rootFontSize)-23.4)<0.1);const buttons=[];
+for(const b of await home.$$('button')){const fontSize=await b.style('font-size');assert.ok(Math.abs(parseFloat(fontSize)-23.4)<0.1);buttons.push({text:await b.text(),fontSize,size:await b.size()});}
+await m.screenshot({path:out+'/controlled-font-home-top.png'});await m.pageScrollTo(10000);await home.waitFor(100);await m.screenshot({path:out+'/controlled-font-home-bottom.png'});
+fs.writeFileSync(out+'/controlled-font.json',JSON.stringify({kind:'CONTROLLED temporary substitution of wx.getAppBaseInfo; not real user font setting; no auth override, no direct App/page scale injection',width:320,basePx:26,baseFactor:1.625,appScale:controlled.scale,pageScale:await home.data('fontScale'),rootFontSize,buttons},null,2)+'\n');console.log('PASS five actual identify buttons + controlled interface→App→page→23.4px computed font, separate from real font observations.');
+}finally{await m.evaluate(()=>{const a=getApp();if(a._fontFixtureRestore){wx.getAppBaseInfo=a._fontFixtureRestore;delete a._fontFixtureRestore;}getCurrentPages().slice(-1)[0].onShow();});await m.reLaunch('/pages/home/home');m.disconnect();}})().catch(e=>{console.error(e.name);process.exitCode=1});
