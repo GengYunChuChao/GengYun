@@ -94,7 +94,7 @@ npm run db:status --workspace @gengyun/api
 
 ## 5 接口契约与关键决策
 
-- 路径、字段与状态以[OpenAPI](../packages/contracts/openapi.json)、[数据字典](architecture/data-dictionary.md)、[状态协议](architecture/state-contract.md)为准；契约列出的路径不等于已实现。实际装配见 `services/api/src/app.ts`。
+- 路径、字段与状态以[OpenAPI](../packages/contracts/openapi.json)、[数据字典](architecture/data-dictionary.md)、[状态协议](architecture/state-contract.md)为准；契约列出的路径不等于已实现。实际装配见 `services/api/src/app.ts`；**哪条契约现在能调、调不通该等哪一项**见[契约实现状态对照](architecture/contract-implementation-status.md)（机器可读副本 `architecture/contract-status.json`，可用 `node tools/verify-contract-status.mjs` 复核覆盖性与装配一致性）。
 - 用户、后台鉴权独立；服务端验证会话、角色及对象归属，客户端不能指定 openid／owner／role。
 - 任务设计有排队、运行、成功、不确定、失败、超时及取消；终态不能被旧回调复活，幂等重试不得重复计费。
 - 来源、账号、用途和对象版本在执行与保存时复核；撤回阻断在途回写。资料与媒体可查不等于可公开或可作用量依据。

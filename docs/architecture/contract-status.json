@@ -1,0 +1,1728 @@
+{
+  "contract_version": "1.0.0",
+  "proposal_revision": 2,
+  "baseline": "2d562d5b6fb79896ef8935716b90939538f274c2",
+  "source_of_operations": "packages/contracts/operations.json",
+  "generated_by": "tools/verify-contract-status.mjs 校验；人工判定状态（本文件不是契约事实源）",
+  "status_definitions": {
+    "implemented": "main 上已装配 http 路由，且行为有可复核证据（源码路径+行 或 测试文件+用例名）",
+    "partial": "有代码但缺运行条件或缺分支，或与冻结契约存在已记录的偏差",
+    "planned": "仅契约冻结，无实现"
+  },
+  "operations": [
+    {
+      "id": "getPublicHome",
+      "method": "get",
+      "path": "/public/home",
+      "route": "/api/v1/public/home",
+      "scope": "public",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/public-home.ts",
+          "lines": "9-16"
+        },
+        {
+          "path": "services/api/src/db/catalog.ts",
+          "lines": "14-27"
+        },
+        {
+          "test": "tests/unit/public-home.test.mjs",
+          "name": "public home refuses missing DB and non-real modes"
+        }
+      ],
+      "blocker": "缺分支：仅 execution_mode=real 且 DATABASE_URL 非空时读取（catalog.ts:15）；stub/preset_demo 恒 503 PROVIDER_UNAVAILABLE，本机无真实库故未取得成功响应；响应固定 human_review_state=under_construction"
+    },
+    {
+      "id": "loginWechat",
+      "method": "post",
+      "path": "/auth/wechat",
+      "route": "/api/v1/auth/wechat",
+      "scope": "public",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/auth.ts",
+          "lines": "42-83"
+        },
+        {
+          "path": "services/api/src/auth/wechat.ts",
+          "lines": "66-131"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "微信登录：仅凭 code 建立会话"
+        }
+      ],
+      "blocker": "无（需 Idempotency-Key；stub/preset_demo 用合成身份，不代表真实微信身份）"
+    },
+    {
+      "id": "loginAdmin",
+      "method": "post",
+      "path": "/admin/auth/session",
+      "route": "/api/v1/admin/auth/session",
+      "scope": "public",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin-auth.ts",
+          "lines": "46-86"
+        },
+        {
+          "path": "services/api/src/auth/password.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "后台登录/会话/退出全流程"
+        }
+      ],
+      "blocker": "首次管理员需 ADMIN_BOOTSTRAP_LOGIN_NAME/PASSWORD；凭据错误沿用 401 SESSION_REQUIRED（契约无专用码）"
+    },
+    {
+      "id": "getAdminSession",
+      "method": "get",
+      "path": "/admin/auth/session",
+      "route": "/api/v1/admin/auth/session",
+      "scope": "session:read",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin-auth.ts",
+          "lines": "88-101"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "后台高权限拒绝：scope 不足的管理员被 403 SCOPE_DENIED 拦下"
+        }
+      ],
+      "blocker": "无"
+    },
+    {
+      "id": "getUserSession",
+      "method": "get",
+      "path": "/auth/session",
+      "route": "/api/v1/auth/session",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/auth.ts",
+          "lines": "85-99"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "GET /auth/session：返回本人 SessionInfo"
+        }
+      ],
+      "blocker": "无"
+    },
+    {
+      "id": "logoutUser",
+      "method": "post",
+      "path": "/auth/logout",
+      "route": "/api/v1/auth/logout",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/auth.ts",
+          "lines": "101-122"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "退出登录：撤销当前会话后同一令牌立即失效"
+        }
+      ],
+      "blocker": "无"
+    },
+    {
+      "id": "logoutAdmin",
+      "method": "post",
+      "path": "/admin/auth/logout",
+      "route": "/api/v1/admin/auth/logout",
+      "scope": "session:logout",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin-auth.ts",
+          "lines": "103-127"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "后台登录/会话/退出全流程"
+        }
+      ],
+      "blocker": "无"
+    },
+    {
+      "id": "getProfile",
+      "method": "get",
+      "path": "/me/profile",
+      "route": "/api/v1/me/profile",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "lines": "25-28"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "66-71"
+        },
+        {
+          "test": "tests/unit/profile-api.test.mjs",
+          "name": "GY-I05 persistent profile/catalog HTTP and SQL regression"
+        }
+      ],
+      "blocker": "需 DATABASE_URL 与 0001..0010 迁移；无库时如实 503 PROVIDER_UNAVAILABLE"
+    },
+    {
+      "id": "putProfile",
+      "method": "put",
+      "path": "/me/profile",
+      "route": "/api/v1/me/profile",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "lines": "29-42"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "72-104"
+        },
+        {
+          "test": "tests/unit/profile-api.test.mjs",
+          "name": "GY-I05 persistent profile/catalog HTTP and SQL regression"
+        }
+      ],
+      "blocker": "无（需 If-Match 与 Idempotency-Key；空档案 revision=1，首次 PUT 写 revision=2）"
+    },
+    {
+      "id": "listCrops",
+      "method": "get",
+      "path": "/catalog/crops",
+      "route": "/api/v1/catalog/crops",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "lines": "43-53"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "57-64"
+        },
+        {
+          "test": "tests/unit/profile-api.test.mjs",
+          "name": "GY-I05 persistent profile/catalog HTTP and SQL regression"
+        }
+      ],
+      "blocker": "需 DATABASE_URL；目录行须与 packages/knowledge/catalog/crops.json 逐字段一致"
+    },
+    {
+      "id": "listRegions",
+      "method": "get",
+      "path": "/catalog/regions",
+      "route": "/api/v1/catalog/regions",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "lines": "43-53"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "57-64"
+        },
+        {
+          "test": "tests/unit/profile-api.test.mjs",
+          "name": "GY-I05 persistent profile/catalog HTTP and SQL regression"
+        }
+      ],
+      "blocker": "需 DATABASE_URL；仅浙江（33 开头）行政区代码"
+    },
+    {
+      "id": "listSpecies",
+      "method": "get",
+      "path": "/catalog/species",
+      "route": "/api/v1/catalog/species",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+    },
+    {
+      "id": "getPrivacyPolicy",
+      "method": "get",
+      "path": "/me/privacy-policy",
+      "route": "/api/v1/me/privacy-policy",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "未装配"
+    },
+    {
+      "id": "listConsents",
+      "method": "get",
+      "path": "/me/consents",
+      "route": "/api/v1/me/consents",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/consents.ts",
+          "lines": "40-49"
+        },
+        {
+          "path": "services/api/src/privacy/consent-pg.ts",
+          "lines": "48-55"
+        },
+        {
+          "path": "services/api/src/privacy/consent-pg.ts",
+          "lines": "116-127"
+        }
+      ],
+      "blocker": "缺：游标为裸 base64url（consent-pg.ts:48-55），未 HMAC 签名、未绑定主体/过滤器/版本水位、无 15 分钟有效期，违反 state-contract.md:32；且依赖运维手工导入 consent_policies（0009 无管理 API/生产种子）"
+    },
+    {
+      "id": "grantConsent",
+      "method": "post",
+      "path": "/me/consents",
+      "route": "/api/v1/me/consents",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/consents.ts",
+          "lines": "24-39"
+        },
+        {
+          "path": "services/api/src/privacy/grant-pg.ts",
+          "lines": "26-97"
+        },
+        {
+          "test": "tests/integration/consent-grant-pg.mjs",
+          "name": "normal production app rejects synthetic registry",
+          "ci": true
+        }
+      ],
+      "blocker": "缺运行条件：purpose 政策行必须已由人工在 consent_policies 落库（0009 不提供管理 API 或生产种子，见 docs/verification/gy-i27-consent-grant-pg.md:9）；无可用政策时如实 403 CONSENT_REQUIRED，本机仅在 allowSyntheticGrantPolicy 测试注入下走通"
+    },
+    {
+      "id": "withdrawConsent",
+      "method": "delete",
+      "path": "/me/consents/{purpose}",
+      "route": "/api/v1/me/consents/:purpose",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/consents.ts",
+          "lines": "50-64"
+        },
+        {
+          "path": "services/api/src/privacy/consent-pg.ts",
+          "lines": "140-183"
+        }
+      ],
+      "blocker": "缺分支：撤回的消费者（jobs/media/exports/author_links）未接入，存在任一条即 409 OBJECT_UNAVAILABLE 拒绝（consent-pg.ts:164-169）；同样依赖 consent_policies 已落库"
+    },
+    {
+      "id": "listExports",
+      "method": "get",
+      "path": "/me/exports",
+      "route": "/api/v1/me/exports",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+    },
+    {
+      "id": "requestAccountDeletion",
+      "method": "post",
+      "path": "/me/account/deletion",
+      "route": "/api/v1/me/account/deletion",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+    },
+    {
+      "id": "getDeletionReceipt",
+      "method": "get",
+      "path": "/account/deletions/{id}",
+      "route": "/api/v1/account/deletions/:id",
+      "scope": "receipt",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+    },
+    {
+      "id": "createUpload",
+      "method": "post",
+      "path": "/media/uploads",
+      "route": "/api/v1/media/uploads",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "packages/media 库已实现（字节校验/去 EXIF/时长/状态机，有用例），但 HTTP 路由未装配（services/api/src/app.ts:113-119 未注册）"
+    },
+    {
+      "id": "completeUpload",
+      "method": "post",
+      "path": "/media/uploads/{id}/complete",
+      "route": "/api/v1/media/uploads/:id/complete",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "packages/media 库已实现（字节校验/去 EXIF/时长/状态机，有用例），但 HTTP 路由未装配（services/api/src/app.ts:113-119 未注册）"
+    },
+    {
+      "id": "getMedia",
+      "method": "get",
+      "path": "/media/{id}",
+      "route": "/api/v1/media/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "packages/media 库已实现（字节校验/去 EXIF/时长/状态机，有用例），但 HTTP 路由未装配（services/api/src/app.ts:113-119 未注册）"
+    },
+    {
+      "id": "deleteMedia",
+      "method": "delete",
+      "path": "/media/{id}",
+      "route": "/api/v1/media/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "packages/media 库已实现（字节校验/去 EXIF/时长/状态机，有用例），但 HTTP 路由未装配（services/api/src/app.ts:113-119 未注册）"
+    },
+    {
+      "id": "grantMediaAccess",
+      "method": "post",
+      "path": "/media/{id}/access",
+      "route": "/api/v1/media/:id/access",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "packages/media 库已实现（字节校验/去 EXIF/时长/状态机，有用例），但 HTTP 路由未装配（services/api/src/app.ts:113-119 未注册）"
+    },
+    {
+      "id": "getJob",
+      "method": "get",
+      "path": "/jobs/{id}",
+      "route": "/api/v1/jobs/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "Job 状态机仅存在于契约 states.json；无 worker、无队列、无路由"
+    },
+    {
+      "id": "cancelJob",
+      "method": "post",
+      "path": "/jobs/{id}/cancel",
+      "route": "/api/v1/jobs/:id/cancel",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "Job 状态机仅存在于契约 states.json；无 worker、无队列、无路由"
+    },
+    {
+      "id": "listKnowledge",
+      "method": "get",
+      "path": "/knowledge",
+      "route": "/api/v1/knowledge",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "lines": "25-29"
+        },
+        {
+          "path": "services/api/src/knowledge/service.ts",
+          "lines": "14-80"
+        },
+        {
+          "test": "tests/unit/knowledge-api.test.mjs",
+          "name": "knowledge real projection and limited runtime over loopback HTTP"
+        }
+      ],
+      "blocker": "需 DATABASE_URL 与 catalog_read.current_knowledge 视图；排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致"
+    },
+    {
+      "id": "getKnowledge",
+      "method": "get",
+      "path": "/knowledge/{id}",
+      "route": "/api/v1/knowledge/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "lines": "30-34"
+        },
+        {
+          "path": "services/api/src/knowledge/service.ts",
+          "lines": "60-69"
+        },
+        {
+          "test": "tests/unit/knowledge-api.test.mjs",
+          "name": "knowledge real projection and limited runtime over loopback HTTP"
+        }
+      ],
+      "blocker": "需 DATABASE_URL；不可见/不存在统一 404，ETag 为 revision"
+    },
+    {
+      "id": "listHerbicides",
+      "method": "get",
+      "path": "/herbicides",
+      "route": "/api/v1/herbicides",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+    },
+    {
+      "id": "getHerbicide",
+      "method": "get",
+      "path": "/herbicides/{id}",
+      "route": "/api/v1/herbicides/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+    },
+    {
+      "id": "verifyRegistration",
+      "method": "post",
+      "path": "/registrations/verify",
+      "route": "/api/v1/registrations/verify",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+    },
+    {
+      "id": "createRecognition",
+      "method": "post",
+      "path": "/recognitions",
+      "route": "/api/v1/recognitions",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "getRecognition",
+      "method": "get",
+      "path": "/recognitions/{id}",
+      "route": "/api/v1/recognitions/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "deleteRecognition",
+      "method": "delete",
+      "path": "/recognitions/{id}",
+      "route": "/api/v1/recognitions/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "selectSpecies",
+      "method": "patch",
+      "path": "/recognitions/{id}/selection",
+      "route": "/api/v1/recognitions/:id/selection",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "createOCR",
+      "method": "post",
+      "path": "/ocr",
+      "route": "/api/v1/ocr",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "getOCR",
+      "method": "get",
+      "path": "/ocr/{id}",
+      "route": "/api/v1/ocr/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "deleteOCR",
+      "method": "delete",
+      "path": "/ocr/{id}",
+      "route": "/api/v1/ocr/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "correctOCR",
+      "method": "patch",
+      "path": "/ocr/{id}/correction",
+      "route": "/api/v1/ocr/:id/correction",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "verifyOCR",
+      "method": "post",
+      "path": "/ocr/{id}/verify",
+      "route": "/api/v1/ocr/:id/verify",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "createTranscription",
+      "method": "post",
+      "path": "/speech/transcriptions",
+      "route": "/api/v1/speech/transcriptions",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "getTranscription",
+      "method": "get",
+      "path": "/speech/transcriptions/{id}",
+      "route": "/api/v1/speech/transcriptions/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "deleteTranscription",
+      "method": "delete",
+      "path": "/speech/transcriptions/{id}",
+      "route": "/api/v1/speech/transcriptions/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "confirmTranscription",
+      "method": "patch",
+      "path": "/speech/transcriptions/{id}/confirmation",
+      "route": "/api/v1/speech/transcriptions/:id/confirmation",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "createSynthesis",
+      "method": "post",
+      "path": "/speech/synthesis",
+      "route": "/api/v1/speech/synthesis",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "createConversation",
+      "method": "post",
+      "path": "/conversations",
+      "route": "/api/v1/conversations",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "listConversations",
+      "method": "get",
+      "path": "/conversations",
+      "route": "/api/v1/conversations",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "getConversation",
+      "method": "get",
+      "path": "/conversations/{id}",
+      "route": "/api/v1/conversations/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "deleteConversation",
+      "method": "delete",
+      "path": "/conversations/{id}",
+      "route": "/api/v1/conversations/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "createTurn",
+      "method": "post",
+      "path": "/conversations/{id}/turns",
+      "route": "/api/v1/conversations/:id/turns",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "listTurns",
+      "method": "get",
+      "path": "/conversations/{id}/turns",
+      "route": "/api/v1/conversations/:id/turns",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "deleteTurn",
+      "method": "delete",
+      "path": "/conversations/{id}/turns/{turn_id}",
+      "route": "/api/v1/conversations/:id/turns/:turn_id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "AI 能力未接入（前置 GY-I25 供应商与 GY-I21 评估）；无路由、无 worker"
+    },
+    {
+      "id": "listPosts",
+      "method": "get",
+      "path": "/posts",
+      "route": "/api/v1/posts",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "createPost",
+      "method": "post",
+      "path": "/posts",
+      "route": "/api/v1/posts",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "getPost",
+      "method": "get",
+      "path": "/posts/{id}",
+      "route": "/api/v1/posts/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "editPost",
+      "method": "patch",
+      "path": "/posts/{id}",
+      "route": "/api/v1/posts/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "deletePost",
+      "method": "delete",
+      "path": "/posts/{id}",
+      "route": "/api/v1/posts/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "listComments",
+      "method": "get",
+      "path": "/posts/{id}/comments",
+      "route": "/api/v1/posts/:id/comments",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "createComment",
+      "method": "post",
+      "path": "/posts/{id}/comments",
+      "route": "/api/v1/posts/:id/comments",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "getComment",
+      "method": "get",
+      "path": "/comments/{id}",
+      "route": "/api/v1/comments/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "editComment",
+      "method": "patch",
+      "path": "/comments/{id}",
+      "route": "/api/v1/comments/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "deleteComment",
+      "method": "delete",
+      "path": "/comments/{id}",
+      "route": "/api/v1/comments/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "likePosts",
+      "method": "put",
+      "path": "/posts/{id}/like",
+      "route": "/api/v1/posts/:id/like",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "unlikePosts",
+      "method": "delete",
+      "path": "/posts/{id}/like",
+      "route": "/api/v1/posts/:id/like",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "likeComments",
+      "method": "put",
+      "path": "/comments/{id}/like",
+      "route": "/api/v1/comments/:id/like",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "unlikeComments",
+      "method": "delete",
+      "path": "/comments/{id}/like",
+      "route": "/api/v1/comments/:id/like",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "createReport",
+      "method": "post",
+      "path": "/reports",
+      "route": "/api/v1/reports",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "getOwnReport",
+      "method": "get",
+      "path": "/reports/{id}",
+      "route": "/api/v1/reports/:id",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "listFavorites",
+      "method": "get",
+      "path": "/favorites",
+      "route": "/api/v1/favorites",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "createFavorite",
+      "method": "post",
+      "path": "/favorites",
+      "route": "/api/v1/favorites",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "deleteFavorite",
+      "method": "delete",
+      "path": "/favorites/{id}",
+      "route": "/api/v1/favorites/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "listHistory",
+      "method": "get",
+      "path": "/history",
+      "route": "/api/v1/history",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "deleteHistory",
+      "method": "delete",
+      "path": "/history/{id}",
+      "route": "/api/v1/history/:id",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "listMessages",
+      "method": "get",
+      "path": "/messages",
+      "route": "/api/v1/messages",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "getUnreadCount",
+      "method": "get",
+      "path": "/messages/unread-count",
+      "route": "/api/v1/messages/unread-count",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "markMessageRead",
+      "method": "put",
+      "path": "/messages/{id}/read",
+      "route": "/api/v1/messages/:id/read",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区/引用/收藏/消息业务未实现（消费任务见 acceptance-map：GY-I14/15/16/17/18）；packages/privacy 提供守卫但无 HTTP 装配"
+    },
+    {
+      "id": "listAdminSources",
+      "method": "get",
+      "path": "/admin/sources",
+      "route": "/api/v1/admin/sources",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "createSourceDraft",
+      "method": "post",
+      "path": "/admin/sources",
+      "route": "/api/v1/admin/sources",
+      "scope": "sources:write",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "getAdminSource",
+      "method": "get",
+      "path": "/admin/sources/{id}",
+      "route": "/api/v1/admin/sources/:id",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "editSourceDraft",
+      "method": "patch",
+      "path": "/admin/sources/{id}",
+      "route": "/api/v1/admin/sources/:id",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "publishSource",
+      "method": "post",
+      "path": "/admin/sources/{id}/publish",
+      "route": "/api/v1/admin/sources/:id/publish",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "withdrawSource",
+      "method": "post",
+      "path": "/admin/sources/{id}/withdraw",
+      "route": "/api/v1/admin/sources/:id/withdraw",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminKnowledge",
+      "method": "get",
+      "path": "/admin/knowledge",
+      "route": "/api/v1/admin/knowledge",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "createKnowledgeDraft",
+      "method": "post",
+      "path": "/admin/knowledge",
+      "route": "/api/v1/admin/knowledge",
+      "scope": "sources:write",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "getAdminKnowledge",
+      "method": "get",
+      "path": "/admin/knowledge/{id}",
+      "route": "/api/v1/admin/knowledge/:id",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "editKnowledgeDraft",
+      "method": "patch",
+      "path": "/admin/knowledge/{id}",
+      "route": "/api/v1/admin/knowledge/:id",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "publishKnowledge",
+      "method": "post",
+      "path": "/admin/knowledge/{id}/publish",
+      "route": "/api/v1/admin/knowledge/:id/publish",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "withdrawKnowledge",
+      "method": "post",
+      "path": "/admin/knowledge/{id}/withdraw",
+      "route": "/api/v1/admin/knowledge/:id/withdraw",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminRegistration",
+      "method": "get",
+      "path": "/admin/registrations",
+      "route": "/api/v1/admin/registrations",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "createRegistrationDraft",
+      "method": "post",
+      "path": "/admin/registrations",
+      "route": "/api/v1/admin/registrations",
+      "scope": "sources:write",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "getAdminRegistration",
+      "method": "get",
+      "path": "/admin/registrations/{id}",
+      "route": "/api/v1/admin/registrations/:id",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "editRegistrationDraft",
+      "method": "patch",
+      "path": "/admin/registrations/{id}",
+      "route": "/api/v1/admin/registrations/:id",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "publishRegistration",
+      "method": "post",
+      "path": "/admin/registrations/{id}/publish",
+      "route": "/api/v1/admin/registrations/:id/publish",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "withdrawRegistration",
+      "method": "post",
+      "path": "/admin/registrations/{id}/withdraw",
+      "route": "/api/v1/admin/registrations/:id/withdraw",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminRestriction",
+      "method": "get",
+      "path": "/admin/restrictions",
+      "route": "/api/v1/admin/restrictions",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "createRestrictionDraft",
+      "method": "post",
+      "path": "/admin/restrictions",
+      "route": "/api/v1/admin/restrictions",
+      "scope": "sources:write",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "getAdminRestriction",
+      "method": "get",
+      "path": "/admin/restrictions/{id}",
+      "route": "/api/v1/admin/restrictions/:id",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "editRestrictionDraft",
+      "method": "patch",
+      "path": "/admin/restrictions/{id}",
+      "route": "/api/v1/admin/restrictions/:id",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "publishRestriction",
+      "method": "post",
+      "path": "/admin/restrictions/{id}/publish",
+      "route": "/api/v1/admin/restrictions/:id/publish",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "withdrawRestriction",
+      "method": "post",
+      "path": "/admin/restrictions/{id}/withdraw",
+      "route": "/api/v1/admin/restrictions/:id/withdraw",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminCategories",
+      "method": "get",
+      "path": "/admin/categories",
+      "route": "/api/v1/admin/categories",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "editCategory",
+      "method": "patch",
+      "path": "/admin/categories/{id}",
+      "route": "/api/v1/admin/categories/:id",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminUsers",
+      "method": "get",
+      "path": "/admin/accounts",
+      "route": "/api/v1/admin/accounts",
+      "scope": "accounts:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "suspendUser",
+      "method": "post",
+      "path": "/admin/accounts/{id}/suspend",
+      "route": "/api/v1/admin/accounts/:id/suspend",
+      "scope": "accounts:suspend",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAdminJobs",
+      "method": "get",
+      "path": "/admin/jobs",
+      "route": "/api/v1/admin/jobs",
+      "scope": "jobs:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "cancelAdminJob",
+      "method": "post",
+      "path": "/admin/jobs/{id}/cancel",
+      "route": "/api/v1/admin/jobs/:id/cancel",
+      "scope": "jobs:cancel",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listFlags",
+      "method": "get",
+      "path": "/admin/feature-flags",
+      "route": "/api/v1/admin/feature-flags",
+      "scope": "flags:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "setFlag",
+      "method": "put",
+      "path": "/admin/feature-flags/{key}",
+      "route": "/api/v1/admin/feature-flags/:key",
+      "scope": "flags:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "hidePost",
+      "method": "post",
+      "path": "/admin/posts/{id}/hide",
+      "route": "/api/v1/admin/posts/:id/hide",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "listAuditEvents",
+      "method": "get",
+      "path": "/admin/audit-events",
+      "route": "/api/v1/admin/audit-events",
+      "scope": "audit:read",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "后台业务路由未实现（后台仅认证三端点已装配）；scope 常量与守卫已就绪（auth/middleware.ts:201-247）"
+    },
+    {
+      "id": "grantCommunityMediaAccess",
+      "method": "post",
+      "path": "/community/media-access",
+      "route": "/api/v1/community/media-access",
+      "scope": "user",
+      "version_required": true,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区取图链未实现；packages/media 已有 grant/取图用例（tests/media/access.test.mjs）但未装配路由"
+    },
+    {
+      "id": "readCommunityMediaContent",
+      "method": "get",
+      "path": "/community/media/{grant_id}/content",
+      "route": "/api/v1/community/media/:grant_id/content",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": false,
+      "status": "planned",
+      "evidence": [],
+      "blocker": "社区取图链未实现；packages/media 已有 grant/取图用例（tests/media/access.test.mjs）但未装配路由"
+    }
+  ],
+  "dimensions": [
+    {
+      "key": "error_codes",
+      "title": "错误码与 HTTP 状态映射",
+      "source_anchor": "packages/contracts/states.json#/error_status_map；docs/architecture/state-contract.md:17-30",
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/contract.ts",
+          "lines": "14-58"
+        },
+        {
+          "path": "services/api/src/errors.ts",
+          "lines": "29-63"
+        },
+        {
+          "test": "tests/contract/contract-codes.test.mjs",
+          "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
+        }
+      ],
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:170-184）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+    },
+    {
+      "key": "pagination",
+      "title": "分页（items + next_cursor、limit 默认 20 上限 50、服务端签名游标）",
+      "source_anchor": "docs/architecture/state-contract.md:32；packages/contracts/openapi.json#/components/parameters/Cursor|Limit",
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/knowledge/service.ts",
+          "lines": "36-51"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "105-131"
+        },
+        {
+          "path": "services/api/src/privacy/consent-pg.ts",
+          "lines": "48-55"
+        },
+        {
+          "test": "tests/unit/knowledge-api.test.mjs",
+          "name": "knowledge real projection and limited runtime over loopback HTTP"
+        }
+      ],
+      "blocker": "缺：/me/consents 游标未签名且未绑定主体/过滤器/版本水位/有效期（consent-pg.ts:48-55）；/knowledge 排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致。契约 Limit 1..50/默认 20 已在三处 schema 中一致"
+    },
+    {
+      "key": "versioning",
+      "title": "版本（强 ETag、If-Match 428/409、revision 自增）",
+      "source_anchor": "docs/architecture/state-contract.md:15",
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "lines": "37-41"
+        },
+        {
+          "path": "services/api/src/routes/consents.ts",
+          "lines": "59-63"
+        },
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "lines": "30-34"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "lines": "86-87"
+        },
+        {
+          "test": "tests/unit/profile-api.test.mjs",
+          "name": "GY-I05 persistent profile/catalog HTTP and SQL regression"
+        }
+      ],
+      "blocker": "无（需 DATABASE_URL；撤回/编辑路径的 If-Match 缺 428、不匹配 409 已实现）"
+    },
+    {
+      "key": "idempotency",
+      "title": "幂等（Idempotency-Key 8..128、同键同体重放、同键异体 409、进行中 409）",
+      "source_anchor": "docs/architecture/state-contract.md:34",
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/support.ts",
+          "lines": "80-148"
+        },
+        {
+          "path": "services/api/src/auth/idempotency.ts",
+          "lines": "1-60"
+        },
+        {
+          "test": "tests/unit/auth-routes.test.mjs",
+          "name": "幂等：同键同体收敛到同一会话"
+        }
+      ],
+      "blocker": "缺：409 REQUEST_IN_PROGRESS 未带 Retry-After 响应头（support.ts:141-145 仅置 retryable=true，app.ts 错误处理器不加头），与 state-contract.md:34「带 Retry-After」不符；已挂载业务写入仅 profile PUT 与 consents POST/DELETE，均自建幂等台账"
+    },
+    {
+      "key": "source_kind",
+      "title": "source_kind / evidence_kind（来源取得方式与证据性质）",
+      "source_anchor": "packages/contracts/states.json#/states/SourceKind|EvidenceKind；docs/architecture/state-contract.md:60",
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/db/catalog.ts",
+          "lines": "5-22"
+        },
+        {
+          "path": "services/api/src/knowledge/service.ts",
+          "lines": "60-64"
+        },
+        {
+          "path": "packages/reference/constants.mjs",
+          "lines": "1-60"
+        },
+        {
+          "test": "tests/reference/contract.test.mjs",
+          "name": "H2"
+        }
+      ],
+      "blocker": "缺：只有 /public/home 与 /knowledge 两条已挂载路径投影该字段（均需真实库）；/herbicides 的 source_kind/evidence_kind 投影只在未挂载的 packages/reference/service.mjs 中存在，HTTP 层取不到；模拟来源不产生 DoseCard 的规则仅在库层与契约层有断言"
+    },
+    {
+      "key": "execution_modes",
+      "title": "真实 / 替身 / 演示环境（execution_mode）",
+      "source_anchor": "packages/contracts/states.json#/states/ExecutionMode；docs/architecture/state-contract.md:3",
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/contract.ts",
+          "lines": "9-11"
+        },
+        {
+          "path": "services/api/src/config.ts",
+          "lines": "126-238"
+        },
+        {
+          "path": "services/api/src/auth/wechat.ts",
+          "lines": "66-76"
+        },
+        {
+          "test": "tests/unit/api-config.test.mjs",
+          "name": "real 模式缺配置时一次性列出全部字段"
+        }
+      ],
+      "blocker": "无（本机实测：stub 启动并返回 meta.execution_mode=stub；APP_EXECUTION_MODE=real 且无凭据时 exit 1 并列出 9 个缺失字段，不半配置启动）"
+    },
+    {
+      "key": "cancel",
+      "title": "取消（Job 取消、原子递增 revision、撤租约与外发）",
+      "source_anchor": "docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions",
+      "status": "planned",
+      "evidence": [],
+      "blocker": "无实现：cancelJob / cancelAdminJob 未挂载（POST /api/v1/jobs/{id}/cancel 返回 404），无 Job 表读写、无租约（lease_token/lease_expires_at）、无取消的原子 revision 递增；仅 states.json 冻结了 cancelled 终态不可复活"
+    },
+    {
+      "key": "timeout",
+      "title": "超时（数据库/健康检查/供应商调用截止）",
+      "source_anchor": "docs/architecture/state-contract.md:50",
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/db/pool.ts",
+          "lines": "27-53"
+        },
+        {
+          "path": "services/api/src/auth/wechat.ts",
+          "lines": "32-33"
+        },
+        {
+          "path": "services/api/src/knowledge/service.ts",
+          "lines": "74-78"
+        },
+        {
+          "test": "tests/unit/api-health.test.mjs",
+          "name": "/health 在 real 模式数据库不可达时返回 503 degraded"
+        }
+      ],
+      "blocker": "缺：已实现的只有连接池 statement_timeout 5s / query_timeout 6s、健康检查默认 2s、微信 code2session 8s AbortController、SQL 57014/55P03 → PROVIDER_TIMEOUT；契约要求的「单识别/ASR/问答阶段硬截止 30 秒」「语音录制 60 秒与处理 30 秒区分」「deadline_at 与租约 15 秒/心跳 5 秒」均无实现"
+    }
+  ]
+}
