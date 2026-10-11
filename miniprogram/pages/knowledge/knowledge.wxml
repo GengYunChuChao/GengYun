@@ -6,10 +6,10 @@
   <block wx:if="{{gatePassed}}">
     <view class="search-box">
       <view class="field-label">搜索科普资料</view>
-      <input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" />
+      <view class="search-input"><image class="search-icon" src="/assets/knowledge/search.png" aria-hidden="true" /><input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" /></view>
     </view>
-    <view class="card filter-panel">
-      <view class="card-title">筛选条件</view>
+    <view class="filter-panel">
+      <view class="field-label">筛选条件</view>
       <view class="chips">
       <picker range="{{crops}}" range-key="name" value="{{cropIndex}}" data-field="cropIndex" bindchange="pick"><view class="picker chip">作物 · {{crops[cropIndex].name}}</view></picker>
       <picker range="{{species}}" range-key="name" value="{{speciesIndex}}" data-field="speciesIndex" bindchange="pick"><view class="picker chip">杂草 · {{species[speciesIndex].name}}</view></picker>
@@ -28,7 +28,7 @@
     <view class="status" role="status">{{status}}</view>
     <view class="result-heading" wx:if="{{items.length}}">当前页资料</view>
     <view class="card article-card" wx:for="{{items}}" wx:key="id">
-      <view class="article-art">科普参考 · {{item.labels.source}}</view>
+      <view class="article-art"><image class="leaf-icon" src="/assets/knowledge/leaf.png" aria-hidden="true" /><text>科普 / FIELD NOTES</text></view><view class="card-meta">科普参考 · {{item.labels.source}}</view>
       <view class="card-title">{{item.item.title}}</view>
       <view class="source-tags"><text class="pill">{{item.labels.evidence}}</text><text class="pill amber">{{item.labels.review}}</text></view>
       <view class="notice">{{item.conditionNote}}</view>

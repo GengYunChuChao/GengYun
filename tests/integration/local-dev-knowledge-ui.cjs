@@ -1,15 +1,17 @@
 // Actual native simulator and HTTP transport. Fixture identity/data are synthetic.
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict')
-const [dir, outDir, portArg = '9425'] = process.argv.slice(2)
+const [dir, outDir, portArg = '9425', scaleArg = '1'] = process.argv.slice(2)
 if (!dir || !outDir) throw Error('SDK and output directories required')
+const scale = Number(scaleArg); assert.ok([1, 1.3].includes(scale))
 const sdk = require(path.resolve(dir)), port = Number(portArg)
 assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535)
 let m, stage = 'connect'
 const deadline = setTimeout(() => { console.error('Timeout at ' + stage); m?.disconnect(); process.exit(2) }, 150000)
 ;(async () => {
   m = await sdk.connect({ wsEndpoint: 'ws://127.0.0.1:' + port })
+  if (scale !== 1) await m.evaluate(() => { const a = getApp(); a.__knowledgeTestOriginalRefresh = a.refreshFontScale; a.__knowledgeTestOriginalScale = a.globalData.fontScale; a.refreshFontScale = function () { this.globalData.fontScale = 1.3; return 1.3 } })
   const out = path.resolve(outDir); fs.mkdirSync(out, { recursive: true })
-  const info = await m.systemInfo(), report = { kind: 'actual native pages/wx.login/loopback HTTP; server, identity and data synthetic; no auth/font override', width: info.windowWidth, height: info.windowHeight, SDKVersion: info.SDKVersion, cases: [] }
+  const info = await m.systemInfo(), report = { kind: 'actual native pages/wx.login/loopback HTTP; server, identity and data synthetic; no auth override', fontTest: scale === 1 ? 'native standard setting' : 'controlled app refreshFontScale=1.3, restored in finally; not device setting', width: info.windowWidth, height: info.windowHeight, SDKVersion: info.SDKVersion, cases: [] }
   async function route(name) { for (let i = 0; i < 100; i++) { const p = await m.currentPage(); if (p.path === 'pages/' + name + '/' + name) return p; await new Promise(r => setTimeout(r, 100)) }; throw Error('Unexpected route') }
   async function tap(p, text) { await m.pageScrollTo(0); for (const b of await p.$$('button')) if ((await b.text()).includes(text)) { const at = await b.offset(); await m.pageScrollTo(Math.max(0, at.top - 80)); await p.waitFor(100); await b.tap(); return }; throw Error('Missing button') }
   async function capture(p, name) { await p.waitFor(300); await m.screenshot({ path: path.join(out, name + '.png') }) }
@@ -18,7 +20,7 @@ const deadline = setTimeout(() => { console.error('Timeout at ' + stage); m?.dis
   await state('synthetic-v1', false)
   stage = 'guest/login'; await m.callWxMethod('removeStorageSync', 'gengyun.session'); await m.reLaunch('/pages/knowledge/knowledge'); const login = await route('login'); await capture(login, 'guest-login'); await tap(login, '微信登录')
   let p = await listing(); await m.pageScrollTo(0); await capture(p, 'knowledge-search'); report.cases.push('guest gated, actual login returned to knowledge')
-  const bodySize = await (await p.$('.page')).style('font-size'); assert.ok(parseFloat(bodySize) >= 18); report.bodyFont = bodySize
+  const bodySize = await (await p.$('.page')).style('font-size'); assert.ok(parseFloat(bodySize) >= 18 * scale - 0.1); report.bodyFont = bodySize
   const buttons = await p.$$('button'); report.minimumButtonHeight = Math.min(...await Promise.all(buttons.map(async b => (await b.size()).height))); assert.ok(report.minimumButtonHeight >= 44)
   await m.pageScrollTo((await (await p.$('.article-card')).offset()).top - 30); await capture(p, 'knowledge-result')
   assert.match(await p.data('modeNote'), /替身/); assert.equal((await p.data('items'))[0].item.source.source_kind, 'simulation')
@@ -28,5 +30,5 @@ const deadline = setTimeout(() => { console.error('Timeout at ' + stage); m?.dis
   stage = 'valid-current'; await tap(d, '返回继续查询'); p = await listing(); assert.equal((await p.data('items'))[0].item.source.version, 'synthetic-v2'); await tap(p, '查看详情'); d = await route('knowledgedetail'); await d.waitFor(async () => !!(await d.data('item'))); assert.equal((await d.data('item')).source.version, 'synthetic-v2'); assert.match(await d.data('conditionsText'), /条件资料不足/); assert.equal((await d.data('item')).dose_cards.length, 0); await m.pageScrollTo(0); await capture(d, 'knowledge-detail');
   const cards = await d.$$('.card'); await m.pageScrollTo((await cards[cards.length - 1].offset()).top - 30); await capture(d, 'knowledge-source'); report.cases.push('fresh detail exact source v2, null conditions, empty dose cards')
   stage = 'withdrawal'; await state('synthetic-v2', true); await tap(d, '重新核对／重试'); await d.waitFor(async () => !(await d.data('busy')) && (await d.data('status')).includes('已失效')); assert.ok(!(await d.data('item'))); await capture(d, 'knowledge-withdrawn'); await tap(d, '返回继续查询'); p = await route('knowledge'); await p.waitFor(async () => await p.data('gatePassed') && !(await p.data('busy')) && (await p.data('status')).includes('没有')); assert.equal((await p.data('items')).length, 0); await m.pageScrollTo(220); await capture(p, 'knowledge-withdrawn-list'); report.cases.push('withdrawn detail and re-entered list clear previous data')
-  fs.writeFileSync(path.join(out, 'observations.json'), JSON.stringify(report, null, 2) + '\n'); await state('synthetic-v1', false); await m.reLaunch('/pages/home/home'); console.log('PASS actual ' + info.windowWidth + 'px, 10 native screenshots; fixture HTTP, no production identity/API claim')
-})().catch(e => { console.error(stage + ': ' + e.name); process.exitCode = 1 }).finally(() => { clearTimeout(deadline); m?.disconnect() })
+  fs.writeFileSync(path.join(out, 'observations.json'), JSON.stringify(report, null, 2) + '\n'); await state('synthetic-v1', false); await m.reLaunch('/pages/home/home'); console.log('PASS actual ' + info.windowWidth + 'px, 10 native screenshots; fixture HTTP, font scale ' + scale + ', no production identity/API claim')
+})().catch(e => { console.error(stage + ': ' + e.name); process.exitCode = 1 }).finally(async () => { clearTimeout(deadline); if (m && scale !== 1) { try { await m.evaluate(() => { const a = getApp(); a.refreshFontScale = a.__knowledgeTestOriginalRefresh; a.globalData.fontScale = a.__knowledgeTestOriginalScale; delete a.__knowledgeTestOriginalRefresh; delete a.__knowledgeTestOriginalScale; a.refreshFontScale() }); await m.reLaunch('/pages/home/home') } catch (e) { console.error('font restoration failed: ' + e.name); process.exitCode = 1 } }; m?.disconnect() })
