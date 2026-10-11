@@ -12,7 +12,7 @@ export function prepareLocalDev({root,postgresBin,apiPort=3100,pgPort=55436}) {
  if(runtime!=="// Shared source always has networking disabled. Local preparation writes only an ignored copy.\nmodule.exports = { mode: 'disabled', apiBaseUrl: '' }\n")throw new Error('Shared runtime must remain disabled');
  const out=join(root,'.local/local-dev');if(existsSync(out))throw new Error('Output exists; preserve it or use its existing start/stop scripts');
  mkdirSync(out,{recursive:true});
- for(const file of ['start.ps1','stop.ps1','database.mjs','api.mjs','smoke.mjs'])copyFileSync(join(root,'tools/local-dev',file),join(out,file));
+ for(const file of ['start.ps1','stop.ps1','database.mjs','profile-bootstrap.mjs','api.mjs','smoke.mjs'])copyFileSync(join(root,'tools/local-dev',file),join(out,file));
  writeFileSync(join(out,'settings.json'),JSON.stringify({repoRoot:root,postgresBin,nodePath:process.execPath,apiPort,pgPort},null,2));
  const wechat=join(out,'wechat');mkdirSync(wechat);
  function copy(source,target,relative=''){

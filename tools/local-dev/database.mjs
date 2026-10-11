@@ -1,6 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
+import {bootstrapLocalProfile} from './profile-bootstrap.mjs';
 const settings=JSON.parse(readFileSync(new URL('./settings.json',import.meta.url),'utf8'));
 const repoRequire=createRequire(pathToFileURL(settings.repoRoot+'/package.json'));
 const pg=repoRequire('pg');
@@ -26,5 +27,7 @@ try {
   await owner.query("CREATE ROLE gengyun_local_runtime LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '"+config.runtimePassword+"'");
   await owner.query('GRANT gengyun_auth_privacy,gengyun_preview_reader,gengyun_consent_granter TO gengyun_local_runtime');
  }
+ const profile=await bootstrapLocalProfile(owner,settings.repoRoot);
+ console.log('Local profile catalog: synthetic fixture; '+profile.cropCount+' crops, '+profile.regionCount+' regions; '+(profile.initialized?'initialized empty local tables':'existing fixture preserved')+'.');
  console.log('Database ready: '+result.applied.length+' applied, '+result.skipped.length+' unchanged migrations.');
 } finally {await owner.end();}
