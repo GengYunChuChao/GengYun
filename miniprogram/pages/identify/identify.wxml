@@ -1,10 +1,20 @@
 <view class="page" style="--font-scale: {{fontScale}}">
   <view class="page-title">识别</view>
-  <view class="page-subtitle">拍照或说话，查找杂草与农药资料</view>
+  <view class="page-subtitle">拍照片识别田里的杂草，得到至多 3 个候选，再自行核对</view>
 
   <view class="notice" wx:if="{{guest}}">
     <text class="notice__icon">🔒</text>
-    <text class="notice__text">您正在以游客身份浏览，登录后才能实际使用识别与语音功能。</text>
+    <text class="notice__text">您正在以游客身份浏览，登录后才能实际使用识别功能。识别结果不会公开。</text>
+  </view>
+
+  <view class="notice notice--mode" wx:if="{{modeNote}}">
+    <text class="notice__icon">🧪</text>
+    <text class="notice__text">{{modeNote}}</text>
+  </view>
+
+  <view class="notice notice--substitute" wx:if="{{substituteNotice}}">
+    <text class="notice__icon">🔁</text>
+    <text class="notice__text">{{substituteNotice}}</text>
   </view>
 
   <view class="mode" wx:for="{{modes}}" wx:key="key">
@@ -15,31 +25,87 @@
         <view class="mode__desc">{{item.desc}}</view>
       </view>
     </view>
-    <button class="btn btn--primary mode__btn" disabled="{{guest}}" bindtap="onShoot">
+    <button class="btn btn--primary mode__btn" disabled="{{guest || busy}}" data-mode="{{item.key}}" bindtap="onShoot">
       {{item.action}}
     </button>
   </view>
 
-  <view class="card">
-    <view class="card-title">语音提问</view>
-    <view class="card-text">
-      录音与播放分成两个按钮：先点录音，说完再点播放回听。这样不会在说话时误触覆盖，也不会把录音直接发出去。
-    </view>
-    <view class="voice-row">
-      <button class="btn btn--primary voice-btn" disabled="{{guest}}" bindtap="onRecord">
-        {{recording ? '录音中…' : '开始录音'}}
-      </button>
-      <button class="btn btn--secondary voice-btn" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
-        播放录音
-      </button>
-    </view>
-    <view class="voice-hint" wx:if="{{!hasRecording}}">还没有录音。录音功能尚未接入，此处仅演示按钮布局。</view>
+  <!-- 任务状态：七类各自一句，不合并成「失败」 -->
+  <view class="section-title" wx:if="{{stateView}}">任务状态</view>
+  <view class="state-chip state-chip--{{stateView.tone}}" wx:if="{{stateView}}">
+    <text class="state-chip__code">JobState：{{stateView.state}}</text>
+    <text class="state-chip__title">{{stateView.title}}</text>
+    <text class="state-chip__desc">{{stateView.desc}}</text>
+    <text class="state-chip__err" wx:if="{{stateView.state === 'failed' || stateView.state === 'timed_out'}}">服务端错误码以接口返回为准（error_code 非 null 时才显示）。</text>
   </view>
 
-  <view class="section-title">服务状态</view>
+  <view class="btn-row" wx:if="{{stateView}}">
+    <button class="btn btn--secondary btn-row__item" wx:if="{{!stateView.terminal}}" bindtap="onCancelJob">取消任务</button>
+    <button class="btn btn--secondary btn-row__item" wx:if="{{stateView.retryable}}" bindtap="onRetry">重新识别</button>
+  </view>
+
+  <!-- 不确定原因：如实列出，不隐藏、不改写成成功 -->
+  <view class="reasons" wx:if="{{uncertaintyReasons.length}}">
+    <view class="reasons__title">不确定原因（服务端 uncertainty_reasons）</view>
+    <view class="reasons__item" wx:for="{{uncertaintyReasons}}" wx:key="*this">· {{item}}</view>
+  </view>
+
+  <!-- 候选：succeeded 才算识别成功；uncertain 必须人工核对；历史记录不推断任务状态 -->
+  <view wx:if="{{showTop3}}">
+    <view class="section-title">{{candidateSource === 'history' ? '历史记录候选（模型原始结果）' : (candidatesTrusted ? '候选（识别成功）' : '候选（不可信，需人工核对）')}}</view>
+    <view class="candidate-hint" wx:if="{{historyNote}}">{{historyNote}}</view>
+    <view class="candidate {{pendingManualId === item.species_id ? 'candidate--picked' : ''}}" wx:for="{{candidates}}" wx:key="species_id" data-id="{{item.species_id}}" bindtap="onTapCandidate">
+      <view class="candidate__rank">#{{item.rank}}</view>
+      <view class="candidate__body">
+        <view class="candidate__name">{{item.species_id}}</view>
+        <view class="candidate__score">模型分数：{{item.scoreText}}</view>
+      </view>
+      <view class="candidate__state" wx:if="{{selectedSpeciesId === item.species_id}}">已选择</view>
+    </view>
+    <view class="candidate-hint" wx:if="{{!candidatesTrusted && candidateSource !== 'history'}}">这是「不确定」结果：请人工核对后再确认，确认前不会记录选择、也不会查询关联科普。</view>
+    <view class="btn-row" wx:if="{{pendingManualId}}">
+      <button class="btn btn--primary btn-row__item" bindtap="onConfirmManual">确认人工核对结果</button>
+      <button class="btn btn--secondary btn-row__item" bindtap="onCancelManual">取消</button>
+    </view>
+  </view>
+
+  <!-- 关联科普查询（选择之后） -->
+  <view wx:if="{{relatedKnowledge}}">
+    <view class="section-title">关联科普（{{relatedKnowledge.matchStateLabel}}）</view>
+    <view class="seed-tag">资料为种子整理稿 · 待核实·非权威 · 不提供用量</view>
+    <view class="knowledge" wx:for="{{relatedKnowledge.items}}" wx:key="recordId">
+      <view class="knowledge__name">{{item.name}}</view>
+      <view class="knowledge__meta">登记证号：{{item.registrationNumber}} · 剂型：{{item.dosageForm}}</view>
+      <view class="knowledge__meta">使用场景：{{item.useScene}}</view>
+    </view>
+    <view class="reasons__item" wx:for="{{relatedKnowledge.reasons}}" wx:key="*this">· {{item}}</view>
+    <view class="knowledge__note">{{relatedKnowledge.note}}</view>
+    <button class="btn btn--secondary" wx:if="{{recordId}}" bindtap="onDeleteRecord">删除这条识别记录</button>
+  </view>
+
+  <view class="error-text" wx:if="{{errorText}}">{{errorText}}</view>
+
+  <!-- 私有历史（本机索引 + 服务端权威核对） -->
+  <view class="section-title" wx:if="{{history.length}}">我的识别记录（私有）</view>
+  <view class="history" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
+    <view class="history__title">{{item.stateTitle}}</view>
+    <view class="history__meta">{{item.state}} · {{item.at}}</view>
+  </view>
+  <button class="btn btn--secondary" wx:if="{{history.length}}" bindtap="onClearHistory">清空本机索引</button>
+
+  <view class="section-title">其他入口</view>
+  <view class="card">
+    <view class="card-title">语音提问</view>
+    <view class="card-text">录音与播放尚未接入真实服务；本页不会采集录音或上传。</view>
+    <view class="voice-row">
+      <button class="btn btn--secondary voice-btn" disabled="{{guest}}" bindtap="onRecord">开始录音</button>
+    </view>
+  </view>
+
   <state-view
-    status="stub"
-    title="识别能力未接入"
-    desc="拍草识别、标签识别、语音转写与大模型问答均未接入真实服务，页面不会采集照片或录音。识别结果将在后续任务中逐项替换。"
+    wx:if="{{stateView && !stateView.terminal}}"
+    status="{{stateView.component}}"
+    title="{{stateView.title}}"
+    desc="{{stateView.desc}}"
   ></state-view>
 </view>

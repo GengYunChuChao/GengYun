@@ -32,6 +32,8 @@ try {
     'utils/auth.js',
     'utils/profile-api.js',
     'utils/knowledge-api.js',
+    // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/identify-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
