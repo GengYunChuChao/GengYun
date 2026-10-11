@@ -1,0 +1,17 @@
+{
+  "kind": "actual native pages/wx.login/loopback HTTP; server, identity and data synthetic; no auth override",
+  "fontTest": "native standard setting",
+  "width": 320,
+  "height": 504,
+  "SDKVersion": "3.17.3",
+  "cases": [
+    "guest gated, actual login returned to knowledge",
+    "empty result clears old items",
+    "HTTP 503 clears old items, no offline fallback",
+    "list/detail source version mismatch clears body",
+    "fresh detail exact source v2, null conditions, empty dose cards",
+    "withdrawn detail and re-entered list clear previous data"
+  ],
+  "bodyFont": "18px",
+  "minimumButtonHeight": 45.19791793823242
+}
