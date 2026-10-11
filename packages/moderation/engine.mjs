@@ -121,6 +121,9 @@ export function evaluateRule(rule, text, matchers = MATCHERS) {
           offset: Number.isInteger(outcome.offset) ? outcome.offset : null,
           length: Number.isInteger(outcome.length) ? outcome.length : null,
           suppressed: Number.isInteger(outcome.suppressed) ? outcome.suppressed : 0,
+          // 被"取消词"顶掉否定的次数与具体取消词（来自规则闭集，不是输入原文，可安全回传）。
+          cancelled: Number.isInteger(outcome.cancelled) ? outcome.cancelled : 0,
+          cancelled_by: typeof outcome.cancelled_by === 'string' ? outcome.cancelled_by : null,
         }
       : null,
     error: null,

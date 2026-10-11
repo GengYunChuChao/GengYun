@@ -9,6 +9,19 @@
 仓库内 `docs/moderation/README.md`；真实命令与输出见
 `docs/verification/gy-i14-moderation-rules-20261011.md`。
 
+## 否定护栏在危险类上更保守（宁可多拦）
+
+MR-01／MR-02／MR-03（`dangerous_usage` / `label_bound_dose`）的否定护栏**可被转折/祈使词取消**：
+同一句读段内、否定词之后出现 `但/但是/而/而是/要/应/应该/建议/最好` 时，否定失效、命中成立。
+否则「不要单独用而要混配」这类句式会被整句压掉 ⇒ **放行**危险混配与无依据用量（fail-open）。
+
+- 只对这两类生效（`negation_cancellers` 仅挂在这三条规则上，`validateRuleCatalog` 会拒绝挂到别的匹配器），其它类别行为不变；
+- 纯否定（`不要随意混配`、`不能脱离标签使用`）仍**不命中**；
+- **代价**：取消词含单字 `要`／`应`，无标点且含 `需要`／`主要`／`反应` 的句子可能被**误拦**——危险类接受误拦；
+- 可观测：`evidence.cancelled` / `evidence.cancelled_by`（取值来自规则闭集，不是输入原文）。
+
+详见 `docs/moderation/README.md` §3.1 与 §7 已知限制。
+
 ## 快速用法
 
 ```js
@@ -34,6 +47,7 @@ toRuleLayerDraft(result); // 显式 incomplete 的草稿，未补 model_version 
 | `evaluateBatch` | 批量审核，逐目标失败隔离 |
 | `validateModerationInput` | 输入校验（缺字段／类型不符／空／超长／编码异常／未知字段一律不放行） |
 | `RULES` / `validateRuleCatalog` / `rulesByCategory` | 规则集集中定义与自检 |
+| `DANGEROUS_NEGATION_CANCELLERS` | 危险类否定取消词闭集（MR-01／MR-02／MR-03 使用） |
 | `deriveRuleVersion` / `RULE_VERSION` / `ruleSetDigest` | 由规则集内容派生版本 |
 | `evaluateReReview` / `isPublishable` | 版本重审失效判定与发布口径 |
 | `checkDecisionInvariant` / `assertDecisionInvariant` | 判定不变式检查（`approved ⟺ hard_rule_passed === true`） |

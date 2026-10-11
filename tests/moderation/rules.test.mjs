@@ -10,9 +10,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { RULES } from '../../packages/moderation/rules.mjs';
+import { DANGEROUS_NEGATION_CANCELLERS } from '../../packages/moderation/matchers.mjs';
 import { RULE_CATEGORIES, isAuditState } from '../../packages/moderation/constants.mjs';
 import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
-import { CLEAN_TEXT, RULE_TEXT_FIXTURES, makeInput } from './_fixtures.mjs';
+import {
+  CLEAN_TEXT,
+  NEGATION_CANCELLATION_FIXTURES,
+  PURE_NEGATION_FIXTURES,
+  RULE_TEXT_FIXTURES,
+  makeInput,
+} from './_fixtures.mjs';
 
 function ruleById(id) {
   const rule = RULES.find((item) => item.id === id);
@@ -75,6 +82,89 @@ test('规则类别覆盖：每个声明类别都有命中与不命中两类夹�
     assert.equal(typeof fixture.miss, 'string');
     assert.ok(fixture.hit.length > 0 && fixture.miss.length > 0);
     assert.notEqual(fixture.hit, fixture.miss);
+  }
+});
+
+// ---- fail-open 方向返修（2026-10-11）：危险类的"否定 + 转折/祈使"必须照常拦截 ----
+
+for (const fixture of NEGATION_CANCELLATION_FIXTURES) {
+  test(`危险类否定取消：${fixture.name} ⇒ 不得放行`, () => {
+    const result = evaluateHardRules(makeInput({ text: fixture.text }));
+    const entry = result.rules.find((item) => item.id === fixture.rule_id);
+    assert.ok(entry, `${fixture.rule_id} 未出现在求值结果里`);
+    // 最高优先断言：绝不 approved（fail-open 方向的底线）。
+    assert.notEqual(result.decision, 'approved', `漏拦：${fixture.text}`);
+    assert.equal(result.hard_rule_passed, false);
+    assert.equal(result.decision, 'rejected', `应判 rejected：${fixture.text}`);
+    // 逐条独立用例：必须由该规则自己命中，并带上自己的原因码。
+    assert.equal(entry.status, 'hit');
+    assert.equal(entry.matched, true);
+    assert.ok(result.reason_codes.includes(fixture.reason_code));
+    if (fixture.required_by_order) assert.equal(typeof fixture.required_by_order, 'boolean');
+  });
+}
+
+for (const fixture of PURE_NEGATION_FIXTURES) {
+  test(`纯否定无转折：${fixture.name} ⇒ 仍不命中`, () => {
+    const result = evaluateHardRules(makeInput({ text: fixture.text }));
+    const entry = result.rules.find((item) => item.id === fixture.rule_id);
+    assert.ok(entry);
+    assert.equal(entry.status, 'evaluated', `不得因返修而误伤纯否定句：${fixture.text}`);
+    assert.equal(entry.matched, false);
+    assert.equal(result.decision, 'approved');
+    assert.equal(result.hard_rule_passed, true);
+  });
+}
+
+test('否定取消词只对危险两类生效，其它类别的否定护栏行为不变', () => {
+  const withCancellers = RULES.filter((rule) => rule.negation_cancellers !== undefined).map((rule) => rule.id);
+  assert.deepEqual(withCancellers, ['MR-01', 'MR-02', 'MR-03']);
+  for (const id of withCancellers) {
+    const rule = ruleById(id);
+    assert.ok(
+      ['dangerous_usage', 'label_bound_dose'].includes(rule.category),
+      `${id} 不属于危险两类，不应启用取消词`,
+    );
+    assert.deepEqual([...rule.negation_cancellers], [...DANGEROUS_NEGATION_CANCELLERS]);
+  }
+  // 非危险类的"否定 + 转折"仍按原语义压掉（返修不得改变其它类行为）。
+  const safety = evaluateHardRules(makeInput({ text: '按标签使用可以减少残留风险，但不代表完全没有残留。' }));
+  assert.equal(safety.decision, 'approved');
+  assert.equal(safety.rules.find((item) => item.id === 'MR-09').status, 'evaluated');
+});
+
+test('取消词生效可观测：evidence.cancelled_by 记录机制，与句读边界命中可区分', () => {
+  const byCanceller = evaluateHardRules(makeInput({ text: '不要单独用而要混配' }));
+  const cancellerEntry = byCanceller.rules.find((item) => item.id === 'MR-01');
+  assert.equal(cancellerEntry.status, 'hit');
+  assert.equal(cancellerEntry.evidence.cancelled, 1);
+  assert.equal(typeof cancellerEntry.evidence.cancelled_by, 'string');
+  assert.ok(DANGEROUS_NEGATION_CANCELLERS.includes(cancellerEntry.evidence.cancelled_by));
+
+  const byBoundary = evaluateHardRules(makeInput({ text: '不要单独用，要混配' }));
+  const boundaryEntry = byBoundary.rules.find((item) => item.id === 'MR-01');
+  assert.equal(boundaryEntry.status, 'hit');
+  assert.equal(boundaryEntry.evidence.cancelled, 0);
+  assert.equal(boundaryEntry.evidence.cancelled_by, null);
+});
+
+test('确定性口径：除墙钟诊断字段外两次求值完全相同（elapsed_ms 是唯一允许变动的字段）', () => {
+  // 判定字段必须逐字节可复现；`budget.elapsed_ms` 取自真实墙钟，属诊断信息，非判定依据。
+  const stripClock = (result) => {
+    const { budget, ...rest } = result;
+    return { ...rest, budget: { ms: budget.ms, exhausted: budget.exhausted } };
+  };
+  assert.equal(typeof stripClock(evaluateHardRules(makeInput())).budget.elapsed_ms, 'undefined');
+  for (const fixture of NEGATION_CANCELLATION_FIXTURES) {
+    const input = () => makeInput({ text: fixture.text });
+    const first = JSON.stringify(stripClock(evaluateHardRules(input())));
+    for (let round = 0; round < 10; round += 1) {
+      assert.equal(
+        JSON.stringify(stripClock(evaluateHardRules(input()))),
+        first,
+        `${fixture.name} 第 ${round} 次求值不一致`,
+      );
+    }
   }
 });
 

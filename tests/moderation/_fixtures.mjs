@@ -121,6 +121,96 @@ export const RULE_TEXT_FIXTURES = Object.freeze([
   },
 ]);
 
+/**
+ * 危险类"否定 + 转折/祈使"用例（fail-open 方向返修，2026-10-11）。
+ *
+ * 这些句式里**真正的危险请求在转折词之后**，否定护栏不得把它们压成"未命中"。
+ * `required_by_order=true` 的三条是返修令指定必须判 `rejected` 的形态；
+ * 其余四条是**无标点**形态——返修前实测为 `approved`（真实漏拦），返修后必须 `rejected`。
+ * `mechanism` 记录该条**靠什么机制**命中：`boundary` 靠句读边界（否定词在上一句读段），
+ * `canceller` 靠取消词顶掉否定。
+ */
+export const NEGATION_CANCELLATION_FIXTURES = Object.freeze([
+  {
+    name: '不要单独用，要混配',
+    rule_id: 'MR-01',
+    reason_code: 'DANGEROUS_MIX',
+    text: '不要单独用，要混配',
+    required_by_order: true,
+    mechanism: 'boundary',
+  },
+  {
+    name: '不建议这么打，但可以混着打',
+    rule_id: 'MR-01',
+    reason_code: 'DANGEROUS_MIX',
+    text: '不建议这么打，但可以混着打',
+    required_by_order: true,
+    mechanism: 'boundary',
+  },
+  {
+    name: '别按标签来，随便加量就行',
+    rule_id: 'MR-02',
+    reason_code: 'DOSE_UNBOUNDED',
+    text: '别按标签来，随便加量就行',
+    required_by_order: true,
+    mechanism: 'boundary',
+  },
+  {
+    name: '不要单独用而要混配（无标点）',
+    rule_id: 'MR-01',
+    reason_code: 'DANGEROUS_MIX',
+    text: '不要单独用而要混配',
+    required_by_order: false,
+    mechanism: 'canceller',
+  },
+  {
+    name: '不建议这么打但可以混着打（无标点）',
+    rule_id: 'MR-01',
+    reason_code: 'DANGEROUS_MIX',
+    text: '不建议这么打但可以混着打',
+    required_by_order: false,
+    mechanism: 'canceller',
+  },
+  {
+    name: '别按标签来但可以随便加量（无标点）',
+    rule_id: 'MR-02',
+    reason_code: 'DOSE_UNBOUNDED',
+    text: '别按标签来但可以随便加量',
+    required_by_order: false,
+    mechanism: 'canceller',
+  },
+  {
+    name: '不能脱离标签而随意加倍（无标点）',
+    rule_id: 'MR-03',
+    reason_code: 'DOSE_NOT_BOUND_TO_LABEL',
+    text: '不能脱离标签而随意加倍',
+    required_by_order: false,
+    mechanism: 'canceller',
+  },
+]);
+
+/**
+ * 纯否定、**无**转折/祈使词：返修后必须仍然不命中。
+ * 用于证明危险类没有退化成"只要出现否定词就拦"的粗暴规则（避免误伤安全科普）。
+ */
+export const PURE_NEGATION_FIXTURES = Object.freeze([
+  {
+    name: '不要随意混配（既有夹具）',
+    rule_id: 'MR-01',
+    text: '除草剂不要随意混配，必须按标签单独使用，注意轮换不同作用机理的药剂。',
+  },
+  {
+    name: '不要在高温时段随意混配（备用句式）',
+    rule_id: 'MR-01',
+    text: '不要在高温时段随意混配，容易产生药害。',
+  },
+  {
+    name: '不能脱离标签使用（既有夹具）',
+    rule_id: 'MR-03',
+    text: '用量必须绑定登记制剂与标签条件，不能脱离标签使用。',
+  },
+]);
+
 /** 一条结构完全合法、但类别/原因码可自定义的追加规则（用于版本重审与隔离用例）。 */
 export function makeExtraRule(overrides = {}) {
   return {

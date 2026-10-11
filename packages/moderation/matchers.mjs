@@ -8,33 +8,70 @@
  *   3) 匹配器实现本身参与 `rule_version` 派生（见 rule-version.mjs）：改这里 = 改规则集 = 旧结果失效。
  *
  * 每个匹配器返回 `{ matched, field, offset, length, suppressed }`；
- * `suppressed` 记录被"否定护栏"压掉的命中数（用于回归与过度拦截审计）。
+ * `suppressed` 记录被"否定护栏"压掉的命中数，`cancelled` 记录被"取消词"顶掉否定的次数
+ * （两者都只用于回归与过度拦截审计，不回传命中原文）。
  */
 
-/** 句读边界：否定词不能跨越标点去否定后文。 */
+/** 句读边界：否定词与取消词都必须落在同一句读段内。 */
 const BOUNDARY = /[，。；！？、,.!?;:\n\r（）()【】\[\]「」《》""'']/;
 
-/** 默认否定词。 */
+/**
+ * 默认否定词。同一位置优先取最长匹配：`不要` 必须整体识别，
+ * 否则会把 `不要` 里的 `要` 误当成"取消词"（见 DANGEROUS_NEGATION_CANCELLERS）。
+ */
 const DEFAULT_NEGATORS = Object.freeze([
-  '不',
-  '别',
+  '不建议',
+  '没有必要',
+  '不要',
+  '不用',
+  '不必',
+  '无需',
+  '不能',
   '禁止',
   '严禁',
+  '避免',
+  '没有',
+  '别',
+  '甭',
   '勿',
   '莫',
-  '避免',
-  '无需',
-  '没有必要',
-  '没有',
+  '不',
+]);
+
+/**
+ * **危险类专用**的"否定取消词"。
+ *
+ * 背景（fail-open 方向返修）：「不要单独用而要混配」「不建议这么打但可以混着打」这类
+ * **否定 + 转折/祈使**句式中，真正的危险请求在转折词**之后**；否定护栏若整句压掉，
+ * 等于把危险用量/混配请求放行。危险用法与用量两类（`dangerous_usage` / `label_bound_dose`）
+ * **宁可多拦**：同一句读段内、否定词之后出现下列任一词，否定护栏即失效，命中照常成立。
+ *
+ * 代价（如实事先声明）：`不要随意混配需要注意…` 这类**无标点**且恰好含「要／应」的句子
+ * 可能被误拦。危险类接受该代价——漏拦（放行危险用量/混配）远比误拦严重。
+ * 该列表只挂在 MR-01／MR-02／MR-03 上，其它类别的否定护栏行为完全不变。
+ */
+export const DANGEROUS_NEGATION_CANCELLERS = Object.freeze([
+  '但',
+  '但是',
+  '而',
+  '而是',
+  '要',
+  '应',
+  '应该',
+  '建议',
+  '最好',
 ]);
 
 /** 单条规则最多接受的匹配数（防止病态输入放大成本）。 */
 const MAX_MATCHES = 64;
 
+/** 取消词向后扫描的上限（限制在同一句读段内，且限制单条规则成本）。 */
+const FORWARD_CLAUSE_LIMIT = 64;
+
 /** 匹配器版本：改动匹配器语义时必须 +1（并会同步改变 rule_version）。 */
 export const MATCHER_REVISIONS = Object.freeze({
   any_pattern: 1,
-  negation_guarded_pattern: 1,
+  negation_guarded_pattern: 2,
   address_chain: 1,
   coordinate_pair: 1,
   commerce_link: 1,
@@ -62,8 +99,19 @@ function firstMatch(text, patterns) {
   return null;
 }
 
-/** 命中窗口前是否存在否定词（以标点为界回溯）。 */
-function isNegated(text, index, negators, window = 12) {
+/**
+ * 否定护栏判定。
+ *
+ * 第一步与旧实现完全一致：在命中点之前 **12 字符窗口内、以句读边界截断** 找否定词。
+ * 第二步是本次返修新增的"取消"：**仅当规则声明了 `negation_cancellers`**（危险两类）时，
+ * 从否定词之后一直看到本句读段末尾（含命中词之后，因为有「不能脱离标签**而**随意加倍」
+ * 这种转折词出现在命中词之后的形态），若出现取消词，则**否定失效、命中成立**。
+ *
+ * @returns {{ negated: boolean, cancelled_by: string|null }}
+ */
+function evaluateNegation(text, index, rule) {
+  const negators = rule.negators ?? DEFAULT_NEGATORS;
+  const window = rule.negation_window ?? 12;
   const start = Math.max(0, index - window);
   const before = text.slice(start, index);
   let cut = -1;
@@ -74,7 +122,38 @@ function isNegated(text, index, negators, window = 12) {
     }
   }
   const windowText = cut === -1 ? before : before.slice(cut + 1);
-  return negators.some((negator) => windowText.includes(negator));
+  const windowOffset = cut === -1 ? start : start + cut + 1;
+
+  // 取最右侧的否定词（同一位置取最长），取消词只从它之后开始找。
+  let negatorIndex = -1;
+  let negatorLength = 0;
+  for (let i = 0; i < windowText.length; i += 1) {
+    for (const negator of negators) {
+      if (!windowText.startsWith(negator, i)) continue;
+      if (i > negatorIndex || (i === negatorIndex && negator.length > negatorLength)) {
+        negatorIndex = i;
+        negatorLength = negator.length;
+      }
+    }
+  }
+  if (negatorIndex === -1) return { negated: false, cancelled_by: null };
+
+  const cancellers = rule.negation_cancellers;
+  if (Array.isArray(cancellers) && cancellers.length > 0) {
+    const from = windowOffset + negatorIndex + negatorLength;
+    const stop = Math.min(text.length, index + FORWARD_CLAUSE_LIMIT);
+    let clauseEnd = stop;
+    for (let i = index; i < stop; i += 1) {
+      if (BOUNDARY.test(text[i])) {
+        clauseEnd = i;
+        break;
+      }
+    }
+    const afterNegator = text.slice(from, clauseEnd);
+    const cancelledBy = cancellers.find((word) => afterNegator.includes(word));
+    if (cancelledBy !== undefined) return { negated: false, cancelled_by: cancelledBy };
+  }
+  return { negated: true, cancelled_by: null };
 }
 
 /** 任一模式命中（不设否定护栏）。 */
@@ -85,34 +164,54 @@ export function anyPattern(text, rule) {
 }
 
 /**
- * 任一模式命中，但被"否定护栏"压掉的匹配不算命中。
+ * 任一模式命中，但被"否定护栏"压掉的匹配不算命中；**危险类**的否定可被取消词顶掉。
  *
- * 已知边界（如实登记）：这是**确定性启发式**，不是语义理解。
- * "不要把 A 和 B 混配" 被压掉（正确）；而 "不要单独用，要混配" 这种
- * "否定 + 转折" 句式在同一句读段内仍可能被误压掉（漏拦）。
- * 因此本层**不承担**语义级判断，语义覆盖由后续模型层增量补齐；
- * 漏拦风险登记在 docs/moderation/README.md 的已知限制一节。
+ * 行为分层（如实说明）：
+ *   - 未声明 `negation_cancellers` 的规则（MR-04 无护栏；MR-07／MR-08／MR-09 走本匹配器）
+ *     **完全保持原有语义**：「不代表完全没有残留」仍被压掉，不因本次返修而改变；
+ *   - 声明了取消词的规则（MR-01／MR-02／MR-03）在"否定 + 转折/祈使"句式中**不再压掉命中**，
+ *     宁可多拦——漏拦会放行危险混配与无依据用量，比误拦严重得多。
+ *
+ * 仍属**确定性启发式**，不是语义理解：取消词列表是有限闭集，未列出的转折说法
+ * （如"不如""倒不如"）仍可能被压掉；语义级覆盖由后续模型层增量补齐。
+ * 该残留限制登记在 docs/moderation/README.md 的已知限制一节。
  */
 export function negationGuardedPattern(text, rule) {
-  const negators = rule.negators ?? DEFAULT_NEGATORS;
-  const window = rule.negation_window ?? 12;
   let suppressed = 0;
+  let cancelled = 0;
   let matchCount = 0;
   for (const pattern of rule.patterns ?? []) {
     const regex = toGlobalRegExp(pattern);
     let found = regex.exec(text);
     while (found !== null && matchCount < MAX_MATCHES) {
       matchCount += 1;
-      if (isNegated(text, found.index, negators, window)) {
-        suppressed += 1;
-      } else {
-        return { matched: true, field: 'text', offset: found.index, length: found[0].length, suppressed };
+      const verdict = evaluateNegation(text, found.index, rule);
+      if (!verdict.negated) {
+        if (verdict.cancelled_by !== null) cancelled += 1;
+        return {
+          matched: true,
+          field: 'text',
+          offset: found.index,
+          length: found[0].length,
+          suppressed,
+          cancelled,
+          cancelled_by: verdict.cancelled_by,
+        };
       }
+      suppressed += 1;
       if (found.index === regex.lastIndex) regex.lastIndex += 1;
       found = regex.exec(text);
     }
   }
-  return { matched: false, field: 'text', offset: null, length: 0, suppressed };
+  return {
+    matched: false,
+    field: 'text',
+    offset: null,
+    length: 0,
+    suppressed,
+    cancelled,
+    cancelled_by: null,
+  };
 }
 
 const SEGMENT_SPLIT = /[，。；！？,;!?\n\r、]/;

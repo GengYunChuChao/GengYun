@@ -18,7 +18,7 @@
  *
  * 隐私说明：规则的 reason_code 与证据**只含偏移**，不含命中原文（见 matchers.mjs）。
  */
-import { MATCHERS, MATCHER_REVISIONS } from './matchers.mjs';
+import { DANGEROUS_NEGATION_CANCELLERS, MATCHERS, MATCHER_REVISIONS } from './matchers.mjs';
 import {
   ALL_REASON_CODES,
   REASON_CODE_MAX_LENGTH,
@@ -36,7 +36,8 @@ export const RULES = Object.freeze([
     title: '危险混配：要求把多种药剂混在一起施用',
     description:
       '命中"把 A 和 B 一起打""三瓶药混着打""混配／复配／交叉混用"等混配诉求。' +
-      '带否定护栏：「不要随意混配」这类同句读段内相邻否定不命中。',
+      '带否定护栏：「不要随意混配」这类同句读段内相邻否定不命中；' +
+      '但危险类**可被转折/祈使词取消否定**：「不要单独用而要混配」仍命中（宁可多拦）。',
     severity: 'block',
     matcher: 'negation_guarded_pattern',
     patterns: [
@@ -46,6 +47,7 @@ export const RULES = Object.freeze([
       /互相混用|交叉混用|混合使用/,
       /(?:把|将)[^，。；]{0,10}(?:和|跟|与)[^，。；]{0,10}(?:一起|同时)(?:打|喷|用|兑)/,
     ],
+    negation_cancellers: DANGEROUS_NEGATION_CANCELLERS,
   },
   {
     id: 'MR-02',
@@ -54,7 +56,8 @@ export const RULES = Object.freeze([
     title: '脱离标签的用量：随意加量、"加多少都行"',
     description:
       '命中"随便加""加多少都行""不用计量""浓度高点没关系"等不定量诉求；' +
-      '这类诉求跳过登记制剂与标签条件，属于不得生成的用量口径。',
+      '这类诉求跳过登记制剂与标签条件，属于不得生成的用量口径。' +
+      '危险类否定护栏可被转折/祈使词取消（宁可多拦）。',
     severity: 'block',
     matcher: 'negation_guarded_pattern',
     patterns: [
@@ -64,6 +67,7 @@ export const RULES = Object.freeze([
       /(?:加|用|兑)(?:多|大)(?:点|些)(?:也)?(?:没事|没关系|无妨|不要紧)/,
       /浓度(?:高点|大点|多点)?(?:没|无)(?:关系|事|妨)/,
     ],
+    negation_cancellers: DANGEROUS_NEGATION_CANCELLERS,
   },
   {
     id: 'MR-03',
@@ -72,7 +76,8 @@ export const RULES = Object.freeze([
     title: '用量脱离登记制剂与标签条件',
     description:
       '命中"不用看标签""不管登记条件""直接加倍"等脱离标签／登记条件的用量指令；' +
-      '原文用量必须绑定单位制剂与标签条件，此类内容不得发布。',
+      '原文用量必须绑定单位制剂与标签条件，此类内容不得发布。' +
+      '危险类否定护栏可被转折/祈使词取消（宁可多拦）：如「不能脱离标签而随意加倍」。',
     severity: 'block',
     matcher: 'negation_guarded_pattern',
     patterns: [
@@ -82,6 +87,7 @@ export const RULES = Object.freeze([
       /(?:不用|不必|无需)(?:管|看)(?:什么|啥)?(?:登记)?(?:制剂|条件)/,
       /(?:直接|就)(?:说|给|用|按)(?:我|这个)?(?:剂量|用量|毫升|克数)(?:就)?(?:行|可以|好)/,
     ],
+    negation_cancellers: DANGEROUS_NEGATION_CANCELLERS,
   },
   {
     id: 'MR-04',
@@ -276,6 +282,19 @@ export function validateRuleCatalog(rules = RULES, matchers = MATCHERS) {
             errors.push(`${where}: patterns 不得带 g/y 标志（有状态，破坏确定性）`);
           }
         }
+      }
+    }
+    // 否定取消词：只对否定护栏有效；写在不生效的匹配器上属于"看起来配了其实没用"，直接判非法。
+    if (rule.negation_cancellers !== undefined) {
+      if (rule.matcher !== 'negation_guarded_pattern') {
+        errors.push(`${where}: negation_cancellers 只对 negation_guarded_pattern 生效，当前匹配器为 ${rule.matcher}`);
+      }
+      if (
+        !Array.isArray(rule.negation_cancellers) ||
+        rule.negation_cancellers.length === 0 ||
+        rule.negation_cancellers.some((word) => typeof word !== 'string' || word.length === 0)
+      ) {
+        errors.push(`${where}: negation_cancellers 必须是非空的非空字符串数组`);
       }
     }
   }
