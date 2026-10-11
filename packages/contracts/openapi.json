@@ -10851,6 +10851,321 @@
         "x-version-required": false,
         "x-task": "GY-I01"
       }
+    },
+    "/media/uploads/{id}/content": {
+      "put": {
+        "operationId": "receivePrivateMediaBytes",
+        "summary": "接收私有上传实际字节",
+        "description": "仅使用UploadGrant.upload提供的PUT URL。userSession与X-Media-Access-Token同时必需；token绑定当前owner/session/auth_epoch、所有必需用途epoch及媒体revision，不是公共桶签名。无会话401，非本人或失效句柄统一404。If-Match为初始化媒体revision；Content-Length、Content-Type及实际字节须匹配初始化声明，并按用途限制长度，读取过程中同样有界。成功只接收私有对象，不代表ready、AI调用或公开。原Idempotency-Key/If-Match与完全相同字节重放前重新鉴权并校验撤回/删除；不同字节或请求409。完成请求使用回执的新ETag。取消/撤回/版本失效禁止旧PUT或迟到完成复活对象，并回收拒绝/中断对象。",
+        "tags": [
+          "media"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Media-Access-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "description": "仅通过header传输；不得放入URL或日志。与同一owner/session/auth_epoch、用途epoch、media revision绑定，最长300秒，每次重新核对当前权限。"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "name": "Content-Length",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10485760
+            },
+            "description": "声明真实字节数；实际流仍须逐块计数并按用途限制，不依赖此头放行。"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "audio/mpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "audio/wav": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "audio/aac": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "字节已接收的Media投影及当前ETag；不保证已ready，仍须complete。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "私有/授权访问no-store"
+              },
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Execution-Mode": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionMode"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": true,
+        "x-task": "GY-I06"
+      }
+    },
+    "/media/{id}/content": {
+      "get": {
+        "operationId": "readOwnerMediaContent",
+        "summary": "owner私有媒体内容读取",
+        "description": "仅使用AccessGrant.url提供的GET URL，userSession与X-Media-Access-Token同时必需；不接受URL token、不重定向原桶。每次读取重新验证同一owner、当前登录session/auth_epoch、必需用途epoch、媒体revision及ready状态，最长300秒的旧授权不能绕过撤回或删除。无会话401，非本人/不存在/过期或失效句柄统一404。图片只返回已清EXIF衍生件，音频返回受控私有对象；不开放原始图片。回应当前媒体ETag与no-store。",
+        "tags": [
+          "media"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Media-Access-Token",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "description": "仅通过header传输；不得放入URL或日志。与同一owner/session/auth_epoch、用途epoch、media revision绑定，最长300秒，每次重新核对当前权限。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前仍有权限的私有二进制内容；不表示永久公开。",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/aac": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store"
+                },
+                "description": "私有/授权访问no-store"
+              },
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Execution-Mode": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionMode"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I06"
+      }
     }
   },
   "components": {

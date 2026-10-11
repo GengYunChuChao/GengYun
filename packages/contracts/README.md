@@ -129,3 +129,12 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 | listAuditEvents | `GET /admin/audit-events` | audit:read | 否 |
 | grantCommunityMediaAccess | `POST /community/media-access` | user | 是 |
 | readCommunityMediaContent | `GET /community/media/{grant_id}/content` | user | 否 |
+
+## GY-I06 私有字节传输增补
+
+这是原JSON授权契约的新增传输路径，既有Media/AccessGrant字段不变。参考媒体模块原先只生成示例URL，不能作为HTTP已实现证据；实现与迁移影响见[ADR](../../docs/architecture/adr-gy-i06-local-private-transport.md)。
+
+| operationId | 方法与路径（前缀/api/v1） | 权限 | 版本 |
+| --- | --- | --- | --- |
+| receivePrivateMediaBytes | `PUT /media/uploads/{id}/content` | userSession＋header短效token | If-Match必需 |
+| readOwnerMediaContent | `GET /media/{id}/content` | userSession＋header短效token | 当前媒体版本重新验证 |
