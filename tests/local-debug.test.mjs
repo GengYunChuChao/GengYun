@@ -97,6 +97,7 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'custom-tab-bar/index.wxss',
     'utils/reference.js',
     'utils/profile-api.js',
+    'utils/location-region.js',
     'utils/knowledge-api.js',
     'utils/font-scale.js',
     'utils/system-font.js',

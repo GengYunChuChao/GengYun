@@ -19,6 +19,12 @@
     "navigationBarTextStyle": "white",
     "backgroundColor": "#F4F9F4"
   },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于即时选择所在地区（浙江市县）；不持续跟踪，不保存原始坐标"
+    }
+  },
+  "requiredPrivateInfos": ["getLocation"],
   "tabBar": {
     "color": "#555555",
     "selectedColor": "#1F7A45",

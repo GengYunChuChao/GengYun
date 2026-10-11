@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
 const root=resolve(import.meta.dirname,'../..');
 const crop=[{id:'crop_rice',name:'水稻'}];
 const regions=[{code:'330000',name:'浙江省',parent_code:null,catalog_version:'v1'},{code:'330100',name:'杭州市',parent_code:'330000',catalog_version:'v1'},{code:'330102',name:'上城区',parent_code:'330100',catalog_version:'v1'}];
@@ -33,5 +34,80 @@ test('same token after clear still invalidates previous request generation',asyn
 test('401 closes identity and starts real login gate, provider failure does not invent data',async()=>{const f=fixture();await f.ready();f.choose();f.page.onSave();f.answer(f.last('/me/profile'),'SESSION_EXPIRED',401);await flush();assert.equal(f.page.data.guest,true);assert.equal(f.page.data.profile,null);assert.equal(f.routes.at(-1),'/pages/login/login');});
 test('empty catalog remains empty; repeated cursor is a visible error, not partial success',async()=>{const f=fixture();f.seed();f.page.onShow();f.answer(f.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:[],next_cursor:null});f.answer(f.last('/catalog/regions'),{items:regions.slice(0,1),next_cursor:'repeat'});await flush();f.answer(f.last('/catalog/regions'),{items:regions.slice(1,2),next_cursor:'repeat'});await flush();assert.equal(f.page.data.loaded,false);assert.equal(f.page.data.regions.length,0);assert.ok(f.page.data.message);});
 test('manual city selection is valid without any location authorization API',async()=>{const f=fixture();await f.ready();f.page.onEdit();f.page.onCrop({detail:{value:0}});f.page.onCity({detail:{value:0}});f.page.onSave();assert.equal(f.last('/me/profile').data.region_code,'330100');assert.equal('getLocation' in f.wx,false);});
+
+// —— GY-I05 收尾（Refs #5）：定位只即时选地区，五类失败分支都保留手选，坐标不出内存 ——
+// 合成哨兵值，不是任何真实位置；仅用于证明坐标不进入页面状态/存储/请求。
+const sentinel={latitude:123.4567,longitude:89.0123};
+for(const [label,errMsg,expected] of [['授权被拒绝','getLocation:fail auth deny','未获得定位授权'],['用户取消','getLocation:fail cancel','已取消定位'],['定位超时','getLocation:fail timeout','定位超时'],['平台未声明隐私接口','getLocation:fail the api need to be declared in the requiredPrivateInfos field in app.json','定位不可用或平台不支持']])
+test('location '+label+' keeps manual selection and never sends coordinates',async()=>{
+ const f=fixture();await f.ready();f.wx.getLocation=o=>o.fail({errMsg});
+ f.page.onEdit();f.page.onLocate();await flush();
+ assert.ok(f.page.data.message.includes(expected),f.page.data.message);
+ assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
+ f.page.onCrop({detail:{value:'0'}});f.page.onCity({detail:{value:'0'}});f.page.onCounty({detail:{value:'0'}});f.page.onSave();
+ const put=f.last('/me/profile');assert.equal(put.method,'PUT');
+ assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});
+ assert.deepEqual(Object.keys(put.data).sort(),['crop_id','region_catalog_version','region_code']);
+ assert.equal(JSON.stringify(f.requests).includes('123.4567'),false);
+ assert.equal('startLocationUpdate' in f.wx,false);assert.equal('onLocationChange' in f.wx,false);
+});
+test('location without a conversion resource falls back to manual selection and stores/returns no coordinates',async()=>{
+ const f=fixture();await f.ready();const writes=[];const raw=f.wx.setStorageSync;f.wx.setStorageSync=(k,v)=>{writes.push([k,v]);return raw(k,v)};
+ f.wx.getLocation=o=>o.success(sentinel);f.page.onEdit();f.page.onLocate();await flush();
+ assert.ok(f.page.data.message.includes('地区转换资源尚未接入'),f.page.data.message);
+ assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
+ assert.equal(JSON.stringify(f.page.data).includes('123.4567'),false);
+ assert.equal(JSON.stringify(writes).includes('123.4567'),false);
+ assert.equal(JSON.stringify(f.requests).includes('123.4567'),false);
+ f.page.onCrop({detail:{value:'0'}});f.page.onCity({detail:{value:'0'}});f.page.onCounty({detail:{value:'0'}});f.page.onSave();
+ assert.equal(f.last('/me/profile').data.region_code,'330102');
+});
+test('out-of-coverage and converter failure both keep the Zhejiang manual catalog usable',async()=>{
+ const out=fixture();await out.ready();out.page.regionConverter=()=>null;out.wx.getLocation=o=>o.success(sentinel);
+ out.page.onEdit();out.page.onLocate();await flush();
+ assert.ok(out.page.data.message.includes('不在首版覆盖的浙江省'),out.page.data.message);assert.equal(out.page.data.editing,true);
+ out.page.onCrop({detail:{value:'0'}});out.page.onCity({detail:{value:'0'}});out.page.onSave();
+ assert.equal(out.last('/me/profile').data.region_code,'330100');
+ const bad=fixture();await bad.ready();bad.page.regionConverter=()=>{throw new Error('synthetic converter failure')};bad.wx.getLocation=o=>o.success(sentinel);
+ bad.page.onEdit();bad.page.onLocate();await flush();
+ assert.ok(bad.page.data.message.includes('定位不可用或平台不支持'),bad.page.data.message);
+ bad.page.onCrop({detail:{value:'0'}});bad.page.onCity({detail:{value:'0'}});bad.page.onSave();
+ assert.equal(bad.last('/me/profile').data.region_code,'330100');
+});
+test('location preselects a Zhejiang county from the loaded catalog, then the user confirms exactly one save',async()=>{
+ const f=fixture();await f.ready();const seen=[];
+ f.page.regionConverter=(lat,lng)=>{seen.push([lat,lng]);return '330102'};f.wx.getLocation=o=>o.success(sentinel);
+ f.page.onEdit();f.page.onLocate();await flush();
+ assert.deepEqual(seen,[[sentinel.latitude,sentinel.longitude]]);
+ assert.equal(f.page.data.cityIndex,0);assert.equal(f.page.data.countyIndex,0);assert.equal(f.page.data.counties[0].code,'330102');
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+ assert.equal(JSON.stringify(f.page.data).includes('123.4567'),false);
+ f.page.onCrop({detail:{value:'0'}});f.page.onSave();f.page.onSave();
+ const put=f.last('/me/profile');assert.equal(put.method,'PUT');
+ assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);
+ assert.equal(JSON.stringify(put.header).includes('123.4567'),false);
+ assert.equal(new URL(put.url).pathname,'/api/v1/me/profile');
+});
+test('guest cannot edit, save or locate: zero writes, no location call, no identity or coordinate fields',async()=>{
+ const f=fixture();let located=0;f.wx.getLocation=()=>{located++};
+ f.page.onShow();await flush();
+ assert.equal(f.page.data.guest,true);assert.equal(f.routes.at(-1),'/pages/login/login');
+ f.page.onEdit();f.page.onSave();f.page.onLocate();await flush();
+ assert.equal(located,0);assert.equal(f.page.data.editing,false);
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+ assert.equal(JSON.stringify(f.requests).includes('user_id'),false);
+ assert.equal(/latitude|longitude|owner_id|role=/.test(JSON.stringify(f.requests.map(r=>r.url))),false);
+});
+test('location helper exposes no tracking API and returns only status/region code',async()=>{
+ const locationRegion=createRequire(import.meta.url)(root+'/miniprogram/utils/location-region.js');
+ const success=o=>o.success(sentinel);
+ assert.deepEqual(JSON.parse(JSON.stringify(await locationRegion.locate({getLocation:success},()=>'330102'))),{status:'ok',region_code:'330102'});
+ assert.deepEqual(JSON.parse(JSON.stringify(await locationRegion.locate({getLocation:success},()=>null))),{status:'out_of_coverage'});
+ assert.deepEqual(JSON.parse(JSON.stringify(await locationRegion.locate({getLocation:success},()=>{throw new Error('x')}))),{status:'failed'});
+ assert.deepEqual(JSON.parse(JSON.stringify(await locationRegion.locate({},()=>'330102'))),{status:'failed'});
+ for(const name of ['startLocationUpdate','onLocationChange','startLocationUpdateBackground','chooseLocation'])assert.equal(typeof locationRegion[name],'undefined',name);
+ assert.equal(JSON.stringify(locationRegion.MESSAGES).includes('预警'),false);
+});
 
 test('reference handoff preserves only existing crop/region conditions and refuses identity params',()=>{const f=fixture(); const navPath=root+'/miniprogram/utils/navigation.js';const m={exports:{}};vm.runInNewContext(readFileSync(navPath,'utf8'),{module:m});assert.equal(m.exports.normalizeTarget('/pages/reference/reference?crop_id=crop_rice&region_code=330102'),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');for(const q of ['crop_id=crop_rice&region_code=330102&user_id=x','crop_id=crop_rice&region_code=440000','owner=x','redirect=http://evil'])assert.equal(m.exports.normalizeTarget('/pages/reference/reference?'+q),null)});
