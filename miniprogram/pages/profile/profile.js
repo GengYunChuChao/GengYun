@@ -2,7 +2,7 @@ const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const api = require('../../utils/profile-api')
-function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '未设置', regionName: '未设置', editing: false, busy: false, loaded: false, message: '', needsReload: false, retryPending: false } }
+function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, loaded: false, message: '', needsReload: false, retryPending: false } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
   return messages[code] || '档案暂时无法读取或保存，请重试。'
