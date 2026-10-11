@@ -1,0 +1,256 @@
+{
+  "schema": "gengyun.research.label-evidence-increment.v1",
+  "audit_version": "gy-i03-label-evidence-increment-20261011.v1",
+  "observed_at": "2026-10-11",
+  "timezone": "Asia/Hong_Kong",
+  "baseline_main": "487918856a0099d6c7ee5f083069bd415b095bee",
+  "baseline_index": "gy-i03-public-label-index-20261011.json",
+  "notice": "隔离研究增量，不作为生产种子、标签source_version、适用许可或用量建议。基线标签复读不计新增。",
+  "new_sources": [
+    {
+      "id": "national-reference-pdf-2026",
+      "title": "禁限用农药名录、禁停用兽药名录",
+      "publisher": "农业农村部农产品质量安全监管司",
+      "landing_url": "https://jgs.moa.gov.cn/gzdt/jgjdt/202608/t20260805_6486465.htm",
+      "viewer_url": "https://www.moa.gov.cn/zxfile/reader?file=https%3A%2F%2Fjgs.moa.gov.cn%2Fgzdt%2Fjgjdt%2F202608%2FP020260825525332962180.pdf",
+      "original_url": "https://jgs.moa.gov.cn/gzdt/jgjdt/202608/P020260825525332962180.pdf",
+      "retrieval_method": "unauthenticated HTTPS GET of original PDF; pypdf text extraction; page1 PNG rendered and visually checked",
+      "http_status": 200,
+      "content_type": "application/pdf",
+      "bytes": 653721,
+      "original_bytes_sha256": "fb396bd22da1c224fefeddb69baacd075ffe0f407a101be714d539ced2eeea2a",
+      "pages": 2,
+      "page1_visually_checked": true,
+      "page2_scope": "veterinary; excluded",
+      "version_fields": {
+        "landing_display_date": "2026-08-05",
+        "pdf_creation_date": "D:20260804121250+08'00'",
+        "pdf_mod_date": "D:20260804121251+08'00'",
+        "http_last_modified": "Tue, 25 Aug 2026 06:34:52 GMT",
+        "http_date": "Sun, 11 Oct 2026 06:20:27 GMT",
+        "http_etag": "\"6a8d378c-9f999\"",
+        "page1_footer_year": "2026"
+      },
+      "body_summary": "农业农村部公开附件共两页。页1为农药禁限用名录，禁用表60种、限制表20种，限制范围与品种须对应读取；页2为兽药名录，不纳入除草剂范围。页1禁用表出现2,4-滴丁酯，与候选PD20211636中的2,4-滴异辛酯名称不同；本摘要不判定该候选适用、合法或安全。",
+      "body_summary_sha256": "6b29a12c8b7ff6b1e30cabf3923f80ff4c8956ad79cb507d9f600dc0a08140ec",
+      "hash_semantics": "original_bytes_sha256 hashes full fetched PDF bytes; body_summary_sha256 hashes only our exact UTF-8 summary, no trailing newline; neither identifies a label version",
+      "permission_status": "not_established; public access and landing rights notice do not grant reuse/training licence",
+      "original_bytes_committed": false,
+      "scope_limit": "national reference snapshot only; later notices, per-formulation eligibility and Zhejiang coverage unverified"
+    },
+    {
+      "id": "national-enforcement-notice-2026",
+      "title": "农业农村部办公厅关于集中整治禁限用农药非法生产经营使用的通知",
+      "publisher": "农业农村部办公厅；发布页面来源为种植业管理司",
+      "original_url": "https://zzys.moa.gov.cn/gzdt/202604/t20260428_6483747.htm",
+      "retrieval_method": "browser tool rendered actual page body; cache independence and direct origin HTML not verified",
+      "landing_display_date": "2026-04-28",
+      "body_signature_date": "2026-03-19",
+      "body_field_locator": "整治范围、重点任务、正文末尾落款",
+      "body_summary": "通知区分非法生产、销售和添加，提及经营资格、线上经营和科学用药指导；特定高毒品种库存处理带时间条件。网页日期与正文落款日期不同，不能直接当制剂登记日期。",
+      "body_summary_sha256": "b7030fb66f702b172582a4e7f88cf0f3ca9523aa44d65b74cd13bc44e622ab14",
+      "original_bytes_sha256": null,
+      "original_bytes_committed": false,
+      "permission_status": "not_established",
+      "scope_limit": "policy context, not label approval or formulation-specific permission"
+    }
+  ],
+  "selected_labels": [
+    {
+      "registration_number": "PD20211636",
+      "baseline_identity": {
+        "registered_name": "乙·嗪·滴辛酯",
+        "holder": "天津博克百胜科技有限公司",
+        "form": "乳油",
+        "ingredients_observed": "乙草胺55.3%；2,4-滴异辛酯20.2%；嗪草酮6.5%",
+        "in_scope_scenes_observed": [
+          "春大豆田",
+          "春玉米田"
+        ],
+        "approved_at": "2021-08-25",
+        "reapproved_at": "2024-09-29"
+      },
+      "baseline_identity_provenance": "gy-i03-public-label-index-20261011.json#/labels; prior browser-rendered official body, not new origin snapshot",
+      "canonical_label_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20211636",
+      "field_locators": {
+        "identity": "页面首部登记证号、持有人、名称、剂型及成分",
+        "scenes": "使用范围和使用方法表的作物/场所字段；不据此放行",
+        "approval_dates": "页面尾部核准日期和重新核准日期；不是登记有效期",
+        "toxicity": "毒性及其标识的图片链接"
+      },
+      "new_image_locator": {
+        "url": "https://www.icama.cn/BasicdataSystem/lib/images/dx3.JPG",
+        "method": "browser tool followed image link from selected label; shared asset direct GET once returned 403",
+        "body_obtained": false,
+        "toxicity_value": null
+      },
+      "registration_valid_from": null,
+      "registration_valid_to": null,
+      "current_full_approved_label_obtained": false,
+      "production_source_version": null,
+      "review_status": "unverified",
+      "national_reference_attachment_obtained": true,
+      "national_restriction_review_complete": false,
+      "zhejiang_restriction_review_complete": false,
+      "licensed": false,
+      "usable_as_dose": false
+    },
+    {
+      "registration_number": "PD20082322",
+      "baseline_identity": {
+        "registered_name": "精异丙甲草胺",
+        "holder": "先正达（苏州）作物保护有限公司",
+        "form": "乳油",
+        "ingredients_observed": "精异丙甲草胺960克/升",
+        "in_scope_scenes_observed": [
+          "冬油菜田",
+          "夏大豆田",
+          "春大豆田",
+          "夏玉米田",
+          "春玉米田"
+        ],
+        "approved_at": "2008-12-01",
+        "reapproved_at": "2026-04-17"
+      },
+      "baseline_identity_provenance": "gy-i03-public-label-index-20261011.json#/labels; prior browser-rendered official body, not new origin snapshot",
+      "canonical_label_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20082322",
+      "field_locators": {
+        "identity": "页面首部登记证号、持有人、名称、剂型及成分",
+        "scenes": "使用范围和使用方法表的作物/场所字段；不据此放行",
+        "approval_dates": "页面尾部核准日期和重新核准日期；不是登记有效期",
+        "toxicity": "毒性及其标识的图片链接"
+      },
+      "new_image_locator": {
+        "url": "https://www.icama.cn/BasicdataSystem/lib/images/dx3.JPG",
+        "method": "browser tool followed image link from selected label; shared asset direct GET once returned 403",
+        "body_obtained": false,
+        "toxicity_value": null
+      },
+      "registration_valid_from": null,
+      "registration_valid_to": null,
+      "current_full_approved_label_obtained": false,
+      "production_source_version": null,
+      "review_status": "unverified",
+      "national_reference_attachment_obtained": true,
+      "national_restriction_review_complete": false,
+      "zhejiang_restriction_review_complete": false,
+      "licensed": false,
+      "usable_as_dose": false
+    },
+    {
+      "registration_number": "PD20141898",
+      "baseline_identity": {
+        "registered_name": "精异丙甲草胺",
+        "holder": "山东滨农科技有限公司",
+        "form": "乳油",
+        "ingredients_observed": "精异丙甲草胺960克/升",
+        "in_scope_scenes_observed": [
+          "冬油菜田",
+          "夏玉米"
+        ],
+        "approved_at": "2014-08-01",
+        "reapproved_at": "2024-06-11"
+      },
+      "baseline_identity_provenance": "gy-i03-public-label-index-20261011.json#/labels; prior browser-rendered official body, not new origin snapshot",
+      "canonical_label_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20141898",
+      "field_locators": {
+        "identity": "页面首部登记证号、持有人、名称、剂型及成分",
+        "scenes": "使用范围和使用方法表的作物/场所字段；不据此放行",
+        "approval_dates": "页面尾部核准日期和重新核准日期；不是登记有效期",
+        "toxicity": "毒性及其标识的图片链接"
+      },
+      "new_image_locator": {
+        "url": "https://www.icama.cn/BasicdataSystem/lib/images/dx3.JPG",
+        "method": "browser tool followed image link from selected label; shared asset direct GET once returned 403",
+        "body_obtained": false,
+        "toxicity_value": null
+      },
+      "registration_valid_from": null,
+      "registration_valid_to": null,
+      "current_full_approved_label_obtained": false,
+      "production_source_version": null,
+      "review_status": "unverified",
+      "national_reference_attachment_obtained": true,
+      "national_restriction_review_complete": false,
+      "zhejiang_restriction_review_complete": false,
+      "licensed": false,
+      "usable_as_dose": false
+    },
+    {
+      "registration_number": "PD20086306",
+      "baseline_identity": {
+        "registered_name": "苄嘧·丙草胺",
+        "holder": "浙江来益生物技术有限公司",
+        "form": "可湿性粉剂",
+        "ingredients_observed": "苄嘧磺隆10%；丙草胺15%",
+        "in_scope_scenes_observed": [
+          "水稻田(直播)"
+        ],
+        "approved_at": "2008-12-31",
+        "reapproved_at": null
+      },
+      "baseline_identity_provenance": "gy-i03-public-label-index-20261011.json#/labels; prior browser-rendered official body, not new origin snapshot",
+      "canonical_label_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20086306",
+      "field_locators": {
+        "identity": "页面首部登记证号、持有人、名称、剂型及成分",
+        "scenes": "使用范围和使用方法表的作物/场所字段；不据此放行",
+        "approval_dates": "页面尾部核准日期和重新核准日期；不是登记有效期",
+        "toxicity": "毒性及其标识的图片链接"
+      },
+      "new_image_locator": {
+        "url": "https://www.icama.cn/BasicdataSystem/lib/images/dx3.JPG",
+        "method": "browser tool followed image link from selected label; shared asset direct GET once returned 403",
+        "body_obtained": false,
+        "toxicity_value": null
+      },
+      "registration_valid_from": null,
+      "registration_valid_to": null,
+      "current_full_approved_label_obtained": false,
+      "production_source_version": null,
+      "review_status": "unverified",
+      "national_reference_attachment_obtained": true,
+      "national_restriction_review_complete": false,
+      "zhejiang_restriction_review_complete": false,
+      "licensed": false,
+      "usable_as_dose": false
+    }
+  ],
+  "unsuccessful_attempts": [
+    {
+      "url": "https://www.icama.cn/BasicdataSystem/lib/images/dx3.JPG",
+      "method": "one direct HTTPS GET",
+      "result": "HTTP403",
+      "scope": "shared asset; no toxicity inferred"
+    },
+    {
+      "url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/viewpd.do?pdno=PD20082322",
+      "method": "browser open",
+      "result": "page body not obtained",
+      "scope": "no validity values accepted"
+    },
+    {
+      "url": "https://www.chinapesticide.org.cn/oldfile/110844428633.pdf",
+      "method": "browser open timed out; single direct HTTPS GET failed TLS UNEXPECTED_EOF_WHILE_READING",
+      "result": "body not obtained",
+      "scope": "historical search lead only; no search-summary validity dates accepted"
+    }
+  ],
+  "summary": {
+    "selected_existing_candidates": 4,
+    "new_candidates": 0,
+    "new_full_original_official_attachments": 1,
+    "new_official_notice_bodies_browser_read": 1,
+    "new_complete_approved_current_labels": 0,
+    "toxicity_images_obtained": 0,
+    "current_registration_validity_obtained": 0,
+    "baseline_distinct_label_bodies": 24,
+    "usable_dose_cards": 0
+  },
+  "remaining_gaps": [
+    "complete current approved original labels and images for selected formulations",
+    "current registration status and validity dates",
+    "all applicable national notices and Zhejiang constraints",
+    "source reuse and training permission",
+    "independent human review and complete source_version handoff"
+  ]
+}
