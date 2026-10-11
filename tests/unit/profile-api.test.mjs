@@ -206,3 +206,85 @@ test('GY-I05 persistent profile/catalog HTTP and SQL regression (synthetic ident
     assert.equal((await put(b)).statusCode,401);
   });
 });
+
+// —— GY-I05 收尾（Refs #5）：每一条"应当拒绝"都有独立反例（negative control），
+// 并且"判定"必须被下游真正消费：被拒的请求一条都不许落库、不许同时返回成功 data。
+test('GY-I05 closeout: no session / other subject / self-reported identity / coordinates / extra fields / missing dictionary / revision conflict each rejected without writing', async t => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const {app,db,a,b,headers,put} = f;
+  const stored = async () => (await db.query('SELECT user_id,crop_id,region_code,region_catalog_version,revision FROM single_profiles ORDER BY user_id')).rows;
+  assert.equal((await put(a)).statusCode,200);
+  const baseline = await stored();
+  assert.equal(baseline.length,1);
+  assert.equal(baseline[0].revision,2);
+  const controls = [];
+  // 1. 无会话（游客）：读、目录、写都拒绝。
+  for (const url of [route,'/api/v1/catalog/crops','/api/v1/catalog/regions']) controls.push(['guest GET '+url, await app.inject({url})]);
+  controls.push(['guest PUT', await app.inject({method:'PUT',url:route,headers:{'idempotency-key':'closeout-guest-put','if-match':'"2"'},payload:{...input}})]);
+  // 2. 客户端自报身份／指向他人档案：一律拒绝，不得被当作目标主体。
+  for (const [index,extra] of [{user_id:'00000000-0000-0000-0000-000000000002'},{owner_id:'synthetic-other'},{role:'admin'},{profile_id:'synthetic-other'}].entries())
+    controls.push(['self-reported identity '+JSON.stringify(extra), await put(a,{...input,...extra},'closeout-identity-'+index,'"2"')]);
+  controls.push(['query user_id', await app.inject({url:`${route}?user_id=00000000-0000-0000-0000-000000000002`,headers:headers(a)})]);
+  // 3. 坐标字段：请求体与查询串都必须拒绝，服务端不接收原始坐标。
+  controls.push(['body coordinates', await put(a,{...input,latitude:30,longitude:120},'closeout-coordinates-body','"2"')]);
+  for (const url of [`${route}?latitude=30&longitude=120`,'/api/v1/catalog/regions?latitude=30&longitude=120','/api/v1/catalog/crops?longitude=120']) controls.push(['query coordinates', await app.inject({url,headers:headers(a)})]);
+  // 4. additionalProperties 多余字段（不含身份/坐标的普通多余字段）。
+  controls.push(['extra field', await put(a,{...input,note:'synthetic'},'closeout-extra-field','"2"')]);
+  // 5. 缺地区／缺作物／字典外字典版本。
+  const missing = [{region_code:input.region_code,region_catalog_version:input.region_catalog_version},{crop_id:input.crop_id,region_catalog_version:input.region_catalog_version},{...input,crop_id:'crop_synthetic_unknown'},{...input,region_code:'330999'},{...input,region_code:'440100'},{...input,region_catalog_version:'forged-version'}];
+  for (const [index,body] of missing.entries()) controls.push(['missing/unsupported '+JSON.stringify(body), await put(a,body,'closeout-dictionary-'+index,'"2"')]);
+  // 6. revision 冲突。
+  controls.push(['revision conflict', await put(a,input,'closeout-revision-conflict','"9"')]);
+  for (const [label,response] of controls) {
+    assert.ok([400,401,409,428].includes(response.statusCode), label+' -> '+response.statusCode+' '+response.body);
+    const body = response.json();
+    assert.equal(typeof (body.error && body.error.code),'string', label+' 缺少契约错误码');
+    assert.equal(body.data,undefined, label+' 被拒绝却同时返回成功 data');
+  }
+  assert.deepEqual(await stored(),baseline,'被拒绝的请求改写了档案（判定未被下游消费）');
+  assert.equal((await app.inject({url:route,headers:headers(a)})).json().data.revision,2);
+  assert.equal((await app.inject({url:route,headers:headers(b)})).json().data.revision,1);
+  assert.equal((await stored()).length,1,'另一个主体不应因他人请求产生档案行');
+});
+
+test('GY-I05 closeout: non-user session role is denied before any SQL, and profile edits never rewrite saved record tables (byte-identical)', async t => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const {app,db,a,headers,put} = f;
+  // 非 user 角色的会话（自报或被错误授予的角色）：服务层在事务内先拒绝。
+  const session = (await db.query("SELECT id,user_id,auth_epoch FROM sessions WHERE token_hash=decode($1,'hex')",[hashToken(a)])).rows[0];
+  const service = createProfileService(f.pool,'test-hmac-key');
+  for (const role of ['admin','guest','service','']) {
+    const identity = {userId:session.user_id,authEpoch:Number(session.auth_epoch),sessionId:session.id,role};
+    await assert.rejects(service.get({identity,token:a}), error => error.code === 'SCOPE_DENIED', 'role='+role+' GET');
+    await assert.rejects(service.put({identity,token:a},input,'"1"','closeout-role-'+role), error => error.code === 'SCOPE_DENIED', 'role='+role+' PUT');
+  }
+  // 他人会话 id 不能借用主体身份读取档案。
+  await assert.rejects(service.get({identity:{userId:session.user_id,authEpoch:Number(session.auth_epoch),sessionId:'00000000-0000-0000-0000-000000000009',role:'user'},token:a}), error => error.code === 'SESSION_EXPIRED');
+
+  // 改档案前后：除 single_profiles / idempotency_keys 外，所有已保存记录表逐字节不变。
+  const author = (await db.query("INSERT INTO public_authors(display_name) VALUES('synthetic closeout author') RETURNING id")).rows[0].id;
+  const post = (await db.query('INSERT INTO posts(author_ref,current_revision) VALUES($1,1) RETURNING id',[author])).rows[0].id;
+  await db.query("INSERT INTO post_versions(post_id,revision,title,body,crop_id,region_code) VALUES($1,1,'synthetic','snapshot','crop_rice','330102')",[post]);
+  const immutableTables = async () => {
+    const names = (await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")).rows.map(row => row.table_name).filter(name => !['single_profiles','idempotency_keys'].includes(name));
+    const dump = [];
+    for (const name of names) dump.push([name, (await db.query(`SELECT * FROM public."${name}"`)).rows.map(row => JSON.stringify(row)).sort()]);
+    return JSON.stringify(dump);
+  };
+  const records = (await db.query('SELECT * FROM post_versions WHERE post_id=$1',[post])).rows.map(row => JSON.stringify(row)).sort();
+  const before = await immutableTables();
+  assert.equal((await put(a)).statusCode,200);
+  assert.equal((await put(a,{...input,region_code:'330100'},'closeout-rewrite-region','"2"')).statusCode,200);
+  assert.equal((await put(a,{...input,crop_id:'crop_corn',region_code:'330100'},'closeout-rewrite-crop','"3"')).statusCode,200);
+  assert.deepEqual((await db.query('SELECT * FROM post_versions WHERE post_id=$1',[post])).rows.map(row => JSON.stringify(row)).sort(),records,'已保存识别/来源记录快照被改写');
+  assert.equal(await immutableTables(),before,'改档案改写了档案之外的表');
+  const profile = (await db.query('SELECT crop_id,region_code,revision FROM single_profiles WHERE user_id=$1::uuid',[session.user_id])).rows[0];
+  assert.equal(profile.revision,4,'正向对照：档案本身确实被改写');
+  assert.equal(profile.region_code,'330100');
+  // 服务端任何表都没有坐标列，档案不接收也不持久化原始坐标。
+  const coordinates = (await db.query("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' AND column_name ~* '^(latitude|longitude|lat|lng|lon|coords?|geocode|geohash|location)$'")).rows;
+  assert.deepEqual(coordinates,[],'存在疑似坐标列');
+  assert.equal((await app.inject({url:route,headers:headers(a)})).json().data.revision,4);
+});

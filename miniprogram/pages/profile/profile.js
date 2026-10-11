@@ -2,7 +2,8 @@ const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const api = require('../../utils/profile-api')
-function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, loaded: false, message: '', needsReload: false, retryPending: false } }
+const locationRegion = require('../../utils/location-region')
+function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', needsReload: false, retryPending: false } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
   return messages[code] || '档案暂时无法读取或保存，请重试。'
@@ -73,7 +74,36 @@ Page({
   },
   onCounty: function (event) { if (this.editable()) this.setData({ countyIndex: Number(event.detail.value) }) },
   useCity: function () { if (this.editable()) this.setData({ countyIndex: -1 }) },
-  onCancel: function () { if (this.editable()) this.setData({ editing: false, message: '' }) },
+  // 地区转换资源尚未接入：为 null 时定位入口只处理授权／拒绝／取消／超时并回退手选，不假装转换成功。
+  // 接入时替换为转换函数；坐标只在内存中交给它，不写入存储或请求。
+  regionConverter: null,
+  onLocate: function () {
+    if (!this.editable() || this.data.locating) return
+    const self = this, op = this._operation, b = this._subjectBinding
+    wx.showModal({ title: '使用定位选地区', content: locationRegion.EXPLAIN, confirmText: '允许并定位', cancelText: '改用手选', success: function (r) {
+      if (!self.live(op, b)) { self.identityFailure(op); return }
+      if (!r.confirm) { self.setData({ message: '已选择手选，可继续选择浙江市县。' }); return }
+      self.setData({ locating: true, message: '正在获取位置…' })
+      locationRegion.locate(wx, self.regionConverter).then(function (result) {
+        if (!self.live(op, b)) { self.identityFailure(op); return }
+        if (result.status !== 'ok') { self.setData({ locating: false, message: locationRegion.message(result.status) }); return }
+        self.applyLocatedRegion(result.region_code)
+      })
+    }, fail: function () { if (self.live(op, b)) self.setData({ locating: false, message: locationRegion.message('failed') }) } })
+  },
+  // 定位只负责预选，不自动保存：仍需用户在目录内确认后手动保存；任何失败都保留手选入口。
+  applyLocatedRegion: function (code) {
+    const regions = this.data.regions
+    const found = regions.find(function (r) { return r.code === code })
+    const city = found && found.parent_code !== null ? regions.find(function (r) { return r.code === found.parent_code }) : null
+    const isCity = !!found && regions.some(function (r) { return r.parent_code === code })
+    const selected = isCity ? found : city
+    const cityIndex = selected ? this.data.cities.findIndex(function (r) { return r.code === selected.code }) : -1
+    if (cityIndex < 0) { this.setData({ locating: false, message: locationRegion.message('out_of_coverage') }); return }
+    const counties = regions.filter(function (r) { return r.parent_code === selected.code })
+    this.setData({ locating: false, cityIndex: cityIndex, counties: counties, countyIndex: isCity ? -1 : counties.findIndex(function (r) { return r.code === code }), message: '已按定位预选 ' + (isCity ? selected.name : found.name) + '，请确认后保存档案。' })
+  },
+  onCancel: function () { if (this.editable()) this.setData({ editing: false, locating: false, message: '' }) },
   onSave: function () {
     if (this.data.guest || this.data.busy || this.data.needsReload || !this.data.loaded || !this.data.editing) return
     if (!this.subjectCurrent()) return
