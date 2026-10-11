@@ -8,6 +8,17 @@ const auth = require('../../utils/auth')
 const pageGate = require('../../utils/page-gate')
 const reference = require('../../utils/reference')
 
+// External links may contain malformed percent encoding. Reject before lookup,
+// but always continue into the existing identity gate and empty state.
+function detailId(options) {
+  const raw = options && options.id
+  if (typeof raw !== 'string' || raw.length > 512) return ''
+  try {
+    const id = decodeURIComponent(raw)
+    return /^[A-Za-z0-9_-]{1,128}$/.test(id) ? id : ''
+  } catch (_) { return '' }
+}
+
 Page({
   data: {
     fontScale: 1,
@@ -22,7 +33,7 @@ Page({
 
   onLoad: function (options) {
     fontScale.applyFontScale(this)
-    this._detailId = options && options.id ? decodeURIComponent(options.id) : ''
+    this._detailId = detailId(options)
     this.checkGate()
   },
 
@@ -52,9 +63,9 @@ Page({
       this.setData({ gatePassed: false, found: false, item: null, label: '', labels: {}, notCollected: '' })
       return
     }
-    const item = reference.seedHerbicideDetail(seedId)
+    const item = typeof seedId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(seedId) ? reference.seedHerbicideDetail(seedId) : null
     if (!item) {
-      this.setData({ found: false, item: null })
+      this.setData({ found: false, item: null, label: '', labels: {}, notCollected: '' })
       return
     }
     this.setData({
@@ -67,6 +78,10 @@ Page({
   },
 
   back: function () {
-    wx.navigateBack({ delta: 1 })
+    const self = this, operation = this._gateOperation
+    wx.navigateBack({ delta: 1, fail: function () {
+      if (self._gateActive !== true || self._gateOperation !== operation) return
+      wx.redirectTo({ url: '/pages/referenceseed/referenceseed' })
+    } })
   }
 })
