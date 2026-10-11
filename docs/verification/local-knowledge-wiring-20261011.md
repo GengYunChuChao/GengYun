@@ -2,7 +2,7 @@
 
 Refs #2/#7，软件组件口径，不关闭父 issue。已通过 GitHub 只读连接器核对上游 main `8932ba5153709ed67e2944984c3b891f38e1a951`、PR76 review5481696724、PR79 review5482194171；两组件已合并，旧阻塞不重复修订。PR80 是另一写手的草稿前端，#8/#12 保留协作者领取。
 
-当前沙盒的 Yu0ry credential helper 报 wincredman 无法持久化、无交互密码，真实 main 的 Git 对象尚未导入此 clone。工作保存在新本地分支 feature/local-knowledge-wiring，暂基于原已审分支 `9275762f3d91bbb1673fecd449c38d8b37b5cf80`；未称已从8932ba5完成同步，尚未推送或创建PR，不使用owner连接器代写Fork。收到真实main对象后，保留本分支历史，将本轮新增提交正常移到最新main再提交审查。
+真实 main 对象已通过指挥提供并验证的完整历史 bundle 只读导入；feature/local-knowledge-wiring 已正常 rebase 到 `8932ba5153709ed67e2944984c3b891f38e1a951`，恢复后的实现提交是 `7094c3812c7629462bd45e8c066aaa4c6cf65610`。旧 `8b44b02996f112a13e2a412ba0ac8bd92871c783` 保存在 local-knowledge-before-main-8b44b02 分支与自己的恢复 bundle，原79分支没有改写。尚未推送或创建PR；当前沙盒的 Yu0ry credential helper 仍报 wincredman 无法持久化、无交互密码，不使用owner连接器代写Fork。
 
 ## 组件变化和验收边界
 
@@ -29,9 +29,17 @@ lint（API/admin typecheck、卫生扫描）、新集成脚本node --check、doc
 
 本轮没有PG_VERSION，没有postmaster/API PID，3218及55473无监听。密码文件由原finally移除，随机配置留在自己的已忽略private目录，未输出或提交。prepare只验证准备，不能写成start/HTTP/stop/restart通过。local-knowledge-smoke的实际原生路径尚未执行；因此本组件尚不可按原生验收通过。
 
+### 最新恢复后复测
+
+只读导入真实main后，再次获得本会话network/Git配置/PG程序只读权限，未获得改变PG安全行为的授权。在第三个全新根 `.local/local-knowledge-check-recovered` 实际prepare成功，3218/55473预检空闲，随机私密配置与initdb成功，`PG_VERSION=True`。随后原Hidden pg_ctl启动仍失败：`could not create restricted token: error code 87`、`could not start server: error code 3`。仅检查了自己新窗口的脱敏错误；没有API PID、监听或运行中的服务。没有把初始化成功等同HTTP或重启通过，也没有复用旧cluster。
+
+同轮精确 require_escalated 请求在执行前被工具拒绝，实际策略为 Granular `sandbox_approval:false`；不重复该请求。默认上下文重新核验Yu0ry仍报 `Unable to persist credentials with the 'wincredman' credential store`，终端密码交互禁用，未获得token、未调用GitHub写接口。上述旧两窗口记录保留为历史，不把旧失败沿用为最新结果。
+
+真实main恢复后再次执行受影响API/角色/打包/契约集合，仍30项、29通过、0失败、1明确原生专项跳过；本轮程序没有更改，因此未重复无关全量验收。
+
 ## 最小交接与继续命令
 
-需要恢复正常Windows进程执行环境与独立Yu0ry认证；不要发送密码或令牌。先以只读bundle/本地fetch获得真实main Git对象，保留旧分支/本轮提交，再将仅本轮提交移到当前main。不要在共享目录修改remote/全局认证，也不要使用owner连接器发布。
+需要恢复正常Windows进程执行环境与独立Yu0ry认证；不要发送密码或令牌。真实main同步已完成。不要在共享目录修改remote/全局认证，也不要使用owner连接器发布。
 
 以下在自己的新独立clone、已同步待审分支、未存在.local/local-dev、PG程序实际17.11且两个端口空闲时执行。新正常用户应从新输出重新生成随机凭据，不复用上述失败窗口或别人的数据库。凭据只留private文件，日志/聊天不传令牌。
 
@@ -50,4 +58,4 @@ node tests/integration/local-knowledge-smoke.mjs .local/local-dev
 
 首次与重启应核对API为gengyun_local_runtime，owner只初始化，并保留端口/PID、源码LF哈希和脱敏结果。每步失败立即保留失败证据；只停止自己创建的服务。微信消费交给原写手：其独立prepare产生的wechat路径和回环API端口可以交接，不能复制本窗口密码；此前320px截图不能当当前业务API渲染。当前没有供前端实际使用的已启动窗口。
 
-仍未完成：真实main同步/个人Fork PR、原生prepare→start→HTTP→stop→restart、当前业务API微信消费/320px/Android、真实资料/身份/HTTPS和herbicides。无供应商请求、费用或部署。
+仍未完成：个人Fork PR、原生prepare→start→HTTP→stop→restart、当前业务API微信消费/320px/Android、真实资料/身份/HTTPS和herbicides。无供应商请求、费用或部署。
