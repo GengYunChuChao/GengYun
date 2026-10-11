@@ -98,6 +98,7 @@ git grep -n -E "latitude|longitude" -- services/api/db packages/knowledge/catalo
 ### 4.2 隔离运行／合成身份
 
 - [tests/integration/profile-ui-http.test.mjs](../../tests/integration/profile-ui-http.test.mjs)（**真实前端模块 + 真实 loopback HTTP**，PGlite 串行受限 `SET ROLE`）：`pass 1 / fail 0`，输出 `PASS PGlite, serialized limited SET ROLE; synthetic identity/catalog fixture; real loopback HTTP and actual frontend modules; no suppliers`。
+- [tests/ui-adaptive.test.mjs](../../tests/ui-adaptive.test.mjs)（受影响页面检查：对每个 Tab 页 `<button>` 的样式与 `--font-scale` 注入断言）：`tests 25 / pass 25 / fail 0`。**该文件不在 `npm run test:unit` 的 glob 内**，本轮因为它直接扫描 `miniprogram/pages/profile/profile.wxml` 的按钮而单独执行，已通过。
 - 档案 HTTP／SQL 全部使用**合成身份与合成目录夹具**（`login('profile-a')`／`login('profile-b')`、4 作物／102 浙江节点），没有真实用户、没有供应商调用。
 - 页面级（改动页的实际产物加载）：
 
