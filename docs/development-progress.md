@@ -29,7 +29,7 @@ API 专项包含 PGlite 限权与实际本机回环 HTTP，身份／资料为合
 
 本机用户目录 `D:\challenge_cup` 当前 main 与本次远端 SHA 一致；保留 7 张原有未提交截图，未提交个人原始媒体。
 
-本次分页覆盖全部 11 个开放 PR；其中 7 个有新提交或新组件，当前 SHA 的工作流均为 `action_required`，尚无成功检查，不能写作 CI 通过。
+本次开始核查时分页覆盖全部 11 个开放 PR；其中 7 个有新提交或新组件，当前 SHA 的工作流均为 `action_required`，尚无成功检查，不能写作 CI 通过。整理期间另有新 PR #88 提交，已读取其范围与 HEAD，尚未独立验证；本报告的治理 PR 单独计数。
 
 | PR／固定 HEAD | 本次状态 | 合并前仍需处理 |
 | --- | --- | --- |
@@ -40,6 +40,7 @@ API 专项包含 PGlite 限权与实际本机回环 HTTP，身份／资料为合
 | [#85](https://github.com/GengYunChuChao/GengYun/pull/85) `d307eb843fa7` | 契约实现状态对照待审 | 与真实路由一致性、校验脚本及适用 CI；对照表不是新接口交付 |
 | [#86](https://github.com/GengYunChuChao/GengYun/pull/86) `09ca9a6d1e43` | 档案快照／越权及定位失败回退组件待审 | 独立客户端／权限检查及适用 CI；定位成功与 Android 仍未验 |
 | [#87](https://github.com/GengYunChuChao/GengYun/pull/87) `73935ecef1b8` | 识别任务与七类状态组件待审 | 接口／权限／取消回调检查及适用 CI；作者说明仍为内存存储，真实供应商／质量／真机未验 |
+| [#88](https://github.com/GengYunChuChao/GengYun/pull/88) `0e06ee8be397` | 新提交的文本确定性审核规则组件待审 | 独立安全／版本／失败隔离与适用 CI；作者明确未接 HTTP、模型、图片或发布消费者，不计 AI 审核完成 |
 
 另外 #39／#49／#50／#65 为未变化的旧 PR，当前均有冲突；既有阻塞与已合接续组件分别保留，不重复合并或关闭。
 本机 GitHub 账号上游实际权限为 READ，不能批准 Fork 工作流或合并；个人 Fork 的提交能力不改变上游权限。没有改权限、派发、部署或真实付费调用。
