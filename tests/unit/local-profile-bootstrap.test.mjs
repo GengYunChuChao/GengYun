@@ -41,10 +41,53 @@ test('synthetic bootstrap heals old LOGIN membership, preserves data and refuses
   await db.query("UPDATE crops SET name='existing local content' WHERE id='crop_rice'");
   await assert.rejects(bootstrapLocalProfile(client,root),/Existing local catalog differs/);
   assert.equal((await db.query("SELECT name FROM crops WHERE id='crop_rice'")).rows[0].name,'existing local content');
+  await db.query("UPDATE crops SET name='水稻' WHERE id='crop_rice'");
   await db.exec('GRANT postgres TO gengyun_local_runtime');
   await assert.rejects(bootstrapLocalProfile(client,root),/migration owner/);
   await db.exec('REVOKE postgres FROM gengyun_local_runtime');
   await db.exec('ALTER ROLE gengyun_local_runtime CREATEDB');
   await assert.rejects(bootstrapLocalProfile(client,root),/restricted LOGIN/);
+  await db.exec('ALTER ROLE gengyun_local_runtime NOCREATEDB');
+  await db.exec('REVOKE gengyun_profile_runtime FROM gengyun_local_runtime');
+  const dataBefore=(await db.query('SELECT * FROM crops ORDER BY id')).rows;
+  for(const [danger,grant] of [['postgres',null],['local_high_createrole','CREATEROLE'],['local_high_createdb','CREATEDB'],['local_high_bypass','BYPASSRLS'],['pg_read_all_data',null]]){
+   if(grant)await db.exec(`CREATE ROLE ${danger} NOLOGIN ${grant}`);
+   await db.exec(`GRANT ${danger} TO gengyun_profile_runtime`);
+   assert.equal((await db.query("SELECT pg_has_role('gengyun_local_runtime','postgres','MEMBER') AS member")).rows[0].member,false);
+   await assert.rejects(bootstrapLocalProfile(client,root),/membership chain/);
+   assert.equal((await db.query("SELECT pg_has_role('gengyun_local_runtime','gengyun_profile_runtime','MEMBER') AS member")).rows[0].member,false);
+   assert.deepEqual((await db.query('SELECT * FROM crops ORDER BY id')).rows,dataBefore);
+   await db.exec(`REVOKE ${danger} FROM gengyun_profile_runtime`);
+   if(grant)await db.exec(`DROP ROLE ${danger}`);
+  }
+  // Inject a real SQL membership change after the pre-check but before the
+  // post-GRANT guard. Both the new runtime grant and injected change roll back.
+  const afterGrant={query:async(sql,values)=>{
+   const result=await client.query(sql,values);
+   if(sql==='GRANT gengyun_profile_runtime TO gengyun_local_runtime')await db.exec('GRANT postgres TO gengyun_profile_runtime');
+   return result;
+  }};
+  await assert.rejects(bootstrapLocalProfile(afterGrant,root),/membership chain/);
+  for(const role of ['gengyun_profile_runtime','postgres'])assert.equal((await db.query('SELECT pg_has_role($1,$2,\'MEMBER\') AS member',['gengyun_local_runtime',role])).rows[0].member,false);
+  assert.equal((await db.query("SELECT pg_has_role('gengyun_profile_runtime','postgres','MEMBER') AS member")).rows[0].member,false);
+  assert.deepEqual((await db.query('SELECT * FROM crops ORDER BY id')).rows,dataBefore);
+  // A fresh group's CREATE/grants and empty-directory inserts also belong to
+  // the outer transaction and cannot survive a failed final guard.
+  await db.exec('DROP OWNED BY gengyun_profile_runtime; DROP ROLE gengyun_profile_runtime; DELETE FROM crops; DELETE FROM regions');
+  let chainChecks=0;
+  const finalFailure={query:async(sql,values)=>{
+   if(sql.includes('FROM pg_roles WHERE pg_has_role')&&values?.[0]==='gengyun_local_runtime'){
+    chainChecks++;
+    if(chainChecks===3)await db.exec('GRANT postgres TO gengyun_profile_runtime');
+   }
+   return client.query(sql,values);
+  }};
+  await assert.rejects(bootstrapLocalProfile(finalFailure,root),/membership chain/);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM pg_roles WHERE rolname='gengyun_profile_runtime'")).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM crops')).rows[0].n,0);
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM regions')).rows[0].n,0);
+  assert.equal((await bootstrapLocalProfile(client,root)).initialized,true);
+  await db.exec('SET SESSION AUTHORIZATION gengyun_local_runtime');
+  await assert.rejects(db.query('SET ROLE postgres'),error=>error.code==='42501');
  }finally{await db.close();}
 });
