@@ -372,6 +372,14 @@ export function conflictFields(fields: LabelFields, registration: RegistryHerbic
  * 6. 仅当以上都不成立 → `matched`（此时 missing_fields 与 conflict_fields 必为空）。
  *
  * 该函数是纯函数，不读时钟、不做 I/O —— 便于逐条构造 6 类状态。
+ *
+ * **实现层口径声明（契约未规定，指挥已接受现状）**：契约只给出 `MatchState` 的 6 个取值，
+ * **没有**规定彼此的优先级。下面这条「`unavailable` > `insufficient` > `conflict` >
+ * `ambiguous` > `no_match` > `matched`」的判定顺序，以及上文 `NECESSARY_LABEL_FIELDS`
+ * 那份「必要条件」清单，都是**本实现的选择**，不是契约条文：
+ * - 顺序的可见后果：登记号缺失但同时存在冲突时，本实现报 `insufficient` 而非 `conflict`；
+ * - 六类结论都严格非 `matched`，故该顺序不影响 fail-closed 安全性，只影响呈现的可读性；
+ * - 若要调整，须同步修改对应负例用例，并同步证据文档。
  */
 export function decideMatchState(fields: LabelFields, lookup: RegistryLookup): MatchDecision {
   const missingFields = missingNecessaryFields(fields);

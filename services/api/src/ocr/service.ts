@@ -575,6 +575,12 @@ export function createOcrService(options: OcrServiceOptions) {
   /**
    * 用户校正：**只写 corrected_fields**，raw_fields 原样保留，revision 递增，
    * 并按 corrected_fields **重算** verification（旧登记核对随之失效，不留陈旧结论）。
+   *
+   * **实现层口径声明（契约未规定，指挥已接受现状）**：契约只要求「保留 raw_fields、
+   * revision 递增并 invalidate 旧登记核对」，**没有**规定失效后该如何重算，也没有规定
+   * `verification` 应该绑定哪一份字段。本实现选择「按 corrected_fields、在**无 conditions**
+   * 下重算」，因此校正后的 `verification.dose_cards` 必然为 `[]`（条件未随校正提交）。
+   * 这是本实现的选择，不是契约条文；若将来要求条件随行持久化，需先补契约字段。
    */
   async function correctOcr(input: {
     userId: string;
@@ -624,6 +630,12 @@ export function createOcrService(options: OcrServiceOptions) {
   /**
    * 登记核对：按提交的 fields + 可选 conditions 重算 verification 并落库（revision 递增）。
    * **不改** raw_fields，也**不改** corrected_fields —— 校正只走 correctOCR。
+   *
+   * **实现层口径声明（契约未规定，指挥已接受现状）**：`Verification` 是 `OCR` 上的必填字段，
+   * 但契约**没有**规定 `verification` 必须与 `corrected_fields` 一致。本实现让 `verification`
+   * 反映**最后一次请求提交的字段与条件**，因此在「先 correct 再 verify（或反之）」之后，
+   * 落库的 `verification` 可能与 `corrected_fields` 不同步。这是本实现的选择，不是契约条文；
+   * 选择它的理由是不让 verify 越权覆写用户校正结果（`corrected_fields` 只由 correctOCR 写）。
    */
   async function verifyOcr(input: {
     userId: string;
