@@ -1,0 +1,16 @@
+{"method":"POST","path":"/api/v1/auth/wechat","status":200}
+{"method":"GET","path":"/api/v1/auth/session","status":200}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/auth/session","status":200}
+{"method":"GET","path":"/api/v1/knowledge/c891fc7f-f674-4908-80df-82e274396918","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/auth/session","status":200}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[]}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/auth/session","status":200}
+{"method":"GET","path":"/api/v1/knowledge/c891fc7f-f674-4908-80df-82e274396918","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/knowledge/c891fc7f-f674-4908-80df-82e274396918","status":404,"error":"NOT_FOUND","mode":"stub","items":[]}
+{"method":"GET","path":"/api/v1/auth/session","status":200}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[]}
+{"method":"GET","path":"/api/v1/knowledge","status":200,"error":null,"mode":"stub","items":[{"id":"c891fc7f-f674-4908-80df-82e274396918","title":"隔离合成科普（非核准资料）","source":{"id":"97551fd0-fb43-4f32-98ca-55f410b65f77","version":"synthetic-wx-native-v1","updated_at":"2026-10-11T00:00:00.000Z"},"conditions":null,"doseCards":0}]}
+{"method":"GET","path":"/api/v1/knowledge","status":401,"error":"SESSION_EXPIRED","mode":"stub","items":[]}
