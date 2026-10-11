@@ -114,7 +114,15 @@ try {
   await owner.query("UPDATE knowledge_dataset_modes SET accepts_database=true WHERE mode='real'");
   await owner.query("UPDATE knowledge_dataset_config SET value='real',mode='real' WHERE key='active_mode'");
   await owner.query("UPDATE knowledge_dataset_config SET value='true',mode='real' WHERE key='database_connected'");
-  for (const path of ['/api/v1/knowledge', '/api/v1/knowledge/00000000-0000-4000-8000-000000000001', '/api/v1/staging', '/api/v1/registrations']) {
+  // Knowledge is now registered and user-only, even for unavailable detail.
+  // This preview LOGIN intentionally lacks user-auth/knowledge privileges;
+  // guest rejection happens before any attempt to query private user data.
+  for (const path of ['/api/v1/knowledge', '/api/v1/knowledge/00000000-0000-4000-8000-000000000001']) {
+    const denied = await fetch(`${app.listeningOrigin}${path}`);
+    assert.equal(denied.status, 401);
+    assert.equal((await denied.json()).error.code, 'SESSION_REQUIRED');
+  }
+  for (const path of ['/api/v1/herbicides', '/api/v1/herbicides/00000000-0000-4000-8000-000000000001', '/api/v1/staging', '/api/v1/registrations']) {
     assert.equal((await fetch(`${app.listeningOrigin}${path}`)).status, 404);
   }
   const reviewer = randomUUID();
