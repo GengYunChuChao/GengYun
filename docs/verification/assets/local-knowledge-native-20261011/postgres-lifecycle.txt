@@ -1,0 +1,8 @@
+2026-10-11 18:50:26.507 CST [61928] LOG:  starting PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35229, 64-bit
+2026-10-11 18:50:26.509 CST [61928] LOG:  listening on IPv4 address "127.0.0.1", port 55493
+2026-10-11 18:50:26.628 CST [61928] LOG:  database system is ready to accept connections
+2026-10-11 18:51:09.137 CST [61928] LOG:  database system is shut down
+2026-10-11 18:51:15.052 CST [29752] LOG:  starting PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35229, 64-bit
+2026-10-11 18:51:15.053 CST [29752] LOG:  listening on IPv4 address "127.0.0.1", port 55493
+2026-10-11 18:51:15.148 CST [29752] LOG:  database system is ready to accept connections
+2026-10-11 18:53:34.561 CST [29752] LOG:  database system is shut down

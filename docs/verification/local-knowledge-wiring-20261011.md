@@ -1,5 +1,7 @@
 # 本地 knowledge 受限接线：待原生及发布验证
 
+> 后续写手接续：保留本页子写手历史及失败边界；已正常同步main2d562d5，在自己的全新r3窗口完成实际启动/HTTP/停机/重启，并修正PS5退出码误报，见[原生启动验证](local-knowledge-native-20261011.md)。下文“尚未执行/无法发布”为交接当时状态。
+
 Refs #2/#7，软件组件口径，不关闭父 issue。已通过 GitHub 只读连接器核对上游 main `8932ba5153709ed67e2944984c3b891f38e1a951`、PR76 review5481696724、PR79 review5482194171；两组件已合并，旧阻塞不重复修订。PR80 是另一写手的草稿前端，#8/#12 保留协作者领取。
 
 真实 main 对象已通过指挥提供并验证的完整历史 bundle 只读导入；feature/local-knowledge-wiring 已正常 rebase 到 `8932ba5153709ed67e2944984c3b891f38e1a951`，恢复后的实现提交是 `7094c3812c7629462bd45e8c066aaa4c6cf65610`。旧 `8b44b02996f112a13e2a412ba0ac8bd92871c783` 保存在 local-knowledge-before-main-8b44b02 分支与自己的恢复 bundle，原79分支没有改写。尚未推送或创建PR；当前沙盒的 Yu0ry credential helper 仍报 wincredman 无法持久化、无交互密码，不使用owner连接器代写Fork。
