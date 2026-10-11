@@ -1,0 +1,75 @@
+{
+  "kind": "actual native simulator and real loopback HTTP; native PostgreSQL limited LOGIN; server identity synthetic; SDK picker change and showModal confirmation fixture, no auth/font overrides",
+  "width": 320,
+  "height": 504,
+  "SDKVersion": "3.17.3",
+  "before": {
+    "crop_id": null,
+    "region_code": null,
+    "region_catalog_version": null,
+    "revision": 1
+  },
+  "catalogCounts": {
+    "crops": 4,
+    "regions": 102
+  },
+  "after": {
+    "crop_id": "crop_rice",
+    "region_code": "330102",
+    "region_catalog_version": "mca-xzqh-2023",
+    "revision": 2
+  },
+  "buttons": [
+    {
+      "text": "重新读取档案",
+      "size": {
+        "width": 274.66668701171875,
+        "height": 45.19791793823242
+      },
+      "fontSize": "18px"
+    },
+    {
+      "text": "手选作物与市县",
+      "size": {
+        "width": 274.66668701171875,
+        "height": 45.19791793823242
+      },
+      "fontSize": "18px"
+    },
+    {
+      "text": "按当前档案查科普资料",
+      "size": {
+        "width": 274.66668701171875,
+        "height": 45.19791793823242
+      },
+      "fontSize": "18px"
+    },
+    {
+      "text": "退出登录",
+      "size": {
+        "width": 184,
+        "height": 45.19791793823242
+      },
+      "fontSize": "18px"
+    }
+  ],
+  "font": {
+    "basePx": 16,
+    "baseFactor": 0.9,
+    "appScale": 1,
+    "pageScale": 1,
+    "rootFontSize": "18px"
+  },
+  "reference": {
+    "cropId": "crop_rice",
+    "regionCode": "330102",
+    "matchState": "insufficient"
+  },
+  "controlledFont": {
+    "kind": "temporary wx.getAppBaseInfo fixture, not real maximum font setting",
+    "pageScale": 1.3,
+    "rootFontSize": "23.4px",
+    "selectionFontSize": "23.4px"
+  },
+  "restoredScale": 1
+}

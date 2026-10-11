@@ -88,7 +88,7 @@ for (const name of ['identify', 'community', 'messages', 'profile']) {
     assert.equal(page.data.guest, false);
     page.onShow();
     assert.equal(page.data.guest, true);
-    h.acceptVerification(h.requests[1]);
+    h.acceptVerification(h.requests.filter(r => r.url.endsWith("/auth/session")).at(-1));
     assert.equal(page.data.guest, false);
   });
 }
