@@ -17,14 +17,30 @@ const MEDIA_ID = '11111111-1111-4111-8111-111111111111';
 // 替身脚本按 media_id 的 sha256 分桶（provider.ts 有注释）；该 id 落在「候选全无分数」桶，
 // 用于在真实 HTTP 上观测 uncertain 分支。
 const MEDIA_ID_UNCERTAIN = '77777777-7777-4777-8777-777777777777';
+// 该 id 让包装后的提供者**悬挂**，用于在真实 HTTP 上观测取消与取消重放。
+const MEDIA_ID_HANG = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const TERMINAL = ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
 const observations = [];
+
+// 计数包装：用于断言「并发同键只调用提供者一次」（返修轮 1 [P1] 的独立取证）。
+let providerCalls = 0;
+const baseProvider = createStubRecognitionProvider();
+const countingProvider = {
+  ...baseProvider,
+  async recognize(input) {
+    providerCalls += 1;
+    if (input.mediaId === MEDIA_ID_HANG) return new Promise(() => {});
+    return baseProvider.recognize(input);
+  },
+};
 
 const app = buildApp({
   config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
   recognitionStore: createMemoryRecognitionStore(),
-  recognitionProvider: createStubRecognitionProvider(),
+  recognitionProvider: countingProvider,
   recognitionMedia: createSubstituteMediaPort(),
+  // 悬挂场景用较短截止时间，避免集成脚本退出时被 30s 定时器拖住。
+  recognitionJobDeadlineMs: 2500,
 });
 
 async function main() {
@@ -145,6 +161,69 @@ async function main() {
     assert.equal(candidate.model_score, null, '没有分数时不得写入分数');
   }
   observations.push('uncertain job=' + uncertainJob.id + ' reasons=' + JSON.stringify(uncertainJob.result.value.uncertainty_reasons));
+
+  // —— 返修轮 1 [P1]：同键同体**并发**（真实 HTTP + Promise.all）→ 1 个 job、1 次提供者调用 ——
+  const beforeSame = providerCalls;
+  const sameKey = 'integration-concurrent-same-0001';
+  const concurrentSame = await Promise.all([
+    http('/api/v1/recognitions', json(token, { method: 'POST', headers: { 'idempotency-key': sameKey }, body: JSON.stringify({ media_id: MEDIA_ID, media_revision: 1 }) })),
+    http('/api/v1/recognitions', json(token, { method: 'POST', headers: { 'idempotency-key': sameKey }, body: JSON.stringify({ media_id: MEDIA_ID, media_revision: 1 }) })),
+  ]);
+  for (const r of concurrentSame) assert.equal(r.status, 202, JSON.stringify(r.body));
+  assert.equal(typeof concurrentSame[0].body.data.id, 'string');
+  assert.equal(concurrentSame[0].body.data.id, concurrentSame[1].body.data.id, '并发同键同体必须收敛到同一 job');
+  for (let i = 0; i < 200 && providerCalls === beforeSame; i += 1) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(providerCalls - beforeSame, 1, '并发同键只允许 1 次提供者调用（实际 ' + (providerCalls - beforeSame) + ' 次）');
+  observations.push('concurrent same-key: job=' + concurrentSame[0].body.data.id + ' provider_calls=' + (providerCalls - beforeSame) + ' (两个响应同一 job)');
+
+  // —— 返修轮 1 [P1]：同键**异体**并发 → 一个 202 + 一个 409 IDEMPOTENCY_CONFLICT，无第二个任务 ——
+  const beforeDiff = providerCalls;
+  const diffKey = 'integration-concurrent-diff-0001';
+  const concurrentDiff = await Promise.all([
+    http('/api/v1/recognitions', json(token, { method: 'POST', headers: { 'idempotency-key': diffKey }, body: JSON.stringify({ media_id: MEDIA_ID, media_revision: 1 }) })),
+    http('/api/v1/recognitions', json(token, { method: 'POST', headers: { 'idempotency-key': diffKey }, body: JSON.stringify({ media_id: MEDIA_ID_UNCERTAIN, media_revision: 1 }) })),
+  ]);
+  const diffStatuses = concurrentDiff.map(r => r.status).sort((a, b) => a - b);
+  assert.deepEqual(diffStatuses, [202, 409], JSON.stringify(concurrentDiff.map(r => r.body)));
+  const conflict = concurrentDiff.find(r => r.status === 409);
+  assert.equal(conflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  for (let i = 0; i < 200 && providerCalls === beforeDiff; i += 1) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(providerCalls - beforeDiff, 1, '异体并发不得产生第二个任务');
+  observations.push('concurrent different-body: statuses=' + JSON.stringify(diffStatuses) + ' conflict=' + conflict.body.error.code + ' provider_calls=' + (providerCalls - beforeDiff));
+
+  // —— 返修轮 1 [P2]：取消成功后原键 + 原 If-Match 原样重放（真实 HTTP）——
+  const hangCreated = await http('/api/v1/recognitions', json(token, {
+    method: 'POST', headers: { 'idempotency-key': 'integration-cancel-create-0001' },
+    body: JSON.stringify({ media_id: MEDIA_ID_HANG, media_revision: 1 }),
+  }));
+  assert.equal(hangCreated.status, 202);
+  let hangJob = hangCreated.body.data;
+  for (let i = 0; i < 200 && hangJob.state !== 'running'; i += 1) {
+    hangJob = (await http('/api/v1/jobs/' + hangJob.id, json(token))).body.data;
+    if (hangJob.state !== 'running') await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal(hangJob.state, 'running');
+  const cancelKey = 'integration-cancel-key-0001';
+  const cancelled = await http('/api/v1/jobs/' + hangJob.id + '/cancel', json(token, {
+    method: 'POST', headers: { 'if-match': '"' + hangJob.revision + '"', 'idempotency-key': cancelKey },
+  }));
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  assert.equal(cancelled.body.data.state, 'cancelled');
+  const cancelledRevision = cancelled.body.data.revision;
+  const cancelReplay = await http('/api/v1/jobs/' + hangJob.id + '/cancel', json(token, {
+    method: 'POST', headers: { 'if-match': '"' + hangJob.revision + '"', 'idempotency-key': cancelKey },
+  }));
+  assert.equal(cancelReplay.status, 200, JSON.stringify(cancelReplay.body));
+  assert.equal(cancelReplay.body.data.state, 'cancelled');
+  assert.equal(cancelReplay.body.data.revision, cancelledRevision, '原样重放必须回放同一取消结果');
+  const cancelStale = await http('/api/v1/jobs/' + hangJob.id + '/cancel', json(token, {
+    method: 'POST', headers: { 'if-match': '"' + hangJob.revision + '"', 'idempotency-key': 'integration-cancel-key-0002' },
+  }));
+  assert.equal(cancelStale.status, 409);
+  assert.equal(cancelStale.body.error.code, 'REVISION_CONFLICT');
+  observations.push('cancel=' + cancelledRevision + '; same-key replay -> 200 cancelled revision=' + cancelReplay.body.data.revision + '; new-key stale If-Match -> 409 ' + cancelStale.body.error.code);
 
   console.log('PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memory store)');
   for (const line of observations) console.log('  - ' + line);

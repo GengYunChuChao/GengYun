@@ -185,24 +185,71 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     return idempotencyScope(userId, method, routePath);
   }
 
-  async function loadIdempotent(scope: string, key: string, requestHash: string, at: Date): Promise<Record<string, unknown> | null> {
-    await store.purgeIdempotent(at);
-    const keyHashHex = idempotencyKeyHashHex(scope, key);
-    const row = await store.findIdempotent(scope, keyHashHex);
-    if (row === null || row.expiresAt.getTime() <= at.getTime()) return null;
-    if (row.requestHash !== requestHash) {
-      throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
-    }
-    return row.payload;
+  /**
+   * 同键收敛的有界等待预算（用真实时钟，避免受注入时钟影响）；
+   * 与 routes/support.ts 的认证幂等重放口径一致。
+   */
+  const CLAIM_WAIT_STEP_MS = 2;
+  const CLAIM_WAIT_BUDGET_MS = 1000;
+
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function saveIdempotent(scope: string, key: string, requestHash: string, payload: Record<string, unknown>, at: Date): Promise<void> {
-    await store.putIdempotent(scope, idempotencyKeyHashHex(scope, key), {
-      requestHash,
-      // 只存不含凭据的结果引用；重放时按 job_id 重新读取当前状态。
-      payload,
-      expiresAt: new Date(at.getTime() + IDEMPOTENCY_TTL_SECONDS * 1000),
-    });
+  /**
+   * 写路径的幂等执行（监工 review 5483726169 [P1]）：
+   * 「**原子占位** → 执行写入 → 写完成回执」三段，占位与查回执在同一临界区内完成，
+   * 因此同主体同键并发**只能有一个**进入 `produce`：
+   * - 同键同体并发：后到者得到 `in_progress`，有界等待其回执后按回执重放（收敛到同一结果，不产生第二个任务）；
+   * - 同键异体并发：立即 `conflict` → `IDEMPOTENCY_CONFLICT`，且不产生第二个任务；
+   * - 等待超预算：`REQUEST_IN_PROGRESS`（409，可重试），仍不产生第二个任务；
+   * - `produce` 抛错：释放占位（不落回执），错误原样抛出。
+   */
+  async function runIdempotentWrite<T>(input: {
+    scope: string;
+    key: string;
+    requestHash: string;
+    /** 命中完成回执时的重放路径（按结果引用重新读取当前状态）。 */
+    replay: (payload: Record<string, unknown>) => Promise<T>;
+    /** 只有占位成功者才执行；返回结果与**不含凭据**的结果引用。 */
+    produce: () => Promise<{ result: T; payload: Record<string, unknown> }>;
+  }): Promise<T> {
+    const keyHashHex = idempotencyKeyHashHex(input.scope, input.key);
+    const deadline = Date.now() + CLAIM_WAIT_BUDGET_MS;
+    for (;;) {
+      const at = now();
+      await store.purgeIdempotent(at);
+      const claim = await store.claimIdempotent(input.scope, keyHashHex, {
+        requestHash: input.requestHash,
+        expiresAt: new Date(at.getTime() + IDEMPOTENCY_TTL_SECONDS * 1000),
+        now: at,
+      });
+      if (claim.status === 'conflict') {
+        throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
+      }
+      if (claim.status === 'completed') return input.replay(claim.row.payload);
+      if (claim.status === 'in_progress') {
+        if (Date.now() >= deadline) {
+          throw new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中，请稍后重试', { retryable: true });
+        }
+        await delay(CLAIM_WAIT_STEP_MS);
+        continue;
+      }
+      try {
+        const produced = await input.produce();
+        await store.completeIdempotent(input.scope, keyHashHex, {
+          requestHash: input.requestHash,
+          // 只存不含凭据的结果引用；重放时按引用重新读取当前状态。
+          payload: produced.payload,
+          expiresAt: new Date(now().getTime() + IDEMPOTENCY_TTL_SECONDS * 1000),
+        });
+        return produced.result;
+      } catch (error) {
+        // 写入失败不落回执：释放占位，后续同键请求可重新尝试。
+        await store.releaseIdempotent(input.scope, keyHashHex);
+        throw error;
+      }
+    }
   }
 
   async function getOwnedJob(userId: string, jobId: string): Promise<JobRow> {
@@ -244,35 +291,40 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     const at = now();
     const scope = scopeFor(input.userId, 'POST', `${API_PREFIX}/recognitions`);
     const requestHash = idempotencyRequestHash(mediaJobInput, undefined, idempotencyHmacKey);
-    const replay = await loadIdempotent(scope, key, requestHash, at);
-    if (replay !== null) {
-      const jobId = replay['job_id'];
-      if (typeof jobId !== 'string') throw new ApiError('PROVIDER_OUTCOME_UNKNOWN', '幂等台账结果引用非法');
-      const existing = await getOwnedJob(input.userId, jobId);
-      const recognition = await store.getRecognition(existing.recognitionId);
-      return { job: toJob(existing, recognition), replayed: true };
-    }
-
-    const jobId = idFactory();
-    const row: JobRow = {
-      id: jobId,
-      revision: 1,
-      kind: 'recognition',
-      ownerUserId: input.userId,
-      recognitionId: idFactory(),
-      mediaId: mediaJobInput.media_id,
-      mediaRevision: mediaJobInput.media_revision,
-      state: 'queued',
-      deadlineAt: new Date(at.getTime() + jobDeadlineMs),
-      createdAt: at,
-      updatedAt: at,
-      errorCode: null,
-    };
-    await store.insertJob(row);
-    // 先落幂等台账再执行：并发同键收敛到同一任务。
-    await saveIdempotent(scope, key, requestHash, { job_id: jobId }, at);
-    track(execute(jobId));
-    return { job: toJob(row, null), replayed: false };
+    const outcome = await runIdempotentWrite<{ job: JobProjection; replayed: boolean }>({
+      scope,
+      key,
+      requestHash,
+      replay: async (payload) => {
+        const jobId = payload['job_id'];
+        if (typeof jobId !== 'string') throw new ApiError('PROVIDER_OUTCOME_UNKNOWN', '幂等台账结果引用非法');
+        const existing = await getOwnedJob(input.userId, jobId);
+        const recognition = await store.getRecognition(existing.recognitionId);
+        return { job: toJob(existing, recognition), replayed: true };
+      },
+      produce: async () => {
+        const jobId = idFactory();
+        const row: JobRow = {
+          id: jobId,
+          revision: 1,
+          kind: 'recognition',
+          ownerUserId: input.userId,
+          recognitionId: idFactory(),
+          mediaId: mediaJobInput.media_id,
+          mediaRevision: mediaJobInput.media_revision,
+          state: 'queued',
+          deadlineAt: new Date(at.getTime() + jobDeadlineMs),
+          createdAt: at,
+          updatedAt: at,
+          errorCode: null,
+        };
+        await store.insertJob(row);
+        return { result: { job: toJob(row, null), replayed: false }, payload: { job_id: jobId } };
+      },
+    });
+    // 只有占位成功者（非重放）才启动执行：同键收敛不会产生第二次提供者调用。
+    if (!outcome.replayed) track(execute(outcome.job.id));
+    return outcome;
   }
 
   function track(promise: Promise<void>): void {
@@ -412,28 +464,33 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     const key = requireIdempotencyKey(input.idempotencyKey);
     const expectedRevision = requireIfMatch(input.ifMatch);
     const row = await getOwnedRecognition(input.userId, input.recognitionId);
-    const at = now();
     const scope = scopeFor(input.userId, 'PATCH', `${API_PREFIX}/recognitions/${input.recognitionId}/selection`);
     const requestHash = idempotencyRequestHash({ selection, ifMatch: `"${expectedRevision}"` }, undefined, idempotencyHmacKey);
-    // 幂等重放先于版本校验：首次成功请求的**原样重试**必须回放首次结果，
-    // 而不是被已自增的 revision 判成 409（与 packages/media 完成接口 B3 口径一致）。
-    const replay = await loadIdempotent(scope, key, requestHash, at);
-    if (replay !== null) {
-      const current = await store.getRecognition(row.id);
-      if (current === null) throw new ApiError('NOT_FOUND', '识别记录不存在');
-      return toRecognition(current);
-    }
-    if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '识别记录版本与 If-Match 不一致');
-    const updated = await store.updateRecognition(row.id, expectedRevision, (current) => ({
-      ...current,
-      // 只动这两项：candidates / model_score / model_version 保持模型原始值。
-      selectedSpeciesId: selection.selected_species_id,
-      revision: current.revision + 1,
-      updatedAt: at,
-    }));
-    if (updated === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
-    await saveIdempotent(scope, key, requestHash, { accepted: true }, at);
-    return toRecognition(updated);
+    return runIdempotentWrite<RecognitionProjection>({
+      scope,
+      key,
+      requestHash,
+      // 幂等重放先于版本校验：首次成功请求的**原样重试**必须回放首次结果，
+      // 而不是被已自增的 revision 判成 409（与 packages/media 完成接口 B3 口径一致）。
+      replay: async () => {
+        const current = await store.getRecognition(row.id);
+        if (current === null) throw new ApiError('NOT_FOUND', '识别记录不存在');
+        return toRecognition(current);
+      },
+      produce: async () => {
+        if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '识别记录版本与 If-Match 不一致');
+        const at = now();
+        const updated = await store.updateRecognition(row.id, expectedRevision, (current) => ({
+          ...current,
+          // 只动这两项：candidates / model_score / model_version 保持模型原始值。
+          selectedSpeciesId: selection.selected_species_id,
+          revision: current.revision + 1,
+          updatedAt: at,
+        }));
+        if (updated === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
+        return { result: toRecognition(updated), payload: { accepted: true } };
+      },
+    });
   }
 
   /** 删除识别记录（归属者限定）。 */
@@ -445,23 +502,27 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
   }): Promise<{ accepted: true }> {
     const key = requireIdempotencyKey(input.idempotencyKey);
     const expectedRevision = requireIfMatch(input.ifMatch);
-    const at = now();
     const scope = scopeFor(input.userId, 'DELETE', `${API_PREFIX}/recognitions/${input.recognitionId}`);
     const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idempotencyHmacKey);
-    const replay = await loadIdempotent(scope, key, requestHash, at);
-    if (replay !== null) return { accepted: true };
-
-    const row = await getOwnedRecognition(input.userId, input.recognitionId);
-    if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '识别记录版本与 If-Match 不一致');
-    const updated = await store.updateRecognition(row.id, expectedRevision, (current) => ({
-      ...current,
-      deleted: true,
-      revision: current.revision + 1,
-      updatedAt: at,
-    }));
-    if (updated === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
-    await saveIdempotent(scope, key, requestHash, { accepted: true }, at);
-    return { accepted: true };
+    return runIdempotentWrite<{ accepted: true }>({
+      scope,
+      key,
+      requestHash,
+      replay: async () => ({ accepted: true }),
+      produce: async () => {
+        const row = await getOwnedRecognition(input.userId, input.recognitionId);
+        if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '识别记录版本与 If-Match 不一致');
+        const at = now();
+        const updated = await store.updateRecognition(row.id, expectedRevision, (current) => ({
+          ...current,
+          deleted: true,
+          revision: current.revision + 1,
+          updatedAt: at,
+        }));
+        if (updated === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
+        return { result: { accepted: true }, payload: { accepted: true } };
+      },
+    });
   }
 
   /** 取消任务：只允许 queued/running；已终态一律 OBJECT_UNAVAILABLE（不假装取消成功）。 */
@@ -473,29 +534,45 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
   }): Promise<JobProjection> {
     const key = requireIdempotencyKey(input.idempotencyKey);
     const expectedRevision = requireIfMatch(input.ifMatch);
+    // 归属守卫先行（越权/不存在一律 NOT_FOUND，不泄露存在性）：不放宽身份与归属。
     const row = await getOwnedJob(input.userId, input.jobId);
-    if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '任务版本与 If-Match 不一致');
-    if (isTerminalJobState(row.state)) {
-      throw new ApiError('OBJECT_UNAVAILABLE', `任务已处于终态 ${row.state}，不可取消`);
-    }
-    const at = now();
     const scope = scopeFor(input.userId, 'POST', `${API_PREFIX}/jobs/${input.jobId}/cancel`);
     const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idempotencyHmacKey);
-    const replay = await loadIdempotent(scope, key, requestHash, at);
-    if (replay !== null) return getJob({ userId: input.userId, jobId: input.jobId });
+    return runIdempotentWrite<JobProjection>({
+      scope,
+      key,
+      requestHash,
+      // 监工 review 5483726169 [P2]：**先读幂等回执**再谈版本/终态。
+      // 首次取消成功后，原键 + 原 If-Match 的原样重试必须回放已存储的取消结果，
+      // 而不是因为 revision 已自增（或被终态判断挡下）返回 REVISION_CONFLICT / OBJECT_UNAVAILABLE。
+      replay: async () => currentJobProjection(input.userId, input.jobId),
+      produce: async () => {
+        // 仅在未命中回执时才做版本/终态判断（守卫语义不变）。
+        if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '任务版本与 If-Match 不一致');
+        if (isTerminalJobState(row.state)) {
+          throw new ApiError('OBJECT_UNAVAILABLE', `任务已处于终态 ${row.state}，不可取消`);
+        }
+        const at = now();
+        const updated = await store.updateJob(row.id, expectedRevision, (current) => ({
+          ...current,
+          state: 'cancelled',
+          errorCode: null,
+          revision: current.revision + 1,
+          updatedAt: at,
+        }));
+        // CAS 失败说明此刻已被其他写入改为终态（例如刚好成功/超时）：如实报冲突。
+        if (updated === null) throw new ApiError('REVISION_CONFLICT', '任务状态已变化，未能取消');
+        const recognition = updated.state === 'succeeded' || updated.state === 'uncertain' ? await store.getRecognition(updated.recognitionId) : null;
+        return { result: toJob(updated, recognition), payload: { job_id: updated.id } };
+      },
+    });
+  }
 
-    const updated = await store.updateJob(row.id, expectedRevision, (current) => ({
-      ...current,
-      state: 'cancelled',
-      errorCode: null,
-      revision: current.revision + 1,
-      updatedAt: at,
-    }));
-    // CAS 失败说明此刻已被其他写入改为终态（例如刚好成功/超时）：如实报冲突。
-    if (updated === null) throw new ApiError('REVISION_CONFLICT', '任务状态已变化，未能取消');
-    await saveIdempotent(scope, key, requestHash, { accepted: true }, at);
-    const recognition = updated.state === 'succeeded' || updated.state === 'uncertain' ? await store.getRecognition(updated.recognitionId) : null;
-    return toJob(updated, recognition);
+  /** 任务当前投影（幂等重放用：按结果引用重新读取当前状态）。 */
+  async function currentJobProjection(userId: string, jobId: string): Promise<JobProjection> {
+    const row = await getOwnedJob(userId, jobId);
+    const recognition = row.state === 'succeeded' || row.state === 'uncertain' ? await store.getRecognition(row.recognitionId) : null;
+    return toJob(row, recognition);
   }
 
   return {

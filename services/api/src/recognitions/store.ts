@@ -7,6 +7,9 @@
  *
  * 幂等台账与 services/api 的认证幂等台账口径一致（键域 = 主体/方法/路径，key_hash 只存摘要，
  * request_hash 含请求体与 If-Match），但**独立存放**，不改动 GY-I04 的认证幂等存储。
+ *
+ * 并发收敛（监工 review 5483726169 [P1]）：写路径必须用 `claimIdempotent` 做**原子单飞占位**，
+ * 「查回执 → 占位 → 建任务 → 写回执」之间不得给同键请求留下第二个入口；同键异体一律 `conflict`。
  */
 import type { ErrorCode } from '../contract.ts';
 import { canTransitionJob, type Candidate, type JobState } from './state.ts';
@@ -48,6 +51,26 @@ export interface IdempotencyRow {
   payload: Record<string, unknown>;
 }
 
+/** 原子占位输入：请求摘要 + 占位到期时刻 + 判定到期用的当前时刻。 */
+export interface IdempotencyClaimInput {
+  requestHash: string;
+  expiresAt: Date;
+  now: Date;
+}
+
+/**
+ * 原子占位结果（同主体同键的并发收敛）：
+ * - `claimed`：本次调用占位成功，**只有它**可以进入创建/写入流程；
+ * - `completed`：已有完成回执 → 调用方按回执重放（同键同体）；
+ * - `in_progress`：同键同体请求正在处理 → 调用方有界等待其回执后重放；
+ * - `conflict`：同键已被**不同请求体**占用 → 必须 `IDEMPOTENCY_CONFLICT`。
+ */
+export type IdempotencyClaimResult =
+  | { status: 'claimed' }
+  | { status: 'completed'; row: IdempotencyRow }
+  | { status: 'in_progress' }
+  | { status: 'conflict' };
+
 /** 记录变更函数：只允许写白名单字段，避免调用方整体覆盖（防 selection 回写模型字段）。 */
 export type JobMutation = (row: JobRow) => JobRow;
 export type RecognitionMutation = (row: RecognitionRow) => RecognitionRow;
@@ -72,9 +95,17 @@ export interface RecognitionStore {
   insertRecognition(row: RecognitionRow): Promise<void>;
   getRecognition(recognitionId: string): Promise<RecognitionRow | null>;
   updateRecognition(recognitionId: string, expectedRevision: number, mutate: RecognitionMutation): Promise<RecognitionRow | null>;
-  findIdempotent(scope: string, keyHashHex: string): Promise<IdempotencyRow | null>;
-  putIdempotent(scope: string, keyHashHex: string, row: IdempotencyRow): Promise<void>;
-  /** 物理删除已到期台账条目。 */
+  /**
+   * 原子占位（单飞）：查回执与写入占位在**同一临界区**内完成，因此同主体同键的并发请求
+   * 只有一个拿到 `claimed`，其余得到 `completed`/`in_progress`/`conflict`，
+   * **不可能**各自创建一份任务（监工 review 5483726169 [P1]）。
+   */
+  claimIdempotent(scope: string, keyHashHex: string, input: IdempotencyClaimInput): Promise<IdempotencyClaimResult>;
+  /** 写入完成回执并释放同键占位（同一临界区）。 */
+  completeIdempotent(scope: string, keyHashHex: string, row: IdempotencyRow): Promise<void>;
+  /** 放弃占位（写入流程失败），只删占位、不动已有回执。 */
+  releaseIdempotent(scope: string, keyHashHex: string): Promise<void>;
+  /** 物理删除已到期的回执与占位。 */
   purgeIdempotent(now: Date): Promise<number>;
 }
 
@@ -94,6 +125,8 @@ export function createMemoryRecognitionStore(): RecognitionStore {
   const jobs = new Map<string, JobRow>();
   const recognitions = new Map<string, RecognitionRow>();
   const idempotency = new Map<string, IdempotencyRow>();
+  /** 单飞占位：`claimed` 只在占位存在期间唯一，完成回执写入时释放。 */
+  const claims = new Map<string, { requestHash: string; expiresAt: Date }>();
   const composite = (scope: string, keyHashHex: string): string => `${scope}\u0000${keyHashHex}`;
   return {
     persistent: false,
@@ -144,18 +177,49 @@ export function createMemoryRecognitionStore(): RecognitionStore {
       recognitions.set(recognitionId, cloneRecognition(next));
       return cloneRecognition(next);
     },
-    async findIdempotent(scope, keyHashHex) {
-      const row = idempotency.get(composite(scope, keyHashHex));
-      return row === undefined ? null : { ...row, payload: { ...row.payload } };
+    async claimIdempotent(scope, keyHashHex, input) {
+      const key = composite(scope, keyHashHex);
+      const nowMs = input.now.getTime();
+      // 先物理清理同键的过期回执/占位，避免过期条目永久占用唯一键。
+      const completed = idempotency.get(key);
+      if (completed !== undefined && completed.expiresAt.getTime() <= nowMs) idempotency.delete(key);
+      const pending = claims.get(key);
+      if (pending !== undefined && pending.expiresAt.getTime() <= nowMs) claims.delete(key);
+
+      const existing = idempotency.get(key);
+      if (existing !== undefined) {
+        if (existing.requestHash !== input.requestHash) return { status: 'conflict' };
+        return { status: 'completed', row: { ...existing, payload: { ...existing.payload } } };
+      }
+      const active = claims.get(key);
+      if (active !== undefined) {
+        // 同键异体并发：立即明确冲突，绝不放行第二个任务。
+        if (active.requestHash !== input.requestHash) return { status: 'conflict' };
+        return { status: 'in_progress' };
+      }
+      // 查回执与写占位在同一同步临界区内完成 → 同主体同键并发只有一个 claimed。
+      claims.set(key, { requestHash: input.requestHash, expiresAt: input.expiresAt });
+      return { status: 'claimed' };
     },
-    async putIdempotent(scope, keyHashHex, row) {
-      idempotency.set(composite(scope, keyHashHex), { ...row, payload: { ...row.payload } });
+    async completeIdempotent(scope, keyHashHex, row) {
+      const key = composite(scope, keyHashHex);
+      idempotency.set(key, { ...row, payload: { ...row.payload } });
+      claims.delete(key);
+    },
+    async releaseIdempotent(scope, keyHashHex) {
+      claims.delete(composite(scope, keyHashHex));
     },
     async purgeIdempotent(now) {
       let removed = 0;
       for (const [key, row] of idempotency) {
         if (row.expiresAt.getTime() <= now.getTime()) {
           idempotency.delete(key);
+          removed += 1;
+        }
+      }
+      for (const [key, claim] of claims) {
+        if (claim.expiresAt.getTime() <= now.getTime()) {
+          claims.delete(key);
           removed += 1;
         }
       }

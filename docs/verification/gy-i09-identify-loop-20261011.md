@@ -112,6 +112,7 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。   
 ℹ cancelled 0
 ℹ skipped 1        # 既有 native-PG 用例（本机无 PG，按其自身 skip 条件跳过）
 ℹ duration_ms 16739.3582                                  # exit 0
+# 返修轮 1 后为 ℹ tests 718 / pass 717 / fail 0 / skipped 1（新增 3 条并发与取消重放用例），见 §11.4
 
 > npm run test:contract
 ✔ API 错误码与 HTTP 状态映射与契约 states.json 完全一致
@@ -155,6 +156,7 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
   - uncertain job=ad9d9404-… reasons=["替身未给出可信分数，需重拍或人工核对"]
 ```
 （job/recognition id 为单次运行的合成 uuid，每次运行不同。）
+**返修轮 1 后**该脚本追加了并发与取消重放的取证（见 §11.1/§11.2），输出见 §11.4；原有用例全部保留。
 
 ### 6.4 过程中真实失败与处置（如实记录，含原始报错）
 
@@ -224,3 +226,86 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
 - [x] 未提交令牌、`.env`、AppSecret、真实 openid、真实会话令牌、个人原始媒体、构建输出
 - [x] 未跑的命令不写「通过」；失败原文已如实记录（§6.4）
 - [ ] **不声称**真实供应商可用、真机通过、准确率成立、PG 持久化已完成、`/media/**` 已接线、CI 绿灯
+
+## 11 返修轮 1：回应监工批复（review 5483726169，reviewed_sha 73935ece）
+
+### 11.1 [P1] 同键并发创建被受理两次 → 已修复（原子单飞占位）
+
+- 监工行内 `4241990966`：`Promise.all` 同主体同键同体 `createRecognition` ×2 返回**两个不同 job_id、两次提供者调用**，两个 `replayed` 均为 false。
+- 根因：原实现是「**查回执 → 建任务 → 写回执**」的先读后写，两次并发请求都在对方写回执之前查到空，各自建了一份任务。
+- 改法（两层，均在 `services/api/src/recognitions/`）：
+  1. `store.ts` 新增 `claimIdempotent / completeIdempotent / releaseIdempotent`：**查完成回执与写占位在同一个同步临界区内**完成（占位表 `claims` 与完成回执表 `idempotency` 分离），返回
+     `claimed | completed | in_progress | conflict`；同键异体在占位阶段即判 `conflict`。
+  2. `service.ts` 新增 `runIdempotentWrite`：写路径统一为「**原子占位 → produce → 写完成回执**」；未拿到占位者：
+     - 同键同体 → `in_progress` → **有界等待**（2ms 步进、1000ms 预算，与 `routes/support.ts` 的认证幂等口径一致）后按回执**重放**；超预算 → `409 REQUEST_IN_PROGRESS`（可重试）；仍不产生第二个任务；
+     - 同键异体 → `conflict` → `409 IDEMPOTENCY_CONFLICT`；
+     - `produce` 抛错 → **释放占位**（不落回执），错误原样抛出，后续同键请求可重试。
+  3. 创建路径把媒体引用校验、提供者可用性、归属等**前置检查留在占位之前**；只有占位成功者（`replayed=false`）才 `execute(jobId)` 启动执行，因此并发同键**只调用提供者一次**。
+  4. `selection` / `delete` / `cancel` 三条写路径同步改用同一 helper（并发语义一致，均不产生第二次写入）。
+- 新增反例（逐条可单独指出）：
+  - `返修轮 1 [P1]：同键同体**并发**创建 → 恰好 1 个 job、恰好 1 次提供者调用、两响应收敛`（`app.inject`）
+  - `返修轮 1 [P1]：同键**异体**并发 → IDEMPOTENCY_CONFLICT 且不产生第二个任务`（`app.inject`）
+  - 集成脚本内两条**真实 HTTP** `Promise.all` 并发用例（`tests/integration/recognitions-http.mjs`）
+
+### 11.2 [P2] 取消的原样重放不可靠 → 已修复（先读回执，再做版本/终态判断）
+
+- 监工行内 `4241990969`：首次取消 `cancelled` revision=3，原幂等键 + 原 `If-Match` 重试得到 `REVISION_CONFLICT`。
+- 改法：`cancelJob` 顺序改为 **归属守卫（越权/不存在仍 `NOT_FOUND`，不放宽）→ 原子占位/读回执 → 仅未命中回执时才做版本与终态判断**；
+  重放按结果引用 `job_id` 重新读取当前状态（任务已终态，结果稳定），返回**同一取消结果**。
+- **未放宽**的守卫（均有对应用例）：新键 + 过期 `If-Match` → `409 REVISION_CONFLICT`；新键 + 当前版本 → `409 OBJECT_UNAVAILABLE`（不假装取消成功）；
+  他人取消 → `404 NOT_FOUND`；取消后**迟到提供者结果仍不复活**任务（CAS + 合法迁移守卫）。
+- 新增反例：`返修轮 1 [P2]：取消成功后**原键 + 原 If-Match 原样重放** → 回放取消结果（非 REVISION_CONFLICT）`。
+
+### 11.3 既有反例全部继续通过
+
+越权 `NOT_FOUND`（GET/PATCH/DELETE/jobs 四条路径）、多余字段 `INVALID_REQUEST`、候选 ≤3 不补造、候选 >3 / rank 重复 / 字段缺失 → `failed`、
+`selection` 不回写模型原始分数、幂等同键异体 `IDEMPOTENCY_CONFLICT`、`If-Match` 428/400/409、`real` fail-closed（503 + 不回退替身）、
+取消后迟到结果不复活：`tests/unit/recognitions-api.test.mjs` **30/30 pass**（原 27 项 + 新增 3 项，未删改任何既有断言）。
+
+### 11.4 返修轮门禁与并发反例的**实际输出**（真跑）
+
+```
+> npm run lint
+PASS tsc --noEmit services/api/tsconfig.json
+PASS tsc --noEmit apps/admin/tsconfig.json
+PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+lint 通过（静态检查；不代表运行期或真实服务已通过）。            # exit 0
+
+> npm run test:unit
+ℹ tests 718
+ℹ pass 717
+ℹ fail 0
+ℹ skipped 1        # 既有 native-PG 用例（本机无 PG）
+                                                                  # exit 0
+
+> npm run test:contract      ℹ tests 6 / pass 6 / fail 0          # exit 0
+> npm run test:docs          PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+> npm run test:mini          PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax.
+                             ℹ tests 4 / pass 4 / fail 0          # exit 0
+
+> node tests/integration/recognitions-http.mjs
+PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memory store)
+  - loopback origin=http://127.0.0.1:59057
+  - create job=ed29e420-… recognition=8a5f6609-… state=queued
+  - final state=succeeded error_code=null model_version=stub-v1
+  - selection=synthetic_weed_a revision=2
+  - delete=accepted; get after delete=404
+  - uncertain job=e60c1154-… reasons=["替身未给出可信分数，需重拍或人工核对"]
+  - concurrent same-key: job=e68bbcf3-3978-45aa-9291-2850ef162bfd provider_calls=1 (两个响应同一 job)
+  - concurrent different-body: statuses=[202,409] conflict=IDEMPOTENCY_CONFLICT provider_calls=1
+  - cancel=3; same-key replay -> 200 cancelled revision=3; new-key stale If-Match -> 409 REVISION_CONFLICT
+                                                                  # exit 0
+```
+
+**并发反例的实际结果（修复前 → 修复后）**：
+
+| 反例 | 修复前 | 修复后（实测） |
+| --- | --- | --- |
+| `Promise.all` 同键同体 ×2 | 2 个 job_id、2 次提供者调用、两个 `replayed=false` | **1 个 job**（两响应同一 job）、**1 次提供者调用**、202/202 |
+| `Promise.all` 同键异体 ×2 | 可能各自建任务 | **`[202, 409]`**，409 = `IDEMPOTENCY_CONFLICT`，**1 次提供者调用**（无第二个任务） |
+| 取消成功后的原样重放 | `409 REVISION_CONFLICT` | **200 `cancelled` revision=3**（同一结果） |
+| 新键 + 过期 `If-Match` 取消 | `409 REVISION_CONFLICT` | 不变（`409 REVISION_CONFLICT`，守卫未放宽） |
+
+> 仍未取得：真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯 —— 与本片第一轮相同，**不因本次返修而改变**。
+> 本次返修**未**宣布验收通过；监工需基于 `review` 后的新 HEAD 独立复核。
+

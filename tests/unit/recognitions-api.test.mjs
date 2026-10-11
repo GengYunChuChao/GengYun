@@ -343,6 +343,125 @@ test('GY-I09 识别任务闭环：契约面、七类状态与逐条反例（合�
     } finally { await own.close(); }
   });
 
+  await t.test('返修轮 1 [P1]：同键同体**并发**创建 → 恰好 1 个 job、恰好 1 次提供者调用、两响应收敛', async () => {
+    let release;
+    const provider = scriptedProvider([() => new Promise(resolve => { release = resolve; })]);
+    const own = makeApp({ provider });
+    try {
+      const token = await login(own, 'synthetic-concurrent-same');
+      const key = KEY('concurrent-same');
+      const [first, second] = await Promise.all([
+        createJob(own, token, { key, mediaId: MEDIA_B }),
+        createJob(own, token, { key, mediaId: MEDIA_B }),
+      ]);
+      assert.equal(first.status, 202, JSON.stringify(first.body));
+      assert.equal(second.status, 202, JSON.stringify(second.body));
+      assert.equal(typeof first.body.data.id, 'string');
+      // 收敛判据：同一任务身份（id/kind/target_ref）。后到者按回执重新读取当前状态，
+      // 因此瞬态 state/revision 可能已推进（queued → running），这属于如实读取而非第二个任务。
+      assert.equal(first.body.data.id, second.body.data.id, '同键同体并发必须收敛到同一 job');
+      assert.equal(first.body.data.kind, 'recognition');
+      assert.equal(first.body.data.kind, second.body.data.kind);
+      assert.equal(first.body.data.target_ref.id, second.body.data.target_ref.id);
+      assert.equal(first.body.data.target_ref.type, 'recognition');
+      assert.equal(first.body.data.state, 'queued');
+      assert.ok(['queued', 'running'].includes(second.body.data.state), '后到者应报当前状态，实际 ' + second.body.data.state);
+      // 恰好 1 次提供者调用：等到第一次调用出现，再给（错误的）第二次调用留出窗口。
+      for (let i = 0; i < 200 && provider.calls.length === 0; i += 1) await new Promise(r => setTimeout(r, 2));
+      assert.equal(provider.calls.length, 1, '并发同键只允许调用提供者一次');
+      await new Promise(r => setTimeout(r, 40));
+      assert.equal(provider.calls.length, 1, '不得出现第二次提供者调用');
+      release({ kind: 'completed', candidates: VALID_CANDIDATES, uncertainty_reasons: [] });
+      await own.recognitionService.settle();
+      assert.equal(provider.calls.length, 1);
+      const settled = await call(own, 'GET', '/api/v1/jobs/' + first.body.data.id, token);
+      assert.equal(settled.body.data.state, 'succeeded');
+    } finally { await own.close(); }
+  });
+
+  await t.test('返修轮 1 [P1]：同键**异体**并发 → IDEMPOTENCY_CONFLICT 且不产生第二个任务', async () => {
+    let release;
+    const provider = scriptedProvider([() => new Promise(resolve => { release = resolve; })]);
+    const own = makeApp({ provider });
+    try {
+      const token = await login(own, 'synthetic-concurrent-diff');
+      const key = KEY('concurrent-diff');
+      const [a, b] = await Promise.all([
+        createJob(own, token, { key, mediaId: MEDIA_A }),
+        createJob(own, token, { key, mediaId: MEDIA_B }),
+      ]);
+      const statuses = [a.status, b.status].sort((x, y) => x - y);
+      assert.deepEqual(statuses, [202, 409], JSON.stringify([a.body, b.body]));
+      const conflict = a.status === 409 ? a : b;
+      const accepted = a.status === 202 ? a : b;
+      assert.equal(conflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+      assert.equal(typeof accepted.body.data.id, 'string');
+      for (let i = 0; i < 200 && provider.calls.length === 0; i += 1) await new Promise(r => setTimeout(r, 2));
+      assert.equal(provider.calls.length, 1, '异体并发不得产生第二个任务');
+      await new Promise(r => setTimeout(r, 40));
+      assert.equal(provider.calls.length, 1);
+      release({ kind: 'completed', candidates: VALID_CANDIDATES, uncertainty_reasons: [] });
+      await own.recognitionService.settle();
+    } finally { await own.close(); }
+  });
+
+  await t.test('返修轮 1 [P2]：取消成功后**原键 + 原 If-Match 原样重放** → 回放取消结果（非 REVISION_CONFLICT）', async () => {
+    let release;
+    const provider = scriptedProvider([() => new Promise(resolve => { release = resolve; })]);
+    const own = makeApp({ provider });
+    try {
+      const token = await login(own, 'synthetic-cancel-replay');
+      const created = await createJob(own, token, { key: KEY('cancel-replay-create'), mediaId: MEDIA_B });
+      const jobId = created.body.data.id;
+      let current = created.body.data;
+      for (let i = 0; i < 200 && current.state === 'queued'; i += 1) {
+        current = (await call(own, 'GET', '/api/v1/jobs/' + jobId, token)).body.data;
+        await new Promise(r => setTimeout(r, 2));
+      }
+      assert.equal(current.state, 'running');
+      const originalIfMatch = '"' + current.revision + '"';
+      const cancelKey = KEY('cancel-replay-op');
+      const cancelled = await call(own, 'POST', '/api/v1/jobs/' + jobId + '/cancel', token, {
+        headers: { 'if-match': originalIfMatch, 'idempotency-key': cancelKey },
+      });
+      assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+      assert.equal(cancelled.body.data.state, 'cancelled');
+      const cancelledRevision = cancelled.body.data.revision;
+      // 原样重放：同一幂等键 + 同一（此时已过期的）If-Match。
+      const replay = await call(own, 'POST', '/api/v1/jobs/' + jobId + '/cancel', token, {
+        headers: { 'if-match': originalIfMatch, 'idempotency-key': cancelKey },
+      });
+      assert.equal(replay.status, 200, JSON.stringify(replay.body));
+      assert.equal(replay.body.data.state, 'cancelled');
+      assert.equal(replay.body.data.revision, cancelledRevision, '重放必须返回同一取消结果');
+      // 但「新键 + 过期 If-Match」仍按契约报版本冲突（守卫未放宽）。
+      const staleNewKey = await call(own, 'POST', '/api/v1/jobs/' + jobId + '/cancel', token, {
+        headers: { 'if-match': originalIfMatch, 'idempotency-key': KEY('cancel-replay-stale') },
+      });
+      assert.equal(staleNewKey.status, 409);
+      assert.equal(staleNewKey.body.error.code, 'REVISION_CONFLICT');
+      // 新键 + 当前版本 → 已终态，不可取消（不假装取消成功）。
+      const terminalNewKey = await call(own, 'POST', '/api/v1/jobs/' + jobId + '/cancel', token, {
+        headers: { 'if-match': '"' + cancelledRevision + '"', 'idempotency-key': KEY('cancel-replay-terminal') },
+      });
+      assert.equal(terminalNewKey.status, 409);
+      assert.equal(terminalNewKey.body.error.code, 'OBJECT_UNAVAILABLE');
+      // 迟到结果仍不复活（守卫保留）。
+      release({ kind: 'completed', candidates: VALID_CANDIDATES, uncertainty_reasons: [] });
+      await new Promise(r => setTimeout(r, 30));
+      const after = (await call(own, 'GET', '/api/v1/jobs/' + jobId, token)).body.data;
+      assert.equal(after.state, 'cancelled');
+      assert.equal(after.result, null);
+      // 他人不可取消（归属守卫保留）。
+      const tokenOther = await login(own, 'synthetic-cancel-replay-other');
+      const foreignReplay = await call(own, 'POST', '/api/v1/jobs/' + jobId + '/cancel', tokenOther, {
+        headers: { 'if-match': originalIfMatch, 'idempotency-key': cancelKey },
+      });
+      assert.equal(foreignReplay.status, 404);
+      assert.equal(foreignReplay.body.error.code, 'NOT_FOUND');
+    } finally { await own.close(); }
+  });
+
   await t.test('反例 5：候选 >3 → failed PROVIDER_OUTCOME_UNKNOWN（不截断、不补造）', async () => {
     const provider = scriptedProvider([{
       kind: 'completed',
