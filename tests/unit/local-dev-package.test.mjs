@@ -4,6 +4,7 @@ import {mkdtempSync,cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSyn
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname,basename} from 'node:path';
 import {prepareLocalDev} from '../../tools/local-dev/prepare.mjs';
+import {spawnSync} from 'node:child_process';
 function cleanup(root){assert.equal(dirname(resolve(root)),resolve(tmpdir()));assert.ok(basename(root).startsWith('gengyun-local-package-'));rmSync(root,{recursive:true,force:true});}
 function fixture(){
  const root=mkdtempSync(join(tmpdir(),'gengyun-local-package-'));
@@ -42,4 +43,12 @@ test('invalid ports, missing PostgreSQL or modified release config reject before
   assert.throws(()=>prepareLocalDev(f),/domain validation/);
   assert.equal(existsSync(join(f.root,'.local/local-dev')),false);
  }finally{cleanup(f.root);}
+});
+
+test('Windows local password generator works with Framework RNG and retains independent 192-bit outputs',{skip:process.platform!=='win32'},()=>{
+ const script=readFileSync(resolve(import.meta.dirname,'../../tools/local-dev/start.ps1'),'utf8');
+ const generator=script.match(/ function New-LocalRandomPassword \{[\s\S]*?\n \}/)?.[0];assert.ok(generator);
+ const command=generator+"\n$taskA=New-LocalRandomPassword;$taskB=New-LocalRandomPassword;if($taskA -notmatch '^[a-f0-9]{48}$' -or $taskB -notmatch '^[a-f0-9]{48}$' -or $taskA -eq $taskB){throw 'Local RNG failed'};Write-Output 'PASS local RNG compatibility'";
+ const result=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',command],{encoding:'utf8',timeout:15000});
+ assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/PASS local RNG compatibility/);
 });

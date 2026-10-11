@@ -11,7 +11,13 @@ $taskSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if($LASTEXITCODE -ne 0){throw 'Private directory ACL failed'}
 $taskConfig=Join-Path $taskPrivate 'config.json'
 if(-not(Test-Path -LiteralPath $taskConfig)){
- $taskValues=@{ownerPassword=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant();runtimePassword=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant()}
+ function New-LocalRandomPassword {
+  $taskBytes=New-Object byte[] 24
+  $taskGenerator=[Security.Cryptography.RandomNumberGenerator]::Create()
+  try {$taskGenerator.GetBytes($taskBytes);return [BitConverter]::ToString($taskBytes).Replace('-','').ToLowerInvariant()}
+  finally {$taskGenerator.Dispose()}
+ }
+ $taskValues=@{ownerPassword=New-LocalRandomPassword;runtimePassword=New-LocalRandomPassword}
  [IO.File]::WriteAllText($taskConfig,($taskValues|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 }
 $taskValues=Get-Content -LiteralPath $taskConfig -Raw | ConvertFrom-Json

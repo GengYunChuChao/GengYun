@@ -37,6 +37,12 @@ for(const [name,id,key] of [['referencedetail','gy-i03-hb-001','detail'],['refer
 const token=storage.get('gengyun.session').accessToken;
 const base=`http://127.0.0.1:${settings.apiPort}/api/v1`;
 const profileHeaders={Authorization:'Bearer '+token};
+for(const path of ['/knowledge','/knowledge/00000000-0000-4000-8000-000000000001']){
+ const guest=await fetch(base+path);assert.equal(guest.status,401);assert.equal((await guest.json()).error.code,'SESSION_REQUIRED');
+}
+const knowledge=await fetch(base+'/knowledge',{headers:profileHeaders});assert.equal(knowledge.status,200);
+const knowledgeBody=await knowledge.json();assert.equal(knowledgeBody.meta.execution_mode,'stub');
+assert.deepEqual(knowledgeBody.data,{items:[],next_cursor:null},'default local bootstrap never seeds approved knowledge');
 const profileBefore=await fetch(base+'/me/profile',{headers:profileHeaders});assert.equal(profileBefore.status,200);
 const before=await profileBefore.json();
 const crops=await fetch(base+'/catalog/crops',{headers:profileHeaders});assert.equal(crops.status,200);
@@ -59,11 +65,12 @@ try{
  assert.equal((await runtime.query('SELECT current_user AS actor')).rows[0].actor,'gengyun_local_runtime');
  assert.equal((await runtime.query("SELECT count(*)::integer AS n FROM sessions WHERE token_hash=decode($1,'hex')",[createHash('sha256').update(token).digest('hex')])).rows[0].n,1);
  const flags=(await runtime.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];assert.ok(Object.values(flags).every(value=>value===false));
- for(const sql of ['CREATE TABLE public.local_forbidden(id int)','CREATE ROLE local_forbidden_role','DELETE FROM crops','DELETE FROM single_profiles',"UPDATE users SET state='suspended'",'SELECT object_ref_cipher FROM media','SELECT object_id FROM exports'])await assert.rejects(runtime.query(sql),error=>error.code==='42501');
+ for(const sql of ['CREATE TABLE public.local_forbidden(id int)','CREATE ROLE local_forbidden_role','DELETE FROM crops','DELETE FROM single_profiles',"UPDATE users SET state='suspended'",'SELECT object_ref_cipher FROM media','SELECT object_id FROM exports','SELECT body FROM knowledge_versions','SELECT canonical_url FROM sources','SET ROLE gengyun_local_owner'])await assert.rejects(runtime.query(sql),error=>error.code==='42501');
 }finally{await runtime.end();}
 const result=await new Promise(resolve=>auth.logout(resolve));assert.equal(result.serverRevoked,true);
 assert.equal((await fetch(`http://127.0.0.1:${settings.apiPort}/api/v1/auth/session`,{headers:{Authorization:'Bearer '+token}})).status,401);
 assert.equal((await fetch(base+'/me/profile',{headers:profileHeaders})).status,401);
+assert.equal((await fetch(base+'/knowledge',{headers:profileHeaders})).status,401);
 assert.equal((await fetch(base+'/me/profile',{method:'PUT',headers:putHeaders,body:JSON.stringify(body)})).status,401);
 await Promise.all([...pending]);
 console.log('PASS local client → actual restricted-LOGIN API → persistent PostgreSQL: login/four-page loading, profile/catalog GET, ETag save/replay/conflict, forbidden owner, SQL privilege denials, hashed session, logout and old-token profile/replay denial. Profile catalog is a synthetic local fixture.');
