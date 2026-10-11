@@ -1,0 +1,27 @@
+{
+  "mainBase": "487918856a0099d6c7ee5f083069bd415b095bee",
+  "apiPR79": "9275762f3d91bbb1673fecd449c38d8b37b5cf80",
+  "frontendPR80": "0bd0a6dea6c471f03419ae198bbb1739aed832ef",
+  "localCombinedCommit": "ac9eeeaefaa4cc7cde8bde862b1fbbfdb561518f",
+  "localCombinedTree": "8d200207f6fa692726085404ac597a2b274bcf07",
+  "hashMethod": "SHA256 of LF-normalized tracked text; excludes all private config, credentials, database data, logs and wx codes/tokens",
+  "sha256": {
+    "tests/integration/knowledge-native-consumer.mjs": "fbcaf4b2eca134f8c1b6962aefcb66c938e3aa7bfa5dc1f28ed2c121bf1d0765",
+    "tests/integration/knowledge-native-pg.ps1": "816093035fe9cb4d32c788e98e441b6bf63dceb0937f5a0f7220b28522d42f4e",
+    "docs/verification/assets/i07-native-combined-ac9eeea/observations.json": "cd4720f063d8198f2d398625fced01c436be03439492ad3eaa05a7ee0e1e6af7"
+  },
+  "cleanup": {
+    "datadir": "C:/Users/MR/Documents/Codex/2026-10-03/new-chat/i07-native-runtime-20261011-r4/data",
+    "finalPostmasterPid": 24284,
+    "stopped": true,
+    "closedLoopbackPorts": [
+      55486,
+      55487,
+      55488,
+      3126,
+      3127,
+      3128
+    ]
+  },
+  "identityAndData": "All synthetic in fresh empty native test cluster, stub auth provider. verified/real dataset fields only isolated projection test prerequisites; no production approval."
+}
