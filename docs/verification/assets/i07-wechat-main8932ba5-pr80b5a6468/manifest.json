@@ -1,0 +1,133 @@
+{
+  "kind": "actual WeChat/main Fastify/restricted native PG evidence; all identities and records synthetic",
+  "main": "8932ba5153709ed67e2944984c3b891f38e1a951",
+  "frontend": "b5a64688406616dcc99963f0c21643e1699039a1",
+  "verifiedMerge": "52b060d6a6ed270b59e5359306b2d13a0a9b910b",
+  "sourceComparison": "622 existing tracked files identical after UTF-8 CRLF to LF normalization; binaries raw",
+  "cases": 5,
+  "rawScreenshots": 11,
+  "portsStopped": [
+    3129,
+    55489
+  ],
+  "ignoredRuntimeRestored": 3120,
+  "recompileAfterRestore": false,
+  "artifacts": [
+    {
+      "path": "api-http.jsonl",
+      "bytes": 2983,
+      "sha256": "27377707137b9aca3f965d3360c0533d5248cea8776129e3ac43049d20390908"
+    },
+    {
+      "path": "contact-sheet.png",
+      "bytes": 380476,
+      "sha256": "1e43d53641ba5a46cb69c766152ce8c957067f915cc38e10bd694798237ccdea"
+    },
+    {
+      "path": "executed-bootstrap.cjs",
+      "bytes": 1184,
+      "sha256": "d6fa5ef2704330ba0031120f74542b37a315d85005990704534601f570aa4a3f"
+    },
+    {
+      "path": "executed-service.mjs",
+      "bytes": 6701,
+      "sha256": "dba2e1ca1882cf801a5c4867f87ff07b1e3ec109d2efe392728cc381b2547ac5"
+    },
+    {
+      "path": "executed-ui.cjs",
+      "bytes": 7775,
+      "sha256": "fba5466280a1292310f6186e77738478d6b46377ae0d63ee4475ade2f1e7b7e7"
+    },
+    {
+      "path": "import-equivalence.json",
+      "bytes": 21462,
+      "sha256": "16b34c87a64e23e6037ffbc4cbc3bc694b3b1f8bf25dc9f66f7206da95593a46"
+    },
+    {
+      "path": "input-main-blobs.json",
+      "bytes": 1368,
+      "sha256": "a80a2dd06239e8bd4cbc3b0d3e18faa09f5c9e476d60ccc99b1e951eb5aa49c0"
+    },
+    {
+      "path": "merged-source-equivalence.json",
+      "bytes": 118189,
+      "sha256": "16d3ed7adb996294d16577279c2abe773aaa21e549ad0f344b302966fc4af916"
+    },
+    {
+      "path": "merged-tests.log",
+      "bytes": 22188,
+      "sha256": "d2f3e90a1c012828852523099de8e02bbc8137b32dde4b6b117b8eb5feba4e62"
+    },
+    {
+      "path": "runtime.json",
+      "bytes": 1302,
+      "sha256": "10bd094d4d804120ce1ab11c346cfa6e976d75a361100780a14b0b8b1266cdab"
+    },
+    {
+      "path": "wechat/expired-login-gate.png",
+      "bytes": 48358,
+      "sha256": "2125b346631377f741833d2ee1cb36d0a4b74826937303c2392bcf07dbc67dab"
+    },
+    {
+      "path": "wechat/guest-login.png",
+      "bytes": 48374,
+      "sha256": "bb4bbc97f1ad57756aab08347cf877b3a7e7cd3d052081ca2f446d64995e670f"
+    },
+    {
+      "path": "wechat/knowledge-body.png",
+      "bytes": 74184,
+      "sha256": "36fb9cdf87e4a8fe395bb4ea144ad0d372d905d1cebf9b7c9a208524bb6c4042"
+    },
+    {
+      "path": "wechat/knowledge-card.png",
+      "bytes": 89089,
+      "sha256": "e2fce9a4bfc0e135a281d523dab6125b8301884ed6aa03b72fe72d49a06245e2"
+    },
+    {
+      "path": "wechat/knowledge-detail.png",
+      "bytes": 80610,
+      "sha256": "d18b35222f7d9f7dd93ee2126ee568d5b1887db5ba89e7d920c887f2ad55559a"
+    },
+    {
+      "path": "wechat/knowledge-empty.png",
+      "bytes": 88006,
+      "sha256": "c1435b775206e847c9f3fadc1477529dcd49926a57a52461d2a9731b9b20022f"
+    },
+    {
+      "path": "wechat/knowledge-query.png",
+      "bytes": 84439,
+      "sha256": "1e0ec82b8dd469fa0c51eeb5d248d9a6c4f3d4b72ded26c0963c2e1df81c9a98"
+    },
+    {
+      "path": "wechat/knowledge-session-expired.png",
+      "bytes": 96079,
+      "sha256": "ba7aec05697556221ccccedea74a602bd24187b491caf7f8615bdbe6910510fb"
+    },
+    {
+      "path": "wechat/knowledge-source.png",
+      "bytes": 75670,
+      "sha256": "799d7537cd3ee44efc87c091b3a16e89152539609ef12df30e5331f6274dc8c9"
+    },
+    {
+      "path": "wechat/knowledge-withdrawn-list.png",
+      "bytes": 87992,
+      "sha256": "18bea6571c33d045c7edf77423841ba84d4282833fc8a26d91ee4b6e9705b770"
+    },
+    {
+      "path": "wechat/knowledge-withdrawn.png",
+      "bytes": 92261,
+      "sha256": "fb0bede0fde6479484ccf804d56d7f38d11223977e599a9afe177d75f66e09e7"
+    },
+    {
+      "path": "wechat/observations.json",
+      "bytes": 1147,
+      "sha256": "ea4ce7527c40c9d91f148c7d42c5b379cde900d92e9664f4108b3584188b62ab"
+    },
+    {
+      "path": ".gitattributes",
+      "bytes": 29,
+      "sha256": "730a35ae3d558080083c3103d9ac8100c3f6561678092abe341701dfa331eb1d"
+    }
+  ],
+  "bytePreservation": "Local .gitattributes preserves exact bytes and declares captured CRLF line endings"
+}

@@ -1,0 +1,43 @@
+<view class="page knowledge-page" style="--font-scale: {{fontScale}}">
+  <view class="breadcrumb">科普资料 / 服务端查询</view>
+  <view class="page-title">把田间知识，放在手边</view>
+  <view class="subtitle">检索资料，核对来源与适用条件。</view>
+  <view class="notice">{{modeNote}}</view>
+  <block wx:if="{{gatePassed}}">
+    <view class="search-box">
+      <view class="field-label">搜索科普资料</view>
+      <view class="search-input"><image class="search-icon" src="/assets/knowledge/search.png" aria-hidden="true" /><input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" /></view>
+    </view>
+    <view class="filter-panel">
+      <view class="field-label">筛选条件</view>
+      <view class="chips">
+      <picker range="{{crops}}" range-key="name" value="{{cropIndex}}" data-field="cropIndex" bindchange="pick"><view class="picker chip">作物 · {{crops[cropIndex].name}}</view></picker>
+      <picker range="{{species}}" range-key="name" value="{{speciesIndex}}" data-field="speciesIndex" bindchange="pick"><view class="picker chip">杂草 · {{species[speciesIndex].name}}</view></picker>
+      <picker range="{{regions}}" range-key="name" value="{{regionIndex}}" data-field="regionIndex" bindchange="pick"><view class="picker chip">地区 · {{regions[regionIndex].name}}</view></picker>
+      </view>
+      <button class="btn btn--ghost btn--block" bindtap="toggle">{{advanced ? '收起更多条件' : '更多条件'}}</button>
+      <block wx:if="{{advanced}}">
+        <view class="field-label">生育期（可选）</view><input class="query-input" maxlength="80" value="{{growth_stage}}" data-field="growth_stage" bindinput="input" />
+        <view class="field-label">种植方式（可选）</view><input class="query-input" maxlength="80" value="{{planting_method}}" data-field="planting_method" bindinput="input" />
+        <view class="field-label">使用场景（可选）</view><input class="query-input" maxlength="80" value="{{use_scene}}" data-field="use_scene" bindinput="input" />
+      </block>
+      <button class="btn btn--primary btn--block" bindtap="search" loading="{{busy}}" disabled="{{busy}}">查询／重试</button>
+      <button class="btn btn--secondary btn--block" bindtap="reset" disabled="{{busy}}">清空条件继续查询</button>
+    </view>
+    <view class="directory-note">{{directoryNote}}</view>
+    <view class="status" role="status">{{status}}</view>
+    <view class="result-heading" wx:if="{{items.length}}">当前页资料</view>
+    <view class="card article-card" wx:for="{{items}}" wx:key="id">
+      <view class="article-art"><image class="leaf-icon" src="/assets/knowledge/leaf.png" aria-hidden="true" /><text>科普 / FIELD NOTES</text></view><view class="card-meta">科普参考 · {{item.labels.source}}</view>
+      <view class="card-title">{{item.item.title}}</view>
+      <view class="source-tags"><text class="pill">{{item.labels.evidence}}</text><text class="pill amber">{{item.labels.review}}</text></view>
+      <view class="notice">{{item.conditionNote}}</view>
+      <view>来源：{{item.item.source.publisher}} · {{item.item.source.title}}</view>
+      <view>来源版本：{{item.item.source.version}}</view><view>来源取得时间：{{item.item.source.updated_at}}</view>
+      <button class="btn btn--primary btn--block" data-id="{{item.item.id}}" bindtap="open">查看详情并核对来源</button>
+    </view>
+    <button wx:if="{{nextCursor}}" class="btn btn--secondary btn--block" bindtap="next" disabled="{{busy}}">下一页</button>
+  </block>
+  <view wx:else class="status">{{status || "需要核实登录状态后才能查询。"}}<button class="btn btn--primary btn--block" bindtap="search">核实登录／重试</button></view>
+  <view class="notice">科普参考不等于用药建议。本页不提供用量卡，不把科研来源标为专家认证。</view>
+</view>

@@ -1,0 +1,59 @@
+{
+  "kind": "official WeChat → actual main business Fastify → native PG17 limited SCRAM LOGIN; all fixture data and WeChat identity synthetic",
+  "main": "8932ba5153709ed67e2944984c3b891f38e1a951",
+  "frontend": "b5a64688406616dcc99963f0c21643e1699039a1",
+  "migrations": [
+    "0001",
+    "0002",
+    "0003",
+    "0004",
+    "0005",
+    "0006",
+    "0007",
+    "0008",
+    "0009",
+    "0010"
+  ],
+  "postgres": "17.11",
+  "flags": {
+    "current_user": "gy_i07_runtime_wx",
+    "session_user": "gy_i07_runtime_wx",
+    "rolsuper": false,
+    "rolcreatedb": false,
+    "rolcreaterole": false,
+    "rolreplication": false,
+    "rolbypassrls": false,
+    "rolcanlogin": true
+  },
+  "groups": [
+    "gengyun_auth_privacy",
+    "gengyun_knowledge_runtime"
+  ],
+  "scram": true,
+  "denied": [
+    {
+      "sql": "SELECT body FROM knowledge_versions",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT canonical_url FROM sources",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT object_ref_cipher FROM media",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TABLE denied_ddl(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TEMP TABLE denied_temp(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "SET ROLE gy_i07_owner_wx",
+      "code": "42501"
+    }
+  ]
+}

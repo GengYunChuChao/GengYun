@@ -2,6 +2,8 @@
   "pages": [
     "pages/home/home",
     "pages/identify/identify",
+    "pages/knowledge/knowledge",
+    "pages/knowledgedetail/knowledgedetail",
     "pages/reference/reference",
     "pages/referencedetail/referencedetail",
     "pages/referenceseed/referenceseed",

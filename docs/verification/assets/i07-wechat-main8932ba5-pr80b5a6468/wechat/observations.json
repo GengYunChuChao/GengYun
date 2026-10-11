@@ -1,0 +1,24 @@
+{
+  "kind": "actual rendered WeChat WXML/JS and wx.login → main business Fastify/SQL → restricted native PG17 LOGIN; identity and records synthetic; no font/auth override",
+  "main": "8932ba5153709ed67e2944984c3b891f38e1a951",
+  "frontend": "b5a64688406616dcc99963f0c21643e1699039a1",
+  "width": 320,
+  "height": 504,
+  "platform": "devtools",
+  "SDKVersion": "3.17.3",
+  "cases": [
+    "actual guest gate/wx.login/auth SQL and live list from PG projection",
+    "actual rendered list→detail fresh GET, exact PG source tuple; null conditions and zero DoseCard",
+    "business q query no match clears rendered list; no static fallback",
+    "separate fixture SQL withdrawal commits; business detail 404 clears rendered body and reread list empty",
+    "actual SQL-persisted session expiry gives business 401; rendered old list and cached session cleared; reentry gates to login"
+  ],
+  "bodyFont": "18px",
+  "minimumButtonHeight": 45.19791793823242,
+  "sourceTuple": {
+    "id": "97551fd0-fb43-4f32-98ca-55f410b65f77",
+    "version": "synthetic-wx-native-v1",
+    "updated_at": "2026-10-11T00:00:00.000Z"
+  },
+  "interfaceObservations": 16
+}
