@@ -44,7 +44,9 @@ Page({
     gatePassed: false
   },
 
-  onLoad: function () {
+  onLoad: function (options) {
+    const q = options || {}
+    this._profileFilter = /^[A-Za-z0-9_-]{1,80}$/.test(q.crop_id || '') && /^33[0-9]{4}$/.test(q.region_code || '') ? { crop_id: q.crop_id, region_code: q.region_code } : null
     fontScale.applyFontScale(this); this.checkGate() },
 
   checkGate: function () {
@@ -63,6 +65,16 @@ Page({
         modeNote: reference.modeNote(),
         catalogVersion: reference.catalogVersionText()
       })
+      if (self._profileFilter) {
+        const filter = self._profileFilter; self._profileFilter = null
+        const cropIndex = reference.crops.findIndex(function (c) { return c.id === filter.crop_id })
+        const regionIndex = reference.regions.findIndex(function (r) { return r.code === filter.region_code })
+        if (cropIndex < 0 || regionIndex < 0) {
+          self.setData({ matchState: 'invalid', matchLabel: '当前资料目录不支持档案条件，请重新选择。', items: [], total: 0, nextCursor: null })
+          return
+        }
+        self.setData({ cropId: filter.crop_id, regionCode: filter.region_code, cropIndex: cropIndex, regionIndex: regionIndex })
+      }
       self.runQuery()
     })
   },

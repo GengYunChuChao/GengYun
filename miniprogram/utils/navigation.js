@@ -20,6 +20,8 @@ function normalizeTarget(candidate) {
   if (parts.length > 2 || PAGES.indexOf(parts[0].slice(1)) === -1 ||
       parts[0].charAt(0) !== '/' || parts[0] === LOGIN) return null
   if (parts.length === 1) return parts[0]
+  // Profile navigation carries only the two existing reference query conditions.
+  if (parts[0] === '/pages/reference/reference' && /^crop_id=[A-Za-z0-9_-]{1,80}&region_code=33[0-9]{4}$/.test(parts[1])) return candidate
   // No arbitrary role/token/user_id/redirect parameters. Only existing detail-page IDs.
   if (ID_PAGES.indexOf(parts[0]) === -1 || !/^id=[A-Za-z0-9_%.-]+$/.test(parts[1])) return null
   let id

@@ -45,3 +45,6 @@
   font-weight: 600;
   color: var(--color-text, #1B2B1E);
 }
+
+.profile-form > button { width: 100%; margin: 12px 0; }
+.selection { padding: 14px 10px; border: 1px solid #bed6c5; border-radius: 12px; margin: 12px 0; min-height: 44px; box-sizing: border-box; }

@@ -381,6 +381,8 @@ function resumeAfterLogin(id, callback) {
 }
 
 module.exports = {
+  // Read-only binding for protected client requests, including an in-flight logout.
+  sessionEpoch: function () { return generation + ":" + intentEpoch },
   getSession: getSession,
   setSession: setSession,
   clearSession: clearSession,
