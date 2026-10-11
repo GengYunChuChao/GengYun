@@ -1,0 +1,46 @@
+[
+  {
+    "path": "docs/research/gy-i03-label-evidence-increment-20261011.json",
+    "sha": "b6cd1ec8c4ba6294f074b3ef41a1d4763e7b5001"
+  },
+  {
+    "path": "docs/research/gy-i03-label-evidence-increment-20261011.md",
+    "sha": "99fdd127a003ff301fcc436d5d5459f7d3fc09f1"
+  },
+  {
+    "path": "docs/verification/gy-i07-knowledge-api-20261011.md",
+    "sha": "d80e528319960f87c05e4e705305b0205e5a821d"
+  },
+  {
+    "path": "services/api/db/migrations/0010_knowledge_read_views.sql",
+    "sha": "318c44b73473624fea87a5536a2f1857550413ef"
+  },
+  {
+    "path": "services/api/db/migrations/rollback/0010_knowledge_read_views.down.sql",
+    "sha": "e870fe4198c922e500e674e241598f770fa59730"
+  },
+  {
+    "path": "services/api/db/roles/knowledge_runtime.sql",
+    "sha": "98f419498aa9bfb2184ff0a03039c3b60c34f33e"
+  },
+  {
+    "path": "services/api/src/app.ts",
+    "sha": "dcb9ed89cdaf729f7b50dcf901e195fb06ba3cd7"
+  },
+  {
+    "path": "services/api/src/knowledge/service.ts",
+    "sha": "bd5ef77b716408efc2b7fd9e9f010aa144de7bb1"
+  },
+  {
+    "path": "services/api/src/routes/knowledge.ts",
+    "sha": "2b1701522f11cfb0dbdc5256ede80dc4484218f6"
+  },
+  {
+    "path": "tests/integration/catalog-pg.mjs",
+    "sha": "7782062b127d6046fc2897d66e3dc8001b277188"
+  },
+  {
+    "path": "tests/unit/knowledge-api.test.mjs",
+    "sha": "d3f2895abccc393f32d99227b8b10b7bc0293718"
+  }
+]

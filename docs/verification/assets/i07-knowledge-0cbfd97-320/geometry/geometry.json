@@ -1,0 +1,113 @@
+{
+  "width": 320,
+  "cases": [
+    {
+      "scale": 1,
+      "elements": [
+        {
+          "selector": ".query-input",
+          "width": 284,
+          "height": 52,
+          "left": 18
+        },
+        {
+          "selector": ".chips",
+          "width": 284,
+          "height": 159.78125,
+          "left": 18
+        },
+        {
+          "selector": ".article-card",
+          "width": 284,
+          "height": 599.6666870117188,
+          "left": 18
+        },
+        {
+          "selector": ".back-button",
+          "width": 87.33333587646484,
+          "height": 44,
+          "left": 18
+        },
+        {
+          "selector": ".detail-heading",
+          "width": 284,
+          "height": 44,
+          "left": 18
+        },
+        {
+          "selector": ".article-card",
+          "width": 284,
+          "height": 419.4895935058594,
+          "left": 18
+        },
+        {
+          "selector": ".stat-grid",
+          "width": 256.66668701171875,
+          "height": 185.0416717529297,
+          "left": 31.666667938232422
+        },
+        {
+          "selector": ".source-url",
+          "width": 256.66668701171875,
+          "height": 61.1875,
+          "left": 31.666667938232422
+        }
+      ],
+      "backFont": "18px"
+    },
+    {
+      "scale": 1.3,
+      "elements": [
+        {
+          "selector": ".query-input",
+          "width": 284,
+          "height": 67.59375,
+          "left": 18
+        },
+        {
+          "selector": ".chips",
+          "width": 284,
+          "height": 187.59375,
+          "left": 18
+        },
+        {
+          "selector": ".article-card",
+          "width": 284,
+          "height": 753.0833740234375,
+          "left": 18
+        },
+        {
+          "selector": ".back-button",
+          "width": 98.125,
+          "height": 57.19791793823242,
+          "left": 18
+        },
+        {
+          "selector": ".detail-heading",
+          "width": 284,
+          "height": 89.22917175292969,
+          "left": 18
+        },
+        {
+          "selector": ".article-card",
+          "width": 284,
+          "height": 530.2708740234375,
+          "left": 18
+        },
+        {
+          "selector": ".stat-grid",
+          "width": 256.66668701171875,
+          "height": 221.75,
+          "left": 31.666667938232422
+        },
+        {
+          "selector": ".source-url",
+          "width": 256.66668701171875,
+          "height": 79.54167175292969,
+          "left": 31.666667938232422
+        }
+      ],
+      "backFont": "23.4px"
+    }
+  ]
+}

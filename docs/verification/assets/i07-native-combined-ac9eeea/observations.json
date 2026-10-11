@@ -1,0 +1,221 @@
+{
+  "kind": "actual native PostgreSQL17 SCRAM restricted LOGIN + business Fastify HTTP + unmodified native page/auth/client modules in VM; all identity/catalog/source/review data synthetic; no WeChat rendering or production identity claim",
+  "combinationCommit": "ac9eeeaefaa4cc7cde8bde862b1fbbfdb561518f",
+  "combinationTree": "8d200207f6fa692726085404ac597a2b274bcf07",
+  "cases": [
+    "fresh native migrations, SCRAM LOGIN, exact two group membership, private data/write/DDL/TEMP/owner escalation denied",
+    "guest native gate sends no knowledge request; direct business endpoint 401",
+    "actual auth/session SQL + native auth/gate: valid synthetic login and empty database yields empty page",
+    "actual page list→detail across auth gate and business SQL projection; exact SourceRef tuple; null conditions and zero DoseCard",
+    "real business query no match clears previously displayed native list; no bundled fallback",
+    "separate owner fixture connection withdraws source; fresh business detail 404 clears body, returning list empty",
+    "server-side persisted session expiry: native query 401 clears cached session and prior list"
+  ],
+  "http": [
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/wechat",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/573bad73-37bf-483f-83de-1bcdc8c681d1",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20&q=%E4%B8%8D%E5%AD%98%E5%9C%A8%E7%9A%84%E5%90%88%E6%88%90%E5%85%B3%E9%94%AE%E8%AF%8D",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/573bad73-37bf-483f-83de-1bcdc8c681d1",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge/573bad73-37bf-483f-83de-1bcdc8c681d1",
+      "query": "",
+      "status": 404,
+      "error": "NOT_FOUND"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/session",
+      "query": "",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 200,
+      "error": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/knowledge",
+      "query": "?limit=20",
+      "status": 401,
+      "error": "SESSION_EXPIRED"
+    }
+  ],
+  "migrations": [
+    "0001",
+    "0002",
+    "0003",
+    "0004",
+    "0005",
+    "0006",
+    "0007",
+    "0008",
+    "0009",
+    "0010"
+  ],
+  "postgresVersion": "17.11",
+  "runtimeFlags": {
+    "current_user": "gy_i07_runtime_20261011",
+    "session_user": "gy_i07_runtime_20261011",
+    "rolsuper": false,
+    "rolcreatedb": false,
+    "rolcreaterole": false,
+    "rolreplication": false,
+    "rolbypassrls": false,
+    "rolcanlogin": true
+  },
+  "runtimeGroups": [
+    "gengyun_auth_privacy",
+    "gengyun_knowledge_runtime"
+  ],
+  "runtimeScram": true,
+  "denials": [
+    {
+      "sql": "SELECT body FROM knowledge_versions",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT canonical_url FROM sources",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT content_hash FROM source_versions",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT object_ref_cipher FROM media",
+      "code": "42501"
+    },
+    {
+      "sql": "UPDATE users SET state='deleted'",
+      "code": "42501"
+    },
+    {
+      "sql": "DELETE FROM knowledge_versions",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TABLE rejected_ddl(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TEMP TABLE rejected_temp(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE ROLE rejected_role",
+      "code": "42501"
+    },
+    {
+      "sql": "SET ROLE gy_i07_owner_20261011",
+      "code": "42501"
+    }
+  ],
+  "loopback": {
+    "apiPort": 3128,
+    "pgPort": 55488
+  },
+  "sourceHashes": {
+    "services/api/src/app.ts": "08f3084d0ee41b86218b54ceae731512f19f5b63c72880cecd4dc574eaf6baf5",
+    "services/api/src/knowledge/service.ts": "62a009cf3984ddf628fe5a1472d8ed8cacf21ad40c6920b9a6d88db3fafc62eb",
+    "services/api/src/routes/knowledge.ts": "cbfa6a13fb3ccc7f647a4bb7ee30241b48d85618056fd84bf536e0e73f24d653",
+    "services/api/db/migrations/0010_knowledge_read_views.sql": "9a827eb1d2e290bab4374da28d525d31f99f866563dce2a8b4a96544f71c3711",
+    "services/api/db/roles/knowledge_runtime.sql": "4bcc1c66c563980d70e7a88d9978ad8b4ef7e5b4576042d33ff58d63c202df60",
+    "miniprogram/utils/auth.js": "c7f18bb430203d9fd72735ffbae77e9859f7aab430bfa07ff9b930a3ad69d258",
+    "miniprogram/utils/page-gate.js": "0c42d0c9d66c643043e3e240c59e8226e0b30d889d072ab1ab1ec6d3511f4a0d",
+    "miniprogram/utils/knowledge-api.js": "ab2ab98290b8a59adef8f726e7409e1369d17ca4f24f8c97d7ce62f8de4177b8",
+    "miniprogram/pages/knowledge/knowledge.js": "a3341c28c4fd2b5aa140824de925c3c6f2e6baaf9e60959aef1791eadc1e356a",
+    "miniprogram/pages/knowledgedetail/knowledgedetail.js": "6283ee90f4346effd31f8b494a78aa17c4438473e631e678500495c0808f2f07"
+  }
+}

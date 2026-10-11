@@ -1,0 +1,18 @@
+<view class="page knowledge-page" style="--font-scale: {{fontScale}}">
+  <view class="breadcrumb">科普资料 / 详情</view>
+  <view class="detail-heading"><button class="btn btn--ghost back-button" bindtap="back" aria-label="返回资料列表"><image class="back-icon" src="/assets/knowledge/back.png" aria-hidden="true" />返回</button><view class="page-title">核对资料来源</view></view>
+  <view class="subtitle">阅读原文，分别核对证据与适用条件。</view>
+  <view class="notice">{{modeNote}}</view>
+  <view class="status" role="status">{{status}}</view>
+  <block wx:if="{{gatePassed && item}}">
+    <view class="card article-card"><view class="article-art"><image class="leaf-icon" src="/assets/knowledge/leaf.png" aria-hidden="true" /><text>科普 / FIELD NOTES</text></view><view class="card-meta">科普参考 · {{labels.source}}</view><view class="card-title">{{item.title}}</view><view class="source-tags"><text class="pill">{{labels.evidence}}</text><text class="pill amber">{{labels.review}}</text></view><view class="section-title">正文</view><view class="knowledge-body">{{item.body}}</view></view>
+    <view class="card"><view class="card-title">适用条件</view><view>{{conditionsText}}</view><view class="notice">条件仍需逐项核对。本页不提供用量卡或安全可用建议。</view></view>
+    <view class="card"><view class="card-title">原文来源</view>
+      <view>{{item.source.publisher}} · {{item.source.title}}</view><view class="stat-grid"><view class="source-stat"><view class="stat-label">来源版本</view><view class="stat-value">{{item.source.version}}</view></view><view class="source-stat"><view class="stat-label">审核状态</view><view class="stat-value">{{labels.review}}</view></view></view>
+      <view>资料修订：{{item.revision}}</view><view>来源取得时间：{{item.source.updated_at}}</view><view>来源有效性：{{item.source.validity === 'valid' ? '有效' : '待确认'}}</view>
+      <view class="source-url">{{item.source.url}}</view><button class="btn btn--secondary btn--block" bindtap="copySource">复制原文来源链接</button>
+    </view>
+  </block>
+  <button class="btn btn--primary btn--block" bindtap="retry" loading="{{busy}}" disabled="{{busy}}">{{gatePassed ? "重新核对／重试" : "核实登录／重试"}}</button>
+  <button class="btn btn--secondary btn--block" bindtap="back">返回继续查询</button>
+</view>
