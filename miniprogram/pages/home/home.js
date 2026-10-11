@@ -35,6 +35,7 @@ Page({
     navigation.goLogin(op.id)
   },
   onEntryTap: function () { this.openGated('/pages/identify/identify') },
+  goKnowledge: function () { this.openGated('/pages/knowledge/knowledge') },
   goReference: function () { this.openGated('/pages/reference/reference') },
   goReferenceSeed: function () { this.openGated('/pages/referenceseed/referenceseed') },
   openGated: function (target) {

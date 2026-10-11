@@ -1,0 +1,567 @@
+{
+  "applicationSourceCommit": "3ce1a5569f05821f9fc4f715a5a6ed71fde6c488",
+  "baseCommit": "487918856a0099d6c7ee5f083069bd415b095bee",
+  "backendDependency": {
+    "pr": 79,
+    "readHead": "0a72820be794f3da25d3f9178028a0ec14ba737d",
+    "usedInGui": false
+  },
+  "sourceFiles": [
+    {
+      "path": "miniprogram/app.js",
+      "sha256LF": "5e94052695b9e7b813273998d0651be471ce20d3294b24b140d4acadf5b69169",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/app.json",
+      "sha256LF": "e16c1daf547b575a5732c132bd301298ec176259f989c50c5902886ae155f54b",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/app.wxss",
+      "sha256LF": "c864708fb797a19893bdef30fc805578d516bdfc16689134aec95a65708ea5d1",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.js",
+      "sha256LF": "4932cd6d795412b2c2c2251e9685774a13021914d3e3e4afac01c28137cc98b4",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.json",
+      "sha256LF": "035503c1a56d8b4b9227ce8bb9145fbd1ef8ec7dce59e55f9d5d55fb5eb7d566",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.wxml",
+      "sha256LF": "a5a741188de38e8d3c5cbd2cc055f5fd9a64210c9c44d9a68c0e151e69eea0a4",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.wxss",
+      "sha256LF": "3a8ea58ec1d6aadee49249460034d1eb94a244106553644320836e0b4ff2f2bd",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/config/runtime.js",
+      "sha256LF": "65fa8fdab9795f2fa7ff173e67cebdb391181369935e169efc9767012930714b",
+      "includedInStandardProject": true,
+      "localRuntimeException": true
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.js",
+      "sha256LF": "3cea66ba9a1c655ae246e869e4acf43fc5d281545cf6183d63f1cbc794d1f90e",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.json",
+      "sha256LF": "6bcc2e9e536384851fcfbdd823aee8ae4331243636adc4a656a64a44d9cf9318",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.wxml",
+      "sha256LF": "a4269e7f544d62d2fb23e8fd5b62082ec4d45abaa8b4e1cedfcea63445bd9548",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.wxss",
+      "sha256LF": "4ed108f52fff755f6451135a33e7acfcd0294f8a30bb6cca807f8b2364102c05",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/crops.js",
+      "sha256LF": "50a53feffde2d1d2338c8a275317edd8139d5ea947b2140de079a4ed720a7748",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/records-2026.js",
+      "sha256LF": "3bee9b9d28472b97c10d5795bf403f89673adcfdb7cfafbc309f7374fcbbe86e",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/regions.js",
+      "sha256LF": "edbf809ee5793efff2f76f98676b49a659f11d07655cd1d3ef51c9536db9f0f9",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/seed-control-timing.js",
+      "sha256LF": "987c2c964655a767d5a91f9bfce26c89583a3e31c26f7d0af1df02b416c9791b",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/seed-herbicides.js",
+      "sha256LF": "66af61403bae4c049768530901b202171b0249f3e84d23bcf787cd5555825487",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/seed-province-index.js",
+      "sha256LF": "3790b7c3ff62a754fd542aaf01d5d26867bc0c6ac24689ec179d343b8de48ef3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/seed-weed-master.js",
+      "sha256LF": "88d7ab7bebe7c02aa23e9a8cef71d35ddaf12ccad2d92fcd8f399f6b1c77922f",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/seed-weeds.js",
+      "sha256LF": "db7ebdd1d36d6967b2c11dfcc7ba943a90860e8a7a3d4a2d67d4f0f801c9ddf9",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/sources.js",
+      "sha256LF": "e2742bbfaa31a36100a289a5a3e6dad8d1887703124557d3d024dff1e6b64827",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/data/species.js",
+      "sha256LF": "094b143708734003722d81351d0c064613ce78d8cca2dd7a278c00cc0d9016c5",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/community/community.js",
+      "sha256LF": "3cbc9cbd17e658e5a09285277f1e8a5af29b535e05a5478212bf41722cb64b4c",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/community/community.json",
+      "sha256LF": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/community/community.wxml",
+      "sha256LF": "78563df2dcd2c9808ee62d41becffd47cb65efbf384c930f81987d91035528a5",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/community/community.wxss",
+      "sha256LF": "41a98170b535ddff671343a2b9a89e1690b418253559eec4ddbbc888d53e3214",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/home/home.js",
+      "sha256LF": "96b12c4c3c94cbc5a6d14436dfca7673fac6e67c9428a13322e0a8f94a0dbd0c",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/home/home.json",
+      "sha256LF": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/home/home.wxml",
+      "sha256LF": "758237253e2decb3f8004c2412784769477809e07083f3da59a8f72c0b1294b4",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/home/home.wxss",
+      "sha256LF": "eb4fbf7a2387d7914c8eb8e462c18337dbe9d004038ff44b14d0829ebbf2618c",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.js",
+      "sha256LF": "eb5c8c975e5ad0db6e94a891ed30ca909ca7a35bd07b81eb41323f4c523be8ad",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.json",
+      "sha256LF": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.wxml",
+      "sha256LF": "3876210c6d4fcf4f5c4220068f1336e717b203c7a37308fce4124f229cc56564",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.wxss",
+      "sha256LF": "0f7255952882318fafd4837da8fd4183e22c24ee82196e360104ad9add6257a4",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.js",
+      "sha256LF": "a3341c28c4fd2b5aa140824de925c3c6f2e6baaf9e60959aef1791eadc1e356a",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.json",
+      "sha256LF": "fa846ebcdbc793ada2dce5c932c110b3772a2e0158b7197069e0b97e95102ec8",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.wxml",
+      "sha256LF": "9414d3d8290dc534ee5e90971e31684f81b690dd71ff26cab8c127fac6093822",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.wxss",
+      "sha256LF": "4a829f36610c6d2a752fe1bf5c32d8349e11b0738d49587d09580ac1039bc447",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.js",
+      "sha256LF": "6283ee90f4346effd31f8b494a78aa17c4438473e631e678500495c0808f2f07",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.json",
+      "sha256LF": "dde7ccc4071c19fb5f8c94af06e773101b7da3fc278112ec960b29326183a045",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.wxml",
+      "sha256LF": "dc08409b417f1ca7d598626ac5bb2fbfb764e26008f8f8fb873a2d899279f913",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.wxss",
+      "sha256LF": "4a829f36610c6d2a752fe1bf5c32d8349e11b0738d49587d09580ac1039bc447",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/login/login.js",
+      "sha256LF": "c04749dc4fddd5b4d94fef432b620e9d5c724c550df897492ed109f274f7b70a",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/login/login.json",
+      "sha256LF": "6c1533282486f0f4052037c324f30d4c25002aa1c67c2004c1baee9be8ffbc62",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/login/login.wxml",
+      "sha256LF": "aef79da3786fa85c2b36f3df5f35e3b49e92acbd1d7f12a388f7663697264c09",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.js",
+      "sha256LF": "ca56fe28105280ce383ec53ff678430379ad5415e3c004b5517cfdb50af9fe2e",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.json",
+      "sha256LF": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.wxml",
+      "sha256LF": "76b640ff9059ae1f1d4a510c28d9a928a60067fa3a58bd3c017daeb5d7fff0a1",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.wxss",
+      "sha256LF": "46866f590c419614403b4057a24b96db835b24e283e358407878f122e7d4786f",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.js",
+      "sha256LF": "ac6473bfdb0eec0d5ffaee91bb1583ed965be7a7ddc7dc579d3fb85ee0ff54d2",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.json",
+      "sha256LF": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.wxml",
+      "sha256LF": "af8f6514614745d13e7f291e44567dd9c4e14673d9e0dee2466b3d9ae8e51829",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.wxss",
+      "sha256LF": "a6a3ab36565be03222c3e42510e6a2939849fa1f477dcac1b5ded51e35b177f8",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.js",
+      "sha256LF": "aefdbdf59e084f7e891940140e6f1fef9f86ecfbb2a86015e4a8c255d9558564",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.json",
+      "sha256LF": "7f4f5700a7f5fd0e62277a7e6979e5781dcc73cde2ce09382d547fd1505cacfa",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.wxml",
+      "sha256LF": "5956a75e4d22d216e004d7ff6d36acdabc1dea372fd2f84236fe44803ccd4103",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.wxss",
+      "sha256LF": "dea47f2d3817b58a72b7c7d6aafc3c35abf36d7300b17aafbf3b23ab3b91f4fc",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.js",
+      "sha256LF": "aead2c086c3ddb5fdb8140c43f4ac3479401017be21e059fc9ac377f549fbce5",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.json",
+      "sha256LF": "8447921886c1a38e852539ff0de9592f12c6985f83f8c168ed8888c76befb094",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.wxml",
+      "sha256LF": "6675156aeb2a210194be41f0415cfd91b77da17cca63a4dc223ae8afa72e1cbe",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.wxss",
+      "sha256LF": "0a903c88aad0892c93f5329079ef30f57cd01e470b4624025b609c15679363dd",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.js",
+      "sha256LF": "2b837acadde9d433905d63a727780f1c343105c34b706021ddff5667eafac716",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.json",
+      "sha256LF": "96a9d8f8e5da85569576a953abf37c066846593962160f7554714fea4bb6381a",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.wxml",
+      "sha256LF": "c1cdf61b59b26e8e5ab94266fdd4bae2f6eb39f50a05452b76f8d70a67673f04",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.wxss",
+      "sha256LF": "190f9a7068b4581274f377472cc5511a8db8056327c66043d85bec4a3364ce5e",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.js",
+      "sha256LF": "f6e45b782eec05035ec4d568a36807b4c8ea7decf9ffcb18866972b9f92b6874",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.json",
+      "sha256LF": "78a2c669e266e2cbb4f7919f6d12d94f24cfaea6d539494446146a70e7bf75bc",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.wxml",
+      "sha256LF": "9e637e340b23fb1887e32fbaab47488a120ae936f055e267265d7c13c9f57b09",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.wxss",
+      "sha256LF": "532a275ed565a67d25259c788d5d28470ab08c59eeb079c9116a49581190da0c",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/project.config.json",
+      "sha256LF": "e0a3fad68eeac685d4f9cf12579eba70be7c4acdb7fc5ab45c8eca8db196ba0f",
+      "includedInStandardProject": false,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/sitemap.json",
+      "sha256LF": "0486511b86dcd050fb31d0d243177a9fb68edc1598b224cac8b929a37ab439b7",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/auth.js",
+      "sha256LF": "c7f18bb430203d9fd72735ffbae77e9859f7aab430bfa07ff9b930a3ad69d258",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/debug.js",
+      "sha256LF": "78f5c420e100024f33091ac6e6851c078c7035b9d01a1cdcb6e0a4adf2ebb66b",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/font-scale.js",
+      "sha256LF": "3c7d28e9b0daedcf9ed557dcbc9c8244466502917acdc243df7696c200604d9c",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/knowledge-api.js",
+      "sha256LF": "ab2ab98290b8a59adef8f726e7409e1369d17ca4f24f8c97d7ce62f8de4177b8",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/navigation.js",
+      "sha256LF": "c3c29424d898426918148c8fb118805bbe50fd20d3ad2d5a5b95b91711d4c3f7",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/page-gate.js",
+      "sha256LF": "0c42d0c9d66c643043e3e240c59e8226e0b30d889d072ab1ab1ec6d3511f4a0d",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/profile-api.js",
+      "sha256LF": "4c55806768352b23c73cdfa07574d1c9151764dd01d55e811ac4db4ebdb32255",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/reference.js",
+      "sha256LF": "4ed8087472db7c1984f999ee7813a7b9cbfff252665379533d227beac1a0b42a",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/session.js",
+      "sha256LF": "9f29a7418071da750aff9e93ff2910338ec19a082f5b80278dc325544ed6ae4d",
+      "includedInStandardProject": false,
+      "localRuntimeException": false
+    },
+    {
+      "path": "miniprogram/utils/system-font.js",
+      "sha256LF": "b9af36ef6f223231006c17f828d9472c35ff104f6faa7ea3207cf52384b021bf",
+      "includedInStandardProject": true,
+      "localRuntimeException": false
+    }
+  ],
+  "scripts": [
+    {
+      "path": "tests/integration/local-dev-knowledge-ui.cjs",
+      "sha256LF": "f3b1f63f79a71a39da4fb8a6ca5ae86d95dcc5e369bd652794a888ea017e36f1"
+    },
+    {
+      "path": "tests/integration/knowledge-http-fixture.cjs",
+      "sha256LF": "836953f22fc75168e7125ee1998161f4c41962975895a4e441035a2609ad96b4"
+    },
+    {
+      "path": "tests/integration/knowledge-consumer-http.mjs",
+      "sha256LF": "c87adba20158971b96ed788bcc12030bd4376826e5821d88a1593f75409f128d"
+    }
+  ],
+  "demo": {
+    "path": "docs/ui-demo/demo.html",
+    "sha256LF": "06efa451e0c327107857ed7380e74fdb339b6aa8678c92baed7162cb8d057b72"
+  },
+  "runtimeException": {
+    "path": "miniprogram/config/runtime.js",
+    "apiBaseUrl": "http://127.0.0.1:3120/api/v1",
+    "mode": "local",
+    "committed": false
+  },
+  "assets": [
+    {
+      "path": "guest-login.png",
+      "sha256": "d0459e44b3e81315380ebc980f1145a0b45582bc33ab1760350b6767c2685e0e"
+    },
+    {
+      "path": "knowledge-detail.png",
+      "sha256": "0b1ddc247aaf6723c4ec3983d2379a85ee702ab8a51ea2b9edfaea3009d8f343"
+    },
+    {
+      "path": "knowledge-empty.png",
+      "sha256": "af242aa109c74e0499590e1f329cdb2b2c9d06096c2b62166725733d4b907774"
+    },
+    {
+      "path": "knowledge-failure.png",
+      "sha256": "60161d2b70b01da6f6ae3584145634c28240925731d95a90ebed7bd23c0cea19"
+    },
+    {
+      "path": "knowledge-result.png",
+      "sha256": "dc885e85b952f1c5e75b6c13a80afc3e40ff3ecffc5c3112c989fa4d1e16ff63"
+    },
+    {
+      "path": "knowledge-search.png",
+      "sha256": "a925f7af58bc54be1d3266df9cc6204c76c75a432d8d09e77da31d71b641cd1b"
+    },
+    {
+      "path": "knowledge-source.png",
+      "sha256": "ee66082e56ea55a7bc9b804d5c3595355b0ddc1f5a3390e242e3e8a403dec565"
+    },
+    {
+      "path": "knowledge-version-changed.png",
+      "sha256": "5284d1b8264cdb2d0f7299eba9d3840b331507aa6fbcc50ebcaad15b716c9621"
+    },
+    {
+      "path": "knowledge-withdrawn-list.png",
+      "sha256": "ca01eeb444e27e09c6b441d37e1fb1935d1e49d58e64084a247710fee9ab32c9"
+    },
+    {
+      "path": "knowledge-withdrawn.png",
+      "sha256": "2816daadfb21eeaa214bbe0ba0e1a70dfe306fc34d00a4274b7ead6f69ae9098"
+    },
+    {
+      "path": "observations.json",
+      "sha256": "3d82a1c8d8ef1370837aedc91756c03bcf0c4dd94c2effc14501458749bc06a3"
+    }
+  ]
+}

@@ -1,0 +1,3119 @@
+{
+  "merge": "52b060d6a6ed270b59e5359306b2d13a0a9b910b",
+  "main": "8932ba5153709ed67e2944984c3b891f38e1a951",
+  "frontend": "b5a64688406616dcc99963f0c21643e1699039a1",
+  "equal": 622,
+  "different": [],
+  "files": [
+    {
+      "path": ".env.example",
+      "sha256": "e3386701265950207704d4485309db36517e47b5a1f9f1ad093eeab5d2be018a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/CODEOWNERS",
+      "sha256": "a859853df3a04e2bab88c4e4a44a10b647fa5e6c0eeefb85a5de03bf5665eab3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "sha256": "0fb733d78cbbbc72b55b82ccc0f0c07054d45624807e6b19cfc0d7e9c4510bf6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/access-verification.yml",
+      "sha256": "baf888ba016058588c10c71bdcd9f9c0c71f05840fe50e3245e0042846f6b574",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/auth-privacy-postgres.yml",
+      "sha256": "8ef6525f720a96e6765fa3db7061f6b810443a1acfda441e68503edabf7a7453",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/catalog-postgres.yml",
+      "sha256": "c76619d535568ffd1768a301007a16d3aa3ec9cd8ed743a400470d6de99fdcf4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/consent-grant-postgres.yml",
+      "sha256": "3de4e8f3d23ef109dea0d36deb8d2aff8884c419907b2fd78ce5232a8656cb31",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/development-docs.yml",
+      "sha256": "04fcbac1860828922a195c3d9372d07f72bbb50b55a5037a42e41f4110c88d36",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/engineering-shell.yml",
+      "sha256": "73ac36187b7024e20d88d4ba1e0fbeb59c0f44b29ae40409f5da9eb03324e884",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/local-wechat.yml",
+      "sha256": "9898f6100f5d229915c25ad7b909ca43b7cb6a225d3b1c9641752fcf45e0e68a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/source-lifecycle-postgres.yml",
+      "sha256": "9df60cf0e88ce3c9d41e419b2c7e2154aa3a436eac8b1ca275e79331c1931938",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/staging-intake-postgres.yml",
+      "sha256": "c550a0faebb5043a79dbf804cdad293ed5dd250c6ec936d8af1fbcaf239fc749",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".github/workflows/workbook-staging.yml",
+      "sha256": "b0f43c29a5d12c7c2b071c9705538d85e4c1aed17ed0146acf23299b9fa3fd9b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "a7f6fb79b78ea25cbdeb33c6ccc11f6e3040dd46b6e7d7247d2623688abaa860",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "30d566c97dde8b8a24502c78a7956a7da3924b73b082e57b96169761f5485b69",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "README.md",
+      "sha256": "b94e5b9e3898e38e373e41a27a04b8cfd384da4f80d0444af01a771e94f65e47",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/README.md",
+      "sha256": "afa99d9ca56034278e2cca4b8157e02bb1f2f3fe26e792b77d48a8426e045b3a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/index.html",
+      "sha256": "8ea7942d336aceb9eff0b136e1fcc24a983c5a52f4f9198690abfa4641358850",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/package.json",
+      "sha256": "34726098ce0cc16a8d415305499d8b1f1be34ea6950aeae56a004a6b25a71902",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/src/App.vue",
+      "sha256": "5f6c6b0d9257416680a46df9b3068f465def97fa4f6be99d243c9370aa38c590",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/src/auth/session.ts",
+      "sha256": "3deef727f5637d0d62f90d2bf53ea6371af5e5e172a49e27a6330706e900fcc6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/src/env.d.ts",
+      "sha256": "6417e9fd6ece8f37d8c8c7d7d87f026511a0825df9d66bde827beaa79d601c27",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/src/main.ts",
+      "sha256": "b5793576fe35ab72d7b3cdc56162bc825743ba64eba386ab5a71c5bd93b15168",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/tsconfig.json",
+      "sha256": "f19fffdc2a3ae532283ce07e89ae51203cef0db0d3273a655bede413be7784e1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "apps/admin/vite.config.ts",
+      "sha256": "005309a357131da231c28a6dafe63b9d4ab4feb5a3ff19a421bc08ee6b825c9e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "config/debug.local.json.example",
+      "sha256": "d8353e772fb78aba01edc621c7ad34b5e114b460c56b5f45e4971579a52d2a25",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/README.md",
+      "sha256": "14647c7ca3845d50f5d71b98c9b0058bd33bab5d3d46884639cff20805a63255",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/policies/modes.md",
+      "sha256": "051301145e3375d107019c10c0420b3ff1f9b1f4c5722946c9796b3fc772f7d8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/samples/desensitized-sample.sql",
+      "sha256": "4e3df98641e7aee76cff8e5f8d7d52dcd85080ffa0743caa0b49020dcf5a2e78",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/samples/field-mapping.md",
+      "sha256": "355ad1b992c02ce7ee631748fe7809588c89027ba6fa77e0393b285599a9145e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/INDEX.json",
+      "sha256": "26687e60c3f51235ce350a0269c85e5973702bca099fa8abc876d4eccbcb6812",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/control_timing.json",
+      "sha256": "18a50bf6fdac25a601815f1096a700e110606eda16cf3590b6f8f44aa4c9e18f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/herbicides.json",
+      "sha256": "b3a10b1e7ad08ba54412024c477954a0f1ec9431aaeff8e33c09f5e0db1a6434",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/province_index.json",
+      "sha256": "8fb2aa107bde9acccc61795686a15a09c92342a83c80cb9e6054a641900647ac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/usage_notes.json",
+      "sha256": "96b238e58a38795048221daf4c27cd7ce3c68a595c450a71c444c32e2907fb18",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/weed_master.json",
+      "sha256": "dc611aaf67a3316b833a26acc62c8466916a7c592917f2ebf3c9a035203912ba",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/gy-i07/weeds.json",
+      "sha256": "5aed5a30713f80fe8d499c39698ad19818f01c673a61abb106bcf9ea07eeb4ac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/rollback_seed.sql",
+      "sha256": "c5606577ec180733e0ed6b9740620302742e6aef7ead34e3d3fae66b307f9068",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/seed_herbicides_verified.sql",
+      "sha256": "d8ee2ac35abb62de83a0ed976e2f1c539212a7e443d9b57cf1cbf893a0643337",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/seed_reference.sql",
+      "sha256": "d27fd2c2ae07a30c9cd7c41612694807cbfc07b6e9ee18157e6eb90d2c4863d5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "db/seeds/seed_simulation.sql",
+      "sha256": "280b3cb310338d43a01fde777488477f5e551d8e0232561ab8aade01640d9093",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/GY-I04-衔接说明.md",
+      "sha256": "b574bce6808835b913efaa2136a3b4b4e3c5ac4ac141f68c4ee0f251f29dd9ee",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/acceptance-map.md",
+      "sha256": "07a2df943793631b95ef4db69de032728c12b4d180e836157b4d9349f0ce988a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/adr-001-initial-architecture.md",
+      "sha256": "9ab72c9e035aa912339d7796b6c184b47f593b94135e060d4865ae7ab35586c3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/data-dictionary.md",
+      "sha256": "890be3ccc653d531f6e455ea643a3a810f9a6707c694e881d3675fb893b3872b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/state-contract.md",
+      "sha256": "3b96228738d047f04dc9aabfaeba1b9878c231945d1d72c2be83ff6ad38c9fac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/validation.md",
+      "sha256": "790f616241c444fcb67519da06ee2e0e386afa4182983354519b9d2a5a8c7fee",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/architecture/workbook-staging-design.md",
+      "sha256": "531719782c49ed1fbc1dda16d9c74840bcb66cdaa4de48e2264a0af955e2ecd5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/.github/PULL_REQUEST_TEMPLATE.md",
+      "sha256": "df477e80c0e3389dc22f08a76c9ff4b51a50e9b08164216a6232245ab534d6c4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/AGENTS.md",
+      "sha256": "b886f39710bf748e4b6a2eb374aba7db109d39a4f807334a9d6af6cc98a29cad",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/INDEX.md",
+      "sha256": "55b698e483dad92f1f7ae80977ea4849f1d1de7f953497e6a9bb5f8efdcc734a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/README.md",
+      "sha256": "3d98e09f8d454045b5b0eed40273dd414bba77c409ad60e8b9251b3047efae9f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/development-order.md",
+      "sha256": "8b307dad42f25d074e726c824ef348c13c2623cd62473a4eff3ce7badcc870fd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/development-plan.md",
+      "sha256": "596c0f7c821380bffb0360c19e04971b58fed496a95385fa226ba9a1f7753a5d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/development-progress.md",
+      "sha256": "d704204f08b95ddc78e05562892c045a49daa36b583133fd4cd4277f5ba300cf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/engineering-shell.md",
+      "sha256": "3d28c58dc3ed69a310f8c4e5639a95753be0a9a75f1ac96c4a2d2b065ce73c2d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/local-wechat-debug.md",
+      "sha256": "86d0369e3029d5464c326e9ffd5a51ddc488af9da8ea3d91308c06b375959ada",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/phase1-execution.md",
+      "sha256": "5b29a4ea5f60d4e610f65f6c80744cf98cada46abfdacc1ebdb36ed46338f8f4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/pr-review-policy.md",
+      "sha256": "c22a0a57b0456e9310c34741bc4898192674b178a3df35034068aab29f81be67",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/archive/development-2026-10-10/docs/requirements.md",
+      "sha256": "a3d6566264a62c6f9c2ccb82087fb90ef64a87f6033c0f246c5d37a3b3e244d8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/commander-guide.md",
+      "sha256": "e8e555aa3d693450abcf2e3c2a83ce8303775bb3953875c7ff57f5b642672979",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/development-guide.md",
+      "sha256": "aabd58d011d71a33ef0d66693f229561ab3d47e63e11180907c00ccd752f3400",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/development-order.md",
+      "sha256": "5265602d8780884a77326bef10675ae34f137aeb3f9d4b403f883a00b5bffc9c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/development-plan.md",
+      "sha256": "4cc60877ddc448530699e6faf70d3ab6b631c2bbd480c500cbd2306830756790",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/development-progress.md",
+      "sha256": "3c16e347c56477385623e906ac61b2e0a1eafd1846aa9c33e706b7924996014a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/engineering-shell.md",
+      "sha256": "a5ae2ba20633555319cabdbb4da4dec87d62f82ef69e5f54fcc696d76e35612c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/README.md",
+      "sha256": "1a64cece6cd15ae345c683b96a04af86df5bac7d0f69b44698489a9808e9ae88",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/evaluation-report-template.md",
+      "sha256": "df81a7cb4ea5ac732aba65bafcea924a0046eee281a51ae53312ed4b67bb67cc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/near-duplicate-policy.md",
+      "sha256": "cb623a2cf804e018f5bd59c06b7832db4060d136dca22d3ea8fe31ffaa8e0ea7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/sample-gap-register.md",
+      "sha256": "750abc2e5e62d9040580e714e240f68541bd4b7f1cda4ec83004d1f7818f5b13",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/sample-index-schema.md",
+      "sha256": "1e59b022d3f347ce1ad2d6ab0aa6f1ed0bf648bee19ec323c4cf976d49c5de91",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/evaluation/scoring-spec.md",
+      "sha256": "f0bcb49f0a7786eb32f3beffa04bfa64518be8af83f87e9831528be79ea744bf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/features/pesticide-demo-video.md",
+      "sha256": "2ce73eadd76475f8927151d54b9ab3c6618d6b60d690e54dd336335c3b52f8ce",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/github-project-references.md",
+      "sha256": "29e8a953e9f35f60b3108f22954b3168607fb41470befd6fd6797c7f96b17559",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/implementation-requirements.md",
+      "sha256": "ff5d00d1b78708909034b8a34719ad9f5c5fe8e44275ca7214b4fc73d8805bda",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/initial-issues.json",
+      "sha256": "aad26487f9561b9c3315c21aa1be04c78b2b51279ca202ba159a937e65a79547",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/initial-issues.md",
+      "sha256": "f202647a70fd43869158e242ac6c67dc4bba19def3c346b268667ad9773d37b5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/issue-revision-log.md",
+      "sha256": "89ebf04a16825b1a8e77c1d251ac0550a4d99379bb40031bcdd209c512d13b96",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/local-wechat-debug.md",
+      "sha256": "af790191e841d5d3435ea067c853f7ca6a34aef438e644dbd9b15db0615bb5c8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/phase1-execution.md",
+      "sha256": "ac1a1ba754d8ecadfe2e636ca93f8d0959eb26d1607f69f970a6bbf5590b568c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/pr-review-policy.md",
+      "sha256": "00442a0514da9728d18a453de91f726099dc74f26ffcd16b6e0cf9ac7ed44aa9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/product-requirements.md",
+      "sha256": "216d65ff4043f2739445916632dda3e644a63663c4762181e927f4163608fbe3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/reference/README.md",
+      "sha256": "1463058c88a62fafb82746443d217628c4097bf552e854fbdd169fb6b4d3e081",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/reference/configuration.md",
+      "sha256": "f63346479e04864e662f123fa01d73d260758adecd44391bcb083c389da9682b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/reference/future-scope.md",
+      "sha256": "d108f4ca7c4c18d9e29ce703c99d856ae066f0bd9832d131defe90a315c67926",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/reference/local-development.md",
+      "sha256": "744f000eee5abef7db8e4b7e8efe0ecb9368a7e82da8f6ed9628e4ce881e2474",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/requirements.md",
+      "sha256": "c043f0a3cb7b4538cb3ac57588bdbc40c299061fdf453353b12f1c4a5e0bc336",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/research/gy-i03-label-evidence-increment-20261011.json",
+      "sha256": "b7cd3a5c6fb35e5738d0e4d3c1c3314e65dea9d99b533ed8f802d994823d5550",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/research/gy-i03-label-evidence-increment-20261011.md",
+      "sha256": "4ce0a3d3448b88e0a904ca68310350775ca928d4540360920a3137f763f1b6ba",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/research/gy-i03-public-label-index-20261011.json",
+      "sha256": "7cdc3a8a0e8b722a2b09f18a7b362aae20246477879b4a86703095b9a6d9c16e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/research/gy-i03-public-source-audit-20261011.md",
+      "sha256": "a55e7601023f87bb6569f53296323d24535412191b62126ed818be0c18257052",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/ui-contract-binding.md",
+      "sha256": "9009e51207c645e8008a61c46d5d0d2524c38a32740ce618a33f0f13a4909317",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/ui-demo/demo.html",
+      "sha256": "06efa451e0c327107857ed7380e74fdb339b6aa8678c92baed7162cb8d057b72",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/ui-state-inventory.md",
+      "sha256": "ae0afe8fcf537f2938373d8c7fccebd39283d31206534feb5cfe25576e1e183e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/README.md",
+      "sha256": "2e37b71d2f8977a184e643df5828736236de0bd46594ce8ee579152172ac097b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/ai-configuration-evidence.md",
+      "sha256": "e134867ef191531860775dc99570a8ccf257d3c59351c7e5ea5f8f01a85135e5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/01-home.jpg",
+      "sha256": "99cb275afa4a440e1c5c3d38f8c46324ac65b5badc3db34827faa0e97dbce147",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/02-identify.jpg",
+      "sha256": "23f955c6b68fc51a2a58aa4403dba5306b421f611abb4abdb9e54012d29c2ab1",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/03-community.jpg",
+      "sha256": "23315dcdf7a760a649a4505bdc1bc95eaf45596cdd24956bcf0afd78c60f6453",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/04-messages.jpg",
+      "sha256": "ad767ec2e335183099e7b07f4fe9e6faf8ee49a6f22efff548f9d93b317ab84b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/05-profile.jpg",
+      "sha256": "2c74426c8b31ac7fc248b68d64c657d788af5711897e89ed4218d82f9c9fa830",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/06-home-font-max.jpg",
+      "sha256": "25402253b67383196d6940571a71ab163f442a5425d7e27b45763e97728b0f8f",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/07-home-display-size-max.jpg",
+      "sha256": "f4acf68ed52f0d821fe88348343720b5ce1e1317a538c984dcaa7aeb29f08a18",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/08-identify-display-max.jpg",
+      "sha256": "dea57efca9549e3b120852d3e0d5e08d99c41886e882aefb495e927454dd6088",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/09-community-display-max.jpg",
+      "sha256": "6fae69ed218153404052c71b06f692df0b38a91ced784c83c9c86a3e3bca86d4",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/10-messages-display-max.jpg",
+      "sha256": "eed96bb4226a58543a99567e646d813d42cf763343bd79d82cc2d3adaf73aec8",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/11-profile-display-max.jpg",
+      "sha256": "f418a027640a36a8d71704dcb3bffa03ec554ca4af1ac6443c1824f40c025418",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/12-tool-basic-info.png",
+      "sha256": "0e0806bf047aea22b17a38fbbbc970eab67313d3e4f278ed4f088dcb5b4818ed",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/13-tool-local-settings.png",
+      "sha256": "1675e143cca9ce2841f2f5525960badebfa6a121163fc4f294819087939ef2b0",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/14-tool-code-quality.png",
+      "sha256": "415f02a67cde40cb316a94fce287a18c9dcc02aa69a9f44739fd8d1c7eb81687",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/15-compile-success.png",
+      "sha256": "45e9306db38a5010d1beb0c08f4adbf9c9dad6099d84f4403d564af416b79264",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/16-code-quality-rescan.png",
+      "sha256": "1ffcb4373f5e9eac1944e182086a0150b2c9aa487c79fdb8910cbf0b2695a445",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/17-simulator-font-scale.png",
+      "sha256": "765a281ce69f6ff794ae5308c8a1a7b76ffb8308a7899b5f8e517df532b0c0f2",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/18-device-font-standard.png",
+      "sha256": "104de0b16d4f1aa6d9e6cec9f5bb3a6342f28be8bbeb162d879df1e1180064f5",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-250c4d4/19-device-font-xlarge.png",
+      "sha256": "36113e09936831a800303bb20af5e16b5ea557d197d8bcc4246f98853a4c685e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-3007d76/20-device-my-font-xlarge.jpg",
+      "sha256": "66acfdfd3091859ea2b33def5e09fc3626ae55af72f5d0ad8ff9865cc8bcb134",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/capture.json",
+      "sha256": "db263eab4e99cf3a27d39554c94b8ef8fdbd3aca75d5a89e658ea3cc7c38ab53",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/community-bottom.png",
+      "sha256": "5859e0664ea24a49f43fe90666756111117285ec4820093b291505384dbb49f6",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/community-top.png",
+      "sha256": "5859e0664ea24a49f43fe90666756111117285ec4820093b291505384dbb49f6",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/home-bottom.png",
+      "sha256": "e54538a0db662daf3f1376c1b739a772842641850badd00212cc6fcd2f7b1f15",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/home-button-1.png",
+      "sha256": "eee0f5f582aac86c75c6f55595bcab25e66fc9b03e4f9653bc1be5184dfa593a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/home-button-2.png",
+      "sha256": "46a22cb708ca6f566e448a0a21e32bd2e8e076b3750fb594e07f85302845cbf8",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/home-button-3.png",
+      "sha256": "e23ae4ffda765596a08329f088f30d84d8df0c0e351d7a72bd36d69bb00315e2",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/home-top.png",
+      "sha256": "1f2a971d7e618584533a23ca9df4714168102a2cf1765e16307abffd312eecf1",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-bottom.png",
+      "sha256": "3264d1e6861a254091397e4e6d57dc0ac8b82518e712fc3881e2a365233e2a7a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-button-1.png",
+      "sha256": "ca2f729736142fe7100f8c6436f6a310b729a886c6d810ae1b0023e680f4aac2",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-button-2.png",
+      "sha256": "85b379e627e3d921d57d4ba404ec85460174ba9133aee0d79d9555567f83d8da",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-button-3.png",
+      "sha256": "ae37a82e8221150c7bbf4f8259d50730a919134b82eb1826cc87861827313194",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-button-4.png",
+      "sha256": "0568441a2a0782224d442a026c92be561cac4f88b2c57a857c16bdc1101998f8",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-button-5.png",
+      "sha256": "0568441a2a0782224d442a026c92be561cac4f88b2c57a857c16bdc1101998f8",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/identify-top.png",
+      "sha256": "f6e7af9828755b29e8700d22ee99d3ebde2e72ce47389cfd566b6ce95fc0add5",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/messages-bottom.png",
+      "sha256": "3f3374da23f086ba10f08df70ed1b1e333a3156a403633799ae18d168879f28b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/messages-top.png",
+      "sha256": "3f3374da23f086ba10f08df70ed1b1e333a3156a403633799ae18d168879f28b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/profile-bottom.png",
+      "sha256": "3978d9bd669fdfabea17841de216b09998065be5de3c8161c935b5dc374dfa62",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/profile-button-1.png",
+      "sha256": "d47abbed57abea6ff72319a6b2e263a318a7b340c80d045934232ed99bae4fd5",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/profile-top.png",
+      "sha256": "ae2ca01de046991c22f56e8c12df8a9752c1e0567560ede4a8736caa8d6b9722",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/gui-adaptive-writer-8c20261/sources.json",
+      "sha256": "793fdad5ffb3895b8922e24e456b086e486a9f3cda7fde21f974b4537046a97e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/controlled-profile-bottom.png",
+      "sha256": "5912e37194692d607eab4061c535970651cb87b49db40c166641dee77fbb1575",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/controlled-profile-save.png",
+      "sha256": "8cf94a08d4afc8f9ea4091662656fa0ea97fcc5702ab41d318ae49ad9b84a4ce",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/controlled-profile-selections.png",
+      "sha256": "f10136a767252d65e32f17745cf26022a23f92d0cdac2852271b2d70b0037900",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/controlled-profile-top.png",
+      "sha256": "47e6c92f3ec0748848d2abdaa3e63466a2176af70e28135d75f4d83ce5d76893",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/guest-login.png",
+      "sha256": "9ad3e210937deb9f169331c1ce0c74d793de873f51373df0527ad995593b02ac",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/observations.json",
+      "sha256": "15500b5dcc0abf38e6dcacff333f9c3fc29ff861d338f1d58f6f6c5dfaeb9a0f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-before-bottom.png",
+      "sha256": "539126b59c047bd5e67d2353ec4755ba63e9c01b1d904c2c7ec2b1bbb59f5d1d",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-before-top.png",
+      "sha256": "10e5ae5751ca832b3f5eda6ff728513bdcde65edbdbd2ab0f8a72b83dfc8f6c0",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-edit-bottom.png",
+      "sha256": "e1d3c933587d9305a8ac71c0564115c7f67fcdbd3302a6aefa5513db9263eaf0",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-edit-save.png",
+      "sha256": "500e453c83b4c18bf7b5d76203c788c92500981c14b31957c2ea1b8dbd67f43b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-edit-selections.png",
+      "sha256": "7cc1210c09efadb555ea185b4cca8acba2d6f48121ca483627e818e90c805811",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-edit-top.png",
+      "sha256": "9846c3b8e35377e20efd593671a76882e936dcbfdb6e4b4e7e4512cb1c986c97",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-reentry.png",
+      "sha256": "eb0980c485dcc933eb1b8dbef547fe46513d8d58622105dad0ea464a5f16a1bc",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-saved-bottom.png",
+      "sha256": "2f7ed86354218ef57b61a16341f3fb3db34ca9c058e44a7ea7a23efe19f2cf53",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/profile-saved-top.png",
+      "sha256": "7736f9cf8d29bf9f888d302d19387a187400d47f6e5f70da7cdbb837f1d1689e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/reference-filter-bottom.png",
+      "sha256": "1ecab068b2b34339977f0ad5c30e136d945adbaa9613a6bec7daa1b8e83e53e6",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/reference-filter-top.png",
+      "sha256": "695719b19fe5e40c489afeda72d6f831302e94e4d3e9da428e3a3160e9ee6c78",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i05-profile-f0ea601-320/sources.json",
+      "sha256": "ab6d32e33ff9ba61b3b28cb2b69a58fce4154c36410980b3d65033b1f41135b1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/guest-malformed-login.png",
+      "sha256": "cae01ebf68eb2087344e30f0d85794fe774bd64712606aa72deba1ed5ea3db82",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/observations.json",
+      "sha256": "549d3053fedaac76158715fa54475a481cd8e056a7f962a843d2ee673a9150c8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referencedetail-cold-back-list.png",
+      "sha256": "e73f596aa27179fdef66776378939f5493c6fcbdea4a62acf4376b0c58be1d14",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referencedetail-invalid.png",
+      "sha256": "178cc3019d2cc1a023373d379d8a18f08b4e3cce120c865204f1c14841f96b41",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referencedetail-valid.png",
+      "sha256": "0e242e24bf967b56d3f99201ca7167e827abc1df65bc1843fa168d9f462175ab",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referenceseeddetail-cold-back-list.png",
+      "sha256": "2772d5cbfbf5c5dca3cd4e0bdb89fe43635bc4b4c72597c0e530924082cd36c9",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referenceseeddetail-invalid.png",
+      "sha256": "0c6049afb16ff6a9231620916d703f4b947e31d4ef7277b18db249cb1f52f896",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/referenceseeddetail-valid.png",
+      "sha256": "d932cc160a88272f1f6e9af81ee317001550920d5721883f8a4f2eba44b63570",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-detail-275c321-390/sources.json",
+      "sha256": "e1679b4d606cf30b3c1cdef6d253910a7c8c242bc1e8ddf0debdf42d9727f83f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/contact-sheet.png",
+      "sha256": "bb4c84a09b3fa9cc2504d87ab998c493e0331ed4a2323d28ce2aecdd6d7b7168",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/demo/detail-320.png",
+      "sha256": "24b0cbea5f90e033ed8b9f1a414f2574ba55f338b38b8486d25ceb768edbda29",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/demo/library-320.png",
+      "sha256": "ffc56deecc565316d490e7ce9389af459471722e443d758d5461158e87a31ee3",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/detail-comparison.png",
+      "sha256": "b689368f76f037f2d7af3cdd408fbaf2aea8528f0f016c1f6f8a3045eb850b92",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/geometry/detail-body-1.3.png",
+      "sha256": "241a71ae06ff1a090049baeba7dc5e7e63c723fef76581eb330b110df1c4b4da",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/geometry/detail-body-1.png",
+      "sha256": "2748455679a84a06a220eedd7fff04c0cc534500e9efb2c6f932aa8f2791c144",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/geometry/geometry.json",
+      "sha256": "e212193ecbe010dd49dadde16bcd9bf8255824f4fe0f5304f4dce0ee8381f802",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/geometry/list-card-1.3.png",
+      "sha256": "d8b777368411dbced3feb1bcfa90b82958923954256f9c55ffae7c646a2764b3",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/geometry/list-card-1.png",
+      "sha256": "3a6e6de0b83c9d9871f3a669bf0f3967eb440abcb1247e23c3f5fa1183ad9095",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/guest-login.png",
+      "sha256": "df5ed0b3bbd54d11895406490cb17957a6d29f6dc61c19ae6ec27f4173ea58d3",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-detail.png",
+      "sha256": "91edb2c12c05fec653cc42b66f068e34f482e3b34a253612f5065d06bd1b24b7",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-empty.png",
+      "sha256": "a927f222d3c6f77e05953f10ac2e98e8976082728d8595efa632004b0232258a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-failure.png",
+      "sha256": "a35d2eda5133eb531634483e7c7801ba90efd63f036d4a7faca48da6979e275f",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-result.png",
+      "sha256": "7ac4b4dc9091372cea87b23a1303f5e7367a2405d1eae555173a24ecaa974715",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-search.png",
+      "sha256": "d2683fdc4d13136f98ede7102c0e46928cb607b782862af58bfc4bc50c5c3134",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-source.png",
+      "sha256": "8e45f3b50c22945ce8fbc1470d5e126bf1f2f7dc767b48ccdf6c4db71b9c9d46",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-version-changed.png",
+      "sha256": "e92af29128557125e9d07734fdb9a3993a973129a121f7d04cd055046f4df9a4",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-withdrawn-list.png",
+      "sha256": "75bcd1d874e47284f48921c02e3a2f1d90ad572399f225d1cd48002f439fac5c",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/knowledge-withdrawn.png",
+      "sha256": "6442230c5d665cc8917dbd6947e1b9e725c5d10c4b42f7e4cb36b9430a890233",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/large/observations.json",
+      "sha256": "c596abcd353c88b55c2be810ee120cb75696dc9721d8e2895fbd1198e69b288b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/library-comparison.png",
+      "sha256": "0954983300277db8a639ca29080dd70a9b193f8c603fa797d680c830a8cec503",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/manifest.json",
+      "sha256": "29f594c2f5aeac69c0d177ce9fe251ab748933c32457f7b14351986eaf9ea146",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/guest-login.png",
+      "sha256": "dac6e77892bda50f456cd7f47d3766741aebc97895bff9a5e8fb843c89639583",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-detail.png",
+      "sha256": "be93aecf17c4255460e59137a6e7fe9fa05ba814f5c96b7059590dccc9523236",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-empty.png",
+      "sha256": "1845ec748e7fcd729a661394e3eaaf59dbae7a6645b9ac825a4a237cf2be3c8f",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-failure.png",
+      "sha256": "5050b130a0e4a8b75c9ca5c87af7308481c346527b81c4ddd5f1260622f42d4a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-result.png",
+      "sha256": "6901deb8c19613cd8ecc5fcb1e0a0e092fc9a8126472f4596012b3caf82f0d43",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-search.png",
+      "sha256": "72235948c4524e75971b846f27ebec56c08b9c2c88052cc9251f58816b23b9cf",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-source.png",
+      "sha256": "61f4a04262b59ce52910790f2734a1ecf026f075d84a503869d69618c0a2d2c8",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-version-changed.png",
+      "sha256": "e1af07bb014a22a086d1f3181ef227ab485fb6d31e0dc82ec96baeb64147b941",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-withdrawn-list.png",
+      "sha256": "2eec5d4af262cce3fdbfb9bf7ed981576021a4a388ae2ed57a7500d1f95d3995",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/knowledge-withdrawn.png",
+      "sha256": "227e816453ecc07526bff605709178dbaca819e0444c5d912e2aed8841f3030b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-0cbfd97-320/standard/observations.json",
+      "sha256": "c1a6611a6a052df7ceb076e15404f3cc75b66d18f4dc467b27701bbcdfa84b5b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/guest-login.png",
+      "sha256": "d0459e44b3e81315380ebc980f1145a0b45582bc33ab1760350b6767c2685e0e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-detail.png",
+      "sha256": "0b1ddc247aaf6723c4ec3983d2379a85ee702ab8a51ea2b9edfaea3009d8f343",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-empty.png",
+      "sha256": "af242aa109c74e0499590e1f329cdb2b2c9d06096c2b62166725733d4b907774",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-failure.png",
+      "sha256": "60161d2b70b01da6f6ae3584145634c28240925731d95a90ebed7bd23c0cea19",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-result.png",
+      "sha256": "dc885e85b952f1c5e75b6c13a80afc3e40ff3ecffc5c3112c989fa4d1e16ff63",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-search.png",
+      "sha256": "a925f7af58bc54be1d3266df9cc6204c76c75a432d8d09e77da31d71b641cd1b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-source.png",
+      "sha256": "ee66082e56ea55a7bc9b804d5c3595355b0ddc1f5a3390e242e3e8a403dec565",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-version-changed.png",
+      "sha256": "5284d1b8264cdb2d0f7299eba9d3840b331507aa6fbcc50ebcaad15b716c9621",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-withdrawn-list.png",
+      "sha256": "ca01eeb444e27e09c6b441d37e1fb1935d1e49d58e64084a247710fee9ab32c9",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/knowledge-withdrawn.png",
+      "sha256": "2816daadfb21eeaa214bbe0ba0e1a70dfe306fc34d00a4274b7ead6f69ae9098",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/observations.json",
+      "sha256": "3d82a1c8d8ef1370837aedc91756c03bcf0c4dd94c2effc14501458749bc06a3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-knowledge-3ce1a55-390/sources.json",
+      "sha256": "a0c91bc1fb2861ba22f6d6ddc446459be26ad342a96b7218bf97513ae0eab702",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-native-combined-ac9eeea/manifest.json",
+      "sha256": "8eb0382399beac15366e02d46f40c1b3fcca956c71fc0f029474452b6852d229",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/i07-native-combined-ac9eeea/observations.json",
+      "sha256": "cd4720f063d8198f2d398625fced01c436be03439492ad3eaa05a7ee0e1e6af7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/pr68-revision-c7e3102/observations.json",
+      "sha256": "2f194262eb9c38efdcee2a4c393789a79f23323c1a6bec5aebe83523c06ac920",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/pr68-revision-c7e3102/referencedetail.png",
+      "sha256": "d22f40042abd24d6c54d1899c85a781fc5d1f7193cf6318c6a56b39b8dbf5517",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr68-revision-c7e3102/referenceseeddetail.png",
+      "sha256": "651aed61867e53100c181669a814d3d7c95ad08842258a52c54534fb60ffa1a4",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/community-bottom.png",
+      "sha256": "bd4524ad64e6d911fccafaad1e451b3b1adb7bb4eda78bd703350ef6726fccbb",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/community-top.png",
+      "sha256": "a040f0bfef8d6e28a958de0110cbd4a993175ca4771dfe96309d6fa48a39c13e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/controlled-font-home-bottom.png",
+      "sha256": "5811f22bcda2c6343f5ab1a72aeb060abd743e9ef1f0d1f6df99fd2c7a1fface",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/controlled-font-home-top.png",
+      "sha256": "0e3624ad9c516e93215b6a52c59770dcd522e6f0f703101641005461efe47e6b",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/controlled-font.json",
+      "sha256": "bfb7777c4fa364255715652a5bcd476fec86b9f599b2fec5b72ec1e43eb3b6de",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/guest-home.png",
+      "sha256": "b64911440a90284c14f926584b78d8668ae990f19d7f807c3f37edaba4ce4e29",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/guest-login.png",
+      "sha256": "ac4f36c1b92cebe459f7370781dca852b51c5b882152cb61cee60e79b53c65a4",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/home-bottom.png",
+      "sha256": "e805206fbf194ac636540b5bb4579e749d5904764d5a8b847037aa98fbafc034",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/home-top.png",
+      "sha256": "57fd91de4931638d5221a5300bdb834a70bc06cf5c6322ad70bf0950b06ae42d",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-bottom.png",
+      "sha256": "275c97fbcc2bc4f234abb0c56cab0b214120cdc8f364d81d6e0baba24ba30930",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-button-1.png",
+      "sha256": "ef3bbf3d807ac30bd3e3e29bda30fd063d88a372d9ce4227f9d2668a878f2608",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-button-2.png",
+      "sha256": "2ad912aefc02c2351bef6026ea76cab5820d554843f08b351497851ebb625ff2",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-button-3.png",
+      "sha256": "5b82a92adb31d1f2e8a83d8a5881a2c10633567ab84edec8d49798ddb1820697",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-button-4.png",
+      "sha256": "bd1e800c2cecd6b44845142de040173666a35188e649c267d697c6abe67d591e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-button-5.png",
+      "sha256": "acfb4ac9114845066ab8a60e2b76d31f62c16e660154c2ee09bb47838189a133",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/identify-top.png",
+      "sha256": "945b8d104eb2d4a451227f18927228fb8172ec75d57dcc5c187045978c48932e",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/messages-bottom.png",
+      "sha256": "b0ef74402ec6e5bec1f84e69e30be7fb55c4de12ebb48d8ceb9bc01505b87c0a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/messages-top.png",
+      "sha256": "7c732a75f48f82e367a3256ccb180ed365557c7e5ae67f723647f8036a74ed03",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/observations.json",
+      "sha256": "ce0d73b81729ed4fca2c72c6e0c69fed45b4473577511ce3d90cafe913fc94d6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/profile-bottom.png",
+      "sha256": "1e70fb9c3f3e1d7630613d85e8b1a0880fd0e0c79c6b6873a949573e029462f5",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/profile-top.png",
+      "sha256": "a3981aae39148f67883d76ab3ee92d9de0c07a63a7c7446d0a4f8a9ccfa459ee",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/referencedetail.png",
+      "sha256": "766be5698a4731626c7decfa63640ea9a2f039d740c70372285841b2fda132f5",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/referenceseeddetail.png",
+      "sha256": "59901e3180783ee9fc5a8afa961fc3bc0fbd3d2f3f82dab3cf46bf1054d40e5a",
+      "rule": "raw"
+    },
+    {
+      "path": "docs/verification/assets/pr69-integrated-22622f3-320/sources.json",
+      "sha256": "3f3a0a2ecc9b7b731752b3b26b62c2abbad739f9de54c43da1a82b4969d72259",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/config.example.json",
+      "sha256": "d9f116292a6b491ecf4b9ec5ce4ef1b0cf45fde0d5a9643a4c2cdb08d275e44a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/continuation-evidence.md",
+      "sha256": "c09540be6a7eeaeaebab72204c734333002925c81b2039110bfe4dfe64665456",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/database-run-handoff.md",
+      "sha256": "ff50bfb4456f9e94bf5edb6a4b408254af803f7932a120360311c952f0a8dbd0",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/docs-simplification-20261010.md",
+      "sha256": "dbb3e037904296b863ea0eac6905d12f36f9548094cd97a7f15a43788143a70f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gui-adaptive-evidence.md",
+      "sha256": "972436ece1731995a2a949655e5c3897ca76717b0387dfed92236ed07352cfbe",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i03-evidence.md",
+      "sha256": "c3836e049a8c3f1cd85a364a7edb44d9cc4c98ab9b33ff3932732d653b1d5df6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i04-27-auth-consent-pg.md",
+      "sha256": "05928f3f40ed9cae28f1bd5fde1f514240e181cc0f3b1e46e03e3ff0e8d0fe29",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i04-admin-session-race.md",
+      "sha256": "dbca0938a4d3e445b3bb94c897786f66500c6def4f7037cf0b57634e0e32b117",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i04-login-return-20261010.md",
+      "sha256": "9315f3521991b05e976abf5839c6c271181340856d6dd429a32366bb3f6ce299",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i04-pr68-revision-20261011.md",
+      "sha256": "47053e80eb82098c45a074e722e52e45191c5d21368f53622f64aa741100bd2d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i05-api-20261011.md",
+      "sha256": "149d0433e34d982a4b336b94dc6b19d04abc68d4eaba724c78509f2d52493184",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i05-native-profile-20261011.md",
+      "sha256": "f175c16a2e5d73093aef34e557cd9dd3708e7e8aaeb9d710cbbd8b4635e8ea8a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-detail-route-20261011.md",
+      "sha256": "eb7a0958aaf2f3ba60e61473835b2c5053e6667ddd8942220f5076dc68bfb0ac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-generated-crlf-check.md",
+      "sha256": "932c2052f1ca3294d6a53a2d8838187cd3313db0e29880b7b13be3437c4bd281",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-knowledge-api-20261011.md",
+      "sha256": "3fdcd0d974b3f10ce5ec15dce2b68dc32e9cde80ca7f827896c2ed06d92d379e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-knowledge-consumer-20261011.md",
+      "sha256": "eaa54c8d49461e82070f52c7fae001ee40c7bb43070ea78b300b3ddd92c9f546",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-knowledge-demo-320-20261011.md",
+      "sha256": "a8c4ffac094962b31ed11157454e63af02a4f3385616b4647d86f3239c366cf6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i07-native-business-consumer-20261011.md",
+      "sha256": "ee5c60ac091661da88dae78508bb0d6a225985a6d28689d5bb44d66e72af7689",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i25-catalog-pg.md",
+      "sha256": "a966fb0adc65298b79bfa8f6f2cba5c1d4382d2cbe9a202089b950556052361a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i25-source-lifecycle.md",
+      "sha256": "05cac4a96dd462fbee4a66bd48c24754db891fddc376d148abeed906db3b4d24",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i25-staging-intake.md",
+      "sha256": "52c5254751d783b267735ce39a22efdaad2d8618b235864705bab59673e8bf8b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i26-pr69-integration-20261011.md",
+      "sha256": "9ae9caa424b15fb68a34df1bc3ea82cefed930f9569e7c6bb768f3b570071d51",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/gy-i27-consent-grant-pg.md",
+      "sha256": "01d37e3c75c76c6e75dfa7b7806f0e3062343dc02f368e8b93c61e75f9983c0a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/llm-live-evidence.md",
+      "sha256": "0296483ad827d7ad80c1879c610701a6f2e93fb69e35a48ccdde36b1f4902009",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/local-login-dev-20261010.md",
+      "sha256": "e68031b7f50571ec84edd4a4332b87d7d237c5c61e10b85f4b3d5b2a3382e41a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/local-profile-wiring-20261011.md",
+      "sha256": "7d64be89a2b111ad4fa53b5c1150ac9f55bc53b6ed29bb9efacf416387cb85ce",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/platform-checklist.md",
+      "sha256": "245264727f10b7f84e1a7642e27720c23fac10ae616c5b638b8ff14db2d2de9a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/pr65-pr68-compatibility.patch",
+      "sha256": "a09111f2e73548ad5e4e0dfc5d0e0623d03962bbbb7a7ccd1ca785d3165b5fac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/pr65-writer-continuation.md",
+      "sha256": "df5114f014dd4bbaa6fcdabd5a8ef15b08eff43e47c29cb875d65af1a2b6f2ce",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/product-readiness.md",
+      "sha256": "634d56d625a24cf8944da12f0494c45e81e445b78a300320a9574a9625ed950a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/provider-matrix.md",
+      "sha256": "75c096201605695f65fa0e5622fedcb450ca1d1d7c2ab2c0df7c0778af978f06",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/quota-estimate.md",
+      "sha256": "9e9da90e6366722de88c5925465d72495b824832ca8d9951779a5a8462fca70d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/resource-handoff.md",
+      "sha256": "9fdeaffb87d1c082ad4aaf3fc5b8cccf5439db3995e4fb61fb9954a89501cbf3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/supervisor-audit-20261010.md",
+      "sha256": "a569260b27503956bf09b60f6302f5fae4973de9917e0e9165c8dda07ea53ecd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/tencent-live-evidence.md",
+      "sha256": "07c9183427870488166beeebd2337716873bd20a1e322fcbc41b0f8e4329dfac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/verification/wechat-compatibility-candidates.md",
+      "sha256": "da851ece809a2313158794e596e20a90f4694b438c44f50365cc0fd13eeac0d2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "docs/资源需求清单.md",
+      "sha256": "84668a87b1889c172e79b6a1485eb0c5439d05e88cfb5bf9de91d67bc0e4d790",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/app.js",
+      "sha256": "5e94052695b9e7b813273998d0651be471ce20d3294b24b140d4acadf5b69169",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/app.json",
+      "sha256": "e16c1daf547b575a5732c132bd301298ec176259f989c50c5902886ae155f54b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/app.wxss",
+      "sha256": "c864708fb797a19893bdef30fc805578d516bdfc16689134aec95a65708ea5d1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/assets/knowledge/back.png",
+      "sha256": "69f7988c74139d098e2fc4ecdf1638ab349120269510455941867f1a7f23bdc1",
+      "rule": "raw"
+    },
+    {
+      "path": "miniprogram/assets/knowledge/leaf.png",
+      "sha256": "2a169960ad078a8790fd23407fcef0a640c9c3121672f228b2e00e1e9052cfb8",
+      "rule": "raw"
+    },
+    {
+      "path": "miniprogram/assets/knowledge/search.png",
+      "sha256": "ea9b39264d27d7cdf4abafe2e1e4467cdaef3620a97ae93eddf725bc4fc30ab9",
+      "rule": "raw"
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.js",
+      "sha256": "4932cd6d795412b2c2c2251e9685774a13021914d3e3e4afac01c28137cc98b4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.json",
+      "sha256": "035503c1a56d8b4b9227ce8bb9145fbd1ef8ec7dce59e55f9d5d55fb5eb7d566",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.wxml",
+      "sha256": "a5a741188de38e8d3c5cbd2cc055f5fd9a64210c9c44d9a68c0e151e69eea0a4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/components/state-view/state-view.wxss",
+      "sha256": "3a8ea58ec1d6aadee49249460034d1eb94a244106553644320836e0b4ff2f2bd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/config/runtime.js",
+      "sha256": "65fa8fdab9795f2fa7ff173e67cebdb391181369935e169efc9767012930714b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.js",
+      "sha256": "3cea66ba9a1c655ae246e869e4acf43fc5d281545cf6183d63f1cbc794d1f90e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.json",
+      "sha256": "6bcc2e9e536384851fcfbdd823aee8ae4331243636adc4a656a64a44d9cf9318",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.wxml",
+      "sha256": "a4269e7f544d62d2fb23e8fd5b62082ec4d45abaa8b4e1cedfcea63445bd9548",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/custom-tab-bar/index.wxss",
+      "sha256": "4ed108f52fff755f6451135a33e7acfcd0294f8a30bb6cca807f8b2364102c05",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/crops.js",
+      "sha256": "50a53feffde2d1d2338c8a275317edd8139d5ea947b2140de079a4ed720a7748",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/records-2026.js",
+      "sha256": "3bee9b9d28472b97c10d5795bf403f89673adcfdb7cfafbc309f7374fcbbe86e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/regions.js",
+      "sha256": "edbf809ee5793efff2f76f98676b49a659f11d07655cd1d3ef51c9536db9f0f9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/seed-control-timing.js",
+      "sha256": "987c2c964655a767d5a91f9bfce26c89583a3e31c26f7d0af1df02b416c9791b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/seed-herbicides.js",
+      "sha256": "66af61403bae4c049768530901b202171b0249f3e84d23bcf787cd5555825487",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/seed-province-index.js",
+      "sha256": "3790b7c3ff62a754fd542aaf01d5d26867bc0c6ac24689ec179d343b8de48ef3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/seed-weed-master.js",
+      "sha256": "88d7ab7bebe7c02aa23e9a8cef71d35ddaf12ccad2d92fcd8f399f6b1c77922f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/seed-weeds.js",
+      "sha256": "db7ebdd1d36d6967b2c11dfcc7ba943a90860e8a7a3d4a2d67d4f0f801c9ddf9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/sources.js",
+      "sha256": "e2742bbfaa31a36100a289a5a3e6dad8d1887703124557d3d024dff1e6b64827",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/data/species.js",
+      "sha256": "094b143708734003722d81351d0c064613ce78d8cca2dd7a278c00cc0d9016c5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/community/community.js",
+      "sha256": "3cbc9cbd17e658e5a09285277f1e8a5af29b535e05a5478212bf41722cb64b4c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/community/community.json",
+      "sha256": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/community/community.wxml",
+      "sha256": "78563df2dcd2c9808ee62d41becffd47cb65efbf384c930f81987d91035528a5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/community/community.wxss",
+      "sha256": "41a98170b535ddff671343a2b9a89e1690b418253559eec4ddbbc888d53e3214",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/home/home.js",
+      "sha256": "96b12c4c3c94cbc5a6d14436dfca7673fac6e67c9428a13322e0a8f94a0dbd0c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/home/home.json",
+      "sha256": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/home/home.wxml",
+      "sha256": "758237253e2decb3f8004c2412784769477809e07083f3da59a8f72c0b1294b4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/home/home.wxss",
+      "sha256": "eb4fbf7a2387d7914c8eb8e462c18337dbe9d004038ff44b14d0829ebbf2618c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.js",
+      "sha256": "eb5c8c975e5ad0db6e94a891ed30ca909ca7a35bd07b81eb41323f4c523be8ad",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.json",
+      "sha256": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.wxml",
+      "sha256": "3876210c6d4fcf4f5c4220068f1336e717b203c7a37308fce4124f229cc56564",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/identify/identify.wxss",
+      "sha256": "0f7255952882318fafd4837da8fd4183e22c24ee82196e360104ad9add6257a4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.js",
+      "sha256": "a3341c28c4fd2b5aa140824de925c3c6f2e6baaf9e60959aef1791eadc1e356a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.json",
+      "sha256": "fa846ebcdbc793ada2dce5c932c110b3772a2e0158b7197069e0b97e95102ec8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.wxml",
+      "sha256": "2fe1f951c6e3b466e1724db6e749cc9ba6bf593490c8e86dd623f7d5cad5df92",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledge/knowledge.wxss",
+      "sha256": "3eb0e84256ea7b97dd42f33555841aaf4757177c5d31c765c8d924f1cf13fa00",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.js",
+      "sha256": "6283ee90f4346effd31f8b494a78aa17c4438473e631e678500495c0808f2f07",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.json",
+      "sha256": "dde7ccc4071c19fb5f8c94af06e773101b7da3fc278112ec960b29326183a045",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.wxml",
+      "sha256": "5b8da2c3379b62ce19196e9fc48ea0c95883ef79f481a58f9c6fbe1cde3df199",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/knowledgedetail/knowledgedetail.wxss",
+      "sha256": "3eb0e84256ea7b97dd42f33555841aaf4757177c5d31c765c8d924f1cf13fa00",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/login/login.js",
+      "sha256": "c04749dc4fddd5b4d94fef432b620e9d5c724c550df897492ed109f274f7b70a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/login/login.json",
+      "sha256": "6c1533282486f0f4052037c324f30d4c25002aa1c67c2004c1baee9be8ffbc62",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/login/login.wxml",
+      "sha256": "aef79da3786fa85c2b36f3df5f35e3b49e92acbd1d7f12a388f7663697264c09",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.js",
+      "sha256": "ca56fe28105280ce383ec53ff678430379ad5415e3c004b5517cfdb50af9fe2e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.json",
+      "sha256": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.wxml",
+      "sha256": "76b640ff9059ae1f1d4a510c28d9a928a60067fa3a58bd3c017daeb5d7fff0a1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.wxss",
+      "sha256": "46866f590c419614403b4057a24b96db835b24e283e358407878f122e7d4786f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.js",
+      "sha256": "ac6473bfdb0eec0d5ffaee91bb1583ed965be7a7ddc7dc579d3fb85ee0ff54d2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.json",
+      "sha256": "0e3efb2d5658d8a4c4a7221f4c9533c42241a3bed818848efb8d213b573a6dc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.wxml",
+      "sha256": "af8f6514614745d13e7f291e44567dd9c4e14673d9e0dee2466b3d9ae8e51829",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/profile/profile.wxss",
+      "sha256": "a6a3ab36565be03222c3e42510e6a2939849fa1f477dcac1b5ded51e35b177f8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.js",
+      "sha256": "aefdbdf59e084f7e891940140e6f1fef9f86ecfbb2a86015e4a8c255d9558564",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.json",
+      "sha256": "7f4f5700a7f5fd0e62277a7e6979e5781dcc73cde2ce09382d547fd1505cacfa",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.wxml",
+      "sha256": "5956a75e4d22d216e004d7ff6d36acdabc1dea372fd2f84236fe44803ccd4103",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/reference/reference.wxss",
+      "sha256": "dea47f2d3817b58a72b7c7d6aafc3c35abf36d7300b17aafbf3b23ab3b91f4fc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.js",
+      "sha256": "aead2c086c3ddb5fdb8140c43f4ac3479401017be21e059fc9ac377f549fbce5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.json",
+      "sha256": "8447921886c1a38e852539ff0de9592f12c6985f83f8c168ed8888c76befb094",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.wxml",
+      "sha256": "6675156aeb2a210194be41f0415cfd91b77da17cca63a4dc223ae8afa72e1cbe",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referencedetail/referencedetail.wxss",
+      "sha256": "0a903c88aad0892c93f5329079ef30f57cd01e470b4624025b609c15679363dd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.js",
+      "sha256": "2b837acadde9d433905d63a727780f1c343105c34b706021ddff5667eafac716",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.json",
+      "sha256": "96a9d8f8e5da85569576a953abf37c066846593962160f7554714fea4bb6381a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.wxml",
+      "sha256": "c1cdf61b59b26e8e5ab94266fdd4bae2f6eb39f50a05452b76f8d70a67673f04",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseed/referenceseed.wxss",
+      "sha256": "190f9a7068b4581274f377472cc5511a8db8056327c66043d85bec4a3364ce5e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.js",
+      "sha256": "f6e45b782eec05035ec4d568a36807b4c8ea7decf9ffcb18866972b9f92b6874",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.json",
+      "sha256": "78a2c669e266e2cbb4f7919f6d12d94f24cfaea6d539494446146a70e7bf75bc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.wxml",
+      "sha256": "9e637e340b23fb1887e32fbaab47488a120ae936f055e267265d7c13c9f57b09",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/pages/referenceseeddetail/referenceseeddetail.wxss",
+      "sha256": "532a275ed565a67d25259c788d5d28470ab08c59eeb079c9116a49581190da0c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/project.config.json",
+      "sha256": "e0a3fad68eeac685d4f9cf12579eba70be7c4acdb7fc5ab45c8eca8db196ba0f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/sitemap.json",
+      "sha256": "0486511b86dcd050fb31d0d243177a9fb68edc1598b224cac8b929a37ab439b7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/auth.js",
+      "sha256": "c7f18bb430203d9fd72735ffbae77e9859f7aab430bfa07ff9b930a3ad69d258",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/debug.js",
+      "sha256": "78f5c420e100024f33091ac6e6851c078c7035b9d01a1cdcb6e0a4adf2ebb66b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/font-scale.js",
+      "sha256": "3c7d28e9b0daedcf9ed557dcbc9c8244466502917acdc243df7696c200604d9c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/knowledge-api.js",
+      "sha256": "ab2ab98290b8a59adef8f726e7409e1369d17ca4f24f8c97d7ce62f8de4177b8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/navigation.js",
+      "sha256": "c3c29424d898426918148c8fb118805bbe50fd20d3ad2d5a5b95b91711d4c3f7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/page-gate.js",
+      "sha256": "0c42d0c9d66c643043e3e240c59e8226e0b30d889d072ab1ab1ec6d3511f4a0d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/profile-api.js",
+      "sha256": "4c55806768352b23c73cdfa07574d1c9151764dd01d55e811ac4db4ebdb32255",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/reference.js",
+      "sha256": "4ed8087472db7c1984f999ee7813a7b9cbfff252665379533d227beac1a0b42a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/session.js",
+      "sha256": "9f29a7418071da750aff9e93ff2910338ec19a082f5b80278dc325544ed6ae4d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "miniprogram/utils/system-font.js",
+      "sha256": "b9af36ef6f223231006c17f828d9472c35ff104f6faa7ea3207cf52384b021bf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "979905c8b8f8103f3444acc79076cd2a039b9c2557a63ae00c8fefce4ba8b753",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "package.json",
+      "sha256": "ffcfff9b1531cf292a3010368006a0d020214adac1640443b00e4412b8fce9fd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/README.md",
+      "sha256": "2fa7fd96a456eeb5f577c7a1fd73acbce7f79454531fce01152a146941c1be24",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/examples.json",
+      "sha256": "871786b56030f9e7d6beaa3e4e9310cb64bf553b55bc38d9ee0a05d5d5f902e8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "sha256": "8a7714983711e4b349f44c84c20bb138ea822b8ae0dd7bc0d983f0989fba89d0",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/operations.json",
+      "sha256": "d5b29a1877ed22c91f69919def6d2348d736087403af954500298d74f5a13a8a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/runtime-baseline.json",
+      "sha256": "b95c77e9855130067925996d6ae0b25872832d2b0152e6823d00ef5e7a204eda",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/contracts/states.json",
+      "sha256": "5b4ff78cc9da79acfe03b454ca9fc609c13aeee0bb09c6efa92f71a917d2b3b1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/README.md",
+      "sha256": "6c5ee16710813766e4aec0c154274bcba907242b449d77443a7779526e42596d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/index.mjs",
+      "sha256": "ad18504bd19c63cc747d4df1000879b41624d404cf5933411d6d0e5faac5cde9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/schema/run-report.schema.json",
+      "sha256": "597fd13f9e701cf5fd5c7d6b6c9628534cb1d3a00d56271037fb7bd7f23264df",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/schema/sample.schema.json",
+      "sha256": "bd0879d3ef2dc8c9156f4bdc0cea79cc719597abd5b04446a983d756e176bb42",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/ci.mjs",
+      "sha256": "17528f4d857af16eb024cfcb7cdbac9a4030ee80e99d50e8c5794a9955aed28e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/evaluate.mjs",
+      "sha256": "423681c553ae37c57c03ef626c7ac019b255b87502a57b605abb860390553ad3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/frozen.mjs",
+      "sha256": "71218fce637119c7eddd723ddf5245c085ffdb311774a83143eb3f41ee507ad1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/gaps.mjs",
+      "sha256": "95d77d8f00e8784b7cc256c7a0efb0d109d7a93f2f4d6b35c409dead8cb3a99e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/grouping.mjs",
+      "sha256": "947a93f4f022c68a8ef13c27573576e876f12c246ce1b947fb915bfede8582ad",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/metrics.mjs",
+      "sha256": "5080b3a30c160ab21379b46078860829fece12e8cca531d3c696793438a540a6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/schema-validate.mjs",
+      "sha256": "31fb1fe2bdbc912df6e88936f18ed804c497a3e535484b3f3ddb4decf931fc99",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/evaluation/src/targets.mjs",
+      "sha256": "6d6239b95d76278b725dd340ddbdbd19a0a446d17a80a7fd52de7ab13326af7e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/README.md",
+      "sha256": "e6b2eedce4364584c74be0d88af5f0a6707b424a12770dc83e4796db67ef1cfc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/catalog/crops.json",
+      "sha256": "52418724d0f278bdaaa00bb9e19765992f01a652ae5521dfcbf9455c5e10cecd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/catalog/regions-zhejiang.json",
+      "sha256": "a2806f518190ad6ae20a04bf933d93afd6e4c1248289f32fa83dcf872100e16a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/catalog/sources.json",
+      "sha256": "f334d00827433e30101c6a2b10c7027f04b06db9b8ad15f5c6cf24f118065557",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/catalog/species.json",
+      "sha256": "903e1eb99f8577511cc3ade9501f6ed9a783b33b0f32878e007c4415fff4fa3c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/coverage-report.json",
+      "sha256": "a207d2bd664be30709ef84b523335a2cbaa9ce263e1ac844334f4e057d04848f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/knowledge/herbicides/records-2026.json",
+      "sha256": "137c1d1a1666ea7d6196553460860d9344def3587fd1b33da229999cf0c0319c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/README.md",
+      "sha256": "73453d97efb6ca2f63602961626e9d8a8b666c68af19c2687bd44d485ed7d2bc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/audio.mjs",
+      "sha256": "8631fc317e0672b77821328a4509d2106c1d1367ede5c7379c76dcbb82dd8b4e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/constants.mjs",
+      "sha256": "51c3fce015368d8de56e9e1b2b07062c2cc1c72bdf56fac4976179c621790301",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/detect.mjs",
+      "sha256": "629a7e40ad7783e8d4ab159f8cbc8a0da40588c9b6bf3476c9e9c233e66fec16",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/errors.mjs",
+      "sha256": "6e65cbd84a5a2897c3cec39400fed91a253bb3e7d1687daf15b00869c062ac51",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/exif.mjs",
+      "sha256": "9d0ec38a33637216294d4bc6a122f5ae0d792544c3793a250d933afd55c13bd1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/index.mjs",
+      "sha256": "4465fb91f66839f08e3e9dedf669e4799896343e51ae11633d8cf280da25a7af",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/service.mjs",
+      "sha256": "fd7442333b80c1f80c99559cd53fea815dd5eea0123da83a24af867ff62979fb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/store.mjs",
+      "sha256": "b37b5f96b3d67f25ac6536f8229eb0651cee324744e544b226a370d3d6d43544",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/tokens.mjs",
+      "sha256": "2b7a48d8e4d860491acf1ce8315b690893681f374be64aa95c49bfb7c432b034",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/validate.mjs",
+      "sha256": "b4716f8103b91cad5ff6cfdd77861cc407f4a5a036fa5a3d577e504752b0c1b3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/media/webp.mjs",
+      "sha256": "4f3510f10dc52d9114ec87d1fe7155c7790b75556e51bed877b2be9e74cb62b3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/README.md",
+      "sha256": "50298a5df825aeacf44d784f158d3ea3a5598f0afd2fcecd9639ffe49cf3ab84",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/commit-gate.mjs",
+      "sha256": "1a3fe1cf077bac8b8afda2f6ab73df6385039fd2e2fdea11f35171ce191c65da",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/consent.mjs",
+      "sha256": "8d65c279703bac58eb664dbefab1d876221dbd798c2b51a4863f2cff276fd6ac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/constants.mjs",
+      "sha256": "abe2c6e7a90aad8cd83060a2e8e2bad9baf55b52fd6318e75fea96714f819fe4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/deletion.mjs",
+      "sha256": "51b74038c040c2cf4c353d29689eddd2b2857097113709195e2d194524aea7ec",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/errors.mjs",
+      "sha256": "6fcde353aac25e288777c478ff3f9eef12aa1ebd51559528be65a47b530e8019",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/guard.mjs",
+      "sha256": "fec9ea1206fcc18ad4943aca8a95c106ffd848e0fd39e9c63063e2e17bf14767",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/index.mjs",
+      "sha256": "9b7fff5380bcb73ac287e944b65ddb9164de64de22c1a0a6d3bc66f9095877cb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/ledger.mjs",
+      "sha256": "eed25a2101127b14c1c630bf7f089a3f0174c14c76ca6ae1a6566b957d6ae8fd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/redact.mjs",
+      "sha256": "b1f320207f4f9ad133391df9441fdc882f84d2cf3e63b9f264b8ef8b11faa2ac",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/privacy/writeback.mjs",
+      "sha256": "4c14e7146cdf331a5df78377b803fab739c2d1138c59fe2eb402ac04a321cdcf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/README.md",
+      "sha256": "1b9b5f900313377d0ea04fe8e0ae8bdd255a9472d96637d5eac6403d9f1b6bdb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/catalog.mjs",
+      "sha256": "624f70645a1d06c7720b97e5c50a333b0375556ac80040127e48fed81b98581c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/constants.mjs",
+      "sha256": "e5a7a37746cb5d0820f0d330f19e669c776e225bb25a012355f0c56f8fb772a3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/errors.mjs",
+      "sha256": "da68ee2a6d954f48f11970266d53a5fe6aac2d763980f4001ebb15c49ae58aab",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/index.mjs",
+      "sha256": "3e747ca17305277693601c948422b16b5cb0e4ffc4a88556c349c75c3a689aa7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/labels.mjs",
+      "sha256": "a91a957c5ffe878937ddfe87264c6e944ac1b50d62e09e7c3e6d4ab633411139",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/query.mjs",
+      "sha256": "f1d087bf69e7fabab8896c79f200ea4cb0850dc44f30952e60d8adcf025625e2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/records.mjs",
+      "sha256": "a81a190958e1fe057eb1d4896f4ceff19d545df51d5226f50f35d2f46490aa76",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/seed.mjs",
+      "sha256": "af908b7ee824fef7a4805c7f677edf7cf9e30059694c3086009be2780e3f6601",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/service.mjs",
+      "sha256": "8430e78346c791163f65ac9159f373873ed7df55d215f7614cbe2e1c816649e2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "packages/reference/source-version.mjs",
+      "sha256": "3bd8336cb0a29e89c2f424bea7009cadccf58fd9092830e0cfb97390747fea05",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "project.config.json",
+      "sha256": "5a1a47631312f657ba20913a6f1556f3f1c36ec97fbaa5b6f996fbf6dc50e98c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "project.private.config.json.example",
+      "sha256": "50209cc000eed442585296b5708f9cc8a575e4cbdf0c3effcc3f9c30e638b84a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/README.md",
+      "sha256": "b56e841349f6716337cf87d1f3c1c6635ab8b8e33564f6cc7c62af3fb58c7b07",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0001_initial_schema.sql",
+      "sha256": "5e852cd40a305ec2824cc8b3b92e58eab2bf0b718e293d511cb9ce7009297692",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0002_knowledge_catalog.sql",
+      "sha256": "3a596cc1de207e6ea77b085fef69ce94bb1547b7bb53d863d596544c51cd9880",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0003_privacy_consent.sql",
+      "sha256": "7ef65c75844adc51cdc7b54bb794f63de48d9314b4a642b066b392121801271c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0004_workbook_staging.sql",
+      "sha256": "a70f7d90f572340ae91776f0be642be12deb85f8f16490f5679275b837243c12",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0005_catalog_read_views.sql",
+      "sha256": "47908ef2eca33963df0c8c9af8c389b05af095bcc378a74eda12a994e80069f1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0006_source_lifecycle.sql",
+      "sha256": "f0d79cd78cc7e7b9d6087af9f0da3f3b801e7e3cc49ddf91e8161b8fa6c77325",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0007_staging_intake.sql",
+      "sha256": "a78cb18499307c16c5a6adc83fec59d69ecec7081c37741c0ece7f2ba53990a2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0008_auth_session.sql",
+      "sha256": "ae41ff808c77edb8e62fdf9aabc823dcd7e86b0c21a50b42daeb2f09f5cc3659",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0009_consent_policy.sql",
+      "sha256": "5522566b794ddc48c2185300c5ec2a61a4173bd01ef812f1cb4d592ed49ec8b0",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/0010_knowledge_read_views.sql",
+      "sha256": "9a827eb1d2e290bab4374da28d525d31f99f866563dce2a8b4a96544f71c3711",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0002_knowledge_catalog.down.sql",
+      "sha256": "f75ed45e0d329e9e953b1fec29f5448771ff1ec0fb1ca598f0f5aa951c05f1cf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0003_privacy_consent.down.sql",
+      "sha256": "6d02011e266105aeb374bb498d3c066c589532404cb68a5954a8f9dc55b27f9d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0004_workbook_staging.down.sql",
+      "sha256": "cd6508d2bf766c060ef99f6a75fac4df8bafef030224078396d0f750f12a26c1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0005_catalog_read_views.down.sql",
+      "sha256": "f6c2c395710441c7df12a3a8587c952dbf81afdd8a85dec459a45302f3578b31",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0006_source_lifecycle.down.sql",
+      "sha256": "deb2421c9c77c37349473c9273ee84103cc43df8b437623bd852427d2ce5ea4a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0007_staging_intake.down.sql",
+      "sha256": "e6c23eaf8f9c3540ddf200607f29a82f5210097c0e14d60ea62c5b378f121a33",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0008_auth_session.down.sql",
+      "sha256": "8c2b040e16c3561c80ae5fa6f40da9a80874e7c8d9ef7eac7ff2f158749c89b3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0009_consent_policy.down.sql",
+      "sha256": "09c731da51ec017410320e3d41d775f5ea8836c9e75370cc08712feb9b43e86e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/migrations/rollback/0010_knowledge_read_views.down.sql",
+      "sha256": "a67fff2fa3b5cc6f588eed1b205027c131a5edbc7321b6d09494eb0ece9f9a3e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/auth_privacy.sql",
+      "sha256": "34b690004b2cb25ee575f0c98b1ce51339f8cd541794ed6ceaa997571461c47f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/catalog_readers.sql",
+      "sha256": "f5a223315bf4f4e080b3a6ff99b5b061b8b9aa9b1087d398d890fa8ffbcad97a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/consent_granter.sql",
+      "sha256": "0f8d62200f9a622c9a5569485c0c749d9f23eb8722debbb067e830a40b05ea96",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/knowledge_runtime.sql",
+      "sha256": "4bcc1c66c563980d70e7a88d9978ad8b4ef7e5b4576042d33ff58d63c202df60",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/profile_runtime.sql",
+      "sha256": "2c08852efb1bf53e56ec5c8f1ea366f3bba8b3ed964a87442e245fc7530e8500",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/source_operator.sql",
+      "sha256": "34711d552b3b34df58539e8cbc6011bada1dc2066f450613551eb24bca9f53f4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/db/roles/staging_importer.sql",
+      "sha256": "75bc1a3cc6d39d5dc1cc282dea187d735137d755061ec1a0e121fb95e5f0523a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/package.json",
+      "sha256": "3ee296ac24c229294d81fd86a49a6dc80ad95213bf4ac70ea5943a64e4befd38",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "sha256": "08f3084d0ee41b86218b54ceae731512f19f5b63c72880cecd4dc574eaf6baf5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/idempotency.ts",
+      "sha256": "e9373f89f3a184371c05b66b0e47ca60b9497d4477b46e40a8cc1bf0467d6b03",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/middleware.ts",
+      "sha256": "7d27f11e9cc3bde7c7b33198ecfbb4b8dc7845b4a1e76cc96652542c204bb2c9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/password.ts",
+      "sha256": "9f25fd86745f3c0c46fff4646f4f7dbaa01fa36be2bfa0e47838ad56ce1ad5c9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/service.ts",
+      "sha256": "1170fb551117c3e938720878c1c7d17053b229110ec23869189c59790b9c4319",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/store.ts",
+      "sha256": "adf1638d6891d02fdfe7f1059fc452e51999dda5ea77bcaef66c599f2cffa6ec",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/tokens.ts",
+      "sha256": "1ef83d8d89bf290dca43aba4c28e95c4caeedf5950cbb7740950c37deca7574d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/types.ts",
+      "sha256": "8585201bb8b9da81bfe8075325718c131624020319a8508899bb10942ed3e0ca",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/auth/wechat.ts",
+      "sha256": "37917463d6ff0c1419ba5217f7947b4640d76fa9ccf24a3429ffe912c7c677bb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/config.ts",
+      "sha256": "bc31e4feaa453f44956b81509d71851c186fb2bd33bc949fd67f46edb0dfc14f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/contract.ts",
+      "sha256": "a8014b67d23fd778363d1960220e6c12b7eaaab7ce0b245e843ee041c8e9f750",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/db/catalog.ts",
+      "sha256": "a075ed10f6bdb501338fd132645d926e8032294b064abff66f7f5cf6997a2232",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/db/migrate.ts",
+      "sha256": "eeefb2946b56a6cd1c07f09f90e2d249de9a5f0b2100a372f07b9b876be327ee",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/db/pool.ts",
+      "sha256": "a8e5af35901d5d3e0facb55c19ca58bb30ba495885b066c615d5b6af97e1b5e7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/db/source-lifecycle.ts",
+      "sha256": "513e660c300adc42b2fbc0dc1d91d9a8318b4726597922e6c1c9fc79a2d1df24",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/db/staging-intake.ts",
+      "sha256": "75d203bfaa2639f018ae108066fdaa6d0a3f326ce7f2a80d27cbaffa3be15f2e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/errors.ts",
+      "sha256": "a08f5283122cb68099617c01be32f71c36453870870eb1c06549488cb47e75aa",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/knowledge/service.ts",
+      "sha256": "62a009cf3984ddf628fe5a1472d8ed8cacf21ad40c6920b9a6d88db3fafc62eb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/privacy/consent-pg.ts",
+      "sha256": "a60820c813376113768b6ce49d6e5a3a82d6c4751bac656784ae45e3d9ebc0e5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/privacy/grant-pg.ts",
+      "sha256": "d72e3368bbc1b7a81c91204de60cc6b3f6ab904f568178f95c4103734200c63a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/privacy/reference.d.ts",
+      "sha256": "4ce5b9aa7db745d37b2c3eb9714b7a1eda918ecf032dfa9a72088faf5eda093d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/profile/service.ts",
+      "sha256": "c4f792b04ca253107e4eb53697d527af8b0fdbc37b3cbe613a03452bdaca472a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/admin-auth.ts",
+      "sha256": "3d7acb6b60727592bc832f3719e0ee50eec011730cc964efe156500fc5c139e2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/auth.ts",
+      "sha256": "aa24af142068205e072445f063573c3cbead2691c149b4040e4d73bb62976bc3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/consents.ts",
+      "sha256": "014e5eeefc08d4e73e93580d6a2788e1f28b9c60e086e28df8a6adc08a0eada6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/health.ts",
+      "sha256": "6be10c280a019a103a1f8de0c8439d338ce5c3adc3f973032d7e55bed1a01326",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/knowledge.ts",
+      "sha256": "cbfa6a13fb3ccc7f647a4bb7ee30241b48d85618056fd84bf536e0e73f24d653",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/profile.ts",
+      "sha256": "4ad3842afbe6c2988f738b3b1b7249cc12eb99a5e4ce61b150ed91d8edcbdeff",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/public-home.ts",
+      "sha256": "2a864dfdc86a5d004f8a0ce0d8b428b49712b178ec360668ade9149fc5de5fe7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/routes/support.ts",
+      "sha256": "1614ae44331806e7b2d4640197ff181e7bd963e5bcfa045dc2522ebfd1f26b8e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/src/server.ts",
+      "sha256": "2c7e8ead89d6e57113b3ab0eb76c43f3fb97149790d9335d6ca4997c7b75e141",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "services/api/tsconfig.json",
+      "sha256": "6f0b42ffe28da17241c7ede447e1682f0f37cfe1f9570d9e4e6f0dc08d1bc6e4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/ai-config.test.mjs",
+      "sha256": "5a6a439cfa6327312edf518190e6ce1195da19234712d5edcb8d7347dc7ae878",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/contract/contract-codes.test.mjs",
+      "sha256": "3f180b56b3ad7f53908ef4410793881f13670aa124c39b035c6a040985a2b70b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/deepseek-account.test.cjs",
+      "sha256": "440af6b00cf5b93e29efd43f541b7eca9f9742b49f3763161e3d4fdb6d03e3d2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/evaluate.test.mjs",
+      "sha256": "7554eb243b01f686cdfbf59993f80f25d38b998a1746695098af805afd459b59",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/fixtures/synthetic-index.json",
+      "sha256": "4361273cf32397ce0a044c287d71bfe6eb5a3327cc723ceda9d6908d88808edd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/fixtures/synthetic-predictions.json",
+      "sha256": "7d2b05b181fc9a9146b114cd2d412069f1a5bfa1c5b7436cba39edffde172e6f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/grouping.test.mjs",
+      "sha256": "ca22525575042d004e237381fa5561ddb8aa0214985cff4cabb3fb1dc5d6784c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/metrics.test.mjs",
+      "sha256": "4ae1dc2b9673df4ba611e5860ad617297c7aae8db54c9a92b178466c758b490f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/repair1.test.mjs",
+      "sha256": "a369ab81bdcbf0cbae8cb942965ff330e21fd070b338569eb10c0e1352effd0c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/repair2.test.mjs",
+      "sha256": "5c6ce27bd59812063b3f7a2f21384691f156538316ce386298e3f5aea930fcb2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/repair3.test.mjs",
+      "sha256": "7d11360dc3d29ec7b75781e7300654ab7b516ae89d7b573b2d09a49f6d9e3ce4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/evaluation/validation-fixture.mjs",
+      "sha256": "d25f6ec6313da6f63fa23c6bca4946b305f9a1c4979cc3037ea55c1b3346379f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/auth-privacy-pg.mjs",
+      "sha256": "1371bf69f497a5e5b60a29ecca10fb20a0590bcf2e50866ac4e2fccc749e2758",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/catalog-pg.mjs",
+      "sha256": "f97eb633a598b615b12b8d8c6c7e9f45302a36afedc5214e461ecf5f55582afd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/consent-grant-pg.mjs",
+      "sha256": "d3d5320cd6e98c89d04dd1eebc86e805da77fdf62d114862f752f6896789d6cb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/demo-reference.cjs",
+      "sha256": "93a130bc3bc9523ce17e37ab852da8f7eb95b53f637da6e045335c81bb77f8f5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/knowledge-consumer-http.mjs",
+      "sha256": "c87adba20158971b96ed788bcc12030bd4376826e5821d88a1593f75409f128d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/knowledge-http-fixture.cjs",
+      "sha256": "836953f22fc75168e7125ee1998161f4c41962975895a4e441035a2609ad96b4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/knowledge-native-consumer.mjs",
+      "sha256": "fbcaf4b2eca134f8c1b6962aefcb66c938e3aa7bfa5dc1f28ed2c121bf1d0765",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/knowledge-native-pg.ps1",
+      "sha256": "816093035fe9cb4d32c788e98e441b6bf63dceb0937f5a0f7220b28522d42f4e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-detail-route.cjs",
+      "sha256": "3c850f734a675ecc326cc409fed46a717b5f5f9ea0a960ef59732be7cf58c56a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-knowledge-geometry.cjs",
+      "sha256": "e98ff3902cd60ef2bffa87ad545aa0c1dda17bd47fb78045369ca3a3e0efc6df",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-knowledge-ui.cjs",
+      "sha256": "0a6e08d83a66f353022c8ad6e4eace0e399a83d92ba02742a97cddec434a12d5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-login-detail.cjs",
+      "sha256": "2636e35b375b132574d5fef005ffe75e37eaabec35ba224e0a099c6842522036",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-profile-ui.cjs",
+      "sha256": "848766ec0143c8ad901559d1afb19e0298dd5822e909637a5a7685f9b64ec05a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-ui-controls.cjs",
+      "sha256": "2a84d84d322d1455746a3d28fa98b57b638c87a51a5966f51b99184e2d0aa861",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-ui.cjs",
+      "sha256": "a8291700d238f6be1c0bfdb372f4fa9e78f71f8cedef4e4085e40b2865ac217d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/local-dev-wechat.cjs",
+      "sha256": "996d9f00255f2e55a17a95a4bcbb070ef1b2075f69ae670de4166e6e89b7432b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/miniprogram-login-loop.mjs",
+      "sha256": "279fdfd73ca7b813620337da46ec4ae77c3b27dcd1be336834fa0d8c5989b247",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/profile-ui-fixture.mjs",
+      "sha256": "711bbbb770576edb766f66d5ce503c5522f8e4dcd935ea7b53dc129ef1ece804",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/profile-ui-http.test.mjs",
+      "sha256": "94dd264d0956c1bdbd8f6844f336536bc20b95e20db18a0c77ce20ccf78893ed",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/source-lifecycle-pg.mjs",
+      "sha256": "923ea2cdea1204ced1047cb972cbe928c9e88fc722efdd9a35d66543190b4c68",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/staging-intake-pg.mjs",
+      "sha256": "162d9e074941f55e9c6d4c1348fa8ebab07495c34a6fb0318e2e0d904c89fb02",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/integration/workbook-staging-pg.mjs",
+      "sha256": "0860a174113944cc9da0687ccb42cef0ffd5e9cb14ff0e43d396a6bc323387d7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/knowledge/test_workbook_staging.py",
+      "sha256": "accaaa5032c1fd7c9b66186816bce2fb2a0af1e627bed49068dafd41f3c573cc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/llm-live.test.mjs",
+      "sha256": "e693ecd5b58002e470422d6a27c451b98cd2f4529d7e283f54dcf688cfe95afa",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/local-debug.test.mjs",
+      "sha256": "33aa1a375880be095037014f1ccae689a3d65d4e995eced1b61a710ad2fe77ff",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/_fixtures.mjs",
+      "sha256": "94765c12282c2d8a50271fa096fd68bc5916e18d432723adf3c81cebc4ca6e5d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/access.test.mjs",
+      "sha256": "6f2dd8820335d607c39e5f6ad524e7c648b0e9a2e7ab6ca71e7a60f2bfe69986",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/audio.test.mjs",
+      "sha256": "14e1a75d89471525e95288546203e5a418af076438cff109b91680cdd4ab93ce",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/chunk-transform-boundaries.test.mjs",
+      "sha256": "f592628261e220955ff24c69251c47bdcef24d1fce5c28f519c076933bd563f8",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/contract.test.mjs",
+      "sha256": "29c6c531fd03073bb18e411a7bb420d7bcef1e00700b27eee8931fe715534efe",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/detect-exif.test.mjs",
+      "sha256": "9cb717a7c7ddec35200dfe99b3d717f4da8244a09618324e17b2e8217788be6a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/lifecycle.test.mjs",
+      "sha256": "88c699e51a71a53949be2320236d98f52e1559675f3afbd606a791ae209dac67",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/schema.test.mjs",
+      "sha256": "3eff288c1ef373537f86e34143c644c532eabde7555320e4149cfc5ae393da9b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/media/validate.test.mjs",
+      "sha256": "a40b5be38256fbe686e20f858a3771cbf5b3b790068da43ca4d61cc084623b5a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/_fixtures.mjs",
+      "sha256": "ceeb4d140930d46a55bb1cbeeea8a4808906e930b7c332d875d6bb036cc2c46b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/consent.test.mjs",
+      "sha256": "8848dd58a8f9dfab1889798155aea1316fe9bfe5a78e7c260975d83e95eb4d45",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/contract.test.mjs",
+      "sha256": "b5d49a8d511a07a55c746c0408d075aa5206792ce4279c394e4efb9bb48ab3dd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/deletion.test.mjs",
+      "sha256": "1ac7c61fcab3248074d0e4addcad7433e775eb64ae4659ae65b31961050791ee",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/errors.test.mjs",
+      "sha256": "456f6c592ef43593a9b6c5453fdc3e89cdc306cca903d64dc3c30de1755b61eb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/guard.test.mjs",
+      "sha256": "3c7c28192f6e0027348cd0606d4c0cae709f3ca65c040b7dc67200052d4a6e61",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/ledger.test.mjs",
+      "sha256": "534e2b6aa8a59e66808b9678ea1bb4271d23b8970de017abd3df851cc4a476a7",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/migration.test.mjs",
+      "sha256": "1ef086589dfad49b75161482c8fd70826773152cb53743f361f107fc01b33b07",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/privacy/redact.test.mjs",
+      "sha256": "4fc7765f0f00a33de5375b5b4668186de9f603703a94d52669b2aeb85efba432",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/_fixtures.mjs",
+      "sha256": "ebdc3f2a48d8c7f92bd00ad5d97bcd1d6e8ed01ec5e73c4cb2aa9c8cf16a48ca",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/contract.test.mjs",
+      "sha256": "b3be9ea08b8cb5ad2fa6929f6421b23c6d8e4c7f5f8ffddbbe448a189a91cba1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/detail-route.test.mjs",
+      "sha256": "736c31d149bdc4d6777008aa07bb84e0d0ce1ea444d2b10c2d99a06a8ebce05a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/generated-data-check.test.mjs",
+      "sha256": "845e4fc5722dc8ea8c7485d6ed5e8f064ec59c4102c133800ad3cddc7cc32a4d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/knowledge-client.test.mjs",
+      "sha256": "028aba648c431550561ec55364733e39ea3eb9ddb2962d1df61667b39b3b413c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/knowledge-layout.test.mjs",
+      "sha256": "2f437990d90050979ead49733f2b3f49655349f80ae02b1f27bcb2cf13f3add6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/labels.test.mjs",
+      "sha256": "ed51bda7f25fcf86e4e5927e42d599ecada805ca0c55c6f324d7148953f1bffa",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/miniprogram-parity.test.mjs",
+      "sha256": "b93efd49a43d3ba12a42a60339c5f898807af608048a3ae88f98c548955b9519",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/page-gate.test.mjs",
+      "sha256": "3abc58f5716b25b93125bd10fabbcc8308f4cb65d02979908481e9d8a442710b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/query.test.mjs",
+      "sha256": "989e45a76e4910f267a33f043ac4dea9015921b66ef3072bda40d0a711140cab",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/seed.test.mjs",
+      "sha256": "fefbf20f386f999b99899504778e6101bcc7f1bec7ffe790354cc861b074842e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/reference/source-version.test.mjs",
+      "sha256": "65a2f1963a48f7460d60d1ef290353a383573bd779ea0e6180aa8590d3bf04f6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/tencent-identity.test.cjs",
+      "sha256": "598e5fa0baac2824bae5b949612544c3a2caf713cb4c5478fe59ffb16589b273",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/tencent-live.test.mjs",
+      "sha256": "468413fc7faf713a9422283c07ed2ae5c1cd97a0649dc33375e9ddcb74f2642b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/tokenhub-account.test.mjs",
+      "sha256": "a0f7e2f72debedd1041eb3eaa91ecd2dd89f986c4ee5f35ca2f4cdcf58745531",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/ui-adaptive.test.mjs",
+      "sha256": "ab1ab5e065e04a5be7f2e366d57bff292626fdc40a8b88c749590228ac659caf",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/admin-session-client.test.mjs",
+      "sha256": "ec22fcd0fbafddef7a6cc03ca0964ee7b4a094ecd4454e9d02549f66a154446e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/api-config.test.mjs",
+      "sha256": "660357c588597d2d64681d1eeaa0a38adb0f9c80e6f3dcde4541681e918eabd0",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/api-errors.test.mjs",
+      "sha256": "b38750de8cf4385fce08c49451f103aa36c5f68a3bc467a9f6d98d7017c7994c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/api-health.test.mjs",
+      "sha256": "7df7bdf77be3c3a839a8ad92dd7e3e1b9867bbc140e95e7f1052608b48088b9e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/auth-guards.test.mjs",
+      "sha256": "1d0956a532eb619328c1a28b564dc18852ed56212d2ec68c03ea74aa74ea3ae3",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/auth-routes.test.mjs",
+      "sha256": "a2b7f9fc526edae449a5e9b9fd11d008df0f947914be1bf646b4fcfbf737b38c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/auth-store-pg.test.mjs",
+      "sha256": "364dd8f635bde907c4f87fe7a9cad2162c86c03b1f805f9e59c9c9d7b539a76b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/gy-i03-db.test.mjs",
+      "sha256": "122f5ded34aea54a2b13c5c6767240091bbeaff662a5df7aff3d37b4baf23231",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/knowledge-api.test.mjs",
+      "sha256": "12f1487dec071e6898bc84294a2e95ace1335c777c5afa6b9a31925528c7a138",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/local-dev-package.test.mjs",
+      "sha256": "64f168faf67ce40f55b384a5e7d3dd7424d14f4d3f04b66bcd8d3c323d25c3ad",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/local-profile-bootstrap.test.mjs",
+      "sha256": "eacb793af23d715855a9d2f0c2a4ad857472a367725a5364bf7789b247c7d5ab",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/migrations-constraint.test.mjs",
+      "sha256": "03fde7d069889db98b4d71a0e9d4a370c8cfebd4ada535339e008c69894608ce",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/migrations.test.mjs",
+      "sha256": "ed1ba4059b83f01e1f95a3716cd26a89bfbd037b8345dcfbbf1308347b1b67ec",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/miniprogram-auth-runtime.test.mjs",
+      "sha256": "1159a29425aa9cac22385649ece6075d86837591ec83c37e87e298008cc475fa",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/miniprogram-guest-gate.test.mjs",
+      "sha256": "3e55c66fc5c05fc3598201b4d3167deea59100670fed258c3300d44d5daf0134",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/miniprogram-login-return-to.test.mjs",
+      "sha256": "03e26c731d9face72310ff9d835919dafeb1d3e96d06bb105319aba4d2ffda20",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/miniprogram-profile.test.mjs",
+      "sha256": "d593941375782d3876468c5f8680ca83f9022010618b19a7d2db6f2518f33958",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/miniprogram-ui-auth-integration.test.mjs",
+      "sha256": "8c08f5a8f587652b22cd8e2d37fcfabcf2d319d97ab7785e796abc50d3b0f4e1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/profile-api.test.mjs",
+      "sha256": "e34cda6aee1c7601f86c06cc365e22b1e05f47ebbf564ebeb09dcc9b4c2cdac9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/public-home.test.mjs",
+      "sha256": "6e8cd43c94306ca2f2d403db83bdd972dbbd59c4f696d669ae6f3f8f50801aad",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/source-lifecycle.test.mjs",
+      "sha256": "4d895e9f1da0bd360934eff1be9d14a214147c131354d07db72b0e1aa7f2c99b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/unit/staging-intake.test.mjs",
+      "sha256": "ca93dd0ed474750e6fb03ff44c05854e37502335e5ae6bf24ebe4e87c7eb1cbd",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/verify-env.test.mjs",
+      "sha256": "73a3a85bb8d0592809447b2f671efed04e070bcf8ce2399ae2f6e68893fd9fc4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tests/wechat-account.test.cjs",
+      "sha256": "959c20fc57678becd0964f4beb430a89cbab496223adcd1cef8c4a9aebe2d372",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/ai-config.mjs",
+      "sha256": "ac9fdeb4d9dd1d431fc16797284d96a42243ac06b5fdf4b683239543be4116d1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/check-ai-sdk.cjs",
+      "sha256": "7fd352dec689f4a8ee7f45799213e5d482b33c6d56bbb6e8b755d981e2725e46",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/check-wechat-project.mjs",
+      "sha256": "e36a00811a8e4c70c99e4f92d46aa49cf9031d16c96cb481a8404453afabd96f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/database/source-lifecycle.mjs",
+      "sha256": "b252e566bf47cf7ebc69db7d530d43d13fad846de982004336be92d88d993de4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/database/staging-intake.mjs",
+      "sha256": "757afb5e90a01c8351d2b95bc51911b9f1c76b307b8c48042faca5ae6469dd12",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/evaluation/knowledge-scope.mjs",
+      "sha256": "e4919289a8a67b629edda62b116b5d7ae21483f3cece6f758c3ead136f74f4bc",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/evaluation/lib.mjs",
+      "sha256": "b8b076bdc6eda9dba27855aac10f706af84e93d7dc7c878d77e06cf2ec2264d1",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/evaluation/make-synthetic-fixture.mjs",
+      "sha256": "2e5c3332d4e946bbd71ea3e6e937a2f2c593c62a68a4956086f5e33acc079e07",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/evaluation/run-evaluation.mjs",
+      "sha256": "47a856ae4a64a4c6a413464be89e825f7ce56532c01f006de52d3f15a9f54454",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/evaluation/validate-evaluation-samples.mjs",
+      "sha256": "d157cf09ba174c5d9a9e6c0d602619c2f79f237b29b89153d508dd8c3d6afa9d",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/adapter_demo.py",
+      "sha256": "277e9387a95bd889be42241c8a90e24c45a5730f37b44194dbc1cfc365801f0a",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/build_herbicides.py",
+      "sha256": "2312c36ec56eacc69594c39592866fe223723e2d927f56d65c815f021f38adf4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/build_miniprogram_data.mjs",
+      "sha256": "bff2de84da122a8eaff2df2fe9a8b9f286cf47ced0304e05a8db7531cdbdb450",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/build_regions.py",
+      "sha256": "74b3c975929af867788218bfde235d95f216954a4d4a4a43230ca64bae2bbe60",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/build_seeds.py",
+      "sha256": "cf14f754a4db7b034c405708456f260c62439ecd14eae252154917b9f3f4a461",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/import_workbook_staging.py",
+      "sha256": "9d0815ee38af01c4ca31016284d600254006d5117ccd6346c686de10ca67351c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/pglite_verify.mjs",
+      "sha256": "d4e67188d1e56fea624cefb7ab4769fba512258b13fd09c6572a162c82775c49",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/test_knowledge.py",
+      "sha256": "0bcfcda8bc1633456accbce9334fae9d46f8df2b0c77cd0583fc36aab1914056",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/knowledge/validate_knowledge.py",
+      "sha256": "2766740e67d7da687cc95b775e1b5b7654df619ecf88e521a953ccd7eb7a6c38",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/lint-workspaces.mjs",
+      "sha256": "25b5570692f29a6311a92326f86cce094f66efa6c25449196e9ea753d2f2503b",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-debug-config.mjs",
+      "sha256": "a2e266db7c430fdb7ba7e676bb68366456db30e885f8d3f31dcaf553ba4bab86",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-debug-server.mjs",
+      "sha256": "2caecb4499d42b886aa3cd4604990cd05c69876f4bc34a934c4f239c5a2be54e",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/api.mjs",
+      "sha256": "69fe0f5dac3b8967fc8825fc798b8000ce1f4da862b5a3d5a09cbec55e3d5b2f",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/database.mjs",
+      "sha256": "28de064119d6e788f3b51db52741664a1df5ab6f83c5cd0c4822668c21823bf9",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/prepare.mjs",
+      "sha256": "352dc7b474b95c386cb770830e0821704bf841162ffd9d79aa2a605cecf7b108",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/profile-bootstrap.mjs",
+      "sha256": "c05a19d681e97ad19f338ca4d56b8ccc629def411aad21e8a283d8ad500aa565",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/smoke.mjs",
+      "sha256": "8219c77fb9d9fabb3d1c5aff6733f5e2503b97f060dde44b3394cd9399a3ee94",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/start.ps1",
+      "sha256": "b701040fc17c10135ce698e7830bee786f11e84e9e2e52de62b07b29849c3b54",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/local-dev/stop.ps1",
+      "sha256": "6832dafb0bc9ae79fbcdd2244b1dbed0b6f8102f94066237eb4c7f133bf13151",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/prepare-ai-verification.mjs",
+      "sha256": "b614233e9b5eddc184a112422c7d7fac65b36a7075b2e8baccfc5a49905e8e44",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/prepare-wechat.mjs",
+      "sha256": "d130bc32525aee8814c9129864524d5ed224727c9a2c45995f9fd4c5c3df9119",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/run-python.mjs",
+      "sha256": "06079eb71260ae3b6fa953572cb16045d89d79651bdc262a54c7689a952825a5",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/smoke-wechat.cjs",
+      "sha256": "9cf6fe2016b3ef63e5f11520da64cbc06513438ada5bfd5483abba22be3536da",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/test_contracts.py",
+      "sha256": "612cbe581a234f0c9995eded7afc55f73f48db1a108a9fd9aeb5ab4485f31378",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/validate_contracts.py",
+      "sha256": "4b7403205f718b72d748b0357bdfd5ea09d227e269808e677196a0f5a2d5de98",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/validate_development_docs.py",
+      "sha256": "1c4d8e0e6a2b644759ba54a13fc07d4ac1d40ee64947096301d2efdce16bd9bb",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/validate_openapi_standard.py",
+      "sha256": "75e8d2a6dc53f639a37cd02ee4c7a5bf3793357e4060346aab4a36031c6f73ea",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-deepseek.cjs",
+      "sha256": "cb9528095c29a53259685740ddecb612b5c875723ffb4d74b79c88df8349d2f2",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-env.mjs",
+      "sha256": "4cb44b0ede90652c1773e5295b68ae835db1f3248aa06dd19fa77c4c68f9cbe4",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-layout.mjs",
+      "sha256": "f78c776d119638d5d59f8d7aa8e4538f4a573d1d1716c390c78b29f859b910a6",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-llm-live.mjs",
+      "sha256": "2987356ced9f3d6c69ff3d2ede8c926491de6e09894a5d15678258424acc7a28",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-tencent-identity.cjs",
+      "sha256": "6f99456fab936e620ee075f4d618caccccbb248a688f078c3bd689f5a4950111",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-tencent-live.mjs",
+      "sha256": "e9593089c26a86e2f9028292fdbb716d5125e1c125511765dcee68f1b5d20b8c",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-tokenhub.mjs",
+      "sha256": "dbac4efc1a7b017dabb2f164e1fdf89f9bb158e6675c509001122fdf5b5089ea",
+      "rule": "UTF-8 CRLF to LF"
+    },
+    {
+      "path": "tools/verify-wechat-account.cjs",
+      "sha256": "2b18cf303533fb3c0dd74ad0455fca52b625f728ab3e22d332d1d87d9ca2cd19",
+      "rule": "UTF-8 CRLF to LF"
+    }
+  ]
+}
