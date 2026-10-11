@@ -26,6 +26,8 @@ function fakeReference() {
     matchStateLabel: (s) => s,
     query: () => ({ match_state: 'matched', items: [{ record_id: 'r1', id: 'r1', source_version: 'sv' }], total: 1, next_cursor: null, reasons: [], unmatched_reasons: [], simulated_excluded: 0 }),
     detail: () => ({ labels: {}, verified_scope: [], not_collected: [], unavailable_reason: '', queryable: true, source_version: 'sv' }),
+    doseCardDescriptor: () => ({ renderable: false, reason: '本记录未采集用量字段，不提供用量信息', rule_version: 'gy-i08/1.0.0', off_switch_supported: true, closed: false }),
+    evaluateApplicability: () => ({ applicable: true, blocked: [], reasons: [], rule_version: 'gy-i08/1.0.0' }),
     seed: {
       counts: { herbicides: 96, weeds: 172, weedMaster: 175, provinces: 34, controlTiming: 14 },
       label: '待核实·非权威',

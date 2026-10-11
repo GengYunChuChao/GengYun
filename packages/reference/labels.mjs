@@ -12,7 +12,7 @@
  * 纯 ESM，无第三方依赖。
  */
 
-import { DISPLAY_LABELS, FORBIDDEN_LABELS, SEED_REQUIRED_LABEL } from './constants.mjs';
+import { APPLICABILITY_RULE_VERSION, DISPLAY_LABELS, FORBIDDEN_LABELS, SEED_REQUIRED_LABEL } from './constants.mjs';
 
 /** 断言文案不含禁用标签（供内部与测试共用）。 */
 export function assertNoForbiddenLabel(text) {
@@ -65,6 +65,63 @@ export function doseDisplayFor(item) {
     return '仅按来源原文核对展示，不生成换算或处方';
   }
   return '本记录未采集用量字段，不提供用量信息';
+}
+
+/**
+ * GY-I08 标签原文用量卡片描述符（DoseCard，F14）。
+ *
+ * 确定性规则：用量**仅由来源原文卡片渲染并绑定数字+单位+条件**；当且仅当记录
+ * `verification.usable_as_dose === true` 且来源提供数字用量（structured `dose`）时
+ * `renderable` 为真。否则如实返回「未采集/不提供用量」占位 —— **不空白、不补写、
+ * 不显示模拟用量**（AC13/规格）。
+ *
+ * `doseCardEnabled`（功能关闭开关）：为 false 时一律 `renderable=false`，reason 说明已关闭。
+ * 满足规格「有功能关闭开关」与 AC14「风险文字无绝对安全承诺」（本函数不产出任何禁用词）。
+ *
+ * @param {object} item 内部条目（含 verification.usable_as_dose / verification.dose）
+ * @param {{ doseCardEnabled?: boolean }} [opts] doseCardEnabled 默认 true
+ * @returns {{ renderable: boolean, reason: string|null, rule_version: string, off_switch_supported: boolean, closed: boolean, dose?: {number:string,unit:string,condition:string|null} }}
+ */
+export function doseCardDescriptor(item, opts = {}) {
+  const doseCardEnabled = opts.doseCardEnabled !== false;
+  if (!doseCardEnabled) {
+    return Object.freeze({
+      renderable: false,
+      reason: '用量卡片已关闭（功能开关）',
+      rule_version: APPLICABILITY_RULE_VERSION,
+      off_switch_supported: true,
+      closed: true,
+    });
+  }
+  const usable = item?.verification?.usable_as_dose === true;
+  if (!usable) {
+    return Object.freeze({
+      renderable: false,
+      reason: '本记录未采集用量字段，不提供用量信息',
+      rule_version: APPLICABILITY_RULE_VERSION,
+      off_switch_supported: true,
+      closed: false,
+    });
+  }
+  // 来源提供结构化数字用量时，方可渲染并绑定 number/unit/condition（关闭个人处方/混配/自动换算）。
+  const dose = item?.verification?.dose;
+  if (dose && typeof dose.number === 'string' && dose.number !== '' && typeof dose.unit === 'string') {
+    return Object.freeze({
+      renderable: true,
+      reason: null,
+      rule_version: APPLICABILITY_RULE_VERSION,
+      off_switch_supported: true,
+      closed: false,
+      dose: { number: dose.number, unit: dose.unit, condition: typeof dose.condition === 'string' ? dose.condition : null },
+    });
+  }
+  return Object.freeze({
+    renderable: false,
+    reason: '来源未提供可绑定的数字用量，仅按原文核对展示',
+    rule_version: APPLICABILITY_RULE_VERSION,
+    off_switch_supported: true,
+    closed: false,
+  });
 }
 
 /**

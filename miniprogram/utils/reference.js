@@ -534,8 +534,100 @@ function seedLabels() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// GY-I08 镜像：药剂适用过滤 + 标签原文用量卡片（DoseCard）。
+// 与 packages/reference 同 RULE_VERSION、同口径（所有消费端同一规则版本）。
+// ---------------------------------------------------------------------------
+const APPLICABILITY_RULE_VERSION = 'gy-i08/1.0.0';
+const RESTRICTION_STATUSES = ['banned', 'restricted', 'unrestricted', 'unknown'];
+const APPLICABILITY_DIMENSIONS = ['valid_source', 'banned_restricted', 'crop', 'growth_stage', 'region', 'dosage_form', 'ingredient_content', 'use_scene'];
+
+function readRestrictionStatus(item) {
+  const raw = (item && item.verification && item.verification.restriction_status) ||
+    (item && item.source && item.source.restriction_status) ||
+    (item && item.restriction_status);
+  if (typeof raw === 'string' && RESTRICTION_STATUSES.indexOf(raw) !== -1) return raw;
+  return 'unknown';
+}
+
+// 确定性、fail-closed 的适用过滤（详见 packages/reference/query.mjs 同函数）。
+function evaluateApplicability(item, context) {
+  context = context || {};
+  const reasons = [];
+  const blocked = [];
+  const elig = isEligible(item);
+  if (!elig.ok) {
+    blocked.push('valid_source');
+    reasons.push('来源不可用：' + (elig.reason || '不满足契约必填或可查询条件'));
+  }
+  const restriction = readRestrictionStatus(item);
+  if (restriction === 'banned') {
+    blocked.push('banned_restricted');
+    reasons.push('该药剂为禁用状态，不得进入用量建议');
+  } else if (restriction === 'restricted') {
+    if (context.allow_restricted === true) reasons.push('该药剂为限用状态，已按上下文显式确认');
+    else { blocked.push('banned_restricted'); reasons.push('该药剂为限用状态，需额外确认后方可进入用量建议'); }
+  } else if (restriction === 'unknown') {
+    blocked.push('banned_restricted');
+    reasons.push('未采集禁限用状态，无法确认非禁用，不得进入用量建议');
+  }
+  if (context.crop_id) {
+    if ((item.crop_ids || []).indexOf(context.crop_id) === -1) {
+      blocked.push('crop');
+      reasons.push('作物不符（记录未覆盖该作物）');
+    }
+  }
+  if (context.growth_stage) {
+    const gs = item.growth_stage || (item.verification && item.verification.growth_stage);
+    if (typeof gs === 'string' && gs.trim() !== '') {
+      if (norm(gs).indexOf(norm(context.growth_stage)) === -1) reasons.push('生育期不符');
+    } else {
+      reasons.push('记录未采集生育期条件，无法确认是否适用该生育期');
+    }
+  }
+  if (context.region_code) {
+    const rc = Array.isArray(item.region_codes) ? item.region_codes : (typeof item.region_code === 'string' ? [item.region_code] : []);
+    if (rc.length > 0) {
+      if (rc.indexOf(context.region_code) === -1) { blocked.push('region'); reasons.push('适用地区不符'); }
+    } else {
+      reasons.push('记录未标注适用地区，无法确认是否适用该地区');
+    }
+  }
+  if (context.dosage_form) {
+    if (norm(item.dosage_form || '') !== norm(context.dosage_form)) { blocked.push('dosage_form'); reasons.push('制剂（剂型）不符'); }
+  }
+  if (context.ingredient_content) {
+    const want = norm(context.ingredient_content);
+    const hay = norm((item.verification && item.verification.parsed_ingredients_text) || item.ingredients_text || (item.norm && item.norm.ingredients) || '');
+    if (hay.indexOf(want) === -1) { blocked.push('ingredient_content'); reasons.push('有效成分/含量与所选不符'); }
+  }
+  if (context.use_scene) {
+    if (norm(item.use_scene || '').indexOf(norm(context.use_scene)) === -1) { blocked.push('use_scene'); reasons.push('使用场景不符'); }
+  }
+  return { applicable: blocked.length === 0, blocked: blocked, reasons: reasons, rule_version: APPLICABILITY_RULE_VERSION };
+}
+
+// 标签原文用量卡片描述符（F14）。未采集用量不渲染；关闭开关生效；有源数字用量才绑定。
+function doseCardDescriptor(item, opts) {
+  opts = opts || {};
+  const enabled = opts.doseCardEnabled !== false;
+  if (!enabled) return { renderable: false, reason: '用量卡片已关闭（功能开关）', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: true };
+  const usable = !!(item && item.verification && item.verification.usable_as_dose === true);
+  if (!usable) return { renderable: false, reason: '本记录未采集用量字段，不提供用量信息', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false };
+  const dose = item.verification && item.verification.dose;
+  if (dose && typeof dose.number === 'string' && dose.number !== '' && typeof dose.unit === 'string') {
+    return { renderable: true, reason: null, rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false, dose: { number: dose.number, unit: dose.unit, condition: typeof dose.condition === 'string' ? dose.condition : null } };
+  }
+  return { renderable: false, reason: '来源未提供可绑定的数字用量，仅按原文核对展示', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false };
+}
+
 module.exports = {
   crops: crops.crops,
+  APPLICABILITY_RULE_VERSION: APPLICABILITY_RULE_VERSION,
+  RESTRICTION_STATUSES: RESTRICTION_STATUSES,
+  APPLICABILITY_DIMENSIONS: APPLICABILITY_DIMENSIONS,
+  evaluateApplicability: evaluateApplicability,
+  doseCardDescriptor: doseCardDescriptor,
   species: species.species,
   sources: sources.sources,
   regions: require('../data/regions.js').regions,
