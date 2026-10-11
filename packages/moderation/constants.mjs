@@ -186,7 +186,9 @@ export const FAIL_CLOSED_REASON_CODES = Object.freeze([
   'TARGET_TYPE_NOT_COVERED',
   'MEDIA_NOT_EVALUATED_BY_RULE_LAYER',
   'RULE_NOT_EVALUATED',
+  'RULE_SCAN_TRUNCATED',
   'REVIEW_INPUT_INVALID',
+  'TARGET_REF_INVALID',
   'DECISION_INVALID',
   'DECISION_INCONSISTENT',
   'RULE_VERSION_CHANGED',
@@ -208,6 +210,7 @@ export const RULE_STATUSES = Object.freeze([
   'error', // 抛错：计入"未求值"，不得当作"未命中"
   'timeout', // 预算耗尽未能求值
   'not_evaluated', // 因输入无效／类型未覆盖等原因未求值
+  'truncated', // 扫描达到限额被截断：**未检查的尾部不得算"未命中"**，整体 fail-closed
 ]);
 
 /**

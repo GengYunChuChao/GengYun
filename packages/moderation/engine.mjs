@@ -109,11 +109,13 @@ export function evaluateRule(rule, text, matchers = MATCHERS) {
     };
   }
   const matched = outcome.matched === true;
+  // 扫描限额截断（返修轮 3 · P1）：未检查的尾部**不得**当作"未命中"，单列一个状态交引擎 fail-closed。
+  const truncated = !matched && outcome.truncated === true;
   return {
     id: rule.id,
     category: rule.category,
     reason_code: rule.reason_code,
-    status: matched ? 'hit' : 'evaluated',
+    status: matched ? 'hit' : truncated ? 'truncated' : 'evaluated',
     matched,
     evidence: matched
       ? {
@@ -124,8 +126,19 @@ export function evaluateRule(rule, text, matchers = MATCHERS) {
           // 被"取消词"顶掉否定的次数与具体取消词（来自规则闭集，不是输入原文，可安全回传）。
           cancelled: Number.isInteger(outcome.cancelled) ? outcome.cancelled : 0,
           cancelled_by: typeof outcome.cancelled_by === 'string' ? outcome.cancelled_by : null,
+          truncated: false,
         }
-      : null,
+      : truncated
+        ? {
+            field: 'text',
+            offset: null,
+            length: 0,
+            suppressed: Number.isInteger(outcome.suppressed) ? outcome.suppressed : 0,
+            cancelled: Number.isInteger(outcome.cancelled) ? outcome.cancelled : 0,
+            cancelled_by: typeof outcome.cancelled_by === 'string' ? outcome.cancelled_by : null,
+            truncated: true,
+          }
+        : null,
     error: null,
   };
 }
@@ -185,12 +198,21 @@ function validateEngineOptions(options) {
 }
 
 function countStatuses(ruleResults) {
-  const counts = { total: ruleResults.length, evaluated: 0, hits: 0, errors: 0, timeouts: 0, not_evaluated: 0 };
+  const counts = {
+    total: ruleResults.length,
+    evaluated: 0,
+    hits: 0,
+    errors: 0,
+    timeouts: 0,
+    truncated: 0,
+    not_evaluated: 0,
+  };
   for (const item of ruleResults) {
     if (item.status === 'evaluated') counts.evaluated += 1;
     else if (item.status === 'hit') counts.hits += 1;
     else if (item.status === 'error') counts.errors += 1;
     else if (item.status === 'timeout') counts.timeouts += 1;
+    else if (item.status === 'truncated') counts.truncated += 1;
     else counts.not_evaluated += 1;
   }
   return counts;
@@ -235,6 +257,15 @@ export function checkDecisionInvariant(result) {
   }
   if (hardRulePassed === true && decision !== DECISION_APPROVED) {
     violations.push(`hard_rule_passed=true 但 decision=${String(decision)}`);
+  }
+  // 通过时的"全干净"要求（返修轮 3 · P1）：扫描截断/未求值/抛错/超时/命中任一存在即不得通过。
+  if (decision === DECISION_APPROVED && result.counts !== null && typeof result.counts === 'object') {
+    const counts = result.counts;
+    if (counts.truncated > 0) violations.push('approved 但存在被扫描限额截断的规则（RULE_SCAN_TRUNCATED）');
+    if (counts.not_evaluated > 0) violations.push('approved 但存在未求值的规则');
+    if (counts.errors > 0) violations.push('approved 但存在求值失败的规则');
+    if (counts.timeouts > 0) violations.push('approved 但存在超时的规则');
+    if (counts.hits > 0) violations.push('approved 但存在命中的规则');
   }
   return { ok: violations.length === 0, violations };
 }
@@ -349,7 +380,10 @@ export function evaluateHardRules(input, options = {}) {
           break;
         }
         try {
-          ruleResults.push(evaluateRule(rules[index], validation.text, matchers));
+          const entry = evaluateRule(rules[index], validation.text, matchers);
+          ruleResults.push(entry);
+          // 扫描限额截断（P1）：未检查的尾部不得算"未命中"，整体 fail-closed。
+          if (entry.status === 'truncated') failClosed.push('RULE_SCAN_TRUNCATED');
         } catch (error) {
           // 单条规则抛错：计入"未求值/失败"，不吞成"未命中"，也不影响其它目标。
           failClosed.push('RULE_ENGINE_ERROR');

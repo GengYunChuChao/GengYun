@@ -46,12 +46,12 @@
 ℹ duration_ms 14399.8873
 ```
 
-**纳入后**（本片把 `tests/moderation/*.test.mjs` 追加进 `test:unit` glob 后实测，含返修轮）：
+**纳入后**（本片把 `tests/moderation/*.test.mjs` 追加进 `test:unit` glob 后实测，含返修轮 2、3）：
 
 ```
-ℹ tests 796
+ℹ tests 805
 ℹ suites 0
-ℹ pass 795
+ℹ pass 804
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 1
@@ -61,40 +61,44 @@
 
 （`duration_ms` 随机器负载浮动（实测 12s~36s），不参与判定。）
 
-**差值 = 113**，与本片用例数完全相等（`node --test "tests/moderation/*.test.mjs"` 亦为 `tests 113 / pass 113 / fail 0`），
+**差值 = 122**，与本片用例数完全相等（`node --test "tests/moderation/*.test.mjs"` 亦为 `tests 122 / pass 122 / fail 0`），
 说明**本片用例确实被门禁执行**，不是"写在目录里没人跑"。
 
-#### 用例数口径（93 → 100 → 113，逐次说清）
+#### 用例数口径（93 → 100 → 113 → 122，逐次说清）
 
-本片用例数**两轮增长**，本文件所有数字取**最后一次直跑的实测值（113）**：
+本片用例数**三轮增长**，本文件所有数字取**最后一次直跑的实测值（122）**：
 
 1. 首次交付：**93** 条；
-2. 返修轮 1（指挥预审意见）：补充 6 条错误封套用例（`errors.test.mjs`）+ 1 条引擎选项 fail-closed 用例 ⇒ **100** 条；
-3. 返修轮 2（指挥返修令，fail-open 方向）：补充 **13** 条危险类"否定 + 转折/祈使"用例
-   （3 条指定形态 + 4 条无标点形态 + 3 条纯否定不误伤 + 1 条取消词生效范围 + 1 条取消词可观测 + 1 条确定性口径）⇒ **113** 条。
+2. 返修轮 1（指挥预审意见）：补 6 条错误封套用例 + 1 条引擎选项 fail-closed 用例 ⇒ **100** 条；
+3. 返修轮 2（指挥返修令，fail-open 方向）：补 **13** 条危险类"否定 + 转折/祈使"用例
+   （3 条指定形态 + 4 条无标点形态 + 3 条纯否定不误伤 + 1 条取消词生效范围 + 1 条取消词可观测 + 1 条确定性口径）⇒ **113** 条；
+4. 返修轮 3（监工`CHANGES_REQUESTED` 的 P1／P2）：补 **9** 条
+   （P1 扫描限额截断 3 条 + P2 重审绑定结构 6 条）⇒ **122** 条。
 
-按文件分布（逐个文件单独直跑 `node --test <file>` 的实测条数，合计 113）：
+按文件分布（逐个文件单独直跑 `node --test <file>` 的实测条数，合计 122）：
 
 | 用例文件 | 条数 | 直跑实测 |
 | --- | --- | --- |
 | `tests/moderation/contract.test.mjs` | 10 | `tests 10 / pass 10 / fail 0` |
 | `tests/moderation/errors.test.mjs` | 6 | `tests 6 / pass 6 / fail 0` |
-| `tests/moderation/fail-closed.test.mjs` | 41 | `tests 41 / pass 41 / fail 0` |
+| `tests/moderation/fail-closed.test.mjs` | 44 | `tests 44 / pass 44 / fail 0` |
 | `tests/moderation/isolation.test.mjs` | 5 | `tests 5 / pass 5 / fail 0` |
-| `tests/moderation/rule-version.test.mjs` | 10 | `tests 10 / pass 10 / fail 0` |
+| `tests/moderation/rule-version.test.mjs` | 16 | `tests 16 / pass 16 / fail 0` |
 | `tests/moderation/rules.test.mjs` | 41 | `tests 41 / pass 41 / fail 0` |
-| **合计** | **113** | `tests 113 / pass 113 / fail 0` |
+| **合计** | **122** | `tests 122 / pass 122 / fail 0` |
 
 三处数字可以互相对上：
 
-1. **本节差额**：`796（纳入后）− 683（纳入前）= 113` = 上表合计；
+1. **本节差额**：`805（纳入后）− 683（纳入前）= 122` = 上表合计；
 2. **§5 的逐类条目数**：§5 表格 11 行（11 条规则）对应 `rules.test.mjs` 里
    **11 条命中 + 11 条不命中 = 22 条**独立用例；该文件余下 19 条 = 基线对照／类别覆盖／确定性／
    证据脱敏／`g`/`y` 标志／多规则命中 **6** 条 + 返修轮 2 的否定取消用例 **13** 条
    （1 + 22 + 6 + 13 = 41，与本文件该行实测 `tests 41` 一致）；
-3. **§12 的直跑数字**：`node --test "tests/moderation/*.test.mjs"` → `tests 113 / pass 113 / fail 0`。
+   返修轮 3 的新用例落在 `fail-closed.test.mjs`（41 → 44）与 `rule-version.test.mjs`（10 → 16）；
+3. **§12 的直跑数字**：`node --test "tests/moderation/*.test.mjs"` → `tests 122 / pass 122 / fail 0`。
 
-`fail-closed.test.mjs` 的 41 条 = `INPUT_CASES` 表驱动的 **28** 条输入闸门用例 + **13** 条引擎级／不变式用例。
+`fail-closed.test.mjs` 的 44 条 = `INPUT_CASES` 表驱动的 **28** 条输入闸门用例 + **13** 条引擎级／不变式用例
++ **3** 条返修轮 3 扫描限额用例。
 
 纳入方式（纯加法，已获指挥授权）：
 
@@ -152,22 +156,22 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 
 ```
 node --test "tests/moderation/*.test.mjs"
-ℹ tests 113
-ℹ pass 113
+ℹ tests 122
+ℹ pass 122
 ℹ fail 0
 ```
 
 ## 4 规则清单与 `rule_version` 派生（本机实测值）
 
 ```
-RULE_VERSION = mr1+sha256:64b8be6ae7bb3bf06c6870090a028e62
-RULE_SET_DIGEST(sha256, 64) = 64b8be6ae7bb3bf06c6870090a028e6225298bd79895b2b8478099ab6959a1d7
+RULE_VERSION = mr1+sha256:b4309f211beae8ddb0b298fc4297b696
+RULE_SET_DIGEST(sha256, 64) = b4309f211beae8ddb0b298fc4297b696745ad4c0bc90c36d156c8a6f16575e3d
 规则条数 = 11
 ```
 
-> 上述为**返修轮 2（否定取消机制）之后**的实测值。返修前为
-> `mr1+sha256:b0139d79374b93d65c9b80af869fcd0d`（digest `b0139d79…881554`）——
-> 规则集内容变化（新增 `negation_cancellers` 选项 + 匹配器实现与版本号变更）**必然**改变版本，
+> 上述为**返修轮 3（扫描限额 fail-closed）之后**的实测值。历史值：
+> 返修轮 1 结束时 `b0139d79…`；返修轮 2（否定取消）结束时 `64b8be6ae7bb3bf06c6870090a028e62`。
+> 每次规则集内容变化（新增 `negation_cancellers` 选项、匹配器实现与版本号变更）**必然**改变版本，
 > 这正是 §7 版本重审机制生效的证据。
 
 派生方式：`sha256(stableStringify({ schema, domain, matchers, rules }))`，其中
@@ -176,7 +180,7 @@ RULE_SET_DIGEST(sha256, 64) = 64b8be6ae7bb3bf06c6870090a028e6225298bd79895b2b847
 2. `rules` = 每条规则的 id／类别／原因码／标题／说明／严重级别／匹配器／模式（`source` + 排序后的 `flags`）／其它选项；
 3. 展示版本取摘要前 32 位十六进制，前缀 `mr1+sha256:`，总长 43 ≤ 契约上限 80。
 
-实测：追加一条规则后版本变为 `mr1+sha256:200a17d13e0c98941e5569c37b24618a`（与当前值不同）。
+实测：追加一条规则后版本变为 `mr1+sha256:65db4ea7d4d27e6cf9cb102a256b8f5c`（与当前值不同）。
 
 ## 5 逐类规则命中的实际观测（本机 · 规则夹具）
 
@@ -202,7 +206,7 @@ RULE_SET_DIGEST(sha256, 64) = 64b8be6ae7bb3bf06c6870090a028e6225298bd79895b2b847
 基线对照（干净文本）：
 
 ```
-decision=approved hard_rule_passed=true counts={"total":11,"evaluated":11,"hits":0,"errors":0,"timeouts":0,"not_evaluated":0}
+decision=approved hard_rule_passed=true counts={"total":11,"evaluated":11,"hits":0,"errors":0,"timeouts":0,"truncated":0,"not_evaluated":0}
 reason_codes=[]
 ```
 
@@ -259,6 +263,53 @@ reason_codes=[]
 **逐字节完全相同**（`same=50 / diff=0`）；该口径已固化为用例
 `确定性口径：除墙钟诊断字段外两次求值完全相同`。
 
+### 5.2 扫描限额截断（返修轮 3 · 监工 P1，`matchers.mjs`）
+
+**返修前的真实缺陷**：`negationGuardedPattern` 的候选匹配扫描上界为 `MAX_MATCHES = 64`。
+上界用尽后**仍有未检查的匹配**时，旧实现直接返回"未命中"——即把**未检查的尾部**当作已检查过的干净文本
+（fail-open）。监工给出的反例在本机复现如下（同一探针脚本，返修前后各跑一次）：
+
+| 探针输入 | 长度 | 在输入上限内 | 返修前 | 返修后 |
+| --- | --- | --- | --- | --- |
+| `不要随意混配。`×63 + `把两种药混配。` | 448 | 是 | `rejected`（真实混配被检查到） | `rejected`（`DANGEROUS_MIX`，MR-01 `hit`） |
+| `不要随意混配。`×64 + `把两种药混配。` | 455 | 是 | **`approved` ← 未检查的尾部被当作"未命中"** | **`quarantined`**（`RULE_SCAN_TRUNCATED`，MR-01 `truncated`） |
+
+返修后 ×64 的真实输出：
+
+```
+×64  len=455 (上限 20000, 在限内=true)
+    decision=quarantined hard_rule_passed=false reason_codes=["RULE_SCAN_TRUNCATED"]
+    MR-01 status=truncated counts={"total":11,"evaluated":10,"hits":0,"errors":0,"timeouts":0,"truncated":1,"not_evaluated":0}
+```
+
+要点：
+
+- 新增规则求值状态 **`truncated`** 与 fail-closed 原因码 **`RULE_SCAN_TRUNCATED`**；
+  截断时**不**返回"命中"也**不**返回"未命中"，由引擎压到 `quarantined` + `hard_rule_passed=false`。
+- `checkDecisionInvariant` 增加"通过时必须全干净"的检查：`approved` 与
+  `counts.truncated > 0`（以及 `not_evaluated` / `errors` / `timeouts` / `hits`）**互斥**，违反即降级为隔离。
+- **两个闸门互相独立**：×64 反例**没有**走"超长"闸门（`INPUT_TEXT_TOO_LONG` 未出现、`input.valid=true`）；
+  只有把 `max_text_length` 压到 100 才转成超长隔离——用例显式断言了这一点。
+- **另一处同类风险一并收口**：否定取消词的后向扫描上界 `FORWARD_CLAUSE_LIMIT`（64 字符）
+  若在未到句读段末尾时用尽，同样**不再**认为"否定成立"，而是回传截断 ⇒ 同样走 `RULE_SCAN_TRUNCATED`。
+
+### 5.3 重审绑定结构校验（返修轮 3 · 监工 P2，`review.mjs`）
+
+**返修前的真实缺陷**：`evaluateReReview` 只检查既有结果的 `type`/`id` 是 `string`、`revision` 是 `number`，
+于是非法绑定被当成可复用结果。本机复现：
+
+| 既有结果的 `target_ref` | 返修前 | 返修后 |
+| --- | --- | --- |
+| `{type:'bogus', id:'post-1001', revision:1}` | `reuse` + `publishable=true` ← 非法绑定被放行 | `stale=true` / `landing=quarantined` / `publishable=false` / `TARGET_REF_INVALID` |
+| `{type:'post', id:'', revision:1}` | `reuse` + `publishable=true` | 同上 |
+| `{type:'post', id:'post-1001', revision:0}` | `reuse` + `publishable=true` | 同上 |
+| `{type:'post', id:'post-1001', revision:1}`（合法对照） | `reuse` + `publishable=true` | `reuse` + `publishable=true`（不变） |
+
+校验口径（`targetRefProblems`）：`type` ∈ 契约 `TargetRef.type` 闭集、`id` 为非空且 ≤80 的字符串、
+`revision` 为 ≥1 的**正整数**（`Number.isSafeInteger`）；任一不满足 ⇒ `quarantined`。
+**同一校验也用于**：(a) 调用方传入的"当前目标"`options.target_ref`（此前只比较、不校验）；
+(b) 发布口径 `isPublishable`（非法绑定的结果不得发布）。
+
 ## 6 fail-closed 实际观测（本机）
 
 以下为直接调用引擎后的真实输出（截取）：
@@ -275,7 +326,7 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 输入 undefined -> decision=quarantined hard_rule_passed=false reason_codes=["INPUT_NOT_OBJECT"] evaluated=0/11
 输入 null -> decision=quarantined hard_rule_passed=false reason_codes=["INPUT_NOT_OBJECT"] evaluated=0/11
 空规则集 -> decision=quarantined hard_rule_passed=false reason_codes=["RULE_CATALOG_INVALID"]
-超时（脚本化时钟 0→1000ms，预算 50ms） -> decision=quarantined hard_rule_passed=false counts={"total":11,"evaluated":0,"hits":0,"errors":0,"timeouts":11,"not_evaluated":0} reason_codes=["RULE_TIMEOUT"]
+超时（脚本化时钟 0→1000ms，预算 50ms） -> decision=quarantined hard_rule_passed=false counts={"total":11,"evaluated":0,"hits":0,"errors":0,"timeouts":11,"truncated":0,"not_evaluated":0} reason_codes=["RULE_TIMEOUT"]
 ```
 
 关键点：
@@ -296,12 +347,12 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 ## 7 版本重审实际观测（本机）
 
 ```
-旧 rule_version = mr1+sha256:64b8be6ae7bb3bf06c6870090a028e62
-追加一条规则后的 rule_version = mr1+sha256:200a17d13e0c98941e5569c37b24618a（不同=true）
+旧 rule_version = mr1+sha256:b4309f211beae8ddb0b298fc4297b696
+追加一条规则后的 rule_version = mr1+sha256:65db4ea7d4d27e6cf9cb102a256b8f5c（不同=true）
 同版本重审 -> stale=false action=reuse landing=null publishable=true reason_codes=[]
 规则集变化后 -> stale=true action=re_review landing=pending publishable=false reason_codes=["RULE_VERSION_CHANGED","NOT_PUBLISHABLE"]
 旧结果在新版本下 isPublishable = {"publishable":false,"reason_codes":["RULE_VERSION_CHANGED"]}
-新规则集重跑同一文本 -> decision=rejected rule_version=mr1+sha256:200a17d13e0c98941e5569c37b24618a reason_codes=["COMMERCE_SOLICITATION"]
+新规则集重跑同一文本 -> decision=rejected rule_version=mr1+sha256:65db4ea7d4d27e6cf9cb102a256b8f5c reason_codes=["COMMERCE_SOLICITATION"]
 目标 revision 1→2 -> stale=true landing=pending reason_codes=["TARGET_REVISION_CHANGED","NOT_PUBLISHABLE"]
 自称通过但 hard_rule_passed=false -> stale=true landing=quarantined reason_codes=["DECISION_INCONSISTENT"]
 ```
@@ -322,7 +373,7 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 ## 8 失败隔离实际观测（本机）
 
 ```
-单条规则抛错 -> decision=quarantined hard_rule_passed=false rules[0].status=error counts={"total":1,"evaluated":0,"hits":0,"errors":1,"timeouts":0,"not_evaluated":0} reason_codes=["RULE_ENGINE_ERROR"]
+单条规则抛错 -> decision=quarantined hard_rule_passed=false rules[0].status=error counts={"total":1,"evaluated":0,"hits":0,"errors":1,"timeouts":0,"truncated":0,"not_evaluated":0} reason_codes=["RULE_ENGINE_ERROR"]
 批量（干净 / 读输入抛错 / 隐私命中）-> 0:approved , 1:quarantined , 2:rejected
 批量逐条 reason_codes = [[],["INPUT_READ_FAILED","INPUT_TEXT_MISSING"],["PRIVACY_PII"]]
 批量 summary = {"total":3,"approved":1,"rejected":1,"quarantined":1,"other":0,"engine_errors":0}
@@ -352,19 +403,31 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 四层并集恰好等于契约 `Moderation.required`。
 **断言只被加强、没有被削弱**：新增了"同一字段不得出现在多层"的检查。
 
-处置后该用例通过，全部 113 条用例通过。
+处置后该用例通过，全部 122 条用例通过。
 
 ### 9.1 返修轮 2 的失败面（返修令正是冲它而来）
-
 返修前的探针实测显示：**无标点**的"否定 + 转折"句式在危险类规则上被判 `approved`，
 即**放行**了危险混配 / 无依据用量请求（4 条实测，见 §5.1 表）。这是本片自己登记的
 风险 ①（fail-open 方向），由指挥返修令要求先行修复；返修后 7 条形态全部 `rejected`，且
 11 条既有"不命中"用例继续通过。
 
+### 9.1.1 返修轮 3 的失败面（监工 `CHANGES_REQUESTED` 的两条阻塞项）
+
+监工在 `reviewed_sha=0e06ee8b` 上独立探针发现两处，本机**逐条复现成功后才动手修**：
+
+| 编号 | 监工行内 | 复现结果（返修前） | 修后 |
+| --- | --- | --- | --- |
+| **P1** | `4241991132` | `不要随意混配。`×64 + `把两种药混配。`（455 字符，**在上限内**）⇒ `approved` / `hard_rule_passed=true` / `reasons=[]`；×63 ⇒ `rejected` | ×64 ⇒ `quarantined` + `RULE_SCAN_TRUNCATED`；×63 ⇒ `rejected` |
+| **P2** | `4241991137` | `type=bogus` / `id=''` / `revision=0` ⇒ `reuse` + `publishable=true` | 三者 ⇒ `stale` / `landing=quarantined` / `publishable=false` / `TARGET_REF_INVALID` |
+
+两处都是**同一个根因族**："**未检查／未校验的部分被当作通过**"——P1 把未扫描的匹配尾部当作"未命中"，
+P2 把未校验的绑定结构当作"可复用"。修法与观测见 §5.2、§5.3；两处都补了独立回归（P1 三条、P2 六条），
+且**既有 113 条用例全部保持通过**（无一条被改松或被删除）。
+
 ## 9.2 门禁 `test:unit` 在本机存在**与本片无关**的资源型抖动（原始报错保留）
 
-纳入本片用例后，截至本次记录（2026-10-11，含返修轮 2），`npm run test:unit` 共运行 **14** 次：
-**8 次全绿**、**6 次出现失败**（全绿时为 `796 / 795 / fail 0 / skipped 1`；返修轮 1 期间的绿行为 `783 / 782`）。
+纳入本片用例后，截至本次记录（2026-10-11，含返修轮 2、3），`npm run test:unit` 共运行 **15** 次：
+**9 次全绿**、**6 次出现失败**（全绿时为 `805 / 804 / fail 0 / skipped 1`；早前绿行为 `796 / 795`、`783 / 782`）。
 失败比例随本机内存负载变化，**不是本片稳定性的指标**。
 **失败全部落在改动前就存在的 PGlite／加密／子进程／文件生成套件**；
 本片用例在直接运行时恒为全绿（见 9.2.4）。
@@ -466,15 +529,15 @@ test at tests\unit\auth-routes.test.mjs:519:1
   被 V8 OOM、OpenSSL `scryptSync` 内存分配失败终止，或干脆 `spawn UNKNOWN`。
   **先于本片存在**，与本片代码无关。（本机同时有多个写手 worktree 跑同类门禁，是压力来源的合理解释，
   但此处不作断言。）
-- **本片影响**：`tests/moderation/**` 为纯同步函数调用，113 条合计约 0.2~0.8 秒，
-  **不派生进程、不开端口、不连数据库**；正常负载下**直接运行连续 4 次全绿**（`113 / 113 / fail 0`），
+- **本片影响**：`tests/moderation/**` 为纯同步函数调用，122 条合计约 0.2~0.8 秒，
+  **不派生进程、不开端口、不连数据库**；正常负载下**直接运行连续 4 次全绿**（`122 / 122 / fail 0`），
   50 次重复求值逐字节一致（§5.1）。
 - **证据缺口（如实登记）**：6 次失败中完整保留 3 次的原始输出（`fail 9` 见 §9.2.1；
   `fail 20`、`fail 23` 见 §9.2.3 与 §3）；另 3 次（`fail 3`、`fail 6`、`fail 10`）只保留了汇总行。
 - **给监工的建议**：复核本 PR 时若遇到 `test:unit` 失败，
   请先看失败项里有没有本片文件；**若有，请确认是 `spawn UNKNOWN` 这类资源错误还是断言失败**——
   本片用例的正确复核方式是 `node --test "tests/moderation/*.test.mjs"`
-  （113 条，恒为全绿，单进程、约 0.3 秒）。
+  （122 条，恒为全绿，单进程、约 0.3 秒）。
   这类抖动属既有门禁的机器资源问题，不应记在本 PR 名下；建议由指挥评估是否单独开一项治理任务
   （如给 PGlite 套件串行化、给 node --test 限制并发、或调高内存上限）。
 
@@ -482,7 +545,7 @@ test at tests\unit\auth-routes.test.mjs:519:1
 
 | 环境 | 取得情况 | 说明 |
 | --- | --- | --- |
-| **本机**（Node v24.16.0，Windows） | **已取得** | `lint` / `test:unit` / `test:contract` / `test:docs` 四条门禁均已实跑通过；规则层 **113** 条用例直接运行恒为全绿（单进程约 0.3 秒）；规则命中、fail-closed、版本重审、失败隔离、否定取消 5 组观测均出自本机。注：`test:unit` 在本机存在**与本次改动无关**的资源型抖动（14 次运行中 6 次失败，失败全部落在既有 PGlite／加密／子进程／文件生成套件）——详见 §9.2 |
+| **本机**（Node v24.16.0，Windows） | **已取得** | `lint` / `test:unit` / `test:contract` / `test:docs` 四条门禁均已实跑通过；规则层 **122** 条用例直接运行恒为全绿（单进程约 0.3 秒）；规则命中、fail-closed、版本重审、失败隔离、否定取消、扫描限额、绑定结构共 7 组观测均出自本机。注：`test:unit` 在本机存在**与本次改动无关**的资源型抖动（15 次运行中 6 次失败，失败全部落在既有 PGlite／加密／子进程／文件生成套件）——详见 §9.2 |
 | **隔离环境**（受限执行沙箱） | **未取得** | 本片为纯函数组件，未做隔离环境实跑；沙箱 ACL 相关证据见既有 `docs/verification/*` 其它文档 |
 | **真机**（微信真机） | **未取得** | 本片无小程序改动、无页面；真机证据不适用本轮 |
 | **真实供应商**（模型/第三方） | **未取得** | 本片不调用任何模型或外部服务，无真实请求可记录 |
@@ -500,8 +563,13 @@ test at tests\unit\auth-routes.test.mjs:519:1
 5. **单条规则不可被抢占**：预算检查发生在规则之间，病态规则内部的死循环无法在进程内中断；
    进程级超时属接线增量。本层以 20000 字符文本上界限制单条规则成本。
 6. **否定护栏是确定性启发式**：同句读段内的"否定 + 转折"仍可能漏拦（已知方向见
-   `docs/moderation/README.md` 第 7 节"已知限制"）。
-7. **`tests/contract/**` 未纳入本片**：契约一致性用例放在 `tests/moderation/contract.test.mjs`
+   `docs/moderation/README.md` 第 7 节"已知限制"）；危险两类已在返修轮 2 收窄该面。
+7. **扫描限额现在是 fail-closed 闸门（返修轮 3 的行为变更，需接线方知情）**：单条规则的候选匹配
+   上界 `MAX_MATCHES = 64`、否定取消词的句读段内后向扫描上界 `FORWARD_CLAUSE_LIMIT = 64` 字符。
+   任一上界在"仍有未检查内容"时用尽 ⇒ 该规则状态 `truncated`、整体 `quarantined` + `RULE_SCAN_TRUNCATED`，
+   **不会**再返回"未命中"。代价是极长的重复片段（如 64 次以上同类提及）会被隔离而非放行——
+   这是刻意选择（未检查 ≠ 干净）；若接线方需要更大上界，应显式调大并重新评估成本。
+8. **`tests/contract/**` 未纳入本片**：契约一致性用例放在 `tests/moderation/contract.test.mjs`
    （已进 `test:unit`）；若监工要求它同时进 `test:contract`，属可改动的接线，本片未擅自扩大改动面。
 
 ## 12 复现命令

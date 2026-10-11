@@ -22,6 +22,16 @@ MR-01／MR-02／MR-03（`dangerous_usage` / `label_bound_dose`）的否定护栏
 
 详见 `docs/moderation/README.md` §3.1 与 §7 已知限制。
 
+## 扫描限额是 fail-closed 闸门（未检查 ≠ 干净）
+
+匹配器对候选匹配数与取消词扫描范围都有上界（`MAX_MATCHES = 64`、`FORWARD_CLAUSE_LIMIT = 64`）。
+**上界用尽而仍有未检查内容时绝不返回"未命中"**：该规则状态记为 `truncated`，整体
+`quarantined` + `RULE_SCAN_TRUNCATED`，`hard_rule_passed` 保持 false。
+反例：`不要随意混配。`×63 + `把两种药混配。`（448 字符）能正常驳回；×64（455 字符）会让真实混配
+落在第 65 个候选上——旧实现把它当作"未命中"而 `approved`，现在一律隔离。
+同理，重审与发布都会**结构性校验绑定**（`type` 闭集 / `id` 非空 ≤80 / `revision` ≥1 正整数），
+非法绑定一律 `TARGET_REF_INVALID` + 隔离，不得 `reuse` 或发布。
+
 ## 快速用法
 
 ```js

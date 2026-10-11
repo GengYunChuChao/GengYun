@@ -71,7 +71,7 @@ const FORWARD_CLAUSE_LIMIT = 64;
 /** 匹配器版本：改动匹配器语义时必须 +1（并会同步改变 rule_version）。 */
 export const MATCHER_REVISIONS = Object.freeze({
   any_pattern: 1,
-  negation_guarded_pattern: 2,
+  negation_guarded_pattern: 3,
   address_chain: 1,
   coordinate_pair: 1,
   commerce_link: 1,
@@ -136,31 +136,36 @@ function evaluateNegation(text, index, rule) {
       }
     }
   }
-  if (negatorIndex === -1) return { negated: false, cancelled_by: null };
+  if (negatorIndex === -1) return { negated: false, cancelled_by: null, truncated: false };
 
   const cancellers = rule.negation_cancellers;
   if (Array.isArray(cancellers) && cancellers.length > 0) {
     const from = windowOffset + negatorIndex + negatorLength;
     const stop = Math.min(text.length, index + FORWARD_CLAUSE_LIMIT);
     let clauseEnd = stop;
+    let scanComplete = stop >= text.length;
     for (let i = index; i < stop; i += 1) {
       if (BOUNDARY.test(text[i])) {
         clauseEnd = i;
+        scanComplete = true;
         break;
       }
     }
     const afterNegator = text.slice(from, clauseEnd);
     const cancelledBy = cancellers.find((word) => afterNegator.includes(word));
-    if (cancelledBy !== undefined) return { negated: false, cancelled_by: cancelledBy };
+    if (cancelledBy !== undefined) return { negated: false, cancelled_by: cancelledBy, truncated: false };
+    // 上界用尽且仍未走到句读段末尾：取消词可能在界外 ⇒ **不得**当作"否定成立"（那是 fail-open）。
+    if (!scanComplete) return { negated: false, cancelled_by: null, truncated: true };
+    return { negated: true, cancelled_by: null, truncated: false };
   }
-  return { negated: true, cancelled_by: null };
+  return { negated: true, cancelled_by: null, truncated: false };
 }
 
 /** 任一模式命中（不设否定护栏）。 */
 export function anyPattern(text, rule) {
   const found = firstMatch(text, rule.patterns);
-  if (!found) return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0 };
-  return { matched: true, field: 'text', offset: found.offset, length: found.length, suppressed: 0 };
+  if (!found) return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  return { matched: true, field: 'text', offset: found.offset, length: found.length, suppressed: 0, truncated: false };
 }
 
 /**
@@ -175,17 +180,33 @@ export function anyPattern(text, rule) {
  * 仍属**确定性启发式**，不是语义理解：取消词列表是有限闭集，未列出的转折说法
  * （如"不如""倒不如"）仍可能被压掉；语义级覆盖由后续模型层增量补齐。
  * 该残留限制登记在 docs/moderation/README.md 的已知限制一节。
+ *
+ * **限额纪律（返修轮 3，P1）**：本匹配器对候选匹配数有上界 `MAX_MATCHES`。
+ * 上界一旦用尽而**仍有未检查的匹配**（或否定取消扫描被上界截断），就**不得**得出
+ * "未命中"的结论——那会把未检查的尾部当作"干净"（fail-open）。
+ * 此时返回 `truncated: true`，由引擎压到 `quarantined` + `hard_rule_passed=false`。
  */
 export function negationGuardedPattern(text, rule) {
   let suppressed = 0;
   let cancelled = 0;
   let matchCount = 0;
+  let truncated = false;
   for (const pattern of rule.patterns ?? []) {
     const regex = toGlobalRegExp(pattern);
     let found = regex.exec(text);
-    while (found !== null && matchCount < MAX_MATCHES) {
+    while (found !== null) {
+      // 限额已满且仍有未检查的匹配 ⇒ 截断，不得结论为"未命中"。
+      if (matchCount >= MAX_MATCHES) {
+        truncated = true;
+        break;
+      }
       matchCount += 1;
       const verdict = evaluateNegation(text, found.index, rule);
+      if (verdict.truncated) {
+        // 否定取消扫描被上界截断：压不压掉都不可信，交回引擎 fail-closed。
+        truncated = true;
+        break;
+      }
       if (!verdict.negated) {
         if (verdict.cancelled_by !== null) cancelled += 1;
         return {
@@ -196,12 +217,14 @@ export function negationGuardedPattern(text, rule) {
           suppressed,
           cancelled,
           cancelled_by: verdict.cancelled_by,
+          truncated: false,
         };
       }
       suppressed += 1;
       if (found.index === regex.lastIndex) regex.lastIndex += 1;
       found = regex.exec(text);
     }
+    if (truncated) break;
   }
   return {
     matched: false,
@@ -211,6 +234,7 @@ export function negationGuardedPattern(text, rule) {
     suppressed,
     cancelled,
     cancelled_by: null,
+    truncated,
   };
 }
 
@@ -234,10 +258,10 @@ export function addressChain(text, rule) {
     const lastAdmin = Math.max(...ADMIN_TOKENS.map((token) => segment.lastIndexOf(token)));
     const precise = PRECISE_TOKENS.find((token) => segment.indexOf(token) > lastAdmin);
     if (precise) {
-      return { matched: true, field: 'text', offset, length: segment.length, suppressed: 0 };
+      return { matched: true, field: 'text', offset, length: segment.length, suppressed: 0, truncated: false };
     }
   }
-  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0 };
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
 }
 
 /**
@@ -246,8 +270,8 @@ export function addressChain(text, rule) {
  */
 export function coordinatePair(text, rule) {
   const found = firstMatch(text, rule.patterns);
-  if (!found) return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0 };
-  return { matched: true, field: 'text', offset: found.offset, length: found.length, suppressed: 0 };
+  if (!found) return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  return { matched: true, field: 'text', offset: found.offset, length: found.length, suppressed: 0, truncated: false };
 }
 
 const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s，。；；、)）"'<>]+/gi;
@@ -266,20 +290,20 @@ export function commerceLink(text, rule) {
   while (found !== null) {
     const url = found[0];
     if (SHOP_HOST.test(url)) {
-      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0 };
+      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0, truncated: false };
     }
     if (STRONG_COMMERCE_CUE.test(text)) {
-      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0 };
+      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0, truncated: false };
     }
     const start = Math.max(0, found.index - cueWindow);
     const windowText = text.slice(start, found.index + url.length + cueWindow);
     if (WEAK_COMMERCE_CUE.test(windowText)) {
-      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0 };
+      return { matched: true, field: 'text', offset: found.index, length: url.length, suppressed: 0, truncated: false };
     }
     if (found.index === regex.lastIndex) regex.lastIndex += 1;
     found = regex.exec(text);
   }
-  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0 };
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
 }
 
 /**

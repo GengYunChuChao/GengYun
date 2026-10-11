@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 
 import {
   AUDIT_STATES,
+  MAX_TEXT_LENGTH,
   isAuditState,
 } from '../../packages/moderation/constants.mjs';
 import { MATCHERS } from '../../packages/moderation/matchers.mjs';
@@ -23,7 +24,13 @@ import {
   evaluateHardRules,
   toRuleLayerDraft,
 } from '../../packages/moderation/engine.mjs';
-import { CLEAN_TEXT, makeInput, scriptedClock, withThrowingGetter } from './_fixtures.mjs';
+import {
+  CLEAN_TEXT,
+  buildScanLimitText,
+  makeInput,
+  scriptedClock,
+  withThrowingGetter,
+} from './_fixtures.mjs';
 
 function expectNotApproved(result, name) {
   assert.equal(typeof result.decision, 'string', `${name}: decision 必须是字符串`);
@@ -262,6 +269,54 @@ test('fail-closed：给错引擎选项不等于按默认值跑一遍就算通过
   assert.equal(ok.decision, 'approved');
 });
 
+// ---- 扫描限额截断（返修轮 3 · 监工 P1）----
+
+test('fail-closed：扫描限额截断（×64）不得把未检查的尾部当作"未命中"', () => {
+  const text = buildScanLimitText(64);
+  // 先排除"这是超长隔离"的解释：455 字符远在上限之内。
+  assert.ok(text.length <= MAX_TEXT_LENGTH, `反例必须在上限内：${text.length}`);
+  const result = evaluateHardRules(makeInput({ text }));
+
+  expectNotApproved(result, '扫描限额截断（×64）');
+  assert.equal(result.decision, 'quarantined');
+  assert.ok(result.reason_codes.includes('RULE_SCAN_TRUNCATED'), result.reason_codes.join(','));
+  // 未检查的尾部不得算作"已求值且未命中"。
+  const entry = result.rules.find((item) => item.id === 'MR-01');
+  assert.equal(entry.status, 'truncated');
+  assert.notEqual(entry.status, 'evaluated');
+  assert.equal(entry.matched, false);
+  assert.equal(entry.evidence.truncated, true);
+  assert.equal(result.counts.truncated, 1);
+  assert.equal(result.counts.evaluated, RULES.length - 1);
+  assert.equal(result.hard_rule_passed, false);
+  assert.deepEqual(checkDecisionInvariant(result).violations, []);
+});
+
+test('对照：扫描限额之内（×63）仍按真实命中判 rejected', () => {
+  const text = buildScanLimitText(63);
+  assert.ok(text.length <= MAX_TEXT_LENGTH);
+  const result = evaluateHardRules(makeInput({ text }));
+  assert.equal(result.decision, 'rejected');
+  assert.ok(result.reason_codes.includes('DANGEROUS_MIX'));
+  assert.equal(result.reason_codes.includes('RULE_SCAN_TRUNCATED'), false);
+  const entry = result.rules.find((item) => item.id === 'MR-01');
+  assert.equal(entry.status, 'hit');
+  assert.equal(result.counts.hits, 1);
+  assert.equal(result.counts.truncated, 0);
+});
+
+test('扫描限额与输入长度上限是两个不同的闸门（×64 反例未被误判为超长）', () => {
+  const text = buildScanLimitText(64);
+  const byLimit = evaluateHardRules(makeInput({ text }));
+  assert.equal(byLimit.reason_codes.includes('INPUT_TEXT_TOO_LONG'), false);
+  assert.equal(byLimit.input.valid, true);
+  // 把上限压到文本之下，才会走"超长"这条闸门——证明上面那条不是超长导致的。
+  const tooLong = evaluateHardRules(makeInput({ text }), { max_text_length: 100 });
+  expectNotApproved(tooLong, '压小上限后的×64文本');
+  assert.ok(tooLong.reason_codes.includes('INPUT_TEXT_TOO_LONG'));
+  assert.equal(tooLong.reason_codes.includes('RULE_SCAN_TRUNCATED'), false);
+});
+
 test('核心不变式：approved ⟺ hard_rule_passed === true（全部用例加总核对）', () => {
   const samples = [
     ...INPUT_CASES.map((item) => item.input),
@@ -287,6 +342,26 @@ test('不变式检查能捕捉 undefined／越界值（先 typeof 再判值）',
     { name: 'reason_codes 超过 30 项', result: { decision: 'quarantined', hard_rule_passed: false, reason_codes: Array.from({ length: 31 }, (_, i) => `CODE_${i}`), rule_version: 'v' } },
     { name: 'approved 但 hard_rule_passed 为 false', result: { decision: 'approved', hard_rule_passed: false, reason_codes: [], rule_version: 'v' } },
     { name: 'hard_rule_passed 为 true 但 decision 不是 approved', result: { decision: 'pending', hard_rule_passed: true, reason_codes: [], rule_version: 'v' } },
+    {
+      name: 'approved 但存在被扫描限额截断的规则',
+      result: {
+        decision: 'approved',
+        hard_rule_passed: true,
+        reason_codes: [],
+        rule_version: 'v',
+        counts: { total: 1, evaluated: 0, hits: 0, errors: 0, timeouts: 0, truncated: 1, not_evaluated: 0 },
+      },
+    },
+    {
+      name: 'approved 但存在未求值的规则',
+      result: {
+        decision: 'approved',
+        hard_rule_passed: true,
+        reason_codes: [],
+        rule_version: 'v',
+        counts: { total: 1, evaluated: 0, hits: 0, errors: 0, timeouts: 0, truncated: 0, not_evaluated: 1 },
+      },
+    },
   ];
   for (const item of cases) {
     const report = checkDecisionInvariant(item.result);

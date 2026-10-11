@@ -86,6 +86,16 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
   漏拦会放行危险用量/混配，远比误拦严重。
 - **可观测**：结果里 `evidence.cancelled` 记录"取消词顶掉否定"的次数，`evidence.cancelled_by` 记录具体取消词
   （取值来自规则闭集，不是输入原文）。
+- **取消词的扫描也有上界**：句读段内的后向扫描最多 64 字符；若上界用尽时**还没走到句读段末尾**，
+  说明取消词可能落在界外 ⇒ **不认为"否定成立"**，而是按 §4 的"扫描截断"处理（`RULE_SCAN_TRUNCATED` ⇒ 隔离）。
+
+### 3.2 扫描限额是 fail-closed 闸门（未检查 ≠ 干净）
+
+匹配器对候选匹配数与取消词扫描范围都有上界（`MAX_MATCHES = 64`、`FORWARD_CLAUSE_LIMIT = 64`）。
+**上界用尽而仍有未检查内容时，绝不返回"未命中"**：该规则状态记为 `truncated`，整体 `quarantined`
++ `RULE_SCAN_TRUNCATED`。反例（监工在 PR #88 发现）：`不要随意混配。`×63 + `把两种药混配。`（448 字符）能正常驳回，
+但 ×64（455 字符）会让真实混配落在第 65 个候选上——旧实现把它当作"未命中"而 `approved`，
+现在一律隔离。**未检查的尾部不等于干净文本**。
 
 ## 4 判定口径（fail-closed）
 
@@ -93,15 +103,16 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
 
 | 决策 | 触发条件 |
 | --- | --- |
-| `quarantined`（隔离） | 存在**任一** fail-closed 条件：输入非法／target type 未覆盖／带媒体未审／规则未求值／规则抛错／超时／规则集非法 |
+| `quarantined`（隔离） | 存在**任一** fail-closed 条件：输入非法／target type 未覆盖／带媒体未审／规则未求值／规则抛错／超时／**扫描被限额截断**／规则集或引擎选项非法 |
 | `rejected`（驳回） | 无 fail-closed 条件，且至少一条规则**实际命中** |
 | `approved`（通过） | 无 fail-closed 条件，且**全部**规则**实际求值**且**均未命中** |
 
 **核心不变式**：`decision === 'approved'` **当且仅当** `hard_rule_passed === true`。
 两者由 `checkDecisionInvariant` 逐条检查；引擎每次返回前都自查，违反则以 `quarantined` 兜底并记录
-`invariant_violations`，**绝不"修好"成通过**。
+`invariant_violations`，**绝不"修好"成通过**。该检查还要求"通过时必须全干净"：
+`approved` 与 `counts.truncated`／`not_evaluated`／`errors`／`timeouts`／`hits` 任一**大于 0** 互斥。
 
-三条最容易被忽视的 fail-closed 语义（本片显式实现并有负例）：
+五条最容易被忽视的 fail-closed 语义（本片显式实现并有负例）：
 
 1. **"没跑"不等于"通过"**：输入闸门不通过时，`counts.evaluated = 0`、`counts.not_evaluated = 规则数`，
    `hard_rule_passed` 保持 false。
@@ -115,6 +126,9 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
    若被显式传入但类型非法（如 `rules` 传字符串、`budget_ms` 传 `NaN`），一律 `quarantined`
    + `ENGINE_OPTIONS_INVALID`，并把明细放在结果的非契约字段 `option_errors` 里——
    静默回落到默认值会让调用方误以为自定规则或时间预算已生效。
+5. **"没查完"不等于"没命中"**（返修轮 3 · P1）：候选匹配或取消词扫描达到上界而**仍有未检查内容**时，
+   该规则记为 `truncated`，整体 `quarantined` + `RULE_SCAN_TRUNCATED`。把未检查的尾部当作"未命中"
+   就是 fail-open——455 字符的独立反例曾因此被判 `approved`（详见 §3.2）。
 
 **隐私加固**：命中证据只回传 `{field, offset, length, suppressed}`，**不回传命中原文**——
 手机号／身份证号／住址／坐标不会被抄进结果、日志或原因码（有专门用例断言结果 JSON 不含命中原文）。
@@ -140,14 +154,22 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
 | 缺／非法 `rule_version` | 是 | `quarantined` | `RULE_VERSION_UNKNOWN` |
 | `decision` 非法 | 是 | `quarantined` | `DECISION_INVALID` |
 | 自称通过但 `hard_rule_passed` 不为 `true` | 是 | `quarantined` | `DECISION_INCONSISTENT` |
+| **绑定结构非法**：`type` 不在契约闭集／`id` 空或 >80／`revision` 非 ≥1 正整数 | 是 | `quarantined` | `TARGET_REF_INVALID` |
 | 版本、目标均未变且自洽 | 否 | — | — |
+
+**绑定结构校验（返修轮 3 · P2）**：`evaluateReReview` 对**既有结果的 `target_ref`** 与
+**调用方传入的"当前目标"** 都做结构性校验（`type` ∈ `TargetRef.type` 闭集、
+`id` 非空且 ≤80、`revision` 为 ≥1 的正整数）；任一不满足即 `quarantined` + `TARGET_REF_INVALID`，
+**不得** `reuse`。此前只检查"是不是 string／number"，于是 `type=bogus`、`id=''`、`revision=0`
+的非法绑定被 `reuse` 甚至 `publishable=true`——同样是"未校验的部分被当作通过"。
 
 **落点理由**：规则集或目标修订变化意味着"旧判定失去强制力"，内容回到待筛查队列（`pending`）由确定性规则自动重跑，
 重跑本身仍 fail-closed，不会因排队而放行；而"版本号缺失／决策非法／自相矛盾／绑定对象已变"属于**证据不可信**，
 不能自动排队放行，必须 `quarantined`。
 
 **发布口径**：`isPublishable(result)` 要求 `approved` **且** `hard_rule_passed === true` **且**
-`rule_version` 等于当前版本；任一不满足即不得发布——"旧版本审核结果不能套新版本"（AC19）。
+`rule_version` 等于当前版本 **且** `target_ref` 结构合法（`TARGET_REF_INVALID` 一律不可发布）；
+任一不满足即不得发布——"旧版本审核结果不能套新版本"（AC19）。
 注意"通过筛查"与"发布"在本组件里是**两个步骤**（F08：通过筛查不等同于专业验证）。
 
 ## 6 失败隔离
@@ -155,6 +177,8 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
 - **单条规则抛错**：该规则状态记为 `error`（不是 `evaluated`、`matched` 恒为 false），
   计入 fail-closed，整体 `quarantined`；异常**不会**被吞成"未命中"。
 - **匹配器返回结构非法**：同样记为 `error`。
+- **扫描被限额截断**：该规则状态记为 `truncated`（既不是 `hit` 也不是 `evaluated`），
+  整体 `quarantined` + `RULE_SCAN_TRUNCATED`；未检查的尾部**不会**被当作"未命中"。
 - **批量审核**：每条目标独立求值；单条目标在引擎外抛出（例如输入对象陷阱抛错）时，
   该条隔离为 `quarantined` + `RULE_ENGINE_ERROR`，**不影响**批内其它目标的判定。
 - **超时**：规则预算（默认 50ms，可注入）只在**开始一条规则之前**检查；超出即从该条起全部记为 `timeout`，
@@ -180,6 +204,10 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
    本片全部用例只能表述为"**规则夹具上的确定性回归**"，**不得**用于声称任何模型准确率／召回率。
 7. **确定性口径**：判定字段（`decision` / `reason_codes` / `hard_rule_passed` / `rule_version` / 逐规则状态）
    逐字节可复现；非契约诊断字段 `budget.elapsed_ms` 取自真实墙钟，**是唯一允许逐次变动的字段**。
+8. **扫描限额是硬闸门，代价是"长重复文本会被隔离"**：`MAX_MATCHES = 64` 与
+   `FORWARD_CLAUSE_LIMIT = 64` 字符用尽而仍有未检查内容时，一律 `quarantined`（§3.2）。
+   安全方向正确（未检查 ≠ 干净），但意味着**超过 64 次同类匹配提及的文本不会得到 `approved`**，
+   而是需要人工或更大上界的重跑；接线增量如需调大上界，必须显式修改并重新评估单条规则成本。
 
 ## 8 如何运行
 

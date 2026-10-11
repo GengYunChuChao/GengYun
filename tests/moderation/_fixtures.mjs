@@ -211,6 +211,20 @@ export const PURE_NEGATION_FIXTURES = Object.freeze([
   },
 ]);
 
+/**
+ * 扫描限额反例（返修轮 3 · 监工 P1，`packages/moderation/matchers.mjs`）。
+ *
+ * 构造 `n` 次**被否定护栏压掉**的"混配"提及 + 1 次**真实**混配请求：
+ *   - `n = 63`：全部匹配都在 `MAX_MATCHES`(64) 之内 ⇒ 真实混配被检查到 ⇒ `rejected`；
+ *   - `n = 64`：真实混配落在第 65 个匹配上，被限额截断 ⇒ **不得**判"未命中"，
+ *     必须 `quarantined` + `RULE_SCAN_TRUNCATED`（绝不允许 `approved`）。
+ * 文本长度 448／455 字符，**远低于**输入上限 20000——与"超长隔离"是两个不同的闸门，
+ * 用例会显式断言这一点。
+ */
+export function buildScanLimitText(suppressedRepeats) {
+  return `${'不要随意混配。'.repeat(suppressedRepeats)}把两种药混配。`;
+}
+
 /** 一条结构完全合法、但类别/原因码可自定义的追加规则（用于版本重审与隔离用例）。 */
 export function makeExtraRule(overrides = {}) {
   return {

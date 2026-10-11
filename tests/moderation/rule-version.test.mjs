@@ -145,6 +145,71 @@ test('版本重审：目标 type/id 变化 ⇒ 失效且隔离（不是同一个
   }
 });
 
+// ---- 重审绑定结构校验（返修轮 3 · 监工 P2）----
+
+const BINDING_REVIEW_BASE = { decision: 'approved', hard_rule_passed: true, rule_version: RULE_VERSION };
+
+for (const item of [
+  {
+    name: 'target_ref.type 不在契约闭集',
+    ref: { type: 'bogus', id: 'post-1001', revision: 1 },
+  },
+  {
+    name: 'target_ref.id 为空串',
+    ref: { type: 'post', id: '', revision: 1 },
+  },
+  {
+    name: 'target_ref.id 超过 80 字符',
+    ref: { type: 'post', id: 'x'.repeat(81), revision: 1 },
+  },
+  {
+    name: 'target_ref.revision 为 0',
+    ref: { type: 'post', id: 'post-1001', revision: 0 },
+  },
+  {
+    name: 'target_ref.revision 非整数',
+    ref: { type: 'post', id: 'post-1001', revision: 1.5 },
+  },
+]) {
+  test(`重审绑定结构非法：${item.name} ⇒ 失效且隔离，不得 reuse／publishable`, () => {
+    const existing = { ...BINDING_REVIEW_BASE, target_ref: item.ref };
+    const outcome = evaluateReReview(existing, { rule_version: RULE_VERSION, target_ref: item.ref });
+    assert.equal(outcome.stale, true);
+    assert.equal(outcome.action, 're_review');
+    assert.notEqual(outcome.action, 'reuse');
+    assert.equal(outcome.landing, 'quarantined');
+    assert.equal(outcome.publishable, false);
+    assert.ok(
+      outcome.reason_codes.includes('TARGET_REF_INVALID'),
+      `缺原因码 TARGET_REF_INVALID：${outcome.reason_codes.join(',')}`,
+    );
+    // 非法绑定不得被发布口径放行。
+    assert.equal(isPublishable(existing, RULE_VERSION).publishable, false);
+    assert.ok(isPublishable(existing, RULE_VERSION).reason_codes.includes('TARGET_REF_INVALID'));
+  });
+}
+
+test('重审绑定结构：传入的"当前目标"结构非法同样隔离，不得 reuse', () => {
+  const validRef = { type: 'post', id: 'post-1001', revision: 1 };
+  const existing = { ...BINDING_REVIEW_BASE, target_ref: validRef };
+  for (const bad of [
+    { type: 'bogus', id: 'post-1001', revision: 1 },
+    { type: 'post', id: '', revision: 1 },
+    { type: 'post', id: 'post-1001', revision: 0 },
+  ]) {
+    const outcome = evaluateReReview(existing, { rule_version: RULE_VERSION, target_ref: bad });
+    assert.equal(outcome.stale, true);
+    assert.equal(outcome.landing, 'quarantined');
+    assert.equal(outcome.publishable, false);
+    assert.ok(outcome.reason_codes.includes('TARGET_REF_INVALID'));
+  }
+  // 合法对照不受影响。
+  const ok = evaluateReReview(existing, { rule_version: RULE_VERSION, target_ref: validRef });
+  assert.equal(ok.stale, false);
+  assert.equal(ok.action, 'reuse');
+  assert.equal(ok.publishable, true);
+});
+
 test('版本重审：缺 rule_version／decision 非法／自称通过却未过 = 失效且隔离', () => {
   const target_ref = { type: 'post', id: 'post-1001', revision: 1 };
   const cases = [

@@ -23,7 +23,11 @@ import {
   DECISION_APPROVED,
   DECISION_QUARANTINED,
   NOT_PRODUCED_BY_RULE_LAYER,
+  TARGET_ID_MAX_LENGTH,
+  TARGET_ID_MIN_LENGTH,
+  TARGET_REVISION_MIN,
   isAuditState,
+  isTargetType,
 } from './constants.mjs';
 import { RULE_VERSION } from './rule-version.mjs';
 
@@ -42,6 +46,36 @@ function safeGet(holder, key) {
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * `target_ref` 的**结构性校验**（返修轮 3 · P2）。
+ *
+ * 只判 "type/id 是 string、revision 是 number" 是不够的：`type=bogus`、`id=''`、`revision=0`
+ * 都能通过宽松检查，从而被 `reuse` 甚至 `publishable=true`——等于把**非法绑定**当成可复用结果。
+ * 这里按契约 `TargetRef` 校验：type 属闭集、id 非空且 ≤80、revision 为 ≥1 的正整数。
+ *
+ * @returns {string[]} 问题清单（空数组 = 合法）
+ */
+function targetRefProblems(ref) {
+  if (!isPlainObject(ref)) return ['target_ref 必须是对象'];
+  const problems = [];
+  if (!isTargetType(ref.type)) problems.push('target_ref.type 不在契约闭集内');
+  if (
+    typeof ref.id !== 'string' ||
+    ref.id.length < TARGET_ID_MIN_LENGTH ||
+    ref.id.length > TARGET_ID_MAX_LENGTH
+  ) {
+    problems.push(`target_ref.id 必须是 ${TARGET_ID_MIN_LENGTH}..${TARGET_ID_MAX_LENGTH} 的非空字符串`);
+  }
+  if (
+    typeof ref.revision !== 'number' ||
+    !Number.isSafeInteger(ref.revision) ||
+    ref.revision < TARGET_REVISION_MIN
+  ) {
+    problems.push(`target_ref.revision 必须是 ≥${TARGET_REVISION_MIN} 的正整数`);
+  }
+  return problems;
 }
 
 function buildOutcome(fields) {
@@ -113,14 +147,13 @@ export function evaluateReReview(existing, options = {}) {
     return buildOutcome({ ...base, ...outcome });
   }
 
-  // 3) target_ref 必须存在且结构可用（版本绑定依赖它）。
-  if (
-    !isPlainObject(existingRef) ||
-    typeof existingRef.type !== 'string' ||
-    typeof existingRef.id !== 'string' ||
-    typeof existingRef.revision !== 'number'
-  ) {
+  // 3) target_ref 必须存在且**结构合法**（返修轮 3 · P2：宽松检查会放过 type=bogus／id 空／revision=0）。
+  if (!isPlainObject(existingRef)) {
     const outcome = fail('REVIEW_INPUT_INVALID', 'quarantined', 'target_ref');
+    return buildOutcome({ ...base, ...outcome });
+  }
+  if (targetRefProblems(existingRef).length > 0) {
+    const outcome = fail('TARGET_REF_INVALID', 'quarantined', 'target_ref');
     return buildOutcome({ ...base, ...outcome });
   }
 
@@ -143,10 +176,10 @@ export function evaluateReReview(existing, options = {}) {
     fail('RULE_VERSION_CHANGED', 'pending', 'rule_version');
   }
 
-  // 6) 目标绑定变化 ⇒ 旧结果失效。
+  // 6) 目标绑定变化 ⇒ 旧结果失效（先校验"当前目标"本身是否结构合法）。
   if (targetRef !== null) {
-    if (!isPlainObject(targetRef)) {
-      fail('REVIEW_INPUT_INVALID', 'quarantined', 'target_ref');
+    if (targetRefProblems(targetRef).length > 0) {
+      fail('TARGET_REF_INVALID', 'quarantined', 'target_ref');
     } else if (targetRef.type !== existingRef.type || targetRef.id !== existingRef.id) {
       fail('TARGET_REF_CHANGED', 'quarantined', 'target_ref');
     } else if (targetRef.revision !== existingRef.revision) {
@@ -157,7 +190,14 @@ export function evaluateReReview(existing, options = {}) {
   const stale = reason_codes.length > 0;
   const landing = stale
     ? reason_codes.some((code) =>
-        ['DECISION_INVALID', 'DECISION_INCONSISTENT', 'RULE_VERSION_UNKNOWN', 'TARGET_REF_CHANGED', 'REVIEW_INPUT_INVALID'].includes(code),
+        [
+          'DECISION_INVALID',
+          'DECISION_INCONSISTENT',
+          'RULE_VERSION_UNKNOWN',
+          'TARGET_REF_CHANGED',
+          'TARGET_REF_INVALID',
+          'REVIEW_INPUT_INVALID',
+        ].includes(code),
       )
       ? DECISION_QUARANTINED
       : 'pending'
@@ -180,12 +220,15 @@ export function isPublishable(result, ruleVersionCurrent = RULE_VERSION) {
   const decisionRead = safeGet(result, 'decision');
   const hardRead = safeGet(result, 'hard_rule_passed');
   const versionRead = safeGet(result, 'rule_version');
-  if (!decisionRead.ok || !hardRead.ok || !versionRead.ok) {
+  const refRead = safeGet(result, 'target_ref');
+  if (!decisionRead.ok || !hardRead.ok || !versionRead.ok || !refRead.ok) {
     return { publishable: false, reason_codes: ['REVIEW_INPUT_INVALID'] };
   }
   if (!isAuditState(decisionRead.value)) reason_codes.push('DECISION_INVALID');
   else if (decisionRead.value !== DECISION_APPROVED) reason_codes.push('NOT_PUBLISHABLE');
   if (hardRead.value !== true) reason_codes.push('DECISION_INCONSISTENT');
+  // 绑定结构非法（type 不在闭集／id 空／revision 非正整数）⇒ 不得发布（返修轮 3 · P2）。
+  if (targetRefProblems(refRead.value).length > 0) reason_codes.push('TARGET_REF_INVALID');
   if (versionRead.value !== ruleVersionCurrent) {
     reason_codes.push(versionRead.value === undefined || versionRead.value === null
       ? 'RULE_VERSION_UNKNOWN'
