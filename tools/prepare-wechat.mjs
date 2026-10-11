@@ -30,6 +30,7 @@ try {
     'config/runtime.js',
     'utils/debug.js',
     'utils/auth.js',
+    'utils/profile-api.js',
     'utils/font-scale.js',
     'utils/system-font.js',
     'components/state-view/state-view.js',

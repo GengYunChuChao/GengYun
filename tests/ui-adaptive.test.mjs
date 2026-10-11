@@ -113,7 +113,7 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
 
   const profileJs = read('miniprogram/pages/profile/profile.js');
   const profileWxml = read('miniprogram/pages/profile/profile.wxml');
-  assert.ok(profileJs.includes('currentFontScale'), '我的页面未刷新字号');
+  assert.ok(/fontScale\.applyFontScale\(this\)/.test(profileJs), '我的页面未刷新字号');
   assert.ok(!/font-choice/.test(profileWxml), '不得残留应用内档位 UI');
 
   // 切换页面后字号必须立即生效：页面复用时 onLoad 不再执行，须由 onShow 刷新
