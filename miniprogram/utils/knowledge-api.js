@@ -11,6 +11,12 @@ function keys(x, required, optional) {
       Object.keys(x).some(k => required.concat(optional || []).indexOf(k) === -1)) throw failure('INVALID_RESPONSE')
 }
 function text(x, max) { return typeof x === 'string' && x.length > 0 && x.length <= max }
+function timestamp(value) {
+  if (typeof value !== 'string') return false
+  const m = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value)
+  return !!m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[3]) >= 1 &&
+    Number(m[3]) <= new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).getUTCDate() && Number.isFinite(Date.parse(value))
+}
 function one(x, values) { return values.indexOf(x) !== -1 }
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
 function current(b) { const now = binding(); return !!b && !!now && b.token === now.token && b.epoch === now.epoch }
@@ -35,7 +41,7 @@ function validItem(x) {
       !text(x.title, 200) || !text(x.body, 20000) || typeof s.id !== 'string' || !UUID.test(s.id) || !text(s.version, 80) || !text(s.title, 200) || !text(s.publisher, 200) ||
       typeof s.url !== 'string' || !/^https:\/\/[^\s]+$/.test(s.url) || !one(s.source_kind, ['database', 'verified_seed', 'simulation']) ||
       !one(s.evidence_kind, ['research', 'experience', 'mixed']) || !one(s.validity, ['valid', 'expired', 'conflicting', 'unknown', 'withdrawn']) ||
-      !one(s.review_status, ['unverified', 'verified', 'rejected']) || typeof s.updated_at !== 'string' || !/^\d{4}-\d\d-\d\dT/.test(s.updated_at) || !Number.isFinite(Date.parse(s.updated_at)) ||
+      !one(s.review_status, ['unverified', 'verified', 'rejected']) || !timestamp(s.updated_at) ||
       !one(x.reference_state, ['available', 'unavailable']) || !Array.isArray(x.dose_cards)) throw failure('INVALID_RESPONSE')
   // This component is read-only science, not the separately gated DoseCard consumer.
   if (x.dose_cards.length !== 0) throw failure('UNSUPPORTED_DOSE_RESPONSE')
@@ -96,7 +102,7 @@ function labels(x) {
     evidence: { research: '科研来源', experience: '经验来源', mixed: '混合证据' }[s.evidence_kind],
     review: { verified: '已核对', unverified: '未核对', rejected: '已拒绝' }[s.review_status] }
 }
-function modeNote(mode) { return mode === 'real' ? '服务端资料读取；来源核对与适用条件仍需分别确认。' : mode === 'preset_demo' ? '预设演示资料，不代表实际查询结果。' : mode === 'stub' ? '替身服务资料，仅供联调，不代表真实资料查询。' : '正在读取服务端资料；失败时不会改用本地资料。' }
+function modeNote(mode) { return mode === 'real' ? '服务端资料读取；来源核对与适用条件仍需分别确认。' : mode === 'preset_demo' ? '预设演示资料，不代表实际查询结果。' : mode === 'stub' ? '替身服务资料，仅供联调，不代表真实资料查询。' : '服务端资料查询；资料需重新核对，失败时不会改用本地资料。' }
 function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
 module.exports = { binding, current, filters, list, detail, remember, expected, fingerprint, labels, modeNote, message,
   validId: id => typeof id === 'string' && UUID.test(id), clearSelection: () => { selection = null } }

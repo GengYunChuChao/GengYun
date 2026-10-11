@@ -94,7 +94,7 @@ test('knowledge return-to navigation accepts UUID only, never extra identity/red
 const malformed = [
  ['extra source_version', r => r.source_version = 'invented'], ['missing body', r => delete r.body], ['array ID', r => r.id = [id]], ['bad revision', r => r.revision = 0],
  ['unknown type', r => r.type = 'prescription'], ['unknown source kind', r => r.source.source_kind = 'unknown'], ['unknown evidence', r => r.source.evidence_kind = 'expert'], ['bad source URL', r => r.source.url = 'http://example.test'],
- ['invalid updated_at', r => r.source.updated_at = 'yesterday'], ['nullable condition field', r => r.conditions = { crop_id: 'crop_rice', region_code: null }], ['extra condition', r => r.conditions = { crop_id: 'crop_rice', region_code: '330102', owner: 'x' }],
+ ['invalid updated_at', r => r.source.updated_at = 'yesterday'], ['missing timestamp zone', r => r.source.updated_at = '2026-10-11T01:00:00'], ['invalid calendar date', r => r.source.updated_at = '2026-02-31T01:00:00Z'], ['nullable condition field', r => r.conditions = { crop_id: 'crop_rice', region_code: null }], ['extra condition', r => r.conditions = { crop_id: 'crop_rice', region_code: '330102', owner: 'x' }],
  ['nonempty dose cards', r => r.dose_cards = [{}]], ['duplicate records', () => {}], ['unavailable list record', r => r.reference_state = 'unavailable'], ['rejected source', r => r.source.review_status = 'rejected']
 ];
 for (const [name, mutate] of malformed) test('rejects ' + name + ' instead of displaying unchecked content', async () => { const f = fixture(); f.login(); const p = f.api.list({ limit: 20 }); const r = record(); mutate(r); f.answer(f.last('/knowledge'), { items: name === 'duplicate records' ? [r, r] : [r], next_cursor: null }); await assert.rejects(p); });
