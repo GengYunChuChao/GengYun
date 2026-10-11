@@ -21,6 +21,8 @@ test('local package includes actual navigation dependencies, stays synthetic and
   writeFileSync(join(f.root,'miniprogram/.env'),'do not copy');
   const out=prepareLocalDev({...f,apiPort:3101,pgPort:55437});
   assert.ok(existsSync(join(out,'wechat/miniprogram/utils/navigation.js')));
+  assert.ok(existsSync(join(out,'profile-bootstrap.mjs')));
+  assert.match(readFileSync(join(out,'database.mjs'),'utf8'),/bootstrapLocalProfile/);
   assert.equal(existsSync(join(out,'wechat/miniprogram/config/secret.local.json')),false);
   assert.equal(existsSync(join(out,'wechat/miniprogram/.env')),false);
   assert.equal(readFileSync(join(f.root,'miniprogram/config/runtime.js'),'utf8'),runtime);
