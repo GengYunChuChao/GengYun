@@ -38,3 +38,13 @@ Refs #7，基线 main `487918856a0099d6c7ee5f083069bd415b095bee`。这是两个�
 ## 未验证和后续
 
 真实资料审批、用户端HTTP消费/微信工具/Android、herbicides和条件完整元数据仍待各自组件与整项验收；本轮原生身份为明确标注的微信替身，没有供应商调用、付费或部署。独立监工仍需绑定最终提交SHA复验与核对CI。
+
+## PR79 CI 断言修订
+
+监工 review5482050707、已审HEAD `0a72820be794f3da25d3f9178028a0ec14ba737d`：catalog-postgres-17.11 失败，实际日志运行38111910049在 catalog-pg.mjs:118 为401 !=404。旧测试仍假定知识路由未装配；其余13项CI成功。这不是身份失效，也没有通过移除 requireUser 修复。
+
+本轮仅同步 tests/integration/catalog-pg.mjs：知识列表与详情的无登录请求必须401 SESSION_REQUIRED；尚未装配的 herbicides 列表/详情、staging、registrations仍404。保留迁移重入/漂移/失败回滚、受限真实LOGIN/PUBLIC/私有表/跨视图/写/DDL/TEMP/owner升级拒绝、未批准种子排除、source生命周期与登记证据以及0005回滚等全部原断言。
+
+实际执行与 .github/workflows/catalog-postgres.yml 相同入口 `node tests/integration/catalog-pg.mjs`，DATABASE_TEST_URL 仅在内存指向自己PG17.11隔离cluster新空 gengyun_catalog_test 库，六组PASS、退出0。实际运行身份是独立随机密码 preview/evidence LOGIN，API不是owner；所有资料synthetic或保留未核状态的公开种子。未在该preview专用库伪造知识授权角色。有效身份空列表/无数据库503/knowledge_runtime私有表权限的既有 knowledge-api 回归保留，affected+contract重跑24项23通过、1原生专项明确跳过；上轮独立knowledge限权LOGIN9/9证据复用（service/views/roles本轮未变），不能把它替代本次实际catalog入口。
+
+本轮docs与diff通过，自己cluster启动PID43464已按绝对datadir停止，55472关闭。CI修订后的远端结果仍待维护者允许运行与监工复验，不自批、合并或将本地PASS写成CI成功。local-dev新组接线、前后端/320px/Android、herbicides与整项#7验收仍未完成。
