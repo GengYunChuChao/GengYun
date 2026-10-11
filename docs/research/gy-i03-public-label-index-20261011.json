@@ -1,0 +1,475 @@
+{
+  "schema": "gengyun.research.public-label-audit.v1",
+  "audit_version": "gy-i03-public-label-audit-20261011.v1",
+  "observed_at": "2026-10-11",
+  "timezone": "Asia/Hong_Kong",
+  "baseline_main": "d8588e0d666e2a8cba4f270800f73c79bd9d1542",
+  "notice": "隔离研究索引，不能导入现有资料种子或直接作为用量/评估答案。audit_version不是生产source_version或官方标签版本。以下身份和日期只来自本次实际读取的官方网页文字；全文、毒性图示、登记有效期、最新登记状态及全国/浙江禁限用未完整交接或独立审核。",
+  "publisher": "农业农村部农药检定所公开标签门户（icama.cn）",
+  "retrieval_method": "browser_tool_rendered_page_body; may be search-provider cached rendition; not direct origin HTTP verification",
+  "canonical_label_url_template": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno={registration_number}",
+  "common_observed_text_sections": [
+    "登记证号",
+    "登记证持有人",
+    "农药名称",
+    "剂型",
+    "有效成分及其含量",
+    "使用范围和使用方法",
+    "使用技术要求",
+    "产品性能",
+    "注意事项",
+    "中毒急救措施",
+    "储存和运输方法",
+    "质量保证期",
+    "核准日期",
+    "重新核准日期"
+  ],
+  "section_evidence_locators": {
+    "identity": "正文首部登记证号/登记证持有人/农药名称/剂型/有效成分",
+    "dose_and_method_present": "使用范围和使用方法 → 作物/场所、防治对象、用药量、施用方式表格；本索引不转载用量",
+    "conditions_present": "使用技术要求及注意事项；不把性能说明替代适用表",
+    "version_dates": "正文尾部核准日期及重新核准日期；斜杠记录为null，不推断日期",
+    "toxicity": "毒性及其标识；除PD20151189显示文字微毒，其余页面图示未读取"
+  },
+  "common_release_status": {
+    "review_status": "unverified",
+    "validity": "unknown",
+    "registration_valid_from": null,
+    "registration_valid_to": null,
+    "national_restriction_checked": false,
+    "zhejiang_restriction_checked": false,
+    "licensed": false,
+    "license_survey_status": "not_established",
+    "full_source_snapshot_retained": false,
+    "official_source_content_hash": null,
+    "production_source_version": null,
+    "card_ready": false,
+    "card_eligible": false,
+    "usable_as_dose": false,
+    "independent_evaluation_sample": false
+  },
+  "summary": {
+    "existing_seed_registrations_attempted": 20,
+    "existing_seed_label_bodies_read": 1,
+    "existing_seed_label_bodies_not_obtained": 19,
+    "distinct_official_label_text_bodies_read": 24,
+    "in_scope_text_candidates": 20,
+    "boundary_only_examples": 4,
+    "complete_approved_current_labels_delivered": 0,
+    "usable_dose_cards": 0
+  },
+  "labels": [
+    {
+      "registration_number": "PD20211636",
+      "registered_name": "乙·嗪·滴辛酯",
+      "holder": "天津博克百胜科技有限公司",
+      "form": "乳油",
+      "ingredients_observed": "乙草胺55.3%；2,4-滴异辛酯20.2%；嗪草酮6.5%",
+      "approved_at": "2021-08-25",
+      "reapproved_at": "2024-09-29",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "春大豆田",
+        "春玉米田"
+      ],
+      "existing_seed_record_id": "gy-i03-hb-020",
+      "followup": "原20记录唯一取得标签正文者；需核对既有公告与该重新核准版本；甜玉米、爆裂型玉米禁用，敏感邻作与温度等条件须保留。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20211636"
+    },
+    {
+      "registration_number": "PD20080626",
+      "registered_name": "苄嘧磺隆",
+      "holder": "江西江南绿岸生态科技有限公司",
+      "form": "可湿性粉剂",
+      "ingredients_observed": "苄嘧磺隆30%",
+      "approved_at": "2008-05-12",
+      "reapproved_at": "2020-06-18",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻移栽田"
+      ],
+      "followup": "表格针对阔叶及莎草科，不映射为稗草/狗尾草防治证据；移栽阶段和水管理条件待结构化审核。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20080626"
+    },
+    {
+      "registration_number": "PD20151189",
+      "registered_name": "2甲4氯二甲胺盐",
+      "holder": "江苏省农垦生物化学有限公司",
+      "form": "水剂",
+      "ingredients_observed": "2甲4氯62%（备注盐含量75%）",
+      "approved_at": "2015-06-27",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻移栽田"
+      ],
+      "toxicity_text_observed": "微毒",
+      "followup": "勿把有效成分与盐含量当同一身份字段；阔叶邻作漂移及水生环境限制待核对。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20151189"
+    },
+    {
+      "registration_number": "PD20183937",
+      "registered_name": "2甲·灭草松",
+      "holder": "广西鑫金泰化工有限公司",
+      "form": "可溶液剂",
+      "ingredients_observed": "灭草松400克/升；2甲4氯60克/升",
+      "approved_at": "2018-08-21",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻田(直播)"
+      ],
+      "followup": "适用表仅直播稻，技术/性能叙述还提移栽稻；冲突未解决，不凭叙述扩大适用范围。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20183937"
+    },
+    {
+      "registration_number": "PD20250140",
+      "registered_name": "丙草·丙噁·松",
+      "holder": "安徽众邦生物工程有限公司",
+      "form": "乳油",
+      "ingredients_observed": "异噁草松12%；丙炔噁草酮6%；丙草胺30%",
+      "approved_at": "2025-01-16",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻移栽田"
+      ],
+      "followup": "移栽前施用、水层和水产套养禁用等条件须完整绑定，不能仅保留药名。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20250140"
+    },
+    {
+      "registration_number": "PD20210496",
+      "registered_name": "敌稗",
+      "holder": "合肥星宇化学有限责任公司",
+      "form": "乳油",
+      "ingredients_observed": "敌稗34%",
+      "approved_at": "2021-04-27",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻田(直播)"
+      ],
+      "followup": "表格明确稗草；水稻阶段、前后药剂间隔与鱼虾蟹套养禁用须保留；急救文本不自动作为健康指导输出。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20210496"
+    },
+    {
+      "registration_number": "PD20086306",
+      "registered_name": "苄嘧·丙草胺",
+      "holder": "浙江来益生物技术有限公司",
+      "form": "可湿性粉剂",
+      "ingredients_observed": "苄嘧磺隆10%；丙草胺15%",
+      "approved_at": "2008-12-31",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "水稻田(直播)"
+      ],
+      "followup": "直播模式及播种期、水管理、后茬间隔待核对；持有人在浙江不能代替浙江适用审核。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20086306"
+    },
+    {
+      "registration_number": "PD20173018",
+      "registered_name": "唑嘧磺草胺",
+      "holder": "吉林金秋农药有限公司",
+      "form": "水分散粒剂",
+      "ingredients_observed": "唑嘧磺草胺80%",
+      "approved_at": "2017-12-20",
+      "reapproved_at": "2025-09-01",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "大豆田",
+        "玉米田"
+      ],
+      "followup": "油菜在注意中作为后茬敏感作物，不能映射为登记作物；冬小麦在项目4作物之外。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20173018"
+    },
+    {
+      "registration_number": "PD20172613",
+      "registered_name": "辛·烟·莠去津",
+      "holder": "浙江禾本科技股份有限公司",
+      "form": "可分散油悬浮剂",
+      "ingredients_observed": "莠去津22%；辛酰溴苯腈13%；烟嘧磺隆3%",
+      "approved_at": "2017-10-18",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "玉米田"
+      ],
+      "followup": "甜/糯/爆裂/制种玉米、间套作等限制及药剂间隔须保留；同一作物ID不足以匹配。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20172613"
+    },
+    {
+      "registration_number": "PD20081734",
+      "registered_name": "乙草胺",
+      "holder": "江苏常隆农化有限公司",
+      "form": "乳油",
+      "ingredients_observed": "乙草胺900克/升",
+      "approved_at": "2008-11-18",
+      "reapproved_at": "2019-12-27",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "冬油菜",
+        "夏大豆",
+        "春大豆",
+        "夏玉米",
+        "春玉米"
+      ],
+      "followup": "春/夏及苗前处理条件不得抹平；降雨积水风险待审核。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20081734"
+    },
+    {
+      "registration_number": "PD20082322",
+      "registered_name": "精异丙甲草胺",
+      "holder": "先正达（苏州）作物保护有限公司",
+      "form": "乳油",
+      "ingredients_observed": "精异丙甲草胺960克/升",
+      "approved_at": "2008-12-01",
+      "reapproved_at": "2026-04-17",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "冬油菜田",
+        "夏大豆田",
+        "春大豆田",
+        "夏玉米田",
+        "春玉米田"
+      ],
+      "followup": "同名同含量与PD20141898仍为不同登记制剂；作物/栽培/土壤/轮作条件须分别核对，不能合并标签。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20082322"
+    },
+    {
+      "registration_number": "PD20201114",
+      "registered_name": "乙·嗪·滴辛酯",
+      "holder": "安徽丰乐农化有限责任公司",
+      "form": "乳油",
+      "ingredients_observed": "乙草胺55.3%；2,4-滴异辛酯20.2%；嗪草酮6.5%",
+      "approved_at": "2020-12-25",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "春大豆田"
+      ],
+      "followup": "不可套用同成分PD20211636的玉米场景或原文；饮用水源等限制待核验。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20201114"
+    },
+    {
+      "registration_number": "PD20210507",
+      "registered_name": "乙·嗪·滴辛酯",
+      "holder": "辽宁津田科技有限公司",
+      "form": "乳油",
+      "ingredients_observed": "乙草胺55.3%；2,4-滴异辛酯20.2%；嗪草酮6.5%",
+      "approved_at": "2021-04-27",
+      "reapproved_at": "2026-07-29",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "春大豆田",
+        "春玉米田"
+      ],
+      "followup": "同成分不同登记号及重新核准日期分别保留；不得复用其他持有人的条件或旧版本。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20210507"
+    },
+    {
+      "registration_number": "PD20141898",
+      "registered_name": "精异丙甲草胺",
+      "holder": "山东滨农科技有限公司",
+      "form": "乳油",
+      "ingredients_observed": "精异丙甲草胺960克/升",
+      "approved_at": "2014-08-01",
+      "reapproved_at": "2024-06-11",
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "冬油菜田",
+        "夏玉米"
+      ],
+      "followup": "标签适用表无大豆；不能由PD20082322相同成分/含量推导大豆登记。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20141898"
+    },
+    {
+      "registration_number": "PD20081680",
+      "registered_name": "精喹禾灵",
+      "holder": "江苏丰山生化科技有限公司",
+      "form": "乳油",
+      "ingredients_observed": "精喹禾灵5%",
+      "approved_at": "2008-11-17",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "夏大豆田",
+        "春大豆田",
+        "油菜田"
+      ],
+      "followup": "防除禾本科不等于可施用于禾本科作物；水稻/玉米为应避免药液触及作物。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20081680"
+    },
+    {
+      "registration_number": "PD20100133",
+      "registered_name": "烯草酮",
+      "holder": "江苏丰山生化科技有限公司",
+      "form": "乳油",
+      "ingredients_observed": "烯草酮120克/升",
+      "approved_at": "2010-01-05",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "油菜田"
+      ],
+      "followup": "播种/移栽、抽苔和低温限制待核对；不能与240克/升标签互用。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20100133"
+    },
+    {
+      "registration_number": "PD20171896",
+      "registered_name": "烯草酮",
+      "holder": "中农立华（天津）农用化学品有限公司",
+      "form": "乳油",
+      "ingredients_observed": "烯草酮240克/升",
+      "approved_at": "2017-09-19",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "春油菜田"
+      ],
+      "followup": "春油菜不是全部油菜；间套禾本科作物禁用；不从标签中的配合使用措辞生成混配方案。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20171896"
+    },
+    {
+      "registration_number": "PD20140297",
+      "registered_name": "硝磺草酮",
+      "holder": "利民化学有限责任公司",
+      "form": "悬浮剂",
+      "ingredients_observed": "硝磺草酮15%",
+      "approved_at": "2014-02-12",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "玉米田"
+      ],
+      "followup": "玉米类型、间作、后茬和药剂间隔待绑定；不能仅凭除草剂名称显示原文用量。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20140297"
+    },
+    {
+      "registration_number": "PD20083717",
+      "registered_name": "草除灵",
+      "holder": "江苏富田农化有限公司",
+      "form": "悬浮剂",
+      "ingredients_observed": "草除灵30%",
+      "approved_at": "2008-12-15",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "冬油菜田"
+      ],
+      "followup": "甘蓝型、芥菜型、白菜型差异及生育阶段需审核，不泛化所有油菜。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20083717"
+    },
+    {
+      "registration_number": "PD20211623",
+      "registered_name": "灭草松钠盐",
+      "holder": "安达市海纳贝尔化工有限公司",
+      "form": "可溶液剂",
+      "ingredients_observed": "灭草松480克/升（备注灭草松40.0%、钠盐524克/升）",
+      "approved_at": "2021-08-25",
+      "reapproved_at": null,
+      "bucket": "in_scope_text_candidate",
+      "in_scope_scenes_observed": [
+        "大豆田",
+        "水稻移栽田"
+      ],
+      "followup": "性能中的莲子草不可自动等同species_alligatorweed，学名/对象粒度待独立核实；盐/有效成分身份须区分。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20211623"
+    },
+    {
+      "registration_number": "PD20181483",
+      "registered_name": "草铵·草甘膦",
+      "holder": "浙江新安化工集团股份有限公司",
+      "form": "可溶液剂",
+      "ingredients_observed": "草铵膦6%；草甘膦30%",
+      "approved_at": "2018-04-18",
+      "reapproved_at": "2023-04-03",
+      "bucket": "boundary_only",
+      "in_scope_scenes_observed": [],
+      "followup": "只读到非耕地场景，农林区域禁止条款明确；不计首版4作物适用候选，不推广到田埂。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20181483"
+    },
+    {
+      "registration_number": "PD20084065",
+      "registered_name": "草甘膦铵盐",
+      "holder": "浙江新安化工集团股份有限公司",
+      "form": "可溶粒剂",
+      "ingredients_observed": "草甘膦68%（备注铵盐75.7%）",
+      "approved_at": "2008-12-16",
+      "reapproved_at": null,
+      "bucket": "boundary_only",
+      "in_scope_scenes_observed": [
+        "免耕冬油菜",
+        "免耕抛秧晚稻田",
+        "免耕春油菜",
+        "夏玉米",
+        "春玉米"
+      ],
+      "followup": "技术要求将春/夏玉米限定北方，浙江玉米不得命中；免耕模式与普通作物档案不同。本轮仅边界例，不计20候选。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20084065"
+    },
+    {
+      "registration_number": "PD20101587",
+      "registered_name": "草甘膦铵盐",
+      "holder": "南通江山农药化工股份有限公司",
+      "form": "水剂",
+      "ingredients_observed": "草甘膦30%（备注铵盐33%）",
+      "approved_at": "2010-09-07",
+      "reapproved_at": "2025-12-22",
+      "bucket": "boundary_only",
+      "in_scope_scenes_observed": [],
+      "followup": "玉米用途为特定耐受转化体，未确认项目品种条件；不能将转基因条件删除后匹配crop_maize。不计20普通候选。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20101587"
+    },
+    {
+      "registration_number": "PD20140879",
+      "registered_name": "草铵膦",
+      "holder": "山东滨农科技有限公司",
+      "form": "水剂",
+      "ingredients_observed": "草铵膦200克/升",
+      "approved_at": "2014-04-08",
+      "reapproved_at": "2026-01-21",
+      "bucket": "boundary_only",
+      "in_scope_scenes_observed": [],
+      "followup": "玉米/大豆用途仅特定耐受转化体，冬枣/柑橘非4作物；不计20普通候选，不推导普通玉米/大豆适用。",
+      "canonical_url": "https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD20140879"
+    }
+  ],
+  "original_seed_audit": {
+    "file": "packages/knowledge/herbicides/records-2026.json",
+    "successful_registration_numbers": [
+      "PD20211636"
+    ],
+    "not_obtained_via_browser": [
+      "PD20161371",
+      "PD20211218",
+      "PD20211629",
+      "PD20212142",
+      "PD20212101",
+      "PD20212271",
+      "PD20161376",
+      "PD20211624",
+      "PD20161175",
+      "PD20110805",
+      "PD20212226",
+      "PD20211628",
+      "PD20212137",
+      "PD20212138",
+      "PD20211640",
+      "PD20111018",
+      "PD20161375",
+      "PD20260472",
+      "PD20212148"
+    ],
+    "failure_observation": "19条本次打开返回不可访问/抓取失败；未判定其标签不存在或登记无效。另对PD20161371及PD20181483执行本机urllib直接GET，均HTTP403，未绕过访问控制。"
+  },
+  "unresolved_for_every_label": [
+    "原始完整标签/图示及可复核内容哈希尚未交接",
+    "登记有效期起止及截至读取日当前状态未独立核实",
+    "全国与浙江最新禁限用和适用条件未完成审核",
+    "标签原文与结构化条件/单位逐项复核未完成",
+    "全文保存、展示、再分发与训练许可未建立",
+    "未经来源生命周期流程生成并发布production source_version",
+    "不是独立实拍OCR/识草评估样本"
+  ]
+}
