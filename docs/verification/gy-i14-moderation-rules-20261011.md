@@ -292,20 +292,61 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 
 处置后该用例通过，全部 100 条用例通过。
 
-## 9.2 门禁运行中观察到的一次**与本片无关**的资源型抖动（原始报错保留）
+## 9.2 门禁 `test:unit` 在本机存在**与本片无关**的资源型抖动（原始报错保留）
 
-在反复运行门禁时，观察到过一次**不绿色**的 `test:unit`：
+纳入本片用例后，`npm run test:unit` 共运行 **9** 次：**6 次全绿**，**3 次出现失败**。
+3 次失败**全部**落在改动前就存在的 PostgreSQL/PGlite、加密与子进程套件，
+**`tests/moderation/**` 在失败运行中 0 失败**（100 条全过）。
+
+### 9.2.1 失败运行之一（完整原始输出已保存）
 
 ```
 ℹ tests 773
-ℹ pass 769
-ℹ fail 3
+ℹ pass 763
+ℹ fail 9
 ℹ skipped 1
 ```
 
-**归因过程（先排除本片，再下结论）**：把本片的 `tests/moderation/*.test.mjs` **完全排除**，
-只跑改动前就存在的四组用例（`tests/unit` / `tests/privacy` / `tests/media` / `tests/reference`），
-在第 2 次重复运行中复现了失败：
+失败项全清单（`✖` 原样）：
+
+```
+✖ mixed LF/CRLF output passes and regeneration remains deterministic LF (5965.3284ms)
+✖ P2-③ 后台账号 suspended 后同键同体重放 → 403 ACCOUNT_INACTIVE (1290.8634ms)
+✖ P2-③ 后台 auth_epoch 递增后同键同体重放 → 403 ACCOUNT_INACTIVE (2010.801ms)
+✖ P2-③ 后台关联会话撤销后同键同体重放 → 401 SESSION_EXPIRED (1016.2923ms)
+✖ tests\unit\auth-store-pg.test.mjs (7013.9642ms)
+✖ tests\unit\gy-i03-db.test.mjs (6972.3947ms)
+✖ tests\unit\local-profile-bootstrap.test.mjs (6965.0808ms)
+✖ tests\unit\migrations-constraint.test.mjs (6859.1519ms)
+✖ actual source CLI rejects pg overrides before any socket connection (5209.1938ms)
+```
+
+根因（原始报错，说明是内存耗尽而非逻辑错误）：
+
+```
+test at tests\reference\generated-data-check.test.mjs:76:1
+✖ mixed LF/CRLF output passes and regeneration remains deterministic LF
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  3221226505 !== 0            # 子进程被 Windows 致命退出码终止（0xC0000409）
+      at TestContext.<anonymous> (tests/reference/generated-data-check.test.mjs:87:10)
+```
+
+```
+test at tests\unit\auth-routes.test.mjs:519:1
+✖ P2-③ 后台 auth_epoch 递增后同键同体重放 → 403 ACCOUNT_INACTIVE
+  Error: Deriving bits failed
+      at scryptSync (node:internal/crypto/scrypt:71:37)
+      at hashPassword (services/api/src/auth/password.ts:18:16)
+      at AuthService.ensureBootstrapAdmin (services/api/src/auth/service.ts:248:23)
+```
+
+四个 PGlite 测试文件整体失败（`'test failed'`，各约 7 秒）——它们的子用例未计入，
+故总数 `773 < 783`（少 10 条），与 `fail 9` 自洽。
+
+### 9.2.2 归因实验一：**完全排除**本片用例
+
+只跑改动前就存在的四组用例（`tests/unit` / `tests/privacy` / `tests/media` / `tests/reference`，
+**不含** `tests/moderation`），独立运行 4 次，其中第 2 次复现失败：
 
 ```
 ✖ staging own database profile rejects source DB and any pg URL options before sockets (1935.4539ms)
@@ -316,27 +357,31 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
   #
 
   2147483651 !== 1
-      at TestContext.<anonymous> (file:///E:/GengYunCommander/GengYun_W6/tests/unit/staging-intake.test.mjs:39:12)
+      at TestContext.<anonymous> (tests/unit/staging-intake.test.mjs:39:12)
     actual: 2147483651,
     expected: 1,
     operator: 'strictEqual'
 ```
 
-即：**既有**用例 `tests/unit/staging-intake.test.mjs:30` 派生的子进程在本机内存压力下被 V8 OOM 终止
-（Windows 致命退出码 `2147483651`），而该用例断言退出码必须为 `1`。与本片代码无关。
+### 9.2.3 结论与影响评估
 
-随后 `npm run test:unit` 连续 5 次运行均为 `783 tests / 782 pass / fail 0 / skipped 1`。
-**未保留失败那一次的完整原始日志**（仅保留了复现实验中的这段堆栈）——这是本次证据的一处缺口，如实登记。
-
-**对本片的影响评估**：本片用例为纯同步函数调用，100 条合计约 0.3 秒、不派生进程、不开端口、不连数据库，
-因此本片把 `tests/moderation/*.test.mjs` 纳入门禁对上述内存压力**几乎无影响**；
-但"门禁存在与本次改动无关的资源型抖动"这一点仍应让监工知晓。
+- **抖动的成因**：本机内存压力下，派生大量 Node 子进程／PGlite 实例的**既有**用例被
+  V8 OOM 或 OpenSSL `scryptSync` 内存分配失败终止。**先于本片存在**，与本片代码无关。
+  （本机同时有多个写手 worktree 在跑同类门禁，是内存压力的合理来源，但此处不作断言。）
+- **本片影响**：`tests/moderation/**` 为纯同步函数调用，100 条合计约 0.2~0.3 秒，
+  **不派生进程、不开端口、不连数据库**，因此把本片用例纳入门禁对上述压力几乎没有影响。
+- **证据缺口（如实登记）**：3 次失败中已完整保留 1 次（§9.2.1）；另两次（`fail 3`、`fail 6`）
+  只保留了汇总行，未保存完整日志。
+- **给监工的建议**：复核本 PR 时，若遇到 `test:unit` 的这类失败，
+  请以 `node --test "tests/moderation/*.test.mjs"`（本片 100 条，恒为全绿，约 0.3 秒）
+  与本片文档 §3.1 的数值对照为准；这类抖动属既有门禁的机器资源问题，不应记在本 PR 名下。
+  建议由指挥评估是否单独开一项治理任务（如给 PGlite 套件串行化或调高内存上限）。
 
 ## 10 验证分列（按环境）
 
 | 环境 | 取得情况 | 说明 |
 | --- | --- | --- |
-| **本机**（Node v24.16.0，Windows） | **已取得** | `lint` / `test:unit` / `test:contract` / `test:docs` 四条门禁实跑通过；规则层 100 条用例通过；§4~§8 观测均出自本机 |
+| **本机**（Node v24.16.0，Windows） | **已取得** | `lint` / `test:unit` / `test:contract` / `test:docs` 四条门禁均已实跑通过；规则层 100 条用例恒为全绿（约 0.3 秒）；规则命中、fail-closed、版本重审、失败隔离观测均出自本机。注：`test:unit` 在本机存在**与本次改动无关**的资源型抖动（9 次运行中 3 次失败，失败全部落在既有 PGlite／加密／子进程套件，本片 0 失败）——详见 §9.2 |
 | **隔离环境**（受限执行沙箱） | **未取得** | 本片为纯函数组件，未做隔离环境实跑；沙箱 ACL 相关证据见既有 `docs/verification/*` 其它文档 |
 | **真机**（微信真机） | **未取得** | 本片无小程序改动、无页面；真机证据不适用本轮 |
 | **真实供应商**（模型/第三方） | **未取得** | 本片不调用任何模型或外部服务，无真实请求可记录 |
