@@ -1,7 +1,8 @@
 // GY-I04: one-use navigation intent, never an authorization or a persisted credential.
 // Reference: Agent2 feature/gy-i04-login-loop (uncommitted candidate, 2026-10-10).
 // Intents remain in this app process across reLaunch, and disappear on app restart.
-const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/reference/reference',
+const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/knowledge',
+  'pages/knowledgedetail/knowledgedetail', 'pages/reference/reference',
   'pages/referencedetail/referencedetail', 'pages/referenceseed/referenceseed',
   'pages/referenceseeddetail/referenceseeddetail', 'pages/community/community',
   'pages/messages/messages', 'pages/profile/profile', 'pages/login/login']
@@ -10,7 +11,7 @@ const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identi
 const HOME = '/pages/home/home'
 const LOGIN = '/pages/login/login'
 const MAX_PATH_LENGTH = 512
-const ID_PAGES = ['/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail']
+const ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail']
 let revision = 0
 let returnTo = null
 
@@ -27,6 +28,7 @@ function normalizeTarget(candidate) {
   let id
   try { id = decodeURIComponent(parts[1].slice(3)) } catch (_) { return null }
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return null
+  if (parts[0] === '/pages/knowledgedetail/knowledgedetail' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null
   return parts[0] + '?id=' + encodeURIComponent(id)
 }
 

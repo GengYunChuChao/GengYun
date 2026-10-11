@@ -31,6 +31,7 @@ try {
     'utils/debug.js',
     'utils/auth.js',
     'utils/profile-api.js',
+    'utils/knowledge-api.js',
     'utils/font-scale.js',
     'utils/system-font.js',
     'components/state-view/state-view.js',
@@ -55,6 +56,8 @@ try {
   const pages = [
     'pages/home/home',
     'pages/identify/identify',
+    'pages/knowledge/knowledge',
+    'pages/knowledgedetail/knowledgedetail',
     'pages/reference/reference',
     'pages/referencedetail/referencedetail',
     'pages/referenceseed/referenceseed',
