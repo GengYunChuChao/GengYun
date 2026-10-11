@@ -20,6 +20,12 @@
  *      **不得凭空补造剂量**；用量原文必须绑定「登记制剂 + 完整 6 字段条件」。
  *
  * 「只记原因、不改状态」在本模块是被禁止的写法；判定与原因在同一次纯函数调用里一起产生。
+ *
+ * 用量卡的生产口径（**不是**本模块的判定规则，而是装配层的硬约束）：
+ * GY-I07 验收第 3 条明令「不授 AI／用户经验专家认证标签，**不对模拟记录显示真实用量**」，
+ * 因此 `ocr/reference.ts` 的替身（stub/preset_demo）与未接线（real）用量端口**都恒返回空**，
+ * 生产路径的 `dose_cards` 恒为 `[]`。本模块的 gate **通过面**只由测试注入契约合法的
+ * 可信来源来证明（见 tests/unit/ocr-*.test.mjs），**绝不**让替身来源扮演「已核对有效」来源。
  */
 
 /** packages/contracts/openapi.json -> components.schemas.MatchState.enum（逐项一致，不得扩展）。 */
@@ -431,6 +437,10 @@ export interface DoseCard {
 /**
  * 用量卡候选：**来源可信度字段是实现层（非契约）判定依据，绝不下发**。
  * `card` 是契约投影；gate 只有在全部可信度条件成立时才允许它进入 `dose_cards`。
+ *
+ * 生产装配（`ocr/reference.ts`）在**任何**执行模式下都不产出候选
+ * （替身不提供用量、真实来源尚未接线），因此生产路径的 `dose_cards` 恒为 `[]`；
+ * 本接口的**通过面**只由测试**注入可信来源**来构造，绝不由替身数据扮演。
  */
 export interface DoseCardCandidate {
   card: DoseCard;
@@ -492,7 +502,10 @@ function isContractShapeValid(card: DoseCard): boolean {
  * 单卡适用性判定（**这是 PR #82 被判 P1 的那个 gate**）：
  * 单独看 `usable_as_dose === true`（等价于本层的 source_kind 可信）**不足以**放行，
  * 必须同时满足：条件齐全 → 绑定同一登记制剂 → 六项条件逐项一致 → 来源非模拟 →
- * 来源类型可信 → 未过期 → 已核对。
+ * 来源类型可信 → 未过期 → 已核对 → 卡片形状合法。
+ *
+ * 生产装配不产出任何候选，因此本函数的**通过面**只可能由测试注入可信来源触发；
+ * 任何一项不成立都会给出可单独指出的拒绝原因（`DoseGateReason`），不做静默降级。
  */
 export function decideDoseCard(
   candidate: DoseCardCandidate,
@@ -521,7 +534,9 @@ export function decideDoseCard(
 
 /**
  * 批量 gate：只有 `decideDoseCard` 判可用的卡才进入结果，顺序稳定，最多 10 张。
- * **绝不补造**：候选为空（含 real 模式端口未接线）就返回空数组。
+ * **绝不补造**：候选为空（替身 / 真实来源未接线的生产装配）就返回空数组。
+ * 生产替身**不提供**任何候选，因此本函数在 stub/preset_demo 下必然返回空
+ * —— 这正是 #7 验收第 3 条要求的形态，不是"暂时没有数据"。
  */
 export function gateDoseCards(input: {
   candidates: DoseCardCandidate[];

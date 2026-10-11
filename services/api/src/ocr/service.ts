@@ -342,6 +342,10 @@ export function createOcrService(options: OcrServiceOptions) {
    *   2) 纯函数判定 match_state（missing_fields / conflict_fields / ambiguous 的硬规则在 state.ts）；
    *   3) **只有 matched** 才去取用量卡候选；
    *   4) 候选再经 gate（条件齐全 + 绑定同一制剂 + 来源非模拟/未过期/已核对）才进入 dose_cards。
+   *
+   * 注意：生产装配的用量端口（替身 / 未接线）**恒返回空候选**，因此
+   * `dose_cards` 在生产路径恒为 `[]`（#7 验收第 3 条：不对模拟记录显示真实用量）。
+   * gate 的通过面由测试**注入**可信来源证明，绝不靠替身数据扮演可信来源。
    */
   async function verifyFields(fields: LabelFields, conditions: Conditions | null): Promise<OcrVerification> {
     let lookup: RegistryLookup;

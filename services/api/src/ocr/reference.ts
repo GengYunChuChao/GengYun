@@ -12,21 +12,21 @@
  *
  * 现状（如实记录，须写入证据文档与 PR 正文）：
  * - 真实登记库接入属后续任务；本片**不接数据库**，因此 `real` 模式下登记来源未接线 →
- *   **fail-closed**：`lookup` 一律 unavailable（→ MatchState `unavailable`），`listCandidates` 一律空，
+ *   **fail-closed**：`lookup` 一律 unavailable（→ MatchState `unavailable`），
  *   **绝不**用 `no_match` 掩盖「不可用」，也**绝不**回退替身登记资料。
  * - `stub` / `preset_demo` 模式使用**明确标注的替身合成登记资料**：合成登记号、合成产品名、
  *   合成生产企业，并在每条资料的 title/publisher/文本中显式带「替身合成示例（非真实登记资料）」标记。
+ *   替身**只用于核对链路**（MatchState 的构造与观测），**不提供任何用量**。
  *
- * 「用量原文必须绑定登记制剂 + 条件」在本文件的结构上就是强制的：
- * `DoseCardCandidate` 同时携带 `formulation_registration_number` 与六项 `conditions`，
- * 由 state.ts 的 `decideDoseCard` 逐项比对后才可能进入 `dose_cards`。
+ * 用量卡（`dose_cards`）的生产口径见本文件末节：
+ * **替身与未接线一律恒返回空** —— 严格执行 GY-I07 验收第 3 条
+ * 「不授 AI／用户经验专家认证标签，**不对模拟记录显示真实用量**」。
+ * 因此「用量原文必须绑定登记制剂 + 条件」这条约束在本片由两处共同保证：
+ * `DoseCardCandidate` 同时携带 `formulation_registration_number` 与六项 `conditions`（结构约束），
+ * 以及 `state.ts` 的 `decideDoseCard` 逐项比对后才可能进入 `dose_cards`（判定约束）。
  */
-import { createHash } from 'node:crypto';
 import {
-  MAX_DOSE_TEXT_LENGTH,
-  type DoseCard,
   type DoseCardCandidate,
-  type DoseConditions,
   type RegistryHerbicide,
   type RegistryLookup,
 } from './state.ts';
@@ -179,123 +179,50 @@ export function createOcrReferencePort(executionMode: string): OcrReferencePort 
 
 // ------------------------------------------------------------------ 用量卡来源
 
-/** 用量卡端口：只有替身模式才产出候选，`real` 一律空（**不补造**）。 */
+/**
+ * 用量卡端口。
+ *
+ * **生产口径（严格执行 GY-I07 验收第 3 条「不授专家认证标签，不对模拟记录显示真实用量」）**：
+ * 替身（`stub` / `preset_demo`）与未接线（`real`）**一律不产出任何候选** ⇒ `dose_cards` 恒为 `[]`。
+ * 只有**已核对的真实用量来源**才可能放行用量卡；本片尚未接入任何真实用量来源，
+ * 因此**在任何执行模式下都不会产出用量卡**（如实记录，不假装具备用量能力）。
+ *
+ * 本文件刻意**不提供任何「替身用量卡」构造器**：若让替身产出契约合法、
+ * 来源标为 `validity='valid'` / `review_status='verified'` 的卡片，即使它随后被 gate 拒绝，
+ * 也等于「以模拟记录呈现真实用量」，不该出现在生产代码里。
+ *
+ * `state.ts` 的 `decideDoseCard` / `gateDoseCards` 完整保留且**必须被消费**
+ * （适用性判定不得被跳过）；其**通过面**由 `tests/unit/ocr-*.test.mjs`
+ * **注入契约合法的可信来源**来证明 —— 靠测试注入，而不是靠让生产替身输出可信卡。
+ */
 export interface OcrDosePort {
   readonly kind: 'substitute' | 'unwired';
   readonly note: string;
   listCandidates(input: { registrationNumber: string | null }): Promise<DoseCardCandidate[]>;
 }
 
-function sha256Hex(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
-}
-
-/** 替身用量卡绑定的完整六项条件（契约 DoseConditions 要求全齐）。 */
-export const SUBSTITUTE_DOSE_CONDITIONS: DoseConditions = {
-  crop_id: 'rice',
-  region_code: '330100',
-  species_id: 'species_barnyardgrass',
-  growth_stage: '3-5叶期',
-  planting_method: '移栽',
-  use_scene: '水稻田',
-};
-
-const DOSE_ORIGINAL_TEXT = `${SUBSTITUTE_MARK}·原文用量示例：防除稗草，按登记标签标注的制剂用量与施药方法使用。`;
-
-function substituteDoseCandidate(input: {
-  cardId: string;
-  registrationNumber: string;
-  dosageForm: string;
-  ingredient: { name: string; contentText: string; unitText: string };
-  locator: string;
-  methodText: string;
-}): DoseCardCandidate {
-  const originalText = DOSE_ORIGINAL_TEXT;
-  const formulation = {
-    id: input.cardId,
-    registration_number: input.registrationNumber,
-    producer: `${SUBSTITUTE_MARK}·合成生产企业`,
-    dosage_form: input.dosageForm,
-    ingredients: [
-      { name: input.ingredient.name, content_text: input.ingredient.contentText, unit_text: input.ingredient.unitText },
-    ],
-  };
-  const card: DoseCard = {
-    id: input.cardId,
-    revision: 1,
-    formulation,
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
-    original_text: originalText,
-    unit_text: '毫升/亩',
-    method_text: input.methodText,
-    precautions_text: `${SUBSTITUTE_MARK}·注意事项示例，仅用于离线链路回归。`,
-    source: {
-      id: 'bbbbbbbb-0000-4000-8000-000000000001',
-      version: 'substitute-dose-1',
-      title: `${SUBSTITUTE_MARK}·用量登记资料`,
-      url: 'https://example.invalid/substitute/dose',
-      publisher: `${SUBSTITUTE_MARK}·本地替身用量库`,
-      source_kind: 'database',
-      evidence_kind: 'mixed',
-      validity: 'valid',
-      review_status: 'verified',
-      updated_at: '2026-01-01T00:00:00.000Z',
-    },
-    locator: input.locator,
-    content_hash: sha256Hex(`${originalText}\u0000${input.locator}\u0000${input.registrationNumber}`),
-  };
-  return {
-    card,
-    formulation_registration_number: input.registrationNumber,
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
-    source_kind: 'database',
-    validity: 'valid',
-    review_status: 'verified',
-    simulated: false,
-  };
-}
+const SUBSTITUTE_DOSE_NOTE =
+  '替身用量端口（stub/preset_demo）：**恒返回空** —— 替身不提供用量，绝不以模拟记录呈现真实用量。';
 
 /**
- * 替身用量卡候选。**只有 PD20210001 / PD20210002 有卡片**；
- * PD20210003 / PD20210004（歧义那两条）刻意没有卡片，用于验证「匹配到歧义记录时不得凭空补造剂量」。
+ * 替身用量端口。**恒返回空数组**：替身不产出任何用量卡。
+ *
+ * 这不是「暂时没实现」的托词，而是验收条要求的行为：
+ * 模拟来源不得呈现真实用量（#7 验收第 3 条）。因此即使本片能构造出契约合法的替代数据，
+ * 也**不允许**让它成为可放行的用量卡。
  */
-export const SUBSTITUTE_DOSE_CANDIDATES: readonly DoseCardCandidate[] = [
-  substituteDoseCandidate({
-    cardId: '55555555-5555-4555-8555-555555555555',
-    registrationNumber: 'PD20210001',
-    dosageForm: '水剂',
-    ingredient: { name: '草甘膦', contentText: '41', unitText: '%' },
-    locator: `${SUBSTITUTE_MARK}·标签「使用技术与使用方法」第 1 段`,
-    methodText: `${SUBSTITUTE_MARK}·定向喷雾，避免药液漂移到邻近敏感作物。`,
-  }),
-  substituteDoseCandidate({
-    cardId: '66666666-6666-4666-8666-666666666666',
-    registrationNumber: 'PD20210002',
-    dosageForm: '乳油',
-    ingredient: { name: '乙草胺', contentText: '50', unitText: '%' },
-    locator: `${SUBSTITUTE_MARK}·标签「使用范围与使用方法」第 2 段`,
-    methodText: `${SUBSTITUTE_MARK}·土壤喷雾处理，施药后保持土壤湿润。`,
-  }),
-];
-
-const SUBSTITUTE_DOSE_NOTE =
-  '替身合成用量卡端口（stub/preset_demo）：仅返回绑定替身合成制剂与完整六项条件的候选，文本显式带替身标记。';
-
 export function createSubstituteDosePort(): OcrDosePort {
   return {
     kind: 'substitute',
     note: SUBSTITUTE_DOSE_NOTE,
-    async listCandidates({ registrationNumber }) {
-      if (registrationNumber === null) return [];
-      return SUBSTITUTE_DOSE_CANDIDATES.filter(
-        (item) => item.formulation_registration_number.toLowerCase() === registrationNumber.trim().toLowerCase(),
-      );
+    async listCandidates() {
+      return [];
     },
   };
 }
 
 /**
- * 未接线用量端口（`real`）。一律返回空数组：**没有已审真实用量来源就不得产出任何剂量**，
+ * 未接线用量端口（`real`）。同样恒返回空数组：**没有已审真实用量来源就不得产出任何剂量**，
  * `dose_cards` 必须是 []，绝不回退替身用量卡。
  */
 export function createUnwiredDosePort(reason = '真实用量资料来源尚未接线'): OcrDosePort {
@@ -308,23 +235,11 @@ export function createUnwiredDosePort(reason = '真实用量资料来源尚未�
   };
 }
 
-/** 按执行模式选择用量端口：只有替身模式才允许替身用量卡。 */
+/**
+ * 按执行模式选择用量端口：**两种模式都恒返回空**。
+ * 也就是说，生产路径在结构上不可能产出用量卡（`dose_cards` 恒为 `[]`）；
+ * 一旦接入已审真实用量来源，只需替换本工厂的 `real` 分支，gate 与判定链无需改动。
+ */
 export function createOcrDosePort(executionMode: string): OcrDosePort {
   return executionMode === 'real' ? createUnwiredDosePort() : createSubstituteDosePort();
 }
-
-/** 供测试构造变体（模拟来源 / 过期 / 未核对 / 条件不符）时复用（`card` / `conditions` 做浅合并）。 */
-export function cloneDoseCandidate(
-  candidate: DoseCardCandidate,
-  overrides: Partial<DoseCardCandidate> = {},
-): DoseCardCandidate {
-  return {
-    ...candidate,
-    ...overrides,
-    card: { ...candidate.card, ...(overrides.card ?? {}) },
-    conditions: { ...candidate.conditions, ...(overrides.conditions ?? {}) },
-  };
-}
-
-/** 契约文本上限导出给测试断言使用（避免测试里硬编码 4000）。 */
-export const DOSE_TEXT_LIMIT = MAX_DOSE_TEXT_LENGTH;

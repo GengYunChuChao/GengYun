@@ -8,10 +8,17 @@
  *      多候选无法区分 ⇒ ambiguous；登记库不可用 ⇒ unavailable（不得用 no_match 掩盖）；
  *   4. dose_cards 被适用性判定 gate：条件缺失/不全、来源模拟/过期/未核对 ⇒ 必为 []，且不补造。
  *
+ * **用量卡的重要口径**（对应 GY-I07 验收第 3 条「不对模拟记录显示真实用量」）：
+ * 生产装配（替身 / 未接线）**恒返回空候选**，生产路径的 dose_cards 恒为 []。
+ * 因此本文件里用来证明 gate **通过面**的候选，是**测试注入的契约合法可信来源**
+ * （`INJECTED_TRUSTED_CANDIDATES`，明确命名、明确标注），**不是**生产替身数据 ——
+ * 绝不让替身来源扮演「已核对有效」来源。
+ *
  * 断言一律**先判 typeof / Array.isArray 再判值**，避免 `undefined === undefined` 式的假通过。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
   MATCH_STATES,
@@ -29,12 +36,7 @@ import {
   decideDoseCard,
   OcrProtocolError,
 } from '../../services/api/src/ocr/state.ts';
-import {
-  SUBSTITUTE_REGISTRY,
-  SUBSTITUTE_DOSE_CANDIDATES,
-  SUBSTITUTE_DOSE_CONDITIONS,
-  cloneDoseCandidate,
-} from '../../services/api/src/ocr/reference.ts';
+import { SUBSTITUTE_REGISTRY } from '../../services/api/src/ocr/reference.ts';
 
 // ---------------------------------------------------------------- 断言辅助
 
@@ -66,6 +68,88 @@ function fields(overrides = {}) {
 /** 登记库可用 + 给定候选。 */
 function available(candidates) {
   return { status: 'available', candidates };
+}
+
+// ------------------------------------------- 测试注入的用量卡来源（非生产数据）
+
+/** 用量卡绑定的完整六项条件样例（契约 DoseConditions 要求全齐）。 */
+const DOSE_CONDITIONS_SAMPLE = {
+  crop_id: 'rice',
+  region_code: '330100',
+  species_id: 'species_barnyardgrass',
+  growth_stage: '3-5叶期',
+  planting_method: '移栽',
+  use_scene: '水稻田',
+};
+
+/**
+ * 构造一张**测试注入的、契约合法且来源可信**的用量卡候选。
+ *
+ * 这是**测试夹具**，不是生产数据：生产替身端口不产出任何候选（见 ocr/reference.ts）。
+ * 只有在这里才能构造「来源可信」形态，用于证明 gate 的通过面与逐项拒绝面。
+ */
+function trustedDoseCandidate(overrides = {}) {
+  const { conditions: conditionOverrides = {}, card: cardOverrides = {}, ...rest } = overrides;
+  const registrationNumber = rest.registrationNumber ?? 'PD20210001';
+  const cardId = rest.cardId ?? '55555555-5555-4555-8555-555555555555';
+  const conditions = { ...DOSE_CONDITIONS_SAMPLE, ...conditionOverrides };
+  const originalText = '测试注入·登记标签原文用量：防除稗草，按登记标签标注的制剂用量与施药方法使用。';
+  const locator = '测试注入·标签「使用技术与使用方法」第 1 段';
+  const card = {
+    id: cardId,
+    revision: 1,
+    formulation: {
+      id: cardId,
+      registration_number: registrationNumber,
+      producer: '测试注入合成生产企业',
+      dosage_form: '水剂',
+      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+    },
+    conditions,
+    original_text: originalText,
+    unit_text: '毫升/亩',
+    method_text: '测试注入·定向喷雾，避免药液漂移到邻近敏感作物。',
+    precautions_text: '测试注入·注意事项。',
+    source: {
+      id: 'bbbbbbbb-0000-4000-8000-000000000001',
+      version: 'test-injected-1',
+      title: '测试注入用量登记资料',
+      url: 'https://example.invalid/test-injected/dose',
+      publisher: '测试注入本地用量库',
+      source_kind: 'database',
+      evidence_kind: 'mixed',
+      validity: 'valid',
+      review_status: 'verified',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    },
+    locator,
+    content_hash: createHash('sha256')
+      .update(`${originalText}\u0000${locator}\u0000${registrationNumber}`, 'utf8')
+      .digest('hex'),
+    ...cardOverrides,
+  };
+  return {
+    card,
+    formulation_registration_number: registrationNumber,
+    conditions,
+    source_kind: rest.source_kind ?? 'database',
+    validity: rest.validity ?? 'valid',
+    review_status: rest.review_status ?? 'verified',
+    simulated: rest.simulated ?? false,
+  };
+}
+
+/** 测试注入的可信候选（单条），供各用例复用。 */
+const INJECTED_TRUSTED_CANDIDATES = [trustedDoseCandidate()];
+
+/** 基于注入候选构造变体（`card` / `conditions` 做浅合并）。 */
+function variantOfCandidate(candidate, overrides = {}) {
+  return {
+    ...candidate,
+    ...overrides,
+    card: { ...candidate.card, ...(overrides.card ?? {}) },
+    conditions: { ...candidate.conditions, ...(overrides.conditions ?? {}) },
+  };
 }
 
 const R1 = SUBSTITUTE_REGISTRY[0];
@@ -246,11 +330,11 @@ test('辅助函数·missingNecessaryFields 与 conflictFields 与 decideMatchSta
 
 // ---------------------------------------------------------------- 4. dose_cards 适用性 gate
 
-test('dose gate 正向·条件齐全 + 绑定同一登记制剂 + 来源可信 ⇒ 放行 1 张', () => {
-  const candidate = SUBSTITUTE_DOSE_CANDIDATES[0];
+test('dose gate 通过面（**测试注入**契约合法可信来源）·条件齐全 + 绑定同一登记制剂 ⇒ 放行 1 张', () => {
+  const candidate = INJECTED_TRUSTED_CANDIDATES[0];
   const outcome = gateDoseCards({
     candidates: [candidate],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertArray(outcome.dose_cards, 'dose_cards');
@@ -260,43 +344,43 @@ test('dose gate 正向·条件齐全 + 绑定同一登记制剂 + 来源可信 �
 });
 
 test('反例·conditions 缺失 ⇒ dose_cards 必为 []（且原因可指出）', () => {
-  const decision = decideDoseCard(SUBSTITUTE_DOSE_CANDIDATES[0], { conditions: null, registrationNumber: 'PD20210001' });
+  const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], { conditions: null, registrationNumber: 'PD20210001' });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'CONDITIONS_ABSENT');
-  const outcome = gateDoseCards({ candidates: [SUBSTITUTE_DOSE_CANDIDATES[0]], conditions: null, registrationNumber: 'PD20210001' });
+  const outcome = gateDoseCards({ candidates: [INJECTED_TRUSTED_CANDIDATES[0]], conditions: null, registrationNumber: 'PD20210001' });
   assertEmptyArray(outcome.dose_cards, 'conditions 缺失时的 dose_cards');
 });
 
 test('反例·conditions 不全（只给 crop_id + region_code）⇒ dose_cards 必为 []', () => {
   const partial = { crop_id: 'rice', region_code: '330100' };
-  const decision = decideDoseCard(SUBSTITUTE_DOSE_CANDIDATES[0], { conditions: partial, registrationNumber: 'PD20210001' });
+  const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], { conditions: partial, registrationNumber: 'PD20210001' });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'CONDITIONS_INCOMPLETE');
-  const outcome = gateDoseCards({ candidates: [SUBSTITUTE_DOSE_CANDIDATES[0]], conditions: partial, registrationNumber: 'PD20210001' });
+  const outcome = gateDoseCards({ candidates: [INJECTED_TRUSTED_CANDIDATES[0]], conditions: partial, registrationNumber: 'PD20210001' });
   assertEmptyArray(outcome.dose_cards, 'conditions 不全时的 dose_cards');
 });
 
 test('反例·只凭来源"可用"标记不得放行：模拟来源必被 gate 丢弃', () => {
-  const simulated = cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], { simulated: true });
+  const simulated = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], { simulated: true });
   const decision = decideDoseCard(simulated, {
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'SOURCE_SIMULATED');
   const outcome = gateDoseCards({
     candidates: [simulated],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, '模拟来源时的 dose_cards');
 });
 
 test('反例·source_kind=simulation ⇒ dose_cards 必为 []', () => {
-  const simulated = cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], { source_kind: 'simulation', simulated: false });
+  const simulated = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], { source_kind: 'simulation', simulated: false });
   const outcome = gateDoseCards({
     candidates: [simulated],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, 'simulation 来源时的 dose_cards');
@@ -304,26 +388,26 @@ test('反例·source_kind=simulation ⇒ dose_cards 必为 []', () => {
 });
 
 test('反例·来源过期 ⇒ dose_cards 必为 []', () => {
-  const expired = cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], { validity: 'expired' });
+  const expired = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], { validity: 'expired' });
   const decision = decideDoseCard(expired, {
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'SOURCE_EXPIRED');
   const outcome = gateDoseCards({
     candidates: [expired],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, '过期来源时的 dose_cards');
 });
 
 test('反例·来源未核对 ⇒ dose_cards 必为 []', () => {
-  const unverified = cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], { review_status: 'unverified' });
+  const unverified = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], { review_status: 'unverified' });
   const outcome = gateDoseCards({
     candidates: [unverified],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, '未核对来源时的 dose_cards');
@@ -331,27 +415,27 @@ test('反例·来源未核对 ⇒ dose_cards 必为 []', () => {
 });
 
 test('反例·条件与卡片绑定的六项条件不一致 ⇒ dose_cards 必为 []', () => {
-  const mismatched = { ...SUBSTITUTE_DOSE_CONDITIONS, growth_stage: '分蘖期' };
-  const decision = decideDoseCard(SUBSTITUTE_DOSE_CANDIDATES[0], {
+  const mismatched = { ...DOSE_CONDITIONS_SAMPLE, growth_stage: '分蘖期' };
+  const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], {
     conditions: mismatched,
     registrationNumber: 'PD20210001',
   });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'CONDITIONS_MISMATCH');
-  const outcome = gateDoseCards({ candidates: [SUBSTITUTE_DOSE_CANDIDATES[0]], conditions: mismatched, registrationNumber: 'PD20210001' });
+  const outcome = gateDoseCards({ candidates: [INJECTED_TRUSTED_CANDIDATES[0]], conditions: mismatched, registrationNumber: 'PD20210001' });
   assertEmptyArray(outcome.dose_cards, '条件不一致时的 dose_cards');
 });
 
 test('反例·制剂不匹配（用量卡不绑定本次命中的登记制剂）⇒ dose_cards 必为 []', () => {
-  const decision = decideDoseCard(SUBSTITUTE_DOSE_CANDIDATES[0], {
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+  const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210002',
   });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'FORMULATION_MISMATCH');
   const outcome = gateDoseCards({
-    candidates: [SUBSTITUTE_DOSE_CANDIDATES[0]],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    candidates: [INJECTED_TRUSTED_CANDIDATES[0]],
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210002',
   });
   assertEmptyArray(outcome.dose_cards, '制剂不匹配时的 dose_cards');
@@ -359,35 +443,35 @@ test('反例·制剂不匹配（用量卡不绑定本次命中的登记制剂）
 
 test('反例·登记号为 null（未命中）⇒ dose_cards 必为 []', () => {
   const outcome = gateDoseCards({
-    candidates: [SUBSTITUTE_DOSE_CANDIDATES[0]],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    candidates: [INJECTED_TRUSTED_CANDIDATES[0]],
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: null,
   });
   assertEmptyArray(outcome.dose_cards, '登记号为 null 时的 dose_cards');
 });
 
 test('反例·卡片形状违规（content_hash 非 64 位十六进制）必被丢弃而非修补', () => {
-  const malformed = cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], {
-    card: { ...SUBSTITUTE_DOSE_CANDIDATES[0].card, content_hash: 'NOT-A-HASH' },
+  const malformed = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, content_hash: 'NOT-A-HASH' },
   });
   const decision = decideDoseCard(malformed, {
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assert.equal(decision.usable, false);
   assert.equal(decision.reason, 'CARD_MALFORMED');
   const outcome = gateDoseCards({
     candidates: [malformed],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, '形状违规时的 dose_cards');
 });
 
-test('反例·候选为空（real 未接线语义）⇒ dose_cards 为 []，绝不补造', () => {
+test('反例·生产装配（替身 / 未接线）不产出任何候选 ⇒ dose_cards 为 []，绝不补造', () => {
   const outcome = gateDoseCards({
     candidates: [],
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assertEmptyArray(outcome.dose_cards, '无候选时的 dose_cards');
@@ -396,13 +480,13 @@ test('反例·候选为空（real 未接线语义）⇒ dose_cards 为 []，绝�
 
 test('dose gate·候选超过契约上限 10 时最多输出 10 张', () => {
   const many = Array.from({ length: 14 }, (_, index) =>
-    cloneDoseCandidate(SUBSTITUTE_DOSE_CANDIDATES[0], {
-      card: { ...SUBSTITUTE_DOSE_CANDIDATES[0].card, id: `77777777-7777-4777-8777-777777777${String(index).padStart(3, '0')}` },
+    variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+      card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, id: `77777777-7777-4777-8777-777777777${String(index).padStart(3, '0')}` },
     }),
   );
   const outcome = gateDoseCards({
     candidates: many,
-    conditions: { ...SUBSTITUTE_DOSE_CONDITIONS },
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
     registrationNumber: 'PD20210001',
   });
   assert.equal(outcome.dose_cards.length, MAX_DOSE_CARDS);
@@ -414,8 +498,8 @@ test('辅助函数·missingDoseConditionFields 对 null 返回全部 6 项，对
   assert.equal(all.length, 6, `实际 ${JSON.stringify(all)}`);
   const partial = missingDoseConditionFields({ crop_id: 'rice', region_code: '330100' });
   assert.deepEqual([...partial].sort(), ['growth_stage', 'planting_method', 'species_id', 'use_scene']);
-  assertEmptyArray(missingDoseConditionFields({ ...SUBSTITUTE_DOSE_CONDITIONS }), '齐全条件的缺项');
-  assert.equal(isDoseConditionsComplete({ ...SUBSTITUTE_DOSE_CONDITIONS }), true);
+  assertEmptyArray(missingDoseConditionFields({ ...DOSE_CONDITIONS_SAMPLE }), '齐全条件的缺项');
+  assert.equal(isDoseConditionsComplete({ ...DOSE_CONDITIONS_SAMPLE }), true);
   assert.equal(isDoseConditionsComplete({ crop_id: 'rice', region_code: '330100' }), false);
 });
 

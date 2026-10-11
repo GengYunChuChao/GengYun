@@ -1,9 +1,15 @@
 /**
  * GY-I10 标签 OCR · 服务层单元回归（Refs #10）。
  *
- * 走**真实服务链路**（内存 store + 替身提供者 + 替身登记库 + 替身用量库），覆盖契约 5 个 operationId
+ * 走**真实服务链路**（内存 store + 替身提供者 + 替身登记库），覆盖契约 5 个 operationId
  * 的 fail-closed 语义：越权、revision 冲突、多余字段、提供者失败不得写成功、
  * raw_fields 与 corrected_fields 严格分离、dose_cards 适用性 gate。
+ *
+ * **用量卡口径**（GY-I07 验收第 3 条「不对模拟记录显示真实用量」）：
+ * 生产装配（替身 / 未接线）恒返回空候选 ⇒ 生产路径 dose_cards 恒为 []，
+ * 并有专门反例断言 stub 生产路径在 matched + 条件齐全时仍为 []。
+ * gate 的**通过面**由本文件**注入**契约合法的可信来源（`createTrustedDosePort`）证明，
+ * 绝不用替身来源扮演「已核对有效」来源。
  *
  * 断言一律先判 typeof / Array.isArray 再判值；不使用「只要不抛错就算过」的写法。
  */
@@ -17,7 +23,6 @@ import { createMemoryOcrStore } from '../../services/api/src/ocr/store.ts';
 import { createOcrProvider } from '../../services/api/src/ocr/provider.ts';
 import { createOcrMediaPort, createSubstituteMediaPort } from '../../services/api/src/ocr/media.ts';
 import {
-  SUBSTITUTE_DOSE_CONDITIONS,
   createOcrDosePort,
   createOcrReferencePort,
   createSubstituteDosePort,
@@ -72,6 +77,90 @@ function boot(executionMode = 'stub', overrides = {}) {
     idempotencyHmacKey: HMAC_KEY,
   });
   return { store, service, provider };
+}
+
+// ------------------------------------------- 测试注入的用量卡来源（非生产数据）
+
+/** 用量卡绑定的完整六项条件样例（契约 DoseConditions 要求全齐）。 */
+const DOSE_CONDITIONS_SAMPLE = {
+  crop_id: 'rice',
+  region_code: '330100',
+  species_id: 'species_barnyardgrass',
+  growth_stage: '3-5叶期',
+  planting_method: '移栽',
+  use_scene: '水稻田',
+};
+
+/**
+ * 构造一张**测试注入的、契约合法且来源可信**的用量卡候选。
+ *
+ * 这是**测试夹具**，不是生产数据：生产替身端口不产出任何候选
+ * （GY-I07 验收第 3 条：不对模拟记录显示真实用量）。
+ * 只有靠注入才能构造「来源可信」形态，用于证明 gate 的通过面与逐项拒绝面。
+ */
+function trustedDoseCandidate(overrides = {}) {
+  const { conditions: conditionOverrides = {}, card: cardOverrides = {}, ...rest } = overrides;
+  const registrationNumber = rest.registrationNumber ?? 'PD20210001';
+  const cardId = rest.cardId ?? '55555555-5555-4555-8555-555555555555';
+  const conditions = { ...DOSE_CONDITIONS_SAMPLE, ...conditionOverrides };
+  const originalText = '测试注入·登记标签原文用量：防除稗草，按登记标签标注的制剂用量与施药方法使用。';
+  const locator = '测试注入·标签「使用技术与使用方法」第 1 段';
+  const card = {
+    id: cardId,
+    revision: 1,
+    formulation: {
+      id: cardId,
+      registration_number: registrationNumber,
+      producer: '测试注入合成生产企业',
+      dosage_form: '水剂',
+      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+    },
+    conditions,
+    original_text: originalText,
+    unit_text: '毫升/亩',
+    method_text: '测试注入·定向喷雾，避免药液漂移到邻近敏感作物。',
+    precautions_text: '测试注入·注意事项。',
+    source: {
+      id: 'bbbbbbbb-0000-4000-8000-000000000001',
+      version: 'test-injected-1',
+      title: '测试注入用量登记资料',
+      url: 'https://example.invalid/test-injected/dose',
+      publisher: '测试注入本地用量库',
+      source_kind: 'database',
+      evidence_kind: 'mixed',
+      validity: 'valid',
+      review_status: 'verified',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    },
+    locator,
+    content_hash: createHash('sha256')
+      .update(`${originalText}\u0000${locator}\u0000${registrationNumber}`, 'utf8')
+      .digest('hex'),
+    ...cardOverrides,
+  };
+  return {
+    card,
+    formulation_registration_number: registrationNumber,
+    conditions,
+    source_kind: rest.source_kind ?? 'database',
+    validity: rest.validity ?? 'valid',
+    review_status: rest.review_status ?? 'verified',
+    simulated: rest.simulated ?? false,
+  };
+}
+
+/**
+ * **测试注入**的用量端口：返回契约合法的可信来源候选。
+ * 仅用于证明 gate 的通过面；生产装配（`createOcrDosePort`）绝不这样返回。
+ */
+function createTrustedDosePort(candidates = [trustedDoseCandidate()]) {
+  return {
+    kind: 'unwired',
+    note: '测试注入的可信用量来源端口（非生产装配）',
+    async listCandidates() {
+      return candidates;
+    },
+  };
 }
 
 /** 找一个哈希分桶等于 bucket 的媒体 uuid（与提供者的确定性分桶口径一致）。 */
@@ -313,13 +402,13 @@ test('反例·correctOCR 会重算并 invalidate 旧登记核对（不留陈旧�
 
 // ---------------------------------------------------------------- dose_cards gate（服务层）
 
-test('verifyOCR·conditions 齐全且命中时给出用量卡，并绑定登记制剂与六项条件', async () => {
-  const { service } = boot();
+test('dose gate 通过面（**测试注入**契约合法可信来源）·matched + 条件齐全 ⇒ 放行 1 张并绑定登记制剂与六项条件', async () => {
+  const { service } = boot('stub', { dose: createTrustedDosePort() });
   const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
   const verification = await service.verifyOcr({
     userId: USER,
     ocrId: job.target_ref.id,
-    body: { fields: ocr.raw_fields, conditions: { ...SUBSTITUTE_DOSE_CONDITIONS } },
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
     ifMatch: `"${ocr.revision}"`,
     idempotencyKey: nextKey(),
   });
@@ -329,12 +418,48 @@ test('verifyOCR·conditions 齐全且命中时给出用量卡，并绑定登记�
   const card = verification.dose_cards[0];
   assertString(card.original_text, 'dose_card.original_text');
   assert.equal(card.formulation.registration_number, 'PD20210001', '用量原文必须绑定命中的登记制剂');
-  assert.equal(card.conditions.growth_stage, SUBSTITUTE_DOSE_CONDITIONS.growth_stage);
+  assert.equal(card.conditions.growth_stage, DOSE_CONDITIONS_SAMPLE.growth_stage);
+  assert.equal(card.conditions.species_id, DOSE_CONDITIONS_SAMPLE.species_id);
   assert.equal(card.source.review_status, 'verified');
 });
 
-test('反例·verifyOCR 不带 conditions 时 dose_cards 必为 []（matched 也不例外）', async () => {
-  const { service } = boot();
+test('反例·**stub 生产路径不得产出用量卡**：matched + 条件齐全时 dose_cards 必须为 []', async () => {
+  // 生产装配（不注入任何东西）：替身用量端口恒返回空候选 —— #7 验收第 3 条要求的行为。
+  const { service } = boot('stub');
+  const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+  const verification = await service.verifyOcr({
+    userId: USER,
+    ocrId: job.target_ref.id,
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+    ifMatch: `"${ocr.revision}"`,
+    idempotencyKey: nextKey(),
+  });
+  // 必须是 matched，才能证明空剂量不是靠"压根没匹配上"换来的。
+  assert.equal(verification.match_state, 'matched');
+  assertEmptyArray(verification.dose_cards, 'stub 生产路径的 dose_cards');
+  assert.equal(verification.dose_cards.length, 0);
+  // 落库后也不得出现任何用量卡。
+  const fetched = await service.getOcr({ userId: USER, ocrId: job.target_ref.id });
+  assertEmptyArray(fetched.verification.dose_cards, '落库后的 dose_cards');
+});
+
+test('反例·preset_demo 生产路径同样不得产出用量卡', async () => {
+  const { service } = boot('preset_demo');
+  const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+  assert.equal(ocr.verification.match_state, 'matched');
+  const verification = await service.verifyOcr({
+    userId: USER,
+    ocrId: job.target_ref.id,
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+    ifMatch: `"${ocr.revision}"`,
+    idempotencyKey: nextKey(),
+  });
+  assert.equal(verification.match_state, 'matched');
+  assertEmptyArray(verification.dose_cards, 'preset_demo 生产路径的 dose_cards');
+});
+
+test('反例·注入可信来源但不带 conditions 时 dose_cards 必为 []（matched 也不例外）', async () => {
+  const { service } = boot('stub', { dose: createTrustedDosePort() });
   const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
   const verification = await service.verifyOcr({
     userId: USER,
@@ -347,8 +472,8 @@ test('反例·verifyOCR 不带 conditions 时 dose_cards 必为 []（matched 也
   assertEmptyArray(verification.dose_cards, '无 conditions 时的 dose_cards');
 });
 
-test('反例·conditions 不全（只给 crop_id + region_code）时 dose_cards 必为 []', async () => {
-  const { service } = boot();
+test('反例·注入可信来源但 conditions 不全（只给 crop_id + region_code）时 dose_cards 必为 []', async () => {
+  const { service } = boot('stub', { dose: createTrustedDosePort() });
   const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
   const verification = await service.verifyOcr({
     userId: USER,
@@ -360,15 +485,15 @@ test('反例·conditions 不全（只给 crop_id + region_code）时 dose_cards 
   assertEmptyArray(verification.dose_cards, 'conditions 不全时的 dose_cards');
 });
 
-test('反例·conditions 与用量来源绑定条件不一致时 dose_cards 必为 []', async () => {
-  const { service } = boot();
+test('反例·注入可信来源但 conditions 与卡片绑定条件不一致时 dose_cards 必为 []', async () => {
+  const { service } = boot('stub', { dose: createTrustedDosePort() });
   const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
   const verification = await service.verifyOcr({
     userId: USER,
     ocrId: job.target_ref.id,
     body: {
       fields: ocr.raw_fields,
-      conditions: { ...SUBSTITUTE_DOSE_CONDITIONS, growth_stage: '分蘖期' },
+      conditions: { ...DOSE_CONDITIONS_SAMPLE, growth_stage: '分蘖期' },
     },
     ifMatch: `"${ocr.revision}"`,
     idempotencyKey: nextKey(),
@@ -376,14 +501,35 @@ test('反例·conditions 与用量来源绑定条件不一致时 dose_cards 必�
   assertEmptyArray(verification.dose_cards, '条件不一致时的 dose_cards');
 });
 
-test('反例·未命中（no_match / ambiguous）时即使条件齐全 dose_cards 也必为 []', async () => {
+test('反例·注入的候选来源为模拟 / 未核对 / 过期时 dose_cards 恒为 []（不得以模拟记录呈现真实用量）', async () => {
+  const variants = [
+    { label: '模拟来源', candidate: trustedDoseCandidate({ simulated: true, source_kind: 'simulation' }) },
+    { label: '未核对来源', candidate: trustedDoseCandidate({ review_status: 'unverified' }) },
+    { label: '过期来源', candidate: trustedDoseCandidate({ validity: 'expired' }) },
+  ];
+  for (const variant of variants) {
+    const { service } = boot('stub', { dose: createTrustedDosePort([variant.candidate]) });
+    const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+    const verification = await service.verifyOcr({
+      userId: USER,
+      ocrId: job.target_ref.id,
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+      ifMatch: `"${ocr.revision}"`,
+      idempotencyKey: nextKey(),
+    });
+    assert.equal(verification.match_state, 'matched', `${variant.label}：核对状态应为 matched`);
+    assertEmptyArray(verification.dose_cards, `${variant.label}时的 dose_cards`);
+  }
+});
+
+test('反例·注入可信来源但未命中（no_match / ambiguous）时即使条件齐全 dose_cards 也必为 []', async () => {
   for (const bucket of [3, 4]) {
-    const { service } = boot();
+    const { service } = boot('stub', { dose: createTrustedDosePort() });
     const { job, ocr } = await createAndSettle(service, USER, { bucket });
     const verification = await service.verifyOcr({
       userId: USER,
       ocrId: job.target_ref.id,
-      body: { fields: ocr.raw_fields, conditions: { ...SUBSTITUTE_DOSE_CONDITIONS } },
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
       ifMatch: `"${ocr.revision}"`,
       idempotencyKey: nextKey(),
     });
@@ -398,7 +544,7 @@ test('反例·real 模式用量端口未接线时 dose_cards 恒为 []（不补�
   const verification = await service.verifyOcr({
     userId: USER,
     ocrId: job.target_ref.id,
-    body: { fields: ocr.raw_fields, conditions: { ...SUBSTITUTE_DOSE_CONDITIONS } },
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
     ifMatch: `"${ocr.revision}"`,
     idempotencyKey: nextKey(),
   });
@@ -791,14 +937,29 @@ test('describe·未接线端口如实暴露 kind 与说明（供证据文档引�
   assert.equal(described.referenceAvailable, false);
 });
 
-test('端口装配·替身用量库只对已登记制剂给候选（歧义那两条没有卡片，不得补造）', async () => {
+test('反例·替身用量端口恒返回空（不得以模拟记录呈现真实用量，也不得凭空补造）', async () => {
   const dosePort = createSubstituteDosePort();
-  const forFirst = await dosePort.listCandidates({ registrationNumber: 'PD20210001' });
-  assert.equal(forFirst.length, 1);
-  const forAmbiguous = await dosePort.listCandidates({ registrationNumber: 'PD20210003' });
-  assertEmptyArray(forAmbiguous, 'PD20210003 的候选');
-  const forNull = await dosePort.listCandidates({ registrationNumber: null });
-  assertEmptyArray(forNull, '登记号为 null 的候选');
+  assert.equal(dosePort.kind, 'substitute');
+  // 命中已登记制剂的登记号也不得给候选 —— 替身不提供用量。
+  assertEmptyArray(await dosePort.listCandidates({ registrationNumber: 'PD20210001' }), 'PD20210001 的候选');
+  assertEmptyArray(await dosePort.listCandidates({ registrationNumber: 'PD20210002' }), 'PD20210002 的候选');
+  // 歧义记录、未命中、null 一律为空。
+  assertEmptyArray(await dosePort.listCandidates({ registrationNumber: 'PD20210003' }), 'PD20210003 的候选');
+  assertEmptyArray(await dosePort.listCandidates({ registrationNumber: 'PD99999999' }), '未命中登记号的候选');
+  assertEmptyArray(await dosePort.listCandidates({ registrationNumber: null }), '登记号为 null 的候选');
+
+  // 未接线端口同样恒空。
+  const unwiredPort = createUnwiredDosePort();
+  assert.equal(unwiredPort.kind, 'unwired');
+  assertEmptyArray(await unwiredPort.listCandidates({ registrationNumber: 'PD20210001' }), '未接线端口的候选');
+
+  // 两种执行模式经工厂装配都恒空（生产路径不可能产出用量卡）。
+  for (const mode of ['stub', 'preset_demo', 'real']) {
+    const port = createOcrDosePort(mode);
+    assertEmptyArray(await port.listCandidates({ registrationNumber: 'PD20210001' }), `${mode} 模式的候选`);
+  }
+
+  // 登记库替身端口仍然可用（替身只服务核对链路，不服务用量）。
   const referencePort = createSubstituteReferencePort();
   const lookup = await referencePort.lookup({ registrationNumber: 'PD20210005', name: '替身示例复配歧义剂' });
   assert.equal(lookup.status, 'available');
