@@ -52,3 +52,19 @@ test('Windows local password generator works with Framework RNG and retains inde
  const result=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',command],{encoding:'utf8',timeout:15000});
  assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/PASS local RNG compatibility/);
 });
+
+// Run the actual checked-wait blocks with redirected child processes: PS5 otherwise loses ExitCode.
+test('Windows redirected child exit codes survive waiting in both start and stop',{skip:process.platform!=='win32'},()=>{
+ const window=mkdtempSync(join(tmpdir(),'gengyun-local-package-'));
+ try{
+  for(const file of ['start.ps1','stop.ps1']){
+   const script=readFileSync(resolve(import.meta.dirname,'../../tools/local-dev',file),'utf8');
+   const checked=script.match(/ \$null=\$taskProcess.Handle\r?\n \$taskProcess.WaitForExit\(\)\r?\n  ?if\(\$taskProcess.ExitCode -ne 0\)\{throw '[^']+'\}/)?.[0];assert.ok(checked,file);
+   for(const code of [0,7]){
+    const prefix="$ErrorActionPreference='Stop';$taskProcess=Start-Process -FilePath cmd.exe -ArgumentList '/c exit "+code+"' -WindowStyle Hidden -PassThru -RedirectStandardOutput '"+join(window,'out').replaceAll("'","''")+"' -RedirectStandardError '"+join(window,'err').replaceAll("'","''")+"';\n";
+    const r=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',prefix+checked+"\nWrite-Output ('EXIT='+$taskProcess.ExitCode)"],{encoding:'utf8',timeout:15000});
+    if(code===0){assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/EXIT=0/);}else{assert.notEqual(r.status,0);assert.match(r.stderr,/Local PG (startup|stop) failed/);}
+   }
+  }
+ }finally{cleanup(window);}
+});

@@ -21,7 +21,9 @@ if(Test-Path -LiteralPath (Join-Path $taskData 'PG_VERSION')){
  & "$taskBin\pg_ctl.exe" -D $taskData status *> $null
  if($LASTEXITCODE -eq 0){
   $taskProcess=Start-Process -FilePath "$taskBin\pg_ctl.exe" -ArgumentList ('-D "'+$taskData+'" -m fast -w stop') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskPrivate 'pg-stop.log') -RedirectStandardError (Join-Path $taskPrivate 'pg-stop-error.log')
-  $taskProcess.WaitForExit()
+  # PS5 redirected processes need an open handle before waiting to retain ExitCode.
+ $null=$taskProcess.Handle
+ $taskProcess.WaitForExit()
   if($taskProcess.ExitCode -ne 0){throw 'Local PG stop failed'}
  }
 }

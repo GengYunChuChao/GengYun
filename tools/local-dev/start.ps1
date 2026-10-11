@@ -37,6 +37,8 @@ if(-not $taskRunning){
  if(Get-NetTCPConnection -State Listen -LocalPort $taskSettings.pgPort -ErrorAction SilentlyContinue){throw 'Port 55436 belongs to another service'}
  $taskArgs='-D "'+$taskData+'" -l "'+(Join-Path $taskPrivate 'pg.log')+'" -o "-h 127.0.0.1 -p '+$taskSettings.pgPort+'" -w start'
  $taskProcess=Start-Process -FilePath "$taskBin\pg_ctl.exe" -ArgumentList $taskArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskPrivate 'pg-start.log') -RedirectStandardError (Join-Path $taskPrivate 'pg-start-error.log')
+ # PS5 redirected processes need an open handle before waiting to retain ExitCode.
+ $null=$taskProcess.Handle
  $taskProcess.WaitForExit()
  if($taskProcess.ExitCode -ne 0){throw 'Local PG startup failed'}
 }
