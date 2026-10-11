@@ -19,6 +19,7 @@ import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
 import { registerConsentRoutes } from './routes/consents.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
+import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
@@ -115,6 +116,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerAdminAuthRoutes(app, config, { service, guards, now: clock });
   registerConsentRoutes(app, config, pool, guards, consentGrantTestOptions);
   registerProfileRoutes(app, config, pool, guards);
+  registerKnowledgeRoutes(app, config, pool, guards);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
