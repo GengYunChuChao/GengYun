@@ -29,5 +29,6 @@ try {
  }
  const profile=await bootstrapLocalProfile(owner,settings.repoRoot);
  console.log('Local profile catalog: synthetic fixture; '+profile.cropCount+' crops, '+profile.regionCount+' regions; '+(profile.initialized?'initialized empty local tables':'existing fixture preserved')+'.');
+ console.log('Knowledge read projection ready for restricted LOGIN; no source or knowledge records seeded.');
  console.log('Database ready: '+result.applied.length+' applied, '+result.skipped.length+' unchanged migrations.');
 } finally {await owner.end();}

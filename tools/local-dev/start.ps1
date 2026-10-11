@@ -11,7 +11,13 @@ $taskSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if($LASTEXITCODE -ne 0){throw 'Private directory ACL failed'}
 $taskConfig=Join-Path $taskPrivate 'config.json'
 if(-not(Test-Path -LiteralPath $taskConfig)){
- $taskValues=@{ownerPassword=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant();runtimePassword=[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)).ToLowerInvariant()}
+ function New-LocalRandomPassword {
+  $taskBytes=New-Object byte[] 24
+  $taskGenerator=[Security.Cryptography.RandomNumberGenerator]::Create()
+  try {$taskGenerator.GetBytes($taskBytes);return [BitConverter]::ToString($taskBytes).Replace('-','').ToLowerInvariant()}
+  finally {$taskGenerator.Dispose()}
+ }
+ $taskValues=@{ownerPassword=New-LocalRandomPassword;runtimePassword=New-LocalRandomPassword}
  [IO.File]::WriteAllText($taskConfig,($taskValues|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
 }
 $taskValues=Get-Content -LiteralPath $taskConfig -Raw | ConvertFrom-Json
@@ -31,6 +37,8 @@ if(-not $taskRunning){
  if(Get-NetTCPConnection -State Listen -LocalPort $taskSettings.pgPort -ErrorAction SilentlyContinue){throw 'Port 55436 belongs to another service'}
  $taskArgs='-D "'+$taskData+'" -l "'+(Join-Path $taskPrivate 'pg.log')+'" -o "-h 127.0.0.1 -p '+$taskSettings.pgPort+'" -w start'
  $taskProcess=Start-Process -FilePath "$taskBin\pg_ctl.exe" -ArgumentList $taskArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskPrivate 'pg-start.log') -RedirectStandardError (Join-Path $taskPrivate 'pg-start-error.log')
+ # PS5 redirected processes need an open handle before waiting to retain ExitCode.
+ $null=$taskProcess.Handle
  $taskProcess.WaitForExit()
  if($taskProcess.ExitCode -ne 0){throw 'Local PG startup failed'}
 }

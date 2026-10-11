@@ -4,6 +4,7 @@ import {mkdtempSync,cpSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSyn
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname,basename} from 'node:path';
 import {prepareLocalDev} from '../../tools/local-dev/prepare.mjs';
+import {spawnSync} from 'node:child_process';
 function cleanup(root){assert.equal(dirname(resolve(root)),resolve(tmpdir()));assert.ok(basename(root).startsWith('gengyun-local-package-'));rmSync(root,{recursive:true,force:true});}
 function fixture(){
  const root=mkdtempSync(join(tmpdir(),'gengyun-local-package-'));
@@ -42,4 +43,28 @@ test('invalid ports, missing PostgreSQL or modified release config reject before
   assert.throws(()=>prepareLocalDev(f),/domain validation/);
   assert.equal(existsSync(join(f.root,'.local/local-dev')),false);
  }finally{cleanup(f.root);}
+});
+
+test('Windows local password generator works with Framework RNG and retains independent 192-bit outputs',{skip:process.platform!=='win32'},()=>{
+ const script=readFileSync(resolve(import.meta.dirname,'../../tools/local-dev/start.ps1'),'utf8');
+ const generator=script.match(/ function New-LocalRandomPassword \{[\s\S]*?\n \}/)?.[0];assert.ok(generator);
+ const command=generator+"\n$taskA=New-LocalRandomPassword;$taskB=New-LocalRandomPassword;if($taskA -notmatch '^[a-f0-9]{48}$' -or $taskB -notmatch '^[a-f0-9]{48}$' -or $taskA -eq $taskB){throw 'Local RNG failed'};Write-Output 'PASS local RNG compatibility'";
+ const result=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',command],{encoding:'utf8',timeout:15000});
+ assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/PASS local RNG compatibility/);
+});
+
+// Run the actual checked-wait blocks with redirected child processes: PS5 otherwise loses ExitCode.
+test('Windows redirected child exit codes survive waiting in both start and stop',{skip:process.platform!=='win32'},()=>{
+ const window=mkdtempSync(join(tmpdir(),'gengyun-local-package-'));
+ try{
+  for(const file of ['start.ps1','stop.ps1']){
+   const script=readFileSync(resolve(import.meta.dirname,'../../tools/local-dev',file),'utf8');
+   const checked=script.match(/ \$null=\$taskProcess.Handle\r?\n \$taskProcess.WaitForExit\(\)\r?\n  ?if\(\$taskProcess.ExitCode -ne 0\)\{throw '[^']+'\}/)?.[0];assert.ok(checked,file);
+   for(const code of [0,7]){
+    const prefix="$ErrorActionPreference='Stop';$taskProcess=Start-Process -FilePath cmd.exe -ArgumentList '/c exit "+code+"' -WindowStyle Hidden -PassThru -RedirectStandardOutput '"+join(window,'out').replaceAll("'","''")+"' -RedirectStandardError '"+join(window,'err').replaceAll("'","''")+"';\n";
+    const r=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',prefix+checked+"\nWrite-Output ('EXIT='+$taskProcess.ExitCode)"],{encoding:'utf8',timeout:15000});
+    if(code===0){assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/EXIT=0/);}else{assert.notEqual(r.status,0);assert.match(r.stderr,/Local PG (startup|stop) failed/);}
+   }
+  }
+ }finally{cleanup(window);}
 });

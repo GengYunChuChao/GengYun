@@ -1,0 +1,53 @@
+{
+  "kind": "actual restricted native PostgreSQL LOGIN audit after normal local-dev restart; synthetic data only",
+  "postgres": "17.11",
+  "flags": {
+    "current_user": "gengyun_local_runtime",
+    "session_user": "gengyun_local_runtime",
+    "rolsuper": false,
+    "rolcreatedb": false,
+    "rolcreaterole": false,
+    "rolreplication": false,
+    "rolbypassrls": false,
+    "rolcanlogin": true
+  },
+  "groups": [
+    "gengyun_auth_privacy",
+    "gengyun_consent_granter",
+    "gengyun_knowledge_runtime",
+    "gengyun_preview_reader",
+    "gengyun_profile_runtime"
+  ],
+  "scram": true,
+  "independentPasswords": true,
+  "afterFixtureCleanup": {
+    "sources": 0,
+    "knowledge": 0
+  },
+  "denied": [
+    {
+      "sql": "SELECT body FROM knowledge_versions",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT canonical_url FROM sources",
+      "code": "42501"
+    },
+    {
+      "sql": "SELECT object_ref_cipher FROM media",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TABLE public.local_audit_forbidden(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "CREATE TEMP TABLE local_audit_forbidden(x int)",
+      "code": "42501"
+    },
+    {
+      "sql": "SET ROLE gengyun_local_owner",
+      "code": "42501"
+    }
+  ]
+}

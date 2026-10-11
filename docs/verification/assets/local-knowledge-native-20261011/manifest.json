@@ -1,0 +1,92 @@
+{
+  "main": "2d562d5b6fb79896ef8935716b90939538f274c2",
+  "handoff": "b2d79bc56672c697af11beebc9e09f96792544f6",
+  "executedSource": "4e839cb31b6746d57b376aa4f17f905af3c5e8a6",
+  "ports": [
+    3228,
+    55493
+  ],
+  "finalStopped": true,
+  "restartPgPid": 29752,
+  "restartApiPid": 29816,
+  "inputs": [
+    {
+      "path": "docs/verification/local-knowledge-wiring-20261011.md",
+      "sha256LF": "68a4e82bc59463ddd29782712d382f8bc0e10ddb9b468ca657a625351ccd08b4"
+    },
+    {
+      "path": "tests/integration/local-knowledge-smoke.mjs",
+      "sha256LF": "e3be4c54a615daeb4f290f9f0b25af8f32918488f86af39035658337ffd5c893"
+    },
+    {
+      "path": "tests/unit/local-dev-package.test.mjs",
+      "sha256LF": "f7dc4108248cb80f5592f1a2dcfa5d066ced9bb880a7bcf799e9258260aad236"
+    },
+    {
+      "path": "tests/unit/local-profile-bootstrap.test.mjs",
+      "sha256LF": "fcb453feb9e1a0428556ea4a0719578f74f7a03f0de49b592586842daaaf3fa5"
+    },
+    {
+      "path": "tools/local-dev/database.mjs",
+      "sha256LF": "8e4e1a6c3b80623e441febee03321afd14fb44fb6cdeefc2b046caadd9bb785b"
+    },
+    {
+      "path": "tools/local-dev/profile-bootstrap.mjs",
+      "sha256LF": "4982c5609378aadc77ffd0b3ef543112c899f12a939df33b99ca071d8b6c7fd2"
+    },
+    {
+      "path": "tools/local-dev/smoke.mjs",
+      "sha256LF": "f748f82dc8f25a1abdb32cd7282c319123d1a6c2ace5e025561678f06f7e9f31"
+    },
+    {
+      "path": "tools/local-dev/start.ps1",
+      "sha256LF": "f6b36b677361f6114b621eec4c5e8760564db870945d32168897afe4c1a013f2"
+    },
+    {
+      "path": "tools/local-dev/stop.ps1",
+      "sha256LF": "3367c2468881eea067ab3660f84e86e382d3c2c0a72051abd615364daf875a37"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": ".gitattributes",
+      "bytes": 29,
+      "sha256": "730a35ae3d558080083c3103d9ac8100c3f6561678092abe341701dfa331eb1d"
+    },
+    {
+      "path": "affected-tests.log",
+      "bytes": 6284,
+      "sha256": "6914ba152c6cc5217540b0c30fbc00404060ea0cb0ad8d57e131707d6c89cea4"
+    },
+    {
+      "path": "executed-audit.cjs",
+      "bytes": 2933,
+      "sha256": "0632bd49e9200200176bc2280c8ed0a1fc8858d447f092872832277553ae171a"
+    },
+    {
+      "path": "first-cycle.log",
+      "bytes": 2676,
+      "sha256": "e38c89fe6e87d71d8d2f89115f6c0058c7b8488174280e493774165ab53ac50c"
+    },
+    {
+      "path": "input.json",
+      "bytes": 182,
+      "sha256": "8e970a52180aca7320d4b2e032dd2a3a7edba4e549d1fdfd85279c3a1f305b64"
+    },
+    {
+      "path": "postgres-lifecycle.txt",
+      "bytes": 752,
+      "sha256": "e34d5923e38fd8aaf4b24a211f3150189d6e9adb968035bff1a736297e520e2e"
+    },
+    {
+      "path": "restart-smoke.log",
+      "bytes": 1120,
+      "sha256": "76385f03e5c9b42ec9d5cd642f9bd35dfbf6c5c3c6134013bfac56b5b034bf61"
+    },
+    {
+      "path": "runtime-audit.json",
+      "bytes": 1248,
+      "sha256": "388b9ccd092d5552b126439fcedb3d89c6546628b260882a3f58ae57548519c0"
+    }
+  ]
+}
