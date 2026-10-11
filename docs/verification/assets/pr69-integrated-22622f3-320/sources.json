@@ -1,6 +1,6 @@
 {
   "sourceCommit": "22622f3168c5e1d66f96af363b34bcdc741eba05",
-  "normalization": "CRLF to LF for source; assets and scripts raw SHA256",
+  "normalization": "CRLF to LF for source and scripts; assets raw SHA256",
   "sourceFiles": [
     {
       "path": "miniprogram/app.js",
@@ -503,11 +503,11 @@
   "scripts": [
     {
       "path": "tests/integration/local-dev-ui.cjs",
-      "sha256": "a8291700d238f6be1c0bfdb372f4fa9e78f71f8cedef4e4085e40b2865ac217d"
+      "lfSha256": "a8291700d238f6be1c0bfdb372f4fa9e78f71f8cedef4e4085e40b2865ac217d"
     },
     {
       "path": "tests/integration/local-dev-ui-controls.cjs",
-      "sha256": "2a84d84d322d1455746a3d28fa98b57b638c87a51a5966f51b99184e2d0aa861"
+      "lfSha256": "2a84d84d322d1455746a3d28fa98b57b638c87a51a5966f51b99184e2d0aa861"
     }
   ],
   "assets": [
