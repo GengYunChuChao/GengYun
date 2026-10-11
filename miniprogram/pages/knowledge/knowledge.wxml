@@ -27,7 +27,7 @@
     <view class="directory-note">{{directoryNote}}</view>
     <view class="status" role="status">{{status}}</view>
     <view class="result-heading" wx:if="{{items.length}}">当前页资料</view>
-    <view class="card article-card" wx:for="{{items}}" wx:key="item.id">
+    <view class="card article-card" wx:for="{{items}}" wx:key="id">
       <view class="article-art">科普参考 · {{item.labels.source}}</view>
       <view class="card-title">{{item.item.title}}</view>
       <view class="source-tags"><text class="pill">{{item.labels.evidence}}</text><text class="pill amber">{{item.labels.review}}</text></view>
@@ -38,6 +38,6 @@
     </view>
     <button wx:if="{{nextCursor}}" class="btn btn--secondary btn--block" bindtap="next" disabled="{{busy}}">下一页</button>
   </block>
-  <view wx:else class="status">需要核实登录状态后才能查询。</view>
+  <view wx:else class="status">{{status || "需要核实登录状态后才能查询。"}}<button class="btn btn--primary btn--block" bindtap="search">核实登录／重试</button></view>
   <view class="notice">科普参考不等于用药建议。本页不提供用量卡，不把科研来源标为专家认证。</view>
 </view>

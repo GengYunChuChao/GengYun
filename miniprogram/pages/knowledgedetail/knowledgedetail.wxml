@@ -13,6 +13,6 @@
       <view class="source-url">{{item.source.url}}</view><button class="btn btn--secondary btn--block" bindtap="copySource">复制原文来源链接</button>
     </view>
   </block>
-  <button wx:if="{{gatePassed}}" class="btn btn--primary btn--block" bindtap="retry" loading="{{busy}}" disabled="{{busy}}">重新核对／重试</button>
+  <button class="btn btn--primary btn--block" bindtap="retry" loading="{{busy}}" disabled="{{busy}}">{{gatePassed ? "重新核对／重试" : "核实登录／重试"}}</button>
   <button class="btn btn--secondary btn--block" bindtap="back">返回继续查询</button>
 </view>

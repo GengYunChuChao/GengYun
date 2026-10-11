@@ -59,7 +59,7 @@ Page({
       if (cursor) this._cursors.push(cursor)
       this._displayBinding = b
       this.setData({ busy: false, nextCursor: r.nextCursor, modeNote: api.modeNote(r.mode),
-        items: r.items.map(item => ({ item, labels: api.labels(item), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
+        items: r.items.map(item => ({ id: item.id, item, labels: api.labels(item), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
         status: r.items.length ? '已读取当前页资料；详情会重新核对来源。' : '没有符合条件的资料，请调整条件继续查询。' })
     } catch (e) {
       if (!current()) { if (this._gateActive === true && this._readOperation === operation) { this.clear(); this.setData({ gatePassed: false, status: api.message(e) }) }; return }
