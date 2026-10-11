@@ -16,7 +16,7 @@
 | HTTP 路由与 `app.ts` 接线 | **未做**（派单禁止触碰 `services/api/**`）→ 本组件**无消费者** |
 | 图片／多媒体审核、模型判定 | **未做**（模型层增量） |
 | `model_version` / `prompt_version` | **不产出**，不使用占位字符串 |
-| 真实样本上的模型指标 | **未取得**（真实样本为 0，见 §8） |
+| 真实样本上的模型指标 | **未取得**（真实样本为 0，见 §11） |
 
 ## 2 环境与基线
 
@@ -61,6 +61,35 @@
 
 **差值 = 100**，与本片用例数完全相等（`node --test "tests/moderation/*.test.mjs"` 亦为 `tests 100 / pass 100 / fail 0`），
 说明**本片用例确实被门禁执行**，不是"写在目录里没人跑"。
+
+#### 用例数口径（消除 93 与 100 两个数字的歧义）
+
+本片用例数**从 93 增至 100**：首次交付时为 **93** 条；随后应指挥预审意见补充了
+**6 条错误封套用例**（`tests/moderation/errors.test.mjs`）与
+**1 条引擎选项 fail-closed 用例**（`evaluateHardRules` 的选项非法场景），合计 **100** 条。
+本文件所有数字均取**最后一次直跑的实测值**（即 100）。
+
+按文件分布（逐个文件单独直跑 `node --test <file>` 的实测条数，合计 100）：
+
+| 用例文件 | 条数 | 直跑实测 |
+| --- | --- | --- |
+| `tests/moderation/contract.test.mjs` | 10 | `tests 10 / pass 10 / fail 0` |
+| `tests/moderation/errors.test.mjs` | 6 | `tests 6 / pass 6 / fail 0` |
+| `tests/moderation/fail-closed.test.mjs` | 41 | `tests 41 / pass 41 / fail 0` |
+| `tests/moderation/isolation.test.mjs` | 5 | `tests 5 / pass 5 / fail 0` |
+| `tests/moderation/rule-version.test.mjs` | 10 | `tests 10 / pass 10 / fail 0` |
+| `tests/moderation/rules.test.mjs` | 28 | `tests 28 / pass 28 / fail 0` |
+| **合计** | **100** | `tests 100 / pass 100 / fail 0` |
+
+三处数字可以互相对上：
+
+1. **本节差额**：`783（纳入后）− 683（纳入前）= 100` = 上表合计；
+2. **§5 的逐类条目数**：§5 表格 11 行（11 条规则）对应 `rules.test.mjs` 里
+   **11 条命中 + 11 条不命中 = 22 条**独立用例；该文件余下 6 条为基线对照、类别覆盖、
+   确定性、证据脱敏、`g`/`y` 标志与多规则命中专项用例（1 + 22 + 5 = 28）；
+3. **§12 的直跑数字**：`node --test "tests/moderation/*.test.mjs"` → `tests 100 / pass 100 / fail 0`。
+
+`fail-closed.test.mjs` 的 41 条 = `INPUT_CASES` 表驱动的 **28** 条输入闸门用例 + **13** 条引擎级／不变式用例。
 
 纳入方式（纯加法，已获指挥授权）：
 
