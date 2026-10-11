@@ -294,9 +294,15 @@ text getter 抛错 -> decision=quarantined hard_rule_passed=false reason_codes=[
 
 ## 9.2 门禁 `test:unit` 在本机存在**与本片无关**的资源型抖动（原始报错保留）
 
-纳入本片用例后，`npm run test:unit` 共运行 **9** 次：**6 次全绿**，**3 次出现失败**。
-3 次失败**全部**落在改动前就存在的 PostgreSQL/PGlite、加密与子进程套件，
-**`tests/moderation/**` 在失败运行中 0 失败**（100 条全过）。
+纳入本片用例后，截至本次记录（2026-10-11），`npm run test:unit` 共运行 **12** 次：
+**9 次全绿**（`783 / 782 / fail 0 / skipped 1`），**3 次出现失败**。
+失败比例随本机内存负载变化，**不是本片稳定性的指标**。
+**3 次失败全部落在改动前就存在的 PGlite／加密／子进程套件，
+`tests/moderation/**` 在失败运行中 0 失败（100 条全过）。**
+
+> 回报给监工的 HEAD `fb978fb` 上，`test:unit` 连续 3 次运行均为
+> `783 / 782 / fail 0 / skipped 1`（moderation 失败项为空），`lint` / `test:contract` / `test:docs` 均为退出码 0。
+> 即：**本报告所述的最终 SHA 上，四条门禁均为绿色**；下文的抖动记录是为了不让监工在别的时刻碰到失败时误判。
 
 ### 9.2.1 失败运行之一（完整原始输出已保存）
 
