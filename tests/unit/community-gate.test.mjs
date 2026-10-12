@@ -4,6 +4,10 @@
  * 断言纪律：**先判 `typeof` 再判值**（`undefined` 不会被 `===` 的偶然相等蒙混过关）。
  * 证据边界：这些是规则夹具上的确定性回归，**不是**模型准确率／召回率证据，
  * 也不代表社区已端到端可用。
+ *
+ * 时钟确定性（参见 PR「测试确定性修复」）：本文件默认用 `makeGate()`（**冻结时钟**）构造闸门，
+ * 使 `evaluateHardRules` 的 50ms **真实墙钟**预算（`DEFAULT_RULE_BUDGET_MS`）不会把机器负载
+ * 变成测试结果；「预算耗尽 ⇒ 不得发布」由「反例 6」与末条「确定性」用例显式覆盖。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +21,7 @@ import {
   makeExtraRule,
   scriptedClock,
 } from '../moderation/_fixtures.mjs';
+import { FROZEN_CLOCK, makeGate } from './community-fixtures.mjs';
 
 const TARGET = Object.freeze({ type: 'post', id: '00000000-0000-4000-8500-000000000001', revision: 1 });
 const CLEAN = '今年雨水偏多，我按标签说明选择登记药剂，先看苗情再决定，注意轮换。';
@@ -41,7 +46,7 @@ test('出厂规则集为 11 条，发布 gate 不缩小规则集（不得用空/
   assert.equal(typeof FACTORY_RULE_COUNT, 'number');
   assert.equal(FACTORY_RULE_COUNT, 11);
   assert.equal(RULES.length, 11);
-  const gate = createPublishGate();
+  const gate = makeGate();
   assert.equal(gate.ruleCount(), 11);
   assert.equal(typeof gate.currentRuleVersion(), 'string');
   assert.ok(gate.currentRuleVersion().startsWith('mr1+sha256:'), 'rule_version 必须由规则集内容派生，不是手填串');
@@ -49,7 +54,7 @@ test('出厂规则集为 11 条，发布 gate 不缩小规则集（不得用空/
 });
 
 test('正控制：干净文本 ⇒ approved 且 publishable=true，且与 packages/moderation 的 isPublishable 一致', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const outcome = gate.evaluate(TARGET, CLEAN, []);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'approved');
@@ -66,7 +71,7 @@ test('正控制：干净文本 ⇒ approved 且 publishable=true，且与 packag
 });
 
 test('反例 1：确定性规则命中（危险混配）⇒ rejected 且 publishable=false，reason_codes 带上', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const outcome = gate.evaluate(TARGET, DANGEROUS, []);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'rejected');
@@ -79,7 +84,7 @@ test('反例 1：确定性规则命中（危险混配）⇒ rejected 且 publish
 });
 
 test('反例 2：带媒体（图片审核属模型层，未审）⇒ quarantined，不得发布', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const outcome = gate.evaluate(TARGET, CLEAN, [{ media_id: '00000000-0000-4000-8500-0000000000ff' }]);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'quarantined');
@@ -93,7 +98,7 @@ test('反例 2：带媒体（图片审核属模型层，未审）⇒ quarantined
 });
 
 test('反例 3：文本为空/仅空白 ⇒ quarantined（"没有可审内容"不等于通过）', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   for (const text of ['', '   ', '\n\t ']) {
     const outcome = gate.evaluate(TARGET, text, []);
     assertVerdictShape(outcome);
@@ -104,7 +109,7 @@ test('反例 3：文本为空/仅空白 ⇒ quarantined（"没有可审内容"�
 });
 
 test('反例 4：落单代理项（编码异常）⇒ quarantined，不得发布', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const outcome = gate.evaluate(TARGET, `苗情正常\uD800`, []);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'quarantined');
@@ -113,7 +118,7 @@ test('反例 4：落单代理项（编码异常）⇒ quarantined，不得发布
 });
 
 test('反例 5：扫描限额截断 ⇒ RULE_SCAN_TRUNCATED + quarantined；未截断的同形文本仍 rejected（对照）', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const truncated = gate.evaluate(TARGET, buildScanLimitText(64), []);
   assertVerdictShape(truncated);
   assert.equal(truncated.decision, 'quarantined');
@@ -128,7 +133,7 @@ test('反例 5：扫描限额截断 ⇒ RULE_SCAN_TRUNCATED + quarantined；未�
 });
 
 test('反例 6：规则求值超时（预算耗尽）⇒ RULE_TIMEOUT + quarantined，不得发布', () => {
-  const gate = createPublishGate({ budget_ms: 50, clock: scriptedClock([0, 1000, 1000]) });
+  const gate = makeGate({ budget_ms: 50, clock: scriptedClock([0, 1000, 1000]) });
   const outcome = gate.evaluate(TARGET, CLEAN, []);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'quarantined');
@@ -145,7 +150,7 @@ test('反例 7a：匹配器抛错被引擎捕获 ⇒ RULE_ENGINE_ERROR + quarant
       throw new Error('boom: matcher');
     };
   }
-  const gate = createPublishGate({ matchers: brokenMatchers });
+  const gate = makeGate({ matchers: brokenMatchers });
   const outcome = gate.evaluate(TARGET, CLEAN, []);
   assertVerdictShape(outcome);
   assert.equal(outcome.decision, 'quarantined', '"规则跑了但炸了"必须隔离，不得当作未命中');
@@ -157,7 +162,7 @@ test('反例 7a：匹配器抛错被引擎捕获 ⇒ RULE_ENGINE_ERROR + quarant
 });
 
 test('反例 7b：规则层整体抛错（匹配器查表即炸）⇒ gate 自身 fail-closed，干净文本也不得发布', () => {
-  const gate = createPublishGate({
+  const gate = makeGate({
     matchers: new Proxy(
       {},
       {
@@ -180,11 +185,11 @@ test('反例 7b：规则层整体抛错（匹配器查表即炸）⇒ gate 自�
 });
 
 test('反例 8：规则集升级（rule_version 变化）⇒ 旧结论 stale 且不得继续可见', () => {
-  const gateA = createPublishGate();
+  const gateA = makeGate();
   const published = gateA.evaluate(TARGET, CLEAN, []);
   assert.equal(published.publishable, true);
 
-  const upgraded = createPublishGate({ rules: [...RULES, makeExtraRule()] });
+  const upgraded = makeGate({ rules: [...RULES, makeExtraRule()] });
   assert.notEqual(upgraded.currentRuleVersion(), gateA.currentRuleVersion());
   const assessment = upgraded.assess(TARGET, published);
   assert.equal(typeof assessment.stale, 'boolean');
@@ -208,7 +213,7 @@ test('反例 8：规则集升级（rule_version 变化）⇒ 旧结论 stale 且
 });
 
 test('反例 9：目标 revision 变化 ⇒ 旧结论失效须重审', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const published = gate.evaluate(TARGET, CLEAN, []);
   const assessment = gate.assess({ ...TARGET, revision: 2 }, published);
   assert.equal(assessment.stale, true);
@@ -217,7 +222,7 @@ test('反例 9：目标 revision 变化 ⇒ 旧结论失效须重审', () => {
 });
 
 test('反例 10：自相矛盾的旧结论（approved 但 hard_rule_passed=false）不得可见', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const published = gate.evaluate(TARGET, CLEAN, []);
   const tampered = { ...published, hard_rule_passed: false };
   const assessment = gate.assess(TARGET, tampered);
@@ -227,7 +232,7 @@ test('反例 10：自相矛盾的旧结论（approved 但 hard_rule_passed=false
 });
 
 test('反例 11：结论缺少 rule_version（证据不可信）⇒ 须重审并隔离', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const published = gate.evaluate(TARGET, CLEAN, []);
   const assessment = gate.assess(TARGET, { ...published, rule_version: undefined });
   assert.equal(assessment.stale, true);
@@ -236,7 +241,7 @@ test('反例 11：结论缺少 rule_version（证据不可信）⇒ 须重审并
 });
 
 test('反例 12：绑定结构非法（type 不在契约闭集 / revision=0）⇒ 不得可见', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const published = gate.evaluate(TARGET, CLEAN, []);
   for (const broken of [
     { ...published, target_ref: { type: 'bogus', id: TARGET.id, revision: 1 } },
@@ -249,7 +254,7 @@ test('反例 12：绑定结构非法（type 不在契约闭集 / revision=0）�
 });
 
 test('评定不变式：approved ⟺ hard_rule_passed=true，且 approved 时 counts 全干净', () => {
-  const gate = createPublishGate();
+  const gate = makeGate();
   const outcome = gate.evaluate(TARGET, CLEAN, []);
   assert.equal(outcome.invariant.ok, true, `不变式违反：${outcome.invariant.violations.join('；')}`);
   assert.equal(outcome.decision === 'approved', outcome.hard_rule_passed === true);
@@ -260,4 +265,45 @@ test('评定不变式：approved ⟺ hard_rule_passed=true，且 approved 时 co
   assert.equal(outcome.counts.timeouts, 0);
   assert.equal(outcome.counts.truncated, 0);
   assert.equal(outcome.counts.not_evaluated, 0);
+});
+
+/**
+ * 时钟确定性（本文件与夹具的默认闸门）：
+ * 同一个"**同步忙等 >50ms**"的匹配器下——
+ *   - 冻结时钟（`makeGate()` 默认 / `FROZEN_CLOCK`）：引擎照跑 11 条规则、`approved`；
+ *   - 真实墙钟 + 默认 50ms 预算：**必然** `RULE_TIMEOUT` ⇒ `quarantined` ⇒ 不得发布。
+ * 这条用例把"预算耗尽 ⇒ 不得判通过"的语义**留在覆盖内**，同时证明默认闸门不再受机器负载影响。
+ */
+test('确定性：慢匹配器在真实时钟下必然超预算不得发布，在冻结时钟（夹具默认）下正常 approved', () => {
+  assert.equal(typeof FROZEN_CLOCK, 'function');
+  assert.equal(FROZEN_CLOCK(), 0);
+  assert.equal(FROZEN_CLOCK(), 0, '冻结时钟两次读数必须相同');
+
+  // 规则 MR-01／02／03 用 negation_guarded_pattern：把它换成同步忙等 >50ms 的实现
+  // （测试内注入匹配器，不改 packages/moderation 一行）。
+  const busyMatcher = () => {
+    const deadline = Date.now() + 60;
+    while (Date.now() < deadline) {
+      // 同步忙等：制造"规则求值本身占用了 >50ms 墙钟"的确定性场景。
+    }
+    return { matched: false, offset: null, length: 0 };
+  };
+  const slowMatchers = { ...MATCHERS, negation_guarded_pattern: busyMatcher };
+
+  const realClockGate = createPublishGate({ matchers: slowMatchers });
+  const realOutcome = realClockGate.evaluate(TARGET, CLEAN, []);
+  assertVerdictShape(realOutcome);
+  assert.equal(realOutcome.decision, 'quarantined', '真实时钟下忙等 >50ms 必然触发预算超时');
+  assert.equal(realOutcome.hard_rule_passed, false);
+  assert.equal(realOutcome.publishable, false, '预算耗尽绝不放行');
+  assert.ok(realOutcome.reason_codes.includes('RULE_TIMEOUT'), `实际 ${realOutcome.reason_codes}`);
+  assert.ok(realOutcome.counts.timeouts >= 1);
+
+  const frozenGate = makeGate({ matchers: slowMatchers });
+  const frozenOutcome = frozenGate.evaluate(TARGET, CLEAN, []);
+  assertVerdictShape(frozenOutcome);
+  assert.equal(frozenOutcome.decision, 'approved');
+  assert.equal(frozenOutcome.publishable, true);
+  assert.equal(frozenOutcome.counts.evaluated, 11, '规则仍然逐条求值（预算检查路径照跑）');
+  assert.equal(frozenOutcome.counts.timeouts, 0);
 });

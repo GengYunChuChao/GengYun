@@ -21,6 +21,34 @@ export { buildScanLimitText, makeExtraRule, scriptedClock, RULE_TEXT_FIXTURES, N
 /** 仅测试用签名密钥（不是真实密钥、不入库、不入日志）。 */
 export const TEST_SIGNING_KEY = 'community-phase1-test-signing-key';
 
+/**
+ * **冻结时钟**：本片测试默认注入给发布 gate 的引擎时钟。
+ *
+ * 为什么：`evaluateHardRules` 的默认预算是 `DEFAULT_RULE_BUDGET_MS = 50`（真实墙钟，
+ * `packages/moderation/constants.mjs:223`），并在**每条规则开始前**比较
+ * `now - started > budgetMs`（`engine.mjs:373`）。机器负载／调度停顿一旦让两次时钟读取
+ * 间隔超过 50ms，判决就变成 `quarantined(RULE_TIMEOUT)`，经社区映射成 422 `INPUT_UNCERTAIN`
+ * ——**把机器速度变成了测试结果**。
+ *
+ * 冻结时钟让 `now - started` 恒为 0：引擎照样**逐条求值全部规则**（预算检查代码路径仍执行），
+ * 但"过了多少墙钟"不再参与判定，用例因此只反映规则语义。
+ *
+ * 语义覆盖**没有被删掉**：「预算耗尽 ⇒ 不得判通过」由两条专门用例（极小预算 + 脚本化时钟）继续覆盖
+ *   - `tests/unit/community-gate.test.mjs`「反例 6：规则求值超时（预算耗尽）…」
+ *   - `tests/unit/community-service.test.mjs`「反例 4：规则求值超时…」
+ * 并由 `community-gate.test.mjs` 的「确定性」用例加固：同一个"同步忙等 >50ms"的匹配器，
+ * 在**真实时钟**下必然 `RULE_TIMEOUT`（不得发布），在**冻结时钟**下正常 `approved`。
+ */
+export const FROZEN_CLOCK = () => 0;
+
+/**
+ * 构造社区测试用的发布闸门：默认冻结时钟；`options` 中显式的 `clock`/`budget_ms` 仍可覆盖
+ * （超时类用例就是这样写的）。
+ */
+export function makeGate(options = {}) {
+  return createPublishGate({ clock: FROZEN_CLOCK, ...options });
+}
+
 export const USER_A = Object.freeze({
   userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   role: 'user',
@@ -97,7 +125,9 @@ export function makeHarness(options = {}) {
   const now = options.now ?? (() => new Date(base + (tick += 1) * 1000));
   const baseStore = options.store ?? createMemoryCommunityStore({ now: () => now().getTime() });
   const store = options.storeWrapper === undefined ? baseStore : options.storeWrapper(baseStore);
-  const gate = options.gate ?? createPublishGate(options.gateOptions ?? {});
+  // 默认闸门使用**冻结时钟**与出厂预算：预算检查照跑，但"过了多少墙钟"不参与判定
+  // （避免机器负载把 approved 变成 quarantined(RULE_TIMEOUT)）。超时语义由专门用例覆盖。
+  const gate = options.gate ?? makeGate(options.gateOptions ?? {});
   const baseAuthors = options.authors ?? createLocalPseudonymousAuthorDirectory();
   const authors = options.authorsWrapper === undefined ? baseAuthors : options.authorsWrapper(baseAuthors);
   const newId = options.newId ?? makeIdFactory();
@@ -122,7 +152,7 @@ export function withGate(harness, gateOptions) {
   return createCommunityService({
     store: harness.store,
     authors: harness.authors,
-    gate: createPublishGate(gateOptions),
+    gate: makeGate(gateOptions),
     signingKey: TEST_SIGNING_KEY,
     now: harness.now,
     newId: harness.newId,
