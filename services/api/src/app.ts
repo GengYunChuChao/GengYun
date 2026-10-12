@@ -41,6 +41,15 @@ import { createSynthesisMediaPort, type SynthesisMediaPort } from './tts/media.t
 import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
 import { createMemorySynthesisStore, type SynthesisStore } from './tts/store.ts';
+// GY-I18 后台域（阶段 2 装配）：路由 + 阶段 1／1b 两个已合并的服务。
+import { registerAdminRoutes } from './routes/admin.ts';
+import { createAdminContentService } from './admin/service.ts';
+import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
+import { createAdminOpsService } from './admin/ops/service.ts';
+import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
+import { createAdminContentStore } from './admin/store.ts';
+import { createAdminOpsStore } from './admin/ops/store.ts';
+import { createAdminRuntime } from './admin/runtime.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -50,6 +59,10 @@ declare module 'fastify' {
     recognitionService: RecognitionService;
     /** GY-I13 合成服务（供回归测试核对默认关闭、幂等收敛与任务终态）。 */
     synthesisService: SynthesisService;
+    /** GY-I18 阶段 1：后台资料生命周期服务（25 个 operationId）。 */
+    adminContentService: AdminContentService;
+    /** GY-I18 阶段 1b：后台运营与开关服务（9 个 operationId）。 */
+    adminOpsService: AdminOpsService;
   }
 }
 
@@ -95,6 +108,18 @@ export interface BuildAppOptions {
   synthesisContent?: CheckedContentPort;
   /** 合成任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   synthesisJobDeadlineMs?: number;
+  // GY-I18 后台域注入项。**全部可选**：不传时与接线前**逐字节同行为** ——
+  // 内容/运营存储为空种子，`AdminJobPort` 与社区帖子端口**未接线**，
+  // 因此作业读/取消与隐藏帖子按服务层 fail-closed 返回 503（不返回空页、不伪造状态）。
+  /** 测试注入：后台资料存储（默认新建内存 store）。 */
+  adminInjection?: {
+    contentStore?: AdminContentServiceOptions['store'];
+    opsStore?: AdminOpsServiceOptions['store'];
+    jobPort?: AdminOpsServiceOptions['jobPort'];
+    communityStore?: AdminOpsServiceOptions['community'];
+    /** 注入 flag 语义分类表：用于验证"含放宽语义 ⇒ 拒绝接线"（默认出厂表）。 */
+    flagEffects?: AdminOpsServiceOptions['flagEffects'];
+  };
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -112,7 +137,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -181,6 +206,38 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(synthesisJobDeadlineMs === undefined ? {} : { jobDeadlineMs: synthesisJobDeadlineMs }),
   });
 
+  // GY-I18 后台域：阶段 1（资料生命周期，25 个 operationId）+ 阶段 1b（运营与开关，9 个）。
+  //
+  // **两个切片必须共用同一个 `AdminRuntime`**（串行临界区 + **同一份只可追加审计** +
+  // 同一套幂等台账）：`listAuditEvents` 是阶段 1 的操作，读的是内容 store 的审计流；
+  // 若两个 store 各建一份 runtime，后台运营/开关的写操作（分类/账号/作业/开关/隐藏帖子）
+  // 就不会出现在审计里 —— 那等于**审计漏记**。这里由装配层共享一个 runtime 修好，
+  // **不改服务层代码**（两个 store 的工厂都已支持注入 `runtime`）。
+  //
+  // **零端口注入**：`AdminJobPort` 与社区帖子端口默认**不注入** ⇒ 服务层对平台级作业的
+  // 读/取消与 `hidePost` 返回 503 `PROVIDER_UNAVAILABLE`（**不返回空页**：空页等于宣称
+  // 「平台当前没有作业」，那是无法确认的结论）。真实作业端口与社区存储属后续接线；
+  // 本文件**不**自建会与其它域割裂的替身实例（那会让「隐藏了帖子」在不同 store 上失真）。
+  const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
+  const adminRuntime = createAdminRuntime();
+  const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
+  const adminOpsStore = adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime });
+  const adminContentService = createAdminContentService({
+    store: adminContentStore,
+    now: clock,
+    signingKey: adminSigningKey,
+    executionMode: config.executionMode,
+  });
+  const adminOpsService = createAdminOpsService({
+    store: adminOpsStore,
+    now: clock,
+    signingKey: adminSigningKey,
+    executionMode: config.executionMode,
+    jobPort: adminInjection?.jobPort,
+    community: adminInjection?.communityStore,
+    flagEffects: adminInjection?.flagEffects,
+  });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -192,6 +249,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('authService', service);
   app.decorate('recognitionService', recognitionService);
   app.decorate('synthesisService', synthesisService);
+  app.decorate('adminContentService', adminContentService);
+  app.decorate('adminOpsService', adminOpsService);
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -203,6 +262,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerRecognitionRoutes(app, config, guards, recognitionService);
   registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs });
   registerSynthesisRoutes(app, config, guards, synthesisService);
+  registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
