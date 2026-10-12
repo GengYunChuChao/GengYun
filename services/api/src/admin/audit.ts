@@ -32,6 +32,15 @@ export interface AuditAppendInput {
   createdAt: Date;
   /** 仅测试注入固定 id 时使用；缺省生成 uuid。 */
   id?: string;
+  /**
+   * **内部专用**的目标标识（阶段 1b 新增）。
+   *
+   * 起因（契约缺口）：`TargetRef.type` 的 16 个闭集成员里**没有** category / account / flag，
+   * 而契约又允许 `target_ref: null`。若只写 null，审计就丢掉了"改的是哪一个目标"。
+   * 因此把目标标识放在**内部记录**上；契约投影（`projectAuditEvent`）严格只输出合同的 8 个字段，
+   * `target_hint` 永不出现在响应里。
+   */
+  targetHint?: string | null;
 }
 
 export interface AuditLog {
@@ -85,6 +94,7 @@ export function createAuditLog(): AuditLog {
         request_id: input.requestId,
         result: input.result,
         created_at: input.createdAt.toISOString(),
+        target_hint: input.targetHint ?? null,
       };
       // 入库前用契约镜像再校验一次：任何超长/闭集外取值都不允许落进审计台账。
       assertContractInput('AuditEvent', projectAuditEvent(record));

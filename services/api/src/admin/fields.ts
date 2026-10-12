@@ -17,7 +17,7 @@ import type { FieldError } from '../errors.ts';
 
 /** 契约 JSON Schema 子集在本片用到的全部关键字（归一化后的形状）。 */
 export interface FieldSpec {
-  type?: 'string' | 'integer' | 'boolean' | 'array' | 'object';
+  type?: 'string' | 'integer' | 'boolean' | 'array' | 'object' | 'null';
   const?: string;
   enum?: readonly string[];
   format?: string;
@@ -389,8 +389,15 @@ function checkFormat(format: string, value: string): boolean {
   }
 }
 
-function collect(spec: FieldSpec, value: unknown, path: string, issues: ValidationIssue[]): void {
+function collect(registry: Readonly<Record<string, FieldSpec>>, spec: FieldSpec, value: unknown, path: string, issues: ValidationIssue[]): void {
   if (issues.length >= MAX_FIELD_ERRORS) return;
+
+  // 契约里存在 `{"type":"null"}` 这种"恒为 null"的字段（例如 `AdminJob.result`）。
+  // 必须先于通用 null 分支处理，否则合法的 null 会被误判。
+  if (spec.type === 'null') {
+    if (value !== null) issues.push({ field: path, code: 'type' });
+    return;
+  }
 
   // 可空字段：契约的 anyOf [T, {type:"null"}]。null 是合法值，但键仍必须存在（由父层 required 保证）。
   if (value === null) {
@@ -399,12 +406,12 @@ function collect(spec: FieldSpec, value: unknown, path: string, issues: Validati
   }
 
   if (spec.ref !== undefined) {
-    const target = ALL_SPECS[spec.ref];
+    const target = registry[spec.ref];
     if (target === undefined) {
       issues.push({ field: path, code: 'spec_missing' });
       return;
     }
-    collect(target, value, path, issues);
+    collect(registry, target, value, path, issues);
     return;
   }
 
@@ -454,7 +461,7 @@ function collect(spec: FieldSpec, value: unknown, path: string, issues: Validati
       if (items !== undefined) {
         for (let index = 0; index < value.length; index += 1) {
           if (issues.length >= MAX_FIELD_ERRORS) return;
-          collect(items, value[index], `${path}[${index}]`, issues);
+          collect(registry, items, value[index], `${path}[${index}]`, issues);
         }
       }
       return;
@@ -479,7 +486,7 @@ function collect(spec: FieldSpec, value: unknown, path: string, issues: Validati
           if (spec.additionalProperties === false) issues.push({ field: childPath, code: 'additional_property' });
           continue;
         }
-        collect(childSpec, child, childPath, issues);
+        collect(registry, childSpec, child, childPath, issues);
       }
       return;
     }
@@ -497,18 +504,54 @@ export function collectIssues(specName: string, value: unknown): ValidationIssue
   const spec = ALL_SPECS[specName];
   if (spec === undefined) throw new Error(`契约镜像表缺少 schema：${specName}`);
   const issues: ValidationIssue[] = [];
-  collect(spec, value, '', issues);
+  collect(ALL_SPECS, spec, value, '', issues);
   return issues;
 }
 
 /** 入参校验（fail-closed）：任何契约不符一律 `INVALID_REQUEST`，并带上字段级 details。 */
 export function assertContractInput(specName: string, value: unknown): void {
+  const spec = ALL_SPECS[specName];
+  if (spec === undefined) throw new Error(`契约镜像表缺少 schema：${specName}`);
+  assertInputWith(ALL_SPECS, specName, value);
+}
+
+function assertInputWith(registry: Readonly<Record<string, FieldSpec>>, specName: string, value: unknown): void {
   if (value === undefined) {
     throw new ApiError('INVALID_REQUEST', '缺少请求体', { details: [{ field: '', code: 'required' }] });
   }
-  const issues = collectIssues(specName, value);
+  const spec = registry[specName];
+  if (spec === undefined) throw new Error(`契约镜像表缺少 schema：${specName}`);
+  const issues: ValidationIssue[] = [];
+  collect(registry, spec, value, '', issues);
   if (issues.length > 0) {
     const details: FieldError[] = issues.map((issue) => ({ field: issue.field === '' ? '(body)' : issue.field, code: issue.code }));
     throw new ApiError('INVALID_REQUEST', '请求体不符合契约字段约束', { details });
   }
+}
+
+/**
+ * 用**同一套解析与判定实现**针对另一张 schema 注册表建校验函数。
+ *
+ * 用途（GY-I18 阶段 1b）：阶段 1b 的后台运营/开关切片有自己的镜像表
+ * （`admin/ops/fields.ts`），但它**复用**这里的实现，不另写第二套校验器——
+ * 避免"两套校验语义各自演化"。
+ */
+export interface SpecValidator {
+  collectIssues(specName: string, value: unknown): ValidationIssue[];
+  assertInput(specName: string, value: unknown): void;
+}
+
+export function createSpecValidator(registry: Readonly<Record<string, FieldSpec>>): SpecValidator {
+  return {
+    collectIssues(specName, value) {
+      const spec = registry[specName];
+      if (spec === undefined) throw new Error(`契约镜像表缺少 schema：${specName}`);
+      const issues: ValidationIssue[] = [];
+      collect(registry, spec, value, '', issues);
+      return issues;
+    },
+    assertInput(specName, value) {
+      assertInputWith(registry, specName, value);
+    },
+  };
 }

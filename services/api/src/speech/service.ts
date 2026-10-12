@@ -264,6 +264,8 @@ export function createSpeechService(options: SpeechServiceOptions) {
   const idempotencyWaitMs = options.idempotencyWaitMs ?? DEFAULT_IDEMPOTENCY_WAIT_MS;
   const idempotencyHmacKey = options.idempotencyHmacKey;
   const inFlight = new Set<Promise<void>>();
+  /** 真实调用提供者的累计次数（仅在 runProviderWithDeadline 真正发起调用处 +1）。 */
+  let providerCalls = 0;
 
   function scopeFor(userId: string, method: string, routePath: string): string {
     return idempotencyScope(userId, method, routePath);
@@ -595,6 +597,9 @@ export function createSpeechService(options: SpeechServiceOptions) {
     const timeout = new Promise<{ kind: 'timeout' }>((resolve) => {
       timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining);
     });
+    // 可观测计数（诊断/证据用，不含凭据、不改变语义）：真实调用提供者的次数。
+    // 计数点就在真正发起调用的这一行，因此「受理前 fail-closed」时它必然为 0。
+    providerCalls += 1;
     const call = provider
       .transcribe({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
       .then((value) => ({ kind: 'value' as const, value }))
@@ -740,6 +745,8 @@ export function createSpeechService(options: SpeechServiceOptions) {
       storePersistent: store.persistent,
       jobDeadlineMs,
       idempotencyWaitMs,
+      /** 真实调用提供者的累计次数（诊断/证据用；受理前 fail-closed 时恒为 0）。 */
+      providerCalls,
     }),
   };
 }
