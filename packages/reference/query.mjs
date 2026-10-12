@@ -17,6 +17,8 @@
  */
 
 import {
+  APPLICABILITY_DIMENSIONS,
+  APPLICABILITY_RULE_VERSION,
   DEFAULT_LIMIT,
   EVIDENCE_KINDS,
   MAX_LIMIT,
@@ -24,11 +26,12 @@ import {
   QUERYABLE_VALIDITIES,
   QUERYABLE_VISIBILITIES,
   REGION_CODE_PATTERN,
+  RESTRICTION_STATUSES,
   SOURCE_KINDS,
 } from './constants.mjs';
 import { normalizeText, resolveNavTerm } from './catalog.mjs';
 import { ReferenceError, FieldError } from './errors.mjs';
-import { deriveSourceVersion } from './records.mjs';
+import { deriveSourceVersion, parseIngredients } from './records.mjs';
 
 /**
  * 规范化查询输入。
@@ -177,6 +180,132 @@ export function matchConditions(item, query) {
   }
 
   return { matched: reasons.length === 0, reasons };
+}
+
+/**
+ * GY-I08 药剂适用过滤（确定性、fail-closed）。
+ *
+ * 给定一条记录与用户/场景上下文，逐维度检查「是否可进入可执行建议或问答用量卡片」。
+ * 任一安全性维度缺失即如实说明，**不静默放宽**（AC13：未核对／不适用／禁用不进入可执行
+ * 建议；规格：缺条件说明原因）。
+ *
+ * 维度（顺序同 `APPLICABILITY_DIMENSIONS`）：
+ *   valid_source      —— 复用 evaluateEligibility（来源枚举/有效期/可见性/模拟）。
+ *   banned_restricted —— 禁限用状态；banned 必阻断，restricted 默认阻断（除非显式 allow_restricted），
+ *                       unknown（未采集）按 fail-closed：无法确认非禁用 → 阻断。
+ *   crop              —— 记录 crop_ids 含上下文作物。
+ *   growth_stage      —— 记录未采集该字段 → 标注无法确认（不阻断其它维度匹配）。
+ *   region            —— 记录未标注地区码 → 标注无法确认。
+ *   dosage_form       —— 上下文指定剂型时比对（含量剂型维度）。
+ *   ingredient_content—— 上下文指定有效成分（名称±含量）时，比对 ingredients_text 解析结果。
+ *   use_scene         —— 上下文使用场景做子串比对。
+ *
+ * @returns {{ applicable: boolean, blocked: string[], reasons: string[], rule_version: string }}
+ *   applicable：是否可进入可执行建议/用量卡片（安全性维度全部通过）。
+ *   blocked：被阻断的维度。
+ *   reasons：每个未满足或未采集维度的可读原因（AC02：缺项有原因）。
+ */
+export function evaluateApplicability(item, context = {}, { ruleVersion = APPLICABILITY_RULE_VERSION } = {}) {
+  const reasons = [];
+  const blocked = [];
+
+  // 1) 有效来源（复用既有 eligibility）。
+  const elig = evaluateEligibility(item, { includeSimulated: context.include_simulated === true });
+  if (!elig.queryable) {
+    blocked.push('valid_source');
+    reasons.push(`来源不可用：${elig.reason ?? '不满足契约必填或可查询条件'}`);
+  }
+
+  // 2) 禁限用（fail-closed：未知即不得确认为安全）。
+  const restriction = readRestrictionStatus(item);
+  if (restriction === 'banned') {
+    blocked.push('banned_restricted');
+    reasons.push('该药剂为禁用状态，不得进入用量建议');
+  } else if (restriction === 'restricted') {
+    if (context.allow_restricted === true) {
+      reasons.push('该药剂为限用状态，已按上下文显式确认');
+    } else {
+      blocked.push('banned_restricted');
+      reasons.push('该药剂为限用状态，需额外确认后方可进入用量建议');
+    }
+  } else if (restriction === 'unknown') {
+    blocked.push('banned_restricted');
+    reasons.push('未采集禁限用状态，无法确认非禁用，不得进入用量建议');
+  }
+
+  // 3) 作物。
+  if (context.crop_id) {
+    if (!(item.crop_ids ?? []).includes(context.crop_id)) {
+      blocked.push('crop');
+      reasons.push('作物不符（记录未覆盖该作物）');
+    }
+  }
+
+  // 4) 生育期（记录未采集 → 标注无法确认，不阻断其它维度匹配）。
+  if (context.growth_stage) {
+    const gs = item.growth_stage ?? item.verification?.growth_stage;
+    if (typeof gs === 'string' && gs.trim() !== '') {
+      if (!normalizeText(gs).includes(normalizeText(context.growth_stage))) {
+        reasons.push('生育期不符');
+      }
+    } else {
+      reasons.push('记录未采集生育期条件，无法确认是否适用该生育期');
+    }
+  }
+
+  // 5) 地区（记录未标注地区码 → 标注无法确认）。
+  if (context.region_code) {
+    const rc = Array.isArray(item.region_codes) ? item.region_codes : (typeof item.region_code === 'string' ? [item.region_code] : []);
+    if (rc.length > 0) {
+      if (!rc.includes(context.region_code)) {
+        blocked.push('region');
+        reasons.push('适用地区不符');
+      }
+    } else {
+      reasons.push('记录未标注适用地区，无法确认是否适用该地区');
+    }
+  }
+
+  // 6) 制剂（剂型）。
+  if (context.dosage_form) {
+    if (normalizeText(item.dosage_form ?? '') !== normalizeText(context.dosage_form)) {
+      blocked.push('dosage_form');
+      reasons.push('制剂（剂型）不符');
+    }
+  }
+
+  // 7) 含量剂型（有效成分）。
+  if (context.ingredient_content) {
+    const want = normalizeText(context.ingredient_content);
+    const parsed = item.verification?.parsed_ingredients ?? parseIngredients(item.ingredients_text);
+    const hit = parsed.some((ing) => normalizeText(ing.name).includes(want) || normalizeText(ing.content_text).includes(want));
+    if (!hit) {
+      blocked.push('ingredient_content');
+      reasons.push('有效成分/含量与所选不符');
+    }
+  }
+
+  // 8) 使用场景。
+  if (context.use_scene) {
+    if (!normalizeText(item.use_scene ?? '').includes(normalizeText(context.use_scene))) {
+      blocked.push('use_scene');
+      reasons.push('使用场景不符');
+    }
+  }
+
+  return Object.freeze({
+    applicable: blocked.length === 0,
+    blocked: Object.freeze(blocked),
+    reasons: Object.freeze(reasons),
+    rule_version: ruleVersion,
+  });
+}
+
+/** 读取记录的禁限用状态（来源未给出时回退 unknown，绝不默认 unrestricted）。 */
+function readRestrictionStatus(item) {
+  const raw = item?.verification?.restriction_status ?? item?.source?.restriction_status ?? item?.restriction_status;
+  if (typeof raw === 'string' && RESTRICTION_STATUSES.includes(raw)) return raw;
+  return 'unknown';
 }
 
 /**

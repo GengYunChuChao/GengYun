@@ -145,6 +145,36 @@ export const FORBIDDEN_LABELS = [
 ];
 
 /**
+ * GY-I08 药剂适用过滤规则版本。
+ *
+ * 所有消费端（packages/reference 域库、miniprogram 详情页、GY-I12 问答用量卡片）
+ * **必须引用同一常量**，以满足规格「所有消费端使用同一规则版本」的契约要求。
+ * 任何一处修改适用过滤语义时，须同步 bump 此版本并回归 miniprogram 镜像。
+ */
+export const APPLICABILITY_RULE_VERSION = 'gy-i08/1.0.0';
+
+/**
+ * 禁限用状态枚举（GY-I08 适用过滤维度之一）。
+ * - banned：禁用（不得进入可执行建议/用量卡片，AC13）
+ * - restricted：限用（需额外确认，默认不得进入）
+ * - unrestricted：非禁限用
+ * - unknown：来源未采集该状态（**不得静默视为安全**；按 fail-closed 处理）
+ */
+export const RESTRICTION_STATUSES = ['banned', 'restricted', 'unrestricted', 'unknown'];
+
+/** 药剂适用过滤的维度清单（顺序即检查顺序；用于测试断言与 UI 说明）。 */
+export const APPLICABILITY_DIMENSIONS = [
+  'valid_source',
+  'banned_restricted',
+  'crop',
+  'growth_stage',
+  'region',
+  'dosage_form',
+  'ingredient_content',
+  'use_scene',
+];
+
+/**
  * 指挥提供的结构化**种子数据**（整理稿）的强制标注。
  *
  * 合规口径（见 db/seeds/gy-i07/INDEX.json usage_policy）：

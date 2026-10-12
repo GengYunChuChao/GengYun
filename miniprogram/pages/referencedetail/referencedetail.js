@@ -36,6 +36,10 @@ Page({
     unavailableReason: '',
     queryable: true,
     modeNote: '',
+    // GY-I08：标签原文用量卡片（DoseCard）与适用过滤结论。
+    doseCardEnabled: true,
+    doseCard: null,
+    applicability: null,
     // G2：会话门禁状态（未通过服务端核实前恒 false）。
     gatePassed: false
   },
@@ -84,8 +88,19 @@ Page({
       verifiedScope: detail.verified_scope || [],
       notCollected: detail.not_collected || [],
       unavailableReason: detail.unavailable_reason || '',
-      queryable: detail.queryable === true
+      queryable: detail.queryable === true,
+      doseCard: reference.doseCardDescriptor(detail, { doseCardEnabled: this.data.doseCardEnabled }),
+      applicability: reference.evaluateApplicability(detail, {})
     })
+  },
+
+  // GY-I08：用量卡片功能关闭开关（满足规格「有功能关闭开关」）。
+  toggleDoseCard: function (e) {
+    const enabled = e && e.detail && typeof e.detail.value === 'boolean' ? e.detail.value : !this.data.doseCardEnabled;
+    this.setData({ doseCardEnabled: enabled });
+    if (this.data.detail) {
+      this.setData({ doseCard: reference.doseCardDescriptor(this.data.detail, { doseCardEnabled: enabled }) });
+    }
   },
 
   backToList: function () {

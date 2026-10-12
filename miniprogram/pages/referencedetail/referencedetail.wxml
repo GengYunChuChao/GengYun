@@ -51,6 +51,33 @@
       <view class="note">{{detail.note}}</view>
     </view>
 
+    <!-- GY-I08 标签原文用量安全边界（DoseCard） -->
+    <view class="card">
+      <view class="section-title">用量安全边界（标签原文）</view>
+      <view class="row"><text class="k">规则版本</text><text class="v mono">{{applicability.rule_version}}</text></view>
+      <view class="row row-switch">
+        <text class="k">用量卡片开关</text>
+        <switch checked="{{doseCardEnabled}}" bindchange="toggleDoseCard" color="#1F7A45" />
+      </view>
+      <block wx:if="{{doseCard.renderable}}">
+        <view class="dose-card">
+          <view class="dose-num">{{doseCard.dose.number}}<text class="dose-unit">{{doseCard.dose.unit}}</text></view>
+          <view class="dose-cond" wx:if="{{doseCard.dose.condition}}">条件：{{doseCard.dose.condition}}</view>
+          <view class="dose-note">用量仅依来源原文展示，不生成换算或处方。</view>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="note">{{doseCard.reason}}</view>
+      </block>
+      <view class="sub-title">适用过滤结论</view>
+      <view class="state-bar {{applicability.applicable ? 'state-ok' : 'state-unavailable'}}">
+        {{applicability.applicable ? '可进入用量建议与问答用量卡片' : '不可进入可执行用量建议'}}
+      </view>
+      <view class="chips" wx:if="{{applicability.reasons.length}}">
+        <text class="chip chip-mute" wx:for="{{applicability.reasons}}" wx:key="*this">{{item}}</text>
+      </view>
+    </view>
+
     <!-- 原文来源 -->
     <view class="card">
       <view class="section-title">原文来源</view>
