@@ -22,6 +22,10 @@ import { registerConsentRoutes } from './routes/consents.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
+import { registerSpeechRoutes } from './routes/speech.ts';
+import type { SpeechStore } from './speech/store.ts';
+import type { SpeechProvider } from './speech/provider.ts';
+import type { SpeechMediaPort } from './speech/media.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
@@ -70,6 +74,17 @@ export interface BuildAppOptions {
   recognitionMedia?: RecognitionMediaPort;
   /** 任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   recognitionJobDeadlineMs?: number;
+  // GY-I11 转写域注入项（形状与上面识别域的同名项一致）。**全部可选**：
+  // 不传时与注入前**逐字节同行为**——存储用内存实现、提供者与媒体端口按 executionMode 自建、
+  // 截止时间取服务层默认；即默认装配路径仍成立「零端口注入」。
+  /** 测试注入：替换转写存储（默认进程内内存 store；本片无持久化实现）。 */
+  speechStore?: SpeechStore;
+  /** 测试注入：替换 ASR 提供者（默认按 executionMode 选择 real/替身）。 */
+  speechProvider?: SpeechProvider;
+  /** 测试注入：替换媒体引用端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  speechMedia?: SpeechMediaPort;
+  /** 转写任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
+  speechJobDeadlineMs?: number;
   /** 测试注入：替换合成存储（默认进程内内存 store；本片无持久化实现）。 */
   synthesisStore?: SynthesisStore;
   /** 测试注入：替换合成提供者（默认按 executionMode 选择 real/替身）。 */
@@ -97,7 +112,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -186,6 +201,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerProfileRoutes(app, config, pool, guards);
   registerKnowledgeRoutes(app, config, pool, guards);
   registerRecognitionRoutes(app, config, guards, recognitionService);
+  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs });
   registerSynthesisRoutes(app, config, guards, synthesisService);
 
   app.setNotFoundHandler((request, reply) => {
