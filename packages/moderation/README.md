@@ -81,7 +81,9 @@ toRuleLayerDraft(result); // 显式 incomplete 的草稿，未补 model_version 
 | 出口 | 用途 |
 | --- | --- |
 | `mergeModeration` | **合流层**：规则层结论 + 模型层结论 ⇒ 完整合法契约 `Moderation`（`id` 除外） |
-| `mergeReasonCodes` / `checkMergedContractShape` / `checkMergedInvariant` | 原因码合流（截断口径）、契约形状核对、合流判定不变式（**单向**必要条件） |
+| `mergeReasonCodes` / `checkMergedContractShape` / `checkMergedInvariant` | 原因码合流（截断口径）、契约形状核对、合流判定不变式（**单向**必要条件；返修 1 起三处共用） |
+| `evaluateBoundHardRules` / `moderationInputDigest` / `verifyInputBinding` / `readInputBinding` | **输入绑定**（返修 1 · 监工 `5488195507` P1）：结论必须绑定它实际检查过的 `target_ref`+正文+媒体引用摘要；合流时**重算比对**，不一致即隔离，任何模型 pass 都覆盖不了 |
+| `mergedFailureCodes` / `MERGED_FAILURE_REASON_CODES` | 合流层"出现即不得放行／不得复用"的原因码清单（模型失败类 + `MODEL_BLOCKED`） |
 | `MODEL_REASON_CODES` | 模型层**原因码**闭集（`reason_codes` 取值，不是契约错误码；错误封套码仍只有规则层 `MODERATION_ERROR_CODES` 三个值，本层未新增） |
 | `MODEL_PORT_SEAMS` / `MODEL_PORT_SEAM_DEFAULTS` | 真实网络 seam 清单；本包对它们的默认实现**全为 `null`**（默认关闭靠"类型上就没有实现"） |
 | `validateModelPort` / `classifyModelFailure` / `buildModelRequest` / `normalizeMediaRef` | 端口校验、失败归类、离线请求信封、图片引用归一（**不传字节**） |
@@ -100,6 +102,12 @@ toRuleLayerDraft(result); // 显式 incomplete 的草稿，未补 model_version 
   且必须留下可判别的 `MODEL_*` 原因码。
 - `reason_codes` 超限走**截断**（不是拒绝）：`REASON_CODES_TRUNCATED` 置顶、≤30 条，
   合流全量留在非契约字段 `reason_codes_full`；**裁码绝不改变决策**。
+- **输入绑定（返修 1 · P1）**：生产接线应使用 `evaluateBoundHardRules(input, options)` 得到规则层结论
+  （结论自带 `input_binding`）；合流必须传 `content`，层内会重算摘要比对，
+  不一致 ⇒ `MODEL_LAYER_INPUT_BINDING_MISMATCH` + `quarantined`。**缺少绑定一律不得通过**。
+- **放行闸门（返修 1 · P2）**：模型层结论**必须**用 `isModelLayerPublishable` / `evaluateModelReReview`
+  （两者都过 `checkMergedInvariant` + 模型失败原因 + 输入绑定核验，调用时要传 `input`）；
+  规则层的 `isPublishable` 只对规则层事实负责，**不得**用于放行模型层结论。
 
 ## 测试
 

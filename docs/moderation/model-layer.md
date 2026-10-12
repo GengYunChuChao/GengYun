@@ -24,12 +24,45 @@
 | `packages/moderation/model-reason-codes.mjs` | 模型层**原因码**闭集（`reason_codes` 取值；不是契约错误码） |
 | `packages/moderation/model-verdict.mjs` | 模型回报形状归一（形状必须齐备；自由文本一律丢弃） |
 | `packages/moderation/model-ports.mjs` | 端口契约、端口校验、失败归类、离线请求信封、图片引用归一 |
+| `packages/moderation/input-binding.mjs` | **输入绑定**（返修 1 · P1）：把结论绑到它**实际检查过**的 `target_ref` + 正文 + 媒体引用摘要上，并提供合流时的重算比对 |
+| `packages/moderation/merged-invariant.mjs` | **合流合法性**单一事实来源（返修 1 · P2）：`checkMergedInvariant` / `mergedFailureCodes`，合流层与两个闸门三处共用 |
 | `packages/moderation/model-review.mjs` | 三元组版本绑定、重审失效、发布口径（内部复用规则层 `evaluateReReview` / `isPublishable`） |
-| `packages/moderation/merge.mjs` | **合流层**：规则层结论 + 模型层结论 ⇒ 完整合法契约 `Moderation`（`id` 除外） |
+| `packages/moderation/merge.mjs` | **合流层**：规则层结论 + 模型层结论 ⇒ 完整合法契约 `Moderation`（`id` 除外）；**必须**校验输入绑定 |
 
 本片**没有改规则层既有语义**：`constants.mjs` / `matchers.mjs` / `rules.mjs` / `rule-version.mjs` /
 `validate-input.mjs` / `engine.mjs` / `batch.mjs` / `review.mjs` 逐字节未动；
 `index.mjs` 只**追加**导出与更新头部边界说明。规则层既有断言（`tests/moderation/` 原有 122 条）逐条继续通过。
+
+## 输入绑定：结论必须绑定它**实际检查过**的内容（返修 1 · 监工 `5488195507` P1）
+
+事故形态（监工独立复现）：对干净正文 A 跑 `evaluateHardRules` 得 `approved`，**同一个
+`target_ref`/`revision`** 下把 `content.text` 换成硬规则会 `rejected` 的正文 B，再注入返回 pass 的假模型
+⇒ 旧实现返回 **`approved`**：等于**模型放行 B 时复用了 A 的硬规则结论**，绕过"模型不能翻案"的硬边界。
+
+摘要（`moderationInputDigest`，形如 `mib1+sha256:<32 位十六进制>`）覆盖的输入面 **恰好是规则层唯一接受的输入面**
+（`ALLOWED_INPUT_FIELDS`）：`target_ref{type,id,revision}` + `text` **原文逐字符** + `media`（**保序**，元素内容逐个进摘要）。
+
+| 选择 | 理由 |
+| --- | --- |
+| 覆盖 `target_ref` 与 `revision` | 同 id 换版本、或换成另一个对象，都必须被识别为"不是同一次检查" |
+| 覆盖正文**逐字符** | 只绑"非空正文"等于没绑；换一个字就可能是另一种内容 |
+| 覆盖**媒体引用集合**且**保序** | 监工明确要求不得只看数量；顺序变化对应不同的待发布内容，宁多失效不静默复用 |
+| **不**覆盖未知顶层字段 | 规则层对未知字段本就判 `INPUT_UNKNOWN_FIELD`（fail-closed），摘要只覆盖"真正被检查的内容" |
+| 用域分隔 + 规范化序列化（复用规则层 `stableStringify`） | 与 `rule-version.mjs`/`prompt-version.mjs` 同做法，避免跨组件摘要混淆；结构化输入需要稳定序列化 |
+| 由 `evaluateBoundHardRules` 在**规则层结论旁**写入 `input_binding`（非契约字段） | 规则层字段逐字节不动；绑定只做"加字段"（有用例逐字段比对证明） |
+
+与社区线（`#15` 阶段 1，`services/api/src/community/service.ts`）既有做法的异同：
+
+| 维度 | 社区线 | 本模块 | 说明 |
+| --- | --- | --- | --- |
+| 绑定对象 | 正文 `text_digest = sha256Hex(text)` | `target_ref` + 正文 + **媒体引用** | 本模块范围更宽：本层是文本/图片两个端口的唯一合流点，媒体也是被检查的输入 |
+| 哈希方式 | 对纯字符串直接 SHA-256 | 结构化输入 ⇒ `stableStringify` + 域分隔 + 摘要前缀 | 输入形状不同；安全目标一致 |
+| 不一致时落点 | 降级为 `pending`（内容回到待筛查队列） | **隔离 `quarantined`** | 社区线那是"内容被编辑"；本层是"**本次调用把 A 的结论用在 B 上**"，属证据不可信/自相矛盾 |
+| 存储位置 | 社区线自己的 `ModerationRecord.text_digest`（契约之外） | `input_binding`（契约之外） | 同一种现实约束：契约 `Moderation` 没有该字段（见 §9.5） |
+
+合流层口径：绑定**缺失／不可用** ⇒ `MODEL_LAYER_INPUT_BINDING_MISSING`；**重算不一致** ⇒
+`MODEL_LAYER_INPUT_BINDING_MISMATCH`；两者都让 `decision` 至少为 `quarantined`，并且
+**任何模型端口的 pass 都无法覆盖这个拒绝**（有用例断言端口确实返回了 pass）。
 
 ## 2 端口契约：可注入、默认关闭（结构性，不是运行期开关）
 
@@ -116,6 +149,8 @@
 | 模型 `unsure`（没结论） | `quarantined` | `MODEL_NOT_EVALUATED` |
 | 模型明确 `block` | `rejected` | `MODEL_BLOCKED` |
 | `content` 与规则层看到的输入不一致／非法 `execution_mode`／规则层结果自相矛盾 | `quarantined` | `MODEL_MERGE_INPUT_INVALID` |
+| **结论没带输入绑定**（只跑了 `evaluateHardRules`） | `quarantined` | `MODEL_LAYER_INPUT_BINDING_MISSING`（返修 1 · P1） |
+| **绑定与本次内容重算摘要不一致**（换正文／换同数量媒体） | `quarantined` | `MODEL_LAYER_INPUT_BINDING_MISMATCH`（返修 1 · P1） |
 | prompt 定义非法（无法派生版本） | `quarantined` | `MODEL_PROMPT_DEFINITION_INVALID` |
 
 **落点选择（`quarantined`，不选 `pending`）及理由**：`pending` 在规则层口径中专指
@@ -135,6 +170,33 @@
 所以合流结果**允许**出现 `hard_rule_passed=true` + `decision='quarantined'`（规则通过、模型没跑或没结论），
 这是本片 fail-closed 的主线；`checkDecisionInvariant`（规则层）**不**适用于合流结果，
 合流层有自己的 `checkMergedInvariant`。反向（`hard_rule_passed=false` + `approved`）则**永远禁止**。
+除 `hard_rule_passed` 与"无失败原因码"外，`approved` 还要求：**全部所需端口实际通过**，
+且**输入绑定存在并已重算比对一致**（返修 1 · P1）。
+
+## 4.1 放行闸门与导出消费者清查（返修 1 · 监工 `5488195507` P2）
+
+事故形态（监工独立构造）：`decision='approved'` + `hard_rule_passed=true` + 三版本匹配 +
+`reason_codes=['MODEL_TIMEOUT']` 的**自相矛盾结论**——`checkMergedInvariant` 早已判 `ok=false`，
+但两个"放行闸门"只比版本 ⇒ `isModelLayerPublishable` 返回 `publishable=true`、
+`evaluateModelReReview` 返回 `action='reuse'/publishable=true`。根因是**闸门分散、各自校验口径不同**。
+
+处置：把"合流合法性"抽成单一事实来源 `checkMergedInvariant`（`merged-invariant.mjs`），
+**三处共用**（合流层 + 两个闸门），并且闸门的前置条件还包含：
+① 结论自身不得携带合流层失败原因码（`MODEL_*` 失败类 + `MODEL_BLOCKED`）；
+② 输入绑定必须存在，且调用方给了当前内容时必须重算比对一致（P1 的回读侧）。
+任一不满足 ⇒ `publishable=false`、`evaluateModelReReview` 判 `stale` + `re_review` + `quarantined`。
+
+本包**所有**"拿一个结论 ⇒ 回答可发布／可复用／是否合法"的出口，逐一清查如下：
+
+| 出口 | 口径 | 是否过合流合法性 | 处置 / 不改的理由 |
+| --- | --- | --- | --- |
+| `mergeModeration` | 合流层（生产端） | 是（决定 `decision`，且输出 `input_binding.verified`） | 返修 1 已加输入绑定 |
+| `isModelLayerPublishable` | **模型层唯一放行口径** | 是（返修 1 新增） | 模型层消费者**必须**用它 |
+| `evaluateModelReReview` | 模型层复用/重审口径 | 是（返修 1 新增） | 同上；"有模型层失败原因 ⇒ 不复用" |
+| `checkMergedInvariant` | 共用合法性 | 它本身就是该口径 | 三处共用，避免再次分散 |
+| `checkMergedContractShape` | **形状**核对（不是放行判定） | 否（不回答"能不能发布"） | 只核契约 `Moderation` 字段是否齐备合法；不含放行语义 |
+| `isPublishable` / `evaluateReReview` | **规则层**口径（PR #88 已合并） | 否 | **不改**：它只对规则层事实负责、不认识模型层码；改它就是改规则层既有语义。口径是"模型层结论必须走 `isModelLayerPublishable`"，并在 PR 正文写明 |
+| `checkDecisionInvariant` / `assertDecisionInvariant` | **规则层**自身不变式 | 否 | 同上；合流结果不适用（见 §4 的口径差异表） |
 
 ## 5 图片／多媒体的口径与跨片依赖
 
@@ -163,10 +225,20 @@
 | 调用方未给当前 model／prompt 版本 | 是 | `quarantined` | 同上（"不知道用哪版"不等于"没变化"） |
 | 目标 `revision` 变化 | 是 | `pending` | `TARGET_REVISION_CHANGED`（规则层判出） |
 | `approved` 与 `hard_rule_passed` 自相矛盾 | 是 | `quarantined` | `DECISION_INCONSISTENT`（规则层判出） |
-| 三版本与目标均未变且自洽 | 否 | — | `reuse` 且 `publishable: true` |
+| 既有结论**没带输入绑定** | 是 | `quarantined` | `MODEL_LAYER_INPUT_BINDING_MISSING`（返修 1 · P1） |
+| 有绑定但调用方未给当前内容 | 是 | `quarantined` | `MODEL_LAYER_INPUT_BINDING_UNVERIFIED`（不得发布；内容是否仍是同一份未知） |
+| 绑定摘要与当前内容不一致 | 是 | `quarantined` | `MODEL_LAYER_INPUT_BINDING_MISMATCH`（返修 1 · P1） |
+| 结论自身带合流层失败原因码（`MODEL_TIMEOUT` 等）或违反合流不变式 | 是 | `quarantined` | `MODEL_LAYER_INVARIANT_VIOLATION` + 原失败码（返修 1 · P2） |
+| 三版本与目标均未变、绑定已核、结论自身合法 | 否 | — | `reuse` 且 `publishable: true` |
 
-发布口径 `isModelLayerPublishable` = 规则层 `isPublishable` **且** 模型／prompt 版本与当前一致；
-任一不满足即 `NOT_PUBLISHABLE`。"通过筛查"与"发布"仍是两步（F08）。
+> 返修 1 起，`stale = true` 的含义是"**不得按原样复用**"（版本／绑定／自身合法性任一不成立），
+> 不再只表示"版本变了"。落点仍沿用规则层口径：**版本变化 ⇒ `pending`**，
+> 其余（未知／不一致／失败／不合法）⇒ `quarantined`。
+
+发布口径 `isModelLayerPublishable` = 规则层 `isPublishable` **且** 模型／prompt 版本与当前一致
+**且** 合流合法性成立 **且** 输入绑定已与当前内容重算比对一致（返修 1 · P1+P2）；
+任一不满足即 `NOT_PUBLISHABLE`。调用方要传 `input`（当前这份内容）才可能得到 `publishable: true`。
+"通过筛查"与"发布"仍是两步（F08）。
 
 ## 7 `reason_codes` 合流与超限口径
 
@@ -221,6 +293,12 @@
    （`model_layer.status` / `kinds[*].status`），契约对象本身无法表达"这条是模型没跑导致的隔离"，
    只能靠 `MODEL_*` 原因码间接推断。
 4. **带媒体目标的 `approved` 不可达**（见 §5）：这不是本片能单方面修的，属规则层口径 + 接线口径的跨片依赖。
+5. **契约 `Moderation` 没有"这份结论绑定了哪份内容"的字段**（返修 1 · P1 的现实约束）：
+   本片把绑定放在非契约字段 `input_binding`（规则层结论侧与合流结果侧各一份），
+   因此**存储层必须把该字段一起存**，否则回读时就只剩版本可用、
+   内容是否仍是同一份无法核验（闸门会以 `MODEL_LAYER_INPUT_BINDING_MISSING` 拒绝放行，方向安全）。
+   社区线（`#15`）面对同一约束，做法相同（把 `text_digest` 存在契约之外的 `ModerationRecord` 上）。
+   若要把内容绑定提升为契约字段，需要契约侧增量。
 
 ## 10 已知限制（不掩饰）
 
@@ -236,6 +314,10 @@
    "合流层等待"，不能抢占端口内部已经发出的调用（进程级／worker 级超时属接线增量）。
 6. **`execution_mode` 只是标签**：它不影响"要不要跑端口"，因此"默认关闭"**不**靠它；
    若下游误以为切成 `real` 就会跑模型，会得到 `quarantined` 而不是静默通过（方向安全）。
+7. **输入绑定是"调用方必须传对同一份内容"的协作口径**（返修 1 · P1）：
+   摘要在组件内保证"不一致必被发现"，但组件无法阻止调用方**根本不调用** `mergeModeration`
+   而只拿规则层结论去发布——那属于接线口径的跨片依赖（见 §9.5 与 §4.1 清查表）。
+   本片能保证的是：**凡走本层**的路径，模型结论都无法覆盖"内容不一致"这个拒绝。
 
 ## 11 如何运行
 

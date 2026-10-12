@@ -33,10 +33,10 @@ import { missingContractFields, REVIEW_ACTIONS, REVIEW_LANDINGS } from '../../pa
 import {
   MODERATION_CONTRACT_FIELDS,
   checkMergedContractShape,
-  checkMergedInvariant,
   mergeModeration,
   mergeReasonCodes,
 } from '../../packages/moderation/merge.mjs';
+import { checkMergedInvariant } from '../../packages/moderation/merged-invariant.mjs';
 import { derivePromptVersionForIds } from '../../packages/moderation/prompt-version.mjs';
 import {
   CLEAN_RULE_RESULT,

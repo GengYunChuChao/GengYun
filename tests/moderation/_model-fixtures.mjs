@@ -9,6 +9,11 @@
  *     真实样本**各为 0**，因此本文件与全部用例**不得**被引用为任何模型准确率／召回率证据。
  */
 import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
+import {
+  INPUT_BINDING_SCHEMA,
+  evaluateBoundHardRules,
+  moderationInputDigest,
+} from '../../packages/moderation/input-binding.mjs';
 
 /**
  * 夹具显式给定的规则预算（毫秒）。
@@ -20,9 +25,35 @@ import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
  */
 export const RULE_BUDGET_MS = 5000;
 
-/** 用显式预算跑规则层（模型层夹具的统一入口）。 */
+/**
+ * 用显式预算跑规则层，并**绑定输入摘要**（返修 1 · 监工 P1 之后，合流层要求结论必须带绑定）。
+ * 这就是生产接线应当使用的形态：`evaluateBoundHardRules(input, options)`。
+ */
 export function runRules(input, options = {}) {
+  return evaluateBoundHardRules(input, { budget_ms: RULE_BUDGET_MS, ...options });
+}
+
+/** 只跑规则层、**不绑定输入**：仅用于构造"结论没带绑定"的反例（合流层必须拒绝）。 */
+export function runUnboundRules(input, options = {}) {
   return evaluateHardRules(input, { budget_ms: RULE_BUDGET_MS, ...options });
+}
+
+/** 剥掉输入绑定：用于构造"绑定缺失"的反例。 */
+export function stripInputBinding(result) {
+  const copy = { ...result };
+  delete copy.input_binding;
+  return copy;
+}
+
+/** 为"既有结论"构造一个已验证的输入绑定（回读路径：结论 + 绑定 + 当前内容）。 */
+export function bindingFor(input) {
+  return {
+    schema: INPUT_BINDING_SCHEMA,
+    digest: moderationInputDigest(input),
+    media_count: Array.isArray(input?.media) ? input.media.length : null,
+    text_length: typeof input?.text === 'string' ? input.text.length : null,
+    verified: true,
+  };
 }
 
 /** 干净文本（与规则层夹具同源，不含任何命中形态）。 */
@@ -137,16 +168,23 @@ export function currentBinding(overrides = {}) {
   };
 }
 
-/** 与规则层结果**逐字段一致**的合成"既有结论"（已补齐模型层字段）。 */
+/**
+ * 与规则层结果**逐字段一致**的合成"既有结论"（已补齐模型层字段 + 输入绑定）。
+ *
+ * 默认绑定到 `makeContent()`（干净文本、无媒体）；要换内容请同时传 `input` 与 `input_binding`
+ * （或直接用 `realApproved()` 那种真实合流出来的结论）。
+ */
 export function existingApproved(overrides = {}) {
+  const { input = makeContent(), ...rest } = overrides;
   return {
-    target_ref: makeContent().target_ref,
+    target_ref: input.target_ref,
     decision: 'approved',
     reason_codes: [],
     hard_rule_passed: true,
     rule_version: CLEAN_RULE_RESULT.rule_version,
     model_version: 'synthetic-tms-model@1.0',
     prompt_version: 'mp1+sha256:' + 'a'.repeat(32),
-    ...overrides,
+    input_binding: bindingFor(input),
+    ...rest,
   };
 }

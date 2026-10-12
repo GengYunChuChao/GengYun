@@ -10,8 +10,11 @@
  *   - **第一片（规则层）**：`constants/matchers/rules/rule-version/validate-input/engine/batch/review`，
  *     确定性硬规则判定；已由 PR #88 合并进 main（d5562923）。
  *   - **第二片（模型层，本片）**：`prompts/prompt-version/model-reason-codes/model-verdict/
- *     model-ports/model-review/merge`，可注入且**默认关闭**的模型审核端口 + 合流层 +
- *     prompt 版本派生 + 版本绑定重审 + 失败隔离。
+ *     model-ports/input-binding/merged-invariant/model-review/merge`，可注入且**默认关闭**的模型审核端口 +
+ *     合流层 + **输入绑定**（结论绑它实际检查过的内容）+ prompt 版本派生 + 版本绑定重审 + 失败隔离。
+ *     返修 1（监工 5488195507）：合流层要求规则层结论必须带**输入绑定**，重算摘要不一致即隔离；
+ *     两个放行闸门（`isModelLayerPublishable` / `evaluateModelReReview`）与合流层**共用**
+ *     `checkMergedInvariant`，并额外核验模型层失败原因与输入绑定。
  *   两片共同点：
  *   - 本包**不新增路由**、不改 `services/api/**`，因此**暂无 HTTP 消费者**（合流层同样没有调用点）；
  *   - 真实 `tms`/`ims` 网络能力**只能**来自注入式端口，本包**不内置任何端口实现**，
@@ -34,5 +37,7 @@ export * from './prompt-version.mjs';
 export * from './model-reason-codes.mjs';
 export * from './model-verdict.mjs';
 export * from './model-ports.mjs';
+export * from './input-binding.mjs';
+export * from './merged-invariant.mjs';
 export * from './model-review.mjs';
 export * from './merge.mjs';

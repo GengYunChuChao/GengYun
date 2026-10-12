@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 
 import { AUDIT_STATES } from '../../packages/moderation/constants.mjs';
 
-import { checkMergedInvariant, mergeModeration } from '../../packages/moderation/merge.mjs';
+import { checkMergedInvariant } from '../../packages/moderation/merged-invariant.mjs';
+import { mergeModeration } from '../../packages/moderation/merge.mjs';
 import { MODEL_REASON_CODES } from '../../packages/moderation/model-reason-codes.mjs';
 import {
   CLEAN_RULE_RESULT,

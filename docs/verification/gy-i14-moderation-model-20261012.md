@@ -342,3 +342,99 @@ exit code: 1
    `approved ⟺ hard_rule_passed` 矛盾"**：矛盾只存在于**规则层**不变式；合流层有两个判定者，
    只有单向必要条件 `approved ⟹ hard_rule_passed === true`，并另设 `checkMergedInvariant`。
    这是本片 fail-closed 的主线（规则过了 ≠ 整体过了），已在 `model-layer.md` §4 显式列表说明。
+
+## 13 返修 1：回应监工 `5488195507`（P1 内容绑定 / P2 闸门漏校验）
+
+- 返修起点（监工 `reviewed_sha`）：`f3d780d2927e95ce6d2a51782f2735c043a5b915`；
+  本节的追加提交 SHA 见 PR #97 时间线（本文档与代码同一次提交）。
+- 口径不变：`Refs #14`，**不关闭整项 #14**；**既有 235 条断言一条未放宽**；未新增错误封套码／契约字段。
+
+### 13.1 数字对照（本机实测）
+
+| 范围 | 返修前（f3d780d） | 返修后 | 差值 |
+| --- | --- | --- | --- |
+| `node --test "tests/moderation/*.test.mjs"` | `tests 235 / pass 235 / fail 0` | `tests 254 / pass 254 / fail 0` | **+19**（既有 235 条逐条保留） |
+| `npm run test:unit` | `tests 932 / pass 931 / fail 0 / skipped 1` | `tests 951 / pass 950 / fail 0 / skipped 1` | **+19** |
+
+新增用例分布：`input-binding.test.mjs`（12 条，P1 主反例＋摘要单元）、
+`model-review.test.mjs` 追加 7 条（P2 主反例/同型反例/回读侧 + 导出清查）。
+
+### 13.2 四条门禁（原始输出）
+
+```
+npm run lint         → exit 0
+  PASS tsc --noEmit services/api/tsconfig.json
+  PASS tsc --noEmit apps/admin/tsconfig.json
+  PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+npm run test:unit    → exit 0 : ℹ tests 951 / ℹ pass 950 / ℹ fail 0 / ℹ skipped 1
+npm run test:contract→ exit 0 : ℹ tests 6 / ℹ pass 6 / ℹ fail 0
+npm run test:docs    → exit 0 : PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+git diff --check     → exit 0（无空白错误）
+```
+
+### 13.3 P1 修法（内容绑定）与反例（先失败后通过）
+
+- 新模块 `packages/moderation/input-binding.mjs`：`moderationInputDigest` 对
+  `target_ref{type,id,revision}` + `text`（逐字符） + `media`（**保序**，元素逐个）算
+  `mib1+sha256:<32 位十六进制>`；`evaluateBoundHardRules` 在规则层结论旁**加**字段 `input_binding`；
+  合流层**重算并比对**，缺失 ⇒ `MODEL_LAYER_INPUT_BINDING_MISSING`，不一致 ⇒
+  `MODEL_LAYER_INPUT_BINDING_MISMATCH`，两者都落 `quarantined`。
+- 摘要范围理由与"与社区线（`#15`）`text_digest` 的异同"：见 `docs/moderation/model-layer.md` 的
+  「输入绑定」一节（范围更宽含媒体、保序、域分隔 + 规范化序列化；社区线 `pending` 是本层 `quarantined`
+  的理由也写在那里）。
+- 反例用例名：`P1 主反例（监工原样）：同 target_ref/revision 换正文 + 假模型 pass ⇒ 必须隔离，模型不得翻案`
+  （同文件另有"结论没有输入绑定"、"媒体数量相同内容不同"、"正控制"三条）。
+- **回退-复跑（去掉绑定守卫）**：`node --test tests/moderation/input-binding.test.mjs`
+
+```
+exit code: 1
+ℹ tests 12   ℹ pass 9   ℹ fail 3
+  AssertionError [ERR_ASSERTION]: P1 主反例: 绝不允许 approved
+  AssertionError [ERR_ASSERTION]: 缺绑定: 绝不允许 approved
+```
+
+恢复后 12/12 通过（备份还原 + SHA256 一致 = True）。
+
+### 13.4 P2 修法（闸门共用合法性）与反例（先失败后通过）
+
+- 新模块 `packages/moderation/merged-invariant.mjs`：把 `checkMergedInvariant` 抽为**单一事实来源**，
+  并导出 `mergedFailureCodes` / `MERGED_FAILURE_REASON_CODES`；合流层与两个放行闸门**三处共用**。
+- `isModelLayerPublishable` / `evaluateModelReReview` 新增前置条件：① `checkMergedInvariant` 必须 ok；
+  ② 结论不得携带合流层失败原因码（`MODEL_*` 失败类 + `MODEL_BLOCKED`）；
+  ③ 输入绑定必须存在且（调用方给了 `input` 时）重算比对一致。任一不满足 ⇒
+  `publishable=false`、`stale=true` + `action='re_review'` + `landing='quarantined'`，
+  原因码含 `MODEL_LAYER_INVARIANT_VIOLATION` 与原失败码。
+- 反例用例名：`P2 主反例（监工原样）：approved + 版本匹配 + reason_codes=[MODEL_TIMEOUT] ⇒ 不得可发布、不得复用`
+  （同文件另有 `MODEL_BLOCKED` 同型反例、合理隔离结论不得复用、回读侧三条、导出清查一条）。
+- **回退-复跑（去掉合法性前置条件）**：`node --test tests/moderation/model-review.test.mjs`
+
+```
+exit code: 1
+ℹ tests 23   ℹ pass 16   ℹ fail 7
+  AssertionError [ERR_ASSERTION]: 自相矛盾结论不得可发布
+  AssertionError [ERR_ASSERTION]: 有模型层失败原因的结论不得按原样复用
+```
+
+恢复后 23/23 通过（备份还原 + SHA256 一致 = True）。
+
+### 13.5 导出消费者清查（本包"能给结论"的全部出口）
+
+| 出口 | 口径 | 是否过合流合法性 | 处置 / 不改的理由 |
+| --- | --- | --- | --- |
+| `mergeModeration` | 合流层（生产端） | 是（返修 1 加输入绑定） | — |
+| `isModelLayerPublishable` | 模型层唯一放行口径 | 是（返修 1 新增） | 模型层消费者必须用它 |
+| `evaluateModelReReview` | 模型层复用/重审口径 | 是（返修 1 新增） | 有失败原因 ⇒ 不复用 |
+| `checkMergedInvariant` | 共用合法性 | 本身就是该口径 | 三处共用 |
+| `checkMergedContractShape` | 形状核对 | 否 | 不回答"能不能发布" |
+| `isPublishable` / `evaluateReReview` | 规则层口径（PR #88） | 否 | **不改**（改即改规则层语义）；模型层结论必须走 `isModelLayerPublishable` |
+| `checkDecisionInvariant` / `assertDecisionInvariant` | 规则层自身不变式 | 否 | 合流结果不适用（口径差异见 `model-layer.md` §4） |
+
+### 13.6 剩余风险（返修 1 之后）
+
+1. **绑定字段不在契约里**：`input_binding` 是非契约字段 ⇒ 存储层必须一起存，否则回读只剩版本可用；
+   闸门会以 `MODEL_LAYER_INPUT_BINDING_MISSING` 拒绝放行（方向安全，但需要接线方配合）。
+2. **协作口径**：组件能保证"凡走本层的路径内容不一致必被发现"，无法阻止调用方**绕过**本层
+   只拿规则层结论去发布——属接线口径的跨片依赖。
+3. **规则层 `isPublishable` 仍不认识 `MODEL_*` 码**：这是刻意的（不改规则层语义），
+   已在 §13.5 与 `model-layer.md` §4.1 写明；若后续要求"单入口放行"，需契约/治理层决定。
+

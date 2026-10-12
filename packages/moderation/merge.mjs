@@ -48,6 +48,13 @@ import {
   isTargetType,
 } from './constants.mjs';
 import { orderReasonCodes, truncateReasonCodes } from './engine.mjs';
+import {
+  INPUT_BINDING_FIELD,
+  INPUT_BINDING_SCHEMA,
+  canonicalModerationInput,
+  moderationInputDigest,
+  verifyInputBinding,
+} from './input-binding.mjs';
 import { MODEL_REASON_CODES } from './model-reason-codes.mjs';
 import {
   MODEL_PORT_KINDS,
@@ -215,6 +222,9 @@ function buildMerged(fields) {
     prompt_version: fields.prompt_version ?? null,
     // —— 组件内诊断（**不得**写进契约 Moderation）——
     reason_codes_full: fields.reason_codes_full ?? reason_codes,
+    // 返修 1 · P1：合流结果也要带着"它绑定了哪份输入"（含是否已重算比对通过），
+    // 供存储回读路径与闸门复用（契约 Moderation 没有这个字段，见文档"契约缺口"）。
+    input_binding: fields.input_binding ?? null,
     contract_value: fields.contract_value ?? null,
     moderation_result: fields.contract_value
       ? { kind: 'moderation', value: fields.contract_value }
@@ -428,6 +438,42 @@ export async function mergeModeration(ruleResult, options = {}) {
   const contentMedia = content.media;
   const mediaCount = contentMedia.length;
 
+  // ---- 3.1) 输入绑定（返修 1 · 监工 P1）：结论必须绑定**它实际检查过的输入** ----
+  // 只比对 target_ref/revision、正文非空、媒体数量是不够的：同一 target_ref/revision 下换正文
+  // （或换掉数量相同的媒体）会让"模型放行 B 时复用 A 的硬规则结论"。这里重算摘要并比对，
+  // 不一致即隔离（绝不 approved），且**任何模型端口都无法覆盖这个拒绝**。
+  const canonicalContent = canonicalModerationInput(content);
+  let bindingExpectedDigest = null;
+  let bindingVerification = null;
+  try {
+    bindingExpectedDigest = moderationInputDigest(content);
+  } catch {
+    // 入参无法规范化 ⇒ 无法核验 ⇒ 不得放行。
+    addModelCode('MODEL_LAYER_INPUT_BINDING_UNVERIFIED', INPUT_BINDING_FIELD);
+  }
+  try {
+    bindingVerification = verifyInputBinding(ruleResult, content);
+  } catch {
+    addModelCode('MODEL_LAYER_INPUT_BINDING_UNVERIFIED', INPUT_BINDING_FIELD);
+  }
+  if (bindingVerification !== null) {
+    for (const code of bindingVerification.reason_codes) addModelCode(code, INPUT_BINDING_FIELD);
+  }
+  const inputBinding = {
+    schema: INPUT_BINDING_SCHEMA,
+    // 规则层结论自带的摘要（没有绑定则为 null，绝不填占位）
+    digest: bindingVerification === null ? null : bindingVerification.actual_digest,
+    // 合流层对**本次**输入重算的摘要（诊断用；一致时应与 digest 相同）
+    expected_digest: bindingExpectedDigest,
+    media_count: canonicalContent.media_count,
+    text_length: canonicalContent.text === null ? null : canonicalContent.text.length,
+    // 只有"绑定存在、可解析、且与本次输入重算摘要一致"才算已验证。
+    verified:
+      bindingVerification !== null &&
+      bindingVerification.ok === true &&
+      bindingExpectedDigest !== null,
+  };
+
   // ---- 4) 本次需要的端口 / 使用的 prompt ----
   const neededKinds = ['tms'];
   if (mediaCount > 0) neededKinds.push('ims');
@@ -576,8 +622,11 @@ export async function mergeModeration(ruleResult, options = {}) {
   } else {
     decision = ruleDecisionRead.value;
   }
-  // 最后一道闸：只有"规则层事实为真 + 无任何 fail-closed 原因 + 全部所需端口通过"才允许通过。
-  if (decision === DECISION_APPROVED && (hardRulePassed !== true || failClosedCodes.length > 0 || !kindsAllPass)) {
+  // 最后一道闸：只有"规则层事实为真 + 无任何 fail-closed 原因 + 全部所需端口通过 + 输入绑定已验证"才允许通过。
+  if (
+    decision === DECISION_APPROVED &&
+    (hardRulePassed !== true || failClosedCodes.length > 0 || !kindsAllPass || inputBinding.verified !== true)
+  ) {
     decision = DECISION_QUARANTINED;
   }
 
@@ -617,6 +666,7 @@ export async function mergeModeration(ruleResult, options = {}) {
     rule_version: ruleVersion,
     model_version: modelVersion,
     prompt_version: promptVersion,
+    input_binding: inputBinding,
     contract_value: contractValue,
     missing_contract_fields: missing,
     rule_decision: ruleDecisionRead.value,
@@ -626,11 +676,13 @@ export async function mergeModeration(ruleResult, options = {}) {
   });
 
   // ---- 12) 复用规则层 review 口径：本结果当前是否可复用／可发布 ----
+  // `input` 一并传入：放行口径必须**核过"绑定的是不是这份内容"**，不能只看版本。
   const binding = {
     rule_version: ruleVersion,
     model_version: modelVersion,
     prompt_version: promptVersion,
     target_ref: ruleShape.targetRef,
+    input: content,
   };
   merged.model_layer.re_review = evaluateModelReReview(merged, binding);
   merged.model_layer.publishable = isModelLayerPublishable(merged, binding);
@@ -702,37 +754,14 @@ export function checkMergedContractShape(merged) {
 }
 
 /**
- * 合流层的**判定不变式**（与规则层 `checkDecisionInvariant` 分开，口径不同，必须显式声明）：
- *   规则层不变式是 `approved ⟺ hard_rule_passed`（因为规则层唯一的判定者就是硬规则）；
- *   合流层的判定者有两个（规则 + 模型），因此只有**单向**必要条件：
- *     `decision === 'approved'` ⟹ `hard_rule_passed === true` 且无任何 fail-closed 原因码。
- *   **反向不成立**，而且**必须不成立**：规则层通过 + 模型不可用 ⇒ `hard_rule_passed=true` 但
- *   `decision='quarantined'`——"硬规则过了"不等于"整体过了"（这正是本片的 fail-closed 主线）。
+ * 合流层的**判定不变式**已抽到 `merged-invariant.mjs`（返修 1 · 监工 P2 的根因正是"闸门各自校验、口径分散"）：
+ *
+ * 合流层、`isModelLayerPublishable`、`evaluateModelReReview` 三处共用同一份 `checkMergedInvariant`，
+ * 避免"生产端查、消费端不查"再次出现。需要它的调用方请
+ * `import { checkMergedInvariant } from './merged-invariant.mjs'`（或从包出口 `./index.mjs` 取）。
+ *
+ * 口径（与规则层刻意不同）：规则层是 `approved ⟺ hard_rule_passed`（该层唯一判定者是硬规则）；
+ * 合流层只有**单向**必要条件 `approved ⟹ hard_rule_passed === true 且无合流层失败原因码
+ * 且全部所需端口实际通过 且输入绑定已验证`。反向不成立而且必须不成立：
+ * 规则层通过 + 模型没跑／没结论 ⇒ `hard_rule_passed=true` 但 `decision='quarantined'`。
  */
-export function checkMergedInvariant(merged) {
-  const violations = [];
-  if (!isPlainObject(merged)) return { ok: false, violations: ['合流结果不是对象'] };
-  const { decision, hard_rule_passed: hardRulePassed, reason_codes: reasonCodes } = merged;
-  if (typeof decision !== 'string' || !isAuditState(decision)) {
-    violations.push(`decision 不是 AuditState 闭集值：${typeof decision}`);
-  }
-  if (typeof hardRulePassed !== 'boolean') {
-    violations.push(`hard_rule_passed 必须是 boolean，实际 ${typeof hardRulePassed}`);
-  }
-  if (!Array.isArray(reasonCodes)) {
-    violations.push(`reason_codes 必须是数组，实际 ${typeof reasonCodes}`);
-  } else if (reasonCodes.length > 30) {
-    violations.push('reason_codes 超过契约上限 30');
-  }
-  if (decision === DECISION_APPROVED) {
-    if (hardRulePassed !== true) violations.push('decision=approved 但 hard_rule_passed 不为 true');
-    const failureCodes = (reasonCodes ?? []).filter((code) => MODEL_REASON_CODES.includes(code) && code !== 'MODEL_BLOCKED');
-    if (failureCodes.length > 0) violations.push(`approved 但存在模型层 fail-closed 原因码：${failureCodes.join(',')}`);
-    if (merged.model_layer?.kinds) {
-      for (const [kind, entry] of Object.entries(merged.model_layer.kinds)) {
-        if (entry?.status !== 'pass') violations.push(`approved 但 ${kind} 端口未实际通过（status=${String(entry?.status)}）`);
-      }
-    }
-  }
-  return { ok: violations.length === 0, violations };
-}
