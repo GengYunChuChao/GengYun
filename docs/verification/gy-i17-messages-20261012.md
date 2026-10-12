@@ -13,17 +13,16 @@
 | --- | --- |
 | 开工前 `git fetch upstream --prune` 后 `upstream/main` | `ffd5bf73b57709bf18d47a6644dff24eaf58e30c`（与派单要求一致） |
 | 本分支 HEAD（= 基线，未 rebase、未基于任何其它 PR 分支头） | `ffd5bf73b57709bf18d47a6644dff24eaf58e30c` |
-| 收尾时 `upstream/main` | `13262f19345b6e2e99de8ba39d661dae065d3b01`（上游在本片工作期间前进了两个合并 PR） |
-| 上游新增（相对本基线） | `f8da03b`（#87 GY-I09 识别闭环）、`13262f1`（#99 转写并发诊断改走 stderr） |
+| 收尾时 `upstream/main`（第一次 fetch） | `13262f19345b6e2e99de8ba39d661dae065d3b01`（上游在本片工作期间前进了两个合并 PR） |
+| 上游新增（相对本基线，第一次） | `f8da03b`（#87 GY-I09 识别闭环）、`13262f1`（#99 转写并发诊断改走 stderr） |
+| 第二次 `git fetch` 后的 `upstream/main` | `6337f1899f0a9ee4384a0a71fa2db3b51e68b5a8`（再前进 1 个：`6337f18` = #101 GY-I18 阶段 1b） |
 | `ffd5bf73` 是否仍为 `upstream/main` 的祖先 | 是（`git merge-base --is-ancestor` 退出码 0 ⇒ 本分支是"落后基线"而非"分叉"） |
-| 本片新增文件与上游新增文件是否重叠 | 无（`git diff --name-only ffd5bf73 upstream/main` 里没有任何 `messages` 路径） |
+| 本片新增文件与上游新增文件是否重叠 | 无（`git diff --name-only ffd5bf73 upstream/main` 里没有任何 `messages` 路径；#101 只动 `admin/**` 与 `tests/unit/admin-ops-*`） |
 | Node / npm | `v24.16.0` / `11.13.0` |
 | 依赖安装 | `npm ci --no-audit --no-fund` ⇒ `added 103 packages in 3s` |
 
-说明：门禁数字是**在 `ffd5bf73` + 本片改动**这棵树上实测的（见 §9）。上游两个新提交改动的是
-`app.ts`／`routes/recognitions.ts`／`recognitions/**`／`miniprogram/pages/identify/**`／
-`tools/prepare-wechat.mjs`／`tests/unit/recognitions-api.test.mjs` 与 `tests/unit/speech-service.test.mjs`
-—— 与本片**零文件重叠**；是否在合并前重跑全量门禁由监工按 PR 规范决定。
+说明：§9 的门禁数字是**在 `ffd5bf73` + 本片改动**这棵树上实测的；按指挥要求合并上游后，
+已在**合成树**上复跑全部门禁，原始输出见 §11。两次上游新增（#87／#99 与 #101）与本片**零文件重叠**。
 
 ## 2 契约核对（**逐字读全**，不新增字段/错误码，不改契约）
 
@@ -338,3 +337,54 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 另附两点**主动暴露**的诚实边界（不是辩解，是免得被当成"已完成"）：本片**没有**路由、**没有**持久化、
 **没有**任何真实目标读取实现，因此**不得**被引用为"消息系统已端到端可用"；
 `docs/architecture/contract-status.json` 里三条 operationId 仍应保持 `route_mounted: false`、`status: planned`。
+
+## 11 合并上游后在**合成树**上复跑（PR head 所在树）
+
+按指挥要求 `git merge upstream/main` 两次，**均无冲突、无手工解冲突**（`git merge-tree --write-tree`
+预检返回单一树号、无 `CONFLICT`；且与本片文件零重叠）：
+
+| 次序 | 合并对象 | 内容 |
+| --- | --- | --- |
+| 第 1 次 | `13262f19` | #87 GY-I09 识别闭环、#99 转写并发诊断改走 stderr |
+| 第 2 次 | `6337f18` | #101 GY-I18 后台运营与开关服务层（阶段 1b） |
+
+门禁原始输出（**第 2 次合并后的合成树**）：
+
+```
+$ npm run lint
+PASS tsc --noEmit services/api/tsconfig.json
+PASS tsc --noEmit apps/admin/tsconfig.json
+PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+lint 通过（静态检查；不代表运行期或真实服务已通过）。
+[exit code: 0]
+
+$ npm run test:unit
+before（临时移出 tests/unit/messages-*.test.mjs）: ℹ tests 1437  ℹ pass 1436  ℹ fail 0  ℹ skipped 1  [exit code: 0]
+after                                        : ℹ tests 1469  ℹ pass 1468  ℹ fail 0  ℹ skipped 1  [exit code: 0]
+差值                                          : +32 tests / +32 pass / +0 fail / +0 skipped
+
+$ npm run test:contract
+ℹ tests 6  ℹ pass 6  ℹ fail 0  [exit code: 0]
+
+$ npm run test:docs
+PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+[exit code: 0]
+
+$ node --test "tests/unit/messages*.test.mjs"
+ℹ tests 32  ℹ suites 0  ℹ pass 32  ℹ fail 0  ℹ cancelled 0  ℹ skipped 0  ℹ todo 0  [exit code: 0]
+
+$ git add -A -N . ; git diff --check
+（无输出）[exit code: 0]
+```
+
+三次同口径基线测量（都是"把本片用例移出后"测的）：`ffd5bf73` = 1347 / 1346；
+`+ #87／#99` = 1390 / 1389；`+ #101` = 1437 / 1436 ⇒ 本片差值**恒为 +32，fail 恒为 0**。
+
+**剩余风险（交给监工）**
+
+1. **CI 未运行**：PR 的 8 个 workflow run 全部是 `conclusion=action_required`
+   （fork PR 首次贡献者需维护者点"Approve and run"）；`statuses` 为 `pending`（总数 0）⇒
+   PR 的 `mergeable_state = unstable` **不代表检查失败**，但也**不是**"CI 通过"。
+2. `mergeable = true`、`changed_files = 15`（A=15 / M=0，`git diff --name-status upstream/main...HEAD`）。
+3. 本片**未修改** `docs/architecture/contract-status.json`（三条 operationId 仍应为 `planned`）。
+4. 每次上游前进都会抬高 `test:unit` 基线；若监工在更新的 main 上复跑，请以"移出本片用例后"为基线再比对 +32。
