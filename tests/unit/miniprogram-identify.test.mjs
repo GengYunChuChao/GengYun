@@ -237,8 +237,13 @@ function lifecycle() {
     instance._pollTimer = null;
     return instance;
   }
-  function seedSession() {
-    storage.set('gengyun.session', { accessToken: 'synthetic-identify-token', audience: 'user', expiresAt: expires(), executionMode: 'stub' });
+  function seedSession(accessToken) {
+    storage.set('gengyun.session', {
+      accessToken: typeof accessToken === 'string' && accessToken !== '' ? accessToken : 'synthetic-identify-token',
+      audience: 'user',
+      expiresAt: expires(),
+      executionMode: 'stub'
+    });
   }
   function acceptVerification(request) {
     request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() } } });
@@ -264,13 +269,15 @@ function recognitionValue(overrides) {
   }, overrides || {});
 }
 
-function jobEnvelope(state, result) {
+function jobEnvelope(state, result, ids) {
+  const jobId = ids && ids.job ? ids.job : JOB_ID;
+  const recordId = ids && ids.rec ? ids.rec : RECORD_ID;
   return {
     data: {
-      id: JOB_ID,
+      id: jobId,
       revision: state === 'queued' ? 1 : 3,
       kind: 'recognition',
-      target_ref: { type: 'recognition', id: RECORD_ID, revision: 1 },
+      target_ref: { type: 'recognition', id: recordId, revision: 1 },
       state: state,
       deadline_at: '2026-10-11T10:00:00.000Z',
       created_at: '2026-10-11T09:59:30.000Z',
@@ -282,12 +289,16 @@ function jobEnvelope(state, result) {
 }
 
 /** 页面 applyJob 接收的是 identify-api **校验后**的 Job（result 已展开为 Recognition 本身）。 */
-function validatedJob(state, result) {
-  const envelope = jobEnvelope(state, result);
+function validatedJob(state, result, ids) {
+  const envelope = jobEnvelope(state, result, ids);
   return Object.assign({}, envelope.data, {
     result: envelope.data.result === null ? null : envelope.data.result.value
   });
 }
+
+/** A 主体专用的合成 id（用于验证 B 看不到 A 的条目）。 */
+const A_JOB_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const A_RECORD_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 test('GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）', () => {
   const h = lifecycle();
@@ -303,6 +314,8 @@ test('GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数�
   assert.equal(page.data.history.length, 0, '门禁未通过时历史必须为空');
   assert.equal(page.data.candidates.length, 0);
   assert.equal(page.data.recordId, null);
+  // 无法证明归属的历史遗留全局缓存必须丢弃（fail-closed），而不是"沿用展示"。
+  assert.equal(h.storage.has('gengyun.identify.history'), false, '旧全局缓存必须被丢弃');
 });
 
 test('GY-I09 [B2]：核实后取得候选/历史，会话被清 → onHide/onShow 必须清空私有展示', () => {
@@ -413,6 +426,71 @@ test('GY-I09 [C 负控制①]：当代次正常完成仍必须生效（不得把
   assert.equal(page.data.candidates.length, 2);
   assert.equal(page.data.recordId, RECORD_ID);
   assert.equal(page.data.history.length, 1, '当代次的正常完成必须写入历史');
+});
+
+test('GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必须看不到 A 的私有历史', () => {
+  const h = lifecycle();
+  h.seedSession('synthetic-identify-token-A');
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  const ownerA = page._ownerKey;
+  assert.equal(typeof ownerA, 'string');
+  assert.notEqual(ownerA, '', '核实后必须有归属键');
+  // A 取得候选并写入历史（走真实页面方法）。
+  const jobA = validatedJob('succeeded', recognitionValue({ id: A_RECORD_ID }), { job: A_JOB_ID, rec: A_RECORD_ID });
+  page.applyJob(jobA, page._generation);
+  page.rememberHistory(jobA, jobA.result, page._generation);
+  assert.equal(page.data.history.length, 1);
+  // 归属命名空间：A 的条目写在按归属派生的键下，且条目自带 ownerKey。
+  const storedA = h.storage.get('gengyun.identify.history.v2.' + ownerA);
+  assert.equal(Array.isArray(storedA), true, 'A 的历史必须写在归属命名空间键下');
+  assert.equal(storedA.length, 1);
+  assert.equal(storedA[0].ownerKey, ownerA);
+  assert.equal(storedA[0].recordId, A_RECORD_ID);
+  // 退出 → 装载**不同主体 B**（不同令牌 ⇒ 不同会话世代/归属键）。
+  page.onHide();
+  h.auth.clearSession();
+  h.seedSession('synthetic-identify-token-B');
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false, 'B 应通过核实');
+  const ownerB = page._ownerKey;
+  assert.equal(typeof ownerB, 'string');
+  assert.notEqual(ownerB, '', 'B 核实后必须有归属键');
+  assert.notEqual(ownerB, ownerA, '归属键必须随主体变化');
+  assert.equal(page.data.history.length, 0, 'B 不得看到 A 的私有历史');
+  const serialized = JSON.stringify(page.data);
+  assert.equal(serialized.includes(A_RECORD_ID), false, 'B 的页面数据不得出现 A 的 recordId');
+  assert.equal(serialized.includes(A_JOB_ID), false, 'B 的页面数据不得出现 A 的 jobId');
+  assert.equal(page.data.historyOwner, ownerB);
+  // A 的命名空间条目仍在（未被 B 读取，也未被误删）。
+  assert.equal(h.storage.get('gengyun.identify.history.v2.' + ownerA).length, 1);
+});
+
+test('GY-I09 [B4 正控制]：同主体离开再返回仍能读回自己的历史（不得误清）', () => {
+  const h = lifecycle();
+  h.seedSession('synthetic-identify-token-A');
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  const ownerA = page._ownerKey;
+  const jobA = validatedJob('succeeded', recognitionValue());
+  page.applyJob(jobA, page._generation);
+  page.rememberHistory(jobA, jobA.result, page._generation);
+  assert.equal(page.data.history.length, 1);
+  // 同一令牌（同一主体）离开再返回并重新核实：归属键不变，历史必须仍可读。
+  page.onHide();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  assert.equal(page._ownerKey, ownerA, '同一令牌重新核实不得改变归属键');
+  assert.equal(page.data.history.length, 1, '同一主体必须仍能读取自己的历史');
+  assert.equal(page.data.history[0].recordId, RECORD_ID);
+  assert.equal(page.data.history[0].ownerKey, ownerA);
 });
 
 test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何请求', async () => {

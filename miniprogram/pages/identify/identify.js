@@ -14,7 +14,23 @@ const identifyApi = require('../../utils/identify-api')
 // 参考域查询模块按需加载（懒 require）：页面注册阶段不引入 data/** 依赖，
 // 使页面在只打包必要依赖的场景下也能加载；白名单仍须包含 utils/reference.js。
 
-const HISTORY_KEY = 'gengyun.identify.history'
+/**
+ * 私有历史缓存：**按归属命名空间 + 逐条归属**双绑定（监工 review 5486774508 行内 4244882054）。
+ *
+ * - 归属键 `ownerKey` 只能来自**已核实会话**（`auth.sessionEpoch()`：令牌变化/清会话/换账号都会变），
+ *   **不得**用展示字段当归属证明；
+ * - 存储键按归属派生：`gengyun.identify.history.v2.<ownerKey>`，换主体天然读不到别人的条目；
+ * - 条目内带 `ownerKey`，装载时**再过滤一次**（双保险）；
+ * - **无法确认归属的一律 fail-closed**：历史遗留的全局键 `gengyun.identify.history` 与缺
+ *   `ownerKey` 的条目一律丢弃，绝不展示、绝不"沿用展示"。
+ *
+ * 已知取舍（如实记录）：会话缓存里没有稳定的账号主体标识（`auth.js` 只存 accessToken/audience/
+ * expiresAt/executionMode，且本片不得改 `auth.js`），因此归属键取**会话世代**：同一账号重新登录后
+ * 世代变化 → 读不到旧的本机索引（fail-closed，宁可不显示也不跨主体串号）。服务端记录本身仍按归属
+ * 校验（越权一律 404），但服务端 404 不能消除"已经展示过的串号"，故归属绑定必须在装载前完成。
+ */
+const HISTORY_KEY_LEGACY = 'gengyun.identify.history'
+const HISTORY_KEY_PREFIX = 'gengyun.identify.history.v2.'
 const HISTORY_MAX = 10
 const POLL_INTERVAL_MS = 1000
 const POLL_MAX_TICKS = 60
@@ -41,12 +57,63 @@ function mimeOfPath(path) {
   return null
 }
 
-/** 门禁核实后的「当前已核实主体」本地标识（会话世代，不含令牌本身）；未核实为空串。 */
-function gateOwner() {
+/** 门禁核实后的**归属键**（私有缓存的唯一归属证明）。未核实或取不到会话 → 空串。 */
+function ownerKeyOf() {
   try {
-    return auth.isLoggedIn() ? auth.sessionEpoch() : ''
+    if (auth.isLoggedIn() !== true || auth.getSession() === null) return ''
+    const epoch = auth.sessionEpoch()
+    return typeof epoch === 'string' && epoch !== '' ? epoch : ''
   } catch (error) {
     return ''
+  }
+}
+
+/** 归属命名空间存储键（把归属键收敛为安全字符集，避免键注入）。 */
+function historyKeyFor(ownerKey) {
+  return HISTORY_KEY_PREFIX + String(ownerKey).replace(/[^0-9a-zA-Z:_-]/g, '_')
+}
+
+/** 丢弃无法证明归属的历史遗留全局缓存（fail-closed；可选做法即"读到旧键就清掉"）。 */
+function dropLegacyHistory() {
+  try {
+    const legacy = wx.getStorageSync(HISTORY_KEY_LEGACY)
+    if (legacy !== '' && legacy !== null && legacy !== undefined) wx.removeStorageSync(HISTORY_KEY_LEGACY)
+  } catch (error) {
+    // 存储不可用时不谎称已清理；调用方仍不会展示旧数据。
+  }
+}
+
+/**
+ * 读取**当前归属**的私有历史：无归属键 → 空；逐条校验 `ownerKey` 一致，
+ * 不一致/缺字段的条目一律丢弃并顺手清理。
+ */
+function readHistory(ownerKey) {
+  if (typeof ownerKey !== 'string' || ownerKey === '') return []
+  dropLegacyHistory()
+  let value
+  try {
+    value = wx.getStorageSync(historyKeyFor(ownerKey))
+  } catch (error) {
+    return []
+  }
+  if (!Array.isArray(value)) return []
+  const kept = value.filter(function (item) {
+    return !!item && typeof item.recordId === 'string' && item.ownerKey === ownerKey
+  })
+  if (kept.length !== value.length) {
+    try { wx.setStorageSync(historyKeyFor(ownerKey), kept) } catch (error) {}
+  }
+  return kept
+}
+
+/** 写入**当前归属**的私有历史；无归属键一律拒写（fail-closed）。 */
+function writeHistory(ownerKey, items) {
+  if (typeof ownerKey !== 'string' || ownerKey === '') return false
+  try {
+    wx.setStorageSync(historyKeyFor(ownerKey), items)
+    return true
+  } catch (error) {
+    return false
   }
 }
 
@@ -97,7 +164,11 @@ Page({
     this.closePrivate()
     pageGate.start(this, function (ok) {
       if (ok === true && auth.isLoggedIn()) {
-        that.setData({ guest: false, historyOwner: gateOwner(), history: readHistory() })
+        // 归属键只能来自**已核实会话**；取不到归属键一律按未核实处理（fail-closed）。
+        const ownerKey = ownerKeyOf()
+        if (ownerKey === '') { that.closePrivate(); return }
+        that._ownerKey = ownerKey
+        that.setData({ guest: false, historyOwner: ownerKey, history: readHistory(ownerKey) })
         return
       }
       that.closePrivate()
@@ -126,6 +197,10 @@ Page({
   closePrivate: function (message) {
     this.stopPoll()
     this.beginOperation()
+    // 归属键失效：此后任何写入/读取都必须重新经门禁核实取得归属。
+    this._ownerKey = ''
+    // 无法证明归属的历史遗留全局缓存一律丢弃（fail-closed）。
+    dropLegacyHistory()
     const patch = {
       guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
@@ -367,11 +442,14 @@ Page({
   // ---------------------------------------------------------------- 私有历史
 
   rememberHistory: function (job, record, gen) {
-    // 门禁未通过、无已核实主体、或代次已失效时**不得**写全局私有数据。
-    if (this.data.guest === true || this.data.historyOwner === '') return
+    // 门禁未通过、无**归属键**、或代次已失效时**不得**写全局私有数据。
+    const ownerKey = this._ownerKey
+    if (this.data.guest === true || typeof ownerKey !== 'string' || ownerKey === '') return
     if (gen !== undefined && !this.isCurrentOperation(gen)) return
-    const items = readHistory().filter(function (item) { return item.recordId !== record.id })
+    const items = readHistory(ownerKey).filter(function (item) { return item.recordId !== record.id })
     items.unshift({
+      // 逐条归属：装载时据此过滤，缺归属字段的旧条目一律不展示。
+      ownerKey: ownerKey,
       jobId: job.id,
       recordId: record.id,
       state: job.state,
@@ -380,7 +458,7 @@ Page({
       at: new Date().toISOString()
     })
     const trimmed = items.slice(0, HISTORY_MAX)
-    try { wx.setStorageSync(HISTORY_KEY, trimmed) } catch (_) {}
+    if (writeHistory(ownerKey, trimmed) !== true) return
     this.setData({ history: trimmed })
   },
 
@@ -420,6 +498,8 @@ Page({
     const that = this
     const recordId = this.data.recordId
     const revision = this.data.recordRevision
+    const ownerKey = this._ownerKey
+    if (typeof ownerKey !== 'string' || ownerKey === '') return
     wx.showModal({
       title: '删除这条识别记录',
       content: '删除后无法恢复，关联的候选与选择一并移除。',
@@ -428,9 +508,9 @@ Page({
         const gen = that.beginOperation()
         try {
           await identifyApi.deleteRecognition(recordId, revision)
-          if (!that.isCurrentOperation(gen)) return
-          const items = readHistory().filter(function (item) { return item.recordId !== recordId })
-          try { wx.setStorageSync(HISTORY_KEY, items) } catch (_) {}
+          if (!that.isCurrentOperation(gen) || that._ownerKey !== ownerKey) return
+          const items = readHistory(ownerKey).filter(function (item) { return item.recordId !== recordId })
+          writeHistory(ownerKey, items)
           that.onRetry()
           that.setData({ history: items, errorText: '' })
         } catch (error) {
@@ -443,8 +523,9 @@ Page({
   },
 
   onClearHistory: function () {
-    if (this.data.guest === true || this.data.historyOwner === '') return
-    try { wx.removeStorageSync(HISTORY_KEY) } catch (_) {}
+    const ownerKey = this._ownerKey
+    if (this.data.guest === true || typeof ownerKey !== 'string' || ownerKey === '') return
+    try { wx.removeStorageSync(historyKeyFor(ownerKey)) } catch (_) {}
     this.setData({ history: [] })
   }
 })
@@ -453,14 +534,6 @@ Page({
 function isGateLossError(error) {
   const code = error && error.code
   return code === 'SESSION_REQUIRED' || code === 'SESSION_CHANGED' || code === 'SESSION_EXPIRED'
-}
-
-function readHistory() {
-  try {
-    const value = wx.getStorageSync(HISTORY_KEY)
-    if (Array.isArray(value)) return value.filter(function (item) { return item && typeof item.recordId === 'string' })
-  } catch (_) {}
-  return []
 }
 
 /** 读取文件 sha256 与字节数（用于契约 UploadInput 的声明；服务端仍以真实字节核验）。 */

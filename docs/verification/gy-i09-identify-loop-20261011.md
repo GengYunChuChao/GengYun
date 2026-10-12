@@ -331,7 +331,7 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
 | --- | --- | --- |
 | B1 | 无任何会话 + 本机已有一条合成本地旧历史 → 门禁后 `history.length=1` | `onLoad` **不再**读取全局历史；只有门禁核实通过（`auth.requireLogin` 回调 true 且 `auth.isLoggedIn()`）才 `readHistory()` 并写入 `historyOwner` |
 | B2 | 已核实 A 取得候选/历史 → `auth.clearSession()` → `onHide/onShow` 后候选/recordId/历史仍在 | 新增 `closePrivate()`：清空 `candidates / recordId / recordRevision / job / stateView / showTop3 / candidatesTrusted / uncertaintyReasons / pendingManualId / selectedSpeciesId / relatedKnowledge / history / historyOwner`，并在 `onShow` 门禁关闭回调、`onHide`、`onUnload` 调用 |
-| B3 | 在途 `GET /jobs` 返回 401（api 已清会话）→ `guest` 仍 false、旧候选仍在 | `refreshJob` / `prepareMedia` / `recordSelection` / `onCancelJob` / `onOpenHistoryItem` / `onDeleteRecord` 的失败分支识别会话类错误（`SESSION_REQUIRED|SESSION_CHANGED|SESSION_EXPIRED`）→ `closePrivate()` 关闭门禁并清空，而不是只写提示 |
+| B3 | 在途 `GET /jobs` 返回 401（api 已清会话）→ `guest` 仍 false、旧候选仍在 | `refreshJob` / `prepareMedia` / `recordSelection` / `onCancelJob` / `onOpenHistoryItem` / `onDeleteRecord` 的失败分支识别会话类错误（`SESSION_REQUIRED`、`SESSION_CHANGED`、`SESSION_EXPIRED`）→ `closePrivate()` 关闭门禁并清空，而不是只写提示 |
 
 - WXML 侧：历史区改为 `wx:if="{{!guest && historyOwner && history.length}}"`（绑定**当前已核实主体**
   `historyOwner = auth.sessionEpoch()`，门禁关闭时置空）；状态块/候选区/关联科普区/state-view 全部加 `&& !guest`。
@@ -403,5 +403,92 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
 
 > `npm run test:unit` 由 718 增至 **723**（+5：B1/B2/B3/C/正控制）。返修轮 2 **未**宣布验收通过；
 > 仍**未取得**真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯。
+
+## 13 返修轮 3：回应监工 `review 5486774508`（行内 `4244882054`）
+
+返修轮 2 的其它项监工已确认通过（播放入口恢复、未登录/401 关闭私有展示、离页/重试淘汰旧 GET 响应）；本条只修跨账号私有缓存串号。
+
+### 13.1 缺陷：已核实的 B 会装载 A 的全局私有历史
+
+- 监工行内 `4244882054` 原文要点：`identify.js:99` 核实 B 后直接 `readHistory()`；`historyOwner` 只是新会话世代，
+  **未绑定缓存条目归属**；`readHistory` 读的是**唯一全局** `gengyun.identify.history`。反例：A 核实→写 1 条→
+  `clearSession`→装载 B→核实成功 ⇒ **B 的 `history.length=1`**（含 A 的 jobId/recordId/状态/时间）。
+  并指出「退出时只清展示、B 核实时又读回 A 全局索引，不构成账号隔离；后续 GET 的服务端 404 不能消除已展示的泄露」。
+
+### 13.2 归属方案（key 名与派生方式）
+
+| 项 | 实现 |
+| --- | --- |
+| 归属键 `ownerKey` | **只能**来自已核实会话：`ownerKeyOf()` = `auth.isLoggedIn() && auth.getSession() !== null ? auth.sessionEpoch() : ''`；取不到一律按未核实处理 |
+| 命名空间存储键 | `gengyun.identify.history.v2.<ownerKey>`（`historyKeyFor()` 把归属键收敛为 `[0-9a-zA-Z:_-]`，防键注入） |
+| 逐条归属 | 每条历史带 `ownerKey` 字段；`readHistory(ownerKey)` 装载时**再过滤** `item.ownerKey === ownerKey`，不一致/缺字段的条目丢弃并顺手清理 |
+| 无法确认归属即 fail-closed | 历史遗留全局键 `gengyun.identify.history` 由 `dropLegacyHistory()` **丢弃**（`closePrivate()` 与装载前都调用）；无归属键时 `readHistory` 返回空、`writeHistory` **拒写** |
+| 归属证明与展示字段分离 | 存储读写只用内部 `this._ownerKey`（核实成功时写入、`closePrivate()` 清空）；`data.historyOwner` 仅用于 WXML 展示门禁，**不再**当归属证明 |
+
+**已知取舍（如实记录）**：会话缓存里没有稳定的账号主体标识（`auth.js` 只持久化 accessToken/audience/expiresAt/executionMode，
+且本片**不得**改 `auth.js`），因此归属键取**会话世代**。后果：同一账号**重新登录**（令牌变化 ⇒ 世代变化）后，
+读不到旧的本机索引（fail-closed：宁可不显示，也不跨主体串号）；旧命名空间条目仍留在本机（本页不主动删除他人命名空间）。
+若要「同账号重登仍可见」，需要会话缓存提供**服务端签发的稳定主体标识**——属认证层改动，本片不做，列为剩余项。
+
+### 13.3 新增反例与正控制（`[B4]`）
+
+- `GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必须看不到 A 的私有历史`
+  断言：A 核实后归属键非空、条目写在 `gengyun.identify.history.v2.<ownerA>` 且自带 `ownerKey`；
+  退出后装载**不同令牌的 B** 核实成功 ⇒ `B._ownerKey !== ownerA`、`B.history.length === 0`、
+  B 的页面数据**不含** A 的 `recordId`/`jobId`、`historyOwner === ownerB`。
+- `GY-I09 [B4 正控制]：同主体离开再返回仍能读回自己的历史（不得误清）`
+  断言：同一令牌 `onHide → onShow → 重新核实` 后 `_ownerKey` 不变、`history.length === 1`、条目 `ownerKey` 一致。
+- 既有 `[B1]`（并新增断言：旧全局键必须被丢弃）、`[B2]`、`[B3]`、`[C]`、`[C 负控制①]` **全部继续通过**。
+
+### 13.4 反例有效性实证（先失败后通过）
+
+把识别页临时回退到修复前版本（`git stash push -- miniprogram/pages/identify/identify.js`）再跑同一测试文件：
+
+```
+=== 旧页面（修复前）跑 [B4] 反例 ===
+✖ GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）
+✔ GY-I09 [B2]：核实后取得候选/历史，会话被清 → onHide/onShow 必须清空私有展示
+✔ GY-I09 [B3]：在途 GET /jobs 被服务端 401 拒绝（会话清除）→ 必须关闭门禁并清空展示
+✖ GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必须看不到 A 的私有历史
+✔ GY-I09 [B4 正控制]：同主体离开再返回仍能读回自己的历史（不得误清）
+ℹ tests 12
+ℹ pass 10
+ℹ fail 2
+=== 恢复修复后 ===
+ℹ tests 12
+ℹ pass 12
+ℹ fail 0
+```
+即：`[B4]` 与 `[B1]` 在修复前**确实失败**（跨账号可见 + 旧全局缓存未丢弃），`[B4 正控制]` 始终通过，恢复修复后 12/12。
+
+### 13.5 未放宽认证（确认）
+
+本次**只改** `miniprogram/pages/identify/identify.js`（与其测试、证据文档）；**未改**
+`miniprogram/utils/auth.js`、`page-gate.js`、`navigation.js`、`miniprogram/config/runtime.js`、
+`packages/privacy/**`、`packages/contracts/**`、`packages/evaluation/**`；**未删除/未注释/未改弱**任何既有断言
+（`ui-adaptive.test.mjs` 25/25 与既有 `miniprogram-ui-auth-integration` 18 项原样通过）。门禁语义仍是"只认服务端核实"：
+`ownerKey` 只在核实成功后才取得，`closePrivate()` 立即清空归属键。
+
+### 13.6 返修轮 3 门禁（真跑原始输出要点）与一次真实门禁失败
+
+```
+node --test tests/unit/miniprogram-identify.test.mjs   ℹ tests 12 / pass 12 / fail 0
+node --test tests/ui-adaptive.test.mjs                 ℹ tests 25 / pass 25 / fail 0
+npm run lint                                           PASS tsc ×2 + 卫生扫描                          exit 0
+npm run test:unit                                      ℹ tests 725 / pass 724 / fail 0 / skipped 1    exit 0
+npm run test:contract                                  ℹ tests 6 / pass 6 / fail 0                    exit 0
+npm run test:docs                                      PASS: 27 initial tasks; …Markdown links and tables
+npm run test:mini                                      PASS: native JSON/routes, … ℹ tests 4 / pass 4 / fail 0
+node tests/integration/recognitions-http.mjs           PASS（含并发与取消重放取证）                    exit 0
+```
+
+**过程中一次真实门禁失败（如实记录）**：本轮首次跑 `npm run test:docs` 报
+`ERROR: gy-i09-identify-loop-20261011.md:334: inconsistent table` —— 原因是 §12.2 表格单元格里写了
+`SESSION_REQUIRED|SESSION_CHANGED|SESSION_EXPIRED`，竖线被 Markdown 解析成列分隔符。已改为顿号/斜杠分隔（不改任何断言），
+复跑 `test:docs` → `PASS`。
+
+> 返修轮 3 **未**宣布验收通过。仍未取得：真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯。
+> 关于 CI：监工提到"当前新 HEAD 的适用 CI 未取得全绿"；本机侧门禁输出如上，**CI 的 `action_required` 不等于通过**，
+> 不使用 CI 状态代替本机实测，也不声称 CI 已绿。
 
 
