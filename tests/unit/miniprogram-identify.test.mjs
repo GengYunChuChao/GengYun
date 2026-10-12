@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 const root = resolve(import.meta.dirname, '..', '..');
 const require = createRequire(import.meta.url);
@@ -163,6 +164,255 @@ test('GY-I09 小程序：打包白名单必须包含识别页依赖（既往 MOD
   }
   // 页面不得在缺网络时伪造识别结果：源码中不存在「本地兜底候选」这种写法。
   assert.equal(/fallbackCandidates|fakeResult|MOCK_RESULT/.test(page), false);
+  // 既有独立播放入口与「无录音时禁用」的交互必须保留（ui-adaptive.test.mjs 的既有验收）。
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  assert.ok(/bindtap="onRecord"/.test(wxml), '缺少独立录音按钮');
+  assert.ok(/bindtap="onPlay"/.test(wxml), '缺少独立播放按钮');
+  assert.ok(/disabled="\{\{guest \|\| !hasRecording\}\}"/.test(wxml), '播放按钮未在无录音时禁用');
+  assert.equal(/getRecorderManager|createInnerAudioContext/.test(readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8')), false);
+  // 历史区必须绑定「当前已核实主体」，不能只凭本机索引长度。
+  assert.ok(/historyOwner/.test(wxml), '历史区未绑定已核实主体（historyOwner）');
+  assert.ok(!/wx:if="\{\{history\.length\}\}"/.test(wxml), '历史区不得只凭 history.length 展示');
+});
+
+// ---------------------------------------------------------------------------
+// 生命周期回归（监工 5485989704 [B]/[C]）：用最小 vm 沙箱加载真实页面与真实 auth 模块，
+// 手动解析 wx.request，以复现「门禁未核实/失效仍展示私有数据」与「在途响应淘汰」两个实际反例。
+// 合成身份与合成响应，绝不外发；不作为微信工具或真机证据。
+// ---------------------------------------------------------------------------
+function lifecycle() {
+  const storage = new Map();
+  const requests = [];
+  const launches = [];
+  const cache = new Map();
+  const expires = () => new Date(Date.now() + 3600_000).toISOString();
+  let definition = null;
+  const context = {
+    wx: {
+      getStorageSync: key => (storage.has(key) ? storage.get(key) : ''),
+      setStorageSync: (key, value) => { storage.set(key, value); },
+      removeStorageSync: key => { storage.delete(key); },
+      request: options => requests.push(options),
+      reLaunch: options => launches.push(options.url),
+      switchTab: options => launches.push(options.url),
+      navigateTo: options => launches.push(options.url),
+      showToast: () => {},
+      showModal: options => { if (options && typeof options.success === 'function') options.success({ confirm: true }); },
+      chooseMedia: () => {},
+      getFileInfo: () => {},
+      getFileSystemManager: () => ({ readFile: () => {} })
+    },
+    getApp: () => ({ globalData: { fontScale: 1 } }),
+    App: () => {},
+    Page: value => { definition = value; },
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval
+  };
+  function load(path) {
+    path = resolve(path);
+    if (path.endsWith('config\\runtime.js') || path.endsWith('config/runtime.js')) {
+      return { mode: 'local', apiBaseUrl: 'https://synthetic.invalid/api/v1' };
+    }
+    if (cache.has(path)) return cache.get(path).exports;
+    const module = { exports: {} };
+    cache.set(path, module);
+    const wrapper = runInNewContext('(function(require,module,exports){' + readFileSync(path, 'utf8') + '\n})', context, { filename: path });
+    wrapper(relative => load(resolve(dirname(path), relative + '.js')), module, module.exports);
+    return module.exports;
+  }
+  const auth = load(resolve(root, 'miniprogram/utils/auth.js'));
+  const identify = load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const identifyPage = load(resolve(root, 'miniprogram/pages/identify/identify.js'));
+  void identify;
+  void identifyPage;
+  assert.ok(definition !== null && typeof definition === 'object', '沙箱内识别页未注册 Page');
+  const pageDefinition = definition;
+  /** 每个用例一份独立页面实例（复制注册定义，不共享 data）。 */
+  function page() {
+    const instance = Object.assign({}, pageDefinition);
+    instance.data = JSON.parse(JSON.stringify(pageDefinition.data));
+    instance.setData = function (patch) { Object.assign(this.data, patch); };
+    instance._pollTimer = null;
+    return instance;
+  }
+  function seedSession() {
+    storage.set('gengyun.session', { accessToken: 'synthetic-identify-token', audience: 'user', expiresAt: expires(), executionMode: 'stub' });
+  }
+  function acceptVerification(request) {
+    request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() } } });
+  }
+  return { storage, requests, launches, auth, page, seedSession, acceptVerification, load };
+}
+
+const JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const RECORD_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const REQUEST_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function recognitionValue(overrides) {
+  return Object.assign({
+    id: RECORD_ID,
+    revision: 1,
+    candidates: [
+      { species_id: 'species_barnyardgrass', rank: 1, model_score: 0.81 },
+      { species_id: 'species_foxtail', rank: 2, model_score: 0.33 }
+    ],
+    uncertainty_reasons: [],
+    selected_species_id: null,
+    model_version: 'stub-v1'
+  }, overrides || {});
+}
+
+function jobEnvelope(state, result) {
+  return {
+    data: {
+      id: JOB_ID,
+      revision: state === 'queued' ? 1 : 3,
+      kind: 'recognition',
+      target_ref: { type: 'recognition', id: RECORD_ID, revision: 1 },
+      state: state,
+      deadline_at: '2026-10-11T10:00:00.000Z',
+      created_at: '2026-10-11T09:59:30.000Z',
+      error_code: null,
+      result: result === undefined ? null : { kind: 'recognition', value: result }
+    },
+    meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'stub' }
+  };
+}
+
+/** 页面 applyJob 接收的是 identify-api **校验后**的 Job（result 已展开为 Recognition 本身）。 */
+function validatedJob(state, result) {
+  const envelope = jobEnvelope(state, result);
+  return Object.assign({}, envelope.data, {
+    result: envelope.data.result === null ? null : envelope.data.result.value
+  });
+}
+
+test('GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）', () => {
+  const h = lifecycle();
+  // 注入一条合成本地旧历史（模拟同设备遗留数据），但**没有**任何会话。
+  h.storage.set('gengyun.identify.history', [{ jobId: JOB_ID, recordId: RECORD_ID, state: 'succeeded', stateTitle: '识别完成', selectedSpeciesId: null, at: '2026-10-11T09:00:00.000Z' }]);
+  const page = h.page();
+  page.onLoad();
+  assert.equal(page.data.history.length, 0, '门禁核实前不得装载全局私有历史');
+  page.onShow();
+  assert.equal(h.auth.isLoggedIn(), false);
+  assert.equal(page.data.guest, true);
+  assert.equal(page.data.historyOwner, '', '未核实时不得有已核实主体标识');
+  assert.equal(page.data.history.length, 0, '门禁未通过时历史必须为空');
+  assert.equal(page.data.candidates.length, 0);
+  assert.equal(page.data.recordId, null);
+});
+
+test('GY-I09 [B2]：核实后取得候选/历史，会话被清 → onHide/onShow 必须清空私有展示', () => {
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  assert.notEqual(page.data.historyOwner, '');
+  // 取得候选与历史（走真实页面方法）。
+  const job = validatedJob('succeeded', recognitionValue());
+  page.applyJob(job, page._generation);
+  page.rememberHistory(job, job.result, page._generation);
+  assert.equal(page.data.candidates.length, 2);
+  assert.equal(page.data.recordId, RECORD_ID);
+  assert.equal(page.data.history.length, 1);
+  // 会话被清除 + 重新进入页面。
+  h.auth.clearSession();
+  page.onHide();
+  assert.equal(page.data.guest, true, 'onHide 后必须关闭门禁');
+  assert.equal(page.data.candidates.length, 0, 'onHide 必须清空候选');
+  assert.equal(page.data.recordId, null, 'onHide 必须清空 recordId');
+  assert.equal(page.data.history.length, 0, 'onHide 必须清空私有历史展示');
+  page.onShow();
+  assert.equal(page.data.guest, true);
+  assert.equal(page.data.candidates.length, 0);
+  assert.equal(page.data.recordId, null);
+  assert.equal(page.data.job, null);
+  assert.equal(page.data.history.length, 0);
+  assert.equal(page.data.historyOwner, '');
+});
+
+test('GY-I09 [B3]：在途 GET /jobs 被服务端 401 拒绝（会话清除）→ 必须关闭门禁并清空展示', async () => {
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  const job = validatedJob('succeeded', recognitionValue());
+  page.applyJob(job, page._generation);
+  page.rememberHistory(job, job.result, page._generation);
+  assert.equal(page.data.candidates.length, 2);
+  const before = h.requests.length;
+  const gen = page._generation;
+  const pending = page.refreshJob(gen);
+  assert.equal(h.requests.length, before + 1, 'refreshJob 必须发出一次 GET /jobs');
+  // 服务端 401 + 契约错误封套：identify-api 会清会话并以 SESSION_REQUIRED 拒绝。
+  h.requests.at(-1).success({ statusCode: 401, data: { error: { code: 'SESSION_REQUIRED', message: '需要用户会话', retryable: false, details: [] } } });
+  await pending;
+  assert.equal(page.data.guest, true, '401 后必须关闭门禁，不能只留提示');
+  assert.equal(page.data.candidates.length, 0, '401 后必须清空候选');
+  assert.equal(page.data.recordId, null);
+  assert.equal(page.data.job, null);
+  assert.equal(page.data.history.length, 0);
+  assert.equal(page.data.historyOwner, '');
+});
+
+test('GY-I09 [C]：隐藏/重试后在途合法 succeeded 响应必须被淘汰（不得恢复展示、不得写历史）', async () => {
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  const queued = validatedJob('queued', null);
+  page.applyJob(queued, page._generation);
+  const gen = page._generation;
+  const pending = page.refreshJob(gen);
+  assert.equal(h.requests.length, 2);
+  // 页面离开 + 重试（两者都必须递增代次）。
+  page.onHide();
+  page.onRetry();
+  assert.equal(page.data.job, null);
+  // 迟到的合法 200 succeeded 封套：必须被丢弃。
+  h.requests.at(-1).success({ statusCode: 200, data: jobEnvelope('succeeded', recognitionValue()) });
+  await pending;
+  assert.equal(page.data.job, null, '离页/重试后的旧响应不得恢复展示');
+  assert.equal(page.data.candidates.length, 0, '旧响应不得恢复候选');
+  assert.equal(page.data.stateView, null);
+  assert.equal(page.data.recordId, null);
+  assert.equal(page.data.guest, true);
+  assert.equal(h.storage.has('gengyun.identify.history'), false, '失效回调不得写入全局私有历史');
+});
+
+test('GY-I09 [C 负控制①]：当代次正常完成仍必须生效（不得把功能一起挡掉）', async () => {
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  const queued = validatedJob('queued', null);
+  page.applyJob(queued, page._generation);
+  const gen = page._generation;
+  const pending = page.refreshJob(gen);
+  assert.equal(h.requests.length, 2);
+  // 未离页、未重试：合法 200 succeeded 必须正常生效并写历史。
+  h.requests.at(-1).success({ statusCode: 200, data: jobEnvelope('succeeded', recognitionValue()) });
+  await pending;
+  assert.equal(page.data.guest, false);
+  assert.equal(page.data.job.state, 'succeeded');
+  assert.equal(page.data.stateView.state, 'succeeded');
+  assert.equal(page.data.candidates.length, 2);
+  assert.equal(page.data.recordId, RECORD_ID);
+  assert.equal(page.data.history.length, 1, '当代次的正常完成必须写入历史');
 });
 
 test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何请求', async () => {

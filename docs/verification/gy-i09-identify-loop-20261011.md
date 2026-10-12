@@ -113,6 +113,7 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。   
 ℹ skipped 1        # 既有 native-PG 用例（本机无 PG，按其自身 skip 条件跳过）
 ℹ duration_ms 16739.3582                                  # exit 0
 # 返修轮 1 后为 ℹ tests 718 / pass 717 / fail 0 / skipped 1（新增 3 条并发与取消重放用例），见 §11.4
+# 返修轮 2 后为 ℹ tests 723 / pass 722 / fail 0 / skipped 1（新增 5 条生命周期用例），见 §12.5
 
 > npm run test:contract
 ✔ API 错误码与 HTTP 状态映射与契约 states.json 完全一致
@@ -308,4 +309,99 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
 
 > 仍未取得：真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯 —— 与本片第一轮相同，**不因本次返修而改变**。
 > 本次返修**未**宣布验收通过；监工需基于 `review` 后的新 HEAD 独立复核。
+
+## 12 返修轮 2：回应监工两轮批复（`rev 5484153038` 行内 `4242424659` / `5485989704`）
+
+监工已确认本分支与前进后的 `main`（`d5562923`，含 #88）**无冲突**，故**未 rebase、未 force-push**，直接追加提交。
+
+### 12.1 [A][P2] 行内 `4242424659`：既有独立播放按钮被移除 → 已恢复
+
+- 事实：第一片把识别页语音区改成只有录音按钮，导致既有独立验收
+  `tests/ui-adaptive.test.mjs`（"录音与播放为两个独立按钮，播放需先有录音"）失败。
+- 改法：**恢复既有交互**（不迁移入口、不改测试）——
+  - `identify.wxml` 恢复两个独立按钮：`bindtap="onRecord"` 与 `bindtap="onPlay"`，播放按钮 `disabled="{{guest || !hasRecording}}"`（无录音时禁用）；
+  - `identify.js` 恢复 `recording` / `hasRecording` 状态与 `onRecord` / `onPlay` 处理；
+    **未接入真实录音/播放**：不调用 `getRecorderManager` / `createInnerAudioContext`（既有断言），
+    播放按钮点击如实提示「播放能力尚未接入」，页面显著标注不会采集或上传任何音频。
+- 原始输出（见 §12.5）：`node --test tests/ui-adaptive.test.mjs` → **25/25 pass**。
+
+### 12.2 [B][P1] `5485989704`：未核实/失效会话仍展示既有私有识别数据 → 已修复
+
+| # | 实际反例 | 改法 |
+| --- | --- | --- |
+| B1 | 无任何会话 + 本机已有一条合成本地旧历史 → 门禁后 `history.length=1` | `onLoad` **不再**读取全局历史；只有门禁核实通过（`auth.requireLogin` 回调 true 且 `auth.isLoggedIn()`）才 `readHistory()` 并写入 `historyOwner` |
+| B2 | 已核实 A 取得候选/历史 → `auth.clearSession()` → `onHide/onShow` 后候选/recordId/历史仍在 | 新增 `closePrivate()`：清空 `candidates / recordId / recordRevision / job / stateView / showTop3 / candidatesTrusted / uncertaintyReasons / pendingManualId / selectedSpeciesId / relatedKnowledge / history / historyOwner`，并在 `onShow` 门禁关闭回调、`onHide`、`onUnload` 调用 |
+| B3 | 在途 `GET /jobs` 返回 401（api 已清会话）→ `guest` 仍 false、旧候选仍在 | `refreshJob` / `prepareMedia` / `recordSelection` / `onCancelJob` / `onOpenHistoryItem` / `onDeleteRecord` 的失败分支识别会话类错误（`SESSION_REQUIRED|SESSION_CHANGED|SESSION_EXPIRED`）→ `closePrivate()` 关闭门禁并清空，而不是只写提示 |
+
+- WXML 侧：历史区改为 `wx:if="{{!guest && historyOwner && history.length}}"`（绑定**当前已核实主体**
+  `historyOwner = auth.sessionEpoch()`，门禁关闭时置空）；状态块/候选区/关联科普区/state-view 全部加 `&& !guest`。
+- 新增用例（各一条，逐条可单独指出）：
+  - `GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）`
+  - `GY-I09 [B2]：核实后取得候选/历史，会话被清 → onHide/onShow 必须清空私有展示`
+  - `GY-I09 [B3]：在途 GET /jobs 被服务端 401 拒绝（会话清除）→ 必须关闭门禁并清空展示`
+  - 另在「打包白名单」用例中锁定 WXML 必须含 `onRecord`/`onPlay`/`hasRecording` 禁用表达式与 `historyOwner`，
+    且**不得**只凭 `history.length` 展示历史。
+
+### 12.3 [C][P2] `5485989704`：隐藏/重试未淘汰在途业务响应 → 已修复
+
+- 事实：`onHide` 只 `stopPoll`（停未来 timer），已发出的请求仍会 `applyJob`；在途 `GET /jobs` 的合法 200 `succeeded`
+  在 `onHide → onRetry` 后仍恢复展示并 `rememberHistory` 写全局存储。
+- 改法：**双重约束**——
+  1. **操作代次**：新增 `beginOperation()` / `isCurrentOperation(gen)`；`onHide` / `onUnload` / `onRetry` / `closePrivate`
+     / `prepareMedia` / `onOpenHistoryItem` / `onDeleteRecord` 一律递增代次；
+  2. **对象版本**：`refreshJob` 在 await 前捕获 `jobId`，await 后要求 `this.data.job` 仍存在且 `id` 相同；
+     `onOpenHistoryItem` / `recordSelection` 同样比对 `recordId`。
+  所有异步结果落回展示前都过 `isCurrentOperation(gen)`；`rememberHistory` 额外要求 `guest !== true`、`historyOwner !== ''`
+  且代次未失效，**失效回调不写全局私有数据**。
+- 新增用例与**负控制**：
+  - `GY-I09 [C]：隐藏/重试后在途合法 succeeded 响应必须被淘汰（不得恢复展示、不得写历史）`（负控制②：失效回调必须丢弃）
+  - `GY-I09 [C 负控制①]：当代次正常完成仍必须生效（不得把功能一起挡掉）`（正控制：不把功能一起挡掉）
+- **反例有效性实证（先失败后通过）**：把识别页临时回退到修复前版本
+  （`git stash push -- miniprogram/pages/identify/identify.js`）再跑同一测试文件，原始输出：
+
+```
+=== 旧页面（修复前）跑新反例 ===
+✖ GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）
+✖ GY-I09 [B2]：核实后取得候选/历史，会话被清 → onHide/onShow 必须清空私有展示
+✖ GY-I09 [B3]：在途 GET /jobs 被服务端 401 拒绝（会话清除）→ 必须关闭门禁并清空展示
+✖ GY-I09 [C]：隐藏/重试后在途合法 succeeded 响应必须被淘汰（不得恢复展示、不得写历史）
+✔ GY-I09 [C 负控制①]：当代次正常完成仍必须生效（不得把功能一起挡掉）
+ℹ tests 10
+ℹ pass 6
+ℹ fail 4
+=== 恢复修复后 ===
+ℹ tests 10
+ℹ pass 10
+ℹ fail 0
+```
+即：四条反例在修复前**确实失败**，正控制始终通过；恢复修复后 10/10。
+
+### 12.4 未放宽的守卫（本次返修）
+
+- 未改 `auth.js` / `page-gate.js` / `navigation.js` / `packages/privacy/**` / `packages/contracts/**` / `miniprogram/config/runtime.js`；
+- 未删除、未注释、未改弱任何既有断言（`tests/ui-adaptive.test.mjs` 与既有 18 项 `miniprogram-ui-auth-integration` 均原样通过）；
+- 会话/门禁语义保持「只认服务端核实」：`closePrivate` 只清展示，不伪造登录态，也不把本地索引当作已授权数据。
+
+### 12.5 返修轮 2 门禁（真跑原始输出要点）
+
+```
+node --test tests/ui-adaptive.test.mjs
+ℹ tests 25 / pass 25 / fail 0                                    （A 项既有验收恢复）
+
+npm run test:unit          ℹ tests 723 / pass 722 / fail 0 / skipped 1        exit 0
+npm run lint               PASS tsc ×2 + 卫生扫描                              exit 0
+npm run test:contract      ℹ tests 6 / pass 6 / fail 0                        exit 0
+npm run test:docs          PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+npm run test:mini          PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. ℹ tests 4 / pass 4 / fail 0
+node tests/integration/recognitions-http.mjs
+PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memory store)
+  - concurrent same-key: job=18bb1bcc-… provider_calls=1 (两个响应同一 job)
+  - concurrent different-body: statuses=[202,409] conflict=IDEMPOTENCY_CONFLICT provider_calls=1
+  - cancel=3; same-key replay -> 200 cancelled revision=3; new-key stale If-Match -> 409 REVISION_CONFLICT
+                                                                                exit 0
+```
+
+> `npm run test:unit` 由 718 增至 **723**（+5：B1/B2/B3/C/正控制）。返修轮 2 **未**宣布验收通过；
+> 仍**未取得**真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯。
+
 

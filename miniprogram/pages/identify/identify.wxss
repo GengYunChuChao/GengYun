@@ -296,3 +296,10 @@
   padding-left: 8px;
   padding-right: 8px;
 }
+
+.voice-hint {
+  margin-top: 20rpx;
+  font-size: calc(16px * var(--font-scale, 1));
+  color: var(--color-text-muted, #6F7F72);
+  line-height: 1.6;
+}

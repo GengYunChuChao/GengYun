@@ -30,28 +30,28 @@
     </button>
   </view>
 
-  <!-- 任务状态：七类各自一句，不合并成「失败」 -->
-  <view class="section-title" wx:if="{{stateView}}">任务状态</view>
-  <view class="state-chip state-chip--{{stateView.tone}}" wx:if="{{stateView}}">
+  <!-- 任务状态：七类各自一句，不合并成「失败」；门禁未通过（guest）一律不展示私有数据 -->
+  <view class="section-title" wx:if="{{stateView && !guest}}">任务状态</view>
+  <view class="state-chip state-chip--{{stateView.tone}}" wx:if="{{stateView && !guest}}">
     <text class="state-chip__code">JobState：{{stateView.state}}</text>
     <text class="state-chip__title">{{stateView.title}}</text>
     <text class="state-chip__desc">{{stateView.desc}}</text>
     <text class="state-chip__err" wx:if="{{stateView.state === 'failed' || stateView.state === 'timed_out'}}">服务端错误码以接口返回为准（error_code 非 null 时才显示）。</text>
   </view>
 
-  <view class="btn-row" wx:if="{{stateView}}">
+  <view class="btn-row" wx:if="{{stateView && !guest}}">
     <button class="btn btn--secondary btn-row__item" wx:if="{{!stateView.terminal}}" bindtap="onCancelJob">取消任务</button>
     <button class="btn btn--secondary btn-row__item" wx:if="{{stateView.retryable}}" bindtap="onRetry">重新识别</button>
   </view>
 
   <!-- 不确定原因：如实列出，不隐藏、不改写成成功 -->
-  <view class="reasons" wx:if="{{uncertaintyReasons.length}}">
+  <view class="reasons" wx:if="{{uncertaintyReasons.length && !guest}}">
     <view class="reasons__title">不确定原因（服务端 uncertainty_reasons）</view>
     <view class="reasons__item" wx:for="{{uncertaintyReasons}}" wx:key="*this">· {{item}}</view>
   </view>
 
   <!-- 候选：succeeded 才算识别成功；uncertain 必须人工核对；历史记录不推断任务状态 -->
-  <view wx:if="{{showTop3}}">
+  <view wx:if="{{showTop3 && !guest}}">
     <view class="section-title">{{candidateSource === 'history' ? '历史记录候选（模型原始结果）' : (candidatesTrusted ? '候选（识别成功）' : '候选（不可信，需人工核对）')}}</view>
     <view class="candidate-hint" wx:if="{{historyNote}}">{{historyNote}}</view>
     <view class="candidate {{pendingManualId === item.species_id ? 'candidate--picked' : ''}}" wx:for="{{candidates}}" wx:key="species_id" data-id="{{item.species_id}}" bindtap="onTapCandidate">
@@ -70,7 +70,7 @@
   </view>
 
   <!-- 关联科普查询（选择之后） -->
-  <view wx:if="{{relatedKnowledge}}">
+  <view wx:if="{{relatedKnowledge && !guest}}">
     <view class="section-title">关联科普（{{relatedKnowledge.matchStateLabel}}）</view>
     <view class="seed-tag">资料为种子整理稿 · 待核实·非权威 · 不提供用量</view>
     <view class="knowledge" wx:for="{{relatedKnowledge.items}}" wx:key="recordId">
@@ -85,25 +85,31 @@
 
   <view class="error-text" wx:if="{{errorText}}">{{errorText}}</view>
 
-  <!-- 私有历史（本机索引 + 服务端权威核对） -->
-  <view class="section-title" wx:if="{{history.length}}">我的识别记录（私有）</view>
-  <view class="history" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
+  <!-- 私有历史：必须绑定「当前已核实主体」（historyOwner），不能只凭本机索引长度 -->
+  <view class="section-title" wx:if="{{!guest && historyOwner && history.length}}">我的识别记录（私有）</view>
+  <view class="history" wx:if="{{!guest && historyOwner}}" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
     <view class="history__title">{{item.stateTitle}}</view>
     <view class="history__meta">{{item.state}} · {{item.at}}</view>
   </view>
-  <button class="btn btn--secondary" wx:if="{{history.length}}" bindtap="onClearHistory">清空本机索引</button>
+  <button class="btn btn--secondary" wx:if="{{!guest && historyOwner && history.length}}" bindtap="onClearHistory">清空本机索引</button>
 
   <view class="section-title">其他入口</view>
   <view class="card">
     <view class="card-title">语音提问</view>
-    <view class="card-text">录音与播放尚未接入真实服务；本页不会采集录音或上传。</view>
+    <view class="card-text">录音与播放尚未接入真实服务；此处仅演示按钮布局，不会采集录音、不会上传。</view>
     <view class="voice-row">
-      <button class="btn btn--secondary voice-btn" disabled="{{guest}}" bindtap="onRecord">开始录音</button>
+      <button class="btn btn--primary voice-btn" disabled="{{guest}}" bindtap="onRecord">
+        {{recording ? '录音中…' : '开始录音'}}
+      </button>
+      <button class="btn btn--secondary voice-btn" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
+        播放录音
+      </button>
     </view>
+    <view class="voice-hint" wx:if="{{!hasRecording}}">还没有录音。录音与播放能力尚未接入，本页不会采集或上传任何音频。</view>
   </view>
 
   <state-view
-    wx:if="{{stateView && !stateView.terminal}}"
+    wx:if="{{stateView && !stateView.terminal && !guest}}"
     status="{{stateView.component}}"
     title="{{stateView.title}}"
     desc="{{stateView.desc}}"

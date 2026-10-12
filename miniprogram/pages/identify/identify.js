@@ -41,10 +41,19 @@ function mimeOfPath(path) {
   return null
 }
 
+/** 门禁核实后的「当前已核实主体」本地标识（会话世代，不含令牌本身）；未核实为空串。 */
+function gateOwner() {
+  try {
+    return auth.isLoggedIn() ? auth.sessionEpoch() : ''
+  } catch (error) {
+    return ''
+  }
+}
+
 Page({
   onLoad: function () {
+    // 门禁核实**之前**不得读取/应用任何全局私有数据（历史只在核实通过后装载）。
     fontScale.applyFontScale(this)
-    this.setData({ history: readHistory() })
   },
 
   data: {
@@ -71,22 +80,61 @@ Page({
     selectedSpeciesId: null,
     relatedKnowledge: null,
     history: [],
+    /** 当前已核实主体标识；为空表示门禁未通过，历史/候选区一律不展示。 */
+    historyOwner: '',
     historyNote: '',
-    candidateSource: 'job'
+    candidateSource: 'job',
+    /** 语音入口的既有按钮状态（独立录音/播放按钮，播放需先有录音）。 */
+    recording: false,
+    hasRecording: false
   },
 
   onShow: function () {
     fontScale.applyFontScale(this)
-    // 每次进入先关闭入口，服务端核实成功后才允许识别。
     const that = this
-    this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
+    this.setData({ fontScale: fontScale.currentFontScale() })
+    // 门禁核实前先关闭私有展示（清空候选/记录/历史并递增代次），核实通过后才装载。
+    this.closePrivate()
     pageGate.start(this, function (ok) {
-      that.setData({ guest: !ok })
+      if (ok === true && auth.isLoggedIn()) {
+        that.setData({ guest: false, historyOwner: gateOwner(), history: readHistory() })
+        return
+      }
+      that.closePrivate()
     })
   },
 
-  onHide: function () { pageGate.cancel(this); this.stopPoll() },
-  onUnload: function () { pageGate.cancel(this); this.stopPoll() },
+  onHide: function () { pageGate.cancel(this); this.closePrivate() },
+  onUnload: function () { pageGate.cancel(this); this.closePrivate() },
+
+  // -------------------------------------------------- 私有展示的关闭与代次
+
+  /**
+   * 操作代次：门禁关闭、离页、重试、切换对象时递增；在途异步结果只有在代次未变、
+   * 门禁仍通过、且对象版本一致时才允许落回展示（监工 5485989704 [C]）。
+   */
+  beginOperation: function () {
+    this._generation = (this._generation || 0) + 1
+    return this._generation
+  },
+
+  isCurrentOperation: function (gen) {
+    return this._generation === gen && this.data.guest !== true
+  },
+
+  /** 关闭私有展示：清空候选/任务/记录/历史，并递增代次使在途回调失效。 */
+  closePrivate: function (message) {
+    this.stopPoll()
+    this.beginOperation()
+    const patch = {
+      guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
+      uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
+      recordId: null, recordRevision: 0, job: null, stateView: null, historyNote: '', candidateSource: 'job',
+      busy: false, substituteNotice: ''
+    }
+    if (typeof message === 'string' && message !== '') patch.errorText = message
+    this.setData(patch)
+  },
 
   // ------------------------------------------------------------------ 入口
 
@@ -100,12 +148,20 @@ Page({
     this.choosePhoto()
   },
 
+  /** 录音入口：**尚未接入真实录音**，只切换按钮文案；不调用任何录音能力、不采集、不上传。 */
   onRecord: function () {
     if (this.data.guest) return
-    wx.showToast({ title: '语音提问尚未接入', icon: 'none' })
+    this.setData({ recording: !this.data.recording })
+  },
+
+  /** 播放入口（独立按钮，无录音时禁用）：未接入真实播放能力，如实提示，不播放、不上传。 */
+  onPlay: function () {
+    if (this.data.guest || !this.data.hasRecording) return
+    wx.showToast({ title: '播放能力尚未接入', icon: 'none' })
   },
 
   choosePhoto: function () {
+    if (this.data.guest) return
     const that = this
     wx.chooseMedia({
       count: 1,
@@ -123,49 +179,61 @@ Page({
 
   /** 取得可用于识别的媒体引用：real 走真实上传链路，替身模式用明确标注的替身引用。 */
   prepareMedia: async function (tempFilePath) {
+    if (this.data.guest) return
+    const gen = this.beginOperation()
     this.setData({ busy: true, errorText: '', substituteNotice: '', stateView: null, job: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
     let media
     try {
       const mode = await identifyApi.serverMode()
+      if (!this.isCurrentOperation(gen)) return
       this.setData({ modeNote: modeNoteFor(mode) })
       if (mode === 'real') {
         const mime = mimeOfPath(tempFilePath)
         if (mime === null) { this.setData({ busy: false, errorText: '无法确定照片类型，请改用 JPG / PNG / WebP。' }); return }
         const info = await readFileInfo(tempFilePath)
+        if (!this.isCurrentOperation(gen)) return
         media = await identifyApi.uploadPrivatePhoto(tempFilePath, { mime: mime, bytes: info.size, sha256: info.digest })
       } else {
         // 替身模式：照片**不上传**，使用本地生成的替身媒体引用（服务端 meta.execution_mode 已如实标注）。
         this.setData({ substituteNotice: '替身模式（' + mode + '）：照片不会上传，识别使用替身媒体引用，结果不代表真实识别。' })
         media = { mediaId: syntheticMediaId(), mediaRevision: 1 }
       }
+      if (!this.isCurrentOperation(gen)) return
     } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
       this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
       return
     }
     try {
       const created = await identifyApi.createRecognition(media.mediaId, media.mediaRevision)
+      if (!this.isCurrentOperation(gen)) return
       this.setData({ job: { id: created.job.id, revision: created.job.revision, state: created.job.state }, modeNote: modeNoteFor(created.mode) })
-      this.applyJob(created.job)
-      this.startPoll()
+      this.applyJob(created.job, gen)
+      this.startPoll(gen)
     } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
       this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
     }
   },
 
   // ------------------------------------------------------------------ 轮询
 
-  startPoll: function () {
+  startPoll: function (gen) {
     const that = this
+    const generation = gen === undefined ? this._generation : gen
     this.stopPoll()
     let ticks = 0
     this._pollTimer = setInterval(function () {
       ticks += 1
+      if (!that.isCurrentOperation(generation) || !that.data.job) { that.stopPoll(); return }
       if (ticks > POLL_MAX_TICKS) {
         that.stopPoll()
         that.setData({ busy: false, errorText: '轮询已达上限，请重新查询任务状态。' })
         return
       }
-      that.refreshJob()
+      that.refreshJob(generation)
     }, POLL_INTERVAL_MS)
   },
 
@@ -173,19 +241,28 @@ Page({
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null }
   },
 
-  refreshJob: async function () {
+  refreshJob: async function (gen) {
     if (!this.data.job) return
+    const generation = gen === undefined ? this._generation : gen
+    const jobId = this.data.job.id
     try {
-      const r = await identifyApi.getJob(this.data.job.id)
-      this.applyJob(r.job)
+      const r = await identifyApi.getJob(jobId)
+      // 双重约束：操作代次未变（未离页/未重试/未切对象）且门禁仍通过、对象仍是同一任务。
+      if (!this.isCurrentOperation(generation)) return
+      if (!this.data.job || this.data.job.id !== jobId) return
+      this.applyJob(r.job, generation)
     } catch (error) {
+      if (!this.isCurrentOperation(generation)) return
       this.stopPoll()
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
       this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
     }
   },
 
   /** 由**已校验**的 Job 决定页面显示；非 succeeded 绝不按识别成功渲染。 */
-  applyJob: function (job) {
+  applyJob: function (job, gen) {
+    // 迟到的合法成功响应若已离页/重试/切对象，不得恢复展示，也不得写历史。
+    if (gen !== undefined && !this.isCurrentOperation(gen)) return
     const model = identifyApi.viewModelForJob(job)
     const record = job.result
     const patch = {
@@ -205,7 +282,7 @@ Page({
     if (record !== null && record.selected_species_id !== null) patch.selectedSpeciesId = record.selected_species_id
     if (model.view.terminal === true) {
       this.stopPoll()
-      if (record !== null) this.rememberHistory(job, record)
+      if (record !== null) this.rememberHistory(job, record, gen)
     }
     this.setData(patch)
   },
@@ -214,16 +291,24 @@ Page({
 
   onCancelJob: async function () {
     if (!this.data.job || this.data.busy !== true) return
+    const gen = this._generation
+    const jobId = this.data.job.id
+    const revision = this.data.job.revision
     try {
-      const r = await identifyApi.cancelJob(this.data.job.id, this.data.job.revision)
-      this.applyJob(r.job)
+      const r = await identifyApi.cancelJob(jobId, revision)
+      if (!this.isCurrentOperation(gen)) return
+      if (!this.data.job || this.data.job.id !== jobId) return
+      this.applyJob(r.job, gen)
     } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
       this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
     }
   },
 
   onRetry: function () {
     this.stopPoll()
+    this.beginOperation()
     this.setData({ job: null, stateView: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
   },
 
@@ -244,23 +329,34 @@ Page({
 
   /** 记录用户选择（独立于模型原始候选），随后才查询关联科普。 */
   recordSelection: async function (speciesId) {
-    if (this.data.recordId === null || this.data.recordRevision < 1) return
+    if (this.data.guest === true || this.data.recordId === null || this.data.recordRevision < 1) return
+    const gen = this._generation
+    const recordId = this.data.recordId
+    const revision = this.data.recordRevision
     this.setData({ busy: true, errorText: '', pendingManualId: null })
     let recognition
     try {
-      const r = await identifyApi.selectSpecies(this.data.recordId, this.data.recordRevision, speciesId)
+      const r = await identifyApi.selectSpecies(recordId, revision, speciesId)
       recognition = r.recognition
     } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
       if (error && error.code === 'REVISION_CONFLICT') {
         try {
-          const fresh = await identifyApi.getRecognition(this.data.recordId)
+          const fresh = await identifyApi.getRecognition(recordId)
           recognition = fresh.recognition
-        } catch (again) { this.setData({ busy: false, errorText: identifyApi.messageFor(again) }); return }
+        } catch (again) {
+          if (!this.isCurrentOperation(gen)) return
+          if (isGateLossError(again)) { this.closePrivate(identifyApi.messageFor(again)); return }
+          this.setData({ busy: false, errorText: identifyApi.messageFor(again) }); return
+        }
       } else {
+        if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
         this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
         return
       }
     }
+    if (!this.isCurrentOperation(gen)) return
+    if (this.data.recordId !== recordId) return
     // selection 只写用户选择：模型原始候选/分数由服务端保持，客户端不重算、不覆盖。
     this.setData({ busy: false, selectedSpeciesId: speciesId, recordRevision: recognition.revision, candidates: recognition.candidates.map(function (c) {
       return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
@@ -270,7 +366,10 @@ Page({
 
   // ---------------------------------------------------------------- 私有历史
 
-  rememberHistory: function (job, record) {
+  rememberHistory: function (job, record, gen) {
+    // 门禁未通过、无已核实主体、或代次已失效时**不得**写全局私有数据。
+    if (this.data.guest === true || this.data.historyOwner === '') return
+    if (gen !== undefined && !this.isCurrentOperation(gen)) return
     const items = readHistory().filter(function (item) { return item.recordId !== record.id })
     items.unshift({
       jobId: job.id,
@@ -289,9 +388,15 @@ Page({
   onOpenHistoryItem: async function (event) {
     const recordId = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.id : null
     if (typeof recordId !== 'string' || !identifyApi.validId(recordId)) return
+    if (this.data.guest === true || this.data.historyOwner === '') return
+    const gen = this.beginOperation()
+    const previousRecordId = this.data.recordId
     this.setData({ busy: true, errorText: '' })
     try {
       const r = await identifyApi.getRecognition(recordId)
+      // 代次 + 对象版本双约束：离页/重试/切换对象后的旧响应不得恢复展示。
+      if (!this.isCurrentOperation(gen)) return
+      if (this.data.recordId !== previousRecordId) return
       const candidates = r.recognition.candidates.map(function (c) {
         return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
       })
@@ -304,25 +409,33 @@ Page({
         stateView: null,
         relatedKnowledge: r.recognition.selected_species_id === null ? null : queryRelatedKnowledge(r.recognition.selected_species_id) })
     } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
       this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
     }
   },
 
   onDeleteRecord: async function () {
-    if (this.data.recordId === null || this.data.recordRevision < 1) return
+    if (this.data.guest === true || this.data.recordId === null || this.data.recordRevision < 1) return
     const that = this
+    const recordId = this.data.recordId
+    const revision = this.data.recordRevision
     wx.showModal({
       title: '删除这条识别记录',
       content: '删除后无法恢复，关联的候选与选择一并移除。',
       success: async function (result) {
         if (!result.confirm) return
+        const gen = that.beginOperation()
         try {
-          await identifyApi.deleteRecognition(that.data.recordId, that.data.recordRevision)
-          const items = readHistory().filter(function (item) { return item.recordId !== that.data.recordId })
+          await identifyApi.deleteRecognition(recordId, revision)
+          if (!that.isCurrentOperation(gen)) return
+          const items = readHistory().filter(function (item) { return item.recordId !== recordId })
           try { wx.setStorageSync(HISTORY_KEY, items) } catch (_) {}
           that.onRetry()
           that.setData({ history: items, errorText: '' })
         } catch (error) {
+          if (!that.isCurrentOperation(gen)) return
+          if (isGateLossError(error)) { that.closePrivate(identifyApi.messageFor(error)); return }
           that.setData({ errorText: identifyApi.messageFor(error) })
         }
       }
@@ -330,10 +443,17 @@ Page({
   },
 
   onClearHistory: function () {
+    if (this.data.guest === true || this.data.historyOwner === '') return
     try { wx.removeStorageSync(HISTORY_KEY) } catch (_) {}
     this.setData({ history: [] })
   }
 })
+
+/** 会话/门禁失效类错误：必须关闭私有展示，而不是只提示。 */
+function isGateLossError(error) {
+  const code = error && error.code
+  return code === 'SESSION_REQUIRED' || code === 'SESSION_CHANGED' || code === 'SESSION_EXPIRED'
+}
 
 function readHistory() {
   try {
