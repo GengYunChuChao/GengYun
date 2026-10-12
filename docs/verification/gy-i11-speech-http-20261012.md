@@ -1,13 +1,41 @@
 # GY-I11 阶段 2a 转写路由与回环 HTTP 验证
 
-日期：2026-10-12（香港时间）。Refs #11，仅交付转写路由插件与**本机回环 HTTP** 证据；不注册到 `app.ts`、不改小程序、不开 PR。
+日期：2026-10-12（香港时间）。Refs #11，仅交付转写路由插件与**本机回环 HTTP** 证据；**2a 当时**不注册到 `app.ts`、不改小程序、不开 PR。
+本页正文是 **2a 当时**的记录；**其后的变更与最新证据见下方「阶段 2b 更新」**（凡与 2b 冲突处，以 2b 为准）。
 
-## 来源与范围
+## 阶段 2b 更新（2026-10-12，`upstream/main = 13262f19`，本页随 2b 提交追加）
+
+**基线变化**：`upstream/main` 已推进到 `13262f19`（其中 `f8da03b` 是 #87「识别任务闭环与七类状态」的合并）。
+本分支基于 2a 的 `c3aa79e` 合并该 main（**无冲突**），因此 2a 时"参考文件不存在"的前提已消失。
+
+1. **`routes/speech.ts` 已注册进产品装配**：`services/api/src/app.ts` **只加两行**
+   （一行 `import { registerSpeechRoutes } from './routes/speech.ts';` + 一行
+   `registerSpeechRoutes(app, config, { guards });`，紧随 `registerRecognitionRoutes` 之后）。
+   **装配路径零端口注入**——不传 provider／store／media。
+2. **集成脚本改为打真实装配**：`tests/integration/speech-http.mjs` 现用 `buildApp`（同一实例同时提供鉴权、
+   生产错误封套、`ajv removeAdditional:false` 与转写路由）+ 本机回环 HTTP；**12 组通过**（含 real 模式实例）。
+   2a 的"测试内自建最小 app"已不再使用（当时是唯一可行做法）。
+3. **失败终态与 `/jobs/{id}` 的现状更正**：契约的 `GET /jobs/{id}`／`POST /jobs/{id}/cancel`
+   **现已实现**（由 #87 在 `routes/recognitions.ts` 注册），但**只服务识别域**——转写 job 的 id 在其上得到
+   `404 NOT_FOUND`（两域 store 独立）。⇒ **转写任务的 `JobState` 与取消目前仍不可经 HTTP 读取**，
+   `failed`／`timed_out`／`uncertain` 依然只能表现为「该转写记录 `GET` 404（未产生记录）」。
+   本片**不得**再注册同一路径（会与 #87 的路由重复），故按跨域装配缺口如实登记。
+4. **默认关闭的结构性证据（2b 新增）**：`real` 型 ASR 未配置时，经真实装配实例实测
+   受理前 **503 `PROVIDER_UNAVAILABLE`**、**提供者调用 0 次**、**不回退替身**（`describe().modelVersion`
+   仍为 `real-unconfigured`）；代码层证据：`app.ts` 的转写注册行只传 `guards`（且不 import `speech/provider`、
+   `speech/store`、`speech/media`），`speech/provider.ts` **不含任何网络客户端**（无 `fetch(`／`node:http`／
+   `node:https`／`node:net`），`createRealSpeechProvider` 函数体内**无替身回退**、**无网络请求**。
+5. **新增诊断计数**：`speech/service.ts` 在真正发起提供者调用的那一行累加 `providerCalls`，并经
+   `describe().providerCalls` 暴露（不含凭据、不改变语义），用于在真实装配上实测"0 次／恰好 1 次调用"。
+   路由插件同时 `app.decorate('speechService', service)`，供回归驱动在途任务（`settle()`）。
+6. **跨基线口径**：2b 的"前后数字"在**合并后的合成树**上测得（见 2b 的 PR 正文与提交信息）。
+
+## 来源与范围（**以下为 2a 当时记录**）
 
 - 基线 `upstream/main = 9e87a97385f86e04e965ad2a2caf7494e10a628b`（开工前 `git fetch upstream --prune` 核对；工作分支 `feat/gy-i11-speech-http`，HEAD 即基线 + 本页所述新增）。
 - 阶段 1（PR #93，合并提交 `0b75a08`）已把 `services/api/src/speech/**` 与 `tests/unit/speech-*.test.mjs` 带入 main；本页实测**与阶段 1 分支逐字节相同**（`git diff --stat 9a979e6 9e87a97 -- services/api/src/speech tests/unit/speech-*.test.mjs` 为空），因此本轮**未改动服务层语义**。
 - 本轮新增：
-  - `services/api/src/routes/speech.ts`：转写路由插件（导出 `registerSpeechRoutes`），**未注册到 `app.ts`**。
+  - `services/api/src/routes/speech.ts`：转写路由插件（导出 `registerSpeechRoutes`），**2a 当时未注册到 `app.ts`**（2b 已注册，见上）。
   - `tests/integration/speech-http.mjs`：真实本机回环 HTTP 集成脚本。
 - 未触碰：`services/api/src/app.ts`（只读调用其 `buildApp`）、`services/api/src/routes/recognitions.ts`（**该文件在基线中不存在**，见下）、`services/api/src/{ocr,tts,community,admin}/**`、`miniprogram/**`、`tools/prepare-wechat.mjs`、`packages/**`、根 `package.json`／`package-lock.json`、`.github/workflows/**`。
 
@@ -102,14 +130,14 @@ PASS 11 loopback HTTP groups; production pipeline (buildApp) with only the speec
 
 ## 未做项（本轮明确未取得）
 
-- **`services/api/src/app.ts` 注册**：未做（该装配点被 #9／PR #87 占用，属 2b）。因此**生产入口 `dsh`/server 启动后仍无这四条路由**；本页证据全部来自测试内自行装配的实例。
+- **`services/api/src/app.ts` 注册**：2a 时未做（该装配点当时被 #9／PR #87 占用）。**2b 已完成**（两行，见上）；本页下方 2a 证据仍来自测试内自行装配的实例。
 - **小程序 `miniprogram/pages/identify/**` 语音模式**、`tools/prepare-wechat.mjs` 白名单：未做（2b）。
 - **真实 ASR 供应商／凭据**：未接入；`real` 分支只证明受理前 `PROVIDER_UNAVAILABLE` 与"不回退替身"。**ASR 真实样本为 0**（`docs/evaluation/sample-gap-register.md` 的 `asr_utterances` 0/50、`asr_speakers` 0/10）⇒ 本页**不声称任何转写质量或准确率**，也不声称需求第 6 节评估已运行。
 - **真机／微信开发者工具**：未取得（本轮无小程序改动）。
 - **PG 持久化**：未做；转写任务与记录仍在内存 store（`describe()` 如实标注 `persistent=false`），进程重启即丢。
 - **媒体 HTTP 层**：未接线；`real` 下媒体端口为 `unwired`（受理前 `OBJECT_UNAVAILABLE`）。
 - **`POST /speech/synthesis`**：属 #13 TTS，未做。
-- **未 push、未开 PR**（按派单：等 2b 完成 `app.ts` 与页面后一次性开）。
+- **未 push、未开 PR**（2a 当时按派单：等 2b 完成 `app.ts` 与页面后一次性开）。⇒ 2a 的提交 `c3aa79e` 随 **2a+2b 合并的同一个 PR** 推送。
 
 ## 整项仍待完成
 

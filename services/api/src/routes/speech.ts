@@ -17,13 +17,18 @@
  *   3. 响应封套与头部装配：`buildMeta`（`meta.contract_version` / `meta.execution_mode`）、
  *      `ETag: "<revision>"`、`Cache-Control: no-store`（契约 200/202 头部注明「私有/授权访问 no-store」）。
  *
- * **本阶段不注册到 `services/api/src/app.ts`**：该装配点（全局串行点）被 #9/PR #87 占用，
- * 属 2b；这里只导出插件，由调用方（2b 的 app.ts，或本模块的集成测试）自行装配。
+ * **装配（阶段 2b）**：`services/api/src/app.ts` **只加两行**（一行 `import` + 一行
+ * `registerSpeechRoutes(app, config, { guards })`，紧随 `registerRecognitionRoutes` 之后）。
+ * 产品装配路径**不做任何端口注入**：服务由本模块按 `config.executionMode` 自建
+ * （`real` 走 fail-closed，`stub`/`preset_demo` 走明确标注的替身）。
  *
- * **契约声明但本模块不实现的相邻 operationId**（不属本派单的四个操作，不得越界注册）：
- * - `getJob` `GET /jobs/{id}`（`x-task: GY-I01`，通用任务轮询；当前 main 未见实现）
- *   ⇒ 后果：本阶段失败终态（`failed`/`timed_out`/`uncertain`）在 HTTP 上只能表现为
- *   「该转写记录 `GET` 404（未产生记录）」，无法轮询到 Job 终态；已如实登记在证据文档。
+ * **契约里与本域相邻、但不由本模块注册的操作**（不得越界注册，否则与既有路由重复）：
+ * - `getJob` `GET /jobs/{id}` / `cancelJob` `POST /jobs/{id}/cancel`（`x-task: GY-I01`）：
+ *   已由 GY-I09（PR #87）在 `routes/recognitions.ts` 注册，**只服务于识别任务**；
+ *   转写任务的 id 在该路由上得到 `404 NOT_FOUND`（两个域的 store 彼此独立）。
+ *   ⇒ 后果：转写任务的 `JobState` 与取消**目前无法经 HTTP 读取**；失败终态
+ *   （`failed`/`timed_out`/`uncertain`）只能表现为「该转写记录 `GET` 404（未产生记录）」。
+ *   已如实登记在证据文档与 PR 正文（属跨域装配缺口，不是本片越界项）。
  * - `createSynthesis` `POST /speech/synthesis`（#13 TTS）。
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -37,6 +42,16 @@ import { createMemorySpeechStore, type SpeechStore } from '../speech/store.ts';
 import { createSpeechProvider, type SpeechProvider } from '../speech/provider.ts';
 import { createSpeechMediaPort, type SpeechMediaPort } from '../speech/media.ts';
 import { buildMeta } from './support.ts';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * GY-I11 转写服务实例（供装配方与回归测试驱动在途任务：`settle()`、
+     * `describe().providerCalls` 真实调用计数）。**不含凭据**。
+     */
+    speechService: SpeechService;
+  }
+}
 
 /**
  * openapi `components.schemas.MediaJobInput`（`additionalProperties:false`）。
@@ -107,6 +122,9 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
       now: deps.now,
       jobDeadlineMs: deps.jobDeadlineMs,
     });
+
+  // 暴露给装配方与回归测试（驱动在途任务、读取真实调用计数）；不含凭据。
+  app.decorate('speechService', service);
 
   /** 只认服务端会话解析出的身份（客户端无法声明 userId）。 */
   const userId = (request: FastifyRequest): string => readIdentity(request).userId;
