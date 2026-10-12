@@ -1,0 +1,1063 @@
+/**
+ * GY-I15（#15）阶段 1 · 社区域服务层（服务端语义，**不注册路由**）。
+ *
+ * 覆盖契约 operationId：`listPosts`/`createPost`/`getPost`/`editPost`/`deletePost`、
+ * `listComments`/`createComment`/`getComment`/`editComment`/`deleteComment`、
+ * `likePosts`/`unlikePosts`/`likeComments`/`unlikeComments`、`createReport`/`getOwnReport`。
+ * **不做** `hidePost`（属 #18）、`/community/media*`（依赖媒体接线）。
+ *
+ * 核心不变式（先审后发）：
+ *   一条内容**对外可见** ⟺ `visibility === 'published'` 且 `audit_state === 'approved'`
+ *   且存在一条审核结论**恰好绑定** `TargetRef{type,id,当前revision}`、`rule_version` 等于
+ *   当前派生版本、且 `text_digest` 等于当前正文摘要，并且 `evaluateReReview` 与
+ *   `isPublishable` 都同意可发布。
+ *   可见性在**每次读取时**重新计算（`assess`），因此规则集升级后旧结论自动失效、
+ *   内容立即退出列表，直到重审通过——不是"写时信任一次、之后永远可见"。
+ *
+ * 未取得（如实声明，不得当作已完成）：
+ *   - 没有 HTTP 路由、没有 `app.ts` 装配（阶段 2）；返回的是契约 **data 载荷**，
+ *     `meta`/封套由阶段 2 的路由层补齐；
+ *   - 没有数据库迁移，只有内存存储（进程重启即丢）；
+ *   - **模型层审核（LLM）不在本片**：`Moderation.model_version`/`prompt_version` 不产出、
+ *     不填占位串；因此本片不得声称审核准确率/召回率（真实样本各为 0，见
+ *     `docs/evaluation/sample-gap-register.md`）；
+ *   - 带图片的帖子一律**不得发布**（图片审核属模型层，规则层遇媒体即隔离）；
+ *   - 显式 `linked_knowledge_ref`（知识关联）一律拒绝：本片未接线资料可用性核验，
+ *     静默丢弃关联会违反契约"创建遗漏关联等于无关联"。
+ */
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { ApiError } from '../errors.ts';
+import { sha256Hex } from '../auth/tokens.ts';
+import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
+import { createPublishGate } from './moderation-gate.ts';
+import type { GateOutcome, PublishGate, RuleLayerVerdict } from './moderation-gate.ts';
+import type {
+  CommentRecord,
+  CommunityStore,
+  IdempotencyOutcome,
+  ModerationRecord,
+  PostRecord,
+  ReportRecord,
+} from './store.ts';
+import {
+  UUID_PATTERN,
+  parseCursor,
+  parseLimit,
+  requireIdempotencyKey,
+  requireIfMatch,
+  requireUserActor,
+  validateCommentInput,
+  validatePostInput,
+  validateReportInput,
+} from './validate.ts';
+import type {
+  Ack,
+  AuditState,
+  AuthorDirectory,
+  Comment,
+  CommentInput,
+  CommentPage,
+  CommunityActor,
+  KnowledgeTarget,
+  Post,
+  PostInput,
+  PostPage,
+  Report,
+  ReportInput,
+  Visibility,
+} from './types.ts';
+
+/** 游标有效期（与 profile/service 同量级：只服务翻页，不做长期令牌）。 */
+export const CURSOR_TTL_MS = 15 * 60 * 1000;
+/** 幂等重放窗口（契约参数描述：只覆盖客户端超时重试）。 */
+export const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
+/** 同键并发等待上界：超过即 409 REQUEST_IN_PROGRESS。 */
+export const IDEMPOTENCY_WAIT_MS = 2000;
+
+export interface CommunityServiceDeps {
+  store: CommunityStore;
+  /** 作者投影（阶段 2 接 `public_authors`）。**必填**：不提供默认值，避免悄悄伪造作者。 */
+  authors: AuthorDirectory;
+  /** 签名密钥（游标签名 + 幂等请求摘要 HMAC）；只在内存使用，不落库、不入日志。 */
+  signingKey: string;
+  /** 发布闸门；默认出厂规则集。注入自定义规则集会真实改变派生 `rule_version`。 */
+  gate?: PublishGate;
+  now?: () => Date;
+  newId?: () => string;
+  idempotencyTtlMs?: number;
+  idempotencyWaitMs?: number;
+}
+
+export interface WriteOptions {
+  idempotencyKey?: string;
+  ifMatch?: string;
+}
+
+export interface ListPostsQuery {
+  cursor?: string | null;
+  limit?: number | null;
+  crop_id?: string | null;
+  region_code?: string | null;
+  mine?: boolean | null;
+}
+
+export interface ListCommentsQuery {
+  cursor?: string | null;
+  limit?: number | null;
+}
+
+/** 内容重审结果（内部操作，供阶段 2 的巡检任务与测试使用）。 */
+export interface ReReviewReport {
+  re_reviewed: boolean;
+  publishable: boolean;
+  decision: RuleLayerVerdict['decision'];
+  reason_codes: string[];
+  rule_version: string | null;
+  visibility: Visibility;
+}
+
+function notFound(): ApiError {
+  return new ApiError('NOT_FOUND', '内容不存在或不可用');
+}
+
+function requireUuidParam(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw new ApiError('INVALID_REQUEST', `${field} 必须是 uuid`, {
+      details: [{ field, code: 'INVALID_UUID' }],
+    });
+  }
+  return value;
+}
+
+/** 正文摘要：帖子 = title + LF + body（与送审文本一致），评论 = body。 */
+function postModerationText(record: Pick<PostRecord, 'title' | 'body'>): string {
+  return `${record.title}\n${record.body}`;
+}
+function commentModerationText(record: Pick<CommentRecord, 'body'>): string {
+  return record.body;
+}
+function mediaInputs(mediaIds: readonly string[]): Array<{ media_id: string }> {
+  return mediaIds.map((media_id) => ({ media_id }));
+}
+
+export function createCommunityService(deps: CommunityServiceDeps) {
+  const store = deps.store;
+  const authors = deps.authors;
+  const gate = deps.gate ?? createPublishGate();
+  const signingKey = deps.signingKey;
+  const clock = deps.now ?? (() => new Date());
+  const newId = deps.newId ?? (() => randomUUID());
+  const idempotencyTtlMs = deps.idempotencyTtlMs ?? IDEMPOTENCY_TTL_MS;
+  const idempotencyWaitMs = deps.idempotencyWaitMs ?? IDEMPOTENCY_WAIT_MS;
+
+  const nowIso = (): string => clock().toISOString();
+  const sign = (value: string): string => createHmac('sha256', signingKey).update(value).digest('base64url');
+
+  // -------------------------------------------------------------------------
+  // 幂等：先原子占位 → 审核/落库 → 写回结果；失败释放占位；同键异体冲突
+  // -------------------------------------------------------------------------
+
+  async function withIdempotency<T>(
+    scope: string,
+    keyHash: string,
+    requestDigest: string,
+    responseStatus: number,
+    produce: () => Promise<{ outcome: IdempotencyOutcome; result: T }>,
+    replay: (ref: IdempotencyOutcome) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existing = await store.findIdempotency(scope, keyHash);
+      if (existing !== null) {
+        if (existing.request_hash !== requestDigest) {
+          throw new ApiError('IDEMPOTENCY_CONFLICT', '同键请求内容不一致');
+        }
+        return replay(existing.outcome);
+      }
+      const claimed = await store.claimIdempotency(scope, keyHash, {
+        request_hash: requestDigest,
+        response_status: responseStatus,
+        expires_at: clock().getTime() + idempotencyTtlMs,
+      });
+      if (!claimed) {
+        const settled = await store.awaitIdempotencySettled(scope, keyHash, idempotencyWaitMs);
+        if (settled === 'timeout') {
+          throw new ApiError('REQUEST_IN_PROGRESS', '同键请求正在处理中，请稍后重试', { retryable: true });
+        }
+        continue;
+      }
+      let produced: { outcome: IdempotencyOutcome; result: T };
+      try {
+        produced = await produce();
+      } catch (error) {
+        // 失败释放占位：本次不留任何"半成品"结果，也不让后续同键重试被永久挡住。
+        await store.releaseIdempotency(scope, keyHash);
+        throw error;
+      }
+      const saved = await store.completeIdempotency(scope, keyHash, {
+        response_status: responseStatus,
+        outcome: produced.outcome,
+      });
+      if (saved) return produced.result;
+      // 占位已被他人完成/释放（理论上不出现）：回到循环按台账重放，不重复落库。
+    }
+    throw new ApiError('REQUEST_IN_PROGRESS', '同键请求正在处理中，请稍后重试', { retryable: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // 审核结论：落台账 + 读取时重算可见性
+  // -------------------------------------------------------------------------
+
+  async function recordVerdict(
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    outcome: GateOutcome,
+    text: string,
+  ): Promise<void> {
+    const record: ModerationRecord = {
+      id: newId(),
+      target_ref: { type: target.type, id: target.id, revision: target.revision },
+      decision: outcome.decision,
+      reason_codes: [...outcome.reason_codes],
+      hard_rule_passed: outcome.hard_rule_passed,
+      rule_version: outcome.rule_version,
+      // 结论绑定"这一份正文"，不只绑定 revision。
+      text_digest: sha256Hex(text),
+      // 契约 Moderation 共 9 个必填：本片只产出规则层 + 绑定部分，模型层字段不假装已填。
+      contract_complete: false,
+      missing_contract_fields: [...outcome.missing_contract_fields],
+      created_at: nowIso(),
+    };
+    await store.putModeration(record);
+  }
+
+  /**
+   * **读取时**重算内容的有效状态（可见性 + 审核状态）。
+   *
+   * 这是本片的"先审后发"落点：存储行只记录"写入时"的状态，真正对外投影的
+   * `visibility`/`audit_state` 每次读取都按**当前规则版本**重新判定：
+   *   - 结论缺失／失效（规则集升级、revision 变化、证据不可信）⇒ 降级为 `hidden` + `pending`
+   *     （`evaluateReReview` 判 `quarantined` 时如实报 `quarantined`），"旧结论不得继续放行"；
+   *   - 结论新鲜且明确不可发布 ⇒ 按结论如实报 `rejected`/`quarantined`，且不再公开；
+   *   - 结论新鲜且可发布 ⇒ 报 `published` + `approved`。
+   * 因此"规则集升级后旧内容自动退出可见"不需要额外的后台任务，也没有"写时信任一次"的窗口。
+   */
+  async function effectiveState(
+    kind: 'post' | 'comment',
+    record: PostRecord | CommentRecord,
+  ): Promise<{ visibility: Visibility; audit_state: AuditState }> {
+    if (record.visibility === 'deleted') return { visibility: 'deleted', audit_state: record.audit_state };
+    const demoted = (auditState: AuditState): { visibility: Visibility; audit_state: AuditState } => ({
+      visibility: record.visibility === 'published' ? 'hidden' : record.visibility,
+      audit_state: auditState,
+    });
+    const verdict = await store.getModeration(kind, record.id, record.revision);
+    if (verdict === null) return demoted('pending');
+    if (
+      verdict.target_ref.type !== kind ||
+      verdict.target_ref.id !== record.id ||
+      verdict.target_ref.revision !== record.revision
+    ) {
+      return demoted('pending');
+    }
+    const text =
+      kind === 'post' ? postModerationText(record as PostRecord) : commentModerationText(record as CommentRecord);
+    if (verdict.text_digest !== sha256Hex(text)) return demoted('pending');
+    const assessment = gate.assess({ type: kind, id: record.id, revision: record.revision }, verdict);
+    if (assessment.stale) return demoted(assessment.landing === 'quarantined' ? 'quarantined' : 'pending');
+    if (assessment.publishable) return { visibility: record.visibility, audit_state: 'approved' };
+    return demoted(verdict.decision);
+  }
+
+  /** 发布口径谓词：只有有效状态恰好是 `published` + `approved` 才算公开可见。 */
+  async function isPubliclyVisible(kind: 'post' | 'comment', record: PostRecord | CommentRecord): Promise<boolean> {
+    const state = await effectiveState(kind, record);
+    return state.visibility === 'published' && state.audit_state === 'approved';
+  }
+
+  /** 被拒绝的发布请求 → 契约错误码 + reason_codes（逐条作为 details 回传）。 */
+  function refusal(outcome: GateOutcome): ApiError {
+    const details = outcome.refusal_reason_codes.map((code) => ({ field: 'reason_codes', code }));
+    if (outcome.decision === 'rejected') {
+      return new ApiError(
+        'INVALID_REQUEST',
+        `内容未通过硬规则审核，已拒绝发布（decision=rejected, rule_version=${outcome.rule_version ?? 'unknown'}）`,
+        { details },
+      );
+    }
+    return new ApiError(
+      'INPUT_UNCERTAIN',
+      `内容筛查未完成或未通过（decision=${outcome.decision}），一律不得发布`,
+      { details },
+    );
+  }
+
+  async function projectAuthor(userId: string) {
+    const author = await authors.resolve(userId);
+    if (author === null) {
+      // 不伪造作者：无法投影就明确失败，而不是编一个 display_name。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '作者投影不可用');
+    }
+    return author;
+  }
+
+  async function projectPost(record: PostRecord): Promise<Post> {
+    const state = await effectiveState('post', record);
+    return {
+      id: record.id,
+      revision: record.revision,
+      author: await projectAuthor(record.author_id),
+      title: record.title,
+      body: record.body,
+      crop_id: record.crop_id,
+      region_code: record.region_code,
+      media_ids: [...record.media_ids],
+      visibility: state.visibility,
+      audit_state: state.audit_state,
+      created_at: record.created_at,
+      updated_at: record.updated_at,
+      // 媒体投影需要"当前已发布且独立筛查通过"的附件版本（阶段 2 接 packages/media）。
+      // 本片带媒体的内容一律不发布，因此公开投影恒为空数组。
+      media: [],
+      linked_knowledge_ref: record.linked_knowledge_ref === null ? null : { ...record.linked_knowledge_ref },
+      // 资料安全投影需要可用性核验（阶段 2）；本片显式关联一律拒绝，故恒为 null。
+      linked_knowledge: null,
+    };
+  }
+
+  async function projectComment(record: CommentRecord): Promise<Comment> {
+    const state = await effectiveState('comment', record);
+    return {
+      id: record.id,
+      revision: record.revision,
+      post_id: record.post_id,
+      author: await projectAuthor(record.author_id),
+      body: record.body,
+      visibility: state.visibility,
+      audit_state: state.audit_state,
+      created_at: record.created_at,
+    };
+  }
+
+  function projectReport(record: ReportRecord): Report {
+    return {
+      id: record.id,
+      revision: record.revision,
+      target_ref: { ...record.target_ref },
+      state: record.state,
+      reason_code: record.reason_code,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // 游标（签名 + 绑定主体/路由/过滤/排序，防篡改与跨主体复用）
+  // -------------------------------------------------------------------------
+
+  interface CursorPayload {
+    subject: string;
+    route: string;
+    filter: Record<string, string | boolean | null>;
+    sort: 'created_at_desc' | 'created_at_asc';
+    after: { created_at: string; id: string };
+    expires: number;
+  }
+
+  function encodeCursor(payload: CursorPayload): string {
+    const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    return `${body}.${sign(body)}`;
+  }
+
+  function decodeCursor(
+    cursor: string | null,
+    expected: Omit<CursorPayload, 'after' | 'expires'>,
+  ): { created_at: string; id: string } | null {
+    if (cursor === null) return null;
+    try {
+      const parts = cursor.split('.');
+      if (parts.length !== 2) throw new Error('shape');
+      const body = parts[0];
+      const signature = parts[1];
+      if (typeof body !== 'string' || typeof signature !== 'string' || body.length === 0) throw new Error('shape');
+      const expectedSignature = Buffer.from(sign(body));
+      const received = Buffer.from(signature);
+      if (received.length !== expectedSignature.length || !timingSafeEqual(expectedSignature, received)) {
+        throw new Error('signature');
+      }
+      const value = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<string, unknown>;
+      if (value['subject'] !== expected.subject || value['route'] !== expected.route) throw new Error('scope');
+      if (value['sort'] !== expected.sort) throw new Error('sort');
+      if (JSON.stringify(value['filter']) !== JSON.stringify(expected.filter)) throw new Error('filter');
+      const expires = value['expires'];
+      if (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= clock().getTime()) throw new Error('expired');
+      const after = value['after'];
+      if (typeof after !== 'object' || after === null) throw new Error('after');
+      const afterRecord = after as Record<string, unknown>;
+      if (typeof afterRecord['created_at'] !== 'string' || typeof afterRecord['id'] !== 'string') throw new Error('after');
+      return { created_at: afterRecord['created_at'], id: afterRecord['id'] };
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('INVALID_CURSOR', '游标无效或已失效');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 读取辅助
+  // -------------------------------------------------------------------------
+
+  /** 该主体是否可读这条帖子（作者可读自己的非删除内容；他人仅可读当前公开可见版本）。 */
+  async function readablePost(user: CommunityActor, id: string): Promise<PostRecord> {
+    const record = await store.getPost(id);
+    if (record === null || record.visibility === 'deleted') throw notFound();
+    if (record.author_id === user.userId) return record;
+    if (!(await isPubliclyVisible('post', record))) throw notFound();
+    return record;
+  }
+
+  /** 该主体是否可读这条评论（作者可读自己的待审评论；他人仅可读公开且父帖可见的评论）。 */
+  async function readableComment(user: CommunityActor, id: string): Promise<CommentRecord> {
+    const record = await store.getComment(id);
+    if (record === null || record.visibility === 'deleted') throw notFound();
+    if (record.author_id === user.userId) return record;
+    const parent = await store.getPost(record.post_id);
+    if (parent === null || !(await isPubliclyVisible('post', parent))) throw notFound();
+    if (!(await isPubliclyVisible('comment', record))) throw notFound();
+    return record;
+  }
+
+  /** 点赞/举报的目标必须**当前公开可见**（更严：作者也不能对隔离内容操作）。 */
+  async function publiclyVisibleTarget(
+    kind: 'post' | 'comment',
+    id: string,
+  ): Promise<PostRecord | CommentRecord> {
+    if (kind === 'post') {
+      const record = await store.getPost(id);
+      if (record === null || !(await isPubliclyVisible('post', record))) throw notFound();
+      return record;
+    }
+    const record = await store.getComment(id);
+    if (record === null || !(await isPubliclyVisible('comment', record))) throw notFound();
+    const parent = await store.getPost(record.post_id);
+    if (parent === null || !(await isPubliclyVisible('post', parent))) throw notFound();
+    return record;
+  }
+
+  // -------------------------------------------------------------------------
+  // 公开操作（对应 operationId）
+  // -------------------------------------------------------------------------
+
+  const service = {
+    /** `listPosts`：`GET /posts`。`mine=true` 时返回主体自己的非删除内容（含未公开版本）。 */
+    async listPosts(actor: unknown, query: ListPostsQuery = {}): Promise<PostPage> {
+      const user = requireUserActor(actor);
+      const limit = parseLimit(query.limit ?? null);
+      const cursor = parseCursor(query.cursor ?? null);
+      const cropId = query.crop_id ?? null;
+      const regionCode = query.region_code ?? null;
+      const mine = query.mine === true;
+      if (cropId !== null && (typeof cropId !== 'string' || cropId.length < 1 || cropId.length > 80)) {
+        throw new ApiError('INVALID_REQUEST', 'crop_id 必须是 1..80 的字符串', {
+          details: [{ field: 'crop_id', code: 'INVALID_LENGTH' }],
+        });
+      }
+      if (regionCode !== null && (typeof regionCode !== 'string' || !/^33[0-9]{4}$/.test(regionCode))) {
+        throw new ApiError('INVALID_REQUEST', 'region_code 必须是 ^33[0-9]{4}$ 的地区码', {
+          details: [{ field: 'region_code', code: 'PATTERN_MISMATCH' }],
+        });
+      }
+
+      const all = await store.listPosts();
+      const visible: PostRecord[] = [];
+      for (const record of all) {
+        if (record.visibility === 'deleted') continue;
+        if (mine) {
+          if (record.author_id === user.userId) visible.push(record);
+          continue;
+        }
+        // 公开列表：只放当前公开可见版本（规则版本变化/重审失败会立即退出列表）。
+        if (await isPubliclyVisible('post', record)) visible.push(record);
+      }
+      const filtered = visible.filter(
+        (record) =>
+          (cropId === null || record.crop_id === cropId) && (regionCode === null || record.region_code === regionCode),
+      );
+      const after = decodeCursor(cursor, {
+        subject: user.userId,
+        route: 'posts',
+        filter: { crop_id: cropId, region_code: regionCode, mine },
+        sort: 'created_at_desc',
+      });
+      const remaining =
+        after === null
+          ? filtered
+          : filtered.filter(
+              (record) =>
+                record.created_at < after.created_at ||
+                (record.created_at === after.created_at && record.id < after.id),
+            );
+      const page = remaining.slice(0, limit);
+      const last = page[page.length - 1];
+      const next_cursor =
+        remaining.length > limit && last !== undefined
+          ? encodeCursor({
+              subject: user.userId,
+              route: 'posts',
+              filter: { crop_id: cropId, region_code: regionCode, mine },
+              sort: 'created_at_desc',
+              after: { created_at: last.created_at, id: last.id },
+              expires: clock().getTime() + CURSOR_TTL_MS,
+            })
+          : null;
+      const items: Post[] = [];
+      for (const record of page) items.push(await projectPost(record));
+      return { items, next_cursor };
+    },
+
+    /** `createPost`：`POST /posts`。先审后发；未获批准一律**不落内容行**。 */
+    async createPost(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Post> {
+      const user = requireUserActor(actor);
+      const body: PostInput = validatePostInput(input);
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const scope = idempotencyScope(user.userId, 'POST', '/posts');
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(body, undefined, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        201,
+        async () => {
+          if (body.linked_knowledge_ref !== undefined && body.linked_knowledge_ref !== null) {
+            throw new ApiError(
+              'OBJECT_UNAVAILABLE',
+              '关联资料目标当前不可用：本片未接线资料可用性核验，显式关联一律拒绝（不静默丢弃）',
+            );
+          }
+          // 作者投影不可用时**不落任何内容行**（不伪造作者）；先探一次，避免留下"投影不了的内容"。
+          await projectAuthor(user.userId);
+          const id = newId();
+          const target = { type: 'post' as const, id, revision: 1 };
+          const text = postModerationText({ title: body.title, body: body.body });
+          // 先审后发：审核发生在**任何内容行落库之前**。
+          const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
+          await recordVerdict(target, outcome, text);
+          if (!outcome.publishable) throw refusal(outcome);
+          if (body.media_ids.length > 0) {
+            // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
+            // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
+            throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+          }
+          const timestamp = nowIso();
+          const record: PostRecord = {
+            id,
+            revision: 1,
+            author_id: user.userId,
+            title: body.title,
+            body: body.body,
+            crop_id: body.crop_id ?? null,
+            region_code: body.region_code ?? null,
+            media_ids: [...body.media_ids],
+            linked_knowledge_ref: (body.linked_knowledge_ref ?? null) as KnowledgeTarget | null,
+            visibility: 'published',
+            audit_state: 'approved',
+            created_at: timestamp,
+            updated_at: timestamp,
+          };
+          await store.insertPost(record);
+          return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(record) };
+        },
+        async (ref) => projectPost(await readablePost(user, ref.id)),
+      );
+    },
+
+    /** `getPost`：`GET /posts/{id}`。他人对不可见内容一律 `NOT_FOUND`（不泄露存在性）。 */
+    async getPost(actor: unknown, id: unknown): Promise<Post> {
+      const user = requireUserActor(actor);
+      const postId = requireUuidParam(id, 'id');
+      return projectPost(await readablePost(user, postId));
+    },
+
+    /** `editPost`：`PATCH /posts/{id}`。仅作者；新 revision 必须**重新审核**后才可能可见。 */
+    async editPost(actor: unknown, id: unknown, input: unknown, options: WriteOptions = {}): Promise<Post> {
+      const user = requireUserActor(actor);
+      const postId = requireUuidParam(id, 'id');
+      const body = validatePostInput(input);
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const ifMatch = requireIfMatch(options.ifMatch);
+      const scope = idempotencyScope(user.userId, 'PATCH', `/posts/${postId}`);
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(body, options.ifMatch, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        200,
+        async () => {
+          const record = await store.getPost(postId);
+          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record.revision !== ifMatch.revision) {
+            throw new ApiError('REVISION_CONFLICT', '帖子版本已变化，请刷新后重试');
+          }
+          if (body.linked_knowledge_ref !== undefined && body.linked_knowledge_ref !== null) {
+            throw new ApiError('OBJECT_UNAVAILABLE', '关联资料目标当前不可用：显式关联一律拒绝');
+          }
+          const revision = record.revision + 1;
+          const target = { type: 'post' as const, id: postId, revision };
+          await projectAuthor(user.userId);
+          // 旧结论必须失效：用 evaluateReReview 显式证明"没有静默复用旧判定"。
+          const prior = await store.getModeration('post', postId, record.revision);
+          if (prior !== null && !gate.assess(target, prior).stale) {
+            throw new ApiError('PROVIDER_UNAVAILABLE', '重审判定未生效（内部不变式违反），拒绝编辑');
+          }
+          const text = postModerationText({ title: body.title, body: body.body });
+          const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
+          await recordVerdict(target, outcome, text);
+          if (!outcome.publishable) throw refusal(outcome);
+          if (body.media_ids.length > 0) {
+            throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+          }
+          const updated: PostRecord = {
+            ...record,
+            revision,
+            title: body.title,
+            body: body.body,
+            crop_id: body.crop_id ?? null,
+            region_code: body.region_code ?? null,
+            media_ids: [...body.media_ids],
+            linked_knowledge_ref: (body.linked_knowledge_ref ?? null) as KnowledgeTarget | null,
+            visibility: 'published',
+            audit_state: 'approved',
+            updated_at: nowIso(),
+          };
+          await store.replacePost(updated);
+          return { outcome: { kind: 'post' as const, id: postId, revision }, result: await projectPost(updated) };
+        },
+        async (ref) => projectPost(await readablePost(user, ref.id)),
+      );
+    },
+
+    /** `deletePost`：`DELETE /posts/{id}`。仅作者；软删除（保留审计证据），对外一律 `NOT_FOUND`。 */
+    async deletePost(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      const user = requireUserActor(actor);
+      const postId = requireUuidParam(id, 'id');
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const ifMatch = requireIfMatch(options.ifMatch);
+      const scope = idempotencyScope(user.userId, 'DELETE', `/posts/${postId}`);
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(null, options.ifMatch, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        200,
+        async () => {
+          const record = await store.getPost(postId);
+          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '帖子版本已变化');
+          await store.replacePost({ ...record, visibility: 'deleted', updated_at: nowIso() });
+          return { outcome: { kind: 'ack' as const, id: postId, revision: record.revision }, result: { accepted: true } };
+        },
+        async () => ({ accepted: true }),
+      );
+    },
+
+    /** `listComments`：`GET /posts/{id}/comments`。父帖不可见 ⇒ 整个列表 `NOT_FOUND`。 */
+    async listComments(actor: unknown, postId: unknown, query: ListCommentsQuery = {}): Promise<CommentPage> {
+      const user = requireUserActor(actor);
+      const parentId = requireUuidParam(postId, 'id');
+      const limit = parseLimit(query.limit ?? null);
+      const cursor = parseCursor(query.cursor ?? null);
+      // 父帖可读性先行：隐藏父帖不得通过评论列表泄露正文或存在性。
+      await readablePost(user, parentId);
+      const parent = await store.getPost(parentId);
+      if (parent === null) throw notFound();
+      const parentPublic = await isPubliclyVisible('post', parent);
+      const all = await store.listComments(parentId);
+      const readable: CommentRecord[] = [];
+      for (const record of all) {
+        if (record.visibility === 'deleted') continue;
+        if (record.author_id === user.userId) {
+          readable.push(record);
+          continue;
+        }
+        if (parentPublic && (await isPubliclyVisible('comment', record))) readable.push(record);
+      }
+      const after = decodeCursor(cursor, {
+        subject: user.userId,
+        route: 'comments',
+        filter: { post_id: parentId },
+        sort: 'created_at_asc',
+      });
+      const remaining =
+        after === null
+          ? readable
+          : readable.filter(
+              (record) =>
+                record.created_at > after.created_at ||
+                (record.created_at === after.created_at && record.id > after.id),
+            );
+      const page = remaining.slice(0, limit);
+      const last = page[page.length - 1];
+      const next_cursor =
+        remaining.length > limit && last !== undefined
+          ? encodeCursor({
+              subject: user.userId,
+              route: 'comments',
+              filter: { post_id: parentId },
+              sort: 'created_at_asc',
+              after: { created_at: last.created_at, id: last.id },
+              expires: clock().getTime() + CURSOR_TTL_MS,
+            })
+          : null;
+      const items: Comment[] = [];
+      for (const record of page) items.push(await projectComment(record));
+      return { items, next_cursor };
+    },
+
+    /** `createComment`：`POST /posts/{id}/comments`。If-Match = 父帖当前 revision，父帖须 published。 */
+    async createComment(
+      actor: unknown,
+      postId: unknown,
+      input: unknown,
+      options: WriteOptions = {},
+    ): Promise<Comment> {
+      const user = requireUserActor(actor);
+      const parentId = requireUuidParam(postId, 'id');
+      const body: CommentInput = validateCommentInput(input);
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const ifMatch = requireIfMatch(options.ifMatch);
+      const scope = idempotencyScope(user.userId, 'POST', `/posts/${parentId}/comments`);
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(body, options.ifMatch, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        201,
+        async () => {
+          const parent = await store.getPost(parentId);
+          if (parent === null || parent.visibility === 'deleted') throw notFound();
+          if (!(await isPubliclyVisible('post', parent))) throw notFound();
+          if (parent.revision !== ifMatch.revision) {
+            throw new ApiError('REVISION_CONFLICT', '父帖版本已变化，请刷新后重试');
+          }
+          await projectAuthor(user.userId);
+          const id = newId();
+          const target = { type: 'comment' as const, id, revision: 1 };
+          const outcome = gate.evaluate(target, commentModerationText({ body: body.body }), []);
+          await recordVerdict(target, outcome, commentModerationText({ body: body.body }));
+          if (!outcome.publishable) throw refusal(outcome);
+          const record: CommentRecord = {
+            id,
+            revision: 1,
+            post_id: parentId,
+            author_id: user.userId,
+            body: body.body,
+            visibility: 'published',
+            audit_state: 'approved',
+            created_at: nowIso(),
+          };
+          await store.insertComment(record);
+          return { outcome: { kind: 'comment' as const, id, revision: 1 }, result: await projectComment(record) };
+        },
+        async (ref) => projectComment(await readableComment(user, ref.id)),
+      );
+    },
+
+    /** `getComment`：`GET /comments/{id}`。作者可读自己的待审评论；他人仅可读公开版本。 */
+    async getComment(actor: unknown, id: unknown): Promise<Comment> {
+      const user = requireUserActor(actor);
+      const commentId = requireUuidParam(id, 'id');
+      return projectComment(await readableComment(user, commentId));
+    },
+
+    /** `editComment`：`PATCH /comments/{id}`。仅作者 + 必须重审。 */
+    async editComment(actor: unknown, id: unknown, input: unknown, options: WriteOptions = {}): Promise<Comment> {
+      const user = requireUserActor(actor);
+      const commentId = requireUuidParam(id, 'id');
+      const body = validateCommentInput(input);
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const ifMatch = requireIfMatch(options.ifMatch);
+      const scope = idempotencyScope(user.userId, 'PATCH', `/comments/${commentId}`);
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(body, options.ifMatch, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        200,
+        async () => {
+          const record = await store.getComment(commentId);
+          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '评论版本已变化');
+          const revision = record.revision + 1;
+          const target = { type: 'comment' as const, id: commentId, revision };
+          await projectAuthor(user.userId);
+          const prior = await store.getModeration('comment', commentId, record.revision);
+          if (prior !== null && !gate.assess(target, prior).stale) {
+            throw new ApiError('PROVIDER_UNAVAILABLE', '重审判定未生效（内部不变式违反），拒绝编辑');
+          }
+          const outcome = gate.evaluate(target, commentModerationText({ body: body.body }), []);
+          await recordVerdict(target, outcome, commentModerationText({ body: body.body }));
+          if (!outcome.publishable) throw refusal(outcome);
+          const updated: CommentRecord = {
+            ...record,
+            revision,
+            body: body.body,
+            visibility: 'published',
+            audit_state: 'approved',
+          };
+          await store.replaceComment(updated);
+          return { outcome: { kind: 'comment' as const, id: commentId, revision }, result: await projectComment(updated) };
+        },
+        async (ref) => projectComment(await readableComment(user, ref.id)),
+      );
+    },
+
+    /** `deleteComment`：`DELETE /comments/{id}`。仅作者；软删除。 */
+    async deleteComment(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      const user = requireUserActor(actor);
+      const commentId = requireUuidParam(id, 'id');
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const ifMatch = requireIfMatch(options.ifMatch);
+      const scope = idempotencyScope(user.userId, 'DELETE', `/comments/${commentId}`);
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(null, options.ifMatch, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        200,
+        async () => {
+          const record = await store.getComment(commentId);
+          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '评论版本已变化');
+          await store.replaceComment({ ...record, visibility: 'deleted' });
+          return {
+            outcome: { kind: 'ack' as const, id: commentId, revision: record.revision },
+            result: { accepted: true },
+          };
+        },
+        async () => ({ accepted: true }),
+      );
+    },
+
+    /** `likePosts`：`PUT /posts/{id}/like`。重复 PUT 幂等（不重复计数；点赞不改内容 revision）。 */
+    async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      return like(actor, 'post', id, 'PUT', options);
+    },
+    /** `unlikePosts`：`DELETE /posts/{id}/like`。未点赞时为无操作，计数不为负。 */
+    async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      return like(actor, 'post', id, 'DELETE', options);
+    },
+    /** `likeComments`：`PUT /comments/{id}/like`。 */
+    async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      return like(actor, 'comment', id, 'PUT', options);
+    },
+    /** `unlikeComments`：`DELETE /comments/{id}/like`。 */
+    async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {
+      return like(actor, 'comment', id, 'DELETE', options);
+    },
+
+    /** `createReport`：`POST /reports`。目标是当前公开可见版本；举报者身份只存库、不投影。 */
+    async createReport(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Report> {
+      const user = requireUserActor(actor);
+      const body: ReportInput = validateReportInput(input);
+      const key = requireIdempotencyKey(options.idempotencyKey);
+      const scope = idempotencyScope(user.userId, 'POST', '/reports');
+      const keyHash = idempotencyKeyHashHex(scope, key);
+      const digest = idempotencyRequestHash(body, undefined, signingKey);
+      return withIdempotency(
+        scope,
+        keyHash,
+        digest,
+        201,
+        async () => {
+          const target = await publiclyVisibleTarget(body.target_ref.type, body.target_ref.id);
+          if (target.revision !== body.target_ref.revision) {
+            throw new ApiError('REVISION_CONFLICT', '举报目标版本已变化，请刷新后重试');
+          }
+          const id = newId();
+          const record: ReportRecord = {
+            id,
+            revision: 1,
+            reporter_id: user.userId,
+            target_ref: { type: body.target_ref.type, id: body.target_ref.id, revision: target.revision },
+            state: 'received',
+            reason_code: body.reason_code,
+            detail: body.detail ?? null,
+            created_at: nowIso(),
+          };
+          await store.insertReport(record);
+          return { outcome: { kind: 'report' as const, id, revision: 1 }, result: projectReport(record) };
+        },
+        async (ref) => {
+          const record = await store.getReport(ref.id);
+          if (record === null || record.reporter_id !== user.userId) throw notFound();
+          return projectReport(record);
+        },
+      );
+    },
+
+    /** `getOwnReport`：`GET /reports/{id}`。**仅举报者本人**可读，他人一律 `NOT_FOUND`。 */
+    async getOwnReport(actor: unknown, id: unknown): Promise<Report> {
+      const user = requireUserActor(actor);
+      const reportId = requireUuidParam(id, 'id');
+      const record = await store.getReport(reportId);
+      if (record === null || record.reporter_id !== user.userId) throw notFound();
+      return projectReport(record);
+    },
+
+    // -----------------------------------------------------------------------
+    // 内部操作（**不是**契约 operationId；阶段 2 由巡检任务调用，无 HTTP 入口）
+    // -----------------------------------------------------------------------
+
+    /**
+     * 读取某版本的审核结论台账。**仅内容作者**可读（他人/不存在一律 `NOT_FOUND`）。
+     * 返回结构**不是**契约 `Moderation`：缺 `model_version`/`prompt_version`（模型层未接入），
+     * 用 `contract_complete:false` 与 `missing_contract_fields` 如实标注。
+     */
+    async getModerationDecision(actor: unknown, targetRef: unknown): Promise<ModerationRecord> {
+      const user = requireUserActor(actor);
+      const target = parseInternalTarget(targetRef);
+      const content =
+        target.type === 'post' ? await store.getPost(target.id) : await store.getComment(target.id);
+      if (content === null || content.author_id !== user.userId) throw notFound();
+      const record = await store.getModeration(target.type, target.id, target.revision);
+      if (record === null) throw notFound();
+      return record;
+    },
+
+    /**
+     * 按**当前**规则版本重审既有内容（规则集升级 / revision 变化后使用）。
+     *
+     * 复用 `packages/moderation` 的 `evaluateReReview` 判定失效，再复用 `evaluateHardRules`
+     * 重跑规则；重审未通过的内容保持 `hidden`（不得因"曾经通过"而继续可见）。
+     */
+    async reReviewContent(actor: unknown, targetRef: unknown): Promise<ReReviewReport> {
+      const user = requireUserActor(actor);
+      const target = parseInternalTarget(targetRef);
+      const record: PostRecord | CommentRecord | null =
+        target.type === 'post' ? await store.getPost(target.id) : await store.getComment(target.id);
+      if (record === null || record.author_id !== user.userId) throw notFound();
+      if (record.revision !== target.revision) throw notFound();
+      const prior = await store.getModeration(target.type, target.id, target.revision);
+      if (prior === null) throw notFound();
+
+      // 已下架内容**不得被重审复活**：重审只能"继续不可见 / 重新可见一个仍存活的版本"。
+      if (record.visibility === 'deleted') {
+        return {
+          re_reviewed: false,
+          publishable: false,
+          decision: record.audit_state,
+          reason_codes: ['NOT_PUBLISHABLE'],
+          rule_version: prior.rule_version,
+          visibility: 'deleted',
+        };
+      }
+
+      const assessment = gate.assess(
+        { type: target.type, id: target.id, revision: target.revision },
+        prior,
+      );
+      const text =
+        target.type === 'post' ? postModerationText(record as PostRecord) : commentModerationText(record as CommentRecord);
+      if (!assessment.stale && prior.text_digest === sha256Hex(text)) {
+        return {
+          re_reviewed: false,
+          publishable: assessment.publishable,
+          decision: prior.decision,
+          reason_codes: assessment.reason_codes,
+          rule_version: prior.rule_version,
+          visibility: (await effectiveState(target.type, record)).visibility,
+        };
+      }
+
+      const outcome = gate.evaluate(
+        { type: target.type, id: target.id, revision: target.revision },
+        text,
+        target.type === 'post' ? mediaInputs((record as PostRecord).media_ids) : [],
+      );
+      await recordVerdict({ type: target.type, id: target.id, revision: target.revision }, outcome, text);
+      const visibility: 'published' | 'hidden' = outcome.publishable ? 'published' : 'hidden';
+      const auditState = outcome.publishable ? 'approved' : outcome.decision;
+      if (target.type === 'post') {
+        const post = record as PostRecord;
+        await store.replacePost({
+          ...post,
+          visibility,
+          audit_state: auditState,
+          updated_at: nowIso(),
+        });
+      } else {
+        await store.replaceComment({ ...(record as CommentRecord), visibility, audit_state: auditState });
+      }
+      return {
+        re_reviewed: true,
+        publishable: outcome.publishable,
+        decision: outcome.decision,
+        reason_codes: [...outcome.reason_codes],
+        rule_version: outcome.rule_version,
+        visibility,
+      };
+    },
+
+    /** 诊断用：点赞计数（契约 `Post`/`Comment` **没有**点赞计数字段，故无对外读取口）。 */
+    async countLikes(kind: 'post' | 'comment', id: string): Promise<number> {
+      return store.countLikes(kind, id);
+    },
+  };
+
+  async function like(
+    actor: unknown,
+    kind: 'post' | 'comment',
+    id: unknown,
+    method: 'PUT' | 'DELETE',
+    options: WriteOptions,
+  ): Promise<Ack> {
+    const user = requireUserActor(actor);
+    const targetId = requireUuidParam(id, 'id');
+    const key = requireIdempotencyKey(options.idempotencyKey);
+    const ifMatch = requireIfMatch(options.ifMatch);
+    const routePath = kind === 'post' ? `/posts/${targetId}/like` : `/comments/${targetId}/like`;
+    const scope = idempotencyScope(user.userId, method, routePath);
+    const keyHash = idempotencyKeyHashHex(scope, key);
+    const digest = idempotencyRequestHash({ kind, id: targetId }, options.ifMatch, signingKey);
+    return withIdempotency(
+      scope,
+      keyHash,
+      digest,
+      200,
+      async () => {
+        const target = await publiclyVisibleTarget(kind, targetId);
+        if (target.revision !== ifMatch.revision) {
+          throw new ApiError('REVISION_CONFLICT', '目标版本已变化，请刷新后重试');
+        }
+        if (method === 'PUT') await store.addLike(kind, targetId, user.userId);
+        else await store.removeLike(kind, targetId, user.userId);
+        return {
+          outcome: { kind: 'ack' as const, id: targetId, revision: target.revision },
+          result: { accepted: true },
+        };
+      },
+      async () => ({ accepted: true }),
+    );
+  }
+
+  return service;
+}
+
+export type CommunityService = ReturnType<typeof createCommunityService>;
+
+function parseInternalTarget(value: unknown): { type: 'post' | 'comment'; id: string; revision: number } {
+  if (typeof value !== 'object' || value === null) {
+    throw new ApiError('INVALID_REQUEST', 'target_ref 必须是对象');
+  }
+  const record = value as Record<string, unknown>;
+  const type = record['type'];
+  const id = record['id'];
+  const revision = record['revision'];
+  if (type !== 'post' && type !== 'comment') throw new ApiError('INVALID_REQUEST', 'target_ref.type 必须是 post/comment');
+  if (typeof id !== 'string' || !UUID_PATTERN.test(id)) throw new ApiError('INVALID_REQUEST', 'target_ref.id 必须是 uuid');
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+    throw new ApiError('INVALID_REQUEST', 'target_ref.revision 必须是 ≥1 的整数');
+  }
+  return { type, id, revision };
+}
