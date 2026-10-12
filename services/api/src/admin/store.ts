@@ -15,9 +15,10 @@
  * 占位行（outcome 未定型）**不算**已完成结果，对重放方表现为「尚未就绪」。
  */
 import { randomUUID } from 'node:crypto';
-import { createAuditLog } from './audit.ts';
 import type { AuditLog } from './audit.ts';
 import { takeOwnershipDeep } from './immutable.ts';
+import { createAdminRuntime } from './runtime.ts';
+import type { AdminRuntime, IdempotencyClaimInput, IdempotencyLedgerRow, IdempotencySettledRecord } from './runtime.ts';
 import type {
   AdminFamily,
   ContentIdempotencyOutcome,
@@ -26,29 +27,11 @@ import type {
   StoredRevision,
 } from './types.ts';
 
-export interface IdempotencyClaimInput {
-  requestHash: string;
-  responseStatus: number;
-  expiresAt: Date;
-  /** 判定既有行是否已到期所用的当前时刻。 */
-  now: Date;
-}
-
-/** 台账行的真实形状：`outcome === null` 即「占位中」。 */
-export interface IdempotencyLedgerRow {
-  requestHash: string;
-  responseStatus: number;
-  outcome: ContentIdempotencyOutcome | null;
-  expiresAt: Date;
-}
-
-/** 已定型的台账记录（重放时返回的就是这种）。 */
-export interface IdempotencySettledRecord {
-  requestHash: string;
-  responseStatus: number;
-  outcome: ContentIdempotencyOutcome;
-  expiresAt: Date;
-}
+/**
+ * 幂等台账与审计由 `runtime.ts` 提供（阶段 1b 的两个切片共用同一套实现）。
+ * 这里重新导出这些类型，保持阶段 1 的既有引用路径不变。
+ */
+export type { IdempotencyClaimInput, IdempotencyLedgerRow, IdempotencySettledRecord };
 
 export interface AdminContentStore {
   /** 内存 store：**不得**对外声称已接真实数据库。 */
@@ -84,31 +67,14 @@ export interface AdminContentStore {
   idempotentCount(): number;
 }
 
-/** 串行临界区：把并发的写路径排成一条链，保证「占位」与「生效」之间不被打断。 */
-function createCriticalSection(): <T>(work: () => T | Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(work: () => T | Promise<T>): Promise<T> => {
-    const result = tail.then(() => work());
-    // 无论成败都不让链条断掉，也不让失败外溢到后续排队者。
-    tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-}
-
-export function createAdminContentStore(): AdminContentStore {
+export function createAdminContentStore(options: { runtime?: AdminRuntime } = {}): AdminContentStore {
+  const runtime = options.runtime ?? createAdminRuntime();
   const entities = new Map<string, StoredEntity<unknown>>();
-  const ledger = new Map<string, IdempotencyLedgerRow>();
-  const audit = createAuditLog();
-  const runExclusive = createCriticalSection();
-  const composite = (scope: string, keyHash: string): string => `${scope}\u0000${keyHash}`;
 
   return {
     persistent: false,
-    audit,
-    transaction: runExclusive,
+    audit: runtime.audit,
+    transaction: runtime.transaction,
 
     createEntity(input) {
       const id = input.id ?? randomUUID();
@@ -168,60 +134,13 @@ export function createAdminContentStore(): AdminContentStore {
       entity.lifecycle = lifecycle;
     },
 
-    findIdempotent(scope, keyHash) {
-      const row = ledger.get(composite(scope, keyHash));
-      // 占位行（outcome === null）不算已完成结果：对重放方表现为「尚未就绪」。
-      if (row === undefined || row.outcome === null) return null;
-      return { requestHash: row.requestHash, responseStatus: row.responseStatus, outcome: row.outcome, expiresAt: row.expiresAt };
-    },
-
-    peekIdempotent(scope, keyHash) {
-      const row = ledger.get(composite(scope, keyHash));
-      return row === undefined ? null : { ...row };
-    },
-
-    claimIdempotent(scope, keyHash, claim) {
-      const key = composite(scope, keyHash);
-      const existing = ledger.get(key);
-      // 只让**已到期**的旧行让位；未到期的行（无论占位还是已定型）一律不覆盖。
-      if (existing !== undefined && existing.expiresAt.getTime() > claim.now.getTime()) return false;
-      ledger.set(key, {
-        requestHash: claim.requestHash,
-        responseStatus: claim.responseStatus,
-        outcome: null,
-        expiresAt: claim.expiresAt,
-      });
-      return true;
-    },
-
-    completeIdempotent(scope, keyHash, outcome, expiresAt) {
-      const key = composite(scope, keyHash);
-      const existing = ledger.get(key);
-      if (existing === undefined || existing.outcome !== null) return false;
-      ledger.set(key, { requestHash: existing.requestHash, responseStatus: outcome.status, outcome, expiresAt });
-      return true;
-    },
-
-    releaseIdempotent(scope, keyHash) {
-      const key = composite(scope, keyHash);
-      const existing = ledger.get(key);
-      // 只释放未定型的占位；已定型结果不因后续失败被抹掉。
-      if (existing !== undefined && existing.outcome === null) ledger.delete(key);
-    },
-
-    purgeExpiredIdempotent(now) {
-      let removed = 0;
-      for (const [key, row] of ledger) {
-        if (row.expiresAt.getTime() <= now.getTime()) {
-          ledger.delete(key);
-          removed += 1;
-        }
-      }
-      return removed;
-    },
-
-    idempotentCount() {
-      return ledger.size;
-    },
+    // ---- 幂等台账：整体委托给共享 runtime（阶段 1b 复用同一套实现）----
+    findIdempotent: runtime.findIdempotent,
+    peekIdempotent: runtime.peekIdempotent,
+    claimIdempotent: runtime.claimIdempotent,
+    completeIdempotent: runtime.completeIdempotent,
+    releaseIdempotent: runtime.releaseIdempotent,
+    purgeExpiredIdempotent: runtime.purgeExpiredIdempotent,
+    idempotentCount: runtime.idempotentCount,
   };
 }

@@ -60,14 +60,18 @@ export const AUDIT_RESULTS = ['accepted', 'denied', 'failed'] as const;
 export type AuditResult = (typeof AUDIT_RESULTS)[number];
 
 /**
- * 内部审计记录：契约 `AuditEvent` 的字段，**加上** `actor_id`。
+ * 内部审计记录：契约 `AuditEvent` 的字段，**加上**两个内部专用字段。
  *
- * 契约缺口：`AuditEvent` 的 8 个必填字段里**没有主体/actor 字段**，
- * 而派单要求审计事件「含主体」。本片把主体存在只可追加的内部记录上，
- * 契约投影（`projectAuditEvent`）按 `additionalProperties:false` 只输出合同的 8 个字段。
+ * 契约缺口 1：`AuditEvent` 的 8 个必填字段里**没有主体/actor 字段**，而派单要求审计「含主体」。
+ * 契约缺口 2（阶段 1b）：`TargetRef.type` 无 category / account / flag 成员，且允许 `target_ref: null`；
+ * 只写 null 会丢掉"改的是哪一个目标"。
+ * 处理：两者都只存在于**内部记录**；契约投影（`projectAuditEvent`）按
+ * `additionalProperties:false` 严格只输出合同的那 8 个字段。
  */
 export interface AuditRecord extends ContractAuditEvent {
   actor_id: string;
+  /** 内部专用目标标识（如 `category:330100` / `flag:ai_enabled`）；永不出现在契约投影里。 */
+  target_hint: string | null;
 }
 
 /** 契约 `AuditEvent` 的字面形状（additionalProperties:false）。 */
