@@ -185,7 +185,8 @@ test('正控制：规则层通过 + 文本端口通过 ⇒ 完整合法 Moderati
   const shape = checkMergedContractShape(merged);
   assert.deepEqual(shape.problems, []);
   assert.equal(shape.ok, true);
-  assert.deepEqual(checkMergedInvariant(merged), { ok: true, violations: [] });
+  assert.deepEqual(checkMergedInvariant(merged).violations, []);
+  assert.equal(checkMergedInvariant(merged).ok, true);
 
   // 复用 review 口径：当前版本下可复用且可发布。
   assert.equal(merged.model_layer.re_review.stale, false);

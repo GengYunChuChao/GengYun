@@ -63,11 +63,13 @@ function mergedLegality(holder, options = {}) {
     details.push({ field: field ?? null, code });
   };
 
-  let invariant = { ok: false, violations: ['合流结果不是对象'] };
+  let invariant = { ok: false, violations: ['合流结果不是对象'], evidence: null };
   try {
-    invariant = checkMergedInvariant(holder);
+    // 返修 2 · P1：把当前输入一起传进去 ⇒ 所需端口集合**由内容决定**（带媒体必须核 `ims`），
+    // 而不是由"结论里有没有 `kinds`"决定——那正是"缺证据反而被跳过检查"的成因。
+    invariant = checkMergedInvariant(holder, { input: options.input });
   } catch (error) {
-    invariant = { ok: false, violations: [`checkMergedInvariant 抛错：${(error && error.name) || 'Error'}`] };
+    invariant = { ok: false, violations: [`checkMergedInvariant 抛错：${(error && error.name) || 'Error'}`], evidence: null };
   }
   if (!invariant.ok) {
     add('MODEL_LAYER_INVARIANT_VIOLATION', null);

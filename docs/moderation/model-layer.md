@@ -173,7 +173,7 @@
 除 `hard_rule_passed` 与"无失败原因码"外，`approved` 还要求：**全部所需端口实际通过**，
 且**输入绑定存在并已重算比对一致**（返修 1 · P1）。
 
-## 4.1 放行闸门与导出消费者清查（返修 1 · 监工 `5488195507` P2）
+### 4.1 放行闸门与导出消费者清查（返修 1 · 监工 `5488195507` P2）
 
 事故形态（监工独立构造）：`decision='approved'` + `hard_rule_passed=true` + 三版本匹配 +
 `reason_codes=['MODEL_TIMEOUT']` 的**自相矛盾结论**——`checkMergedInvariant` 早已判 `ok=false`，
@@ -183,7 +183,8 @@
 处置：把"合流合法性"抽成单一事实来源 `checkMergedInvariant`（`merged-invariant.mjs`），
 **三处共用**（合流层 + 两个闸门），并且闸门的前置条件还包含：
 ① 结论自身不得携带合流层失败原因码（`MODEL_*` 失败类 + `MODEL_BLOCKED`）；
-② 输入绑定必须存在，且调用方给了当前内容时必须重算比对一致（P1 的回读侧）。
+② 输入绑定必须存在，且调用方给了当前内容时必须重算比对一致（返修 1 · P1 的回读侧）；
+③ **所需端口的执行证据齐备且均为通过**（返修 2 · P1 加入；口径见 §4.2）。
 任一不满足 ⇒ `publishable=false`、`evaluateModelReReview` 判 `stale` + `re_review` + `quarantined`。
 
 本包**所有**"拿一个结论 ⇒ 回答可发布／可复用／是否合法"的出口，逐一清查如下：
@@ -197,6 +198,45 @@
 | `checkMergedContractShape` | **形状**核对（不是放行判定） | 否（不回答"能不能发布"） | 只核契约 `Moderation` 字段是否齐备合法；不含放行语义 |
 | `isPublishable` / `evaluateReReview` | **规则层**口径（PR #88 已合并） | 否 | **不改**：它只对规则层事实负责、不认识模型层码；改它就是改规则层既有语义。口径是"模型层结论必须走 `isModelLayerPublishable`"，并在 PR 正文写明 |
 | `checkDecisionInvariant` / `assertDecisionInvariant` | **规则层**自身不变式 | 否 | 同上；合流结果不适用（见 §4 的口径差异表） |
+
+### 4.2 端口执行证据：**"没有证据" ≠ "全部通过"**（返修 2 · 监工 `5489050358` P1）
+
+事故形态（监工独立构造）：`existingApproved()` 那种"有有效 `input_binding`、三版本匹配、**但完全没有
+`model_layer.kinds`**"的记录 ⇒ 旧实现 `checkMergedInvariant.ok=true`、`isModelLayerPublishable.publishable=true`、
+`evaluateModelReReview` 可复用。根因：不变式**只在 `kinds` 存在时**才检查端口状态，
+"缺失／空对象"直接跳过——把"没有模型执行证据"当成"所有端口通过"。与已修的两条同类：**缺失 ≠ 通过**。
+
+| 规则 | 说明 |
+| --- | --- |
+| `tms` 证据：**任何**内容都必需 | 存在该端口的 `kinds` 条目、且 `status === 'pass'`（"实际求值过且结论是通过类"） |
+| `ims` 证据：内容**带媒体**时必需 | 由**内容**决定（`media` 非空），**不得**由"结论里有没有 `kinds`"决定（那正是本缺陷） |
+| `kinds` 缺失／空对象 | ⇒ 判不通过（`MODEL_LAYER_INVARIANT_VIOLATION`），不得发布、不得复用 |
+| 缺所需端口 / 任一存在端口 `status !== 'pass'` | ⇒ 同上（`unsure`/`timeout`/`not_invoked`/`failed`/`blocked` 都算不通过） |
+| 自报 `media_count` 与本次实际内容不一致 | ⇒ 判不通过（否则可伪造"没有媒体"把所需端口降级为只有 `tms`） |
+| 所需端口无法确定（既无当前输入、绑定也无 `media_count`） | ⇒ 判不通过（fail-closed，不允许"不确定就放行"） |
+
+`checkMergedInvariant(merged, { input })` 与两个放行闸门**共用**这一口径（闸门把 `options.input` 透传进来）。
+
+### 4.3 全包清查：所有"某字段缺失即跳过／即通过"的点（返修 2 · 要求顺带清查）
+
+| 位置 | 缺失/为空时会怎样 | 处置 |
+| --- | --- | --- |
+| `checkMergedInvariant` 的端口证据 | **返修前**：`kinds` 缺失/空 ⇒ **跳过检查**（缺陷） | **本轮已修**：缺失/空/缺所需端口/状态非通过 ⇒ 一律不通过 |
+| `modelExecutionEvidence` 的"所需端口" | 无法确定所需集合 | **本轮已修**：判不通过并写明原因 |
+| `modelExecutionEvidence` 的自报形状 | 自报 `media_count` 与实际不一致 | **本轮已修**：判不通过（防"伪造没媒体"） |
+| `mergedFailureCodes` | 缺 `reason_codes` ⇒ 返回 `[]`（无失败码） | **不改**：不变式另有"`reason_codes` 必须是数组"硬检查 ⇒ 缺失仍被判不通过 |
+| `readInputBinding` | 缺绑定 ⇒ `present:false`、`verified:false` | 已正确（返修 1）：闸门与不变式都拒 |
+| `mergedLegality` 的 `options.input` | 调用方没给当前内容 ⇒ `UNVERIFIED` | 已正确（返修 1）：不得发布（内容是否仍是同一份未知） |
+| `verifyInputBinding` | 绑定缺失/摘要非法 ⇒ `MISSING`；入参不可规范化 ⇒ `UNVERIFIED` | 已正确（返修 1） |
+| `merge.checkRuleLayerResult` 的 `input` | 规则层结果没带 `input` ⇒ `inputValid:false` ⇒ 不尝试模型层 | 已正确：决策仍为隔离（"没跑"≠"通过"） |
+| `merge` 的端口存在性 / `validateModelPort` | 缺端口 ⇒ `MISSING`；缺 `seams`/`provider` 字段 ⇒ `INVALID`；缺 `model_version` ⇒ `MODEL_VERSION_MISSING`；BizType 未核验 ⇒ 不调用 | 已正确（返修 1 之前即如此） |
+| `normalizeModelVerdict` 的 `reason_codes`/`summary` | 缺 ⇒ 形状未知（因为 prompt 声明它们是必报字段） | 已正确 |
+| `normalizeModelVerdict` 的 `model_version` | 回报里缺 ⇒ **采用端口声明的模型标识** | **不改**：端口声明是必填且已校验；模型标识由注入方声明，不是模型自陈，不回显不构成"缺证据" |
+| `validateModelPort` 的 `provider.timeout_ms` | 缺 ⇒ 合流层不设额外 deadline | **不改**：端口自己持有超时并在超时时抛错（归类 `MODEL_TIMEOUT`）；合流层 deadline 是纵深防御，不是放行条件 |
+| `normalizeMediaRef` 的 `mime` | 缺但 `kind === 'image'` ⇒ 视为图片 | **不改**：只影响"是不是图片"；缺标识仍判 `PAYLOAD_INVALID`；证据核对按内容的媒体条目数，与 `mime` 无关 |
+| `checkMergedContractShape` 的 `contract_value` | 为 `null` ⇒ 全部必填字段算缺 ⇒ 报问题 | 已正确（形状检查本就不放行） |
+| `merge` 的 `promptDefinition` | 为 `null` ⇒ `PROMPT_DEFINITION_INVALID` 且**不调用端口** | 已正确 |
+| `merge` 的 `mediaRefs` | 与媒体条目数不等 ⇒ 不调用 `ims` 且 `PAYLOAD_INVALID` | 已正确 |
 
 ## 5 图片／多媒体的口径与跨片依赖
 
@@ -318,6 +358,10 @@
    摘要在组件内保证"不一致必被发现"，但组件无法阻止调用方**根本不调用** `mergeModeration`
    而只拿规则层结论去发布——那属于接线口径的跨片依赖（见 §9.5 与 §4.1 清查表）。
    本片能保证的是：**凡走本层**的路径，模型结论都无法覆盖"内容不一致"这个拒绝。
+8. **端口执行证据（`model_layer.kinds`）也必须落库**（返修 2 · P1）：
+   不放行"没有执行证据"的结论；因此存储层若只存契约 `Moderation` 字段而丢掉
+   `model_layer.kinds`，回读时该结论**会**被判不可发布（方向安全，但同样需要接线方配合）。
+   这与 §9.5 是同一类约束：**放行所需的事实有一部分在本片的非契约字段里**。
 
 ## 11 如何运行
 

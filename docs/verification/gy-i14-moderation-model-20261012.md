@@ -438,3 +438,101 @@ exit code: 1
 3. **规则层 `isPublishable` 仍不认识 `MODEL_*` 码**：这是刻意的（不改规则层语义），
    已在 §13.5 与 `model-layer.md` §4.1 写明；若后续要求"单入口放行"，需契约/治理层决定。
 
+## 14 返修 2：回应监工 `5489050358`（P1 端口执行证据缺失即通过）
+
+- 返修起点（监工本轮 `reviewed_sha`）：`9ae2478a282dd1490b313810db7e2cb3219a1a56`；
+  本节的追加提交 SHA 见 PR #97 时间线（本文档与代码同一次提交）。
+- 口径不变：`Refs #14`，**不关闭整项 #14**；**既有 254 条断言一条未放宽**；未新增错误封套码／契约字段。
+
+### 14.1 修法（所需端口由**内容**决定）
+
+| 规则 | 实现 |
+| --- | --- |
+| 任何内容都要 `tms` 执行证据 | `requiredModelPortKinds(content)` 恒含 `tms` |
+| 内容带媒体额外要 `ims` | `media` 非空 ⇒ 追加 `ims`；**由内容决定**，不看结论里有没有 `kinds` |
+| 证据必须"实际求值且通过" | `model_layer.kinds[kind].status === 'pass'`；缺失／空对象／缺端口／状态非 `pass`（`unsure`/`timeout`/`not_invoked`/`failed`/`blocked`）⇒ 一律不通过 |
+| 自报形状不得与内容矛盾 | 结论自报 `media_count` 与本次内容不一致 ⇒ 不通过（防"伪造没媒体"少核 IMS） |
+| 所需端口无法确定 | 既无当前输入、绑定也无 `media_count` ⇒ 不通过（fail-closed） |
+| 三处口径一致 | `checkMergedInvariant(merged, { input })` 三处共用；闸门把 `options.input` 透传进去 |
+
+`approved` 之外的结论不因缺证据被额外判违例（本来就不放行）；
+但**发布与复用**必须 `approved` ⇒ 证据维度必然被检查到。
+
+### 14.2 数字对照（本机实测）
+
+| 范围 | 返修 2 前（`9ae2478`） | 返修 2 后 | 差值 |
+| --- | --- | --- | --- |
+| `node --test "tests/moderation/*.test.mjs"` | `tests 254 / pass 254 / fail 0` | `tests 266 / pass 266 / fail 0` | **+12**（既有 254 条逐条保留） |
+| `npm run test:unit` | `tests 951 / pass 950 / fail 0 / skipped 1` | `tests 963 / pass 962 / fail 0 / skipped 1` | **+12** |
+
+新增用例：`tests/moderation/port-evidence.test.mjs`（12 条）。
+
+### 14.3 四条门禁 + `git diff --check`（原始输出）
+
+```
+npm run lint         → exit 0
+  PASS tsc --noEmit services/api/tsconfig.json
+  PASS tsc --noEmit apps/admin/tsconfig.json
+  PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+npm run test:unit    → exit 0 : ℹ tests 963 / ℹ pass 962 / ℹ fail 0 / ℹ skipped 1
+npm run test:contract→ exit 0 : ℹ tests 6 / ℹ pass 6 / ℹ fail 0
+npm run test:docs    → exit 0 : PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+git diff --check     → exit 0（无空白错误）
+node --test "tests/moderation/*.test.mjs" → exit 0 : ℹ tests 266 / ℹ pass 266 / ℹ fail 0
+```
+
+### 14.4 各反例用例名与**先失败后通过**原始输出
+
+`tests/moderation/port-evidence.test.mjs`（每条可单独指出）：
+
+| 用例名 | 断言要点 |
+| --- | --- |
+| `所需端口由**内容**决定：文本 ⇒ 只需 tms；带媒体 ⇒ tms + ims` | 所需集合与"结论里写了什么"无关 |
+| `P1 主反例（监工原样）：绑定有效 + 版本匹配，但**没有 model_layer.kinds** ⇒ 不得放行、不得复用` | `ok=false`、不可发布、`re_review`、`quarantined` |
+| `kinds 为空对象 ⇒ 不得放行、不得复用` | 空对象同样不通过 |
+| `kinds 缺 TMS（只报 IMS）⇒ 不得放行` | 缺所需端口 |
+| `带媒体却缺 IMS 证据 ⇒ 不得放行（所需端口按内容来）` | `required = ['tms','ims']` |
+| `端口存在但状态不是"通过" ⇒ 一律不得放行（unsure/超时/未求值/失败/blocked）` | 6 种状态逐个断言 |
+| `自报 media_count 与本次实际内容不一致（伪造形状以少核端口）⇒ 不得放行` | 防降级绕过 |
+| `无法确定所需端口（既无当前输入、绑定也无 media_count）⇒ 不得当作全部通过` | fail-closed |
+| `正控制：所需端口齐备且均为通过 ⇒ 仍可发布、仍可复用（证明不是"一律拒绝"）` | `ok=true`、`publishable=true`、`reuse` |
+| `正控制（媒体口径）：带媒体 + tms/ims 均通过 ⇒ 证据核对通过（单位级）` | 媒体维度双向（缺 IMS 反面对照） |
+| `三处口径一致：闸门把"缺执行证据"作为同一个不变式违例回传` | 三处违例集合 deepEqual |
+| `合法合流结果自带执行证据：真实 merge 输出的 kinds 与内容所需集合一致` | 夹具与组件口径对齐 |
+
+**回退-复跑（还原返修前"只在 kinds 存在时才检查"的写法）**：
+`node --test tests/moderation/port-evidence.test.mjs`
+
+```
+exit code: 1
+ℹ tests 12   ℹ pass 10   ℹ fail 2
+  AssertionError [ERR_ASSERTION]: 没有模型执行证据 ⇒ 绝不能判 ok
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+```
+
+恢复后 12/12 通过（备份还原 + SHA256 一致 = True）。
+
+### 14.5 "缺失即跳过／即通过"全包清查（返修 2 · 要求顺带清查）
+
+完整表见 `docs/moderation/model-layer.md` §4.3（含"不改的理由"）。要点：
+
+- **本轮修掉 3 处**：`checkMergedInvariant` 的端口证据（原缺陷）、`modelExecutionEvidence` 的
+  "所需端口无法确定"、自报 `media_count` 与实际内容不一致；
+- **不改的关键 4 处及理由**：`mergedFailureCodes` 缺 `reason_codes` 返回空（不变式另有硬检查）；
+  `normalizeModelVerdict` 缺 `model_version` 时采用**端口声明**（端口声明必填且已校验，
+  模型标识由注入方声明、不是模型自陈）；`validateModelPort` 缺 `provider.timeout_ms`
+  （端口自持超时并抛错，合流层 deadline 只是纵深防御）；`normalizeMediaRef` 缺 `mime`
+  但有 `kind:'image'`（只影响"是不是图片"，缺标识仍判 `PAYLOAD_INVALID`，与证据核对无关）；
+- 其余各处（端口存在性、端口字段、输入绑定、`options.input` 缺失、prompt 定义、媒体引用计数、
+  契约装配、形状核对）**本来就 fail-closed**，已逐条列出。
+
+### 14.6 返修 2 之后的剩余风险
+
+1. **执行证据在非契约字段里**（`model_layer.kinds`）：存储层必须一起存，否则回读判不可发布
+   （方向安全，但需要接线方配合，见 `model-layer.md` §9.5 与 §10.8）。
+2. **协作口径**：组件保证"凡走本层"的路径缺证据必不放行，无法阻止调用方绕过本层直接发布。
+3. **规则层 `isPublishable` 仍不认识模型层维度**（刻意不改，见 §13.5）；
+   若治理层要求"单入口放行"，需要新的决定。
+4. **真实 `tms`/`ims`、真实 BizType、真实样本指标**：仍未取得（§1、§11 的声明不变）。
+
+

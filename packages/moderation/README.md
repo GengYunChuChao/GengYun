@@ -108,6 +108,10 @@ toRuleLayerDraft(result); // 显式 incomplete 的草稿，未补 model_version 
 - **放行闸门（返修 1 · P2）**：模型层结论**必须**用 `isModelLayerPublishable` / `evaluateModelReReview`
   （两者都过 `checkMergedInvariant` + 模型失败原因 + 输入绑定核验，调用时要传 `input`）；
   规则层的 `isPublishable` 只对规则层事实负责，**不得**用于放行模型层结论。
+- **端口执行证据（返修 2 · 监工 `5489050358` P1）**：`approved` 还要求**所需端口的执行证据齐备且均为通过**——
+  任何内容都要求 `tms`，内容带媒体额外要求 `ims`（所需集合由**内容**决定，不看结论里有没有 `kinds`）；
+  `kinds` 缺失／空对象／缺所需端口／状态非 `pass` ⇒ 一律不得发布、不得复用。
+  **"没有证据" ≠ "全部通过"。**
 
 ## 测试
 

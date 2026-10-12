@@ -168,10 +168,39 @@ export function currentBinding(overrides = {}) {
   };
 }
 
+/** 一个"该端口实际求值且通过"的执行证据条目（合成替身）。 */
+export function passKindEntry(kind) {
+  return { kind, status: 'pass', label: 'pass', reason_codes: [], reported: null, synthetic: true };
+}
+
 /**
- * 与规则层结果**逐字段一致**的合成"既有结论"（已补齐模型层字段 + 输入绑定）。
+ * 按内容形状给出"所需端口"的执行证据（返修 2 · 监工 `5489050358` P1：
+ * 任何内容都要 `tms`，带媒体额外要 `ims`）。
+ * 合法结论必须带这个证据；没有它 = 没有模型执行证据 = 不得放行。
+ */
+export function evidenceFor(input) {
+  const mediaCount = Array.isArray(input?.media) ? input.media.length : 0;
+  const kinds = { tms: passKindEntry('tms') };
+  if (mediaCount > 0) kinds.ims = passKindEntry('ims');
+  return {
+    status: 'attempted',
+    kinds,
+    reason_codes: [],
+    synthetic_ports: mediaCount > 0 ? ['tms', 'ims'] : ['tms'],
+  };
+}
+
+/** 剥掉模型执行证据（用于构造"缺证据却自称通过"的反例）。 */
+export function stripModelLayerEvidence(record) {
+  const copy = { ...record };
+  delete copy.model_layer;
+  return copy;
+}
+
+/**
+ * 与规则层结果**逐字段一致**的合成"既有结论"（已补齐模型层字段 + 输入绑定 + 端口执行证据）。
  *
- * 默认绑定到 `makeContent()`（干净文本、无媒体）；要换内容请同时传 `input` 与 `input_binding`
+ * 默认绑定到 `makeContent()`（干净文本、无媒体）；要换内容请传 `input`
  * （或直接用 `realApproved()` 那种真实合流出来的结论）。
  */
 export function existingApproved(overrides = {}) {
@@ -185,6 +214,7 @@ export function existingApproved(overrides = {}) {
     model_version: 'synthetic-tms-model@1.0',
     prompt_version: 'mp1+sha256:' + 'a'.repeat(32),
     input_binding: bindingFor(input),
+    model_layer: evidenceFor(input),
     ...rest,
   };
 }
