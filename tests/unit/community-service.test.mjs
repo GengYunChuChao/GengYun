@@ -222,7 +222,14 @@ test('反例 7：正文在 revision 未变时被改写（绕过服务层）⇒ �
   const h = makeHarness();
   const post = await publishPost(h.service, USER_A, {}, idem(11));
   const stored = await h.store.getPost(post.id);
-  await h.store.replacePost({ ...stored, body: `${CLEAN_BODY}（被旁路改写）` });
+  // 模拟"旁路/迁移式写入"：用 CAS 改正文但**不推进 revision**（结论因此不再绑定这份正文）。
+  const tampered = await h.store.commitPostIfCurrent(
+    post.id,
+    { revision: stored.revision },
+    { body: `${CLEAN_BODY}（被旁路改写）` },
+    null,
+  );
+  assert.equal(tampered.ok, true, 'CAS 允许"同版本改正文"，靠结论绑定正文摘要来兜底不可见');
 
   const feed = await h.service.listPosts(USER_B, {});
   assert.equal(feed.items.length, 0, '结论绑定的是正文摘要，正文变了就不得再可见');
@@ -383,9 +390,9 @@ test('反例 15：同键并发且占位者长时间未完成 ⇒ 409 REQUEST_IN_
   const h = makeHarness({
     storeWrapper: (base) => ({
       ...base,
-      insertPost: async (record) => {
+      insertPost: async (record, moderation) => {
         await blocker;
-        return base.insertPost(record);
+        return base.insertPost(record, moderation);
       },
     }),
     idempotencyWaitMs: 20,

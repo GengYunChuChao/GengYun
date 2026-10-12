@@ -32,10 +32,13 @@ import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from 
 import { createPublishGate } from './moderation-gate.ts';
 import type { GateOutcome, PublishGate, RuleLayerVerdict } from './moderation-gate.ts';
 import type {
+  CommentCommitPatch,
   CommentRecord,
+  CommitFailureReason,
   CommunityStore,
   IdempotencyOutcome,
   ModerationRecord,
+  PostCommitPatch,
   PostRecord,
   ReportRecord,
 } from './store.ts';
@@ -207,12 +210,17 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   // 审核结论：落台账 + 读取时重算可见性
   // -------------------------------------------------------------------------
 
-  async function recordVerdict(
+  /**
+   * 构造审核结论台账记录（纯函数，不写库）。
+   * 结论**随内容同一次原子提交**写入（见 `insertPost`/`commitPostIfCurrent`），
+   * 或在"未提交内容"的拒绝路径上经 `putRefusalVerdict` 补录。
+   */
+  function buildVerdict(
     target: { type: 'post' | 'comment'; id: string; revision: number },
     outcome: GateOutcome,
     text: string,
-  ): Promise<void> {
-    const record: ModerationRecord = {
+  ): ModerationRecord {
+    return {
       id: newId(),
       target_ref: { type: target.type, id: target.id, revision: target.revision },
       decision: outcome.decision,
@@ -226,7 +234,41 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       missing_contract_fields: [...outcome.missing_contract_fields],
       created_at: nowIso(),
     };
-    await store.putModeration(record);
+  }
+
+  /** 未提交内容的结论补录（拒绝/隔离）：仅在该 (target,revision) 尚无内容与结论时写入。 */
+  async function recordRefusalVerdict(
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    outcome: GateOutcome,
+    text: string,
+  ): Promise<boolean> {
+    return store.putRefusalVerdict(buildVerdict(target, outcome, text));
+  }
+
+  /**
+   * CAS 失败的契约映射（监工 5487924826 返修 1 · 第 3 条）。
+   *
+   * - `NOT_FOUND` / `AUTHOR_CHANGED` ⇒ `404 NOT_FOUND`：不泄露存在性（非作者永远拿不到 409）；
+   * - `DELETED` ⇒ `409 OBJECT_UNAVAILABLE`：对象已被下架，**写路径**明确报"目标不可用"，
+   *   绝不静默成功、绝不复活（读路径对已删除内容仍是 404，读写口径差别见 PR 正文）；
+   * - `REVISION_CHANGED` / `VISIBILITY_CHANGED` / `AUDIT_STATE_CHANGED` ⇒ `409 REVISION_CONFLICT`：
+   *   客户端 `If-Match` 依据的视图已过期，按 `docs/architecture/state-contract.md`「刷新当前版本并
+   *   显式确认，不复用旧审核」处理。
+   * 三者都在契约 409/404 错误码闭集内（`REVISION_CONFLICT`/`OBJECT_UNAVAILABLE`/`NOT_FOUND`）。
+   */
+  function commitRefusal(reason: CommitFailureReason): ApiError {
+    switch (reason) {
+      case 'NOT_FOUND':
+      case 'AUTHOR_CHANGED':
+        return notFound();
+      case 'DELETED':
+        return new ApiError('OBJECT_UNAVAILABLE', '目标内容已下架，不可继续修改');
+      case 'REVISION_CHANGED':
+        return new ApiError('REVISION_CONFLICT', '目标版本已变化，请刷新后重试');
+      case 'VISIBILITY_CHANGED':
+      case 'AUDIT_STATE_CHANGED':
+        return new ApiError('REVISION_CONFLICT', '目标当前状态已变化，请刷新后重试');
+    }
   }
 
   /**
@@ -537,8 +579,11 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           const text = postModerationText({ title: body.title, body: body.body });
           // 先审后发：审核发生在**任何内容行落库之前**。
           const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
-          await recordVerdict(target, outcome, text);
-          if (!outcome.publishable) throw refusal(outcome);
+          if (!outcome.publishable) {
+            // 未提交内容：结论只做**补录**（不覆盖任何已提交内容的结论），然后拒绝发布。
+            await recordRefusalVerdict(target, outcome, text);
+            throw refusal(outcome);
+          }
           if (body.media_ids.length > 0) {
             // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
             // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
@@ -560,7 +605,11 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             created_at: timestamp,
             updated_at: timestamp,
           };
-          await store.insertPost(record);
+          // 内容与审核结论**同一次原子提交**写入（不存在"内容已可见但其结论还没落"的窗口）。
+          const inserted = await store.insertPost(record, buildVerdict(target, outcome, text));
+          if (!inserted) {
+            throw new ApiError('PROVIDER_UNAVAILABLE', '内容 id 冲突（内部不变式违反）');
+          }
           return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(record) };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
@@ -591,7 +640,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         200,
         async () => {
           const record = await store.getPost(postId);
-          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          // 只做"存在且属于本人"的快速失败（不泄露存在性）；已删除/状态变化由下面的 CAS 定夺，
+          // 且**写路径**对已删除对象统一报 409 OBJECT_UNAVAILABLE（不因并发时序改变错误码语义）。
+          if (record === null || record.author_id !== user.userId) throw notFound();
           if (record.revision !== ifMatch.revision) {
             throw new ApiError('REVISION_CONFLICT', '帖子版本已变化，请刷新后重试');
           }
@@ -608,13 +659,14 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           }
           const text = postModerationText({ title: body.title, body: body.body });
           const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
-          await recordVerdict(target, outcome, text);
-          if (!outcome.publishable) throw refusal(outcome);
+          if (!outcome.publishable) {
+            await recordRefusalVerdict(target, outcome, text);
+            throw refusal(outcome);
+          }
           if (body.media_ids.length > 0) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
           }
-          const updated: PostRecord = {
-            ...record,
+          const patch: PostCommitPatch = {
             revision,
             title: body.title,
             body: body.body,
@@ -626,8 +678,19 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             audit_state: 'approved',
             updated_at: nowIso(),
           };
-          await store.replacePost(updated);
-          return { outcome: { kind: 'post' as const, id: postId, revision }, result: await projectPost(updated) };
+          // 检查（revision/归属/未删除）与写入在**同一原子提交**内完成；
+          // 审核结论也随这次提交一起写入。`record`（旧快照）只用于给出"期望值"，不用于写回。
+          const committed = await store.commitPostIfCurrent(
+            postId,
+            { revision: record.revision, author_id: user.userId },
+            patch,
+            buildVerdict(target, outcome, text),
+          );
+          if (!committed.ok) throw commitRefusal(committed.reason);
+          return {
+            outcome: { kind: 'post' as const, id: postId, revision },
+            result: await projectPost(committed.record),
+          };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
       );
@@ -649,10 +712,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         200,
         async () => {
           const record = await store.getPost(postId);
-          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record === null || record.author_id !== user.userId) throw notFound();
           if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '帖子版本已变化');
-          await store.replacePost({ ...record, visibility: 'deleted', updated_at: nowIso() });
-          return { outcome: { kind: 'ack' as const, id: postId, revision: record.revision }, result: { accepted: true } };
+          // 删除同样是 CAS：与并发的编辑/重审交错时，后到者只会看到"已删除"，不会把它写回 published。
+          const deleted = await store.commitPostIfCurrent(
+            postId,
+            { revision: record.revision, author_id: user.userId },
+            { visibility: 'deleted', updated_at: nowIso() },
+            null,
+          );
+          if (!deleted.ok) throw commitRefusal(deleted.reason);
+          return {
+            outcome: { kind: 'ack' as const, id: postId, revision: record.revision },
+            result: { accepted: true },
+          };
         },
         async () => ({ accepted: true }),
       );
@@ -741,9 +814,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           await projectAuthor(user.userId);
           const id = newId();
           const target = { type: 'comment' as const, id, revision: 1 };
-          const outcome = gate.evaluate(target, commentModerationText({ body: body.body }), []);
-          await recordVerdict(target, outcome, commentModerationText({ body: body.body }));
-          if (!outcome.publishable) throw refusal(outcome);
+          const text = commentModerationText({ body: body.body });
+          const outcome = gate.evaluate(target, text, []);
+          if (!outcome.publishable) {
+            await recordRefusalVerdict(target, outcome, text);
+            throw refusal(outcome);
+          }
           const record: CommentRecord = {
             id,
             revision: 1,
@@ -754,7 +830,15 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             audit_state: 'approved',
             created_at: nowIso(),
           };
-          await store.insertComment(record);
+          // 插入评论时在**同一临界区**再校验父帖（存在、未删除、revision 未变），
+          // 防止"父帖刚被删除，评论却插入成功"。
+          const inserted = await store.insertComment(record, buildVerdict(target, outcome, text), {
+            id: parentId,
+            revision: ifMatch.revision,
+          });
+          if (!inserted) {
+            throw new ApiError('REVISION_CONFLICT', '父帖已被删除或版本已变化，请刷新后重试');
+          }
           return { outcome: { kind: 'comment' as const, id, revision: 1 }, result: await projectComment(record) };
         },
         async (ref) => projectComment(await readableComment(user, ref.id)),
@@ -785,7 +869,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         200,
         async () => {
           const record = await store.getComment(commentId);
-          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record === null || record.author_id !== user.userId) throw notFound();
           if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '评论版本已变化');
           const revision = record.revision + 1;
           const target = { type: 'comment' as const, id: commentId, revision };
@@ -794,18 +878,29 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (prior !== null && !gate.assess(target, prior).stale) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '重审判定未生效（内部不变式违反），拒绝编辑');
           }
-          const outcome = gate.evaluate(target, commentModerationText({ body: body.body }), []);
-          await recordVerdict(target, outcome, commentModerationText({ body: body.body }));
-          if (!outcome.publishable) throw refusal(outcome);
-          const updated: CommentRecord = {
-            ...record,
+          const text = commentModerationText({ body: body.body });
+          const outcome = gate.evaluate(target, text, []);
+          if (!outcome.publishable) {
+            await recordRefusalVerdict(target, outcome, text);
+            throw refusal(outcome);
+          }
+          const patch: CommentCommitPatch = {
             revision,
             body: body.body,
             visibility: 'published',
             audit_state: 'approved',
           };
-          await store.replaceComment(updated);
-          return { outcome: { kind: 'comment' as const, id: commentId, revision }, result: await projectComment(updated) };
+          const committed = await store.commitCommentIfCurrent(
+            commentId,
+            { revision: record.revision, author_id: user.userId },
+            patch,
+            buildVerdict(target, outcome, text),
+          );
+          if (!committed.ok) throw commitRefusal(committed.reason);
+          return {
+            outcome: { kind: 'comment' as const, id: commentId, revision },
+            result: await projectComment(committed.record),
+          };
         },
         async (ref) => projectComment(await readableComment(user, ref.id)),
       );
@@ -827,9 +922,15 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         200,
         async () => {
           const record = await store.getComment(commentId);
-          if (record === null || record.visibility === 'deleted' || record.author_id !== user.userId) throw notFound();
+          if (record === null || record.author_id !== user.userId) throw notFound();
           if (record.revision !== ifMatch.revision) throw new ApiError('REVISION_CONFLICT', '评论版本已变化');
-          await store.replaceComment({ ...record, visibility: 'deleted' });
+          const deleted = await store.commitCommentIfCurrent(
+            commentId,
+            { revision: record.revision, author_id: user.userId },
+            { visibility: 'deleted' },
+            null,
+          );
+          if (!deleted.ok) throw commitRefusal(deleted.reason);
           return {
             outcome: { kind: 'ack' as const, id: commentId, revision: record.revision },
             result: { accepted: true },
@@ -975,19 +1076,38 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         text,
         target.type === 'post' ? mediaInputs((record as PostRecord).media_ids) : [],
       );
-      await recordVerdict({ type: target.type, id: target.id, revision: target.revision }, outcome, text);
-      const visibility: 'published' | 'hidden' = outcome.publishable ? 'published' : 'hidden';
-      const auditState = outcome.publishable ? 'approved' : outcome.decision;
-      if (target.type === 'post') {
-        const post = record as PostRecord;
-        await store.replacePost({
-          ...post,
-          visibility,
-          audit_state: auditState,
-          updated_at: nowIso(),
-        });
-      } else {
-        await store.replaceComment({ ...(record as CommentRecord), visibility, audit_state: auditState });
+      const visibility: Visibility = outcome.publishable ? 'published' : 'hidden';
+      const auditState: AuditState = outcome.publishable ? 'approved' : outcome.decision;
+      const verdict = buildVerdict({ type: target.type, id: target.id, revision: target.revision }, outcome, text);
+      // 重审写回同样是 CAS：期望"读到的版本 + 读到的可见性/审核状态"，与删除交错时
+      // 只会拿到 DELETED（返回"未重审、仍为 deleted"），**绝不复活**已下架内容。
+      const expected = {
+        revision: target.revision,
+        author_id: user.userId,
+        visibility: record.visibility,
+        audit_state: record.audit_state,
+      };
+      const committed =
+        target.type === 'post'
+          ? await store.commitPostIfCurrent(
+              target.id,
+              expected,
+              { visibility, audit_state: auditState, updated_at: nowIso() },
+              verdict,
+            )
+          : await store.commitCommentIfCurrent(target.id, expected, { visibility, audit_state: auditState }, verdict);
+      if (!committed.ok) {
+        if (committed.reason === 'DELETED') {
+          return {
+            re_reviewed: false,
+            publishable: false,
+            decision: record.audit_state,
+            reason_codes: ['NOT_PUBLISHABLE'],
+            rule_version: prior.rule_version,
+            visibility: 'deleted',
+          };
+        }
+        throw commitRefusal(committed.reason);
       }
       return {
         re_reviewed: true,

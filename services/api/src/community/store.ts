@@ -93,24 +93,108 @@ export interface IdempotencyRecord {
   expires_at: number;
 }
 
+/**
+ * 更新前的**期望状态**（CAS 的比较条件）。
+ *
+ * 语义：只有在同一同步临界区内重读到当前记录、并逐项满足下面的期望时，才允许写入；
+ * 任何一项不满足都**不写入**并回传失败原因（见 `CommitFailureReason`）。
+ */
+export interface PostCommitExpectation {
+  /** 必须等于当前 `revision`（契约 `If-Match` 的服务端等价物）。 */
+  revision: number;
+  /** 必须等于当前 `visibility`。 */
+  visibility?: Visibility;
+  /** 必须等于当前 `audit_state`。 */
+  audit_state?: AuditState;
+  /** 必须等于当前 `author_id`（归属校验也在同一临界区内完成）。 */
+  author_id?: string;
+}
+
+export interface CommentCommitExpectation {
+  revision: number;
+  visibility?: Visibility;
+  audit_state?: AuditState;
+  author_id?: string;
+}
+
+/** 允许被 CAS 修改的字段（白名单：不给"整条记录覆盖"的口子）。 */
+export type PostCommitPatch = Partial<
+  Pick<
+    PostRecord,
+    | 'revision'
+    | 'title'
+    | 'body'
+    | 'crop_id'
+    | 'region_code'
+    | 'media_ids'
+    | 'linked_knowledge_ref'
+    | 'visibility'
+    | 'audit_state'
+    | 'updated_at'
+  >
+>;
+
+export type CommentCommitPatch = Partial<Pick<CommentRecord, 'revision' | 'body' | 'visibility' | 'audit_state'>>;
+
+/** CAS 失败原因。**注意：已删除（`DELETED`）永远失败**——不提供"复活已删除内容"的开关。 */
+export type CommitFailureReason =
+  | 'NOT_FOUND'
+  | 'DELETED'
+  | 'AUTHOR_CHANGED'
+  | 'REVISION_CHANGED'
+  | 'VISIBILITY_CHANGED'
+  | 'AUDIT_STATE_CHANGED';
+
+export type CommitResult<T> = { ok: true; record: T } | { ok: false; reason: CommitFailureReason };
+
 export interface CommunityStore {
   readonly persistent: boolean;
   // ---- 帖子 ----
-  insertPost(record: PostRecord): Promise<void>;
+  /** 创建：同 id 已存在则不写入并返回 `false`；**内容与审核结论同一次提交写入**。 */
+  insertPost(record: PostRecord, moderation: ModerationRecord | null): Promise<boolean>;
   getPost(id: string): Promise<PostRecord | null>;
-  replacePost(record: PostRecord): Promise<boolean>;
+  /**
+   * **唯一的帖子更新原语**：比较并写入（CAS）。
+   * 在同一同步临界区内完成"重读当前记录 → 校验 revision/可见性/审核状态/归属/未删除 → 写入补丁
+   * （+ 可选：同一次提交写入该 revision 的审核结论）"。**不存在**无条件覆盖的更新入口。
+   */
+  commitPostIfCurrent(
+    id: string,
+    expected: PostCommitExpectation,
+    patch: PostCommitPatch,
+    moderation: ModerationRecord | null,
+  ): Promise<CommitResult<PostRecord>>;
   listPosts(): Promise<PostRecord[]>;
   // ---- 评论 ----
-  insertComment(record: CommentRecord): Promise<void>;
+  /**
+   * 创建评论：同 id 已存在则不写入；`requireParent` 给定时，还在**同一临界区**内校验父帖
+   * 仍存在、未删除且 revision 未变（防止"父帖刚被删除却插入评论"）。
+   */
+  insertComment(
+    record: CommentRecord,
+    moderation: ModerationRecord | null,
+    requireParent?: { id: string; revision: number },
+  ): Promise<boolean>;
   getComment(id: string): Promise<CommentRecord | null>;
-  replaceComment(record: CommentRecord): Promise<boolean>;
+  /** 评论侧的唯一更新原语（CAS），语义同 `commitPostIfCurrent`。 */
+  commitCommentIfCurrent(
+    id: string,
+    expected: CommentCommitExpectation,
+    patch: CommentCommitPatch,
+    moderation: ModerationRecord | null,
+  ): Promise<CommitResult<CommentRecord>>;
   listComments(postId: string): Promise<CommentRecord[]>;
   // ---- 点赞（集合语义：同主体同目标至多 1 条，计数由集合大小派生，永不为负）----
   addLike(kind: 'post' | 'comment', targetId: string, userId: string): Promise<boolean>;
   removeLike(kind: 'post' | 'comment', targetId: string, userId: string): Promise<boolean>;
   countLikes(kind: 'post' | 'comment', targetId: string): Promise<number>;
   // ---- 审核结论台账 ----
-  putModeration(record: ModerationRecord): Promise<void>;
+  /**
+   * **未提交内容**的结论补录（拒绝/隔离的写入请求）：仅当该 `(type,id,revision)`
+   * 既没有内容行、也没有既有结论时写入，否则返回 `false` 不覆盖。
+   * 已提交内容的结论由 `insertPost`/`commitPostIfCurrent` **同原子**写入，不走这里。
+   */
+  putRefusalVerdict(record: ModerationRecord): Promise<boolean>;
   getModeration(kind: 'post' | 'comment', id: string, revision: number): Promise<ModerationRecord | null>;
   countModeration(): Promise<number>;
   // ---- 举报 ----
@@ -201,36 +285,116 @@ export function createMemoryCommunityStore(
     for (const wake of waiters) wake();
   }
 
+  /**
+   * 帖子 CAS 的**同步**临界区。
+   *
+   * 这个函数**没有任何 `await`**：从"重读当前记录"到"写回"之间不产生事件循环让步，
+   * 因此不会出现"检查用旧快照、写回却覆盖新状态"的窗口（监工 5487924826 P1 的成因）。
+   * 内存实现天然原子；阶段 2 的 PG 实现必须在**同一事务**内 `SELECT ... FOR UPDATE`
+   * 后完成同样的比较与写入，语义与这里逐条对齐。
+   */
+  function commitPost(
+    id: string,
+    expected: PostCommitExpectation,
+    patch: PostCommitPatch,
+    moderationRecord: ModerationRecord | null,
+  ): CommitResult<PostRecord> {
+    const current = posts.get(id);
+    if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
+    // 已删除是单向门：任何写入（含把 visibility 改回 published）都不得复活它。
+    if (current.visibility === 'deleted') return { ok: false, reason: 'DELETED' };
+    if (expected.author_id !== undefined && current.author_id !== expected.author_id) {
+      return { ok: false, reason: 'AUTHOR_CHANGED' };
+    }
+    if (current.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
+    if (expected.visibility !== undefined && current.visibility !== expected.visibility) {
+      return { ok: false, reason: 'VISIBILITY_CHANGED' };
+    }
+    if (expected.audit_state !== undefined && current.audit_state !== expected.audit_state) {
+      return { ok: false, reason: 'AUDIT_STATE_CHANGED' };
+    }
+    const next: PostRecord = { ...current, ...patch };
+    posts.set(id, clonePost(next));
+    if (moderationRecord !== null) {
+      moderation.set(moderationComposite('post', id, next.revision), cloneModeration(moderationRecord));
+    }
+    return { ok: true, record: clonePost(next) };
+  }
+
+  /** 评论 CAS 的同步临界区（语义同 commitPost）。 */
+  function commitComment(
+    id: string,
+    expected: CommentCommitExpectation,
+    patch: CommentCommitPatch,
+    moderationRecord: ModerationRecord | null,
+  ): CommitResult<CommentRecord> {
+    const current = comments.get(id);
+    if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
+    if (current.visibility === 'deleted') return { ok: false, reason: 'DELETED' };
+    if (expected.author_id !== undefined && current.author_id !== expected.author_id) {
+      return { ok: false, reason: 'AUTHOR_CHANGED' };
+    }
+    if (current.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
+    if (expected.visibility !== undefined && current.visibility !== expected.visibility) {
+      return { ok: false, reason: 'VISIBILITY_CHANGED' };
+    }
+    if (expected.audit_state !== undefined && current.audit_state !== expected.audit_state) {
+      return { ok: false, reason: 'AUDIT_STATE_CHANGED' };
+    }
+    const next: CommentRecord = { ...current, ...patch };
+    comments.set(id, cloneComment(next));
+    if (moderationRecord !== null) {
+      moderation.set(moderationComposite('comment', id, next.revision), cloneModeration(moderationRecord));
+    }
+    return { ok: true, record: cloneComment(next) };
+  }
+
   return {
     persistent: false,
 
-    async insertPost(record) {
+    async insertPost(record, moderationRecord) {
+      if (posts.has(record.id)) return false;
       posts.set(record.id, clonePost(record));
+      if (moderationRecord !== null) {
+        moderation.set(moderationComposite('post', record.id, record.revision), cloneModeration(moderationRecord));
+      }
+      return true;
     },
     async getPost(id) {
       const record = posts.get(id);
       return record === undefined ? null : clonePost(record);
     },
-    async replacePost(record) {
-      if (!posts.has(record.id)) return false;
-      posts.set(record.id, clonePost(record));
-      return true;
+    async commitPostIfCurrent(id, expected, patch, moderationRecord) {
+      return commitPost(id, expected, patch, moderationRecord);
     },
     async listPosts() {
       return [...posts.values()].map(clonePost).sort(compareCreatedAtDescending);
     },
 
-    async insertComment(record) {
+    async insertComment(record, moderationRecord, requireParent) {
+      if (comments.has(record.id)) return false;
+      if (requireParent !== undefined) {
+        // 父帖校验与插入处于同一临界区：父帖被并发删除/改版时不得插入孤儿评论。
+        const parent = posts.get(requireParent.id);
+        if (parent === undefined || parent.visibility === 'deleted' || parent.revision !== requireParent.revision) {
+          return false;
+        }
+      }
       comments.set(record.id, cloneComment(record));
+      if (moderationRecord !== null) {
+        moderation.set(
+          moderationComposite('comment', record.id, record.revision),
+          cloneModeration(moderationRecord),
+        );
+      }
+      return true;
     },
     async getComment(id) {
       const record = comments.get(id);
       return record === undefined ? null : cloneComment(record);
     },
-    async replaceComment(record) {
-      if (!comments.has(record.id)) return false;
-      comments.set(record.id, cloneComment(record));
-      return true;
+    async commitCommentIfCurrent(id, expected, patch, moderationRecord) {
+      return commitComment(id, expected, patch, moderationRecord);
     },
     async listComments(postId) {
       return [...comments.values()]
@@ -259,8 +423,16 @@ export function createMemoryCommunityStore(
       return likes.get(likeComposite(kind, targetId))?.size ?? 0;
     },
 
-    async putModeration(record) {
-      moderation.set(moderationComposite(record.target_ref.type, record.target_ref.id, record.target_ref.revision), cloneModeration(record));
+    async putRefusalVerdict(record) {
+      const key = moderationComposite(record.target_ref.type, record.target_ref.id, record.target_ref.revision);
+      // 已有结论（含"内容已提交时同原子写入的结论"）优先，不覆盖。
+      if (moderation.has(key)) return false;
+      const content =
+        record.target_ref.type === 'post' ? posts.get(record.target_ref.id) : comments.get(record.target_ref.id);
+      // 该 revision 的内容已经存在 ⇒ 它的结论必须由提交路径写，这里不补录。
+      if (content !== undefined && content.revision === record.target_ref.revision) return false;
+      moderation.set(key, cloneModeration(record));
+      return true;
     },
     async getModeration(kind, id, revision) {
       const record = moderation.get(moderationComposite(kind, id, revision));

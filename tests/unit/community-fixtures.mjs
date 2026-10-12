@@ -98,7 +98,8 @@ export function makeHarness(options = {}) {
   const baseStore = options.store ?? createMemoryCommunityStore({ now: () => now().getTime() });
   const store = options.storeWrapper === undefined ? baseStore : options.storeWrapper(baseStore);
   const gate = options.gate ?? createPublishGate(options.gateOptions ?? {});
-  const authors = options.authors ?? createLocalPseudonymousAuthorDirectory();
+  const baseAuthors = options.authors ?? createLocalPseudonymousAuthorDirectory();
+  const authors = options.authorsWrapper === undefined ? baseAuthors : options.authorsWrapper(baseAuthors);
   const newId = options.newId ?? makeIdFactory();
   const service = createCommunityService({
     store,
@@ -126,6 +127,44 @@ export function withGate(harness, gateOptions) {
     now: harness.now,
     newId: harness.newId,
   });
+}
+
+/**
+ * 手动放行的挂起点：用于**交错复现**——把一条请求停在"已读、未写"的窗口里，
+ * 让另一条请求先完成（这正是"检查与写入之间隔着 await"的复现手段）。
+ *
+ * 用法：`arm()` 之后，**第一次**经过指定依赖的调用会挂起；`entered` 表示已挂起，
+ * `release()` 放行。未 `arm()` 时调用直接放行（避免把准备阶段的请求也挂住）。
+ */
+export function makePausePoint() {
+  let release;
+  let entered;
+  const blocker = new Promise((resolve) => {
+    release = resolve;
+  });
+  const enteredPromise = new Promise((resolve) => {
+    entered = resolve;
+  });
+  let armed = false;
+  let used = false;
+  return {
+    arm() {
+      armed = true;
+    },
+    /** 只在"已 arm 且尚未使用"时挂起一次。 */
+    async pauseOnce() {
+      if (!armed || used) return;
+      used = true;
+      entered();
+      await blocker;
+    },
+    get entered() {
+      return enteredPromise;
+    },
+    release() {
+      release();
+    },
+  };
 }
 
 /** 便捷：发一条干净帖子（返回契约 Post）。 */
