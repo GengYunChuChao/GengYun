@@ -15,20 +15,26 @@ const identifyApi = require('../../utils/identify-api')
 // 使页面在只打包必要依赖的场景下也能加载；白名单仍须包含 utils/reference.js。
 
 /**
- * 私有历史缓存：**按归属命名空间 + 逐条归属**双绑定（监工 review 5486774508 行内 4244882054）。
+ * 私有历史：**只在进程内内存保存，不写入 wx storage**（监工 review 5487051759）。
  *
- * - 归属键 `ownerKey` 只能来自**已核实会话**（`auth.sessionEpoch()`：令牌变化/清会话/换账号都会变），
- *   **不得**用展示字段当归属证明；
- * - 存储键按归属派生：`gengyun.identify.history.v2.<ownerKey>`，换主体天然读不到别人的条目；
- * - 条目内带 `ownerKey`，装载时**再过滤一次**（双保险）；
- * - **无法确认归属的一律 fail-closed**：历史遗留的全局键 `gengyun.identify.history` 与缺
- *   `ownerKey` 的条目一律丢弃，绝不展示、绝不"沿用展示"。
+ * 为什么不能持久化归属：`ownerKey` 取自已核实会话的 `auth.sessionEpoch()`，而 auth 的
+ * generation/intentEpoch 是**模块内计数器，应用重启后归零**；契约 `Session`/`SessionInfo`
+ * 也没有任何主体标识（只有 access_token/token_type/expires_at/audience/revision/scopes），
+ * 小程序内亦无可用哈希能力。因此**跨启动无法证明持久化条目的归属**：重启后不同主体会被映射到
+ * 同一存储键与同一 ownerKey，逐条相等过滤随之失效（监工反例：启动 1 的 A 写 1 条 → 模拟重启 →
+ * 装载 B 核实成功 ⇒ 仍读出 A 的 recordId）。
  *
- * 已知取舍（如实记录）：会话缓存里没有稳定的账号主体标识（`auth.js` 只存 accessToken/audience/
- * expiresAt/executionMode，且本片不得改 `auth.js`），因此归属键取**会话世代**：同一账号重新登录后
- * 世代变化 → 读不到旧的本机索引（fail-closed，宁可不显示也不跨主体串号）。服务端记录本身仍按归属
- * 校验（越权一律 404），但服务端 404 不能消除"已经展示过的串号"，故归属绑定必须在装载前完成。
+ * 结论（fail-closed，不发明"本地随机 owner id"——那同样不能证明归属）：
+ * - 历史**不再跨应用重启**持久化，只保留本次进程内；
+ * - 装载前**清理**所有本地历史缓存键：旧全局键 `gengyun.identify.history` 与
+ *   `gengyun.identify.history.v2.*`（含当前会话世代派生的键）。旧数据无法核实归属 ⇒ 清理，
+ *   不做"沿用展示"；
+ * - 同进程内的账号切换隔离保持：内存条目仍按已核实会话世代 `ownerKey` 逐条过滤。
+ *
+ * 代价（如实记录）：本机识别历史不再跨应用重启；服务端仍是历史的事实来源，后续可经服务端读取接口
+ * （如 `GET /history`，属 GY-I20 范围）补回。
  */
+const historyByOwner = new Map()
 const HISTORY_KEY_LEGACY = 'gengyun.identify.history'
 const HISTORY_KEY_PREFIX = 'gengyun.identify.history.v2.'
 const HISTORY_MAX = 10
@@ -68,59 +74,62 @@ function ownerKeyOf() {
   }
 }
 
-/** 归属命名空间存储键（把归属键收敛为安全字符集，避免键注入）。 */
+/** 历史缓存键名（把归属键收敛为安全字符集，避免键注入）；仅用于**清理**旧持久化键。 */
 function historyKeyFor(ownerKey) {
   return HISTORY_KEY_PREFIX + String(ownerKey).replace(/[^0-9a-zA-Z:_-]/g, '_')
 }
 
-/** 丢弃无法证明归属的历史遗留全局缓存（fail-closed；可选做法即"读到旧键就清掉"）。 */
-function dropLegacyHistory() {
+/**
+ * 清理**所有本地持久化**的历史缓存键：旧全局键 `gengyun.identify.history` 与
+ * `gengyun.identify.history.v2.*`。跨启动无法核实归属 ⇒ 一律清理，不做"沿用展示"。
+ * 无论 `getStorageInfoSync` 是否可用，旧全局键都会被显式删除。
+ */
+function purgeHistoryCache() {
   try {
-    const legacy = wx.getStorageSync(HISTORY_KEY_LEGACY)
-    if (legacy !== '' && legacy !== null && legacy !== undefined) wx.removeStorageSync(HISTORY_KEY_LEGACY)
+    let keys = []
+    try {
+      const info = typeof wx.getStorageInfoSync === 'function' ? wx.getStorageInfoSync() : null
+      if (info && Array.isArray(info.keys)) keys = info.keys
+    } catch (error) {
+      keys = []
+    }
+    const targets = keys.filter(function (key) {
+      return key === HISTORY_KEY_LEGACY || (typeof key === 'string' && key.indexOf(HISTORY_KEY_PREFIX) === 0)
+    })
+    if (targets.indexOf(HISTORY_KEY_LEGACY) === -1) targets.push(HISTORY_KEY_LEGACY)
+    for (const key of targets) wx.removeStorageSync(key)
+    return targets.length
   } catch (error) {
-    // 存储不可用时不谎称已清理；调用方仍不会展示旧数据。
+    return 0
   }
 }
 
 /**
- * 读取**当前归属**的私有历史：无归属键 → 空；逐条校验 `ownerKey` 一致，
- * 不一致/缺字段的条目一律丢弃并顺手清理。
+ * 读取**当前归属**的进程内私有历史：无归属键 → 空；逐条校验 `ownerKey` 一致
+ * （不读 wx storage：跨启动不可核实归属的缓存已在上游清理）。
  */
 function readHistory(ownerKey) {
   if (typeof ownerKey !== 'string' || ownerKey === '') return []
-  dropLegacyHistory()
-  let value
-  try {
-    value = wx.getStorageSync(historyKeyFor(ownerKey))
-  } catch (error) {
-    return []
-  }
+  const value = historyByOwner.get(ownerKey)
   if (!Array.isArray(value)) return []
-  const kept = value.filter(function (item) {
+  return value.filter(function (item) {
     return !!item && typeof item.recordId === 'string' && item.ownerKey === ownerKey
   })
-  if (kept.length !== value.length) {
-    try { wx.setStorageSync(historyKeyFor(ownerKey), kept) } catch (error) {}
-  }
-  return kept
 }
 
-/** 写入**当前归属**的私有历史；无归属键一律拒写（fail-closed）。 */
+/** 写入**当前归属**的进程内私有历史；无归属键一律拒写（fail-closed）。 */
 function writeHistory(ownerKey, items) {
   if (typeof ownerKey !== 'string' || ownerKey === '') return false
-  try {
-    wx.setStorageSync(historyKeyFor(ownerKey), items)
-    return true
-  } catch (error) {
-    return false
-  }
+  historyByOwner.set(ownerKey, items)
+  return true
 }
 
 Page({
   onLoad: function () {
     // 门禁核实**之前**不得读取/应用任何全局私有数据（历史只在核实通过后装载）。
     fontScale.applyFontScale(this)
+    // 启动即清理无法跨启动核实归属的本地历史缓存（旧全局键 + v2.* 命名空间键）。
+    purgeHistoryCache()
   },
 
   data: {
@@ -199,8 +208,8 @@ Page({
     this.beginOperation()
     // 归属键失效：此后任何写入/读取都必须重新经门禁核实取得归属。
     this._ownerKey = ''
-    // 无法证明归属的历史遗留全局缓存一律丢弃（fail-closed）。
-    dropLegacyHistory()
+    // 无法跨启动核实归属的本地历史缓存一律清理（fail-closed），不做"沿用展示"。
+    purgeHistoryCache()
     const patch = {
       guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
@@ -525,6 +534,8 @@ Page({
   onClearHistory: function () {
     const ownerKey = this._ownerKey
     if (this.data.guest === true || typeof ownerKey !== 'string' || ownerKey === '') return
+    historyByOwner.delete(ownerKey)
+    // 旧持久化键（若有残留）一并清理，避免下次启动出现无法核实归属的数据。
     try { wx.removeStorageSync(historyKeyFor(ownerKey)) } catch (_) {}
     this.setData({ history: [] })
   }

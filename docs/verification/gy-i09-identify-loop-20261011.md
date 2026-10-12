@@ -114,6 +114,8 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。   
 ℹ duration_ms 16739.3582                                  # exit 0
 # 返修轮 1 后为 ℹ tests 718 / pass 717 / fail 0 / skipped 1（新增 3 条并发与取消重放用例），见 §11.4
 # 返修轮 2 后为 ℹ tests 723 / pass 722 / fail 0 / skipped 1（新增 5 条生命周期用例），见 §12.5
+# 返修轮 3 后为 ℹ tests 725 / pass 724 / fail 0 / skipped 1（新增 [B4] 与 [B4 正控制]），见 §13.6
+# 返修轮 4 后为 ℹ tests 726 / pass 725 / fail 0 / skipped 1（新增 [B5] 跨重启反例），见 §14.4
 
 > npm run test:contract
 ✔ API 错误码与 HTTP 状态映射与契约 states.json 完全一致
@@ -490,5 +492,73 @@ node tests/integration/recognitions-http.mjs           PASS（含并发与取消
 > 返修轮 3 **未**宣布验收通过。仍未取得：真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯。
 > 关于 CI：监工提到"当前新 HEAD 的适用 CI 未取得全绿"；本机侧门禁输出如上，**CI 的 `action_required` 不等于通过**，
 > 不使用 CI 状态代替本机实测，也不声称 CI 已绿。
+
+## 14 返修轮 4：回应监工 `5487051759`（跨"应用重启"的归属失效）
+
+监工先确认：本机独立 checkout 的识别 API／页面／既有 UI **67/67 通过**；单次运行内 A→退出→B 的命名空间隔离**已有修订**。
+本条修的是**跨启动**归属失效。
+
+### 14.1 缺陷（监工反例）
+
+`ownerKey` 取自已核实会话的 `auth.sessionEpoch()`，而 auth 的 generation/intentEpoch 是**模块内计数器，应用重启后归零**，
+因此它**不能证明持久化条目的主体归属**。监工反例：
+① 启动实例 A，核实成功，写 1 条（`ownerA=0:0`）；② `onHide` + `auth.clearSession`，**保留 wx 本地存储**；
+③ **新建完全独立 VM 模拟应用重启**，装载不同 B 会话并核实成功；④ 实际 `ownerB=0:0`、`guest=false`、**`history.length=1`**，
+读出 A 的 `recordId`。即：单进程内计数器递增能隔离这一次切换，但**跨启动会重用存储键与条目 ownerKey**，逐条相等过滤随之失效。
+
+已确认的约束（不再尝试别的路子）：契约 `Session`/`SessionInfo` **没有**任何主体标识（只有 `access_token`/`token_type`/
+`expires_at`/`audience`/`revision`/`scopes`）；小程序内无可用哈希/加密能力；`auth.js` 只导出 `getSession` 与 `sessionEpoch`。
+故正确修法只能是监工给的第二条路径：**对无法跨启动核实归属的缓存，拒绝/清理（fail-closed）**。
+
+### 14.2 修法：不持久化 + 装载前清理
+
+| 项 | 实现 |
+| --- | --- |
+| 私有历史**不再持久化** | 改为**进程内内存** `historyByOwner`（模块级 Map）；`writeHistory` 只写内存、`readHistory` 只读内存，**不再**调用 `wx.setStorageSync` |
+| **装载前清理** | 新增 `purgeHistoryCache()`：删除旧全局键 `gengyun.identify.history` **以及** `gengyun.identify.history.v2.*`（含当前会话世代派生的键）；在页面 `onLoad` 与 `closePrivate()` 调用；`wx.getStorageInfoSync()` 不可用时也**显式删除旧全局键** |
+| 同进程内账号切换隔离保持 | 内存条目仍按已核实会话世代 `ownerKey` 逐条过滤（**不回退**监工已复验通过的行为） |
+| 未采用的写法 | 未引入"本地随机 owner id"之类同样不能证明归属的方案；未改 `auth.js`/`page-gate.js`/`navigation.js`/`runtime.js`/`packages/**` |
+
+**代价（如实说明，已写入 PR 正文）**：本地识别历史**不再跨应用重启**；服务端仍是历史的事实来源，后续可经服务端读取接口
+（如 `GET /history`，属 GY-I20 范围）补回。
+
+### 14.3 `[B5]` 用例名与"先失败后通过"原始输出
+
+- 新增：`GY-I09 [B5]：两个独立启动共享同一本地存储 —— 重启后不得读到上一进程/旧缓存的历史`
+  - 启动 1（VM#1）：A 核实 → `applyJob` + `rememberHistory` 写 1 条；断言**本地存储里没有任何历史缓存键**（不持久化）。
+  - 注入旧版本遗留：`gengyun.identify.history`（旧全局键）与 `gengyun.identify.history.v2.0:0`（旧命名空间键，条目属 A）。
+  - 模拟应用重启（**VM#2，新模块实例，共享同一份 wx storage**），装载不同主体 B 并核实成功 ⇒ `guest=false`；
+    断言 **`history.length === 0`**、页面数据**不含** A 的 `recordId`/`jobId`，且**清理后存储里不再有历史缓存键**。
+- 同进程正控制保留：`[B4 正控制]`（同主体离开再返回仍读回自己的历史）；既有 `[B1]`~`[B4]`、`[C]`、`[C 负控制①]` 全部继续通过。
+- **回退-复跑原始输出**（把识别页临时回退到返修轮 3 的持久化版本）：
+
+```
+=== 旧页面（修复前，持久化归属）跑 [B5] ===
+✔ [B1]   ✔ [B2]   ✔ [B3]
+✖ GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必须看不到 A 的私有历史
+✔ [B4 正控制]
+✖ GY-I09 [B5]：两个独立启动共享同一本地存储 —— 重启后不得读到上一进程/旧缓存的历史
+ℹ tests 13 / pass 11 / fail 2
+=== 恢复修复后 ===
+ℹ tests 13 / pass 13 / fail 0
+```
+说明：修复前 `[B5]` 确实失败（跨启动读出 A 的条目）；`[B4]` 同时失败是因为它已按"不落本地存储"的新不变量断言
+（旧实现会把条目写进 `wx storage`）。恢复修复后 13/13。
+
+### 14.4 返修轮 4 门禁（真跑原始输出要点）与 CI 现状
+
+```
+node --test tests/unit/miniprogram-identify.test.mjs   ℹ tests 13 / pass 13 / fail 0
+node --test tests/ui-adaptive.test.mjs                 ℹ tests 25 / pass 25 / fail 0
+npm run lint                                           PASS tsc ×2 + 卫生扫描                          exit 0
+npm run test:unit                                      ℹ tests 726 / pass 725 / fail 0 / skipped 1    exit 0
+npm run test:contract                                  ℹ tests 6 / pass 6 / fail 0                    exit 0
+npm run test:docs                                      PASS: 27 initial tasks; …Markdown links and tables
+npm run test:mini                                      PASS: native JSON/routes, … ℹ tests 4 / pass 4 / fail 0
+node tests/integration/recognitions-http.mjs            PASS（并发：same-key provider_calls=1 / different-body [202,409] / cancel 原样重放 200）  exit 0
+```
+
+**CI 现状（如实）**：本机未跑 CI；监工提到当前新 HEAD 的适用 CI 未取得全绿。**CI 的 `action_required` 不等于通过**，
+本 PR 不以 CI 状态代替本机实测，也不声称 CI 已绿。返修轮 4 **未**宣布验收通过；请监工基于新 HEAD 独立复核。
 
 

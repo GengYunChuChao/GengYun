@@ -180,8 +180,9 @@ test('GY-I09 小程序：打包白名单必须包含识别页依赖（既往 MOD
 // 手动解析 wx.request，以复现「门禁未核实/失效仍展示私有数据」与「在途响应淘汰」两个实际反例。
 // 合成身份与合成响应，绝不外发；不作为微信工具或真机证据。
 // ---------------------------------------------------------------------------
-function lifecycle() {
-  const storage = new Map();
+function lifecycle(sharedStorage) {
+  // 传入共享 storage 可模拟「同一份本地存储 + 两个独立启动（新 VM、新模块实例）」。
+  const storage = sharedStorage instanceof Map ? sharedStorage : new Map();
   const requests = [];
   const launches = [];
   const cache = new Map();
@@ -192,6 +193,7 @@ function lifecycle() {
       getStorageSync: key => (storage.has(key) ? storage.get(key) : ''),
       setStorageSync: (key, value) => { storage.set(key, value); },
       removeStorageSync: key => { storage.delete(key); },
+      getStorageInfoSync: () => ({ keys: Array.from(storage.keys()), currentSize: 0, limitSize: 10240 }),
       request: options => requests.push(options),
       reLaunch: options => launches.push(options.url),
       switchTab: options => launches.push(options.url),
@@ -299,6 +301,13 @@ function validatedJob(state, result, ids) {
 /** A 主体专用的合成 id（用于验证 B 看不到 A 的条目）。 */
 const A_JOB_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const A_RECORD_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+
+/** 本地存储里残留的历史缓存键（旧全局键 + v2.* 命名空间键）；正常应为空。 */
+function historyKeysIn(storage) {
+  return Array.from(storage.keys()).filter(function (key) {
+    return typeof key === 'string' && key.indexOf('gengyun.identify.history') === 0;
+  });
+}
 
 test('GY-I09 [B1]：无会话时不得读取/展示任何全局私有识别数据（门禁核实前）', () => {
   const h = lifecycle();
@@ -444,12 +453,10 @@ test('GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必�
   page.applyJob(jobA, page._generation);
   page.rememberHistory(jobA, jobA.result, page._generation);
   assert.equal(page.data.history.length, 1);
-  // 归属命名空间：A 的条目写在按归属派生的键下，且条目自带 ownerKey。
-  const storedA = h.storage.get('gengyun.identify.history.v2.' + ownerA);
-  assert.equal(Array.isArray(storedA), true, 'A 的历史必须写在归属命名空间键下');
-  assert.equal(storedA.length, 1);
-  assert.equal(storedA[0].ownerKey, ownerA);
-  assert.equal(storedA[0].recordId, A_RECORD_ID);
+  // 私有历史**不落 wx storage**（跨启动不可核实归属）：条目只在进程内，且自带 ownerKey。
+  assert.deepEqual(historyKeysIn(h.storage), [], '私有历史不得写入本地存储');
+  assert.equal(page.data.history[0].ownerKey, ownerA);
+  assert.equal(page.data.history[0].recordId, A_RECORD_ID);
   // 退出 → 装载**不同主体 B**（不同令牌 ⇒ 不同会话世代/归属键）。
   page.onHide();
   h.auth.clearSession();
@@ -466,8 +473,8 @@ test('GY-I09 [B4]：跨账号隔离 —— A 写历史后退出，装载 B 必�
   assert.equal(serialized.includes(A_RECORD_ID), false, 'B 的页面数据不得出现 A 的 recordId');
   assert.equal(serialized.includes(A_JOB_ID), false, 'B 的页面数据不得出现 A 的 jobId');
   assert.equal(page.data.historyOwner, ownerB);
-  // A 的命名空间条目仍在（未被 B 读取，也未被误删）。
-  assert.equal(h.storage.get('gengyun.identify.history.v2.' + ownerA).length, 1);
+  // 私有历史只存在于进程内（不落 wx storage）：内存里的条目不得被 B 读出。
+  assert.deepEqual(historyKeysIn(h.storage), [], '私有历史不得写入本地存储');
 });
 
 test('GY-I09 [B4 正控制]：同主体离开再返回仍能读回自己的历史（不得误清）', () => {
@@ -491,6 +498,42 @@ test('GY-I09 [B4 正控制]：同主体离开再返回仍能读回自己的历�
   assert.equal(page.data.history.length, 1, '同一主体必须仍能读取自己的历史');
   assert.equal(page.data.history[0].recordId, RECORD_ID);
   assert.equal(page.data.history[0].ownerKey, ownerA);
+});
+
+test('GY-I09 [B5]：两个独立启动共享同一本地存储 —— 重启后不得读到上一进程/旧缓存的历史', () => {
+  const shared = new Map();
+  // —— 启动 1：A 核实并写入一条私有历史 ——
+  const h1 = lifecycle(shared);
+  h1.seedSession('synthetic-identify-token-A');
+  const page1 = h1.page();
+  page1.onLoad();
+  page1.onShow();
+  h1.acceptVerification(h1.requests.at(-1));
+  assert.equal(page1.data.guest, false);
+  const jobA = validatedJob('succeeded', recognitionValue({ id: A_RECORD_ID }), { job: A_JOB_ID, rec: A_RECORD_ID });
+  page1.applyJob(jobA, page1._generation);
+  page1.rememberHistory(jobA, jobA.result, page1._generation);
+  assert.equal(page1.data.history.length, 1);
+  // 私有不落本地存储（跨启动不可核实归属 ⇒ 不持久化）。
+  assert.deepEqual(historyKeysIn(shared), [], '启动 1 不得把私有历史写入本地存储');
+  // 模拟旧版本遗留的本地历史缓存（旧全局键 + v2.* 命名空间键，归属来自旧进程的计数器）。
+  const legacyEntry = { ownerKey: '0:0', jobId: A_JOB_ID, recordId: A_RECORD_ID, state: 'succeeded', stateTitle: '识别完成', selectedSpeciesId: null, at: '2026-10-12T05:00:00.000Z' };
+  shared.set('gengyun.identify.history', [legacyEntry]);
+  shared.set('gengyun.identify.history.v2.0:0', [legacyEntry]);
+  // —— 模拟应用重启：全新 VM（新模块实例），共享同一份 wx storage，装载不同主体 B ——
+  const h2 = lifecycle(shared);
+  h2.seedSession('synthetic-identify-token-B');
+  const page2 = h2.page();
+  page2.onLoad();
+  page2.onShow();
+  h2.acceptVerification(h2.requests.at(-1));
+  assert.equal(page2.data.guest, false, 'B 应通过核实');
+  assert.equal(page2.data.history.length, 0, '重启后不得读出上一进程/旧缓存的历史');
+  const serialized = JSON.stringify(page2.data);
+  assert.equal(serialized.includes(A_RECORD_ID), false, '重启后不得出现 A 的 recordId');
+  assert.equal(serialized.includes(A_JOB_ID), false, '重启后不得出现 A 的 jobId');
+  // 清理证据：装载前必须删除无法核实归属的本地历史缓存键。
+  assert.deepEqual(historyKeysIn(shared), [], '装载前必须清理无法核实归属的本地历史缓存');
 });
 
 test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何请求', async () => {
