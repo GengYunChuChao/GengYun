@@ -249,6 +249,8 @@ export function createOcrService(options: OcrServiceOptions) {
   const jobDeadlineMs = options.jobDeadlineMs ?? DEFAULT_JOB_DEADLINE_MS;
   const idempotencyHmacKey = options.idempotencyHmacKey;
   const inFlight = new Set<Promise<void>>();
+  /** 真实调用提供者的累计次数（仅在 `runProviderWithDeadline` 真正发起调用处 +1）。 */
+  let providerCalls = 0;
 
   function scopeFor(userId: string, method: string, routePath: string): string {
     return idempotencyScope(userId, method, routePath);
@@ -548,6 +550,10 @@ export function createOcrService(options: OcrServiceOptions) {
     const timeout = new Promise<{ kind: 'timeout' }>((resolve) => {
       timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining);
     });
+    // 可观测计数（诊断/证据用；不含凭据、不改变语义）：**真正发起提供者调用**的次数。
+    // 计数点就在下面这一行，因此「受理前 fail-closed」时它必然为 0；
+    // 也用于在真实装配上证明「同键同体并发只调用一次」。
+    providerCalls += 1;
     const call = provider
       .extract({ jobId: job.id, mediaId: job.mediaId, mediaRevision: job.mediaRevision })
       .then((value) => ({ kind: 'value' as const, value }))
@@ -783,6 +789,8 @@ export function createOcrService(options: OcrServiceOptions) {
       doseNote: dose.note,
       storePersistent: store.persistent,
       jobDeadlineMs,
+      /** 真实调用提供者的累计次数（诊断/证据用；受理前 fail-closed 时恒为 0）。 */
+      providerCalls,
     }),
   };
 }

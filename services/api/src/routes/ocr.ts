@@ -26,10 +26,56 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AuthGuards } from '../auth/middleware.ts';
 import { readIdentity } from '../auth/middleware.ts';
+import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
-import type { OcrService } from '../ocr/service.ts';
+import { createOcrService, type OcrService } from '../ocr/service.ts';
+import { createMemoryOcrStore, type OcrStore } from '../ocr/store.ts';
+import { createOcrProvider, type OcrProvider } from '../ocr/provider.ts';
+import { createOcrMediaPort, type OcrMediaPort } from '../ocr/media.ts';
+import {
+  createOcrDosePort,
+  createOcrReferencePort,
+  type OcrDosePort,
+  type OcrReferencePort,
+} from '../ocr/reference.ts';
 import { buildMeta } from './support.ts';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * GY-I10 标签 OCR 服务实例（供装配方与回归测试驱动在途任务：
+     * `settle()`、`describe().providerCalls` 真实调用计数）。**不含凭据**。
+     */
+    ocrService: OcrService;
+  }
+}
+
+/**
+ * 路由依赖注入面（**产品装配 `app.ts` 只传 `{ guards }`，不传任何端口**）。
+ *
+ * 「产品装配不暴露任何 provider / store / 端口注入」本身是**默认关闭**的结构属性：
+ * 真实适配器只能由 `createOcrProvider` / `createOcrReferencePort` 依 `config.executionMode` 选择，
+ * 装配方无法在装配点塞入一个未审的真实客户端，也无法绕过 fail-closed 换成替身。
+ * 其余字段仅供**回归测试**构造隔离场景（如"真实登记库未接线"这一分支）。
+ */
+export interface OcrRouteDeps {
+  /** 用户端鉴权守卫（`createAuthGuards` 产物），由装配方提供。 */
+  guards: AuthGuards;
+  /** 已组装的服务；缺省由本层按 `config.executionMode` 组装（便于 `app.ts` 一行接入）。 */
+  service?: OcrService;
+  provider?: OcrProvider;
+  store?: OcrStore;
+  media?: OcrMediaPort;
+  reference?: OcrReferencePort;
+  dose?: OcrDosePort;
+  /** 幂等请求摘要密钥；缺省取 `config.sessionSigningKey`，再缺省为替身桩密钥。 */
+  idempotencyHmacKey?: string;
+  now?: () => Date;
+  idFactory?: () => string;
+  /** 任务截止时间（毫秒）；生产走服务层默认 30s，仅供装配/回环测试收紧。 */
+  jobDeadlineMs?: number;
+}
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
 
@@ -115,12 +161,34 @@ function actorId(request: FastifyRequest): string {
   return readIdentity(request).userId;
 }
 
-export function registerOcrRoutes(
-  app: FastifyInstance,
-  config: AppConfig,
-  guards: AuthGuards,
-  service: OcrService,
-): void {
+/**
+ * 注册标签 OCR 路由（契约 5 个 operationId）。
+ *
+ * 服务缺省由本层按 `config.executionMode` 组装 ⇒ **产品装配 `app.ts` 只需一行调用**：
+ * `registerOcrRoutes(app, config, { guards });`（零端口注入，见 `OcrRouteDeps` 注释）。
+ * 返回组装好的服务，便于装配方/测试注入或驱动（并已 `decorate` 到 `app.ocrService`）。
+ */
+export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps: OcrRouteDeps): OcrService {
+  const guards = deps.guards;
+  const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode });
+  const store = deps.store ?? createMemoryOcrStore();
+  const media = deps.media ?? createOcrMediaPort(config.executionMode);
+  const reference = deps.reference ?? createOcrReferencePort(config.executionMode);
+  const dose = deps.dose ?? createOcrDosePort(config.executionMode);
+  const service =
+    deps.service ??
+    createOcrService({
+      store,
+      provider,
+      media,
+      reference,
+      dose,
+      idempotencyHmacKey: deps.idempotencyHmacKey ?? config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+      now: deps.now,
+      idFactory: deps.idFactory,
+      jobDeadlineMs: deps.jobDeadlineMs,
+    });
+  app.decorate('ocrService', service);
   app.post(
     `${API_PREFIX}/ocr`,
     { preHandler: guards.requireUser, schema: { body: mediaJobBody } },
@@ -208,4 +276,6 @@ export function registerOcrRoutes(
         .send({ data: { accepted }, meta: buildMeta(request, config) });
     },
   );
+
+  return service;
 }
