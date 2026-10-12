@@ -27,6 +27,7 @@ import {
   QUERYABLE_VISIBILITIES,
   REGION_CODE_PATTERN,
   RESTRICTION_STATUSES,
+  SIMULATION_REGISTRATION_PREFIX,
   SOURCE_KINDS,
 } from './constants.mjs';
 import { normalizeText, resolveNavTerm } from './catalog.mjs';
@@ -118,6 +119,13 @@ export function evaluateEligibility(item, { includeSimulated = false } = {}) {
     return { queryable: false, reason: '登记证号缺失，无法满足契约必填' };
   }
 
+  // PR #82 复核：**来源类型实名判定**。`source_kind === 'simulation'` 即模拟来源，
+  // 与 `item.simulated` 标志位、`SIM-` 登记号前缀同等对待；`include_simulated`
+  // 只放开「查阅」，不放开真实有效集合（可执行资格由 evaluateApplicability 单独判定）。
+  if (isSimulatedSource(item) && !includeSimulated) {
+    return { queryable: false, reason: '模拟演示记录（非真实资料）' };
+  }
+
   if (item.visibility === 'hidden') return { queryable: false, reason: '该记录已下架' };
   if (item.visibility === 'deleted') return { queryable: false, reason: '该记录已删除' };
   if (!QUERYABLE_VISIBILITIES.includes(item.visibility)) return { queryable: false, reason: '该记录当前不可见' };
@@ -128,10 +136,20 @@ export function evaluateEligibility(item, { includeSimulated = false } = {}) {
     return { queryable: false, reason: map[validity] ?? '来源有效期不可用' };
   }
 
-  if (item.simulated && !includeSimulated) {
-    return { queryable: false, reason: '模拟演示记录（非真实资料）' };
-  }
   return { queryable: true, reason: null };
+}
+
+/**
+ * PR #82 复核：是否模拟来源（**实名判定**，任一成立即为模拟）。
+ *   - `item.simulated === true`（装载层派生标志）
+ *   - `source.source_kind === 'simulation'`（来源类型）
+ *   - 登记号以 `SIM-` 前缀
+ * 此前只认标志位，导致「来源类型=simulation 但标志位=false」被当成真实来源放行。
+ */
+export function isSimulatedSource(item) {
+  if (item?.simulated === true) return true;
+  if (item?.source?.source_kind === 'simulation') return true;
+  return String(item?.registration_number ?? '').startsWith(SIMULATION_REGISTRATION_PREFIX);
 }
 
 /**
@@ -194,11 +212,16 @@ export function matchConditions(item, query) {
  *   banned_restricted —— 禁限用状态；banned 必阻断，restricted 默认阻断（除非显式 allow_restricted），
  *                       unknown（未采集）按 fail-closed：无法确认非禁用 → 阻断。
  *   crop              —— 记录 crop_ids 含上下文作物。
- *   growth_stage      —— 记录未采集该字段 → 标注无法确认（不阻断其它维度匹配）。
- *   region            —— 记录未标注地区码 → 标注无法确认。
+ *   growth_stage      —— **必要条件**：上下文要求而记录未采集或不相符 → 阻断（PR #82）。
+ *   region            —— **必要条件**：上下文要求而记录未标注或不相符 → 阻断（PR #82）。
  *   dosage_form       —— 上下文指定剂型时比对（含量剂型维度）。
- *   ingredient_content—— 上下文指定有效成分（名称±含量）时，比对 ingredients_text 解析结果。
+ *   ingredient_content—— 上下文指定有效成分（名称±含量）时，按精确语义比对
+ *                       （见 `ingredientContentMatch`，域库与小程序同一套规则）。
  *   use_scene         —— 上下文使用场景做子串比对。
+ *
+ * PR #82 修订要点：`applicable=true` 意味着「可进入可执行建议/用量卡片」。凡**必要条件**
+ * 未知（未采集）或不相符，一律进 `blocked` 并给出可读原因 ——「可以查阅」不等于
+ * 「适用/可展示用量」（资料仍可经详情查询，`queryable` 判定不受影响）。
  *
  * @returns {{ applicable: boolean, blocked: string[], reasons: string[], rule_version: string }}
  *   applicable：是否可进入可执行建议/用量卡片（安全性维度全部通过）。
@@ -210,7 +233,9 @@ export function evaluateApplicability(item, context = {}, { ruleVersion = APPLIC
   const blocked = [];
 
   // 1) 有效来源（复用既有 eligibility）。
-  const elig = evaluateEligibility(item, { includeSimulated: context.include_simulated === true });
+  //    PR #82 复核：`include_simulated` 只放开「查阅」，**不得**据此产生可执行资格 ——
+  //    故此处一律以 includeSimulated=false 判定来源有效性；模拟来源始终阻断 valid_source。
+  const elig = evaluateEligibility(item, { includeSimulated: false });
   if (!elig.queryable) {
     blocked.push('valid_source');
     reasons.push(`来源不可用：${elig.reason ?? '不满足契约必填或可查询条件'}`);
@@ -241,19 +266,28 @@ export function evaluateApplicability(item, context = {}, { ruleVersion = APPLIC
     }
   }
 
-  // 4) 生育期（记录未采集 → 标注无法确认，不阻断其它维度匹配）。
+  // 4) 生育期（**必要条件**：上下文要求而记录未采集或不相符 → 阻断）。
+  //    PR #82：此前仅 push reason 不 push blocked，导致「record=seedling / context=flowering」
+  //    与「record 无生育期 / context=seedling」都判 applicable=true，被详情页解释成
+  //    「可进入用量建议」。必要条件未知/不符不得形成可执行资格（AC13 fail-closed）。
   if (context.growth_stage) {
-    const gs = item.growth_stage ?? item.verification?.growth_stage;
-    if (typeof gs === 'string' && gs.trim() !== '') {
+    // 显式读取：只有**非空字符串**才算已采集；空串/缺失一律按未采集 fail-closed。
+    // （不用 `??`/`||` 混用，避免两端对空串取值不同造成一端放行一端拒绝。）
+    const gs = firstNonEmptyString(item.growth_stage, item.verification?.growth_stage);
+    if (gs !== null) {
       if (!normalizeText(gs).includes(normalizeText(context.growth_stage))) {
+        blocked.push('growth_stage');
         reasons.push('生育期不符');
       }
     } else {
+      blocked.push('growth_stage');
       reasons.push('记录未采集生育期条件，无法确认是否适用该生育期');
     }
   }
 
-  // 5) 地区（记录未标注地区码 → 标注无法确认）。
+  // 5) 地区（**必要条件**：上下文要求而记录未标注或不相符 → 阻断）。
+  //    PR #82 同上：此前未标注地区仅给原因，出现「record 无地区 / context=region_code=330100」
+  //    仍 applicable=true。资料可查询，但「可查阅」不等于「适用/可展示用量」。
   if (context.region_code) {
     const rc = Array.isArray(item.region_codes) ? item.region_codes : (typeof item.region_code === 'string' ? [item.region_code] : []);
     if (rc.length > 0) {
@@ -262,6 +296,7 @@ export function evaluateApplicability(item, context = {}, { ruleVersion = APPLIC
         reasons.push('适用地区不符');
       }
     } else {
+      blocked.push('region');
       reasons.push('记录未标注适用地区，无法确认是否适用该地区');
     }
   }
@@ -274,12 +309,10 @@ export function evaluateApplicability(item, context = {}, { ruleVersion = APPLIC
     }
   }
 
-  // 7) 含量剂型（有效成分）。
+  // 7) 含量剂型（有效成分）—— PR #82：跨端一致的精确语义（见 ingredientContentMatch）。
   if (context.ingredient_content) {
-    const want = normalizeText(context.ingredient_content);
     const parsed = item.verification?.parsed_ingredients ?? parseIngredients(item.ingredients_text);
-    const hit = parsed.some((ing) => normalizeText(ing.name).includes(want) || normalizeText(ing.content_text).includes(want));
-    if (!hit) {
+    if (!ingredientContentMatch(parsed, context.ingredient_content)) {
       blocked.push('ingredient_content');
       reasons.push('有效成分/含量与所选不符');
     }
@@ -301,11 +334,88 @@ export function evaluateApplicability(item, context = {}, { ruleVersion = APPLIC
   });
 }
 
-/** 读取记录的禁限用状态（来源未给出时回退 unknown，绝不默认 unrestricted）。 */
+/**
+ * PR #82：有效成分 + 含量的**精确匹配语义**（域库与小程序两端必须同一套规则）。
+ *
+ * 背景缺陷（P2 跨端不同判）：`ingredients_text='硝磺草酮 40%'` 且
+ * `context.ingredient_content='硝磺草酮 40%'` 时——
+ *   - 域库把原文拆成 `{name:'硝磺草酮', content_text:'40%'}`，再用**整串**分别与
+ *     name/content_text 做 includes → false（误判不符）；
+ *   - 小程序用**整串** ingredients_text.includes → true（判相符）。
+ * 两端结论相反。现按资料结构统一定义：
+ *
+ * 1. 上下文按分隔符（顿号／非数字前逗号）拆成**等分**；
+ * 2. 每个等分识别为「完整组合（名称+含量）」「名称单项」「含量单项」之一；
+ * 3. 完整组合：名称与含量须命中**同一成分**且含量**精确相等**；名称单项：命中任一成分
+ *    名称**精确相等**；含量单项：命中任一成分含量文本**精确相等**；
+ * 4. 全部等分都命中才算相符（AND 语义，避免多成分中只命中一个就放行）。
+ *
+ * PR #82 阻塞 A：名称分支**不得**使用 `includes` 子串匹配。反例：记录
+ * `ingredients_text='硝磺草酮 40%'` 与上下文 `'磺草酮'`——子串匹配会把「磺草酮」
+ * 判成命中「硝磺草酮」，从而把一个**不同成分**放行为可执行资格（制剂身份被混同）。
+ * 名称与含量一律精确相等；用户需要模糊查找时应走关键词检索，不占用适用资格判定。
+ *
+ * 该函数为纯函数，`miniprogram/utils/reference.js` 中的镜像与其**逐字同语义**，
+ * 由 `tests/reference/pr82-safety.test.mjs` 对同一组用例断言两端同判。
+ *
+ * @param {Array<{name:string, content_text:string}>} parsed parseIngredients 的结果
+ * @param {string} contextValue context.ingredient_content
+ * @returns {boolean}
+ */
+export function ingredientContentMatch(parsed, contextValue) {
+  const want = normalizeText(contextValue);
+  if (want === '') return false;
+  const ingredients = (parsed ?? []).map((ing) => ({
+    name: normalizeText(ing?.name),
+    content: normalizeText(ing?.content_text),
+  }));
+
+  // 等分切分：顿号；半角逗号仅在**后接非数字**时作分隔（避免误切「2,4-滴异辛酯」）。
+  const segments = String(contextValue)
+    .split(/、|,(?![0-9])/)
+    .map((s) => normalizeText(s))
+    .filter((s) => s !== '');
+  if (segments.length === 0) return false;
+
+  return segments.every((seg) => {
+    // 含量单项：整段即含量文本（如 40% / 200g/l）。
+    if (/^[\d.]+\s*(%|g\/l|g\/kg|mg\/kg|g|ml\/l|ml|mg|kg|l|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤)?$/.test(seg) && /[\d.]/.test(seg)) {
+      // 含量必须**精确相等**：`22%`.includes('2%') 会把「二甲戊灵 2%」错配到
+      // 「二甲戊灵 22%」（子串混同），故不用 includes。
+      return ingredients.some((ing) => ing.content === seg);
+    }
+    // 完整组合 / 名称单项：拆出「名称部分」与可能的「含量部分」。
+    const m = seg.match(/^(.+?)\s*([\d.]+\s*(?:%|g\/l|g\/kg|mg\/kg|g|ml\/l|ml|mg|kg|l|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤))?$/);
+    const name = m ? normalizeText(m[1]) : seg;
+    const content = m && m[2] ? normalizeText(m[2]) : null;
+    if (content !== null) {
+      // 完整组合：名称与含量必须命中**同一成分**且**含量精确相等**
+      // （防「唑草酮 40%」错配「敌唑草酮 40%」，也防 `2%` 混同 `22%`）。
+      return ingredients.some((ing) => ing.name === name && ing.content === content);
+    }
+    // 名称单项：**精确相等**（PR #82 阻塞 A：不再用 includes 子串匹配，
+    // 否则「磺草酮」会命中「硝磺草酮」，把不同成分当同一制剂放行）。
+    return ingredients.some((ing) => ing.name === name);
+  });
+}
+
+/**
+ * 读取记录的禁限用状态（来源未给出时回退 unknown，绝不默认 unrestricted）。
+ * 显式读取：只有**非空字符串**才采用；空串与缺失一律回退 `unknown`（fail-closed）。
+ * 小程序端同口径（见 miniprogram/utils/reference.js readRestrictionStatus）。
+ */
 function readRestrictionStatus(item) {
-  const raw = item?.verification?.restriction_status ?? item?.source?.restriction_status ?? item?.restriction_status;
-  if (typeof raw === 'string' && RESTRICTION_STATUSES.includes(raw)) return raw;
+  const raw = firstNonEmptyString(item?.verification?.restriction_status, item?.source?.restriction_status, item?.restriction_status);
+  if (raw !== null && RESTRICTION_STATUSES.includes(raw)) return raw;
   return 'unknown';
+}
+
+/** 取第一个「非空字符串」值；全为空/缺失/非字符串时返回 null（不用 ?? 也不用 ||）。 */
+function firstNonEmptyString(...values) {
+  for (const v of values) {
+    if (typeof v === 'string' && v.trim() !== '') return v;
+  }
+  return null;
 }
 
 /**

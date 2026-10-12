@@ -127,6 +127,27 @@ export const DISPLAY_LABELS = {
     complete: '字段完整',
     simulated: '模拟记录',
   },
+  // PR #82：DoseCard 拒绝渲染的原因标签（fail-closed，逐项可读；不含任何禁用词）。
+  dose_reject_reason: {
+    not_usable: '本记录未采集可用作依据的用量字段，不提供用量信息',
+    missing_condition: '来源未提供可绑定的原文条件，不展示用量',
+    not_applicable: '当前条件不适用（或必要条件未采集），不展示用量',
+    banned: '该药剂为禁用状态，不展示用量',
+    restricted: '该药剂为限用状态，需额外确认后方可展示用量',
+    restriction_unknown: '未采集禁限用状态，无法确认非禁用，不展示用量',
+    invalid_source: '来源当前不可用（失效/撤回/冲突/有效期未知/下架/模拟），不展示用量',
+    closed: '用量卡片已关闭（功能开关）',
+    // —— gy-i08/1.2.0（PR #82 阻塞 B）——
+    not_reviewed: '该用量未绑定已核对的审核状态，不展示用量',
+    stale_dose: '该用量未绑定当前来源版本（可能为陈旧数据），不展示用量',
+    incomplete_formulation: '登记制剂信息不完整（名称/剂型/有效成分含量缺失），不展示用量',
+    simulated_source: '该来源为模拟演示数据，不作为真实用量依据',
+    no_confirmed_context: '尚未确认当前适用条件（档案未确认或读取失败），不展示用量',
+    // —— gy-i08/1.2.0 复核补强（监工 follow-up）——
+    dose_formulation_mismatch: '该用量未绑定当前登记制剂（名称/剂型/成分含量不一致），不展示用量',
+    dose_record_mismatch: '该用量未绑定当前登记记录，不展示用量',
+    dose_reference_missing: '该用量缺少原文引用/定位依据，不展示用量',
+  },
 };
 
 /**
@@ -150,8 +171,77 @@ export const FORBIDDEN_LABELS = [
  * 所有消费端（packages/reference 域库、miniprogram 详情页、GY-I12 问答用量卡片）
  * **必须引用同一常量**，以满足规格「所有消费端使用同一规则版本」的契约要求。
  * 任何一处修改适用过滤语义时，须同步 bump 此版本并回归 miniprogram 镜像。
+ *
+ * 版本轨迹（语义变更必须记录，便于监工按版本核对行为）：
+ *   gy-i08/1.0.0 —— 初版：禁限用/来源/作物/剂型/场景阻断；生育期与地区「未采集」仅记原因。
+ *   gy-i08/1.1.0 —— PR #82 安全修订（三项已证实阻塞）：
+ *     a) 生育期、地区升级为**必要条件**：上下文要求而记录未采集或不相符 → `blocked`
+ *        （必要条件未知/不符不得形成可执行资格；AC13 fail-closed）。
+ *     b) DoseCard 资格**绑定当前适用判定**：禁用/失效/模拟/不适用/缺原文条件一律拒绝渲染；
+ *        功能开关关闭只是附加条件，不能代替资格验证。
+ *     c) 有效成分+含量改为**跨端一致的精确语义**（名称单项／完整组合／含量单项），
+ *        不再用整串子串匹配（见 `ingredientContentMatch`）。
+ *   gy-i08/1.2.0 —— PR #82 阻塞 A/B/C 复修：
+ *     A) 成分/含量名称分支改为**精确相等**（此前 includes 子串会把「磺草酮」命中
+ *        「硝磺草酮」，混同不同成分）。
+ *     B) DoseCard 追加绑定：**已核对审核状态**（unverified/rejected/缺失一律拒绝）、
+ *        **用量版本绑定当前来源版本**（陈旧用量不得因来源 valid 而合格）、
+ *        **登记制剂身份完整**（名称/剂型/成分含量缺失即拒绝）、
+ *        **模拟来源实名判定**（source_kind='simulation' 或 SIM- 登记号一律拒绝，
+ *        `include_simulated` 只放开查阅，不放开真实用量卡片）。
+ *     C) 详情页适用上下文改为**已确认档案**（`/me/profile`）：未确认/网络失败/身份变化
+ *        不得默认为空上下文放行具体用量。
  */
-export const APPLICABILITY_RULE_VERSION = 'gy-i08/1.0.0';
+export const APPLICABILITY_RULE_VERSION = 'gy-i08/1.2.0';
+
+/**
+ * PR #82 阻塞 B：允许作为用量展示依据的**审核状态**。
+ *
+ * F04/F14：用量仅核对原文展示，且必须来自**已核对**的当前来源版本。
+ * `unverified`（未核对）、`rejected`（已驳回）、缺失一律拒绝 —— 不取「较宽松状态」。
+ * 记录级 `verification.review_status` 与来源级 `source.review_status` **都必须**为
+ * `verified`；任一不满足即拒绝（避免来源已驳回而记录自标 verified 的冲突放行）。
+ */
+export const DOSE_CARD_REVIEW_STATUSES = ['verified'];
+
+/**
+ * PR #82 阻塞 B：DoseCard 拒绝原因（在 1.1.0 基础上追加审核/版本/制剂/模拟来源）。
+ */
+export const DOSE_REJECT_REASONS = Object.freeze({
+  not_usable: 'not_usable',
+  missing_condition: 'missing_condition',
+  not_applicable: 'not_applicable',
+  banned: 'banned',
+  restricted: 'restricted',
+  restriction_unknown: 'restriction_unknown',
+  invalid_source: 'invalid_source',
+  closed: 'closed',
+  // —— 1.2.0 新增 ——
+  not_reviewed: 'not_reviewed', // 审核状态未核对/已驳回/缺失，或记录与来源审核冲突
+  stale_dose: 'stale_dose', // 用量未绑定当前来源版本（陈旧用量数据）
+  incomplete_formulation: 'incomplete_formulation', // 登记制剂身份不完整（名称/剂型/成分含量缺失）
+  simulated_source: 'simulated_source', // 来源为模拟数据（source_kind=simulation 或 SIM- 登记号）
+  no_confirmed_context: 'no_confirmed_context', // 缺少已确认的适用上下文（档案未确认/读取失败）
+});
+
+/**
+ * PR #82 修订：上下文要求有效成分时的**精确匹配语义**（域库与小程序两端同一套规则）。
+ *
+ * 资料结构（GY-I03 原文 `ingredients_text`，如「硝磺草酮 40%」「吡氟酰草胺 2%、二甲戊灵 22%」）
+ * 由 `parseIngredients` 拆成「名称 + 含量文本」对。`context.ingredient_content` 可能是：
+ *   - 完整组合（`硝磺草酮 40%`）→ 名称与含量都须命中同一成分；
+ *   - 名称单项（`硝磺草酮`）    → 命中该成分名称即可（不强制含量，原文可能未采集）；
+ *   - 含量单项（`40%`）          → 命中任一成分含量文本（用户按含量检索）。
+ *
+ * 判定为「任一等分组合命中」：把上下文按分隔符拆成等分，每个等分分别按名称/含量精确比对，
+ * 防止「整串 includes」把不同成分（如把「唑草酮 40%」错配到「敌唑草酮 40%」）或
+ * 不同含量（`40%` vs `400 g/L`）静默判为相符。
+ */
+export const INGREDIENT_MATCH_MODES = Object.freeze({
+  FULL: 'full', // 完整「名称 + 含量」组合
+  NAME_ONLY: 'name_only', // 仅名称
+  CONTENT_ONLY: 'content_only', // 仅含量
+});
 
 /**
  * 禁限用状态枚举（GY-I08 适用过滤维度之一）。

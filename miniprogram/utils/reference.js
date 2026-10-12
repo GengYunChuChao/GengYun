@@ -125,12 +125,28 @@ function isEligible(item) {
   if (typeof item.registration_number !== 'string' || item.registration_number === '') missing.push('登记证号（registration_number）')
   if (missing.length > 0) return { ok: false, reason: '来源元数据缺项，无法满足契约必填：' + missing.join('、') }
   if (item.visibility !== 'published') return { ok: false, reason: item.visibility === 'hidden' ? '该记录已下架' : '该记录当前不可见' }
-  if (item.validity !== 'valid') {
-    const map = { expired: '来源已过期', withdrawn: '来源已撤回', conflicting: '来源相互冲突', unknown: '来源有效期未知' }
-    return { ok: false, reason: map[item.validity] || '来源有效期不可用' }
+  // PR #82 复核：来源有效期读取与域库 evaluateEligibility **逐字同口径**：
+  // `source.source_validity` → `source.validity` → 都没有则 `unknown`（拒绝）。
+  // - 字段存在但为**显式空串**：同样视为未知并拒绝（域库 `??` 保留空串即此语义），
+  //   不得用真假值默认把空串覆盖成别名字段 —— 显式空串是「未知」状态。
+  // - **不回退顶层 `item.validity`**：那是装载期缓存，删除/矛盾时不得掩盖来源真实状态。
+  const src = item.source || {}
+  const validity = (src.source_validity !== undefined && src.source_validity !== null) ? src.source_validity
+    : ((src.validity !== undefined && src.validity !== null) ? src.validity : 'unknown')
+  if (validity !== 'valid') {
+    const map = { expired: '来源已过期', withdrawn: '来源已撤回', conflicting: '来源相互冲突', unknown: '来源有效期未知', '': '来源有效期未知' }
+    return { ok: false, reason: map[validity] || '来源有效期不可用' }
   }
-  if (item.simulated) return { ok: false, reason: '模拟演示记录（非真实资料）' }
+  // PR #82 复核：模拟来源**实名判定**（标志位/来源类型/SIM- 前缀任一成立即排除）。
+  if (isSimulatedSource(item)) return { ok: false, reason: '模拟演示记录（非真实资料）' }
   return { ok: true, reason: null }
+}
+
+// 模拟来源实名判定（与域库 packages/reference/query.mjs isSimulatedSource 同口径）。
+function isSimulatedSource(item) {
+  if (item && item.simulated === true) return true;
+  if (item && item.source && item.source.source_kind === 'simulation') return true;
+  return String((item && item.registration_number) || '').indexOf('SIM-') === 0;
 }
 
 function resolveCropId(term) {
@@ -537,17 +553,118 @@ function seedLabels() {
 // ---------------------------------------------------------------------------
 // GY-I08 镜像：药剂适用过滤 + 标签原文用量卡片（DoseCard）。
 // 与 packages/reference 同 RULE_VERSION、同口径（所有消费端同一规则版本）。
+//
+// PR #82 修订（gy-i08/1.2.0，与域库 packages/reference 同步 bump）：
+//   A) 成分/含量名称分支改为**精确相等**（此前 includes 子串会把「磺草酮」命中
+//      「硝磺草酮」，混同不同成分）。
+//   B) DoseCard 追加绑定：已核对审核状态、用量版本绑定当前来源版本、登记制剂身份完整、
+//      模拟来源实名判定（source_kind=simulation 或 SIM- 登记号）。
+//   C) 详情页适用上下文改为**已确认档案**（/me/profile）：未确认/读取失败/身份变化
+//      不得默认为空上下文放行具体用量。
 // ---------------------------------------------------------------------------
-const APPLICABILITY_RULE_VERSION = 'gy-i08/1.0.0';
+const APPLICABILITY_RULE_VERSION = 'gy-i08/1.2.0';
 const RESTRICTION_STATUSES = ['banned', 'restricted', 'unrestricted', 'unknown'];
+const REVIEW_STATUSES = ['unverified', 'verified', 'rejected'];
 const APPLICABILITY_DIMENSIONS = ['valid_source', 'banned_restricted', 'crop', 'growth_stage', 'region', 'dosage_form', 'ingredient_content', 'use_scene'];
 
+// PR #82：DoseCard 拒绝原因标签（与域库 DISPLAY_LABELS.dose_reject_reason 同文案）。
+const DOSE_REJECT_REASON = {
+  not_usable: '本记录未采集可用作依据的用量字段，不提供用量信息',
+  missing_condition: '来源未提供可绑定的原文条件，不展示用量',
+  not_applicable: '当前条件不适用（或必要条件未采集），不展示用量',
+  banned: '该药剂为禁用状态，不展示用量',
+  restricted: '该药剂为限用状态，需额外确认后方可展示用量',
+  restriction_unknown: '未采集禁限用状态，无法确认非禁用，不展示用量',
+  invalid_source: '来源当前不可用（失效/撤回/冲突/有效期未知/下架/模拟），不展示用量',
+  closed: '用量卡片已关闭（功能开关）',
+  // —— gy-i08/1.2.0（阻塞 B）——
+  not_reviewed: '该用量未绑定已核对的审核状态，不展示用量',
+  stale_dose: '该用量未绑定当前来源版本（可能为陈旧数据），不展示用量',
+  incomplete_formulation: '登记制剂信息不完整（名称/剂型/有效成分含量缺失），不展示用量',
+  simulated_source: '该来源为模拟演示数据，不作为真实用量依据',
+  // —— follow-up 复核补强 ——
+  dose_record_mismatch: '该用量未绑定当前登记记录，不展示用量',
+  dose_formulation_mismatch: '该用量未绑定当前登记制剂（名称/剂型/成分含量不一致），不展示用量',
+  dose_reference_missing: '该用量缺少原文引用/定位依据，不展示用量'
+};
+
+// 制剂绑定校验结果 → 拒绝原因（与域库 doseCardDescriptor 内映射同文案）。
+const FORMULATION_REJECT_REASON = {
+  incomplete: DOSE_REJECT_REASON.incomplete_formulation,
+  record_mismatch: DOSE_REJECT_REASON.dose_record_mismatch,
+  formulation_mismatch: DOSE_REJECT_REASON.dose_formulation_mismatch,
+  reference_missing: DOSE_REJECT_REASON.dose_reference_missing
+};
+
+// 显式读取禁限用状态：只有**非空字符串**才采用；空串/缺失一律回退 unknown（fail-closed）。
+// 与域库 readRestrictionStatus 同口径（不用 ?? 也不用 ||，避免空串取值差异）。
 function readRestrictionStatus(item) {
-  const raw = (item && item.verification && item.verification.restriction_status) ||
-    (item && item.source && item.source.restriction_status) ||
-    (item && item.restriction_status);
-  if (typeof raw === 'string' && RESTRICTION_STATUSES.indexOf(raw) !== -1) return raw;
+  const raw = firstNonEmptyString(
+    item && item.verification && item.verification.restriction_status,
+    item && item.source && item.source.restriction_status,
+    item && item.restriction_status
+  );
+  if (raw !== null && RESTRICTION_STATUSES.indexOf(raw) !== -1) return raw;
   return 'unknown';
+}
+
+function firstNonEmptyString() {
+  for (let i = 0; i < arguments.length; i += 1) {
+    const v = arguments[i];
+    if (typeof v === 'string' && v.trim() !== '') return v;
+  }
+  return null;
+}
+
+// PR #82：有效成分 + 含量的精确匹配语义（与域库 packages/reference/query.mjs
+// `ingredientContentMatch` 逐字同语义）。等分切分 + 每等分按名称/含量**精确相等**比对，
+// 全部等分命中才算相符；不用整串 includes（跨端不同判缺陷），也不用名称子串匹配
+// （阻塞 A：否则「磺草酮」会命中「硝磺草酮」，把不同成分当同一制剂放行）。
+function ingredientContentMatch(ingredients, contextValue) {
+  const want = norm(contextValue);
+  if (!want) return false;
+  const list = (ingredients || []).map(function (ing) {
+    return { name: norm(ing && ing.name), content: norm(ing && ing.content_text) };
+  });
+  const segments = String(contextValue)
+    .split(/、|,(?![0-9])/)
+    .map(function (s) { return norm(s) })
+    .filter(function (s) { return s !== '' });
+  if (segments.length === 0) return false;
+  return segments.every(function (seg) {
+    if (/^[\d.]+\s*(%|g\/l|g\/kg|mg\/kg|g|ml\/l|ml|mg|kg|l|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤)?$/.test(seg) && /[\d.]/.test(seg)) {
+      // 含量必须**精确相等**：`22%`.includes('2%') 会把「二甲戊灵 2%」错配到
+      // 「二甲戊灵 22%」（子串混同），故不用 includes。
+      return list.some(function (ing) { return ing.content === seg });
+    }
+    const m = seg.match(/^(.+?)\s*([\d.]+\s*(?:%|g\/l|g\/kg|mg\/kg|g|ml\/l|ml|mg|kg|l|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤))?$/);
+    const name = m ? norm(m[1]) : seg;
+    const content = m && m[2] ? norm(m[2]) : null;
+    if (content !== null) {
+      // 完整组合：名称与含量必须命中**同一成分**且**含量精确相等**。
+      return list.some(function (ing) { return ing.name === name && ing.content === content });
+    }
+    // 名称单项：**精确相等**（阻塞 A：不用 includes 子串匹配）。
+    return list.some(function (ing) { return ing.name === name });
+  });
+}
+
+// 从 ingredients_text 解析有效成分（与域库 parseIngredients 同口径：名值对拆分）。
+function parseIngredientsLocal(text) {
+  if (typeof text !== 'string' || text.trim() === '') return [{ name: '未采集', content_text: '未采集', unit_text: '未采集' }];
+  return text
+    .split(/、|,(?![0-9])/)
+    .map(function (seg) { return seg.trim() })
+    .filter(function (seg) { return seg !== '' })
+    .map(function (seg) {
+      const m = seg.match(/^(.+?)\s*([\d.]+)\s*(%|g\/L|g\/kg|mg\/kg|g|ml\/L|ml|mg|kg|L|克\/升|克\/公斤|毫升\/升|克|毫克|毫升|升|公斤)?\s*$/);
+      if (m) {
+        const explicitUnit = (m[3] || '').trim();
+        if (explicitUnit === '') return { name: m[1].trim(), content_text: m[2].trim(), unit_text: '未采集' };
+        return { name: m[1].trim(), content_text: m[2].trim() + explicitUnit, unit_text: explicitUnit };
+      }
+      return { name: seg, content_text: '未采集', unit_text: '未采集' };
+    });
 }
 
 // 确定性、fail-closed 的适用过滤（详见 packages/reference/query.mjs 同函数）。
@@ -577,29 +694,37 @@ function evaluateApplicability(item, context) {
       reasons.push('作物不符（记录未覆盖该作物）');
     }
   }
+  // PR #82：生育期为必要条件——不符或未采集一律阻断（此前仅记原因）。
+  // 显式读取：只有非空字符串才算已采集（与域库同口径，避免 ?? / || 差异）。
   if (context.growth_stage) {
-    const gs = item.growth_stage || (item.verification && item.verification.growth_stage);
-    if (typeof gs === 'string' && gs.trim() !== '') {
-      if (norm(gs).indexOf(norm(context.growth_stage)) === -1) reasons.push('生育期不符');
+    const gs = firstNonEmptyString(item.growth_stage, item.verification && item.verification.growth_stage);
+    if (gs !== null) {
+      if (norm(gs).indexOf(norm(context.growth_stage)) === -1) { blocked.push('growth_stage'); reasons.push('生育期不符'); }
     } else {
+      blocked.push('growth_stage');
       reasons.push('记录未采集生育期条件，无法确认是否适用该生育期');
     }
   }
+  // PR #82：地区为必要条件——未标注或不相符一律阻断。
   if (context.region_code) {
     const rc = Array.isArray(item.region_codes) ? item.region_codes : (typeof item.region_code === 'string' ? [item.region_code] : []);
     if (rc.length > 0) {
       if (rc.indexOf(context.region_code) === -1) { blocked.push('region'); reasons.push('适用地区不符'); }
     } else {
+      blocked.push('region');
       reasons.push('记录未标注适用地区，无法确认是否适用该地区');
     }
   }
   if (context.dosage_form) {
     if (norm(item.dosage_form || '') !== norm(context.dosage_form)) { blocked.push('dosage_form'); reasons.push('制剂（剂型）不符'); }
   }
+  // PR #82：成分/含量改用跨端一致的精确语义。
   if (context.ingredient_content) {
-    const want = norm(context.ingredient_content);
-    const hay = norm((item.verification && item.verification.parsed_ingredients_text) || item.ingredients_text || (item.norm && item.norm.ingredients) || '');
-    if (hay.indexOf(want) === -1) { blocked.push('ingredient_content'); reasons.push('有效成分/含量与所选不符'); }
+    const parsed = (item.verification && item.verification.parsed_ingredients) || parseIngredientsLocal(item.ingredients_text || (item.norm && item.norm.ingredients) || '');
+    if (!ingredientContentMatch(parsed, context.ingredient_content)) {
+      blocked.push('ingredient_content');
+      reasons.push('有效成分/含量与所选不符');
+    }
   }
   if (context.use_scene) {
     if (norm(item.use_scene || '').indexOf(norm(context.use_scene)) === -1) { blocked.push('use_scene'); reasons.push('使用场景不符'); }
@@ -607,18 +732,106 @@ function evaluateApplicability(item, context) {
   return { applicable: blocked.length === 0, blocked: blocked, reasons: reasons, rule_version: APPLICABILITY_RULE_VERSION };
 }
 
-// 标签原文用量卡片描述符（F14）。未采集用量不渲染；关闭开关生效；有源数字用量才绑定。
+// PR #82：标签原文用量卡片描述符（F14）。
+// 用量展示资格**绑定当前有效来源/审核、登记制剂、原文条件/版本和适用判定**：
+// 未采集用量字段、缺原文条件、缺数字/单位、审核未核对/已驳回/**来源侧缺失**、
+// 用量未绑定当前来源版本、制剂身份不完整或与用量绑定不一致（record_id/formulation_key/reference）、
+// 模拟来源（source_kind=simulation 或 SIM- 登记号）、禁用/限用/禁限用未知、
+// 来源失效/撤回/冲突/未知有效期、下架、任一适用维度不符或未采集 → 一律不渲染。
+// 功能开关关闭只是附加条件，**不能代替资格验证**。
 function doseCardDescriptor(item, opts) {
   opts = opts || {};
   const enabled = opts.doseCardEnabled !== false;
-  if (!enabled) return { renderable: false, reason: '用量卡片已关闭（功能开关）', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: true };
-  const usable = !!(item && item.verification && item.verification.usable_as_dose === true);
-  if (!usable) return { renderable: false, reason: '本记录未采集用量字段，不提供用量信息', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false };
-  const dose = item.verification && item.verification.dose;
-  if (dose && typeof dose.number === 'string' && dose.number !== '' && typeof dose.unit === 'string') {
-    return { renderable: true, reason: null, rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false, dose: { number: dose.number, unit: dose.unit, condition: typeof dose.condition === 'string' ? dose.condition : null } };
+  const base = { rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true };
+  if (!enabled) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.closed, closed: true };
+  const ver = item && item.verification;
+  if (!ver || ver.usable_as_dose !== true) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.not_usable, closed: false };
+  // 阻塞 B-4：模拟来源实名判定（标志位/来源类型/登记号前缀任一成立即拒绝）。
+  if (isSimulatedSource(item)) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.simulated_source, closed: false };
+  // 阻塞 B-1：记录级与来源级审核状态都必须**显式为** verified；任一侧缺失即拒绝（不取较宽松状态）。
+  if (!isDoseReviewed(item)) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.not_reviewed, closed: false };
+  // 阻塞 B-3：制剂身份完整且与用量绑定一致（record_id/formulation_key/reference）。
+  const bound = hasBoundFormulation(item, ver.dose);
+  if (bound !== 'ok') return { ...base, renderable: false, reason: FORMULATION_REJECT_REASON[bound], closed: false };
+  const dose = ver.dose;
+  const hasNumber = dose && typeof dose.number === 'string' && dose.number.trim() !== '';
+  const hasUnit = dose && typeof dose.unit === 'string' && dose.unit.trim() !== '';
+  const hasCondition = dose && typeof dose.condition === 'string' && dose.condition.trim() !== '';
+  if (!(hasNumber && hasUnit)) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.not_usable, closed: false };
+  // 缺原文条件即拒绝（此前 condition=null 仍可渲染）。
+  if (!hasCondition) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.missing_condition, closed: false };
+  // 阻塞 B-2：用量必须绑定当前来源版本（陈旧用量数据不放行）。
+  if (!isDoseBoundToCurrentSource(item, dose)) return { ...base, renderable: false, reason: DOSE_REJECT_REASON.stale_dose, closed: false };
+  // 必须通过当前适用判定（fail-closed）。
+  const applicability = evaluateApplicability(item, opts.context || {});
+  if (!applicability.applicable) {
+    return { ...base, renderable: false, reason: doseRejectReasonFrom(applicability), closed: false, applicable: false, blocked: applicability.blocked.slice() };
   }
-  return { renderable: false, reason: '来源未提供可绑定的数字用量，仅按原文核对展示', rule_version: APPLICABILITY_RULE_VERSION, off_switch_supported: true, closed: false };
+  return { ...base, renderable: true, reason: null, closed: false, applicable: true, blocked: [], dose: { number: dose.number, unit: dose.unit, condition: dose.condition } };
+}
+
+// 阻塞 B-4：模拟来源实名判定（不看 include_simulated——它只放开查阅，不放开真实用量卡片）。
+function isSimulatedSource(item) {
+  if (item && item.simulated === true) return true;
+  if (item && item.source && item.source.source_kind === 'simulation') return true;
+  return String((item && item.registration_number) || '').indexOf('SIM-') === 0;
+}
+
+// 阻塞 B-1：记录级与来源级审核状态都必须**显式为** verified；任一侧 unverified/rejected/缺失即拒绝。
+function isDoseReviewed(item) {
+  const recordStatus = item && item.verification && item.verification.review_status;
+  const sourceStatus = item && item.source && item.source.review_status;
+  if (REVIEW_STATUSES.indexOf(recordStatus) === -1 || recordStatus !== 'verified') return false;
+  if (REVIEW_STATUSES.indexOf(sourceStatus) === -1 || sourceStatus !== 'verified') return false;
+  return true;
+}
+
+// 阻塞 B-3（follow-up 复核）：制剂身份完整**且与用量绑定一致**。
+// 仅三个字符串非空不够：dose 还须绑定当前 record_id、完整制剂字段与原文引用/定位依据，
+// 防止同一 source_version（如同一公告共享版本）下的其他制剂挪用同一张用量卡。
+//
+// 与域库 packages/reference/labels.mjs `hasBoundFormulation` **同一套显式字段比对规则**
+// （不用任何一端的哈希派生），因此后端同一份已核对的记录及用量 JSON 在两端判定一致。
+function hasBoundFormulation(item, dose) {
+  const name = nonEmptyText(item && item.registered_name);
+  const form = nonEmptyText(item && item.dosage_form);
+  const ingredients = nonEmptyText(item && item.ingredients_text);
+  if (name === '' || form === '' || ingredients === '') return 'incomplete';
+  // 绑定到具体登记记录：两侧都必须存在且相等（不得因双缺 '' === '' 放行）。
+  const boundRecord = nonEmptyText(dose && dose.record_id);
+  const currentRecord = nonEmptyText(item && item.record_id);
+  if (boundRecord === '' || currentRecord === '' || boundRecord !== currentRecord) return 'record_mismatch';
+  // 绑定到具体制剂身份：登记号 + 名称 + 剂型 + 成分含量逐项相等。
+  const bound = dose && dose.formulation;
+  if (!bound || typeof bound !== 'object') return 'formulation_mismatch';
+  const sameRegistration = nonEmptyText(bound.registration_number) !== '' && nonEmptyText(bound.registration_number) === nonEmptyText(item && item.registration_number);
+  const sameName = nonEmptyText(bound.registered_name) === name;
+  const sameForm = nonEmptyText(bound.dosage_form) === form;
+  const sameIngredients = nonEmptyText(bound.ingredients_text) === ingredients;
+  if (!(sameRegistration && sameName && sameForm && sameIngredients)) return 'formulation_mismatch';
+  if (nonEmptyText(dose && dose.reference) === '') return 'reference_missing';
+  return 'ok';
+}
+
+function nonEmptyText(value) { return typeof value === 'string' ? value.trim() : '' }
+
+// 阻塞 B-2：用量必须绑定当前来源版本；dose.source_version 缺失或不等于记录 source_version 即拒绝。
+function isDoseBoundToCurrentSource(item, dose) {
+  const bound = dose && typeof dose.source_version === 'string' ? dose.source_version.trim() : '';
+  if (bound === '') return false;
+  return bound === nonEmptyText(item && item.source_version);
+}
+
+function doseRejectReasonFrom(applicability) {
+  const b = applicability.blocked || [];
+  if (b.indexOf('banned_restricted') !== -1) {
+    // 先判「未采集」：该文案本身含「禁用」二字，不能先用禁用判别（会把未知误判为禁用）。
+    if ((applicability.reasons || []).some(function (r) { return r.indexOf('未采集禁限用') !== -1 })) return DOSE_REJECT_REASON.restriction_unknown;
+    if ((applicability.reasons || []).some(function (r) { return r.indexOf('限用') !== -1 })) return DOSE_REJECT_REASON.restricted;
+    return DOSE_REJECT_REASON.banned;
+  }
+  if (b.indexOf('valid_source') !== -1) return DOSE_REJECT_REASON.invalid_source;
+  return DOSE_REJECT_REASON.not_applicable;
 }
 
 module.exports = {
@@ -628,6 +841,8 @@ module.exports = {
   APPLICABILITY_DIMENSIONS: APPLICABILITY_DIMENSIONS,
   evaluateApplicability: evaluateApplicability,
   doseCardDescriptor: doseCardDescriptor,
+  ingredientContentMatch: ingredientContentMatch,
+  parseIngredients: parseIngredientsLocal,
   species: species.species,
   sources: sources.sources,
   regions: require('../data/regions.js').regions,

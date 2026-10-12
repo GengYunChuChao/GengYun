@@ -26,8 +26,8 @@ function fakeReference() {
     matchStateLabel: (s) => s,
     query: () => ({ match_state: 'matched', items: [{ record_id: 'r1', id: 'r1', source_version: 'sv' }], total: 1, next_cursor: null, reasons: [], unmatched_reasons: [], simulated_excluded: 0 }),
     detail: () => ({ labels: {}, verified_scope: [], not_collected: [], unavailable_reason: '', queryable: true, source_version: 'sv' }),
-    doseCardDescriptor: () => ({ renderable: false, reason: '本记录未采集用量字段，不提供用量信息', rule_version: 'gy-i08/1.0.0', off_switch_supported: true, closed: false }),
-    evaluateApplicability: () => ({ applicable: true, blocked: [], reasons: [], rule_version: 'gy-i08/1.0.0' }),
+    doseCardDescriptor: () => ({ renderable: false, reason: '本记录未采集可用作依据的用量字段，不提供用量信息', rule_version: 'gy-i08/1.2.0', off_switch_supported: true, closed: false }),
+    evaluateApplicability: () => ({ applicable: true, blocked: [], reasons: [], rule_version: 'gy-i08/1.2.0' }),
     seed: {
       counts: { herbicides: 96, weeds: 172, weedMaster: 175, provinces: 34, controlTiming: 14 },
       label: '待核实·非权威',
@@ -67,16 +67,28 @@ function loadPage(rel, { verified, loggedInDirect }) {
   vm.runInNewContext(readFileSync(pagePath('utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.3 } }) });
   const gateModule = { exports: {} };
   vm.runInNewContext(readFileSync(pagePath('utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => auth });
+  // PR #82 阻塞 C：referencedetail 现在经 utils/profile-api 读取**已确认档案**。
+  // 这里给出同步替身（默认成功且档案已确认），使既有门禁断言继续有效；
+  // 档案未确认/读取失败的真实路径由 page-dosecard-consumption.test.mjs 覆盖。
+  const profileApi = {
+    binding: () => ({ token: 't', epoch: 1 }),
+    current: () => true,
+    read: () => Promise.resolve({ crop_id: 'crop_rice', region_code: '330100', region_catalog_version: 'v1', revision: 1 }),
+    crops: () => Promise.resolve([]),
+    regions: () => Promise.resolve([]),
+    save: () => Promise.reject(new Error('not used')),
+  };
   const sandbox = {
     Page(def) { Object.assign(page, def); },
     wx: {
       reLaunch(opts) { calls.reLaunch.push(opts.url); },
       navigateTo() {},
       navigateBack() {},
+      redirectTo() {},
       setClipboardData() {},
     },
     console,
-    require: (id) => (id.indexOf('font-scale') !== -1 ? fontModule.exports : id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('reference') !== -1 ? fakeReference() : {}),
+    require: (id) => (id.indexOf('font-scale') !== -1 ? fontModule.exports : id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('profile-api') !== -1 ? profileApi : id.indexOf('reference') !== -1 ? fakeReference() : {}),
   };
   vm.runInNewContext(readFileSync(pagePath(rel), 'utf8'), sandbox);
   return { page, calls };
@@ -95,6 +107,11 @@ function assertEmpty(page, rel, key) {
   else assert.ok(value === null || value === undefined, `${rel} 未通过门禁时不得残留 ${key}`);
 }
 
+/** 等待页面内 Promise 链结算（referencedetail 现在经 profile-api 异步读取档案）。 */
+async function settle() {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
 test('F3：四个页面 onLoad 前置门禁——未核实不加载数据且跳转登录页', () => {
   for (const { rel, load, listKey } of PAGES) {
     const { page, calls } = loadPage(rel, { verified: false, loggedInDirect: false });
@@ -104,7 +121,7 @@ test('F3：四个页面 onLoad 前置门禁——未核实不加载数据且跳�
   }
 });
 
-test('F3：会话核实通过后才装载数据', () => {
+test('F3：会话核实通过后才装载数据', async () => {
   const ref = loadPage('pages/reference/reference.js', { verified: true, loggedInDirect: true });
   ref.page.onLoad();
   assert.ok(ref.page.data.items.length > 0, '核实通过后应装载列表数据');
@@ -114,9 +131,12 @@ test('F3：会话核实通过后才装载数据', () => {
   seed.page.onLoad();
   assert.ok(seed.page.data.list.length > 0, '核实通过后应装载种子列表');
 
+  // referencedetail：档案经 profile-api 异步读取，需等待结算后再断言装载。
   const detail = loadPage('pages/referencedetail/referencedetail.js', { verified: true, loggedInDirect: true });
   detail.page.onLoad({ id: 'r1' });
+  await settle();
   assert.ok(detail.page.data.found === true, '核实通过后应装载详情');
+  assert.ok(detail.page.data.detail !== null, '详情本体应装载（未授权时不读取的断言见 G2 组）');
 });
 
 test('F3：onShow 兜底——会话失效时先清空再跳转（不残留旧数据）', () => {
@@ -181,7 +201,7 @@ test('G2：门禁失败后调用 load 不得装载详情（referencedetail / ref
   assert.equal(sd.page.data.item, null);
 });
 
-test('G2：onShow 令会话失效后，处理器立即不可用（reference / referencedetail）', () => {
+test('G2：onShow 令会话失效后，处理器立即不可用（reference / referencedetail）', async () => {
   // 先通过门禁装载数据，再令会话失效并重入 onShow → 处理器须失效。
   const ref = loadPage('pages/reference/reference.js', { verified: true, loggedInDirect: true });
   ref.page.onLoad();
@@ -190,12 +210,17 @@ test('G2：onShow 令会话失效后，处理器立即不可用（reference / re
   ref.page.runQuery();
   assert.equal(ref.page.data.items.length, 0, '会话失效后 runQuery 不得再装载');
 
+  // referencedetail：档案异步读取，先等结算再令会话失效。
   const d = loadPage('pages/referencedetail/referencedetail.js', { verified: true, loggedInDirect: true });
   d.page.onLoad({ id: 'r1' });
+  await settle();
   assert.equal(d.page.data.found, true, '前置：门禁通过应已装载详情');
   d.page.data.gatePassed = false;
   d.page.load('r1');
   assert.equal(d.page.data.found, false, '会话失效后 load 不得再装载');
+  // 未授权时也不得残留用量资格。
+  assert.equal(d.page.data.doseCard, null, '会话失效后不得残留 DoseCard');
+  assert.equal(d.page.data.applicability, null, '会话失效后不得残留适用结论');
 });
 
 test('F3：资料页随全局字号放大，门禁未通过时仍保持空数据', () => {

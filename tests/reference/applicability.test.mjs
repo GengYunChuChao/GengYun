@@ -37,6 +37,7 @@ function baseItem(over = {}) {
     validity: 'valid',
     simulated: false,
     source: { source_kind: 'verified_seed', evidence_kind: 'research', source_validity: 'valid' },
+    source_version: 'sv-base@1',
     verification: { usable_as_dose: false, review_status: 'unverified', restriction_status: 'unrestricted' },
     ...over,
   };
@@ -80,7 +81,11 @@ function expectedBlocks(cname) {
     case 'use_scene_bad': return ['use_scene'];
     case 'dosage_form_bad': return ['dosage_form'];
     case 'ingredient_bad': return ['ingredient_content'];
-    default: return []; // region_bad/growth_stage 在 baseline 未采集 → 仅原因、不阻断
+    // PR #82：region/growth_stage 升级为**必要条件**。baseline 记录未标注地区、
+    // 未采集生育期 → 上下文一旦要求即阻断（未知/不符不得形成可执行资格）。
+    case 'region_bad': return ['region'];
+    case 'growth_stage': return ['growth_stage'];
+    default: return [];
   }
 }
 
@@ -124,21 +129,35 @@ test('restricted + allow_restricted：显式确认后可进入（不静默放宽
   assert.ok(allowed.reasons.some((r) => r.includes('限用')));
 });
 
-test('地区/生育期已采集时按真实值阻断（未采集仅给原因、不阻断）', () => {
+test('PR #82：地区/生育期为必要条件——不符或未采集一律阻断', () => {
+  // 已采集地区且不相符 → 阻断（既有行为，保留）。
   const withRegion = baseItem({ region_codes: ['330100', '330200'] });
   assert.ok(evaluateApplicabilityBlocksRegion(evaluateApplicability(withRegion, { region_code: '330300' })));
+  // 已采集地区且相符 → 不阻断（防止过度收紧）。
+  assert.equal(evaluateApplicability(withRegion, { region_code: '330100' }).applicable, true);
+
+  // PR #82：未标注地区 + 上下文要求 → 阻断（此前仅给原因，判 applicable=true）。
   const noRegion = baseItem({ region_codes: [] });
   const v = evaluateApplicability(noRegion, { region_code: '330100' });
-  assert.equal(v.applicable, true, '未标注地区不阻断匹配');
-  assert.ok(v.reasons.some((r) => r.includes('未标注适用地区')));
+  assert.equal(v.applicable, false, '未标注地区而上下文要求地区 → 不得判可执行资格');
+  assert.ok(v.blocked.includes('region'), '未标注地区须阻断 region 维度');
+  assert.ok(v.reasons.some((r) => r.includes('未标注适用地区')), '须如实说明未标注');
 
+  // 已采集生育期且不相符 → 阻断。
   const withGs = baseItem({ growth_stage: '苗后' });
   const badGs = evaluateApplicability(withGs, { growth_stage: '播种前' });
+  assert.ok(badGs.blocked.includes('growth_stage'), '生育期不符须阻断');
   assert.ok(badGs.reasons.includes('生育期不符'));
+
+  // PR #82：未采集生育期 + 上下文要求 → 阻断（此前仅给原因，判 applicable=true）。
   const noGs = baseItem({ growth_stage: '' });
   const vGs = evaluateApplicability(noGs, { growth_stage: '苗后' });
-  assert.equal(vGs.applicable, true);
-  assert.ok(vGs.reasons.some((r) => r.includes('未采集生育期')));
+  assert.equal(vGs.applicable, false, '未采集生育期而上下文要求 → 不得判可执行资格');
+  assert.ok(vGs.blocked.includes('growth_stage'), '未采集生育期须阻断 growth_stage 维度');
+  assert.ok(vGs.reasons.some((r) => r.includes('未采集生育期')), '须如实说明未采集');
+
+  // 未要求该维度时不受影响（不静默收紧无条件的查询）。
+  assert.equal(evaluateApplicability(noGs, {}).applicable, true, '无上下文要求时不因未采集生育期而阻断');
 });
 
 function evaluateApplicabilityBlocksRegion(v) {
@@ -169,14 +188,18 @@ test('真实 20 条记录：禁限用状态未采集 → fail-closed，不得进
     assert.ok(v.blocked.includes('banned_restricted'));
     const card = doseCardDescriptor(item);
     assert.equal(card.renderable, false, `记录 ${item.registration_number} 无用量数据，DoseCard 不渲染`);
-    assert.ok(card.reason.includes('未采集用量') || card.reason.includes('关闭'), 'DoseCard 须如实说明未采集/关闭');
+    // PR #82：拒绝原因须如实（未采集用量字段 / 禁限用未采集 / 已关闭），不得空白。
+    assert.ok(
+      card.reason.includes('未采集') || card.reason.includes('禁用') || card.reason.includes('限用') || card.reason.includes('关闭'),
+      `DoseCard 须如实说明未采集/禁限用/关闭，实际：${card.reason}`,
+    );
   }
 });
 
-test('DoseCard 描述符：未采集用量不渲染；关闭开关生效；有源数字用量才绑定', () => {
+test('DoseCard 描述符：未采集用量不渲染；关闭开关生效；完整绑定的原文用量才渲染', () => {
   const uncollected = doseCardDescriptor(baseItem());
   assert.equal(uncollected.renderable, false);
-  assert.ok(uncollected.reason.includes('未采集用量'));
+  assert.ok(uncollected.reason.includes('未采集'));
   assert.equal(uncollected.off_switch_supported, true);
   assert.equal(uncollected.closed, false);
 
@@ -185,13 +208,63 @@ test('DoseCard 描述符：未采集用量不渲染；关闭开关生效；有�
   assert.equal(closed.closed, true);
   assert.ok(closed.reason.includes('关闭'));
 
+  // PR #82：必须**完整绑定**（来源版本 + 登记记录 + 制剂字段 + 引用依据）才可渲染。
+  // 先定义完整绑定的基准用量，再逐项只改一个维度，确保每个负例真正隔离目标字段。
+  const verifiedSource = { source_kind: 'verified_seed', evidence_kind: 'research', source_validity: 'valid', review_status: 'verified' };
+  const boundDose = {
+    number: '40',
+    unit: '克/公顷',
+    condition: '苗后茎叶喷雾',
+    source_version: 'sv-base@1',
+    record_id: 't-base',
+    formulation: {
+      registration_number: 'PD20210001',
+      registered_name: '测试剂',
+      dosage_form: '水分散粒剂',
+      ingredients_text: '唑草酮 40%',
+    },
+    reference: '测试用合成公告第 1 行',
+  };
+
+  // PR #82：缺原文条件（condition 缺失或为 null/空白）→ 拒绝渲染（此前可渲染）。
+  // 其余绑定保持完整，确保拒绝原因精确来自「缺条件」本身。
+  for (const badCondition of [undefined, null, '', '   ']) {
+    const dose = { ...boundDose, condition: badCondition };
+    const missing = doseCardDescriptor(baseItem({
+      source: { ...verifiedSource },
+      verification: { usable_as_dose: true, review_status: 'verified', restriction_status: 'unrestricted', dose },
+    }));
+    assert.equal(missing.renderable, false, `condition=${JSON.stringify(badCondition)} 不得渲染`);
+    assert.ok(missing.reason.includes('原文条件'), `须说明缺原文条件，实际：${missing.reason}`);
+  }
+
+  const missingBindings = [
+    ['缺来源版本绑定', (d) => { delete d.source_version; }],
+    ['缺登记记录绑定', (d) => { delete d.record_id; }],
+    ['缺制剂绑定', (d) => { delete d.formulation; }],
+    ['缺引用依据', (d) => { delete d.reference; }],
+  ];
+  for (const [label, mutate] of missingBindings) {
+    const dose = { ...boundDose };
+    mutate(dose);
+    const card = doseCardDescriptor(baseItem({
+      source: { ...verifiedSource },
+      verification: { usable_as_dose: true, review_status: 'verified', restriction_status: 'unrestricted', dose },
+    }));
+    assert.equal(card.renderable, false, `${label} 不得渲染`);
+    assert.ok(card.reason.length > 0, `${label} 须给出拒绝原因`);
+  }
+
+  // PR #82：完整绑定 + 当前适用 → 可渲染。
   const usable = baseItem({
-    verification: { usable_as_dose: true, restriction_status: 'unrestricted', dose: { number: '40', unit: '克/公顷', condition: '苗后茎叶喷雾' } },
+    source: { ...verifiedSource },
+    verification: { usable_as_dose: true, review_status: 'verified', restriction_status: 'unrestricted', dose: { ...boundDose } },
   });
   const card = doseCardDescriptor(usable);
-  assert.equal(card.renderable, true, '有源数字用量须可渲染');
+  assert.equal(card.renderable, true, '完整绑定的原文用量须可渲染');
   assert.deepEqual(card.dose, { number: '40', unit: '克/公顷', condition: '苗后茎叶喷雾' });
   assert.equal(card.reason, null);
+  assert.equal(card.applicable, true);
 });
 
 test('DoseCard 与适用过滤所有文案不含禁用词（AC14）', () => {
