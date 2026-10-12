@@ -371,13 +371,22 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   }
 
   /**
+   * 端口回传**不可信**时的统一 fail-closed 错误。
+   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码），`retryable: true`：
+   * 既可能是端口暂时行为异常，也可能是接线错误；一律**不登记成功、不写审计**。
+   */
+  function portIntegrityFailure(message: string): ApiError {
+    return new ApiError('PROVIDER_UNAVAILABLE', message, { retryable: true });
+  }
+
+  /**
    * 端口返回的作业必须先过**契约镜像**：形状不对就拒绝投影（fail-closed），
    * 而不是把一条不完全/超范围的记录当作业状态发出去——那等于伪造平台状态。
    */
   function assertJobContract(job: unknown): AdminJobView {
     const issues = opsValidator.collectIssues('AdminJob', job);
     if (issues.length > 0) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', '平台级作业端口返回了不符合契约的记录，拒绝投影', { retryable: true });
+      throw portIntegrityFailure('平台级作业端口返回了不符合契约的记录，拒绝投影');
     }
     return job as AdminJobView;
   }
@@ -427,16 +436,54 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
               throw new ApiError('REVISION_CONFLICT', '作业修订已变化，If-Match 与当前 ETag 不匹配');
           }
         }
+
+        // ------------------------------------------------------------------
+        // **先证成、后产生副作用**（返修 1 / 监工 5492234991 P1）。
+        //
+        // 端口回传属于「外部输入」：在**写任何 accepted 审计、写入幂等台账之前**，
+        // 必须先把整条结果验完。下面四条任一不成立即 fail-closed，
+        // 且**不留任何部分副作用**（审计 0 条、幂等台账无已完成行，占位由外壳释放）。
+        // ------------------------------------------------------------------
+
+        // (1) 契约形状合法：整条记录过契约镜像（含 `kind` 等必填）。
+        const cancelled = assertJobContract(cloneDeep(outcome.job));
+
+        // (2) 同一性：回传的必须是**被请求取消的那一个作业**（不得是别的作业），
+        //     且 `kind` 与 `target_ref` 未被偷换。
+        if (cancelled.id !== normalizedId) {
+          throw portIntegrityFailure('作业端口回传的目标不是被请求取消的作业，拒绝登记取消结果');
+        }
+        if (
+          cancelled.kind !== current.kind ||
+          cancelled.target_ref.type !== current.target_ref.type ||
+          cancelled.target_ref.id !== current.target_ref.id ||
+          cancelled.target_ref.revision !== current.target_ref.revision
+        ) {
+          throw portIntegrityFailure('作业端口回传的类型/目标与取消前不一致，拒绝登记取消结果');
+        }
+
+        // (3) 后置状态：必须**确实进入已取消态**（`states.json.job_transitions` 里
+        //     `queued → cancelled`、`running → cancelled` 是唯一合法路径；
+        //     回传仍为 `queued`/`running` 等未取消态，或别的终态 ⇒ 拒）。
+        if (cancelled.state !== 'cancelled') {
+          throw portIntegrityFailure(`作业端口回传的状态不是已取消（${cancelled.state}），拒绝登记取消结果`);
+        }
+
+        // (4) 版本迁移正确：一次取消 = 一次状态迁移 = 修订号**恰好递增 1**（不增或倒退 ⇒ 拒）。
+        if (cancelled.revision !== current.revision + 1) {
+          throw portIntegrityFailure('作业端口回传的修订号未正确递增（应为取消前修订号 +1），拒绝登记取消结果');
+        }
+
+        // ---- 校验全部通过，才登记成功：审计 + 幂等定型（要么全做，要么全不做）----
         appendAudit(context, {
           action: 'job.cancel',
           scope: OPS_SCOPES.cancelAdminJob,
           // 契约 `TargetRef.type` 闭集**有** job 成员 ⇒ 用合同口径，且带被取消的 revision。
-          targetRef: { type: 'job', id: outcome.job.id, revision: current.revision },
+          targetRef: { type: 'job', id: normalizedId, revision: current.revision },
           targetHint: null,
           reasonCode: 'job_cancelled',
           result: 'accepted',
         });
-        const cancelled = assertJobContract(cloneDeep(outcome.job));
         return singleResponse(context, executionMode, 200, cancelled, etagOf(cancelled.revision));
       },
     );
