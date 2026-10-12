@@ -35,9 +35,9 @@ import {
 import { RULES, rulesByCategory, validateRuleCatalog } from '../../packages/moderation/rules.mjs';
 import { deriveRuleVersion, isDerivedRuleVersion, RULE_VERSION } from '../../packages/moderation/rule-version.mjs';
 import { MATCHERS } from '../../packages/moderation/matchers.mjs';
-import { evaluateHardRules, toRuleLayerDraft } from '../../packages/moderation/engine.mjs';
+import { toRuleLayerDraft } from '../../packages/moderation/engine.mjs';
 import { missingContractFields } from '../../packages/moderation/review.mjs';
-import { makeInput } from './_fixtures.mjs';
+import { makeInput, runRules } from './_fixtures.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -140,7 +140,7 @@ test('本片不产出 model_version / prompt_version：源码里没有占位赋�
 });
 
 test('规则层草稿显式声明不完整，且不含模型层字段键', () => {
-  const result = evaluateHardRules(makeInput());
+  const result = runRules(makeInput());
   const draft = toRuleLayerDraft(result);
   assert.equal(draft.complete, false);
   assert.equal('model_version' in draft, false);
@@ -164,7 +164,7 @@ test('引擎产出的 decision 永远落在契约闭集内（含异常输入）'
     makeInput({ media: [{ kind: 'image' }] }),
   ];
   for (const input of inputs) {
-    const result = evaluateHardRules(input);
+    const result = runRules(input);
     assert.equal(typeof result.decision, 'string');
     assert.equal(isAuditState(result.decision), true, `decision 越界：${String(result.decision)}`);
   }

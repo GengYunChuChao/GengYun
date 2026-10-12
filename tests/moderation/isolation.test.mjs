@@ -10,9 +10,14 @@ import assert from 'node:assert/strict';
 
 import { MATCHERS } from '../../packages/moderation/matchers.mjs';
 import { RULES } from '../../packages/moderation/rules.mjs';
-import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
-import { evaluateBatch } from '../../packages/moderation/batch.mjs';
-import { CLEAN_TEXT, makeInput, withThrowingGetter, withThrowingOwnKeys } from './_fixtures.mjs';
+import {
+  CLEAN_TEXT,
+  makeInput,
+  runBatch,
+  runRules,
+  withThrowingGetter,
+  withThrowingOwnKeys,
+} from './_fixtures.mjs';
 
 const PRIVACY_TEXT = '有事打我电话 13812345678，或者晚上再联系。';
 
@@ -30,7 +35,7 @@ function compareVerdict(a, b, name) {
 test('批量审核：中间一条输入读失败，前后两条判定完全不受影响', () => {
   const clean = makeInput({ text: CLEAN_TEXT });
   const privacy = makeInput({ text: PRIVACY_TEXT });
-  const batch = evaluateBatch([clean, withThrowingGetter('text'), privacy]);
+  const batch = runBatch([clean, withThrowingGetter('text'), privacy]);
 
   assert.equal(batch.batch_size, 3);
   assert.deepEqual(batch.results.map((item) => item.index), [0, 1, 2]);
@@ -42,8 +47,8 @@ test('批量审核：中间一条输入读失败，前后两条判定完全不�
   assert.notEqual(batch.results[2].decision, 'approved');
 
   // 与单独求值逐字段对齐：批量没有污染任何一条。
-  compareVerdict(batch.results[0], evaluateHardRules(clean), '第 1 条');
-  compareVerdict(batch.results[2], evaluateHardRules(privacy), '第 3 条');
+  compareVerdict(batch.results[0], runRules(clean), '第 1 条');
+  compareVerdict(batch.results[2], runRules(privacy), '第 3 条');
   assert.equal(batch.summary.approved, 1);
   assert.equal(batch.summary.rejected, 1);
   assert.equal(batch.summary.quarantined, 1);
@@ -51,7 +56,7 @@ test('批量审核：中间一条输入读失败，前后两条判定完全不�
 
 test('批量审核：引擎级抛出（ownKeys 陷阱）被隔离为该条失败，其它目标不受影响', () => {
   const clean = makeInput({ text: CLEAN_TEXT });
-  const batch = evaluateBatch([clean, withThrowingOwnKeys(), clean]);
+  const batch = runBatch([clean, withThrowingOwnKeys(), clean]);
 
   assert.equal(batch.batch_size, 3);
   assert.equal(batch.results[1].decision, 'quarantined');
@@ -86,7 +91,7 @@ test('批量审核：单条规则抛错只影响该规则的求值，不影响�
   };
   const clean = makeInput({ text: CLEAN_TEXT });
   const privacy = makeInput({ text: PRIVACY_TEXT });
-  const batch = evaluateBatch([clean, privacy], options);
+  const batch = runBatch([clean, privacy], options);
 
   assert.equal(batch.results[0].decision, 'quarantined', '有规则未求值，干净文本也不得通过');
   assert.ok(batch.results[0].reason_codes.includes('RULE_ENGINE_ERROR'));
@@ -100,18 +105,18 @@ test('批量审核：单条规则抛错只影响该规则的求值，不影响�
 });
 
 test('批量审核：输入不是数组时返回空批次而不是抛错或放行', () => {
-  const batch = evaluateBatch(undefined);
+  const batch = runBatch(undefined);
   assert.equal(batch.batch_size, 0);
   assert.equal(batch.input_was_array, false);
   assert.deepEqual(batch.results, []);
-  const batch2 = evaluateBatch(null);
+  const batch2 = runBatch(null);
   assert.equal(batch2.batch_size, 0);
 });
 
 test('失败隔离不影响确定性：同一批重复跑得到同一组判定', () => {
   const items = [makeInput({ text: CLEAN_TEXT }), withThrowingGetter('text'), makeInput({ text: PRIVACY_TEXT })];
-  const first = evaluateBatch(items);
-  const second = evaluateBatch(items);
+  const first = runBatch(items);
+  const second = runBatch(items);
   assert.deepEqual(
     first.results.map((item) => [item.decision, item.reason_codes]),
     second.results.map((item) => [item.decision, item.reason_codes]),

@@ -18,9 +18,8 @@ import {
   ruleSetDigest,
   stableStringify,
 } from '../../packages/moderation/rule-version.mjs';
-import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
 import { evaluateReReview, isPublishable, REVIEW_ACTIONS } from '../../packages/moderation/review.mjs';
-import { CLEAN_TEXT, makeExtraRule, makeInput } from './_fixtures.mjs';
+import { CLEAN_TEXT, makeExtraRule, makeInput, runRules } from './_fixtures.mjs';
 
 test('rule_version 由规则集内容派生：格式固定、与摘要一致、长度合规', () => {
   assert.equal(isDerivedRuleVersion(RULE_VERSION), true);
@@ -79,7 +78,7 @@ test('stableStringify：键序无关、RegExp 归一、特殊值显式标注', (
 
 test('版本重审：规则集变化后旧结果失效、必须重审（落点 pending）', () => {
   const input = makeInput({ text: CLEAN_TEXT });
-  const oldResult = evaluateHardRules(input);
+  const oldResult = runRules(input);
   assert.equal(oldResult.decision, 'approved');
   assert.equal(oldResult.rule_version, RULE_VERSION);
 
@@ -111,7 +110,7 @@ test('版本重审：规则集变化后旧结果失效、必须重审（落点 p
   assert.equal(isPublishable(oldResult, RULE_VERSION).publishable, true);
 
   // 新规则集下重跑，同一文本的结论真的变了（不是"换个版本号但行为不变"）。
-  const rerun = evaluateHardRules(input, { rules: mutatedRules, matchers: MATCHERS });
+  const rerun = runRules(input, { rules: mutatedRules, matchers: MATCHERS });
   assert.equal(rerun.rule_version, newVersion);
   assert.equal(rerun.decision, 'rejected');
   assert.ok(rerun.reason_codes.includes('COMMERCE_SOLICITATION'));
@@ -119,7 +118,7 @@ test('版本重审：规则集变化后旧结果失效、必须重审（落点 p
 
 test('版本重审：目标 revision 变化 ⇒ 旧结果失效（编辑生成新版本重审）', () => {
   const input = makeInput({ text: CLEAN_TEXT });
-  const oldResult = evaluateHardRules(input);
+  const oldResult = runRules(input);
   const outcome = evaluateReReview(oldResult, {
     rule_version: RULE_VERSION,
     target_ref: { type: 'post', id: input.target_ref.id, revision: 2 },
@@ -133,7 +132,7 @@ test('版本重审：目标 revision 变化 ⇒ 旧结果失效（编辑生成�
 
 test('版本重审：目标 type/id 变化 ⇒ 失效且隔离（不是同一个对象）', () => {
   const input = makeInput({ text: CLEAN_TEXT });
-  const oldResult = evaluateHardRules(input);
+  const oldResult = runRules(input);
   for (const changed of [
     { type: 'comment', id: input.target_ref.id, revision: 1 },
     { type: 'post', id: 'post-9999', revision: 1 },
