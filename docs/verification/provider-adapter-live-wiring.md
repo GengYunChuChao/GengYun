@@ -2,10 +2,20 @@
 
 - 分支：`chore/provider-adapter-live-prep`（worktree `E:\GengYunCommander\GengYun_W10`）
 - 基线：`upstream/main = d5562923`（`git fetch upstream --prune` 后复核，与本地 HEAD 一致）
-- 性质：**方案 + 骨架**。本阶段**零付费、零联网**，未向任何供应商发出请求。
-- 口径声明：本文件**不宣布验收通过**，**不声称**任何能力"已接入真实供应商"或"已验收"。
-  所有 `authenticationVerifiedThisRun` / `serviceActivationVerified` / `quotaVerified` /
-  `capabilityVerified` / `policySelectionVerified` 仍为 `false`。
+- 性质：**接线规范 + 骨架**，定位为**阶段 2 的实现规范**（本阶段不落实现）。
+  本阶段**零付费、零联网**，未向任何供应商发出任何请求、**未消耗任何预算**。
+- **原始可达性证据已在 2026-10-04 轮取得**（见 `docs/verification/tencent-live-evidence.md`：
+  moderation Pass / ASR 真实转写 / TTS 真实 8784 B mp3 / OCR 两条文字匹配 / TokenHub 视觉成功；
+  累计 12 次、预留 ¥1.7224）。**本轮不复现该证据、也不新增任何请求。**
+- 口径声明：本文件**不宣布验收通过**，**不声称**任何能力"已接入真实供应商"或"已验收"，
+  **也不声称**参数配置"完整无缺"。所有 `authenticationVerifiedThisRun` /
+  `serviceActivationVerified` / `quotaVerified` / `capabilityVerified` /
+  `policySelectionVerified` 仍为 `false`。
+- **待用户交接项（唯一）**：两个**真实 BizType**（文本 TMS 一个、图片 IMS 一个）。当前
+  `moderation.bizType` 与 `moderation.image.bizType` 的值 `SYNTH_PLACEHOLDER_NOT_REAL`
+  **是合成占位值、不是真实策略**，仅为满足 `/^[A-Za-z0-9_-]{1,32}$/` 的格式校验而存在；
+  **任何真实 TMS / IMS 调用之前，必须由用户交接两个真实 BizType 并替换该值。**
+  本轮**不申请任何 moderation 调用**，`policySelectionVerified` 保持 `false`。
 
 ---
 
@@ -167,7 +177,7 @@ build(本地)  →  reserve(闸门)  →  sign(TC3)  →  send(恰好一次)  �
 | HTTP 5xx | `PROVIDER_OUTCOME_UNKNOWN` | 503 | 同上 |
 | HTTP 200 但 `Response.Error.Code` = `ResourceUnavailable.ResourcePackageRunOut` / `UnsupportedOperation.PkgExhausted` / `RequestLimitExceeded*` / `LimitExceeded*` | `PROVIDER_QUOTA_EXCEEDED` | 429 | 配额/限流类 |
 | `Response.Error.Code` = `AuthFailure.*` / `UnauthorizedOperation.*` / `InvalidCredential` / `FailedOperation.UnOpenError` / `FailedOperation.UserNotRegistered` | `PROVIDER_UNAVAILABLE` | 503 | 账号/服务/凭据不可用；**对外不区分是哪一种**（避免泄露账号状态） |
-| `Response.Error.Code` = `InvalidParameter*` / `MissingParameter` | `PROVIDER_OUTCOME_UNKNOWN` | 503 | **判断依据**：适配器的 body 由服务端从已校验媒体构造，参数错说明是**我们的适配器缺陷**，把它映射成 400 会把责任错误地推给客户端。故按"结果不可判定"处理并留内部诊断（**待监工裁定**，见 §8-4） |
+| `Response.Error.Code` = `InvalidParameter*` / `MissingParameter` | `PROVIDER_OUTCOME_UNKNOWN` | 503 | **判断依据**：适配器的 body 由服务端从已校验媒体构造，参数错说明是**我们的适配器缺陷**，把它映射成 400 会把责任错误地推给客户端。故按"结果不可判定"处理并留内部诊断。**指挥已裁定接受此映射**，并追加硬要求：台账**必须原样保留供应商原始错误码**（`providerErrorCode` 字段），不得只留映射后的契约码，以便定位适配器缺陷（见 §8-4） |
 | `Response.Error.Code` = `InternalError*` / `FailedOperation.ServiceIsolate` / 未知码 | `PROVIDER_OUTCOME_UNKNOWN` | 503 | 未知即不声称可用，也不声称是干净失败 |
 | HTTP 200 但 payload 形状非法 / `RequestId` 缺失 | `PROVIDER_OUTCOME_UNKNOWN` | 503 | **供应商确实干活了（可能已计费）却没给出可用证据** ⇒ 必须落"结果未知"，不得当成功 |
 
@@ -189,14 +199,15 @@ build(本地)  →  reserve(闸门)  →  sign(TC3)  →  send(恰好一次)  �
 **调用**：`GeneralAccurateOCR` / `2018-11-19`（TC3，共享凭据对，`region=ap-shanghai`，`timeoutMs=8000`）。
 **响应**：`Response.RequestId` + `Response.TextDetections[].DetectedText`（**纯文本行**）。
 
-**关键缺口（必须由指挥/监工决策，不能由写手私自补）**：
+**关键缺口 —— 指挥已裁定：抽取层明确纳入 #10 阶段 2 范围**：
 `OcrProvider.extract` 的产出是结构化 `fields = { registration_number, name, ingredients[], dosage_form }`，
 而 `GeneralAccurateOCR` 只给**文本行**。二者之间需要一个新的 **标签字段抽取层**（规则式或 LLM 式），
-该组件在阶段 1 不存在（阶段 1 的替身是**直接编造** `fields`，不是从文本解析）。所以：
+该组件在阶段 1 不存在（阶段 1 的替身是**直接编造** `fields`，不是从文本解析）。因此：
 
-- OCR 的"真实接线"**不是**接一个 HTTP 客户端就完事，它依赖一个**新的、尚未验证的解析组件**；
+- OCR 的"真实接线"**不是**接一个 HTTP 客户端就完事，它 = **HTTP 接入 + 抽取层**，两者都属 **#10 阶段 2 范围**；
+- **本轮不实现**抽取层（阶段 0 只到"能走到即将发送"）；
 - 该解析组件**不得**决定 `MatchState`（那是 `ocr/state.ts` 的 `decideMatchState` 的职责），只产出候选字段，由 service 校验；
-- 若走 LLM 抽取，会额外引入 DeepSeek 端点与它自己的预算闸门（**本阶段不申请**）。
+- 若走 LLM 抽取，会额外引入 DeepSeek 端点与它自己的预算闸门（**本轮不申请**）。
 
 **骨架**（局部；`real` 分支默认关闭的写法见 §2.1）：
 
@@ -255,16 +266,19 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 
 | 观测 | 产出 |
 | --- | --- |
-| `Result` 非空 | `{ kind:'completed', transcript:{ text: Result, uncertain_spans: [] } }` |
+| `Result` 非空 | `{ kind:'completed', transcript:{ text: Result, uncertain_spans: [] } }` **＋** 提供者级 `uncertaintyReporting:'provider_silent'`（见下方硬要求） |
 | `Result` 空 / 只有空白 | `{ kind:'uncertain', reason:'供应商标注无可识别语音' }` —— **不编造文本** |
 | 失败（见 §2.6） | `{ kind:'failed', code }` |
 
-> **语义张力（须裁定，见 §8-3）**：阶段 1 的适配层约定要求 `text` 与 `uncertain_spans` **两键都显式出现**，
-> 且"不得补造"。但 `SentenceRecognition` **不返回**任何 span 级置信度。写 `uncertain_spans: []`
-> 等于声称"没有不确定区间"，而供应商其实**没有提供**这个信息。两种候选口径：
-> (a) `[]` + 在 `note`/内部记录里写明"空数组表示供应商未提供区间置信度，不代表不存在"；
-> (b) 供应商未提供置信度时返回 `{ kind:'uncertain' }`——但这会把**正常可用**的转写判成不确定态，过度保守。
-> 本方案**不预选**，交由指挥/监工按证据口径裁定。
+> **已裁定（硬要求，见 §8-3）**：`SentenceRecognition` **不返回**任何 span 级置信度。因此：
+> 1. 实现层**必须显式暴露**"供应商未提供 span 级置信度"这一事实。本方案的做法是在
+>    `SpeechProvider` 接口上新增只读字段 `uncertaintyReporting: 'provider_spans' | 'provider_silent'`，
+>    真实分支恒为 `'provider_silent'`，同时在 `note` 里写明；**不得**只靠一个空数组让读者去推断。
+> 2. **不得**用 `uncertain_spans: []` 暗示"无不确定区间"。`[]` 在此只表示"供应商没有给出这个维度"，
+>    该含义必须由上面的**显式字段**承载，而不是靠读者默认。
+> 3. 阶段 2 的证据**不得**据此声称"无不确定区间"，也不得声称任何转写质量 / 置信度结论。
+> 4. 优先在提供者层**新增显式字段**，而不是改写 `uncertain_spans` 的语义——后者的形状与区间校验
+>    归属 `speech/state.ts`，改动它需同步 W7 分支与其回归用例。
 
 ### 3.3 TTS（`feat/gy-i13-synthesis:services/api/src/tts/provider.ts`）
 
@@ -297,7 +311,7 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 **不改动** `tools/verify-tencent-live.mjs`（它是上一轮已审、且被 `access-verification.yml`
 `node --check` + `tests/tencent-live.test.mjs` 覆盖的付费路径装置）。预留方式：
 
-新增**独立**工具 `tools/verify-provider-adapter-live.mjs`（阶段 1 落地，本阶段只留设计）：
+新增**独立**工具 `tools/verify-provider-adapter-live.mjs`（**阶段 2 落地**，本阶段只留设计）：
 
 - **默认（无 `--manual-authorization`）= 纯离线 dry run**：
   用 §2.1 的端口构造真实适配器，`fetchImpl` 注入**假函数** + `globalThis.fetch` 换成绊线，
@@ -322,7 +336,7 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 | --- | --- | --- | --- | --- |
 | ASR（#11） | 1 | 1 | **2** | 最小成本，先跑通"重建 WAV + 专用凭据 + 签名" |
 | TTS（#13） | 1 | 1 | **2** | 精品音色配额状态未知，正常这次同时验配额 |
-| OCR（#10） | 1 | 1 | **2** | 单价最高；且**真实字段抽取层未决**，本次只验到 `TextDetections` |
+| OCR（#10） | 1 | 1 | **2** | 单价最高；抽取层已纳入 #10 阶段 2，本轮只验到 `TextDetections` |
 | 合计 | 3 | 3 | **6** | 未申请 `llm` / `weedRecognition` / `moderation*` |
 
 **标注**：受控失败用例（`--controlled-failure`：OCR 塞非法 base64、ASR 塞非法 `VoiceFormat`、TTS 塞空 `Text`）
@@ -330,7 +344,7 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 
 ---
 
-## 6. 待批准的真实调用清单
+## 6. 待批准的真实调用清单（**阶段 2 放行提案；本轮不发任何请求**）
 
 **单价来源必须说明**：下表单价来自 `tools/verify-tencent-live.mjs` 的 `PRICES` 常量，是**保守预留额**，
 **不是**已核实的供应商目录价，也不是实际账单金额（`actualChargeCny` 在既有台账中恒为 `null`）。
@@ -353,10 +367,17 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 **建议分批**：先放行 #1–#3（≈¥0.5062），核验台账与实际观测后再决定是否放行 #4–#6；
 不建议一次放行全部 6 次（OCR 单价是 ASR 的 156 倍）。
 
-**放行前指挥需确认的三件事**：
-1. 轮次预算与上表 6 次/¥1.0124 是否一致；
-2. OCR 的"真实字段抽取层"是否纳入本轮（不纳入则 #5/#6 只验到 `TextDetections`，不构成 OCR 能力证据）；
-3. `uncertain_spans: []` 与 BizType 占位值两处口径（§8-1、§8-3）如何裁定。
+**指挥已下的裁定（2026-10-12）**：
+1. **本轮不申请任何调用**，本清单是**阶段 2 的放行提案**，需阶段 2 另行授权；轮次预算待阶段 2 再确认。
+2. **OCR 的标签字段抽取层明确纳入 #10 阶段 2 范围**（不纳入则 #5/#6 只验到 `TextDetections`，**不构成 OCR 能力证据**）；
+   本轮不实现抽取层。
+3. **moderation 不申请调用**：两个 `bizType` 保持合成占位值、保持自描述、`policySelectionVerified` 保持 `false`；
+   将来需要的两个真实 BizType 由指挥去找用户交接（建议作为新字段放进 `E:\GengYunPrivate\credentials.local.json`）。
+4. **ASR 的 `uncertain_spans` 口径已裁定**（见 §3.2 硬要求）：必须**显式暴露**"供应商未提供 span 级置信度"，
+   不得用 `[]` 暗示"无不确定区间"，阶段 2 证据不得据此声称"无不确定区间"。
+5. **`InvalidParameter*` 映射已裁定接受**（见 §2.6），并追加台账**必须保留原始供应商错误码**的硬要求。
+6. **骨架维持只落文档**：本文件是**阶段 2 接线规范**，各适配器由**各任务自己的分支**在阶段 2 落实现；
+   不在 W5/W7/W8 的在途分支上写文件。
 
 ---
 
@@ -369,14 +390,15 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
 - `.supervisor/gy25-live/`（**gitignored**）：`synthetic.png`、`synthetic-speech.wav`、`synthetic-manifest.json`、
   `fixture-text.json`、`offline-selfcheck.mjs`。
 
-**未交付（及原因）**
-- 未把骨架落到 `services/api/src/{ocr,speech,tts}/provider.ts`：本分支不存在这些文件，且在途 PR（W5/W7/W8）占用其路径；新建会冲突，且会被 `build`/`lint` 收集。需指挥决定落地分支。
-- 未做任何真实调用（本阶段红线）。
-- 未解决 OCR 字段抽取层与 `uncertain_spans` 语义。
+**未交付（及原因；指挥已裁定）**
+- 未把骨架落到 `services/api/src/{ocr,speech,tts}/provider.ts`：本分支不存在这些文件，且在途 PR（W5/W7/W8）占用其路径；新建会冲突，且会被 `build`/`lint` 收集（等于把付费接线塞进 CI 编译面，与本阶段红线冲突）。**指挥已裁定维持"只交文档"**：本文件作为**阶段 2 的接线规范**，各适配器由**各任务自己的分支**在阶段 2 落实现；**不得**去 W5/W7/W8 的在途分支上写文件。
+- 未做任何真实调用（本阶段红线：零付费、零联网、零预算消耗）。
+- OCR 字段抽取层与 ASR `uncertain_spans` 口径**已由指挥裁定并纳入阶段 2**（§3.1 / §3.2），本轮按裁定不实现。
+- 未申请任何 `moderation*` 调用（真实 BizType 缺失，见 §8-1）。
 
 ---
 
-## 8. 未解缺口 / 需要决策的问题
+## 8. 缺口与裁定状态
 
 1. **真实 BizType 缺失（阻塞 moderation 真实调用）**：`E:\GengYunPrivate\credentials.local.json`
    的字段仅为 `appid / appsecret / deepseekApiKey / tencentAsrSecretId / tencentAsrSecretKey /
@@ -388,9 +410,21 @@ PCM(1) / 单声道 / 16000 Hz / 16-bit / `dataLength` 偶数 / `≤60s` / Base64
    ⇒ 本轮 `config.local.json` 的两个 `bizType` 填的是**合成占位值 `SYNTH_PLACEHOLDER_NOT_REAL`**
    （仅满足 `/^[A-Za-z0-9_-]{1,32}$/` 的格式校验）。`policySelectionVerified` 仍为 `false`。
    **在任何真实审核调用之前，必须由用户重新交接两个真实 BizType。**
-2. **OCR 字段抽取层不存在**（§3.1），是 OCR"真实接线"的真实前置件，本阶段未实现。
-3. **`uncertain_spans: []` 的语义**（§3.2）需按证据口径裁定。
-4. **`InvalidParameter*` 映射到 `PROVIDER_OUTCOME_UNKNOWN` 而非 400**（§2.6）是我的判断，需监工裁定。
+   **指挥裁定**：占位值保持不动、保持自描述；**不得**把本轮审计结果表述为"配置完整无缺"；
+   本轮不申请任何 moderation 调用；两个真实 BizType 由指挥向用户索取（建议作为新字段放进
+   `E:\GengYunPrivate\credentials.local.json`）。
+2. **OCR 字段抽取层**（§3.1）：**已裁定纳入 #10 阶段 2 范围**，本轮不实现。落实现时必须保持
+   "抽取层只产出候选字段、**不决定** `MatchState`"。
+3. **ASR `uncertain_spans` 口径**（§3.2）：**已裁定** —— 实现层必须**显式暴露**"供应商未提供 span 级置信度"
+   这一事实（本方案用提供者级只读字段 `uncertaintyReporting:'provider_silent'` ＋ `note`），
+   **不得**用 `uncertain_spans: []` 暗示"无不确定区间"；阶段 2 证据**不得**据此声称"无不确定区间"。
+4. **`InvalidParameter*` 映射**（§2.6）：**已裁定接受** `PROVIDER_OUTCOME_UNKNOWN(503)`
+   （理由：body 由服务端从已校验媒体构造，参数错属**适配器缺陷**，映射成 400 会把责任错误地推给客户端）；
+   并追加硬要求——**台账必须原样保留供应商原始错误码**，不得只留映射后的契约码。
 5. 契约**没有** TTS 文本上限、**没有** `JobState`↔`ErrorCode` 对应关系的明文（既有实现已按 `timed_out`/`failed` 口径处理）。
-6. 阶段 1 适配器全部在**未合并**分支上；本文档的所有行内引用锚定的是**在途分支**的当前内容，
-   合并顺序变化会使引用漂移，落地时需重新核对。
+6. 三个 `real` 适配器全部在**未合并**分支上（W5 `feat/gy-i10-label-ocr`、W7 `feat/gy-i11-speech-pipeline`、
+   W8 `feat/gy-i13-synthesis`）；本文档的所有行内引用锚定的是**在途分支的当前内容**，
+   合并顺序变化会使引用漂移，阶段 2 落地时需重新核对。
+7. **本轮证据边界（不得越界解读）**：本轮**未向任何供应商发出请求、未消耗任何预算**。
+   本文件中的可达性事实全部引自 **2026-10-04 轮**的既有证据（`docs/verification/tencent-live-evidence.md`），
+   本轮**没有复现**它们；离线审计只覆盖**配置与凭据就绪性**，不构成任何能力、配额、开通或策略的验证。
