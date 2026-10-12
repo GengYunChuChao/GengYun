@@ -176,35 +176,51 @@ test('异键并发发布：第二次是幂等空操作，不产生第二次迁�
 });
 
 test('失败释放占位：失败后可以用同一个键重试成功', async () => {
-  const { service, store } = createHarness();
-  const created = await createDraft(SOURCES, service);
-  const id = created.body.data.id;
+  const { service, store, clock } = createHarness();
+  const authorId = context().identity.userId;
 
-  // 1) 发布门槛失败（植入非法内容）⇒ 占位必须释放。
-  const entity = store.getEntity(id);
-  const before = structuredClone(entity.revisions[0].content);
-  entity.revisions[0].content = { ...before, title: '' };
+  // ---- A) 发布门槛失败（库中内容不合契约）⇒ 占位必须释放 ----
+  // 既有修订在存储边界已被深冻结（返修 1），故用「追加一条不合契约的修订」注入非法内容。
+  const a = await createDraft(SOURCES, service);
+  const idA = a.body.data.id;
+  const entityA = store.getEntity(idA);
+  const before = structuredClone(entityA.revisions[0].content);
+  store.appendRevision({
+    entity: entityA,
+    content: { ...before, title: '' },
+    authorId,
+    createdAt: clock.now(),
+    derivedFromRevision: 1,
+  });
   const key = idempotencyKey('release');
-  const ctx = { ...context(), idempotencyKey: key, ifMatch: '"1"' };
-  await expectApiError(() => service.publishSource(ctx, id, validPublishBody()), 'INVALID_REQUEST');
-  assert.equal(store.peekIdempotent(
-    idempotencyScope(STEWARD, 'POST', `/admin/sources/${id}/publish`),
-    idempotencyKeyHashHex(idempotencyScope(STEWARD, 'POST', `/admin/sources/${id}/publish`), key),
-  ), null, '失败后占位必须被释放');
+  const scopeA = idempotencyScope(STEWARD, 'POST', `/admin/sources/${idA}/publish`);
+  await expectApiError(
+    () => service.publishSource({ ...context(), idempotencyKey: key, ifMatch: '"2"' }, idA, validPublishBody()),
+    'INVALID_REQUEST',
+  );
+  assert.equal(store.peekIdempotent(scopeA, idempotencyKeyHashHex(scopeA, key)), null, '失败后占位必须被释放');
 
-  // 2) 修回合法内容，用**同一个键**重试 ⇒ 成功。
-  entity.revisions[0].content = before;
-  const retried = await service.publishSource(ctx, id, validPublishBody());
+  // 追加合法修订后用**同一个键**重试 ⇒ 成功，证明占位确实释放了。
+  store.appendRevision({
+    entity: entityA,
+    content: before,
+    authorId,
+    createdAt: clock.now(),
+    derivedFromRevision: 2,
+  });
+  const retried = await service.publishSource({ ...context(), idempotencyKey: key, ifMatch: '"3"' }, idA, validPublishBody());
   assert.equal(retried.status, 200);
-  assert.equal(store.getEntity(id).lifecycle, 'published');
+  assert.equal(store.getEntity(idA).lifecycle, 'published');
 
-  // 3) If-Match 不匹配导致失败后，同样的键也能重试。
+  // ---- B) If-Match 不匹配导致失败后，同样的键也能重试 ----
+  const b = await createDraft(SOURCES, service);
+  const idB = b.body.data.id;
   const editKey = idempotencyKey('release-edit');
   await expectApiError(
-    () => service.editSourceDraft({ ...context(), idempotencyKey: editKey, ifMatch: '"9"' }, id, SOURCES.editedInput()),
+    () => service.editSourceDraft({ ...context(), idempotencyKey: editKey, ifMatch: '"9"' }, idB, SOURCES.editedInput()),
     'REVISION_CONFLICT',
   );
-  const edited = await service.editSourceDraft({ ...context(), idempotencyKey: editKey, ifMatch: '"1"' }, id, SOURCES.editedInput());
+  const edited = await service.editSourceDraft({ ...context(), idempotencyKey: editKey, ifMatch: '"1"' }, idB, SOURCES.editedInput());
   assert.equal(edited.status, 200);
   assert.equal(edited.body.data.revision, 2);
 });

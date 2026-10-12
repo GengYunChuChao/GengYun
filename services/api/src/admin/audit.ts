@@ -18,6 +18,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { assertContractInput } from './fields.ts';
+import { freezeDeep } from './immutable.ts';
 import type { AuditRecord, AuditResult, ContractAuditEvent, TargetRefValue } from './types.ts';
 
 export interface AuditAppendInput {
@@ -43,18 +44,16 @@ export interface AuditLog {
 }
 
 function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      deepFreeze((value as Record<string, unknown>)[key]);
-    }
-  }
-  return value;
+  // 与 `immutable.ts` 共用同一份实现，避免两处冻结语义分叉。
+  return freezeDeep(value);
 }
 
 /**
  * 契约出口：把内部记录投影成契约 `AuditEvent`。
  * 只取合同的 8 个字段；内部独有的 `actor_id` 在此被剥离。
+ *
+ * 出口安全：这里**构造全新的标量对象**，不引用任何内部可变结构，
+ * 因此审计出口天然是副本（`AuditEvent` 全部字段都是 string / enum / 嵌套标量）。
  */
 export function projectAuditEvent(record: AuditRecord): ContractAuditEvent {
   return {

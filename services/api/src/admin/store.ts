@@ -7,12 +7,17 @@
  *    「原子占位 → 生效 → 记审计」整体在同一个临界区内完成，不存在交错。
  * 3. **审计只可追加**：审计台账由 `audit.ts` 提供，本层没有删改入口。
  *
+ * 另有**不可变边界**（返修 1）：`appendRevision` 入库即深拷贝 + 深冻结（含嵌套对象），
+ * 修订本体也冻结；配合各投影的出口深拷贝，任何外部持有者都无法通过响应改写存储。
+ * 详见 `immutable.ts` 与 `tests/unit/admin-content-immutability.test.mjs`。
+ *
  * 幂等台账沿用 `services/api/src/auth/idempotency.ts` 的 claim/complete/release 语义：
  * 占位行（outcome 未定型）**不算**已完成结果，对重放方表现为「尚未就绪」。
  */
 import { randomUUID } from 'node:crypto';
 import { createAuditLog } from './audit.ts';
 import type { AuditLog } from './audit.ts';
+import { takeOwnershipDeep } from './immutable.ts';
 import type {
   AdminFamily,
   ContentIdempotencyOutcome,
@@ -145,13 +150,16 @@ export function createAdminContentStore(): AdminContentStore {
       const { entity } = input;
       const previous = entity.revisions.at(-1);
       const revision = previous === undefined ? 1 : previous.revision + 1;
-      const stored: StoredRevision<unknown> = {
+      // **存储边界**：入库即深拷贝 + 深冻结（含嵌套对象），并冻结修订本体。
+      // 库内内容从此不与任何外部对象共享引用，也不可能被外部改写；
+      // 越界改动会直接抛 TypeError（本片选定的可判定语义，见 immutable.ts）。
+      const stored: StoredRevision<unknown> = Object.freeze({
         revision,
-        content: input.content,
+        content: takeOwnershipDeep(input.content),
         createdAt: input.createdAt,
         authorId: input.authorId,
         derivedFromRevision: input.derivedFromRevision,
-      };
+      });
       entity.revisions.push(stored);
       return stored;
     },

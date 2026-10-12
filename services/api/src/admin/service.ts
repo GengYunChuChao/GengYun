@@ -33,6 +33,7 @@ import {
   idempotencyScope,
 } from '../auth/idempotency.ts';
 import { assertContractInput, collectIssues, MAX_FIELD_ERRORS } from './fields.ts';
+import { cloneDeep, freezeDeep } from './immutable.ts';
 import { projectAuditEvent } from './audit.ts';
 import { createAdminContentStore } from './store.ts';
 import type { AdminContentStore } from './store.ts';
@@ -286,21 +287,11 @@ function parseCursorParam(raw: unknown): string | null {
   return raw;
 }
 
-/** 深冻结：审计台账与幂等台账里的结果引用一旦定型即不可改。 */
-function freezeDeep<T>(value: T): T {
-  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const key of Object.keys(value as Record<string, unknown>)) {
-      freezeDeep((value as Record<string, unknown>)[key]);
-    }
-  }
-  return value;
-}
-
-function cloneDeep<T>(value: T): T {
-  return structuredClone(value);
-}
-
+/**
+ * 冻结与拷贝统一走 `immutable.ts`（返修 1）：
+ * - 幂等台账里的结果引用一旦定型即深冻结；
+ * - 所有出口一律深拷贝。
+ */
 function etagOf(revision: number): string {
   return `"${revision}"`;
 }
@@ -511,8 +502,9 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         });
         const revision = store.appendRevision({
           entity,
-          // 存副本：调用方事后改自己的对象也动不了库里的修订内容。
-          content: cloneDeep(body),
+          // 存储边界（`store.appendRevision`）自己负责深拷贝 + 深冻结：
+          // 调用方事后改自己的对象、或改任何响应都动不了库里的修订内容。
+          content: body,
           authorId: context.identity.userId,
           createdAt: issuedAt,
           derivedFromRevision: null,
@@ -556,7 +548,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         // **只追加新修订**：已发布修订的正文（以及它上面的任何修订）都不会被改写。
         const revision = store.appendRevision({
           entity,
-          content: cloneDeep(body),
+          content: body,
           authorId: context.identity.userId,
           createdAt: now(),
           derivedFromRevision: head.revision,

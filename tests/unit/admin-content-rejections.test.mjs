@@ -503,18 +503,31 @@ test('反例 21：request_id 非 uuid ⇒ INVALID_REQUEST', async () => {
 });
 
 test('反例 22：发布门槛在发布时复检库中内容；拒绝时不得部分发布', async () => {
-  const { service, store, view } = createHarness();
+  const { service, store, view, clock } = createHarness();
   const created = await createDraft(SOURCES, service);
   const id = created.body.data.id;
   const entity = store.getEntity(id);
+  const authorId = context().identity.userId;
 
-  // 绕过写入路径把非法内容放进库里（模拟历史数据/迁移/未来改线）。
+  // 绕过写入路径把非法内容放进库里（模拟历史数据/迁移/未来改线）：
+  // 通过**追加一条不合契约的修订**注入，而不是改写既有修订——
+  // 既有修订在存储边界已被深冻结（返修 1），本来就改不动。
   // 这不是"没校验就放行"而是"没校验 = 不可发布"：发布时必须重新判定。
   const before = structuredClone(entity.revisions[0].content);
-  entity.revisions[0].content = { ...before, title: '' };
+  store.appendRevision({
+    entity,
+    content: { ...before, title: '' },
+    authorId,
+    createdAt: clock.now(),
+    derivedFromRevision: 1,
+  });
+  assert.equal(entity.revisions.length, 2);
+  assert.throws(() => {
+    entity.revisions[1].content.title = '改不动';
+  }, TypeError);
 
   const error = await expectApiError(
-    () => publishRevision(SOURCES, service, id, 1),
+    () => publishRevision(SOURCES, service, id, 2),
     'INVALID_REQUEST',
   );
   assertFieldDetails(error);
@@ -530,13 +543,20 @@ test('反例 22：发布门槛在发布时复检库中内容；拒绝时不得�
   assert.equal(events.length, 1);
   assert.equal(events[0].result, 'denied');
   assert.equal(events[0].action, 'source.publish');
-  assert.equal(events[0].target_ref.revision, 1);
+  assert.equal(events[0].target_ref.revision, 2);
   assert.ok(events[0].reason_code.startsWith('publish_gate_denied:'));
 
-  // 修回合法内容后可以发布，且这次是 accepted。
-  entity.revisions[0].content = before;
-  await publishRevision(SOURCES, service, id, 1);
+  // 追加一条合法修订后可以发布，且这次是 accepted。
+  store.appendRevision({
+    entity,
+    content: before,
+    authorId,
+    createdAt: clock.now(),
+    derivedFromRevision: 2,
+  });
+  await publishRevision(SOURCES, service, id, 3);
   const after = (await service.listAuditEvents(context())).body.data.items;
   assert.deepStrictEqual(after.map((event) => event.result), ['denied', 'accepted']);
   assert.notEqual(view.readPublished('sources', id), null);
+  assert.equal(view.readPublished('sources', id).revision, 3);
 });

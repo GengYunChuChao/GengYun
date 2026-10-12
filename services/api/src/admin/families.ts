@@ -21,7 +21,8 @@
  * - `RegistrationDraft` / `Restriction` 没有 `visibility` 字段，「撤回」在它们的
  *   契约响应里无处表达 → 撤回只落在服务层内部生命周期 + 公开读口径上。
  */
-import type { AdminFamily, Lifecycle, StoredEntity, StoredRevision, TargetRefValue } from './types.ts';
+import { cloneDeep } from './immutable.ts';
+import type { AdminFamily, StoredEntity, StoredRevision, TargetRefValue } from './types.ts';
 
 export interface SourceDraftInputValue {
   title: string;
@@ -252,6 +253,9 @@ function validityFor(entity: StoredEntity<unknown>, revision: StoredRevision<unk
 /**
  * 把（实体, 某个修订）投影成契约响应体 `data`。
  * 只按契约字段输出；不新增字段。
+ *
+ * **出口不可变**（返修 1）：凡承载存储内容的字段一律 `cloneDeep`，
+ * 绝不把 `revision.content` 原对象交给调用方。
  */
 export function projectRevisionData(
   descriptor: FamilyDescriptor,
@@ -263,6 +267,8 @@ export function projectRevisionData(
 
   if (descriptor.family === 'sources') {
     const content = revision.content as SourceDraftInputValue;
+    // sources 的契约出参是 `SourceRef`：这里把入参**摊平**成新的标量对象，
+    // 每个字段都是 string / enum 原始值，因此天然不共享任何引用，无需额外拷贝。
     return {
       id: entity.id,
       revision: revision.revision,
@@ -286,7 +292,9 @@ export function projectRevisionData(
     return {
       id: entity.id,
       revision: revision.revision,
-      content: revision.content,
+      // **出口深拷贝**（返修 1）：绝不交出 `revision.content` 原对象。
+      // 存储修订已深冻结，这里仍需深拷贝，调用方才能拿到自有的普通数据。
+      content: cloneDeep(revision.content),
       visibility: visibilityFor(entity, revision),
       review_status: reviewStatus,
     };
@@ -296,7 +304,7 @@ export function projectRevisionData(
   return {
     id: entity.id,
     revision: revision.revision,
-    content: revision.content,
+    content: cloneDeep(revision.content),
     review_status: reviewStatus,
   };
 }
@@ -319,9 +327,4 @@ export function headRevision(entity: StoredEntity<unknown>): StoredRevision<unkn
   const head = entity.revisions.at(-1);
   if (head === undefined) throw new Error(`资料 ${entity.id} 没有任何修订`);
   return head;
-}
-
-/** 生命周期 → 契约可见性文字（仅用于注释/审计 reason_code，不进入响应字段）。 */
-export function lifecycleLabel(lifecycle: Lifecycle): string {
-  return lifecycle;
 }

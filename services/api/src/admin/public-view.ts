@@ -11,6 +11,7 @@
  * - `lifecycle === 'withdrawn'` ⇒ 不可见（`null`）；从未发布 ⇒ 不可见；
  * - 撤回不删除该修订：`lifecycle` 回到 `published` 后同一修订可再次可见。
  */
+import { cloneDeep } from './immutable.ts';
 import { ADMIN_FAMILIES } from './types.ts';
 import type { AdminFamily, StoredEntity, StoredRevision } from './types.ts';
 import type { AdminContentStore } from './store.ts';
@@ -59,7 +60,8 @@ export function createAdminPublicView(store: AdminContentStore): AdminPublicView
         family: entity.family,
         id: entity.id,
         revision: revision.revision,
-        content: revision.content,
+        // **出口深拷贝**（返修 1）：公开视图也不得交出存储修订的原对象。
+        content: cloneDeep(revision.content),
         updated_at: revision.createdAt.toISOString(),
       };
     },
@@ -71,10 +73,11 @@ export function createAdminPublicView(store: AdminContentStore): AdminPublicView
       const entity = lookup(family, id);
       if (entity === null || entity.publishedRevision === null) return Object.freeze([]);
       // 「曾经发布过」的修订：修订号 ≤ 已发布修订号的都是历史冻结内容，仍可追溯。
+      // 每个历史版本同样返回**深拷贝**，调用方改自己的副本动不了库。
       return Object.freeze(
         entity.revisions
           .filter((revision) => revision.revision <= (entity.publishedRevision ?? 0))
-          .map((revision) => Object.freeze({ revision: revision.revision, content: revision.content })),
+          .map((revision) => Object.freeze({ revision: revision.revision, content: cloneDeep(revision.content) })),
       );
     },
   };
