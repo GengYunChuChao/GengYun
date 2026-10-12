@@ -30,36 +30,12 @@
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.ts';
-import type { PgPool } from '../db/pool.ts';
 import { currentIdentity, type AuthGuards } from '../auth/middleware.ts';
-import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
-import { createCheckedContentPort, type CheckedContentPort } from '../tts/content.ts';
-import { createSynthesisMediaPort, type SynthesisMediaPort } from '../tts/media.ts';
-import { createTtsProvider, type TtsProvider } from '../tts/provider.ts';
-import { createSynthesisService, type SynthesisService } from '../tts/service.ts';
 import { SYNTHESIS_TARGET_TYPES } from '../tts/state.ts';
-import { createMemorySynthesisStore, type SynthesisStore } from '../tts/store.ts';
+import type { SynthesisService } from '../tts/service.ts';
 import { buildMeta } from './support.ts';
-
-/**
- * 可注入依赖（**仅供测试替换端口**；应用装配路径不传，于是走按执行模式装配的默认端口）。
- * 缺省即：内存 store + 按模式的提供者/产物存储/核对源 —— `real` 模式三者全部 fail-closed。
- */
-export interface SynthesisRouteDeps {
-  store?: SynthesisStore;
-  provider?: TtsProvider;
-  media?: SynthesisMediaPort;
-  content?: CheckedContentPort;
-  idempotencyHmacKey?: string;
-  jobDeadlineMs?: number;
-  idempotencyWaitMs?: number;
-  now?: () => Date;
-  idFactory?: () => string;
-  /** 测试注入：直接替换整个服务（默认由上面的端口装配）。 */
-  service?: SynthesisService;
-}
 
 /** `Idempotency-Key` 头：与既有路由同一口径（缺/非法 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED）。 */
 function requireIdempotencyKeyHeader(request: FastifyRequest): string {
@@ -74,34 +50,17 @@ function requireIdempotencyKeyHeader(request: FastifyRequest): string {
 /**
  * 注册 TTS 合成路由。
  *
- * @param pool 本域**尚无可用的 PG 记录层实现**（`tts/store.ts` 目前只有内存实现）。
- *   参数位置与既有 registrar 家族（profile/knowledge/consents…）保持一致，便于阶段 2b 在
- *   `app.ts` 里一行接线；当前**不读取**该参数，也不据此声称任何持久化能力。
+ * **只接收一个已装配好的服务**（与 `registerRecognitionRoutes(app, config, guards, service)` 同形）：
+ * 本文件因此**不可能**构造提供者、产物存储或核对源——「应用装配路径零端口注入」不只靠纪律，
+ * 而是由这个签名在类型上成立。服务由 `app.ts` 按执行模式（或测试注入）构建，
+ * 并在 `buildApp` 里 decorate 为 `app.synthesisService` 供回归核对默认关闭与任务终态。
  */
 export function registerSynthesisRoutes(
   app: FastifyInstance,
   config: AppConfig,
-  pool: PgPool | null,
   guards: AuthGuards,
-  deps: SynthesisRouteDeps = {},
-): SynthesisService {
-  void pool; // 预留参数：避免「看起来已接线持久化」
-
-  const mode = config.executionMode;
-  const service =
-    deps.service ??
-    createSynthesisService({
-      store: deps.store ?? createMemorySynthesisStore(),
-      // 应用装配路径**永不**注入真实适配器端口；real 模式拿到的是 fail-closed 提供者。
-      provider: deps.provider ?? createTtsProvider({ executionMode: mode }),
-      media: deps.media ?? createSynthesisMediaPort(mode),
-      content: deps.content ?? createCheckedContentPort(mode),
-      idempotencyHmacKey: deps.idempotencyHmacKey ?? config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-      jobDeadlineMs: deps.jobDeadlineMs,
-      idempotencyWaitMs: deps.idempotencyWaitMs,
-      now: deps.now,
-      idFactory: deps.idFactory,
-    });
+  service: SynthesisService,
+): void {
 
   // 与契约 `SynthesisInput` 逐项一致（`additionalProperties:false` ⇒ 多余字段由 schema 拦下；
   // `app.ts` 关闭了 removeAdditional，所以不会被静默剔除）。
@@ -143,6 +102,4 @@ export function registerSynthesisRoutes(
         .send({ data: result.job, meta: buildMeta(request, config) });
     },
   );
-
-  return service;
 }
