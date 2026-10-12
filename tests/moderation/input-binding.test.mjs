@@ -29,8 +29,10 @@ import {
   verifyInputBinding,
 } from '../../packages/moderation/input-binding.mjs';
 import { checkMergedInvariant } from '../../packages/moderation/merged-invariant.mjs';
-import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
 import { MODERATION_CONTRACT_FIELDS, mergeModeration } from '../../packages/moderation/merge.mjs';
+import { DEFAULT_RULE_BUDGET_MS } from '../../packages/moderation/constants.mjs';
+import { RULES } from '../../packages/moderation/rules.mjs';
+import { scriptedClock } from './_fixtures.mjs';
 import {
   CLEAN_RULE_RESULT,
   CLEAN_TEXT,
@@ -114,19 +116,41 @@ test('输入摘要：不接受手填固定串（先 typeof 再判值）', () => 
 // 2) 绑定入口与校验
 // ---------------------------------------------------------------------------
 
-test('evaluateBoundHardRules：只新增绑定字段，规则层既有字段逐字节不变', () => {
+test('evaluateBoundHardRules：只新增绑定字段，规则层既有字段逐字节不变（bound/raw 用同一可控时钟）', () => {
   const input = makeContent();
-  const bound = evaluateBoundHardRules(input);
-  const raw = evaluateHardRules(input);
+  // 返修 3 · 监工 `4248262134`：两侧都走夹具（注入**同一个可控时钟**），
+  // 因此差异只可能来自"是否带绑定"，不会把墙钟抖动带进这条对照。
+  const bound = runRules(input);
+  const raw = runUnboundRules(input);
   const { [INPUT_BINDING_FIELD]: binding, ...ruleFields } = bound;
-  // `budget.elapsed_ms` 取自真实墙钟，是规则层唯一允许逐次变动的诊断字段（规则层自己的用例同口径）。
-  const stripClock = (result) => ({ ...result, budget: { ms: result.budget.ms, exhausted: result.budget.exhausted } });
-  assert.deepEqual(stripClock(ruleFields), stripClock(raw), '绑定必须是"加字段"，不得改动规则层任何既有字段');
+  assert.deepEqual(ruleFields, raw, '绑定必须是"加字段"，不得改动规则层任何既有字段');
   assert.equal(binding.schema, INPUT_BINDING_SCHEMA);
   assert.equal(binding.digest, moderationInputDigest(input));
   assert.equal(binding.media_count, 0);
   assert.equal(binding.text_length, input.text.length);
   assert.equal(readInputBinding(bound).present, true);
+  // 同一可控时钟下连 `budget.elapsed_ms` 都一致（冻结时钟 ⇒ 确定值），无需再剔除墙钟字段。
+  assert.equal(bound.budget.ms, raw.budget.ms);
+  assert.equal(bound.budget.exhausted, false);
+  assert.equal(bound.budget.elapsed_ms, raw.budget.elapsed_ms);
+});
+
+test('绑定入口保留预算语义：注入慢时钟 ⇒ bound/raw 两侧都不得判通过（预算失败覆盖不丢）', () => {
+  const input = makeContent();
+  const rawTimeout = runUnboundRules(input, { clock: scriptedClock([0, 1000]), budget_ms: DEFAULT_RULE_BUDGET_MS });
+  const boundTimeout = runRules(input, { clock: scriptedClock([0, 1000]), budget_ms: DEFAULT_RULE_BUDGET_MS });
+  for (const [name, result] of [['raw', rawTimeout], ['bound', boundTimeout]]) {
+    assert.equal(typeof result.decision, 'string', `${name}: decision 必须是字符串`);
+    assert.notEqual(result.decision, 'approved', `${name}: 预算耗尽不得判通过`);
+    assert.equal(result.decision, 'quarantined', `${name}: 预算耗尽必须隔离`);
+    assert.notEqual(result.hard_rule_passed, true, `${name}: 预算耗尽不得 hard_rule_passed=true`);
+    assert.equal(result.reason_codes.includes('RULE_TIMEOUT'), true, `${name}: 缺 RULE_TIMEOUT`);
+    assert.equal(result.counts.timeouts, RULES.length, `${name}: 全部规则都应记为 timeout`);
+    assert.equal(result.counts.evaluated, 0, `${name}: 不得声称求值过`);
+  }
+  // 绑定只是"加字段"：超时结论同样带着它，且绑定不改变判定。
+  assert.equal(typeof boundTimeout[INPUT_BINDING_FIELD]?.digest, 'string');
+  assert.equal(boundTimeout.decision, rawTimeout.decision);
 });
 
 test('verifyInputBinding：一致⇒ok；缺失／摘要非法⇒MISSING；不一致⇒MISMATCH', () => {

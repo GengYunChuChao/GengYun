@@ -82,8 +82,14 @@
    因此"关闭"不依赖任何运行期判断，而是"类型上就没有实现"；
 2. **本包源码零命中网络原语**：无 HTTP 客户端调用、无 Node HTTP 模块、无供应商 SDK、
    无环境变量读取、无绝对 URL 字面量（逐文件正则扫描，命中即失败）；
-3. **本包不导出任何端口实现**，且仓库内 `services/` `apps/` `miniprogram/` `tools/`
-   **零命中** `mergeModeration` / `packages/moderation` ⇒ 应用装配未接线，暂无 HTTP 消费者。
+3. **本包不导出任何端口实现**；且"应用装配未接线"由**模型合流 API 符号**判定（返修 3 · 监工 `4248262118`）：
+   在 `services/` `apps/` `miniprogram/` `tools/` 中扫描本片模型合流的对外符号
+   （`mergeModeration` / `checkMergedInvariant` / `isModelLayerPublishable` / `evaluateModelReReview` /
+   `evaluateBoundHardRules` / `requiredModelPortKinds` 等），**必须零命中** ⇒ 暂无 HTTP 消费者。
+   > 判据**不是**"扫 `packages/moderation` 这个包路径"：已合并的 #94（community）等线**合法消费规则层**
+   > （同一个包路径），用包路径当判据会把合法引用误判为越界。用例对两种形态各给一例：
+   > 合法规则层消费（真实取社区线 `moderation-gate.ts` 的 import 形态）放行；真实模型合流接线
+   > （`import { mergeModeration } from '…/merge.mjs'`、`checkMergedInvariant(…)`、`isModelLayerPublishable(…)`）被抓。
 
 因此 `execution_mode: 'real'` 与"未接线"**逐字节相同**（合流层只用注入的端口，
 `execution_mode` 仅记录在诊断字段里）：两者都输出 `quarantined` + `MODEL_LAYER_PORT_MISSING`。

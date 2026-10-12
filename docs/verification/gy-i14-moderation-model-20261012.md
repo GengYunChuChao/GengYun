@@ -98,8 +98,10 @@ test at tests\moderation\rules.test.mjs:30:1
 - 规则层**自己的**用例（`tests/moderation/fail-closed.test.mjs` 的"规则预算耗尽 ⇒ 未求值的规则不得算通过"）
   已经把这个行为写成规格，所以"干净文本 ⇒ approved"这条基线断言**依赖墙钟**，在整套 `test:unit`
   并行（含 PGlite／Postgres／HTTP 集成用例）时可能偶发抖动；
-- 本片**已把自己的一半摘干净**：模型层夹具一律显式给足预算（`_model-fixtures.mjs` 的 `RULE_BUDGET_MS = 5000`），
-  因此**本片新增的 113 条用例在 7 次实测中全部通过**，不受该抖动影响；
+- 本片**已把自己的一半摘干净**：模型层夹具走**可控时钟**（`_model-fixtures.mjs` 注入
+  `_fixtures.mjs` 的 `FROZEN_CLOCK` + 显式预算 `RULE_BUDGET_MS = 5000`；返修 3 起 bound/raw 两侧同钟，
+  以满足 #98 的守卫），
+  因此**本片新增的用例在多次实测中全部通过**，不受该抖动影响；
 - 夹具改为显式预算之后的 2 次全量运行均为 `932 / 931 / 0 fail`（序号 6、7）；
 - **未改** `rules.test.mjs`：它属第一片（PR #88 已合并），改它就是动别人片的既有断言；
   建议由规则层 owner 用一行修掉（给该调用显式 `budget_ms`，或在规则层用例里注入时钟），本片不代改。
@@ -534,5 +536,104 @@ exit code: 1
 3. **规则层 `isPublishable` 仍不认识模型层维度**（刻意不改，见 §13.5）；
    若治理层要求"单入口放行"，需要新的决定。
 4. **真实 `tms`/`ims`、真实 BizType、真实样本指标**：仍未取得（§1、§11 的声明不变）。
+
+## 15 返修 3：与当前 main 合成的两处**测试集成**失败（监工 `5491101769` / 行内 `4248262118`+`4248262134`）
+
+### 15.1 合成情况
+
+| 项 | 值 |
+| --- | --- |
+| 合成前本片 HEAD | `e68ec0ee4fb4b3f416b21cb4b08e6740982b80d5` |
+| 合入的 `upstream/main` | `0939607842b84dea425450d53e8d0e9067e8cdf0`（`feat(GY-I18) … (#96)`） |
+| 合并方式 | `git merge upstream/main`（**由本轮派单特别许可**；**未 rebase / 未 force-push / 未 amend**） |
+| 冲突 | **无**（双方改动文件集合不相交：main 动的是 6 个规则层测试文件 + `_fixtures.mjs` + community/admin 源码；本片动的是新增模型层文件与自有测试） |
+| merge commit | `4b1aacb`（git 自动生成的英文标题；为避免触碰"禁 amend/rebase"，**未改动该消息**） |
+
+**合成后先复现监工看到的两条失败**（`node --test "tests/moderation/*.test.mjs"`）：
+
+```
+✖ 文书边界：仓库内没有任何合流层调用点（应用装配未接线，暂无 HTTP 消费者）
+    AssertionError: 本片不注册路由、不改 services/api/**，不应存在任何消费者
+✖ 时钟口径：默认预算值仍被断言，且内容用例一律不得裸调用引擎（防墙钟抖动回归）
+    AssertionError: 规则层调用必须走 runRules/runBatch（冻结时钟），否则内容用例会重新依赖真实墙钟
+ℹ tests 268 / ℹ pass 266 / ℹ fail 2
+```
+
+两条都只在合成树出现，且都是**测试集成问题**（不是组件缺陷）：前者是**判据过宽**，
+后者是新合并的 #98 守卫**正确抓到**本片一处裸调用。**两条按监工要求修判据／修测试，未放宽任何断言。**
+
+### 15.2 行内 `4248262118`（`model-ports.test.mjs`）：判据从"包路径"改为"模型合流 API 符号"
+
+- 旧判据：`services|apps|miniprogram|tools` 里出现 `mergeModeration` **或 `packages/moderation`** 即判越界。
+  已合并 #94 的 5 个 community 文件**合法消费确定性硬规则层**（同一个包路径）⇒ 被误判。
+- 新判据（**精确定义**）：上述四根目录下的源码（`.mjs`/`.cjs`/`.js`/`.ts`）出现**本片模型合流的对外 API 符号**
+  即判越界；符号清单集中在 `MODEL_MERGE_API_SYMBOLS`（词边界匹配）：合流与合法性
+  （`mergeModeration`/`mergeReasonCodes`/`checkMergedContractShape`/`checkMergedInvariant`/`mergedFailureCodes`/
+  `MERGED_FAILURE_REASON_CODES`）、闸门（`isModelLayerPublishable`/`evaluateModelReReview`/`modelBindingOf`）、
+  输入绑定（`evaluateBoundHardRules`/`bindRuleResult`/`moderationInputDigest`/`isDerivedInputDigest`/
+  `verifyInputBinding`/`readInputBinding`/`INPUT_BINDING_SCHEMA`/`requiredModelPortKinds`/`modelExecutionEvidence`）、
+  端口与回报（`MODEL_PORT_SEAMS`/`MODEL_PORT_SEAM_DEFAULTS`/`MODEL_REASON_CODES`/`validateModelPort`/
+  `classifyModelFailure`/`buildModelRequest`/`normalizeMediaRef`/`normalizeModelVerdict`/`MODEL_VERDICT_LABELS`）、
+  prompt 版本（`derivePromptVersion`/`derivePromptVersionForIds`/`isDerivedPromptVersion`/`PROMPT_VERSIONS_BY_ID`/`PROMPT_DEFINITIONS`/`promptDefinition`）。
+  **规则层符号不在清单内**（`evaluateHardRules`/`evaluateReReview`/`isPublishable`/`makeQuarantineResult`/
+  `missingContractFields`/`checkDecisionInvariant`/`deriveRuleVersion`/`RULES` …）⇒ 合法消费不再被误判。
+- **两侧例子**（同一用例内断言，报告与 PR 正文均给出）：
+  - **合法通过**：以社区线 `moderation-gate.ts` 的真实 import 形态构造（`RULES, checkDecisionInvariant,
+    deriveRuleVersion, evaluateHardRules, evaluateReReview, isPublishable, makeQuarantineResult, missingContractFields`
+    from `packages/moderation/index.mjs`）⇒ 判据零命中；另有**真实文件对证**用例：扫
+    `services/api/src/community/*.ts`（≥5 个文件、确有引用 `packages/moderation` 的消费方）⇒ 模型合流符号零命中。
+  - **真实模型接线被抓**：`import { mergeModeration } from '…/merge.mjs'` ⇒ `['mergeModeration']`；
+    `await mergeModeration(ruleResult, { content })` ⇒ `['mergeModeration']`；
+    `checkMergedInvariant(record, { input })` ⇒ `['checkMergedInvariant']`；
+    `isModelLayerPublishable(record, options)`、`evaluateBoundHardRules(input, options)` 亦被抓；
+    另加词边界反例（`mergeModerationDraft()` / `checkMergedInvariantStatus()`）**不得**误报。
+- "本片无 HTTP 装配"的边界**保留**（四根目录零命中）；守卫**未被删除**，只是判据更精确。
+
+### 15.3 行内 `4248262134`（`input-binding.test.mjs`）：bound/raw 同钟，且不丢预算覆盖
+
+- 该对照测试此前用**裸 `evaluateHardRules(input)`** 当 raw 侧 ⇒ 既被 #98 的守卫抓到（裸调用），
+  又让这条对照重新依赖**真实 50ms 墙钟**。
+- 落地方式（照 #98 已确立的做法）：`_model-fixtures.mjs` 的 `runRules`/`runUnboundRules`
+  **都注入 `_fixtures.mjs` 的 `FROZEN_CLOCK`**（外加显式预算 `RULE_BUDGET_MS = 5000`）；
+  对照测试两侧改为 `runRules(input)`（bound）与 `runUnboundRules(input)`（raw）⇒ **同一个可控时钟**，
+  差异只可能来自"是否带绑定"。
+- **保留的两条覆盖**：
+  1. **规则输出一致性**：`{ ...bound, 去掉 input_binding }` 与 raw 结果 `deepEqual`；
+     并且同钟下 `budget.ms` / `budget.exhausted` / `budget.elapsed_ms` 三者两侧相等（确定性）；
+  2. **预算失败覆盖（不丢）**：新增用例 `绑定入口保留预算语义：注入慢时钟 ⇒ bound/raw 两侧都不得判通过`
+     —— 两侧都注入 `scriptedClock([0, 1000])` + `budget_ms = DEFAULT_RULE_BUDGET_MS`，
+     断言 `decision='quarantined'`、`hard_rule_passed !== true`、含 `RULE_TIMEOUT`、
+     `counts.timeouts === RULES.length`、`counts.evaluated === 0`，并断言超时结论**同样带绑定**。
+     规则层原有的那条注入式预算用例（`fail-closed.test.mjs`）**未动**。
+
+### 15.4 合成树数字对照与门禁（原始输出）
+
+| 范围 | 合成后（修前） | 合成后（修后） | 说明 |
+| --- | --- | --- | --- |
+| `node --test "tests/moderation/*.test.mjs"` | `268 / 266 / fail 2` | **`271 / 271 / fail 0`** | 净 +3 条：判据精度拆成 3 条用例（+2）、预算覆盖新增 1 条（+1）；**无断言被放宽或删除** |
+| `npm run test:unit` | 未跑（先修） | **`1346 / 1345 / fail 0 / skipped 1`** | 合成后 main 的用例总数为 1346 |
+
+```
+npm run lint         → exit 0
+  PASS tsc --noEmit services/api/tsconfig.json
+  PASS tsc --noEmit apps/admin/tsconfig.json
+  PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+npm run test:unit    → exit 0 : ℹ tests 1346 / ℹ pass 1345 / ℹ fail 0 / ℹ skipped 1 / ℹ todo 0
+npm run test:contract→ exit 0 : ℹ tests 6 / ℹ pass 6 / ℹ fail 0
+npm run test:docs    → exit 0 : PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+git diff --check     → exit 0（无空白错误）
+node --test "tests/moderation/*.test.mjs" → exit 0 : ℹ tests 271 / ℹ pass 271 / ℹ fail 0
+```
+
+### 15.5 返修 3 之后的剩余风险
+
+1. **判据是"符号清单"**：清单集中在 `MODEL_MERGE_API_SYMBOLS`（显式审计点）。将来新增模型合流导出
+   而忘记登记，扫描就看不到它——**代价方向**：漏判"该接线"只会让边界断言偏松（不是放行风险），
+   组件的 fail-closed 行为不受影响。
+2. 其余风险同 §14.6（非契约字段需一起落库、接线方可能绕过本层、规则层 `isPublishable` 不认识模型层维度、
+   真实 `tms`/`ims` 与真实样本指标未取得）。
+3. **本次为满足"与 main 合成后再验"而引入了 merge commit**（`4b1aacb`）：PR #97 从"单线三提交"
+   变为"含上游合并历史"，审查时需按合成后的 HEAD 复核；本片自有提交仍为 `f3d780d`→`9ae2478`→`e68ec0e`→本轮修复提交。
+
 
 

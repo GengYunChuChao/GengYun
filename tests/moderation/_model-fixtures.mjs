@@ -14,28 +14,35 @@ import {
   evaluateBoundHardRules,
   moderationInputDigest,
 } from '../../packages/moderation/input-binding.mjs';
+import { FROZEN_CLOCK } from './_fixtures.mjs';
 
 /**
  * 夹具显式给定的规则预算（毫秒）。
  *
  * 为什么要显式给：规则层默认预算是 **50ms 墙钟**，超出即 `RULE_TIMEOUT` + `quarantined`
  * （规则层自己的用例已证明这一点）。模型层夹具要的是"规则层已通过的确定性前提"，
- * 不该把并行跑整套 `test:unit` 时的**偶发调度停顿**变成模型层用例的假失败，
- * 所以这里给一个宽裕的显式预算——规则层"慢"的回归由规则层自己的用例负责。
+ * 不该把并行跑整套 `test:unit` 时的**偶发调度停顿**变成模型层用例的假失败。
  */
 export const RULE_BUDGET_MS = 5000;
 
 /**
- * 用显式预算跑规则层，并**绑定输入摘要**（返修 1 · 监工 P1 之后，合流层要求结论必须带绑定）。
+ * 用**可控时钟**（返修 3 · 监工 `4248262134`：与已合并 #98 在 `_fixtures.mjs` 里确立的做法一致）
+ * 跑规则层，并**绑定输入摘要**（返修 1 · P1 之后合流层要求结论必须带绑定）。
  * 这就是生产接线应当使用的形态：`evaluateBoundHardRules(input, options)`。
+ *
+ * 冻结时钟 + 显式预算双保险：前者让内容判定与真实墙钟无关，后者保证即使有人改了时钟注入、
+ * 也不会退回默认 50ms 墙钟。**需要时间语义的用例**仍可显式传 `clock`/`budget_ms`（`...options` 在后，调用方优先）。
  */
 export function runRules(input, options = {}) {
-  return evaluateBoundHardRules(input, { budget_ms: RULE_BUDGET_MS, ...options });
+  return evaluateBoundHardRules(input, { clock: FROZEN_CLOCK, budget_ms: RULE_BUDGET_MS, ...options });
 }
 
-/** 只跑规则层、**不绑定输入**：仅用于构造"结论没带绑定"的反例（合流层必须拒绝）。 */
+/**
+ * 只跑规则层、**不绑定输入**：用于"结论没带绑定"的反例，以及 bound/raw 对照。
+ * 与 `runRules` **共用同一个可控时钟**，因此 bound 与 raw 的差异只可能来自"是否带绑定"。
+ */
 export function runUnboundRules(input, options = {}) {
-  return evaluateHardRules(input, { budget_ms: RULE_BUDGET_MS, ...options });
+  return evaluateHardRules(input, { clock: FROZEN_CLOCK, budget_ms: RULE_BUDGET_MS, ...options });
 }
 
 /** 剥掉输入绑定：用于构造"绑定缺失"的反例。 */

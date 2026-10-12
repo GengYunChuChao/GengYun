@@ -94,7 +94,66 @@ test('默认关闭：本包不导出任何端口实现（没有 create*Port 之�
   assert.equal(moderation.MODEL_PORT_SEAM_DEFAULTS.evaluate, null);
 });
 
-test('文书边界：仓库内没有任何合流层调用点（应用装配未接线，暂无 HTTP 消费者）', () => {
+/**
+ * 本片**模型合流**的对外 API 符号（返修 3 · 监工 `4248262118`）。
+ *
+ * 判据从"扫 `packages/moderation` 这个包路径"改成"扫**模型合流的 API 符号**"：
+ * 已合并的 #94（community）等线**合法使用规则层**（`evaluateHardRules` / `evaluateReReview` /
+ * `isPublishable` / `deriveRuleVersion` …），它们引用同一个包路径但**不是本片模型合流的消费者**，
+ * 用包路径当判据会把合法消费误判为越界。这里只认"本片模型合流"的符号。
+ */
+const MODEL_MERGE_API_SYMBOLS = Object.freeze([
+  // 合流与合法性
+  'mergeModeration',
+  'mergeReasonCodes',
+  'checkMergedContractShape',
+  'checkMergedInvariant',
+  'mergedFailureCodes',
+  'MERGED_FAILURE_REASON_CODES',
+  // 放行/复用闸门
+  'isModelLayerPublishable',
+  'evaluateModelReReview',
+  'modelBindingOf',
+  // 输入绑定
+  'evaluateBoundHardRules',
+  'bindRuleResult',
+  'moderationInputDigest',
+  'isDerivedInputDigest',
+  'verifyInputBinding',
+  'readInputBinding',
+  'INPUT_BINDING_SCHEMA',
+  'requiredModelPortKinds',
+  'modelExecutionEvidence',
+  // 端口与回报
+  'MODEL_PORT_SEAMS',
+  'MODEL_PORT_SEAM_DEFAULTS',
+  'MODEL_REASON_CODES',
+  'validateModelPort',
+  'classifyModelFailure',
+  'buildModelRequest',
+  'normalizeMediaRef',
+  'normalizeModelVerdict',
+  'MODEL_VERDICT_LABELS',
+  // prompt 版本（模型层增量）
+  'derivePromptVersion',
+  'derivePromptVersionForIds',
+  'isDerivedPromptVersion',
+  'PROMPT_VERSIONS_BY_ID',
+  'PROMPT_DEFINITIONS',
+  'promptDefinition',
+]);
+
+/** 在一段源码文本里找出"本片模型合流接线"命中的符号（词边界匹配，避免子串误报）。 */
+function findModelMergeWiring(text) {
+  if (typeof text !== 'string') return [];
+  const hits = [];
+  for (const symbol of MODEL_MERGE_API_SYMBOLS) {
+    if (new RegExp(`\\b${symbol}\\b`).test(text)) hits.push(symbol);
+  }
+  return hits;
+}
+
+test('文书边界：全仓不得出现"本片模型合流"的装配/消费者（判据=模型合流 API 符号）', () => {
   const scanRoots = ['services', 'apps', 'miniprogram', 'tools'];
   const hits = [];
   for (const root of scanRoots) {
@@ -110,13 +169,66 @@ test('文书边界：仓库内没有任何合流层调用点（应用装配未�
     }
     for (const file of files) {
       if (file.includes('node_modules')) continue;
-      const text = readFileSync(file, 'utf8');
-      if (text.includes('mergeModeration') || text.includes('packages/moderation')) {
-        hits.push(file.replace(repoRoot, ''));
-      }
+      const found = findModelMergeWiring(readFileSync(file, 'utf8'));
+      if (found.length > 0) hits.push(`${file.replace(repoRoot, '')} :: ${found.join(',')}`);
     }
   }
-  assert.deepEqual(hits, [], '本片不注册路由、不改 services/api/**，不应存在任何消费者');
+  assert.deepEqual(hits, [], '本片不注册路由、不改 services/api/** ⇒ 不应存在模型合流接线（规则层引用不算）');
+});
+
+test('文书边界判据有精度也有牙齿：合法规则层消费放行、真实模型合流接线被抓', () => {
+  // 合法（真实形态，取自已合并 #94 的 community 消费方）：引用同一个包，但只消费**规则层**。
+  const legitRuleLayerConsumer = [
+    "import {",
+    '  RULES,',
+    '  checkDecisionInvariant,',
+    '  deriveRuleVersion,',
+    '  evaluateHardRules,',
+    '  evaluateReReview,',
+    '  isPublishable,',
+    '  makeQuarantineResult,',
+    '  missingContractFields,',
+    "} from '../../../../packages/moderation/index.mjs';",
+  ].join('\n');
+  assert.deepEqual(findModelMergeWiring(legitRuleLayerConsumer), [], '合法规则层消费不得被判越界');
+
+  // 真实模型合流接线（三种形态）必须被抓。
+  assert.deepEqual(
+    findModelMergeWiring("import { mergeModeration } from '../../../../packages/moderation/merge.mjs';"),
+    ['mergeModeration'],
+  );
+  assert.deepEqual(
+    findModelMergeWiring('const merged = await mergeModeration(ruleResult, { content });'),
+    ['mergeModeration'],
+  );
+  assert.deepEqual(
+    findModelMergeWiring('if (!checkMergedInvariant(record, { input }).ok) return refuse();'),
+    ['checkMergedInvariant'],
+  );
+  assert.equal(
+    findModelMergeWiring('await isModelLayerPublishable(record, options);').includes('isModelLayerPublishable'),
+    true,
+  );
+  assert.equal(findModelMergeWiring('evaluateBoundHardRules(input, options)').includes('evaluateBoundHardRules'), true);
+  // 词边界：相似但不同的名字不得误报。
+  assert.deepEqual(findModelMergeWiring('mergeModerationDraft(); checkMergedInvariantStatus();'), []);
+});
+
+test('文书边界：已合并 #94 的 community 消费者是**合法规则层消费**（真实文件对证）', () => {
+  const dir = join(repoRoot, 'services', 'api', 'src', 'community');
+  let files = [];
+  try {
+    files = walkFiles(dir, '.ts');
+  } catch {
+    files = [];
+  }
+  assert.ok(files.length >= 5, `夹具前提：community 文件应存在（实际 ${files.length}）`);
+  const consumesRulePackage = files.filter((file) => readFileSync(file, 'utf8').includes('packages/moderation'));
+  assert.ok(consumesRulePackage.length > 0, '确实存在引用规则包的合法消费者（这正是旧判据误判的对象）');
+  const wiring = files.flatMap((file) =>
+    findModelMergeWiring(readFileSync(file, 'utf8')).map((symbol) => `${file.replace(repoRoot, '')}::${symbol}`),
+  );
+  assert.deepEqual(wiring, [], '合法规则层消费方不得被当成模型合流接线');
 });
 
 // ---------------------------------------------------------------------------
