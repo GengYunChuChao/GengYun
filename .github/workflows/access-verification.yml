@@ -19,6 +19,7 @@ jobs:
           node-version: '24.16.0'
       - run: node --check tools/check-ai-sdk.cjs
       - run: node --check tools/verify-tencent-live.mjs
+      - run: node --check tools/verify-provider-adapter-live.mjs
       - run: node --test tests/tencent-live.test.mjs
       - run: node --check tools/verify-llm-live.mjs
       - run: node --test tests/llm-live.test.mjs
