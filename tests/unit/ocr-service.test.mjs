@@ -23,6 +23,7 @@ import { createMemoryOcrStore } from '../../services/api/src/ocr/store.ts';
 import { createOcrProvider } from '../../services/api/src/ocr/provider.ts';
 import { createOcrMediaPort, createSubstituteMediaPort } from '../../services/api/src/ocr/media.ts';
 import {
+  SUBSTITUTE_REGISTRY,
   createOcrDosePort,
   createOcrReferencePort,
   createSubstituteDosePort,
@@ -92,29 +93,37 @@ const DOSE_CONDITIONS_SAMPLE = {
 };
 
 /**
+ * 登记库替身里的第一条记录（R1，登记号 PD20210001）。
+ * 注入夹具默认绑定它的制剂，以便与 gate 的"登记制剂交叉核对"一致。
+ */
+const SERVICE_R1 = SUBSTITUTE_REGISTRY[0];
+
+/**
  * 构造一张**测试注入的、契约合法且来源可信**的用量卡候选。
  *
  * 这是**测试夹具**，不是生产数据：生产替身端口不产出任何候选
  * （GY-I07 验收第 3 条：不对模拟记录显示真实用量）。
  * 只有靠注入才能构造「来源可信」形态，用于证明 gate 的通过面与逐项拒绝面。
+ *
+ * `card.formulation` **默认取自登记库里的 R1**（同一制剂）—— 因为 gate 现在会把
+ * 卡片制剂与本次命中的登记制剂逐字段交叉核对（"原文用量必须绑定登记制剂"）。
  */
 function trustedDoseCandidate(overrides = {}) {
-  const { conditions: conditionOverrides = {}, card: cardOverrides = {}, ...rest } = overrides;
-  const registrationNumber = rest.registrationNumber ?? 'PD20210001';
+  const { conditions: conditionOverrides = {}, card: cardOverrides = {}, formulation: formulationOverrides, ...rest } = overrides;
   const cardId = rest.cardId ?? '55555555-5555-4555-8555-555555555555';
   const conditions = { ...DOSE_CONDITIONS_SAMPLE, ...conditionOverrides };
   const originalText = '测试注入·登记标签原文用量：防除稗草，按登记标签标注的制剂用量与施药方法使用。';
   const locator = '测试注入·标签「使用技术与使用方法」第 1 段';
+  const baseFormulation = SERVICE_R1.formulation;
+  const formulation = {
+    ...baseFormulation,
+    ...(formulationOverrides ?? {}),
+    ingredients: (formulationOverrides?.ingredients ?? baseFormulation.ingredients).map((item) => ({ ...item })),
+  };
   const card = {
     id: cardId,
     revision: 1,
-    formulation: {
-      id: cardId,
-      registration_number: registrationNumber,
-      producer: '测试注入合成生产企业',
-      dosage_form: '水剂',
-      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
-    },
+    formulation,
     conditions,
     original_text: originalText,
     unit_text: '毫升/亩',
@@ -134,13 +143,13 @@ function trustedDoseCandidate(overrides = {}) {
     },
     locator,
     content_hash: createHash('sha256')
-      .update(`${originalText}\u0000${locator}\u0000${registrationNumber}`, 'utf8')
+      .update(`${originalText}\u0000${locator}\u0000${formulation.registration_number}`, 'utf8')
       .digest('hex'),
     ...cardOverrides,
   };
   return {
     card,
-    formulation_registration_number: registrationNumber,
+    formulation_registration_number: formulation.registration_number,
     conditions,
     source_kind: rest.source_kind ?? 'database',
     validity: rest.validity ?? 'valid',
@@ -604,6 +613,57 @@ test('反例·端到端：外层候选来源标称可信、但**卡片载荷**�
     assert.equal(verification.match_state, 'matched', `${variant.label}：核对状态仍是 matched`);
     assertEmptyArray(verification.dose_cards, `${variant.label} 时的 dose_cards`);
   }
+});
+
+test('反例·端到端：**卡片制剂**与登记库命中的制剂不符 ⇒ dose_cards 为 []（收口"登记制剂绑定"）', async () => {
+  const variants = [
+    { label: 'dosage_form 不符', formulation: { dosage_form: '乳油' } },
+    { label: 'producer 不符', formulation: { producer: '另一家合成生产企业' } },
+    { label: '含量不符', formulation: { ingredients: [{ name: '草甘膦', content_text: '30', unit_text: '%' }] } },
+    { label: '名称不符', formulation: { ingredients: [{ name: '乙草胺', content_text: '41', unit_text: '%' }] } },
+    { label: 'formulation.id 不符', formulation: { id: '99999999-9999-4999-8999-999999999999' } },
+  ];
+  for (const variant of variants) {
+    const lying = trustedDoseCandidate({ formulation: variant.formulation });
+    // 前提：登记号仍命中 R1（所以不是靠"登记号都没对上"来拒绝）。
+    assert.equal(lying.formulation_registration_number, 'PD20210001', `${variant.label} 前提：登记号仍是 R1`);
+    const { service } = boot('stub', { dose: createTrustedDosePort([lying]) });
+    const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+    const verification = await service.verifyOcr({
+      userId: USER,
+      ocrId: job.target_ref.id,
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+      ifMatch: `"${ocr.revision}"`,
+      idempotencyKey: nextKey(),
+    });
+    assert.equal(verification.match_state, 'matched', `${variant.label}：核对仍未 matched`);
+    assertEmptyArray(verification.dose_cards, `${variant.label} 时的 dose_cards`);
+    // 落库后也不得带进记录。
+    const fetched = await service.getOcr({ userId: USER, ocrId: job.target_ref.id });
+    assertEmptyArray(fetched.verification.dose_cards, `${variant.label} 落库后的 dose_cards`);
+  }
+});
+
+test('正控制·端到端：仅排版性差异（大小写 / 首尾空白 / 全半角）⇒ 仍放出 1 张', async () => {
+  const base = trustedDoseCandidate();
+  const styled = trustedDoseCandidate({
+    formulation: {
+      producer: `  ${SERVICE_R1.formulation.producer.toUpperCase()}  `,
+      ingredients: [{ name: '草甘膦', content_text: '４１', unit_text: '％' }],
+    },
+  });
+  const { service } = boot('stub', { dose: createTrustedDosePort([styled]) });
+  const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+  const verification = await service.verifyOcr({
+    userId: USER,
+    ocrId: job.target_ref.id,
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+    ifMatch: `"${ocr.revision}"`,
+    idempotencyKey: nextKey(),
+  });
+  assert.equal(verification.match_state, 'matched');
+  assert.equal(verification.dose_cards.length, 1, '仅排版差异不得被误杀');
+  assert.equal(verification.dose_cards[0].formulation.id, base.card.formulation.id);
 });
 
 test('反例·端到端：登记库返回不可解析载荷 ⇒ unavailable（不得 no_match，也不得打成 500）', async () => {

@@ -369,10 +369,11 @@ export function createOcrService(options: OcrServiceOptions) {
       }
     }
 
-    // gate 自身对不可信载荷是全域的（不抛错）；这里再兜一层：任何意外一律收敛为"不放行"。
+    // gate 以**本次核对命中的权威登记记录**为准做制剂交叉核对（收口"登记制剂绑定"）；
+    // 载荷自身仍按不可信数据处理，且 gate 是全域的（不抛错）——这里再兜一层：任何意外一律"不放行"。
     let doseCards: OcrVerification['dose_cards'] = [];
     try {
-      doseCards = gateDoseCards({ candidates, conditions, registrationNumber }).dose_cards;
+      doseCards = gateDoseCards({ candidates, conditions, registration: decision.registration }).dose_cards;
     } catch {
       doseCards = [];
     }

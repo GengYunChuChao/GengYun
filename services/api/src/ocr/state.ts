@@ -55,7 +55,23 @@ export const MAX_DOSE_TEXT_LENGTH = 4000;
 export const MAX_DOSE_UNIT_LENGTH = 80;
 /** DoseCard.locator maxLength。 */
 export const MAX_LOCATOR_LENGTH = 200;
-/** DoseCard.content_hash 契约 pattern。 */
+/**
+ * DoseCard.content_hash 契约 pattern。
+ *
+ * **用途判定（已查契约原文与仓库既有口径；结论：本片不重算，理由如下）**：
+ * - 契约（`packages/contracts/openapi.json`）对该字段**只给了 `pattern: ^[a-f0-9]{64}$`**；
+ *   `DoseCard` 与 `SourceVersion` 两处都**没有 `description`**，契约里没有任何地方
+ *   定义这个哈希的"原文（preimage）"是什么；
+ * - 仓库存在**两种互不相同**的既有含义：`packages/reference/records.mjs` 的 `recordContentHash`
+ *   是"该记录自身若干字段的 JSON 摘要 sha256"；而 `db/samples/field-mapping.md` 把
+ *   `sources[].issues[].attachment_sha256` 映射到 `source_versions.content_hash`，
+ *   即**来源附件（原始文件）的 SHA-256**；
+ * - 因此若用 `original_text` 之类自行挑选的原文重算比对，等于**发明一个契约未定义的约定**，
+ *   会把"哈希绑定来源附件"的合法卡片整片误拒 —— 而本域**并不持有**来源附件字节。
+ * - 故本片只做**契约可判定**的校验：存在 + 类型 + 符合 pattern（顺带 `format: uuid` 那类主动收紧见各 id 校验）。
+ *   该字段在证据文档与 PR 正文里**如实登记为未校验字段**；阶段 2 接入真实用量来源后，
+ *   正确做法是与**来源版本**的 `content_hash` 比对，而不是与本卡片文本比对。
+ */
 export const DOSE_CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
 /** Conditions.region_code 契约 pattern（浙江 33 开头 6 位）。 */
 export const REGION_CODE_PATTERN = /^33[0-9]{4}$/;
@@ -323,9 +339,83 @@ export interface MatchDecision {
   missing_fields: string[];
 }
 
-/** 归一化文本用于比较：去首尾空白 + 全角空白归一 + 大小写无关。 */
+/**
+ * 比较用文本规范化 —— **全片唯一的归一化口径**（集中一处，可单独单测）。
+ *
+ * 只消除**排版性**差异，不消除任何**实质**差异：
+ *   1) `NFKC` 统一全角/半角与兼容字符（`Ａ`→`A`、`％`→`%`、全角空格 U+3000→半角空格）；
+ *   2) 去掉首尾空白；
+ *   3) 内部连续空白折叠为**单个半角空格**（**不删除**，因此 `41 %` 与 `41%` 仍视为不同）；
+ *   4) 大小写无关。
+ *
+ * 明确**不允许**的等价：改动数字/含量、改动名称用字、增删成分、改变单位。
+ */
+export function normalizeComparableText(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** 归一化文本用于比较（**委托** `normalizeComparableText`，保证全片同一口径）。 */
 function normalizeForCompare(value: string): string {
-  return value.trim().replace(/[\s\u3000]+/g, '').toLowerCase();
+  return normalizeComparableText(value);
+}
+
+/** 制剂交叉核对结果：不一致时带出**可单独指出**的字段名。 */
+export interface FormulationCompareResult {
+  ok: boolean;
+  field: 'formulation.id' | 'registration_number' | 'producer' | 'dosage_form' | 'ingredients' | null;
+}
+
+/**
+ * 交叉核对「卡片载荷里的制剂」与「登记库命中的制剂」——
+ * 把项目口径「**原文用量必须是绑定登记制剂**」落到可判定的代码上。
+ *
+ * 依据契约 `Formulation`（`packages/contracts/openapi.json`）**按"契约可判定性"分层**：
+ *   - `id`：`format: uuid`（严格说是注解；本片按主动收紧处理，且 **UUID 定义上大小写无关**）⇒ 规范化后相等；
+ *   - `registration_number`(1..80)：自由文本，但它是**业务主键** ⇒ 规范化后相等；
+ *   - `producer`(1..200) / `dosage_form`(1..80)：自由文本 ⇒ 规范化后相等（口径见 `normalizeComparableText`）；
+ *   - `ingredients`：**结构化**（`Ingredient[]`，`minItems 1 / maxItems 20`，每项
+ *     `name`/`content_text`/`unit_text` 三个自由文本）⇒ 先比长度，再按**多重集**逐项比对；
+ *   - **成分顺序**：契约**未约束排序**（无 `uniqueItems`、无顺序语义）⇒ 允许重排，
+ *     但不允许增删、改名、改含量、改单位。
+ *
+ * 任一不一致即视为"该卡并非绑定本次命中的制剂"，由调用方 fail-closed 拒绝。
+ */
+export function compareFormulation(
+  cardFormulation: RegistryFormulation,
+  authoritativeFormulation: RegistryFormulation,
+): FormulationCompareResult {
+  if (normalizeComparableText(cardFormulation.id) !== normalizeComparableText(authoritativeFormulation.id)) {
+    return { ok: false, field: 'formulation.id' };
+  }
+  if (
+    normalizeComparableText(cardFormulation.registration_number) !==
+    normalizeComparableText(authoritativeFormulation.registration_number)
+  ) {
+    return { ok: false, field: 'registration_number' };
+  }
+  if (normalizeComparableText(cardFormulation.producer) !== normalizeComparableText(authoritativeFormulation.producer)) {
+    return { ok: false, field: 'producer' };
+  }
+  if (
+    normalizeComparableText(cardFormulation.dosage_form) !== normalizeComparableText(authoritativeFormulation.dosage_form)
+  ) {
+    return { ok: false, field: 'dosage_form' };
+  }
+  if (cardFormulation.ingredients.length !== authoritativeFormulation.ingredients.length) {
+    return { ok: false, field: 'ingredients' };
+  }
+  const triplet = (item: Ingredient): string =>
+    [
+      normalizeComparableText(item.name),
+      normalizeComparableText(item.content_text),
+      normalizeComparableText(item.unit_text),
+    ].join('\u0000');
+  const cardTriplets = cardFormulation.ingredients.map(triplet).sort();
+  const authoritativeTriplets = authoritativeFormulation.ingredients.map(triplet).sort();
+  for (let index = 0; index < cardTriplets.length; index += 1) {
+    if (cardTriplets[index] !== authoritativeTriplets[index]) return { ok: false, field: 'ingredients' };
+  }
+  return { ok: true, field: null };
 }
 
 /** 必要条件（登记号 / 名称）未采集清单。 */
@@ -545,6 +635,7 @@ export type DoseGateReason =
   | 'CARD_MALFORMED'
   | 'CARD_CONDITIONS_INVALID'
   | 'CARD_CONDITIONS_MISMATCH'
+  | 'CARD_FORMULATION_MISMATCH'
   | 'CARD_SOURCE_INVALID';
 
 /** gate 判定结果：可用时**必须**带出经校验的契约卡片（`card`），不可用时 `card` 为 null。 */
@@ -809,34 +900,40 @@ function validateDoseCardPayload(raw: unknown): { ok: true; card: DoseCard } | {
 }
 
 /**
- * 单卡适用性判定（**这是 PR #82 被判 P1、并被监工 `5487924164` 指出只信外层的那个 gate**）。
+ * 单卡适用性判定（**这是 PR #82 被判 P1、监工 `5487924164` 指出只信外层、
+ * 指挥 `74599e2` 要求收口"登记制剂绑定"的那个 gate**）。
  *
  * 判定链（逐条即回归用例），**判定对象是 `candidate.card`（实际要下发的载荷）**：
  *   1. 请求侧条件必须齐全（契约 DoseConditions 六项）；
  *   2. 载荷 `card` 必须可读且结构合法（缺字段/类型异常/越界 ⇒ 拒绝，**读不到就不放行**）；
  *   3. **`card.conditions` 六项必须与请求逐项一致**（否则 `CARD_CONDITIONS_MISMATCH`）；
  *   4. `card.formulation.registration_number` 必须等于本次命中的登记制剂；
- *   5. 外层候选必须与载荷**互相印证**（条件与制剂任一侧不一致 ⇒ 拒绝，不回退只信一侧）；
- *   6. 外层来源标记也必须合格（`simulated` / `simulation` 等任一不合格 ⇒ 拒绝）。
+ *   5. **`card.formulation` 必须与登记库命中的 `registration.formulation` 逐字段交叉核对**
+ *      （`id`/`registration_number`/`producer`/`dosage_form`/`ingredients`，口径见 `compareFormulation`；
+ *      任一不一致 ⇒ `CARD_FORMULATION_MISMATCH`）—— 落地「原文用量必须绑定登记制剂」；
+ *   6. 外层候选必须与载荷**互相印证**（条件与制剂任一侧不一致 ⇒ 拒绝，不回退只信一侧）；
+ *   7. 外层来源标记也必须合格（`simulated` / `simulation` 等任一不合格 ⇒ 拒绝）。
  *
  * 单独看 `usable_as_dose === true`（或外层 `source_kind` 可信）**远不足以**放行。
  * 通过时返回的是**重新构造**的契约卡片，调用方只能下发它，不能下发原始载荷。
  */
 export function decideDoseCard(
   candidate: unknown,
-  input: { conditions: Conditions | null | undefined; registrationNumber: string | null },
+  input: { conditions: Conditions | null | undefined; registration: RegistryHerbicide | null },
 ): DoseGateDecision {
   const fail = (reason: DoseGateReason): DoseGateDecision => ({ usable: false, reason, card: null });
 
   const requestConditions = input.conditions;
   if (requestConditions === null || requestConditions === undefined) return fail('CONDITIONS_ABSENT');
   if (!isDoseConditionsComplete(requestConditions)) return fail('CONDITIONS_INCOMPLETE');
-  if (input.registrationNumber === null) return fail('FORMULATION_MISMATCH');
+  // 没有权威登记制剂就无从绑定 ⇒ 不得放行。
+  if (input.registration === null) return fail('FORMULATION_MISMATCH');
+  const authoritative = input.registration.formulation;
 
   const candidateRecord = asRecord(candidate);
   if (candidateRecord === null) return fail('CARD_MALFORMED');
 
-  // 2) 载荷自身必须可读且合法 —— 这是原实现缺失的一步。
+  // 2) 载荷自身必须可读且合法 —— 这是原始实现缺失的一步。
   const validated = validateDoseCardPayload(candidateRecord['card']);
   if (!validated.ok) return fail(validated.reason);
   const card = validated.card;
@@ -844,12 +941,16 @@ export function decideDoseCard(
   // 3) **卡片**六项条件必须与请求逐项一致（防止放行"错误作物"的用量原文）。
   if (!doseConditionsEqual(card.conditions, requestConditions)) return fail('CARD_CONDITIONS_MISMATCH');
 
-  // 4) **卡片**绑定的登记制剂必须与本次命中一致。
-  if (normalizeForCompare(card.formulation.registration_number) !== normalizeForCompare(input.registrationNumber)) {
+  // 4) **卡片**绑定的登记号必须等于本次命中的登记制剂。
+  if (normalizeForCompare(card.formulation.registration_number) !== normalizeForCompare(authoritative.registration_number)) {
     return fail('FORMULATION_MISMATCH');
   }
 
-  // 5) 外层与载荷互相印证：不一致即视为不可信载荷，拒绝。
+  // 5) **卡片制剂**与**登记库制剂**逐字段交叉核对（收口"登记制剂绑定"）。
+  const formulationCheck = compareFormulation(card.formulation, authoritative);
+  if (!formulationCheck.ok) return fail('CARD_FORMULATION_MISMATCH');
+
+  // 6) 外层与载荷互相印证：不一致即视为不可信载荷，拒绝。
   const envelopeConditions = asRecord(candidateRecord['conditions']);
   if (envelopeConditions === null || !recordConditionsEqual(envelopeConditions, card.conditions)) {
     return fail('CONDITIONS_MISMATCH');
@@ -862,7 +963,7 @@ export function decideDoseCard(
     return fail('FORMULATION_MISMATCH');
   }
 
-  // 6) 外层来源标记也必须合格（任一说不合格即拒绝；载荷侧的判定已在步骤 2 完成）。
+  // 7) 外层来源标记也必须合格（任一说不合格即拒绝；载荷侧的判定已在步骤 2 完成）。
   if (candidateRecord['simulated'] === true) return fail('SOURCE_SIMULATED');
   const envelopeKind = candidateRecord['source_kind'];
   if (envelopeKind === 'simulation') return fail('SOURCE_SIMULATED');
@@ -879,6 +980,7 @@ export function decideDoseCard(
  *
  * 入参 `candidates` 按**不可信数据**处理：非数组视同没有可信候选（fail-closed：不放行，
  * 也不抛错把请求打成 500）；单个元素畸形由 `decideDoseCard` 给 `CARD_MALFORMED`。
+ * `registration` 是**本次核对命中的权威登记记录**，制剂交叉核对以它为准。
  *
  * **绝不补造**：候选为空（替身 / 真实来源未接线的生产装配）就返回空数组。
  * 生产替身**不提供**任何候选，因此本函数在 stub/preset_demo 下必然返回空
@@ -887,7 +989,7 @@ export function decideDoseCard(
 export function gateDoseCards(input: {
   candidates: unknown;
   conditions: Conditions | null | undefined;
-  registrationNumber: string | null;
+  registration: RegistryHerbicide | null;
 }): { dose_cards: DoseCard[]; rejections: Array<{ card_id: string; reason: DoseGateReason }> } {
   const doseCards: DoseCard[] = [];
   const rejections: Array<{ card_id: string; reason: DoseGateReason }> = [];
@@ -895,7 +997,7 @@ export function gateDoseCards(input: {
   for (const candidate of list) {
     const decision = decideDoseCard(candidate, {
       conditions: input.conditions,
-      registrationNumber: input.registrationNumber,
+      registration: input.registration,
     });
     if (decision.usable) {
       if (doseCards.length < MAX_DOSE_CARDS) doseCards.push(decision.card);
