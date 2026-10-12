@@ -2,8 +2,9 @@
  * Fastify 应用装配。
  *
  * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
- * /api/v1 下的认证与后台认证、授权列表／授予及受限撤回路由、契约错误封套、404。
- * 其余业务路由（识别、问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
+ * /api/v1 下的认证与后台认证、授权列表／授予及受限撤回路由、契约错误封套、404、
+ * 个人档案与资料查询，以及 GY-I09 的识别任务闭路（/recognitions/**、/jobs/{id}[/cancel]）。
+ * 其余业务路由（问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
  * 不伪造成功。
  */
 import { randomUUID } from 'node:crypto';
@@ -20,16 +21,23 @@ import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
 import { registerConsentRoutes } from './routes/consents.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
+import { registerRecognitionRoutes } from './routes/recognitions.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
 import { AuthService, STUB_IDEMPOTENCY_HMAC_KEY } from './auth/service.ts';
 import { createAuthGuards } from './auth/middleware.ts';
+import { createRecognitionService, type RecognitionService } from './recognitions/service.ts';
+import { createRecognitionProvider, type RecognitionProvider } from './recognitions/provider.ts';
+import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
+import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
     /** 认证服务（供 server.ts 做管理员初始化与测试注入）。 */
     authService: AuthService;
+    /** GY-I09 识别服务（供回归测试驱动在途任务与状态判定）。 */
+    recognitionService: RecognitionService;
   }
 }
 
@@ -46,6 +54,14 @@ export interface BuildAppOptions {
   idempotency?: IdempotencyStore;
   /** 测试注入：替换微信身份提供者（默认按 executionMode 选择 real/stub）。 */
   wechat?: WechatIdentityProvider;
+  /** 测试注入：替换识别存储（默认进程内内存 store；本片无持久化实现）。 */
+  recognitionStore?: RecognitionStore;
+  /** 测试注入：替换识别提供者（默认按 executionMode 选择 real/替身）。 */
+  recognitionProvider?: RecognitionProvider;
+  /** 测试注入：替换媒体引用端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  recognitionMedia?: RecognitionMediaPort;
+  /** 任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
+  recognitionJobDeadlineMs?: number;
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -63,7 +79,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -100,6 +116,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
   const guards = createAuthGuards({ store: authStore, now: clock });
 
+  // GY-I09 识别任务闭环：real 走 fail-closed 提供者（缺凭据 503，绝不回退替身），
+  // stub/preset_demo 用明确标注的替身；媒体引用端口同理（real 未接线 → OBJECT_UNAVAILABLE）。
+  const recognitionProviderResolved =
+    recognitionProvider ??
+    createRecognitionProvider({
+      executionMode: config.executionMode,
+      endpoint: process.env['RECOGNITION_PROVIDER_URL'] ?? null,
+      apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null,
+    });
+  const recognitionService = createRecognitionService({
+    store: recognitionStore ?? createMemoryRecognitionStore(),
+    provider: recognitionProviderResolved,
+    media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode),
+    idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+    now: clock,
+    ...(recognitionJobDeadlineMs === undefined ? {} : { jobDeadlineMs: recognitionJobDeadlineMs }),
+  });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -109,6 +143,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorateRequest('accountRevision', null);
   app.decorateRequest('authScopes', null);
   app.decorate('authService', service);
+  app.decorate('recognitionService', recognitionService);
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -117,6 +152,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerConsentRoutes(app, config, pool, guards, consentGrantTestOptions);
   registerProfileRoutes(app, config, pool, guards);
   registerKnowledgeRoutes(app, config, pool, guards);
+  registerRecognitionRoutes(app, config, guards, recognitionService);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
