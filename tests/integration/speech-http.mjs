@@ -19,6 +19,8 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
+import { createMemorySpeechStore } from '../../services/api/src/speech/store.ts';
+import { createSubstituteMediaPort } from '../../services/api/src/speech/media.ts';
 
 const API = '/api/v1';
 const PATH = API + '/speech/transcriptions';
@@ -90,7 +92,7 @@ function makeHttp(origin) {
   };
 }
 
-/** 播种合成身份与会话（仅用于 real 模式实例；不经过微信换取，不产生任何外网调用）。 */
+/** 播种合成身份与会话（用于 real / 注入实例；不经过微信换取，不产生任何外网调用）。 */
 async function seedSession(authStore, label) {
   const user = await authStore.createUser(`${label}-${randomUUID().replace(/-/g, '')}`);
   const token = mintOpaqueToken();
@@ -101,7 +103,7 @@ async function seedSession(authStore, label) {
     expiresAt: new Date(Date.now() + 3600 * 1000),
     audience: 'user',
   });
-  return token;
+  return { token, userId: user.id };
 }
 
 const REAL_ENV = {
@@ -449,7 +451,7 @@ try {
   const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
   const realHttp = makeHttp(realOrigin);
   try {
-    const realToken = await seedSession(realAuthStore, 'speech-http-real');
+    const { token: realToken } = await seedSession(realAuthStore, 'speech-http-real');
     await group('[9] real 缺凭据：受理前 503 PROVIDER_UNAVAILABLE、提供者调用 0 次、不回退替身（含结构性证据）', async () => {
       const described = realApp.speechService.describe();
       assert.equal(described.executionMode, 'real');
@@ -471,9 +473,23 @@ try {
       // 结构性证据（读源码文本，不靠行为推断）：
       const appText = readFileSync(new URL('services/api/src/app.ts', root), 'utf8');
       const providerText = readFileSync(new URL('services/api/src/speech/provider.ts', root), 'utf8');
-      assert.ok(appText.includes('registerSpeechRoutes(app, config, { guards })'), '装配必须零端口注入（只传 guards）');
-      for (const forbidden of ['speech/provider', 'speech/store', 'speech/media']) {
-        assert.equal(appText.includes(forbidden), false, `产品装配路径不得直接 import ${forbidden}`);
+      // 默认仍是零端口注入：注册行只出现 guards 与四个**可选**注入值（不传即 undefined ⇒ 插件按模式自建）。
+      assert.ok(
+        appText.includes(
+          'registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs })',
+        ),
+        '注册行形状必须只见 guards + 四个可选注入值',
+      );
+      // 装配路径对 speech/{store,provider,media} 的引用**只能是 import type**（运行时被类型擦除）。
+      for (const mod of ['speech/store', 'speech/provider', 'speech/media']) {
+        const refs = appText.split(/\r?\n/).filter((line) => line.includes(mod));
+        assert.ok(refs.length > 0, `app.ts 应有 ${mod} 的类型引用`);
+        for (const line of refs) {
+          assert.ok(
+            /^import type \{[^}]+\} from '\.\/speech\//.test(line.trim()),
+            `app.ts 对 ${mod} 只能有 import type 引用（运行时擦除），实际：${line.trim()}`,
+          );
+        }
       }
       for (const network of ['fetch(', 'node:http', 'node:https', 'node:net']) {
         assert.equal(providerText.includes(network), false, `speech 提供者层不得含网络调用：${network}`);
@@ -484,17 +500,132 @@ try {
       );
       assert.equal(realSlice.includes('createStubSpeechProvider'), false, 'real 分支不得回退替身');
       assert.equal(realSlice.includes('fetch('), false, 'real 分支不得发起网络请求');
-      observations.push('default-off 结构性证据：app.ts 只传 guards（零端口注入）；provider.ts 无网络客户端；real 分支无替身回退');
+      observations.push('default-off 结构性证据：注册行只传 guards + 可选注入值（默认 undefined ⇒ 零端口注入）；provider.ts 无网络客户端；real 分支无替身回退');
     });
   } finally {
     await realApp.close();
+  }
+
+  // ---------------------------------------------------------------- 注入式实例（#87 形状）：
+  // 用 app.ts 新增的 speechStore/speechProvider/speechMedia/speechJobDeadlineMs 在**真实装配**上
+  // 构造出此前无法构造的终态（timed_out 等），并把终态读出来（经装饰的 `speechService.getJob`）。
+  const injectedAuthStore = createMemoryAuthStore();
+  const scriptedCalls = { count: 0 };
+  const scriptedOutcomes = new Map(); // media_id → 结局
+  const scriptedProvider = {
+    executionMode: 'stub',
+    modelVersion: 'stub-scripted-v1',
+    note: '集成脚本注入的合成提供者（非真实 ASR；不构成任何准确率或转写质量证据）',
+    available: true,
+    unavailableReason: null,
+    async transcribe({ mediaId }) {
+      scriptedCalls.count += 1;
+      const outcome = scriptedOutcomes.get(mediaId);
+      assert.ok(outcome !== undefined, `注入提供者未登记该媒体：${mediaId}`);
+      if (outcome.kind === 'never') return new Promise(() => {});
+      return structuredClone(outcome);
+    },
+  };
+  const scenario = {
+    ok: mediaIdForBucket(0),
+    hang: randomUUID(),
+    uncertain: randomUUID(),
+    quota: randomUUID(),
+  };
+  scriptedOutcomes.set(scenario.ok, { kind: 'completed', transcript: { text: '合成用例·注入提供者文本', uncertain_spans: [{ start: 0, end: 4, reason: '合成用例·前缀不确定' }] } });
+  scriptedOutcomes.set(scenario.hang, { kind: 'never' });
+  scriptedOutcomes.set(scenario.uncertain, { kind: 'uncertain', reason: '合成用例·有效语音不足' });
+  scriptedOutcomes.set(scenario.quota, { kind: 'failed', code: 'PROVIDER_QUOTA_EXCEEDED' });
+
+  const injectedApp = buildApp({
+    config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+    store: injectedAuthStore,
+    speechStore: createMemorySpeechStore(),
+    speechProvider: scriptedProvider,
+    speechMedia: createSubstituteMediaPort(),
+    // 注入较短截止时间，使悬挂场景在毫秒级落 timed_out（服务层默认 30s）。
+    speechJobDeadlineMs: 250,
+  });
+  const injectedOrigin = await injectedApp.listen({ host: '127.0.0.1', port: 0 });
+  const injectedHttp = makeHttp(injectedOrigin);
+  try {
+    const { token: injectedToken, userId: injectedUserId } = await seedSession(injectedAuthStore, 'speech-http-injected');
+
+    await group('[12] 真实装配上的终态（注入提供者 + 250ms 截止时间）：succeeded / timed_out / uncertain / failed', async () => {
+      const create = async (mediaId) => {
+        const res = await injectedHttp(PATH, {
+          method: 'POST', token: injectedToken, headers: { 'idempotency-key': newKey('inj') }, body: { media_id: mediaId, media_revision: 1 },
+        });
+        assert.equal(res.status, 202, JSON.stringify(res.body));
+        assert.equal(res.body.data.state, 'queued');
+        await injectedApp.speechService.settle();
+        return res.body.data;
+      };
+      const stateOf = async (jobId) => injectedApp.speechService.getJob({ userId: injectedUserId, jobId });
+      const callsBefore = injectedApp.speechService.describe().providerCalls;
+
+      // succeeded（对照）：GET 记录 200
+      const okJob = await create(scenario.ok);
+      const okState = await stateOf(okJob.id);
+      assert.equal(okState.state, 'succeeded');
+      assert.equal(okState.error_code, null);
+      assert.notEqual(okState.result, null);
+      assert.equal((await injectedHttp(`${PATH}/${okJob.target_ref.id}`, { token: injectedToken })).status, 200);
+
+      // timed_out（悬挂提供者 + 注入的 250ms 截止时间）——**这是 2a 无法在真实装配上构造的那一类**
+      const hangJob = await create(scenario.hang);
+      const hangState = await stateOf(hangJob.id);
+      assert.equal(hangState.state, 'timed_out', `悬挂提供者必须落 timed_out，实际 ${hangState.state}`);
+      assert.equal(hangState.error_code, 'PROVIDER_TIMEOUT');
+      assert.equal(hangState.result, null);
+      assert.equal((await injectedHttp(`${PATH}/${hangJob.target_ref.id}`, { token: injectedToken })).status, 404, 'timed_out 不产生转写记录');
+
+      // uncertain（提供者明确无法判定）
+      const uncertainJob = await create(scenario.uncertain);
+      const uncertainState = await stateOf(uncertainJob.id);
+      assert.equal(uncertainState.state, 'uncertain');
+      assert.equal(uncertainState.error_code, 'INPUT_UNCERTAIN');
+      assert.equal((await injectedHttp(`${PATH}/${uncertainJob.target_ref.id}`, { token: injectedToken })).status, 404);
+
+      // failed（提供者配额）
+      const quotaJob = await create(scenario.quota);
+      const quotaState = await stateOf(quotaJob.id);
+      assert.equal(quotaState.state, 'failed');
+      assert.equal(quotaState.error_code, 'PROVIDER_QUOTA_EXCEEDED');
+      assert.equal((await injectedHttp(`${PATH}/${quotaJob.target_ref.id}`, { token: injectedToken })).status, 404);
+
+      // 每个被受理的任务恰好 1 次提供者调用；注入提供者确实被使用（4 次）。
+      assert.equal(injectedApp.speechService.describe().providerCalls - callsBefore, 4);
+      assert.equal(scriptedCalls.count, 4);
+      console.log(`[注入实例实测] succeeded/timed_out/uncertain/failed 终态齐备；提供者调用=${scriptedCalls.count}（每个受理任务恰好 1 次）`);
+      observations.push('注入实例终态：succeeded / timed_out(PROVIDER_TIMEOUT) / uncertain(INPUT_UNCERTAIN) / failed(PROVIDER_QUOTA_EXCEEDED)');
+    });
+
+    await group('[13] 默认行为不变：不传 speech* 注入项时仍按 executionMode 自建（默认零端口注入）', async () => {
+      const injected = injectedApp.speechService.describe();
+      assert.equal(injected.modelVersion, 'stub-scripted-v1', '传入的注入项必须生效');
+      assert.equal(injected.mediaPort, 'substitute');
+      assert.equal(injected.storePersistent, false, '注入的内存 store 如实标注不持久');
+      // 默认实例（本脚本 [1]–[11] 全部跑在它上面，未传任何 speech* 注入项）仍按模式自建：
+      const byMode = stubApp.speechService.describe();
+      assert.equal(byMode.executionMode, 'stub');
+      assert.equal(byMode.modelVersion, 'stub-v1', '默认实例不得被注入影响');
+      assert.notEqual(byMode.modelVersion, injected.modelVersion);
+      assert.equal(byMode.mediaPort, 'substitute');
+      assert.equal(byMode.storePersistent, false);
+      assert.equal(typeof byMode.providerCalls, 'number');
+      // real 默认实例（[9]）同样未传注入项 ⇒ 503 + 0 次调用，默认零端口注入在 real 下亦成立。
+      observations.push(`默认实例 describe(): model=${byMode.modelVersion} media=${byMode.mediaPort}（与注入实例 ${injected.modelVersion} 可区分）`);
+    });
+  } finally {
+    await injectedApp.close();
   }
 } finally {
   await stubApp.close();
 }
 
 console.log(
-  `PASS ${passed} loopback HTTP groups; real assembly via buildApp (app.ts +2 lines, zero port injection); ` +
-    'synthetic identity; stub provider (替身) / real fail-closed; loopback only, no supplier, no PG, no real ASR sample',
+  `PASS ${passed} loopback HTTP groups; real assembly via buildApp (app.ts 仅追加注入项，默认零端口注入); ` +
+    'synthetic identity; stub provider (替身) / injected scripted provider / real fail-closed; loopback only, no supplier, no PG, no real ASR sample',
 );
 for (const line of observations) console.log('  - ' + line);
