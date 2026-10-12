@@ -918,7 +918,7 @@ test('反例·同键同体**并发** createTranscription：恰好 1 个任务、
   const jobIds = [...new Set(fulfilled.map((item) => item.job.id))];
   const transcriptionIds = [...new Set(fulfilled.map((item) => item.job.target_ref.id))];
 
-  console.log(
+  console.error(
     `[并发实测·同键同体 3 次] 落库任务数=${spy.state.insertedJobs}、提供者调用数=${counter.state.calls}、` +
       `成功响应=${fulfilled.length}、不同 job id 数=${jobIds.length}、不同 target_ref.id 数=${transcriptionIds.length}、` +
       `IDEMPOTENCY_CONFLICT=${conflicts}、REQUEST_IN_PROGRESS=${inProgress}、写入记录数=${spy.state.recordCommits}`,
@@ -964,7 +964,7 @@ test('反例·同键不同体并发 ⇒ 一个受理、另一个 IDEMPOTENCY_CON
   await service.settle();
   const fulfilled = results.filter((item) => item.status === 'fulfilled');
   const rejected = results.filter((item) => item.status === 'rejected');
-  console.log(
+  console.error(
     `[并发实测·同键异体 2 次] 落库任务数=${spy.state.insertedJobs}、成功响应=${fulfilled.length}、` +
       `IDEMPOTENCY_CONFLICT=${rejected.filter((item) => item.reason.code === 'IDEMPOTENCY_CONFLICT').length}`,
   );
