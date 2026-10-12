@@ -771,11 +771,7 @@ function doseCardDescriptor(item, opts) {
 }
 
 // 阻塞 B-4：模拟来源实名判定（不看 include_simulated——它只放开查阅，不放开真实用量卡片）。
-function isSimulatedSource(item) {
-  if (item && item.simulated === true) return true;
-  if (item && item.source && item.source.source_kind === 'simulation') return true;
-  return String((item && item.registration_number) || '').indexOf('SIM-') === 0;
-}
+// 该判定由上方 line 146 的 isSimulatedSource 统一定义，模拟标志/source_kind/SIM- 登记号任一成立即拒绝真实用量。
 
 // 阻塞 B-1：记录级与来源级审核状态都必须**显式为** verified；任一侧 unverified/rejected/缺失即拒绝。
 function isDoseReviewed(item) {
