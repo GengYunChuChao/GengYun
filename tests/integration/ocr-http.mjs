@@ -498,19 +498,41 @@ try {
     assert.equal(badMediaId.status, 400);
     assert.equal(badMediaId.json.error.code, 'INVALID_REQUEST');
 
-    // 路径 id 非法（非 uuid）：记录实际行为
-    const badPathId = await call(base, tokenA, 'GET', '/api/v1/ocr/not-a-uuid');
-    assert.ok(
-      badPathId.status === 400 || badPathId.status === 404,
-      `非法路径 id 应为 400(INVALID_REQUEST) 或 404(NOT_FOUND)，实际 ${badPathId.status}`,
-    );
-    console.log(`      · 非法路径 id 实测 status=${badPathId.status} code=${badPathId.json.error.code}`);
-
     // 缺鉴权
     const noSession = await call(base, null, 'GET', `/api/v1/ocr/${randomUUID()}`);
     assert.equal(noSession.status, 401);
     assert.equal(noSession.json.error.code, 'SESSION_REQUIRED');
-    record(`7) 请求边界：缺/过短 Idempotency-Key⇒400 IDEMPOTENCY_KEY_REQUIRED；多余字段/非法 media_id/media_revision⇒400 INVALID_REQUEST；非法路径 id⇒${badPathId.status} ${badPathId.json.error.code}；无会话⇒401 SESSION_REQUIRED`);
+    record('7) 请求边界：缺/过短 Idempotency-Key⇒400 IDEMPOTENCY_KEY_REQUIRED；多余字段/非法 media_id/media_revision⇒400 INVALID_REQUEST；无会话⇒401 SESSION_REQUIRED');
+  }
+
+  // ---- 7b) 钉子用例：非 uuid 路径 id ⇒ 400 INVALID_REQUEST（钉住两层分工）----
+  {
+    // **这条钉住 HTTP 层与服务层的分工，防止未来去掉 params schema 后行为静默翻转。**
+    //
+    // 分工（指挥 2026-10-12 裁定）：
+    //   - **HTTP 层负责「格式/形状」** ⇒ 路径 `id` 不满足契约 `format: uuid` 时，
+    //     Fastify 的 params schema 先失败 ⇒ **400 `INVALID_REQUEST`**；
+    //   - **服务层负责「存在性/归属/版本」** ⇒ 即便 id 格式合法，也会对他人或不存在返回
+    //     **404 `NOT_FOUND`**（且两者同形）、对版本不符返回 **409 `REVISION_CONFLICT`**、
+    //     缺失 `If-Match` 返回 **428 `REVISION_REQUIRED`**。
+    //
+    // 注意：阶段 1 的服务层对"非 uuid 的 id"给的是 **404**（`UUID_PATTERN` 不匹配即视为不存在，
+    // 以防探测）。当前 HTTP 层在前，所以对外表现为 400；**若阶段 2b 移除 params schema，
+    // 同一输入会从 400 翻成 404** —— 这条用例就是用来在翻转时立刻报警。
+    for (const [method, path] of [
+      ['GET', '/api/v1/ocr/not-a-uuid'],
+      ['GET', '/api/v1/ocr/12345'],
+      ['GET', '/api/v1/ocr/%20'],
+    ]) {
+      const response = await call(base, tokenA, method, path);
+      assert.equal(response.status, 400, `${method} ${path} 非 uuid 路径 id 必须 400（HTTP 层格式判定），实际 ${response.status}`);
+      assert.equal(response.json.error.code, 'INVALID_REQUEST', `${method} ${path} 的错误码`);
+    }
+    // 对照：**格式合法但不存在** ⇒ 404 NOT_FOUND（分工的另一半），证明不是"一律 400"。
+    const wellFormedMissing = await call(base, tokenA, 'GET', `/api/v1/ocr/${randomUUID()}`);
+    assert.equal(wellFormedMissing.status, 404);
+    assert.equal(wellFormedMissing.json.error.code, 'NOT_FOUND');
+    record('7b) 钉子·两层分工：非 uuid 路径 id⇒400 INVALID_REQUEST（HTTP 层判格式）；格式合法但不存在⇒404 NOT_FOUND（服务层判存在性）—— 防 2b 去掉 schema 后静默翻转');
   }
 
   // ---- 8) real 型提供者缺凭据 ⇒ 受理前 503，不建任务、不调提供者、不回退替身 ------
