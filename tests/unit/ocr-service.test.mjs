@@ -552,6 +552,122 @@ test('反例·real 模式用量端口未接线时 dose_cards 恒为 []（不补�
   assertEmptyArray(verification.dose_cards, '用量端口未接线时的 dose_cards');
 });
 
+// ------------------------- 监工 5487924164 / 行内 4245800045：端到端复核"只信外层"已修
+
+test('反例·端到端：外层候选标称可信、但**卡片载荷**条件与请求不一致 ⇒ dose_cards 为 []', async () => {
+  // 外层 candidate.conditions 与请求一致（rice 系列），只有 card.conditions.crop_id=wheat。
+  // 这正是原实现只校验 candidate.* 时会放行"错误作物用量原文"的形态。
+  const lying = trustedDoseCandidate({
+    card: { conditions: { ...DOSE_CONDITIONS_SAMPLE, crop_id: 'wheat' } },
+  });
+  assert.equal(lying.card.conditions.crop_id, 'wheat', '前提：卡片载荷条件为 wheat');
+  assert.equal(lying.conditions.crop_id, 'rice', '前提：外层候选条件为 rice');
+  const { service } = boot('stub', { dose: createTrustedDosePort([lying]) });
+  const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+  const verification = await service.verifyOcr({
+    userId: USER,
+    ocrId: job.target_ref.id,
+    body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+    ifMatch: `"${ocr.revision}"`,
+    idempotencyKey: nextKey(),
+  });
+  assert.equal(verification.match_state, 'matched');
+  assertEmptyArray(verification.dose_cards, '载荷条件不符时的 dose_cards');
+  // 也不能靠"绕过 gate 直接落库"把卡片带进记录。
+  const fetched = await service.getOcr({ userId: USER, ocrId: job.target_ref.id });
+  assertEmptyArray(fetched.verification.dose_cards, '落库后的 dose_cards');
+});
+
+test('反例·端到端：外层候选来源标称可信、但**卡片载荷**来源不可信 ⇒ dose_cards 为 []', async () => {
+  const base = trustedDoseCandidate();
+  const variants = [
+    { label: 'validity=withdrawn', source: { validity: 'withdrawn' } },
+    { label: 'review_status=rejected', source: { review_status: 'rejected' } },
+    { label: 'source_kind=simulation', source: { source_kind: 'simulation' } },
+  ];
+  for (const variant of variants) {
+    const lying = trustedDoseCandidate({ card: { source: { ...base.card.source, ...variant.source } } });
+    // 前提：外层来源三项全部标称可信 —— 原实现只看这三项，因此会放行。
+    assert.equal(lying.source_kind, 'database', `${variant.label} 前提：外层 source_kind 标称可信`);
+    assert.equal(lying.validity, 'valid', `${variant.label} 前提：外层 validity 标称有效`);
+    assert.equal(lying.review_status, 'verified', `${variant.label} 前提：外层已核对`);
+
+    const { service } = boot('stub', { dose: createTrustedDosePort([lying]) });
+    const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+    const verification = await service.verifyOcr({
+      userId: USER,
+      ocrId: job.target_ref.id,
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+      ifMatch: `"${ocr.revision}"`,
+      idempotencyKey: nextKey(),
+    });
+    assert.equal(verification.match_state, 'matched', `${variant.label}：核对状态仍是 matched`);
+    assertEmptyArray(verification.dose_cards, `${variant.label} 时的 dose_cards`);
+  }
+});
+
+test('反例·端到端：登记库返回不可解析载荷 ⇒ unavailable（不得 no_match，也不得打成 500）', async () => {
+  const malformedPorts = [
+    { label: 'candidates 非数组', lookup: async () => ({ status: 'available', candidates: null }) },
+    {
+      label: '候选缺 formulation',
+      lookup: async () => ({ status: 'available', candidates: [{ id: '11111111-1111-4111-8111-111111111111', revision: 1 }] }),
+    },
+    { label: '返回非对象', lookup: async () => 'garbage' },
+    { label: 'status 未知', lookup: async () => ({ status: 'weird' }) },
+  ];
+  for (const item of malformedPorts) {
+    const reference = {
+      kind: 'substitute',
+      note: `测试注入：${item.label}`,
+      available: true,
+      unavailableReason: null,
+      lookup: item.lookup,
+    };
+    const { service } = boot('stub', { reference });
+    const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+    assert.notEqual(ocr, null, `${item.label}：任务仍应成功产出记录`);
+    assert.equal(ocr.verification.match_state, 'unavailable', `${item.label} 应如实 unavailable`);
+    assert.notEqual(ocr.verification.match_state, 'no_match', `${item.label} 不得伪装成 no_match`);
+    assertEmptyArray(ocr.verification.dose_cards, `${item.label} 时的 dose_cards`);
+    // 也确认 verify 路径不会因此抛错（不得打成 500）。
+    const verification = await service.verifyOcr({
+      userId: USER,
+      ocrId: job.target_ref.id,
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+      ifMatch: `"${ocr.revision}"`,
+      idempotencyKey: nextKey(),
+    });
+    assert.equal(verification.match_state, 'unavailable');
+    assertEmptyArray(verification.dose_cards);
+  }
+});
+
+test('反例·端到端：用量端口返回非数组 / 畸形候选 ⇒ dose_cards 为 []，请求不得失败', async () => {
+  const brokenPorts = [
+    { label: '返回 null', list: async () => null },
+    { label: '返回字符串', list: async () => 'nope' },
+    { label: '元素为 null', list: async () => [null] },
+    { label: '元素缺 card', list: async () => [{ formulation_registration_number: 'PD20210001' }] },
+    { label: 'card 非对象', list: async () => [{ card: 'x' }] },
+  ];
+  for (const item of brokenPorts) {
+    const dosePort = { kind: 'unwired', note: `测试注入：${item.label}`, listCandidates: item.list };
+    const { service } = boot('stub', { dose: dosePort });
+    const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });
+    assert.equal(ocr.verification.match_state, 'matched', `${item.label}：核对仍应 matched`);
+    assertEmptyArray(ocr.verification.dose_cards, `${item.label} 时的 dose_cards`);
+    const verification = await service.verifyOcr({
+      userId: USER,
+      ocrId: job.target_ref.id,
+      body: { fields: ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } },
+      ifMatch: `"${ocr.revision}"`,
+      idempotencyKey: nextKey(),
+    });
+    assertEmptyArray(verification.dose_cards, `${item.label} verify 时的 dose_cards`);
+  }
+});
+
 test('反例·verifyOCR 不得改动 raw_fields 与 corrected_fields', async () => {
   const { service } = boot();
   const { job, ocr } = await createAndSettle(service, USER, { bucket: 0 });

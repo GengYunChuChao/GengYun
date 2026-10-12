@@ -40,8 +40,8 @@ import {
   gateDoseCards,
   normalizeConditions,
   normalizeLabelFields,
+  sanitizeRegistryLookup,
   type Conditions,
-  type DoseCardCandidate,
   type JobState,
   type LabelFields,
   type RegistryLookup,
@@ -338,10 +338,11 @@ export function createOcrService(options: OcrServiceOptions) {
 
   /**
    * 由「标签字段 + 可选条件」产生 Verification。步骤即 fail-closed 链：
-   *   1) 查登记库：不可用 → unavailable（**不**伪装成 no_match）；
+   *   1) 查登记库：不可用 → unavailable（**不**伪装成 no_match）；返回物经 `sanitizeRegistryLookup`
+   *      逐字段收敛，无法解析一律当 unavailable（**不**丢坏候选保留好候选，避免 ambiguous 静默变 matched）；
    *   2) 纯函数判定 match_state（missing_fields / conflict_fields / ambiguous 的硬规则在 state.ts）；
    *   3) **只有 matched** 才去取用量卡候选；
-   *   4) 候选再经 gate（条件齐全 + 绑定同一制剂 + 来源非模拟/未过期/已核对）才进入 dose_cards。
+   *   4) 候选按**不可信载荷**交给 gate，由 gate 校验并重新投影出真正能下发的卡。
    *
    * 注意：生产装配的用量端口（替身 / 未接线）**恒返回空候选**，因此
    * `dose_cards` 在生产路径恒为 `[]`（#7 验收第 3 条：不对模拟记录显示真实用量）。
@@ -350,14 +351,14 @@ export function createOcrService(options: OcrServiceOptions) {
   async function verifyFields(fields: LabelFields, conditions: Conditions | null): Promise<OcrVerification> {
     let lookup: RegistryLookup;
     try {
-      lookup = await reference.lookup({ registrationNumber: fields.registration_number, name: fields.name });
+      lookup = sanitizeRegistryLookup(await reference.lookup({ registrationNumber: fields.registration_number, name: fields.name }));
     } catch {
       // 登记库抛错等同不可用：**不得**降级成 no_match。
       lookup = { status: 'unavailable', reason: '登记库查询异常' };
     }
     const decision = decideMatchState(fields, lookup);
 
-    let candidates: DoseCardCandidate[] = [];
+    let candidates: unknown = [];
     const registrationNumber = decision.registration === null ? null : decision.registration.formulation.registration_number;
     if (decision.match_state === 'matched' && registrationNumber !== null) {
       try {
@@ -368,13 +369,20 @@ export function createOcrService(options: OcrServiceOptions) {
       }
     }
 
-    const gated = gateDoseCards({ candidates, conditions, registrationNumber });
+    // gate 自身对不可信载荷是全域的（不抛错）；这里再兜一层：任何意外一律收敛为"不放行"。
+    let doseCards: OcrVerification['dose_cards'] = [];
+    try {
+      doseCards = gateDoseCards({ candidates, conditions, registrationNumber }).dose_cards;
+    } catch {
+      doseCards = [];
+    }
+
     return {
       match_state: decision.match_state,
       registration: decision.registration,
       conflict_fields: decision.conflict_fields,
       missing_fields: decision.missing_fields,
-      dose_cards: gated.dose_cards,
+      dose_cards: doseCards,
     };
   }
 

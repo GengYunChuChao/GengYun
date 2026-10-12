@@ -34,6 +34,7 @@ import {
   normalizeIngredients,
   gateDoseCards,
   decideDoseCard,
+  sanitizeRegistryLookup,
   OcrProtocolError,
 } from '../../services/api/src/ocr/state.ts';
 import { SUBSTITUTE_REGISTRY } from '../../services/api/src/ocr/reference.ts';
@@ -414,16 +415,45 @@ test('反例·来源未核对 ⇒ dose_cards 必为 []', () => {
   assert.equal(outcome.rejections[0]?.reason, 'SOURCE_UNVERIFIED');
 });
 
-test('反例·条件与卡片绑定的六项条件不一致 ⇒ dose_cards 必为 []', () => {
+test('反例·请求条件与**卡片**绑定的六项条件不一致 ⇒ dose_cards 必为 []（归因指向卡片）', () => {
+  // 请求说"分蘖期"，卡片与候选外层都绑"3-5叶期" ⇒ 判定对象是卡片，故归因为 CARD_CONDITIONS_MISMATCH。
   const mismatched = { ...DOSE_CONDITIONS_SAMPLE, growth_stage: '分蘖期' };
   const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], {
     conditions: mismatched,
     registrationNumber: 'PD20210001',
   });
   assert.equal(decision.usable, false);
-  assert.equal(decision.reason, 'CONDITIONS_MISMATCH');
+  assert.equal(decision.reason, 'CARD_CONDITIONS_MISMATCH');
+  assert.equal(decision.card, null, '拒绝时不得带出任何卡片');
   const outcome = gateDoseCards({ candidates: [INJECTED_TRUSTED_CANDIDATES[0]], conditions: mismatched, registrationNumber: 'PD20210001' });
   assertEmptyArray(outcome.dose_cards, '条件不一致时的 dose_cards');
+});
+
+test('反例·外层候选条件与**卡片**条件互相矛盾（外层≠载荷）⇒ 拒绝而非只信一侧', () => {
+  // 卡片与请求都是 3-5叶期（一致），只有外层候选声明被改成"分蘖期" ⇒ 载荷与外层矛盾。
+  const envelopeLies = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE, growth_stage: '分蘖期' },
+  });
+  const decision = decideDoseCard(envelopeLies, {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
+    registrationNumber: 'PD20210001',
+  });
+  assert.equal(decision.usable, false);
+  assert.equal(decision.reason, 'CONDITIONS_MISMATCH');
+  const outcome = gateDoseCards({ candidates: [envelopeLies], conditions: { ...DOSE_CONDITIONS_SAMPLE }, registrationNumber: 'PD20210001' });
+  assertEmptyArray(outcome.dose_cards, '外层与载荷矛盾时的 dose_cards');
+});
+
+test('反例·外层候选的制剂与**卡片**制剂互相矛盾 ⇒ 拒绝', () => {
+  const envelopeLies = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    formulation_registration_number: 'PD20210002',
+  });
+  const decision = decideDoseCard(envelopeLies, {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
+    registrationNumber: 'PD20210001',
+  });
+  assert.equal(decision.usable, false);
+  assert.equal(decision.reason, 'FORMULATION_MISMATCH');
 });
 
 test('反例·制剂不匹配（用量卡不绑定本次命中的登记制剂）⇒ dose_cards 必为 []', () => {
@@ -468,6 +498,177 @@ test('反例·卡片形状违规（content_hash 非 64 位十六进制）必被�
   assertEmptyArray(outcome.dose_cards, '形状违规时的 dose_cards');
 });
 
+// ---------------------------------------- 监工 5487924164 / 行内 4245800045 点名反例
+// 判定对象必须是**实际要下发的那张卡**（card.*），不是外层候选。
+
+test('反例①·请求与候选外层均为 rice，但 **card.conditions 任一项与请求不一致** ⇒ 必须拒绝且 0 张（六项逐项参数化）', () => {
+  // 六项条件逐一替换成"**契约合法但与请求不同**"的值，每一项都必须被拦下（不是只查 crop_id）。
+  const wrongValues = {
+    crop_id: 'wheat',
+    region_code: '330200', // 合法浙江编码（^33\d{4}$，但与请求的 330100 不同）
+    species_id: 'species_other',
+    growth_stage: '分蘖期',
+    planting_method: '直播',
+    use_scene: '旱地',
+  };
+  for (const field of Object.keys(wrongValues)) {
+    const candidate = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+      card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, conditions: { ...DOSE_CONDITIONS_SAMPLE, [field]: wrongValues[field] } },
+    });
+    // 前提：外层候选与请求都是 rice 系列（即"外层看起来没问题"）。
+    assert.deepEqual(candidate.conditions, DOSE_CONDITIONS_SAMPLE, `外层候选条件不应被改动（${field}）`);
+    const decision = decideDoseCard(candidate, {
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(decision.usable, false, `card.conditions.${field} 与请求不一致时必须拒绝`);
+    assert.equal(decision.reason, 'CARD_CONDITIONS_MISMATCH', `card.conditions.${field} 的归因`);
+    assert.equal(decision.card, null);
+    const outcome = gateDoseCards({
+      candidates: [candidate],
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(outcome.dose_cards.length, 0, `card.conditions.${field} 时 gateDoseCards 必须返回 0 张`);
+  }
+  // 反面对照：只把请求侧条件改错（卡片不动）同样必须拒绝——两侧都不放过。
+  const decision = decideDoseCard(INJECTED_TRUSTED_CANDIDATES[0], {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE, crop_id: 'wheat' },
+    registrationNumber: 'PD20210001',
+  });
+  assert.equal(decision.usable, false);
+});
+
+test('反例②·**card.source** 为 withdrawn / rejected / simulation ⇒ 必须拒绝且 0 张（三值参数化）', () => {
+  const variants = [
+    { label: 'validity=withdrawn', source: { validity: 'withdrawn' }, reason: 'SOURCE_EXPIRED' },
+    { label: 'review_status=rejected', source: { review_status: 'rejected' }, reason: 'SOURCE_UNVERIFIED' },
+    { label: 'source_kind=simulation', source: { source_kind: 'simulation' }, reason: 'SOURCE_SIMULATED' },
+  ];
+  for (const variant of variants) {
+    const candidate = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+      card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, source: { ...INJECTED_TRUSTED_CANDIDATES[0].card.source, ...variant.source } },
+    });
+    // 前提：外层候选来源全部标称可信（即"外层看起来没问题"）——这正是原实现只信外层的地方。
+    assert.equal(candidate.source_kind, 'database', '外层候选来源应为标称可信');
+    assert.equal(candidate.validity, 'valid', '外层候选有效期应为标称有效');
+    assert.equal(candidate.review_status, 'verified', '外层候选审核状态应为标称已核对');
+    const decision = decideDoseCard(candidate, {
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(decision.usable, false, `card.source ${variant.label} 时必须拒绝`);
+    assert.equal(decision.reason, variant.reason, `card.source ${variant.label} 的归因`);
+    assert.equal(decision.card, null);
+    const outcome = gateDoseCards({
+      candidates: [candidate],
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(outcome.dose_cards.length, 0, `card.source ${variant.label} 时 gateDoseCards 必须返回 0 张`);
+    assert.equal(outcome.rejections[0]?.reason, variant.reason);
+  }
+});
+
+test('反例·card.conditions 缺字段 / 不全 / 不合契约 ⇒ CARD_CONDITIONS_INVALID（读不到就不放行）', () => {
+  const missingField = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, conditions: { crop_id: 'rice', region_code: '330100' } },
+  });
+  const decision = decideDoseCard(missingField, {
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
+    registrationNumber: 'PD20210001',
+  });
+  assert.equal(decision.usable, false);
+  assert.equal(decision.reason, 'CARD_CONDITIONS_INVALID');
+  const outcome = gateDoseCards({ candidates: [missingField], conditions: { ...DOSE_CONDITIONS_SAMPLE }, registrationNumber: 'PD20210001' });
+  assert.equal(outcome.dose_cards.length, 0);
+
+  // 卡片条件整体缺失（undefined）同样不放行，且不得抛错。
+  const noConditions = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, conditions: undefined },
+  });
+  const none = decideDoseCard(noConditions, { conditions: { ...DOSE_CONDITIONS_SAMPLE }, registrationNumber: 'PD20210001' });
+  assert.equal(none.usable, false);
+  assert.equal(none.reason, 'CARD_CONDITIONS_INVALID');
+
+  // 契约 pattern 违规（region_code 非 ^33[0-9]{4}$）算"不合契约"，也在这里被拦下。
+  const badRegion = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], {
+    card: { ...INJECTED_TRUSTED_CANDIDATES[0].card, conditions: { ...DOSE_CONDITIONS_SAMPLE, region_code: '440100' } },
+  });
+  const bad = decideDoseCard(badRegion, { conditions: { ...DOSE_CONDITIONS_SAMPLE }, registrationNumber: 'PD20210001' });
+  assert.equal(bad.usable, false);
+  assert.equal(bad.reason, 'CARD_CONDITIONS_INVALID');
+});
+
+test('反例·card.source 缺字段 / 非法 url / 非 https ⇒ CARD_SOURCE_INVALID（读不到就不放行）', () => {
+  const variants = [
+    { label: 'source 缺失', source: undefined },
+    { label: 'url 非 https', source: { url: 'http://example.invalid/x' } },
+    { label: 'title 缺失', source: { title: '' } },
+    { label: 'updated_at 非日期', source: { updated_at: 'not-a-date' } },
+    { label: 'evidence_kind 非法', source: { evidence_kind: 'guess' } },
+  ];
+  for (const variant of variants) {
+    const card = { ...INJECTED_TRUSTED_CANDIDATES[0].card };
+    if (variant.source === undefined) card.source = undefined;
+    else card.source = { ...INJECTED_TRUSTED_CANDIDATES[0].card.source, ...variant.source };
+    const candidate = variantOfCandidate(INJECTED_TRUSTED_CANDIDATES[0], { card });
+    const decision = decideDoseCard(candidate, {
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(decision.usable, false, `${variant.label} 时必须拒绝`);
+    assert.equal(decision.reason, 'CARD_SOURCE_INVALID', `${variant.label} 的归因`);
+  }
+});
+
+test('反例·card 整块缺失 / 非对象 ⇒ CARD_MALFORMED，且 gate 不抛错', () => {
+  for (const broken of [undefined, null, 'not-an-object', 42, []]) {
+    const decision = decideDoseCard({ card: broken }, {
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assert.equal(decision.usable, false, `card=${JSON.stringify(broken)} 时必须拒绝`);
+    assert.equal(decision.reason, 'CARD_MALFORMED');
+  }
+  // 候选本身畸形 / 非对象，也不得抛错。
+  for (const broken of [undefined, null, 'x', 42]) {
+    const decision = decideDoseCard(broken, { conditions: { ...DOSE_CONDITIONS_SAMPLE }, registrationNumber: 'PD20210001' });
+    assert.equal(decision.usable, false);
+  }
+});
+
+test('反例·gate 入参 candidates 非数组 ⇒ 返回 0 张且不抛错（fail-closed）', () => {
+  for (const broken of [undefined, null, 'nope', 42, { length: 1 }]) {
+    const outcome = gateDoseCards({
+      candidates: broken,
+      conditions: { ...DOSE_CONDITIONS_SAMPLE },
+      registrationNumber: 'PD20210001',
+    });
+    assertEmptyArray(outcome.dose_cards, `candidates=${JSON.stringify(broken)} 时的 dose_cards`);
+    assertEmptyArray(outcome.rejections, `candidates=${JSON.stringify(broken)} 时的 rejections`);
+  }
+});
+
+test('gate 下发的是**重新构造**的契约卡片，不是端口给的原始载荷对象', () => {
+  const source = INJECTED_TRUSTED_CANDIDATES[0];
+  const outcome = gateDoseCards({
+    candidates: [source],
+    conditions: { ...DOSE_CONDITIONS_SAMPLE },
+    registrationNumber: 'PD20210001',
+  });
+  assert.equal(outcome.dose_cards.length, 1);
+  const emitted = outcome.dose_cards[0];
+  assert.notEqual(emitted, source.card, '不得把端口给的载荷对象直接下发');
+  // 来源被重建为契约 DoseSource（const 字段由 gate 依据校验结果写成）。
+  assert.equal(emitted.source.source_kind, 'database');
+  assert.equal(emitted.source.validity, 'valid');
+  assert.equal(emitted.source.review_status, 'verified');
+  assert.equal(emitted.conditions.crop_id, DOSE_CONDITIONS_SAMPLE.crop_id);
+  // 条件对象也是新建的（不共享引用）。
+  assert.notEqual(emitted.conditions, source.card.conditions);
+});
+
 test('反例·生产装配（替身 / 未接线）不产出任何候选 ⇒ dose_cards 为 []，绝不补造', () => {
   const outcome = gateDoseCards({
     candidates: [],
@@ -501,6 +702,52 @@ test('辅助函数·missingDoseConditionFields 对 null 返回全部 6 项，对
   assertEmptyArray(missingDoseConditionFields({ ...DOSE_CONDITIONS_SAMPLE }), '齐全条件的缺项');
   assert.equal(isDoseConditionsComplete({ ...DOSE_CONDITIONS_SAMPLE }), true);
   assert.equal(isDoseConditionsComplete({ crop_id: 'rice', region_code: '330100' }), false);
+});
+
+test('反例·登记库返回物不可解析 ⇒ 收敛为 unavailable（不得当 no_match，也不得抛错）', () => {
+  const cases = [
+    { label: '整体非对象', raw: 'not-an-object' },
+    { label: 'status 未知', raw: { status: 'weird', candidates: [R1] } },
+    { label: 'candidates 非数组', raw: { status: 'available', candidates: null } },
+    { label: '候选非对象', raw: { status: 'available', candidates: ['nope'] } },
+    { label: '候选缺 formulation', raw: { status: 'available', candidates: [{ id: '11111111-1111-4111-8111-111111111111', revision: 1 }] } },
+    { label: '候选 registration_number 非字符串', raw: { status: 'available', candidates: [{ ...R1, formulation: { ...R1.formulation, registration_number: 42 } }] } },
+    { label: '候选成分数组为空', raw: { status: 'available', candidates: [{ ...R1, formulation: { ...R1.formulation, ingredients: [] } }] } },
+    { label: '候选来源 url 非 https', raw: { status: 'available', candidates: [{ ...R1, source: { ...R1.source, url: 'http://x.invalid' } }] } },
+  ];
+  for (const item of cases) {
+    const sanitized = sanitizeRegistryLookup(item.raw);
+    assert.equal(sanitized.status, 'unavailable', `${item.label} 应收敛为 unavailable`);
+    assertString(sanitized.reason, `${item.label} 的 reason`);
+    // 经判定链仍然是 unavailable，且不得退化成 no_match。
+    const decision = decideMatchState(fields(), sanitized);
+    assert.equal(decision.match_state, 'unavailable', `${item.label} 的 match_state`);
+    assert.notEqual(decision.match_state, 'no_match');
+    assert.equal(decision.registration, null);
+  }
+
+  // unavailable 原样透传（保留原因）。
+  const passthrough = sanitizeRegistryLookup({ status: 'unavailable', reason: '登记库未接线' });
+  assert.equal(passthrough.status, 'unavailable');
+  assert.equal(passthrough.reason, '登记库未接线');
+});
+
+test('sanitizeRegistryLookup·合法载荷保持 available，且候选被**重新构造**（不共享引用）', () => {
+  const sanitized = sanitizeRegistryLookup({ status: 'available', candidates: [R1] });
+  assert.equal(sanitized.status, 'available');
+  assert.equal(sanitized.candidates.length, 1);
+  assert.notEqual(sanitized.candidates[0], R1, '不得把登记库给的候选对象直接下发');
+  assert.deepEqual(sanitized.candidates[0], R1);
+  // 空候选是合法的 no_match（不是 unavailable）。
+  const empty = sanitizeRegistryLookup({ status: 'available', candidates: [] });
+  assert.equal(empty.status, 'available');
+  assert.equal(decideMatchState(fields(), empty).match_state, 'no_match');
+});
+
+test('反例·decideMatchState 收到畸形 lookup（候选非数组）⇒ unavailable，不得抛错', () => {
+  const decision = decideMatchState(fields(), { status: 'available', candidates: null });
+  assert.equal(decision.match_state, 'unavailable');
+  assert.notEqual(decision.match_state, 'no_match');
 });
 
 // ---------------------------------------------------------------- 5. 归一化 fail-closed
