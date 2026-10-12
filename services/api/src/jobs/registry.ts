@@ -292,7 +292,14 @@ export function createJobRegistry(sources: readonly JobSourcePort[]): JobRegistr
         const raw = await source.cancel(input);
         if (raw !== null && raw !== undefined) return assertContractJob(raw, `作业源 ${source.kind}.cancel`);
       }
-      if (existsWithoutCancel) throw new ApiError('OBJECT_UNAVAILABLE', '该作业所属能力尚未提供取消');
+      if (existsWithoutCancel) {
+        // 该域**根本没有取消能力**（能力未接线），与"对象当前不可用"是两件事：
+        // 按契约 `cancelJob` 的响应闭集，503 = `PROVIDER_UNAVAILABLE`（`x-error-status-map["503"]`），
+        // 并沿用项目"未接线 ⇒ fail-closed 503"的口径（先例：`db/catalog.ts` 的"尚未接入"、
+        // admin 的 `AdminJobPort`）⇒ **不谎称对象状态**（故不用 409 `OBJECT_UNAVAILABLE`）。
+        // `retryable: true`：接线后同一请求即可成功（契约为 503 保留 `Retry-After`）。
+        throw new ApiError('PROVIDER_UNAVAILABLE', '该作业所属能力尚未提供取消（未接线）', { retryable: true });
+      }
       throw new ApiError('NOT_FOUND', '作业不存在');
     },
   };

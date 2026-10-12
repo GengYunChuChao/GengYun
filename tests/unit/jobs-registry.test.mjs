@@ -238,7 +238,7 @@ test('取消·有能力的源被复用；域内冲突码原样透出（本层不
   );
 });
 
-test('取消·**域内无取消能力但作业存在 ⇒ OBJECT_UNAVAILABLE**（不假装取消、不伪造 cancelled）；未知 id 仍 404', async () => {
+test('取消·**域内无取消能力但作业存在 ⇒ 503 PROVIDER_UNAVAILABLE**（能力未接线，不谎称对象状态、不伪造 cancelled）；未知 id 仍 404', async () => {
   const jobs = new Map([[JOB_ID, validJob({ kind: 'transcription', state: 'running', result: null, error_code: null, target_ref: { type: 'transcription', id: TARGET_ID, revision: 1 } })]]);
   const noCancel = fakeSource('transcription', jobs, { withoutCancel: true });
   const registry = createJobRegistry([noCancel.source]);
@@ -247,8 +247,11 @@ test('取消·**域内无取消能力但作业存在 ⇒ OBJECT_UNAVAILABLE**（
     () => null,
     (e) => e,
   );
-  assert.equal(error?.code, 'OBJECT_UNAVAILABLE');
-  assert.equal(error?.status, 409);
+  // 契约 `cancelJob` 的响应闭集含 503（`x-error-status-map["503"] = [PROVIDER_UNAVAILABLE, PROVIDER_OUTCOME_UNKNOWN]`）：
+  // "该域根本没有取消能力"（能力未接线）不得用 409 OBJECT_UNAVAILABLE 冒充"对象当前不可用"。
+  assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(error?.status, 503);
+  assert.equal(error?.retryable, true, '未接线属可重试（接线后同一请求即可成功）');
   // 作业状态**未被改动**（没有伪造 cancelled），仅多了一次确认存在性的读取
   assert.equal(jobs.get(JOB_ID).state, 'running');
   assert.equal(jobs.get(JOB_ID).revision, 3);

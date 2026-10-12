@@ -214,11 +214,10 @@ try {
     }
   });
 
-  // -------- [4] 归属与同形 404（他人 / 未知 / 非法 uuid / 未接线 kind） --------
-  await group('[4] 反例·他人作业 / 未知 id / 非法 uuid / 未接线 kind 四类 GET 一律同形 404', async () => {
+  // -------- [4] 归属与同形 404（他人 / 合法但不存在 / 未接线 kind 三类） --------
+  await group('[4] 反例·同形 404 三类：他人作业 / 合法 uuid 但不存在 / kind 未接线（封套逐字段同形）', async () => {
     const foreign = await readJob(recognitionOkJobId, tokenB);
     const unknown = await readJob(UNKNOWN_ID, tokenA);
-    const malformed = await readJob('not-a-uuid', tokenA);
     // "未接线 kind"：拿转写 job 的 id 去问"只有识别域源"的注册表（等价收敛前/未接线装配）。
     const beforeRecognitionService = createRecognitionService({ store: createMemoryRecognitionStore(), provider: createStubRecognitionProvider({}), media: createRecognitionMediaPort(), idempotencyHmacKey: HMAC });
     const unwiredRegistry = createJobRegistry([createRecognitionJobSource(beforeRecognitionService)]);
@@ -226,28 +225,54 @@ try {
       () => null,
       (e) => e,
     );
-    for (const [label, res] of [['他人作业', foreign], ['未知 id', unknown], ['非法 uuid', malformed]]) {
+    for (const [label, res] of [['他人作业', foreign], ['合法 uuid 但不存在', unknown]]) {
       assert.equal(res.status, 404, `${label} 应为 404`);
       assert.equal(res.body.error.code, 'NOT_FOUND');
     }
+    // 三类**同形**：他人作业 / 合法但不存在 / 未接线 kind（封套逐字段一致）。
     sameShape(foreign, unknown);
-    sameShape(foreign, malformed);
-    assert.equal(unwired?.code, 'NOT_FOUND', '未接线 kind 必须与"作业不存在"同形');
+    assert.equal(unwired?.code, 'NOT_FOUND', '未接线 kind 必须与「作业不存在」同形');
     assert.equal(unwired?.status, 404);
-    observations.push('同形 404：他人/未知/非法 uuid（HTTP）与未接线 kind（注册表）四类一致');
+    assert.equal(unwired?.message, foreign.body.error.message, '未接线 kind 的 message 亦须同形');
+    observations.push('同形 404 三类（他人作业 / 合法但不存在 / kind 未接线）一致');
   });
 
-  await group('[5] 反例·他人取消 / 未知 id 取消 / 非法 uuid 取消 一律同形 404；无会话 401', async () => {
+  // -------- [4b] 钉子：**两层分工**（HTTP 层判格式 ⇒ 400；服务层判存在性 ⇒ 404） --------
+  // 与 #9/#10 线的既有钉子同一口径：`docs/verification/gy-i09-identify-loop-20261011.md:74`
+  // 「非 uuid 路径参数 `GET /recognitions/not-a-uuid` ⇒ `400 INVALID_REQUEST`（ajv `format:uuid` 生效，实测确认）」。
+  // 本用例钉住该分工，**防未来静默翻转**（把非法 uuid 吞成 404）。
+  await group('[4b] 钉子·两层分工：/jobs/{id} 与 /jobs/{id}/cancel 非 uuid ⇒ 400 INVALID_REQUEST（HTTP 层判格式）；合法但不存在 ⇒ 404 NOT_FOUND（服务层判存在性）—— 防未来静默翻转', async () => {
+    const ifMatch = '"1"';
+    const malformedGet = await readJob('not-a-uuid', tokenA);
+    assert.equal(malformedGet.status, 400, `非 uuid GET 应 400 INVALID_REQUEST，实际 ${malformedGet.status}`);
+    assert.equal(malformedGet.body.error.code, 'INVALID_REQUEST');
+    const malformedCancel = await http(`${JOBS}/not-a-uuid/cancel`, { method: 'POST', token: tokenA, headers: { 'if-match': ifMatch, 'idempotency-key': newKey('nail') } });
+    assert.equal(malformedCancel.status, 400, `非 uuid 取消应 400 INVALID_REQUEST，实际 ${malformedCancel.status}`);
+    assert.equal(malformedCancel.body.error.code, 'INVALID_REQUEST');
+    // 同一条路径上，「合法 uuid 但不存在」仍是 404（存在性归服务层）——两层不混。
+    const wellFormedMissing = await readJob(UNKNOWN_ID, tokenA);
+    assert.equal(wellFormedMissing.status, 404);
+    assert.equal(wellFormedMissing.body.error.code, 'NOT_FOUND');
+    // 契约未声明任何查询参数 ⇒ 未声明参数不得被静默接受（GET 与 cancel 都算）
+    const queryGet = await http(`${JOBS}/${recognitionOkJobId}?limit=5`, { token: tokenA });
+    assert.equal(queryGet.status, 400, '未声明查询参数（GET）应 400 INVALID_REQUEST');
+    assert.equal(queryGet.body.error.code, 'INVALID_REQUEST');
+    const queryCancel = await http(`${JOBS}/${recognitionOkJobId}/cancel?limit=5`, { method: 'POST', token: tokenA, headers: { 'if-match': ifMatch, 'idempotency-key': newKey('nailq') } });
+    assert.equal(queryCancel.status, 400, '未声明查询参数（cancel）应 400 INVALID_REQUEST');
+    assert.equal(queryCancel.body.error.code, 'INVALID_REQUEST');
+    observations.push('钉子：非 uuid ⇒ 400（HTTP 层）；合法但不存在 ⇒ 404（服务层）；未声明查询参数 ⇒ 400');
+  });
+
+  await group('[5] 反例·他人取消 / 合法 uuid 但不存在 的取消 一律同形 404；无会话 401', async () => {
     const ifMatch = '"1"';
     const foreign = await http(`${JOBS}/${recognitionOkJobId}/cancel`, { method: 'POST', token: tokenB, headers: { 'if-match': ifMatch, 'idempotency-key': newKey('f') } });
     const unknown = await http(`${JOBS}/${UNKNOWN_ID}/cancel`, { method: 'POST', token: tokenA, headers: { 'if-match': ifMatch, 'idempotency-key': newKey('u') } });
-    const malformed = await http(`${JOBS}/not-a-uuid/cancel`, { method: 'POST', token: tokenA, headers: { 'if-match': ifMatch, 'idempotency-key': newKey('m') } });
-    for (const [label, res] of [['他人取消', foreign], ['未知 id 取消', unknown], ['非法 uuid 取消', malformed]]) {
+    for (const [label, res] of [['他人取消', foreign], ['合法 uuid 但不存在的取消', unknown]]) {
       assert.equal(res.status, 404, `${label} 应为 404`);
       assert.equal(res.body.error.code, 'NOT_FOUND');
     }
     sameShape(foreign, unknown);
-    sameShape(foreign, malformed);
+    // 非 uuid / 未声明查询参数由 [4b] 钉子覆盖，此处不再重复。
     for (const [method, path] of [['GET', `${JOBS}/${recognitionOkJobId}`], ['POST', `${JOBS}/${recognitionOkJobId}/cancel`]]) {
       const res = await http(path, { method, headers: { 'if-match': '"1"', 'idempotency-key': newKey('anon') } });
       assert.equal(res.status, 401, `${method} 无会话应为 401`);
@@ -312,16 +337,19 @@ try {
     assert.equal(after.revision, before.revision, '被拒的取消不得推进 revision');
   });
 
-  await group('[9] 反例·转写域**无取消能力**：作业存在（GET 200）但 cancel ⇒ 409 OBJECT_UNAVAILABLE，且状态不被改动', async () => {
+  await group('[9] 反例·转写域**无取消能力（未接线）**：作业存在（GET 200）但 cancel ⇒ 503 PROVIDER_UNAVAILABLE（retryable），且状态不被改动', async () => {
     const before = (await readJob(transcriptionJobId)).body.data;
     assert.equal(before.state, 'succeeded');
     const rejected = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA, headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': newKey('sp-cancel') } });
-    assert.equal(rejected.status, 409, JSON.stringify(rejected.body));
-    assert.equal(rejected.body.error.code, 'OBJECT_UNAVAILABLE', '不得假装取消成功');
+    // 契约 `cancelJob` 的响应闭集含 503（`x-error-status-map["503"] = [PROVIDER_UNAVAILABLE, PROVIDER_OUTCOME_UNKNOWN]`）：
+    // "该域根本没有取消能力"（能力未接线）≠"对象当前不可用"，故用 503 而不是 409，且不谎称对象状态。
+    assert.equal(rejected.status, 503, JSON.stringify(rejected.body));
+    assert.equal(rejected.body.error.code, 'PROVIDER_UNAVAILABLE', '不得假装取消成功，也不得冒充对象不可用');
+    assert.equal(rejected.body.error.retryable, true);
     const after = (await readJob(transcriptionJobId)).body.data;
     assert.equal(after.state, before.state, '不得伪造 cancelled');
     assert.equal(after.revision, before.revision);
-    observations.push('转写域 cancel ⇒ 409 OBJECT_UNAVAILABLE（无取消能力，如实拒绝）');
+    observations.push('转写域 cancel ⇒ 503 PROVIDER_UNAVAILABLE（能力未接线，如实拒绝；状态未变）');
   });
 
   await group('[10] cancel 并发：同键并发 ⇒ 恰好一次迁移（两次响应同一 revision）；异键并发 + 同一 If-Match ⇒ 恰好一个 200、一个 409', async () => {

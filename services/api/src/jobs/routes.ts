@@ -13,11 +13,12 @@
  * 本层只做三件事：鉴权身份读取、把请求交给注册表、装配封套与头部。业务语义（归属、版本、终态、
  * 幂等回放）全部在**各域服务**里（只读复用）。
  *
- * **不注册 `params: {format:'uuid'}`**（刻意，见证据文档）：契约把路径参数标为 `format: uuid`，但派单要求
- * 「他人作业／未知 id／非法 uuid／未接线 kind」四类**对外封套逐字节同形**；若在 Fastify 层用 `format:'uuid'`
- * 校验，非法 uuid 会先被判 `400 INVALID_REQUEST`，与其余三类的 `404 NOT_FOUND` 不同形。因此这里把
- * 形状判定交给各域服务（非 uuid 一律走"找不到"分支）⇒ 四类同形。
- * 同理**不声明 querystring schema**：与迁移前的识别域路由一致（未声明的查询参数被忽略），避免为共享路径引入新的拒绝面。
+ * **两层分工（与 #10/#18 的既有钉子用例同一口径）**：路径参数按契约声明 `format: uuid` ⇒
+ * **HTTP 层负责格式**（非 uuid ⇒ `400 INVALID_REQUEST`）；**服务层负责存在性与归属**（⇒ `404 NOT_FOUND`）。
+ * 因此「非法 uuid」**不并入**「他人作业／合法但不存在／未接线 kind」那一组同形 404 —— 后三者才是同形的。
+ *
+ * 这两个操作在契约里**没有声明任何查询参数** ⇒ 显式 `additionalProperties:false`，未声明参数一律 `400 INVALID_REQUEST`
+ * （与 `routes/speech.ts` 同口径；**不静默忽略**）。
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { readIdentity } from '../auth/middleware.ts';
@@ -26,6 +27,17 @@ import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
 import { buildMeta } from '../routes/support.ts';
 import type { JobRegistry } from './registry.ts';
+
+/** 路径参数：契约 `format: uuid` ⇒ 非 uuid 由 HTTP 层判 400（存在性仍由服务层判 404）。 */
+const idParams = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id'],
+  properties: { id: { type: 'string', format: 'uuid' } },
+} as const;
+
+/** 契约未声明查询参数 ⇒ 未声明参数一律 400。 */
+const noQuery = { type: 'object', additionalProperties: false } as const;
 
 export function registerJobRoutes(
   app: FastifyInstance,
@@ -36,26 +48,34 @@ export function registerJobRoutes(
   const actorId = (request: FastifyRequest): string => readIdentity(request).userId;
   const jobIdOf = (request: FastifyRequest): string => (request.params as { id: string }).id;
 
-  app.get(`${API_PREFIX}/jobs/:id`, { preHandler: guards.requireUser }, async (request, reply) => {
-    const job = await registry.get({ userId: actorId(request), jobId: jobIdOf(request) });
-    return reply
-      .status(200)
-      .header('ETag', `"${job.revision}"`)
-      .header('Cache-Control', 'no-store')
-      .send({ data: job, meta: buildMeta(request, config) });
-  });
+  app.get(
+    `${API_PREFIX}/jobs/:id`,
+    { preHandler: guards.requireUser, schema: { params: idParams, querystring: noQuery } },
+    async (request, reply) => {
+      const job = await registry.get({ userId: actorId(request), jobId: jobIdOf(request) });
+      return reply
+        .status(200)
+        .header('ETag', `"${job.revision}"`)
+        .header('Cache-Control', 'no-store')
+        .send({ data: job, meta: buildMeta(request, config) });
+    },
+  );
 
-  app.post(`${API_PREFIX}/jobs/:id/cancel`, { preHandler: guards.requireUser }, async (request, reply) => {
-    const job = await registry.cancel({
-      userId: actorId(request),
-      jobId: jobIdOf(request),
-      ifMatch: request.headers['if-match'],
-      idempotencyKey: request.headers['idempotency-key'],
-    });
-    return reply
-      .status(200)
-      .header('ETag', `"${job.revision}"`)
-      .header('Cache-Control', 'no-store')
-      .send({ data: job, meta: buildMeta(request, config) });
-  });
+  app.post(
+    `${API_PREFIX}/jobs/:id/cancel`,
+    { preHandler: guards.requireUser, schema: { params: idParams, querystring: noQuery } },
+    async (request, reply) => {
+      const job = await registry.cancel({
+        userId: actorId(request),
+        jobId: jobIdOf(request),
+        ifMatch: request.headers['if-match'],
+        idempotencyKey: request.headers['idempotency-key'],
+      });
+      return reply
+        .status(200)
+        .header('ETag', `"${job.revision}"`)
+        .header('Cache-Control', 'no-store')
+        .send({ data: job, meta: buildMeta(request, config) });
+    },
+  );
 }
