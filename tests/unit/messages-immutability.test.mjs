@@ -42,18 +42,19 @@ test('反例·出口不可变：改列表响应里的嵌套 target_ref / read_at
   const pageAgain = await h.service.listMessages(USER_A, {});
   assert.equal(pageAgain.items.length, 1, 'push 进响应数组不得影响存储');
 
-  // markMessageRead 的响应同理。
+  // markMessageRead 的响应同理（首次读转换后 revision 由 1 推进到 2）。
   const marked = await h.service.markMessageRead(USER_A, created.message.id, {
     idempotencyKey: idem(601),
     ifMatch: '"1"',
   });
   assert.equal(typeof marked.read_at, 'string');
+  assert.equal(marked.revision, 2);
   marked.read_at = '1999-01-01T00:00:00.000Z';
   marked.revision = 42;
   const storedAfterMutate = await h.rawStore.getMessage(created.message.id);
   assert.equal(typeof storedAfterMutate.read_at, 'string');
   assert.notEqual(storedAfterMutate.read_at, '1999-01-01T00:00:00.000Z', '改响应不得改存储里的 read_at');
-  assert.equal(storedAfterMutate.revision, 1);
+  assert.equal(storedAfterMutate.revision, 2, '改响应不得改存储里的 revision');
 });
 
 test('反例·入口冻结：把入参对象再改动不得影响存储，且存储内的记录是深冻结的', async () => {

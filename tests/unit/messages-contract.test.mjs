@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MESSAGE_TYPES, REFERENCE_STATES, TARGET_REF_TYPES } from '../../services/api/src/messages/types.ts';
+import { strongEtagOf } from '../../services/api/src/messages/service.ts';
 import {
   CURSOR_MAX,
   PAGE_LIMIT_DEFAULT,
@@ -29,6 +30,18 @@ test('局部闭集与契约原文逐项一致（Message.type / ReferenceState / 
   assert.deepEqual([...REFERENCE_STATES], schemas.ReferenceState.enum);
   assert.deepEqual([...REFERENCE_STATES], states.states.ReferenceState);
   assert.deepEqual([...TARGET_REF_TYPES], schemas.TargetRef.properties.type.enum);
+});
+
+test('强 ETag 口径与契约同形：strongEtagOf(revision) 匹配 If-Match pattern，且不同版本不同串', () => {
+  const pattern = new RegExp(openapi.components.parameters.IfMatch.schema.pattern);
+  for (const revision of [1, 2, 9, 12345]) {
+    const etag = strongEtagOf(revision);
+    assert.equal(typeof etag, 'string');
+    assert.equal(etag, `"${revision}"`);
+    assert.match(etag, pattern, `strongEtagOf(${revision}) 必须与契约 If-Match pattern 同形`);
+  }
+  // 「不同资源状态不得共用同一强 ETag」的最小可判定形式。
+  assert.notEqual(strongEtagOf(1), strongEtagOf(2));
 });
 
 test('Message：键集恰为契约 required 七项，additionalProperties:false，且没有 title/body/actor', () => {

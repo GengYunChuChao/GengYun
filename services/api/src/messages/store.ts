@@ -10,8 +10,12 @@
  * 三个**唯一写入原语**（不存在无条件覆盖的入口）：
  *   1. `insertMessage`：同 id 或同 `(owner_id, event_key)` 已存在 ⇒ 不写入、返回 `'duplicate'`；
  *   2. `markReadIfUnread`：读状态的唯一写入口，**比较并写入（CAS）** + **单调**
- *      （只允许 `null → 时刻`；已是已读则原样返回，不改时间、不再计数）；
- *      整个临界区**没有任何 `await`** ⇒ 并发标记只会有一次真正写入；
+ *      （只允许 `null → 时刻`；已是已读则**空操作**：不改时间、不推进版本、不再计数）；
+ *      **首次读转换会推进 `revision`（自 1 递增）** —— `read_at` 是契约 `Message` 的字段，
+ *      改它就是改资源表示，强 ETag `"<revision>"` 必须随之变化（依据：冻结条款
+ *      `docs/architecture/state-contract.md`「GET 条目带强 ETag `"<revision>"`；版本整数自1递增…」，
+ *      逐字引文见证据文档 §12）。
+ *      整个临界区**没有任何 `await`** ⇒ 并发标记只会有一次真正写入（= 恰好一次版本推进）；
  *   3. 幂等台账 `claim/complete/release`（沿用 `auth/idempotency.ts` 的
  *      「先原子占位 → produce → 写回结果，失败释放占位」语义）。
  *
@@ -24,7 +28,10 @@ import { cloneDeep, freezeDeep, takeOwnershipDeep } from './immutable.ts';
 
 export interface MessageRecord {
   id: string;
-  /** 消息（事件）版本；本阶段恒为 1：读取标记**不是**内容版本的变更（见证据文档）。 */
+  /**
+   * 资源版本（强 ETag 绑定 `"<revision>"`）。初始 1；
+   * **首次读转换（`read_at: null → 时刻`）推进 1**；重复标记（已是已读）不变。
+   */
   revision: number;
   /** 接收者归属：只有本人能读到/标记（他人一律与"不存在"同形）。 */
   owner_id: string;
@@ -63,8 +70,9 @@ export interface MarkReadExpectation {
 
 /**
  * 读状态写入结果。
- * `transitioned` 明确区分"本次真的把 `null` 写成时刻"与"读到已是已读、未写入"
- * —— 这是"并发只减一次"的可判定证据（诊断字段，不出契约）。
+ * `transitioned` 明确区分"本次真的把 `null` 写成时刻**并推进了一次版本**"与
+ * "读到已是已读、空操作未写入" —— 这是"并发只减一次 / 版本只 +1"的可判定证据
+ * （诊断字段，不出契约）。
  */
 export type MarkReadResult =
   | { ok: true; record: MessageRecord; transitioned: boolean }
@@ -78,7 +86,7 @@ export interface MessagesStore {
   /** **归属域**列表原语：只返回该主体的行（存储层不把他人行交给上层）。 */
   listMessagesByOwner(ownerId: string): Promise<MessageRecord[]>;
   findByEventKey(ownerId: string, eventKey: string): Promise<MessageRecord | null>;
-  /** 读状态的唯一写入原语（CAS + 单调 + 同步临界区）。 */
+  /** 读状态的唯一写入原语（CAS + 单调 + 同步临界区；首次转换推进 `revision`）。 */
   markReadIfUnread(id: string, expected: MarkReadExpectation, readAt: string): Promise<MarkReadResult>;
   /** **派生**未读数：`read_at === null` 的本人行数（不是计数器）。 */
   countUnread(ownerId: string): Promise<number>;
@@ -143,10 +151,11 @@ export function createMemoryMessagesStore(
    * 读状态写入的**同步**临界区。
    *
    * 本函数**没有任何 `await`**：从"重读当前记录"到"写回"之间不产生事件循环让步，
-   * 所以不会出现"两个并发标记都读到 `read_at === null`，然后各写一次"的窗口。
+   * 所以不会出现"两个并发标记都读到 `read_at === null`，然后各写一次（各推进一次版本）"的窗口。
    * 内存实现天然原子；阶段 2 的 PG 实现必须在**同一事务**内
    * `SELECT ... FOR UPDATE` 后完成同样的比较与写入（等价 SQL：
-   * `UPDATE messages SET read_at = $3 WHERE id = $1 AND owner_id = $2 AND read_at IS NULL`，
+   * `UPDATE messages SET read_at = $3, revision = revision + 1
+   *   WHERE id = $1 AND owner_id = $2 AND revision = $4 AND read_at IS NULL`，
    * 以 `rowCount` 判定是否真的发生了转换），语义与这里逐条对齐。
    */
   function markRead(id: string, expected: MarkReadExpectation, readAt: string): MarkReadResult {
@@ -156,9 +165,10 @@ export function createMemoryMessagesStore(
       return { ok: false, reason: 'OWNER_CHANGED' };
     }
     if (current.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
-    // 单调 + 幂等：已是已读 ⇒ 不写入、不改首次时间、不再次计减。
+    // 单调 + 幂等：已是已读 ⇒ **空操作**（不改首次时间、不推进版本、不再次计减）。
     if (current.read_at !== null) return { ok: true, record: cloneDeep(current), transitioned: false };
-    const next: MessageRecord = { ...current, read_at: readAt };
+    // 首次读转换：`read_at` 是资源表示的一部分 ⇒ 同步推进 `revision`（强 ETag 随之变化）。
+    const next: MessageRecord = { ...current, revision: current.revision + 1, read_at: readAt };
     messages.set(id, freezeDeep(cloneDeep(next)));
     readTransitions += 1;
     return { ok: true, record: cloneDeep(next), transitioned: true };
@@ -263,6 +273,10 @@ export function createMemoryMessagesStore(
       });
     },
 
+    /**
+     * 诊断计数（测试用；不出契约）：`read_transitions` = 真正发生的
+     * `read_at: null → 时刻` 写入次数，**等于版本推进次数**（首次转换才推进）。
+     */
     snapshotCounts() {
       return { messages: messages.size, read_transitions: readTransitions };
     },

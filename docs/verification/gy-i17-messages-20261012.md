@@ -16,8 +16,9 @@
 | 收尾时 `upstream/main`（第一次 fetch） | `13262f19345b6e2e99de8ba39d661dae065d3b01`（上游在本片工作期间前进了两个合并 PR） |
 | 上游新增（相对本基线，第一次） | `f8da03b`（#87 GY-I09 识别闭环）、`13262f1`（#99 转写并发诊断改走 stderr） |
 | 第二次 `git fetch` 后的 `upstream/main` | `6337f1899f0a9ee4384a0a71fa2db3b51e68b5a8`（再前进 1 个：`6337f18` = #101 GY-I18 阶段 1b） |
+| 返修 1 时的 `git fetch` 后 `upstream/main` | `54ed689c16fc35fc2659593502fb3633649e13fd`（= `6337f18` + #102 GY-I11 + #105 GY-I13，两次合并之间只探到 `a249e77`） |
 | `ffd5bf73` 是否仍为 `upstream/main` 的祖先 | 是（`git merge-base --is-ancestor` 退出码 0 ⇒ 本分支是"落后基线"而非"分叉"） |
-| 本片新增文件与上游新增文件是否重叠 | 无（`git diff --name-only ffd5bf73 upstream/main` 里没有任何 `messages` 路径；#101 只动 `admin/**` 与 `tests/unit/admin-ops-*`） |
+| 本片新增文件与上游新增文件是否重叠 | 无（`git diff --name-only ffd5bf73 upstream/main` 里没有任何 `messages` 路径；#101 只动 `admin/**`，#102/#105 只动 `routes/speech.ts`、`routes/synthesis.ts`、`speech/**` 与 `app.ts`） |
 | Node / npm | `v24.16.0` / `11.13.0` |
 | 依赖安装 | `npm ci --no-audit --no-fund` ⇒ `added 103 packages in 3s` |
 
@@ -56,7 +57,7 @@
 | `UnreadCount` | `{count}`，integer `minimum:0`，`additionalProperties:false` | `service.ts::getUnreadCount`（**派生值**） |
 | `MessagePageEnvelope` / `UnreadCountEnvelope` / `MessageEnvelope` | 均为 `{data, meta}` 全必填 | 本片只产 `data`；封套与 `meta` 属阶段 2 路由层 |
 | `listMessages` 参数 | `Cursor`（≤2048）、`Limit`（1..50，默认 20） | `validate.ts::parseListMessagesQuery` |
-| `markMessageRead` 参数 | path `id` uuid；`Idempotency-Key` required 8..128；`If-Match` required `^"[1-9][0-9]*"$`；**无请求体**；`x-version-required: true` | `validate.ts::requireIdempotencyKey` / `requireIfMatch` |
+| `markMessageRead` 参数 | path `id` uuid；`Idempotency-Key` required 8..128；`If-Match` required `^"[1-9][0-9]*"$`；**无请求体**；`x-version-required: true`（返修 1：首次读转换推进 `revision`，强 ETag 随之变化，见 §12） | `validate.ts::requireIdempotencyKey` / `requireIfMatch` |
 | 状态码 | 200 + 400/401/403/404/409/413/415/422/428/429/503/504（契约按全站枚举声明） | 本片只会产生 200/400/401/403/404/409/428（全部在闭集内，见 §9 契约用例） |
 | `ErrorCode` | 25 项闭集 | 本片使用 10 项，全部在闭集内（`messages-contract.test.mjs` 逐项断言） |
 
@@ -76,18 +77,19 @@
 - [reference.ts](../../services/api/src/messages/reference.ts)：目标可用性端口（fail-closed）。
 - [validate.ts](../../services/api/src/messages/validate.ts)：契约参数与创建口入参校验。
 - [immutable.ts](../../services/api/src/messages/immutable.ts)：入口深冻结 + 出口深拷贝边界。
-- [service.ts](../../services/api/src/messages/service.ts)：三条 operationId 与内部创建口。
+- [service.ts](../../services/api/src/messages/service.ts)：三条 operationId、内部创建口，
+  以及强 ETag 口径 `strongEtagOf(revision)`（契约 `If-Match.pattern` 同形；返修 1 起用于绑定 `revision`）。
 - [index.ts](../../services/api/src/messages/index.ts)：出口。
 
 **未触碰**：`services/api/src/app.ts`、`routes/**`、`{community,admin,ocr,speech,tts,recognitions,auth,db}/**`、
 `miniprogram/**`、`tools/prepare-wechat.mjs`、`packages/**`、`db/**`、根 `package.json`/lock、
-`.github/workflows/**`。`auth/idempotency.ts`（`claim/complete/release` 台账）与
-`community/store.ts`（CAS 同步临界区）只作**只读 import / 只读参考**。
+`.github/workflows/**`、`docs/architecture/contract-status.json`。`auth/idempotency.ts`
+（`claim/complete/release` 台账）与 `community/store.ts`（CAS 同步临界区）只作**只读 import / 只读参考**。
 
-> 派单里提到的 `services/api/src/admin/idempotent-write.ts` **在基线上不存在**
+> 派单里提到的 `services/api/src/admin/idempotent-write.ts` **在本片基线（`ffd5bf73`）上不存在**
 > （`git cat-file -e HEAD:services/api/src/admin/idempotent-write.ts` 报
-> `fatal: path ... does not exist in 'HEAD'`；`git log --follow --all` 只命中一个不包含该文件的历史提交）。
-> 因此"原子占位"思路改以 `services/api/src/auth/idempotency.ts`（同仓库内唯一现存实现）为准。
+> `fatal: path ... does not exist in 'HEAD'`）；它是 **#101（`6337f18`，GY-I18 阶段 1b）** 才随上游进入 main 的，
+> 本片**未依赖、未修改**它。因此"原子占位"思路以既有的 `auth/idempotency.ts` 为准。
 
 ## 4 `ReferenceState` 的完整取值与计算规则
 
@@ -118,23 +120,27 @@
 设计：`unread-count` 是**派生量**——`store.countUnread(ownerId)` 每次现算
 `read_at === null` 的**本人**行数，不是计数器，因此不存在计数漂移路径。
 读状态的唯一写入口是 `store.markReadIfUnread`：**同步**临界区内的比较并写入（CAS）+ 单调
-（只允许 `null → 时刻`，已是已读则原样返回、`transitioned: false`）。
+（只允许 `null → 时刻`，已是已读则**空操作**：`read_at`、`revision` 都不变、`transitioned: false`）。
+**返修 1 起**：首次读转换**同时推进 `revision`（自 1 递增）**，使强 ETag `"<revision>"`
+随资源状态变化（逐字依据与理由见 §12）；重复标记仍是空操作，**不推进版本**。
 
-实测（`tests/unit/messages-concurrency.test.mjs`，7/7 通过）：
+实测（`tests/unit/messages-concurrency.test.mjs` 7/7 + `tests/unit/messages-read-version.test.mjs` 7/7）：
 
 | 场景 | 观测量 | 实测值 |
 | --- | --- | --- |
 | 本人两条消息（一未读一已读） | `unread-count` | `1` |
-| 标记未读消息 | `read_at` | 有值（`2026-10-12T03:00:0x.000Z`） |
+| 首次标记未读消息 | `read_at` / `revision` | 有值（`2026-10-12T03:00:0x.000Z`） / **2**（自 1 递增） |
 | 标记后 | `unread-count` | `0` |
-| 重复标记（新幂等键，`If-Match: "1"`） | `read_at` / `unread-count` | **不变** / `0` |
-| 同键重放 | `read_transitions` | `1`（重放不产生第二次写入） |
-| **两条并发标记同一消息**（屏障保证两条都先读完再写） | 两个响应的 `read_at` | **完全相同** |
-| 同上 | `snapshotCounts().read_transitions` | **1**（只发生一次转换） |
-| 同上 | `unread-count` | `0`（不是 `-1`，也不是 `2`） |
+| 重复标记（新幂等键 + **当前** ETag） | `read_at` / `revision` / `unread-count` | **不变** / **不变** / `0` |
+| 重复标记携带**旧** ETag（`"1"`） | 结果 | **409 `REVISION_CONFLICT`**（不得静默通过；存储不变） |
+| 同键重放 | `read_transitions` | `1`（重放不产生第二次写入，且回放**当前**版本） |
+| **两条并发标记同一消息**（异键，屏障保证两条都先读完再写） | 结果 | 一条 200（`revision` 2） + 一条 **409** |
+| 同上 | `snapshotCounts().read_transitions` | **1**（只发生一次转换 = 只推进一次版本） |
+| 同上 | 存储 `revision` / `unread-count` | **2**（不是 3） / `0`（不是 `-1`，也不是 `2`） |
 | 同上 | 派生不变量 | `count === 本人 read_at===null 行数` |
-| 挂起点交错（迟到者的检查早于别人写入） | 迟到者 `read_at` | 复用首次时刻，未改写 |
-| 5 条消息并发标记 + 全部再标记一轮 | `read_transitions` | `5` → 仍 `5`（单调 + 幂等） |
+| 同一消息**同键**并发（重试合并） | 两个响应的 `read_at` / `revision` | **完全相同** / 都是 `2` |
+| 挂起点交错（迟到者的检查早于别人写入） | 迟到者 | **409**，且不改写 `read_at`/`revision` |
+| 5 条消息并发标记 + 携带当前 ETag 再标一轮 | `read_transitions` / 各条 `revision` | `5` → 仍 `5` / 都是 `2`（单调 + 幂等） |
 | 同键并发（3 条请求） | 结果 | 恰好一次 `created/生效`，两/三方拿到同一状态 |
 
 未读数为 0 的边界：无消息 ⇒ `0`；全部已读后重复标记 ⇒ 仍 `0` 且 `>= 0`（`typeof count === 'number'`）。
@@ -177,7 +183,7 @@
 
 ## 8 反例清单（可单独指出）与回退-复跑
 
-### 8.1 反例（≥12 类，共 32 条用例，全部通过）
+### 8.1 反例（22 类，返修 1 后共 **40** 条用例，全部通过）
 
 | # | 反例 | 期望 | 用例文件 |
 | --- | --- | --- | --- |
@@ -186,45 +192,61 @@
 | 3 | 未知消息 id（合法 uuid） | 404 `NOT_FOUND` | messages-service |
 | 4 | 非法 uuid | 400 `INVALID_REQUEST` | messages-service |
 | 5 | `type` 闭集外 / 缺失 / 非字符串（创建口） | 400 `INVALID_REQUEST` + `INVALID_ENUM`，不落库 | messages-security |
-| 6 | 重复标记同一消息 | `read_at` 不变、未读不再减少、`read_transitions` 不增 | messages-service / concurrency |
-| 7 | **并发标记同一消息** | 未读**只减一次**（`read_transitions === 1`、两个 `read_at` 相同、`count === 0`） | messages-concurrency |
-| 8 | 未读数为 0 的边界（无消息/全已读/重复标记） | `0`，且 `>= 0` | messages-service |
-| 9 | `limit` 超上限（51）或非法（0/-1/1.5/字符串/NaN） | 400 `INVALID_REQUEST` | messages-service / pagination |
-| 10 | 非法游标（篡改/换主体/过期/结构非法等 12 种） | 400 `INVALID_CURSOR` / `INVALID_REQUEST` | messages-pagination |
-| 11 | 多余字段（查询参数、创建口含 `read_at`/`id`/`revision`/`reference_state`） | 400 `INVALID_REQUEST` + `UNKNOWN_FIELD` | messages-service / security |
-| 12 | **目标不可见时 `reference_state`** | 不得假装可用 ⇒ `unavailable`，且与"目标不存在"不可区分 | messages-security |
-| 13 | 目标端口未接线 / 抛错 / 返回非闭集 | 一律 `unavailable`（含"矛盾端口"） | messages-security |
-| 14 | 分页同刻多条 | 不漏不重（5 条 / limit 2 / 3 页） | messages-pagination |
-| 15 | 出口嵌套改动（`target_ref.id`、`read_at`、数组 push） | 动不了存储 | messages-immutability |
-| 16 | 入口改动（入库后改调用方对象） | 动不了存储；存储记录深冻结 | messages-immutability |
-| 17 | 创建口非法入参（19 组：owner/event_key/target_ref/注入字段） | 400 `INVALID_REQUEST`，全部不落库 | messages-security |
-| 18 | 主体：缺会话 / 后台会话 | 401 `SESSION_REQUIRED` / 403 `SCOPE_DENIED` | messages-service |
-| 19 | `Idempotency-Key` 缺失/过短；同键异体；处理中 | 400 / 409 `IDEMPOTENCY_CONFLICT` / 409 `REQUEST_IN_PROGRESS` | messages-service / concurrency |
-| 20 | `If-Match` 缺失 / 非法 / 不匹配 | 428 `REVISION_REQUIRED` / 400 / 409 `REVISION_CONFLICT` | messages-service |
-| 21 | 事件去重（同 `(owner,event_key)`） | 只创建一次；命中去重**不重置**读状态；并发只生效一次 | messages-security / concurrency |
-| 22 | 契约闭集被扩展（`Message` 多字段、错误码外扩） | 契约用例立即失败 | messages-contract |
+| 6 | 重复标记同一消息（携带**当前** ETag） | `read_at` / `revision` 都不变、未读不再减少、`read_transitions` 不增 | messages-service / read-version |
+| 7 | **重复标记携带旧 ETag** | **409 `REVISION_CONFLICT`**，且存储不变 | messages-read-version |
+| 8 | **并发标记同一消息** | 未读**只减一次**、`revision` **只 +1**（同键并发两条都 200 且同 ETag；异键并发另一方 409） | messages-concurrency / read-version |
+| 9 | 首次读转换 | `revision` 恰好 +1，且强 ETag 由 `"1"` 变 `"2"` | messages-read-version |
+| 10 | 未读数为 0 的边界（无消息/全已读/重复标记） | `0`，且 `>= 0`；重复标记不推进版本 | messages-service |
+| 11 | `limit` 超上限（51）或非法（0/-1/1.5/字符串/NaN） | 400 `INVALID_REQUEST` | messages-service / pagination |
+| 12 | 非法游标（篡改/换主体/过期/结构非法等 12 种） | 400 `INVALID_CURSOR` / `INVALID_REQUEST` | messages-pagination |
+| 13 | 多余字段（查询参数、创建口含 `read_at`/`id`/`revision`/`reference_state`） | 400 `INVALID_REQUEST` + `UNKNOWN_FIELD` | messages-service / security |
+| 14 | **目标不可见时 `reference_state`** | 不得假装可用 ⇒ `unavailable`，且与"目标不存在"不可区分 | messages-security |
+| 15 | 目标端口未接线 / 抛错 / 返回非闭集 | 一律 `unavailable`（含"矛盾端口"） | messages-security |
+| 16 | 分页同刻多条 | 不漏不重（5 条 / limit 2 / 3 页） | messages-pagination |
+| 17 | 出口嵌套改动（`target_ref.id`、`read_at`、`revision`、数组 push） | 动不了存储 | messages-immutability |
+| 18 | 入口改动（入库后改调用方对象） | 动不了存储；存储记录深冻结 | messages-immutability |
+| 19 | 创建口非法入参（19 组：owner/event_key/target_ref/注入字段） | 400 `INVALID_REQUEST`，全部不落库 | messages-security |
+| 20 | 主体：缺会话 / 后台会话 | 401 `SESSION_REQUIRED` / 403 `SCOPE_DENIED` | messages-service |
+| 21 | `Idempotency-Key` 缺失/过短；同键异体；处理中；同键重放 | 400 / 409 `IDEMPOTENCY_CONFLICT` / 409 `REQUEST_IN_PROGRESS` / 幂等且回放**当前** ETag | messages-service / concurrency / read-version |
+| 22 | 事件去重（同 `(owner,event_key)`） | 只创建一次；命中去重**不重置**读状态；并发只生效一次 | messages-security / concurrency |
+| 23 | `If-Match` 缺失 / 非法 / 不匹配 | 428 `REVISION_REQUIRED` / 400 / 409 `REVISION_CONFLICT` | messages-service / read-version |
+| 24 | 契约闭集被扩展 / 强 ETag 与 If-Match pattern 不同形 | 契约用例立即失败 | messages-contract |
 
-### 8.2 回退-复跑（去掉守卫/去掉原子性 ⇒ 反例失败）
+### 8.2 回退-复跑（去掉守卫/去掉原子性/去掉版本推进 ⇒ 反例失败）
 
 变异脚本：`E:\GengYunCommander\.gy-i17-evidence\mutate.mjs`（最小改动 + 出现次数校验 + 还原后 SHA256 比对）。
+**返修 1 后全部重跑过一遍**（还原后的 SHA256 与变异前逐一相同）：
+`store.ts` = `048F28955A0156D7FFC0AAFF3C787FF68DD401F73F82F683CCEF1FB2C8821014`、
+`service.ts` = `5AD7B64F40AD7930FFDD5415B23FA2CBE71253E5C39A395C55EE4D6B63397B13`。
+
+**实验 ④（去掉版本推进）**：把 `const next: MessageRecord = { ...current, revision: current.revision + 1, read_at: readAt };`
+退回成 `{ ...current, read_at: readAt }`（= 监工否掉的旧口径）。
+
+```
+✖ 回归①：首次标记 ⇒ revision 恰好 +1，且强 ETag 随资源状态变化
+  AssertionError: 首次读转换必须推进 revision（自 1 递增）  1 !== 2
+✖ 回归②：重复标记（新键 + 当前 ETag）⇒ revision 不变、read_at 不变、未读为 0
+✖ 回归③：用旧 ETag 做第二次标记 ⇒ 409 REVISION_CONFLICT，且不得改动存储
+✖ 回归④a：并发两条首次标记（同幂等键）⇒ 恰好一次版本推进、两响应 read_at 与 ETag 相同
+✖ 回归④b：并发两条首次标记（不同幂等键、都带当前 ETag "1"）⇒ 恰好一次推进，落败方 409
+✖ 回归④b 附证：落败方的请求形状与"用旧 ETag 的第二次标记"完全同形 ⇒ 规则上不可区分
+✖ 回归⑤：同键同体重放 ⇒ 幂等，且回放**当前** ETag（不是首次响应的快照）
+ℹ tests 7  ℹ pass 0  ℹ fail 7  [exit code: 1]
+```
 
 **实验 ①（去掉原子性/单调守卫）**：删掉 `store.ts::markRead` 里的
 `if (current.read_at !== null) return { ok: true, record: cloneDeep(current), transitioned: false };`
-（⇒ 每次都无条件改写 `read_at`）。
+（⇒ 每次都无条件改写 `read_at` 并推进版本）。
 
 ```
-✖ 并发反例（主）：同一消息两条并发标记 ⇒ 未读只减一次，两个响应 read_at 相同 (4.9888ms)
-  AssertionError [ERR_ASSERTION]: 两者必须报告同一个首次已读时刻
-  + actual '2026-10-12T03:00:04.000Z'  - expected '2026-10-12T03:00:05.000Z'
-✖ 并发反例：挂起点交错（迟到者的检查发生在别人写入之前）⇒ 迟到者不得改写 read_at
-  AssertionError: 迟到者必须复用首次 read_at，不得改写
-✖ 单调性：批量并发标记/重复标记后，未读数只减不增且等于派生值（无漂移）
-ℹ tests 7  ℹ pass 4  ℹ fail 3   [exit code: 1]
+✖ 并发反例：挂起点交错 ⇒ 迟到者 409 且存储不变
+✖ 单调性：批量并发标记/重复标记后，未读数只减不增、版本只 +1、且等于派生值（无漂移）
+✖ 回归②：重复标记（新键 + 当前 ETag）⇒ revision 不变、read_at 不变、未读为 0
+✖ 回归⑤：同键同体重放 ⇒ 幂等，且回放**当前** ETag（不是首次响应的快照）
+ℹ tests 14  ℹ pass 10  ℹ fail 4  [exit code: 1]
 ```
 
-还原后（`store.ts` SHA256 与变异前一致：`50BC98CC…7A10EF`）复跑：`ℹ tests 7 ℹ pass 7 ℹ fail 0 [exit code: 0]`。
-
-**实验 ②（去掉归属守卫）**：删掉服务层两处
+**实验 ②（去掉归属守卫）**：只删服务层两处
 `if (record === null || record.owner_id !== user.userId) throw notFound();`。
 
 ```
@@ -249,9 +271,8 @@
 ℹ tests 6  ℹ pass 5  ℹ fail 1  [exit code: 1]
 ```
 
-三次实验全部还原后复核：`store.ts` = `50BC98CC233D76B05DBE4D2ED8BA47742DE82A4FAA202F21DC54685BAE7A10EF`、
-`service.ts` = `4D49F0B77CE891ACC423FE28E4478691B5A787B6BF76532A3A600526214D9406`（与变异前逐一相同），
-复跑 `node --test` 全绿。
+四次实验全部还原后复核（SHA256 与变异前逐一相同），复跑 `node --test` 全绿。
+原始日志：`08`–`14`（返修前树）、`60`–`63`（返修后树）。
 
 ## 9 门禁原始输出（`ffd5bf73` + 本片改动）
 
@@ -301,11 +322,10 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 2. `reference_state` 是**必填二值**，对"没有 `target_ref`"的 `system` 消息没有第三种取值可选 ⇒
    本片取保守值 `unavailable`（见 §4 第 1 条）；是否应新增"not_applicable"或允许该字段为 null，
    属契约演进问题。
-3. `markMessageRead` 的 `x-version-required: true` + `If-Match` 与"读标记不改变内容版本"存在张力：
-   本片按仓库既有 `likePosts`（`PUT /posts/{id}/like` 同样要求 `If-Match`+`Idempotency-Key`，
-   且**不**改内容 revision）的口径，**读取标记不改 `revision`**，因此 `If-Match` 是针对**事件版本**的：
-   不匹配时返回 409（用例覆盖），而"重复标记"保持 200/幂等（派单验收明写要求）。
-   若监工认为读状态变化也应让强 ETag 变化，本片需要改口径（会让"重复标记"变成 409，与验收字面冲突）。
+3. `markMessageRead` 的 `x-version-required: true` + `If-Match` 与读状态的关系：**返修 1 已定案**——
+   首次读转换**推进 `revision`**（依 §12.1 冻结条款），重复标记（携当前 ETag）为空操作、
+   旧 ETag ⇒ 409。"重复标记 200/幂等"与"旧 ETag 409"并不矛盾：前者是**同键重放或携当前 ETag**，
+   后者是携已失效 ETag。仅当"异键并发两条都携旧 ETag"时二者交叉，见 §12.5（规格层面冲突，已按 ③ 实现）。
 4. `Message` 没有"来源事件 + 版本"的持久唯一键字段 ⇒ 去重键 `event_key` 只能作为**内部字段**存在，
    不参与契约校验；跨进程/持久化去重需阶段 2 的 `(owner_id, event_key)` 唯一约束（本片内存实现已具备）。
 
@@ -329,10 +349,9 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 2. **游标没有"可见集合水位"**（§7）。选择"追加密集收件箱用 keyset、watermark 会频繁失效"，
    代价是翻页期间新到的消息不在旧游标窗口内（由新开第一页 + 服务端聚合的未读数覆盖）。
    若监工坚持 watermark 口径，需改 `service.ts` 的游标载荷与 `listMessages`（并发/分页用例需同步调整）。
-3. **`If-Match` 在当前阶段"几乎总能匹配"**（读取标记不改 `revision` ⇒ 消息 `revision` 恒为 1）。
-   409 `REVISION_CONFLICT` 只有客户端送错 ETag（如 `"2"`）时才出现（用例覆盖），
-   因此该头在阶段 1 的"防并发"作用弱于"防错"。若监工认为应由读状态推进 revision，
-   则与"重复标记幂等且 `read_at` 不变"的验收条目冲突，需要监工裁定口径。
+3. ~~**`If-Match` 在当前阶段"几乎总能匹配"**（读取标记不改 `revision` ⇒ 消息 `revision` 恒为 1）……~~
+   **已作废**：返修 1 依冻结条款改为**首次读转换推进 `revision`**（见 §12）。
+   本节保留划掉的原文，是为了诚实记录"此前把读状态当作不推版本"的口径已更正。
 
 另附两点**主动暴露**的诚实边界（不是辩解，是免得被当成"已完成"）：本片**没有**路由、**没有**持久化、
 **没有**任何真实目标读取实现，因此**不得**被引用为"消息系统已端到端可用"；
@@ -340,15 +359,16 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 
 ## 11 合并上游后在**合成树**上复跑（PR head 所在树）
 
-按指挥要求 `git merge upstream/main` 两次，**均无冲突、无手工解冲突**（`git merge-tree --write-tree`
-预检返回单一树号、无 `CONFLICT`；且与本片文件零重叠）：
+按指挥要求 `git merge upstream/main` **三次**，**均无冲突、无手工解冲突**（每次先 `git merge-tree --write-tree`
+预检：返回单一树号、无 `CONFLICT`；且每次都与本片文件零重叠）：
 
-| 次序 | 合并对象 | 内容 |
+| 次序 | 合并对象（实际合成到分支头） | 内容 |
 | --- | --- | --- |
 | 第 1 次 | `13262f19` | #87 GY-I09 识别闭环、#99 转写并发诊断改走 stderr |
 | 第 2 次 | `6337f18` | #101 GY-I18 后台运营与开关服务层（阶段 1b） |
+| 第 3 次（返修 1） | `54ed689` | #102 GY-I11 转写路由接入装配、#105 GY-I13 语音合成 HTTP 装配（两次 fetch 之间上游又前进了一个：先探到 `a249e77`，合并时已是 `54ed689`） |
 
-门禁原始输出（**第 2 次合并后的合成树**）：
+门禁原始输出（**第 3 次合并后、返修 1 的合成树**）：
 
 ```
 $ npm run lint
@@ -360,8 +380,8 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。
 
 $ npm run test:unit
 before（临时移出 tests/unit/messages-*.test.mjs）: ℹ tests 1437  ℹ pass 1436  ℹ fail 0  ℹ skipped 1  [exit code: 0]
-after                                        : ℹ tests 1469  ℹ pass 1468  ℹ fail 0  ℹ skipped 1  [exit code: 0]
-差值                                          : +32 tests / +32 pass / +0 fail / +0 skipped
+after（返修 1 后，本片 40 条用例）            : ℹ tests 1477  ℹ pass 1476  ℹ fail 0  ℹ skipped 1  [exit code: 0]
+差值                                          : +40 tests / +40 pass / +0 fail / +0 skipped
 
 $ npm run test:contract
 ℹ tests 6  ℹ pass 6  ℹ fail 0  [exit code: 0]
@@ -371,20 +391,106 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 [exit code: 0]
 
 $ node --test "tests/unit/messages*.test.mjs"
-ℹ tests 32  ℹ suites 0  ℹ pass 32  ℹ fail 0  ℹ cancelled 0  ℹ skipped 0  ℹ todo 0  [exit code: 0]
+ℹ tests 40  ℹ suites 0  ℹ pass 40  ℹ fail 0  ℹ cancelled 0  ℹ skipped 0  ℹ todo 0  [exit code: 0]
 
 $ git add -A -N . ; git diff --check
 （无输出）[exit code: 0]
 ```
 
-三次同口径基线测量（都是"把本片用例移出后"测的）：`ffd5bf73` = 1347 / 1346；
-`+ #87／#99` = 1390 / 1389；`+ #101` = 1437 / 1436 ⇒ 本片差值**恒为 +32，fail 恒为 0**。
+`test:unit` 基线同口径测量（都是"把本片用例移出后"测的）：`ffd5bf73` = 1347 / 1346；
+`+ #87／#99` = 1390 / 1389；`+ #101` = 1437 / 1436；`+ #102／#105`（返修 1 合并）= 仍 **1437 / 1436**
+（#102/#105 只新增 `tests/integration/**`，不在 `test:unit` glob 内）⇒ 返修 1 后本片差值为 **+40**（原 32 条 + 新 8 条），**fail 恒为 0**。
 
 **剩余风险（交给监工）**
 
-1. **CI 未运行**：PR 的 8 个 workflow run 全部是 `conclusion=action_required`
+1. **CI 未运行**：PR 的 workflow run 全部是 `conclusion=action_required`
    （fork PR 首次贡献者需维护者点"Approve and run"）；`statuses` 为 `pending`（总数 0）⇒
    PR 的 `mergeable_state = unstable` **不代表检查失败**，但也**不是**"CI 通过"。
-2. `mergeable = true`、`changed_files = 15`（A=15 / M=0，`git diff --name-status upstream/main...HEAD`）。
+2. `mergeable = true`、`changed_files = 15`（A=15 / M=0，`git diff --name-status upstream/main...HEAD`；
+   返修 1 只改既有 7 个文件 + 新增 1 个测试文件，仍是 A/M、无删除）。
 3. 本片**未修改** `docs/architecture/contract-status.json`（三条 operationId 仍应为 `planned`）。
-4. 每次上游前进都会抬高 `test:unit` 基线；若监工在更新的 main 上复跑，请以"移出本片用例后"为基线再比对 +32。
+4. 每次上游前进都会抬高 `test:unit` 基线；若监工在更新的 main 上复跑，请以"移出本片用例后"为基线再比对（返修 1 后为 **+40**）。
+5. **合并提交信息里的 SHA 与实际上游头不一致（如实记录）**：第 3 次合并提交写的是
+   `Merge upstream/main (a249e77: #102 GY-I11 …)`，但合并时上游头已是 **`54ed689`**（`a249e77` + #105 GY-I13）；
+   `a249e77` 是我预检时的值，`54ed689` 是实际被合入的。二者都被本次合并完整包含，
+   与本片文件零重叠、无冲突。未 amend/未改写历史（按指挥"禁 amend"），仅在此如实登记。
+
+## 12 返修 1：回应监工（批复对象 = docs-only 提交 `8dc2eecd`）—— 首次读转换须推进 `revision`
+
+**此前口径已更正**：本片最初按仓库 `likePosts` 的形状把 `markMessageRead` 当成"不改内容版本"，
+并在正文里把它写成"张力说明"。**这个口径是错的**，本返修按监工依据改为**推进版本**。
+
+### 12.1 冻结条款逐字引文（本修法的依据）
+
+`docs/architecture/state-contract.md` 第 15 行：
+
+> 成功包 `data + meta`，meta 包含 request_id、contract_version、execution_mode；失败包 `error + meta`，
+> error 含 code、message、retryable、字段级 details（field/code，无敏感原文）。不以200包装失败。
+> 异步AI任务202返回 Job，媒体完成202返回Media并轮询其state；GET jobs 返回任务状态而非假成功结果。
+> **GET 条目带强 ETag `"<revision>"`；版本整数自1递增，PATCH/DELETE/取消以及OpenAPI标注的创建要求
+> `If-Match`，缺失428，不匹配409，不做 last-write-wins。**引用创建通过必填
+> target_ref.revision/media_revision/transcription_revision核对目标版本；不能只信ID。空档案GET仅三个档案字段为null、
+> revision=1，首次PUT必须带该ETag，写入revision=2。
+
+（同文件第 26 行状态表：`| 428 | REVISION_REQUIRED | 先读当前ETag |`。）
+
+### 12.2 为什么"`likePosts` 也不推版本"不构成反例（已逐项核验，**不冲突**）
+
+| 事实（契约原文/实现） | 结论 |
+| --- | --- |
+| `PUT /posts/{id}/like`（`likePosts`）`x-version-required: true`、要 `Idempotency-Key`+`If-Match`，200 **有** ETag 头，但 schema 是 `AckEnvelope` | 其 200 **不返回资源表示**，只有 `{accepted}` |
+| `Post` / `Comment` 的投影字段里**没有**任何点赞字段（`Post.properties` = id/revision/author/title/body/crop_id/region_code/media_ids/visibility/audit_state/created_at/updated_at/media/linked_knowledge_ref/linked_knowledge） | 点赞**不改变** Post/Comment 的表示 ⇒ 强 ETag **不应**变化，与冻结条款不冲突 |
+| `markMessageRead` 的 200 是 `MessageEnvelope`，而 `read_at` **就在** `Message` 的 7 个必填字段里 | 首次未读→已读**改变了资源表示** ⇒ 强 ETag **必须**变化 ⇒ `revision` 必须推进 |
+
+因此两条 PUT 的差别不是"风格"，而是**是否改变返回的资源表示**；`likePosts` **不能**用来支持
+"读状态不推版本"。本修法不需要改动 `community/**`（也未改）。
+
+### 12.3 落实的版本语义
+
+| 场景 | `read_at` | `revision` | 响应 ETag | 未读 |
+| --- | --- | --- | --- | --- |
+| 首次标记（携带当前 ETag） | `null → 时刻` | **+1**（自 1 递增） | `"2"` | 减 1（只减一次） |
+| 重复标记（携带**当前** ETag，新幂等键） | 不变（保持首次时刻） | 不变 | 不变 | 不再减 |
+| 重复标记（携带**旧** ETag） | 不变 | 不变 | —（**409 `REVISION_CONFLICT`**） | 不再减 |
+| 同键同体重放 | 不变 | 不变 | **当前** ETag | 不再减 |
+| 并发（**同键**，同一逻辑请求重试） | 两条响应相同 | **只 +1** | 两条都取当前 ETag | 只减一次 |
+| 并发（**异键**，两个独立客户端都带 `"1"`） | 一条写入，另一条 409 | **只 +1**（不是 3） | 成功方取当前 ETag | 只减一次 |
+
+实现落点：`store.ts::markRead` 的转换分支写入 `revision: current.revision + 1`；
+`service.ts` 新增 `strongEtagOf(revision) = `"${revision}"``（与契约 `If-Match.pattern` 同形，
+阶段 2 路由层据此写 `ETag` 头，保证"不同资源状态不得共用同一强 ETag"在装配层也成立）。
+PG 阶段的等价 SQL 已在 `store.ts` 注明：
+`UPDATE messages SET read_at = $3, revision = revision + 1 WHERE id = $1 AND owner_id = $2 AND revision = $4 AND read_at IS NULL`。
+
+### 12.4 五类回归的原始输出（`tests/unit/messages-read-version.test.mjs`，7/7 通过）
+
+```
+✔ 回归①：首次标记 ⇒ revision 恰好 +1，且强 ETag 随资源状态变化
+✔ 回归②：重复标记（新键 + 当前 ETag）⇒ revision 不变、read_at 不变、未读为 0
+✔ 回归③：用旧 ETag 做第二次标记 ⇒ 409 REVISION_CONFLICT，且不得改动存储
+✔ 回归④a：并发两条首次标记（同幂等键）⇒ 恰好一次版本推进、两响应 read_at 与 ETag 相同
+✔ 回归④b：并发两条首次标记（不同幂等键、都带当前 ETag "1"）⇒ 恰好一次推进，落败方 409
+✔ 回归④b 附证：落败方的请求形状与"用旧 ETag 的第二次标记"完全同形 ⇒ 规则上不可区分
+✔ 回归⑤：同键同体重放 ⇒ 幂等，且回放**当前** ETag（不是首次响应的快照）
+ℹ tests 7  ℹ suites 0  ℹ pass 7  ℹ fail 0  [exit code: 0]
+```
+
+对应回退-复跑见 §8.2 实验 ④（去掉版本推进 ⇒ **7/7 全失败**）。
+
+### 12.5 一处**规格层面的冲突**（必须报给指挥/监工，已按③实现并给出证据）
+
+指挥转述的返修条目里，**③ 与 ④（异键并发）在字面上不可同时满足**：
+
+- ③ 要求：首次标记之后，用**旧 ETag** 再标记 ⇒ **409**；
+- ④ 要求：并发两条首次标记同一消息 ⇒ **两响应 `read_at` 相同**。
+
+④ 的两条请求都携带 `"1"`，落败方与"③ 的顺序重试"在**可观测输入上完全相同**：
+`(目标记录状态 = {revision: 2, read_at: 非空}, If-Match = "1")` —— 唯一差别是幂等键不同，
+而幂等键按契约只用于"重试合并/重放"，**不是状态选择器**。
+因此任何"让 ④ 落败方返回 200 空操作"的规则，都会同时让 ③ 返回 200，二者不可兼得。
+本片用 `回归④b 附证` 把这一点做成了**可执行证据**：两种情形的错误封套在同一 `request_id` 下**逐字节相同**。
+
+本片的选择（依监工更硬的那条依据）：**实现 ③**（旧 ETag ⇒ 409，符合冻结条款"不匹配409，不做 last-write-wins"），
+并且 ④ 的"恰好一次版本推进 / 未读只减一次 / 两响应 `read_at` 相同"由 **同键并发**情形完整满足（回归④a）。
+若监工坚持 ④ 在异键并发下也必须两条都 200，则需要**放宽 ③**（明确写"已读状态下的空操作不校验 If-Match"），
+改动量是一处判断；本片不擅自选这条更宽的口径。

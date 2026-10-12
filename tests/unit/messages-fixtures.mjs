@@ -9,10 +9,10 @@
  */
 import { ApiError, buildErrorEnvelope } from '../../services/api/src/errors.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
-import { createMessagesService } from '../../services/api/src/messages/service.ts';
+import { createMessagesService, strongEtagOf } from '../../services/api/src/messages/service.ts';
 import { createUnwiredReferencePort, createWiredReferencePort } from '../../services/api/src/messages/reference.ts';
 
-export { ApiError, buildErrorEnvelope, createUnwiredReferencePort, createWiredReferencePort };
+export { ApiError, buildErrorEnvelope, createUnwiredReferencePort, createWiredReferencePort, strongEtagOf };
 
 /** 仅测试用签名密钥（不是真实密钥、不入库、不入日志）。 */
 export const TEST_SIGNING_KEY = 'messages-phase1-test-signing-key';

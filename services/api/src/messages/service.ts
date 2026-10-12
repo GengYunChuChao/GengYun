@@ -12,12 +12,17 @@
  *    `buildErrorEnvelope` 逐字节相同（不泄露存在性）。
  * 2. **未读一致性**：`unread-count` 是**派生量**（每次现算 `read_at === null` 的本人行数），
  *    不是计数器 ⇒ 不存在漂移路径；`markMessageRead` **幂等**（重复标记不改首次
- *    `read_at`、不再减未读）且**单调**（绝不增加未读）；并发标记同一消息由存储层的
- *    同步 CAS 临界区保证**只发生一次** `null → 时刻`。
- * 3. **引用可用性 fail-closed**：`reference_state` 每次读取按**目标当前状态**派生；
+ *    `read_at`、不再减未读、不再推进版本）且**单调**（绝不增加未读）；并发标记同一消息由存储层的
+ *    同步 CAS 临界区保证**只发生一次** `null → 时刻`（= **恰好一次版本推进**）。
+ * 3. **强 ETag ↔ 资源版本**（冻结条款，见证据文档 §12 逐字引文）：`read_at` 是契约 `Message`
+ *    的字段，首次未读→已读**改变了资源表示** ⇒ **必须推进 `revision`**（自 1 递增），
+ *    使 `ETag: "<revision>"` 随资源状态变化；**不同资源状态不得共用同一个强 ETag**。
+ *    `If-Match` 是目标**当前**强 ETag：不匹配 ⇒ 409（首次标记后旧 ETag 即不再匹配）。
+ *    本片提供 `strongEtagOf(revision)`，阶段 2 路由层据此写 `ETag` 头。
+ * 4. **引用可用性 fail-closed**：`reference_state` 每次读取按**目标当前状态**派生；
  *    未接线/端口抛错/返回非闭集取值/无 `target_ref` 一律 `unavailable`，
  *    绝不假装可用，也绝不借消息泄露目标内容或存在性（消息本身不存目标正文）。
- * 4. **出口不可变**：所有返回给调用方的对象都是从存储**深拷贝**出来的自有数据。
+ * 5. **出口不可变**：所有返回给调用方的对象都是从存储**深拷贝**出来的自有数据。
  *
  * ## 未取得（如实声明，不得当作已完成）
  *
@@ -52,6 +57,21 @@ export const CURSOR_TTL_MS = 15 * 60 * 1000;
 export const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 /** 同键并发等待上界：超过即 409 REQUEST_IN_PROGRESS。 */
 export const IDEMPOTENCY_WAIT_MS = 2000;
+
+/**
+ * 契约强 ETag 的唯一构造口径：`ETag: "<revision>"`。
+ *
+ * 依据（逐字引文见证据文档 §12）：`docs/architecture/state-contract.md`
+ * 「GET 条目带强 ETag `"<revision>"`；版本整数自1递增，PATCH/DELETE/取消以及
+ * OpenAPI 标注的创建要求 `If-Match`，缺失428，不匹配409，不做 last-write-wins。」
+ *
+ * 与契约 `parameters.IfMatch.schema.pattern`（`^"[1-9][0-9]*"$`）严格同形。
+ * 阶段 2 的路由层必须用本函数（而不是自己拼串）写 `ETag` 头，从而保证
+ * 「不同资源状态不得共用同一强 ETag」在装配层也成立。
+ */
+export function strongEtagOf(revision: number): string {
+  return `"${revision}"`;
+}
 
 export interface MessagesServiceDeps {
   store: MessagesStore;
@@ -317,9 +337,11 @@ export function createMessagesService(deps: MessagesServiceDeps) {
      * `markMessageRead`：`PUT /messages/{id}/read`。
      *
      * - 归属：非本人（含不存在）一律 404 `NOT_FOUND`，同形；
-     * - `If-Match`：缺失 428、格式非法 400、与当前 `revision` 不符 409；
-     * - 转换：由存储层 CAS 在同一同步临界区内完成（并发只发生一次 `null → 时刻`）；
-     *   已是已读 ⇒ 不改 `read_at`、不再计减，返回当前记录（**幂等**）。
+     * - `If-Match`：缺失 428、格式非法 400、**与目标当前 `revision` 不符 409**（不做 last-write-wins）；
+     * - 首次读转换：由存储层 CAS 在同一同步临界区内完成（并发只发生一次 `null → 时刻`）
+     *   ⇒ **`revision` 恰好 +1**，返回的强 ETag `"<revision>"` 随之变化；
+     * - 重复标记（携带**当前** ETag）：**空操作** ⇒ `revision` 与 `read_at` 均不变、未读不再减；
+     * - 首次标记之后的**旧 ETag** 不再匹配 ⇒ 409（不得静默通过）。
      */
     async markMessageRead(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Message> {
       const user = requireUserActor(actor);

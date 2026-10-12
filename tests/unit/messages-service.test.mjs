@@ -21,6 +21,7 @@ import {
   captureError,
   idem,
   makeHarness,
+  strongEtagOf,
 } from './messages-fixtures.mjs';
 
 /** 契约闭集（与 openapi 原文逐项一致）。 */
@@ -67,13 +68,14 @@ test('正控制：本人两条消息（一条未读、一条已读）⇒ unread-
   assert.equal(second.message.read_at, null);
   assert.equal((await h.service.getUnreadCount(USER_A)).count, 2);
 
-  // 只把第二条标记已读。
+  // 只把第二条标记已读（首次读转换 ⇒ revision 1 → 2，ETag 随之变化）。
   const markedSecond = await h.service.markMessageRead(USER_A, second.message.id, {
     idempotencyKey: idem(101),
     ifMatch: '"1"',
   });
   assertMessageShape(markedSecond, 'markMessageRead 响应');
   assert.equal(typeof markedSecond.read_at, 'string', '标记后 read_at 必须有值');
+  assert.equal(markedSecond.revision, 2, '首次读转换必须推进 revision');
 
   const unread = await h.service.getUnreadCount(USER_A);
   assert.equal(typeof unread.count, 'number');
@@ -89,6 +91,9 @@ test('正控制：本人两条消息（一条未读、一条已读）⇒ unread-
   // 契约排序 (created_at DESC, id DESC)：后创建的先出现。
   assert.equal(page.items[0].id, second.message.id);
   assert.equal(page.items[1].id, first.message.id);
+  // 列表投影必须反映推进后的版本（强 ETag 的来源）。
+  assert.equal(page.items[0].revision, 2);
+  assert.equal(page.items[1].revision, 1);
 
   // 标记第一条 ⇒ count=0，且 read_at 有值。
   const markedFirst = await h.service.markMessageRead(USER_A, first.message.id, {
@@ -96,22 +101,24 @@ test('正控制：本人两条消息（一条未读、一条已读）⇒ unread-
     ifMatch: '"1"',
   });
   assert.equal(typeof markedFirst.read_at, 'string');
+  assert.equal(markedFirst.revision, 2);
   const zero = await h.service.getUnreadCount(USER_A);
   assert.equal(zero.count, 0);
 
-  // 重复标记（新幂等键）：count 仍为 0，read_at 不变（首次时间被保持）。
+  // 重复标记（新幂等键 + **当前** ETag）：count 仍为 0，read_at 与 revision 都不变。
   const repeat = await h.service.markMessageRead(USER_A, first.message.id, {
     idempotencyKey: idem(103),
-    ifMatch: '"1"',
+    ifMatch: strongEtagOf(markedFirst.revision),
   });
   assert.equal(typeof repeat.read_at, 'string');
   assert.equal(repeat.read_at, markedFirst.read_at, '重复标记不得改动首次 read_at');
+  assert.equal(repeat.revision, 2, '重复标记不得再推进版本');
   assert.equal((await h.service.getUnreadCount(USER_A)).count, 0, '重复标记不得再次减少未读');
-  // 真正发生的读状态转换恰好 2 次（每条消息一次）。
+  // 真正发生的读状态转换恰好 2 次（每条消息一次，= 版本各推进一次）。
   assert.equal(h.store.snapshotCounts().read_transitions, 2);
 });
 
-test('正控制：同键重放返回同一状态（不重复写、read_at 不变）', async () => {
+test('正控制：同键重放返回同一状态（不重复写、read_at 与 revision 均不变）', async () => {
   const h = makeHarness();
   const created = await append(h.service, { event_key: 'evt-replay' });
   const options = { idempotencyKey: idem(110), ifMatch: '"1"' };
@@ -119,6 +126,8 @@ test('正控制：同键重放返回同一状态（不重复写、read_at 不变
   const twice = await h.service.markMessageRead(USER_A, created.message.id, options);
   assert.equal(twice.id, once.id);
   assert.equal(twice.read_at, once.read_at, '同键重放必须回放同一状态');
+  assert.equal(twice.revision, 2, '重放必须回放当前版本（强 ETag 的来源）');
+  assert.equal(strongEtagOf(twice.revision), strongEtagOf(once.revision));
   assert.equal(h.store.snapshotCounts().read_transitions, 1, '重放不得产生第二次读状态写入');
 });
 
@@ -129,11 +138,21 @@ test('正控制：未读数为 0 的边界（无消息、全已读、重复标�
   assert.equal(empty.count, 0, '没有任何消息 ⇒ 未读为 0（不是 null/NaN）');
 
   const created = await append(h.service, { event_key: 'evt-boundary' });
-  await h.service.markMessageRead(USER_A, created.message.id, { idempotencyKey: idem(120), ifMatch: '"1"' });
+  const marked = await h.service.markMessageRead(USER_A, created.message.id, {
+    idempotencyKey: idem(120),
+    ifMatch: '"1"',
+  });
+  assert.equal(marked.revision, 2);
   assert.equal((await h.service.getUnreadCount(USER_A)).count, 0);
 
-  // 未读已经是 0，再标记已读消息：仍为 0（单调，绝不增加也绝不变成负数）。
-  await h.service.markMessageRead(USER_A, created.message.id, { idempotencyKey: idem(121), ifMatch: '"1"' });
+  // 未读已经是 0，再用**当前** ETag 标记已读消息：仍为 0（单调，绝不增加也绝不变成负数），
+  // 且版本不推进（空操作）。
+  const repeat = await h.service.markMessageRead(USER_A, created.message.id, {
+    idempotencyKey: idem(121),
+    ifMatch: strongEtagOf(marked.revision),
+  });
+  assert.equal(repeat.revision, 2, '未读为 0 时的重复标记不得推进版本');
+  assert.equal(repeat.read_at, marked.read_at);
   const stillZero = await h.service.getUnreadCount(USER_A);
   assert.equal(stillZero.count, 0);
   assert.ok(stillZero.count >= 0, '未读数不得为负');
