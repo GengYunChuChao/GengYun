@@ -653,6 +653,24 @@ export function createOcrService(options: OcrServiceOptions) {
     ifMatch: unknown;
     idempotencyKey: unknown;
   }): Promise<OcrVerification> {
+    return (await verifyOcrWithRevision(input)).verification;
+  }
+
+  /**
+   * 与 `verifyOcr` **同一实现**，额外带回记录 revision（供路由写契约要求的强 `ETag`）。
+   *
+   * 这是 HTTP 层需要的薄适配：契约 `verifyOCR` 的 200 响应声明了 `ETag: 资源revision强ETag`，
+   * 而 `OcrVerification` 本身**不含** revision（契约 `Verification` 是 `additionalProperties:false`
+   * 的五字段对象，不能往里塞字段）。与其让路由在 verify 之后再读一次记录（多一次 I/O 且有 TOCTOU），
+   * 不如由服务层在同一次临界区内带出。**既有 `verifyOcr` 的返回值与语义完全不变。**
+   */
+  async function verifyOcrWithRevision(input: {
+    userId: string;
+    ocrId: string;
+    body: unknown;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<{ verification: OcrVerification; revision: number }> {
     const verifyInput = requireVerifyInput(input.body);
     const key = requireIdempotencyKey(input.idempotencyKey);
     const expectedRevision = requireIfMatch(input.ifMatch);
@@ -665,7 +683,7 @@ export function createOcrService(options: OcrServiceOptions) {
       if (claim.pending) throw inProgress();
       const current = await store.getOcr(row.id);
       if (current === null) throw new ApiError('NOT_FOUND', 'OCR 记录不存在');
-      return current.verification;
+      return { verification: current.verification, revision: current.revision };
     }
     try {
       if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', 'OCR 记录版本与 If-Match 不一致');
@@ -679,7 +697,7 @@ export function createOcrService(options: OcrServiceOptions) {
       }));
       if (updated === null) throw new ApiError('REVISION_CONFLICT', 'OCR 记录已被并发修改');
       await finalizeIdempotentScope(scope, key, { accepted: true });
-      return updated.verification;
+      return { verification: updated.verification, revision: updated.revision };
     } catch (error) {
       await releaseIdempotentScope(scope, key);
       throw error;
@@ -693,6 +711,20 @@ export function createOcrService(options: OcrServiceOptions) {
     ifMatch: unknown;
     idempotencyKey: unknown;
   }): Promise<{ accepted: true }> {
+    const result = await deleteOcrWithRevision(input);
+    return { accepted: result.accepted };
+  }
+
+  /**
+   * 与 `deleteOcr` **同一实现**，额外带回删除后的记录 revision
+   * （供路由写契约 `deleteOCR` 202 响应声明的强 `ETag`）。既有 `deleteOcr` 返回值不变。
+   */
+  async function deleteOcrWithRevision(input: {
+    userId: string;
+    ocrId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<{ accepted: true; revision: number }> {
     const key = requireIdempotencyKey(input.idempotencyKey);
     const expectedRevision = requireIfMatch(input.ifMatch);
     const at = now();
@@ -704,7 +736,9 @@ export function createOcrService(options: OcrServiceOptions) {
     const claim = await claimIdempotentScope(scope, key, requestHash, {}, at);
     if (claim.kind === 'existing') {
       if (claim.pending) throw inProgress();
-      return { accepted: true };
+      const current = await store.getOcr(row.id);
+      if (current === null) throw new ApiError('NOT_FOUND', 'OCR 记录不存在');
+      return { accepted: true, revision: current.revision };
     }
     try {
       if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', 'OCR 记录版本与 If-Match 不一致');
@@ -716,7 +750,7 @@ export function createOcrService(options: OcrServiceOptions) {
       }));
       if (updated === null) throw new ApiError('REVISION_CONFLICT', 'OCR 记录已被并发修改');
       await finalizeIdempotentScope(scope, key, { accepted: true });
-      return { accepted: true };
+      return { accepted: true, revision: updated.revision };
     } catch (error) {
       await releaseIdempotentScope(scope, key);
       throw error;
@@ -729,7 +763,9 @@ export function createOcrService(options: OcrServiceOptions) {
     getJob,
     correctOcr,
     verifyOcr,
+    verifyOcrWithRevision,
     deleteOcr,
+    deleteOcrWithRevision,
     settle,
     /** 供证据文档/诊断：当前提供者与各端口标注。 */
     describe: () => ({
