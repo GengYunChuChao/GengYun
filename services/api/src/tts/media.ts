@@ -44,8 +44,12 @@ export interface SynthesisMediaPort {
 const SUBSTITUTE_NOTE =
   '替身产物存储（stub/preset_demo）：只登记**非音频**标注产物；不接真实对象存储、不写入任何真实音频、不接受真实音频上传。';
 
-/** 疑似 MP3 帧/标签头：替身产物携带这些字节即视为「伪装成真实音频」。 */
-function looksLikeMp3(body: Uint8Array): boolean {
+/**
+ * 字节是否带 MPEG/ID3 头（`ID3` 标签 或 MPEG 帧同步 `0xFF 0xEx`）。
+ * 两处用它：替身存储拒绝「伪装成真实音频的替身」，真实适配器拒绝「把错误 JSON/HTML 当音频落库」。
+ * 这是**头部嗅探**，不是完整解码器，也不构成任何音频质量结论。
+ */
+export function hasMpegAudioHeader(body: Uint8Array): boolean {
   if (body.byteLength >= 3 && body[0] === 0x49 && body[1] === 0x44 && body[2] === 0x33) return true; // 'ID3'
   if (body.byteLength >= 2 && body[0] === 0xff && (body[1]! & 0xe0) === 0xe0) return true; // MPEG 帧同步
   return false;
@@ -54,6 +58,8 @@ function looksLikeMp3(body: Uint8Array): boolean {
 /**
  * 替身产物存储：明确标注、确定性、**不含音频**。
  * 拒绝条件（返回契约错误码，不静默接受）：
+ * - `substitute === false`（真实产物）⇒ `OBJECT_UNAVAILABLE`：真实对象存储**未接线**，
+ *   替身存储绝不接收真实音频（否则「真实存储已接线」会看起来成立）；
  * - `audio/*` 且 `substitute=true` ⇒ `MEDIA_TYPE_UNSUPPORTED`（替身不得伪装成真实音频）；
  * - 替身正文带 MP3/ID3 头 ⇒ `MEDIA_TYPE_UNSUPPORTED`（纵深防御）。
  */
@@ -73,10 +79,14 @@ export function createSubstituteMediaPort(options: { idFactory?: () => string } 
     kind: 'substitute',
     note: SUBSTITUTE_NOTE,
     async put({ ownerUserId, synthesisId, artifact }) {
-      if (artifact.substitute && artifact.contentType.toLowerCase().startsWith('audio/')) {
+      if (!artifact.substitute) {
+        // 真实合成产物需要**真实**对象存储；本片未接线，绝不把它记成替身对象。
+        return { ok: false, code: 'OBJECT_UNAVAILABLE' };
+      }
+      if (artifact.contentType.toLowerCase().startsWith('audio/')) {
         return { ok: false, code: 'MEDIA_TYPE_UNSUPPORTED' };
       }
-      if (artifact.substitute && looksLikeMp3(artifact.body)) {
+      if (hasMpegAudioHeader(artifact.body)) {
         return { ok: false, code: 'MEDIA_TYPE_UNSUPPORTED' };
       }
       const mediaId = nextId();

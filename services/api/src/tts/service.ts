@@ -29,6 +29,9 @@
  *   超时 → `timed_out` + `PROVIDER_TIMEOUT`；配额 → `failed` + `PROVIDER_QUOTA_EXCEEDED`；
  *   结果未知/协议违规/替身伪装成真实音频 → `failed` + `PROVIDER_OUTCOME_UNKNOWN`；
  *   落库失败 → `failed` + `OBJECT_UNAVAILABLE`；**任何异常路径都不得变成 `succeeded`**；
+ *   真实适配器（`createLiveTtsProvider`，只能经注入式端口构造、应用装配路径不可达）额外带来一类
+ *   **本地入参拒绝**：供应商侧文本上限超限 ⇒ 适配器在**预留与发包之前**抛 `TtsLocalInputError`
+ *   （**不截断**），本层如实落 `failed` + `INVALID_REQUEST`（未发包、不占预算）；
  * - **幂等并发（#9 的 P1 教训）**：写路径**先原子占位、再建任务**。同主体同键同体并发 ⇒
  *   **恰好 1 个任务、恰好 1 次提供者调用**，落败者等待占位者落定后**收敛到同一任务**；
  *   同键异体 ⇒ `IDEMPOTENCY_CONFLICT` 且不产生第二个任务；占位者失败 ⇒ **释放占位**；
@@ -60,6 +63,7 @@ import {
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import type { CheckedContentPort } from './content.ts';
+import { TtsLocalInputError } from './live-ports.ts';
 import type { SynthesisMediaPort } from './media.ts';
 import type { ProviderFailureCode, TtsProvider } from './provider.ts';
 import {
@@ -489,7 +493,10 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
       return;
     }
     if (outcome.kind === 'threw') {
-      await commitTerminal(jobId, running, { state: 'failed', errorCode: 'PROVIDER_OUTCOME_UNKNOWN' }, null);
+      // 本地入参拒绝（如真实适配器的文本上限，**未发包、不占预算**）按契约入参错误码如实落账；
+      // 其余抛出（提供者内部异常）一律「结果不可判定」，绝不落 succeeded。
+      const code = outcome.error instanceof TtsLocalInputError ? outcome.error.code : 'PROVIDER_OUTCOME_UNKNOWN';
+      await commitTerminal(jobId, running, { state: 'failed', errorCode: code }, null);
       return;
     }
     const value = outcome.value;
@@ -541,7 +548,7 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
     text: string,
   ): Promise<
     | { kind: 'timeout' }
-    | { kind: 'threw' }
+    | { kind: 'threw'; error: unknown }
     | { kind: 'value'; value: Awaited<ReturnType<TtsProvider['synthesize']>> }
   > {
     const remaining = Math.max(0, job.deadlineAt.getTime() - now().getTime());
@@ -552,7 +559,8 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
     const call = provider
       .synthesize({ jobId: job.id, text, locale: job.locale, targetRef: { ...job.checkedContentRef } })
       .then((value) => ({ kind: 'value' as const, value }))
-      .catch(() => ({ kind: 'threw' as const }));
+      // 保留抛出对象：本地入参拒绝（TtsLocalInputError）与提供者内部异常要分开映射。
+      .catch((error: unknown) => ({ kind: 'threw' as const, error }));
     try {
       return await Promise.race([call, timeout]);
     } finally {
