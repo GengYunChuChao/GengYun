@@ -1,0 +1,217 @@
+/**
+ * GY-I11 普通话录音与转写域 · 提供者适配层（接口 + 执行模式实现）。
+ *
+ * 硬约束（派单 §2.4）：
+ * - `stub` / `preset_demo`：确定性的**明确标注替身**，绝不冒充真实 ASR；
+ *   `model_version` 带 `stub` / `preset-demo` 标记，`note` 明写「替身」。
+ * - `real`：缺凭据**一律 fail-closed**（`PROVIDER_UNAVAILABLE`），**严禁静默回退替身**；
+ *   即使凭据齐备，本片也没有已审真实 ASR 供应商适配器，同样 fail-closed，不伪造成功。
+ * - 提供者错误按契约映射：超时 → `PROVIDER_TIMEOUT`，配额 → `PROVIDER_QUOTA_EXCEEDED`，
+ *   结果未知/协议违规 → `PROVIDER_OUTCOME_UNKNOWN`，不可用 → `PROVIDER_UNAVAILABLE`。
+ *   **不得**把提供者失败写成 `succeeded`。
+ *
+ * **证据口径（不得越界声称）**：真实 ASR 样本为 **0**（`docs/evaluation/sample-gap-register.md`
+ * 的 `asr_utterances`、`asr_speakers` 均为 0），因此本文件与全域**不产生、不声称任何准确率
+ * 或转写质量结论**。替身脚本只是离线联调夹具，逐桶构造的是**可观测的契约行为**
+ * （正常 / 空 / 上限 / 超限 / 畸形），不是识别效果。
+ *
+ * 提供者只负责「产出原始文本 + 如实上报不确定区间」，**不决定**任务终态、
+ * **不裁剪也不补造** `uncertain_spans`：形状与区间校验在 state.ts，
+ * 终态判定在 service.ts，因此提供者无法把自己的畸形输出写成 succeeded。
+ */
+import { createHash } from 'node:crypto';
+import type { ExecutionMode } from '../contract.ts';
+
+/** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
+export const PROVIDER_FAILURE_CODES = [
+  'PROVIDER_TIMEOUT',
+  'PROVIDER_QUOTA_EXCEEDED',
+  'PROVIDER_OUTCOME_UNKNOWN',
+  'PROVIDER_UNAVAILABLE',
+] as const;
+export type ProviderFailureCode = (typeof PROVIDER_FAILURE_CODES)[number];
+
+export type ProviderOutcome =
+  /**
+   * 提供者给出转写载荷（**未校验**；由 service 用 `requireTranscriptText` +
+   * `normalizeUncertainSpans` 校验）。载荷形状（适配层约定，非契约字段）：
+   * `{ text: unknown; uncertain_spans: unknown }` —— 两键都必须**显式出现**，
+   * 缺 `uncertain_spans` 会被判协议违规而不是被默认成空数组（不得补造）。
+   */
+  | { kind: 'completed'; transcript: unknown }
+  /**
+   * 提供者明确表示**无法判定**文本（如无有效语音、置信不足）。
+   * 由 service 落 `uncertain` 终态并**不产生**转写记录：不编造文本。
+   */
+  | { kind: 'uncertain'; reason: string }
+  /** 提供者失败：由 service 映射为 failed / timed_out，绝不落 succeeded。 */
+  | { kind: 'failed'; code: ProviderFailureCode };
+
+export interface SpeechProvider {
+  readonly executionMode: ExecutionMode;
+  /** 写入 `Transcription.model_version`；替身必须带明确标注。 */
+  readonly modelVersion: string;
+  /** 供证据/诊断引用的如实标注（替身说明，或真实适配器缺失说明）；不含任何凭据原文。 */
+  readonly note: string;
+  /** false 表示「现在就不该受理」：real 缺凭据时受理直接 503，不排队、不回退替身。 */
+  readonly available: boolean;
+  /** 不可用原因（不含凭据原文）。 */
+  readonly unavailableReason: string | null;
+  transcribe(input: { jobId: string; mediaId: string; mediaRevision: number }): Promise<ProviderOutcome>;
+}
+
+/** 确定性分桶：同一 `media_id` 永远得到同一替身脚本（可离线复现，不引入随机）。 */
+function bucketOf(seed: string, modulo: number): number {
+  const digest = createHash('sha256').update(seed).digest();
+  return (digest[0] ?? 0) % modulo;
+}
+
+/** 替身文案前缀：所有替身文本与原因都带此前缀，避免被误读为真实转写内容。 */
+export const STUB_TRANSCRIPT_PREFIX = '替身示例·合成转写（非真实录音）';
+
+/** 替身脚本的桶位常量（供测试按同一口径构造输入）。 */
+export const STUB_BUCKETS = {
+  /** 正常：有文本 + 2 个不确定区间。 */
+  normal: 0,
+  /** 全置信：有文本 + 0 个不确定区间。 */
+  confident: 1,
+  /** 静默/空转写：空文本（service 必须落 uncertain 且不写记录）。 */
+  silent: 2,
+  /** 上限：恰好 100 个不确定区间（= 契约 maxItems）。 */
+  spansAtLimit: 3,
+  /** 超限：8001 码点文本（service 必须 fail-closed，不得截断）。 */
+  tooLong: 4,
+  /** 畸形：`start >= end` 的区间（service 必须 fail-closed，不得自动交换两端）。 */
+  malformedSpan: 5,
+} as const;
+
+/** 契约 `uncertain_spans` 上限用例使用的不确定区间条数（= maxItems）。 */
+export const STUB_SPAN_LIMIT = 100;
+
+/** 超长用例的文本码点数（= maxLength + 1，刻意只超 1 个码点以证明边界被卡住）。 */
+export const STUB_TOO_LONG_CODE_POINTS = 8001;
+
+function normalTranscript(): unknown {
+  return {
+    text: `${STUB_TRANSCRIPT_PREFIX}：稻田稗草三到五叶期，请问题应该用什么药。`,
+    uncertain_spans: [
+      { start: 0, end: 8, reason: '替身示例·开头为合成前缀，非真实语音内容' },
+      { start: 24, end: 26, reason: '替身示例·生育期表述可能识别偏差' },
+    ],
+  };
+}
+
+function spansAtLimitTranscript(): unknown {
+  const spans: Array<{ start: number; end: number; reason: string }> = [];
+  for (let index = 0; index < STUB_SPAN_LIMIT; index += 1) {
+    spans.push({ start: index * 4, end: index * 4 + 2, reason: `替身示例·上限用例第 ${index + 1} 段` });
+  }
+  return {
+    text: `${STUB_TRANSCRIPT_PREFIX}·上限用例`.repeat(4) + '。'.repeat(400),
+    uncertain_spans: spans,
+  };
+}
+
+/**
+ * 替身提供者（`stub` / `preset_demo`）。
+ *
+ * 脚本按 `mediaId` 的 sha256 分 6 桶（见 `STUB_BUCKETS`），**确定性**、可离线复现，
+ * 逐桶对应一类**可观测的契约行为**（不是识别效果，也不构成任何准确率证据）。
+ */
+export function createStubSpeechProvider(options: { executionMode?: 'stub' | 'preset_demo' } = {}): SpeechProvider {
+  const executionMode = options.executionMode ?? 'stub';
+  const isDemo = executionMode === 'preset_demo';
+  const modelVersion = isDemo ? 'preset-demo-v1' : 'stub-v1';
+  const note = isDemo
+    ? '预设演示替身 ASR（合成文本，非真实录音、非真实供应商，不构成任何准确率证据）'
+    : '替身 ASR（合成文本，非真实录音、非真实供应商，不构成任何准确率证据）';
+
+  return {
+    executionMode,
+    modelVersion,
+    note,
+    available: true,
+    unavailableReason: null,
+    async transcribe({ mediaId }) {
+      if (isDemo) {
+        // 预设演示：固定一份「有文本 + 1 个不确定区间」的转写，明示演示，不走分桶。
+        return {
+          kind: 'completed',
+          transcript: {
+            text: `${STUB_TRANSCRIPT_PREFIX}：这是预设演示用的一句话。`,
+            uncertain_spans: [{ start: 0, end: 8, reason: '替身示例·开头为合成前缀，非真实语音内容' }],
+          },
+        };
+      }
+      const bucket = bucketOf(mediaId, 6);
+      if (bucket === STUB_BUCKETS.confident) {
+        return {
+          kind: 'completed',
+          transcript: { text: `${STUB_TRANSCRIPT_PREFIX}：全置信用例文本。`, uncertain_spans: [] },
+        };
+      }
+      if (bucket === STUB_BUCKETS.silent) {
+        // 空文本：service 必须判「无可用转写」⇒ uncertain 终态，且不写记录、不编造文本。
+        return { kind: 'completed', transcript: { text: '', uncertain_spans: [] } };
+      }
+      if (bucket === STUB_BUCKETS.spansAtLimit) {
+        return { kind: 'completed', transcript: spansAtLimitTranscript() };
+      }
+      if (bucket === STUB_BUCKETS.tooLong) {
+        // 8001 码点：service 必须 fail-closed（不得截断成 8000 后当成功）。
+        return {
+          kind: 'completed',
+          transcript: { text: '替'.repeat(STUB_TOO_LONG_CODE_POINTS), uncertain_spans: [] },
+        };
+      }
+      if (bucket === STUB_BUCKETS.malformedSpan) {
+        // start >= end：service 必须 fail-closed（不得交换两端、不得丢弃该区间）。
+        return {
+          kind: 'completed',
+          transcript: {
+            text: `${STUB_TRANSCRIPT_PREFIX}：畸形区间用例文本。`,
+            uncertain_spans: [{ start: 9, end: 4, reason: '替身示例·故意倒置的区间' }],
+          },
+        };
+      }
+      return { kind: 'completed', transcript: normalTranscript() };
+    },
+  };
+}
+
+/**
+ * 真实提供者（`real`）。**fail-closed**：
+ * - 缺 endpoint/apiKey → `available=false`，受理直接 503 `PROVIDER_UNAVAILABLE`；
+ * - 即使凭据齐备，本片也没有已审真实 ASR 供应商适配器，`transcribe` 仍返回
+ *   `PROVIDER_UNAVAILABLE`，任务落 `failed`；
+ * - 任何路径都**不会**回退到 stub/preset_demo 替身（回退会让证据口径被污染）。
+ */
+export function createRealSpeechProvider(credentials: { endpoint?: string | null; apiKey?: string | null } = {}): SpeechProvider {
+  const endpoint =
+    typeof credentials.endpoint === 'string' && credentials.endpoint.trim() !== '' ? credentials.endpoint.trim() : null;
+  const apiKey = typeof credentials.apiKey === 'string' && credentials.apiKey.trim() !== '' ? credentials.apiKey.trim() : null;
+  const missing = endpoint === null || apiKey === null;
+  return {
+    executionMode: 'real',
+    modelVersion: 'real-unconfigured',
+    note: '真实 ASR 适配器尚未接入（无已审供应商适配器；缺凭据即受理前 fail-closed，不回退替身）',
+    available: !missing,
+    unavailableReason: missing ? '缺少真实 ASR 供应商凭据（fail-closed，不回退替身）' : null,
+    async transcribe() {
+      // 无已审真实适配器：不伪造结果，也不回退替身。
+      return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
+    },
+  };
+}
+
+/** 按执行模式选择提供者；`real` 永远走 fail-closed 实现。 */
+export function createSpeechProvider(input: {
+  executionMode: ExecutionMode;
+  endpoint?: string | null;
+  apiKey?: string | null;
+}): SpeechProvider {
+  if (input.executionMode === 'real') {
+    return createRealSpeechProvider({ endpoint: input.endpoint ?? null, apiKey: input.apiKey ?? null });
+  }
+  return createStubSpeechProvider({ executionMode: input.executionMode });
+}
