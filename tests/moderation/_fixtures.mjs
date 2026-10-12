@@ -7,6 +7,39 @@
  * 且原文明确"不可用演示样本替代"。
  * 因此本文件与所有用例**不得**被引用为模型准确率／召回率证据。
  */
+import { evaluateHardRules } from '../../packages/moderation/engine.mjs';
+import { evaluateBatch } from '../../packages/moderation/batch.mjs';
+
+/**
+ * 冻结时钟：恒返回 0。
+ *
+ * **为什么测试要用它**：规则层的默认预算 `DEFAULT_RULE_BUDGET_MS = 50` 是**墙钟**预算——
+ * 整套 `test:unit` 并行跑（含 PGlite／Postgres／HTTP 集成用例）时，任何一次 ~50ms 的调度停顿
+ * 都会让"干净文本应当放行"这类**内容判定**用例被 `RULE_TIMEOUT` 打成 `quarantined`，
+ * 于是 CI 随机变红（实测：`rules.test.mjs` 的基线对照用例耗时 64.3ms > 50ms 即失败）。
+ *
+ * 用冻结时钟后，"某条文本该判通过还是驳回"**完全与墙钟无关**，用例回到它本来要验证的东西。
+ * 这**不是**放宽带宽：
+ *   - 默认预算值本身仍被断言（见 `rules.test.mjs` 的确定性口径用例断言 `budget.ms`）；
+ *   - "预算耗尽 ⇒ 未求值的规则不得算通过"这条语义**保留原有覆盖**，
+ *     且本来就是**注入式**的（`fail-closed.test.mjs` 注入 `scriptedClock([0, 1000])` + `budget_ms: 50`）；
+ *   - 需要真实墙钟的用例仍可显式传入 `clock` / `budget_ms`（本文件的 `runRules` 把 `options` 放在最后，
+ *     调用方传入的值优先）。
+ *
+ * 换言之：**内容判定用例**一律走 `runRules` / `runBatch`（冻结时钟）；
+ * **时间语义用例**显式注入自己的时钟。两者不再互相污染。
+ */
+export const FROZEN_CLOCK = () => 0;
+
+/** 以冻结时钟跑规则层（内容判定用例的统一入口；显式传入的 `clock`/`budget_ms` 优先）。 */
+export function runRules(input, options = {}) {
+  return evaluateHardRules(input, { clock: FROZEN_CLOCK, ...options });
+}
+
+/** 以冻结时钟跑批量审核（同上；`options` 会透传给每条目标的引擎）。 */
+export function runBatch(items, options = {}) {
+  return evaluateBatch(items, { clock: FROZEN_CLOCK, ...options });
+}
 
 /** 构造一条合法输入（默认：无媒体、首版版本、普通文本）。 */
 export function makeInput(overrides = {}) {

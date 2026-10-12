@@ -21,13 +21,13 @@ import { RULES, validateRuleCatalog } from '../../packages/moderation/rules.mjs'
 import {
   assertDecisionInvariant,
   checkDecisionInvariant,
-  evaluateHardRules,
   toRuleLayerDraft,
 } from '../../packages/moderation/engine.mjs';
 import {
   CLEAN_TEXT,
   buildScanLimitText,
   makeInput,
+  runRules,
   scriptedClock,
   withThrowingGetter,
 } from './_fixtures.mjs';
@@ -112,14 +112,14 @@ const INPUT_CASES = [
 
 for (const item of INPUT_CASES) {
   test(`fail-closed：${item.name} ⇒ 不得通过`, () => {
-    const result = evaluateHardRules(item.input);
+    const result = runRules(item.input);
     expectNotApproved(result, item.name);
     assert.ok(result.reason_codes.includes(item.code), `缺原因码 ${item.code}：${result.reason_codes.join(',')}`);
   });
 }
 
 test('fail-closed：text 超长（超过组件防御上界）⇒ 不得通过', () => {
-  const result = evaluateHardRules(makeInput({ text: '苗'.repeat(50) }), { max_text_length: 10 });
+  const result = runRules(makeInput({ text: '苗'.repeat(50) }), { max_text_length: 10 });
   expectNotApproved(result, 'text 超长');
   assert.ok(result.reason_codes.includes('INPUT_TEXT_TOO_LONG'));
 });
@@ -127,7 +127,7 @@ test('fail-closed：text 超长（超过组件防御上界）⇒ 不得通过', 
 test('输入闸门不通过时，规则一条都不算求值（"没跑"≠"通过"）', () => {
   const cases = [undefined, {}, makeInput({ text: '' }), makeInput({ media: [{}] })];
   for (const input of cases) {
-    const result = evaluateHardRules(input);
+    const result = runRules(input);
     assert.equal(result.counts.evaluated, 0, '输入闸门不通过时不得声称规则已求值');
     assert.equal(result.counts.total, RULES.length);
     assert.equal(result.counts.not_evaluated, RULES.length);
@@ -140,13 +140,13 @@ test('未覆盖的 target type：全部 16 个契约类型中，未声明覆盖�
   const uncovered = TARGET_TYPES.filter((type) => !COVERED_TARGET_TYPES.includes(type));
   assert.ok(uncovered.length > 0, '至少应存在未覆盖类型以证明该闸门有效');
   for (const type of uncovered) {
-    const result = evaluateHardRules(makeInput({ target_ref: { type, id: 'ref-1', revision: 1 } }));
+    const result = runRules(makeInput({ target_ref: { type, id: 'ref-1', revision: 1 } }));
     expectNotApproved(result, `未覆盖类型 ${type}`);
     assert.ok(result.reason_codes.includes('TARGET_TYPE_NOT_COVERED'));
     assert.equal(result.decision, 'quarantined');
   }
   for (const type of COVERED_TARGET_TYPES) {
-    const result = evaluateHardRules(makeInput({ target_ref: { type, id: 'ref-1', revision: 1 } }));
+    const result = runRules(makeInput({ target_ref: { type, id: 'ref-1', revision: 1 } }));
     assert.equal(result.decision, 'approved', `已覆盖类型 ${type} 的干净文本应放行`);
   }
 });
@@ -154,7 +154,7 @@ test('未覆盖的 target type：全部 16 个契约类型中，未声明覆盖�
 // ---- 规则引擎级 fail-closed ----
 
 test('fail-closed：空规则集不得通过（"零条规则都没命中"不是通过）', () => {
-  const result = evaluateHardRules(makeInput(), { rules: [] });
+  const result = runRules(makeInput(), { rules: [] });
   expectNotApproved(result, '空规则集');
   assert.ok(result.reason_codes.includes('RULE_CATALOG_INVALID'));
   assert.equal(result.decision, 'quarantined');
@@ -166,7 +166,7 @@ test('fail-closed：规则集结构非法（id 重复／原因码越界／带 g 
   const stateful = [{ ...RULES[0], matcher: 'any_pattern', patterns: [/苗/g] }];
   for (const [name, rules] of [['id 重复', duplicated], ['原因码越界', badCode], ['g 标志', stateful]]) {
     assert.equal(validateRuleCatalog(rules, MATCHERS).valid, false, `${name} 应被判非法`);
-    const result = evaluateHardRules(makeInput(), { rules });
+    const result = runRules(makeInput(), { rules });
     expectNotApproved(result, `规则集非法（${name}）`);
     assert.ok(result.reason_codes.includes('RULE_CATALOG_INVALID'));
   }
@@ -191,7 +191,7 @@ test('fail-closed：单条规则抛错 ⇒ 计入"未求值/失败"，不得吞�
       throw new Error('boom: rule exploded');
     },
   };
-  const result = evaluateHardRules(makeInput(), { rules, matchers });
+  const result = runRules(makeInput(), { rules, matchers });
   expectNotApproved(result, '规则抛错');
   assert.ok(result.reason_codes.includes('RULE_ENGINE_ERROR'));
   assert.equal(result.rules[0].status, 'error');
@@ -216,14 +216,14 @@ test('fail-closed：匹配器返回结构非法也算失败，不得当作"未�
     },
   ];
   const matchers = { ...MATCHERS, any_pattern: () => null };
-  const result = evaluateHardRules(makeInput(), { rules, matchers });
+  const result = runRules(makeInput(), { rules, matchers });
   expectNotApproved(result, '匹配器返回 null');
   assert.equal(result.rules[0].status, 'error');
   assert.equal(result.hard_rule_passed, false);
 });
 
 test('fail-closed：规则预算耗尽（超时）⇒ 未求值的规则不得算通过', () => {
-  const result = evaluateHardRules(makeInput(), {
+  const result = runRules(makeInput(), {
     clock: scriptedClock([0, 1000]),
     budget_ms: 50,
   });
@@ -237,7 +237,7 @@ test('fail-closed：规则预算耗尽（超时）⇒ 未求值的规则不得�
 });
 
 test('fail-closed：时钟不可用（抛错）⇒ 不放行', () => {
-  const result = evaluateHardRules(makeInput(), {
+  const result = runRules(makeInput(), {
     clock: () => {
       throw new Error('boom: clock');
     },
@@ -257,14 +257,14 @@ test('fail-closed：给错引擎选项不等于按默认值跑一遍就算通过
     ['max_text_length 为 0', { max_text_length: 0 }],
   ];
   for (const [name, options] of cases) {
-    const result = evaluateHardRules(makeInput(), options);
+    const result = runRules(makeInput(), options);
     expectNotApproved(result, `选项非法（${name}）`);
     assert.ok(result.reason_codes.includes('ENGINE_OPTIONS_INVALID'), `${name} 缺原因码`);
     assert.ok(result.option_errors.length > 0, `${name} 未记录选项错误`);
     assert.equal(result.counts.evaluated, 0);
   }
   // 合法选项不受影响。
-  const ok = evaluateHardRules(makeInput(), { budget_ms: 1000, max_text_length: 20000 });
+  const ok = runRules(makeInput(), { budget_ms: 1000, max_text_length: 20000 });
   assert.deepEqual(ok.option_errors, []);
   assert.equal(ok.decision, 'approved');
 });
@@ -275,7 +275,7 @@ test('fail-closed：扫描限额截断（×64）不得把未检查的尾部当�
   const text = buildScanLimitText(64);
   // 先排除"这是超长隔离"的解释：455 字符远在上限之内。
   assert.ok(text.length <= MAX_TEXT_LENGTH, `反例必须在上限内：${text.length}`);
-  const result = evaluateHardRules(makeInput({ text }));
+  const result = runRules(makeInput({ text }));
 
   expectNotApproved(result, '扫描限额截断（×64）');
   assert.equal(result.decision, 'quarantined');
@@ -295,7 +295,7 @@ test('fail-closed：扫描限额截断（×64）不得把未检查的尾部当�
 test('对照：扫描限额之内（×63）仍按真实命中判 rejected', () => {
   const text = buildScanLimitText(63);
   assert.ok(text.length <= MAX_TEXT_LENGTH);
-  const result = evaluateHardRules(makeInput({ text }));
+  const result = runRules(makeInput({ text }));
   assert.equal(result.decision, 'rejected');
   assert.ok(result.reason_codes.includes('DANGEROUS_MIX'));
   assert.equal(result.reason_codes.includes('RULE_SCAN_TRUNCATED'), false);
@@ -307,11 +307,11 @@ test('对照：扫描限额之内（×63）仍按真实命中判 rejected', () =
 
 test('扫描限额与输入长度上限是两个不同的闸门（×64 反例未被误判为超长）', () => {
   const text = buildScanLimitText(64);
-  const byLimit = evaluateHardRules(makeInput({ text }));
+  const byLimit = runRules(makeInput({ text }));
   assert.equal(byLimit.reason_codes.includes('INPUT_TEXT_TOO_LONG'), false);
   assert.equal(byLimit.input.valid, true);
   // 把上限压到文本之下，才会走"超长"这条闸门——证明上面那条不是超长导致的。
-  const tooLong = evaluateHardRules(makeInput({ text }), { max_text_length: 100 });
+  const tooLong = runRules(makeInput({ text }), { max_text_length: 100 });
   expectNotApproved(tooLong, '压小上限后的×64文本');
   assert.ok(tooLong.reason_codes.includes('INPUT_TEXT_TOO_LONG'));
   assert.equal(tooLong.reason_codes.includes('RULE_SCAN_TRUNCATED'), false);
@@ -325,7 +325,7 @@ test('核心不变式：approved ⟺ hard_rule_passed === true（全部用例加
     makeInput({ media: [] }),
   ];
   for (const input of samples) {
-    const result = evaluateHardRules(input);
+    const result = runRules(input);
     assert.equal(
       result.decision === 'approved',
       result.hard_rule_passed === true,
@@ -369,14 +369,14 @@ test('不变式检查能捕捉 undefined／越界值（先 typeof 再判值）',
     assert.ok(report.violations.length > 0);
     assert.throws(() => assertDecisionInvariant(item.result), `${item.name} 断言版应抛错`);
   }
-  const ok = evaluateHardRules(makeInput());
+  const ok = runRules(makeInput());
   assert.deepEqual(checkDecisionInvariant(ok), { ok: true, violations: [] });
   assert.equal(assertDecisionInvariant(ok), ok);
 });
 
 test('契约闭集核对：全部用例的 decision 都在 AuditState 之内', () => {
   for (const item of INPUT_CASES) {
-    const result = evaluateHardRules(item.input);
+    const result = runRules(item.input);
     assert.ok(AUDIT_STATES.includes(result.decision));
   }
 });
