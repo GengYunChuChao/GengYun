@@ -46,8 +46,6 @@ export async function runIdempotentWrite<TBody>(
   const scope = idempotencyScope(context.identity.userId, keyDomain.method, keyDomain.path);
   const keyHash = idempotencyKeyHashHex(scope, rawKey);
   const requestHash = idempotencyRequestHash(requestBody, context.ifMatch, deps.signingKey);
-  const issuedAt = deps.now();
-  const expiresAt = new Date(issuedAt.getTime() + deps.ttlSeconds * 1000);
 
   // `produce` 可以是同步或异步：
   // - 阶段 1 与阶段 1b 的本地内存写路径都是**同步**的 ⇒ 提交期间没有任何 await 让步点；
@@ -56,6 +54,11 @@ export async function runIdempotentWrite<TBody>(
   //   代价是端口 I/O 期间独占队列（head-of-line）。阶段 2 接真实 PG/HTTP 时应改为
   //   按目标分片的短临界区；本片如实记录该限制。
   return deps.runtime.transaction(async () => {
+    // 队列可能跨外部端口 await：获得临界区后取当前时刻，不能用排队前的时间。
+    // 完成回执也必须实际到期清理，再查询；否则 findIdempotent 会无限重放旧成功结果。
+    const issuedAt = deps.now();
+    deps.runtime.purgeExpiredIdempotent(issuedAt);
+    const expiresAt = new Date(issuedAt.getTime() + deps.ttlSeconds * 1000);
     const settled = deps.runtime.findIdempotent(scope, keyHash);
     if (settled !== null) {
       if (settled.requestHash !== requestHash) {
