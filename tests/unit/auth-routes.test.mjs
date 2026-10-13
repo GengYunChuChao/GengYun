@@ -365,23 +365,92 @@ test('R2-2 并发同键重试收敛到同一会话（不产生互不关联多会
   await app.close();
 });
 
-test('幂等：重放窗口过后不再命中台账，且台账始终不含可用令牌（P1-①，注入时钟）', async () => {
+test('幂等：24小时窗口内复用原会话且不滑动，到期物理清理，台账不含凭据', async (t) => {
   let clockMs = Date.parse('2026-01-01T00:00:00Z');
+  const startMs = clockMs;
   const idempotency = createMemoryIdempotencyStore();
-  const app = newApp({ idempotency, now: () => new Date(clockMs) });
+  const tracker = trackingStore();
+  const app = newApp({ store: tracker.store, idempotency, now: () => new Date(clockMs) });
+  t.after(() => app.close());
   const first = await login(app, 'code-ttl', 'idem-key-ttl');
+  assert.equal(first.statusCode, 200);
   const firstToken = first.json().data.access_token;
   const record = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/auth/wechat', 'idem-key-ttl');
+  assert.equal(record.expiresAt.getTime(), startMs + 24 * 60 * 60 * 1000);
   assert.equal(JSON.stringify(record).includes(firstToken), false, '台账不含明文令牌');
-
-  // 越过重放窗口：台账条目到期，命中判定失效，按新请求处理。
   clockMs += (5 * 60 + 1) * 1000;
-  const replay = await login(app, 'code-ttl', 'idem-key-ttl');
-  assert.equal(replay.statusCode, 200);
-  assert.notEqual(replay.json().data.access_token, firstToken);
+  const conflict = await login(app, 'code-other', 'idem-key-ttl');
+  assert.equal(conflict.statusCode, 409, '超过旧5分钟仍保留同键异体冲突');
+  assert.equal(conflict.json().error.code, 'IDEMPOTENCY_CONFLICT');
+  for (const at of [clockMs, startMs + 24 * 60 * 60 * 1000 - 1]) {
+    clockMs = at;
+    const replay = await login(app, 'code-ttl', 'idem-key-ttl');
+    assert.equal(replay.statusCode, 200);
+    assert.notEqual(replay.json().data.access_token, firstToken);
+    assert.equal(replay.json().data.expires_at, first.json().data.expires_at);
+    assert.equal(tracker.sessionCount(), 1, '窗口内不能重新建立会话');
+    const retained = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/auth/wechat', 'idem-key-ttl');
+    assert.equal(retained.outcome.sessionId, record.outcome.sessionId);
+    assert.equal(retained.expiresAt.getTime(), record.expiresAt.getTime(), '重放不滑动回执有效期');
+    assert.equal(JSON.stringify(retained).includes(replay.json().data.access_token), false);
+  }
+  // 到期边界按新请求处理；这里的 code 由明确的替身身份提供者重复兑换。
+  clockMs = startMs + 24 * 60 * 60 * 1000;
+  assert.equal((await login(app, 'code-ttl', 'idem-key-ttl')).statusCode, 200);
+  assert.equal(tracker.sessionCount(), 2);
+  const renewed = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/auth/wechat', 'idem-key-ttl');
+  assert.notEqual(renewed.outcome.sessionId, record.outcome.sessionId);
   // 到期条目已在本次请求开始时被实际清理（不是只写 TTL 字段）。
   assert.equal(await idempotency.purgeExpired(new Date(clockMs)), 0, '到期条目应在请求处理时已清理');
-  await app.close();
+});
+
+test('24小时回执不延长后台8小时会话：到期仍401且不建立新会话', async (t) => {
+  let clockMs = Date.parse('2026-01-01T00:00:00Z');
+  const startMs = clockMs;
+  const idempotency = createMemoryIdempotencyStore();
+  const tracker = trackingStore();
+  const app = newApp({
+    store: tracker.store, idempotency, now: () => new Date(clockMs),
+    config: stubConfig({ ADMIN_BOOTSTRAP_LOGIN_NAME: 'root', ADMIN_BOOTSTRAP_PASSWORD: 'synthetic-bootstrap-pass' }),
+  });
+  t.after(() => app.close());
+  await app.authService.ensureBootstrapAdmin();
+  const request = () => app.inject({ method: 'POST', url: ADMIN_SESSION_URL,
+    headers: { 'idempotency-key': 'admin-window-0001' },
+    payload: { login_name: 'root', password: 'synthetic-bootstrap-pass' } });
+  const first = await request();
+  assert.equal(first.statusCode, 200);
+  assert.equal(Date.parse(first.json().data.expires_at), startMs + 8 * 60 * 60 * 1000);
+  clockMs += (5 * 60 + 1) * 1000;
+  const replay = await request();
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.json().data.expires_at, first.json().data.expires_at);
+  assert.equal(tracker.sessionCount(), 1);
+  clockMs = startMs + 8 * 60 * 60 * 1000;
+  const expired = await request();
+  assert.equal(expired.statusCode, 401);
+  assert.equal(expired.json().error.code, 'SESSION_EXPIRED');
+  assert.equal(tracker.sessionCount(), 1, '仍有效回执不能绕过原会话过期');
+  const retained = await readIdempotencyRecord(idempotency, 'anonymous', 'POST', '/admin/auth/session', 'admin-window-0001');
+  assert.equal(retained.expiresAt.getTime(), startMs + 24 * 60 * 60 * 1000);
+});
+
+test('退出后超过旧5分钟重放登录仍拒绝，不借24小时回执复活会话', async (t) => {
+  let clockMs = Date.parse('2026-01-01T00:00:00Z');
+  const tracker = trackingStore();
+  const app = newApp({ store: tracker.store, now: () => new Date(clockMs) });
+  t.after(() => app.close());
+  const first = await login(app, 'code-window-revoked', 'idem-window-revoked');
+  assert.equal(first.statusCode, 200);
+  const logout = await app.inject({ method: 'POST', url: LOGOUT_URL,
+    headers: { ...bearer(first.json().data.access_token), 'idempotency-key': 'logout-window-0001' } });
+  assert.equal(logout.statusCode, 200);
+  clockMs += 6 * 60 * 1000;
+  const replay = await login(app, 'code-window-revoked', 'idem-window-revoked');
+  assert.equal(replay.statusCode, 401);
+  assert.equal(replay.json().error.code, 'SESSION_EXPIRED');
+  assert.equal(tracker.sessionCount(), 1);
+  assert.equal(tracker.activeCount(), 0);
 });
 
 // ---------------------------------------------------------------------------

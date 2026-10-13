@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {randomUUID,randomBytes} from 'node:crypto';
+import {randomUUID,randomBytes,createHmac} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 import pg from 'pg';
 import {buildApp} from '../../services/api/src/app.ts';
@@ -22,7 +22,8 @@ async function fixture(){
   let intercept=null;
   const actual=pool;
   pool={async query(...args){return actual.query(...args)},async connect(){const c=await actual.connect();return {async query(...args){if(intercept&&String(args[0]).includes(intercept.marker)){const cb=intercept.cb;intercept=null;await cb();}return c.query(...args)},release(){c.release()}}}};
-  const app=buildApp({config:loadConfig({APP_EXECUTION_MODE:'stub',LOG_LEVEL:'silent'}),pool});
+  const cursorKey=randomBytes(32).toString('hex');
+  const app=buildApp({config:loadConfig({APP_EXECUTION_MODE:'stub',LOG_LEVEL:'silent',SESSION_SIGNING_KEY:cursorKey}),pool});
   await app.listen({host:'127.0.0.1',port:0});const base=app.server.address();const origin='http://127.0.0.1:'+base.port;
   async function http(path,token,options={}){const r=await fetch(origin+'/api/v1'+path,{...options,headers:{...(token?{authorization:'Bearer '+token}:{}),...options.headers}});return {status:r.status,data:await r.json(),etag:r.headers.get('etag'),cache:r.headers.get('cache-control')};}
   async function login(code){const r=await http('/auth/wechat',null,{method:'POST',headers:{'content-type':'application/json','idempotency-key':'login-key-'+code},body:JSON.stringify({code})});assert.equal(r.status,200);return r.data.data.access_token;}
@@ -39,7 +40,7 @@ async function fixture(){
     for(let i=0;i<3;i++){const id=randomUUID();ids.push(id);await db.query("INSERT INTO knowledge_versions(id,knowledge_id,revision,title,body,type,source_version_id,crop_ids,species_ids,region_codes,visibility) VALUES($1,$2,1,$3,'Synthetic educational body only','species',$4,'[\"crop_rice\"]','[\"synthetic_weed\"]','[\"330102\"]','published')",[randomUUID(),id,'Synthetic '+i,version]);}
     return {admin,source,version,ids:ids.sort()};
   }
-  return {db,pool,app,http,a,b,seed,native,intercept(marker,cb){intercept={marker,cb}},async close(){await app.close();if(native){await actual.end();await owner.end()}else{await queue;await db.close()}}};
+  return {db,pool,app,http,a,b,seed,native,cursorKey,intercept(marker,cb){intercept={marker,cb}},async close(){await app.close();if(native){await actual.end();await owner.end()}else{await queue;await db.close()}}};
 }
 test('knowledge real projection and limited runtime over loopback HTTP (synthetic only)',async t=>{
   const f=await fixture();t.after(()=>f.close());const {http,db,a,b,pool}=f;
@@ -56,6 +57,22 @@ test('knowledge real projection and limited runtime over loopback HTTP (syntheti
     assert.equal((await http('/knowledge?crop_id=crop_rice&region_code=330102&species_id=synthetic_weed&q=synthetic',a)).data.data.items.length,3);
     assert.equal((await http('/knowledge?crop_id=missing',a)).data.data.items.length,0);
     for(const key of ['growth_stage','planting_method','use_scene']){assert.equal((await http('/knowledge?'+key+'=unknown',a)).data.data.items.length,0);assert.equal((await http('/knowledge/'+s.ids[0]+'?'+key+'=unknown',a)).status,404);}
+  });
+  await t.test('knowledge pagination fixed chain deadline, epoch/version/domain/expiry guards over product HTTP',async()=>{
+    const value=JSON.parse(Buffer.from(cursor.split('.')[0],'base64url').toString('utf8'));
+    const resign=(value,namespace='knowledge-list/v1\n')=>{const encoded=Buffer.from(JSON.stringify(value)).toString('base64url');return encoded+'.'+createHmac('sha256',f.cursorKey).update(namespace+encoded).digest('base64url')};
+    const second=await http('/knowledge?limit=1&cursor='+encodeURIComponent(cursor),a);
+    assert.equal(second.status,200);assert.ok(second.data.data.next_cursor);
+    const next=JSON.parse(Buffer.from(second.data.data.next_cursor.split('.')[0],'base64url').toString('utf8'));
+    assert.equal(next.expires,value.expires,'second page must preserve the first 15min deadline');
+    const tail=await http('/knowledge?limit=2&cursor='+encodeURIComponent(cursor),a);
+    assert.deepEqual(tail.data.data.items.map(x=>x.id),s.ids.slice(1));assert.equal(tail.data.data.next_cursor,null);
+    for(const modified of [{...value,auth_epoch:value.auth_epoch+1},{...value,v:2},{...value,expires:Date.now()-1}]) {
+      const denied=await http('/knowledge?cursor='+encodeURIComponent(resign(modified)),a);
+      assert.equal(denied.status,400);assert.equal(denied.data.error.code,'INVALID_CURSOR');
+    }
+    const legacy=await http('/knowledge?cursor='+encodeURIComponent(resign(value,'')),a);
+    assert.equal(legacy.status,400);assert.equal(legacy.data.error.code,'INVALID_CURSOR');
   });
   await t.test('cursor subject, filter, signature, next page and visibility watermark binding',async()=>{
     const next=await http('/knowledge?limit=1&cursor='+encodeURIComponent(cursor),a);assert.equal(next.status,200);assert.equal(next.data.data.items[0].id,s.ids[1]);

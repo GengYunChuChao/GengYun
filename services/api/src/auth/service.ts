@@ -22,7 +22,7 @@ import type {
   IdempotencyStore,
   LoginOutcomeReference,
 } from './idempotency.ts';
-import { idempotencyRequestHash } from './idempotency.ts';
+import { IDEMPOTENCY_TTL_SECONDS, idempotencyRequestHash } from './idempotency.ts';
 import { hashPassword, verifyPassword } from './password.ts';
 import {
   ADMIN_SESSION_TTL_SECONDS,
@@ -103,7 +103,7 @@ export class AuthService {
     this.now = options.now ?? (() => new Date());
     this.userSessionTtlSeconds = options.userSessionTtlSeconds ?? USER_SESSION_TTL_SECONDS;
     this.adminSessionTtlSeconds = options.adminSessionTtlSeconds ?? ADMIN_SESSION_TTL_SECONDS;
-    this.idempotencyTtlSeconds = options.idempotencyTtlSeconds ?? 5 * 60;
+    this.idempotencyTtlSeconds = options.idempotencyTtlSeconds ?? IDEMPOTENCY_TTL_SECONDS;
     this.idempotencyHmacKey = options.idempotencyHmacKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
     this.bootstrap = options.bootstrap ?? null;
     this.bootstrapScopes = options.bootstrapScopes ?? BOOTSTRAP_ADMIN_SCOPES;

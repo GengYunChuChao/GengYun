@@ -52,6 +52,32 @@ test('list filters encode only frozen query fields; each cursor page replaces th
 test('repeated/cyclic cursor is rejected and clears the prior page', async () => {
   const f = fixture(); f.login(); f.show(); f.answer(f.last('/knowledge'), { items: [record()], next_cursor: 'A' }); await flush(); f.page.next(); f.answer(f.last('/knowledge'), { items: [record()], next_cursor: 'A' }); await flush(); assert.equal(f.page.data.items.length, 0); assert.match(f.page.data.status, /无法核对/);
 });
+
+test('expired/changed cursor clears stale page, preserves session and restarts query without old cursor', async () => {
+  const f = fixture(); f.login(); f.page.setData({ q: '合成查询' }); f.show();
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: 'synthetic-expired' }); await flush();
+  f.api.remember(record(), { q: '合成查询' });
+  f.page.next(); const count = f.requests.length;
+  f.last('/knowledge').success({ statusCode: 400, data: { error: { code: 'INVALID_CURSOR', message: 'synthetic', retryable: false, details: [] }, meta: envelope(null).meta } });
+  await flush();
+  assert.equal(f.page.data.items.length, 0); assert.equal(f.page.data.nextCursor, null);
+  assert.equal(f.page.data.busy, false); assert.equal(f.api.expected(id), null);
+  assert.match(f.page.data.status, /点击查询重新开始/); assert.equal(f.auth.isLoggedIn(), true);
+  assert.equal(f.requests.length, count, 'no automatic stale-cursor retry loop');
+  f.page.next(); assert.equal(f.requests.length, count);
+  f.page.search(); const url = new URL(f.last('/knowledge').url);
+  assert.equal(url.searchParams.get('cursor'), null); assert.equal(url.searchParams.get('q'), '合成查询');
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush();
+  assert.equal(f.page.data.items.length, 1);
+});
+
+test('malformed INVALID_CURSOR envelope cannot bypass response validation', async () => {
+  for (const patch of [{ contract_version: '0.0.0' }, { execution_mode: 'unknown' }, { request_id: 'bad' }]) {
+    const f = fixture(); f.login(); f.show();
+    f.last('/knowledge').success({ statusCode: 400, data: { error: { code: 'INVALID_CURSOR', message: 'synthetic', retryable: false, details: [] }, meta: { ...envelope(null).meta, ...patch } } });
+    await flush(); assert.equal(f.page.data.items.length, 0); assert.match(f.page.data.status, /无法核对/);
+  }
+});
 test('older query completion and completion after hide cannot repopulate results', async () => {
   const f = fixture(); f.login(); f.show(); const old = f.last('/knowledge'); f.page.search(); const newer = f.last('/knowledge'); f.answer(newer, { items: [], next_cursor: null }); await flush(); f.answer(old, { items: [record()], next_cursor: null }); await flush(); assert.equal(f.page.data.items.length, 0); assert.match(f.page.data.status, /没有/);
   f.page.search(); const pending = f.last('/knowledge'); f.page.onHide(); f.answer(pending, { items: [record()], next_cursor: null }); await flush(); assert.equal(f.page.data.items.length, 0); assert.equal(f.page.data.gatePassed, false);
