@@ -784,6 +784,20 @@
       "method": "get",
       "scope": "user",
       "version_required": false
+    },
+    {
+      "id": "receivePrivateMediaBytes",
+      "path": "/media/uploads/{id}/content",
+      "method": "put",
+      "scope": "user",
+      "version_required": true
+    },
+    {
+      "id": "readOwnerMediaContent",
+      "path": "/media/{id}/content",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
     }
   ],
   "proposal_revision": 2

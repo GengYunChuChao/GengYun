@@ -1,0 +1,31 @@
+# GY-I06 私有字节契约与本地文件组件证据
+
+## ?????????2026-10-11?
+
+??????7f406cedd9aac0e6741a5b53337a5eae5b1937c9?????????main2d562d5b6fb79896ef8935716b90939538f274c2??????0b9ede44f4ad3c13f6658e0d5087183321411afa?10?????????Git blob???????????????????????
+
+????E?checkout??????media/privacy/contract?288???0???0???lint?????typecheck????????????????????114 operations/29fixtures/30media traces/8knowledge roundtrips?????main????????OpenAPI???components??????????????path?[????????manifest](assets/gy-i06-private-file-main-20261011/manifest.json)?[??????](assets/gy-i06-private-file-main-20261011/affected-tests.log)???????
+
+???????/????PR??????????PR83????HTTP/PG/??????/Windows ACL????????????#6?
+
+基线 `8932ba5153709ed67e2944984c3b891f38e1a951`，独立分支 `feature/gy-i06-private-file-contract`，作者 Yu0ry，Refs #6。[范围及兼容影响](../architecture/adr-gy-i06-local-private-transport.md)。全部使用合成非个人字节，实际供应商／生产凭据／费用／部署为 0。
+
+## 验证层级
+
+本次是真实本地文件 I/O 与参考媒体服务的组件测试，不是 HTTP、PG、微信、Android、COS 或完整删除证据。新建独立适配器后读取相同文件证明字节落盘；不把仍为内存的媒体业务状态写成重启后持久化。
+
+专项命令：
+
+```text
+node --test tests/media/local-store.test.mjs tests/media/private-transport-contract.test.mjs
+```
+
+Windows，Node 24.16.0，10/10 通过、0 跳过：真实字节持久、不可变读取副本、路径穿越／绝对路径／ADS 拒绝、长度／空字节限制、根目录及祖先 junction 拒绝、对象 hardlink／junction 拒绝、外部超限文件拒绝、专用目录约束。实际 Windows junction 和 hardlink 用合成临时目录创建，并非仅模拟 lstat。越界目标内容未读取或删除。
+
+复用现有媒体服务：合成 PNG 的原对象和已清 EXIF 衍生件真实落盘，owner 读取只见衍生件；删除后文件数为 0、旧句柄失效。畸形 PNG 不留下文件；合成 WAV 可写入和删除。身份仍为明确合成主体、媒体状态仍为参考内存 Map；PNG 音频字节不是用户上传。撤回竞争、真实 HTTP 请求和 PG 台账未在本次测试。
+
+设计命令 `python tools/validate_contracts.py`：114 operations、29 fixtures、30 media traces、8 knowledge roundtrips 通过；新增路径的登录＋header token、安全响应头、幂等／版本头、二进制 MIME、完成 DTO 不变有专项消费者断言。此命令不能代替安全 HTTP 实测。
+
+受影响串行回归 `node --test --test-concurrency=1 "tests/media/*.test.mjs" "tests/privacy/*.test.mjs" "tests/contract/*.test.mjs"`：288/288、0 跳过，原132项隐私回归保留。契约增量比对：只新增2路径，全部原路径／components／其它顶层字段与基线完全相同。`tools/lint-workspaces.mjs`：两工作区tsc及卫生扫描通过；27任务文档检查、专项JS语法及diff检查通过。固定提交SHA在PR正文记录。未触及的业务不机械重跑。
+
+Windows ACL、任意并发敌对目录替换、磁盘耗尽／掉电耐久恢复尚未独立验收，OS 权限前提和失败回收边界见 ADR。下一份 PG／HTTP／撤回集成仍须独立审查。

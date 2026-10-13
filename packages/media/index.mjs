@@ -12,4 +12,5 @@ export * from './audio.mjs';
 export * from './validate.mjs';
 export * from './tokens.mjs';
 export * from './store.mjs';
+export * from './local-store.mjs';
 export * from './service.mjs';

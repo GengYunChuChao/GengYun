@@ -1,0 +1,70 @@
+{
+  "handoff": "7f406cedd9aac0e6741a5b53337a5eae5b1937c9",
+  "main": "2d562d5b6fb79896ef8935716b90939538f274c2",
+  "merge": "0b9ede44f4ad3c13f6658e0d5087183321411afa",
+  "implementationUnchanged": 10,
+  "existingOpenapiUnchanged": true,
+  "addedPaths": [
+    "/media/uploads/{id}/content",
+    "/media/{id}/content"
+  ],
+  "tests": {
+    "count": 288,
+    "pass": 288,
+    "fail": 0,
+    "skip": 0
+  },
+  "contractDesign": {
+    "operations": 114,
+    "fixtures": 29,
+    "mediaTraces": 30,
+    "knowledgeRoundtrips": 8
+  },
+  "inputs": [
+    {
+      "path": "docs/architecture/adr-gy-i06-local-private-transport.md",
+      "blob": "a0ba7d5e78a93db4e579f9c31dd66cded7c01b88"
+    },
+    {
+      "path": "docs/verification/gy-i06-private-file-contract.md",
+      "blob": "831a7f2b0021f165077cd4bc4878cc129cb48389"
+    },
+    {
+      "path": "packages/contracts/README.md",
+      "blob": "fa8fc201334f0fdb8663f9051d22a7066f4ff0b6"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "blob": "07ea065e84974b404a42fceff3a72a74c482a43a"
+    },
+    {
+      "path": "packages/contracts/operations.json",
+      "blob": "71e1ebfd96dfb466d179a4c161bb17d5786bb832"
+    },
+    {
+      "path": "packages/media/README.md",
+      "blob": "b84a2edef7e7accad1c699381f88c79724aff947"
+    },
+    {
+      "path": "packages/media/index.mjs",
+      "blob": "f70388893f7267db46a95ed93f65a5df4c537acd"
+    },
+    {
+      "path": "packages/media/local-store.mjs",
+      "blob": "ea3f15ae797a0ee14b6a1d1fdf74de73f4c22b60"
+    },
+    {
+      "path": "tests/media/local-store.test.mjs",
+      "blob": "ede301b8162978b8628fa39cb23bdc70aba8d692"
+    },
+    {
+      "path": "tests/media/private-transport-contract.test.mjs",
+      "blob": "36665ddf2b6bd795556b71306c3756c1b0b89c49"
+    }
+  ],
+  "log": {
+    "path": "affected-tests.log",
+    "bytes": 32360,
+    "sha256": "0873dc270f51f699bb280f46fbd3547901267e91baed32c94143ecba01156f6b"
+  }
+}

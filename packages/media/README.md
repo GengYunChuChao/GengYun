@@ -29,8 +29,15 @@
 | `validate.mjs` | 声明与真实字节校验（用途/类型/字节/**真实时长**/hash/伪扩展名/每帖 3 张） |
 | `tokens.mjs` | HMAC 短效句柄签名（token 不入 URL；服务端只存 hash） |
 | `store.mjs` | 私有对象存储（内存参考实现，可插拔真实对象存储；对外只出**不透明 object_ref**） |
+| `local-store.mjs` | 私有本地文件适配器；只存字节，专用根目录与OS权限前提见下文；不是COS或HTTP授权网关 |
 | `service.mjs` | 服务：生命周期、owner 访问、社区取图、过期与孤立对象清理 |
 | `index.mjs` | 统一出口 |
+
+## 本地文件及新增传输契约（部分交付）
+
+`createPrivateLocalObjectStore({ rootDir })` 可注入现有服务 store，真实字节写入专用私有目录并可由新适配器读取；元数据/幂等仍为参考内存实现。不要将存储目录作为静态目录公开或放入Git；本地对象放已忽略`.local/`或`.supervisor/`下，由服务端配置根目录，不接受用户路径。Windows须由操作者配置受限ACL，组件不将0600模式宣称为已落实Windows权限。
+
+OpenAPI增补PUT上传字节及owner GET内容两条私有传输操作，现有DTO不变；本次只有契约、文件组件与合成回归，没有实际HTTP接线。权限、300秒token、用途epoch、版本及回收仍须由下一份PG/HTTP组件落实，参考示例URL不是HTTP成功。[ADR](../../docs/architecture/adr-gy-i06-local-private-transport.md)与[证据](../../docs/verification/gy-i06-private-file-contract.md)记录边界；COS、正式微信/Android及完整7/30日删除未完成。
 
 ## 状态机（`docs/architecture/state-contract.md`）
 
