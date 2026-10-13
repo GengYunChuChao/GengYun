@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 4,
-  "baseline": "3e8f89bb7dcd79d4ffe509ec79260acd71b26ded",
+  "proposal_revision": 5,
+  "baseline": "769420ae2f46166d651823a86af687456f3c75e3",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -476,15 +476,23 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/routes/recognitions.ts",
-          "lines": "118-122"
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "51-62"
         },
         {
-          "test": "tests/unit/recognitions-api.test.mjs",
-          "name": "GY-I09 识别任务闭环"
+          "path": "services/api/src/app.ts",
+          "lines": "211-217"
+        },
+        {
+          "path": "services/api/src/jobs/sources.ts",
+          "lines": "23-71"
+        },
+        {
+          "test": "tests/integration/jobs-http.mjs",
+          "name": "对照·「改前 404 → 改后 200」"
         }
       ],
-      "blocker": "识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线）"
+      "blocker": "公共Job单一注册与识别/转写读取已合（#106），保留归属、结果契约校验、ETag和no-store；OCR/合成未注册此读面，持久队列、租约及恢复仍缺，真实能力/样本/Android未因共享面合入而完成"
     },
     {
       "id": "cancelJob",
@@ -497,15 +505,23 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/routes/recognitions.ts",
-          "lines": "130-134"
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "64-80"
         },
         {
-          "test": "tests/unit/recognitions-api.test.mjs",
-          "name": "GY-I09 识别任务闭环"
+          "path": "services/api/src/jobs/sources.ts",
+          "lines": "35-46"
+        },
+        {
+          "path": "services/api/src/jobs/registry.ts",
+          "lines": "281-307"
+        },
+        {
+          "test": "tests/integration/jobs-http.mjs",
+          "name": "转写域**无取消能力（未接线）**"
         }
       ],
-      "blocker": "识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线）"
+      "blocker": "公共Job单一注册与识别取消已合（#106），复用域内If-Match/幂等/终态守卫；转写可读但缺取消能力，存在的转写作业取消返回503 PROVIDER_UNAVAILABLE（retryable），OCR/合成未接共享面；持久租约、外发撤销和跨域生命周期仍缺"
     },
     {
       "id": "listKnowledge",
@@ -609,7 +625,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "57-61"
+          "lines": "58-62"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -630,7 +646,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "74-78"
+          "lines": "75-79"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -651,7 +667,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "101-105"
+          "lines": "102-106"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -672,7 +688,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "86-90"
+          "lines": "87-91"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -799,7 +815,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "getTranscription",
@@ -819,7 +835,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "deleteTranscription",
@@ -839,7 +855,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "confirmTranscription",
@@ -859,7 +875,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "createSynthesis",
@@ -2167,7 +2183,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:260-276）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:270-285）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
     },
     {
       "key": "pagination",
@@ -2239,7 +2255,7 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "219-224"
+          "lines": "229-234"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -2341,9 +2357,17 @@
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "状态 7 cancelled"
+        },
+        {
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "64-80"
+        },
+        {
+          "path": "services/api/src/jobs/registry.ts",
+          "lines": "281-307"
         }
       ],
-      "blocker": "识别域 cancelJob 已装配，CAS 增 revision、幂等重放、终态守卫与迟到结果不复活已有证据；公共 Job 未消费转写/OCR/合成，cancelAdminJob 只有独立后台服务且无 HTTP；持久租约、外发撤销与跨域生命周期仍待完成"
+      "blocker": "识别域cancelJob已接公共单一注册（#106），CAS增revision、幂等重放、终态守卫与迟到结果不复活已有证据；转写公共读取已接但取消能力缺失（503 PROVIDER_UNAVAILABLE），OCR/合成公共读/取消未接；cancelAdminJob仍只有独立后台服务且无HTTP，持久租约、外发撤销与跨域生命周期仍待完成"
     },
     {
       "key": "timeout",
