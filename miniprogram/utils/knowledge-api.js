@@ -18,6 +18,11 @@ function timestamp(value) {
     Number(m[3]) <= new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).getUTCDate() && Number.isFinite(Date.parse(value))
 }
 function one(x, values) { return values.indexOf(x) !== -1 }
+function responseMeta(m) {
+  keys(m, ['request_id', 'contract_version', 'execution_mode'])
+  if (typeof m.request_id !== 'string' || !UUID.test(m.request_id) || m.contract_version !== '1.0.0' || !one(m.execution_mode, ['real', 'stub', 'preset_demo'])) throw failure('INVALID_RESPONSE')
+  return m
+}
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
 function current(b) { const now = binding(); return !!b && !!now && b.token === now.token && b.epoch === now.epoch }
 function filters(input, list) {
@@ -62,11 +67,17 @@ function request(path) {
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); selection = null; reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 400 && object(r.data) && object(r.data.error) && r.data.error.code === 'INVALID_CURSOR') {
+          try {
+            keys(r.data, ['error', 'meta']); responseMeta(r.data.meta)
+            keys(r.data.error, ['code', 'message', 'retryable', 'details'])
+            if (typeof r.data.error.message !== 'string' || r.data.error.retryable !== false || !Array.isArray(r.data.error.details)) throw failure('INVALID_RESPONSE')
+          } catch (e) { reject(e); return }
+          reject(failure('INVALID_CURSOR')); return
+        }
         if (r.statusCode !== 200) { reject(failure(r.statusCode === 404 ? 'NOT_FOUND' : 'UNAVAILABLE')); return }
         try {
-          keys(r.data, ['data', 'meta']); const m = r.data.meta
-          keys(m, ['request_id', 'contract_version', 'execution_mode'])
-          if (typeof m.request_id !== 'string' || !UUID.test(m.request_id) || m.contract_version !== '1.0.0' || !one(m.execution_mode, ['real', 'stub', 'preset_demo'])) throw failure('INVALID_RESPONSE')
+          keys(r.data, ['data', 'meta']); const m = responseMeta(r.data.meta)
           resolve({ data: r.data.data, mode: m.execution_mode })
         } catch (e) { reject(e) }
       }, fail: function () { reject(failure(current(b) ? 'NETWORK_UNCERTAIN' : 'SESSION_CHANGED')) }
@@ -103,6 +114,6 @@ function labels(x) {
     review: { verified: '已核对', unverified: '未核对', rejected: '已拒绝' }[s.review_status] }
 }
 function modeNote(mode) { return mode === 'real' ? '服务端资料读取；来源核对与适用条件仍需分别确认。' : mode === 'preset_demo' ? '预设演示资料，不代表实际查询结果。' : mode === 'stub' ? '替身服务资料，仅供联调，不代表真实资料查询。' : '服务端资料查询；资料需重新核对，失败时不会改用本地资料。' }
-function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
+function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_CURSOR: '查询已过期或资料已更新，请点击查询重新开始。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
 module.exports = { binding, current, filters, list, detail, remember, expected, fingerprint, labels, modeNote, message,
   validId: id => typeof id === 'string' && UUID.test(id), clearSelection: () => { selection = null } }

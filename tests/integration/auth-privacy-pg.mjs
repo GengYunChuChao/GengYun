@@ -112,7 +112,10 @@ try {
   const store = createPostgresAuthStore({ query: async (text, values) => ({ rows: (await pool.query(text, values)).rows }) });
   const guards = createAuthGuards({ store, now: () => new Date() });
   const consent = createPostgresConsentService(pool, signingKey);
-  app = buildApp({ config, pool, wechat: { exchange: async code => ({ subjectLookupHex: subject(code) }) } });
+  let authClockMs = null;
+  let identityExchanges = 0;
+  app = buildApp({ config, pool, now: () => new Date(authClockMs ?? Date.now()),
+    wechat: { exchange: async code => { identityExchanges++; return { subjectLookupHex: subject(code) }; } } });
   // Test-only read consumer: no remote provider, no business media route, no write callback.
   app.get('/api/v1/test-only/consent-read', { preHandler: guards.requireUser }, request => consent.requireConsent({ identity: currentIdentity(request), token: readBearerToken(request.headers.authorization) }, { purpose: 'external_inference' }));
   // The test-only route must still produce the application meta envelope.
@@ -144,7 +147,10 @@ try {
   await expectError('/test-only/consent-read', a.token, 403, 'CONSENT_REQUIRED');
   say('no consent and epoch-zero never-granted records do not authorize');
   const initial = await fixture(a);
-  await fixture(a, 'media_processing');
+  const recent = await fixture(a, 'media_processing');
+  // Freeze distinct creation instants so ordering cannot accidentally pass by random UUID.
+  await owner.query('UPDATE consent_records SET granted_at=$2 WHERE id=$1', [initial.id, '2026-10-01T00:00:00Z']);
+  await owner.query('UPDATE consent_records SET granted_at=$2 WHERE id=$1', [recent.id, '2026-10-02T00:00:00Z']);
   await fixture(b);
   const read = await request('/test-only/consent-read', a.token);
   assert.equal(read.status, 200, JSON.stringify(read.body));
@@ -152,6 +158,7 @@ try {
   const page = await request('/me/consents?limit=1', a.token);
   assert.equal(page.status, 200); assert.equal(page.headers.get('cache-control'), 'no-store');
   assert.equal(page.body.data.items.length, 1); assert.ok(page.body.data.next_cursor);
+  assert.equal(page.body.data.items[0].id, recent.id);
   const next = await request(`/me/consents?limit=1&cursor=${page.body.data.next_cursor}`, a.token);
   assert.equal(next.body.data.items.length, 1); assert.equal(next.body.data.next_cursor, null);
   assert.notEqual(next.body.data.items[0].id, page.body.data.items[0].id);
@@ -160,8 +167,21 @@ try {
   assert.notEqual(own.body.data.items[0].id, initial.id);
   assert.ok(!JSON.stringify(page.body).includes('user_id'));
   await expectError('/me/consents?cursor=invalid', a.token, 400, 'INVALID_CURSOR');
+  await expectError(`/me/consents?cursor=${page.body.data.next_cursor}`, b.token, 400, 'INVALID_CURSOR');
+  await expectError(`/me/consents?cursor=${Buffer.from(recent.id).toString('base64url')}`, a.token, 400, 'INVALID_CURSOR');
+  const [encoded, signature] = page.body.data.next_cursor.split('.');
+  const corruptCursor = `${encoded}.${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+  await expectError(`/me/consents?cursor=${corruptCursor}`, a.token, 400, 'INVALID_CURSOR');
+  const value = JSON.parse(Buffer.from(encoded, 'base64url'));
+  value.expires = Date.now() - 1;
+  const staleBody = Buffer.from(JSON.stringify(value)).toString('base64url');
+  const staleSignature = createHmac('sha256', signingKey).update(`consent-list/v1\n${staleBody}`).digest('base64url');
+  await expectError(`/me/consents?cursor=${staleBody}.${staleSignature}`, a.token, 400, 'INVALID_CURSOR');
+  // A DTO version change keeps the row/epoch consistent but invalidates the old list watermark.
+  await owner.query('UPDATE consent_records SET revision=revision+1 WHERE id=$1', [recent.id]);
+  await expectError(`/me/consents?cursor=${page.body.data.next_cursor}`, a.token, 400, 'INVALID_CURSOR');
   await expectError('/me/consents?limit=51', a.token, 400, 'INVALID_REQUEST');
-  say('reference guard consumes authenticated PG identity; paginated consent DTOs are owner-scoped');
+  say('reference guard consumes authenticated PG identity; consent cursor is signed/owner-bound, sorted by granted_at/id DESC, rejects expired/changed snapshot/legacy cursor');
   await expectError('/me/consents/external_inference', a.token, 428, 'REVISION_REQUIRED', { method: 'DELETE', headers: { 'idempotency-key': 'missing-revision' } });
   await expectError('/me/consents/external_inference', a.token, 400, 'IDEMPOTENCY_KEY_REQUIRED', { method: 'DELETE', headers: { 'if-match': '"1"' } });
   await expectError('/me/consents/external_inference', a.token, 409, 'REVISION_CONFLICT', deletion('wrong-revision', 2));
@@ -264,6 +284,56 @@ try {
   assert.ok(ledger.every(row => row.outcome === null || !JSON.stringify(row.outcome).includes('access_token')));
   assert.ok(!JSON.stringify(ledger).includes(signingKey));
   say('idempotency receipts contain references, no bearer or server signing key');
+  // Only auth requests follow below. Time advances in the application clock; no wall-clock wait
+  // or real WeChat exchange. All rows use this disposable cluster's synthetic identities.
+  authClockMs = Date.now();
+  const startMs = authClockMs;
+  const exchangesBefore = identityExchanges;
+  const ttlKey = 'synthetic-24h-window';
+  const ttlFirst = await login('login-ttl-window', ttlKey);
+  const receipt = (await owner.query("SELECT id,expires_at FROM idempotency_keys WHERE outcome->>'sessionId'=$1", [ttlFirst.sessionId])).rows[0];
+  const originalSession = (await owner.query('SELECT expires_at FROM sessions WHERE id=$1', [ttlFirst.sessionId])).rows[0];
+  assert.equal(receipt.expires_at.getTime(), startMs + 24 * 60 * 60 * 1000);
+  let latest = ttlFirst;
+  for (const at of [startMs + 6 * 60 * 1000, startMs + 24 * 60 * 60 * 1000 - 1]) {
+    authClockMs = at;
+    latest = await login('login-ttl-window', ttlKey);
+    assert.equal(latest.sessionId, ttlFirst.sessionId);
+    assert.equal(identityExchanges, exchangesBefore + 1);
+    const saved = (await owner.query('SELECT expires_at FROM idempotency_keys WHERE id=$1', [receipt.id])).rows[0];
+    assert.equal(saved.expires_at.getTime(), receipt.expires_at.getTime());
+    const session = (await owner.query('SELECT expires_at FROM sessions WHERE id=$1', [ttlFirst.sessionId])).rows[0];
+    assert.equal(session.expires_at.getTime(), originalSession.expires_at.getTime());
+  }
+  await expectError('/auth/wechat', null, 409, 'IDEMPOTENCY_CONFLICT', { method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': ttlKey }, body: JSON.stringify({ code: 'different-ttl-code' }) });
+  say('24h auth receipt persists under restricted LOGIN; 6m/24h-1ms replays retain one session and one synthetic identity exchange, no sliding expiry');
+  assert.equal((await request('/auth/logout', latest.token, { method: 'POST', headers: { 'idempotency-key': 'synthetic-ttl-logout' } })).status, 200);
+  await expectError('/auth/wechat', null, 401, 'SESSION_EXPIRED', { method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': ttlKey }, body: JSON.stringify({ code: 'login-ttl-window' }) });
+  assert.equal(identityExchanges, exchangesBefore + 1);
+  authClockMs = startMs + 24 * 60 * 60 * 1000;
+  const renewed = await login('login-ttl-window', ttlKey);
+  assert.notEqual(renewed.sessionId, ttlFirst.sessionId);
+  assert.equal(identityExchanges, exchangesBefore + 2);
+  assert.equal((await owner.query('SELECT count(*)::int n FROM idempotency_keys WHERE id=$1', [receipt.id])).rows[0].n, 0);
+  say('within-window revoked login cannot replay; exact 24h boundary physically removes original PG receipt (new exchange remains synthetic)');
+  authClockMs = Date.now();
+  const adminStartMs = authClockMs;
+  const ttlAdminOptions = { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'synthetic-admin-24h-window' },
+    body: JSON.stringify({ login_name: 'synthetic-admin', password: adminPassword }) };
+  const adminFirst = await request('/admin/auth/session', null, ttlAdminOptions);
+  assert.equal(adminFirst.status, 200);
+  assert.equal(Date.parse(adminFirst.body.data.expires_at), adminStartMs + 8 * 60 * 60 * 1000);
+  authClockMs += 6 * 60 * 1000;
+  const adminReplay = await request('/admin/auth/session', null, ttlAdminOptions);
+  assert.equal(adminReplay.status, 200);
+  assert.equal(adminReplay.body.data.expires_at, adminFirst.body.data.expires_at);
+  const sessionCount = (await owner.query('SELECT count(*)::int n FROM admin_sessions WHERE admin_id=$1', [admin.id])).rows[0].n;
+  authClockMs = adminStartMs + 8 * 60 * 60 * 1000;
+  await expectError('/admin/auth/session', null, 401, 'SESSION_EXPIRED', ttlAdminOptions);
+  assert.equal((await owner.query('SELECT count(*)::int n FROM admin_sessions WHERE admin_id=$1', [admin.id])).rows[0].n, sessionCount);
+  say('24h PG receipt does not prolong an 8h admin session or silently establish a replacement');
   console.log(`ALL ${passed} native PG17.11 integration groups passed; grant API is tested separately; business write/export consumers remain unimplemented.`);
 } finally {
   await app?.close();
