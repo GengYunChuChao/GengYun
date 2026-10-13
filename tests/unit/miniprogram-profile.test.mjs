@@ -26,6 +26,24 @@ function fixture() {
 test('actual profile page reads complete cursor catalog, selects and freezes one save, then rereads',async()=>{
  const f=fixture();f.seed();f.page.onShow();f.answer(f.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});f.answer(f.last('/catalog/regions'),{items:regions.slice(0,2),next_cursor:'opaque.cursor'});await flush();assert.match(f.last('/catalog/regions').url,/cursor=opaque.cursor/);assert.equal(f.page.data.loaded,false);f.answer(f.last('/catalog/regions'),{items:regions.slice(2),next_cursor:null});await flush();f.choose();f.page.onSave();f.page.onSave();const put=f.last('/me/profile');assert.equal(put.method,'PUT');assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});assert.equal(put.header['If-Match'],'"1"');assert.ok(put.header['Idempotency-Key'].length>=8);assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);f.answer(put,saved());await flush();assert.equal(f.last('/me/profile').method,'GET');f.answer(f.last('/me/profile'),saved(3));await flush();assert.equal(f.page.data.profile.revision,3);assert.equal(f.page.data.cropName,'水稻');assert.equal(f.page.data.regionName,'上城区');f.page.openReference();assert.equal(f.routes.at(-1),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');
 });
+test('expired catalog cursor discards partial directory and explicit reload starts a fresh chain without clearing login',async()=>{
+ const f=fixture();f.seed();f.page.onShow();
+ f.answer(f.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});
+ f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});
+ f.answer(f.last('/catalog/regions'),{items:regions.slice(0,2),next_cursor:'expired.opaque'});await flush();
+ assert.match(f.last('/catalog/regions').url,/cursor=expired.opaque/);
+ f.answer(f.last('/catalog/regions'),'INVALID_CURSOR',400);await flush();
+ assert.equal(f.auth.isLoggedIn(),true);assert.equal(f.page.data.guest,false);
+ assert.equal(f.page.data.loaded,false);assert.equal(f.page.data.busy,false);assert.equal(f.page.data.needsReload,true);
+ assert.equal(f.page.data.crops.length,0);assert.equal(f.page.data.regions.length,0);assert.equal(f.page.data.profile,null);
+ assert.match(f.page.data.message,/重新读取/);
+ const count=f.requests.length;await flush();assert.equal(f.requests.length,count,'no automatic retry loop');
+ f.page.onEdit();f.page.onSave();assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+ f.page.loadProfile();assert.equal(new URL(f.last('/catalog/regions').url).searchParams.has('cursor'),false);
+ f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});
+ f.answer(f.last('/catalog/regions'),{items:regions,next_cursor:null});await flush();
+ assert.equal(f.page.data.loaded,true);assert.equal(f.page.data.needsReload,false);assert.equal(f.auth.isLoggedIn(),true);
+});
 test('uncertain save retries identical key/body/version, locks edits, and never repeats automatically',async()=>{const f=fixture();await f.ready();f.choose();f.page.onSave();const first=f.last('/me/profile');first.fail({});await flush();assert.equal(f.page.data.retryPending,true);f.page.onCity({detail:{value:-1}});assert.equal(f.page.data.cityIndex,0);assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);f.page.onSave();const retry=f.last('/me/profile');assert.deepEqual(retry.header,first.header);assert.deepEqual(retry.data,first.data);});
 test('revision conflict blocks overwrite until explicit reread and fresh confirmation',async()=>{const f=fixture();await f.ready();f.choose();f.page.onSave();f.answer(f.last('/me/profile'),'REVISION_CONFLICT',409);await flush();assert.equal(f.page.data.needsReload,true);f.page.onSave();assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);f.page.loadProfile();f.answer(f.last('/me/profile'),saved(4));f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});f.answer(f.last('/catalog/regions'),{items:regions,next_cursor:null});await flush();f.page.onEdit();f.page.onSave();assert.equal(f.last('/me/profile').header['If-Match'],'"4"');});
 for(const event of ['hide','switch','logout'])test('old read/write cannot revive or transfer profile after '+event,async()=>{const f=fixture();await f.ready();f.choose();f.page.onSave();const old=f.last('/me/profile');if(event==='hide')f.page.onHide();else if(event==='logout')f.page.logout();else f.seed('synthetic-b');f.answer(old,saved());await flush();assert.equal(f.page.data.profile,null);assert.equal(f.page.data.guest,true);assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);});

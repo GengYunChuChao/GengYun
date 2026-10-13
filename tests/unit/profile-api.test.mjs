@@ -176,6 +176,57 @@ test('GY-I05 persistent profile/catalog HTTP and SQL regression (synthetic ident
     try { assert.equal((await app.inject({url:`/api/v1/catalog/crops?cursor=${cursor}`,headers:headers(a)})).json().error.code,'INVALID_CURSOR'); }
     finally { Date.now=originalNow; }
   });
+  for (const kind of ['crops', 'regions']) await t.test(`${kind} actual HTTP chain expires at first 15min boundary after late pagination`, async () => {
+    const originalNow = Date.now;
+    const initial = originalNow();
+    let now = initial;
+    Date.now = () => now;
+    try {
+      const base = app.server.address();
+      const path = `/api/v1/catalog/${kind}?limit=1${kind === 'regions' ? '&parent_code=330100' : ''}`;
+      const readPage = async cursor => {
+        const response = await fetch(`http://127.0.0.1:${base.port}${path}${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, {headers:headers(a)});
+        if (response.status === 200) assert.equal(response.headers.get('cache-control'),'no-store');
+        return {status:response.status, body:await response.json()};
+      };
+      const first = await readPage();
+      assert.equal(first.status,200); assert.ok(first.body.data.next_cursor);
+      now = initial + 14*60*1000;
+      const second = await readPage(first.body.data.next_cursor);
+      assert.equal(second.status,200); assert.ok(second.body.data.next_cursor);
+      now = initial + 15*60*1000 - 1;
+      const stillValid = await readPage(second.body.data.next_cursor);
+      assert.equal(stillValid.status,200);
+      now += 1;
+      const expired = await readPage(second.body.data.next_cursor);
+      assert.equal(expired.status,400,'late second page must not extend the original chain');
+      assert.equal(expired.body.error.code,'INVALID_CURSOR'); assert.equal(expired.body.data,undefined);
+      const restart = await readPage();
+      assert.equal(restart.status,200); assert.deepEqual(restart.body.data.items,first.body.data.items);
+      const resumed = await readPage(restart.body.data.next_cursor);
+      assert.equal(resumed.status,200); assert.deepEqual(resumed.body.data.items,second.body.data.items);
+    } finally { Date.now = originalNow; }
+  });
+  await t.test('valid current epoch/session rejects old directory cursor but fresh chain works', async () => {
+    const cursors = {};
+    for (const kind of ['crops','regions']) cursors[kind] = (await app.inject({url:`/api/v1/catalog/${kind}?limit=1`,headers:headers(a)})).json().data.next_cursor;
+    const session = (await db.query("SELECT id,user_id,auth_epoch FROM sessions WHERE token_hash=decode($1,'hex')",[hashToken(a)])).rows[0];
+    await db.query('UPDATE users SET auth_epoch=auth_epoch+1 WHERE id=$1',[session.user_id]);
+    await db.query('UPDATE sessions SET auth_epoch=auth_epoch+1 WHERE id=$1',[session.id]);
+    try {
+      for (const kind of ['crops','regions']) {
+        const response = await app.inject({url:`/api/v1/catalog/${kind}?limit=1&cursor=${encodeURIComponent(cursors[kind])}`,headers:headers(a)});
+        assert.equal(response.statusCode,400,'current valid session cannot resume prior epoch chain');
+        assert.equal(response.json().error.code,'INVALID_CURSOR'); assert.equal(response.json().data,undefined);
+        const fresh = await app.inject({url:`/api/v1/catalog/${kind}?limit=1`,headers:headers(a)});
+        assert.equal(fresh.statusCode,200); assert.ok(fresh.json().data.next_cursor);
+        assert.equal((await app.inject({url:`/api/v1/catalog/${kind}?limit=1&cursor=${encodeURIComponent(fresh.json().data.next_cursor)}`,headers:headers(a)})).statusCode,200);
+      }
+    } finally {
+      await db.query('UPDATE sessions SET auth_epoch=$2 WHERE id=$1',[session.id,session.auth_epoch]);
+      await db.query('UPDATE users SET auth_epoch=$2 WHERE id=$1',[session.user_id,session.auth_epoch]);
+    }
+  });
   await t.test('same-key concurrent PUT once; different-key stale version loses; snapshot rows not rewritten', async () => {
     const author = (await db.query("INSERT INTO public_authors(display_name) VALUES('synthetic author') RETURNING id")).rows[0].id;
     const post = (await db.query('INSERT INTO posts(author_ref,current_revision) VALUES($1,1) RETURNING id',[author])).rows[0].id;

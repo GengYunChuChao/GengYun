@@ -2173,7 +2173,7 @@
         },
         {
           "path": "services/api/src/profile/service.ts",
-          "lines": "105-131"
+          "lines": "104-113"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
