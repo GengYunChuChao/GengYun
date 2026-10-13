@@ -62,7 +62,7 @@ Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频
 - 已有工程、鉴权、科普预览、参考页面和数据库等组件；完整业务链路尚未整项验收。
 - 新增[农药情景演示视频](docs/features/pesticide-demo-video.md)：模板合成、近期／十年／二十年，不要求真实效果预测；尚未实现。
 - [需求入口](docs/requirements.md) · [开发顺序](docs/development-order.md) · [当前进度](docs/development-progress.md)
-- [审查规范](docs/pr-review-policy.md)：每 4 小时覆盖全部开放 PR，按改动分层检查。
+- [PR 审查与作者自查规范](docs/pr-review-policy.md)：提交清单、分层验证、推荐重点、问题分级、证据复用、合并与 issue 关闭；其他审查者可按同一规范自查，每 4 小时覆盖全部开放 PR。
 - [详细参考与历史](docs/reference/README.md)：API、配置、数据、评估及原文档存档。
 
 真实密钥、个人原始媒体、Word 原稿、依赖与构建输出不提交。
