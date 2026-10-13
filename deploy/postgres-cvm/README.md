@@ -12,7 +12,7 @@
 >   **在账号边界/路径确定之前，不得创建任何资源。**
 > - **本机（写手环境）**：只做了 `bash -n`、**桩化回归**、Markdown/链接与行尾校验；本机**没有 PostgreSQL/Docker/云凭据**，
 >   所以本机**不能**产出"已部署"级证据。原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md) §1–§11。
-> - **已由监工在真实环境真跑（权威证据，全程无变通）**，并**按脚本 `sha256` 与 SHA `939670c` 绑定**（[evidence §12](evidence/local-self-check.md)）：
+> - **已由指挥在真实环境真跑**（在用户授权的目标 CVM 上；全程无变通；**监工尚未复核**），并**按脚本 `sha256` 与 SHA `939670c` 绑定**（[evidence §12](evidence/local-self-check.md)）：
 >   * 目标 CVM（Ubuntu 22.04 ／ 内网 `10.21.1.8` ／ 数据盘 `/dev/vdb → /data`）：
 >     `install-postgres.sh` **`INSTALL_EXIT=0`**；只监听 `127.0.0.1:5432` 与 `10.21.1.8:5432`；
 >     **收尾硬校验通过**；私密目录 `/etc/gengyun` = `drwxr-x--- root:postgres` 且 `postgres` **两级 `test -x` 通过**；
@@ -31,6 +31,8 @@
 >   交接方式见 [runbook.md](runbook.md) 第 2 节。**不要把口令贴进聊天、仓库、PR 或文档。**
 >
 > 关联：用户清单第 3 项；GitHub `Refs #27`（GY-I25，正式 AppID／真机域名／AI 与数据库服务接入的提前验证）。
+> **本 PR 为"数据库部署准备 + 真机证据"，`Refs #27` 但明确不关闭整项 #27**（`Closes/Fixes/Resolves` 均为 0）。
+> 执行者归属与"外部读者无法自核的部分"见 [evidence §13](evidence/local-self-check.md)。
 > 基线：`upstream/main` = `b1f6ab0e4dc304d2dd621d6a20852b31ccbfab3e`（2026-10-13 11:27:33 +0800）。
 
 ## 0 结构性前提：账号边界、目标形态与授权门禁
@@ -217,7 +219,7 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan    # 预期输出见 runbook
 | [conf/pg_hba.gengyun.conf](conf/pg_hba.gengyun.conf) | 客户端认证：仅回环 + VPC 网段，无 `0.0.0.0/0` | 否（模板） |
 | [conf/pg_ident.gengyun.conf](conf/pg_ident.gengyun.conf) | 系统用户 `postgres` → 数据库用户 `gengyun_cvm_owner` 映射 | 否（模板） |
 | [conf/gengyun-postgresql.service](conf/gengyun-postgresql.service) | 专用 systemd 单元（数据目录在持久盘） | 否（模板） |
-| [evidence/local-self-check.md](evidence/local-self-check.md) | 本地可做/不可做的自检原始输出；§4 为**外部真实 PG 17.11** 的复核证据 | 已有原始输出（外部部分由监工回传） |
+| [evidence/local-self-check.md](evidence/local-self-check.md) | 本地可做/不可做的自检原始输出；§4／§12 为**真机证据**（由指挥执行） | 已有原始输出（真机部分**由指挥执行并回传**；监工尚未复核） |
 | [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) | **外部复核用**：在"只有套接字、无 root/systemd"的环境里复现关键动作的等价命令（**不是部署路径**） | 文档（本单未执行） |
 
 > **传送到 CVM 时的行尾注意**：本目录的脚本/配置在 Git 索引里都是 **LF**（`git ls-files --eol` 显示

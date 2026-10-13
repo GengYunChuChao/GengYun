@@ -219,15 +219,16 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 - 需求 F13/AC23 的"注销后在线 7 日／备份 30 日内清理个人数据"是**逐用户删除语义**，
   `backup-postgres.sh` 的 30 天只是备份文件保留期，**两者不是同一件事**，后者属未交付项。
 
-## 6 真跑证据与本次返修（外部真实 PostgreSQL 17.11）
+## 6 真跑证据与本次返修（真实 PostgreSQL 17.11；**由指挥执行**）
 
-> **证据来源必须写清楚**：本节的真跑由**监工**在**本机真实 PostgreSQL 17.11**（官方 Windows 便携版，
+> **证据来源必须写清楚**：本节的真跑由**指挥**在**其本机真实 PostgreSQL 17.11**（官方 Windows 便携版，
 > 与 CI 的 `postgres:17.11` 同版本）上执行，**不是本单写手复现的**（本单写手无 PostgreSQL）。
-> 监工回传的原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md) §4。
+> 指挥回传的原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md) §4；
+> **监工尚未复核**这些真机结果（见该文件 §13）。
 
-### 6.1 监工返修前跑出的结果
+### 6.1 指挥返修前跑出的结果
 
-| 监工执行的内容 | 结果 |
+| 指挥执行的内容 | 结果 |
 | --- | --- |
 | 仓库 `services/api/db/migrations/*.sql`（10 个，按序 `psql -f`） | ✅ **10/10 成功**（含 `0007` 自建 `pgcrypto` —— 印证"不要预装扩展"的判断） |
 | 仓库 `services/api/db/roles/*.sql`（7 个） | ✅ **7/7 成功** |
@@ -266,7 +267,7 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | `20-login-roles.sql` 单独在"未建组"的库上执行 | 由存在性前置拦下，提示先跑 `provision-db.sh` | `exit≠0`（**不是**含糊的 role does not exist） |
 | `90-assert-least-privilege.sql` 单独在"未迁移/未引导"的库上执行 | 由前置自检拦下，打印三步补救指引 | `exit≠0`，且输出可操作 |
 
-### 6.4 第二轮外部复核（真实 PG 17.11，按返修版重跑）
+### 6.4 第二轮真机复核（真实 PG 17.11，按返修版重跑；**由指挥执行，监工尚未复核**）
 
 | 项 | 结果 | 判定 |
 | --- | --- | --- |
@@ -279,9 +280,9 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | **备份 `pg_dump -Fc` + `pg_restore --list`** | `exit=0`；dump 184.1 KB；TOC 条目 **415** | ✅ **真实 PG 已验证** |
 | **恢复第 1 次** | `createdb` → `pg_restore --exit-on-error` **`exit=0`** | ✅ **真实 PG 已验证** |
 | **恢复库上的权限继承** | 以 `gengyun_api_runtime` 身份查 `users` 返回 0 且**无权限错误** | ✅ 组角色继承与授权随 dump 重建成功 |
-| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但错误文本被复核者管道吞掉、未捕获；事后 schema 指标 source=restored=`40\|4\|0\|0` | ⚠️ **未解释、待复核（不得记通过）**；判读与定论命令见 [evidence §4.3.1](evidence/local-self-check.md) |
+| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但错误文本被指挥管道吞掉、未捕获；事后 schema 指标 source=restored=`40\|4\|0\|0` | ⚠️ **未解释、待复核（不得记通过）**；判读与定论命令见 [evidence §4.3.1](evidence/local-self-check.md) |
 
-复核者另确认：**上一条真缺陷（前置断言早于建角色）已确认修好**；
+指挥另确认：**上一条真缺陷（前置断言早于建角色）已确认修好**；
 库名守卫、5 组前置、口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
 并纠正了其上一轮的一条结论：重复跑 `roles/*.sql` 报"角色已存在"是**同集群复用**所致
 （角色 SQL 是裸 `CREATE ROLE`、设计上不 DROP 别人的角色），**不是缺陷**。
@@ -318,7 +319,7 @@ PASS 条件收紧为 **`exit=0` 且无 `ERROR:` 行**。
 
 | 项 | 状态 | 下一步 |
 | --- | --- | --- |
-| **恢复第 2 次的 `exit=1` 原因** | ⚠️ **未解释** | 复核者按 [evidence §4.3.1](evidence/local-self-check.md) 的命令**清库重跑**并保留 stderr；若 `exit=0` 且无 `ERROR:` ⇒ 归因"未清库"，本项即闭环 |
+| **恢复第 2 次的 `exit=1` 原因** | ⚠️ **未解释** | 指挥按 [evidence §4.3.1](evidence/local-self-check.md) 的命令**清库重跑**并保留 stderr；若 `exit=0` 且无 `ERROR:` ⇒ 归因"未清库"，本项即闭环 |
 | 目标 CVM 侧一切 | **未验证** | `install-postgres.sh` 的安装/initdb/持久盘/`listen_addresses`/`ss` 自检；`pg_hba`/`pg_ident` 生效；安全组；公网 5432 关闭；重启持久性；与云托管侧联调 |
 
 已由外部真实 PG 17.11 验证通过的项见 §6.4（A/B/C/D 四项 + 备份 `pg_dump`/TOC + 恢复第 1 次 + 权限继承）。

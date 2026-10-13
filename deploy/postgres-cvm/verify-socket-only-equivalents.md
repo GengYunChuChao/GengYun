@@ -8,7 +8,7 @@
 > - 当复核环境是"本机便携版 PostgreSQL、只有 AF_UNIX 套接字、没有 root/systemd、node-postgres 也连不上"
 >   时，用下面的命令**手工复现脚本的动作**，以取得可比的证据。
 > - 状态：技术准备物。**这些等价命令没有被本单写手执行过**（本机无 PostgreSQL）；
->   它们由外部复核者执行，原始输出由其回传。
+>   它们由**执行者**在其环境里执行（本单写手无 PostgreSQL，未复现），原始输出由其回传。
 > - **不要把这里的任何命令当作生产步骤**；也不要因为这里能跑就认为脚本已在 CVM 上验证。
 
 约定：下文的 `PSQL` / `PG_DUMP` / `PG_RESTORE` / `CREATEDB` / `DROPDB` 指你的 17.11 二进制；
@@ -58,7 +58,7 @@ $PSQL -v ON_ERROR_STOP=1 -tA -d assert_probe -f sql/90-assert-least-privilege.sq
 **判读**：最后一行 `ok` ⇒ 15 项断言全部通过（与有没有台账无关）。
 若出现 `FAIL: <标签> (<说明>)` ⇒ 按标签定位；若卡在硬前置 ⇒ 那是真的缺关系/缺角色。
 
-> 若复核者还想要"台账存在时的完整判据"（`verify-cvm-postgres.sh` 的 `migrations_applied`、
+> 若还想要"台账存在时的完整判据"（`verify-cvm-postgres.sh` 的 `migrations_applied`、
 > `restore-drill.sh` 的 `migration_versions`），那属于**目标 CVM 侧**的证据：
 > 在 CVM 上用 `DATABASE_URL=… node services/api/src/db/migrate.ts up` 应用迁移即会生成台账。
 > 本文件**不提供**"手工伪造台账"的做法——那会把不属于 `migrate.ts` 的写入带进库，
