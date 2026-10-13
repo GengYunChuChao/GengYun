@@ -147,6 +147,8 @@ $ bash deploy/postgres-cvm/restore-drill.sh
 exit=1
 
 # root 下的 --plan：会走到真正的检测逻辑并明确失败
+# 【注意】以下这段是本单在**网段变更之前**捕获的原始输出，按"不改写历史证据"的原则**原样保留**
+# （当时目标网段还是父账号的 10.20.0.0/16；变更后的复跑输出见本页 §6）
 $ wsl -u root -- bash deploy/postgres-cvm/install-postgres.sh --plan
 [install-postgres.sh][WARN] 发行版 ubuntu 26.04 不在 PGDG apt 已验证列表 (ubuntu 22.04/24.04, debian 12) 内，继续但请人工确认仓库可用。
 [install-postgres.sh][ERROR] 在 VPC 网段 10.20.0.0/16 内找到 0 个私网 IPv4（期望正好 1 个）：
@@ -477,3 +479,91 @@ bash install-postgres.sh --plan                                 # E（非 root �
 
 第 A–F 项不依赖 PostgreSQL，任何 POSIX 环境都能复现；
 一旦有了 PG17，这些命令的"未验证"部分才有条件补上（§4 的真跑即由监工在真实 PG 17.11 上完成）。
+
+## 6 网段变更执行记录：`10.20.0.0/16` → `10.21.0.0/16`（**用户授权、因选定方案 A**）
+
+**授权来源**：用户选定**方案 A**（在子账号 S 内建网），并**明确授权**做这处"四处同改"的 CIDR 变更
+（见 PR #114 正文与 [README.md](../README.md) §0.4／§0.5）。**依据**：原目标网段属父账号 P，
+方案 A 的设备将位于子账号 S 内新建的 VPC ⇒ 目标网段必须换成**不与 `10.20.0.0/16` 重叠**的 `10.21.0.0/16`。
+
+### 6.1 改动清单（精确到行，改后行号）
+
+| # | 文件 | 改动 |
+| --- | --- | --- |
+| 1 | `install-postgres.sh` | **第 10–11 行**头部说明改为方案 A + 保留父账号 VPC 为历史；**第 51 行** `VPC_CIDR='10.21.0.0/16'`；**第 52/53 行** `VPC_NAME`/`VPC_ID` 改为方案 A 表述；**第 152–155 行**失败提示改为"加入方案 A 目标 VPC 的对应子网"；**第 159 行**"安全组"改"入站规则/安全组/防火墙"；**第 514 行**收尾提示改为「标准 CVM 看安全组／Lighthouse 看实例防火墙」。**第 134–140／149／158 行**是网段匹配逻辑（**按 `^10\.21\.` 即 VPC /16 前缀**，见 §6.3）——**未改** |
+| 2 | `conf/pg_hba.gengyun.conf` | **第 8–10 行**注释补 Lighthouse 防火墙等同安全组、**只控入流量**；**第 14–16 行**三者一致表改为目标网段 `10.21.0.0/16` + 入站规则；**第 32／34／38 行**三条规则 `10.20.0.0/16` → `10.21.0.0/16`；两条区段注释改"目标网段" |
+| 3 | `conf/10-gengyun-postgres.conf` | **第 12 行** `@VPC_PRIVATE_IP@` 说明改为目标 VPC(`10.21.0.0/16`)；**第 16／18 行**网络姿态注释改为「入站规则（安全组／防火墙）」 |
+| 4 | `verify-cvm-postgres.sh` | **第 8–10 行**前置注释改为方案 A（保留历史）；**第 14 行**示例 `--remote-host 10.21.1.9`；**第 40 行** `VPC_CIDR='10.21.0.0/16'`；**第 41 行** `VPC_PREFIX='10.21'`；**第 148 行**断言 `address = '10.21.0.0'`；**第 276/277 行**两项 `manual` 改为「入站规则（安全组／Lighthouse 防火墙）」与「方案 A 的 VPC」（标签同步改为 `ingress_5432_source`／`cvm_in_target_vpc`，全库无其他引用） |
+| 5 | 文档 | `README.md`（§0.4 选中方案 A、§0.5 重写为"已完成的变更记录+将来再改步骤"、§2.1／§2.2 目标网段、**新增 §2.5 Lighthouse 差异**、§4 P0b/P1/P4/P5、§6 新增第 9 条、§7 第 0 步）、`runbook.md`（§0 目标形态+`--plan` 预期输出+检查表、§1 角色表、§3 输出示例与入站规则、§6 U0e/U1/U3、§7 新增一行）、`verify-checklist.md`（§0、§3、§4、§9、§10） |
+| 6 | 保留（**未改**） | 父账号 P 的 `10.20.0.0/16` 作为**历史记录**保留在 `README.md` §0.1／§0.2／§0.4、`runbook.md` §0、`verify-checklist.md` §0、`install-postgres.sh` 第 10/11/51 行注释、`verify-cvm-postgres.sh` 第 10 行注释；本页 §2.D 的**历史原始输出**也原样保留 |
+
+### 6.3 同批补充：目标 VPC 下有**两个子网**（对四处 CIDR 变更**无影响**）
+
+**用户补充（2026-10-13）**：子账号 S 内 VPC `10.21.0.0/16` 下建**两个子网** ——
+`10.21.0.0/24 @ ap-shanghai-1` 与 `10.21.1.0/24 @ ap-shanghai-2`（名称用户所定，ID 待回传）。
+
+**关键判据（写入 [README.md](../README.md) §2.6）**：四处 CIDR 用的是 **VPC 网段 `10.21.0.0/16`**，
+**天然覆盖两个子网** ⇒ **5432 来源规则仍写 `10.21.0.0/16`**，
+**不需要**因"多了一个子网"而扩大或改写这四处；**也不新建第二套配置/第二份 `pg_hba`**。
+
+**点 3 的核实（`--plan` 是否按 /24 匹配？）—— 已核：按 VPC /16 前缀匹配，与选哪个子网无关**：
+
+```console
+$ grep -n "VPC_PREFIX=\|only-/16\|grep -E \"\^\${VPC_PREFIX\|VPC_PRIVATE_IP\" =~" deploy/postgres-cvm/install-postgres.sh
+134:readonly VPC_PREFIX="$(
+136:  [[ "${VPC_CIDR##*/}" == '16' ]] || { printf 'only-/16' ; exit 0; }
+140:  [[ "$VPC_PREFIX" == 'only-/16' ]] && fail "本脚本的网段判定只实现 ${VPC_CIDR} 这种 /16 形式，当前值无法判定。"
+149:      | grep -E "^${VPC_PREFIX//./\\.}\." | sort -u
+158:[[ "$VPC_PRIVATE_IP" =~ ^${VPC_PREFIX//./\\.}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] \
+```
+
+判读：`VPC_PREFIX` 由 `VPC_CIDR` 取**前两段**（`10.21`），网卡筛选与地址校验都用 **`^10\.21\.`**
+⇒ **`10.21.0.x`（子网 A）与 `10.21.1.x`（子网 B）都能通过**；脚本**没有**任何 `/24` 匹配逻辑。
+`verify-cvm-postgres.sh` 同理（第 41 行 `VPC_PREFIX='10.21'`）。**因此无需改脚本逻辑**（也按要求未改）。
+
+另注：该实现**只支持 /16**；若把 `VPC_CIDR` 改成 `/24`，脚本会在**第 140 行明确失败**（刻意保护）。
+
+**两条落地约束（写入 README §2.6 与 runbook §0/§1）**：
+① 一台服务器只在一个可用区的一个子网内；
+② 云托管「服务设置 → 私有网络」只能选**一个**子网，选哪个都通（同 VPC 内跨子网可路由），建议选 DB 服务器所在子网。
+
+**未做**（按指令）：没有把 `VPC_CIDR` 环境变量化、没有其他重构。
+
+### 6.2 改后复跑（本机真实输出，root）
+
+```console
+### bash -n ×5
+  backup-postgres.sh         : OK
+  install-postgres.sh        : OK
+  provision-db.sh            : OK
+  restore-drill.sh           : OK
+  verify-cvm-postgres.sh     : OK
+
+### 脚本内常量
+deploy/postgres-cvm/install-postgres.sh:51:readonly VPC_CIDR='10.21.0.0/16'   # 方案 A：子账号 S 内新建的 VPC；与父账号 gengyun-vpc 的 10.20.0.0/16 不重叠
+deploy/postgres-cvm/verify-cvm-postgres.sh:40:readonly VPC_CIDR='10.21.0.0/16'
+deploy/postgres-cvm/verify-cvm-postgres.sh:41:readonly VPC_PREFIX='10.21'
+
+### pg_hba 三行
+32:host        @DB_NAME@   gengyun_cvm_owner       10.21.0.0/16        scram-sha-256
+34:host        @DB_NAME@   gengyun_api_runtime     10.21.0.0/16        scram-sha-256
+38:host        all         all                     10.21.0.0/16        reject
+
+### install-postgres.sh --plan（root；本机网卡不在 10.21.0.0/16 ⇒ 预期明确失败，**不是通过**）
+[install-postgres.sh][WARN] 发行版 ubuntu 26.04 不在 PGDG apt 已验证列表 (ubuntu 22.04/24.04, debian 12) 内，继续但请人工确认仓库可用。
+[install-postgres.sh][ERROR] 在 VPC 网段 10.21.0.0/16 内找到 0 个私网 IPv4（期望正好 1 个）：
+         候选：（无）
+         请确认该 CVM 已加入 方案 A 目标 VPC（子账号 S 内新建，名称待用户确定） 的对应子网（VPC ID：待用户在子账号 S 内创建后填写），
+         或显式设置 GENGYUN_VPC_PRIVATE_IP=<该 CVM 的私网 IPv4>。
+plan_exit=1
+```
+
+**如何判读 `--plan`（**不得误判为通过**）**：
+
+| 场景 | 输出特征 | 结论 |
+| --- | --- | --- |
+| 服务器在 `10.21.0.0/16` 内 | 无 `[ERROR]`；`[PLAN]` 里出现 `listen_addresses=127.0.0.1,10.21.x.y` | **计划可用**，可以执行真安装 |
+| 服务器不在该网段（**本例**：本机 WSL 网卡是 `172.x`） | `[ERROR] 在 VPC 网段 10.21.0.0/16 内找到 0 个私网 IPv4`，退出码 **1** | **失败、不是通过**——脚本在拒绝"把 PG 装到目标网段之外"；处置见 [runbook.md](../runbook.md) §0 |
+
+> 本机（WSL）**不可能**通过这条前置（它的网卡不在 `10.21.0.0/16`），所以本页记录的是**预期失败**；
+> 这也正是"**脚本完成 ≠ 通过**"的实例：**唯一的通过证据必须来自目标 CVM 上的真实复跑**。

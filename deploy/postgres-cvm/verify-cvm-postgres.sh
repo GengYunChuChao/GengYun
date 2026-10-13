@@ -5,12 +5,13 @@
 # 状态：技术准备物。**未部署、未验收、未在任何真实 CVM/PG 实例上执行过。**
 #       只有资源就绪并真正运行本脚本、保留原始输出后，才有“验证证据”可谈。
 #
-# 前置：CVM 已创建并加入 VPC gengyun-vpc(10.20.0.0/16)，install-postgres.sh 已执行，
-#       迁移已执行，provision-db.sh 已执行。
+# 前置：CVM 已创建并加入【方案 A】子账号 S 内新建的 VPC（10.21.0.0/16，即目标网段），
+#       install-postgres.sh 已执行，迁移已执行，provision-db.sh 已执行。
+#       （历史：原目标曾是父账号 P 的 gengyun-vpc / vpc-h33f1h5a / 10.20.0.0/16，现不用于本路线。）
 #
 # 用法：
 #   sudo ./verify-cvm-postgres.sh
-#   sudo ./verify-cvm-postgres.sh --remote-host 10.20.1.9
+#   sudo ./verify-cvm-postgres.sh --remote-host 10.21.1.9
 #       # 额外从同 VPC 的另一台机测 TCP（在本机执行 nc/psql 探针）
 #   sudo ./verify-cvm-postgres.sh --runtime-password-env GENGYUN_API_RUNTIME_PASSWORD
 #       # 额外做运行时的真实 TCP + scram 登录（口令经环境变量注入，不进 argv）
@@ -36,8 +37,8 @@ readonly PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
 readonly PGHOST_SOCKET='/var/run/postgresql'
 readonly DB_OWNER='gengyun_cvm_owner'
 readonly RUNTIME_ROLE='gengyun_api_runtime'
-readonly VPC_CIDR='10.20.0.0/16'
-readonly VPC_PREFIX='10.20'
+readonly VPC_CIDR='10.21.0.0/16'
+readonly VPC_PREFIX='10.21'
 
 DB_NAME="${GENGYUN_DB_NAME:-gengyun}"
 PGPORT="${GENGYUN_PGPORT:-5432}"
@@ -144,7 +145,7 @@ report_eq 'hba_parse_errors' '0' "$(qs 'SELECT count(*) FROM pg_hba_file_rules W
 report_eq 'hba_no_default_route' '0' \
   "$(qs "SELECT count(*) FROM pg_hba_file_rules WHERE netmask = '0.0.0.0' OR address IN ('0.0.0.0','::')")"
 report_ge 'hba_vpc_rules' '2' \
-  "$(qs "SELECT count(*) FROM pg_hba_file_rules WHERE address = '10.20.0.0' AND netmask = '255.255.0.0'")"
+  "$(qs "SELECT count(*) FROM pg_hba_file_rules WHERE address = '10.21.0.0' AND netmask = '255.255.0.0'")"
 report_eq 'ident_file' "${PGDATA_DIR}/pg_ident.conf" "$(qs 'SHOW ident_file')"
 report_eq 'ident_map_rows' '1' "$(qs 'SELECT count(*) FROM pg_ident_file_mappings')"
 
@@ -272,8 +273,8 @@ fi
 # ---------------------------------------------------------------------------
 # 11. 仅用户可在控制台核对 / 必须由用户提供的项
 # ---------------------------------------------------------------------------
-manual 'security_group_5432_source' "控制台确认 CVM 安全组入站 5432 来源仅为 ${VPC_CIDR}，无 0.0.0.0/0（脚本无云凭据，无法核对）"
-manual 'cvm_in_vpc_gengyun-vpc' '控制台确认该 CVM 所属 VPC 为 gengyun-vpc(vpc-h33f1h5a)，地域 ap-shanghai'
+manual 'ingress_5432_source' "控制台确认**入站规则**（标准 CVM=安全组；轻量应用服务器 Lighthouse=实例防火墙）5432 来源仅为 ${VPC_CIDR}，无 0.0.0.0/0（脚本无云凭据，无法核对；官方：Lighthouse 防火墙只控入流量、来源默认为 0.0.0.0/0）"
+manual 'cvm_in_target_vpc' '控制台确认该 CVM 所属 VPC 为【方案 A】子账号 S 内新建的 VPC（10.21.0.0/16），地域 ap-shanghai'
 manual 'cloud_disk_attached' "控制台确认 ${PGDATA_DIR} 所在云硬盘是独立云硬盘并有快照/续费策略"
 manual 'runtime_password_handoff' '运行时的 DATABASE_URL 口令只经私密通道交接，不进聊天/仓库/PR/文档'
 manual 'restore_drill_output' 'restore-drill.sh 的原始输出（未执行则不得声称恢复可用）'

@@ -7,7 +7,8 @@
 #       因此“脚本存在”不等于“已安装”。证据见 evidence/local-self-check.md。
 #
 # 目标形态（不可自行变更）：
-#   腾讯云 同账号 · ap-shanghai · VPC gengyun-vpc(vpc-h33f1h5a, 10.20.0.0/16) 下的 CVM
+#   腾讯云 · ap-shanghai · 【方案 A（用户已选定）】在子账号 S 内新建的 VPC（10.21.0.0/16）下的 CVM
+#   （历史：原目标曾是父账号 P 的 gengyun-vpc(vpc-h33f1h5a, 10.20.0.0/16)；该 VPC 现**不用于本路线**，保留不动）
 #   PostgreSQL 17.11（与 .github/workflows/*postgres*.yml 的 postgres:17.11 /
 #   postgres:17 主版本一致；本脚本只装 17.11，不升级也不降级主版本）
 #   数据目录落在独立持久云硬盘，重启后仍在
@@ -47,9 +48,9 @@ readonly CONF_DIR="${SCRIPT_DIR}/conf"
 readonly PG_MAJOR='17'
 readonly PG_MINOR='11'
 readonly PG_BIN="/usr/lib/postgresql/${PG_MAJOR}/bin"
-readonly VPC_CIDR='10.20.0.0/16'
-readonly VPC_NAME='gengyun-vpc'
-readonly VPC_ID='vpc-h33f1h5a'
+readonly VPC_CIDR='10.21.0.0/16'   # 方案 A：子账号 S 内新建的 VPC；与父账号 gengyun-vpc 的 10.20.0.0/16 不重叠
+readonly VPC_NAME='方案 A 目标 VPC（子账号 S 内新建，名称待用户确定）'
+readonly VPC_ID='待用户在子账号 S 内创建后填写'
 readonly REGION='ap-shanghai'
 readonly DB_OWNER='gengyun_cvm_owner'
 readonly RUNTIME_ROLE='gengyun_api_runtime'
@@ -150,11 +151,12 @@ else
   [[ "${#_ip_candidates[@]}" -eq 1 ]] || fail \
     "在 VPC 网段 ${VPC_CIDR} 内找到 ${#_ip_candidates[@]} 个私网 IPv4（期望正好 1 个）：
          候选：${_ip_candidates[*]:-（无）}
-         请确认该 CVM 已加入 ${VPC_NAME}(${VPC_ID})，或显式设置 GENGYUN_VPC_PRIVATE_IP。"
+         请确认该 CVM 已加入 ${VPC_NAME} 的对应子网（VPC ID：${VPC_ID}），
+         或显式设置 GENGYUN_VPC_PRIVATE_IP=<该 CVM 的私网 IPv4>。"
   VPC_PRIVATE_IP="${_ip_candidates[0]}"
 fi
 [[ "$VPC_PRIVATE_IP" =~ ^${VPC_PREFIX//./\\.}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] \
-  || fail "私网 IPv4 ${VPC_PRIVATE_IP} 不在 VPC 网段 ${VPC_CIDR} 内，拒绝继续（会导致 listen_addresses 与安全组不一致）。"
+  || fail "私网 IPv4 ${VPC_PRIVATE_IP} 不在 VPC 网段 ${VPC_CIDR} 内，拒绝继续（会导致 listen_addresses 与入站规则/安全组/防火墙不一致）。"
 readonly VPC_PRIVATE_IP
 
 CVM_HOSTNAME="$(hostname -s 2>/dev/null || echo 'unknown')"
@@ -509,7 +511,8 @@ cat <<EOF
 尚未完成（本脚本不做，顺序不可颠倒）：
   1) 迁移：以 ${DB_OWNER} 执行 services/api/src/db/migrate.ts up（见 roles-and-migration.md）
   2) 角色引导：迁移完成后再跑 ./provision-db.sh
-  3) 安全组核对：控制台确认 5432 只对 ${VPC_CIDR} 放行（脚本无云凭据，无法核对）
+  3) 入站规则核对：**标准 CVM 看安全组／轻量应用服务器(Lighthouse) 看实例防火墙**——
+     确认 5432 只对 ${VPC_CIDR} 放行（脚本无云凭据，无法核对）
   4) 持久性验证与验收：见 verify-checklist.md（含重启后核对）
 
 持久存储自证（重启后执行，两次输出必须一致）：
