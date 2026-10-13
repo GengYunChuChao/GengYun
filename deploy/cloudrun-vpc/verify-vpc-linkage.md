@@ -6,12 +6,12 @@
 
 ## 0 通用规则（先读）
 
-- **凭据只私密交接**：只放在仓库外私密目录（本仓库既有约定为 `E:\GengYunPrivate`，关闭继承、仅当前用户与 SYSTEM）。**不得**把 SecretId/SecretKey/SessionToken、数据库口令、真实账号 UIN 之外的隐私信息写入聊天、本仓库、PR 或任何文档。
+- **凭据只私密交接**：只放在仓库外私密目录（本仓库既有约定为 `E:\GengYunPrivate`，关闭继承、仅当前用户与 SYSTEM）。**可入库 / 不入库**的完整清单见 [README.md](README.md) §0「标识口径」；**不入库** = 账号 ID / UIN、SecretId/SecretKey/SessionToken、数据库口令与凭据、资源私网 IP、原始响应、截图原图。
 - **只读优先**：本阶段只做 `Describe*`/`Get*` 类读操作与 `env:list`/`service:list` 类查询；**不创建、不修改、不删除、不购买、不发布版本**。
 - **不扩权**：不为核验新建管理员策略；若需只读凭据，由用户在自己的腾讯云账号下建**受限子账号**并只授读动作（候选：`DescribeVpcs`、`DescribeSubnets`、`DescribeSecurityGroups`、`DescribeSecurityGroupPolicies`、`DescribeVpcPeeringConnections`、`GetCallerIdentity`），凭据按上面规则私密交接。
 - **真实动作名与参数以官方 API 文档为准**：本文给出的动作名按官方文档常见命名书写，**除第 2 节"命令可核性"表注明"已核对"者外均未逐条核对**；执行前请对照[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 与 [腾讯云 API 中心](https://cloud.tencent.com/document/api)（在其中确认安全凭证服务 / STS 的动作页）核对动作名、`Version`、`Region` 与参数名，**不要凭本文猜测参数**。
 - **不推断控制台链接里的地域数字**：官方自查指南给出的对等连接链接含 `rid=4`，本文**不**把 `rid=4` 断言为上海；请登录控制台后**手动把地域切到上海**再查看。地域取值一律以 `ap-shanghai` 这类官方代码为准（[地域列表](https://cloud.tencent.com/document/api/215/15758)）。
-- **账号 ID 只留在私密目录**：把 UIN、实例 ID、内网 IP 等记录到私密文件，文档/PR 里只写"是否一致"的结论与判定依据。
+- **标识口径见 [README.md](README.md) §0「标识口径」（2026-10-13 统一，取代此前含糊的"实例 ID 也不入库"）**：**不入库** = 账号 ID / UIN、SecretId/SecretKey/SessionToken、数据库口令与凭据、**资源私网 IP**、原始响应、截图原图；**可入库** = VPC ID、子网 ID、CIDR、环境 ID、服务 / 版本名、计数与状态；**默认不入库** = CVM / 安全组等资源实例 ID。文档 / PR 里只写结论与判定依据。
 - 本目录不含可执行文件，CI 不运行其中任何命令。
 
 ## 1 路径 A：用户本人执行（控制台，无需凭据交接）
@@ -268,7 +268,7 @@ tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <
 ## 4 核验记录应写到哪
 
 - **结论层**（可入仓库）：判定项 ①–⑤ 的"是/否/待确证"结论、实际观察到的**提示文案**、错误码、命令退出码、执行日期与基线 SHA。
-- **事实层**（不入仓库）：UIN、SecretId/SecretKey/SessionToken、数据库口令、实例 ID、内网 IP、截图原图 → 全部落在私密目录，仓库只引用其**存在性**与文件名占位。
+- **事实层**（按 [README.md](README.md) §0「标识口径」不入库）：账号 ID / UIN、SecretId/SecretKey/SessionToken、数据库口令、**资源私网 IP**、原始响应、截图原图 → 全部落在私密目录，仓库只引用其**存在性**与文件名占位。**CVM / 安全组等资源实例 ID 按"默认不入库"处理；本目录当前未写入任何此类 ID。**
 
 ## 5 本文件明确不做的事
 
