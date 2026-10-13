@@ -87,7 +87,13 @@
 
 镜像里用 `node` 直接跑 `services/api/src/server.ts`：**模块解析与模块顶层的文件读取都发生在启动期**，
 因此镜像必须包含「入口 import 闭包」里全部仓库内文件。按静态 `import`／`export … from`／副作用 `import`／
-动态 `import()` 与 `new URL(…, import.meta.url)` 读取逐层遍历（入口 `services/api/src/server.ts`，闭包内 57 个文件），结论：
+动态 `import()` 与 `new URL(…, import.meta.url)` 读取逐层遍历（入口 `services/api/src/server.ts`），结论：
+
+- 闭包内文件数：**63**（在 main `769420ae2f46166d651823a86af687456f3c75e3` 的合成树上重跑；该版本含上游 GY-I01
+  的 `services/api/src/jobs/**` 与 `app.ts` 变更——**合并后重跑本检查仍是 `IMPORT_OK`**）。
+- 闭包内 `services/api` 之外的文件只有 `packages/privacy/{constants,errors,guard}.mjs`；
+  运行期 `new URL(…, import.meta.url)` 读取只有 `packages/knowledge/catalog/{crops.json,regions-zhejiang.json}`；
+  外部包只有 `fastify`、`pg`。
 
 | 仓库路径 | 是否需要进镜像 | 依据 |
 | --- | --- | --- |
