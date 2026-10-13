@@ -139,7 +139,8 @@ npm run start --workspace @gengyun/api
 
 后台发布 `apps/admin/dist` 静态产物；API 发布包需包含源码、依赖与迁移文件。
 `prepare-wechat release` 只产生关闭网络的准备副本，不能直接当比赛发布。
-TODO：选定实际部署平台、合法域名／备案方案、发布配置、小程序发布步骤、全库恢复及进程托管实测。没有已验证的一键生产部署命令；合并不触发部署。
+部署路线（用户 2026-10-12 直接选定）：微信云托管跑现有 Fastify API，上海 CVM 跑 PostgreSQL 17.11；保留独立 HTTP API 与现有 PostgreSQL 数据模型。准备物、首次部署顺序与 Runbook 见[云托管部署准备](../deploy/cloudrun/README.md)，**本次未部署**。
+仍 TODO：合法域名／备案方案、发布配置、小程序发布步骤、全库恢复及进程托管实测。没有已验证的一键生产部署命令；合并不触发部署。
 
 ### 6.1 VPC 互联前置（云托管 → 腾讯云 VPC）
 
