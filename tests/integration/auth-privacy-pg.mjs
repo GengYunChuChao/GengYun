@@ -144,7 +144,10 @@ try {
   await expectError('/test-only/consent-read', a.token, 403, 'CONSENT_REQUIRED');
   say('no consent and epoch-zero never-granted records do not authorize');
   const initial = await fixture(a);
-  await fixture(a, 'media_processing');
+  const recent = await fixture(a, 'media_processing');
+  // Freeze distinct creation instants so ordering cannot accidentally pass by random UUID.
+  await owner.query('UPDATE consent_records SET granted_at=$2 WHERE id=$1', [initial.id, '2026-10-01T00:00:00Z']);
+  await owner.query('UPDATE consent_records SET granted_at=$2 WHERE id=$1', [recent.id, '2026-10-02T00:00:00Z']);
   await fixture(b);
   const read = await request('/test-only/consent-read', a.token);
   assert.equal(read.status, 200, JSON.stringify(read.body));
@@ -152,6 +155,7 @@ try {
   const page = await request('/me/consents?limit=1', a.token);
   assert.equal(page.status, 200); assert.equal(page.headers.get('cache-control'), 'no-store');
   assert.equal(page.body.data.items.length, 1); assert.ok(page.body.data.next_cursor);
+  assert.equal(page.body.data.items[0].id, recent.id);
   const next = await request(`/me/consents?limit=1&cursor=${page.body.data.next_cursor}`, a.token);
   assert.equal(next.body.data.items.length, 1); assert.equal(next.body.data.next_cursor, null);
   assert.notEqual(next.body.data.items[0].id, page.body.data.items[0].id);
@@ -160,8 +164,21 @@ try {
   assert.notEqual(own.body.data.items[0].id, initial.id);
   assert.ok(!JSON.stringify(page.body).includes('user_id'));
   await expectError('/me/consents?cursor=invalid', a.token, 400, 'INVALID_CURSOR');
+  await expectError(`/me/consents?cursor=${page.body.data.next_cursor}`, b.token, 400, 'INVALID_CURSOR');
+  await expectError(`/me/consents?cursor=${Buffer.from(recent.id).toString('base64url')}`, a.token, 400, 'INVALID_CURSOR');
+  const [encoded, signature] = page.body.data.next_cursor.split('.');
+  const corruptCursor = `${encoded}.${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+  await expectError(`/me/consents?cursor=${corruptCursor}`, a.token, 400, 'INVALID_CURSOR');
+  const value = JSON.parse(Buffer.from(encoded, 'base64url'));
+  value.expires = Date.now() - 1;
+  const staleBody = Buffer.from(JSON.stringify(value)).toString('base64url');
+  const staleSignature = createHmac('sha256', signingKey).update(`consent-list/v1\n${staleBody}`).digest('base64url');
+  await expectError(`/me/consents?cursor=${staleBody}.${staleSignature}`, a.token, 400, 'INVALID_CURSOR');
+  // A DTO version change keeps the row/epoch consistent but invalidates the old list watermark.
+  await owner.query('UPDATE consent_records SET revision=revision+1 WHERE id=$1', [recent.id]);
+  await expectError(`/me/consents?cursor=${page.body.data.next_cursor}`, a.token, 400, 'INVALID_CURSOR');
   await expectError('/me/consents?limit=51', a.token, 400, 'INVALID_REQUEST');
-  say('reference guard consumes authenticated PG identity; paginated consent DTOs are owner-scoped');
+  say('reference guard consumes authenticated PG identity; consent cursor is signed/owner-bound, sorted by granted_at/id DESC, rejects expired/changed snapshot/legacy cursor');
   await expectError('/me/consents/external_inference', a.token, 428, 'REVISION_REQUIRED', { method: 'DELETE', headers: { 'idempotency-key': 'missing-revision' } });
   await expectError('/me/consents/external_inference', a.token, 400, 'IDEMPOTENCY_KEY_REQUIRED', { method: 'DELETE', headers: { 'if-match': '"1"' } });
   await expectError('/me/consents/external_inference', a.token, 409, 'REVISION_CONFLICT', deletion('wrong-revision', 2));
