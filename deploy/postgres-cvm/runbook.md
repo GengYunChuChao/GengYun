@@ -86,7 +86,7 @@
 | 拿到基线 | `git rev-parse HEAD` | 记录实际 SHA（部署与 PR 必须同一 SHA） |
 | OS 与发行版 | `. /etc/os-release; echo "$ID $VERSION_ID"` | `ubuntu 22.04` / `ubuntu 24.04` / `debian 12`（否则停下来决策，见 [README.md](README.md) 前置 P2） |
 | 数据盘已挂载 | `df -P -- /data` | 设备是云硬盘（不是 `/`） |
-| 私密文件权限 | `stat -c '%a %U:%G' /etc/gengyun/private/db-credentials.env` | `600 root:postgres` |
+| 私密文件权限 | `stat -c '%a %U:%G' /etc/gengyun/private/db-credentials.env` | `600 root:root`（脚本以 root 读取；**不要**在装包前 `chown root:postgres`——那时 postgres 组还不存在） |
 | 时间同步 | `timedatectl status` | 已同步（影响备份文件名/审计） |
 
 **先干跑一遍**：`sudo deploy/postgres-cvm/install-postgres.sh --plan`。它会解析版本、检测私网 IP、
@@ -155,13 +155,17 @@
 2. 在目标 CVM 上落成私密文件，**不要**贴在聊天里、**不要**提交：
 
    ```bash
-   sudo install -d -o root -g postgres -m 0750 /etc/gengyun/private
-   sudo install -o root -g postgres -m 0600 /dev/null /etc/gengyun/private/db-credentials.env
+   # 【返修 8】在装 PG 包**之前**不要引用 postgres 组/用户 —— 它们由 postgresql-17 的 postinst 创建，
+   # 此刻还不存在（旧写法 `-g postgres` 会以 invalid group 中止）。私密文件由本脚本以 root 读取，
+   # 因此用 root:root 0600 就够；需要 postgres 访问的是 initdb 的**临时**口令文件，
+   # 而私密**目录**的属组会由 install-postgres.sh 在装包之后自动 chgrp 为 postgres。
+   sudo install -d -o root -g root -m 0750 /etc/gengyun/private
+   sudo install -o root -g root -m 0600 /dev/null /etc/gengyun/private/db-credentials.env
    sudo tee /etc/gengyun/private/db-credentials.env >/dev/null <<'EOF'
    GENGYUN_DB_OWNER_PASSWORD=<粘贴在这里>
    GENGYUN_API_RUNTIME_PASSWORD=<粘贴在这里>
    EOF
-   sudo chown root:postgres /etc/gengyun/private/db-credentials.env
+   sudo chown root:root /etc/gengyun/private/db-credentials.env
    sudo chmod 0600 /etc/gengyun/private/db-credentials.env
    ```
 
@@ -182,6 +186,34 @@ SCRAM 校验值再发送，本交付**未接线**（见 [README.md](README.md) �
 sudo deploy/postgres-cvm/install-postgres.sh --plan    # 零改动，先看计划
 sudo deploy/postgres-cvm/install-postgres.sh           # 幂等，可重复执行
 ```
+
+#### ⚠️ 怎么**正确**取退出码（否则会得到"假成功"）
+
+`exit 0` 是本脚本的**承诺**：它只会在收尾硬校验（`PG_VERSION`、单元 active、`pg_isready`、业务库可查询）**全部通过**后返回 0；
+任一环节失败都会**非零退出**。但**你的调用方式会决定 `$?` 是谁的**：
+
+```bash
+# ✅ 正确：直接取脚本退出码
+sudo deploy/postgres-cvm/install-postgres.sh; echo "INSTALL_EXIT=$?"
+
+# ✅ 正确：要留日志又要真退出码（两种都行）
+sudo deploy/postgres-cvm/install-postgres.sh > /tmp/install.log 2>&1; echo "INSTALL_EXIT=$?"
+( set -o pipefail; sudo deploy/postgres-cvm/install-postgres.sh 2>&1 | tee /tmp/install.log ); echo "INSTALL_EXIT=$?"
+
+# ❌ 错误：管道里的 $? 是**末位命令**的（tee/tail/head 通常返回 0）⇒ 看起来"成功"
+sudo deploy/postgres-cvm/install-postgres.sh 2>&1 | tee /tmp/install.log; echo "INSTALL_EXIT=$?"   # ← 这会骗你
+```
+
+> **这就是"失败却 exit=0"最常见的来源**：把输出接进 `tee`/`tail` 再看 `$?`。
+> 若你在自动化里用了管道，请务必 `set -o pipefail` 或改用 `${PIPESTATUS[0]}`。
+
+#### 关于 `postgres` 用户/组（**返修 8**）
+
+- 私密**目录**在装包前由脚本以 **`root:root` 0750** 创建；**装包后**脚本会断言
+  `postgres` 用户/组确实由 `postgresql-17` 包创建，并把它 `chgrp` 为 `postgres`
+  （目录是 0750，`postgres` 必须能"穿过"它才能读 initdb 的临时口令文件）。
+- **不要**自己 `groupadd`/`useradd` 造 PG 运行身份（那是绕过、会与发行版包的行为不一致）；
+  脚本也**不会**这么做——它只断言存在，不存在就明确失败并给出排查命令。
 
 期望结尾包含：
 

@@ -405,7 +405,7 @@ ls -d /data/gengyun/pgdata/base          # 数据目录结构仍在
 | P5 | 云托管侧（CloudBase/云托管）与目标 VPC 的**内网直连** | **未核实**；路径 B 下**官方依据"未找到"**（§0.3）；**路径 A 下也要求 PG 所在服务器在目标 VPC 内**（§2.5） | 后端连不到内网库时只能走公网，与"仅内网可达"的目标冲突 |
 | P6 | 子账号 S 的**（只读）凭据**，或由用户在子账号 S 控制台内操作 | **需用户提供** | 我们只有父账号 P 的只读视角；**对子账号 S 名下 VPC/CVM/入站规则没有视角**，无法核对与验证 |
 | P7 | `gengyun_cvm_owner` / `gengyun_api_runtime` 两个口令**已按私密方式交接**到目标主机 | **未交接** | 口令是脚本的必需输入（无口令即拒绝运行）；口令不得进聊天/仓库/PR/文档 |
-| P8 | 私密文件位（`/etc/gengyun/private/db-credentials.env`，`0600`）已就位 | 未创建 | `install-postgres.sh` / `provision-db.sh` 从这里读取口令 |
+| P8 | 私密文件位（`/etc/gengyun/private/db-credentials.env`，`0600 root:root`）已就位 | 未创建 | `install-postgres.sh` / `provision-db.sh` 以 **root** 读取它；**不要**在装包前 `chown root:postgres`（那时 postgres 组还不存在 —— 见 [runbook.md](runbook.md) §2 的返修 8 说明） |
 
 另有几个**技术待决项**（见第 6 节）：是否要求 PG 侧 TLS、是否需要 PITR、备份落点、
 注销"备份 30 日"逐用户删除的实现，都不在本交付范围内。
@@ -476,9 +476,11 @@ ls -d /data/gengyun/pgdata/base          # 数据目录结构仍在
 #    入站规则：标准 CVM 用安全组；若确用 Lighthouse 则用其实例防火墙（来源需手动收紧）
 #    脚本侧网段变更本次已由用户授权完成（§0.5），无需再改
 
-# 0.5) 把两个口令放进私密文件（0600），不要进聊天/仓库
-sudo install -d -o root -g postgres -m 0750 /etc/gengyun/private
-sudo install -o root -g postgres -m 0600 /dev/null /etc/gengyun/private/db-credentials.env
+# 0.5) 把两个口令放进私密文件（0600 **root:root**），不要进聊天/仓库
+#      【返修 8】不要在装 PG 包前引用 postgres 组——它由 postgresql-17 包创建，此刻还不存在；
+#      私密文件由脚本以 root 读取，root:root 0600 即可（目录属组由脚本装包后自动 chgrp）
+sudo install -d -o root -g root -m 0750 /etc/gengyun/private
+sudo install -o root -g root -m 0600 /dev/null /etc/gengyun/private/db-credentials.env
 # 写入两行（值用 openssl rand -hex 24 生成，演示占位符见 runbook）
 #   GENGYUN_DB_OWNER_PASSWORD=<48位小写十六进制>
 #   GENGYUN_API_RUNTIME_PASSWORD=<48位小写十六进制>

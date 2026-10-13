@@ -233,9 +233,13 @@ elif [[ ! "$OWNER_PASSWORD" =~ $PW_REGEX ]]; then
   fail "迁移管理员口令格式不符：要求 48 位小写十六进制（openssl rand -hex 24）。"
 fi
 
+# 【返修 8 · 顺序缺陷】不要在安装 PG 包之前引用 `postgres` 系统组：
+#   该用户/组由 `postgresql-17` 包的 postinst 创建；在此处还不存在 ⇒ 旧版会以
+#   `install: invalid group 'postgres'` 中止（目标 CVM 实测，原始输出见 evidence §7）。
+#   因此这里先按 **root:root** 0750 建目录；等包装完、`postgres` 存在后再 `chgrp`（见下方 5b）。
 if [[ "$PLAN_ONLY" -eq 0 && -n "${OWNER_PASSWORD:-}" ]]; then
-  act "准备私密目录 ${PRIVATE_DIR}（0750 root:postgres）" \
-    install -d -o root -g postgres -m 0750 -- "$PRIVATE_DIR"
+  act "准备私密目录 ${PRIVATE_DIR}（0750 root:root；装包后再 chgrp postgres）" \
+    install -d -o root -g root -m 0750 -- "$PRIVATE_DIR"
 fi
 
 # ---------------------------------------------------------------------------
@@ -306,6 +310,31 @@ if [[ "$PLAN_ONLY" -eq 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5b. 运行身份前置（**返修 8**）：`postgres` 用户/组必须由包创建
+#
+#   为什么不能自己 groupadd/useradd：PG 运行身份由发行版包（postinst）创建，其 UID/GID、
+#   home、shell、以及 `postgresql-common` 的预期都与包一致；本脚本自行创建会与包管理预期冲突，
+#   且属于"绕过"而非修复。因此这里**只断言存在**，不存在就明确失败并给出排查命令。
+#   同时把私密目录的属组从 root 改为 postgres —— 目录是 0750，`postgres` 必须能"穿过"它
+#   才能读 initdb 的临时口令文件（该文件在 section 7 里以 0600 postgres 创建）。
+# ---------------------------------------------------------------------------
+if [[ "$PLAN_ONLY" -eq 0 ]]; then
+  getent group postgres >/dev/null 2>&1 || fail \
+    "postgresql-${PG_MAJOR} 安装后仍未出现 'postgres' 系统组 —— 本脚本**不会**自己 groupadd/useradd
+         造 PG 运行身份（会与发行版包的行为不一致）。请确认包是否真的装成功：
+           dpkg -s postgresql-${PG_MAJOR} | head -5
+           getent group postgres; getent passwd postgres"
+  getent passwd postgres >/dev/null 2>&1 || fail \
+    "postgresql-${PG_MAJOR} 安装后仍未出现 'postgres' 系统用户（同上，不由本脚本创建）。"
+  if [[ -d "$PRIVATE_DIR" ]]; then
+    act "把私密目录 ${PRIVATE_DIR} 的属组改为 postgres（供 initdb 临时口令文件被 postgres 读取）" \
+      chown root:postgres -- "$PRIVATE_DIR"
+  fi
+else
+  log "[PLAN] 断言 postgres 用户/组存在（由 postgresql-${PG_MAJOR} 包创建），随后 chgrp 私密目录为 postgres"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. 发行版自带集群与端口冲突：默认不破坏，冲突时明确失败
 # ---------------------------------------------------------------------------
 if command -v pg_lsclusters >/dev/null 2>&1; then
@@ -349,6 +378,7 @@ else
   else
     umask 077
     privatedir_for_pw="${PRIVATE_DIR}"
+    # 走到这里说明已过 section 5b ⇒ `postgres` 组**一定**存在，可以安全用 -g postgres。
     if [[ ! -d "$privatedir_for_pw" ]]; then
       install -d -o root -g postgres -m 0750 -- "$privatedir_for_pw"
     fi
@@ -489,11 +519,38 @@ if [[ "$PLAN_ONLY" -eq 0 ]]; then
     fail "未检测到 ${VPC_PRIVATE_IP}:${PGPORT} 监听；同 VPC 内的消费者将无法连接。"
   fi
   printf '[%s] 网络姿态自检通过：仅回环与 VPC 私网 IPv4 在监听 %s。\n' "$SCRIPT_NAME" "$PGPORT"
-  runuser -u postgres -- "${PG_BIN}/psql" -h /var/run/postgresql -U "$DB_OWNER" -d "$DB_NAME" -tAc \
+  # 【返修 8】这一行原来是 `runuser … | awk` —— 管道末位是 awk，psql 失败会被吞掉。
+  # 改成"先捕获、失败即退出"，避免任何"命令失败但脚本继续"的路径。
+  server_info="$(runuser -u postgres -- "${PG_BIN}/psql" -h /var/run/postgresql -U "$DB_OWNER" \
+    -d "$DB_NAME" -tAc \
     "SELECT 'server_version=' || current_setting('server_version') ||
             ' listen_addresses=' || current_setting('listen_addresses') ||
-            ' port=' || current_setting('port')" \
-    | awk '{print "         " $0}'
+            ' port=' || current_setting('port')")" \
+    || fail "无法查询服务端信息（psql 失败），安装未完成。"
+  log "         ${server_info}"
+fi
+
+# ---------------------------------------------------------------------------
+# 11.5 「exit 0 必须代表目标达成」——收尾硬校验（**返修 8**）
+#
+#   目的：让"某个命令失败但脚本继续"的路径**不可能**以 0 退出。
+#   即使 `set -e` 因某种原因没有拦住，只要下列任一目标未达成，本脚本就非零退出。
+#   这同时保护"把输出接进管道"的调用者（管道里的 $? 是末位命令的，见 runbook §3 的取码说明）。
+# ---------------------------------------------------------------------------
+if [[ "$PLAN_ONLY" -eq 0 ]]; then
+  _final_ver="$(cat -- "${PGDATA_DIR}/PG_VERSION" 2>/dev/null || true)"
+  [[ "$_final_ver" == "$PG_MAJOR" ]] || fail \
+    "收尾校验失败：${PGDATA_DIR}/PG_VERSION = '${_final_ver:-（缺失）}'，期望 '${PG_MAJOR}'。安装未完成。"
+  systemctl is-active --quiet "$UNIT_NAME" || fail \
+    "收尾校验失败：${UNIT_NAME} 不是 active（用 systemctl status ${UNIT_NAME} 排查）。安装未完成。"
+  runuser -u postgres -- "${PG_BIN}/pg_isready" -h /var/run/postgresql -q || fail \
+    "收尾校验失败：pg_isready 不通（集群未就绪）。安装未完成。"
+  _final_ping="$(runuser -u postgres -- "${PG_BIN}/psql" -h /var/run/postgresql -U "$DB_OWNER" \
+    -d "$DB_NAME" -tAc 'SELECT 1' 2>/dev/null || true)"
+  [[ "$_final_ping" == '1' ]] || fail \
+    "收尾校验失败：业务库 ${DB_NAME} 不可查询（SELECT 1 未返回 1）。安装未完成。"
+  log "收尾校验通过：PG_VERSION=${_final_ver}、${UNIT_NAME} active、pg_isready 通、业务库 ${DB_NAME} 可查询。"
+  log "（因此本脚本的 exit 0 表示上述目标均已达成，而不只是\"跑到了最后一行\"。）"
 fi
 
 # ---------------------------------------------------------------------------

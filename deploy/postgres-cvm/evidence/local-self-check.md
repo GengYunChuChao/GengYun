@@ -567,3 +567,115 @@ plan_exit=1
 
 > 本机（WSL）**不可能**通过这条前置（它的网卡不在 `10.21.0.0/16`），所以本页记录的是**预期失败**；
 > 这也正是"**脚本完成 ≠ 通过**"的实例：**唯一的通过证据必须来自目标 CVM 上的真实复跑**。
+
+## 7 返修 8：目标 CVM 真跑缺陷 —— 装包前引用 `postgres` 组 + 「假成功」排查
+
+### 7.1 监工在目标 CVM 上的原始输出（**返修前**）
+
+环境：Ubuntu 22.04.5 jammy / 2C2G / 内网 `10.21.1.8` / `/dev/vdb` 挂 `/data`；`--plan` 全绿。
+
+```text
+[install-postgres.sh] 数据目录：/data/gengyun/pgdata
+[install-postgres.sh] 所在文件系统：/dev/vdb 挂载点 /data
+[install-postgres.sh] 准备私密目录 /etc/gengyun/private（0750 root:postgres）
+install: invalid group 'postgres'
+INSTALL_EXIT=0
+```
+
+### 7.2 本地复现（**返修前**版本 + 相同前置）
+
+本机 WSL（ubuntu 26.04）**同样没有** `postgres` 系统组，因此可直接复现该失败（对包管理/系统工具做 stub，
+不改动系统；`GENGYUN_VPC_PRIVATE_IP=10.21.1.8` 覆盖网段判定）：
+
+```console
+### 本机是否存在 postgres 系统组？（监工的 CVM 上装包前不存在）
+  不存在（与监工 CVM 装包前一致）
+### 本机是否存在 postgres 系统用户？
+  不存在
+[install-postgres.sh] 准备私密目录 /etc/gengyun/private（0750 root:postgres）
+install: invalid group: 'postgres'
+EXIT=1
+>>> 退出码非 0（未复现假成功）
+### 清理（只删本脚本自己造的临时物）
+  /etc/gengyun 未创建
+```
+
+**结论（如实、不含糊）**：
+
+- **顺序缺陷属实**：装包前引用 `postgres` 组 ⇒ 目标 CVM 上一执行就中止。**已修**（§7.3a）。
+- **但在我这次复现里，脚本的退出码是 `1`（非 0）** —— 我**没能**在本地复现 `INSTALL_EXIT=0`。
+  （两边报错文本略有差异：本机 coreutils 较新，打印 `invalid group: 'postgres'`；jammy 为 `invalid group 'postgres'`，
+  但两者都是 `install` 失败，退出码都是非 0。）
+- **因此"假成功"最可能来自调用方式，而不是脚本的退出码**，典型是**管道**：
+  `sudo ./install-postgres.sh 2>&1 | tee log; echo $?` ⇒ `$?` 是 **`tee`** 的（0），不是脚本的；
+  `| tail` / `| head` 同理；`cmd || true`、外层 `set +e` 也会造成同样效果。
+- **无论真相是哪一种，本版都把"exit 0"变成经过校验的承诺**（§7.3d）：即使有某条命令失败而未被拦住，
+  只要目标未达成，脚本就**不可能**返回 0；同时把取码方式写成文档（§7.3f），避免自动化被骗。
+
+### 7.3 修复（只改 `deploy/postgres-cvm/**`）
+
+| # | 修复 | 位置 |
+| --- | --- | --- |
+| a | **顺序**：私密目录改为**装包前以 `root:root` 0750** 创建；装包后再 `chgrp postgres` | `install-postgres.sh`（原私密目录步骤 + 新增 5b） |
+| b | **新增 5b 运行身份前置**：断言 `postgres` 用户/组**由包创建**；不存在则**明确失败并给出排查命令**；**本脚本绝不自己 `groupadd`/`useradd`**（避免与发行版包行为冲突）。通过后 `chown root:postgres` 私密目录（`postgres` 需能"穿过"它去读 initdb 临时口令文件） | `install-postgres.sh` 新增 5b |
+| c | **修掉一处管道接缝**：原 `runuser … psql … \| awk` ⇒ 改为**先捕获、失败即 `fail`**（管道末位是 `awk`，会吞掉 psql 失败） | `install-postgres.sh` 第 11 节 |
+| d | **新增 11.5 收尾硬校验**：`PG_VERSION==17`、单元 `active`、`pg_isready` 通、业务库 `SELECT 1` 返回 1；**任一不满足即 `fail`** ⇒ **`exit 0` 表示目标已达成，而不只是"跑到最后一行"** | `install-postgres.sh` 新增 11.5 |
+| e | 文档：私密文件与目录改为 **`0600`/`0750` `root:root`**，并写明"装包前不要引用 postgres 组"；README P8 与 §7 第 0.5 步同步 | `runbook.md` §0/§2/§3、`README.md` P8/§7 |
+| f | 文档：**如何正确取退出码**（`tee`/`tail` 陷阱；`set -o pipefail` 或 `${PIPESTATUS[0]}`） | `runbook.md` §3 步骤 1 |
+
+### 7.4 回归（**真跑原始输出**，本机 root；工具桩化以绝不改动系统）
+
+```
+=== T0：装包前不再引用 postgres 组（顺序缺陷回归）===
+[install-postgres.sh] 准备私密目录 /tmp/w19-t0/private（0750 root:root；装包后再 chgrp postgres）
+[install-postgres.sh] 下载 PGDG 签名公钥（…）
+[STUB] curl --fail --silent --show-error --location --output …
+T0_EXIT=7
+PASS T0：**没有** invalid group（顺序缺陷已修）
+PASS T0：私密目录按 root:root 创建
+PASS T0：目录已建：750 root:root
+PASS T0：后续步骤失败后**非零退出**（rc=7）
+
+=== T1：私密目录创建失败 ⇒ 必须非零退出 ===
+[install-postgres.sh] 准备私密目录 /tmp/w19-t1/private（0750 root:root；装包后再 chgrp postgres）
+install: cannot create directory '/tmp/w19-t1/private': Not a directory
+T1_EXIT=1
+PASS T1 失败即非零退出
+
+=== T2：PGDG 公钥下载失败（curl exit 7）⇒ 必须非零退出 ===
+T2_EXIT=7
+PASS T2 失败即非零退出
+
+=== T3：act() 包装器的失败传播（微测：证明所有 act 包住的步骤都会硬失败）===
+T3a 真实 install 失败 -> rc=1     PASS T3a install 经 act 传播失败
+T3b 真实 chown   失败 -> rc=1     PASS T3b chown 经 act 传播失败
+T3c 任意失败命令经 act -> rc=1   PASS T3c 任意失败命令经 act 传播
+=== 回归结论：全部 PASS ===
+```
+
+**用例名与覆盖**：`T0` 顺序缺陷回归（**该步骤不再引用 postgres 组**，且后续失败非零退出）；
+`T1` 私密目录失败 ⇒ 非零；`T2` 包下载失败 ⇒ 非零；`T3` `act()` 传播（install/chown/任意命令）。
+均在本机以 root 真实执行，输出如上（工具桩化，未改动系统；测试造的临时物已清理）。
+
+### 7.5 失败路径审计（`install`/`chown`/`systemctl`/`createdb` 等）
+
+| 位置/命令 | 失败是否会让脚本非零退出 | 依据 |
+| --- | --- | --- |
+| 全部经 `act "…" <cmd>` 的步骤（`install -d`、`chown`、`apt-get update/install`、`systemctl restart/enable`、`createdb` 前的 `install` 等） | **是** | `act` 末尾直接 `"$@"`，状态原样返回；**T3 微测实证** |
+| 裸命令（`runuser … initdb`、`runuser … createdb`、`substitute()` 里的 `chown`/`chmod`、`printf >> postgresql.conf` 等） | **是** | 位于 `set -euo pipefail` 之下的普通命令；无 `\|\| true` 包裹 |
+| 业务库存在性判断 `if runuser … psql … \| grep -q 1` | 是（走 else 分支执行 `createdb`，失败即退出） | `if` 条件豁免 errexit，但**分支内的 `createdb` 不免** |
+| `dpkg -s`（`if ! …`） | **否（刻意）** | 仅用于判断"是否需要装包"，是查询语义 |
+| `pg_lsclusters`/`find \| wc -l`/`cat \|\| true`/`mapfile` 里的 `grep`（均在 `$()` 或 `if` 条件内） | **否（刻意）** | 都是**探测**；其结果随后被显式判定并 `fail`（如"0 个私网 IPv4"） |
+| `act "停用发行版集群启动单元…" bash -c 'systemctl disable … \|\| true'` | **否（唯一刻意的系统性豁免）** | 目标是**发行版的** `postgresql.service`（可能不存在）；**我们自己的单元**用 `act systemctl restart`，失败会传播 |
+| 第 11 节 `runuser … psql … \| awk`（**返修前**） | **否（缺陷）** | 末位是 `awk` ⇒ 已按 (§7.3c) 修为"先捕获、失败即 fail" |
+| 收尾硬校验（11.5） | 是 | 四条断言各自 `\|\| fail` |
+
+### 7.6 本地**未**验证的部分（不写通过）
+
+- **5b 的 `postgres` 存在性断言**与**11.5 的收尾硬校验**需要真实安装到那一步 ⇒ **本地未执行**；
+  它们的代码路径请在**目标 CVM** 上由监工复核（§7.4 的 T0/T1/T2 只覆盖到"包下载/安装之前"）。
+- `systemctl` / `createdb` / `runuser` 的**真实端到端**失败传播：本地未端到端执行，
+  仅有 **T3 微测**（证明 `act` 会传播）+ §7.5 的代码审计作为依据。
+- **监工已做的临时变通**（在服务器上 `groupadd -r postgres` + `useradd`）是**绕过、不是修复**，
+  且**未入仓**；建议记为"变通运行"。在**修复版**上重跑时，5b 的断言会**直接通过**（身份已存在）——**这属预期**；
+  修复版对"**全新机器**"才有意义（那种情况下装包前不再引用 `postgres`，装包后断言其存在）。
