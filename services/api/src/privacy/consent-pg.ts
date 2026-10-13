@@ -6,6 +6,7 @@ import { hashToken } from '../auth/tokens.ts';
 import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
 import { persistConsentGrant, type ConsentGrantRequest } from './grant-pg.ts';
+import { paginateConsentRecords } from './consent-pagination.ts';
 
 export const CONSENT_PURPOSES = ['recording', 'media_processing', 'external_inference', 'public_posting'] as const;
 type Row = Record<string, unknown>;
@@ -45,14 +46,6 @@ function assertCurrent(row: Row): void {
 const currentRecords = `SELECT c.*,p.state AS epoch_state,p.current_epoch FROM public.privacy_epochs p
   LEFT JOIN public.consent_records c ON c.user_id=p.user_id AND c.purpose=p.purpose
   AND c.epoch=CASE WHEN p.state='granted' THEN p.current_epoch ELSE p.current_epoch-1 END`;
-export function parseConsentCursor(cursor: string | undefined): string | null {
-  if (cursor === undefined) return null;
-  const value = Buffer.from(cursor, 'base64url').toString('utf8');
-  if (!uuid.test(value) || Buffer.from(value).toString('base64url') !== cursor) {
-    throw new ApiError('INVALID_CURSOR', '授权分页游标无效');
-  }
-  return value;
-}
 
 /** No exports, media writes or generic commit callbacks. */
 export function createPostgresConsentService(pool: PgPool, hmacKey: string, options: { allowSyntheticGrantPolicy?: boolean } = {}) {
@@ -114,15 +107,16 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, opti
       return transaction(input, async client => dto(await persistConsentGrant(client, input.identity.userId, hmacKey, request, options.allowSyntheticGrantPolicy === true)));
     },
     async list(input: Identity, options: { cursor?: string; limit: number }) {
-      const after = parseConsentCursor(options.cursor);
       return transaction(input, async (client, user) => {
         await referenceGuard(user, []).assertAccountActive(input.identity.userId, { authEpoch: input.identity.authEpoch });
         const { rows } = await client.query(`${currentRecords}
-          WHERE p.user_id=$1::uuid AND p.current_epoch>0 AND ($2::uuid IS NULL OR c.id>$2::uuid OR c.id IS NULL)
-          ORDER BY c.id LIMIT $3 FOR SHARE OF p`, [input.identity.userId, after, options.limit + 1]);
+          WHERE p.user_id=$1::uuid AND p.current_epoch>0
+          ORDER BY c.granted_at DESC,c.id DESC FOR SHARE OF p`, [input.identity.userId]);
         rows.forEach(assertCurrent);
-        const items = rows.slice(0, options.limit).map(dto);
-        return { items, next_cursor: rows.length > options.limit ? Buffer.from(String(items.at(-1)?.id)).toString('base64url') : null };
+        // Four closed-set purposes: lock/read the complete current snapshot before signing its watermark.
+        return paginateConsentRecords(rows.map(dto), {
+          ...options, userId: input.identity.userId, authEpoch: input.identity.authEpoch, hmacKey,
+        });
       });
     },
 
