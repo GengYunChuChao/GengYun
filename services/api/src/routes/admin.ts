@@ -40,7 +40,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { currentIdentity, type AuthGuards } from '../auth/middleware.ts';
 import { API_PREFIX } from '../contract.ts';
-import { FAMILIES } from '../admin/families.ts';
+import { FAMILIES, KNOWLEDGE_FAMILY, REGISTRATION_FAMILY, RESTRICTION_FAMILY, SOURCE_FAMILY } from '../admin/families.ts';
 import type { AdminCallContext, ServiceResponse } from '../admin/types.ts';
 import type { AdminContentService } from '../admin/service.ts';
 import { OPS_SCOPES } from '../admin/ops/service.ts';
@@ -147,50 +147,106 @@ export function registerAdminRoutes(
 ): void {
   // -------------------------------------------------------------------------
   // 阶段 1：四类资料 × 6（24 个 operationId）
-  // 路径/方法/operationId/scope 全部取自 `families.ts` 的家族描述符（单一来源）。
+  // operationId/scope 取自 `families.ts` 的家族描述符（单一来源）；
+  // **路径逐条字面书写**（`${API_PREFIX}/admin/...`）：项目的静态路由清单工具
+  // （`tools/contract-status-core.mjs` 的 `scanMountedRoutes`）只识别紧跟在
+  // `app.<method>(` 之后、且不含未知模板变量的字符串；二次拼接会被判为
+  // `Unresolved route template`（并使 `test:unit` 的
+  // `contract-status-tool.test.mjs` 失败）。因此这里显式展开 24 条。
   // -------------------------------------------------------------------------
-  for (const descriptor of FAMILIES) {
-    const base = `${API_PREFIX}${descriptor.path}`;
-    const read = methodOf(services.content, descriptor.operations.list);
-    const create = methodOf(services.content, descriptor.operations.create);
-    const get = methodOf(services.content, descriptor.operations.get);
-    const edit = methodOf(services.content, descriptor.operations.edit);
-    const publish = methodOf(services.content, descriptor.operations.publish);
-    const withdraw = methodOf(services.content, descriptor.operations.withdraw);
-
-    const readGuards = { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.readScope)] };
-    const writeGuards = { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.writeScope)] };
-
-    // GET 列表：契约 Cursor/Limit 由服务层判定（limit 1..50，缺省 20）。
-    app.get(base, readGuards, async (request, reply) =>
-      send(reply, await read(callerOf(request), request.query)),
-    );
-    // POST 建草稿：Idempotency-Key 必填（服务层判定）；201 由服务层给出。
-    app.post(base, writeGuards, async (request, reply) =>
-      send(reply, await create(callerOf(request), request.body)),
-    );
-    app.get(`${base}/:id`, { ...readGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
-      send(reply, await get(callerOf(request), (request.params as { id: string }).id)),
-    );
-    app.patch(
-      `${base}/:id`,
-      { ...writeGuards, schema: { params: uuidIdParams } },
-      async (request, reply) =>
-        send(reply, await edit(callerOf(request), (request.params as { id: string }).id, request.body)),
-    );
-    app.post(
-      `${base}/:id/publish`,
-      { ...writeGuards, schema: { params: uuidIdParams } },
-      async (request, reply) =>
-        send(reply, await publish(callerOf(request), (request.params as { id: string }).id, request.body)),
-    );
-    app.post(
-      `${base}/:id/withdraw`,
-      { ...writeGuards, schema: { params: uuidIdParams } },
-      async (request, reply) =>
-        send(reply, await withdraw(callerOf(request), (request.params as { id: string }).id, request.body)),
-    );
+  /** 绑定某家族的 6 个服务方法与两套守卫（只为减少重复；路径仍逐条字面书写）。 */
+  function familyOps(descriptor: (typeof FAMILIES)[number]) {
+    return {
+      read: methodOf(services.content, descriptor.operations.list),
+      create: methodOf(services.content, descriptor.operations.create),
+      get: methodOf(services.content, descriptor.operations.get),
+      edit: methodOf(services.content, descriptor.operations.edit),
+      publish: methodOf(services.content, descriptor.operations.publish),
+      withdraw: methodOf(services.content, descriptor.operations.withdraw),
+      readGuards: { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.readScope)] },
+      writeGuards: { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.writeScope)] },
+    };
   }
+
+  const sources = familyOps(SOURCE_FAMILY);
+  app.get(`${API_PREFIX}/admin/sources`, sources.readGuards, async (request, reply) =>
+    send(reply, await sources.read(callerOf(request), request.query)),
+  );
+  app.post(`${API_PREFIX}/admin/sources`, sources.writeGuards, async (request, reply) =>
+    send(reply, await sources.create(callerOf(request), request.body)),
+  );
+  app.get(`${API_PREFIX}/admin/sources/:id`, { ...sources.readGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await sources.get(callerOf(request), (request.params as { id: string }).id)),
+  );
+  app.patch(`${API_PREFIX}/admin/sources/:id`, { ...sources.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await sources.edit(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/sources/:id/publish`, { ...sources.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await sources.publish(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/sources/:id/withdraw`, { ...sources.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await sources.withdraw(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+
+  const knowledge = familyOps(KNOWLEDGE_FAMILY);
+  app.get(`${API_PREFIX}/admin/knowledge`, knowledge.readGuards, async (request, reply) =>
+    send(reply, await knowledge.read(callerOf(request), request.query)),
+  );
+  app.post(`${API_PREFIX}/admin/knowledge`, knowledge.writeGuards, async (request, reply) =>
+    send(reply, await knowledge.create(callerOf(request), request.body)),
+  );
+  app.get(`${API_PREFIX}/admin/knowledge/:id`, { ...knowledge.readGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await knowledge.get(callerOf(request), (request.params as { id: string }).id)),
+  );
+  app.patch(`${API_PREFIX}/admin/knowledge/:id`, { ...knowledge.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await knowledge.edit(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/knowledge/:id/publish`, { ...knowledge.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await knowledge.publish(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`, { ...knowledge.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await knowledge.withdraw(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+
+  const registrations = familyOps(REGISTRATION_FAMILY);
+  app.get(`${API_PREFIX}/admin/registrations`, registrations.readGuards, async (request, reply) =>
+    send(reply, await registrations.read(callerOf(request), request.query)),
+  );
+  app.post(`${API_PREFIX}/admin/registrations`, registrations.writeGuards, async (request, reply) =>
+    send(reply, await registrations.create(callerOf(request), request.body)),
+  );
+  app.get(`${API_PREFIX}/admin/registrations/:id`, { ...registrations.readGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await registrations.get(callerOf(request), (request.params as { id: string }).id)),
+  );
+  app.patch(`${API_PREFIX}/admin/registrations/:id`, { ...registrations.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await registrations.edit(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/registrations/:id/publish`, { ...registrations.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await registrations.publish(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`, { ...registrations.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await registrations.withdraw(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+
+  const restrictions = familyOps(RESTRICTION_FAMILY);
+  app.get(`${API_PREFIX}/admin/restrictions`, restrictions.readGuards, async (request, reply) =>
+    send(reply, await restrictions.read(callerOf(request), request.query)),
+  );
+  app.post(`${API_PREFIX}/admin/restrictions`, restrictions.writeGuards, async (request, reply) =>
+    send(reply, await restrictions.create(callerOf(request), request.body)),
+  );
+  app.get(`${API_PREFIX}/admin/restrictions/:id`, { ...restrictions.readGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await restrictions.get(callerOf(request), (request.params as { id: string }).id)),
+  );
+  app.patch(`${API_PREFIX}/admin/restrictions/:id`, { ...restrictions.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await restrictions.edit(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/restrictions/:id/publish`, { ...restrictions.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await restrictions.publish(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`, { ...restrictions.writeGuards, schema: { params: uuidIdParams } }, async (request, reply) =>
+    send(reply, await restrictions.withdraw(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
 
   // -------------------------------------------------------------------------
   // 阶段 1：审计事件只读（1 个 operationId）
