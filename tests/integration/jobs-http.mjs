@@ -432,6 +432,84 @@ try {
     assert.ok(hits.some((h) => h.pattern === '${API_PREFIX}/jobs/:id/cancel'), 'POST cancel 注册存在');
     observations.push('单一注册：/jobs/{id} 与 /jobs/{id}/cancel 各 1 处，均在 jobs/routes.ts');
   });
+
+  // -------- [13] 反例（监工 5497968362 的 P2）：嵌套 result.value 不合契约 ⇒ 经路由 **503**，绝不 200 透出 --------
+  // 产品装配不可能把"不合契约的域投影"喂进来（真实域都过其自身契约镜像），故这里用**对照臂**
+  // （最小管道：同一 errorHandler/notFoundHandler 口径 + `registerJobRoutes` + 故意返回坏记录的合成源），
+  // 让"坏投影"能走到共享面的守卫上 —— 这正是监工那条反例的复现路径。
+  await group('[13] 反例（监工 P2）·嵌套 result.value=null/{}/只带两字段 ⇒ 经路由 **503 PROVIDER_UNAVAILABLE**（改前会被当 200 透出）', async () => {
+    const brokenSource = (valueOfResult) => ({
+      kind: 'recognition',
+      async get({ jobId }) {
+        if (jobId !== UNKNOWN_ID) return null;
+        return {
+          id: UNKNOWN_ID,
+          revision: 2,
+          kind: 'recognition',
+          target_ref: { type: 'recognition', id: RECOGNITION_OK, revision: 1 },
+          state: 'succeeded',
+          deadline_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          error_code: null,
+          result: { kind: 'recognition', value: valueOfResult() },
+        };
+      },
+    });
+    const buildProbeApp = async (source) => {
+      const probe = Fastify({ logger: false, ajv: { customOptions: { removeAdditional: false } } });
+      registerJobRoutes(probe, config, createAuthGuards({ store: authStore, now: () => new Date() }), createJobRegistry([source]));
+      probe.setNotFoundHandler((request, reply) => {
+        reply.status(404).send(buildErrorEnvelope(new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`), { request_id: request.id, execution_mode: config.executionMode }));
+      });
+      probe.setErrorHandler((error, request, reply) => {
+        if (error instanceof ApiError) return reply.status(error.status).send(buildErrorEnvelope(error, { request_id: request.id, execution_mode: config.executionMode }));
+        return reply.status(500).send({ error: { message: '内部错误', retryable: false, details: [] }, meta: { request_id: request.id, contract_version: '1.0.0', execution_mode: config.executionMode } });
+      });
+      return { probe, origin: await probe.listen({ host: '127.0.0.1', port: 0 }) };
+    };
+    const validRecognitionValue = {
+      id: RECOGNITION_OK,
+      revision: 1,
+      candidates: [{ species_id: 'species_barnyardgrass', rank: 1, model_score: 0.5 }],
+      uncertainty_reasons: [],
+      selected_species_id: null,
+      model_version: 'stub-v1',
+    };
+    const badCases = [
+      ['value=null', () => null],
+      ['value={}', () => ({})],
+      ['value 只带 candidates/uncertainty_reasons', () => ({ candidates: [], uncertainty_reasons: [] })],
+      ['value.candidates[0].rank 超出 1..3', () => ({ ...validRecognitionValue, candidates: [{ species_id: 'species_x', rank: 9, model_score: 0.1 }] })],
+      ['value 多余字段', () => ({ ...validRecognitionValue, extra: 1 })],
+    ];
+    const lines = [];
+    for (const [label, make] of badCases) {
+      const { probe, origin: probeOrigin } = await buildProbeApp(brokenSource(make));
+      try {
+        const res = await makeHttp(probeOrigin)(`${JOBS}/${UNKNOWN_ID}`, { token: tokenA });
+        lines.push(`${label} → ${res.status} ${res.body?.error?.code ?? 'JobEnvelope（被当作成功透出！）'}`);
+        assert.equal(res.status, 503, `${label} 必须 503，实际 ${res.status}`);
+        assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
+        assert.equal(res.body.error.retryable, true);
+        assert.equal(res.body.data, undefined, `${label} 不得带 data（不得把坏结果当作业透出）`);
+      } finally {
+        await probe.close();
+      }
+    }
+    // 正控制：同一条管道上，契约合法的 succeeded 结果仍必须 200（证明不是"一律拒绝"）
+    const good = await buildProbeApp(brokenSource(() => validRecognitionValue));
+    try {
+      const ok = await makeHttp(good.origin)(`${JOBS}/${UNKNOWN_ID}`, { token: tokenA });
+      lines.push(`契约合法 value → ${ok.status} ${ok.body?.data?.state ?? ''}`);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.equal(ok.body.data.state, 'succeeded');
+      assert.equal(ok.body.data.result.kind, 'recognition');
+    } finally {
+      await good.probe.close();
+    }
+    console.log('[嵌套值守卫实测] ' + lines.join(' ｜ '));
+    observations.push('嵌套 result.value 守卫：坏投影经路由 503（改前 200 透出），契约合法仍 200');
+  });
 } finally {
   await app.close();
 }

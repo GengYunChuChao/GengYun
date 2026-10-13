@@ -37,8 +37,15 @@ const openapi = JSON.parse(readFileSync(resolve(root, 'packages/contracts/openap
 
 const JOB_ID = '11111111-1111-4111-8111-111111111111';
 const TARGET_ID = '22222222-2222-4222-8222-222222222222';
+const RESULT_ID = '33333333-3333-4333-8333-333333333333';
 
-/** 合法契约 Job（recognition，succeeded 带 result）。 */
+/**
+ * 合法契约 Job（recognition，succeeded 带 result）。
+ * `result.value` 必须是**契约合法的 `Recognition`**（必填 `id`/`revision`/`candidates`/
+ * `uncertainty_reasons`/`selected_species_id`/`model_version`；`additionalProperties:false`）——
+ * 此前这里只给了 `candidates`+`uncertainty_reasons`，属**不合契约**的夹具，已按监工
+ * `5497968362` 的要求修正（否则新守卫会（正确地）拒绝它）。
+ */
 function validJob(overrides = {}) {
   return {
     id: JOB_ID,
@@ -49,18 +56,30 @@ function validJob(overrides = {}) {
     deadline_at: '2026-10-12T00:00:30.000Z',
     created_at: '2026-10-12T00:00:00.000Z',
     error_code: null,
-    result: { kind: 'recognition', value: { candidates: [], uncertainty_reasons: [] } },
+    result: {
+      kind: 'recognition',
+      value: {
+        id: RESULT_ID,
+        revision: 1,
+        candidates: [{ species_id: 'synthetic_weed_a', rank: 1, model_score: 0.5 }],
+        uncertainty_reasons: [],
+        selected_species_id: null,
+        model_version: 'stub-v1',
+      },
+    },
     ...overrides,
   };
 }
 
-/** 断言 `assertContractJob` 抛错（内部契约违规用普通 Error，不伪装成契约错误码）。 */
+/** 断言走**统一 fail-closed 通道**（503 PROVIDER_UNAVAILABLE，与 admin 的 portIntegrityFailure 同机制）。 */
 function assertViolation(job, label) {
   assert.throws(
     () => assertContractJob(job, 'unit'),
     (error) => {
-      assert.equal(error instanceof Error, true, `${label} 应抛 Error`);
-      assert.equal(error.name, 'Error', `${label} 不应伪装成 ApiError，实际 ${error.name}`);
+      assert.equal(error?.name, 'ApiError', `${label} 应走统一 fail-closed 通道（ApiError），实际 ${error?.name}`);
+      assert.equal(error?.code, 'PROVIDER_UNAVAILABLE', `${label} 错误码应为 PROVIDER_UNAVAILABLE`);
+      assert.equal(error?.status, 503, `${label} 状态应为 503`);
+      assert.equal(error?.retryable, true, `${label} 应标记 retryable（端口回传不可信）`);
       assert.equal(typeof error.message, 'string');
       assert.ok(error.message.includes('不合契约'), `${label} 的 message 应说明违规，实际：${error.message}`);
       return true;
@@ -144,7 +163,7 @@ test('反例·result 判别子必须与 kind 一致；终态不得带 result；s
   assertViolation(validJob({ state: 'timed_out', error_code: null, result: null }), 'timed_out 无 error_code');
   // 允许面：uncertain 带 result（已合并识别域与 speech 域的既有口径）；succeeded/uncertain 也可不带 result。
   const uncertain = assertContractJob(
-    validJob({ state: 'uncertain', error_code: 'INPUT_UNCERTAIN', result: { kind: 'recognition', value: { candidates: [] } } }),
+    validJob({ state: 'uncertain', error_code: 'INPUT_UNCERTAIN', result: { kind: 'recognition', value: validJob().result.value } }),
     'unit',
   );
   assert.equal(uncertain.state, 'uncertain');
@@ -183,7 +202,7 @@ function fakeSource(kind, jobs = new Map(), options = {}) {
 
 test('注册表·按 kind 分派：各源自报家门，命中的源返回的 Job 原样（校验后）下发', async () => {
   const recog = fakeSource('recognition', new Map([[JOB_ID, validJob()]]));
-  const trans = fakeSource('transcription', new Map([['33333333-3333-4333-8333-333333333333', validJob({ kind: 'transcription', target_ref: { type: 'transcription', id: TARGET_ID, revision: 1 }, result: { kind: 'transcription', value: { raw_text: 'x' } } })]]));
+  const trans = fakeSource('transcription', new Map([['33333333-3333-4333-8333-333333333333', validJob({ kind: 'transcription', target_ref: { type: 'transcription', id: TARGET_ID, revision: 1 }, result: { kind: 'transcription', value: { id: RESULT_ID, revision: 1, raw_text: '合成用例', uncertain_spans: [], confirmed_text: null, confirmed_at: null, model_version: 'stub-v1' } } })]]));
   const registry = createJobRegistry([recog.source, trans.source]);
   assert.deepEqual(registry.kinds, ['recognition', 'transcription']);
   assert.equal((await registry.get({ userId: 'u', jobId: JOB_ID })).kind, 'recognition');

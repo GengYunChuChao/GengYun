@@ -15,12 +15,20 @@
  *    `NOT_FOUND` 映射为 `null`），注册表因此无法、也不需要区分二者。
  * 3. **出口即重建**：命中后由 `assertContractJob` **按契约字段逐项重建**一个新对象（`additionalProperties:false`
  *    ⇒ 键集合必须恰好九个）并对 `result.value` 做 `structuredClone` ⇒ 出口不共享域内引用（出口不可变边界）。
- * 4. **形状违规 = 内部契约违规**：注册表/域源返回不合契约的 `Job`（未知 kind、未知 state、`result` 判别子与
- *    `kind` 不一致、终态带 `result` 等）⇒ 抛**普通 Error**（由 `app.ts` 既有 500 分支如实报 `NO_CONTRACT_CODE_FOR_500`），
- *    **不伪造契约错误码、也不放宽 schema**。
+ * 4. **`result.value` 必须过**冻结分支 schema 的**完整**校验**（`./result-shape.ts` 的契约镜像）：
+ *    必填、类型、闭集、上界与 `additionalProperties:false` 逐项检查，**不以 `kind` 一致代替**；
+ *    `value=null` / `value={}` / 只有部分字段等一律拒绝（监工 `5497968362` 的 P2）。
+ * 5. **形状违规 = 端口回传不可信**：任何不合契约的 `Job`（未知 kind/state、`result` 判别子不一致、终态带 `result`、
+ *    嵌套值不合分支）⇒ 统一走 `contractViolation` ⇒ **503 `PROVIDER_UNAVAILABLE`（`retryable`）**，
+ *    与 `admin/ops/service.ts` 的 `portIntegrityFailure` **同一机制、同一个通道**；**不伪造状态、不放宽 schema**。
  */
 import { ERROR_CODES, type ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import { TARGET_REF_TYPES, collectResultValueIssues } from './result-shape.ts';
+
+// `TargetRef.type` 闭集与 `JobResult.value` 的**契约镜像**统一放在 `./result-shape.ts`（单一镜像来源）；
+// 这里转出 `TARGET_REF_TYPES` 以免既有引用点（与本模块的单元用例）改动。
+export { TARGET_REF_TYPES };
 
 /** `components.schemas.Job.properties.kind.enum`（逐项一致，不得扩展）。 */
 export const JOB_KINDS = ['recognition', 'ocr', 'transcription', 'answer', 'synthesis', 'moderation'] as const;
@@ -37,26 +45,6 @@ export const JOB_STATES = [
   'cancelled',
 ] as const;
 export type JobState = (typeof JOB_STATES)[number];
-
-/** `components.schemas.TargetRef.properties.type.enum`。 */
-export const TARGET_REF_TYPES = [
-  'species',
-  'herbicide',
-  'scheme',
-  'static_region',
-  'recognition',
-  'ocr',
-  'transcription',
-  'answer',
-  'post',
-  'comment',
-  'conversation',
-  'dose_card',
-  'media',
-  'synthesis',
-  'job',
-  'source',
-] as const;
 
 /** `Job.required`（九字段全必填；`additionalProperties:false` ⇒ 键集合必须恰好是这九个）。 */
 export const JOB_KEYS = [
@@ -130,9 +118,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 内部契约违规：**不映射成契约错误码**（由 app.ts 既有 500 分支如实报缺口）。 */
-export function contractViolation(where: string, reason: string): Error {
-  return new Error(`作业投影不合契约（${where}）：${reason}`);
+/**
+ * 域源/端口回传**不合契约**时的统一 fail-closed 拒绝路径。
+ *
+ * **沿用仓库既有机制**：与 `services/api/src/admin/ops/service.ts` 的 `portIntegrityFailure`
+ * 同形——503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）+ `retryable: true`，含义是"端口回传不可信 ⇒
+ * 拒绝投影，既不登记成功也不把不合契约的记录当状态发出"。**只有一个错误通道**（本函数），
+ * 不再另造；也**不放宽**冻结契约。
+ */
+export function contractViolation(where: string, reason: string): ApiError {
+  return new ApiError('PROVIDER_UNAVAILABLE', `作业投影不合契约（${where}）：${reason}`, { retryable: true });
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], where: string, what: string): void {
@@ -227,6 +222,12 @@ export function assertContractJob(raw: unknown, where: string): ContractJob {
       throw contractViolation(where, `result.kind 必须与 Job.kind 一致（Job.kind=${kind}，result.kind=${String(resultKind)}）`);
     }
     if (!('value' in rawResult)) throw contractViolation(where, 'result.value 必须存在');
+    // **嵌套结果的完整契约校验**（监工 5497968362 的 P2）：不以 `kind` 一致代替分支 schema ——
+    // 必填、类型、闭集、上界与 `additionalProperties:false` 全部逐项校验（镜像见 `./result-shape.ts`）。
+    const valueIssues = collectResultValueIssues(kind as JobKind, rawResult['value']);
+    if (valueIssues.length > 0) {
+      throw contractViolation(where, `result.value 不合 ${kind} 的契约分支：${valueIssues.slice(0, 4).join('；')}`);
+    }
     result = { kind: kind as JobKind, value: structuredClone(rawResult['value']) };
   }
 

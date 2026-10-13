@@ -104,6 +104,7 @@ services\api\src\jobs\routes.ts:48:    `${API_PREFIX}/jobs/:id/cancel`,
 | 10 | **域无取消能力（转写）⇒ 503 `PROVIDER_UNAVAILABLE`（retryable）且状态不变** | 集成 `[9]` + 单元 |
 | 11 | 形状违规：多余/缺键、未知 kind/state、`result` 判别子不一致、终态带 `result`、`succeeded` 带 `error_code`、`failed`/`timed_out` 无 `error_code` | 单元（逐条） |
 | 12 | 同一 kind 重复装配 ⇒ 装配期抛错 | 单元 |
+| 13 | **嵌套 `result.value` 不合分支 schema**（`null`/`{}`/只带部分字段/缺必填/类型错/闭集或上界违例/多余字段/深层嵌套）⇒ **503**（改前经路由 200 透出） | 单元（`jobs-result-shape.test.mjs`）+ 集成 `[13]` |
 
 ## cancel 的终态与并发证据
 
@@ -146,6 +147,65 @@ services\api\src\jobs\routes.ts:48:    `${API_PREFIX}/jobs/:id/cancel`,
 - **真实供应商**（识别/转写）未接入；**真实样本为 0** ⇒ 不声称任何识别/转写质量或准确率；**未运行需求第 6 节评估**。
 - **真机 / 微信开发者工具**、小程序页面（`identify` 语音模式等）未取得。
 - `/admin/jobs*`（`AdminJobPort`，属 #18 阶段 2）**未做**。
+
+## 变更 4：回应监工 `5497968362`（P2 `result.value` 分支 schema 未校验）
+
+**问题（监工原文性转述 + 行内 `4253994325`）**：`assertContractJob` 只校验 `result.kind === Job.kind`，
+**未校验嵌套的 `result.value`** ⇒ 独立构造 `recognition/succeeded`，`value=null` / `value={}` /
+`value` 只带 `candidates`+`uncertainty_reasons` 三者**都会被当作 200 `JobEnvelope` 透出**。
+
+**修法**：新增 `services/api/src/jobs/result-shape.ts`（**契约镜像**），对 **6 个 `JobResult` 分支**的
+`value` 实体做**递归**校验：必填、类型、闭集（`enum`/`const`）、`minLength`/`maxLength`/`minimum`/`maximum`/
+`maxItems`/`pattern`，以及 `additionalProperties:false`（键集合必须**恰好**等于契约声明）；
+`registry.ts` 在返回成功 Job 前调用它，**不以 `kind` 一致代替**分支 schema。
+**拒绝通道沿用既有机制**：与 `services/api/src/admin/ops/service.ts` 的 `portIntegrityFailure` 同形——
+**503 `PROVIDER_UNAVAILABLE`（`retryable: true`）**，含义"端口回传不可信 ⇒ 拒绝投影"；**只有一个通道**
+（`registry.ts` 的 `contractViolation`），未新造第二套、未放宽冻结契约。
+（注：本片此前把这类违规当"内部错误 ⇒ 普通 Error ⇒ 500"；按指挥"复用既有拒绝路径"改为上述 503 口径。）
+
+**各分支必填字段清单（引契约 `packages/contracts/openapi.json`，`additionalProperties:false`）**：
+
+| `JobResult` 分支 | `value` 实体 | 必填字段（全部必填） |
+| --- | --- | --- |
+| `RecognitionResult` | `Recognition` | `id`(uuid) `revision`(int≥1) `candidates`(≤3,`Candidate{species_id,rank1..3,model_score|null}`) `uncertainty_reasons`(≤10) `selected_species_id`(str1..80\|null) `model_version`(1..80) |
+| `OCRResult` | `OCR` | `id`(uuid) `revision` `raw_fields`/`corrected_fields`(`LabelFields{registration_number,name,ingredients≤20,dosage_form}`) `verification`(`match_state`∈6值 `registration`(`Herbicide`\|null) `conflict_fields`≤20 `missing_fields`≤20 `dose_cards`≤10) `model_version` |
+| `TranscriptionResult` | `Transcription` | `id`(uuid) `revision` `raw_text`(≤8000) `uncertain_spans`(≤100,`{start≥0,end≥1,reason1..80}`) `confirmed_text`(1..8000\|null) `confirmed_at`(date-time\|null) `model_version` |
+| `AnswerResult` | `Answer` | `id`(uuid) `revision` `status`∈{answered,insufficient,blocked} `checked_text`(1..16000) `check_state`∈{passed,blocked} `citations`(≤20 `SourceRef`) `dose_cards`(≤10 `DoseCard`) `model_version` `prompt_version` `rule_version` |
+| `SynthesisResult` | `Synthesis` | `id`(uuid) `revision` `checked_content_ref`(`TargetRef{type∈16值,id1..80,revision≥1}`) `media_id`(uuid) |
+| `ModerationResult` | `Moderation` | `id`(uuid) `target_ref`(`TargetRef`) `decision`∈{pending,approved,rejected,quarantined} `reason_codes`≤30 `hard_rule_passed`(bool) `model_version` `prompt_version` `rule_version` |
+
+（嵌套 `Candidate`/`LabelFields`/`Ingredient`/`Verification`/`Herbicide`/`DoseCard`/`Formulation`/`DoseConditions`/
+`DoseSource`/`SourceRef`/`UncertainSpan`/`TargetRef` 亦逐项镜像；**每个镜像 schema 的全部属性在契约里都是 required**，
+故镜像按"全必填"编码，并由用例断言 `required == properties`。）
+
+**fixture 修正（监工指出）**：本片此前的"合法"夹具 `result.value = { candidates, uncertainty_reasons }`
+**本身不合契约**（缺 `id`/`revision`/`selected_species_id`/`model_version`）。已修正为契约合法的 `Recognition`，
+并同步修正另外两处夹具（按 kind 分派用例的 `Transcription` 值、`uncertain` 用例的 `Recognition` 值）。
+**未为了让旧夹具通过而放宽任何守卫。**
+
+**负例（可单独指出；`tests/unit/jobs-result-shape.test.mjs`）**：
+- 监工三条：`value=null`、`value={}`、`value` 只带 `candidates/uncertainty_reasons` ⇒ 一律拒绝；
+- 同一形状在**六个分支**上都拒绝 `null`/`{}`/只带 `id`；
+- 每分支四类变异（6×4=24）：缺必填、类型错（如 `revision` 为字符串）、闭集或上界违例（`rank=4`/`match_state` 闭集外/`region_code` 模式/`start=-1`）、多余字段；
+- **深层嵌套**：`verification.dose_cards[0].conditions.region_code`/`content_hash` 与深层多余字段同样被拒（证明递归，而非只看一层）；
+- **正控制**：六个分支的契约合法 `succeeded` 结果**仍被接受**（200/放行，形状不变）。
+- 契约一致性用例：**读 `openapi.json` 原文逐字段比对**镜像表（键集合/必填/类型/闭集/上界，≥80 字段）；
+  该用例在本片开发中**实际抓到 5 处手抄偏差**（`selected_species_id` 等 4 个可空字符串的 1..80 上界、
+  以及 `Moderation`/`Herbicide`/`DoseSource` 的 `id` 实为 `format: uuid`）⇒ 已按契约原文修正。
+
+**改前 / 改后对照（原始输出）**：`tests/integration/jobs-http.mjs` 的 `[13]` 走**真实路由管道**
+（对照臂：最小管道 + `registerJobRoutes` + 故意返回坏记录的合成源）：
+```text
+（改后）[嵌套值守卫实测] value=null → 503 PROVIDER_UNAVAILABLE ｜ value={} → 503 PROVIDER_UNAVAILABLE ｜
+ value 只带 candidates/uncertainty_reasons → 503 PROVIDER_UNAVAILABLE ｜ value.candidates[0].rank 超出 1..3 → 503 ｜
+ value 多余字段 → 503 ｜ 契约合法 value → 200 succeeded
+（改前 = 摘掉该层守卫的变异 M3）FAIL [13] …：value=null 必须 503，实际 200
+```
+
+**回退-复跑（M3）**：把"校验 `result.value`"整层摘掉 ⇒ 单元负例 **pass 4 / fail 4**（坏值被接受）、
+集成 `[13]` 失败并显示 `实际 200`；还原后 `registry.ts`/`result-shape.ts`/`routes.ts`/`sources.ts` 的 sha256
+与注入前**完全一致**（`D692B7EE…` / `C8580829…` / `A3500591…` / `74D2F653…`），重跑全绿。
+（既有变异 M1「伪造未接线 kind 的状态」⇒ `FAIL [3]`、M2「把终态取消伪装成功」⇒ `FAIL [8]`，在本次改动后**重跑仍各自命中**。）
 
 ## 整项状态
 
