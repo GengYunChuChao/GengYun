@@ -4,7 +4,20 @@
 
 - 基线（**每次推送前同步上游**）：开工时 `upstream/main = 54ed689c`；随后按序合并 `b1f6ab0e`（含 `#104` 标签 OCR）、`3e8f89b`（含 `#107` 产品装配事实源、`#108`/`#109`/`#113`/`#115`）、**`769420a`（`#106` 跨 kind 作业读面/取消面）**。
 - 本记录对应的已推送 HEAD：**`eb5635b`**（合并 `769420a` 后；此前为 `fe67482`/`990d1f2`）。
-- **不代替监工独立验收**；**不声称 CI 通过**（新 HEAD 的 workflow 需维护者/用户在 PR 页面点 "Approve and run workflows"）。
+- **不代替监工独立验收**；**不声称 CI 通过**（原因见下「CI 说明」）。
+
+## 0. CI 说明（**归因更正**）
+
+**CI 当前不可用：账号级 Actions 计费/支出限额限制（GitHub `Billing & plans`）⇒ runner 不启动；连 `upstream/main` 头同样全红；与任何 PR 无关。故本片不声称 CI 通过。**
+
+已确证的实测事实：
+
+- 失败 job 的**逐字注解**（经 API 取 `…/check-runs/<id>/annotations`）：
+  `The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings`
+- 该 job 的 `jobs` **无任何 step 记录**、日志 `BlobNotFound` ⇒ **runner 从未启动**；
+- **`upstream/main` 头同样全红（13/13）** ⇒ 与任何 PR 的 diff 无关；更早的基 `b1f6ab0` 曾 **14/14 success** ⇒ 属**账号状态变化**。
+
+（另有一件**独立**的事：fork PR 的 workflow 批准门——需在 PR 页面点 "Approve and run workflows"。**它不是本仓库 CI 未跑的原因**，本记录此前把它当作主因的写法已更正。）
 
 > 本文件是**仓库内证据**：本片的三处联动（① `#107` 事实源同步、② 路由模板内联、③ 跨线修改 `#107` 测试 1 行）与 `evidence.lines` 修正都写在这里，供**代码侧读者**在看不到 PR 正文时核对。PR 正文亦有同内容章节。
 >
