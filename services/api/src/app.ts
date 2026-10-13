@@ -26,6 +26,7 @@ import { registerSpeechRoutes } from './routes/speech.ts';
 import type { SpeechStore } from './speech/store.ts';
 import type { SpeechProvider } from './speech/provider.ts';
 import type { SpeechMediaPort } from './speech/media.ts';
+import { registerOcrRoutes } from './routes/ocr.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
@@ -262,6 +263,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerRecognitionRoutes(app, config, guards, recognitionService);
   registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs });
   registerSynthesisRoutes(app, config, guards, synthesisService);
+  registerOcrRoutes(app, config, { guards });
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
 
   app.setNotFoundHandler((request, reply) => {

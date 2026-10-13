@@ -3,6 +3,14 @@
 
 .state-bar { border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; font-size: calc(16px * var(--font-scale, 1)); line-height: 1.6; }
 .state-unavailable { background: #FDECEA; color: #B71C1C; }
+.state-ok { background: #E8F5E9; color: #1B5E20; }
+
+.dose-card { background: #E8F1E8; border-left: 8rpx solid #1F7A45; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 14rpx 0; }
+.dose-num { font-size: calc(22px * var(--font-scale, 1)); font-weight: bold; color: #1B5E20; }
+.dose-unit { font-size: calc(16px * var(--font-scale, 1)); margin-left: 8rpx; font-weight: normal; }
+.dose-cond { color: #37474F; margin-top: 8rpx; font-size: calc(16px * var(--font-scale, 1)); }
+.dose-note { color: #6D4C00; margin-top: 10rpx; font-size: calc(16px * var(--font-scale, 1)); line-height: 1.6; }
+.row-switch { align-items: center; }
 
 .section-title { font-size: calc(16px * var(--font-scale, 1)); font-weight: bold; color: #1B5E20; margin-bottom: 16rpx; }
 .sub-title { font-size: calc(16px * var(--font-scale, 1)); color: #52665a; margin: 20rpx 0 10rpx; }

@@ -14,11 +14,14 @@ const requireHere = createRequire(join(directory, 'utils/auth.js'));
 after(() => rmSync(directory, { recursive: true, force: true }));
 const future = () => new Date(Date.now() + 3600000).toISOString();
 const cache = (token = 'synthetic-token') => ({ accessToken: token, audience: 'user', expiresAt: future(), executionMode: 'stub' });
+// 合成档案替身数据：作物/地区均未设置 → 未确认上下文。详情本体仍必须真实装载
+// （「可以查阅」与「适用」分离），且不依赖 reference 目录的适用判定数据。
+const PROFILE = { crop_id: null, region_code: null, region_catalog_version: null, revision: 1 };
 const REF = '/pages/reference/reference';
 const SEED = '/pages/referenceseed/referenceseed';
 function fixture() {
   const storage = new Map(), requests = [], modals = [], routes = [], wxLogins = [];
-  const b = { storage, requests, modals, routes, wxLogins, pages: [], failNextRoute: false };
+  const b = { storage, requests, modals, routes, wxLogins, pages: [], failNextRoute: false, profileReads: [] };
   const wx = {
     getStorageSync: (key) => storage.get(key) || '', setStorageSync: (key, value) => storage.set(key, value),
     removeStorageSync: (key) => storage.delete(key), request: (opts) => requests.push(opts),
@@ -40,9 +43,22 @@ function fixture() {
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.25 } }) });
     const gateModule = { exports: {} };
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => b.auth });
+    const profileModule = { exports: {} };
+    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/profile-api.js'), 'utf8'), { module: profileModule, require: (id) => id.endsWith('/auth') ? b.auth : id.endsWith('/runtime') ? requireHere(join(directory, 'config/runtime.js')) : { localEnabled: () => false } });
+    const profileApi = profileModule.exports;
+    // 合成档案替身：只接线页面用到的 binding/current/read。身份绑定跟随 fixture 里的
+    // 真实 auth 当前会话（token+epoch），身份变化立即失效，不在生产代码打补丁。
+    const profile = {
+      binding: () => profileApi.binding(),
+      current: (bound) => profileApi.current(bound),
+      read: function () {
+        b.profileReads.push(profileApi.binding());
+        return Promise.resolve(Object.assign({}, PROFILE));
+      }
+    };
     vm.runInNewContext(readFileSync(join(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
       Page: (value) => { def = value; }, wx, console,
-      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
+      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/profile-api') ? profile : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
     });
     const page = { ...def, route: `pages/${name}/${name}`, options: {}, data: { ...def.data }, setData(value) { Object.assign(this.data, value); } };
     b.pages = [page]; return page;
@@ -58,6 +74,13 @@ function fixture() {
   return b;
 }
 function verified(req) { req.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: future() } } }); }
+// 已确认档案 Promise 落地：先等档案读取真正发起，再排空微任务队列，
+// 等其后续的真实详情装载完成（不再依赖同步 setData 时序）。
+async function settled(b, page) {
+  const reads = b.profileReads.length;
+  for (let i = 0; i < 50 && b.profileReads.length === reads; i++) await Promise.resolve();
+  for (let i = 0; i < 50 && page.data.profileLoading; i++) await Promise.resolve();
+}
 test('page and tab lists match actual app.json; each actual tab is accepted without query', () => {
   const b = fixture(), app = JSON.parse(readFileSync(join(root, 'miniprogram/app.json')));
   assert.deepEqual(b.nav.PAGES, app.pages);
@@ -238,7 +261,7 @@ const detailCases = [
 ];
 for (const [name, id, resultKey] of detailCases) {
   for (const order of [[0, 1], [1, 0]]) {
-    test(`${name}: cold cached onLoad→onShow retains one loader; response order ${order}`, () => {
+    test(`${name}: cold cached onLoad→onShow retains one loader; response order ${order}`, async () => {
       const b = fixture(); b.storage.set('gengyun.session', cache());
       const page = b.page(name); page.options = { id };
       let loads = 0; const load = page.load; page.load = function (...args) { loads++; return load.apply(this, args); };
@@ -248,25 +271,38 @@ for (const [name, id, resultKey] of detailCases) {
       // An independent same-session verification may settle before or after the lifecycle request.
       b.auth.verifySession(); assert.equal(b.requests.length, 2);
       for (const n of order) verified(b.requests[n]);
+      await settled(b, page);
+      // 详情本体照常装载；两页共有：认证通过、found、实体、单 loader、无路由跳转。
       assert.equal(b.auth.isLoggedIn(), true); assert.equal(page.data.gatePassed, true);
-      assert.equal(page.data.found, true); assert.ok(page.data[resultKey]); assert.equal(loads, 1);
+      assert.equal(page.data.found, true); assert.ok(page.data[resultKey]);
+      // 仅 referencedetail 含档案读取与用量资格断言；referenceseeddetail 无 profile 依赖。
+      if (name === 'referencedetail') {
+        assert.equal(b.profileReads.length, 1);
+        assert.equal(page.data.profileConfirmed, false); assert.equal(page.data.profileContext, null);
+        assert.equal(page.data.doseCard, null); assert.equal(page.data.applicability, null);
+      }
+      assert.equal(loads, 1);
       assert.equal(b.routes.length, 0);
     });
   }
-  test(`${name}: hidden/unloaded late success cannot load; re-entry verifies and loads once`, () => {
+  test(`${name}: hidden/unloaded late success cannot load; re-entry verifies and loads once`, async () => {
     for (const lifecycle of ['onHide', 'onUnload']) {
       const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
       let loads = 0; const load = page.load; page.load = function (...args) { loads++; return load.apply(this, args); };
       page.onLoad({ id }); page.onShow(); const old = b.requests[0]; page[lifecycle]();
-      verified(old); assert.equal(page.data.gatePassed, false); assert.equal(page.data[resultKey], null); assert.equal(loads, 0);
+      verified(old); await settled(b, page);
+      assert.equal(page.data.gatePassed, false); assert.equal(page.data[resultKey], null); assert.equal(loads, 0);
       page.onShow(); assert.equal(b.requests.length, 2); verified(b.requests[1]);
+      await settled(b, page);
       assert.equal(page.data.gatePassed, true); assert.equal(page.data.found, true); assert.equal(loads, 1);
     }
   });
-  test(`${name}: old failure after re-entry cannot clear the new verified detail`, () => {
+  test(`${name}: old failure after re-entry cannot clear the new verified detail`, async () => {
     const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name); page.options = { id };
     page.onLoad({ id }); page.onHide(); page.onShow(); verified(b.requests[1]);
+    await settled(b, page);
     b.requests[0].success({ statusCode: 401, data: {} });
+    await settled(b, page);
     assert.equal(page.data.gatePassed, true); assert.equal(page.data.found, true);
     assert.ok(page.data[resultKey]); assert.equal(b.auth.isLoggedIn(), true); assert.equal(b.routes.length, 0);
   });

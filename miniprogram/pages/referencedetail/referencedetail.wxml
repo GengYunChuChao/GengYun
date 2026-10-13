@@ -51,6 +51,43 @@
       <view class="note">{{detail.note}}</view>
     </view>
 
+    <!-- GY-I08 标签原文用量安全边界（DoseCard） -->
+    <view class="card">
+      <view class="section-title">用量安全边界（标签原文）</view>
+      <!-- PR #82 阻塞 C：档案未确认/读取失败时明确拒绝，不按空上下文放行具体用量。 -->
+      <view wx:if="{{!profileConfirmed}}" class="state-bar state-unavailable">
+        尚未确认当前适用条件{{profileError ? '：' + profileError : ''}}。资料可查阅，但不提供可执行用量。
+      </view>
+      <view wx:elif="{{profileLoading}}" class="state-bar state-unavailable">正在读取已确认档案…</view>
+      <block wx:else>
+        <view class="row"><text class="k">规则版本</text><text class="v mono">{{applicability.rule_version}}</text></view>
+        <view class="row row-switch">
+          <text class="k">用量卡片开关</text>
+          <switch checked="{{doseCardEnabled}}" bindchange="toggleDoseCard" color="#1F7A45" />
+        </view>
+        <!-- PR #82：用量卡片只在 renderable 且资格未被拒绝时展示（renderable 已内含适用判定与绑定校验）。 -->
+        <block wx:if="{{doseCard.renderable && doseCard.applicable !== false}}">
+          <view class="dose-card">
+            <view class="dose-num">{{doseCard.dose.number}}<text class="dose-unit">{{doseCard.dose.unit}}</text></view>
+            <view class="dose-cond" wx:if="{{doseCard.dose.condition}}">条件：{{doseCard.dose.condition}}</view>
+            <view class="dose-note">用量仅依来源原文展示，不生成换算或处方。</view>
+          </view>
+        </block>
+        <block wx:else>
+          <view class="note">{{doseCard.reason}}</view>
+        </block>
+        <view class="sub-title">适用过滤结论</view>
+        <!-- PR #82：「可以查阅」与「适用/可展示用量」分开表达：queryable 管可查阅，applicability 管适用资格。 -->
+        <view class="state-bar {{applicability.applicable ? 'state-ok' : 'state-unavailable'}}">
+          {{applicability.applicable ? '当前条件适用，可进入用量建议与问答用量卡片' : '当前条件不适用，不可进入可执行用量建议'}}
+        </view>
+        <view class="chips" wx:if="{{applicability.reasons.length}}">
+          <text class="chip chip-mute" wx:for="{{applicability.reasons}}" wx:key="*this">{{item}}</text>
+        </view>
+      </block>
+      <button wx:if="{{!profileConfirmed}}" class="btn btn-ghost" bindtap="retryProfile">重试档案读取</button>
+    </view>
+
     <!-- 原文来源 -->
     <view class="card">
       <view class="section-title">原文来源</view>
