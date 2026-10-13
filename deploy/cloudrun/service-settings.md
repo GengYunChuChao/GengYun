@@ -82,3 +82,37 @@
 
 注：腾讯云开发 CloudBase 云托管（docs.cloudbase.net/run）是**另一个产品面**，本轮未采用；其「部署方式」页同样未见
 仓库级 `container.config.json`，需要时另行核对。
+
+## 5 运行时 import 闭包（决定镜像必须 COPY 哪些路径）
+
+镜像里用 `node` 直接跑 `services/api/src/server.ts`：**模块解析与模块顶层的文件读取都发生在启动期**，
+因此镜像必须包含「入口 import 闭包」里全部仓库内文件。按静态 `import`／`export … from`／副作用 `import`／
+动态 `import()` 与 `new URL(…, import.meta.url)` 读取逐层遍历（入口 `services/api/src/server.ts`，闭包内 57 个文件），结论：
+
+| 仓库路径 | 是否需要进镜像 | 依据 |
+| --- | --- | --- |
+| `package.json`、`package-lock.json` | 需要 | workspace 清单与确定性安装 |
+| `services/api/package.json` | 需要 | 依赖声明 |
+| `apps/admin/package.json` | 需要（**仅清单**） | 满足仓库 workspace 锁解析；其源码与产物不进镜像 |
+| `node_modules`（`--from=deps`） | 需要 | 闭包侧的外部包只有 `fastify`、`pg` |
+| `packages/**` | **需要** | `packages/privacy/{guard,constants,errors}.mjs` 被 `services/api/src/privacy/consent-pg.ts:2` 静态 import；`packages/knowledge/catalog/{crops.json,regions-zhejiang.json}` 被 `services/api/src/profile/service.ts:15-16` 顶层 `readFileSync` 读取（import 期即触发）；`packages/moderation/index.mjs` 被 `services/api/src/community/moderation-gate.ts:40,46` import（该路由当前尚未装配，属同一闭包，一并带上） |
+| `services/api/src` | 需要 | 应用源码（Node 24 直接执行 `.ts`） |
+| `services/api/db` | 需要 | `migrate.ts` 以自身位置解析 `services/api/db/migrations/`，可在容器内经 VPC 执行迁移 |
+| `config/**` | **不需要** | 根 `config/` 只有 `debug.local.json.example`，运行期无消费者 |
+| `db/**`（种子）、`miniprogram/**`、`apps/admin/src`、`tests/**`、`tools/**`、`docs/**` | **不需要** | 静态遍历无命中 |
+
+复现与守卫（**不需要 Docker**）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy/cloudrun/local-check.ps1 -SkipDocker
+```
+
+该脚本的 [1/4] 会解析 Dockerfile 的 COPY 清单、把「镜像根」复刻到临时目录（`node_modules` 用 junction 指向
+仓库现有安装），再以容器根视角 import 入口依赖链——**因此这份闭包不是纸面推导，而是每次都能复跑的守卫**：
+将来入口新增运行期依赖、而 COPY 清单没跟上时，该检查会直接失败。
+
+实测（本 PR）：改前（缺 `packages/**`）⇒ `Error [ERR_MODULE_NOT_FOUND]: Cannot find module
+'…\packages\privacy\guard.mjs' imported from '…\services\api\src\privacy\consent-pg.ts'`，exit 1；
+补 `COPY packages ./packages` 后 ⇒ `IMPORT_OK`，exit 3（本机无 Docker，脚本报「部分通过」）。
+
+**未验证**：真实 `docker build`（本机无 Docker）；平台构建器是否读取 `Dockerfile.dockerignore`。

@@ -32,6 +32,14 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY services/api/package.json ./services/api/package.json
 COPY apps/admin/package.json ./apps/admin/package.json
+# packages/** 是**运行时 import 闭包**的一部分，不是可选项：
+#   - packages/privacy/{guard,constants,errors}.mjs 被 services/api/src/privacy/consent-pg.ts 静态 import；
+#   - packages/knowledge/catalog/{crops.json,regions-zhejiang.json} 被 services/api/src/profile/service.ts
+#     在模块顶层 readFileSync(new URL(...,import.meta.url)) 读取（import 期即触发，非惰性）；
+#   - packages/moderation/index.mjs 由 services/api/src/community/moderation-gate.ts import（当前装配路径
+#     尚未接入社区路由，但同属运行时闭包，一并带上，避免后续装配时又缺文件）。
+# 缺 packages/** ⇒ 容器内 import 入口即 ERR_MODULE_NOT_FOUND / ENOENT，服务必然启动失败。
+COPY packages ./packages
 # 源码 + 迁移与角色 SQL：migrate.ts 以自身位置解析 services/api/db/migrations，
 # 因此迁移可在容器内、经 VPC 私网访问数据库后执行（见 README「迁移与初始化」）。
 COPY services/api/src ./services/api/src

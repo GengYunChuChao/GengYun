@@ -30,7 +30,8 @@
 | real 模式缺配置时 fail-closed | **实测通过** | `APP_EXECUTION_MODE=real` 且其余未提供 → exit 1，逐条列出 9 个缺失字段 |
 | real 模式 DB 不可达时 `/health` | **实测通过** | 503 `{"status":"degraded","checks":{"database":{"status":"error","category":"connection_failed"}}}` |
 | 只读接口的最小验收是否可判别 | **实测通过（负例）** | DB 不可达时 `GET /api/v1/public/home` → 503 `PROVIDER_UNAVAILABLE`；stub 模式同样 503（该端点只在 real＋DB 下可用） |
-| `local-check.ps1` 的控制流与判定 | **实测通过（替身 docker + 真实 `/health` 应答）** | 用替身 `docker.cmd`（不构建任何镜像）跑通四步，`exit 0` / `PASS`；Windows PowerShell 5.1 语法解析无错误。**这不验证镜像** |
+| `local-check.ps1` 的 **[1/4] 依赖闭包检查**（不需要 Docker） | **实测通过（改前失败 / 改后通过）** | 改前（committed HEAD 的 COPY 清单）⇒ `ERR_MODULE_NOT_FOUND: packages/privacy/guard.mjs imported from services/api/src/privacy/consent-pg.ts`，exit 1；补 `COPY packages ./packages` 后 ⇒ `IMPORT_OK`。详见「变更 2」 |
+| `local-check.ps1` 的 [2/4]／[3/4] 控制流与判定 | **实测通过（替身 docker + 真实 `/health` 应答）** | 用替身 `docker.cmd`（不构建任何镜像）跑通，`exit 0` / `PASS`；PS 5.1 语法解析无错误。**这不验证镜像** |
 | **镜像真实构建、容器真实启动、容器内 `/health`** | **未验证**：本机**没有 Docker**（`docker` 不在 PATH），也没有平台环境 | 见 §8 的可执行自检脚本与期望输出 |
 | 微信云托管控制台字段实际生效 | **未验证**：无环境、无账号操作 | 官方文档语义见 [service-settings.md](service-settings.md) |
 | CVM 上的 PostgreSQL 17.11、库、角色、迁移 | **未验证**：无 CVM、无凭据、未部署 | 步骤见 §5 |
@@ -51,6 +52,11 @@ docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
   `sha256:2c87ef9bd3c6a3bd4b472b4bec2ce9d16354b0c574f736c476489d09f560a203`，需要更强可复现性时可写
   `node:24.16.0-bookworm-slim@sha256:2c87…` 固定；tag 被重新推送后 digest 会变）。
 - 镜像内**没有**任何密钥、`.env` 或凭据：Dockerfile 只 `COPY` 显式列出的路径，不使用 `COPY . .`。
+  **该清单是运行时 import 闭包**（依据与逐条推导见 [service-settings.md](service-settings.md) §5）：
+  除 `services/api/{src,db}` 外**必须**包含 `packages/**`——`packages/privacy/*.mjs` 被
+  `privacy/consent-pg.ts` 静态 import，`packages/knowledge/catalog/*.json` 被 `profile/service.ts`
+  在模块顶层 `readFileSync` 读取。缺了它容器启动必然失败；本 PR 用 `local-check.ps1` 的 [1/4] 复现并修好
+  （改前 `ERR_MODULE_NOT_FOUND: packages/privacy/guard.mjs` ⇒ 改后 `IMPORT_OK`）。
   `deploy/cloudrun/Dockerfile.dockerignore` 是同名忽略清单（BuildKit 用 `-f` 时优先读取
   `<Dockerfile>.dockerignore`）；若平台构建器不读取它，可复制到仓库根为 `.dockerignore`——
   它只影响构建上下文体积，**不影响密钥边界**。
@@ -198,18 +204,26 @@ Windows PowerShell 若策略受限（报 `cannot be loaded ... is not digitally 
 powershell -NoProfile -ExecutionPolicy Bypass -File deploy/cloudrun/local-check.ps1
 ```
 
-脚本做四件事：构建镜像 → 检查镜像内**没有** `.env` 且以非 root 运行 → 以 `APP_EXECUTION_MODE=stub`
-启动容器并轮询 `/health` → 清理容器。期望输出（脚本内打印）：
+脚本做四件事：**[1/4] 依赖闭包检查（不需要 Docker）**——解析 Dockerfile 的 COPY 清单、把「镜像根」复刻到临时目录
+（`node_modules` 用 junction 指向仓库现有安装）并以容器根视角 import 入口依赖链 → 构建镜像 →
+检查镜像内**没有** `.env` 且以非 root 运行 → 以 `APP_EXECUTION_MODE=stub` 启动容器并轮询 `/health` → 清理。
+期望输出（脚本内打印）：
 
 ```
-[1/4] docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
+[1/4] 依赖闭包检查（容器根视角，不需要 Docker）… IMPORT_OK
+[2/4] docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
 [2/4] 镜像静态检查：uid=1000；未发现 /app/.env 或 /app/.env.*
 [3/4] GET http://127.0.0.1:3199/health -> HTTP 200 status=ok execution_mode=stub
 [4/4] PASS
 ```
 
-**本机（开发机）没有安装 Docker**，所以本 PR **没有**运行过这个脚本，第 2 张表里也如实标注了
-「镜像真实构建、容器真实启动」为未验证。有 Docker 的机器上请直接执行上面的命令；
+退出码：`0` = 全部通过；`1` = 有检查失败；`2` = 环境不可用（找不到仓库根／Dockerfile／依赖未安装）；
+`3` = **仅依赖闭包检查通过（本机无 Docker）**——即在没有 Docker 的机器上，脚本仍然能挡住
+「COPY 清单缺文件 ⇒ 容器启动必然失败」这一类缺陷，其余镜像层检查如实留作未验证。
+
+**本机（开发机）没有安装 Docker**：本 PR 在本机跑过的是 **[1/4] 依赖闭包检查**（改前失败、改后 `IMPORT_OK`，
+原始输出见 PR 正文「变更 2」）；[2/4] 镜像静态检查与 [3/4] 容器 `/health` **没有跑过**，脚本会以 `exit 3`
+报告「部分通过」，第 2 张表也把「镜像真实构建、容器真实启动」标为未验证。有 Docker 的机器上请直接执行上面的命令；
 也可以用等价的纯命令序列：
 
 ```powershell
@@ -244,4 +258,4 @@ docker rm -f gengyun-api-check
 | `deploy/cloudrun/service-settings.md` | 平台字段、健康检查语义、环境变量/机密清单、官方依据 |
 | `deploy/cloudrun/container.config.json.example` | 官方模板 `container.config.json` 字段对照（本路线**不使用**） |
 | `deploy/cloudrun/env.placeholder.json` | 平台「环境变量 JSON 导入」的空值模板（无任何真实值） |
-| `deploy/cloudrun/local-check.ps1` | 本地自检：构建镜像 + 容器内 `/health`（需 Docker） |
+| `deploy/cloudrun/local-check.ps1` | 本地自检：[1/4] 依赖闭包检查（**不需要 Docker**）+ [2/4] 镜像静态检查 + [3/4] 容器内 `/health`（后两项需 Docker） |
