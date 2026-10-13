@@ -510,6 +510,42 @@ try {
     console.log('[嵌套值守卫实测] ' + lines.join(' ｜ '));
     observations.push('嵌套 result.value 守卫：坏投影经路由 503（改前 200 透出），契约合法仍 200');
   });
+
+  // -------- [14] 钉子（预审要求）：**无取消能力 kind 的 cancel 错误码映射** --------
+  // 显式钉住现口径，防静默漂移：
+  //   （a）两个头都缺            ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`
+  //   （b）有 Key、缺 `If-Match` ⇒ 428 `REVISION_REQUIRED`
+  //   （c）两个头齐备但该 kind 无取消能力 ⇒ 503 `PROVIDER_UNAVAILABLE`（能力未接线）
+  // **隐式依赖如实说明**：(a)/(b) 由"**已注册的、有取消能力的源**"（本片为识别域）在归属判定**之前**
+  // 执行的共享请求头前置校验（`requireIdempotencyKey`/`requireIfMatch`）代答 —— 即"先校请求形状、再判归属"；
+  // 注册表 cancel **遍历全部源**，故该映射**与注册顺序无关**（单测 `jobs-registry.test.mjs` 的钉子用换序 + 摘源两种构造证明了这一点），
+  // 但它**依赖"注册表里存在至少一个有取消能力的源"**：若某天只剩无取消能力的源，同一缺头请求会退化为 503。
+  // 只有 (c) 真正走到"该 kind 无取消能力"的分支。
+  await group('[14] 钉子·无取消能力 kind 的 cancel 错误码：缺 Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；缺 If-Match ⇒ 428 REVISION_REQUIRED；两头齐备 ⇒ 503 PROVIDER_UNAVAILABLE（依赖"存在有取消能力的源"，与顺序无关——详见用例注释与单测钉子）', async () => {
+    const before = (await readJob(transcriptionJobId)).body.data;
+    const neither = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA });
+    assert.equal(neither.status, 400, `两个头都缺应 400，实际 ${neither.status}`);
+    assert.equal(neither.body.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+    const keyOnly = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA, headers: { 'idempotency-key': newKey('nail-key-only') } });
+    assert.equal(keyOnly.status, 428, `有 Key 缺 If-Match 应 428，实际 ${keyOnly.status}`);
+    assert.equal(keyOnly.body.error.code, 'REVISION_REQUIRED');
+    const bothHeaders = await http(`${JOBS}/${transcriptionJobId}/cancel`, {
+      method: 'POST',
+      token: tokenA,
+      headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': newKey('nail-both') },
+    });
+    assert.equal(bothHeaders.status, 503, `两头齐备应 503（该 kind 无取消能力），实际 ${bothHeaders.status}`);
+    assert.equal(bothHeaders.body.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(bothHeaders.body.error.retryable, true);
+    const after = (await readJob(transcriptionJobId)).body.data;
+    assert.equal(after.state, before.state, '三次失败调用都不得改动作业状态');
+    assert.equal(after.revision, before.revision);
+    console.log(
+      `[无取消能力 kind 的错误码钉子] 缺两头=${neither.status} ${neither.body.error.code} ｜ ` +
+        `有 Key 缺 If-Match=${keyOnly.status} ${keyOnly.body.error.code} ｜ 两头齐备=${bothHeaders.status} ${bothHeaders.body.error.code}`,
+    );
+    observations.push('钉子：无取消能力 kind 的 cancel ⇒ 缺 Key 400 / 缺 If-Match 428 / 齐备 503（顺序依赖已在用例注释钉明）');
+  });
 } finally {
   await app.close();
 }
