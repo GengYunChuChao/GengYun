@@ -14,7 +14,7 @@
 
 事实源为 `packages/contracts/openapi.json`、`operations.json` 与 `states.json`；语义约定见[状态协议](state-contract.md)。[JSON 副本](contract-status.json)人工维护状态、证据和缺口，以下表格从该副本同步，脚本不会自动判定 implemented。
 
-当前 `services/api/src/app.ts:197-207` 注册健康、公共主页、用户/后台身份、授权、档案、资料、识别、转写、合成和 OCR。健康端点不计入 112 条业务契约。GET /jobs/{id} 与 POST /jobs/{id}/cancel 当前只读取 recognition store；[PR #106](https://github.com/GengYunChuChao/GengYun/pull/106) 的跨域注册未计入本基线，本次不改其代码或接管其任务。
+当前 `services/api/src/app.ts:200-210` 注册健康、公共主页、用户/后台身份、授权、档案、资料、识别、转写、合成和 OCR；`:214-217` 追加共享作业面（GY-I01）。健康端点不计入 112 条业务契约。GET /jobs/{id} 与 POST /jobs/{id}/cancel 由共享作业面 `services/api/src/jobs/routes.ts` 提供：按 kind 分派，识别域与转写域已接入（转写域无取消能力 ⇒ 该 kind 的取消以 503 如实拒绝），未接线 kind 与「作业不存在」同形 404。
 
 社区 16 项、消息 3 项和后台业务 34 项已有独立服务证据，状态记 partial、route_mounted=false。媒体/参考/隐私相关库存在，保留 planned 的条目表示本轮未取得对应产品服务证据，不否认这些库的成果。识别、OCR、ASR、TTS 新注册操作均记 partial，不以替身或回环测试宣称真实能力达标。
 
