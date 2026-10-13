@@ -287,7 +287,8 @@ $ # 交叉核对 90-assert-least-privilege.sql 里出现的每个关系名
 | 改写时自查 | `runtime_tcp_login` 之外还曾想用 `pg_dump -s` 作为越权反例，但低权限角色能否跑 `pg_dump -s` 我无法在本机证实 | **删除该判据**，不保留"我不知道结论"的检查 |
 | `deploy/**` Markdown 等价校验（见 L 节） | 2 处未转义竖线（`\|\|`）导致表格列数从 3 变 5；后又出现 1 处同类问题（`for … do bash -n "$f" \|\| echo` 写在表格单元格里） | 均转义为 `\|\|` 并复跑通过——**说明这个检查有牙齿** |
 | 改写文档后复检行尾 | 用 Python `pathlib.write_text` 拼接段落时，Windows 上把 `\n` 转成了 `\r\n`，导致 `README.md`（421 处）与 `runbook.md`（368 处）变成 CRLF，与仓库其余 LF 文件不一致 | 用 `WriteAllText` + `-replace "\r\n","\n"` 转回 LF；复检本目录 16 个文件 **CRLF=0**、`git ls-files --eol` 全部 `i/lf w/lf` |
-| **外部真跑（监工 · 真实 PG 17.11）** | **`20-login-roles.sql` 的前置断言 `pg_has_role('gengyun_api_runtime', …)` 排在建角色之前 ⇒ 全新库上 `ERROR: role … does not exist`（exit=3）**；`90-assert` 连带中止。**本单的静态自检没能发现它**（`bash -n` 不看 SQL，本机也没有 psql） | 见 §4 与 [roles-and-migration.md](../roles-and-migration.md) §6.2：改为"角色不存在也安全"，新增组存在性前置，`90-assert` 加前置自检，`verify`/`restore-drill` 消除同类隐患；返修后的首跑/幂等回归**待监工回传** |
+| **外部真跑（监工 · 真实 PG 17.11）** | **`20-login-roles.sql` 的前置断言 `pg_has_role('gengyun_api_runtime', …)` 排在建角色之前 ⇒ 全新库上 `ERROR: role … does not exist`（exit=3）**；`90-assert` 连带中止。**本单的静态自检没能发现它**（`bash -n` 不看 SQL，本机也没有 psql） | 见 §4 与 [roles-and-migration.md](../roles-and-migration.md) §6.2：改为"角色不存在也安全"，新增组存在性前置，`90-assert` 加前置自检，`verify`/`restore-drill` 消除同类隐患。**第二轮外部复核已确认修好**（§4.3 A/B/D 三项通过） |
+| **外部真跑（第二轮）发现的过度约束** | `90-assert` 把 `schema_migrations` 列为**硬前置**，而 **15 项断言没有一项读它** ⇒ 在"有套接字但无 `migrate.ts`"的等价环境里无法验证断言（守卫正确早停，但也挡住了复核） | 见 §4.3.1：改为**硬前置（真依赖）+ 软前置（台账只告警）**；**15 条断言的 SQL 一字未改**，台账的权威判定点仍在 `provision-db.sh` 门禁与 `verify` 的 `migrations_applied` |
 
 ### L) 本目录 Markdown 复用仓库文档校验器的同类规则
 
@@ -328,14 +329,16 @@ $ git diff --cached --check
 
 | 项 | 为什么做不了 | 状态 |
 | --- | --- | --- |
-| `sql/20-login-roles.sql`、`sql/90-assert-least-privilege.sql` 的 **SQL 语法与语义** | 本机没有任何 psql 可解析它们 | **从未被 PostgreSQL 解析过**；只有第 J 节的静态结构检查 |
+| `sql/20-login-roles.sql`、`sql/90-assert-least-privilege.sql` 的 **SQL 语法与语义** | 本单写机没有 psql | 已由**外部真实 PG 17.11** 解析并执行（见 §4）；本单仍只做第 J 节的静态结构检查 |
 | `install-postgres.sh` 的安装/initdb/启动 | 需要目标 CVM + 云硬盘 + root + 网络 | **未执行** |
 | PG 主版本 17.11 是否真的能装上 | 需要 `apt-cache madison postgresql-17` 在**目标 CVM** 上跑 | **未执行**；脚本会在找不到 17.11 时明确失败 |
 | `pg_hba.conf` / `pg_ident.conf` 是否真的生效 | 需要真实集群重载 + `pg_hba_file_rules` 查询 | **未执行** |
-| 角色引导是否真能建出 LOGIN 并授予 5 个组 | 需要真实库 + 迁移已应用 | **未执行** |
-| 最小权限断言是否真能返回 `ok` | 同上 | **未执行** |
-| 越权反例是否真的返回 `42501` | 同上 | **未执行**（判据已写好，结论未知） |
-| 备份是否可恢复 | 需要真实库 + `pg_dump` + 隔离库恢复 | **未产生任何备份、未演练** |
+| 角色引导是否真能建出 LOGIN 并授予 5 个组 | 需要真实库 + 迁移已应用 | ✅ **外部真实 PG 已验证**（§4.3 的 A 项） |
+| 重复执行是否幂等（不改口令） | 第二遍比对 `rolpassword` | ✅ **外部真实 PG 已验证**（§4.3 的 B 项） |
+| 缺口令是否被拒绝 | 未设 `GENGYUN_API_RUNTIME_PASSWORD` | ✅ **外部真实 PG 已验证**（§4.3 的 D 项） |
+| 最小权限断言是否真能返回 `ok` | 需要真实库 + 全部迁移 + 角色已引导 | ⚠️ **仍未验成**：复核环境无 `migrate.ts` 台账 ⇒ 旧版硬前置早停；已收窄依赖（§4.3.1），**待复核者用 `psql` 直跑** |
+| 越权反例是否真的返回 `42501` | 需要真实库 + 运行时角色 | **未执行**（判据已写好，结论未知） |
+| 备份是否可恢复 | 需要真实库 + `pg_dump` + 隔离库恢复 | ⚠️ **未演练**；等价命令已给出（[verify-socket-only-equivalents.md](../verify-socket-only-equivalents.md) 第 2/3 节），待复核 |
 | 网络姿态（公网 5432 关不关） | 安全组在腾讯云账号侧，脚本无凭据 | **未核对**；只能由用户在控制台确认 + 公网反面探针 |
 | 与 CloudBase/云托管侧的真实联调 | 需要真实已部署环境 | **未执行** |
 | 持久性（重启后仍在） | 需要真实 CVM 重启 | **未执行** |
@@ -370,17 +373,38 @@ $ git diff --cached --check
   `20-login-roles.sql` / `90-assert-least-privilege.sql` / `verify-cvm-postgres.sh` /
   `restore-drill.sh` / `provision-db.sh` 里逐处清查并加固（见 §4.4）。
 
-### 4.3 返修后**待补**的证据（在其回传前不得记通过）
+### 4.3 返修后复核结果（**第二轮**，监工回传）
 
-| 回归 | 判据 | 状态 |
+复核环境说明（**必须随证据一起记**）：本机官方 PostgreSQL **17.11**（与 CI 同版本），
+因沙箱禁 TCP ⇒ **只听 AF_UNIX 套接字**，`psql` 可用、**node-postgres 连不上**（故无法跑 `migrate.ts`）；
+迁移是用 `psql -f` 逐个应用的。
+
+| 回归 | 复核结果 | 判定 |
 | --- | --- | --- |
-| **全新库首跑** | `20-login-roles.sql` 在空库+已迁移+已建组的库上 `exit=0`，角色出现在 `\du` | **待监工回传** |
-| **重复执行（幂等）** | 第二遍 `exit=0`，且 `pg_authid.rolpassword` **不变**、`pg_auth_members` 无重复行 | **待监工回传** |
-| 15 项最小权限断言 | 输出 `ok` | **待监工回传** |
-| 备份 / 恢复演练 | `restore-drill.sh` 退出码 0、`FAIL=0` | **待监工回传** |
-| 缺口令 / 口令格式不符 | 明确失败（不建无口令 LOGIN） | **待监工回传** |
+| **A 全新库首跑** | `20-login-roles.sql` `exit=0`；`rolcanlogin=true`、`rolsuper=false`；**继承 5 组** | ✅ **真实 PG 已验证** |
+| 库名守卫 | 在临时库上被"当前数据库不是 gengyun"拦下 | ✅ 按设计生效 |
+| **B 重复执行（幂等）** | 第二遍 `exit=0`；`pg_authid.rolpassword` **哈希不变**；成员数仍 **5** | ✅ **真实 PG 已验证** |
+| **C 15 项最小权限断言** | 在**旧版**上于前置守卫处 `exit=3`（division by zero） | ⚠️ **守卫有效，但断言本身未验成**：复核者用 `psql -f` 应用迁移 ⇒ 库里**没有 `migrate.ts` 才会创建的 `schema_migrations` 台账** ⇒ 被硬前置**正确地**拦下。旧版把台账列为硬前置属**过度约束** —— 已按 §4.3.1 收窄，待其用 `psql` 直跑 15 项断言 |
+| **D 缺口令反例** | 未设 `GENGYUN_API_RUNTIME_PASSWORD` ⇒ `exit=3 ≠ 0` | ✅ **真实 PG 已验证**（拒绝建无口令 LOGIN） |
+| E 前置守卫 | 未单独跑（C 已证明守卫会早停并给指引） | 由 C 覆盖 |
+| 备份 / 恢复演练 | 未跑 | ⚠️ **待复核**：等价命令见 [verify-socket-only-equivalents.md](../verify-socket-only-equivalents.md) |
 
-> 监工回传原始输出后，本表会按实际结果更新；**在此之前这五条一律不得当作已通过。**
+复核者另确认：**返修 1 的真缺陷（前置断言早于建角色）已确认修好**；库名守卫、5 组前置、
+口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
+
+#### 4.3.1 针对 C 的收窄（按依赖关系，不改任何断言语义）
+
+**事实**：`90-assert-least-privilege.sql` 的 **15 项断言没有任何一项读取 `schema_migrations`**；
+它们真正依赖的是 7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组。把台账列为**硬前置**属过度约束。
+
+**处理**：前置分两级——**硬前置**（上述关系与角色；缺失即失败并给三步指引）+
+**软前置**（`schema_migrations` 台账；缺失**只告警不失败**）。这样在"有套接字但没有 `migrate.ts`"
+的等价环境里也能验证那 15 项断言；**台账的权威判定点仍在目标 CVM 侧**
+（`provision-db.sh` 的迁移门禁 + `verify-cvm-postgres.sh` 的 `migrations_applied` 判 FAIL）。
+本交付**不提供**"手工伪造台账"的做法——那会把不属于 `migrate.ts` 的写入带进库。
+
+> **仍然待验证（不得记通过）**：15 项断言本身的输出、备份/恢复演练。
+> 在监工回传这两项的原始输出前，本页不把它们记为通过。
 
 ### 4.4 本次返修涉及的"引用可能不存在的对象"清查结果
 

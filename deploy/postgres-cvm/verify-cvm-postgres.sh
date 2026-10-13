@@ -217,9 +217,17 @@ mapfile -t file_versions < <(
     | sed -nE 's/^([0-9]{4,})_[a-z0-9_]+\.sql$/\1/p' | sort -u
 )
 disk_joined="$(printf '%s\n' "${file_versions[@]}" | paste -sd, -)"
-applied_joined="$(qs "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations" || true)"
+# 存在性安全：目标 CVM 上台账是本项判据的权威载体；台账缺失时给出可读的“实际值”，
+# 而不是把 psql 的 relation does not exist 原文当成判据结果。
+if [[ "$(qs "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" == 't' ]]; then
+  applied_joined="$(qs "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations" || true)"
+  checksum_nulls="$(qs 'SELECT count(*) FROM schema_migrations WHERE checksum IS NULL' || true)"
+else
+  applied_joined='schema_migrations-missing'
+  checksum_nulls='schema_migrations-missing'
+fi
 report_eq 'migrations_applied' "$disk_joined" "$applied_joined"
-report_eq 'migrations_checksum_not_null' '0' "$(qs 'SELECT count(*) FROM schema_migrations WHERE checksum IS NULL')"
+report_eq 'migrations_checksum_not_null' '0' "$checksum_nulls"
 
 # ---------------------------------------------------------------------------
 # 8. 只读取数（证明业务读路径真的通）

@@ -32,12 +32,18 @@
 \pset tuples_only on
 \pset format unaligned
 
--- --- 前置自检（全部用 to_regclass / pg_roles，对“对象不存在”天然安全）--------
--- 目的：把“迁移没跑完 / 角色没引导”这类前置缺失，从“跑到一半的含糊报错”
---       变成“一开头就给出补救命令”。下列关系是本文件后续断言真正依赖的全部对象。
+-- --- 前置自检（分两级；全部用 to_regclass / pg_roles，对“对象不存在”天然安全）--
+-- (硬) 本文件 15 项断言**真正依赖**的对象：7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组。
+--      缺任一项 ⇒ 断言无法求值 ⇒ 立即失败并打印补救指引。
+-- (软) public.schema_migrations 台账：**不是** 15 项断言的对象，它只是“迁移由 migrate.ts 应用”
+--      的凭据。台账缺失时**只告警、不失败**，以便在“用 psql -f 应用了迁移、但没有 migrate.ts”
+--      的等价复跑环境（例如只有 Unix 套接字、node-postgres 不可用的本机复现）里仍能验证这 15 项。
+--      ⚠️ 在目标 CVM 上台账缺失属异常：provision-db.sh 的迁移门禁会拦下，verify 的
+--         migrations_applied 也会判 FAIL —— 那里才是台账的权威判定点。
+-- 说明：本文件 15 项断言**没有任何一项读取 schema_migrations**；把它列为硬前置属于过度约束，
+--       会妨碍“CVM 之外等价环境”的复核。此处按依赖关系收窄，不改变任何断言语义。
 SELECT (
-         to_regclass('public.schema_migrations')            IS NOT NULL
-     AND to_regclass('public.users')                        IS NOT NULL
+         to_regclass('public.users')                        IS NOT NULL
      AND to_regclass('public.sessions')                     IS NOT NULL
      AND to_regclass('public.admin_accounts')               IS NOT NULL
      AND to_regclass('public.admin_scopes')                 IS NOT NULL
@@ -53,14 +59,27 @@ SELECT (
        ) AS prereq_ok \gset
 \if :prereq_ok
 \else
-  \echo '错误：90-assert-least-privilege.sql 的前置未满足——本文件是 provisioning 之后的事后断言。'
-  \echo '      需要的对象：schema_migrations 与 7 个业务关系，以及角色 gengyun_api_runtime + 5 个既有 NOLOGIN 组。'
+  \echo '错误：90-assert-least-privilege.sql 的硬前置未满足——本文件是 provisioning 之后的事后断言。'
+  \echo '      需要：7 个业务关系（users / sessions / admin_accounts / admin_scopes /'
+  \echo '            idempotency_keys / catalog_read.home_species / catalog_read.current_knowledge）'
+  \echo '            + 角色 gengyun_api_runtime + 5 个既有 NOLOGIN 组。'
   \echo '      请按顺序确认：'
   \echo '        1) sudo deploy/postgres-cvm/install-postgres.sh'
   \echo '        2) DATABASE_URL=… node services/api/src/db/migrate.ts up     # 全部迁移'
   \echo '        3) sudo deploy/postgres-cvm/provision-db.sh                  # 建组 ⇒ 20- ⇒ 本文件(90-)'
   \echo '      本文件不会自己建角色或建表。'
   SELECT 1/0;
+\endif
+
+-- 软前置：台账缺失只告警（见上）。该告警在 \if 之外、且在最终 SELECT 之前，
+-- 因此调用方按“最后一行”取判定结果时不受影响。
+SELECT (to_regclass('public.schema_migrations') IS NOT NULL) AS ledger_ok \gset
+\if :ledger_ok
+\else
+  \echo '警告：未找到 public.schema_migrations 台账。'
+  \echo '      本文件 15 项断言不依赖它，故继续执行；但“迁移由 migrate.ts 应用”在本库无法证明。'
+  \echo '      若这是目标 CVM，属异常：请用 DATABASE_URL=… node services/api/src/db/migrate.ts up 后重跑。'
+  \echo '      （等价复跑环境：用 psql -f 应用迁移时不会有该台账，此告警属预期。）'
 \endif
 
 WITH checks(label, ok, detail) AS (

@@ -204,7 +204,8 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan   # 期望：在新网段内
 | [conf/pg_hba.gengyun.conf](conf/pg_hba.gengyun.conf) | 客户端认证：仅回环 + VPC 网段，无 `0.0.0.0/0` | 否（模板） |
 | [conf/pg_ident.gengyun.conf](conf/pg_ident.gengyun.conf) | 系统用户 `postgres` → 数据库用户 `gengyun_cvm_owner` 映射 | 否（模板） |
 | [conf/gengyun-postgresql.service](conf/gengyun-postgresql.service) | 专用 systemd 单元（数据目录在持久盘） | 否（模板） |
-| [evidence/local-self-check.md](evidence/local-self-check.md) | 本地可做/不可做的自检原始输出 | 已有原始输出 |
+| [evidence/local-self-check.md](evidence/local-self-check.md) | 本地可做/不可做的自检原始输出；§4 为**外部真实 PG 17.11** 的复核证据 | 已有原始输出（外部部分由监工回传） |
+| [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) | **外部复核用**：在"只有套接字、无 root/systemd"的环境里复现关键动作的等价命令（**不是部署路径**） | 文档（本单未执行） |
 
 > **传送到 CVM 时的行尾注意**：本目录的脚本/配置在 Git 索引里都是 **LF**（`git ls-files --eol` 显示
 > `i/lf w/lf`），`bash` 在 Linux 上可正常执行。但本仓库的 Windows 检出配置为

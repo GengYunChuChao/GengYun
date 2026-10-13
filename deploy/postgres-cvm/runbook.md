@@ -371,6 +371,8 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 | API `category=connection_failed`（`ECONNREFUSED`） | 没监听该地址 / 安全组挡了 | `ss -ltn "sport = :5432"`、`SHOW listen_addresses` | 修 `listen_addresses`；用户核对安全组 |
 | API `category=database_missing`（`3D000`） | 库名写错或库没建 | `\l` 等价查询 | 用 `gengyun`（或 `GENGYUN_DB_NAME` 指定的一致名字） |
 | API 报 `42501 permission denied` | 角色引导没跑或跑在错误的库上 | `verify-cvm-postgres.sh` 的 `least_privilege_assert`、`runtime_can_read_*` | 跑 `provision-db.sh` |
+| `90-assert` 输出"警告：未找到 public.schema_migrations 台账" | 该库的迁移**不是用 `migrate.ts` 应用的**（例如用 `psql -f` 手工应用） | `SELECT to_regclass('public.schema_migrations')` | 在**目标 CVM** 上这属异常：用 `DATABASE_URL=… node services/api/src/db/migrate.ts up` 应用迁移。**等价复核环境**（只有套接字、node-postgres 不可用）里此告警属预期，15 项断言照常执行，见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |
+| `90-assert` 输出"错误：…的硬前置未满足" | 7 个业务关系 / 运行时角色 / 5 组有缺失 | 输出里的三步指引 | 按序补：`install-postgres.sh` ⇒ `migrate.ts up` ⇒ `provision-db.sh` |
 | `pg_hba_file_rules` 有 `error` | 手改坏了配置 | `SELECT * FROM pg_hba_file_rules WHERE error IS NOT NULL` | 从 5.0 的备份恢复（5.1） |
 | `migrate.ts` 报 drift | 磁盘上的迁移文件被改过 | `migrate.ts status` | 不要继续；恢复被改的文件到与 HEAD 一致 |
 | 备份文件为 0 字节或 `pg_restore --list` 失败 | 备份过程被打断/磁盘满 | `backup-postgres.sh --list`、`df -h` | 当次备份**不算数**，修好后重跑 |

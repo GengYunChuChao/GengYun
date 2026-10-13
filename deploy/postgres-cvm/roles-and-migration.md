@@ -266,10 +266,45 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | `20-login-roles.sql` 单独在"未建组"的库上执行 | 由存在性前置拦下，提示先跑 `provision-db.sh` | `exit≠0`（**不是**含糊的 role does not exist） |
 | `90-assert-least-privilege.sql` 单独在"未迁移/未引导"的库上执行 | 由前置自检拦下，打印三步补救指引 | `exit≠0`，且输出可操作 |
 
-### 6.4 待补的证据（返修后）
+### 6.4 第二轮外部复核（真实 PG 17.11，按返修版重跑）
 
-监工将在真实 PG 17.11 上按正确顺序重跑：**全新库首跑 → 重复执行（幂等）→ 15 项断言 → 备份/恢复演练**，
-并回传原始输出。**在监工回传之前，返修后的这两条回归仍属"待验证"，不得记通过。**
+| 项 | 结果 | 判定 |
+| --- | --- | --- |
+| **A 全新库首跑** | `20-login-roles.sql` `exit=0`；`rolcanlogin=t, rolsuper=f`；**继承 5 组** | ✅ **真实 PG 已验证** |
+| 库名守卫 | 在临时库上运行时被"当前数据库不是 gengyun"拦下 | ✅ 按设计生效 |
+| **B 重复执行幂等** | 第二遍 `exit=0`；`pg_authid.rolpassword` **哈希不变**；成员数仍 **5** | ✅ **真实 PG 已验证** |
+| **D 缺口令反例** | 未设 `GENGYUN_API_RUNTIME_PASSWORD` ⇒ `exit=3 ≠ 0` | ✅ **真实 PG 已验证**（拒绝建无口令 LOGIN） |
+| **C 15 项断言** | 在**旧版**上于前置守卫处 `exit=3`（division by zero） | ⚠️ **守卫有效但断言本身未验成**：复核者用 `psql -f` 应用迁移 ⇒ 库里**没有 `migrate.ts` 才会创建的 `schema_migrations` 台账** ⇒ 被硬前置正确拦下。⇒ 已按 §6.5 收窄依赖，待其用 `psql` 直跑 15 项断言 |
+| E 前置守卫 | 未单独跑（C 已证明守卫会早停并给指引） | 由 C 覆盖 |
+| 备份 / 恢复演练 | 未跑 | ⚠️ **待复核**：等价命令见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |
+
+复核者另确认：**上一条真缺陷（前置断言早于建角色）已确认修好**；
+库名守卫、5 组前置、口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
+并纠正了其上一轮的一条结论：重复跑 `roles/*.sql` 报"角色已存在"是**同集群复用**所致
+（角色 SQL 是裸 `CREATE ROLE`、设计上不 DROP 别人的角色），**不是缺陷**。
+
+### 6.5 `90-assert-least-privilege.sql` 前置分级（按依赖关系收窄，不改断言语义）
+
+**问题**：旧版把 `public.schema_migrations` 列为**硬前置**。但**15 项断言没有任何一项读取该台账**
+——它们真正依赖的是 7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组。
+把台账列为硬前置属**过度约束**，会挡住"CVM 之外等价环境（用 `psql -f` 应用迁移、无 `migrate.ts`）"的复核。
+
+**处理**：
+
+| 级别 | 内容 | 缺失时行为 |
+| --- | --- | --- |
+| **硬前置** | 7 个业务关系（`users`/`sessions`/`admin_accounts`/`admin_scopes`/`idempotency_keys`/`catalog_read.home_species`/`catalog_read.current_knowledge`）+ 角色 `gengyun_api_runtime` + 5 个既有 NOLOGIN 组 | **立即失败**并打印三步补救指引 |
+| **软前置** | `public.schema_migrations` 台账 | **只告警不失败**（说明"迁移由 `migrate.ts` 应用"在本库无法证明），15 项断言照常执行 |
+
+**没有放宽任何断言**：15 条断言的 SQL 一字未改。**台账的权威判定点仍在目标 CVM 侧**：
+`provision-db.sh` 的迁移门禁（未全部应用即拒绝引导角色）+ `verify-cvm-postgres.sh` 的
+`migrations_applied`（判 FAIL）。本交付**不提供**"手工伪造台账"的做法——那会把不属于
+`migrate.ts` 的写入带进库，与"台账由权威运行器维护"冲突。
+
+### 6.6 待补的证据（返修后）
+
+监工将继续在真实 PG 17.11 上补齐：**15 项断言（按 §6.5 收窄后）**、**备份/恢复演练**。
+在回传原始输出前，这两条仍属"待验证"，不得记通过。
 
 ## 7 一致性自查清单（提交/验收前逐条对照）
 

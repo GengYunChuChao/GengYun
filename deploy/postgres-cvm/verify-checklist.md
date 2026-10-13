@@ -113,7 +113,7 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 | `runtime_group_count` | `SELECT count(*) FROM pg_roles WHERE pg_has_role('gengyun_api_runtime', oid,'MEMBER') AND rolname<>…` | `5` | `<5` ⇒ 某些功能会 42501；`>5` ⇒ **多授权**，对照第 3.3 节 |
 | `runtime_not_owner_member` | `SELECT pg_has_role('gengyun_api_runtime','gengyun_cvm_owner','MEMBER')` | `f` | `t` ⇒ **P0：运行时拿到超级用户**，立即 `REVOKE` 并排查 |
 | `nologin_groups_present` | 统计 5 个组的 `NOT rolcanlogin` 个数 | `5` | 少于 5 ⇒ 组没建或被人改成可登录 |
-| `least_privilege_assert` | 跑 [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | `ok` | `FAIL: <标签> (<说明>)` ⇒ 按标签定位；脚本**只报不改** |
+| `least_privilege_assert` | 跑 [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | `ok` | `FAIL: <标签> (<说明>)` ⇒ 按标签定位；脚本**只报不改**。该文件前置分**硬/软**两级：7 个业务关系 + 运行时角色 + 5 组缺失 ⇒ 立即失败并给三步指引；`schema_migrations` 台账缺失 ⇒ **只告警**（15 项断言不依赖它，故可在"用 `psql -f` 应用迁移"的等价环境里复核，见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md)） |
 | `runtime_can_read_home_species` | `SET ROLE gengyun_api_runtime; SELECT count(*) FROM catalog_read.home_species` | 非负整数 | 报 42501 ⇒ `gengyun_preview_reader` 没授上 |
 | `runtime_can_read_current_knowledge` | 同上，`catalog_read.current_knowledge` | 非负整数 | 报 42501 ⇒ `gengyun_knowledge_runtime` 没授上，或 0010 未应用 |
 | `runtime_denied_select_star_users` | `SET ROLE …; SELECT * FROM public.users` | `42501` | **成功返回即 P1**：按列授权被放宽成整表读 |
