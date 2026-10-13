@@ -1,6 +1,6 @@
 # VPC 互联可执行核验步骤
 
-2026-10-12，Refs #25。配套 [README.md](README.md)（判定项与原因列表）。
+2026-10-12，**Refs #27**（此前误写 `#25`，已更正）。配套 [README.md](README.md)（判定项与原因列表）。
 
 **本文件只给出步骤，不代为执行。** 撰写时**没有任何凭据、未登录控制台、未调用任何云 API**；所有"预期输出"均为文档推断值，实际以控制台/CLI 返回为准，**不得**把本文当作已核验结果。
 
@@ -9,7 +9,8 @@
 - **凭据只私密交接**：只放在仓库外私密目录（本仓库既有约定为 `E:\GengYunPrivate`，关闭继承、仅当前用户与 SYSTEM）。**不得**把 SecretId/SecretKey/SessionToken、数据库口令、真实账号 UIN 之外的隐私信息写入聊天、本仓库、PR 或任何文档。
 - **只读优先**：本阶段只做 `Describe*`/`Get*` 类读操作与 `env:list`/`service:list` 类查询；**不创建、不修改、不删除、不购买、不发布版本**。
 - **不扩权**：不为核验新建管理员策略；若需只读凭据，由用户在自己的腾讯云账号下建**受限子账号**并只授读动作（候选：`DescribeVpcs`、`DescribeSubnets`、`DescribeSecurityGroups`、`DescribeSecurityGroupPolicies`、`DescribeVpcPeeringConnections`、`GetCallerIdentity`），凭据按上面规则私密交接。
-- **真实动作名与参数以官方 API 文档为准**：本文给出的动作名按官方文档常见命名书写，执行前请对照[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 与 [STS API 文档](https://cloud.tencent.com/document/api/1312) 核对，**不要凭本文猜测参数**。
+- **真实动作名与参数以官方 API 文档为准**：本文给出的动作名按官方文档常见命名书写，**除第 2 节"命令可核性"表注明"已核对"者外均未逐条核对**；执行前请对照[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 与 [腾讯云 API 中心](https://cloud.tencent.com/document/api)（在其中确认安全凭证服务 / STS 的动作页）核对动作名、`Version`、`Region` 与参数名，**不要凭本文猜测参数**。
+- **不推断控制台链接里的地域数字**：官方自查指南给出的对等连接链接含 `rid=4`，本文**不**把 `rid=4` 断言为上海；请登录控制台后**手动把地域切到上海**再查看。地域取值一律以 `ap-shanghai` 这类官方代码为准（[地域列表](https://cloud.tencent.com/document/api/215/15758)）。
 - **账号 ID 只留在私密目录**：把 UIN、实例 ID、内网 IP 等记录到私密文件，文档/PR 里只写"是否一致"的结论与判定依据。
 - 本目录不含可执行文件，CI 不运行其中任何命令。
 
@@ -20,8 +21,8 @@
 - **目的**：确定是微信云托管还是腾讯云开发 CloudBase 云托管，并确认登录的是目标小程序/公众号。
 - **入口**：`https://cloud.weixin.qq.com/cloudrun/`（微信客户端扫码）或 `https://tcb.cloud.tencent.com/dev`。
 - **预期输出**：登录后进入"账号选择 → 环境"界面，能看到环境别名 `prod` 与环境 ID `prod-d1g6qe87c4f2d7061`。
-- **判读规则**：能按环境名称 `prod` + 追加串的形式看到该 envId ⇒ 归属**微信云托管**（官方规则见 README 第 2 节）。若只能从 `tcb.cloud.tencent.com` 进入，改按 CloudBase 文档路径处理。
-- **失败下一步**：看不到该环境 ⇒ 先按 A3 确认自己的微信侧角色与环境授权范围，而不是改任何配置。
+- **判读规则**：**归属必须按 [README.md](README.md) 第 0 步的 D1–D7 逐项抄录后判定**（登录域名、页面产品名、是否有「设置 → 权限设置」「设置 → CLI 密钥」、是否存在"绑定腾讯云账号"概念、哪套 CLI 能列出该 envId、帮助链接域名、环境是否出现在你自己的腾讯云账号控制台内），并把抄录表填入 [user-console-actions.md](user-console-actions.md) A0。**`envId` 形态（环境名 `prod` + 追加串）只作提示、不作证据**。若确证不是微信云托管，按 README 第 0 步的分支清单**整段替换**判定项 ① 与入口路径，本文件 §1/§2 的 `wxcloud` 命令段不再适用。
+- **失败下一步**：归属无法确证 ⇒ 记【待确证】并停止推进账号归属结论；看不到该环境 ⇒ 先按 A3 确认自己的角色与环境授权范围，而不是改任何配置。
 
 ### A2 确认环境地域
 
@@ -79,14 +80,28 @@
 
 - **目的**：真正打通后按官方顺序自查。
 - **入口**：[资源互联调用腾讯云资源自查指南](https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloudrun/src/scene/noun/vpc.html)。
-- **要点（原文步骤）**：①核对目标资源内网 IP/端口/账号密码；②「设置 - 环境设置 - 资源互联」授权状态是否正常；③核对自己的 VPC 与腾讯云资源所属 VPC 是否一致；④登录服务 webshell 用 `ping`/`telnet ip port`/`nc ip port` 自查连通性；⑤登录对应腾讯云账号查看[对等连接](https://console.cloud.tencent.com/vpc/conn?rid=4)状态是否"已连接"；⑥核对资源安全组是否屏蔽了服务内网 IP 所在网段。
+- **要点（原文步骤）**：①核对目标资源内网 IP/端口/账号密码；②「设置 - 环境设置 - 资源互联」授权状态是否正常；③核对自己的 VPC 与腾讯云资源所属 VPC 是否一致；④登录服务 webshell 用 `ping`/`telnet ip port`/`nc ip port` 自查连通性；⑤登录对应腾讯云账号查看[对等连接](https://console.cloud.tencent.com/vpc/conn?rid=4)状态是否"已连接"（**该官方链接含 `rid=4`，本目录不断言其等于上海；请在控制台内手动切到上海地域**）；⑥核对资源安全组是否屏蔽了服务内网 IP 所在网段。
 - **判读规则**：上述 6 步全部正常才可能连通；任一步异常按该步处理。**对等连接（步骤⑤）属旧"资源互联"机制的产物**，走新版服务维度 VPC 时是否需要：**未找到明确依据**，以控制台实际显示为准。
 
 ## 2 路径 B：后续有凭据时执行（命令级）
 
-前置：① 已确认要在**哪个腾讯云账号**下核验（路径 A7 的结论）；② 已由用户私下交接**受限只读**凭据或已在本机配置好 CLI 凭据；③ 凭据只存在于进程环境或私密配置，**不写入命令行参数**（避免进入 shell 历史）、**不写入仓库**。
+前置：⓪ 已按 [README.md](README.md) 第 0 步确证产品归属为**微信云托管**（抄录表已填；若确证为其他产品，本节的 `wxcloud` 命令段**不适用**，需按 CloudBase 文档替换）；① 已确认要在**哪个腾讯云账号**下核验（路径 A7 的结论）；② 已由用户私下交接**受限只读**凭据或已在本机配置好 CLI 凭据；③ 凭据只存在于进程环境或私密配置，**不写入命令行参数**（避免进入 shell 历史）、**不写入仓库**。
 
 安装与登录以官方文档为准：腾讯云 CLI 见[命令行工具文档](https://cloud.tencent.com/document/product/440/6176)；微信云托管 CLI 为 `npm install -g @wxcloud/cli`（[CLI 工具](https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloudrun/src/guide/cli/)）。**本目录未验证这些安装命令**。
+
+**命令可核性（逐条状态）**：下表逐条给出每条 `tccli` 命令的官方文档入口与核对状态。除注明"已核对"者外，**动作名与参数一律未逐条核对，以官方文档为准**。
+
+| 命令 | 官方文档入口 | 核对状态 |
+| --- | --- | --- |
+| `tccli sts GetCallerIdentity` | [腾讯云 API 中心](https://cloud.tencent.com/document/api)（安全凭证服务 / STS） | **未逐条核对**：动作名与返回字段以官方文档为准 |
+| `tccli vpc DescribeVpcs --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作名与返回结构以官方为准；`Region` 合法值见[地域列表](https://cloud.tencent.com/document/api/215/15758)（上海 = `ap-shanghai`） |
+| `tccli vpc DescribeSubnets --region ap-shanghai --Filters Name=vpc-id,Values=vpc-h33f1h5a` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：`Filters` 字段名与取值格式以官方为准 |
+| `tccli vpc DescribeVpcPeeringConnections --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作是否存在、状态字段取值以官方为准 |
+| `tccli vpc DescribeSecurityGroups --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作名与返回结构以官方为准 |
+| `tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <安全组ID>` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：参数名与规则结构以官方为准 |
+| 配额读取 | [配额中心控制台](https://console.cloud.tencent.com/limitation) | 控制台人工读取；**未找到**可直接读取这些配额的只读 API 依据 |
+
+**已核对的部分**：微信云托管 CLI 的 `npm install -g @wxcloud/cli`、`wxcloud login`（`-a/--appId`、`-k/--privateKey`）及 `env:list` / `service:list`（`-e/--envId`、`-s/--serviceName`、`--json`）/ `version:list` 的命令与参数，逐条来自官方 [CLI 工具](https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloudrun/src/guide/cli/) 页面原文。
 
 ### B1 微信云托管侧：环境与服务清单
 
@@ -116,6 +131,7 @@ wxcloud version:list --envId prod-d1g6qe87c4f2d7061 --serviceName <服务名> --
 tccli sts GetCallerIdentity
 ```
 
+- **文档入口**：[腾讯云 API 中心](https://cloud.tencent.com/document/api) 内"安全凭证服务 / STS"的 `GetCallerIdentity` 动作页（**动作名与字段未逐条核对，以官方为准**）。
 - **预期输出**：返回 `AccountId`/`Arn`/`UserId` 等身份字段（真实字段以官方 STS 文档为准）。
 - **判读规则**：把返回的账号与 A5 记录的"云托管背后绑定账号"在**私密目录内**比对；一致 ⇒ 本凭据可用来核验目标资源；不一致 ⇒ 换用正确账号的凭据，**不要**在此账号下建资源。
 - **失败下一步**：返回鉴权类错误 ⇒ 凭据无效或被禁用，请用户重新私密交接；**不要**改用管理员密钥。
@@ -130,6 +146,7 @@ tccli vpc DescribeVpcs --region ap-shanghai
 tccli vpc DescribeSubnets --region ap-shanghai --Filters Name=vpc-id,Values=vpc-h33f1h5a
 ```
 
+- **文档入口**：[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 的 `DescribeVpcs`、`DescribeSubnets` 动作页（**动作名、`Filters` 字段与返回结构未逐条核对，以官方为准**）。
 - **预期输出**：`DescribeVpcs` 的 `VpcSet` 中出现 `VpcId: "vpc-h33f1h5a"`、`CidrBlock: "10.20.0.0/16"`；`DescribeSubnets` 返回该 VPC 下 1 个子网及 `AvailableIpAddressCount`。
 - **判读规则**：
   - 出现该 VPC ⇒ 本凭据账号即是其所属账号，且地域为上海。与 A5 的绑定账号比对即可定 A7 结论。
@@ -147,6 +164,7 @@ tccli vpc DescribeSubnets --region ap-shanghai --Filters Name=vpc-id,Values=vpc-
 tccli vpc DescribeVpcPeeringConnections --region ap-shanghai
 ```
 
+- **文档入口**：[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 的对等连接查询动作页（**动作是否存在与状态取值未逐条核对，以官方为准**；`rid=4` 不作地域断言）。
 - **预期输出**：返回对等连接列表及状态。
 - **判读规则**：官方自查指南要求状态"显示已连接才可正常使用"；列表为空 ⇒ 旧路径未建立。**新版服务维度 VPC 是否需要对等连接：未找到依据**。
 - **失败下一步**：不要自行创建对等连接；属资源创建，用户决策。
@@ -161,6 +179,7 @@ tccli vpc DescribeSecurityGroups --region ap-shanghai
 tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <安全组ID>
 ```
 
+- **文档入口**：[私有网络 API 文档](https://cloud.tencent.com/document/api/215) 的安全组查询动作页（**动作名、参数名与规则结构未逐条核对，以官方为准**）。
 - **预期输出**：目标安全组入站规则中存在允许 `5432`、来源为该子网 CIDR（或该 VPC 网段）的规则。
 - **判读规则**：官方自查指南第 6 步即"查看腾讯云 redis 或 mysql 的安全组是否有入站规则屏蔽了服务内网 IP 所在的网段"。来源写 (`0.0.0.0/0`) 属过度放开 ⇒ 记为风险项，建议收窄到子网网段（**修改属用户决策**）。
 - **失败下一步**：无规则 ⇒ 列入 [user-console-actions.md](user-console-actions.md) 待办，由用户放通；**不要**由核验者改生产安全组。
