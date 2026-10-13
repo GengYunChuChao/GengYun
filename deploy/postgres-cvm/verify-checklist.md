@@ -8,14 +8,22 @@
 
 ## 0 资源就绪后的第一条命令
 
-> ✅ **账号条件已收敛**：用户控制台核对控制台账号 ID 与凭据账号**一致（同一账号）**，
-> 故"账号错配导致结构上连不通"的风险**不适用**（历史分析保留在 [README.md](README.md) §0.3／§0.4）。
+> ⛔ **结构性前提（风险适用）**：微信云托管环境 `prod-d1g6qe87c4f2d7061` 属**子账号 S**，
+> `gengyun-vpc`(`vpc-h33f1h5a`, `10.20.0.0/16`) 属**父账号 P**，**S ≠ P**
+> ⇒ 把 PG 建在**父账号 P** 的该 VPC 里，**结构上很可能连不通**（非调参问题）。
+> 目标形态因此分**两条并列路径**，**选择权在用户**：
+> **路径 A（推荐）** 在子账号 S 内新建 VPC（CIDR 勿与 `10.20.0.0/16` 重叠，如 `10.21.0.0/16`）+ CVM + PG；
+> **路径 B** 仍用父账号 P 的 VPC，但需跨账号私有互通（**未找到依据**）且 CloudRun 侧仍需子账号 S 内有可绑定的网。
+> 详见 [README.md](README.md) §0.3／§0.4。**路径 A 换 CIDR 时，网段必须四处同改**（[README.md](README.md) §0.5）。
 >
-> ⛔ **但两道门禁仍然有效**：
-> ① **授权门禁**：未取得用户对具体动作的明确授权前，不创建 CVM／不建库／不购买资源包／不改 VPC；
-> ② **资源就绪门禁**：只读实测当前 `cvm DescribeInstances @ap-shanghai` = **0 台**、
-> `DescribeSecurityGroups` = **0 个**，云硬盘也未核实。仍待用户：创建 CVM 并加入 `gengyun-vpc`、
-> 创建并挂载云硬盘、配置安全组（5432 仅 `10.20.0.0/16`）、私密交接两个 48 位十六进制口令。
+> ⛔ **两道门禁仍然有效**：
+> ① **授权门禁**：未取得用户对具体动作的明确授权前，**不创建 CVM／不建库／不购买资源包／不改 VPC**；
+>    并注意**不要**在父账号 P 里"为子账号 S 的环境"新建 VPC（解决不了互通问题）。
+> ② **资源就绪门禁**：父账号 P 只读实测 `cvm DescribeInstances @ap-shanghai` = **0 台**、
+>    `DescribeSecurityGroups` = **0 个**，云硬盘未核实，**子账号 S 我们无视角**。
+>    仍待用户：**选定路径** → 在选定账号内建 VPC/子网/CVM → 挂载云硬盘 →
+>    配置安全组（5432 仅所选路径的目标网段）→ 私密交接两个 48 位十六进制口令 →
+>    提供子账号 S 的只读凭据（或在子账号 S 控制台内代为操作并给出结果）。
 > 这些做完后本页与 `backup`／`restore-drill` 才具备执行条件。
 
 ```bash
@@ -23,8 +31,9 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan
 ```
 
 理由：它**零改动**，却能在动手前一次性暴露最可能的前置缺口——发行版不是 apt 系、
-CVM 没进 VPC、没有独立云硬盘、口令没交接、仓库里没有 17.11 包。
+CVM 没进目标网段、没有独立云硬盘、口令没交接、仓库里没有 17.11 包。
 计划里的每一项都应为"已解析/已找到"；出现任何 `[ERROR]` 就先解决，不要直接执行真安装。
+若走路径 A 却仍报"在 VPC 网段 `10.20.0.0/16` 内找到 0 个私网 IPv4"，说明**四处同改没做完**。
 
 ## 1 一键跑完全部可执行判据
 
@@ -53,17 +62,17 @@ echo "exit=$?"
 | --- | --- | --- | --- |
 | `socket_reachable` | `sudo -u postgres /usr/lib/postgresql/17/bin/pg_isready -h /var/run/postgresql` | `期望=yes 实际=yes` | `no` ⇒ 服务没起或 socket 目录不对；先 `systemctl status gengyun-postgresql.service` |
 | `loopback_tcp_open` | `timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5432'` | `期望=yes 实际=yes` | `no` ⇒ `listen_addresses` 没含回环，或服务未起 |
-| `vpc_tcp_open(10.20.x.y)` | 同上但用私网 IP | `期望=yes 实际=yes` | `no` ⇒ `listen_addresses` 漏了私网 IP；**注意**：本机 `nc` 通不代表同 VPC 另一台机能通（安全组在中间） |
+| `vpc_tcp_open(<CVM私网IP>)` | 同上但用 CVM 的私网 IP（脚本按**脚本内配置的网段**自动找） | `期望=yes 实际=yes` | `no` ⇒ `listen_addresses` 漏了私网 IP；**注意**：本机 `nc` 通**不代表**目标网段内另一台机能通（安全组在中间）；**路径 A 若仍显示旧网段 → 四处同改没做完** |
 | `remote_vpc_tcp_open(<ip>)` | 需 `--remote-host` | `期望=yes 实际=yes` | `SKIP` ⇒ 未提供探针机；这是**证据缺口**，不是通过 |
 
-补充人工探针（从同 VPC 的另一台机执行，原始输出留档）：
+补充人工探针（从**目标网段内**的另一台机执行，原始输出留档；`<CVM私网IP>` 按所选路径替换）：
 
 ```bash
 # 有 nc：期望 "succeeded"
-nc -vz -w 5 10.20.x.y 5432
+nc -vz -w 5 <CVM私网IP> 5432
 # 无 nc：期望 current_user 为 gengyun_api_runtime
 PGPASSWORD=<私密口令> /usr/lib/postgresql/17/bin/psql \
-  -h 10.20.x.y -p 5432 -U gengyun_api_runtime -d gengyun -c 'SELECT current_user'
+  -h <CVM私网IP> -p 5432 -U gengyun_api_runtime -d gengyun -c 'SELECT current_user'
 ```
 
 **反面也是证据**：从**公网**（例如你自己的开发机/手机热点）尝试连 `CVM公网IP:5432`
@@ -80,7 +89,7 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 | 判据标签 | 命令 | 期望 | 判读 |
 | --- | --- | --- | --- |
 | `server_version` | `SHOW server_version` | `17.11` | 主版本不是 17 ⇒ 与 CI 不一致，停下；minor 不是 11 ⇒ 与固定标签不一致，记录并按需确认 |
-| `listen_addresses` | `SHOW listen_addresses` | `127.0.0.1,10.20.x.y` | 出现 `*` / `0.0.0.0` ⇒ **FAIL，等于对外监听** |
+| `listen_addresses` | `SHOW listen_addresses` | `127.0.0.1,<CVM私网IP>`（现为 `10.20.x.y`；路径 A 换网段后应为新网段） | 出现 `*` / `0.0.0.0` ⇒ **FAIL，等于对外监听**；仍是旧网段 ⇒ §0.5 四处同改未完成 |
 | `port` | `SHOW port` | `5432`（或显式配置的端口） | 与安全组规则、`DATABASE_URL` 三者必须一致 |
 | `no_wildcard_listener` | `ss -ltn "sport = :5432"` | `期望=0 实际=0` | 非 0 说明内核层面在通配地址监听：配置没生效或被覆盖 |
 
@@ -91,7 +100,7 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 | `hba_file` | `SHOW hba_file` | `/data/gengyun/pgdata/pg_hba.conf` | 指向发行版默认路径 ⇒ 用的是别人的集群 |
 | `hba_parse_errors` | `SELECT count(*) FROM pg_hba_file_rules WHERE error IS NOT NULL` | `0` | 非 0 ⇒ 该行被忽略（可能整段拒绝或放开），必须修并 `pg_reload_conf()` |
 | `hba_no_default_route` | `… WHERE netmask='0.0.0.0' OR address IN ('0.0.0.0','::')` | `0` | 非 0 ⇒ 存在"任何来源"规则，等于公网可尝试认证 |
-| `hba_vpc_rules` | `… WHERE address='10.20.0.0' AND netmask='255.255.0.0'` | `>=2` | 0 ⇒ 同 VPC 也连不上；1 ⇒ 少了运行时或迁移管理员的授权行 |
+| `hba_vpc_rules` | `… WHERE address='10.20.0.0' AND netmask='255.255.0.0'`（脚本内常量；**路径 A 换网段时此处也要同改**，见 [README.md](README.md) §0.5 第 3 行） | `>=2` | 0 ⇒ 目标网段内也连不上（或**判据还在看旧网段**）；1 ⇒ 少了运行时或迁移管理员的授权行 |
 | `ident_file` | `SHOW ident_file` | `/data/gengyun/pgdata/pg_ident.conf` | 指向别处 ⇒ 本机免口令运维会失败 |
 | `ident_map_rows` | `SELECT count(*) FROM pg_ident_file_mappings` | `1` | 应为唯一一条 `postgres → gengyun_cvm_owner`；多于 1 条要人工过一遍是否放开了别的系统用户 |
 
@@ -164,9 +173,11 @@ SHOW password_encryption;   -- 期望 scram-sha-256
 
 | 项 | 在哪核对 | 期望状态 | 不满足的后果 |
 | --- | --- | --- | --- |
-| **账号归属比对** | 腾讯云控制台（**用户本人已核对**） | 与本凭据账号**一致** ⇒ **✅ 已完成：同一账号**（标识值留私密留档，不写入仓库） | —（原条件式风险不适用，见 [README.md](README.md) §0.3） |
-| 安全组入站 `5432` | 腾讯云控制台 → 该 CVM 安全组 | 来源仅 `10.20.0.0/16`；**无 `0.0.0.0/0`**（当前实测：安全组 **0 个**，尚不存在） | 公网可尝试连库 ⇒ P0 风险 |
-| CVM 所属 VPC/地域 | 控制台 → 实例详情 | `gengyun-vpc`(`vpc-h33f1h5a`)、`ap-shanghai`（当前实测：CVM **0 台**，尚未创建） | 与"同账号上海该 VPC"不符，验收前提不成立 |
+| **账号边界** | 用户账户信息（**已由用户提供**） | 云托管环境属**子账号 S**、`gengyun-vpc` 属**父账号 P**，**S ≠ P**（标识值留私密留档，不写入仓库） | 边界 ⇒ "把 PG 建在父账号 P 的 VPC 里很可能连不通"（[README.md](README.md) §0.3） |
+| **路径选择（A/B）** | 用户决策 | 已明确；路径 A 已定新 CIDR；跨账号互通（路径 B）已确认是否有官方依据 | 未定路径 ⇒ 资源不知道建在哪个账号，**不得开工** |
+| **子账号 S 视角** | 用户提供只读凭据，或由用户在子账号 S 控制台操作 | 我们能核对子账号 S 名下的 VPC/子网/CVM/安全组 | 无视角 ⇒ 子账号内的配置**无法核对、无法验证** |
+| 安全组入站 `5432` | 对应账号的控制台 → 该 CVM 安全组 | 来源仅**目标网段**（路径 B = `10.20.0.0/16`；路径 A = 子账号 S 的新网段）；**无 `0.0.0.0/0`**（父账号 P 当前实测：安全组 **0 个**） | 公网可尝试连库 ⇒ P0 风险 |
+| CVM 所属 VPC/地域 | 对应账号的控制台 → 实例详情 | 路径 A：子账号 S 内新建 VPC；路径 B：父账号 P 的 `gengyun-vpc`(`vpc-h33f1h5a`)；地域均 `ap-shanghai`（父账号 P 当前实测：CVM **0 台**） | 与"与环境同账号"不符 ⇒ 验收前提不成立 |
 | 云硬盘挂载与快照策略 | 控制台 → 云硬盘 | 数据目录所在盘为独立云硬盘，有快照/续费策略 | 实例重建即丢库 |
 | 运行时口令交接 | 私密通道 | API 只拿到最小权限连接串 | 若给了 owner 口令，等于把超级用户给了应用 |
 | 恢复演练原始输出 | 由运维提供 | `restore-drill.sh` 完整输出 | 无法证明备份可用 |
