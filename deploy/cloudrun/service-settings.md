@@ -37,6 +37,12 @@
 
 ## 3 环境变量与机密清单
 
+> **变量名易错点（P1 级）**：执行模式的**正确名称是 `APP_EXECUTION_MODE`**，合法值为 `real`｜`stub`｜`preset_demo`。
+> 只写 `EXECUTION_MODE` **无效**：`services/api/src/config.ts:129` 只读取 `APP_EXECUTION_MODE`
+> （`EXECUTION_MODES` 是代码里的取值常量，不是环境变量名），配置校验会以 `APP_EXECUTION_MODE [MISSING]`
+> 失败并 exit 1。指挥在目标 CVM 首次实测时正是踩了 `EXECUTION_MODE` 这个坑；
+> `env.placeholder.json` 的第一个键就是正确名，可直接对照。
+
 「注入位置」两列的含义：**平台环境变量**＝在微信云托管控制台填写、随版本下发；
 **用户私密交接**＝不经过本仓库，由用户本人经私密渠道交给运维/自己保存。
 

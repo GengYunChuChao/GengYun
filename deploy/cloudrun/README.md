@@ -32,7 +32,7 @@
 | 只读接口的最小验收是否可判别 | **实测通过（负例）** | DB 不可达时 `GET /api/v1/public/home` → 503 `PROVIDER_UNAVAILABLE`；stub 模式同样 503（该端点只在 real＋DB 下可用） |
 | `local-check.ps1` 的 **[1/4] 依赖闭包检查**（不需要 Docker） | **实测通过（改前失败 / 改后通过）** | 改前（committed HEAD 的 COPY 清单）⇒ `ERR_MODULE_NOT_FOUND: packages/privacy/guard.mjs imported from services/api/src/privacy/consent-pg.ts`，exit 1；补 `COPY packages ./packages` 后 ⇒ `IMPORT_OK`。详见「变更 2」 |
 | `local-check.ps1` 的 [2/4]／[3/4] 控制流与判定 | **实测通过（替身 docker + 真实 `/health` 应答）** | 用替身 `docker.cmd`（不构建任何镜像）跑通，`exit 0` / `PASS`；PS 5.1 语法解析无错误。**这不验证镜像** |
-| **镜像真实构建、容器真实启动、容器内 `/health`** | **未验证**：本机**没有 Docker**（`docker` 不在 PATH），也没有平台环境 | 见 §8 的可执行自检脚本与期望输出 |
+| **镜像真实构建、容器真实启动、容器内 `/health`** | **已验证（执行者＝指挥，在用户授权目标 CVM；监工未复核；写手本机无 Docker、未独立复核）** | 真构建 `BUILD_EXIT=0`、19 步成功、镜像 397 MB／`0107daaaddb3`；容器 `Up`、`/health` 200 且 `checks.database.status=ok`。详见 §9.1 |
 | 微信云托管控制台字段实际生效 | **未验证**：无环境、无账号操作 | 官方文档语义见 [service-settings.md](service-settings.md) |
 | CVM 上的 PostgreSQL 17.11、库、角色、迁移 | **未验证**：无 CVM、无凭据、未部署 | 步骤见 §5 |
 | 优雅退出（SIGTERM→关连接池） | **代码已读，未在运行时观测**：Windows 无法投递真实 SIGTERM，且无 Docker | `services/api/src/server.ts:41-50` 注册 SIGTERM/SIGINT → `app.close()` → `pool.end()` |
@@ -44,7 +44,11 @@
 docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
 ```
 
-- **预期产物**：本地镜像 `gengyun-api:local`（linux/amd64；体积未在本机实测）。
+- **预期产物**：本地镜像 `gengyun-api:local`（linux/amd64）。
+- **真构建结果（由指挥在用户授权目标 CVM 执行，2026-10-13；监工未复核）**：`BUILD_EXIT=0`，19 步全部成功，
+  产物 `gengyun-api:local` **397 MB**、镜像 ID `0107daaaddb3`，基础镜像 `node:24.16.0-bookworm-slim`。
+  该次构建在**仓库外**额外放了 `.npmrc`（`registry=https://registry.npmmirror.com`）以避开国际带宽瓶颈——
+  它只影响依赖下载来源，**不影响 COPY 闭包与启动行为**，且**不得**提交进本仓库。详见 §9.1。
 - 平台侧不用手敲这条命令：流水线按「目标目录＝仓库根、DockerFile 路径＝`deploy/cloudrun/Dockerfile`」构建并推送镜像，
   再以该镜像发布版本；CLI 等价命令见 [service-settings.md](service-settings.md) §4 的 CLI 链接。
 - 基础镜像 `node:24.16.0-bookworm-slim` 与 CI 的 Node 版本一致。该 tag **已在线确认存在**
@@ -219,11 +223,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File deploy/cloudrun/local-check.
 
 退出码：`0` = 全部通过；`1` = 有检查失败；`2` = 环境不可用（找不到仓库根／Dockerfile／依赖未安装）；
 `3` = **仅依赖闭包检查通过（本机无 Docker）**——即在没有 Docker 的机器上，脚本仍然能挡住
-「COPY 清单缺文件 ⇒ 容器启动必然失败」这一类缺陷，其余镜像层检查如实留作未验证。
+「COPY 清单缺文件 ⇒ 容器启动必然失败」这一类缺陷；[2/4]／[3/4] 由脚本如实记为**未在本机运行**
+（等价的真机构建与真机运行由指挥在目标 CVM 完成，见 §9.1）。
 
 **本机（开发机）没有安装 Docker**：本 PR 在本机跑过的是 **[1/4] 依赖闭包检查**（改前失败、改后 `IMPORT_OK`，
-原始输出见 PR 正文「变更 2」）；[2/4] 镜像静态检查与 [3/4] 容器 `/health` **没有跑过**，脚本会以 `exit 3`
-报告「部分通过」，第 2 张表也把「镜像真实构建、容器真实启动」标为未验证。有 Docker 的机器上请直接执行上面的命令；
+原始输出见 PR 正文「变更 3」）；[2/4] 镜像静态检查与 [3/4] 容器 `/health` **没有在本机跑过**，脚本会以 `exit 3`
+报告「部分通过」。等价的「真构建 + 真启动 + 真连库」由**指挥**在用户授权的目标 CVM 上执行完成（见 §9.1）——
+写手未参与该次运行、也未独立复核。有 Docker 的机器上请直接执行上面的命令；
 也可以用等价的纯命令序列：
 
 ```powershell
@@ -236,7 +242,35 @@ docker rm -f gengyun-api-check
 
 ## 9 未部署声明与未取得项
 
-**本次未部署。** 没有创建服务、没有绑定 VPC、没有构建或发布镜像、没有发布数据库、没有产生任何费用。
+**本次未部署。** 没有创建（云托管）服务、没有绑定 VPC、没有经**平台**构建或发布镜像、没有发布数据库、
+没有产生任何费用。指挥在目标 CVM 上用本机 Docker 做的镜像构建与容器启动属于**环境准备**，不是平台构建或发布（见 §9.1）。
+
+### 9.1 真机证据：镜像真构建 + 容器真启动（**由指挥执行**，2026-10-13）
+
+**执行者归属**：以下结论**由指挥**在**用户授权的目标 CVM**上执行，**不是写手在本机复现**；**监工尚未复核**。
+该机器、Docker 安装与 registry mirror 配置均**无法由外部读者自核**，如实列明如下。
+
+- 环境：Docker **29.1.3**；使用腾讯内网 registry mirror；构建上下文＝本 PR HEAD `3512797` 的仓库根
+  （含修复后的 `COPY packages ./packages`）。
+- **本机偏差（必须写清）**：为避开国际带宽（该机器到 npm 官方源约 6–23 KB/s），指挥在**仓库外**的构建目录放了
+  `.npmrc`（`registry=https://registry.npmmirror.com`）。它**只影响依赖下载来源**，不影响 COPY 闭包与启动行为；
+  **不得**写进本仓库（本 PR 未包含，也未建议提交任何 `.npmrc`）。
+- 镜像真实构建：`BUILD_EXIT=0`，19 步全部成功（可见 `COPY services/api/src`、`COPY services/api/db`、
+  `USER node`、`EXPOSE 3000`、`CMD ["node","services/api/src/server.ts"]`）；产物 `gengyun-api:local`
+  **397 MB**、镜像 ID `0107daaaddb3`，基础镜像 `node:24.16.0-bookworm-slim`（`2c87ef9bd3c6…`，
+  与本文件 §3 在线核对到的 digest 前缀一致，可互相印证）。
+- 容器真实启动 + 真连库（`--network host`；`APP_EXECUTION_MODE=stub`；`DATABASE_URL` 指向该机 PG 的运行时身份）：
+  容器 `Up`；日志 `Server listening at http://127.0.0.1:13000` 与
+  `{"execution_mode":"stub","database_configured":true,...}`；`GET /health` → **HTTP 200**，
+  `checks.database.status = ok`（`latency_ms 19`）；`GET /api/v1/public/home` → **HTTP 503 `PROVIDER_UNAVAILABLE`**
+  （stub 下未接线的既有 fail-closed 语义，**不是**假成功，与写手本机负例一致）。
+- 端口暴露面：`13000` 仅 `127.0.0.1`；`5432` 仅 `127.0.0.1` + `10.21.1.8`，**无 `0.0.0.0`**。
+- 另：指挥第一版环境变量误用 `EXECUTION_MODE` ⇒ 实际唯一有效名为 **`APP_EXECUTION_MODE`**
+  （`services/api/src/config.ts:129`；写手已独立核对，并在 [service-settings.md](service-settings.md) §3 点名该易错点）。
+- **诊断结论**：修复前容器会在 **import 期** `ERR_MODULE_NOT_FOUND`；修复后它走到了配置校验与启动，
+  `/health` 200 且数据库检查 `ok` ⇒ 本 PR 的 COPY 闭包修复**经真构建／真运行确认有效**。
+- **边界**：这只证明「镜像能构建、容器能启动、容器能连本机 PG」。**平台构建与发布、云托管实例经 VPC 连到
+  CVM PG、VPC 绑定是否生效** 仍**未验证**（见下方未取得项）。
 
 未取得项（都需要用户提供或授权，本轮**没有**索取、也没有尝试获取）：
 
@@ -246,7 +280,9 @@ docker rm -f gengyun-api-check
 - `DATABASE_URL`／`SESSION_SIGNING_KEY`／`DELETION_LEDGER_KEY`／`WECHAT_APP_SECRET`／`OBJECT_STORAGE_*` 的**真实值**。
 - 微信云托管 **CLI 密钥**（需账号管理员扫码生成）。
 - 自定义域名与 HTTPS／备案（小程序 `callContainer` 可先不依赖；网页后台直连需要）。
-- 本机 **Docker**（因此镜像层未实测）。
+- 写手本机的 **Docker**（因此写手本人没有独立复核镜像层；镜像层由指挥在目标 CVM 真构建／真运行，见 §9.1）。
+- **平台侧**：微信云托管环境／服务的创建与**平台构建发布**、**云托管实例经 VPC 连到 CVM PG** 的连通性、
+  **VPC 绑定是否生效**——§9.1 只覆盖本机容器的真构建／真运行，**不覆盖**平台链路。
 - 迁移／角色／数据库的**真实执行证据**（需 3、4 项就绪）。
 
 ## 10 关联文件
