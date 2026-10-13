@@ -23,6 +23,9 @@ import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
 import { registerSpeechRoutes } from './routes/speech.ts';
+import { createJobRegistry } from './jobs/registry.ts';
+import { createRecognitionJobSource, createTranscriptionJobSource } from './jobs/sources.ts';
+import { registerJobRoutes } from './jobs/routes.ts';
 import type { SpeechStore } from './speech/store.ts';
 import type { SpeechProvider } from './speech/provider.ts';
 import type { SpeechMediaPort } from './speech/media.ts';
@@ -264,6 +267,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs });
   registerSynthesisRoutes(app, config, guards, synthesisService);
   registerOcrRoutes(app, config, { guards });
+  // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
+  // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
+  // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
+  registerJobRoutes(app, config, guards, createJobRegistry([
+    createRecognitionJobSource(recognitionService),
+    createTranscriptionJobSource(app.speechService),
+  ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
 
   app.setNotFoundHandler((request, reply) => {
