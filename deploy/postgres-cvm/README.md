@@ -13,10 +13,16 @@
 > - 本目录内所有脚本只在本机做过 `bash -n` 语法检查；**本机没有可用的 PostgreSQL / Docker / 云凭据**，
 >   因此**没有任何脚本被真正执行过**。原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md)。
 > - **已由监工在真实 PostgreSQL 17.11（官方 Windows 便携版，与 CI 同版本）上真跑过本目录的 SQL**：
->   10/10 迁移与 7/7 既有角色成功；并**发现一个"全新库上必失败"的顺序缺陷**（见
->   [roles-and-migration.md](roles-and-migration.md) §6.2）。缺陷**已修**（本版），
->   但**返修后的「全新库首跑」与「重复执行幂等」两条回归仍待监工回传原始输出**；
->   在其回传前**不得当作已通过**（见 [evidence/local-self-check.md](evidence/local-self-check.md) §4）。
+>   10/10 迁移与 7/7 既有角色成功；**两轮真跑共发现两个问题并已修**——
+>   ① `20-login-roles.sql` 旧版「**全新库上必失败**」的顺序缺陷（见
+>   [roles-and-migration.md](roles-and-migration.md) §6.2）；
+>   ② `90-assert` 旧版把 `schema_migrations` 台账列为**硬前置**属**过度约束**（15 项断言并不读它，
+>   见 §6.5）。
+> - **外部真跑已验证通过**：全新库首跑、重复执行幂等、缺口令拒绝、**15 项断言（末行 `ok`）**、
+>   `pg_dump` + TOC（415 条）、**恢复第 1 次 `exit=0`**、恢复库上的权限继承。
+> - **仍未验证（不得记通过）**：**恢复第 2 次 `exit=1` 的原因**（待复核者清库重跑定论，
+>   见 [evidence/local-self-check.md](evidence/local-self-check.md) §4.3.1）；
+>   以及**目标 CVM 侧一切**（安装、`pg_hba`、安全组、公网 5432、持久性、云托管侧联调）。
 > - **脚本完成 ≠ 已部署**；任何"已部署/已验收/可用"的说法都必须等到资源就绪后按
 >   [verify-checklist.md](verify-checklist.md) 真跑并留下原始输出。
 > - 密钥不存在于本目录任何文件中：口令只从环境变量或主机上的私密文件读取，
@@ -192,10 +198,10 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan   # 期望：在新网段内
 | --- | --- | --- |
 | [install-postgres.sh](install-postgres.sh) | 目标 CVM 上安装 PostgreSQL 17.11、在持久云硬盘上 initdb、安装网络配置、启动 | 否（仅 `bash -n`） |
 | [provision-db.sh](provision-db.sh) | 迁移之后：建角色组、建最小权限运行时 LOGIN、跑最小权限断言 | 否（仅 `bash -n`） |
-| [sql/20-login-roles.sql](sql/20-login-roles.sql) | 运行时 LOGIN 的创建/收敛与组成员授予 | 否（从未被 psql 解析过） |
-| [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | 只读最小权限断言，输出 `ok` 或 `FAIL: …` | 否（从未被 psql 解析过） |
-| [backup-postgres.sh](backup-postgres.sh) | 逻辑备份 `pg_dump -Fc` + 产出清单 + 保留期清理 | 否 |
-| [restore-drill.sh](restore-drill.sh) | 隔离库恢复演练 + 逐项判定 | 否 |
+| [sql/20-login-roles.sql](sql/20-login-roles.sql) | 运行时 LOGIN 的创建（仅缺失时）/属性收敛/口令（默认不改）/组成员授予 | **已由外部真实 PG 17.11 执行通过**（首跑 `exit=0`、重复执行幂等） |
+| [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | 只读最小权限断言，输出 `ok` 或 `FAIL: …`；前置分硬/软两级 | **已由外部真实 PG 17.11 执行通过**（末行 `ok`，15/15） |
+| [backup-postgres.sh](backup-postgres.sh) | 逻辑备份 `pg_dump -Fc` + 产出清单 + 保留期清理 | 脚本本身未运行（需 Linux/root/systemd）；其**核心动作的等价命令**已由外部真实 PG 跑过（`pg_dump -Fc` `exit=0`、`pg_restore --list` TOC 415） |
+| [restore-drill.sh](restore-drill.sh) | 隔离库恢复演练 + 逐项判定（**保留完整输出并按致命/非致命分类**） | 脚本本身未运行；其**等价流程**已跑过：**恢复第 1 次 `exit=0`**、恢复库上权限继承可用；**恢复第 2 次 `exit=1` 原因待复核**（见 [evidence §4.3.1](evidence/local-self-check.md)） |
 | [verify-cvm-postgres.sh](verify-cvm-postgres.sh) | 资源就绪后的验证清单（可执行） | 否 |
 | [verify-checklist.md](verify-checklist.md) | 每条判据的期望输出与判读方式 | 文档 |
 | [roles-and-migration.md](roles-and-migration.md) | 角色用途/授予范围/验证命令；迁移执行与顺序 | 文档 |

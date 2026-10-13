@@ -161,7 +161,7 @@ SHOW password_encryption;   -- 期望 scram-sha-256
 | `backup_artifact` | `backup-postgres.sh --list` / `find /data/gengyun/backup -name 'gengyun-*.dump'` | 至少 1 份 | `SKIP` ⇒ 还没备份；**此时不得声称"已备份"** |
 | `backup_sha256_matches_manifest` | 比较清单 `dump_sha256` 与 `sha256sum <dump>` | 完全一致 | 不一致 ⇒ 备份被截断/改写，**该备份不可用** |
 | `backup_freshness_days_ok` | 最新 dump 的 mtime 距今 | `<=1` 天 | 过期 ⇒ 定时任务没生效 |
-| 恢复演练（不在 verify 内） | `restore-drill.sh --dump <最新dump>` | 退出码 `0`，`FAIL=0` | 退出码 `1` ⇒ 备份不可恢复；`2` ⇒ 证据不完整。**没有演练就不得声称可恢复** |
+| 恢复演练（不在 verify 内） | `restore-drill.sh --dump <最新dump>` | 退出码 `0` 且 `FAIL=0`（**判定看"恢复过程是否报错"，不能只看事后计数**） | 退出码 `1` ⇒ 恢复过程报错，**必须先把 error 文本取出来分类**：`already exists` ⇒ 目标库不是空的（先 dropdb/createdb，**不是 dump 的问题**）；`does not exist` ⇒ 未做角色引导；其它 ⇒ 真失败。非致命项只有 `WARNING:`/`NOTICE:`。退出码 `2` ⇒ 证据不完整。**没有演练、或原因未定位，都不得声称可恢复**；判读表见 `restore-drill.sh` 文件头与 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |
 | `pgdata_present` | `test -f /data/gengyun/pgdata/PG_VERSION` | `yes` | `no` ⇒ 数据目录不对 |
 | `pgdata_version` | `cat /data/gengyun/pgdata/PG_VERSION` | `17` | 非 17 ⇒ 换过主版本 |
 | `pgdata_separate_filesystem` | `df -P -- /data/gengyun/pgdata` | 挂载点非 `/`（是云硬盘设备） | `/` ⇒ **不满足持久存储要求**，该部署不能按"持久"验收 |

@@ -288,7 +288,8 @@ $ # 交叉核对 90-assert-least-privilege.sql 里出现的每个关系名
 | `deploy/**` Markdown 等价校验（见 L 节） | 2 处未转义竖线（`\|\|`）导致表格列数从 3 变 5；后又出现 1 处同类问题（`for … do bash -n "$f" \|\| echo` 写在表格单元格里） | 均转义为 `\|\|` 并复跑通过——**说明这个检查有牙齿** |
 | 改写文档后复检行尾 | 用 Python `pathlib.write_text` 拼接段落时，Windows 上把 `\n` 转成了 `\r\n`，导致 `README.md`（421 处）与 `runbook.md`（368 处）变成 CRLF，与仓库其余 LF 文件不一致 | 用 `WriteAllText` + `-replace "\r\n","\n"` 转回 LF；复检本目录 16 个文件 **CRLF=0**、`git ls-files --eol` 全部 `i/lf w/lf` |
 | **外部真跑（监工 · 真实 PG 17.11）** | **`20-login-roles.sql` 的前置断言 `pg_has_role('gengyun_api_runtime', …)` 排在建角色之前 ⇒ 全新库上 `ERROR: role … does not exist`（exit=3）**；`90-assert` 连带中止。**本单的静态自检没能发现它**（`bash -n` 不看 SQL，本机也没有 psql） | 见 §4 与 [roles-and-migration.md](../roles-and-migration.md) §6.2：改为"角色不存在也安全"，新增组存在性前置，`90-assert` 加前置自检，`verify`/`restore-drill` 消除同类隐患。**第二轮外部复核已确认修好**（§4.3 A/B/D 三项通过） |
-| **外部真跑（第二轮）发现的过度约束** | `90-assert` 把 `schema_migrations` 列为**硬前置**，而 **15 项断言没有一项读它** ⇒ 在"有套接字但无 `migrate.ts`"的等价环境里无法验证断言（守卫正确早停，但也挡住了复核） | 见 §4.3.1：改为**硬前置（真依赖）+ 软前置（台账只告警）**；**15 条断言的 SQL 一字未改**，台账的权威判定点仍在 `provision-db.sh` 门禁与 `verify` 的 `migrations_applied` |
+| **外部真跑（第二轮）发现的过度约束** | `90-assert` 把 `schema_migrations` 列为**硬前置**，而 **15 项断言没有一项读它** ⇒ 在"有套接字但无 `migrate.ts`"的等价环境里无法验证断言（守卫正确早停，但也挡住了复核） | 见 §4.3.3：改为**硬前置（真依赖）+ 软前置（台账只告警）**；**15 条断言的 SQL 一字未改**，台账的权威判定点仍在 `provision-db.sh` 门禁与 `verify` 的 `migrations_applied`。**收窄后已由复核者实跑通过**（末行 `ok`） |
+| **外部真跑（第二轮）暴露的判读缺口** | `restore-drill.sh` 只看 `pg_restore` 的 exit code，**丢弃完整输出** ⇒ 复核者遇到 `exit=1` 时无法定位（错误文本被管道吞掉） | 见 §4.3.2：改为保留完整输出到日志 + **致命/非致命分类**（`WARNING`/`NOTICE` 非致命；`already exists` 归因目标库非空；`does not exist` 归因前置缺失；其它为真失败），PASS 条件收紧为 `exit=0` 且无 `ERROR:` 行 |
 
 ### L) 本目录 Markdown 复用仓库文档校验器的同类规则
 
@@ -336,7 +337,7 @@ $ git diff --cached --check
 | 角色引导是否真能建出 LOGIN 并授予 5 个组 | 需要真实库 + 迁移已应用 | ✅ **外部真实 PG 已验证**（§4.3 的 A 项） |
 | 重复执行是否幂等（不改口令） | 第二遍比对 `rolpassword` | ✅ **外部真实 PG 已验证**（§4.3 的 B 项） |
 | 缺口令是否被拒绝 | 未设 `GENGYUN_API_RUNTIME_PASSWORD` | ✅ **外部真实 PG 已验证**（§4.3 的 D 项） |
-| 最小权限断言是否真能返回 `ok` | 需要真实库 + 全部迁移 + 角色已引导 | ⚠️ **仍未验成**：复核环境无 `migrate.ts` 台账 ⇒ 旧版硬前置早停；已收窄依赖（§4.3.1），**待复核者用 `psql` 直跑** |
+| 最小权限断言是否真能返回 `ok` | 需要真实库 + 全部迁移 + 角色已引导 | ✅ **外部真实 PG 已验证**（§4.3 的 C 项：收窄依赖后 `exit=0`、末行 `ok`、15/15 通过） |
 | 越权反例是否真的返回 `42501` | 需要真实库 + 运行时角色 | **未执行**（判据已写好，结论未知） |
 | 备份是否可恢复 | 需要真实库 + `pg_dump` + 隔离库恢复 | ⚠️ **未演练**；等价命令已给出（[verify-socket-only-equivalents.md](../verify-socket-only-equivalents.md) 第 2/3 节），待复核 |
 | 网络姿态（公网 5432 关不关） | 安全组在腾讯云账号侧，脚本无凭据 | **未核对**；只能由用户在控制台确认 + 公网反面探针 |
@@ -384,15 +385,59 @@ $ git diff --cached --check
 | **A 全新库首跑** | `20-login-roles.sql` `exit=0`；`rolcanlogin=true`、`rolsuper=false`；**继承 5 组** | ✅ **真实 PG 已验证** |
 | 库名守卫 | 在临时库上被"当前数据库不是 gengyun"拦下 | ✅ 按设计生效 |
 | **B 重复执行（幂等）** | 第二遍 `exit=0`；`pg_authid.rolpassword` **哈希不变**；成员数仍 **5** | ✅ **真实 PG 已验证** |
-| **C 15 项最小权限断言** | 在**旧版**上于前置守卫处 `exit=3`（division by zero） | ⚠️ **守卫有效，但断言本身未验成**：复核者用 `psql -f` 应用迁移 ⇒ 库里**没有 `migrate.ts` 才会创建的 `schema_migrations` 台账** ⇒ 被硬前置**正确地**拦下。旧版把台账列为硬前置属**过度约束** —— 已按 §4.3.1 收窄，待其用 `psql` 直跑 15 项断言 |
+| **C 15 项最小权限断言**（收窄依赖后的 `d2b8c3d`） | `exit=0`；首行为软前置告警"未找到 `public.schema_migrations` 台账"（**按设计**）；**末行 `ok`** | ✅ **真实 PG 已验证**（15/15 通过） |
 | **D 缺口令反例** | 未设 `GENGYUN_API_RUNTIME_PASSWORD` ⇒ `exit=3 ≠ 0` | ✅ **真实 PG 已验证**（拒绝建无口令 LOGIN） |
-| E 前置守卫 | 未单独跑（C 已证明守卫会早停并给指引） | 由 C 覆盖 |
-| 备份 / 恢复演练 | 未跑 | ⚠️ **待复核**：等价命令见 [verify-socket-only-equivalents.md](../verify-socket-only-equivalents.md) |
+| E 前置守卫 | 未单独跑（C 的硬/软前置已在实跑中体现） | 由 C 覆盖 |
+| **备份：`pg_dump -Fc`** | `exit=0`；大小 184.1 KB；`sha256` 已记录 | ✅ **真实 PG 已验证** |
+| **备份：`pg_restore --list`（TOC）** | TOC 条目 **415** | ✅ **真实 PG 已验证** |
+| **恢复第 1 次** | `createdb` → `pg_restore --exit-on-error` **`exit=0`** | ✅ **真实 PG 已验证** |
+| **恢复库上的权限继承** | 以 `gengyun_api_runtime` 身份 `select count(*) from users` **返回 0 且无权限错误** | ✅ 证明**组角色继承与授权随 dump 重建成功** |
+| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但**错误文本被复核者的管道吞掉、未捕获**；事后 schema 指标 source=restored=`40\|4\|0\|0` | ⚠️ **未解释、待复核（不得记通过）**；最可能原因见 §4.3.1 |
 
-复核者另确认：**返修 1 的真缺陷（前置断言早于建角色）已确认修好**；库名守卫、5 组前置、
-口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
+复核者另确认：**返修 1 的真缺陷已确认修好**；库名守卫、5 组前置、口令守卫、`COALESCE` 顺序修复、
+口令默认不变**都按设计生效**；并纠正其上一轮一条结论：重复跑 `roles/*.sql` 报"角色已存在"是
+**同集群复用**所致（角色 SQL 是裸 `CREATE ROLE`、设计上不 DROP 别人的角色），**不是缺陷**。
+台账一致性一项按口径记为 **"不适用（本环境无 `migrate.ts` 写入）"**，不是数据损坏。
 
-#### 4.3.1 针对 C 的收窄（按依赖关系，不改任何断言语义）
+#### 4.3.1 对"第 2 次恢复 exit=1"的判读（**假设，未定论**）
+
+**技术事实（可自证）**：本 dump 是**库级** `pg_dump -d`（不是 `pg_dumpall`），**不含任何角色定义**。因此：
+
+- **不可能**出现"角色已存在"这类错误 ⇒ 复核者提出的"角色/ACL 已存在属非致命"这一假设**不成立**；
+- 与角色相关的错误只可能是 `role "…" does not exist` ⇒ 那属**致命**（目标集群未做角色引导）；
+- `already exists` 只可能来自**恢复进了一个非空库**（对象还在，例如第 1 次演练的残留）。
+
+**最可能的原因**：第 2 次恢复**没有先 `dropdb`/`createdb`**（第 1 次是新建库，第 2 次直接在原库上再恢复）
+⇒ `pg_restore` 在第一个重复对象处报 `already exists`，因 `--exit-on-error` 立即退出（`exit=1`）；
+而"事后指标完全一致"恰恰因为**那些对象本来就是第 1 次恢复留下的**。
+
+**一条命令即可定论**（不要吞 stderr）：
+
+```bash
+dropdb --if-exists gengyun_restore_drill
+createdb -O gengyun_cvm_owner gengyun_restore_drill
+pg_restore -U gengyun_cvm_owner -d gengyun_restore_drill --exit-on-error "$DUMP" >/tmp/restore2.log 2>&1
+echo "restore_exit=$?"
+grep -nE '^(pg_restore: error:|ERROR:)' /tmp/restore2.log | head -5   # 期望：无输出
+```
+
+- 若这次 `exit=0` 且无 error 行 ⇒ 上述假设成立：第 2 次属**操作顺序问题（未清库）**，
+  **不是 dump 或脚本缺陷**；演练以本次为准记为通过。
+- 若仍非 0 ⇒ 请把前 5 条 error 行回传 ⇒ 属**真失败**，按文本定位。
+
+#### 4.3.2 `restore-drill.sh` 的判读口径加固（本版新增）
+
+| 输出 | 是否致命 | 处理 |
+| --- | --- | --- |
+| `WARNING:` / `NOTICE:` / `pg_restore: warning\|notice:` | **非致命** | 只计数并写日志，不影响判定（它们本就不会让 `--exit-on-error` 变非 0） |
+| `already exists` | **致命，但归因于目标库** | 明确提示"目标库不是空的；脚本会先 DROP 再建，手工复现必须先 dropdb/createdb。**不是 dump 的问题**" |
+| `does not exist` | **致命，但归因于前置** | 明确提示"未完成角色引导，先跑 `provision-db.sh`；本 dump 不含角色定义" |
+| 其它 `ERROR:` | **致命** | 打印前 5 条 error 行与日志路径，要求人工定位 |
+
+同时：`pg_restore` 的**完整输出写入日志文件**（路径打印在判据行里，不再被丢弃）；
+PASS 条件收紧为 **`exit=0` 且输出无 `ERROR:` 行**。
+
+#### 4.3.3 针对 C 的收窄（按依赖关系，不改任何断言语义）
 
 **事实**：`90-assert-least-privilege.sql` 的 **15 项断言没有任何一项读取 `schema_migrations`**；
 它们真正依赖的是 7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组。把台账列为**硬前置**属过度约束。
@@ -403,8 +448,10 @@ $ git diff --cached --check
 （`provision-db.sh` 的迁移门禁 + `verify-cvm-postgres.sh` 的 `migrations_applied` 判 FAIL）。
 本交付**不提供**"手工伪造台账"的做法——那会把不属于 `migrate.ts` 的写入带进库。
 
-> **仍然待验证（不得记通过）**：15 项断言本身的输出、备份/恢复演练。
-> 在监工回传这两项的原始输出前，本页不把它们记为通过。
+> **本项已由外部真跑验证通过**：收窄后在 `d2b8c3d` 上 `exit=0`、首行为软前置告警、**末行 `ok`**（§4.3 的 C 项）。
+>
+> **仍未验证（不得记通过）**：**恢复第 2 次的 `exit=1` 原因**（§4.3.1，待复核者用清库重跑定论）；
+> 以及目标 CVM 侧的一切（安装 / `pg_hba` / 安全组 / 持久性 / 公网 5432）。
 
 ### 4.4 本次返修涉及的"引用可能不存在的对象"清查结果
 

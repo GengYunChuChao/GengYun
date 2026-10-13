@@ -158,15 +158,44 @@ $DROPDB -U gengyun_cvm_owner --if-exists "$TARGET"
 | 判据 | 通过条件 | 你的环境（无 `migrate.ts` 台账）下的预期 |
 | --- | --- | --- |
 | dump sha256 | 与清单一致 | 应 PASS |
-| `pg_restore --exit-on-error` | 退出码 0 | 应 PASS（restore 不需要台账） |
+| `pg_restore --exit-on-error` | 退出码 0 **且输出无 `ERROR:` 行** | 应 PASS（restore 不需要台账） |
 | 迁移版本一致 | 清单与目标一致 | **两侧都会是 `schema_migrations-missing` ⇒ 判为一致/不适用**；这不是数据损坏，而是**环境缺少权威运行器写入的台账** |
 | 基本表/视图数量 | 与清单一致 | 应 PASS |
 | 逐表行数 | 与清单一致 | 应 PASS（`MISSING` 也要一致） |
+
+### 若 `pg_restore` 非 0：**先把 error 文本取出来再判**（不要只看退出码）
+
+```bash
+# 关键：不要吞掉 stderr。用日志文件，两个流都进去。
+pg_restore -U gengyun_cvm_owner -d "$TARGET" --exit-on-error "$DUMP" >/tmp/restore.log 2>&1
+echo "restore_exit=$?"
+echo "--- 致命（ERROR）行数"; grep -cE '^(pg_restore: error:|ERROR:)' /tmp/restore.log
+echo "--- 非致命（WARNING/NOTICE）行数"; grep -cE '^(pg_restore: )?(WARNING|NOTICE):' /tmp/restore.log
+echo "--- 前几条致命错误"; grep -nE '^(pg_restore: error:|ERROR:)' /tmp/restore.log | head -5
+```
+
+| 输出特征 | 是否致命 | 归因与处置 |
+| --- | --- | --- |
+| `WARNING:` / `NOTICE:` / `pg_restore: warning\|notice:` | **非致命** | 不会让 `--exit-on-error` 变非 0；只计数、保留日志，不影响判据 |
+| `already exists`（`relation "…" already exists` / `schema "…" already exists` 等） | **致命，但归因于目标库** | **目标库不是空的**：恢复前必须 `dropdb`/`createdb`（脚本用 `--recreate` 自己做）。**这不是 dump 的问题** |
+| `role "…" does not exist` 或其它 `does not exist` | **致命，但归因于前置** | 目标集群**未完成角色引导**：先跑 `provision-db.sh`。**本 dump 是库级 `pg_dump -d`，不含角色定义** |
+| 其它 `pg_restore: error:` / `ERROR:` | **致命** | 真实失败，必须人工定位（含 dump 损坏、磁盘满、版本不兼容等） |
+
+> ⚠️ **一条容易误判的事实**：库级 `pg_dump -d` 的 dump **不创建角色**，所以
+> **不可能**出现"角色已存在"这类错误；与角色相关的错误只可能是"角色不存在"。
+> 因此"exit≠0 但 schema/行数看起来完全一致"最常见的原因是 **恢复进了非空库**
+> （第一次演练留下的对象还在），而不是 dump 有问题、也不是"非致命噪声"。
+> **判定必须看 error 文本**：`already exists` ⇒ 清库重来；`does not exist` ⇒ 补前置；
+> 其它 ⇒ 真失败。
 
 > **结论口径**：在"只有套接字、无 `migrate.ts`"的环境里，恢复演练能证明的是
 > "**该 dump 可在同主版本 PG 上完整重建 schema+数据+授权，且表/视图数量与逐表行数一致**"；
 > **不能**证明"迁移台账版本一致"——那一条需要在目标 CVM 上（用 `migrate.ts up` 生成台账）才有意义。
 > 报告时请按此口径分别标注，**不要**把 `schema_migrations-missing` 当成本目录脚本的缺陷。
+>
+> 另外：**"看起来一致"不能替代"恢复过程无错误"**。若 `pg_restore` 非 0 且原因未定位，
+> 该次演练必须记为**未通过 / 待复核**（哪怕事后查询的计数与清单相同），
+> 因为对象可能是上一次演练残留的，而非本次恢复出来的。
 
 ## 4 这套等价命令**不能**证明什么（避免跨层推断）
 

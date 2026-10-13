@@ -274,14 +274,27 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | 库名守卫 | 在临时库上运行时被"当前数据库不是 gengyun"拦下 | ✅ 按设计生效 |
 | **B 重复执行幂等** | 第二遍 `exit=0`；`pg_authid.rolpassword` **哈希不变**；成员数仍 **5** | ✅ **真实 PG 已验证** |
 | **D 缺口令反例** | 未设 `GENGYUN_API_RUNTIME_PASSWORD` ⇒ `exit=3 ≠ 0` | ✅ **真实 PG 已验证**（拒绝建无口令 LOGIN） |
-| **C 15 项断言** | 在**旧版**上于前置守卫处 `exit=3`（division by zero） | ⚠️ **守卫有效但断言本身未验成**：复核者用 `psql -f` 应用迁移 ⇒ 库里**没有 `migrate.ts` 才会创建的 `schema_migrations` 台账** ⇒ 被硬前置正确拦下。⇒ 已按 §6.5 收窄依赖，待其用 `psql` 直跑 15 项断言 |
-| E 前置守卫 | 未单独跑（C 已证明守卫会早停并给指引） | 由 C 覆盖 |
-| 备份 / 恢复演练 | 未跑 | ⚠️ **待复核**：等价命令见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |
+| **C 15 项断言**（收窄依赖后的 `d2b8c3d`） | `exit=0`；首行软前置告警"未找到 `public.schema_migrations` 台账"（**按设计**）；**末行 `ok`** | ✅ **真实 PG 已验证**（15/15 通过） |
+| E 前置守卫 | 未单独跑（硬/软前置已在 C 的实跑中体现） | 由 C 覆盖 |
+| **备份 `pg_dump -Fc` + `pg_restore --list`** | `exit=0`；dump 184.1 KB；TOC 条目 **415** | ✅ **真实 PG 已验证** |
+| **恢复第 1 次** | `createdb` → `pg_restore --exit-on-error` **`exit=0`** | ✅ **真实 PG 已验证** |
+| **恢复库上的权限继承** | 以 `gengyun_api_runtime` 身份查 `users` 返回 0 且**无权限错误** | ✅ 组角色继承与授权随 dump 重建成功 |
+| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但错误文本被复核者管道吞掉、未捕获；事后 schema 指标 source=restored=`40\|4\|0\|0` | ⚠️ **未解释、待复核（不得记通过）**；判读与定论命令见 [evidence §4.3.1](evidence/local-self-check.md) |
 
 复核者另确认：**上一条真缺陷（前置断言早于建角色）已确认修好**；
 库名守卫、5 组前置、口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
 并纠正了其上一轮的一条结论：重复跑 `roles/*.sql` 报"角色已存在"是**同集群复用**所致
 （角色 SQL 是裸 `CREATE ROLE`、设计上不 DROP 别人的角色），**不是缺陷**。
+台账一致性一项按口径记为"**不适用（本环境无 `migrate.ts` 写入**）"，不是数据损坏。
+
+**对"恢复第 2 次 exit=1"的技术判读**（本单结论，详见 [evidence §4.3.1](evidence/local-self-check.md)）：
+本 dump 是**库级** `pg_dump -d`，**不含角色定义** ⇒ **不可能**出现"角色已存在"这类非致命错误；
+与角色相关的错误只会是 `role "…" does not exist`（致命，指向未做角色引导）。
+`already exists` 只可能来自**恢复进了一个非空库**（第 1 次的残留对象），
+即第 2 次**没有先 `dropdb`/`createdb`**——"事后指标完全一致"恰恰因为对象是上一次留下的。
+**脚本侧已加固**：`restore-drill.sh` 现在保留 `pg_restore` 完整输出到日志，
+把 `WARNING:`/`NOTICE:`（非致命）与三类 `ERROR:`（目标库非空 / 前置缺失 / 真失败）分开判读，
+PASS 条件收紧为 **`exit=0` 且无 `ERROR:` 行**。
 
 ### 6.5 `90-assert-least-privilege.sql` 前置分级（按依赖关系收窄，不改断言语义）
 
@@ -301,10 +314,14 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 `migrations_applied`（判 FAIL）。本交付**不提供**"手工伪造台账"的做法——那会把不属于
 `migrate.ts` 的写入带进库，与"台账由权威运行器维护"冲突。
 
-### 6.6 待补的证据（返修后）
+### 6.6 仍未验证的项（不得记通过）
 
-监工将继续在真实 PG 17.11 上补齐：**15 项断言（按 §6.5 收窄后）**、**备份/恢复演练**。
-在回传原始输出前，这两条仍属"待验证"，不得记通过。
+| 项 | 状态 | 下一步 |
+| --- | --- | --- |
+| **恢复第 2 次的 `exit=1` 原因** | ⚠️ **未解释** | 复核者按 [evidence §4.3.1](evidence/local-self-check.md) 的命令**清库重跑**并保留 stderr；若 `exit=0` 且无 `ERROR:` ⇒ 归因"未清库"，本项即闭环 |
+| 目标 CVM 侧一切 | **未验证** | `install-postgres.sh` 的安装/initdb/持久盘/`listen_addresses`/`ss` 自检；`pg_hba`/`pg_ident` 生效；安全组；公网 5432 关闭；重启持久性；与云托管侧联调 |
+
+已由外部真实 PG 17.11 验证通过的项见 §6.4（A/B/C/D 四项 + 备份 `pg_dump`/TOC + 恢复第 1 次 + 权限继承）。
 
 ## 7 一致性自查清单（提交/验收前逐条对照）
 

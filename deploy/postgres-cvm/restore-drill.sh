@@ -14,10 +14,25 @@
 #
 # 判定口径（全部 PASS 才算恢复成功）：
 #   1. dump 文件 sha256 与清单一致（备份没有被截断/改写）
-#   2. pg_restore --exit-on-error 退出码为 0
+#   2. pg_restore --exit-on-error 退出码为 0，**且输出中没有任何 `ERROR:` 行**
+#      （判定不只依赖 exit code：见下方"致命 / 非致命"口径）
 #   3. 迁移版本集合与清单一致（schema_migrations）
 #   4. 基本表数量、视图数量与清单一致
 #   5. 清单列出的关键表逐表行数一致（清单记录 MISSING 的也必须仍然缺失）
+#
+# 致命 / 非致命 的判读口径（**这一节是为了避免"只看 exit code"造成的误判**）：
+#
+#   | 输出 | 是否致命 | 说明 |
+#   | --- | --- | --- |
+#   | `WARNING:` / `NOTICE:` / `pg_restore: warning|notice:` | **非致命** | 不会让 `--exit-on-error` 变非 0；只计数并保留日志 |
+#   | `already exists` 类错误 | **致命（但指向目标库）** | 说明**目标库不是空的**（对象已存在）。脚本本来就会先 DROP 再 CREATE；手工复现时必须先 `dropdb`/`createdb`。**不是 dump 的问题** |
+#   | `role "…" does not exist` / 其它 `does not exist` | **致命（但指向前置）** | 目标集群**尚未完成角色引导**。**本 dump 是库级 `pg_dump -d`，不含任何角色定义**，所以必须先 `provision-db.sh` 建角色 |
+#   | 其它 `pg_restore: error:` / `ERROR:` | **致命** | 真实失败，必须人工定位；本脚本会打印前 5 条 error 行与日志路径 |
+#
+#   ⚠️ 由此可推出一条重要事实：**库级 dump 不可能产生"角色已存在"错误**
+#   （角色不由 dump 创建）；与角色相关的错误只可能是"角色不存在"。
+#   所以"exit=1 但看起来数据没问题"最常见的原因就是**恢复进了非空库**，
+#   而不是 dump 损坏或非致命噪声——判定时必须把 error 文本取出来看。
 #
 # 本次演练能证明什么、不能证明什么：
 #   能证明：该 dump 可在同主版本 PG 上完整重建 schema+数据+授权，且行数/迁移版本一致。
@@ -173,17 +188,47 @@ if [[ "$target_exists" != '1' ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. 真正恢复
+# 3. 真正恢复（**保留完整输出**并按"致命 / 非致命"分类，不只依赖 exit code）
+#
+# 判读口径（同时写在文件头与 verify-checklist.md）：
+#   * 非致命：`WARNING:` / `NOTICE:` / `pg_restore: warning|notice:` 行。它们**不会**让
+#     `--exit-on-error` 变非 0，也不影响判据；只计入"非致命行数"供人查阅。
+#   * 致命：`pg_restore: error:` / `ERROR:` 行，或 exit≠0 ⇒ 一律 FAIL（判据不放宽）。
+#   * 重要事实：本 dump 是**库级** `pg_dump -d`（不是 `pg_dumpall`），**不含任何角色定义**。
+#     因此**不可能**出现"角色已存在"这类错误；与角色相关的错误只可能是
+#     `role "…" does not exist`（⇒ 目标集群尚未做角色引导）。
+#     而 `already exists` 只可能来自**恢复进了一个非空库**（对象已存在），
+#     那是"目标库没清干净"，**不是 dump 的问题**——脚本本应先 DROP 再 CREATE（`--recreate`）。
 # ---------------------------------------------------------------------------
-log "恢复中：${DUMP} → ${TARGET_DB}"
+RESTORE_LOG="${TMPDIR:-/tmp}/gengyun-restore-drill-$(date -u '+%Y%m%dT%H%M%SZ').log"
+log "恢复中：${DUMP} → ${TARGET_DB}（完整输出写入 ${RESTORE_LOG}）"
 restore_rc=0
 runuser -u postgres -- "${PG_BIN}/pg_restore" \
   -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$TARGET_DB" \
-  --exit-on-error --no-password "$DUMP" || restore_rc=$?
-if [[ "$restore_rc" -eq 0 ]]; then
-  report PASS 'pg_restore --exit-on-error' '0' '0'
+  --exit-on-error --no-password "$DUMP" >"$RESTORE_LOG" 2>&1 || restore_rc=$?
+
+notices="$(grep -cE '^(pg_restore: )?(WARNING|NOTICE):' "$RESTORE_LOG" 2>/dev/null || true)"
+errors="$(grep -nE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null | head -5 || true)"
+error_count="$(grep -cE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null || true)"
+
+if [[ "$restore_rc" -eq 0 && -z "$errors" ]]; then
+  report PASS 'pg_restore --exit-on-error' '0' \
+    "0（非致命 WARNING/NOTICE ${notices:-0} 行；完整输出 ${RESTORE_LOG}）"
 else
-  report FAIL 'pg_restore --exit-on-error' '0' "$restore_rc"
+  report FAIL 'pg_restore --exit-on-error' '0' \
+    "exit=${restore_rc}，致命 error 行=${error_count:-0}（完整输出 ${RESTORE_LOG}）"
+  printf '[%s] pg_restore 失败，前几条致命错误：\n' "$SCRIPT_NAME" >&2
+  printf '%s\n' "${errors:-（未匹配到 ERROR: 行，请直接查看日志）}" | sed 's/^/         /' >&2
+  case "$errors" in
+    *already\ exists*)
+      printf '[%s] 判读：目标库不是空的（对象已存在）。脚本会先 DROP 再建（--recreate）；\n' "$SCRIPT_NAME" >&2
+      printf '         手工复现时请务必在恢复前 dropdb/createdb。**这不是 dump 的问题。**\n' >&2 ;;
+    *does\ not\ exist*)
+      printf '[%s] 判读：缺角色或缺对象（如 role "…" does not exist）⇒ 目标集群尚未完成角色引导。\n' "$SCRIPT_NAME" >&2
+      printf '         本 dump 不含角色定义，必须先跑 provision-db.sh 建角色。\n' >&2 ;;
+    *)
+      printf '[%s] 判读：既非"对象已存在"也非"对象不存在"，属真实失败，请人工看日志定位。\n' "$SCRIPT_NAME" >&2 ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------------
