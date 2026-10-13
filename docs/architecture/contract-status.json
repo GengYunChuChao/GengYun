@@ -1412,7 +1412,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "172-174"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1441,7 +1441,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "175-177"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1470,7 +1470,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "178-180"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1499,7 +1499,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "181-183"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1528,7 +1528,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "184-186"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1557,7 +1557,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "187-189"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1586,7 +1586,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "192-194"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1615,7 +1615,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "195-197"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1644,7 +1644,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "198-200"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1673,7 +1673,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "201-203"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1702,7 +1702,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "204-206"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1731,7 +1731,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "207-209"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1760,7 +1760,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "212-214"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1789,7 +1789,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "215-217"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1818,7 +1818,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "218-220"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1847,7 +1847,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "221-223"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1876,7 +1876,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "224-226"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1905,7 +1905,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "227-229"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1934,7 +1934,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "232-234"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1963,7 +1963,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "235-237"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -1992,7 +1992,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "238-240"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2021,7 +2021,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "241-243"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2050,7 +2050,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "244-246"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2079,7 +2079,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "152-195"
+          "lines": "247-249"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2108,7 +2108,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "211-220"
+          "lines": "267-271"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2137,7 +2137,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "216-225"
+          "lines": "272-281"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2166,7 +2166,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "232-241"
+          "lines": "288-292"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2195,7 +2195,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "237-246"
+          "lines": "293-301"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2224,7 +2224,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "255-264"
+          "lines": "311-315"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2253,7 +2253,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "260-269"
+          "lines": "316-324"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2282,7 +2282,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "276-285"
+          "lines": "332-336"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2311,7 +2311,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "281-290"
+          "lines": "337-345"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2340,7 +2340,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "297-306"
+          "lines": "353-361"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2369,7 +2369,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "lines": "199-208"
+          "lines": "255-259"
         },
         {
           "test": "tests/integration/admin-http.mjs",
