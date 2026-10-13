@@ -167,9 +167,9 @@ services\api\src\jobs\routes.ts:48:    `${API_PREFIX}/jobs/:id/cancel`,
 
 | `JobResult` 分支 | `value` 实体 | 必填字段（全部必填） |
 | --- | --- | --- |
-| `RecognitionResult` | `Recognition` | `id`(uuid) `revision`(int≥1) `candidates`(≤3,`Candidate{species_id,rank1..3,model_score|null}`) `uncertainty_reasons`(≤10) `selected_species_id`(str1..80\|null) `model_version`(1..80) |
-| `OCRResult` | `OCR` | `id`(uuid) `revision` `raw_fields`/`corrected_fields`(`LabelFields{registration_number,name,ingredients≤20,dosage_form}`) `verification`(`match_state`∈6值 `registration`(`Herbicide`\|null) `conflict_fields`≤20 `missing_fields`≤20 `dose_cards`≤10) `model_version` |
-| `TranscriptionResult` | `Transcription` | `id`(uuid) `revision` `raw_text`(≤8000) `uncertain_spans`(≤100,`{start≥0,end≥1,reason1..80}`) `confirmed_text`(1..8000\|null) `confirmed_at`(date-time\|null) `model_version` |
+| `RecognitionResult` | `Recognition` | `id`(uuid) `revision`(int≥1) `candidates`(≤3,`Candidate{species_id,rank1..3,model_score 或 null}`) `uncertainty_reasons`(≤10) `selected_species_id`(str1..80 或 null) `model_version`(1..80) |
+| `OCRResult` | `OCR` | `id`(uuid) `revision` `raw_fields`/`corrected_fields`(`LabelFields{registration_number,name,ingredients≤20,dosage_form}`) `verification`(`match_state`∈6值 `registration`(`Herbicide` 或 null) `conflict_fields`≤20 `missing_fields`≤20 `dose_cards`≤10) `model_version` |
+| `TranscriptionResult` | `Transcription` | `id`(uuid) `revision` `raw_text`(≤8000) `uncertain_spans`(≤100,`{start≥0,end≥1,reason1..80}`) `confirmed_text`(1..8000 或 null) `confirmed_at`(date-time 或 null) `model_version` |
 | `AnswerResult` | `Answer` | `id`(uuid) `revision` `status`∈{answered,insufficient,blocked} `checked_text`(1..16000) `check_state`∈{passed,blocked} `citations`(≤20 `SourceRef`) `dose_cards`(≤10 `DoseCard`) `model_version` `prompt_version` `rule_version` |
 | `SynthesisResult` | `Synthesis` | `id`(uuid) `revision` `checked_content_ref`(`TargetRef{type∈16值,id1..80,revision≥1}`) `media_id`(uuid) |
 | `ModerationResult` | `Moderation` | `id`(uuid) `target_ref`(`TargetRef`) `decision`∈{pending,approved,rejected,quarantined} `reason_codes`≤30 `hard_rule_passed`(bool) `model_version` `prompt_version` `rule_version` |
