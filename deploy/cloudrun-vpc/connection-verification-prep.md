@@ -1,6 +1,6 @@
 # 连接验证准备：云托管 API 容器 → 上海 CVM 上的 PostgreSQL（内网）
 
-2026-10-12，**Refs #27**（此前误写 `#25`，已更正）。配套 [README.md](README.md) / [verify-vpc-linkage.md](verify-vpc-linkage.md)。
+2026-10-12，**Refs #27**（此前误写 `#25`，已更正）；**本目录为部署准备与核验，不关闭整项 #27**（`Closes` / `Fixes` / `Resolves` 均为 0）。配套 [README.md](README.md) / [verify-vpc-linkage.md](verify-vpc-linkage.md)。
 
 **本文件只做准备与判读规则，不执行任何连接。** 撰写时未登录云托管、未登录腾讯云、未连接数据库、未读取任何口令；文中 `<...>` 均为占位符，**任何人不得把真实口令、DSN 或账号标识填进本仓库**。
 

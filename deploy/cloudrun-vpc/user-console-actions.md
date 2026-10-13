@@ -1,6 +1,6 @@
 # 仅用户本人可做的控制台清单
 
-2026-10-12，**Refs #27**（此前误写 `#25`，已更正）。配套 [README.md](README.md) / [verify-vpc-linkage.md](verify-vpc-linkage.md) / [connection-verification-prep.md](connection-verification-prep.md)。
+2026-10-12，**Refs #27**（此前误写 `#25`，已更正）；**本目录为部署准备与核验，不关闭整项 #27**（`Closes` / `Fixes` / `Resolves` 均为 0）。配套 [README.md](README.md) / [verify-vpc-linkage.md](verify-vpc-linkage.md) / [connection-verification-prep.md](connection-verification-prep.md)。
 
 **为什么单列**：以下动作需要微信扫码身份、腾讯云账号登录、付费或平台侧授权，**都属于 AI 无条件不可执行的范畴**（无凭据、且被明确禁止购买/开通/扩权/生产变更）。请逐项打勾；打勾即代表**你本人**已执行并核对，任何人不得代勾、代执行、代声称完成。
 
