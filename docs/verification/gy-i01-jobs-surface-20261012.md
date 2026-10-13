@@ -6,6 +6,7 @@
 
 - 基线 `upstream/main = a249e77b31d75001b778bf2d8df0229a6a23639a`（开工前 `git fetch upstream --prune` 核对，`git merge` ⇒ Already up to date）。
 - **合成（变更 2）**：开工后 main 前进到 **`54ed689c`**（#105「GY-I13 TTS 阶段 2a+2b」）⇒ `git merge upstream/main` 出现**唯一冲突文件 `services/api/src/app.ts`**（两侧在同一 import 区末尾与 `registerSpeechRoutes(...)` 之后**同点各自追加**）。经指挥逐条许可，按「**两侧全保留**」解决：保留 #102 的 `registerSpeechRoutes(...)`、#105 的 `registerSynthesisRoutes(...)`（沿用其原位）与本片的 `registerJobRoutes(...)`；import 三组与 `BuildAppOptions` 的 `speech*`(4)/`synthesis*`(5) 注入项全部保留。**未删除/改写 #102、#105 的任何行**（合成后 `git diff upstream/main -- services/api/src/app.ts` 只显示本片新增的 3 行 import + 4 行 jobs 注册块）。merge commit `c75e792`（中文，**非** rebase/force/amend）。
+- **合成（变更 3）**：main 又前进到 **`b1f6ab0e`**（含 **#104「GY-I10 标签 OCR 服务端 HTTP 层」**）⇒ 第二次 `git merge upstream/main`，**冲突仍只在 `services/api/src/app.ts`**（同点相邻追加：本片 jobs 注册块 vs #104 的 `registerOcrRoutes(app, config, { guards })`）。同样按「**两侧全保留**」解决：`registerRecognitionRoutes` / `registerSpeechRoutes` / `registerSynthesisRoutes` / `registerOcrRoutes` / `registerJobRoutes` **五者各恰一处**（行 207/208/209/210/214），无残留冲突标记，jobs 仍在 `registerSpeechRoutes` 之后；**未删除/改写 #102、#104、#105 的任何行**。merge commit `0679d09`（中文，**非** rebase/force/amend）。合成后 `jobs-http.mjs` 仍 **13 组全 PASS**，四个既有域脚本（`speech-http` / `recognitions-http` / `tts-http` / `ocr-http`）全部通过。
 - 本片新增：`services/api/src/jobs/registry.ts`（端口 + 契约形状守卫 + 分派注册表）、`services/api/src/jobs/sources.ts`（各域作业源适配器）、`services/api/src/jobs/routes.ts`（**唯一注册点**）。
 - 本片修改：`services/api/src/routes/recognitions.ts`（**仅为收敛**：删除其两处 `/jobs` 注册与原注释）、`services/api/src/app.ts`（+3 import、+1 注册块）、`tests/integration/speech-http.mjs`（#102 里那条 `[gap] …→ 404` 已过时 ⇒ 改为"经共享作业面可读"；**只动缺口那几行、只新增断言**，14 组仍全绿）。
 - 未触碰：`packages/**`、契约、`db/**`、`apps/admin/**`、`miniprogram/**`、`tools/prepare-wechat.mjs`、根 `package.json`/lock、`.github/workflows/**`；**未改** `routes/{speech,synthesis,ocr}.ts` 与任何域 `service`/`store` 语义（**只读复用**）。
@@ -23,8 +24,9 @@ JobSourcePort = { kind, get({userId, jobId}) → Job|null, cancel?({userId, jobI
 2. **按 kind 分派**：注册表按注册顺序询问各源；**未注册的 kind ⇒ 与"作业不存在"同形的 404**（fail-closed，**绝不为未接线能力伪造状态**）。
 3. **同形 404（**三类**）**：**他人作业**、**合法 uuid 但不存在**、**kind 未接线** ⇒ 对外封套**逐字节同形**。
 4. **两层分工（与 #9/#10 线既有钉子同一口径）**：路径参数按契约 `format: uuid` ⇒ **HTTP 层判格式（非 uuid ⇒ 400 `INVALID_REQUEST`）**；
-   **服务层判存在性与归属（⇒ 404 `NOT_FOUND`）**。先例：`docs/verification/gy-i09-identify-loop-20261011.md:74`
-   「非 uuid 路径参数 `GET /recognitions/not-a-uuid` ⇒ `400 INVALID_REQUEST`（ajv `format:uuid` 生效，实测确认）」。
+   **服务层判存在性与归属（⇒ 404 `NOT_FOUND`）**。既有钉子两处可对照：
+   `docs/verification/gy-i09-identify-loop-20261011.md:74`「非 uuid 路径参数 `GET /recognitions/not-a-uuid` ⇒ `400 INVALID_REQUEST`（ajv `format:uuid` 生效，实测确认）」，
+   以及 #104 的 `tests/integration/ocr-http.mjs` 的 **`PASS 7b) 钉子·两层分工：非 uuid 路径 id⇒400 INVALID_REQUEST（HTTP 层判格式）；格式合法但不存在⇒404 NOT_FOUND（服务层判存在性）`**（本片合成后实测仍通过）。
    **非法 uuid 不并入同形 404 组**（故 `/ocr/{id}`、`/recognitions/{id}` 与本共享面口径一致：格式 400、存在性 404）。
 5. **未声明查询参数 ⇒ 400**：契约对这两个操作**没有声明任何查询参数** ⇒ 显式 `additionalProperties: false`（不静默忽略；与 `routes/speech.ts` 同口径）。
 6. **出口即重建**：命中后由 `assertContractJob` 按契约字段**重建**新对象（`additionalProperties:false` ⇒ 键集合恰好九键）并对 `result.value` `structuredClone` ⇒ 出口不共享域内引用。
