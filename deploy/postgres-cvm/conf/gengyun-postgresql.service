@@ -1,0 +1,46 @@
+# ============================================================================
+# 耕云 CVM PostgreSQL 17 systemd 单元（由 install-postgres.sh 安装到
+# /etc/systemd/system/gengyun-postgresql.service）
+#
+# 状态：技术准备物，未部署、未验收、未在任何真实 PG 实例上执行过。
+#
+# 为什么不用发行版的 postgresql@17-main.service：
+#   发行版集群固定在 /var/lib/postgresql/17/main（系统盘/根分区），
+#   本交付要求数据目录落在独立持久云硬盘上，因此用直接 initdb 的数据目录
+#   加专用单元。发行版自带集群若已存在，install-postgres.sh 默认不删除，
+#   只在端口冲突时明确失败并给出处置选项（见脚本 GENGYUN_DROP_DEFAULT_CLUSTER）。
+#
+# 占位符由 install-postgres.sh 替换：
+#   @PGDATA@   数据目录绝对路径
+#   @PG_BIN@   PostgreSQL 17 可执行文件目录（/usr/lib/postgresql/17/bin）
+# ============================================================================
+
+[Unit]
+Description=GengYun PostgreSQL 17 (persistent data at @PGDATA@)
+Documentation=file:///usr/share/doc/postgresql-17/README.Debian.gz
+After=network-online.target local-fs.target
+Wants=network-online.target
+# 数据盘挂载失败时不要启动，避免在根分区上建库造成“以为持久其实没有”。
+RequiresMountsFor=@PGDATA@
+
+[Service]
+Type=notify
+User=postgres
+Group=postgres
+# 显式提供 /run/postgresql（/var/run 是其符号链接）作为 Unix socket 目录，
+# 避免依赖发行版 postgresql-common 的准备逻辑；pg_hba 的 local 行依赖该 socket。
+RuntimeDirectory=postgresql
+RuntimeDirectoryMode=2775
+ExecStart=@PG_BIN@/postgres -D @PGDATA@ -c config_file=@PGDATA@/postgresql.conf
+ExecReload=/bin/kill -HUP $MAINPID
+# 平滑关闭：master 收 SIGINT 走 fast shutdown，并等待后端退出。
+KillMode=mixed
+KillSignal=SIGINT
+TimeoutSec=300
+Restart=on-failure
+RestartSec=5
+# 降低被 OOM 杀掉的概率；PG 自身内存由配置而非 cgroup 控制。
+OOMScoreAdjust=-1000
+
+[Install]
+WantedBy=multi-user.target
