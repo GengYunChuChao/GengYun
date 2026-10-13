@@ -5,7 +5,7 @@ function item(version = 'synthetic-v1') { return { id: ID, revision: version ===
  source: { id: '22222222-2222-4222-8222-222222222222', version, title: '合成测试来源', url: 'https://example.test/synthetic-source', publisher: '合成发布方', source_kind: 'simulation', evidence_kind: 'research', validity: 'valid', review_status: 'unverified', updated_at: '2026-10-11T01:00:00Z' }, conditions: null, reference_state: 'available', dose_cards: [] } }
 function envelope(data) { return { data, meta: { request_id: '33333333-3333-4333-8333-333333333333', contract_version: '1.0.0', execution_mode: 'stub' } } }
 function createFixture() {
- const state = { version: 'synthetic-v1', withdrawn: false }, requests = [], token = 'gy-knowledge-synthetic-session'
+ const state = { version: 'synthetic-v1', withdrawn: false, expiredCursor: false }, requests = [], token = 'gy-knowledge-synthetic-session'
  const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1'); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Cache-Control', 'no-store')
   const send = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -22,6 +22,7 @@ function createFixture() {
   if (req.method === 'POST' && url.pathname === '/api/v1/auth/logout') { send(200, envelope({ accepted: true })); return }
   if (req.method !== 'GET') { error(404, 'NOT_FOUND'); return }
   if (url.pathname === '/api/v1/knowledge') {
+   if (state.expiredCursor && url.searchParams.has('cursor')) { error(400, 'INVALID_CURSOR'); return }
    if (url.searchParams.get('q') === '服务失败') { error(503, 'PROVIDER_UNAVAILABLE'); return }
    const noResults = state.withdrawn || url.searchParams.get('q') === '无结果' || url.searchParams.has('growth_stage') || url.searchParams.has('planting_method') || url.searchParams.has('use_scene')
    let r = item(state.version); if (url.searchParams.has('cursor')) r = { ...r, id: '44444444-4444-4444-8444-444444444444' }
