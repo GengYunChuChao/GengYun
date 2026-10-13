@@ -144,8 +144,8 @@ try {
   assert.equal(typeof tokenA, 'string');
   assert.equal(typeof tokenB, 'string');
 
-  // 创建并等待落定：契约的 `GET /jobs/{id}` 只服务识别域（见 [11]），因此这里用服务实例的
-  // `settle()` 确定性等待，而不是轮询 job。
+  // 创建并等待落定：用服务实例的 `settle()` 确定性等待（不依赖轮询 job；
+  // GY-I01 收敛后 `/jobs/{id}` 亦已能读到转写作业，见 [11]）。
   async function createAndSettle(mediaId, token = tokenA) {
     const created = await stubHttp(PATH, {
       method: 'POST', token,
@@ -434,12 +434,17 @@ try {
     assert.equal(unchanged.revision, 2);
   });
 
-  await group('[11] 跨域装配缺口（只观测、不断言未来）：契约 getJob `GET /jobs/{id}` 只服务识别域', async () => {
+  await group('[11] 跨域作业面（GY-I01 收敛后）：转写 job 经共享 `GET /jobs/{id}` 可读（改前 404 → 改后 200）', async () => {
     const created = await createAndSettle(MEDIA.confident);
     const jobId = created.body.data.id;
     const probe = await stubHttp(`${API}/jobs/${jobId}`, { token: tokenA });
-    console.log(`[gap] GET ${API}/jobs/{id}（转写 job）→ ${probe.status} ${probe.body?.error?.code ?? '-'}（该路由由 GY-I09 注册，只查识别域 store）`);
-    observations.push('转写 job 无法经 /jobs/{id} 读取（跨域缺口，如实登记）');
+    assert.equal(probe.status, 200, JSON.stringify(probe.body));
+    assert.equal(probe.body.data.id, jobId);
+    assert.equal(probe.body.data.kind, 'transcription');
+    if (probe.body.data.result !== null) assert.equal(probe.body.data.result.kind, 'transcription');
+    assert.equal(probe.etag, `"${probe.body.data.revision}"`);
+    console.log(`[跨域作业面] GET ${API}/jobs/{id}（转写 job）→ ${probe.status} state=${probe.body.data.state} kind=${probe.body.data.kind}（GY-I01 收敛前该 id 为 404）`);
+    observations.push('转写 job 经共享 /jobs/{id} 可读（改前 404 → 改后 200）');
   });
 
   // ---------------------------------------------------------------- real 模式实例：默认关闭
