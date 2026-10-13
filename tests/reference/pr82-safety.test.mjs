@@ -925,5 +925,3 @@ test('follow-up 4：include_simulated 不得令 evaluateApplicability 产生可�
     }
   }
 });
-
-
