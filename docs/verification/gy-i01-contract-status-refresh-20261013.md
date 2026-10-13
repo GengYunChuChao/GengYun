@@ -12,6 +12,7 @@
 
 - 旧基线校验实际有 16 条 route_mounted 不一致；识别、OCR、转写、合成和 Job 接口在 main 已注册，而旧对照记作未装配。新表记录 32 条已装配、80 条未装配。
 - 逐条核对社区 16、消息 3、后台业务 34 个对应服务方法，补源码/测试证据，标 partial 且保持 route_mounted=false。新增 16 个已注册接口也仅标 partial；操作计数为 implemented 12 / partial 73 / planned 27，横切维度为 implemented 2 / partial 6 / planned 0。
+- 修订（GY-I18 阶段 2，2026-10-13，作者 Yu0ry；Refs #18，**不改本记录其余结论**）：本记录成文时的基线是 `b1f6ab0e`，当时后台业务 34 条按"未装配 HTTP"记 `route_mounted=false`。其后 GY-I18 阶段 2 新增 `services/api/src/routes/admin.ts`（`app.ts` 只追加一行注册），装配了这 34 条后台路由；`docs/architecture/contract-status.json` 中这 34 条的 `route_mounted` 已同步为 `true`，`evidence` 指向 `services/api/src/routes/admin.ts` 与 `tests/integration/admin-http.mjs`，`status` **仍保守保持 `partial`**（真实存储、外部端口、后台 UI 联调未完成）。相应计数由上文"32 条已装配、80 条未装配"变为 **66 条已装配、46 条未装配**。本记录的边界、未验证项与不升档状态的原则均不变。
 - 已读取冻结操作元数据并逐项比较：112 条操作的 id、method、path、route、scope、version_required 未改；OpenAPI、状态契约和产品实现文件未改。
 - 新工具先核对覆盖、证据与装配，再检查中文表格；只有显式 --write-doc 且前置检查通过才写表格，不自动升档状态。
 - 反例覆盖未调用注册函数、仅注释调用、未知模板、陈旧装配标记、陈旧中文表格、重复条目、越界/私有证据与外部 junction。失败退出，错误时不写文档。
