@@ -51,6 +51,7 @@ PRIVATE_DIR="${GENGYUN_PRIVATE_DIR:-/etc/gengyun/private}"
 CRED_FILE="${PRIVATE_DIR}/db-credentials.env"
 PLAN_ONLY=0
 WITH_CLI_GROUPS=0
+ROTATE_RUNTIME_PASSWORD=0
 
 log()  { printf '[%s] %s\n' "$SCRIPT_NAME" "$*"; }
 warn() { printf '[%s][WARN] %s\n' "$SCRIPT_NAME" "$*" >&2; }
@@ -62,13 +63,19 @@ fail() { printf '[%s][ERROR] %s\n' "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-用法: sudo ./provision-db.sh [--plan] [--with-cli-groups]
+用法: sudo ./provision-db.sh [--plan] [--with-cli-groups] [--rotate-runtime-password]
 
-  --plan             只校验前置并打印将要执行的动作，不做任何改动
-  --with-cli-groups  额外创建 gengyun_source_operator / gengyun_staging_importer 组
-                     （注意：对应 CLI 目前只接受本机回环连接串，
-                      见 roles-and-migration.md 第 3 节；CVM 部署通常不需要）
-  --help             显示本帮助
+  --plan                      只校验前置并打印将要执行的动作，不做任何改动
+  --with-cli-groups           额外创建 gengyun_source_operator / gengyun_staging_importer 组
+                              （注意：对应 CLI 目前只接受本机回环连接串，
+                               见 roles-and-migration.md 第 3 节；CVM 部署通常不需要）
+  --rotate-runtime-password   重设 gengyun_api_runtime 的口令（默认**不改口令**，保证重复执行幂等；
+                              轮换后 pg_authid.rolpassword 必然变化——PostgreSQL 每次
+                              ALTER ROLE … PASSWORD 都会用新的随机 salt，属固有行为）
+  --help                      显示本帮助
+
+执行顺序（不可颠倒，脚本内有硬门禁）：
+  集群/业务库(install-postgres.sh) ⇒ 迁移(migrate.ts up) ⇒ 本脚本（建组 ⇒ 20-login-roles.sql ⇒ 90-assert）⇒ 启动 API
 EOF
 }
 
@@ -76,8 +83,9 @@ for arg in "$@"; do
   case "$arg" in
     --plan) PLAN_ONLY=1 ;;
     --with-cli-groups) WITH_CLI_GROUPS=1 ;;
+    --rotate-runtime-password) ROTATE_RUNTIME_PASSWORD=1 ;;
     --help|-h) usage; exit 0 ;;
-    *) fail "未知参数：${arg}（支持 --plan / --with-cli-groups / --help）" ;;
+    *) fail "未知参数：${arg}（支持 --plan / --with-cli-groups / --rotate-runtime-password / --help）" ;;
   esac
 done
 
@@ -254,13 +262,30 @@ fi
 # 5. 运行时 LOGIN：创建/收敛 + 授予组成员 + 最小权限断言
 # ---------------------------------------------------------------------------
 if [[ "$PLAN_ONLY" -eq 1 ]]; then
-  log "[PLAN] 执行 sql/20-login-roles.sql（创建/收敛 ${RUNTIME_ROLE}，授予 5 个 NOLOGIN 组）"
+  log "[PLAN] 执行 sql/20-login-roles.sql（创建（仅缺失时）/收敛 ${RUNTIME_ROLE}，授予 5 个 NOLOGIN 组）"
+  log "[PLAN] 口令：$([[ "$ROTATE_RUNTIME_PASSWORD" -eq 1 ]] && echo '将按 --rotate-runtime-password 轮换' || echo '默认不改动（重复执行幂等）')"
   log "[PLAN] 执行 sql/90-assert-least-privilege.sql（必须输出 ok）"
 else
   log "执行 sql/20-login-roles.sql（口令经环境变量传给 psql 的 \\getenv，不落 argv/不打印）"
-  # 环境变量前缀作用于 runuser 本身；runuser 不带 --login 时保留其它环境变量。
-  # 若该变量未传到 psql，20-login-roles.sql 的 \getenv 守卫会明确失败，不会建出无口令身份。
+
+  # 前置：确认 runuser 会保留环境变量（不同发行版/是否走 PAM 可能不同）。
+  # 这一步只探测「变量名」，探测值不是口令 ⇒ 不涉及秘密。
+  # 若此处失败，说明无法把口令安全地传进 psql；下面给出不经 argv 的替代做法。
+  if ! GENGYUN_ENV_PROBE=1 runuser -u postgres -- sh -c '[ "$GENGYUN_ENV_PROBE" = 1 ]'; then
+    fail "runuser 未保留环境变量，无法把口令安全传给 psql（本脚本拒绝把口令放 argv）。
+         替代做法（任选其一，口令仍只经环境/私密文件）：
+           1) sudo --preserve-env=GENGYUN_API_RUNTIME_PASSWORD -u postgres -- \\
+                ${PG_BIN}/psql ${PSQL_BASE[*]} -f ${SQL_DIR}/20-login-roles.sql
+           2) set -a; . ${CRED_FILE}; set +a
+              runuser -u postgres -- ${PG_BIN}/psql ${PSQL_BASE[*]} -f ${SQL_DIR}/20-login-roles.sql
+         或把本机 shell 换成保留环境的实现后重跑。"
+  fi
+
+  # 环境变量前缀作用于 runuser 本身；上面的前置已确认 runuser 会保留它们。
+  # 若 GENGYUN_API_RUNTIME_PASSWORD 仍没传到 psql，20-login-roles.sql 的 \getenv 守卫会明确失败，
+  # 不会建出无口令身份。GENGYUN_ROTATE_RUNTIME_PASSWORD 只在显式要求轮换时才置 1。
   GENGYUN_API_RUNTIME_PASSWORD="$RUNTIME_PASSWORD" \
+  GENGYUN_ROTATE_RUNTIME_PASSWORD="$([[ "$ROTATE_RUNTIME_PASSWORD" -eq 1 ]] && echo 1 || echo 0)" \
     runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "${SQL_DIR}/20-login-roles.sql"
 
   log "执行最小权限断言 sql/90-assert-least-privilege.sql"

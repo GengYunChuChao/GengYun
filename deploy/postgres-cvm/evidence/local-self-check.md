@@ -287,6 +287,7 @@ $ # 交叉核对 90-assert-least-privilege.sql 里出现的每个关系名
 | 改写时自查 | `runtime_tcp_login` 之外还曾想用 `pg_dump -s` 作为越权反例，但低权限角色能否跑 `pg_dump -s` 我无法在本机证实 | **删除该判据**，不保留"我不知道结论"的检查 |
 | `deploy/**` Markdown 等价校验（见 L 节） | 2 处未转义竖线（`\|\|`）导致表格列数从 3 变 5；后又出现 1 处同类问题（`for … do bash -n "$f" \|\| echo` 写在表格单元格里） | 均转义为 `\|\|` 并复跑通过——**说明这个检查有牙齿** |
 | 改写文档后复检行尾 | 用 Python `pathlib.write_text` 拼接段落时，Windows 上把 `\n` 转成了 `\r\n`，导致 `README.md`（421 处）与 `runbook.md`（368 处）变成 CRLF，与仓库其余 LF 文件不一致 | 用 `WriteAllText` + `-replace "\r\n","\n"` 转回 LF；复检本目录 16 个文件 **CRLF=0**、`git ls-files --eol` 全部 `i/lf w/lf` |
+| **外部真跑（监工 · 真实 PG 17.11）** | **`20-login-roles.sql` 的前置断言 `pg_has_role('gengyun_api_runtime', …)` 排在建角色之前 ⇒ 全新库上 `ERROR: role … does not exist`（exit=3）**；`90-assert` 连带中止。**本单的静态自检没能发现它**（`bash -n` 不看 SQL，本机也没有 psql） | 见 §4 与 [roles-and-migration.md](../roles-and-migration.md) §6.2：改为"角色不存在也安全"，新增组存在性前置，`90-assert` 加前置自检，`verify`/`restore-drill` 消除同类隐患；返修后的首跑/幂等回归**待监工回传** |
 
 ### L) 本目录 Markdown 复用仓库文档校验器的同类规则
 
@@ -342,7 +343,58 @@ $ git diff --cached --check
 **因此：本目录的脚本"能跑"只是设计目标，不是实测结果。任何"已部署/已验收/备份可用"
 的说法都必须等到资源就绪后按 [verify-checklist.md](../verify-checklist.md) 真跑并留下原始输出。**
 
-## 4 复现方式
+## 4 外部真实 PostgreSQL 17.11 证据（**监工执行，非本单写手复现**）
+
+本节与上面 1–3 节**性质不同**：上面是本单写手在本机能做的静态/失败路径自检；
+本节是**监工**在**本机真实 PostgreSQL 17.11**（官方 Windows 便携版，与 CI 的 `postgres:17.11` 同版本）
+上真跑本目录 SQL 的结果，经指挥转述。**本单写手未复现这些运行**（本机无 PostgreSQL）。
+
+### 4.1 返修前的真跑结果（监工回传）
+
+| 监工执行的内容 | 结果 |
+| --- | --- |
+| 仓库 `services/api/db/migrations/*.sql`（10 个，按序 `psql -f`） | ✅ **10/10 全部成功**（含 `0007` 自建 `pgcrypto`） |
+| 仓库 `services/api/db/roles/*.sql`（7 个） | ✅ **7/7 全部成功** |
+| `deploy/postgres-cvm/sql/20-login-roles.sql`（**返修前**版本） | ❌ `exit=3`：`ERROR: role "gengyun_api_runtime" does not exist`（旧版第 74 行） |
+| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`（**返修前**版本） | ❌ 连带失败：同一 ERROR（只跑了 3 行就中止） |
+
+### 4.2 该真跑发现并已修复的缺陷（返修 1）
+
+- **缺陷**：`20-login-roles.sql` 的**前置断言**（`pg_has_role('gengyun_api_runtime', …)`）排在
+  **建角色之前**，而 `pg_has_role(name, …)` 在角色不存在时会直接 `ERROR`
+  ⇒ **全新库上必然失败**（真实部署场景）；本机若曾手工建过该角色就会掩盖它。
+- **修复**：见 [roles-and-migration.md](../roles-and-migration.md) §6.2 的 7 条
+  （核心是把该断言改成"角色不存在也安全"，并把"5 个组存在性"提前为止损前置；
+  另在 `90-assert` 加前置自检，在 `verify`/`restore-drill` 里消除同类隐患）。
+- **同类隐患的排查范围**：本单写手随后把"引用可能不存在的对象"这一模式在
+  `20-login-roles.sql` / `90-assert-least-privilege.sql` / `verify-cvm-postgres.sh` /
+  `restore-drill.sh` / `provision-db.sh` 里逐处清查并加固（见 §4.4）。
+
+### 4.3 返修后**待补**的证据（在其回传前不得记通过）
+
+| 回归 | 判据 | 状态 |
+| --- | --- | --- |
+| **全新库首跑** | `20-login-roles.sql` 在空库+已迁移+已建组的库上 `exit=0`，角色出现在 `\du` | **待监工回传** |
+| **重复执行（幂等）** | 第二遍 `exit=0`，且 `pg_authid.rolpassword` **不变**、`pg_auth_members` 无重复行 | **待监工回传** |
+| 15 项最小权限断言 | 输出 `ok` | **待监工回传** |
+| 备份 / 恢复演练 | `restore-drill.sh` 退出码 0、`FAIL=0` | **待监工回传** |
+| 缺口令 / 口令格式不符 | 明确失败（不建无口令 LOGIN） | **待监工回传** |
+
+> 监工回传原始输出后，本表会按实际结果更新；**在此之前这五条一律不得当作已通过。**
+
+### 4.4 本次返修涉及的"引用可能不存在的对象"清查结果
+
+| 位置 | 是否引用了可能不存在的对象 | 处理 |
+| --- | --- | --- |
+| `sql/20-login-roles.sql` | 是（`pg_has_role(name,…)` 早于建角色；`GRANT` 依赖 5 个组） | 已改为存在性安全 + 新增组存在性前置 |
+| `sql/90-assert-least-privilege.sql` | 是（多条 `has_table_privilege`/`has_column_privilege` 需关系存在；`'catalog_read.current_knowledge'::regclass` 会硬报错） | 已加前置自检（`to_regclass` + `pg_roles`）；缺前置时立即给补救指引 |
+| `verify-cvm-postgres.sh` | 是（4 处角色判据：`rolpassword`、`pg_has_role`×2、`rolattrs`） | 已改为存在性安全，缺失时输出 `实际=role-missing` |
+| `restore-drill.sh` | 是（`schema_migrations` 直接 `FROM`） | 已先用 `to_regclass` 判存在，缺失时 `实际=schema_migrations-missing` |
+| `provision-db.sh` | 否（建角色前先查 `pg_roles`；迁移门禁用 `to_regclass`） | — 另新增 runuser 环境变量透传前置探测 |
+| `backup-postgres.sh` | 否（每张关键表都用 `to_regclass` 守卫） | — |
+| `install-postgres.sh` | 否（只用 `pg_database`/`pg_roles` 与 `createdb`） | — |
+
+## 5 复现方式
 
 ```bash
 # 在本仓库任一 checkout 的 deploy/postgres-cvm 下
@@ -353,4 +405,4 @@ bash install-postgres.sh --plan                                 # E（非 root �
 ```
 
 第 A–F 项不依赖 PostgreSQL，任何 POSIX 环境都能复现；
-一旦有了 PG17，这些命令的"未验证"部分才有条件补上。
+一旦有了 PG17，这些命令的"未验证"部分才有条件补上（§4 的真跑即由监工在真实 PG 17.11 上完成）。

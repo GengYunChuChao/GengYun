@@ -191,7 +191,12 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -r "$MANIFEST" && "$restore_rc" -eq 0 ]]; then
   expected_migrations="$(manifest_get 'migration_versions')"
-  actual_migrations="$(qs "$TARGET_DB" "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations")"
+  # 存在性安全的写法：表不存在时直接查询会解析失败，故先用 to_regclass 判存在。
+  if [[ "$(qs "$TARGET_DB" "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" == 't' ]]; then
+    actual_migrations="$(qs "$TARGET_DB" "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations")"
+  else
+    actual_migrations='schema_migrations-missing'
+  fi
   if [[ "$expected_migrations" == "$actual_migrations" ]]; then
     report PASS 'migration_versions' "$expected_migrations" "$actual_migrations"
   else

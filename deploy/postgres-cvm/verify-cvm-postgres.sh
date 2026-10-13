@@ -150,15 +150,18 @@ report_eq 'ident_map_rows' '1' "$(qs 'SELECT count(*) FROM pg_ident_file_mapping
 
 # ---------------------------------------------------------------------------
 # 4. 角色与成员资格（\\du 等价的机器可读版本）
+#    全部写成「角色不存在也安全」：子查询 0 行 ⇒ COALESCE 兜底成 'role-missing'，
+#    绝不因为角色缺失而抛出 `role "…" does not exist`（返修 1 的同类问题）。
 # ---------------------------------------------------------------------------
 report_eq 'runtime_role_attrs' 't|t|f|f|f|f|f' \
-  "$(qs "SELECT rolcanlogin || '|' || rolinherit || '|' || rolsuper || '|' || rolcreatedb || '|' || rolcreaterole || '|' || rolreplication || '|' || rolbypassrls FROM pg_roles WHERE rolname='${RUNTIME_ROLE}'")"
+  "$(qs "SELECT COALESCE((SELECT rolcanlogin || '|' || rolinherit || '|' || rolsuper || '|' || rolcreatedb || '|' || rolcreaterole || '|' || rolreplication || '|' || rolbypassrls FROM pg_roles WHERE rolname='${RUNTIME_ROLE}'), 'role-missing')")"
 report_eq 'runtime_password_scram' 't' \
-  "$(qs "SELECT rolpassword LIKE 'SCRAM-SHA-256\$%' FROM pg_authid WHERE rolname='${RUNTIME_ROLE}'")"
+  "$(qs "SELECT COALESCE((SELECT (rolpassword LIKE 'SCRAM-SHA-256\$%')::text FROM pg_authid WHERE rolname='${RUNTIME_ROLE}'), 'role-missing')")"
+# pg_has_role(name, …) 在角色缺失时会 ERROR；故先判存在，缺失就返回 'role-missing'。
 report_eq 'runtime_group_count' '5' \
-  "$(qs "SELECT count(*) FROM pg_roles WHERE pg_has_role('${RUNTIME_ROLE}', oid, 'MEMBER') AND rolname <> '${RUNTIME_ROLE}'")"
+  "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN (SELECT count(*)::text FROM pg_roles WHERE pg_has_role('${RUNTIME_ROLE}', oid, 'MEMBER') AND rolname <> '${RUNTIME_ROLE}') ELSE 'role-missing' END")"
 report_eq 'runtime_not_owner_member' 'f' \
-  "$(qs "SELECT pg_has_role('${RUNTIME_ROLE}', '${DB_OWNER}', 'MEMBER')")"
+  "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN pg_has_role('${RUNTIME_ROLE}', '${DB_OWNER}', 'MEMBER')::text ELSE 'role-missing' END")"
 report_eq 'nologin_groups_present' '5' \
   "$(qs "SELECT count(*) FROM pg_roles WHERE rolname IN ('gengyun_auth_privacy','gengyun_preview_reader','gengyun_consent_granter','gengyun_profile_runtime','gengyun_knowledge_runtime') AND NOT rolcanlogin")"
 

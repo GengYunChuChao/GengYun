@@ -1,7 +1,18 @@
 -- ============================================================================
 -- 耕云 · CVM PostgreSQL 17：最小权限断言（只读检查，不修改任何对象）
 --
--- 状态：技术准备物，未部署、未验收、未在任何真实 PG 实例上执行过。
+-- 状态：技术准备物，未部署、未验收。本文件的 SQL **已由监工在真实 PostgreSQL 17.11 上真跑**：
+--   在**未 provisioning 的全新库**上，旧版会跑到一半才因
+--   `ERROR: role "gengyun_api_runtime" does not exist` 中止（信息量很低）。
+--   返修后本文件在**最前面**加了一道「前置自检」，缺前置时**立即**给出可操作提示。
+--
+-- 顺序性前提（写清楚）：本文件是 **provisioning 之后的事后断言**，不是建角色/建表的脚本：
+--   1) install-postgres.sh 已建好集群与业务库 gengyun；
+--   2) `migrate.ts up` 已应用**全部**迁移（本文件读 public.* 与 catalog_read.*）；
+--   3) 5 个既有 NOLOGIN 组已由 services/api/db/roles/*.sql 建出；
+--   4) sql/20-login-roles.sql 已创建 gengyun_api_runtime 并授予那 5 个组。
+--   ⇒ 正确顺序：install-postgres.sh ⇒ migrate.ts up ⇒ provision-db.sh（内部依次执行 20- 与 90-）。
+--   前置不满足时**不是“跳过”，而是“失败”**（断言无法求值），但会打印明确的补救指引。
 --
 -- 执行者：迁移管理员 gengyun_cvm_owner（需要读 pg_authid，只有超级用户可读）。
 -- 前置  ：20-login-roles.sql 已执行；全部迁移已应用（本文件会读取表与视图）。
@@ -20,6 +31,37 @@
 \pset pager off
 \pset tuples_only on
 \pset format unaligned
+
+-- --- 前置自检（全部用 to_regclass / pg_roles，对“对象不存在”天然安全）--------
+-- 目的：把“迁移没跑完 / 角色没引导”这类前置缺失，从“跑到一半的含糊报错”
+--       变成“一开头就给出补救命令”。下列关系是本文件后续断言真正依赖的全部对象。
+SELECT (
+         to_regclass('public.schema_migrations')            IS NOT NULL
+     AND to_regclass('public.users')                        IS NOT NULL
+     AND to_regclass('public.sessions')                     IS NOT NULL
+     AND to_regclass('public.admin_accounts')               IS NOT NULL
+     AND to_regclass('public.admin_scopes')                 IS NOT NULL
+     AND to_regclass('public.idempotency_keys')             IS NOT NULL
+     AND to_regclass('catalog_read.home_species')           IS NOT NULL
+     AND to_regclass('catalog_read.current_knowledge')      IS NOT NULL
+     AND (SELECT count(*) FROM pg_roles
+           WHERE rolname = 'gengyun_api_runtime') = 1
+     AND (SELECT count(*) FROM pg_roles
+           WHERE rolname IN ('gengyun_auth_privacy','gengyun_preview_reader',
+                             'gengyun_consent_granter','gengyun_profile_runtime',
+                             'gengyun_knowledge_runtime')) = 5
+       ) AS prereq_ok \gset
+\if :prereq_ok
+\else
+  \echo '错误：90-assert-least-privilege.sql 的前置未满足——本文件是 provisioning 之后的事后断言。'
+  \echo '      需要的对象：schema_migrations 与 7 个业务关系，以及角色 gengyun_api_runtime + 5 个既有 NOLOGIN 组。'
+  \echo '      请按顺序确认：'
+  \echo '        1) sudo deploy/postgres-cvm/install-postgres.sh'
+  \echo '        2) DATABASE_URL=… node services/api/src/db/migrate.ts up     # 全部迁移'
+  \echo '        3) sudo deploy/postgres-cvm/provision-db.sh                  # 建组 ⇒ 20- ⇒ 本文件(90-)'
+  \echo '      本文件不会自己建角色或建表。'
+  SELECT 1/0;
+\endif
 
 WITH checks(label, ok, detail) AS (
 

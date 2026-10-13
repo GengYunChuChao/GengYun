@@ -12,6 +12,11 @@
 >   **在账号边界/路径确定之前，不得创建任何资源。**
 > - 本目录内所有脚本只在本机做过 `bash -n` 语法检查；**本机没有可用的 PostgreSQL / Docker / 云凭据**，
 >   因此**没有任何脚本被真正执行过**。原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md)。
+> - **已由监工在真实 PostgreSQL 17.11（官方 Windows 便携版，与 CI 同版本）上真跑过本目录的 SQL**：
+>   10/10 迁移与 7/7 既有角色成功；并**发现一个"全新库上必失败"的顺序缺陷**（见
+>   [roles-and-migration.md](roles-and-migration.md) §6.2）。缺陷**已修**（本版），
+>   但**返修后的「全新库首跑」与「重复执行幂等」两条回归仍待监工回传原始输出**；
+>   在其回传前**不得当作已通过**（见 [evidence/local-self-check.md](evidence/local-self-check.md) §4）。
 > - **脚本完成 ≠ 已部署**；任何"已部署/已验收/可用"的说法都必须等到资源就绪后按
 >   [verify-checklist.md](verify-checklist.md) 真跑并留下原始输出。
 > - 密钥不存在于本目录任何文件中：口令只从环境变量或主机上的私密文件读取，

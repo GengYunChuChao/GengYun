@@ -219,7 +219,58 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 - 需求 F13/AC23 的"注销后在线 7 日／备份 30 日内清理个人数据"是**逐用户删除语义**，
   `backup-postgres.sh` 的 30 天只是备份文件保留期，**两者不是同一件事**，后者属未交付项。
 
-## 6 一致性自查清单（提交/验收前逐条对照）
+## 6 真跑证据与本次返修（外部真实 PostgreSQL 17.11）
+
+> **证据来源必须写清楚**：本节的真跑由**监工**在**本机真实 PostgreSQL 17.11**（官方 Windows 便携版，
+> 与 CI 的 `postgres:17.11` 同版本）上执行，**不是本单写手复现的**（本单写手无 PostgreSQL）。
+> 监工回传的原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md) §4。
+
+### 6.1 监工返修前跑出的结果
+
+| 监工执行的内容 | 结果 |
+| --- | --- |
+| 仓库 `services/api/db/migrations/*.sql`（10 个，按序 `psql -f`） | ✅ **10/10 成功**（含 `0007` 自建 `pgcrypto` —— 印证"不要预装扩展"的判断） |
+| 仓库 `services/api/db/roles/*.sql`（7 个） | ✅ **7/7 成功** |
+| `sql/20-login-roles.sql`（**返修前**版本） | ❌ `exit=3`：`ERROR: role "gengyun_api_runtime" does not exist`（旧版第 74 行） |
+| `sql/90-assert-least-privilege.sql`（**返修前**版本） | ❌ 连带失败：`ERROR: role "gengyun_api_runtime" does not exist`（只跑了 3 行就中止） |
+
+### 6.2 成因与修复（返修 1）
+
+**成因**：旧版把"运行身份是否为迁移管理员成员"这条**前置断言**
+（`pg_has_role('gengyun_api_runtime', …)`）放在了**建角色之前**；而 `pg_has_role(name, …)`
+在角色不存在时会直接 `ERROR` ⇒ **全新库上必然失败**（这正是真实部署场景）。
+若本机历史遗留过该角色，缺陷会被掩盖。
+
+**修复**（只改 `deploy/postgres-cvm/**`，**未动仓库既有 `db/**`**）：
+
+| # | 修复 | 位置 |
+| --- | --- | --- |
+| 1 | 该断言改为**角色不存在也安全**：`COALESCE((SELECT NOT pg_has_role(…) FROM pg_roles WHERE rolname='gengyun_api_runtime'), true)` —— 子查询 0 行 ⇒ 标量子查询 NULL ⇒ 兜底 `true`；`pg_has_role` 只在子查询真正产生行时才被求值 | `sql/20-login-roles.sql` |
+| 2 | 新增 **5 个既有 NOLOGIN 组的存在性前置**（只查 `pg_roles`，天然安全），避免 GRANT 阶段报含糊的 `role does not exist` | 同上 |
+| 3 | 两处前置现在都**早于任何写操作** | 同上 |
+| 4 | `sql/90-assert-least-privilege.sql` 开头新增**前置自检**（`to_regclass` + `pg_roles` 计数）：缺迁移或缺角色时**立即**打印可操作的补救步骤，而不是跑到一半才报错 | `sql/90-assert-least-privilege.sql` |
+| 5 | `verify-cvm-postgres.sh` 的 4 处角色判据改为存在性安全（角色缺失时 `实际=role-missing`，不再抛 `role does not exist`） | `verify-cvm-postgres.sh` |
+| 6 | `restore-drill.sh` 的迁移版本比对先用 `to_regclass` 判存在（缺失时 `实际=schema_migrations-missing`） | `restore-drill.sh` |
+| 7 | `provision-db.sh` 新增 `--rotate-runtime-password`，并加 **runuser 环境变量透传前置探测**（透传失败时给出不经 argv 的替代做法） | `provision-db.sh` |
+
+### 6.3 口令语义与幂等（返修后可判定的性质）
+
+| 场景 | 行为 | 回归判据 |
+| --- | --- | --- |
+| **全新库首跑** | 创建 LOGIN（写入口令）+ 收敛属性 + 授予 5 组 | 应 `exit=0`，角色出现在 `\du` |
+| **重复执行**（同一口令、不带 rotate） | **不写口令**；只收敛属性 + 重复 GRANT（幂等） | 第二遍 `exit=0`，且 `pg_authid.rolpassword` **不变** |
+| **显式轮换**（`--rotate-runtime-password` 或 `GENGYUN_ROTATE_RUNTIME_PASSWORD=1`） | 执行 `ALTER ROLE … PASSWORD` | `rolpassword` **必然变化**——PostgreSQL 每次都用新的随机 salt 重算 SCRAM 校验值，**属固有行为，不是缺陷** |
+| 未设 `GENGYUN_API_RUNTIME_PASSWORD` | 明确失败，**绝不**创建无口令 LOGIN | `exit≠0` 且提示明确 |
+| 口令非 48 位小写十六进制 | 明确失败 | 同上 |
+| `20-login-roles.sql` 单独在"未建组"的库上执行 | 由存在性前置拦下，提示先跑 `provision-db.sh` | `exit≠0`（**不是**含糊的 role does not exist） |
+| `90-assert-least-privilege.sql` 单独在"未迁移/未引导"的库上执行 | 由前置自检拦下，打印三步补救指引 | `exit≠0`，且输出可操作 |
+
+### 6.4 待补的证据（返修后）
+
+监工将在真实 PG 17.11 上按正确顺序重跑：**全新库首跑 → 重复执行（幂等）→ 15 项断言 → 备份/恢复演练**，
+并回传原始输出。**在监工回传之前，返修后的这两条回归仍属"待验证"，不得记通过。**
+
+## 7 一致性自查清单（提交/验收前逐条对照）
 
 - [ ] `deploy/postgres-cvm/**` 之外没有改动（`git diff --name-only <base>..HEAD` 只有本目录）
 - [ ] 没有复制任何 `services/api/db/roles/*.sql` 的内容到本目录（只按路径执行）

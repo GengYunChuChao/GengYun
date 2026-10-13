@@ -201,6 +201,16 @@ sudo deploy/postgres-cvm/provision-db.sh
 若报 `尚无 schema_migrations 表` 或 `以下迁移在磁盘上存在但未应用` ⇒ **回到步骤 2**，
 这正是"迁移必须在角色之前"的硬门禁。
 
+**口令与幂等（返修后语义）**：本步**默认不改口令**——首次创建才写入口令，重复执行保持
+`pg_authid.rolpassword` 不变（因此"幂等"可严格判定）。需要轮换时显式加
+`--rotate-runtime-password`；注意轮换后 `rolpassword` **必然变化**
+（PostgreSQL 每次都用新的随机 salt 重算 SCRAM 校验值），这是固有行为、不是缺陷。
+完整语义见 [roles-and-migration.md](roles-and-migration.md) §6.3。
+
+> **真跑状态**：本步的 SQL 已由监工在真实 PostgreSQL 17.11 上跑过，并据此**修掉了一个
+> "全新库上必失败"的顺序缺陷**（前置断言排在建角色之前）。返修后的
+> 「**全新库首跑**」与「**重复执行幂等**」两条回归**待监工回传原始输出**，回传前不得记通过。
+
 ### 步骤 4 备份与恢复演练
 
 ```bash
