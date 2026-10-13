@@ -32,6 +32,11 @@
 #   GENGYUN_VPC_PRIVATE_IP          私网 IPv4 覆盖值（仍须落在 VPC 网段内）
 #   GENGYUN_ALLOW_ROOTFS=1          允许数据目录落在根分区（默认拒绝）
 #   GENGYUN_DROP_DEFAULT_CLUSTER=1  删除发行版自动创建的空 17/main 集群（默认拒绝）
+#   GENGYUN_RESET_PGDATA=1          清空「非空但没有 PG_VERSION」的残留数据目录（默认拒绝，只报错并给指引）
+#   GENGYUN_PGDG_MIRROR             PGDG apt 源（默认官方源；境内可用
+#                                   https://mirrors.cloud.tencent.com/postgresql/repos/apt 加速，见下方注释）
+#   PGDG_MIRROR                     GENGYUN_PGDG_MIRROR 的等价别名（二选一）
+#   GENGYUN_PGDG_KEY_URL            PGDG 签名公钥地址（默认官方）
 #   GENGYUN_DB_OWNER_PASSWORD       迁移管理员口令（48 位小写十六进制）
 # ============================================================================
 
@@ -59,6 +64,18 @@ readonly UNIT_PATH="/etc/systemd/system/${UNIT_NAME}"
 readonly PGDG_KEY='/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc'
 readonly PGDG_LIST='/etc/apt/sources.list.d/pgdg.list'
 readonly PW_REGEX='^[a-f0-9]{48}$'
+
+# --- 【返修 9 · 可选镜像】中国境内 CVM 直连官方 PGDG 源可能极慢 -----------------
+#   真机实测：官方 apt.postgresql.org 约 6.7 KB/s（装一个包要 ~40 分钟）；
+#             mirrors.cloud.tencent.com/postgresql/repos/apt 与
+#             mirrors.aliyun.com/postgresql/repos/apt 均可用且约 930 KB/s；
+#             清华/中科大对应路径 404（勿用）。
+#   默认**仍是官方源**，绝不静默改源；要加速就显式设 GENGYUN_PGDG_MIRROR（或 PGDG_MIRROR）。
+#   镜像需与官方同目录布局（`<repo>/<codename>-pgdg main`）。
+PGDG_REPO="${GENGYUN_PGDG_MIRROR:-${PGDG_MIRROR:-https://apt.postgresql.org/pub/repos/apt}}"
+readonly PGDG_REPO
+PGDG_KEY_URL="${GENGYUN_PGDG_KEY_URL:-https://www.postgresql.org/media/keys/ACCC4CF8.asc}"
+readonly PGDG_KEY_URL
 
 DB_NAME="${GENGYUN_DB_NAME:-gengyun}"
 PGDATA_DIR="${GENGYUN_PGDATA:-/data/gengyun/pgdata}"
@@ -237,9 +254,60 @@ fi
 #   该用户/组由 `postgresql-17` 包的 postinst 创建；在此处还不存在 ⇒ 旧版会以
 #   `install: invalid group 'postgres'` 中止（目标 CVM 实测，原始输出见 evidence §7）。
 #   因此这里先按 **root:root** 0750 建目录；等包装完、`postgres` 存在后再 `chgrp`（见下方 5b）。
+#
+# 【返修 9 · 缺陷 3】**逐级**目录都必须能被 `postgres` 穿越（每级都要有 x 位）：
+#   initdb 的临时口令文件放在 ${PRIVATE_DIR} 里，`postgres` 要能"穿过"它的**每一级**父目录。
+#   旧版只控制了叶子目录，且叶子若不存在会在 `umask 077` 下隐式创建父目录（实测父目录变成 0700 root:root）
+#   ⇒ `postgres` 连目录都进不去 ⇒ initdb 报 Permission denied（真机实测，evidence §8.1）。
+#   这里**显式建两级**（`install -d` 对已存在目录也会把模式修成 0750，已实测）并**显式断言**，
+#   完全不依赖环境 umask 与历史遗留模式。
+readonly PRIVATE_PARENT="$(dirname -- "$PRIVATE_DIR")"
 if [[ "$PLAN_ONLY" -eq 0 && -n "${OWNER_PASSWORD:-}" ]]; then
-  act "准备私密目录 ${PRIVATE_DIR}（0750 root:root；装包后再 chgrp postgres）" \
+  act "准备私密目录父级 ${PRIVATE_PARENT}（0750 root:root；装包后 chgrp postgres）" \
+    install -d -o root -g root -m 0750 -- "$PRIVATE_PARENT"
+  act "准备私密目录 ${PRIVATE_DIR}（0750 root:root；装包后 chgrp postgres）" \
     install -d -o root -g root -m 0750 -- "$PRIVATE_DIR"
+  for _pd in "$PRIVATE_PARENT" "$PRIVATE_DIR"; do
+    _pm="$(stat -c '%a' -- "$_pd")"
+    [[ "$_pm" == '750' ]] || fail \
+      "私密路径 ${_pd} 的权限是 ${_pm}，期望 750（组需要 x 位才能被 postgres 穿越；工具有 0711 的写法，本脚本统一用 0750+chgrp）。"
+  done
+  log "私密路径权限已收敛为 0750（${PRIVATE_PARENT}、${PRIVATE_DIR}）；装包后将 chgrp postgres 并断言可穿越。"
+fi
+
+# ---------------------------------------------------------------------------
+# 4c. 数据目录状态前置（【返修 9 · 缺陷 4】）
+#
+#   initdb 失败会留下"**非空但没有 PG_VERSION**"的数据目录；旧版只判断 PG_VERSION，
+#   于是重跑会直接再 initdb ⇒ `directory is not empty` 再次失败（**不自愈**，真机实测见 evidence §8.2）。
+#   这里把处理**前移到装包之前**：默认**明确失败**并给清理指引（**绝不替用户删别人的目录**）；
+#   只有显式 `GENGYUN_RESET_PGDATA=1` 才清空，且**先打印内容预览**、并拒绝在"挂载点自身"或系统目录上执行。
+# ---------------------------------------------------------------------------
+if [[ "$PLAN_ONLY" -eq 0 && -d "$PGDATA_DIR" && ! -f "${PGDATA_DIR}/PG_VERSION" ]]; then
+  _pgdata_entries="$(find "$PGDATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l || echo 0)"
+  if [[ "${_pgdata_entries:-0}" -gt 0 ]]; then
+    _pgdata_preview="$(find "$PGDATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 5 || true)"
+    _pgdata_ismount="$(df -P -- "$PGDATA_DIR" 2>/dev/null | tail -1 | awk '{print $6}')"
+    if [[ "${GENGYUN_RESET_PGDATA:-0}" == '1' ]]; then
+      [[ "$_pgdata_ismount" != "$PGDATA_DIR" ]] || fail \
+        "拒绝清空：${PGDATA_DIR} 自身就是挂载点（清空会抹掉整个数据盘）。请人工确认后处置。"
+      case "$PGDATA_DIR" in
+        /|/var|/usr|/etc|/tmp|/root|/home) fail "拒绝对系统目录执行清空：${PGDATA_DIR}" ;;
+      esac
+      log "GENGYUN_RESET_PGDATA=1：将清空半初始化的数据目录 ${PGDATA_DIR}；内容预览（前 5 项）："
+      printf '%s\n' "$_pgdata_preview" | sed 's/^/         /'
+      rm -rf -- "${PGDATA_DIR:?}"
+      log "已清空 ${PGDATA_DIR}（接下来由第 7 节重新创建并 initdb）。"
+    else
+      fail "数据目录 ${PGDATA_DIR} **非空但没有 PG_VERSION**（${_pgdata_entries} 项）⇒ 这是上次 initdb 失败的残留；
+         若直接重跑，initdb 仍会以 \"directory is not empty\" 失败。请二选一：
+           ① 人工确认后清理（**先自己看内容**）： rm -rf ${PGDATA_DIR}
+           ② 显式重跑让脚本清空：GENGYUN_RESET_PGDATA=1 sudo ./install-postgres.sh
+              （脚本会先打印内容预览，并拒绝在挂载点自身或系统目录上执行）
+         内容预览（前 5 项）：
+$(printf '%s\n' "$_pgdata_preview" | sed 's/^/           /')"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -249,21 +317,25 @@ need_pkg_update=0
 if [[ ! -f "$PGDG_KEY" ]]; then
   act "下载 PGDG 签名公钥到 ${PGDG_KEY}" \
     install -d -m 0755 -- "$(dirname -- "$PGDG_KEY")"
-  act "下载 PGDG 签名公钥（https://www.postgresql.org/media/keys/ACCC4CF8.asc）" \
+  act "下载 PGDG 签名公钥（${PGDG_KEY_URL}）" \
     curl --fail --silent --show-error --location \
-      --output "$PGDG_KEY" https://www.postgresql.org/media/keys/ACCC4CF8.asc
+      --output "$PGDG_KEY" "$PGDG_KEY_URL"
   if [[ "$PLAN_ONLY" -eq 0 ]]; then
     [[ -s "$PGDG_KEY" ]] || fail "PGDG 公钥下载为空文件：${PGDG_KEY}。请检查网络后重跑。"
   fi
   need_pkg_update=1
 fi
 
-EXPECTED_LIST="deb [signed-by=${PGDG_KEY}] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME:-$(. /etc/os-release; echo "$VERSION_CODENAME")}-pgdg main"
+EXPECTED_LIST="deb [signed-by=${PGDG_KEY}] ${PGDG_REPO} ${VERSION_CODENAME:-$(. /etc/os-release; echo "$VERSION_CODENAME")}-pgdg main"
 readonly EXPECTED_LIST
 if [[ ! -f "$PGDG_LIST" ]] || [[ "$(cat -- "$PGDG_LIST" 2>/dev/null || true)" != "$EXPECTED_LIST" ]]; then
-  act "写入 ${PGDG_LIST}（apt.postgresql.org ${VERSION_CODENAME:-?}-pgdg）" \
+  act "写入 ${PGDG_LIST}（源：${PGDG_REPO}，suite：${VERSION_CODENAME:-?}-pgdg）" \
     bash -c "printf '%s\n' \"\$1\" > \"\$2\"" _ "$EXPECTED_LIST" "$PGDG_LIST"
   need_pkg_update=1
+fi
+if [[ "$PGDG_REPO" != 'https://apt.postgresql.org/pub/repos/apt' ]]; then
+  log "PGDG 源已按 GENGYUN_PGDG_MIRROR/PGDG_MIRROR 切换为镜像：${PGDG_REPO}"
+  log "（默认是官方源；镜像只是**加速**，版本口径仍由 CI 的 17.11 决定，本脚本不因换源而改版本。）"
 fi
 
 if ! dpkg -s "postgresql-${PG_MAJOR}" >/dev/null 2>&1; then
@@ -326,12 +398,24 @@ if [[ "$PLAN_ONLY" -eq 0 ]]; then
            getent group postgres; getent passwd postgres"
   getent passwd postgres >/dev/null 2>&1 || fail \
     "postgresql-${PG_MAJOR} 安装后仍未出现 'postgres' 系统用户（同上，不由本脚本创建）。"
-  if [[ -d "$PRIVATE_DIR" ]]; then
-    act "把私密目录 ${PRIVATE_DIR} 的属组改为 postgres（供 initdb 临时口令文件被 postgres 读取）" \
-      chown root:postgres -- "$PRIVATE_DIR"
-  fi
+
+  # 【返修 9 · 缺陷 3】**逐级** chgrp + **逐级断言可穿越**（不是只改叶子目录）。
+  #   `postgres` 必须能穿过父级与叶子目录，才能读 initdb 的临时口令文件；
+  #   逐级断言把"Permission denied"从 initdb 阶段**前移**到这里，并直接给出 namei 诊断命令。
+  for _pd in "$PRIVATE_PARENT" "$PRIVATE_DIR"; do
+    [[ -d "$_pd" ]] || fail "私密路径 ${_pd} 不存在（应由前面的步骤创建）。"
+    act "把 ${_pd} 的属组改为 postgres（postgres 需能穿越它才能读 initdb 临时口令文件）" \
+      chown root:postgres -- "$_pd"
+    [[ "$(stat -c '%a' -- "$_pd")" == '750' ]] || fail \
+      "私密路径 ${_pd} 的权限变成了 $(stat -c '%a' -- "$_pd")，期望 750。"
+    runuser -u postgres -- test -x "$_pd" || fail \
+      "postgres 无法穿越 ${_pd}（当前 $(stat -c '%a %U:%G' -- "$_pd")）—— initdb 会读不到临时口令文件。
+         诊断： namei -l ${_pd}
+         要求：该目录**每一级**都要让 postgres 有 x（穿越）位；本脚本用 0750 + 属组 postgres 实现。"
+  done
+  log "私密路径可穿越性已断言：${PRIVATE_PARENT}、${PRIVATE_DIR}（0750 root:postgres）。"
 else
-  log "[PLAN] 断言 postgres 用户/组存在（由 postgresql-${PG_MAJOR} 包创建），随后 chgrp 私密目录为 postgres"
+  log "[PLAN] 断言 postgres 用户/组存在（由 postgresql-${PG_MAJOR} 包创建），随后**逐级** chgrp 私密路径为 postgres 并断言可穿越"
 fi
 
 # ---------------------------------------------------------------------------
@@ -378,15 +462,27 @@ else
   else
     umask 077
     privatedir_for_pw="${PRIVATE_DIR}"
-    # 走到这里说明已过 section 5b ⇒ `postgres` 组**一定**存在，可以安全用 -g postgres。
-    if [[ ! -d "$privatedir_for_pw" ]]; then
-      install -d -o root -g postgres -m 0750 -- "$privatedir_for_pw"
-    fi
+    # 【返修 9 · 缺陷 3】这里**不再**用 `install -d` 隐式创建私密目录：
+    #   在本段 `umask 077` 之下隐式创建会把**父目录**建成立即 0700（实测），导致 `postgres` 无法穿越。
+    #   目录应由前面的步骤（section 4 + 5b）以 0750 + 属组 postgres 建好；缺了就明确失败。
+    [[ -d "$privatedir_for_pw" ]] || fail \
+      "私密目录 ${privatedir_for_pw} 不存在（应由前面的步骤创建）。
+         拒绝在此处用 umask 下的 install -d 隐式创建 —— 那会把父目录建成 0700 而让 postgres 无法穿越。"
     pwfile="$(mktemp -p "$privatedir_for_pw" .initdb-pw.XXXXXX)"
     trap 'rm -f -- "${pwfile:-}"' EXIT
     printf '%s\n' "$OWNER_PASSWORD" >"$pwfile"
     chown postgres:postgres -- "$pwfile"
     chmod 0600 -- "$pwfile"
+    # 【返修 9 · 缺陷 3】把失败前移：先断言 postgres **真能读到**这个临时口令文件，
+    #   否则 initdb 只会报一句 `could not open file … Permission denied`（真机实测，evidence §8.1）。
+    if ! runuser -u postgres -- test -r "$pwfile"; then
+      _pwdir="$(dirname -- "$pwfile")"
+      fail "临时口令文件对 postgres 不可读：${pwfile}
+         逐级权限（要求**每一级**都让 postgres 有 x 穿越位，文件本身 0600 postgres）：
+$(namei -l "$_pwdir" 2>/dev/null | sed 's/^/           /' || true)
+         当前文件：$(stat -c '%a %U:%G' -- "$pwfile" 2>/dev/null || echo '（stat 失败）')
+         当前目录：$(stat -c '%a %U:%G' -- "$_pwdir" 2>/dev/null || echo '（stat 失败）')"
+    fi
     log "initdb 初始化集群（日志见下一行输出；口令经临时私密文件传递，随后立即删除）"
     runuser -u postgres -- "${PG_BIN}/initdb" \
       -D "$PGDATA_DIR" \

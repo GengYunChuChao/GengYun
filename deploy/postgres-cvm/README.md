@@ -475,6 +475,16 @@ ls -d /data/gengyun/pgdata/base          # 数据目录结构仍在
 #    服务器必须是「标准 CVM」并加入该 VPC（Lighthouse 不支持自定义 VPC，见 §2.5）
 #    入站规则：标准 CVM 用安全组；若确用 Lighthouse 则用其实例防火墙（来源需手动收紧）
 #    脚本侧网段变更本次已由用户授权完成（§0.5），无需再改
+#
+# 0.2) 【可选·境内加速】官方 PGDG 源真机实测约 6.7 KB/s（装一个包 ~40 分钟）；
+#      mirrors.cloud.tencent.com / mirrors.aliyun.com 的 postgresql/repos/apt ≈ 930 KB/s
+#      （清华/中科大对应路径 404，勿用）。默认仍是官方源，要加速就显式设：
+#        export GENGYUN_PGDG_MIRROR=https://mirrors.cloud.tencent.com/postgresql/repos/apt
+#        sudo -E deploy/postgres-cvm/install-postgres.sh      # 详见 runbook §3 步骤 1
+#      脚本会打印"PGDG 源已按 … 切换为镜像"；**没有这行就是变量没传进去**（sudo 会重置环境）。
+#
+# 0.3) 若之前 initdb 失败过：数据目录可能"非空但没有 PG_VERSION"；脚本会**明确失败**并给指引，
+#      确认后可 GENGYUN_RESET_PGDATA=1 重跑（会**先打印内容预览**再清空）。
 
 # 0.5) 把两个口令放进私密文件（0600 **root:root**），不要进聊天/仓库
 #      【返修 8】不要在装 PG 包前引用 postgres 组——它由 postgresql-17 包创建，此刻还不存在；

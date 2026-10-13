@@ -43,6 +43,9 @@ readonly VPC_PREFIX='10.21'
 DB_NAME="${GENGYUN_DB_NAME:-gengyun}"
 PGPORT="${GENGYUN_PGPORT:-5432}"
 PGDATA_DIR="${GENGYUN_PGDATA:-/data/gengyun/pgdata}"
+# 【返修 9 · 缺陷 3】私密路径的逐级可穿越性也要作为装后不变量来核（防被后续 chmod 改坏）
+PRIVATE_DIR="${GENGYUN_PRIVATE_DIR:-/etc/gengyun/private}"
+PRIVATE_PARENT="$(dirname -- "$PRIVATE_DIR")"
 BACKUP_DIR="${GENGYUN_BACKUP_DIR:-/data/gengyun/backup}"
 REMOTE_HOST=''
 RUNTIME_PW_ENV=''
@@ -148,6 +151,20 @@ report_ge 'hba_vpc_rules' '2' \
   "$(qs "SELECT count(*) FROM pg_hba_file_rules WHERE address = '10.21.0.0' AND netmask = '255.255.0.0'")"
 report_eq 'ident_file' "${PGDATA_DIR}/pg_ident.conf" "$(qs 'SHOW ident_file')"
 report_eq 'ident_map_rows' '1' "$(qs 'SELECT count(*) FROM pg_ident_file_mappings')"
+
+# ---------------------------------------------------------------------------
+# 3b. 私密路径「逐级可穿越」是不变量（返修 9 · 缺陷 3）
+#     postgres 要能穿过**每一级**父目录去读 initdb 的临时口令文件；否则下次重装/重建集群
+#     会以 initdb Permission denied 失败。这里作为装后判据，防止被后续 chmod 改坏。
+# ---------------------------------------------------------------------------
+for _pd in "$PRIVATE_PARENT" "$PRIVATE_DIR"; do
+  if [[ -d "$_pd" ]]; then
+    if runuser -u postgres -- test -x "$_pd"; then _pt='yes'; else _pt='no'; fi
+    report_eq "postgres_can_traverse(${_pd})" 'yes' "$_pt"
+  else
+    report_eq "postgres_can_traverse(${_pd})" 'yes' 'missing'
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 4. 角色与成员资格（\\du 等价的机器可读版本）

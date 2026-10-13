@@ -679,3 +679,118 @@ T3c 任意失败命令经 act -> rc=1   PASS T3c 任意失败命令经 act 传�
 - **监工已做的临时变通**（在服务器上 `groupadd -r postgres` + `useradd`）是**绕过、不是修复**，
   且**未入仓**；建议记为"变通运行"。在**修复版**上重跑时，5b 的断言会**直接通过**（身份已存在）——**这属预期**；
   修复版对"**全新机器**"才有意义（那种情况下装包前不再引用 `postgres`，装包后断言其存在）。
+
+## 8 返修 9：真机缺陷 3（逐级目录穿越）与缺陷 4（半初始化目录不自愈）+ 可选 PGDG 镜像
+
+**背景（监工真机回报）**：`7bdd431` + 两处最小变通后安装跑通，且 **11.5 收尾硬校验按设计生效**：
+
+```text
+[install-postgres.sh] 收尾校验通过：PG_VERSION=17、gengyun-postgresql.service active、pg_isready 通、业务库 gengyun 可查询。
+版本 PostgreSQL 17.11 ｜ 数据目录 /data/gengyun/pgdata（/dev/vdb→/data）｜ 业务库 gengyun ｜ 监听 127.0.0.1,10.21.1.8:5432
+INSTALL_EXIT=0
+```
+
+（发行版集群 5432 守卫也按设计生效：按选项 (a) `GENGYUN_DROP_DEFAULT_CLUSTER=1` 时脚本**明确提示**需确认，
+监工核实该集群只有 `postgres/template0/template1`、从未使用 ✓。）
+
+### 8.1 缺陷 3：`/etc/gengyun` 为 `0700 root:root` ⇒ `postgres` 无法穿越 ⇒ initdb 读不到临时口令文件
+
+真机原始输出：
+
+```text
+[install-postgres.sh] 创建数据目录 /data/gengyun/pgdata（0700 postgres:postgres）
+[install-postgres.sh] initdb 初始化集群（口令经临时私密文件传递，随后立即删除）
+initdb: error: could not open file "/etc/gengyun/private/.initdb-pw.J1ECyF" for reading: Permission denied
+INSTALL_EXIT=1
+
+$ namei -l /etc/gengyun/private
+drwxr-xr-x root root /
+drwxr-xr-x root root etc
+drwx------ root root gengyun        ← **0700 root:root**，postgres 连目录都进不去
+```
+
+**根因（本单本地复现并钉死）**：旧版只在**叶子**目录上控制属组，且当私密目录不存在时会
+在 `umask 077` 下用 `install -d` **隐式创建父目录**。本机实测（`probe-install-d.sh`）：
+
+```console
+### umask 077 下创建 /tmp/probe-p/leaf，父目录 /tmp/probe-p 的模式是什么？
+  700 root:root /tmp/probe-p        ← 隐式创建的父目录 = 0700（正是缺陷根因）
+  750 root:root /tmp/probe-p/leaf
+### install -d -m 0750 对**已存在**的 0700 目录，会不会把模式改过来？
+  before : 700 root:root
+  after  : 750 root:root            ← 会修（这条让"历史遗留 0700 父目录"也能自愈）
+### 逐级穿越语义（本机无 postgres 用户 ⇒ 用非 root 用户 mr 作等价代理）
+  0700 -> 不可穿越（符合预期）
+  0750 + 属组=运行身份 -> 可穿越（符合预期，即修复目标）
+```
+
+**修复**：
+
+| # | 修复 | 位置 |
+| --- | --- | --- |
+| 1 | **显式建两级**私密路径（`$(dirname $PRIVATE_DIR)` 与 `$PRIVATE_DIR`）为 `0750 root:root`，并**断言权限=750**；不再依赖 umask 与历史模式 | `install-postgres.sh` 第 4 节 |
+| 2 | 装包后**逐级** `chgrp postgres` + **逐级** `runuser -u postgres -- test -x` 断言，失败时打印 `namei -l` 提示 | 第 5b 节 |
+| 3 | initdb 段**删掉** `umask` 下的 `install -d` 隐式创建（改为"目录必须已存在，否则明确失败"），并在 initdb 前**断言临时口令文件对 postgres 可读**（失败时打印逐级权限 + 文件/目录模式） | 第 7 节 |
+
+**理由（回应"任选，但请给出理由"）**：选择**让目录可穿越**（`0750` + 属组 `postgres`），而不是把口令文件挪到别处——
+因为 ① 私密目录本来就是存放该临时口令的**正确位置**（`0600 postgres`，其它人不可读）；
+② `0750 root:postgres` 只给 `postgres` **穿越（x）** 权限，**不给读**：凭据文件仍是 `0600 root:root`，
+`postgres` 打不开它；③ 这与发行版包对 `/etc/postgresql/*` 的做法同源（属组 = 运行身份）。
+
+### 8.2 缺陷 4：initdb 失败留下的"非空且无 `PG_VERSION`"目录 ⇒ 重跑不自愈
+
+旧版只判断 `PG_VERSION` 是否存在，否则直接 initdb ⇒ 对非空目录 initdb 会再报 `directory is not empty`。
+
+**修复**：把该判断**前移到装包之前**（新增第 4c 节），默认**明确失败**并打印内容预览 + 两种处置；
+只有显式 `GENGYUN_RESET_PGDATA=1` 才清空，且清空前**打印预览**、并**拒绝**在"挂载点自身"或系统目录上执行
+（`df` 判定 + 路径白名单），**绝不默认删用户数据**。
+
+### 8.3 缺陷 9 回归（**真跑原始输出**，本机 root；工具桩化、未改动系统）
+
+```
+=== 0) 逐级穿越语义（用非 root 用户 mr 代理 postgres）===
+  drwx------ root root w19-t4            ← namei -l 的逐级输出
+  mr **不可**穿越（符合预期 ⇒ 正是 postgres 遇到的 Permission denied）
+  0750 + 属组=运行身份 ⇒ **可**穿越（符合预期，即修复目标）
+=== 1) 缺陷 3 回归：预置 0700 的私密目录 ⇒ 脚本必须收敛为 0750 且不在此处失败 ===
+  预置：700 root:root → 之后：750 root:root / 父级 750 root:root
+  [install-postgres.sh] 私密路径权限已收敛为 0750（…、…）；装包后将 chgrp postgres 并断言可穿越。
+  退出码=7（在包下载处失败；**不在权限处**失败）
+  PASS 1a 脚本收敛并断言 0750    PASS 1b 已存在目录被修为 750    PASS 1c 不应报权限断言失败
+=== 2) 缺陷 4 回归：非空且无 PG_VERSION ⇒ 必须明确失败（不得再 initdb）===
+  [install-postgres.sh][ERROR] 数据目录 /tmp/w19-t6/pgdata **非空但没有 PG_VERSION**（1 项）⇒ …
+  退出码=1
+  PASS 2a 明确失败并说明原因   PASS 2b 给出显式处置开关   PASS 2c 打印内容预览
+  PASS 2d 不得真正执行 initdb  PASS 2e 默认不删除用户数据
+=== 3) 缺陷 4 修复路径：GENGYUN_RESET_PGDATA=1 ⇒ 先预览再清空，然后继续 ===
+  …将清空半初始化的数据目录 …；内容预览（前 5 项）： …/partial-file
+  已清空 …（接下来由第 7 节重新创建并 initdb）。   退出码=7
+  PASS 3a 执行了清空   PASS 3b 残留已被清掉
+=== 4) 镜像变量贯通（等价表达式；本机不写 /etc/apt 以免改动 apt 配置）===
+  默认 -> https://apt.postgresql.org/pub/repos/apt
+  GENGYUN_PGDG_MIRROR=…tencent… -> https://mirrors.cloud.tencent.com/postgresql/repos/apt
+  仅设别名 PGDG_MIRROR -> https://mirrors.aliyun.com/postgresql/repos/apt
+  PASS 4a 默认官方源   PASS 4b 别名生效   PASS 4c 镜像确实进了 sources.list 行
+=== 返修 9 回归结论：全部 PASS（PASS 行数=13，FAIL 行数=0，脚本退出码 0）===
+```
+
+### 8.4 可选 PGDG 镜像（**监工真机实测数据，本单复述**）
+
+| 源 | 结果 |
+| --- | --- |
+| `apt.postgresql.org`（官方，默认） | 可用但约 **6.7 KB/s** ⇒ 装一个包 ~40 分钟 |
+| `mirrors.cloud.tencent.com/postgresql/repos/apt` | **HTTP 200，约 930 KB/s** |
+| `mirrors.aliyun.com/postgresql/repos/apt` | **HTTP 200，约 930 KB/s** |
+| 清华 / 中科大对应路径 | **404**（勿用） |
+
+**实现**：新增 `GENGYUN_PGDG_MIRROR`（别名 `PGDG_MIRROR`）与 `GENGYUN_PGDG_KEY_URL`；
+**默认仍是官方源**，切换时脚本**明确打印**实际源；`sources.list` 与会话要求不一致时重写（幂等）；
+**换源不改版本口径**（仍是 CI 的 `17.11`）。
+
+### 8.5 本地**未**验证（不写通过）
+
+- 第 5b 的**逐级 `runuser -u postgres -- test -x` 断言**与第 7 节的**口令文件 `test -r` 断言**：
+  本机**无 `postgres` 用户**、且需真实安装到该步 ⇒ 本地**未执行**；§8.3 的第 0/1 项用**非 root 用户 mr**
+  验证的是**同等穿越语义**（0700 不可穿越 / 0750+属组可穿越），不是脚本内那两行本身。
+- 镜像：本机**未真正写 `/etc/apt`**（避免改动 apt 配置），只验证了变量解析与它在 `sources.list` 行中的位置。
+- 其余端到端（apt 安装、initdb、systemctl、createdb）仍需在**目标 CVM** 上执行。

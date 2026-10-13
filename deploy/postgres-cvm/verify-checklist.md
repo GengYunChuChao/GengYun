@@ -108,6 +108,7 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 | `hba_vpc_rules` | `… WHERE address='10.21.0.0' AND netmask='255.255.0.0'`（脚本内常量；**网段再变时此处必须同改**，见 [README.md](README.md) §0.5 第 3 行） | `>=2` | 0 ⇒ 目标网段内也连不上（或**判据还在看旧网段**）；1 ⇒ 少了运行时或迁移管理员的授权行 |
 | `ident_file` | `SHOW ident_file` | `/data/gengyun/pgdata/pg_ident.conf` | 指向别处 ⇒ 本机免口令运维会失败 |
 | `ident_map_rows` | `SELECT count(*) FROM pg_ident_file_mappings` | `1` | 应为唯一一条 `postgres → gengyun_cvm_owner`；多于 1 条要人工过一遍是否放开了别的系统用户 |
+| `postgres_can_traverse(<路径>)` | `sudo -u postgres test -x <路径>`（脚本对**父级**与**叶子**各判一次） | `期望=yes 实际=yes` | `no` ⇒ `postgres` 无法穿越该级目录 ⇒ **下次 initdb 会以 `Permission denied` 失败**；用 `namei -l <路径>` 看逐级权限，要求 **0750 且属组 postgres**（返修 9 · 缺陷 3）；`missing` ⇒ 该路径不存在（装包步骤没跑或被人删了） |
 
 ## 5 角色与最小权限（含正例与反例）
 

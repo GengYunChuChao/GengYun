@@ -215,6 +215,65 @@ sudo deploy/postgres-cvm/install-postgres.sh 2>&1 | tee /tmp/install.log; echo "
 - **不要**自己 `groupadd`/`useradd` 造 PG 运行身份（那是绕过、会与发行版包的行为不一致）；
   脚本也**不会**这么做——它只断言存在，不存在就明确失败并给出排查命令。
 
+#### 逐级目录必须能被 `postgres` **穿越**（**返修 9 · 缺陷 3**）
+
+initdb 的临时口令文件放在 `${GENGYUN_PRIVATE_DIR}`（默认 `/etc/gengyun/private`）里，
+所以 `postgres` 必须能穿过**每一级**父目录（每级都要有 `x` 位）。真机曾出现：
+
+```text
+initdb: error: could not open file "/etc/gengyun/private/.initdb-pw.J1ECyF" for reading: Permission denied
+$ namei -l /etc/gengyun/private
+drwxr-xr-x root root /            ← 0755 可穿越
+drwx------ root root gengyun      ← **0700 root:root ⇒ postgres 连目录都进不去**
+```
+
+**本版怎么保证**：
+
+- 装包前：脚本**显式建两级**（`/etc/gengyun` 与 `/etc/gengyun/private`）为 `0750 root:root`
+  并**断言权限是 750**；`install -d -m 0750` 对**已存在**目录也会把模式修正过来（已实测），
+  所以历史上被留成 0700 的父目录也会被收敛。
+- 装包后：**逐级** `chgrp postgres` + **逐级** `runuser -u postgres -- test -x` 断言，
+  并给出 `namei -l` 提示——把 `Permission denied` 从 initdb 阶段**前移**。
+- initdb 前还会再断言一次"**临时口令文件对 postgres 可读**"（`test -r`），失败时打印逐级权限。
+- ⚠️ 脚本**不再**在 `umask 077` 下用 `install -d` 隐式创建私密目录（那会把父目录建成 0700 —— 缺陷根因）。
+
+自查命令（任何一步报权限问题都用它）：
+
+```bash
+namei -l /etc/gengyun/private
+sudo -u postgres test -x /etc/gengyun && sudo -u postgres test -x /etc/gengyun/private && echo "可穿越"
+```
+
+#### 半初始化数据目录必须显式处理（**返修 9 · 缺陷 4**）
+
+initdb 失败会留下"**非空但没有 `PG_VERSION`**"的数据目录；直接重跑会再次报
+`directory is not empty`（不自愈）。本版把判断**前移到装包之前**：
+
+```bash
+# 默认：明确失败，打印内容预览与两种处置，**不替用户删数据**
+sudo deploy/postgres-cvm/install-postgres.sh
+# 显式清空后继续（会先打印预览；拒绝在挂载点自身或系统目录上执行）
+GENGYUN_RESET_PGDATA=1 sudo deploy/postgres-cvm/install-postgres.sh
+```
+
+#### 境内加速：可选 PGDG 镜像（**返修 9 · 可选**）
+
+真机实测：官方 `apt.postgresql.org` 约 **6.7 KB/s**（装一个包要 ~40 分钟）；
+`mirrors.cloud.tencent.com/postgresql/repos/apt` 与 `mirrors.aliyun.com/postgresql/repos/apt`
+均可用且约 **930 KB/s**；清华/中科大对应路径 **404**（勿用）。
+
+```bash
+# 默认仍是官方源；要加速就显式指定（镜像只改**下载源**，不改版本口径：仍是 CI 的 17.11）
+export GENGYUN_PGDG_MIRROR=https://mirrors.cloud.tencent.com/postgresql/repos/apt
+sudo -E deploy/postgres-cvm/install-postgres.sh
+# 若 sudo 不允许传环境，改用： sudo GENGYUN_PGDG_MIRROR=... deploy/postgres-cvm/install-postgres.sh
+# 别名等价：PGDG_MIRROR=... ；公钥地址也可覆盖：GENGYUN_PGDG_KEY_URL=...
+```
+
+脚本会在切换镜像时**明确打印**实际使用的源（`PGDG 源已按 … 切换为镜像：…`）；
+**若输出里没有这一行，说明镜像变量没传进脚本**（`sudo` 默认会重置环境）——请改用上面任一写法。
+`sources.list` 的内容与会话要求不一致时会重写（幂等）。
+
 期望结尾包含：
 
 ```text
