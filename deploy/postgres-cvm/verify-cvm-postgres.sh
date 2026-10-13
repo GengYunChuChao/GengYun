@@ -168,9 +168,14 @@ report_eq 'nologin_groups_present' '5' \
 # ---------------------------------------------------------------------------
 # 5. 最小权限断言（复用同一份 SQL，保证与 provision-db.sh 口径一致）
 # ---------------------------------------------------------------------------
-verdict="$(runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 \
+assert_out="$(runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 \
   -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" -tA \
-  -f "${SQL_DIR}/90-assert-least-privilege.sql" 2>&1 | tr -d '\r' | tail -n1 || true)"
+  -f "${SQL_DIR}/90-assert-least-privilege.sql" 2>&1 | tr -d '\r' || true)"
+verdict="$(printf '%s\n' "$assert_out" | sed '/^[[:space:]]*$/d' | tail -n1)"
+if [[ "$verdict" != 'ok' ]]; then
+  # 保留完整输出：缺前置时 90-assert 会打印三步补救指引，不能只留最后一行。
+  printf '%s\n' "$assert_out" | sed 's/^/         /' >&2
+fi
 report_eq 'least_privilege_assert' 'ok' "$verdict"
 
 # 正面：运行时能读它该读的投影

@@ -289,10 +289,16 @@ else
     runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "${SQL_DIR}/20-login-roles.sql"
 
   log "执行最小权限断言 sql/90-assert-least-privilege.sql"
-  verdict="$(qfile "${SQL_DIR}/90-assert-least-privilege.sql" | tail -n1)"
+  # 保留**完整**输出：90-assert 在缺前置时会打印三步补救指引，不能只留最后一行。
+  assert_out="$(qfile "${SQL_DIR}/90-assert-least-privilege.sql" || true)"
+  verdict="$(printf '%s\n' "$assert_out" | sed '/^[[:space:]]*$/d' | tail -n1)"
   if [[ "$verdict" != 'ok' ]]; then
-    fail "最小权限断言未通过：${verdict}
-         本脚本只报告不自动回收权限；请对照 services/api/db/roles/*.sql 人工排查。"
+    printf '[%s] 最小权限断言的完整输出：\n' "$SCRIPT_NAME" >&2
+    printf '%s\n' "$assert_out" | sed 's/^/         /' >&2
+    fail "最小权限断言未通过（最后一行：${verdict}）
+         若输出里是「前置未满足」，请按其中的三步指引先补迁移/角色引导后重跑；
+         若输出里是 FAIL 明细，本脚本只报告不自动回收权限，请对照
+         services/api/db/roles/*.sql 人工排查。"
   fi
   log "最小权限断言通过：${verdict}"
 fi

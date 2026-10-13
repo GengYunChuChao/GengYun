@@ -252,6 +252,7 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | 5 | `verify-cvm-postgres.sh` 的 4 处角色判据改为存在性安全（角色缺失时 `实际=role-missing`，不再抛 `role does not exist`） | `verify-cvm-postgres.sh` |
 | 6 | `restore-drill.sh` 的迁移版本比对先用 `to_regclass` 判存在（缺失时 `实际=schema_migrations-missing`） | `restore-drill.sh` |
 | 7 | `provision-db.sh` 新增 `--rotate-runtime-password`，并加 **runuser 环境变量透传前置探测**（透传失败时给出不经 argv 的替代做法） | `provision-db.sh` |
+| 8 | 断言失败时**保留完整输出**（`90-assert` 缺前置时打印的三步补救指引不再被 `tail -n1` 吞掉）：`provision-db.sh` 与 `verify-cvm-postgres.sh` 都改为先抓全量输出、判非 `ok` 时原样打到 stderr，再报 FAIL | `provision-db.sh`、`verify-cvm-postgres.sh` |
 
 ### 6.3 口令语义与幂等（返修后可判定的性质）
 
