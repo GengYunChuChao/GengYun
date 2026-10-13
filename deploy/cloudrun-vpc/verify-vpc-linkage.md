@@ -215,7 +215,7 @@ tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <
 | 5 | `vpc DescribeSubnets` @`ap-shanghai`（`Filters: [{Name:'vpc-id', Values:['vpc-h33f1h5a']}]`） | 子网数量与可用 IP | `subnet_count=1`；`subnet_mask_bits=24`；`AvailableIpAddressCount=253`；`Zone=ap-shanghai-1` | 【已确证·实测】**IP 充足（253），不构成"实例起不来"的阻塞** |
 | 6 | `vpc DescribeSecurityGroups` @`ap-shanghai`（不带 Filters） | 安全组是否存在 | 地域内 `TotalCount=0` ⇒ 目标 VPC 内安全组数 = **0** | 【已确证·实测】**安全组尚不存在**，5432 入站放通尚未配置 |
 | 7 | `cvm DescribeInstances`（`2017-03-12`）@`ap-shanghai` | CVM 是否已购买/创建 | `TotalCount=0`（该账号上海地域无可列实例） | 【已确证·实测】**CVM 尚未创建** —— 直接回答用户"尚未核实购买或创建完成"：**核实结果是没有** |
-| 8 | `tcb DescribeEnvs`（`2018-06-08`）@`ap-shanghai` 与 @`ap-guangzhou` | 目标环境是否在该账号 | 两地域均 `TotalCount=0`、`EnvList` 为空 ⇒ `prod-d1g6qe87c4f2d7061` **不在**该账号 | 【已确证·实测】该事实；**其含义需谨慎**：见 3.4 残余不确定性 |
+| 8 | `tcb DescribeEnvs`（`2018-06-08`）@`ap-shanghai` 与 @`ap-guangzhou` | 目标环境是否在该账号 | 两地域均 `TotalCount=0`、`EnvList` 为空 | 【已确证·实测】**该观测本身**；**证据强度：不构成对账号归属的证据** —— 这是一条**有两种解释的观测**（见 3.4） |
 
 **权限判读（判定项 ④）**：8 类调用**全部成功，未出现 `AuthFailure.UnauthorizedOperation`** ⇒ 该凭据对 `sts GetCallerIdentity`、`vpc DescribeVpcs/DescribeSubnets/DescribeSecurityGroups`、`cvm DescribeInstances`、`tcb DescribeEnvs` 的**读权限齐备**；**无需**为用户申请更大的 CAM 权限。
 
@@ -226,10 +226,10 @@ tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <
 
 ### 3.4 结论、残余不确定性与待确证
 
-- **已从"待确证"升级为【已确证·实测】**：两份凭据同账号；该账号上海地域唯一 VPC 即 `gengyun-vpc`；VPC 地域=上海；子网 1 个 `/24`、可用 IP 253；该账号无 CVM、无安全组、无云托管/TCB 环境；只读权限齐备。
+- **已从"待确证"升级为【已确证·实测】**：两份凭据同账号；该账号上海地域唯一 VPC 即 `gengyun-vpc`；VPC 地域=上海；子网 1 个 `/24`、可用 IP 253；该账号无 CVM、无安全组；只读权限齐备。（`tcb DescribeEnvs` 观测为 0 个环境，**证据强度见 3.4 第 2 条**。）
 - **仍然【待确证】**：
   1. **目标环境的绑定账号**（只能控制台读）：微信云托管「设置 → 环境设置 → 充值与账单」⇒ 绑定账号 UIN，与本凭据账号在**私密目录内**比对。
-  2. **`tcb DescribeEnvs` 是否覆盖微信云托管创建的环境**：官方文档**未明确**。⇒ 上面第 8 条"0 个环境"存在两种解释：(a) 环境绑定在另一个账号（⇒ 支持 README 4.1，且最可能）；(b) 环境就在本账号但该接口不列微信侧环境（⇒ 账号错配被排除）。**不得**把 (a) 当已确证结论。
+  2. **`tcb DescribeEnvs` 是否覆盖微信云托管创建的环境**：官方文档**未明确**。⇒ 上面第 8 条的"0 个环境"是**一条有两种解释的观测**：**若**该接口覆盖微信侧环境 ⇒ **支持**"账号错配"；**若**覆盖不到 ⇒ **该观测不构成证据**。**"账号错配"在本目录一律保持为【推断】，不写成已确证**；**判定只能靠控制台读绑定账号 UIN 与凭据账号比对（A2/A4）**——该步是**当前唯一未闭合的关键判定**，也是**唯一判据**。
   3. 环境部署地域（环境侧）、互联入口新/旧、是否需服务角色授权、环境是否冻结/欠费 —— 均需控制台。
   4. **微信云托管 CLI 密钥**未交接 ⇒ `wxcloud env:list`/`service:list` 路径未执行。
 - **仍未连通、仍未开通**：本轮未做任何写操作，网络打通与 VPC 绑定**均未发生**；`connection-verification-prep.md` 的 G0–G11 门禁**仍未满足**（G2/G3/G5/G7/G8 明确不具备）。
@@ -239,6 +239,27 @@ tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <
 - 密钥值**从未打印**：脚本把凭据读入进程内存，stdout 只输出掩码长度与**不可逆指纹**（`sha256(UIN)` 前 12 位），指纹本身不泄露 UIN。
 - 含账号标识的**原始响应**只写入仓库外 `E:\GengYunPrivate\w18-vpc-verify-raw\`；结论汇总只写入 `E:\GengYunPrivate\w18-vpc-verify-results.md`（含 UIN，**未进仓库、未进 PR、未进聊天**）。
 - 仓库内只保留：命令、状态、计数、`vpc-h33f1h5a`/`10.20.0.0/16`（用户已在任务中给出的标识）与判读结论；**不含** UIN、密钥、口令、子网 CIDR、CVM/安全组 ID。
+
+### 3.6 等价性依据：本轮"等价只读 TC3 调用"与原先列出的 `tccli` 命令逐条对应
+
+**为何等价**：`tccli` 本身只是对腾讯云官方 API 的**签名封装**；本轮直接以**同一官方 API、同一动作、同一版本、同一参数**发起 **TC3-HMAC-SHA256** 签名的 HTTPS POST，取得的是**同类只读事实**，不引入额外语义。
+
+- **签名实现来源**：`Authorization` 头与 canonical request 的构造**逐行沿用本仓库已审代码** `tools/verify-tencent-live.mjs` 的 `signRequest`（该文件第 24–33 行）：`TC3-HMAC-SHA256 Credential=<SecretId>/<date>/<service>/tc3_request, SignedHeaders=content-type;host, Signature=<hex>`，canonical request 为 `POST\n/\n\ncontent-type:application/json\nhost:<host>\n\ncontent-type;host\n<sha256(body)>` ⇒ 即与 `tccli` 采用的**同一官方签名算法**。
+- **未把凭据放进命令行**：不经 `--secretId/--secretKey` 传参（避免进入 shell 历史），凭据只在进程内存；**未安装 `tccli`**（按指挥裁定，不必为字面复跑而安装）。
+- **映射关系（供监工核对）**：
+
+| 本目录原先列出的命令 | 本轮实际执行 | 对应关系 |
+| --- | --- | --- |
+| `tccli sts GetCallerIdentity` | `POST https://sts.tencentcloudapi.com/`；`X-TC-Action: GetCallerIdentity`；`X-TC-Version: 2018-08-13`；`X-TC-Region: ap-shanghai`；body `{}` | 同一动作、同一版本、同一地域参数（**不带 `Region` 会 `MissingParameter`**，见 3.3） |
+| `tccli vpc DescribeVpcs --region ap-shanghai` | `POST https://vpc.tencentcloudapi.com/`；`DescribeVpcs`；`2017-03-12`；`X-TC-Region: ap-shanghai`；body `{}` | 参数逐字对应 |
+| `tccli vpc DescribeSubnets --region ap-shanghai --Filters Name=vpc-id,Values=vpc-h33f1h5a` | 同端点；`DescribeSubnets`；body `{"Filters":[{"Name":"vpc-id","Values":["vpc-h33f1h5a"]}]}` | `--Filters` 逐字对应为请求体 `Filters` |
+| `tccli vpc DescribeSecurityGroups --region ap-shanghai` | 同端点；`DescribeSecurityGroups`；body `{}` | **与 tccli 无额外参数时的行为一致**；本目录示例中"带 `Filters Name=vpc-id`"的写法**本轮实测不可用**（见 3.3） |
+| `tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <sg>` | **未执行** | 该地域安全组数为 0，无可查询对象 |
+| `tccli vpc DescribeVpcPeeringConnections --region ap-shanghai` | **未执行** | 属旧「资源互联」路径的自查项；本轮问题为"下拉框无选项"，对等连接非必要条件，且新/旧路径尚未确认 |
+| （本目录未列，**额外加做并已获追认**）`tccli cvm DescribeInstances --region ap-shanghai` | `POST https://cvm.tencentcloudapi.com/`；`DescribeInstances`；`2017-03-12`；body `{"Limit":20}` | 直接回答"用户尚未核实 CVM 购买/创建" |
+| （本目录未列，**额外加做并已获追认**）`tccli tcb DescribeEnvs` | `POST https://tcb.tencentcloudapi.com/`；`DescribeEnvs`；`2018-06-08`；`X-TC-Region` 分别为 `ap-shanghai` 与 `ap-guangzhou` | 结果**只作观测**，证据强度见 3.4 第 2 条 |
+
+**地域数字仍不断言**：官方自查指南链接里的 `rid=4` 与"上海"的**数值映射本目录不作断言**（见第 0 节通用规则）；地域一律以 `ap-shanghai` 这类官方代码为准。
 
 ## 4 核验记录应写到哪
 
