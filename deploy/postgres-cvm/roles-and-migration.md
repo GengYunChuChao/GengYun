@@ -280,7 +280,7 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | **备份 `pg_dump -Fc` + `pg_restore --list`** | `exit=0`；dump 184.1 KB；TOC 条目 **415** | ✅ **真实 PG 已验证** |
 | **恢复第 1 次** | `createdb` → `pg_restore --exit-on-error` **`exit=0`** | ✅ **真实 PG 已验证** |
 | **恢复库上的权限继承** | 以 `gengyun_api_runtime` 身份查 `users` 返回 0 且**无权限错误** | ✅ 组角色继承与授权随 dump 重建成功 |
-| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但错误文本被指挥管道吞掉、未捕获；事后 schema 指标 source=restored=`40\|4\|0\|0` | ⚠️ **未解释、待复核（不得记通过）**；判读与定论命令见 [evidence §4.3.1](evidence/local-self-check.md) |
+| **恢复第 2 次** | `pg_restore --exit-on-error` **`exit=1`**，但错误文本被指挥管道吞掉、未捕获；事后 schema 指标 source=restored=`40\|4\|0\|0` | **判定：高置信推断（执行者＝指挥）**（与 [evidence §4.3.1](evidence/local-self-check.md) 同一口径）：**直接证据**＝清库重跑后 `exit=0`、致命 error **0** 条、指标一致；**原始错误文本未捕获，故主因未直接观测** |
 
 指挥另确认：**上一条真缺陷（前置断言早于建角色）已确认修好**；
 库名守卫、5 组前置、口令守卫、`COALESCE` 顺序修复、口令默认不变**都按设计生效**。
@@ -288,11 +288,12 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 （角色 SQL 是裸 `CREATE ROLE`、设计上不 DROP 别人的角色），**不是缺陷**。
 台账一致性一项按口径记为"**不适用（本环境无 `migrate.ts` 写入**）"，不是数据损坏。
 
-**对"恢复第 2 次 exit=1"的技术判读**（本单结论，详见 [evidence §4.3.1](evidence/local-self-check.md)）：
-本 dump 是**库级** `pg_dump -d`，**不含角色定义** ⇒ **不可能**出现"角色已存在"这类非致命错误；
+**对"恢复第 2 次 exit=1"的判读**（**判定：高置信推断（执行者＝指挥）**，与 [evidence §4.3.1](evidence/local-self-check.md) 同一口径）：
+**直接证据**＝清库重跑后 `exit=0`、致命 error **0** 条、源/恢复指标一致；**原始错误文本未捕获，故主因未直接观测**。
+**支持性推理**：本 dump 是**库级** `pg_dump -d`，**不含角色定义** ⇒ **不可能**出现"角色已存在"这类非致命错误；
 与角色相关的错误只会是 `role "…" does not exist`（致命，指向未做角色引导）。
 `already exists` 只可能来自**恢复进了一个非空库**（第 1 次的残留对象），
-即第 2 次**没有先 `dropdb`/`createdb`**——"事后指标完全一致"恰恰因为对象是上一次留下的。
+即第 2 次**没有先 `dropdb`/`createdb`**（**推断**）——"事后指标完全一致"恰恰因为对象是上一次留下的。
 **脚本侧已加固**：`restore-drill.sh` 现在保留 `pg_restore` 完整输出到日志，
 把 `WARNING:`/`NOTICE:`（非致命）与三类 `ERROR:`（目标库非空 / 前置缺失 / 真失败）分开判读，
 PASS 条件收紧为 **`exit=0` 且无 `ERROR:` 行**。
@@ -319,7 +320,7 @@ PASS 条件收紧为 **`exit=0` 且无 `ERROR:` 行**。
 
 | 项 | 状态 | 下一步 |
 | --- | --- | --- |
-| **恢复第 2 次的 `exit=1` 原因** | ⚠️ **未解释** | 指挥按 [evidence §4.3.1](evidence/local-self-check.md) 的命令**清库重跑**并保留 stderr；若 `exit=0` 且无 `ERROR:` ⇒ 归因"未清库"，本项即闭环 |
+| **恢复第 2 次的 `exit=1` 主因** | **高置信推断（执行者＝指挥）**：直接证据＝清库重跑后 `exit=0`、致命 error **0** 条、指标一致；**原始错误文本未捕获 ⇒ 主因未直接观测** | 若要把它升为**直接观测**：在**保留 stderr** 的前提下复现一次"未清库"的恢复（按 [evidence §4.3.1](evidence/local-self-check.md) 的命令反向做），并把原始 error 文本留档 |
 | 目标 CVM 侧一切 | **未验证** | `install-postgres.sh` 的安装/initdb/持久盘/`listen_addresses`/`ss` 自检；`pg_hba`/`pg_ident` 生效；安全组；公网 5432 关闭；重启持久性；与云托管侧联调 |
 
 已由外部真实 PG 17.11 验证通过的项见 §6.4（A/B/C/D 四项 + 备份 `pg_dump`/TOC + 恢复第 1 次 + 权限继承）。
