@@ -2,11 +2,13 @@
 
 日期：2026-10-13。分支 `feat/gy-i18-admin-http`（fork `Yu0ry/GengYun_Write`）。**Refs #18，不关闭整项。**
 
-- 基线：开工时 `upstream/main = 54ed689c`；**已合并当时 main `3e8f89b`**（含 `#104` 标签 OCR、`#107` 产品装配事实源、`#108`/`#109`/`#113`/`#115` 等）。
-- 本记录对应的已推送 HEAD：**`990d1f2`**（+ 本记录所在的后续提交）。
+- 基线（**每次推送前同步上游**）：开工时 `upstream/main = 54ed689c`；随后按序合并 `b1f6ab0e`（含 `#104` 标签 OCR）、`3e8f89b`（含 `#107` 产品装配事实源、`#108`/`#109`/`#113`/`#115`）、**`769420a`（`#106` 跨 kind 作业读面/取消面）**。
+- 本记录对应的已推送 HEAD：**`eb5635b`**（合并 `769420a` 后；此前为 `fe67482`/`990d1f2`）。
 - **不代替监工独立验收**；**不声称 CI 通过**（新 HEAD 的 workflow 需维护者/用户在 PR 页面点 "Approve and run workflows"）。
 
 > 本文件是**仓库内证据**：本片的三处联动（① `#107` 事实源同步、② 路由模板内联、③ 跨线修改 `#107` 测试 1 行）与 `evidence.lines` 修正都写在这里，供**代码侧读者**在看不到 PR 正文时核对。PR 正文亦有同内容章节。
+>
+> **合并 `769420a`（#106）时的冲突解决**：`services/api/src/app.ts` **仅 1 个 hunk** —— `#106` 的 `registerJobRoutes(...)` 块与本片 `registerAdminRoutes(...)` 落在**同一插入点**。解决方式：**两侧全保留、各就各位**，把 `#106` 的块留在 **upstream 原有的位置**（`registerOcrRoutes` 之后），本片 `registerAdminRoutes` 追加其后；**未重排、未删改任何既有行**（三点式 `git diff upstream/main...HEAD -- app.ts` 里，`registerJobRoutes`/`registerOcrRoutes`/`registerSynthesisRoutes` 及其 import 均为**上下文行**，唯一的 `+` 只属本片）。
 
 ## 1. 交付面
 
@@ -110,11 +112,12 @@ check-evidence HEAD: checked=34  ok=34  MISMATCH=0  区间独占性违规=0
 
 ```
 $ npm run lint          → PASS tsc(api) / PASS tsc(admin) / PASS 仓库卫生扫描
-$ npm run test:unit     → ℹ tests 1590 / pass 1589 / fail 0 / skipped 1      （含本片钉子）
+$ npm run test:unit     → ℹ tests 1609 / pass 1608 / fail 0 / skipped 1      （含本片钉子；并入 #106 的 jobs 用例）
 $ npm run test:contract → ℹ tests 6 / pass 6 / fail 0
 $ npm run test:docs     → PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
 $ git diff --check      → (无输出)
 $ node tests/integration/admin-http.mjs → 映射表覆盖 34 / 34；PASS 组数=27，FAIL 组数=0
+$ node tests/integration/jobs-http.mjs  → 14 组 PASS，exit=0（#106 已在 main，合成后必须跑）
 $ node tests/integration/recognitions-http.mjs → exit=0
 $ node tests/integration/speech-http.mjs       → exit=0
 $ node tests/integration/tts-http.mjs          → exit=0
@@ -123,21 +126,32 @@ $ node tests/integration/ocr-http.mjs          → exit=0
 
 ## 7. 既有失败归因（**非本片引入，未修改**）
 
-`node tools/verify-contract-status.mjs` 在**纯 `upstream/main`（`3e8f89b`，不含本片任何文件）**上同样 `exit=1`、**4 项**：
+`node tools/verify-contract-status.mjs` 在**纯 `upstream/main`（`769420a`，不含本片任何文件）**上同样 `exit=1`、**5 项**：
 
 ```
 ERROR: delete /me/consents/{purpose}: services/api/src/privacy/consent-pg.ts lines=140-183 越界
+ERROR: post /jobs/{id}/cancel: services/api/src/routes/recognitions.ts lines=130-134 越界
 ERROR: get /knowledge: services/api/src/knowledge/service.ts lines=14-80 越界
 ERROR: get /knowledge/{id}: services/api/src/knowledge/service.ts lines=60-69 越界
 ERROR: dimension timeout: services/api/src/knowledge/service.ts lines=74-78 越界
-FAIL: 契约实现状态对照校验未通过（4 项）
+FAIL: 契约实现状态对照校验未通过（5 项）
 ```
 
-复现方式：`git worktree add --detach <tmp> upstream/main` + 软链 `node_modules` 后直接运行该工具。⇒ **非本片引入**；本片改动后该工具**恰好只剩这 4 项**（未新增任何条目），且**未修改**它们（不属本片范围）。
+在 `3e8f89b` 上是 **4 项**；合并 `769420a`（`#106` 把 `/jobs/{id}/cancel` 的注册从 `routes/recognitions.ts` 迁到 `jobs/routes.ts`）后**新增第 5 项**——状态表里该条 `evidence.lines` 仍指向 `recognitions.ts:130-134`，已越界。该项**由 #106 引入**，在纯 main 上同样存在，**不属本片**。
+
+复现方式：`git worktree add --detach <tmp> upstream/main` + 软链 `node_modules` 后直接运行该工具。⇒ 本片合并后该工具**恰好只剩这 5 项**（本片新增 0 项），且**未修改**它们（不属本片范围）。
 
 ## 8. 未取得（如实登记，不得外推）
 
 真实 PostgreSQL 持久化（全内存 store，重启即丢，无迁移）；**真实平台作业端口**（`AdminJobPort` 默认未接线，读/写都 503，已接线路径只用内存参考端口验证）；后台页面（`apps/admin/**` 不在本单）；全局开关/账号停用与业务链路联调；社区路由未装配（`hidePost` 的"公开读不可见/作者仍可见"用**社区服务层**在同一 store 上断言）；真机。
+
+### 8.1 已知后续项：`/admin/jobs` 与 `#106` 作业注册表的关系（**本片不动手**）
+
+`#106`（`769420a`）已为**用户面** `/jobs/{id}` 与 `/jobs/{id}/cancel` 提供真实作业注册表（`services/api/src/jobs/registry.ts`，按 kind 分派识别域 + 转写域）；而本片的后台面 `/admin/jobs`（`listAdminJobs`/`cancelAdminJob`）仍走 `AdminJobPort` 且**默认未接线 ⇒ 503**。
+
+- 两者**形状与受众不同**：`#106` 是按 id 的读/取消（`JobEnvelope`，用户 scope）；`listAdminJobs` 是**平台级跨 kind 列表**（`AdminJob`，含 `kind`/`state`/`revision`，后台 scope）——注册表面向"按 id 取源"，不提供列表面。
+- `AdminJobPort` 的形状与"未接线 ⇒ 503、**不返回空页**"是**阶段 1b 派单的裁定语义**；复用需改端口契约 ⇒ 超出本片"只读复用服务层"的边界。
+- **正确做法（后续单）**：在 `AdminJobPort` **之下**加一个"基于该作业注册表"的适配器，把 `/admin/jobs` 接真（届时 503 应变为真实列表）。本片**不改端口契约、不加适配器**。
 
 ## 9. 自查
 
