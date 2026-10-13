@@ -58,6 +58,12 @@ echo "exit=$?"
 | `1` | 至少一条 FAIL | **不是**已就绪；修好重跑 |
 | `2` | 无 FAIL，但有 SKIP（缺口令/备份/远端探针） | **证据不完整**；补齐后重跑，不得当通过 |
 
+> 📌 **本项目的实测状态（2026-10-13）**：那次运行里的 `SKIP remote_vpc_tcp_open` **已由平台侧实测满足**
+> （**云托管实例 → `10.21.1.8:5432`** 连通 + `scram-sha-256` 认证通过；原始输出见
+> [evidence §15](evidence/local-self-check.md)）⇒ **上表退出码语义不变**；若要 `verify` 自己打出 `PASS`／退出码 `0`，
+> 用 `--remote-host <同 VPC 探针机>` 复跑即可。
+> **两层口径**：**事实层面**已部署且平台侧连通已实测；**验收层面仍未验收**（监工尚未复核）。
+
 同时输出分两段：`===== 验证判据 =====`（机器可核对）与
 `===== 仅用户可核对/提供 =====`（脚本无凭据，只能由人做）。
 
@@ -68,7 +74,7 @@ echo "exit=$?"
 | `socket_reachable` | `sudo -u postgres /usr/lib/postgresql/17/bin/pg_isready -h /var/run/postgresql` | `期望=yes 实际=yes` | `no` ⇒ 服务没起或 socket 目录不对；先 `systemctl status gengyun-postgresql.service` |
 | `loopback_tcp_open` | `timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/5432'` | `期望=yes 实际=yes` | `no` ⇒ `listen_addresses` 没含回环，或服务未起 |
 | `vpc_tcp_open(<CVM私网IP>)` | 同上但用 CVM 的私网 IP（脚本按**脚本内配置的网段**自动找） | `期望=yes 实际=yes` | `no` ⇒ `listen_addresses` 漏了私网 IP；**注意**：本机 `nc` 通**不代表**目标网段内另一台机能通（安全组在中间）；**路径 A 若仍显示旧网段 → 四处同改没做完** |
-| `remote_vpc_tcp_open(<ip>)` | 需 `--remote-host` | `期望=yes 实际=yes` | `SKIP` ⇒ 未提供探针机；这是**证据缺口**，不是通过 |
+| `remote_vpc_tcp_open(<ip>)` | 需 `--remote-host` | `期望=yes 实际=yes` | `SKIP` ⇒ 未提供探针机；这是**证据缺口**，不是通过。**本项目该项已于 2026-10-13 由平台侧实测满足**（云托管实例 → `10.21.1.8:5432`；原始输出见 [evidence §15](evidence/local-self-check.md)）——**但脚本的 `SKIP` 语义不变**，有探针机时仍应复跑取 `PASS` |
 
 补充人工探针（从**目标网段内**的另一台机执行，原始输出留档；`<CVM私网IP>` 按所选路径替换）：
 

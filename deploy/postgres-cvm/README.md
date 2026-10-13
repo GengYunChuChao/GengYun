@@ -20,11 +20,17 @@
 >     5 组 + `20-login-roles.sql` + 90- 断言 `ok`）；复核 `migrations=10`／`tables=41`／`groups=5`／`login=true super=false`；
 >   * `backup-postgres.sh` **`exit=0`**；`restore-drill.sh --recreate` **`exit=0`、`PASS=24 FAIL=0`、结论「恢复演练【通过】」**；
 >   * `verify-cvm-postgres.sh`（带运行时口令环境变量）**`PASS=39 FAIL=0 SKIP=1`（`exit=2`）**。
-> - **唯一剩余缺项（不得写成通过）**：`verify` 的 **`SKIP remote_vpc_tcp_open`** ——
->   **云托管实例 → `10.21.1.8:5432` 的真实连通未测**（需用户 webshell 探活，或 API 部署后用业务冒烟证明）。
->   ⇒ **`verify exit=2` = 无失败但证据不完整**；**`backup exit=0` 也不等于"可恢复"**（可恢复性只认 `restore-drill exit=0`）。
-> - **仍不成立的说法**：本交付**未部署、未验收（整项）**；云托管侧联调、公网 5432 的最终关闭核对、
->   重启持久性外的灾备项（PITR/异地）等见第 6 节。
+> - **平台侧连通：已实测通过（2026-10-13）** —— 云托管实例内 `net.connect(5432,'10.21.1.8')` 返回 **CONNECTED**、
+>   平台内 `/health` 返回 **HTTP 200**（`database.status=ok`）；CVM 侧 PG 日志显示该连接**通过 `scram-sha-256` 认证**
+>   （`pg_hba.conf:34`，身份 `gengyun_api_runtime@gengyun`），另有公网扫描来源被 `pg_hba` 在认证前拒绝。
+>   **原始输出见 [evidence §15](evidence/local-self-check.md)**（A 由**用户**在 WebShell 内执行、指挥转述；B 由**指挥**在 CVM 上核验）。
+>   ⇒ 该情形下 `verify` 里原来那条 `SKIP remote_vpc_tcp_open` 的**意图已满足**；脚本本身仍可用 `--remote-host <ip>` 复跑把 `SKIP` 变 `PASS`。
+> - **两个层面必须分开（不得混同）**：
+>   * **事实层面**：数据库**已部署在目标 CVM**，且**已由平台（云托管实例）实测连通**（上一条与 evidence §15）；
+>   * **验收层面**：**仍未验收** —— **监工尚未复核**；**`backup exit=0` 也不等于"可恢复"**（可恢复性只认 `restore-drill exit=0`）。
+> - **仍未取得 / 不得升级**：云控制台入站规则的最终核对、公网 5432 的独立复核、PITR 与异地灾备、
+>   独立第三方复跑 —— 见第 6 节与 [evidence §13.2／§15.4](evidence/local-self-check.md)。
+> - **本交付不关闭整项**：仍 `Refs #27`（真 `Closes/Fixes/Resolves` = 0）。
 > - **CI 现状（与任何 PR 的 diff 无关）**：本仓库 GitHub Actions **runner 不启动**，原因是
 >   **账号级 Actions 计费/支出限额限制**（需在 GitHub `Billing & plans` 处理）；连 `upstream/main`
 >   自己的头也是 13/13 失败。第一手注解、现象与时间线见 [evidence §14](evidence/local-self-check.md)。
@@ -214,7 +220,7 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan    # 预期输出见 runbook
 | [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | 只读最小权限断言，输出 `ok` 或 `FAIL: …`；前置分硬/软两级 | **已由外部真实 PG 17.11 执行通过**（末行 `ok`，15/15） |
 | [backup-postgres.sh](backup-postgres.sh) | 逻辑备份 `pg_dump -Fc` + 产出清单 + 保留期清理；**退出码语义见文件头** | **已在目标 CVM 真跑**：`exit=0`、dump 与 manifest 均产出（[evidence §12.2](evidence/local-self-check.md)）；本机另有改前/改后回归（[evidence §11.2](evidence/local-self-check.md)） |
 | [restore-drill.sh](restore-drill.sh) | 隔离库恢复演练 + 逐项判定（**保留完整输出并按致命/非致命分类**） | **已在目标 CVM 真跑通过**：`exit=0`、`PASS=24 FAIL=0`、结论「恢复演练【通过】」——**这是"备份可恢复"的唯一证据**（[evidence §12.2](evidence/local-self-check.md)） |
-| [verify-cvm-postgres.sh](verify-cvm-postgres.sh) | 资源就绪后的验证清单（可执行） | **已在目标 CVM 真跑**：`PASS=39 FAIL=0 SKIP=1`（`exit=2`，缺项 = 远端 VPC 探针）；本机另有桩化回归（6 条判据转 PASS，[evidence §10.3](evidence/local-self-check.md)） |
+| [verify-cvm-postgres.sh](verify-cvm-postgres.sh) | 资源就绪后的验证清单（可执行） | **已在目标 CVM 真跑**：`PASS=39 FAIL=0 SKIP=1`（`exit=2`）；其中原 `SKIP remote_vpc_tcp_open` 的**意图已由平台侧实测满足**（[evidence §15](evidence/local-self-check.md)），脚本仍可用 `--remote-host` 复跑；本机另有桩化回归（[evidence §10.3](evidence/local-self-check.md)） |
 | [verify-checklist.md](verify-checklist.md) | 每条判据的期望输出与判读方式 | 文档 |
 | [roles-and-migration.md](roles-and-migration.md) | 角色用途/授予范围/验证命令；迁移执行与顺序 | 文档 |
 | [runbook.md](runbook.md) | 部署与运维步骤、回滚、仅用户本人可做清单 | 文档 |

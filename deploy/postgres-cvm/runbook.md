@@ -359,7 +359,11 @@ sudo deploy/postgres-cvm/provision-db.sh
 > - 早前由真跑发现并已修复的缺陷：`20-login-roles.sql` 旧版「**全新库上必失败**」的顺序缺陷、
 >   以及「把台账列为硬前置」的过度约束；对应回归（**全新库首跑**、**重复执行幂等**）均已通过。
 > - 这些结论绑定脚本指纹与 SHA `939670c`，原始输出见 [evidence §12](evidence/local-self-check.md)；
->   **唯一缺项**是远端 VPC 探针（见该文件 §12.4），故**仍不得声称已验收**。
+> - **平台侧连通已实测（2026-10-13）**：云托管实例内 `net.connect(5432,'10.21.1.8')` = **CONNECTED**、
+>   平台内 `/health` = **HTTP 200**（`database.status=ok`）；CVM 侧 PG 日志显示该连接**通过 `scram-sha-256` 认证**
+>   （原始输出见 [evidence §15](evidence/local-self-check.md)）。
+> - **两层口径**：**事实层面**已部署且平台侧连通已实测；**验收层面仍未验收**（**监工尚未复核**）⇒
+>   **不得声称"已验收"**；公网 5432 的独立复核、PITR/异地等仍未取得（[evidence §13.2／§15.4](evidence/local-self-check.md)）。
 
 ### 步骤 4 备份与恢复演练
 
@@ -387,6 +391,11 @@ sudo deploy/postgres-cvm/restore-drill.sh --dump /data/gengyun/backup/gengyun-ge
 > ⚠️ **`backup` 退出 0 ≠ 备份可恢复**：可恢复性**只能**由 `restore-drill.sh` 证明。
 > 历史上 `backup-postgres.sh` 在**成功路径**上也会 `exit 1`（EXIT trap 里 `[[ … ]] && cmd` 短路所致），
 > **返修 12 已修**；若你在旧副本上看到"dump 已产出但 exit=1"，请更新到含该修复的版本。
+>
+> 📌 **本项目的实测状态（2026-10-13）**：`verify` 那次运行的 `SKIP remote_vpc_tcp_open`
+> **已由平台侧实测满足**（云托管实例 → `10.21.1.8:5432` 连通 + `scram-sha-256` 认证通过，
+> 原始输出见 [evidence §15](evidence/local-self-check.md)）⇒ **这两行的退出码语义不变**，
+> 但若你想让 `verify` 自己打出 `PASS`／退出码 `0`，用 `--remote-host <同 VPC 探针机>` 复跑即可。
 
 定时建议（不自动安装；是否启用由用户决定）：
 
@@ -548,4 +557,4 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 | `migrate.ts` 报 drift | 磁盘上的迁移文件被改过 | `migrate.ts status` | 不要继续；恢复被改的文件到与 HEAD 一致 |
 | 备份文件为 0 字节或 `pg_restore --list` 失败 | 备份过程被打断/磁盘满 | `backup-postgres.sh --list`、`df -h` | 当次备份**不算数**，修好后重跑 |
 | 恢复演练 `PASS=n FAIL>0` | 备份与清单不一致或恢复报错 | 演练输出里的逐行期望/实际 | 按失败判据处理；**不得**宣称备份可用 |
-| 验证脚本退出码 `2` | 缺项（口令/备份/远端探针） | 输出里的 `SKIP` 行 | 补齐后重跑，别把 `2` 当通过 |
+| 验证脚本退出码 `2` | 缺项（口令/备份/远端探针） | 输出里的 `SKIP` 行 | 补齐后重跑，别把 `2` 当通过。**本项目 2026-10-13 的那次 `SKIP`（远端 VPC 探针）已由平台侧实测满足**（[evidence §15](evidence/local-self-check.md)）；语义不变，有探针机时用 `--remote-host` 复跑取 `PASS` |
