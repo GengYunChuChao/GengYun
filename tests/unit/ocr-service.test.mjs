@@ -1295,3 +1295,80 @@ test('反例·deleteOCR 同键并发只删除一次，且成功后可回放 202'
   assert.equal(replay.accepted, true);
   await assertApiError(() => service.getOcr({ userId: USER, ocrId: job.target_ref.id }), 'NOT_FOUND', '删除后读取');
 });
+
+// ---------------------------------------------------------------- 2a 薄适配的等价性（可执行断言）
+
+/**
+ * 阶段 2a 在 `ocr/service.ts` **纯追加**了 `verifyOcrWithRevision` / `deleteOcrWithRevision`
+ * （供路由写契约要求的强 ETag；`Verification` 是 `additionalProperties:false` 的五字段对象，
+ * 塞不进 revision），既有 `verifyOcr` / `deleteOcr` 改为**委托**。
+ *
+ * 下面两条把"既有函数返回值与语义逐字节不变"从**声明**变成**可执行断言**：
+ * 同一输入 × 两条独立记录（同样的替身脚本与同样的请求体）⇒ 两条路径产出的结果必须**逐字段相同**，
+ * 且 `deleteOcr` 的返回对象**键集恰为 `{accepted}`**（不得多出内部 revision）。
+ */
+
+test('等价性·verifyOcr(...) 与 verifyOcrWithRevision(...).verification 逐字段相同', async () => {
+  const { service } = boot();
+  // 两条独立记录：同一分桶 ⇒ 替身脚本产出完全相同的 raw_fields。
+  const first = await createAndSettle(service, USER, { bucket: 0 });
+  const second = await createAndSettle(service, USER, { bucket: 0 });
+  assert.deepEqual(first.ocr.raw_fields, second.ocr.raw_fields, '前提：两条记录的原始字段应相同');
+  assert.equal(first.ocr.revision, 1);
+  assert.equal(second.ocr.revision, 1);
+
+  const body = { fields: first.ocr.raw_fields, conditions: { ...DOSE_CONDITIONS_SAMPLE } };
+  const legacy = await service.verifyOcr({
+    userId: USER,
+    ocrId: first.job.target_ref.id,
+    body,
+    ifMatch: '"1"',
+    idempotencyKey: nextKey(),
+  });
+  const adapted = await service.verifyOcrWithRevision({
+    userId: USER,
+    ocrId: second.job.target_ref.id,
+    body,
+    ifMatch: '"1"',
+    idempotencyKey: nextKey(),
+  });
+
+  // 逐字段相同（不是"都非空"这类弱断言）。
+  assert.deepEqual(adapted.verification, legacy, '两条路径的 verification 必须逐字段相同');
+  assert.deepEqual(Object.keys(adapted.verification).sort(), ['conflict_fields', 'dose_cards', 'match_state', 'missing_fields', 'registration']);
+  assert.equal(adapted.verification.match_state, 'matched');
+  // 新增的分支只多带回 revision，且该 revision 与落库记录一致。
+  assert.equal(adapted.revision, 2, 'verify 后 revision 应为 2');
+  const persisted = await service.getOcr({ userId: USER, ocrId: second.job.target_ref.id });
+  assert.equal(persisted.revision, adapted.revision);
+  assert.deepEqual(persisted.verification, legacy, '落库后的 verification 也应与既有路径一致');
+});
+
+test('等价性·deleteOcr(...) 与 deleteOcrWithRevision(...) 的 accepted 相同，且返回值键集不变', async () => {
+  const { service } = boot();
+  const first = await createAndSettle(service, USER, { bucket: 0 });
+  const second = await createAndSettle(service, USER, { bucket: 0 });
+
+  const legacy = await service.deleteOcr({
+    userId: USER,
+    ocrId: first.job.target_ref.id,
+    ifMatch: '"1"',
+    idempotencyKey: nextKey(),
+  });
+  const adapted = await service.deleteOcrWithRevision({
+    userId: USER,
+    ocrId: second.job.target_ref.id,
+    ifMatch: '"1"',
+    idempotencyKey: nextKey(),
+  });
+
+  // 既有返回值必须**恰为** { accepted: true }：既逐字段相等，键集也不得漂移。
+  assert.deepEqual(legacy, { accepted: true });
+  assert.deepEqual(Object.keys(legacy).sort(), ['accepted'], 'deleteOcr 返回值不得多出内部字段');
+  assert.equal(adapted.accepted, legacy.accepted);
+  assert.equal(adapted.revision, 2, '删除后 revision 应为 2');
+  // 新增分支多出的只有 revision（这正是路由写 ETag 需要的）。
+  const { revision, ...rest } = adapted;
+  assert.equal(revision, 2);
+  assert.deepEqual(rest, legacy, '去掉新增的 revision 后必须与既有返回值逐字段相同');
+});
