@@ -218,6 +218,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       buildErrorEnvelope(apiError, { request_id: request.id, execution_mode: config.executionMode });
 
     if (error instanceof ApiError) {
+      // 状态协议：同键请求仍在处理时，409 带 Retry-After（秒），等待后可重试原请求。
+      if (error.code === 'REQUEST_IN_PROGRESS') reply.header('Retry-After', '1');
       reply.status(error.status).send(envelope(error));
       return;
     }
