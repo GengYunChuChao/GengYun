@@ -27,7 +27,7 @@
 | 服务设置 → 服务版本配置 | 扩缩容条件 | CPU 80% 或 内存 80% | 官方提示：只看 CPU 会在内存先满时 OOM → 概率性 500 |
 | 服务设置 → 服务版本配置 | 日志采集路径 | `stdout`（默认） | 采集 stdout/stderr；与 Dockerfile 的 volume 路径不得相同。容器不支持持久化存储 |
 | 服务设置 → 环境变量 | Key-Value 或 JSON 导入 | 见 §3 清单；JSON 模板 `deploy/cloudrun/env.placeholder.json` | 平台环境变量对具备控制台权限者可见 |
-| 服务设置 → 私有网络 | 启用 VPC 并选 VPC／子网 | 与上海 CVM 的 PostgreSQL **同一 VPC 与子网** | 保存后会发布新版本；之后可用私网 IP／内网域名访问 CVM 的 PG；子网需有足够空闲 IP |
+| 服务设置 → 私有网络 | 启用 VPC 并选 VPC／子网 | 与上海 CVM 的 PostgreSQL **同一 VPC 与子网** | 保存后会发布新版本；之后可用私网 IP／内网域名访问 CVM 的 PG；子网需有足够空闲 IP。**以上是平台能力描述，该连通性尚未验证**（见 README §9 未取得项） |
 | 服务设置 → 流水线 | 代码源／分支 | 绑定 GitHub（私有 Fork 或正式仓库）／`feat/deploy-cloudrun-api-prep` 或合并后的 `main` | 首次使用需授权仓库；平台会建 webhook，删掉即失效 |
 | 服务设置 → 流水线 | 目标目录 | **仓库根** | Dockerfile 需 COPY 仓库根的 `package.json`／`package-lock.json`，构建上下文必须是根 |
 | 服务设置 → 流水线 | 端口 | `3000` | 必须与容器内 `API_PORT` 一致；非 root 运行**不能**监听 80 |
@@ -109,7 +109,7 @@
 | `node_modules`（`--from=deps`） | 需要 | 闭包侧的外部包只有 `fastify`、`pg` |
 | `packages/**` | **需要** | `packages/privacy/{guard,constants,errors}.mjs` 被 `services/api/src/privacy/consent-pg.ts:2` 静态 import；`packages/knowledge/catalog/{crops.json,regions-zhejiang.json}` 被 `services/api/src/profile/service.ts:15-16` 顶层 `readFileSync` 读取（import 期即触发）；`packages/moderation/index.mjs` 被 `services/api/src/community/moderation-gate.ts:40,46` import（该路由当前尚未装配，属同一闭包，一并带上） |
 | `services/api/src` | 需要 | 应用源码（Node 24 直接执行 `.ts`） |
-| `services/api/db` | 需要 | `migrate.ts` 以自身位置解析 `services/api/db/migrations/`，可在容器内经 VPC 执行迁移 |
+| `services/api/db` | 需要 | `migrate.ts` 以自身位置解析 `services/api/db/migrations/`，容器内可直接执行迁移（**实际经 VPC 连库执行属未验证**，见 README §9 未取得项） |
 | `config/**` | **不需要** | 根 `config/` 只有 `debug.local.json.example`，运行期无消费者 |
 | `db/**`（种子）、`miniprogram/**`、`apps/admin/src`、`tests/**`、`tools/**`、`docs/**` | **不需要** | 静态遍历无命中 |
 

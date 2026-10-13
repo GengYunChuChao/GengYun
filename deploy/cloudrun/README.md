@@ -177,7 +177,7 @@ Invoke-RestMethod https://<服务域名>/api/v1/public/home
 
 | 检查 | 通过条件 | 说明 |
 | --- | --- | --- |
-| `GET /health` | HTTP 200，`status = ok`，`meta.execution_mode = real`，`checks.database.status = ok` | real 模式下 DB 不可达会得到 503 `degraded`（本机已实测），因此这条同时验证了容器→CVM PG 的 VPC 链路 |
+| `GET /health` | HTTP 200，`status = ok`，`meta.execution_mode = real`，`checks.database.status = ok` | real 模式下 DB 不可达会得到 503 `degraded`（本机已实测）。通过它只说明**容器 → 连接串所指向的那个 PostgreSQL** 是通的（指挥的真机运行用 `--network host` 连的是**同机 PG**）；**云托管实例经 VPC 连 CVM PG 的链路仍需平台环境具备后再验证**（见 §9 未取得项） |
 | `GET /api/v1/public/home` | HTTP 200，`meta.execution_mode = real`，`data.previews` 为数组（可空） | 该端点需要运行身份具备 `gengyun_preview_reader`；权限缺失会被映射为 503 `PROVIDER_UNAVAILABLE` |
 
 其他可选只读确认：`GET /health` 连续两次（排除冷启动偶发）、服务日志中无 `database health check failed`。
