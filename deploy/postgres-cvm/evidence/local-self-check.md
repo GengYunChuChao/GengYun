@@ -1087,3 +1087,38 @@ PASS dump 已产出   PASS 清单已产出   PASS 打印了成功日志
   **不是**"独立复核通过"，更**不是**"已部署／已验收"；
 - 因存在 §13.2 的缺项，**整项仍记为"未部署、未验收"**；
 - 本 PR 明确**不关闭整项 `#27`**（只做数据库部署准备与真机证据）。
+
+## 14 CI 现状：**账号级 Actions 计费/支出限额限制**（与任何 PR 的 diff 无关）
+
+**结论（按实证校正）**：本仓库的 GitHub Actions **runner 不启动**，原因是
+**账号级 Actions 计费/支出限额限制**（需在 GitHub **`Billing & plans`** 处理付款或提高支出限额）。
+**这不是**代码/测试失败，**不是**任何单个 PR 的 diff 造成，也**不宜**含糊写成"调度/基础设施故障"。
+
+**第一手证据（本单直接用 API 取到，非转述）**：对 `upstream/main` 头 `769420a` 的失败 check-run
+拉取 `…/check-runs/<id>/annotations`，**逐字**返回：
+
+> `[failure] The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings`
+
+（在 `evaluation-tests`、`static-check`、`build` 等多个 job 上重复出现；另有一条 `[notice]`
+关于 `ubuntu-latest` 标签迁移的提示，与本问题无关。）
+
+**现象（与"runner 从未启动"一致）**：
+
+- `jobs` 接口**没有任何 step 记录**；
+- 取 job 日志返回 **`BlobNotFound`**（日志 blob 不存在 —— 因为 job 根本没执行）。
+
+**时间线证据（说明这是"账号状态变化"，不是我们的改动）**：
+
+| 提交 | 时间关系 | 检查结果 |
+| --- | --- | --- |
+| `b1f6ab0`（本分支旧基） | **更早** | **14/14 success** |
+| `769420a`（`upstream/main` 头，**不含本 PR 任何改动**） | 之后 | **13/13 failure** |
+| `045d037`（本 PR 合成前 HEAD） | 之后 | 11/11 failure |
+| `7b5c56d`（合并 `769420a` 后的 HEAD） | 之后 | `check_runs=0`（尚未产生） |
+
+⇒ 同一仓库、同一批工作流，**在某个时间点之后全部失败**，且**连 `upstream/main` 自己的头都红**
+⇒ 属**账号/账单状态变化**所致，**与任何 PR 的 diff 无关**。
+
+**本单不做**：不绕过失败、不自动合并、不为"变绿"而改动其它目录。
+**待办（用户／组织侧）**：在 GitHub `Billing & plans` 完成付款或提高支出限额，然后在**同一 HEAD** 上重跑，
+把结果与本页 §12 的证据一起看。

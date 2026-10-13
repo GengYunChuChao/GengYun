@@ -25,6 +25,9 @@
 >   ⇒ **`verify exit=2` = 无失败但证据不完整**；**`backup exit=0` 也不等于"可恢复"**（可恢复性只认 `restore-drill exit=0`）。
 > - **仍不成立的说法**：本交付**未部署、未验收（整项）**；云托管侧联调、公网 5432 的最终关闭核对、
 >   重启持久性外的灾备项（PITR/异地）等见第 6 节。
+> - **CI 现状（与任何 PR 的 diff 无关）**：本仓库 GitHub Actions **runner 不启动**，原因是
+>   **账号级 Actions 计费/支出限额限制**（需在 GitHub `Billing & plans` 处理）；连 `upstream/main`
+>   自己的头也是 13/13 失败。第一手注解、现象与时间线见 [evidence §14](evidence/local-self-check.md)。
 > - **脚本完成 ≠ 已部署**；"已部署/已验收"必须按 [verify-checklist.md](verify-checklist.md) 真跑、留原始输出，
 >   并与具体 SHA／脚本指纹绑定。
 > - 密钥不存在于本目录任何文件中：口令只从环境变量或主机上的私密文件读取，
