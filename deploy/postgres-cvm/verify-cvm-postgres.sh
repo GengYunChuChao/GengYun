@@ -107,6 +107,41 @@ as_runtime() { # 以运行时身份执行 SQL（SET ROLE，不需要口令）；
 tcp_open() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
+# 【返修 10 · 缺陷 6】把要执行的 SQL 暂存到 postgres 可读处再喂给 psql。
+#   仓库常在 /home/<user>（默认 0750）⇒ postgres 穿越不了 ⇒ `psql: error: …Permission denied`
+#   （真机实测，evidence §9.2）。这里**不要求放宽仓库权限**，复制到 0700 postgres 的临时目录，
+#   执行后由 EXIT trap 删除。
+# ---------------------------------------------------------------------------
+SQL_STAGE_DIR=''
+stage_sql_file() { # <源文件> ⇒ 打印暂存路径；失败返回非 0
+  local src="$1" dst
+  if [[ ! -r "$src" ]]; then
+    printf '[%s][ERROR] SQL 文件不可读（以 root 视角）：%s\n' "$SCRIPT_NAME" "$src" >&2
+    return 1
+  fi
+  if [[ -z "$SQL_STAGE_DIR" || ! -d "$SQL_STAGE_DIR" ]]; then
+    SQL_STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gengyun-sql.XXXXXX")" || return 1
+    chown postgres:postgres -- "$SQL_STAGE_DIR" \
+      || { printf '[%s][ERROR] chown %s 失败（postgres 用户/组是否存在？）\n' "$SCRIPT_NAME" "$SQL_STAGE_DIR" >&2; return 1; }
+    chmod 0700 -- "$SQL_STAGE_DIR" \
+      || { printf '[%s][ERROR] chmod %s 失败\n' "$SCRIPT_NAME" "$SQL_STAGE_DIR" >&2; return 1; }
+  fi
+  dst="${SQL_STAGE_DIR}/$(basename -- "$src")"
+  cp -f -- "$src" "$dst" \
+    || { printf '[%s][ERROR] 复制 %s → %s 失败\n' "$SCRIPT_NAME" "$src" "$dst" >&2; return 1; }
+  chown postgres:postgres -- "$dst" \
+    || { printf '[%s][ERROR] chown %s 失败（postgres 用户/组是否存在？）\n' "$SCRIPT_NAME" "$dst" >&2; return 1; }
+  chmod 0600 -- "$dst" \
+    || { printf '[%s][ERROR] chmod %s 失败\n' "$SCRIPT_NAME" "$dst" >&2; return 1; }
+  printf '%s' "$dst"
+}
+cleanup_sql_stage() {
+  [[ -n "${SQL_STAGE_DIR:-}" && -d "${SQL_STAGE_DIR:-}" ]] && rm -rf -- "$SQL_STAGE_DIR"
+  return 0
+}
+trap 'cleanup_sql_stage' EXIT
+
+# ---------------------------------------------------------------------------
 # 1. 连通性
 # ---------------------------------------------------------------------------
 if runuser -u postgres -- "${PG_BIN}/pg_isready" -h "$PGHOST_SOCKET" -q; then sock_ok='yes'; else sock_ok='no'; fi
@@ -186,9 +221,11 @@ report_eq 'nologin_groups_present' '5' \
 # ---------------------------------------------------------------------------
 # 5. 最小权限断言（复用同一份 SQL，保证与 provision-db.sh 口径一致）
 # ---------------------------------------------------------------------------
+staged_assert_sql="$(stage_sql_file "${SQL_DIR}/90-assert-least-privilege.sql")" \
+  || fail "无法暂存 ${SQL_DIR}/90-assert-least-privilege.sql（见上一行错误）。"
 assert_out="$(runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 \
   -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" -tA \
-  -f "${SQL_DIR}/90-assert-least-privilege.sql" 2>&1 | tr -d '\r' || true)"
+  -f "$staged_assert_sql" 2>&1 | tr -d '\r' || true)"
 verdict="$(printf '%s\n' "$assert_out" | sed '/^[[:space:]]*$/d' | tail -n1)"
 if [[ "$verdict" != 'ok' ]]; then
   # 保留完整输出：缺前置时 90-assert 会打印三步补救指引，不能只留最后一行。

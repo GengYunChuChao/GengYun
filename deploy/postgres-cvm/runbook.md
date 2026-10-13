@@ -256,6 +256,23 @@ sudo deploy/postgres-cvm/install-postgres.sh
 GENGYUN_RESET_PGDATA=1 sudo deploy/postgres-cvm/install-postgres.sh
 ```
 
+#### 仓库路径与权限（**返修 10 · 缺陷 6**）
+
+- **不需要**为 `postgres` 放宽仓库权限：`provision-db.sh` / `verify-cvm-postgres.sh` 会把要执行的
+  SQL **复制到 postgres 可读的临时目录**（`0700 postgres`，执行后立即删除），因此仓库可以位于
+  `/home/<user>` 这类默认 `0750` 的目录下。
+- ⛔ **不要** `chmod 777`，也**不要**把家目录改成 `0755` 来"让它能跑"——那是绕过，会造成不必要的信息暴露。
+- 若你**手工**执行 `runuser -u postgres -- psql -f <仓库文件>`，那条手工命令仍会因目录权限失败；
+  请先自行 `cp` 一份到 postgres 可读处。
+
+#### 变量命名约束（**返修 10 · 缺陷 5**，改动脚本时必看）
+
+- **不要**把清单/数组命名为 bash 的保留或特殊变量（`GROUPS`、`SECONDS`、`RANDOM`、`UID`、`EUID`、
+  `PPID`、`FUNCNAME`、`OPTARG`、`OPTIND`、`PIPESTATUS`、`REPLY`、`IFS`、`PATH`、`BASH_*` 等）。
+  真机曾因把角色清单命名为 `GROUPS` 而报 `…/roles/0`：`GROUPS` 由 shell 维护、**赋值无效**，
+  用 `sudo` 跑时它是 `(0)`（root 的 gid）⇒ 循环把 `0` 当成文件名。
+- 已改名为 `ROLE_GROUP_FILES`；自查命令见 [evidence/local-self-check.md](evidence/local-self-check.md) §9.1。
+
 #### 境内加速：可选 PGDG 镜像（**返修 9 · 可选**）
 
 真机实测：官方 `apt.postgresql.org` 约 **6.7 KB/s**（装一个包要 ~40 分钟）；
@@ -500,6 +517,8 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 | API 健康检查 `database.status=error`，`category=auth_failed`（`28P01`/`28000`） | 口令错 / `pg_hba` 不匹配 | `pg_hba_file_rules`、`journalctl -u gengyun-postgresql`（会记录 `password authentication failed`） | 核对私密文件里的运行时口令；确认 `scram-sha-256` 行存在 |
 | API `category=connection_failed`（`ECONNREFUSED`） | 没监听该地址 / 入站规则挡了 | `ss -ltn "sport = :5432"`、`SHOW listen_addresses` | 修 `listen_addresses`；用户核对**入站规则**（标准 CVM=安全组；Lighthouse=实例防火墙，其来源默认 `0.0.0.0/0` 需收紧） |
 | 云托管侧**始终连不上**内网库，但本机 `psql` 正常 | ① PG 所在服务器**不在云托管可绑定的那张 VPC 内**（例如装在 Lighthouse 上）；② 或路径选择/绑定的 VPC 不对 | 服务器形态与所属 VPC（控制台）；`ip -4 -o addr` 是否为 `10.21.x.y` | 按 [README.md](README.md) §2.5：把 PG 放到**标准 CVM + `10.21.0.0/16` VPC**，并让云托管绑定该 VPC。**这不是 `pg_hba`/安全组能修的** |
+| 报错里出现 `…/roles/0` 或其它**奇怪的文件名** | 清单变量被 bash 保留名覆盖（历史缺陷：`GROUPS`） | `grep -n 'ROLE_GROUP_FILES' deploy/postgres-cvm/provision-db.sh` | 返修 10 已改名修好；若你用的是旧副本，请更新到含 `ROLE_GROUP_FILES` 的版本 |
+| `psql: error: /home/…/xxx.sql: Permission denied`（**仓库文件**读不了） | 仓库在 `postgres` 不可穿越的目录（如 `/home/<user>` 默认 `0750`） | `namei -l <仓库路径>` | 返修 10 起脚本会把 SQL **暂存**到 postgres 可读的临时目录；若仍报错，说明用的是旧副本。**不要** `chmod 777` |
 | API `category=database_missing`（`3D000`） | 库名写错或库没建 | `\l` 等价查询 | 用 `gengyun`（或 `GENGYUN_DB_NAME` 指定的一致名字） |
 | API 报 `42501 permission denied` | 角色引导没跑或跑在错误的库上 | `verify-cvm-postgres.sh` 的 `least_privilege_assert`、`runtime_can_read_*` | 跑 `provision-db.sh` |
 | `90-assert` 输出"警告：未找到 public.schema_migrations 台账" | 该库的迁移**不是用 `migrate.ts` 应用的**（例如用 `psql -f` 手工应用） | `SELECT to_regclass('public.schema_migrations')` | 在**目标 CVM** 上这属异常：用 `DATABASE_URL=… node services/api/src/db/migrate.ts up` 应用迁移。**等价复核环境**（只有套接字、node-postgres 不可用）里此告警属预期，15 项断言照常执行，见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |

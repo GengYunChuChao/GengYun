@@ -130,7 +130,48 @@ PSQL_BASE=(-X -q -v ON_ERROR_STOP=1 -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_N
 qs() { # 单值查询：qs "<sql>"
   runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -tA -c "$1" | tr -d '\r'
 }
-qfile() { runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -tA -f "$1" | tr -d '\r'; }
+qfile() { # 执行文件并取单值输出（内部会先暂存到 postgres 可读处，见下）
+  local staged
+  staged="$(stage_sql_file "$1")" || return 1
+  runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -tA -f "$staged" | tr -d '\r'
+}
+
+# ---------------------------------------------------------------------------
+# 【返修 10 · 缺陷 6】postgres 必须能读到我们喂给 psql 的**仓库文件**
+#
+#   云主机上仓库常在 /home/<user>（默认 0750 <user>:<user>）⇒ `postgres` 连目录都穿越不了
+#   ⇒ `psql: error: /home/ubuntu/…/auth_privacy.sql: Permission denied`（真机实测，evidence §9.2）。
+#   本脚本**不要求放宽仓库权限**（**不要** chmod 777、也不建议把家目录改成 0755），
+#   而是把要执行的 SQL **复制到 postgres 可读的临时目录**（0700 postgres），执行后立即删除。
+# ---------------------------------------------------------------------------
+SQL_STAGE_DIR=''
+stage_sql_file() { # stage_sql_file <源文件> ⇒ 打印暂存路径；失败返回非 0（由调用方决定是否致命）
+  local src="$1" dst
+  if [[ ! -r "$src" ]]; then
+    printf '[%s][ERROR] SQL 文件不可读（以 root 视角）：%s（工作区不完整？）\n' "$SCRIPT_NAME" "$src" >&2
+    return 1
+  fi
+  if [[ -z "$SQL_STAGE_DIR" || ! -d "$SQL_STAGE_DIR" ]]; then
+    SQL_STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gengyun-sql.XXXXXX")" || return 1
+    chown postgres:postgres -- "$SQL_STAGE_DIR" \
+      || { printf '[%s][ERROR] chown %s 失败（postgres 用户/组是否存在？）\n' "$SCRIPT_NAME" "$SQL_STAGE_DIR" >&2; return 1; }
+    chmod 0700 -- "$SQL_STAGE_DIR" \
+      || { printf '[%s][ERROR] chmod %s 失败\n' "$SCRIPT_NAME" "$SQL_STAGE_DIR" >&2; return 1; }
+  fi
+  dst="${SQL_STAGE_DIR}/$(basename -- "$src")"
+  cp -f -- "$src" "$dst" \
+    || { printf '[%s][ERROR] 复制 %s → %s 失败\n' "$SCRIPT_NAME" "$src" "$dst" >&2; return 1; }
+  chown postgres:postgres -- "$dst" \
+    || { printf '[%s][ERROR] chown %s 失败（postgres 用户/组是否存在？）\n' "$SCRIPT_NAME" "$dst" >&2; return 1; }
+  chmod 0600 -- "$dst" \
+    || { printf '[%s][ERROR] chmod %s 失败\n' "$SCRIPT_NAME" "$dst" >&2; return 1; }
+  printf '%s' "$dst"
+}
+cleanup_sql_stage() {
+  [[ -n "${SQL_STAGE_DIR:-}" && -d "${SQL_STAGE_DIR:-}" ]] && rm -rf -- "$SQL_STAGE_DIR"
+  return 0
+}
+trap 'cleanup_sql_stage' EXIT
 
 if [[ "$PLAN_ONLY" -eq 0 ]]; then
   runuser -u postgres -- "${PG_BIN}/pg_isready" -h "$PGHOST_SOCKET" -q \
@@ -216,7 +257,12 @@ fi
 #   profile_runtime   —— 作物/地区/单作物档案（0001 的表）
 #   knowledge_runtime —— 0010 的 security_barrier 投影
 # 运行时只继承前 4 个中的 preview_reader（不是 evidence_reader），见 roles-and-migration.md。
-GROUPS=(
+# 【返修 10 · 缺陷 5】不要把清单变量命名为 `GROUPS`：
+#   `GROUPS` 是 **bash 自己的特殊数组**（"当前用户所属组的数组"），**对它的赋值会被 shell 忽略**。
+#   于是用文档要求的 `sudo`（root）执行时，`GROUPS` 实际是 `(0)`（root 的 gid），
+#   循环里就得到 `entry='0'` ⇒ 报 `缺少既有角色文件 …/roles/0`（真机实测，evidence §9.1）。
+#   故改名为 `ROLE_GROUP_FILES`。同类保留名（勿用作自有变量）已在 evidence §9.3 列出。
+ROLE_GROUP_FILES=(
   'gengyun_auth_privacy:auth_privacy.sql'
   'gengyun_preview_reader:catalog_readers.sql'
   'gengyun_consent_granter:consent_granter.sql'
@@ -224,13 +270,25 @@ GROUPS=(
   'gengyun_knowledge_runtime:knowledge_runtime.sql'
 )
 if [[ "$WITH_CLI_GROUPS" -eq 1 ]]; then
-  GROUPS+=(
+  ROLE_GROUP_FILES+=(
     'gengyun_source_operator:source_operator.sql'
     'gengyun_staging_importer:staging_importer.sql'
   )
 fi
 
-for entry in "${GROUPS[@]}"; do
+# 【返修 10 · 文案】角色目录不存在/为空时，先给出**目录级**的清晰报错，
+#   而不是在逐条循环里报出 `…/roles/0` 这种怪文件名。
+if [[ ! -d "$ROLES_DIR" ]]; then
+  fail "既有角色目录不存在：${ROLES_DIR}
+         本脚本按路径**复用**仓库里的 7 个角色 SQL（不复制、不重写）。请确认：
+           ① 工作区完整（git 检出）；② 从仓库根执行；③ services/api/db/roles 未被移动。
+         提示：${ROLES_DIR} 由脚本位置推导（deploy/postgres-cvm → 仓库根），若不是从仓库内运行会找不到。"
+fi
+_role_sql_count="$(find "$ROLES_DIR" -maxdepth 1 -type f -name '*.sql' 2>/dev/null | wc -l || echo 0)"
+[[ "${_role_sql_count:-0}" -gt 0 ]] || fail \
+  "既有角色目录为空（无 *.sql）：${ROLES_DIR}（工作区不完整）。"
+
+for entry in "${ROLE_GROUP_FILES[@]}"; do
   role="${entry%%:*}"
   file="${entry##*:}"
   [[ -r "${ROLES_DIR}/${file}" ]] || fail "缺少既有角色文件 ${ROLES_DIR}/${file}（工作区不完整）。"
@@ -247,7 +305,9 @@ for entry in "${GROUPS[@]}"; do
   fi
   # 既有角色文件自身带 BEGIN;/COMMIT;，此处不再套 --single-transaction。
   log "创建组 ${role}（执行 services/api/db/roles/${file}）"
-  runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "${ROLES_DIR}/${file}"
+  staged_role_sql="$(stage_sql_file "${ROLES_DIR}/${file}")" \
+    || fail "无法暂存既有角色文件 ${ROLES_DIR}/${file}（见上一行错误）。"
+  runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "$staged_role_sql"
   after="$(qs "SELECT 1 FROM pg_roles WHERE rolname = '${role}'")"
   [[ "$after" == '1' ]] || fail "执行 ${file} 后仍找不到角色 ${role}，请检查该文件是否被改动。"
 done
@@ -255,7 +315,13 @@ done
 # catalog_readers.sql 同时建出 evidence_reader；此处只确认它存在，不授予运行时。
 if [[ "$PLAN_ONLY" -eq 0 ]]; then
   evidence_exists="$(qs "SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_evidence_reader'")"
-  [[ "$evidence_exists" == '1' ]] && log "gengyun_evidence_reader 已存在但刻意不授予 ${RUNTIME_ROLE}（内部证据读取路由尚未接线）。"
+  # 【返修 10】原来是 `[[ … == '1' ]] && log …`：条件不成立时该语句返回 1，
+  #   在 `set -e` 下会**静默中止**整个脚本（没有报错信息）。改为显式 if/else。
+  if [[ "$evidence_exists" == '1' ]]; then
+    log "gengyun_evidence_reader 已存在但刻意不授予 ${RUNTIME_ROLE}（内部证据读取路由尚未接线）。"
+  else
+    warn "未发现 gengyun_evidence_reader（catalog_readers.sql 应同时建出它）——不影响运行时最小权限，但请核对角色文件是否被改动。"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -278,15 +344,20 @@ else
                 ${PG_BIN}/psql ${PSQL_BASE[*]} -f ${SQL_DIR}/20-login-roles.sql
            2) set -a; . ${CRED_FILE}; set +a
               runuser -u postgres -- ${PG_BIN}/psql ${PSQL_BASE[*]} -f ${SQL_DIR}/20-login-roles.sql
+         注意：仓库若在 /home/<user>（默认 0750），postgres 读不到仓库里的 SQL。本脚本平时会
+               **自动**把 SQL 复制到 postgres 可读的临时目录（0700 postgres，执行后删除）；
+               上面两条手工替代做法请自行先把文件 cp 到 postgres 可读处（**勿用 chmod 777**）。
          或把本机 shell 换成保留环境的实现后重跑。"
   fi
 
   # 环境变量前缀作用于 runuser 本身；上面的前置已确认 runuser 会保留它们。
   # 若 GENGYUN_API_RUNTIME_PASSWORD 仍没传到 psql，20-login-roles.sql 的 \getenv 守卫会明确失败，
   # 不会建出无口令身份。GENGYUN_ROTATE_RUNTIME_PASSWORD 只在显式要求轮换时才置 1。
+  staged_login_sql="$(stage_sql_file "${SQL_DIR}/20-login-roles.sql")" \
+    || fail "无法暂存 ${SQL_DIR}/20-login-roles.sql（见上一行错误）。"
   GENGYUN_API_RUNTIME_PASSWORD="$RUNTIME_PASSWORD" \
   GENGYUN_ROTATE_RUNTIME_PASSWORD="$([[ "$ROTATE_RUNTIME_PASSWORD" -eq 1 ]] && echo 1 || echo 0)" \
-    runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "${SQL_DIR}/20-login-roles.sql"
+    runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "$staged_login_sql"
 
   log "执行最小权限断言 sql/90-assert-least-privilege.sql"
   # 保留**完整**输出：90-assert 在缺前置时会打印三步补救指引，不能只留最后一行。

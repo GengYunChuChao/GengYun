@@ -794,3 +794,116 @@ drwx------ root root gengyun        ← **0700 root:root**，postgres 连目录�
   验证的是**同等穿越语义**（0700 不可穿越 / 0750+属组可穿越），不是脚本内那两行本身。
 - 镜像：本机**未真正写 `/etc/apt`**（避免改动 apt 配置），只验证了变量解析与它在 `sources.list` 行中的位置。
 - 其余端到端（apt 安装、initdb、systemctl、createdb）仍需在**目标 CVM** 上执行。
+
+## 9 返修 10：真机缺陷 5（`GROUPS` 是 bash 保留数组）+ 缺陷 6（仓库文件对 postgres 不可读）
+
+**背景**：监工在真机上把**整条数据库链**跑通（迁移 10 条、5 组、`20-login-roles.sql`、90- 断言 `ok`、
+运行时身份可读 `users` 且越权建表被拒 `permission denied for schema public`），确认迁移门禁、
+5 组集合、`evidence_reader` 不授予、口令不轮换语义、90- 断言、越权拒绝**全部按预期**。
+
+### 9.1 缺陷 5：清单变量名 `GROUPS` 与 bash 保留数组冲突
+
+真机原始输出：
+
+```text
+[provision-db.sh] 迁移校验通过：10 个版本已全部应用（0001 … 0010）。
+[provision-db.sh][ERROR] 缺少既有角色文件 /home/ubuntu/services/api/db/roles/0（工作区不完整）。
+provision_exit=1
+```
+
+**根因（监工定位，本单以 root 复现确认）**：`GROUPS` 是 **bash 自己维护的特殊数组**（"当前用户所属组"），
+**对它的赋值会被 shell 忽略**。用文档要求的 `sudo`（root）执行时它就是 `(0)`（root 的 gid）
+⇒ 循环拿到 `entry='0'`、`file='0'` ⇒ 正是 `roles/0`。
+
+本机实测（`audit-reserved-vars2.sh`，EUID=0）：
+
+```console
+  GROUPS=(aaa bbb ccc)      -> 展开为: [0]            元素数=1     ← 赋值被忽略
+  ROLE_GROUP_FILES=(aaa…)   -> 展开为: [aaa bbb ccc]  元素数=3     ← 改名后正常
+```
+
+**修复**：`GROUPS` → **`ROLE_GROUP_FILES`**（定义、`+=`、循环三处同步改），并把根因写进代码注释。
+
+**保留名自查（回复"顺带自查"）**：对 5 个脚本做了两轮扫描（行首 `NAME=`/`NAME+=(`，以及
+`local|declare|readonly|typeset|export NAME=`），对照 bash 特殊/只读变量清单
+（`BASH*`、`EUID`、`UID`、`FUNCNAME`、`GROUPS`、`IFS`、`LINENO`、`OPTARG/OPTIND`、`PATH`、`PIPESTATUS`、
+`RANDOM`、`SECONDS`、`REPLY`、`SECONDS`、`TMPDIR`、`UID`、`PS*`、`HIST*` 等）：
+
+| 结果 | 说明 |
+| --- | --- |
+| **除 `GROUPS` 外 0 命中** | 5 个脚本**没有**对任何 bash 特殊/只读变量赋值（含 `local` 等形式） |
+| 1 处"疑似"命中：`install-postgres.sh` 的 `IFS=. read -r o1 o2 _ _ <<<"$net"` | 这是**作用域限定的命令前缀**（只对该条命令生效，不污染全局 `IFS`），**有意且合法** |
+| 只读引用（不改） | `${EUID}`（root 判定）、`${TMPDIR:-/tmp}`（带默认值）、`${PG_*}` 等 |
+
+### 9.2 缺陷 6：脚本假定"仓库文件对 `postgres` 可读"
+
+真机原始输出（把 `GROUPS` 改名变通之后）：
+
+```text
+[provision-db.sh] 创建组 gengyun_auth_privacy（执行 services/api/db/roles/auth_privacy.sql）
+psql: error: /home/ubuntu/services/api/db/roles/auth_privacy.sql: Permission denied
+```
+
+**根因**：脚本用 `runuser -u postgres -- psql -f <仓库内文件>`，而云主机上仓库常在 `/home/<user>`
+（默认 `0750 <user>:<user>`）⇒ `postgres` 连目录都穿越不了。
+
+**修复（选了"规避"，而不是要求放宽权限）**：新增 `stage_sql_file()`，把要执行的 SQL
+**复制到 postgres 可读的临时目录**（`mktemp -d` + `0700 postgres`，文件 `0600 postgres`），
+执行后由 `EXIT trap` 删除。**不要求 `chmod 777`、也不要求改家目录权限。**
+覆盖了三处喂文件的调用点：
+
+| 位置 | 原写法 | 现写法 |
+| --- | --- | --- |
+| `provision-db.sh`（角色循环，7 个文件） | `-f "${ROLES_DIR}/${file}"` | 先 `stage_sql_file` 再 `-f "$staged_role_sql"` |
+| `provision-db.sh`（`20-login-roles.sql`） | `-f "${SQL_DIR}/20-login-roles.sql"` | 先暂存再 `-f "$staged_login_sql"` |
+| `provision-db.sh` / `verify-cvm-postgres.sh`（`90-assert-…sql`） | `qfile`/`-f "${SQL_DIR}/90-…"` | `qfile` 内部暂存；verify 里先暂存再 `-f "$staged_assert_sql"` |
+
+**顺带加固**（本轮真跑暴露）：`stage_sql_file` 里 `mktemp/chown/chmod/cp` 任一失败**都返回非 0**
+并打印明确错误（原先末尾是 `printf`，前面的失败会被"最后一条命令成功"掩盖）。同时把
+`provision-db.sh` 里 `[[ … == '1' ]] && log …` 改为显式 `if/else`（条件不成立时该语句返回 1，
+在 `set -e` 下会**静默中止**整个脚本，且没有任何报错信息）。
+
+### 9.3 回归（**root 身份真跑**，原始输出见下；工具桩化、未改动系统）
+
+```
+=== R1：以 root 真跑 provision-db.sh（假 psql）到角色循环 ===
+（预检：本机 0 用户；GROUPS 当前值=[0] —— 证明 root 下它被 shell 维护，无法用于清单）
+[provision-db.sh] 迁移校验通过：10 个版本已全部应用（0001 … 0010）。
+[provision-db.sh] 创建组 gengyun_auth_privacy（执行 services/api/db/roles/auth_privacy.sql）
+[provision-db.sh] 创建组 gengyun_preview_reader（执行 …catalog_readers.sql）
+[provision-db.sh] 创建组 gengyun_consent_granter（执行 …consent_granter.sql）
+[provision-db.sh] 创建组 gengyun_profile_runtime（执行 …profile_runtime.sql）
+[provision-db.sh] 创建组 gengyun_knowledge_runtime（执行 …knowledge_runtime.sql）
+[provision-db.sh] 执行 sql/20-login-roles.sql（…）
+[provision-db.sh] 最小权限断言通过：ok
+[provision-db.sh] 完成（PLAN_ONLY=0, WITH_CLI_GROUPS=0）。
+provision_exit=0   迭代到的预期角色数=5
+PASS R1a 迭代的是 5 个预期条目   PASS R1b 不得出现 roles/0   PASS R1c 走到断言步骤
+
+=== R2：角色目录不存在/为空 ⇒ 目录级清晰报错（不再 …/roles/0）===
+[provision-db.sh][ERROR] 既有角色目录不存在：/tmp/w19-fake-repo/services/api/db/roles
+         本脚本按路径**复用**仓库里的 7 个角色 SQL（不复制、不重写）。请确认：…
+[provision-db.sh][ERROR] 既有角色目录为空（无 *.sql）：…（工作区不完整）。
+PASS R2a 报"角色目录不存在"   PASS R2b 不得出现 roles/0   PASS R2c 空目录报"目录为空"
+
+=== R3：缺陷 6 规避 —— 仓库位于 postgres **不可穿越**的目录时仍能执行 ===
+/tmp/w19-nohome 权限=700 root:root（模拟 /home/<user> 0750/0700）
+[provision-db.sh] 创建组 gengyun_auth_privacy（…）… 5 条
+迭代到=5；exit=0
+PASS R3a 无 Permission denied   PASS R3b 仍迭代 5 个预期条目
+
+=== 返修 10 回归结论：全部 PASS ===
+```
+
+**用例名与覆盖**：`R1` root 下真跑到角色循环并把整条流程走完（`provision_exit=0`），
+断言迭代的是 **5 个预期条目**（`创建组 <role>` ×5）且**不出现 `roles/0`**；
+`R2` 角色目录**不存在**与**为空**两种情形各自给出目录级清晰报错；
+`R3` 仓库放在 `0700`（`postgres` 不可穿越）的目录下仍能执行全部 SQL、**无 `Permission denied`**。
+
+### 9.4 本地**未**验证 / 测试脚手架的边界（不写通过）
+
+- 本机**没有 `postgres` 用户**，故回测用 `runuser`/`chown` **垫片**替代（真机上这两条命令是真实的、
+  且 `stage_sql_file` 现在会把它们的失败**当作致命错误**报出）。
+- 假 `psql`/`pg_isready` 只回答 `provision-db.sh` 需要的那几条查询，**不验证 SQL 语义**；
+  SQL 语义的权威证据仍来自监工真机（§9 背景）与 §4 的真实 PG 证据。
+- 回测创建的 `/usr/lib/postgresql/17/bin` 与临时目录**已删除**（仅当原本不存在时才删）。
