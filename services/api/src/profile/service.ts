@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { PoolClient } from 'pg';
 import type { PgPool } from '../db/pool.ts';
@@ -6,6 +5,7 @@ import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
 import { idempotencyScope, idempotencyKeyHashHex, idempotencyRequestHash } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
+import { paginateCatalog } from './pagination.ts';
 
 type Row = Record<string, unknown>;
 type Identity = { identity: AuthenticatedIdentity; token: string };
@@ -25,7 +25,6 @@ function profile(row: Row): Profile {
 
 /** Persistent profile only: no seed-as-success fallback, coordinates, providers or historical record writes. */
 export function createProfileService(pool: PgPool, key: string) {
-  const sign = (value: string) => createHmac('sha256', key).update(value).digest('base64url');
   async function transaction<T>(input: Identity, work: (client: PoolClient) => Promise<T>): Promise<T> {
     let client: PoolClient | undefined;
     try {
@@ -105,29 +104,12 @@ export function createProfileService(pool: PgPool, key: string) {
     async list(input: Identity, kind: 'crops' | 'regions', options: {cursor?: string; limit: number; parent_code?: string}) {
       return transaction(input, async client => {
         const items = await directory(client, kind);
-        const watermark = sign(JSON.stringify(items));
-        const filter = options.parent_code ?? null;
-        let after: string | null = null;
-        if (options.cursor !== undefined) {
-          try {
-            const [encoded, signature, extra] = options.cursor.split('.');
-            if (!encoded || !signature || extra !== undefined) throw new Error();
-            const expected = Buffer.from(sign(encoded));
-            const received = Buffer.from(signature);
-            if (received.length !== expected.length || !timingSafeEqual(expected, received)) throw new Error();
-            const value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-            if (value.user !== input.identity.userId || value.kind !== kind || value.filter !== filter
-                || value.watermark !== watermark || value.sort !== 'catalog_key_asc'
-                || !Number.isSafeInteger(value.expires) || value.expires <= Date.now()
-                || typeof value.after !== 'string') throw new Error();
-            after = value.after;
-          } catch { throw new ApiError('INVALID_CURSOR', '目录游标无效或已失效'); }
-        }
-        const field = kind === 'crops' ? 'id' : 'code';
-        const visible = items.filter(item => (filter === null || item['parent_code'] === filter) && (after === null || String(item[field]) > after));
-        const page = visible.slice(0, options.limit);
-        const encoded = Buffer.from(JSON.stringify({user: input.identity.userId, kind, filter, watermark, sort: 'catalog_key_asc', after: page.at(-1)?.[field], expires: Date.now() + 15 * 60 * 1000})).toString('base64url');
-        return {items: page, next_cursor: visible.length > options.limit ? `${encoded}.${sign(encoded)}` : null};
+        return paginateCatalog(items, {
+          kind, userId: input.identity.userId, authEpoch: input.identity.authEpoch, hmacKey: key,
+          limit: options.limit,
+          ...(options.parent_code === undefined ? {} : {parentCode: options.parent_code}),
+          ...(options.cursor === undefined ? {} : {cursor: options.cursor}),
+        });
       });
     },
   };
