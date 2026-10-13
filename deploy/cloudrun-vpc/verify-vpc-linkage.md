@@ -93,15 +93,17 @@
 
 | 命令 | 官方文档入口 | 核对状态 |
 | --- | --- | --- |
-| `tccli sts GetCallerIdentity` | [腾讯云 API 中心](https://cloud.tencent.com/document/api)（安全凭证服务 / STS） | **未逐条核对**：动作名与返回字段以官方文档为准 |
+| `tccli sts GetCallerIdentity` | [腾讯云 API 中心](https://cloud.tencent.com/document/api)（安全凭证服务 / STS） | **未逐条核对**：动作名与返回字段以官方文档为准。**本轮实测**：该动作**需要 `Region`**，不带时返回 `MissingParameter`（见第 3.3 节） |
 | `tccli vpc DescribeVpcs --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作名与返回结构以官方为准；`Region` 合法值见[地域列表](https://cloud.tencent.com/document/api/215/15758)（上海 = `ap-shanghai`） |
 | `tccli vpc DescribeSubnets --region ap-shanghai --Filters Name=vpc-id,Values=vpc-h33f1h5a` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：`Filters` 字段名与取值格式以官方为准 |
 | `tccli vpc DescribeVpcPeeringConnections --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作是否存在、状态字段取值以官方为准 |
-| `tccli vpc DescribeSecurityGroups --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作名与返回结构以官方为准 |
+| `tccli vpc DescribeSecurityGroups --region ap-shanghai` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：动作名与返回结构以官方为准。**本轮实测**：**不接受** `Filters Name=vpc-id`（返回 `UnknownParameter`），须去掉 Filters 后本地按 `VpcId` 过滤（见第 3.3 节） |
 | `tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <安全组ID>` | [私有网络 API 文档](https://cloud.tencent.com/document/api/215) | **未逐条核对**：参数名与规则结构以官方为准 |
 | 配额读取 | [配额中心控制台](https://console.cloud.tencent.com/limitation) | 控制台人工读取；**未找到**可直接读取这些配额的只读 API 依据 |
 
 **已核对的部分**：微信云托管 CLI 的 `npm install -g @wxcloud/cli`、`wxcloud login`（`-a/--appId`、`-k/--privateKey`）及 `env:list` / `service:list`（`-e/--envId`、`-s/--serviceName`、`--json`）/ `version:list` 的命令与参数，逐条来自官方 [CLI 工具](https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloudrun/src/guide/cli/) 页面原文。
+
+**本轮实测（2026-10-13）实际执行情况**：本机**未安装 `tccli` 与 `wxcloud`**，上表的 `tccli` 命令行**未按原样执行**，而是用**等价的只读 TC3 调用**完成（签名逐行沿用本仓库已审实现）；动作、结果、判读与两条踩坑见第 3 节，并已回填为本表的注意项。`wxcloud` 路径未执行：私密文件中**没有**微信云托管 CLI 密钥。
 
 ### B1 微信云托管侧：环境与服务清单
 
@@ -192,12 +194,58 @@ tccli vpc DescribeSecurityGroupPolicies --region ap-shanghai --SecurityGroupId <
 - **判读规则**：官方明确服务实例会通过 VPC 弹性网卡取 IP，且"IP 不足……会导致实例无法正常启动"。⇒ 已用值接近上限即记为阻塞风险。
 - **失败下一步**：【待确证】是否存在可直接读取这些配额的只读 API；**未找到依据**前不要为它申请新权限，用控制台人工读取即可。
 
-## 3 核验记录应写到哪
+## 3 路径 C：只读实测记录（2026-10-13，已完成一轮）
+
+用户私密交接 `E:\GengYunPrivate` 后执行。**只读**：全部为 `Describe*`/`Get*`，无任何 `Create*`/`Modify*`/`Delete*`/`Allocate*`，无购买、无开通、无扩权。
+
+### 3.1 执行方式与环境（含一处与预设命令的偏差）
+
+- 本机**未安装 `tccli`，也未安装 `wxcloud`**（`Get-Command` 均 NOT FOUND）⇒ 未采用 `tccli` 命令，改用**等价的只读 TC3 HTTP 调用**；签名算法**逐行沿用本仓库已审实现** `tools/verify-tencent-live.mjs` 的 `signRequest`（未改动仓库任何代码）。
+- 因此 **`wxcloud env:list` / `service:list` 未能执行**：私密文件中**没有**微信云托管 CLI 密钥（掩码检查未见"CLI 密钥/私钥"类标签）⇒ 按用户要求如实记录：**缺微信云托管 CLI 密钥，`wxcloud` 路径无法执行**，且**不得**用 AppSecret 去猜。
+- 执行脚本置于仓库外 `E:\GengYunCommander\.w18-vpc-evidence\readonly-vpc-check.cjs`、`readonly-tcb-probe.cjs`、`make-private-summary.cjs`（**未进入仓库**）。
+
+### 3.2 实际调用与结果
+
+| # | 动作（服务 / 版本 / 地域） | 目的 | 结果 | 判读 |
+| --- | --- | --- | --- | --- |
+| 1 | `sts GetCallerIdentity`（`2018-08-13`）@`ap-shanghai` | 取得凭据所属账号 | OK；返回 `Type/AccountId/UserId/PrincipalId/Arn/RequestId` | 【已确证·实测】凭据有效，签名被接受 |
+| 2 | 同上，用第二份凭据 | 比对两份凭据是否同账号 | OK；账号指纹**相同** | 【已确证·实测】**两份凭据属同一账号** |
+| 3 | `vpc DescribeVpcs`（`2017-03-12`）@`ap-shanghai` | 目标 VPC 是否可见 | `TotalCount=1`；`has_target_vpc=true`；`CidrBlock=10.20.0.0/16`；`VpcName=gengyun-vpc`；`IsDefault=false`；该账号 VPC 列表 = 仅有 `vpc-h33f1h5a` | 【已确证·实测】目标 VPC 属该账号且在上海；**该账号上海地域只有这一个 VPC** |
+| 4 | `vpc DescribeVpcs` @`ap-guangzhou` | 排除地域因素 | `TotalCount=0` | 【已确证·实测】目标 VPC 确实只在上海 |
+| 5 | `vpc DescribeSubnets` @`ap-shanghai`（`Filters: [{Name:'vpc-id', Values:['vpc-h33f1h5a']}]`） | 子网数量与可用 IP | `subnet_count=1`；`subnet_mask_bits=24`；`AvailableIpAddressCount=253`；`Zone=ap-shanghai-1` | 【已确证·实测】**IP 充足（253），不构成"实例起不来"的阻塞** |
+| 6 | `vpc DescribeSecurityGroups` @`ap-shanghai`（不带 Filters） | 安全组是否存在 | 地域内 `TotalCount=0` ⇒ 目标 VPC 内安全组数 = **0** | 【已确证·实测】**安全组尚不存在**，5432 入站放通尚未配置 |
+| 7 | `cvm DescribeInstances`（`2017-03-12`）@`ap-shanghai` | CVM 是否已购买/创建 | `TotalCount=0`（该账号上海地域无可列实例） | 【已确证·实测】**CVM 尚未创建** —— 直接回答用户"尚未核实购买或创建完成"：**核实结果是没有** |
+| 8 | `tcb DescribeEnvs`（`2018-06-08`）@`ap-shanghai` 与 @`ap-guangzhou` | 目标环境是否在该账号 | 两地域均 `TotalCount=0`、`EnvList` 为空 ⇒ `prod-d1g6qe87c4f2d7061` **不在**该账号 | 【已确证·实测】该事实；**其含义需谨慎**：见 3.4 残余不确定性 |
+
+**权限判读（判定项 ④）**：8 类调用**全部成功，未出现 `AuthFailure.UnauthorizedOperation`** ⇒ 该凭据对 `sts GetCallerIdentity`、`vpc DescribeVpcs/DescribeSubnets/DescribeSecurityGroups`、`cvm DescribeInstances`、`tcb DescribeEnvs` 的**读权限齐备**；**无需**为用户申请更大的 CAM 权限。
+
+### 3.3 两条实测踩坑（供后续复跑，已写进本文件的命令可核性表）
+
+1. **`sts GetCallerIdentity` 要求 `Region`**：不带 `X-TC-Region` 时返回 `MissingParameter :: The request is missing the required parameter Region.` ⇒ 本目录的示例命令应显式带上 `--region`。⚠️ 这正是"未逐条核对动作名与参数"的风险实例，**再次说明必须以官方文档为准**。
+2. **`vpc DescribeSecurityGroups` 不接受 `Filters: [{Name:'vpc-id', ...}]`**：返回 `UnknownParameter` ⇒ 改为**不带 Filters 拉取地域内全部安全组**，再在本地按 `VpcId` 过滤（本轮即用此法）。
+
+### 3.4 结论、残余不确定性与待确证
+
+- **已从"待确证"升级为【已确证·实测】**：两份凭据同账号；该账号上海地域唯一 VPC 即 `gengyun-vpc`；VPC 地域=上海；子网 1 个 `/24`、可用 IP 253；该账号无 CVM、无安全组、无云托管/TCB 环境；只读权限齐备。
+- **仍然【待确证】**：
+  1. **目标环境的绑定账号**（只能控制台读）：微信云托管「设置 → 环境设置 → 充值与账单」⇒ 绑定账号 UIN，与本凭据账号在**私密目录内**比对。
+  2. **`tcb DescribeEnvs` 是否覆盖微信云托管创建的环境**：官方文档**未明确**。⇒ 上面第 8 条"0 个环境"存在两种解释：(a) 环境绑定在另一个账号（⇒ 支持 README 4.1，且最可能）；(b) 环境就在本账号但该接口不列微信侧环境（⇒ 账号错配被排除）。**不得**把 (a) 当已确证结论。
+  3. 环境部署地域（环境侧）、互联入口新/旧、是否需服务角色授权、环境是否冻结/欠费 —— 均需控制台。
+  4. **微信云托管 CLI 密钥**未交接 ⇒ `wxcloud env:list`/`service:list` 路径未执行。
+- **仍未连通、仍未开通**：本轮未做任何写操作，网络打通与 VPC 绑定**均未发生**；`connection-verification-prep.md` 的 G0–G11 门禁**仍未满足**（G2/G3/G5/G7/G8 明确不具备）。
+
+### 3.5 安全处理（本轮如何做到"密钥与账号标识不出仓库"）
+
+- 密钥值**从未打印**：脚本把凭据读入进程内存，stdout 只输出掩码长度与**不可逆指纹**（`sha256(UIN)` 前 12 位），指纹本身不泄露 UIN。
+- 含账号标识的**原始响应**只写入仓库外 `E:\GengYunPrivate\w18-vpc-verify-raw\`；结论汇总只写入 `E:\GengYunPrivate\w18-vpc-verify-results.md`（含 UIN，**未进仓库、未进 PR、未进聊天**）。
+- 仓库内只保留：命令、状态、计数、`vpc-h33f1h5a`/`10.20.0.0/16`（用户已在任务中给出的标识）与判读结论；**不含** UIN、密钥、口令、子网 CIDR、CVM/安全组 ID。
+
+## 4 核验记录应写到哪
 
 - **结论层**（可入仓库）：判定项 ①–⑤ 的"是/否/待确证"结论、实际观察到的**提示文案**、错误码、命令退出码、执行日期与基线 SHA。
 - **事实层**（不入仓库）：UIN、SecretId/SecretKey/SessionToken、数据库口令、实例 ID、内网 IP、截图原图 → 全部落在私密目录，仓库只引用其**存在性**与文件名占位。
 
-## 4 本文件明确不做的事
+## 5 本文件明确不做的事
 
 - 不创建/删除/修改 VPC、子网、安全组、对等连接、CVM、数据库；不发布云托管新版本；不购买任何资源包或套餐；不解绑/换绑腾讯云账号。
 - 不调用任何供应商付费接口；不向外部发送真实用户数据。
