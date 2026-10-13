@@ -4,7 +4,7 @@ import type { PoolClient } from 'pg';
 import type { PgPool } from '../db/pool.ts';
 import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
-import { idempotencyScope, idempotencyKeyHashHex, idempotencyRequestHash } from '../auth/idempotency.ts';
+import { IDEMPOTENCY_TTL_SECONDS, idempotencyScope, idempotencyKeyHashHex, idempotencyRequestHash } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
 
 type Row = Record<string, unknown>;
@@ -97,8 +97,8 @@ export function createProfileService(pool: PgPool, key: string) {
           RETURNING crop_id,region_code,region_catalog_version,revision`, [input.identity.userId, body.crop_id, body.region_code, body.region_catalog_version]);
         const result = profile(rows[0]);
         await client.query(`INSERT INTO public.idempotency_keys(scope,key_hash,request_hash,response_status,outcome,expires_at)
-          VALUES($1,decode($2,'hex'),$3,200,$4::jsonb,clock_timestamp()+interval '5 minutes')`,
-        [scope, keyHash, digest, JSON.stringify({profileReceipt: {...result, user_id: input.identity.userId}})]);
+          VALUES($1,decode($2,'hex'),$3,200,$4::jsonb,clock_timestamp()+($5::integer * interval '1 second'))`,
+        [scope, keyHash, digest, JSON.stringify({profileReceipt: {...result, user_id: input.identity.userId}}), IDEMPOTENCY_TTL_SECONDS]);
         return result;
       });
     },
