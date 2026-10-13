@@ -131,7 +131,9 @@ qs() { # qs <db> <sql>
     -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$1" -tA -c "$2" | tr -d '\r'
 }
 
-manifest_get() { sed -n "s/^$1=//p" -- "$MANIFEST" | head -1; }
+# 【返修 11】用 awk 取首行而不是 `| head -1`：在 `set -o pipefail` 下，
+#   `head` 提前退出会让上游收到 SIGPIPE(141) ⇒ 整条管道非零 ⇒ set -e 静默中止。
+manifest_get() { sed -n "s/^$1=//p" -- "$MANIFEST" | awk 'NR==1{print;exit}'; }
 
 # ---------------------------------------------------------------------------
 # 1. dump 自身完整性（与清单比对 sha256）

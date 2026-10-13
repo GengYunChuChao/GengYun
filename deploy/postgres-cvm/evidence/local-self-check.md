@@ -907,3 +907,118 @@ PASS R3a 无 Permission denied   PASS R3b 仍迭代 5 个预期条目
 - 假 `psql`/`pg_isready` 只回答 `provision-db.sh` 需要的那几条查询，**不验证 SQL 语义**；
   SQL 语义的权威证据仍来自监工真机（§9 背景）与 §4 的真实 PG 证据。
 - 回测创建的 `/usr/lib/postgresql/17/bin` 与临时目录**已删除**（仅当原本不存在时才删）。
+
+## 10 返修 11：`verify-cvm-postgres.sh` 的 6 条判据缺陷 + 2 处静默中止隐患
+
+**背景（监工真机）**：`verify-cvm-postgres.sh --runtime-password-env …` 报 `PASS=31 FAIL=6 SKIP=1`；
+6 条 FAIL 全是**判据写法**问题，**配置本身是对的**（监工已逐条取证：`psql` 实测 `t|t`／`true|true`；
+运行时直读两个投影均 `exit=0` 且 `has_table_privilege=true`；组角色分工正确）。
+
+### 10.1 6 条判据的病因与修法（**不放宽任何安全语义**）
+
+| 判据 | 真机 FAIL | 病因 | 修法 |
+| --- | --- | --- | --- |
+| `server_version` | 期望 `17.11` 实际 `17.11 (Ubuntu 17.11-1.pgdg22.04+2)` | 拿 `SHOW server_version` 的**整串**做等值比较 | 改查 `substring(current_setting('server_version') from '^[0-9]+\.[0-9]+')` ⇒ 只比主.次 |
+| `runtime_role_attrs` | 期望 `t\|t\|f…` 实际 `true\|true\|false…` | 用 `\|\|` 拼接布尔列 ⇒ 走 `bool::text` 语义得到 `true/false` | 新增 `_tf()`（`CASE WHEN … THEN 't' ELSE 'f' END`）逐列转换 ⇒ 与期望字面量**一致** |
+| `runtime_password_scram` | 期望 `t` 实际 `true` | 同上（`(… LIKE …)::text`） | 用 `_tf` |
+| `runtime_not_owner_member` | 期望 `f` 实际 `false` | 同上（`pg_has_role(…)::text`） | 用 `_tf` |
+| `runtime_can_read_home_species` | 期望非负整数 实际（空/空白） | **`as_runtime()` 漏了 `-tA`** ⇒ 拿到的是**对齐表格**（表头/分隔线/`(1 row)`）而不是裸数字 | `as_runtime` 补 `-tA`；新增 `report_num_runtime()`：失败时**把原始输出打到 stderr** |
+| `runtime_can_read_current_knowledge` | 同上 | 同上 | 同上 |
+
+> **"为何为空"的定位（回复监工第 3 点）**：直接病因是 `as_runtime` **缺少 `-tA`**，
+> 输出是对齐表格而非裸数字；调用方再 `tail -n1` 就得到表尾（或一个带前导空格的值，读数时像"空"）。
+> 现已 `-tA` + 显式取最后一行数字，且**失败时打印原始输出** ⇒ 下次一眼可见。
+
+### 10.2 顺带发现并修掉的 2 处**静默中止**（同类隐患，会让"汇总"整段消失）
+
+1. `read -r DATA_SRC DATA_MNT <<<"$(df -P …)"`：数据目录父级不存在时 `df` 失败 ⇒ 输入为空 ⇒
+   `read` 返回 1 ⇒ 在 `set -e` 下**整个脚本中止**（stdout 连汇总都没有）。已改为显式判目录 +
+   `|| true`，并把"父级不存在"作为**一条失败判据**报出（不再假 PASS、也不再中止）。
+2. `find … | sort -nr | head -1 | awk …`（第 9 节备份探测）：`set -o pipefail` 下 `head` 提前退出
+   会让上游收到 **SIGPIPE(141)**（或 `find` 因目录不存在而失败）⇒ 管道非零 ⇒ `set -e` 中止。
+   已改为先判目录 + `awk 'NR==1{print $2}'`（不提前关闭管道）+ `|| true`；
+   同类 `sed … | head -1` 也在 `restore-drill.sh: manifest_get()` 与 verify 的清单读取处改为 `awk`。
+
+### 10.3 回归（**用监工真机实测原值回放**，跑的是**真实的** `verify-cvm-postgres.sh`）
+
+```console
+### 跑真实 verify-cvm-postgres.sh（假 psql；无 --remote-host ⇒ 预期 1 个 SKIP）
+PASS server_version                        期望=17.11 实际=17.11
+PASS runtime_role_attrs                    期望=t|t|f|f|f|f|f 实际=t|t|f|f|f|f|f
+PASS runtime_password_scram                期望=t 实际=t
+PASS runtime_not_owner_member              期望=f 实际=f
+PASS runtime_can_read_home_species         期望=非负整数 实际=0
+PASS runtime_can_read_current_knowledge    期望=非负整数 实际=0
+=== 返修 11 回归结论：6 条判据全部 PASS ===
+```
+
+**边界（不夸大）**：该回归用**桩** `psql` 回放监工给的**真机数值**，证明的是
+"**判据写法与取值路径已正确**"（6/6 转 PASS），**不等于**"真实 PG 上整体 0 FAIL"——
+后者须由监工在**含本修复的 SHA** 上真跑作为权威证据。桩环境下其余判据因取不到值而 FAIL
+（本回归**只断言这 6 条**）。
+
+## 11 返修 12：`backup-postgres.sh` 的"假失败"（成功产出 dump 却 `exit 1`）
+
+### 11.1 裁定：**是缺陷，不是刻意**（已修）
+
+真机现象（监工）：`backup-postgres.sh` 成功产出 dump（随后 `restore-drill.sh` 用它跑出【通过】），
+但脚本**退出码为 1**。根因：
+
+```bash
+cleanup_partial() { [[ -f "$TMP_DUMP" ]] && rm -f -- "$TMP_DUMP"; }
+trap cleanup_partial EXIT
+```
+
+**成功路径**上 `$TMP_DUMP` 已被 `mv` 成正式 dump ⇒ `[[ -f … ]]` 为**假** ⇒ `&&` 短路 ⇒ 函数返回 **1**
+⇒ **EXIT trap 的退出码覆盖了脚本退出码** ⇒ 备份成功却 `exit 1`。
+（与返修 8 的"假成功"互为镜像：那是失败报 0，这是**成功报 1**。）
+
+**修法**：`if [[ -f "$TMP_DUMP" ]]; then rm -f -- "$TMP_DUMP"; fi; return 0`。
+**并把退出码语义写进脚本头部与 runbook**：`backup` 的 `0` = 备份动作成功且通过可读性校验，
+**不等于**"可恢复"——可恢复性只能由 `restore-drill.sh` 证明。
+
+### 11.2 回归（**改前/改后对照**，真实脚本 + 桩；本机 root）
+
+```console
+=== 1) 改前对照（同目录临时副本把 trap 还原成旧写法）===
+    [backup-postgres.sh] 备份完成并通过可读性校验：
+    旧写法 exit=1                      ← 复现监工看到的现象（dump 已产出却 exit 1）
+=== 2) 修复版（真实脚本）===
+    [backup-postgres.sh] 备份完成并通过可读性校验：
+    [backup-postgres.sh]   文件      : /tmp/w19-bk-new/gengyun-gengyun-….dump
+    修复版 exit=0
+PASS 改前复现：dump 已产出但 exit=1（正是监工看到的现象）
+PASS 修复版：备份成功后 exit=0
+PASS dump 已产出   PASS 清单已产出   PASS 打印了成功日志
+=== 返修 12 回归结论：全部 PASS ===
+```
+
+**边界**：`pg_dump/pg_restore/psql` 为桩（`pg_dump` 只写几个字节）；本回归证明的是
+"**退出码语义正确**"（改前 1、改后 0），**不**证明真实 dump 内容（那由监工真机的 `restore-drill`【通过】证明）。
+
+## 12 监工**权威证据**：无变通的完整链（**跑在 `5e75c86` 上**）
+
+监工先把服务器**恢复到"未加变通"的状态**（删 `/etc/gengyun`、删 `/data/gengyun/pgdata`、
+`/home/ubuntu` 收回 `0750`），再上传 `5e75c86` 脚本包直接跑，**不再使用**任何变通
+（`chgrp/chmod` 私密目录、清残留、`GROUPS` 改名、放开家目录权限）。
+
+| 环节 | 真机原始结果 |
+| --- | --- |
+| `install-postgres.sh` | `INSTALL_EXIT=0`；仅 `10.21.1.8:5432` + `127.0.0.1:5432` 监听；**收尾校验通过**；**私密目录 `/etc/gengyun` = `drwxr-x--- root:postgres`，postgres 两级 `test -x` 通过**（⇒ 缺陷 3 已修） |
+| `migrate.ts up` | `up_exit=0`，已应用 `0001…0010` |
+| `provision-db.sh` | **家目录保持 `0750`**：无 `Permission denied`、**无 `roles/0`**；创建 5 组 → `20-login-roles` 就位并授予 5 组 → 90- 断言 `ok` → `provision_exit=0`（⇒ 缺陷 5/6 **双双生效**） |
+| 复核 | `migrations=10`、`tables=41`、`gengyun_api_runtime` `login=true super=false`、`groups=5` |
+| `backup-postgres.sh` | dump=`/data/gengyun/backup/gengyun-gengyun-…dump`（**退出码问题见 §11，已修**） |
+| `restore-drill.sh --recreate` | **结论：恢复演练【通过】**（`restore_exit=0`）：完整重建 schema+数据+授权；迁移版本、基本表/视图数量与清单关键行数逐项一致 |
+| `verify-cvm-postgres.sh --runtime-password-env …` | 监工报告 `PASS=39 FAIL=0 SKIP=1` |
+
+**证据与 SHA 绑定（必须写清，避免张冠李戴）**：该权威链跑在 **`5e75c86`** 上 —— 它**已包含**
+返修 8/9/10（install、provision 正是被验证的部分），但**不包含**本页 §10 的返修 11（verify 判据）
+与 §11 的返修 12（backup 退出码）。
+⇒ **建议**：在**含返修 11/12 的新 HEAD** 上对 `verify` 与 `backup` **各复跑一次**，把
+`verify PASS=… FAIL=0 SKIP=1`、`backup exit=0`、`restore-drill exit=0` 三条结论**绑定到该 SHA**；
+在此之前本页把 `verify 0 FAIL` 记为"**监工报告（SHA=`5e75c86`）**"，不写成"本版本已验证"。
+
+**仍属"变通运行"（不得混入权威证据）**：此前几轮的 `chgrp/chmod /etc/gengyun`（缺陷 3）、
+清半初始化数据目录（缺陷 4）、`sed` 改名 `GROUPS→ROLE_FILES`（缺陷 5）、
+`chmod 755 /home/ubuntu` + `a+rX`（缺陷 6）——**均已被返修 9/10 从脚本层面消除**。

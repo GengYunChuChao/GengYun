@@ -32,6 +32,14 @@
 #   GENGYUN_BACKUP_DIR   备份目录，默认 /data/gengyun/backup（必须在持久存储上）
 #   GENGYUN_BACKUP_KEEP_DAYS  保留天数，默认 30
 #   GENGYUN_DB_NAME      业务库名，默认 gengyun
+#
+# 【退出码语义（自动化请按这个判读；返修 12 已修掉历史上的"假失败"）】
+#   0 = **本次备份已产出 dump 且通过可读性校验**（`pg_restore --list` 能列出目录）+ 清单已写；
+#   1 = 备份过程失败（pg_dump 报错/产出为空、pg_restore --list 读不了、集群未就绪、缺 pg_dump 等）；
+#   2 = 无（本脚本不产生 2）。
+#   ⚠️ **exit 0 ≠ "备份已被证明可恢复"**：可恢复性**只能**由 `restore-drill.sh` 在隔离库上真正
+#      恢复并逐项比对清单来证明。未做演练时，禁止声称"已备份可恢复"。
+#      历史上（返修 12 之前）成功路径会因 EXIT trap 的 `[[ … ]] && cmd` 短路而**误报 exit 1** —— 已修。
 # ============================================================================
 
 set -euo pipefail
@@ -163,7 +171,12 @@ DUMP="${BACKUP_DIR}/${FILE_PREFIX}${DB_NAME}-${STAMP}.dump"
 MANIFEST="${DUMP}.manifest.txt"
 TMP_DUMP="${DUMP}.partial"
 
-cleanup_partial() { [[ -f "$TMP_DUMP" ]] && rm -f -- "$TMP_DUMP"; }
+# 【返修 12 · 缺陷 8】EXIT trap 的末命令**不能是 `[[ … ]] && cmd`**：
+#   `[[ -f "$TMP_DUMP" ]]` 在**成功路径**上为假（partial 已被 mv 成正式 dump）⇒ `&&` 短路
+#   ⇒ 函数返回 1 ⇒ **bash 用 EXIT trap 的退出码覆盖脚本退出码** ⇒
+#   "备份已成功产出 dump 且通过可读性校验，脚本却 exit=1"（真机实测，evidence §11.1）。
+#   这正是早前"假成功"的镜像问题：**假失败**。改为 if + 显式 return 0。
+cleanup_partial() { if [[ -f "$TMP_DUMP" ]]; then rm -f -- "$TMP_DUMP"; fi; return 0; }
 trap cleanup_partial EXIT
 
 log "开始备份：$(qs 'SELECT current_database()') → ${DUMP}"

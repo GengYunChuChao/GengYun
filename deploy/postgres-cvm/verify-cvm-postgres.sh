@@ -18,6 +18,15 @@
 #
 # 退出码：0 = 全部可执行判据通过且无缺项；1 = 有判据失败；2 = 无失败但有缺项（证据不完整）
 #
+# 【返修 11】**SKIP 的判读（明确写清）**：
+#   * `SKIP` 表示"**该项本次没有执行条件**"，不是通过、也不是失败。典型来源：
+#     - 未给 `--remote-host` ⇒ 同 VPC 另一台机器的 TCP 探针无法执行（本机无法代替"另一台机器"）；
+#     - 未给 `--runtime-password-env` ⇒ 运行时的**真实 TCP + scram 登录**无法执行
+#       （`SET ROLE` 只能证明授权语义，不能证明口令与 `pg_hba` 的 host 行端到端可用）。
+#   * 因此**退出码 2 = 无失败但证据不完整**：可以说明"已跑的判据都过"，但**不足以**下"验收通过"的结论；
+#     补齐缺项（提供 `--remote-host` / 口令环境变量）后重跑并保留输出，才算完整证据。
+#   * 反之，**只有退出码 0** 才表示"本次全部可执行判据通过且无缺项"。
+#
 # 判读方式：每行 PASS/FAIL 都写了“期望=… 实际=…”，逐行对照 verify-checklist.md。
 # ============================================================================
 
@@ -99,9 +108,32 @@ qs() { # qs <sql> [db]
 }
 
 as_runtime() { # 以运行时身份执行 SQL（SET ROLE，不需要口令）；输出含 psql 的 stderr
+  # 【返修 11 · 缺陷 7】必须带 -tA：否则输出是**对齐表格**（表头 + ` count ` + 分隔线 + `(1 row)`），
+  #   调用方 `tail -n1` 拿到的不是数字（或是一个带前导空格的 `0`，读数时看着像"空"）
+  #   ⇒ report_num 必然 FAIL。真机实测这两条就是这样 FAIL 的（evidence §10.1）。
   runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
-    -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" \
+    -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" -tA \
     -c "SET ROLE ${RUNTIME_ROLE}; $1" 2>&1 || true
+}
+
+# 【返修 11 · 缺陷 7】布尔值 → 't'/'f'。psql 的 -tA 对**布尔列**输出 t/f，
+# 但 `bool::text` 输出 true/false；构造拼接字符串时一旦 `||` 就会走 ::text 语义 ⇒
+# 期望 't|f' 却实际 'true|false'，**必然 FAIL**。这里显式用 CASE 统一成 t/f。
+_tf() { printf "CASE WHEN %s THEN 't' ELSE 'f' END" "$1"; }
+
+# 【返修 11 · 缺陷 7】带完整输出的数值判据：失败时把 as_runtime 的**原始输出**打到 stderr，
+# 便于一眼看出是权限错、语法错、还是取数路径问题（不再只显示一个空/怪值）。
+report_num_runtime() { # <label> <sql>
+  local label="$1" sql="$2" raw last
+  raw="$(as_runtime "$sql")"
+  last="$(printf '%s\n' "$raw" | sed '/^[[:space:]]*$/d' | tail -n1)"
+  if [[ "$last" =~ ^[0-9]+$ ]]; then
+    _pass "$label" '非负整数' "$last"
+  else
+    _fail "$label" '非负整数' "${last:-（空）}"
+    printf '[%s] %s 的原始输出（供定位）：\n' "$SCRIPT_NAME" "$label" >&2
+    printf '%s\n' "$raw" | sed 's/^/         /' >&2
+  fi
 }
 
 tcp_open() { timeout 5 bash -c "exec 3<>/dev/tcp/$1/$2" >/dev/null 2>&1; }
@@ -169,7 +201,8 @@ fi
 # ---------------------------------------------------------------------------
 # 2. 版本与监听（与 CI 主版本一致 + 不监听通配地址）
 # ---------------------------------------------------------------------------
-report_eq 'server_version' "${PG_MAJOR}.${PG_MINOR}" "$(qs 'SHOW server_version')"
+report_eq 'server_version' "${PG_MAJOR}.${PG_MINOR}" \
+  "$(qs "SELECT substring(current_setting('server_version') from '^[0-9]+\.[0-9]+')")"
 report_eq 'listen_addresses' "127.0.0.1,${VPC_IP:-?}" "$(qs 'SHOW listen_addresses')"
 report_eq 'port' "$PGPORT" "$(qs 'SHOW port')"
 wild_count="$(ss -ltnH "sport = :${PGPORT}" 2>/dev/null | awk '{print $4}' | grep -cE '^(0\.0\.0\.0|\*|\[::\]):' || true)"
@@ -207,14 +240,14 @@ done
 #    绝不因为角色缺失而抛出 `role "…" does not exist`（返修 1 的同类问题）。
 # ---------------------------------------------------------------------------
 report_eq 'runtime_role_attrs' 't|t|f|f|f|f|f' \
-  "$(qs "SELECT COALESCE((SELECT rolcanlogin || '|' || rolinherit || '|' || rolsuper || '|' || rolcreatedb || '|' || rolcreaterole || '|' || rolreplication || '|' || rolbypassrls FROM pg_roles WHERE rolname='${RUNTIME_ROLE}'), 'role-missing')")"
+  "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN (SELECT $(_tf rolcanlogin) || '|' || $(_tf rolinherit) || '|' || $(_tf rolsuper) || '|' || $(_tf rolcreatedb) || '|' || $(_tf rolcreaterole) || '|' || $(_tf rolreplication) || '|' || $(_tf rolbypassrls) FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') ELSE 'role-missing' END")"
 report_eq 'runtime_password_scram' 't' \
-  "$(qs "SELECT COALESCE((SELECT (rolpassword LIKE 'SCRAM-SHA-256\$%')::text FROM pg_authid WHERE rolname='${RUNTIME_ROLE}'), 'role-missing')")"
+  "$(qs "SELECT COALESCE((SELECT $(_tf "rolpassword LIKE 'SCRAM-SHA-256\$%'") FROM pg_authid WHERE rolname='${RUNTIME_ROLE}'), 'role-missing')")"
 # pg_has_role(name, …) 在角色缺失时会 ERROR；故先判存在，缺失就返回 'role-missing'。
 report_eq 'runtime_group_count' '5' \
   "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN (SELECT count(*)::text FROM pg_roles WHERE pg_has_role('${RUNTIME_ROLE}', oid, 'MEMBER') AND rolname <> '${RUNTIME_ROLE}') ELSE 'role-missing' END")"
 report_eq 'runtime_not_owner_member' 'f' \
-  "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN pg_has_role('${RUNTIME_ROLE}', '${DB_OWNER}', 'MEMBER')::text ELSE 'role-missing' END")"
+  "$(qs "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${RUNTIME_ROLE}') THEN $(_tf "pg_has_role('${RUNTIME_ROLE}', '${DB_OWNER}', 'MEMBER')") ELSE 'role-missing' END")"
 report_eq 'nologin_groups_present' '5' \
   "$(qs "SELECT count(*) FROM pg_roles WHERE rolname IN ('gengyun_auth_privacy','gengyun_preview_reader','gengyun_consent_granter','gengyun_profile_runtime','gengyun_knowledge_runtime') AND NOT rolcanlogin")"
 
@@ -233,11 +266,9 @@ if [[ "$verdict" != 'ok' ]]; then
 fi
 report_eq 'least_privilege_assert' 'ok' "$verdict"
 
-# 正面：运行时能读它该读的投影
-out="$(as_runtime 'SELECT count(*) FROM catalog_read.home_species' | tail -n1)"
-report_num 'runtime_can_read_home_species' "$out"
-out="$(as_runtime 'SELECT count(*) FROM catalog_read.current_knowledge' | tail -n1)"
-report_num 'runtime_can_read_current_knowledge' "$out"
+# 正面：运行时能读它该读的投影（用 report_num_runtime：失败时会打印原始输出）
+report_num_runtime 'runtime_can_read_home_species' 'SELECT count(*) FROM catalog_read.home_species'
+report_num_runtime 'runtime_can_read_current_knowledge' 'SELECT count(*) FROM catalog_read.current_knowledge'
 
 # 反面：越权必须失败，且 SQLSTATE 为 42501
 report_denied 'runtime_denied_select_star_users' "$(as_runtime 'SELECT * FROM public.users')"
@@ -294,12 +325,19 @@ report_num 'readonly_read(catalog_read.home_species)' "$(qs 'SELECT count(*) FRO
 # ---------------------------------------------------------------------------
 # 9. 备份产出存在性与清单一致性
 # ---------------------------------------------------------------------------
-newest_dump="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'gengyun-*.dump' -printf '%T@ %p\n' 2>/dev/null \
-  | sort -nr | head -1 | awk '{print $2}')"
+# 【返修 11】原来 `find … | sort -nr | head -1 | awk`：在 `set -o pipefail` 下，
+#   `head -1` 提前退出会让 `find` 收到 SIGPIPE(141)（备份很多时）或 `find` 自身因目录不存在而失败
+#   ⇒ **整条管道非零 ⇒ set -e 让脚本静默中止**（stdout 里连汇总都没有）。
+#   改为：先判目录存在、用 `awk 'NR==1'` 取代 `head -1`（不提前关闭管道）、并显式容错。
+newest_dump=''
+if [[ -d "$BACKUP_DIR" ]]; then
+  newest_dump="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'gengyun-*.dump' -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr | awk 'NR==1{print $2}')" || true
+fi
 if [[ -n "$newest_dump" ]]; then
   report_eq 'backup_artifact' 'exists' 'exists'
   if [[ -r "${newest_dump}.manifest.txt" ]]; then
-    exp="$(sed -n 's/^dump_sha256=//p' -- "${newest_dump}.manifest.txt" | head -1)"
+    exp="$(sed -n 's/^dump_sha256=//p' -- "${newest_dump}.manifest.txt" | awk 'NR==1{print;exit}')"
     act="$(sha256sum -- "$newest_dump" | awk '{print $1}')"
     report_eq 'backup_sha256_matches_manifest' "$exp" "$act"
     age_days="$(( ( $(date +%s) - $(stat -c %Y -- "$newest_dump") ) / 86400 ))"
@@ -314,11 +352,20 @@ fi
 # ---------------------------------------------------------------------------
 # 10. 持久存储
 # ---------------------------------------------------------------------------
-read -r DATA_SRC DATA_MNT <<<"$(df -P -- "$(dirname -- "$PGDATA_DIR")" 2>/dev/null | tail -1 | awk '{print $1, $6}')"
+# 【返修 11】原来直接 `read -r … <<<"$(df …)"`：当数据目录父级**不存在**时 `df` 失败 ⇒ 输入为空
+#   ⇒ `read` 返回 1 ⇒ 在 `set -e` 下**整个脚本静默中止**（stdout 里连汇总都没有）。
+#   这里显式判断，并把"父级不存在"当作一条**失败判据**报出来（而不是假 PASS、也不再中止）。
+DATA_SRC=''; DATA_MNT=''
+_pgdata_parent="$(dirname -- "$PGDATA_DIR")"
+if [[ -d "$_pgdata_parent" ]]; then
+  read -r DATA_SRC DATA_MNT <<<"$(df -P -- "$_pgdata_parent" 2>/dev/null | tail -1 | awk '{print $1, $6}')" || true
+fi
 if [[ -f "${PGDATA_DIR}/PG_VERSION" ]]; then pv='yes'; else pv='no'; fi
 report_eq 'pgdata_present' 'yes' "$pv"
 report_eq 'pgdata_version' "$PG_MAJOR" "$(cat -- "${PGDATA_DIR}/PG_VERSION" 2>/dev/null || echo missing)"
-if [[ "${DATA_MNT:-/}" == '/' ]]; then
+if [[ -z "${DATA_MNT:-}" ]]; then
+  _fail 'pgdata_separate_filesystem' '独立云硬盘挂载点（非 /）' "数据目录父级不存在或 df 不可用（${_pgdata_parent}）"
+elif [[ "$DATA_MNT" == '/' ]]; then
   _fail 'pgdata_separate_filesystem' '独立云硬盘挂载点（非 /）' '/ （根分区，不满足持久存储要求）'
 else
   _pass 'pgdata_separate_filesystem' '独立云硬盘挂载点（非 /）' "${DATA_SRC:-?} @ ${DATA_MNT}"

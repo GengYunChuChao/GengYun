@@ -93,7 +93,7 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 
 | 判据标签 | 命令 | 期望 | 判读 |
 | --- | --- | --- | --- |
-| `server_version` | `SHOW server_version` | `17.11` | 主版本不是 17 ⇒ 与 CI 不一致，停下；minor 不是 11 ⇒ 与固定标签不一致，记录并按需确认 |
+| `server_version` | `SELECT substring(current_setting('server_version') from '^[0-9]+\.[0-9]+')`（**只取主.次**；`SHOW server_version` 会带发行版后缀，如 `17.11 (Ubuntu 17.11-1.pgdg22.04+2)`，**不能整串等值比较** —— 返修 11） | `17.11` | 主版本不是 17 ⇒ 与 CI 不一致，停下；minor 不是 11 ⇒ 与固定标签不一致，记录并按需确认 |
 | `listen_addresses` | `SHOW listen_addresses` | `127.0.0.1,10.21.x.y`（方案 A 目标网段；**必须是 `10.21.` 开头**） | 出现 `*` / `0.0.0.0` ⇒ **FAIL，等于对外监听**；若是别的网段 ⇒ 该机器不在目标 VPC 的子网里，**不要继续** |
 | `port` | `SHOW port` | `5432`（或显式配置的端口） | 与**入站规则**、`DATABASE_URL` 三者必须一致 |
 | `no_wildcard_listener` | `ss -ltn "sport = :5432"` | `期望=0 实际=0` | 非 0 说明内核层面在通配地址监听：配置没生效或被覆盖 |
@@ -127,6 +127,12 @@ nc -vz -w 5 <CVM公网IP> 5432      # 期望：超时/拒绝，绝不 succeeded
 | `runtime_denied_update_users_state` | `SET ROLE …; UPDATE public.users SET state='active'` | `42501` | 成功 ⇒ 能改账号状态/绕过注销，P0 级语义 |
 | `runtime_denied_create_table` | `SET ROLE …; CREATE TABLE public.verify_should_fail (x int)` | `42501` | 成功 ⇒ 运行时可建对象，P1 |
 | `runtime_tcp_login` | 需 `--runtime-password-env` | `<用户名为 gengyun_api_runtime>` | `SKIP`/失败 ⇒ 要么没给口令，要么 scram/`pg_hba`/安全组有问题 |
+
+> **布尔值的表示口径（返修 11 的教训）**：`psql -tA` 对**布尔列**输出 **`t`/`f`**，
+> 但 `bool::text`（以及 `\|\|` 拼接布尔列）输出 **`true`/`false`**。
+> ⇒ 判据的**期望字面量必须与查询的实际表示一致**：本目录统一用 **`t`/`f`**，
+> 因此查询里一律用 `CASE WHEN … THEN 't' ELSE 'f' END`（脚本内 `_tf()` 辅助函数），**不要**用 `::text`。
+> 真机曾因此 3 条判据误报 FAIL（`t|t|f…` vs `true|true|false…`），配置本身并无问题。
 
 人工补充（原始输出留档）：
 

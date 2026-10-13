@@ -367,6 +367,23 @@ sudo deploy/postgres-cvm/restore-drill.sh --dump /data/gengyun/backup/gengyun-ge
 期望 `restore-drill.sh` 结尾 `PASS=n FAIL=0` 并打印 `恢复演练【通过】`。
 若退出码为 `2`（缺清单/判据不完整），**不算演练通过**，必须补齐后重跑。
 
+#### 三个脚本的退出码语义（**自动化按下表判读**；返修 11/12 已修正历史误判）
+
+| 脚本 | 退出码 | 含义 | 能否作为"备份可恢复"证据 |
+| --- | --- | --- | --- |
+| `backup-postgres.sh` | `0` | 本次**已产出 dump 且通过可读性校验**（`pg_restore --list` 能列出目录）+ 清单已写 | **不能单独作为证据**：只能说明"备份动作成功" |
+| `backup-postgres.sh` | `1` | 备份**过程失败**（pg_dump 报错/空产出、`pg_restore --list` 读不了、集群未就绪…） | 当次备份**不算数** |
+| `restore-drill.sh` | `0` | 演练**通过**（`FAIL=0`：完整重建 schema+数据+授权，版本/表数/行数逐项一致） | **可以**，这就是"备份可恢复"的证据 |
+| `restore-drill.sh` | `1` | 恢复过程报错（先在日志里按"致命/非致命"分类，见其文件头） | 不可用 / 待复核 |
+| `restore-drill.sh` | `2` | 无失败但**证据不完整**（缺清单等） | 不算通过，补齐后重跑 |
+| `verify-cvm-postgres.sh` | `0` | 本次全部可执行判据 PASS **且无 SKIP** | 可进入独立复核 |
+| `verify-cvm-postgres.sh` | `1` | 有判据 FAIL | 不得记作已部署/已验收 |
+| `verify-cvm-postgres.sh` | `2` | 无 FAIL 但有 **SKIP**（如未给 `--remote-host`／未给口令环境变量）⇒**证据不完整** | 不得当通过，补齐后重跑 |
+
+> ⚠️ **`backup` 退出 0 ≠ 备份可恢复**：可恢复性**只能**由 `restore-drill.sh` 证明。
+> 历史上 `backup-postgres.sh` 在**成功路径**上也会 `exit 1`（EXIT trap 里 `[[ … ]] && cmd` 短路所致），
+> **返修 12 已修**；若你在旧副本上看到"dump 已产出但 exit=1"，请更新到含该修复的版本。
+
 定时建议（不自动安装；是否启用由用户决定）：
 
 ```cron
