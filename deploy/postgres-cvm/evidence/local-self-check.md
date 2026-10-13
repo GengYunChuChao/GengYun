@@ -996,11 +996,37 @@ PASS dump 已产出   PASS 清单已产出   PASS 打印了成功日志
 **边界**：`pg_dump/pg_restore/psql` 为桩（`pg_dump` 只写几个字节）；本回归证明的是
 "**退出码语义正确**"（改前 1、改后 0），**不**证明真实 dump 内容（那由监工真机的 `restore-drill`【通过】证明）。
 
-## 12 监工**权威证据**：无变通的完整链（**跑在 `5e75c86` 上**）
+## 12 监工**权威证据**：无变通的完整链（**已绑定 SHA `939670c`**）
 
 监工先把服务器**恢复到"未加变通"的状态**（删 `/etc/gengyun`、删 `/data/gengyun/pgdata`、
-`/home/ubuntu` 收回 `0750`），再上传 `5e75c86` 脚本包直接跑，**不再使用**任何变通
+`/home/ubuntu` 收回 `0750`），再上传脚本包直接跑，**不再使用**任何变通
 （`chgrp/chmod` 私密目录、清残留、`GROUPS` 改名、放开家目录权限）。
+
+### 12.1 脚本指纹绑定（**本单已逐项核对：三个指纹与仓库内容完全一致**）
+
+监工给出的指纹，与本单在 HEAD `939670c` 工作区（= 提交内容，LF）计算的 `sha256sum` **一致**：
+
+| 脚本 | sha256（监工服务器 = 本单 `939670c`） | 核对 |
+| --- | --- | --- |
+| `backup-postgres.sh` | `baf1dcdb2e0c0fba6b9ecf3440cb08a5e70325af22853bae27157494e662755a` | ✅ **MATCH** |
+| `restore-drill.sh` | `3960d6e252184bdf380d97f1da8ad53cfd03506d0f97997669a28a9a5e4c2121` | ✅ **MATCH** |
+| `verify-cvm-postgres.sh` | `8bfcdb5ce323c6a8de9cd025c84968b6403408b4492cf44c16cfc278efdea810` | ✅ **MATCH** |
+
+> ⇒ 服务器上被验证的**就是**仓库 `939670c` 的这三个文件（逐字节相同），
+> 因此下面的结论**可以绑定到该 SHA**，不存在"验的不是同一份代码"的问题。
+
+### 12.2 在 `939670c` 上复跑的三条（**原始输出**）
+
+| 环节 | 真机原始结果 | 判定 |
+| --- | --- | --- |
+| `backup-postgres.sh` | `backup_exit=0`；`dump=/data/gengyun/backup/gengyun-gengyun-20261013T125657Z.dump`；`manifest: -rw------- 1 root root 947B …T125657Z.dump.manifest.txt` | ✅ **返修 12 在真机生效**（此前 `exit=1`）；备份动作成功，**不等于**"可恢复" |
+| `restore-drill.sh --dump <上一步 dump> --recreate` | `restore_exit=0`；`PASS=24 FAIL=0`；`[restore-drill.sh] 结论：恢复演练【通过】。` | ✅ **唯一可作为"备份可恢复"的证据** |
+| `verify-cvm-postgres.sh --runtime-password-env GENGYUN_API_RUNTIME_PASSWORD` | `verify_exit=2`；`PASS=39 FAIL=0 SKIP=1`；`SKIP remote_vpc_tcp_open 未给 --remote-host；同 VPC 另一台机的连通性未测` | ✅ **返修 11 在真机生效**（FAIL `6 → 0`、PASS `31 → 39`）；`exit=2` = **无失败但有缺项 ⇒ 证据不完整**，不得当通过 |
+
+### 12.3 无变通完整链的其余环节（install / migrate / provision）
+
+这三个环节是在 `5e75c86` 上跑的；**`install-postgres.sh` 与 `provision-db.sh` 在
+`5e75c86 → 939670c` 之间未被改动**（`git diff` 为空）⇒ 其结论对**两个 SHA 等值成立**。
 
 | 环节 | 真机原始结果 |
 | --- | --- |
@@ -1008,16 +1034,15 @@ PASS dump 已产出   PASS 清单已产出   PASS 打印了成功日志
 | `migrate.ts up` | `up_exit=0`，已应用 `0001…0010` |
 | `provision-db.sh` | **家目录保持 `0750`**：无 `Permission denied`、**无 `roles/0`**；创建 5 组 → `20-login-roles` 就位并授予 5 组 → 90- 断言 `ok` → `provision_exit=0`（⇒ 缺陷 5/6 **双双生效**） |
 | 复核 | `migrations=10`、`tables=41`、`gengyun_api_runtime` `login=true super=false`、`groups=5` |
-| `backup-postgres.sh` | dump=`/data/gengyun/backup/gengyun-gengyun-…dump`（**退出码问题见 §11，已修**） |
-| `restore-drill.sh --recreate` | **结论：恢复演练【通过】**（`restore_exit=0`）：完整重建 schema+数据+授权；迁移版本、基本表/视图数量与清单关键行数逐项一致 |
-| `verify-cvm-postgres.sh --runtime-password-env …` | 监工报告 `PASS=39 FAIL=0 SKIP=1` |
 
-**证据与 SHA 绑定（必须写清，避免张冠李戴）**：该权威链跑在 **`5e75c86`** 上 —— 它**已包含**
-返修 8/9/10（install、provision 正是被验证的部分），但**不包含**本页 §10 的返修 11（verify 判据）
-与 §11 的返修 12（backup 退出码）。
-⇒ **建议**：在**含返修 11/12 的新 HEAD** 上对 `verify` 与 `backup` **各复跑一次**，把
-`verify PASS=… FAIL=0 SKIP=1`、`backup exit=0`、`restore-drill exit=0` 三条结论**绑定到该 SHA**；
-在此之前本页把 `verify 0 FAIL` 记为"**监工报告（SHA=`5e75c86`）**"，不写成"本版本已验证"。
+### 12.4 唯一剩余缺项（**尚未证明**，不得写成通过）
+
+| 缺项 | 含义 | 谁来补 |
+| --- | --- | --- |
+| `remote_vpc_tcp_open`（`verify` 的 `SKIP`） | **云托管实例 → `10.21.1.8:5432` 的真实连通**未测（需要同 VPC 另一台机器/云托管探针） | 用户 webshell 探活，或 API 部署后用业务冒烟证明 |
+
+> 因此本交付当前的口径是：**PG 侧内网姿态与最小权限已在真机验证；"云托管能否连到库"仍属未证明**。
+> **未部署、未验收（整项）**的结论保持不变。
 
 **仍属"变通运行"（不得混入权威证据）**：此前几轮的 `chgrp/chmod /etc/gengyun`（缺陷 3）、
 清半初始化数据目录（缺陷 4）、`sed` 改名 `GROUPS→ROLE_FILES`（缺陷 5）、

@@ -10,21 +10,23 @@
 >   ⇒ 把 PostgreSQL 建在**父账号 P** 的该 VPC 里**结构上很可能连不通**（不是调参问题）；
 >   目标形态因此分**两条并列路径**（A 推荐：子账号 S 内建网；B：父账号 P 的 VPC + 跨账号互通，**未找到依据**）。
 >   **在账号边界/路径确定之前，不得创建任何资源。**
-> - 本目录内所有脚本只在本机做过 `bash -n` 语法检查；**本机没有可用的 PostgreSQL / Docker / 云凭据**，
->   因此**没有任何脚本被真正执行过**。原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md)。
-> - **已由监工在真实 PostgreSQL 17.11（官方 Windows 便携版，与 CI 同版本）上真跑过本目录的 SQL**：
->   10/10 迁移与 7/7 既有角色成功；**两轮真跑共发现两个问题并已修**——
->   ① `20-login-roles.sql` 旧版「**全新库上必失败**」的顺序缺陷（见
->   [roles-and-migration.md](roles-and-migration.md) §6.2）；
->   ② `90-assert` 旧版把 `schema_migrations` 台账列为**硬前置**属**过度约束**（15 项断言并不读它，
->   见 §6.5）。
-> - **外部真跑已验证通过**：全新库首跑、重复执行幂等、缺口令拒绝、**15 项断言（末行 `ok`）**、
->   `pg_dump` + TOC（415 条）、**恢复第 1 次 `exit=0`**、恢复库上的权限继承。
-> - **仍未验证（不得记通过）**：**恢复第 2 次 `exit=1` 的原因**（待复核者清库重跑定论，
->   见 [evidence/local-self-check.md](evidence/local-self-check.md) §4.3.1）；
->   以及**目标 CVM 侧一切**（安装、`pg_hba`、安全组、公网 5432、持久性、云托管侧联调）。
-> - **脚本完成 ≠ 已部署**；任何"已部署/已验收/可用"的说法都必须等到资源就绪后按
->   [verify-checklist.md](verify-checklist.md) 真跑并留下原始输出。
+> - **本机（写手环境）**：只做了 `bash -n`、**桩化回归**、Markdown/链接与行尾校验；本机**没有 PostgreSQL/Docker/云凭据**，
+>   所以本机**不能**产出"已部署"级证据。原始输出见 [evidence/local-self-check.md](evidence/local-self-check.md) §1–§11。
+> - **已由监工在真实环境真跑（权威证据，全程无变通）**，并**按脚本 `sha256` 与 SHA `939670c` 绑定**（[evidence §12](evidence/local-self-check.md)）：
+>   * 目标 CVM（Ubuntu 22.04 ／ 内网 `10.21.1.8` ／ 数据盘 `/dev/vdb → /data`）：
+>     `install-postgres.sh` **`INSTALL_EXIT=0`**；只监听 `127.0.0.1:5432` 与 `10.21.1.8:5432`；
+>     **收尾硬校验通过**；私密目录 `/etc/gengyun` = `drwxr-x--- root:postgres` 且 `postgres` **两级 `test -x` 通过**；
+>   * `migrate.ts up` **`exit=0`**（`0001…0010`）；`provision-db.sh` **`exit=0`**（**家目录保持 `0750`**：无 `Permission denied`、无 `roles/0`；
+>     5 组 + `20-login-roles.sql` + 90- 断言 `ok`）；复核 `migrations=10`／`tables=41`／`groups=5`／`login=true super=false`；
+>   * `backup-postgres.sh` **`exit=0`**；`restore-drill.sh --recreate` **`exit=0`、`PASS=24 FAIL=0`、结论「恢复演练【通过】」**；
+>   * `verify-cvm-postgres.sh`（带运行时口令环境变量）**`PASS=39 FAIL=0 SKIP=1`（`exit=2`）**。
+> - **唯一剩余缺项（不得写成通过）**：`verify` 的 **`SKIP remote_vpc_tcp_open`** ——
+>   **云托管实例 → `10.21.1.8:5432` 的真实连通未测**（需用户 webshell 探活，或 API 部署后用业务冒烟证明）。
+>   ⇒ **`verify exit=2` = 无失败但证据不完整**；**`backup exit=0` 也不等于"可恢复"**（可恢复性只认 `restore-drill exit=0`）。
+> - **仍不成立的说法**：本交付**未部署、未验收（整项）**；云托管侧联调、公网 5432 的最终关闭核对、
+>   重启持久性外的灾备项（PITR/异地）等见第 6 节。
+> - **脚本完成 ≠ 已部署**；"已部署/已验收"必须按 [verify-checklist.md](verify-checklist.md) 真跑、留原始输出，
+>   并与具体 SHA／脚本指纹绑定。
 > - 密钥不存在于本目录任何文件中：口令只从环境变量或主机上的私密文件读取，
 >   交接方式见 [runbook.md](runbook.md) 第 2 节。**不要把口令贴进聊天、仓库、PR 或文档。**
 >
@@ -201,13 +203,13 @@ sudo deploy/postgres-cvm/install-postgres.sh --plan    # 预期输出见 runbook
 
 | 文件 | 作用 | 是否已运行 |
 | --- | --- | --- |
-| [install-postgres.sh](install-postgres.sh) | 目标 CVM 上安装 PostgreSQL 17.11、在持久云硬盘上 initdb、安装网络配置、启动 | 否（仅 `bash -n`） |
-| [provision-db.sh](provision-db.sh) | 迁移之后：建角色组、建最小权限运行时 LOGIN、跑最小权限断言 | 否（仅 `bash -n`） |
+| [install-postgres.sh](install-postgres.sh) | 目标 CVM 上安装 PostgreSQL 17.11、在持久云硬盘上 initdb、安装网络配置、启动 | **已在目标 CVM 真跑通过**：`INSTALL_EXIT=0`、收尾硬校验通过、私密目录逐级可穿越（[evidence §12](evidence/local-self-check.md)） |
+| [provision-db.sh](provision-db.sh) | 迁移之后：建角色组、建最小权限运行时 LOGIN、跑最小权限断言 | **已在目标 CVM 真跑通过**：`exit=0`，家目录保持 `0750` 下无 `Permission denied`、无 `roles/0`；90- 断言 `ok`（[evidence §12](evidence/local-self-check.md)） |
 | [sql/20-login-roles.sql](sql/20-login-roles.sql) | 运行时 LOGIN 的创建（仅缺失时）/属性收敛/口令（默认不改）/组成员授予 | **已由外部真实 PG 17.11 执行通过**（首跑 `exit=0`、重复执行幂等） |
 | [sql/90-assert-least-privilege.sql](sql/90-assert-least-privilege.sql) | 只读最小权限断言，输出 `ok` 或 `FAIL: …`；前置分硬/软两级 | **已由外部真实 PG 17.11 执行通过**（末行 `ok`，15/15） |
-| [backup-postgres.sh](backup-postgres.sh) | 逻辑备份 `pg_dump -Fc` + 产出清单 + 保留期清理 | 脚本本身未运行（需 Linux/root/systemd）；其**核心动作的等价命令**已由外部真实 PG 跑过（`pg_dump -Fc` `exit=0`、`pg_restore --list` TOC 415） |
-| [restore-drill.sh](restore-drill.sh) | 隔离库恢复演练 + 逐项判定（**保留完整输出并按致命/非致命分类**） | 脚本本身未运行；其**等价流程**已跑过：**恢复第 1 次 `exit=0`**、恢复库上权限继承可用；**恢复第 2 次 `exit=1` 原因待复核**（见 [evidence §4.3.1](evidence/local-self-check.md)） |
-| [verify-cvm-postgres.sh](verify-cvm-postgres.sh) | 资源就绪后的验证清单（可执行） | 否 |
+| [backup-postgres.sh](backup-postgres.sh) | 逻辑备份 `pg_dump -Fc` + 产出清单 + 保留期清理；**退出码语义见文件头** | **已在目标 CVM 真跑**：`exit=0`、dump 与 manifest 均产出（[evidence §12.2](evidence/local-self-check.md)）；本机另有改前/改后回归（[evidence §11.2](evidence/local-self-check.md)） |
+| [restore-drill.sh](restore-drill.sh) | 隔离库恢复演练 + 逐项判定（**保留完整输出并按致命/非致命分类**） | **已在目标 CVM 真跑通过**：`exit=0`、`PASS=24 FAIL=0`、结论「恢复演练【通过】」——**这是"备份可恢复"的唯一证据**（[evidence §12.2](evidence/local-self-check.md)） |
+| [verify-cvm-postgres.sh](verify-cvm-postgres.sh) | 资源就绪后的验证清单（可执行） | **已在目标 CVM 真跑**：`PASS=39 FAIL=0 SKIP=1`（`exit=2`，缺项 = 远端 VPC 探针）；本机另有桩化回归（6 条判据转 PASS，[evidence §10.3](evidence/local-self-check.md)） |
 | [verify-checklist.md](verify-checklist.md) | 每条判据的期望输出与判读方式 | 文档 |
 | [roles-and-migration.md](roles-and-migration.md) | 角色用途/授予范围/验证命令；迁移执行与顺序 | 文档 |
 | [runbook.md](runbook.md) | 部署与运维步骤、回滚、仅用户本人可做清单 | 文档 |
