@@ -6,7 +6,7 @@
 
 - 记录人：原协作者初版；写手2026-10-04按用户授权接续，保留原台账结构
 - 分支：原`feature/verify-platform-services` / PR #32；接续`codex/gy-i25-access-verification`
-- 关联 issue：#27
+- 关联 issue：#27（`Refs #27`；**本文件为证据留存，不关闭整项 #27**，`Closes` / `Fixes` / `Resolves` 均为 0）
 - 最后更新：2026-10-04；[来源与实际证据](continuation-evidence.md)
 
 ---
