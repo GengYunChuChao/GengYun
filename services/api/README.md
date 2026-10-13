@@ -33,7 +33,7 @@ APP_EXECUTION_MODE=stub node src/server.ts
 
 错误码严格取自 `packages/contracts/states.json#error_status_map`（401 `SESSION_REQUIRED`/`SESSION_EXPIRED`，403 `SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE` 等）。其余未实现路径返回契约 `NOT_FOUND` 错误封套。
 
-`Idempotency-Key` 语义：在「主体/方法/路径」键域内，同键同体在重放窗口（默认 5 分钟）内**收敛到同一可撤销的登录结果**——台账只记录**不含凭据的结果引用**（登录类为会话 id + 受众，退出类为成功标记，**绝不**存 access token 明文），命中时按该引用在**同一会话上换发新令牌**（保持首次的绝对到期时刻），不新建互不关联的会话；该会话被撤销/过期或账号状态变更即拒绝旧重放。并发同键以原子占位收敛，未占位者等待结果后重放，超时返回 `409 REQUEST_IN_PROGRESS`；同键异体返回 `409 IDEMPOTENCY_CONFLICT`。
+`Idempotency-Key` 语义：在「主体/方法/路径」键域内，同键同体在重放窗口（默认 24 小时）内**收敛到同一可撤销的登录结果**——台账只记录**不含凭据的结果引用**（登录类为会话 id + 受众，退出类为成功标记，**绝不**存 access token 明文），命中时按该引用在**同一会话上换发新令牌**（保持首次的绝对到期时刻），不新建互不关联的会话；该会话被撤销/过期或账号状态变更即拒绝旧重放。并发同键以原子占位收敛，未占位者等待结果后重放，超时返回 `409 REQUEST_IN_PROGRESS`；同键异体返回 `409 IDEMPOTENCY_CONFLICT`。
 
 会话层把服务端权威 `userId` / `authEpoch`（正整数）/ `role` 填到请求上，供 GY-I27 的 `requireConsent` 消费（接口缝见 `src/auth/middleware.ts`）；`packages/privacy/**` 归 GY-I27，本层不修改。
 
