@@ -1,6 +1,6 @@
 # GY-I01 契约实现状态对照
 
-更新：2026-10-13。正式 main 基线 `b1f6ab0e4dc304d2dd621d6a20852b31ccbfab3e`。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)，只刷新已合并代码的对照，不关闭整项。旧基线 2d562d5 的 16 条路由结论已被替换；历史实测仍见原验证记录。
+更新：2026-10-13。正式 main 基线 `3e8f89bb7dcd79d4ffe509ec79260acd71b26ded`。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)，只刷新已合并代码的对照，不关闭整项。已同步 #108／#109／#113／#115 的等待头、授权／科普分页和普通回执保留期修订，待合成果不计入本基线；历史实测仍见原验证记录。
 
 ## 1 判据与事实源
 
@@ -18,19 +18,21 @@
 
 社区 16 项、消息 3 项和后台业务 34 项已有独立服务证据，状态记 partial、route_mounted=false。媒体/参考/隐私相关库存在，保留 planned 的条目表示本轮未取得对应产品服务证据，不否认这些库的成果。识别、OCR、ASR、TTS 新注册操作均记 partial，不以替身或回环测试宣称真实能力达标。
 
+知识列表的 `id_asc` 排序偏差仍在，按上面的状态定义将 listKnowledge 从 implemented 修正为 partial；没有删除接口或改变实际功能。已装配仍为 32 条，状态计数是 11 implemented／74 partial／27 planned，不等于整项完成率。#116 后台到期修复的 CI 尚未获批、未合，后台独立默认及到期处理缺口仍保留。
+
 <!-- contract-status-tables:start -->
 ## 2 横切约定
 
 | 维度 | 来源锚点 | 状态 | 证据 | 缺口 / 条件 |
 | --- | --- | --- | --- | --- |
 | 错误码与 HTTP 状态映射 | packages/contracts/states.json#/error_status_map；docs/architecture/state-contract.md:17-30 | `partial` | services/api/src/contract.ts:14-58；services/api/src/errors.ts:29-63；tests/contract/contract-codes.test.mjs::API 错误码与 HTTP 状态映射与契约 states.json 完全一致 | 缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:260-276）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13） |
-| 分页（items + next_cursor、limit 默认 20 上限 50、服务端签名游标） | docs/architecture/state-contract.md:32；packages/contracts/openapi.json#/components/parameters/Cursor\|Limit | `partial` | services/api/src/knowledge/service.ts:36-51；services/api/src/profile/service.ts:105-131；services/api/src/privacy/consent-pg.ts:48-55；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 缺：/me/consents 游标未签名且未绑定主体/过滤器/版本水位/有效期（consent-pg.ts:48-55）；/knowledge 排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致。契约 Limit 1..50/默认 20 已在三处 schema 中一致 |
+| 分页（items + next_cursor、limit 默认 20 上限 50、服务端签名游标） | docs/architecture/state-contract.md:32；packages/contracts/openapi.json#/components/parameters/Cursor\|Limit | `partial` | services/api/src/knowledge/pagination.ts:24-65；services/api/src/profile/service.ts:105-131；services/api/src/privacy/consent-pagination.ts:24-65；tests/unit/knowledge-pagination.test.mjs::knowledge chain keeps first 15min deadline；tests/unit/consent-pagination.test.mjs::15分钟截止严格生效 | 授权列表HMAC/主体epoch/水位/15分钟固定期限已合（#109），科普固定期限与过期恢复已合（#115）；知识id_asc排序仍偏差，缺历史创建时点字段；目录按稳定目录键排序，其他后台/社区/消息分页仍需按各模块核对，不能记整维度完成 |
 | 版本（强 ETag、If-Match 428/409、revision 自增） | docs/architecture/state-contract.md:15 | `implemented` | services/api/src/routes/profile.ts:37-41；services/api/src/routes/consents.ts:59-63；services/api/src/routes/knowledge.ts:30-34；services/api/src/profile/service.ts:86-87；tests/unit/profile-api.test.mjs::GY-I05 persistent profile/catalog HTTP and SQL regression | 无（需 DATABASE_URL；撤回/编辑路径的 If-Match 缺 428、不匹配 409 已实现） |
-| 幂等（Idempotency-Key 8..128、同键同体重放、同键异体 409、进行中 409） | docs/architecture/state-contract.md:34 | `partial` | services/api/src/routes/support.ts:80-148；services/api/src/auth/idempotency.ts:1-60；tests/unit/auth-routes.test.mjs::幂等：同键同体收敛到同一会话；services/api/src/recognitions/service.ts:529-568；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 身份、档案、授权、识别/OCR/转写/合成均有各自幂等实现；support.ts 的 409 REQUEST_IN_PROGRESS 仍未带 Retry-After 响应头，与状态协议约定不符；内存域幂等记录重启不持久，不能据此宣称通用持久任务幂等完成 |
-| source_kind / evidence_kind（来源取得方式与证据性质） | packages/contracts/states.json#/states/SourceKind\|EvidenceKind；docs/architecture/state-contract.md:60 | `partial` | services/api/src/db/catalog.ts:5-22；services/api/src/knowledge/service.ts:60-64；packages/reference/constants.mjs:1-60；tests/reference/contract.test.mjs::H2；services/api/src/ocr/reference.ts:35-49；services/api/src/ocr/reference.ts:223-245；tests/integration/ocr-http.mjs | 公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；替身标记且 review_status=unverified，两种模式用量候选恒空；/herbicides 仍未装配，真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收 |
+| 幂等（Idempotency-Key 8..128、同键同体重放、同键异体 409、进行中 409） | docs/architecture/state-contract.md:34 | `partial` | services/api/src/routes/support.ts:80-148；services/api/src/app.ts:219-224；services/api/src/auth/idempotency.ts:31-33；services/api/src/auth/service.ts:104-107；services/api/src/admin/identity.ts:23-25；services/api/src/admin/idempotent-write.ts:55-72；tests/unit/idempotency-retry-after-http.test.mjs::真实产品登录 HTTP：同键请求仍在处理；tests/unit/idempotency-job-ttl.test.mjs | REQUEST_IN_PROGRESS的Retry-After: 1已合（#108）；认证/识别OCRASRTTS普通回执24小时及非滑动时效已合（#113）。后台独立默认仍5分钟且完成回执未自动清理；#116修复待CI批准/未合，不计入main。内存域重启不持久，其他键域/当前可见性及持久业务唯一键仍须按模块验收 |
+| source_kind / evidence_kind（来源取得方式与证据性质） | packages/contracts/states.json#/states/SourceKind\|EvidenceKind；docs/architecture/state-contract.md:60 | `partial` | services/api/src/db/catalog.ts:5-22；services/api/src/knowledge/service.ts:43-47；packages/reference/constants.mjs:1-60；tests/reference/contract.test.mjs::H2；services/api/src/ocr/reference.ts:35-49；services/api/src/ocr/reference.ts:223-245；tests/integration/ocr-http.mjs | 公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；替身标记且 review_status=unverified，两种模式用量候选恒空；/herbicides 仍未装配，真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收 |
 | 真实 / 替身 / 演示环境（execution_mode） | packages/contracts/states.json#/states/ExecutionMode；docs/architecture/state-contract.md:3 | `implemented` | services/api/src/contract.ts:9-11；services/api/src/config.ts:126-238；services/api/src/auth/wechat.ts:66-76；tests/unit/api-config.test.mjs::real 模式缺配置时一次性列出全部字段 | 无（本机实测：stub 启动并返回 meta.execution_mode=stub；APP_EXECUTION_MODE=real 且无凭据时 exit 1 并列出 9 个缺失字段，不半配置启动） |
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:529-573；tests/unit/recognitions-api.test.mjs::状态 7 cancelled | 识别域 cancelJob 已装配，CAS 增 revision、幂等重放、终态守卫与迟到结果不复活已有证据；公共 Job 未消费转写/OCR/合成，cancelAdminJob 只有独立后台服务且无 HTTP；持久租约、外发撤销与跨域生命周期仍待完成 |
-| 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:74-78；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
+| 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:57-60；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
 ## 3 已装配操作（32 条）
 
@@ -49,13 +51,13 @@
 | `putProfile` | PUT /me/profile | `implemented` | services/api/src/routes/profile.ts:29-42；services/api/src/profile/service.ts:72-104；tests/unit/profile-api.test.mjs::GY-I05 persistent profile/catalog HTTP and SQL regression | 无（需 If-Match 与 Idempotency-Key；空档案 revision=1，首次 PUT 写 revision=2） |
 | `listCrops` | GET /catalog/crops | `implemented` | services/api/src/routes/profile.ts:43-53；services/api/src/profile/service.ts:57-64；tests/unit/profile-api.test.mjs::GY-I05 persistent profile/catalog HTTP and SQL regression | 需 DATABASE_URL；目录行须与 packages/knowledge/catalog/crops.json 逐字段一致 |
 | `listRegions` | GET /catalog/regions | `implemented` | services/api/src/routes/profile.ts:43-53；services/api/src/profile/service.ts:57-64；tests/unit/profile-api.test.mjs::GY-I05 persistent profile/catalog HTTP and SQL regression | 需 DATABASE_URL；仅浙江（33 开头）行政区代码 |
-| `listConsents` | GET /me/consents | `partial` | services/api/src/routes/consents.ts:40-49；services/api/src/privacy/consent-pg.ts:48-55；services/api/src/privacy/consent-pg.ts:116-127 | 缺：游标为裸 base64url（consent-pg.ts:48-55），未 HMAC 签名、未绑定主体/过滤器/版本水位、无 15 分钟有效期，违反 state-contract.md:32；且依赖运维手工导入 consent_policies（0009 无管理 API/生产种子） |
+| `listConsents` | GET /me/consents | `partial` | services/api/src/routes/consents.ts:40-49；services/api/src/privacy/consent-pg.ts:109-120；services/api/src/privacy/consent-pagination.ts:24-65；tests/unit/consent-pagination-http.test.mjs::授权分页走实际产品 HTTP 与受限 SQL | 授权列表签名、主体/auth_epoch/水位绑定、稳定排序和15分钟固定期限已合（#109）；真实授权政策/接收方配置与用途链路仍须验收，grant依赖运维导入consent_policies，不把列表合成记录证据当真实授权全链完成 |
 | `grantConsent` | POST /me/consents | `partial` | services/api/src/routes/consents.ts:24-39；services/api/src/privacy/grant-pg.ts:26-97；tests/integration/consent-grant-pg.mjs::normal production app rejects synthetic registry | 该 purpose 的已核验可用政策行须先落入 consent_policies，否则 403 CONSENT_REQUIRED；合成政策注入/组件 PG 测试不等于真实授权来源和全消费者验收 |
-| `withdrawConsent` | DELETE /me/consents/{purpose} | `partial` | services/api/src/routes/consents.ts:50-64；services/api/src/privacy/consent-pg.ts:140-183 | 缺分支：撤回的消费者（jobs/media/exports/author_links）未接入，存在任一条即 409 OBJECT_UNAVAILABLE 拒绝（consent-pg.ts:164-169）；同样依赖 consent_policies 已落库 |
+| `withdrawConsent` | DELETE /me/consents/{purpose} | `partial` | services/api/src/routes/consents.ts:50-64；services/api/src/privacy/consent-pg.ts:135-179 | 撤回消费者（jobs/media/exports/author_links）未接入，存在任一条即409 OBJECT_UNAVAILABLE拒绝（consent-pg.ts:153-163）；真实授权政策/接收方和外发/注销全链未验，保留fail-closed边界 |
 | `getJob` | GET /jobs/{id} | `partial` | services/api/src/routes/recognitions.ts:118-122；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线） |
 | `cancelJob` | POST /jobs/{id}/cancel | `partial` | services/api/src/routes/recognitions.ts:130-134；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线） |
-| `listKnowledge` | GET /knowledge | `implemented` | services/api/src/routes/knowledge.ts:25-29；services/api/src/knowledge/service.ts:14-80；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需 DATABASE_URL 与 catalog_read.current_knowledge 视图；排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致 |
-| `getKnowledge` | GET /knowledge/{id} | `implemented` | services/api/src/routes/knowledge.ts:30-34；services/api/src/knowledge/service.ts:60-69；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需 DATABASE_URL；不可见/不存在统一 404，ETag 为 revision |
+| `listKnowledge` | GET /knowledge | `partial` | services/api/src/routes/knowledge.ts:25-29；services/api/src/knowledge/service.ts:14-56；services/api/src/knowledge/pagination.ts:24-65；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留 |
+| `getKnowledge` | GET /knowledge/{id} | `implemented` | services/api/src/routes/knowledge.ts:30-34；services/api/src/knowledge/service.ts:43-56；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需 DATABASE_URL；不可见/不存在统一 404，ETag 为 revision |
 | `createRecognition` | POST /recognitions | `partial` | services/api/src/routes/recognitions.ts:57-61；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `getRecognition` | GET /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:74-78；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `deleteRecognition` | DELETE /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:101-105；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
@@ -162,7 +164,7 @@
 
 | 范围 | implemented | partial | planned | 合计 |
 | --- | --- | --- | --- | --- |
-| 契约操作 | 12 | 73 | 27 | 112 |
+| 契约操作 | 11 | 74 | 27 | 112 |
 | 横切维度 | 2 | 6 | 0 | 8 |
 <!-- contract-status-tables:end -->
 
@@ -186,6 +188,6 @@ node --test tests/unit/contract-status-tool.test.mjs
 
 ## 7 验证边界
 
-本轮记录见[接口对照刷新验证](../verification/gy-i01-contract-status-refresh-20261013.md)。既有业务证据按文件/用例保留，本次未改变业务实现；不重复要求全项目、真机或付费供应商验收。
+本轮记录见[新 main 进度同步验证](../verification/gy-i01-status-sync-20261013.md)，原装配工具验证见[接口对照刷新验证](../verification/gy-i01-contract-status-refresh-20261013.md)。既有已合业务证据按提交/文件/用例保留，本次未改变业务实现；不重复要求全项目、真机或付费供应商验收。
 
 旧记录中的“本机没有 PG”“未取得成功响应”只描述当时环境。本轮只运行清洁 stub 产品装配与相称回归，不据其他任务的本地 PG、微信模拟器或旧 CI 推定真实供应商、真实微信身份、一加 ACE3V 或资料/用量验收通过。整项 #1 的契约偏差、跨域任务、真实消费者等剩余条件仍按原 issue 验收。

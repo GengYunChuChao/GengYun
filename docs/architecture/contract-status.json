@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 3,
-  "baseline": "b1f6ab0e4dc304d2dd621d6a20852b31ccbfab3e",
+  "proposal_revision": 4,
+  "baseline": "3e8f89bb7dcd79d4ffe509ec79260acd71b26ded",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -309,14 +309,18 @@
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "48-55"
+          "lines": "109-120"
         },
         {
-          "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "116-127"
+          "path": "services/api/src/privacy/consent-pagination.ts",
+          "lines": "24-65"
+        },
+        {
+          "test": "tests/unit/consent-pagination-http.test.mjs",
+          "name": "授权分页走实际产品 HTTP 与受限 SQL"
         }
       ],
-      "blocker": "缺：游标为裸 base64url（consent-pg.ts:48-55），未 HMAC 签名、未绑定主体/过滤器/版本水位、无 15 分钟有效期，违反 state-contract.md:32；且依赖运维手工导入 consent_policies（0009 无管理 API/生产种子）"
+      "blocker": "授权列表签名、主体/auth_epoch/水位绑定、稳定排序和15分钟固定期限已合（#109）；真实授权政策/接收方配置与用途链路仍须验收，grant依赖运维导入consent_policies，不把列表合成记录证据当真实授权全链完成"
     },
     {
       "id": "grantConsent",
@@ -360,10 +364,10 @@
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "140-183"
+          "lines": "135-179"
         }
       ],
-      "blocker": "缺分支：撤回的消费者（jobs/media/exports/author_links）未接入，存在任一条即 409 OBJECT_UNAVAILABLE 拒绝（consent-pg.ts:164-169）；同样依赖 consent_policies 已落库"
+      "blocker": "撤回消费者（jobs/media/exports/author_links）未接入，存在任一条即409 OBJECT_UNAVAILABLE拒绝（consent-pg.ts:153-163）；真实授权政策/接收方和外发/注销全链未验，保留fail-closed边界"
     },
     {
       "id": "listExports",
@@ -511,7 +515,7 @@
       "scope": "user",
       "version_required": false,
       "route_mounted": true,
-      "status": "implemented",
+      "status": "partial",
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
@@ -519,14 +523,18 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "14-80"
+          "lines": "14-56"
+        },
+        {
+          "path": "services/api/src/knowledge/pagination.ts",
+          "lines": "24-65"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
           "name": "knowledge real projection and limited runtime over loopback HTTP"
         }
       ],
-      "blocker": "需 DATABASE_URL 与 catalog_read.current_knowledge 视图；排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致"
+      "blocker": "需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留"
     },
     {
       "id": "getKnowledge",
@@ -544,7 +552,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "60-69"
+          "lines": "43-56"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
@@ -2168,23 +2176,27 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/knowledge/service.ts",
-          "lines": "36-51"
+          "path": "services/api/src/knowledge/pagination.ts",
+          "lines": "24-65"
         },
         {
           "path": "services/api/src/profile/service.ts",
           "lines": "105-131"
         },
         {
-          "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "48-55"
+          "path": "services/api/src/privacy/consent-pagination.ts",
+          "lines": "24-65"
         },
         {
-          "test": "tests/unit/knowledge-api.test.mjs",
-          "name": "knowledge real projection and limited runtime over loopback HTTP"
+          "test": "tests/unit/knowledge-pagination.test.mjs",
+          "name": "knowledge chain keeps first 15min deadline"
+        },
+        {
+          "test": "tests/unit/consent-pagination.test.mjs",
+          "name": "15分钟截止严格生效"
         }
       ],
-      "blocker": "缺：/me/consents 游标未签名且未绑定主体/过滤器/版本水位/有效期（consent-pg.ts:48-55）；/knowledge 排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致。契约 Limit 1..50/默认 20 已在三处 schema 中一致"
+      "blocker": "授权列表HMAC/主体epoch/水位/15分钟固定期限已合（#109），科普固定期限与过期恢复已合（#115）；知识id_asc排序仍偏差，缺历史创建时点字段；目录按稳定目录键排序，其他后台/社区/消息分页仍需按各模块核对，不能记整维度完成"
     },
     {
       "key": "versioning",
@@ -2226,23 +2238,34 @@
           "lines": "80-148"
         },
         {
+          "path": "services/api/src/app.ts",
+          "lines": "219-224"
+        },
+        {
           "path": "services/api/src/auth/idempotency.ts",
-          "lines": "1-60"
+          "lines": "31-33"
         },
         {
-          "test": "tests/unit/auth-routes.test.mjs",
-          "name": "幂等：同键同体收敛到同一会话"
+          "path": "services/api/src/auth/service.ts",
+          "lines": "104-107"
         },
         {
-          "path": "services/api/src/recognitions/service.ts",
-          "lines": "529-568"
+          "path": "services/api/src/admin/identity.ts",
+          "lines": "23-25"
         },
         {
-          "test": "tests/unit/recognitions-api.test.mjs",
-          "name": "GY-I09 识别任务闭环"
+          "path": "services/api/src/admin/idempotent-write.ts",
+          "lines": "55-72"
+        },
+        {
+          "test": "tests/unit/idempotency-retry-after-http.test.mjs",
+          "name": "真实产品登录 HTTP：同键请求仍在处理"
+        },
+        {
+          "test": "tests/unit/idempotency-job-ttl.test.mjs"
         }
       ],
-      "blocker": "身份、档案、授权、识别/OCR/转写/合成均有各自幂等实现；support.ts 的 409 REQUEST_IN_PROGRESS 仍未带 Retry-After 响应头，与状态协议约定不符；内存域幂等记录重启不持久，不能据此宣称通用持久任务幂等完成"
+      "blocker": "REQUEST_IN_PROGRESS的Retry-After: 1已合（#108）；认证/识别OCRASRTTS普通回执24小时及非滑动时效已合（#113）。后台独立默认仍5分钟且完成回执未自动清理；#116修复待CI批准/未合，不计入main。内存域重启不持久，其他键域/当前可见性及持久业务唯一键仍须按模块验收"
     },
     {
       "key": "source_kind",
@@ -2256,7 +2279,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "60-64"
+          "lines": "43-47"
         },
         {
           "path": "packages/reference/constants.mjs",
@@ -2338,7 +2361,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "74-78"
+          "lines": "57-60"
         },
         {
           "test": "tests/unit/api-health.test.mjs",
