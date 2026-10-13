@@ -15,6 +15,10 @@ try {
  f.state.withdrawn = true; await assert.rejects(api.detail(ID, {}), e => e.code === 'NOT_FOUND'); assert.equal((await api.list({})).items.length, 0); f.state.withdrawn = false;
  assert.equal((await api.list({ q: '无结果' })).items.length, 0); assert.equal((await api.list({ growth_stage: '未采集' })).items.length, 0); await assert.rejects(api.detail(ID, { planting_method: '未采集' }), e => e.code === 'NOT_FOUND');
  const first = await api.list({ q: '分页' }); const second = await api.list({ q: '分页', cursor: first.nextCursor }); assert.equal(second.nextCursor, null); assert.notEqual(second.items[0].id, first.items[0].id);
+ f.state.expiredCursor = true;
+ await assert.rejects(api.list({ q: '分页', cursor: first.nextCursor }), e => e.code === 'INVALID_CURSOR' && /点击查询重新开始/.test(api.message(e)));
+ assert.equal(token, f.token); assert.ok((await api.list({ q: '分页' })).nextCursor); assert.equal(f.requests.at(-1).query.cursor, undefined);
+ f.state.expiredCursor = false;
  await assert.rejects(api.list({ q: '服务失败' }), e => e.code === 'UNAVAILABLE'); token = 'invalid-synthetic'; await assert.rejects(api.list({}), e => e.code === 'SESSION_REQUIRED'); assert.equal(token, null);
- console.log('PASS 8 loopback HTTP groups; actual client; synthetic identity/data/server; no production API or PG claim');
+ console.log('PASS 9 loopback HTTP groups; actual client; synthetic identity/data/server; no production API or PG claim');
 } finally { await new Promise(r => f.server.close(r)) }

@@ -29,8 +29,8 @@ import { createHmac } from 'node:crypto';
 import type { SqlExecutor } from './store.ts';
 import { sha256Hex } from './tokens.ts';
 
-/** 幂等重放窗口：只覆盖客户端超时重试。 */
-export const IDEMPOTENCY_TTL_SECONDS = 5 * 60;
+/** 普通幂等回执保留 24 小时（state-contract）；不延长会话或持久业务唯一键。 */
+export const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * 不含任何凭据的结果引用。

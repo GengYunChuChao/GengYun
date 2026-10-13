@@ -4,8 +4,9 @@
  *   GET    /recognitions/{id}            getRecognition    → RecognitionEnvelope
  *   PATCH  /recognitions/{id}/selection  selectSpecies     → RecognitionEnvelope
  *   DELETE /recognitions/{id}            deleteRecognition → 202 AckEnvelope
- *   GET    /jobs/{id}                    getJob            → JobEnvelope（读 JobState）
- *   POST   /jobs/{id}/cancel             cancelJob         → JobEnvelope（构造 cancelled）
+ *
+ * **不再注册** `GET /jobs/{id}` 与 `POST /jobs/{id}/cancel`：这两个路径已收敛到共享作业面
+ * （`services/api/src/jobs/routes.ts`，单一注册点；识别域改为以作业源形式接入）。
  *
  * 归属：一律 `guards.requireUser`；越权/不存在由服务层统一映射 NOT_FOUND，不泄露存在性。
  * 私有响应一律 `Cache-Control: no-store` + 资源 revision 强 ETag。
@@ -113,31 +114,8 @@ export function registerRecognitionRoutes(
   );
 
   // ---------------------------------------------------------------- 任务
-  // GET /jobs/{id} 是契约里唯一能读到 JobState 的接口，识别页按它分七类呈现。
-
-  app.get(
-    `${API_PREFIX}/jobs/:id`,
-    { preHandler: guards.requireUser, schema: { params: idParams } },
-    async (request, reply) => {
-      const data = await service.getJob({
-        userId: actorId(request),
-        jobId: (request.params as { id: string }).id,
-      });
-      return reply.headers(noStore).header('ETag', `"${data.revision}"`).send({ data, meta: buildMeta(request, config) });
-    },
-  );
-
-  app.post(
-    `${API_PREFIX}/jobs/:id/cancel`,
-    { preHandler: guards.requireUser, schema: { params: idParams } },
-    async (request, reply) => {
-      const data = await service.cancelJob({
-        userId: actorId(request),
-        jobId: (request.params as { id: string }).id,
-        ifMatch: request.headers['if-match'],
-        idempotencyKey: request.headers['idempotency-key'],
-      });
-      return reply.headers(noStore).header('ETag', `"${data.revision}"`).send({ data, meta: buildMeta(request, config) });
-    },
-  );
+  // `/jobs/{id}` 与 `/jobs/{id}/cancel` **已收敛到共享作业面** `services/api/src/jobs/routes.ts`
+  // （GY-I01 跨 kind 作业读面/取消面，单一注册点）。识别域只提供作业源
+  // （`createRecognitionJobSource(service)`，在 app.ts 装配时注册），因此这里**不再注册**这两个路径；
+  // 把识别域服务直接喂给共享面，行为与迁移前一致（既有集成回归仍全绿）。
 }
