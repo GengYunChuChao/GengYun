@@ -34,6 +34,8 @@ try {
     // 定位即时选地区（GY-I05／F02）：仅授权与失败分支，不内置坐标→地区转换资源。
     'utils/location-region.js',
     'utils/knowledge-api.js',
+    // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/identify-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
