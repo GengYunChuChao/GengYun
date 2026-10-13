@@ -1,8 +1,8 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { PgPool } from '../db/pool.ts';
 import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
 import { ApiError } from '../errors.ts';
+import { paginateKnowledge } from './pagination.ts';
 
 type Identity = { identity: AuthenticatedIdentity; token: string };
 export interface KnowledgeQuery {
@@ -12,7 +12,6 @@ export interface KnowledgeQuery {
 type Row = Record<string, any>;
 /** Only the operator-owned, fail-closed public projection is readable by this group. */
 export function createKnowledgeService(pool: PgPool, key: string) {
-  const sign = (text: string) => createHmac('sha256', key).update(text).digest('base64url');
   async function read(input: Identity, query: KnowledgeQuery, id?: string) {
     let client;
     try {
@@ -33,23 +32,7 @@ export function createKnowledgeService(pool: PgPool, key: string) {
       const filter = {q: query.q ?? null, crop_id: query.crop_id ?? null, region_code: query.region_code ?? null,
         species_id: query.species_id ?? null, growth_stage: query.growth_stage ?? null,
         planting_method: query.planting_method ?? null, use_scene: query.use_scene ?? null};
-      const watermark = sign(JSON.stringify(rows));
-      let after = '';
-      if (query.cursor !== undefined) {
-        try {
-          const [encoded, signature, extra] = query.cursor.split('.');
-          if (!encoded || !signature || extra !== undefined) throw Error();
-          const expected = Buffer.from(sign(encoded)), got = Buffer.from(signature);
-          if (expected.length !== got.length || !timingSafeEqual(expected,got)) throw Error();
-          const cursor = JSON.parse(Buffer.from(encoded,'base64url').toString('utf8'));
-          if (cursor.user !== input.identity.userId || cursor.kind !== 'knowledge' || cursor.sort !== 'id_asc'
-            || cursor.watermark !== watermark || JSON.stringify(cursor.filter) !== JSON.stringify(filter)
-            || !Number.isSafeInteger(cursor.expires) || cursor.expires <= Date.now()
-            || typeof cursor.after !== 'string') throw Error();
-          after = cursor.after;
-        } catch { throw new ApiError('INVALID_CURSOR', '资料游标无效或资料已变化'); }
-      }
-      const visible = rows.filter((row: Row) => (!id || row.id === id) && row.id > after
+      const visible = rows.filter((row: Row) => (!id || row.id === id)
         && (!filter.q || `${row.title}\n${row.body}`.toLocaleLowerCase('zh-CN').includes(filter.q.toLocaleLowerCase('zh-CN')))
         && (!filter.crop_id || row.crop_ids.includes(filter.crop_id))
         && (!filter.region_code || row.region_codes.includes(filter.region_code))
@@ -63,10 +46,10 @@ export function createKnowledgeService(pool: PgPool, key: string) {
           validity: 'valid',review_status: 'verified',updated_at: new Date(row.updated_at).toISOString()},
         conditions: null,reference_state: 'available',dose_cards: []});
       if (id && !visible.length) throw new ApiError('NOT_FOUND', '资料不可用');
-      const page = visible.slice(0,query.limit ?? 20);
-      const encoded = Buffer.from(JSON.stringify({user: input.identity.userId,kind:'knowledge',sort:'id_asc',filter,watermark,
-        after:page.at(-1)?.id,expires:Date.now()+15*60*1000})).toString('base64url');
-      const result = id ? project(visible[0]) : {items: page.map(project),next_cursor:visible.length>page.length ? `${encoded}.${sign(encoded)}` : null};
+      const page = id ? null : paginateKnowledge(visible, { userId: input.identity.userId,
+        authEpoch: input.identity.authEpoch, hmacKey: key, filter, snapshot: rows,
+        cursor: query.cursor, limit: query.limit ?? 20 });
+      const result = page === null ? project(visible[0]) : {items: page.items.map(project),next_cursor:page.next_cursor};
       const alive = await client.query('SELECT id FROM public.sessions WHERE id=$1::uuid AND expires_at>clock_timestamp()', [input.identity.sessionId]);
       if (!alive.rows.length) throw new ApiError('SESSION_EXPIRED','会话已失效');
       await client.query('COMMIT');
