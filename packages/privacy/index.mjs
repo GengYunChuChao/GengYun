@@ -12,4 +12,7 @@ export * from './commit-gate.mjs';
 export * from './writeback.mjs';
 export * from './ledger.mjs';
 export * from './deletion.mjs';
+export * from './deletion-modules.mjs';
+export * from './egress.mjs';
+export * from './in-flight.mjs';
 export * from './redact.mjs';

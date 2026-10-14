@@ -320,6 +320,69 @@ export function createExportLedger({
     return r ? projectRecord(r) : null;
   }
 
+  // ---------------------------------------------------------------------------
+  // 读面（追溯）：按用户列出外发账本，keyset 游标（createdAt desc, id desc）。
+  // 只读、不动任何状态；契约形状（Export / ExportPage）由 egress.mjs 投影。
+  // 游标不签名：它只含「上一页最后一条的时间与 id」，不承载任何授权语义
+  // （HTTP 接线方仍须按本仓既有分页口径做核对与限幅）。
+  // ---------------------------------------------------------------------------
+  function encodeCursor(record) {
+    return Buffer.from(
+      JSON.stringify({ t: new Date(record.createdAt).toISOString(), id: record.id }),
+      'utf8',
+    ).toString('base64url');
+  }
+
+  function decodeCursor(cursor) {
+    if (typeof cursor !== 'string' || cursor.length === 0 || cursor.length > 2048) {
+      throw new PrivacyError('INVALID_CURSOR', '游标非法');
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    } catch {
+      throw new PrivacyError('INVALID_CURSOR', '游标不可解析');
+    }
+    if (!parsed || typeof parsed.id !== 'string' || typeof parsed.t !== 'string') {
+      throw new PrivacyError('INVALID_CURSOR', '游标非法');
+    }
+    const at = new Date(parsed.t);
+    if (!Number.isFinite(at.getTime())) throw new PrivacyError('INVALID_CURSOR', '游标非法');
+    return { at, id: parsed.id };
+  }
+
+  /**
+   * 列出某用户的外发账本（追溯用）。
+   * @param {{ userId: string, limit?: number, cursor?: string|null }} input
+   * @returns {{ items: Array<object>, nextCursor: string|null }}
+   */
+  function list({ userId, limit = 50, cursor = null } = {}) {
+    if (!userId) throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      throw new PrivacyError('INVALID_REQUEST', 'limit 必须是 1..50 的整数');
+    }
+    const after = cursor === null || cursor === undefined ? null : decodeCursor(cursor);
+    const ordered = [...rows.values()]
+      .filter((record) => record.userId === userId)
+      .sort((a, b) => {
+        const at = new Date(a.createdAt).getTime();
+        const bt = new Date(b.createdAt).getTime();
+        if (at !== bt) return bt - at;
+        if (a.id === b.id) return 0;
+        return a.id < b.id ? 1 : -1;
+      })
+      .filter((record) => {
+        if (after === null) return true;
+        const at = new Date(record.createdAt).getTime();
+        const aat = after.at.getTime();
+        if (at !== aat) return at < aat;
+        return record.id < after.id;
+      });
+    const page = ordered.slice(0, limit);
+    const nextCursor = ordered.length > limit ? encodeCursor(page[page.length - 1]) : null;
+    return { items: page.map(projectRecord), nextCursor };
+  }
+
   /**
    * 实际派发：先做**非权威**异步预检（早退 + 细化错误码），再以 reserve 快照为期望，
    * 通过 `commitGate.commit` 在**单次同步临界区**内原子完成「账号 / 全部必需用途 / 接收方」
@@ -458,6 +521,7 @@ export function createExportLedger({
   return {
     reserve,
     get,
+    list,
     markSent,
     markFailed,
     markOutcomeUnknown,
