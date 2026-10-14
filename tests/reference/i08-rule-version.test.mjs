@@ -7,11 +7,10 @@
 //   3) 消费端登记表（`RULE_VERSION_CONSUMERS`）里每个文件都**真实存在**，
 //      且**不得**出现与当前版本不同的 `gy-i08/x.y.z` 字面量（漂移即失败）；
 //   4) 版本号由规则规格内容派生摘要 ⇒ 改维度/改阻断类别/改拒绝原因都会改变摘要（可追溯）；
-//   5) 跨端镜像（微信小程序无构建步骤、无法 import 域库）由一致性测试断言同值。
-//
-// 另如实登记一处**跨线缺项**：`services/api/src/ocr/state.ts`（GY-I10 线）另有一套
-// 用量卡闸门，未声明 gy-i08 规则版本。本轮**不改他人已合并实现**，只做漂移检测
-// 与登记，交指挥协调；不得据此声称「已统一」。
+//   5) 跨端镜像（微信小程序无构建步骤、无法 import 域库）由一致性测试断言同值；
+//   6) **跨线**平行用量闸门（GY-I10 线 `services/api/src/ocr/state.ts`）已按用户 2026-10-14
+//      授权纳入同一规则版本：版本值取自单一事实来源，两层语义差异如实登记为闭集，
+//      并由漂移检测断言（域库版本一变即失败，要求人工重新复核差异表）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,6 +34,11 @@ import {
   ruleVersionDigest,
   ruleVersionSpec,
 } from '../../packages/reference/index.mjs';
+import {
+  DOSE_GATE_REASONS,
+  DOSE_GATE_RULE_VERSION,
+  DOSE_GATE_RULE_VERSION_DIFFERENCES,
+} from '../../services/api/src/ocr/state.ts';
 import { miniReference } from './_fixtures.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -135,16 +139,66 @@ test('GY-I08 规则版本：域库与小程序源码不得出现与当前版本�
   assert.ok(literals.has(APPLICABILITY_RULE_VERSION), '源码中应显式出现当前规则版本');
 });
 
-test('GY-I08 规则版本：跨线平行用量闸门（GY-I10 线）如实登记为缺项，不声称已统一', () => {
-  const gap = RULE_VERSION_CONSUMERS.filter((c) => c.status === 'cross_line_gap');
-  assert.equal(gap.length, 1, '应恰好登记一处跨线缺项（不得静默省略）');
-  assert.equal(gap[0].path, 'services/api/src/ocr/state.ts');
-  const source = read(gap[0].path);
-  // 已合并实现的漂移检测：该文件**不得**声明任何 gy-i08 版本（声明了就必须与本规则同值，
-  // 那意味着需要跨线对齐；未声明则如实登记为缺项，由指挥协调）。
-  const literals = versionLiterals(source);
-  assert.deepEqual(literals, [], `跨线闸门出现了 gy-i08 版本声明（需跨线协调对齐）：${literals.join(', ')}`);
-  assert.ok(/decideDoseCard|gateDoseCards/.test(source), '缺项登记应指向真实的平行闸门实现');
+// GY-I08 · 跨线（GY-I10 线）用量闸门的规则版本漂移检测。
+//
+// 用户 2026-10-14 授权改他人已合并文件后，`services/api/src/ocr/state.ts` 纳入同一规则版本：
+// 版本值**取自域库单一事实来源**（import，不是第二份拷贝），两层语义差异登记为闭集。
+// 本测试断言「一旦该处判定与本规则版本不一致即失败」：
+//   1) 声明值 === 域库 APPLICABILITY_RULE_VERSION；
+//   2) 差异表的复核锚点 `reviewed_against` === 当前版本（域库升版即失败，要求人工复核该表）；
+//   3) 每个拒绝原因都映射到**闭集内**的阻断类别；
+//   4) 拒绝原因联合 ↔ 映射表键完全一致（两份清单不得漂移）；
+//   5) 未能表达的类别（禁限用维度）如实登记，不得静默省略、也不得声称已等同；
+//   6) 该文件内只允许**一处**版本字面量（即复核锚点），不得出现第二份拷贝；
+//   7) 交叉线**无**剩余的未声明平行闸门（新增平行闸门必须显式登记）。
+test('GY-I08 规则版本：跨线用量闸门（GY-I10 线）已纳入同一版本，且版本漂移即失败', () => {
+  // 1) 版本取自单一事实来源。
+  assert.equal(DOSE_GATE_RULE_VERSION, APPLICABILITY_RULE_VERSION, '跨线闸门声明的规则版本必须等于域库单一事实来源');
+
+  // 2) 复核锚点：域库升版后本表必须被人工重新复核。
+  const diff = DOSE_GATE_RULE_VERSION_DIFFERENCES;
+  assert.equal(diff.reviewed_against, APPLICABILITY_RULE_VERSION, '差异登记表必须针对**当前**规则版本复核过');
+
+  // 3) 映射目标必须在阻断类别闭集内。
+  const mapped = Object.entries(diff.reason_to_block_code);
+  for (const [reason, code] of mapped) {
+    assert.ok(BLOCK_CODE_LIST.includes(code), `拒绝原因 ${reason} 映射到闭集外的类别：${code}`);
+  }
+  assert.equal(mapped.length, DOSE_GATE_REASONS.length, '映射表与拒绝原因闭集必须一一对应');
+
+  const source = read('services/api/src/ocr/state.ts');
+
+  // 4) 穷尽性（源码联合 ↔ 运行期映射表键）：两份清单不得漂移。
+  const unionBlock = /export type DoseGateReason =([\s\S]*?);/.exec(source);
+  assert.ok(unionBlock, '应能读到 DoseGateReason 联合声明');
+  const unionMembers = [...unionBlock[1].matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]);
+  assert.ok(unionMembers.length > 0, 'DoseGateReason 联合应含成员');
+  assert.deepEqual(
+    [...unionMembers].sort(),
+    [...DOSE_GATE_REASONS].sort(),
+    'DoseGateReason 联合与映射表键必须完全一致',
+  );
+
+  // 5) 未能表达的类别如实登记（禁限用维度：冻结契约 DoseSource 无对应字段）。
+  assert.deepEqual(
+    [...diff.not_enforced_block_codes].sort(),
+    [BLOCK_CODES.BANNED, BLOCK_CODES.RESTRICTED, BLOCK_CODES.RESTRICTION_UNKNOWN].sort(),
+    '未能表达的阻断类别必须逐项列出（不得静默省略、也不得声称已等同）',
+  );
+
+  // 6) 只允许一处版本字面量（= 复核锚点）。
+  assert.deepEqual(
+    versionLiterals(source),
+    [APPLICABILITY_RULE_VERSION],
+    'ocr/state.ts 只应出现复核锚点这一处规则版本字面量（不得再抄一份）',
+  );
+
+  // 7) 交叉线不得再留下未声明的平行闸门。
+  const gaps = RULE_VERSION_CONSUMERS.filter((c) => c.status === 'cross_line_gap');
+  assert.deepEqual(gaps.map((c) => c.path), [], '不得存在未声明本规则版本的平行用量闸门');
+
+  // 登记指向的实现仍真实存在（登记不是空声明）。
+  assert.ok(/decideDoseCard|gateDoseCards/.test(source), '跨线登记应指向真实的平行闸门实现');
 });
 
 test('GY-I08 规则版本：版本号由规则规格内容派生，任一成员变化都会改变摘要（可追溯）', () => {

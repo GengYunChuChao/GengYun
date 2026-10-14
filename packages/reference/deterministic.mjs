@@ -551,8 +551,10 @@ export function ruleVersionDigest() {
  * `status` 语义：
  *   - `single_source`：直接或间接取自 `packages/reference/constants.mjs` 的同一常量；
  *   - `mirror_asserted`：跨运行时无法 import（微信小程序无构建步骤）⇒ 常量镜像 + 一致性测试断言同值；
- *   - `cross_line_gap`：**他人已合并实现**（GY-I10 线）中的平行用量闸门，未声明本规则版本
- *     —— 本轮**不改他人实现**，如实登记为缺项并交指挥协调（不静默声称已统一）。
+ *   - `cross_line_gap`：平行用量闸门（他线已合并实现）**未声明**本规则版本
+ *     —— 当前为 **0 条**：GY-I10 线 `services/api/src/ocr/state.ts` 已按用户 2026-10-14 授权
+ *     纳入同一规则版本（见该文件的 `DOSE_GATE_RULE_VERSION_DIFFERENCES`：两层语义差异如实登记，
+ *     **不声称判定已等同**）；此后任何新增的未声明平行闸门都必须显式登记，测试断言该集合为空。
  */
 export const RULE_VERSION_CONSUMERS = Object.freeze([
   Object.freeze({ id: 'domain-constants', path: 'packages/reference/constants.mjs', status: 'single_source', version_source: 'APPLICABILITY_RULE_VERSION 常量（唯一事实来源）' }),
@@ -562,7 +564,13 @@ export const RULE_VERSION_CONSUMERS = Object.freeze([
   Object.freeze({ id: 'api-knowledge', path: 'services/api/src/knowledge/reference-query.ts', status: 'single_source', version_source: '经 packages/reference/index.mjs 消费，不另立版本' }),
   Object.freeze({ id: 'miniprogram-adapter', path: 'miniprogram/utils/reference.js', status: 'mirror_asserted', version_source: '跨端镜像常量 APPLICABILITY_RULE_VERSION（一致性测试断言同值）' }),
   Object.freeze({ id: 'miniprogram-detail', path: 'miniprogram/pages/referencedetail/referencedetail.js', status: 'mirror_asserted', version_source: '消费 miniprogram/utils/reference.js，页面展示同值 rule_version' }),
-  Object.freeze({ id: 'ocr-dose-gate', path: 'services/api/src/ocr/state.ts', status: 'cross_line_gap', version_source: '**未声明** gy-i08 规则版本（GY-I10 线独立用量闸门，本轮不改他人实现）' }),
+  Object.freeze({
+    id: 'ocr-dose-gate',
+    path: 'services/api/src/ocr/state.ts',
+    status: 'single_source',
+    version_source:
+      '直接 import constants.mjs 的 APPLICABILITY_RULE_VERSION 并导出为 DOSE_GATE_RULE_VERSION；差异登记见 DOSE_GATE_RULE_VERSION_DIFFERENCES（本层不实现禁限用维度）',
+  }),
 ]);
 
 /** 规则版本的完整追溯描述（版本号 + 规格 + 内容摘要 + 消费端登记）。 */

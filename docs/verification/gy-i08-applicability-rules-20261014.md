@@ -58,7 +58,7 @@
 | 后端路由 | `services/api/src/knowledge/reference-query.ts` | 经 `packages/reference/index.mjs` 消费，不另立版本 | `single_source` |
 | 小程序适配层 | `miniprogram/utils/reference.js` | 跨运行时无法 import ⇒ **常量镜像** + 一致性测试断言同值 | `mirror_asserted` |
 | 小程序详情页 | `miniprogram/pages/referencedetail/referencedetail.js` | 消费小程序适配层，页面展示同值 `rule_version` | `mirror_asserted` |
-| OCR 用量闸门（**他人已合并**） | `services/api/src/ocr/state.ts` | **未声明** gy-i08 规则版本 | `cross_line_gap`（如实登记，本轮不改他人实现、不声称已统一） |
+| OCR 用量闸门（**他人已合并**，用户 2026-10-14 授权纳入） | `services/api/src/ocr/state.ts` | **直接 import** 单一事实来源并导出 `DOSE_GATE_RULE_VERSION`；差异见 `DOSE_GATE_RULE_VERSION_DIFFERENCES` | `single_source`（**声明同版本**；语义差异登记为闭集 + 漂移检测断言，见 §2.5） |
 
 ### 2.3 跨端闭集同构（本轮实测出并修掉一处潜在分叉）
 
@@ -89,6 +89,48 @@ patched_old_mirror: removed 2 lines
 
 开关只影响「是否产出建议／卡片」，**不改变适用结论**（`applicable` 仍如实反映条件是否适用），
 因此页面能把「条件不适用」与「开关已关闭」分开表达。
+
+### 2.5 跨线统一：`services/api/src/ocr/state.ts` 纳入 `gy-i08/1.2.0`
+
+**授权与回退**：用户 **2026-10-14** 授权改他人已合并文件（GY-I10 线）。改动为**纯声明 + 测试**，
+**无行为改动**（未新增/放宽/收紧任何一条阻断判定，未改对外契约与错误码）；
+**回退方式 = 删除该文件顶部的 import 与 `DOSE_GATE_RULE_VERSION` / `DOSE_GATE_REASON_BLOCK_CODES` /
+`DOSE_GATE_REASONS` / `DOSE_GATE_RULE_VERSION_DIFFERENCES` 四个导出**，即还原为「未声明版本」。
+
+**做的是**：版本值直接 `import { APPLICABILITY_RULE_VERSION } from '…/packages/reference/index.mjs'`
+（**不是第二份拷贝**）；本层每个拒绝原因映射到域库 `BLOCK_CODES` 的**枚举成员本身**，
+并由 `Record<DoseGateReason, string>` 让**穷尽性由 tsc 保证**（新增原因不映射 ⇒ `npm run lint` 失败）。
+
+**没做、且本轮不能做的**：把 GY-I08 的**判定**搬进本层 —— 那是**行为改动**，两层本就不同层：
+
+| | GY-I08 闸门（域库） | GY-I10 闸门（本层） |
+| --- | --- | --- |
+| 判定对象 | 内部记录（含 `verification` / `source` / 适用上下文） | **冻结契约载荷**（`DoseCardPayload` + 外层候选 + 登记制剂） |
+| 判定内容 | 8 维度适用性（来源／**禁限用**／作物／生育期／地区／制剂／含量剂型／使用场景）+ 原文用量绑定 | 载荷完整性与绑定（`card` ↔ 请求条件 ↔ 登记制剂）+ 来源可信度（`source_kind`／`validity`／`review_status`／`simulated`） |
+
+**如实登记的差异**：冻结契约 `DoseSource`（`packages/contracts/openapi.json`）只有
+`source_kind` / `validity` / `review_status`，**没有任何禁限用字段** ⇒ 本层**数据形状无法表达**
+`banned` / `restricted` / `restriction_unknown` 三类阻断（代码内登记为 `not_enforced_block_codes`）。
+禁限用筛选在 GY-I08 适用过滤层完成；**真实统一需契约侧新增字段，超出本轮范围**。
+因此本层**不声称判定已与 GY-I08 等同**，只声称「**同一规则版本 + 差异已登记 + 漂移可检测**」。
+`services/api/src/knowledge/reference.d.ts` 相应补了 `APPLICABILITY_RULE_VERSION` 与
+`BLOCK_CODES`（14 个具体键）的只读类型声明（加法，不改既有声明）。
+
+**漂移检测（负控制实测）**：
+
+```text
+# 人为制造版本漂移：把域库常量由 gy-i08/1.2.0 改为 gy-i08/1.2.1
+✖ GY-I08 规则版本：跨线用量闸门（GY-I10 线）已纳入同一版本，且版本漂移即失败
+  AssertionError [ERR_ASSERTION]: 差异登记表必须针对**当前**规则版本复核过
+ℹ pass 5  ℹ fail 3
+# 还原为 1.2.0（文件 SHA256 与修改前一致：45DF49DA9D728B25EA4B96EE833306E4F9761A8EA918015D494EA0CFD1767094）
+✔ GY-I08 规则版本：跨线用量闸门（GY-I10 线）已纳入同一版本，且版本漂移即失败
+ℹ pass 8  ℹ fail 0
+```
+
+该测试同时断言：声明值 === 域库常量；映射目标全部落在 14 类闭集内；`DoseGateReason` 联合 ↔
+映射表键**完全一致**（两份清单不得漂移）；未能表达的类别逐项列出；该文件内只允许**一处**版本
+字面量（即复核锚点，不得再抄一份）；交叉线**无**剩余未声明的平行闸门。
 
 ## 3 100 组用例原始输出
 
@@ -189,9 +231,11 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
    小程序侧改动只有本仓测试（跨端同判 + 页面消费）覆盖，**不等于**真机可用。
    真机步骤沿用[手机最小清单](gy-i08-ace3v-checklist.md)。
 3. **真实供应商调用未做**（未授权、不做）：无 OCR／LLM／TTS 调用，无付费请求。
-4. **跨线平行用量闸门未统一**：`services/api/src/ocr/state.ts`（GY-I10 线）有另一套用量卡闸门、
-   **未声明** gy-i08 规则版本。本轮**不改他人已合并实现**，只做漂移检测与登记，交指挥协调；
-   **不得**据此声称「所有消费端已统一」。
+4. **跨线用量闸门：版本已统一，判定**未**等同（如实登记）**：`services/api/src/ocr/state.ts`
+   （GY-I10 线）已按用户 **2026-10-14** 授权**声明同一规则版本**（`single_source`，见 §2.5），
+   但**禁限用维度无法在本层表达**（冻结契约 `DoseSource` 无对应字段）⇒ **不得**声称
+   「两层判定已等同」或「禁限用维度已覆盖全链路」。**真实统一需契约侧新增字段，
+   需指挥决定是否另开契约变更线。**
 5. **未推送**：写手不持有 GitHub 凭据，本轮只做本地提交，由指挥推送并创建 PR。
 6. **真实部署形态未验证**：`packages/reference` 为纯文件 + 域库驱动，未在真实环境验证部署与
    只读文件可用性。
@@ -229,13 +273,23 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
 > `card_ready=false`，**真实资料 DoseCard 渲染计数=0**；依赖真实用量正例的场景如实标为**缺项／未取得**。
 > 风险文案不含「绝对安全／零药害」类承诺（全量标签扫描断言）。
 >
-> **门禁**：`npm run lint` 通过；`npm run test:reference` 275 项通过 0 失败；
+> **6) 跨线：`ocr/state.ts` 用量闸门纳入 `gy-i08/1.2.0`（用户已授权；回退=删该改动）**：
+> GY-I10 线的平行用量闸门此前**未声明**本规则版本，是「所有消费端使用同一规则版本」的缺口。
+> 本轮按用户 2026-10-14 授权做**最小、无行为改动**的统一：版本值**直接 import 域库单一事实来源**
+> （不是第二份拷贝）；本层每个拒绝原因映射到域库 `BLOCK_CODES` 枚举成员，穷尽性由 `tsc` 保证；
+> 两层语义差异**如实登记为闭集**（`not_enforced_block_codes` = 禁用／限用／未采集禁限用 ——
+> 冻结契约 `DoseSource` 无禁限用字段，本层数据形状无法表达）。**未**改变任何既有阻断语义、
+> 未动对外契约与错误码。新增**漂移检测**：域库版本一变，`reviewed_against` 锚点即不匹配 ⇒ 测试失败
+> （已给负控制：改为 `1.2.1` 时该断言失败；还原后通过且文件 SHA256 不变）。
+> **如实说明**：本层**不声称**判定已与 GY-I08 等同；真实统一需契约侧新增字段。
+>
+> **门禁**：`npm run lint` 通过（含 API `tsc --noEmit`）；`npm run test:reference` 275 项通过 0 失败；
 > `npm run test:unit` 1783 项（1782 通过、1 既有可选原生数据库检查跳过、0 失败）；
+> I10 受影响测试 `ocr-state` / `ocr-service` / `idempotency-job-ttl` 125 项通过 0 失败；
 > `git diff --check` 无输出。
 >
 > **未取得（不写通过）**：真实标签用量正例仍为 0；正式微信／Android 端到端未跑；真实供应商调用未做
-> （未授权）；GY-I10 线 `services/api/src/ocr/state.ts` 的平行用量闸门**未声明**本规则版本 ——
-> 本轮不改他人已合并实现，如实登记为跨线缺项交指挥协调；本轮只做本地提交，**由指挥推送**。
+> （未授权）；跨线**判定未等同**（禁限用维度受契约字段限制，见上 6）；本轮只做本地提交，**由指挥推送**。
 
 ## 9 提交
 
@@ -244,6 +298,11 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
 | `c135b6c57b618137acaa351ab8881fb9015627dc` | `feat(GY-I08)`：确定性规则引擎（`deterministic.mjs` + `query.mjs` 导出 + `index.mjs` 导出） |
 | `a60b32d` | `feat(GY-I08)`：小程序镜像闸门／开关 + 详情页消费同判（含闭集补齐） |
 | `9cbe50c5e30c4013cc37fda884e8abaac27ff627` | `test(GY-I08)`：149 组用例 + 43 条守卫负例 + 规则版本可断言化 |
+| `8957f58` | `docs(GY-I08)`：本页初版（规则引擎／消费端同版本／原始输出／未取得项） |
+| **（本页所在提交）** | `feat(GY-I08)`：**跨线**统一 GY-I10 `ocr/state.ts` 用量闸门纳入 `gy-i08/1.2.0`（用户授权；纯声明 + 漂移检测，**无行为改动**）—— 含 `state.ts` / `knowledge/reference.d.ts` / `deterministic.mjs` / `i08-rule-version.test.mjs` / 本页更新 |
 
-`git diff --stat upstream/main...HEAD`：9 个文件、**+1856 / −13**；0 提交落后 main、无冲突。
-本页为第 4 次提交（仅文档）。
+`git diff --stat upstream/main...HEAD`（含跨线提交，12 个文件）：跨线改动落在
+`services/api/src/ocr/state.ts`、`services/api/src/knowledge/reference.d.ts`、
+`packages/reference/deterministic.mjs`、`tests/reference/i08-rule-version.test.mjs`、本页。
+**本页不写自身提交的 SHA 与精确行数**（自引用会随文字微调失真）：最终 HEAD SHA 与 diffstat
+由指挥在 PR 评论绑定。0 提交落后 main、无冲突。
