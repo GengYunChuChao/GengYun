@@ -1,9 +1,9 @@
 # GY-I14 审核 HTTP 装配片（#14）· 验证证据（2026-10-14）
 
 - **分支**：`feat/gy-i14-moderation-http`（worktree `E:\GengYunCommander\GengYun_W34`）
-- **基线**：`upstream/main` = `fcfa6de9d62aeaaa0489d3319f8f06911312af48`（本次未变）
-- **代码交付 HEAD**：`9422fa9`（其后的提交**只**新增/更新 `docs/**`，无代码或测试行为变化；
-  最终分支 HEAD 以 `git rev-parse HEAD` 为准，由指挥在推送前复核）
+- **基线**：`upstream/main` = `fcfa6de9d62aeaaa0489d3319f8f06911312af48`；**已合并最新 `upstream/main` = `c85a1e8`**（见 §10）
+- **代码交付 HEAD**：`9422fa9`（其后为 docs 提交 `7750b34`/`f1e7d01`，以及**合并提交 `5c0a4a7`**
+  ——合并只解 `app.ts` 冲突、**两侧装配全部保留**，复核输出见 §10；最终分支 HEAD 以 `git rev-parse HEAD` 为准）
 - **环境**：Windows；Node `v24.16.0`；npm `11.13.0`
 - **纪律**：真实 `tms`/`ims` 供应商**未授权付费** ⇒ 本片**零真实调用**、零凭据、零外网；
   全部端口为**合成替身**；**未 push**（由指挥推送）。
@@ -273,6 +273,8 @@ real 整域 fail-closed、持久队列/租约仍待接线）。中文对照表�
 | `042c73c` | `/jobs/{id}` 真实回环 HTTP 回归（5 项） |
 | `9422fa9` | 文书边界负控制同步（**逐个受信文件**白名单）+ 契约状态事实更新（跨线披露） |
 | `7750b34` | `docs/moderation/http-layer.md`（装配层说明 + 跨线接线要求）+ 本证据页 |
+| `f1e7d01` | 证据页钉住代码交付 HEAD / 最终 diffstat / 提交清单 |
+| `5c0a4a7` | **Merge `upstream/main`（`c85a1e8`）**：仅解 `app.ts` 冲突（两侧装配全保留）+ 契约状态并集（见 §10） |
 
 ## 9 未取得 / 未验证（不得读成已完成）
 
@@ -286,3 +288,73 @@ real 整域 fail-closed、持久队列/租约仍待接线）。中文对照表�
 - 部署与真机：未取得（无云端部署、无真机运行）；
 - `tests/integration/**` 中的其它脚本未因本片改动而过：
   与本片直接相关的 `jobs-http.mjs` 已显式运行（§5），其余集成脚本（admin/media/speech/…）未受影响亦未重跑。
+
+## 10 合并增量（`upstream/main` = `c85a1e8`，合并提交 `5c0a4a7`）
+
+监工复核 #150 时报的唯一阻塞是"与最新 main 的**实际合并冲突**（仅 `services/api/src/app.ts`）"。
+本节记录解冲突口径与合并后复核的**原始输出**。
+
+### 10.1 冲突与解冲突（**两侧装配全部保留，只做增量合并**）
+
+| 冲突点 | 解法 |
+| --- | --- |
+| `FastifyInstance` 声明 | 保留审核域 `moderationService`（GY-I14）+ 社区 `communityService`（GY-I15） |
+| `BuildAppOptions` | 保留 `moderationInjection` + `communityInjection` 两个可选注入项（各自完整） |
+| `buildApp` 解构参数 | 同时加入 `moderationInjection` 与 `communityInjection` |
+| 构造区 | 保留审核域 `createModerationService(...)` 块；`const sql/authStore` 一行**逐字保留 upstream 文本**（不重排） |
+| `app.decorate` 区 | 保留 `moderationService` + `communityService`；upstream 已把 GY-I27 的 `consentGate`/`egressRevoker` **前移**到识别域之前，故删除本处**重复副本**（前移后的副本仍在；保留重复声明会 TS 报错） |
+
+其它冲突点（作业源注册 `createJobRegistry([...])`）**自动合并成功**：上游的识别域源（含外发墓碑）
+与本片 `createModerationJobSource(...)` **同时存在**。合并后 `git diff --stat upstream/main...HEAD`
+= 21 files changed, **5266 insertions(+), 9 deletions(-)**（即仅本片增量）。
+`git diff upstream/main -- services/api/src/app.ts` 的 `-` 行**只有** `buildApp` 解构那一行（现同时含两侧注入项）。
+
+契约状态并集：`docs/architecture/contract-status.json` 自动合并保留 upstream 全部条目与本片事实更新；
+本轮补齐 `cancelJob` 条目的同源更新（审核域无取消能力 ⇒ 503 如实拒绝；不再声称"moderation 作业源未接线"）
+并加两条 `job-source.ts` 证据项，中文对照表用 `node tools/verify-contract-status.mjs --write-doc` 同步（1 行）。
+
+### 10.2 合并后复核（原始输出）
+
+```
+=== [1] npm run lint ===
+PASS tsc --noEmit services/api/tsconfig.json
+PASS tsc --noEmit apps/admin/tsconfig.json
+PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）
+lint 通过（静态检查；不代表运行期或真实服务已通过）。            [exit 0]
+
+=== [2] node --test tests/moderation/http-{screening,isolation,callback,jobs}.test.mjs ===
+ℹ tests 31 / ℹ pass 31 / ℹ fail 0 / ℹ skipped 0                    [exit 0]
+
+=== [3] node --test tests/moderation/model-ports.test.mjs ===
+ℹ tests 39 / ℹ pass 39 / ℹ fail 0 / ℹ skipped 0                    [exit 0]
+
+=== [4] node tools/verify-contract-status.mjs ===
+PASS: 覆盖 112 条契约操作；已装配 94 条；implemented 13 / partial 81 / planned 18；横切维度 8 条；中文表格一致
+PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。      [exit 0]
+
+=== [5] node tests/integration/jobs-http.mjs（不在任何 CI glob，显式运行） ===
+  - 识别域 job=09a4157c-c515-479e-906c-f058db7790a9 受理=queued → succeeded result.kind=recognition
+  - 转写域 job=d9e8ad40-214a-4e8e-95af-222b49361eab state=succeeded
+  - 前后对照：转写 job 改前 404 → 改后 200
+  - 同形 404 三类（他人作业 / 合法但不存在 / kind 未接线）一致
+  - 钉子：非 uuid ⇒ 400（HTTP 层）；合法但不存在 ⇒ 404（服务层）；未声明查询参数 ⇒ 400
+  - cancel：running→cancelled revision=3；同键重放回放；新键旧 If-Match→409
+  - 转写域 cancel ⇒ 503 PROVIDER_UNAVAILABLE（能力未接线，如实拒绝；状态未变）
+  - cancel 并发：同键 ⇒ 恰好一次迁移；异键同 If-Match ⇒ 恰好一个 200 + 一个 409
+  - 如实性：succeeded(result≠null,error_code=null) / failed(result=null,error_code=PROVIDER_OUTCOME_UNKNOWN)
+  - 单一注册：/jobs/{id} 与 /jobs/{id}/cancel 各 1 处，均在 jobs/routes.ts
+  - 嵌套 result.value 守卫：坏投影经路由 503（改前 200 透出），契约合法仍 200
+  - 钉子：无取消能力 kind 的 cancel ⇒ 缺 Key 400 / 缺 If-Match 428 / 齐备 503     [exit 0]
+
+=== [6] git diff --check ===
+（无输出）                                                        [exit 0]
+
+=== [extra · 非监工要求] npm run test:unit（合并后全量，验证两侧装配共存） ===
+ℹ tests 1887 / ℹ pass 1886 / ℹ fail 0 / ℹ skipped 1 （duration_ms 22655.6015）  [exit 0]
+
+=== [extra] npm run test:docs ===
+PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables  [exit 0]
+```
+
+> 合并后全量 `test:unit` 由 **1831** 增至 **1887** 项（上游新增用例），**fail 0** ⇒ 社区（#15）、
+> 持久账本（#29 第二片）与本片审核域的装配在同一 `app.ts` 中共存且各自回归全绿。
