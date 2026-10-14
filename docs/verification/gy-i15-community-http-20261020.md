@@ -1,11 +1,11 @@
 # GY-I15（#15）阶段 2 · 社区真实发帖/评论/点赞/筛选/举报 HTTP 面 · 验证证据
 
 - 分支：`feat/gy-i15-community-http`
-- HEAD（本记录所描述的**实现**）：`240c39415fe576db1eb143c804f7404170e1e5ed`
-  （其后仅追加 **本证据页** 与一处**集成脚本维护**：`tests/integration/admin-http.mjs` 的 `hidePost` 默认装配断言；避免自我指涉，本页不记录自身 SHA，最终 SHA 见分支 HEAD）
+- HEAD（本记录所描述的**实现**）：`f8ad68af60cb063c7c1892d08d615add0706dac0`
+  （其后如仅追加本证据页的更新，不再单独记录；最终 SHA 见分支 HEAD）
 - 基线：`upstream/main = fcfa6de9d62aeaaa0489d3319f8f06911312af48`
-- 差异：`240c394` 处 `30 files changed, +3400 / -134`；追加本页后 `31 files changed, +3684 / -139`
-- 交付切片（本地提交，**未 push**）：`469882c`（服务层接线）、`1ccc0d6`（HTTP 用例 + 契约台账）、`240c394`（小程序）
+- 差异：`31 files changed, +3706 / -139`（`git diff --shortstat upstream/main...HEAD`）
+- 交付切片（本地提交，**未 push**）：`469882c`（服务层接线）、`1ccc0d6`（HTTP 用例 + 契约台账）、`240c394`（小程序）、`96bb2e0`+`c2017de`（证据页与集成脚本维护）、`f8ad68a`（**人工审核空态说明回归修复**，见 §2.10）
 - 本记录**不关闭** #15；#15 的“真实端到端可发布”仍未取得（见 §6）。
 
 ## 1. 装配说明（改了什么、接在哪）
@@ -155,6 +155,85 @@ $ node tests/integration/jobs-http.mjs
 
 `tests/integration/miniprogram-login-loop.mjs`：**预存在失败**（与本单无关，未修，见 §6.4）。
 
+### 2.9 CI 覆盖面自查：`test:unit`/`test:mini` **不是** CI 的全部
+
+首次交付时我漏跑了两个 **CI 专属**测试文件（它们既不在 `test:unit` 也不在 `test:mini` 的 glob 内），
+由 `local-preparation` job（`.github/workflows/local-wechat.yml`）执行 ⇒ 其中一条抓到**真实回归**（见 §2.10）。
+完整核对结果（`local-preparation` 共 10 步）：
+
+| # | CI 步骤 | 本地实测 | 退出码 |
+|---|---|---|---|
+| 1 | `npm ci` | `npm install`（`package.json` 未改动） | 0 |
+| 2 | `node tools/check-wechat-project.mjs` | `PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax.` | 0 |
+| 3 | `node --check tools/smoke-wechat.cjs` | 无输出 | 0 |
+| 4 | `node --test tests/local-debug.test.mjs` | `tests 5 / pass 5 / fail 0` | 0 |
+| 5 | `node --test tests/ui-adaptive.test.mjs` | `tests 26 / pass 26 / fail 0` | 0 |
+| 6 | `node --test tests/ui-demo-align.test.mjs` | `tests 7 / pass 7 / fail 0` | 0 |
+| 7 | `node tools/demo-align.mjs` | `PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门槛未被破坏。` | 0 |
+| 8 | `node tools/verify-layout.mjs` | `PASS: 五档视口下触控区、正文与末屏预留（含最大字号档）均满足门槛。` | 0 |
+| 9 | `node --test tests/unit/miniprogram-profile.test.mjs tests/integration/profile-ui-http.test.mjs` | `tests 25 / pass 25 / fail 0` | 0 |
+| 10 | 两条 `git check-ignore` 断言 | 4 个私有/生成物被忽略；3 个 `.example` 未被忽略 | 0 / 1（如预期） |
+
+`engineering-shell` job（也由本单路径触发）的 12 步同样逐条跑过：
+
+```
+python3 tools/validate_development_docs.py   -> PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+python3 tools/validate_contracts.py          -> PASS: 112 operations; contract consistency; 29 fixtures; 30 media traces; 8 knowledge roundtrips
+python3 tools/test_contracts.py              -> Ran 8 tests in 0.354s / OK
+npm run lint                                 -> lint 通过
+npm run test:unit                            -> tests 1818 / pass 1817 / fail 0 / skipped 1
+npm run test:contract                        -> tests 6 / pass 6 / fail 0
+npm run test:evaluation                      -> tests 84 / pass 84 / fail 0
+npm run build                                -> ✓ built in 720ms（产物在 .gitignore 的 dist/ 内，未入库）
+```
+
+#### 本地 Windows checkout 的 CRLF 假失败（如实标注，非仓库缺陷）
+
+在**本机 CRLF 工作树**里 `node tools/demo-align.mjs` 与 `tests/ui-demo-align.test.mjs` 的第 1 组会报
+`miniprogram/styles/icons.wxss 与 demo SVG path 生成结果不一致`：该判据是**整文件逐字节相等**
+（`expectIcons === actualIcons`），而本机 checkout 为 `i/lf, w/crlf`（`git ls-files --eol` 可查），
+生成结果恒为 LF ⇒ 必然不等。
+**复核方式**：用 LF 物化的工作树重跑，同一 HEAD 下该判据通过：
+```
+$ git -c core.autocrlf=false -c core.eol=lf worktree add --detach <tmp> HEAD
+$ node -e "console.log(require('fs').readFileSync('miniprogram/styles/icons.wxss').includes(13))"   -> false
+$ node tools/demo-align.mjs          -> PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门槛未被破坏。 [exit 0]
+$ node --test tests/ui-demo-align.test.mjs   -> tests 7 / pass 7 / fail 0 [exit 0]
+```
+CI 跑在 `ubuntu-24.04`（LF 检出）⇒ 该判据在 CI 上成立。因此 §2.9 表中第 6/7 步的实测值取自 **LF 工作树**；
+其余步骤在两种检出下均一致（已分别复跑）。
+
+### 2.10 真实回归的发现与修复：社区页丢掉「人工审核空态说明」
+
+- **现象（CI）**：`local-preparation → node --test tests/ui-adaptive.test.mjs` 失败
+  `✖ 人工审核仅保留空入口，不展示任何已审核内容 / AssertionError: 缺少人工审核说明`（26 项中 1 项红）。
+- **性质**：**真实回归**。`tests/ui-adaptive.test.mjs:257-262` 是该能力的**既有断言**，三条判据要求
+  `community.wxml`：① 含「人工审核」；② 命中 `建设中|尚未开放|不提供人工审核`；③ **不得**出现 `已审核通过|审核员|专家认证`。
+  我重写社区页时删掉了阶段 1 的「人工审核／内容安全」说明面板 ⇒ ① ② 不再成立。
+  该断言对应本仓红线：**人审入口保持空态、不得造假任务/审核人/投票/专家认证**。
+- **修法（最小、只加文案）**：在 `miniprogram/pages/community/community.wxml` 恢复一个
+  `.panel` 空态说明块（标题「人工审核」+ `pill--gray`「建设中」+ 说明），并**始终渲染**（游客与登录用户都可见，
+  避免“看不到入口就以为审核已开放”）；文案显式声明不展示人工审核任务、复核人员、投票或资质信息。
+- **连带修正**：`tests/ui-demo-align.test.mjs` 要求五个 Tab 页使用 demo 容器形态类
+  （`panel|feature-card|article-card|profile-header`）。新社区页只有 `post`/`feed` 等类，故此前**也**不满足该断言；
+  恢复的空态块采用样式层的 `.panel` 一并满足（同一条改动修两处，未新增任何页面级样式）。
+- **一次自我纠正（留痕）**：首次尝试把「不得造假任务/审核人/投票/专家认证」这句**写进了 WXML 注释**，
+  被同一断言的第三条判据（扫描原始文件文本）当场抓到 ⇒ 已从**注释与文案**中一并清除相关字样。
+  结论：该断言扫描的是文件原文（含注释），说明**不得**用“引述禁止词”的方式解释。
+- **实测（LF 工作树，HEAD `f8ad68a`）**：
+  ```
+  $ node --test tests/ui-adaptive.test.mjs
+  ℹ tests 26 / pass 26 / fail 0   [exit 0]
+  $ node --test tests/ui-demo-align.test.mjs
+  ℹ tests 7 / pass 7 / fail 0     [exit 0]
+  $ node --test tests/local-debug.test.mjs
+  ℹ tests 5 / pass 5 / fail 0     [exit 0]
+  $ node tools/check-wechat-project.mjs
+  PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. Not a WeChat compiler or device test.   [exit 0]
+  ```
+- **纪律**：**未**修改 `tests/ui-adaptive.test.mjs` 的任何判定、**未**删除该断言、**未**放宽门槛；
+  只补齐被丢掉的产品说明文案。
+
 ## 3. 负例与 fail-closed 对照（逐条对应派单验收）
 
 | 验收点 | 用例 | 实测结论 |
@@ -263,6 +342,14 @@ GY-I15 阶段 2：社区 HTTP 面 + 复用既有服务层与审核硬规则层�
 新增 `tests/unit/community-http.test.mjs`（12 组真实 loopback HTTP，含负例与 real fail-closed 对照）、
 `tests/unit/miniprogram-community-api.test.mjs`（6 组适配层回归）。
 显式运行（**不在 CI glob**）：`node tests/integration/admin-http.mjs`（27/27 PASS）、`node tests/integration/jobs-http.mjs`。
+CI 两个受影响 job 逐条复跑：`local-preparation` 10/10 步、`engineering-shell` 的 12 步（`test:contract` 6/6、
+`test:evaluation` 84/84、`build` 成功）全绿。
+
+## 回归修复（既有断言抓到，非改断言）
+`local-preparation → tests/ui-adaptive.test.mjs` 曾报 `缺少人工审核说明`：重写社区页时丢掉了
+「人工审核仅保留空入口 + 明确说明」的**既有**文案（对应本仓红线：人审入口保持空态、不得造假任务/审核人/投票/专家认证）。
+已在 `miniprogram/pages/community/community.wxml` 恢复 `.panel` 空态说明块（对游客与登录用户都可见），
+并同时满足 `tests/ui-demo-align.test.mjs` 对 demo 容器形态类的要求。**未改任何断言、未删断言、未放宽门槛。**
 
 ## 未取得（不得读成已完成）
 1. **图片帖子未取得**：规则层对带媒体目标一律不判通过（`packages/moderation/merge.mjs:26-31` 声明为跨片依赖），
