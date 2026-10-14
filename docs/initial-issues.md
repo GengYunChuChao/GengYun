@@ -37,7 +37,7 @@
 | GY-I23 | [#23 执行Android／iOS真机、时延容量及完整演示验收](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | P0 | [GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I19](https://github.com/Sek1ro-oka/GengYun/issues/19)、[GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22) |
 | GY-I24 | [#24 部署联网比赛版、备份恢复并交付完整材料](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | P0 | [GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22)、[GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23) |
 | GY-I25 | [#27 提前验证正式AppID、真机域名及AI和数据库服务接入](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | P0 | 无 |
-| GY-I26 | [#28 提前建立五Tab原生页面骨架、适老视觉及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | P1 | [GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2) |
+| GY-I26 | [#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | P1 | [GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2) |
 | GY-I27 | [#29 前置用途授权、外发账本与隐私撤回接口守卫](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | P0 | [GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1)、[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2) |
 
 ## GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约
@@ -717,31 +717,31 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 - 脱敏接入矩阵、服务／工具／基础库版本和请求编号，域名及真机测试记录
 - 返回schema、授权留存删除说明、数据库字段样例和按需求样本数量的额度估算
 
-## GY-I26 提前建立五Tab原生页面骨架、适老视觉及统一失败状态
+## GY-I26 提前建立五Tab原生页面骨架、Demo样式及统一失败状态
 
-[#28 提前建立五Tab原生页面骨架、适老视觉及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28)；开始阶段M1／完成阶段M1；P1；当前待领取。
+[#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28)；开始阶段M1／完成阶段M1；P1；当前待领取。
 
-解除界面开发对完整语音流水线的等待，先用冻结HTTP契约联调替身，再逐项替换真实服务。
+解除界面开发对完整语音流水线的等待，先用冻结HTTP契约联调替身，再逐项替换真实服务。 当前先实现Demo样式，适老版本后续开发；暂缓不记验收通过。
 
 前置：[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)。功能：F01、F02、F05、F12、F14、F18、F19、F20；验收：AC01、AC06、AC07、AC08、AC14、AC15、AC17、AC18、AC21。
 
 ### 范围
 
 - 原生首页／识别／社区／消息／我的五Tab，识别含拍草、OCR和语音提问入口；独立后台与用户端分开；只保留人工审核的空入口
-- 主题绿#1F7A45，正文优先18px、44px等效触控区，放大字体、颜色加文字、录音与播放按钮分离，风险提示不能写绝对安全
+- 当前视觉以 docs/ui-demo/demo.html 手机预览为准，复用其色板、字号、间距和组件；正常操作与文字无遮挡、关键状态配文字、录音与播放分离，不写绝对安全。正文18px、44px触控、最大字号与适老布局专项后续，不阻塞本阶段；既有保护保留。
 - 定义未登录、空结果、处理中、失败、重试、取消、已删除／失效和明显模拟状态；游客仅首页，真实权限仍由GY-I04服务端负责
 - 替身数据仅开发模式明确标注，与真实服务地址和评估数据隔离；基础库／工具编译和界面走查可先完成，后续业务验收按各功能任务完成
 
 ### 验收
 
 - [ ] 微信工具可编译并导航五Tab；未登录入口控制、静态地区不假发预警、人审空入口和模拟标记均正确
-- [ ] 常见与放大字体走查没有遮挡主要按钮，关键状态可用文字表达；不将可点原型算实时识别／ASR／AI社区完成
+- [ ] Demo普通使用走查主要文字与按钮可见、可点、无遮挡，关键状态可用文字表达；适老放大字体和专用布局后续，不将暂缓记为通过，不将可点原型算实时识别／ASR／AI社区完成
 - [ ] GY-I13继续完成TTS和播放生命周期，本任务不重复验收语音服务准确率
 
 ### 提交证据
 
 - 五Tab路由和状态清单、微信工具编译版本与截图
-- 视觉和字体走查、替身开关隔离及接口契约绑定记录
+- Demo普通使用视觉及操作走查、替身开关隔离及接口契约绑定；适老字号专项明确后续，不伪造已验
 
 ## GY-I27 前置用途授权、外发账本与隐私撤回接口守卫
 
