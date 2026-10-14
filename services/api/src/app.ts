@@ -196,8 +196,8 @@ const COORDINATE_LIKE = /-?\d{1,3}\.\d{4,}/;
 
 /**
  * 日志安全路径（GY-I05「服务端不接收原始坐标」的**日志侧**）：只返回不含查询串/片段（`?`／`#`）
- * 的**相对路径**；任何解析不出的形态返回 `null`，由调用方 fail-closed 丢弃整段原文：
- *   - 非字符串 / 空串 / 不以 `/` 开头（绝对 URL、协议相对 URL、`host/path` 形态）；
+ * 的**站内相对路径**；任何解析不出的形态返回 `null`，由调用方 fail-closed 丢弃整段原文：
+ *   - 非字符串 / 空串 / 不以单个 `/` 开头（绝对 URL、协议相对 URL `//host/...`、`host/path` 形态）；
  *   - 含 `://`（代理可能转发 absolute-form 请求行，其中可能夹带查询串）；
  *   - 路径含高精度小数（坐标形态）。
  *
@@ -205,7 +205,9 @@ const COORDINATE_LIKE = /-?\d{1,3}\.\d{4,}/;
  * （见 `packages/privacy/redact.mjs` 的日志硬红线），所以整条查询串一律不落。
  */
 export function logSafePath(url: unknown): string | null {
-  if (typeof url !== 'string' || url === '' || !url.startsWith('/') || url.includes('://')) return null;
+  if (typeof url !== 'string' || url === '' || !url.startsWith('/') || url.startsWith('//') || url.includes('://')) {
+    return null;
+  }
   const end = url.search(/[?#]/);
   const path = end === -1 ? url : url.slice(0, end);
   return COORDINATE_LIKE.test(path) ? null : path;
