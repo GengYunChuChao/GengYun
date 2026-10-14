@@ -84,13 +84,14 @@ declare module '*packages/privacy/in-flight.mjs' {
   }
 
   export function createInFlightGuard(deps: {
-    ledger: Record<string, unknown>;
+    /** 账本（内存或持久）；运行期自检必需方法，形状由实现决定。 */
+    ledger: unknown;
     account: { stateOf(userId: string): Promise<string>; authEpochOf(userId: string): Promise<number> };
     consentStore: { isGranted(input: Record<string, unknown>): Promise<boolean>; currentEpoch(input: Record<string, unknown>): Promise<number> };
     now?: () => Date;
   }): InFlightGuard;
 
-  export function createEgressRevoker(deps: { ledger: Record<string, unknown>; now?: () => Date }): EgressRevoker;
+  export function createEgressRevoker(deps: { ledger: unknown; now?: () => Date }): EgressRevoker;
 }
 
 declare module '*packages/privacy/deletion-modules.mjs' {

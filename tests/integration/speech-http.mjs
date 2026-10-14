@@ -497,10 +497,14 @@ try {
         /consent: (consentGate|undefined)\b/.test(registrationLine),
         `注册行只允许追加隐私域 consent 端口，实际：${registrationLine.trim()}`,
       );
+      assert.ok(
+        /egress: (speechEgress|undefined)\b/.test(registrationLine),
+        `注册行只允许追加隐私域 egress 端口（GY-I27 第二片），实际：${registrationLine.trim()}`,
+      );
       const injectedKeys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
       assert.deepEqual(
         injectedKeys,
-        ['consent', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
+        ['consent', 'egress', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
         `注册行不允许出现其它注入键：${injectedKeys.join(', ')}`,
       );
       // 装配路径对 speech/{store,provider,media} 的引用**只能是 import type**（运行时被类型擦除）。

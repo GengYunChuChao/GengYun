@@ -34,7 +34,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.ts';
 import type { AuthGuards } from '../auth/middleware.ts';
-import { readIdentity } from '../auth/middleware.ts';
+import { currentIdentity, readIdentity } from '../auth/middleware.ts';
 import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import { API_PREFIX } from '../contract.ts';
 import { createSpeechService, type SpeechService } from '../speech/service.ts';
@@ -42,6 +42,8 @@ import { createMemorySpeechStore, type SpeechStore } from '../speech/store.ts';
 import { createSpeechProvider, type SpeechProvider } from '../speech/provider.ts';
 import { createSpeechMediaPort, type SpeechMediaPort } from '../speech/media.ts';
 import type { ConsentGate } from '../privacy/egress.ts';
+import { withPrivacyErrors } from '../privacy/egress.ts';
+import type { MediaJobEgress } from '../privacy/task-egress.ts';
 import { buildMeta } from './support.ts';
 
 declare module 'fastify' {
@@ -107,6 +109,11 @@ export interface SpeechRouteDeps {
    * **读取（GET）与删除（DELETE）不挂**。未注入 ⇒ 行为与接线前逐字相同。
    */
   consent?: ConsentGate;
+  /**
+   * GY-I27 第二片：**可选**持久外发账本端口。`real` 模式下受理前预留快照、提供者派发经
+   * `assertExecutable → markSent → saveResult` 收口；未注入或非 real ⇒ 不记账（行为不变）。
+   */
+  egress?: MediaJobEgress;
 }
 
 /**
@@ -120,11 +127,14 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
   const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode });
   const store = deps.store ?? createMemorySpeechStore();
   const media = deps.media ?? createSpeechMediaPort(config.executionMode);
+  // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
+  // 其余模式（替身/演示）**不记账**：替身不发生真实外发，账本里不得出现 sent。
+  const guardedProvider = deps.egress === undefined ? provider : deps.egress.provider(provider, 'transcribe');
   const service =
     deps.service ??
     createSpeechService({
       store,
-      provider,
+      provider: guardedProvider,
       media,
       idempotencyHmacKey: deps.idempotencyHmacKey ?? config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
       now: deps.now,
@@ -150,7 +160,16 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
   app.post(
     `${API_PREFIX}/speech/transcriptions`,
     gated({ querystring: NO_QUERY_SCHEMA, body: MEDIA_JOB_INPUT_SCHEMA }),
-    async (request, reply) => {
+    withPrivacyErrors(async (request, reply) => {
+      if (deps.egress !== undefined) {
+        const body = request.body as { media_id: string; media_revision: number };
+        await deps.egress.reserveForAcceptance({
+          userId: userId(request),
+          authEpoch: currentIdentity(request).authEpoch,
+          objectId: body.media_id,
+          objectRevision: body.media_revision,
+        });
+      }
       const { job } = await service.createTranscription({
         userId: userId(request),
         body: request.body,
@@ -162,7 +181,7 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
         .header('ETag', `"${job.revision}"`)
         .header('Cache-Control', 'no-store')
         .send({ data: job, meta: buildMeta(request, config) });
-    },
+    }),
   );
 
   app.get(

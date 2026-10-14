@@ -25,7 +25,7 @@
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AuthGuards } from '../auth/middleware.ts';
-import { readIdentity } from '../auth/middleware.ts';
+import { currentIdentity, readIdentity } from '../auth/middleware.ts';
 import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
@@ -40,6 +40,8 @@ import {
   type OcrReferencePort,
 } from '../ocr/reference.ts';
 import type { ConsentGate } from '../privacy/egress.ts';
+import { withPrivacyErrors } from '../privacy/egress.ts';
+import type { MediaJobEgress } from '../privacy/task-egress.ts';
 import { buildMeta } from './support.ts';
 
 declare module 'fastify' {
@@ -83,6 +85,10 @@ export interface OcrRouteDeps {
    * **读取（GET）与删除（DELETE）不挂**。未注入 ⇒ 行为与接线前逐字相同。
    */
   consent?: ConsentGate;
+  /**
+   * GY-I27 第二片：**可选**持久外发账本端口（`real` 才接管派发；未注入或非 real ⇒ 不记账）。
+   */
+  egress?: MediaJobEgress;
 }
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -183,11 +189,13 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
   const media = deps.media ?? createOcrMediaPort(config.executionMode);
   const reference = deps.reference ?? createOcrReferencePort(config.executionMode);
   const dose = deps.dose ?? createOcrDosePort(config.executionMode);
+  // GY-I27 第二片：`real` 模式下由持久外发账本接管派发；替身/演示不记账。
+  const guardedProvider = deps.egress === undefined ? provider : deps.egress.provider(provider, 'recognize');
   const service =
     deps.service ??
     createOcrService({
       store,
-      provider,
+      provider: guardedProvider,
       media,
       reference,
       dose,
@@ -207,7 +215,16 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
   app.post(
     `${API_PREFIX}/ocr`,
     gated({ body: mediaJobBody }),
-    async (request, reply) => {
+    withPrivacyErrors(async (request, reply) => {
+      if (deps.egress !== undefined) {
+        const body = request.body as { media_id: string; media_revision: number };
+        await deps.egress.reserveForAcceptance({
+          userId: actorId(request),
+          authEpoch: currentIdentity(request).authEpoch,
+          objectId: body.media_id,
+          objectRevision: body.media_revision,
+        });
+      }
       const { job } = await service.createOcr({
         userId: actorId(request),
         body: request.body,
@@ -218,7 +235,7 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
         .headers(noStore)
         .header('ETag', `"${job.revision}"`)
         .send({ data: job, meta: buildMeta(request, config) });
-    },
+    }),
   );
 
   app.get(
