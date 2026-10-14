@@ -17,6 +17,7 @@ import type { AuthGuards } from '../auth/middleware.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
 import type { RecognitionService } from '../recognitions/service.ts';
+import type { ConsentGate } from '../privacy/egress.ts';
 import { buildMeta } from './support.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -49,15 +50,32 @@ function actorId(request: FastifyRequest): string {
   return readIdentity(request).userId;
 }
 
+/**
+ * 注册识别路由。
+ *
+ * `deps.consent`（GY-I27 接线单）：**可选**授权中间件端口。注入后挂在**会外发/会写入
+ * 派生内容的入口**（`POST /recognitions` 与 `PATCH /recognitions/{id}/selection`），
+ * 资料类型 `weed_recognition` ⇒ 需要 `media_processing` + `external_inference`。
+ * **读取（GET）与删除（DELETE）不挂**：撤回用途后用户仍必须能取回并删除自己的数据。
+ * 未注入 ⇒ 行为与接线前逐字相同（`real` 模式仍由提供者 fail-closed 拦截）。
+ */
 export function registerRecognitionRoutes(
   app: FastifyInstance,
   config: AppConfig,
   guards: AuthGuards,
   service: RecognitionService,
+  deps: { consent?: ConsentGate } = {},
 ): void {
+  const consentGate =
+    deps.consent === undefined
+      ? null
+      : deps.consent({ purpose: 'external_inference', dataType: 'weed_recognition' });
   app.post(
     `${API_PREFIX}/recognitions`,
-    { preHandler: guards.requireUser, schema: { body: mediaJobBody } },
+    {
+      preHandler: consentGate === null ? guards.requireUser : [guards.requireUser, consentGate],
+      schema: { body: mediaJobBody },
+    },
     async (request, reply) => {
       const { job } = await service.createRecognition({
         userId: actorId(request),
@@ -86,7 +104,10 @@ export function registerRecognitionRoutes(
 
   app.patch(
     `${API_PREFIX}/recognitions/:id/selection`,
-    { preHandler: guards.requireUser, schema: { params: idParams, body: selectionBody } },
+    {
+      preHandler: consentGate === null ? guards.requireUser : [guards.requireUser, consentGate],
+      schema: { params: idParams, body: selectionBody },
+    },
     async (request, reply) => {
       const data = await service.selectSpecies({
         userId: actorId(request),

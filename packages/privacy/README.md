@@ -82,16 +82,17 @@ app.route({
 
 ### 1. 外发消费者 `egress.mjs`
 
-挂载与调用（装配说明；`services/api/src/privacy/egress.ts` 是 HTTP 侧适配，**不改 `app.ts`/路由文件**）：
+挂载与调用（装配说明；`services/api/src/privacy/egress.ts` 是 HTTP 侧适配）：
 
-| 位置 | 调用 |
-| --- | --- |
-| 需要用途授权的执行入口（`/speech/transcriptions`、`/recognitions/**`、`/ocr/**`、`/synthesis/**`、社区投稿） | `createConsentPreHandler(guard, { purpose, dataType })` 作为 `preHandler`（会话层先填 `req.userId`/`req.authEpoch`） |
-| 外发派发 | `createPrivacyEgress({ executionMode, ledger, ... }).consumer.send({ identity, objectType, objectId, objectRevision, dataType, purpose, recipientId, sourceVersion, payload })`（在 `withPrivacyErrors(...)` 包装内） |
-| 任务执行前 | `createPrivacyInFlightGuard(...).assertExecutable({ exportId, userId })` |
-| 结果保存前 | `...saveResult({ exportId, userId, objectVersion, result })` |
-| 版本取消 | `...cancelVersion({ exportId, userId, objectVersion, reason })`（`reason` 只接受短安全 token） |
-| 撤回/注销撤销在途 | `createApiEgressRevoker({ ledger })` 注入 `consent-pg.ts` / `grant-pg.ts`（**不注入 ⇒ 行为与今天逐字一致**） |
+| 位置 | 调用 | 当前接线状态 |
+| --- | --- | --- |
+| 需要用途授权的执行入口（`POST /recognitions`、`POST /speech/transcriptions`、`POST /ocr`、`POST /speech/synthesis`，以及派生内容写面：选择/确认/校正/核对） | `ConsentGate({ purpose, dataType })` 作为路由 `preHandler`（紧随 `guards.requireUser`） | **已接线**（`app.ts` 装配；注入优先，否则配置了数据库时用 `consent-pg.requireConsent`） |
+| 读取（GET）与删除（DELETE） | 不挂 | 有意不挂：撤回后用户仍须能取回/删除自己的数据 |
+| 外发派发 | `createPrivacyEgress({ executionMode, ledger, ... }).consumer.send({ identity, objectType, objectId, objectRevision, dataType, purpose, recipientId, sourceVersion, payload })`（在 `withPrivacyErrors(...)` 包装内） | **未接线**：无持久账本/接收方读取口 ⇒ `app.ts` 不装配；`real` 保持 fail-closed |
+| 任务执行前 | `createPrivacyInFlightGuard(...).assertExecutable({ exportId, userId })` | **未接线**（同上：需先有账本） |
+| 结果保存前 | `...saveResult({ exportId, userId, objectVersion, result })` | **未接线**（同上） |
+| 版本取消 | `...cancelVersion({ exportId, userId, objectVersion, reason })`（`reason` 只接受短安全 token） | **未接线**（同上） |
+| 撤回/注销撤销在途 | `createApiEgressRevoker({ ledger })` 注入 `consent-pg.ts` / `grant-pg.ts`（**不注入 ⇒ 行为与今天逐字一致**） | **接口已接线**（`app.ts` 的 `privacyInjection.egressRevoker`）；未提供持久账本 ⇒ 生产未注入 |
 
 派发顺序即安全保证：`transport.available !== true`（`real` 未接真实适配器）⇒ 在任何账本变更**之前**
 `PROVIDER_UNAVAILABLE`(503, `retryable: true`)；记录非 `reserved` ⇒ 拒绝（零重复外发）；
@@ -116,12 +117,18 @@ app.route({
 - 完整 7/30 日删除（对象存储/备份/供应商副本/恢复清单重放）由 **GY-I19** 集成；本模块只提供
   `registerModule` 协议、第三方删除请求/确认/失败接口与 `completionStatus` 派生判定。
 - `deletion_tombstones` / `backup_inventory` 属 GY-I19 独立受控清单，不在本迁移范围。
-- **外发消费者尚未挂到各 AI 域路由上**（`routes/recognitions.ts`、`routes/speech.ts`、`routes/ocr.ts`、
-  `routes/synthesis.ts` 及 `app.ts` 属其它任务线的已合并文件）：本轮交付协议 + HTTP 适配
-  （`services/api/src/privacy/egress.ts`）与挂载说明，实际接线由装配方/各域任务线完成；
-  在此之前 `real` 模式**始终 fail-closed**（503），**不会**被静默放行为替身。
-- 撤回/注销的 `OBJECT_UNAVAILABLE` 兜底（`consent-pg.ts` / `grant-pg.ts`）在**注入**
-  `createEgressRevoker` 之前保持不变（fail-closed，不伪造取消成功）。
+- **授权中间件已接线（接线单：用户 2026-10-14 授权改他人已合并文件）**：`services/api/src/privacy/egress.ts`
+  的 `ConsentGate` 已挂到 4 个 AI 执行入口（`POST /recognitions`、`POST /speech/transcriptions`、
+  `POST /ocr`、`POST /speech/synthesis`）及其**派生内容写面**（选择/确认/校正/核对）。
+  装配规则：注入 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时用
+  `consent-pg.requireConsent`（已合并的单事务读取口，不新写 SQL）；都没有 ⇒ 不挂
+  （本地 stub / 回环测试与既有集成脚本行为逐字不变）。**读取（GET）与删除（DELETE）不挂**
+  授权中间件 —— 否则撤回后用户无法取回或删除自己的数据。
+- **外发账本与真实派发仍未装配**：`ledger.mjs` 需要**持久** commitGate（单事务 + 行锁）与接收方
+  读取口，本片未提供该适配器 ⇒ `app.ts` **不装配**账本；`real` 模式因此始终 fail-closed（503），
+  **不会**被静默放行为替身，也不会产生任何 `sent` 账本记录（不把替身记为真实外发）。
+- 撤回/授予的 `OBJECT_UNAVAILABLE` 兜底（`consent-pg.ts` / `grant-pg.ts`）在**注入**
+  `egressRevoker` 之前保持不变（fail-closed，不伪造取消成功）；注入后在同一事务内先撤销在途外发再继续。
 - 训练**不是**首版 `ConsentPurpose`；`user_training_consents.training_enabled` 默认 `false`，
   启用需独立同意 + 模型谱系验收（迁移 CHECK 强制），首版无放行训练路径。
 - 用户端页面（手选地区/文字替代交互）不实现，由 GY-I05/F12 消费 `CONSENT_REQUIRED` 错误码兜底。

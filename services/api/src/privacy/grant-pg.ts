@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { ApiError } from '../errors.ts';
 import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
+import type { EgressRevoker } from './consent-pg.ts';
 
 export interface ConsentGrantRequest {
   purpose: string;
@@ -22,8 +23,13 @@ function evidence(value: unknown, synthetic: boolean): boolean {
   try { const u = new URL(value); return u.protocol === 'https:' && u.username === '' && u.password === ''; }
   catch { return false; }
 }
-/** Internal SQL step: caller must already hold account/session locks in consent service. */
-export async function persistConsentGrant(client: PoolClient, userId: string, hmacKey: string, input: ConsentGrantRequest, allowSynthetic: boolean): Promise<Row> {
+/**
+ * Internal SQL step: caller must already hold account/session locks in consent service.
+ *
+ * `egressRevoker`（接线单）：注入后，「已有业务依赖的授权变更」改为**先撤销在途外发**
+ * 再写新 epoch；未注入 ⇒ 保持既有 `OBJECT_UNAVAILABLE` fail-closed 兜底（逐字不变）。
+ */
+export async function persistConsentGrant(client: PoolClient, userId: string, hmacKey: string, input: ConsentGrantRequest, allowSynthetic: boolean, egressRevoker: EgressRevoker | null = null): Promise<Row> {
   if (!['recording','media_processing','external_inference','public_posting'].includes(input.purpose)
       || typeof input.policy_version !== 'string' || input.policy_version.length < 1 || input.policy_version.length > 80
       || !Array.isArray(input.recipient_ids) || input.recipient_ids.length > 30 || new Set(input.recipient_ids).size !== input.recipient_ids.length
@@ -76,12 +82,15 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
     return current;
   }
   const expected = current ? number(current.revision) : 1;
-  // No fake job/media/export cancellation while consumers remain unimplemented.
+  // 授权变更消费者（接线单）：注入后先撤销在途外发；未注入 ⇒ 保持既有 fail-closed 兜底。
   const deps = (await client.query(`SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1)
     OR EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1)
     OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1)
     OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1) AS present`, [userId])).rows[0];
-  if (deps?.present) throw new ApiError('OBJECT_UNAVAILABLE', '已有业务依赖的授权变更消费者尚未接入');
+  if (deps?.present) {
+    if (!egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', '已有业务依赖的授权变更消费者尚未接入');
+    egressRevoker.onConsentWithdrawn({ userId, purpose: input.purpose });
+  }
   // Revisions never reset; different keys are serialized new consent intents, not stale-header conflicts.
   const revision = Math.max(expected, epoch ? number(epoch.revision) : 1) + 1;
   const nextEpoch = currentEpoch + 1;

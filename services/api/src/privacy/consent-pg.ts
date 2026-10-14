@@ -47,8 +47,22 @@ const currentRecords = `SELECT c.*,p.state AS epoch_state,p.current_epoch FROM p
   LEFT JOIN public.consent_records c ON c.user_id=p.user_id AND c.purpose=p.purpose
   AND c.epoch=CASE WHEN p.state='granted' THEN p.current_epoch ELSE p.current_epoch-1 END`;
 
+/**
+ * 「撤回/注销消费者」端口（GY-I27 接线单）：由装配方注入 `packages/privacy/in-flight.mjs`
+ * 的 `createEgressRevoker`（经 `services/api/src/privacy/egress.ts` 的 `createApiEgressRevoker`）。
+ *
+ * **缺省不注入 ⇒ 行为与接线前逐字不变**（仍以 `OBJECT_UNAVAILABLE` 拒绝有依赖的撤回/授予，
+ * 不伪造取消成功）。注入后，撤回/授予会在同一事务内**先撤销在途外发**再继续；
+ * 撤销发生在事务内 ⇒ 事务若回滚会「多撤」在途记录，方向是**更安全的一侧**（禁止外发），
+ * 且 `revokeInFlight` 幂等，故可接受（已在证据页写明）。
+ */
+export interface EgressRevoker {
+  onConsentWithdrawn(input: { userId: string; purpose: string }): { revokedInFlight: number };
+  onAccountSuspendedOrDeleted(input: { userId: string }): { revokedInFlight: number };
+}
+
 /** No exports, media writes or generic commit callbacks. */
-export function createPostgresConsentService(pool: PgPool, hmacKey: string, options: { allowSyntheticGrantPolicy?: boolean } = {}) {
+export function createPostgresConsentService(pool: PgPool, hmacKey: string, serviceOptions: { allowSyntheticGrantPolicy?: boolean; egressRevoker?: EgressRevoker | null } = {}) {
   async function transaction<T>(input: Identity, work: (client: PoolClient, user: Row) => Promise<T>): Promise<T> {
     let client: PoolClient | undefined;
     try {
@@ -104,7 +118,7 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, opti
 
   return {
     async grant(input: Identity, request: ConsentGrantRequest) {
-      return transaction(input, async client => dto(await persistConsentGrant(client, input.identity.userId, hmacKey, request, options.allowSyntheticGrantPolicy === true)));
+      return transaction(input, async client => dto(await persistConsentGrant(client, input.identity.userId, hmacKey, request, serviceOptions.allowSyntheticGrantPolicy === true, serviceOptions.egressRevoker ?? null)));
     },
     async list(input: Identity, options: { cursor?: string; limit: number }) {
       return transaction(input, async (client, user) => {
@@ -155,12 +169,16 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, opti
         assertCurrent(record);
         if (`"${positive(record.revision)}"` !== options.ifMatch) throw new ApiError('REVISION_CONFLICT', '授权版本已变化');
         if (record.state === 'granted') {
-          // Consumer cancellation/deletion is not delivered here. Refuse existing dependencies rather than fake success.
+          // 撤回消费者（接线单）：注入后**先撤销在途外发**再完成撤回（撤回递增 epoch 使旧凭据失效）。
+          // 未注入 ⇒ 保持既有 fail-closed 兜底，绝不伪造取消成功。
           const dependencies = await client.query(`SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1::uuid) AS present`, [input.identity.userId]);
-          if (dependencies.rows[0]?.present) throw new ApiError('OBJECT_UNAVAILABLE', '已有资料或任务的撤回消费者尚未接入');
+          if (dependencies.rows[0]?.present) {
+            if (!serviceOptions.egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', '已有资料或任务的撤回消费者尚未接入');
+            serviceOptions.egressRevoker.onConsentWithdrawn({ userId: input.identity.userId, purpose: options.purpose });
+          }
           const updated = await client.query(`UPDATE public.consent_records SET state='withdrawn',withdrawn_at=clock_timestamp(),revision=revision+1
             WHERE id=$1::uuid AND user_id=$2::uuid AND state='granted' RETURNING *`, [record.id, input.identity.userId]);
           if (updated.rows.length !== 1) throw new ApiError('REVISION_CONFLICT', '授权版本已变化');
