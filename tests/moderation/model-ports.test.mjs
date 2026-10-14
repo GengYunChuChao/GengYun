@@ -6,8 +6,10 @@
  *      （`MODEL_PORT_SEAM_DEFAULTS` 全为 `null`）⇒"默认关闭"不依赖任何运行期开关；
  *   2) 本包源码里**没有**任何网络原语、环境变量读取或凭据常量（逐文件正则扫描，零命中）；
  *   3) 本包**不导出**任何端口实现；
- *   4) 仓库内（services/api、apps/admin、miniprogram、tools）**没有任何**合流层调用点
- *      ⇒ 本包暂无 HTTP 消费者、应用装配路径未接线（不可读成"AI 筛查已上线"）。
+ *   4) 仓库内（services/api、apps/admin、miniprogram、tools）**除受信的审核域装配路径
+ *      `services/api/src/moderation/**`（GY-I14 装配片）外没有任何**合流层调用点**
+ *      ⇒ 应用装配路径未接线；该受信消费者经 `GET /jobs/{id}` 只读暴露结论，
+ *      **真实供应商仍未接线**（real 整域 fail-closed 503），不可读成"AI 筛查已上线"。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -153,7 +155,32 @@ function findModelMergeWiring(text) {
   return hits;
 }
 
-test('文书边界：全仓不得出现"本片模型合流"的装配/消费者（判据=模型合流 API 符号）', () => {
+/**
+ * GY-I14 装配片（#14 · HTTP 审核域）更新本控制的口径（2026-10-14）——**这是"前提被达成后
+ * 对既有负控制的同步更新"，不是绕过或放宽**：
+ *
+ *   - **原判据**：全仓（services/apps/miniprogram/tools）**零命中**模型合流 API 符号；
+ *   - **它当时的前提**：模型层片的边界声明是"**本包暂无 HTTP 消费者**、应用装配路径未接线"，
+ *     所以"零命中"等价于"还没有人接线"；
+ *   - **前提如何被本任务达成**：`#14` 的 HTTP 装配片**按设计**给模型层接入**唯一受信消费者**
+ *     ——`services/api/src/moderation/**`（审核域；结论经 `GET /jobs/{id}` 只读暴露，
+ *     real 模式整域 fail-closed）。不引用这些符号就不可能完成装配 ⇒ 该负控制必须同步；
+ *   - **改动只放宽"受信装配路径"这一处**：白名单是**逐个文件**列出的（不是目录通配），
+ *     其余判据与负例一律不变——其它任何目录（#15 `community/**`、#18 `admin/**`、
+ *     `tools/**`、`apps/**`、`miniprogram/**`）以及**该目录里未列出的新文件**命中仍判失败，
+ *     防止绕过审核域直连模型层；
+ *   - **一行回退**：删除下面这个文件清单即可恢复"全仓零命中"。
+ */
+const SANCTIONED_MODEL_CONSUMER_FILES = new Set([
+  '/services/api/src/moderation/service.ts',
+  '/services/api/src/moderation/provider.ts',
+  '/services/api/src/moderation/decisions.ts',
+  '/services/api/src/moderation/callback.ts',
+  '/services/api/src/moderation/types.ts',
+  '/services/api/src/moderation/packages.d.ts',
+]);
+
+test('文书边界：除受信装配路径（services/api/src/moderation/** 的受信文件清单）外，全仓不得出现"本片模型合流"的消费者', () => {
   const scanRoots = ['services', 'apps', 'miniprogram', 'tools'];
   const hits = [];
   for (const root of scanRoots) {
@@ -169,11 +196,17 @@ test('文书边界：全仓不得出现"本片模型合流"的装配/消费者�
     }
     for (const file of files) {
       if (file.includes('node_modules')) continue;
+      const relative = file.replace(repoRoot, '').replaceAll('\\', '/');
+      if (SANCTIONED_MODEL_CONSUMER_FILES.has(relative)) continue;
       const found = findModelMergeWiring(readFileSync(file, 'utf8'));
       if (found.length > 0) hits.push(`${file.replace(repoRoot, '')} :: ${found.join(',')}`);
     }
   }
-  assert.deepEqual(hits, [], '本片不注册路由、不改 services/api/** ⇒ 不应存在模型合流接线（规则层引用不算）');
+  assert.deepEqual(
+    hits,
+    [],
+    '除受信装配路径 services/api/src/moderation/** 的受信文件外，不应存在模型合流接线（规则层引用不算）',
+  );
 });
 
 test('文书边界判据有精度也有牙齿：合法规则层消费放行、真实模型合流接线被抓', () => {
@@ -212,6 +245,13 @@ test('文书边界判据有精度也有牙齿：合法规则层消费放行、�
   assert.equal(findModelMergeWiring('evaluateBoundHardRules(input, options)').includes('evaluateBoundHardRules'), true);
   // 词边界：相似但不同的名字不得误报。
   assert.deepEqual(findModelMergeWiring('mergeModerationDraft(); checkMergedInvariantStatus();'), []);
+  // 白名单本身：逐个文件列出（不是目录通配）——未列出的新文件、以及其它目录一律不在白名单。
+  const sanctioned = (relative) => SANCTIONED_MODEL_CONSUMER_FILES.has(relative.replaceAll('\\', '/'));
+  assert.equal(sanctioned('\\services\\api\\src\\moderation\\service.ts'), true, '审核域装配片是受信消费者');
+  assert.equal(sanctioned('/services/api/src/moderation/evil.ts'), false, '该目录里未列出的新文件不在白名单');
+  assert.equal(sanctioned('/services/api/src/community/service.ts'), false, '#15 社区线不在白名单');
+  assert.equal(sanctioned('/services/api/src/admin/ops/service.ts'), false, '#18 后台线不在白名单');
+  assert.equal(sanctioned('/tools/verify-moderation.mjs'), false, 'tools 不在白名单');
 });
 
 test('文书边界：已合并 #94 的 community 消费者是**合法规则层消费**（真实文件对证）', () => {

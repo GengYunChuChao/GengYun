@@ -547,9 +547,13 @@
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "GY-I09 识别任务闭环"
+        },
+        {
+          "path": "services/api/src/moderation/job-source.ts",
+          "lines": "1-33"
         }
       ],
-      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域与转写域的作业读取已接入，含归属、幂等与终态守卫；ocr/synthesis/answer/moderation 的作业源未接线（经该路径读取这些 kind 的作业与「作业不存在」同形 404）；持久队列与租约待接线"
+      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；ocr/synthesis/answer 的作业源未接线（经该路径读取这些 kind 的作业与「作业不存在」同形 404）；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
     },
     {
       "id": "cancelJob",
