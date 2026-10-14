@@ -2,7 +2,8 @@
 
 - **分支**：`feat/gy-i14-moderation-http`（worktree `E:\GengYunCommander\GengYun_W34`）
 - **基线**：`upstream/main` = `fcfa6de9d62aeaaa0489d3319f8f06911312af48`（本次未变）
-- **交付 HEAD**：`379228d`（本文件与 `docs/moderation/http-layer.md`、白名单收窄为紧随其后的提交；见 §8 逐条提交）
+- **代码交付 HEAD**：`9422fa9`（其后的提交**只**新增/更新 `docs/**`，无代码或测试行为变化；
+  最终分支 HEAD 以 `git rev-parse HEAD` 为准，由指挥在推送前复核）
 - **环境**：Windows；Node `v24.16.0`；npm `11.13.0`
 - **纪律**：真实 `tms`/`ims` 供应商**未授权付费** ⇒ 本片**零真实调用**、零凭据、零外网；
   全部端口为**合成替身**；**未 push**（由指挥推送）。
@@ -18,36 +19,39 @@
 ## 1 交付清单（`git diff --stat upstream/main...HEAD`）
 
 ```
- docs/architecture/contract-status.json    |    6 +-
- services/api/src/app.ts                   |   35 +-
- services/api/src/moderation/callback.ts   |  295 ++++++++
- services/api/src/moderation/decisions.ts  |  486 +++++++++++++
- services/api/src/moderation/index.ts      |   26 +
- services/api/src/moderation/job-source.ts |   45 ++
- services/api/src/moderation/nonbypass.ts  |  171 +++++
- services/api/src/moderation/packages.d.ts |  264 +++++++
- services/api/src/moderation/provider.ts   |  150 ++++
- services/api/src/moderation/service.ts    | 1083 +++++++++++++++++++++++++++++
- services/api/src/moderation/types.ts      |  353 ++++++++++
- services/api/src/moderation/visibility.ts |  290 ++++++++
- tests/moderation/_http-fixtures.mjs       |  216 ++++++
- tests/moderation/http-callback.test.mjs   |  463 ++++++++++++
- tests/moderation/http-isolation.test.mjs  |  283 ++++++++
- tests/moderation/http-jobs.test.mjs       |  218 ++++++
- tests/moderation/http-screening.test.mjs  |  338 ++++++++++
- tests/moderation/model-ports.test.mjs     |   34 +-
- 18 files changed, 4750 insertions(+), 6 deletions(-)
+ docs/architecture/contract-implementation-status.md |    2 +-
+ docs/architecture/contract-status.json              |    6 +-
+ docs/moderation/http-layer.md                       |  226 ++++++++
+ docs/verification/gy-i14-moderation-http-20261014.md |  ~300 ++++
+ services/api/src/app.ts                             |   35 +-
+ services/api/src/moderation/callback.ts             |  295 ++++++++
+ services/api/src/moderation/decisions.ts            |  486 +++++++++++++
+ services/api/src/moderation/index.ts                |   26 +
+ services/api/src/moderation/job-source.ts           |   45 ++
+ services/api/src/moderation/nonbypass.ts            |  171 +++++
+ services/api/src/moderation/packages.d.ts           |  264 +++++++
+ services/api/src/moderation/provider.ts             |  150 ++++
+ services/api/src/moderation/service.ts              | 1105 +++++++++++++++++++++++++++++
+ services/api/src/moderation/types.ts                |  361 ++++++++++
+ services/api/src/moderation/visibility.ts           |  315 ++++++++
+ tests/moderation/_http-fixtures.mjs                 |  216 ++++++
+ tests/moderation/http-callback.test.mjs             |  463 ++++++++++++
+ tests/moderation/http-isolation.test.mjs            |  283 ++++++++
+ tests/moderation/http-jobs.test.mjs                 |  218 ++++++
+ tests/moderation/http-screening.test.mjs            |  338 ++++++++++
+ tests/moderation/model-ports.test.mjs               |   48 +-
+ 21 files changed, 5256 insertions(+), 7 deletions(-)
 ```
 
-（`packages/contracts/**`、`packages/moderation/**`、`services/api/src/community/**`、
-`services/api/src/admin/**` **零改动**；`app.ts` 为纯追加式装配，见 §6。）
+（上面数字取自 `git diff --stat upstream/main...HEAD`；`packages/contracts/**`、`packages/moderation/**`、
+`services/api/src/community/**`、`services/api/src/admin/**` **零改动**；`app.ts` 为纯追加式装配，见 §6。）
 
 ## 2 门禁与检查清单（命令 + 退出码 + 原始输出）
 
 | # | 命令 | 退出码 | 原始输出（关键行） |
 | --- | --- | --- | --- |
 | 1 | `npm run lint` | 0 | `PASS tsc --noEmit services/api/tsconfig.json` / `PASS tsc --noEmit apps/admin/tsconfig.json` / `PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）` / `lint 通过` |
-| 2 | `npm run test:unit` | 0 | `ℹ tests 1831` `ℹ pass 1830` `ℹ fail 0` `ℹ skipped 1` |
+| 2 | `npm run test:unit` | 0 | `ℹ tests 1831` `ℹ pass 1830` `ℹ fail 0` `ℹ skipped 1`（`duration_ms 21558.6734`；在代码交付 HEAD `9422fa9` 上复跑） |
 | 3 | `npm run test:contract` | 0 | `ℹ tests 6` `ℹ pass 6` `ℹ fail 0` |
 | 4 | `npm run test:docs` | 0 | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
 | 5 | `node --test tests/moderation/http-screening.test.mjs tests/moderation/http-isolation.test.mjs tests/moderation/http-callback.test.mjs tests/moderation/http-jobs.test.mjs` | 0 | `ℹ tests 31` `ℹ pass 31` `ℹ fail 0` |
@@ -267,8 +271,8 @@ real 整域 fail-closed、持久队列/租约仍待接线）。中文对照表�
 | `1c28561` | 版本重审/发布隔离/下架缓存/读取重查回归（6 项）+ 可见性与缓存口径修正 |
 | `ddd94e8` | 回调验签/版本/回放与不可绕过回归（13 项）+ 端口统一加守卫 + 视图租约字段 |
 | `042c73c` | `/jobs/{id}` 真实回环 HTTP 回归（5 项） |
-| `379228d` | 文书边界负控制同步 + contract-status 事实更新（跨线披露） |
-| （紧随其后） | 白名单收窄为逐个受信文件；`docs/moderation/http-layer.md`；本证据页 |
+| `9422fa9` | 文书边界负控制同步（**逐个受信文件**白名单）+ 契约状态事实更新（跨线披露） |
+| `7750b34` | `docs/moderation/http-layer.md`（装配层说明 + 跨线接线要求）+ 本证据页 |
 
 ## 9 未取得 / 未验证（不得读成已完成）
 
