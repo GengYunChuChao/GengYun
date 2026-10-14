@@ -92,4 +92,24 @@
       <view class="demo-caption">{{modeNote}}</view>
     </block>
   </block>
+
+  <!--
+    人工审核：**只保留空入口 + 明确说明**，对游客与登录用户都可见
+    （避免"看不到入口就以为审核已开放"）。本块只写静态说明，
+    不呈现任何人工复核结论、任务或人员信息。
+  -->
+  <view class="panel">
+    <view class="panel-head">
+      <view class="panel-head__title">人工审核</view>
+      <view class="pill pill--gray">建设中</view>
+    </view>
+    <view class="card-text">
+      人工审核入口正在建设中：当前尚未开放，也不接受人工复核申请。
+      本页不展示任何人工审核任务、复核人员、投票或资质信息，也不把机器规则层的筛查结论写成「人工复核已完成」。
+    </view>
+    <view class="card-text">
+      内容需要人工复核时会在服务端留档；页面只呈现服务端返回的当前状态（待审／已公开／已下架）。
+      未开放的入口不会用任何形式的假任务、假结论或假人员信息代替——这一点是本页的硬性约束。
+    </view>
+  </view>
 </view>
