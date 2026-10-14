@@ -1,5 +1,9 @@
 import {readFileSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
+// GY-I07（#7）：本地联调（stub）显式放行「浙江首批真实资料（未发布/未核对）」并入
+// /knowledge 读取面。**必须显式**：这批条目 visibility='private'、review_status='unverified'，
+// 逐条仍如实标注「未核对」，且只在非 real 执行模式生效（real 模式装配层硬拒）。
+process.env.APP_KNOWLEDGE_UNVERIFIED_SEED='1';
 const settings=JSON.parse(readFileSync(new URL('./settings.json',import.meta.url),'utf8'));
 const {buildApp}=await import(pathToFileURL(settings.repoRoot+'/services/api/src/app.ts'));
 const {loadConfig}=await import(pathToFileURL(settings.repoRoot+'/services/api/src/config.ts'));

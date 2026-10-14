@@ -27,12 +27,12 @@
 | 分页（items + next_cursor、limit 默认 20 上限 50、服务端签名游标） | docs/architecture/state-contract.md:32；packages/contracts/openapi.json#/components/parameters/Cursor\|Limit | `partial` | services/api/src/knowledge/pagination.ts:24-65；services/api/src/profile/service.ts:104-113；services/api/src/privacy/consent-pagination.ts:24-65；tests/unit/knowledge-pagination.test.mjs::knowledge chain keeps first 15min deadline；tests/unit/consent-pagination.test.mjs::15分钟截止严格生效；services/api/src/profile/pagination.ts:24-65 | 授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成 |
 | 版本（强 ETag、If-Match 428/409、revision 自增） | docs/architecture/state-contract.md:15 | `implemented` | services/api/src/routes/profile.ts:37-41；services/api/src/routes/consents.ts:59-63；services/api/src/routes/knowledge.ts:30-34；services/api/src/profile/service.ts:86-87；tests/unit/profile-api.test.mjs::GY-I05 persistent profile/catalog HTTP and SQL regression | 无（需 DATABASE_URL；撤回/编辑路径的 If-Match 缺 428、不匹配 409 已实现） |
 | 幂等（Idempotency-Key 8..128、同键同体重放、同键异体 409、进行中 409） | docs/architecture/state-contract.md:34 | `partial` | services/api/src/routes/support.ts:80-148；services/api/src/app.ts:349-358；services/api/src/auth/idempotency.ts:31-33；services/api/src/auth/service.ts:104-107；services/api/src/admin/identity.ts:23-26；services/api/src/admin/idempotent-write.ts:55-72；tests/unit/idempotency-retry-after-http.test.mjs::真实产品登录 HTTP：同键请求仍在处理；tests/unit/idempotency-job-ttl.test.mjs；tests/unit/admin-idempotency-expiry.test.mjs；tests/unit/pg-write-idempotency-ttl.test.mjs | REQUEST_IN_PROGRESS 的 Retry-After: 1 已合（#108）；认证/识别/OCR/ASR/TTS普通回执24小时已合（#113），后台24小时及到期清理/锁内时钟已合（#116），档案/授权授予/撤回的新PG回执24小时已合（#120）。重放不续期，旧PG五分钟回执不追溯延长；内存域重启不持久，当前可见性/持久业务唯一键仍须按模块验收 |
-| source_kind / evidence_kind（来源取得方式与证据性质） | packages/contracts/states.json#/states/SourceKind\|EvidenceKind；docs/architecture/state-contract.md:60 | `partial` | services/api/src/db/catalog.ts:5-22；services/api/src/knowledge/service.ts:43-47；packages/reference/constants.mjs:1-60；tests/reference/contract.test.mjs::H2；services/api/src/ocr/reference.ts:35-49；services/api/src/ocr/reference.ts:223-245；tests/integration/ocr-http.mjs | 公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；替身标记且 review_status=unverified，两种模式用量候选恒空；/herbicides 仍未装配，真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收 |
+| source_kind / evidence_kind（来源取得方式与证据性质） | packages/contracts/states.json#/states/SourceKind\|EvidenceKind；docs/architecture/state-contract.md:60 | `partial` | services/api/src/db/catalog.ts:5-22；services/api/src/knowledge/service.ts:43-47；packages/reference/constants.mjs:1-60；tests/reference/contract.test.mjs::H2；services/api/src/ocr/reference.ts:35-49；services/api/src/ocr/reference.ts:223-245；tests/integration/ocr-http.mjs | 公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；/herbicides 列表与详情已装配并消费 packages/reference 的真实公告记录（来源 review_status=unverified，禁限用/用量未采集 ⇒ 用量候选恒空）；/knowledge 在非 real 模式且显式放行时并入浙江首批真实资料（review_status=unverified、visibility=private）；真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收 |
 | 真实 / 替身 / 演示环境（execution_mode） | packages/contracts/states.json#/states/ExecutionMode；docs/architecture/state-contract.md:3 | `implemented` | services/api/src/contract.ts:9-11；services/api/src/config.ts:126-238；services/api/src/auth/wechat.ts:66-76；tests/unit/api-config.test.mjs::real 模式缺配置时一次性列出全部字段 | 无（本机实测：stub 启动并返回 meta.execution_mode=stub；APP_EXECUTION_MODE=real 且无凭据时 exit 1 并列出 9 个缺失字段，不半配置启动） |
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:529-573；tests/unit/recognitions-api.test.mjs::状态 7 cancelled；services/api/src/jobs/routes.ts:64-80；services/api/src/jobs/registry.ts:281-307；services/api/src/routes/admin.ts:316-324 | 共享Job识别取消及转写读取已合（#106/#125）；转写取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；OCR/合成/问答/审核未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收 |
 | 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:57-60；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
-## 3 已装配操作（73 条）
+## 3 已装配操作（75 条）
 
 装配只表示存在产品路由；请同时读状态和限制。
 
@@ -61,6 +61,8 @@
 | `cancelJob` | POST /jobs/{id}/cancel | `partial` | services/api/src/jobs/routes.ts:64-80；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled；ocr/synthesis/answer/moderation 的作业源未接线；持久租约与外发撤销待接线 |
 | `listKnowledge` | GET /knowledge | `partial` | services/api/src/routes/knowledge.ts:25-29；services/api/src/knowledge/service.ts:14-56；services/api/src/knowledge/pagination.ts:24-65；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留 |
 | `getKnowledge` | GET /knowledge/{id} | `implemented` | services/api/src/routes/knowledge.ts:30-34；services/api/src/knowledge/service.ts:43-56；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需 DATABASE_URL；不可见/不存在统一 404，ETag 为 revision |
+| `listHerbicides` | GET /herbicides | `implemented` | services/api/src/routes/knowledge.ts:60-65；services/api/src/knowledge/reference-query.ts:158-166；packages/reference/zhejiang.mjs:97-160；tests/unit/knowledge-herbicides-http.test.mjs::/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯 | 记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收 |
+| `getHerbicide` | GET /herbicides/{id} | `implemented` | services/api/src/routes/knowledge.ts:66-72；services/api/src/knowledge/reference-query.ts:167-175；tests/unit/knowledge-herbicides-http.test.mjs::/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致 | 未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表 |
 | `createRecognition` | POST /recognitions | `partial` | services/api/src/routes/recognitions.ts:58-62；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `getRecognition` | GET /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:75-79；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `deleteRecognition` | DELETE /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:102-106；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
@@ -112,7 +114,7 @@
 | `grantCommunityMediaAccess` | POST /community/media-access | `partial` | services/api/src/routes/media.ts:257-265；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入 |
 | `readCommunityMediaContent` | GET /community/media/{grant_id}/content | `partial` | services/api/src/routes/media.ts:276-284；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面；tests/unit/media-real-mode-fail-closed.test.mjs::GY-I06 real 模式 | 取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收 |
 
-## 4 未装配操作（39 条）
+## 4 未装配操作（37 条）
 
 以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。
 
@@ -123,8 +125,6 @@
 | `listExports` | GET /me/exports | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
 | `requestAccountDeletion` | POST /me/account/deletion | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
 | `getDeletionReceipt` | GET /account/deletions/{id} | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
-| `listHerbicides` | GET /herbicides | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
-| `getHerbicide` | GET /herbicides/{id} | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 | `verifyRegistration` | POST /registrations/verify | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 | `createConversation` | POST /conversations | `planned` | — | 此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS |
 | `listConversations` | GET /conversations | `planned` | — | 此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS |
@@ -162,7 +162,7 @@
 
 | 范围 | implemented | partial | planned | 合计 |
 | --- | --- | --- | --- | --- |
-| 契约操作 | 11 | 81 | 20 | 112 |
+| 契约操作 | 13 | 81 | 18 | 112 |
 | 横切维度 | 2 | 6 | 0 | 8 |
 <!-- contract-status-tables:end -->
 
