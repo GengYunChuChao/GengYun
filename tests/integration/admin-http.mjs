@@ -354,7 +354,7 @@ await group('[正控制] 作业：已接线实例 ⇒ list 200（4 条）+ cance
 });
 
 // —— 开关 ——
-await group('[正控制] 开关：list 200（本实例注入的 store 为出厂默认 false）→ setFlag 200 → 读回一致', async () => {
+await group('[正控制] 开关：list 200（契约 3 键默认 false）→ setFlag 200 → 读回一致', async () => {
   const listed = await probe('listFlags', 'GET', `${API}/admin/feature-flags`);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.data.items.map((f) => f.key).sort(), [...CONTRACT_FLAG_KEYS].sort());
