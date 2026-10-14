@@ -32,7 +32,7 @@
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:529-573；tests/unit/recognitions-api.test.mjs::状态 7 cancelled；services/api/src/jobs/routes.ts:64-80；services/api/src/jobs/registry.ts:281-307；services/api/src/routes/admin.ts:316-324 | 共享Job识别取消及转写读取已合（#106/#125）；转写取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；OCR/合成/问答/审核未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收 |
 | 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:57-60；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
-## 3 已装配操作（78 条）
+## 3 已装配操作（83 条）
 
 装配只表示存在产品路由；请同时读状态和限制。
 
@@ -77,6 +77,11 @@
 | `deleteTranscription` | DELETE /speech/transcriptions/{id} | `partial` | services/api/src/routes/speech.ts:167-171；tests/integration/speech-http.mjs | 录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收 |
 | `confirmTranscription` | PATCH /speech/transcriptions/{id}/confirmation | `partial` | services/api/src/routes/speech.ts:187-191；tests/integration/speech-http.mjs | 录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收 |
 | `createSynthesis` | POST /speech/synthesis | `partial` | services/api/src/routes/synthesis.ts:86-90；tests/integration/tts-http.mjs | 合成受理端点已装配，仅接受已核对内容引用；真实提供者、核对内容与产物端口未在产品装配接线，明确拒绝；内存任务未接公共 Job 读取/取消；真实音频/听感评估、播放消费、持久/删除链待验收 |
+| `listFavorites` | GET /favorites | `partial` | services/api/src/routes/favorites.ts:60-72；services/api/src/favorites/service.ts:214-258；tests/unit/favorites-http.test.mjs::收藏HTTP：增→列→取消 的契约形状、头部与 | GY-I16 本片只交付内存存储（进程重启即丢，无数据库迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；引用可用性端口生产默认未接线 ⇒ 一律 reference_state=unavailable（不假装可用）。归属/去重/取消/分页/读取时重查已由 HTTP + 域测试覆盖（见证据） |
+| `createFavorite` | POST /favorites | `partial` | services/api/src/routes/favorites.ts:74-88；services/api/src/favorites/service.ts:262-330；tests/unit/favorites-http.test.mjs::收藏HTTP：请求校验（闭集/未知字段/路径/查询参数）与后台会话隔离 | 同 listFavorites：内存存储 + real 模式关闭 + 可见性端口未接线。收藏只接受契约 3 类目标（species/herbicide/scheme）；收藏**不授予可见性**，也不产生任何"已使用"事实（投影恰为契约 6 字段） |
+| `deleteFavorite` | DELETE /favorites/{id} | `partial` | services/api/src/routes/favorites.ts:90-102；services/api/src/favorites/service.ts:332-380；tests/unit/favorites-http.test.mjs::收藏HTTP：归属/越权同形、If-Match 与幂等头部纪律 | 同 listFavorites：内存存储 + real 模式关闭。契约 If-Match/Idempotency-Key 已强制（缺失 428／形状非法 400／版本不符 409；非本人与不存在同形 404）；取消为物理删除，旧行不复活 |
+| `listHistory` | GET /history | `partial` | services/api/src/routes/history.ts:55-62；services/api/src/history/service.ts:238-292；tests/unit/history-http.test.mjs::历史HTTP：任务状态端口已接线到已合并读取口 ⇒ 失败状态真实可见（读取时重查） | GY-I16 本片只交付内存存储（无数据库迁移）⇒ real 模式整域 503。**识别/OCR → 历史的写入接线属跨线**：本片只交付内部口 historyService.appendHistory()（非契约 operationId、不注册路由，签名见 services/api/src/history/service.ts），那一句调用待指挥另行派单。引用可用性端口生产默认未接线 ⇒ reference_state 一律 unavailable |
+| `deleteHistory` | DELETE /history/{id} | `partial` | services/api/src/routes/history.ts:64-80；services/api/src/history/service.ts:294-340；tests/unit/history-http.test.mjs::历史HTTP：删除历史行 + 级联披露（未接线如实说明，接线后只启动不声称完成） | 同 listHistory：内存存储 + real 模式关闭。契约描述的"同时启动关联识别/OCR 私有结果/媒体和外发删除"**尚未接线**（属 GY-I19／跨线）：本片只删除历史行本身，并通过 history/cascade.ts 端口 + X-GY-Cascade 非契约披露头如实回传 initiated/unwired/failed，不谎称级联已完成 |
 | `listMessages` | GET /messages | `partial` | services/api/src/routes/messages.ts:24-33；tests/unit/messages-http.test.mjs::消息列表实际HTTP：整链固定15min，读状态不改变水位，每页重查引用 | 消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息 |
 | `getUnreadCount` | GET /messages/unread-count | `partial` | services/api/src/routes/messages.ts:34-39；tests/unit/messages-http.test.mjs::消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致 | 消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息 |
 | `markMessageRead` | PUT /messages/{id}/read | `partial` | services/api/src/routes/messages.ts:40-51；tests/unit/messages-http.test.mjs::消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致 | 消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息 |
@@ -117,7 +122,7 @@
 | `grantCommunityMediaAccess` | POST /community/media-access | `partial` | services/api/src/routes/media.ts:257-265；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入 |
 | `readCommunityMediaContent` | GET /community/media/{grant_id}/content | `partial` | services/api/src/routes/media.ts:276-284；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面；tests/unit/media-real-mode-fail-closed.test.mjs::GY-I06 real 模式 | 取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收 |
 
-## 4 未装配操作（34 条）
+## 4 未装配操作（29 条）
 
 以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。
 
@@ -152,17 +157,12 @@
 | `unlikeComments` | DELETE /comments/{id}/like | `partial` | services/api/src/community/service.ts:956-961；tests/unit/community-contract.test.mjs | 独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15） |
 | `createReport` | POST /reports | `partial` | services/api/src/community/service.ts:961-966；tests/unit/community-contract.test.mjs | 独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15） |
 | `getOwnReport` | GET /reports/{id} | `partial` | services/api/src/community/service.ts:1001-1006；tests/unit/community-contract.test.mjs | 独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15） |
-| `listFavorites` | GET /favorites | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
-| `createFavorite` | POST /favorites | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
-| `deleteFavorite` | DELETE /favorites/{id} | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
-| `listHistory` | GET /history | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
-| `deleteHistory` | DELETE /history/{id} | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
 
 ## 5 计数
 
 | 范围 | implemented | partial | planned | 合计 |
 | --- | --- | --- | --- | --- |
-| 契约操作 | 13 | 81 | 18 | 112 |
+| 契约操作 | 13 | 86 | 13 | 112 |
 | 横切维度 | 2 | 6 | 0 | 8 |
 <!-- contract-status-tables:end -->
 

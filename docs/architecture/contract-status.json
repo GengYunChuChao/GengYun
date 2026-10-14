@@ -1387,10 +1387,23 @@
       "route": "/api/v1/favorites",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "60-72"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "214-258"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：增→列→取消 的契约形状、头部与"
+        }
+      ],
+      "blocker": "GY-I16 本片只交付内存存储（进程重启即丢，无数据库迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；引用可用性端口生产默认未接线 ⇒ 一律 reference_state=unavailable（不假装可用）。归属/去重/取消/分页/读取时重查已由 HTTP + 域测试覆盖（见证据）"
     },
     {
       "id": "createFavorite",
@@ -1399,10 +1412,23 @@
       "route": "/api/v1/favorites",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "74-88"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "262-330"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：请求校验（闭集/未知字段/路径/查询参数）与后台会话隔离"
+        }
+      ],
+      "blocker": "同 listFavorites：内存存储 + real 模式关闭 + 可见性端口未接线。收藏只接受契约 3 类目标（species/herbicide/scheme）；收藏**不授予可见性**，也不产生任何\"已使用\"事实（投影恰为契约 6 字段）"
     },
     {
       "id": "deleteFavorite",
@@ -1411,10 +1437,23 @@
       "route": "/api/v1/favorites/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "90-102"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "332-380"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：归属/越权同形、If-Match 与幂等头部纪律"
+        }
+      ],
+      "blocker": "同 listFavorites：内存存储 + real 模式关闭。契约 If-Match/Idempotency-Key 已强制（缺失 428／形状非法 400／版本不符 409；非本人与不存在同形 404）；取消为物理删除，旧行不复活"
     },
     {
       "id": "listHistory",
@@ -1423,10 +1462,23 @@
       "route": "/api/v1/history",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/history.ts",
+          "lines": "55-62"
+        },
+        {
+          "path": "services/api/src/history/service.ts",
+          "lines": "238-292"
+        },
+        {
+          "test": "tests/unit/history-http.test.mjs",
+          "name": "历史HTTP：任务状态端口已接线到已合并读取口 ⇒ 失败状态真实可见（读取时重查）"
+        }
+      ],
+      "blocker": "GY-I16 本片只交付内存存储（无数据库迁移）⇒ real 模式整域 503。**识别/OCR → 历史的写入接线属跨线**：本片只交付内部口 historyService.appendHistory()（非契约 operationId、不注册路由，签名见 services/api/src/history/service.ts），那一句调用待指挥另行派单。引用可用性端口生产默认未接线 ⇒ reference_state 一律 unavailable"
     },
     {
       "id": "deleteHistory",
@@ -1435,10 +1487,23 @@
       "route": "/api/v1/history/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/history.ts",
+          "lines": "64-80"
+        },
+        {
+          "path": "services/api/src/history/service.ts",
+          "lines": "294-340"
+        },
+        {
+          "test": "tests/unit/history-http.test.mjs",
+          "name": "历史HTTP：删除历史行 + 级联披露（未接线如实说明，接线后只启动不声称完成）"
+        }
+      ],
+      "blocker": "同 listHistory：内存存储 + real 模式关闭。契约描述的\"同时启动关联识别/OCR 私有结果/媒体和外发删除\"**尚未接线**（属 GY-I19／跨线）：本片只删除历史行本身，并通过 history/cascade.ts 端口 + X-GY-Cascade 非契约披露头如实回传 initiated/unwired/failed，不谎称级联已完成"
     },
     {
       "id": "listMessages",
