@@ -163,15 +163,86 @@ test('消息实际HTTP：产品回执24h，6m及23h59m重放不续期，到期�
   assert.equal(h.messages.snapshotCounts().read_transitions, 1);
 });
 
-test('消息实际HTTP：real即使注入内存也503，未注册列表/创建，不伪造消息能力', async t => {
+test('消息实际HTTP：real即使注入内存也503，无客户端创建，不伪造消息能力', async t => {
   const h = await fixture(t, { real: true });
   assert.equal(h.app.messagesService, null);
   error(await h.call('GET', unread), 503, 'PROVIDER_UNAVAILABLE');
   error(await h.call('PUT', read(absent), h.a, { headers: write() }), 503, 'PROVIDER_UNAVAILABLE');
   error(await h.call('GET', unread, null), 401, 'SESSION_REQUIRED');
+  error(await h.call('GET', '/api/v1/messages', null), 401, 'SESSION_REQUIRED');
   const list = await h.call('GET', '/api/v1/messages');
   const create = await h.call('POST', '/api/v1/messages', h.a, { payload: { owner_id: h.a.user.id } });
-  assert.equal(list.status, 404);
+  error(list, 503, 'PROVIDER_UNAVAILABLE');
   assert.equal(create.status, 404);
   assert.equal(h.messages.snapshotCounts().messages, 0);
+});
+
+test('消息列表实际HTTP：本人稳定分页，空页/限额/未知字段与聚合未读', async t => {
+  const h = await fixture(t);
+  const ids = [];
+  for (let i = 0; i < 5; i++) ids.push((await h.append(h.a, `page-${i}`)).message.id);
+  let cursor = null;
+  const seen = [];
+  do {
+    const page = await h.call('GET', '/api/v1/messages?limit=2' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+    assert.equal(page.status, 200);
+    assert.equal(page.cache, 'no-store');
+    assert.equal(page.etag, null);
+    assert.ok(page.data.data.items.length <= 2);
+    seen.push(...page.data.data.items.map(item => item.id));
+    cursor = page.data.data.next_cursor;
+  } while (cursor);
+  assert.deepEqual(seen, ids.sort().reverse());
+  assert.deepEqual((await h.call('GET', unread)).data.data, { count: 5 });
+  const empty = await h.call('GET', '/api/v1/messages', h.b);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.data.data, { items: [], next_cursor: null });
+  error(await h.call('GET', '/api/v1/messages?owner_id=' + h.b.user.id), 400, 'INVALID_REQUEST');
+  error(await h.call('GET', '/api/v1/messages?limit=0'), 400, 'INVALID_REQUEST');
+});
+
+test('消息列表实际HTTP：整链固定15min，读状态不改变水位，每页重查引用', async t => {
+  let visible = true;
+  const reference = createWiredReferencePort({ resolve: async () => visible ? 'available' : 'unavailable' });
+  const h = await fixture(t, { reference });
+  for (let i = 0; i < 4; i++) await h.append(h.a, `deadline-${i}`, { type: 'job', id: absent, revision: 1 });
+  const first = await h.call('GET', '/api/v1/messages?limit=1');
+  assert.equal(first.status, 200);
+  const cursor = first.data.data.next_cursor;
+  assert.equal(first.data.data.items[0].reference_state, 'available');
+  assert.equal((await h.call('PUT', read(first.data.data.items[0].id), h.a, { headers: write() })).status, 200);
+  h.advance(14 * 60000);
+  visible = false;
+  const second = await h.call('GET', '/api/v1/messages?limit=1&cursor=' + encodeURIComponent(cursor));
+  assert.equal(second.status, 200);
+  assert.equal(second.data.data.items[0].reference_state, 'unavailable');
+  const next = second.data.data.next_cursor;
+  const decode = value => JSON.parse(Buffer.from(value.split('.')[0], 'base64url').toString('utf8'));
+  assert.equal(decode(next).expires, start + 900000);
+  assert.equal(decode(cursor).expires, decode(next).expires);
+  h.advance(59999);
+  assert.equal((await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(next))).status, 200);
+  h.advance(1);
+  error(await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(next)), 400, 'INVALID_CURSOR');
+  error(await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(cursor)), 400, 'INVALID_CURSOR');
+});
+
+test('消息列表实际HTTP：主体/水位/账号版本变化拒旧游标，重新首页恢复', async t => {
+  const h = await fixture(t);
+  for (let i = 0; i < 3; i++) await h.append(h.a, `snapshot-${i}`);
+  const first = await h.call('GET', '/api/v1/messages?limit=1');
+  const cursor = first.data.data.next_cursor;
+  error(await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(cursor), h.b), 400, 'INVALID_CURSOR');
+  await h.append(h.a, 'snapshot-new');
+  error(await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(cursor)), 400, 'INVALID_CURSOR');
+  const fresh = await h.call('GET', '/api/v1/messages?limit=1');
+  assert.equal(fresh.status, 200);
+  const freshCursor = fresh.data.data.next_cursor;
+  await h.auth.bumpUserAuthEpoch(h.a.user.id);
+  const current = await h.auth.getUser(h.a.user.id);
+  const token = 'synthetic-new-epoch-token';
+  await h.auth.createSession({ userId: current.id, tokenHashHex: hashToken(token), authEpoch: current.authEpoch,
+    expiresAt: new Date(start + 3600000), audience: 'user' });
+  error(await h.call('GET', '/api/v1/messages?cursor=' + encodeURIComponent(freshCursor), { token }), 400, 'INVALID_CURSOR');
+  assert.equal((await h.call('GET', '/api/v1/messages', { token })).data.data.items.length, 4);
 });

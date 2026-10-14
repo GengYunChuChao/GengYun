@@ -63,7 +63,7 @@ import { createClosedContentSource, type PublishedContentSource } from './media/
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
-import { registerMessageReadRoutes } from './routes/messages.ts';
+import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
@@ -391,7 +391,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   registerMediaRoutes(app, config, guards, mediaService);
-  registerMessageReadRoutes(app, config, guards, messagesService);
+  registerMessageRoutes(app, config, guards, messagesService);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);

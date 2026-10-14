@@ -7,8 +7,8 @@ import { strongEtagOf, type MessagesService } from '../messages/service.ts';
 import { requireIdempotencyKey, requireIfMatch } from '../messages/validate.ts';
 import { buildMeta } from './support.ts';
 
-/** Only the two read-state operations; message creation and listing are not exposed here. */
-export function registerMessageReadRoutes(
+/** Three frozen message operations; message creation remains server-internal. */
+export function registerMessageRoutes(
   app: FastifyInstance, config: AppConfig, guards: AuthGuards, service: MessagesService | null,
 ): void {
   const emptyQuery = { type: 'object', additionalProperties: false, properties: {} };
@@ -20,6 +20,16 @@ export function registerMessageReadRoutes(
   const noStore = async (_request: FastifyRequest, reply: import('fastify').FastifyReply) => {
     reply.header('Cache-Control', 'no-store');
   };
+  app.get(`${API_PREFIX}/messages`, {
+    onRequest: noStore, preHandler: guards.requireUser,
+    schema: { querystring: { type: 'object', additionalProperties: false, properties: {
+      cursor: { type: 'string', minLength: 1, maxLength: 2048 },
+      limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+    } } },
+  }, async request => {
+    const data = await ready(request).listMessages(readIdentity(request), request.query);
+    return { data, meta: buildMeta(request, config) };
+  });
   app.get(`${API_PREFIX}/messages/unread-count`, {
     onRequest: noStore, preHandler: guards.requireUser, schema: { querystring: emptyQuery },
   }, async (request) => {
