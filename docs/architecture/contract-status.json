@@ -651,6 +651,10 @@
        {
         "test": "tests/unit/knowledge-herbicides-http.test.mjs",
         "name": "/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯"
+       },
+       {
+         "test": "tests/unit/admin-flag-gate.test.mjs",
+         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
        }
       ],
       "blocker": "记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收"
@@ -676,6 +680,10 @@
        {
         "test": "tests/unit/knowledge-herbicides-http.test.mjs",
         "name": "/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致"
+       },
+       {
+         "test": "tests/unit/admin-flag-gate.test.mjs",
+         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
        }
       ],
       "blocker": "未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表"
@@ -1104,6 +1112,10 @@
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "F. submissions_enabled 关闭 ⇒ createPost 拒绝且**一条内容都没落库**；开启 ⇒ 正常发布"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1744,6 +1756,10 @@
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-ops-governance.test.mjs",
+          "name": "G1b. 四类资料的「版本修改」逐类留审计（此前不写 ⇒ 事后无法追责）"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -1947,6 +1963,10 @@
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-reference-invalidity.test.mjs",
+          "name": "5. 发布门槛：引用已下架来源的依赖发布 ⇒ 422 SOURCE_CONFLICT，且**不部分发布**、留 denied 审计"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2556,6 +2576,10 @@
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
           "name": "恰好实现 9 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "E1. 装配基线：3 个开关与各自输出面的真实状态一致（否则开关等于没生效）"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"

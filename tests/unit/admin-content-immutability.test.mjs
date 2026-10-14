@@ -225,7 +225,8 @@ test('反例：改写响应不得影响后续 edit/publish 的结果（写入路
   );
   assert.equal(view.readPublished('knowledge', id), null, '撤回后必须退出公开视图');
   const events = (await service.listAuditEvents(fixedCtx())).body.data.items;
-  assert.deepStrictEqual(events.map((event) => `${event.action}@${event.target_ref.revision}`), ['knowledge.publish@1', 'knowledge.publish@2', 'knowledge.withdraw@2']);
+  // 本片新增：编辑（= 追加新版本）也是关键修改 ⇒ 必须留审计（此前不写，事后无法追责）。
+  assert.deepStrictEqual(events.map((event) => `${event.action}@${event.target_ref.revision}`), ['knowledge.publish@1', 'knowledge.edit@2', 'knowledge.publish@2', 'knowledge.withdraw@2']);
   assert.deepStrictEqual(store.getEntity(id).revisions[1].content, newInput);
 });
 

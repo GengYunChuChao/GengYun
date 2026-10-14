@@ -55,6 +55,17 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+// GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
+import {
+  createFeatureFlagGate,
+  createFlagGatedGuards,
+  createStoreFlagReader,
+  flagSeedFromBaseline,
+  FLAG_WIRING_BASELINE,
+  type FeatureFlagGate,
+} from './admin/ops/flag-gate.ts';
+// GY-I18 本片：人工评审入口**空态**（无假任务/审核人/投票/专家认证）。
+import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
 import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
@@ -112,6 +123,13 @@ declare module 'fastify' {
     adminContentService: AdminContentService;
     /** GY-I18 阶段 1b：后台运营与开关服务（9 个 operationId）。 */
     adminOpsService: AdminOpsService;
+    /**
+     * GY-I18 本片：全局开关门（跨端点真实生效）。供回归测试核对"关闭 ⇒ 拒绝且零产出"、
+     * "不可识别 ⇒ fail-closed"与"开关不改变适用判定结论"。
+     */
+    featureFlagGate: FeatureFlagGate;
+    /** GY-I18 本片：人工评审入口（**空态**：无任务/审核人/投票/专家认证，未接线）。 */
+    humanReviewDirectory: HumanReviewDirectory;
     /** GY-I06 媒体域服务（7 个 operationId；供回归测试核对 real fail-closed 与孤立对象清理）。 */
     mediaService: AppMediaService;
     /**
@@ -524,7 +542,23 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
   const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
-  const adminOpsStore = adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime });
+  // **开关播种（本片新增）**：把 3 个开关与该输出面**当前是否真的在产出**对齐（见
+  // `admin/ops/flag-gate.ts` 的 `FLAG_WIRING_BASELINE` 说明）。不播种的话，出厂默认（全 false）
+  // 会让 `listFlags` 自述"药剂输出已关闭"而 `/herbicides` 照常产出 —— 开关等于没生效。
+  // 注入的 store 不覆盖（测试可自带 flagSeed 做反例）。
+  const adminOpsStore =
+    adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime, flagSeed: flagSeedFromBaseline() });
+  // 全局开关门：读取**当前**开关状态。real 模式后台域整体 fail-closed ⇒ 开关没有权威来源，
+  // 此时 `armed:false`（保持既有产出行为，不拿未接线的开关中断用户面）—— 见证据页「未取得项」。
+  const adminRealUnwired = config.executionMode === 'real';
+  const featureFlagGate = createFeatureFlagGate({
+    reader: createStoreFlagReader(adminOpsStore),
+    armed: !adminRealUnwired,
+  });
+  // 受控输出面的守卫链：**先鉴权（401/403 次序不变）、后判开关**。
+  const gatedGuards = createFlagGatedGuards(guards, featureFlagGate);
+  // 人工评审入口空态：本片未接入任何人工评审（无任务/审核人/投票/专家认证）。
+  const humanReviewDirectory = createHumanReviewDirectory();
 
   // **real 模式 ⇒ 后台域整体 fail-closed**（监工返修 P1）。
   // 后台服务建的是**内存** store；若在 `real` 下仍把它交给服务层，写操作会返回**成功封套**
@@ -533,7 +567,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 口径与本仓一致：real 永远走 fail-closed 实现（缺真实后端即 503，**严禁静默回退替身**）。
   // **刻意不依赖任何"自述持久化"的布尔标志**：将来后台域接上真实持久 store 时，必须在这里
   // **显式放行**（一次可审查的接线变更），而不是靠替身自称真实就能自动启用。
-  const adminRealUnwired = config.executionMode === 'real';
+  // （`adminRealUnwired` 已在上方与开关门一并判定：它同时决定后台域是否 fail-closed
+  //  以及开关门是否有权威来源。）
 
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
@@ -654,6 +689,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('synthesisService', synthesisService);
   app.decorate('adminContentService', adminContentService);
   app.decorate('adminOpsService', adminOpsService);
+  app.decorate('featureFlagGate', featureFlagGate);
+  app.decorate('humanReviewDirectory', humanReviewDirectory);
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
   app.decorate('messagesService', messagesService);
@@ -677,11 +714,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
   registerProfileRoutes(app, config, pool, guards);
-  registerKnowledgeRoutes(app, config, pool, guards);
-  registerRecognitionRoutes(app, config, guards, recognitionService, { consent: consentGate, egress: recognitionEgress });
-  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
-  registerSynthesisRoutes(app, config, guards, synthesisService, consentGate);
-  registerOcrRoutes(app, config, { guards, consent: consentGate, egress: ocrEgress });
+  // 本片起：以下五个域的输出面受**全局开关**控制（受控面清单见 `admin/ops/flag-gate.ts`），
+  // 因此传入 `gatedGuards`（= 原守卫 + 开关门；先鉴权、后判开关）。守卫链语义与错误码次序不变。
+  // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
+  // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
+  registerKnowledgeRoutes(app, config, pool, gatedGuards);
+  registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
+  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
+  registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
@@ -703,7 +744,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerFavoriteRoutes(app, config, guards, favoritesService);
   registerHistoryRoutes(app, config, guards, historyService);
   // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
-  registerCommunityRoutes(app, config, guards, communityService);
+  // 本片起：投稿/评论两条 **POST** 面（`POST /posts`、`POST /posts/:id/comments`）纳入全局开关
+  // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
+  // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
+  // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
+  registerCommunityRoutes(app, config, gatedGuards, communityService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：

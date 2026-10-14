@@ -352,11 +352,20 @@ test('审计事件逐次追加且目标 revision 精确，绝不因撤回或覆�
   const events = await auditItems(service);
   assert.deepStrictEqual(
     events.map((event) => `${event.action}@${event.target_ref.revision}`),
-    ['source.publish@1', 'source.publish@2', 'source.withdraw@2'],
+    ['source.publish@1', 'source.edit@2', 'source.publish@2', 'source.withdraw@2'],
   );
-  assert.equal(store.audit.count(), 3);
+  assert.equal(store.audit.count(), 4);
   // 撤回后审计仍在（撤回不删审计痕迹）。
-  assert.equal(events.length, 3);
+  assert.equal(events.length, 4);
+  // 本片新增：**关键修改（版本/来源）必须留责任人与范围** —— `source.edit` 事件带主体、
+  // 行使的 scope，以及内部"影响范围"字段（引用条数/失效条数）；契约投影不输出该内部字段。
+  const editEvent = store.audit.list().find((record) => record.action === 'source.edit');
+  assert.equal(typeof editEvent, 'object', '编辑必须留审计');
+  assert.equal(editEvent.actor_id, STEWARD);
+  assert.equal(editEvent.scope, 'sources:write');
+  assert.equal(editEvent.result, 'accepted');
+  assert.match(editEvent.target_hint, /^source:.+:rev=2:live=.+:refs=\d+:invalidated=\d+$/);
+  assert.equal(Object.hasOwn(events[1], 'target_hint'), false, '内部 target_hint 不得出现在契约投影里');
   // 每个事件都有主体（内部记录）与 request_id。
   for (const record of store.audit.list()) {
     assert.equal(typeof record.actor_id, 'string');
