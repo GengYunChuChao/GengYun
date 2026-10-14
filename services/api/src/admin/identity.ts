@@ -22,7 +22,8 @@ export const MAX_LIMIT = 50;
 /** 契约参数 Cursor/Idempotency-Key 的长度上限。 */
 export const IDEMPOTENCY_KEY_MIN = 8;
 export const IDEMPOTENCY_KEY_MAX = 128;
-export const DEFAULT_IDEMPOTENCY_TTL_SECONDS = 5 * 60;
+/** 普通后台回执保留 24 小时（state-contract），不延长会话或业务唯一键。 */
+export const DEFAULT_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
 
 /** 通过权限门后的调用上下文（`requestId` 已定型，供 Meta 与审计共用同一个值）。 */
 export interface ResolvedContext {

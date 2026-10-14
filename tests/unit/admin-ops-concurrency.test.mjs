@@ -264,7 +264,7 @@ test('幂等台账可清理到期条目（复用阶段 1 的 runtime）', async 
   const ctx = opsContext();
   await harness.service.setFlag({ ...ctx, idempotencyKey: opsKey('ttl'), ifMatch: '"1"' }, 'ai_enabled', { enabled: true, reason: '示例' });
   assert.equal(harness.store.runtime.idempotentCount(), 1);
-  const removed = harness.store.runtime.purgeExpiredIdempotent(new Date(harness.now().getTime() + 10 * 60 * 1000));
+  const removed = harness.store.runtime.purgeExpiredIdempotent(new Date(harness.now().getTime() + 24 * 60 * 60 * 1000));
   assert.equal(removed, 1);
   assert.equal(harness.store.runtime.idempotentCount(), 0);
 });
