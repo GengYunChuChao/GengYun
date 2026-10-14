@@ -9,6 +9,7 @@
 | --- | --- |
 | 分支 | `feat/gy-i16-favorites-history`（自建 worktree `E:\GengYunCommander\GengYun_W28`） |
 | 基线 | `upstream/main = fcfa6de9d62aeaaa0489d3319f8f06911312af48`（`feat(ui): add reusable native Demo components (Refs #28) (#142)`） |
+| 已并入上游 | `upstream/main = c85a1e8`（含 #146 GY-I02／#147 GY-I09／**#148 GY-I15 社区页**／#149 GY-I27 第二片）⇒ 合并提交与冲突解析见 §3.7 |
 | 契约 | 只读消费 `packages/contracts/{openapi,operations,states}.json`（1.0.0）；**不改契约** |
 | 执行模式声明 | 本片服务端只有**内存** store（无数据库迁移）⇒ `real` 模式下收藏／历史**整域 503**（有意 fail-closed）；`stub`/`preset_demo` 下可跑通，但**不代表真实业务验收** |
 | 推送 | 由**指挥**推送；写手**不 push**、不改共享 remote／配置 |
@@ -171,15 +172,25 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。
 ℹ tests 8  ℹ pass 8  ℹ fail 0
 ```
 
-### 3.4 门禁全量（本 HEAD）
+### 3.4 门禁全量
+
+本片单分支 HEAD（`fe6ab99`）：
 
 ```
 > npm run test:unit
 ℹ tests 1834  ℹ pass 1833  ℹ fail 0  ℹ skipped 1  ℹ duration_ms 42542.9
 ```
+
+**并入 `upstream/main = c85a1e8` 之后**（合并提交 `380edc3`；上游新增社区/识别/隐私测试，故总数变化）：
+
+```
+> npm run test:unit
+ℹ tests 1890  ℹ pass 1889  ℹ fail 0  ℹ skipped 1  ℹ duration_ms 23455.3
+```
+
 > 唯一的 `skipped 1` 是**既有**子用例 `native separate-connection withdrawal and account state changes at
 > guarded read boundary`（`tests/unit/knowledge-api.test.mjs:101`，`skip: !f.native`：需要原生独立连接/PG），
-> **与本片无关**，未被我改动。
+> **与本片无关**，未被我改动。两次运行都**没有红项**。
 
 ```
 > npm run test:mini
@@ -204,16 +215,24 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 
 > node --test tests/local-debug.test.mjs
 ℹ tests 5  ℹ pass 5  ℹ fail 0
-   （其中 local-debug.test.mjs:118 由 13 页 → **16 页**，按"只加数据项、不改判定逻辑"最小修正）
+   （其中 local-debug.test.mjs:118 页数断言随页数变化，按"只加数据项、不改判定逻辑"最小修正）
 ```
 
 同步内容（**只加数据项，不改任何路由判定逻辑**）：
 
-1. `miniprogram/app.json` 的 `pages` 末尾追加 `pages/favorites/favorites`、`pages/history/history`、`pages/historydetail/historydetail`（13 → 16）；
+1. `miniprogram/app.json` 的 `pages` 追加 `pages/favorites/favorites`、`pages/history/history`、`pages/historydetail/historydetail`；
 2. `miniprogram/utils/navigation.js` 的 `PAGES` 同步（与 `app.json.pages` **逐项相等**）；三者**都不是**底部 Tab ⇒ **不加** `TAB_PAGES`；
-   另把 `pages/historydetail/historydetail` 加入 `ID_PAGES`（只接受 `?id=<uuid>`，不接受任何状态类参数）；
+   另把 `pages/historydetail/historydetail` 加入 `ID_PAGES` 与 `UUID_ID_PAGES`（只接受 `?id=<uuid>`，不接受任何状态类参数）；
 3. `tools/prepare-wechat.mjs` 的**打包允许清单**：`pages` 三项 + `utils/favorites-api.js`、`utils/history-api.js`
    （否则隔离工程缺页／`MODULE_NOT_FOUND`）。
+
+页数轨迹：本片单分支 13 → **16**；并入 `c85a1e8`（+GY-I15 社区投稿/详情）后 = **18**。
+合并后复核（同一命令，在合并树 `380edc3` 上）：
+
+```
+> node --test tests/unit/miniprogram-login-return-to.test.mjs tests/local-debug.test.mjs
+ℹ tests 46  ℹ pass 46  ℹ fail 0
+```
 
 ### 3.6 契约实现状态对照表（**必改**，否则 `test:unit` 必红）
 
@@ -227,6 +246,36 @@ PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整�
 `docs/architecture/contract-status.json` 中本片 5 条 operation：`route_mounted: false → true`、
 `status: planned → partial`（**保守不升档**）、补证据（行区间 + 用例名）与真实缺口；
 `docs/architecture/contract-implementation-status.md` 由该工具**自动重生成**。
+
+合并后（`main` 新增社区 16 条已装配路由）同一工具的运行期比对：
+
+```
+> node tools/verify-contract-status.mjs --runtime
+PASS: 覆盖 112 条契约操作；已装配 99 条；implemented 13 / partial 86 / planned 13；横切维度 8 条；中文表格一致
+```
+
+### 3.7 与最新 main 的实际合并冲突（已解；**不重排、不删任何一侧**）
+
+合并提交：`380edc33bf97e6a5b51dd89e661e733bd39d1712`（双亲 `fe6ab99` + `c85a1e8`）。
+
+| 文件 | 处理 |
+| --- | --- |
+| `services/api/src/app.ts` | 导入块／`FastifyInstance` 声明／`BuildAppOptions` 注入项／`buildApp` 形参解构／`decorate`／路由 `register` **六处全部取并集**（本片 6 项 + GY-I15 社区 1 项） |
+| `miniprogram/utils/navigation.js` | `PAGES` 并集；`ID_PAGES` = main 4 项 + `historydetail`；保留 main 的 `UUID_ID_PAGES` 并把 `historydetail` **也纳入** uuid 校验 |
+| `miniprogram/app.json` | 自动合并为并集（18 页，顺序与 `navigation.PAGES` 逐项相等） |
+| `tools/prepare-wechat.mjs` | utils 适配层并集（`community-api` + `favorites-api`/`history-api`）；`pages` 白名单 18 项 |
+| `tests/local-debug.test.mjs` | 页数断言合并为 **18**；`dep` 清单补本片两个 utils |
+| `docs/architecture/contract-implementation-status.md` | **不手改** ⇒ `--write-doc` 重生成 |
+| `docs/architecture/contract-status.json` | 自动合并为并集（本片 5 条 + main 的社区/识别/隐私增量；运行期比对通过） |
+
+**唯一"不能只保留双方"处（如实说明）**：`app.ts` 中 GY-I27 的
+`consentSigningKey` / `consentGate` / `egressRevoker` 被**两侧各声明一次** —— 上游把该块**前移并扩成"两片接线"**
+（新增持久外发账本 `createPostgresExportLedger`/`createPostgresPrivacyPorts`，位置在识别域服务构造**之前**）。
+同一标识符二次 `const` 会直接 `SyntaxError`（实测：合并过程中 `tools/contract-status-runtime.mjs` 子进程报
+`Identifier 'consentSigningKey' has already been declared`）。**最小必要改动**：删除**本片侧那份重复声明**，
+保留上游版本（它是严格超集：仍以 `privacyInjection.consent`/`egressRevoker` 优先，只是多了持久账本），
+并在原位留 4 行注释写清理由。本片自身的装配（store 构造／service／decorate／register）**全部保留**，
+只是**同一段配置只能有一份声明**。
 
 ## 4 装配说明（如何复用既有成果）
 
@@ -251,6 +300,9 @@ const historyService   = config.executionMode === 'real' ? null : createHistoryS
 - 5 条路由的**唯一注册点**：`registerFavoriteRoutes(...)` / `registerHistoryRoutes(...)`（与 `messages` 并列，追加在两行之后）；
 - 新增可选注入：`favoritesInjection`／`historyInjection`／`userDataDeletionInjection`（**全部可选**，不传即默认）；
 - `real` ⇒ 两个 service 为 `null` ⇒ 5 条路由 503 `PROVIDER_UNAVAILABLE`（**绝不用内存存储冒充持久化**）。
+- **并入最新 main 时**同一文件出现 6 处冲突，全部按"并集"解决（见 §3.7）；
+  唯一无法"只保留双方"的是 GY-I27 三个标识符被两侧各声明一次 —— 保留上游那份（超集），删除本片侧重复声明，
+  本片自身的装配**一行未删**。因此现在的文件是「既有装配 + 本片装配」的合成结果，**没有重排、没有删任何一侧的功能**。
 
 ### 4.2 小程序端（复用既有成果，不重写）
 
