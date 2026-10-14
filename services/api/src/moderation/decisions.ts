@@ -147,6 +147,8 @@ export function projectKindScreening(args: {
   ruleDecision: AuditState;
   ruleReasonCodes: readonly string[];
   ruleInputValid: boolean;
+  /** 规则层事实（`merged === null` 时结论里也必须如实登记它，否则"待回调"任务会丢掉规则层事实）。 */
+  ruleHardPassed: boolean;
   merged: MergedModeration | null;
 }): KindProjection {
   const portKind = PORT_KIND_BY_CONTENT_KIND[args.contentKind];
@@ -209,7 +211,7 @@ export function projectKindScreening(args: {
     decision,
     state,
     reason_codes: orderedReasonCodes([...args.ruleReasonCodes, ...modelReasonCodes]),
-    hard_rule_passed: args.merged === null ? false : args.merged.hard_rule_passed === true,
+    hard_rule_passed: args.merged === null ? args.ruleHardPassed : args.merged.hard_rule_passed === true,
     rule_reason_codes: [...args.ruleReasonCodes],
     model_reason_codes: [...new Set(modelReasonCodes)],
     reasons,

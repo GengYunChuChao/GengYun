@@ -378,7 +378,13 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
   function currentRuleVersion(): string | null {
     try {
-      return deriveRuleVersion();
+      // **必须**用本服务实际使用的规则集派生"当前版本"：调用方注入自定义规则集时，
+      // 默认规则集的版本无关紧要（否则"规则集升级后旧结论失效"会被误判为"从未生效"）。
+      return deriveRuleVersion(
+        ruleOptions['rules'] as never,
+        ruleOptions['matchers'] as never,
+        ruleOptions['matcher_revisions'] as never,
+      );
     } catch {
       return null;
     }
@@ -590,6 +596,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
           ruleDecision: rule.decision,
           ruleReasonCodes: rule.reason_codes,
           ruleInputValid: rule.input_valid,
+          ruleHardPassed: rule.hard_rule_passed,
           merged: canRunModel && !deferred ? merged : null,
         });
       }
@@ -867,6 +874,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       return callbackReject(['CALLBACK_EXPIRED'], [`签发时间越出 ±${CALLBACK_MAX_SKEW_MS}ms 偏差`]);
     }
     if (replayGuard.seen(envelope.job_id, envelope.event_id)) {
+      // **回放优先判定**：同一 `event_id` 已落定过 ⇒ 无论任务后来变成什么状态，都按"回放"拒绝
+      // （比"终态"更精确地指出事故形态；两者都是拒绝）。
       return callbackReject(['CALLBACK_REPLAY'], ['同一 event_id 已落定过']);
     }
     const task = ledger.byJobId(envelope.job_id);
