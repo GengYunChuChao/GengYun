@@ -56,6 +56,7 @@ import {
   targetRefFor,
 } from './families.ts';
 import type { FamilyDescriptor } from './families.ts';
+import { DEPENDENT_FAMILIES, createReferenceIntegrity } from './reference-integrity.ts';
 import type { AdminCallContext, ServiceResponse } from './types.ts';
 
 /** 契约 `Meta` 与各信封共用；定义已抽到 `identity.ts`，此处只做转发以保持既有引用路径。 */
@@ -164,6 +165,23 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
     throw new Error('后台资料服务需要至少 16 字符的签名密钥（只经内存传入，不入库）');
   }
   const cursors = createCursorCodec(signingKey);
+  // **引用完整性**（本片）：来源 → 引用 的同步失效。判定**每次读取重算**、不缓存，
+  // 因此"下架/改版后旧链接与缓存里不得复活"由构造保证，而不是靠清缓存的动作。
+  const integrity = createReferenceIntegrity(store);
+
+  /**
+   * 审计「范围」：来源类实体写清"这次变更影响了几条引用、其中几条失效"。
+   * 依赖类实体写清"引用的是哪个来源版本、当前判定是什么"。
+   * 只落在内部字段 `target_hint` 上（契约投影严格只有合同的 8 个字段）。
+   */
+  function rangeHint(descriptor: FamilyDescriptor, entity: { id: string }, revisionNumber: number, content: unknown): string {
+    if (descriptor.family === 'sources') {
+      const impact = integrity.describeSourceChange(entity.id);
+      return `source:${entity.id}:rev=${revisionNumber}:live=${impact.liveVersion ?? 'none'}:refs=${impact.references}:invalidated=${impact.invalidated}`;
+    }
+    const resolution = integrity.resolve(descriptor.family, content);
+    return `${descriptor.noun}:${entity.id}:rev=${revisionNumber}:source=${resolution.sourceId ?? 'none'}@${resolution.referencedVersion ?? 'none'}:state=${resolution.state}`;
+  }
 
   // -------------------------------------------------------------------------
   // 权限/归属解析
@@ -314,6 +332,22 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           createdAt: now(),
           derivedFromRevision: head.revision,
         });
+        // **关键修改必须留责任人与范围**（本片）：编辑 = 追加新版本，是"来源/版本/限制规则"
+        // 这类关键修改的入口之一，此前**不写审计** ⇒ 事后无法追责。这里补齐：
+        //   责任人 = `actor_id`（契约 `AuditEvent` 没有主体字段，见 `audit.ts` 的缺口说明）；
+        //   范围   = `scope`（行使的权限）+ `target_ref`（含新 revision）+ 内部 `target_hint`
+        //            （来源类：影响了几条引用/几条失效；依赖类：引用的来源版本与当前判定）。
+        store.audit.append({
+          actorId: context.identity.userId,
+          action: `${descriptor.noun}.edit`,
+          scope: descriptor.writeScope,
+          targetRef: targetRefFor(descriptor, entity, revision),
+          reasonCode: 'revision_appended',
+          requestId: context.requestId,
+          result: 'accepted',
+          createdAt: revision.createdAt,
+          targetHint: rangeHint(descriptor, entity, revision.revision, revision.content),
+        });
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, revision), etagOf(revision.revision));
       },
     );
@@ -367,6 +401,28 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           });
         }
 
+        // **引用门槛**（本片）：依赖类资料引用的来源必须当前可用。
+        // 只拦"确认失效"（来源未发布/已撤回/版本不一致）；`unverifiable`（未接真实库、
+        // 库外来源）**不拦** —— 详见 `reference-integrity.ts` 的口径表。
+        if (DEPENDENT_FAMILIES.includes(descriptor.family)) {
+          const reference = integrity.resolve(descriptor.family, head.content);
+          if (reference.state === 'unavailable') {
+            store.audit.append({
+              actorId: context.identity.userId,
+              action: `${descriptor.noun}.publish`,
+              scope: AUDIT_SCOPE_BY_ACTION.publish,
+              targetRef: targetRefFor(descriptor, entity, head),
+              reasonCode: `publish_gate_denied:reference_${reference.reason ?? 'unavailable'}`.slice(0, 80),
+              requestId: context.requestId,
+              result: 'denied',
+              createdAt: now(),
+              targetHint: rangeHint(descriptor, entity, head.revision, head.content),
+            });
+            // 抛契约闭集内的 422 SOURCE_CONFLICT（"来源条件冲突"），不新增错误码。
+            integrity.assertPublishable(descriptor.family, head.content);
+          }
+        }
+
         // 全有或全无：以下提交是同步的，中间没有 await ⇒ 不存在部分发布。
         const committedAt = now();
         entity.publishedRevision = head.revision;
@@ -385,6 +441,8 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           requestId: context.requestId,
           result: 'accepted',
           createdAt: committedAt,
+          // 来源发布 ⇒ 生效版本变化 ⇒ 记录这次变化**影响到的引用范围**（含失效条数）。
+          targetHint: rangeHint(descriptor, entity, head.revision, head.content),
         });
 
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
@@ -444,6 +502,9 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           requestId: context.requestId,
           result: 'accepted',
           createdAt: committedAt,
+          // 撤回来源 ⇒ 该来源不再生效 ⇒ 记录这次下架**失效掉的引用范围**（下架后不得复活，
+          // 公开读由 `public-view.ts` 在每次读取时按同一判定重算）。
+          targetHint: rangeHint(descriptor, entity, head.revision, head.content),
         });
 
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));

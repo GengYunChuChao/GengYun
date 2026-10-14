@@ -43,6 +43,12 @@ export interface AdminContentStore {
   createEntity(input: { id?: string; family: AdminFamily; stewardId: string; createdAt: Date }): StoredEntity<unknown>;
   getEntity(id: string): StoredEntity<unknown> | undefined;
   listEntities(family: AdminFamily, stewardId: string): readonly StoredEntity<unknown>[];
+  /**
+   * 某家族的**全部**实体（不按管辖过滤）。**只读**，供「引用完整性」在读取时重算用：
+   * 一条知识引用可以由别的后台主体管辖的来源支撑，因此依赖解析必须能查全库。
+   * 这些实体**不会**被直接投影进任何响应（投影仍走各家族的 steward 过滤与字段白名单）。
+   */
+  listFamilyEntities(family: AdminFamily): readonly StoredEntity<unknown>[];
   appendRevision(input: {
     entity: StoredEntity<unknown>;
     content: unknown;
@@ -108,6 +114,14 @@ export function createAdminContentStore(options: { runtime?: AdminRuntime } = {}
         [...entities.values()]
           .filter((entity) => entity.family === family && entity.stewardId === stewardId)
           // 稳定游标：按 id 升序。
+          .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
+      );
+    },
+
+    listFamilyEntities(family) {
+      return Object.freeze(
+        [...entities.values()]
+          .filter((entity) => entity.family === family)
           .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
       );
     },
