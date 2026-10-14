@@ -62,10 +62,10 @@
       <block wx:else>
         <view class="row"><text class="k">规则版本</text><text class="v mono">{{applicability.rule_version}}</text></view>
         <view class="row row-switch">
-          <text class="k">用量卡片开关</text>
+          <text class="k">可执行建议与用量卡开关</text>
           <switch checked="{{doseCardEnabled}}" bindchange="toggleDoseCard" color="#1F7A45" />
         </view>
-        <!-- PR #82：用量卡片只在 renderable 且资格未被拒绝时展示（renderable 已内含适用判定与绑定校验）。 -->
+        <!-- GY-I08：用量卡片只在 renderable 且资格未被拒绝时展示（renderable 已内含适用判定与绑定校验）。 -->
         <block wx:if="{{doseCard.renderable && doseCard.applicable !== false}}">
           <view class="dose-card">
             <view class="dose-num">{{doseCard.dose.number}}<text class="dose-unit">{{doseCard.dose.unit}}</text></view>
@@ -79,7 +79,7 @@
         <view class="sub-title">适用过滤结论</view>
         <!-- PR #82：「可以查阅」与「适用/可展示用量」分开表达：queryable 管可查阅，applicability 管适用资格。 -->
         <view class="state-bar {{applicability.applicable ? 'state-ok' : 'state-unavailable'}}">
-          {{applicability.applicable ? '当前条件适用，可进入用量建议与问答用量卡片' : '当前条件不适用，不可进入可执行用量建议'}}
+          {{applicability.applicable ? '当前条件适用' : '当前条件不适用'}}；{{advice.note}}
         </view>
         <view class="chips" wx:if="{{applicability.reasons.length}}">
           <text class="chip chip-mute" wx:for="{{applicability.reasons}}" wx:key="*this">{{item}}</text>

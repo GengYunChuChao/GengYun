@@ -14,6 +14,8 @@
  *     `ZHEJIANG_VISIBILITY` / `ZHEJIANG_PROVINCE_CODE` / `ZHEJIANG_DOSE_ABSENT_NOTE`：zhejiang.mjs
  *   - `doseCardDescriptor` / `describeRecord` / `assertNoForbiddenLabel`：labels.mjs
  *   - `ReferenceError`（域库自有错误类型，**与全局 ReferenceError 同名但不同类**）：errors.mjs
+ *   - `APPLICABILITY_RULE_VERSION`：constants.mjs（GY-I08 规则版本，唯一事实来源）
+ *   - `BLOCK_CODES`：deterministic.mjs（GY-I08 阻断类别闭集）
  *
  * 若域库改变导出形状，`npm run lint`（tsc --noEmit）会失败 —— 这正是本声明的作用：
  * 让漂移在静态检查阶段暴露，而不是在运行期静默错判。
@@ -45,6 +47,34 @@ declare module '*packages/reference/index.mjs' {
     detail_state?: Record<string, unknown>;
   }
 
+  /** GY-I08 规则版本常量（`constants.mjs` 唯一定义；所有消费端同一版本）。 */
+  export const APPLICABILITY_RULE_VERSION: string;
+
+  /** GY-I08 阻断类别闭集（`deterministic.mjs`；键为类别名、值为类别码）。 */
+  /**
+   * GY-I08 阻断类别闭集（`deterministic.mjs` 的 `BLOCK_CODES`）：键为类别名、值为类别码。
+   *
+   * **逐键列举**（不用 `Record<string, string>` 索引签名）：tsconfig 的 `noUncheckedIndexedAccess`
+   * 会把索引签名读成 `string | undefined`，而这些值是**常量成员**、永远存在。
+   * 键集合与域库逐项一致；域库删改成员时 `tests/reference/i08-rule-version.test.mjs` 的
+   * 闭集成员断言会失败。
+   */
+  export const BLOCK_CODES: Readonly<{
+    NO_SOURCE: string;
+    SIMULATED_SOURCE: string;
+    INVALID_SOURCE: string;
+    AMBIGUOUS_MATCH: string;
+    FIELD_CONFLICT: string;
+    NO_MATCH: string;
+    UNREVIEWED: string;
+    BANNED: string;
+    RESTRICTED: string;
+    RESTRICTION_UNKNOWN: string;
+    NOT_APPLICABLE: string;
+    MISSING_CONDITION: string;
+    NO_DOSE_SOURCE: string;
+    FEATURE_CLOSED: string;
+  }>;
   export function createReferenceService(options?: { executionMode?: string }): {
     executionMode: string;
     listKnowledge(input?: Record<string, unknown>, requestId?: string): DomainResponse;

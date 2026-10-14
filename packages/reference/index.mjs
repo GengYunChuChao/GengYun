@@ -14,6 +14,7 @@ export * from './records.mjs';
 export * from './seed.mjs';
 export * from './zhejiang.mjs';
 export * from './query.mjs';
+export * from './deterministic.mjs';
 export * from './source-version.mjs';
 export * from './labels.mjs';
 export * from './service.mjs';

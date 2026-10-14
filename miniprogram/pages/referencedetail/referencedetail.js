@@ -52,9 +52,14 @@ Page({
     queryable: true,
     modeNote: '',
     // GY-I08：标签原文用量卡片（DoseCard）与适用过滤结论。
+    // doseCardEnabled 是 issue #8 要求的**功能关闭开关**：关闭后不产出可执行建议，也不产出用量卡。
     doseCardEnabled: true,
     doseCard: null,
     applicability: null,
+    // GY-I08：可执行建议闸门（适用判定 + 来源/禁限用细分 + 功能关闭开关）。
+    // 与 applicability 分离：开关切换**不改变适用结论**（applicable 仍如实反映条件是否适用），
+    // 只改变「是否产出可执行建议/用量卡」。
+    advice: null,
     // G2：会话门禁状态（未通过服务端核实前恒 false）。
     gatePassed: false,
     // PR #82 阻塞 C：已确认档案上下文。confirmed=false 时**不得**据此放行具体用量。
@@ -75,7 +80,7 @@ Page({
     const self = this
     pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
-        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
+        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
         return
       }
       self.setData({ gatePassed: true, recordId: recordId, modeNote: reference.modeNote() })
@@ -160,7 +165,7 @@ Page({
     if (!this._profileBinding) return false
     if (!profileApi.current(this._profileBinding)) {
       this._profileBinding = null
-      this.setData({ profileConfirmed: false, profileContext: null, profileError: '登录状态已变化，档案已失效，请重新进入本页。', doseCard: null, applicability: null })
+      this.setData({ profileConfirmed: false, profileContext: null, profileError: '登录状态已变化，档案已失效，请重新进入本页。', doseCard: null, applicability: null, advice: null })
       return false
     }
     return true
@@ -193,12 +198,12 @@ Page({
   load: function (recordId, profileNote) {
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。
     if (!this.data.gatePassed || !auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, profileConfirmed: false, profileContext: null })
+      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null })
       return
     }
     const detail = typeof recordId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(recordId) ? reference.detail(recordId) : null
     if (!detail) {
-      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: false, doseCard: null, applicability: null })
+      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: false, doseCard: null, applicability: null, advice: null })
       return
     }
     const base = {
@@ -213,27 +218,43 @@ Page({
     // 阻塞 C：适用上下文必须来自已确认档案；未确认时**不**给用量资格（也不给适用结论）。
     const ctx = this.confirmedContext()
     if (ctx === null) {
-      this.setData(Object.assign({}, base, { doseCard: null, applicability: null }, profileNote ? { profileError: profileNote } : {}))
+      this.setData(Object.assign({}, base, { doseCard: null, applicability: null, advice: null }, profileNote ? { profileError: profileNote } : {}))
       return
     }
     const applicability = reference.evaluateApplicability(detail, ctx)
+    const advice = this.adviceFor(detail, ctx, this.data.doseCardEnabled)
     this.setData(Object.assign({}, base, {
       applicability: applicability,
+      advice: advice,
       doseCard: reference.doseCardDescriptor(detail, { doseCardEnabled: this.data.doseCardEnabled, context: ctx })
     }))
   },
 
+  // GY-I08：可执行建议闸门（含功能关闭开关 + 阻断原因的可读说明）。
+  // 页面只消费域库/镜像的同名判定，不在此重复任何规则语义；
+  // 关闭开关或资格不足时明确说明**具体原因**（不得把「未核对」说成「开关已关闭」）。
+  adviceFor: function (detail, ctx, enabled) {
+    const advice = reference.evaluateExecutableAdvice(detail, ctx, { executableEnabled: enabled })
+    const reasons = (advice && advice.reasons) || []
+    return Object.assign({}, advice, {
+      note: advice && advice.executable === true
+        ? '可进入用量建议与问答用量卡片'
+        : (reasons.length > 0 ? reasons[0] : '当前不产出可执行建议')
+    })
+  },
+
   // GY-I08：用量卡片功能关闭开关（满足规格「有功能关闭开关」）。
-  // 注意：开关只是附加条件；关闭不能代替资格验证（PR #82）。
+  // 注意：开关只是附加条件；关闭不能代替资格验证（PR #82）；关闭后不产出可执行建议与用量卡。
   toggleDoseCard: function (e) {
     const enabled = e && e.detail && typeof e.detail.value === 'boolean' ? e.detail.value : !this.data.doseCardEnabled;
     this.setData({ doseCardEnabled: enabled });
     if (this.data.detail) {
       const ctx = this.confirmedContext()
-      if (ctx === null) { this.setData({ doseCard: null, applicability: null }); return }
+      if (ctx === null) { this.setData({ doseCard: null, applicability: null, advice: null }); return }
       this.setData({
         doseCard: reference.doseCardDescriptor(this.data.detail, { doseCardEnabled: enabled, context: ctx }),
-        applicability: reference.evaluateApplicability(this.data.detail, ctx)
+        applicability: reference.evaluateApplicability(this.data.detail, ctx),
+        advice: this.adviceFor(this.data.detail, ctx, enabled)
       });
     }
   },
