@@ -227,7 +227,15 @@ export function makeHarness(options = {}) {
         credentialHash: 'synthetic-not-a-real-credential-hash',
         scopes,
       });
-      return { userId, adminCtx: adminCtx(userId, scopes) };
+      const token = `synthetic-i14i15-admin-token-${userId.slice(0, 8)}`;
+      await auth.createSession({
+        userId,
+        tokenHashHex: hashToken(token),
+        authEpoch: 1,
+        expiresAt: new Date(START + 3600_000),
+        audience: 'admin',
+      });
+      return { userId, token, adminCtx: adminCtx(userId, scopes) };
     },
   };
 }
