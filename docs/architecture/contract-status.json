@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 6,
-  "baseline": "15c3003efc221407734ea26366a7538ae23ddcbb",
+  "proposal_revision": 7,
+  "baseline": "72c4923a8ec058399a51609e1cf1e3c70a890b4a",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -1459,7 +1459,7 @@
           "name": "三个 operationId"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "本人消息列表仍只有独立服务，GET /messages 未装配；已装配未读数量/读标记不代表列表可用。列表分页、事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
     },
     {
       "id": "getUnreadCount",
@@ -1468,19 +1468,19 @@
       "route": "/api/v1/messages/unread-count",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/messages/service.ts",
-          "lines": "331-336"
+          "path": "services/api/src/routes/messages.ts",
+          "lines": "24-29"
         },
         {
-          "test": "tests/unit/messages-contract.test.mjs",
-          "name": "三个 operationId"
+          "test": "tests/unit/messages-http.test.mjs",
+          "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "已装配消息未读/读标记HTTP，stub/preset_demo为空内存存储，消息仅由服务端内部口产生；real尚无消息持久存储，显式503，不返回假空计数/读成功。归属/当前会话、CAS版本、24h回执和引用重查保留；真实事件/目标端口、PG/注销及页面/Android仍待验收；消息列表未在本片装配"
     },
     {
       "id": "markMessageRead",
@@ -1489,19 +1489,19 @@
       "route": "/api/v1/messages/:id/read",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/messages/service.ts",
-          "lines": "346-351"
+          "path": "services/api/src/routes/messages.ts",
+          "lines": "30-42"
         },
         {
-          "test": "tests/unit/messages-contract.test.mjs",
-          "name": "三个 operationId"
+          "test": "tests/unit/messages-http.test.mjs",
+          "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "已装配消息未读/读标记HTTP，stub/preset_demo为空内存存储，消息仅由服务端内部口产生；real尚无消息持久存储，显式503，不返回假空计数/读成功。归属/当前会话、CAS版本、24h回执和引用重查保留；真实事件/目标端口、PG/注销及页面/Android仍待验收；消息列表未在本片装配"
     },
     {
       "id": "listAdminSources",

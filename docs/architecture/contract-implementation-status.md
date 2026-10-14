@@ -1,6 +1,6 @@
 # GY-I01 契约实现状态对照
 
-更新：2026-10-14。正式 main 基线 `15c3003efc221407734ea26366a7538ae23ddcbb`。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
+更新：2026-10-14。正式 main 基线 `72c4923a8ec058399a51609e1cf1e3c70a890b4a`。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
 
 ## 1 判据与事实源
 
@@ -16,7 +16,7 @@
 
 当前 `services/api/src/app.ts:320-340` 装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台和媒体。健康不计入112条业务契约。共享 Job 读取仅识别/转写，取消仅识别；转写取消503 PROVIDER_UNAVAILABLE，未接作业源与不存在同形404。
 
-后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项和消息3项保持独立服务、未装配。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
+后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项及消息列表保持独立服务、未装配；消息未读数量与读标记已装配为partial，real尚未接持久存储，明确503。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
 
 <!-- contract-status-tables:start -->
 ## 2 横切约定
@@ -32,7 +32,7 @@
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:529-573；tests/unit/recognitions-api.test.mjs::状态 7 cancelled；services/api/src/jobs/routes.ts:64-80；services/api/src/jobs/registry.ts:281-307；services/api/src/routes/admin.ts:316-324 | 共享Job识别取消及转写读取已合（#106/#125）；转写取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；OCR/合成/问答/审核未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收 |
 | 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:57-60；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
-## 3 已装配操作（75 条）
+## 3 已装配操作（77 条）
 
 装配只表示存在产品路由；请同时读状态和限制。
 
@@ -77,6 +77,8 @@
 | `deleteTranscription` | DELETE /speech/transcriptions/{id} | `partial` | services/api/src/routes/speech.ts:167-171；tests/integration/speech-http.mjs | 录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收 |
 | `confirmTranscription` | PATCH /speech/transcriptions/{id}/confirmation | `partial` | services/api/src/routes/speech.ts:187-191；tests/integration/speech-http.mjs | 录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收 |
 | `createSynthesis` | POST /speech/synthesis | `partial` | services/api/src/routes/synthesis.ts:86-90；tests/integration/tts-http.mjs | 合成受理端点已装配，仅接受已核对内容引用；真实提供者、核对内容与产物端口未在产品装配接线，明确拒绝；内存任务未接公共 Job 读取/取消；真实音频/听感评估、播放消费、持久/删除链待验收 |
+| `getUnreadCount` | GET /messages/unread-count | `partial` | services/api/src/routes/messages.ts:24-29；tests/unit/messages-http.test.mjs::消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致 | 已装配消息未读/读标记HTTP，stub/preset_demo为空内存存储，消息仅由服务端内部口产生；real尚无消息持久存储，显式503，不返回假空计数/读成功。归属/当前会话、CAS版本、24h回执和引用重查保留；真实事件/目标端口、PG/注销及页面/Android仍待验收；消息列表未在本片装配 |
+| `markMessageRead` | PUT /messages/{id}/read | `partial` | services/api/src/routes/messages.ts:30-42；tests/unit/messages-http.test.mjs::消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致 | 已装配消息未读/读标记HTTP，stub/preset_demo为空内存存储，消息仅由服务端内部口产生；real尚无消息持久存储，显式503，不返回假空计数/读成功。归属/当前会话、CAS版本、24h回执和引用重查保留；真实事件/目标端口、PG/注销及页面/Android仍待验收；消息列表未在本片装配 |
 | `listAdminSources` | GET /admin/sources | `partial` | services/api/src/routes/admin.ts:172-174；tests/integration/admin-http.mjs::create→get→edit→publish→list→withdraw 全链路经 HTTP 生效；services/api/src/admin/service.ts:513-518；tests/unit/admin-contract-conformance.test.mjs::只实现派单指定的 25 个 operationId | 独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18） |
 | `createSourceDraft` | POST /admin/sources | `partial` | services/api/src/routes/admin.ts:175-177；tests/integration/admin-http.mjs::create→get→edit→publish→list→withdraw 全链路经 HTTP 生效；services/api/src/admin/service.ts:514-519；tests/unit/admin-contract-conformance.test.mjs::只实现派单指定的 25 个 operationId | 独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18） |
 | `getAdminSource` | GET /admin/sources/{id} | `partial` | services/api/src/routes/admin.ts:178-180；tests/integration/admin-http.mjs::create→get→edit→publish→list→withdraw 全链路经 HTTP 生效；services/api/src/admin/service.ts:515-520；tests/unit/admin-contract-conformance.test.mjs::只实现派单指定的 25 个 operationId | 独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18） |
@@ -114,7 +116,7 @@
 | `grantCommunityMediaAccess` | POST /community/media-access | `partial` | services/api/src/routes/media.ts:257-265；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入 |
 | `readCommunityMediaContent` | GET /community/media/{grant_id}/content | `partial` | services/api/src/routes/media.ts:276-284；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面；tests/unit/media-real-mode-fail-closed.test.mjs::GY-I06 real 模式 | 取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收 |
 
-## 4 未装配操作（37 条）
+## 4 未装配操作（35 条）
 
 以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。
 
@@ -154,9 +156,7 @@
 | `deleteFavorite` | DELETE /favorites/{id} | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
 | `listHistory` | GET /history | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
 | `deleteHistory` | DELETE /history/{id} | `planned` | — | 收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16） |
-| `listMessages` | GET /messages | `partial` | services/api/src/messages/service.ts:293-298；tests/unit/messages-contract.test.mjs::三个 operationId | 独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17） |
-| `getUnreadCount` | GET /messages/unread-count | `partial` | services/api/src/messages/service.ts:331-336；tests/unit/messages-contract.test.mjs::三个 operationId | 独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17） |
-| `markMessageRead` | PUT /messages/{id}/read | `partial` | services/api/src/messages/service.ts:346-351；tests/unit/messages-contract.test.mjs::三个 operationId | 独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17） |
+| `listMessages` | GET /messages | `partial` | services/api/src/messages/service.ts:293-298；tests/unit/messages-contract.test.mjs::三个 operationId | 本人消息列表仍只有独立服务，GET /messages 未装配；已装配未读数量/读标记不代表列表可用。列表分页、事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17） |
 
 ## 5 计数
 
