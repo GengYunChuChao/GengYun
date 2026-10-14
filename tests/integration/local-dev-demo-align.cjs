@@ -31,24 +31,46 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const [sdkDir, outDir, portArg = '9420'] = process.argv.slice(2)
-if (!sdkDir || !outDir) throw Error('Usage: node tests/integration/local-dev-demo-align.cjs <SDK directory> <output directory> [automation port=9420]')
+const [sdkDir, outDir, portArg = '9420', targetArg = 'simulator'] = process.argv.slice(2)
+if (!sdkDir || !outDir) throw Error('Usage: node tests/integration/local-dev-demo-align.cjs <SDK directory> <output directory> [automation port=9420] [target=simulator|device]')
+if (!['simulator', 'device'].includes(targetArg)) throw Error('target must be simulator or device')
 const port = Number(portArg)
 assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535)
 const sdk = require(path.resolve(sdkDir))
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const target = targetArg
+let report = null
 
 let mini
 let stage = 'connect'
-const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.disconnect(); process.exit(2) }, 180000)
+const timer = setTimeout(() => { console.error('Timeout at ' + stage); dump(); mini?.disconnect(); process.exit(2) }, 180000)
+/** 失败/超时也把已量到的部分落盘：真机与模拟器不同，不能因为最后一个断言丢掉前面全部读数 */
+function dump() {
+  try {
+    if (!report) return
+    const out = path.resolve(outDir)
+    fs.mkdirSync(out, { recursive: true })
+    fs.writeFileSync(path.join(out, 'observations.json'), JSON.stringify(report, null, 2) + '\n')
+  } catch (_) {}
+}
 
 ;(async () => {
   mini = await sdk.connect({ wsEndpoint: 'ws://127.0.0.1:' + port })
   const out = path.resolve(outDir)
   fs.mkdirSync(out, { recursive: true })
+  // 真机档：官方 SDK 的 MiniProgram.remote(true) 把自动化切到 IDE「真机调试」已连接的那台手机。
+  // 实测切过去后 systemInfo 从 devtools/390px 变为 android/RMX3706/355px（见证据页）。
+  let remoteOn = null
+  if (target === 'device') {
+    try { await mini.remote(true); remoteOn = true } catch (e) { remoteOn = e.name + ': ' + e.message }
+  }
   const info = await mini.systemInfo()
-  const report = {
-    kind: 'actual WeChat devtools simulator + official miniprogram-automator; loopback synthetic fixture identity/data; controlled font substitution for the max-scale pass; NOT a device test',
+  report = {
+    target: target === 'device' ? 'real device via MiniProgram.remote(true) (IDE 真机调试); code/identity not printed' : 'devtools simulator',
+    remoteOn,
+    kind: (target === 'device'
+      ? 'actual physical phone + official miniprogram-automator remote debugging; loopback synthetic fixture identity/data; controlled font substitution for the max-scale pass; requests from a phone cannot reach 127.0.0.1, so page data may be empty/failed - styles and geometry are still measured on the real renderer'
+      : 'actual WeChat devtools simulator + official miniprogram-automator; loopback synthetic fixture identity/data; controlled font substitution for the max-scale pass; NOT a device test'),
     width: info.windowWidth, height: info.windowHeight, SDKVersion: info.SDKVersion,
     platform: info.platform, model: info.model, system: info.system, pixelRatio: info.pixelRatio,
     getAppBaseInfo: await mini.evaluate(() => {
@@ -418,11 +440,11 @@ const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.dis
     report.maxFont.restored = true
   }
 
-  fs.writeFileSync(path.join(out, 'observations.json'), JSON.stringify(report, null, 2) + '\n')
+  dump()
   await mini.reLaunch('/pages/home/home')
-  console.log('PASS devtools simulator ' + info.windowWidth + 'x' + info.windowHeight + ' (SDK ' + info.SDKVersion + '): @import inlined, page{} tokens resolve, data URI icons render, apply-shared reaches components, five tabs + specimen forms render, last screen clears the real tab bar at both standard and max font scale.')
-  console.log('BOUNDARY: synthetic loopback identity/data, controlled font substitution, devtools simulator only - not a device, real account or production-data test.')
-})().catch((e) => { console.error(stage + ': ' + e.name + ' - ' + e.message); process.exitCode = 1 }).finally(async () => {
+  console.log('PASS ' + report.target + ' ' + info.windowWidth + 'x' + info.windowHeight + ' (SDK ' + info.SDKVersion + '): @import inlined, page{} tokens resolve, data URI icons render, apply-shared reaches components, five tabs + specimen forms render, last screen clears the real tab bar at both standard and max font scale.')
+  console.log('BOUNDARY: synthetic loopback identity/data, controlled font substitution, ' + report.target + ' only - not a production-data or release test.')
+})().catch((e) => { console.error(stage + ': ' + e.name + ' - ' + e.message); dump(); process.exitCode = 1 }).finally(async () => {
   clearTimeout(timer)
   if (mini) { try { await mini.evaluate(() => { const a = getApp(); if (a && a._demoAlignFontRestore) { wx.getAppBaseInfo = a._demoAlignFontRestore; delete a._demoAlignFontRestore } }) } catch (_) {} mini.disconnect() }
 })
