@@ -378,18 +378,63 @@ OUTER_EXIT=0
 
 ```text
 $ git fetch upstream --prune ; git merge upstream/main --no-edit
-upstream/main = 15c3003efc221407734ea26366a7538ae23ddcbb（仅 docs/ui-demo/**，#132）
-→ 无冲突；合成提交 d93dd0cf41a2e275cd12f6715bb42975104bf539
+第一次合成：upstream/main = 15c3003efc221407734ea26366a7538ae23ddcbb（仅 docs/ui-demo/**，#132）
+            → 无冲突；合成提交 d93dd0cf41a2e275cd12f6715bb42975104bf539
+第二次合成：upstream/main = 2431cfde9b4fcb1619d65cec8817f686b9a50846
+            （#134 docs(GY-I01) 协调主线契约事实 + #133 feat(GY-I27) 用途授权接线）
+            → 冲突仅 docs/architecture/contract-implementation-status.md（生成表格）
 ```
+
+第二次合成的**注册表冲突口径**（`docs/architecture/contract-status.json` 自动合并，语义已核对）：
+
+| 条目 | 采用 | 说明 |
+| --- | --- | --- |
+| `listHerbicides` / `getHerbicide` | **本片** | 主线仍写 `planned`/`route_mounted:false`；本片必须标 `implemented`+`route_mounted:true`（否则 `contract-status-tool.test.mjs` 的装配一致性断言失败） |
+| `listKnowledge`（主线由 `implemented` 改判 `partial`，补 `pagination.ts` 证据与新 blocker）/ `getKnowledge` | **主线** | 本片此前的 `/knowledge` 注册表条目改动**主动放弃**，不覆盖 #134 的协调结论 |
+| `source_kind` 横切维度 blocker | **本片** | 主线仍写「/herbicides 仍未装配」，与事实不符，故更新为「已装配并消费真实公告记录（来源 unverified、用量/禁限用未采集）」 |
+| `withdrawConsent`（`consent-pg.ts:135-179`）等 | **主线** | #134 已修正此前发现的 privacy 行号越界，本轮不再自行修改 |
+
+冲突文件按「取主线版本 → 用工具 `replaceStatusTables` 从合并后 JSON 重建生成表格」解决，
+**不改动手写正文**。
+
+```text
+$ node tools/verify-contract-status.mjs
+PASS: 覆盖 112 条契约操作；已装配 75 条；implemented 13 / partial 81 / planned 18；横切维度 8 条；中文表格一致
+PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。
+```
+
+（此前该工具在基线上因 `consent-pg.ts` 行号越界失败；#134 已修复，本轮**全通过**。）
 
 ```text
 $ npm run lint                      → PASS（api/admin tsc + 卫生扫描）
 $ npm run test:contract             → tests 6  / pass 6 / fail 0
 $ node --test tests/reference/zhejiang-consumption.test.mjs tests/unit/knowledge-herbicides-http.test.mjs
                                     → tests 20 / pass 20 / fail 0 / skipped 0
-$ npm run test:unit                 → tests 1757 / pass 1756 / fail 0 / skipped 1
-$ git diff --check                  → 无输出
+$ npm run test:unit                 → tests 1767 / pass 1766 / fail 0 / skipped 1
+$ git diff --check upstream/main...HEAD → 无输出
 ```
 
-未跑项：CI 上的其余 workflow（`workbook-staging`、`local-wechat` 等）未在本机复跑；
-本轮唯一新增跨线改动是 `tests/integration/catalog-pg.mjs` 的那一处（已在真 PG 复现并验证）。
+合成后再次在隔离 PG 17.11 上跑目标集成测试（因为 #133 改了 `app.ts` 等装配）：
+
+```text
+=== [AFTER merge of upstream 2431cfd] PG17.11 up on port 55512 ===
+preconditions: server_version=17.11 public_tables=0 pre_existing_roles=0
+Real PostgreSQL patch: 17.11
+PASS real migration apply/repeat/drift/failed-DDL rollback
+PASS actual login roles deny private/base reads, PUBLIC access, cross-view access, writes, DDL, TEMP and escalation
+PASS committed 20 incomplete public records + 2 synthetic records: real PG import/repeat, eligible evidence=0, DoseCard=0, scoped seed rollback
+PASS real HTTP→API→restricted PG: empty/12→10, field shape, source/status/date/review/mode/content negatives, newer-hidden and immediate invalidation/rollback
+PASS registration identity/source/hash/ingredients mapping; status/missing-date/identity-conflict/injection/demo rejection; failed import transaction preserves prior evidence
+PASS 0005 scoped rollback preserves base records and fails closed in API
+=== [AFTER merge of upstream 2431cfd] catalog-pg exit=0 (expected pass) ===
+port 55512 listening after stop: False
+leftover postgres processes from E:\GengYunCommander\.pg17\pgsql\bin : 0
+OUTER_EXIT=0
+```
+
+未跑项：CI 上的其余 workflow（`workbook-staging`、`local-wechat`、`auth-privacy-postgres` 等）
+未在本机复跑；本轮唯一新增跨线改动是 `tests/integration/catalog-pg.mjs` 的那一处
+（已在真 PG 复现失败、并验证修复）。隔离集群 `E:\GengYunCommander\.w24-pg`（仓外、
+随机 owner 密码仅存本机 private 文件、不提交）与启动脚本
+`E:\GengYunCommander\.w24-pg-run-catalog.ps1` 保留在仓外，便于复验；跑完已停库、
+端口关闭、无遗留 postgres 进程。
