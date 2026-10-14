@@ -68,6 +68,12 @@ import { createMessagesService, type MessagesService } from './messages/service.
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
+// GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
+// 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
+import { createModerationService } from './moderation/service.ts';
+import type { ModerationService } from './moderation/service.ts';
+import { createModerationJobSource } from './moderation/job-source.ts';
+import type { ContentAuthorityPort } from './moderation/types.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -90,6 +96,8 @@ declare module 'fastify' {
     mediaObjectStore: MediaObjectStore;
     /** Non-real message service; real remains closed until persistent storage is delivered. */
     messagesService: MessagesService | null;
+    /** GY-I14 审核域服务（供回归测试驱动版本级任务、回调 seam 与可见性重查）。 */
+    moderationService: ModerationService;
   }
 }
 
@@ -169,6 +177,17 @@ export interface BuildAppOptions {
   };
   /** Synthetic tests only; these memory/reference injections do not enable the real-mode domain. */
   messagesInjection?: { store?: MessagesStore; reference?: MessageReferencePort };
+  // GY-I14（#14）审核域注入项（**全部可选**，纯追加）：
+  //   - 不传时按 executionMode 自建 —— `real` ⇒ **整域 fail-closed**（每次送审/发布/下架/读取/回调
+  //     都以契约 503 `PROVIDER_UNAVAILABLE`（`retryable`）如实拒绝，**绝不用内存/替身返回成功封套**）；
+  //     其余模式 ⇒ 明确标注的**替身**端口（替身一律回报"无结论"⇒ 隔离，不会放行任何内容）。
+  //   - `service` 供回归测试注入已建好的审核域（含内存台账）以驱动版本级任务与回调 seam。
+  moderationInjection?: {
+    service?: ModerationService;
+    ports?: { tms?: unknown; ims?: unknown };
+    authority?: ContentAuthorityPort;
+    callbackKey?: string;
+  };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
    * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
@@ -242,7 +261,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -267,6 +286,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
     idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
   });
+  // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域（未授权真实 tms/ims 供应商）；其余模式 ⇒ 替身端口
+  // （替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**（零端口注入）。
+  const moderationService: ModerationService =
+    moderationInjection?.service ??
+    createModerationService({
+      executionMode: config.executionMode,
+      ...(moderationInjection?.ports === undefined ? {} : { ports: moderationInjection.ports }),
+      ...(moderationInjection?.authority === undefined ? {} : { authority: moderationInjection.authority }),
+      ...(moderationInjection?.callbackKey === undefined ? {} : { callbackKey: moderationInjection.callbackKey }),
+    });
   const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;
   const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
   const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
@@ -411,6 +440,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
   app.decorate('messagesService', messagesService);
+  app.decorate('moderationService', moderationService);
 
   // ---------------------------------------------------------------------------
   // GY-I27 接线单（用途授权接线）。两处**最小、追加式**接线：
@@ -450,6 +480,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerJobRoutes(app, config, guards, createJobRegistry([
     createRecognitionJobSource(recognitionService),
     createTranscriptionJobSource(app.speechService),
+    // GY-I14（#14）审核域作业源（纯追加）：`GET /jobs/{id}` 现可返回 `kind=moderation` 的
+    // 契约 `ModerationResult`；`cancel` **不提供** ⇒ 注册表以 503 PROVIDER_UNAVAILABLE 如实拒绝。
+    createModerationJobSource(moderationService),
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
