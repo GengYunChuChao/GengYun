@@ -230,6 +230,20 @@ function invalidRequest(message: string, details: Array<{ field: string; code: s
   return new ApiError('INVALID_REQUEST', message, { details });
 }
 
+/**
+ * **模型层可达性**（装配层的安全加严，必须与文档一致）：
+ * 只有"规则层得出可放行结论"或"规则层仅因声明了媒体而不评估（图片只能由模型层筛查）"时，
+ * 才把内容交给模型端口；其余任何情形（驳回、输入非法、引擎异常、规则集非法、超时、扫描截断、
+ * 版本未知）都**不外发**给第三方供应商——既有安全理由（不把已判定违规/含 PII 的内容外发），
+ * 也避免为注定不放行的内容付费调用。结论方向**不变**：模型不得把非通过抬成通过。
+ */
+function modelLayerReachable(rule: RuleLayerRead): boolean {
+  if (!rule.input_valid) return false;
+  if (rule.decision === 'rejected') return false;
+  if (rule.decision === 'approved') return true;
+  return rule.reason_codes.every((code) => code === 'MEDIA_NOT_EVALUATED_BY_RULE_LAYER');
+}
+
 /** 主体校验（不接受客户端自述身份；缺一项即 401）。 */
 function assertActor(actor: ModerationActor | null | undefined): ModerationActor {
   if (
@@ -550,7 +564,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     const mediaCount = content.media.length;
     const kinds = contentKindsFor(mediaCount);
 
-    const canRunModel = rule.input_valid && rule.decision !== 'rejected';
+    const canRunModel = modelLayerReachable(rule);
     let merged: Awaited<ReturnType<typeof mergeModeration>> | null = null;
     let mergeFailed: string[] = [];
     let deferred = false;
@@ -597,6 +611,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
           ruleReasonCodes: rule.reason_codes,
           ruleInputValid: rule.input_valid,
           ruleHardPassed: rule.hard_rule_passed,
+          modelDeferred: canRunModel && deferred,
           merged: canRunModel && !deferred ? merged : null,
         });
       }

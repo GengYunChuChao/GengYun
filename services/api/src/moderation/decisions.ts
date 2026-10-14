@@ -149,6 +149,8 @@ export function projectKindScreening(args: {
   ruleInputValid: boolean;
   /** 规则层事实（`merged === null` 时结论里也必须如实登记它，否则"待回调"任务会丢掉规则层事实）。 */
   ruleHardPassed: boolean;
+  /** 模型层是否**按调用方要求**留待回调（异步供应商路径）。 */
+  modelDeferred?: boolean;
   merged: MergedModeration | null;
 }): KindProjection {
   const portKind = PORT_KIND_BY_CONTENT_KIND[args.contentKind];
@@ -173,11 +175,18 @@ export function projectKindScreening(args: {
     decision = 'rejected';
     state = 'succeeded';
     reasons.push('rule_rejected');
-  } else if (args.merged === null) {
+  } else if (args.merged === null && args.modelDeferred === true) {
     // 版本级任务已建立、模型层待回调（异步供应商路径）；`pending` 不得发布。
     decision = 'pending';
     state = 'queued';
     reasons.push('model_screening_pending');
+  } else if (args.merged === null) {
+    // 规则层**未得出可放行结论** ⇒ 装配层不外发（见 service 的 modelLayerReachable）⇒ 隔离。
+    // 这不是"等回调"：没有任何端口会被调用，因此不得落在 `pending`（那会被误读为"在跑"）。
+    decision = 'quarantined';
+    state = 'uncertain';
+    errorCode = errorCodeFor({ ruleReasonCodes: args.ruleReasonCodes, modelReasonCodes: [], modelStatus: null });
+    reasons.push('model_not_attempted');
   } else if (args.ruleDecision !== 'approved') {
     decision = 'quarantined';
     state = 'uncertain';
