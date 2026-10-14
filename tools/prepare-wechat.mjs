@@ -41,6 +41,9 @@ try {
     'utils/knowledge-api.js',
     // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/identify-api.js',
+    // 收藏与识别历史适配层（GY-I16）：新页面依赖它们；漏加同样会导致 MODULE_NOT_FOUND。
+    'utils/favorites-api.js',
+    'utils/history-api.js',
     // 社区域适配层（GY-I15）：社区列表/投稿/详情页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/community-api.js',
     'assets/knowledge/leaf.png',
@@ -87,6 +90,10 @@ try {
     'pages/login/login',
     // 样式走查页（GY-I26 demo 对齐）：只在本地替身工程可见（runtime.mode === 'local'）
     'pages/specimen/specimen',
+    // 收藏与识别历史（GY-I16）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
+    'pages/favorites/favorites',
+    'pages/history/history',
+    'pages/historydetail/historydetail',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {

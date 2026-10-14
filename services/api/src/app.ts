@@ -55,6 +55,17 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+// GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
+import {
+  createFeatureFlagGate,
+  createFlagGatedGuards,
+  createStoreFlagReader,
+  flagSeedFromBaseline,
+  FLAG_WIRING_BASELINE,
+  type FeatureFlagGate,
+} from './admin/ops/flag-gate.ts';
+// GY-I18 本片：人工评审入口**空态**（无假任务/审核人/投票/专家认证）。
+import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
 import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
@@ -70,6 +81,21 @@ import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
+// GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域 + 注销删除接线（F13 协议复用）。
+import { registerFavoriteRoutes } from './routes/favorites.ts';
+import { registerHistoryRoutes } from './routes/history.ts';
+import { createFavoritesService, type FavoritesService } from './favorites/service.ts';
+import { createMemoryFavoritesStore, type FavoritesStore } from './favorites/store.ts';
+import { createHistoryService, type HistoryService } from './history/service.ts';
+import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
+import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
+import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
+import { createUnwiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import {
+  createUserDataDeletion,
+  type BackupPurgePort,
+  type UserDataDeletionRegistry,
+} from './privacy/user-data-deletion.ts';
 // GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
 import { registerCommunityRoutes } from './routes/community.ts';
 import { createCommunityService, type CommunityService } from './community/service.ts';
@@ -103,6 +129,13 @@ declare module 'fastify' {
     adminContentService: AdminContentService;
     /** GY-I18 阶段 1b：后台运营与开关服务（9 个 operationId）。 */
     adminOpsService: AdminOpsService;
+    /**
+     * GY-I18 本片：全局开关门（跨端点真实生效）。供回归测试核对"关闭 ⇒ 拒绝且零产出"、
+     * "不可识别 ⇒ fail-closed"与"开关不改变适用判定结论"。
+     */
+    featureFlagGate: FeatureFlagGate;
+    /** GY-I18 本片：人工评审入口（**空态**：无任务/审核人/投票/专家认证，未接线）。 */
+    humanReviewDirectory: HumanReviewDirectory;
     /** GY-I06 媒体域服务（7 个 operationId；供回归测试核对 real fail-closed 与孤立对象清理）。 */
     mediaService: AppMediaService;
     /**
@@ -114,6 +147,22 @@ declare module 'fastify' {
     messagesService: MessagesService | null;
     /** GY-I14 审核域服务（供回归测试驱动版本级任务、回调 seam 与可见性重查）。 */
     moderationService: ModerationService;
+    /**
+    /**
+     * GY-I16 收藏服务；`real` 模式下为 `null`（内存存储不冒充持久化 ⇒ 三条路由 503）。
+     * 也供回归测试驱动。
+     */
+    favoritesService: FavoritesService | null;
+    /**
+     * GY-I16 历史服务；`real` 模式下为 `null`（同上）。
+     * **内部创建口** `historyService.appendHistory(...)` 供识别/OCR 域后续一行接线调用。
+     */
+    historyService: HistoryService | null;
+    /**
+     * GY-I16 注销删除接线：`favorites`/`history` 两个模块注册在**已合并的**
+     * `packages/privacy` 删除注册协议上（不另起一套）。供回归测试与后续 GY-I19 接线驱动。
+     */
+    userDataDeletion: UserDataDeletionRegistry;
     /**
      * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
      * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
@@ -209,6 +258,24 @@ export interface BuildAppOptions {
     authority?: ContentAuthorityPort;
     callbackKey?: string;
   };
+  // GY-I16 收藏（#16）注入项。**全部可选**：不传时与接线前**逐字节同行为** —— 收藏域新建
+  // 内存 store、可见性端口**未接线**（一律 unavailable，绝不假装可用）；real 模式下整域关闭。
+  favoritesInjection?: {
+    store?: FavoritesStore;
+    visibility?: VisibilityPort;
+  };
+  // GY-I16 历史（#16）注入项。**全部可选**：不传时——历史域新建内存 store；可见性端口未接线；
+  // **任务状态端口默认接线到已合并的公开读取口**（`recognitionService.getJob` /
+  // `ocrService.getJob`）⇒ 读取时能拿到真实任务状态（失败/超时/取消原样可见）；
+  // 关联删除级联端口未接线（如实回 `unwired`，不谎称已启动）。
+  historyInjection?: {
+    store?: HistoryStore;
+    visibility?: VisibilityPort;
+    job?: HistoryJobPort;
+    cascade?: HistoryCascadePort;
+  };
+  /** GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。 */
+  userDataDeletionInjection?: { backupPurge?: BackupPurgePort };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
   //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
@@ -296,7 +363,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -504,7 +571,23 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
   const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
-  const adminOpsStore = adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime });
+  // **开关播种（本片新增）**：把 3 个开关与该输出面**当前是否真的在产出**对齐（见
+  // `admin/ops/flag-gate.ts` 的 `FLAG_WIRING_BASELINE` 说明）。不播种的话，出厂默认（全 false）
+  // 会让 `listFlags` 自述"药剂输出已关闭"而 `/herbicides` 照常产出 —— 开关等于没生效。
+  // 注入的 store 不覆盖（测试可自带 flagSeed 做反例）。
+  const adminOpsStore =
+    adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime, flagSeed: flagSeedFromBaseline() });
+  // 全局开关门：读取**当前**开关状态。real 模式后台域整体 fail-closed ⇒ 开关没有权威来源，
+  // 此时 `armed:false`（保持既有产出行为，不拿未接线的开关中断用户面）—— 见证据页「未取得项」。
+  const adminRealUnwired = config.executionMode === 'real';
+  const featureFlagGate = createFeatureFlagGate({
+    reader: createStoreFlagReader(adminOpsStore),
+    armed: !adminRealUnwired,
+  });
+  // 受控输出面的守卫链：**先鉴权（401/403 次序不变）、后判开关**。
+  const gatedGuards = createFlagGatedGuards(guards, featureFlagGate);
+  // 人工评审入口空态：本片未接入任何人工评审（无任务/审核人/投票/专家认证）。
+  const humanReviewDirectory = createHumanReviewDirectory();
 
   // **real 模式 ⇒ 后台域整体 fail-closed**（监工返修 P1）。
   // 后台服务建的是**内存** store；若在 `real` 下仍把它交给服务层，写操作会返回**成功封套**
@@ -513,7 +596,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 口径与本仓一致：real 永远走 fail-closed 实现（缺真实后端即 503，**严禁静默回退替身**）。
   // **刻意不依赖任何"自述持久化"的布尔标志**：将来后台域接上真实持久 store 时，必须在这里
   // **显式放行**（一次可审查的接线变更），而不是靠替身自称真实就能自动启用。
-  const adminRealUnwired = config.executionMode === 'real';
+  // （`adminRealUnwired` 已在上方与开关门一并判定：它同时决定后台域是否 fail-closed
+  //  以及开关门是否有权威来源。）
 
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
@@ -560,6 +644,67 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
   });
 
+  // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
+  //
+  // **real 模式整体关闭**（与本仓「real 永远 fail-closed、严禁静默回退替身」一致）：
+  // 两域当前只有**内存** store，若在 real 下仍交出服务层，写操作会返回成功封套而落点易失
+  // —— 那是"在真实模式下声称成功、重启即丢"。因此 real ⇒ 服务为 `null` ⇒ 5 条路由 503
+  // PROVIDER_UNAVAILABLE。将来接真实持久 store 时必须**在这里显式放行**（一次可审查的变更）。
+  //
+  // **引用可用性端口默认未接线**（`createUnwiredVisibilityPort`）：一律 `unavailable`，
+  // **绝不**返回 `'available'` 来"默认可用"（同 #17 消息域口径）。这直接落实 issue #16
+  // 「隐藏／失效／注销不因缓存或旧链接重新公开」——服务端在没有真实可见性核验前不作出任何
+  // "可用"陈述；真实接线 = 在这里把一个 `VisibilityPort` 传进来。
+  //
+  // **任务状态端口默认接线到已合并的公开读取口**：`recognitionService.getJob`（#9）与
+  // `ocrService.getJob`（#10）—— 只调用公开方法、不改他人文件。这样历史列表/详情的
+  // `job_state` 在读取时能取到**实时**状态（失败/超时/取消原样可见），核不到时才退回入库值。
+  // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
+  const favoritesStore = favoritesInjection?.store ?? createMemoryFavoritesStore({ now: () => clock().getTime() });
+  const historyStore = historyInjection?.store ?? createMemoryHistoryStore({ now: () => clock().getTime() });
+  const favoritesVisibility = favoritesInjection?.visibility ?? createUnwiredVisibilityPort();
+  const historyVisibility = historyInjection?.visibility ?? createUnwiredVisibilityPort();
+  const historyJobPort: HistoryJobPort =
+    historyInjection?.job ??
+    createWiredHistoryJobPort({
+      note: '任务状态端口接线到已合并的公开读取口：recognitionService.getJob（#9）/ ocrService.getJob（#10）',
+      resolve: async ({ kind, jobId, userId }) => {
+        if (kind === 'recognition') return app.recognitionService.getJob({ userId, jobId });
+        return app.ocrService.getJob({ userId, jobId });
+      },
+    });
+  const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();
+  const favoritesService =
+    config.executionMode === 'real'
+      ? null
+      : createFavoritesService({
+          store: favoritesStore,
+          visibility: favoritesVisibility,
+          signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+          now: clock,
+        });
+  const historyService =
+    config.executionMode === 'real'
+      ? null
+      : createHistoryService({
+          store: historyStore,
+          visibility: historyVisibility,
+          job: historyJobPort,
+          cascade: historyCascadePort,
+          signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+          now: clock,
+        });
+  // GY-I16 第 4 项：**复用已合并的** `packages/privacy` 删除注册协议（不另起一套），
+  // 只把本片自己的 `favorites`/`history` 两个模块注册进去（在线部分真的清理并留证据；
+  // 备份副本清除未接线 ⇒ `backupState: 'pending'`，如实显示未完成）。
+  const userDataDeletion = createUserDataDeletion({
+    favoritesStore,
+    historyStore,
+    ...(userDataDeletionInjection?.backupPurge === undefined
+      ? {}
+      : { backupPurge: userDataDeletionInjection.backupPurge }),
+  });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -573,11 +718,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('synthesisService', synthesisService);
   app.decorate('adminContentService', adminContentService);
   app.decorate('adminOpsService', adminOpsService);
+  app.decorate('featureFlagGate', featureFlagGate);
+  app.decorate('humanReviewDirectory', humanReviewDirectory);
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
   app.decorate('messagesService', messagesService);
   app.decorate('moderationService', moderationService);
+  app.decorate('favoritesService', favoritesService);
+  app.decorate('historyService', historyService);
+  app.decorate('userDataDeletion', userDataDeletion);
   app.decorate('communityService', communityService);
+
+  // 注：GY-I27 的 `consentSigningKey`/`consentGate`/`egressRevoker` 声明已在上方
+  // 「GY-I27 隐私域装配（两片接线）」块内完成（合并时上游把该块前移并扩成含
+  // 持久外发账本的第二片）。此处**不再重复声明**：同一标识符二次 `const` 会直接语法错误，
+  // 且上游版本是严格超集（仍以 `privacyInjection.consent`/`egressRevoker` 优先）。
+  // 这是本次合并的唯一语义冲突点：只能保留上游那份声明，本片只保留自己的装配（decorate/register）。
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -588,11 +744,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
   registerProfileRoutes(app, config, pool, guards);
-  registerKnowledgeRoutes(app, config, pool, guards);
-  registerRecognitionRoutes(app, config, guards, recognitionService, { consent: consentGate, egress: recognitionEgress });
-  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
-  registerSynthesisRoutes(app, config, guards, synthesisService, consentGate);
-  registerOcrRoutes(app, config, { guards, consent: consentGate, egress: ocrEgress });
+  // 本片起：以下五个域的输出面受**全局开关**控制（受控面清单见 `admin/ops/flag-gate.ts`），
+  // 因此传入 `gatedGuards`（= 原守卫 + 开关门；先鉴权、后判开关）。守卫链语义与错误码次序不变。
+  // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
+  // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
+  registerKnowledgeRoutes(app, config, pool, gatedGuards);
+  registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
+  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
+  registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
@@ -613,8 +773,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   registerMediaRoutes(app, config, guards, mediaService);
   registerMessageRoutes(app, config, guards, messagesService);
+  // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
+  registerFavoriteRoutes(app, config, guards, favoritesService);
+  registerHistoryRoutes(app, config, guards, historyService);
   // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
-  registerCommunityRoutes(app, config, guards, communityService);
+  // 本片起：投稿/评论两条 **POST** 面（`POST /posts`、`POST /posts/:id/comments`）纳入全局开关
+  // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
+  // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
+  // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
+  registerCommunityRoutes(app, config, gatedGuards, communityService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：

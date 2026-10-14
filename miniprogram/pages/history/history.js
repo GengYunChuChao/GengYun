@@ -1,0 +1,127 @@
+// GY-I16 识别历史列表页（Demo 形态：styles/* 色板与卡片 + gy-ui-* 组件 + state-view 空/失败态）。
+//
+// 数据来源（**已合并**契约面，不新增路径）：
+//   * 列表 / 删除：GET /history、DELETE /history/{id}（If-Match 用服务端给的 revision）
+//   * 详情：无契约外路径 —— 只带历史行 id 跳到详情页，详情页再用实时读取 + 已合并的
+//     GET /recognitions/{id}（#9）或 GET /ocr/{id}（#10）组合呈现。
+//
+// 硬口径：
+//   - **失败状态真实可见**：`job_state` 七类逐类呈现，`failed`/`timed_out`/`cancelled`/`uncertain`
+//     一律原样列出，绝不隐藏、不折叠成"成功"。
+//   - `reference_state` 由服务端逐次派生：不可用时如实标注，且**不提供跳转**（避免旧链接复活）。
+//   - 删除记录会**同时**触发服务端的关联删除流程；是否已接线由 `X-GY-Cascade`（非契约披露标记）如实回传。
+//   - 识别/收藏**不等于**"已使用"：本页没有任何"标记已使用"的入口。
+const fontScale = require('../../utils/font-scale')
+const auth = require('../../utils/auth')
+const pageGate = require('../../utils/page-gate')
+const historyApi = require('../../utils/history-api')
+
+const PAGE_SIZE = 20
+
+Page({
+  data: {
+    fontScale: fontScale.DEFAULT_FONT_SCALE,
+    gatePassed: false,
+    checking: true,
+    networkOff: false,
+    busy: false,
+    loading: false,
+    mode: '',
+    message: '',
+    errorText: '',
+    items: [],
+    nextCursor: null,
+    failedCount: 0
+  },
+
+  onLoad: function () {
+    fontScale.applyFontScale(this)
+  },
+
+  onShow: function () {
+    fontScale.applyFontScale(this)
+    const self = this
+    self.setData({
+      gatePassed: false, checking: true, items: [], nextCursor: null,
+      errorText: '', message: '', failedCount: 0
+    })
+    pageGate.start(this, function (ok) {
+      self.setData({ checking: false })
+      if (!ok) { self.setData({ gatePassed: false }); return }
+      self.setData({ gatePassed: true, networkOff: !auth.networkEnabled() })
+      if (auth.networkEnabled()) self.load()
+    })
+  },
+
+  onHide: function () { pageGate.cancel(this) },
+  onUnload: function () { pageGate.cancel(this) },
+
+  load: function (cursor) {
+    const self = this
+    self.setData({ busy: true, loading: true, errorText: '' })
+    historyApi.listHistory(cursor || '', PAGE_SIZE).then(function (result) {
+      const items = result.items.map(function (item) {
+        const view = historyApi.historyItemView(item)
+        return Object.assign({}, view, { cardTitle: view.kindLabel + ' · ' + view.createdText })
+      })
+      const merged = cursor ? self.data.items.concat(items) : items
+      // 列表页写入**引用快照**：详情页只把它用于定位，不把它当状态来源。
+      historyApi.remember(result.items)
+      self.setData({
+        busy: false, loading: false, items: merged, nextCursor: result.nextCursor, mode: result.mode,
+        failedCount: merged.filter(function (entry) { return entry.failed }).length,
+        message: merged.length ? '' : '还没有识别记录。'
+      })
+    }).catch(function (error) {
+      self.setData({ busy: false, loading: false, items: [], nextCursor: null, failedCount: 0, errorText: historyApi.messageFor(error) })
+    })
+  },
+
+  onMore: function () {
+    if (this.data.busy || !this.data.nextCursor) return
+    this.load(this.data.nextCursor)
+  },
+
+  onRefresh: function () {
+    if (!this.data.gatePassed || this.data.networkOff) return
+    historyApi.clearSelection()
+    this.load()
+  },
+
+  openDetail: function (event) {
+    const index = Number(event.currentTarget.dataset.index)
+    const item = this.data.items[index]
+    if (!item) return
+    // 只带历史行 id；不把任何状态放进链接（状态一律由详情页实时读取）。
+    wx.navigateTo({ url: '/pages/historydetail/historydetail?id=' + encodeURIComponent(item.id) })
+  },
+
+  onDelete: function (event) {
+    const self = this
+    if (self.data.busy) return
+    const index = Number(event.currentTarget.dataset.index)
+    const item = self.data.items[index]
+    if (!item) return
+    wx.showModal({
+      title: '删除这条记录？',
+      content: '将删除该识别记录，并触发关联的识别结果与媒体删除流程。删除后不可恢复。',
+      confirmText: '删除',
+      cancelText: '取消',
+      success: function (res) {
+        if (!res.confirm) return
+        self.setData({ busy: true, message: '正在删除…' })
+        historyApi.deleteHistory(item.id, item.revision).then(function (result) {
+          // 级联是否已启动由服务端如实回传（非契约披露标记）。
+          self.setData({ busy: false, message: '已删除记录。' + historyApi.cascadeNote(result.cascade) })
+          self.load()
+        }).catch(function (error) {
+          self.setData({ busy: false, message: historyApi.messageFor(error) })
+        })
+      }
+    })
+  },
+
+  onLogin: function () {
+    wx.navigateTo({ url: '/pages/login/login' })
+  }
+})

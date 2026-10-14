@@ -126,6 +126,28 @@ async function group(name, fn) {
   }
 }
 
+/**
+ * 走完全部分页取回审计台账。
+ *
+ * 为什么需要：`listAuditEvents` 是**分页**端点（契约 limit 1..50，默认 20），
+ * 因此"读一页 items"**不等于**"读全部审计"。本片新增了编辑审计（四类资料的版本修改）
+ * 与来源撤回的范围审计后，台账条数超过了默认页大小，此前把"第一页"当"全部"的断言
+ * 会静默算错（差值算成 0 / 找不到事件）。这里按 `next_cursor` 翻完，
+ * 让断言仍然作用于**整份**台账，而不是第一页。
+ */
+async function allAuditItems(fetch = http, token = adminAll.token) {
+  const items = [];
+  let cursor = null;
+  for (let page = 0; page < 20; page += 1) {
+    const url = `${API}/admin/audit-events?limit=50${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+    const body = (await fetch(url, { token })).body.data;
+    items.push(...body.items);
+    cursor = body.next_cursor;
+    if (cursor === null) return items;
+  }
+  throw new Error('审计分页未收敛（超过 20 页）');
+}
+
 /** 回环 HTTP 调用（只走 127.0.0.1）。 */
 function makeHttp(origin) {
   return async function http(path, options = {}) {
@@ -362,7 +384,10 @@ await group('[正控制] 开关：list 200（契约 3 键默认 false）→ setF
   const listed = await probe('listFlags', 'GET', `${API}/admin/feature-flags`);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.data.items.map((f) => f.key).sort(), [...CONTRACT_FLAG_KEYS].sort());
-  for (const flag of listed.body.data.items) assert.equal(flag.enabled, false, '默认必须是关闭态（最严格一侧）');
+  // 注意：本组走 **wired 实例**（测试自己注入 opsStore，未播种）⇒ 出厂默认仍是全 false。
+  // 「默认关闭 + 与产出面对齐」的播种只发生在 `app.ts` **自建** store 的装配路径上；
+  // 该口径由 `tests/unit/admin-flag-gate.test.mjs` E1 与 `admin-real-mode-fail-closed.test.mjs` 钉住。
+  for (const flag of listed.body.data.items) assert.equal(flag.enabled, false, '注入 store 未播种 ⇒ 出厂默认（最严格一侧）');
 
   const set = await probe('setFlag', 'PUT', `${API}/admin/feature-flags/specific_herbicide_output_enabled`, {
     body: { enabled: true, reason: '示例：比赛演示需要展示药剂输出' },
@@ -404,8 +429,8 @@ await group('[正控制] hidePost：经 HTTP 隐藏 ⇒ 社区公开读不可见
   assert.equal(stored.visibility, 'hidden');
   assert.equal(stored.revision, communityPost.revision + 1);
 
-  const audit = await http(`${API}/admin/audit-events`, { token: adminAll.token });
-  const hit = audit.body.data.items.filter((e) => e.action === 'post.hide');
+  const audit = await allAuditItems();
+  const hit = audit.filter((e) => e.action === 'post.hide');
   assert.equal(hit.length, 1, '隐藏恰好一条审计');
   assert.equal(hit[0].target_ref.type, 'post');
   assert.equal(hit[0].target_ref.id, communityPost.id);
@@ -484,7 +509,7 @@ await group('反例 3/4：未知 flag key ⇒ 400；安全语义 key ⇒ 400 **�
   assert.equal(unknown.status, 400, JSON.stringify(unknown.body));
   assert.equal(unknown.body.error.code, 'INVALID_REQUEST');
 
-  const before = (await http(`${API}/admin/audit-events`, { token: adminAll.token })).body.data.items.length;
+  const before = (await allAuditItems()).length;
   for (const key of ['hard_rules_enabled', 'moderation_enabled', 'auto_approve', 'allow_unverified_publish']) {
     const res = await http(`${API}/admin/feature-flags/${key}`, {
       method: 'PUT', token: adminAll.token,
@@ -494,7 +519,7 @@ await group('反例 3/4：未知 flag key ⇒ 400；安全语义 key ⇒ 400 **�
     assert.equal(res.status, 400, `${key} 应为 400`);
     assert.ok(res.body.error.details.some((d) => d.code === 'SAFETY_CRITICAL_KEY'), `${key} 应给出安全语义标记`);
   }
-  const after = (await http(`${API}/admin/audit-events`, { token: adminAll.token })).body.data.items;
+  const after = await allAuditItems();
   const denied = after.slice(before).filter((e) => e.reason_code === 'flag_weakening_denied');
   assert.equal(denied.length, 4, '每次安全语义拒绝都必须留一条 denied 审计');
   for (const event of denied) assert.equal(event.result, 'denied');
@@ -669,7 +694,7 @@ await group('反例 12：同键异体 ⇒ 409；同键同体并发 ⇒ 恰好一
 
   // 并发同键同体：createCategory 走 editCategory（已有种子），用 edit 做并发。
   const raceKey = newKey('race');
-  const before = (await http(`${API}/admin/audit-events`, { token: adminAll.token })).body.data.items.length;
+  const before = (await allAuditItems()).length;
   const payload = JSON.stringify({ name: '并发名', description: '并发说明', active: true });
   const results = await Promise.all([1, 2, 3].map(() => http(`${API}/admin/categories/species-barnyardgrass`, {
     method: 'PATCH', token: adminAll.token,
@@ -679,7 +704,7 @@ await group('反例 12：同键异体 ⇒ 409；同键同体并发 ⇒ 恰好一
   for (const res of results) assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.deepEqual(results[0].body, results[1].body, '同键同体并发必须收敛到同一响应');
   assert.equal(adminOpsStore.getCategory('species-barnyardgrass').revision, 2, '并发只能迁移一次');
-  const after = (await http(`${API}/admin/audit-events`, { token: adminAll.token })).body.data.items;
+  const after = await allAuditItems();
   assert.equal(after.length - before, 1, '并发只允许一条审计');
 });
 
@@ -741,8 +766,8 @@ await group('反例 16：审计只可追加（无改删入口），且 `target_h
   for (const forbidden of ['update', 'delete', 'remove', 'clear']) {
     assert.equal(auditLog[forbidden], undefined);
   }
-  const res = await http(`${API}/admin/audit-events`, { token: adminAll.token });
-  for (const item of res.body.data.items) {
+  const fullLedger = await allAuditItems();
+  for (const item of fullLedger) {
     assert.equal(Object.hasOwn(item, 'actor_id'), false);
     assert.equal(Object.hasOwn(item, 'target_hint'), false);
   }
@@ -762,7 +787,8 @@ await group('反例 16：审计只可追加（无改删入口），且 `target_h
 await group('[审计统一 · 回归] 五类新写操作的审计都必须可经 GET /admin/audit-events 读到（按目标核对）', async () => {
   const res = await probe('listAuditEvents', 'GET', `${API}/admin/audit-events`, { note: '审计统一回归' });
   assert.equal(res.status, 200);
-  const items = res.body.data.items;
+  // 审计端点是分页的 ⇒ 断言必须作用于**整份台账**（翻完所有页），不能用第一页代替全部。
+  const items = await allAuditItems();
   const actions = items.map((event) => event.action);
   for (const expected of ['category.update', 'account.suspend', 'job.cancel', 'flag.set', 'post.hide']) {
     assert.ok(
@@ -810,14 +836,17 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   assert.notEqual(independentA.audit, independentB.audit, '两个独立 runtime 必然各有台账');
 
   // 默认装配（**未注入任何 store**）上实跑：`setFlag` 必须出现在阶段 1 的审计读端点里。
-  const before = (await defaultHttp(`${API}/admin/audit-events`, { token: defaultAdminAll.token })).body.data.items.length;
+  // 本片起装配层会按 `FLAG_WIRING_BASELINE` 播种（ai_enabled 基线为 true）⇒ 这里改成
+  // **真正改变取值**（true → false），否则同值设置按既有幂等语义不迁移、不记审计。
+  const before = (await allAuditItems(defaultHttp, defaultAdminAll.token)).length;
   const set = await defaultHttp(`${API}/admin/feature-flags/ai_enabled`, {
     method: 'PUT', token: defaultAdminAll.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('unify'), 'if-match': '"1"' },
-    body: JSON.stringify({ enabled: true, reason: '示例：审计统一回归' }),
+    body: JSON.stringify({ enabled: false, reason: '示例：审计统一回归' }),
   });
   assert.equal(set.status, 200, JSON.stringify(set.body));
-  const after = (await defaultHttp(`${API}/admin/audit-events`, { token: defaultAdminAll.token })).body.data.items;
+  assert.equal(set.body.data.enabled, false);
+  const after = await allAuditItems(defaultHttp, defaultAdminAll.token);
   assert.equal(after.length, before + 1, '默认装配下 flag.set 必须出现在阶段 1 的审计读端点里');
   assert.ok(after.some((event) => event.action === 'flag.set'), 'flag.set 审计必须可经 HTTP 读到');
 
@@ -839,13 +868,15 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   );
 
   // 三条**不依赖分类/账号种子**的写操作：其审计必须出现在阶段 1 的读端点里。
-  const portsBefore = (await portsHttp(`${API}/admin/audit-events`, { token: portsAdmin.token })).body.data.items.length;
+  // （同值设置按既有幂等语义不迁移、不记审计 ⇒ 这里对 ai_enabled 做真实取值变更。）
+  const portsBefore = (await allAuditItems(portsHttp, portsAdmin.token)).length;
   const portsSet = await portsHttp(`${API}/admin/feature-flags/ai_enabled`, {
     method: 'PUT', token: portsAdmin.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('ports-flag'), 'if-match': '"1"' },
-    body: JSON.stringify({ enabled: true, reason: '示例：审计统一回归' }),
+    body: JSON.stringify({ enabled: false, reason: '示例：审计统一回归' }),
   });
   assert.equal(portsSet.status, 200, JSON.stringify(portsSet.body));
+  assert.equal(portsSet.body.data.enabled, false);
   const portsCancel = await portsHttp(`${API}/admin/jobs/${JOB_QUEUED}/cancel`, {
     method: 'POST', token: portsAdmin.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('ports-job'), 'if-match': '"1"' },
@@ -863,7 +894,7 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   });
   assert.equal(portsHide.status, 200, JSON.stringify(portsHide.body));
 
-  const portsAfter = (await portsHttp(`${API}/admin/audit-events`, { token: portsAdmin.token })).body.data.items;
+  const portsAfter = await allAuditItems(portsHttp, portsAdmin.token);
   const portsActions = portsAfter.map((event) => event.action);
   for (const expected of ['flag.set', 'job.cancel', 'post.hide']) {
     assert.ok(

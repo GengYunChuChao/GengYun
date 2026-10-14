@@ -659,6 +659,10 @@
        {
         "test": "tests/unit/knowledge-herbicides-http.test.mjs",
         "name": "/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯"
+       },
+       {
+         "test": "tests/unit/admin-flag-gate.test.mjs",
+         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
        }
       ],
       "blocker": "记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收"
@@ -684,6 +688,10 @@
        {
         "test": "tests/unit/knowledge-herbicides-http.test.mjs",
         "name": "/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致"
+       },
+       {
+         "test": "tests/unit/admin-flag-gate.test.mjs",
+         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
        }
       ],
       "blocker": "未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表"
@@ -1112,6 +1120,10 @@
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "F. submissions_enabled 关闭 ⇒ createPost 拒绝且**一条内容都没落库**；开启 ⇒ 正常发布"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1459,10 +1471,23 @@
       "route": "/api/v1/favorites",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "60-72"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "214-258"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：增→列→取消 的契约形状、头部与"
+        }
+      ],
+      "blocker": "GY-I16 本片只交付内存存储（进程重启即丢，无数据库迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；引用可用性端口生产默认未接线 ⇒ 一律 reference_state=unavailable（不假装可用）。归属/去重/取消/分页/读取时重查已由 HTTP + 域测试覆盖（见证据）"
     },
     {
       "id": "createFavorite",
@@ -1471,10 +1496,23 @@
       "route": "/api/v1/favorites",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "74-88"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "262-330"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：请求校验（闭集/未知字段/路径/查询参数）与后台会话隔离"
+        }
+      ],
+      "blocker": "同 listFavorites：内存存储 + real 模式关闭 + 可见性端口未接线。收藏只接受契约 3 类目标（species/herbicide/scheme）；收藏**不授予可见性**，也不产生任何\"已使用\"事实（投影恰为契约 6 字段）"
     },
     {
       "id": "deleteFavorite",
@@ -1483,10 +1521,23 @@
       "route": "/api/v1/favorites/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/favorites.ts",
+          "lines": "90-102"
+        },
+        {
+          "path": "services/api/src/favorites/service.ts",
+          "lines": "332-380"
+        },
+        {
+          "test": "tests/unit/favorites-http.test.mjs",
+          "name": "收藏HTTP：归属/越权同形、If-Match 与幂等头部纪律"
+        }
+      ],
+      "blocker": "同 listFavorites：内存存储 + real 模式关闭。契约 If-Match/Idempotency-Key 已强制（缺失 428／形状非法 400／版本不符 409；非本人与不存在同形 404）；取消为物理删除，旧行不复活"
     },
     {
       "id": "listHistory",
@@ -1495,10 +1546,23 @@
       "route": "/api/v1/history",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/history.ts",
+          "lines": "55-62"
+        },
+        {
+          "path": "services/api/src/history/service.ts",
+          "lines": "238-292"
+        },
+        {
+          "test": "tests/unit/history-http.test.mjs",
+          "name": "历史HTTP：任务状态端口已接线到已合并读取口 ⇒ 失败状态真实可见（读取时重查）"
+        }
+      ],
+      "blocker": "GY-I16 本片只交付内存存储（无数据库迁移）⇒ real 模式整域 503。**识别/OCR → 历史的写入接线属跨线**：本片只交付内部口 historyService.appendHistory()（非契约 operationId、不注册路由，签名见 services/api/src/history/service.ts），那一句调用待指挥另行派单。引用可用性端口生产默认未接线 ⇒ reference_state 一律 unavailable"
     },
     {
       "id": "deleteHistory",
@@ -1507,10 +1571,23 @@
       "route": "/api/v1/history/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "收藏/历史 HTTP 服务未装配；已有引用和隐私相关组件不构成此操作实现，持久化、归属与失效引用消费待完成（GY-I16）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/history.ts",
+          "lines": "64-80"
+        },
+        {
+          "path": "services/api/src/history/service.ts",
+          "lines": "294-340"
+        },
+        {
+          "test": "tests/unit/history-http.test.mjs",
+          "name": "历史HTTP：删除历史行 + 级联披露（未接线如实说明，接线后只启动不声称完成）"
+        }
+      ],
+      "blocker": "同 listHistory：内存存储 + real 模式关闭。契约描述的\"同时启动关联识别/OCR 私有结果/媒体和外发删除\"**尚未接线**（属 GY-I19／跨线）：本片只删除历史行本身，并通过 history/cascade.ts 端口 + X-GY-Cascade 非契约披露头如实回传 initiated/unwired/failed，不谎称级联已完成"
     },
     {
       "id": "listMessages",
@@ -1687,6 +1764,10 @@
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-ops-governance.test.mjs",
+          "name": "G1b. 四类资料的「版本修改」逐类留审计（此前不写 ⇒ 事后无法追责）"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -1890,6 +1971,10 @@
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-reference-invalidity.test.mjs",
+          "name": "5. 发布门槛：引用已下架来源的依赖发布 ⇒ 422 SOURCE_CONFLICT，且**不部分发布**、留 denied 审计"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2499,6 +2584,10 @@
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
           "name": "恰好实现 9 个 operationId"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "E1. 装配基线：3 个开关与各自输出面的真实状态一致（否则开关等于没生效）"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"

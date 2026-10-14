@@ -3,23 +3,44 @@ const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const api = require('../../utils/profile-api')
 const locationRegion = require('../../utils/location-region')
+// GY-I16：收藏与识别历史各自有独立页面；本页只显示**已加载条数**并给出入口。
+const favoritesApi = require('../../utils/favorites-api')
+const historyApi = require('../../utils/history-api')
 function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', needsReload: false, retryPending: false } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
   return messages[code] || '档案暂时无法读取或保存，请重试。'
 }
 Page({
-  data: Object.assign({ fontScale: 1, guest: true }, empty()),
+  data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—' }, empty()),
   onLoad: function () { fontScale.applyFontScale(this) },
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
+    // 计数一律清零：不把上一个会话的条数留在界面上。
+    this.setData({ favoriteCount: '—', historyCount: '—' })
     pageGate.start(this, function (ok) {
       self.invalidate()
       self.setData(Object.assign({ guest: !ok }, empty()))
-      if (ok) self.loadProfile()
+      if (ok) { self.loadProfile(); self.loadCounts() }
     })
   },
+  /**
+   * 收藏／识别历史的**已加载条数**（不是总数，契约封套没有计数字段）：
+   * 只读第一页，`N+` 表示还有下一页；读不到就如实显示 `—`（绝不用本地数据凑数）。
+   */
+  loadCounts: function () {
+    const self = this
+    if (!auth.networkEnabled()) return
+    favoritesApi.listFavorites('', 20).then(function (result) {
+      self.setData({ favoriteCount: result.items.length + (result.nextCursor ? '+' : '') })
+    }).catch(function () { self.setData({ favoriteCount: '—' }) })
+    historyApi.listHistory('', 20).then(function (result) {
+      self.setData({ historyCount: result.items.length + (result.nextCursor ? '+' : '') })
+    }).catch(function () { self.setData({ historyCount: '—' }) })
+  },
+  openFavorites: function () { wx.navigateTo({ url: '/pages/favorites/favorites' }) },
+  openHistory: function () { wx.navigateTo({ url: '/pages/history/history' }) },
   invalidate: function () { this._operation = (this._operation || 0) + 1; this._pendingSave = null; this._subjectBinding = null },
   onHide: function () { pageGate.cancel(this) },
   onUnload: function () { pageGate.cancel(this) },
