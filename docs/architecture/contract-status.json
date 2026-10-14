@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 3,
-  "baseline": "b1f6ab0e4dc304d2dd621d6a20852b31ccbfab3e",
+  "proposal_revision": 6,
+  "baseline": "15c3003efc221407734ea26366a7538ae23ddcbb",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -309,14 +309,18 @@
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "48-55"
+          "lines": "109-120"
         },
         {
-          "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "116-127"
+          "path": "services/api/src/privacy/consent-pagination.ts",
+          "lines": "24-65"
+        },
+        {
+          "test": "tests/unit/consent-pagination-http.test.mjs",
+          "name": "授权分页走实际产品 HTTP 与受限 SQL"
         }
       ],
-      "blocker": "缺：游标为裸 base64url（consent-pg.ts:48-55），未 HMAC 签名、未绑定主体/过滤器/版本水位、无 15 分钟有效期，违反 state-contract.md:32；且依赖运维手工导入 consent_policies（0009 无管理 API/生产种子）"
+      "blocker": "授权列表签名、主体/auth_epoch/水位绑定、稳定排序和15分钟固定期限已合（#109）；真实授权政策/接收方配置与用途链路仍须验收，grant依赖运维导入consent_policies，不把列表合成记录证据当真实授权全链完成"
     },
     {
       "id": "grantConsent",
@@ -360,10 +364,10 @@
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "140-183"
+          "lines": "135-179"
         }
       ],
-      "blocker": "缺分支：撤回的消费者（jobs/media/exports/author_links）未接入，存在任一条即 409 OBJECT_UNAVAILABLE 拒绝（consent-pg.ts:164-169）；同样依赖 consent_policies 已落库"
+      "blocker": "PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
     },
     {
       "id": "listExports",
@@ -576,7 +580,7 @@
       "scope": "user",
       "version_required": false,
       "route_mounted": true,
-      "status": "implemented",
+      "status": "partial",
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
@@ -584,14 +588,18 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "14-80"
+          "lines": "14-56"
+        },
+        {
+          "path": "services/api/src/knowledge/pagination.ts",
+          "lines": "24-65"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
           "name": "knowledge real projection and limited runtime over loopback HTTP"
         }
       ],
-      "blocker": "需 DATABASE_URL 与 catalog_read.current_knowledge 视图；排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致"
+      "blocker": "需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留"
     },
     {
       "id": "getKnowledge",
@@ -609,7 +617,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "60-69"
+          "lines": "43-56"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
@@ -666,7 +674,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "57-61"
+          "lines": "58-62"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -687,7 +695,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "74-78"
+          "lines": "75-79"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -708,7 +716,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "101-105"
+          "lines": "102-106"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -729,7 +737,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "86-90"
+          "lines": "87-91"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -856,7 +864,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "getTranscription",
@@ -876,7 +884,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "deleteTranscription",
@@ -896,7 +904,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "confirmTranscription",
@@ -916,7 +924,7 @@
           "test": "tests/integration/speech-http.mjs"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取/取消未消费此域；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），但转写取消能力未接线，返回503 PROVIDER_UNAVAILABLE（retryable）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "createSynthesis",
@@ -2526,7 +2534,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:260-276）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:392-407）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
     },
     {
       "key": "pagination",
@@ -2535,23 +2543,31 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/knowledge/service.ts",
-          "lines": "36-51"
+          "path": "services/api/src/knowledge/pagination.ts",
+          "lines": "24-65"
         },
         {
           "path": "services/api/src/profile/service.ts",
           "lines": "104-113"
         },
         {
-          "path": "services/api/src/privacy/consent-pg.ts",
-          "lines": "48-55"
+          "path": "services/api/src/privacy/consent-pagination.ts",
+          "lines": "24-65"
         },
         {
-          "test": "tests/unit/knowledge-api.test.mjs",
-          "name": "knowledge real projection and limited runtime over loopback HTTP"
+          "test": "tests/unit/knowledge-pagination.test.mjs",
+          "name": "knowledge chain keeps first 15min deadline"
+        },
+        {
+          "test": "tests/unit/consent-pagination.test.mjs",
+          "name": "15分钟截止严格生效"
+        },
+        {
+          "path": "services/api/src/profile/pagination.ts",
+          "lines": "24-65"
         }
       ],
-      "blocker": "缺：/me/consents 游标未签名且未绑定主体/过滤器/版本水位/有效期（consent-pg.ts:48-55）；/knowledge 排序为 id 升序，与 state-contract.md:32 的 (created_at DESC,id DESC) 不一致。契约 Limit 1..50/默认 20 已在三处 schema 中一致"
+      "blocker": "授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成"
     },
     {
       "key": "versioning",
@@ -2593,23 +2609,40 @@
           "lines": "80-148"
         },
         {
+          "path": "services/api/src/app.ts",
+          "lines": "349-358"
+        },
+        {
           "path": "services/api/src/auth/idempotency.ts",
-          "lines": "1-60"
+          "lines": "31-33"
         },
         {
-          "test": "tests/unit/auth-routes.test.mjs",
-          "name": "幂等：同键同体收敛到同一会话"
+          "path": "services/api/src/auth/service.ts",
+          "lines": "104-107"
         },
         {
-          "path": "services/api/src/recognitions/service.ts",
-          "lines": "529-568"
+          "path": "services/api/src/admin/identity.ts",
+          "lines": "23-26"
         },
         {
-          "test": "tests/unit/recognitions-api.test.mjs",
-          "name": "GY-I09 识别任务闭环"
+          "path": "services/api/src/admin/idempotent-write.ts",
+          "lines": "55-72"
+        },
+        {
+          "test": "tests/unit/idempotency-retry-after-http.test.mjs",
+          "name": "真实产品登录 HTTP：同键请求仍在处理"
+        },
+        {
+          "test": "tests/unit/idempotency-job-ttl.test.mjs"
+        },
+        {
+          "test": "tests/unit/admin-idempotency-expiry.test.mjs"
+        },
+        {
+          "test": "tests/unit/pg-write-idempotency-ttl.test.mjs"
         }
       ],
-      "blocker": "身份、档案、授权、识别/OCR/转写/合成均有各自幂等实现；support.ts 的 409 REQUEST_IN_PROGRESS 仍未带 Retry-After 响应头，与状态协议约定不符；内存域幂等记录重启不持久，不能据此宣称通用持久任务幂等完成"
+      "blocker": "REQUEST_IN_PROGRESS 的 Retry-After: 1 已合（#108）；认证/识别/OCR/ASR/TTS普通回执24小时已合（#113），后台24小时及到期清理/锁内时钟已合（#116），档案/授权授予/撤回的新PG回执24小时已合（#120）。重放不续期，旧PG五分钟回执不追溯延长；内存域重启不持久，当前可见性/持久业务唯一键仍须按模块验收"
     },
     {
       "key": "source_kind",
@@ -2623,7 +2656,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "60-64"
+          "lines": "43-47"
         },
         {
           "path": "packages/reference/constants.mjs",
@@ -2685,9 +2718,21 @@
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "状态 7 cancelled"
+        },
+        {
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "64-80"
+        },
+        {
+          "path": "services/api/src/jobs/registry.ts",
+          "lines": "281-307"
+        },
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "316-324"
         }
       ],
-      "blocker": "识别域 cancelJob 已装配，CAS 增 revision、幂等重放、终态守卫与迟到结果不复活已有证据；公共 Job 未消费转写/OCR/合成，cancelAdminJob 只有独立后台服务且无 HTTP；持久租约、外发撤销与跨域生命周期仍待完成"
+      "blocker": "共享Job识别取消及转写读取已合（#106/#125）；转写取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；OCR/合成/问答/审核未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",
@@ -2705,7 +2750,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "74-78"
+          "lines": "57-60"
         },
         {
           "test": "tests/unit/api-health.test.mjs",
