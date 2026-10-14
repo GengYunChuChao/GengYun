@@ -459,6 +459,90 @@ test('E5. 端到端 fail-closed：开关行被写坏（enabled 非布尔）⇒ �
   }
 });
 
+test('E7. 跨端点（#148 社区 HTTP 装配后）：关闭 submissions_enabled ⇒ POST /posts 与评论被拒且**零落库**', async () => {
+  const { app, store } = newApp();
+  try {
+    const adminToken = await seedAdmin(store);
+    const userToken = await loginUser(app);
+    const postPayload = { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] };
+
+    // 关闭前：社区投稿面真实可用（基线开启）⇒ 201 且列表可见。
+    const created = await app.inject({
+      method: 'POST', url: `${API}/posts`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-post-open-0001' },
+      payload: postPayload,
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const postId = created.json().data.id;
+    const before = await app.inject({ method: 'GET', url: `${API}/posts`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(before.statusCode, 200, before.body);
+    assert.equal(before.json().data.items.length, 1);
+
+    // 后台关闭投稿开关。
+    const closed = await app.inject({
+      method: 'PUT', url: `${API}/admin/feature-flags/submissions_enabled`,
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-subs-close-0001', 'if-match': '"1"' },
+      payload: { enabled: false, reason: '示例：停止投稿' },
+    });
+    assert.equal(closed.statusCode, 200, closed.body);
+    assert.equal(closed.json().data.enabled, false);
+
+    // 关闭后：新投稿与新评论一律拒绝，且**没有**任何新内容行。
+    const blockedPost = await app.inject({
+      method: 'POST', url: `${API}/posts`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-post-closed-0001' },
+      payload: { title: '关闭后不应落库的帖子', body: CLEAN_BODY, media_ids: [] },
+    });
+    assert.equal(blockedPost.statusCode, 409, blockedPost.body);
+    assert.equal(blockedPost.json().error.code, 'OBJECT_UNAVAILABLE');
+    assert.equal(blockedPost.json().error.retryable, false);
+    assert.equal(blockedPost.json().data, undefined);
+
+    const blockedComment = await app.inject({
+      method: 'POST', url: `${API}/posts/${postId}/comments`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-cmt-closed-0001' },
+      payload: { body: CLEAN_BODY },
+    });
+    assert.equal(blockedComment.statusCode, 409, blockedComment.body);
+    assert.equal(blockedComment.json().error.code, 'OBJECT_UNAVAILABLE');
+
+    const after = await app.inject({ method: 'GET', url: `${API}/posts`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(after.json().data.items.length, 1, '关闭态不得新增任何内容行（零产出）');
+    const comments = await app.inject({ method: 'GET', url: `${API}/posts/${postId}/comments`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(comments.statusCode, 200);
+    assert.deepEqual(comments.json().data.items, [], '关闭态不得新增任何评论行');
+
+    // 读面不受影响（开关只决定"是否受理新投稿/评论"，不改变既有可见性判定）。
+    const detail = await app.inject({ method: 'GET', url: `${API}/posts/${postId}`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(detail.statusCode, 200, detail.body);
+
+    // 未登录仍是 401（开关判定在鉴权之后，开关状态不泄露给未鉴权方）。
+    const anonymous = await app.inject({
+      method: 'POST', url: `${API}/posts`,
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-post-anon-0001' },
+      payload: postPayload,
+    });
+    assert.equal(anonymous.statusCode, 401, anonymous.body);
+    assert.equal(anonymous.json().error.code, 'SESSION_REQUIRED');
+
+    // 重新开启 ⇒ 立即恢复受理（无"负缓存"）。
+    const reopened = await app.inject({
+      method: 'PUT', url: `${API}/admin/feature-flags/submissions_enabled`,
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-subs-open-0001', 'if-match': '"2"' },
+      payload: { enabled: true, reason: '示例：恢复投稿' },
+    });
+    assert.equal(reopened.statusCode, 200, reopened.body);
+    const recovered = await app.inject({
+      method: 'POST', url: `${API}/posts`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-post-reopen-0001' },
+      payload: postPayload,
+    });
+    assert.equal(recovered.statusCode, 201, recovered.body);
+  } finally {
+    await app.close();
+  }
+});
+
 test('E6. real 模式（后台域未接线）⇒ 开关门不启用：不拿未接线的开关中断用户面（如实声明）', async () => {
   const base = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
   const config = { ...base, executionMode: 'real', requiresRealCredentials: true, logLevel: 'silent' };

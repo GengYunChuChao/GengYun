@@ -22,8 +22,10 @@
  *     不填占位串；因此本片不得声称审核准确率/召回率（真实样本各为 0，见
  *     `docs/evaluation/sample-gap-register.md`）；
  *   - 带图片的帖子一律**不得发布**（图片审核属模型层，规则层遇媒体即隔离）；
- *   - 显式 `linked_knowledge_ref`（知识关联）一律拒绝：本片未接线资料可用性核验，
- *     静默丢弃关联会违反契约"创建遗漏关联等于无关联"。
+ *   - 阶段 2 已接线「杂草／药剂关联」可用性端口（`knowledge.ts`，默认未接线 ⇒ 新增/替换引用
+ *     一律 `OBJECT_UNAVAILABLE`），以及审核结果/下架事件投递（`events.ts` → 消息中心公开端口）。
+ *     带媒体的目标**仍然不可能被抬成 `approved`**：规则层对带媒体目标一律不判通过
+ *     （`packages/moderation/merge.mjs` 明确声明这是跨片依赖），因此"图片帖子"本片**未取得**。
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ApiError } from '../errors.ts';
@@ -31,6 +33,21 @@ import { sha256Hex } from '../auth/tokens.ts';
 import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { createPublishGate } from './moderation-gate.ts';
 import type { GateOutcome, PublishGate, RuleLayerVerdict } from './moderation-gate.ts';
+// 阶段 2 接线（#15）：杂草／药剂关联可用性 + 审核结果/下架事件投递。
+// 两者都是**可选**依赖，且默认实现一律 fail-closed；不注入时与阶段 1 逐字同行为
+// （唯一例外是"编辑遗漏关联保留旧值"这一条契约语义修正，见 editPost 注释）。
+import {
+  createUnwiredKnowledgeAvailabilityPort,
+  unavailableLink,
+  type KnowledgeAvailabilityPort,
+  type KnowledgeLinkProjection,
+} from './knowledge.ts';
+import {
+  createUnwiredCommunityEventsPort,
+  type CommunityEvent,
+  type CommunityEventTarget,
+  type CommunityEventsPort,
+} from './events.ts';
 import type {
   CommentCommitPatch,
   CommentRecord,
@@ -85,6 +102,17 @@ export interface CommunityServiceDeps {
   signingKey: string;
   /** 发布闸门；默认出厂规则集。注入自定义规则集会真实改变派生 `rule_version`。 */
   gate?: PublishGate;
+  /**
+   * 阶段 2：「杂草／药剂关联」可用性端口。
+   * 默认**未接线**（`createUnwiredKnowledgeAvailabilityPort()`）⇒ 一切引用判不可用，
+   * 因此"新增/替换引用"一律 `OBJECT_UNAVAILABLE`（fail-closed，绝不静默丢弃关联）。
+   */
+  knowledge?: KnowledgeAvailabilityPort;
+  /**
+   * 阶段 2：审核结果／下架事件投递端口（转发到已合并的消息中心公开创建口）。
+   * 默认**未接线** ⇒ 如实回传"未投递"，不影响内容写入的权威结果。
+   */
+  events?: CommunityEventsPort;
   now?: () => Date;
   newId?: () => string;
   idempotencyTtlMs?: number;
@@ -147,6 +175,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   const store = deps.store;
   const authors = deps.authors;
   const gate = deps.gate ?? createPublishGate();
+  const knowledge = deps.knowledge ?? createUnwiredKnowledgeAvailabilityPort();
+  const events = deps.events ?? createUnwiredCommunityEventsPort();
   const signingKey = deps.signingKey;
   const clock = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => randomUUID());
@@ -332,6 +362,79 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // 阶段 2：「杂草／药剂关联」投影与闸门（契约 PostInput 描述逐条落实）
+  // -------------------------------------------------------------------------
+
+  /** 同一关联目标（type/id/revision 逐项相等）——用于"编辑遗漏/未变 ⇒ 保留旧值"。 */
+  function sameLink(a: KnowledgeTarget | null, b: KnowledgeTarget | null): boolean {
+    if (a === null || b === null) return a === b;
+    return a.type === b.type && a.id === b.id && a.revision === b.revision;
+  }
+
+  /**
+   * 逐次现查关联投影。端口抛错（任何原因）一律按**不可用**处理：
+   * 取不到状态绝不能变成"默认可用"，也不能把资料域细节带进帖子响应。
+   */
+  async function linkProjection(target: KnowledgeTarget): Promise<KnowledgeLinkProjection> {
+    try {
+      const projection = await knowledge.lookup(target);
+      if (projection === null || typeof projection !== 'object') return unavailableLink(target);
+      return projection;
+    } catch {
+      return unavailableLink(target);
+    }
+  }
+
+  /**
+   * 「新增/替换引用需当前可用」闸门：不可用 ⇒ 契约闭集内 `OBJECT_UNAVAILABLE`。
+   * **不得**静默丢弃关联——契约明写「创建遗漏关联等于无关联」，静默丢弃会让客户端
+   * 以为关联已保存。
+   */
+  async function requireAvailableLink(target: KnowledgeTarget): Promise<KnowledgeTarget> {
+    const projection = await linkProjection(target);
+    if (projection.reference_state !== 'available') {
+      throw new ApiError(
+        'OBJECT_UNAVAILABLE',
+        '关联资料目标当前不可用：新增/替换引用需当前可用（不静默丢弃关联）',
+      );
+    }
+    return { ...target };
+  }
+
+  // -------------------------------------------------------------------------
+  // 阶段 2：审核结果／下架事件投递（**只调用消息中心公开端口**，不改其实现）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 投递一次审核结果事件。
+   *
+   * 投递**只覆盖已提交的 revision**（创建/编辑成功、以及重审把既有内容降级为不可见）。
+   * 被拒的写入请求**不投递**：那条 revision 从未落库，投一条指向不存在版本的消息
+   * 只会产生悬挂引用，而作者本人在**同一个请求**里已拿到同步错误封套（含原因码）。
+   *
+   * 事件端口按契约不抛错；这里仍兜底 try/catch，**绝不让通知影响内容写入的权威结果**。
+   */
+  async function publishModerationResult(
+    ownerId: string,
+    target: CommunityEventTarget,
+    decision: AuditState,
+    reasonCodes: readonly string[],
+  ): Promise<void> {
+    const event: CommunityEvent = {
+      event: 'moderation_result',
+      ownerId,
+      target: { ...target },
+      decision,
+      reasonCodes: [...reasonCodes],
+    };
+    try {
+      await events.publish(event);
+    } catch {
+      // 通知失败不改变内容写入结果，也不入响应（事件端口自身已如实标注未投递）。
+    }
+  }
+
   async function projectAuthor(userId: string) {
     const author = await authors.resolve(userId);
     if (author === null) {
@@ -360,8 +463,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       // 本片带媒体的内容一律不发布，因此公开投影恒为空数组。
       media: [],
       linked_knowledge_ref: record.linked_knowledge_ref === null ? null : { ...record.linked_knowledge_ref },
-      // 资料安全投影需要可用性核验（阶段 2）；本片显式关联一律拒绝，故恒为 null。
-      linked_knowledge: null,
+      // 关联安全投影**逐次现查**（默认未接线 ⇒ 恒为不可用投影，但 ref 原样保留）。
+      linked_knowledge: record.linked_knowledge_ref === null ? null : await linkProjection(record.linked_knowledge_ref),
     };
   }
 
@@ -566,12 +669,10 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         digest,
         201,
         async () => {
-          if (body.linked_knowledge_ref !== undefined && body.linked_knowledge_ref !== null) {
-            throw new ApiError(
-              'OBJECT_UNAVAILABLE',
-              '关联资料目标当前不可用：本片未接线资料可用性核验，显式关联一律拒绝（不静默丢弃）',
-            );
-          }
+          // 契约 PostInput：「创建遗漏关联等于无关联」⇒ 未给就是 null；
+          // 给了（含显式 null 以外的目标）⇒ 必须**当前可用**，否则 OBJECT_UNAVAILABLE。
+          const requestedLink = body.linked_knowledge_ref ?? null;
+          const linkTarget = requestedLink === null ? null : await requireAvailableLink(requestedLink);
           // 作者投影不可用时**不落任何内容行**（不伪造作者）；先探一次，避免留下"投影不了的内容"。
           await projectAuthor(user.userId);
           const id = newId();
@@ -599,7 +700,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             crop_id: body.crop_id ?? null,
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
-            linked_knowledge_ref: (body.linked_knowledge_ref ?? null) as KnowledgeTarget | null,
+            linked_knowledge_ref: linkTarget,
             visibility: 'published',
             audit_state: 'approved',
             created_at: timestamp,
@@ -610,6 +711,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!inserted) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '内容 id 冲突（内部不变式违反）');
           }
+          // 审核结果事件（已提交的 revision）投递到消息中心公开端口；失败不回滚内容。
+          await publishModerationResult(user.userId, { type: 'post', id, revision: 1 }, outcome.decision, outcome.reason_codes);
           return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(record) };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
@@ -646,8 +749,19 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (record.revision !== ifMatch.revision) {
             throw new ApiError('REVISION_CONFLICT', '帖子版本已变化，请刷新后重试');
           }
-          if (body.linked_knowledge_ref !== undefined && body.linked_knowledge_ref !== null) {
-            throw new ApiError('OBJECT_UNAVAILABLE', '关联资料目标当前不可用：显式关联一律拒绝');
+          // 契约 PostInput 的编辑语义（逐字）：「**编辑遗漏关联保留旧值，显式 null 解除关联。
+          // 新增/替换引用需当前可用，原已保存失效引用可原样保留，但只输出不可用投影**」。
+          // 阶段 1 把"遗漏"当成 null（等于静默解除关联），这里修正为契约语义。
+          const priorLink = record.linked_knowledge_ref;
+          let nextLink: KnowledgeTarget | null;
+          if (body.linked_knowledge_ref === undefined) {
+            // 遗漏 ⇒ 保留旧值（**不**因为旧引用此刻失效就报错，也不清除它）。
+            nextLink = priorLink === null ? null : { ...priorLink };
+          } else {
+            const requested = body.linked_knowledge_ref ?? null;
+            if (requested === null) nextLink = null; // 显式 null ⇒ 解除关联
+            else if (priorLink !== null && sameLink(priorLink, requested)) nextLink = { ...priorLink }; // 未变 ⇒ 原样保留
+            else nextLink = await requireAvailableLink(requested); // 新增/替换 ⇒ 需当前可用
           }
           const revision = record.revision + 1;
           const target = { type: 'post' as const, id: postId, revision };
@@ -673,7 +787,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             crop_id: body.crop_id ?? null,
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
-            linked_knowledge_ref: (body.linked_knowledge_ref ?? null) as KnowledgeTarget | null,
+            linked_knowledge_ref: nextLink,
             visibility: 'published',
             audit_state: 'approved',
             updated_at: nowIso(),
@@ -687,6 +801,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             buildVerdict(target, outcome, text),
           );
           if (!committed.ok) throw commitRefusal(committed.reason);
+          await publishModerationResult(
+            user.userId,
+            { type: 'post', id: postId, revision },
+            outcome.decision,
+            outcome.reason_codes,
+          );
           return {
             outcome: { kind: 'post' as const, id: postId, revision },
             result: await projectPost(committed.record),
@@ -839,6 +959,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!inserted) {
             throw new ApiError('REVISION_CONFLICT', '父帖已被删除或版本已变化，请刷新后重试');
           }
+          await publishModerationResult(
+            user.userId,
+            { type: 'comment', id, revision: 1 },
+            outcome.decision,
+            outcome.reason_codes,
+          );
           return { outcome: { kind: 'comment' as const, id, revision: 1 }, result: await projectComment(record) };
         },
         async (ref) => projectComment(await readableComment(user, ref.id)),
@@ -897,6 +1023,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             buildVerdict(target, outcome, text),
           );
           if (!committed.ok) throw commitRefusal(committed.reason);
+          await publishModerationResult(
+            user.userId,
+            { type: 'comment', id: commentId, revision },
+            outcome.decision,
+            outcome.reason_codes,
+          );
           return {
             outcome: { kind: 'comment' as const, id: commentId, revision },
             result: await projectComment(committed.record),
@@ -1109,6 +1241,14 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         }
         throw commitRefusal(committed.reason);
       }
+      // 重审把既有内容**降级为不可见**（或重新放行）：这是对作者有意义的审核结果，
+      // 投递一条消息；同一 (rev, decision) 重复投递命中去重键，不产生第二条。
+      await publishModerationResult(
+        user.userId,
+        { type: target.type, id: target.id, revision: target.revision },
+        auditState,
+        outcome.reason_codes,
+      );
       return {
         re_reviewed: true,
         publishable: outcome.publishable,

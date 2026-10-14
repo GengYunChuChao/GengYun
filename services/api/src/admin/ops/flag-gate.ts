@@ -25,14 +25,19 @@
  * 本片**不改**这些线的实现文件，只在**装配层**（`app.ts`）把它们的守卫链与产出方包一层：
  * - HTTP 面：`createFlagGatedGuards()` 包装 `AuthGuards.requireUser`，**先鉴权、后判开关**
  *   （顺序刻意如此：401/403 语义与错误码次序与接线前逐字相同，开关只在**已鉴权**后生效）。
- * - 服务层面（社区 `createPost`/`createComment` 目前尚未装配路由）：`gateCommunityService()`
- *   返回一个**装饰副本**，投稿受理前先判开关。
+ *   合并 `upstream/main`（#148 社区 HTTP 装配）后，投稿/评论两条 POST 也走同一条 HTTP 面
+ *   （`app.ts` 把 `gatedGuards` 传给 `registerCommunityRoutes`）。
+ * - 服务层兜底：`gateCommunityService()` 返回投稿面**装饰副本**（关闭时产出方零调用、零落库），
+ *   供只在服务层消费社区服务的场景按同一口径判定。
  *
  * ## 如实声明的边界
  * - **real 执行模式**：后台域整体 fail-closed（`fail-closed-services.ts`），开关因此**没有权威来源**。
  *   本层在这种模式下 `armed:false`：**保持既有产出行为**，不拿一个未接线的开关去中断用户面。
  *   这是装配层的显式决定（见 `app.ts`），并作为"未取得项"记入证据页；
  *   一旦后台域接上真实持久存储并解除 fail-closed，开关在 real 模式下即为权威。
+ * - **合并增量口径**：`upstream/main` 新装配的受控面按**同一原口径**纳入 ——
+ *   判据是"该 operationId 是否已登记在本清单里"（清单＝契约镜像，早已含 `createPost`/`createComment`），
+ *   并只把装配基线对齐到"该面真的在产出"；**不新增受控面、不改清单**。
  * - 受控面清单（`FLAG_GATED_SURFACES`）是契约的**镜像**，由
  *   `tests/unit/admin-flag-gate.test.mjs` 对着 `packages/contracts/operations.json` 逐条比对，防漂移。
  */
@@ -179,8 +184,14 @@ export const FLAG_GATED_SURFACES: readonly FlagGatedSurface[] = Object.freeze([
  *   由单测钉住（那个默认用于"未接线的领域服务"，不用于本进程的输出面）。
  */
 export const FLAG_WIRING_BASELINE: Readonly<Record<FlagKey, boolean>> = Object.freeze({
-  /** 社区投稿/评论路由由 #15 阶段 2 装配，当前**未接线** ⇒ 如实为关闭（不作为"已开启"自述）。 */
-  submissions_enabled: false,
+  /**
+   * 社区投稿/评论面（`POST /posts`、`POST /posts/:id/comments`）**已由 #148 装配真实路由**
+   * （合并 `upstream/main` 后复核：`registerCommunityRoutes` 是唯一注册点）⇒ 该输出面当前**真实可用**，
+   * 基线因此为开启；后台一键关闭即拒绝新投稿（且不落任何内容行）。
+   * 合并口径：新装配的受控面**按同一原口径纳入**（清单里的 `createPost`/`createComment` 早已登记，
+   * 无需改清单、也未新增受控面），只把基线对齐到"该面真的在产出"。
+   */
+  submissions_enabled: true,
   /** 药剂/制剂输出面（`/herbicides`）当前真实可用（#7 已合并）⇒ 基线开启，可由后台一键收紧。 */
   specific_herbicide_output_enabled: true,
   /** AI 任务受理面（识别/OCR/转写/合成）当前真实可用 ⇒ 基线开启，可由后台一键收紧。 */

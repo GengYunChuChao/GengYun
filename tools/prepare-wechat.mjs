@@ -41,6 +41,8 @@ try {
     'utils/knowledge-api.js',
     // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/identify-api.js',
+    // 社区域适配层（GY-I15）：社区列表/投稿/详情页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/community-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
@@ -77,6 +79,9 @@ try {
     'pages/referenceseed/referenceseed',
     'pages/referenceseeddetail/referenceseeddetail',
     'pages/community/community',
+    // GY-I15 社区投稿与详情页（必须与 miniprogram/app.json 的 pages 逐项同序）。
+    'pages/communitycreate/communitycreate',
+    'pages/communitydetail/communitydetail',
     'pages/messages/messages',
     'pages/profile/profile',
     'pages/login/login',

@@ -11,10 +11,10 @@
  * 落到 succeeded；必须落 uncertain / failed / timed_out，并如实写出 uncertainty_reasons 或 error_code。
  * 「只记原因、不改状态」在本模块是被禁止的写法。
  */
+import { BRANCH_DESCRIPTORS, isFailureBranch } from './branches.ts';
 
 /** packages/contracts/openapi.json -> components.schemas.JobState.enum（逐项一致，不得扩展）。 */
-export const JOB_STATES = [
-  'queued',
+export const JOB_STATES = [  'queued',
   'running',
   'succeeded',
   'uncertain',
@@ -155,11 +155,33 @@ export interface Decision {
  * 3. 任一候选 model_score 为 null → uncertain（**不得**在该情形下写分数）；
  * 4. Top1 分数低于实现层门槛 → uncertain；
  * 5. 仅当以上都不成立时才是 succeeded，且此时 uncertainty_reasons 必为空。
+ *
+ * 第 3 个参数（可选，GY-I09 第二片）：提供者上报的**六类失败/边界分支**
+ * （见 `branches.ts`）。给定时**一律**判 `uncertain` 并带上该分支的如实原因 ——
+ * 即「模型自己说这是覆盖外/低质量/需重拍/无结果」**不可能**被写成 `succeeded`，
+ * 即便它同时返回了高分候选（覆盖外不得产出高置信候选：需求第 6 节评估指标
+ * `outOfCoverageHighConfidenceRate` 的前提）。
+ *
+ * 非闭集成员的分支上报视为**提供者协议违规**（抛 `CandidateProtocolError`，
+ * 由服务层映射为 `failed` / `PROVIDER_OUTCOME_UNKNOWN`），不静默忽略。
  */
-export function decideOutcome(rawCandidates: unknown, rawReasons: unknown): Decision {
+export function decideOutcome(rawCandidates: unknown, rawReasons: unknown, branch?: unknown): Decision {
   const candidates = normalizeCandidates(rawCandidates);
   const providerReasons = normalizeReasons(rawReasons);
+  const base = baseDecision(candidates, providerReasons);
+  if (branch === undefined) return base;
+  if (!isFailureBranch(branch)) {
+    throw new CandidateProtocolError('提供者上报了非法的失败分支');
+  }
+  const descriptor = BRANCH_DESCRIPTORS[branch];
+  const reasons = [...base.uncertaintyReasons];
+  if (descriptor.reason !== null && !reasons.includes(descriptor.reason)) reasons.push(descriptor.reason);
+  // 分支存在 ⇒ 本次结果不构成可信成功：**一律** uncertain。
+  return { state: 'uncertain', candidates: base.candidates, uncertaintyReasons: dedupeReasons(reasons) };
+}
 
+/** 既有四条规则（不含分支约束），保持逐字不变。 */
+function baseDecision(candidates: Candidate[], providerReasons: string[]): Decision {
   if (candidates.length === 0) {
     return {
       state: 'uncertain',

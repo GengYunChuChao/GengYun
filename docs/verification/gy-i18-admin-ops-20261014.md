@@ -2,7 +2,10 @@
 
 日期：2026-10-14。分支 `feat/gy-i18-admin-ops-r2`（自建 worktree `GengYun_W29`，**由指挥推送**）。
 
-- 基线：`upstream/main = fcfa6de9d62aeaaa0489d3319f8f06911312af48`（开工即此 SHA，全程未变）。
+- 开工基线：`upstream/main = fcfa6de9d62aeaaa0489d3319f8f06911312af48`。
+- **合并增量（监工批复：唯一阻塞＝与最新 main 的实际合并冲突）**：已 `git merge upstream/main`
+  （`upstream/main = c85a1e889556bd9c1e089910e7245a90693f9498`，含 #146/#147/#148/#149）。
+  冲突 2 个文件，解冲突口径见 §10；合并后受影响范围的复核输出见 §7。
 - 本记录对应 HEAD：见本文件所在提交（`git rev-parse HEAD`）。**Refs #18，不关闭整项。**
 - **不代替监工独立验收**；**不声称 CI 通过**（见 §0）。
 
@@ -23,7 +26,7 @@
 
 | 派单要求 | 实现落点 | 证据（用例名） |
 | --- | --- | --- |
-| 全局开关**跨端点真实生效**：关闭 ⇒ 拒绝且**不产出**可执行建议/用量卡 | `services/api/src/admin/ops/flag-gate.ts` + `app.ts` 装配 | `admin-flag-gate.test.mjs` C / E2 / E4 |
+| 全局开关**跨端点真实生效**：关闭 ⇒ 拒绝且**不产出**可执行建议/用量卡 | `services/api/src/admin/ops/flag-gate.ts` + `app.ts` 装配（6 个注册点） | `admin-flag-gate.test.mjs` C / E2 / E4 / **E7（投稿 HTTP）** |
 | **未识别取值 fail-closed** | 同上（`createStoreFlagReader` 把"不可识别"建模成 `null`） | B3 / B4 / E5 |
 | 开关**不得改变适用判定结论**（只决定是否产出） | 闸门只做"调用前断言"，不参与判定 | D（开启时逐字节相同；关闭时是拒绝而非改过的结论） |
 | 来源**修改/下架 ⇒ 引用同步失效**；下架后缓存与详情同步（不得复活，要有负例） | `services/api/src/admin/reference-integrity.ts` + `public-view.ts` + `service.ts` 发布门槛 | `admin-reference-invalidity.test.mjs` 1 / 2 / 3 / 4 / 5 / 6 |
@@ -57,8 +60,10 @@
    - **零产出**：关闭时被包装的产出方**一次都不会被调用**（用例 C 以调用计数＝0 钉住，而不是"产出后丢弃"）；
    - **不改判定结论**：用例 D 证明开启时经闸门与不经闸门**逐字节相同**、入参未被改写，关闭时**没有**任何新结论产生。
 4. **装配基线（`FLAG_WIRING_BASELINE`）+ 播种**：`app.ts` **自建** ops store 时按基线播种
-   （`specific_herbicide_output_enabled: true`、`ai_enabled: true`、`submissions_enabled: false`），
-   使"接口自述"与"输出面是否真的在产出"一致。
+   （`specific_herbicide_output_enabled: true`、`ai_enabled: true`、`submissions_enabled: true`），
+   使"接口自述"与"输出面是否真的在产出"一致。其中 `submissions_enabled` 合并前为 `false`
+   （社区路由未装配）；**合并 `upstream/main` 后** #148 已装配 `registerCommunityRoutes`
+   ⇒ 投稿/评论面真实可用，基线随之上对齐为开启（纳入口径见 §10.2）。
    **理由**：该 3 键的工厂默认是 `false`（最严格一侧）；若直接接到门上，`/herbicides` 与 AI 受理面会
    在**默认装配**下不可用 —— 且这不是更安全，而是"接口说关闭、实际在产出"的另一种失真。
    服务层工厂 `createAdminOpsStore()`（不播种）的出厂默认**仍是全 `false`**，由既有单测继续钉住
@@ -147,14 +152,15 @@
 
 | # | 命令 | 退出码 | 关键输出（原始） |
 | --- | --- | --- | --- |
-| 1 | `npm run test:unit` | **0** | `ℹ tests 1840 / ℹ pass 1839 / ℹ fail 0 / ℹ skipped 1`（1 条跳过为既有用例；**含**本片 40 条新用例） |
-| 2 | `node --test tests/unit/admin-flag-gate.test.mjs tests/unit/admin-reference-invalidity.test.mjs tests/unit/admin-ops-governance.test.mjs tests/unit/admin-read-time-recheck.test.mjs tests/unit/admin-real-mode-fail-closed.test.mjs` | **0** | `ℹ tests 42 / ℹ pass 42 / ℹ fail 0`（逐条见 §7.1） |
-| 3 | `node tests/integration/admin-http.mjs`（**CI 不执行，见 §0**） | **0** | `映射表覆盖 operationId 数：34 / 34` + `PASS 组数=27，FAIL 组数=0` |
-| 4 | `npm run lint` | **0** | `PASS tsc --noEmit services/api/tsconfig.json` / `PASS tsc --noEmit apps/admin/tsconfig.json` / `PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）` / `lint 通过（静态检查；不代表运行期或真实服务已通过）。` |
-| 5 | `npm run test:docs` | **0** | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
-| 6 | `node tools/verify-contract-status.mjs --runtime` | **0** | `PASS: 覆盖 112 条契约操作；已装配 78 条；implemented 13 / partial 81 / planned 18；横切维度 8 条；中文表格一致` + `PASS: 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致（不监听 / 不请求服务）。` + `PASS: 状态为人工判定；…` |
-| 7 | `git diff --check` | **0** | 无输出（干净） |
-| 8 | `npm run typecheck --workspace @gengyun/api` | **0** | 无输出（`tsc -p tsconfig.json --noEmit`） |
+| 1 | `npm run test:unit`（**合并 `upstream/main` 后重跑**；支持性全量，非验收） | **0** | `ℹ tests 1897 / ℹ pass 1896 / ℹ fail 0 / ℹ skipped 1`（1 条跳过为既有用例；含 main 合并进的新用例） |
+| 2 | `node --test tests/unit/admin-flag-gate.test.mjs tests/unit/admin-reference-invalidity.test.mjs tests/unit/admin-ops-governance.test.mjs tests/unit/admin-read-time-recheck.test.mjs tests/unit/admin-real-mode-fail-closed.test.mjs`（合并后重跑；逐条见 §7.1） | **0** | `ℹ tests 43 / ℹ pass 43 / ℹ fail 0` |
+| 3 | `node --test tests/unit/community-http.test.mjs tests/unit/contract-status-tool.test.mjs`（**合并后新增的受影响面**：社区路由被本片闸门包裹、契约状态表被本片改写） | **0** | 与第 2 行合计 `ℹ tests 62 / ℹ pass 62 / ℹ fail 0`（`+19`） |
+| 4 | `node tests/integration/admin-http.mjs`（**CI 不执行，见 §0**；合并后重跑） | **0** | `映射表覆盖 operationId 数：34 / 34` + `PASS 组数=27，FAIL 组数=0` |
+| 5 | `npm run lint` | **0** | `PASS tsc --noEmit services/api/tsconfig.json` / `PASS tsc --noEmit apps/admin/tsconfig.json` / `PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 .env）` / `lint 通过（静态检查；不代表运行期或真实服务已通过）。` |
+| 6 | `npm run test:docs` | **0** | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
+| 7 | `node tools/verify-contract-status.mjs --runtime`（合并后重跑） | **0** | `PASS: 覆盖 112 条契约操作；已装配 94 条；implemented 13 / partial 81 / planned 18；横切维度 8 条；中文表格一致` + `PASS: 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致（不监听 / 不请求服务）。` + `PASS: 状态为人工判定；…` |
+| 8 | `git diff --check` | **0** | 无输出（干净） |
+| 9 | `npm run typecheck --workspace @gengyun/api` | **0** | 无输出（`tsc -p tsconfig.json --noEmit`） |
 
 > 上表**没有**列出的检查一律视为**未运行**：本片未跑多 PG 集群、压力/变异测试、真机、后台页面联调。
 > 需要说明的一处**自查发现并修复**的真实失败（不是功能缺陷）：
@@ -182,6 +188,7 @@
 ✔ E3. 断言顺序：未登录访问受控面仍是 401（开关状态不泄露给未鉴权调用方）
 ✔ E4. 跨端点：关闭 ai_enabled ⇒ AI 任务受理面拒绝；未受控的 AI 读面不受影响
 ✔ E5. 端到端 fail-closed：开关行被写坏（enabled 非布尔）⇒ 受控面 503 而不是放行
+✔ E7. 跨端点（#148 社区 HTTP 装配后）：关闭 submissions_enabled ⇒ POST /posts 与评论被拒且**零落库**
 ✔ E6. real 模式（后台域未接线）⇒ 开关门不启用：不拿未接线的开关中断用户面（如实声明）
 ✔ G1a. 分类修改留责任人与范围（action/scope/主体/目标提示）
 ✔ G1b. 四类资料的「版本修改」逐类留审计（此前不写 ⇒ 事后无法追责）
@@ -208,7 +215,7 @@
 ✔ 8. 不越界：引用库外来源（未接真实库无法核对）⇒ 不谎称失效、也不阻断既有发布链路
 ✔ real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用
 ✔ stub 默认装配行为不变（内存实现仍可用且确会写内存）——改动只对 real 拒绝
-ℹ tests 42 / ℹ pass 42 / ℹ fail 0 / ℹ skipped 0
+ℹ tests 43 / ℹ pass 43 / ℹ fail 0 / ℹ skipped 0
 ```
 
 ### 7.2 跨端点开关的实测响应（HTTP，`app.inject`，只本机、无外网）
@@ -223,6 +230,10 @@ GET /health（未受控）            -> 200
 未登录访问受控面（关闭态下）      -> 401 SESSION_REQUIRED（开关判定在鉴权之后）
 开关行被写坏（enabled 非布尔）    -> GET /api/v1/herbicides -> 503 PROVIDER_UNAVAILABLE(retryable:true)
 关闭 ai_enabled                 -> POST /recognitions | /ocr | /speech/transcriptions | /speech/synthesis -> 409（均无成功封套）
+关闭 submissions_enabled        -> POST /posts -> 409 OBJECT_UNAVAILABLE；POST /posts/{id}/comments -> 409
+                                   GET /posts 仍 200 且新增条数 0、GET /posts/{id}/comments 仍 200 且 items=[]
+                                   未登录 POST /posts（关闭态下）-> 401 SESSION_REQUIRED
+                                   重开 -> 200；POST /posts -> 201（无"负缓存"）
 ```
 
 ## 8. 未取得 / 未验证（**不得外推**）
@@ -231,9 +242,12 @@ GET /health（未受控）            -> 200
    （`persistent:false`，重启即回到装配基线）。因此 `real` 执行模式下**后台域整体 fail-closed**
    （34 条路由一律 503 `PROVIDER_UNAVAILABLE`，既有口径未改动）⇒ 本片**不声称**开关在 real 有权威状态
    （闸门 `armed:false`，§2.5）。
-2. **投稿（`submissions_enabled`）只有服务层证据**：社区 HTTP 路由由 #15 阶段 2 装配，当前**未装配**
-   ⇒ `/posts` 仍是 404；本片提供的是**装饰式受理门**（`gateCommunityService`）与"零落库"用例（F），
-   **不是** HTTP 级证据。`/posts`、`/posts/{id}/comments` 两条受控面已登记在清单里，路由装配后即生效。
+2. **投稿面在合并后已有 HTTP 级证据**（合并前只有服务层证据）：`upstream/main`（#148）装配了
+   `registerCommunityRoutes`，`app.ts` 已把 `gatedGuards` 传给同一注册点 ⇒ `POST /posts`
+   与 `POST /posts/{id}/comments` 受 `submissions_enabled` 控制（用例 E7：关闭 ⇒ 409、
+   列表/评论零新增、未登录仍 401、重开即恢复）。服务层装饰器 `gateCommunityService`
+   仍保留，供只在服务层消费社区服务的场景按同一口径判定。
+   读/改/删等 14 条社区路由**不在**受控面清单里 ⇒ 闸门"不命中即不判"，行为与 `upstream/main` 逐字相同。
 3. **公开路由未接引用失效判定**：`/knowledge`、`/herbicides`（#7 线，读 PG 视图/公告附表）**未改**；
    引用失效目前生效在**服务层公开读口径** `public-view.ts`（无路由、不被产品响应消费）。
    把该判定接到实际公开读路径属跨线接线，**需指挥/监工裁定**。
@@ -254,7 +268,8 @@ GET /health（未受控）            -> 200
 > 并补齐来源引用失效、读取时重查、关键修改审计责任、人审空态四块缺口。
 > **装配说明**：新增 `services/api/src/admin/ops/flag-gate.ts`（契约镜像的受控面清单 + fail-closed 开关门
 > + 守卫包装器 + 投稿面装饰器），在 `app.ts` **唯一改动点**把包装后的 `guards` 传给
-> knowledge/recognition/speech/synthesis/ocr 五个注册点（**先鉴权、后判开关**，401/403 次序不变），
+> knowledge/recognition/speech/synthesis/ocr 五个注册点 +（合并 main 后）`registerCommunityRoutes`
+> （**先鉴权、后判开关**，401/403 次序不变），
 > 并按 `FLAG_WIRING_BASELINE` 播种使"开关状态＝输出面真实状态"；real（后台域未接线）下闸门不启用并如实登记。
 > 关闭 ⇒ `OBJECT_UNAVAILABLE`(409, retryable:false) 且**产出方零调用**；取值不可识别 ⇒
 > `PROVIDER_UNAVAILABLE`(503, retryable:true)；开关**不改变**任何适用判定结论。
@@ -267,8 +282,38 @@ GET /health（未受控）            -> 200
 > 并有抗伪造扫描断言后台响应 schema 不含评审人/投票/专家认证字段。
 > **作者自检**（CI glob 说明：`tests/integration/**` **不在任何 CI glob 内**，下条为作者显式运行；
 > 是否纳入 CI 由维护者裁定，**请勿据"CI 全绿"推断该脚本已被执行**）：
-> `npm run test:unit` → 1840 tests / 1839 pass / 0 fail / 1 skipped（exit 0）；
+> `npm run test:unit` → 1897 tests / 1896 pass / 0 fail / 1 skipped（exit 0，**合并 `upstream/main` 后重跑**）；
+> 受影响面定向复跑 → `tests 62 / pass 62 / fail 0`（本片 5 个 admin 测试文件 43 条 + main 的
+> `community-http`/`contract-status-tool` 19 条，exit 0）；
 > `node tests/integration/admin-http.mjs` → `映射表覆盖 operationId 数：34 / 34`、`PASS 组数=27，FAIL 组数=0`（exit 0）；
 > `npm run lint` / `npm run test:docs` / `node tools/verify-contract-status.mjs --runtime` / `git diff --check` 全部 exit 0。
-> **未取得**：真实持久存储（real 后台域 fail-closed）、投稿的 HTTP 级门（社区路由属 #15 阶段 2）、
-> 公开路由上的引用失效接线（属 #7 线）、后台页面联调、真实部署形态、人工评审、真实供应商能力。
+> **未取得**：真实持久存储（real 后台域 fail-closed）、公开路由上的引用失效接线（属 #7 线）、
+> 后台页面联调、真实部署形态、人工评审、真实供应商能力。
+
+## 10. 合并 `upstream/main`（`c85a1e8`）的冲突解决（**只做增量合并**）
+
+### 10.1 冲突文件与解法
+- `services/api/src/app.ts`（1 处冲突，`<<<<<<<`…`>>>>>>>`）：两侧改动落在**同一段注册块**上 ——
+  main 给 `registerRecognitionRoutes`/`registerSpeechRoutes`/`registerOcrRoutes` 增加了
+  `egress` 依赖（GY-I27 外发账本），本片把 `guards` 换成 `gatedGuards`。**两侧全保留**：
+  采用 main 的完整调用签名（含 `egress`），只把第一个参数写成 `gatedGuards`；
+  并在原位置补注释说明两者互不替代（前者=外发账本条，后者=全局开关门）。
+  另**追加**：`registerCommunityRoutes(app, config, gatedGuards, communityService)`。
+- `docs/architecture/contract-implementation-status.md`（生成物）：**未手改** —— 取 main 版本后
+  用既有工具 `node tools/verify-contract-status.mjs --write-doc` 重新生成表格（exit 0）。
+- `docs/architecture/contract-status.json`（自动合并）：核对为**双方条目并集** ——
+  本片追加的 6 条证据项仍在（如 `editSourceDraft` 含 `tests/unit/admin-ops-governance.test.mjs::G1b…`），
+  main 新增条目（`listPosts`/`createPost`/`likePosts`/`createReport` 等社区 16 条）也在；
+  工具校验 `覆盖 112 条契约操作 / 已装配 94 条` 通过。
+- `tests/integration/admin-http.mjs`（自动合并）：本片的 `allAuditItems()` 翻页断言与 main 的新增组**共存**；
+  合并后整脚本 27 组全过（§7 第 4 行）。
+
+### 10.2 main 新增受控面的纳入口径（**按本片原口径**）
+合并后 main 装配了社区 HTTP 路由（#148），其中 `POST /posts`、`POST /posts/{id}/comments`
+**本来就是本片受控面清单里已登记的 `createPost`/`createComment`**（清单＝契约镜像，未改动）。
+纳入口径：**判据是"该 operationId 是否已登记在清单里"，不是"这次新出现了什么路由"** ⇒
+纳入并只把装配基线对齐到"该面真的在产出"（`submissions_enabled: false → true`）。
+**未新增任何受控面、未改清单**；社区其余 14 条读/改/删路由（`listPosts`/`editPost`/`deletePost`/
+点赞/举报/`hidePost` 等）**不在**清单里 ⇒ 明确**不纳入**（它们不是"投稿/药剂输出/AI 任务受理"三类
+输出面，纳入会是范围扩大且需要新的语义论证）。新增用例 E7 提供 HTTP 级证据；服务层装饰器保留作兜底。
+`admin/content/...` 与本片无关的 main 新增（外发账本、识别候选、持久账本迁移等）**不改动、不参与本片判定**。

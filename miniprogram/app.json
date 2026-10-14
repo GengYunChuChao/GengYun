@@ -9,6 +9,8 @@
     "pages/referenceseed/referenceseed",
     "pages/referenceseeddetail/referenceseeddetail",
     "pages/community/community",
+    "pages/communitycreate/communitycreate",
+    "pages/communitydetail/communitydetail",
     "pages/messages/messages",
     "pages/profile/profile",
     "pages/login/login",

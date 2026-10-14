@@ -52,7 +52,7 @@ declare module '*packages/privacy/egress.mjs' {
   export function listExportsForUser(
     ledger: Record<string, unknown>,
     input: { userId: string; limit?: number; cursor?: string | null },
-  ): { items: Array<Record<string, unknown>>; next_cursor: string | null };
+  ): Promise<{ items: Array<Record<string, unknown>>; next_cursor: string | null }>;
 }
 
 declare module '*packages/privacy/in-flight.mjs' {
@@ -64,7 +64,7 @@ declare module '*packages/privacy/in-flight.mjs' {
       userId: string;
       objectVersion: number;
       reason?: string;
-    }): { exportId: string; objectVersion: number; cancelled: boolean; alreadyCancelled: boolean; revokedInFlight: number };
+    }): Promise<{ exportId: string; objectVersion: number; cancelled: boolean; alreadyCancelled: boolean; revokedInFlight: number }>;
     isVersionCancelled(input: { exportId: string; objectVersion: number }): boolean;
     saveResult(input: {
       exportId: string;
@@ -78,19 +78,20 @@ declare module '*packages/privacy/in-flight.mjs' {
   }
 
   export interface EgressRevoker {
-    onConsentWithdrawn(input: { userId: string; purpose: string }): { revokedInFlight: number };
-    onAccountSuspendedOrDeleted(input: { userId: string }): { revokedInFlight: number };
+    onConsentWithdrawn(input: { userId: string; purpose: string }): Promise<{ revokedInFlight: number }>;
+    onAccountSuspendedOrDeleted(input: { userId: string }): Promise<{ revokedInFlight: number }>;
     audit(): Array<Record<string, unknown>>;
   }
 
   export function createInFlightGuard(deps: {
-    ledger: Record<string, unknown>;
+    /** 账本（内存或持久）；运行期自检必需方法，形状由实现决定。 */
+    ledger: unknown;
     account: { stateOf(userId: string): Promise<string>; authEpochOf(userId: string): Promise<number> };
     consentStore: { isGranted(input: Record<string, unknown>): Promise<boolean>; currentEpoch(input: Record<string, unknown>): Promise<number> };
     now?: () => Date;
   }): InFlightGuard;
 
-  export function createEgressRevoker(deps: { ledger: Record<string, unknown>; now?: () => Date }): EgressRevoker;
+  export function createEgressRevoker(deps: { ledger: unknown; now?: () => Date }): EgressRevoker;
 }
 
 declare module '*packages/privacy/deletion-modules.mjs' {

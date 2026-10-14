@@ -152,16 +152,23 @@ test('运行时清除继承配置/凭据与 NODE_OPTIONS；实际注册与静态
   }
 });
 
-test('实际 buildApp 注册清单与当前契约表一致；消息已接线、社区保持未注册', () => {
+test('实际 buildApp 注册清单与当前契约表一致；消息与社区均已接线', () => {
   const status = JSON.parse(readFileSync(join(ROOT, 'docs/architecture/contract-status.json')));
   const operations = JSON.parse(readFileSync(join(ROOT, 'packages/contracts/operations.json'))).operations;
   const mounted = runtimeMountedRoutes(ROOT, operations);
   assert.deepEqual(mountedMismatches(status.operations, mounted), []);
   assert.deepEqual([...mounted].sort(), [...scanMountedRoutes(ROOT).mounted].sort());
   for (const key of ['post /recognitions', 'post /ocr', 'post /speech/transcriptions', 'post /speech/synthesis']) assert.ok(mounted.has(key), key);
-  // 已交付的后台与三个消息端点必须装配；尚未接线的社区保持负例。
+  // 已交付的后台、三个消息端点与 GY-I15 的 16 条社区端点必须装配。
   for (const key of ['get /admin/sources', 'get /messages', 'get /messages/unread-count', 'put /messages/{id}/read']) {
     assert.equal(mounted.has(key), true, key);
   }
-  assert.equal(mounted.has('get /posts'), false);
+  for (const key of ['get /posts', 'post /posts', 'get /posts/{id}', 'patch /posts/{id}', 'delete /posts/{id}',
+    'get /posts/{id}/comments', 'post /posts/{id}/comments', 'get /comments/{id}', 'patch /comments/{id}',
+    'delete /comments/{id}', 'put /posts/{id}/like', 'delete /posts/{id}/like', 'put /comments/{id}/like',
+    'delete /comments/{id}/like', 'post /reports', 'get /reports/{id}']) {
+    assert.equal(mounted.has(key), true, key);
+  }
+  // `hidePost` 属 #18，仍由后台路由装配（不是社区路由）。
+  assert.equal(mounted.has('post /admin/posts/{id}/hide'), true);
 });

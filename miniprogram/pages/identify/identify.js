@@ -146,10 +146,22 @@ Page({
     substituteNotice: '',
     job: null,
     stateView: null,
+    /** 六类失败/边界分支归类（不属于六类时为 null）与其指引（落点 + 可重试语义）。 */
+    branch: null,
+    branchInfo: null,
     candidates: [],
     candidatesTrusted: false,
     showTop3: false,
     uncertaintyReasons: [],
+    /**
+     * 关联科普/用量判定所用的**条件**（契约 `DoseConditions` 的 6 个必填项）。
+     *
+     * 本页只掌握「杂草对象」一项：作物/地区/生育期/种植方式/使用场景需要用户档案或选择，
+     * 因此默认 `null` ⇒ 条件不完整 ⇒ 用量查询被**阻断**并如实列出缺项（不使用默认值凑齐）。
+     */
+    recognitionConditions: null,
+    /** 用量路径守卫结果（恒不可用；恒不展示用量）。 */
+    doseGuard: null,
     recordId: null,
     recordRevision: 0,
     pendingManualId: null,
@@ -214,6 +226,7 @@ Page({
       guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
       recordId: null, recordRevision: 0, job: null, stateView: null, historyNote: '', candidateSource: 'job',
+      branch: null, branchInfo: null, doseGuard: null,
       busy: false, substituteNotice: ''
     }
     if (typeof message === 'string' && message !== '') patch.errorText = message
@@ -353,6 +366,9 @@ Page({
       busy: model.view.terminal !== true,
       job: { id: job.id, revision: job.revision, state: job.state },
       stateView: model.view,
+      // 六类失败/边界分支：页面据此给出**唯一**重试动作（不可重试时不给入口）。
+      branch: model.branch,
+      branchInfo: model.branchInfo,
       candidates: model.candidates,
       candidatesTrusted: model.candidatesTrusted,
       showTop3: model.showTop3,
@@ -361,9 +377,12 @@ Page({
       recordRevision: record === null ? 0 : record.revision,
       pendingManualId: null,
       historyNote: '',
-      candidateSource: 'job'
+      candidateSource: 'job',
+      // 用量守卫：无论任务状态如何，本页恒不展示用量（如实带出阻断与缺项）。
+      doseGuard: identifyApi.dosePathGuard(this.data.recognitionConditions)
     }
     if (record !== null && record.selected_species_id !== null) patch.selectedSpeciesId = record.selected_species_id
+    else patch.selectedSpeciesId = null
     if (model.view.terminal === true) {
       this.stopPoll()
       if (record !== null) this.rememberHistory(job, record, gen)
@@ -393,7 +412,7 @@ Page({
   onRetry: function () {
     this.stopPoll()
     this.beginOperation()
-    this.setData({ job: null, stateView: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
+    this.setData({ job: null, stateView: null, branch: null, branchInfo: null, doseGuard: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
   },
 
   /** 点候选：succeeded 直接记录选择；uncertain 必须先显式「人工核对」确认。 */
@@ -445,7 +464,8 @@ Page({
     this.setData({ busy: false, selectedSpeciesId: speciesId, recordRevision: recognition.revision, candidates: recognition.candidates.map(function (c) {
       return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
     }) })
-    this.setData({ relatedKnowledge: queryRelatedKnowledge(speciesId) })
+    // 关联科普与条件：条件不完整即阻断用量查询（页面如实列出缺项）。
+    this.setData({ relatedKnowledge: queryRelatedKnowledge(speciesId, this.data.recognitionConditions) })
   },
 
   // ---------------------------------------------------------------- 私有历史
@@ -487,14 +507,18 @@ Page({
       const candidates = r.recognition.candidates.map(function (c) {
         return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
       })
-      // 历史记录只展示服务端保存的模型原始候选；**不**据此推断任务状态（JobState 需要任务读面）。
+      // 历史记录只展示服务端保存的模型原始候选；**不**据此推断任务状态（JobState 需要任务读面），
+      // 因此也不给「分支 + 重试动作」（那是任务读面的结论）。
       this.setData({ busy: false, recordId: r.recognition.id, recordRevision: r.recognition.revision,
         selectedSpeciesId: r.recognition.selected_species_id, candidates: candidates,
         candidatesTrusted: false, showTop3: r.recognition.candidates.length > 0, candidateSource: 'history',
         uncertaintyReasons: r.recognition.uncertainty_reasons,
         historyNote: '这是服务端保存的历史识别记录（第 ' + r.recognition.revision + ' 次修订）：候选为模型原始结果，请人工核对；本页不据此推断任务状态。',
         stateView: null,
-        relatedKnowledge: r.recognition.selected_species_id === null ? null : queryRelatedKnowledge(r.recognition.selected_species_id) })
+        branch: null,
+        branchInfo: null,
+        doseGuard: identifyApi.dosePathGuard(this.data.recognitionConditions),
+        relatedKnowledge: r.recognition.selected_species_id === null ? null : queryRelatedKnowledge(r.recognition.selected_species_id, this.data.recognitionConditions) })
     } catch (error) {
       if (!this.isCurrentOperation(gen)) return
       if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
@@ -562,26 +586,74 @@ function readFileInfo(filePath) {
   })
 }
 
-/** 关联科普查询：本地参考域查询组件（种子资料，明显标注「待核实·非权威」；不展示任何用量）。 */
-function queryRelatedKnowledge(speciesId) {
+/**
+ * 关联科普查询（本地参考域查询组件 + **GY-I08 用量守卫**）。
+ *
+ * 硬规则（与 `services/api/src/recognitions/linkage.ts` 同口径）：
+ *   1. 只取**有效、可访问、非模拟**的资料（由 `reference.query` 的资格判定保证，
+ *      模拟来源数量如实带出 `simulated_excluded`）；
+ *   2. 条件按契约 `DoseConditions` 的 6 个必填项判定，**不完整即阻断**，
+ *      并逐项列出缺什么（不静默放宽、不补默认值）；
+ *   3. **禁止经识别绕过用量守卫**：本路径恒不展示用量
+ *      （`dose.renderable === false`、`dose.card === null`、恒定阻断 `no_dose_source`），
+ *      即便条件完整也一样；具体用量必须走 GY-I08 授权的资料/详情消费面；
+ *   4. 规则版本与 GY-I08 一致（`APPLICABILITY_RULE_VERSION`），不一致由回归测试拦住。
+ *
+ * 资料条目为种子整理稿，呈现时必须标注「待核实 · 非权威」。
+ */
+function queryRelatedKnowledge(speciesId, conditions) {
+  const guard = identifyApi.dosePathGuard(conditions)
+  const base = {
+    speciesId: speciesId,
+    ruleVersion: guard.ruleVersion,
+    dose: guard,
+    conditionsComplete: guard.conditionsComplete,
+    missingConditions: guard.missingConditions,
+    missingConditionLabels: guard.missingConditionLabels
+  }
   try {
     const reference = require('../../utils/reference')
-    const result = reference.query({ species_id: speciesId, limit: 5 })
+    const queryParams = { species_id: speciesId, limit: 5 }
+    // 只把**非空**条件交给查询：空串不得被当成"已采集"（与域库 matchConditions 同口径）。
+    for (const field of identifyApi.DOSE_CONDITION_FIELDS) {
+      const value = conditions && typeof conditions[field] === 'string' ? conditions[field].trim() : ''
+      if (value !== '') queryParams[field] = value
+    }
+    const result = reference.query(queryParams)
     const items = (result && result.items ? result.items : []).map(function (item) {
-      return { recordId: item.record_id, registrationNumber: item.registration_number, name: item.registered_name,
-        dosageForm: item.dosage_form, useScene: item.use_scene, labels: item.labels }
+      // 逐条跑 GY-I08 用量描述符：**只用于如实说明为什么不能给用量**，
+      // 其结果不会被本页用来渲染任何剂量数字。
+      const descriptor = reference.doseCardDescriptor(item, {
+        doseCardEnabled: false,
+        context: queryParams
+      })
+      return {
+        recordId: item.record_id,
+        registrationNumber: item.registration_number,
+        name: item.registered_name,
+        dosageForm: item.dosage_form,
+        useScene: item.use_scene,
+        labels: item.labels,
+        doseRenderable: descriptor.renderable === true,
+        doseReason: descriptor.reason,
+        doseRuleVersion: descriptor.rule_version
+      }
     })
-    return {
-      speciesId: speciesId,
+    return Object.assign({}, base, {
       matchState: result.match_state,
       matchStateLabel: reference.matchStateLabel(result.match_state),
       reasons: result.reasons.concat(result.simulated_excluded > 0 ? ['已排除 ' + result.simulated_excluded + ' 条模拟资料'] : []),
       items: items,
-      note: '资料为种子整理稿（' + reference.catalogVersionText() + '），须以官方登记信息核对；本页不提供用量。'
-    }
+      note: '资料为种子整理稿（' + reference.catalogVersionText() + '），须以官方登记信息核对；本页不提供用量（识别路径恒不可给用量）。'
+    })
   } catch (error) {
-    return { speciesId: speciesId, matchState: 'unavailable', matchStateLabel: '查询未取得结果',
-      reasons: ['关联科普查询未取得结果：' + (error && error.message ? error.message : '未知原因')], items: [], note: '未取得结果时不会用本地缓存顶替。' }
+    return Object.assign({}, base, {
+      matchState: 'unavailable',
+      matchStateLabel: '查询未取得结果',
+      reasons: ['关联科普查询未取得结果：' + (error && error.message ? error.message : '未知原因')],
+      items: [],
+      note: '未取得结果时不会用本地缓存顶替，也不会给出任何用量。'
+    })
   }
 }
 

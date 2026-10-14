@@ -205,7 +205,9 @@ test('stub 默认装配行为不变（内存实现仍可用且确会写内存）
     // 本片起：装配层把 3 个开关与该输出面的**真实状态**对齐（见 `admin/ops/flag-gate.ts`
     // 的 `FLAG_WIRING_BASELINE`）——此前"列表说全关、/herbicides 照常产出"正是本片要修的
     // "开关没生效"。服务层工厂的出厂默认（全 false）仍由单测单独钉住。
-    assert.deepEqual(flags.json().data.items.map((f) => f.enabled), [true, true, false], '装配基线：药剂输出/AI 开，投稿面未接线故关');
+    // 合并 `upstream/main`（含 #148 社区 HTTP 装配）后：投稿面也真实可用了 ⇒ 基线为开启。
+    // 顺序 = `listFlags` 的 key 升序：ai_enabled / specific_herbicide_output_enabled / submissions_enabled。
+    assert.deepEqual(flags.json().data.items.map((f) => f.enabled), [true, true, true], '装配基线：三个输出面当前都真实可用');
 
     const set = await app.inject({
       method: 'PUT', url: `${API}/admin/feature-flags/ai_enabled`,

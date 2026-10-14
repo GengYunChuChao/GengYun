@@ -90,14 +90,22 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
     return safe;
   }
 
-  function requireRecord({ exportId, userId }) {
+  /**
+   * 读取并核对归属。
+   *
+   * **持久账本适配（GY-I27 第二片）**：内存账本的 `get` 是同步的，PostgreSQL 账本的 `get`
+   * 必然返回 Promise，因此这里统一 `await` —— 对同步实现是**零成本且行为不变**（await 非 Promise
+   * 值直接返回该值），对持久实现则正确等待。否则守卫会拿到 Promise 并把归属判成不符（fail-closed
+   * 方向正确但功能不可用）。
+   */
+  async function requireRecord({ exportId, userId }) {
     if (typeof exportId !== 'string' || exportId.length === 0) {
       throw new PrivacyError('INVALID_REQUEST', 'exportId 缺失');
     }
     if (typeof userId !== 'string' || userId.length === 0) {
       throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
     }
-    const record = ledger.get(exportId);
+    const record = await ledger.get(exportId);
     if (!record || record.userId !== userId) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '外发记录不存在或归属不符');
     }
@@ -138,7 +146,7 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
 
   /** 任务**执行前**重查：记录在途、版本未被取消、账号活跃、全部必需用途仍有效。 */
   async function assertExecutable({ exportId, userId }) {
-    const record = requireRecord({ exportId, userId });
+    const record = await requireRecord({ exportId, userId });
     if (TERMINAL_STATES.includes(record.state)) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}），禁止继续执行`);
     }
@@ -156,7 +164,7 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
     if (!Number.isInteger(objectVersion) || objectVersion < 1) {
       throw new PrivacyError('INVALID_REQUEST', 'object_version 非法');
     }
-    const record = requireRecord({ exportId, userId });
+    const record = await requireRecord({ exportId, userId });
     if (TERMINAL_STATES.includes(record.state)) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `外发已终态（${record.state}），回写被阻断`);
     }
@@ -175,12 +183,16 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
   /**
    * 取消一个版本：登记**不可复活**的墓碑，并把在途外发置 `failed`。
    * 取消是幂等的；已终态记录仍登记墓碑（晚到回调同样被阻断）。
+   *
+   * **持久账本适配（GY-I27 第二片）**：返回 Promise，并 `await` 账本的 `markFailed`
+   * （PostgreSQL 实现必须在**单事务**内完成状态迁移；同步实现的 await 是零成本）。
+   * @returns {Promise<{exportId:string, objectVersion:number, cancelled:boolean, alreadyCancelled:boolean, revokedInFlight:number}>}
    */
-  function cancelVersion({ exportId, userId, objectVersion, reason = 'cancelled' } = {}) {
+  async function cancelVersion({ exportId, userId, objectVersion, reason = 'cancelled' } = {}) {
     if (!Number.isInteger(objectVersion) || objectVersion < 1) {
       throw new PrivacyError('INVALID_REQUEST', 'object_version 非法');
     }
-    const record = requireRecord({ exportId, userId });
+    const record = await requireRecord({ exportId, userId });
     const key = versionKey(record.id, objectVersion);
     const already = cancelledVersions.has(key);
     const safeReason = sanitizeReason(reason);
@@ -195,7 +207,7 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
     let revoked = 0;
     if (!TERMINAL_STATES.includes(record.state)) {
       try {
-        ledger.markFailed(exportId, { errorCode: 'OBJECT_CANCELLED' });
+        await ledger.markFailed(exportId, { errorCode: 'OBJECT_CANCELLED' });
         revoked = 1;
       } catch {
         // 记录已在派发/回写路径上进入终态：保留既有结论。
@@ -245,8 +257,12 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
  *
  * 这是 `consent-pg.ts` / `grant-pg.ts` 里"消费者尚未接入"那条兜底所缺的对象。
  * 接口刻意只做**一件事**（撤销在途外发）且**不返回可后置消费的授权结论**：
- * 撤销本身由账本 `revokeInFlight` 同步完成，之后任何 `markSent` / `guardWriteback`
+ * 撤销本身由账本 `revokeInFlight` 完成，之后任何 `markSent` / `guardWriteback`
  * 都会在原子边界上被拒。
+ *
+ * **持久账本适配（GY-I27 第二片）**：两个方法返回 Promise 并 `await` 账本的 `revokeInFlight`
+ * （PostgreSQL 实现是一条原子 UPDATE；同步实现的 await 是零成本）。调用方（授权服务）
+ * 必须 `await` —— 否则撤销失败会变成未处理的 rejection。
  *
  * 接线方（`services/api`）注入本对象后即可删掉 `OBJECT_UNAVAILABLE` 兜底；
  * **不注入时行为与今天逐字一致**（仍然 fail-closed，不伪造取消成功）。
@@ -270,20 +286,20 @@ export function createEgressRevoker({ ledger, now = () => new Date() } = {}) {
 
   return Object.freeze({
     /** 用途撤回：撤销**依赖该用途**的在途外发。 */
-    onConsentWithdrawn({ userId, purpose } = {}) {
+    async onConsentWithdrawn({ userId, purpose } = {}) {
       if (typeof userId !== 'string' || userId.length === 0) {
         throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
       }
-      const count = ledger.revokeInFlight({ userId, purpose });
+      const count = await ledger.revokeInFlight({ userId, purpose });
       note('consent_withdrawn', userId, purpose, count);
       return Object.freeze({ revokedInFlight: count });
     },
     /** 注销/停用：撤销该用户**全部**在途外发（新外发由账号状态守卫阻断）。 */
-    onAccountSuspendedOrDeleted({ userId } = {}) {
+    async onAccountSuspendedOrDeleted({ userId } = {}) {
       if (typeof userId !== 'string' || userId.length === 0) {
         throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
       }
-      const count = ledger.revokeInFlight({ userId });
+      const count = await ledger.revokeInFlight({ userId });
       note('account_inactive', userId, null, count);
       return Object.freeze({ revokedInFlight: count });
     },

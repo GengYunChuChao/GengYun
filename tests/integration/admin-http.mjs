@@ -10,8 +10,10 @@
 // - 身份是**合成**的：直接按 `AuthStore` 公开 API 播种 admin / user 会话（不经过微信换取）。
 // - **平台级作业端口**：默认装配实例**未接线**（读与写都 503）；另建一个注入了
 //   内存参考端口的实例用于验证"已接线"路径。**不是真实平台作业面**。
-// - **社区存储**：注入内存社区 store（阶段 1b 的 `hidePost` 复用其 CAS）。社区**路由**未装配，
-//   因此"公开读不可见 / 作者仍可见"用社区**服务层**在同一 store 上断言（#15 既有口径）。
+// - **社区存储**：本脚本**显式注入**一份内存社区 store 供后台 `hidePost` 复用其 CAS。
+//   GY-I15 阶段 2 起社区 HTTP 路由已装配，但本脚本仍用社区**服务层**在同一 store 上断言
+//   "公开读不可见 / 作者仍可见"（因为注入的 store 是脚本自建的，与 app 内建的社区 store 不是同一份；
+//   #15 的社区 HTTP 面由 `tests/unit/community-http.test.mjs` 覆盖）。
 // - 未取得：真实 PG 持久化、真实作业端口、后台页面（`apps/admin/**` 不在本单）、
 //   全局开关/账号停用与业务链路联调、真机。
 import assert from 'node:assert/strict';
@@ -197,7 +199,9 @@ async function seedUserSession(authStore, label) {
 }
 
 // ---------------------------------------------------------------- 装配两个实例
-// A) **默认装配**（不注入任何后台端口）⇒ 作业读/取消与 hidePost 必须 fail-closed。
+// A) **默认装配**（不注入任何后台端口）⇒ 平台级作业读/取消 fail-closed（503）；
+//    `hidePost` 自 GY-I15 阶段 2 起接到 app 自建的**同一份**社区 store（不再是 503），
+//    未知帖子因此是 404；real 模式的整域 503 由单元回归覆盖。
 const defaultAuth = createMemoryAuthStore();
 const defaultApp = buildApp({
   config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
@@ -432,13 +436,17 @@ await group('[正控制] hidePost：经 HTTP 隐藏 ⇒ 社区公开读不可见
   assert.equal(hit[0].target_ref.id, communityPost.id);
 });
 
-await group('[正控制/反例] hidePost：默认装配**社区存储未接线** ⇒ 503，不谎报成功', async () => {
+await group('[正控制/反例] hidePost：默认装配下社区存储已接线 ⇒ 未知帖子 404，不谎报成功', async () => {
+  // GY-I15（#15）阶段 2 起，`app.ts` 把**同一份**社区 store 交给后台 `hidePost`
+  // （下架必须与社区读取面同源，否则"后台隐藏了帖子"在社区列表/详情侧不生效）。
+  // 因此默认装配下未知帖子是 404 `NOT_FOUND`，而不是"存储未接线"的 503。
+  // **real 模式仍整域 fail-closed 503**（见 tests/unit/admin-real-mode-fail-closed.test.mjs 的 34 条路由反例）。
   const res = await probe('hidePost', 'POST', `${API}/admin/posts/${UNKNOWN_UUID}/hide`, {
-    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=社区未接线',
+    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=社区已接线（未知帖子）',
     body: { reason: '示例' }, headers: { 'idempotency-key': newKey('hide0'), 'if-match': '"1"' },
   });
-  assert.equal(res.status, 503, JSON.stringify(res.body));
-  assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(res.status, 404, JSON.stringify(res.body));
+  assert.equal(res.body.error.code, 'NOT_FOUND');
 });
 
 // —— 审计只读（**放在最后**：此时五类写操作都已发生） ——
