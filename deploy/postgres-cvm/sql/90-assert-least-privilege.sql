@@ -15,6 +15,11 @@
 --   前置不满足时**不是“跳过”，而是“失败”**（断言无法求值），但会打印明确的补救指引。
 --
 -- 执行者：迁移管理员 gengyun_cvm_owner（需要读 pg_authid，只有超级用户可读）。
+--         ⚠️ 2026-10-13 更正（按监工批复）：**这才是**本交付需要超级用户的**真实**理由；
+--         与 `pgcrypto` **无关** —— `pgcrypto` 是 trusted extension（PG 13+ 起），
+--         只要对当前数据库有 `CREATE` 权限即可安装（PG 17 官方文档 F.26），**不需要**超级用户。
+--         若不希望依赖"超级用户读 pg_authid"，可改用端到端证明：
+--         `verify-cvm-postgres.sh --runtime-password-env …` 的 `runtime_tcp_login`（真实 TCP + scram 登录）。
 -- 前置  ：20-login-roles.sql 已执行；全部迁移已应用（本文件会读取表与视图）。
 --
 -- 输出约定：只打印一行。

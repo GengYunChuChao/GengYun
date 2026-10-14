@@ -16,12 +16,30 @@
 --         ③ 两处前置都**早于任何写操作**；
 --         ④ 口令默认不再每次重写 ⇒ 重复执行严格幂等（判读见下）。
 --
--- 执行者：迁移管理员 gengyun_cvm_owner（initdb -U 建出的超级用户），
---         经 Unix socket + pg_ident 免口令连接；由 provision-db.sh 调用。
+-- 执行者：迁移管理员 gengyun_cvm_owner（本交付用 `initdb -U` 建为集群超级用户；但**本文件真正要求的
+--         是"能力"而非"超级用户"**，见下方"权限前提（按真实 DDL）"）。经 Unix socket + pg_ident 免口令连接；
+--         由 provision-db.sh 调用。
 -- 前置  ：1) 集群已由 install-postgres.sh 建好；2) 业务库 gengyun 已创建；
 --         3) services/api/src/db/migrate.ts up 已在本库应用全部迁移（本文件只授权，不建表）；
 --         4) 5 个既有 NOLOGIN 组已由 services/api/db/roles/*.sql 建出
 --            （provision-db.sh 在本文件之前完成；本文件只校验存在，不代建）。
+--
+-- 权限前提（**按真实 DDL 逐条说明**；2026-10-13 按监工批复更正）：
+--   * ⚠️ **更正**：**`pgcrypto` 是 trusted extension**（PostgreSQL 13+ 起；PG 17 官方文档 F.26 原文：
+--     "This module is considered “trusted”, that is, it can be installed by non-superusers who have
+--      CREATE privilege on the current database."）⇒ `CREATE EXTENSION pgcrypto` **不需要超级用户**，
+--     只要对**当前数据库**有 `CREATE` 权限。故原先"迁移管理员必须是超级用户，因为 0007 要建 pgcrypto"
+--     这一**理由是错的**，已删除。
+--   * 迁移 `0001–0010` 实际需要的权限（据真实 DDL：`CREATE SCHEMA`、在自有 schema 内建表/视图/策略、
+--     `CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake`）⇒ **数据库属主（非超级用户）即可**。
+--   * `services/api/db/roles/*.sql` 建 7 个 NOLOGIN 组 ⇒ 需 **CREATEROLE**（非超级用户亦可）。
+--   * **本文件**：A/B 段的 `CREATE ROLE` / `ALTER ROLE` ⇒ 需 **CREATEROLE**（或超级用户）；
+--     C 段的 `GRANT <组> TO <运行时角色>` ⇒ 需对所授组有 **ADMIN OPTION**（PG 16+）**或**超级用户。
+--     下面把这些写成**前置能力断言**（不再是"必须超级用户"）。
+--   * 本交付**唯一**真正需要超级用户的地方是 `90-assert-least-privilege.sql`（以及 `verify-cvm-postgres.sh`
+--     的 `runtime_password_scram`）：它们要读 **`pg_authid`**，而该目录**仅超级用户可读**。
+--     若不希望依赖超级用户，可用**端到端**证明替代：`verify-cvm-postgres.sh --runtime-password-env …`
+--     的 `runtime_tcp_login`（真实 TCP + scram 登录），无需读 `pg_authid`。
 --
 -- 本文件做三件事：
 --   A. 创建（仅缺失时）应用运行时 LOGIN gengyun_api_runtime
@@ -79,15 +97,17 @@ SELECT (current_database() = 'gengyun') AS db_ok \gset
   SELECT 1/0;
 \endif
 
--- 迁移管理员必须存在且是超级用户（0007 的 CREATE EXTENSION pgcrypto 需要超级用户）。
--- 只查 pg_roles，对"角色不存在"天然安全。
+-- 迁移管理员必须存在（**存在性**检查：确认这是本交付的集群；不要求超级用户）。
+-- 【2026-10-13 按监工批复更正】原先这里要求 `rolsuper`，理由是"0007 的 `CREATE EXTENSION pgcrypto`
+--   需要超级用户"——**该理由错误**：`pgcrypto` 是 trusted extension（PG 13+），只要对当前数据库有
+--   `CREATE` 权限即可安装（PG 17 官方文档 F.26）。改为按**实际所需能力**断言（见下方两条）。
 SELECT (count(*) = 1) AS owner_ok
   FROM pg_roles
- WHERE rolname = 'gengyun_cvm_owner' AND rolsuper
+ WHERE rolname = 'gengyun_cvm_owner'
 \gset
 \if :owner_ok
 \else
-  \echo '错误：未找到超级用户 gengyun_cvm_owner；数据库可能不是本交付的集群。'
+  \echo '错误：未找到 gengyun_cvm_owner；数据库可能不是本交付的集群。'
   SELECT 1/0;
 \endif
 
@@ -106,6 +126,45 @@ SELECT (count(*) = 5) AS groups_ok
   \echo '错误：5 个既有 NOLOGIN 组未全部存在。请先让 provision-db.sh 执行'
   \echo '      services/api/db/roles/*.sql 建组（auth_privacy / catalog_readers /'
   \echo '      consent_granter / profile_runtime / knowledge_runtime）；本文件不代建。'
+  SELECT 1/0;
+\endif
+
+-- 【2026-10-13 新增 · 按监工批复"补受影响说明/断言检查"】
+-- 能力 1：能创建/收敛角色（A/B 段的 `CREATE ROLE` / `ALTER ROLE` 需 **CREATEROLE** 或超级用户）。
+--        只查 pg_roles，对"角色不存在"天然安全（COALESCE 兜底 false）。
+SELECT COALESCE((SELECT (rolsuper OR rolcreaterole)
+                   FROM pg_roles
+                  WHERE rolname = current_user), false) AS can_create_role
+\gset
+\if :can_create_role
+\else
+  \echo '错误：当前执行角色既不是超级用户、也没有 CREATEROLE，无法创建/收敛运行时 LOGIN。'
+  \echo '      处置：以 gengyun_cvm_owner 执行（本交付由 initdb -U 建为超级用户），或授予'
+  \echo '            CREATEROLE 后重跑。注意：pgcrypto 是 trusted extension，**不是**需要超级用户的理由。'
+  SELECT 1/0;
+\endif
+
+-- 能力 2：能把 5 个既有组授予运行时角色（C 段的 `GRANT <组> TO <运行时角色>` 需对所授组有
+--        **ADMIN OPTION**（PG 16+ 起；`pg_auth_members.admin_option`）或本身是超级用户）。
+--        `bool_and()` 在 0 行时返回 NULL ⇒ COALESCE 兜底 false，不会误判为"有权限"。
+--        （这些组由 roles/*.sql 以**同一迁移管理员**身份创建，PG 16+ 下创建者自动获得其 ADMIN OPTION。）
+SELECT (COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false)
+        OR COALESCE((SELECT bool_and(m.admin_option)
+                       FROM pg_auth_members m
+                       JOIN pg_roles g ON g.oid = m.roleid
+                       JOIN pg_roles u ON u.oid = m.member
+                      WHERE u.rolname = current_user
+                        AND g.rolname IN ('gengyun_auth_privacy',
+                                          'gengyun_preview_reader',
+                                          'gengyun_consent_granter',
+                                          'gengyun_profile_runtime',
+                                          'gengyun_knowledge_runtime')), false)) AS can_grant_groups
+\gset
+\if :can_grant_groups
+\else
+  \echo '错误：当前执行角色对 5 个既有 NOLOGIN 组没有 ADMIN OPTION，也没有超级用户权限，'
+  \echo '      无法完成 C 段的 GRANT。处置：以建组时的角色（或超级用户）执行，'
+  \echo '      或先 `GRANT <组> TO <当前角色> WITH ADMIN OPTION` 后重跑。'
   SELECT 1/0;
 \endif
 

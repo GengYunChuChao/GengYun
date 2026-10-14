@@ -80,13 +80,50 @@
 
 | 角色 | 属性 | 用途 | 谁持有口令 |
 | --- | --- | --- | --- |
-| `gengyun_cvm_owner` | `LOGIN SUPERUSER`（由 `initdb -U` 创建） | **迁移管理员**：建库、跑迁移、建角色。只有人类运维使用 | 私密文件 / 私密环境；`pg_ident.conf` 让系统用户 `postgres` 走 socket 免口令执行运维 |
+| `gengyun_cvm_owner` | `LOGIN SUPERUSER`（由 `initdb -U` 创建） | **迁移管理员**：建库、跑迁移、建角色、跑最小权限断言。只有人类运维使用 | 私密文件 / 私密环境；`pg_ident.conf` 让系统用户 `postgres` 走 socket 免口令执行运维 |
 | `gengyun_api_runtime` | `LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`，口令为 `scram-sha-256` | **应用运行时**：API 的 `DATABASE_URL` 用户 | 只经私密通道交给 API 部署 |
 
-`gengyun_cvm_owner` 必须是超级用户，因为迁移 `0007_staging_intake.sql` 里有
-`CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake;`，而 `pgcrypto` 不是 trusted extension →
-需要超级用户。这与 CI（`POSTGRES_USER=gengyun_ci_owner`，即超级用户）和本地开发
-（`initdb -U gengyun_local_owner`）的口径一致。**因此迁移管理员口令的保管等级等同数据库最高权限。**
+#### 3.2.1 权限前提：**按真实 DDL 逐条说明**（2026-10-13 按监工批复更正）
+
+> ⚠️ **更正一处错误理由**。本文档此前写"`gengyun_cvm_owner` **必须是超级用户**，因为迁移
+> `0007_staging_intake.sql` 里有 `CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake;`，
+> 而 `pgcrypto` **不是** trusted extension" —— **该说法错误**。PostgreSQL **13+ 起 `pgcrypto` 是
+> trusted extension**，PG 17 官方文档 F.26 原文：
+> *"This module is considered “trusted”, that is, it can be installed by non-superusers who have
+> `CREATE` privilege on the current database."*（<https://www.postgresql.org/docs/17/pgcrypto.html>）
+> ⇒ `CREATE EXTENSION pgcrypto` **只需对当前数据库有 `CREATE` 权限**，**不需要超级用户**。
+
+各步骤**真实**需要的权限（据本仓库真实 DDL 与 PostgreSQL 17 语义）：
+
+| 步骤（真实依据） | 真正需要什么 | 是否需要超级用户 |
+| --- | --- | --- |
+| `install-postgres.sh`：装包、`initdb -U gengyun_cvm_owner`、写 `pg_hba`/`conf.d`、systemd 单元 | **系统层 root**（不是数据库权限） | 否（是 OS 权限问题） |
+| 建业务库 `createdb -O gengyun_cvm_owner gengyun` | **`CREATEDB`**（脚本由 OS 用户 `postgres` 经 peer/`pg_ident` 执行） | 否（也可由具备 `CREATEDB` 的角色执行） |
+| 迁移 `0001–0010`：`CREATE SCHEMA`（`knowledge_staging`/`catalog_read`/`catalog_ops`/`staging_intake`）、在自有 schema 内建表/视图/策略、`CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake` | `CREATE SCHEMA` 需**该库的 `CREATE`**；建表/视图需 **schema 属主**；**trusted** 扩展需**该库的 `CREATE`** | **否 —— 数据库属主（非超级用户）即可完成全部 10 个迁移** |
+| `services/api/db/roles/*.sql`：建 7 个 NOLOGIN 组 | **`CREATEROLE`** | 否（非超级用户亦可；PG 16+ 起创建者自动获得新角色的 `ADMIN OPTION`） |
+| `sql/20-login-roles.sql` A/B 段：`CREATE ROLE` / `ALTER ROLE` 运行时 LOGIN | **`CREATEROLE`** | 否 |
+| `sql/20-login-roles.sql` C 段：`GRANT <组> TO <运行时角色>` | 对所授组有 **`ADMIN OPTION`**（PG 16+ 起；`pg_auth_members.admin_option`） | 否（建组者即自动具备） |
+| `sql/90-assert-least-privilege.sql`（读 **`pg_authid.rolpassword`**）、`verify-cvm-postgres.sh` 的 `runtime_password_scram` | **`pg_authid` 仅超级用户可读** | ✅ **是 —— 这才是本交付保留超级用户的真实理由** |
+| `pg_hba`/`postgresql.conf`/systemd 变更 | **系统层 root** | 否（是 OS 权限问题） |
+
+**结论**：
+- 本交付**把迁移管理员建成集群超级用户**，是因为其中**两项检查要读 `pg_authid`**（上表倒数第二行），
+  **不是**因为 `pgcrypto`；同时它与 CI（`POSTGRES_USER=gengyun_ci_owner`，超级用户）和本地开发
+  （`initdb -U gengyun_local_owner`）口径一致，**便于复现**。
+- 若希望迁移管理员**不是**超级用户：只需 `CREATEROLE` + 建库/迁移所需权限（上表前四行），
+  并把 `pg_authid` 那两项换成**端到端**证明（`verify --runtime-password-env …` 的 `runtime_tcp_login`，
+  走真实 TCP + `scram-sha-256` 登录）。**这是可选加固，本交付未接线。**
+- **`sql/20-login-roles.sql` 已改为按"能力"断言**（`CREATEROLE`、对 5 个组的 `ADMIN OPTION` 或超级用户），
+  不再要求 `rolsuper`。
+
+**对两次安装的影响必须分清（监工要求）**：
+
+| | 已完成的安装（**目标 CVM**，2026-10-13） | **全新安装**（用更正后的脚本） |
+| --- | --- | --- |
+| 迁移管理员 | `initdb -U` 建为**超级用户** ⇒ 能力断言全部满足 | 同左（`install-postgres.sh` 口径未变）⇒ 断言同样满足 |
+| 迁移 0007 的 `CREATE EXTENSION pgcrypto` | 由超级用户执行，**成功**（与 trusted 与否无关） | 由**数据库属主**执行即可成功（trusted） |
+| 是否需要重新执行 | **不需要** —— 已部署事实不变；本次仅更正**说明与断言**，不改变任何已执行路径 | —— |
+| 已执行路径 vs 更正后路径的差异 | 更正的只是"**理由**"与新增的**前置能力断言**；**DDL 与授权语义一字未改** | 若把迁移管理员降为非超级用户，则需按上表给足 `CREATEROLE` 等，并替换 `pg_authid` 两项检查 |
 
 `gengyun_api_runtime` 的命名与属性遵循既有先例 `gengyun_local_runtime`
 （`tools/local-dev/database.mjs` 第 25–29 行创建，`tools/local-dev/profile-bootstrap.mjs` 第 4 行
@@ -185,7 +222,7 @@ RESET ROLE;
 | --- | --- |
 | **何时** | ① 首次部署：`install-postgres.sh` 之后、`provision-db.sh` **之前**（硬门禁）；② 每次 API 发布前，若 `upstream/main` 新增了迁移文件；③ 回滚演练前先做备份 |
 | **由谁** | 人类运维／写手在**获准**后执行。**CI 不执行生产迁移**，合并不触发部署 |
-| **以什么角色** | `gengyun_cvm_owner`（迁移管理员，超级用户）。**绝不使用** `gengyun_api_runtime` |
+| **以什么角色** | `gengyun_cvm_owner`（迁移管理员，超级用户）。**绝不使用** `gengyun_api_runtime`。保留超级用户的**真实**理由见 §3.2.1（读 `pg_authid`），**与 `pgcrypto` 无关** |
 | **连接方式** | 本机回环 TCP：`DATABASE_URL='postgres://gengyun_cvm_owner:<私密口令>@127.0.0.1:5432/gengyun'`。口令只从服务端私密环境注入，**不进 argv、不进仓库、不进 PR、不打日志** |
 | **为什么不能用 socket 免口令** | `migrate.ts` 直接用 `pg.Client({connectionString})`；用 socket 需要写 `?host=/var/run/postgresql` 这类查询参数，属于对该入口的另一套用法，本交付不引入，以免与既有用法不一致 |
 | **执行顺序** | `list`（离线看发现列表）→ `status`（看待应用/drift）→ `up` |
