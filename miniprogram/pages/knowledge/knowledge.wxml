@@ -4,15 +4,18 @@
   <view class="subtitle">检索资料，核对来源与适用条件。</view>
   <view class="notice">{{modeNote}}</view>
 
-  <!-- 统一状态：门禁未通过 / 查询失败 / 无结果都走 state-view，不再自写一行灰字当失败提示 -->
-  <state-view
-    wx:if="{{!gatePassed}}"
-    status="guest"
-    title="需要核实登录状态后才能查询"
-    desc="{{status || '本页资料需登录后查询，游客不能读取。'}}"
-    action-text="核实登录／重试"
-    bind:action="search"
-  ></state-view>
+  <!-- 统一状态：门禁未通过 / 查询失败 / 无结果都走 state-view，不再自写一行灰字当失败提示。
+       外层保留 .status 容器：既有 tests/integration/local-dev-knowledge-ui.cjs 用该选择器定位
+       结果区（旧实现是一行灰字），保留它可让既有脚本继续复核，不必改他人验证脚本。 -->
+  <view class="status" wx:if="{{!gatePassed}}">
+    <state-view
+      status="guest"
+      title="需要核实登录状态后才能查询"
+      desc="{{status || '本页资料需登录后查询，游客不能读取。'}}"
+      action-text="核实登录／重试"
+      bind:action="search"
+    ></state-view>
+  </view>
 
   <block wx:else>
     <view class="search-box">
@@ -37,9 +40,15 @@
     </view>
     <view class="directory-note">{{directoryNote}}</view>
 
-    <state-view wx:if="{{stateKind === 'loading'}}" status="loading" title="正在核对当前资料" desc="{{status}}"></state-view>
-    <state-view wx:elif="{{stateKind === 'empty'}}" status="empty" title="没有符合条件的资料" desc="{{status}}" action-text="清空条件继续查询" bind:action="reset"></state-view>
-    <state-view wx:elif="{{stateKind === 'error'}}" status="error" title="查询没有成功" desc="{{status}}" action-text="查询／重试" bind:action="search"></state-view>
+    <view class="status" wx:if="{{stateKind === 'loading'}}">
+      <state-view status="loading" title="正在核对当前资料" desc="{{status}}"></state-view>
+    </view>
+    <view class="status" wx:elif="{{stateKind === 'empty'}}">
+      <state-view status="empty" title="没有符合条件的资料" desc="{{status}}" action-text="清空条件继续查询" bind:action="reset"></state-view>
+    </view>
+    <view class="status" wx:elif="{{stateKind === 'error'}}">
+      <state-view status="error" title="查询没有成功" desc="{{status}}" action-text="查询／重试" bind:action="search"></state-view>
+    </view>
     <view wx:else class="status" role="status">{{status}}</view>
 
     <view class="result-heading" wx:if="{{items.length}}">当前页资料</view>
