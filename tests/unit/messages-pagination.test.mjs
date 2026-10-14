@@ -23,12 +23,11 @@ import {
 /** 用同一把测试签名密钥"伪造"一个结构合法但语义不同的游标（白盒：验证逐项绑定校验）。 */
 function craftCursor(payload, key = TEST_SIGNING_KEY) {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  const signature = createHmac('sha256', key).update(body).digest('base64url');
+  const signature = createHmac('sha256', key).update('messages-list/v1\n').update(body).digest('base64url');
   return `${body}.${signature}`;
 }
 
 const FIXED_MS = Date.UTC(2026, 9, 12, 3, 0, 0);
-const validAfter = { created_at: new Date(FIXED_MS).toISOString(), id: '00000000-0000-4000-8100-000000000000' };
 
 async function seed(service, count, eventPrefix = 'evt') {
   for (let index = 0; index < count; index += 1) {
@@ -102,7 +101,7 @@ test('反例·分页：items ≤ 50 且分页在 60 条上不漏不重（limit=7
   assert.deepEqual(seen7, seen, '不同 limit 必须得到同一顺序');
 });
 
-test('反例·分页：翻页期间新消息插入 ⇒ 既有快照不漏不重（新消息不在旧游标窗口内）', async () => {
+test('反例·分页：新消息改变版本水位 ⇒ 旧游标400，重取首页不遗漏新消息', async () => {
   const h = makeHarness();
   await seed(h.service, 5, 'snap');
   const page1 = await h.service.listMessages(USER_A, { limit: 3 });
@@ -110,19 +109,12 @@ test('反例·分页：翻页期间新消息插入 ⇒ 既有快照不漏不重�
   const cursor = page1.next_cursor;
   assert.equal(typeof cursor, 'string');
 
-  // 翻页途中来了一条更新的消息（created_at 更晚 ⇒ 落在游标"之前"的窗口外）。
+  // 翻页途中新增消息，版本水位变化；旧链明确失效，不能混用两代快照。
   await append(h.service, { owner_id: USER_A.userId, event_key: 'snap-new' });
 
-  const page2 = await h.service.listMessages(USER_A, { limit: 3, cursor });
-  const ids = [...page1.items.map((item) => item.id), ...page2.items.map((item) => item.id)];
-  assert.equal(page2.items.length, 2, '游标窗口内只剩原有的 2 条');
-  assert.equal(new Set(ids).size, ids.length, '游标翻页不得产生重复');
+  assertApiErrorShape(await captureError(() => h.service.listMessages(USER_A, { limit: 3, cursor })), 'INVALID_CURSOR', 400);
   const stored = await h.store.listMessagesByOwner(USER_A.userId);
   assert.equal(stored.length, 6, '新消息确实已入库');
-  assert.equal(
-    ids.every((id) => stored.some((row) => row.id === id)),
-    true,
-  );
   // 新消息会出现在**新开的第一页**（不依赖旧游标），这条保证它不会被永久丢掉。
   const fresh = await h.service.listMessages(USER_A, { limit: 50 });
   assert.equal(fresh.items.length, 6);
@@ -137,15 +129,7 @@ test('反例·游标：篡改签名 / 非本路由 / 换主体 / 换排序 / 换
   const good = page.next_cursor;
   assert.equal(typeof good, 'string');
 
-  const base = {
-    kind: 'messages',
-    subject: USER_A.userId,
-    route: 'messages',
-    filter: {},
-    sort: 'created_at_desc',
-    after: validAfter,
-    expires: clock.ms + 60_000,
-  };
+  const base = JSON.parse(Buffer.from(good.split('.')[0], 'base64url').toString('utf8'));
   const badCursors = [
     ['篡改签名（改一位）', `${good.slice(0, -1)}${good.endsWith('A') ? 'B' : 'A'}`],
     ['其它密钥签名', craftCursor(base, 'another-key')],
@@ -153,9 +137,12 @@ test('反例·游标：篡改签名 / 非本路由 / 换主体 / 换排序 / 换
     ['换主体（别人的游标）', craftCursor({ ...base, subject: USER_B.userId })],
     ['换排序', craftCursor({ ...base, sort: 'created_at_asc' })],
     ['换过滤', craftCursor({ ...base, filter: { crop_id: 'x' } })],
+    ['额外字段', craftCursor({ ...base, owner: USER_B.userId })],
+    ['换账号版本', craftCursor({ ...base, auth_epoch: 2 })],
+    ['换水位', craftCursor({ ...base, watermark: 'not-current' })],
     ['已过期', craftCursor({ ...base, expires: clock.ms - 1 })],
     ['after 结构非法', craftCursor({ ...base, after: { created_at: 1, id: 'x' } })],
-    ['非 JSON 体（签名正确）', `${Buffer.from('not-json', 'utf8').toString('base64url')}.${createHmac('sha256', TEST_SIGNING_KEY).update(Buffer.from('not-json', 'utf8').toString('base64url')).digest('base64url')}`],
+    ['非 JSON 体（签名正确）', `${Buffer.from('not-json', 'utf8').toString('base64url')}.${createHmac('sha256', TEST_SIGNING_KEY).update('messages-list/v1\n').update(Buffer.from('not-json', 'utf8').toString('base64url')).digest('base64url')}`],
     ['没有分隔点', 'nodothere'],
     ['空体加点', '.sig'],
     ['乱串', 'abc'],

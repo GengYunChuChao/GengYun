@@ -63,6 +63,11 @@ import { createClosedContentSource, type PublishedContentSource } from './media/
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
+import { registerMessageRoutes } from './routes/messages.ts';
+import { createMessagesService, type MessagesService } from './messages/service.ts';
+import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
+import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
+import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -83,6 +88,8 @@ declare module 'fastify' {
      * 生产读取路径不经此装饰直接暴露给客户端，绝不进入任何响应投影。
      */
     mediaObjectStore: MediaObjectStore;
+    /** Non-real message service; real remains closed until persistent storage is delivered. */
+    messagesService: MessagesService | null;
   }
 }
 
@@ -160,6 +167,8 @@ export interface BuildAppOptions {
     /** 撤回/注销消费者：注入后 `consent-pg`/`grant-pg` 在撤回/授予时**先撤销在途外发**。 */
     egressRevoker?: EgressRevoker;
   };
+  /** Synthetic tests only; these memory/reference injections do not enable the real-mode domain. */
+  messagesInjection?: { store?: MessagesStore; reference?: MessageReferencePort };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
    * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
@@ -233,7 +242,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -251,6 +260,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
 
   const clock = now ?? (() => new Date());
+  const messagesService = config.executionMode === 'real' ? null : createMessagesService({
+    store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
+    reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+    signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+    now: clock,
+    idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+  });
   const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;
   const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
   const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
@@ -394,6 +410,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('adminOpsService', adminOpsService);
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
+  app.decorate('messagesService', messagesService);
 
   // ---------------------------------------------------------------------------
   // GY-I27 接线单（用途授权接线）。两处**最小、追加式**接线：
@@ -437,6 +454,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   registerMediaRoutes(app, config, guards, mediaService);
+  registerMessageRoutes(app, config, guards, messagesService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：

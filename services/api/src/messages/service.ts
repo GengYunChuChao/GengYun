@@ -1,5 +1,5 @@
 /**
- * GY-I17（#17）阶段 1 · 消息域服务层（服务端语义，**不注册路由**）。
+ * GY-I17（#17）消息域服务层；HTTP 装配在 routes/messages.ts，领域层不注册路由。
  *
  * 覆盖契约 operationId：`listMessages`（`GET /messages`）、
  * `getUnreadCount`（`GET /messages/unread-count`）、`markMessageRead`（`PUT /messages/{id}/read`）。
@@ -26,8 +26,8 @@
  *
  * ## 未取得（如实声明，不得当作已完成）
  *
- * - 没有 HTTP 路由、没有 `app.ts` 装配（阶段 2；`app.ts` 被 #87 占用）；
- *   返回的是契约 **`data` 载荷**，`meta`/封套由阶段 2 路由层补齐；
+ * - 返回契约 data 载荷；routes/messages.ts 补齐 HTTP 鉴权、头部与封套；
+ *   real 模式在消息持久存储未接线时关闭，不能把内存 HTTP 记作生产能力；
  * - 没有数据库迁移，只有内存存储（进程重启即丢）；
  * - **目标读取端口未接线**（`createUnwiredReferencePort`）⇒ 现阶段所有带目标的消息
  *   `reference_state` 恒为 `unavailable`；本片**不宣称**消息系统已端到端可用；
@@ -123,9 +123,13 @@ function commitRefusal(reason: 'NOT_FOUND' | 'OWNER_CHANGED' | 'REVISION_CHANGED
 }
 
 interface CursorPayload {
+  v: 1;
   kind: 'messages';
   /** 调用方主体：防止一个用户复用别人的游标（游标由服务端签名，客户端改不动）。 */
   subject: string;
+  auth_epoch: number;
+  /** Immutable row identities/creation times; read-state updates do not invalidate a page chain. */
+  watermark: string;
   route: 'messages';
   /** 过滤器（`GET /messages` 契约上没有筛选参数 ⇒ 恒为 `{}`，仍逐字节参与校验）。 */
   filter: Record<string, string>;
@@ -148,7 +152,7 @@ export function createMessagesService(deps: MessagesServiceDeps) {
   const idempotencyWaitMs = deps.idempotencyWaitMs ?? IDEMPOTENCY_WAIT_MS;
 
   const nowIso = (): string => clock().toISOString();
-  const sign = (value: string): string => createHmac('sha256', signingKey).update(value).digest('base64url');
+  const sign = (value: string): string => createHmac('sha256', signingKey).update('messages-list/v1\n').update(value).digest('base64url');
 
   // -------------------------------------------------------------------------
   // 幂等：先原子占位 → produce → 写回结果；失败释放占位；同键异体 409
@@ -255,7 +259,7 @@ export function createMessagesService(deps: MessagesServiceDeps) {
   function decodeCursor(
     cursor: string | null,
     expected: Omit<CursorPayload, 'after' | 'expires'>,
-  ): { created_at: string; id: string } | null {
+  ): Pick<CursorPayload, 'after' | 'expires'> | null {
     if (cursor === null) return null;
     try {
       const parts = cursor.split('.');
@@ -263,24 +267,30 @@ export function createMessagesService(deps: MessagesServiceDeps) {
       const body = parts[0];
       const signature = parts[1];
       if (typeof body !== 'string' || typeof signature !== 'string' || body.length === 0) throw new Error('shape');
-      const expectedSignature = Buffer.from(sign(body));
-      const received = Buffer.from(signature);
+      const decoded = Buffer.from(body, 'base64url');
+      if (decoded.toString('base64url') !== body || !/^[A-Za-z0-9_-]{43}$/.test(signature)) throw new Error('encoding');
+      const expectedSignature = Buffer.from(sign(body), 'base64url');
+      const received = Buffer.from(signature, 'base64url');
+      if (received.toString('base64url') !== signature) throw new Error('encoding');
       if (received.length !== expectedSignature.length || !timingSafeEqual(expectedSignature, received)) {
         throw new Error('signature');
       }
-      const value = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Record<string, unknown>;
+      const value: unknown = JSON.parse(decoded.toString('utf8'));
+      const keys = ['v', 'kind', 'subject', 'auth_epoch', 'watermark', 'route', 'filter', 'sort', 'after', 'expires'];
+      if (!isRecord(value) || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) throw new Error('fields');
+      if (value['v'] !== 1 || value['auth_epoch'] !== expected.auth_epoch || value['watermark'] !== expected.watermark) throw new Error('version');
       if (value['kind'] !== expected.kind || value['route'] !== expected.route) throw new Error('scope');
       if (value['subject'] !== expected.subject) throw new Error('subject');
       if (value['sort'] !== expected.sort) throw new Error('sort');
       if (JSON.stringify(value['filter']) !== JSON.stringify(expected.filter)) throw new Error('filter');
       const expires = value['expires'];
-      if (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= clock().getTime()) {
+      if (typeof expires !== 'number' || !Number.isSafeInteger(expires) || expires <= clock().getTime()) {
         throw new Error('expired');
       }
       const after = value['after'];
-      if (!isRecord(after)) throw new Error('after');
+      if (!isRecord(after) || Object.keys(after).length !== 2 || !Object.hasOwn(after, 'created_at') || !Object.hasOwn(after, 'id')) throw new Error('after');
       if (typeof after['created_at'] !== 'string' || typeof after['id'] !== 'string') throw new Error('after');
-      return { created_at: after['created_at'], id: after['id'] };
+      return { after: { created_at: after['created_at'], id: after['id'] }, expires };
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw new ApiError('INVALID_CURSOR', '游标无效或已失效');
@@ -296,13 +306,22 @@ export function createMessagesService(deps: MessagesServiceDeps) {
       const rows = await store.listMessagesByOwner(user.userId);
       const sorted = [...rows].sort(compareMessagesDescending);
       const expected: Omit<CursorPayload, 'after' | 'expires'> = {
+        v: 1,
         kind: 'messages',
         subject: user.userId,
+        auth_epoch: user.authEpoch,
+        watermark: createHmac('sha256', signingKey).update('messages-watermark/v1\n')
+          .update(JSON.stringify(sorted.map(row => [row.id, row.created_at]))).digest('base64url'),
         route: 'messages',
         filter: {},
         sort: 'created_at_desc',
       };
-      const after = decodeCursor(cursor, expected);
+      const chain = decodeCursor(cursor, expected);
+      const after = chain?.after ?? null;
+      if (after !== null && !sorted.some(row => row.id === after.id && row.created_at === after.created_at)) {
+        throw new ApiError('INVALID_CURSOR', '游标位置已失效，请重新读取首页');
+      }
+      const expires = chain?.expires ?? clock().getTime() + CURSOR_TTL_MS;
       // 稳定游标：同 `created_at` 用 `id` 全序兜底 ⇒ 同刻多条不漏不重。
       const remaining =
         after === null
@@ -319,7 +338,7 @@ export function createMessagesService(deps: MessagesServiceDeps) {
           ? encodeCursor({
               ...expected,
               after: { created_at: last.created_at, id: last.id },
-              expires: clock().getTime() + CURSOR_TTL_MS,
+              expires,
             })
           : null;
       const items: Message[] = [];

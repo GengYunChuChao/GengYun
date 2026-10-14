@@ -152,15 +152,16 @@ test('运行时清除继承配置/凭据与 NODE_OPTIONS；实际注册与静态
   }
 });
 
-test('实际 buildApp 注册清单与当前契约表一致；未接 HTTP 的社区/消息/后台保持未注册', () => {
+test('实际 buildApp 注册清单与当前契约表一致；消息已接线、社区保持未注册', () => {
   const status = JSON.parse(readFileSync(join(ROOT, 'docs/architecture/contract-status.json')));
   const operations = JSON.parse(readFileSync(join(ROOT, 'packages/contracts/operations.json'))).operations;
   const mounted = runtimeMountedRoutes(ROOT, operations);
   assert.deepEqual(mountedMismatches(status.operations, mounted), []);
   assert.deepEqual([...mounted].sort(), [...scanMountedRoutes(ROOT).mounted].sort());
   for (const key of ['post /recognitions', 'post /ocr', 'post /speech/transcriptions', 'post /speech/synthesis']) assert.ok(mounted.has(key), key);
-  // GY-I18 阶段 2（Refs #18）：原 `'get /admin/sources'` 负例已删除 —— 后台 34 条路由已装配
-  // （`services/api/src/routes/admin.ts`），该期望被新事实推翻；`/admin/**` 现已**无**未装配的
-  // 代表路由（37 条全部装配），故无法替换为其它 admin 负例。社区/消息的负例完整保留。
-  for (const key of ['get /posts', 'get /messages']) assert.equal(mounted.has(key), false, key);
+  // 已交付的后台与三个消息端点必须装配；尚未接线的社区保持负例。
+  for (const key of ['get /admin/sources', 'get /messages', 'get /messages/unread-count', 'put /messages/{id}/read']) {
+    assert.equal(mounted.has(key), true, key);
+  }
+  assert.equal(mounted.has('get /posts'), false);
 });
