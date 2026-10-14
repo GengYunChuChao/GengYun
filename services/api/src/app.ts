@@ -54,6 +54,7 @@ import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/servic
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
+import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -226,21 +227,41 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const adminRuntime = createAdminRuntime();
   const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
   const adminOpsStore = adminInjection?.opsStore ?? createAdminOpsStore({ runtime: adminRuntime });
-  const adminContentService = createAdminContentService({
-    store: adminContentStore,
-    now: clock,
-    signingKey: adminSigningKey,
-    executionMode: config.executionMode,
-  });
-  const adminOpsService = createAdminOpsService({
-    store: adminOpsStore,
-    now: clock,
-    signingKey: adminSigningKey,
-    executionMode: config.executionMode,
-    jobPort: adminInjection?.jobPort,
-    community: adminInjection?.communityStore,
-    flagEffects: adminInjection?.flagEffects,
-  });
+
+  // **real 模式 ⇒ 后台域整体 fail-closed**（监工返修 P1）。
+  // 后台服务建的是**内存** store；若在 `real` 下仍把它交给服务层，写操作会返回**成功封套**
+  // 而落点只是易失内存 —— 即在"真实模式"下声称成功、重启即丢。这不能靠
+  // `contract-status=partial` 之类文档披露替代，必须在**运行时**拒绝。
+  // 口径与本仓一致：real 永远走 fail-closed 实现（缺真实后端即 503，**严禁静默回退替身**）。
+  // **刻意不依赖任何"自述持久化"的布尔标志**：将来后台域接上真实持久 store 时，必须在这里
+  // **显式放行**（一次可审查的接线变更），而不是靠替身自称真实就能自动启用。
+  const adminRealUnwired = config.executionMode === 'real';
+
+  let adminContentService: AdminContentService;
+  let adminOpsService: AdminOpsService;
+  if (adminRealUnwired) {
+    const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
+    const failClosed = createFailClosedAdminServices(reason);
+    adminContentService = failClosed.content;
+    adminOpsService = failClosed.ops;
+    app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+  } else {
+    adminContentService = createAdminContentService({
+      store: adminContentStore,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+    });
+    adminOpsService = createAdminOpsService({
+      store: adminOpsStore,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+      jobPort: adminInjection?.jobPort,
+      community: adminInjection?.communityStore,
+      flagEffects: adminInjection?.flagEffects,
+    });
+  }
 
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);

@@ -2,8 +2,8 @@
 
 日期：2026-10-13。分支 `feat/gy-i18-admin-http`（fork `Yu0ry/GengYun_Write`）。**Refs #18，不关闭整项。**
 
-- 基线（**每次推送前同步上游**）：开工时 `upstream/main = 54ed689c`；随后按序合并 `b1f6ab0e`（含 `#104` 标签 OCR）、`3e8f89b`（含 `#107` 产品装配事实源、`#108`/`#109`/`#113`/`#115`）、**`769420a`（`#106` 跨 kind 作业读面/取消面）**。
-- 本记录对应的已推送 HEAD：**`dde1bc8`**（代码内容自 `eb5635b` 起未变；`eb5635b` = 合并 `769420a`；此前为 `fe67482`/`990d1f2`）。
+- 基线（**每次推送前同步上游**）：开工时 `upstream/main = 54ed689c`；随后按序合并 `b1f6ab0e`（含 `#104` 标签 OCR）、`3e8f89b`（含 `#107` 产品装配事实源、`#108`/`#109`/`#113`/`#115`）、`769420a`（`#106` 跨 kind 作业读面/取消面）、`5c66f43`（`#116`/`#119`/`#120`）、`f7e0053`（轻量审查规范）。
+- 本记录对应的分支 HEAD：本次返修提交（`app.ts` real⇒fail-closed + `admin/fail-closed-services.ts` + 2 条用例 + §10）；**由指挥推送**（本工作区账号无推送权限）。
 - **不代替监工独立验收**；**不声称 CI 通过**（原因见下「CI 说明」）。
 
 ## 0. CI 说明（**归因更正**）
@@ -171,3 +171,43 @@ FAIL: 契约实现状态对照校验未通过（5 项）
 - 只用 `Refs #18`，**不使用关闭关键字**；不声称验收通过、不声称 CI 通过。
 - `app.ts` 只追加；未触碰 `packages/**`、契约、`db/**`、`apps/admin/**`、`miniprogram/**`、`tools/prepare-wechat.mjs`、根 `package.json`/lock、`.github/**`、他人路由文件、`services/api/src/jobs/**`；`services/api/src/admin/**` 服务层未改。
 - 未放宽/删除任何**安全语义**断言；跨线改动（#107 测试 1 行）已在此处与 PR 正文显著披露，且一行可回退。
+
+## 10. 返修记录 · 监工批复 P1：**real 默认装配必须运行时 fail-closed**
+
+**批复原文（监工 `gengyun-supervisor[bot]`，CHANGES_REQUESTED）**：
+
+> **P1仍在 services/api/src/app.ts 后台装配：默认内存 content/ops store 却传入 real executionMode，真实模式写操作可能以成功封套修改易失内存**；当前全绿CI不能证明未接持久端口的真实业务可用。**请在未接真实存储时明确 fail-closed 或准确限制替身模式，并验证 real 默认装配反例。**
+
+### 10.1 缺陷（已复现，含量化）
+`executionMode === 'real'` 时，`app.ts` 把 `config.executionMode` 原样交给后台服务，而 store 仍是**内存**实现（`persistent === false`）：写操作返回**成功封套**（`data` + `meta.execution_mode='real'`），落点只是**易失内存**——"真实模式"下声称成功、重启即丢。
+
+**改前量化探针**（real + 默认内存 store，19 次调用）：**13 次返回成功封套（<400）**，其中含 4 条 `create*`（201）与 `setFlag`（200）；其余为 `404`（默认无种子）与端口级 `503`。
+
+### 10.2 修法（沿用本仓既有口径）
+- 新增 `services/api/src/admin/fail-closed-services.ts`：后台域的**整体 fail-closed 替身**——方法名 = 契约 operationId（25 + 9，逐条显式列出，非 Proxy），每次调用抛 `ApiError('PROVIDER_UNAVAILABLE', …, { retryable: true })`，由 `app.ts` 的 errorHandler 映射为契约内的 **503 `ErrorEnvelope`**；**不写审计、不定型幂等、无任何内存副作用**。
+- `services/api/src/app.ts`：判定条件为 **`config.executionMode === 'real'`** ⇒ 使用该替身（并在装配期 `app.log.warn` 记日志）；否则照旧构造真实服务。
+- **34 条路由保持注册**（契约面不缩水；静态清单工具与既有回归不受影响），只是运行时一律拒绝。
+- **依据**：本仓对"real 模式没有真实后端"的一贯口径就是 **real 永远走 fail-closed 实现、严禁静默回退替身**（同 `auth` 侧"real 必须持久化存储，否则拒绝签发会话"）。
+- **刻意不依赖任何"自述持久化"的布尔标志**：将来后台域接上真实持久后端时，必须在 `app.ts` **显式放行**（一次可审查的接线变更），而不是靠替身自称真实就自动启用 —— 否则"把替身记为真实成功"仍可能发生（按更新后的审查规范，该情形**仍属阻塞**）。
+
+### 10.3 测试（验收重点，最小必要）
+新增 `tests/unit/admin-real-mode-fail-closed.test.mjs`（2 条，全过）：
+1. **【监工要求的反例】** `real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用`
+   —— 覆盖**全部 34 个 operationId**；断言状态码 503、`error.code='PROVIDER_UNAVAILABLE'`、`retryable=true`、**无 `data`**；断言 34 条路由**仍注册**；断言两本审计台账**均为空**（零内存副作用）。
+2. `stub 默认装配行为不变（内存实现仍可用且确会写内存）——改动只对 real 拒绝`
+   —— stub 下 `listFlags` 200（3 键默认全 false）、`setFlag` 200、`createSourceDraft` 201，且**确有**内存审计写入；端口级 503（作业端口未接线）仍成立。说明改动**只对外拒绝 real**，未改变 stub 语义。
+
+**改前失败 → 改后通过**（同一用例，临时还原 `app.ts` 到 HEAD 后复跑，跑完即刻恢复）：
+
+```
+改前：✖ real 默认装配反例…  AssertionError: GET /api/v1/admin/sources 在 real 默认装配下必须 503，实际 200
+      ℹ tests 2 / pass 1 / fail 1
+改后：✔ real 默认装配反例…  ℹ tests 2 / pass 2 / fail 0
+```
+同一探针改前/改后：**13/19 → 0/19 成功封套**。
+
+### 10.4 顺带发现并修掉的一处**自身回归**（如实记录）
+修 P1 时我在 `app.ts` 注释里写了"见 `speech/provider.ts` 的 `createSpeechProvider`…"，**该注释文本**触发了 `tests/integration/speech-http.mjs` 的结构性 default-off 断言（它要求 `app.ts` 里出现 `speech/{store,provider,media}` 的**每一行**都只能是 `import type`，运行时擦除）⇒ `speech-http.mjs` **exit=1**。已把该文件提及从 `app.ts` 注释中删去（口径说明改写在本文档 §10.2），复跑 `speech-http.mjs` **exit=0**。教训：**跨域结构性断言会扫描注释文本**，注释里不要引用他人模块路径。
+
+### 10.5 剩余阻塞（**不得**用 `contract-status=partial` 替代运行时 fail-closed）
+**未接真实持久存储**（`packages` 侧无后台 PG store）仍是本片的**剩余阻塞**：`real` 下后台业务**不可用**（503），`stub`/`preset_demo` 下才是可用的内存实现。**#18 整体仍开放、整项未验收**；本记录如实登记，不把任何未接端口写成可用。
