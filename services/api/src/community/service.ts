@@ -50,7 +50,7 @@ import {
 } from './events.ts';
 // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：版本级审核任务与"明确驳回"否决来自已合并审核域。
 // 社区**不 import** `services/api/src/moderation/**`；这里只消费结构性端口（由装配层传入）。
-import { linkActorOf, type CommunityModerationLink, type LinkScreenResult } from './moderation-link.ts';
+import { linkActorOf, type CommunityModerationLink, type LinkConclusion, type LinkScreenResult } from './moderation-link.ts';
 import type {
   CommentCommitPatch,
   CommentRecord,
@@ -120,15 +120,18 @@ export interface CommunityServiceDeps {
    * **GY-I14 ⇄ GY-I15 联动接线（#14 + #15）**：审核域联动端口。
    *
    * 不传时与本接线前**逐字同行为**（社区仍只用本地规则层闸门 + 本地结论台账）。
-   * 传入后：
+   * 传入后（**B09**：服务失败或**无法判断不公开**）：
    *   1. 投稿/评论/编辑在**落内容行之前**送审审核域（建立版本级审核任务）；
-   *   2. 审核域**明确驳回**（规则层或模型层）⇒ 一律不得公开（400，回传原因码）；
+   *   2. **只有审核域明确放行**（`publishable`：任务集非空且全部 approved）才允许落内容行并公开；
+   *      审核域**明确驳回**（规则层/模型层）⇒ 400 `INVALID_REQUEST`（不落库，回传原因码）；
+   *      其余（**隔离/未结论**：`quarantined`/`pending`/超时/未接线/无结论）⇒ 422 `INPUT_UNCERTAIN`
+   *      （同样**不落库**，但**不**伪装成驳回：台账 `decision` 如实记 `quarantined`/`pending`）；
    *   3. 审核域抛错（`real` 未接真实供应商等）⇒ **原样上抛**（契约 503 `PROVIDER_UNAVAILABLE`）；
-   *   4. 读取时若审核域台账对该版本给出**明确驳回**（例如迟到的模型层结论/回调 block），
-   *      内容立即退出公开面（"曾经通过"不构成继续可见的理由）。
+   *   4. 读取时若审核域台账对该版本**退回非放行**（迟到的驳回 **或** 迟到的隔离/无结论），
+   *      内容立即退出公开面（"曾经通过"不是继续可见的理由）。
    *
-   * **模型层未接线时不得冒充通过**：`model_layer === 'not_wired'` 不是通过，本服务的结论台账
-   * 照旧保持 `contract_complete:false` + `missing_contract_fields`（见 `buildVerdict`）。
+   * **未接线/无结论不得冒充通过**：`model_layer === 'not_wired'` 既不是通过也不是驳回 ⇒ **隔离（非公开）**；
+   * 本服务的结论台账照旧保持 `contract_complete:false` + `missing_contract_fields`（见 `buildVerdict`）。
    */
   moderation?: CommunityModerationLink;
   now?: () => Date;
@@ -302,8 +305,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
    * **送审审核域**（落内容行**之前**调用）。
    *
    * 调用时机：社区本地规则层闸门（`gate.evaluate`，规则先挡的**记录口径**）已放行之后、
-   * 任何内容行落库之前。返回值里 `vetoed === true` 表示审核域**明确驳回**（规则层或模型层），
-   * 此时一律不得落内容行、不得公开。
+   * 任何内容行落库之前。返回值三态互斥：`publishable`（明确放行）/ `vetoed`（明确驳回）/
+   * `isolation`（隔离·未结论）；后两者都**不得**落内容行、不得公开（见 `requireDomainClearance`）。
    *
    * 审核域抛错**不在此处捕获**：`real` 未接真实供应商时必须让契约 503 原样到达调用方
    * （fail-closed；绝不把"不可用"降级成"通过"或"普通 400"）。
@@ -323,13 +326,36 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   }
 
   /**
-   * 审核域**明确驳回**时未提交内容的结论补录。
+   * **审核域放行门**（落内容行**之前**调用）：未获审核域**明确放行** ⇒ 一律不落库、不公开。
+   *
+   * 三态处置（**不混淆驳回与隔离**；B09「服务失败或无法判断不公开」）：
+   *   - `publishable === true`（审核域明确通过）⇒ 放行，继续写入；
+   *   - `vetoed === true`（明确驳回）⇒ 结论补录（`decision:'rejected'`）+ 400 `INVALID_REQUEST`；
+   *   - 其余（`isolation`：`quarantined`/`pending`/超时/未接线/无结论）⇒ 结论补录（如实记
+   *     `quarantined`/`pending`，**不**伪装成驳回）+ 422 `INPUT_UNCERTAIN`。
+   *
+   * `screen === null` 表示**本服务未接线审核域联动端口**（接线前口径，逐字不变）。
+   */
+  async function requireDomainClearance(
+    screen: LinkScreenResult | null,
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    outcome: GateOutcome,
+    text: string,
+  ): Promise<void> {
+    if (screen === null || screen.publishable === true) return;
+    await recordDomainVerdict(target, outcome, screen, text);
+    throw screen.vetoed === true ? domainRefusal(screen) : domainIsolation(screen);
+  }
+
+  /**
+   * 审核域**未获放行**（驳回或隔离）时未提交内容的结论补录。
    *
    * 复用 `buildVerdict`（`rule_version`/`text_digest`/`missing_contract_fields` 仍来自
-   * 本服务实际使用的那份规则集，**不伪造**），只把结论替换为审核域给出的那一条。
+   * 本服务实际使用的那份规则集，**不伪造**），只把结论替换为审核域给出的那一条；
+   * 隔离时 `decision` 如实记 `quarantined`/`pending`（**不**写成 `rejected`）。
    * 模型层未接线时 `contract_complete` 保持 `false`。
    */
-  async function recordDomainRefusalVerdict(
+  async function recordDomainVerdict(
     target: { type: 'post' | 'comment'; id: string; revision: number },
     outcome: GateOutcome,
     screen: LinkScreenResult,
@@ -355,22 +381,45 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   }
 
   /**
-   * 读取时重查：审核域台账对该版本是否有**明确驳回**（决定性结论）。
+   * 审核域**隔离/未结论** ⇒ 契约闭集内的"不确定"错误（与本地 `refusal` 的非 rejected 分支同形）。
    *
-   * 返回非 `null` 表示"该版本不得公开"，调用方必须降级（fail-closed）。
-   * 台账里没有结论、或只有"未接线/无结论"时返回 `null`——**不**把"没有结论"当成驳回，
-   * 也不当成通过（可见性的主判据仍是本服务自己的结论台账）。
+   * 刻意与 `domainRefusal` 分开：**"待审核/无结论"不是"驳回"**，错误码（422 vs 400）、
+   * 文案与台账 `decision` 都如实区分（审计上可分辨），但**两者都不公开**。
    */
-  function domainVetoOf(kind: 'post' | 'comment', id: string, revision: number): AuditState | null {
+  function domainIsolation(screen: LinkScreenResult): ApiError {
+    const details = screen.reason_codes.slice(0, 30).map((code) => ({ field: 'reason_codes', code }));
+    return new ApiError(
+      'INPUT_UNCERTAIN',
+      `内容未获审核域放行（隔离/未结论：decision=${screen.decision}, model_layer=${screen.model_layer}），一律不得发布`,
+      { details },
+    );
+  }
+
+  /**
+   * 读取时重查：审核域台账对该**当前版本**是否已退回"非放行"（驳回 **或** 隔离/未结论）。
+   *
+   * 返回非 `null` ⇒ 该版本不得继续公开，调用方必须降级（fail-closed），降级后的
+   * `audit_state` 如实区分 `rejected`（驳回）与 `pending`/`quarantined`（隔离）。
+   *
+   * 边界（如实登记）：台账**可读但完全没有该版本任务**（`present === false`）时返回 `null`——
+   * 没有结论可"退回"，可见性的主判据仍是本服务的结论台账；接线后**新建**内容不存在这种状态
+   * （送审先于落库）。台账**不可读**（`readable === false`）或端口抛错时返回 `'quarantined'`：
+   * **无法判断 ⇒ 隔离**（B09），不得继续公开。
+   */
+  function domainWithholdingOf(kind: 'post' | 'comment', id: string, revision: number): AuditState | null {
     if (moderationLink === null) return null;
+    let conclusion: LinkConclusion;
     try {
-      const conclusion = moderationLink.conclusionFor({ type: kind, id, revision });
-      if (!conclusion.present || !conclusion.vetoed) return null;
-      return conclusion.decision ?? 'rejected';
+      conclusion = moderationLink.conclusionFor({ type: kind, id, revision });
     } catch {
-      // 台账读不出来：主判据（本地结论台账）继续生效；**不**因此放行任何东西。
-      return null;
+      // 端口异常 ⇒ 无法判断 ⇒ 隔离（绝不放行）。
+      return 'quarantined';
     }
+    if (conclusion.readable !== true) return 'quarantined'; // 台账读不出来 ⇒ 隔离
+    if (conclusion.present !== true) return null; // 无该版本任务 ⇒ 没有结论可"退回"
+    if (conclusion.publishable === true) return null; // 审核域明确放行 ⇒ 不降级
+    if (conclusion.vetoed === true) return conclusion.decision ?? 'rejected'; // 明确驳回
+    return conclusion.decision ?? 'quarantined'; // 隔离/未结论（pending/quarantined）⇒ 退出公开面
   }
 
   /**
@@ -435,10 +484,11 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     if (assessment.stale) return demoted(assessment.landing === 'quarantined' ? 'quarantined' : 'pending');
     if (assessment.publishable) {
       // GY-I14 联动接线 · **读取时重查**：本地结论"曾经通过"不是继续可见的理由 ——
-      // 审核域台账里该版本若已被**明确驳回**（迟到的模型层结论 / 回调 block / 规则层驳回），
-      // 一律立即降级为不可公开（fail-closed）。没有结论/未接线时**不**降级（见 `domainVetoOf`）。
-      const veto = domainVetoOf(kind, record.id, record.revision);
-      if (veto !== null) return demoted(veto);
+      // 审核域台账里该版本若已**退回非放行**（迟到的驳回 / 迟到的隔离·未结论 / 台账不可读），
+      // 一律立即降级为不可公开（fail-closed）。降级后的 `audit_state` 如实区分
+      // `rejected`（驳回）与 `pending`/`quarantined`（隔离），见 `domainWithholdingOf`。
+      const withholding = domainWithholdingOf(kind, record.id, record.revision);
+      if (withholding !== null) return demoted(withholding);
       return { visibility: record.visibility, audit_state: 'approved' };
     }
     return demoted(verdict.decision);
@@ -791,12 +841,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             throw refusal(outcome);
           }
           // GY-I14 联动接线：规则先挡放行后、**落内容行之前**送审审核域 —— 建立该 revision 的
-          // 版本级审核任务（`GET /jobs/{id}` 可读），并接受审核域的**明确驳回**。
-          const screen = await screenWithModeration(user, target, text, body.media_ids);
-          if (screen !== null && screen.vetoed) {
-            await recordDomainRefusalVerdict(target, outcome, screen, text);
-            throw domainRefusal(screen);
-          }
+          // 版本级审核任务（`GET /jobs/{id}` 可读）；**未获明确放行**（明确驳回 / 隔离 / 未结论）
+          // 一律不落内容行、不公开（B09：服务失败或无法判断不公开）。
+          await requireDomainClearance(await screenWithModeration(user, target, text, body.media_ids), target, outcome, text);
           if (body.media_ids.length > 0) {
             // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
             // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
@@ -890,12 +937,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             throw refusal(outcome);
           }
           // GY-I14 联动接线：**新 revision 必须重新送审**（新版本级任务 + 新输入绑定），
-          // 旧版本的审核域结论**不得**套到新版本上（版本级绑定由审核域自己保证）。
-          const screen = await screenWithModeration(user, target, text, body.media_ids);
-          if (screen !== null && screen.vetoed) {
-            await recordDomainRefusalVerdict(target, outcome, screen, text);
-            throw domainRefusal(screen);
-          }
+          // 旧版本的审核域结论**不得**套到新版本上（版本级绑定由审核域自己保证）；
+          // 新版本未获明确放行（驳回 / 隔离）同样不得落库、不得公开。
+          await requireDomainClearance(await screenWithModeration(user, target, text, body.media_ids), target, outcome, text);
           if (body.media_ids.length > 0) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
           }
@@ -1059,12 +1103,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
           }
-          // GY-I14 联动接线：评论同样**先审后发**（版本级任务绑定该评论 revision）。
-          const screen = await screenWithModeration(user, target, text, []);
-          if (screen !== null && screen.vetoed) {
-            await recordDomainRefusalVerdict(target, outcome, screen, text);
-            throw domainRefusal(screen);
-          }
+          // GY-I14 联动接线：评论同样**先审后发**（版本级任务绑定该评论 revision）；
+          // 未获明确放行（驳回 / 隔离）一律不落评论行、不公开。
+          await requireDomainClearance(await screenWithModeration(user, target, text, []), target, outcome, text);
           const record: CommentRecord = {
             id,
             revision: 1,
@@ -1135,12 +1176,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
           }
-          // GY-I14 联动接线：评论编辑生成的新 revision 同样必须先送审（旧结论不得套新版本）。
-          const screen = await screenWithModeration(user, target, text, []);
-          if (screen !== null && screen.vetoed) {
-            await recordDomainRefusalVerdict(target, outcome, screen, text);
-            throw domainRefusal(screen);
-          }
+          // GY-I14 联动接线：评论编辑生成的新 revision 同样必须先送审（旧结论不得套新版本）；
+          // 未获明确放行（驳回 / 隔离）同样不得落库、不得公开。
+          await requireDomainClearance(await screenWithModeration(user, target, text, []), target, outcome, text);
           const patch: CommentCommitPatch = {
             revision,
             body: body.body,

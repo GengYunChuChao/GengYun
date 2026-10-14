@@ -23,16 +23,26 @@
  *
  * | 观察 | 结论 |
  * | --- | --- |
- * | 存在任务 `decision==='rejected' && hard_rule_passed !== true` | `rule_layer='rejected'` ⇒ **否决**（规则先挡） |
- * | 存在任务 `decision==='rejected' && hard_rule_passed === true` | `model_layer='rejected'` ⇒ **否决**（模型层明确驳回） |
- * | 全部任务 `decision==='approved'` | `model_layer='approved'`（模型层**已有真实结论**） |
- * | 全部端口 `provider.synthetic === true` 或 `origin==='substitute'`（或没有端口证据） | `model_layer='not_wired'`（**不是**通过，也不是驳回） |
- * | 其余 | `model_layer='unconcluded'` |
+ * | 存在任务 `decision==='rejected' && hard_rule_passed !== true` | `rule_layer='rejected'` ⇒ **驳回**（规则先挡） |
+ * | 存在任务 `decision==='rejected' && hard_rule_passed === true` | `model_layer='rejected'` ⇒ **驳回**（模型层明确驳回） |
+ * | 任务集**非空**且全部 `decision==='approved'` | `model_layer='approved'` ⇒ **可发布** |
+ * | 全部端口 `provider.synthetic === true` 或 `origin==='substitute'`（或没有端口证据） | `model_layer='not_wired'` ⇒ **隔离**（**不是**通过，也不是驳回） |
+ * | 其余 | `model_layer='unconcluded'` ⇒ **隔离** |
  *
- * **只有"明确驳回"是否决**（`vetoed`）。这一条是刻意的、已披露的口径：
- * "模型层未接线 / 没有结论"按派单 §5 如实记为不完整（`contract_complete:false`），
- * **不得**被当成"替身 AI 审核通过"，也**不得**被当成驳回去摧毁 #15 已合并的
- * 规则层阶段（把"未接线"变成"一律不可公开"等于让 stub/演示模式下社区无法投稿）。
+ * **三态互斥**（`publishable` / `vetoed` / `isolation`，唯一实现，调用方不得自行重算）：
+ *
+ * | 态 | 判据 | 社区侧处置 |
+ * | --- | --- | --- |
+ * | **可发布** `publishable` | `decision === 'approved'`（任务集非空且全部通过） | 允许落内容行并公开 |
+ * | **驳回** `vetoed` | 存在 `rejected` 任务（规则层或模型层） | **不落库**（400）+ 读取面退出公开面 |
+ * | **隔离** `isolation` | 其余（`quarantined` / `pending` / 超时 / 未接线 / 无结论） | **不落库**（422）+ 读取面退出公开面 |
+ *
+ * 依据 `docs/product-requirements.md` **B09**（服务失败或**无法判断不公开**；AI 失败/超时/无结论**保持隔离**）
+ * 与监工 #155 返修（P1，2026-10-15）：**"未接线/无结论"不得发布**；但**也不必伪装成"驳回"**——
+ * 两者在对外错误码（400 vs 422）、台账 `decision`（`rejected` vs `quarantined`/`pending`）与
+ * `model_layer`（`rejected` vs `not_wired`/`unconcluded`）上都如实区分，审计可分辨、不冒称"已审核通过"。
+ * Demo 的**通过分支**必须由**明确标注的合成 `pass` 端口**（`provider.synthetic === true`）驱动，
+ * **不得**用"未接线"冒充通过。
  */
 import { ApiError } from '../errors.ts';
 
@@ -68,8 +78,15 @@ export interface LinkScreenResult {
   model_layer: LinkModelLayer;
   decision: LinkAuditState;
   reason_codes: string[];
-  /** **明确驳回**（规则层或模型层）⇒ 内容不得公开。仅此一条是否决。 */
+  /**
+   * **审核域明确可发布**（`decision === 'approved'`：任务集非空且全部拿到通过结论）。
+   * **只有它为 `true`** 时社区才允许落内容行并公开（B09：无法判断不公开）。
+   */
+  publishable: boolean;
+  /** **明确驳回**（规则层 `rejected` 或模型层 `rejected`）⇒ 400（与"隔离"区分，不混淆）。 */
   vetoed: boolean;
+  /** **隔离/未结论**（`quarantined` / `pending` / 超时 / 未接线 / 无结论）⇒ 422（不得发布，但**不**伪装成驳回）。 */
+  isolation: boolean;
   rule_rejected: boolean;
   model_rejected: boolean;
   /** 模型层是否产出了**真实**结论（只有这时契约 `Moderation` 才可能装配完整）。 */
@@ -84,8 +101,16 @@ export interface LinkScreenResult {
 
 /** 该版本在审核域台账里的**当前**结论（读取时重查用；同步读，不发起审核）。 */
 export interface LinkConclusion {
+  /** 台账里是否有该 `(target, revision)` 的版本级任务。 */
   present: boolean;
+  /** 台账是否**可读**。不可读 ⇒ 调用方必须按"无法判断 ⇒ 隔离"处理（fail-closed）。 */
+  readable: boolean;
+  /** 审核域对该版本**明确可发布**（`present && publishable`）。 */
+  publishable: boolean;
+  /** 明确驳回（非公开），与"隔离"分开表达。 */
   vetoed: boolean;
+  /** 隔离/未结论：既非可发布、也非明确驳回（含"台账里没有该版本任务"）。 */
+  isolation: boolean;
   decision: LinkAuditState | null;
   reason_codes: string[];
   task_ids: string[];
@@ -215,7 +240,9 @@ export function judgeTasks(tasksValue: unknown): {
   model_layer: LinkModelLayer;
   decision: LinkAuditState;
   reason_codes: string[];
+  publishable: boolean;
   vetoed: boolean;
+  isolation: boolean;
   rule_rejected: boolean;
   model_rejected: boolean;
   model_concluded: boolean;
@@ -253,12 +280,18 @@ export function judgeTasks(tasksValue: unknown): {
           : 'quarantined';
 
   const reasonCodes = [...new Set(tasks.flatMap((task) => task.reason_codes))].slice(0, 30);
+  // **三态互斥**：只有"任务集非空且全部 approved"才可发布；存在 rejected 任务即驳回；
+  // 其余（quarantined / pending / 未接线 / 无结论 / 超时）一律**隔离**（不得发布，也不谎称驳回）。
+  const publishable = decision === 'approved';
+  const vetoed = ruleRejected || modelRejected;
   return {
     rule_layer: ruleRejected ? 'rejected' : allRulePassed ? 'passed' : 'unconcluded',
     model_layer: modelLayer,
     decision,
     reason_codes: reasonCodes,
-    vetoed: ruleRejected || modelRejected,
+    publishable,
+    vetoed,
+    isolation: !publishable && !vetoed,
     rule_rejected: ruleRejected,
     model_rejected: modelRejected,
     model_concluded: allApproved || modelRejected,
@@ -371,15 +404,30 @@ export function createCommunityModerationLink(options: {
     try {
       tasks = moderation.tasks(target_ref);
     } catch {
-      // 台账读不出来 ⇒ 没有结论（**不是**通过，也**不是**驳回 ⇒ 不影响可见性；
-      // 可见性的主判据仍是社区自己的结论台账，见 `service.ts` 的 `effectiveState`）。
-      return { present: false, vetoed: false, decision: null, reason_codes: [], task_ids: [], model_layer: 'unconcluded' };
+      // 台账读不出来 ⇒ **不可读**：调用方必须按"无法判断 ⇒ 隔离"处理（B09），
+      // 绝不把"读不懂"当成"可发布"。
+      return {
+        present: false,
+        readable: false,
+        publishable: false,
+        vetoed: false,
+        isolation: true,
+        decision: null,
+        reason_codes: [],
+        task_ids: [],
+        model_layer: 'unconcluded',
+      };
     }
     const judged = judgeTasks(tasks);
+    const present = judged.task_ids.length > 0;
     return {
-      present: judged.task_ids.length > 0,
-      vetoed: judged.vetoed,
-      decision: judged.task_ids.length > 0 ? judged.decision : null,
+      present,
+      readable: true,
+      // 台账里没有该版本任务 ⇒ **不**算"可发布"（没有结论就不是放行）。
+      publishable: present && judged.publishable,
+      vetoed: present && judged.vetoed,
+      isolation: !present || judged.isolation,
+      decision: present ? judged.decision : null,
       reason_codes: judged.reason_codes,
       task_ids: judged.task_ids,
       model_layer: judged.model_layer,
