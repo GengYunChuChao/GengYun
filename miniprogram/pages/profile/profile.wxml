@@ -79,21 +79,23 @@
             {{locating ? '正在定位…' : '使用定位选地区（可改手选）'}}
           </button>
           <picker range="{{crops}}" range-key="name" value="{{cropIndex < 0 ? 0 : cropIndex}}" bindchange="onCrop" disabled="{{busy || retryPending || needsReload}}">
-            <view class="setting-row">
+            <!-- .selection 是既有 tests/integration/local-dev-profile-ui.cjs 测量字号用的稳定选择器，
+                 与 demo .setting-row 形态并存，不改他人验证脚本 -->
+            <view class="setting-row selection">
               <text class="setting-row__label">种植作物</text>
               <text class="setting-row__value">{{cropIndex < 0 ? '请选择' : crops[cropIndex].name}}</text>
               <view class="gy-icon gy-icon--arrow"></view>
             </view>
           </picker>
           <picker range="{{cities}}" range-key="name" value="{{cityIndex < 0 ? 0 : cityIndex}}" bindchange="onCity" disabled="{{busy || retryPending || needsReload}}">
-            <view class="setting-row">
+            <view class="setting-row selection">
               <text class="setting-row__label">浙江市</text>
               <text class="setting-row__value">{{cityIndex < 0 ? '请选择' : cities[cityIndex].name}}</text>
               <view class="gy-icon gy-icon--arrow"></view>
             </view>
           </picker>
           <picker range="{{counties}}" range-key="name" value="{{countyIndex < 0 ? 0 : countyIndex}}" bindchange="onCounty" disabled="{{busy || retryPending || needsReload || !counties.length}}">
-            <view class="setting-row">
+            <view class="setting-row selection">
               <text class="setting-row__label">县区</text>
               <text class="setting-row__value">{{countyIndex < 0 ? '未选县区，使用所选市' : counties[countyIndex].name}}</text>
               <view class="gy-icon gy-icon--arrow"></view>

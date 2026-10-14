@@ -15,3 +15,12 @@
   opacity: 0.75;
   margin-left: 6rpx;
 }
+
+/* picker 触发区的兼容类：形态走 demo .setting-row；同时保留 .selection，
+   因为既有 tests/integration/local-dev-profile-ui.cjs 以 .selection 测量字号
+   （受控最大字号档期望 23.4px），保留稳定选择器比改他人验证脚本更稳。
+   这里只补触控下限与盒模型，不覆盖 .setting-row 的 flex 排版。 */
+.selection {
+  min-height: var(--tap-min, 44px);
+  box-sizing: border-box;
+}
