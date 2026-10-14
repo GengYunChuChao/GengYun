@@ -13,6 +13,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 ```
 
 在微信工具导入 .local/wechat-local 根目录；按本机地址填写忽略配置。
+`apiBaseUrl` 是**客户端拼接基址**（客户端自行拼 `/auth/…`、`/me/profile`）：诊断替身用 `http://127.0.0.1:4318`（带路径前缀时 `GET /<前缀>/__local__/status` 同样可达）；接真实本地 API 时须写成 `http://127.0.0.1:<api端口>/api/v1`，否则登录会打到 `/auth/wechat` 而 404。工具已按客户端口径接受并保留该路径（尾斜杠规范化，凭据/查询串/片段/空段/百分号编码仍拒绝）。
 诊断服务仅返回合成状态，不提供 /api/v1 业务；手机 localhost 是手机自身。
 个人“不校验合法域名”例外仅用于此隔离工程，不能当正式 HTTPS／真机资格证据。
 输出已存在时工具拒绝覆盖，先保留检查，再核对绝对路径属于自己后清理该生成目录；不要删除他人的工程。

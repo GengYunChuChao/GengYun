@@ -1,0 +1,94 @@
+{
+  "kind": "actual native devtools simulator + real page code + real loopback HTTP; 平台失败分支为受控注入，不是真实授权弹窗",
+  "platform": {
+    "platform": "devtools",
+    "SDKVersion": "3.17.3",
+    "windowWidth": 390,
+    "windowHeight": 753
+  },
+  "branches": [
+    {
+      "label": "确认框选改用手选",
+      "message": "已选择手选，可继续选择浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "拒绝授权",
+      "message": "未获得定位授权，可继续手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "用户取消",
+      "message": "已取消定位，可继续手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "定位超时",
+      "message": "定位超时，可继续手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "平台不支持",
+      "message": "定位不可用或平台不支持，可继续手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "哨兵坐标·无转换资源",
+      "message": "地区转换资源尚未接入，请手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "省外",
+      "message": "当前位置不在首版覆盖的浙江省内，请手选浙江市县。",
+      "editing": true,
+      "locating": false
+    },
+    {
+      "label": "受控转换资源预选县区",
+      "message": "已按定位预选 上城区，请确认后保存档案。",
+      "editing": true,
+      "locating": false,
+      "selection": {
+        "cityIndex": 0,
+        "countyIndex": 0
+      }
+    },
+    {
+      "label": "允许·真实平台坐标无转换资源",
+      "message": "地区转换资源尚未接入，请手选浙江市县。",
+      "editing": true,
+      "locating": false
+    }
+  ],
+  "catalog": {
+    "crops": 4,
+    "regions": 102
+  },
+  "privacy": {
+    "sentinelInStorage": [],
+    "sentinelInPageData": [],
+    "storageKeys": [
+      "gengyun.session"
+    ]
+  },
+  "manualSaveAfterFailures": {
+    "revisionBeforeSave": 3,
+    "revisionAfterSave": 4,
+    "crop_id": "crop_rice",
+    "region_code": "330102"
+  },
+  "realGetLocation": {
+    "status": "returned",
+    "result": {
+      "ok": true,
+      "latitudeType": "number",
+      "longitudeType": "number"
+    }
+  }
+}

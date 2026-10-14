@@ -6,23 +6,42 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 import { once } from 'node:events';
-import { readLocalConfig, privateIPv4 } from '../tools/local-debug-config.mjs';
+import { readLocalConfig, privateIPv4, clientBasePath } from '../tools/local-debug-config.mjs';
 import { startLocalServer } from '../tools/local-debug-server.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const fixture = mkdtempSync(join(tmpdir(), 'gengyun-local-test-'));
+// 每次调用写一份独立配置：共用同一文件时后一次 config() 会覆盖前一次的 apiBaseUrl（曾造成假通过）
+let configSeq = 0;
 function config(overrides = {}) {
-  const path = join(fixture, 'config.json');
+  const path = join(fixture, `config-${++configSeq}.json`);
   writeFileSync(path, JSON.stringify({ mode: 'local', bindHost: '127.0.0.1', port: 4318, apiBaseUrl: 'http://127.0.0.1:4318', ...overrides }));
   return path;
 }
-test('missing, public, wildcard, credential and mismatched configs fail', () => {
+test('missing, public, wildcard, credential, unsafe path and mismatched configs fail', () => {
   assert.throws(() => readLocalConfig());
   assert.throws(() => readLocalConfig(join(fixture, 'absent')));
-  for (const overrides of [ { mode: 'production' }, { bindHost: '0.0.0.0' }, { apiBaseUrl: 'https://example.com' }, { apiBaseUrl: 'http://127.0.0.1:9999' }, { apiBaseUrl: 'http://user:pass@127.0.0.1:4318' }, { apiBaseUrl: 'http://127.0.0.1:4318/private' }, { apiBaseUrl: 'http://127.0.0.1:4318?secret=1' }, { secret: 'synthetic' } ]) assert.throws(() => readLocalConfig(config(overrides)));
+  for (const overrides of [ { mode: 'production' }, { bindHost: '0.0.0.0' }, { apiBaseUrl: 'https://example.com' }, { apiBaseUrl: 'http://127.0.0.1:9999' }, { apiBaseUrl: 'http://user:pass@127.0.0.1:4318' }, { apiBaseUrl: 'http://127.0.0.1:4318?secret=1' }, { apiBaseUrl: 'http://127.0.0.1:4318#fragment' }, { apiBaseUrl: 'http://127.0.0.1:4318/api//v1' }, { apiBaseUrl: 'http://127.0.0.1:4318/api%2Fv1' }, { bindHost: '192.168.1.10' }, { secret: 'synthetic' } ]) assert.throws(() => readLocalConfig(config(overrides)));
   assert.equal(privateIPv4('172.32.1.1'), false);
   assert.equal(privateIPv4('192.168.1.2'), true);
   assert.equal(readLocalConfig(config()).mode, 'local');
+});
+// —— 工具链修正：`apiBaseUrl` 是**客户端拼接基址**，既要支持 origin（诊断替身），
+// 也要支持 origin + 业务前缀（真实本地 API 的 /api/v1），且不得因此放宽任何安全拒绝 ——
+test('apiBaseUrl accepts origin or origin plus a client-append base path without widening rejections', () => {
+  assert.equal(readLocalConfig(config()).apiBaseUrl, 'http://127.0.0.1:4318');
+  assert.equal(readLocalConfig(config({ apiBaseUrl: 'http://127.0.0.1:4318/api/v1' })).apiBaseUrl, 'http://127.0.0.1:4318/api/v1');
+  assert.equal(readLocalConfig(config({ apiBaseUrl: 'http://127.0.0.1:4318/api/v1/' })).apiBaseUrl, 'http://127.0.0.1:4318/api/v1', '尾斜杠规范化为同一形态');
+  assert.equal(readLocalConfig(config({ apiBaseUrl: 'http://127.0.0.1:4318/' })).apiBaseUrl, 'http://127.0.0.1:4318');
+  assert.equal(readLocalConfig(config({ bindHost: '192.168.1.10', apiBaseUrl: 'http://192.168.1.10:4318/api/v1' })).apiBaseUrl, 'http://192.168.1.10:4318/api/v1', '同网私网地址同样支持路径形态');
+  // URL 解析器会先消解 `.`／`..` 段（不残留路径穿越），这里显式记录该规范化结果
+  assert.equal(readLocalConfig(config({ apiBaseUrl: 'http://127.0.0.1:4318/api/./v1' })).apiBaseUrl, 'http://127.0.0.1:4318/api/v1');
+  assert.equal(readLocalConfig(config({ apiBaseUrl: 'http://127.0.0.1:4318/api/../v1' })).apiBaseUrl, 'http://127.0.0.1:4318/v1');
+  assert.equal(clientBasePath('/'), '');
+  assert.equal(clientBasePath(''), '');
+  assert.equal(clientBasePath('/api/v1'), '/api/v1');
+  assert.equal(clientBasePath('/api/v1///'), '/api/v1');
+  for (const bad of [null, 42, {}, 'api/v1', '//api/v1', '/api//v1', '/api/./v1', '/api/../v1', '/api/v1/../..', '/api%2Fv1', '/api v1', '/api/v1;x']) assert.equal(clientBasePath(bad), null, `不该接受该路径：${String(bad)}`);
 });
 test('actual HTTP service is synthetic, no-store and has no business routes', async () => {
   const server = startLocalServer({ bindHost: '127.0.0.1', port: 0 });
@@ -36,6 +55,19 @@ test('actual HTTP service is synthetic, no-store and has no business routes', as
     for (const path of ['/api/v1/auth/login', '/__local__/status?token=x', '/media']) assert.equal((await fetch(base + path)).status, 404);
     assert.equal((await fetch(base + '/__local__/status', { method: 'POST' })).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); }
+  // 带路径基址（/api/v1）时 debug.js 请求的是 `${apiBaseUrl}/__local__/status`：两种前缀都必须可达，
+  // 否则工具打印出来的诊断地址自己取不到；同时不得因此多开任何业务路径。
+  const scoped = startLocalServer({ bindHost: '127.0.0.1', port: 0, apiBaseUrl: 'http://127.0.0.1:1/api/v1' });
+  try {
+    await once(scoped, 'listening');
+    const base = 'http://127.0.0.1:' + scoped.address().port;
+    for (const path of ['/__local__/status', '/api/v1/__local__/status']) {
+      const response = await fetch(base + path);
+      assert.equal(response.status, 200, path);
+      assert.deepEqual(await response.json(), { service: 'gengyun-local-diagnostic', execution_mode: 'local_stub', synthetic: true, capabilities: [] });
+    }
+    for (const path of ['/api/v1/media', '/api//__local__/status', '/api/v1/__local__/status?token=x', '/v1/__local__/status']) assert.equal((await fetch(base + path)).status, 404, path);
+  } finally { await new Promise(resolve => scoped.close(resolve)); }
 });
 test('client blocks trial/release/unknown environments and labels stub or failure', () => {
   const script = readFileSync(join(root, 'miniprogram/utils/debug.js'), 'utf8');
@@ -66,13 +98,16 @@ test('isolated packaging excludes private files and rejects release overrides/st
   writeFileSync(join(project, 'project.private.config.json'), '{"setting":{"urlCheck":false}}');
   writeFileSync(join(project, 'miniprogram/private.local.json'), '{"secret":"synthetic"}');
   const run = args => spawnSync(process.execPath, [join(project, 'tools/prepare-wechat.mjs'), ...args], { encoding: 'utf8' });
+  // 本地替身工程按**客户端拼接基址**生成：这里直接用真实本地 API 的业务前缀形态（/api/v1）
+  const apiConfig = config({ apiBaseUrl: 'http://127.0.0.1:4318/api/v1' });
   assert.notEqual(run(['local']).status, 0);
   assert.notEqual(run(['release', '--config', config()]).status, 0);
-  assert.equal(run(['local', '--config', config()]).status, 0);
+  assert.equal(run(['local', '--config', apiConfig]).status, 0);
   const local = join(project, '.local/wechat-local');
   assert.equal(existsSync(join(local, 'project.private.config.json')), false);
   assert.equal(existsSync(join(local, 'miniprogram/private.local.json')), false);
-  assert.match(readFileSync(join(local, 'miniprogram/config/runtime.js'), 'utf8'), /"mode":"local"/);
+  const generatedRuntime = readFileSync(join(local, 'miniprogram/config/runtime.js'), 'utf8');
+  assert.deepEqual(JSON.parse(generatedRuntime.split('= ')[1]), { mode: 'local', apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }, '生成物必须逐字保留带业务前缀的客户端拼接基址');
   assert.notEqual(run(['local', '--config', config()]).status, 0);
   assert.equal(run(['release']).status, 0);
   const release = join(project, '.local/wechat-release');

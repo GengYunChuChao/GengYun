@@ -339,3 +339,67 @@ test('GY-I05 closeout: non-user session role is denied before any SQL, and profi
   assert.deepEqual(coordinates,[],'存在疑似坐标列');
   assert.equal((await app.inject({url:route,headers:headers(a)})).json().data.revision,4);
 });
+
+// —— GY-I05（#5）：错误码与契约闭集一致（前后端一致性 · 服务端侧）。
+// 断言对象是 **packages/contracts/states.json 的 error_status_map**（契约闭集），不是手写清单；
+// 同时把该闭集与 openapi.json 的 ErrorCode 枚举对齐，确保没有第二份"自己维护"的错误码表。
+const contractStates = JSON.parse(read('packages/contracts/states.json'));
+const contractOpenapi = JSON.parse(read('packages/contracts/openapi.json'));
+const CONTRACT_STATUS = Object.fromEntries(Object.entries(contractStates.error_status_map)
+  .flatMap(([status, codes]) => codes.map(code => [code, Number(status)])));
+const CONTRACT_CODES = new Set(Object.values(contractStates.error_status_map).flat());
+
+test('GY-I05: profile/catalog 端点只返回契约闭集内的错误码，且状态码与契约逐项一致', async t => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const {app, db, a, b, headers, put} = f;
+  assert.deepEqual([...CONTRACT_CODES].sort(), [...contractOpenapi.components.schemas.ErrorCode.enum].sort(),
+    'states.error_status_map 与 openapi ErrorCode 枚举必须一致');
+
+  const observed = [];
+  const record = (label, response) => {
+    const body = response.json();
+    observed.push([label, response.statusCode, body.error && body.error.code, body.data]);
+    return response;
+  };
+  // 无会话（游客）与失效会话。
+  for (const url of [route, '/api/v1/catalog/crops', '/api/v1/catalog/regions']) record('guest GET ' + url, await app.inject({url}));
+  record('guest PUT', await app.inject({method:'PUT',url:route,headers:{'idempotency-key':'err-guest-put','if-match':'"1"'},payload:input}));
+  const logout = await app.inject({method:'POST',url:'/api/v1/auth/logout',headers:{...headers(b),'idempotency-key':'err-logout-b'}});
+  assert.equal(logout.statusCode,200,logout.body);
+  record('revoked session GET', await app.inject({url:route,headers:headers(b)}));
+  record('revoked session PUT', await app.inject({method:'PUT',url:route,headers:{...headers(b),'idempotency-key':'err-revoked-put','if-match':'"1"'},payload:input}));
+  // 头部缺失与版本冲突。
+  record('no if-match', await app.inject({method:'PUT',url:route,headers:{...headers(a),'idempotency-key':'err-no-ifmatch'},payload:input}));
+  record('no idempotency-key', await app.inject({method:'PUT',url:route,headers:{...headers(a),'if-match':'"1"'},payload:input}));
+  assert.equal((await put(a)).statusCode,200,'首次保存应成功（revision 2）');
+  record('stale if-match', await put(a,input,'err-stale','"9"'));
+  record('same key different body', await put(a,{...input,crop_id:'crop_corn'},'profile-key-0001','"2"'));
+  // schema 校验失败（查询串与请求体各一条）与失效游标。
+  record('query validation', await app.inject({url:`${route}?latitude=30&longitude=120`,headers:headers(a)}));
+  record('body validation', await put(a,{...input,note:'x'},'err-body','"2"'));
+  record('invalid cursor', await app.inject({url:'/api/v1/catalog/crops?cursor=not-a-real-cursor',headers:headers(a)}));
+  // 无数据库：档案端点按契约 503（不伪造空档案成功）。
+  const stub = buildApp({config:loadConfig({APP_EXECUTION_MODE:'stub',LOG_LEVEL:'silent'})});
+  const stubLogin = await stub.inject({method:'POST',url:'/api/v1/auth/wechat',headers:{'idempotency-key':'err-stub-login'},payload:{code:'none'}});
+  const stubToken = stubLogin.json().data.access_token;
+  record('no database GET', await stub.inject({url:route,headers:headers(stubToken)}));
+  record('no database PUT', await stub.inject({method:'PUT',url:route,headers:{...headers(stubToken),'idempotency-key':'err-stub-put','if-match':'"1"'},payload:input}));
+  await stub.close();
+
+  const seen = new Set();
+  for (const [label, status, code, data] of observed) {
+    assert.equal(typeof code,'string',`${label} 没有契约错误码（body=${JSON.stringify(data)}）`);
+    assert.ok(CONTRACT_CODES.has(code),`${label} 返回契约外错误码：${code}`);
+    assert.equal(status,CONTRACT_STATUS[code],`${label} 的错误码 ${code} 与契约状态码不一致`);
+    assert.equal(data,undefined,`${label} 被拒绝却同时返回成功 data`);
+    seen.add(code);
+  }
+  // 覆盖面守卫：本片真正触达的错误码必须都被观察到（防止断言对象是个空集）。
+  for (const code of ['SESSION_REQUIRED','REVISION_REQUIRED','IDEMPOTENCY_KEY_REQUIRED','REVISION_CONFLICT',
+    'IDEMPOTENCY_CONFLICT','INVALID_REQUEST','INVALID_CURSOR','PROVIDER_UNAVAILABLE']) {
+    assert.ok(seen.has(code),`本片应触达的错误码没有被覆盖：${code}`);
+  }
+  assert.equal((await app.inject({url:route,headers:headers(a)})).json().data.revision,2,'被拒请求不得改写档案');
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM single_profiles')).rows[0].n,1);
+});
