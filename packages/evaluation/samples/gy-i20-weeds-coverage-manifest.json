@@ -1,0 +1,16 @@
+{
+  "schema": "gengyun.evaluation.coverage-manifest.v1",
+  "indexVersion": "gy-i20-weeds-real-2026.10.14",
+  "basisRef": "GY-I03#species_groups.required@pkg/knowledge/coverage-report.json",
+  "weedPhotoCoveredClasses": [
+    "species_barnyardgrass",
+    "species_foxtail",
+    "species_nettle_group",
+    "species_crabgrass",
+    "species_goosegrass",
+    "species_shortawn_foxtail",
+    "species_lambsquarters",
+    "species_alligatorweed"
+  ],
+  "note": "覆盖承诺类取自 GY-I03 承诺范围（packages/knowledge/coverage-report.json#species_groups.required，8 组中文展示名）经 packages/knowledge/catalog/species.json 的 group_name↔id 映射后的规范物种 ID，顺序与目录一致。该清单绑定进冻结清单：缩减/修改/新增一律拒绝，变化须作为新冻结版本。注意：GY-I03 的 8 组为**资料覆盖承诺**（coverage_state=planned，尚无识别标注），本轮据此作为拍草评估的覆盖绑定依据；模型侧独立覆盖承诺仍待冻结，见 sample-gap-register。"
+}
