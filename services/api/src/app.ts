@@ -55,6 +55,7 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+import type { AdminCallContext } from './admin/types.ts';
 // GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
 import {
   createFeatureFlagGate,
@@ -109,6 +110,11 @@ import {
   type CommunityEventsPort,
 } from './community/events.ts';
 import { withTakedownObserver } from './community/takedown.ts';
+// GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：审核域 ⇄ 社区发布/编辑链 ⇄ 后台下架。
+//   - `createCommunityContentAuthority`：审核域的**内容权威端口**接到社区那一份 store（同源）；
+//   - `createCommunityModerationLink`：社区侧的**结构性**审核域端口（社区目录不 import 审核域实现）。
+import { createCommunityContentAuthority } from './community/moderation-authority.ts';
+import { createCommunityModerationLink, type CommunityModerationLink } from './community/moderation-link.ts';
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
@@ -168,6 +174,12 @@ declare module 'fastify' {
      * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
      */
     communityService: CommunityService | null;
+  /**
+   * **GY-I14 ⇄ GY-I15 联动接线**（#14 + #15）：社区侧的审核域联动端口；`real` 下社区服务为
+   * `null`（整域 503），此端口也随之不可用（审核域在 real 下整域 fail-closed）。
+   * 仅作装配透明性与**证据/回归**用；业务判定只在服务层内部发生。
+   */
+  communityModerationLink: CommunityModerationLink | null;
   }
 }
 
@@ -289,6 +301,11 @@ export interface BuildAppOptions {
     events?: CommunityEventsPort;
     /** 测试注入：替换发布闸门（默认出厂规则集；注入自定义规则集会真实改变派生 `rule_version`）。 */
     gate?: Parameters<typeof createCommunityService>[0]['gate'];
+    /**
+     * **GY-I14 ⇄ GY-I15 联动接线**：测试可注入自己的审核域联动端口；传 `null` 显式**关闭**联动
+     * （回到接线前行为，用于"接线确实改变了行为"的对照与反例）。
+     */
+    moderation?: CommunityModerationLink | null;
   };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
@@ -362,6 +379,55 @@ export function requestLogFields(request: unknown): RequestLogFields {
   return fields;
 }
 
+/**
+ * **GY-I14 ⇄ GY-I15 联动接线（后台下架 ⇄ 审核域）**：包装后台 `hidePost`。
+ *
+ * 纪律（与 `community/takedown.ts` 的下架观察器同口径）：
+ *   - 后台下架的**权威写入仍在社区 store 的 CAS 里**；本层**不**复制可见性判定、
+ *     **不**改错误映射、**不**改响应形状；
+ *   - 本层只做一件事：CAS **成功返回之后**调用审核域 `withdraw`，从而
+ *     1. 失效审核域对该目标**全部 revision** 的读缓存（`invalidated_cache_keys`）；
+ *     2. 在审核域台账打**永久 withdrawn 标记** ⇒ 该版本此后不得再被发布/复活。
+ *   - 处置**已经生效**：审核域不可用时**不回滚**一次已生效的合规处置，而是如实抛
+ *     契约 503（`retryable`）——重试是幂等的（后台的 `changed:false` 路径不重复处置）。
+ *   - `target_ref.revision` 取**处置前**的版本（后台隐藏会把 revision +1），
+ *     因为被公开发布、也是缓存里被记住的就是那一版。
+ */
+function withModerationTakedownLink(
+  ops: AdminOpsService,
+  deps: {
+    link: CommunityModerationLink;
+    posts: AdminOpsServiceOptions['community'];
+    reason?: string;
+  },
+): AdminOpsService {
+  const reason = deps.reason ?? 'admin_hide';
+  return {
+    ...ops,
+    async hidePost(ctx: AdminCallContext, id: string, body: unknown) {
+      const before = deps.posts === undefined ? null : await deps.posts.getPost(id);
+      const response = await ops.hidePost(ctx, id, body);
+      const targetRef = { type: 'post' as const, id, revision: before === null ? 1 : before.revision };
+      try {
+        await deps.link.withdraw({
+          // 主体来自**真实后台会话**（路由已强制 admin + `sources:write`）；客户端不可自述。
+          actor: { userId: ctx.identity.userId, role: 'admin', authEpoch: ctx.identity.authEpoch },
+          target_ref: targetRef,
+          reason_code: reason,
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.retryable) throw error;
+        throw new ApiError(
+          'PROVIDER_UNAVAILABLE',
+          '后台下架已生效，但审核域缓存失效未完成（fail-closed，可重试）',
+          { retryable: true },
+        );
+      }
+      return response;
+    },
+  };
+}
+
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
 export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
@@ -388,16 +454,38 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
     idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
   });
+  // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：社区 store 与作者投影**只声明一次**，
+  // 由社区服务、后台 `hidePost` 与审核域的**同源内容权威端口**三方共用同一实例。
+  // 说明：这两行原在下方"社区装配"块内；本接线只把**声明**前移到审核域构造之前
+  // （审核域构造时需要权威端口），其余装配顺序与内容**逐字未变**。
+  const communityStore = communityInjection?.store ?? createMemoryCommunityStore({ now: () => clock().getTime() });
+  const communityAuthors: AuthorDirectory = communityInjection?.authors ?? createLocalPseudonymousAuthorDirectory();
+  // 同源权威端口：审核域读到的就是社区真实内容行，下架写的也是同一行（不是第二份副本）。
+  const communityContentAuthority = createCommunityContentAuthority({
+    store: communityStore,
+    authors: communityAuthors,
+  });
   // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域（未授权真实 tms/ims 供应商）；其余模式 ⇒ 替身端口
   // （替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**（零端口注入）。
+  // 本接线起：非 real 模式下**内容权威端口**默认是同源社区权威（除非显式注入）。
   const moderationService: ModerationService =
     moderationInjection?.service ??
     createModerationService({
       executionMode: config.executionMode,
       ...(moderationInjection?.ports === undefined ? {} : { ports: moderationInjection.ports }),
-      ...(moderationInjection?.authority === undefined ? {} : { authority: moderationInjection.authority }),
+      ...(moderationInjection?.authority !== undefined
+        ? { authority: moderationInjection.authority }
+        : config.executionMode === 'real'
+          ? {}
+          : { authority: communityContentAuthority }),
       ...(moderationInjection?.callbackKey === undefined ? {} : { callbackKey: moderationInjection.callbackKey }),
     });
+  // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
+  // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。
+  const communityModerationLink: CommunityModerationLink | null =
+    communityInjection?.moderation === undefined
+      ? createCommunityModerationLink({ moderation: moderationService })
+      : communityInjection.moderation;
   const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
   const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
   const wechatProvider =
@@ -539,7 +627,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 不改 visibility、不改错误映射（权威判定仍在社区 store 的 CAS 里）。
   // ---------------------------------------------------------------------------
   const communitySigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
-  const communityStore = communityInjection?.store ?? createMemoryCommunityStore({ now: () => clock().getTime() });
+  // `communityStore` / `communityAuthors` 已在本文件上方（审核域构造之前）**声明一次**，
+  // 由社区服务、后台 `hidePost` 与审核域同源权威端口三方共用；此处不再重复声明。
   const communityEvents: CommunityEventsPort =
     communityInjection?.events ??
     (messagesService === null
@@ -555,10 +644,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     communityService = createCommunityService({
       store: communityStore,
       // **必填**：不提供默认值，避免某个接线点忘了接作者来源时悄悄用假名当真实作者。
-      authors: communityInjection?.authors ?? createLocalPseudonymousAuthorDirectory(),
+      authors: communityAuthors,
       gate: communityInjection?.gate,
       knowledge: communityInjection?.knowledge,
       events: communityEvents,
+      // GY-I14 ⇄ GY-I15 联动接线：投稿/评论/编辑在落内容行前送审审核域；明确驳回一律不得公开。
+      ...(communityModerationLink === null ? {} : { moderation: communityModerationLink }),
       signingKey: communitySigningKey,
       now: clock,
     });
@@ -624,6 +715,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       community: communityPostPortForAdmin,
       flagEffects: adminInjection?.flagEffects,
     });
+    // GY-I14 ⇄ GY-I15 联动接线：后台下架生效后**驱动审核域下架**（整链缓存失效 + 该版本永久不可复活）。
+    // 只用**包装**的方式追加一个时机，不改 `admin/ops/**` 的任何实现。
+    if (communityModerationLink !== null) {
+      adminOpsService = withModerationTakedownLink(adminOpsService, {
+        link: communityModerationLink,
+        posts: communityPostPortForAdmin,
+      });
+    }
   }
 
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
@@ -728,6 +827,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('historyService', historyService);
   app.decorate('userDataDeletion', userDataDeletion);
   app.decorate('communityService', communityService);
+  // GY-I14 ⇄ GY-I15 联动接线：把装配好的联动端口挂出来（只读用途；业务判定仍在服务层内部）。
+  app.decorate('communityModerationLink', communityModerationLink);
 
   // 注：GY-I27 的 `consentSigningKey`/`consentGate`/`egressRevoker` 声明已在上方
   // 「GY-I27 隐私域装配（两片接线）」块内完成（合并时上游把该块前移并扩成含
