@@ -1,19 +1,26 @@
 # GY-I20 评估样本、标准答案与评估程序
 
-本目录冻结 GY-I20（GitHub issue #20）的**样本索引与标准答案 schema、近重复排除规则、评分规约、评估命令与样本缺口清单**。
+本目录冻结 GY-I20（GitHub issue #20）的**样本索引与标准答案 schema、近重复排除规则、评分规约、评估命令、真实样本登记物与缺口清单**。
 第一真相为 `docs/implementation-requirements.md` 第6节（第6.1至6.5），辅以 `docs/initial-issues.md` 的 GY-I20 段落。
 
 ## 本任务交付了什么 / 没交付什么
 
-| 已交付（可审查） | 尚未交付（真实样本未交接） |
+| 已交付（可审查） | 尚未交付 |
 | --- | --- |
-| 可重复运行的评估命令与预期输出结构 | 真实评估样本（两类图片、语音、问答、筛查全部） |
-| 样本索引与标准答案 schema（含来源/标注/分组/hash/隔离规则） | 真实独立标准答案与独立核实记录 |
-| 近重复排除规则（同源裁剪/连拍/近重复跨 split 阻断） | 真实冻结清单与冻结版本号 |
-| 评分规约（指标定义、口径、拒识、95% 置信区间程序） | 真实模型/规则版本的实测结果 |
-| 样本缺口逐项清单（对照第6节标准） | — |
+| 可重复运行的评估命令与预期输出结构 | 其余六域真实样本（标签OCR、登记匹配、AI筛查、播报、ASR、问答） |
+| 样本索引与标准答案 schema（含来源/标注/分组/hash/隔离规则） | 覆盖内手机实拍照片（≥300、每类 ≥30、不同角度/背景） |
+| 近重复排除规则（同源裁剪/连拍/近重复跨 split 阻断） | 独立核实记录（`reviewedBy`）与许可/出处核实 |
+| 评分规约（指标定义、口径、拒识、95% 置信区间程序） | 人工质量分级（清晰/低质量分组） |
+| **真实拍草样本登记 172 条**（`packages/evaluation/samples/`，`split=test`） | 真实模型/规则版本的实测结果（付费调用未授权） |
+| **拍草独立标准答案键**（物种标签 + 判据要点 + 来源绑定） | 模型侧实际覆盖承诺的冻结（现以 GY-I03 资料范围为绑定依据） |
+| **冻结清单 + 承诺覆盖绑定**（可复算，复算命令退出码 0） | Android/iOS 真机与联网耗时证据（第6.2节） |
+| 样本缺口逐项清单（对照第6节标准，已用真实计数替换 0 值） | — |
 
 > 评估程序框架与评分规约先交 PR；**实际样本不足列为阻塞，不用生成或重复媒体充数**。
+> 本轮真实样本只填了拍草域的一部分：**覆盖内 7 张（7 类各 1、荨麻类 0）**、覆盖外 165 张；
+> 因此 `isRealEvaluation=false`、门禁 `not_evaluated`、**无任何模型成绩**。
+> 详见 [real-samples-weeds-docx.md](real-samples-weeds-docx.md) 与
+> [../verification/gy-i20-real-samples-20261014.md](../verification/gy-i20-real-samples-20261014.md)。
 
 ## 文档索引
 
@@ -22,16 +29,25 @@
 | [scoring-spec.md](scoring-spec.md) | 指标定义、评分口径、拒识处理、95% 置信区间程序、门禁判定 |
 | [sample-index-schema.md](sample-index-schema.md) | 样本索引字段、来源、标注、独立分组、内容 hash、训练/验证/测试隔离规则 |
 | [near-duplicate-policy.md](near-duplicate-policy.md) | 同源裁剪／连拍／近重复排除规则与每类／拒识样本记录 |
-| [sample-gap-register.md](sample-gap-register.md) | 样本缺口逐项清单（对照第6节标准） |
+| [real-samples-weeds-docx.md](real-samples-weeds-docx.md) | **真实拍草样本**：来源、抽取与去重计数、标准答案与判据、覆盖口径、冻结与复算、离线评估输出、未取得/未验证项与剩余风险 |
+| [sample-gap-register.md](sample-gap-register.md) | 样本缺口逐项清单（对照第6节标准，含真实计数） |
 | [evaluation-report-template.md](evaluation-report-template.md) | 评估报告模板与预期输出结构 |
 
-代码实现位于 `packages/evaluation/`，命令位于 `tools/evaluation/`，测试位于 `tests/evaluation/`。
+代码实现位于 `packages/evaluation/`，命令位于 `tools/evaluation/`，真实样本登记物位于 `packages/evaluation/samples/`，测试位于 `tests/evaluation/`。
 
 ## 命令一览
 
 ```bash
 # 1) 生成合成占位输入（仅验证程序，不是真实评估）
 node tools/evaluation/make-synthetic-fixture.mjs
+
+# 1b) 从仓外 docx 抽取真实拍草样本（幂等；答案键 cross-check；媒体只写仓外）
+node tools/evaluation/extract-docx-weed-samples.mjs \
+  --docx <仓外>/杂草图片版.docx --out-dir <仓外>/extracted/media \
+  --path-map <仓外>/extracted/path-map.json \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+  --report <仓外>/extracted/extraction-report.json --emit-perceptual-hash
 
 # 2) 校验脱敏样本索引（schema + 硬红线 + 隔离）
 node tools/evaluation/validate-evaluation-samples.mjs --index <index.json>
@@ -41,6 +57,13 @@ node tools/evaluation/run-evaluation.mjs \
   --index <index.json> --predictions <predictions.json> \
   --manifest <frozen-manifest.json> --coverage <coverage-manifest.json> \
   --out <report.json>
+
+# 3b) 冻结清单生成 / 复算核对（--verify 失败即退出码 1）
+node tools/evaluation/freeze-real-samples.mjs \
+  --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+  --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+  --index-version gy-i20-weeds-real-2026.10.14 \
+  --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json
 
 # 4) 单元测试（亦接入工程 CI 的 evaluation-tests 层）
 node --test tests/evaluation/*.test.mjs

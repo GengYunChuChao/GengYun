@@ -1,0 +1,22 @@
+{
+  "manifestVersion": "1.0.0",
+  "indexVersion": "gy-i20-weeds-real-2026.10.14",
+  "split": "test",
+  "recordCount": 172,
+  "indexSha256": "36053ceed50abbeb43edbab891fef910763bf0442ac8b2d8e2f26adcd598c78f",
+  "frozenAt": "2026-10-14T12:05:00+08:00",
+  "coverage": {
+    "weedPhotoCoveredClasses": [
+      "species_barnyardgrass",
+      "species_foxtail",
+      "species_nettle_group",
+      "species_crabgrass",
+      "species_goosegrass",
+      "species_shortawn_foxtail",
+      "species_lambsquarters",
+      "species_alligatorweed"
+    ],
+    "coverageSha256": "325fae943924a6aefd762ddcbe479b095733340283b83cabc89a75578b2787cc",
+    "basisRef": "GY-I03#species_groups.required@pkg/knowledge/coverage-report.json"
+  }
+}
