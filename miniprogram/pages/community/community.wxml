@@ -2,7 +2,7 @@
   <view class="page-heading">
     <view class="page-heading__main">
       <view class="page-heading__title">田间的发现，值得分享</view>
-      <view class="page-heading__sub">记录日常观察，和更多耕耘者一起交流。</view>
+      <view class="page-heading__sub">记录日常观察，和更多耕耘者一起交流。每条内容先经审核，通过后才对他人可见。</view>
     </view>
   </view>
 
@@ -16,50 +16,80 @@
     wx:if="{{guest}}"
     status="guest"
     title="请先登录"
-    desc="社区需要登录后才能查看。游客无法浏览帖子，也无法发布或评论。"
+    desc="社区内容需要登录后查看；登录仅用于保存你的记录，不会公开你的位置。"
+    action-text="去登录"
+    bind:action="onLogin"
   ></state-view>
 
   <block wx:else>
     <view class="section-head">
       <view class="section-head__title">田间动态</view>
-      <button class="btn btn--primary" bindtap="onPublish">分享发现</button>
+      <gy-ui-button label="分享发现" variant="primary" bind:tap="onCreate"></gy-ui-button>
     </view>
+
+    <view class="chips">
+      <gy-ui-chip label="全部" value="all" selected="{{!filterMine}}" bind:select="onToggleMine"></gy-ui-chip>
+      <gy-ui-chip label="我的投稿" value="mine" selected="{{filterMine}}" bind:select="onToggleMine"></gy-ui-chip>
+    </view>
+
+    <view class="chips">
+      <picker range="{{cropLabels}}" value="{{cropIndex}}" bindchange="onCropChange">
+        <view class="chip">作物：{{cropLabels[cropIndex]}}</view>
+      </picker>
+      <picker range="{{regionLabels}}" value="{{regionIndex}}" bindchange="onRegionChange">
+        <view class="chip">地区：{{regionLabels[regionIndex]}}</view>
+      </picker>
+    </view>
+
+    <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
     <state-view
-      status="empty"
-      title="还没有帖子"
-      desc="社区尚未开放，发布、评论与点赞功能均未接入。后续开放时，每条内容都会先经审核再对外展示。"
+      wx:elif="{{status === 'error'}}"
+      status="error"
+      title="社区内容没有取到"
+      desc="{{errorText}}"
     ></state-view>
 
-    <view class="section">
-      <view class="section-head">
-        <view class="section-head__title">功能规划</view>
-        <view class="section-head__meta">尚未开放</view>
-      </view>
-      <view class="profile-grid">
-        <view class="panel">
-          <view class="panel-head">
-            <view class="panel-head__title">人工审核</view>
-            <view class="pill pill--gray">建设中</view>
-          </view>
-          <view class="card-text">
-            人工审核入口正在建设中，当前不提供人工审核功能，也不接受任何投稿。
-            审核团队、专家身份与举报处理都会在后续任务中落地，现在页面上不会放置任何伪造的审核记录。
-          </view>
-        </view>
+    <state-view
+      wx:elif="{{status === 'empty'}}"
+      status="empty"
+      title="还没有符合条件的内容"
+      desc="换个作物或地区条件再试，也可以先分享一条田间发现。"
+      action-text="分享发现"
+      bind:action="onCreate"
+    ></state-view>
 
-        <view class="panel">
-          <view class="panel-head">
-            <view class="panel-head__title">内容安全</view>
-            <view class="pill pill--purple">先审后发</view>
+    <block wx:else>
+      <view class="feed">
+        <view class="post" wx:for="{{posts}}" wx:key="id">
+          <view class="post-author">
+            <view class="post-author__copy">
+              <view class="post-author__title">{{item.author}}</view>
+              <view class="post-author__meta">{{item.time}}{{item.crop_id ? ' · ' + item.crop_id : ''}}{{item.region_code ? ' · ' + item.region_code : ''}}</view>
+            </view>
+            <view wx:if="{{item.stateLabel}}" class="post-author__tag pill pill--amber">{{item.stateLabel}}</view>
           </view>
-          <view class="card-text">
-            社区内容将先经过机器筛查，必要时进入人工复核。涉及用药的内容会额外核对来源，
-            未经核实的信息不会以"专家建议"的形式展示。
+          <view class="post-title">{{item.title}}</view>
+          <view class="post-text">{{item.body}}</view>
+          <view wx:if="{{item.linkTitle}}" class="pill">关联资料：{{item.linkTitle}}</view>
+          <view class="post-actions">
+            <button class="post-actions__item" data-id="{{item.id}}" bindtap="onOpenPost">查看与评论</button>
           </view>
         </view>
       </view>
-      <view class="demo-caption">社区内容为后续任务交付；本页不展示任何演示帖子或评论。</view>
-    </view>
+
+      <view class="row-actions">
+        <gy-ui-button
+          wx:if="{{nextCursor}}"
+          label="{{loadingMore ? '正在加载…' : '加载更多'}}"
+          variant="ghost"
+          loading="{{loadingMore}}"
+          bind:tap="onLoadMore"
+        ></gy-ui-button>
+        <view wx:else class="demo-caption">已经到底了。</view>
+      </view>
+
+      <view class="demo-caption">{{modeNote}}</view>
+    </block>
   </block>
 </view>

@@ -1,0 +1,58 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">分享一次田间发现</view>
+      <view class="page-heading__sub">记录观察、问题或心得。提交后先经审核，通过后其他耕耘者才能看到。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{guest}}"
+    status="guest"
+    desc="投稿需要登录；登录仅用于保存你的记录。"
+    action-text="去登录"
+    bind:action="onBack"
+  ></state-view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="label">标题（必填，最多 120 字）</view>
+      <input class="input" value="{{title}}" maxlength="120" placeholder="例如：稗草防除的一次记录" bindinput="onTitle" />
+
+      <view class="label form-gap">正文（必填，最多 8000 字）</view>
+      <textarea class="input textarea" value="{{body}}" maxlength="8000" placeholder="写下你的观察、条件与结论…" bindinput="onBody"></textarea>
+
+      <view class="label form-gap">作物</view>
+      <picker range="{{cropLabels}}" value="{{cropIndex}}" bindchange="onCropChange">
+        <view class="input">{{cropLabels[cropIndex]}}</view>
+      </picker>
+
+      <view class="label form-gap">地区（浙江，可选）</view>
+      <picker range="{{regionLabels}}" value="{{regionIndex}}" bindchange="onRegionChange">
+        <view class="input">{{regionLabels[regionIndex]}}</view>
+      </picker>
+
+      <view wx:if="{{errorText}}" class="notice notice--danger form-gap">
+        <view class="notice__text">{{errorText}}</view>
+      </view>
+
+      <view class="row-actions form-gap">
+        <gy-ui-button label="{{submitting ? '正在提交…' : '提交审核'}}" variant="primary" loading="{{submitting}}" bind:tap="onSubmit"></gy-ui-button>
+        <gy-ui-button label="返回社区" variant="ghost" bind:tap="onBack"></gy-ui-button>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">本轮未取得的能力（如实说明）</view>
+      <view class="card-text">
+        1. 图片帖子未取得：契约允许每帖最多 3 张图片，但当前规则层对「带媒体」的目标一律不判通过
+        （图片审核属模型层跨片依赖），因此本页不提供图片上传，也不用本地图片伪造「已发布」。
+      </view>
+      <view class="card-text form-gap">
+        2. 真实 AI 图文审核未授权付费：本环境使用确定性硬规则层先行筛查；real 模式未接真实审核供应商时
+        服务端会直接拒绝（503），不会以替身返回成功。
+      </view>
+      <view class="demo-caption form-gap">发布结果只以服务端返回为准；页面不显示未经服务端确认的"已通过"。</view>
+    </view>
+  </block>
+</view>
