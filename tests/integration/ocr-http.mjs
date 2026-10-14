@@ -570,8 +570,8 @@ try {
     // —— 代码层结构证据（"默认关闭"是结构属性，不是约定）——
     const appText = readFileSync(new URL('../../services/api/src/app.ts', import.meta.url), 'utf8');
     assert.ok(
-      appText.includes('registerOcrRoutes(app, config, { guards })'),
-      '产品装配必须**零端口注入**（只传 guards）；若失败说明装配点被塞入了 provider/store/端口',
+      appText.includes('registerOcrRoutes(app, config, { guards, consent: consentGate });'),
+      '产品装配必须**零端口注入**（只传 guards + 隐私域 consent 授权中间件）；若失败说明装配点被塞入了 provider/store/端口',
     );
     for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference', 'ocr/service']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);

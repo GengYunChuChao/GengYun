@@ -35,6 +35,7 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { SYNTHESIS_TARGET_TYPES } from '../tts/state.ts';
 import type { SynthesisService } from '../tts/service.ts';
+import type { ConsentGate } from '../privacy/egress.ts';
 import { buildMeta } from './support.ts';
 
 /** `Idempotency-Key` 头：与既有路由同一口径（缺/非法 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED）。 */
@@ -60,6 +61,13 @@ export function registerSynthesisRoutes(
   config: AppConfig,
   guards: AuthGuards,
   service: SynthesisService,
+  /**
+   * GY-I27 接线单：**可选**授权中间件端口。注入后挂在 `POST /speech/synthesis`
+   * （外部 TTS 外发 ⇒ 用途 `external_inference`）。合成**不属**四类媒体资料类型
+   * （`MEDIA_PURPOSES` 无 TTS），因此这里只声明用途、不声明 `data_type`（不做「错用途」判定）；
+   * 未注入 ⇒ 行为与接线前逐字相同。
+   */
+  consent?: ConsentGate,
 ): void {
 
   // 与契约 `SynthesisInput` 逐项一致（`additionalProperties:false` ⇒ 多余字段由 schema 拦下；
@@ -85,7 +93,13 @@ export function registerSynthesisRoutes(
 
   app.post(
     `${API_PREFIX}/speech/synthesis`,
-    { preHandler: guards.requireUser, schema: { body } },
+    {
+      preHandler:
+        consent === undefined
+          ? guards.requireUser
+          : [guards.requireUser, consent({ purpose: 'external_inference' })],
+      schema: { body },
+    },
     async (request, reply) => {
       // 服务端权威身份（客户端无法通过 body/query/自定义头声明身份）。
       const identity = currentIdentity(request);

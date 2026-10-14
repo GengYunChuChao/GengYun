@@ -60,6 +60,9 @@ import { registerMediaRoutes } from './routes/media.ts';
 import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
 import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
+// GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
+import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
+import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -145,6 +148,18 @@ export interface BuildAppOptions {
   mediaContentSource?: PublishedContentSource;
   /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
   mediaAttachmentCounter?: CommunityAttachmentCounter;
+  // GY-I27 接线单（用途授权接线）：隐私域端口。
+  // **全部可选**：不传时——
+  //   * 授权中间件仍会在**配置了数据库**时按 PG 读取口挂到 4 个 AI 执行入口
+  //     （`/recognitions`、`/speech/transcriptions`、`/ocr`、`/speech/synthesis`）；
+  //     无数据库（本地 stub/回环测试）⇒ 不挂，行为与接线前逐字相同；
+  //   * 撤回/注销消费者不注入 ⇒ `consent-pg`/`grant-pg` 保持既有 `OBJECT_UNAVAILABLE` 兜底。
+  privacyInjection?: {
+    /** 授权中间件端口（覆盖默认解析）：仅测试或已核验的读取口需要显式注入。 */
+    consent?: ConsentGate;
+    /** 撤回/注销消费者：注入后 `consent-pg`/`grant-pg` 在撤回/授予时**先撤销在途外发**。 */
+    egressRevoker?: EgressRevoker;
+  };
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -162,7 +177,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -317,17 +332,38 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
 
+  // ---------------------------------------------------------------------------
+  // GY-I27 接线单（用途授权接线）。两处**最小、追加式**接线：
+  //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
+  //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
+  //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
+  //  2. 撤回/注销消费者：`privacyInjection.egressRevoker` 存在时交给授权服务；缺省不注入 ⇒
+  //     `consent-pg`/`grant-pg` 保持既有 `OBJECT_UNAVAILABLE` fail-closed 兜底。
+  // 真实外发账本（`packages/privacy/ledger.mjs`）需要**持久** commitGate + 接收方读取口，
+  // 本片未提供该适配器 ⇒ **不装配**（`real` 模式因此始终 fail-closed 503，不会被静默放行）。
+  // ---------------------------------------------------------------------------
+  const consentSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
+  const consentGate: ConsentGate | undefined =
+    privacyInjection?.consent ??
+    (pool === null
+      ? undefined
+      : createPostgresConsentGate(createPostgresConsentService(pool, consentSigningKey, consentGrantTestOptions ?? {})));
+  const egressRevoker: EgressRevoker | undefined = privacyInjection?.egressRevoker;
+
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
   registerUserAuthRoutes(app, config, { service, guards, now: clock });
   registerAdminAuthRoutes(app, config, { service, guards, now: clock });
-  registerConsentRoutes(app, config, pool, guards, consentGrantTestOptions);
+  registerConsentRoutes(app, config, pool, guards, {
+    ...(consentGrantTestOptions ?? {}),
+    ...(egressRevoker === undefined ? {} : { egressRevoker }),
+  });
   registerProfileRoutes(app, config, pool, guards);
   registerKnowledgeRoutes(app, config, pool, guards);
-  registerRecognitionRoutes(app, config, guards, recognitionService);
-  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs });
-  registerSynthesisRoutes(app, config, guards, synthesisService);
-  registerOcrRoutes(app, config, { guards });
+  registerRecognitionRoutes(app, config, guards, recognitionService, { consent: consentGate });
+  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate });
+  registerSynthesisRoutes(app, config, guards, synthesisService, consentGate);
+  registerOcrRoutes(app, config, { guards, consent: consentGate });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
