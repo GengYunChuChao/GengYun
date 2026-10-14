@@ -57,8 +57,8 @@ const currentRecords = `SELECT c.*,p.state AS epoch_state,p.current_epoch FROM p
  * 且 `revokeInFlight` 幂等，故可接受（已在证据页写明）。
  */
 export interface EgressRevoker {
-  onConsentWithdrawn(input: { userId: string; purpose: string }): { revokedInFlight: number };
-  onAccountSuspendedOrDeleted(input: { userId: string }): { revokedInFlight: number };
+  onConsentWithdrawn(input: { userId: string; purpose: string }): Promise<{ revokedInFlight: number }>;
+  onAccountSuspendedOrDeleted(input: { userId: string }): Promise<{ revokedInFlight: number }>;
 }
 
 /** No exports, media writes or generic commit callbacks. */
@@ -177,7 +177,7 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, serv
             OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1::uuid) AS present`, [input.identity.userId]);
           if (dependencies.rows[0]?.present) {
             if (!serviceOptions.egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', '已有资料或任务的撤回消费者尚未接入');
-            serviceOptions.egressRevoker.onConsentWithdrawn({ userId: input.identity.userId, purpose: options.purpose });
+            await serviceOptions.egressRevoker.onConsentWithdrawn({ userId: input.identity.userId, purpose: options.purpose });
           }
           const updated = await client.query(`UPDATE public.consent_records SET state='withdrawn',withdrawn_at=clock_timestamp(),revision=revision+1
             WHERE id=$1::uuid AND user_id=$2::uuid AND state='granted' RETURNING *`, [record.id, input.identity.userId]);

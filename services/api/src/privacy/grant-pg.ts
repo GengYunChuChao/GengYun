@@ -89,7 +89,7 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
     OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1) AS present`, [userId])).rows[0];
   if (deps?.present) {
     if (!egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', '已有业务依赖的授权变更消费者尚未接入');
-    egressRevoker.onConsentWithdrawn({ userId, purpose: input.purpose });
+    await egressRevoker.onConsentWithdrawn({ userId, purpose: input.purpose });
   }
   // Revisions never reset; different keys are serialized new consent intents, not stale-header conflicts.
   const revision = Math.max(expected, epoch ? number(epoch.revision) : 1) + 1;

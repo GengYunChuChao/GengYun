@@ -262,7 +262,9 @@ export function createEgressConsumer({ ledger, transport, executionMode, logSink
     if (dispatching.has(exportId)) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '该外发正在派发中，禁止重复外发');
     }
-    const record = ledger.get(exportId);
+    // 账本读取统一 await：内存账本的 get 是同步的（await 非 Promise 值即原值），
+    // PostgreSQL 账本的 get 返回 Promise —— 二者行为一致，守卫/消费者只需一套实现。
+    const record = await ledger.get(exportId);
     if (!record || record.userId !== userId) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '外发记录不存在或归属不符');
     }
@@ -290,8 +292,8 @@ export function createEgressConsumer({ ledger, transport, executionMode, logSink
         const outcomeUnknown = error instanceof PrivacyError && error.code === 'PROVIDER_OUTCOME_UNKNOWN';
         const code = outcomeUnknown ? 'PROVIDER_OUTCOME_UNKNOWN' : 'PROVIDER_UNAVAILABLE';
         try {
-          if (outcomeUnknown) ledger.markOutcomeUnknown(exportId, { errorCode: code });
-          else ledger.markFailed(exportId, { errorCode: code });
+          if (outcomeUnknown) await ledger.markOutcomeUnknown(exportId, { errorCode: code });
+          else await ledger.markFailed(exportId, { errorCode: code });
         } catch {
           // 记录已是终态（例如派发期间被撤回）：不覆盖既有结论。
         }
@@ -395,14 +397,15 @@ export function toContractExport(record) {
  * 可查、可追溯的账本读面（契约 `ExportPage`：`{ items, next_cursor }`）。
  * 只读、按用户隔离；游标由账本 `list()` 提供（越界/畸形游标 ⇒ `INVALID_CURSOR`）。
  */
-export function listExportsForUser(ledger, { userId, limit = 50, cursor = null } = {}) {
+export async function listExportsForUser(ledger, { userId, limit = 50, cursor = null } = {}) {
   if (!ledger || typeof ledger.list !== 'function') {
     throw new Error('账本未提供 list 查询能力：账本读面不可用（不得静默返回空页）');
   }
   if (typeof userId !== 'string' || userId.length === 0) {
     throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
   }
-  const page = ledger.list({ userId, limit, cursor });
+  // 同 `dispatch`：账本访问统一 await（同步实现零成本，持久实现正确等待）。
+  const page = await ledger.list({ userId, limit, cursor });
   return {
     items: page.items.map(toContractExport),
     next_cursor: page.nextCursor ?? null,
