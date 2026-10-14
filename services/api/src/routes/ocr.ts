@@ -39,6 +39,7 @@ import {
   type OcrDosePort,
   type OcrReferencePort,
 } from '../ocr/reference.ts';
+import type { ConsentGate } from '../privacy/egress.ts';
 import { buildMeta } from './support.ts';
 
 declare module 'fastify' {
@@ -75,6 +76,13 @@ export interface OcrRouteDeps {
   idFactory?: () => string;
   /** 任务截止时间（毫秒）；生产走服务层默认 30s，仅供装配/回环测试收紧。 */
   jobDeadlineMs?: number;
+  /**
+   * GY-I27 接线单：**可选**授权中间件端口。注入后挂在**会外发/会写入派生内容的入口**
+   * （`POST /ocr`、`PATCH /ocr/{id}/correction`、`POST /ocr/{id}/verify`），资料类型 `label_ocr`
+   * ⇒ 需要 `media_processing` + `external_inference`。
+   * **读取（GET）与删除（DELETE）不挂**。未注入 ⇒ 行为与接线前逐字相同。
+   */
+  consent?: ConsentGate;
 }
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -189,9 +197,16 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
       jobDeadlineMs: deps.jobDeadlineMs,
     });
   app.decorate('ocrService', service);
+  // GY-I27 接线单：授权中间件（可选注入；缺省 ⇒ 与接线前逐字相同）。
+  const consentGate =
+    deps.consent === undefined ? null : deps.consent({ purpose: 'external_inference', dataType: 'label_ocr' });
+  const gated = (schema: Record<string, unknown>) => ({
+    preHandler: consentGate === null ? deps.guards.requireUser : [deps.guards.requireUser, consentGate],
+    schema,
+  });
   app.post(
     `${API_PREFIX}/ocr`,
-    { preHandler: guards.requireUser, schema: { body: mediaJobBody } },
+    gated({ body: mediaJobBody }),
     async (request, reply) => {
       const { job } = await service.createOcr({
         userId: actorId(request),
@@ -223,7 +238,7 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
 
   app.patch(
     `${API_PREFIX}/ocr/:id/correction`,
-    { preHandler: guards.requireUser, schema: { params: idParams, body: correctionBody } },
+    gated({ params: idParams, body: correctionBody }),
     async (request, reply) => {
       const data = await service.correctOcr({
         userId: actorId(request),
@@ -241,7 +256,7 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
 
   app.post(
     `${API_PREFIX}/ocr/:id/verify`,
-    { preHandler: guards.requireUser, schema: { params: idParams, body: verifyBody } },
+    gated({ params: idParams, body: verifyBody }),
     async (request, reply) => {
       const { verification, revision } = await service.verifyOcrWithRevision({
         userId: actorId(request),

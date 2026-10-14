@@ -684,7 +684,7 @@ try {
     assert.equal(/createLiveTtsProvider/.test(code), false, 'app.ts 不得引用真实发送构造器');
     assert.equal(/live-ports/.test(code), false, 'app.ts 不得引用端口模块');
     assert.equal(/RealTtsPorts/.test(code), false);
-    assert.equal((code.match(/registerSynthesisRoutes\(app, config, guards, synthesisService\);/g) ?? []).length, 1);
+    assert.equal((code.match(/registerSynthesisRoutes\(app, config, guards, synthesisService, consentGate\);/g) ?? []).length, 1);
     assert.equal(/createTtsProvider\(\{ executionMode: config\.executionMode \}\)/.test(code), true);
     return 'app.ts 无 createLiveTtsProvider / 无 live-ports；注册恰好一处';
   });
