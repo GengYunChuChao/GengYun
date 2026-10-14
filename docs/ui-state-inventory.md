@@ -49,17 +49,39 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 指标 | 任务书要求 | 实现位置 | 换算说明 |
 | --- | --- | --- | --- |
-| 主题绿 | `#1F7A45` | `app.wxss` 的 `--color-primary`；`app.json` 导航与 tabBar | — |
+| 主题绿 | demo `--green` = `#176b50` | `miniprogram/styles/tokens.wxss` 的 `--green`／`--color-primary`；`app.json` 导航与 tabBar | **2026-10-14 起改用 docs/ui-demo 的值**（见下方「Demo 样式对齐」） |
 | 正文字号 | 优先 18px | `app.wxss` 的 `font-size: 18px` | **绝对 px，不随屏宽缩放** |
 | 触控区 | ≥44px 等效 | `app.wxss` 的 `--tap-min: 44px`，由 `.btn`、`.entry` 的 `min-height` 引用 | **绝对 px** |
-| 末屏预留 | 不被 tabBar 遮挡 | `.page` 的 `padding-bottom: calc(54px + env(safe-area-inset-bottom))` | tabBar 恒为 50px，故须用 px |
+| 末屏预留 | 不被 tabBar 遮挡 | `.page` 的 `padding-bottom: calc(105px + env(safe-area-inset-bottom))` | Tab 高度按 `custom-tab-bar/index.wxss` 实际声明复算：标准档 73.6px、微信最大字号档 87.3px，预留 105px 覆盖两者 |
 | 状态表达 | 颜色加文字 | `state-view` 每态含图标＋标题＋说明 | — |
 | 录音与播放 | 按钮分离 | 识别页两个独立按钮，播放需先有录音 | — |
 | 风险提示 | 不得写绝对安全 | 文案使用「未接入」「不能作为用药依据」 | — |
 
 **为什么字号与触控区用 px 而非 rpx**：rpx 为屏宽 750 等分，88rpx 仅在 375px 视口等于 44px，320px 视口只有 37.55px；36rpx 正文在 320px 视口只有 15.36px，均不满足门槛。改用 px 后数值为绝对值，窄屏不再缩水。
 
-**保留 rpx 的两处**：`.state__icon`（72rpx）与 `.mode__icon`（44rpx）为图标。18px 正文门槛只约束文字，图标随屏幕缩放是合理行为；且 320px 视口下分别为 30.7／18.8px，不会小到不可辨识。**已实测**：显示大小最大档真机`windowWidth` 为 320px（见 [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.3.2），该档位属实际覆盖而非仅静态核算。
+**保留 rpx 的两处**：`.section-title::before`（8×32rpx）与 `page-heading` 装饰线为纯装饰；文字类图标已改用 `calc(Npx * var(--font-scale,1))`（如 `.state__icon` 36px、`.gy-icon` 21px）。18px 正文门槛只约束文字，图标随屏幕与字体缩放是合理行为；且 320px 视口下不会小到不可辨识。**已实测**：显示大小最大档真机`windowWidth` 为 320px（见 [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.3.2），该档位属实际覆盖而非仅静态核算。
+
+---
+
+## 3.1 Demo 样式对齐（2026-10-14，Refs #28）
+
+用户 2026-10-14 指令「前端页面务必先做到 `docs/ui-demo/demo.html` 所演示的样式，优先做好；适老版后面再弄」，本任务据此把视觉准绳改为 `docs/ui-demo`（PR #132）：
+
+| 项目 | 位置 | 机检 |
+| --- | --- | --- |
+| 设计令牌（demo `:root` 色板，逐值一致） | `miniprogram/styles/tokens.wxss` | `node tools/demo-align.mjs` 第 1 组；`tests/ui-adaptive.test.mjs` |
+| 图标层（由 demo `app.js` 的 SVG path 生成，28 类） | `miniprogram/styles/icons.wxss` | `node tools/demo-align.mjs` 第 3 组 |
+| 组件层（按钮／卡片／panel／pill／tabs／chips／底部导航／info-row／feature-card／profile-header／setting-row／article-card／post／empty 等） | `miniprogram/styles/components.wxss` | `node tools/demo-align.mjs` 第 2 组（104 条类映射） |
+| 五 Tab 与 article／post 详情形态 | `pages/{home,identify,knowledge,community,messages,profile}`、走查页 `pages/specimen` | `tests/ui-demo-align.test.mjs` |
+| 末屏（按实际声明复算，含最大字号档） | `.page` 底部预留 + `custom-tab-bar/index.wxss` | `node tools/verify-layout.mjs` |
+
+**色板冲突披露（交监工裁定）**：demo `--green` 为 `#176b50`，而 `docs/implementation-requirements.md:402` 写主题绿 `#1F7A45`。按用户 2026-10-14 指令采用 demo 值；状态色（提示蓝／警告红／提醒黄／替身紫）demo 未定义，沿用任务书值。判回 `#1F7A45` 只需改 `styles/tokens.wxss` 的 `--green`/`--color-primary` 与 `app.json` 两处颜色及两条断言。
+
+**统一状态视图**改为 demo `.empty` 形态（虚线框 + 图标 + 标题 + 说明 + 语气色），并接入资料库、资料详情与样式走查页；各页面不得再自写一行灰字当失败提示。
+
+**适老版（最大字号／简化布局）本轮不做**，按用户指令留作后续单；本任务只保证字号随微信设置放大、且最大档静态核算下不破版。
+
+证据页：[gy-i26-demo-align-20261014.md](verification/gy-i26-demo-align-20261014.md)。
 
 **字号来源**：只跟随微信「设置 → 通用 → 字体大小」。真机实测该设置可读（`fontSizeSetting` 标准 16px／特大 26px），换算为系数后注入 `--font-scale`；需求未要求应用内开关，故本任务不设档位、不写本地存储（同上 7.7）。
 
@@ -123,9 +145,11 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 契约一致性检查 | `python tools/validate_contracts.py` → PASS（112 操作） |
 | 契约测试 | `python tools/test_contracts.py` → OK（8 项） |
 | 微信工程结构检查 | `node tools/check-wechat-project.mjs` → PASS |
-| 界面自动化 | `node --test tests/ui-adaptive.test.mjs` → 14 项 PASS |
-| 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 4 项 PASS |
-| 布局静态核算 | `node tools/verify-layout.mjs` → 五档视口 PASS |
+| 界面自动化 | `node --test tests/ui-adaptive.test.mjs` → 26 项 PASS（2026-10-14 起含 demo 色板断言与按钮类触控下限断言） |
+| Demo 样式对齐机检 | `node tools/demo-align.mjs` → PASS（令牌逐值一致／104 条类映射／28 个图标几何一致／无裸 px 字号） |
+| Demo 样式对齐回归 | `node --test tests/ui-demo-align.test.mjs` → 7 项 PASS |
+| 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 4 项 PASS（含打包允许清单随 app.json 的 13 页同步） |
+| 布局静态核算 | `node tools/verify-layout.mjs` → 五档视口 PASS，末屏预留按实际声明在**微信最大字号档**核对（105px ≥ 87.3px） |
 | 五 Tab 导航 | **真机预览逐一导航，五个页面均可打开**，截图已入库 |
 | 截图 | **15 张已入库**（`assets/gui-adaptive-250c4d4/`，绑定提交 250c4d4）：五 Tab 真机、显示大小最大档五页、工具基本信息与本地设置、代码质量扫描、编译成功 |
 
@@ -136,6 +160,8 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 窄视口布局实测 | 真机（一加 Ace 3V）显示大小最大档，视口约 318dp，五页无破版 | **已实测**（见证据文档 7.3.1／7.3.2） |
 | 放大字号走查 | 微信字体设置无效；**系统显示大小最大档实测整体放大且不破版** | **已实测**（见证据文档 7.3） |
 | 登录态界面 | 登录能力依赖 GY-I04，尚未开始 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) |
+| Demo 对齐的**工具／模拟器／真机截图** | 2026-10-14 批次的写手机器未安装微信开发者工具（仅有残留 User Data），开发者工具编译、模拟器与真机渲染均未取得 | 见 [gy-i26-demo-align-20261014.md](verification/gy-i26-demo-align-20261014.md) 第 8 节（含复核命令） |
+| 适老版（最大字号／简化布局） | 用户 2026-10-14 指令「适老版后面再弄」 | 后续单，本任务不做 |
 
 数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。
 
