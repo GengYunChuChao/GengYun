@@ -48,6 +48,9 @@ import {
   type CommunityEventTarget,
   type CommunityEventsPort,
 } from './events.ts';
+// GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：版本级审核任务与"明确驳回"否决来自已合并审核域。
+// 社区**不 import** `services/api/src/moderation/**`；这里只消费结构性端口（由装配层传入）。
+import { linkActorOf, type CommunityModerationLink, type LinkScreenResult } from './moderation-link.ts';
 import type {
   CommentCommitPatch,
   CommentRecord,
@@ -113,6 +116,21 @@ export interface CommunityServiceDeps {
    * 默认**未接线** ⇒ 如实回传"未投递"，不影响内容写入的权威结果。
    */
   events?: CommunityEventsPort;
+  /**
+   * **GY-I14 ⇄ GY-I15 联动接线（#14 + #15）**：审核域联动端口。
+   *
+   * 不传时与本接线前**逐字同行为**（社区仍只用本地规则层闸门 + 本地结论台账）。
+   * 传入后：
+   *   1. 投稿/评论/编辑在**落内容行之前**送审审核域（建立版本级审核任务）；
+   *   2. 审核域**明确驳回**（规则层或模型层）⇒ 一律不得公开（400，回传原因码）；
+   *   3. 审核域抛错（`real` 未接真实供应商等）⇒ **原样上抛**（契约 503 `PROVIDER_UNAVAILABLE`）；
+   *   4. 读取时若审核域台账对该版本给出**明确驳回**（例如迟到的模型层结论/回调 block），
+   *      内容立即退出公开面（"曾经通过"不构成继续可见的理由）。
+   *
+   * **模型层未接线时不得冒充通过**：`model_layer === 'not_wired'` 不是通过，本服务的结论台账
+   * 照旧保持 `contract_complete:false` + `missing_contract_fields`（见 `buildVerdict`）。
+   */
+  moderation?: CommunityModerationLink;
   now?: () => Date;
   newId?: () => string;
   idempotencyTtlMs?: number;
@@ -177,6 +195,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   const gate = deps.gate ?? createPublishGate();
   const knowledge = deps.knowledge ?? createUnwiredKnowledgeAvailabilityPort();
   const events = deps.events ?? createUnwiredCommunityEventsPort();
+  const moderationLink: CommunityModerationLink | null = deps.moderation ?? null;
   const signingKey = deps.signingKey;
   const clock = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => randomUUID());
@@ -275,6 +294,85 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     return store.putRefusalVerdict(buildVerdict(target, outcome, text));
   }
 
+  // -------------------------------------------------------------------------
+  // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：审核域送审 / 否决 / 读取时重查
+  // -------------------------------------------------------------------------
+
+  /**
+   * **送审审核域**（落内容行**之前**调用）。
+   *
+   * 调用时机：社区本地规则层闸门（`gate.evaluate`，规则先挡的**记录口径**）已放行之后、
+   * 任何内容行落库之前。返回值里 `vetoed === true` 表示审核域**明确驳回**（规则层或模型层），
+   * 此时一律不得落内容行、不得公开。
+   *
+   * 审核域抛错**不在此处捕获**：`real` 未接真实供应商时必须让契约 503 原样到达调用方
+   * （fail-closed；绝不把"不可用"降级成"通过"或"普通 400"）。
+   */
+  async function screenWithModeration(
+    user: CommunityActor,
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    text: string,
+    mediaIds: readonly string[],
+  ): Promise<LinkScreenResult | null> {
+    if (moderationLink === null) return null;
+    return moderationLink.screen({
+      actor: linkActorOf(user),
+      // 送审内容与"同一构造函数"口径一致：帖子 = title + LF + body；媒体**显式**声明。
+      content: { target_ref: { ...target }, text, media: mediaInputs(mediaIds) },
+    });
+  }
+
+  /**
+   * 审核域**明确驳回**时未提交内容的结论补录。
+   *
+   * 复用 `buildVerdict`（`rule_version`/`text_digest`/`missing_contract_fields` 仍来自
+   * 本服务实际使用的那份规则集，**不伪造**），只把结论替换为审核域给出的那一条。
+   * 模型层未接线时 `contract_complete` 保持 `false`。
+   */
+  async function recordDomainRefusalVerdict(
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    outcome: GateOutcome,
+    screen: LinkScreenResult,
+    text: string,
+  ): Promise<boolean> {
+    return store.putRefusalVerdict({
+      ...buildVerdict(target, outcome, text),
+      id: newId(),
+      decision: screen.decision,
+      reason_codes: [...screen.reason_codes].slice(0, 30),
+      hard_rule_passed: screen.rule_layer === 'passed',
+    });
+  }
+
+  /** 审核域明确驳回 ⇒ 契约闭集内的拒绝错误（与本地 `refusal` 的 rejected 分支同形）。 */
+  function domainRefusal(screen: LinkScreenResult): ApiError {
+    const details = screen.reason_codes.slice(0, 30).map((code) => ({ field: 'reason_codes', code }));
+    return new ApiError(
+      'INVALID_REQUEST',
+      `内容被审核域明确驳回，已拒绝发布（rule_layer=${screen.rule_layer}, model_layer=${screen.model_layer}）`,
+      { details },
+    );
+  }
+
+  /**
+   * 读取时重查：审核域台账对该版本是否有**明确驳回**（决定性结论）。
+   *
+   * 返回非 `null` 表示"该版本不得公开"，调用方必须降级（fail-closed）。
+   * 台账里没有结论、或只有"未接线/无结论"时返回 `null`——**不**把"没有结论"当成驳回，
+   * 也不当成通过（可见性的主判据仍是本服务自己的结论台账）。
+   */
+  function domainVetoOf(kind: 'post' | 'comment', id: string, revision: number): AuditState | null {
+    if (moderationLink === null) return null;
+    try {
+      const conclusion = moderationLink.conclusionFor({ type: kind, id, revision });
+      if (!conclusion.present || !conclusion.vetoed) return null;
+      return conclusion.decision ?? 'rejected';
+    } catch {
+      // 台账读不出来：主判据（本地结论台账）继续生效；**不**因此放行任何东西。
+      return null;
+    }
+  }
+
   /**
    * CAS 失败的契约映射（监工 5487924826 返修 1 · 第 3 条）。
    *
@@ -335,7 +433,14 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     if (verdict.text_digest !== sha256Hex(text)) return demoted('pending');
     const assessment = gate.assess({ type: kind, id: record.id, revision: record.revision }, verdict);
     if (assessment.stale) return demoted(assessment.landing === 'quarantined' ? 'quarantined' : 'pending');
-    if (assessment.publishable) return { visibility: record.visibility, audit_state: 'approved' };
+    if (assessment.publishable) {
+      // GY-I14 联动接线 · **读取时重查**：本地结论"曾经通过"不是继续可见的理由 ——
+      // 审核域台账里该版本若已被**明确驳回**（迟到的模型层结论 / 回调 block / 规则层驳回），
+      // 一律立即降级为不可公开（fail-closed）。没有结论/未接线时**不**降级（见 `domainVetoOf`）。
+      const veto = domainVetoOf(kind, record.id, record.revision);
+      if (veto !== null) return demoted(veto);
+      return { visibility: record.visibility, audit_state: 'approved' };
+    }
     return demoted(verdict.decision);
   }
 
@@ -685,6 +790,13 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
           }
+          // GY-I14 联动接线：规则先挡放行后、**落内容行之前**送审审核域 —— 建立该 revision 的
+          // 版本级审核任务（`GET /jobs/{id}` 可读），并接受审核域的**明确驳回**。
+          const screen = await screenWithModeration(user, target, text, body.media_ids);
+          if (screen !== null && screen.vetoed) {
+            await recordDomainRefusalVerdict(target, outcome, screen, text);
+            throw domainRefusal(screen);
+          }
           if (body.media_ids.length > 0) {
             // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
             // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
@@ -776,6 +888,13 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!outcome.publishable) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
+          }
+          // GY-I14 联动接线：**新 revision 必须重新送审**（新版本级任务 + 新输入绑定），
+          // 旧版本的审核域结论**不得**套到新版本上（版本级绑定由审核域自己保证）。
+          const screen = await screenWithModeration(user, target, text, body.media_ids);
+          if (screen !== null && screen.vetoed) {
+            await recordDomainRefusalVerdict(target, outcome, screen, text);
+            throw domainRefusal(screen);
           }
           if (body.media_ids.length > 0) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
@@ -940,6 +1059,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
           }
+          // GY-I14 联动接线：评论同样**先审后发**（版本级任务绑定该评论 revision）。
+          const screen = await screenWithModeration(user, target, text, []);
+          if (screen !== null && screen.vetoed) {
+            await recordDomainRefusalVerdict(target, outcome, screen, text);
+            throw domainRefusal(screen);
+          }
           const record: CommentRecord = {
             id,
             revision: 1,
@@ -1009,6 +1134,12 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!outcome.publishable) {
             await recordRefusalVerdict(target, outcome, text);
             throw refusal(outcome);
+          }
+          // GY-I14 联动接线：评论编辑生成的新 revision 同样必须先送审（旧结论不得套新版本）。
+          const screen = await screenWithModeration(user, target, text, []);
+          if (screen !== null && screen.vetoed) {
+            await recordDomainRefusalVerdict(target, outcome, screen, text);
+            throw domainRefusal(screen);
           }
           const patch: CommentCommitPatch = {
             revision,
@@ -1156,6 +1287,21 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       const record = await store.getModeration(target.type, target.id, target.revision);
       if (record === null) throw notFound();
       return record;
+    },
+
+    /**
+     * **联动接线自述**（不是契约 operationId、不注册路由、不参与任何业务判定）：
+     * 审核域联动端口是否已接线 + 口径说明 + 审核域台账只读计数（供证据页与用例断言）。
+     */
+    moderationLinkNote(): {
+      wired: boolean;
+      note: string;
+      counts: ReturnType<CommunityModerationLink['counts']> | null;
+    } {
+      if (moderationLink === null) {
+        return { wired: false, note: '审核域联动端口未接线（社区行为与本接线前逐字相同）', counts: null };
+      }
+      return { wired: true, note: moderationLink.note, counts: moderationLink.counts() };
     },
 
     /**
