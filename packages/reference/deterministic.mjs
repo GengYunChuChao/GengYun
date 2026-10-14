@@ -296,6 +296,32 @@ export function evaluateExecutableAdvice(item, context = {}, opts = {}) {
 }
 
 /**
+ * 同登记号资料冲突探测：返回第一个「同一登记号下制剂身份互不一致」的组（无冲突则 `null`）。
+ *
+ * `formulationIdentityHash` 的构成为登记号／名称／剂型／有效成分含量 —— 即「关键字段」。
+ * 同一个登记号（同一授权制剂身份）下这些字段互相矛盾，说明该登记号的资料**自相矛盾**，
+ * 任何基于它的用量结论都不安全。只比较**同一登记号内部**，不跨登记号（与「相似制剂不合并」
+ * 同源：不同登记号是不同制剂，互不冲突）。
+ *
+ * 该探测必须作用于**输入收窄之前**的候选范围，否则调用方传入的名称／剂型／成分含量条件
+ * 就会「选一侧」并把冲突消掉（见 `evaluateRegistrationMatch` 步骤 3）。
+ */
+function sameRegistrationConflict(candidates) {
+  const byRegistration = new Map();
+  for (const candidate of candidates) {
+    const key = normalizeText(candidate.registration_number);
+    if (!byRegistration.has(key)) byRegistration.set(key, []);
+    byRegistration.get(key).push(candidate);
+  }
+  for (const [registration, group] of byRegistration) {
+    if (group.length < 2) continue;
+    const identities = new Set(group.map((c) => formulationIdentityHash(c)));
+    if (identities.size > 1) return { registration, group };
+  }
+  return null;
+}
+
+/**
  * **登记／匹配／限制场景的登记侧判定**（issue #8：无来源／模拟／失效／多匹配／关键字段冲突一律阻断）。
  *
  * 状态取契约冻结闭集 `MatchState`（`states.json`）：
@@ -305,16 +331,21 @@ export function evaluateExecutableAdvice(item, context = {}, opts = {}) {
  *   1. 候选为空 ⇒ `unavailable`（`no_source`）：没有可用的登记来源记录；
  *   2. 来源侧逐条判定 ⇒ 全部不合格时 `unavailable`，并按类给出 `simulated_source`／
  *      `invalid_source`／`no_source` 计数（不合并成一句「不可用」）；
- *   3. **无任何识别条件**且候选多于一条 ⇒ `insufficient`（`missing_condition`）：
+ *   3. **冲突预检（在输入收窄之前）**：合格候选中同一登记号下出现互不一致的制剂身份
+ *      （名称／剂型／成分含量）⇒ `conflict`（`field_conflict`）。
+ *      **只有显式给出「另一个」登记号**才能把该组排除在判定范围之外 —— 登记号是登记制剂的
+ *      **身份**；而名称／剂型／成分含量正是**互相矛盾的关键字段本身**，用它们收窄等于「选一侧」，
+ *      会把资料自身的冲突消掉（P1 缺陷）。故这四类收窄条件对冲突结论**不生效**；
+ *   4. **无任何识别条件**且候选多于一条 ⇒ `insufficient`（`missing_condition`）：
  *      条件不足时必须说明原因，不得挑一条返回；
- *   4. 按给出的识别条件（登记号／名称／剂型／成分含量）**精确**过滤；
+ *   5. 按给出的识别条件（登记号／名称／剂型／成分含量）**精确**过滤；
  *      但**不做相似合并**：0 条命中 ⇒ `no_match`（合法格式但无记录也走这里）；
- *   5. 命中集合内同一登记号出现互不一致的制剂身份（名称／剂型／成分含量）⇒ `conflict`（`field_conflict`）；
- *   6. 命中集合仍有多个且无法唯一确定 ⇒ `ambiguous`（`ambiguous_match`）—— **不静默选一**；
+ *   6. 过滤后仍有多个且无法唯一确定 ⇒ `ambiguous`（`ambiguous_match`）—— **不静默选一**；
  *   7. 唯一命中 ⇒ `matched`。
  *
  * 过滤是「按已有字段确定性匹配」，**不是**放宽：过滤后仍多于一条一律阻断，
- * 因此「多匹配」在任何路径上都不会被静默消解。
+ * 因此「多匹配」在任何路径上都不会被静默消解；而**同登记号资料冲突**由步骤 3 在收窄**之前**
+ * 判定（`filtered ⊆ scope`，故无需在收窄之后重复判定），收窄条件**不能**把它消掉 —— fail-closed。
  *
  * @param {Array<object>} candidates 候选登记记录（来自登记库／OCR 核对，按**不可信数据**处理）
  * @param {{ registration_number?: string, dosage_form?: string, ingredients_text?: string, registered_name?: string }} [query]
@@ -397,7 +428,33 @@ export function evaluateRegistrationMatch(candidates, query = {}, opts = {}) {
   const queryIngredients = nonEmpty(query.ingredients_text);
   const hasIdentifyingCondition = [queryRegistration, queryName, queryForm, queryIngredients].some((v) => v !== '');
 
-  // 3) 无任何识别条件且候选多于一条：条件不足（**不挑一条返回**）。
+  // 3) **冲突预检（在输入收窄之前）**：合格候选中同一登记号下出现互不一致的制剂身份
+  //    （名称／剂型／成分含量）⇒ conflict/field_conflict。
+  //
+  //    范围 `scope` 只允许由**登记号**收窄：登记号是登记制剂的**身份**，显式查询另一个登记号
+  //    才谈得上把某个登记号组排除在外。名称／剂型／成分含量是**互相矛盾的关键字段本身**，
+  //    若让它们参与收窄，就等于让调用方「选一侧」，会把资料自身的冲突消掉
+  //    （这正是监工 2026-10-14 指出的 P1）。
+  //    失败代价不对称：这里**宁可保守阻断**（fail-closed），也不许收窄条件消除冲突。
+  const scope =
+    queryRegistration === ''
+      ? eligible
+      : eligible.filter((candidate) => normalizeText(candidate.registration_number) === normalizeText(queryRegistration));
+  const conflict = sameRegistrationConflict(scope);
+  if (conflict !== null) {
+    return build(
+      'conflict',
+      [BLOCK_CODES.FIELD_CONFLICT],
+      [
+        `登记号 ${conflict.registration} 下存在关键字段冲突（名称/剂型/有效成分含量不一致），不合并不同制剂、不放行；` +
+          '该判定在输入收窄之前完成，名称/剂型/成分含量等收窄条件不得消除此冲突',
+      ],
+      null,
+      counts,
+    );
+  }
+
+  // 4) 无任何识别条件且候选多于一条：条件不足（**不挑一条返回**）。
   if (!hasIdentifyingCondition && eligible.length > 1) {
     return build(
       'insufficient',
@@ -408,7 +465,7 @@ export function evaluateRegistrationMatch(candidates, query = {}, opts = {}) {
     );
   }
 
-  // 4) 按给出的识别条件**精确**过滤（相似制剂不合并）；0 条命中 ⇒ 无匹配。
+  // 5) 按给出的识别条件**精确**过滤（相似制剂不合并）；0 条命中 ⇒ 无匹配。
   const filtered = eligible.filter((candidate) => {
     if (queryRegistration !== '' && normalizeText(candidate.registration_number) !== normalizeText(queryRegistration)) return false;
     if (queryName !== '' && normalizeText(candidate.registered_name) !== normalizeText(queryName)) return false;
@@ -418,27 +475,6 @@ export function evaluateRegistrationMatch(candidates, query = {}, opts = {}) {
   });
   if (filtered.length === 0) {
     return build('no_match', [BLOCK_CODES.NO_MATCH], ['给出的登记号/名称/剂型/成分含量条件没有任何候选登记制剂与之匹配（不合并相近制剂）'], null, counts);
-  }
-
-  // 5) 关键字段冲突：命中集合内同一登记号下出现互不一致的制剂身份（名称/剂型/成分含量）。
-  const byRegistration = new Map();
-  for (const candidate of filtered) {
-    const key = normalizeText(candidate.registration_number);
-    if (!byRegistration.has(key)) byRegistration.set(key, []);
-    byRegistration.get(key).push(candidate);
-  }
-  for (const [registration, group] of byRegistration) {
-    if (group.length < 2) continue;
-    const identities = new Set(group.map((c) => formulationIdentityHash(c)));
-    if (identities.size > 1) {
-      return build(
-        'conflict',
-        [BLOCK_CODES.FIELD_CONFLICT],
-        [`登记号 ${registration} 下存在关键字段冲突（名称/剂型/有效成分含量不一致），不合并不同制剂、不放行`],
-        null,
-        counts,
-      );
-    }
   }
 
   // 6) 多匹配：过滤后仍多于一条 ⇒ ambiguous（**不静默选一**）。

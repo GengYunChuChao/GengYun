@@ -284,6 +284,26 @@ function candidateItem(patch = {}) {
 }
 
 /**
+ * P1 探针形候选对（2026-10-14 监工 review 原形）：
+ * 两候选**同登记号** `PD20210001`、名称/剂型相同、**成分含量矛盾**（`40%` / `50%`），
+ * 均 published + valid + verified —— 不因来源侧问题提前退出，专测「同登记号资料冲突」判定本身。
+ *
+ * `opts.bName` / `opts.bDosageForm` 用于把冲突字段换成名称或剂型，验证修复不是只对
+ * `ingredients_text` 打补丁。
+ */
+function conflictPair(opts = {}) {
+  return [
+    candidateItem({ record_id: 'A', registered_name: '测试剂', dosage_form: '水分散粒剂', ingredients_text: '40%' }),
+    candidateItem({
+      record_id: 'B',
+      registered_name: opts.bName ?? '测试剂',
+      dosage_form: opts.bDosageForm ?? '水分散粒剂',
+      ingredients_text: '50%',
+    }),
+  ];
+}
+
+/**
  * 每条：{ id, name, candidates, query, opts?, state, codes, matchedReg? }
  *   state  —— 期望的契约 MatchState
  *   codes  —— 期望出现的阻断类别（matched 时为空）
@@ -319,6 +339,21 @@ const MATCH_CASES = [
   { id: 'MRG-028', name: '给出的条件组合无任何候选匹配 → no_match（不合并相近制剂）', candidates: [candidateItem()], query: { dosage_form: '乳油' }, state: 'no_match', codes: [BLOCK_CODES.NO_MATCH] },
   { id: 'MRG-029', name: '候选数组非数组（畸形输入）→ unavailable（fail-closed）', candidates: null, query: {}, state: 'unavailable', codes: [BLOCK_CODES.NO_SOURCE] },
   { id: 'MRG-030', name: '状态取值必须命中契约 MatchState 闭集', candidates: [candidateItem()], query: {}, state: 'matched', codes: [] },
+
+  // ===== P1 返修（2026-10-14 监工）：**同登记号资料冲突不得被输入收窄消除** =====
+  // 缺陷原形：两候选同登记号、成分含量矛盾；只查登记号 ⇒ conflict，
+  // 但**加 ingredients_text=40%（选其中一侧）⇒ 修复前返回 matched 并返回 A**（冲突被输入消掉）。
+  // 修复：冲突判定在**输入收窄之前**的全候选范围上完成（仅登记号可限定范围，见引擎 JSDoc 步骤 3）。
+  { id: 'MRG-031', name: 'P1 探针原形：同登记号含量矛盾 + 只查登记号 ⇒ conflict/field_conflict', candidates: conflictPair(), query: { registration_number: 'PD20210001' }, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-032', name: 'P1 探针：同登记号含量矛盾 + ingredients_text=40%（选 A 一侧）⇒ 仍 conflict，不得 matched、不得返回 A', candidates: conflictPair(), query: { registration_number: 'PD20210001', ingredients_text: '40%' }, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-033', name: 'P1 探针（另一侧）：+ ingredients_text=50% ⇒ 仍 conflict', candidates: conflictPair(), query: { registration_number: 'PD20210001', ingredients_text: '50%' }, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-034', name: '非补丁证明：用矛盾字段之一「剂型」单边收窄 ⇒ 仍 conflict', candidates: conflictPair({ bDosageForm: '悬乳剂' }), query: { registration_number: 'PD20210001', dosage_form: '水分散粒剂' }, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-035', name: '非补丁证明：用矛盾字段之一「名称」单边收窄 ⇒ 仍 conflict', candidates: conflictPair({ bName: '乙剂' }), query: { registration_number: 'PD20210001', registered_name: '测试剂' }, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-036', name: '无任何识别条件 + 同登记号冲突 ⇒ conflict（比「条件不足」更具体，仍阻断）', candidates: conflictPair(), query: {}, state: 'conflict', codes: [BLOCK_CODES.FIELD_CONFLICT] },
+  { id: 'MRG-037', name: '不越界：冲突组存在但显式查不到的登记号 ⇒ no_match（不误判为冲突）', candidates: conflictPair().concat([candidateItem({ record_id: 'c', registration_number: 'PD20210002' })]), query: { registration_number: 'PD20219999' }, state: 'no_match', codes: [BLOCK_CODES.NO_MATCH] },
+  { id: 'MRG-038', name: '不越界：显式查询另一个**无冲突**登记号 ⇒ matched（冲突组在范围外，不误伤）', candidates: conflictPair().concat([candidateItem({ record_id: 'c', registration_number: 'PD20210002' })]), query: { registration_number: 'PD20210002' }, state: 'matched', codes: [] },
+  { id: 'MRG-039', name: '回归：同登记号**同身份**两条重复 ⇒ ambiguous（冲突预检不得把一致重复判成冲突）', candidates: [candidateItem(), candidateItem({ record_id: 'b' })], query: { registration_number: 'PD20210001' }, state: 'ambiguous', codes: [BLOCK_CODES.AMBIGUOUS_MATCH] },
+  { id: 'MRG-040', name: '回归：不同登记号各自单条 + 含量收窄 ⇒ matched（跨登记号不互相冲突）', candidates: [candidateItem({ ingredients_text: '40%' }), candidateItem({ record_id: 'b', registration_number: 'PD20210002', ingredients_text: '30%' })], query: { ingredients_text: '30%' }, state: 'matched', codes: [] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -502,4 +537,55 @@ test('GY-I08 缺项登记：真实资料无用量列 ⇒ 用量正例为缺项/�
   }
   console.log(`[GY-I08] 真实资料 DosCard 渲染计数=${renderable}（期望 0；用量正例为缺项/未取得）`);
   assert.equal(renderable, 0, '真实资料无用量列，DoseCard 计数必须保持 0');
+});
+
+// ---------------------------------------------------------------------------
+// P1 返修（2026-10-14 监工 CHANGES_REQUESTED）：**同登记号资料冲突不得被输入收窄消除**
+//
+// 监工探针（运行 SHA `8957f58`）：两候选同登记号 `PD20210001`、成分含量 40% / 50% 矛盾、
+// 均 published/valid/verified；**只查登记号**返回 `conflict`/`field_conflict`，
+// **增加 `ingredients_text=40%`（选其中一侧）后返回 `matched`、`block_codes=[]`、选中 A**。
+// 这违反 #8「来源和确定性规则先检查，模型或用户选中候选不能绕过」与「关键字段冲突均阻断」。
+//
+// 本用例把该场景**逐条**钉死（数据表中另有 MRG-031…MRG-040 同形覆盖）。
+// ---------------------------------------------------------------------------
+test('GY-I08 P1 返修：同登记号资料冲突不得被输入收窄消除（监工 2026-10-14 探针）', () => {
+  const pair = conflictPair();
+  const onlyRegistration = evaluateRegistrationMatch(pair, { registration_number: 'PD20210001' });
+  const pickSide = evaluateRegistrationMatch(pair, { registration_number: 'PD20210001', ingredients_text: '40%' });
+
+  // 1) 只查登记号：冲突阻断（修复前即如此，作为对照基线）。
+  assert.equal(onlyRegistration.state, 'conflict', '只查登记号应判 conflict');
+  assert.ok(onlyRegistration.block_codes.includes(BLOCK_CODES.FIELD_CONFLICT), 'block_codes 应含 field_conflict');
+  assert.equal(onlyRegistration.matched, null, '冲突时不得返回命中记录');
+
+  // 2) **监工探针**：加 ingredients_text=40%（选其中一侧）后，冲突**不得**被消掉。
+  assert.notEqual(pickSide.state, 'matched', '收窄条件不得把同登记号资料冲突变成 matched');
+  assert.equal(pickSide.state, 'conflict', '收窄后仍必须是 conflict');
+  assert.ok(pickSide.block_codes.includes(BLOCK_CODES.FIELD_CONFLICT), '收窄后 block_codes 必须含 field_conflict');
+  assert.equal(pickSide.matched, null, '不得返回被选中的候选 A');
+  assert.deepEqual([...pickSide.block_codes], [BLOCK_CODES.FIELD_CONFLICT]);
+
+  // 3) 换用另一类矛盾字段（剂型）单边收窄 ⇒ 同样否决：证明不是只对 ingredients_text 打补丁。
+  const byForm = evaluateRegistrationMatch(conflictPair({ bDosageForm: '悬乳剂' }), {
+    registration_number: 'PD20210001',
+    dosage_form: '水分散粒剂',
+  });
+  assert.equal(byForm.state, 'conflict', '剂型单边收窄后仍必须是 conflict');
+  assert.ok(byForm.block_codes.includes(BLOCK_CODES.FIELD_CONFLICT));
+  assert.equal(byForm.matched, null);
+
+  // 4) 语义边界：**显式查询另一个登记号**是合法收窄（登记号是制剂身份），冲突组在范围外 ⇒ 不误伤。
+  const other = evaluateRegistrationMatch(
+    pair.concat([candidateItem({ record_id: 'c', registration_number: 'PD20210002' })]),
+    { registration_number: 'PD20210002' },
+  );
+  assert.equal(other.state, 'matched', '查询另一个无冲突登记号不应被冲突组牵连');
+  assert.equal(other.matched.registration_number, 'PD20210002');
+
+  console.log(
+    `[GY-I08 P1] 只查登记号 → ${onlyRegistration.state}/${onlyRegistration.block_codes.join(',')}；` +
+      `加 ingredients_text=40% → ${pickSide.state}/${pickSide.block_codes.join(',')}、matched=${pickSide.matched === null ? 'null' : 'A'}（修复前为 matched 且返回 A）；` +
+      `剂型单边收窄 → ${byForm.state}/${byForm.block_codes.join(',')}；查另一个登记号 → ${other.state}`,
+  );
 });

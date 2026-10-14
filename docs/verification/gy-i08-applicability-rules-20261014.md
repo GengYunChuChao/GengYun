@@ -23,7 +23,8 @@
 | `evaluateApplicability` 8 维度 fail-closed、`doseCardDescriptor` 原文数字／单位／条件绑定 | 加装**可执行建议闸门**与**登记侧判定**，并把这些能力做成闭集 + 逐类计数 |
 | 功能开关只关**用量卡** | 开关改为关**可执行建议**（用量卡为其下位，一并关闭） |
 | 「同一规则版本」为文档声明 | 变成**可执行断言**（含消费端真实存在、漂移检测、内容摘要、跨端闭集同构） |
-| 无 100 组场景集 | **149 组**（登记 54／匹配 63／限制 32）+ **43 条**守卫负例 |
+| 无 100 组场景集 | **159 组**（登记 64／匹配 63／限制 32）+ **43 条**守卫负例 |
+| **P1（监工 2026-10-14 CHANGES_REQUESTED）**：`evaluateRegistrationMatch` 先按名称／剂型／成分含量过滤、再判同登记号冲突 ⇒ **输入收窄可消除已有冲突** | **返修：冲突判定移到输入收窄之前**（只有登记号可限定范围）⇒ 见 **§10**，同形用例 MRG-031…MRG-040 + 专项用例 |
 
 ## 2 规则引擎位置与各消费端如何取同一规则版本
 
@@ -90,7 +91,12 @@ patched_old_mirror: removed 2 lines
 开关只影响「是否产出建议／卡片」，**不改变适用结论**（`applicable` 仍如实反映条件是否适用），
 因此页面能把「条件不适用」与「开关已关闭」分开表达。
 
-### 2.5 跨线统一：`services/api/src/ocr/state.ts` 纳入 `gy-i08/1.2.0`
+### 2.5 跨线纳入同一规则版本：`services/api/src/ocr/state.ts` 声明 `gy-i08/1.2.0`
+
+> **口径（监工 2026-10-14 CHANGES_REQUESTED 第 2 点）**：本节及全文出现「统一」时，
+> **一律只指「纳入同一规则版本」**（版本号同源 + 差异登记 + 漂移可检测），
+> **绝不表示「判定等同」**。本层与 GY-I08 层的**判定语义不同**，差异已逐项登记（见下），
+> 且本页**不得**被引用为「OCR 判定已与 #8 适用过滤一致」。
 
 **授权与回退**：用户 **2026-10-14** 授权改他人已合并文件（GY-I10 线）。改动为**纯声明 + 测试**，
 **无行为改动**（未新增/放宽/收紧任何一条阻断判定，未改对外契约与错误码）；
@@ -137,17 +143,17 @@ patched_old_mirror: removed 2 lines
 命令：`node --test tests/reference/i08-scenarios-100.test.mjs tests/reference/i08-dose-guard-negatives.test.mjs`
 
 ```text
-[GY-I08] 用例总数=149 通过=149 失败=0
-[GY-I08] 分组计数: 登记=54 匹配=63 限制=32
-[GY-I08] 放行(可执行建议或 matched)计数=51
+[GY-I08] 用例总数=159 通过=159 失败=0
+[GY-I08] 分组计数: 登记=64 匹配=63 限制=32
+[GY-I08] 放行(可执行建议或 matched)计数=53
 [GY-I08] 用量卡可渲染计数=4（真实资料无用量列，正例仅用合成夹具）
 [GY-I08] 被阻断类别逐类计数:
   no_source=15
   simulated_source=9
   invalid_source=19
-  ambiguous_match=1
-  field_conflict=7
-  no_match=6
+  ambiguous_match=2
+  field_conflict=13
+  no_match=7
   unreviewed=13
   banned=5
   restricted=4
@@ -156,23 +162,26 @@ patched_old_mirror: removed 2 lines
   missing_condition=4
   no_dose_source=79
   feature_closed=7
+[GY-I08 P1] 只查登记号 → conflict/field_conflict；加 ingredients_text=40% → conflict/field_conflict、matched=null（修复前为 matched 且返回 A）；剂型单边收窄 → conflict/field_conflict；查另一个登记号 → matched
 [GY-I08] 真实资料 DosCard 渲染计数=0（期望 0；用量正例为缺项/未取得）
 ```
 
-用例集是**数据驱动表**（`SCENARIOS` + `MATCH_CASES`），逐例断言：
+用例集是**数据驱动表**（`SCENARIOS` 119 条 + `MATCH_CASES` 40 条 = **159 条**），逐例断言：
 
 1. 期望的阻断类别**必须出现**，期望放行的**必须放行**，且放行集合内 `block_codes` 必须为空；
 2. **被阻断的用例一律不得产出可执行建议与用量卡**（`executable=false` ⇒ `renderable=false` 且 `dose_count=0`）；
 3. 每条判定必须回传同一 `rule_version`，阻断类别必须落在 14 类**闭集**内；
 4. 阻断必须给出**可读原因**（不静默返回空），且原因不得含禁用词；
-5. 每个阻断类别**至少被覆盖一次**（闭集无死角）且逐类计数均为正。
+5. 每个阻断类别**至少被覆盖一次**（闭集无死角）且逐类计数均为正；
+6. 登记匹配用例额外断言：`matched` 时必须有命中记录，**非 `matched` 时 `matched` 必须为 `null`**（不得返回被选中的候选）。
 
-登记／匹配组（63 例，状态取契约冻结闭集 `MatchState`）覆盖：无来源、模拟、失效（过期／撤回／
+`MATCH_CASES`（40 条，状态取契约冻结闭集 `MatchState`）覆盖：无来源、模拟、失效（过期／撤回／
 冲突／有效期未知／下架／删除／不可见）、多匹配（`ambiguous`）、**条件不足**（`insufficient`，
-不静默选一）、无匹配（`no_match`）、**关键字段冲突**（同一登记号下名称／剂型／成分含量互不一致，
-`conflict`）、唯一命中（`matched`）。
+不静默选一）、无匹配（`no_match`）、**关键字段冲突**（`conflict`）、唯一命中（`matched`）；
+其中 **MRG-031…MRG-040（10 条）为 P1 返修新增**（见 §10）。
+`SCENARIOS` 的 63 条「匹配」覆盖 8 个适用维度与用量卡原文绑定。
 
-`node --test` 汇总：**8 项测试全部通过，0 失败**。
+`node --test` 汇总：**9 项测试全部通过，0 失败**。
 
 ## 4 用量卡守卫负例原始输出
 
@@ -215,9 +224,11 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
 | 门禁 | 命令 | 结果 |
 | --- | --- | --- |
 | 静态检查 | `npm run lint` | **通过**（API／后台 `tsc --noEmit` + 仓库卫生扫描：无禁用 TLS 写法／疑似硬编码密钥／真实 `.env`） |
-| 参考域全量 | `npm run test:reference` | **275 项通过，0 失败** |
-| 全量单测 | `npm run test:unit` | **1783 项：1782 通过、1 跳过（既有可选原生数据库跨连接边界检查）、0 失败** |
-| 空白／冲突标记 | `git diff --check upstream/main...HEAD` | **无输出（exit 0）** |
+| 参考域全量 | `npm run test:reference` | **276 项通过，0 失败**（含 159 场景 + 43 守卫负例 + P1 专项） |
+| I10 受影响 | `node --test tests/unit/ocr-state.test.mjs tests/unit/ocr-service.test.mjs tests/unit/idempotency-job-ttl.test.mjs` | **125 项通过，0 失败** |
+| 全量单测 | `npm run test:unit` | **1793 项：1792 通过、1 跳过（既有可选原生数据库跨连接边界检查）、0 失败**（合并 `upstream/main` `1865c64` 之后的树） |
+| 文档检查 | `npm run test:docs` | **PASS**（27 任务／依赖无环／F-AC-Q 映射／Markdown 链接与表格） |
+| 空白／冲突标记 | `git diff --check` | **无输出（exit 0）** |
 
 本机 Node `v24.16.0`、npm `11.13.0`（满足 `engines` 的 `>=24.16.0 <25`）。依赖用 `npm install`
 恢复（103 个包，`node_modules/` 已被忽略，未提交）。**未跑的不写通过**：本轮未执行构建、微信开发者
@@ -231,11 +242,11 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
    小程序侧改动只有本仓测试（跨端同判 + 页面消费）覆盖，**不等于**真机可用。
    真机步骤沿用[手机最小清单](gy-i08-ace3v-checklist.md)。
 3. **真实供应商调用未做**（未授权、不做）：无 OCR／LLM／TTS 调用，无付费请求。
-4. **跨线用量闸门：版本已统一，判定**未**等同（如实登记）**：`services/api/src/ocr/state.ts`
+4. **跨线用量闸门：规则版本已纳入，判定**未**等同（如实登记）**：`services/api/src/ocr/state.ts`
    （GY-I10 线）已按用户 **2026-10-14** 授权**声明同一规则版本**（`single_source`，见 §2.5），
    但**禁限用维度无法在本层表达**（冻结契约 `DoseSource` 无对应字段）⇒ **不得**声称
-   「两层判定已等同」或「禁限用维度已覆盖全链路」。**真实统一需契约侧新增字段，
-   需指挥决定是否另开契约变更线。**
+   「两层判定已等同」或「禁限用维度已覆盖全链路」。**判定层的真实统一需契约侧新增字段，
+   需指挥决定是否另开契约变更线。**（口径见 §2.5 开头：本页「统一」只指**纳入同一规则版本**。）
 5. **未推送**：写手不持有 GitHub 凭据，本轮只做本地提交，由指挥推送并创建 PR。
 6. **真实部署形态未验证**：`packages/reference` 为纯文件 + 域库驱动，未在真实环境验证部署与
    只读文件可用性。
@@ -275,18 +286,31 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
 >
 > **6) 跨线：`ocr/state.ts` 用量闸门纳入 `gy-i08/1.2.0`（用户已授权；回退=删该改动）**：
 > GY-I10 线的平行用量闸门此前**未声明**本规则版本，是「所有消费端使用同一规则版本」的缺口。
-> 本轮按用户 2026-10-14 授权做**最小、无行为改动**的统一：版本值**直接 import 域库单一事实来源**
-> （不是第二份拷贝）；本层每个拒绝原因映射到域库 `BLOCK_CODES` 枚举成员，穷尽性由 `tsc` 保证；
-> 两层语义差异**如实登记为闭集**（`not_enforced_block_codes` = 禁用／限用／未采集禁限用 ——
-> 冻结契约 `DoseSource` 无禁限用字段，本层数据形状无法表达）。**未**改变任何既有阻断语义、
-> 未动对外契约与错误码。新增**漂移检测**：域库版本一变，`reviewed_against` 锚点即不匹配 ⇒ 测试失败
-> （已给负控制：改为 `1.2.1` 时该断言失败；还原后通过且文件 SHA256 不变）。
-> **如实说明**：本层**不声称**判定已与 GY-I08 等同；真实统一需契约侧新增字段。
+> 本轮按用户 2026-10-14 授权做**最小、无行为改动**的纳入（**只统一规则版本，不统一判定**）：
+> 版本值**直接 import 域库单一事实来源**（不是第二份拷贝）；本层每个拒绝原因映射到域库
+> `BLOCK_CODES` 枚举成员，穷尽性由 `tsc` 保证；两层语义差异**如实登记为闭集**
+> （`not_enforced_block_codes` = 禁用／限用／未采集禁限用 —— 冻结契约 `DoseSource` 无禁限用字段，
+> 本层数据形状无法表达）。**未**改变任何既有阻断语义、未动对外契约与错误码。新增**漂移检测**：
+> 域库版本一变，`reviewed_against` 锚点即不匹配 ⇒ 测试失败（已给负控制：改为 `1.2.1` 时该断言失败；
+> 还原后通过且文件 SHA256 不变）。**口径（监工第 2 点）**：本层**不声称**判定已与 GY-I08 等同 ——
+> 「统一」仅指**纳入同一规则版本**（版本同源 + 差异登记 + 漂移可检测）；判定层真实统一需契约侧新增字段。
 >
-> **门禁**：`npm run lint` 通过（含 API `tsc --noEmit`）；`npm run test:reference` 275 项通过 0 失败；
-> `npm run test:unit` 1783 项（1782 通过、1 既有可选原生数据库检查跳过、0 失败）；
-> I10 受影响测试 `ocr-state` / `ocr-service` / `idempotency-job-ttl` 125 项通过 0 失败；
-> `git diff --check` 无输出。
+> **7) 返修（监工 P1，reviewed `a1ce99b`）**：`packages/reference/deterministic.mjs` 的
+> `evaluateRegistrationMatch` 原本**先按名称／剂型／成分含量过滤、再只在 `filtered` 上判同登记号冲突**，
+> 于是「输入选一侧」会把资料自身的冲突消掉（监工探针：两候选同登记号 `PD20210001`、含量 40%／50%
+> 矛盾 ⇒ 只查登记号返回 `conflict`，加 `ingredients_text=40%` 返回 **`matched` 且选中 A**）。
+> **已修：冲突判定移到输入收窄之前** —— 范围 `scope` **只允许由登记号收窄**（登记号是登记制剂身份；
+> 名称／剂型／成分含量正是互相矛盾的关键字段本身，不得用于收窄）。新增 MRG-031…MRG-040 同形用例与
+> P1 专项断言（含「剂型单边收窄同样否决」的非补丁证明、「显式查另一个登记号不误伤」的边界、
+> 「同登记号同身份仍判 `ambiguous`」的回归）。**负控制**：把冲突范围临时改回「按全部输入条件收窄」
+> ⇒ MRG-032/033/034/035 与专项用例失败（`state 期望 conflict 实际 matched`、`缺少阻断类别 field_conflict`、
+> `state 非 matched 却返回了命中记录`）；还原后 **159/159 通过**、文件 SHA256 不变。
+> **未**放宽任何阻断断言；用例数由 149 **增至 159**（未改小）。
+>
+> **门禁**：`npm run lint` 通过（含 API `tsc --noEmit`）；`npm run test:reference` **276 项通过 0 失败**；
+> `npm run test:unit` **1784 项（1783 通过、1 既有可选原生数据库检查跳过、0 失败）**；
+> I10 受影响测试 `ocr-state` / `ocr-service` / `idempotency-job-ttl` **125 项通过 0 失败**；
+> `npm run test:docs` PASS；`git diff --check` 无输出。
 >
 > **未取得（不写通过）**：真实标签用量正例仍为 0；正式微信／Android 端到端未跑；真实供应商调用未做
 > （未授权）；跨线**判定未等同**（禁限用维度受契约字段限制，见上 6）；本轮只做本地提交，**由指挥推送**。
@@ -299,10 +323,109 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
 | `a60b32d` | `feat(GY-I08)`：小程序镜像闸门／开关 + 详情页消费同判（含闭集补齐） |
 | `9cbe50c5e30c4013cc37fda884e8abaac27ff627` | `test(GY-I08)`：149 组用例 + 43 条守卫负例 + 规则版本可断言化 |
 | `8957f58` | `docs(GY-I08)`：本页初版（规则引擎／消费端同版本／原始输出／未取得项） |
-| **（本页所在提交）** | `feat(GY-I08)`：**跨线**统一 GY-I10 `ocr/state.ts` 用量闸门纳入 `gy-i08/1.2.0`（用户授权；纯声明 + 漂移检测，**无行为改动**）—— 含 `state.ts` / `knowledge/reference.d.ts` / `deterministic.mjs` / `i08-rule-version.test.mjs` / 本页更新 |
+| `a1ce99bc9af1b899cc9a825ccb38f7e62857c418` | `feat(GY-I08)`：跨线**纳入同一规则版本**（`ocr/state.ts` 声明 `gy-i08/1.2.0`；纯声明 + 漂移检测，**无行为改动**）—— 监工 reviewed_sha |
+| **（本页所在提交）** | `fix(GY-I08)`：**P1 返修** —— `evaluateRegistrationMatch` 的**同登记号冲突判定移到输入收窄之前**（收窄条件不得消除冲突）；含 10 条同形用例 + P1 专项断言 + 本页 §2.5 口径收紧与 §10 |
 
-`git diff --stat upstream/main...HEAD`（含跨线提交，12 个文件）：跨线改动落在
-`services/api/src/ocr/state.ts`、`services/api/src/knowledge/reference.d.ts`、
-`packages/reference/deterministic.mjs`、`tests/reference/i08-rule-version.test.mjs`、本页。
+`git diff --stat upstream/main...HEAD`：**12 个文件**（P1 返修只改动其中 3 个已在 diff 内的文件：
+`packages/reference/deterministic.mjs`、`tests/reference/i08-scenarios-100.test.mjs`、本页）。
 **本页不写自身提交的 SHA 与精确行数**（自引用会随文字微调失真）：最终 HEAD SHA 与 diffstat
-由指挥在 PR 评论绑定。0 提交落后 main、无冲突。
+由指挥在 PR 评论绑定。
+
+**主线同步**：本轮已 `git fetch upstream --prune` 并 `git merge upstream/main`
+（`upstream/main` 由 `72c4923` 前进到 **`1865c64`**，即 GY-I17 消息三端点 #138 等）；
+合并提交 `0f8a55b`（两父：`a1ce99b` 与本分支 + `1865c64`），**无冲突**；P1 返修提交在其之上。
+合并后的树重跑了全部门禁（见 §6，`test:unit` 计入了主线新增测试 ⇒ 1793 项）。0 提交落后 main。
+
+## 10 P1 返修（监工 2026-10-14 CHANGES_REQUESTED）
+
+**监工原文（逐字要点）**：
+> P1：`packages/reference/deterministic.mjs:412-432` 先按名称/剂型/成分含量过滤，再只在 filtered 检查
+> 同登记号冲突，查询条件会隐藏原候选的关键字段冲突。…**两候选均 published/valid/verified、同登记号
+> `PD20210001`，但成分含量 40%/50% 矛盾；只查登记号返回 conflict/field_conflict；增加
+> `ingredients_text=40%` 后返回 matched、block_codes=[]、选中 A。** …**请保留同登记号资料冲突的阻断，
+> 不能把已存在冲突由输入选择一侧后消除。**
+
+### 10.1 根因
+
+判定顺序为「**先收窄、后判冲突**」：冲突检查作用在 `filtered`（已被查询条件过滤后的集合）上。
+调用方给出的名称／剂型／成分含量条件会把冲突对收窄到其中一条，于是同登记号组内只剩 1 条候选、
+冲突自然消失 ⇒ `matched`。而这三类条件**正是互相矛盾的关键字段本身**，用它们收窄等于「选一侧」。
+
+### 10.2 修法（最小、fail-closed）
+
+`evaluateRegistrationMatch` 的判定顺序改为：
+
+```text
+（原）1 空候选 → 2 来源侧分类 → 3 条件不足 → 4 按全部条件过滤 → 5 在 filtered 上判同登记号冲突 → 6 ambiguous → 7 matched
+（新）1 空候选 → 2 来源侧分类 → 3 **在输入收窄之前判同登记号冲突** → 4 条件不足 → 5 按全部条件过滤 → 6 ambiguous → 7 matched
+```
+
+- 新增 `sameRegistrationConflict(candidates)`：按登记号分组，组内 `formulationIdentityHash`
+  （登记号／名称／剂型／有效成分含量）出现多种 ⇒ 冲突。**只比较同一登记号内部**（跨登记号不冲突）。
+- 冲突范围 `scope` **只允许由登记号收窄**：`query.registration_number` 为空时取全部合格候选，
+  否则只取该登记号的候选。**名称／剂型／成分含量不参与范围收窄。**
+- 因 `filtered ⊆ scope`，收窄之后再判一次是冗余的；冲突判定只保留在收窄之前（单点、不易漏改）。
+- 理由与依据：登记号是**同一授权制剂的身份**，显式查询**另一个**登记号才是合法收窄；
+  而「关键字段冲突均阻断」「模型或用户选中候选不能绕过」（issue #8 / 需求 §6.1）要求
+  **输入不得改变冲突结论**。**未**放宽任何阻断；此处取保守阻断（fail-closed）。
+
+### 10.3 同形用例（MRG-031…MRG-040，均为 published + valid + verified）
+
+| 用例 | 输入收窄 | 修复前 | 修复后（断言） |
+| --- | --- | --- | --- |
+| MRG-031 | 只查登记号 `PD20210001` | `conflict`（对照基线） | `conflict` / `field_conflict` |
+| **MRG-032** | **+ `ingredients_text=40%`（选 A 一侧，监工探针）** | **`matched`、`block_codes=[]`、返回 A** | **`conflict` / `field_conflict`、`matched=null`** |
+| MRG-033 | + `ingredients_text=50%`（另一侧） | `matched` | `conflict` / `field_conflict` |
+| MRG-034 | + `dosage_form`（矛盾字段之一，单边） | `matched` | `conflict` / `field_conflict` |
+| MRG-035 | + `registered_name`（矛盾字段之一，单边） | `matched` | `conflict` / `field_conflict` |
+| MRG-036 | 无任何识别条件 | `insufficient` | `conflict`（更具体的原因，仍阻断） |
+| MRG-037 | 显式查不到的登记号 | `no_match` | `no_match`（不误判为冲突） |
+| MRG-038 | 显式查**另一个无冲突**登记号 | `matched` | `matched`（冲突组在范围外，不误伤） |
+| MRG-039 | 同登记号**同身份**重复两条 | `ambiguous` | `ambiguous`（不得判成冲突） |
+| MRG-040 | 不同登记号 + 含量收窄 | `matched` | `matched`（跨登记号不互相冲突） |
+
+另有专项用例 `GY-I08 P1 返修：同登记号资料冲突不得被输入收窄消除（监工 2026-10-14 探针）`，
+直接断言 `matched === null`、`block_codes` 恰为 `[field_conflict]`，并覆盖 MRG-034 的剂型单边场景与
+MRG-038 的边界。
+
+### 10.4 改前 / 改后原始输出
+
+**改前（负控制：冲突范围回退为「按全部输入条件收窄」）**：
+
+```text
+[GY-I08] 失败明细:
+  MRG-032: state 期望 conflict 实际 matched | 缺少阻断类别 field_conflict（实际 无） | state 非 matched 却返回了命中记录（不得放行） | 阻断必须给出可读原因（AC02）
+  MRG-033: state 期望 conflict 实际 matched | 缺少阻断类别 field_conflict（实际 无） | state 非 matched 却返回了命中记录（不得放行） | 阻断必须给出可读原因（AC02）
+  MRG-034: state 期望 conflict 实际 matched | 缺少阻断类别 field_conflict（实际 无） | state 非 matched 却返回了命中记录（不得放行） | 阻断必须给出可读原因（AC02）
+  MRG-035: state 期望 conflict 实际 matched | 缺少阻断类别 field_conflict（实际 无） | state 非 matched 却返回了命中记录（不得放行） | 阻断必须给出可读原因（AC02）
+✖ GY-I08 用例集：登记／匹配／限制 ≥100 组，全部通过
+✖ GY-I08 P1 返修：同登记号资料冲突不得被输入收窄消除（监工 2026-10-14 探针）
+  AssertionError [ERR_ASSERTION]: 收窄条件不得把同登记号资料冲突变成 matched
+ℹ tests 7  pass 5  fail 2
+```
+
+**改后（修复态）**：
+
+```text
+[GY-I08 P1] 只查登记号 → conflict/field_conflict；加 ingredients_text=40% → conflict/field_conflict、matched=null（修复前为 matched 且返回 A）；剂型单边收窄 → conflict/field_conflict；查另一个登记号 → matched
+[GY-I08] 用例总数=159 通过=159 失败=0
+ℹ tests 9  pass 9  fail 0        （本文件）
+```
+
+**负控制（含文件 SHA256）**：
+
+```text
+before_sha   = 46A375B23FB585375A2160BDDDE919BC3A1CF32FE6BFEFF3FFA7EA1091C57644   # packages/reference/deterministic.mjs（修复态）
+patched: 冲突范围回退为「按全部输入条件收窄」（修复前语义）  → 上述改前输出（fail 2）
+restored: 冲突范围恢复为「仅登记号可收窄」（修复态）
+after_restore_sha = 46A375B23FB585375A2160BDDDE919BC3A1CF32FE6BFEFF3FFA7EA1091C57644   # 与 before_sha 一致
+→ 159/159 通过、9/9 测试通过
+```
+
+### 10.5 范围与边界（未扩项）
+
+- **未**放宽任何阻断断言；**未**把用例数改小（149 → **159**）；43 条守卫负例保持不变。
+- **未**新增变异／穷举／重复 PG／供应商调用；**只**针对「同登记号 + 收窄条件」这一处修复并验证。
+- `evaluateRegistrationMatch` **只存在于域库**（小程序镜像无同名函数，已 grep 确认）⇒ 无同源镜像需同步；
+  该函数无 HTTP 契约暴露面，**未**改动对外契约与错误码。
+- 真实用量正例仍为 0、OCR 禁限用维度未贯通、正式端侧未验：**属整项 #8 剩余**，不附加到这处局部返修。
