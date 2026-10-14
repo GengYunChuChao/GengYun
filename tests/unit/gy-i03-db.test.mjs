@@ -142,3 +142,62 @@ test('0002 down 可执行：删除 0002 对象，保留 0001 对象', async () =
   assert.equal(await count(db, 'regions'), 0, 'regions 表仍可查询（0001 对象保留）');
   await db.close();
 });
+
+test('浙江首批资料种子：幂等、用量缺项门、批次精确回滚', async () => {
+  const SEED_ZJ = read('db/seeds/seed_zhejiang_materials.sql');
+  const ROLLBACK_ZJ = read('db/seeds/rollback_zhejiang_materials.sql');
+  const db = await freshDb();
+  await applySeeds(db);
+  const base = {
+    sources: await count(db, 'sources'),
+    source_versions: await count(db, 'source_versions'),
+    formulations: await count(db, 'formulations'),
+    registrations: await count(db, 'registrations'),
+    queryable: await count(db, 'v_queryable_seed_version'),
+  };
+
+  await db.exec(SEED_ZJ);
+  await db.exec(SEED_ZJ); // 幂等：确定性 uuid + ON CONFLICT DO NOTHING
+  assert.equal(await count(db, 'knowledge_versions'), 159, '119 杂草 + 5 防除时期 + 35 药剂适用');
+  assert.equal(await count(db, 'sources'), base.sources + 2);
+  assert.equal(await count(db, 'source_versions'), base.source_versions + 2);
+  assert.equal(await count(db, 'catalog_import_runs'), 1);
+  assert.equal(await count(db, 'catalog_source_update_events'), 2);
+  assert.equal(await count(db, 'v_active_source_version'), 0, '未核对来源不得进有效集合');
+  assert.equal(await count(db, 'v_queryable_seed_version'), base.queryable + 2, 'stub 可见且标注未核对');
+  assert.equal(
+    (await db.query(
+      `SELECT count(*)::int AS c FROM knowledge_versions WHERE region_codes <> '["330000"]'::jsonb OR visibility <> 'private'`,
+    )).rows[0].c,
+    0, '条目限于浙江且未发布',
+  );
+
+  const bodyCount = async (re) => (await db.query(
+    'SELECT count(*)::int AS c FROM knowledge_versions WHERE body ~ $1', [re])).rows[0].c;
+  assert.equal(await bodyCount('"dose_text"\\s*:\\s*"[^"]'), 0, '源表无用量列，不得出现非空用量');
+  assert.equal(await bodyCount('"dose_text":null'), 159, '用量缺项应显式写 null');
+  assert.equal(await bodyCount('"usable_as_dose":true'), 0);
+  assert.equal(await bodyCount('"card_ready":true'), 0);
+
+  // 负例：外部补造一行用量必须能被上述门检出
+  await db.exec(`INSERT INTO knowledge_versions (id, knowledge_id, revision, title, body, type, source_version_id, region_codes, visibility)
+    SELECT '00000000-0000-4000-8000-0000000000fe'::uuid, gen_random_uuid(), 1, 'bad-dose',
+    '{"dose_text":"1"}', 'species', id, '["330000"]'::jsonb, 'private'
+    FROM source_versions WHERE version='weed-summary-2026.10'`);
+  assert.equal(await bodyCount('"dose_text"\\s*:\\s*"[^"]'), 1, '补造用量应被检出');
+  await db.exec(`DELETE FROM knowledge_versions WHERE id='00000000-0000-4000-8000-0000000000fe'::uuid`);
+
+  await db.exec(ROLLBACK_ZJ);
+  await db.exec(ROLLBACK_ZJ); // 重复回滚幂等
+  assert.equal(await count(db, 'knowledge_versions'), 0);
+  assert.equal(await count(db, 'sources'), base.sources, '其他种子来源保留');
+  assert.equal(await count(db, 'source_versions'), base.source_versions);
+  assert.equal(await count(db, 'formulations'), base.formulations, '其他种子制剂保留');
+  assert.equal(await count(db, 'registrations'), base.registrations);
+  assert.equal(await count(db, 'catalog_source_update_events'), 0);
+  assert.equal(
+    (await db.query(`SELECT count(*)::int AS c FROM catalog_import_runs WHERE status='reverted'`)).rows[0].c,
+    1, '本批次导入运行应标记 reverted',
+  );
+  await db.close();
+});
