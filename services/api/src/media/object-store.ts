@@ -55,6 +55,14 @@ export interface MediaObjectStore {
   putObject(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
   getObject(key: string): Promise<StoredObject | null>;
   hasObject(key: string): Promise<boolean>;
+  /**
+   * 删除对象。**返回值的语义是「已确认删除」而非「本次是否真的移除了条目」**：
+   * - `true` = 已确认删除（含幂等删除「对象本就不存在」，与 S3 `DeleteObject` 的 204 一致）；
+   * - `false` = **未能确认**（保守：调用方必须保留引用以便重试，不得当成删除成功）；
+   * - 抛出 = 暂时失败（调用方同样必须保留引用）。
+   *
+   * 这条语义是隐私红线的一部分（监工批复 P1）：未确认删除**不得**丢失重试依据。
+   */
   deleteObject(key: string): Promise<boolean>;
   /** 当前对象数（诊断/测试断言孤立对象是否被回收）。 */
   objectCount(): Promise<number>;
@@ -93,7 +101,10 @@ export function createSubstituteObjectStore(options: { note?: string } = {}): Me
       return objects.has(key);
     },
     async deleteObject(key) {
-      return objects.delete(key);
+      // 幂等删除：键本就不存在也视为**已确认删除**（与 S3 `DeleteObject` 的 204 语义一致）。
+      // 否则「一次成功删除后的重试」会返回 false，让引用永远悬空、无法收敛。
+      objects.delete(key);
+      return true;
     },
     async objectCount() {
       return objects.size;
@@ -361,7 +372,11 @@ export function createS3CompatibleObjectStore(config: ObjectStorageConfig): Medi
     },
     async deleteObject(key) {
       const response = await send('DELETE', key);
-      return response.ok || response.status === 404;
+      // 2xx / 404 = 已确认删除（幂等）；其余状态**抛错**，让调用方保留引用并可重试。
+      if (response.ok || response.status === 404) return true;
+      throw new MediaError('PROVIDER_UNAVAILABLE', `对象存储删除失败（HTTP ${response.status}）`, {
+        retryable: response.status >= 500,
+      });
     },
     async objectCount() {
       throw new MediaError('PROVIDER_UNAVAILABLE', '真实适配器不提供对象计数（需 list 权限，未接线）');

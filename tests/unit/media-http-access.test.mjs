@@ -36,9 +36,9 @@ function dynamicContentSource() {
   };
 }
 
-function makeApp(contentSource) {
+function makeApp(contentSource, objectStore) {
   let nowMs = 1_700_000_000_000;
-  const store = createSubstituteObjectStore();
+  const store = objectStore ?? createSubstituteObjectStore();
   const app = buildApp({
     config: { ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }), executionMode: 'stub' },
     mediaObjectStore: store,
@@ -46,6 +46,38 @@ function makeApp(contentSource) {
     now: () => new Date(nowMs),
   });
   return { app, store, advance: (ms) => { nowMs += ms; } };
+}
+
+/**
+ * 删除故障注入替身（测试专用）：前 `failures` 次 `deleteObject` 按 `mode` 失败，
+ * 之后透传真实替身端口。
+ * - `mode: 'throw'` ⇒ 抛出暂时失败；
+ * - `mode: 'false'` ⇒ 返回 `false`（**未能确认删除**）。
+ * 两种都是「未确认删除」，按隐私红线都必须让调用方保留引用。
+ */
+function flakyDeleteStore(inner, failures, mode = 'throw') {
+  let remaining = failures;
+  return {
+    kind: 'substitute',
+    note: '一次性删除故障注入替身（测试）：验证「未确认删除不得丢失重试依据」。',
+    get externalRequestCount() {
+      return inner.externalRequestCount;
+    },
+    putObject: (key, bytes, contentType) => inner.putObject(key, bytes, contentType),
+    getObject: (key) => inner.getObject(key),
+    hasObject: (key) => inner.hasObject(key),
+    async deleteObject(key) {
+      if (remaining > 0) {
+        remaining -= 1;
+        if (mode === 'false') return false;
+        throw new Error('synthetic transient object-store delete failure');
+      }
+      return inner.deleteObject(key);
+    },
+    objectCount: () => inner.objectCount(),
+    presignUpload: (input) => inner.presignUpload(input),
+    presignDownload: (input) => inner.presignDownload(input),
+  };
 }
 
 async function login(app, code) {
@@ -181,6 +213,146 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       objectsBeforeDelete - 2,
       '删除必须即时回收该媒体的原始件与去元数据衍生件',
     );
+  });
+
+  // ------------------------- 监工批复 P1 返修：删除失败后的可重试性（隐私缺口） -------------------------
+  // 隐私红线：**只有确认删除成功**才允许清空对象引用；未确认删除（抛错或返回 false）必须保留引用，
+  // 否则「暂时删不掉的私人对象」会变成不可达孤儿，cleanupOrphans 永久失去重试依据。
+
+  await t.test('返修 P1：删除时端口一次暂时失败 ⇒ 引用保留；端口恢复 ⇒ cleanupOrphans 真正删除', async () => {
+    const inner = createSubstituteObjectStore();
+    const scoped = makeApp(undefined, flakyDeleteStore(inner, 1, 'throw'));
+    try {
+      const token = await login(scoped.app, 'media-retry-cleanup');
+      const { mediaId, revision } = await createReadyMedia(scoped.app, token, 'label_ocr', jpeg, 'image/jpeg', 'retry');
+      assert.equal(await inner.objectCount(), 2, '原始件 + 去元数据衍生件');
+
+      const deleted = await call(scoped.app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+        headers: { 'idempotency-key': KEY('retry-delete'), 'if-match': `"${revision}"` },
+      });
+      // 对外语义保持不变：仍然受理为 202 已删除。
+      assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
+      assert.deepEqual(deleted.body.data, { accepted: true });
+      const afterDelete = await call(scoped.app, 'GET', `/api/v1/media/${mediaId}`, token);
+      assert.equal(afterDelete.body.data.state, 'deleted');
+
+      // 核心断言（改前会失败）：未确认删除的对象**引用必须还在**，否则重试依据永久丢失。
+      const keysAfterFailure = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.ok(
+        keysAfterFailure.rawRef !== null || keysAfterFailure.derivativeRef !== null,
+        `未确认删除必须保留重试依据，实际 rawRef=${keysAfterFailure.rawRef} derivativeRef=${keysAfterFailure.derivativeRef}`,
+      );
+      assert.equal(await inner.objectCount(), 1, '有一个对象本次确实没能删除');
+
+      // 端口已恢复（故障只注入一次）：cleanupOrphans 必须能真正把它删掉并清空引用。
+      const swept = await scoped.app.mediaService.cleanupOrphans();
+      assert.ok(swept.removedObjects >= 1, `removedObjects=${swept.removedObjects} 应 ≥1`);
+      assert.equal(swept.pendingObjects, 0);
+      assert.equal(swept.remainingObjects, 0, `remainingObjects=${swept.remainingObjects} 应为 0`);
+      assert.equal(await inner.objectCount(), 0);
+      const keysFinal = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.equal(keysFinal.rawRef, null);
+      assert.equal(keysFinal.derivativeRef, null);
+    } finally {
+      await scoped.app.close();
+    }
+  });
+
+  await t.test('返修 P1：端口持续返回 false（未能确认）⇒ 引用与待清理计数保留，恢复后才清空', async () => {
+    const inner = createSubstituteObjectStore();
+    // 故障预算 3：deleteMedia 消耗 2（两个引用），第一次 cleanupOrphans 再消耗 1。
+    const scoped = makeApp(undefined, flakyDeleteStore(inner, 3, 'false'));
+    try {
+      const token = await login(scoped.app, 'media-retry-false');
+      const { mediaId, revision } = await createReadyMedia(scoped.app, token, 'label_ocr', jpeg, 'image/jpeg', 'retryfalse');
+      const deleted = await call(scoped.app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+        headers: { 'idempotency-key': KEY('retryfalse-delete'), 'if-match': `"${revision}"` },
+      });
+      assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
+      const keysAfterFailure = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.equal(typeof keysAfterFailure.rawRef, 'string', 'false（未确认）同样不得清空引用');
+      assert.equal(typeof keysAfterFailure.derivativeRef, 'string', 'false（未确认）同样不得清空引用');
+      assert.equal(await inner.objectCount(), 2);
+
+      // 仍在故障中：清扫不得「假装清干净」，必须如实报 pending 且保留引用。
+      const stillFailing = await scoped.app.mediaService.cleanupOrphans();
+      assert.equal(stillFailing.pendingObjects, 1, `pendingObjects=${stillFailing.pendingObjects} 应为 1`);
+      assert.equal(stillFailing.remainingObjects, 1);
+      const keysMid = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.equal(typeof keysMid.rawRef, 'string', '清扫失败后重试依据仍在');
+
+      // 故障预算耗尽（端口恢复）：重试成功。
+      const recovered = await scoped.app.mediaService.cleanupOrphans();
+      assert.ok(recovered.removedObjects >= 1, `removedObjects=${recovered.removedObjects} 应 ≥1`);
+      assert.equal(recovered.pendingObjects, 0);
+      assert.equal(recovered.remainingObjects, 0);
+      assert.equal(await inner.objectCount(), 0);
+      const keysFinal = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.equal(keysFinal.rawRef, null);
+      assert.equal(keysFinal.derivativeRef, null);
+    } finally {
+      await scoped.app.close();
+    }
+  });
+
+  await t.test('返修 P1：重复删除（已是 deleted）仍会重试回收；completeUpload 失败回收走同一原则', async () => {
+    // (1) 已是 deleted 的记录：再次 DELETE 必须**重试**回收，而不是因状态终态直接跳过。
+    const inner = createSubstituteObjectStore();
+    const scoped = makeApp(undefined, flakyDeleteStore(inner, 2, 'throw'));
+    try {
+      const token = await login(scoped.app, 'media-retry-again');
+      const { mediaId, revision } = await createReadyMedia(scoped.app, token, 'label_ocr', jpeg, 'image/jpeg', 'retryagain');
+      const first = await call(scoped.app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+        headers: { 'idempotency-key': KEY('retryagain-1'), 'if-match': `"${revision}"` },
+      });
+      assert.equal(first.status, 202, JSON.stringify(first.body));
+      assert.equal(await inner.objectCount(), 2, '两次删除都失败，两个对象仍在');
+      assert.equal(typeof scoped.app.mediaService.serverObjectKeys(mediaId).rawRef, 'string');
+
+      const second = await call(scoped.app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+        // 第一次删除已把 revision 自增到 revision+1；用新幂等键 + 当前版本强 ETag 触发一次真正的重试。
+        headers: { 'idempotency-key': KEY('retryagain-2'), 'if-match': `"${revision + 1}"` },
+      });
+      assert.equal(second.status, 202, JSON.stringify(second.body));
+      assert.equal(await inner.objectCount(), 0, '重复删除必须重试并真正回收对象');
+      const keys = scoped.app.mediaService.serverObjectKeys(mediaId);
+      assert.equal(keys.rawRef, null);
+      assert.equal(keys.derivativeRef, null);
+    } finally {
+      await scoped.app.close();
+    }
+
+    // (2) completeUpload 失败回收（同一 helper 的同源路径）：失败时不得丢引用，恢复后可重试。
+    const inner2 = createSubstituteObjectStore();
+    const scoped2 = makeApp(undefined, flakyDeleteStore(inner2, 1, 'throw'));
+    try {
+      const token = await login(scoped2.app, 'media-retry-complete-failure');
+      const created = await call(scoped2.app, 'POST', '/api/v1/media/uploads', token, {
+        payload: { purpose: 'label_ocr', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) },
+        headers: { 'idempotency-key': KEY('retrycf-create') },
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const mediaId = created.body.data.media.id;
+      // 上传与声明不符的字节 ⇒ 完成接口失败并触发「失败即回收对象」路径。
+      await clientUpload(scoped2.app, mediaId, png);
+      const completed = await call(scoped2.app, 'POST', `/api/v1/media/uploads/${mediaId}/complete`, token, {
+        payload: { sha256: sha256Hex(jpeg), bytes: jpeg.length },
+        headers: { 'idempotency-key': KEY('retrycf-op'), 'if-match': '"1"' },
+      });
+      assert.equal(completed.status, 400, JSON.stringify(completed.body));
+      const rejected = await call(scoped2.app, 'GET', `/api/v1/media/${mediaId}`, token);
+      assert.equal(rejected.body.data.state, 'rejected');
+      assert.equal(typeof scoped2.app.mediaService.serverObjectKeys(mediaId).rawRef, 'string', '回收失败不得丢引用');
+      assert.equal(await inner2.objectCount(), 1);
+
+      const swept = await scoped2.app.mediaService.cleanupOrphans();
+      assert.ok(swept.removedObjects >= 1, `removedObjects=${swept.removedObjects} 应 ≥1`);
+      assert.equal(swept.remainingObjects, 0);
+      assert.equal(await inner2.objectCount(), 0);
+      assert.equal(scoped2.app.mediaService.serverObjectKeys(mediaId).rawRef, null);
+    } finally {
+      await scoped2.app.close();
+    }
   });
 
   await t.test('grantMediaAccess：仅 owner 且仅 ready；If-Match 对应媒体 revision', async () => {

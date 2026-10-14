@@ -236,8 +236,18 @@ export interface AppMediaService {
   }): Promise<CommunityContentOutcome>;
   /** 24h 未完成的 `initiated` 记录回收（state-contract）。 */
   expireInitiated(): Promise<{ expired: number }>;
-  /** `rejected` / `deleted` 记录的对象与已失效句柄统一清理。 */
-  cleanupOrphans(): Promise<{ removedObjects: number; revokedGrants: number }>;
+  /**
+   * `rejected` / `deleted` 记录的对象与已失效句柄统一清理。
+   *
+   * `pendingObjects` = 端口抛错或返回 `false`（**未能确认删除**）而被保留引用的对象数 ⇒ 仍可重试；
+   * `remainingObjects` = 清扫一次后对象存储中仍然存在的对象数（诊断用）。
+   */
+  cleanupOrphans(): Promise<{
+    removedObjects: number;
+    revokedGrants: number;
+    pendingObjects: number;
+    remainingObjects: number;
+  }>;
   stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }>;
   /**
    * **仅服务端/测试用**：读取某条记录的私有对象键（用于在测试里模拟「客户端直传对象存储」）。
@@ -413,7 +423,12 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
     async expireInitiated(): Promise<{ expired: number }> {
       throw fail();
     },
-    async cleanupOrphans(): Promise<{ removedObjects: number; revokedGrants: number }> {
+    async cleanupOrphans(): Promise<{
+      removedObjects: number;
+      revokedGrants: number;
+      pendingObjects: number;
+      remainingObjects: number;
+    }> {
       throw fail();
     },
     async stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }> {
@@ -481,20 +496,37 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     record.updatedAt = timestamp;
   }
 
-  async function dropObjects(record: MediaRecord): Promise<number> {
+  /**
+   * 回收记录持有的私有对象。
+   *
+   * **隐私红线（监工批复 P1 返修）**：只有**确认删除成功**（端口返回 `true`）才清空该引用。
+   * 端口**抛错**或返回 **`false`** ⇒ **保留该引用**，使 `cleanupOrphans` / 后续重试**仍有依据**；
+   * 未确认删除**绝不算成功**，也绝不让「删不掉的对象」变成不可达的孤儿。
+   *
+   * 端口契约（`MediaObjectStore.deleteObject`）因此被明确为：`true` = 已确认删除
+   * （含幂等删除「对象本就不存在」，与 S3 `DeleteObject` 的 204 语义一致）；
+   * `false` = **未能确认**；抛出 = 暂时失败。后两者都保留引用。
+   */
+  async function dropObjects(record: MediaRecord): Promise<{ removed: number; pending: number }> {
     let removed = 0;
-    for (const ref of [record.rawRef, record.derivativeRef]) {
-      if (ref !== null) {
-        try {
-          if (await objectStore.deleteObject(ref)) removed += 1;
-        } catch {
-          // 清洗失败不得把错误掩盖成成功；对象可能已不存在，如实继续并计数为 0。
+    let pending = 0;
+    for (const field of ['rawRef', 'derivativeRef'] as const) {
+      const ref = record[field];
+      if (ref === null) continue;
+      try {
+        if (await objectStore.deleteObject(ref)) {
+          record[field] = null;
+          removed += 1;
+        } else {
+          // 未确认删除：**保留引用**，留给 cleanupOrphans / 下次删除重试。
+          pending += 1;
         }
+      } catch {
+        // 暂时失败同样不得清空引用，否则永久丢失清理依据。
+        pending += 1;
       }
     }
-    record.rawRef = null;
-    record.derivativeRef = null;
-    return removed;
+    return { removed, pending };
   }
 
   function revokeGrantsForMedia(mediaId: string, timestamp: number): number {
@@ -783,10 +815,13 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     const timestamp = at();
     if (record.state !== 'deleted') {
       if (canTransition(record.state, 'deleting')) record.state = 'deleting';
-      await dropObjects(record);
-      record.state = 'deleted';
       record.updatedAt = timestamp;
     }
+    // **即使记录已是 `deleted`**（上一次未确认删除）也重试回收：不得因状态已终态而丢掉重试依据。
+    // 未确认删除时 `rawRef` / `derivativeRef` 会被保留（见 dropObjects）；对外语义仍是 202 已删除。
+    await dropObjects(record);
+    record.state = 'deleted';
+    record.updatedAt = timestamp;
     revokeGrantsForMedia(record.id, timestamp);
     record.revision += 1;
     idempotency.set(key, { requestHash, mediaId: record.id });
@@ -1032,17 +1067,25 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     async cleanupOrphans() {
       const timestamp = at();
       let removedObjects = 0;
+      let pendingObjects = 0;
       let revokedGrants = 0;
       for (const record of records.values()) {
         if (record.state === 'rejected' || record.state === 'deleted') {
-          removedObjects += await dropObjects(record);
+          const outcome = await dropObjects(record);
+          removedObjects += outcome.removed;
+          pendingObjects += outcome.pending;
           revokedGrants += revokeGrantsForMedia(record.id, timestamp);
         }
       }
       for (const [grantId, grant] of grants) {
         if (grant.expiresAt <= timestamp || grant.revokedAt !== null) grants.delete(grantId);
       }
-      return { removedObjects, revokedGrants };
+      return {
+        removedObjects,
+        revokedGrants,
+        pendingObjects,
+        remainingObjects: await attemptAsync(() => objectStore.objectCount()),
+      };
     },
     async stats() {
       return {
