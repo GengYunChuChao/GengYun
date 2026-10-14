@@ -585,7 +585,13 @@ const DOSE_REJECT_REASON = {
   // —— follow-up 复核补强 ——
   dose_record_mismatch: '该用量未绑定当前登记记录，不展示用量',
   dose_formulation_mismatch: '该用量未绑定当前登记制剂（名称/剂型/成分含量不一致），不展示用量',
-  dose_reference_missing: '该用量缺少原文引用/定位依据，不展示用量'
+  dose_reference_missing: '该用量缺少原文引用/定位依据，不展示用量',
+  // —— GY-I08 跨端补齐 ——
+  // 域库 DISPLAY_LABELS.dose_reject_reason 有此条（并映射 missing_condition），
+  // 镜像此前缺失 ⇒ 同一 reason 在两端会派生出**不同**的阻断类别（跨端分叉）。
+  // 该 reason 当前不由此端 doseCardDescriptor 产出（档案未确认时页面直接置 doseCard=null），
+  // 但映射表必须两端同构，否则「所有消费端同一规则版本」在闭集层面不成立。
+  no_confirmed_context: '尚未确认当前适用条件（档案未确认或读取失败），不展示用量'
 };
 
 // 制剂绑定校验结果 → 拒绝原因（与域库 doseCardDescriptor 内映射同文案）。
@@ -830,12 +836,215 @@ function doseRejectReasonFrom(applicability) {
   return DOSE_REJECT_REASON.not_applicable;
 }
 
+// ---------------------------------------------------------------------------
+// GY-I08 镜像（第二阶段）：可执行建议闸门 + 功能关闭开关 + 阻断类别。
+// 与域库 packages/reference/deterministic.mjs **同语义**（跨端一致性测试逐例断言）：
+//   - 未核对／不适用／禁用不得进入**可执行建议**（不只是用量卡）；
+//   - 功能关闭开关关闭后**不产出可执行建议，也不产出用量卡**；
+//   - 阻断类别为闭集，供页面与测试逐类核对（不合并「未采集」与「禁用」）。
+// ---------------------------------------------------------------------------
+const BLOCK_CODES = {
+  NO_SOURCE: 'no_source',
+  SIMULATED_SOURCE: 'simulated_source',
+  INVALID_SOURCE: 'invalid_source',
+  AMBIGUOUS_MATCH: 'ambiguous_match',
+  FIELD_CONFLICT: 'field_conflict',
+  NO_MATCH: 'no_match',
+  UNREVIEWED: 'unreviewed',
+  BANNED: 'banned',
+  RESTRICTED: 'restricted',
+  RESTRICTION_UNKNOWN: 'restriction_unknown',
+  NOT_APPLICABLE: 'not_applicable',
+  MISSING_CONDITION: 'missing_condition',
+  NO_DOSE_SOURCE: 'no_dose_source',
+  FEATURE_CLOSED: 'feature_closed'
+};
+const BLOCK_CODE_LIST = Object.keys(BLOCK_CODES).map(function (k) { return BLOCK_CODES[k] });
+
+const FEATURE_SWITCH_IDS = {
+  EXECUTABLE: 'APP_GY_I08_EXECUTABLE_ENABLED',
+  DOSE_CARD: 'APP_GY_I08_DOSE_CARD_ENABLED'
+};
+const SWITCH_TRUTHY = ['1', 'true', 'on', 'yes'];
+const SWITCH_FALSEY = ['0', 'false', 'off', 'no'];
+
+// 单开关解析：未设置用默认值；未识别的取值**保守关闭**（拼错不得静默当作开启）。
+function parseSwitchValue(raw, fallback) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return { enabled: fallback, raw: raw === undefined ? null : raw, unrecognized: false };
+  const token = String(raw).trim().toLowerCase();
+  if (SWITCH_TRUTHY.indexOf(token) !== -1) return { enabled: true, raw: String(raw), unrecognized: false };
+  if (SWITCH_FALSEY.indexOf(token) !== -1) return { enabled: false, raw: String(raw), unrecognized: false };
+  return { enabled: false, raw: String(raw), unrecognized: true };
+}
+
+// 读取开关状态。小程序侧无 process.env：环境开关由构建/发布配置注入（缺省即默认开启）。
+function readFeatureSwitches(env) {
+  env = env || {};
+  const executable = parseSwitchValue(env[FEATURE_SWITCH_IDS.EXECUTABLE], true);
+  const doseCard = parseSwitchValue(env[FEATURE_SWITCH_IDS.DOSE_CARD], true);
+  return {
+    executable_enabled: executable.enabled,
+    dose_card_enabled: doseCard.enabled,
+    executable_switch: { id: FEATURE_SWITCH_IDS.EXECUTABLE, enabled: executable.enabled, raw: executable.raw, unrecognized: executable.unrecognized },
+    dose_card_switch: { id: FEATURE_SWITCH_IDS.DOSE_CARD, enabled: doseCard.enabled, raw: doseCard.raw, unrecognized: doseCard.unrecognized }
+  };
+}
+
+// 显式入参优先（页面开关 / 测试注入），否则读环境开关；用量卡是「可执行建议」的下位。
+function resolveFeatureSwitches(opts) {
+  opts = opts || {};
+  const envSwitches = readFeatureSwitches(opts.env || {});
+  const executableEnabled = opts.executableEnabled === undefined ? envSwitches.executable_enabled : opts.executableEnabled !== false;
+  const doseCardRequested = opts.doseCardEnabled === undefined ? (opts.executableEnabled === undefined ? envSwitches.dose_card_enabled : executableEnabled) : opts.doseCardEnabled !== false;
+  return { executable_enabled: executableEnabled, dose_card_enabled: doseCardRequested && executableEnabled, env: envSwitches };
+}
+
+// 来源侧阻断类别（与域库 sourceBlockCode 同判据与同顺序）。
+function sourceBlockCode(item) {
+  const s = (item && item.source) || {};
+  if (SOURCE_KINDS.indexOf(s.source_kind) === -1) return BLOCK_CODES.NO_SOURCE;
+  if (EVIDENCE_KINDS.indexOf(s.evidence_kind) === -1) return BLOCK_CODES.NO_SOURCE;
+  if (typeof (item && item.registration_number) !== 'string' || item.registration_number === '') return BLOCK_CODES.NO_SOURCE;
+  if (isSimulatedSource(item)) return BLOCK_CODES.SIMULATED_SOURCE;
+  const visibility = item.visibility;
+  if (visibility !== 'published') return BLOCK_CODES.INVALID_SOURCE;
+  const validity = (item.source && (item.source.source_validity || item.source.validity)) || 'unknown';
+  if (validity !== 'valid') return BLOCK_CODES.INVALID_SOURCE;
+  return null;
+}
+
+// 禁限用侧阻断类别（与域库 restrictionBlockCode 同口径）。
+function restrictionBlockCode(item, context) {
+  context = context || {};
+  const status = readRestrictionStatus(item);
+  if (status === 'banned') return BLOCK_CODES.BANNED;
+  if (status === 'restricted') return context.allow_restricted === true ? null : BLOCK_CODES.RESTRICTED;
+  if (status === 'unknown') return BLOCK_CODES.RESTRICTION_UNKNOWN;
+  return null;
+}
+
+// 未核对侧阻断类别（与域库 reviewBlockCode 同口径）：记录级与来源级审核状态都须显式 verified。
+function reviewBlockCode(item) {
+  const recordStatus = item && item.verification && item.verification.review_status;
+  const sourceStatus = item && item.source && item.source.review_status;
+  if (REVIEW_STATUSES.indexOf(recordStatus) === -1 || recordStatus !== 'verified') return BLOCK_CODES.UNREVIEWED;
+  if (REVIEW_STATUSES.indexOf(sourceStatus) === -1 || sourceStatus !== 'verified') return BLOCK_CODES.UNREVIEWED;
+  return null;
+}
+
+// 由 DoseCard 拒绝原因派生阻断类别（与域库 doseBlockCode 同映射表）。
+function doseBlockCode(card) {
+  if (card && card.renderable === true) return null;
+  if (card && card.closed === true) return BLOCK_CODES.FEATURE_CLOSED;
+  const reason = String((card && card.reason) || '');
+  const table = [
+    [DOSE_REJECT_REASON.not_usable, BLOCK_CODES.NO_DOSE_SOURCE],
+    [DOSE_REJECT_REASON.missing_condition, BLOCK_CODES.MISSING_CONDITION],
+    [DOSE_REJECT_REASON.not_reviewed, BLOCK_CODES.UNREVIEWED],
+    [DOSE_REJECT_REASON.simulated_source, BLOCK_CODES.SIMULATED_SOURCE],
+    [DOSE_REJECT_REASON.invalid_source, BLOCK_CODES.INVALID_SOURCE],
+    [DOSE_REJECT_REASON.restriction_unknown, BLOCK_CODES.RESTRICTION_UNKNOWN],
+    [DOSE_REJECT_REASON.restricted, BLOCK_CODES.RESTRICTED],
+    [DOSE_REJECT_REASON.banned, BLOCK_CODES.BANNED],
+    [DOSE_REJECT_REASON.not_applicable, BLOCK_CODES.NOT_APPLICABLE],
+    [DOSE_REJECT_REASON.incomplete_formulation, BLOCK_CODES.NO_SOURCE],
+    [DOSE_REJECT_REASON.dose_formulation_mismatch, BLOCK_CODES.FIELD_CONFLICT],
+    [DOSE_REJECT_REASON.dose_record_mismatch, BLOCK_CODES.NO_MATCH],
+    [DOSE_REJECT_REASON.dose_reference_missing, BLOCK_CODES.MISSING_CONDITION],
+    [DOSE_REJECT_REASON.stale_dose, BLOCK_CODES.INVALID_SOURCE],
+    [DOSE_REJECT_REASON.no_confirmed_context, BLOCK_CODES.MISSING_CONDITION]
+  ];
+  for (let i = 0; i < table.length; i += 1) {
+    if (reason !== '' && table[i][0] === reason) return table[i][1];
+  }
+  return BLOCK_CODES.NOT_APPLICABLE;
+}
+
+// 可执行建议闸门：适用判定 + 来源/禁限用细分 + 功能关闭开关（与域库同语义）。
+function evaluateExecutableAdvice(item, context, opts) {
+  context = context || {};
+  opts = opts || {};
+  const switches = resolveFeatureSwitches(opts);
+  const applicability = evaluateApplicability(item, context);
+  const blockCodes = [];
+  const reasons = (applicability.reasons || []).slice();
+
+  const sourceCode = sourceBlockCode(item);
+  if (sourceCode !== null) blockCodes.push(sourceCode);
+  const reviewCode = reviewBlockCode(item);
+  if (reviewCode !== null) blockCodes.push(reviewCode);
+  const restrictionCode = restrictionBlockCode(item, context);
+  if (restrictionCode !== null) blockCodes.push(restrictionCode);
+  (applicability.blocked || []).forEach(function (dimension) {
+    if (dimension === 'banned_restricted' || dimension === 'valid_source') return;
+    blockCodes.push(BLOCK_CODES.NOT_APPLICABLE);
+  });
+  if (!switches.executable_enabled) {
+    blockCodes.push(BLOCK_CODES.FEATURE_CLOSED);
+    reasons.push('功能开关 ' + FEATURE_SWITCH_IDS.EXECUTABLE + ' 已关闭：不产出可执行建议与用量卡');
+  }
+
+  const uniqueCodes = [];
+  blockCodes.forEach(function (c) { if (uniqueCodes.indexOf(c) === -1) uniqueCodes.push(c) });
+  return {
+    executable: uniqueCodes.length === 0 && applicability.applicable === true,
+    applicable: applicability.applicable,
+    blocked: (applicability.blocked || []).slice(),
+    block_codes: uniqueCodes,
+    reasons: reasons,
+    rule_version: APPLICABILITY_RULE_VERSION,
+    feature_switch: {
+      executable_id: FEATURE_SWITCH_IDS.EXECUTABLE,
+      dose_card_id: FEATURE_SWITCH_IDS.DOSE_CARD,
+      executable_enabled: switches.executable_enabled,
+      dose_card_enabled: switches.dose_card_enabled
+    }
+  };
+}
+
+// 用量卡边界统一入口：可执行建议 + 原文用量卡同闸（关闭或不合格时两者都不产出）。
+function evaluateDoseBoundary(item, context, opts) {
+  context = context || {};
+  opts = opts || {};
+  const switches = resolveFeatureSwitches(opts);
+  const advice = evaluateExecutableAdvice(item, context, opts);
+  const card = doseCardDescriptor(item, { doseCardEnabled: switches.dose_card_enabled, context: context });
+  const cardAllowed = advice.executable === true && card.renderable === true;
+  const blockCodes = advice.block_codes.slice();
+  const reasons = advice.reasons.slice();
+  if (!cardAllowed) {
+    const code = doseBlockCode(card);
+    if (code !== null) blockCodes.push(code);
+    if (typeof card.reason === 'string' && card.reason !== '' && reasons.indexOf(card.reason) === -1) reasons.push(card.reason);
+  }
+  const unique = [];
+  blockCodes.forEach(function (c) { if (unique.indexOf(c) === -1) unique.push(c) });
+  return {
+    executable: advice.executable,
+    renderable: cardAllowed,
+    dose_count: cardAllowed ? 1 : 0,
+    block_codes: unique,
+    reasons: reasons,
+    rule_version: APPLICABILITY_RULE_VERSION,
+    dose_card: card,
+    advice: advice,
+    feature_switch: advice.feature_switch
+  };
+}
+
 module.exports = {
   crops: crops.crops,
   APPLICABILITY_RULE_VERSION: APPLICABILITY_RULE_VERSION,
   RESTRICTION_STATUSES: RESTRICTION_STATUSES,
   APPLICABILITY_DIMENSIONS: APPLICABILITY_DIMENSIONS,
+  BLOCK_CODES: BLOCK_CODES,
+  BLOCK_CODE_LIST: BLOCK_CODE_LIST,
+  FEATURE_SWITCH_IDS: FEATURE_SWITCH_IDS,
   evaluateApplicability: evaluateApplicability,
+  evaluateExecutableAdvice: evaluateExecutableAdvice,
+  evaluateDoseBoundary: evaluateDoseBoundary,
+  readFeatureSwitches: readFeatureSwitches,
+  doseBlockCode: doseBlockCode,
   doseCardDescriptor: doseCardDescriptor,
   ingredientContentMatch: ingredientContentMatch,
   parseIngredients: parseIngredientsLocal,
