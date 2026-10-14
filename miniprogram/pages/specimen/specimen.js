@@ -20,6 +20,9 @@ Page({
   data: {
     fontScale: 1,
     local: false,
+    kitQuery: '',
+    kitSelected: '全部',
+    kitStatus: 'ready',
     /** 末屏走查用：一段可滚动的长内容，用来核对 tabBar 是否遮挡末屏 */
     filler: [1, 2, 3, 4, 5, 6]
   },
@@ -34,5 +37,11 @@ Page({
   /** 样张按钮：不产生任何业务行为，避免被误当已交付功能 */
   onStub: function () {
     wx.showToast({ title: '样式样张，无业务行为', icon: 'none' })
-  }
+  },
+  onKitInput: function (event) { this.setData({ kitQuery: event.detail.value }) },
+  onKitClear: function () { this.setData({ kitQuery: '' }) },
+  onKitConfirm: function (event) { this.setData({ kitQuery: event.detail.value, kitStatus: 'loading' }) },
+  onKitSelect: function (event) { this.setData({ kitSelected: event.detail.value }) },
+  onKitRetry: function () { this.setData({ kitStatus: 'loading' }) },
+  onKitState: function (event) { this.setData({ kitStatus: event.currentTarget.dataset.value }) }
 })

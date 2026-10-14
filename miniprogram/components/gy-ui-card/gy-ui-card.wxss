@@ -1,0 +1,2 @@
+.gyui-card { box-sizing: border-box; min-width: 0; padding: 20px; border: 1px solid var(--line, #e5ebe5); border-radius: var(--radius, 14px); background: #fff; color: var(--ink, #17352b); }
+.gyui-card__title { margin-bottom: 16px; font-size: calc(18px * var(--font-scale, 1)); line-height: 1.5; font-weight: 600; }

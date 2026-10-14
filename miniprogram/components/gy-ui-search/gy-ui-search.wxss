@@ -1,0 +1,6 @@
+@import "../../styles/icons.wxss";
+.gyui-search { box-sizing: border-box; display: flex; align-items: center; min-height: 44px; width: 100%; padding: 0 10px 0 14px; border: 1px solid var(--green-field, #dfe8dc); border-radius: 12px; background: #fff; color: var(--ink, #17352b); }
+.gyui-search__icon { --gy-icon-size: 18px; margin-right: 12px; }
+.gyui-search__input { min-width: 0; flex: 1; height: 42px; font-size: calc(16px * var(--font-scale, 1)); color: var(--ink, #17352b); }
+.gyui-search__clear { min-height: 44px; margin: 0 0 0 4px; padding: 0 6px; display: flex; align-items: center; background: transparent; color: var(--green, #176b50); font-size: calc(14px * var(--font-scale, 1)); }
+.gyui-search__clear::after { border: none; }

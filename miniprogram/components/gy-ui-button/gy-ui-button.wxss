@@ -1,0 +1,8 @@
+.gyui-button { box-sizing: border-box; display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 9px 18px; margin: 0; border-radius: 10px; font-size: calc(16px * var(--font-scale, 1)); line-height: 1.5; font-weight: 600; color: var(--ink, #17352b); background: var(--green-soft, #eef3e9); }
+.gyui-button::after { border: none; }
+.gyui-button--block { width: 100%; }
+.gyui-button--primary { color: #fff; background: var(--green, #176b50); }
+.gyui-button--lime { color: #264630; background: var(--lime, #c6f17b); }
+.gyui-button--ghost { background: transparent; border: 1px solid var(--line, #e5ebe5); }
+.gyui-button--danger { color: var(--tone-danger-ink, #a4473e); background: var(--tone-danger-bg, #f8eeec); }
+.gyui-button[disabled] { opacity: .55; }

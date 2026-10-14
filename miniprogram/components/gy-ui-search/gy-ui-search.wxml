@@ -1,0 +1,5 @@
+<view class="gyui-search">
+  <view class="gy-icon gy-icon--search gyui-search__icon" aria-hidden="true"></view>
+  <input class="gyui-search__input" type="text" confirm-type="search" value="{{value}}" placeholder="{{placeholder}}" disabled="{{disabled}}" aria-label="{{placeholder}}" bindinput="onInput" bindconfirm="onConfirm" />
+  <button wx:if="{{value && !disabled}}" class="gyui-search__clear" aria-label="清除搜索内容" bindtap="onClear">清除</button>
+</view>

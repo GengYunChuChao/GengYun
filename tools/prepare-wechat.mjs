@@ -50,6 +50,8 @@ try {
     'components/state-view/state-view.json',
     'components/state-view/state-view.wxml',
     'components/state-view/state-view.wxss',
+    ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
+      ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
     'utils/navigation.js',
     'utils/page-gate.js',
     // 参考查询域适配层与数据（GY-I07）：随页面一同打包。
