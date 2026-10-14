@@ -1,10 +1,22 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { readLocalConfig, configArgument } from './local-debug-config.mjs';
+import { readLocalConfig, configArgument, clientBasePath } from './local-debug-config.mjs';
+
+/**
+ * 诊断端点路径集合：历史 origin 形态在根路径；`apiBaseUrl` 带路径（如 `/api/v1`）时，
+ * `miniprogram/utils/debug.js` 请求的是 `${apiBaseUrl}/__local__/status`，所以两种前缀都服务，
+ * 保证本工具打印出来的 URL 一定取得到。
+ */
+function localStatusPaths(config) {
+  let basePath = '';
+  try { basePath = clientBasePath(new URL(String(config.apiBaseUrl ?? '')).pathname) ?? ''; } catch { basePath = ''; }
+  return new Set(['/__local__/status', basePath + '/__local__/status']);
+}
 
 export function startLocalServer(config) {
+  const statusPaths = localStatusPaths(config);
   const server = createServer((req, res) => {
-    const success = req.method === 'GET' && req.url === '/__local__/status';
+    const success = req.method === 'GET' && statusPaths.has(req.url);
     res.writeHead(success ? 200 : 404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Execution-Mode': 'local_stub' });
     res.end(JSON.stringify(success
       ? { service: 'gengyun-local-diagnostic', execution_mode: 'local_stub', synthetic: true, capabilities: [] }
