@@ -125,14 +125,14 @@ check-evidence HEAD: checked=34  ok=34  MISMATCH=0  区间独占性违规=0
 
 ```
 $ npm run lint          → PASS tsc(api) / PASS tsc(admin) / PASS 仓库卫生扫描
-$ npm run test:unit     → ℹ tests 1609 / pass 1608 / fail 0 / skipped 1      （含本片钉子；并入 #106 的 jobs 用例）
+$ npm run test:unit     → ℹ tests 1651 / pass 1650 / fail 0 / skipped 1      （含本片钉子与返修用例）
 $ npm run test:contract → ℹ tests 6 / pass 6 / fail 0
 $ npm run test:docs     → PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
 $ git diff --check      → (无输出)
 $ node tests/integration/admin-http.mjs → 映射表覆盖 34 / 34；PASS 组数=27，FAIL 组数=0
-$ node tests/integration/jobs-http.mjs  → 14 组 PASS，exit=0（#106 已在 main，合成后必须跑）
+$ node tests/integration/jobs-http.mjs  → 15 组 PASS，exit=0（#106 已在 main）
 $ node tests/integration/recognitions-http.mjs → exit=0
-$ node tests/integration/speech-http.mjs       → exit=0
+$ node tests/integration/speech-http.mjs       → exit=0（返修后复跑：我的注释曾打破其结构性断言，见 §10.4）
 $ node tests/integration/tts-http.mjs          → exit=0
 $ node tests/integration/ocr-http.mjs          → exit=0
 ```
