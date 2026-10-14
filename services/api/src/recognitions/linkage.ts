@@ -370,7 +370,12 @@ export function resolveSelectionLinkage(input: ResolveSelectionLinkageInput): Se
  *
  * 装载失败时**抛错**（由调用方如实降级为「未取得」），**不**静默返回空集合冒充「无资料」。
  */
-export function createReferenceLinkagePort(): ReferenceLinkagePort {
+export function createReferenceLinkagePort(options: { requireVerified?: boolean } = {}): ReferenceLinkagePort {
+  // `real` 执行模式沿用仓库既有口径：只把**已核对**条目并入查询面
+  // （`catalog_read.current_knowledge` 即「已核对 + 已发布」）。
+  // 非 real（本地联调/演示）可并入**已发布但未核对**的真实公告附表记录，
+  // 且逐条如实带出 `review_status`，页面必须据此标注「待核实」。
+  const requireVerified = options.requireVerified === true;
   let records: readonly ReferenceRecordLike[] | null = null;
   let speciesNames: ReadonlyMap<string, readonly string[]> | null = null;
 
@@ -404,18 +409,33 @@ export function createReferenceLinkagePort(): ReferenceLinkagePort {
   }
 
   return {
-    kind: 'reference_package',
-    note: 'packages/reference 已合入的真实公告附表记录（未采集用量，恒无用量卡）',
+    kind: requireVerified ? 'reference_package_verified_only' : 'reference_package',
+    note: requireVerified
+      ? 'packages/reference 已合入记录中**已核对**的公开条目（real 模式口径）'
+      : 'packages/reference 已合入的真实公告附表记录（已发布；未核对条目逐条标注；未采集用量，恒无用量卡）',
     itemsForSpecies(speciesId) {
       const names = namesFor(text(speciesId));
       if (names.length === 0) return [];
       return load().filter((record) => {
+        if (requireVerified && text(record.verification?.review_status) !== 'verified') return false;
         const target = text(record.target_original).toLowerCase();
         if (target === '') return false;
         return names.some((name) => name.includes(target) || target.includes(name));
       });
     },
   };
+}
+
+/**
+ * 关联**未取得**时的如实结果（域库装载失败、或端口未装配）。
+ *
+ * 用法纪律：用户的选择本身**不因关联失败而失败**（选择已写入、可重试），
+ * 但记录里必须带上「关联未取得 + 原因」，**不得**用空资料冒充「查过但没有」，
+ * 也**不得**因此产出任何用量。
+ */
+export function unavailableLinkage(speciesId: string, reason: string): SelectionLinkage {
+  const base = resolveSelectionLinkage({ speciesId, conditions: null, records: [] });
+  return { ...base, note: `${base.note}（关联未取得：${reason}）` };
 }
 
 /**

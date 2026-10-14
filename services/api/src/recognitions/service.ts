@@ -22,8 +22,29 @@ import { randomUUID } from 'node:crypto';
 import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import {
+  BRANCH_DESCRIPTORS,
+  FAILURE_BRANCHES,
+  branchCreatesJob,
+  retrySemanticsFor,
+} from './branches.ts';
+import {
+  createReferenceLinkagePort,
+  resolveSelectionLinkage,
+  unavailableLinkage,
+  type ReferenceLinkagePort,
+  type SelectionConditions,
+  type SelectionLinkage,
+} from './linkage.ts';
 import type { RecognitionMediaPort } from './media.ts';
 import type { ProviderFailureCode, RecognitionProvider } from './provider.ts';
+import {
+  SELECTION_PROVENANCE_LABELS,
+  summarizeSelections,
+  type SelectionProvenance,
+  type SelectionRecord,
+  type SelectionSummary,
+} from './selection.ts';
 import {
   MAX_SPECIES_ID_LENGTH,
   CandidateProtocolError,
@@ -76,6 +97,15 @@ export interface RecognitionServiceOptions {
   media: RecognitionMediaPort;
   /** 幂等请求摘要密钥（服务端密钥，不入库、不下发）。 */
   idempotencyHmacKey: string;
+  /**
+   * 选择后关联科普与条件的**只读**资料端口（可选）。
+   *
+   * 缺省按其执行模式装配：`real` 只并入**已核对**条目（与既有
+   * `catalog_read.current_knowledge` 口径一致），非 real 可并入已发布但未核对的
+   * 真实公告附表记录（逐条如实带 `review_status`）。
+   * 注入替身端口即可在测试里构造「有效/失效/模拟」各式条目做负例。
+   */
+  linkage?: ReferenceLinkagePort;
   now?: () => Date;
   idFactory?: () => string;
   jobDeadlineMs?: number;
@@ -179,6 +209,12 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
   const idFactory = options.idFactory ?? (() => randomUUID());
   const jobDeadlineMs = options.jobDeadlineMs ?? DEFAULT_JOB_DEADLINE_MS;
   const idempotencyHmacKey = options.idempotencyHmacKey;
+  /**
+   * 选择后关联端口。缺省按执行模式装配（`real` 只并入已核对条目）。
+   * 端口只读资料层，**不可能**写入资料或产出用量卡（用量由 linkage.ts 恒阻断）。
+   */
+  const linkagePort =
+    options.linkage ?? createReferenceLinkagePort({ requireVerified: provider.executionMode === 'real' });
   const inFlight = new Set<Promise<void>>();
 
   function scopeFor(userId: string, method: string, routePath: string): string {
@@ -379,7 +415,9 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
 
     let decision: Decision;
     try {
-      decision = decideOutcome(outcome.value.candidates, outcome.value.uncertainty_reasons);
+      // 第三参数为提供者上报的六类失败/边界分支：一旦上报，**一律** uncertain
+      // （覆盖外/低质量/需重拍不得因同时返回高分候选而被写成成功）。
+      decision = decideOutcome(outcome.value.candidates, outcome.value.uncertainty_reasons, outcome.value.branch);
     } catch (error) {
       if (error instanceof CandidateProtocolError) {
         // 提供者协议违规（候选 >3 / rank 重复 / 字段缺失）：fail-closed，不截断、不补造。
@@ -480,16 +518,101 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
       produce: async () => {
         if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '识别记录版本与 If-Match 不一致');
         const at = now();
-        const updated = await store.updateRecognition(row.id, expectedRevision, (current) => ({
-          ...current,
-          // 只动这两项：candidates / model_score / model_version 保持模型原始值。
-          selectedSpeciesId: selection.selected_species_id,
-          revision: current.revision + 1,
-          updatedAt: at,
-        }));
-        if (updated === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
-        return { result: toRecognition(updated), payload: { accepted: true } };
+        // 关联科普与条件：**只取有效、可访问、非模拟**资料，且用量恒被 GY-I08 守卫阻断。
+        const linkage = await resolveLinkageFor(selection.selected_species_id);
+        // 原子提交：CAS 更新识别记录 + **追加**独立的用户选择记录（候选与人工选择分开记录）。
+        const committed = await store.commitSelection(
+          row.id,
+          expectedRevision,
+          (current) => ({
+            ...current,
+            // 只动这两项：candidates / model_score / model_version 保持模型原始值。
+            selectedSpeciesId: selection.selected_species_id,
+            revision: current.revision + 1,
+            updatedAt: at,
+          }),
+          {
+            id: idFactory(),
+            revision: 1,
+            recognitionId: row.id,
+            ownerUserId: row.ownerUserId,
+            speciesId: selection.selected_species_id,
+            // 人工选择：**永不**计入模型成绩（见 selection.ts 的 MODEL_ATTRIBUTABLE_PROVENANCE）。
+            provenance: 'human',
+            decidedAt: at,
+            linkage,
+          },
+        );
+        if (committed === null) throw new ApiError('REVISION_CONFLICT', '识别记录已被并发修改');
+        return { result: toRecognition(committed.recognition), payload: { accepted: true } };
       },
+    });
+  }
+
+  /**
+   * 解析某个已选品种的关联科普与条件。
+   *
+   * **关联失败不使选择失败**：用户的选择已写入且可重试，但记录里必须**如实**带出
+   * 「关联未取得 + 原因」——不用空资料冒充「查过但没有」，更不因此产出任何用量。
+   */
+  async function resolveLinkageFor(
+    speciesId: string,
+    conditions: SelectionConditions | null = null,
+  ): Promise<SelectionLinkage> {
+    try {
+      const records = await linkagePort.itemsForSpecies(speciesId);
+      return resolveSelectionLinkage({ speciesId, conditions, records });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      return unavailableLinkage(speciesId, reason);
+    }
+  }
+
+  /**
+   * 人工选择的独立记录（归属者限定）。
+   * 越权与不存在一律 `NOT_FOUND`（不泄露存在性，与识别记录读面同口径）。
+   */
+  async function listSelections(input: {
+    userId: string;
+    recognitionId: string;
+  }): Promise<{ items: SelectionRecord[]; summary: SelectionSummary }> {
+    await getOwnedRecognition(input.userId, input.recognitionId);
+    const items = await store.listSelections(input.recognitionId, input.userId);
+    return { items, summary: summarizeSelections(items) };
+  }
+
+  /** 人工选择的来源标签（页面/证据页共用，避免两端各写一套文案）。 */
+  function selectionProvenanceLabels(): Record<SelectionProvenance, string> {
+    return { ...SELECTION_PROVENANCE_LABELS };
+  }
+
+  /**
+   * 六类分支的**如实指引**（`branches.ts` 闭集的稳定投影）。
+   * 逐分支给出：契约内落点（state / error_code）、是否可重试、唯一重试动作、如实原因。
+   */
+  function branchGuide(): {
+    branch: string;
+    label: string;
+    job_state: string | null;
+    error_code: string | null;
+    retryable: boolean;
+    retry_action: string | null;
+    reason: string | null;
+    creates_job: boolean;
+  }[] {
+    return FAILURE_BRANCHES.map((branch) => {
+      const descriptor = BRANCH_DESCRIPTORS[branch];
+      const retry = retrySemanticsFor(branch);
+      return {
+        branch: descriptor.branch,
+        label: descriptor.label,
+        job_state: descriptor.jobState,
+        error_code: descriptor.errorCode,
+        retryable: retry.retryable,
+        retry_action: retry.retryAction,
+        reason: descriptor.reason,
+        creates_job: branchCreatesJob(branch),
+      };
     });
   }
 
@@ -582,6 +705,17 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     deleteRecognition,
     getJob,
     cancelJob,
+    /** 人工选择的独立记录（归属者限定；改选历史 append-only）。 */
+    listSelections,
+    /** 人工选择来源标签（页面与证据页共用同一份文案）。 */
+    selectionProvenanceLabels,
+    /**
+     * 六类失败/边界分支的**如实指引**（闭集，唯一事实来源见 `branches.ts`）。
+     *
+     * 小程序的 `identify-api.js` 镜像同一份指引，并由回归测试逐项断言两端一致
+     * （漂移即失败）—— 因此这里不是装饰性输出，而是跨端一致性的锚点。
+     */
+    branchGuide,
     settle,
     /** 供证据文档/诊断：当前提供者与媒体端口标注。 */
     describe: () => ({
@@ -593,6 +727,12 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
       mediaNote: media.note,
       storePersistent: store.persistent,
       jobDeadlineMs,
+      /** 选择后关联端口（只读资料层；用量恒被 GY-I08 守卫阻断）。 */
+      linkagePort: linkagePort.kind,
+      linkageNote: linkagePort.note,
+      /** 人工选择一律不计模型成绩（来源闭集与模型成绩无交集）。 */
+      selectionProvenance: 'human',
+      selectionModelAttributable: false,
     }),
   };
 }

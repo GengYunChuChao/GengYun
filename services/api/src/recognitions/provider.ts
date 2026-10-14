@@ -15,6 +15,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
+import { FAILURE_BRANCHES, type FailureBranch } from './branches.ts';
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
 export const PROVIDER_FAILURE_CODES = [
@@ -26,8 +27,15 @@ export const PROVIDER_FAILURE_CODES = [
 export type ProviderFailureCode = (typeof PROVIDER_FAILURE_CODES)[number];
 
 export type ProviderOutcome =
-  /** 提供者给出原始候选（未校验；由 decideOutcome 校验并判定状态）。 */
-  | { kind: 'completed'; candidates: unknown; uncertainty_reasons?: unknown }
+  /**
+   * 提供者给出原始候选（未校验；由 decideOutcome 校验并判定状态）。
+   *
+   * `branch`（可选）：提供者上报的**六类失败/边界分支**（见 `branches.ts`）。
+   * 一旦上报，`decideOutcome` **一律**判 `uncertain` ——
+   * 「覆盖外/低质量/需重拍」不得因为同时返回了高分候选而被当成可信成功。
+   * 非闭集成员会被判为协议违规（`failed` / `PROVIDER_OUTCOME_UNKNOWN`）。
+   */
+  | { kind: 'completed'; candidates: unknown; uncertainty_reasons?: unknown; branch?: FailureBranch }
   /** 提供者失败：由 service 映射为 failed / timed_out，绝不落 succeeded。 */
   | { kind: 'failed'; code: ProviderFailureCode };
 
@@ -108,10 +116,18 @@ export function createStubRecognitionProvider(options: {
             { species_id: ids[1], rank: 2, model_score: null },
           ],
           uncertainty_reasons: ['替身未给出可信分数，需重拍或人工核对'],
+          // 分支：不确定（无分数即不可信）。
+          branch: 'uncertain',
         };
       }
       if (bucket === 3) {
-        return { kind: 'completed', candidates: [], uncertainty_reasons: ['替身在该媒体上未产出候选'] };
+        return {
+          kind: 'completed',
+          candidates: [],
+          uncertainty_reasons: ['替身在该媒体上未产出候选'],
+          // 分支：无结果（正常调用但无候选）。
+          branch: 'no_result',
+        };
       }
       return {
         kind: 'completed',
@@ -162,3 +178,51 @@ export function createRecognitionProvider(input: {
   }
   return createStubRecognitionProvider({ executionMode: input.executionMode });
 }
+
+/**
+ * 把「六类失败/边界分支」映射为提供者输出（**唯一**的规范化入口）。
+ *
+ * 用途：任何提供者实现（含未来的真实适配器）都通过本函数上报分支，
+ * 从而保证「分支 → 候选/原因」的映射只有一份，且 `model_version` 由调用方提供
+ * （替身必须带明确标注）。
+ *
+ * 注意：`permission_denied` **不**是提供者输出 —— 它在受理前由用途授权中间件拦截
+ * （见 `branches.ts` 的说明）；本函数对它返回 `failed`/`PROVIDER_UNAVAILABLE` 以防止
+ * 任何调用方把「权限拒绝」当成一次已执行的任务结果。
+ */
+export function branchOutcome(branch: FailureBranch): ProviderOutcome {
+  if (branch === 'permission_denied') {
+    return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
+  }
+  if (branch === 'timeout') {
+    return { kind: 'failed', code: 'PROVIDER_TIMEOUT' };
+  }
+  return { kind: 'completed', candidates: [], uncertainty_reasons: [], branch };
+}
+
+/**
+ * **分支演示替身**（`stub`/`preset_demo`，明确标注）。
+ *
+ * 给定一个分支即恒定上报它 —— 用于本机联调、Demo 走查与证据页逐分支取证。
+ * `model_version` 带 `stub-branch` 标记，**不构成任何准确率证据**；
+ * 真实模型调用未授权，`real` 模式永不回退到本替身。
+ */
+export function createBranchRecognitionProvider(options: {
+  branch: FailureBranch;
+  executionMode?: 'stub' | 'preset_demo';
+}): RecognitionProvider {
+  const executionMode = options.executionMode ?? 'stub';
+  const branch = options.branch;
+  return {
+    executionMode,
+    modelVersion: `${executionMode === 'preset_demo' ? 'preset-demo' : 'stub'}-branch-${branch}-v1`,
+    available: true,
+    unavailableReason: null,
+    async recognize() {
+      return branchOutcome(branch);
+    },
+  };
+}
+
+/** 分支闭集（供装配层与测试断言，避免两处各写一份清单）。 */
+export const PROVIDER_BRANCHES: readonly FailureBranch[] = FAILURE_BRANCHES;
