@@ -408,10 +408,23 @@
       "route": "/api/v1/media/uploads",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "157-165"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-upload.test.mjs",
+          "name": "GY-I06 HTTP 上传面"
+        }
+      ],
+      "blocker": "媒体域 7 条路由已装配（services/api/src/routes/media.ts 单一注册点，注册进 app.ts）；对象存储按执行模式解析 —— stub/preset_demo 为**明确标注的替身**（句柄域 substitute.invalid），real 未接真实存储时整域 503 PROVIDER_UNAVAILABLE（fail-closed）；真实对象存储/COS、上传访问网关与真实微信登录态未接线、未验收"
     },
     {
       "id": "completeUpload",
@@ -420,10 +433,23 @@
       "route": "/api/v1/media/uploads/:id/complete",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "175-183"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-upload.test.mjs",
+          "name": "GY-I06 HTTP 上传面"
+        }
+      ],
+      "blocker": "完成接口按契约只收 {sha256,bytes}，服务端从对象存储取回字节后核验魔数/hash/字节数/音频真实时长并做 EXIF 结构性清除；失败与取消即回收对象（含 24h 过期回收）；真实对象存储未接线，real 一律 fail-closed；真实容器解码库、实库事务与网关直传数据面未验收"
     },
     {
       "id": "getMedia",
@@ -432,10 +458,23 @@
       "route": "/api/v1/media/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "199-207"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "仅 owner 可读私有元数据，非本人与不存在**逐字节同形** 404；内存记录 store（本片无持久化实现）；契约内没有私有媒体内容路由，owner 短效句柄 URL 由部署期访问网关承担，未接线未验收"
     },
     {
       "id": "deleteMedia",
@@ -444,10 +483,23 @@
       "route": "/api/v1/media/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "217-225"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "归属 + 强 ETag（缺失 428 / 不匹配 409）+ 同键幂等重放已装配；删除即时回收原始件与衍生件并撤销社区句柄，记录以 deleted 墓碑保留；注销 7/30 天删除闭环、备份与第三方完成证据未接线未验收"
     },
     {
       "id": "grantMediaAccess",
@@ -456,10 +508,23 @@
       "route": "/api/v1/media/:id/access",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "237-245"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "仅 owner 且仅 ready 才签发短效句柄（最长 300 秒，令牌不入 URL）；非本人统一 404；契约内没有私有媒体内容端点，句柄消费端（访问网关）未接线，未取得真实取图证据"
     },
     {
       "id": "getJob",
@@ -2393,10 +2458,23 @@
       "route": "/api/v1/community/media-access",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "257-265"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入"
     },
     {
       "id": "readCommunityMediaContent",
@@ -2405,10 +2483,27 @@
       "route": "/api/v1/community/media/:grant_id/content",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "276-284"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        },
+        {
+          "test": "tests/unit/media-real-mode-fail-closed.test.mjs",
+          "name": "GY-I06 real 模式"
+        }
+      ],
+      "blocker": "取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收"
     }
   ],
   "dimensions": [

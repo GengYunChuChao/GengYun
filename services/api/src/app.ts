@@ -55,6 +55,11 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+// GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
+import { registerMediaRoutes } from './routes/media.ts';
+import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
+import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
+import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -68,6 +73,13 @@ declare module 'fastify' {
     adminContentService: AdminContentService;
     /** GY-I18 阶段 1b：后台运营与开关服务（9 个 operationId）。 */
     adminOpsService: AdminOpsService;
+    /** GY-I06 媒体域服务（7 个 operationId；供回归测试核对 real fail-closed 与孤立对象清理）。 */
+    mediaService: AppMediaService;
+    /**
+     * GY-I06 媒体域的对象存储端口（**仅供测试**模拟「客户端直传对象存储」并断言孤立对象被回收）。
+     * 生产读取路径不经此装饰直接暴露给客户端，绝不进入任何响应投影。
+     */
+    mediaObjectStore: MediaObjectStore;
   }
 }
 
@@ -125,6 +137,14 @@ export interface BuildAppOptions {
     /** 注入 flag 语义分类表：用于验证"含放宽语义 ⇒ 拒绝接线"（默认出厂表）。 */
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
   };
+  // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
+  // `real` ⇒ 未接线对象存储（整域 fail-closed 503），`stub`/`preset_demo` ⇒ 明确标注的替身。
+  /** 测试注入：替换对象存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  mediaObjectStore?: MediaObjectStore;
+  /** 测试注入：替换公开内容来源（默认为**关闭**：社区取图统一 404，不误放行）。 */
+  mediaContentSource?: PublishedContentSource;
+  /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
+  mediaAttachmentCounter?: CommunityAttachmentCounter;
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -142,7 +162,7 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
     genReqId: () => randomUUID(),
@@ -263,6 +283,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     });
   }
 
+  // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
+  //
+  // **零真实存储注入**：对象存储端口按执行模式解析 —— `real` 一律 `unwired`（整域 fail-closed
+  // 503 PROVIDER_UNAVAILABLE，绝不把内存/替身存储记成真实持久化），`stub`/`preset_demo` 用
+  // **明确标注的替身**（句柄域名 `substitute.invalid`，不在响应里冒充真实网关）。
+  // 将来接真实对象存储必须在**这里显式**改为传入 `createS3CompatibleObjectStore(...)`
+  // ——判据是端口的 `kind`，不是任何自述持久化的布尔标志（同监工对 #121 的 P1 口径）。
+  // 公开内容来源默认**关闭**：社区取图统一 404，不误放行；真实来源属社区/审核线，跨线接线。
+  const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
+  const mediaService = createAppMediaService({
+    executionMode: config.executionMode,
+    objectStore: mediaObjectStore,
+    tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+    contentSource: mediaContentSource ?? createClosedContentSource(),
+    ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
+    now: clock,
+  });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -276,6 +314,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('synthesisService', synthesisService);
   app.decorate('adminContentService', adminContentService);
   app.decorate('adminOpsService', adminOpsService);
+  app.decorate('mediaService', mediaService);
+  app.decorate('mediaObjectStore', mediaObjectStore);
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -296,6 +336,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     createTranscriptionJobSource(app.speechService),
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
+  // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
+  registerMediaRoutes(app, config, guards, mediaService);
 
   app.setNotFoundHandler((request, reply) => {
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
