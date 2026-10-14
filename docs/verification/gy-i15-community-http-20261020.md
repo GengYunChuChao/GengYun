@@ -1,8 +1,10 @@
 # GY-I15（#15）阶段 2 · 社区真实发帖/评论/点赞/筛选/举报 HTTP 面 · 验证证据
 
 - 分支：`feat/gy-i15-community-http`
-- HEAD：`240c39415fe576db1eb143c804f7404170e1e5ed`
+- HEAD（本记录所描述的**实现**）：`240c39415fe576db1eb143c804f7404170e1e5ed`
+  （其后仅追加 **本证据页** 与一处**集成脚本维护**：`tests/integration/admin-http.mjs` 的 `hidePost` 默认装配断言；避免自我指涉，本页不记录自身 SHA，最终 SHA 见分支 HEAD）
 - 基线：`upstream/main = fcfa6de9d62aeaaa0489d3319f8f06911312af48`
+- 差异：`240c394` 处 `30 files changed, +3400 / -134`；追加本页后 `31 files changed, +3684 / -139`
 - 交付切片（本地提交，**未 push**）：`469882c`（服务层接线）、`1ccc0d6`（HTTP 用例 + 契约台账）、`240c394`（小程序）
 - 本记录**不关闭** #15；#15 的“真实端到端可发布”仍未取得（见 §6）。
 
