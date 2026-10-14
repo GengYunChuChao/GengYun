@@ -71,12 +71,21 @@ function snapshot(overrides = {}) {
  * 恢复目标**替身**：真在内存里删/查对象，并用 `replay_key → 证据` 的账本模拟
  * 目标端的原子幂等（同一键重复调用返回 `duplicate`，不产生第二份事实）。
  */
-function fakeTarget({ live = [], failKeys = [], skipApply = false, noThirdParty = false, throwOnVisible = false } = {}) {
+function fakeTarget({
+  live = [],
+  failKeys = [],
+  skipApply = false,
+  noThirdParty = false,
+  thirdPartyUnavailable = false,
+  throwOnVisible = false,
+} = {}) {
   const liveSet = new Set(live);
   /** 幂等账本：replay_key → evidenceRef（唯一一份事实）。 */
   const ledger = new Map();
   const calls = [];
   const appliedOrder = [];
+  /** **第三方**实际被发送的重放次数（用于断言"未接线 ⇒ 零发送"）。 */
+  let thirdPartySends = 0;
   const target = {
     kind: 'wired',
     available: true,
@@ -84,6 +93,9 @@ function fakeTarget({ live = [], failKeys = [], skipApply = false, noThirdParty 
     ledger,
     calls,
     appliedOrder,
+    get thirdPartySends() {
+      return thirdPartySends;
+    },
     apply(entry) {
       calls.push(entry.replay_key);
       if (skipApply) return { outcome: 'pending', errorCode: 'STORE_UNREACHABLE' };
@@ -105,10 +117,21 @@ function fakeTarget({ live = [], failKeys = [], skipApply = false, noThirdParty 
       return liveSet.has(ref);
     },
   };
-  if (!noThirdParty) {
+  if (thirdPartyUnavailable) {
+    // 端口**存在但不可用**：`available: false`，且任何调用都要被计为一次"发送"（用于断言 0 发送）。
+    target.thirdParty = {
+      available: false,
+      replay(entry) {
+        thirdPartySends += 1;
+        calls.push(entry.replay_key);
+        return { outcome: 'failed', errorCode: 'PROVIDER_UNAVAILABLE' };
+      },
+    };
+  } else if (!noThirdParty) {
     target.thirdParty = {
       available: true,
       replay(entry) {
+        thirdPartySends += 1;
         calls.push(entry.replay_key);
         if (skipApply) return { outcome: 'pending', errorCode: 'PROVIDER_TIMEOUT' };
         if (ledger.has(entry.replay_key)) {
@@ -472,6 +495,101 @@ test('负例④：期限是上限、不是完成条件 —— 不得仅凭时钟
   assert.deepEqual([...mixedResult.entries].map((e) => e.settled), [true, true]);
   assert.equal(mixedResult.restore_safe, true, '两阶段都已带证据重放 ⇒ 可开流量（期限只是事实）');
   assert.equal(mixedResult.reason_code, null);
+});
+
+test('P1 返修：历史完成事实不得覆盖本轮失败 —— 必重放条目只认本轮证据（含监工场景）', async () => {
+  // 监工场景：快照明确含该第三方对象；tombstone 已有**历史** confirmed + 证据（deletion_settled=true）；
+  // 本轮第三方端口 **available=false**；isVisible 只对本地恢复对象回查 false。
+  const manifest = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: T, contains_object_refs: ['opaque:third-party-object'] }),
+    tombstones: [tombstone({
+      object_ref: 'opaque:third-party-object',
+      scope: 'third_party',
+      state: 'completed',
+      evidence_ref: 'ev:tp:historical',
+      third_party: {
+        recipient_id: 'vendor-a',
+        online_status: 'confirmed',
+        backup_status: 'confirmed',
+        evidence_ref: 'tp-historical-receipt',
+      },
+    })],
+    now: DAY30,
+  });
+  assert.equal(manifest.entries[0].needed, true);
+  assert.equal(manifest.entries[0].deletion_settled, true, '历史事实：确已确认且有证据（仅背景信息）');
+
+  const target = fakeTarget({ live: [], thirdPartyUnavailable: true });
+  const result = await executeBackupReplay({ manifest, target });
+  assertReplayInvariants(result, '历史事实+本轮未接线');
+  assert.equal(result.entries[0].status, 'failed');
+  assert.equal(result.entries[0].reason_code, REASON.THIRD_PARTY_UNWIRED, '必须保留可判别失败原因');
+  assert.equal(result.entries[0].evidence_ref, null, '本轮没有证据');
+  assert.equal(result.entries[0].replayed_this_round, false);
+  assert.equal(result.entries[0].settled, false, '历史事实不得兜成本轮成功');
+  assert.equal(result.entries[0].needed, true, '该条目必须重放（required=1）');
+  assert.equal(result.replayed, 0);
+  assert.equal(result.failed, 1, '本轮确为失败（failed=1），不得被历史事实改写');
+  assert.equal(result.entries[0].visible_after, false, '本地确实不可见（这正是陷阱）');
+  assert.equal(result.restore_safe, false, '本轮第三方重放未完成 ⇒ 不得放行');
+  assert.equal(result.isolation_required, true);
+  assert.equal(typeof result.reason_code, 'string');
+  assert.ok(result.reason_code.length > 0);
+  assert.ok([...result.reasons].includes(REASON.THIRD_PARTY_UNWIRED));
+  assert.equal(target.thirdPartySends, 0, '端口未接线 ⇒ 零发送');
+
+  // 正向对照（同一份清单）：端口可用且**本轮**确认 ⇒ 才如实放行。
+  const wired = fakeTarget({ live: [] });
+  const wiredResult = await executeBackupReplay({ manifest, target: wired });
+  assert.equal(wiredResult.entries[0].status, 'applied');
+  assert.equal(wiredResult.entries[0].replayed_this_round, true);
+  assert.equal(wiredResult.entries[0].settled, true);
+  assert.equal(wiredResult.restore_safe, true);
+  assert.equal(wiredResult.reason_code, null);
+  assert.equal(wired.thirdPartySends, 1);
+
+  // 同一缺陷的非第三方实例：本轮 failed / pending，而本地恰好不可见
+  // （旧口径会由历史 `deletion_settled` 兜成 `restore_safe:true`）。
+  const localManifest = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: T, contains_object_refs: ['opaque:obj-1'] }),
+    tombstones: [tombstone({ object_ref: 'opaque:obj-1' })],
+    now: DAY30,
+  });
+  assert.equal(localManifest.entries[0].deletion_settled, true, '历史事实（背景）');
+  for (const [label, opts, expectedReason] of [
+    ['本轮 failed', { failKeys: ['opaque:obj-1'] }, 'STORE_REJECTED'],
+    ['本轮 pending', { skipApply: true }, 'STORE_UNREACHABLE'],
+  ]) {
+    const broken = fakeTarget({ live: [], ...opts });
+    const brokenResult = await executeBackupReplay({ manifest: localManifest, target: broken });
+    assertReplayInvariants(brokenResult, label);
+    assert.equal(brokenResult.entries[0].visible_after, false, `${label}：本地不可见`);
+    assert.equal(brokenResult.entries[0].replayed_this_round, false, label);
+    assert.equal(brokenResult.entries[0].settled, false, `${label}：历史事实不得兜成本轮成功`);
+    assert.equal(brokenResult.entries[0].reason_code, expectedReason, label);
+    assert.equal(brokenResult.restore_safe, false, `${label}：不得放行`);
+    assert.equal(brokenResult.isolation_required, true, label);
+    assert.ok([...brokenResult.reasons].includes(expectedReason), label);
+  }
+
+  // **保留**：覆盖条目（`needed=false`）仍可合法复用既成证据；`duplicate` 仍是本轮幂等成功。
+  const covered = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: DAY30, contains_object_refs: [] }),
+    tombstones: [tombstone({ object_ref: 'opaque:obj-covered', state: 'completed', evidence_ref: 'ev:c:1' })],
+    now: DAY30,
+  });
+  const coveredResult = await executeBackupReplay({ manifest: covered, target: fakeTarget({ live: [] }) });
+  assert.equal(coveredResult.entries[0].needed, false);
+  assert.equal(coveredResult.entries[0].settled, true, '覆盖条目：既成证据可合法复用');
+  assert.equal(coveredResult.restore_safe, true);
+
+  const replayTwice = fakeTarget({ live: ['opaque:obj-1'] });
+  await executeBackupReplay({ manifest: localManifest, target: replayTwice });
+  const second = await executeBackupReplay({ manifest: localManifest, target: replayTwice });
+  assert.equal(second.entries[0].status, 'duplicate');
+  assert.equal(second.entries[0].replayed_this_round, true, 'duplicate 仍是本轮幂等成功');
+  assert.equal(second.entries[0].settled, true);
+  assert.equal(second.restore_safe, true);
 });
 
 test('fail-closed：坏行不静默跳过 / 入参不可信 / 越权 / 清单不含用户可识别信息', async () => {

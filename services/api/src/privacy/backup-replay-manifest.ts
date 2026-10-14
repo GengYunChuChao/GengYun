@@ -41,6 +41,10 @@
  * 2. **漏重放不得表现为成功**：任何未 `applied`/`duplicate` 的必重放条目 ⇒ `pending`/`failed` +
  *    可判别原因码；`restore_safe` 恒 false。**清单本身**的 `restore_safe` 也**恒为 false**
  *    （清单只是计划，没重放、没验证，就绝不能说安全）。
+ *    **「本轮结果」与「历史事实」严格分开**：`needed` 条目**只能由本轮定案** ——
+ *    清单里的 `deletion_settled`（历史 confirmed + 证据）**只作背景信息**，**绝不**能把本轮
+ *    `failed`/`pending`/端口未接线/无本轮证据兜成成功；`visible_after === false`（本地不可见）
+ *    **不得单独**作为放行依据（本地不可见 ≠ 当前第三方已确认）。`duplicate` 仍是本轮幂等成功。
  * 3. **不得仅凭时钟判完成**：7 日 / 30 日是**期限上限**（`docs/product-requirements.md` B18
  *    「在线 7 日内删除、备份 30 日内滚动清理」），**不是必须保留满**，更不得把「未到期」反转成
  *    「必须等到期才认完成」。每条按 `requested_at` + 阶段判期限（闭区间；复用第 1 步
@@ -279,7 +283,8 @@ export interface BackupReplayManifestEntry {
    * **只是事实列示，不是完成门槛** —— 期限是上限，期限内提前完成同样算完成。 */
   readonly window_due: boolean;
   /** 清单里**既成的完成证据**是否成立（`HANDLER_STATES.completed` + 证据非空白；
-   * 第三方条目要求接收方 `confirmed` 且带证据）。与是否到期**解耦**。 */
+   * 第三方条目要求接收方 `confirmed` 且带证据）。与是否到期**解耦**。
+   * **只作背景信息**：`needed` 条目不得据此放行（历史确认不能证明本轮重放已完成）。 */
   readonly deletion_settled: boolean;
   /** **必须重放**：快照含有该对象，或 tombstone 比快照水位新。 */
   readonly needed: boolean;
@@ -382,8 +387,12 @@ export interface BackupReplayEntryOutcome {
   readonly visible_after: boolean | null;
   /** 期限是否已到（**事实**，不是完成门槛）。 */
   readonly window_due: boolean;
-  /** 该条删除事实是否已由**证据**确定完成（清单既有证据 或 本次重放证据）。 */
+  /** 该条删除事实是否已由**证据**确定完成（本轮定案或覆盖条目的既成证据）。
+   * 注意：`needed` 条目**只认本轮**（历史完成事实只作背景，见 `replayed_this_round`）。 */
   readonly settled: boolean;
+  /** **本轮**是否真的完成重放并带本轮证据（`applied`/`duplicate` + 非空证据）。
+   * `needed` 条目仅凭此项才能定案；历史 `deletion_settled` **不得**覆盖本轮失败。 */
+  readonly replayed_this_round: boolean;
   /** 本条是否已达到「恢复安全」（可判别，不靠整单平均）。 */
   readonly restore_safe: boolean;
   readonly reason_code: string | null;
@@ -832,9 +841,13 @@ function classifyApply(
  *   - 重放后逐条回查可见性；任一仍可见 ⇒ `REPLAY_REVIVED`，`restore_safe: false`、`isolation_required: true`；
  *   - **不得仅凭时钟判完成**：没有完成证据时，仍在期限内 ⇒ `REPLAY_UNDUE_NO_EVIDENCE`、
  *     已逾期 ⇒ `REPLAY_OVERDUE_NOT_EXECUTED`，`restore_safe: false`；
- *     反过来，**期限内提前完成且带证据**（本次重放证据或清单既有证据）必须如实判安全；
- *   - `restore_safe === true` 需：无复活 + 每条必重放条目都已重放且带证据 + 每条窗口都已到期
- *     + 清单非空（空清单不得真空真）。
+ *     反过来，**期限内提前完成且带证据**（本轮重放证据）必须如实判安全；
+ *   - **历史完成事实不得覆盖本轮失败**：`needed` 条目只认**本轮**（`applied`/`duplicate` + 本轮证据；
+ *     第三方还须本轮已确认）。清单里的 `deletion_settled` 只作背景信息；
+ *     `visible_after === false` 不得单独放行 ⇒ 本轮 `failed`/`pending`/未接线时**保留失败原因**
+ *     且 `isolation_required: true`；
+ *   - `restore_safe === true` 需：无复活 + 每条条目**由证据定案**（`needed` 用本轮证据，
+ *     被覆盖条目可合法复用既成证据）+ 清单非空（空清单不得真空真）。
  */
 export async function executeBackupReplay(input: BackupReplayExecutionInput): Promise<BackupReplayResult> {
   const manifest = input?.manifest as BackupReplayManifest | undefined;
@@ -952,22 +965,26 @@ export async function executeBackupReplay(input: BackupReplayExecutionInput): Pr
       detail = detail ?? '无法回查该对象是否仍可见 ⇒ 不得声称恢复安全';
     }
 
-    // 完成看**证据**、不看时钟（监工 P1 / B18：7 日 / 30 日是上限，不是必须保留满）：
-    //   必须重放的条目 ⇒ 本次重放的证据（applied/duplicate + 非空 evidence_ref）即可定案；
-    //   被快照覆盖的条目 ⇒ 只能靠清单里**既成**的完成证据（它没被重放）。
-    const settledByReplay = (status === 'applied' || status === 'duplicate') && evidenceRef !== null;
-    const settledEntry = entry.needed ? (settledByReplay || entry.deletion_settled) : entry.deletion_settled;
+    // **把「本轮结果」与「历史事实」分开**（监工 P1）：
+    //   本轮完成 = 本轮真的重放成功（applied/duplicate）**且带本轮证据**（第三方还须本轮已确认）；
+    //   `needed` 条目**只能由本轮定案** —— 历史 `deletion_settled` 只是**背景信息**，
+    //   绝不允许把本轮 `failed`/`pending`/未接线/无证据兜成成功（历史确认不能证明本轮已完成，
+    //   本地不可见也不能替代当前第三方确认）。
+    //   被快照覆盖的条目（`needed === false`）没有本轮动作，才允许合法复用既成的完成证据。
+    const replayedThisRound = (status === 'applied' || status === 'duplicate') && evidenceRef !== null;
+    const settledEntry = entry.needed ? replayedThisRound : entry.deletion_settled;
     if (!settledEntry && reasonCode === null) {
-      // **不得仅凭时钟判完成**：没有证据时，「期限未到」与「已逾期」都不得声称安全。
+      // 本轮没有定案证据，但也没有更具体的失败原因 ⇒ 给出可判别原因（期限只作背景）。
       reasonCode = entry.window_due
         ? REASON_CODE_VALUES.OVERDUE_NOT_EXECUTED
         : REASON_CODE_VALUES.UNDUE_NO_EVIDENCE;
       detail = entry.window_due
-        ? '已逾期且仍无完成证据 ⇒ 逾期未执行，不得声称恢复安全'
-        : '仍在期限内且无完成证据 ⇒ 不得仅凭时钟判完成（期限是上限，不是保留期）';
+        ? '已逾期且仍无本轮完成证据 ⇒ 不得声称恢复安全'
+        : '仍在期限内且无本轮完成证据 ⇒ 不得仅凭时钟判完成（期限是上限，不是保留期）';
     }
 
-    // 单条安全 = **证据确定的完成事实** + 已回查确认不可见（期限只作事实列示）。
+    // 单条安全 = **本轮证据定案**（或覆盖条目的既成证据）+ 已回查确认不可见。
+    //  `visibleAfter === false` **不得单独作为放行依据**（本地不可见 ≠ 当前第三方已确认）。
     const restoreSafe = settledEntry && visibleAfter === false;
 
     outcomes.push(Object.freeze({
@@ -982,6 +999,7 @@ export async function executeBackupReplay(input: BackupReplayExecutionInput): Pr
       visible_after: visibleAfter,
       window_due: entry.window_due,
       settled: settledEntry,
+      replayed_this_round: replayedThisRound,
       restore_safe: restoreSafe,
       // `restore_safe === false` 时原因码必非空。
       reason_code: restoreSafe ? null : reasonCode ?? REASON_CODE_VALUES.NOT_EXECUTED,
