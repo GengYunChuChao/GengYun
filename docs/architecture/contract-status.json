@@ -625,10 +625,27 @@
       "route": "/api/v1/herbicides",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+       {
+        "path": "services/api/src/routes/knowledge.ts",
+        "lines": "60-65"
+       },
+       {
+        "path": "services/api/src/knowledge/reference-query.ts",
+        "lines": "158-166"
+       },
+       {
+        "path": "packages/reference/zhejiang.mjs",
+        "lines": "97-160"
+       },
+       {
+        "test": "tests/unit/knowledge-herbicides-http.test.mjs",
+        "name": "/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯"
+       }
+      ],
+      "blocker": "记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收"
     },
     {
       "id": "getHerbicide",
@@ -637,10 +654,23 @@
       "route": "/api/v1/herbicides/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+       {
+        "path": "services/api/src/routes/knowledge.ts",
+        "lines": "66-72"
+       },
+       {
+        "path": "services/api/src/knowledge/reference-query.ts",
+        "lines": "167-175"
+       },
+       {
+        "test": "tests/unit/knowledge-herbicides-http.test.mjs",
+        "name": "/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致"
+       }
+      ],
+      "blocker": "未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表"
     },
     {
       "id": "verifyRegistration",
@@ -2645,7 +2675,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；替身标记且 review_status=unverified，两种模式用量候选恒空；/herbicides 仍未装配，真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收"
+      "blocker": "公共科普/资料已有来源字段投影，已装配 OCR 登记核对也使用来源投影；/herbicides 列表与详情已装配并消费 packages/reference 的真实公告记录（来源 review_status=unverified，禁限用/用量未采集 ⇒ 用量候选恒空）；/knowledge 在非 real 模式且显式放行时并入浙江首批真实资料（review_status=unverified、visibility=private）；真实已审来源与制剂/条件完整的用量 HTTP 消费尚缺，不以库层或替身断言冒称真实用药验收"
     },
     {
       "key": "execution_modes",
