@@ -59,6 +59,8 @@ export interface LinkageItem {
   applicable: boolean;
   /** 不适用的 GY-I08 阻断类别（闭集；适用时为空数组）。 */
   blocked_codes: string[];
+  /** 不适用的**可读原因**（逐维度，AC02「缺项有原因」；适用时为空数组）。 */
+  reasons: string[];
 }
 
 /** 被排除的资料（**如实带出原因**，不静默丢弃）。 */
@@ -186,6 +188,7 @@ function toLinkageItem(record: ReferenceRecordLike, context: Record<string, unkn
     review_status: reviewStatus === '' ? 'unknown' : reviewStatus,
     applicable: applicability.applicable === true,
     blocked_codes: Array.isArray(applicability.blocked) ? [...applicability.blocked] : [],
+    reasons: Array.isArray(applicability.reasons) ? [...applicability.reasons] : [],
   };
 }
 

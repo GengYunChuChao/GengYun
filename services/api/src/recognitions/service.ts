@@ -314,8 +314,11 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     const mediaJobInput = requireMediaJobInput(input.body);
     const key = requireIdempotencyKey(input.idempotencyKey);
     // real 缺凭据/无已审适配器：受理前 fail-closed，不排队、不回退替身。
+    // `retryable: true` 与仓库既有口径一致（媒体域 / 隐私外发域的 PROVIDER_UNAVAILABLE 同）。
     if (!provider.available) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? '识别提供者不可用');
+      throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? '识别提供者不可用', {
+        retryable: true,
+      });
     }
     const resolution = await media.resolve({
       ownerUserId: input.userId,
