@@ -21,7 +21,14 @@ function isNotFound(error: unknown): boolean {
 }
 
 /** 识别域作业源（#87）：`getJob` 读取、`cancelJob` 取消（两者都已实现，含 If-Match/幂等/终态语义）。 */
-export function createRecognitionJobSource(service: RecognitionService): JobSourcePort {
+export function createRecognitionJobSource(
+  service: RecognitionService,
+  /**
+   * GY-I27 第二片：取消后的**追加式**钩子（可选）。域内取消**成功后**调用，用于写外发取消墓碑
+   * （只增不减 ⇒ 晚到回调不可复活）。钩子异常**不改变**取消结果（取消已提交），只记入告警日志。
+   */
+  hooks: { onCancelled?(input: { jobId: string; userId: string }): Promise<void> } = {},
+): JobSourcePort {
   return {
     kind: 'recognition',
     async get(input: JobSourceGetInput) {
@@ -33,8 +40,9 @@ export function createRecognitionJobSource(service: RecognitionService): JobSour
       }
     },
     async cancel(input: JobSourceCancelInput) {
+      let cancelled;
       try {
-        return await service.cancelJob({
+        cancelled = await service.cancelJob({
           userId: input.userId,
           jobId: input.jobId,
           ifMatch: input.ifMatch,
@@ -44,6 +52,11 @@ export function createRecognitionJobSource(service: RecognitionService): JobSour
         if (isNotFound(error)) return null;
         throw error;
       }
+      if (cancelled !== null && hooks.onCancelled !== undefined) {
+        // 取消已提交：钩子失败不得回滚取消，也不得改写成失败响应（原始错误只进日志）。
+        await hooks.onCancelled({ jobId: input.jobId, userId: input.userId }).catch(() => {});
+      }
+      return cancelled;
     },
   };
 }

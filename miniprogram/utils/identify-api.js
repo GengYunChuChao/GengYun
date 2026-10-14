@@ -40,6 +40,114 @@ const JOB_STATE_VIEWS = {
 
 const JOB_STATES = Object.keys(JOB_STATE_VIEWS)
 
+// ---------------------------------------------------------------------------
+// GY-I08 规则版本 / 条件口径 / 六类失败分支的**跨端镜像**
+//
+// 唯一事实来源是 `packages/reference`（规则版本与阻断类别）与
+// `services/api/src/recognitions/{linkage,branches}.ts`（本片的选择后关联与六类分支闭集）。
+// 小程序无法 import 服务端 TS 模块，因此按仓库既有做法（同 `reference.js` 镜像 GY-I08）
+// 在这里镜像一份，并由 `tests/unit/miniprogram-identify.test.mjs` **逐项断言两端一致**
+// —— 任何一端漂移都会让回归失败，而不是静默产生两套口径。
+// ---------------------------------------------------------------------------
+
+/** GY-I08 规则版本（与域库 `APPLICABILITY_RULE_VERSION` 同值）。 */
+const APPLICABILITY_RULE_VERSION = 'gy-i08/1.2.0'
+
+/** 契约 `DoseConditions` 的 6 个必填字段（顺序即契约字段顺序）。 */
+const DOSE_CONDITION_FIELDS = ['crop_id', 'region_code', 'species_id', 'growth_stage', 'planting_method', 'use_scene']
+
+/** 浙江地区码形状（契约 `Conditions.region_code` 的 pattern）。 */
+const REGION_CODE_PATTERN = /^33[0-9]{4}$/
+
+/**
+ * 识别/选择路径的**恒定**用量阻断类别（GY-I08 闭集成员 `no_dose_source`）。
+ * 与 `services/api/src/recognitions/linkage.ts` 的 `DOSE_PATH_BLOCK_CODE` 同值：
+ * 这条路径**没有**经 GY-I08 授权的用量来源，因此任何条件下都不得展示用量。
+ */
+const DOSE_PATH_BLOCK_CODE = 'no_dose_source'
+
+/**
+ * 六类失败/边界分支（与 `branches.ts` 的 `FAILURE_BRANCHES` 同闭集、同顺序）。
+ * 小程序侧只按契约可见信息（`state` / `error_code` / `uncertainty_reasons`）归类。
+ */
+const FAILURE_BRANCHES = ['uncertain', 'out_of_coverage_or_low_quality', 'permission_denied', 'no_result', 'timeout', 'reshoot_required']
+
+/**
+ * 六类分支的呈现与重试语义（镜像 `branches.ts` 的 `BRANCH_DESCRIPTORS`）。
+ *
+ * `jobState` 为 `null` = **受理前**拦截（权限拒绝），不存在任务；
+ * `retryable` 为 false 时页面**不得**给出重试入口。
+ */
+const BRANCH_GUIDE = {
+  uncertain: {
+    branch: 'uncertain',
+    label: '结果不确定：候选仅供参考，需人工核对',
+    jobState: 'uncertain',
+    errorCode: null,
+    retryable: true,
+    retryAction: 'new_task',
+    reason: null
+  },
+  out_of_coverage_or_low_quality: {
+    branch: 'out_of_coverage_or_low_quality',
+    label: '该对象不在覆盖范围内，或照片质量不足无法判定',
+    jobState: 'uncertain',
+    errorCode: null,
+    retryable: true,
+    retryAction: 'reshoot',
+    reason: '拍摄对象不在当前覆盖范围内'
+  },
+  permission_denied: {
+    branch: 'permission_denied',
+    label: '尚未获得该用途的授权，或会话已失效',
+    jobState: null,
+    errorCode: 'CONSENT_REQUIRED',
+    retryable: true,
+    retryAction: 'grant_consent',
+    reason: null
+  },
+  no_result: {
+    branch: 'no_result',
+    label: '本次未取得任何候选',
+    jobState: 'uncertain',
+    errorCode: null,
+    retryable: true,
+    retryAction: 'reshoot',
+    reason: null
+  },
+  timeout: {
+    branch: 'timeout',
+    label: '识别超时：超过任务截止时间仍未完成',
+    jobState: 'timed_out',
+    errorCode: 'PROVIDER_TIMEOUT',
+    retryable: true,
+    retryAction: 'new_task',
+    reason: null
+  },
+  reshoot_required: {
+    branch: 'reshoot_required',
+    label: '需要重新拍摄后才能继续',
+    jobState: 'uncertain',
+    errorCode: null,
+    retryable: true,
+    retryAction: 'reshoot',
+    reason: '拍摄条件不合格，建议重新拍摄'
+  }
+}
+
+/** 覆盖外·低质量的两个细分如实原因（与 `branches.ts` 的 `COVERAGE_REASONS` 同文本）。 */
+const COVERAGE_REASON_OUT_OF_SCOPE = '拍摄对象不在当前覆盖范围内'
+const COVERAGE_REASON_LOW_QUALITY = '照片模糊/遮挡/光照不足，无法可靠判定'
+const COVERAGE_REASON_RESHOOT = '拍摄条件不合格，建议重新拍摄'
+
+/** 重试动作 → 页面按钮文案（页面只按动作渲染，不自己拼语义）。 */
+const RETRY_ACTION_LABELS = {
+  reshoot: '重新拍摄',
+  new_task: '重新识别',
+  grant_consent: '去授权',
+  reauthenticate: '重新登录'
+}
+
 function failure(code) { const e = new Error(code); e.code = code; return e }
 function object(x) { return !!x && typeof x === 'object' && !Array.isArray(x) }
 function keys(x, required, optional) {
@@ -299,6 +407,101 @@ function isSuccessState(state) { return state === 'succeeded' }
 function isTerminalState(state) { return one(state, JOB_STATES) && JOB_STATE_VIEWS[state].terminal === true }
 function terminalStates() { return JOB_STATES.filter(function (s) { return JOB_STATE_VIEWS[s].terminal === true }) }
 
+// ---------------------------------------------------------------- 六类分支
+
+/**
+ * 由**契约可见信息**归类六类失败/边界分支；不属于六类时返回 null。
+ *
+ * 归类顺序是安全性的一部分（不得重排）：
+ *   1. 权限拒绝（受理前拦截，`error_code=CONSENT_REQUIRED`）——优先，因为它根本没有任务；
+ *   2. 超时（`timed_out` / `PROVIDER_TIMEOUT`）；
+ *   3. `uncertain` 细分：覆盖外·低质量 / 重拍 / 无结果 / 一般不确定。
+ *
+ * 「按原因文本细分」是**契约形态**决定的：`Recognition` 没有分支字段，
+ * 因此只能以服务端写入 `uncertainty_reasons` 的**闭集文本**为准；
+ * 匹配不上时回落到一般 `uncertain`（更保守，绝不因此把结果当成成功）。
+ * 文本来源与本文件上方镜像的闭集一致，漂移由回归测试拦住。
+ */
+function branchFor(state, errorCode, reasons) {
+  const list = Array.isArray(reasons) ? reasons : []
+  if (errorCode === 'CONSENT_REQUIRED') return 'permission_denied'
+  if (state === 'timed_out' || errorCode === 'PROVIDER_TIMEOUT') return 'timeout'
+  if (state !== 'uncertain') return null
+  if (list.indexOf(COVERAGE_REASON_OUT_OF_SCOPE) !== -1 || list.indexOf(COVERAGE_REASON_LOW_QUALITY) !== -1) {
+    return 'out_of_coverage_or_low_quality'
+  }
+  if (list.indexOf(COVERAGE_REASON_RESHOOT) !== -1) return 'reshoot_required'
+  if (list.some(function (r) { return typeof r === 'string' && r.indexOf('未返回任何候选') !== -1 })) return 'no_result'
+  return 'uncertain'
+}
+
+/** 分支指引（不可变副本；unknown 分支返回 null，页面不得据此给出重试入口）。 */
+function describeBranch(branch) {
+  if (!one(branch, FAILURE_BRANCHES)) return null
+  const entry = BRANCH_GUIDE[branch]
+  return {
+    branch: entry.branch, label: entry.label, jobState: entry.jobState, errorCode: entry.errorCode,
+    retryable: entry.retryable, retryAction: entry.retryAction,
+    retryLabel: entry.retryAction === null ? '' : (RETRY_ACTION_LABELS[entry.retryAction] || '重试'),
+    reason: entry.reason,
+    createsJob: entry.jobState !== null
+  }
+}
+
+/** 六类分支的完整指引（供证据/走查逐类核对；顺序与闭集一致）。 */
+function branchGuide() { return FAILURE_BRANCHES.map(function (b) { return describeBranch(b) }) }
+
+// -------------------------------------------------- 条件完整性 / 用量路径守卫
+
+/** 缺项清单（逐项如实，不补默认值；`region_code` 另需满足契约形状）。 */
+function missingDoseConditions(conditions) {
+  const source = conditions && typeof conditions === 'object' ? conditions : {}
+  const missing = []
+  for (const field of DOSE_CONDITION_FIELDS) {
+    const raw = source[field]
+    const value = typeof raw === 'string' ? raw.trim() : ''
+    if (value === '') { missing.push(field); continue }
+    if (field === 'region_code' && !REGION_CODE_PATTERN.test(value)) missing.push(field)
+  }
+  return missing
+}
+
+/** 条件是否完整（契约 `DoseConditions` 口径）。 */
+function isConditionsComplete(conditions) { return missingDoseConditions(conditions).length === 0 }
+
+/** 条件字段的页面文案（缺项提示用；不出现"权威/绝对安全"等禁用表述）。 */
+const DOSE_CONDITION_LABELS = {
+  crop_id: '作物', region_code: '地区', species_id: '杂草对象',
+  growth_stage: '生育期', planting_method: '种植方式', use_scene: '使用场景'
+}
+
+/** 缺项的可读清单（页面直接展示，避免页面自己拼字段名）。 */
+function missingConditionLabels(conditions) {
+  return missingDoseConditions(conditions).map(function (f) { return DOSE_CONDITION_LABELS[f] || f })
+}
+
+/**
+ * 识别/选择路径的用量守卫结果（**恒定**不可用）。
+ *
+ * 与 `linkage.ts` 同语义：这条路径没有经 GY-I08 授权的用量来源，
+ * 因此 `renderable` 恒 false、`card` 恒 null；条件是否完整只影响**原因**，
+ * 不影响「这条路径能不能给用量」（永远不能）。
+ */
+function dosePathGuard(conditions) {
+  const missing = missingDoseConditions(conditions)
+  return {
+    renderable: false,
+    card: null,
+    blockCode: DOSE_PATH_BLOCK_CODE,
+    blockedByPath: 'recognition_selection',
+    conditionsComplete: missing.length === 0,
+    missingConditions: missing,
+    missingConditionLabels: missingConditionLabels(conditions),
+    ruleVersion: APPLICABILITY_RULE_VERSION
+  }
+}
+
+
 /**
  * 纯函数视图模型：由**已校验**的 Job 决定页面能显示什么。
  * showTop3 仅在 succeeded / uncertain 为真；candidatesTrusted 与 allowReferenceQuery 仅 succeeded 为真
@@ -306,7 +509,7 @@ function terminalStates() { return JOB_STATES.filter(function (s) { return JOB_S
  */
 function viewModelForJob(job) {
   if (job === null || job === undefined) {
-    return { view: null, state: null, candidates: [], reasons: [], showTop3: false, candidatesTrusted: false, allowReferenceQuery: false, hasError: false }
+    return { view: null, state: null, branch: null, branchInfo: null, candidates: [], reasons: [], showTop3: false, candidatesTrusted: false, allowReferenceQuery: false, hasError: false, stateComponent: 'empty' }
   }
   const view = describeJobState(job.state)
   const value = job.result
@@ -315,6 +518,7 @@ function viewModelForJob(job) {
       scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
   })
   const reasons = value === null ? [] : value.uncertainty_reasons.slice()
+  const branch = branchFor(job.state, job.error_code, reasons)
   return {
     view: view,
     state: job.state,
@@ -323,7 +527,16 @@ function viewModelForJob(job) {
     showTop3: view.success === true || job.state === 'uncertain',
     candidatesTrusted: view.success === true,
     allowReferenceQuery: view.success === true,
-    hasError: job.error_code !== null
+    hasError: job.error_code !== null,
+    /** 六类分支归类（不属于六类时为 null）。 */
+    branch: branch,
+    branchInfo: describeBranch(branch),
+    /**
+     * 失败/空态收口到 `state-view` 组件用的状态名：
+     * 非终态 → loading；uncertain/failed/timed_out → error；cancelled → cancelled；
+     * succeeded → ready（不渲染 state-view）。
+     */
+    stateComponent: view.component
   }
 }
 
@@ -341,6 +554,8 @@ function messageFor(e) {
     PROVIDER_QUOTA_EXCEEDED: '识别服务配额已用尽，请稍后重试。',
     PROVIDER_OUTCOME_UNKNOWN: '识别结果状态未知，已停止显示，请重试。',
     OBJECT_UNAVAILABLE: '该照片当前不可用于识别（未就绪或不可用），请重新拍照上传。',
+    // 权限拒绝分支（受理前拦截）：不得用任何替身或缓存结果顶替。
+    CONSENT_REQUIRED: '尚未获得照片处理与外部识别的用途授权。请先在「我的」中完成授权，未授权时不会外发照片、也不会用替身结果顶替。',
     MEDIA_CHANNEL_UNAVAILABLE: '私有媒体上传通道尚未接入服务端（/media 内容端点未挂载），real 模式下不会用替身结果顶替。',
     REVISION_CONFLICT: '记录已被更新，请刷新后重试。',
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
@@ -368,5 +583,19 @@ module.exports = {
   viewModelForJob: viewModelForJob,
   messageFor: messageFor,
   newKey: newKey,
+  // ---- GY-I08 规则版本 / 条件口径 / 六类分支的跨端镜像（漂移由回归测试拦住） ----
+  APPLICABILITY_RULE_VERSION: APPLICABILITY_RULE_VERSION,
+  DOSE_CONDITION_FIELDS: DOSE_CONDITION_FIELDS.slice(),
+  DOSE_PATH_BLOCK_CODE: DOSE_PATH_BLOCK_CODE,
+  FAILURE_BRANCHES: FAILURE_BRANCHES.slice(),
+  RETRY_ACTION_LABELS: Object.assign({}, RETRY_ACTION_LABELS),
+  COVERAGE_REASONS: [COVERAGE_REASON_OUT_OF_SCOPE, COVERAGE_REASON_LOW_QUALITY, COVERAGE_REASON_RESHOOT],
+  describeBranch: describeBranch,
+  branchGuide: branchGuide,
+  branchFor: branchFor,
+  missingDoseConditions: missingDoseConditions,
+  missingConditionLabels: missingConditionLabels,
+  isConditionsComplete: isConditionsComplete,
+  dosePathGuard: dosePathGuard,
   validId: function (id) { return typeof id === 'string' && UUID.test(id) }
 }

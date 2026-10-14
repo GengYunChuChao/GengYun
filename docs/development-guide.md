@@ -47,7 +47,8 @@
 
 ## 4 本地启动与环境
 
-在仓库根目录使用锁文件安装。API 只读取进程环境，`npm run dev:api` 不会自动加载根 `.env`。
+在仓库根目录使用锁文件安装。API 只读取进程环境，`npm run dev:api` 不会自动加载根 `.env`（已实测：根目录放 `.env` 且进程未设置变量时，仍报 `APP_EXECUTION_MODE [MISSING]`）。
+`dev:api` 是 `node --watch` 常驻进程：配置校验失败会打印缺失字段名且不启动服务，但**不会退出、也不返回非零退出码**；需要退出码判定时用 `npm run start --workspace @gengyun/api`（缺 `APP_EXECUTION_MODE` 实测 exit 1）。
 
 ```powershell
 npm ci

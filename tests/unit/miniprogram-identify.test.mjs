@@ -549,3 +549,152 @@ test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何
   page.onShoot({ currentTarget: { dataset: { mode: 'weed' } } });
   assert.equal(calls, 0);
 });
+
+// ---------------------------------------------------------------------------
+// GY-I09 第二片：小程序侧镜像与**服务端闭集逐项一致**（跨端漂移即失败），
+// 以及「选择后也拿不到用量」的页面级负例。
+// ---------------------------------------------------------------------------
+
+test('GY-I09 跨端一致性：小程序的规则版本/条件字段/六类分支镜像与服务端逐项相同', async () => {
+  // 动态 import 服务端模块（TS 源码由 node 直接加载，与本仓库其它测试同法）。
+  const linkage = await import('../../services/api/src/recognitions/linkage.ts');
+  const branches = await import('../../services/api/src/recognitions/branches.ts');
+  const reference = await import('../../packages/reference/index.mjs');
+
+  // 1) GY-I08 规则版本：域库 = 服务端关联层 = 小程序镜像，三者同值。
+  assert.equal(linkage.LINKAGE_RULE_VERSION, reference.APPLICABILITY_RULE_VERSION);
+  assert.equal(identifyApi.APPLICABILITY_RULE_VERSION, reference.APPLICABILITY_RULE_VERSION);
+  assert.equal(identifyApi.APPLICABILITY_RULE_VERSION, linkage.LINKAGE_RULE_VERSION);
+
+  // 2) 条件字段闭集与顺序逐项相同。
+  assert.deepEqual(identifyApi.DOSE_CONDITION_FIELDS, linkage.DOSE_CONDITION_FIELDS.slice());
+
+  // 3) 用量路径阻断类别同值。
+  assert.equal(identifyApi.DOSE_PATH_BLOCK_CODE, linkage.DOSE_PATH_BLOCK_CODE);
+
+  // 4) 六类分支闭集与顺序逐项相同。
+  assert.deepEqual(identifyApi.FAILURE_BRANCHES, branches.FAILURE_BRANCHES.slice());
+
+  // 5) 逐分支的落点/错误码/可重试语义/如实原因逐项相同。
+  for (const branch of branches.FAILURE_BRANCHES) {
+    const server = branches.BRANCH_DESCRIPTORS[branch];
+    const retry = branches.retrySemanticsFor(branch);
+    const client = identifyApi.describeBranch(branch);
+    assert.ok(client !== null, `${branch} 在小程序侧必须存在`);
+    assert.equal(client.jobState, server.jobState, `${branch} 落点漂移`);
+    assert.equal(client.errorCode, server.errorCode, `${branch} 错误码漂移`);
+    assert.equal(client.retryable, retry.retryable, `${branch} 可重试语义漂移`);
+    assert.equal(client.retryAction, retry.retryAction, `${branch} 重试动作漂移`);
+    assert.equal(client.reason, server.reason, `${branch} 如实原因漂移`);
+    assert.equal(client.createsJob, branches.branchCreatesJob(branch));
+  }
+
+  // 6) 覆盖外/低质量细分原因文本与服务端闭集一致（客户端按文本归类，必须同文本）。
+  assert.deepEqual(identifyApi.COVERAGE_REASONS, branches.COVERAGE_REASONS.slice());
+
+  // 7) 未知分支不得被当成有效分支（页面据此不给重试入口）。
+  assert.equal(identifyApi.describeBranch('not_a_branch'), null);
+  assert.equal(identifyApi.branchGuide().length, 6);
+});
+
+test('GY-I09 小程序：六类分支归类只凭契约可见信息，且不把任何分支当成成功', () => {
+  const cases = [
+    { state: 'uncertain', errorCode: null, reasons: [], expect: 'uncertain' },
+    { state: 'uncertain', errorCode: null, reasons: ['拍摄对象不在当前覆盖范围内'], expect: 'out_of_coverage_or_low_quality' },
+    { state: 'uncertain', errorCode: null, reasons: ['照片模糊/遮挡/光照不足，无法可靠判定'], expect: 'out_of_coverage_or_low_quality' },
+    { state: 'uncertain', errorCode: null, reasons: ['拍摄条件不合格，建议重新拍摄'], expect: 'reshoot_required' },
+    { state: 'uncertain', errorCode: null, reasons: ['模型未返回任何候选'], expect: 'no_result' },
+    { state: 'timed_out', errorCode: 'PROVIDER_TIMEOUT', reasons: [], expect: 'timeout' },
+    { state: 'failed', errorCode: 'CONSENT_REQUIRED', reasons: [], expect: 'permission_denied' },
+    // 不在六类之内的一律 null：不得硬塞进某个分支。
+    { state: 'succeeded', errorCode: null, reasons: [], expect: null },
+    { state: 'failed', errorCode: 'PROVIDER_QUOTA_EXCEEDED', reasons: [], expect: null },
+    { state: 'cancelled', errorCode: null, reasons: [], expect: null },
+    { state: 'queued', errorCode: null, reasons: [], expect: null }
+  ];
+  for (const item of cases) {
+    assert.equal(identifyApi.branchFor(item.state, item.errorCode, item.reasons), item.expect,
+      `${item.state}/${item.errorCode}/${JSON.stringify(item.reasons)}`);
+    // 任何分支都不允许被当成识别成功。
+    const info = identifyApi.describeBranch(item.expect);
+    if (info !== null) {
+      assert.notEqual(info.jobState, 'succeeded', '分支不得落 succeeded');
+      assert.equal(identifyApi.isSuccessState(info.jobState || item.state), false);
+    }
+  }
+  // 视图模型必须把分支与呈现状态一并带出（页面据此渲染重试入口）。
+  const vm = identifyApi.viewModelForJob(jobOf('timed_out', null));
+  assert.equal(vm.branch, 'timeout');
+  assert.equal(vm.branchInfo.retryAction, 'new_task');
+  assert.equal(vm.stateComponent, 'error', '失败态必须收口到 state-view 的 error');
+  const okVm = identifyApi.viewModelForJob(jobOf('succeeded', RECOGNITION));
+  assert.equal(okVm.branch, null, '成功不属于六类分支');
+  assert.equal(okVm.stateComponent, 'ready');
+});
+
+test('GY-I09 小程序：用量路径守护——条件不全阻断，且条件完整时**仍**不给用量', () => {
+  const incomplete = { species_id: 'species_barnyardgrass' };
+  const partial = identifyApi.dosePathGuard(incomplete);
+  assert.equal(partial.renderable, false, '识别路径恒不给用量');
+  assert.equal(partial.card, null);
+  assert.equal(partial.blockCode, identifyApi.DOSE_PATH_BLOCK_CODE);
+  assert.equal(partial.blockedByPath, 'recognition_selection');
+  assert.equal(partial.conditionsComplete, false);
+  assert.ok(partial.missingConditions.length >= 1);
+  assert.ok(partial.missingConditionLabels.includes('作物'), JSON.stringify(partial.missingConditionLabels));
+
+  const completeConditions = {
+    crop_id: 'crop_rice', region_code: '330100', species_id: 'species_barnyardgrass',
+    growth_stage: '苗后', planting_method: 'transplant', use_scene: '水稻移栽田'
+  };
+  assert.equal(identifyApi.isConditionsComplete(completeConditions), true);
+  assert.deepEqual(identifyApi.missingDoseConditions(completeConditions), []);
+  const full = identifyApi.dosePathGuard(completeConditions);
+  // 关键：条件完整**也不放行**——阻断来自路径本身，不是"恰好没数据"。
+  assert.equal(full.renderable, false, '条件完整时识别路径仍不得给用量');
+  assert.equal(full.card, null);
+  assert.equal(full.blockCode, identifyApi.DOSE_PATH_BLOCK_CODE);
+  assert.equal(full.conditionsComplete, true);
+  assert.equal(full.ruleVersion, identifyApi.APPLICABILITY_RULE_VERSION);
+  // 形状不符的地区码算缺项（不静默接受）。
+  assert.ok(identifyApi.missingDoseConditions(Object.assign({}, completeConditions, { region_code: '9911' })).includes('region_code'));
+});
+
+test('GY-I09 小程序：记录选择后的关联科普**恒不含用量**，并如实列出条件缺项', async () => {
+  const page = instance();
+  page.data.guest = false;
+  page.data.recordId = '66666666-6666-4666-8666-666666666666';
+  page.data.recordRevision = 1;
+  page._generation = 7;
+  page._ownerKey = 'synthetic-owner-key';
+  // 替身选择响应：只回模型原始候选（与真实服务端同形），不含任何用量字段。
+  const original = identifyApi.selectSpecies;
+  identifyApi.selectSpecies = async () => ({
+    recognition: {
+      id: page.data.recordId, revision: 2,
+      candidates: [{ species_id: 'species_barnyardgrass', rank: 1, model_score: 0.81 }],
+      uncertainty_reasons: [], selected_species_id: 'species_barnyardgrass', model_version: 'stub-v1'
+    }
+  });
+  try {
+    await page.recordSelection('species_barnyardgrass');
+  } finally {
+    identifyApi.selectSpecies = original;
+  }
+  const related = page.data.relatedKnowledge;
+  assert.ok(related !== null && typeof related === 'object', '选择后必须解析关联科普');
+  // 用量恒不可展示（页面上也不会出现任何剂量数字字段）。
+  assert.equal(related.dose.renderable, false);
+  assert.equal(related.dose.card, null);
+  assert.equal(related.dose.blockCode, identifyApi.DOSE_PATH_BLOCK_CODE);
+  assert.equal(related.conditionsComplete, false, '本页只掌握杂草对象，条件必然不完整');
+  assert.ok(related.missingConditionLabels.length >= 1);
+  assert.equal(JSON.stringify(related).includes('"number"'), false, '关联结果不得含任何用量数字');
+  // 规则版本与 GY-I08 一致。
+  assert.equal(related.ruleVersion, identifyApi.APPLICABILITY_RULE_VERSION);
+  // 逐条资料也标注了不可展示用量及其原因/版本。
+  for (const item of related.items) {
+    assert.equal(item.doseRenderable, false);
+    assert.equal(item.doseRuleVersion, identifyApi.APPLICABILITY_RULE_VERSION);
+  }
+});

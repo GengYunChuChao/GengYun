@@ -5,6 +5,8 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/knowledgedetail/knowledgedetail', 'pages/reference/reference',
   'pages/referencedetail/referencedetail', 'pages/referenceseed/referenceseed',
   'pages/referenceseeddetail/referenceseeddetail', 'pages/community/community',
+  // GY-I15：社区投稿与详情（详情页按 uuid 收窄查询参数，不接受任意参数）。
+  'pages/communitycreate/communitycreate', 'pages/communitydetail/communitydetail',
   'pages/messages/messages', 'pages/profile/profile', 'pages/login/login',
   // GY-I26：样式走查页（仅本地替身工程可见）。本列表须与 app.json 的 pages 逐项一致，
   // 由 tests/unit/miniprogram-login-return-to.test.mjs 锁定；不改变任何路由逻辑。
@@ -17,9 +19,14 @@ const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identi
 const HOME = '/pages/home/home'
 const LOGIN = '/pages/login/login'
 const MAX_PATH_LENGTH = 512
-const ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail',
+const ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail', '/pages/communitydetail/communitydetail',
   // GY-I16 识别记录详情：只带历史行 id（`?id=<uuid>`），不接受任何状态类参数。
   '/pages/historydetail/historydetail']
+// 只接受 uuid 的详情页（避免把任意字符串拼进查询串）。
+const UUID_ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/communitydetail/communitydetail',
+  // GY-I16：识别记录详情同样只接受 uuid（历史行 id）；与页面侧 parseDetailQuery 的校验一致。
+  '/pages/historydetail/historydetail']
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 let revision = 0
 let returnTo = null
 
@@ -36,7 +43,7 @@ function normalizeTarget(candidate) {
   let id
   try { id = decodeURIComponent(parts[1].slice(3)) } catch (_) { return null }
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return null
-  if (parts[0] === '/pages/knowledgedetail/knowledgedetail' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null
+  if (UUID_ID_PAGES.indexOf(parts[0]) !== -1 && !UUID_PATTERN.test(id)) return null
   return parts[0] + '?id=' + encodeURIComponent(id)
 }
 

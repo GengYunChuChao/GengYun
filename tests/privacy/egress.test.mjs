@@ -298,11 +298,11 @@ test('账本读面：契约 Export 形状 + keyset 游标分页；畸形游标�
   // 另一个用户的外发不得出现在本用户读面（归属隔离）。
   await consentStore.grant({ userId: 'u2', purpose: 'external_inference', policyVersion: '1.0.0', recipientIds: [VERIFIED_RECIPIENT.id] });
 
-  const page1 = listExportsForUser(ledger, { userId: 'u1', limit: 2 });
+  const page1 = await listExportsForUser(ledger, { userId: 'u1', limit: 2 });
   assert.equal(page1.items.length, 2);
   assert.equal(typeof page1.next_cursor, 'string');
 
-  const page2 = listExportsForUser(ledger, { userId: 'u1', limit: 2, cursor: page1.next_cursor });
+  const page2 = await listExportsForUser(ledger, { userId: 'u1', limit: 2, cursor: page1.next_cursor });
   assert.equal(page2.items.length, 1);
   assert.equal(page2.next_cursor, null);
 
@@ -320,8 +320,19 @@ test('账本读面：契约 Export 形状 + keyset 游标分页；畸形游标�
     assert.equal(item.sent_at, new Date(item.sent_at).toISOString());
   }
 
-  assert.throws(() => listExportsForUser(ledger, { userId: 'u1', cursor: 'not-a-cursor' }), (err) => err.code === 'INVALID_CURSOR');
-  assert.throws(() => listExportsForUser(ledger, { userId: 'u1', limit: 500 }), (err) => err.code === 'INVALID_REQUEST');
+  // 负例保持在同一断言强度上：畸形游标 / 越界 limit 仍必须被拒（接口 async 化不改变判定）。
+  await assert.rejects(
+    () => listExportsForUser(ledger, { userId: 'u1', cursor: 'not-a-cursor' }),
+    (err) => err.code === 'INVALID_CURSOR',
+  );
+  await assert.rejects(
+    () => listExportsForUser(ledger, { userId: 'u1', limit: 500 }),
+    (err) => err.code === 'INVALID_REQUEST',
+  );
+  await assert.rejects(
+    () => listExportsForUser(ledger, { userId: '', limit: 1 }),
+    (err) => err.code === 'SESSION_REQUIRED',
+  );
 });
 
 test('契约形状不符的账本记录：宁可报 PROVIDER_UNAVAILABLE，也不输出自相矛盾条目', async () => {

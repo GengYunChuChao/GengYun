@@ -89,7 +89,7 @@ test('旧版本回调：objectVersion 与预留版本不一致 ⇒ 阻断且零�
 
 test('取消版本不可被回调复活：cancelVersion 后回写阻断且零写入，重新授权亦不复活', async () => {
   const { guard, consentStore, ledger, exportId } = await setup();
-  const cancelled = guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1, reason: 'user_cancelled' });
+  const cancelled = await guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1, reason: 'user_cancelled' });
   assert.equal(cancelled.cancelled, true);
   assert.equal(cancelled.revokedInFlight, 1);
   assert.equal(ledger.get(exportId).state, 'failed', '取消必须把在途外发置 failed');
@@ -111,14 +111,14 @@ test('取消版本不可被回调复活：cancelVersion 后回写阻断且零写
   assert.equal(ledger.getWriteback(exportId), null, '已取消版本不得被任何回调写入');
 
   // 取消幂等：重复取消不改变结论，墓碑只增不减。
-  const again = guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1, reason: 'user_cancelled' });
+  const again = await guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1, reason: 'user_cancelled' });
   assert.equal(again.alreadyCancelled, true);
   assert.equal(guard.cancelledVersionCount(), 1);
 });
 
 test('取消后 markSent 亦被阻断：已终态记录不可再派发', async () => {
   const { guard, ledger, exportId } = await setup();
-  guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1 });
+  await guard.cancelVersion({ exportId, userId: 'u1', objectVersion: 1 });
   await assert.rejects(
     () => ledger.markSent(exportId),
     (err) => err instanceof PrivacyError && err.code === 'OBJECT_UNAVAILABLE',
@@ -139,7 +139,7 @@ test('撤回消费者接口：撤销在途外发后回写被阻断（新外发�
   const { guard, ledger, exportId } = await setup();
   const revoker = createEgressRevoker({ ledger });
 
-  const revoked = revoker.onConsentWithdrawn({ userId: 'u1', purpose: 'external_inference' });
+  const revoked = await revoker.onConsentWithdrawn({ userId: 'u1', purpose: 'external_inference' });
   assert.equal(revoked.revokedInFlight, 1, '撤回必须撤销依赖该用途的在途外发');
   assert.equal(ledger.get(exportId).state, 'failed');
 
@@ -164,7 +164,7 @@ test('注销消费者接口：撤销该用户全部在途外发（含多条）',
   });
   const revoker = createEgressRevoker({ ledger });
 
-  const revoked = revoker.onAccountSuspendedOrDeleted({ userId: 'u1' });
+  const revoked = await revoker.onAccountSuspendedOrDeleted({ userId: 'u1' });
   assert.equal(revoked.revokedInFlight, 2, '注销必须撤销该用户全部在途外发');
   assert.equal(ledger.get(community.id).state, 'failed');
   assert.equal(revoker.audit().length, 1);
@@ -172,7 +172,7 @@ test('注销消费者接口：撤销该用户全部在途外发（含多条）',
 
 test('取消原因只接受短安全 token：自由文本（可能含私有正文）一律回落为 cancelled', async () => {
   const { guard, exportId } = await setup();
-  guard.cancelVersion({
+  await guard.cancelVersion({
     exportId, userId: 'u1', objectVersion: 1,
     reason: '我家地在东经121.47370北纬31.23041，正文私有',
   });

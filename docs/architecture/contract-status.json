@@ -1067,9 +1067,13 @@
       "route": "/api/v1/posts",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "200-200"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "490-495"
@@ -1078,7 +1082,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createPost",
@@ -1087,9 +1091,13 @@
       "route": "/api/v1/posts",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "210-210"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "556-561"
@@ -1098,7 +1106,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getPost",
@@ -1107,9 +1115,13 @@
       "route": "/api/v1/posts/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "222-222"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "620-625"
@@ -1118,7 +1130,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "editPost",
@@ -1127,9 +1139,13 @@
       "route": "/api/v1/posts/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "231-231"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "627-632"
@@ -1138,7 +1154,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "deletePost",
@@ -1147,9 +1163,13 @@
       "route": "/api/v1/posts/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "240-240"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "700-705"
@@ -1158,7 +1178,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "listComments",
@@ -1167,9 +1187,13 @@
       "route": "/api/v1/posts/:id/comments",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "250-250"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "735-740"
@@ -1178,7 +1202,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createComment",
@@ -1187,9 +1211,13 @@
       "route": "/api/v1/posts/:id/comments",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "263-263"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "788-793"
@@ -1198,7 +1226,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getComment",
@@ -1207,9 +1235,13 @@
       "route": "/api/v1/comments/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "275-275"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "849-854"
@@ -1218,7 +1250,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "editComment",
@@ -1227,9 +1259,13 @@
       "route": "/api/v1/comments/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "284-284"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "856-861"
@@ -1238,7 +1274,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "deleteComment",
@@ -1247,9 +1283,13 @@
       "route": "/api/v1/comments/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "293-293"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "910-915"
@@ -1258,7 +1298,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "likePosts",
@@ -1267,9 +1307,13 @@
       "route": "/api/v1/posts/:id/like",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "304-304"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "944-949"
@@ -1278,7 +1322,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "unlikePosts",
@@ -1287,9 +1331,13 @@
       "route": "/api/v1/posts/:id/like",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "313-313"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "948-953"
@@ -1298,7 +1346,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "likeComments",
@@ -1307,9 +1355,13 @@
       "route": "/api/v1/comments/:id/like",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "322-322"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "952-957"
@@ -1318,7 +1370,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "unlikeComments",
@@ -1327,9 +1379,13 @@
       "route": "/api/v1/comments/:id/like",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "331-331"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "956-961"
@@ -1338,7 +1394,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createReport",
@@ -1347,9 +1403,13 @@
       "route": "/api/v1/reports",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "340-340"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "961-966"
@@ -1358,7 +1418,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getOwnReport",
@@ -1367,9 +1427,13 @@
       "route": "/api/v1/reports/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+       {
+        "path": "services/api/src/routes/community.ts",
+        "lines": "352-352"
+       },
         {
           "path": "services/api/src/community/service.ts",
           "lines": "1001-1006"
@@ -1378,7 +1442,7 @@
           "test": "tests/unit/community-contract.test.mjs"
         }
       ],
-      "blocker": "独立社区服务已有此操作，含归属/可见性与先审后发守卫；app.ts 未装配社区 HTTP 路由，审核、媒体和真实存储/事件依赖未完成产品联调；相关服务测试不等于页面或真实审核验收（GY-I14/GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "listFavorites",

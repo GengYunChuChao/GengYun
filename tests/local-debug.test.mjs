@@ -113,10 +113,10 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（16 页：原 13 页 + GY-I16 的收藏/历史/历史详情）同步，
-  // 且参考域依赖须一并复制 ——
+  // —— F2 回归：打包允许清单须随 app.json（18 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情）
+  // 同步，且参考域/社区域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 16);
+  assert.equal(appJson.pages.length, 18);
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);
@@ -139,6 +139,11 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'utils/profile-api.js',
     'utils/location-region.js',
     'utils/knowledge-api.js',
+    // 社区域适配层（GY-I15）：社区三页依赖它
+    'utils/community-api.js',
+    // 收藏与识别历史适配层（GY-I16）：收藏/历史/历史详情三页依赖它们
+    'utils/favorites-api.js',
+    'utils/history-api.js',
     'utils/font-scale.js',
     'utils/system-font.js',
     'components/state-view/state-view.js',

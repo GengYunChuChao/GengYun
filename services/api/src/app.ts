@@ -63,6 +63,9 @@ import { createClosedContentSource, type PublishedContentSource } from './media/
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
+import { createPostgresExportLedger, createPostgresPrivacyPorts } from './privacy/ledger-pg.ts';
+import { createMediaJobEgress, type MediaJobEgress } from './privacy/task-egress.ts';
+import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs';
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
@@ -82,6 +85,19 @@ import {
   type BackupPurgePort,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
+// GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
+import { registerCommunityRoutes } from './routes/community.ts';
+import { createCommunityService, type CommunityService } from './community/service.ts';
+import { createMemoryCommunityStore, type CommunityStore } from './community/store.ts';
+import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
+import type { AuthorDirectory } from './community/types.ts';
+import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
+import {
+  createMessagesCommunityEventsPort,
+  createUnwiredCommunityEventsPort,
+  type CommunityEventsPort,
+} from './community/events.ts';
+import { withTakedownObserver } from './community/takedown.ts';
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 
 declare module 'fastify' {
@@ -106,6 +122,7 @@ declare module 'fastify' {
     /** Non-real message service; real remains closed until persistent storage is delivered. */
     messagesService: MessagesService | null;
     /**
+    /**
      * GY-I16 收藏服务；`real` 模式下为 `null`（内存存储不冒充持久化 ⇒ 三条路由 503）。
      * 也供回归测试驱动。
      */
@@ -120,6 +137,11 @@ declare module 'fastify' {
      * `packages/privacy` 删除注册协议上（不另起一套）。供回归测试与后续 GY-I19 接线驱动。
      */
     userDataDeletion: UserDataDeletionRegistry;
+    /**
+     * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
+     * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
+     */
+    communityService: CommunityService | null;
   }
 }
 
@@ -217,6 +239,20 @@ export interface BuildAppOptions {
   };
   /** GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。 */
   userDataDeletionInjection?: { backupPurge?: BackupPurgePort };
+  // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
+  //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
+  //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
+  //   * 「杂草／药剂关联」可用性端口**未接线** ⇒ 新增/替换引用一律 `OBJECT_UNAVAILABLE`；
+  //     （真实接线需要请求会话身份进入社区服务，属跨线决定，见 PR 正文"未取得"）
+  //   * 事件端口接到本进程的消息服务公开创建口；消息服务为 null（real）时端口 `wired:false`。
+  communityInjection?: {
+    store?: CommunityStore;
+    authors?: AuthorDirectory;
+    knowledge?: KnowledgeAvailabilityPort;
+    events?: CommunityEventsPort;
+    /** 测试注入：替换发布闸门（默认出厂规则集；注入自定义规则集会真实改变派生 `rule_version`）。 */
+    gate?: Parameters<typeof createCommunityService>[0]['gate'];
+  };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
    * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
@@ -290,7 +326,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, favoritesInjection, historyInjection, userDataDeletionInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -315,8 +351,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
     idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
   });
-  const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;
-  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
+  const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
   const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
   const wechatProvider =
     wechat ??
@@ -341,6 +376,57 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
   const guards = createAuthGuards({ store: authStore, now: clock });
 
+  // ---------------------------------------------------------------------------
+  // GY-I27 隐私域装配（两片接线；**必须早于识别域服务构造** —— 识别域的提供者包装发生在此处）。
+  //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
+  //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
+  //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
+  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库**时由持久账本现建（撤回/授予时撤销在途外发）。
+  //  3. **持久外发账本**（第二片）：仅当配置了数据库时装配；提交边界在**单事务**内完成
+  //     「校验读取 + 实际写入」（见 privacy/ledger-pg.ts）。`real` 未接真实传输 ⇒
+  //     受理处在**任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`，**零 sent 记录**；
+  //     替身/演示模式**不记账**（替身不发生真实外发）。
+  // ---------------------------------------------------------------------------
+  const consentSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
+  const consentGate: ConsentGate | undefined =
+    privacyInjection?.consent ??
+    (pool === null
+      ? undefined
+      : createPostgresConsentGate(createPostgresConsentService(pool, consentSigningKey, consentGrantTestOptions ?? {})));
+
+  // 账本需要**事务**（`connect()`）；测试里注入的「假池」只实现 query（用于验证其他域的
+  // 数据库错误映射）⇒ 此处按形状判定：不满足则**不装配账本**并告警（不抛，不静默降级为替身）。
+  const egressPoolUsable = pool !== null && typeof pool.connect === 'function' && typeof pool.query === 'function';
+  if (pool !== null && !egressPoolUsable) {
+    app.log.warn('GY-I27 外发账本未装配：连接池缺少 connect()/query()（测试替身或非法池）');
+  }
+  const privacyPorts = egressPoolUsable ? createPostgresPrivacyPorts({ pool }) : null;
+  const egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null;
+  const privacyInFlight =
+    egressLedger !== null && privacyPorts !== null
+      ? createInFlightGuard({
+          ledger: egressLedger,
+          account: privacyPorts.account,
+          consentStore: privacyPorts.consentStore,
+        })
+      : null;
+  const egressRevoker: EgressRevoker | undefined =
+    privacyInjection?.egressRevoker ??
+    (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }));
+  const mediaEgress = (dataType: string, capability: string): MediaJobEgress | undefined =>
+    egressLedger === null || privacyInFlight === null
+      ? undefined
+      : createMediaJobEgress({
+          ledger: egressLedger,
+          inFlight: privacyInFlight,
+          executionMode: config.executionMode,
+          dataType,
+          capability,
+        });
+  const recognitionEgress = mediaEgress('weed_recognition', 'weed');
+  const speechEgress = mediaEgress('voice_question', 'asr');
+  const ocrEgress = mediaEgress('label_ocr', 'ocr');
+
   // GY-I09 识别任务闭环：real 走 fail-closed 提供者（缺凭据 503，绝不回退替身），
   // stub/preset_demo 用明确标注的替身；媒体引用端口同理（real 未接线 → OBJECT_UNAVAILABLE）。
   const recognitionProviderResolved =
@@ -352,7 +438,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     });
   const recognitionService = createRecognitionService({
     store: recognitionStore ?? createMemoryRecognitionStore(),
-    provider: recognitionProviderResolved,
+    // GY-I27 第二片：识别域的提供者包装在**装配处**完成（该域的服务由本文件构建）；
+    // `real` 才接管派发，替身/演示原样返回（不记账）。
+    provider: recognitionEgress === undefined
+      ? recognitionProviderResolved
+      : recognitionEgress.provider(recognitionProviderResolved, 'recognize'),
     media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     now: clock,
@@ -385,6 +475,52 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 读/取消与 `hidePost` 返回 503 `PROVIDER_UNAVAILABLE`（**不返回空页**：空页等于宣称
   // 「平台当前没有作业」，那是无法确认的结论）。真实作业端口与社区存储属后续接线；
   // 本文件**不**自建会与其它域割裂的替身实例（那会让「隐藏了帖子」在不同 store 上失真）。
+  // ---------------------------------------------------------------------------
+  // GY-I15 社区域（#15）阶段 2 装配。
+  //
+  // **real 模式 ⇒ 社区整域 fail-closed**（与 GY-I18 后台域、GY-I17 消息域同一口径）：
+  // 社区 store 是**内存**实现（`persistent:false`），真实持久存储未交付。若在 `real` 下把它交给
+  // 服务层，写操作会返回**成功封套**而落点只是易失内存 —— 即在"真实模式"下声称投稿成功、
+  // 重启即丢。因此这里在**运行时**拒绝（503 `PROVIDER_UNAVAILABLE`, retryable），
+  // 而不是靠文档披露。将来接真实持久 store 必须在这里**显式放行**（一次可审查的接线变更）。
+  //
+  // **事件投递**：只把消息域的公开创建口 `appendMessage` 作为**结构性端口**传进来
+  // （不 import 消息域、不改其实现）。消息服务在 real 下为 `null` ⇒ 事件端口 `wired:false`。
+  //
+  // **下架观察器**：交给后台（GY-I18）的社区帖子端口套一层观察器，使
+  // `POST /admin/posts/{id}/hide` 生效后能投递「下架」事件；观察器只发通知，
+  // 不改 visibility、不改错误映射（权威判定仍在社区 store 的 CAS 里）。
+  // ---------------------------------------------------------------------------
+  const communitySigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
+  const communityStore = communityInjection?.store ?? createMemoryCommunityStore({ now: () => clock().getTime() });
+  const communityEvents: CommunityEventsPort =
+    communityInjection?.events ??
+    (messagesService === null
+      ? createUnwiredCommunityEventsPort('消息服务未接线（real 模式）：审核结果/下架事件无法投递')
+      : createMessagesCommunityEventsPort({ messages: messagesService }));
+  const communityRealUnwired = config.executionMode === 'real';
+  let communityService: CommunityService | null;
+  if (communityRealUnwired) {
+    const reason = 'real 模式未接真实持久后端：社区业务不可用（拒绝以内存 store 返回成功封套）';
+    communityService = null;
+    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 16 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
+  } else {
+    communityService = createCommunityService({
+      store: communityStore,
+      // **必填**：不提供默认值，避免某个接线点忘了接作者来源时悄悄用假名当真实作者。
+      authors: communityInjection?.authors ?? createLocalPseudonymousAuthorDirectory(),
+      gate: communityInjection?.gate,
+      knowledge: communityInjection?.knowledge,
+      events: communityEvents,
+      signingKey: communitySigningKey,
+      now: clock,
+    });
+  }
+  // 后台 `hidePost` 的社区帖子端口：注入优先；否则用**同一个**社区 store（绝不自建第二份，
+  // 否则"后台隐藏了帖子"在社区读取侧不生效）。上面套下架观察器只为发通知。
+  const communityPostPortForAdmin =
+    adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });
+
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
   const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
@@ -420,7 +556,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
       jobPort: adminInjection?.jobPort,
-      community: adminInjection?.communityStore,
+      // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
+      community: communityPostPortForAdmin,
       flagEffects: adminInjection?.flagEffects,
     });
   }
@@ -523,24 +660,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('favoritesService', favoritesService);
   app.decorate('historyService', historyService);
   app.decorate('userDataDeletion', userDataDeletion);
+  app.decorate('communityService', communityService);
 
-  // ---------------------------------------------------------------------------
-  // GY-I27 接线单（用途授权接线）。两处**最小、追加式**接线：
-  //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
-  //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
-  //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
-  //  2. 撤回/注销消费者：`privacyInjection.egressRevoker` 存在时交给授权服务；缺省不注入 ⇒
-  //     `consent-pg`/`grant-pg` 保持既有 `OBJECT_UNAVAILABLE` fail-closed 兜底。
-  // 真实外发账本（`packages/privacy/ledger.mjs`）需要**持久** commitGate + 接收方读取口，
-  // 本片未提供该适配器 ⇒ **不装配**（`real` 模式因此始终 fail-closed 503，不会被静默放行）。
-  // ---------------------------------------------------------------------------
-  const consentSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
-  const consentGate: ConsentGate | undefined =
-    privacyInjection?.consent ??
-    (pool === null
-      ? undefined
-      : createPostgresConsentGate(createPostgresConsentService(pool, consentSigningKey, consentGrantTestOptions ?? {})));
-  const egressRevoker: EgressRevoker | undefined = privacyInjection?.egressRevoker;
+  // 注：GY-I27 的 `consentSigningKey`/`consentGate`/`egressRevoker` 声明已在上方
+  // 「GY-I27 隐私域装配（两片接线）」块内完成（合并时上游把该块前移并扩成含
+  // 持久外发账本的第二片）。此处**不再重复声明**：同一标识符二次 `const` 会直接语法错误，
+  // 且上游版本是严格超集（仍以 `privacyInjection.consent`/`egressRevoker` 优先）。
+  // 这是本次合并的唯一语义冲突点：只能保留上游那份声明，本片只保留自己的装配（decorate/register）。
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -552,15 +678,21 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
   registerProfileRoutes(app, config, pool, guards);
   registerKnowledgeRoutes(app, config, pool, guards);
-  registerRecognitionRoutes(app, config, guards, recognitionService, { consent: consentGate });
-  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate });
+  registerRecognitionRoutes(app, config, guards, recognitionService, { consent: consentGate, egress: recognitionEgress });
+  registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
   registerSynthesisRoutes(app, config, guards, synthesisService, consentGate);
-  registerOcrRoutes(app, config, { guards, consent: consentGate });
+  registerOcrRoutes(app, config, { guards, consent: consentGate, egress: ocrEgress });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
+  // GY-I27 第二片：识别域取消成功后写外发取消墓碑（只增不减 ⇒ 晚到回调不可复活）。
   registerJobRoutes(app, config, guards, createJobRegistry([
-    createRecognitionJobSource(recognitionService),
+    createRecognitionJobSource(
+      recognitionService,
+      recognitionEgress === undefined
+        ? {}
+        : { onCancelled: async (input) => { await recognitionEgress.cancelForJob({ ...input, reason: 'job_cancelled' }); } },
+    ),
     createTranscriptionJobSource(app.speechService),
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
@@ -570,6 +702,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
   registerFavoriteRoutes(app, config, guards, favoritesService);
   registerHistoryRoutes(app, config, guards, historyService);
+  // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
+  registerCommunityRoutes(app, config, guards, communityService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：

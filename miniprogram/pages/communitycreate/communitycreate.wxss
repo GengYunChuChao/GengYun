@@ -1,0 +1,22 @@
+/* 社区投稿页（GY-I15 阶段 2）
+ * ---------------------------------------------------------------------------
+ * 表单控件沿用 app.wxss 的 `.input` 与 styles/components.wxss 的 `.label`／`.notice`；
+ * 本文件只补两处样式层未提供的等价物（多行输入与表单项间距）。
+ */
+
+/* 多行输入：与 .input 同底色/边框/圆角，只增加高度与行距。 */
+.textarea {
+  width: 100%;
+  min-height: calc(140px * var(--font-scale, 1));
+  border: 1px solid var(--green-field);
+  background: var(--green-paper-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: calc(18px * var(--font-scale, 1));
+  line-height: 1.8;
+  box-sizing: border-box;
+}
+
+.form-gap {
+  margin-top: 19px;
+}

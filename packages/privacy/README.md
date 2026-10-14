@@ -88,11 +88,16 @@ app.route({
 | --- | --- | --- |
 | 需要用途授权的执行入口（`POST /recognitions`、`POST /speech/transcriptions`、`POST /ocr`、`POST /speech/synthesis`，以及派生内容写面：选择/确认/校正/核对） | `ConsentGate({ purpose, dataType })` 作为路由 `preHandler`（紧随 `guards.requireUser`） | **已接线**（`app.ts` 装配；注入优先，否则配置了数据库时用 `consent-pg.requireConsent`） |
 | 读取（GET）与删除（DELETE） | 不挂 | 有意不挂：撤回后用户仍须能取回/删除自己的数据 |
-| 外发派发 | `createPrivacyEgress({ executionMode, ledger, ... }).consumer.send({ identity, objectType, objectId, objectRevision, dataType, purpose, recipientId, sourceVersion, payload })`（在 `withPrivacyErrors(...)` 包装内） | **未接线**：无持久账本/接收方读取口 ⇒ `app.ts` 不装配；`real` 保持 fail-closed |
-| 任务执行前 | `createPrivacyInFlightGuard(...).assertExecutable({ exportId, userId })` | **未接线**（同上：需先有账本） |
-| 结果保存前 | `...saveResult({ exportId, userId, objectVersion, result })` | **未接线**（同上） |
-| 版本取消 | `...cancelVersion({ exportId, userId, objectVersion, reason })`（`reason` 只接受短安全 token） | **未接线**（同上） |
-| 撤回/注销撤销在途 | `createApiEgressRevoker({ ledger })` 注入 `consent-pg.ts` / `grant-pg.ts`（**不注入 ⇒ 行为与今天逐字一致**） | **接口已接线**（`app.ts` 的 `privacyInjection.egressRevoker`）；未提供持久账本 ⇒ 生产未注入 |
+| 外发登记（预留/派发） | `services/api/src/privacy/task-egress.ts` 的 `reserveForAcceptance` → `ledger.markSent`（在提供者包装内，随后 `saveResult`/`markFailed`） | **已接线（识别/转写/OCR）**：`app.ts` 在配置了数据库时装配持久账本（`ledger-pg.ts`），提供者包装在 `task-egress.ts`；**合成域未接线**（`exports.object_id uuid` 与 `checked_content_ref.id` 不兼容，需 schema/决策） |
+| 任务执行前 | `in-flight.assertExecutable({ exportId, userId })` | **已接线**（同上，持久账本路径） |
+| 结果保存前 | `in-flight.saveResult({ exportId, userId, objectVersion, result })` | **已接线**（回写与校验同事务；不过 ⇒ 零写入） |
+| 版本取消 | 账本 `cancelVersion` / `cancelForJob`（墓碑 `cancelled_at`，只增不减） | **已接线**：识别域作业取消成功后经 `jobs/sources.ts` 的可选钩子写墓碑 |
+| 撤回/注销撤销在途 | `createEgressRevoker({ ledger })` 注入 `consent-pg.ts` / `grant-pg.ts`（**不注入 ⇒ 行为与今天逐字一致**） | **已接线**：配置了数据库时由持久账本现建；注入优先 |
+
+**持久账本（`ledger-pg.ts`）与内存参考实现的差异（如实说明）**：内存账本靠"单线程同步临界区"，
+PostgreSQL 上按 `README`「提交一致性契约」的部署义务实现为**单事务内完成校验读取 + 实际写入**；
+结果回写只落**结构分类**（`kind`/`code`；`content_class:'structural_only'`），**不落私有正文/媒体/坐标/凭据**。
+`in-flight.mjs` / `egress.mjs` 对账本访问统一 `async/await` —— 对内存账本（同步）零成本，对持久账本正确等待。
 
 派发顺序即安全保证：`transport.available !== true`（`real` 未接真实适配器）⇒ 在任何账本变更**之前**
 `PROVIDER_UNAVAILABLE`(503, `retryable: true`)；记录非 `reserved` ⇒ 拒绝（零重复外发）；
@@ -124,9 +129,16 @@ app.route({
   `consent-pg.requireConsent`（已合并的单事务读取口，不新写 SQL）；都没有 ⇒ 不挂
   （本地 stub / 回环测试与既有集成脚本行为逐字不变）。**读取（GET）与删除（DELETE）不挂**
   授权中间件 —— 否则撤回后用户无法取回或删除自己的数据。
-- **外发账本与真实派发仍未装配**：`ledger.mjs` 需要**持久** commitGate（单事务 + 行锁）与接收方
-  读取口，本片未提供该适配器 ⇒ `app.ts` **不装配**账本；`real` 模式因此始终 fail-closed（503），
-  **不会**被静默放行为替身，也不会产生任何 `sent` 账本记录（不把替身记为真实外发）。
+- **持久外发账本已装配（第二片：用户 2026-10-14 授权改他人已合并文件）**：
+  `services/api/src/privacy/ledger-pg.ts` + 迁移 `0011_export_ledger.sql` + 最小权限角色
+  `roles/egress_ledger.sql`。`app.ts` 在**配置了数据库**（且连接池具备 `connect()`）时装配；
+  提交边界在**单事务**内完成「校验读取 + 实际写入」，结果回写落在 `export_writebacks`
+  （只增不改；只落结构分类，**不落私有正文/媒体/坐标/凭据**）。
+  **合成域（TTS）未接入账本**：`exports.object_id` 是 uuid 而 `checked_content_ref.id` 是任意字符串
+  ⇒ 需一次 schema/契约决策；**注销的 HTTP 触发面** `requestAccountDeletion` 在契约里仍为 `planned`（属 GY-I19），
+  本模块只交付消费者接口，不自造路由。
+  真实第三方外发仍未授权：`real` 未接真实传输 ⇒ 受理处在**任何账本变更之前** 503
+  `PROVIDER_UNAVAILABLE`(retryable)，**零 `sent` 记录**；替身/演示**不记账**。
 - 撤回/授予的 `OBJECT_UNAVAILABLE` 兜底（`consent-pg.ts` / `grant-pg.ts`）在**注入**
   `egressRevoker` 之前保持不变（fail-closed，不伪造取消成功）；注入后在同一事务内先撤销在途外发再继续。
 - 训练**不是**首版 `ConsentPurpose`；`user_training_consents.training_enabled` 默认 `false`，
