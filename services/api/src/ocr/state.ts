@@ -26,7 +26,14 @@
  * 因此 `ocr/reference.ts` 的替身（stub/preset_demo）与未接线（real）用量端口**都恒返回空**，
  * 生产路径的 `dose_cards` 恒为 `[]`。本模块的 gate **通过面**只由测试注入契约合法的
  * 可信来源来证明（见 tests/unit/ocr-*.test.mjs），**绝不**让替身来源扮演「已核对有效」来源。
+ *
+ * 跨线规则版本（GY-I08 issue #8 验收：「所有消费端使用同一规则版本」）：
+ * 本层的规则版本**取自域库单一事实来源**（`packages/reference`，直接 import，不另抄一份），
+ * 与 GY-I08 适用过滤层之间的差异登记为闭集 —— 见 `DOSE_GATE_RULE_VERSION` /
+ * `DOSE_GATE_RULE_VERSION_DIFFERENCES`（在 `DoseGateDecision` 之后）。
  */
+
+import { APPLICABILITY_RULE_VERSION, BLOCK_CODES } from '../../../../packages/reference/index.mjs';
 
 /** packages/contracts/openapi.json -> components.schemas.MatchState.enum（逐项一致，不得扩展）。 */
 export const MATCH_STATES = [
@@ -642,6 +649,76 @@ export type DoseGateReason =
 export type DoseGateDecision =
   | { usable: true; reason: null; card: DoseCard }
   | { usable: false; reason: DoseGateReason; card: null };
+
+
+/**
+ * —— 跨线规则版本（GY-I08 issue #8）——
+ *
+ * 本层闸门（GY-I10 线）与 `packages/reference`（GY-I08 线）是**两个不同层**的用量闸门：
+ *   - GY-I08 闸门判定**内部记录**的适用性（8 维度：来源／禁限用／作物／生育期／地区／制剂／
+ *     含量剂型／使用场景）与「原文用量是否绑定当前登记制剂」；
+ *   - 本层闸门判定**冻结契约载荷**的完整性与绑定（`card` ↔ 请求条件 ↔ 登记制剂）
+ *     + 来源可信度（`source_kind` / `validity` / `review_status` / `simulated`）。
+ *
+ * 因此本轮**不把 GY-I08 的判定搬进本层**：那会改变 I10 已合并的行为（见
+ * `not_enforced_block_codes` —— 冻结契约 `DoseSource` **没有任何禁限用字段**，
+ * 本层数据形状**无法表达**禁用／限用／未采集禁限用）。本轮只做**最小、可回退**的统一：
+ * 版本号取自域库单一事实来源，两层之间的差异登记成闭集并由测试断言（漂移即失败）。
+ *
+ * 回退方式：删除本文件顶部的 import 与下列三个导出即可还原为「未声明版本」。
+ */
+export const DOSE_GATE_RULE_VERSION: string = APPLICABILITY_RULE_VERSION;
+
+/**
+ * 本层拒绝原因 → GY-I08 阻断类别（闭集）。
+ *
+ * 映射值取域库 `BLOCK_CODES` 的**枚举成员本身**（不抄字符串字面量）；
+ * `Record<DoseGateReason, string>` 使**穷尽性由 tsc 保证** —— 新增一个 `DoseGateReason`
+ * 而不给出映射，`npm run lint`（tsc --noEmit）直接失败。
+ */
+export const DOSE_GATE_REASON_BLOCK_CODES: Record<DoseGateReason, string> = {
+  CONDITIONS_ABSENT: BLOCK_CODES.MISSING_CONDITION,
+  CONDITIONS_INCOMPLETE: BLOCK_CODES.MISSING_CONDITION,
+  FORMULATION_MISMATCH: BLOCK_CODES.NO_MATCH,
+  CONDITIONS_MISMATCH: BLOCK_CODES.NOT_APPLICABLE,
+  SOURCE_SIMULATED: BLOCK_CODES.SIMULATED_SOURCE,
+  SOURCE_KIND_UNTRUSTED: BLOCK_CODES.NO_SOURCE,
+  SOURCE_EXPIRED: BLOCK_CODES.INVALID_SOURCE,
+  SOURCE_UNVERIFIED: BLOCK_CODES.UNREVIEWED,
+  CARD_MALFORMED: BLOCK_CODES.NO_SOURCE,
+  CARD_CONDITIONS_INVALID: BLOCK_CODES.MISSING_CONDITION,
+  CARD_CONDITIONS_MISMATCH: BLOCK_CODES.NOT_APPLICABLE,
+  CARD_FORMULATION_MISMATCH: BLOCK_CODES.FIELD_CONFLICT,
+  CARD_SOURCE_INVALID: BLOCK_CODES.INVALID_SOURCE,
+};
+
+/** 本层拒绝原因闭集（由映射表键导出，避免与 `DoseGateReason` 联合出现第二份清单）。 */
+export const DOSE_GATE_REASONS: readonly DoseGateReason[] = Object.freeze(
+  Object.keys(DOSE_GATE_REASON_BLOCK_CODES) as DoseGateReason[],
+);
+
+/**
+ * 差异登记（跨线统一的**可断言对象**）。
+ *
+ * `reviewed_against` 是人工复核本映射表时的规则版本**字面量**：域库版本一旦变更
+ * （`1.2.0` → 更高），它与 `APPLICABILITY_RULE_VERSION` 不再相等，漂移检测测试立即失败，
+ * 要求人工重新复核本表 —— 而不是让本层静默声称已对齐新规则。
+ */
+export const DOSE_GATE_RULE_VERSION_DIFFERENCES = Object.freeze({
+  reviewed_against: 'gy-i08/1.2.0',
+  reason_to_block_code: DOSE_GATE_REASON_BLOCK_CODES,
+  /**
+   * GY-I08 会阻断、而**本层数据形状无法表达**的阻断类别（**如实登记，不声称已统一**）：
+   * 冻结契约 `DoseSource` 只有 `source_kind` / `validity` / `review_status`，
+   * **没有任何禁限用字段**，故本层无法判定禁用／限用／未采集禁限用 ——
+   * 禁限用筛选在 GY-I08 适用过滤层完成。真实统一需契约侧新增字段（超出本轮范围）。
+   */
+  not_enforced_block_codes: Object.freeze([
+    BLOCK_CODES.BANNED,
+    BLOCK_CODES.RESTRICTED,
+    BLOCK_CODES.RESTRICTION_UNKNOWN,
+  ] as readonly string[]),
+});
 
 /** 卡片/制剂/来源 id 的契约 `format: uuid`；与本服务其他入口（media_id、路径 id）同一口径。 */
 const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

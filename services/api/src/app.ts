@@ -169,6 +169,12 @@ export interface BuildAppOptions {
   };
   /** Synthetic tests only; these memory/reference injections do not enable the real-mode domain. */
   messagesInjection?: { store?: MessagesStore; reference?: MessageReferencePort };
+  /**
+   * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
+   * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
+   * 目标逐字节保持接线前行为（只多一条 `serializers.req`，见 `requestLogFields`）。
+   */
+  logStream?: { write(chunk: string): void };
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -185,10 +191,67 @@ function createSqlExecutor(pool: PgPool): SqlExecutor {
   };
 }
 
+/** 请求日志字段（默认 `serializers.req` 的子集，去掉一切原文风险）。 */
+type RequestLogFields = {
+  method?: string;
+  url?: string;
+  host?: string;
+  remoteAddress?: string;
+  remotePort?: number;
+};
+
+/** 高精度小数（经纬度形态）：出现在路径里也不落原文。 */
+const COORDINATE_LIKE = /-?\d{1,3}\.\d{4,}/;
+
+/**
+ * 日志安全路径（GY-I05「服务端不接收原始坐标」的**日志侧**）：只返回不含查询串/片段（`?`／`#`）
+ * 的**站内相对路径**；任何解析不出的形态返回 `null`，由调用方 fail-closed 丢弃整段原文：
+ *   - 非字符串 / 空串 / 不以单个 `/` 开头（绝对 URL、协议相对 URL `//host/...`、`host/path` 形态）；
+ *   - 含 `://`（代理可能转发 absolute-form 请求行，其中可能夹带查询串）；
+ *   - 路径含高精度小数（坐标形态）。
+ *
+ * 之所以不用「参数名黑名单」：黑名单能被任意改名绕过，而查询串的值**任何一段都可能是坐标**
+ * （见 `packages/privacy/redact.mjs` 的日志硬红线），所以整条查询串一律不落。
+ */
+export function logSafePath(url: unknown): string | null {
+  if (typeof url !== 'string' || url === '' || !url.startsWith('/') || url.startsWith('//') || url.includes('://')) {
+    return null;
+  }
+  const end = url.search(/[?#]/);
+  const path = end === -1 ? url : url.slice(0, end);
+  return COORDINATE_LIKE.test(path) ? null : path;
+}
+
+/**
+ * 请求日志序列化器：只输出 method 与日志安全路径（外加 host / 远端地址这类不含请求内容的值）。
+ * 代替 Fastify 默认序列化器——后者会把**含查询串的原始 URL** 逐字写进日志，等于把被拒的坐标落盘。
+ * 与默认行为的差别仅此一项；解析不出安全路径时只落 method，不落任何原文。
+ */
+export function requestLogFields(request: unknown): RequestLogFields {
+  const source = (request ?? {}) as {
+    method?: unknown; url?: unknown; host?: unknown; ip?: unknown; socket?: { remotePort?: unknown };
+  };
+  const fields: RequestLogFields = {};
+  if (typeof source.method === 'string' && source.method !== '') fields.method = source.method;
+  const path = logSafePath(source.url);
+  if (path !== null) fields.url = path;
+  if (typeof source.host === 'string' && source.host !== '') fields.host = source.host;
+  if (typeof source.ip === 'string' && source.ip !== '') fields.remoteAddress = source.ip;
+  if (typeof source.socket?.remotePort === 'number') fields.remotePort = source.socket.remotePort;
+  return fields;
+}
+
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
-    logger: config.logLevel === 'silent' ? false : { level: config.logLevel },
+    // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
+    // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
+    logger: config.logLevel === 'silent' ? false : {
+      level: config.logLevel,
+      serializers: { req: requestLogFields },
+      // 仅测试注入；不传时逐字节保持默认行为（写进程 stdout，不新建文件、不改级别与格式）。
+      ...(logStream === undefined ? {} : { stream: logStream }),
+    },
     genReqId: () => randomUUID(),
     // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
     // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
@@ -394,7 +457,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerMessageRoutes(app, config, guards, messagesService);
 
   app.setNotFoundHandler((request, reply) => {
-    const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method} ${request.url}`);
+    // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
+    // 未匹配的 URL 可能携带被拒的坐标参数（同一 `logSafePath` 口径）。
+    const path = logSafePath(request.url);
+    const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method}${path === null ? '' : ` ${path}`}`);
     reply
       .status(error.status)
       .send(buildErrorEnvelope(error, { request_id: request.id, execution_mode: config.executionMode }));

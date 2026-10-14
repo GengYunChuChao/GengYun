@@ -8,11 +8,13 @@
   </view>
 
   <!-- 非本地替身工程：统一失败态（同时是失败态走查入口） -->
-  <state-view
+  <state-view class="gy-state"
     wx:if="{{!local}}"
     status="error"
     title="样式走查页仅在本地替身工程可见"
     desc="共享源码的 runtime 恒为 disabled，因此标准包不渲染样张。请用 tools/prepare-wechat.mjs local 生成隔离工程，在 develop 环境打开本页。"
+    action-text="重新加载"
+    bind:action="onStub"
   ></state-view>
 
   <block wx:else>
@@ -214,13 +216,13 @@
         <view class="section-head__title">6 统一状态视图</view>
         <view class="section-head__meta">components/state-view</view>
       </view>
-      <state-view status="guest" title="请先登录" desc="未登录状态：图标 + 标题 + 说明 + 主操作，不靠颜色单独传达。"></state-view>
-      <state-view status="empty" title="没有找到相关资料" desc="空结果状态：虚线框 + 中性语气。"></state-view>
-      <state-view status="loading" title="正在处理" desc="处理中状态：绿语气。"></state-view>
-      <state-view status="error" title="操作没有成功" desc="失败状态：红语气 + 重试入口，全站统一走本组件。"></state-view>
-      <state-view status="cancelled" title="已取消" desc="取消状态：中性语气。"></state-view>
-      <state-view status="invalid" title="内容已失效" desc="失效状态：黄语气。"></state-view>
-      <state-view status="stub" title="示例数据" desc="替身状态：紫语气，并附「替身数据」文字标签。"></state-view>
+      <state-view class="gy-state" status="guest" title="请先登录" desc="未登录状态：图标 + 标题 + 说明 + 主操作，不靠颜色单独传达。"></state-view>
+      <state-view class="gy-state" status="empty" title="没有找到相关资料" desc="空结果状态：虚线框 + 中性语气。"></state-view>
+      <state-view class="gy-state" status="loading" title="正在处理" desc="处理中状态：绿语气。"></state-view>
+      <state-view class="gy-state" status="error" title="操作没有成功" desc="失败状态：红语气 + 重试入口，全站统一走本组件。" action-text="重试（样张）" bind:action="onStub"></state-view>
+      <state-view class="gy-state" status="cancelled" title="已取消" desc="取消状态：中性语气。"></state-view>
+      <state-view class="gy-state" status="invalid" title="内容已失效" desc="失效状态：黄语气。"></state-view>
+      <state-view class="gy-state" status="stub" title="示例数据" desc="替身状态：紫语气，并附「替身数据」文字标签。"></state-view>
     </view>
 
     <!-- 可注册组件组合：仅 local 样张，不查询资料或调用业务 API。 -->

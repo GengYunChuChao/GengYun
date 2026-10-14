@@ -129,3 +129,47 @@ test('location helper exposes no tracking API and returns only status/region cod
 });
 
 test('reference handoff preserves only existing crop/region conditions and refuses identity params',()=>{const f=fixture(); const navPath=root+'/miniprogram/utils/navigation.js';const m={exports:{}};vm.runInNewContext(readFileSync(navPath,'utf8'),{module:m});assert.equal(m.exports.normalizeTarget('/pages/reference/reference?crop_id=crop_rice&region_code=330102'),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');for(const q of ['crop_id=crop_rice&region_code=330102&user_id=x','crop_id=crop_rice&region_code=440000','owner=x','redirect=http://evil'])assert.equal(m.exports.normalizeTarget('/pages/reference/reference?'+q),null)});
+
+// —— GY-I05（#5）：错误码与前端交互一致（前端侧）。断言对象来自 **packages/contracts/states.json 的
+// error_status_map**（契约闭集），不是手写清单；遍历整个闭集，确保每个契约错误码在页面上都有
+// 明确的失败分支（可见文案或登录门），**绝不**被当成保存成功。
+const contractStates=JSON.parse(readFileSync(root+'/packages/contracts/states.json','utf8'));
+const contractOpenapi=JSON.parse(readFileSync(root+'/packages/contracts/openapi.json','utf8'));
+test('every contract error code has a defined frontend failure branch (message or login gate), never success',async()=>{
+ const pairs=Object.entries(contractStates.error_status_map).flatMap(([status,codes])=>codes.map(code=>[Number(status),code]));
+ assert.deepEqual([...new Set(pairs.map(p=>p[1]))].sort(),[...contractOpenapi.components.schemas.ErrorCode.enum].sort(),
+  '遍历对象必须就是契约闭集本身（states.error_status_map == openapi ErrorCode 枚举）');
+ assert.ok(pairs.length>=20,`契约闭集解析到的错误码太少：${pairs.length}`);
+ for(const [statusCode,code] of pairs){
+  const f=fixture();await f.ready();f.choose();f.page.onSave();
+  assert.equal(f.last('/me/profile').method,'PUT','保存请求未发出：'+code);
+  f.answer(f.last('/me/profile'),code,statusCode);await flush();
+  const redirected=f.routes.at(-1)==='/pages/login/login';
+  const message=f.page.data.message;
+  assert.ok(redirected||(typeof message==='string'&&message.length>0),`${statusCode} ${code} 没有给出任何用户可见的失败分支`);
+  assert.ok(!(f.page.data.profile&&f.page.data.profile.revision>1),`${statusCode} ${code} 被当成保存成功并显示了新版本`);
+  assert.equal(f.requests.filter(r=>r.method==='PUT').length,1,`${statusCode} ${code} 失败后重复提交`);
+  assert.equal(f.requests.filter(r=>r.method==='GET'&&new URL(r.url).pathname.endsWith('/me/profile')).length,1,
+   `${statusCode} ${code} 失败后仍走了成功路径的重新读取`);
+ }
+});
+test('frontend profile message table only names contract error codes or codes the client itself raises',()=>{
+ const source=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');
+ const table=/const messages = \{([\s\S]*?)\}/.exec(source);
+ assert.ok(table,'profile.js 的文案表未解析到——正则失配必须失败，不得静默通过');
+ const keys=[...table[1].matchAll(/([A-Z][A-Z0-9_]{3,})\s*:/g)].map(m=>m[1]);
+ assert.ok(keys.length>=8,`文案表解析到的键太少：${JSON.stringify(keys)}`);
+ assert.ok(keys.includes('PROVIDER_UNAVAILABLE'),'文案表解析结果自检失败');
+ const contract=new Set(Object.values(contractStates.error_status_map).flat());
+ const api=readFileSync(root+'/miniprogram/utils/profile-api.js','utf8');
+ // 「客户端本地码」从客户端模块源码里取（形如 `failure('SESSION_CHANGED')` 或
+ // `failure(current(b) ? 'NETWORK_UNCERTAIN' : 'SESSION_CHANGED')`），不手写第二份清单。
+ const clientLocal=new Set([...api.matchAll(/'([A-Z][A-Z0-9_]{4,})'/g)].map(m=>m[1]));
+ assert.ok(clientLocal.size>=3,`客户端本地码解析失败：${JSON.stringify([...clientLocal])}`);
+ assert.ok(clientLocal.has('NETWORK_UNCERTAIN')&&clientLocal.has('SESSION_CHANGED'),'客户端本地码解析结果自检失败');
+ for(const key of keys){
+  assert.ok(contract.has(key)||clientLocal.has(key),`文案表的 ${key} 既不在契约闭集也不在客户端本地码（${JSON.stringify([...clientLocal])}）里`);
+ }
+ // 反向：契约闭集里本片会触达的错误码，前端要么有专文，要么走通用兜底——两者都必须是"非成功"文案。
+ assert.ok(keys.includes('REVISION_CONFLICT')&&keys.includes('INVALID_CURSOR'),'契约错误码在前端文案表里缺失');
+});

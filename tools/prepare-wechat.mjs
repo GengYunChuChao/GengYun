@@ -96,7 +96,11 @@ try {
     copyFileSync(join(root, 'miniprogram', file), target);
   }
   writeFileSync(join(out, 'project.config.json'), JSON.stringify(config, null, 2) + '\n');
+  // 生成物里的 apiBaseUrl 就是**客户端拼接基址**（客户端以 `runtime.apiBaseUrl + '/auth/…'` 等自行拼接）：
+  // 指向真实本地 API 时须含业务前缀（如 http://127.0.0.1:3100/api/v1），诊断替身用 origin 形态即可。
   writeFileSync(join(out, 'miniprogram/config/runtime.js'), 'module.exports = ' + JSON.stringify({ mode: runtime.mode, apiBaseUrl: runtime.apiBaseUrl }) + '\n');
   console.log(mode.toUpperCase() + ' import root: ' + out);
-  console.log(mode === 'local' ? 'Diagnostic stub only; enable personal domain exception only in this isolated project if needed.' : 'Networking disabled, urlCheck=true. This is not a working competition release.');
+  console.log(mode === 'local'
+    ? 'Local client base (runtime.apiBaseUrl): ' + runtime.apiBaseUrl + ' ; diagnostic stub only; enable the personal domain exception only in this isolated project if needed.'
+    : 'Networking disabled, urlCheck=true. This is not a working competition release.');
 } catch (error) { console.error(error.message); process.exitCode = 1; }

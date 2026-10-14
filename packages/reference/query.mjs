@@ -403,8 +403,11 @@ export function ingredientContentMatch(parsed, contextValue) {
  * 读取记录的禁限用状态（来源未给出时回退 unknown，绝不默认 unrestricted）。
  * 显式读取：只有**非空字符串**才采用；空串与缺失一律回退 `unknown`（fail-closed）。
  * 小程序端同口径（见 miniprogram/utils/reference.js readRestrictionStatus）。
+ *
+ * GY-I08 导出：`deterministic.mjs` 的阻断分类需要**同一份**禁限用判定，
+ * 不得另立一套（否则「不适用」与「禁用」的归类会在两个消费端分叉）。
  */
-function readRestrictionStatus(item) {
+export function readRestrictionStatus(item) {
   const raw = firstNonEmptyString(item?.verification?.restriction_status, item?.source?.restriction_status, item?.restriction_status);
   if (raw !== null && RESTRICTION_STATUSES.includes(raw)) return raw;
   return 'unknown';
