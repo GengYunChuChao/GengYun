@@ -137,6 +137,32 @@ async function post(app, face, token, keySeed) {
   return { status: response.statusCode, body };
 }
 
+/**
+ * 第 5 个受控写面：`PATCH /recognitions/{id}/selection`。
+ * `routes/recognitions.ts` 对它挂的是**同一个** `consentGate`（用途 `external_inference`、
+ * 资料类型 `weed_recognition`）—— 但 4 面矩阵里没有它，故单独驱动。
+ */
+async function selection(app, token, recognitionId, { ifMatch = '"1"' } = {}) {
+  const response = await app.inject({
+    method: 'PATCH',
+    url: `${API}/recognitions/${recognitionId}/selection`,
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      'idempotency-key': 'gy-i22-consent-selection-0001',
+      'if-match': ifMatch,
+    },
+    payload: { selected_species_id: 'synthetic-species-1' },
+  });
+  let body = null;
+  try {
+    body = response.json();
+  } catch {
+    body = null;
+  }
+  return { status: response.statusCode, body };
+}
+
 /** 逐字节同形指纹（排除逐次不同的 `meta.request_id`）。 */
 function fingerprint(result) {
   assert.ok(result.body !== null, '响应必须是 JSON 错误封套');
@@ -300,7 +326,28 @@ test('跨模块·口径：游客与伪造令牌在受理面一律 401（鉴权�
 });
 
 // ---------------------------------------------------------------------------
-// 7. real 未接真实依赖 ⇒ 零外发
+// 8. 第 5 个受控写面：人工选择（AI 矩阵之外，但挂同一授权中间件）
+// ---------------------------------------------------------------------------
+
+test('跨模块·授权：第 5 个受控写面 PATCH /recognitions/{id}/selection 未授权 403 CONSENT_REQUIRED；授权齐全后到达归属判定（404 而非 403）', async (t) => {
+  const h = await makeFixture(t);
+
+  // 未授权：该写面必须先被授权中间件拦下（否则「先写派生内容」的口子就开了）。
+  const denied = await selection(h.app, h.token, ABSENT_UUID);
+  assert.equal(denied.status, 403, JSON.stringify(denied.body));
+  assert.equal(denied.body.error.code, 'CONSENT_REQUIRED');
+  assert.equal(denied.body.data, undefined);
+
+  // 授权齐全后：授权不再拦，**归属/存在性**照旧生效 ⇒ 404（不是 403，也不是 200）。
+  for (const purpose of ['recording', 'media_processing', 'external_inference']) await h.grant(purpose);
+  const allowed = await selection(h.app, h.token, ABSENT_UUID);
+  assert.equal(allowed.status, 404, `授权齐全后应到达归属判定（404），实际 ${allowed.status} ${allowed.body}`);
+  assert.equal(allowed.body.error.code, 'NOT_FOUND');
+  assert.equal(allowed.body.data, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// 9. real 未接真实依赖 ⇒ 零外发
 // ---------------------------------------------------------------------------
 
 test('跨模块·real 未接真实依赖：4 个真实受理面一致 503 PROVIDER_UNAVAILABLE(retryable)，且业务提供者零调用（零外发）', async (t) => {
