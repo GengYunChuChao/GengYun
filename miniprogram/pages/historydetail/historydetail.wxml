@@ -1,0 +1,172 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">{{kindLabel || '识别记录'}}详情</view>
+      <view class="page-heading__sub">任务状态与目标可见性来自服务端实时读取，不由链接携带。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{checking || !gatePassed}}"
+    status="guest"
+    title="请先登录"
+    desc="登录后才能查看该识别记录。记录只与你的账号绑定。"
+    actionText="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <block wx:else>
+    <view class="notice notice--warn" wx:if="{{networkOff}}">
+      <text class="notice__icon">⚠️</text>
+      <text class="notice__text">当前未启用联网（共享源码默认关闭）。记录详情来自服务端实时读取，本页在没有联网时不会用本地数据顶替。</text>
+    </view>
+
+    <state-view
+      wx:if="{{invalid}}"
+      status="invalid"
+      title="记录不可用"
+      desc="{{invalidReason}}"
+    ></state-view>
+
+    <block wx:else>
+      <view class="notice" wx:if="{{ignoredParams.length}}">
+        <text class="notice__icon">ℹ️</text>
+        <text class="notice__text">链接中夹带的字段（{{ignoredParams}}）已忽略：本页状态一律以服务端实时读取为准，旧链接或缓存不能改变它。</text>
+      </view>
+
+      <state-view wx:if="{{busy}}" status="loading" title="正在实时读取记录"></state-view>
+
+      <view class="notice notice--warn" wx:elif="{{!stateKnown}}">
+        <text class="notice__icon">⚠️</text>
+        <text class="notice__text">任务状态未从实时读取取得（记录可能不在第一页）。为避免展示过期状态，本页不显示任务状态。</text>
+      </view>
+
+      <view class="section">
+        <view class="section-head">
+          <text class="section-head__title">任务状态</text>
+          <text class="section-head__meta">{{locatedBy === 'live' ? '实时读取' : '未取得'}}</text>
+        </view>
+        <view class="panel">
+          <view class="card-meta">
+            <text class="pill {{stateTone === 'error' ? 'pill--amber' : 'pill--gray'}}">{{stateLabel}}</text>
+            <text class="pill {{referenceAvailable ? '' : 'pill--gray'}}">{{referenceLabel}}</text>
+          </view>
+          <view class="card-text">{{stateDesc}}</view>
+          <view class="demo-caption">
+            任务类型 {{kindLabel}} · 记录时间 {{createdAt || '未取得'}} · 记录版本 {{historyRevision}}
+          </view>
+        </view>
+      </view>
+
+      <view class="notice notice--warn" wx:if="{{errorText}}">
+        <text class="notice__icon">⚠️</text>
+        <text class="notice__text">{{errorText}}</text>
+      </view>
+
+      <!-- 识草：模型候选 与 人工选择 **两个独立区块** -->
+      <view class="section" wx:if="{{!errorText && manualSelection}}">
+        <view class="section-head">
+          <text class="section-head__title">模型候选</text>
+          <text class="section-head__meta">未人工确认</text>
+        </view>
+        <view class="panel" wx:if="{{modelCandidates.length}}">
+          <view class="info-list">
+            <view class="info-row" wx:for="{{modelCandidates}}" wx:key="rank">
+              <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
+              <view class="info-row__copy">
+                <text class="info-row__title">候选 {{item.rank}} · {{item.species_id}}</text>
+                <text class="info-row__desc">模型自报分数 {{item.scoreText}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+        <state-view wx:else status="empty" title="没有候选" desc="{{modelCandidateNote}}"></state-view>
+        <view class="demo-caption">{{modelCandidateNote}}</view>
+
+        <view class="section-head">
+          <text class="section-head__title">人工选择</text>
+          <text class="section-head__meta">{{manualSelection.label}}</text>
+        </view>
+        <view class="panel">
+          <view class="card-text">{{manualSelection.present ? manualSelection.selected : '你还没有在这条记录里确认物种。'}}</view>
+          <view class="demo-caption">{{manualSelection.note}}</view>
+        </view>
+
+        <view class="panel" wx:if="{{uncertaintyReasons.length}}">
+          <view class="card-title">不确定原因（模型自述）</view>
+          <view class="card-text">{{uncertaintyReasons}}</view>
+        </view>
+
+        <view class="panel">
+          <view class="card-meta">
+            <text class="pill pill--gray">来源（模型）版本</text>
+          </view>
+          <view class="card-text">{{sourceVersion}}</view>
+        </view>
+      </view>
+
+      <!-- 标签识别（OCR）：原始字段 / 人工更正 与 核对结果 分开 -->
+      <block wx:if="{{!errorText && raw}}">
+        <view class="section">
+          <view class="section-head">
+            <text class="section-head__title">模型原始字段</text>
+            <text class="section-head__meta">未经人工更正</text>
+          </view>
+          <view class="panel">
+            <view class="card-text">产品名称：{{raw.name || '未识别'}}</view>
+            <view class="card-text">登记证号：{{raw.registration_number || '未识别'}}</view>
+            <view class="card-text">剂型：{{raw.dosage_form || '未识别'}}</view>
+            <view class="card-text" wx:if="{{raw.ingredients.length}}">有效成分：{{raw.ingredients}}</view>
+          </view>
+        </view>
+
+        <view class="section">
+          <view class="section-head">
+            <text class="section-head__title">人工更正字段</text>
+            <text class="section-head__meta">{{correctedDiffers ? '与原始字段不同' : '与原始字段相同'}}</text>
+          </view>
+          <view class="panel">
+            <view class="card-text">产品名称：{{corrected.name || '未填写'}}</view>
+            <view class="card-text">登记证号：{{corrected.registration_number || '未填写'}}</view>
+            <view class="card-text">剂型：{{corrected.dosage_form || '未填写'}}</view>
+            <view class="card-text" wx:if="{{corrected.ingredients.length}}">有效成分：{{corrected.ingredients}}</view>
+          </view>
+          <view class="demo-caption">原始字段与人工更正分开保存；更正不会改写模型原始输出。</view>
+        </view>
+
+        <view class="section">
+          <view class="section-head">
+            <text class="section-head__title">核对结果</text>
+            <text class="section-head__meta">对照登记资料</text>
+          </view>
+          <view class="panel" wx:if="{{verification}}">
+            <view class="card-meta">
+              <text class="pill pill--gray">{{verification.matchLabel}}</text>
+              <text class="pill pill--gray">{{verification.hasRegistration ? '已匹配到登记资料' : '未匹配到登记资料'}}</text>
+            </view>
+            <view class="card-text" wx:if="{{verification.conflictFields.length}}">冲突字段：{{verification.conflictFields}}</view>
+            <view class="card-text" wx:if="{{verification.missingFields.length}}">缺失字段：{{verification.missingFields}}</view>
+            <view class="card-text">登记用量卡：{{verification.doseCardCount}} 条（本页不展示用量内容）</view>
+          </view>
+          <view class="notice notice--warn">
+            <text class="notice__icon">⚠️</text>
+            <text class="notice__text">{{doseSafetyNote}}</text>
+          </view>
+          <view class="demo-caption">来源（模型）版本：{{sourceVersion}}</view>
+        </view>
+      </block>
+    </block>
+
+    <view class="row-actions">
+      <gy-ui-button label="重新实时读取" variant="secondary" disabled="{{busy || networkOff || !gatePassed}}" bind:tap="onRefresh"></gy-ui-button>
+      <gy-ui-button
+        wx:if="{{canDelete}}"
+        label="{{busy ? '处理中…' : '删除这条记录'}}"
+        variant="ghost"
+        disabled="{{busy}}"
+        bind:tap="onDelete"
+      ></gy-ui-button>
+    </view>
+    <view class="hint" role="status">{{message}}</view>
+  </block>
+</view>

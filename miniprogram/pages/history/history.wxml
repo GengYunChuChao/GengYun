@@ -1,0 +1,98 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">识别历史</view>
+      <view class="page-heading__sub">每一次识草与标签识别，都留下可核对的记录。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{checking || !gatePassed}}"
+    status="guest"
+    title="请先登录"
+    desc="登录后才能查看自己的识别记录。记录只与你的账号绑定，不会公开。"
+    actionText="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <block wx:else>
+    <view class="notice notice--warn" wx:if="{{networkOff}}">
+      <text class="notice__icon">⚠️</text>
+      <text class="notice__text">当前未启用联网（共享源码默认关闭）。识别历史完全来自服务端，本页在没有联网时不会用本地数据顶替。请在本机或正式环境启用后再查看。</text>
+    </view>
+
+    <view class="section" wx:if="{{!networkOff}}">
+      <view class="section-head">
+        <text class="section-head__title">全部记录</text>
+        <text class="section-head__meta">{{items.length}} 条 · 未成功 {{failedCount}} 条</text>
+      </view>
+
+      <view class="row-actions">
+        <gy-ui-button label="重新读取" variant="secondary" disabled="{{busy}}" bind:tap="onRefresh"></gy-ui-button>
+        <view class="hint" role="status">{{message}}</view>
+      </view>
+
+      <state-view wx:if="{{loading && !items.length}}" status="loading" title="正在读取历史"></state-view>
+
+      <state-view
+        wx:elif="{{errorText}}"
+        status="error"
+        title="历史读取失败"
+        desc="{{errorText}}"
+      ></state-view>
+
+      <state-view
+        wx:elif="{{!items.length}}"
+        status="empty"
+        title="还没有识别记录"
+        desc="完成一次识草或标签识别后，记录会出现在这里（含失败与超时的任务）。识别不会自动变成“已使用”。"
+      ></state-view>
+
+      <block wx:else>
+        <gy-ui-card wx:for="{{items}}" wx:key="id" title="{{item.cardTitle}}">
+          <view class="card-meta">
+            <text class="pill pill--gray">{{item.kindLabel}}</text>
+            <text class="pill {{item.failed ? 'pill--amber' : ''}}">{{item.stateLabel}}</text>
+            <text class="pill {{item.navigable ? '' : 'pill--gray'}}">{{item.referenceLabel}}</text>
+          </view>
+          <view class="card-text">{{item.stateDesc}}</view>
+          <view class="demo-caption">
+            记录时间 {{item.createdText}} · 任务类型 {{item.kindLabel}} · 记录版本 {{item.revision}}
+          </view>
+          <view class="row-actions">
+            <gy-ui-button label="查看详情" variant="primary" data-index="{{index}}" bind:tap="openDetail"></gy-ui-button>
+            <gy-ui-button
+              label="{{busy ? '处理中…' : '删除记录'}}"
+              variant="ghost"
+              disabled="{{busy}}"
+              data-index="{{index}}"
+              bind:tap="onDelete"
+            ></gy-ui-button>
+          </view>
+        </gy-ui-card>
+
+        <gy-ui-button
+          wx:if="{{nextCursor}}"
+          label="加载更多"
+          variant="secondary"
+          block="{{true}}"
+          disabled="{{busy}}"
+          bind:tap="onMore"
+        ></gy-ui-button>
+      </block>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-head__title">关于识别历史</text>
+      </view>
+      <view class="panel">
+        <view class="card-text">
+          失败、超时、取消与不确定的任务**都会原样显示**，不会因为不好看而隐藏，也不会被写成"识别成功"。
+          目标当前是否可读由服务端在每次读取时重新判定；已下架、已失效、已删除或注销后的目标不会因为
+          历史里有记录而重新公开。识别与收藏都不会自动变成"已使用"事实。
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

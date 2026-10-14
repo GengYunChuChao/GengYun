@@ -1,0 +1,140 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">我的收藏</view>
+      <view class="page-heading__sub">把有用的杂草、药剂与方案留在手边。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{checking || !gatePassed}}"
+    status="guest"
+    title="请先登录"
+    desc="登录后才能查看与取消收藏。收藏只与你的账号绑定，不会公开。"
+    actionText="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <block wx:else>
+    <view class="notice notice--warn" wx:if="{{networkOff}}">
+      <text class="notice__icon">⚠️</text>
+      <text class="notice__text">当前未启用联网（共享源码默认关闭）。收藏完全由服务端保存与判定，本页在没有联网时不会用本地数据顶替；请在本机或正式环境启用后再查看。</text>
+    </view>
+
+    <!-- 可收藏目标：来自已合并的 GET /knowledge（前三类 type 恰是契约允许收藏的目标） -->
+    <view class="section" wx:if="{{!networkOff}}">
+      <view class="section-head">
+        <text class="section-head__title">可收藏的资料</text>
+        <text class="section-head__meta">{{targetNote}}</text>
+      </view>
+
+      <view class="panel" wx:if="{{targets.length}}">
+        <view class="info-list">
+          <view class="info-row" wx:for="{{targets}}" wx:key="key">
+            <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
+            <view class="info-row__copy">
+              <text class="info-row__title">{{item.title}}</text>
+              <text class="info-row__desc">{{item.typeLabel}} · 资料版本 {{item.revision}}{{item.favorited ? ' · 已收藏' : ''}}</text>
+            </view>
+            <gy-ui-button
+              label="{{item.favorited ? '已收藏' : '收藏'}}"
+              variant="secondary"
+              disabled="{{item.favorited || busy}}"
+              data-index="{{index}}"
+              bind:tap="onAdd"
+            ></gy-ui-button>
+          </view>
+        </view>
+      </view>
+      <state-view
+        wx:else
+        status="{{targetError ? 'error' : 'empty'}}"
+        title="{{targetError ? '资料列表不可用' : '暂无可收藏的资料'}}"
+        desc="{{targetError || '已上架资料为空，或当前尚未接入资料查询。收藏列表本身仍可查看与取消。'}}"
+      ></state-view>
+
+      <view class="demo-caption">
+        目标与版本取自服务端资料列表；重复收藏同一目标不会产生第二条记录（服务端去重）。
+        资料可收藏**不等于**它适合你的地块或可以照此用药。
+      </view>
+    </view>
+
+    <!-- 我的收藏 -->
+    <view class="section">
+      <view class="section-head">
+        <text class="section-head__title">我的收藏</text>
+        <text class="section-head__meta">{{items.length}} 条</text>
+      </view>
+
+      <view class="row-actions">
+        <gy-ui-button label="重新读取" variant="secondary" disabled="{{busy || !gatePassed || networkOff}}" bind:tap="onRefresh"></gy-ui-button>
+        <view class="hint" role="status">{{message}}</view>
+      </view>
+
+      <state-view wx:if="{{busy && !items.length}}" status="loading" title="正在读取收藏"></state-view>
+
+      <state-view
+        wx:elif="{{errorText}}"
+        status="error"
+        title="收藏读取失败"
+        desc="{{errorText}}"
+      ></state-view>
+
+      <state-view
+        wx:elif="{{!items.length}}"
+        status="empty"
+        title="还没有收藏"
+        desc="在上方选择资料收藏，或前往资料库浏览。收藏与识别记录都不会自动变成“已使用”。"
+      ></state-view>
+
+      <block wx:else>
+        <gy-ui-card wx:for="{{items}}" wx:key="id" title="{{item.title}}">
+          <view class="card-meta">
+            <text class="pill pill--gray">{{item.typeLabel}}</text>
+            <text class="pill {{item.available ? '' : 'pill--gray'}}">{{item.stateLabel}}</text>
+          </view>
+          <view class="card-text">{{item.stateHint}}</view>
+          <view class="demo-caption">资料版本 {{item.revision}} · 收藏时间 {{item.createdAt}}</view>
+          <view class="row-actions">
+            <gy-ui-button
+              wx:if="{{item.canOpen}}"
+              label="查看资料"
+              variant="secondary"
+              data-index="{{index}}"
+              bind:tap="openTarget"
+            ></gy-ui-button>
+            <gy-ui-button
+              label="{{busy ? '处理中…' : '取消收藏'}}"
+              variant="ghost"
+              disabled="{{busy}}"
+              data-index="{{index}}"
+              bind:tap="onCancel"
+            ></gy-ui-button>
+          </view>
+        </gy-ui-card>
+
+        <gy-ui-button
+          wx:if="{{nextCursor}}"
+          label="加载更多"
+          variant="secondary"
+          block="{{true}}"
+          disabled="{{busy}}"
+          bind:tap="onMore"
+        ></gy-ui-button>
+      </block>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-head__title">关于收藏</text>
+      </view>
+      <view class="panel">
+        <view class="card-text">
+          收藏只保存你与目标的关联；目标当前是否可读由服务端在每次读取时重新判定，
+          已下架、已失效、已隐藏或注销后的目标不会因为被收藏过而重新公开，
+          也不会恢复任何推荐资格。取消收藏会删除该条收藏（去重键同时释放）。
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

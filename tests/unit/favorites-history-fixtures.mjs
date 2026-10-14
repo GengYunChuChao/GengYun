@@ -1,0 +1,241 @@
+/**
+ * GY-I16（#16）· 收藏／历史测试夹具。
+ *
+ * 声明（必须如实，不得被引用为端到端证据）：
+ *   这里的用户、目标引用、可见性与任务状态都是**合成输入**，用于验证确定性服务语义
+ *   （归属、去重、取消、读取时重查、失败可见、幂等/CAS、分页、不可变出口、F13 删除接线）。
+ *   它们**不是**真实识别结果，也**不是**"收藏/历史已端到端可用"的证据：
+ *   - 生产装配下**引用可用性端口未接线** ⇒ 一律 unavailable（本夹具的"可用"由可控替身给出）；
+ *   - **识别/OCR → 历史的写入接线属跨线**（本片只交付内部口），因此本夹具用内部口
+ *     `appendHistory` 直接落行 —— 这正是"替身/未验证"的一部分。
+ */
+import { ApiError, buildErrorEnvelope } from '../../services/api/src/errors.ts';
+import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
+import { createFavoritesService } from '../../services/api/src/favorites/service.ts';
+import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createHistoryService } from '../../services/api/src/history/service.ts';
+import {
+  createUnwiredHistoryCascadePort,
+  createWiredHistoryCascadePort,
+} from '../../services/api/src/history/cascade.ts';
+import { createUnwiredHistoryJobPort, createWiredHistoryJobPort } from '../../services/api/src/history/job.ts';
+import {
+  createUnwiredVisibilityPort,
+  createWiredVisibilityPort,
+  REFERENCE_UNAVAILABLE_REASONS,
+} from '../../services/api/src/targetref/visibility.ts';
+
+export {
+  ApiError,
+  buildErrorEnvelope,
+  createUnwiredHistoryCascadePort,
+  createUnwiredHistoryJobPort,
+  createUnwiredVisibilityPort,
+  createWiredHistoryCascadePort,
+  createWiredHistoryJobPort,
+  createWiredVisibilityPort,
+  REFERENCE_UNAVAILABLE_REASONS,
+};
+
+/** 仅测试用签名密钥（不是真实密钥、不入库、不入日志）。 */
+export const TEST_SIGNING_KEY = 'gy-i16-favorites-history-test-signing-key';
+
+export const USER_A = Object.freeze({
+  userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  role: 'user',
+  authEpoch: 1,
+});
+export const USER_B = Object.freeze({
+  userId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  role: 'user',
+  authEpoch: 1,
+});
+export const ADMIN = Object.freeze({
+  userId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  role: 'admin',
+  authEpoch: 1,
+});
+
+/** 一个**不存在**的合法 uuid（用于"他人收藏/历史"与"完全不存在"的同形比较）。 */
+export const ABSENT_ID = '00000000-0000-4000-8f00-0000000000ff';
+
+/** 契约 `Favorite` 的键集（`additionalProperties:false` 的逐字段比对基准）。 */
+export const FAVORITE_KEYS = [
+  'id',
+  'revision',
+  'target_ref',
+  'reference_state',
+  'unavailable_reason',
+  'created_at',
+];
+
+/** 契约 `History` 的键集。 */
+export const HISTORY_KEYS = ['id', 'revision', 'kind', 'target_ref', 'job_state', 'reference_state', 'created_at'];
+
+/** 契约 `TargetRef` 的键集。 */
+export const TARGET_REF_KEYS = ['type', 'id', 'revision'];
+
+/** 生成契约格式的确定性 uuid。 */
+export function makeIdFactory(namespace = '1') {
+  let counter = 0;
+  return () => {
+    counter += 1;
+    return `00000000-0000-4000-8${namespace}00-${String(counter).padStart(12, '0')}`;
+  };
+}
+
+/** 合法幂等键（契约要求 8..128 字符）。 */
+export function idem(seed) {
+  return `idem-${String(seed).padStart(4, '0')}`;
+}
+
+export function assertApiErrorShape(error, code, status) {
+  if (!(error instanceof ApiError)) throw new Error(`应为 ApiError，实际：${String(error)}`);
+  if (error.code !== code) throw new Error(`错误码应为 ${code}，实际 ${error.code}`);
+  if (error.status !== status) throw new Error(`HTTP 状态应为 ${status}，实际 ${error.status}`);
+}
+
+export async function captureError(run) {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error('期望抛出错误，但没有抛出');
+}
+
+/** 把业务错误渲染成**逐字节可比**的契约错误封套（归属/不存在同形判定的核心工具）。 */
+export function errorEnvelopeJson(error, requestId = '99999999-9999-4999-8999-999999999999', executionMode = 'stub') {
+  if (!(error instanceof ApiError)) throw new Error(`应为 ApiError，实际：${String(error)}`);
+  return JSON.stringify(buildErrorEnvelope(error, { request_id: requestId, execution_mode: executionMode }));
+}
+
+/** 脚本化时钟：`now()` 返回可控时刻，`advance(ms)` 手动推进。 */
+export function scriptedClock(baseMs = Date.UTC(2026, 9, 14, 3, 0, 0)) {
+  let ms = baseMs;
+  return {
+    now: () => new Date(ms),
+    advance: (deltaMs) => {
+      ms += deltaMs;
+      return ms;
+    },
+    get ms() {
+      return ms;
+    },
+  };
+}
+
+/**
+ * **可控可见性替身**：`visible` 集合外的目标一律 `unavailable`。
+ *
+ * 用途：模拟"目标当前对该用户可见与否"（含隐藏/失效/删除/注销后不可读）。
+ * 这是**替身**，不是真实可见性核验实现；它的存在只用于证明服务层在**每次读取**都重新问它。
+ */
+export function makeControllableVisibility(initialVisible = []) {
+  const visible = new Set(initialVisible);
+  const calls = [];
+  const port = createWiredVisibilityPort({
+    note: '测试替身：不可见的集合可由用例控制（不是真实可见性核验实现）',
+    resolve: async ({ target_ref, userId }) => {
+      const key = `${target_ref.type}:${target_ref.id}`;
+      calls.push({ key, userId });
+      return visible.has(key) ? 'available' : 'unavailable';
+    },
+  });
+  return {
+    port,
+    calls,
+    show: (type, id) => visible.add(`${type}:${id}`),
+    hide: (type, id) => visible.delete(`${type}:${id}`),
+    isVisible: (type, id) => visible.has(`${type}:${id}`),
+  };
+}
+
+/** 抛错的可见性替身（用来验证 fail-closed：读取失败 ⇒ 不可用，且说明落在冻结闭集内）。 */
+export function makeThrowingVisibility() {
+  return createWiredVisibilityPort({
+    resolve: async () => {
+      throw new Error('合成故障：不可外传的原始错误文本');
+    },
+  });
+}
+
+/** 返回非闭集取值的可见性替身（`true` / 任意字符串都不算可用）。 */
+export function makeJunkVisibility(value) {
+  return createWiredVisibilityPort({ resolve: async () => value });
+}
+
+/**
+ * **可控任务状态替身**：`states` 映射 `jobId → JobState`；未登记的 jobId 返回 `null`（核不到）。
+ * 该替身同样是"替身/未验证"，只用于证明服务层读取时确实重查、且不会凭空升级为成功。
+ */
+export function makeControllableJobPort(initial = {}, options = {}) {
+  const states = new Map(Object.entries(initial));
+  const calls = [];
+  const port = createWiredHistoryJobPort({
+    note: '测试替身：任务状态可由用例控制（不是真实作业读取实现）',
+    resolve: async ({ jobId, userId }) => {
+      calls.push({ jobId, userId });
+      if (options.throwFor !== undefined && options.throwFor === jobId) throw new Error('合成故障');
+      const state = states.get(jobId);
+      return state === undefined ? null : state;
+    },
+  });
+  return {
+    port,
+    calls,
+    set: (jobId, state) => states.set(jobId, state),
+    forget: (jobId) => states.delete(jobId),
+  };
+}
+
+/** 收藏域夹具。 */
+export function makeFavoritesHarness(options = {}) {
+  const clock = options.clock ?? scriptedClock();
+  const store = options.store ?? createMemoryFavoritesStore({ now: () => clock.ms });
+  const visibility = options.visibility ?? createUnwiredVisibilityPort();
+  const service = createFavoritesService({
+    store,
+    visibility,
+    signingKey: TEST_SIGNING_KEY,
+    now: clock.now,
+    newId: options.newId ?? makeIdFactory(options.namespace ?? '1'),
+    ...(options.idempotencyWaitMs === undefined ? {} : { idempotencyWaitMs: options.idempotencyWaitMs }),
+    ...(options.idempotencyTtlMs === undefined ? {} : { idempotencyTtlMs: options.idempotencyTtlMs }),
+  });
+  return { store, visibility, service, clock };
+}
+
+/** 历史域夹具。 */
+export function makeHistoryHarness(options = {}) {
+  const clock = options.clock ?? scriptedClock();
+  const store = options.store ?? createMemoryHistoryStore({ now: () => clock.ms });
+  const visibility = options.visibility ?? createUnwiredVisibilityPort();
+  const job = options.job ?? createUnwiredHistoryJobPort();
+  const cascade = options.cascade ?? createUnwiredHistoryCascadePort();
+  const service = createHistoryService({
+    store,
+    visibility,
+    job,
+    cascade,
+    signingKey: TEST_SIGNING_KEY,
+    now: clock.now,
+    newId: options.newId ?? makeIdFactory(options.namespace ?? '2'),
+    ...(options.idempotencyWaitMs === undefined ? {} : { idempotencyWaitMs: options.idempotencyWaitMs }),
+    ...(options.idempotencyTtlMs === undefined ? {} : { idempotencyTtlMs: options.idempotencyTtlMs }),
+  });
+  return { store, visibility, job, cascade, service, clock };
+}
+
+/** 便捷：经内部创建口落一条历史（返回 `{created, history}`）。 */
+export async function appendHistory(service, overrides = {}) {
+  return service.appendHistory({
+    owner_id: USER_A.userId,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: '00000000-0000-4000-8a00-000000000001', revision: 1 },
+    job_id: '00000000-0000-4000-8b00-000000000001',
+    job_state: 'succeeded',
+    event_key: 'evt-1',
+    ...overrides,
+  });
+}
