@@ -144,6 +144,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'components/state-view/state-view.json',
     'components/state-view/state-view.wxml',
     'components/state-view/state-view.wxss',
+    ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
+      ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
     'data/crops.js',
     'data/species.js',
     'data/regions.js',
@@ -167,6 +169,13 @@ test('isolated packaging excludes private files and rejects release overrides/st
     require(path.join(dir,'miniprogram/custom-tab-bar/index.js'));
     for(const page of JSON.parse(fs.readFileSync(path.join(dir,'miniprogram/app.json'))).pages)require(path.join(dir,'miniprogram',page+'.js'));`;
   for (const [product, mode] of [[local, 'local'], [release, 'disabled']]) {
+    for (const name of ['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search']) {
+      for (const ext of ['.js', '.json', '.wxml', '.wxss']) {
+        const dep = `components/${name}/${name}${ext}`;
+        assert.equal(readFileSync(join(product, 'miniprogram', dep), 'utf8'),
+          readFileSync(join(root, 'miniprogram', dep), 'utf8'), `${mode} component copy differs: ${dep}`);
+      }
+    }
     const loaded = spawnSync(process.execPath, ['-e', loader, product, mode], { encoding: 'utf8' });
     assert.equal(loaded.status, 0, `Standard ${mode} product must load auth/App/all pages: ${loaded.stderr}`);
   }

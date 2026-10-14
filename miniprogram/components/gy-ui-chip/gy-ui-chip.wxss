@@ -1,0 +1,4 @@
+.gyui-chip { box-sizing: border-box; display: flex; align-items: center; justify-content: center; min-height: 44px; margin: 0; padding: 7px 14px; border: 1px solid var(--green-chip-line, #dfe7da); border-radius: 999px; background: #fff; color: var(--ink-chip, #829176); font-size: calc(14px * var(--font-scale, 1)); line-height: 1.5; }
+.gyui-chip::after { border: none; }
+.gyui-chip--selected { color: var(--green, #176b50); border-color: var(--green, #176b50); background: var(--green-soft, #eef3e9); font-weight: 600; }
+.gyui-chip[disabled] { opacity: .55; }

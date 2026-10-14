@@ -1,0 +1,1 @@
+<button class="gyui-chip {{selected ? 'gyui-chip--selected' : ''}}" disabled="{{disabled}}" aria-label="{{label}}" aria-pressed="{{selected}}" bindtap="onTap">{{label}}</button>

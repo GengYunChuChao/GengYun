@@ -225,10 +225,39 @@
       <state-view class="gy-state" status="stub" title="示例数据" desc="替身状态：紫语气，并附「替身数据」文字标签。"></state-view>
     </view>
 
-    <!-- 7 末屏：核对 tabBar 不遮挡末屏内容 -->
+    <!-- 可注册组件组合：仅 local 样张，不查询资料或调用业务 API。 -->
     <view class="section">
       <view class="section-head">
-        <view class="section-head__title">7 末屏核对</view>
+        <view class="section-head__title">7 可复用原生组件</view>
+        <view class="section-head__meta">gy-ui-* · 交互样张</view>
+      </view>
+      <gy-ui-card title="资料检索布局样张">
+        <view class="hint">这里只演示组件组合。输入与筛选保存在本页内存，没有真实查询。</view>
+        <view class="specimen-gap"><gy-ui-search value="{{kitQuery}}" placeholder="输入样张关键词" bindinput="onKitInput" bindconfirm="onKitConfirm" bindclear="onKitClear" /></view>
+        <view class="row-actions">
+          <gy-ui-chip label="全部" value="全部" selected="{{kitSelected === '全部'}}" bindselect="onKitSelect" />
+          <gy-ui-chip label="科普" value="科普" selected="{{kitSelected === '科普'}}" bindselect="onKitSelect" />
+        </view>
+        <view class="specimen-gap"><gy-ui-button label="查询样张" variant="primary" block="{{true}}" bindtap="onStub" /></view>
+        <view class="specimen-gap"><gy-ui-button label="处理中不可点" variant="lime" loading="{{true}}" bindtap="onStub" /></view>
+        <view class="specimen-gap"><gy-ui-button label="禁用不可点" disabled="{{true}}" bindtap="onStub" /></view>
+        <view class="demo-caption">当前选择：{{kitSelected}}；输入：{{kitQuery || '空'}}。确认键只切换下方样张状态。</view>
+      </gy-ui-card>
+      <view class="row-actions">
+        <button class="btn btn--ghost" data-value="ready" bindtap="onKitState">正常</button>
+        <button class="btn btn--ghost" data-value="empty" bindtap="onKitState">空内容</button>
+        <button class="btn btn--ghost" data-value="error" bindtap="onKitState">失败</button>
+      </view>
+      <view class="specimen-gap" wx:if="{{kitStatus === 'ready'}}"><gy-ui-card title="正常状态样张"><view class="hint">组件布局正常展示；这里没有资料记录。</view></gy-ui-card></view>
+      <view class="specimen-gap" wx:elif="{{kitStatus === 'loading'}}"><state-view status="loading" title="样张处理中" desc="仅演示加载状态，不发起请求。" /></view>
+      <view class="specimen-gap" wx:elif="{{kitStatus === 'empty'}}"><state-view status="empty" title="样张空内容" desc="仅演示空状态。" /></view>
+      <view class="specimen-gap" wx:else><state-view status="error" title="样张失败" desc="仅演示失败和重试。" actionText="重试样张" bindaction="onKitRetry" /></view>
+    </view>
+
+    <!-- 8 末屏：核对 tabBar 不遮挡末屏内容 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">8 末屏核对</view>
         <view class="section-head__meta">.page padding-bottom</view>
       </view>
       <view class="hint">下面这一段用于把页面撑高，滚到最底时「末屏标记」必须完整可见、不被底部五 Tab 遮挡。排版规则：demo .main 的 padding-bottom 105px + env(safe-area-inset-bottom)。</view>

@@ -1,6 +1,10 @@
 {
   "navigationBarTitleText": "样式走查",
   "usingComponents": {
-    "state-view": "/components/state-view/state-view"
+    "state-view": "/components/state-view/state-view",
+    "gy-ui-button": "/components/gy-ui-button/gy-ui-button",
+    "gy-ui-card": "/components/gy-ui-card/gy-ui-card",
+    "gy-ui-chip": "/components/gy-ui-chip/gy-ui-chip",
+    "gy-ui-search": "/components/gy-ui-search/gy-ui-search"
   }
 }

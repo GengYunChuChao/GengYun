@@ -20,6 +20,9 @@ Page({
   data: {
     fontScale: 1,
     local: false,
+    kitQuery: '',
+    kitSelected: '全部',
+    kitStatus: 'ready',
     /** 末屏走查用：一段可滚动的长内容，用来核对 tabBar 是否遮挡末屏 */
     filler: [1, 2, 3, 4, 5, 6],
     /** 走查探针输出（见 probeStates）：正常浏览不写入，页面模板不引用 */
@@ -37,6 +40,13 @@ Page({
   onStub: function () {
     wx.showToast({ title: '样式样张，无业务行为', icon: 'none' })
   },
+  // #142（codex/demo-ui-kit-20261014）：gy-ui 可复用组件样张的受控输入与状态处理器。
+  onKitInput: function (event) { this.setData({ kitQuery: event.detail.value }) },
+  onKitClear: function () { this.setData({ kitQuery: '' }) },
+  onKitConfirm: function (event) { this.setData({ kitQuery: event.detail.value, kitStatus: 'loading' }) },
+  onKitSelect: function (event) { this.setData({ kitSelected: event.detail.value }) },
+  onKitRetry: function () { this.setData({ kitStatus: 'loading' }) },
+  onKitState: function (event) { this.setData({ kitStatus: event.currentTarget.dataset.value }) },
 
   /**
    * 统一状态视图的样式走查探针（只读；正常交互不会触发，供自动化或人工复核显式调用）

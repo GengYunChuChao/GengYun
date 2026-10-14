@@ -1,0 +1,4 @@
+<view class="gyui-card">
+  <view wx:if="{{title}}" class="gyui-card__title">{{title}}</view>
+  <slot></slot>
+</view>

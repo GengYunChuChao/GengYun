@@ -1,0 +1,1 @@
+<button class="gyui-button gyui-button--{{variant}} {{block ? 'gyui-button--block' : ''}}" disabled="{{disabled || loading}}" loading="{{loading}}" aria-label="{{label}}" catchtap="onTap">{{label}}</button>
