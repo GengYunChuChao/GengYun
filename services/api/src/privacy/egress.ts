@@ -33,6 +33,9 @@ import {
 } from '../../../../packages/privacy/egress.mjs';
 import { createEgressRevoker, createInFlightGuard, type EgressRevoker, type InFlightGuard } from '../../../../packages/privacy/in-flight.mjs';
 import { createDeletionCoordinator, type DeletionCoordinator } from '../../../../packages/privacy/deletion-modules.mjs';
+import { currentIdentity } from '../auth/middleware.ts';
+import { readBearerToken } from '../auth/tokens.ts';
+import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { ApiError } from '../errors.ts';
 import { isErrorCode, type ExecutionMode } from '../contract.ts';
 
@@ -99,6 +102,56 @@ export function createConsentPreHandler(
       throw error;
     }
   };
+}
+
+/** 一次用途授权检查的要求（`purpose` 必填；`dataType` 用于「错用途」判定）。 */
+export interface ConsentRequirement {
+  purpose: string;
+  dataType?: string;
+}
+
+/**
+ * 授权中间件端口（**可插拔**）：由装配方选择实现，域路由只按自己的资料类型声明要求。
+ *
+ * 两种现成实现（都在本文件）：
+ * - `createGuardConsentGate(guard)` —— 用 `packages/privacy` 的 `requireConsent`（内存/已核验读取口）；
+ * - `createPostgresConsentGate(service)` —— 复用**已合并的** `consent-pg.requireConsent`
+ *   单事务读取（不新写 SQL、不新造授权事实源）。
+ */
+export type ConsentGate = (requirement: ConsentRequirement) => (request: FastifyRequest) => Promise<void>;
+
+/** 注入式实现：`requireConsent({purpose, dataType})` → 已认证执行入口中间件。 */
+export function createGuardConsentGate(guard: {
+  requireConsent(input: { purpose: string; dataType?: string }): (identity: { userId: string | null; authEpoch: number | null }) => Promise<unknown>;
+}): ConsentGate {
+  return (requirement) => createConsentPreHandler(guard, requirement);
+}
+
+/**
+ * PG 实现：复用 `services/api/src/privacy/consent-pg.ts` 的 `requireConsent`。
+ *
+ * 该方法是**已合并、已在集成脚本覆盖**的单事务读取口（同一事务内锁账号/会话，
+ * 逐条核对 `privacy_epochs` 与 `consent_records` 一致后才放行），因此本适配层
+ * **不新增任何 SQL**。缺 bearer 令牌 ⇒ `SESSION_REQUIRED`（会话层未先跑时的兜底）。
+ */
+export function createPostgresConsentGate(service: {
+  requireConsent(
+    input: { identity: AuthenticatedIdentity; token: string },
+    requirement: { purpose: string; dataType?: string },
+  ): Promise<unknown>;
+}): ConsentGate {
+  return (requirement) =>
+    async function postgresConsentGate(request: FastifyRequest): Promise<void> {
+      const token = readBearerToken(request.headers.authorization);
+      if (token === null) throw new ApiError('SESSION_REQUIRED', '需要用户会话');
+      try {
+        await service.requireConsent({ identity: currentIdentity(request), token }, requirement);
+      } catch (error) {
+        const apiError = toApiError(error);
+        if (apiError) throw apiError;
+        throw error;
+      }
+    };
 }
 
 /**
