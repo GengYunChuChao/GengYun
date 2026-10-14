@@ -113,10 +113,11 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（18 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情）
+  // —— F2 回归：打包允许清单须随 app.json（19 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情
+  // + GY-I13 播报页）
   // 同步，且参考域/社区域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 18);
+  assert.equal(appJson.pages.length, 19);
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);
@@ -152,6 +153,14 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'components/state-view/state-view.wxss',
     ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
+    // GY-I13 播报域：统一语音球组件与五个适配层（漏打包 ⇒ 播报页 MODULE_NOT_FOUND / 组件解析失败）
+    ...['gy-voice-ball'].flatMap(name =>
+      ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
+    'utils/speech-text.js',
+    'utils/audio-playback.js',
+    'utils/inner-audio-port.js',
+    'utils/substitute-player.js',
+    'utils/voice-api.js',
     'data/crops.js',
     'data/species.js',
     'data/regions.js',

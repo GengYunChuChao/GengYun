@@ -17,7 +17,8 @@
     "pages/specimen/specimen",
     "pages/favorites/favorites",
     "pages/history/history",
-    "pages/historydetail/historydetail"
+    "pages/historydetail/historydetail",
+    "pages/voice/voice"
   ],
   "window": {
     "navigationBarTitleText": "耕云",
