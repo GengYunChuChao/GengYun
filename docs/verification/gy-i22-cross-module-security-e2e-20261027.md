@@ -10,16 +10,20 @@
   | `b16a607` | 跨模块会话/角色在途变化失败回归（16 个受保护面矩阵 + 逐字节同形封套） |
   | `de8b06c` | 授权撤回/在途外发在 4 个真实 AI 受理面的跨模块失败回归（零外发、逐面必需用途） |
   | `7c6f12e` | 作业在途守卫（取消后晚到结果零写入）与识别线跨用户归属失败回归 |
-  | `5c8f178` | 补第 5 个受控写面 `PATCH /recognitions/{id}/selection` 的授权与归属覆盖（**HEAD**） |
+  | `5c8f178` | 补第 5 个受控写面 `PATCH /recognitions/{id}/selection` 的授权与归属覆盖 |
+  | `2c1866b` | 本证据页（含 CI glob 事实更正、4 处变异自证、2 项发现披露） |
 
 - **`git diff --stat upstream/main...HEAD`**：
 
   ```
-   tests/unit/gy-i22-consent-withdrawal-inflight-http.test.mjs | 413 +++++++++++++++++++
-   tests/unit/gy-i22-job-inflight-guard-and-ownership.test.mjs | 353 +++++++++++++++++
-   tests/unit/gy-i22-session-inflight-cross-module.test.mjs    | 425 +++++++++++++++++++++
-   3 files changed, 1191 insertions(+)
+   docs/verification/gy-i22-cross-module-security-e2e-20261027.md | 468 +++++++++++++++++++++
+   tests/unit/gy-i22-consent-withdrawal-inflight-http.test.mjs    | 413 ++++++++++++++++++
+   tests/unit/gy-i22-job-inflight-guard-and-ownership.test.mjs    | 353 +++++++++++++++++
+   tests/unit/gy-i22-session-inflight-cross-module.test.mjs       | 425 +++++++++++++++++++++
+   4 files changed, 1659 insertions(+)
   ```
+
+  （`HEAD` 以分支实际末端为准；本页为**新增文档**，无生产代码改动。）
 
 - **环境**：Node `v24.16.0` / npm `11.13.0`；npm workspaces + 纯 ESM；`npm install`（**未使用** junction/symlink）。
 - **实现者 = 写手；推送者 = 指挥**。本片**不持有任何 GitHub 凭据**、**未 push**。
