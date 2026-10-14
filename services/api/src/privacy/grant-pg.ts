@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { ApiError } from '../errors.ts';
-import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
+import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 
 export interface ConsentGrantRequest {
   purpose: string;
@@ -91,7 +91,7 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
   await client.query(`INSERT INTO public.privacy_epochs(user_id,purpose,current_epoch,state,revision) VALUES($1,$2,$3,'granted',$4)
     ON CONFLICT(user_id,purpose) DO UPDATE SET current_epoch=excluded.current_epoch,state='granted',revision=excluded.revision,updated_at=clock_timestamp()`, [userId,input.purpose,nextEpoch,revision]);
   await client.query(`INSERT INTO public.idempotency_keys(scope,key_hash,request_hash,response_status,outcome,expires_at)
-    VALUES($1,decode($2,'hex'),$3,201,$4::jsonb,clock_timestamp()+interval '5 minutes')`, [scope,key,hash,JSON.stringify({privacyGrantId:record.id})]);
+    VALUES($1,decode($2,'hex'),$3,201,$4::jsonb,clock_timestamp()+($5::integer * interval '1 second'))`, [scope,key,hash,JSON.stringify({privacyGrantId:record.id}),IDEMPOTENCY_TTL_SECONDS]);
   // Time can advance while blocked in SQL even though rows are locked.
   await assertPolicyFresh();
   return record;

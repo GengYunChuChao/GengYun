@@ -1,0 +1,40 @@
+# 与 deploy/cloudrun/Dockerfile 配套的构建忽略清单。
+#
+# 用法（BuildKit）：以 `-f deploy/cloudrun/Dockerfile` 构建时，
+# Docker 优先读取与本 Dockerfile 同名的 `<Dockerfile>.dockerignore`，本文件即该文件。
+# 若平台构建器不读取它，可把本文件复制到仓库根为 `.dockerignore`（见 README「镜像构建」）。
+#
+# 安全说明：Dockerfile 只 COPY 显式列出的路径，不使用 `COPY . .`，
+# 因此本文件缺失也不会把 .env、密钥或私有配置带进镜像；它主要控制构建上下文体积。
+
+# 依赖与构建产物
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/__pycache__
+
+# 版本控制与治理缓存
+.git
+.github
+.supervisor
+.local
+
+# 本地私密配置与密钥（绝不可进镜像）
+**/.env
+**/.env.*
+**/*.local.json
+config/*.local.json
+project.private.config.json
+project.private.config.json.example
+
+# 与 API 运行无关的内容
+docs
+miniprogram
+tests
+tools
+*.log
+*.doc
+*.docx
+*.docm
+*.zip

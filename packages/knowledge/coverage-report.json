@@ -56,6 +56,46 @@
     "card_eligible": 0,
     "note": "20条登记证号均取自农业农村部农药管理司公开公告附表，非编造；但缺用药量/施用方法/注意事项/有效期起止/禁限用状态，记录状态 partial，禁止作为用药量依据。"
   },
+  "zhejiang_first_batch": {
+    "dataset": "packages/knowledge/zhejiang/materials-zhejiang-v1.json",
+    "schema": "gengyun.knowledge.zhejiang-materials.v1",
+    "release": "2026-10-14",
+    "source_kind": "verified_seed",
+    "review_status": "unverified",
+    "sources": [
+      {
+        "role": "weeds",
+        "file": "中国各省份农田常见杂草识别与防除时期汇总表.xlsx",
+        "sha256": "e708577e1cd035b435686c8d249209aa96d345d86a33a9a870e01cd6cdddc420"
+      },
+      {
+        "role": "herbicides",
+        "file": "市面常见除草剂环境风险与适用信息汇总表.xlsx",
+        "sha256": "c4905d850b3750c712b10fd8278b5029448a651308fb92c186df604a527c9e70"
+      }
+    ],
+    "originals_committed": false,
+    "provenance": "每条含 file_sha256/sheet/excel_row/cell_range/row_sha256/locator，可用 --samples-dir 重算逐字节比对",
+    "selected": {
+      "weed_items": 119,
+      "control_timing_items": 5,
+      "herbicide_items": 35,
+      "db_knowledge_rows": 159
+    },
+    "recorded_not_selected": {
+      "weed_name_only": 1,
+      "control_timing_items_unlinked": 9,
+      "herbicide_items_outside_first_batch": 61
+    },
+    "dose": {
+      "dose_text": "absent_in_source",
+      "usable_as_dose": 0,
+      "card_ready": 0,
+      "note": "两份工作簿无「标签原文用量」列；本轮不推断、不补造，DoseCard=0。"
+    },
+    "status": "achieved_partial",
+    "note": "浙江适用条目已抽取并接入既有适配层（unverified/private，v_active_source_version 不含）；用量、八组科普评估、云库/受控HTTPS/正式 real/双手机真机仍未取得。"
+  },
   "gaps": [
     "用药量、施用方法、注意事项未采集（公告附表无此列）",
     "登记有效期起止日期未采集（公告仅述有效期延续5年）",

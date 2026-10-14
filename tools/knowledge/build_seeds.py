@@ -276,12 +276,230 @@ def build(root: str) -> dict[str, str]:
     rb.append(f"DELETE FROM sources WHERE id IN ({src_id_list});\n")
     rb.append("\nCOMMIT;\n")
 
+    zj = build_zhejiang(root)
     return {
         "seed_reference.sql": "".join(ref),
         "seed_herbicides_verified.sql": "".join(hb),
         "seed_simulation.sql": "".join(sim),
         "rollback_seed.sql": "".join(rb),
+        "seed_zhejiang_materials.sql": zj["seed"],
+        "rollback_zhejiang_materials.sql": zj["rollback"],
     }
+
+
+# ---------------------------------------------------------------------------
+# 浙江首批资料（GY-I03 / #3）
+# 输入：packages/knowledge/zhejiang/materials-zhejiang-v1.json（由仓外两份真实工作簿确定性抽取）
+# 输出：db/seeds/seed_zhejiang_materials.sql + db/seeds/rollback_zhejiang_materials.sql
+#
+# 复用 0002 已有的表与语义：
+#   * sources / source_versions 登记来源与版本（review_status=unverified，不进 v_active_source_version）
+#   * knowledge_versions 承载条目（按 region_codes=[330000] 限定浙江；visibility=private 未发布）
+#   * catalog_import_runs / catalog_source_update_events 记录本批次导入与来源事件
+# 幂等：uuid5 确定性 id + ON CONFLICT DO NOTHING。回滚：只删本批次这些 id，不触碰其他种子/样例。
+# ---------------------------------------------------------------------------
+ZJ_DATASET = "zhejiang-first-batch-v1"
+ZJ_DOSE_KEYS = ("dose_text", "application_method_text", "precautions_text", "registration_number")
+
+
+def zj_crop_id(crops: list[dict], name: str):
+    for c in crops:
+        if c["name"] == name or name in c.get("aliases", []):
+            return c["id"]
+    return None
+
+
+def zj_species_id(species: list[dict], item: dict):
+    tokens = {item.get("canonical_name", "")} | set(item.get("parenthetical_aliases", []))
+    tokens.discard("")
+    for sp in species:
+        names = {sp.get("canonical_name", ""), sp.get("group_name", "")} | set(sp.get("aliases", []))
+        if tokens & names:
+            return sp["id"]
+    return None
+
+
+def zj_dedupe(seq):
+    out = []
+    for x in seq:
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def build_zhejiang(root: str) -> dict:
+    k = os.path.join(root, "packages", "knowledge")
+    crops = load(os.path.join(k, "catalog", "crops.json"))["crops"]
+    species = load(os.path.join(k, "catalog", "species.json"))["species"]
+    zj_path = os.path.join(k, "zhejiang", "materials-zhejiang-v1.json")
+    zj = load(zj_path)
+    with open(zj_path, "rb") as fh:
+        zj_bytes = fh.read()
+    release = zj["release"]
+
+    sources = zj["sources"]
+    src_db = {s["id"]: uid(f"source:{s['id']}") for s in sources}
+    ver_db = {s["id"]: uid(f"source_version:{s['id']}:{s['version']}") for s in sources}
+
+    rows = []          # (id, knowledge_id, title, body_json, type, source_id, crop_ids, species_ids)
+    for w in zj["weed_items"]:
+        sid = w["source"]["source_id"]
+        crop_ids = zj_dedupe([zj_crop_id(crops, c) for c in w.get("companion_crops", [])])
+        sp = zj_species_id(species, w)
+        body = {
+            "kind": "weed",
+            "item_id": w["item_id"],
+            "weed_name": w["weed_name"],
+            "canonical_name": w["canonical_name"],
+            "scientific_name": w["scientific_name"],
+            "family_genus": w["family_genus"],
+            "companion_crops": w["companion_crops"],
+            "distribution_note": w["distribution_note"],
+            "distribution_provinces": w["distribution_provinces"],
+            "growth_stages_text": w["growth_stages_text"],
+            "best_control_stage_text": w["best_control_stage_text"],
+            "spray_window_text": w["spray_window_text"],
+            "identification_key_text": w["identification_key_text"],
+            "zhejiang_evidence_strength": w["zhejiang_evidence_strength"],
+            "dose_text": None,
+            "usable_as_dose": False,
+            "card_ready": False,
+            "provenance": w["source"],
+        }
+        rows.append((w["item_id"], f"浙江适用杂草：{w['weed_name']}", body, "species", sid,
+                     crop_ids, [sp] if sp else []))
+    for t in zj["control_timing_items"]:
+        if t["zhejiang_scope"] != "scene_matches_zhejiang_main_crop":
+            continue
+        sid = t["source"]["source_id"]
+        crop_ids = zj_dedupe([zj_crop_id(crops, c) for c in t.get("matched_main_crops", [])])
+        body = {
+            "kind": "control_timing",
+            "item_id": t["item_id"],
+            "scene_text": t["scene_text"],
+            "critical_window_text": t["critical_window_text"],
+            "target_weeds_text": t["target_weeds_text"],
+            "key_points_text": t["key_points_text"],
+            "zhejiang_scope_basis": t["zhejiang_scope_basis"],
+            "dose_text": None,
+            "usable_as_dose": False,
+            "card_ready": False,
+            "provenance": t["source"],
+        }
+        rows.append((t["item_id"], f"浙江防除时期：{t['scene_text']}", body, "scheme", sid,
+                     crop_ids, []))
+    for h in zj["herbicide_items"]:
+        if not h["in_zhejiang_first_batch"]:
+            continue
+        sid = h["source"]["source_id"]
+        body = {
+            "kind": "herbicide_applicability",
+            "item_id": h["item_id"],
+            "herbicide_name": h["herbicide_name"],
+            "aliases_text": h["aliases_text"],
+            "hazard_level_text": h["hazard_level_text"],
+            "hazard_detail_text": h["hazard_detail_text"],
+            "target_weeds_text": h["target_weeds_text"],
+            "region_text": h["region_text"],
+            "zhejiang_evidence": h["zhejiang_evidence"],
+            "zhejiang_basis": h["zhejiang_basis"],
+            "dose_text": None,
+            "dose_status": "absent_in_source",
+            "application_method_text": None,
+            "precautions_text": None,
+            "registration_number": None,
+            "usable_as_dose": False,
+            "card_ready": False,
+            "provenance": h["source"],
+        }
+        rows.append((h["item_id"], f"浙江适用除草剂（环境风险与适用信息）：{h['herbicide_name']}",
+                     body, "herbicide", sid, [], []))
+
+    out = []
+    out.append("-- 生成文件：浙江首批资料（GY-I03 / #3）。请勿手工编辑；改 JSON 后运行\n")
+    out.append("--   python tools/knowledge/build_seeds.py --root .\n")
+    out.append("-- 依赖：0001 + 0002 迁移，且先执行 db/seeds/seed_reference.sql"
+               "（knowledge_dataset_modes 的 'stub' 行）。\n")
+    out.append("-- 来源 review_status 一律 unverified、visibility=private：")
+    out.append("未核对不进 v_active_source_version，不得当作权威资料。\n")
+    out.append("-- 用量：源工作簿无「标签原文用量」列，dose_text 显式为 null，"
+               "usable_as_dose/card_ready 一律 false。\n")
+    out.append("-- 幂等：uuid5 确定性 id + ON CONFLICT DO NOTHING。\n")
+    out.append("BEGIN;\n")
+
+    out.append("\n-- 来源与来源版本（sha256 为仓外原文件哈希；原文件不入库）\n")
+    for s in sources:
+        out.append(
+            "INSERT INTO sources (id, title, canonical_url, publisher, source_kind, evidence_kind) VALUES "
+            f"({q(src_db[s['id']])}::uuid, {q(s['title'])}, {q(s['canonical_url'])}, {q(s['publisher'])}, "
+            f"{q(s['source_kind'])}, {q(s['evidence_kind'])}) ON CONFLICT (id) DO NOTHING;\n"
+        )
+    for s in sources:
+        out.append(
+            "INSERT INTO source_versions (id, source_id, version, content_hash, locator, retrieved_at, "
+            "valid_from, validity, review_status) VALUES "
+            f"({q(ver_db[s['id']])}::uuid, {q(src_db[s['id']])}::uuid, {q(s['version'])}, "
+            f"{q(s['file']['sha256'])}, {q('repo-external://samples/' + s['file']['name'])}, "
+            f"{q(release)}::timestamptz, {q(release)}::timestamptz, {q(s['validity'])}, {q(s['review_status'])}) "
+            "ON CONFLICT (id) DO NOTHING;\n"
+        )
+    for s in sources:
+        out.append(f"UPDATE sources SET current_version_id = {q(ver_db[s['id']])}::uuid "
+                   f"WHERE id = {q(src_db[s['id']])}::uuid;\n")
+
+    out.append(f"\n-- 浙江适用条目 {len(rows)} 条（杂草/防除时期/药剂适用；逐条带来源定位与行哈希）\n")
+    for item_id, title, body, ktype, sid, crop_ids, species_ids in rows:
+        kid = uid(f"knowledge:zhejiang:{item_id}")
+        rid = uid(f"knowledge_row:zhejiang:{item_id}:1")
+        out.append(
+            "INSERT INTO knowledge_versions (id, knowledge_id, revision, title, body, type, "
+            "source_version_id, crop_ids, species_ids, region_codes, visibility) VALUES "
+            f"({q(rid)}::uuid, {q(kid)}::uuid, 1, {q(title)}, {q(json.dumps(body, ensure_ascii=False, separators=(',', ':')))}, "
+            f"{q(ktype)}, {q(ver_db[sid])}::uuid, {qj(crop_ids)}, {qj(species_ids)}, "
+            f"{qj(['330000'])}, 'private') ON CONFLICT (id) DO NOTHING;\n"
+        )
+
+    run_id = uid(f"import_run:{ZJ_DATASET}")
+    out.append("\n-- 本批次导入审计（mode=stub：未接真实库；records_in=records_ok，冲突 0，未跳过）\n")
+    out.append(
+        "INSERT INTO catalog_import_runs (id, mode, dataset, started_at, finished_at, status, records_in, "
+        "records_ok, records_conflict, records_skipped, output_hash, note) VALUES "
+        f"({q(run_id)}::uuid, 'stub', {q(ZJ_DATASET)}, {q(release)}::timestamptz, {q(release)}::timestamptz, "
+        f"'succeeded', {len(rows)}, {len(rows)}, 0, 0, {q(hashlib.sha256(zj_bytes).hexdigest())}, "
+        f"{q('浙江首批资料 v1：来源未核对(review_status=unverified)，无用量字段，card_ready=false')}) "
+        "ON CONFLICT (id) DO NOTHING;\n"
+    )
+    for s in sources:
+        ev = uid(f"source_event:imported:{s['id']}:{s['version']}")
+        out.append(
+            "INSERT INTO catalog_source_update_events (id, source_id, source_version_id, event, old_validity, "
+            "new_validity, occurred_at, reason) VALUES "
+            f"({q(ev)}::uuid, {q(src_db[s['id']])}::uuid, {q(ver_db[s['id']])}::uuid, 'imported', NULL, "
+            f"{q(s['validity'])}, {q(release)}::timestamptz, "
+            f"{q('浙江首批资料 v1 派生条目入库；来源 review_status=unverified，作者侧非法定审核责任人')}) "
+            "ON CONFLICT (id) DO NOTHING;\n"
+        )
+    out.append("\nCOMMIT;\n")
+
+    src_list = ", ".join(q(v) + "::uuid" for v in src_db.values())
+    ver_list = ", ".join(q(v) + "::uuid" for v in ver_db.values())
+    rb = []
+    rb.append("-- 生成文件：精确回滚浙江首批资料批次（只删本批次写入的行；表结构不动）\n")
+    rb.append("-- 其他种子（seed_reference/seed_herbicides_verified/seed_simulation）、脱敏样例与\n")
+    rb.append("-- knowledge_staging 批次不在本文件范围内，不删、不改。\n")
+    rb.append("BEGIN;\n")
+    rb.append(f"UPDATE catalog_import_runs SET status='reverted' WHERE dataset = {q(ZJ_DATASET)} AND status <> 'reverted';\n")
+    rb.append("-- 先解除 sources.current_version_id 对 source_versions 的引用（FK 前置）\n")
+    rb.append(f"UPDATE sources SET current_version_id = NULL WHERE id IN ({src_list});\n")
+    rb.append("-- 知识条目 → 来源事件 → 来源版本 → 来源（按依赖顺序，仅本批次 id）\n")
+    rb.append(f"DELETE FROM knowledge_versions WHERE source_version_id IN ({ver_list});\n")
+    rb.append(f"DELETE FROM catalog_source_update_events WHERE source_version_id IN ({ver_list}) OR source_id IN ({src_list});\n")
+    rb.append(f"DELETE FROM source_versions WHERE id IN ({ver_list});\n")
+    rb.append(f"DELETE FROM sources WHERE id IN ({src_list});\n")
+    rb.append("\nCOMMIT;\n")
+
+    return {"seed": "".join(out), "rollback": "".join(rb)}
+
 
 
 def main() -> int:

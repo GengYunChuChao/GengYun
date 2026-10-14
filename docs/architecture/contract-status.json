@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 5,
-  "baseline": "769420ae2f46166d651823a86af687456f3c75e3",
+  "proposal_revision": 6,
+  "baseline": "15c3003efc221407734ea26366a7538ae23ddcbb",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -367,7 +367,7 @@
           "lines": "135-179"
         }
       ],
-      "blocker": "撤回消费者（jobs/media/exports/author_links）未接入，存在任一条即409 OBJECT_UNAVAILABLE拒绝（consent-pg.ts:153-163）；真实授权政策/接收方和外发/注销全链未验，保留fail-closed边界"
+      "blocker": "PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
     },
     {
       "id": "listExports",
@@ -412,10 +412,23 @@
       "route": "/api/v1/media/uploads",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "157-165"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-upload.test.mjs",
+          "name": "GY-I06 HTTP 上传面"
+        }
+      ],
+      "blocker": "媒体域 7 条路由已装配（services/api/src/routes/media.ts 单一注册点，注册进 app.ts）；对象存储按执行模式解析 —— stub/preset_demo 为**明确标注的替身**（句柄域 substitute.invalid），real 未接真实存储时整域 503 PROVIDER_UNAVAILABLE（fail-closed）；真实对象存储/COS、上传访问网关与真实微信登录态未接线、未验收"
     },
     {
       "id": "completeUpload",
@@ -424,10 +437,23 @@
       "route": "/api/v1/media/uploads/:id/complete",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "175-183"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-upload.test.mjs",
+          "name": "GY-I06 HTTP 上传面"
+        }
+      ],
+      "blocker": "完成接口按契约只收 {sha256,bytes}，服务端从对象存储取回字节后核验魔数/hash/字节数/音频真实时长并做 EXIF 结构性清除；失败与取消即回收对象（含 24h 过期回收）；真实对象存储未接线，real 一律 fail-closed；真实容器解码库、实库事务与网关直传数据面未验收"
     },
     {
       "id": "getMedia",
@@ -436,10 +462,23 @@
       "route": "/api/v1/media/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "199-207"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "仅 owner 可读私有元数据，非本人与不存在**逐字节同形** 404；内存记录 store（本片无持久化实现）；契约内没有私有媒体内容路由，owner 短效句柄 URL 由部署期访问网关承担，未接线未验收"
     },
     {
       "id": "deleteMedia",
@@ -448,10 +487,23 @@
       "route": "/api/v1/media/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "217-225"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "归属 + 强 ETag（缺失 428 / 不匹配 409）+ 同键幂等重放已装配；删除即时回收原始件与衍生件并撤销社区句柄，记录以 deleted 墓碑保留；注销 7/30 天删除闭环、备份与第三方完成证据未接线未验收"
     },
     {
       "id": "grantMediaAccess",
@@ -460,10 +512,23 @@
       "route": "/api/v1/media/:id/access",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "237-245"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "仅 owner 且仅 ready 才签发短效句柄（最长 300 秒，令牌不入 URL）；非本人统一 404；契约内没有私有媒体内容端点，句柄消费端（访问网关）未接线，未取得真实取图证据"
     },
     {
       "id": "getJob",
@@ -480,19 +545,11 @@
           "lines": "51-62"
         },
         {
-          "path": "services/api/src/app.ts",
-          "lines": "211-217"
-        },
-        {
-          "path": "services/api/src/jobs/sources.ts",
-          "lines": "23-71"
-        },
-        {
-          "test": "tests/integration/jobs-http.mjs",
-          "name": "对照·「改前 404 → 改后 200」"
+          "test": "tests/unit/recognitions-api.test.mjs",
+          "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "公共Job单一注册与识别/转写读取已合（#106），保留归属、结果契约校验、ETag和no-store；OCR/合成未注册此读面，持久队列、租约及恢复仍缺，真实能力/样本/Android未因共享面合入而完成"
+      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域与转写域的作业读取已接入，含归属、幂等与终态守卫；ocr/synthesis/answer/moderation 的作业源未接线（经该路径读取这些 kind 的作业与「作业不存在」同形 404）；持久队列与租约待接线"
     },
     {
       "id": "cancelJob",
@@ -509,19 +566,11 @@
           "lines": "64-80"
         },
         {
-          "path": "services/api/src/jobs/sources.ts",
-          "lines": "35-46"
-        },
-        {
-          "path": "services/api/src/jobs/registry.ts",
-          "lines": "281-307"
-        },
-        {
-          "test": "tests/integration/jobs-http.mjs",
-          "name": "转写域**无取消能力（未接线）**"
+          "test": "tests/unit/recognitions-api.test.mjs",
+          "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "公共Job单一注册与识别取消已合（#106），复用域内If-Match/幂等/终态守卫；转写可读但缺取消能力，存在的转写作业取消返回503 PROVIDER_UNAVAILABLE（retryable），OCR/合成未接共享面；持久租约、外发撤销和跨域生命周期仍缺"
+      "blocker": "取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled；ocr/synthesis/answer/moderation 的作业源未接线；持久租约与外发撤销待接线"
     },
     {
       "id": "listKnowledge",
@@ -1431,9 +1480,17 @@
       "route": "/api/v1/admin/sources",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "172-174"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "513-518"
@@ -1443,7 +1500,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "createSourceDraft",
@@ -1452,9 +1509,17 @@
       "route": "/api/v1/admin/sources",
       "scope": "sources:write",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "175-177"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "514-519"
@@ -1464,7 +1529,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "getAdminSource",
@@ -1473,9 +1538,17 @@
       "route": "/api/v1/admin/sources/:id",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "178-180"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "515-520"
@@ -1485,7 +1558,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "editSourceDraft",
@@ -1494,9 +1567,17 @@
       "route": "/api/v1/admin/sources/:id",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "181-183"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "516-521"
@@ -1506,7 +1587,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "publishSource",
@@ -1515,9 +1596,17 @@
       "route": "/api/v1/admin/sources/:id/publish",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "184-186"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "517-522"
@@ -1527,7 +1616,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "withdrawSource",
@@ -1536,9 +1625,17 @@
       "route": "/api/v1/admin/sources/:id/withdraw",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "187-189"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "518-523"
@@ -1548,7 +1645,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminKnowledge",
@@ -1557,9 +1654,17 @@
       "route": "/api/v1/admin/knowledge",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "192-194"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "520-525"
@@ -1569,7 +1674,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "createKnowledgeDraft",
@@ -1578,9 +1683,17 @@
       "route": "/api/v1/admin/knowledge",
       "scope": "sources:write",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "195-197"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "521-526"
@@ -1590,7 +1703,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "getAdminKnowledge",
@@ -1599,9 +1712,17 @@
       "route": "/api/v1/admin/knowledge/:id",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "198-200"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "522-527"
@@ -1611,7 +1732,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "editKnowledgeDraft",
@@ -1620,9 +1741,17 @@
       "route": "/api/v1/admin/knowledge/:id",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "201-203"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "523-528"
@@ -1632,7 +1761,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "publishKnowledge",
@@ -1641,9 +1770,17 @@
       "route": "/api/v1/admin/knowledge/:id/publish",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "204-206"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "524-529"
@@ -1653,7 +1790,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "withdrawKnowledge",
@@ -1662,9 +1799,17 @@
       "route": "/api/v1/admin/knowledge/:id/withdraw",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "207-209"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "525-530"
@@ -1674,7 +1819,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminRegistration",
@@ -1683,9 +1828,17 @@
       "route": "/api/v1/admin/registrations",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "212-214"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "527-532"
@@ -1695,7 +1848,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "createRegistrationDraft",
@@ -1704,9 +1857,17 @@
       "route": "/api/v1/admin/registrations",
       "scope": "sources:write",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "215-217"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "528-533"
@@ -1716,7 +1877,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "getAdminRegistration",
@@ -1725,9 +1886,17 @@
       "route": "/api/v1/admin/registrations/:id",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "218-220"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "529-534"
@@ -1737,7 +1906,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "editRegistrationDraft",
@@ -1746,9 +1915,17 @@
       "route": "/api/v1/admin/registrations/:id",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "221-223"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "530-535"
@@ -1758,7 +1935,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "publishRegistration",
@@ -1767,9 +1944,17 @@
       "route": "/api/v1/admin/registrations/:id/publish",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "224-226"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "531-536"
@@ -1779,7 +1964,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "withdrawRegistration",
@@ -1788,9 +1973,17 @@
       "route": "/api/v1/admin/registrations/:id/withdraw",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "227-229"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "532-537"
@@ -1800,7 +1993,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminRestriction",
@@ -1809,9 +2002,17 @@
       "route": "/api/v1/admin/restrictions",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "232-234"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "534-539"
@@ -1821,7 +2022,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "createRestrictionDraft",
@@ -1830,9 +2031,17 @@
       "route": "/api/v1/admin/restrictions",
       "scope": "sources:write",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "235-237"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "535-540"
@@ -1842,7 +2051,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "getAdminRestriction",
@@ -1851,9 +2060,17 @@
       "route": "/api/v1/admin/restrictions/:id",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "238-240"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "536-541"
@@ -1863,7 +2080,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "editRestrictionDraft",
@@ -1872,9 +2089,17 @@
       "route": "/api/v1/admin/restrictions/:id",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "241-243"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "537-542"
@@ -1884,7 +2109,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "publishRestriction",
@@ -1893,9 +2118,17 @@
       "route": "/api/v1/admin/restrictions/:id/publish",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "244-246"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "538-543"
@@ -1905,7 +2138,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "withdrawRestriction",
@@ -1914,9 +2147,17 @@
       "route": "/api/v1/admin/restrictions/:id/withdraw",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "247-249"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "create→get→edit→publish→list→withdraw 全链路经 HTTP 生效"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "539-544"
@@ -1926,7 +2167,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminCategories",
@@ -1935,9 +2176,17 @@
       "route": "/api/v1/admin/categories",
       "scope": "sources:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "267-271"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 分类：list 200（种子）→ edit 200（revision+1）；未知分类 404"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "269-274"
@@ -1947,7 +2196,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "editCategory",
@@ -1956,9 +2205,17 @@
       "route": "/api/v1/admin/categories/:id",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "272-281"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 分类：list 200（种子）→ edit 200（revision+1）；未知分类 404"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "274-279"
@@ -1968,7 +2225,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminUsers",
@@ -1977,9 +2234,17 @@
       "route": "/api/v1/admin/accounts",
       "scope": "accounts:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "288-292"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 账号：list 200 → suspend 200；重复 suspend 幂等（不再迁移）"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "315-320"
@@ -1989,7 +2254,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "suspendUser",
@@ -1998,9 +2263,17 @@
       "route": "/api/v1/admin/accounts/:id/suspend",
       "scope": "accounts:suspend",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "293-301"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 账号：list 200 → suspend 200；重复 suspend 幂等（不再迁移）"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "320-325"
@@ -2010,7 +2283,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAdminJobs",
@@ -2019,9 +2292,17 @@
       "route": "/api/v1/admin/jobs",
       "scope": "jobs:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "311-315"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 作业：已接线实例 ⇒ list 200（4 条）+ cancel 200；终态取消 409"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "394-399"
@@ -2031,7 +2312,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "cancelAdminJob",
@@ -2040,9 +2321,17 @@
       "route": "/api/v1/admin/jobs/:id/cancel",
       "scope": "jobs:cancel",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "316-324"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 作业：已接线实例 ⇒ list 200（4 条）+ cancel 200；终态取消 409"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "401-406"
@@ -2052,7 +2341,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listFlags",
@@ -2061,9 +2350,17 @@
       "route": "/api/v1/admin/feature-flags",
       "scope": "flags:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "332-336"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 开关：list 200（契约 3 键默认 false）→ setFlag 200 → 读回一致"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "496-501"
@@ -2073,7 +2370,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "setFlag",
@@ -2082,9 +2379,17 @@
       "route": "/api/v1/admin/feature-flags/:key",
       "scope": "flags:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "337-345"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] 开关：list 200（契约 3 键默认 false）→ setFlag 200 → 读回一致"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "501-506"
@@ -2094,7 +2399,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "hidePost",
@@ -2103,9 +2408,17 @@
       "route": "/api/v1/admin/posts/:id/hide",
       "scope": "sources:write",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "353-361"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] hidePost：经 HTTP 隐藏 ⇒ 社区公开读不可见、作者仍可见、审计保留"
+        },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "lines": "566-571"
@@ -2115,7 +2428,7 @@
           "name": "恰好实现 9 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "listAuditEvents",
@@ -2124,9 +2437,17 @@
       "route": "/api/v1/admin/audit-events",
       "scope": "audit:read",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "255-259"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[正控制] listAuditEvents：五类写操作各留痕迹，且契约投影只输出合同 8 字段"
+        },
         {
           "path": "services/api/src/admin/service.ts",
           "lines": "541-546"
@@ -2136,7 +2457,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；app.ts 仅装配后台认证三端点，未装配此业务路由；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
     },
     {
       "id": "grantCommunityMediaAccess",
@@ -2145,10 +2466,23 @@
       "route": "/api/v1/community/media-access",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "257-265"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        }
+      ],
+      "blocker": "登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入"
     },
     {
       "id": "readCommunityMediaContent",
@@ -2157,10 +2491,27 @@
       "route": "/api/v1/community/media/:grant_id/content",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "相关 packages/media 库有字节校验、去 EXIF、时长、状态和访问控制用例；此契约操作的产品 HTTP 服务未装配，私有存储/用途授权及生命周期联调待完成（GY-I07/GY-I27）"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/media.ts",
+          "lines": "276-284"
+        },
+        {
+          "path": "services/api/src/media/service.ts",
+          "lines": "1-40"
+        },
+        {
+          "test": "tests/unit/media-http-access.test.mjs",
+          "name": "GY-I06 HTTP 访问面"
+        },
+        {
+          "test": "tests/unit/media-real-mode-fail-closed.test.mjs",
+          "name": "GY-I06 real 模式"
+        }
+      ],
+      "blocker": "取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收"
     }
   ],
   "dimensions": [
@@ -2183,7 +2534,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:270-285）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:392-407）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
     },
     {
       "key": "pagination",
@@ -2197,7 +2548,7 @@
         },
         {
           "path": "services/api/src/profile/service.ts",
-          "lines": "105-131"
+          "lines": "104-113"
         },
         {
           "path": "services/api/src/privacy/consent-pagination.ts",
@@ -2210,9 +2561,13 @@
         {
           "test": "tests/unit/consent-pagination.test.mjs",
           "name": "15分钟截止严格生效"
+        },
+        {
+          "path": "services/api/src/profile/pagination.ts",
+          "lines": "24-65"
         }
       ],
-      "blocker": "授权列表HMAC/主体epoch/水位/15分钟固定期限已合（#109），科普固定期限与过期恢复已合（#115）；知识id_asc排序仍偏差，缺历史创建时点字段；目录按稳定目录键排序，其他后台/社区/消息分页仍需按各模块核对，不能记整维度完成"
+      "blocker": "授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成"
     },
     {
       "key": "versioning",
@@ -2255,7 +2610,7 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "229-234"
+          "lines": "349-358"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -2267,7 +2622,7 @@
         },
         {
           "path": "services/api/src/admin/identity.ts",
-          "lines": "23-25"
+          "lines": "23-26"
         },
         {
           "path": "services/api/src/admin/idempotent-write.ts",
@@ -2279,9 +2634,15 @@
         },
         {
           "test": "tests/unit/idempotency-job-ttl.test.mjs"
+        },
+        {
+          "test": "tests/unit/admin-idempotency-expiry.test.mjs"
+        },
+        {
+          "test": "tests/unit/pg-write-idempotency-ttl.test.mjs"
         }
       ],
-      "blocker": "REQUEST_IN_PROGRESS的Retry-After: 1已合（#108）；认证/识别OCRASRTTS普通回执24小时及非滑动时效已合（#113）。后台独立默认仍5分钟且完成回执未自动清理；#116修复待CI批准/未合，不计入main。内存域重启不持久，其他键域/当前可见性及持久业务唯一键仍须按模块验收"
+      "blocker": "REQUEST_IN_PROGRESS 的 Retry-After: 1 已合（#108）；认证/识别/OCR/ASR/TTS普通回执24小时已合（#113），后台24小时及到期清理/锁内时钟已合（#116），档案/授权授予/撤回的新PG回执24小时已合（#120）。重放不续期，旧PG五分钟回执不追溯延长；内存域重启不持久，当前可见性/持久业务唯一键仍须按模块验收"
     },
     {
       "key": "source_kind",
@@ -2365,9 +2726,13 @@
         {
           "path": "services/api/src/jobs/registry.ts",
           "lines": "281-307"
+        },
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "lines": "316-324"
         }
       ],
-      "blocker": "识别域cancelJob已接公共单一注册（#106），CAS增revision、幂等重放、终态守卫与迟到结果不复活已有证据；转写公共读取已接但取消能力缺失（503 PROVIDER_UNAVAILABLE），OCR/合成公共读/取消未接；cancelAdminJob仍只有独立后台服务且无HTTP，持久租约、外发撤销与跨域生命周期仍待完成"
+      "blocker": "共享Job识别取消及转写读取已合（#106/#125）；转写取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；OCR/合成/问答/审核未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",

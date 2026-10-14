@@ -53,7 +53,7 @@ export function createRecognitionJobSource(service: RecognitionService): JobSour
  *
  * **取消能力：本基线没有**——`speech/service.ts` 只提供受理/读取/确认/删除，没有取消入口；
  * 派单明令"不得在作业面上另写一套状态机""不得改动各域服务语义"，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以 `409 OBJECT_UNAVAILABLE`（"该作业所属能力尚未提供取消"）
+ * 注册表会先确认作业确实存在，再以 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）**（"该作业所属能力尚未提供取消"）
  * 如实拒绝；**不会**假装取消成功，也**不会**为它伪造 `cancelled` 状态。
  */
 export function createTranscriptionJobSource(service: SpeechService): JobSourcePort {
