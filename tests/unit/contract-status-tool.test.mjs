@@ -159,5 +159,8 @@ test('实际 buildApp 注册清单与当前契约表一致；未接 HTTP 的社�
   assert.deepEqual(mountedMismatches(status.operations, mounted), []);
   assert.deepEqual([...mounted].sort(), [...scanMountedRoutes(ROOT).mounted].sort());
   for (const key of ['post /recognitions', 'post /ocr', 'post /speech/transcriptions', 'post /speech/synthesis']) assert.ok(mounted.has(key), key);
-  for (const key of ['get /posts', 'get /messages', 'get /admin/sources']) assert.equal(mounted.has(key), false, key);
+  // GY-I18 阶段 2（Refs #18）：原 `'get /admin/sources'` 负例已删除 —— 后台 34 条路由已装配
+  // （`services/api/src/routes/admin.ts`），该期望被新事实推翻；`/admin/**` 现已**无**未装配的
+  // 代表路由（37 条全部装配），故无法替换为其它 admin 负例。社区/消息的负例完整保留。
+  for (const key of ['get /posts', 'get /messages']) assert.equal(mounted.has(key), false, key);
 });
