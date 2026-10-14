@@ -12,12 +12,14 @@
  * 私有响应一律 `Cache-Control: no-store` + 资源 revision 强 ETag。
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { readIdentity } from '../auth/middleware.ts';
+import { currentIdentity, readIdentity } from '../auth/middleware.ts';
 import type { AuthGuards } from '../auth/middleware.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
 import type { RecognitionService } from '../recognitions/service.ts';
 import type { ConsentGate } from '../privacy/egress.ts';
+import { withPrivacyErrors } from '../privacy/egress.ts';
+import type { MediaJobEgress } from '../privacy/task-egress.ts';
 import { buildMeta } from './support.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -58,13 +60,17 @@ function actorId(request: FastifyRequest): string {
  * 资料类型 `weed_recognition` ⇒ 需要 `media_processing` + `external_inference`。
  * **读取（GET）与删除（DELETE）不挂**：撤回用途后用户仍必须能取回并删除自己的数据。
  * 未注入 ⇒ 行为与接线前逐字相同（`real` 模式仍由提供者 fail-closed 拦截）。
+ *
+ * `deps.egress`（GY-I27 第二片）：**可选**持久外发账本端口。注入（且执行模式 `real`）后，
+ * 受理前先 `reserveForAcceptance` 冻结快照；`real` 未接真实传输 ⇒ **在任何账本变更之前**
+ * 503 `PROVIDER_UNAVAILABLE`（零 `sent`）。派发/回写在提供者包装侧（见 `task-egress.ts`）。
  */
 export function registerRecognitionRoutes(
   app: FastifyInstance,
   config: AppConfig,
   guards: AuthGuards,
   service: RecognitionService,
-  deps: { consent?: ConsentGate } = {},
+  deps: { consent?: ConsentGate; egress?: MediaJobEgress } = {},
 ): void {
   const consentGate =
     deps.consent === undefined
@@ -76,18 +82,37 @@ export function registerRecognitionRoutes(
       preHandler: consentGate === null ? guards.requireUser : [guards.requireUser, consentGate],
       schema: { body: mediaJobBody },
     },
-    async (request, reply) => {
-      const { job } = await service.createRecognition({
-        userId: actorId(request),
-        body: request.body,
-        idempotencyKey: request.headers['idempotency-key'],
-      });
+    withPrivacyErrors(async (request, reply) => {
+      const reservation =
+        deps.egress === undefined
+          ? null
+          : await deps.egress.reserveForAcceptance({
+              userId: actorId(request),
+              authEpoch: currentIdentity(request).authEpoch,
+              objectId: (request.body as { media_id: string }).media_id,
+              objectRevision: (request.body as { media_revision: number }).media_revision,
+            });
+      let created;
+      try {
+        created = await service.createRecognition({
+          userId: actorId(request),
+          body: request.body,
+          idempotencyKey: request.headers['idempotency-key'],
+        });
+      } catch (error) {
+        // 预留后受理失败 ⇒ 预留置终态（不留残留 reserved 行）。
+        if (reservation !== null && deps.egress !== undefined) {
+          await deps.egress.abandonReservation({ exportId: reservation.exportId });
+        }
+        throw error;
+      }
+      const { job } = created;
       return reply
         .status(202)
         .headers(noStore)
         .header('ETag', `"${job.revision}"`)
         .send({ data: job, meta: buildMeta(request, config) });
-    },
+    }),
   );
 
   app.get(
