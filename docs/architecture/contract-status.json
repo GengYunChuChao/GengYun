@@ -1,7 +1,7 @@
 {
   "contract_version": "1.0.0",
-  "proposal_revision": 6,
-  "baseline": "15c3003efc221407734ea26366a7538ae23ddcbb",
+  "proposal_revision": 8,
+  "baseline": "72c4923a8ec058399a51609e1cf1e3c70a890b4a",
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
@@ -1447,19 +1447,19 @@
       "route": "/api/v1/messages",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/messages/service.ts",
-          "lines": "293-298"
+          "path": "services/api/src/routes/messages.ts",
+          "lines": "24-33"
         },
         {
-          "test": "tests/unit/messages-contract.test.mjs",
-          "name": "三个 operationId"
+          "test": "tests/unit/messages-http.test.mjs",
+          "name": "消息列表实际HTTP：整链固定15min，读状态不改变水位，每页重查引用"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息"
     },
     {
       "id": "getUnreadCount",
@@ -1468,19 +1468,19 @@
       "route": "/api/v1/messages/unread-count",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/messages/service.ts",
-          "lines": "331-336"
+          "path": "services/api/src/routes/messages.ts",
+          "lines": "34-39"
         },
         {
-          "test": "tests/unit/messages-contract.test.mjs",
-          "name": "三个 operationId"
+          "test": "tests/unit/messages-http.test.mjs",
+          "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息"
     },
     {
       "id": "markMessageRead",
@@ -1489,19 +1489,19 @@
       "route": "/api/v1/messages/:id/read",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/messages/service.ts",
-          "lines": "346-351"
+          "path": "services/api/src/routes/messages.ts",
+          "lines": "40-51"
         },
         {
-          "test": "tests/unit/messages-contract.test.mjs",
-          "name": "三个 operationId"
+          "test": "tests/unit/messages-http.test.mjs",
+          "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "独立消息服务已实现本人列表、派生未读数和幂等已读；app.ts 未装配消息 HTTP 路由；业务事件创建、真实存储与前端联调待接线，播放不记已读（GY-I17）"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，real未接持久存储，明确503。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息"
     },
     {
       "id": "listAdminSources",
