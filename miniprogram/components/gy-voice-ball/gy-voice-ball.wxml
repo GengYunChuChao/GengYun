@@ -1,0 +1,76 @@
+<!-- GY-I13 统一语音球 + 等效播放控件。全部走正常文档流：本文件不含 position:fixed/absolute，
+     因此不会覆盖页面上的提交按钮或风险信息。 -->
+<view class="voice-ball-block">
+  <view
+    class="voice-ball voice-ball--{{state}}"
+    role="button"
+    aria-role="button"
+    aria-label="{{ballAria}}"
+    hover-class="voice-ball--hover"
+    bindtap="onToggle"
+  >
+    <view class="voice-ball__glyph gy-icon gy-icon--volume" aria-hidden="{{true}}"></view>
+    <text class="voice-ball__state">{{stateText}}</text>
+    <text class="voice-ball__count" wx:if="{{hint}}">{{hint}}</text>
+  </view>
+
+  <view class="voice-ball__meta">
+    <text class="voice-ball__title">{{label}}</text>
+    <!-- 只有「整份播报自然播完」才显示已听取；失败/停止/中断一律显示未记已听取。 -->
+    <text class="voice-ball__listened" wx:if="{{listened}}">已听取：整份播报已自然播完</text>
+    <text class="voice-ball__unlistened" wx:elif="{{state === 'failed' || state === 'stopped'}}">未记「已听取」</text>
+  </view>
+</view>
+
+<view class="voice-actions">
+  <button
+    class="btn voice-actions__item"
+    aria-role="button"
+    aria-label="播放播报"
+    hover-class="voice-actions__item--hover"
+    disabled="{{disabled || playing}}"
+    bindtap="onPlay"
+  >播放</button>
+  <button
+    class="btn voice-actions__item"
+    aria-role="button"
+    aria-label="暂停播报"
+    hover-class="voice-actions__item--hover"
+    disabled="{{disabled || !playing}}"
+    bindtap="onPause"
+  >暂停</button>
+  <button
+    class="btn voice-actions__item"
+    aria-role="button"
+    aria-label="停止播报"
+    hover-class="voice-actions__item--hover"
+    disabled="{{disabled || !canStop}}"
+    bindtap="onStop"
+  >停止</button>
+  <button
+    class="btn voice-actions__item"
+    aria-role="button"
+    aria-label="重播播报"
+    hover-class="voice-actions__item--hover"
+    disabled="{{disabled || !canReplay}}"
+    bindtap="onReplay"
+  >重播</button>
+</view>
+
+<!-- 失败：文案 + **主动播放按钮**（不得只提示一句就完事，也不得记为已听取）。 -->
+<view class="notice notice--danger voice-failure" wx:if="{{state === 'failed' && failureTitle}}">
+  <text class="notice__icon" aria-hidden="{{true}}">⚠️</text>
+  <view class="voice-failure__body">
+    <text class="voice-failure__title">{{failureTitle}}</text>
+    <text class="voice-failure__hint">{{failureHint}}</text>
+    <text class="voice-failure__note">本次没有记为「已听取」。</text>
+    <button
+      class="btn btn--primary voice-failure__action"
+      aria-role="button"
+      aria-label="{{failureAction || '重新主动播放'}}"
+      hover-class="voice-actions__item--hover"
+      disabled="{{disabled}}"
+      bindtap="onManualPlay"
+    >{{failureAction || '重新主动播放'}}</button>
+  </view>
+</view>

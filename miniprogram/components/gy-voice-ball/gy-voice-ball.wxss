@@ -1,0 +1,94 @@
+/* GY-I13 统一语音球与等效播放控件（组件内样式；apply-shared 下全局 .btn/.notice 仍可用）。
+ *
+ * 硬约束（由 tests/unit/miniprogram-voice-playback.test.mjs 断言）：
+ * - 触控下限用 px 令牌 `var(--tap-min, 44px)`，**不用 rpx**（rpx 在 320px 窄屏会缩到 44px 以下）；
+ * - 字号一律 `calc(Npx * var(--font-scale, 1))`，随系统字号放大而放大，不设上限、不裁切文字；
+ * - **不含 position:fixed/absolute**：控件走正常文档流，不会盖住提交按钮或风险信息。 */
+
+.voice-ball-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.voice-ball {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  /* 语音球本身也是按钮：触控直径取触控令牌的 2 倍，且随系统字号一起放大。 */
+  width: max(88px, 88px * var(--font-scale, 1));
+  height: max(88px, 88px * var(--font-scale, 1));
+  min-width: var(--tap-min, 44px);
+  min-height: var(--tap-min, 44px);
+  border-radius: 50%;
+  border: 2px solid var(--green, #176b50);
+  background: var(--green-soft, #eef3e9);
+  color: var(--green, #176b50);
+}
+
+.voice-ball--hover { opacity: .85; }
+.voice-ball--playing { background: var(--green, #176b50); color: #fff; }
+.voice-ball--paused { border-style: dashed; }
+.voice-ball--failed { border-color: var(--tone-danger-ink, #a4473e); color: var(--tone-danger-ink, #a4473e); background: var(--tone-danger-bg, #f8eeec); }
+
+.voice-ball__glyph { font-size: calc(28px * var(--font-scale, 1)); line-height: 1.2; }
+
+.voice-ball__state {
+  margin-top: 2px;
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.4;
+  text-align: center;
+  /* 放大字号后允许换行，不裁切、不省略。 */
+  word-break: break-word;
+}
+
+.voice-ball__count {
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.4;
+  text-align: center;
+}
+
+.voice-ball__meta { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.voice-ball__title { font-size: calc(16px * var(--font-scale, 1)); font-weight: 600; }
+.voice-ball__listened { font-size: calc(14px * var(--font-scale, 1)); color: var(--green, #176b50); }
+.voice-ball__unlistened { font-size: calc(14px * var(--font-scale, 1)); color: var(--tone-warn-ink, #8a6d3b); }
+
+/* 等效按钮：换行排布（窄屏不挤压、不重叠、不遮挡其它内容）。 */
+.voice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.voice-actions__item {
+  flex: 1 1 40%;
+  min-height: var(--tap-min, 44px);
+  min-width: var(--tap-min, 44px);
+  padding: 6px 12px;
+  font-size: calc(16px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
+
+.voice-actions__item--hover { opacity: .9; }
+
+.voice-failure { align-items: flex-start; }
+.voice-failure__body { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; }
+.voice-failure__title { font-size: calc(16px * var(--font-scale, 1)); font-weight: 600; }
+.voice-failure__hint { font-size: calc(14px * var(--font-scale, 1)); line-height: 1.5; word-break: break-word; }
+.voice-failure__note { font-size: calc(14px * var(--font-scale, 1)); }
+.voice-failure__action {
+  align-self: flex-start;
+  margin-top: 6px;
+  min-height: var(--tap-min, 44px);
+  min-width: var(--tap-min, 44px);
+  padding: 6px 16px;
+  font-size: calc(16px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
