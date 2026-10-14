@@ -13,8 +13,11 @@
 | `guard.mjs` | 授权守卫：**已认证执行入口** `requireConsent`（强制正整数 `auth_epoch` + 核对当前版本）与**纯用途查询** `assertConsent` / `assertAccountActive`（二者分开，不可混用） |
 | `commit-gate.mjs` | **提交一致性契约**：`createCommitGate` 内存参考实现（同步一致快照 + 无 await 原子临界区 CAS 提交原语 `commit`）。**不做事后判错**：`apply` 必须同步完成，不得启动异步副作用 |
 | `writeback.mjs` | **受控数据介质**：`createMemoryWritebackMedium`（冻结 `{ rows: native Map }`）+ `assertWritebackMedium`（**不执行访问器**地校验 own data descriptor，拒绝函数属性 / accessor / 非原生 Map / Proxy，返回**冻结绑定** `{ rows }`）。写入由账本自身 `Map.prototype.set` 同步完成，写路径**不读取调用方可变属性** |
-| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `getWriteback` / `revokeInFlight`。派发与**回写的实际结果写入**都在原子 `commitGate.commit` 的同一临界区内完成（另有非权威异步预检） |
+| `ledger.mjs` | 外发账本：`reserve` / `markSent` / `guardWriteback` / `getWriteback` / `revokeInFlight` / `list`（按用户 keyset 读面，追溯用）。派发与**回写的实际结果写入**都在原子 `commitGate.commit` 的同一临界区内完成（另有非权威异步预检） |
 | `deletion.mjs` | 模块删除处理器注册协议 + 第三方删除请求/确认/失败（不把请求当完成） |
+| `deletion-modules.mjs` | **全模块**闭集协议：必需模块在受理前声明、未声明的模块不可注册、任一必需模块未报告 ⇒ 整单不判完成；`receipt()` 输出契约 `DeletionReceipt` 形状（缺模块以 `pending` 出现） |
+| `egress.mjs` | **外发消费者**：唯一被允许「读账本 → 实际发出数据」的组件；`real` 未接真实适配器 ⇒ fail-closed（`PROVIDER_UNAVAILABLE`/503/`retryable`）；`stub`/`preset_demo` 替身明确标注；账本读面 `listExportsForUser`（契约 `Export`/`ExportPage` 形状） |
+| `in-flight.mjs` | **在途守卫**：任务执行前 `assertExecutable` / 保存前 `assertSavable`（版本必须与预留版本一致）、`cancelVersion` 墓碑（已取消版本不可复活）、`saveResult` 原子回写；`createEgressRevoker` 提供撤回/注销撤销在途外发的**消费者接口** |
 | `redact.mjs` | 日志脱敏：私有正文/图片/音频/精确坐标/凭据 |
 | `index.mjs` | 统一出口 |
 
@@ -70,11 +73,55 @@ app.route({
 `NNNN_name.sql`，`.down.sql` 不合规、`..._down.sql` 会与 0003 版本号重复，故回滚脚本单独放在子目录，
 不进入正向发现集。
 
+## 外发消费者、在途守卫与全模块删除（本轮补齐的剩余项）
+
+上一片交付的是账本与守卫本身，**没有任何消费者**：`services/api/src/privacy/consent-pg.ts` 与
+`grant-pg.ts` 因此在用户已有 jobs/media/exports/author_links 依赖时直接 `OBJECT_UNAVAILABLE`
+（"撤回消费者尚未接入"）。遗留的第二处缺口是 `deletion.mjs` 的**部分模块也算完成**
+（`hasWork = rows.length > 0`）。本轮的三个新模块分别补齐：
+
+### 1. 外发消费者 `egress.mjs`
+
+挂载与调用（装配说明；`services/api/src/privacy/egress.ts` 是 HTTP 侧适配，**不改 `app.ts`/路由文件**）：
+
+| 位置 | 调用 |
+| --- | --- |
+| 需要用途授权的执行入口（`/speech/transcriptions`、`/recognitions/**`、`/ocr/**`、`/synthesis/**`、社区投稿） | `createConsentPreHandler(guard, { purpose, dataType })` 作为 `preHandler`（会话层先填 `req.userId`/`req.authEpoch`） |
+| 外发派发 | `createPrivacyEgress({ executionMode, ledger, ... }).consumer.send({ identity, objectType, objectId, objectRevision, dataType, purpose, recipientId, sourceVersion, payload })`（在 `withPrivacyErrors(...)` 包装内） |
+| 任务执行前 | `createPrivacyInFlightGuard(...).assertExecutable({ exportId, userId })` |
+| 结果保存前 | `...saveResult({ exportId, userId, objectVersion, result })` |
+| 版本取消 | `...cancelVersion({ exportId, userId, objectVersion, reason })`（`reason` 只接受短安全 token） |
+| 撤回/注销撤销在途 | `createApiEgressRevoker({ ledger })` 注入 `consent-pg.ts` / `grant-pg.ts`（**不注入 ⇒ 行为与今天逐字一致**） |
+
+派发顺序即安全保证：`transport.available !== true`（`real` 未接真实适配器）⇒ 在任何账本变更**之前**
+`PROVIDER_UNAVAILABLE`(503, `retryable: true`)；记录非 `reserved` ⇒ 拒绝（零重复外发）；
+`ledger.markSent` 的同步原子边界是唯一权威授权判定（被拒 ⇒ **零外发**）；实际网络调用在临界区之外；
+外部失败落 `failed`/`outcome_unknown`，**绝不**写成成功。
+
+### 2. 在途守卫 `in-flight.mjs`
+
+`assertExecutable`（执行前）/ `assertSavable`（保存前，且回调版本必须等于预留版本）重查账号
+`auth_epoch` 与**全部必需用途**的 `granted + epoch`；`cancelVersion` 写入**只增不减**的
+`exportId\0objectVersion` 墓碑 ⇒ 已取消版本即使晚到、即使之后重新授权也**不可复活**；
+`saveResult` 的实际写入仍在账本 `guardWriteback` 的原子临界区内（校验不过 ⇒ **零写入**）。
+
+### 3. 全模块删除协议 `deletion-modules.mjs`
+
+`declareRequiredModules`（**只能**在创建任何删除请求之前声明，杜绝按已有结果倒推清单）、
+`registerModule`（闭集外一律拒绝）、`completionStatus`（**任一必需模块未报告 ⇒ 不判完成**，并给出
+`missingModules`）、`receipt`（契约 `DeletionReceipt`/`DeletionHandler` 形状，缺模块以 `pending` 出现）。
+
 ## 边界（不实现）
 
 - 完整 7/30 日删除（对象存储/备份/供应商副本/恢复清单重放）由 **GY-I19** 集成；本模块只提供
   `registerModule` 协议、第三方删除请求/确认/失败接口与 `completionStatus` 派生判定。
 - `deletion_tombstones` / `backup_inventory` 属 GY-I19 独立受控清单，不在本迁移范围。
+- **外发消费者尚未挂到各 AI 域路由上**（`routes/recognitions.ts`、`routes/speech.ts`、`routes/ocr.ts`、
+  `routes/synthesis.ts` 及 `app.ts` 属其它任务线的已合并文件）：本轮交付协议 + HTTP 适配
+  （`services/api/src/privacy/egress.ts`）与挂载说明，实际接线由装配方/各域任务线完成；
+  在此之前 `real` 模式**始终 fail-closed**（503），**不会**被静默放行为替身。
+- 撤回/注销的 `OBJECT_UNAVAILABLE` 兜底（`consent-pg.ts` / `grant-pg.ts`）在**注入**
+  `createEgressRevoker` 之前保持不变（fail-closed，不伪造取消成功）。
 - 训练**不是**首版 `ConsentPurpose`；`user_training_consents.training_enabled` 默认 `false`，
   启用需独立同意 + 模型谱系验收（迁移 CHECK 强制），首版无放行训练路径。
 - 用户端页面（手选地区/文字替代交互）不实现，由 GY-I05/F12 消费 `CONSENT_REQUIRED` 错误码兜底。
