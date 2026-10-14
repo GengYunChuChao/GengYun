@@ -90,7 +90,7 @@
 | 避免重复播报 | 同一时刻最多一个活动句柄；同一计划重复 `play` ⇒ `ALREADY_PLAYING`，**不新建句柄、不重复出声** | 单测：`createdHandles` 不变、`plays === 1`；换计划先销毁旧句柄（`live === 1`） |
 | 避免后台残留 | `release()` 退订全部监听（`on()` 必须返回退订函数）、`stop()`+`destroy()` 句柄、清空计划 | 单测：退出后 0 监听 0 句柄；代次守卫使迟到回调无效 |
 | 自动播放失败 ⇒ 文案 + **主动播放按钮**，不假记"已听取" | 失败一律写 `failure{title,hint,actionText,manualStart:true,recordsListened:false}`；组件渲染文案 + 主动播放按钮 | 单测：空计划 ⇒ `SOURCE_UNAVAILABLE`，`listened === false`；宿主页：无音频源 ⇒ `playbackState==='failed'`、`failure.actionText` 非空、`listened === false` |
-| 静音/蓝牙/拒权/平台阻止自动播放各有文案与按钮 | `FAILURE_PRESETS` 八类，四类关键分支文案**互不相同**；平台原始 `errMsg` 按特征归类 | 单测：四类 `title|hint|actionText` 去重后仍为 4；`bluetooth/静音/permission/autoplay/decode/interrupt/未知` 逐条归类 |
+| 静音/蓝牙/拒权/平台阻止自动播放各有文案与按钮 | `FAILURE_PRESETS` 八类，四类关键分支文案**互不相同**；平台原始 `errMsg` 按特征归类 | 单测：四类 `title`／`hint`／`actionText` 三元组去重后仍为 4；`bluetooth/静音/permission/autoplay/decode/interrupt/未知` 逐条归类 |
 | 数字/单位/制剂条件/否定词播报文本正确性 | `criticalTokens` 抽取 `数字+单位` 绑定对、裸数字、制剂/条件词、否定词；`verifySpeakPlan` 做"拼接逐字一致 + 逐项计数" | 单测正例 1 条；反例 6 条：数字被改写、单位丢失、制剂条件丢失、否定词丢失、截断、**多出**正文没有的否定词 |
 | 控制不得遮挡提交按钮或风险信息 | 播报控件走正常文档流（页面/组件样式**无** `position:fixed/absolute`）；DOM 顺序为「风险信息 → 提交按钮 → 播报控件」 | 静态断言：无 fixed/absolute；`notice--danger < bindtap="onBroadcast" < <gy-voice-ball` |
 | 适老不削弱既有保护 | 字号一律 `calc(Npx * var(--font-scale, 1))`；触控下限沿用 `--tap-min`；无 `nowrap`、无裁切 | 静态断言：含 `var(--font-scale`；无 `white-space: nowrap`；**未改** `app.wxss`/`styles/*`/既有页面 |
@@ -260,6 +260,13 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 
 受影响既有面（另跑，均通过）：`node --test tests/unit/jobs-registry.test.mjs tests/unit/jobs-result-shape.test.mjs tests/moderation/http-jobs.test.mjs tests/unit/tts-service.test.mjs` ⇒ 68/68 pass。
 
+根级 UI 用例（**不在任何 npm script 的 glob 内**，属 `.github/workflows/local-wechat.yml`）：
+
+| 命令 | 退出码 | 关键输出 |
+| --- | --- | --- |
+| `node --test tests/ui-adaptive.test.mjs` | 0 | 26/26 pass —— 其中包含「录音与播放为两个独立按钮，播放需先有录音（identify 页不得调用录音/播放能力）」「触控区为 44px 且使用 px 单位，320px 窄屏下仍成立」「正文为 18px 且不随屏宽缩放」三条既有红线，**未被本片削弱** |
+| `node --test tests/ui-demo-align.test.mjs` | **1** | **失败，且与本片无关**：`miniprogram/styles/icons.wxss 与 demo SVG path 生成结果不一致，请运行 node tools/demo-align.mjs --write-icons`。证据：该用例的**全部输入**（`miniprogram/styles/**`、`docs/ui-demo/**`、`tools/demo-align.mjs`、该用例本身）在本分支相对 `upstream/main` 的 `git diff --name-only` 中**一个都没有出现** ⇒ 输入与基线 `ddeb301` 逐字节相同 ⇒ 该失败**在基线即已存在**，属**既有问题**，本片不修（修它需改 `styles/icons.wxss`，属 GY-I26 范围）。**不作"通过"声明。** |
+
 ## 6 提交清单（本地，未 push）
 
 | SHA | 提交 |
@@ -320,3 +327,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 9. **服务端"已核对内容"读取端点不存在**（契约里只有 `POST /speech/synthesis`）。本片**未自造**该端点；
    播报页因此不发明内容来源，离线只提供**明确标注的替身样本**（且仅本地替身工程可见）。
 10. **合成产物下载链路未接线**（`media_id` → 媒体访问授权），故 `audioSourceForJob` 在 `real` 下也如实返回不可播放。
+11. **`tests/ui-demo-align.test.mjs` 在基线上即失败**（`styles/icons.wxss` 与 demo SVG path 不一致）；本片输入未变、
+    未修、**不主张其通过**（详见 §5）。`tests/ui-adaptive.test.mjs` 26/26 通过。
+12. **未跑 `npm run test:contract` / `test:evaluation` / `npm run build`**：本片未改 `packages/contracts/**`、
+    未改评估数据与构建配置；如实登记为未跑，不主张通过。
