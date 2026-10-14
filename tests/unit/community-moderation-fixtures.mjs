@@ -92,6 +92,31 @@ export function revisionGatedPort({ blockFrom = 2 } = {}) {
   return { port, requests };
 }
 
+/**
+ * **可切换结论**的合成端口：用于"内容已公开之后，审核域才给出明确驳回"这类时序负例。
+ * `setMode('pass' | 'block' | 'unsure')` 切换后续调用回报。
+ */
+export function mutablePort({ initial = 'pass' } = {}) {
+  let mode = initial;
+  const requests = [];
+  const port = makePort({
+    kind: 'tms',
+    evaluate: (request) => {
+      requests.push(request);
+      if (mode === 'block') return blockVerdict();
+      if (mode === 'unsure') return { label: 'unsure', reason_codes: ['SYNTHETIC_NO_CONCLUSION'], summary: 'synthetic unsure' };
+      return passVerdict();
+    },
+  });
+  return {
+    port,
+    requests,
+    setMode(next) {
+      mode = next;
+    },
+  };
+}
+
 /** 记录每次 `evaluate` 入参的包装（用于断言"规则先挡 ⇒ 零模型外发"）。 */
 export function countingPort(port) {
   const requests = [];
