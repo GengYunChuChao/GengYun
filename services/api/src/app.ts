@@ -67,6 +67,21 @@ import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
+// GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域 + 注销删除接线（F13 协议复用）。
+import { registerFavoriteRoutes } from './routes/favorites.ts';
+import { registerHistoryRoutes } from './routes/history.ts';
+import { createFavoritesService, type FavoritesService } from './favorites/service.ts';
+import { createMemoryFavoritesStore, type FavoritesStore } from './favorites/store.ts';
+import { createHistoryService, type HistoryService } from './history/service.ts';
+import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
+import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
+import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
+import { createUnwiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import {
+  createUserDataDeletion,
+  type BackupPurgePort,
+  type UserDataDeletionRegistry,
+} from './privacy/user-data-deletion.ts';
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 
 declare module 'fastify' {
@@ -90,6 +105,21 @@ declare module 'fastify' {
     mediaObjectStore: MediaObjectStore;
     /** Non-real message service; real remains closed until persistent storage is delivered. */
     messagesService: MessagesService | null;
+    /**
+     * GY-I16 收藏服务；`real` 模式下为 `null`（内存存储不冒充持久化 ⇒ 三条路由 503）。
+     * 也供回归测试驱动。
+     */
+    favoritesService: FavoritesService | null;
+    /**
+     * GY-I16 历史服务；`real` 模式下为 `null`（同上）。
+     * **内部创建口** `historyService.appendHistory(...)` 供识别/OCR 域后续一行接线调用。
+     */
+    historyService: HistoryService | null;
+    /**
+     * GY-I16 注销删除接线：`favorites`/`history` 两个模块注册在**已合并的**
+     * `packages/privacy` 删除注册协议上（不另起一套）。供回归测试与后续 GY-I19 接线驱动。
+     */
+    userDataDeletion: UserDataDeletionRegistry;
   }
 }
 
@@ -169,6 +199,24 @@ export interface BuildAppOptions {
   };
   /** Synthetic tests only; these memory/reference injections do not enable the real-mode domain. */
   messagesInjection?: { store?: MessagesStore; reference?: MessageReferencePort };
+  // GY-I16 收藏（#16）注入项。**全部可选**：不传时与接线前**逐字节同行为** —— 收藏域新建
+  // 内存 store、可见性端口**未接线**（一律 unavailable，绝不假装可用）；real 模式下整域关闭。
+  favoritesInjection?: {
+    store?: FavoritesStore;
+    visibility?: VisibilityPort;
+  };
+  // GY-I16 历史（#16）注入项。**全部可选**：不传时——历史域新建内存 store；可见性端口未接线；
+  // **任务状态端口默认接线到已合并的公开读取口**（`recognitionService.getJob` /
+  // `ocrService.getJob`）⇒ 读取时能拿到真实任务状态（失败/超时/取消原样可见）；
+  // 关联删除级联端口未接线（如实回 `unwired`，不谎称已启动）。
+  historyInjection?: {
+    store?: HistoryStore;
+    visibility?: VisibilityPort;
+    job?: HistoryJobPort;
+    cascade?: HistoryCascadePort;
+  };
+  /** GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。 */
+  userDataDeletionInjection?: { backupPurge?: BackupPurgePort };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
    * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
@@ -242,7 +290,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, favoritesInjection, historyInjection, userDataDeletionInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -395,6 +443,67 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
   });
 
+  // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
+  //
+  // **real 模式整体关闭**（与本仓「real 永远 fail-closed、严禁静默回退替身」一致）：
+  // 两域当前只有**内存** store，若在 real 下仍交出服务层，写操作会返回成功封套而落点易失
+  // —— 那是"在真实模式下声称成功、重启即丢"。因此 real ⇒ 服务为 `null` ⇒ 5 条路由 503
+  // PROVIDER_UNAVAILABLE。将来接真实持久 store 时必须**在这里显式放行**（一次可审查的变更）。
+  //
+  // **引用可用性端口默认未接线**（`createUnwiredVisibilityPort`）：一律 `unavailable`，
+  // **绝不**返回 `'available'` 来"默认可用"（同 #17 消息域口径）。这直接落实 issue #16
+  // 「隐藏／失效／注销不因缓存或旧链接重新公开」——服务端在没有真实可见性核验前不作出任何
+  // "可用"陈述；真实接线 = 在这里把一个 `VisibilityPort` 传进来。
+  //
+  // **任务状态端口默认接线到已合并的公开读取口**：`recognitionService.getJob`（#9）与
+  // `ocrService.getJob`（#10）—— 只调用公开方法、不改他人文件。这样历史列表/详情的
+  // `job_state` 在读取时能取到**实时**状态（失败/超时/取消原样可见），核不到时才退回入库值。
+  // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
+  const favoritesStore = favoritesInjection?.store ?? createMemoryFavoritesStore({ now: () => clock().getTime() });
+  const historyStore = historyInjection?.store ?? createMemoryHistoryStore({ now: () => clock().getTime() });
+  const favoritesVisibility = favoritesInjection?.visibility ?? createUnwiredVisibilityPort();
+  const historyVisibility = historyInjection?.visibility ?? createUnwiredVisibilityPort();
+  const historyJobPort: HistoryJobPort =
+    historyInjection?.job ??
+    createWiredHistoryJobPort({
+      note: '任务状态端口接线到已合并的公开读取口：recognitionService.getJob（#9）/ ocrService.getJob（#10）',
+      resolve: async ({ kind, jobId, userId }) => {
+        if (kind === 'recognition') return app.recognitionService.getJob({ userId, jobId });
+        return app.ocrService.getJob({ userId, jobId });
+      },
+    });
+  const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();
+  const favoritesService =
+    config.executionMode === 'real'
+      ? null
+      : createFavoritesService({
+          store: favoritesStore,
+          visibility: favoritesVisibility,
+          signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+          now: clock,
+        });
+  const historyService =
+    config.executionMode === 'real'
+      ? null
+      : createHistoryService({
+          store: historyStore,
+          visibility: historyVisibility,
+          job: historyJobPort,
+          cascade: historyCascadePort,
+          signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+          now: clock,
+        });
+  // GY-I16 第 4 项：**复用已合并的** `packages/privacy` 删除注册协议（不另起一套），
+  // 只把本片自己的 `favorites`/`history` 两个模块注册进去（在线部分真的清理并留证据；
+  // 备份副本清除未接线 ⇒ `backupState: 'pending'`，如实显示未完成）。
+  const userDataDeletion = createUserDataDeletion({
+    favoritesStore,
+    historyStore,
+    ...(userDataDeletionInjection?.backupPurge === undefined
+      ? {}
+      : { backupPurge: userDataDeletionInjection.backupPurge }),
+  });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -411,6 +520,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
   app.decorate('messagesService', messagesService);
+  app.decorate('favoritesService', favoritesService);
+  app.decorate('historyService', historyService);
+  app.decorate('userDataDeletion', userDataDeletion);
 
   // ---------------------------------------------------------------------------
   // GY-I27 接线单（用途授权接线）。两处**最小、追加式**接线：
@@ -455,6 +567,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   registerMediaRoutes(app, config, guards, mediaService);
   registerMessageRoutes(app, config, guards, messagesService);
+  // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
+  registerFavoriteRoutes(app, config, guards, favoritesService);
+  registerHistoryRoutes(app, config, guards, historyService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
