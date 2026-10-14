@@ -141,3 +141,76 @@
   color: var(--color-text-sub);
   line-height: 1.7;
 }
+
+/* 六类失败/边界分支：归类 + 落点 + 重试语义（沿用 demo 卡片观感） */
+.branch {
+  margin-top: 14rpx;
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+}
+
+.branch__head {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.branch__pill {
+  align-self: flex-start;
+}
+
+.branch__label {
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.branch__meta {
+  margin-top: 10rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx 18rpx;
+}
+
+.branch__meta-item {
+  font-size: calc(15px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+}
+
+/* 用量守卫：恒不可展示 + 条件不完整时的阻断说明 */
+.dose-guard {
+  margin-top: 11px;
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  background: #FFF8E6;
+  border: 1px solid #F0D9A0;
+}
+
+.dose-guard__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.dose-guard__row + .dose-guard__row {
+  margin-top: 10rpx;
+}
+
+.dose-guard__tag {
+  font-size: calc(16px * var(--font-scale, 1));
+  font-weight: 600;
+  color: #8A5A00;
+}
+
+.dose-guard__tag--warn {
+  color: #A33A1A;
+}
+
+.dose-guard__reason,
+.dose-guard__note {
+  font-size: calc(15px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+  line-height: 1.7;
+}

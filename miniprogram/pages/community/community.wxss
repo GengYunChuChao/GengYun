@@ -1,8 +1,26 @@
-/* 社区页（GY-I26 demo 对齐）
+/* 社区列表页（GY-I15 阶段 2）
  * ---------------------------------------------------------------------------
  * 页面形态全部走 styles/components.wxss 的 demo 组件层（tabs／section-head／panel／
- * profile-grid／pill／demo-caption），本文件不再重复定义。
- * demo 的 .feed／.post／.post-author／.post-text／.post-visual／.post-actions／
- * .comment-row／.topic 已落入样式层，供社区数据接入后直接复用；本轮社区为空态，
- * 不展示任何演示帖子（见 docs/verification/gy-i26-demo-align-20261014.md 取舍表）。
+ * chips／chip／feed／post／post-author／post-text／post-actions／pill／row-actions／
+ * demo-caption）。本文件只补 demo 未提供的两处页面级小样式，取值沿用 tokens。
  */
+
+/* demo 的 `.post h3` 在 WXML 无法用 h3，这里给出同一形态的等价类。 */
+.post-title {
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+/* 作者行：demo 为 avatar + 文案块 + 状态 pill；小程序不展示头像（未接线 public_authors），
+ * 因此文案块需要自己占满剩余宽度。 */
+.post-author__copy {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 作者行的状态标签不用 margin-left:auto 抢占标题空间（窄屏/大字号下会挤压作者名）。 */
+.post-author__tag {
+  margin-left: 0;
+}

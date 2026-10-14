@@ -56,9 +56,25 @@
       <text class="state-chip__desc">{{stateView.desc}}</text>
       <text class="state-chip__err" wx:if="{{stateView.state === 'failed' || stateView.state === 'timed_out'}}">服务端错误码以接口返回为准（error_code 非 null 时才显示）。</text>
     </view>
+
+    <!-- 六类失败/边界分支：逐类给出如实归类与**唯一**重试动作（不可重试时不给入口） -->
+    <view class="branch" wx:if="{{branchInfo}}">
+      <view class="branch__head">
+        <text class="pill pill--amber branch__pill">边界分支：{{branchInfo.branch}}</text>
+        <text class="branch__label">{{branchInfo.label}}</text>
+      </view>
+      <view class="branch__meta">
+        <text class="branch__meta-item" wx:if="{{branchInfo.jobState}}">落到状态：{{branchInfo.jobState}}</text>
+        <text class="branch__meta-item" wx:if="{{branchInfo.errorCode}}">错误码：{{branchInfo.errorCode}}</text>
+        <text class="branch__meta-item" wx:if="{{!branchInfo.createsJob}}">该分支在受理前拦截，不会产生识别记录</text>
+      </view>
+      <view class="hint">可重试：{{branchInfo.retryable ? '是' : '否'}}<text wx:if="{{branchInfo.retryable}}">（动作：{{branchInfo.retryLabel}}）</text></view>
+    </view>
+
     <view class="row-actions">
       <button class="btn btn--secondary row-actions__item" wx:if="{{!stateView.terminal}}" bindtap="onCancelJob">取消任务</button>
-      <button class="btn btn--secondary row-actions__item" wx:if="{{stateView.retryable}}" bindtap="onRetry">重新识别</button>
+      <button class="btn btn--secondary row-actions__item" wx:if="{{branchInfo && branchInfo.retryable}}" bindtap="onRetry">{{branchInfo.retryLabel || '重试'}}</button>
+      <button class="btn btn--secondary row-actions__item" wx:if="{{!branchInfo && stateView.retryable}}" bindtap="onRetry">重新识别</button>
     </view>
   </view>
 
@@ -92,16 +108,34 @@
     </view>
   </view>
 
-  <!-- 关联科普查询（选择之后） -->
+  <!-- 关联科普查询（选择之后）；用量恒被 GY-I08 守卫阻断，条件不完整即阻断并列出缺项 -->
   <view class="section" wx:if="{{relatedKnowledge && !guest}}">
     <view class="section-head">
       <view class="section-head__title">关联科普（{{relatedKnowledge.matchStateLabel}}）</view>
+      <view class="pill pill--gray">{{relatedKnowledge.ruleVersion}}</view>
     </view>
     <view class="pill pill--amber">资料为种子整理稿 · 待核实 · 非权威 · 不提供用量</view>
+
+    <!-- 用量守卫：识别/选择这条路径恒不可给用量（不是"恰好没数据"），且条件不完整时明确阻断 -->
+    <view class="dose-guard">
+      <view class="dose-guard__row">
+        <text class="dose-guard__tag">用量：不可展示</text>
+        <text class="dose-guard__reason">阻断类别 {{relatedKnowledge.dose.blockCode}}（识别/选择路径恒不给用量，需走资料详情按 GY-I08 规则核对）</text>
+      </view>
+      <view class="dose-guard__row" wx:if="{{relatedKnowledge.conditionsComplete}}">
+        <text class="dose-guard__note">条件已完整；即便如此，本路径仍不提供用量。</text>
+      </view>
+      <view class="dose-guard__row" wx:else>
+        <text class="dose-guard__tag dose-guard__tag--warn">条件不完整，已阻断用量查询</text>
+        <text class="dose-guard__reason">缺少：{{relatedKnowledge.missingConditionLabels}}</text>
+      </view>
+    </view>
+
     <view class="knowledge" wx:for="{{relatedKnowledge.items}}" wx:key="recordId">
       <view class="knowledge__name">{{item.name}}</view>
       <view class="knowledge__meta">登记证号：{{item.registrationNumber}} · 剂型：{{item.dosageForm}}</view>
       <view class="knowledge__meta">使用场景：{{item.useScene}}</view>
+      <view class="knowledge__meta">用量：不可展示（GY-I08 判定 {{item.doseReason}}，规则版本 {{item.doseRuleVersion}}）</view>
     </view>
     <view class="reasons__item" wx:for="{{relatedKnowledge.reasons}}" wx:key="*this">· {{item}}</view>
     <view class="demo-caption">{{relatedKnowledge.note}}</view>
@@ -150,10 +184,14 @@
     </view>
   </view>
 
+  <!-- 失败 / 空态 / 处理中一律收口到统一 state-view 组件（本页不自己拼一套状态样式） -->
   <state-view
-    wx:if="{{stateView && !stateView.terminal && !guest}}"
+    wx:if="{{stateView && !guest && stateView.component !== 'ready'}}"
     status="{{stateView.component}}"
-    title="{{stateView.title}}"
+    title="{{branchInfo ? branchInfo.label : stateView.title}}"
     desc="{{stateView.desc}}"
+    actionText="{{branchInfo && branchInfo.retryable ? branchInfo.retryLabel : ''}}"
+    busy="{{busy}}"
+    bind:action="onRetry"
   ></state-view>
 </view>

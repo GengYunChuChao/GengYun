@@ -1,0 +1,44 @@
+/* 社区详情页（GY-I15 阶段 2）
+ * ---------------------------------------------------------------------------
+ * 卡片／评论／pill／row-actions 走 styles/components.wxss 的 demo 组件层；
+ * 本文件只补该层未提供的等价物（正文标题、作者文案块、多行输入、表单项间距）。
+ */
+
+.post-title {
+  font-size: calc(19px * var(--font-scale, 1));
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.post-author__copy {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 状态标签不抢占作者名宽度（窄屏 / 大字号下换行而不挤压）。 */
+.post-author__tag {
+  margin-left: 0;
+  white-space: normal;
+}
+
+.textarea {
+  width: 100%;
+  min-height: calc(120px * var(--font-scale, 1));
+  border: 1px solid var(--green-field);
+  background: var(--green-paper-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: calc(18px * var(--font-scale, 1));
+  line-height: 1.8;
+  box-sizing: border-box;
+}
+
+.form-gap {
+  margin-top: 17px;
+}
+
+.row-actions {
+  gap: 9px;
+}
