@@ -46,6 +46,17 @@ try {
     'utils/history-api.js',
     // 社区域适配层（GY-I15）：社区列表/投稿/详情页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/community-api.js',
+    // 播报域适配层（GY-I13）：播报页依赖它们；漏加会导致标准包 MODULE_NOT_FOUND。
+    //   audio-playback：播放生命周期控制器（端口注入，纯逻辑）
+    //   inner-audio-port：wx.createInnerAudioContext 的唯一出现处
+    //   substitute-player：明确标注的替身播放端口（仅本地替身工程走查，不计「已听取」）
+    //   speech-text：安全检查闸门与播报计划复核（数字/单位/制剂条件/否定词）
+    //   voice-api：POST /speech/synthesis 与 GET /jobs/{id} 的消费层
+    'utils/speech-text.js',
+    'utils/audio-playback.js',
+    'utils/inner-audio-port.js',
+    'utils/substitute-player.js',
+    'utils/voice-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
@@ -56,6 +67,9 @@ try {
     'components/state-view/state-view.wxml',
     'components/state-view/state-view.wxss',
     ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
+      ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
+    // GY-I13 统一语音球（播报页依赖；漏加会导致自定义组件解析失败）。
+    ...['gy-voice-ball'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
     'utils/navigation.js',
     'utils/page-gate.js',
@@ -94,6 +108,8 @@ try {
     'pages/favorites/favorites',
     'pages/history/history',
     'pages/historydetail/historydetail',
+    // 播报页（GY-I13）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
+    'pages/voice/voice',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {

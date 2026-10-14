@@ -1,0 +1,178 @@
+<!-- GY-I13 播报页：安全检查 → 合成 → 播放 三段式。
+     文档流顺序刻意是「风险信息与提交按钮在前、播报控件在后」，控件一律走正常文档流
+     （本文件与 gy-voice-ball 样式内均无 position:fixed/absolute），因此不会遮挡提交按钮或风险信息。 -->
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">把已核对的内容念出来</view>
+      <view class="page-heading__sub">先过安全检查，再合成，最后才播报；录不进、念不出时如实说明，不假记「已听取」</view>
+    </view>
+    <view class="page-heading__right"><view class="pill pill--amber">播报</view></view>
+  </view>
+
+  <!-- 风险信息（永远在播报控件之前） -->
+  <view class="notice notice--warn" wx:if="{{guest}}">
+    <text class="notice__icon">🔒</text>
+    <text class="notice__text">您正在以游客身份浏览，登录后才能使用播报功能。播报内容不会公开。</text>
+  </view>
+
+  <view class="notice notice--danger">
+    <text class="notice__icon">⚠️</text>
+    <text class="notice__text">播报只是把「已通过核对」的正文念出来，不构成任何用药建议；
+      用量与配比一律以核验资料为准，本页不提供剂量换算。</text>
+  </view>
+
+  <view class="notice notice--stub" wx:if="{{substituteNote}}">
+    <text class="notice__icon">🧪</text>
+    <text class="notice__text">{{substituteNote}}</text>
+  </view>
+
+  <view class="notice" wx:if="{{exitNote}}">
+    <text class="notice__icon">🚪</text>
+    <text class="notice__text">离开本页（返回／切页／隐藏）：{{exitNote}}</text>
+  </view>
+
+  <!-- ① 安全检查 -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">① 安全检查（在前）</view>
+      <view class="section-head__meta">{{checkState || '未选择内容'}}</view>
+    </view>
+    <view class="panel">
+      <view class="hint" wx:if="{{samples.length === 0}}">
+        本地替身样本仅在本地替身工程可见（当前不可见）。本页不发明内容来源：没有可核对的正文时不会合成，也不会播报。
+      </view>
+      <view class="row-actions" wx:if="{{samples.length > 0}}">
+        <button
+          wx:for="{{samples}}"
+          wx:key="id"
+          class="btn {{selectedSampleId === item.id ? 'btn--primary' : 'btn--secondary'}} row-actions__item"
+          aria-role="button"
+          aria-label="{{item.label}}"
+          data-id="{{item.id}}"
+          bindtap="onSelectSample"
+        >{{item.label}}</button>
+      </view>
+
+      <view class="hint" wx:if="{{checkState}}">check_state：{{checkState}}</view>
+      <view class="notice {{checkPassed ? '' : 'notice--danger'}}" wx:if="{{checkMessage}}">
+        <text class="notice__text">{{checkMessage}}</text>
+      </view>
+      <view class="demo-caption" wx:if="{{checkedText}}">已核对正文（{{segmentCount}} 段）：{{checkedText}}</view>
+      <view class="hint" wx:if="{{segmentPreview}}">{{segmentPreview}}</view>
+
+      <!-- 提交（合成）入口：位于播报控件**之前**，不会被控件遮挡。 -->
+      <view class="row-actions">
+        <button
+          class="btn btn--primary row-actions__item voice-submit"
+          aria-role="button"
+          aria-label="安全检查通过后提交合成"
+          disabled="{{guest || busy || !checkPassed}}"
+          bindtap="onBroadcast"
+        >{{busy ? '正在提交…' : '通过检查后合成'}}</button>
+      </view>
+      <view class="hint">安全检查未通过时，提交按钮保持禁用，且不会发起任何合成请求。</view>
+    </view>
+  </view>
+
+  <!-- ② 合成状态（七类逐类呈现，不折叠） -->
+  <view class="section" wx:if="{{stage === 'synthesis' || job || synthesisNote}}">
+    <view class="section-head">
+      <view class="section-head__title">② 合成任务</view>
+      <view class="pill pill--blue">{{mode || '未取得执行模式'}}</view>
+    </view>
+    <view class="panel">
+      <view class="hint" wx:if="{{job}}">JobState：{{job.state}} · {{job.label}}</view>
+      <view class="hint" wx:if="{{job && job.errorCode}}">error_code：{{job.errorCode}}</view>
+      <view class="hint" wx:if="{{job}}">任务 {{job.id}} · revision {{job.revision}} · 产物 media_id：{{job.mediaId || '（本次没有产物）'}}</view>
+      <view class="notice notice--danger" wx:if="{{synthesisNote}}">
+        <text class="notice__text">{{synthesisNote}}</text>
+      </view>
+      <view class="hint">失败与超时都如实显示 error_code；不会把失败折叠成「播放成功」。</view>
+    </view>
+  </view>
+
+  <!-- ③ 播报控件：语音球 + 等效按钮（在提交按钮与风险信息之后，正常文档流） -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">③ 播报控件</view>
+      <view class="pill pill--gray">语音球 · 播放/暂停/停止/重播</view>
+    </view>
+    <view class="panel">
+      <view class="notice notice--stub" wx:if="{{localEnabled && substituteWalkthrough}}">
+        <text class="notice__icon">🧪</text>
+        <text class="notice__text">替身播放已开启：非真实音频，不产生任何声音、不朗读任何内容，
+          只走控件与事件生命周期；替身播放不计入「已听取」。</text>
+      </view>
+
+      <gy-voice-ball
+        state="{{playbackState}}"
+        listened="{{listened}}"
+        disabled="{{guest}}"
+        label="{{ballLabel}}"
+        hint="{{ballHint}}"
+        failure-title="{{failure ? failure.title : ''}}"
+        failure-hint="{{failure ? failure.hint : ''}}"
+        failure-action="{{failure ? failure.actionText : ''}}"
+        bind:play="onPlay"
+        bind:pause="onPause"
+        bind:stop="onStop"
+        bind:replay="onReplay"
+      ></gy-voice-ball>
+
+      <view class="hint" wx:if="{{substitute && substituteCompleted}}">替身播放已走完：非真实音频，未记「已听取」。</view>
+      <view class="hint" wx:if="{{listened}}">已听取：整份播报已自然播完。</view>
+      <view class="hint" wx:if="{{!listened && playbackState !== 'idle'}}">当前未记「已听取」（只有整份播报自然播完才算）。</view>
+
+      <!-- 本地替身工程走查开关（默认关闭替身播放；开关只影响本地替身工程） -->
+      <view class="row-actions" wx:if="{{localEnabled}}">
+        <button
+          class="btn btn--secondary row-actions__item"
+          aria-role="button"
+          aria-label="切换替身播放走查"
+          bindtap="onToggleWalkthrough"
+        >{{substituteWalkthrough ? '关闭替身播放走查' : '开启替身播放走查'}}</button>
+      </view>
+      <view class="row-actions" wx:if="{{localEnabled}}">
+        <button
+          wx:for="{{['AUTOPLAY_BLOCKED', 'MUTED', 'BLUETOOTH', 'PERMISSION_DENIED']}}"
+          wx:key="*this"
+          class="btn btn--secondary row-actions__item"
+          aria-role="button"
+          aria-label="模拟失败分支 {{item}}"
+          data-code="{{item}}"
+          bindtap="onPickFailureProbe"
+        >模拟 {{item}}</button>
+        <button
+          class="btn btn--ghost row-actions__item"
+          aria-role="button"
+          aria-label="清除模拟失败分支"
+          data-code=""
+          bindtap="onPickFailureProbe"
+        >清除模拟失败</button>
+      </view>
+      <view class="hint" wx:if="{{probing}}">已选择模拟失败分支：{{failureProbe}}（下一次播放按该分支报错，文案与主动播放按钮随之变化）。</view>
+    </view>
+  </view>
+
+  <!-- 录音控件：与播报控件**分离**的独立控件（如实标注未接线） -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">录音（独立控件）</view>
+      <view class="section-head__meta">尚未接线</view>
+    </view>
+    <view class="panel">
+      <view class="hint">{{recordNote}}</view>
+      <view class="row-actions">
+        <button
+          class="btn btn--secondary row-actions__item"
+          aria-role="button"
+          aria-label="开始或停止录音（尚未接线）"
+          disabled="{{guest}}"
+          bindtap="onRecord"
+        >{{recording ? '录音中…（尚未接线）' : '开始录音（尚未接线）'}}</button>
+      </view>
+      <view class="demo-caption">录音控件与上方播报控件是两个独立控件：录音不会触发播报，播报也不采集任何音频。</view>
+    </view>
+  </view>
+</view>
