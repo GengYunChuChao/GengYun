@@ -254,3 +254,142 @@ CI 的 `test:unit` 只断言 `route_mounted` 一致性，不断言行号范围�
 > （新增 HTTP 10/10、域库 10/10、受影响 292 项 291 通过 1 明确跳过、`npm run test:unit`
 > 1757 项 1756 通过 0 失败 1 明确跳过）。**未验证**：标签原文用量正例、八组科普评估、
 > #8 整项 100 组与消费者一致性、正式微信/Android 端到端、真实库/原生 PG 复跑。
+>
+> **变更 2（跨线，用户 2026-10-14 已授权）· 修正被新事实推翻的陈旧 404 断言**：
+> `tests/integration/catalog-pg.mjs` 的既有守卫写于 `/herbicides` 仍为 `planned` 契约之时，
+> 把 `/api/v1/herbicides`、`/api/v1/herbicides/{id}` 与未实现的 `/staging`、`/registrations`
+> 一起断言为「未实现 ⇒ 404」。本轮合法装配并挂上用户鉴权后，未登录正确返回
+> **401 `SESSION_REQUIRED`**，该 404 断言被新事实推翻（CI 原文 `401 !== 404`，
+> `catalog-pg.mjs:126`）。修正只做**最小搬移**：两条 herbicide 路径并入既有 401 循环
+> （额外断言 `error.code==='SESSION_REQUIRED'`，口径与 `/knowledge` 一致），
+> `/staging`、`/registrations` 留在 404 循环；**未放宽任何其它断言**，
+> 且断言强度只增不减（路径数不变，新增 error.code 断言）。已在自建隔离 PG 17.11
+> 上取「改动前失败 / 改动后通过」对照，原始输出见第 5 节。该处可**一行回退**（把两条
+> herbicide 路径移回 404 循环即可）。
+
+## 5 PR #135 CI 回归：陈旧 404 断言的修正与真 PG 对照复现
+
+### 5.1 事实与根因
+
+| 项 | 值 |
+| --- | --- |
+| PR | #135，head `60dd7b9`（= 本片 `5ba9457` + 合成 main `15c3003`） |
+| CI | 13 项：12 success / 1 failure |
+| 失败项 | `catalog-postgres-17.11` → step 6 `node tests/integration/catalog-pg.mjs` |
+| CI 原文 | `AssertionError: 401 !== 404`，`tests/integration/catalog-pg.mjs:126` |
+| 对照 | `main(15c3003)` 与本片基线 `a15a7f1` 上该项**均 success** ⇒ 确由本片引入 |
+
+根因不是实现缺陷，而是**既有测试守卫陈旧**：`catalog-pg.mjs:117-127` 写作于 `/herbicides`
+仍为 `planned` 契约之时，把两条 herbicide 路径与未实现的 `/staging`、`/registrations`
+合并断言「未实现 ⇒ 404」。本片合法装配并挂用户鉴权后，未登录正确地变成 401
+`SESSION_REQUIRED`。属于「被新事实推翻的断言」，按「只改被推翻处、不放宽其它断言」最小修正。
+
+### 5.2 同源处 grep（只发现这一处）
+
+```text
+$ Select-String -Path tests/**/*.{mjs,cjs,js,ts}, tools/**  -Pattern 'api/v1/herbicides'
+tests/integration/catalog-pg.mjs:125            ← 唯一陈旧处（已修）
+tests/unit/knowledge-herbicides-http.test.mjs:* ← 本片新增测试（正确断言 401）
+```
+
+`tests/integration/*` 全量 grep `404|NOT_FOUND|unassembled|route_mounted|planned` 的其余命中
+均为「未知 id / 归属 / 未接线 kind」等同形 404 语义，与路由是否装配无关，**未触碰**。
+CI 其余 PG 入口（`auth-privacy-pg`、`consent-grant-pg`、`source-lifecycle-pg`、
+`staging-intake-pg`、`workbook-staging-pg`）不含路由装配清单断言。
+
+### 5.3 本轮改动（最小 diff，仅一个文件）
+
+```diff
+--- a/tests/integration/catalog-pg.mjs
++++ b/tests/integration/catalog-pg.mjs
+@@ -114,15 +114,17 @@ try {
+-  // Knowledge is now registered and user-only, even for unavailable detail.
++  // Knowledge and herbicides are now registered and user-only, even for unavailable detail.
+   // This preview LOGIN intentionally lacks user-auth/knowledge privileges;
+   // guest rejection happens before any attempt to query private user data.
+-  for (const path of ['/api/v1/knowledge', '/api/v1/knowledge/00000000-0000-4000-8000-000000000001']) {
++  for (const path of ['/api/v1/knowledge', '/api/v1/knowledge/00000000-0000-4000-8000-000000000001',
++    '/api/v1/herbicides', '/api/v1/herbicides/00000000-0000-4000-8000-000000000001']) {
+     const denied = await fetch(`${app.listeningOrigin}${path}`);
+     assert.equal(denied.status, 401);
+     assert.equal((await denied.json()).error.code, 'SESSION_REQUIRED');
+   }
+-  for (const path of ['/api/v1/herbicides', '/api/v1/herbicides/00000000-0000-4000-8000-000000000001', '/api/v1/staging', '/api/v1/registrations']) {
++  // staging / registrations remain unimplemented paths ⇒ contract-shaped 404.
++  for (const path of ['/api/v1/staging', '/api/v1/registrations']) {
+     assert.equal((await fetch(`${app.listeningOrigin}${path}`)).status, 404);
+   }
+```
+
+强度对照：路径总数不变（6 条未登录探测），两条 herbicide 路径由「仅断言状态 404」
+改为「断言状态 401 **且** `error.code==='SESSION_REQUIRED'`」——**只增强、未放宽**；
+`/staging`、`/registrations` 仍是 404（它们确实未注册）。
+**一行可回退**：把这两条路径移回 404 循环、并删去新增注释行即恢复原状。
+
+### 5.4 自建隔离 PG 17.11 上的「改动前 / 改动后」对照（原始输出）
+
+环境：本机自建集群 `E:\GengYunCommander\.w24-pg\data`（`initdb` 新库、SCRAM、
+`listen_addresses=127.0.0.1`、端口 55512、owner 随机密码仅存本机 private 文件，
+不提交、不回显），库 `gengyun_catalog_test` 每轮 drop+create，并清理 5 个测试角色，
+以满足脚本自带的「fresh DB / 无既有角色」前置。跑完 `pg_ctl -m fast stop`。
+
+```text
+=== [BEFORE (stale 404 guard)] PG17.11 up on port 55512 ===
+preconditions: server_version=17.11 public_tables=0 pre_existing_roles=0
+Real PostgreSQL patch: 17.11
+PASS real migration apply/repeat/drift/failed-DDL rollback
+PASS actual login roles deny private/base reads, PUBLIC access, cross-view access, writes, DDL, TEMP and escalation
+PASS committed 20 incomplete public records + 2 synthetic records: real PG import/repeat, eligible evidence=0, DoseCard=0, scoped seed rollback
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+401 !== 404
+    at file:///E:/GengYunCommander/GengYun_W24/tests/integration/catalog-pg.mjs:126:12
+  actual: 401,
+  expected: 404,
+  operator: 'strictEqual',
+Node.js v24.16.0
+=== [BEFORE (stale 404 guard)] catalog-pg exit=-1073740791 (expected fail) ===
+port 55512 listening after stop: False
+leftover postgres processes from E:\GengYunCommander\.pg17\pgsql\bin : 0
+```
+
+（改动前的本地中断退出码为 `-1073740791`：断言抛出后 Node 在 Windows 上以
+`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` 中止；CI 记为 exit 1。
+两者都是**非零失败**，且断言点与 CI 完全一致。）
+
+```text
+=== [AFTER v2 (fresh cluster, explicit exit)] PG17.11 up on port 55512 ===
+preconditions: server_version=17.11 public_tables=0 pre_existing_roles=0
+Real PostgreSQL patch: 17.11
+PASS real migration apply/repeat/drift/failed-DDL rollback
+PASS actual login roles deny private/base reads, PUBLIC access, cross-view access, writes, DDL, TEMP and escalation
+PASS committed 20 incomplete public records + 2 synthetic records: real PG import/repeat, eligible evidence=0, DoseCard=0, scoped seed rollback
+PASS real HTTP→API→restricted PG: empty/12→10, field shape, source/status/date/review/mode/content negatives, newer-hidden and immediate invalidation/rollback
+PASS registration identity/source/hash/ingredients mapping; status/missing-date/identity-conflict/injection/demo rejection; failed import transaction preserves prior evidence
+PASS 0005 scoped rollback preserves base records and fails closed in API
+=== [AFTER v2 (fresh cluster, explicit exit)] catalog-pg exit=0 (expected pass) ===
+port 55512 listening after stop: False
+leftover postgres processes from E:\GengYunCommander\.pg17\pgsql\bin : 0
+OUTER_EXIT=0
+```
+
+### 5.5 合成当前 main 与本轮门禁
+
+```text
+$ git fetch upstream --prune ; git merge upstream/main --no-edit
+upstream/main = 15c3003efc221407734ea26366a7538ae23ddcbb（仅 docs/ui-demo/**，#132）
+→ 无冲突；合成提交 d93dd0cf41a2e275cd12f6715bb42975104bf539
+```
+
+```text
+$ npm run lint                      → PASS（api/admin tsc + 卫生扫描）
+$ npm run test:contract             → tests 6  / pass 6 / fail 0
+$ node --test tests/reference/zhejiang-consumption.test.mjs tests/unit/knowledge-herbicides-http.test.mjs
+                                    → tests 20 / pass 20 / fail 0 / skipped 0
+$ npm run test:unit                 → tests 1757 / pass 1756 / fail 0 / skipped 1
+$ git diff --check                  → 无输出
+```
+
+未跑项：CI 上的其余 workflow（`workbook-staging`、`local-wechat` 等）未在本机复跑；
+本轮唯一新增跨线改动是 `tests/integration/catalog-pg.mjs` 的那一处（已在真 PG 复现并验证）。
