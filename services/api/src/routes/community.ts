@@ -171,6 +171,17 @@ function noStore(reply: FastifyReply): FastifyReply {
   return reply.header('Cache-Control', 'no-store');
 }
 
+/**
+ * `onRequest` 钩子：**先于**鉴权与 schema 校验执行，因此**成功与失败响应都带 no-store**。
+ *
+ * 为什么必须在钩子里做：契约把社区接口的 200 头标为「私有/授权访问 no-store」，
+ * 而 401/403/404/409/422/503 同样可能带出内容或状态，且共享缓存不应缓存任何一份。
+ * 只在成功分支写头会让错误响应失去 no-store（`routes/messages.ts` 同口径）。
+ */
+const noStoreHook = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  reply.header('Cache-Control', 'no-store');
+};
+
 export function registerCommunityRoutes(
   app: FastifyInstance,
   config: AppConfig,
@@ -187,7 +198,7 @@ export function registerCommunityRoutes(
 
   app.get(
     `${API_PREFIX}/posts`,
-    { preHandler: guards.requireUser, schema: { querystring: listPostsQuery } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { querystring: listPostsQuery } },
     async (request, reply) => {
       const data = await ready().listPosts(actorOf(request), request.query as Record<string, never>);
       // 契约：列表不带 ETag（"列表无此头"）。
@@ -197,7 +208,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/posts`,
-    { preHandler: guards.requireUser, schema: { body: postBody } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { body: postBody } },
     async (request, reply) => {
       const data = await ready().createPost(actorOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -209,7 +220,7 @@ export function registerCommunityRoutes(
 
   app.get(
     `${API_PREFIX}/posts/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().getPost(actorOf(request), idOf(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -218,7 +229,7 @@ export function registerCommunityRoutes(
 
   app.patch(
     `${API_PREFIX}/posts/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: postBody } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: postBody } },
     async (request, reply) => {
       const data = await ready().editPost(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -227,7 +238,7 @@ export function registerCommunityRoutes(
 
   app.delete(
     `${API_PREFIX}/posts/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().deletePost(actorOf(request), idOf(request), writeOptions(request));
       // `Ack` 不返回资源表示，删除后资源已不可读 ⇒ 不写 ETag（见文件头"ETag"一节）。
@@ -237,7 +248,7 @@ export function registerCommunityRoutes(
 
   app.get(
     `${API_PREFIX}/posts/:id/comments`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS, querystring: listCommentsQuery } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, querystring: listCommentsQuery } },
     async (request, reply) => {
       const data = await ready().listComments(
         actorOf(request),
@@ -250,7 +261,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/posts/:id/comments`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
     async (request, reply) => {
       const data = await ready().createComment(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -262,7 +273,7 @@ export function registerCommunityRoutes(
 
   app.get(
     `${API_PREFIX}/comments/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().getComment(actorOf(request), idOf(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -271,7 +282,7 @@ export function registerCommunityRoutes(
 
   app.patch(
     `${API_PREFIX}/comments/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
     async (request, reply) => {
       const data = await ready().editComment(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -280,7 +291,7 @@ export function registerCommunityRoutes(
 
   app.delete(
     `${API_PREFIX}/comments/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().deleteComment(actorOf(request), idOf(request), writeOptions(request));
       return noStore(reply).send({ data, meta: buildMeta(request, config) });
@@ -291,7 +302,7 @@ export function registerCommunityRoutes(
   // 因此不写 ETag（`Ack` 无资源表示，且集合变化不改变 `Post`/`Comment` 的版本）。
   app.put(
     `${API_PREFIX}/posts/:id/like`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().likePosts(actorOf(request), idOf(request), writeOptions(request));
       return noStore(reply).send({ data, meta: buildMeta(request, config) });
@@ -300,7 +311,7 @@ export function registerCommunityRoutes(
 
   app.delete(
     `${API_PREFIX}/posts/:id/like`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().unlikePosts(actorOf(request), idOf(request), writeOptions(request));
       return noStore(reply).send({ data, meta: buildMeta(request, config) });
@@ -309,7 +320,7 @@ export function registerCommunityRoutes(
 
   app.put(
     `${API_PREFIX}/comments/:id/like`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().likeComments(actorOf(request), idOf(request), writeOptions(request));
       return noStore(reply).send({ data, meta: buildMeta(request, config) });
@@ -318,7 +329,7 @@ export function registerCommunityRoutes(
 
   app.delete(
     `${API_PREFIX}/comments/:id/like`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
     async (request, reply) => {
       const data = await ready().unlikeComments(actorOf(request), idOf(request), writeOptions(request));
       return noStore(reply).send({ data, meta: buildMeta(request, config) });
@@ -327,7 +338,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/reports`,
-    { preHandler: guards.requireUser, schema: { body: reportBody } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { body: reportBody } },
     async (request, reply) => {
       const data = await ready().createReport(actorOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -339,7 +350,7 @@ export function registerCommunityRoutes(
 
   app.get(
     `${API_PREFIX}/reports/:id`,
-    { preHandler: guards.requireUser, schema: { params: ID_PARAMS, querystring: emptyQuery } },
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, querystring: emptyQuery } },
     async (request, reply) => {
       const data = await ready().getOwnReport(actorOf(request), idOf(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
