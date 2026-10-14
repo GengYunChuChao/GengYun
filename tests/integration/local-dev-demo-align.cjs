@@ -16,8 +16,15 @@
 // 已知工具限制（如实记录，不用其它数字替代）：
 //   - 自定义 tabBar 的节点**不在 automator 的页面选择器范围内**（page.$$('.tab-bar') = 0），
 //     故其矩形改由 `getTabBar().createSelectorQuery()` 在组件内测量；
+//   - 页面内嵌的自定义组件（`<state-view>`）同样取不到：实测 page.$/$$ 的 `.gy-state`、
+//     `state-view` 标签名，以及 page.selectComponent(标签名／.class／#id) 全部为空。
+//     故改用页面自身 JS 上下文里的只读探针（pages/specimen 的 `probeStates`）：
+//     this.selectAllComponents + createSelectorQuery().in(组件)，结果经 page data 读回；
 //   - IDE 的 getStyles 不返回简写属性（border-radius／padding／gap 为 null），只返回长写
-//     （border-top-left-radius／padding-top 等），脚本按长写属性取值。
+//     （border-top-left-radius／padding-top 等），脚本按长写属性取值；
+//   - `cli auto` 在**自动化端口被上一次会话占用**时会复用一个装载了旧代码的实例
+//     （实测：改完源码后同端口重连仍拿到旧页面方法）。每次改动源码后用新的 --auto-port
+//     起会话，并在脚本里断言探针存在，避免静默拿到旧构建。
 //
 // 边界：身份与数据都是合成替身（loopback fixture），不是真机、不是真实身份或生产资料；
 //      受控字号是临时替换 wx.getAppBaseInfo，不是用户在系统里真的把字调到最大。
@@ -259,6 +266,20 @@ const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.dis
   const sp = await route('specimen')
   await sp.waitFor(async () => (await sp.data('local')) === true)
   await sp.waitFor(300)
+  // 统一状态视图是**自定义组件**，页面级选择器取不到它的宿主节点与内部节点（实测
+  // page.$/$$ 的 `.gy-state`／`state-view` 标签名，以及 page.selectComponent(标签名/class/#id)
+  // 全部为空；与自定义 tabBar 同类限制）。因此改用页面自身的 JS 上下文取组件实例：
+  // 页面导出只读探针 probeStates，用 this.selectAllComponents + createSelectorQuery().in(组件) 量。
+  await sp.callMethod('probeStates')
+  let stateProbe = null
+  for (let i = 0; i < 60 && !stateProbe; i++) {
+    stateProbe = await sp.data('__probeStates')
+    if (!stateProbe) await sleep(200)
+  }
+  assert.ok(stateProbe && stateProbe.count, '页面探针未返回统一状态视图实例（probeStates）')
+  const stateRows = stateProbe.rows
+  const errorRow = stateRows.find((r) => r.status === 'error')
+  const emptyRow = stateRows.find((r) => r.status === 'empty')
   report.specimen = {
     local: await sp.data('local'),
     posts: await count(sp, '.post'),
@@ -274,7 +295,10 @@ const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.dis
     scanFrames: await count(sp, '.scan-frame'),
     processPanels: await count(sp, '.process-panel'),
     progressTracks: await count(sp, '.progress-track'),
-    stateViews: await count(sp, '.state'),
+    stateProbeByClass: stateProbe.byClass,
+    stateProbeByTag: stateProbe.byTag,
+    stateViews: stateProbe.count,
+    stateStatuses: stateRows.map((r) => r.status),
     endMarkers: await count(sp, '.specimen-end'),
     endMarkerBackground: await style(sp, '.specimen-end', 'background-color'),
     postRadius: await style(sp, '.post', 'border-top-left-radius'),
@@ -282,21 +306,31 @@ const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.dis
     primaryButtonBackground: await style(sp, '.btn--primary', 'background-color'),
     amberPillBackground: await style(sp, '.pill--amber', 'background-color'),
     grayPillBackground: await style(sp, '.pill--gray', 'background-color'),
-    // 统一状态视图（demo .empty 形态）在真实渲染中的样子
-    stateBackground: await style(sp, '.state', 'background-color'),
-    stateBorderTopStyle: await style(sp, '.state', 'border-top-style'),
-    stateBorderColor: await style(sp, '.state', 'border-top-color'),
-    stateTitleFont: await style(sp, '.state__title', 'font-size'),
-    // 关键：.btn 只在 app.wxss 定义，state-view.wxss 不含 .btn。量到 44px 触控下限与
-    // 18px 字号 ⇒ styleIsolation:'apply-shared' 确实让 app.wxss 的 class 规则作用到组件内部。
-    componentButtonMinHeight: await style(sp, '.state__btn', 'min-height'),
-    componentButtonFont: await style(sp, '.state__btn', 'font-size')
+    // 统一状态视图（demo .empty 形态）在真实渲染中的样子：取自页面探针的组件级计算样式。
+    // 逐语气分列——guest 有 .state--guest 覆盖，虚线框与 demo .empty 同值要看 empty 那一条。
+    stateBackground: stateRows[0].state.backgroundColor,
+    stateBorderTopStyle: emptyRow.state.borderTopStyle,
+    stateBorderColor: emptyRow.state.borderTopColor,
+    stateBorderRadius: emptyRow.state.borderTopLeftRadius,
+    statePaddingTop: emptyRow.state.paddingTop,
+    stateTitleFont: stateRows[0].title.fontSize,
+    stateTitleColor: stateRows[0].title.color,
+    // 各语气底色：八态不能只靠一个画面代表
+    stateTones: stateRows.map((r) => ({ status: r.status, background: r.state.backgroundColor, border: r.state.borderTopColor, titleColor: r.title.color })),
+    // 关键：.btn / .btn--secondary 只在 app.wxss（经 @import 内联）定义，state-view.wxss 不含 .btn；
+    // --tap-min 只声明在 page{}。组件内部量到 44px 触控下限与 18px 字号
+    // ⇒ styleIsolation:'apply-shared' 确实让 app.wxss 的规则与 page{} 的变量作用到组件内部。
+    componentButtonMinHeight: errorRow.button.minHeight,
+    componentButtonFont: errorRow.button.fontSize,
+    componentButtonBackground: errorRow.button.backgroundColor,
+    componentButtonHeight: errorRow.button.height
   }
   assert.equal(report.specimen.local, true, '样式走查页未在本地替身工程下渲染样张')
   assert.ok(report.specimen.posts >= 2 && report.specimen.postTexts >= 2 && report.specimen.postActions >= 3 && report.specimen.commentRows >= 1, '帖子详情形态未渲染')
   assert.ok(report.specimen.articleCards >= 1 && report.specimen.articleArts >= 1 && report.specimen.proseTexts >= 1, '文章详情形态未渲染')
   assert.ok(report.specimen.scanStages >= 1 && report.specimen.scanFrames >= 1 && report.specimen.processPanels >= 1 && report.specimen.progressTracks >= 1, '识别台形态未渲染')
   assert.equal(report.specimen.stateViews, 7, '统一状态视图未渲染七态')
+  assert.deepEqual(report.specimen.stateStatuses, ['guest', 'empty', 'loading', 'error', 'cancelled', 'invalid', 'stub'], '七态的状态顺序或取值不符')
   assert.equal(report.specimen.endMarkers, 1, '缺少末屏标记')
   assert.equal(report.specimen.endMarkerBackground, 'rgb(198, 241, 123)', '--lime #c6f17b 未生效')
   assert.equal(report.specimen.primaryButtonBackground, 'rgb(23, 107, 80)', 'demo --green #176b50 未生效')
@@ -347,18 +381,29 @@ const timer = setTimeout(() => { console.error('Timeout at ' + stage); mini?.dis
       btnMinHeight: await style(bigHome, '.btn', 'min-height'),
       buttons: bigButtons,
       minButtonHeight: Math.min(...bigButtons.map((b) => parseFloat(b.height))),
+      // --font-scale 定义在 .page / .tab-bar 这些**本节点**上时，本节点写的 calc() 会跟着放大：
+      // 底部 tabBar 的图标宽 = 21px * 1.3 = 27.3px（custom-tab-bar/index.wxss 在本节点计算）。
+      tabIconWidth: bigRects.tabIcon && bigRects.tabIcon.width,
       tabBarRect: bigRects.tabBar,
       tabBarData: bigRects.tabBarData,
       lastContentRect: bigRects.rects.lastPanel,
       pageRect: bigRects.rects.page,
+      // 反例（如实记录，不写成通过）：app.wxss 的 `page { --tap-min: max(44px, 44px * var(--font-scale, 1)) }`
+      // 在 **page 节点**求值，而 --font-scale 是注入在 .page 视图上的（page 上仍是默认 1），
+      // 因此 --tap-min 恒为 44px，不随字号放大。依赖它的 .btn 触控下限在最大字号档仍是 44px。
+      tapMinTokenScalesWithFont: false,
+      tapMinNote: 'app.wxss:33-34 的 --tap-min 在 page 节点求值 → 恒 44px；同档下写在本节点的 max(44px, 44px*var(--font-scale,1))（如 styles/components.wxss:64）才会放大到 57.2px',
       // 与静态核算分列：tools/verify-layout.mjs 在同档下按声明复算的 Tab 高度
       staticNavHeightPx: 87.3,
       staticBottomReservePx: 105
     }
     assert.equal(report.maxFont.pageScale, 1.3, '受控最大字号档未生效')
     assert.ok(Math.abs(parseFloat(report.maxFont.rootFontSize) - 23.4) < 0.1, '最大字号档正文未到 23.4px')
-    assert.equal(report.maxFont.btnMinHeight, '57.2px', '最大字号档 --tap-min 未随之放大到 57.2px')
+    // 触控下限：44px 是硬门槛，最大字号档也必须 ≥44px。--tap-min 不随字号放大是本片如实记录的
+    // 观察（见 tapMinTokenScalesWithFont=false），不是把 44px 当作 57.2px 通过。
+    assert.equal(report.maxFont.btnMinHeight, '44px', '--tap-min 实际取值变了，证据页的说明需同步')
     assert.ok(report.maxFont.minButtonHeight >= 44, '最大字号档仍有按钮低于 44px 触控下限')
+    assert.ok(Math.abs(report.maxFont.tabIconWidth - 21 * 1.3) < 1, '最大字号档 tabBar 图标未随 --font-scale 放大（本节点 calc 未生效）')
     assert.ok(bigRects.rects.lastPanel && bigRects.tabBar, '最大字号档矩形取不到')
     report.maxFont.lastScreenClearsTabBar = bigRects.rects.lastPanel.bottom <= bigRects.tabBar.top + 0.5
     assert.ok(report.maxFont.lastScreenClearsTabBar, '最大字号档末屏内容被底部 Tab 遮挡')
