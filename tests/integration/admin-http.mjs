@@ -177,7 +177,9 @@ async function seedUserSession(authStore, label) {
 }
 
 // ---------------------------------------------------------------- 装配两个实例
-// A) **默认装配**（不注入任何后台端口）⇒ 作业读/取消与 hidePost 必须 fail-closed。
+// A) **默认装配**（不注入任何后台端口）⇒ 平台级作业读/取消 fail-closed（503）；
+//    `hidePost` 自 GY-I15 阶段 2 起接到 app 自建的**同一份**社区 store（不再是 503），
+//    未知帖子因此是 404；real 模式的整域 503 由单元回归覆盖。
 const defaultAuth = createMemoryAuthStore();
 const defaultApp = buildApp({
   config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
@@ -409,13 +411,17 @@ await group('[正控制] hidePost：经 HTTP 隐藏 ⇒ 社区公开读不可见
   assert.equal(hit[0].target_ref.id, communityPost.id);
 });
 
-await group('[正控制/反例] hidePost：默认装配**社区存储未接线** ⇒ 503，不谎报成功', async () => {
+await group('[正控制/反例] hidePost：默认装配下社区存储已接线 ⇒ 未知帖子 404，不谎报成功', async () => {
+  // GY-I15（#15）阶段 2 起，`app.ts` 把**同一份**社区 store 交给后台 `hidePost`
+  // （下架必须与社区读取面同源，否则"后台隐藏了帖子"在社区列表/详情侧不生效）。
+  // 因此默认装配下未知帖子是 404 `NOT_FOUND`，而不是"存储未接线"的 503。
+  // **real 模式仍整域 fail-closed 503**（见 tests/unit/admin-real-mode-fail-closed.test.mjs 的 34 条路由反例）。
   const res = await probe('hidePost', 'POST', `${API}/admin/posts/${UNKNOWN_UUID}/hide`, {
-    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=社区未接线',
+    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=社区已接线（未知帖子）',
     body: { reason: '示例' }, headers: { 'idempotency-key': newKey('hide0'), 'if-match': '"1"' },
   });
-  assert.equal(res.status, 503, JSON.stringify(res.body));
-  assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(res.status, 404, JSON.stringify(res.body));
+  assert.equal(res.body.error.code, 'NOT_FOUND');
 });
 
 // —— 审计只读（**放在最后**：此时五类写操作都已发生） ——
