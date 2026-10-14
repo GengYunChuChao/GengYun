@@ -1,11 +1,11 @@
 /**
  * GY-I19（#19）· 删除任务「在线 7 日 / 备份 30 日」到期模块单测。
  *
- * 覆盖面（对齐切片验收）：
- *   1. 正常到期（到期 + 完成 + 证据 ⇒ completed；到期未做 ⇒ due）；
- *   2. **未到期不得 completed**（即使声称 completed 且带证据）；
+ * 覆盖面（对齐切片验收；**期限=上限、完成看事实**）：
+ *   1. **期限内提前完成（有有效证据）⇒ 必须如实 completed**（监工 P1 场景：10-01 受理 → 10-02 完成）；
+ *   2. **缺有效证据不得 completed**（无论是否到期）；**已逾期仍未执行 ⇒ due 且不得 completed**；
  *   3. **失败必须带可判别原因码**（白名单码透出；非白名单折叠；未完成时原因码必非空）；
- *   4. **第 7 日 / 第 30 日当天边界**（闭区间：`now === due_at` 算到期，差 1ms 不算）；
+ *   4. **第 7 日 / 第 30 日当天边界**（闭区间：`now === due_at` 为已到期，差 1ms 仍在期限内）；
  *   5. **幂等**（同入参同输出、入参不被修改、结果冻结）。
  *
  * 另含「不另起一套」的交叉校验：本模块算出的到期时刻与已合并的
@@ -98,39 +98,66 @@ test('正常到期 + 完成证据齐全 ⇒ completed；到期未做 ⇒ due 且
   assert.equal(running.reason_code, AGING_REASON_CODES.DUE_IN_PROGRESS);
 });
 
-test('铁律 1：未到期不得返回 completed（即便声称 completed 且带证据）', () => {
-  for (const [phase, now] of [
-    ['online', new Date(T_MS + ONLINE_RETENTION_MS - 1).toISOString()],
-    ['backup', new Date(T_MS + BACKUP_RETENTION_MS - 1).toISOString()],
-    ['backup', DAY7], // 在线已到期时备份仍未到期
-  ]) {
-    const result = evaluateDeletionAging({
+test('P1 修正：完成看事实不看时钟 —— 期限内提前完成（有证据）必须如实 completed；缺证据不得 completed', () => {
+  // 监工 P1 实测场景（隔离调用一次）：requestedAt=2026-10-01T00:00Z、now=10-02、phase=online、
+  // recordedState=completed、evidenceRef=synthetic-proof-deleted-day1。
+  // 改前：completed:false / state:pending / AGING_NOT_DUE ⇒ **提前完成的有效事实被隐去**，
+  //       会误导后续调度**延迟**删除。改后：必须 completed:true。
+  const day1 = new Date(T_MS + 24 * 3600 * 1000).toISOString();
+  const earlyOnline = evaluateDeletionAging({
+    requestedAt: T,
+    phase: 'online',
+    now: day1,
+    recordedState: 'completed',
+    evidenceRef: 'synthetic-proof-deleted-day1',
+  });
+  assert.equal(earlyOnline.is_due, false, '期限未到：期限是**上限**，不是必须保留满 7 天');
+  assert.equal(earlyOnline.online_due, false);
+  assert.equal(earlyOnline.backup_due, false);
+  assert.equal(earlyOnline.state, 'pending', '窗口态仍如实报「仍在期限内」');
+  assert.equal(earlyOnline.completed, true, '期限内提前完成 + 有效证据 ⇒ 必须如实完成');
+  assert.equal(earlyOnline.settled, true);
+  assert.equal(earlyOnline.reason_code, null);
+  assert.ok(earlyOnline.remaining_ms > 0, '仍能报出距期限剩余时间（供调度参考）');
+
+  // 备份阶段同理：第 7 日就把备份清理完（30 日为滚动清理**上限**）同样算完成。
+  const earlyBackup = evaluateDeletionAging({
+    requestedAt: T,
+    phase: 'backup',
+    now: DAY7,
+    recordedState: 'completed',
+    evidenceRef: 'backup:purged:day7',
+  });
+  assert.equal(earlyBackup.is_due, false);
+  assert.equal(earlyBackup.completed, true, '期限前完成备份清理也是完成');
+
+  // **缺有效证据**（空白/缺失）⇒ 不得 completed —— 与是否到期无关。
+  for (const [phase, now] of [['online', day1], ['online', DAY7], ['backup', DAY30]]) {
+    const noEvidence = evaluateDeletionAging({
       requestedAt: T,
       phase,
       now,
       recordedState: 'completed',
-      evidenceRef: 'media:online-purged:3',
+      evidenceRef: '   ',
     });
-    assert.equal(result.is_due, false, `${phase}@${now} 应为未到期`);
-    assert.equal(result.state, 'pending');
-    assert.equal(result.completed, false, `${phase}@${now} 未到期不得 completed`);
-    assert.equal(result.settled, false);
-    assert.equal(result.reason_code, AGING_REASON_CODES.NOT_DUE);
-    assert.ok(result.remaining_ms > 0);
-    assert.equal(result.online_due, phase === 'online' ? false : Date.parse(now) >= Date.parse(DAY7));
+    assert.equal(noEvidence.completed, false, `${phase}@${now} 缺证据不得 completed`);
+    assert.equal(noEvidence.reason_code, AGING_REASON_CODES.DUE_NO_EVIDENCE);
+    assert.equal(noEvidence.settled, false);
   }
 
-  // 到期但声称完成却**没有证据** ⇒ 仍不得 completed（不得谎称完成）。
-  const noEvidence = evaluateDeletionAging({
-    requestedAt: T,
-    phase: 'online',
-    now: DAY7,
-    recordedState: 'completed',
-    evidenceRef: '   ',
-  });
-  assert.equal(noEvidence.state, 'due');
-  assert.equal(noEvidence.completed, false);
-  assert.equal(noEvidence.reason_code, AGING_REASON_CODES.DUE_NO_EVIDENCE);
+  // 期限内未执行：如实报「期限内待办」（NOT_DUE），绝不 completed，也不谎称完成。
+  const inWindow = evaluateDeletionAging({ requestedAt: T, phase: 'online', now: day1, recordedState: 'pending' });
+  assert.equal(inWindow.completed, false);
+  assert.equal(inWindow.state, 'pending');
+  assert.equal(inWindow.reason_code, AGING_REASON_CODES.NOT_DUE);
+  assert.ok(inWindow.detail.includes('期限是上限'), '口径写进 detail，避免被读成「不得完成」');
+
+  // 已逾期仍未执行：due + DUE_NOT_EXECUTED，绝不 completed（不得仅凭时钟判完成）。
+  const overdue = evaluateDeletionAging({ requestedAt: T, phase: 'online', now: DAY30, recordedState: 'pending' });
+  assert.equal(overdue.is_due, true);
+  assert.equal(overdue.state, 'due');
+  assert.equal(overdue.completed, false);
+  assert.equal(overdue.reason_code, AGING_REASON_CODES.DUE_NOT_EXECUTED);
 });
 
 test('铁律 2：失败必须带可判别原因码；非白名单自由文本被折叠且不透出', () => {
@@ -203,7 +230,10 @@ test('铁律 2/3 合并：completed === false 时 reason_code 必非空；三态
     assert.ok(THREE_STATES.includes(result.state), `state 必须属闭集：${result.state}`);
     if (result.completed) {
       assert.equal(result.reason_code, null, 'completed 时不应有原因码');
-      assert.equal(result.is_due, true, '未到期不得 completed');
+      assert.equal(result.settled, true);
+      // 完成只由「状态 completed + 有效证据」决定，**与是否到期解耦**（期限是上限）。
+      assert.equal(input.recordedState, 'completed');
+      assert.equal(typeof input.evidenceRef === 'string' && input.evidenceRef.trim().length > 0, true);
     } else {
       assert.equal(typeof result.reason_code, 'string');
       assert.ok(result.reason_code.length > 0, 'completed===false 必须带可判别原因码');

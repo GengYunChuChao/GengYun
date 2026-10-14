@@ -5,8 +5,13 @@
  * 的**既有实现**跑（不另起一套），投影层只读消费 `thirdPartyStatuses()`；
  * 并显式记录两处**真实空白**（未到期也能自称 completed / 契约 `third_party_state` 从不被填）。
  *
- * 覆盖：请求→完成、请求→失败（带原因码）、**未到期不得 completed**、重复/幂等调用、
- * 越权与未知主体 fail-closed、无接收方不得完成、契约 `ThirdPartyState` 闭集对齐。
+ * 覆盖：请求→完成（**期限内提前完成也如实完成**）、请求→失败（带原因码）、
+ * **缺证据不得 completed**（无论是否到期）、重复/幂等调用、越权与未知主体 fail-closed、
+ * 无接收方不得完成、契约 `ThirdPartyState` 闭集对齐。
+ *
+ * 口径（监工 P1 / `docs/product-requirements.md` B18）：7 日 / 30 日是**期限上限**
+ * （在线 7 日内删除、备份 30 日内滚动清理），**不是必须保留满** ⇒
+ * 「已确认 + 有有效证据」必须如实完成，与是否到期解耦。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,12 +86,14 @@ function assertProjectionInvariants(projection, label = '') {
   for (const recipient of projection.recipients) {
     for (const phase of [recipient.online, recipient.backup]) {
       assert.ok(THIRD_PARTY_PROJECTION_STATES.includes(phase.state), `${where}阶段三态必属闭集`);
-      // 铁律：未到期不得 completed。
-      if (!phase.due) assert.equal(phase.completed, false, `${where}${phase.phase} 未到期不得 completed`);
-      if (phase.completed) assert.equal(phase.reason_code, null, where);
-      else {
+      // 期限与完成**解耦**：`due` 只是事实列示，不是完成门槛（期限是上限）。
+      if (phase.completed) {
+        assert.equal(phase.reason_code, null, where);
+        assert.equal(phase.protocol_state, 'confirmed', `${where}只有已确认才可能完成`);
+      } else {
         assert.equal(typeof phase.reason_code, 'string', `${where}${phase.phase} 未完成必须带原因码`);
         assert.ok(phase.reason_code.length > 0, where);
+        assert.notEqual(phase.reason_code, REASON.NOT_DUE, `${where}未到期不再是完成阻塞原因（P1 口径）`);
       }
       assert.ok(THIRD_PARTY_STATES.includes(phase.protocol_state) || phase.reason_code === REASON.INPUT_INVALID, where);
     }
@@ -124,58 +131,76 @@ test('请求态：接收方删除请求已发出 ⇒ 三态为 requested，绝�
   assert.equal(thirdPartyReceiptState({ source: coordinator, requestId, requestedAt: T, now: HOUR1 }), 'requested');
 });
 
-test('请求→完成：到达 7/30 日窗口且证据齐全才 completed；未到期一律不得 completed', () => {
+test('P1 口径：已确认 + 有效证据 ⇒ 如实 completed（期限内提前确认同样完成）；缺证据/未确认不得完成', () => {
   const { coordinator, requestId } = setup();
   coordinator.requestThirdPartyDeletion({ requestId, recipientId: 'vendor-a', exportRef: 'exp-1' });
   coordinator.confirmThirdPartyDeletion({ requestId, recipientId: 'vendor-a', exportRef: 'exp-1', evidenceRef: 'vendor-receipt-1' });
 
-  // 既有访问器：只看 confirmed ⇒ 立刻自称 completed（**不看到期**，这正是本片补的空白）。
-  assert.equal(coordinator.thirdPartyStatuses(requestId)[0].completed, true, '既有实现不看到期窗口');
+  assert.equal(coordinator.thirdPartyStatuses(requestId)[0].completed, true, '既有访问器：confirmed 即 completed');
 
-  // 同一时刻用投影判定：未到期 ⇒ 不得 completed（协议原值如实保留为 confirmed）。
+  // 监工 P1 场景：确认发生在**第 1 小时**（远早于 7/30 日期限）⇒ 必须如实完成；
+  // 不得因为「未到期」把已确认且有证据的接收方重新投影回 requested。
   const early = projectThirdPartyDeletion({ source: coordinator, requestId, requestedAt: T, now: HOUR1 });
-  assertProjectionInvariants(early, '未到期');
-  assert.equal(early.completed, false, '未到期不得 completed');
-  assert.equal(early.state, 'requested');
-  assert.equal(early.reason_code, REASON.NOT_DUE);
-  assert.equal(early.receipt_third_party_state, 'requested');
+  assertProjectionInvariants(early, '期限内提前完成');
+  assert.equal(early.completed, true, '期限内提前确认 + 有证据 ⇒ 如实完成（期限是上限）');
+  assert.equal(early.state, 'completed');
+  assert.equal(early.reason_code, null);
+  assert.equal(early.receipt_third_party_state, 'confirmed');
+  assert.deepEqual(early.summary, { total: 1, requested: 0, completed: 1, failed: 0 });
+  assert.equal(early.recipients[0].online.due, false, 'due 只是事实：仍在期限内');
+  assert.equal(early.recipients[0].online.completed, true);
   assert.equal(early.recipients[0].online.protocol_state, 'confirmed');
-  assert.equal(early.recipients[0].online.completed, false);
-  assert.equal(early.recipients[0].online.due, false);
-  assert.equal(early.recipients[0].confirmed_at, T);
+  assert.equal(early.recipients[0].online.due_at, DAY7);
+  assert.equal(early.recipients[0].online.remaining_ms === undefined, true, '不新增契约外字段');
+  assert.equal([...early.reasons].includes(REASON.NOT_DUE), false, '不再用 NOT_DUE 阻塞完成');
 
-  // 第 7 日当天：在线到期并完成，备份仍未到期 ⇒ 整单仍不得完成。
+  // 第 7 日：在线到期、备份仍在期限内 —— 两阶段都已确认且带证据 ⇒ 仍如实完成。
   const atDay7 = projectThirdPartyDeletion({ source: coordinator, requestId, requestedAt: T, now: DAY7 });
   assertProjectionInvariants(atDay7, '第7日');
-  assert.equal(atDay7.recipients[0].online.completed, true);
-  assert.equal(atDay7.recipients[0].online.due_at, DAY7);
-  assert.equal(atDay7.recipients[0].backup.completed, false);
-  assert.equal(atDay7.completed, false);
-  assert.ok(atDay7.reasons.includes(REASON.NOT_DUE));
+  assert.equal(atDay7.recipients[0].online.due, true);
+  assert.equal(atDay7.recipients[0].backup.due, false);
+  assert.equal(atDay7.completed, true);
 
-  // 第 30 日当天：两阶段都到期且有证据 ⇒ 才算完成。
+  // 第 30 日：两阶段都到期 ⇒ 依旧完成（结论不因时钟推进而改变）。
   const atDay30 = projectThirdPartyDeletion({ source: coordinator, requestId, requestedAt: T, now: DAY30 });
   assertProjectionInvariants(atDay30, '第30日');
   assert.equal(atDay30.completed, true);
   assert.equal(atDay30.state, 'completed');
-  assert.equal(atDay30.reason_code, null);
   assert.deepEqual(atDay30.summary, { total: 1, requested: 0, completed: 1, failed: 0 });
   assert.equal(atDay30.receipt_third_party_state, 'confirmed');
   assert.equal(atDay30.recipients[0].online.due_at, DAY7);
   assert.equal(atDay30.recipients[0].backup.due_at, DAY30);
 
-  // 到期但缺证据同样不得完成（空白证据不算证据）。
-  const noEvidence = projectThirdPartyDeletion({
+  // **缺证据**不得完成 —— 与是否到期无关（空白证据不算证据）。
+  for (const now of [HOUR1, DAY30]) {
+    const noEvidence = projectThirdPartyDeletion({
+      source: manualSource([
+        { recipient_id: 'vendor-x', online_status: 'confirmed', backup_status: 'confirmed', evidence_ref: '   ' },
+      ]),
+      requestId,
+      requestedAt: T,
+      now,
+    });
+    assertProjectionInvariants(noEvidence, `缺证据@${now}`);
+    assert.equal(noEvidence.completed, false);
+    assert.equal(noEvidence.reason_code, REASON.NO_EVIDENCE);
+    assert.equal(noEvidence.receipt_third_party_state, 'requested', '缺证据绝不给 confirmed');
+  }
+
+  // **已逾期仍未确认**（到期仍未执行）⇒ due 为 true 但不得 completed。
+  const overdueUnconfirmed = projectThirdPartyDeletion({
     source: manualSource([
-      { recipient_id: 'vendor-x', online_status: 'confirmed', backup_status: 'confirmed', evidence_ref: '   ' },
+      { recipient_id: 'vendor-y', online_status: 'requested', backup_status: 'requested', evidence_ref: null },
     ]),
     requestId,
     requestedAt: T,
     now: DAY30,
   });
-  assertProjectionInvariants(noEvidence, '缺证据');
-  assert.equal(noEvidence.completed, false);
-  assert.equal(noEvidence.reason_code, REASON.NO_EVIDENCE);
+  assertProjectionInvariants(overdueUnconfirmed, '逾期仍未确认');
+  assert.equal(overdueUnconfirmed.completed, false);
+  assert.equal(overdueUnconfirmed.reason_code, REASON.REQUESTED);
+  assert.equal(overdueUnconfirmed.recipients[0].online.due, true, '事实：已到达期限');
+  assert.equal(overdueUnconfirmed.recipients[0].online.completed, false);
 });
 
 test('请求→失败：三态为 failed 且必带可判别原因码；非白名单原文不透出', () => {

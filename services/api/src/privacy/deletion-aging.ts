@@ -16,24 +16,32 @@
  *   - 失败码白名单：`deletion.mjs` 的 `SAFE_ERROR_CODES`（自由文本一律**不**透出，
  *     见下面「失败必须带可判别原因码」）。
  *
- * ## 三条铁律
- * 1. **未到期不得返回 completed**：即使调用方声称 `recordedState: 'completed'` 且给了证据，
- *    只要 `now < due_at`，结果一律 `completed: false` + `reason_code = 'AGING_NOT_DUE'`。
- *    时钟没走到期，就没有任何理由说"完成"。
- * 2. **失败必须带可判别原因码**：`completed === false` 时 `reason_code` **必非空**，
- *    便于区分「没到期」「到期了没做」「到期了在做」「到期了但没证据」「被阻塞」。
+ * ## 期限口径（**上限**，不是必须保留满）+ 三条铁律
+ * `docs/product-requirements.md` B18：「**在线个人记录及原始私有媒体 7 日内删除，备份 30 日内
+ * 滚动清理**」—— 7 日 / 30 日是**期限上限（最晚完成时间）**，**不是**「必须保留满 7／30 天」。
+ * 因此本模块把**到期（期限）**与**完成（事实）解耦**：
+ *
+ * 1. **完成任务不看时钟，只看事实**：`recordedState: 'completed'` 且**证据有效**（非空白）
+ *    ⇒ `completed: true`，**无论是否到期** —— 期限内提前删完就是完成，必须如实返回；
+ *    把它隐去会误导后续调度**延迟**删除。
+ *    `is_due` / `online_due` / `backup_due` / `due_at` / `remaining_ms` 只表达**期限**，
+ *    不表达「能不能完成」。
+ * 2. **不得凭时钟判完成**：未执行（`pending`/`running`）或缺有效证据时 `completed` 一律
+ *    `false` 并给出可判别原因码 —— 仍在期限内未完成 ⇒ `AGING_NOT_DUE`；
+ *    已逾期未执行 ⇒ `AGING_DUE_NOT_EXECUTED` / `AGING_DUE_IN_PROGRESS`；
+ *    报称完成但缺有效证据 ⇒ `AGING_DUE_NO_EVIDENCE`（与 `deletion.mjs` 的
+ *    `EVIDENCE_REQUIRED` 同口径，**与是否到期无关**）。
+ * 3. **失败必须带可判别原因码**：`completed === false` 时 `reason_code` **必非空**，
+ *    便于区分「期限内没做完」「逾期了没做」「逾期了在做」「缺证据」「被阻塞」。
  *    来自既有协议白名单的失败码原样透出（可判别）；非白名单的自定义文本**折叠**为
  *    `AGING_PHASE_FAILED`，不把任意文本带进输出。
- * 3. **不得谎称完成**：`completed: true` 需同时满足「已到期」+「`recordedState: 'completed'`」
- *    +「证据非空」。缺任意一条都返回 `completed: false` 并给出原因码（到期无证据 ⇒
- *    `AGING_DUE_NO_EVIDENCE`，与 `deletion.mjs` 的 `EVIDENCE_REQUIRED` 同口径）。
  *
  * ## 边界（第 7 日 / 第 30 日**当天**）—— 明确且写进代码
  * `due_at = requested_at + 7×24h`（在线）/ `+ 30×24h`（备份），**精确到毫秒**，
  * 判定采用**闭区间**：
- *   - `now === due_at` ⇒ **算到期**（第 7/30 日当天那一毫秒即到期）；
- *   - `now === due_at - 1ms` ⇒ 未到期（差一毫秒也仍是未到期，不进 completed）。
- * 因此「第 7 日当天」是到期的第一天，不是"第 7 日过完才到期"。
+ *   - `now === due_at` ⇒ **已到期**（第 7/30 日当天那一毫秒即到达期限）；
+ *   - `now === due_at - 1ms` ⇒ 未到期（差一毫秒也仍在期限内）。
+ * 期限只是上限：**当天之前删完同样算完成**，不存在「必须留到第 7/30 日」。`
  *
  * ## 幂等
  * 输出完全由入参决定（`now` 可注入；不注入时才取一次系统时间）。相同入参 ⇒ 逐字段相同，
@@ -74,13 +82,13 @@ export type DeletionRecordedState = 'pending' | 'running' | 'completed' | 'block
  * 原样出现在 `recorded_error_code` 与 `reason_code` 里（见 `SAFE_ERROR_CODES`）。
  */
 const AGING_REASON_CODE_VALUES = {
-  /** 未到期：不得完成，也不得执行。 */
+  /** 仍在期限内、且该阶段尚未完成（**不是**「不得完成」；期限是上限）。 */
   NOT_DUE: 'AGING_NOT_DUE',
-  /** 已到期但该阶段尚未执行。 */
+  /** 已逾期但该阶段尚未执行。 */
   DUE_NOT_EXECUTED: 'AGING_DUE_NOT_EXECUTED',
-  /** 已到期且该阶段正在执行中。 */
+  /** 已逾期且该阶段正在执行中。 */
   DUE_IN_PROGRESS: 'AGING_DUE_IN_PROGRESS',
-  /** 已到期、声称完成，但**没有完成证据**（不得判完成）。 */
+  /** 报称完成但**没有有效证据**（空白不算证据）⇒ 不得判完成（与是否到期无关）。 */
   DUE_NO_EVIDENCE: 'AGING_DUE_NO_EVIDENCE',
   /** 该阶段被阻塞（无白名单错误码可用）。 */
   PHASE_BLOCKED: 'AGING_PHASE_BLOCKED',
@@ -139,9 +147,11 @@ export interface DeletionAgingResult {
   readonly backup_due: boolean;
   /** 本阶段是否已到期。 */
   readonly is_due: boolean;
-  /** 三态：待办 / 到期 / 失败。 */
+  /** 三态（**窗口态**）：期限内待办 `pending` / 已到达期限 `due` / 失败 `failed`。
+   * 注意：它不是「完成态」——是否完成只看 `completed`（与到期解耦）。 */
   readonly state: DeletionAgingState;
-  /** 是否可判完成（到期 + 已记录完成 + 证据非空；**未到期恒为 false**）。 */
+  /** 是否**已带有效证据完成**（`completed` 状态 + 非空白证据）。
+   * **与是否到期解耦**：期限内提前删完同样为 `true`；未执行或缺证据恒为 `false`。 */
   readonly completed: boolean;
   /** 是否已终结（`completed` 或 `state === 'failed'`）。 */
   readonly settled: boolean;
@@ -298,30 +308,31 @@ export function evaluateDeletionAging(input: DeletionAgingInput): DeletionAgingR
       reasonCode = AGING_REASON_CODE_VALUES.PHASE_BLOCKED;
       detail = `阶段 ${phase} 已记录 blocked，且无白名单错误码可用`;
     }
+  } else if (recordedRaw === 'completed' && evidence.length > 0) {
+    // **完成看事实、不看时钟**：期限内提前删完 + 有效证据 ⇒ 如实判完成。
+    // 7 日 / 30 日是期限**上限**，不是必须保留满的时长；把提前完成隐去会误导调度延迟删除。
+    completed = true;
+    state = isDue ? 'due' : 'pending'; // 窗口态只反映期限，不反映完成。
+    reasonCode = ''; // 无：completed 时 reason_code 为 null。
+    detail = null;
+  } else if (recordedRaw === 'completed') {
+    // 报称完成但**缺有效证据**（空白不算证据）⇒ 不得判完成（与是否到期无关）。
+    state = isDue ? 'due' : 'pending';
+    reasonCode = AGING_REASON_CODE_VALUES.DUE_NO_EVIDENCE;
+    detail = `阶段 ${phase} 报称完成但缺有效证据，不得判完成（证据是完成的必要条件）`;
   } else if (!isDue) {
-    // 铁律 1：未到期一律不得完成 —— 即便调用方声称 completed 且给了证据。
+    // 仍在期限内、尚未完成 ⇒ 如实报「期限内待办」；**不是**「不得完成」。
     state = 'pending';
     reasonCode = AGING_REASON_CODE_VALUES.NOT_DUE;
-    detail = `阶段 ${phase} 未到期（now < due_at），不得判完成`;
-  } else if (recordedRaw === 'completed') {
-    state = 'due';
-    if (evidence.length > 0) {
-      completed = true;
-      reasonCode = ''; // 无：completed 时 reason_code 为 null。
-      detail = null;
-    } else {
-      // 铁律 3：到期 + 声称完成但无证据 ⇒ 不得谎称完成。
-      reasonCode = AGING_REASON_CODE_VALUES.DUE_NO_EVIDENCE;
-      detail = `阶段 ${phase} 声称完成但缺证据，不得判完成`;
-    }
+    detail = `阶段 ${phase} 仍在期限内且尚未完成（期限是上限；未到期 ≠ 不得完成）`;
   } else if (recordedRaw === 'running') {
     state = 'due';
     reasonCode = AGING_REASON_CODE_VALUES.DUE_IN_PROGRESS;
-    detail = `阶段 ${phase} 已到期、执行中`;
+    detail = `阶段 ${phase} 已逾期、执行中`;
   } else {
     state = 'due';
     reasonCode = AGING_REASON_CODE_VALUES.DUE_NOT_EXECUTED;
-    detail = `阶段 ${phase} 已到期、尚未执行`;
+    detail = `阶段 ${phase} 已逾期、尚未执行`;
   }
 
   const settled = completed || state === 'failed';

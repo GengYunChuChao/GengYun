@@ -17,17 +17,23 @@
  *    只从 handler 行读 `row.thirdPartyState`（该字段从未被写入）⇒ 接收方三态**永远不出现在回执里**。
  *    本片把「接收方行 → 契约闭集值」的映射补成**可复用的纯函数**（`receipt_third_party_state`），
  *    接线方无需另写一套判断，也无需改动既有文件。
- * 2. **既有 `completed` 不看到期**：`thirdPartyStatuses()` 返回的 `completed` 只看
- *    `online_status==='confirmed' && backup_status==='confirmed'`，**完全不看 7 日 / 30 日窗口** ——
- *    刚确认就能自称"完成"。本片复用第 1 步的 `evaluateDeletionAging()` 把窗口接上：
- *    **未到期一律不得 `completed`**（`THIRD_PARTY_NOT_DUE`）。
+ * 2. **既有 `completed` 不看证据**：`thirdPartyStatuses()` 返回的 `completed` 只看
+ *    `online_status==='confirmed' && backup_status==='confirmed'`，**完全不看确认证据** ——
+ *    行状态是 confirmed（哪怕没有任何可核验证据）就会自称"完成"。本片把**证据**接上：
+ *    已确认**且 `evidence_ref` 有效**（非空白）才算完成（`THIRD_PARTY_NO_EVIDENCE`）。
+ *    **期限（7 日 / 30 日）是上限、不是必须保留满**（`docs/product-requirements.md` B18
+ *    「在线 7 日内删除、备份 30 日内滚动清理」）：`confirmed` + 有证据时**必须如实完成**，
+ *    **无论是否到期**；`due` / `due_at` 只作为事实如实列示，不再当完成门槛。
  * 3. **未完成时没有可判别原因**：既有 `completed:false` 只给一个布尔，分不清"没请求/已请求没确认/
  *    没证据/未到期/接收方失败/无法删除"。本片为每个阶段、每个接收方、整单各给一个**必非空**的
  *    `reason_code`（`completed === true` 时才为 `null`）。
  *
  * ## 边界（默认按"不得谎称完成"设计）
- *   - **未到期不得 completed**：`confirmed` 但 `now < due_at` ⇒ 仍算未完成（`THIRD_PARTY_NOT_DUE`，
- *     同时用 `protocol_state: 'confirmed'` 如实保留协议原值，不隐藏已收到确认这件事）。
+ *   - **期限内提前确认 + 有证据 ⇒ 如实完成**：`confirmed` 且有有效证据时**不得**被重新投影回
+ *     `requested`（期限是上限；把已完成的接收方重投影成待办会误导重试与隔离判断，
+ *     也是监工 P1 所指的「把最晚期限反转为最早确认时间」）。
+ *   - **未确认 / 无有效证据 ⇒ 不得完成**：`requested`/`not_requested`、或 `confirmed` 但证据空白
+ *     ⇒ 一律 `completed: false` + 可判别原因码（`THIRD_PARTY_NO_EVIDENCE`）。
  *   - **失败必须留原因**：白名单错误码原样透出（可判别）；非白名单自由文本**折叠**为
  *     `THIRD_PARTY_FAILED`，**原文不透出**（避免供应商 SDK 文本/私有内容进投影）。
  *   - **fail-closed**：越权（主体不匹配）、给了主体却无法核实归属、请求不存在、入参不可信、
@@ -72,9 +78,10 @@ const REASON_VALUES = {
   NOT_REQUESTED: 'THIRD_PARTY_NOT_REQUESTED',
   /** 已请求、等待接收方确认。 */
   REQUESTED: 'THIRD_PARTY_REQUESTED',
-  /** 接收方已确认，但 7 日 / 30 日窗口**尚未到期** ⇒ 不得判完成。 */
+  /** 保留码：期限未到。**不再**作为完成阻塞原因（期限是上限；已确认 + 有证据即完成，
+   * 无论是否到期）⇒ 新口径下本模块不再产生该码，保留仅为不改变已导出闭集。 */
   NOT_DUE: 'THIRD_PARTY_NOT_DUE',
-  /** 接收方已确认，但缺完成证据（空白不算证据）⇒ 不得判完成。 */
+  /** 已确认，但**缺有效完成证据**（空白不算证据）⇒ 不得判完成。 */
   NO_EVIDENCE: 'THIRD_PARTY_NO_EVIDENCE',
   /** 接收方报告失败（非白名单错误码已折叠；白名单码原样透出）。 */
   FAILED: 'THIRD_PARTY_FAILED',
@@ -111,7 +118,8 @@ export interface ThirdPartyPhaseProjection {
   readonly phase: 'online' | 'backup';
   readonly state: ThirdPartyProjectionState;
   readonly completed: boolean;
-  /** 该阶段窗口是否已到期（`now >= due_at`，闭区间）。 */
+  /** 该阶段窗口是否已到期（`now >= due_at`，闭区间）。
+   * **只是事实列示，不是完成门槛** —— 期限是上限，期限内确认并留下证据同样算完成。 */
   readonly due: boolean;
   readonly due_at: string | null;
   /** 既有协议闭集内的**原始**值（`ThirdPartyState`），如实保留、不隐藏。 */
@@ -227,14 +235,12 @@ function projectPhase(input: {
   } else if (protocolValue === 'requested') {
     state = 'requested';
     reasonCode = REASON_VALUES.REQUESTED;
-  } else if (!due) {
-    // 铁律：未到期不得 completed（协议已确认也不认）。
-    state = 'requested';
-    reasonCode = REASON_VALUES.NOT_DUE;
   } else if (!evidenceOk) {
+    // 已确认但**缺有效证据**（空白不算证据）⇒ 不得判完成（与是否到期无关）。
     state = 'requested';
     reasonCode = REASON_VALUES.NO_EVIDENCE;
   } else {
+    // 已确认 + 有效证据 ⇒ **如实完成**，无论是否到期（期限是上限：7 日内删除 / 30 日内滚动清理）。
     state = 'completed';
     completed = true;
     reasonCode = '';
