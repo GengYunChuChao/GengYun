@@ -478,12 +478,30 @@ try {
       // 结构性证据（读源码文本，不靠行为推断）：
       const appText = readFileSync(new URL('services/api/src/app.ts', root), 'utf8');
       const providerText = readFileSync(new URL('services/api/src/speech/provider.ts', root), 'utf8');
-      // 默认仍是零端口注入：注册行只出现 guards 与四个**可选**注入值（不传即 undefined ⇒ 插件按模式自建）。
+      // 默认仍是零端口注入：注册行只出现 guards + 四个**可选**注入值（不传即 undefined ⇒ 插件按模式自建），
+      // 以及 GY-I27 接线单追加的**隐私域**授权中间件端口 `consent`（与提供者/存储/媒体端口无关）。
+      const registrationLine = appText
+        .split(/\r?\n/)
+        .find((line) => line.includes('registerSpeechRoutes(app, config,'));
+      assert.ok(registrationLine !== undefined, 'app.ts 必须有 registerSpeechRoutes 装配行');
+      for (const required of [
+        'guards',
+        'store: speechStore',
+        'provider: speechProvider',
+        'media: speechMedia',
+        'jobDeadlineMs: speechJobDeadlineMs',
+      ]) {
+        assert.ok(registrationLine.includes(required), `注册行必须仍传 ${required}`);
+      }
       assert.ok(
-        appText.includes(
-          'registerSpeechRoutes(app, config, { guards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs })',
-        ),
-        '注册行形状必须只见 guards + 四个可选注入值',
+        /consent: (consentGate|undefined)\b/.test(registrationLine),
+        `注册行只允许追加隐私域 consent 端口，实际：${registrationLine.trim()}`,
+      );
+      const injectedKeys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
+      assert.deepEqual(
+        injectedKeys,
+        ['consent', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
+        `注册行不允许出现其它注入键：${injectedKeys.join(', ')}`,
       );
       // 装配路径对 speech/{store,provider,media} 的引用**只能是 import type**（运行时被类型擦除）。
       for (const mod of ['speech/store', 'speech/provider', 'speech/media']) {
@@ -505,7 +523,7 @@ try {
       );
       assert.equal(realSlice.includes('createStubSpeechProvider'), false, 'real 分支不得回退替身');
       assert.equal(realSlice.includes('fetch('), false, 'real 分支不得发起网络请求');
-      observations.push('default-off 结构性证据：注册行只传 guards + 可选注入值（默认 undefined ⇒ 零端口注入）；provider.ts 无网络客户端；real 分支无替身回退');
+      observations.push('default-off 结构性证据：注册行只传 guards + 可选注入值 + 隐私域 consent 端口（默认 undefined ⇒ 零端口注入）；provider.ts 无网络客户端；real 分支无替身回退');
     });
   } finally {
     await realApp.close();

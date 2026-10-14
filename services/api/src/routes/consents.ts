@@ -7,10 +7,10 @@ import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import { readBearerToken } from '../auth/tokens.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
-import { CONSENT_PURPOSES, createPostgresConsentService } from '../privacy/consent-pg.ts';
+import { CONSENT_PURPOSES, createPostgresConsentService, type EgressRevoker } from '../privacy/consent-pg.ts';
 import { buildMeta } from './support.ts';
 
-export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, pool: PgPool | null, guards: AuthGuards, testOptions: { allowSyntheticGrantPolicy?: boolean } = {}): void {
+export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, pool: PgPool | null, guards: AuthGuards, testOptions: { allowSyntheticGrantPolicy?: boolean; egressRevoker?: EgressRevoker } = {}): void {
   const service = pool === null ? null : createPostgresConsentService(pool, config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, testOptions);
   const input = (request: FastifyRequest) => {
     const token = readBearerToken(request.headers.authorization);

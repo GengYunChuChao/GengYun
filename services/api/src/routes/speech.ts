@@ -41,6 +41,7 @@ import { createSpeechService, type SpeechService } from '../speech/service.ts';
 import { createMemorySpeechStore, type SpeechStore } from '../speech/store.ts';
 import { createSpeechProvider, type SpeechProvider } from '../speech/provider.ts';
 import { createSpeechMediaPort, type SpeechMediaPort } from '../speech/media.ts';
+import type { ConsentGate } from '../privacy/egress.ts';
 import { buildMeta } from './support.ts';
 
 declare module 'fastify' {
@@ -99,6 +100,13 @@ export interface SpeechRouteDeps {
   now?: () => Date;
   /** 任务截止时间（毫秒）；生产走服务层默认 30s，仅供装配/回环测试收紧。 */
   jobDeadlineMs?: number;
+  /**
+   * GY-I27 接线单：**可选**授权中间件端口。注入后挂在**会外发/会写入派生内容的入口**
+   * （`POST /speech/transcriptions` 与 `PATCH .../confirmation`），资料类型 `voice_question`
+   * ⇒ 需要 `recording` + `media_processing` + `external_inference`。
+   * **读取（GET）与删除（DELETE）不挂**。未注入 ⇒ 行为与接线前逐字相同。
+   */
+  consent?: ConsentGate;
 }
 
 /**
@@ -129,12 +137,19 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
   /** 只认服务端会话解析出的身份（客户端无法声明 userId）。 */
   const userId = (request: FastifyRequest): string => readIdentity(request).userId;
 
+  // GY-I27 接线单：授权中间件（可选注入）。缺省 null ⇒ 路由与接线前逐字相同。
+  const consentGate =
+    deps.consent === undefined
+      ? null
+      : deps.consent({ purpose: 'external_inference', dataType: 'voice_question' });
+  const gated = (schema: Record<string, unknown>) => ({
+    preHandler: consentGate === null ? deps.guards.requireUser : [deps.guards.requireUser, consentGate],
+    schema,
+  });
+
   app.post(
     `${API_PREFIX}/speech/transcriptions`,
-    {
-      preHandler: deps.guards.requireUser,
-      schema: { querystring: NO_QUERY_SCHEMA, body: MEDIA_JOB_INPUT_SCHEMA },
-    },
+    gated({ querystring: NO_QUERY_SCHEMA, body: MEDIA_JOB_INPUT_SCHEMA }),
     async (request, reply) => {
       const { job } = await service.createTranscription({
         userId: userId(request),
@@ -186,10 +201,7 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
 
   app.patch(
     `${API_PREFIX}/speech/transcriptions/:id/confirmation`,
-    {
-      preHandler: deps.guards.requireUser,
-      schema: { querystring: NO_QUERY_SCHEMA, body: CONFIRM_TRANSCRIPTION_INPUT_SCHEMA },
-    },
+    gated({ querystring: NO_QUERY_SCHEMA, body: CONFIRM_TRANSCRIPTION_INPUT_SCHEMA }),
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const data = await service.confirmTranscription({
