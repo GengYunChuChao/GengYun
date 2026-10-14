@@ -6,6 +6,10 @@
 - 工作区：`GengYun_W26`，分支 `feat/gy-i05-region-profile`；**未 push**（提交由指挥推送）。
 - 基线：`upstream/main = 72c4923`（`72c4923a8ec058399a51609e1cf1e3c70a890b4a`）。
 - 本轮代码 HEAD：`567bbda`（`567bbdaca8e698462d17101fcecff2ca57fd44f2`）；证据页自身提交紧随其后。
+- **已并入 `#138`（`1865c64e`）并在 `services/api/src/app.ts` 解冲突（merge `794a331`，两侧并集）**：main 的
+  `messagesInjection`／消息域装配与本站的日志序列化器／`logStream`／404 脱敏同时保留；合并后 lint、本片单测
+  50/50、哨兵探针 PASS（改前对照仍 11 处命中）、消息域 49/49、`test:unit` 1783/1782/0 fail、`diff --check` 均已复跑。
+- **工具链修正**：`prepare-wechat` 的 `apiBaseUrl` 校验已与客户端用法对齐（`d86814a`，单独可回退），见 §6 与 §8。
 
 ## 0 结论摘要
 
@@ -281,11 +285,14 @@ PASS 9 个定位分支（真实页面/真实 loopback HTTP；平台失败响应�
 | 真机联通受控 HTTPS／域名白名单 | **未取得**（本片不做域名/网关/CDN） |
 | 原生工程静态检查是否等同编译 | 否（`test:mini` 自述 *Not a WeChat compiler or device test*；真实编译/渲染由 §4 的工具链行为代替） |
 
-**发现的工具链装配缺口（非阻塞，交指挥判断）**：`tools/prepare-wechat.mjs local` 经 `readLocalConfig`
-只接受 origin 形态 `apiBaseUrl`（拒绝带路径），而客户端一律 `runtime.apiBaseUrl + '/auth/…'` 拼接（例如
-`miniprogram/utils/auth.js`）。因此**按现状生成的本地替身工程登录会 404 `NOT_FOUND`**（本轮实测：登录页
-`status=登录失败：NOT_FOUND`）；须在 gitignored 副本里手工把 `apiBaseUrl` 改成含 `/api/v1` 才能联调。
-本轮**未修改**该工具或客户端（属跨线，且不在本片范围），仅如实记录。
+**工具链装配缺口（本轮已获批准单独修正）**：`tools/prepare-wechat.mjs local` 经 `readLocalConfig` 原先只接受
+origin 形态 `apiBaseUrl`（拒绝带路径），而客户端一律 `runtime.apiBaseUrl + '/auth/…'` 拼接（例如
+`miniprogram/utils/auth.js`）。因此**按当时现状生成的本地替身工程登录会 404 `NOT_FOUND`**（本轮实测：登录页
+`status=登录失败：NOT_FOUND`），须在 gitignored 副本里手工把 `apiBaseUrl` 改成含 `/api/v1` 才能联调。
+该缺口现已修正（`d86814a`）：`readLocalConfig` 接受 **origin 或 origin + 纯路径段**（尾斜杠规范化；凭据、
+查询串、片段、空段、`.`／`..`、百分号编码仍拒绝），`local-debug-server` 的 `__local__/status` 同时服务根路径
+与带前缀路径，`prepare-wechat` 回显「客户端拼接基址」；**未触碰 `miniprogram/**`，未改共享 `project.config.json`
+与 `miniprogram/config/runtime.js`**。验证与回退说明见 §8「工具链修正」。
 
 ## 7 复现命令
 
@@ -331,3 +338,17 @@ node tests/integration/local-dev-profile-location.cjs <automator目录> .local/i
 > **未取得（不冒称）**：工具原生授权弹窗的允许/拒绝点击（需 GUI）、Android 真机权限流程与截图（需手机扫码，
 > `Tool.enableRemoteDebug` 会等待 `Tool.onRemoteDebugConnected`）、真机联通所需受控 HTTPS/域名白名单、
 > 真实坐标→地区转换资源。截图与机读观测见 `docs/verification/assets/gy-i05-toolchain-567bbda-390/`。
+>
+> **工具链修正：`prepare-wechat` 的 `apiBaseUrl` 校验与客户端用法对齐（回退=还原 `d86814a`）**。
+> 原先工具只接受 origin 形态（`url.pathname !== '/'` 即拒绝），而客户端一律把 `runtime.apiBaseUrl` 当
+> **拼接基址**（`utils/auth.js`、`utils/profile-api.js`、`utils/debug.js`），真实本地 API 的业务前缀是 `/api/v1`
+> —— 因此按当时现状生成的隔离工程登录会打到 `/auth/wechat` 并 404（实测 `status=登录失败：NOT_FOUND`）。
+> 修正后 `readLocalConfig` 接受 `origin` 或 `origin + 纯路径段`（尾斜杠规范化），生成物逐字保留该基址；
+> `local-debug-server` 的诊断端点同时服务根路径与带前缀路径（工具打印的 URL 一定取得到）；安全拒绝未放宽
+> （http、回环/私网 IPv4、host=bindHost、端口一致、无凭据/查询串/片段、键集与 mode/端口范围），并**新增**拒绝
+> 空段、`.`／`..`、`//`、百分号编码与非字符串路径。**未触碰 `miniprogram/**`**，未改共享 `project.config.json`
+> 与 `miniprogram/config/runtime.js`（prepare 的 disabled 守卫断言不变）。
+> 验证：`node --test tests/local-debug.test.mjs` 5/5（新增「带 `/api/v1` 被接受并逐字写入生成物」与
+> 「非法路径仍被拒」）、`npm run test:mini` 5/5、`tools/check-wechat-project.mjs` PASS、`lint`／`test:docs`／
+> `git diff --check` 干净；另做一次**产物级端到端**：用本工具生成的隔离工程 + 真实 loopback API 直接登录成功
+> （请求 `POST /api/v1/auth/wechat`）。
