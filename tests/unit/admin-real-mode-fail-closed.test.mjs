@@ -202,15 +202,18 @@ test('stub 默认装配行为不变（内存实现仍可用且确会写内存）
     const flags = await app.inject({ method: 'GET', url: `${API}/admin/feature-flags`, headers: { authorization: `Bearer ${token}` } });
     assert.equal(flags.statusCode, 200, flags.body);
     assert.equal(flags.json().data.items.length, 3);
-    assert.deepEqual(flags.json().data.items.map((f) => f.enabled), [false, false, false], '契约 3 键默认必须关闭');
+    // 本片起：装配层把 3 个开关与该输出面的**真实状态**对齐（见 `admin/ops/flag-gate.ts`
+    // 的 `FLAG_WIRING_BASELINE`）——此前"列表说全关、/herbicides 照常产出"正是本片要修的
+    // "开关没生效"。服务层工厂的出厂默认（全 false）仍由单测单独钉住。
+    assert.deepEqual(flags.json().data.items.map((f) => f.enabled), [true, true, false], '装配基线：药剂输出/AI 开，投稿面未接线故关');
 
     const set = await app.inject({
       method: 'PUT', url: `${API}/admin/feature-flags/ai_enabled`,
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-stub-flag-0001', 'if-match': '"1"' },
-      payload: { enabled: true, reason: 'r' },
+      payload: { enabled: false, reason: 'r' },
     });
     assert.equal(set.statusCode, 200, set.body);
-    assert.equal(set.json().data.enabled, true);
+    assert.equal(set.json().data.enabled, false);
 
     const created = await app.inject({
       method: 'POST', url: `${API}/admin/sources`,

@@ -354,11 +354,14 @@ await group('[正控制] 作业：已接线实例 ⇒ list 200（4 条）+ cance
 });
 
 // —— 开关 ——
-await group('[正控制] 开关：list 200（契约 3 键默认 false）→ setFlag 200 → 读回一致', async () => {
+await group('[正控制] 开关：list 200（本实例注入的 store 为出厂默认 false）→ setFlag 200 → 读回一致', async () => {
   const listed = await probe('listFlags', 'GET', `${API}/admin/feature-flags`);
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.body.data.items.map((f) => f.key).sort(), [...CONTRACT_FLAG_KEYS].sort());
-  for (const flag of listed.body.data.items) assert.equal(flag.enabled, false, '默认必须是关闭态（最严格一侧）');
+  // 注意：本组走 **wired 实例**（测试自己注入 opsStore，未播种）⇒ 出厂默认仍是全 false。
+  // 「默认关闭 + 与产出面对齐」的播种只发生在 `app.ts` **自建** store 的装配路径上；
+  // 该口径由 `tests/unit/admin-flag-gate.test.mjs` E1 与 `admin-real-mode-fail-closed.test.mjs` 钉住。
+  for (const flag of listed.body.data.items) assert.equal(flag.enabled, false, '注入 store 未播种 ⇒ 出厂默认（最严格一侧）');
 
   const set = await probe('setFlag', 'PUT', `${API}/admin/feature-flags/specific_herbicide_output_enabled`, {
     body: { enabled: true, reason: '示例：比赛演示需要展示药剂输出' },
@@ -802,13 +805,16 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   assert.notEqual(independentA.audit, independentB.audit, '两个独立 runtime 必然各有台账');
 
   // 默认装配（**未注入任何 store**）上实跑：`setFlag` 必须出现在阶段 1 的审计读端点里。
+  // 本片起装配层会按 `FLAG_WIRING_BASELINE` 播种（ai_enabled 基线为 true）⇒ 这里改成
+  // **真正改变取值**（true → false），否则同值设置按既有幂等语义不迁移、不记审计。
   const before = (await defaultHttp(`${API}/admin/audit-events`, { token: defaultAdminAll.token })).body.data.items.length;
   const set = await defaultHttp(`${API}/admin/feature-flags/ai_enabled`, {
     method: 'PUT', token: defaultAdminAll.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('unify'), 'if-match': '"1"' },
-    body: JSON.stringify({ enabled: true, reason: '示例：审计统一回归' }),
+    body: JSON.stringify({ enabled: false, reason: '示例：审计统一回归' }),
   });
   assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.data.enabled, false);
   const after = (await defaultHttp(`${API}/admin/audit-events`, { token: defaultAdminAll.token })).body.data.items;
   assert.equal(after.length, before + 1, '默认装配下 flag.set 必须出现在阶段 1 的审计读端点里');
   assert.ok(after.some((event) => event.action === 'flag.set'), 'flag.set 审计必须可经 HTTP 读到');
@@ -831,13 +837,15 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   );
 
   // 三条**不依赖分类/账号种子**的写操作：其审计必须出现在阶段 1 的读端点里。
+  // （同值设置按既有幂等语义不迁移、不记审计 ⇒ 这里对 ai_enabled 做真实取值变更。）
   const portsBefore = (await portsHttp(`${API}/admin/audit-events`, { token: portsAdmin.token })).body.data.items.length;
   const portsSet = await portsHttp(`${API}/admin/feature-flags/ai_enabled`, {
     method: 'PUT', token: portsAdmin.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('ports-flag'), 'if-match': '"1"' },
-    body: JSON.stringify({ enabled: true, reason: '示例：审计统一回归' }),
+    body: JSON.stringify({ enabled: false, reason: '示例：审计统一回归' }),
   });
   assert.equal(portsSet.status, 200, JSON.stringify(portsSet.body));
+  assert.equal(portsSet.body.data.enabled, false);
   const portsCancel = await portsHttp(`${API}/admin/jobs/${JOB_QUEUED}/cancel`, {
     method: 'POST', token: portsAdmin.token,
     headers: { 'content-type': 'application/json', 'idempotency-key': newKey('ports-job'), 'if-match': '"1"' },
