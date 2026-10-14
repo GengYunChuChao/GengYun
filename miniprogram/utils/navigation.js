@@ -8,13 +8,18 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/messages/messages', 'pages/profile/profile', 'pages/login/login',
   // GY-I26：样式走查页（仅本地替身工程可见）。本列表须与 app.json 的 pages 逐项一致，
   // 由 tests/unit/miniprogram-login-return-to.test.mjs 锁定；不改变任何路由逻辑。
-  'pages/specimen/specimen']
+  'pages/specimen/specimen',
+  // GY-I16：收藏与识别历史（列表／详情）。同样须与 app.json 的 pages 逐项一致；
+  // 三者都**不是**底部 Tab，故不加入 TAB_PAGES（不改变任何路由判定逻辑）。
+  'pages/favorites/favorites', 'pages/history/history', 'pages/historydetail/historydetail']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'
 const LOGIN = '/pages/login/login'
 const MAX_PATH_LENGTH = 512
-const ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail']
+const ID_PAGES = ['/pages/knowledgedetail/knowledgedetail', '/pages/referencedetail/referencedetail', '/pages/referenceseeddetail/referenceseeddetail',
+  // GY-I16 识别记录详情：只带历史行 id（`?id=<uuid>`），不接受任何状态类参数。
+  '/pages/historydetail/historydetail']
 let revision = 0
 let returnTo = null
 

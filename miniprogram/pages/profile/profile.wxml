@@ -20,12 +20,12 @@
   </view>
 
   <view class="stat-grid">
-    <view class="stat">
-      <text class="stat__value">0</text>
+    <view class="stat" bindtap="openFavorites" role="button" aria-label="我的收藏">
+      <text class="stat__value">{{favoriteCount}}</text>
       <text class="stat__label">我的收藏</text>
     </view>
-    <view class="stat">
-      <text class="stat__value">0</text>
+    <view class="stat" bindtap="openHistory" role="button" aria-label="识别历史">
+      <text class="stat__value">{{historyCount}}</text>
       <text class="stat__label">识别历史</text>
     </view>
     <view class="stat">
@@ -36,7 +36,7 @@
 
   <view class="notice notice--warn" wx:if="{{guest}}">
     <text class="notice__icon">🔒</text>
-    <text class="notice__text">登录后才能保存我的作物与地区、收藏资料和识别记录。账号登录沿用已接入的独立登录页，收藏和识别记录尚未接入；登录不要求手机号。</text>
+    <text class="notice__text">登录后才能保存我的作物与地区、收藏资料和识别记录。账号登录沿用已接入的独立登录页，收藏与识别历史已接入独立页面；登录不要求手机号。</text>
   </view>
 
   <block wx:else>
@@ -136,8 +136,8 @@
     </view>
     <state-view
       status="{{guest ? 'guest' : 'stub'}}"
-      title="{{guest ? '请先登录' : '记录功能尚未接入'}}"
-      desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '收藏与历史功能将在对应任务中接入，当前显示为空。'}}"
+      title="{{guest ? '请先登录' : '收藏与识别历史在独立页面'}}"
+      desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '本页不展示收藏与历史明细：请用上方“我的收藏”和“识别历史”进入对应页面。那两个页面完全由服务端读取，失败时如实报错，不会用本地数据顶替。'}}"
     ></state-view>
   </view>
 </view>

@@ -113,9 +113,10 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（13 页）同步，且参考域依赖须一并复制 ——
+  // —— F2 回归：打包允许清单须随 app.json（16 页：原 13 页 + GY-I16 的收藏/历史/历史详情）同步，
+  // 且参考域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 13);
+  assert.equal(appJson.pages.length, 16);
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);

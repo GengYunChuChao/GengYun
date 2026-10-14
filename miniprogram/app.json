@@ -12,7 +12,10 @@
     "pages/messages/messages",
     "pages/profile/profile",
     "pages/login/login",
-    "pages/specimen/specimen"
+    "pages/specimen/specimen",
+    "pages/favorites/favorites",
+    "pages/history/history",
+    "pages/historydetail/historydetail"
   ],
   "window": {
     "navigationBarTitleText": "耕云",

@@ -1,0 +1,8 @@
+{
+  "navigationBarTitleText": "识别历史",
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view",
+    "gy-ui-button": "/components/gy-ui-button/gy-ui-button",
+    "gy-ui-card": "/components/gy-ui-card/gy-ui-card"
+  }
+}
