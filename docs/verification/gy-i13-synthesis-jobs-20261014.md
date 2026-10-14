@@ -14,7 +14,7 @@
 | worktree | `E:\GengYunCommander\GengYun_W38` |
 | 分支 | `feat/gy-i13-synthesis-jobs` |
 | 基线 `upstream/main` | `ddeb301d7fa308023ccbd19e46c0c26871cf75a3`（`git fetch upstream --prune` 后核对，与派单给出的 `ddeb301` 一致） |
-| HEAD | `1348b69`（提交清单见 §5） |
+| HEAD | 本页自身即最后一个提交（`docs(GY-I13): 证据页…`）；其 SHA 会因本页修订而变化 ⇒ **权威 HEAD 以回传为准**。5 个代码/测试提交见 §6 |
 | 依赖 | 直连 `npm install`（**无** junction/symlink 指向别处 `node_modules`） |
 
 ## 1 变更 1：合成域接入共享作业源（服务端）
@@ -276,6 +276,9 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 | `820984c` | `feat(GY-I13): 播报安全检查闸门、播放生命周期控制器与统一语音球组件（Refs #13）` |
 | `706d132` | `feat(GY-I13): 播报页（语音球宿主）与三处页面清单同步（Refs #13）` |
 | `1348b69` | `test(GY-I13): 客户端播放生命周期回归 30 例（含负例与 fail-closed 对照）（Refs #13）` |
+
+其后还有 1 个**证据页**提交（`docs(GY-I13): 证据页（作业源接线 + 播放生命周期原始输出与未取得项）(Refs #13)`），
+即本文件自身；其 SHA 随本页修订变化，故不在此固定（权威 HEAD 见回传）。
 
 `git diff --stat upstream/main...HEAD`（实测）：
 
