@@ -88,6 +88,68 @@ CLEANUP=done（角色与回写表已清理；库由运行器删除）
 | 10 | 未注入真实传输的 `real` 实例：`POST /recognitions` ⇒ **503 `PROVIDER_UNAVAILABLE`（retryable）**，该用户 `exports` 计数 **0** | 无账本可查 | 在任何账本变更之前拒绝 ⇒ 零 `sent` |
 | 11 | 按 `state-contract §105` 口径在同一提交置 `deletion_pending` + `auth_epoch+1`：入口 403 `ACCOUNT_INACTIVE`；`revoker.onAccountSuspendedOrDeleted` ⇒ 在途置 `failed`；晚到结果零写入；注销后连同 `GET /jobs/{id}` 也被守卫拒绝 | 无 | 注销/停用 ⇒ 撤销在途（HTTP 触发面仍缺，见第 6 节） |
 
+## 3.2 真 PG workflow 回归 + 修法（本片修）
+
+**现象**（PR #149 的 CI，两个真 PG workflow 红）：
+`auth-privacy-postgres-17.11` 与 `consent-grant-postgres-17.11` 失败，报
+`{"error":{"code":"PROVIDER_UNAVAILABLE","message":"授权服务暂不可用",...}}`
+（`auth-privacy-pg.mjs` 侧断言为 `503 !== 409`）。
+
+**本地复现**（同一隔离集群，为两个 workflow 各建专用库；**不改任何 CI 文件**）：
+
+```
+AUTH_PRIVACY_TEST_URL='postgres://<owner>:<pw>@127.0.0.1:55432/gengyun_auth_privacy_test' node tests/integration/auth-privacy-pg.mjs
+CONSENT_GRANT_TEST_URL='postgres://<owner>:<pw>@127.0.0.1:55432/gengyun_consent_grant_test' node tests/integration/consent-grant-pg.mjs
+```
+
+**真因**（与本片的装配/接口变更直接相关，**不是**基线既有问题——基线 `fcfa6de` 未装配账本，
+撤回/授予在依赖存在时一律 409 拒绝，这两条因此从不会走到消费者）：
+1. 这两个 workflow 的库只施加 `0001/0003/0008`（`consent-grant` 另加 `0009`）与
+   `roles/auth_privacy.sql`（`consent-grant` 另加 `roles/consent_granter.sql`）——
+   **既不施加 `0011_export_ledger.sql`，也不授予新的 `gengyun_egress_ledger` 角色**；
+2. 本片让 `app.ts` 在"配置了数据库"时装配持久账本并注入 `egressRevoker` ⇒ 撤回/授予在
+   "已有业务依赖（jobs/media/exports/author_links）"时会调用撤回消费者；
+3. 消费者的第一条 `UPDATE public.exports` 于是以驱动错误失败（缺列/缺权限），
+   被 `mapPgError` 笼统映射成 **503 `PROVIDER_UNAVAILABLE`**，再被 `consent-pg`/`grant-pg` 的
+   `transaction()` 兜底成"授权服务暂不可用" ⇒ **把"如实拒绝的部分撤回（409）"说成了"服务不可用"**。
+
+**修法**（fail-closed；**未改 CI 文件、未放宽任何断言、未跳过任何真 PG 负例**）：
+- `ledger-pg.ts` 新增**懒探测** `assertProvisioned()`（结果缓存）：要求
+  `to_regclass('public.export_writebacks')` 存在**且**当前角色对 `exports.revision` /
+  `exports.cancelled_at` 具备 `UPDATE`；所有写路径（reserve / markSent / markFailed /
+  markOutcomeUnknown / guardWriteback / linkJob / cancelVersion / cancelForJob / revokeInFlight）
+  先过探测；不就绪 ⇒ 抛契约内的 **`OBJECT_UNAVAILABLE`（"外发账本未就绪"）**，
+  而不让驱动错误变成 503。
+- `consent-pg.ts` / `grant-pg.ts`：消费者调用包 `try/catch` ⇒ 失败时
+  **`OBJECT_UNAVAILABLE`（拒绝部分撤回 / 拒绝授权变更）**。
+  语义定式：**要么真的撤销了在途外发，要么如实拒绝** —— 绝不在"能否撤销"未知时放行。
+
+**改前 / 改后（原始输出）**：
+
+```
+# 改前
+$ node tests/integration/auth-privacy-pg.mjs   → EXIT=1
+  AssertionError: 503 !== 409   at expectError (auth-privacy-pg.mjs:44) → (…:223)
+  {"error":{"code":"PROVIDER_UNAVAILABLE","message":"授权服务暂不可用","retryable":false,...}}
+# 改后
+$ node tests/integration/auth-privacy-pg.mjs   → EXIT=0
+  ALL 26 native PG17.11 integration groups passed; grant API is tested separately; business write/export consumers remain unimplemented.
+$ node tests/integration/consent-grant-pg.mjs  → EXIT=0
+  ALL 27 grant integration groups passed; synthetic policies are NOT production evidence.
+```
+
+**负控制思路（为什么这不算"放宽断言"）**：两个 workflow 的 `409 OBJECT_UNAVAILABLE` 断言
+（`auth-privacy-pg.mjs`「existing media dependency refuses partial withdrawal」、
+`consent-grant-pg.mjs`「all four unimplemented business dependency classes refuse…」）**逐字保留**，
+它们现在验证的是**更严格**的性质：*消费者不可用时，撤回/授权变更必须**拒绝**，而不是放行或含糊的 503*。
+真正"接上消费者"的环境（本片 `egress-ledger-pg.mjs`：施加 0011 + `egress_ledger` 角色）走另一分支：
+撤回 **200** + 在途外发置 `failed` + 晚到零写入（第 3 节 PASS 8）。两条分支合起来即完备的 fail-closed：
+`消费者可用 ⇒ 真撤销并放行` ／ `消费者不可用 ⇒ 拒绝`。
+
+> 备注（不阻塞、未改动他人脚本）：`auth-privacy-pg.mjs` 收尾提示仍写
+> "business write/export consumers remain unimplemented"——该文本属该脚本作者维护；该 workflow 的库
+> 确实没有施加账本迁移/角色，因此其结论在该环境下成立。本片不改他人脚本文案。
+
 ## 4 门禁与受影响测试（原始输出）
 
 ```
@@ -105,6 +167,10 @@ $ npm run test:unit
 
 $ node tests/integration/{recognitions,speech,ocr,tts,jobs}-http.mjs
 recognitions-http EXIT=0 / speech-http EXIT=0 / ocr-http EXIT=0 / tts-http EXIT=0 / jobs-http EXIT=0
+
+$ node tests/integration/auth-privacy-pg.mjs     → EXIT=0（ALL 26 native PG17.11 integration groups passed）
+$ node tests/integration/consent-grant-pg.mjs    → EXIT=0（ALL 27 grant integration groups passed）
+$ node tests/integration/egress-ledger-pg.mjs    → EXIT=0（RESULT=PASS 11 组，见第 3 节）
 
 $ git diff --check
 （无输出）
@@ -184,6 +250,12 @@ reference,moderation,contract,evaluation}` 与 `tests/local-debug.test.mjs`）�
 6. **接口 async 化的兼容面**：`in-flight.mjs` 的 `cancelVersion` 由同步返回变为 Promise。
    仓库内已核对**全部调用点**（`packages/privacy/**`、`services/api/src/**`、`tests/**`）并同步 `await`；
    若外部还有未入库的调用方，需要同样处理。
+7. **账本未就绪时的语义（承接第 3.2 节）**：库未施加 `0011`/`egress_ledger` 角色时，
+   撤回/授权变更在"已有业务依赖"下一律 **409 `OBJECT_UNAVAILABLE` 拒绝**（不再含糊 503）；
+   运维需按迁移与角色文件补齐后，才算真正接入在途撤销。这是**有意的 fail-closed**，
+   不是功能缺失的静默降级（日志/回执给出"账本未就绪/消费者不可用"）。
+8. **两个 workflow 的库仍未施加账本迁移/角色**：本片**不改 CI**，因此那两个 workflow 走的是
+   "消费者不可用 ⇒ 拒绝"分支；它们**不会**验证"真撤销"路径（该路径由 `egress-ledger-pg.mjs` 覆盖）。
 
 ## 8 PR 正文可粘贴段落
 
@@ -215,10 +287,19 @@ consent-pg/grant-pg 的 EgressRevoker 两方法改为返回 Promise 并 await。
 await 非 Promise 值即原值返回；相关既有用例 110/110 全绿，负例未放宽。回退：还原这四个文件的
 async 化（但会失去持久账本支持，须与 ledger-pg 一并回退）。
 
+**真 PG workflow 回归已修（本片）**：`auth-privacy-pg.mjs` / `consent-grant-pg.mjs` 曾在 CI 红
+（`PROVIDER_UNAVAILABLE 授权服务暂不可用`）。真因：这两条链路所在的库**未施加 0011/未授予
+`gengyun_egress_ledger`**，而本片让授权路径在"已有业务依赖"时调用撤回消费者 ⇒ 驱动错误被笼统
+映射成 503。修法（fail-closed，**未改 CI、未放宽断言**）：账本新增"就绪探测"，
+未就绪 ⇒ 契约内 `OBJECT_UNAVAILABLE`；`consent-pg`/`grant-pg` 对消费者失败**如实拒绝**
+（要么真撤销，要么拒绝）。改后：`auth-privacy-pg` **26/26**、`consent-grant-pg` **27/27** 全绿，
+原 `409` 负例逐字保留并升级为"消费者不可用时必须拒绝"的负控制。详见证据页第 3.2 节。
+
 未取得：真实第三方外发（未授权，real 一律 503 且零 sent）、合成域(TTS)在途守卫（exports.object_id
 为 uuid 与 checked_content_ref.id 不兼容 ⇒ 需 schema/契约决策）、注销 HTTP 触发面（契约仍 planned）、
 真实微信身份/真机、真实媒体存储、export_writebacks 的 7/30 日删除与恢复（GY-I19）、域名/网关/CDN。
 
-门禁：lint / test:unit(1800，0 fail) / privacy+unit 冒烟组 110/110 / 真 PG 11 组 / 受影响域集成脚本
+门禁：lint / test:unit(1800，0 fail) / privacy+unit 冒烟组 110/110 / 真 PG 三支
+（auth-privacy-pg 26/26、consent-grant-pg 27/27、egress-ledger-pg 11/11）/ 受影响域集成脚本
 （recognitions/speech/ocr/tts/jobs-http EXIT=0）/ git diff --check。
 ```

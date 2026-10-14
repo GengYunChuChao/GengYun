@@ -152,6 +152,39 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     }
   }
 
+  /**
+   * 账本**是否已就绪**（懒探测 + 缓存）：需要 0011 迁移（`export_writebacks` 与 `exports` 新列）
+   * **且**运行时角色具备 `gengyun_egress_ledger` 的写权限。
+   *
+   * 为什么需要它（真 PG workflow 回归的修法）：授权路径会在"已有业务依赖"时调用撤回消费者；
+   * 若部署尚未施加 0011/角色，第一条 `UPDATE public.exports` 会以驱动错误（42501/42703）失败，
+   * 被笼统映射成 **503 `PROVIDER_UNAVAILABLE`**，把「如实拒绝的部分撤回」变成「授权服务不可用」。
+   * 这里把它变成**契约内的明确拒绝**（409 `OBJECT_UNAVAILABLE`），由授权服务如实拒绝部分撤回 ——
+   * 方向仍然是 fail-closed：**要么真的撤销在途外发，要么拒绝**，绝不伪造取消成功。
+   */
+  let provisioned: boolean | null = null;
+  async function assertProvisioned(): Promise<void> {
+    if (provisioned === true) return;
+    if (provisioned === false) {
+      throw new PrivacyError('OBJECT_UNAVAILABLE', '外发账本未就绪（缺 0011 迁移或 egress_ledger 角色）');
+    }
+    try {
+      const row = (
+        await pool.query(
+          `SELECT to_regclass('public.export_writebacks') AS wb,
+                  has_column_privilege(current_user, 'public.exports', 'revision', 'UPDATE') AS upd,
+                  has_column_privilege(current_user, 'public.exports', 'cancelled_at', 'UPDATE') AS upd_cancel`,
+        )
+      ).rows[0] as Row | undefined;
+      provisioned = row?.['wb'] !== null && row?.['wb'] !== undefined && row['upd'] === true && row['upd_cancel'] === true;
+    } catch {
+      provisioned = false;
+    }
+    if (!provisioned) {
+      throw new PrivacyError('OBJECT_UNAVAILABLE', '外发账本未就绪（缺 0011 迁移或 egress_ledger 角色）');
+    }
+  }
+
   async function lockExport(client: PoolClient, id: string): Promise<Row | null> {
     if (!UUID.test(id)) throw new PrivacyError('INVALID_REQUEST', '外发记录 id 非法');
     const rows = (await client.query('SELECT * FROM public.exports WHERE id=$1::uuid FOR UPDATE', [id])).rows;
@@ -277,6 +310,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
       throw new PrivacyError('SCOPE_DENIED', `用途 ${purpose} 与资料类型 ${dataType} 不匹配（错用途）`);
     }
 
+    await assertProvisioned();
     return withTransaction(async (client) => {
       await assertAccount(client, userId, authEpoch);
       // 取消墓碑：同一 (user, object, revision) 一旦取消，**不得再次预留**（不可复活）。
@@ -425,6 +459,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   async function linkJob(input: { exportId: string; jobId: string }): Promise<void> {
     const { exportId, jobId } = input ?? {};
     if (!UUID.test(String(jobId))) throw new PrivacyError('INVALID_REQUEST', 'job_id 非法');
+    await assertProvisioned();
     try {
       await pool.query(
         'UPDATE public.exports SET job_id=$2::uuid, updated_at=now() WHERE id=$1::uuid AND job_id IS NULL',
@@ -436,6 +471,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   }
 
   async function markSent(id: string): Promise<ExportRecord> {
+    await assertProvisioned();
     return withTransaction(async (client) => {
       const row = await lockExport(client, id);
       if (!row) throw new PrivacyError('NOT_FOUND', '外发记录不存在');
@@ -458,6 +494,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   }
 
   async function markTerminal(id: string, state: 'failed' | 'outcome_unknown', errorCode: string | null): Promise<ExportRecord> {
+    await assertProvisioned();
     return withTransaction(async (client) => {
       const row = await lockExport(client, id);
       if (!row) throw new PrivacyError('NOT_FOUND', '外发记录不存在');
@@ -484,6 +521,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   async function guardWriteback(input: { exportId: string; userId: string; result: unknown }) {
     const { exportId, userId, result } = input ?? {};
     if (typeof userId !== 'string' || !UUID.test(userId)) throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
+    await assertProvisioned();
     return withTransaction(async (client) => {
       const row = await lockExport(client, exportId);
       if (!row || String(row['user_id']) !== userId) {
@@ -525,6 +563,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     if (!Number.isInteger(objectVersion) || objectVersion < 1) {
       throw new PrivacyError('INVALID_REQUEST', 'object_version 非法');
     }
+    await assertProvisioned();
     return withTransaction(async (client) => {
       const row = await lockExport(client, exportId);
       if (!row || String(row['user_id']) !== userId) {
@@ -556,6 +595,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   async function cancelForJob(input: { jobId: string; userId: string; reason?: string }) {
     const { jobId, userId, reason = 'job_cancelled' } = input ?? {};
     if (!UUID.test(String(jobId))) throw new PrivacyError('INVALID_REQUEST', 'job_id 非法');
+    await assertProvisioned();
     return withTransaction(async (client) => {
       const rows = (
         await client.query(
@@ -577,6 +617,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   /** 撤回/注销：把在途外发置 failed（幂等；撤回时可由 `required_consents` 精确到用途）。 */
   async function revokeInFlight(input: { userId: string; purpose?: string | null }): Promise<number> {
     const { userId, purpose = null } = input ?? {};
+    await assertProvisioned();
     try {
       const rows = (
         await pool.query(
