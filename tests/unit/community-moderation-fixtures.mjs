@@ -169,7 +169,9 @@ export function makeHarness(options = {}) {
   const messages = options.messages ?? createMemoryMessagesStore({ now: () => time });
   const executionMode = options.executionMode ?? 'stub';
   const config = {
-    ...loadConfig({ APP_EXECUTION_MODE: executionMode, LOG_LEVEL: 'silent' }),
+    // 与既有社区/媒体夹具同口径：先按 stub 载入（不读真实环境变量、不落真凭据），
+    // 再显式覆盖为 `real`（用于 fail-closed 反例）。
+    ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     ...(executionMode === 'real' ? { executionMode: 'real', requiresRealCredentials: true } : {}),
   };
   const wired =
@@ -262,7 +264,11 @@ export async function inject(app, method, path, { token, headers = {}, payload }
     ...(payload === undefined ? {} : { payload }),
   });
   const text = response.body;
-  return { status: response.statusCode, body: text === '' ? null : JSON.parse(text) };
+  return {
+    status: response.statusCode,
+    body: text === '' ? null : JSON.parse(text),
+    cacheControl: response.headers['cache-control'] ?? null,
+  };
 }
 
 /**
