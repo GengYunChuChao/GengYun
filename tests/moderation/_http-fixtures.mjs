@@ -16,6 +16,8 @@ import {
   createSubstituteContentAuthority,
 } from '../../services/api/src/moderation/visibility.ts';
 import { signCallbackPayload } from '../../services/api/src/moderation/callback.ts';
+import { deriveRuleVersion } from '../../packages/moderation/index.mjs';
+import { derivePromptVersionForIds } from '../../packages/moderation/prompt-version.mjs';
 import {
   CLEAN_TEXT,
   IMAGE_REF,
@@ -179,4 +181,36 @@ export function callbackEnvelope(overrides = {}) {
 export function signedCallback(envelope, key = TEST_CALLBACK_KEY, options = {}) {
   const raw = options.raw_body ?? JSON.stringify(envelope);
   return { raw_body: raw, signature: options.signature ?? signCallbackPayload(raw, key) };
+}
+
+/** 夹具时钟基准（`makeHarness` 的 `now` 从它起每调用 +1 秒）。 */
+export const HARNESS_BASE_ISO = new Date(Date.UTC(2026, 9, 14, 3, 0, 0)).toISOString();
+
+/** 当前出厂规则集派生版本 / prompt 版本（回调核对用；由内容决定需要的 prompt 集合）。 */
+export const RULE_VERSION_CURRENT = deriveRuleVersion();
+export const TEXT_PROMPT_VERSION = derivePromptVersionForIds(['text_moderation']);
+export const IMAGE_PROMPT_VERSION = derivePromptVersionForIds(['image_moderation']);
+export const TEXT_AND_IMAGE_PROMPT_VERSION = derivePromptVersionForIds(['text_moderation', 'image_moderation']);
+
+/**
+ * 为一**待回调**任务构造合法回调信封（默认全部字段与任务当前值一致 ⇒ 可被接受）。
+ * 用例通过 `overrides` 只改一项来构造"伪造/过期/回放/版本过期"等负例。
+ */
+export function envelopeForTask(task, overrides = {}) {
+  return callbackEnvelope({
+    event_id: overrides.event_id ?? 'evt-0001',
+    issued_at: overrides.issued_at ?? HARNESS_BASE_ISO,
+    job_id: overrides.job_id ?? task.job_id,
+    job_revision: overrides.job_revision ?? task.job_revision,
+    lease_token: overrides.lease_token ?? task.lease_token,
+    input_digest: overrides.input_digest ?? task.evidence.input_binding_digest,
+    target_ref: overrides.target_ref ?? task.target_ref,
+    content_kind: overrides.content_kind ?? task.content_kind,
+    rule_version: overrides.rule_version ?? RULE_VERSION_CURRENT,
+    model_version: overrides.model_version ?? 'synthetic-tms-model@1.0',
+    prompt_version: overrides.prompt_version ?? TEXT_PROMPT_VERSION,
+    authorization_epoch: overrides.authorization_epoch ?? task.authorization_epoch,
+    verdict: overrides.verdict ?? { label: 'pass', reason_codes: [], summary: 'synthetic' },
+    ...(overrides.extra === undefined ? {} : overrides.extra),
+  });
 }

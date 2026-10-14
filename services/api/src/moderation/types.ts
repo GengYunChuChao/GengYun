@@ -284,10 +284,16 @@ export interface TaskEvidence {
   rule_counts: Record<string, unknown> | null;
 }
 
-/** 契约合法的任务投影（读面出口；不含任何原文、租约、内部字段）。 */
+/** 契约合法的任务投影（读面出口；不含任何原文、不含内部字段）。 */
 export interface ModerationTaskView {
   job_id: string;
   job_revision: number;
+  /**
+   * 领取租约（**非契约字段**）：仅供**服务端受信回调 seam** 回带核对。
+   * **绝不得**投影进任何 HTTP 响应（作业读面 `job-source.ts` 逐字段重建投影，不扩散本字段；
+   * 用例显式断言响应体里不含它）。
+   */
+  lease_token: string;
   target_ref: TargetRef;
   content_kind: ContentKind;
   port_kind: 'tms' | 'ims';

@@ -611,6 +611,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
           ruleReasonCodes: rule.reason_codes,
           ruleInputValid: rule.input_valid,
           ruleHardPassed: rule.hard_rule_passed,
+          ruleVersion: rule.rule_version,
           modelDeferred: canRunModel && deferred,
           merged: canRunModel && !deferred ? merged : null,
         });

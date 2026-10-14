@@ -149,6 +149,8 @@ export function projectKindScreening(args: {
   ruleInputValid: boolean;
   /** 规则层事实（`merged === null` 时结论里也必须如实登记它，否则"待回调"任务会丢掉规则层事实）。 */
   ruleHardPassed: boolean;
+  /** 规则层派生版本（`merged === null` 时也要登记：它就是这次规则裁决所用的版本）。 */
+  ruleVersion: string | null;
   /** 模型层是否**按调用方要求**留待回调（异步供应商路径）。 */
   modelDeferred?: boolean;
   merged: MergedModeration | null;
@@ -225,7 +227,7 @@ export function projectKindScreening(args: {
     model_reason_codes: [...new Set(modelReasonCodes)],
     reasons,
     error_code: errorCode,
-    rule_version: args.merged === null ? null : args.merged.rule_version,
+    rule_version: args.merged === null ? args.ruleVersion : args.merged.rule_version,
     model_version: args.merged === null ? null : args.merged.model_version,
     prompt_version: args.merged === null ? null : args.merged.prompt_version,
   };
@@ -422,6 +424,7 @@ export function taskView(record: ModerationTaskRecord): ModerationTaskView {
   return {
     job_id: record.job_id,
     job_revision: record.job_revision,
+    lease_token: record.lease_token,
     target_ref: record.target_ref,
     content_kind: record.content_kind,
     port_kind: record.port_kind,

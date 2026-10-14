@@ -13,6 +13,7 @@
  *     要验证"通过"路径必须由调用方**显式注入**合成端口（仅测试/演示，`provider.synthetic === true`）。
  */
 import { MODEL_PORT_SEAMS } from '../../../../packages/moderation/model-ports.mjs';
+import { guardModelPort } from './nonbypass.ts';
 import type { ModerationExecutionMode } from './types.ts';
 
 /** 替身标识（出现在端口 `model_version` 与结论证据里，**不得**被读成真实供应商）。 */
@@ -79,6 +80,22 @@ export interface ResolvedModerationPorts {
 }
 
 /**
+ * **每个**交给合流层的端口都先过不可绕过守卫（`guardModelPort`）：
+ * 回报里出现任何控制类字段（角色/scope/来源/可见性/发布/决策/专家认证/人审/票决/训练开关）
+ * ⇒ 整条回报被拒绝（合流层归类为形状不可信 ⇒ 隔离）。
+ *
+ * 只对"看起来就是端口对象（有函数型 `evaluate`）"的值加守卫：其余值**原样透传**，
+ * 好让合流层的 `validateModelPort` 仍能给出**精确**的 `MODEL_LAYER_PORT_INVALID` 诊断
+ * （守卫本身不承担端口形状校验，避免把"形状非法"误报成"端口调用失败"）。
+ */
+function guardIfPort(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null) return value;
+  const evaluate = (value as Record<string, unknown>)['evaluate'];
+  if (typeof evaluate !== 'function') return value;
+  return guardModelPort(value as { evaluate: (request: unknown) => unknown });
+}
+
+/**
  * 按执行模式解析端口。
  *
  * `injected` 只应出现在**测试/演示**装配路径（生产 `server.ts` 从不注入）；
@@ -100,10 +117,10 @@ export function resolveModerationPorts(options: {
   for (const kind of ['tms', 'ims'] as const) {
     const provided = injected[kind];
     if (provided === undefined || provided === null) {
-      ports[kind] = createSubstituteModerationPort(kind);
+      ports[kind] = guardIfPort(createSubstituteModerationPort(kind));
       substitutes.push(kind);
     } else {
-      ports[kind] = provided;
+      ports[kind] = guardIfPort(provided);
     }
   }
   return { execution_mode: options.executionMode, ports, substitutes, fail_closed: false };
