@@ -25,7 +25,7 @@ import { createMemoryCommunityStore } from '../../services/api/src/community/sto
 import { createKnowledgeAvailabilityPort } from '../../services/api/src/community/knowledge.ts';
 import { createMessagesCommunityEventsPort, communityEventKey } from '../../services/api/src/community/events.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
-import { CLEAN_BODY, CLEAN_TITLE, DANGEROUS_BODY, makeGate } from './community-fixtures.mjs';
+import { CLEAN_BODY, CLEAN_TITLE, DANGEROUS_BODY, makeGate, makeSyntheticPassPort } from './community-fixtures.mjs';
 
 const API = '/api/v1';
 const START = Date.UTC(2026, 9, 20, 4, 0, 0);
@@ -63,6 +63,13 @@ async function fixture(t, options = {}) {
       ...(options.knowledge === undefined ? {} : { knowledge: options.knowledge }),
     },
     messagesInjection: { store: messages },
+    // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）后的既有回归前提：社区联动接线后，
+    // **只有审核域明确放行**才允许落内容行并公开（B09：无法判断不公开）。
+    // 因此这里显式注入**明确标注的合成 `pass` 端口**（`provider.synthetic === true`、
+    // 四个网络 seam「持有即抛错」、不联网）来跑通"可发布"分支；`real` 模式下审核域
+    // 会忽略任何注入端口（本文件另有 real fail-closed 用例）。
+    // **不得**读成真实 tms/ims 已接通：真实供应商未授权，本片零真实调用。
+    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
   });
   async function user(subject) {
     const created = await auth.createUser(subject.repeat(64));

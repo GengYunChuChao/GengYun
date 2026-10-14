@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "播报",
+  "usingComponents": {
+    "gy-voice-ball": "/components/gy-voice-ball/gy-voice-ball"
+  }
+}

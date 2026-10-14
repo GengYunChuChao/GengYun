@@ -1,0 +1,22 @@
+/* GY-I13 播报页样式（页面级）。
+ *
+ * 硬约束（由 tests/unit/miniprogram-voice-playback.test.mjs 断言）：
+ * - 触控下限沿用全局令牌 `var(--tap-min, 44px)`（px，不用 rpx；窄屏 320px 下仍 ≥44px）；
+ * - 字号一律 `calc(Npx * var(--font-scale, 1))`，跟随微信字体设置放大，不裁切文字；
+ * - **不含 position:fixed/absolute**：播报控件走正常文档流，不会遮挡提交按钮或风险信息。 */
+
+/* 提交（合成）按钮与录音按钮都沿用全局 .btn 的 44px 触控下限；这里只补足长文案换行。 */
+.voice-submit {
+  min-height: var(--tap-min, 44px);
+  font-size: calc(18px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 本页所有成组按钮：允许换行、不裁切、不重叠（字号放大后仍可读可点）。 */
+.panel .row-actions__item {
+  min-height: var(--tap-min, 44px);
+  white-space: normal;
+  word-break: break-word;
+  font-size: calc(16px * var(--font-scale, 1));
+}

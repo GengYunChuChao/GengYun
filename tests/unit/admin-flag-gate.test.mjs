@@ -29,7 +29,7 @@ import {
   gateProducer,
 } from '../../services/api/src/admin/ops/flag-gate.ts';
 import { createAdminOpsStore } from '../../services/api/src/admin/ops/store.ts';
-import { makeHarness, CLEAN_BODY, CLEAN_TITLE, USER_A, idem } from '../unit/community-fixtures.mjs';
+import { makeHarness, CLEAN_BODY, CLEAN_TITLE, USER_A, idem, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
 
 const operations = JSON.parse(
   readFileSync(new URL('../../packages/contracts/operations.json', import.meta.url), 'utf8'),
@@ -280,7 +280,15 @@ async function loginUser(app) {
 function newApp() {
   const config = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
   const store = createMemoryAuthStore();
-  const app = buildApp({ config, store, idempotency: createMemoryIdempotencyStore() });
+  const app = buildApp({
+    config,
+    store,
+    idempotency: createMemoryIdempotencyStore(),
+    // GY-I14 ⇄ GY-I15 联动接线后：社区**只有审核域明确放行**才允许落内容行（B09）。
+    // 本文件 E7 的"投稿面基线可用"前提因此显式注入**明确标注的合成 `pass` 端口**
+    // （不联网、无凭据、`provider.synthetic === true`）；**不得**读成真实审核已接通。
+    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+  });
   return { app, store };
 }
 

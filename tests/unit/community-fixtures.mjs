@@ -15,11 +15,28 @@ import { createCommunityService } from '../../services/api/src/community/service
 import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
 import { createPublishGate } from '../../services/api/src/community/moderation-gate.ts';
 import { createLocalPseudonymousAuthorDirectory } from '../../services/api/src/community/authors.ts';
+import { makePort } from '../moderation/_model-fixtures.mjs';
 
 export { buildScanLimitText, makeExtraRule, scriptedClock, RULE_TEXT_FIXTURES, NEGATION_CANCELLATION_FIXTURES } from '../moderation/_fixtures.mjs';
 
 /** 仅测试用签名密钥（不是真实密钥、不入库、不入日志）。 */
 export const TEST_SIGNING_KEY = 'community-phase1-test-signing-key';
+
+/**
+ * **明确标注的合成模型端口**（仅测试／演示）：一律回报 `pass`。
+ *
+ * 用途：验证"审核层**明确放行**（`approved`）⇒ 社区可发布"这条**通过分支**。
+ * 依据 B09 与监工 #155 返工，社区联动接线后**只有**审核域明确放行才允许落内容行并公开；
+ * 未接线（替身只回报 `unsure`）一律**隔离非公开**，因此凡是需要跑到"可发布"的用例
+ * （例如 #15/#18 的既有回归）都必须显式注入本合成端口。
+ *
+ * **不得误读**：`provider.synthetic === true`、四个网络 seam「持有即抛错」、
+ * 不联网、不读环境变量、无凭据 —— 它**不是**真实 `tms`/`ims`，也不构成"真实审核已接通"的证据；
+ * `real` 执行模式下审核域会**忽略**任何注入端口（仍 fail-closed）。
+ */
+export function makeSyntheticPassPort(kind = 'tms') {
+  return makePort({ kind, model_version: `synthetic-test-pass-${kind}@1.0` });
+}
 
 /**
  * **冻结时钟**：本片测试默认注入给发布 gate 的引擎时钟。

@@ -13,7 +13,10 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/specimen/specimen',
   // GY-I16：收藏与识别历史（列表／详情）。同样须与 app.json 的 pages 逐项一致；
   // 三者都**不是**底部 Tab，故不加入 TAB_PAGES（不改变任何路由判定逻辑）。
-  'pages/favorites/favorites', 'pages/history/history', 'pages/historydetail/historydetail']
+  'pages/favorites/favorites', 'pages/history/history', 'pages/historydetail/historydetail',
+  // GY-I13：播报页（语音球与播放生命周期）。同样须与 app.json 的 pages 逐项一致；
+  // 不是 Tab，也不接受任何查询参数（本页不从链接取内容来源，见 pages/voice/voice.js）。
+  'pages/voice/voice']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'

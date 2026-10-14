@@ -9,10 +9,16 @@
  *
  * 本片接线范围（派单 §设计要求 3）：**`recognition`（#87 已合并）与 `transcription`（#11/#102 已合并）**。
  * 未接线的 kind 见证据文档的「待接线清单」；本文件**不引用任何未合并代码**。
+ *
+ * GY-I13 追加（**纯追加，不改既有两个源**）：新增 `createSynthesisJobSource`（#13 合成域）。
+ * 读面复用已合并的 `tts/service.ts` 的 `inspectJob`；本基线**没有**取消入口 ⇒ 与
+ * `createTranscriptionJobSource` 同形**省略 `cancel`**（注册表对已存在的合成作业如实 503
+ * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
  */
 import { ApiError } from '../errors.ts';
 import type { RecognitionService } from '../recognitions/service.ts';
 import type { SpeechService } from '../speech/service.ts';
+import type { SynthesisService } from '../tts/service.ts';
 import type { JobSourceCancelInput, JobSourceGetInput, JobSourcePort } from './registry.ts';
 
 /** 域内「不存在或越权」的统一信号；只有它会变成 `null`（⇒ 同形 404）。 */
@@ -75,6 +81,38 @@ export function createTranscriptionJobSource(service: SpeechService): JobSourceP
     async get(input: JobSourceGetInput) {
       try {
         return await service.getJob({ userId: input.userId, jobId: input.jobId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * 合成（普通话 TTS）域作业源（#13）。
+ *
+ * **只读复用**已合并的 `tts/service.ts`：`inspectJob({userId, jobId})` 是**域内**读面
+ * （契约里 TTS 只有 `POST /speech/synthesis`，没有专属读端点 ⇒ `GET /jobs/{id}` 是读 JobState 的唯一契约面）。
+ *
+ * 归属与不存在**同形**：域内 `getOwnedJob` 对「不存在」与「他人作业」都抛 `ApiError('NOT_FOUND')`，
+ * 本适配层把它映射为 `null` ⇒ 注册表无法、也不需要区分二者（与识别/转写源同一口径）。
+ *
+ * **取消能力：本基线没有**——`tts/service.ts` 只提供受理/读取/校验，没有取消入口；派单明令
+ * 「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
+ * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）** 如实拒绝。
+ * 合成作业不在 `states.json.job_transitions` 之外新增任何迁移语义，本层不判状态、不改 revision。
+ *
+ * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中
+ * `JobResult` 的 `synthesis` 分支镜像在 `./result-shape.ts` 的 `Synthesis`（`id`/`revision`/
+ * `checked_content_ref`(TargetRef)/`media_id` 四键，`additionalProperties:false`）。
+ */
+export function createSynthesisJobSource(service: SynthesisService): JobSourcePort {
+  return {
+    kind: 'synthesis',
+    async get(input: JobSourceGetInput) {
+      try {
+        return await service.inspectJob({ userId: input.userId, jobId: input.jobId });
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;

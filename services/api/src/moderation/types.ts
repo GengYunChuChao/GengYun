@@ -344,7 +344,16 @@ export interface AuthoritySnapshot {
  * 与 real 未接线时的 fail-closed 实现（`createUnwiredContentAuthority`）。
  */
 export interface ContentAuthorityPort {
-  readonly origin: 'substitute' | 'unwired';
+  /**
+   * 权威来源标签。
+   *
+   * `'substitute'`=本片内存替身；`'unwired'`=`real` 未接线（fail-closed）；
+   * `'community_store'`=**跨线接线（GY-I14 ⇄ GY-I15）**：权威端口接到社区那一份
+   * `CommunityStore`（见 `services/api/src/community/moderation-authority.ts`），
+   * 使审核域的下架/读取重查作用在**社区真实内容行**上（两域同源）。
+   * **纯追加**的联合成员：既有取值与判定不变，回退=删除该成员。
+   */
+  readonly origin: 'substitute' | 'unwired' | 'community_store';
   read(target_ref: TargetRef): Promise<AuthoritySnapshot | null>;
   setVisibility(target_ref: TargetRef, visibility: Visibility): Promise<void>;
   /** 记录该目标被**上架**的 revision（下架后置空 ⇒ 旧链接不复活）。 */
