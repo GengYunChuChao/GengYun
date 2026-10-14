@@ -61,6 +61,8 @@ node tools/local-debug-server.mjs --config config/debug.local.json     # 诊断�
 
 ## 用户端前端：先按 Demo 落地
 
+2026-10-14 用户直接确认：当前先开发 docs/ui-demo/demo.html 的 Demo 版本样式，适老版本后续开发，恢复时间待用户决定。当前按 Demo 手机预览的色板、字号、间距、卡片、导航和交互形态审查；独立适老模式、正文统一18px、触控统一44px、最大系统字号、老年用户专用布局与多机型字体矩阵属于后续适老阶段，不作为当前 Demo 样式或可复用组件 PR 的阻塞条件。已实现的字号支持和触控保护保留，不要求为迎合 Demo 删除。当前仍需关键文字与操作可见、可点、无遮挡，状态明确且模拟标记清楚；权限、隐私、用药安全及真实业务验收不因此放宽。暂缓不等于适老验收通过，既有编号与历史证据保留。
+
 用户于 2026-10-10 确认：后续前端暂以[网页版交互 Demo](docs/ui-demo/demo.html)为视觉与交互参考，再落地原生微信小程序。GitHub 显示 HTML 源码，下载文件后用浏览器打开；顶部可切换“手机预览”，无需后端或安装依赖。
 
 - 底部入口从左到右为 **首页、社区、识别、消息、我的**；“识别”居中，文字放大加粗，图标和底色突出，保留完整可点击区域。
@@ -83,7 +85,7 @@ Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频
 
 | 优先级 | 原 issue → 建议独立验收结果 | 可复用成果 | 前置依赖与剩余验收 |
 | --- | --- | --- | --- |
-| 1：先收尾 | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结；[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动；[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | #33 契约、#43 工程、#69 五 Tab、#71 工具与设备基线 | 可并行：区分已实现／规划接口；复现 API、后台和小程序启动；补齐当前五 Tab 大字号与关键按钮操作证据。页面骨架不等待所有业务能力 |
+| 1：先收尾 | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结；[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动；[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | #33 契约、#43 工程、#69 五 Tab、#71 工具与设备基线 | 可并行：区分已实现／规划接口；复现 API、后台和小程序启动；补齐当前五 Tab Demo 样式与关键按钮操作证据；适老字号专项后续。页面骨架不等待所有业务能力 |
 | 2：首段用户链路 | [#4](https://github.com/GengYunChuChao/GengYun/issues/4) 正式会话；[#5](https://github.com/GengYunChuChao/GengYun/issues/5) 作物／地区；[#7](https://github.com/GengYunChuChao/GengYun/issues/7) 知识查询 | #59／#68／#78 会话与返回；#74／#77 资料与手选地区；#79／#80 查询 API 与原生消费者 | 复用冻结接口，补知识运行组的受限启动接续；验证正式微信身份→作物／地区→列表／详情→失效／退出。手选地区不等待定位；科普查询不等待识草、OCR 或 DoseCard |
 | 3：并行补基础 | [#3](https://github.com/GengYunChuChao/GengYun/issues/3) 核准资料；[#20](https://github.com/GengYunChuChao/GengYun/issues/20) 冻结样本；[#6](https://github.com/GengYunChuChao/GengYun/issues/6) 私有媒体；[#8](https://github.com/GengYunChuChao/GengYun/issues/8) 条件匹配与原文用量 | #73／#81 来源候选；#47 评估工具；#60 媒体参考组件；#64 查询参考组件 | 四线可并行：来源候选补有效标签与适用条件，样本调参前独立冻结，媒体补 HTTP／存储／清理，规则补未知条件拒绝与用量卡守卫。#8 接续 [PR #82 批复](https://github.com/GengYunChuChao/GengYun/pull/82#pullrequestreview-5482804369)，保留已有工作 |
 | 4：分能力交付 | [#12](https://github.com/GengYunChuChao/GengYun/issues/12) 文字问答优先；[#9](https://github.com/GengYunChuChao/GengYun/issues/9) 识草、[#10](https://github.com/GengYunChuChao/GengYun/issues/10) OCR、[#11](https://github.com/GengYunChuChao/GengYun/issues/11) ASR、[#13](https://github.com/GengYunChuChao/GengYun/issues/13) TTS、[#14](https://github.com/GengYunChuChao/GengYun/issues/14) 审核 | #40／#42 供应商接入证据；#72 LLM 探针；现有入口与用途守卫 | 文字问答不等完整 ASR；各能力按输入依赖接媒体、用途授权和审核。复用供应商证据，每项能力随交付完成必要独立评估，接入成功不等于质量门槛通过 |
