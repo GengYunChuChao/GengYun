@@ -107,8 +107,9 @@ export interface FavoritesServiceDeps {
 }
 
 export interface WriteOptions {
-  idempotencyKey?: string;
-  ifMatch?: string;
+  /** 原始头值（`string | string[] | undefined`）；由本域校验器判形状，调用方不做预转换。 */
+  idempotencyKey?: unknown;
+  ifMatch?: unknown;
 }
 
 /** 契约 `404 NOT_FOUND`：他人收藏与不存在**共用这一个**错误，形状逐字节相同。 */
@@ -428,8 +429,8 @@ export function createFavoritesService(deps: FavoritesServiceDeps) {
       const ifMatch = requireIfMatch(options.ifMatch);
       const scope = idempotencyScope(user.userId, 'DELETE', `${API_PREFIX}/favorites/${favoriteId}`);
       const keyHash = idempotencyKeyHashHex(scope, key);
-      // 该 DELETE 契约上没有请求体：摘要只含 If-Match。
-      const digest = idempotencyRequestHash(null, options.ifMatch, signingKey);
+      // 该 DELETE 契约上没有请求体：摘要只含 If-Match（用**规范化后**的强 ETag，不用原始头）。
+      const digest = idempotencyRequestHash(null, ifMatch.raw, signingKey);
       return withIdempotency(
         scope,
         keyHash,

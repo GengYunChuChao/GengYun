@@ -16,7 +16,8 @@
  *     `routes/history.ts` 的 `X-GY-Cascade` 非契约披露头与服务层返回值
  *     `cascade: 'initiated' | 'unwired'`（内部字段，不进响应体）。
  */
-import { isHistoryKind, type HistoryKind, type JobState, type TargetRef } from './types.ts';
+import type { TargetRef } from '../targetref/types.ts';
+import { isHistoryKind, type HistoryKind, type JobState } from './types.ts';
 
 export interface CascadeRequest {
   userId: string;
@@ -27,8 +28,12 @@ export interface CascadeRequest {
   jobState: JobState;
 }
 
-/** 级联结果：只区分"已启动"与"未接线"，**不**声称完成。 */
-export type CascadeOutcome = 'initiated' | 'unwired';
+/**
+ * 级联披露取值：只区分"已启动／未接线／启动失败"，**不**声称完成。
+ * 与 `history/store.ts` 的 `CascadeDisclosure` 同值（同一语义在存储侧与端口侧各有一处声明，
+ * 二者结构上相等，可互相赋值）。
+ */
+export type CascadeOutcome = 'initiated' | 'unwired' | 'failed';
 
 export interface HistoryCascadePort {
   readonly kind: 'wired' | 'unwired';
@@ -62,7 +67,6 @@ export interface WiredHistoryCascadePortOptions {
 
 export type CascadeFailureOutcome = 'initiated' | 'failed';
 export type WiredCascadeOutcome = CascadeFailureOutcome;
-
 /**
  * 已接线端口：把任意实现规范化为 `'initiated' | 'failed'`。
  * 抛错 ⇒ `'failed'`（**不**谎称已启动；也不因此回滚历史行的删除结果）。

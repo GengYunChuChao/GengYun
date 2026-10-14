@@ -100,8 +100,9 @@ export interface HistoryServiceDeps {
 }
 
 export interface WriteOptions {
-  idempotencyKey?: string;
-  ifMatch?: string;
+  /** 原始头值（`string | string[] | undefined`）；由本域校验器判形状，调用方不做预转换。 */
+  idempotencyKey?: unknown;
+  ifMatch?: unknown;
 }
 
 /** 内部创建口结果（内部形状，**不是**契约 schema）。 */
@@ -369,7 +370,7 @@ export function createHistoryService(deps: HistoryServiceDeps) {
       const ifMatch = requireIfMatch(options.ifMatch);
       const scope = idempotencyScope(user.userId, 'DELETE', `${API_PREFIX}/history/${historyId}`);
       const keyHash = idempotencyKeyHashHex(scope, key);
-      const digest = idempotencyRequestHash(null, options.ifMatch, signingKey);
+      const digest = idempotencyRequestHash(null, ifMatch.raw, signingKey);
       return withIdempotency(
         scope,
         keyHash,
