@@ -161,20 +161,29 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
     `${API_PREFIX}/speech/transcriptions`,
     gated({ querystring: NO_QUERY_SCHEMA, body: MEDIA_JOB_INPUT_SCHEMA }),
     withPrivacyErrors(async (request, reply) => {
-      if (deps.egress !== undefined) {
-        const body = request.body as { media_id: string; media_revision: number };
-        await deps.egress.reserveForAcceptance({
+      const reservation =
+        deps.egress === undefined
+          ? null
+          : await deps.egress.reserveForAcceptance({
+              userId: userId(request),
+              authEpoch: currentIdentity(request).authEpoch,
+              objectId: (request.body as { media_id: string }).media_id,
+              objectRevision: (request.body as { media_revision: number }).media_revision,
+            });
+      let created;
+      try {
+        created = await service.createTranscription({
           userId: userId(request),
-          authEpoch: currentIdentity(request).authEpoch,
-          objectId: body.media_id,
-          objectRevision: body.media_revision,
+          body: request.body,
+          idempotencyKey: request.headers['idempotency-key'],
         });
+      } catch (error) {
+        if (reservation !== null && deps.egress !== undefined) {
+          await deps.egress.abandonReservation({ exportId: reservation.exportId });
+        }
+        throw error;
       }
-      const { job } = await service.createTranscription({
-        userId: userId(request),
-        body: request.body,
-        idempotencyKey: request.headers['idempotency-key'],
-      });
+      const { job } = created;
       // 202：已受理、尚未完成；JobEnvelope 的 ETag 绑 Job 自身 revision。
       return reply
         .status(202)

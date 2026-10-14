@@ -83,20 +83,30 @@ export function registerRecognitionRoutes(
       schema: { body: mediaJobBody },
     },
     withPrivacyErrors(async (request, reply) => {
-      if (deps.egress !== undefined) {
-        const body = request.body as { media_id: string; media_revision: number };
-        await deps.egress.reserveForAcceptance({
+      const reservation =
+        deps.egress === undefined
+          ? null
+          : await deps.egress.reserveForAcceptance({
+              userId: actorId(request),
+              authEpoch: currentIdentity(request).authEpoch,
+              objectId: (request.body as { media_id: string }).media_id,
+              objectRevision: (request.body as { media_revision: number }).media_revision,
+            });
+      let created;
+      try {
+        created = await service.createRecognition({
           userId: actorId(request),
-          authEpoch: currentIdentity(request).authEpoch,
-          objectId: body.media_id,
-          objectRevision: body.media_revision,
+          body: request.body,
+          idempotencyKey: request.headers['idempotency-key'],
         });
+      } catch (error) {
+        // 预留后受理失败 ⇒ 预留置终态（不留残留 reserved 行）。
+        if (reservation !== null && deps.egress !== undefined) {
+          await deps.egress.abandonReservation({ exportId: reservation.exportId });
+        }
+        throw error;
       }
-      const { job } = await service.createRecognition({
-        userId: actorId(request),
-        body: request.body,
-        idempotencyKey: request.headers['idempotency-key'],
-      });
+      const { job } = created;
       return reply
         .status(202)
         .headers(noStore)

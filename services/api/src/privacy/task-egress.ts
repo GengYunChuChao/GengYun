@@ -39,6 +39,8 @@ export interface MediaJobEgress {
     objectId: string;
     objectRevision: number;
   }): Promise<{ exportId: string } | null>;
+  /** 受理失败（预留后服务层拒绝）⇒ 把预留置终态，避免残留 `reserved` 行被后续任务误用。 */
+  abandonReservation(input: { exportId: string }): Promise<void>;
   /** 包装域提供者（`real` 才真正接管；其余模式原样返回）。 */
   provider<T extends { available?: boolean; unavailableReason?: string | null }>(inner: T, method: 'recognize' | 'transcribe'): T;
   /** 作业取消 ⇒ 写墓碑 + 在途置 failed（晚到回调不可复活）。 */
@@ -141,6 +143,12 @@ export function createMediaJobEgress(deps: {
         return outcome;
       };
       return wrapped as unknown as T;
+    },
+
+    async abandonReservation(input) {
+      if (!engaged) return;
+      // 受理在预留之后失败：把预留置终态（active→failed），避免残留 reserved 行被后续任务误用。
+      await ledger.markFailed(input.exportId, { errorCode: 'ACCEPTANCE_FAILED' }).catch(() => {});
     },
 
     async cancelForJob(input) {
