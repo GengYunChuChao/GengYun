@@ -320,3 +320,81 @@ test('适配层·域内 NOT_FOUND ⇒ null（同形）；域内其它错误原�
   );
   assert.equal((await recognition.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k' })).state, 'cancelled');
 });
+
+// ---------------------------------------------------------------- 钉子（预审要求）：无取消能力 kind 的 cancel 错误码**顺序语义**
+
+test('钉子·无取消能力 kind 的 cancel 错误码（缺 Key ⇒ 400 / 缺 If-Match ⇒ 428 / 两头齐备 ⇒ 503）：400/428 由**已注册的有取消能力的源**所执行的共享请求头前置校验代答（与注册顺序无关）；若注册表内没有这样的源，缺头会退化为 503', async () => {
+  // 该用例把"为什么 transcription 的 cancel 在缺头时返回 400/428"这一**隐式依赖**钉住（CI 内 `test:unit` 会跑）：
+  // 注册表 cancel **遍历全部源**；有取消能力的源会在归属判定**之前**先做共享请求头前置校验
+  // （与识别域同一口径：先校请求形状、再判归属）；只有它判"不属于我"（适配层把 NOT_FOUND 映射为 null）之后，
+  // 才轮到"无取消能力但作业存在"的源 ⇒ 503。**顺序无关，但依赖"存在至少一个有取消能力的源"。**
+  const firstSource = {
+    kind: 'recognition',
+    async get() {
+      return null;
+    },
+    async cancel({ ifMatch, idempotencyKey }) {
+      if (idempotencyKey === undefined || idempotencyKey === null || idempotencyKey === '') {
+        throw new ApiError('IDEMPOTENCY_KEY_REQUIRED', '缺少 Idempotency-Key');
+      }
+      if (ifMatch === undefined || ifMatch === null || ifMatch === '') throw new ApiError('REVISION_REQUIRED', '缺少 If-Match');
+      // 归属不符 ⇒ **适配层**会把域内 NOT_FOUND 映射为 `null`（见 `sources.ts`），注册表据此交给下一个源。
+      // 这里直接返回 null，等价于"适配层已映射"之后的形态。
+      return null;
+    },
+  };
+  const transcriptionValue = {
+    id: RESULT_ID,
+    revision: 1,
+    raw_text: '合成用例',
+    uncertain_spans: [],
+    confirmed_text: null,
+    confirmed_at: null,
+    model_version: 'stub-v1',
+  };
+  const secondSource = {
+    kind: 'transcription',
+    async get() {
+      return validJob({
+        kind: 'transcription',
+        target_ref: { type: 'transcription', id: TARGET_ID, revision: 1 },
+        result: { kind: 'transcription', value: transcriptionValue },
+      });
+    },
+  };
+  const registry = createJobRegistry([firstSource, secondSource]);
+
+  // (a) 两个头都缺 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED（由首个源的共享前置校验代答）
+  await assert.rejects(
+    () => registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: undefined, idempotencyKey: undefined }),
+    (e) => e instanceof ApiError && e.code === 'IDEMPOTENCY_KEY_REQUIRED' && e.status === 400,
+  );
+  // (b) 有 Key、缺 If-Match ⇒ 428 REVISION_REQUIRED（同上）
+  await assert.rejects(
+    () => registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: undefined, idempotencyKey: 'k' }),
+    (e) => e instanceof ApiError && e.code === 'REVISION_REQUIRED' && e.status === 428,
+  );
+  // (c) 两头齐备 ⇒ 首个源判"不属于我"，第二个源确认存在但**无取消能力** ⇒ 503（不伪造 cancelled）
+  const error = await registry
+    .cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"1"', idempotencyKey: 'k' })
+    .then(() => null, (e) => e);
+  assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(error?.status, 503);
+  assert.equal(error?.retryable, true);
+  // 依赖的真实形态（实测修正预判）：注册表 cancel **会遍历全部源**，
+  //  ⇒ (a)/(b) 的 400/428 来自"某个**有取消能力的源**所做的共享请求头前置校验"，
+  //     与它在注册顺序中的位置**无关**（换序后仍是 400，见下）；
+  //  ⇒ 真正的前提是"注册表里**存在**至少一个有取消能力的源"：若把它摘掉，同一缺头请求会变成 503（见下）。
+  const reversed = createJobRegistry([secondSource, firstSource]);
+  await assert.rejects(
+    () => reversed.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: undefined, idempotencyKey: undefined }),
+    (e) => e instanceof ApiError && e.code === 'IDEMPOTENCY_KEY_REQUIRED' && e.status === 400,
+  );
+  // 只有"无取消能力"的源时：缺头**不再**被前置校验 ⇒ 直接落到"能力未接线"503（这才是真正的隐式依赖）
+  const onlyNoCancel = createJobRegistry([secondSource]);
+  const noCancelNoHeaders = await onlyNoCancel
+    .cancel({ userId: 'u', jobId: JOB_ID, ifMatch: undefined, idempotencyKey: undefined })
+    .then(() => null, (e) => e);
+  assert.equal(noCancelNoHeaders?.code, 'PROVIDER_UNAVAILABLE', '无任何有取消能力的源时，缺头不再被前置校验 ⇒ 503');
+  assert.equal(noCancelNoHeaders?.status, 503);
+});

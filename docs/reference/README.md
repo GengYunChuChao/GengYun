@@ -10,6 +10,7 @@
 | 当前关键决策／历史 ADR | [指南](../development-guide.md#5-接口契约与关键决策)、[ADR-001](../architecture/adr-001-initial-architecture.md) |
 | 配置与本地排查 | [完整配置](configuration.md)、[本地开发](local-development.md) |
 | 数据库运行／回滚细节 | [组件交接](../verification/database-run-handoff.md)及其固定 SHA 验证页 |
+| 部署准备（微信云托管 API ＋ 上海 CVM PG） | [云托管部署准备](../../deploy/cloudrun/README.md)、[平台字段与机密清单](../../deploy/cloudrun/service-settings.md) |
 | 独立样本／评分细节 | [评估入口](../evaluation/README.md)、[评分](../evaluation/scoring-spec.md)、[缺口](../evaluation/sample-gap-register.md) |
 | 供应商／平台证据 | [验证入口](../verification/README.md)、[平台清单](../verification/platform-checklist.md)；注意各记录日期与 SHA |
 | 正式任务／调整史 | [任务台账](../initial-issues.json)、[任务列表](../initial-issues.md)、[调整记录](../issue-revision-log.md) |
