@@ -269,7 +269,8 @@ test('占位/结果到期后可被清理，过期键不再永久占用', async (
   // 建草稿与发布各占一行。
   const before = store.idempotentCount();
   assert.equal(before, 2);
-  const removed = store.purgeExpiredIdempotent(new Date(clock.peek().getTime() + 10 * 60 * 1000));
+  // 默认普通回执保留 24 小时；在最后受理时刻之后越过该窗口。
+  const removed = store.purgeExpiredIdempotent(new Date(clock.peek().getTime() + 24 * 60 * 60 * 1000));
   assert.equal(removed, before);
   assert.equal(store.idempotentCount(), 0);
 });

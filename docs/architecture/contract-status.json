@@ -472,15 +472,15 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/routes/recognitions.ts",
-          "lines": "118-122"
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "51-62"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线）"
+      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域与转写域的作业读取已接入，含归属、幂等与终态守卫；ocr/synthesis/answer/moderation 的作业源未接线（经该路径读取这些 kind 的作业与「作业不存在」同形 404）；持久队列与租约待接线"
     },
     {
       "id": "cancelJob",
@@ -493,15 +493,15 @@
       "status": "partial",
       "evidence": [
         {
-          "path": "services/api/src/routes/recognitions.ts",
-          "lines": "130-134"
+          "path": "services/api/src/jobs/routes.ts",
+          "lines": "64-80"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "识别域 Job 读取/取消已装配，含归属、If-Match、幂等与终态守卫；当前只消费 recognition store，转写/OCR/合成 Job 尚不能经此公共接口读取/取消；持久队列、租约及跨域注册待接线（#106 尚未合并，不计入本基线）"
+      "blocker": "取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled；ocr/synthesis/answer/moderation 的作业源未接线；持久租约与外发撤销待接线"
     },
     {
       "id": "listKnowledge",
@@ -2173,7 +2173,7 @@
         },
         {
           "path": "services/api/src/profile/service.ts",
-          "lines": "105-131"
+          "lines": "104-113"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",

@@ -3,7 +3,7 @@ import { createPrivacyGuard } from '../../../../packages/privacy/guard.mjs';
 import type { PgPool } from '../db/pool.ts';
 import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
-import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
+import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
 import { persistConsentGrant, type ConsentGrantRequest } from './grant-pg.ts';
 import { paginateConsentRecords } from './consent-pagination.ts';
@@ -170,8 +170,8 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, opti
           if (epoch.rows.length !== 1) throw new ApiError('REVISION_CONFLICT', '授权版本已变化');
         }
         await client.query(`INSERT INTO public.idempotency_keys(scope,key_hash,request_hash,response_status,outcome,expires_at)
-          VALUES($1,decode($2,'hex'),$3,200,$4::jsonb,clock_timestamp()+interval '5 minutes')`,
-        [scope, key, requestHash, JSON.stringify({ privacyConsentId: String(record.id) })]);
+          VALUES($1,decode($2,'hex'),$3,200,$4::jsonb,clock_timestamp()+($5::integer * interval '1 second'))`,
+        [scope, key, requestHash, JSON.stringify({ privacyConsentId: String(record.id) }), IDEMPOTENCY_TTL_SECONDS]);
         return dto(record);
       });
     },

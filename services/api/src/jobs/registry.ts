@@ -92,7 +92,8 @@ export interface JobSourceCancelInput extends JobSourceGetInput {
  *
  * - `get`：返回该域视角的契约 `Job`；**不存在或越权一律返回 `null`**（调用方不得据此区分二者）。
  * - `cancel`：**可选**。缺失表示「该域没有取消能力」——注册表会先确认作业确实存在，再以
- *   `409 OBJECT_UNAVAILABLE` 如实拒绝（**不假装取消成功，也不为它另写状态机**）。
+ *   **`503 PROVIDER_UNAVAILABLE`（`retryable: true`，"该作业所属能力尚未提供取消"）** 如实拒绝
+ *   （**不假装取消成功，也不为它另写状态机**）。
  *   有取消能力的域**必须复用域内既有实现**（含 `If-Match`/幂等/终态语义），本层不再判状态。
  */
 export interface JobSourcePort {
@@ -106,7 +107,7 @@ export interface JobRegistry {
   readonly kinds: readonly JobKind[];
   /** 读取作业；未命中（不存在/越权/未接线 kind）⇒ `NOT_FOUND`。 */
   get(input: JobSourceGetInput): Promise<ContractJob>;
-  /** 取消作业；未命中 ⇒ `NOT_FOUND`；作业存在但该域无取消能力 ⇒ `OBJECT_UNAVAILABLE`。 */
+  /** 取消作业；未命中 ⇒ `NOT_FOUND`；作业存在但该域无取消能力 ⇒ `PROVIDER_UNAVAILABLE`（503，能力未接线）。 */
   cancel(input: JobSourceCancelInput): Promise<ContractJob>;
 }
 
