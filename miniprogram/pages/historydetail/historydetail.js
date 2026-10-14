@@ -99,7 +99,7 @@ Page({
         referenceLabel: stateKnown
           ? (located.referenceState === 'available' ? '目标当前可读' : '目标当前不可用')
           : '可见性未从实时读取取得',
-        createdAt: located.createdAt ? located.createdAt.replace('T', ' ').replace(/\..*$/, '').replace(/Z$/, ' UTC') : '',
+        createdAt: located.createdAt ? located.createdAt.replace('T', ' ').replace(/\.\d+/, '').replace(/Z$/, ' UTC') : '',
         historyRevision: located.historyRevision,
         canDelete: located.locatedBy === 'live'
       }
