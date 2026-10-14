@@ -22,6 +22,7 @@ import {
   USER_A,
   USER_B,
   blockingPort,
+  deferringModerationPort,
   expectApiError,
   markerPort,
   makeWiredHarness,
@@ -159,38 +160,111 @@ test('G1c. 规则层未结论（带媒体：规则层不评估图片）⇒ 内�
 });
 
 // ---------------------------------------------------------------------------
-// G1-d 口径登记（如实）：审核域"未接线/无结论"不是通过，也不是本实现的否决
+// G1-d 隔离（未接线/无结论）⇒ 非公开；但与"驳回"分开表达
 // ---------------------------------------------------------------------------
 
-test('G1d. 【口径登记】审核域"模型层未接线/无结论"不是通过；也不构成本实现的否决（差异已披露）', async () => {
-  // 出厂 `stub` 装配：文本端口是**明确标注的替身**，一律回报"无结论"。
+test('G1d. 审核域"未接线/无结论"（隔离）⇒ 内容行不落库、公开面不可见，且**不伪装成驳回**', async () => {
+  // 出厂 `stub` 装配：文本端口是**明确标注的替身**，一律回报"无结论"（`not_wired`）。
   const h = makeWiredHarness({ ports: { tms: undefined } });
-  const post = await h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) });
 
+  const error = await expectApiError(
+    () => h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) }),
+    'INPUT_UNCERTAIN',
+    422,
+  );
+  assert.ok(error.details.length > 0, '隔离也必须回传原因码');
+
+  const attemptedId = h.calls.screen[0].input.content.target_ref.id;
   const screened = h.calls.screen[0].result;
-  // (1) 审核域**没有**给出"通过"：既不 approve、也不是驳回，只是"未接线/无结论"。
+  // (1) 审核域**没有**给出"通过"：既不 approve，也不是驳回，而是"未接线/无结论"⇒ **隔离**。
   assert.equal(screened.model_layer, 'not_wired', '替身端口必须如实标为未接线');
   assert.equal(screened.model_concluded, false, '"未接线"不得被当成已有结论');
-  assert.equal(screened.vetoed, false, '"未接线"不是驳回（否则 stub/演示模式下社区无法投稿）');
+  assert.equal(screened.publishable, false, '未接线/无结论**不得发布**（B09：无法判断不公开）');
+  assert.equal(screened.vetoed, false, '"未接线"**不是驳回**（不伪装成驳回）');
+  assert.equal(screened.isolation, true, '未接线/无结论落在"隔离"态');
   assert.ok(
     screened.provider_origins.every((origin) => origin !== 'injected' && origin !== 'callback'),
     `替身端口不得冒充已接线端口，实际 ${JSON.stringify(screened.provider_origins)}`,
   );
-  // (2) 审核域台账里该版本**不存在**"通过"结论（不给后续读取面一个假的放行依据）。
-  const conclusion = h.link.conclusionFor({ type: 'post', id: post.id, revision: 1 });
-  assert.equal(conclusion.present, true, '版本级任务必须已登记（GET /jobs/{id} 可读）');
-  assert.notEqual(conclusion.decision, 'approved', '审核域台账不得出现"替身冒充的通过"');
-  assert.equal(conclusion.vetoed, false);
 
-  // (3) 差异如实登记：本实现里"审核域未接线/无结论"**不构成否决**，
-  //     公开与否仍由社区**规则层阶段**（#15 已合并）的结论决定 —— 这不是"AI 审核通过"，
-  //     见 `services/api/src/community/moderation-link.ts` 文件头第 30–35 行的已披露口径。
-  const communityVerdict = await h.store.getModeration('post', post.id, 1);
-  assert.equal(communityVerdict.decision, 'approved', '社区侧结论来自**规则层阶段**（#15 既有口径）');
-  assert.equal(post.visibility, 'published');
-  // 明确断言这是**规则层**阶段：审核域侧同版本仍停在"无结论"。
-  assert.equal(h.link.counts().authority_origin, 'community_store');
+  // (2) **内容行不落库**、公开面不可见（本人/他人都看不到）。
+  assert.equal(await h.store.getPost(attemptedId), null, '隔离内容不得留下内容行');
+  assert.equal(h.store.snapshotCounts().posts, 0);
+  for (const viewer of [USER_A, USER_B]) {
+    assert.deepEqual(await h.service.listPosts(viewer), { items: [], next_cursor: null });
+  }
+  await expectApiError(() => h.service.getPost(USER_B, attemptedId), 'NOT_FOUND', 404);
+
+  // (3) 台账**如实区分隔离与驳回**：结论记 `quarantined`（不是 `rejected`），规则层确实通过（故不是规则驳回）。
+  const recorded = await h.store.getModeration('post', attemptedId, 1);
+  assert.notEqual(recorded, null, '隔离结论同样必须留档');
+  assert.equal(recorded.decision, 'quarantined', '隔离不得被写成 `rejected`（不伪装成驳回）');
+  assert.equal(recorded.hard_rule_passed, true, '规则层是通过的 ⇒ 这是审核域层面的隔离');
+  // 审核域台账侧同形：任务已登记但不可发布、也不是驳回。
+  const conclusion = h.link.conclusionFor({ type: 'post', id: attemptedId, revision: 1 });
+  assert.equal(conclusion.present, true, '版本级任务必须已登记（GET /jobs/{id} 可读）');
+  assert.equal(conclusion.publishable, false);
+  assert.equal(conclusion.vetoed, false);
+  assert.equal(conclusion.isolation, true);
+  assert.notEqual(conclusion.decision, 'approved', '审核域台账不得出现"替身冒充的通过"');
   assert.equal(h.moderation.counts().substitutes.includes('tms'), true, 'stub 下文本端口确为替身');
+  assert.equal(h.link.counts().authority_origin, 'community_store');
+});
+
+test('G1g. 审核域返回 `pending`（异步供应商路径）⇒ 同样非公开，且台账记 `pending` 而非 `rejected`', async () => {
+  // 用真实审核域 + 真实联动端口，只把"模型层留待回调"开关打开（异步供应商的正常形态）。
+  const h = makeWiredHarness({ ports: { tms: passingPort() }, moderationPortWrapper: deferringModerationPort });
+
+  const error = await expectApiError(
+    () => h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) }),
+    'INPUT_UNCERTAIN',
+    422,
+  );
+  assert.ok(Array.isArray(error.details), '隔离的错误封套必须带 details 数组');
+  // 说明：`pending` 是"等回调"，审核域此时可以不产出 `reason_codes`（任务里的 `reasons`
+  // 记 `model_screening_pending`），因此这里**不**要求 details 非空——但必须**非公开**。
+
+  const attemptedId = h.calls.screen[0].input.content.target_ref.id;
+  const screened = h.calls.screen[0].result;
+  assert.equal(screened.decision, 'pending', '异步路径必须如实落 `pending`');
+  assert.equal(screened.publishable, false, '`pending` 不得发布');
+  assert.equal(screened.vetoed, false, '`pending` 不是驳回');
+  assert.equal(screened.isolation, true);
+
+  // 不落库、公开面不可见。
+  assert.equal(await h.store.getPost(attemptedId), null);
+  assert.equal(h.store.snapshotCounts().posts, 0);
+  assert.deepEqual(await h.service.listPosts(USER_B), { items: [], next_cursor: null });
+  const recorded = await h.store.getModeration('post', attemptedId, 1);
+  assert.equal(recorded.decision, 'pending', '待审核如实记 `pending`（不伪装成驳回）');
+  assert.equal(recorded.hard_rule_passed, true);
+});
+
+test('G1i. 【正控制】明确标注的合成 `pass` 端口 ⇒ 审核域 `approved` ⇒ 社区可发布（不得用"未接线"冒充通过）', async () => {
+  const syntheticPass = passingPort();
+  // 前提：这个端口是**明确标注的合成端口**（不是真实供应商，也不是"未接线"）。
+  assert.equal(syntheticPass.provider.synthetic, true, '合成端口必须显式标注 synthetic');
+  assert.equal(syntheticPass.seams.liveGate.open, false, '合成端口不得持有可用网络 seam');
+  const h = makeWiredHarness({ ports: { tms: syntheticPass } });
+
+  const post = await h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) });
+  assert.equal(post.visibility, 'published');
+  assert.equal(post.audit_state, 'approved');
+
+  const screened = h.calls.screen[0].result;
+  assert.equal(screened.publishable, true, '审核域明确通过 ⇒ 可发布');
+  assert.equal(screened.decision, 'approved');
+  assert.equal(screened.model_layer, 'approved');
+  assert.equal(screened.model_concluded, true, '这是**真实结论**（合成端口显式注入），不是"未接线"');
+  assert.notEqual(screened.model_layer, 'not_wired');
+  assert.equal(screened.vetoed, false);
+  assert.equal(screened.isolation, false);
+  // 文本端口不是替身（是显式注入的合成端口）⇒ "未接线"绝不被用来冒充通过。
+  assert.equal(h.moderation.counts().substitutes.includes('tms'), false);
+  assert.equal(h.moderation.counts().authority_origin, 'community_store');
+  // 公开面确实可见（正控制闭环）。
+  assert.equal((await h.service.getPost(USER_B, post.id)).visibility, 'published');
+  assert.equal((await h.service.listPosts(USER_B)).items.length, 1);
 });
 
 // ---------------------------------------------------------------------------

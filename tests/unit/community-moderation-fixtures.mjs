@@ -297,11 +297,66 @@ export async function inject(app, method, path, { token, headers = {}, payload }
 }
 
 /**
+ * **模拟异步供应商路径**（`defer_model`）：包装真实审核域端口，**只**把"模型层是否留待回调"
+ * 这一个开关置为 `true`，其余（判定、台账、计数、下架、读取）**全部原样委托**。
+ *
+ * 用途：让**真实**审核域与**真实**联动端口产出 `pending`（`decision: 'pending'`，见
+ * `moderation/decisions.ts` 的 `model_screening_pending`）——这是异步供应商的正常部署形态；
+ * 它**不会**合成出任何"通过"。
+ */
+export function deferringModerationPort(moderation) {
+  return {
+    get execution_mode() {
+      return moderation.execution_mode;
+    },
+    submitScreening: (input) => moderation.submitScreening({ ...input, defer_model: true }),
+    withdraw: (input) => moderation.withdraw(input),
+    readView: (input) => moderation.readView(input),
+    tasks: (targetRef) => moderation.tasks(targetRef),
+    counts: () => moderation.counts(),
+  };
+}
+
+/**
+ * **边界用例专用**的读取面替身：`conclusionFor` 恒报"台账里**没有**该版本任务"
+ * （`present:false, readable:true`），其余原样委托。
+ *
+ * 用途：只验证"**没有该版本任务** ⇒ 没有结论可退回 ⇒ 不降级"这条**已登记边界**；
+ * 它**不会**产出任何"通过"，也不得用于其它用例。
+ */
+export function noTaskConclusionLink(inner) {
+  return {
+    wired: inner.wired,
+    get note() {
+      return inner.note;
+    },
+    screen: (input) => inner.screen(input),
+    withdraw: (input) => inner.withdraw(input),
+    readView: (input) => inner.readView(input),
+    counts: () => inner.counts(),
+    conclusionFor: () => ({
+      present: false,
+      readable: true,
+      publishable: false,
+      vetoed: false,
+      isolation: true,
+      decision: null,
+      reason_codes: [],
+      task_ids: [],
+      model_layer: 'unconcluded',
+    }),
+  };
+}
+
+/**
  * 与 `makeHarness` 同一套装配，但**自己建审核域、自己建联动端口**并套一层只观察的包装，
  * 从而能断言"社区送审/下架时到底给审核域传了什么、拿回了什么"。
  *
  * 注意：包装**只记录**，所有调用原样委托给真实端口（`observeLink`）——
  * 这不是"用替身冒充结论"，审核域仍是那份真实实现。
+ *
+ * `options.moderationPortWrapper`：把审核域端口再包一层（例如 `deferringModerationPort`）；
+ * 判定与台账仍是真实实现。
  */
 export function makeWiredHarness(options = {}) {
   const holder = {};
@@ -318,8 +373,15 @@ export function makeWiredHarness(options = {}) {
           ...(options.ports === undefined ? {} : { ports: options.ports }),
           authority,
         });
-      const { link, calls } = observeLink(createCommunityModerationLink({ moderation }));
-      const communityModeration = options.communityModeration === undefined ? link : options.communityModeration;
+      const linkModeration =
+        options.moderationPortWrapper === undefined ? moderation : options.moderationPortWrapper(moderation);
+      const { link, calls } = observeLink(createCommunityModerationLink({ moderation: linkModeration }));
+      const communityModeration =
+        options.communityModeration !== undefined
+          ? options.communityModeration
+          : options.communityLinkWrapper === undefined
+            ? link
+            : options.communityLinkWrapper(link);
       Object.assign(holder, { moderation, calls });
       return { service: moderation, communityModeration };
     },
