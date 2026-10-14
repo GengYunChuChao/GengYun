@@ -66,6 +66,8 @@ npm run dev:admin                   # 另开终端
 npm run lint
 npm run test:unit
 npm run test:contract
+npm run test:reference
+npm run test:evaluation
 npm run build
 npm run test:mini
 ```
@@ -149,6 +151,20 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 
 `test:unit` 唯一跳过项 `native separate-connection withdrawal and account state changes at guarded read boundary`（`# SKIP`）
 需要**原生双连接数据库**环境，在本机无配置条件下不运行，**不计入通过**。
+
+### 4.5b 文档命令表中的其余两层（`test:reference` / `test:evaluation`）
+
+`docs/development-guide.md` §6 的命令表还列了这两条，`engineering-shell.yml` 的 CI 也各有一个 job，故一并复跑留档：
+
+```
+# test:reference
+ℹ tests 276   ℹ pass 276   ℹ fail 0   # EXITCODE: 0
+
+# test:evaluation
+ℹ tests 84    ℹ pass 84    ℹ fail 0   # EXITCODE: 0
+```
+
+`test:evaluation` 按文档口径**不等于真实模型指标**（只用 Node 标准库与合成夹具，禁用真实外部调用），本页不据此声称任何能力达标。
 
 ### 4.6 缺配置必须明确失败（实测；**不把失败写成成功**）
 
