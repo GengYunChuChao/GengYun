@@ -801,8 +801,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       invalidated = cache.invalidateTarget(target);
     } else if (verdict.visible && snapshot !== null) {
       cache.set(target, {
-        visibility: 'published',
-        published_revision: target.revision,
+        visibility: snapshot.visibility,
+        published_revision: published,
         author_state: snapshot.author_state,
         cached_at: nowIso(),
       });

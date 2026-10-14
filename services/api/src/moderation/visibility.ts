@@ -215,7 +215,10 @@ export interface CheckReadArgs {
 /**
  * 读取时可见性判定（**纯函数**，便于逐条断言）。
  *
- * 顺序即优先级：先身份、再存在性、再下架/删除、再作者状态、再**旧链接**、最后发布状态。
+ * 顺序即优先级：先身份、再存在性、再下架/删除、再所有者权限、再作者状态、再**旧链接**，
+ * 最后按可见性决定。
+ *  - `private`：仅**所有者**可见（未公开内容不进公共读面；他人 403 语义 `SCOPE_DENIED`）；
+ *  - `published`：要求**已发布 revision 等于本次请求的 revision**（下架后置空 ⇒ 旧链接不复活）。
  * 任何一项不成立 ⇒ 不可见（fail-closed），且**绝不**因为"缓存说是 published"而放行。
  */
 export function checkReadVisibility(args: CheckReadArgs): ReadVerdict {
@@ -246,14 +249,25 @@ export function checkReadVisibility(args: CheckReadArgs): ReadVerdict {
   const snapshot = args.snapshot;
   if (snapshot.visibility === 'deleted') return deny('deleted', 'CONTENT_DELETED');
   if (snapshot.visibility === 'hidden') return deny('hidden', 'CONTENT_HIDDEN');
-  if (snapshot.visibility === 'private' && snapshot.owner_id !== args.actor.userId) {
-    return deny('private', 'SCOPE_DENIED');
-  }
+  const owned = snapshot.owner_id !== null && snapshot.owner_id === args.actor.userId;
+  if (snapshot.visibility === 'private' && !owned) return deny('private', 'SCOPE_DENIED');
   if (snapshot.author_state === 'inactive') return deny(snapshot.visibility, 'ACCOUNT_INACTIVE');
   if (snapshot.author_state === 'anonymized') return deny(snapshot.visibility, 'AUTHOR_ANONYMIZED');
   if (snapshot.current_revision !== args.target.revision) {
     // 旧链接：目标已生成新 revision，旧 revision 不得因缓存/书签继续可见。
     return deny(snapshot.visibility, 'REVISION_SUPERSEDED');
+  }
+  if (snapshot.visibility === 'private') {
+    // 所有者读自己的未公开内容：可见，但**不计为已发布**（`published_revision` 不参与）。
+    if (stale) reasons.push('CACHE_ENTRY_STALE');
+    return {
+      visible: true,
+      visibility: 'private',
+      reason_codes: reasons,
+      cache_hit: cacheHit,
+      cache_entry_stale: stale,
+      cache_keys_invalidated: stale ? [cacheKey(args.target)] : [],
+    };
   }
   if (args.published_revision === null || args.published_revision !== args.target.revision) {
     return deny(snapshot.visibility, 'NOT_PUBLISHED');
