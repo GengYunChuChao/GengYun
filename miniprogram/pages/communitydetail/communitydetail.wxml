@@ -1,0 +1,117 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">一段田间观察</view>
+      <view class="page-heading__sub">留住发现，也听听大家的想法。点赞与评论都按幂等处理，重复操作不会重复计数。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{guest}}"
+    status="guest"
+    desc="社区内容需要登录后查看。"
+    action-text="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <block wx:else>
+    <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
+
+    <state-view
+      wx:elif="{{status === 'error'}}"
+      status="invalid"
+      title="这条内容当前不可见"
+      desc="{{errorText}}"
+      action-text="返回社区"
+      bind:action="onBack"
+    ></state-view>
+
+    <block wx:else>
+      <view class="card">
+        <view class="post-author">
+          <view class="post-author__copy">
+            <view class="post-author__title">{{post.author}}</view>
+            <view class="post-author__meta">{{post.time}}{{post.crop_id ? ' · ' + post.crop_id : ''}}{{post.region_code ? ' · ' + post.region_code : ''}}</view>
+          </view>
+          <view class="post-author__tag pill {{post.stateLabel ? 'pill--amber' : 'pill--gray'}}">{{post.stateLabel || post.publicLabel}}</view>
+        </view>
+        <view class="post-title">{{post.title}}</view>
+        <view class="post-text">{{post.body}}</view>
+        <view wx:if="{{post.linkTitle}}" class="pill">关联资料：{{post.linkTitle}}</view>
+        <view wx:elif="{{post.linkState === 'unavailable'}}" class="pill pill--gray">关联资料当前不可用（只保留目标引用）</view>
+
+        <view class="row-actions form-gap">
+          <gy-ui-button label="点赞" variant="primary" data-kind="post" bind:tap="onLikePost"></gy-ui-button>
+          <gy-ui-button label="取消点赞" variant="ghost" bind:tap="onUnlikePost"></gy-ui-button>
+          <gy-ui-button label="反馈问题" variant="ghost" bind:tap="onReportPost"></gy-ui-button>
+        </view>
+        <view class="demo-caption form-gap">
+          契约的内容投影里没有点赞数，也没有「我是否点过赞」的读取口，因此这里不显示点赞数；
+          服务端对重复点赞是幂等的（只保留一条记录，不重复计数）。
+        </view>
+      </view>
+
+      <!-- 仅作者可用的编辑/删除：契约 Author 是假名投影，客户端无法判断归属，
+           因此这里不伪造"这是你的内容"，越权一律由服务端 404 拒绝。 -->
+      <view class="card">
+        <view class="panel-head">
+          <view class="panel-head__title">我的内容（仅作者可操作）</view>
+          <view class="pill pill--gray">越权将被服务端拒绝</view>
+        </view>
+        <view class="row-actions">
+          <gy-ui-button label="{{editingPost ? '收起编辑' : '编辑本条'}}" variant="ghost" bind:tap="onToggleEditPost"></gy-ui-button>
+          <gy-ui-button label="删除本条" variant="danger" bind:tap="onDeletePost"></gy-ui-button>
+        </view>
+        <block wx:if="{{editingPost}}">
+          <view class="label form-gap">标题（1..120）</view>
+          <input class="input" value="{{editTitle}}" maxlength="120" bindinput="onEditTitle" />
+          <view class="label form-gap">正文（1..8000）</view>
+          <textarea class="input textarea" value="{{editBody}}" maxlength="8000" bindinput="onEditBody"></textarea>
+          <view class="demo-caption form-gap">保存会生成新版本并重新审核；旧版本的审核结论不会套用到新版本。</view>
+          <view class="row-actions form-gap">
+            <gy-ui-button label="保存并重新审核" variant="primary" bind:tap="onSavePost"></gy-ui-button>
+          </view>
+        </block>
+      </view>
+
+      <!-- 评论 -->
+      <view class="card">
+        <view class="card-title">交流与讨论</view>
+
+        <state-view wx:if="{{comments.length === 0}}" status="empty" title="还没有评论" desc="欢迎留下第一条观察。"></state-view>
+
+        <view wx:for="{{comments}}" wx:key="id" class="comment-row">
+          <view class="comment-row__title">{{item.author}} · {{item.time}}</view>
+          <view wx:if="{{item.stateLabel}}" class="pill pill--amber">{{item.stateLabel}}</view>
+          <view class="comment-row__text">{{item.body}}</view>
+          <view class="row-actions">
+            <gy-ui-button label="点赞" variant="ghost" data-id="{{item.id}}" bind:tap="onLikeComment"></gy-ui-button>
+            <gy-ui-button label="取消点赞" variant="ghost" data-id="{{item.id}}" bind:tap="onUnlikeComment"></gy-ui-button>
+            <gy-ui-button label="反馈" variant="ghost" data-id="{{item.id}}" bind:tap="onReportComment"></gy-ui-button>
+            <gy-ui-button label="编辑" variant="ghost" data-id="{{item.id}}" bind:tap="onToggleEditComment"></gy-ui-button>
+            <gy-ui-button label="删除" variant="danger" data-id="{{item.id}}" bind:tap="onDeleteComment"></gy-ui-button>
+          </view>
+          <block wx:if="{{editingCommentId === item.id}}">
+            <textarea class="input textarea" value="{{editCommentText}}" maxlength="4000" bindinput="onEditCommentInput"></textarea>
+            <view class="row-actions form-gap">
+              <gy-ui-button label="保存并重新审核" variant="primary" bind:tap="onSaveComment"></gy-ui-button>
+            </view>
+          </block>
+        </view>
+
+        <view wx:if="{{nextCursor}}" class="row-actions">
+          <gy-ui-button label="加载更多评论" variant="ghost" bind:tap="onLoadMoreComments"></gy-ui-button>
+        </view>
+
+        <view class="label form-gap">发表评论（1..4000）</view>
+        <textarea class="input textarea" value="{{commentText}}" maxlength="4000" placeholder="分享你的观察…" bindinput="onCommentInput"></textarea>
+        <view class="row-actions form-gap">
+          <gy-ui-button label="{{submitting ? '正在提交…' : '发送评论'}}" variant="primary" loading="{{submitting}}" bind:tap="onSubmitComment"></gy-ui-button>
+          <gy-ui-button label="返回社区" variant="ghost" bind:tap="onBack"></gy-ui-button>
+        </view>
+      </view>
+
+      <view class="demo-caption">{{modeNote}}</view>
+    </block>
+  </block>
+</view>

@@ -70,6 +70,19 @@ import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
+// GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
+import { registerCommunityRoutes } from './routes/community.ts';
+import { createCommunityService, type CommunityService } from './community/service.ts';
+import { createMemoryCommunityStore, type CommunityStore } from './community/store.ts';
+import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
+import type { AuthorDirectory } from './community/types.ts';
+import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
+import {
+  createMessagesCommunityEventsPort,
+  createUnwiredCommunityEventsPort,
+  type CommunityEventsPort,
+} from './community/events.ts';
+import { withTakedownObserver } from './community/takedown.ts';
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 
 declare module 'fastify' {
@@ -93,6 +106,11 @@ declare module 'fastify' {
     mediaObjectStore: MediaObjectStore;
     /** Non-real message service; real remains closed until persistent storage is delivered. */
     messagesService: MessagesService | null;
+    /**
+     * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
+     * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
+     */
+    communityService: CommunityService | null;
   }
 }
 
@@ -172,6 +190,20 @@ export interface BuildAppOptions {
   };
   /** Synthetic tests only; these memory/reference injections do not enable the real-mode domain. */
   messagesInjection?: { store?: MessagesStore; reference?: MessageReferencePort };
+  // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
+  //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
+  //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
+  //   * 「杂草／药剂关联」可用性端口**未接线** ⇒ 新增/替换引用一律 `OBJECT_UNAVAILABLE`；
+  //     （真实接线需要请求会话身份进入社区服务，属跨线决定，见 PR 正文"未取得"）
+  //   * 事件端口接到本进程的消息服务公开创建口；消息服务为 null（real）时端口 `wired:false`。
+  communityInjection?: {
+    store?: CommunityStore;
+    authors?: AuthorDirectory;
+    knowledge?: KnowledgeAvailabilityPort;
+    events?: CommunityEventsPort;
+    /** 测试注入：替换发布闸门（默认出厂规则集；注入自定义规则集会真实改变派生 `rule_version`）。 */
+    gate?: Parameters<typeof createCommunityService>[0]['gate'];
+  };
   /**
    * **仅测试注入**：日志输出的写入目标，用于断言「日志不含坐标等敏感原文」。生产装配
    * （`services/api/src/server.ts`）**永不传入**；不传时日志仍写进程 stdout，级别、格式与
@@ -245,7 +277,7 @@ export function requestLogFields(request: unknown): RequestLogFields {
 }
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -270,8 +302,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
     idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
   });
-  const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;
-  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
+  const sql = store === undefined && pool !== null ? createSqlExecutor(pool) : null;  const authStore = store ?? (sql === null ? createMemoryAuthStore() : createPostgresAuthStore(sql));
   const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));
   const wechatProvider =
     wechat ??
@@ -395,6 +426,52 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 读/取消与 `hidePost` 返回 503 `PROVIDER_UNAVAILABLE`（**不返回空页**：空页等于宣称
   // 「平台当前没有作业」，那是无法确认的结论）。真实作业端口与社区存储属后续接线；
   // 本文件**不**自建会与其它域割裂的替身实例（那会让「隐藏了帖子」在不同 store 上失真）。
+  // ---------------------------------------------------------------------------
+  // GY-I15 社区域（#15）阶段 2 装配。
+  //
+  // **real 模式 ⇒ 社区整域 fail-closed**（与 GY-I18 后台域、GY-I17 消息域同一口径）：
+  // 社区 store 是**内存**实现（`persistent:false`），真实持久存储未交付。若在 `real` 下把它交给
+  // 服务层，写操作会返回**成功封套**而落点只是易失内存 —— 即在"真实模式"下声称投稿成功、
+  // 重启即丢。因此这里在**运行时**拒绝（503 `PROVIDER_UNAVAILABLE`, retryable），
+  // 而不是靠文档披露。将来接真实持久 store 必须在这里**显式放行**（一次可审查的接线变更）。
+  //
+  // **事件投递**：只把消息域的公开创建口 `appendMessage` 作为**结构性端口**传进来
+  // （不 import 消息域、不改其实现）。消息服务在 real 下为 `null` ⇒ 事件端口 `wired:false`。
+  //
+  // **下架观察器**：交给后台（GY-I18）的社区帖子端口套一层观察器，使
+  // `POST /admin/posts/{id}/hide` 生效后能投递「下架」事件；观察器只发通知，
+  // 不改 visibility、不改错误映射（权威判定仍在社区 store 的 CAS 里）。
+  // ---------------------------------------------------------------------------
+  const communitySigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
+  const communityStore = communityInjection?.store ?? createMemoryCommunityStore({ now: () => clock().getTime() });
+  const communityEvents: CommunityEventsPort =
+    communityInjection?.events ??
+    (messagesService === null
+      ? createUnwiredCommunityEventsPort('消息服务未接线（real 模式）：审核结果/下架事件无法投递')
+      : createMessagesCommunityEventsPort({ messages: messagesService }));
+  const communityRealUnwired = config.executionMode === 'real';
+  let communityService: CommunityService | null;
+  if (communityRealUnwired) {
+    const reason = 'real 模式未接真实持久后端：社区业务不可用（拒绝以内存 store 返回成功封套）';
+    communityService = null;
+    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 16 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
+  } else {
+    communityService = createCommunityService({
+      store: communityStore,
+      // **必填**：不提供默认值，避免某个接线点忘了接作者来源时悄悄用假名当真实作者。
+      authors: communityInjection?.authors ?? createLocalPseudonymousAuthorDirectory(),
+      gate: communityInjection?.gate,
+      knowledge: communityInjection?.knowledge,
+      events: communityEvents,
+      signingKey: communitySigningKey,
+      now: clock,
+    });
+  }
+  // 后台 `hidePost` 的社区帖子端口：注入优先；否则用**同一个**社区 store（绝不自建第二份，
+  // 否则"后台隐藏了帖子"在社区读取侧不生效）。上面套下架观察器只为发通知。
+  const communityPostPortForAdmin =
+    adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });
+
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
   const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
@@ -430,7 +507,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
       jobPort: adminInjection?.jobPort,
-      community: adminInjection?.communityStore,
+      // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
+      community: communityPostPortForAdmin,
       flagEffects: adminInjection?.flagEffects,
     });
   }
@@ -469,6 +547,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('mediaService', mediaService);
   app.decorate('mediaObjectStore', mediaObjectStore);
   app.decorate('messagesService', messagesService);
+  app.decorate('communityService', communityService);
 
   registerHealthRoutes(app, config, pool);
   registerPublicHomeRoute(app, config, pool);
@@ -501,6 +580,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   registerMediaRoutes(app, config, guards, mediaService);
   registerMessageRoutes(app, config, guards, messagesService);
+  // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
+  registerCommunityRoutes(app, config, guards, communityService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
