@@ -1,0 +1,124 @@
+/**
+ * 设计令牌（GY-I26 前端页面与 Demo 样式对齐，Refs #28）
+ * ============================================================================
+ * 准绳：docs/ui-demo/（PR #132，基线 upstream/main 15c3003）的 dist/styles.css:1
+ *       :root{--green:#176b50;--ink:#17352b;--muted:#7b8983;--paper:#f5f7f4;
+ *             --line:#e5ebe5;--lime:#c6f17b;--font:'Segoe UI',…}
+ *
+ * 【色板冲突披露】docs/implementation-requirements.md:402 写「主题绿 #1F7A45，知识类绿
+ * #2E9E5B，提示蓝 #2B6CB0，警告红 #C53030，提醒黄 #B7791F」。用户 2026-10-14 指令
+ * 「前端页面务必先做到 demo.html 所演示的样式，优先做好」，本片据此**采用 demo 值**，
+ * 冲突交监工裁定。若判回 #1F7A45，只需改本文件的 --green 与 --color-primary 及
+ * app.json 两处颜色，其余样式层不必动。
+ *
+ * WXSS 约束说明：
+ *   1. CSS 变量必须定义在 page 上才能被页面节点继承（WXSS 无 :root）；
+ *   2. 字号一律写 calc(Npx * var(--font-scale, 1))，不写裸 px——否则微信字体设置对 px 无效；
+ *   3. 色板值逐字取自 demo，避免「看起来差不多」的手调色；
+ *   4. 变量名保留 --color-* 一套别名，供既有页面（GY-I03／I04／I05／I07／I09 等已交付界面）
+ *      继续复用，不重写他人已交付的页面样式。
+ *
+ * 机检：node tools/demo-align.mjs 会逐值比对 --green/--ink/--muted/--paper/--line/--lime。
+ */
+
+page {
+  /* ---- demo :root 令牌（逐值一致，机检对象） ---- */
+  --green: #176b50;
+  --ink: #17352b;
+  --muted: #7b8983;
+  --paper: #f5f7f4;
+  --line: #e5ebe5;
+  --lime: #c6f17b;
+
+  /* ---- demo 派生色：绿色阶（括号内为 demo 选择器） ---- */
+  --green-deep: #135b44;        /* .btn.primary:hover */
+  --green-hero: #123e31;        /* .hero background */
+  --green-dark: #173e30;        /* .btn.dark / .login-mark */
+  --green-ink: #315534;         /* .nav-item.active / .tabs button.active */
+  --green-tab-on: #396d33;      /* .bottom-nav button.active */
+  --green-soft: #eef3e9;        /* .pill / .btn 默认底色 */
+  --green-soft-2: #e9efdf;      /* .profile-header */
+  --green-soft-3: #e6efdf;      /* .nav-item.active */
+  --green-art: #e4eddb;         /* .article-art */
+  --green-art-deep: #e4eeee;    /* .article-art.blue */
+  --green-art-amber: #f0ecdc;   /* .article-art.amber */
+  --green-panel: #edf3e7;       /* .process-panel */
+  --green-tiny-art: #e9f0df;    /* .tiny-art */
+  --green-nav-bg: #fcfdf9;      /* .bottom-nav background */
+  --green-paper-soft: #fbfcf8;  /* .topbar / .empty background */
+  --green-line-soft: #eff3ec;   /* .info-row border-bottom */
+  --green-line-soft-2: #edf1e7; /* .message-row border-bottom */
+  --green-line-2: #e2e9da;      /* .bottom-nav border-top */
+  --green-line-3: #eef2e8;      /* .setting-row border-bottom */
+  --green-line-4: #f0f4eb;      /* .topic border-bottom */
+  --green-field: #dfe8dc;       /* .input border */
+  --green-chip-line: #dfe7da;   /* .chip border */
+  --green-empty-line: #d4dfc7;  /* .empty border */
+  --green-switch: #d9e2ce;      /* .switch background */
+  --green-switch-on: #82a768;   /* .switch.on background */
+  --green-dot: #58a467;         /* .dot */
+  --green-nav-off: #a2b197;      /* .bottom-nav button color */
+
+  /* ---- demo 派生色：文字与灰阶 ---- */
+  --ink-nav: #718277;           /* .nav-item color */
+  --ink-post: #85907c;          /* .post-text */
+  --ink-pill: #6e8565;          /* .pill color */
+  --ink-menu: #748763;          /* .setting-row color */
+  --ink-hint: #97a48e;          /* .hint color */
+  --ink-meta: #a3ad9c;          /* .card-meta */
+  --ink-chip: #829176;          /* .chip color */
+  --ink-icon: #b2beb2;          /* .info-row > .icon */
+  --ink-arrow: #94a087;         /* .post-actions color */
+  --ink-feature-desc: #909d93;  /* .feature-card p */
+  --ink-panel-title: #53685b;   /* .crumb b */
+  --ink-notice: #7e8a60;        /* .notice color */
+
+  /* ---- 语义色：demo 未定义，沿用任务书 implementation-requirements.md:402 ---- */
+  --color-loading: #2B6CB0;   /* 提示蓝 */
+  --color-error: #C53030;     /* 警告红 */
+  --color-invalid: #8A6D1F;   /* 提醒黄（失效／待确认） */
+  --color-stub: #5B4B8A;      /* 替身数据紫，仅开发模式可见 */
+
+  /* ---- demo 未定义但样式层需要的状态底色（取自 demo 的风险 pill 与 danger 按钮） ---- */
+  --tone-warn-bg: #f7f1e3;      /* .pill.amber */
+  --tone-warn-ink: #987d4b;
+  --tone-danger-bg: #f8eeec;    /* .btn.danger */
+  --tone-danger-ink: #a4473e;
+  --tone-low-bg: #e5f2e6;       /* .risk-low */
+  --tone-low-ink: #3d7949;
+  --tone-medium-bg: #fff0d6;    /* .risk-medium */
+  --tone-medium-ink: #986b1c;
+  --tone-high-bg: #fbe5e2;      /* .risk-high */
+  --tone-high-ink: #aa463d;
+  --tone-stub-bg: #efeaf7;
+
+  /* ---- 既有页面的 --color-* 别名：指向上面的 demo 值，不另立一套色板 ---- */
+  --color-primary: #176b50;        /* = demo --green（冲突披露见文件头） */
+  --color-primary-deep: #135b44;
+  --color-primary-soft: #eef3e9;
+  --color-bg: #f5f7f4;             /* = demo --paper */
+  --color-surface: #FFFFFF;
+  --color-text: #17352b;           /* = demo --ink */
+  --color-text-sub: #4a5a4e;       /* 正文对比度取值，见证据页取舍表 */
+  --color-text-muted: #7b8983;     /* = demo --muted */
+  --color-border: #e5ebe5;         /* = demo --line */
+
+  /* ---- 形态令牌（demo .panel / .article-card / .btn 的圆角与内距） ---- */
+  --radius-sm: 12px;   /* .article-card / .input / .tabs */
+  --radius: 14px;      /* .panel */
+  --radius-lg: 15px;   /* .feature-card / .post / .message-list */
+  --radius-art: 11px;  /* .article-art / .tiny-art */
+  --gap-xs: 8px;       /* .chips gap */
+  --gap-sm: 12px;      /* .stat-grid gap */
+  --gap: 17px;         /* demo 窄屏网格 gap */
+  --gap-lg: 22px;      /* demo 桌面网格 gap */
+
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* demo 的字体栈含 Segoe UI（Windows 浏览器专有）；小程序取系统字体，
+   PingFang SC（iOS）与 Microsoft YaHei（Windows 调试器）优先，其余回落 sans-serif。 */
+page {
+  font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}

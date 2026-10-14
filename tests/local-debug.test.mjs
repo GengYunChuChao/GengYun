@@ -78,9 +78,9 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（12 页）同步，且参考域依赖须一并复制 ——
+  // —— F2 回归：打包允许清单须随 app.json（13 页）同步，且参考域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 12);
+  assert.equal(appJson.pages.length, 13);
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);
@@ -95,6 +95,10 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'custom-tab-bar/index.json',
     'custom-tab-bar/index.wxml',
     'custom-tab-bar/index.wxss',
+    // 设计令牌／图标／组件样式层（GY-I26）：app.wxss 依赖它们，漏打包会整站丢样式
+    'styles/tokens.wxss',
+    'styles/icons.wxss',
+    'styles/components.wxss',
     'utils/reference.js',
     'utils/profile-api.js',
     'utils/location-region.js',

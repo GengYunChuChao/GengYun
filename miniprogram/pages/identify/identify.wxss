@@ -1,104 +1,34 @@
-.notice {
-  display: flex;
-  align-items: flex-start;
-  padding: 24rpx;
-  margin-bottom: 28rpx;
-  border-radius: var(--radius, 20rpx);
-  background: #FFF6E5;
-  border: 2rpx solid #F0D9A8;
-}
-
-.notice--mode {
-  background: #EEF4FF;
-  border-color: #C7D8F5;
-}
-
-.notice--substitute {
-  background: #F5F0FF;
-  border-color: #D9CBF0;
-}
-
-.notice__icon {
-  font-size: calc(16px * var(--font-scale, 1));
-  margin-right: 14rpx;
-  line-height: 1.5;
-}
-
-.notice__text {
-  flex: 1;
-  font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: #7A5A16;
-}
-
-.mode {
-  padding: 28rpx;
-  margin-bottom: 24rpx;
-  border-radius: var(--radius-lg, 28rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
-}
-
-.mode__head {
-  display: flex;
-  align-items: flex-start;
-}
-
-.mode__icon {
-  flex: 0 0 auto;
-  width: 88rpx;
-  height: 88rpx;
-  margin-right: 22rpx;
-  border-radius: 22rpx;
-  background: var(--color-primary-soft, #E8F3EC);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 44rpx;
-}
-
-.mode__body {
-  flex: 1;
-  min-width: 0;
-}
-
-.mode__title {
-  font-size: calc(18px * var(--font-scale, 1));
-  font-weight: 600;
-}
-
-.mode__desc {
-  margin-top: 6rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  color: var(--color-text-sub, #4A5A4E);
-  line-height: 1.6;
-}
-
-.mode__btn {
-  width: 100%;
-  margin-top: 24rpx;
-}
+/* 识别页（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 通用形态已落到 styles/components.wxss：page-heading / notice / section-head /
+ * feature-grid / feature-card / row-actions / message-list / pill / hint / demo-caption。
+ * 本文件只保留识别页专属的状态块与候选行，并统一改用 tokens.wxss 的 demo 令牌。
+ *
+ * 未改写 GY-I09 已交付的三入口交互（仍为「一个入口一个按钮 + data-mode」），
+ * demo 的 .scan-stage / .scan-frame / .process-panel 形态已落入样式层，
+ * 可在样式走查页 pages/specimen/specimen 逐项核对。
+ */
 
 /* 七类 JobState 的状态块：底色区分，同时显示契约状态名，不只靠颜色 */
 .state-chip {
   display: flex;
   flex-direction: column;
-  padding: 24rpx;
-  margin-bottom: 24rpx;
-  border-radius: var(--radius, 20rpx);
-  border: 2rpx solid var(--color-border, #D8E4DC);
-  background: var(--color-surface, #fff);
+  padding: 16px;
+  margin-bottom: 17px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #FFFFFF;
 }
 
-.state-chip--pending { background: #F2F7F3; border-color: #CFE0D4; }
-.state-chip--success { background: #EAF6EE; border-color: #B9DEC5; }
-.state-chip--warning { background: #FFF6E5; border-color: #F0D9A8; }
-.state-chip--error { background: #FDEDEC; border-color: #F3C3BE; }
-.state-chip--muted { background: #F2F4F2; border-color: #D5DBD6; }
+.state-chip--pending { background: #f2f7f3; border-color: #cfe0d4; }
+.state-chip--success { background: #eaf6ee; border-color: #b9dec5; }
+.state-chip--warning { background: var(--tone-warn-bg); border-color: #e8d6ad; }
+.state-chip--error { background: var(--tone-danger-bg); border-color: #eec6c0; }
+.state-chip--muted { background: #f2f4f2; border-color: #d5dbd6; }
 
 .state-chip__code {
   font-size: calc(14px * var(--font-scale, 1));
-  color: var(--color-text-muted, #6F7F72);
+  color: var(--muted);
 }
 
 .state-chip__title {
@@ -110,34 +40,25 @@
 .state-chip__desc {
   margin-top: 8rpx;
   font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: var(--color-text-sub, #4A5A4E);
+  line-height: 1.7;
+  color: var(--color-text-sub);
 }
 
 .state-chip__err {
   margin-top: 8rpx;
   font-size: calc(14px * var(--font-scale, 1));
-  color: var(--color-text-muted, #6F7F72);
+  color: var(--muted);
 }
 
-.btn-row {
-  display: flex;
-  gap: 20rpx;
-  margin-bottom: 24rpx;
-}
-
-.btn-row__item {
-  flex: 1;
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
+/* 不确定原因：沿用 demo 的 notice 语气，内部只排标题与条目 */
 .reasons {
-  padding: 24rpx;
-  margin-bottom: 24rpx;
-  border-radius: var(--radius, 20rpx);
-  background: #FFF6E5;
-  border: 2rpx solid #F0D9A8;
+  display: block;
+  margin-bottom: 17px;
+}
+
+.reasons__body {
+  flex: 1;
+  min-width: 0;
 }
 
 .reasons__title {
@@ -147,159 +68,76 @@
 }
 
 .reasons__item {
-  font-size: calc(15px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: #7A5A16;
+  display: block;
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.8;
+  color: inherit;
 }
 
+/* 候选行：结构对应 demo .result-candidate（图标 + 名称 + 分数） */
 .candidate {
   display: flex;
   align-items: center;
-  padding: 24rpx;
-  margin-bottom: 18rpx;
-  border-radius: var(--radius, 20rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
+  gap: 12px;
+  min-height: max(44px, 44px * var(--font-scale, 1));
+  padding: 16px;
+  margin-bottom: 11px;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  box-sizing: border-box;
 }
 
+/* 选中态取 demo .period.active{border-color:#76995d;background:#f0f5e9} */
 .candidate--picked {
-  border-color: var(--color-primary, #3F7A55);
-  background: #EAF6EE;
+  border-color: #76995d;
+  background: #f0f5e9;
 }
 
 .candidate__rank {
   flex: 0 0 auto;
-  width: 70rpx;
+  width: 60rpx;
   font-size: calc(16px * var(--font-scale, 1));
   font-weight: 600;
-  color: var(--color-primary, #3F7A55);
+  color: var(--green);
 }
 
 .candidate__body { flex: 1; min-width: 0; }
 
 .candidate__name {
-  font-size: calc(17px * var(--font-scale, 1));
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .candidate__score {
   margin-top: 6rpx;
-  font-size: calc(15px * var(--font-scale, 1));
-  color: var(--color-text-sub, #4A5A4E);
+  font-size: calc(16px * var(--font-scale, 1));
+  color: var(--color-text-sub);
 }
 
 .candidate__state {
   flex: 0 0 auto;
   font-size: calc(14px * var(--font-scale, 1));
-  color: var(--color-primary, #3F7A55);
+  color: var(--green);
 }
 
-.candidate-hint {
-  margin-bottom: 20rpx;
-  font-size: calc(15px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: #7A5A16;
-}
-
-.seed-tag {
-  margin-bottom: 16rpx;
-  font-size: calc(14px * var(--font-scale, 1));
-  color: #7A5A16;
-}
-
+/* 关联科普条目：沿用 demo .panel 的观感 */
 .knowledge {
-  padding: 22rpx;
-  margin-bottom: 18rpx;
-  border-radius: var(--radius, 20rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
+  padding: 16px;
+  margin-top: 11px;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  border: 1px solid var(--line);
 }
 
 .knowledge__name {
-  font-size: calc(17px * var(--font-scale, 1));
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .knowledge__meta {
   margin-top: 6rpx;
-  font-size: calc(15px * var(--font-scale, 1));
-  color: var(--color-text-sub, #4A5A4E);
-  line-height: 1.6;
-}
-
-.knowledge__note {
-  margin-bottom: 20rpx;
-  font-size: calc(14px * var(--font-scale, 1));
-  color: var(--color-text-muted, #6F7F72);
-  line-height: 1.6;
-}
-
-.error-text {
-  padding: 22rpx;
-  margin-bottom: 24rpx;
-  border-radius: var(--radius, 20rpx);
-  background: #FDEDEC;
-  border: 2rpx solid #F3C3BE;
   font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: #8C2F27;
-}
-
-.history {
-  padding: 22rpx;
-  margin-bottom: 16rpx;
-  border-radius: var(--radius, 20rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
-}
-
-.history__title {
-  font-size: calc(16px * var(--font-scale, 1));
-  font-weight: 600;
-}
-
-.history__meta {
-  margin-top: 6rpx;
-  font-size: calc(14px * var(--font-scale, 1));
-  color: var(--color-text-muted, #6F7F72);
-}
-
-.card {
-  padding: 26rpx;
-  margin-bottom: 24rpx;
-  border-radius: var(--radius-lg, 28rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
-}
-
-.card-title {
-  font-size: calc(17px * var(--font-scale, 1));
-  font-weight: 600;
-}
-
-.card-text {
-  margin-top: 10rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: var(--color-text-sub, #4A5A4E);
-}
-
-.voice-row {
-  display: flex;
-  gap: 20rpx;
-  margin-top: 24rpx;
-}
-
-.voice-btn {
-  flex: 1;
-  /* 保留 .btn 的上下 padding，仅覆盖横向；字号放大后文字换行时按钮自然撑高 */
-  padding-left: 8px;
-  padding-right: 8px;
-}
-
-.voice-hint {
-  margin-top: 20rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  color: var(--color-text-muted, #6F7F72);
-  line-height: 1.6;
+  color: var(--color-text-sub);
+  line-height: 1.7;
 }

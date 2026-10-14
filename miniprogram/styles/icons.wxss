@@ -1,0 +1,55 @@
+/**
+ * 图标层（GY-I26 demo 对齐）
+ * ----------------------------------------------------------------------------
+ * 本体由 tools/demo-align.mjs 从 docs/ui-demo/dist/app.js 的 `const paths` 生成，
+ * 几何与 demo 逐字一致；不用 <svg> 内联标签，改以 data URI 作为 background-image，
+ * 因为 WXSS 不能内联 SVG，而 currentColor 也无法穿透 data URI，故按 demo 的实际
+ * 描边色各建一个类（token 取色见 demo styles.css 的对应选择器）。
+ *
+ * 重新生成：node tools/demo-align.mjs --write-icons
+ * 校验一致：node tools/demo-align.mjs
+ */
+
+.gy-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  /* 与文字同步随微信字体设置放大，避免大字时图标显得过小 */
+  width: calc(var(--gy-icon-size, 21px) * var(--font-scale, 1));
+  height: calc(var(--gy-icon-size, 21px) * var(--font-scale, 1));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% 100%;
+}
+
+/* 底部导航：demo .bottom-nav button{color:#a2b197} / .bottom-nav button.active{color:#396d33} */
+.gy-icon--tab-home { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23a2b197'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m3%2010%209-7%209%207v10H3Z%20M9%2020v-7h6v7'/%3E%3C/svg%3E"); }
+.gy-icon--tab-users { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23a2b197'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M16%2021v-2a4%204%200%200%200-4-4H6a4%204%200%200%200-4%204v2m20%200v-2a4%204%200%200%200-3-4M12%207a4%204%200%201%201-8%200%204%204%200%200%201%208%200Zm4-4a4%204%200%200%201%200%208'/%3E%3C/svg%3E"); }
+.gy-icon--tab-scan { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23a2b197'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M8%203H3v5m13-5h5v5M3%2016v5h5m13-5v5h-5M7%2012h10'/%3E%3C/svg%3E"); }
+.gy-icon--tab-bell { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23a2b197'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M18%208a6%206%200%200%200-12%200c0%207-3%207-3%2010h18c0-3-3-3-3-10M10%2021h4'/%3E%3C/svg%3E"); }
+.gy-icon--tab-person { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23a2b197'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%2021v-2a6%206%200%200%200-6-6h-4a6%206%200%200%200-6%206v2M16%206a4%204%200%201%201-8%200%204%204%200%200%201%208%200Z'/%3E%3C/svg%3E"); }
+
+.tab--selected .gy-icon--tab-home { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23396d33'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m3%2010%209-7%209%207v10H3Z%20M9%2020v-7h6v7'/%3E%3C/svg%3E"); }
+.tab--selected .gy-icon--tab-users { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23396d33'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M16%2021v-2a4%204%200%200%200-4-4H6a4%204%200%200%200-4%204v2m20%200v-2a4%204%200%200%200-3-4M12%207a4%204%200%201%201-8%200%204%204%200%200%201%208%200Zm4-4a4%204%200%200%201%200%208'/%3E%3C/svg%3E"); }
+.tab--selected .gy-icon--tab-scan { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23396d33'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M8%203H3v5m13-5h5v5M3%2016v5h5m13-5v5h-5M7%2012h10'/%3E%3C/svg%3E"); }
+.tab--selected .gy-icon--tab-bell { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23396d33'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M18%208a6%206%200%200%200-12%200c0%207-3%207-3%2010h18c0-3-3-3-3-10M10%2021h4'/%3E%3C/svg%3E"); }
+.tab--selected .gy-icon--tab-person { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23396d33'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%2021v-2a6%206%200%200%200-6-6h-4a6%206%200%200%200-6%206v2M16%206a4%204%200%201%201-8%200%204%204%200%200%201%208%200Z'/%3E%3C/svg%3E"); }
+
+/* 其余图标：描边色取自 demo 对应选择器 */
+.gy-icon--leaf { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%237c9c5f'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%204C8%203%203%208%205%2016c7%205%2016-1%2015-12Z%20M5%2020l10-10'/%3E%3C/svg%3E"); }
+.gy-icon--scan { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23567441'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M8%203H3v5m13-5h5v5M3%2016v5h5m13-5v5h-5M7%2012h10'/%3E%3C/svg%3E"); }
+.gy-icon--chat { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23777550'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M21%203H3v14h5l4%204%204-4h5Z'/%3E%3C/svg%3E"); }
+.gy-icon--video { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23766e91'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M3%205h13v14H3Zm13%205%205-3v10l-5-3'/%3E%3C/svg%3E"); }
+.gy-icon--search { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a18a'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M21%2021l-5-5M18%2010a8%208%200%201%201-16%200%208%208%200%200%201%2016%200Z'/%3E%3C/svg%3E"); }
+.gy-icon--back { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23556a5c'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%2012H4m6-6-6%206%206%206'/%3E%3C/svg%3E"); }
+.gy-icon--arrow { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23b2beb2'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4%2012h16m-6-6%206%206-6%206'/%3E%3C/svg%3E"); }
+.gy-icon--shield { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2394a087'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m12%202%209%204v6c0%205-9%2010-9%2010S3%2017%203%2012V6Z%20M8%2012l3%203%205-6'/%3E%3C/svg%3E"); }
+.gy-icon--heart { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2394a087'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M20%204c-3-2-6%200-8%202-2-2-5-4-8-2-5%204%200%2010%208%2016%208-6%2013-12%208-16Z'/%3E%3C/svg%3E"); }
+.gy-icon--plus { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23ffffff'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%204v16M4%2012h16'/%3E%3C/svg%3E"); }
+.gy-icon--logout { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23748763'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M9%203H3v18h6m5-5%204-4-4-4m-7%204h12'/%3E%3C/svg%3E"); }
+.gy-icon--wheat { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23748763'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%2022V4m0%205C5%209%205%204%205%204s7%200%207%205Zm0%206c-7%200-7-5-7-5s7%200%207%205Zm0-3c7%200%207-5%207-5s-7%200-7%205Zm0%206c7%200%207-5%207-5s-7%200-7%205Z'/%3E%3C/svg%3E"); }
+.gy-icon--volume { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23748763'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m3%209%205%200%205-5v16l-5-5H3ZM17%208a6%206%200%200%201%200%208m3-11a10%2010%200%200%201%200%2014'/%3E%3C/svg%3E"); }
+.gy-icon--settings { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23748763'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%208a4%204%200%201%201%200%208%204%204%200%200%201%200-8ZM12%202v3m0%2014v3M2%2012h3m14%200h3M5%205l2%202m10%2010%202%202M5%2019l2-2M17%207l2-2'/%3E%3C/svg%3E"); }
+.gy-icon--image { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%236e8565'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M3%203h18v18H3Zm0%2014%205-5%204%204%204-6%205%208M8%207h1'/%3E%3C/svg%3E"); }
+.gy-icon--mic { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2382946f'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M9%205a3%203%200%200%201%206%200v7a3%203%200%200%201-6%200ZM5%2010v2a7%207%200%200%200%2014%200v-2M12%2019v3M8%2022h8'/%3E%3C/svg%3E"); }
+.gy-icon--tag { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%236f905c'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='m3%203%2010%200%208%208-10%2010-8-8ZM7%207h1'/%3E%3C/svg%3E"); }
+.gy-icon--clock { background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2385ba91'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%208v5l3%202M22%2012a10%2010%200%201%201-20%200%2010%2010%200%200%201%2020%200Z'/%3E%3C/svg%3E"); }

@@ -8,6 +8,8 @@ const speciesDoc = require('../../data/species')
 const regionDoc = require('../../data/regions')
 Page({
   data: { fontScale: 1, gatePassed: false, busy: false, status: '', modeNote: api.modeNote(), items: [], nextCursor: null,
+    // GY-I26：状态语气字段，供 state-view 统一渲染 loading／empty／error；idle 表示尚未发起查询
+    stateKind: 'idle',
     q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '', advanced: false,
     crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species),
     regions: [{ name: '全部地区', code: '' }].concat(regionDoc.regions),
@@ -16,7 +18,7 @@ Page({
   onShow: function () { fontScale.applyFontScale(this); this.checkGate() },
   onHide: function () { pageGate.cancel(this); this._applied = null; this.setData({ q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '' }) },
   onUnload: function () { this.onHide() },
-  clear: function () { this._displayBinding = null; this._readOperation = (this._readOperation || 0) + 1; this.setData({ busy: false, items: [], nextCursor: null, modeNote: api.modeNote(), status: '' }) },
+  clear: function () { this._displayBinding = null; this._readOperation = (this._readOperation || 0) + 1; this.setData({ busy: false, items: [], nextCursor: null, modeNote: api.modeNote(), status: '', stateKind: 'idle' }) },
   checkGate: function () {
     pageGate.start(this, ok => { this.clear(); this.setData({ gatePassed: ok }); if (ok) this.read() })
   },
@@ -52,7 +54,7 @@ Page({
       if (!cursor) this._cursors = []
       if (cursor && this._cursors.indexOf(cursor) !== -1) throw { code: 'INVALID_RESPONSE' }
       this._applied = Object.assign({}, q); delete this._applied.cursor
-      this.setData({ busy: true, status: '正在核对当前资料…' })
+      this.setData({ busy: true, status: '正在核对当前资料…', stateKind: 'loading' })
       const r = await api.list(q)
       if (!current()) return
       if (r.nextCursor && (this._cursors.indexOf(r.nextCursor) !== -1 || this._cursors.length >= 100)) throw { code: 'INVALID_RESPONSE' }
@@ -60,10 +62,11 @@ Page({
       this._displayBinding = b
       this.setData({ busy: false, nextCursor: r.nextCursor, modeNote: api.modeNote(r.mode),
         items: r.items.map(item => ({ id: item.id, item, labels: api.labels(item), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
+        stateKind: r.items.length ? 'ready' : 'empty',
         status: r.items.length ? '已读取当前页资料；详情会重新核对来源。' : '没有符合条件的资料，请调整条件继续查询。' })
     } catch (e) {
       if (!current()) { if (this._gateActive === true && this._readOperation === operation) { this.clear(); this.setData({ gatePassed: false, status: api.message(e) }) }; return }
-      this.setData({ busy: false, items: [], nextCursor: null, status: api.message(e) })
+      this.setData({ busy: false, items: [], nextCursor: null, status: api.message(e), stateKind: 'error' })
     }
   },
   open: function (e) {

@@ -1,6 +1,13 @@
 <view class="tab-bar" style="--font-scale: {{fontScale}}">
-  <button wx:for="{{tabs}}" wx:key="pagePath" class="tab {{selected === item.pagePath ? 'tab--selected' : ''}} {{index === 2 ? 'tab--identify' : ''}}" data-path="{{item.pagePath}}" bindtap="switchTab" aria-label="{{item.text}}">
-    <view class="tab__icon">{{index === 0 ? '⌂' : index === 1 ? '☷' : index === 2 ? '⌕' : index === 3 ? '✉' : '○'}}</view>
+  <button
+    wx:for="{{tabs}}"
+    wx:key="pagePath"
+    class="tab {{selected === item.pagePath ? 'tab--selected' : ''}} {{item.center ? 'tab--identify' : ''}}"
+    data-path="{{item.pagePath}}"
+    bindtap="switchTab"
+    aria-label="{{item.text}}"
+  >
+    <view class="gy-icon gy-icon--tab-{{item.icon}}"></view>
     <view class="tab__text">{{item.text}}</view>
   </button>
 </view>

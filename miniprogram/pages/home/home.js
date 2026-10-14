@@ -5,10 +5,12 @@ const navigation = require('../../utils/navigation')
 
 // 首页是唯一允许游客预览的页面；其他页面与接口需登录。
 Page({
+  // 入口图标改用样式层的 demo 线性图标（styles/icons.wxss，几何取自 docs/ui-demo 的
+  // SVG path 数据）；数量保持三个已确认入口，不为对齐 demo 的四宫格补虚构入口。
   data: { fontScale: 1, guest: true, entries: [
-      { key: 'weed', icon: '🌿', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
-      { key: 'ocr', icon: '🏷️', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
-      { key: 'voice', icon: '🎤', title: '语音提问', desc: '说话提问，也可打字' }
+      { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
+      { key: 'ocr', iconClass: 'gy-icon--tag', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
+      { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '说话提问，也可打字' }
     ], local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、社区、消息与我的等业务尚未接入。' },
   onShow: function () {
     this._active = true
@@ -38,6 +40,8 @@ Page({
   goKnowledge: function () { this.openGated('/pages/knowledge/knowledge') },
   goReference: function () { this.openGated('/pages/reference/reference') },
   goReferenceSeed: function () { this.openGated('/pages/referenceseed/referenceseed') },
+  /** 样式走查页：仅在本地替身工程可见（debug.localEnabled）；页内自会再判一次 */
+  goSpecimen: function () { wx.navigateTo({ url: '/pages/specimen/specimen' }) },
   openGated: function (target) {
     const op = navigation.beginReturnTo(target)
     const action = this._action = (this._action || 0) + 1

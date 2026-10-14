@@ -135,9 +135,9 @@ Page({
   data: {
     fontScale: fontScale.DEFAULT_FONT_SCALE,
     modes: [
-      { key: 'weed', icon: '🌿', title: '拍草识别', desc: '拍照片识别田里的杂草，给出至多 3 个候选', action: '拍照识别' },
-      { key: 'ocr', icon: '🏷️', title: '标签识别', desc: '拍包装读出药名与成分（尚未接入）', action: '尚未接入' },
-      { key: 'text', icon: '💬', title: '文字提问', desc: '打字提问（尚未接入）', action: '尚未接入' }
+      { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍照片识别田里的杂草，给出至多 3 个候选', action: '拍照识别' },
+      { key: 'ocr', iconClass: 'gy-icon--tag', title: '标签识别', desc: '拍包装读出药名与成分（尚未接入）', action: '尚未接入' },
+      { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问（尚未接入）', action: '尚未接入' }
     ],
     guest: true,
     busy: false,

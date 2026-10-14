@@ -1,22 +1,8 @@
-.notice {
-  display: flex;
-  align-items: flex-start;
-  padding: 24rpx;
-  margin-bottom: 28rpx;
-  border-radius: var(--radius, 20rpx);
-  background: #FFF6E5;
-  border: 2rpx solid #F0D9A8;
-}
-
-.notice__icon {
-  font-size: calc(16px * var(--font-scale, 1));
-  margin-right: 14rpx;
-  line-height: 1.5;
-}
-
-.notice__text {
-  flex: 1;
-  font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: #7A5A16;
-}
+/* 社区页（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 页面形态全部走 styles/components.wxss 的 demo 组件层（tabs／section-head／panel／
+ * profile-grid／pill／demo-caption），本文件不再重复定义。
+ * demo 的 .feed／.post／.post-author／.post-text／.post-visual／.post-actions／
+ * .comment-row／.topic 已落入样式层，供社区数据接入后直接复用；本轮社区为空态，
+ * 不展示任何演示帖子（见 docs/verification/gy-i26-demo-align-20261014.md 取舍表）。
+ */

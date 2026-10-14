@@ -27,6 +27,11 @@ try {
     'custom-tab-bar/index.json',
     'custom-tab-bar/index.wxml',
     'custom-tab-bar/index.wxss',
+    // 设计令牌／图标／组件样式层（GY-I26）：app.wxss 通过 @import 引用，
+    // 漏加会让隔离工程编译后整站样式丢失。
+    'styles/tokens.wxss',
+    'styles/icons.wxss',
+    'styles/components.wxss',
     'config/runtime.js',
     'utils/debug.js',
     'utils/auth.js',
@@ -73,6 +78,8 @@ try {
     'pages/messages/messages',
     'pages/profile/profile',
     'pages/login/login',
+    // 样式走查页（GY-I26 demo 对齐）：只在本地替身工程可见（runtime.mode === 'local'）
+    'pages/specimen/specimen',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {

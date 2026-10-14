@@ -1,6 +1,10 @@
 <view class="page" style="--font-scale: {{fontScale}}">
-  <view class="page-title">消息</view>
-  <view class="page-subtitle">互动通知与审核结果</view>
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">消息，让交流继续</view>
+      <view class="page-heading__sub">你的互动与探索进度，都在这里。</view>
+    </view>
+  </view>
 
   <state-view
     wx:if="{{guest}}"
@@ -10,26 +14,48 @@
   ></state-view>
 
   <block wx:else>
+    <view class="section-head">
+      <view class="section-head__title">互动通知</view>
+      <view class="pill pill--gray">暂无消息</view>
+    </view>
+
     <state-view
       status="empty"
       title="暂无消息"
       desc="消息中心尚未接入，不会生成任何模拟通知。后续开放后，真实互动与系统提醒会显示在这里。"
     ></state-view>
 
-    <view class="section-title">首版消息类型</view>
-    <view class="card">
-      <view class="kind">
-        <text class="kind__name">评论与点赞</text>
-        <text class="kind__desc">别人对你的经验帖或回答的互动</text>
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">首版消息类型</view>
+        <view class="section-head__meta">尚未接入</view>
       </view>
-      <view class="kind">
-        <text class="kind__name">内容审核结果</text>
-        <text class="kind__desc">投稿通过、需修改或被驳回的原因</text>
+      <view class="panel">
+        <view class="info-list">
+          <view class="info-row">
+            <view class="tiny-art"><view class="gy-icon gy-icon--chat"></view></view>
+            <view class="info-row__copy">
+              <text class="info-row__title">评论与点赞</text>
+              <text class="info-row__desc">别人对你的经验帖或回答的互动</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="tiny-art"><view class="gy-icon gy-icon--shield"></view></view>
+            <view class="info-row__copy">
+              <text class="info-row__title">内容审核结果</text>
+              <text class="info-row__desc">投稿通过、需修改或被驳回的原因</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="tiny-art"><view class="gy-icon gy-icon--bell"></view></view>
+            <view class="info-row__copy">
+              <text class="info-row__title">系统通知</text>
+              <text class="info-row__desc">资料下架、来源失效等重要变更</text>
+            </view>
+          </view>
+        </view>
       </view>
-      <view class="kind">
-        <text class="kind__name">系统通知</text>
-        <text class="kind__desc">资料下架、来源失效等重要变更</text>
-      </view>
+      <view class="demo-caption">消息中心为后续任务交付；本页不展示任何模拟通知。</view>
     </view>
   </block>
 </view>

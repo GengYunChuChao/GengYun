@@ -1,24 +1,6 @@
-.kind {
-  display: flex;
-  align-items: flex-start;
-  padding: 20rpx 0;
-  border-bottom: 2rpx solid var(--color-bg, #F4F9F4);
-}
-
-.kind:last-child {
-  border-bottom: none;
-}
-
-.kind__name {
-  flex: 0 0 260rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  font-weight: 600;
-  color: var(--color-text, #1B2B1E);
-}
-
-.kind__desc {
-  flex: 1;
-  font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.6;
-  color: var(--color-text-sub, #4A5A4E);
-}
+/* 消息页（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 页面形态走 styles/components.wxss 的 demo 组件层（info-row／info-list／panel／pill／
+ * demo-caption）。demo 的 .message-list／.message-row／.message-icon／.message-copy／
+ * .unread-dot 已落入样式层，供消息数据接入后复用；本轮为空态，不生成模拟通知。
+ */
