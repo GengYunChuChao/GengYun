@@ -3,7 +3,18 @@
   <view class="page-title">把田间知识，放在手边</view>
   <view class="subtitle">检索资料，核对来源与适用条件。</view>
   <view class="notice">{{modeNote}}</view>
-  <block wx:if="{{gatePassed}}">
+
+  <!-- 统一状态：门禁未通过 / 查询失败 / 无结果都走 state-view，不再自写一行灰字当失败提示 -->
+  <state-view
+    wx:if="{{!gatePassed}}"
+    status="guest"
+    title="需要核实登录状态后才能查询"
+    desc="{{status || '本页资料需登录后查询，游客不能读取。'}}"
+    action-text="核实登录／重试"
+    bind:action="search"
+  ></state-view>
+
+  <block wx:else>
     <view class="search-box">
       <view class="field-label">搜索科普资料</view>
       <view class="search-input"><image class="search-icon" src="/assets/knowledge/search.png" aria-hidden="true" /><input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" /></view>
@@ -25,7 +36,12 @@
       <button class="btn btn--secondary btn--block" bindtap="reset" disabled="{{busy}}">清空条件继续查询</button>
     </view>
     <view class="directory-note">{{directoryNote}}</view>
-    <view class="status" role="status">{{status}}</view>
+
+    <state-view wx:if="{{stateKind === 'loading'}}" status="loading" title="正在核对当前资料" desc="{{status}}"></state-view>
+    <state-view wx:elif="{{stateKind === 'empty'}}" status="empty" title="没有符合条件的资料" desc="{{status}}" action-text="清空条件继续查询" bind:action="reset"></state-view>
+    <state-view wx:elif="{{stateKind === 'error'}}" status="error" title="查询没有成功" desc="{{status}}" action-text="查询／重试" bind:action="search"></state-view>
+    <view wx:else class="status" role="status">{{status}}</view>
+
     <view class="result-heading" wx:if="{{items.length}}">当前页资料</view>
     <view class="card article-card" wx:for="{{items}}" wx:key="id">
       <view class="article-art"><image class="leaf-icon" src="/assets/knowledge/leaf.png" aria-hidden="true" /><text>科普 / FIELD NOTES</text></view><view class="card-meta">科普参考 · {{item.labels.source}}</view>
@@ -38,6 +54,6 @@
     </view>
     <button wx:if="{{nextCursor}}" class="btn btn--secondary btn--block" bindtap="next" disabled="{{busy}}">下一页</button>
   </block>
-  <view wx:else class="status">{{status || "需要核实登录状态后才能查询。"}}<button class="btn btn--primary btn--block" bindtap="search">核实登录／重试</button></view>
+
   <view class="notice">科普参考不等于用药建议。本页不提供用量卡，不把科研来源标为专家认证。</view>
 </view>

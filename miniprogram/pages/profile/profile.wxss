@@ -1,50 +1,17 @@
-.guest-card {
-  padding: 32rpx 28rpx;
-  border-radius: var(--radius-lg, 28rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
+/* 「我的」页（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 页面形态走 styles/components.wxss 的 demo 组件层（profile-header／stat-grid／
+ * profile-grid／panel／setting-row／notice／row-actions／pill／demo-caption）。
+ * 本文件只保留编辑表单需要的一处排版。
+ */
+
+.profile-form__locate {
+  margin: 11px 0;
 }
 
-.guest-card__title {
-  font-size: calc(19px * var(--font-scale, 1));
-  font-weight: 700;
+/* IP 属地说明：demo 展示「上海 · 演示」样例值；本版不读取 IP，如实标注 */
+.ip-location__note {
+  font-size: calc(14px * var(--font-scale, 1));
+  opacity: 0.75;
+  margin-left: 6rpx;
 }
-
-.guest-card__desc {
-  margin-top: 14rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.7;
-  color: var(--color-text-sub, #4A5A4E);
-}
-
-.guest-card__btn {
-  width: 100%;
-  margin-top: 28rpx;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  padding: 22rpx 0;
-  border-bottom: 2rpx solid var(--color-bg, #F4F9F4);
-}
-
-.row:last-child {
-  border-bottom: none;
-}
-
-.row__label {
-  flex: 0 0 220rpx;
-  font-size: calc(16px * var(--font-scale, 1));
-  color: var(--color-text-sub, #4A5A4E);
-}
-
-.row__value {
-  flex: 1;
-  font-size: calc(16px * var(--font-scale, 1));
-  font-weight: 600;
-  color: var(--color-text, #1B2B1E);
-}
-
-.profile-form > button { width: 100%; margin: 12px 0; }
-.selection { padding: 14px 10px; border: 1px solid #bed6c5; border-radius: 12px; margin: 12px 0; min-height: 44px; box-sizing: border-box; }

@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "样式走查",
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view"
+  }
+}

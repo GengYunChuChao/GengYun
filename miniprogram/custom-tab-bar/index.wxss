@@ -1,7 +1,102 @@
-.tab-bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid #D8E4DC; box-sizing: border-box; }
-.tab { flex: 1; min-width: 0; min-height: 52px; margin: 0; padding: 4px 0; border-radius: 10px; background: #fff; color: #555; line-height: 1.2; }
-.tab::after { border: none; }
-.tab__icon { font-size: 23px; line-height: 26px; }
-.tab__text { font-size: calc(12px * var(--font-scale, 1)); line-height: 1.5; }
-.tab--selected { color: #1F7A45; background: #E8F3EC; }
-.tab--identify { min-height: 64px; background: #1F7A45; color: #fff; margin: 0 3px; }
+/* 底部五 Tab（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 对应 docs/ui-demo/dist/styles.css 的 .bottom-nav 规则组：
+ *   .bottom-nav{padding:10px 8px calc(10px + env(safe-area-inset-bottom));background:#fcfdf9f5;
+ *               border-top:1px solid #e2e9da;justify-content:space-around}
+ *   .bottom-nav button{gap:5px;color:#a2b197;min-width:55px;padding:4px;border-radius:10px}
+ *   .bottom-nav button.active{color:#396d33;font-weight:600}
+ *   .bottom-nav button.active:before{top:-11px;width:20px;height:2px;border-radius:4px;background:#6d944d}
+ *   [data-route="identify"]{color:var(--green);min-width:64px;background:#e6efdf;border-radius:15px;
+ *                           padding:9px 12px;margin-top:-15px;box-shadow:0 -3px 0 4px var(--paper)}
+ *
+ * 与 demo 的取舍：
+ *   1. 标签字号 demo 为 10px，抬到 14px 下限（可读性门槛），仍随 --font-scale 放大；
+ *   2. background 的 #fcfdf9f5 与 backdrop-filter:blur(15px) 不落地——WXSS 的毛玻璃
+ *      支持不稳定，改用不透明 --green-nav-bg，避免半透明叠加后对比度不确定；
+ *   3. 触控区下限 44px 由 --tap-min 表达，demo 的视觉尺寸（图标 21px／识别 26px）保留。
+ * 图标几何见 styles/icons.wxss（由 tools/demo-align.mjs 从 demo 的 SVG path 生成）。
+ */
+@import "../styles/icons.wxss";
+
+.tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+  background: var(--green-nav-bg, #fcfdf9);
+  border-top: 1px solid var(--green-line-2, #e2e9da);
+  box-sizing: border-box;
+}
+
+.tab {
+  /* demo .bottom-nav .icon{height:21px;width:21px}；显式声明便于 tools/verify-layout.mjs 复算 */
+  --gy-icon-size: 21px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--tap-min, 44px);
+  margin: 0;
+  padding: 4px 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--green-nav-off, #a2b197);
+  line-height: 1.4;
+  position: relative;
+}
+
+.tab::after {
+  border: none;
+}
+
+.tab__text {
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.4;
+}
+
+/* demo .bottom-nav button.active{color:#396d33} + .active:before 顶部指示条 */
+.tab--selected {
+  color: var(--green-tab-on, #396d33);
+  font-weight: 600;
+}
+
+.tab--selected::before {
+  content: '';
+  position: absolute;
+  top: -11px;
+  width: 20px;
+  height: 2px;
+  border-radius: 4px;
+  background: #6d944d;
+}
+
+/* demo [data-route="identify"]：居中凸起的识别按钮 */
+.tab--identify {
+  --gy-icon-size: 26px;
+  min-width: 64px;
+  padding: 9px 12px;
+  margin-top: -15px;
+  border-radius: 15px;
+  background: var(--green-soft-3, #e6efdf);
+  color: var(--green, #176b50);
+  box-shadow: 0 -3px 0 4px var(--paper, #f5f7f4);
+}
+
+.tab--identify.tab--selected {
+  background: var(--green, #176b50);
+  color: #e9f6d7;
+}
+
+/* demo 里识别按钮的顶部指示条与凸起胶囊重叠，读数不清；这里对识别按钮去掉指示条
+ * （其余四个 Tab 保留），属于本片记录的取舍之一。 */
+.tab--identify.tab--selected::before {
+  content: none;
+}

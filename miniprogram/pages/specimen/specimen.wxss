@@ -1,0 +1,46 @@
+/* 样式走查页（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 本页不定义任何新组件形态：所有块都直接引用 styles/components.wxss 的 demo 对应类，
+ * 这样「走查所见」就是「页面实际渲染所用」的样式，不会出现走查页与真实页两套样式。
+ * 这里只放走查需要的少量排布辅助与两个演示用尺寸。
+ */
+
+.specimen-gap {
+  margin-top: 11px;
+}
+
+.specimen-sub {
+  margin-top: 17px;
+}
+
+/* 用 demo .article-art 的插画尺寸（51px）核对插画与圆环位置 */
+.specimen-art-icon {
+  --gy-icon-size: 51px;
+}
+
+/* demo .post-visual 的图标尺寸（43px） */
+.specimen-visual-icon {
+  --gy-icon-size: 43px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* demo .progress-track > span 的进度演示值；样张固定 40%，不代表真实进度 */
+.specimen-bar {
+  width: 40%;
+}
+
+/* 末屏标记：滚动到底时应完整可见 */
+.specimen-end {
+  margin-top: 17px;
+  padding: 16px;
+  border-radius: var(--radius, 14px);
+  border: 1px dashed var(--green-empty-line, #d4dfc7);
+  background: var(--lime);
+  color: #264630;
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 600;
+  text-align: center;
+}

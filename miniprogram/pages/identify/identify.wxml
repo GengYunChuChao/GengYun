@@ -1,59 +1,82 @@
 <view class="page" style="--font-scale: {{fontScale}}">
-  <view class="page-title">识别</view>
-  <view class="page-subtitle">拍照片识别田里的杂草，得到至多 3 个候选，再自行核对</view>
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">每一次发现，都值得看清</view>
+      <view class="page-heading__sub">拍照片识别田里的杂草，得到至多 3 个候选，再自行核对</view>
+    </view>
+  </view>
 
-  <view class="notice" wx:if="{{guest}}">
+  <view class="notice notice--warn" wx:if="{{guest}}">
     <text class="notice__icon">🔒</text>
     <text class="notice__text">您正在以游客身份浏览，登录后才能实际使用识别功能。识别结果不会公开。</text>
   </view>
 
-  <view class="notice notice--mode" wx:if="{{modeNote}}">
+  <view class="notice" wx:if="{{modeNote}}">
     <text class="notice__icon">🧪</text>
     <text class="notice__text">{{modeNote}}</text>
   </view>
 
-  <view class="notice notice--substitute" wx:if="{{substituteNotice}}">
+  <view class="notice notice--stub" wx:if="{{substituteNotice}}">
     <text class="notice__icon">🔁</text>
     <text class="notice__text">{{substituteNotice}}</text>
   </view>
 
-  <view class="mode" wx:for="{{modes}}" wx:key="key">
-    <view class="mode__head">
-      <text class="mode__icon">{{item.icon}}</text>
-      <view class="mode__body">
-        <view class="mode__title">{{item.title}}</view>
-        <view class="mode__desc">{{item.desc}}</view>
-      </view>
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">识别入口</view>
+      <view class="section-head__meta">三个入口</view>
     </view>
-    <button class="btn btn--primary mode__btn" disabled="{{guest || busy}}" data-mode="{{item.key}}" bindtap="onShoot">
-      {{item.action}}
-    </button>
+    <view class="feature-grid">
+      <button
+        wx:for="{{modes}}"
+        wx:key="key"
+        class="feature-card"
+        hover-class="feature-card--hover"
+        disabled="{{guest || busy}}"
+        data-mode="{{item.key}}"
+        bindtap="onShoot"
+      >
+        <view class="feature-card__icon"><view class="gy-icon {{item.iconClass}}"></view></view>
+        <view class="feature-card__title">{{item.title}}</view>
+        <view class="feature-card__desc">{{item.desc}}</view>
+        <view class="pill pill--gray feature-card__action">{{item.action}}</view>
+      </button>
+    </view>
   </view>
 
   <!-- 任务状态：七类各自一句，不合并成「失败」；门禁未通过（guest）一律不展示私有数据 -->
-  <view class="section-title" wx:if="{{stateView && !guest}}">任务状态</view>
-  <view class="state-chip state-chip--{{stateView.tone}}" wx:if="{{stateView && !guest}}">
-    <text class="state-chip__code">JobState：{{stateView.state}}</text>
-    <text class="state-chip__title">{{stateView.title}}</text>
-    <text class="state-chip__desc">{{stateView.desc}}</text>
-    <text class="state-chip__err" wx:if="{{stateView.state === 'failed' || stateView.state === 'timed_out'}}">服务端错误码以接口返回为准（error_code 非 null 时才显示）。</text>
-  </view>
-
-  <view class="btn-row" wx:if="{{stateView && !guest}}">
-    <button class="btn btn--secondary btn-row__item" wx:if="{{!stateView.terminal}}" bindtap="onCancelJob">取消任务</button>
-    <button class="btn btn--secondary btn-row__item" wx:if="{{stateView.retryable}}" bindtap="onRetry">重新识别</button>
+  <view class="section" wx:if="{{stateView && !guest}}">
+    <view class="section-head">
+      <view class="section-head__title">任务状态</view>
+      <view class="pill pill--blue">JobState</view>
+    </view>
+    <view class="state-chip state-chip--{{stateView.tone}}">
+      <text class="state-chip__code">JobState：{{stateView.state}}</text>
+      <text class="state-chip__title">{{stateView.title}}</text>
+      <text class="state-chip__desc">{{stateView.desc}}</text>
+      <text class="state-chip__err" wx:if="{{stateView.state === 'failed' || stateView.state === 'timed_out'}}">服务端错误码以接口返回为准（error_code 非 null 时才显示）。</text>
+    </view>
+    <view class="row-actions">
+      <button class="btn btn--secondary row-actions__item" wx:if="{{!stateView.terminal}}" bindtap="onCancelJob">取消任务</button>
+      <button class="btn btn--secondary row-actions__item" wx:if="{{stateView.retryable}}" bindtap="onRetry">重新识别</button>
+    </view>
   </view>
 
   <!-- 不确定原因：如实列出，不隐藏、不改写成成功 -->
-  <view class="reasons" wx:if="{{uncertaintyReasons.length && !guest}}">
-    <view class="reasons__title">不确定原因（服务端 uncertainty_reasons）</view>
-    <view class="reasons__item" wx:for="{{uncertaintyReasons}}" wx:key="*this">· {{item}}</view>
+  <view class="notice notice--warn reasons" wx:if="{{uncertaintyReasons.length && !guest}}">
+    <view class="reasons__body">
+      <view class="reasons__title">不确定原因（服务端 uncertainty_reasons）</view>
+      <view class="reasons__item" wx:for="{{uncertaintyReasons}}" wx:key="*this">· {{item}}</view>
+    </view>
   </view>
 
   <!-- 候选：succeeded 才算识别成功；uncertain 必须人工核对；历史记录不推断任务状态 -->
-  <view wx:if="{{showTop3 && !guest}}">
-    <view class="section-title">{{candidateSource === 'history' ? '历史记录候选（模型原始结果）' : (candidatesTrusted ? '候选（识别成功）' : '候选（不可信，需人工核对）')}}</view>
-    <view class="candidate-hint" wx:if="{{historyNote}}">{{historyNote}}</view>
+  <view class="section" wx:if="{{showTop3 && !guest}}">
+    <view class="section-head">
+      <view class="section-head__title">{{candidateSource === 'history' ? '历史记录候选（模型原始结果）' : (candidatesTrusted ? '候选（识别成功）' : '候选（不可信，需人工核对）')}}</view>
+      <view class="pill" wx:if="{{!candidatesTrusted}}">需人工核对</view>
+    </view>
+    <view class="hint" wx:if="{{historyNote}}">{{historyNote}}</view>
     <view class="candidate {{pendingManualId === item.species_id ? 'candidate--picked' : ''}}" wx:for="{{candidates}}" wx:key="species_id" data-id="{{item.species_id}}" bindtap="onTapCandidate">
       <view class="candidate__rank">#{{item.rank}}</view>
       <view class="candidate__body">
@@ -62,50 +85,69 @@
       </view>
       <view class="candidate__state" wx:if="{{selectedSpeciesId === item.species_id}}">已选择</view>
     </view>
-    <view class="candidate-hint" wx:if="{{!candidatesTrusted && candidateSource !== 'history'}}">这是「不确定」结果：请人工核对后再确认，确认前不会记录选择、也不会查询关联科普。</view>
-    <view class="btn-row" wx:if="{{pendingManualId}}">
-      <button class="btn btn--primary btn-row__item" bindtap="onConfirmManual">确认人工核对结果</button>
-      <button class="btn btn--secondary btn-row__item" bindtap="onCancelManual">取消</button>
+    <view class="hint" wx:if="{{!candidatesTrusted && candidateSource !== 'history'}}">这是「不确定」结果：请人工核对后再确认，确认前不会记录选择、也不会查询关联科普。</view>
+    <view class="row-actions" wx:if="{{pendingManualId}}">
+      <button class="btn btn--primary row-actions__item" bindtap="onConfirmManual">确认人工核对结果</button>
+      <button class="btn btn--secondary row-actions__item" bindtap="onCancelManual">取消</button>
     </view>
   </view>
 
   <!-- 关联科普查询（选择之后） -->
-  <view wx:if="{{relatedKnowledge && !guest}}">
-    <view class="section-title">关联科普（{{relatedKnowledge.matchStateLabel}}）</view>
-    <view class="seed-tag">资料为种子整理稿 · 待核实·非权威 · 不提供用量</view>
+  <view class="section" wx:if="{{relatedKnowledge && !guest}}">
+    <view class="section-head">
+      <view class="section-head__title">关联科普（{{relatedKnowledge.matchStateLabel}}）</view>
+    </view>
+    <view class="pill pill--amber">资料为种子整理稿 · 待核实 · 非权威 · 不提供用量</view>
     <view class="knowledge" wx:for="{{relatedKnowledge.items}}" wx:key="recordId">
       <view class="knowledge__name">{{item.name}}</view>
       <view class="knowledge__meta">登记证号：{{item.registrationNumber}} · 剂型：{{item.dosageForm}}</view>
       <view class="knowledge__meta">使用场景：{{item.useScene}}</view>
     </view>
     <view class="reasons__item" wx:for="{{relatedKnowledge.reasons}}" wx:key="*this">· {{item}}</view>
-    <view class="knowledge__note">{{relatedKnowledge.note}}</view>
-    <button class="btn btn--secondary" wx:if="{{recordId}}" bindtap="onDeleteRecord">删除这条识别记录</button>
+    <view class="demo-caption">{{relatedKnowledge.note}}</view>
+    <view class="row-actions">
+      <button class="btn btn--secondary row-actions__item" wx:if="{{recordId}}" bindtap="onDeleteRecord">删除这条识别记录</button>
+    </view>
   </view>
 
-  <view class="error-text" wx:if="{{errorText}}">{{errorText}}</view>
+  <view class="notice notice--danger" wx:if="{{errorText}}">{{errorText}}</view>
 
   <!-- 私有历史：必须绑定「当前已核实主体」（historyOwner），不能只凭本机索引长度 -->
-  <view class="section-title" wx:if="{{!guest && historyOwner && history.length}}">我的识别记录（私有）</view>
-  <view class="history" wx:if="{{!guest && historyOwner}}" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
-    <view class="history__title">{{item.stateTitle}}</view>
-    <view class="history__meta">{{item.state}} · {{item.at}}</view>
-  </view>
-  <button class="btn btn--secondary" wx:if="{{!guest && historyOwner && history.length}}" bindtap="onClearHistory">清空本机索引</button>
-
-  <view class="section-title">其他入口</view>
-  <view class="card">
-    <view class="card-title">语音提问</view>
-    <view class="card-text">录音与播放尚未接入真实服务；此处仅演示按钮布局，不会采集录音、不会上传。</view>
-    <view class="voice-row">
-      <button class="btn btn--primary voice-btn" disabled="{{guest}}" bindtap="onRecord">
-        {{recording ? '录音中…' : '开始录音'}}
-      </button>
-      <button class="btn btn--secondary voice-btn" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
-        播放录音
-      </button>
+  <view class="section" wx:if="{{!guest && historyOwner && history.length}}">
+    <view class="section-head">
+      <view class="section-head__title">我的识别记录（私有）</view>
+      <view class="pill pill--gray">{{history.length}} 条</view>
     </view>
-    <view class="voice-hint" wx:if="{{!hasRecording}}">还没有录音。录音与播放能力尚未接入，本页不会采集或上传任何音频。</view>
+    <view class="message-list">
+      <view class="message-row" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
+        <view class="message-copy">
+          <text class="message-copy__title">{{item.stateTitle}}</text>
+          <text class="message-copy__time">{{item.state}} · {{item.at}}</text>
+        </view>
+      </view>
+    </view>
+    <view class="row-actions">
+      <button class="btn btn--secondary row-actions__item" bindtap="onClearHistory">清空本机索引</button>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">其他入口</view>
+      <view class="section-head__meta">语音提问</view>
+    </view>
+    <view class="panel">
+      <view class="hint">录音与播放尚未接入真实服务；此处仅演示按钮布局，不会采集录音、不会上传。</view>
+      <view class="row-actions">
+        <button class="btn btn--primary row-actions__item" disabled="{{guest}}" bindtap="onRecord">
+          {{recording ? '录音中…' : '开始录音'}}
+        </button>
+        <button class="btn btn--secondary row-actions__item" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
+          播放录音
+        </button>
+      </view>
+      <view class="demo-caption" wx:if="{{!hasRecording}}">还没有录音。录音与播放能力尚未接入，本页不会采集或上传任何音频。</view>
+    </view>
   </view>
 
   <state-view

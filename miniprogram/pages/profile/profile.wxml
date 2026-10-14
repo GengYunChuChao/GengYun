@@ -1,82 +1,141 @@
 <view class="page" style="--font-scale: {{fontScale}}">
-  <view class="page-title">我的</view>
-  <view class="page-subtitle">作物、地区与记录</view>
-
-  <view class="guest-card" wx:if="{{guest}}">
-    <view class="guest-card__title">尚未登录</view>
-    <view class="guest-card__desc">
-      登录后才能保存我的作物与地区、收藏资料和识别记录。账号登录沿用已接入的独立登录页，
-      收藏和识别记录尚未接入；登录不要求手机号。
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">我的耕云</view>
+      <view class="page-heading__sub">把探索与发现，整理成自己的田间档案。</view>
     </view>
-    <button class="btn btn--primary guest-card__btn" bindtap="onLogin">
-      前往微信登录
-    </button>
+  </view>
+
+  <!-- demo .profile-header：头像 + 身份 + 操作区 -->
+  <view class="profile-header">
+    <view class="profile-header__avatar">{{guest ? '游' : '我'}}</view>
+    <view class="profile-header__main">
+      <view class="profile-header__title">{{guest ? '游客' : '我的档案'}}</view>
+      <view class="profile-header__desc">{{guest ? '尚未登录 · 登录不要求手机号' : cropName + ' · ' + regionName}}</view>
+    </view>
+    <view class="profile-actions">
+      <button wx:if="{{guest}}" class="btn btn--primary" bindtap="onLogin">前往微信登录</button>
+      <view class="ip-location">IP 属地：未接入<text class="ip-location__note">（本版不读取 IP）</text></view>
+    </view>
+  </view>
+
+  <view class="stat-grid">
+    <view class="stat">
+      <text class="stat__value">0</text>
+      <text class="stat__label">我的收藏</text>
+    </view>
+    <view class="stat">
+      <text class="stat__value">0</text>
+      <text class="stat__label">识别历史</text>
+    </view>
+    <view class="stat">
+      <text class="stat__value">0</text>
+      <text class="stat__label">我的发布</text>
+    </view>
+  </view>
+
+  <view class="notice notice--warn" wx:if="{{guest}}">
+    <text class="notice__icon">🔒</text>
+    <text class="notice__text">登录后才能保存我的作物与地区、收藏资料和识别记录。账号登录沿用已接入的独立登录页，收藏和识别记录尚未接入；登录不要求手机号。</text>
   </view>
 
   <block wx:else>
-    <view class="card">
-      <view class="card-title">我的档案</view>
-      <view class="row">
-        <text class="row__label">所在地区</text>
-        <text class="row__value">{{regionName}}</text>
+    <view class="profile-grid">
+      <view class="panel">
+        <view class="panel-head">
+          <view class="panel-head__title">我的档案</view>
+          <view class="pill pill--gray">单项作物 · 浙江市县</view>
+        </view>
+        <view class="info-list">
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">所在地区</text>
+              <text class="info-row__desc">{{regionName}}</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">种植作物</text>
+              <text class="info-row__desc">{{cropName}}</text>
+            </view>
+          </view>
+        </view>
       </view>
-      <view class="row">
-        <text class="row__label">种植作物</text>
-        <text class="row__value">{{cropName}}</text>
+
+      <view class="panel profile-form">
+        <view class="panel-head">
+          <view class="panel-head__title">编辑档案</view>
+          <view class="pill pill--gray">{{editing ? '编辑中' : '未编辑'}}</view>
+        </view>
+        <view class="hint" role="status">{{message}}</view>
+
+        <view class="row-actions">
+          <button class="btn btn--secondary row-actions__item" bindtap="loadProfile" disabled="{{busy}}">重新读取档案</button>
+          <button wx:if="{{!editing}}" class="btn btn--primary row-actions__item" bindtap="onEdit" disabled="{{busy || !loaded || needsReload || !crops.length || !cities.length}}">手选作物与市县</button>
+        </view>
+
+        <block wx:if="{{editing}}">
+          <button class="btn btn--secondary btn--block profile-form__locate" bindtap="onLocate" disabled="{{busy || locating || retryPending || needsReload}}">
+            {{locating ? '正在定位…' : '使用定位选地区（可改手选）'}}
+          </button>
+          <picker range="{{crops}}" range-key="name" value="{{cropIndex < 0 ? 0 : cropIndex}}" bindchange="onCrop" disabled="{{busy || retryPending || needsReload}}">
+            <view class="setting-row">
+              <text class="setting-row__label">种植作物</text>
+              <text class="setting-row__value">{{cropIndex < 0 ? '请选择' : crops[cropIndex].name}}</text>
+              <view class="gy-icon gy-icon--arrow"></view>
+            </view>
+          </picker>
+          <picker range="{{cities}}" range-key="name" value="{{cityIndex < 0 ? 0 : cityIndex}}" bindchange="onCity" disabled="{{busy || retryPending || needsReload}}">
+            <view class="setting-row">
+              <text class="setting-row__label">浙江市</text>
+              <text class="setting-row__value">{{cityIndex < 0 ? '请选择' : cities[cityIndex].name}}</text>
+              <view class="gy-icon gy-icon--arrow"></view>
+            </view>
+          </picker>
+          <picker range="{{counties}}" range-key="name" value="{{countyIndex < 0 ? 0 : countyIndex}}" bindchange="onCounty" disabled="{{busy || retryPending || needsReload || !counties.length}}">
+            <view class="setting-row">
+              <text class="setting-row__label">县区</text>
+              <text class="setting-row__value">{{countyIndex < 0 ? '未选县区，使用所选市' : counties[countyIndex].name}}</text>
+              <view class="gy-icon gy-icon--arrow"></view>
+            </view>
+          </picker>
+          <view class="row-actions">
+            <button class="btn btn--secondary row-actions__item" bindtap="useCity" disabled="{{busy || retryPending || needsReload}}">仅使用所选市</button>
+            <button class="btn btn--primary row-actions__item" bindtap="onSave" disabled="{{busy || needsReload}}">{{busy ? '处理中…' : retryPending ? '重试同一次保存' : '确认并保存档案'}}</button>
+            <button class="btn btn--secondary row-actions__item" bindtap="onCancel" disabled="{{busy || retryPending}}">取消编辑</button>
+          </view>
+        </block>
+
+        <view class="demo-caption">仅保存一项作物和浙江市县，手选不需要定位授权。定位只用于即时选择地区，不保存原始坐标；定位被拒绝、取消、超时、省外或地区转换不可用时都可继续手选。</view>
       </view>
     </view>
 
-    <view class="card profile-form">
-      <view class="card-text" role="status">{{message}}</view>
-      <button class="btn btn--secondary" bindtap="loadProfile" disabled="{{busy}}">重新读取档案</button>
-      <button wx:if="{{!editing}}" class="btn btn--primary" bindtap="onEdit" disabled="{{busy || !loaded || needsReload || !crops.length || !cities.length}}">手选作物与市县</button>
-      <block wx:if="{{editing}}">
-        <button class="btn btn--secondary" bindtap="onLocate" disabled="{{busy || locating || retryPending || needsReload}}">
-          {{locating ? '正在定位…' : '使用定位选地区（可改手选）'}}
-        </button>
-        <picker range="{{crops}}" range-key="name" value="{{cropIndex < 0 ? 0 : cropIndex}}" bindchange="onCrop" disabled="{{busy || retryPending || needsReload}}">
-          <view class="selection">种植作物：{{cropIndex < 0 ? '请选择' : crops[cropIndex].name}}</view>
-        </picker>
-        <picker range="{{cities}}" range-key="name" value="{{cityIndex < 0 ? 0 : cityIndex}}" bindchange="onCity" disabled="{{busy || retryPending || needsReload}}">
-          <view class="selection">浙江市：{{cityIndex < 0 ? '请选择' : cities[cityIndex].name}}</view>
-        </picker>
-        <picker range="{{counties}}" range-key="name" value="{{countyIndex < 0 ? 0 : countyIndex}}" bindchange="onCounty" disabled="{{busy || retryPending || needsReload || !counties.length}}">
-          <view class="selection">县区：{{countyIndex < 0 ? '未选县区，使用所选市' : counties[countyIndex].name}}</view>
-        </picker>
-        <button class="btn btn--secondary" bindtap="useCity" disabled="{{busy || retryPending || needsReload}}">仅使用所选市</button>
-        <button class="btn btn--primary" bindtap="onSave" disabled="{{busy || needsReload}}">{{busy ? '处理中…' : retryPending ? '重试同一次保存' : '确认并保存档案'}}</button>
-        <button class="btn btn--secondary" bindtap="onCancel" disabled="{{busy || retryPending}}">取消编辑</button>
-      </block>
-      <view class="card-text">仅保存一项作物和浙江市县，手选不需要定位授权。定位只用于即时选择地区，不保存原始坐标；定位被拒绝、取消、超时、省外或地区转换不可用时都可继续手选。</view>
-      <button class="btn btn--secondary" bindtap="openReference" disabled="{{busy || !loaded || needsReload || !profile.crop_id}}">按当前档案查科普资料</button>
+    <view class="row-actions">
+      <button class="btn btn--secondary row-actions__item" bindtap="openReference" disabled="{{busy || !loaded || needsReload || !profile.crop_id}}">按当前档案查科普资料</button>
+      <button class="btn btn--secondary row-actions__item" bindtap="logout">退出登录</button>
     </view>
-
-    <view class="card">
-      <view class="card-title">我的记录</view>
-      <view class="row">
-        <text class="row__label">收藏</text>
-        <text class="row__value">0 条</text>
-      </view>
-      <view class="row">
-        <text class="row__label">识别历史</text>
-        <text class="row__value">0 条</text>
-      </view>
-    </view>
-    <button class="btn btn--secondary" bindtap="logout">退出登录</button>
   </block>
 
-  <view class="section-title">隐私说明</view>
-  <view class="card">
-    <view class="card-text">
-      平台不会默认保存原始照片的拍摄位置，也不会把您的资料用于模型训练。
-      拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回。
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">隐私说明</view>
+    </view>
+    <view class="panel">
+      <view class="card-text">
+        平台不会默认保存原始照片的拍摄位置，也不会把您的资料用于模型训练。
+        拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回。
+      </view>
     </view>
   </view>
 
-  <view class="section-title">当前状态</view>
-  <state-view
-    status="{{guest ? 'guest' : 'stub'}}"
-    title="{{guest ? '请先登录' : '记录功能尚未接入'}}"
-    desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '收藏与历史功能将在对应任务中接入，当前显示为空。'}}"
-  ></state-view>
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">当前状态</view>
+    </view>
+    <state-view
+      status="{{guest ? 'guest' : 'stub'}}"
+      title="{{guest ? '请先登录' : '记录功能尚未接入'}}"
+      desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '收藏与历史功能将在对应任务中接入，当前显示为空。'}}"
+    ></state-view>
+  </view>
 </view>

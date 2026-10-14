@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "科普知识详情"
+  "navigationBarTitleText": "科普知识详情",
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view"
+  }
 }

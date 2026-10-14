@@ -1,51 +1,37 @@
 /**
  * 全局样式基线（GY-I26）
  * ------------------------------------------------------------
- * 指标依据任务书：主题绿 #1F7A45、正文优先 18px、44px 等效触控区。
- * 换算关系：小程序 rpx 以 750 为设计稿宽度，375px 机型下 1px = 2rpx。
- *   正文 18px  -> 36rpx
- *   触控 44px  -> 88rpx
+ * 视觉准绳：docs/ui-demo/（PR #132）—— 设计令牌与组件形态见
+ *   styles/tokens.wxss（demo :root 色板，逐值一致）
+ *   styles/icons.wxss（demo SVG path 生成的图标层）
+ *   styles/components.wxss（demo 的按钮／卡片／pill／底部导航／空态与失败态等形态）
+ * 本文件只保留**全局原语**（页面容器、正文、卡片、按钮本体、行内标签），
+ * 页面级形态一律走上面的样式层，避免同一类在多个页面各写一套值。
+ *
+ * 指标依据（任务书）：
+ *   正文优先 18px、触控区不小于 44px 等效尺寸、适配微信字体设置、颜色同时配文字／图标。
+ *   换算关系：小程序 rpx 以 750 为设计稿宽度，375px 机型下 1px = 2rpx。
  *
  * 可访问性约定：
  *   1. 任何状态都不只用颜色表达，必须同时有文字或图标；
- *   2. 风险提示不得使用"绝对安全""零风险"等表述；
+ *   2. 风险提示不得使用「绝对安全」「零风险」等表述；
  *   3. 录音与播放按钮分离，避免误触。
  */
 
+@import "styles/tokens.wxss";
+@import "styles/icons.wxss";
+@import "styles/components.wxss";
+
 page {
-  /* 主题绿 */
-  --color-primary: #1F7A45;
-  --color-primary-deep: #145C34;
-  --color-primary-soft: #E8F3EC;
-
-  /* 背景与文字 */
-  --color-bg: #F4F9F4;
-  --color-surface: #FFFFFF;
-  --color-text: #1B2B1E;
-  --color-text-sub: #4A5A4E;
-  --color-text-muted: #6F7F72;
-  --color-border: #D8E4DC;
-
-  /* 状态色（均配合文字使用） */
-  --color-loading: #1F6FB2;
-  --color-error: #C62828;
-  --color-invalid: #8A6D1F;
-  --color-stub: #5B4B8A;
-
-  /* 触控与间距 */
   /* 触控区与字号使用 px 而非 rpx：rpx 为屏宽 750 等分，
      88rpx 仅在 375px 视口等于 44px，320px 窄屏只有约 37.55px，
      36rpx 正文在 320px 视口只有 15.36px，均不满足 44px 触控区与 18px 正文门槛。
-     --font-scale 由页面根节点注入，取值由 app.js 计算：优先微信的
-         fontSizeScaleFactor 比例字段，缺失时才用 fontSizeSetting 的 px 值除以 16 换算，
+     --font-scale 由页面根节点注入，取值由 app.js → utils/system-font.js 计算：
+         wx.getFontSizeManager() / wx.getAppBaseInfo() 的 fontSizeScaleFactor 比例字段优先，
+         缺失时才用 fontSizeSetting 的 px 值除以 16 换算，封顶 1.3，
          实现需求 4.1 的「适配微信字体设置」；缺省 1 表示标准字号。 */
   --font-scale: 1;
   --tap-min: max(44px, 44px * var(--font-scale, 1));
-  --gap-xs: 16rpx;
-  --gap: 28rpx;
-  --gap-lg: 40rpx;
-  --radius: 20rpx;
-  --radius-lg: 28rpx;
 
   background: var(--color-bg);
   color: var(--color-text);
@@ -60,24 +46,26 @@ page {
   font-size: calc(18px * var(--font-scale, 1));
   min-height: 100vh;
   /* tabBar 为 fixed 覆盖层、不占文档流，页面须自行预留其高度。
-     预留值用 px 而非 rpx：当前自定义 tabBar 居中按钮 64px 加上下间距 12px；rpx 随视口缩放，
-     预留 88px 加底部安全区，避免窄屏及放大字体时覆盖末屏。
-     核算见 tools/verify-layout.mjs。 */
-  padding: 32rpx 28rpx calc(88px + env(safe-area-inset-bottom));
+     预留值取 demo .main 的 padding-bottom 105px（窄屏值），用 px 而非 rpx：
+     自定义 tabBar 为图标 21px + 标签 + 上下内距，实测声明合计约 74px，
+     放大到 1.3 倍约 88px；105px 覆盖该上限并加底部安全区。
+     核算见 tools/verify-layout.mjs（按 custom-tab-bar/index.wxss 的实际声明复算）。 */
+  padding: 23px 21px calc(105px + env(safe-area-inset-bottom));
   box-sizing: border-box;
 }
 
+/* demo h1：页面主标题。保留 .page-title 供既有页面（GY-I03／I04 等）继续使用。 */
 .page-title {
   font-size: calc(24px * var(--font-scale, 1));
   font-weight: 700;
-  line-height: 1.35;
-  margin-bottom: 12rpx;
+  line-height: 1.4;
 }
 
 .page-subtitle {
+  margin-top: 8px;
+  margin-bottom: 20px;
   font-size: calc(16px * var(--font-scale, 1));
-  color: var(--color-text-sub);
-  margin-bottom: 32rpx;
+  color: var(--color-text-muted);
 }
 
 .section-title {
@@ -85,7 +73,7 @@ page {
   align-items: center;
   font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
-  margin: 36rpx 0 20rpx;
+  margin: 25px 0 16px;
 }
 
 .section-title::before {
@@ -93,42 +81,47 @@ page {
   width: 8rpx;
   height: 32rpx;
   border-radius: 999rpx;
-  background: var(--color-primary);
+  background: var(--green);
   margin-right: 14rpx;
 }
 
 /* ============================ 卡片 ============================ */
 
+/* 对齐 demo .panel{padding:20px;border-radius:14px;border:1px solid var(--line)} */
 .card {
   background: var(--color-surface);
-  border-radius: var(--radius-lg);
-  padding: 32rpx 28rpx;
-  margin-bottom: 24rpx;
-  border: 2rpx solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 17px;
+  border: 1px solid var(--color-border);
+  box-sizing: border-box;
 }
 
 .card-title {
   font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
-  margin-bottom: 16rpx;
+  margin-bottom: 12px;
 }
 
 .card-text {
   font-size: calc(16px * var(--font-scale, 1));
   color: var(--color-text-sub);
-  line-height: 1.7;
+  line-height: 1.8;
 }
 
 /* ============================ 按钮 ============================ */
 
-/* 触控高度不小于 44px（px 单位，窄屏 320px 下仍成立；padding 归零且 line-height 1.4，不依赖原生默认高度补足） */
+/* 触控高度不小于 44px（px 单位，窄屏 320px 下仍成立；padding 取 demo .btn 的 11px 18px，
+   字号放大后文字换行时由 padding 自然撑高，min-height 只作下限）。
+   配色修饰（.btn--primary／--secondary／--ghost／--lime／--danger）在 styles/components.wxss。 */
 .btn {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: var(--tap-min);
-  padding: 10px 16px;
-  border-radius: 999rpx;
+  padding: 11px 18px;
+  border-radius: 10px;
   font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
   line-height: 1.4;
@@ -138,22 +131,6 @@ page {
 
 .btn--block {
   width: 100%;
-}
-
-.btn--primary {
-  background: var(--color-primary);
-  color: #FFFFFF;
-}
-
-.btn--secondary {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-deep);
-}
-
-.btn--ghost {
-  background: transparent;
-  color: var(--color-primary);
-  border: 2rpx solid var(--color-primary);
 }
 
 .btn[disabled] {
@@ -175,6 +152,6 @@ page {
 }
 
 .badge--stub {
-  background: #EFEAF7;
+  background: var(--tone-stub-bg);
   color: var(--color-stub);
 }

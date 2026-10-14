@@ -1,63 +1,110 @@
+/* 统一状态视图（GY-I26 demo 对齐）
+ * ---------------------------------------------------------------------------
+ * 形态取自 docs/ui-demo/dist/styles.css 的 .empty{padding:50px 20px;text-align:center;
+ * border:1px dashed #d4dfc7;border-radius:14px;background:#fbfcf8}，并按状态语气扩展：
+ * 空态=中性虚线框，失败态=红语气，失效态=黄语气，处理中=绿语气，替身=紫语气。
+ *
+ * 全站统一的失败/空/失效/替身/处理中/未登录表达都走本组件：
+ * 各页面不得再自写一行灰字当失败提示（见 docs/ui-state-inventory.md 第 2 节）。
+ * 颜色只作辅助，识别主要依赖图标与标题文字（可访问性约定 1）。
+ */
+
 .state {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 56rpx 32rpx;
-  border-radius: var(--radius-lg, 28rpx);
-  background: var(--color-surface, #fff);
-  border: 2rpx solid var(--color-border, #D8E4DC);
+  padding: 40px 20px;
+  border-radius: var(--radius, 14px);
+  border: 1px dashed var(--green-empty-line, #d4dfc7);
+  background: var(--green-paper-soft, #fbfcf8);
+  box-sizing: border-box;
 }
 
 .state__icon {
-  font-size: 72rpx;
+  font-size: calc(36px * var(--font-scale, 1));
   line-height: 1.2;
-  margin-bottom: 20rpx;
+  margin-bottom: 15px;
 }
 
 .state__title {
-  font-size: calc(19px * var(--font-scale, 1));
-  font-weight: 700;
-  color: var(--color-text, #1B2B1E);
-  line-height: 1.4;
-}
-
-/* 状态色仅作辅助，识别主要依赖上方图标与标题文字 */
-.state--error .state__title {
-  color: var(--color-error, #C62828);
-}
-
-.state--invalid .state__title {
-  color: var(--color-invalid, #8A6D1F);
-}
-
-.state--loading .state__title {
-  color: var(--color-loading, #1F6FB2);
-}
-
-.state--stub .state__title {
-  color: var(--color-stub, #5B4B8A);
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 600;
+  color: var(--color-text, #17352b);
+  line-height: 1.5;
 }
 
 .state__desc {
-  margin-top: 16rpx;
+  margin-top: 12px;
   font-size: calc(16px * var(--font-scale, 1));
-  line-height: 1.7;
-  color: var(--color-text-sub, #4A5A4E);
+  line-height: 1.9;
+  color: var(--ink-hint, #97a48e);
   max-width: 560rpx;
 }
 
 .state__tag {
-  margin-top: 20rpx;
-  padding: 8rpx 24rpx;
-  border-radius: 999rpx;
-  font-size: calc(16px * var(--font-scale, 1));
+  margin-top: 20px;
+  padding: 6rpx 24rpx;
+  border-radius: 6px;
+  font-size: calc(14px * var(--font-scale, 1));
   font-weight: 600;
   color: var(--color-stub, #5B4B8A);
-  background: #efeaf7;
+  background: var(--tone-stub-bg, #efeaf7);
 }
 
 .state__btn {
-  margin-top: 32rpx;
-  min-width: 280rpx;
+  margin-top: 22px;
+  min-width: 240rpx;
+}
+
+/* 语气：demo 未定义状态色，取任务书 implementation-requirements.md:402 的状态色与
+   demo 的风险 pill／danger 按钮底色。 */
+
+.state--guest {
+  border-color: var(--green-chip-line, #dfe7da);
+  background: var(--green-soft, #eef3e9);
+}
+
+.state--guest .state__title {
+  color: var(--color-primary-deep, #135b44);
+}
+
+.state--loading {
+  border-color: #cfe0d4;
+  background: #f2f7f3;
+}
+
+.state--loading .state__title {
+  color: var(--color-loading);
+}
+
+.state--error {
+  border-color: #eec6c0;
+  background: var(--tone-danger-bg, #f8eeec);
+}
+
+.state--error .state__title {
+  color: var(--color-error);
+}
+
+.state--invalid {
+  border-color: #e8d6ad;
+  background: var(--tone-warn-bg, #f7f1e3);
+}
+
+.state--invalid .state__title {
+  color: var(--color-invalid);
+}
+
+.state--stub {
+  border-color: #ddd2f0;
+  background: var(--tone-stub-bg, #efeaf7);
+}
+
+.state--stub .state__title {
+  color: var(--color-stub);
+}
+
+.state--cancelled .state__title {
+  color: var(--color-text-sub, #4a5a4e);
 }

@@ -5,7 +5,10 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/knowledgedetail/knowledgedetail', 'pages/reference/reference',
   'pages/referencedetail/referencedetail', 'pages/referenceseed/referenceseed',
   'pages/referenceseeddetail/referenceseeddetail', 'pages/community/community',
-  'pages/messages/messages', 'pages/profile/profile', 'pages/login/login']
+  'pages/messages/messages', 'pages/profile/profile', 'pages/login/login',
+  // GY-I26：样式走查页（仅本地替身工程可见）。本列表须与 app.json 的 pages 逐项一致，
+  // 由 tests/unit/miniprogram-login-return-to.test.mjs 锁定；不改变任何路由逻辑。
+  'pages/specimen/specimen']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'

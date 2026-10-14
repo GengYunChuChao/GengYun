@@ -41,6 +41,37 @@ const UI_FILES = [
   'miniprogram/pages/profile/profile.wxml'
 ];
 
+/**
+ * GY-I26 demo 对齐后的样式层（app.wxss 通过 @import 引用）。
+ * 门槛检查必须覆盖它们，否则把字号/触控区挪进样式层就能绕过断言。
+ */
+const STYLE_LAYER_FILES = [
+  'miniprogram/styles/tokens.wxss',
+  'miniprogram/styles/icons.wxss',
+  'miniprogram/styles/components.wxss'
+];
+const styleLayer = STYLE_LAYER_FILES.map(read).join('\n');
+
+/**
+ * 允许承载按钮语义的样式层类。
+ * demo 的 .feature-card／.info-row／.tabs button／.chip／.message-row／.setting-row／
+ * .topic／.post-text／.post-actions button／.stat／.timeline-item 本身就是按钮，
+ * 强制它们套 .btn 会破坏 demo 形态；改为要求「类在样式层声明了 ≥44px 触控下限」，
+ * 由 tests/ui-demo-align.test.mjs 逐类核对 min-height，等价性不减。
+ */
+const TAPPABLE = [
+  'btn', 'feature-card', 'info-row', 'tabs__item', 'chip', 'message-row', 'setting-row',
+  'text-btn', 'topic', 'post-text', 'post-actions__item', 'stat', 'timeline-item'
+];
+
+/** 取出 <button ...> 的 class 列表 */
+const buttonClasses = (tag) => {
+  const m = tag.match(/class="([^"]*)"/);
+  return m ? m[1].split(/\s+/).filter(Boolean) : [];
+};
+/** 按钮须带 .btn，或带一个已在样式层声明触控下限的 demo 组件类 */
+const hasButtonStyle = (tag) => buttonClasses(tag).some((c) => TAPPABLE.includes(c));
+
 test('八种状态齐全，且每种都带图标、标题与说明', () => {
   const start = stateJs.indexOf('const PRESETS');
   const block = stateJs.slice(start, stateJs.indexOf('Component('));
@@ -61,12 +92,14 @@ test('触控区为 44px 且使用 px 单位，320px 窄屏下仍成立', () => {
   assert.ok(!/--tap-min:\s*[\d.]+rpx/.test(appWxss), '触控区不得使用 rpx，窄屏会缩水至 44px以下');
   const btn = appWxss.slice(appWxss.indexOf('.btn {'), appWxss.indexOf('.btn--block'));
   assert.ok(/min-height:\s*var\(--tap-min\)/.test(btn), '.btn 未使用触控区令牌');
-  // .btn 需保留上下内边距：字号放大后文字可能换行，min-height 只作下限
-  assert.ok(/padding:\s*10px\s+16px/.test(btn), '.btn 缺上下内边距，字号放大后文字换行会溢出门面');
+  // .btn 需保留上下内边距：字号放大后文字可能换行，min-height 只作下限。
+  // 具体数值取 demo .btn 的 11px 18px（不锁死常量，只要求纵向内边距为正）。
+  const btnPad = btn.match(/padding:\s*(\d+(?:\.\d+)?)px\s+(\d+(?:\.\d+)?)px/);
+  assert.ok(btnPad && Number(btnPad[1]) > 0, '.btn 缺纵向内边距，字号放大后文字换行会溢出门面');
   assert.ok(!/padding:\s*0\s+16rpx/.test(read('miniprogram/pages/identify/identify.wxss')), 'voice-btn 覆盖了 .btn 的上下内边距');
-  const homeWxss = read('miniprogram/pages/home/home.wxss');
-  assert.ok(/min-height:\s*var\(--tap-min/.test(homeWxss), '首页入口触控区不足');
-  assert.ok(!/var\(--tap-min,\s*[\d.]+rpx\)/.test(homeWxss), '首页入口触控区 fallback 不得为 rpx');
+  // 首页入口与样式层的可点组件必须在样式层声明触控下限（页面样式文件不再各写一套）
+  assert.ok(/min-height:\s*var\(--tap-min/.test(styleLayer), '样式层可点组件缺少触控区令牌');
+  assert.ok(!/var\(--tap-min,\s*[\d.]+rpx\)/.test(styleLayer), '触控区令牌 fallback 不得为 rpx');
 });
 
 test('正文为 18px 且不随屏宽缩放', () => {
@@ -76,10 +109,26 @@ test('正文为 18px 且不随屏宽缩放', () => {
   assert.ok(!/font-size:\s*36rpx/.test(root), '正文不得使用 36rpx，窄屏会缩至 18px 以下');
 });
 
-test('主题绿为 #1F7A45', () => {
-  assert.ok(/--color-primary:\s*#1F7A45/i.test(appWxss), '主题绿未使用 #1F7A45');
-  assert.equal(appJson.window.navigationBarBackgroundColor, '#1F7A45');
-  assert.equal(appJson.tabBar.selectedColor, '#1F7A45');
+test('主题色采用 docs/ui-demo 的设计令牌（色板冲突已披露，待监工裁定）', () => {
+  // 【冲突披露】docs/implementation-requirements.md:402 写「主题绿 #1F7A45，知识类绿 #2E9E5B」，
+  // 而 docs/ui-demo/dist/styles.css:1 的 :root 写 --green:#176b50。用户 2026-10-14 指令
+  // 「前端页面务必先做到 demo.html 所演示的样式，优先做好」，故本片采用 demo 值，
+  // 冲突交由监工裁定：若判回 #1F7A45，只需改 styles/tokens.wxss 的 --green/--color-primary
+  // 与 app.json 的两处颜色，本断言随之回退。
+  const tokensWxss = read('miniprogram/styles/tokens.wxss');
+  const demoGreen = /--green:\s*#176b50/i.test(tokensWxss);
+  assert.ok(demoGreen, '样式层未采用 demo 的主题绿 #176b50');
+  assert.ok(/--color-primary:\s*#176b50/i.test(tokensWxss), '--color-primary 别名未指向 demo 主题绿');
+  assert.equal(appJson.window.navigationBarBackgroundColor, '#176b50');
+  assert.equal(appJson.tabBar.selectedColor, '#176b50');
+});
+
+test('样式层逐值复现 demo 的 :root 色板', () => {
+  // 与 tools/demo-align.mjs 的机检同源：这里锁住不依赖工具的独立断言
+  const tokensWxss = read('miniprogram/styles/tokens.wxss');
+  for (const token of ['--green: #176b50', '--ink: #17352b', '--muted: #7b8983', '--paper: #f5f7f4', '--line: #e5ebe5', '--lime: #c6f17b']) {
+    assert.ok(tokensWxss.toLowerCase().includes(token), `样式层缺少 demo 令牌 ${token}`);
+  }
 });
 
 test('五个 Tab 注册完整且均在页面列表中', () => {
@@ -168,9 +217,14 @@ test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节
   assert.ok(/systemFont\.MAX_FONT_SCALE/.test(appJs), 'app.js 未复用 system-font 的封顶值');
   assert.ok(/globalData[\s\S]*fontScale/.test(appJs), 'globalData 未暴露 fontScale');
 
-  // 字号必须乘以缩放变量，否则微信字体设置对 px 无效（需求 4.1）
-  const sizes = appWxss.match(/font-size:\s*(\d+)px/g) || [];
-  assert.equal(sizes.length, 0, `仍有未乘缩放系数的 px 字号：${sizes.join(', ')}`);
+  // 字号必须乘以缩放变量，否则微信字体设置对 px 无效（需求 4.1）。
+  // 检查范围含 GY-I26 新增的 styles/*.wxss，避免把字号挪出 app.wxss 就绕过断言。
+  // 注释里引用的 demo 原值不算实际声明，先剥掉 CSS 注释再匹配。
+  const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const file of ['miniprogram/app.wxss', ...STYLE_LAYER_FILES]) {
+    const sizes = stripComments(read(file)).match(/font-size:\s*(\d+)px/g) || [];
+    assert.equal(sizes.length, 0, `${file} 仍有未乘缩放系数的 px 字号：${sizes.join(', ')}`);
+  }
   assert.ok(/font-size:\s*calc\(\d+px\s*\*\s*var\(--font-scale/.test(appWxss), '正文字号未乘 --font-scale');
   assert.ok(/--font-scale:\s*1/.test(appWxss), '未定义 --font-scale 默认值');
   assert.ok(/--tap-min:\s*max\(44px/.test(appWxss), '触控区未随字体放大且保持 44px 下限');
@@ -179,7 +233,7 @@ test('适配微信字体设置：读取 fontSizeSetting 并封顶，页面根节
     const wxml = read(`miniprogram/${page}.wxml`);
     const js = read(`miniprogram/${page}.js`);
     for (const button of wxml.matchAll(/<button\b[^>]*>/g)) {
-      assert.match(button[0], /class="[^"]*\bbtn\b/, `${page} 按钮缺少字号与高度样式`);
+      assert.ok(hasButtonStyle(button[0]), `${page} 按钮缺少字号与高度样式：${button[0]}`);
     }
     assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
     assert.ok(js.includes('fontScale'), `${page} 未引入 font-scale`);
@@ -360,7 +414,7 @@ test('每个页面（含 GY-I04 的登录页）都注入 --font-scale', () => {
     const wxml = read(`miniprogram/${page}.wxml`);
     const js = read(`miniprogram/${page}.js`);
     for (const button of wxml.matchAll(/<button\b[^>]*>/g)) {
-      assert.match(button[0], /class="[^"]*\bbtn\b/, `${page} 按钮缺少字号与高度样式`);
+      assert.ok(hasButtonStyle(button[0]), `${page} 按钮缺少字号与高度样式：${button[0]}`);
     }
     assert.ok(wxml.includes('--font-scale: {{fontScale}}'), `${page} 根节点未注入 --font-scale`);
     assert.ok(/applyFontScale|currentFontScale/.test(js), `${page} 未引入 font-scale`);

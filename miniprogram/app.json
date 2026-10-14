@@ -11,13 +11,14 @@
     "pages/community/community",
     "pages/messages/messages",
     "pages/profile/profile",
-    "pages/login/login"
+    "pages/login/login",
+    "pages/specimen/specimen"
   ],
   "window": {
     "navigationBarTitleText": "耕云",
-    "navigationBarBackgroundColor": "#1F7A45",
+    "navigationBarBackgroundColor": "#176b50",
     "navigationBarTextStyle": "white",
-    "backgroundColor": "#F4F9F4"
+    "backgroundColor": "#f5f7f4"
   },
   "permission": {
     "scope.userLocation": {
@@ -27,7 +28,7 @@
   "requiredPrivateInfos": ["getLocation"],
   "tabBar": {
     "color": "#555555",
-    "selectedColor": "#1F7A45",
+    "selectedColor": "#176b50",
     "list": [
       {
         "pagePath": "pages/home/home",

@@ -1,0 +1,239 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">样式走查</view>
+      <view class="page-heading__sub">逐项核对 demo 的组件形态；页内文案均为样式样张，不是真实内容。</view>
+    </view>
+    <view class="page-heading__right"><view class="pill pill--amber">非真实内容</view></view>
+  </view>
+
+  <!-- 非本地替身工程：统一失败态（同时是失败态走查入口） -->
+  <state-view
+    wx:if="{{!local}}"
+    status="error"
+    title="样式走查页仅在本地替身工程可见"
+    desc="共享源码的 runtime 恒为 disabled，因此标准包不渲染样张。请用 tools/prepare-wechat.mjs local 生成隔离工程，在 develop 环境打开本页。"
+  ></state-view>
+
+  <block wx:else>
+    <view class="notice notice--warn">
+      <text class="notice__icon">🧪</text>
+      <text class="notice__text">本页所有文字、数字、来源与帖子都是样式样张占位，不读取任何接口、不代表真实资料或识别结果，也不能作为用药依据。</text>
+    </view>
+
+    <!-- 1 主要按钮：demo .btn 的各修饰 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">1 主要按钮</view>
+        <view class="section-head__meta">demo .btn / .btn.primary …</view>
+      </view>
+      <view class="panel">
+        <button class="btn btn--primary btn--block" bindtap="onStub">主操作（.btn--primary · demo .btn.primary）</button>
+        <view class="row-actions">
+          <button class="btn btn--secondary row-actions__item" bindtap="onStub">次要（.btn--secondary）</button>
+          <button class="btn btn--ghost row-actions__item" bindtap="onStub">描边（.btn--ghost）</button>
+        </view>
+        <button class="btn btn--lime btn--block specimen-gap" bindtap="onStub">浅绿（.btn--lime · demo .btn.lime）</button>
+        <button class="btn btn--danger btn--block specimen-gap" bindtap="onStub">危险语气（.btn--danger）</button>
+      </view>
+    </view>
+
+    <!-- 2 标签与头像 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">2 标签与头像</view>
+        <view class="section-head__meta">demo .pill / .avatar</view>
+      </view>
+      <view class="info-tags">
+        <view class="tag-label">证据</view>
+        <view class="pill">科研来源</view>
+        <view class="pill pill--amber">未核对</view>
+        <view class="pill pill--blue">模拟资料</view>
+        <view class="pill pill--purple">录制片段</view>
+        <view class="pill pill--gray">示例</view>
+        <view class="pill pill--low">危险评估 · 低危</view>
+        <view class="pill pill--medium">危险评估 · 中危</view>
+        <view class="pill pill--high">危险评估 · 高危</view>
+      </view>
+      <view class="info-row">
+        <view class="avatar">样</view>
+        <view class="info-row__copy">
+          <text class="info-row__title">头像与信息行</text>
+          <text class="info-row__desc">demo .avatar / .info-row 的层级与间距</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 3 资料库卡片 + 文章详情的形态（demo library() / article()） -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">3 文章详情形态</view>
+        <view class="section-head__meta">demo article()</view>
+      </view>
+      <view class="article-card">
+        <view class="article-art"><view class="gy-icon gy-icon--leaf specimen-art-icon"></view><text class="article-art__label">FIELD NOTES / 样式样张</text></view>
+        <view class="card-meta"><text>样式样张</text><text>非核准来源</text></view>
+        <view class="prose">
+          <view class="prose__title">样式样张标题：用于核对标题层级与行高</view>
+          <view class="info-tags">
+            <view class="tag-label">常见地区</view>
+            <view class="pill">示例地区 A</view>
+            <view class="pill">示例地区 B</view>
+            <view class="pill pill--low">危险评估 · 低危</view>
+          </view>
+          <view class="prose__heading">先从观察开始</view>
+          <view class="prose__text">样式样张正文：这段文字只用于核对正文行高、颜色与段落间距，不是真实资料内容，也不构成任何用药或识别结论。</view>
+        </view>
+        <view class="stat-grid">
+          <view class="stat"><text class="stat__value">样张</text><text class="stat__label">资料版本</text></view>
+          <view class="stat"><text class="stat__value">占位</text><text class="stat__label">核验状态</text></view>
+        </view>
+        <view class="notice">样式样张提示条：demo .notice 的语气与内距。本页不作为诊断、用药或效果预测依据。</view>
+        <view class="row-actions">
+          <button class="btn btn--ghost row-actions__item" bindtap="onStub">收藏资料</button>
+          <button class="btn btn--primary row-actions__item" bindtap="onStub">继续提问</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 4 社区帖子详情形态（demo postDetail()）——社区数据未接入，此处只核形态 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">4 帖子详情形态</view>
+        <view class="section-head__meta">demo postDetail() / .comment-row</view>
+      </view>
+      <view class="post">
+        <view class="post-author">
+          <view class="avatar">样</view>
+          <view>
+            <text class="post-author__title">样式样张作者</text>
+            <text class="post-author__meta">样张时间 · 样张作物</text>
+          </view>
+          <view class="pill pill--gray post-author__tag">示例动态</view>
+        </view>
+        <view class="post-text">样式样张帖子正文：只用于核对帖子正文的行高、颜色与换行表现。社区内容尚未接入，这里不会展示任何真实帖子。</view>
+        <view class="post-visual">
+          <view class="gy-icon gy-icon--leaf specimen-visual-icon"></view>
+          <text class="post-visual__label">FIELD OBSERVATION / 样式样张</text>
+        </view>
+        <view class="post-actions">
+          <button class="post-actions__item" bindtap="onStub"><view class="gy-icon gy-icon--heart"></view>0</button>
+          <button class="post-actions__item" bindtap="onStub"><view class="gy-icon gy-icon--chat"></view>0</button>
+          <button class="post-actions__item" bindtap="onStub"><view class="gy-icon gy-icon--shield"></view>反馈</button>
+        </view>
+        <view class="comments">
+          <view class="comments__title">交流与讨论</view>
+          <view class="comment-row">
+            <view class="avatar">样</view>
+            <view>
+              <text class="comment-row__title">样式样张评论者</text>
+              <text class="comment-row__text">样式样张评论：用于核对头像、作者行与评论正文的层级关系。</text>
+            </view>
+          </view>
+          <view class="row-actions">
+            <button class="btn btn--primary row-actions__item" bindtap="onStub">发送（样张）</button>
+          </view>
+        </view>
+      </view>
+
+      <view class="section-head specimen-sub">
+        <view class="section-head__title">帖子列表与话题</view>
+        <view class="section-head__meta">demo .feed / .topic</view>
+      </view>
+      <view class="feed">
+        <view class="post">
+          <view class="post-author">
+            <view class="avatar">样</view>
+            <view>
+              <text class="post-author__title">样式样张作者</text>
+              <text class="post-author__meta">样张时间 · 样张作物</text>
+            </view>
+            <view class="pill pill--gray post-author__tag">示例动态</view>
+          </view>
+          <button class="post-text" bindtap="onStub">样式样张帖子正文（整块可点）：核对 .post-text 作为按钮时的可点区域与 ≥44px 触控下限。</button>
+        </view>
+        <view class="topic" bindtap="onStub">
+          <text class="topic__title"># 样式样张话题</text>
+          <text class="topic__desc">看看大家的田间发现（样张）</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 5 识别台形态（demo identify()） -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">5 识别台形态</view>
+        <view class="section-head__meta">demo .scan-stage / .process-panel</view>
+      </view>
+      <view class="tabs">
+        <view class="tabs__item tabs__item--active">拍照识草</view>
+        <view class="tabs__item">扫描标签</view>
+      </view>
+      <view class="scan-grid">
+        <view class="scan-stage">
+          <view class="scan-view">
+            <view class="scan-frame"><view class="gy-icon gy-icon--leaf scan-frame__icon"></view></view>
+            <view class="scan-caption">
+              <text class="scan-caption__title">遇见一株不认识的草？</text>
+              <text class="scan-caption__desc">将植株放入取景框，保留叶片与叶鞘（样式样张）</text>
+            </view>
+          </view>
+          <view class="row-actions">
+            <button class="btn btn--ghost row-actions__item" bindtap="onStub">选择照片</button>
+            <button class="btn btn--ghost row-actions__item" bindtap="onStub">使用示例</button>
+          </view>
+          <view class="demo-caption">样式样张：不读取相册、不调用相机、不上传任何图片。</view>
+        </view>
+        <view class="panel">
+          <view class="panel-head">
+            <view class="panel-head__title">从观察，到了解</view>
+            <view class="pill">前端样式样张</view>
+          </view>
+          <view class="hint">demo .sample 与 .process-panel 的排布；识别能力未接入。</view>
+          <view class="sample">
+            <view class="gy-icon gy-icon--leaf"></view>
+            <view>
+              <text class="sample__title">田边的示例植株</text>
+              <text class="sample__desc">内置样式样张 · 无需拍照（占位，不是识别结果）</text>
+            </view>
+          </view>
+          <view class="process-panel">
+            <view class="process-status"><text>准备好开始了吗？</text><text>READY</text></view>
+            <view class="progress-track"><view class="progress-track__bar specimen-bar"></view></view>
+            <view class="process-steps"><text>01 图片确认</text><text>02 模拟分析</text><text>03 整理结果</text></view>
+          </view>
+          <button class="btn btn--primary btn--block specimen-gap" bindtap="onStub">开始识别（样张）</button>
+          <view class="demo-caption">样式样张：按钮不发起任何识别请求。</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 6 统一状态视图：八态全量核对 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">6 统一状态视图</view>
+        <view class="section-head__meta">components/state-view</view>
+      </view>
+      <state-view status="guest" title="请先登录" desc="未登录状态：图标 + 标题 + 说明 + 主操作，不靠颜色单独传达。"></state-view>
+      <state-view status="empty" title="没有找到相关资料" desc="空结果状态：虚线框 + 中性语气。"></state-view>
+      <state-view status="loading" title="正在处理" desc="处理中状态：绿语气。"></state-view>
+      <state-view status="error" title="操作没有成功" desc="失败状态：红语气 + 重试入口，全站统一走本组件。"></state-view>
+      <state-view status="cancelled" title="已取消" desc="取消状态：中性语气。"></state-view>
+      <state-view status="invalid" title="内容已失效" desc="失效状态：黄语气。"></state-view>
+      <state-view status="stub" title="示例数据" desc="替身状态：紫语气，并附「替身数据」文字标签。"></state-view>
+    </view>
+
+    <!-- 7 末屏：核对 tabBar 不遮挡末屏内容 -->
+    <view class="section">
+      <view class="section-head">
+        <view class="section-head__title">7 末屏核对</view>
+        <view class="section-head__meta">.page padding-bottom</view>
+      </view>
+      <view class="hint">下面这一段用于把页面撑高，滚到最底时「末屏标记」必须完整可见、不被底部五 Tab 遮挡。排版规则：demo .main 的 padding-bottom 105px + env(safe-area-inset-bottom)。</view>
+      <view class="panel" wx:for="{{filler}}" wx:key="*this">
+        <view class="card-text">样式样张填充段 {{item}}：用于滚动到末屏，核对底部预留是否足够。</view>
+      </view>
+      <view class="specimen-end">末屏标记：此行必须完整可见（未被 tabBar 遮挡）</view>
+    </view>
+  </block>
+</view>
