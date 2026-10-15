@@ -273,13 +273,17 @@ export interface BuildAppOptions {
     authority?: ContentAuthorityPort;
     callbackKey?: string;
   };
-  // GY-I16 收藏（#16）注入项。**全部可选**：不传时与接线前**逐字节同行为** —— 收藏域新建
-  // 内存 store、可见性端口**未接线**（一律 unavailable，绝不假装可用）；real 模式下整域关闭。
+  // GY-I16 收藏（#16）注入项。**全部可选**：不传时——收藏域新建内存 store；引用可用性端口
+  // **已于 #167 接线**（缺省即同文件 `defaultVisibility`：`createWiredVisibilityPort`，可用性按
+  // `/knowledge` 公开读面**每次读取重新派生**，核不到即 `unavailable`，绝不假装可用）；
+  // real 模式下整域关闭。
   favoritesInjection?: {
     store?: FavoritesStore;
     visibility?: VisibilityPort;
   };
-  // GY-I16 历史（#16）注入项。**全部可选**：不传时——历史域新建内存 store；可见性端口未接线；
+  // GY-I16 历史（#16）注入项。**全部可选**：不传时——历史域新建内存 store；引用可用性端口
+  // **已于 #167 接线**（缺省即同文件 `defaultVisibility`：`createWiredVisibilityPort`，可用性按
+  // `/knowledge` 公开读面**每次读取重新派生**，核不到即 `unavailable`）；
   // **任务状态端口默认接线到已合并的公开读取口**（`recognitionService.getJob` /
   // `ocrService.getJob`）⇒ 读取时能拿到真实任务状态（失败/超时/取消原样可见）；
   // 关联删除级联端口未接线（如实回 `unwired`，不谎称已启动）。

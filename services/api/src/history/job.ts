@@ -39,8 +39,13 @@ export interface HistoryJobPort {
 }
 
 /**
- * 未接线端口（**生产默认**）：一律 `null`。
- * 之后接线只需替换本工厂（一次可审查的变更），服务层与用例无需改动。
+ * 未接线端口（**不是生产默认**）：一律 `null`。
+ *
+ * 缺省端口**早已接线** —— 装配点 `services/api/src/app.ts` 的
+ * `historyJobPort = historyInjection?.job ?? createWiredHistoryJobPort({...})`，
+ * 自 `1b0b3d6`(#144) 起接到 `recognitionService.getJob`／`ocrService.getJob`。
+ * 本工厂保留为**合法的 fail-closed 端口**（`services/**` 内无调用，供测试夹具注入与对照使用）；
+ * 服务层与用例无需改动。
  */
 export function createUnwiredHistoryJobPort(
   note = '任务状态端口尚未接线：读取时退回历史行记录的最后已知状态（不外推、不伪造成成功）',

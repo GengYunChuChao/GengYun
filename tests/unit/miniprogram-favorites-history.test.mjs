@@ -406,8 +406,8 @@ test('详情页收藏（切片A，断点4-B）：进详情即按服务端收藏�
   assert.equal(scan.method, 'GET');
   assert.match(scan.url, /\/favorites\?limit=50$/);
   assert.equal(scan.header.authorization, 'Bearer synthetic-i16-token');
-  // 服务端当前对收藏目标**恒派生 unavailable**（可见性端口未接线）——
-  // 本页不得因此把收藏入口判为失败，也不得据此展示任何可用性结论。
+  // 本用例的替身响应把该收藏置为 unavailable（服务端引用可用性端口已于 #167 接线、逐次派生；
+  // 本页不依赖该取值）——本页不得因此把收藏入口判为失败，也不得据此展示任何可用性结论。
   answer(f, {
     items: [favorite({
       id: UUID_A, revision: 3,

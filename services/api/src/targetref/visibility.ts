@@ -97,11 +97,14 @@ export interface VisibilityPort {
 }
 
 /**
- * 未接线端口（**生产默认**；本片不接任何真实目标读取实现）。
+ * 未接线端口（**不是生产默认**：生产默认已于 #167 接线 —— 装配点 `services/api/src/app.ts` 的
+ * `defaultVisibility = createWiredVisibilityPort({...})`，可用性按 `/knowledge` 公开读面
+ * **每次读取重新派生**；本工厂保留为**合法的 fail-closed 端口**，供测试注入与对照使用）。
  *
  * 一律 `unavailable` + 未接线说明：**不得**返回 `'available'` 来"默认可用"。
- * 真实接线（阶段 2：把 `species`/`herbicide`/`scheme` 与识别/OCR/媒体的当前可见性核验接进来）
- * 只需替换本工厂，服务层与用例无需改动。
+ * 真实接线已由 #167 部分交付：`species`/`herbicide`/`scheme` 经公开读面逐次核验；
+ * **识别/OCR/媒体的当前可见性核验仍未接线**（非收藏闭集目标恒 `unavailable`）。
+ * 服务层与用例无需改动。
  */
 export function createUnwiredVisibilityPort(
   reason: ReferenceUnavailableReason = UNWIRED_UNAVAILABLE_REASON,
