@@ -15,7 +15,7 @@
 | **未取得 CI 读数** | 是（本分支无 CI 运行记录；本文**不把 CI 配置当成已验证**） |
 
 原始日志（UTF-8）另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\`：`test-docs.txt`、`test-docs-after.txt`、`test-docs-final.txt`、`test-contract.txt`、`test-contract-final.txt`、`validate-contracts.txt`、`test-contracts-py.txt`、`verify-status.txt`、`verify-status-runtime.txt`、`verify-status-runtime-final.txt`、`hashes.txt`、`npm-ls.txt`、`versions.txt`、`ui-adaptive-baseline.txt`、`gate-diff.txt`、`selfcheck-a.txt`、`selfcheck-b.txt`。
-本轮返修（r2）日志另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\fix-r2\`：`crosscheck-lf.sh`／`crosscheck-lf.txt`（跨平台复核命令原样实跑＋GNU `sha256sum` 独立复核）、`form-cmd.cmd`（cmd.exe）、`repro-min.sh`（Git Bash）、`diag-quoting.sh`／`diag-msys.sh`（shell 引号差异定位）、`gate-*.txt`（返修门禁与负控制原始输出）。
+本轮返修（r2）日志另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\fix-r2\`：`crosscheck-lf.sh`／`crosscheck-lf.txt`（跨平台复核命令原样实跑＋GNU `sha256sum` 独立复核）、`from-doc-cmd.txt`（从本文件 §2.2(b) 提取的命令原文）＋`run-from-doc.cmd`／`run-from-doc.sh`／`run-from-doc-ps51.ps1`（三种 shell 的 runner）、`gate-x-cmd.txt`／`gate-x-bash.txt`／`gate-x-ps51.txt`（三 shell 原始输出）、`gate-negative-control-r2.txt`（负控制）、`gate-r2-final.txt`（返修门禁）、`check-eol.sh`／`check-eol.txt`（行尾检查）、`diag-quoting.sh`／`diag-msys.sh`／`repro-min.sh`（shell 引号差异定位）。
 本记录在基线 `24fac03` 之上**只新增这一份文档**（`git diff --name-only upstream/main...HEAD` 实测见 §6.1）；该提交的短 SHA 以回传 handoff 为准。
 
 **修订记录（r2，2026-10-15；返修单 `.pg17/dispatch/issue1-freeze-fix.md`，2026-10-15）**：增量复审判「需修改」⇒ 本版只改本文档、修正三处：**B1（阻塞）** §2 改以 **LF 归一化 sha256** 为跨平台判据并写入跨平台复核命令（原 CRLF 工作区值保留，降级为"仅登记、不作判据"）；**C1** §4.2 微信基础库引用真身由 `local-wechat.yml:6` 更正为 `.github/workflows/engineering-shell.yml:6`；**C2** §1.1#17／§4.2 的 CI Node pin 与 `npm ci` 计数按实测更正。**本记录仍是记录，不构成 #1 的验收结论**（§9）。
@@ -429,7 +429,7 @@ $ bash run-from-doc.sh                                          # (B) Git for Wi
 # 同上五行，逐字符相同
 # EXITCODE: 0
 
-$ powershell -NoProfile -File run-from-doc-ps51.ps1              # (C) Windows PowerShell 5.1.26100.8875（按 §2.2(b) 说明加 --%）
+$ powershell -NoProfile -ExecutionPolicy Bypass -File run-from-doc-ps51.ps1   # (C) Windows PowerShell 5.1.26100.8875（按 §2.2(b) 说明加 --%）
 # check: prefix node --% -e = True
 # 同上五行，逐字符相同
 # EXITCODE: 0
