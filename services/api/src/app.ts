@@ -30,12 +30,19 @@ import type { SpeechStore } from './speech/store.ts';
 import type { SpeechProvider } from './speech/provider.ts';
 import type { SpeechMediaPort } from './speech/media.ts';
 import { registerOcrRoutes } from './routes/ocr.ts';
+import { createUnwiredOcrTerminalHistoryPort, type OcrTerminalHistoryInput, type OcrTerminalHistoryPort } from './ocr/service.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
 import { STUB_LOOKUP_KEY, createWechatIdentityProvider, type WechatIdentityProvider } from './auth/wechat.ts';
 import { AuthService, STUB_IDEMPOTENCY_HMAC_KEY } from './auth/service.ts';
 import { createAuthGuards } from './auth/middleware.ts';
-import { createRecognitionService, type RecognitionService } from './recognitions/service.ts';
+import {
+  createRecognitionService,
+  createUnwiredRecognitionTerminalHistoryPort,
+  type RecognitionService,
+  type RecognitionTerminalHistoryInput,
+  type RecognitionTerminalHistoryPort,
+} from './recognitions/service.ts';
 import { createRecognitionProvider, type RecognitionProvider } from './recognitions/provider.ts';
 import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
@@ -613,6 +620,59 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I09 识别任务闭环：real 走 fail-closed 提供者（缺凭据 503，绝不回退替身），
   // stub/preset_demo 用明确标注的替身；媒体引用端口同理（real 未接线 → OBJECT_UNAVAILABLE）。
+  //
+  // **GY-I16（#16）跨线接线：识别/OCR 的终态 → 服务端识别历史**
+  // ------------------------------------------------
+  // 派单裁定：在识别任务「进入终态并产出识别记录」时（OCR 同理，见其终态提交处）调用**已存在**的
+  // 内部创建口 `historyService.appendHistory({owner_id, kind, target_ref, job_id, job_state, event_key})`
+  // （不是契约 operationId、不注册路由）。接线只在**本文件**发生：两个域各自声明一个「把已落库的
+  // 终态交给历史域」的端口（`RecognitionTerminalHistoryPort`／`OcrTerminalHistoryPort`），
+  // **不 import 对方的服务、不改契约、不加新的契约出口**。
+  //
+  // 三条硬边界（逐条对应裁定，不得放宽）：
+  //   1. **只在终态提交成功后**（`commitTerminal` 返回非 `null`）才投递：CAS 失败（已被取消/已终态）
+  //      时**不投递** ⇒ 不会把一次从未发生的终态写进历史；`job_state` 取**实际落库值**（非乐观值）。
+  //   2. **确定性 `event_key`**：`<kind>:<job_id>` —— 只由**服务端分配**的作业 id 派生，
+  //      **不含**时间戳/随机数；同一次任务重复投递 ⇒ 历史域按 `(owner_id, event_key)` 去重 ⇒ **no-op**。
+  //      （历史 store 另有 `(owner_id, kind, target_ref.id)` 唯一约束作第二道去重。）
+  //   3. **未接线 = 什么都不做**（不伪造历史、不声称成功）：`real` 模式下历史域整域关闭
+  //      （`historyService === null`，本文件下方装配）⇒ 端口落到未接线实现，识别/OCR 任务照常执行。
+  //
+  // `app.historyService` 在本文件**下方**才被装配（其任务状态端口要读 `recognitionService.getJob`／
+  // `app.ocrService.getJob`，故本端口**不捕获历史服务实例、只捕获 `app`，请求期才解析**）——
+  // 与同一装配块里历史任务状态端口的既有做法同源（那里只捕获闭包、请求期才解析 `app.ocrService`）。
+  const recordHistoryTerminal = async (input: {
+    owner_id: string;
+    kind: 'recognition' | 'ocr';
+    target_ref: { type: 'recognition'; id: string; revision: number } | { type: 'ocr'; id: string; revision: number };
+    job_id: string;
+    job_state: string;
+  }): Promise<void> => {
+    const history = app.historyService;
+    if (history === null) return; // real：历史域整域关闭（**不是**配置错误，不告警）
+    // `undefined` 只可能来自「装配顺序漂移」（本端口在 `app.decorate('historyService', …)` 之前被调用）。
+    // 那种情况下静默丢弃历史是**看不见的假成功**，因此如实抛错，由域侧记告警（任务结果不受影响）。
+    if (history === undefined) throw new Error('历史域尚未装配（装配顺序错误），本次终态未写入历史');
+    // 本函数形状 = `appendHistory` 入参 + 本层补的**确定性** `event_key`；`appendHistory` 自己逐字段校验
+    // （未知字段一律 400，因此这里不做任何预转换、也不吞掉它的拒绝）。
+    await history.appendHistory({ ...input, event_key: `${input.kind}:${input.job_id}` });
+  };
+  const recognitionTerminalHistory: RecognitionTerminalHistoryPort =
+    config.executionMode === 'real'
+      ? createUnwiredRecognitionTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
+      : {
+          kind: 'wired',
+          note: '识别终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+          recordTerminal: (input: RecognitionTerminalHistoryInput) => recordHistoryTerminal(input),
+        };
+  const ocrTerminalHistory: OcrTerminalHistoryPort =
+    config.executionMode === 'real'
+      ? createUnwiredOcrTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
+      : {
+          kind: 'wired',
+          note: 'OCR 终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+          recordTerminal: (input: OcrTerminalHistoryInput) => recordHistoryTerminal(input),
+        };
   const recognitionProviderResolved =
     recognitionProvider ??
     createRecognitionProvider({
@@ -629,6 +689,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : recognitionEgress.provider(recognitionProviderResolved, 'recognize'),
     media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+    // GY-I16 #16 跨线接线：识别任务终态 → 服务端识别历史（见上方 `recognitionTerminalHistory`）。
+    history: recognitionTerminalHistory,
     now: clock,
     ...(recognitionJobDeadlineMs === undefined ? {} : { jobDeadlineMs: recognitionJobDeadlineMs }),
   });
@@ -968,7 +1030,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
   registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress });
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。

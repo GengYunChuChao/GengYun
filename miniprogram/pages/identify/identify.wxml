@@ -165,6 +165,8 @@
       <view class="section-head__title">我的识别记录（私有）</view>
       <view class="pill pill--gray">{{history.length}} 条</view>
     </view>
+    <!-- 如实说明：本机索引为什么只在本次打开期间有效（不持久化、不跨启动），以及跨启动该看哪里 -->
+    <view class="hint">本机索引仅在本次打开期间有效（不写入本机存储，重启即清空）；跨启动请看「我的 → 识别历史」。</view>
     <view class="message-list">
       <view class="message-row" wx:for="{{history}}" wx:key="recordId" data-id="{{item.recordId}}" bindtap="onOpenHistoryItem">
         <view class="message-copy">
@@ -175,6 +177,7 @@
     </view>
     <view class="row-actions">
       <button class="btn btn--secondary row-actions__item" bindtap="onClearHistory">清空本机索引</button>
+      <button class="btn btn--secondary row-actions__item" bindtap="onOpenServerHistory" role="button" aria-label="识别历史">我的 → 识别历史</button>
     </view>
   </view>
 

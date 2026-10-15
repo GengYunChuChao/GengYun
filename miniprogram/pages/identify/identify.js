@@ -31,8 +31,14 @@ const identifyApi = require('../../utils/identify-api')
  *   不做"沿用展示"；
  * - 同进程内的账号切换隔离保持：内存条目仍按已核实会话世代 `ownerKey` 逐条过滤。
  *
- * 代价（如实记录）：本机识别历史不再跨应用重启；服务端仍是历史的事实来源，后续可经服务端读取接口
- * （如 `GET /history`，属 GY-I20 范围）补回。
+ * 代价（如实记录）：本机识别历史不再跨应用重启。当时服务端读取接口（`GET /history`，GY-I16 #16）
+ * 已在契约与列表页里，但**没有任何写入点**，因此"跨启动可浏览"当时并不成立。
+ *
+ * GY-I16（#16）接线后的现状（本片交付）：服务端识别历史**已有写入点** —— 识别/OCR 任务终态提交
+ * 成功后由服务端落一行（`services/api/src/app.ts` 的终态历史端口 → `history/service.ts#appendHistory`，
+ * 确定性 `event_key` + 幂等去重）。页面因此给出一条到 `/pages/history/history` 的入口
+ * （`onOpenServerHistory`）。本机索引的这一段 **fail-closed 论证不变**：它仍只在本次打开期间有效，
+ * **不**持久化、**不**跨启动。
  */
 const historyByOwner = new Map()
 const HISTORY_KEY_LEGACY = 'gengyun.identify.history'
@@ -576,6 +582,17 @@ Page({
     // 旧持久化键（若有残留）一并清理，避免下次启动出现无法核实归属的数据。
     try { wx.removeStorageSync(historyKeyFor(ownerKey)) } catch (_) {}
     this.setData({ history: [] })
+  },
+
+  /**
+   * 打开服务端识别历史（`GET /history`，见 `pages/history`）。
+   *
+   * 与「我的 → 识别历史」是**同一个**入口页（`profile.js` 的 `openHistory` 同 URL），
+   * 不另造第二套历史面。服务端历史行由识别/OCR 任务终态写入（GY-I16 #16 接线）。
+   */
+  onOpenServerHistory: function () {
+    if (this.data.guest === true) return
+    wx.navigateTo({ url: '/pages/history/history' })
   }
 })
 

@@ -29,7 +29,7 @@ import { currentIdentity, readIdentity } from '../auth/middleware.ts';
 import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
-import { createOcrService, type OcrService } from '../ocr/service.ts';
+import { createOcrService, type OcrService, type OcrTerminalHistoryPort } from '../ocr/service.ts';
 import { createMemoryOcrStore, type OcrStore } from '../ocr/store.ts';
 import { createOcrProvider, type OcrProvider } from '../ocr/provider.ts';
 import { createOcrMediaPort, type OcrMediaPort } from '../ocr/media.ts';
@@ -74,6 +74,14 @@ export interface OcrRouteDeps {
   dose?: OcrDosePort;
   /** 幂等请求摘要密钥；缺省取 `config.sessionSigningKey`，再缺省为替身桩密钥。 */
   idempotencyHmacKey?: string;
+  /**
+   * GY-I16（#16）跨线接线：**可选**终态写入服务端识别历史的端口（缺省 = 未接线 fail-closed）。
+   *
+   * 它是**装配层**（`app.ts`）提供的端口，不是「绕过 fail-closed 的后门」：与本文件其余注入项
+   * 一样，产品装配只把历史域的内部创建口交给它；`real` 模式下历史域整域关闭 ⇒ 装配层传
+   * `undefined` ⇒ 服务层落到未接线端口（任务照常执行，不产生历史行，**不**伪造成功）。
+   */
+  history?: OcrTerminalHistoryPort;
   now?: () => Date;
   idFactory?: () => string;
   /** 任务截止时间（毫秒）；生产走服务层默认 30s，仅供装配/回环测试收紧。 */
@@ -200,6 +208,7 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
       reference,
       dose,
       idempotencyHmacKey: deps.idempotencyHmacKey ?? config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+      ...(deps.history === undefined ? {} : { history: deps.history }),
       now: deps.now,
       idFactory: deps.idFactory,
       jobDeadlineMs: deps.jobDeadlineMs,
