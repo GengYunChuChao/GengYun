@@ -64,15 +64,21 @@ async function fixture(t, options = {}) {
   t.after(() => app.close());
 
   async function call(method, path, actor = a, extra = {}) {
+    // `contentType` 可**单独**声明 —— 无请求体也带 JSON 头，这正是真机形态：微信 `wx.request`
+    // 默认注入 `content-type: application/json`，无体 `DELETE` 因此带着该头出门。
+    // 旧版只在有 `payload` 时才加这个头（本处原第 70 行），结构上不可能覆盖「无体 + JSON 头」这一整类。
+    const contentType = extra.contentType ?? (extra.payload === undefined ? undefined : 'application/json');
+    // `rawBody` 用于发送**真实文本体**（空串 / 非法 JSON），不被 JSON.stringify 包一层。
+    const requestBody = extra.rawBody ?? (extra.payload === undefined ? undefined : JSON.stringify(extra.payload));
     const headers = {
       ...(actor === null ? {} : { authorization: `Bearer ${actor.token}` }),
       ...(extra.headers ?? {}),
-      ...(extra.payload === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(contentType === undefined ? {} : { 'content-type': contentType }),
     };
     const response = await fetch(base + path, {
       method,
       headers,
-      ...(extra.payload === undefined ? {} : { body: JSON.stringify(extra.payload) }),
+      ...(requestBody === undefined ? {} : { body: requestBody }),
     });
     const body = await response.json();
     return {
@@ -308,6 +314,85 @@ test('收藏HTTP：real 模式整域关闭（内存存储不冒充持久化）',
     assert.equal(result.body.error.code, 'PROVIDER_UNAVAILABLE');
   }
   assert.equal(h.app.favoritesService, null);
+});
+
+test('收藏HTTP：无体写请求带微信默认 JSON content-type 时不得被判成 400（且不放宽任何校验）', async (t) => {
+  const h = await fixture(t);
+  const mine = (await h.call('POST', FAVORITES, h.a, create('spc-nobody', 51))).body.data;
+
+  // 真机形态（GY-I16 真机阻断缺陷）：`wx.request` 默认注入 `content-type: application/json`，
+  // 而取消收藏的 `DELETE` **没有请求体**。修复前 Fastify 只凭该头就进 JSON 解析器 ⇒
+  // `FST_ERR_CTP_EMPTY_JSON_BODY` ⇒ 400「请求体格式错误」，请求**到不了路由**：
+  // 连 401/428/409 都会被它遮住（`_w61-probe-before.log` 的 G1–G6 逐条实测）。
+  const withDefaultHeader = { contentType: 'application/json' };
+
+  // 回归①：缺 If-Match **仍然** 428（不是 200，也不是解析错误顶掉的 400）。
+  const missing = await h.call('DELETE', `${FAVORITES}/${mine.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'fav-nobody-0001' },
+  });
+  assert.equal(missing.status, 428);
+  assert.equal(missing.body.error.code, 'REVISION_REQUIRED');
+
+  // 回归②：版本不符 **仍然** 409。
+  const stale = await h.call('DELETE', `${FAVORITES}/${mine.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'fav-nobody-0002', 'if-match': '"2"' },
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, 'REVISION_CONFLICT');
+
+  // 回归③：未登录 **仍然** 401 —— 鉴权必须在请求体解析之后照常拦下（不能被"无体"绕过）。
+  const anonymous = await h.call('DELETE', `${FAVORITES}/${mine.id}`, null, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'fav-nobody-0003', 'if-match': '"1"' },
+  });
+  assert.equal(anonymous.status, 401);
+  assert.ok(['SESSION_REQUIRED', 'SESSION_EXPIRED'].includes(anonymous.body.error.code));
+
+  // 回归④：幂等键要求与 `If-Match` 形状校验都**不**放宽。
+  const noKey = await h.call('DELETE', `${FAVORITES}/${mine.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'if-match': '"1"' },
+  });
+  assert.equal(noKey.status, 400);
+  assert.equal(noKey.body.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+  const badEtag = await h.call('DELETE', `${FAVORITES}/${mine.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'fav-nobody-0004', 'if-match': '*' },
+  });
+  assert.equal(badEtag.status, 400);
+  assert.equal(badEtag.body.error.code, 'INVALID_REQUEST');
+
+  // 正例：无体 + JSON 头 ⇒ 200 Ack，且与"不带头"的同一请求逐字同形（无体就是无体）。
+  const removed = await h.call('DELETE', `${FAVORITES}/${mine.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'fav-nobody-0005', 'if-match': '"1"' },
+  });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.data, { accepted: true });
+  assert.equal(removed.cache, 'no-store');
+  assert.equal((await h.call('GET', FAVORITES)).body.data.items.length, 0);
+
+  // 负控制①：**需要**请求体的路由，空体 + JSON 头仍然 400（"空体≠无体"只在无体写面上成立，
+  // 不是"任何空体都放行"）。带 schema.body 时按 schema 拒绝，语义更准。
+  const emptyPost = await h.call('POST', FAVORITES, h.a, {
+    ...withDefaultHeader,
+    rawBody: '',
+    headers: { 'idempotency-key': 'fav-nobody-0006' },
+  });
+  assert.equal(emptyPost.status, 400);
+  assert.equal(emptyPost.body.error.code, 'INVALID_REQUEST');
+
+  // 负控制②：非空的**非法 JSON** 仍然 400「请求体格式错误」——真实解析失败不得被顺带放宽。
+  const malformed = await h.call('POST', FAVORITES, h.a, {
+    ...withDefaultHeader,
+    rawBody: '{',
+    headers: { 'idempotency-key': 'fav-nobody-0007' },
+  });
+  assert.equal(malformed.status, 400);
+  assert.equal(malformed.body.error.code, 'INVALID_REQUEST');
+  assert.equal(malformed.body.error.message, '请求体格式错误');
 });
 
 test('收藏HTTP：可控可见性替身下 可用/不可用 的投影与推荐资格', async (t) => {

@@ -100,14 +100,19 @@ async function fixture(t, options = {}) {
   t.after(() => app.close());
 
   async function call(method, path, actor = a, extra = {}) {
+    // `contentType` 可**单独**声明 —— 无请求体也带 JSON 头，这正是真机形态：微信 `wx.request`
+    // 默认注入 `content-type: application/json`，无体 `DELETE` 因此带着该头出门。
+    // 旧版只在有 `payload` 时才加这个头，结构上不可能覆盖「无体 + JSON 头」这一整类。
+    const contentType = extra.contentType ?? (extra.payload === undefined ? undefined : 'application/json');
+    const body = extra.rawBody ?? (extra.payload === undefined ? undefined : JSON.stringify(extra.payload));
     const response = await fetch(base + path, {
       method,
       headers: {
         ...(actor === null ? {} : { authorization: `Bearer ${actor.token}` }),
         ...(extra.headers ?? {}),
-        ...(extra.payload === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(contentType === undefined ? {} : { 'content-type': contentType }),
       },
-      ...(extra.payload === undefined ? {} : { body: JSON.stringify(extra.payload) }),
+      ...(body === undefined ? {} : { body }),
     });
     return {
       status: response.status,
@@ -320,6 +325,50 @@ test('历史HTTP：删除历史行 + 级联披露（未接线如实说明，接�
   assert.equal(removed2.status, 200);
   assert.equal(removed2.cascade, 'unwired');
   assert.equal((await h2.call('GET', HISTORY)).body.data.items.length, 0, '级联未接线也必须能删除自己的记录');
+});
+
+test('历史HTTP：无体 DELETE 带微信默认 JSON content-type 时不得被判成 400（同类写面，非收藏单点）', async (t) => {
+  const h = await fixture(t);
+  await append(h.app, { owner_id: h.a.user.id, job_state: 'failed' });
+  const item = (await h.call('GET', HISTORY)).body.data.items[0];
+
+  // 与收藏同一个机制、**不同域不同路由**：修复前空 JSON 体 ⇒ 400「请求体格式错误」，
+  // 请求到不了路由；修复后与"不带该头"的同一请求行为一致。
+  const withDefaultHeader = { contentType: 'application/json' };
+
+  // 回归①：缺 If-Match **仍然** 428。
+  const missing = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'his-nobody-0001' },
+  });
+  assert.equal(missing.status, 428);
+  assert.equal(missing.body.error.code, 'REVISION_REQUIRED');
+
+  // 回归②：版本不符 **仍然** 409。
+  const stale = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'his-nobody-0002', 'if-match': '"9"' },
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.error.code, 'REVISION_CONFLICT');
+
+  // 回归③：未登录 **仍然** 401。
+  const anonymous = await h.call('DELETE', `${HISTORY}/${item.id}`, null, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'his-nobody-0003', 'if-match': '"1"' },
+  });
+  assert.equal(anonymous.status, 401);
+  assert.ok(['SESSION_REQUIRED', 'SESSION_EXPIRED'].includes(anonymous.body.error.code));
+
+  // 正例：无体 + JSON 头 ⇒ 200 Ack（级联披露照常）。
+  const removed = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
+    ...withDefaultHeader,
+    headers: { 'idempotency-key': 'his-nobody-0004', 'if-match': '"1"' },
+  });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.data, { accepted: true });
+  assert.equal(removed.cache, 'no-store');
+  assert.equal((await h.call('GET', HISTORY)).body.data.items.length, 0);
 });
 
 test('历史HTTP：请求校验、分页与 real 模式整域关闭', async (t) => {
