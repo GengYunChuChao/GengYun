@@ -25,9 +25,26 @@ const UNREADABLE_NOTE = '未能读取我的档案，本次没有按档案预置�
 const OUT_OF_COVERAGE = '未能核对我的档案里的地区信息（原因未定），本次没有按档案条件查询，也没有用省级资料代替。'
   + '当前资料仅覆盖浙江省，只登记到省级（' + PROVINCE_CODE + '）；可点「清空条件继续查询」用手选条件查询，'
   + '或回「我的」确认档案里的作物与地区都已保存完整。'
+// 地区层级标注（GY-I07／差距侦察 3-A）：资料只登记到省级——种子清单全部条目的 `region_codes` 都是
+// `ZHEJIANG_PROVINCE_CODE`（packages/reference/zhejiang.mjs:54 定义 '330000'、:322 逐条只写省级码），
+// 而地区下拉含 11 个市与各县区。因此在选择器旁**如实标注**层级：既不假装市／县能查到本地资料，
+// 也不与 #168 的档案提示（PROVINCE_NOTE／OUT_OF_COVERAGE）冲突——两者是同一口径"只到省级"。
+const REGION_TIER_NOTE = '地区筛选仅浙江省级（' + PROVINCE_CODE + '）：当前资料只登记到省级，选市／县级地区在当前资料下查不到条目；「全部地区」不受此限。'
+// 条件维度未采集（GY-I07／差距侦察 3-B）：服务端可见性过滤要求 growth_stage／planting_method／
+// use_scene **全为空**才可能命中（services/api/src/knowledge/service.ts:64 注释 "Current schema has no
+// stage/method/scene evidence"、:66 的 `&& !filter.growth_stage && !filter.planting_method && !filter.use_scene`）。
+// ⇒ 这三个条件任一非空时，HTTP 200 + `items: []` 是**必然**结果，原因是**当前资料未采集该维度**，
+// 而不是"没有符合条件的资料"。页面必须点名原因并给出只清空这三个条件的出口，绝不用泛化空态让用户
+// 以为"资料里真的没有这一条"；服务端行为**不变**（仍然返回空）。
+const CONDITION_FIELDS = [['growth_stage', '生育期'], ['planting_method', '种植方式'], ['use_scene', '使用场景']]
+const CONDITION_LIST = CONDITION_FIELDS.map(f => f[1]).join('／')
+const UNCOLLECTED_HEAD = '当前资料未采集'
+const UNCOLLECTED_NOTE = '：资料里没有' + CONDITION_LIST + '这几个维度的取值，填了就查不到条目。'
+  + '可点「清空该条件继续查询」只清空' + CONDITION_LIST + '后重查，其余条件（作物／杂草／地区／关键词）保持不变。'
 Page({
   data: { fontScale: 1, gatePassed: false, busy: false, status: '', modeNote: api.modeNote(), items: [], nextCursor: null,
-    // GY-I26：状态语气字段，供 state-view 统一渲染 loading／empty／error；idle 表示尚未发起查询
+    // GY-I26：状态语气字段，供 state-view 统一渲染 loading／empty／error；idle 表示尚未发起查询。
+    // GY-I07：另有 uncollected = 条件维度未采集（不是泛化空态，见 uncollectedNote）。
     stateKind: 'idle',
     // 档案预置（GY-I05/07）：profileState = idle 未读／applied 已按档案预置／none 档案为空／
     // unread 读不到档案／out-of-coverage 档案响应核不出（通用 INVALID_RESPONSE；不按 330000 代查）。
@@ -35,6 +52,7 @@ Page({
     q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '', advanced: false,
     crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species),
     regions: [{ name: '全部地区', code: '' }].concat(regionDoc.regions),
+    regionNote: REGION_TIER_NOTE,
     directoryNote: '筛选目录为随包目录：' + cropDoc.catalog_version + ' / ' + speciesDoc.catalog_version + ' / ' + regionDoc.catalog_version },
   onLoad: function () { fontScale.applyFontScale(this) },
   onShow: function () { fontScale.applyFontScale(this); this.checkGate() },
@@ -138,8 +156,31 @@ Page({
       growth_stage: d.growth_stage.trim(), planting_method: d.planting_method.trim(), use_scene: d.use_scene.trim() }
     Object.keys(values).forEach(k => { if (values[k]) q[k] = values[k] }); return api.filters(q, true)
   },
+  /**
+   * 本次查询里被"未采集"的维度名（生育期／种植方式／使用场景）。入参可以是页面 `data`（手选值）或
+   * 已发出的查询串（`_applied`／`q`，`conditions()` 只为非空值建键）——非空即视为用户填了该条件。
+   * 返回空数组 ⇒ 三个条件都没填，走既有泛化空态（不得把"真的没有"说成"未采集"）。
+   */
+  uncollectedConditions: function (source) {
+    const s = source || this.data
+    return CONDITION_FIELDS.filter(f => String(s[f[0]] || '').trim() !== '').map(f => f[1])
+  },
+  /** 未采集维度的**明确**文案：逐维度点名「当前资料未采集X条件」，并给出只清空这三个条件的出口。 */
+  uncollectedNote: function (names) {
+    return names.map(n => UNCOLLECTED_HEAD + n + '条件').join('；') + UNCOLLECTED_NOTE
+  },
   search: function () { if (this.data.gatePassed) this.read(); else this.checkGate() },
   reset: function () { this.setData({ q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '' }); this.syncProfileNote(); this.search() },
+  /**
+   * 未采集条件的出口：只清空生育期／种植方式／使用场景（作物／杂草／地区／关键词保持不变）后重查。
+   * 与 `reset`（清空全部条件）区分：用户只是想绕开"资料没采集"的维度，不必丢掉已选的作物与地区。
+   * 展开「更多条件」让用户看得见这三个输入框确实已被清空。
+   */
+  clearUncollected: function () {
+    this.clear(); api.clearSelection()
+    this.setData({ growth_stage: '', planting_method: '', use_scene: '', advanced: true })
+    this.search()
+  },
   next: function () { if (!this.data.busy && this.data.nextCursor) this.read(this.data.nextCursor) },
   read: async function (cursor) {
     this.clear(); api.clearSelection()
@@ -158,10 +199,13 @@ Page({
       if (r.nextCursor && (this._cursors.indexOf(r.nextCursor) !== -1 || this._cursors.length >= 100)) throw { code: 'INVALID_RESPONSE' }
       if (cursor) this._cursors.push(cursor)
       this._displayBinding = b
+      // 空结果要分清两种原因：条件维度非空 ⇒ **资料未采集该维度**（服务端必然返回空，给出明确原因与
+      // 清空出口）；三个条件都为空 ⇒ 才是既有泛化空态"没有符合条件的资料"。
+      const uncollected = this.uncollectedConditions(this._applied)
       this.setData({ busy: false, nextCursor: r.nextCursor, modeNote: api.modeNote(r.mode),
         items: r.items.map(item => ({ id: item.id, item, labels: api.labels(item), conditionNote: item.conditions ? '适用条件需逐项核对，不能据此推定用量可用。' : '条件资料不足，不能据此确定适用性或用量。' })),
-        stateKind: r.items.length ? 'ready' : 'empty',
-        status: r.items.length ? '已读取当前页资料；详情会重新核对来源。' : '没有符合条件的资料，请调整条件继续查询。' })
+        stateKind: r.items.length ? 'ready' : (uncollected.length ? 'uncollected' : 'empty'),
+        status: r.items.length ? '已读取当前页资料；详情会重新核对来源。' : (uncollected.length ? this.uncollectedNote(uncollected) : '没有符合条件的资料，请调整条件继续查询。') })
     } catch (e) {
       if (!current()) { if (this._gateActive === true && this._readOperation === operation) { this.clear(); this.setData({ gatePassed: false, status: api.message(e) }) }; return }
       this.setData({ busy: false, items: [], nextCursor: null, status: api.message(e), stateKind: 'error' })

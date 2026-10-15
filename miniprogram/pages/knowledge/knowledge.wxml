@@ -30,6 +30,9 @@
       <picker range="{{species}}" range-key="name" value="{{speciesIndex}}" data-field="speciesIndex" bindchange="pick"><view class="picker chip">杂草 · {{species[speciesIndex].name}}</view></picker>
       <picker range="{{regions}}" range-key="name" value="{{regionIndex}}" data-field="regionIndex" bindchange="pick"><view class="picker chip">地区 · {{regions[regionIndex].name}}</view></picker>
       </view>
+      <!-- 地区层级（差距侦察 3-A）：下拉含 11 个市与各县区，但资料只登记到省级 330000 ⇒ 如实标注层级。
+           与 #168 的档案提示同一口径（只到省级），文案见 knowledge.js#REGION_TIER_NOTE。 -->
+      <view class="notice region-note">{{regionNote}}</view>
       <button class="btn btn--ghost btn--block" bindtap="toggle">{{advanced ? '收起更多条件' : '更多条件'}}</button>
       <block wx:if="{{advanced}}">
         <view class="field-label">生育期（可选）</view><input class="query-input" maxlength="80" value="{{growth_stage}}" data-field="growth_stage" bindinput="input" />
@@ -41,7 +44,7 @@
     </view>
     <view class="directory-note">{{directoryNote}}</view>
 
-    <!-- 结果区状态块是**唯一一条兄弟链**（链头即下方 :45）：wx:if → wx:elif → wx:elif → wx:else，
+    <!-- 结果区状态块是**唯一一条兄弟链**（链头即下方 :52）：wx:if → wx:elif×4 → wx:else，
          因此任一 stateKind 恰好渲染 1 个 .status 块。新增状态必须用 wx:elif 接进本链，
          不得另起一条独立 wx:if —— 否则末行 wx:else 的回退块会一并渲染，该状态下会出现两个
          .status 并把 status 文案打印两次（既有 automator 脚本按 .status 定位结果区）。 -->
@@ -51,6 +54,12 @@
     </view>
     <view class="status" wx:elif="{{stateKind === 'loading'}}">
       <state-view status="loading" title="正在核对当前资料" desc="{{status}}"></state-view>
+    </view>
+    <!-- 条件维度未采集（差距侦察 3-B）：growth_stage／planting_method／use_scene 任一非空 ⇒ 服务端
+         必然返回 0 条（资料里没有这三个维度）。这里点名原因并给出只清空这三个条件的出口，**不得**
+         退回泛化的"没有符合条件的资料"（文案见 knowledge.js#uncollectedNote）。 -->
+    <view class="status" wx:elif="{{stateKind === 'uncollected'}}">
+      <state-view status="empty" title="当前资料未采集该条件" desc="{{status}}" action-text="清空该条件继续查询" bind:action="clearUncollected"></state-view>
     </view>
     <view class="status" wx:elif="{{stateKind === 'empty'}}">
       <state-view status="empty" title="没有符合条件的资料" desc="{{status}}" action-text="清空条件继续查询" bind:action="reset"></state-view>
