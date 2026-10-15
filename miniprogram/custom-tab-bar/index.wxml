@@ -5,9 +5,14 @@
     class="tab {{selected === item.pagePath ? 'tab--selected' : ''}} {{item.center ? 'tab--identify' : ''}}"
     data-path="{{item.pagePath}}"
     bindtap="switchTab"
-    aria-label="{{item.text}}"
+    aria-label="{{item.text}}{{item.pagePath === 'pages/messages/messages' && unreadText ? '，未读 ' + unreadText + ' 条' : ''}}"
   >
     <view class="gy-icon gy-icon--tab-{{item.icon}}"></view>
     <view class="tab__text">{{item.text}}</view>
+    <!-- 未读角标：只在取到 >0 的派生未读数时显示；取不到时不显示数字（不显示 0）。 -->
+    <view
+      wx:if="{{item.pagePath === 'pages/messages/messages' && unreadText}}"
+      class="tab__badge"
+    >{{unreadText}}</view>
   </button>
 </view>

@@ -46,6 +46,8 @@ try {
     'utils/history-api.js',
     // 社区域适配层（GY-I15）：社区列表/投稿/详情页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/community-api.js',
+    // 消息域适配层（GY-I17）：消息页与底部 Tab 未读角标依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/messages-api.js',
     // 播报域适配层（GY-I13）：播报页依赖它们；漏加会导致标准包 MODULE_NOT_FOUND。
     //   audio-playback：播放生命周期控制器（端口注入，纯逻辑）
     //   inner-audio-port：wx.createInnerAudioContext 的唯一出现处
