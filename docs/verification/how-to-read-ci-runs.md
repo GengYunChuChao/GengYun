@@ -29,7 +29,7 @@
 | `evaluation-tests` | `:71-83` | 同上安装 → `npm run test:evaluation` |
 | `build` | `:85-96` | 同上安装 → `npm run build` |
 
-文件头另有一条**边界声明**（不是检查）：`：6` 明写"微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充"。
+文件头另有一条**边界声明**（不是检查）：`:6` 明写"微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充"。
 
 ### 1.2 `.github/workflows/development-docs.yml`（文档检查）
 
@@ -147,7 +147,7 @@ curl -sS -H "Accept: application/vnd.github+json" \
 4. **"没有运行"与"运行失败"要分开**：路径过滤（1.2、1.3）会让检查根本不产生；运行 ID 过期、分支被删、squash 合并使旧分支尖端不在 `main` 上，也都会让原链接失去可判读的对应关系。此时应写明"未取得"，**不要**用邻近提交的 success 顶替。
 5. **工程六项检查不覆盖的范围**（不得用其 success 冒称）：
    - 微信开发者工具编译、真机渲染、基础库版本 —— 见 `engineering-shell.yml:6` 的边界声明；本机任务，不在该 CI。
-   - 真实 PostgreSQL 结构/行为 —— 另有独立工作流承担，`engineering-shell.yml` 的六项里没有起库步骤。
+   - 真实 PostgreSQL 结构/行为 —— 由独立的工作流承担（本仓库另有 `staging-intake-postgres.yml`／`workbook-staging.yml` 等起真实 PG17 的 job）；`engineering-shell.yml` 的六项里**没有**起库步骤。
    - 真实供应商（AI/OCR/ASR/TTS 等）能力 —— CI 内一律禁用真实外部调用。
    - `a0cab31`/`857a683` 一类历史基线的读数 —— 只能各自现场取数，不互相顶替。
 
