@@ -248,8 +248,9 @@ export interface BuildAppOptions {
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
-  // `real` ⇒ 未接线对象存储（整域 fail-closed 503），`stub`/`preset_demo` ⇒ 明确标注的替身。
-  /** 测试注入：替换对象存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  // `real` ⇒ 按 `OBJECT_STORAGE_*` 是否齐备取真实适配器／未接线 fail-closed（整域 503），
+  // `stub`/`preset_demo` ⇒ 明确标注的替身。
+  /** 测试注入：替换对象存储端口（默认 real=按 `OBJECT_STORAGE_*` 解析：缺任一即未接线 fail-closed，其余=明确标注的替身）。 */
   mediaObjectStore?: MediaObjectStore;
   /** 测试注入：替换公开内容来源（默认为**关闭**：社区取图统一 404，不误放行）。 */
   mediaContentSource?: PublishedContentSource;
@@ -838,13 +839,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
   //
-  // **零真实存储注入**：对象存储端口按执行模式解析 —— `real` 一律 `unwired`（整域 fail-closed
-  // 503 PROVIDER_UNAVAILABLE，绝不把内存/替身存储记成真实持久化），`stub`/`preset_demo` 用
-  // **明确标注的替身**（句柄域名 `substitute.invalid`，不在响应里冒充真实网关）。
-  // 将来接真实对象存储必须在**这里显式**改为传入 `createS3CompatibleObjectStore(...)`
-  // ——判据是端口的 `kind`，不是任何自述持久化的布尔标志（同监工对 #121 的 P1 口径）。
+  // **对象存储端口按执行模式 + `OBJECT_STORAGE_*` 解析**（配置只经 `process.env`，不回显任何值）：
+  // `real` 且四个必填键齐备 ⇒ **真实适配器**（`s3_compatible`：构造与预签名都是纯本地计算，
+  // 只有显式 `putObject`/`getObject`/… 才会发网络请求）；`real` 且**缺任一** ⇒ `unwired`
+  // （整域 fail-closed 503 PROVIDER_UNAVAILABLE，与接线前逐字一致 —— 绝不把内存/替身存储记成
+  // 真实持久化）；`stub`/`preset_demo` 用**明确标注的替身**（句柄域名 `substitute.invalid`，
+  // 不在响应里冒充真实网关）。
+  // 判据是端口的 `kind`，不是任何自述持久化的布尔标志（同监工对 #121 的 P1 口径）；
+  // 桶私有性、≤300 秒短效句柄与私有内容网关仍属部署期接线（ADR-001 的门控不在本片）。
   // 公开内容来源默认**关闭**：社区取图统一 404，不误放行；真实来源属社区/审核线，跨线接线。
-  const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
+  const mediaObjectStore =
+    mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode, env: process.env });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
     objectStore: mediaObjectStore,
