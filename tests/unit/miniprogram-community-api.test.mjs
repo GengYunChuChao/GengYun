@@ -224,6 +224,34 @@ test('错误封套：契约错误码与规则层原因码如实透传；未通�
   assert.equal((await rejects(malformed.api.getPost(POST_ID))).code, 'INVALID_RESPONSE');
 });
 
+test('文案：422 INPUT_UNCERTAIN（审核隔离/未结论）与 503 PROVIDER_UNAVAILABLE 必须明确区分', async () => {
+  // 契约实读（改本用例前先读这几行）：
+  //   - 422 的允许错误码含 INPUT_UNCERTAIN：packages/contracts/states.json:137-141、services/api/src/contract.ts:22；
+  //   - 社区域语义 = 审核域「隔离/未结论」（services/api/src/community/service.ts:389-396），
+  //     与 400 INVALID_REQUEST 的「明确驳回」刻意分开（service.ts:373-381、:383-388 注释）；
+  //   - 503 的允许错误码是 PROVIDER_UNAVAILABLE（states.json:149-150），语义 = 社区整域未接线真实存储；
+  //   - `Retry-After` 只随 409/429/503 下发（packages/contracts/openapi.json:16733-16740）⇒ 422 不是"稍后再试"型。
+  const isolated = load(() => ({
+    statusCode: 422,
+    data: errorEnvelope('INPUT_UNCERTAIN', [{ field: 'reason_codes', code: 'NOT_SCREENED' }]),
+  }));
+  const isolatedError = await rejects(isolated.api.createPost({ title: 't', body: 'b', media_ids: [] }));
+  assert.equal(isolatedError.code, 'INPUT_UNCERTAIN', '错误码如实透传，不得被改写成别的码');
+  assert.deepEqual(plain(isolated.api.reasonCodes(isolatedError)), ['NOT_SCREENED'], '契约 details 的原因码保留（供页面按需展示）');
+  const isolatedText = isolated.api.message(isolatedError);
+  assert.match(isolatedText, /审核|筛查|复核/, '422 必须收口到审核类提示');
+  assert.match(isolatedText, /(不会公开|不会发布|不能发布|不得发布|暂不能发布)/, '必须如实说明本条不会被公开');
+  assert.doesNotMatch(isolatedText, /暂不可用/, '422 不得冒充"服务暂不可用"（那是 503 的口径）');
+  assert.doesNotMatch(isolatedText, /请(稍后)?重试|稍后再试|再试一次|重新提交/, '422 不得给出"重试即可"式暗示：重试注定同样结果');
+
+  // 503 文案保持既有口径（见上一个用例的 /暂不可用/ 断言），且与 422 不是同一句。
+  const down = load(() => ({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }));
+  const downError = await rejects(down.api.listPosts({}));
+  assert.equal(downError.code, 'PROVIDER_UNAVAILABLE');
+  assert.match(down.api.message(downError), /暂不可用/, '503 仍为"服务暂不可用"');
+  assert.notEqual(isolatedText, down.api.message(downError), '422 与 503 不得共用同一句文案');
+});
+
 test('会话：401/403 清本地会话并报 SESSION_REQUIRED；网络失败按 SESSION_CHANGED 折叠', async () => {
   const unauthorized = load(() => ({ statusCode: 401, data: errorEnvelope('SESSION_REQUIRED') }));
   const error = await rejects(unauthorized.api.listPosts({}));
