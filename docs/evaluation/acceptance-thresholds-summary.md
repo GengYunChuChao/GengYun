@@ -147,7 +147,7 @@
 | AC12 | 实时OCR登记核对 | 首版必过 | 未取得（无模型输出；真实标签样本 0） |
 | AC13 | 适用与限制 | 首版必过 | 已有组件（适用规则与制剂过滤已在仓库） |
 | AC14 | 风险提示 | 首版必过 | 需外部（Android／iOS 真机播放、静音、拒权核对） |
-| AC15 | 静态地区及预警 | 首版静态 | 已有组件（首版静态筛选已在仓库；预警类文案核查零命中） |
+| AC15 | 静态地区及预警 | 首版静态 | 已有组件（首版静态筛选已在仓库；五个页面 *.wxml 的预警类文案核查零命中，记录见 docs/ui-contract-binding.md 的 AC15 核查过程） |
 | AC16 | 社区商业禁止 | 首版必过 | 已有组件（审核规则引擎已在仓库） |
 | AC17 | 收藏与识别历史 | 首版必过 | 已有组件（services/api favorites／history 已在仓库） |
 | AC18 | 消息与播放控制 | 首版必过 | 已有组件（services/api messages 已在仓库） |
@@ -166,6 +166,7 @@
 > 「**设计覆盖 ≠ 运行通过**」：本表只表示**门槛归属**与**契约／设计覆盖**，**不表示任何 AC 已在运行环境验收**；
 > 与 [acceptance-map.md](../architecture/acceptance-map.md)「下表是设计覆盖，不是运行 AC 通过。」口径一致。
 > `首版必过` = 第 6.3 节原文列出的 19 项；`首版静态` = AC15 只验静态地区科普；`无首版接口` = 第 6.3 节未列且契约层无首版接口的 9 项。
+> AC15 的「预警类文案核查零命中」记录见 [ui-contract-binding.md](../ui-contract-binding.md) 的 AC15 核查过程（`:102`／`:107`）；**核查范围为五个页面 `*.wxml`**，整仓检索并非零命中：`miniprogram/data/seed-herbicides.js:842` 与 `db/seeds/gy-i07/herbicides.json:840` 的「对地下水无风险」为 `seed_unverified` 种子数据，`packages/knowledge/zhejiang/materials-zhejiang-v1.json:10505` 同句属 GY-I03 浙江资料；三处均不在本片核查范围。
 
 ## 6 未取得项与本片边界
 
