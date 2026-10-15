@@ -279,3 +279,75 @@ test('[口径] 「设计覆盖 ≠ 运行通过」不冲突，程序硬口径齐
     assert.ok(summary.includes(hard), `汇总应保留程序硬口径 ${hard}`);
   }
 });
+
+// —— 7. 引用真实存在：内容锚点断言（行号漂移／互换即红）——
+// 本片（#158 收尾加固 + 第七项审查 F1／F2／F1b）：把「引用真实存在」变成机器门禁。
+// 每条锚点三重绑定：
+//   ① 该文件第 N 行**确实含**该原文片段；
+//   ② 汇总里**有一行同时含该文件名与该行号标记**（引用不得与文件名脱钩）；
+//   ③ 该引用行落在**预期章节**内 —— 于是「把两处行号互换」「把行号挪到别的文件那行」都会红。
+// 行号漂移即红：届时在同一提交里同时改引用与断言，不允许引用悬空。
+// ⚠ F1b：自动生成文件 miniprogram/data/seed-herbicides.js 只锚**内容**、不锚行号。
+const AC_SECTION = '## 5 第 6.3 节 AC 清单与首版接口边界';
+const summaryLines = lines(summary);
+const firstHeadingIndex = summaryLines.findIndex((text) => /^##\s/.test(text));
+
+function enclosingHeading(index) {
+  for (let i = index; i >= 0; i -= 1) {
+    const match = summaryLines[i].match(/^##\s+(.+?)\s*$/);
+    if (match) return `## ${match[1]}`;
+  }
+  return '';
+}
+
+const CITATIONS = [
+  { rel: 'docs/implementation-requirements.md', line: 487, fragment: '交付比赛演示版', cite: '`:487`', section: '## 4 第 6.3 节 交付物清单' },
+  { rel: 'docs/implementation-requirements.md', line: 489, fragment: '必须在对应首版范围通过', cite: '`:489`', section: AC_SECTION },
+  { rel: 'docs/architecture/acceptance-map.md', line: 26, fragment: '没有首版接口', cite: '`:26`', section: AC_SECTION },
+  { rel: 'docs/initial-issues.md', line: 11, fragment: 'M4汇总签核', cite: '`:11`', section: '' },
+  { rel: 'docs/initial-issues.md', line: 600, fragment: 'M4只是全量复评与汇总签核', cite: '`:600`', section: '' },
+  { rel: 'docs/issue-revision-log.md', line: 24, fragment: 'M4 汇总签核', cite: '`:24`', section: '' },
+  { rel: 'docs/ui-contract-binding.md', line: 102, fragment: '全页面搜索预警类表述', cite: '`:102`', section: AC_SECTION },
+  { rel: 'docs/ui-contract-binding.md', line: 107, fragment: 'AC15 核查过程', cite: '`:107`', section: AC_SECTION },
+  { rel: 'db/seeds/gy-i07/herbicides.json', line: 840, fragment: '对地下水无风险', cite: ':840', section: AC_SECTION },
+  { rel: 'packages/knowledge/zhejiang/materials-zhejiang-v1.json', line: 10505, fragment: '对地下水无风险', cite: ':10505', section: AC_SECTION },
+];
+
+test('[引用] 逐条锚点断言：该行确实含该原文片段，且汇总在同一行、同一章节内引用它', () => {
+  assert.equal(CITATIONS.length, 10, '锚点清单应逐条列全 10 处引用（删项即红）');
+  assert.ok(!CITATIONS.some((item) => item.rel.endsWith('seed-herbicides.js')), '自动生成文件不得锚行号（F1b：只锚内容）');
+  for (const { rel, line, fragment, cite, section } of CITATIONS) {
+    const target = lines(readRepo(rel))[line - 1];
+    assert.ok(target !== undefined, `${rel} 不足 ${line} 行（引用已漂移）`);
+    assert.ok(target.includes(fragment), `${rel}:${line} 应含「${fragment}」，实际：${target.slice(0, 90)}`);
+    const shown = rel.split('/').pop();
+    // 只在「同一区域」内找引用行：文首说明（首个 `## ` 之前）的「行号口径」清单会一次性列出所有
+    // 行号标记，若不排除它会假命中；正文引用则只认正文，反之亦然。
+    const index = summaryLines.findIndex((text, i) => {
+      if ((i < firstHeadingIndex) !== (section === '')) return false;
+      return text.includes(shown) && text.includes(cite);
+    });
+    assert.ok(index >= 0, `汇总应有一行同时含「${shown}」与「${cite}」：引用不得与文件名脱钩`);
+    assert.equal(
+      enclosingHeading(index),
+      section,
+      `${shown} 的「${cite}」应出现在「${section || '文首说明'}」章节内（行号互换／挪行即红）`,
+    );
+  }
+});
+
+test('[引用] 自动生成文件只锚内容不锚行号（F1b）', () => {
+  assert.ok(
+    readRepo('miniprogram/data/seed-herbicides.js').includes('对地下水无风险'),
+    '自动生成的种子数据文件应含该句（内容锚点；行号不锚，避免生成物行号漂移造成误判）',
+  );
+});
+
+test('[引用] AC15 的结论性表述带证据指针（删掉指针即红）', () => {
+  const table = tableWithHeader('门槛归属');
+  const iAc = column(table, 'AC');
+  const iStatus = column(table, '现状三态');
+  const row = table.rows.find((cells) => cells[iAc] === 'AC15');
+  assert.ok(row, 'AC 表应含 AC15 行');
+  assert.ok(row[iStatus].includes('ui-contract-binding.md'), `AC15 的现状三态格应给出证据指针，实际：${row[iStatus]}`);
+});
