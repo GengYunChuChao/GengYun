@@ -9,11 +9,15 @@
 // 驱动该路径 —— 因此"读取时能看到实时失败状态"不是靠替身，而是走真实读取口。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
+import { STUB_APP_ID, STUB_LOOKUP_KEY, STUB_OPENID_PREFIX, computeSubjectLookup } from '../../services/api/src/auth/wechat.ts';
 import { createMemoryRecognitionStore } from '../../services/api/src/recognitions/store.ts';
+import { createSubstituteMediaPort } from '../../services/api/src/recognitions/media.ts';
+import { createStubRecognitionProvider } from '../../services/api/src/recognitions/provider.ts';
 import { createUnwiredHistoryCascadePort, createWiredHistoryCascadePort } from '../../services/api/src/history/cascade.ts';
 import {
   HISTORY_KEYS,
@@ -29,6 +33,67 @@ const HISTORY = '/api/v1/history';
 const ABSENT = '00000000-0000-4000-8f00-0000000000ff';
 const REC_ID = '00000000-0000-4000-8a00-000000000001';
 const JOB_ID = '00000000-0000-4000-8b00-000000000001';
+const TERMINAL_STATES = ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
+
+/**
+ * **GY-I16（#16）接入后的端到端通路**（以下三个助手只被本文件末三条用例使用）：
+ * 打的是**生产装配**（`buildApp` 默认的替身提供者与替身媒体端口），因此走的是
+ * 「受理 → 异步执行 → 真实终态提交 → 终态历史端口 → `historyService.appendHistory`」这一整条链，
+ * 而不是直接调用内部创建口。合成账号/合成媒体引用；无 PG、无真实供应商调用。
+ */
+async function login(base, code, auth) {
+  const response = await fetch(`${base}/api/v1/auth/wechat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': `synthetic-i16-history-${code}` },
+    body: JSON.stringify({ code }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  const token = body.data.access_token;
+  // 归属者 id 只从服务端存储读（会话信息里没有 user_id）——用**与替身 provider 同一算法**的
+  // subject 摘要反查，绝不从客户端声称的身份取值。
+  const subject = computeSubjectLookup(STUB_LOOKUP_KEY, STUB_APP_ID, `${STUB_OPENID_PREFIX}${code}`);
+  const user = await auth.findUserBySubject(subject);
+  assert.notEqual(user, null, '登录后必须能在认证存储里按 subject 摘要查到该用户');
+  return { token, userId: user.id };
+}
+
+/** 受理一次识别任务（契约 body 恰为 `{media_id, media_revision}`）。 */
+async function createRecognition(base, actor, mediaId, key) {
+  const response = await fetch(`${base}/api/v1/recognitions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${actor.token}`, 'idempotency-key': key },
+    body: JSON.stringify({ media_id: mediaId, media_revision: 1 }),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+/** 轮询 `GET /jobs/{id}` 直到终态（与识别页客户端同一读面；上限 3s）。 */
+async function waitForTerminal(base, actor, jobId) {
+  const deadline = Date.now() + 3000;
+  for (;;) {
+    const response = await fetch(`${base}/api/v1/jobs/${jobId}`, { headers: { authorization: `Bearer ${actor.token}` } });
+    assert.equal(response.status, 200, `GET /jobs/${jobId}`);
+    const body = await response.json();
+    if (TERMINAL_STATES.includes(body.data.state)) return body.data;
+    if (Date.now() > deadline) throw new Error(`等待任务终态超时：${body.data.state}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/**
+ * 替身提供者的分桶（`recognitions/provider.ts`）：`bucketOf(media_id, 4) === 0` ⇒ 3 条有分数候选
+ * ⇒ `succeeded`。这里按同一算法**离线搜**一个落该桶的合成 uuid（不猜、不硬编码）。
+ */
+function mediaIdForStubBucket(bucket) {
+  const hex = '0123456789abcdef';
+  for (let index = 0; index < 5000; index += 1) {
+    const tail = index.toString(16).padStart(12, '0');
+    const candidate = `00000000-0000-4000-8000-${tail}`;
+    if (createHash('sha256').update(candidate).digest()[0] % 4 === bucket) return candidate;
+  }
+  throw new Error('未找到该桶的合成 media_id');
+}
 
 /** 一条真实的（内存）识别任务行：状态由用例给定，供已合并的 `getJob` 读取。 */
 function recognitionRows(ownerUserId, state, options = {}) {
@@ -80,6 +145,11 @@ async function fixture(t, options = {}) {
     now: clock.now,
     recognitionStore,
     ...(options.historyInjection === undefined ? {} : { historyInjection: options.historyInjection }),
+    // 端到端通路（末三条用例）：**生产装配**的替身提供者与替身媒体端口 ——
+    // 不注入就等于「注入前的默认行为」，这里显式注入只为让用例自证"走的是替身、不是真实供应商"。
+    ...(options.recognitionProvider === undefined ? {} : { recognitionProvider: options.recognitionProvider }),
+    ...(options.recognitionMedia === undefined ? {} : { recognitionMedia: options.recognitionMedia }),
+    ...(options.jobDeadlineMs === undefined ? {} : { recognitionJobDeadlineMs: options.jobDeadlineMs }),
   });
   async function account(subject) {
     const user = await auth.createUser(subject.repeat(64));
@@ -122,7 +192,7 @@ async function fixture(t, options = {}) {
       cascade: response.headers.get('x-gy-cascade'),
     };
   }
-  return { app, auth, clock, recognitionStore, a, b, call };
+  return { app, auth, clock, recognitionStore, a, b, call, base, login: (code) => login(base, code, auth) };
 }
 
 /** 经**内部创建口**落一条历史（该口不是契约 operationId、无 HTTP 入口）。 */
@@ -434,4 +504,194 @@ test('历史HTTP：请求校验、分页与 real 模式整域关闭', async (t) 
   void USER_A;
   void USER_B;
   void makeControllableVisibility;
+});
+
+// ---------------------------------------------------------------------------
+// GY-I16（#16）切片 C：**把「识别／OCR 完成」接到服务端识别历史**（端到端验收）
+//
+// 与上面全部用例的差别：这里**不再**直接调用内部创建口，而是打**生产装配**的完整通路 ——
+//   登录 → POST /recognitions（替身媒体端口）→ 异步执行 → 终态提交 → 终态历史端口
+//   → `historyService.appendHistory` → GET /history
+// 因此这组用例是「接线被撤下 ⇒ 必红」的那一组（撤下接线后历史列表恒空，第一条断言即失败）。
+// ---------------------------------------------------------------------------
+
+test('历史HTTP·接线：stub 完成一次识别 ⇒ GET /history 恰 1 条（终态提交后自动写入，非内部口直调）', async (t) => {
+  const h = await fixture(t, {
+    recognitionProvider: createStubRecognitionProvider(),
+    recognitionMedia: createSubstituteMediaPort(),
+  });
+  const actor = await h.login('synthetic-history-wire');
+
+  const created = await createRecognition(h.base, actor, mediaIdForStubBucket(0), 'wire-create-0001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const job = created.body.data;
+  const terminal = await waitForTerminal(h.base, actor, job.id);
+  assert.equal(terminal.state, 'succeeded', '本用例只覆盖成功终态（失败/超时见下一条）');
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.status, 200);
+  assert.equal(page.body.data.items.length, 1, '终态提交后必须自动落 1 条识别历史（撤下接线 ⇒ 恒 0 条）');
+  const item = page.body.data.items[0];
+  assert.equal(item.kind, 'recognition');
+  assert.deepEqual(Object.keys(item).sort(), [...HISTORY_KEYS].sort());
+  assert.equal(item.job_state, 'succeeded', 'job_state 与任务终态一致');
+  assert.deepEqual(item.target_ref, {
+    type: 'recognition',
+    id: terminal.target_ref.id,
+    revision: terminal.target_ref.revision,
+  });
+  // `reference_state` 是逐次派生（不是入库字段）：识别/OCR 目标不在 `/knowledge` 公开读面内
+  // ⇒ 如实 `unavailable`（本片不放宽可见性守卫、也不给它造一个读面）。
+  assert.equal(item.reference_state, 'unavailable', 'reference_state 必须逐次派生（不得在写入时固化）');
+  // 内部字段绝不出契约。
+  for (const internal of ['job_id', 'event_key', 'owner_id']) {
+    assert.equal(Object.hasOwn(item, internal), false, `内部字段不得出契约：${internal}`);
+  }
+  // 详情面能取到（「我的 → 识别历史」进详情的那一跳，`historydetail.js:106-118`）。
+  const detail = await h.call('GET', `/api/v1/recognitions/${item.target_ref.id}`, actor);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.data.candidates.length, 3, '详情面照旧给出模型候选');
+  // 端口接线状态可见（诊断/证据用）：生产装配下是 wired。
+  assert.equal(h.app.recognitionService.describe().historyPort, 'wired');
+});
+
+test('历史HTTP·接线：失败/超时也各追加 1 条，job_state 与任务一致（绝不写成 succeeded）', async (t) => {
+  const MEDIA_QUOTA = '00000000-0000-4000-8000-0000000000f1';
+  const MEDIA_HANG = '00000000-0000-4000-8000-0000000000f2';
+  /** 按媒体引用分派的替身提供者：配额失败 ⇒ failed；悬挂 ⇒ 由服务层截止时间判 timed_out。 */
+  const outcomes = new Map([
+    [MEDIA_QUOTA, { kind: 'failed', code: 'PROVIDER_QUOTA_EXCEEDED' }],
+    [MEDIA_HANG, () => new Promise(() => {})],
+  ]);
+  const h = await fixture(t, {
+    jobDeadlineMs: 60,
+    recognitionMedia: createSubstituteMediaPort(),
+    recognitionProvider: {
+      executionMode: 'stub',
+      modelVersion: 'stub-history-wire-v1',
+      available: true,
+      unavailableReason: null,
+      async recognize({ mediaId }) {
+        const outcome = outcomes.get(mediaId);
+        if (typeof outcome === 'function') return outcome();
+        assert.notEqual(outcome, undefined, `未脚本化的媒体引用：${mediaId}`);
+        return outcome;
+      },
+    },
+  });
+  const actor = await h.login('synthetic-history-wire-neg');
+
+  const failed = await createRecognition(h.base, actor, MEDIA_QUOTA, 'wire-fail-000001');
+  assert.equal(failed.status, 202, JSON.stringify(failed.body));
+  assert.equal((await waitForTerminal(h.base, actor, failed.body.data.id)).state, 'failed');
+
+  const timedOut = await createRecognition(h.base, actor, MEDIA_HANG, 'wire-hang-000001');
+  assert.equal(timedOut.status, 202, JSON.stringify(timedOut.body));
+  assert.equal((await waitForTerminal(h.base, actor, timedOut.body.data.id)).state, 'timed_out');
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.status, 200);
+  const items = page.body.data.items;
+  assert.equal(items.length, 2, '失败与超时各追加 1 条（撤下接线 ⇒ 0 条）');
+  const byTarget = new Map(items.map((item) => [item.target_ref.id, item.job_state]));
+  assert.equal(byTarget.get(failed.body.data.target_ref.id), 'failed');
+  assert.equal(byTarget.get(timedOut.body.data.target_ref.id), 'timed_out');
+  for (const item of items) {
+    assert.notEqual(item.job_state, 'succeeded', '失败/超时绝不因写了历史而变成成功');
+    assert.equal(item.kind, 'recognition');
+  }
+});
+
+test('历史HTTP·接线：OCR 终态同样追加 1 条（kind=ocr，详情面走 GET /ocr/{id}）', async (t) => {
+  const h = await fixture(t);
+  const actor = await h.login('synthetic-history-wire-ocr');
+  const mediaId = '00000000-0000-4000-8000-0000000000c1';
+
+  const response = await fetch(`${h.base}/api/v1/ocr`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${actor.token}`, 'idempotency-key': 'wire-ocr-000001' },
+    body: JSON.stringify({ media_id: mediaId, media_revision: 1 }),
+  });
+  const raw = await response.text();
+  assert.equal(response.status, 202, raw);
+  const job = JSON.parse(raw).data;
+
+  const ocr = await h.call('GET', `/api/v1/ocr/${job.target_ref.id}`, actor);
+  assert.equal(ocr.status, 200, JSON.stringify(ocr.body));
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.body.data.items.length, 1, 'OCR 终态提交后必须自动落 1 条（撤下接线 ⇒ 0 条）');
+  const item = page.body.data.items[0];
+  assert.equal(item.kind, 'ocr');
+  assert.deepEqual(item.target_ref, { type: 'ocr', id: job.target_ref.id, revision: job.target_ref.revision });
+  assert.equal(item.job_state, 'succeeded');
+  // OCR 的读面（历史详情的 `historydetail.js:120-128`）照旧可用，历史不复制其正文。
+  for (const forbidden of ['raw_fields', 'corrected_fields', 'verification']) {
+    assert.equal(Object.hasOwn(item, forbidden), false, `历史不得含 ${forbidden}`);
+  }
+});
+
+test('历史HTTP·接线：同一次任务重复投递终态 ⇒ no-op（确定性 event_key，不追加第二条）', async (t) => {
+  const h = await fixture(t, {
+    recognitionProvider: createStubRecognitionProvider(),
+    recognitionMedia: createSubstituteMediaPort(),
+  });
+  const actor = await h.login('synthetic-history-wire-idem');
+  const created = await createRecognition(h.base, actor, mediaIdForStubBucket(0), 'wire-idem-000001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const job = created.body.data;
+  const terminal = await waitForTerminal(h.base, actor, job.id);
+
+  const first = await h.call('GET', HISTORY, actor);
+  assert.equal(first.body.data.items.length, 1);
+  const rowId = first.body.data.items[0].id;
+
+  // 幂等键是**确定性**的（只由服务端分配的作业 id 派生，不含时间戳/随机数）⇒ 装配层用的就是这一把。
+  const eventKey = `recognition:${job.id}`;
+  assert.equal(typeof eventKey, 'string');
+  const replayed = await h.app.historyService.appendHistory({
+    owner_id: actor.userId,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: terminal.target_ref.id, revision: terminal.target_ref.revision },
+    job_id: job.id,
+    job_state: terminal.state,
+    event_key: eventKey,
+  });
+  assert.equal(replayed.created, false, '同 event_key 重放必须 no-op（created:false）');
+  assert.equal(replayed.history.id, rowId, '重放必须回放同一条既有历史行');
+
+  const after = await h.call('GET', HISTORY, actor);
+  assert.equal(after.body.data.items.length, 1, '重复终态事件不得追加第二条历史行');
+  assert.equal(after.body.data.items[0].id, rowId);
+
+  // 第二道去重（store 的 `(owner_id, kind, target_ref.id)` 唯一约束）：换个 event_key 但同目标
+  // ⇒ 仍不得产生第二条（同一识别记录只能有一条历史）。
+  const otherKey = await h.app.historyService.appendHistory({
+    owner_id: actor.userId,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: terminal.target_ref.id, revision: terminal.target_ref.revision },
+    job_id: job.id,
+    job_state: terminal.state,
+    event_key: `${eventKey}:retry`,
+  });
+  assert.equal(otherKey.created, false, '同目标不同键也不得产生第二条历史行');
+  assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1);
+
+  // 归属过滤：他人列表为空、且越权删除与「不存在」同形（不泄露存在性）。
+  assert.deepEqual((await h.call('GET', HISTORY, h.b)).body.data, { items: [], next_cursor: null });
+  const foreign = await h.call('DELETE', `${HISTORY}/${rowId}`, h.b, {
+    headers: { 'idempotency-key': 'wire-idem-b-01', 'if-match': '"1"' },
+  });
+  assert.equal(foreign.status, 404);
+  assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1, '越权删除不得影响本人历史');
+});
+
+test('历史HTTP·接线：real 模式仍整域 503（不放宽守卫），且终态历史端口未接线', async (t) => {
+  const real = await fixture(t, { real: true });
+  assert.equal(real.app.historyService, null);
+  const page = await real.call('GET', HISTORY, real.a);
+  assert.equal(page.status, 503);
+  assert.equal(page.body.error.code, 'PROVIDER_UNAVAILABLE');
+  // 端口如实标注自身未接线（**不**回退替身、不伪造一片可用历史）。
+  assert.equal(real.app.recognitionService.describe().historyPort, 'unwired');
 });

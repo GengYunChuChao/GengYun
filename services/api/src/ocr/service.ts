@@ -85,6 +85,54 @@ export interface JobProjection {
   result: { kind: 'ocr'; value: OcrProjection } | null;
 }
 
+/**
+ * 标签 OCR 任务**终态**写入服务端识别历史的端口（GY-I16 #16 的跨线接线）。
+ *
+ * 与识别域同形的第二份声明（`recognitions/service.ts` 的 `RecognitionTerminalHistoryPort`）：
+ * 两个域互不 import（`ocr/media.ts:13-14` 的既有口径），因此各自声明自己需要的形状，
+ * **真正的接线只有一处** —— 装配层 `services/api/src/app.ts` 把它接到历史域的内部创建口
+ * `appendHistory(input)`（不是契约 operationId、不注册路由）。
+ *
+ * 调用契约与识别域**逐条相同**：只在终态提交成功后调用；`job_state` 取实际落库值；
+ * `target_ref` 指向 OCR 记录（`GET /ocr/{id}` 是详情面的权威）；幂等由装配层的
+ * **确定性** `event_key` 保证（同一次任务重复投递 = no-op）；端口抛错由本域吞掉并记告警
+ * —— 已落库的终态不因历史写入失败而改写，也绝不伪造"成功"。
+ */
+export interface OcrTerminalHistoryInput {
+  /** 归属者（服务端解析出的用户 id，绝不来自客户端）。 */
+  owner_id: string;
+  kind: 'ocr';
+  target_ref: { type: 'ocr'; id: string; revision: number };
+  /** 内部作业标识（历史行读取时用它核对实时状态）。 */
+  job_id: string;
+  /** **实际落库**的终态。 */
+  job_state: JobState;
+}
+
+export interface OcrTerminalHistoryPort {
+  /** 端口接线状态：`wired`=装配层已接到历史域内部创建口；`unwired`=未接线（只告警，不写）。 */
+  readonly kind: 'wired' | 'unwired';
+  /** 供证据文档/诊断引用的说明（可安全公开：不含归属与目标正文）。 */
+  readonly note: string;
+  recordTerminal(input: OcrTerminalHistoryInput): Promise<void>;
+}
+
+/**
+ * 未接线端口（**合法**的 fail-closed 端口：OCR 任务照常跑，只是历史里没有它的一行）。
+ * `real` 模式下历史域整域关闭（`historyService === null`）⇒ 本端口就是这一支。
+ */
+export function createUnwiredOcrTerminalHistoryPort(
+  note = 'OCR 终态写入历史的端口尚未接线：任务照常执行，但不产生服务端历史行',
+): OcrTerminalHistoryPort {
+  return {
+    kind: 'unwired',
+    note,
+    async recordTerminal() {
+      // 未接线 = 什么都不做（**不是**假装写成功、也不是回退替身）。
+    },
+  };
+}
+
 export interface OcrServiceOptions {
   store: OcrStore;
   provider: OcrProvider;
@@ -93,6 +141,11 @@ export interface OcrServiceOptions {
   dose: OcrDosePort;
   /** 幂等请求摘要密钥（服务端密钥，不入库、不下发）。 */
   idempotencyHmacKey: string;
+  /**
+   * 终态写入服务端识别历史的端口（**可选**；缺省 = 未接线 fail-closed，见端口注释）。
+   * 接线属跨线，装配点唯一：`services/api/src/app.ts`（经 `routes/ocr.ts` 的 `deps.history` 传入）。
+   */
+  history?: OcrTerminalHistoryPort;
   now?: () => Date;
   idFactory?: () => string;
   jobDeadlineMs?: number;
@@ -244,6 +297,8 @@ export function createOcrService(options: OcrServiceOptions) {
   const media = options.media;
   const reference = options.reference;
   const dose = options.dose;
+  /** 终态 → 服务端识别历史（GY-I16 #16 接线；缺省未接线，见 `OcrTerminalHistoryPort`）。 */
+  const historyPort = options.history ?? createUnwiredOcrTerminalHistoryPort();
   const now = options.now ?? (() => new Date());
   const idFactory = options.idFactory ?? (() => randomUUID());
   const jobDeadlineMs = options.jobDeadlineMs ?? DEFAULT_JOB_DEADLINE_MS;
@@ -565,7 +620,12 @@ export function createOcrService(options: OcrServiceOptions) {
     }
   }
 
-  /** 原子提交终态：CAS 失败（任务已被取消或已终态）→ 什么也不写，**旧回调不复活**。 */
+  /**
+   * 原子提交终态：CAS 失败（任务已被取消或已终态）→ 什么也不写，**旧回调不复活**。
+   *
+   * 提交**成功后**把该终态交给历史端口落一行服务端识别历史（GY-I16 #16）：
+   * `job_state` 取**返回值**（实际落库的终态），端口抛错只记告警（已落库的终态不因历史写入失败改写）。
+   */
   async function commitTerminal(
     jobId: string,
     running: OcrJobRow,
@@ -573,7 +633,29 @@ export function createOcrService(options: OcrServiceOptions) {
     ocr: OcrRow | null,
   ): Promise<OcrJobRow | null> {
     const at = now();
-    return store.commitTerminal(jobId, running.revision, terminal, ocr, at);
+    const committed = await store.commitTerminal(jobId, running.revision, terminal, ocr, at);
+    if (committed !== null) {
+      await recordTerminalHistory({
+        owner_id: committed.ownerUserId,
+        kind: 'ocr',
+        target_ref: { type: 'ocr', id: committed.ocrId, revision: ocr === null ? 1 : ocr.revision },
+        job_id: committed.id,
+        job_state: committed.state,
+      });
+    }
+    return committed;
+  }
+
+  /** 把一次**已落库**的终态交给历史端口（吞掉端口异常，不改变任务结果）。 */
+  async function recordTerminalHistory(input: OcrTerminalHistoryInput): Promise<void> {
+    try {
+      await historyPort.recordTerminal(input);
+    } catch (error) {
+      console.warn(
+        `GY-I16 OCR 终态历史写入失败（端口=${historyPort.kind}，job_state=${input.job_state}）：`,
+        error instanceof Error ? error.message : typeof error,
+      );
+    }
   }
 
   async function getOcr(input: { userId: string; ocrId: string }): Promise<OcrProjection> {
@@ -787,6 +869,9 @@ export function createOcrService(options: OcrServiceOptions) {
       referenceUnavailableReason: reference.unavailableReason,
       dosePort: dose.kind,
       doseNote: dose.note,
+      /** 终态 → 服务端识别历史的端口（GY-I16 #16 接线；未接线时任务照常执行）。 */
+      historyPort: historyPort.kind,
+      historyNote: historyPort.note,
       storePersistent: store.persistent,
       jobDeadlineMs,
       /** 真实调用提供者的累计次数（诊断/证据用；受理前 fail-closed 时恒为 0）。 */
@@ -806,6 +891,8 @@ export function createOcrServiceForMode(input: {
   reference: OcrReferencePort;
   dose: OcrDosePort;
   idempotencyHmacKey: string;
+  /** 终态写入服务端识别历史的端口（**可选**；缺省未接线，见 `OcrTerminalHistoryPort`）。 */
+  history?: OcrTerminalHistoryPort;
   now?: () => Date;
   idFactory?: () => string;
   jobDeadlineMs?: number;
@@ -817,6 +904,7 @@ export function createOcrServiceForMode(input: {
     reference: input.reference,
     dose: input.dose,
     idempotencyHmacKey: input.idempotencyHmacKey,
+    ...(input.history === undefined ? {} : { history: input.history }),
     now: input.now,
     idFactory: input.idFactory,
     jobDeadlineMs: input.jobDeadlineMs,

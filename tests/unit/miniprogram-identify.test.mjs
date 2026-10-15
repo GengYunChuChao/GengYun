@@ -176,6 +176,42 @@ test('GY-I09 小程序：打包白名单必须包含识别页依赖（既往 MOD
 });
 
 // ---------------------------------------------------------------------------
+// GY-I16（#16）切片 C：识别页历史区的**如实说明 + 服务端识别历史入口**。
+//
+// 本机索引仍然只在进程内（上面的 fail-closed 论证不得放宽）：因此页面必须**如实**说明它只在本次
+// 打开期间有效，并给出一条到服务端历史的入口（`/pages/history/history`，与「我的 → 识别历史」
+// 同一个页面，不另造第二套历史面）。服务端那一侧的写入点见 `tests/unit/history-http.test.mjs`。
+// ---------------------------------------------------------------------------
+test('GY-I16 小程序：识别页历史区如实说明「仅本次打开期间有效」并给出服务端识别历史入口', () => {
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  assert.ok(/本机索引仅在本次打开期间有效/.test(wxml), '历史区缺「仅本次打开期间有效」的如实说明');
+  assert.ok(/跨启动请看/.test(wxml) && /识别历史/.test(wxml), '如实说明未指向「我的 → 识别历史」');
+  assert.ok(/bindtap="onOpenServerHistory"/.test(wxml), '历史区缺服务端识别历史入口');
+  // 入口与「我的 → 识别历史」必须是**同一个**页面（同一路由，不复制一套历史面）。
+  const profile = readFileSync(join(root, 'miniprogram/pages/profile/profile.js'), 'utf8');
+  assert.ok(/navigateTo\(\{ url: '\/pages\/history\/history' \}\)/.test(profile), '「我的 → 识别历史」入口路由变了');
+  assert.ok(
+    /navigateTo\(\{ url: '\/pages\/history\/history' \}\)/.test(readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8')),
+    '识别页的服务端历史入口未指向 /pages/history/history',
+  );
+  // 本机索引的 fail-closed 论证不得被本片放宽：仍然不落 wx storage、仍然按已核实主体过滤。
+  const page = readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  assert.equal(/setStorageSync\(/.test(page), false, '本机历史索引不得写入 wx storage（fail-closed 论证）');
+  assert.ok(/historyOwner/.test(wxml), '历史区仍未绑定已核实主体（historyOwner）');
+  assert.ok(!/wx:if="\{\{history\.length\}\}"/.test(wxml), '历史区不得只凭 history.length 展示');
+
+  // 行为面：点击该入口确实导航到服务端历史页（在最小沙箱里加载**真实**页面源码驱动）。
+  const box = lifecycle();
+  const instance = box.page();
+  instance.data.guest = false;
+  instance.onOpenServerHistory();
+  assert.deepEqual(box.launches, ['/pages/history/history'], '历史入口未导航到 /pages/history/history');
+  instance.data.guest = true;
+  instance.onOpenServerHistory();
+  assert.equal(box.launches.length, 1, '未登录（guest）时不得发起导航');
+});
+
+// ---------------------------------------------------------------------------
 // 生命周期回归（监工 5485989704 [B]/[C]）：用最小 vm 沙箱加载真实页面与真实 auth 模块，
 // 手动解析 wx.request，以复现「门禁未核实/失效仍展示私有数据」与「在途响应淘汰」两个实际反例。
 // 合成身份与合成响应，绝不外发；不作为微信工具或真机证据。
