@@ -115,6 +115,8 @@
       <view class="pill pill--gray">{{relatedKnowledge.ruleVersion}}</view>
     </view>
     <view class="pill pill--amber">资料为种子整理稿 · 待核实 · 非权威 · 不提供用量</view>
+    <!-- 查询口径如实标注：本地资料没有「杂草对象」的结构化标注，本条命中来自名称文本匹配 -->
+    <view class="hint">{{relatedKnowledge.matchNote}}</view>
 
     <!-- 用量守卫：识别/选择这条路径恒不可给用量（不是"恰好没数据"），且条件不完整时明确阻断 -->
     <view class="dose-guard">
@@ -131,11 +133,22 @@
       </view>
     </view>
 
-    <view class="knowledge" wx:for="{{relatedKnowledge.items}}" wx:key="recordId">
+    <!-- 逐条可点进详情：id 形状与 pages/referencedetail 的校验一致（[A-Za-z0-9_-]{1,128}） -->
+    <view
+      class="knowledge"
+      wx:for="{{relatedKnowledge.items}}"
+      wx:key="recordId"
+      data-id="{{item.recordId}}"
+      bindtap="onOpenKnowledgeDetail"
+    >
       <view class="knowledge__name">{{item.name}}</view>
       <view class="knowledge__meta">登记证号：{{item.registrationNumber}} · 剂型：{{item.dosageForm}}</view>
       <view class="knowledge__meta">使用场景：{{item.useScene}}</view>
-      <view class="knowledge__meta">用量：不可展示（GY-I08 判定 {{item.doseReason}}，规则版本 {{item.doseRuleVersion}}）</view>
+      <!-- 来源/审核标签如实带出（本地资料层的 labels，原文照录） -->
+      <view class="knowledge__meta">来源标签：{{item.labels.source_kind}} · {{item.labels.evidence_kind}} · 审核：{{item.labels.review_status}} · 记录：{{item.labels.record_status}}</view>
+      <!-- 逐条用量归因与页面顶部同一口径：本路径恒不给用量（不再引用"功能开关已关闭"） -->
+      <view class="knowledge__meta">用量：不可展示（{{item.doseReason}}；阻断类别 {{item.doseBlockCode}}，规则版本 {{item.doseRuleVersion}}）</view>
+      <view class="knowledge__meta">查看资料详情 ›</view>
     </view>
     <view class="reasons__item" wx:for="{{relatedKnowledge.reasons}}" wx:key="*this">· {{item}}</view>
     <view class="demo-caption">{{relatedKnowledge.note}}</view>
