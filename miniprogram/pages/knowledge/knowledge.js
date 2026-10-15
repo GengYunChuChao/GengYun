@@ -89,6 +89,9 @@ Page({
       this.read()
       return
     }
+    // 纵深防御的**冗余**复核：契约校验（utils/profile-api.js#validProfile）已把 region_code 钉在
+    // ^33[0-9]{4}$，所以省外／核不出层级的档案在本页**实际**由 prepare() 的 INVALID_RESPONSE 分支
+    // 拦下（那条路才是有覆盖的路径）。这一行只保证将来若校验放宽，也绝不把非浙江地区并进省级查询。
     if (p.region_code !== null && !ZHEJIANG.test(p.region_code)) { this.outOfCoverage(); return }
     const cropIndex = d.crops.findIndex(function (c) { return c.id === p.crop_id })
     const cropName = cropIndex === -1 ? '档案作物不在当前随包目录' : d.crops[cropIndex].name
