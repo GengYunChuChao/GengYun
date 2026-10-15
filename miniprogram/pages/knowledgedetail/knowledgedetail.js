@@ -96,7 +96,11 @@ Page({
         this.setData({ favState: 'none', favLabel: '收藏', favNote: '尚未收藏该资料。', favBusy: false })
       }
     } catch (e) {
-      if (!this.favAlive(operation, epoch)) return
+      // F1：`favAlive()` **不能**同时当错误分支的闸门 —— 会话失效（401/403）时 `favorites-api`
+      // **先** `clearSession()`（世代 +1）再 reject，此处 `favAlive()` 必为假；若就此 return，
+      // 卡片会停在"正在核对收藏状态…"且按钮 `disabled="{{favBusy}}"` 永久卡死（此时已无在途请求）。
+      // 只丢弃「已被更晚操作接管」与「门禁已关闭」的迟到结果；其余一律复位在途标记并如实报错。
+      if (this._favOperation !== operation || this.data.gatePassed !== true) return
       // 读取失败 ⇒ 如实报"未取得"，既不假定已收藏也不假定未收藏。
       this.setData({ favState: 'unknown', favLabel: '收藏', favNote: favoritesApi.messageFor(e), favBusy: false })
     }
@@ -141,7 +145,9 @@ Page({
       this._favCurrent = { id: created.favorite.id, revision: created.favorite.revision }
       this.setData({ favBusy: false, favState: 'favorited', favLabel: '取消收藏', favNote: '已收藏该资料。' })
     } catch (e) {
-      if (!this.favAlive(operation, epoch)) return
+      // F1：同 `refreshFavorite` —— 会话失效（401/403）时 `favAlive()` 必为假，但仍必须复位
+      // `favBusy`（按钮 `disabled="{{favBusy}}"`），并按既有错误映射说明原因（与收藏页同口径）。
+      if (this._favOperation !== operation || this.data.gatePassed !== true) return
       // 失败后不保留乐观状态：回到"未知"，如实说明原因，由用户重新核对。
       this._favCurrent = null
       this.setData({ favBusy: false, favState: 'unknown', favLabel: '收藏', favNote: favoritesApi.messageFor(e) })
