@@ -14,7 +14,7 @@
 >
 > - **基线 SHA**：`upstream/main` = `210c89a9bcbdd51ac0900126f2ce8f9db0b17960`（短 SHA `210c89a`）
 > - **生成时间**：2026-10-15（UTC+8）
-> - **行号口径**：本文引用的行号（`implementation-requirements.md` 的 `:454-467`／`:471-483`／`:487`／`:489`，`acceptance-map.md` 的 `:26`）均为上述基线时点；后续提交可能漂移，一致性由 [tests/evaluation/acceptance-thresholds.test.mjs](../../tests/evaluation/acceptance-thresholds.test.mjs) 按**内容**（不按行号）守卫。
+> - **行号口径**：本文引用的行号（`implementation-requirements.md` 的 `:454-467`／`:471-483`／`:487`／`:489`，`acceptance-map.md` 的 `:26`）均为上述基线时点；后续提交可能漂移，一致性由 [tests/evaluation/acceptance-thresholds.test.mjs](../../tests/evaluation/acceptance-thresholds.test.mjs) 按**内容**守卫；**另对本文引用的行号加「该行确含该原文」锚点门禁（挪行即红）**。
 
 ## 0 现状三态与程序硬口径
 
