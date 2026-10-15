@@ -88,11 +88,13 @@ import { registerFavoriteRoutes } from './routes/favorites.ts';
 import { registerHistoryRoutes } from './routes/history.ts';
 import { createFavoritesService, type FavoritesService } from './favorites/service.ts';
 import { createMemoryFavoritesStore, type FavoritesStore } from './favorites/store.ts';
+import { isFavoriteTargetType } from './favorites/types.ts';
 import { createHistoryService, type HistoryService } from './history/service.ts';
 import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
 import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
-import { createUnwiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
   createUserDataDeletion,
   type BackupPurgePort,
@@ -429,6 +431,14 @@ function withModerationTakedownLink(
   };
 }
 
+/**
+ * `catalog_read.current_knowledge` 的判定用最小投影（GY-I16 引用可用性接线）。
+ *
+ * 用类型别名而不是 `interface`：`pg` 的 `query<Row>()` 要求 `Row extends QueryResultRow`
+ * （索引签名），对象字面量别名才有隐式索引签名（与 `db/catalog.ts` 的既有写法一致）。
+ */
+type PublicKnowledgeReadRow = { id: string; revision: number; type: string };
+
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
 export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
@@ -751,10 +761,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // —— 那是"在真实模式下声称成功、重启即丢"。因此 real ⇒ 服务为 `null` ⇒ 5 条路由 503
   // PROVIDER_UNAVAILABLE。将来接真实持久 store 时必须**在这里显式放行**（一次可审查的变更）。
   //
-  // **引用可用性端口默认未接线**（`createUnwiredVisibilityPort`）：一律 `unavailable`，
-  // **绝不**返回 `'available'` 来"默认可用"（同 #17 消息域口径）。这直接落实 issue #16
-  // 「隐藏／失效／注销不因缓存或旧链接重新公开」——服务端在没有真实可见性核验前不作出任何
-  // "可用"陈述；真实接线 = 在这里把一个 `VisibilityPort` 传进来。
+  // **引用可用性端口接线到公开读面**（本片接线，替代此前的 `createUnwiredVisibilityPort`：
+  // 未接线时收藏/历史 `reference_state` 恒为 `unavailable` ⇒ 收藏页「查看资料」永不可跳转）。
+  // 端口的唯一权威是 `/knowledge` 的**公开读面**，逐次现查：
+  //   1) 数据库读视图 `catalog_read.current_knowledge`（已核对来源 + 已发布 + 当前生效版本）；
+  //   2) 浙江首批真实资料投影（`knowledge/reference-query.ts#toSeedRows`：`validity='valid'` 且未
+  //      `hidden`/`deleted`），与 `routes/knowledge.ts` **同一模式门与同一显式开关**。
+  // 只有目标 id **当前在读面里**、且 `type` 与 `revision` 逐项一致才判 `available`；其余一切
+  // （不在读面／读面不可核对／版本已替换／类型不符／读取失败）一律 `unavailable`，且**不区分**
+  // "已下架"与"不存在"（同 #17 消息域口径）。判定**不缓存、不落库**，"下架/失效不因缓存或旧链接
+  // 重新公开"因此在结构上成立（详见 `targetref/visibility.ts` 的三条硬边界）。
+  // 读面开关的判据与 `routes/knowledge.ts` 逐字相同；两处不漂移由回归用例
+  // `tests/unit/favorites-visibility-wiring.test.mjs`（"列表里能读到的资料，收藏后必须可用"）锁住。
   //
   // **任务状态端口默认接线到已合并的公开读取口**：`recognitionService.getJob`（#9）与
   // `ocrService.getJob`（#10）—— 只调用公开方法、不改他人文件。这样历史列表/详情的
@@ -762,8 +780,56 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
   const favoritesStore = favoritesInjection?.store ?? createMemoryFavoritesStore({ now: () => clock().getTime() });
   const historyStore = historyInjection?.store ?? createMemoryHistoryStore({ now: () => clock().getTime() });
-  const favoritesVisibility = favoritesInjection?.visibility ?? createUnwiredVisibilityPort();
-  const historyVisibility = historyInjection?.visibility ?? createUnwiredVisibilityPort();
+  /** 浙江首批投影面（与 `/knowledge` 同源同过滤同开关）；开关关闭时它恒为空集合。 */
+  const publicKnowledgeSeedFace = createReferenceQueryService({
+    includeUnverifiedSeed:
+      config.executionMode !== 'real' && /^(1|true)$/i.test(process.env['APP_KNOWLEDGE_UNVERIFIED_SEED'] ?? ''),
+  });
+  /**
+   * 公开读面里该 id 的**当前**投影（只取判定所需两列）；读面无法核对时返回 `null`。
+   *
+   * - 没有数据库（`pool === null`）时 `/knowledge` 自己就是 503（`routes/knowledge.ts#ready`）
+   *   ⇒ 没有任何目标读得到，一律"核不到"；**不退回**种子面（那会声称一个列表页打不开的目标
+   *   "可用"，是假阳性）。
+   * - 读视图查询失败（缺视图／权限不足／超时）⇒ 同样"核不到"，也不退回种子面（此时
+   *   `/knowledge` 同样取不到那批行）。异常不外传、不入响应。
+   */
+  async function publicKnowledgeRowOf(id: string): Promise<{ type: string; revision: number } | null> {
+    if (pool === null) return null;
+    let row: PublicKnowledgeReadRow | undefined;
+    try {
+      // 与 `knowledge/service.ts` 读同一张只读视图：行在视图里即"已核对 + 已发布 + 当前生效"。
+      // 位置参数形式（`pool.query(text, values)`）：与 `privacy/ledger-pg.ts` 等既有调用一致，
+      // 且测试夹具的 PGlite 只支持该形式（`{text,values}` 对象形式会打断协议流）。
+      const result = await pool.query<PublicKnowledgeReadRow>(
+        'SELECT id, revision, type FROM catalog_read.current_knowledge WHERE id = $1::uuid',
+        [id],
+      );
+      row = result.rows[0];
+    } catch {
+      return null;
+    }
+    if (row !== undefined) return { type: String(row.type), revision: Number(row.revision) };
+    const seed = publicKnowledgeSeedFace.seedRows().find((candidate) => candidate['id'] === id);
+    if (seed === undefined) return null;
+    return { type: String(seed['type']), revision: Number(seed['revision']) };
+  }
+  const defaultVisibility: VisibilityPort = createWiredVisibilityPort({
+    note:
+      '引用可用性端口已接线到公开读面：逐次核验目标当前是否出现在 /knowledge 读面'
+      + '（数据库读视图 catalog_read.current_knowledge + 浙江首批投影），type/revision 逐项一致才判可用',
+    resolve: async ({ target_ref }) => {
+      // 只核验收藏契约闭集（`species|herbicide|scheme`）：其余目标本片没有可核验的读面。
+      if (!isFavoriteTargetType(target_ref.type)) return 'unavailable';
+      const row = await publicKnowledgeRowOf(target_ref.id);
+      if (row === null) return 'unavailable';
+      if (row.type !== target_ref.type) return 'unavailable';
+      if (row.revision !== target_ref.revision) return 'unavailable';
+      return 'available';
+    },
+  });
+  const favoritesVisibility: VisibilityPort = favoritesInjection?.visibility ?? defaultVisibility;
+  const historyVisibility: VisibilityPort = historyInjection?.visibility ?? defaultVisibility;
   const historyJobPort: HistoryJobPort =
     historyInjection?.job ??
     createWiredHistoryJobPort({
