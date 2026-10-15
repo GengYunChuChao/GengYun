@@ -1,4 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {resolve,dirname} from 'node:path';import vm from 'node:vm';import {createRequire} from 'node:module';import {createProfileFixture} from './profile-ui-fixture.mjs';
+// 浙江首批真实资料（未发布/未核对）默认关闭；本片要核对"档案驱动查询"确实取到资料，显式接线。
+// 只影响 stub 执行模式下的 `/knowledge` 查询面，不改服务端代码与契约。
+process.env.APP_KNOWLEDGE_UNVERIFIED_SEED='1';
 const root=resolve(import.meta.dirname,'../..'),nativeRequire=createRequire(import.meta.url),tick=()=>new Promise(r=>setTimeout(r,10));
 test('actual native page and client over loopback HTTP: profile catalog save reread query and conflict',async()=>{
  const f=await createProfileFixture();const base=await f.app.listen({host:'127.0.0.1',port:0});const storage=new Map(),requests=[],routes=[],cache=new Map();let page,definition,identity='profile-ui-synthetic-a',modal=true;const pending=new Set();
@@ -10,6 +13,16 @@ test('actual native page and client over loopback HTTP: profile catalog save rer
  try {
   const p=create('profile');p.onShow();assert.equal(p.data.guest,true);assert.equal(routes.at(-1),'/pages/login/login');await new Promise((r,j)=>auth.login(e=>e?j(Error(e)):r()));p.onShow();await until(()=>p.data.loaded&&!p.data.busy);assert.equal(p.data.profile.revision,1);assert.equal(p.data.crops.length,4);assert.equal(p.data.regions.length,102);assert.ok(requests.filter(r=>r.url.includes('/catalog/regions?')).length>=6);
   p.onEdit();p.onCrop({detail:{value:p.data.crops.findIndex(c=>c.id==='crop_rice')}});p.onCity({detail:{value:p.data.cities.findIndex(r=>r.code==='330100')}});p.onCounty({detail:{value:p.data.counties.findIndex(r=>r.code==='330102')}});modal=false;p.onSave();assert.equal(requests.filter(r=>r.method==='PUT').length,0);modal=true;p.onSave();await until(()=>!p.data.busy&&!p.data.editing);assert.equal(p.data.profile.revision,2);assert.equal(p.data.cropName,'水稻');assert.equal(p.data.regionName,'上城区');p.openReference();const target=routes.at(-1);p.onHide();const ref=create('reference');ref.options={crop_id:'crop_rice',region_code:'330102'};ref.onLoad(ref.options);ref.onShow();await until(()=>ref.data.gatePassed);assert.equal(ref.data.cropId,'crop_rice');assert.equal(ref.data.regionCode,'330102');assert.ok(ref.data.matchState);assert.match(target,/crop_id=crop_rice&region_code=330102$/);ref.onHide();page=p;p.onShow();await until(()=>p.data.loaded&&!p.data.busy);assert.equal(p.data.profile.revision,2);
+  // GY-I05/07 缺口 2-A/2-B：档案里的手选条件必须驱动科普页的**首次**查询，且地区只按省级发。
+  const k=create('knowledge');k.onShow();await until(()=>k.data.gatePassed&&['ready','empty','error'].includes(k.data.stateKind));
+  const kw=requests.filter(r=>r.url.includes('/knowledge'));
+  assert.equal(kw.length,1,'门禁通过后应只自动查询一次，不轮询');
+  assert.match(kw[0].url,/crop_id=crop_rice/,'首次查询必须带上档案作物');
+  assert.match(kw[0].url,/region_code=330000/,'资料只登记到省级，地区按 330000 发');
+  assert.doesNotMatch(kw[0].url,/region_code=330102/,'不得把市/县码原样当成资料地区');
+  assert.ok(k.data.items.length>0,'按档案预置的首次查询必须真的取到资料');
+  assert.match(k.data.profileNote,/来自我的档案/);assert.match(k.data.profileNote,/上城区/);
+  assert.match(k.data.profileNote,/当前资料只登记到省级，已按浙江省查询/);assert.equal(k.data.profileState,'applied');
   const token=auth.getSession().accessToken;const other=await fetch(base+'/api/v1/me/profile',{method:'PUT',headers:{authorization:'Bearer '+token,'content-type':'application/json','Idempotency-Key':'synthetic-other-tab','If-Match':'"2"'},body:JSON.stringify({crop_id:'crop_rice',region_code:'330100',region_catalog_version:p.data.profile.region_catalog_version})});assert.equal(other.status,200);p.onEdit();p.onSave();await until(()=>!p.data.busy);assert.equal(p.data.needsReload,true);assert.equal(p.data.profile.revision,2);p.loadProfile();await until(()=>p.data.loaded&&!p.data.busy);assert.equal(p.data.profile.revision,3);assert.equal(p.data.regionName,'杭州市');
   p.logout();await until(()=>auth.getSession()===null);assert.equal(p.data.profile,null);const refused=await fetch(base+'/api/v1/me/profile',{headers:{authorization:'Bearer '+token}});assert.equal(refused.status,401);
   console.log('PASS '+f.kind+'; synthetic identity/catalog fixture; real loopback HTTP and actual frontend modules; no suppliers');
