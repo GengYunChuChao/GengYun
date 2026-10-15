@@ -25,6 +25,28 @@ const MEDIA_STATES = ['initiated', 'uploaded', 'processing', 'ready', 'rejected'
 const MEDIA_PURPOSE = 'weed_recognition'
 
 /**
+ * 媒体上传链路上**服务端可能如实返回**的契约错误码闭集。
+ *
+ * 与 `packages/media/constants.mjs` 的 `ERROR_STATUS_MAP` 同源（HTTP 状态 ↔ 错误码一一对应），
+ * 但不含「与 HTTP 状态一起表达」的会话类码（401/403 由上传链路先按会话失效处理）。
+ * 闭集内的码**原样上抛**，由 `messageFor` 如实呈现；闭集外的取值一律折叠为
+ * `MEDIA_CHANNEL_UNAVAILABLE`（不把未知码当契约事实透出，见 `uploadPrivatePhoto`）。
+ */
+const MEDIA_UPLOAD_ERROR_CODES = [
+  // 400 / 413 / 415 / 428：照片声明或字节不符用途限制
+  'INVALID_REQUEST', 'IDEMPOTENCY_KEY_REQUIRED', 'MEDIA_TOO_LARGE', 'MEDIA_TYPE_UNSUPPORTED', 'REVISION_REQUIRED',
+  // 404 / 409：对象与版本
+  'NOT_FOUND', 'OBJECT_UNAVAILABLE', 'REVISION_CONFLICT', 'IDEMPOTENCY_CONFLICT',
+  // 429 / 503 / 504：提供者与对象存储
+  'PROVIDER_UNAVAILABLE', 'PROVIDER_QUOTA_EXCEEDED', 'PROVIDER_OUTCOME_UNKNOWN', 'PROVIDER_TIMEOUT',
+  // 契约 `ErrorCode` 闭集内的「输入不确定」类（本链路未变更其语义，仅如实传递）
+  'INPUT_UNCERTAIN'
+]
+
+/** 照片是否符合用途限制的**唯一**文案（识别图 ≤2 MiB / 仅 JPG·PNG·WebP）。 */
+const MEDIA_USE_LIMIT_TEXT = '照片不符合用途限制（识别图 ≤2 MiB / 仅 JPG·PNG·WebP），请重新拍照或换一张。'
+
+/**
  * 七类 JobState 的**逐类**呈现口径（契约 enum，一类一句，不得合并成一句「失败」）。
  * success=true 仅且仅当 state===succeeded；component 为 state-view 组件的状态名。
  */
@@ -162,6 +184,31 @@ function timestamp(value) {
   const m = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value)
   return !!m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[3]) >= 1 &&
     Number(m[3]) <= new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).getUTCDate() && Number.isFinite(Date.parse(value))
+}
+
+/**
+ * 非成功响应里**如实读出**契约封套 `error.code`（形状同 `services/api/src/errors.ts` 的 ErrorEnvelope）。
+ *
+ * 读不到、非字符串、或不在媒体域闭集内 ⇒ 返回 null（调用方据此回落到"通道不可用"这一如实表述），
+ * **不发明**错误码、也不把未知字符串当契约事实透出给用户。
+ */
+function envelopeErrorCode(payload) {
+  if (!object(payload) || !object(payload.error) || typeof payload.error.code !== 'string') return null
+  return MEDIA_UPLOAD_ERROR_CODES.indexOf(payload.error.code) === -1 ? null : payload.error.code
+}
+
+/**
+ * 由**非成功响应**构造上传失败错误：优先取契约封套的 `error.code` 如实归因；
+ * 取不到（或非闭集）才回落到 `fallback`（"通道不可用"）。
+ *
+ * 这样 `POST /media/uploads` 的 503 PROVIDER_UNAVAILABLE（服务端真实对象存储未接线）
+ * 与 400/413/415（照片不符合用途限制）不再被一律说成同一种原因。
+ */
+function uploadFailureOf(statusCode, payload, fallback) {
+  const code = envelopeErrorCode(payload)
+  const e = failure(code === null ? fallback : code)
+  e.status = statusCode
+  return e
 }
 
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
@@ -317,7 +364,12 @@ function validateUploadGrant(data) {
 
 /**
  * real 模式：按契约走私有媒体上传链路（createUpload → PUT 句柄 URL → completeUpload）。
- * 任何一步失败都**如实抛出**（映射为 MEDIA_CHANNEL_UNAVAILABLE 等），绝不回退替身、绝不伪造 media_id。
+ * 任何一步失败都**如实抛出**，绝不回退替身、绝不伪造 media_id。
+ *
+ * `POST /media/uploads` 非 201 时**读契约封套 `error.code`** 归因（见 `uploadFailureOf`）：
+ *   503 PROVIDER_UNAVAILABLE ⇒ 服务端真实对象存储未接线；
+ *   400/413/415（INVALID_REQUEST / MEDIA_TOO_LARGE / MEDIA_TYPE_UNSUPPORTED）⇒ 照片不符合用途限制；
+ * 封套读不到时才回落 `MEDIA_CHANNEL_UNAVAILABLE`（媒体路由**已挂载**，不得再断言"未挂载"）。
  */
 function uploadPrivatePhoto(tempFilePath, declaration) {
   const b = binding()
@@ -333,7 +385,7 @@ function uploadPrivatePhoto(tempFilePath, declaration) {
         if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
         let grant
         try {
-          if (r.statusCode !== 201) { reject(failure('MEDIA_CHANNEL_UNAVAILABLE')); return }
+          if (r.statusCode !== 201) { reject(uploadFailureOf(r.statusCode, r.data, 'MEDIA_CHANNEL_UNAVAILABLE')); return }
           keys(r.data, ['data', 'meta'])
           validateMeta(r.data.meta)
           grant = validateUploadGrant(r.data.data)
@@ -549,14 +601,19 @@ function messageFor(e) {
     NOT_FOUND: '任务或识别记录不存在、或不属于当前账号。',
     INVALID_INPUT: '请求参数不合法，已停止。',
     INVALID_RESPONSE: '服务端响应无法核对，已停止显示，请重试。',
-    PROVIDER_UNAVAILABLE: '识别服务当前不可用（真实提供者未接入或缺少凭据），不会用替身结果顶替。',
+    // 提供者/对象存储：real 模式下服务端真实对象存储尚未接线（媒体域 fail-closed ⇒ 503）。
+    PROVIDER_UNAVAILABLE: '服务端真实对象存储尚未接线（媒体域 fail-closed），照片未上传；real 模式下不会用替身结果顶替。',
     PROVIDER_TIMEOUT: '识别服务超时，请稍后重试。',
     PROVIDER_QUOTA_EXCEEDED: '识别服务配额已用尽，请稍后重试。',
     PROVIDER_OUTCOME_UNKNOWN: '识别结果状态未知，已停止显示，请重试。',
+    // 用途限制（识别图 ≤2 MiB / 仅 JPG·PNG·WebP）：413 / 415 / 400 三条服务端分支同口径。
+    MEDIA_TOO_LARGE: MEDIA_USE_LIMIT_TEXT,
+    MEDIA_TYPE_UNSUPPORTED: MEDIA_USE_LIMIT_TEXT,
+    INVALID_REQUEST: MEDIA_USE_LIMIT_TEXT,
     OBJECT_UNAVAILABLE: '该照片当前不可用于识别（未就绪或不可用），请重新拍照上传。',
     // 权限拒绝分支（受理前拦截）：不得用任何替身或缓存结果顶替。
     CONSENT_REQUIRED: '尚未获得照片处理与外部识别的用途授权。请先在「我的」中完成授权，未授权时不会外发照片、也不会用替身结果顶替。',
-    MEDIA_CHANNEL_UNAVAILABLE: '私有媒体上传通道尚未接入服务端（/media 内容端点未挂载），real 模式下不会用替身结果顶替。',
+    MEDIA_CHANNEL_UNAVAILABLE: '照片上传未完成（私有媒体上传通道不可用），real 模式下不会用替身结果顶替，请稍后重试。',
     REVISION_CONFLICT: '记录已被更新，请刷新后重试。',
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
