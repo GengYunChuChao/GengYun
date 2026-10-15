@@ -41,6 +41,17 @@ async function error(path, expectedStatus, expectedCode, opts = {}) {
   const response = await request(path, opts);
   assert.equal(response.status, expectedStatus); assert.equal(response.body.error.code, expectedCode);
 }
+const GATE_VERIFICATION = { method: 'GET', path: '/api/v1/auth/session' };
+// GY-I08 / PR #90（b1f6ab0）：详情页在门禁核实通过后合法地读取一次已确认档案，故紧随门禁之后
+// 必须恰好多一条 GET /api/v1/me/profile。断言整段请求序列（条数 + 方法 + 路径 + 先后），
+// 因此**任何额外/无关/顺序错误的请求仍会失败**，而不是退化成「至少一次」。
+const PROFILE_READ = { method: 'GET', path: '/api/v1/me/profile' };
+const expectedRequests = (lifecycles, profileReads) => Array.from({ length: lifecycles }).flatMap(() => profileReads ? [GATE_VERIFICATION, PROFILE_READ] : [GATE_VERIFICATION]);
+function assertRequestSequence(observed, expected, label) {
+  const shape = (list) => list.map((req) => `${req.method} ${req.path}`);
+  assert.deepEqual(shape(observed), shape(expected),
+    `${label}: expected request sequence ${JSON.stringify(shape(expected))}, observed ${JSON.stringify(shape(observed))}`);
+}
 try {
   await error('/auth/session', 401, 'SESSION_REQUIRED');
   await error('/me/consents', 401, 'SESSION_REQUIRED');
@@ -61,10 +72,11 @@ try {
   assert.ok(requests.some((req) => req.method === 'GET' && req.path.endsWith('/auth/session')));
   pass('returned page requires actual GET session verification');
   // Cold module + actual repository pages, not an isolated requireLogin callback.
-  for (const [name, id, resultKey] of [
-    ['referencedetail', 'gy-i03-hb-001', 'detail'],
-    ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item'],
-    ['reference', null, 'items'], ['referenceseed', null, 'list'],
+  // profileReads: 该页在门禁核实后是否合法读取一次档案（仅 referencedetail，自 PR #90 起需要已确认档案上下文）。
+  for (const [name, id, resultKey, profileReads] of [
+    ['referencedetail', 'gy-i03-hb-001', 'detail', true],
+    ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item', false],
+    ['reference', null, 'items', false], ['referenceseed', null, 'list', false],
   ]) {
     const cold = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
     assert.equal(cold.isLoggedIn(), false);
@@ -75,6 +87,7 @@ try {
         if (dep.endsWith('/font-scale')) return load('utils/font-scale.js', {});
         if (dep.endsWith('/auth')) return cold;
         if (dep.endsWith('/page-gate')) return gate;
+        if (dep.endsWith('/profile-api')) return load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
         if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
         throw Error('Unexpected page dependency');
       } });
@@ -84,13 +97,14 @@ try {
     page.onLoad(page.options); page.onShow();
     assert.equal(page.data.gatePassed, false);
     while (pending.size) await Promise.all([...pending]);
-    assert.equal(requests.length - before, 1);
+    assertRequestSequence(requests.slice(before), expectedRequests(1, profileReads), `${name} cold lifecycle`);
     assert.equal(cold.isLoggedIn(), true); assert.equal(page.data.gatePassed, true);
     if (id) { assert.equal(page.data.found, true); assert.ok(page.data[resultKey]); }
     else assert.ok(page.data[resultKey].length > 0);
     page.onHide(); assert.equal(page.data.gatePassed, false); page.onShow();
     while (pending.size) await Promise.all([...pending]);
-    assert.equal(page.data.gatePassed, true); assert.equal(requests.length - before, 2);
+    assert.equal(page.data.gatePassed, true);
+    assertRequestSequence(requests.slice(before), expectedRequests(2, profileReads), `${name} re-entry`);
     pass(`actual ${name} cold lifecycle renders catalog after HTTP verification and re-entry`);
   }
   const headers = { authorization: 'Bearer ' + currentToken };
