@@ -619,20 +619,16 @@ test('反例·分类映射：网络/解码/权限/自动播放/中断各自独�
   assert.equal(audioPlayback.classifyPlaybackFailure('permission denied').code, 'PERMISSION_DENIED');
 });
 
-// ============================================================ G. KNOWN-GAP：已登记缺陷
+// ============================================================ G. 段级迟到事件（本片修复点·正式负例）
 
 /**
- * KNOWN-GAP 组（本片只登记，不改产品代码——改行为需另开修复片）。
- * 每条都断言**当前行为**，因此修复落地后这些用例会转红：这是刻意的，请连同注释一起更新。
+ * 本组原始形态是 KNOWN-GAP（断言旧的缺陷行为）。本片对 `miniprogram/utils/audio-playback.js`
+ * 做**最小修复**：`attach()` 增加段级守卫（只接受**当前段**句柄的事件），迟到/重复事件一律丢弃。
+ * 因此这两条"高"与两条"中"用例**升级为正式负例**——守卫一旦被改坏，它们立即转红。
  */
-
-test('KNOWN-GAP（高）·同一计划内**段级**迟到 ended 不被代次守卫拦截 ⇒ 可假记 listened', () => {
-  // 根因：`attach(target, token)` 的 token 是**计划级**代次（只在 play/stop/release 递增），
-  // 与具体段句柄无关；`onSegmentEnded` 只看 token，不看事件来自哪一段。
-  // 末段分支先 `destroyHandle()`（连同正在播的段句柄一起销毁）再置 listened，因此：
-  // 段 1 的重复/迟到 ended（平台在途回调）会把"整份计划"判定为播完——而段 2 从未播放。
-  // 与硬断言"播放成功 ≠ 已听取 / 不假记 listened"（audio-playback.js 头注释 3、6）冲突。
-  // 最小复现见下面 4 行；建议修复：段级 token 或 `if (thisHandle !== handle) return` 去重 + 完成后再置位。
+test('反例·段级迟到事件：段 1 的重复/迟到 ended 必须被丢弃（不推进段号、不假记 listened）', () => {
+  // 修复前的最小复现：段 1 结束后再投一次段 1 的 ended，会把"整份计划"判成播完
+  // 并置 listened=true（段 2 从未播完）。修复后必须被段级守卫丢弃。
   const { port, state, handles } = spyPlayer();
   const listened = [];
   const controller = audioPlayback.createPlaybackController({
@@ -643,27 +639,50 @@ test('KNOWN-GAP（高）·同一计划内**段级**迟到 ended 不被代次守�
   handles[0].deliver('ended'); // 段 1 自然结束 → 段 2 开始
   assert.equal(state.created, 2);
   assert.equal(controller.snapshot().index, 1);
-  handles[0].deliver('ended'); // KNOWN-GAP：段 1 的迟到/重复 ended
-  assert.equal(controller.isListened(), true, '当前行为（已登记）：段 2 未播放就记为「已听取」');
-  assert.deepEqual(listened, [true], '当前行为（已登记）：onListened 被触发');
-  assert.equal(state.plays, 2, '段 2 只被 play() 过，从未播完（无第二个 ended 投递）');
+  assert.equal(controller.snapshot().state, 'playing');
+
+  handles[0].deliver('ended'); // 段 1 的迟到/重复 ended：必须丢弃
+  assert.equal(controller.isListened(), false, '段 2 未播完，绝不能置「已听取」');
+  assert.deepEqual(listened, [], 'onListened 不得被迟到事件触发');
+  assert.equal(controller.snapshot().index, 1, '段号不得被迟到事件推进');
+  assert.equal(controller.snapshot().state, 'playing', '段 2 必须继续播放（不得被销毁）');
+  assert.equal(state.created, 2, '不得凭迟到事件新建句柄');
+  assert.equal(state.destroyed, 1);
+  assert.equal(state.plays, 2);
+
+  // 正向对照：段 2 真正播完时才置位，且只触发一次。
+  handles[1].deliver('ended');
+  assert.equal(controller.isListened(), true, '整份计划自然播完才算已听取');
+  assert.deepEqual(listened, [true]);
+  assert.equal(controller.snapshot().state, 'stopped');
 });
 
-test('KNOWN-GAP（高）·同因导致**跳段**：段 1 迟到 ended 会直接开始第 3 段、跳过第 2 段', () => {
-  // 根因同上（计划级 token + 迟到事件被当作"当前段结束"）。后果是内容被整段省略，
-  // 与 speech-text 侧"不截断、不省略"的口径不在同一层但同样严重。
+test('反例·段级迟到事件：段 1 迟到 ended 不得跳过第 2 段（内容不得被省略）', () => {
   const { port, state, handles } = spyPlayer();
   const controller = audioPlayback.createPlaybackController({ player: port });
   controller.play(['s1', 's2', 's3']);
   handles[0].deliver('ended'); // → 段 2 开始
   assert.equal(controller.snapshot().index, 1);
-  handles[0].deliver('ended'); // KNOWN-GAP：段 1 迟到 ended
-  assert.equal(controller.snapshot().index, 2, '当前行为（已登记）：段号被推到第 3 段');
+  assert.equal(handles[handles.length - 1].src, 's2');
+
+  handles[0].deliver('ended'); // 段 1 迟到 ended：修复前会把段号推到 2 并直接播 s3
+  assert.equal(controller.snapshot().index, 1, '段号不得被推进（第 2 段不得被跳过）');
+  assert.equal(handles[handles.length - 1].src, 's2', '当前段仍必须是第 2 段');
+  assert.equal(state.created, 2, '不得凭迟到事件新建第 3 段句柄');
   assert.equal(controller.isListened(), false);
-  assert.equal(handles[handles.length - 1].src, 's3', '当前行为（已登记）：直接播第 3 段，第 2 段被跳过');
+
+  // 正向对照：三段按序播完、跨段不重复建句柄。
+  handles[1].deliver('ended');
+  assert.equal(controller.snapshot().index, 2);
+  assert.equal(handles[handles.length - 1].src, 's3');
+  assert.equal(state.created, 3);
+  handles[2].deliver('ended');
+  assert.equal(controller.isListened(), true);
+  assert.equal(state.live, 0);
+  assert.equal(controller.listenerCount(), 0);
 });
 
-test('KNOWN-GAP（中）·播完后重复 ended ⇒ onListened 重复触发（一次计划、多次"已听取"）', () => {
+test('反例·播完后重复 ended 不得重复触发 onListened（一份计划只算一次「已听取」）', () => {
   const { port, handles } = spyPlayer();
   const listened = [];
   const controller = audioPlayback.createPlaybackController({ player: port, onListened: () => listened.push(true) });
@@ -672,26 +691,41 @@ test('KNOWN-GAP（中）·播完后重复 ended ⇒ onListened 重复触发（�
   assert.equal(listened.length, 1);
   handles[0].deliver('ended');
   handles[0].deliver('ended');
-  // 当前行为（已登记）：末段分支没有"已完成"短路，重复 ended 会再次走末段分支并再次回调。
-  assert.equal(listened.length, 3, '当前行为（已登记）：应为 1 次');
+  assert.equal(listened.length, 1, '播完后的重复/迟到 ended 必须丢弃（修复前是 3 次）');
   assert.equal(controller.isListened(), true);
+  assert.equal(controller.snapshot().state, 'stopped');
 });
 
-test('KNOWN-GAP（中）·播完后（listened=true）迟到 error ⇒ 状态翻成 failed，成功与失败并存', () => {
+test('反例·播完后迟到 error 不得把已完成会话翻成失败（成功与失败不得并存）', () => {
   const { port, handles } = spyPlayer();
   const failures = [];
   const controller = audioPlayback.createPlaybackController({ player: port, onFailure: (failure) => failures.push(failure) });
   controller.play('a.mp3');
   handles[0].deliver('ended');
   assert.equal(controller.isListened(), true);
+  assert.equal(controller.snapshot().state, 'stopped');
+
   handles[0].deliver('error', { code: 'MUTED' });
-  // 当前行为（已登记）：迟到的 error 把已完成的会话翻成 failed；isListened() 仍为 true，
-  // onFailure 又报 recordsListened:false ⇒ 同一份计划同时"已听取"与"未听取"。
-  assert.equal(controller.snapshot().state, 'failed');
-  assert.equal(controller.isListened(), true);
-  assert.equal(failures.length, 1);
-  assert.equal(failures[0].recordsListened, false);
+  assert.equal(controller.snapshot().state, 'stopped', '已完成会话不得被迟到 error 翻成失败');
+  assert.equal(controller.snapshot().failure, null);
+  assert.deepEqual(failures, [], '不得为迟到 error 触发 onFailure');
+  assert.equal(controller.isListened(), true, '已听取不得被迟到 error 撤销/变成矛盾态');
+
+  // 对照：仍是当前段时，error 必须照常归类失败（守卫不得把真实失败也吃掉）。
+  const live = spyPlayer();
+  const liveFailures = [];
+  const liveController = audioPlayback.createPlaybackController({ player: live.port, onFailure: (failure) => liveFailures.push(failure) });
+  liveController.play(['s1', 's2']);
+  live.handles[0].deliver('error', { code: 'MUTED' });
+  assert.equal(liveController.snapshot().state, 'failed');
+  assert.equal(liveFailures.length, 1);
+  assert.equal(liveFailures[0].code, 'MUTED');
+  assert.equal(liveController.isListened(), false);
 });
+
+// ---- 以下仍为在册 KNOWN-GAP（断言"当前行为 + 已登记"，不在本片修复范围）；
+//      其中「端口退订为空操作（同步 stop 污染终态快照）」一条已被本片段级守卫附带修好，
+//      故按**正式负例**断言（标题已改为"反例·"），其余保持已登记口径。
 
 test('KNOWN-GAP（中）·play() 同步失败仍返回 {ok:true}（调用方按返回值判断会以为在播）', () => {
   const cases = [
@@ -748,13 +782,11 @@ test('KNOWN-GAP（中）·interrupt 事件空载荷 ⇒ 归类为 UNKNOWN，而�
   }
 });
 
-test('KNOWN-GAP（低·前置：端口退订为空操作）·destroyHandle 期间的同步 stop 事件让终态快照 listened 停在 false', () => {
-  // 成因：末段分支的顺序是 destroyHandle() → listened=true → setState('stopped')。
-  // destroyHandle() 先 detachAll() 再 stop()/destroy()，所以**退订真的生效**的端口不可能在此时
-  // 把事件投回来（问题不可达）。只有"退订是空操作、端口仍向已注册回调投递"的不合规端口才会：
-  // stop 事件让 setState('stopped') 提前 publish 一次 listened=false，之后 listened=true 时
-  // setState('stopped') 因状态未变不再 publish ⇒ 最后一次快照与实际不符（isListened()/onListened 是对的）。
-  // 影响面：需要不合规端口；生产端口（utils/inner-audio-port.js）的退订会真的摘除监听。
+test('反例·端口退订为空操作时，同步 stop 也不得污染终态快照（段级守卫兜底）', () => {
+  // 该用例原为 KNOWN-GAP：destroyHandle() 期间若端口把同步 stop 投回来，会提前 publish 一次
+  // listened=false，而之后 listened=true 时 setState('stopped') 因状态未变不再发布。
+  // 段级守卫（`target !== handle`，且 destroyHandle 先把 handle 置空）让这次迟到 stop 也被丢弃，
+  // 因此终态快照与 isListened() 必须一致——即便端口退订是空操作（不合规端口）。
   function leakyPlayer() {
     const published = [];
     const handles = [];
@@ -782,7 +814,7 @@ test('KNOWN-GAP（低·前置：端口退订为空操作）·destroyHandle 期�
     return { controller, published, handles };
   }
 
-  // ① 合规端口（退订真的摘除监听）：终态快照正确 ⇒ 本 GAP 有前置条件，不是普适缺陷。
+  // ① 合规端口（退订真的摘除监听）：终态快照正确。
   const conforming = spyPlayer({ emitStopOnStop: true });
   const publishedOk = [];
   const okController = audioPlayback.createPlaybackController({
@@ -793,15 +825,15 @@ test('KNOWN-GAP（低·前置：端口退订为空操作）·destroyHandle 期�
   conforming.handles[0].deliver('ended');
   assert.equal(okController.isListened(), true);
   assert.equal(publishedOk[publishedOk.length - 1].state, 'stopped');
-  assert.equal(publishedOk[publishedOk.length - 1].listened, true, '合规端口下终态快照正确（本 GAP 不可达）');
+  assert.equal(publishedOk[publishedOk.length - 1].listened, true);
 
-  // ② 不合规端口（退订为空操作）：当前行为（已登记）——快照 listened=false，而 isListened() 为 true。
+  // ② 不合规端口（退订空操作）：段级守卫兜底，终态快照同样必须与 isListened() 一致。
   const leaky = leakyPlayer();
   leaky.controller.play('a.mp3');
   leaky.handles[0].deliver('ended');
-  assert.equal(leaky.controller.isListened(), true, 'isListened() 是对的');
+  assert.equal(leaky.controller.isListened(), true);
   assert.equal(leaky.published[leaky.published.length - 1].state, 'stopped');
-  assert.equal(leaky.published[leaky.published.length - 1].listened, false, '当前行为（已登记）：终态快照与 isListened() 不一致');
+  assert.equal(leaky.published[leaky.published.length - 1].listened, true, '终态快照必须与 isListened() 一致');
 });
 
 test('KNOWN-GAP（低）·失败分类不对称：字符串形式的 SOURCE_UNAVAILABLE 不自映射；errCode/网络类无独立分类', () => {
