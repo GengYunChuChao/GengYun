@@ -37,8 +37,8 @@ function fixture() {
   for (const file of ['auth.js', 'navigation.js']) delete requireHere.cache[requireHere.resolve(join(directory, 'utils', file))];
   b.auth = requireHere(join(directory, 'utils/auth.js')); b.nav = requireHere(join(directory, 'utils/navigation.js'));
   b.wx = wx;
-  // 追加单 N1（对抗性审查 §4）：门禁一旦放行，各页会立刻发业务读取。这里给所有 *-api 客户端
-  // 一个「永不落地」的替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
+  // 切片 E N1 ／ 追加单 N1（对抗性审查 §4）：门禁一旦放行，各页会立刻发业务读取。这里给所有
+  // *-api 客户端一个「永不落地」的替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
   const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
   b.page = (name) => {
     let def;
@@ -415,8 +415,11 @@ for (const stage of ['wx', 'server']) {
 //      门禁第 1 轮的迟到响应不得关闭已放行的页面；
 //   ② 护栏（改前即绿，防「提示但放行」）：核实失败时按钮只去登录页，绝不放行、无业务请求。
 // ---------------------------------------------------------------------------
+// 覆盖页并集（8 页）＝ #176 6-A 的 favorites/history/profile/messages/communitycreate/
+//   historydetail ＋ 切片 E 的 community/communitydetail（guest 族，无 gatePassed 字段）。
 const N1_PAGES = [['favorites', null], ['history', null], ['profile', null], ['messages', null],
-  ['communitycreate', null], ['historydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }]];
+  ['communitycreate', null], ['historydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }],
+  ['community', null], ['communitydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }]];
 // 门禁放行判据：gatePassed 页看 gatePassed，guest 页看 !guest。
 const opened = (page) => page.data.gatePassed === undefined ? page.data.guest === false : page.data.gatePassed === true;
 for (const [name, options] of N1_PAGES) {

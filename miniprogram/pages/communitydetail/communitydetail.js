@@ -10,6 +10,7 @@
 //   - 未通过审核／已下架的内容不会以公开状态展示：作者看到的是显式状态标签，
 //     他人拿到的是 404（页面收口到 `state-view` 的失效态）。
 const pageGate = require('../../utils/page-gate')
+const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const navigation = require('../../utils/navigation')
 const api = require('../../utils/community-api')
@@ -123,7 +124,10 @@ Page({
     })
   },
 
-  onLogin: function () { require('../../utils/auth').requireLogin(function () {}) },
+  onLogin: function () {
+    const self = this
+    auth.requireLogin(function (ok) { if (ok) { pageGate.cancel(self); self.onShow() } })
+  },
   onBack: function () { navigation.openTarget('/pages/community/community', true, function () {}) },
 
   // ---------------------------------------------------------------- 点赞（幂等）
