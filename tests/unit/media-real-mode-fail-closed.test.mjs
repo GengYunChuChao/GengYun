@@ -7,8 +7,14 @@
 //
 // 真实 S3/COS 适配器只被**构造**（构造不发起任何网络请求）与**预签名**（纯本地计算），
 // 不发起任何真实对象存储调用；`externalRequestCount` 恒为 0 即其证据。
+//
+// 1-A（本片）接线：real 的对象存储判据从"一律未接线"改为"`OBJECT_STORAGE_*` 齐备才接真实适配器，
+// 缺任一仍逐字保持 fail-closed"。**本文件与全仓测试/CI/dev 配置都不设置 `OBJECT_STORAGE_*`
+// 环境变量**（那是对 ADR-001 门控动手）：下面的合成值只作为**参数**内联传给
+// `resolveMediaObjectStore`，不写 `process.env`、不落盘、不连任何真实端点。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
@@ -27,6 +33,21 @@ const KEY = (name) => `media-real-${name}-0000`;
 const MEDIA_ID = '55555555-5555-4555-8555-555555555555';
 const jpeg = jpegWithExif();
 const DECLARED = { purpose: 'label_ocr', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
+
+// 1-A 对象存储配置的**合成占位**（RFC2606 保留域 `.invalid`，不可解析 ⇒ 即便误调用也不可能外发）。
+// 只作为参数内联使用：**不设置**任何 `process.env.OBJECT_STORAGE_*`（红线：ADR-001 门控）。
+const SYNTHETIC_STORAGE_ENV = {
+  OBJECT_STORAGE_ENDPOINT: 'https://synthetic-object-storage.invalid',
+  OBJECT_STORAGE_BUCKET: 'synthetic-media-placeholder',
+  OBJECT_STORAGE_ACCESS_KEY: 'synthetic-access-key-id',
+  OBJECT_STORAGE_SECRET_KEY: 'synthetic-secret-key-value',
+};
+const REQUIRED_STORAGE_KEYS = [
+  'OBJECT_STORAGE_ENDPOINT',
+  'OBJECT_STORAGE_BUCKET',
+  'OBJECT_STORAGE_ACCESS_KEY',
+  'OBJECT_STORAGE_SECRET_KEY',
+];
 
 function baseConfig() {
   return loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' });
@@ -178,8 +199,10 @@ test('GY-I06 对象存储端口：如实标注、构造校验与配置读取', a
   await assert.rejects(() => unwired.putObject('obj_x', new Uint8Array([1]), 'image/jpeg'), (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true);
   await assert.rejects(() => unwired.objectCount(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
 
-  // 按执行模式解析：real 一律未接线；替身/演示才给替身。
+  // 按执行模式解析：real + **缺任一** `OBJECT_STORAGE_*` ⇒ 未接线（fail-closed）；替身/演示才给替身。
+  // （1-A 后 real 的判据是"对象存储配置是否齐备"，不再是"模式是否 real"；齐备路径见下一个用例。）
   assert.equal(resolveMediaObjectStore({ executionMode: 'real' }).kind, 'unwired');
+  assert.equal(resolveMediaObjectStore({ executionMode: 'real', env: {} }).kind, 'unwired');
   assert.equal(resolveMediaObjectStore({ executionMode: 'stub' }).kind, 'substitute');
   assert.equal(resolveMediaObjectStore({ executionMode: 'preset_demo' }).kind, 'substitute');
 
@@ -212,4 +235,64 @@ test('GY-I06 对象存储端口：如实标注、构造校验与配置读取', a
   });
   assert.equal(plaintext.config, null);
   assert.equal(plaintext.issues[0].field, 'OBJECT_STORAGE_ENDPOINT');
+});
+
+test('GY-I06 1-A 装配：real 缺任一 OBJECT_STORAGE_* ⇒ 仍 unwired（逐字 fail-closed）；齐备 ⇒ s3_compatible（零网络）', async () => {
+  // 1) 缺 env（默认装配路径）⇒ 与接线前**逐字一致**：同一个 reason/note，且每个操作仍 503 retryable。
+  const absent = resolveMediaObjectStore({ executionMode: 'real', env: {} });
+  assert.equal(absent.kind, 'unwired');
+  assert.equal(absent.note, createUnwiredObjectStore().note, '缺 env 的 reason/note 必须与接线前逐字一致');
+  assert.equal(absent.externalRequestCount, 0);
+  await assert.rejects(
+    () => absent.putObject('obj_synthetic', new Uint8Array([1]), 'image/jpeg'),
+    (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
+  );
+
+  // 2) 缺**任一**必填键都不得放行（缺配置 ≠ 放行）；明文 http endpoint 同理。
+  for (const missing of REQUIRED_STORAGE_KEYS) {
+    const env = { ...SYNTHETIC_STORAGE_ENV };
+    delete env[missing];
+    const store = resolveMediaObjectStore({ executionMode: 'real', env });
+    assert.equal(store.kind, 'unwired', `缺 ${missing} 时不得构造真实适配器`);
+    await assert.rejects(
+      () => store.presignUpload({ key: 'obj_synthetic', contentType: 'image/jpeg', expiresInSeconds: 300 }),
+      (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
+      `缺 ${missing} 时预签名必须仍被 fail-closed 拒绝`,
+    );
+  }
+  assert.equal(
+    resolveMediaObjectStore({
+      executionMode: 'real',
+      env: { ...SYNTHETIC_STORAGE_ENV, OBJECT_STORAGE_ENDPOINT: 'http://synthetic-object-storage.invalid' },
+    }).kind,
+    'unwired',
+    '明文 http endpoint 不得构造真实适配器',
+  );
+
+  // 3) 齐备 ⇒ 真实适配器（`kind==='s3_compatible'`）；只做**本地**预签名，零外部请求。
+  const wired = resolveMediaObjectStore({ executionMode: 'real', env: SYNTHETIC_STORAGE_ENV });
+  assert.equal(wired.kind, 's3_compatible');
+  assert.equal(wired.externalRequestCount, 0);
+  assert.match(wired.note, /从未被实际调用/);
+  const handle = await wired.presignUpload({ key: 'obj_synthetic', contentType: 'image/jpeg', expiresInSeconds: 300 });
+  assert.equal(handle.method, 'PUT');
+  assert.match(handle.url, /^https:\/\/synthetic-media-placeholder\.synthetic-object-storage\.invalid\/obj_synthetic\?/);
+  assert.match(handle.url, /X-Amz-Algorithm=AWS4-HMAC-SHA256/);
+  assert.match(handle.url, /X-Amz-Expires=300/);
+  assert.match(handle.url, /X-Amz-Signature=[0-9a-f]{64}/);
+  assert.ok(!handle.url.includes(SYNTHETIC_STORAGE_ENV.OBJECT_STORAGE_SECRET_KEY), '签名密钥绝不进 URL');
+  assert.equal(wired.externalRequestCount, 0, '预签名是纯本地计算，不得发起任何真实对象存储请求');
+
+  // 4) 替身分支：`env` 齐备也**不得**影响 stub/preset_demo（逐字不变）。
+  assert.equal(resolveMediaObjectStore({ executionMode: 'stub', env: SYNTHETIC_STORAGE_ENV }).kind, 'substitute');
+  assert.equal(resolveMediaObjectStore({ executionMode: 'preset_demo', env: SYNTHETIC_STORAGE_ENV }).kind, 'substitute');
+
+  // 5) 装配点静态自证：唯一装配行必须把 `process.env` 交给 `resolveMediaObjectStore`。
+  //    运行期无法在不**设置** `OBJECT_STORAGE_*` 的前提下验证这条传递（红线：ADR-001 门控，本片不碰），
+  //    故这里只锁该行文本（去掉 `env: process.env` ⇒ 本断言红）。
+  assert.match(
+    readFileSync(new URL('../../services/api/src/app.ts', import.meta.url), 'utf8'),
+    /resolveMediaObjectStore\(\{ executionMode: config\.executionMode, env: process\.env \}\)/,
+    'app.ts 的对象存储装配点必须传入 process.env',
+  );
 });
