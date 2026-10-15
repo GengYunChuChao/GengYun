@@ -21,6 +21,9 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
 import { buildApp } from '../../services/api/src/app.ts';
@@ -31,9 +34,216 @@ import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.t
 import { createAuthGuards } from '../../services/api/src/auth/middleware.ts';
 import { registerOcrRoutes } from '../../services/api/src/routes/ocr.ts';
 import { createUnwiredReferencePort } from '../../services/api/src/ocr/reference.ts';
+import { createJobRegistry } from '../../services/api/src/jobs/registry.ts';
+import { createOcrJobSource } from '../../services/api/src/jobs/sources.ts';
+import { registerJobRoutes } from '../../services/api/src/jobs/routes.ts';
+import { collectResultValueIssues } from '../../services/api/src/jobs/result-shape.ts';
+
+// ───────────────────────── TS AST 判据（r4 路线）─────────────────────────
+// `typescript@5.9.3` 是本仓 devDependency（下方 require 即为"可解析"的自证）。
+// 用 `createRequire` 取 CJS 导出，避免 ESM/CJS 互操作差异 ⇒ 用**解析器**判定结构，不做文本正则。
+const require = createRequire(import.meta.url);
+const ts = require('typescript');
+
+/** 仓根（从本脚本位置回推：`<root>/tests/integration/`）—— 仅用于把解析结果裁成"仓根相对"。 */
+const REPO_ROOT_FOR_PATHS = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** `app.ts` 所在目录：模块说明符按**该目录**解析（与真实装配的解析基准一致）。 */
+const APP_SOURCE_DIR = resolvePath(REPO_ROOT_FOR_PATHS, 'services', 'api', 'src');
+/** 本域内**唯一**允许被装配路径引用的模块（仓根相对、已归一化，用于比较）。 */
+const OCR_SERVICE_MODULE_PATH = normalizeModulePath('services/api/src/ocr/service.ts');
+/** 该模块**唯一**允许的值符号（裁定授权的端口工厂）。 */
+const OCR_SERVICE_ALLOWED_SYMBOLS = ['createUnwiredOcrTerminalHistoryPort'];
+/** 第二道网（裁定保留的四条**原文子串**禁项，走 `appText` 原文）。 */
+const OCR_FORBIDDEN_SUBSTRINGS = ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference'];
+
+/** 归一化：percent-decode → 剥 `?`/`#` → `\`→`/` → 去 `.` 段与空段 → 解析 `..` → 大小写不敏感。 */
+function normalizeModulePath(specifier) {
+  let decoded = specifier;
+  try {
+    decoded = decodeURIComponent(specifier);
+  } catch {
+    decoded = specifier;
+  }
+  const segments = [];
+  for (const segment of decoded.split('?')[0].split('#')[0].replace(/\\/g, '/').split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') { if (segments.length > 0) segments.pop(); continue; }
+    segments.push(segment);
+  }
+  return segments.join('/').toLowerCase();
+}
+
+/** 解析为"仓根相对"的归一化路径；非相对（裸模块）记为 `bare:` 前缀 ⇒ 不属本判据范围。 */
+function resolveModuleTarget(specifierText, fromDir) {
+  if (specifierText.startsWith('.')) {
+    return normalizeModulePath(resolvePath(fromDir, specifierText).slice(REPO_ROOT_FOR_PATHS.length).replace(/\\/g, '/'));
+  }
+  if (specifierText.startsWith('/')) return normalizeModulePath(specifierText);
+  return `bare:${specifierText}`;
+}
+
+const isOcrDomainTarget = (target) => /(^|\/)ocr\/[^/]+$/.test(target);
+const isServiceTarget = (target) => target.endsWith('ocr/service.ts');
+const isAllowedOcrModuleTarget = (target) => normalizeModulePath(OCR_SERVICE_MODULE_PATH).endsWith(normalizeModulePath(target));
+const literalText = (node) => {
+  // 剥掉括号包裹：`require(('./ocr/state.ts'))` 的 `arguments[0]` 是 ParenthesizedExpression
+  let current = node;
+  while (current !== undefined && ts.isParenthesizedExpression(current)) current = current.expression;
+  // ⚠ 必须按**节点种类**判定，不能只看"有没有 `.text`"：`Identifier` 也有 `.text`
+  //   ⇒ 那样会把 `import(someVar)` / `require(someVar)` 误当成字面量 `someVar` 而**静默放行**（本轮实测抓到）。
+  if (current === undefined) return null;
+  return ts.isStringLiteralLike(current) ? current.text : null;
+};
+
+/**
+ * 判据函数：返回**违规清单**（空数组 = 通过）。自测与真实用例走**同一函数** ⇒ 判据退化必被自测抓住。
+ *
+ * 路线（r4）：`ts.createSourceFile` + 遍历 `ImportDeclaration` / `ExportDeclaration` /
+ * 动态 `import()`（`CallExpression` + `ImportKeyword`）/ `require(...)`，取 `moduleSpecifier.text`。
+ * 由此**一次性消除**：注释与字符串互相干扰、`%XX` 编码、引号种类、多行、有无分号等**整类**问题。
+ *
+ * ⚠ **显式书面取舍（本判据覆盖不到，不得读成"覆盖全部形态"）**：
+ *   ① **运行时拼接/插值**：`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``（AST 只见表达式，无可核对的字面量）；
+ *   ② **间接 require 的其余形态**：本判据**已覆盖** `createRequire(…)` 直接别名（`const X = createRequire(…); X('./ocr/…')`，
+ *      经 `requireAliases` 追踪），但**未覆盖** `require(someVar)`（参数非字面量）、把别名再转手传出的间接引用、
+ *      以及经**中间模块**转出的再引用；
+ *   ③ 因此本判据针对的是"**显式模块引用**"这一类腐化（本仓 `app.ts` 为静态源码 ⇒ 该目标可达）。
+ */
+function evaluateOcrImports(sourceText, fromDir) {
+  const violations = [];
+  const fail = (message) => violations.push(message);
+  const requireAliases = new Set(); // `createRequire(…)` 的别名（间接 require）
+  const sourceFile = ts.createSourceFile('app.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+
+  const checkNamedImports = (namedBindings) => {
+    if (namedBindings === undefined) return;
+    if (ts.isNamespaceImport(namedBindings)) {
+      fail('OCRCONTRACT: 不得以 `* as ns` 命名空间导入 ./ocr/service.ts');
+      return;
+    }
+    if (!ts.isNamedImports(namedBindings)) return;
+    for (const element of namedBindings.elements) {
+      if (element.isTypeOnly === true) continue; // `{ type X }`：运行期擦除
+      const name = (element.propertyName ?? element.name).text; // `X as Y` 按**原名**判定
+      if (!OCR_SERVICE_ALLOWED_SYMBOLS.includes(name)) {
+        fail(`OCRSYMBOL: ./ocr/service.ts 只允许 ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}（值符号），实际出现：${name}`);
+      }
+    }
+  };
+
+  const checkNamedExports = (exportClause) => {
+    if (ts.isNamespaceExport(exportClause)) {
+      fail('OCRCONTRACT: 不得 `export * as ns` 自 ./ocr/service.ts');
+      return;
+    }
+    if (!ts.isNamedExports(exportClause)) return;
+    for (const element of exportClause.elements) {
+      if (element.isTypeOnly === true) continue;
+      const name = (element.propertyName ?? element.name).text;
+      if (!OCR_SERVICE_ALLOWED_SYMBOLS.includes(name)) {
+        fail(`OCRSYMBOL: ./ocr/service.ts 只允许 ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}（值符号），实际出现：${name}`);
+      }
+    }
+  };
+
+  const visit = (node) => {
+    // 记录 `const X = createRequire(…)` 产生的**间接 require**（否则 `X('./ocr/state.ts')` 会成为未声明缺口）
+    if (ts.isVariableDeclaration(node) && node.initializer !== undefined
+      && ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression)
+      && node.initializer.expression.text === 'createRequire' && ts.isIdentifier(node.name)) {
+      requireAliases.add(node.name.text);
+    }
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifierNode = node.moduleSpecifier;
+      if (specifierNode !== undefined) {
+        const text = literalText(specifierNode);
+        if (text === null) {
+          fail('OCRTEXT: 模块说明符不是静态字符串字面量（运行时拼接/插值 ⇒ 无从核对）');
+        } else {
+          const target = resolveModuleTarget(text, fromDir);
+          if (!target.startsWith('bare:') && isOcrDomainTarget(target) && !isAllowedOcrModuleTarget(target)) {
+            fail(`OCRMODULE: ./ocr/ 下只允许 service.ts，实际归一化到 ${target}`);
+          } else if (!target.startsWith('bare:') && isServiceTarget(target)) {
+            if (ts.isImportDeclaration(node)) {
+              if (node.isTypeOnly === true) {
+                // `import type …`：整句运行期擦除 ⇒ 放行（含 `import type * as`）
+              } else if (node.importClause === undefined) {
+                fail('OCRSIDEEFFECT: 不得对 ./ocr/service.ts 做副作用导入（无说明符 ⇒ 无法核对装的是什么）');
+              } else if (node.importClause.isTypeOnly === true) {
+                // 同上：整句擦除
+              } else if (node.importClause.name !== undefined) {
+                fail('OCRFORM: 不得对 ./ocr/service.ts 使用默认导入');
+              } else {
+                checkNamedImports(node.importClause.namedBindings);
+              }
+            } else if (node.isTypeOnly === true) {
+              // `export type … from`：擦除
+            } else if (node.exportClause === undefined) {
+              fail('OCRCONTRACT: 不得 `export *` 自 ./ocr/service.ts');
+            } else {
+              checkNamedExports(node.exportClause);
+            }
+          }
+        }
+      }
+    } else if (ts.isCallExpression(node)
+      && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(node.expression) && (node.expression.text === 'require' || requireAliases.has(node.expression.text))))) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isAliasedRequire = ts.isIdentifier(node.expression) && requireAliases.has(node.expression.text);
+      const label = isDynamicImport ? '动态 import()' : (isAliasedRequire ? '间接 require()' : 'require()');
+      const text = literalText(node.arguments[0]);
+      if (text === null) {
+        if (isDynamicImport) fail('OCRTEXT: 动态 import() 的参数不是静态字符串字面量（运行时拼接/插值 ⇒ 无从核对）');
+      } else {
+        // ⚠ **本域判据在此分支与本文件上方的 `ImportDeclaration`/`ExportDeclaration` 分支**逐字同源**：
+        // 归一化后指向 `./ocr/**` 且不是 `service.ts` ⇒ 一律 `OCRMODULE`（否则会出现"静态写法判红、
+        // 动态写法放行"的**不对称漏分支** —— 复审 F1‴ 实测 `./ocr/state.ts` 的 10 种静态写法全部逃逸）。
+        const target = resolveModuleTarget(text, fromDir);
+        if (!target.startsWith('bare:') && isOcrDomainTarget(target) && !isAllowedOcrModuleTarget(target)) {
+          fail(`OCRMODULE: ./ocr/ 下只允许 service.ts，实际归一化到 ${target}（经 ${label} 引用）`);
+        } else if (!target.startsWith('bare:') && isServiceTarget(target)) {
+          fail(`OCRDYNAMIC: 不得用 ${label} 引用 ./ocr/service.ts`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return violations;
+}
+
+/** 第二道网：四条**原文子串**禁项；对 `%XX` 拼写**逐说明符**解码后复查一遍。 */
+function evaluateForbiddenSubstrings(sourceText) {
+  const violations = [];
+  for (const forbidden of OCR_FORBIDDEN_SUBSTRINGS) {
+    if (sourceText.includes(forbidden)) {
+      violations.push(`INCLUDES: 原文命中 ${forbidden}`);
+      continue;
+    }
+    const specifiers = [...sourceText.matchAll(/(?:from\s*|import\s*\(\s*|require\s*\(\s*)(['"`])([^'"`\r\n]*)\1/g)].map((match) => match[2]);
+    const decodedHit = specifiers.some((specifier) => {
+      try {
+        return decodeURIComponent(specifier).includes(forbidden);
+      } catch {
+        return false;
+      }
+    });
+    if (decodedHit) violations.push(`INCLUDES_DECODED: 解码后命中 ${forbidden}`);
+  }
+  return violations;
+}
+// ─────────────────────── TS AST 判据结束 ───────────────────────
 
 const API = '/api/v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 契约 `Job` 九键（`additionalProperties:false` ⇒ 键集合必须恰好是这九个）。 */
+const JOB_KEYS = ['id', 'revision', 'kind', 'target_ref', 'state', 'deadline_at', 'created_at', 'error_code', 'result'];
+/** 契约 `JobState` 七值闭集（逐项抄录）。 */
+const JOB_STATES = ['queued', 'running', 'succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
+const TERMINAL_STATES = ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
+/** 识别域替身"正常"分桶的媒体 id（取自 GY-I09 既有集成脚本的同口径常量，用于"不回归"对照）。 */
+const RECOGNITION_OK_MEDIA = '11111111-1111-4111-8111-111111111111';
 
 const DOSE_CONDITIONS_COMPLETE = {
   crop_id: 'rice',
@@ -143,13 +353,32 @@ async function createOcr(base, token, mediaId, key = nextKey()) {
 }
 
 /**
- * **注入式接缝**（唯一不走产品装配的一段）。
+ * **纯 HTTP** 轮询**作业读面**到终态（`GET /jobs/{id}`；本片新接线的读面本身就是被测对象）。
+ *
+ * 每一步都断言 **200**：该 kind 未接线时这里必然是 `404 NOT_FOUND`（与"作业不存在"同形）
+ * ⇒ 这条断言就是"接线与否"的红绿分界（撤下 `app.ts` 的注册项 ⇒ 本函数第一轮即失败）。
+ */
+async function waitForTerminalJob(base, token, jobId, tries = 400) {
+  let last = null;
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const response = await call(base, token, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(response.status, 200, `GET /jobs/{id} 必须 200（未接线时是 404）：${JSON.stringify(response.json)}`);
+    last = response.json.data;
+    if (TERMINAL_STATES.includes(last.state)) return last;
+    await sleep(5);
+  }
+  throw new Error(`等待作业终态超时：${jobId}（最后 state=${String(last?.state)}）`);
+}
+
+/**
+ * **注入式接缝（第一段）**：仅用于"登记库未接线 ⇒ unavailable"这一分支。
  *
  * 产品装配 `app.ts` 只传 `{ guards }`（零端口注入）——这本身是**默认关闭**的安全属性，
  * 但也意味着"真实登记库未接线 ⇒ unavailable"这一分支**无法**经产品装配构造
  * （real 模式下提供者先 fail-closed，HTTP 上根本走不到登记库那一步）。
  * 因此该分支用**路由插件自身的 `deps` 接缝**在本测试内最小化装配；
  * 组 8 已用产品装配的**结构断言**钉住"产品路径不暴露该注入面"。
+ * （本文件的**第二段接缝**见 `buildInjectedProviderApp`，只用于构造失败/超时终态与确定性"运行中"。）
  */
 function buildInjectedReferenceApp(config, authStore) {
   const app = Fastify({
@@ -170,6 +399,62 @@ function buildInjectedReferenceApp(config, authStore) {
   const guards = createAuthGuards({ store: authStore, now: () => new Date() });
   registerOcrRoutes(app, config, { guards, reference: createUnwiredReferencePort() });
   return app;
+}
+
+/**
+ * **注入式接缝（第二段）**：只用于构造"失败/超时终态"与**确定性**的"运行中"。
+ *
+ * 为什么必须走接缝：产品装配对 OCR 路由**零端口注入**（只传 `guards`/`consent`/`egress`，组 8 有结构证据），
+ * 而替身提供者按 `media_id` 分六个桶、**六桶全部是"已完成"**（没有失败桶）⇒ "失败态"无法经产品装配构造。
+ * 本接缝**只**替换**提供者**与 **deadline**，装配件全部复用产品同一套：`registerOcrRoutes`（产品同一函数）
+ * + `registerJobRoutes` + 真实注册表（含 `createOcrJobSource`）⇒ 作业读面的分派与契约校验路径与产品装配逐字相同。
+ */
+function buildInjectedProviderApp(config, authStore, options = {}) {
+  const app = Fastify({
+    logger: false,
+    genReqId: () => randomUUID(),
+    ajv: { customOptions: { removeAdditional: false } },
+  });
+  for (const key of ['userId', 'authEpoch', 'role', 'sessionId', 'sessionExpiresAt', 'accountRevision', 'authScopes']) {
+    app.decorateRequest(key, null);
+  }
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof ApiError) {
+      reply.status(error.status).send(buildErrorEnvelope(error, { request_id: request.id, execution_mode: config.executionMode }));
+      return;
+    }
+    reply.status(500).send({ error: { message: '内部错误', retryable: false, details: [] }, meta: { request_id: request.id } });
+  });
+  const guards = createAuthGuards({ store: authStore, now: () => new Date() });
+  const service = registerOcrRoutes(app, config, {
+    guards,
+    provider: options.provider,
+    jobDeadlineMs: options.jobDeadlineMs,
+  });
+  registerJobRoutes(app, config, guards, createJobRegistry([createOcrJobSource(service)]));
+  return app;
+}
+
+/**
+ * 接缝替身提供者（**明确标注的替身**，不触达任何真实供应商）：
+ * 按 `media_id` 的 sha256 分桶（与 `ocr/provider.ts` 的 `bucketOf` 同口径）
+ *   - 桶 0 ⇒ **悬挂**（永不返回）⇒ 由服务端 deadline 落 `timed_out` + `PROVIDER_TIMEOUT`；
+ *   - 桶 1 ⇒ **强制失败** `PROVIDER_OUTCOME_UNKNOWN` ⇒ 落 `failed` + 同一码（非超时失败，刻意与桶 0 分开）；
+ *   - 其余桶 ⇒ 抛错（宁可让用例失败，也不静默给出成功）。
+ */
+function seamProvider() {
+  return {
+    executionMode: 'stub',
+    modelVersion: 'stub-seam-v1',
+    available: true,
+    unavailableReason: null,
+    async extract({ mediaId }) {
+      const bucket = createHash('sha256').update(mediaId).digest()[0] % 6;
+      if (bucket === 0) return new Promise(() => {});
+      if (bucket === 1) return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
+      throw new Error(`接缝替身只支持桶 0/1，收到桶 ${bucket}`);
+    },
+  };
 }
 
 // ---------------------------------------------------------------- 主流程
@@ -199,6 +484,15 @@ const seamAuthStore = createMemoryAuthStore();
 const seamApp = buildInjectedReferenceApp(stubConfig, seamAuthStore);
 const seamBase = await seamApp.listen({ host: '127.0.0.1', port: 0 });
 const seamToken = await seedSession(seamAuthStore, 'synthetic-ocr-seam');
+
+// —— 实例 4：**注入式接缝（第二段）**（悬挂/失败提供者 + 1s deadline；仅用于失败态与确定性"运行中"）——
+const providerSeamAuthStore = createMemoryAuthStore();
+const providerSeamApp = buildInjectedProviderApp(stubConfig, providerSeamAuthStore, {
+  provider: seamProvider(),
+  jobDeadlineMs: 1000,
+});
+const providerSeamBase = await providerSeamApp.listen({ host: '127.0.0.1', port: 0 });
+const providerSeamToken = await seedSession(providerSeamAuthStore, 'synthetic-ocr-provider-seam');
 
 try {
   console.log('== GY-I10 阶段 2b 真实装配 + 回环 HTTP 集成回归 ==');
@@ -573,15 +867,115 @@ try {
       .split(/\r?\n/)
       .find((line) => line.includes('registerOcrRoutes(app, config,'));
     assert.ok(ocrRegistrationLine !== undefined, 'app.ts 必须有 registerOcrRoutes 装配行');
-    // 只允许 `guards` + 两个**隐私域**端口（consent/egress）；不得出现 provider/store/media/端口注入。
+    // 只允许 `guards`（鉴权守卫，本行必填）与两个**隐私域**端口（consent/egress），
+    // 以及 `#181`（`b6f8c1b`）新增的 `history` 槽位；
+    // 不得出现 provider/store/media/reference/service 等**适配器**端口注入。
+    // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
+    //   （实测原始输出见交接文档）——它写于该行还是简写 `{ guards, … }` 的时代，`guards` 无冒号故不被
+    //   正则计入；此后该行改为 `guards: gatedGuards`（全局开关门），`guards` 才被计入。原意（"不得塞入
+    //   provider/store/媒体/登记库端口"）不变，故把必填的 `guards` 显式列入白名单，而非放宽其它项。
+    // ⚠ 同轮**口径如实登记（不得含糊）**：`history` 为 `#181`（`b6f8c1b`）新增的**识别历史域写入端口**
+    //   （端口定义 `app.ts:668-675`：`recordHistoryTerminal` → `appendHistory`），**不是** provider/store/media
+    //   泄漏，故同列入白名单；但这使"零端口注入"这一结构属性的口径**实质变宽**——从"只允许隐私域
+    //   `consent`/`egress`"变为"隐私域 + 识别历史域写入端口"。本注释**不**主张"零端口注入仍成立"。
+    //   下方另补**值断言**：钉住 `guards` 槽位装的确实是 `gatedGuards`（旗标门包装）。
     const ocrInjectedKeys = [...ocrRegistrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
     assert.deepEqual(
       ocrInjectedKeys,
-      ['consent', 'egress'].sort(),
-      `装配行只允许隐私域 consent/egress 端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
+      ['consent', 'egress', 'guards', 'history'].sort(),
+      `装配行只允许 guards 槽位、隐私域 consent/egress 端口与识别历史域 history 写入端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
     );
-    for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference', 'ocr/service']) {
+    // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，不是裸 `guards`
+    //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
+    assert.equal(/\bguards: gatedGuards\b/.test(ocrRegistrationLine), true, `装配行 guards 槽位必须装 gatedGuards（旗标门），实际：${ocrRegistrationLine.trim()}`);
+    assert.equal(
+      /const gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/.test(appText),
+      true,
+      'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）',
+    );
+    // ⚠ 2026-10-16（指挥裁定 `.pg17/dispatch/ruling-ocr-http-import-guard.md`）**清单收窄（保留意图）**：
+    //   原清单含 `'ocr/service'`（写于 `#104`/`8c9ace8`，当时该行还是 `{ guards }` 的**零端口注入**时代）；
+    //   `#181`（`b6f8c1b`）为装配 `history` 端口必须在 `app.ts:33`
+    //   `import { createUnwiredOcrTerminalHistoryPort, type … } from './ocr/service.ts'`，使整条 `'ocr/service'` 为假红
+    //   （**非**适配器泄漏：同域端口工厂所在地，不接触 provider/store/media）。
+    //   裁定：**不整条删掉**，收窄为"**只放行 `createUnwiredOcrTerminalHistoryPort` 这一个值符号**"——
+    //   既放行 `#181` 必需的那一个 import，又**仍然拦住** `ocr/service` 的**其它符号**（`createOcrService`、
+    //   `createOcrServiceForMode`、…）与 `ocr/store`、`ocr/provider`、`ocr/media` 的**任何**引用（含符号级）。
+    for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);
+    }
+    // **判据式护栏（r4：TS AST 路线）**：用 `ts.createSourceFile` 遍历 AST 取模块说明符，
+    // 再用「归一化后是否指向 `ocr/service.ts`」+「值符号白名单（恰 1 个）」判定。
+    // 由此**一次性消除**：注释/字符串互相干扰（含字符串里的 `/*`）、`%XX` 百分号编码、引号种类、
+    //   多行、有无分号等**整类**问题 —— 判据不再依赖任何排版假设。
+    //
+    // ⚠ **显式书面取舍（不得读成"覆盖全部形态"）**：本判据**看不到**
+    //   ① **运行时拼接**（`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``）；
+    //   ② **变量/间接 require**（`require(someVar)`、经中间模块转出）。
+    //   ③ 为何可接受：本仓 `app.ts` 是**静态源码**，本护栏的目标是拦"**显式模块引用**"的腐化；
+    //      上面两类即便写出来也**没有可核对的字面量**，属另一层（运行时/构建期）问题，见交接文档"未取得项"。
+    //   ④ 另注：四条 `includes` 走 `appText` **原文子串**，**注释不例外**（`ocr/store` 出现在注释里同样判红）。
+    const ocrVerdict = evaluateOcrImports(appText, APP_SOURCE_DIR);
+    if (ocrVerdict.length > 0) assert.fail(`app.ts 的 OCR 域模块引用不合规：${ocrVerdict.join(' ｜ ')}`);
+    const forbiddenVerdict = evaluateForbiddenSubstrings(appText);
+    if (forbiddenVerdict.length > 0) assert.fail(`app.ts 命中禁项子串：${forbiddenVerdict.join(' ｜ ')}`);
+
+    // 判据**自测**（对判据整体做负控制，不只测某条正则）：每例断言"判据必须**恰好**给出 N 条违规"。
+    // ⚠ **覆盖范围以实测为准（不得读成"任一判据退化都会失配"）**：本自测覆盖的**具体**退化形态是——
+    //   (a) **去掉 percent-decode**（`./ocr/servic%65.ts`、`./ocr/%73ervice.ts` 相关条目失配）；
+    //   (b) **把 `fail`/`assert.fail` 语义改回"只收集不判红"**（非法例违规数由 N 掉到 0 ⇒ 失配）；
+    //   (c) **删掉 `isOcrDomainTarget` 本域判据**（`./ocr/state.ts` 条目失配）；
+    //   (d) **删掉 `require()` 判据**（`require('./ocr/state.ts')` 条目失配）；
+    //   (e) **删掉"动态 import 非字面量 ⇒ OCRTEXT"判据**（`await import(someVar)` 条目失配）。
+    //   上述 (a)–(e) 均在 `SEL1…SEL5` 变异下**实测**被本自测抓住；**本清单之外的形态未逐一枚举** ✗。
+    // ⇒ 自测条数与下方数组**逐字一致**（改判据必须同步改数组与总数，否则本用例红）。
+    const selfTestCases = [
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts';", 0], // 合法 import（唯一允许的值符号）
+      ['import { createUnwiredOcrTerminalHistoryPort } from "./ocr/service.ts";', 0], // 双引号
+      [`import {${String.fromCharCode(10)}  createUnwiredOcrTerminalHistoryPort,${String.fromCharCode(10)}} from './ocr/service.ts';`, 0], // 多行
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts'", 0],   // 无分号
+      ["import { createUnwiredOcrTerminalHistoryPort } from './/ocr/service.ts';", 0], // 冗余空段（同一模块）
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts#probe';", 0], // fragment
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts?probe=1';", 0], // 查询串
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/servic%65.ts';", 0],      // 百分号编码（同一模块）
+      ["import type * as ocrTypes from './ocr/service.ts';", 0],                     // 全类型擦除
+      ["import { type OcrTerminalHistoryInput } from './ocr/service.ts';", 0],       // 内联类型说明符
+      ["import { createUnwiredOcrTerminalHistoryPort as portAlias } from './ocr/service.ts';", 0], // 合法符号别名
+      ["export { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts';", 0], // 白名单符号再导出
+      ["import { createOcrService } from './ocr/service.ts';", 1],                   // 非白名单值符号
+      ["import { createUnwiredOcrTerminalHistoryPort, createOcrService } from './ocr/service.ts';", 1],
+      ["import { createOcrService as x } from './ocr/service.ts';", 1],              // 别名按**原名**判
+      ["import * as svc from './ocr/service.ts';", 1],                               // 命名空间
+      ["import svcDefault from './ocr/service.ts';", 1],                             // 默认导入
+      ["import './ocr/service.ts';", 1],                                             // 副作用导入
+      ["export * from './ocr/service.ts';", 1],                                      // 再导出通配
+      ["export * as ns from './ocr/service.ts';", 1],
+      ["export { createOcrService } from './ocr/service.ts';", 1],
+      ["await import('./ocr/service.ts');", 1],                                      // 动态 import()
+      ['await import(`./ocr/service.ts`);', 1],                                      // 反引号动态 import()
+      ["import { createOcrService } from './ocr/%73ervice.ts';", 1],                 // percent-encoded 非法符号
+      ["import { createOcrService } from '././ocr/service.ts';", 1],                 // 冗余段 + 非法符号
+      ["import { createOcrService } from './/ocr/service.ts';", 1],
+      ["import { createOcrService } from './ocr/../ocr/service.ts';", 1],            // `..` 解析
+      ["import { createOcrService } from './ocr/service.ts?probe=1';", 1],           // 查询串 + 非法符号
+      ["import { createOcrService } from './ocr/service.ts#probe';", 1],             // fragment + 非法符号
+      ["import { normalizeLabelFields } from './ocr/state.ts';", 1],                 // 本域其它模块
+      ["import { createMemoryOcrStore } from './ocr/%73tore.ts';", 1],               // percent-encoded 禁模块
+      ["const __i1 = '/*'; import { createOcrService } from './ocr/service.ts'; const __i2 = '*/';", 1], // 字符串里的 /* 不得吞掉 import
+      ["const __m = './ocr/' + 'service.ts';", 0],                                   // 已书面声明：运行时拼接不覆盖
+      ["await import('./ocr/state.ts');", 1],                                        // 动态 import：本域其它模块 ⇒ OCRMODE
+      ["require('./ocr/state.ts');", 1],                                             // require：本域其它模块 ⇒ OCRMODE
+      ["await import(someVar);", 1],                                                 // 动态 import 非字面量 ⇒ OCRTEXT
+      ["require('./ocr/service.ts');", 1],                                           // require 指向 service ⇒ OCRDYNAMIC
+    ];
+    assert.equal(selfTestCases.length, 37, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
+    for (const [source, expectedViolations] of selfTestCases) {
+      const verdict = evaluateOcrImports(source, APP_SOURCE_DIR);
+      assert.equal(
+        verdict.length,
+        expectedViolations,
+        `判据自测未通过：期望 ${expectedViolations} 条违规，实际 ${verdict.length} 条 —— ${JSON.stringify(source)} ⇒ ${JSON.stringify(verdict)}`,
+      );
     }
     const providerText = readFileSync(new URL('../../services/api/src/ocr/provider.ts', import.meta.url), 'utf8');
     for (const network of ['fetch(', 'node:https', 'node:http', 'undici', 'axios', 'XMLHttpRequest']) {
@@ -593,12 +987,160 @@ try {
     );
     assert.ok(realSlice.length > 0, 'real 分支切片应非空');
     assert.equal(realSlice.includes('createStubOcrProvider'), false, 'real 分支不得回退替身');
-    record('8) 产品装配 real：受理前 503 PROVIDER_UNAVAILABLE、providerCalls=0、不回退替身（real-unconfigured）；+ 结构证据（app.ts 零端口注入/不 import 适配器、provider.ts 无网络客户端、real 分支无替身回退）');
+    record('8) 产品装配 real：受理前 503 PROVIDER_UNAVAILABLE、providerCalls=0、不回退替身（real-unconfigured）；+ 结构证据（app.ts 经 TS AST 核对：OCR 域只引用 service.ts 的 createUnwiredOcrTerminalHistoryPort；不 import store/provider/media/reference；provider.ts 无网络客户端；real 分支无替身回退）');
+  }
+
+  // ---- 10) 接线（本片）：OCR 作业经**共享作业读面**可读（此前该 kind 未接线 ⇒ 404）----
+  {
+    const created = await createOcr(base, tokenA, mediaIdForBucket(0));
+    assert.equal(created.response.status, 202, 'createOCR 契约规定 202');
+    const accepted = created.response.json.data;
+    assert.equal(accepted.kind, 'ocr');
+    assert.equal(accepted.state, 'queued');
+
+    // 受理后**立刻**读作业面：本片之前这里是 404 NOT_FOUND（与"作业不存在"同形、不泄露存在性）。
+    const early = await call(base, tokenA, 'GET', `${API}/jobs/${accepted.id}`);
+    assert.equal(early.status, 200, `GET /jobs/{ocrJobId} 必须 200，实际 ${early.status}：${JSON.stringify(early.json)}`);
+    assert.equal(early.headers.get('cache-control'), 'no-store');
+    assert.equal(early.json.meta.contract_version, '1.0.0');
+    assert.equal(early.json.meta.execution_mode, 'stub');
+    const observed = early.json.data;
+    assert.deepEqual(Object.keys(observed).sort(), [...JOB_KEYS].sort(), 'Job 键集合必须恰好九个（additionalProperties:false）');
+    assert.equal(early.headers.get('etag'), `"${observed.revision}"`, 'ETag 必须是资源 revision 的强 ETag');
+    assert.equal(observed.kind, 'ocr');
+    assert.equal(observed.id, accepted.id);
+    assert.equal(observed.target_ref.type, 'ocr');
+    assert.match(observed.target_ref.id, UUID_RE);
+    assert.match(observed.id, UUID_RE);
+    assert.equal(Number.isNaN(Date.parse(observed.deadline_at)), false);
+    assert.equal(Number.isNaN(Date.parse(observed.created_at)), false);
+    // **状态可见**（不再是 404）：替身无 I/O，落定极快 ⇒ 这里如实接受"已终态"，
+    // 确定性的"运行中"样本由组 12 的悬挂提供者给出；两种情形都必须**可区分**。
+    assert.ok(JOB_STATES.includes(observed.state), `state 必须落在契约七值闭集内，实际 ${observed.state}`);
+    if (observed.result === null) {
+      assert.equal(observed.error_code, null, '非终态读取不得凭空带 error_code');
+    } else {
+      assert.ok(['succeeded', 'uncertain'].includes(observed.state), 'result 只允许出现在 succeeded/uncertain');
+    }
+
+    // 成功路径：经**同一个作业读面**轮询到落定，结果过契约分支镜像（不手抄契约）
+    const settled = await waitForTerminalJob(base, tokenA, accepted.id);
+    assert.equal(settled.state, 'succeeded', `替身分桶 0 应落 succeeded，实际 ${settled.state}`);
+    assert.equal(settled.error_code, null);
+    assert.deepEqual(Object.keys(settled.result).sort(), ['kind', 'value']);
+    assert.equal(settled.result.kind, 'ocr');
+    assert.deepEqual(collectResultValueIssues('ocr', settled.result.value), [], 'result.value 必须过 ocr 分支的契约镜像');
+    assert.equal(settled.result.value.model_version, 'stub-v1', '替身必须如实标注 model_version');
+    assert.equal(settled.result.value.id, accepted.target_ref.id);
+    assert.equal(settled.result.value.revision, settled.target_ref.revision, '作业面 target_ref.revision 必须与记录 revision 一致');
+
+    // 既有记录读面与作业读面对齐（`GET /ocr/{id}` 的既有行为未变）
+    const record2 = await call(base, tokenA, 'GET', `${API}/ocr/${accepted.target_ref.id}`);
+    assert.equal(record2.status, 200);
+    assert.equal(record2.json.data.id, settled.result.value.id);
+    assert.equal(record2.json.data.revision, settled.target_ref.revision);
+
+    // 作用域：未登录 ⇒ 401；他人作业与"不存在"逐字段同形 404（不泄露存在性）
+    const guestJob = await call(base, null, 'GET', `${API}/jobs/${accepted.id}`);
+    assert.equal(guestJob.status, 401);
+    assert.equal(guestJob.json.error.code, 'SESSION_REQUIRED');
+    const foreignJob = await call(base, tokenB, 'GET', `${API}/jobs/${accepted.id}`);
+    const missingJob = await call(base, tokenB, 'GET', `${API}/jobs/${randomUUID()}`);
+    assert.equal(foreignJob.status, 404);
+    assert.equal(missingJob.status, 404);
+    assert.equal(foreignJob.json.error.code, 'NOT_FOUND');
+    assert.deepEqual(foreignJob.json.error, missingJob.json.error, '他人作业与不存在必须逐字段同形');
+    record(`10) 接线·OCR 作业经 \`GET /jobs/{id}\` 可读：200 + 九键 + kind=ocr + 状态可见（此前 404）；受理后立刻读到 state=${observed.state}；终态 state=${settled.state}/error_code=${String(settled.error_code)}/result.kind=${settled.result.kind} 且过 ocr 契约镜像；与 \`GET /ocr/{id}\` 对齐（revision=${settled.target_ref.revision}）；未登录 401／他人与不存在同形 404`);
+  }
+
+  // ---- 11) 不回归：识别域仍 200；OCR 无取消能力 ⇒ cancel 如实 503（不得 200/404）----
+  {
+    // 对照（同一次运行内）：识别域经**同一个** `/jobs/{id}` 路由仍可读 ⇒ 证明 404 的消失只来自 OCR 接线。
+    const recognition = await call(base, tokenA, 'POST', `${API}/recognitions`, {
+      headers: { 'idempotency-key': nextKey('recognitions-regression') },
+      body: { media_id: RECOGNITION_OK_MEDIA, media_revision: 1 },
+    });
+    assert.equal(recognition.status, 202, JSON.stringify(recognition.json));
+    const recognitionJob = await waitForTerminalJob(base, tokenA, recognition.json.data.id);
+    assert.equal(recognitionJob.kind, 'recognition');
+    assert.equal(recognitionJob.state, 'succeeded');
+
+    const created = await createOcr(base, tokenA, mediaIdForBucket(0));
+    assert.equal(created.response.status, 202);
+    const jobId = created.response.json.data.id;
+    const before = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(before.status, 200, '取消前必须先能读到该作业');
+
+    const cancelled = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': `"${before.json.data.revision}"`, 'idempotency-key': nextKey('cancel-ocr') },
+    });
+    assert.equal(cancelled.status, 503, `OCR 域本基线无取消能力 ⇒ 如实 503（不得 200，也不得 404）：${JSON.stringify(cancelled.json)}`);
+    assert.equal(cancelled.json.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(cancelled.json.error.retryable, true, '能力未接线属可重试（接线后同一请求即可成功）');
+
+    // 不得伪造 cancelled、不得改 revision、不得影响可读性
+    const after = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(after.status, 200);
+    assert.equal(after.json.data.state, before.json.data.state, '取消能力缺失 ⇒ 状态不得被改动（没有伪造 cancelled）');
+    assert.equal(after.json.data.revision, before.json.data.revision, '失败的取消不得递增 revision');
+
+    // 缺头次序与既有 kind 逐字一致（400/428 先于 503；由共享请求头前置校验代答）
+    const noKey = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, { headers: { 'if-match': '"1"' } });
+    assert.equal(noKey.status, 400);
+    assert.equal(noKey.json.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+    const noVersion = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'idempotency-key': nextKey('cancel-ocr-428') },
+    });
+    assert.equal(noVersion.status, 428);
+    assert.equal(noVersion.json.error.code, 'REVISION_REQUIRED');
+
+    // 越权者也不能取消他人的 OCR 作业（同形 404，而不是先告诉他"存在但不可取消"）
+    const foreignCancel = await call(base, tokenB, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': '"1"', 'idempotency-key': nextKey('cancel-ocr-b') },
+    });
+    assert.equal(foreignCancel.status, 404);
+    assert.equal(foreignCancel.json.error.code, 'NOT_FOUND');
+    record(`11) 不回归·识别域仍 200 succeeded（同一 \`/jobs/{id}\` 路由）；OCR 无取消能力 ⇒ cancel 503 ${cancelled.json.error.code}(retryable=${String(cancelled.json.error.retryable)})（不得 200/404）、状态与 revision 未被改动（state=${after.json.data.state} revision=${after.json.data.revision}）、缺头仍 400/428、越权 cancel 同形 404`);
+  }
+
+  // ---- 12) 失败可区分（**注入式接缝**：悬挂 / 强制失败；见 buildInjectedProviderApp）----
+  {
+    // 运行中：悬挂提供者（永不返回）+ 1s deadline ⇒ 作业读面**读得到** queued/running。
+    const hung = await createOcr(providerSeamBase, providerSeamToken, mediaIdForBucket(0), nextKey('seam-hang'));
+    assert.equal(hung.response.status, 202, JSON.stringify(hung.response.json));
+    const hungJob = hung.response.json.data;
+    assert.equal(hungJob.state, 'queued');
+    const runningRead = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/jobs/${hungJob.id}`);
+    assert.equal(runningRead.status, 200, `运行中必须可读（不得与"作业不存在"同形 404）：${JSON.stringify(runningRead.json)}`);
+    const running = runningRead.json.data;
+    assert.ok(['queued', 'running'].includes(running.state), `运行中状态应是 queued/running，实际 ${running.state}`);
+    assert.equal(running.error_code, null, '运行中不得带 error_code');
+    assert.equal(running.result, null, '运行中不得带 result');
+
+    // 终态（超时）：同一读面读出 `timed_out` + 契约 `error_code`（悬挂 ⇒ deadline 触发）
+    const timedOut = await waitForTerminalJob(providerSeamBase, providerSeamToken, hungJob.id);
+    assert.equal(timedOut.state, 'timed_out');
+    assert.equal(timedOut.error_code, 'PROVIDER_TIMEOUT', '超时必须带契约 error_code（不得报成无原因）');
+    assert.equal(timedOut.result, null, 'timed_out 不得携带 result');
+    assert.notEqual(timedOut.state, running.state, '失败/超时不得与"仍在处理"同形（这正是本片要解封的）');
+    // 记录面在失败下**仍是 404**（失败不产出记录）⇒ 如实说明"为什么非有作业读面不可"
+    const recordGap = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/ocr/${hungJob.target_ref.id}`);
+    assert.equal(recordGap.status, 404, '失败/超时在记录面上与"仍在处理"同形（既有事实，本片不改 OCR 域语义）');
+
+    // 强制失败（非超时失败码）：`failed` + 契约 `error_code`，且与 `timed_out` 可区分
+    const forced = await createOcr(providerSeamBase, providerSeamToken, mediaIdForBucket(1), nextKey('seam-failed'));
+    assert.equal(forced.response.status, 202, JSON.stringify(forced.response.json));
+    const failed = await waitForTerminalJob(providerSeamBase, providerSeamToken, forced.response.json.data.id);
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.error_code, 'PROVIDER_OUTCOME_UNKNOWN');
+    assert.equal(failed.result, null);
+    assert.notEqual(failed.state, timedOut.state, 'failed 与 timed_out 必须彼此可区分');
+    record(`12) 失败可区分（接缝：悬挂⇒timed_out+PROVIDER_TIMEOUT／强制⇒failed+PROVIDER_OUTCOME_UNKNOWN）：同一 \`GET /jobs/{id}\` 200 且 state/error_code 可见 —— 运行中 state=${running.state}/error_code=${String(running.error_code)}；超时 state=${timedOut.state}/error_code=${String(timedOut.error_code)}；强制失败 state=${failed.state}/error_code=${String(failed.error_code)}；运行中与失败态**不再同形**；记录面在失败下仍 404（如实）`);
   }
 
   console.log(`PASS ${results.length} 组：经真实装配的 app（buildApp）+ 本机回环 HTTP；合成身份/替身提供者/内存 store；未联网、未连库、未调真实供应商`);
   console.log('NOTE 未覆盖（如实声明）：小程序 identify 页标签模式与打包白名单、真实 OCR 供应商、真实登记库/用量来源、标签类真实样本 0 ⇒ 不声称任何准确率、真机、PG 持久化');
-  console.log('NOTE 唯一非产品装配的一段：组 3d「登记库未接线 ⇒ unavailable」用路由插件 deps 接缝构造（产品装配刻意零端口注入，故该分支无法经产品装配构造）');
+  console.log('NOTE 非产品装配的两段（均为路由插件 deps 接缝，产品装配刻意零端口注入）：组 3d「登记库未接线 ⇒ unavailable」；组 12「失败/超时终态与确定性运行中」（悬挂/失败提供者 + 1s deadline）');
 } finally {
-  await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close()]);
+  await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close(), providerSeamApp.close()]);
 }

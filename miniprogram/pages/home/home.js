@@ -36,7 +36,16 @@ Page({
     this._handoff = true
     navigation.goLogin(op.id)
   },
-  onEntryTap: function () { this.openGated('/pages/identify/identify') },
+  // GY-I12：能力卡把既有 key 透传过来（`data-key="{{item.key}}"`），按 key 分派目标：
+  // 只有「语音提问」（key `voice`，说话提问，也可打字）进播报页 `/pages/voice/voice`
+  // （该页已在 utils/navigation.js 白名单内）；其余 key 与无 key（hero 的「开始识别」）
+  // 一律保持原有进识别页的口径。门禁与未登录行为完全复用 openGated，不放宽任何判定。
+  onEntryTap: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+    const key = dataset && typeof dataset.key === 'string' ? dataset.key : ''
+    if (key === 'voice') { this.openGated('/pages/voice/voice'); return }
+    this.openGated('/pages/identify/identify')
+  },
   goKnowledge: function () { this.openGated('/pages/knowledge/knowledge') },
   goReference: function () { this.openGated('/pages/reference/reference') },
   goReferenceSeed: function () { this.openGated('/pages/referenceseed/referenceseed') },

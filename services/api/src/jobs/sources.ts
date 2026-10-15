@@ -14,8 +14,14 @@
  * 读面复用已合并的 `tts/service.ts` 的 `inspectJob`；本基线**没有**取消入口 ⇒ 与
  * `createTranscriptionJobSource` 同形**省略 `cancel`**（注册表对已存在的合成作业如实 503
  * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
+ *
+ * GY-I10 追加（**纯追加，不改既有四个源**）：新增 `createOcrJobSource`（#10 标签 OCR 域）。
+ * 读面复用已合并的 `ocr/service.ts` 的 `getJob`（域内 `toJob` 产物**已是**契约 `Job` 九键形状）；
+ * OCR 域本基线**没有**取消入口 ⇒ 同样**省略 `cancel`**（注册表对已存在的 OCR 作业如实 503
+ * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
  */
 import { ApiError } from '../errors.ts';
+import type { OcrService } from '../ocr/service.ts';
 import type { RecognitionService } from '../recognitions/service.ts';
 import type { SpeechService } from '../speech/service.ts';
 import type { SynthesisService } from '../tts/service.ts';
@@ -113,6 +119,40 @@ export function createSynthesisJobSource(service: SynthesisService): JobSourcePo
     async get(input: JobSourceGetInput) {
       try {
         return await service.inspectJob({ userId: input.userId, jobId: input.jobId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * 标签 OCR 域作业源（#10，**纯追加**）。
+ *
+ * **只读复用**已合并的 `ocr/service.ts`：`getJob({userId, jobId})` 是**域内**读面
+ * （契约里 OCR 只有 `POST /ocr` / `GET /ocr/{id}` / `DELETE` / `PATCH …/correction` / `POST …/verify`，
+ * **没有** OCR 专属的任务状态端点 ⇒ `GET /jobs/{id}` 是读 `JobState` 与 `error_code` 的**唯一**契约面：
+ * `GET /ocr/{id}` 只在产出记录后可读，`failed`/`timed_out` 不产出记录 ⇒ 与"仍在处理"同形）。
+ *
+ * 归属与不存在**同形**：域内 `getOwnedJob` 对「不存在」与「他人作业」都抛 `ApiError('NOT_FOUND')`
+ * （非法 uuid 亦同），本适配层把它映射为 `null` ⇒ 注册表无法、也不需要区分二者（与识别/转写/合成源同一口径）。
+ *
+ * **取消能力：本基线没有**——`ocr/service.ts` 只提供受理/读取/校正/核对/删除，**没有**取消入口；
+ * 派单明令「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
+ * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）** 如实拒绝
+ * （**不伪造** `cancelled`，也**不**用 404 谎称作业不存在）。本层不判状态、不改 revision。
+ *
+ * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中
+ * `JobResult` 的 `ocr` 分支镜像在 `./result-shape.ts` 的 `OCR`（`id`/`revision`/`raw_fields`/
+ * `corrected_fields`/`verification`/`model_version` 六键，`additionalProperties:false`）。
+ */
+export function createOcrJobSource(service: OcrService): JobSourcePort {
+  return {
+    kind: 'ocr',
+    async get(input: JobSourceGetInput) {
+      try {
+        return await service.getJob({ userId: input.userId, jobId: input.jobId });
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;

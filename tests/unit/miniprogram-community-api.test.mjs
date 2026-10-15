@@ -9,6 +9,11 @@
  *   - 错误封套按契约错误码抛出，并保留规则层原因码（供页面如实展示"未通过审核"）；
  *   - 401/403 清本地会话并报 `SESSION_REQUIRED`；非本会话世代的迟到响应被丢弃。
  *
+ * 末节追加**页面口径**回归（切片 B2-1，Refs #15／#14）：把**真实**投稿页接到同一个真实适配层
+ * 与合成 `wx` 上，核对 201 之后的提示只按服务端返回的 `visibility`/`audit_state` 如实给出，
+ * 并与**真实**详情页／列表页的既有标注逐字对照（不另写一套期望文案）。门禁、真机渲染与
+ * 真实审核能力不在该节范围（门禁另有 miniprogram-login-return-to.test.mjs 覆盖）。
+ *
  * 边界：替身 `wx` 是**合成**的；本文件不证明页面视觉、真机或真实审核能力。
  */
 import { test } from 'node:test';
@@ -54,11 +59,16 @@ function errorEnvelope(code, details = []) {
   };
 }
 
+/** 让用例自行应答（`respond` 返回该哨兵时替身不代替用例回答）；既有用例不返回它，行为不变。 */
+const DEFER = Symbol('defer');
+
 /** 载入真实适配层；`respond` 决定每个请求的替身响应。 */
 function load(respond, file = 'miniprogram/utils/community-api.js', options = {}) {
   const loggedIn = options.loggedIn !== false;
   const calls = [];
   const cleared = { count: 0 };
+  const toasts = [];
+  const routes = [];
   const auth = {
     isLoggedIn: () => loggedIn,
     getSession: () => loggedIn ? { accessToken: 'synthetic-token', audience: 'user', expiresAt: '2099-01-01T00:00:00.000Z', executionMode: 'stub' } : null,
@@ -70,9 +80,12 @@ function load(respond, file = 'miniprogram/utils/community-api.js', options = {}
     request(options) {
       calls.push(options);
       const result = respond(options, calls.length);
+      if (result === DEFER) return;
       if (result && result.fail) { options.fail({ errMsg: 'synthetic network failure' }); return }
       options.success(result);
     },
+    // 页面级用例：只记录，不外发（适配层本身不弹提示）。
+    showToast(options) { toasts.push(options); },
   };
   const box = { exports: {} };
   vm.runInNewContext(readFileSync(resolve(root, file), 'utf8'), {
@@ -80,7 +93,7 @@ function load(respond, file = 'miniprogram/utils/community-api.js', options = {}
     wx,
     require: (id) => (id === './auth' ? auth : { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }),
   });
-  return { api: box.exports, calls, cleared };
+  return { api: box.exports, calls, cleared, toasts, routes, wx };
 }
 
 /** 跨 vm realm 的形状比较：对象的原型来自另一个 realm，deepStrictEqual 会因此失败。 */
@@ -395,4 +408,159 @@ test('消息：入参预检（非法 uuid / revision）在本地即拒绝，不�
   assert.equal((await rejects(h.api.markMessageRead(MESSAGE_ID, 0))).code, 'INVALID_INPUT');
   assert.equal((await rejects(h.api.markMessageRead(MESSAGE_ID, 1.5))).code, 'INVALID_INPUT');
   assert.equal(h.calls.length, 0, '本地拒绝不得发出任何请求');
+});
+
+// ---------------------------------------------------------------------------
+// 切片 B2-1（Refs #15, Refs #14）：投稿页不得无条件宣称"已通过先行审核"。
+//
+// 断点（侦察实测）：`communitycreate.js` 的成功分支此前**无条件**
+// `wx.showToast({ title: '已发布并通过先行审核', icon: 'success' })`；而服务端返回的
+// `Post.audit_state` 可能是 `pending`/`quarantined`/`rejected`、`visibility` 也可能不是
+// `published` —— 那句"已通过"是服务端没说过的话。
+//
+// 口径来源＝**既有**的正确实现，不另立第二套：
+//   - 详情页 `communitydetail.js:105-108`：`publicLabel` = `published ∧ approved` ?
+//     '已通过先行审核' : '未公开／待审'；`stateLabel` = hidden ? '已下架（仅本人可见）' :
+//     (`published ∧ approved` ? '' : '待审／未公开')；
+//   - 列表页 `community.js:130-133`：`stateLabel` 同判据、同措辞。
+// 因此这里在同一个 vm 里装载**真实的**三页，用**同一份**服务端返回做对照：投稿页的提示必须与
+// 详情页／列表页的作者侧标签（`stateLabel`）逐字一致，只有真正通过时才允许出现"已通过"。
+// ---------------------------------------------------------------------------
+const dataCache = new Map();
+/** 真实数据目录（`miniprogram/data/*.js` 只做 `module.exports`，无 wx 依赖）。 */
+function dataModule(name) {
+  if (!dataCache.has(name)) {
+    const box = { exports: {} };
+    vm.runInNewContext(readFileSync(resolve(root, `miniprogram/data/${name}.js`), 'utf8'), { module: box });
+    dataCache.set(name, box.exports);
+  }
+  return dataCache.get(name);
+}
+
+/**
+ * 装载**真实页面**（投稿页／详情页／列表页）：接到同一份真实适配层与同一份合成 `wx`。
+ * 门禁/字体/导航用最小替身：本用例只驱动提交流程本身，受保护页门禁另有单列用例覆盖。
+ */
+function loadPage(h, name) {
+  const stubs = {
+    '../../utils/community-api': h.api,
+    '../../utils/auth': { requireLogin() {} },
+    '../../utils/page-gate': { start() {}, cancel() {} },
+    '../../utils/font-scale': { DEFAULT_FONT_SCALE: 1, applyFontScale() {}, currentFontScale() { return 1 } },
+    '../../utils/navigation': {
+      openTarget(url, resume, done) { h.routes.push({ url: url, resume: resume }); if (done) done(); },
+    },
+    '../../data/crops': dataModule('crops'),
+    '../../data/regions': dataModule('regions'),
+  };
+  let definition = null;
+  vm.runInNewContext(readFileSync(resolve(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
+    Page: (value) => { definition = value; },
+    wx: h.wx,
+    require: (id) => {
+      if (!Object.prototype.hasOwnProperty.call(stubs, id)) throw new Error('未预期的依赖：' + id);
+      return stubs[id];
+    },
+  });
+  assert.ok(definition && typeof definition === 'object', `${name} 未注册 Page`);
+  const page = Object.assign({}, definition);
+  page.data = Object.assign({}, definition.data);
+  page.setData = function (patch) { Object.assign(this.data, patch); };
+  return page;
+}
+
+/** 发起一次投稿提交（替身按 `DEFER` 不代替用例回答）：先钉住"服务端还没回话"的中间态。 */
+function submit(h) {
+  const page = loadPage(h, 'communitycreate');
+  page.setData({ title: '稗草防除的一次记录', body: '按标签说明选择登记药剂。' });
+  page.onSubmit();
+  assert.equal(h.calls.length, 1, '提交必须真的发出请求（不得本地乐观成功）');
+  const request = h.calls[0];
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'http://127.0.0.1:4318/api/v1/posts');
+  assert.ok(request.header['Idempotency-Key'].length >= 8, '写路径必须带幂等键');
+  assert.equal(request.header['If-Match'], undefined, '创建不需要 If-Match');
+  assert.deepEqual(plain(request.data), { title: '稗草防除的一次记录', body: '按标签说明选择登记药剂。', media_ids: [] });
+  assert.deepEqual(h.toasts, [], '服务端回话之前不得预告任何结果');
+  assert.deepEqual(h.routes, [], '服务端回话之前不得跳详情页');
+  assert.equal(page.data.submitting, true);
+  return page;
+}
+
+function flush() { return new Promise((resolve) => setImmediate(resolve)); }
+
+/** 四种审核结论＋两种非公开组合：服务端返回什么，页面就说什么。 */
+const AUDIT_CASES = [
+  ['通过（published ∧ approved）', 'published', 'approved', '已通过先行审核', 'success'],
+  ['待审（审核未结论）', 'published', 'pending', '待审／未公开', 'none'],
+  ['隔离（quarantined）', 'published', 'quarantined', '待审／未公开', 'none'],
+  ['拒绝（rejected）', 'published', 'rejected', '待审／未公开', 'none'],
+  ['未公开（private ∧ approved）', 'private', 'approved', '待审／未公开', 'none'],
+  ['已下架（hidden）', 'hidden', 'approved', '已下架（仅本人可见）', 'none'],
+];
+for (const [label, visibility, audit_state, expectedTitle, expectedIcon] of AUDIT_CASES) {
+  test(`投稿页 B2-1：${label} ⇒ 按服务端返回如实提示，且与详情页／列表页标注逐字一致`, async () => {
+    const h = load(() => DEFER);
+    const page = submit(h);
+    h.calls[0].success({ statusCode: 201, data: envelope(post({ visibility, audit_state })) });
+    await flush();
+
+    assert.equal(h.toasts.length, 1, '一次提交只应有一个结果提示');
+    assert.equal(h.toasts[0].title, expectedTitle);
+    assert.equal(h.toasts[0].icon, expectedIcon);
+    assert.equal(page.data.submitting, false);
+    assert.equal(page.data.errorText, '');
+    assert.deepEqual(h.routes, [{ url: '/pages/communitydetail/communitydetail?id=' + POST_ID, resume: true }],
+      '受理后仍进详情页（成功路径行为不回归）');
+
+    // 同一份服务端返回，三个页面必须说同一件事（对照**既有**实现，而不是另写一套期望文案）。
+    const item = post({ visibility, audit_state });
+    const detail = loadPage(h, 'communitydetail')._decoratePost(item);
+    const list = loadPage(h, 'community')._decorate([item])[0];
+    assert.equal(detail.stateLabel, list.stateLabel, '详情页与列表页本就必须同口径');
+    if (visibility === 'published' && audit_state === 'approved') {
+      assert.equal(detail.publicLabel, '已通过先行审核');
+      assert.equal(detail.stateLabel, '', '真正通过时详情页不显示失效标签');
+      assert.equal(h.toasts[0].title, detail.publicLabel, '只有真正通过才可提示通过，且逐字等于详情页的公开标签');
+    } else {
+      assert.equal(h.toasts[0].title, detail.stateLabel, '与详情页作者侧标签逐字一致');
+      assert.equal(h.toasts[0].title, list.stateLabel, '与列表页作者侧标签逐字一致');
+      assert.doesNotMatch(h.toasts[0].title, /已通过/, '未通过审核时不得出现"已通过"');
+      assert.doesNotMatch(JSON.stringify(page.data), /已通过/, '页面整体（含 errorText）不得出现"已通过"');
+    }
+  });
+}
+
+/** 失败路径：错误码路径仍只走 `errorText`（页面不得改成"已通过"式成功提示）。 */
+const FAILURE_CASES = [
+  ['422 审核隔离／未结论', { statusCode: 422, data: errorEnvelope('INPUT_UNCERTAIN', [{ field: 'reason_codes', code: 'NOT_SCREENED' }]) },
+    { code: 'INPUT_UNCERTAIN' }],
+  ['400 明确驳回', { statusCode: 400, data: errorEnvelope('INVALID_REQUEST', [{ field: 'reason_codes', code: 'DANGEROUS_MIX' }]) },
+    { code: 'INVALID_REQUEST', details: ['DANGEROUS_MIX'] }],
+  ['409 目标不可用', { statusCode: 409, data: errorEnvelope('OBJECT_UNAVAILABLE') }, { code: 'OBJECT_UNAVAILABLE' }],
+  ['503 未接线真实存储', { statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }, { code: 'PROVIDER_UNAVAILABLE' }],
+];
+for (const [label, reply, error] of FAILURE_CASES) {
+  test(`投稿页 B2-1 失败路径不回归：${label} ⇒ 只展示适配层的如实文案，不弹任何成功提示`, async () => {
+    const h = load(() => DEFER);
+    const page = submit(h);
+    h.calls[0].success(reply);
+    await flush();
+    assert.deepEqual(h.toasts, [], '未被受理时不得弹任何提示');
+    assert.deepEqual(h.routes, [], '未被受理时不得跳详情页');
+    assert.equal(page.data.submitting, false);
+    assert.equal(page.data.errorText, h.api.message(error), '页面展示的就是适配层的如实文案');
+    assert.doesNotMatch(page.data.errorText, /已通过/);
+  });
+}
+test('投稿页 B2-1 失败路径不回归：网络未能确认时同样不弹成功提示', async () => {
+  const h = load(() => DEFER);
+  const page = submit(h);
+  h.calls[0].fail({ errMsg: 'synthetic network failure' });
+  await flush();
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.routes, []);
+  assert.equal(page.data.submitting, false);
+  assert.equal(page.data.errorText, h.api.message({ code: 'NETWORK_UNCERTAIN' }));
+  assert.doesNotMatch(page.data.errorText, /已通过/);
 });
