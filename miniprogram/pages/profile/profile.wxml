@@ -155,6 +155,8 @@
       status="{{guest ? 'guest' : 'stub'}}"
       title="{{guest ? '请先登录' : '收藏与识别历史在独立页面'}}"
       desc="{{guest ? '当前会话尚未通过服务端核实，请前往登录页。' : '本页不展示收藏与历史明细：请用上方“我的收藏”和“识别历史”进入对应页面。那两个页面完全由服务端读取，失败时如实报错，不会用本地数据顶替。'}}"
+      action-text="{{guest ? '去登录' : ''}}"
+      bind:action="onLogin"
     ></state-view>
   </view>
 </view>

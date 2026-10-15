@@ -11,6 +11,8 @@
     status="guest"
     title="请先登录"
     desc="登录后才能收到评论、点赞、审核结果与系统提醒。"
+    action-text="去登录"
+    bind:action="onLogin"
   ></state-view>
 
   <block wx:else>

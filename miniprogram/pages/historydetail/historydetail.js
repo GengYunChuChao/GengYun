@@ -166,7 +166,13 @@ Page({
     })
   },
 
+  // GY-I04 6-A：与 page-gate 同一登录口径（登记本页含记录 id 为返回目标 → reLaunch 登录页），
+  // 登录成功后回到本页；门禁拦截语义不变（未登录仍被拦，按钮不放行任何数据）。
+  // N1（对抗性审查 §4）：核实失败或在途时点按钮此前无可见反应。核实成功（ok）说明会话
+  // 已获服务端确认 ⇒ 取消被本次核实取代的旧门禁周期，并按「重新进入本页」重跑门禁，
+  // 让页面可见地放行；ok=false 时 requireLogin 已跳转登录页（可见）。两者都不放行数据。
   onLogin: function () {
-    wx.navigateTo({ url: '/pages/login/login' })
+    const self = this
+    auth.requireLogin(function (ok) { if (ok) { pageGate.cancel(self); self.onShow() } })
   }
 })
