@@ -32,6 +32,9 @@ function fixture() {
     if (b.failNextRoute) { b.failNextRoute = false; opts.fail?.({}); }
     else opts.success?.({});
   };
+  // 切片 E N1：门禁一旦放行，各页会立刻发业务读取。这里给业务 API 客户端一个「永不落地」的
+  // 替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
+  const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
   globalThis.wx = wx;
   globalThis.getCurrentPages = () => b.pages;
   for (const file of ['auth.js', 'navigation.js']) delete requireHere.cache[requireHere.resolve(join(directory, 'utils', file))];
@@ -58,7 +61,7 @@ function fixture() {
     };
     vm.runInNewContext(readFileSync(join(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
       Page: (value) => { def = value; }, wx, console,
-      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/profile-api') ? profile : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : { localEnabled: () => false },
+      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/profile-api') ? profile : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : id.endsWith('-api') ? pendingApi : { localEnabled: () => false },
     });
     const page = { ...def, route: `pages/${name}/${name}`, options: {}, data: { ...def.data }, setData(value) { Object.assign(this.data, value); } };
     b.pages = [page]; return page;
@@ -254,6 +257,62 @@ test('missing navigation dependency remains a diagnostic error, never swallowed 
   const source = readFileSync(join(root, 'miniprogram/utils/auth.js'), 'utf8');
   assert.throws(() => vm.runInNewContext(source, { require(id) { if (id === './navigation') throw Error('navigation missing'); return {}; } }), /navigation missing/);
 });
+
+// ---------------------------------------------------------------------------
+// 切片 E（对抗性审查报告 §4 N1）：community / communitydetail 的门禁核实**失败或在途**时
+// 点「去登录」此前无任何可见反应（页面停在游客态，需离开重进）。最小修法同 6-A 先例＝按钮
+// 回调在核实成功（ok）时重跑本页门禁 ⇒ 页面可见地放行。覆盖：
+//   ① 门禁那一轮核实仍在途时点按钮 ⇒ 本次核实通过后必须重跑门禁并放行本页；
+//      门禁第 1 轮的迟到响应不得关闭已放行的页面；
+//   ② 护栏（改前即绿，防「提示但放行」）：核实失败时按钮只去登录页，绝不放行、无业务请求。
+// ---------------------------------------------------------------------------
+const N1_PAGES = [['community', null], ['communitydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }]];
+// 门禁放行判据：gatePassed 页看 gatePassed，guest 页看 !guest。
+const opened = (page) => page.data.gatePassed === undefined ? page.data.guest === false : page.data.gatePassed === true;
+for (const [name, options] of N1_PAGES) {
+  test(`${name}: 门禁在途时点「去登录」⇒ 核实成功后本页可见放行（N1）`, () => {
+    const b = fixture();
+    b.storage.set('gengyun.session', cache());
+    const page = b.page(name);
+    if (options) page.options = options;
+    page.onShow();                                  // 门禁第 1 轮核实（在途，先不回答）
+    assert.equal(b.requests.length, 1); assert.equal(b.requests[0].url.endsWith('/auth/session'), true);
+    assert.equal(opened(page), false, '核实在途时仍是游客态（fail-closed）');
+    page.onLogin();                                 // 在途时点「去登录」
+    assert.equal(b.requests.length, 2, '按钮自己发起一次核实');
+    verified(b.requests[1]);                        // 服务端确认会话有效 ⇒ 必须出现可见反馈
+    assert.equal(b.requests.length, 3, '核实成功后必须重跑本页门禁（可见放行），不得静默无反应');
+    verified(b.requests[2]);                        // 重跑的门禁核实通过
+    assert.equal(opened(page), true, '页面必须可见放行');
+    assert.equal(b.nav.peekReturnTo(), null, '放行后不得留下待返回目标');
+    assert.ok(b.routes.every((entry) => entry.url === b.nav.LOGIN), '不得跳向任何受保护目标');
+    assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '门禁之前不得发生业务请求');
+    verified(b.requests[0]);                        // 门禁第 1 轮的迟到响应（已被取代）
+    assert.equal(opened(page), true, '迟到的门禁核实不得关闭已放行的页面');
+  });
+  test(`${name}: 核实失败时点「去登录」只去登录页，可见且不放行（N1 护栏）`, () => {
+    for (const outcome of ['rejected', 'network']) {
+      const b = fixture();
+      b.storage.set('gengyun.session', cache());
+      const page = b.page(name);
+      if (options) page.options = options;
+      page.onShow();
+      const first = b.requests[0];
+      if (outcome === 'network') first.fail({}); else first.success({ statusCode: 401, data: {} });
+      assert.equal(opened(page), false);
+      page.onLogin();                                       // 点「去登录」
+      const last = b.requests.at(-1);
+      if (last !== first) {                                 // 网络失败不清会话 ⇒ 按钮再核实一次
+        assert.equal(last.url.endsWith('/auth/session'), true);
+        if (outcome === 'network') last.fail({}); else last.success({ statusCode: 401, data: {} });
+      }
+      assert.equal(b.routes.at(-1).url, b.nav.LOGIN, '核实失败必须去登录页（可见反馈）');
+      assert.equal(b.routes.at(-1).method, 'reLaunch');
+      assert.equal(opened(page), false, '不得因点按钮而放行');
+      assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '不得发生业务请求');
+    }
+  });
+}
 
 const detailCases = [
   ['referencedetail', 'gy-i03-hb-001', 'detail'],
