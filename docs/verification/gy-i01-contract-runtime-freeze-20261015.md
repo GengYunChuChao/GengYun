@@ -266,7 +266,7 @@ $ git diff --name-only origin/main -- packages/contracts/
 | 平台 | `packages/contracts/runtime-baseline.json`（`platform` 记 `Windows x64`） | 未约束 | `Microsoft Windows 11 家庭版 中文版`，NT `10.0.26200.0` | `(Get-CimInstance Win32_OperatingSystem).Caption`、`[System.Environment]::OSVersion` | 仅登记（非兼容结论） |
 | 依赖（API） | `services/api/package.json:21-22` | fastify `5.12.5`、pg `8.23.1` | 5.12.5、8.23.1 | `npm ls … --depth=0` | 一致 |
 | 依赖（后台） | `apps/admin/package.json:18-23` | vue `3.5.43`、@vitejs/plugin-vue `6.0.9`、@vue/compiler-sfc `3.5.43`、vite `7.3.6` | 同左，逐项一致 | `npm ls … --depth=0` | 一致 |
-| 依赖（根） | `package.json:28-31` | typescript `5.9.3`、@types/node `24.19.1` | typescript 5.9.3（实测）；**@types/node 未测** | `npm ls … --depth=0` | typescript 一致；@types/node 列为未取得 |
+| 依赖（根） | `package.json:28-31`（`:29` `@types/node`、`:30` typescript） | typescript `5.9.3`、@types/node `24.19.1` | typescript `5.9.3`、@types/node `24.19.1` | `npm ls … --depth=0`、`npm ls @types/node --depth=0` | **逐项一致**（r2 补齐：`npm ls @types/node --depth=0` ⇒ `@types/node@24.19.1`，与 `package.json:29` 相同；初版"@types/node 未测"一条**已关闭**） |
 | 锁文件策略 | `package-lock.json`（已提交）、`.gitignore` 无锁文件例外 | `npm ci` 锁文件安装 | `lockfileVersion = 3`、156 条 `packages`、`npm ci` exit 0（103 包） | `node -e "…package-lock.json…"`、`npm ci` | 成立 |
 | 微信基础库 | `project.config.json:7`、`miniprogram/project.config.json:27` | `libVersion: 3.17.3` | **本次未实测**（本片未开微信开发者工具）；历史实测见 4.3 | — | **未取得** |
 
@@ -426,12 +426,13 @@ $ git diff --check                # 无输出
 | **真机基础库／真机渲染** | **未取得** | 本片未开微信开发者工具；历史记录只到**模拟器** `platform=devtools`（`docs/verification/gy-i02-clean-repro-20261014.md:337-338`） | 真机走查（属 #23 等） |
 | **本次微信工具编译／界面检查** | **未取得** | 本片是纯文档记录，不启工具、不编译 | `local-wechat.yml` 触发的检查 |
 | **若仅改契约文件的 CI 拦截** | **未取得** | `packages/contracts/**` 不在 `local-wechat.yml` 的 `paths`（`:4-20`）⇒ 契约不可改的机器断言**不会仅因改契约而被触发** | §5.2 第 2 点 |
-| **`sha256sum` 交叉复核** | **未取得** | 本机（Windows）无 `sha256sum` | 可在 Linux/WSL 复算比对 |
+| **`sha256sum` 交叉复核** | **已取得（Git for Windows 自带 GNU coreutils 8.32，非 Linux）** | r2 以 `git cat-file blob <blob>` 送 `sha256sum` 复核 §2.2(b) 五行 ⇒ **5/5 逐字符相同**（原始输出：仓库外 `fix-r2\crosscheck-lf.txt` 第 (2) 段） | Linux／CI 侧仍未实跑；复核时直接用 §2.2(b) 命令 |
+| **CI（`ubuntu-24.04`）实跑 §2.2(b) 命令** | **未取得** | 本片未 push ⇒ 无 Actions 运行；r2 的本机复核是 Windows 侧三种 shell（cmd.exe／Git Bash／PowerShell 5.1） | 建 PR 后在任一 Linux runner 复跑 §2.2(b)（判据跨平台，预期 5/5 相同） |
 | **`runtime-baseline.json` 的陈旧声明更正** | **未做（有意）** | 该文件属冻结件，本片不改；`verification.clean_install = "pending"` 与 §3.3 实测不一致 | 待监工裁定 |
 
 ## 8 本片结论与边界
 
-- **契约侧**：`upstream/main = 24fac03` 上确实存在可冻结的正式契约三件（`openapi.json`／`operations.json`／`states.json`），本记录给出其**实测 sha256 与 git blob 指纹**（§2），并引用仓库既有政策说明**冻结生效须由监工判定**（§2.4）——本记录**不宣布冻结**。
+- **契约侧**：`upstream/main = 24fac03` 上确实存在可冻结的正式契约三件（`openapi.json`／`operations.json`／`states.json`），本记录给出其**实测 git blob 指纹与 LF 归一化 sha256（跨平台判据）＋ LF 字节**（§2.2(b)），并登记本机 CRLF 工作区 sha256 与字节（§2.2(a)，**机器相关、不作判据**）；并引用仓库既有政策说明**冻结生效须由监工判定**（§2.4）——本记录**不宣布冻结**。
 - **运行版本侧**：Node／npm／Python／依赖精确版本／锁文件策略均有**本地实测**读数；CI 侧只有**配置字面值**（§4），二者**分述**，未混写。
 - **门禁侧**：本记录**无机器门禁**，靠人工复核（§5.1 实验证伪了"有校验"的假设）；"不得修改冻结契约"这条机器断言确实存在且可被触发，但有 §5.2 列出的三点限制。
 - **未取得项**已在 §7 单列，**不计入通过**。
@@ -444,4 +445,4 @@ $ git diff --check                # 无输出
 - **未 push、未合并、未 force**；写手不持有 GitHub 凭据。
 - **未读取或打印任何密钥**；§3.2 的 `--runtime` 在无凭据 stub 子进程中运行，不监听端口、不请求业务服务。
 - 待监工裁定的两处**陈旧／待补**：`packages/contracts/runtime-baseline.json` 的 `verification.clean_install: "pending"`（与 §3.3 实测不一致）；`docs/architecture/validation.md:31` 的历史结论（与本次实测状态不同）。二者均**属冻结件/历史记录，本片有意未改**。
-- **模型标注（如实）**：派单指定 `provider = wb-writer`／`model = deepseek-v4.1-flash`，推理等级「高」。**推理等级无法通过工具参数下发**，仅在派单文件与本记录中**声明**，本片不据此声称参数合规。
+- **模型标注（如实）**：初版与 r2 返修单均声明 `model = deepseek-v4.1-flash`（r2 按**会话继承模型**执行，与派单一致）；推理等级（「高」）**无法通过工具参数下发**，仅在派单文件与本记录中**声明**，本片不据此声称参数合规。
