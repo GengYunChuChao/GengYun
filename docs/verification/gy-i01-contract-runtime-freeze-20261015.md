@@ -15,7 +15,7 @@
 | **未取得 CI 读数** | 是（本分支无 CI 运行记录；本文**不把 CI 配置当成已验证**） |
 
 原始日志（UTF-8）另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\`：`test-docs.txt`、`test-docs-after.txt`、`test-docs-final.txt`、`test-contract.txt`、`test-contract-final.txt`、`validate-contracts.txt`、`test-contracts-py.txt`、`verify-status.txt`、`verify-status-runtime.txt`、`verify-status-runtime-final.txt`、`hashes.txt`、`npm-ls.txt`、`versions.txt`、`ui-adaptive-baseline.txt`、`gate-diff.txt`、`selfcheck-a.txt`、`selfcheck-b.txt`。
-本轮返修（r2）日志另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\fix-r2\`：`crosscheck-lf.sh`／`crosscheck-lf.txt`（跨平台复核命令原样实跑＋GNU `sha256sum` 独立复核）、`from-doc-cmd.txt`（从本文件 §2.2(b) 提取的命令原文）＋`run-from-doc.cmd`／`run-from-doc.sh`／`run-from-doc-ps51.ps1`（三种 shell 的 runner）、`gate-x-cmd.txt`／`gate-x-bash.txt`／`gate-x-ps51.txt`（三 shell 原始输出）、`gate-negative-control-r2.txt`（负控制）、`gate-r2-final.txt`（返修门禁）、`check-eol.sh`／`check-eol.txt`（行尾检查）、`diag-quoting.sh`／`diag-msys.sh`／`repro-min.sh`（shell 引号差异定位）。
+本轮返修（r2）日志另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\fix-r2\`：`crosscheck-lf.sh`／`crosscheck-lf.txt`（跨平台复核命令原样实跑＋GNU `sha256sum` 独立复核）、`from-doc-cmd.txt`（从本文件 §2.2(b) 提取的命令原文）＋`run-from-doc.cmd`／`run-from-doc.sh`／`run-from-doc-ps51.ps1`（三种 shell 的 runner）、`gate-x-cmd.txt`／`gate-x-bash.txt`／`gate-x-ps51.txt` 及最终 HEAD 复跑副本 `gate-x-cmd-final.txt`／`gate-x-bash-final.txt`／`gate-x-ps51-final.txt`（三 shell 原始输出）、`gate-negative-control-r2.txt`（负控制）、`gate-r2-final.txt`（返修门禁）、`check-eol.sh`／`check-eol.txt`（行尾检查）、`from-dispatch-verbatim.txt`／`repro-dispatch-verbatim.cmd`／`.txt`／`check-verbatim.sh`／`.txt`（派单第 25 行命令**漏印一对数组括号**的逐字节复现：原样执行抛 `TypeError … Received type string ('blob')`）、`diag-quoting.sh`／`diag-msys.sh`／`repro-min.sh`（shell 引号差异定位）。
 本记录在基线 `24fac03` 之上**只新增这一份文档**（`git diff --name-only upstream/main...HEAD` 实测见 §6.1）；该提交的短 SHA 以回传 handoff 为准。
 
 **修订记录（r2，2026-10-15；返修单 `.pg17/dispatch/issue1-freeze-fix.md`，2026-10-15）**：增量复审判「需修改」⇒ 本版只改本文档、修正三处：**B1（阻塞）** §2 改以 **LF 归一化 sha256** 为跨平台判据并写入跨平台复核命令（原 CRLF 工作区值保留，降级为"仅登记、不作判据"）；**C1** §4.2 微信基础库引用真身由 `local-wechat.yml:6` 更正为 `.github/workflows/engineering-shell.yml:6`；**C2** §1.1#17／§4.2 的 CI Node pin 与 `npm ci` 计数按实测更正。**本记录仍是记录，不构成 #1 的验收结论**（§9）。
@@ -111,6 +111,7 @@ packages/contracts/runtime-baseline.json blob=10ddf580544ae847698ac83abeddde4a4f
 ```
 
 - **Windows PowerShell 5.1** 会把传给原生程序的**内层引号全部剥掉**（实测 `SyntaxError: Invalid or unexpected token`），故该 shell 下须写成 `node --% -e "…"`（`--%` 之后的文本原样传递）；**PowerShell 7 与 bash 可原样执行**。此三条实跑输出逐字符相同（原始输出见 §6.2）。
+- **复制来源提醒**：若从返修单（仓库外 `.pg17/dispatch/issue1-freeze-fix.md` 第 25 行）转抄本命令，注意该处**漏印了一对数组括号**（作 `execFileSync('git','cat-file','blob',h)`，应为 `execFileSync('git',['cat-file','blob',h])`）⇒ 原样执行抛 `TypeError [ERR_INVALID_ARG_TYPE]: … Received type string ('blob')`。**请以本 §2.2(b) 上方的命令为准**（逐字节复现存档见 §1 的 r2 日志清单）。
 - 等价 POSIX 写法（GNU coreutils；`sha256sum` 直接消费 `git cat-file blob` 的字节）：
 
 ```
