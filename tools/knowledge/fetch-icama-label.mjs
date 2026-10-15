@@ -26,6 +26,15 @@
 //      `factsSha256` 是对**抽取后事实字段**做确定性 JSON 哈希（与检索时刻、载荷令牌无关），
 //      实测同一标签两次抓取事实层逐字段一致 ⇒ 内容变更比对请用 `factsSha256`。
 //
+// 内容指纹口径（**已由指挥采纳，供后续切片引用** ✓）：
+//   `source_versions.content_hash` 等"内容哈希"一律取 **`factsSha256`** ✓；
+//   `payloadSha256` 只作**抓取证据**（记录某一次取回的字节）✓，**不得**当内容哈希 ✗。
+// 产物与许可状态（**抓取内容尚未入库**）：
+//   抓取产物只落**仓外**（例如 `<仓外>/icama-labels/labels-20.json`）；来源站点的网站声明要求
+//   书面许可，在取得明确许可前**不把抓取内容入库、不对外分发**；记录内 `licensed=false` 只表示
+//   许可未确立，**不得**写成已许可 ✗。`validity=unknown` / `reviewedBy=null` / `restrictedOrBanned`
+//   仅为标签原文扫描 ⇒ 这批事实**不得作为真实用量依据或评估答案键** ✗。
+//
 // 用法（离线自测）：node tools/knowledge/fetch-icama-label.mjs --fixture-dir <fixture 目录> \
 //   --registration PD99999901 --out <仓外 JSON>
 // 用法（联网，需显式开关）：node tools/knowledge/fetch-icama-label.mjs --allow-network \
