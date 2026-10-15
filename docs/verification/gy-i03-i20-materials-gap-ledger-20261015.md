@@ -81,7 +81,7 @@ upstream/main                = 24fac034276c26b0e870e8ea8ea7f4349a8f8a89
 | 冻结清单绑定块 | `packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json` | #130 | `indexVersion=gy-i20-weeds-real-2026.10.14`、`split=test`、`recordCount=172`、`indexSha256=36053ceed50abbeb…c78f`、`frozenAt=2026-10-14T12:05:00+08:00`、`coverage.weedPhotoCoveredClasses` 8 个规范物种 ID + `coverageSha256` + `basisRef` |
 | 流程与红线 | `docs/evaluation/README.md:72-84` | 早于 #130 | 10 条程序强制硬红线（`:74` rawMediaCommitted=false；`:75` modelGenerated=false；`:76` 同簇不跨 split；`:81` 任一条件不满足即 `isRealEvaluation=false`；`:82` 原始媒体与令牌不入仓） |
 | 抽取方法文档 | `docs/evaluation/real-samples-weeds-docx.md`；`:16` 来源 `sha256`；`:17` 172 张 PNG；`:19` 原始件与媒体一律不入库；`:103-127` 答案键与核实状态；`:129-143` 覆盖口径 | #130 | 见 §1.3 与 §2.6 |
-| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8；两两最小汉明距离 14、近重复对 0 |
+| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8（`near-duplicate-policy.md:15,28`）；两两最小汉明距离 14、近重复对 0 的**实测值**见 `docs/evaluation/real-samples-weeds-docx.md:52,78`、`packages/evaluation/samples/README.md:27`、`docs/evaluation/sample-gap-register.md:62`（`scoring-spec.md` 全文无此数值） |
 | 样本目录说明 | `packages/evaluation/samples/README.md:1-4`、`:67-81` | #130 | `:67-81` 明确列出"**不主张**"的事（含标准答案未经独立复核） |
 | 缺口清单（程序产出） | `docs/evaluation/sample-gap-register.md:16-34`、`:41-54`、`:86-99` | #130 | 17 个缺口桶；解除阻塞所需输入 10 条（`:86-99`） |
 | 证据页 | `docs/verification/gy-i20-real-samples-20261014.md` | #130 | 既有证据页 |
@@ -103,11 +103,11 @@ upstream/main                = 24fac034276c26b0e870e8ea8ea7f4349a8f8a89
 :21  licenseNote = "原始出处与再分发许可未核实（许可调查按用户要求暂缓）；原始媒体不入库、不对外分发。"
 ```
 
-### 1.3 三份私密素材的身份核验（`sha256` 与仓内登记值）
+### 1.3 三份私密素材的身份核验（`sha256` 为**侦察实测**；本单**未独立复算**，见 §7 `U16`）
 
-**结论：三份文件的实测 `sha256` 与仓内登记值逐字节吻合 —— 这是"同一份文件"的硬证据。**
+**结论：三份文件的 `sha256`（侦察实测）与仓内登记值逐字节吻合 —— 这是"同一份文件"的强证据；但该实测值属只读引用，本单未独立复算（见 §7 `U16`），故不称"硬证据"。**
 
-| 素材（文件名） | 字节 | `sha256` | 仓内登记位置 | 判定 |
+| 素材（文件名） | 字节（侦察实测） | `sha256`（侦察实测） | 仓内登记位置 | 判定 |
 | --- | --- | --- | --- | --- |
 | `杂草图片版.docx` | 136 173 583 | `624ee4d5285410e1a9ccc0910e41f52873894079617064e7e49611e9ead7a3b8` | `docs/evaluation/real-samples-weeds-docx.md:16`；`packages/evaluation/samples/gy-i20-weeds-labels.json:6`（`sourceDocSha256`） | **逐字节一致** |
 | `中国各省份农田常见杂草识别与防除时期汇总表.xlsx` | 74 680 | `e708577e1cd035b435686c8d249209aa96d345d86a33a9a870e01cd6cdddc420` | `packages/knowledge/coverage-report.json:69`；`db/seeds/seed_zhejiang_materials.sql:12` | **逐字节一致** |
@@ -261,7 +261,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 
 ## 4 待确认 C1–C14（**原样列出；未替用户 / 监工拍板**）
 
-> 下表 C1–C14 的「待确认事项」「为什么必须由用户 / 监工定」「建议问法」三列**原样搬运**自仓库外侦察报告。**最后一列「是否阻塞本线」为本台账所加，仅作标记，不改前三列内容。**
+> 下表 C1–C14 的「待确认事项」「为什么必须由用户 / 监工定」「建议问法」三列**语义不变地取自**仓库外侦察报告，**以本文件为准**；相对侦察报告所做的**可复核化修订**（行号 / 文件名按基线勘误、"本单"改"侦察"等，**无一处放宽口径**）见 §5.1 下方勘误说明第 3 条。**最后一列「是否阻塞本线」为本台账所加，仅作标记。**
 
 | 编号 | 待确认事项 | 为什么必须由用户 / 监工定 | 建议问法（不预设结论） | 是否阻塞本线 |
 | --- | --- | --- | --- | --- |
@@ -294,9 +294,9 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 
 ---
 
-## 5 不得入库清单（15 条，**原样搬运**）与最小表示建议
+## 5 不得入库清单（15 条，**语义不变；相对侦察报告的可复核化修订见 §5.1 下方勘误说明**）与最小表示建议
 
-### 5.1 不得入库项（**逐条给依据；原样搬运自侦察报告 §5.1**）
+### 5.1 不得入库项（**逐条给依据；语义不变地取自侦察报告 §5.1，修订见下方勘误说明**）
 
 | 编号 | 不得入库的内容 | 依据 |
 | --- | --- | --- |
@@ -316,9 +316,10 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:76`；`docs/implementation-requirements.md:456` |
 | G15 | **付费 / 真实模型调用（未单独授权）** | `coverage-report.json:108-110`；`docs/evaluation/real-samples-weeds-docx.md:243`；`docs/pr-review-policy.md:42` |
 
-> **本台账对侦察报告的两处依据勘误（如实标注）**
+> **本台账相对侦察报告的勘误与修订（如实标注；`G8` 行依据已按第 2 条同步修正）**
 > 1. 侦察报告把 G3 / G4 与"数据样本只用获准脱敏索引"一并挂在 `docs/pr-review-policy.md:23`；基线复核后，该内容**不在** `:23`（`:23` 为空行，`:24` 起是"作者提交前清单"说明）。**实际对应**：`:29`（检查完整 diff，无意外文件、冲突标记、密钥／真实 .env、个人原始媒体、依赖或构建输出）、`:42`（真实能力／资料：版本、来源、失败证据及独立样本评估；新增真实付费请求须用户单独授权）。本台账按**勘误后**的行号给出。
-> 2. G8 的 `workbook-staging-design.md:75` 在基线上为许可相关段落之外的正文；本台账改用可复核的 `:25`（"来源许可和原文再发布未确认"）与 `:99`（`packages/knowledge/zhejiang/README.md` 的许可暂缓行），并在 §3 `L05` 给出三处可复核依据。
+> 2. G8 的 `workbook-staging-design.md:75` 虽含"原文再发布许可…仍缺"字样，但**不含** G8 所需的"不得写为已许可"口径；本台账改用可复核的 `:25`（"来源许可和原文再发布未确认"）与 `packages/knowledge/zhejiang/README.md:99`（许可暂缓行，**不得写为已许可**），并在 §3 `L05` 给出三处可复核依据。
+> 3. **相对侦察报告的可复核化修订（语义不变；方向均为更可复核 / 更合规，无一处放宽口径）**：C 表第 3 列与 G 表依据列的多行已按基线 `24fac03` 勘误，类型为：① 行号校正（`:23`→`:29`、`:110`→`:108-110`、`:254,261`→`:254-255`）；② 补齐 / 改正路径与文件名（`sample-gap-report`→`sample-gap-register.md`、`real-samples-weeds-docx.md`→`docs/evaluation/real-samples-weeds-docx.md`、`packages/knowledge/README` / `zhejiang/README.md:98`→`packages/knowledge/zhejiang/README.md:98`）；③ 侦察报告的"本单"改为"侦察"；④ 删去私密区路径示例与归档 `AGENTS.md:34` 等引用。**本台账以本文件为准**；修订点分散在多行，此处只列类型、不逐一穷举计数。
 
 ### 5.2 入库的**最小表示**建议
 
@@ -377,7 +378,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 
 **做什么**
 
-1. 新增 `docs/knowledge/field-mapping-workbooks.md`：把三张 sheet（杂草总表 9 列 / 省份索引表 5 列 / 防除时期速查 4 列）与除草剂 6 列 → 仓内字段的映射**逐列成表**，每列标注三态：`direct` / `needs_review` / `absent_in_source`（源表无此列，**严禁补造**）。
+1. 新增 `docs/knowledge/field-mapping-workbooks.md`：把三张 sheet（杂草总表 9 列 / 省份索引表 5 列 / 防除时期速查 4 列）与除草剂 6 列 → 仓内字段的映射**逐列成表**（＝**本台账 §2 / §3 的迁移 / 扩写**，不是第二份独立口径；避免两份台账并行漂移，迁移完成后本台账只保留登记与出处），每列标注三态：`direct` / `needs_review` / `absent_in_source`（源表无此列，**严禁补造**）。
 2. 同文件维护缺项台账：把 `docs/verification/gy-i03-zhejiang-materials.md:292-306` 的 11 条缺项与 `packages/knowledge/coverage-report.json:99-107` 的 7 条 `gaps` 合并去重，逐条给「状态 / 依据 file:line / 解除条件」。
 3. 只引用既有产物与行号，**不新增任何从素材抽取的数据**（零新数据入库）。
 
@@ -459,6 +460,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | U13 | **列映射的第一手复核** | **部分未做** | 侦察只读 sheet 名、维度、行数与**前 3 行表头**，**未导出任何数据行、未统计取值分布**；`#3` 侧学名 / 科属与权威学名的比对未做（§2.1） |
 | U14 | **`Q` 行与 `#3` / `#20` 的显式绑定** | **属推断，未确认** | 任务 JSON 只有 F / AC 两类编号（`docs/initial-issues.json`）；见 §4 `C1` |
 | U15 | **本台账与指挥 / 监工既有口径的交叉比对** | **未做** | 本轮只做仓库内只读核对与文档落账，未发评论、未开 PR、未与监工交叉比对 |
+| U16 | **三份私密素材 `sha256` 的独立复算** | **未做（只读引用）** | 素材本体在私密区，本单**不得读取其内容**（含以哈希方式读取）⇒ §1.3 的"实测值"只能标注为**侦察实测、本单未复算**；仓内可复核的一半已完成（§1.3 表中 **6 处登记行 / 5 个文件**与 3 个 `sha256` 值逐字符一致，**本单已实读核对**） |
 
 > **另记一条仓库内观察（不阻断本线，供监工核对）**：答案键的 `annotatorRef` 实为 `docx_weeds_v1`（`packages/evaluation/samples/gy-i20-weeds-labels.json:16`），而 `docs/evaluation/real-samples-weeds-docx.md:122` 写作 `docx_weeds_v1_source_label`。两处对同一字段的描述不一致，**建议由 `#20` 后续切片一并核对**；本台账只如实登记，不改动任何一侧。
 
