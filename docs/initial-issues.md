@@ -4,7 +4,7 @@
 日期：2026-10-03\
 范围：暂定2026-11-15联网比赛演示，仅初版；main应用功能尚未实现。
 
-27项任务归属[初版里程碑](https://github.com/Sek1ro-oka/GengYun/milestone/1)，原GY-I01至24及远端编号保留，新增25至27；[调整依据](issue-revision-log.md)。[全周期开发文档](development-plan.md)覆盖至2027-02-28，二月暂不发布issues。
+27项任务归属[初版里程碑](https://github.com/GengYunChuChao/GengYun/milestone/1)，原GY-I01至24及远端编号保留，新增25至27；[调整依据](issue-revision-log.md)。[全周期开发文档](development-plan.md)覆盖至2027-02-28，二月暂不发布issues。
 
 推荐工作队列、并行条件和当前优先事项见[初版开发顺序建议](development-order.md)。本文件和机器台账保留任务定义与正式依赖；下方初始化的“待领取”等字段不是实时看板，领取和完成须核对远端评论、PR、main 与[进度台账](development-progress.md)，不能重复领取已有工作。
 
@@ -12,37 +12,37 @@
 
 | 任务 | GitHub issue | 完成阶段 | 优先级 | 验收前置 |
 | --- | --- | --- | --- | --- |
-| GY-I01 | [#1 冻结原生微信小程序架构、数据字典与HTTP接口契约](https://github.com/Sek1ro-oka/GengYun/issues/1) | M1 | P0 | 无 |
-| GY-I02 | [#2 整合原生小程序工程壳并建立独立后台、API与分层CI](https://github.com/Sek1ro-oka/GengYun/issues/2) | M1 | P0 | [GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1) |
-| GY-I03 | [#3 建立浙江首批资料清单与可替换数据库适配](https://github.com/Sek1ro-oka/GengYun/issues/3) | M1 | P0 | [GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1) |
-| GY-I04 | [#4 实现微信登录、游客限制与服务端归属权限](https://github.com/Sek1ro-oka/GengYun/issues/4) | M1 | P0 | [GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I05 | [#5 实现单作物地区档案及授权定位／手动选择](https://github.com/Sek1ro-oka/GengYun/issues/5) | M2 | P1 | [GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I06 | [#6 实现私有媒体上传、访问权限及EXIF清除](https://github.com/Sek1ro-oka/GengYun/issues/6) | M1 | P0 | [GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I07 | [#7 实现科普／除草剂查询、详情与来源版本展示](https://github.com/Sek1ro-oka/GengYun/issues/7) | M2 | P0 | [GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) |
-| GY-I08 | [#8 实现药剂适用过滤与标签原文用量安全边界](https://github.com/Sek1ro-oka/GengYun/issues/8) | M2 | P0 | [GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7) |
-| GY-I09 | [#9 实现实时拍草识别、Top3核对及不确定处理](https://github.com/Sek1ro-oka/GengYun/issues/9) | M2 | P0 | [GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I10 | [#10 实现实时标签OCR、用户校正及登记精确核对](https://github.com/Sek1ro-oka/GengYun/issues/10) | M2 | P0 | [GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I11 | [#11 实现普通话录音、实时ASR转写和发送核对](https://github.com/Sek1ro-oka/GengYun/issues/11) | M2 | P0 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I12 | [#12 实现有来源的语音／文字大模型问答与回答安全检查](https://github.com/Sek1ro-oka/GengYun/issues/12) | M2 | P0 | [GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I13 | [#13 实现普通话TTS、播放球及安全文本自动播报](https://github.com/Sek1ro-oka/GengYun/issues/13) | M2 | P1 | [GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I14 | [#14 实现文字／图片AI筛查、版本重审和失败隔离](https://github.com/Sek1ro-oka/GengYun/issues/14) | M2 | P0 | [GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I15 | [#15 实现真实社区发帖、评论、点赞、筛选与举报](https://github.com/Sek1ro-oka/GengYun/issues/15) | M3 | P1 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I16 | [#16 实现收藏与可浏览的识别历史](https://github.com/Sek1ro-oka/GengYun/issues/16) | M3 | P1 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I17 | [#17 实现首版应用内消息、未读状态与权限跳转](https://github.com/Sek1ro-oka/GengYun/issues/17) | M3 | P1 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I18 | [#18 实现独立后台资料、账号、AI任务及功能开关](https://github.com/Sek1ro-oka/GengYun/issues/18) | M3 | P0 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I19 | [#19 贯通注销去身份、在线7日备份30日删除与恢复验收](https://github.com/Sek1ro-oka/GengYun/issues/19) | M3 | P0 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I11](https://github.com/Sek1ro-oka/GengYun/issues/11)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29) |
-| GY-I20 | [#20 冻结独立评估样本、标准答案及评估程序](https://github.com/Sek1ro-oka/GengYun/issues/20) | M1 | P0 | [GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3) |
-| GY-I21 | [#21 持续评估各项真实AI能力并汇总首版验收门槛](https://github.com/Sek1ro-oka/GengYun/issues/21) | M4 | P0 | [GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I11](https://github.com/Sek1ro-oka/GengYun/issues/11)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20) |
-| GY-I22 | [#22 完成权限、安全规则及首版端到端失败回归](https://github.com/Sek1ro-oka/GengYun/issues/22) | M4 | P0 | [GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I19](https://github.com/Sek1ro-oka/GengYun/issues/19) |
-| GY-I23 | [#23 执行Android／iOS真机、时延容量及完整演示验收](https://github.com/Sek1ro-oka/GengYun/issues/23) | M4 | P0 | [GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I19](https://github.com/Sek1ro-oka/GengYun/issues/19)、[GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22) |
-| GY-I24 | [#24 部署联网比赛版、备份恢复并交付完整材料](https://github.com/Sek1ro-oka/GengYun/issues/24) | M4 | P0 | [GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22)、[GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23) |
-| GY-I25 | [#27 提前验证正式AppID、真机域名及AI和数据库服务接入](https://github.com/Sek1ro-oka/GengYun/issues/27) | M1 | P0 | 无 |
-| GY-I26 | [#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28) | M1 | P1 | [GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2) |
-| GY-I27 | [#29 前置用途授权、外发账本与隐私撤回接口守卫](https://github.com/Sek1ro-oka/GengYun/issues/29) | M1 | P0 | [GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1)、[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2) |
+| GY-I01 | [#1 冻结原生微信小程序架构、数据字典与HTTP接口契约](https://github.com/GengYunChuChao/GengYun/issues/1) | M1 | P0 | 无 |
+| GY-I02 | [#2 整合原生小程序工程壳并建立独立后台、API与分层CI](https://github.com/GengYunChuChao/GengYun/issues/2) | M1 | P0 | [GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1) |
+| GY-I03 | [#3 建立浙江首批资料清单与可替换数据库适配](https://github.com/GengYunChuChao/GengYun/issues/3) | M1 | P0 | [GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1) |
+| GY-I04 | [#4 实现微信登录、游客限制与服务端归属权限](https://github.com/GengYunChuChao/GengYun/issues/4) | M1 | P0 | [GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I05 | [#5 实现单作物地区档案及授权定位／手动选择](https://github.com/GengYunChuChao/GengYun/issues/5) | M2 | P1 | [GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I06 | [#6 实现私有媒体上传、访问权限及EXIF清除](https://github.com/GengYunChuChao/GengYun/issues/6) | M1 | P0 | [GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I07 | [#7 实现科普／除草剂查询、详情与来源版本展示](https://github.com/GengYunChuChao/GengYun/issues/7) | M2 | P0 | [GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4) |
+| GY-I08 | [#8 实现药剂适用过滤与标签原文用量安全边界](https://github.com/GengYunChuChao/GengYun/issues/8) | M2 | P0 | [GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7) |
+| GY-I09 | [#9 实现实时拍草识别、Top3核对及不确定处理](https://github.com/GengYunChuChao/GengYun/issues/9) | M2 | P0 | [GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I10 | [#10 实现实时标签OCR、用户校正及登记精确核对](https://github.com/GengYunChuChao/GengYun/issues/10) | M2 | P0 | [GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I11 | [#11 实现普通话录音、实时ASR转写和发送核对](https://github.com/GengYunChuChao/GengYun/issues/11) | M2 | P0 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I12 | [#12 实现有来源的语音／文字大模型问答与回答安全检查](https://github.com/GengYunChuChao/GengYun/issues/12) | M2 | P0 | [GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I13 | [#13 实现普通话TTS、播放球及安全文本自动播报](https://github.com/GengYunChuChao/GengYun/issues/13) | M2 | P1 | [GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I14 | [#14 实现文字／图片AI筛查、版本重审和失败隔离](https://github.com/GengYunChuChao/GengYun/issues/14) | M2 | P0 | [GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I15 | [#15 实现真实社区发帖、评论、点赞、筛选与举报](https://github.com/GengYunChuChao/GengYun/issues/15) | M3 | P1 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I16 | [#16 实现收藏与可浏览的识别历史](https://github.com/GengYunChuChao/GengYun/issues/16) | M3 | P1 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I17 | [#17 实现首版应用内消息、未读状态与权限跳转](https://github.com/GengYunChuChao/GengYun/issues/17) | M3 | P1 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I18 | [#18 实现独立后台资料、账号、AI任务及功能开关](https://github.com/GengYunChuChao/GengYun/issues/18) | M3 | P0 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I19 | [#19 贯通注销去身份、在线7日备份30日删除与恢复验收](https://github.com/GengYunChuChao/GengYun/issues/19) | M3 | P0 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29) |
+| GY-I20 | [#20 冻结独立评估样本、标准答案及评估程序](https://github.com/GengYunChuChao/GengYun/issues/20) | M1 | P0 | [GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3) |
+| GY-I21 | [#21 持续评估各项真实AI能力并汇总首版验收门槛](https://github.com/GengYunChuChao/GengYun/issues/21) | M4 | P0 | [GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20) |
+| GY-I22 | [#22 完成权限、安全规则及首版端到端失败回归](https://github.com/GengYunChuChao/GengYun/issues/22) | M4 | P0 | [GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I19](https://github.com/GengYunChuChao/GengYun/issues/19) |
+| GY-I23 | [#23 执行Android／iOS真机、时延容量及完整演示验收](https://github.com/GengYunChuChao/GengYun/issues/23) | M4 | P0 | [GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I19](https://github.com/GengYunChuChao/GengYun/issues/19)、[GY-I21](https://github.com/GengYunChuChao/GengYun/issues/21)、[GY-I22](https://github.com/GengYunChuChao/GengYun/issues/22) |
+| GY-I24 | [#24 部署联网比赛版、备份恢复并交付完整材料](https://github.com/GengYunChuChao/GengYun/issues/24) | M4 | P0 | [GY-I21](https://github.com/GengYunChuChao/GengYun/issues/21)、[GY-I22](https://github.com/GengYunChuChao/GengYun/issues/22)、[GY-I23](https://github.com/GengYunChuChao/GengYun/issues/23) |
+| GY-I25 | [#27 提前验证正式AppID、真机域名及AI和数据库服务接入](https://github.com/GengYunChuChao/GengYun/issues/27) | M1 | P0 | 无 |
+| GY-I26 | [#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/GengYunChuChao/GengYun/issues/28) | M1 | P1 | [GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2) |
+| GY-I27 | [#29 前置用途授权、外发账本与隐私撤回接口守卫](https://github.com/GengYunChuChao/GengYun/issues/29) | M1 | P0 | [GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1)、[GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2) |
 
 ## GY-I01 冻结原生微信小程序架构、数据字典与HTTP接口契约
 
-[#1 冻结原生微信小程序架构、数据字典与HTTP接口契约](https://github.com/Sek1ro-oka/GengYun/issues/1)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#1 冻结原生微信小程序架构、数据字典与HTTP接口契约](https://github.com/GengYunChuChao/GengYun/issues/1)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 在写功能前统一两端与服务端的契约，避免各组接口和来源规则各做一套。
 
@@ -68,11 +68,11 @@
 
 ## GY-I02 整合原生小程序工程壳并建立独立后台、API与分层CI
 
-[#2 整合原生小程序工程壳并建立独立后台、API与分层CI](https://github.com/Sek1ro-oka/GengYun/issues/2)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#2 整合原生小程序工程壳并建立独立后台、API与分层CI](https://github.com/GengYunChuChao/GengYun/issues/2)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 形成可重复启动和构建的基础工程，后续提交通过统一检查。
 
-前置：[GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1)。功能：F01、F08、F12、F13；验收：AC07、AC09。
+前置：[GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1)。功能：F01、F08、F12、F13；验收：AC07、AC09。
 
 ### 范围
 
@@ -97,11 +97,11 @@
 
 ## GY-I03 建立浙江首批资料清单与可替换数据库适配
 
-[#3 建立浙江首批资料清单与可替换数据库适配](https://github.com/Sek1ro-oka/GengYun/issues/3)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#3 建立浙江首批资料清单与可替换数据库适配](https://github.com/GengYunChuChao/GengYun/issues/3)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 比赛前接数据库，先把来源、覆盖和模拟边界做成可核查契约。
 
-前置：[GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1)。功能：F02、F03、F14、F20；验收：AC02、AC12、AC22。
+前置：[GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1)。功能：F02、F03、F14、F20；验收：AC02、AC12、AC22。
 
 ### 范围
 
@@ -124,11 +124,11 @@
 
 ## GY-I04 实现微信登录、游客限制与服务端归属权限
 
-[#4 实现微信登录、游客限制与服务端归属权限](https://github.com/Sek1ro-oka/GengYun/issues/4)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#4 实现微信登录、游客限制与服务端归属权限](https://github.com/GengYunChuChao/GengYun/issues/4)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 登录方式已经确认；游客不能通过接口、分享链接或页面绕过访问限制。
 
-前置：[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F01、F13；验收：AC01、AC09。
+前置：[GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F01、F13；验收：AC01、AC09。
 
 ### 范围
 
@@ -150,11 +150,11 @@
 
 ## GY-I05 实现单作物地区档案及授权定位／手动选择
 
-[#5 实现单作物地区档案及授权定位／手动选择](https://github.com/Sek1ro-oka/GengYun/issues/5)；开始阶段M2／完成阶段M2；P1；当前待领取。
+[#5 实现单作物地区档案及授权定位／手动选择](https://github.com/GengYunChuChao/GengYun/issues/5)；开始阶段M2／完成阶段M2；P1；当前待领取。
 
 首版浙江单作物／地区档案，定位只为选地区。
 
-前置：[GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F02；验收：AC01、AC21、AC15。
+前置：[GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F02；验收：AC01、AC21、AC15。
 
 ### 范围
 
@@ -177,11 +177,11 @@
 
 ## GY-I06 实现私有媒体上传、访问权限及EXIF清除
 
-[#6 实现私有媒体上传、访问权限及EXIF清除](https://github.com/Sek1ro-oka/GengYun/issues/6)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#6 实现私有媒体上传、访问权限及EXIF清除](https://github.com/GengYunChuChao/GengYun/issues/6)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 识别、语音和社区共享媒体能力，但上传不等于公开。
 
-前置：[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F05、F12、F13、F15、F16；验收：AC07、AC09、AC23。
+前置：[GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F05、F12、F13、F15、F16；验收：AC07、AC09、AC23。
 
 ### 范围
 
@@ -204,11 +204,11 @@
 
 ## GY-I07 实现科普／除草剂查询、详情与来源版本展示
 
-[#7 实现科普／除草剂查询、详情与来源版本展示](https://github.com/Sek1ro-oka/GengYun/issues/7)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#7 实现科普／除草剂查询、详情与来源版本展示](https://github.com/GengYunChuChao/GengYun/issues/7)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 用户可以查资料且辨别来源、核对状态及适用条件。
 
-前置：[GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)。功能：F03、F14；验收：AC02、AC22。
+前置：[GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)。功能：F03、F14；验收：AC02、AC22。
 
 ### 范围
 
@@ -230,11 +230,11 @@
 
 ## GY-I08 实现药剂适用过滤与标签原文用量安全边界
 
-[#8 实现药剂适用过滤与标签原文用量安全边界](https://github.com/Sek1ro-oka/GengYun/issues/8)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#8 实现药剂适用过滤与标签原文用量安全边界](https://github.com/GengYunChuChao/GengYun/issues/8)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 来源和确定性规则先检查，模型或用户选中候选都不能绕过。
 
-前置：[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)。功能：F04、F14、F20；验收：AC13、AC14、AC22。
+前置：[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)。功能：F04、F14、F20；验收：AC13、AC14、AC22。
 
 ### 范围
 
@@ -256,11 +256,11 @@
 
 ## GY-I09 实现实时拍草识别、Top3核对及不确定处理
 
-[#9 实现实时拍草识别、Top3核对及不确定处理](https://github.com/Sek1ro-oka/GengYun/issues/9)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#9 实现实时拍草识别、Top3核对及不确定处理](https://github.com/GengYunChuChao/GengYun/issues/9)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 识草提供候选和查询输入，不能直接开出处方。
 
-前置：[GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F15；验收：AC11、AC22。
+前置：[GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F15；验收：AC11、AC22。
 
 ### 范围
 
@@ -283,11 +283,11 @@
 
 ## GY-I10 实现实时标签OCR、用户校正及登记精确核对
 
-[#10 实现实时标签OCR、用户校正及登记精确核对](https://github.com/Sek1ro-oka/GengYun/issues/10)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#10 实现实时标签OCR、用户校正及登记精确核对](https://github.com/GengYunChuChao/GengYun/issues/10)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
-前置：[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F16；验收：AC12、AC22。
+前置：[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F16；验收：AC12、AC22。
 
 ### 范围
 
@@ -310,11 +310,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I11 实现普通话录音、实时ASR转写和发送核对
 
-[#11 实现普通话录音、实时ASR转写和发送核对](https://github.com/Sek1ro-oka/GengYun/issues/11)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#11 实现普通话录音、实时ASR转写和发送核对](https://github.com/GengYunChuChao/GengYun/issues/11)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 这是最新追加的首版必交项，用于向大模型发语音提问。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F12；验收：AC28、AC09。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F12；验收：AC28、AC09。
 
 ### 范围
 
@@ -338,11 +338,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I12 实现有来源的语音／文字大模型问答与回答安全检查
 
-[#12 实现有来源的语音／文字大模型问答与回答安全检查](https://github.com/Sek1ro-oka/GengYun/issues/12)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#12 实现有来源的语音／文字大模型问答与回答安全检查](https://github.com/GengYunChuChao/GengYun/issues/12)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 普通话转写或文字输入交大模型，回答有依据、可追问且不会伪造用药结论。
 
-前置：[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F20、F12、F13；验收：AC29、AC22、AC09。
+前置：[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F20、F12、F13；验收：AC29、AC22、AC09。
 
 ### 范围
 
@@ -368,11 +368,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I13 实现普通话TTS、播放球及安全文本自动播报
 
-[#13 实现普通话TTS、播放球及安全文本自动播报](https://github.com/Sek1ro-oka/GengYun/issues/13)；开始阶段M2／完成阶段M2；P1；当前待领取。
+[#13 实现普通话TTS、播放球及安全文本自动播报](https://github.com/GengYunChuChao/GengYun/issues/13)；开始阶段M2／完成阶段M2；P1；当前待领取。
 
 统一页面导航与播放／录音入口，视觉和播报均符合首版。
 
-前置：[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F12、F14；验收：AC06、AC14、AC18。
+前置：[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F12、F14；验收：AC06、AC14、AC18。
 
 ### 范围
 
@@ -395,11 +395,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I14 实现文字／图片AI筛查、版本重审和失败隔离
 
-[#14 实现文字／图片AI筛查、版本重审和失败隔离](https://github.com/Sek1ro-oka/GengYun/issues/14)；开始阶段M2／完成阶段M2；P0；当前待领取。
+[#14 实现文字／图片AI筛查、版本重审和失败隔离](https://github.com/GengYunChuChao/GengYun/issues/14)；开始阶段M2／完成阶段M2；P0；当前待领取。
 
 社区先审后发，AI失败不能依赖未上线人工放行。
 
-前置：[GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F08、F05；验收：AC19、AC08、AC16。
+前置：[GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F08、F05；验收：AC19、AC08、AC16。
 
 ### 范围
 
@@ -423,11 +423,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I15 实现真实社区发帖、评论、点赞、筛选与举报
 
-[#15 实现真实社区发帖、评论、点赞、筛选与举报](https://github.com/Sek1ro-oka/GengYun/issues/15)；开始阶段M3／完成阶段M3；P1；当前待领取。
+[#15 实现真实社区发帖、评论、点赞、筛选与举报](https://github.com/GengYunChuChao/GengYun/issues/15)；开始阶段M3／完成阶段M3；P1；当前待领取。
 
 首版社区实际互动，只有人工审核板块留空。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F05、F08；验收：AC08、AC16、AC19。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F05、F08；验收：AC08、AC16、AC19。
 
 ### 范围
 
@@ -449,11 +449,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I16 实现收藏与可浏览的识别历史
 
-[#16 实现收藏与可浏览的识别历史](https://github.com/Sek1ro-oka/GengYun/issues/16)；开始阶段M3／完成阶段M3；P1；当前待领取。
+[#16 实现收藏与可浏览的识别历史](https://github.com/GengYunChuChao/GengYun/issues/16)；开始阶段M3／完成阶段M3；P1；当前待领取。
 
 收藏和历史已确认首版必交，不能只存数据没有页面。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F18；验收：AC17、AC09。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F18；验收：AC17、AC09。
 
 ### 范围
 
@@ -475,11 +475,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I17 实现首版应用内消息、未读状态与权限跳转
 
-[#17 实现首版应用内消息、未读状态与权限跳转](https://github.com/Sek1ro-oka/GengYun/issues/17)；开始阶段M3／完成阶段M3；P1；当前待领取。
+[#17 实现首版应用内消息、未读状态与权限跳转](https://github.com/GengYunChuChao/GengYun/issues/17)；开始阶段M3／完成阶段M3；P1；当前待领取。
 
 首版仅应用内，消息事件、对象可见性及阅读状态一致。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F19；验收：AC18、AC09。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F19；验收：AC18、AC09。
 
 ### 范围
 
@@ -501,11 +501,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I18 实现独立后台资料、账号、AI任务及功能开关
 
-[#18 实现独立后台资料、账号、AI任务及功能开关](https://github.com/Sek1ro-oka/GengYun/issues/18)；开始阶段M3／完成阶段M3；P0；当前待领取。
+[#18 实现独立后台资料、账号、AI任务及功能开关](https://github.com/GengYunChuChao/GengYun/issues/18)；开始阶段M3／完成阶段M3；P0；当前待领取。
 
 后台独立鉴权，首版管理实际可用，人工板块显示建设中。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I26](https://github.com/Sek1ro-oka/GengYun/issues/28)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F08、F13、F14；验收：AC08、AC09、AC19。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I26](https://github.com/GengYunChuChao/GengYun/issues/28)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F08、F13、F14；验收：AC08、AC09、AC19。
 
 ### 范围
 
@@ -527,11 +527,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I19 贯通注销去身份、在线7日备份30日删除与恢复验收
 
-[#19 贯通注销去身份、在线7日备份30日删除与恢复验收](https://github.com/Sek1ro-oka/GengYun/issues/19)；开始阶段M3／完成阶段M3；P0；当前待领取。
+[#19 贯通注销去身份、在线7日备份30日删除与恢复验收](https://github.com/GengYunChuChao/GengYun/issues/19)；开始阶段M3／完成阶段M3；P0；当前待领取。
 
 删除包括私有媒体、会话、第三方副本与模型影响，不只是改昵称。
 
-前置：[GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)、[GY-I06](https://github.com/Sek1ro-oka/GengYun/issues/6)、[GY-I11](https://github.com/Sek1ro-oka/GengYun/issues/11)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I27](https://github.com/Sek1ro-oka/GengYun/issues/29)。功能：F13、F01、F20；验收：AC23、AC09。
+前置：[GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)、[GY-I06](https://github.com/GengYunChuChao/GengYun/issues/6)、[GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I27](https://github.com/GengYunChuChao/GengYun/issues/29)。功能：F13、F01、F20；验收：AC23、AC09。
 
 ### 范围
 
@@ -557,11 +557,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I20 冻结独立评估样本、标准答案及评估程序
 
-[#20 冻结独立评估样本、标准答案及评估程序](https://github.com/Sek1ro-oka/GengYun/issues/20)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#20 冻结独立评估样本、标准答案及评估程序](https://github.com/GengYunChuChao/GengYun/issues/20)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 先冻结样本，防止测试集调参泄漏或用预设答案冒充评估。
 
-前置：[GY-I03](https://github.com/Sek1ro-oka/GengYun/issues/3)。功能：F15、F16、F08、F12、F20；验收：AC11、AC12、AC19、AC28、AC29。
+前置：[GY-I03](https://github.com/GengYunChuChao/GengYun/issues/3)。功能：F15、F16、F08、F12、F20；验收：AC11、AC12、AC19、AC28、AC29。
 
 ### 范围
 
@@ -585,11 +585,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I21 持续评估各项真实AI能力并汇总首版验收门槛
 
-[#21 持续评估各项真实AI能力并汇总首版验收门槛](https://github.com/Sek1ro-oka/GengYun/issues/21)；开始阶段M1／完成阶段M4；P0；当前待领取。
+[#21 持续评估各项真实AI能力并汇总首版验收门槛](https://github.com/GengYunChuChao/GengYun/issues/21)；开始阶段M1／完成阶段M4；P0；当前待领取。
 
 以冻结独立集验证实际模型；运行界面或少量演示不是达标证明。
 
-前置：[GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I11](https://github.com/Sek1ro-oka/GengYun/issues/11)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I20](https://github.com/Sek1ro-oka/GengYun/issues/20)。功能：F15、F16、F12、F20、F08；验收：AC11、AC12、AC06、AC19、AC28、AC29。
+前置：[GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I20](https://github.com/GengYunChuChao/GengYun/issues/20)。功能：F15、F16、F12、F20、F08；验收：AC11、AC12、AC06、AC19、AC28、AC29。
 
 ### 范围
 
@@ -612,11 +612,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I22 完成权限、安全规则及首版端到端失败回归
 
-[#22 完成权限、安全规则及首版端到端失败回归](https://github.com/Sek1ro-oka/GengYun/issues/22)；开始阶段M4／完成阶段M4；P0；当前待领取。
+[#22 完成权限、安全规则及首版端到端失败回归](https://github.com/GengYunChuChao/GengYun/issues/22)；开始阶段M4／完成阶段M4；P0；当前待领取。
 
 验证模块联动和真实失败，阻止单模块通过却整体越权或放行。
 
-前置：[GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5)、[GY-I08](https://github.com/Sek1ro-oka/GengYun/issues/8)、[GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9)、[GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10)、[GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12)、[GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14)、[GY-I15](https://github.com/Sek1ro-oka/GengYun/issues/15)、[GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I19](https://github.com/Sek1ro-oka/GengYun/issues/19)。功能：F01、F04、F05、F08、F13、F20；验收：AC01、AC02、AC07、AC08、AC09、AC13、AC16、AC19、AC21、AC22、AC23、AC29。
+前置：[GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5)、[GY-I08](https://github.com/GengYunChuChao/GengYun/issues/8)、[GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9)、[GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10)、[GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12)、[GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14)、[GY-I15](https://github.com/GengYunChuChao/GengYun/issues/15)、[GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I19](https://github.com/GengYunChuChao/GengYun/issues/19)。功能：F01、F04、F05、F08、F13、F20；验收：AC01、AC02、AC07、AC08、AC09、AC13、AC16、AC19、AC21、AC22、AC23、AC29。
 
 ### 范围
 
@@ -638,11 +638,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I23 执行Android／iOS真机、时延容量及完整演示验收
 
-[#23 执行Android／iOS真机、时延容量及完整演示验收](https://github.com/Sek1ro-oka/GengYun/issues/23)；开始阶段M4／完成阶段M4；P0；当前待领取。
+[#23 执行Android／iOS真机、时延容量及完整演示验收](https://github.com/GengYunChuChao/GengYun/issues/23)；开始阶段M4／完成阶段M4；P0；当前待领取。
 
 按确定条件量化首版体验，包含最新语音问答链路。
 
-前置：[GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16)、[GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17)、[GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18)、[GY-I19](https://github.com/Sek1ro-oka/GengYun/issues/19)、[GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22)。功能：F02、F05、F12、F15、F16、F18、F19、F20；验收：AC06、AC07、AC11、AC12、AC14、AC17、AC18、AC21、AC28、AC29。
+前置：[GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16)、[GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)、[GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)、[GY-I19](https://github.com/GengYunChuChao/GengYun/issues/19)、[GY-I21](https://github.com/GengYunChuChao/GengYun/issues/21)、[GY-I22](https://github.com/GengYunChuChao/GengYun/issues/22)。功能：F02、F05、F12、F15、F16、F18、F19、F20；验收：AC06、AC07、AC11、AC12、AC14、AC17、AC18、AC21、AC28、AC29。
 
 ### 范围
 
@@ -666,11 +666,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I24 部署联网比赛版、备份恢复并交付完整材料
 
-[#24 部署联网比赛版、备份恢复并交付完整材料](https://github.com/Sek1ro-oka/GengYun/issues/24)；开始阶段M4／完成阶段M4；P0；当前待领取。
+[#24 部署联网比赛版、备份恢复并交付完整材料](https://github.com/GengYunChuChao/GengYun/issues/24)；开始阶段M4／完成阶段M4；P0；当前待领取。
 
 将通过验证的固定版本交付给比赛操作者，未测或依赖缺项如实报告。
 
-前置：[GY-I21](https://github.com/Sek1ro-oka/GengYun/issues/21)、[GY-I22](https://github.com/Sek1ro-oka/GengYun/issues/22)、[GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)。功能：F01、F08、F13、F15、F16、F20；验收：AC07、AC09、AC23。
+前置：[GY-I21](https://github.com/GengYunChuChao/GengYun/issues/21)、[GY-I22](https://github.com/GengYunChuChao/GengYun/issues/22)、[GY-I23](https://github.com/GengYunChuChao/GengYun/issues/23)。功能：F01、F08、F13、F15、F16、F20；验收：AC07、AC09、AC23。
 
 ### 范围
 
@@ -693,7 +693,7 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I25 提前验证正式AppID、真机域名及AI和数据库服务接入
 
-[#27 提前验证正式AppID、真机域名及AI和数据库服务接入](https://github.com/Sek1ro-oka/GengYun/issues/27)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#27 提前验证正式AppID、真机域名及AI和数据库服务接入](https://github.com/GengYunChuChao/GengYun/issues/27)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 在架构和功能投入前验证实际接入条件；资源声明具备不等于账号、权限、返回格式和删除能力已经验证。
 
@@ -719,11 +719,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I26 提前建立五Tab原生页面骨架、Demo样式及统一失败状态
 
-[#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/Sek1ro-oka/GengYun/issues/28)；开始阶段M1／完成阶段M1；P1；当前待领取。
+[#28 提前建立五Tab原生页面骨架、Demo样式及统一失败状态](https://github.com/GengYunChuChao/GengYun/issues/28)；开始阶段M1／完成阶段M1；P1；当前待领取。
 
 解除界面开发对完整语音流水线的等待，先用冻结HTTP契约联调替身，再逐项替换真实服务。 当前先实现Demo样式，适老版本后续开发；暂缓不记验收通过。
 
-前置：[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)。功能：F01、F02、F05、F12、F14、F18、F19、F20；验收：AC01、AC06、AC07、AC08、AC14、AC15、AC17、AC18、AC21。
+前置：[GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)。功能：F01、F02、F05、F12、F14、F18、F19、F20；验收：AC01、AC06、AC07、AC08、AC14、AC15、AC17、AC18、AC21。
 
 ### 范围
 
@@ -745,11 +745,11 @@ OCR提字与登记核对分开，文字识别成功不代表药剂已核实。
 
 ## GY-I27 前置用途授权、外发账本与隐私撤回接口守卫
 
-[#29 前置用途授权、外发账本与隐私撤回接口守卫](https://github.com/Sek1ro-oka/GengYun/issues/29)；开始阶段M1／完成阶段M1；P0；当前待领取。
+[#29 前置用途授权、外发账本与隐私撤回接口守卫](https://github.com/GengYunChuChao/GengYun/issues/29)；开始阶段M1／完成阶段M1；P0；当前待领取。
 
 在真实采集和外发前建立用途许可与任务阻断；GY-I19在模块集成后验收注销删除，不等M3才处理隐私。
 
-前置：[GY-I01](https://github.com/Sek1ro-oka/GengYun/issues/1)、[GY-I02](https://github.com/Sek1ro-oka/GengYun/issues/2)。功能：F01、F13、F12、F15、F16、F20、F08；验收：AC09、AC23、AC28、AC29。
+前置：[GY-I01](https://github.com/GengYunChuChao/GengYun/issues/1)、[GY-I02](https://github.com/GengYunChuChao/GengYun/issues/2)。功能：F01、F13、F12、F15、F16、F20、F08；验收：AC09、AC23、AC28、AC29。
 
 ### 范围
 

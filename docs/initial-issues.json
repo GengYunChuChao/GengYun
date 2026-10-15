@@ -2,12 +2,12 @@
   "schema_version": 2,
   "requirements_version": "v1.0",
   "development_version": "v1.1",
-  "repository": "Sek1ro-oka/GengYun",
+  "repository": "GengYunChuChao/GengYun",
   "stage": "initial",
   "due_date": "2026-11-15",
   "timezone": "Asia/Hong_Kong",
   "milestone_number": 1,
-  "milestone_url": "https://github.com/Sek1ro-oka/GengYun/milestone/1",
+  "milestone_url": "https://github.com/GengYunChuChao/GengYun/milestone/1",
   "tasks": [
     {
       "id": "GY-I01",
@@ -42,7 +42,7 @@
       ],
       "status": "待审PR",
       "github_number": 1,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/1",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/1",
       "start_phase": "M1"
     },
     {
@@ -84,7 +84,7 @@
       ],
       "status": "待领取",
       "github_number": 2,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/2",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/2",
       "start_phase": "M1"
     },
     {
@@ -125,7 +125,7 @@
       ],
       "status": "待领取",
       "github_number": 3,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/3",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/3",
       "start_phase": "M1"
     },
     {
@@ -164,7 +164,7 @@
       ],
       "status": "待领取",
       "github_number": 4,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/4",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/4",
       "start_phase": "M1"
     },
     {
@@ -205,7 +205,7 @@
       ],
       "status": "待领取",
       "github_number": 5,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/5",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/5",
       "start_phase": "M2"
     },
     {
@@ -249,7 +249,7 @@
       ],
       "status": "待领取",
       "github_number": 6,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/6",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/6",
       "start_phase": "M1"
     },
     {
@@ -287,7 +287,7 @@
       ],
       "status": "待领取",
       "github_number": 7,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/7",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/7",
       "start_phase": "M2"
     },
     {
@@ -326,7 +326,7 @@
       ],
       "status": "待领取",
       "github_number": 8,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/8",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/8",
       "start_phase": "M2"
     },
     {
@@ -368,7 +368,7 @@
       ],
       "status": "待领取",
       "github_number": 9,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/9",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/9",
       "start_phase": "M2"
     },
     {
@@ -409,7 +409,7 @@
       ],
       "status": "待领取",
       "github_number": 10,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/10",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/10",
       "start_phase": "M2"
     },
     {
@@ -450,7 +450,7 @@
       ],
       "status": "待领取",
       "github_number": 11,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/11",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/11",
       "start_phase": "M2"
     },
     {
@@ -498,7 +498,7 @@
       ],
       "status": "待领取",
       "github_number": 12,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/12",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/12",
       "start_phase": "M2"
     },
     {
@@ -541,7 +541,7 @@
       ],
       "status": "待领取",
       "github_number": 13,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/13",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/13",
       "start_phase": "M2"
     },
     {
@@ -584,7 +584,7 @@
       ],
       "status": "待领取",
       "github_number": 14,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/14",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/14",
       "start_phase": "M2"
     },
     {
@@ -627,7 +627,7 @@
       ],
       "status": "待领取",
       "github_number": 15,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/15",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/15",
       "start_phase": "M3"
     },
     {
@@ -667,7 +667,7 @@
       ],
       "status": "待领取",
       "github_number": 16,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/16",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/16",
       "start_phase": "M3"
     },
     {
@@ -707,7 +707,7 @@
       ],
       "status": "待领取",
       "github_number": 17,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/17",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/17",
       "start_phase": "M3"
     },
     {
@@ -751,7 +751,7 @@
       ],
       "status": "待领取",
       "github_number": 18,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/18",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/18",
       "start_phase": "M3"
     },
     {
@@ -801,7 +801,7 @@
       ],
       "status": "待领取",
       "github_number": 19,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/19",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/19",
       "start_phase": "M3"
     },
     {
@@ -846,7 +846,7 @@
       ],
       "status": "待领取",
       "github_number": 20,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/20",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/20",
       "start_phase": "M1"
     },
     {
@@ -897,7 +897,7 @@
       ],
       "status": "待领取",
       "github_number": 21,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/21",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/21",
       "start_phase": "M1"
     },
     {
@@ -958,7 +958,7 @@
       ],
       "status": "待领取",
       "github_number": 22,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/22",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/22",
       "start_phase": "M4"
     },
     {
@@ -1016,7 +1016,7 @@
       ],
       "status": "待领取",
       "github_number": 23,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/23",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/23",
       "start_phase": "M4"
     },
     {
@@ -1061,7 +1061,7 @@
       ],
       "status": "待领取",
       "github_number": 24,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/24",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/24",
       "start_phase": "M4"
     },
     {
@@ -1107,7 +1107,7 @@
       ],
       "status": "待领取",
       "github_number": 27,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/27",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/27",
       "start_phase": "M1"
     },
     {
@@ -1157,7 +1157,7 @@
       ],
       "status": "待领取",
       "github_number": 28,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/28",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/28",
       "start_phase": "M1"
     },
     {
@@ -1202,7 +1202,7 @@
       ],
       "status": "待领取",
       "github_number": 29,
-      "github_url": "https://github.com/Sek1ro-oka/GengYun/issues/29",
+      "github_url": "https://github.com/GengYunChuChao/GengYun/issues/29",
       "start_phase": "M1"
     }
   ],

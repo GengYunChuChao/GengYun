@@ -1,6 +1,6 @@
 # GY-I26 界面与冻结契约绑定记录
 
-- 记录：2026-10-09｜分支：`feature/gui-adaptive-pages`｜PR：[#39](https://github.com/Sek1ro-oka/GengYun/pull/39)
+- 记录：2026-10-09｜分支：`feature/gui-adaptive-pages`｜PR：[#39](https://github.com/GengYunChuChao/GengYun/pull/39)
 - 记录人：尹一（开发者端）
 - 契约来源：`packages/contracts/operations.json`（112 条操作，冻结契约）
 
@@ -35,21 +35,21 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 进入首页 | `GET /public/home` | 替身·静态文案 | [GY-I07](https://github.com/Sek1ro-oka/GengYun/issues/7) |
+| 进入首页 | `GET /public/home` | 替身·静态文案 | [GY-I07](https://github.com/GengYunChuChao/GengYun/issues/7) |
 | 三个识别入口 | 见 2.2 | 替身·未接入 | GY-I09/10/11 |
-| 识别历史／收藏计数 | `GET /history`、`GET /favorites` | 替身·计数 0 条 | [GY-I16](https://github.com/Sek1ro-oka/GengYun/issues/16) |
+| 识别历史／收藏计数 | `GET /history`、`GET /favorites` | 替身·计数 0 条 | [GY-I16](https://github.com/GengYunChuChao/GengYun/issues/16) |
 
 ### 2.2 识别页（三入口）
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 拍照识别杂草 | `POST /recognitions`、`GET /recognitions/{id}` | 替身·置灰不可点 | [GY-I09](https://github.com/Sek1ro-oka/GengYun/issues/9) |
+| 拍照识别杂草 | `POST /recognitions`、`GET /recognitions/{id}` | 替身·置灰不可点 | [GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9) |
 | Top3 核对与选择 | `PATCH /recognitions/{id}/selection` | 未实现（无数据可核对） | GY-I09 |
-| 拍照识别农药标签 | `POST /ocr`、`GET /ocr/{id}` | 替身·置灰不可点 | [GY-I10](https://github.com/Sek1ro-oka/GengYun/issues/10) |
+| 拍照识别农药标签 | `POST /ocr`、`GET /ocr/{id}` | 替身·置灰不可点 | [GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10) |
 | 标签用量校正与登记核对 | `PATCH /ocr/{id}/correction`、`POST /ocr/{id}/verify` | 未实现 | GY-I10 |
-| 语音提问（录音） | `POST /speech/transcriptions`、`PATCH /speech/transcriptions/{id}/confirmation` | 替身·按钮分离但不发请求 | [GY-I11](https://github.com/Sek1ro-oka/GengYun/issues/11) |
-| 语音提问（文字） | `POST /conversations/{id}/turns` | 替身·未接入 | [GY-I12](https://github.com/Sek1ro-oka/GengYun/issues/12) |
-| 文本转语音播报 | `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13) |
+| 语音提问（录音） | `POST /speech/transcriptions`、`PATCH /speech/transcriptions/{id}/confirmation` | 替身·按钮分离但不发请求 | [GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11) |
+| 语音提问（文字） | `POST /conversations/{id}/turns` | 替身·未接入 | [GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12) |
+| 文本转语音播报 | `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13) |
 
 > 「录音」与「播放」在界面上为两个独立按钮，对应两个不同操作，满足范围「录音与播放按钮分离」。
 
@@ -57,10 +57,10 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 浏览帖子 | `GET /posts` | 游客拦截，未登录不可见 | [GY-I14](https://github.com/Sek1ro-oka/GengYun/issues/14) |
+| 浏览帖子 | `GET /posts` | 游客拦截，未登录不可见 | [GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14) |
 | 发帖／评论（先审后发） | `POST /posts`、`POST /posts/{id}/comments` | 未实现，**不提供任何输入框** | GY-I14/15 |
 | 点赞 | `PUT /posts/{id}/like`、`DELETE /posts/{id}/like` | 未实现 | GY-I14 |
-| **人工审核空入口** | 后台仅 `POST /admin/posts/{id}/hide`（隐藏已发布内容）；**契约中无「帖子审核列表」类操作** | 用户端**不含任何后台入口** | [GY-I18](https://github.com/Sek1ro-oka/GengYun/issues/18) |
+| **人工审核空入口** | 后台仅 `POST /admin/posts/{id}/hide`（隐藏已发布内容）；**契约中无「帖子审核列表」类操作** | 用户端**不含任何后台入口** | [GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18) |
 
 > AC08 要求「人审入口建设中，无假任务／审核人」。用户端只保留空入口与说明，**未渲染任何审核人、任务或「已通过」字样**，符合范围「只保留人工审核的空入口」与「独立后台与用户端分开」。
 
@@ -68,10 +68,10 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 消息列表 | `GET /messages` | 游客拦截 + 空态 | [GY-I17](https://github.com/Sek1ro-oka/GengYun/issues/17) |
+| 消息列表 | `GET /messages` | 游客拦截 + 空态 | [GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17) |
 | 未读数 | `GET /messages/unread-count` | 未实现 | GY-I17 |
 | 标记已读 | `PUT /messages/{id}/read` | 未实现 | GY-I17 |
-| 播放控制 | 见 2.2 `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13) |
+| 播放控制 | 见 2.2 `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13) |
 
 > AC18 要求「首版无外部订阅发送」。全项目搜索「订阅消息／推送通知／短信／公众号」**零命中**，本任务未引入任何外发通道。
 
@@ -79,11 +79,11 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 微信登录 | `POST /auth/wechat` | **未接入**，登录按钮仅提示 | [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4) |
+| 微信登录 | `POST /auth/wechat` | **未接入**，登录按钮仅提示 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4) |
 | 会话查询／退出 | `GET /auth/session`、`POST /auth/logout` | 未接入 | GY-I04 |
-| 档案（作物／地区） | `GET /me/profile`、`PUT /me/profile` | 替身·计数 0 条 | [GY-I05](https://github.com/Sek1ro-oka/GengYun/issues/5) |
-| 隐私说明 | `GET /me/privacy-policy` | 静态文案 | GY-I27 组件已由 [PR #45](https://github.com/Sek1ro-oka/GengYun/pull/45) 合入 main=bb3f20f（`packages/privacy/`）；界面读取待接入 |
-| 用途授权与撤回 | `GET /me/consents`、`POST /me/consents`、`DELETE /me/consents/{purpose}` | 未接入 | 服务端守卫已由 [PR #45](https://github.com/Sek1ro-oka/GengYun/pull/45) 合入；界面与接线待接入 |
+| 档案（作物／地区） | `GET /me/profile`、`PUT /me/profile` | 替身·计数 0 条 | [GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5) |
+| 隐私说明 | `GET /me/privacy-policy` | 静态文案 | GY-I27 组件已由 [PR #45](https://github.com/GengYunChuChao/GengYun/pull/45) 合入 main=bb3f20f（`packages/privacy/`）；界面读取待接入 |
+| 用途授权与撤回 | `GET /me/consents`、`POST /me/consents`、`DELETE /me/consents/{purpose}` | 未接入 | 服务端守卫已由 [PR #45](https://github.com/GengYunChuChao/GengYun/pull/45) 合入；界面与接线待接入 |
 | 字体设置 | **无契约** | 本地读 `wx.getSystemInfoSync()`，不涉及网络 | 本任务 |
 
 > **无本地存储的字号档位**：需求第 4.1 节只要求「适配微信字体设置」，未要求应用内开关，故本任务不设档位、不写存储（详见 [gui-adaptive-evidence.md](verification/gui-adaptive-evidence.md) 7.7）。
@@ -128,9 +128,9 @@
 
 **仍未通过（不属本任务可解决）**：
 
-- 登录态界面未走查，依赖 [GY-I04](https://github.com/Sek1ro-oka/GengYun/issues/4)
+- 登录态界面未走查，依赖 [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)
 - 真实社区、消息、收藏、历史记录未实现
-- 语音播报未实现，依赖 [GY-I13](https://github.com/Sek1ro-oka/GengYun/issues/13)
-- 真机双平台与体验版上传未做，依赖 [GY-I25](https://github.com/Sek1ro-oka/GengYun/issues/27) / [GY-I23](https://github.com/Sek1ro-oka/GengYun/issues/23)
+- 语音播报未实现，依赖 [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13)
+- 真机双平台与体验版上传未做，依赖 [GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27) / [GY-I23](https://github.com/GengYunChuChao/GengYun/issues/23)
 
 因此 issue #28 保持 open，本任务不标整项完成。
