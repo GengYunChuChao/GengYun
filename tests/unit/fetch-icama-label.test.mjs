@@ -15,6 +15,7 @@ import {
   assertNoUnsourcedFacts,
   assertOutPathOutsideRepo,
   buildLabelUrl,
+  computeFactsSha256,
   extractLabelFacts,
   makeRunPlan,
   runFetch,
@@ -63,6 +64,7 @@ test('合成标签页：身份/用量逐字照录，且不改写不换算', () =
   assert.equal(record.reviewedBy, null);
   assert.equal(record.licensed, false);
   assert.equal(record.licenseSurveyStatus, 'not_established');
+  assert.match(record.factsSha256, /^[0-9a-f]{64}$/);
   // 禁限用只做标签原文文本扫描，逐句原文照录。
   assert.ok(record.restrictedOrBanned.some((clause) => clause.includes('示例场景禁用')));
   assert.equal(record.restrictedOrBannedCheck, 'label_text_scan_only');
@@ -111,6 +113,7 @@ test('站点报"查找无结果"⇒ not_found，全部事实字段保持 null', 
     assert.equal(record[field], null, `${field} 必须为 null`);
   }
   assert.equal(record.nullReasons.all, 'source_reported_no_result_for_this_registration_no');
+  assert.equal(record.factsSha256, null, '查不到就没有事实指纹，不得凭空生成');
 });
 
 test('返回登录/验证码页 ⇒ blocked，立即停止整轮（不绕过）', () => {
@@ -217,4 +220,39 @@ test('CLI（离线）：只写仓外 JSON，含来源指针与哈希，不含任
 
 test('确定性：同输入同时间 ⇒ 抽取结果逐字一致', () => {
   assert.deepEqual(extractFixture('PD99999901'), extractFixture('PD99999901'));
+});
+
+test('两个指纹语义不同：载荷随 _SESSIONID 变化，事实层不变（内容比对用 factsSha256）', () => {
+  const base = readFixture('PD99999901');
+  const withToken = (token) => {
+    const injected = base.replace(
+      '<head>',
+      `<head><script>var _ctx='/BasicdataSystem';\n\tvar _SESSIONID = '${token}';</script>`
+    );
+    assert.notEqual(injected, base, '注入必须生效');
+    return injected;
+  };
+  const mk = (html) => extractLabelFacts(html, {
+    sourceUrl: 'https://www.icama.cn/BasicdataSystem/pesticideRegistration/tagview.do?pdno=PD99999901',
+    retrievedAt: FIXED_NOW,
+    payloadSha256: sha256Hex(Buffer.from(html, 'utf8')),
+    registrationNo: 'PD99999901',
+    mode: 'network'
+  });
+  const first = mk(withToken('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'));
+  const second = mk(withToken('BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'));
+  // 载荷指纹必然不同（站点每次请求换令牌）⇒ 不能当内容寻址 ID。
+  assert.notEqual(first.payloadSha256, second.payloadSha256);
+  // 事实指纹必须相同 ⇒ 事实层与令牌无关，可用于内容变更比对。
+  assert.equal(first.factsSha256, second.factsSha256);
+  assert.equal(first.factsSha256, computeFactsSha256(first));
+  // 事实真的变了（改一个用量数字）⇒ factsSha256 必须变。
+  const changedHtml = base.replace('40-60毫升/亩', '41-60毫升/亩');
+  assert.notEqual(changedHtml, base);
+  const changed = mk(changedHtml);
+  assert.notEqual(changed.factsSha256, mk(base).factsSha256);
+  // 事实指纹不含检索时刻/载荷哈希：换 retrievedAt 不影响。
+  const laterAt = mk(base);
+  laterAt.retrievedAt = '2030-01-01T00:00:00.000Z';
+  assert.equal(computeFactsSha256(laterAt), mk(base).factsSha256);
 });

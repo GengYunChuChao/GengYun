@@ -5,7 +5,7 @@
 //   registrationNo / productName / holder / activeIngredient / formulation / dosageAsPublished /
 //   usageTable / precautionsAsPublished / technicalRequirementsAsPublished / shelfLifeAsPublished /
 //   approvedAt / reapprovedAt / validity / restrictedOrBanned +
-//   sourceUrl / retrievedAt / payloadSha256 / reviewedBy(null) / licensed(false)。
+//   sourceUrl / retrievedAt / payloadSha256 / factsSha256 / reviewedBy(null) / licensed(false)。
 //
 // 硬约束（任何一条都不放宽）：
 //   1) 只依赖 Node 标准库；**默认离线**：不传 `--allow-network` 时只读本地 fixture，绝不发起任何网络请求；
@@ -20,7 +20,11 @@
 //   6) 原始页面/图片/大段文本**一律不入库**：输出必须写到**仓库之外**，仓内路径一律拒绝；本工具
 //      不提供"保存原始 payload"的开关；
 //   7) `validity` 只在标签页明确载明登记有效期时才落值，否则 `unknown` 并记原因；`restrictedOrBanned`
-//      只是**标签原文文本扫描**的结果，不是法律判定，也不替代全国/地方禁限用公告核对。
+//      只是**标签原文文本扫描**的结果，不是法律判定，也不替代全国/地方禁限用公告核对；
+//   8) 两个指纹语义不同、不得混用：`payloadSha256` 是**该次检索**的载荷指纹（站点每次请求都会换一个
+//      `_SESSIONID` 令牌，实测同一标签两次抓取该哈希不同 ⇒ 不能当内容寻址 ID、不能当 source content_hash）；
+//      `factsSha256` 是对**抽取后事实字段**做确定性 JSON 哈希（与检索时刻、载荷令牌无关），
+//      实测同一标签两次抓取事实层逐字段一致 ⇒ 内容变更比对请用 `factsSha256`。
 //
 // 用法（离线自测）：node tools/knowledge/fetch-icama-label.mjs --fixture-dir <fixture 目录> \
 //   --registration PD99999901 --out <仓外 JSON>
@@ -237,6 +241,7 @@ export function extractLabelFacts(html, options = {}) {
     sourceUrl,
     retrievedAt,
     payloadSha256,
+    factsSha256: null,
     reviewedBy: null,
     licensed: false,
     licenseSurveyStatus: 'not_established',
@@ -333,7 +338,46 @@ export function extractLabelFacts(html, options = {}) {
   if (registrationNoInPage !== null && requestedRegistrationNo !== null && registrationNoInPage !== requestedRegistrationNo) {
     warnings.push(`registration_no_mismatch:requested=${requestedRegistrationNo};in_page=${registrationNoInPage}`);
   }
+  base.factsSha256 = computeFactsSha256(base);
   return base;
+}
+
+/**
+ * 事实层的规范化视图：**只含事实字段与状态**，按固定键序；刻意排除 retrievedAt / payloadSha256 /
+ * sourceUrl / extraction 这类"每次检索都会变"的来源指针，使哈希可用于内容变更比对。
+ */
+export function canonicalFacts(record) {
+  return {
+    status: record.status,
+    registrationNo: record.registrationNo ?? null,
+    registrationNoInPage: record.registrationNoInPage ?? null,
+    productName: record.productName ?? null,
+    holder: record.holder ?? null,
+    activeIngredient: record.activeIngredient ?? null,
+    formulation: record.formulation ?? null,
+    toxicityAsPublished: record.toxicityAsPublished ?? null,
+    dosageAsPublished: record.dosageAsPublished ?? null,
+    usageTable: (record.usageTable ?? null) === null
+      ? null
+      : record.usageTable.map((row) => ({
+        cropSite: row.cropSite ?? null,
+        target: row.target ?? null,
+        dosage: row.dosage ?? null,
+        method: row.method ?? null
+      })),
+    technicalRequirementsAsPublished: record.technicalRequirementsAsPublished ?? null,
+    precautionsAsPublished: record.precautionsAsPublished ?? null,
+    shelfLifeAsPublished: record.shelfLifeAsPublished ?? null,
+    approvedAt: record.approvedAt ?? null,
+    reapprovedAt: record.reapprovedAt ?? null,
+    validity: record.validity ?? null,
+    restrictedOrBanned: record.restrictedOrBanned ?? null
+  };
+}
+
+/** 事实内容指纹：同一条标签两次抓取（载荷令牌不同）应当得到同一个 factsSha256。 */
+export function computeFactsSha256(record) {
+  return sha256Hex(Buffer.from(JSON.stringify(canonicalFacts(record)), 'utf8'));
 }
 
 /** 取"使用范围和使用方法"4 列表（作物/场所, 防治对象, 用药量, 施用方式）。 */
@@ -593,7 +637,7 @@ export async function runFetch({
     log(
       `${record.status.toUpperCase().padEnd(12)} ${item.registrationNo} ` +
       `product=${record.productName ?? 'null'} dosageRows=${record.dosageAsPublished?.length ?? 0} ` +
-      `sha256=${record.payloadSha256.slice(0, 12)}…`
+      `payload=${record.payloadSha256.slice(0, 12)}… facts=${String(record.factsSha256 ?? 'null').slice(0, 12)}…`
     );
   }
   return { records, aborted };
