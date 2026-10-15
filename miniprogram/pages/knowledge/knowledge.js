@@ -18,14 +18,19 @@ const ZHEJIANG = /^33[0-9]{4}$/
 const PROVINCE_NOTE = '当前资料只登记到省级，已按浙江省查询。'
 const EMPTY_PROFILE_NOTE = '我的档案还没有作物和地区，本次没有预置筛选。'
 const UNREADABLE_NOTE = '未能读取我的档案，本次没有按档案预置筛选；可在下面手选条件查询。'
-const OUT_OF_COVERAGE = '当前资料仅覆盖浙江省，只登记到省级（' + PROVINCE_CODE + '），核不到你档案里的地区是否在覆盖范围内。'
-  + '本页没有用省级资料代替你的档案地区查询；可回「我的」改选浙江省内地区，或点「清空条件继续查询」用手选条件查询。'
+// 触发本提示的是 profileApi 的**通用**失败码 INVALID_RESPONSE（utils/profile-api.js#validProfile：
+// 缺 revision、region_catalog_version 非法、形状不符、地区码非浙江…任一都会命中），本页**无法**从该
+// 失败码反推具体原因。因此文案只陈述"没能核对档案里的地区信息（原因未定）"，**不得**断言"档案地区
+// 不在覆盖范围内"，也不得引导用户去改一个**可能本来就正确**的档案地区（反例：330102 省内 + revision=0）。
+const OUT_OF_COVERAGE = '未能核对我的档案里的地区信息（原因未定），本次没有按档案条件查询，也没有用省级资料代替。'
+  + '当前资料仅覆盖浙江省，只登记到省级（' + PROVINCE_CODE + '）；可点「清空条件继续查询」用手选条件查询，'
+  + '或回「我的」确认档案里的作物与地区都已保存完整。'
 Page({
   data: { fontScale: 1, gatePassed: false, busy: false, status: '', modeNote: api.modeNote(), items: [], nextCursor: null,
     // GY-I26：状态语气字段，供 state-view 统一渲染 loading／empty／error；idle 表示尚未发起查询
     stateKind: 'idle',
     // 档案预置（GY-I05/07）：profileState = idle 未读／applied 已按档案预置／none 档案为空／
-    // unread 读不到档案／out-of-coverage 档案地区核不出（不按 330000 代查）。
+    // unread 读不到档案／out-of-coverage 档案响应核不出（通用 INVALID_RESPONSE；不按 330000 代查）。
     profileState: 'idle', profileNote: '',
     q: '', cropIndex: 0, speciesIndex: 0, regionIndex: 0, growth_stage: '', planting_method: '', use_scene: '', advanced: false,
     crops: [{ name: '全部作物', id: '' }].concat(cropDoc.crops), species: [{ name: '全部杂草', id: '' }].concat(speciesDoc.species),
@@ -60,7 +65,9 @@ Page({
       const code = e && e.code
       if (code === 'SESSION_REQUIRED' || code === 'SESSION_CHANGED') { self.setData({ gatePassed: false }); self.checkGate(); return }
       // 档案响应对不上冻结契约：当前契约把 region_code 钉在 ^33[0-9]{4}$（浙江省）且作物/地区
-      // 必须同时设置，因此这一支就是"档案地区核不出／不在浙江省内"⇒ 不查询，也不拿省级资料顶替。
+      // 必须同时设置 —— 但 INVALID_RESPONSE 是 validProfile 的**通用**失败码（缺 revision、
+      // region_catalog_version 非法、形状不符…都命中），所以这里**不能**断定"地区不在浙江省内"。
+      // 只做不查询、不拿省级资料顶替，并让文案如实说"没能核对档案里的地区信息（原因未定）"。
       if (code === 'INVALID_RESPONSE') { self.outOfCoverage(); return }
       self._preset = null
       self.setData({ profileState: 'unread', profileNote: UNREADABLE_NOTE })
@@ -68,8 +75,9 @@ Page({
     })
   },
   /**
-   * 档案地区不在当前资料的覆盖范围（或核不出层级）：**不发起查询**，给出如实的未收录提示。
-   * 地区口径见文件头：不得把省级证据包装成档案地区的本地适用性。
+   * 档案响应核不出（通用 INVALID_RESPONSE）：**不发起查询**，给出如实的未核对提示。
+   * 地区口径见文件头：不得把省级证据包装成档案地区的本地适用性；也不得断言失败原因
+   * （INVALID_RESPONSE 无法区分"地区不在省内"与"响应形状/版本不符"）。
    */
   outOfCoverage: function () {
     this._preset = null
