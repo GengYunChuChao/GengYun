@@ -3,9 +3,9 @@
 // 负控制（必红）：凭空构造的用量字段必须被 `assertNoUnsourcedFacts` 判为 UNSOURCED_FACT；
 // 去掉该字段后同一记录必须通过（改回复绿）——这条证明工具不会无中生有地补用量/安全字段。
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -255,4 +255,155 @@ test('两个指纹语义不同：载荷随 _SESSIONID 变化，事实层不变�
   const laterAt = mk(base);
   laterAt.retrievedAt = '2030-01-01T00:00:00.000Z';
   assert.equal(computeFactsSha256(laterAt), mk(base).factsSha256);
+});
+
+// ------------------------------------------------- 返修回归（对抗审查 B1/B2/B3/B4）
+const TOOL_SOURCE_PATH = fileURLToPath(new URL('../../tools/knowledge/fetch-icama-label.mjs', import.meta.url));
+const NOTICE_PHRASES = ['书面许可', 'licensed=false', '不入库', '不得用于训练', '不得作为真实用量依据或评估答案键'];
+const FAKE_REPO_ROOT = 'C:\\gy-fake-repo';
+
+test('B1/B2 口径回归：工具头与产物 sourceNotice 必须写明"不得用于训练"等全部口径', async () => {
+  const source = readFileSync(TOOL_SOURCE_PATH, 'utf8');
+  assert.ok(source.includes('训练'), '工具头必须出现"训练"字样（本片返修前全文件 0 命中）');
+  for (const phrase of NOTICE_PHRASES) {
+    assert.ok(source.includes(phrase), `工具头必须写明：${phrase}`);
+  }
+  // B2：反补造不变式的覆盖边界必须写明是"页级包含"检查、不保证字段归属。
+  for (const phrase of ['页级包含', '不保证字段归属']) {
+    assert.ok(source.includes(phrase), `工具头必须写明反补造不变式的覆盖边界：${phrase}`);
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'gy-icama-notice-'));
+  const out = join(dir, 'labels.json');
+  try {
+    await main(['--fixture-dir', FIXTURE_DIR, '--registration', 'PD99999901', '--out', out, '--now', FIXED_NOW]);
+    const { sourceNotice } = JSON.parse(readFileSync(out, 'utf8'));
+    assert.equal(typeof sourceNotice, 'string');
+    for (const phrase of NOTICE_PHRASES) {
+      assert.ok(sourceNotice.includes(phrase), `产物 sourceNotice 必须写明：${phrase}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('B3 守卫：显式拒绝 \\\\?\\ / \\\\.\\ 扩展前缀与 UNC 路径', () => {
+  const benign = join(tmpdir(), 'gy-icama-benign.json');
+  const rejected = [
+    `\\\\?\\${benign}`,
+    `\\\\.\\${benign}`,
+    `\\\\?\\UNC\\localhost\\E$\\tmp\\x.json`,
+    '\\\\localhost\\E$\\GengYunCommander\\x.json',
+    '//localhost/E$/GengYunCommander/x.json'
+  ];
+  for (const raw of rejected) {
+    assert.throws(
+      () => assertOutPathOutsideRepo(raw, FAKE_REPO_ROOT),
+      /UNC|扩展长度/,
+      `必须拒绝：${raw}`
+    );
+  }
+});
+
+test('B3 守卫：junction 指向仓库时 realpath 判仓内 ⇒ 拒绝（词法上看似仓外也不算过关）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gy-icama-guard-'));
+  const outsideDir = mkdtempSync(join(tmpdir(), 'gy-icama-guard-out-'));
+  try {
+    const toRepo = join(dir, 'to-repo');
+    symlinkSync(resolve(REPO_ROOT), toRepo, 'junction');
+    assert.throws(
+      () => assertOutPathOutsideRepo(join(toRepo, 'out-probe.json'), REPO_ROOT),
+      /不能指向仓库内路径/
+    );
+    // 正控制：junction 指向仓外目录 ⇒ 放行（守卫不是"一律拒绝"）。
+    const toOutside = join(dir, 'to-outside');
+    symlinkSync(outsideDir, toOutside, 'junction');
+    const okPath = join(toOutside, 'ok.json');
+    assert.equal(assertOutPathOutsideRepo(okPath, REPO_ROOT), okPath);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('B3 守卫：同仓库其它 worktree 与主检出也一律拒绝（跨 worktree 不放行）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gy-icama-wt-'));
+  try {
+    // 合成仓库骨架：主检出 .git 是目录，链接工作树 .git 是指针文件（与真实布局同构）。
+    const mainRoot = join(dir, 'main');
+    const thisWt = join(dir, 'wt-a');
+    const otherWt = join(dir, 'wt-b');
+    for (const entry of ['wt-a', 'wt-b']) {
+      mkdirSync(join(mainRoot, '.git', 'worktrees', entry), { recursive: true });
+    }
+    for (const [wt, name] of [[thisWt, 'wt-a'], [otherWt, 'wt-b']]) {
+      mkdirSync(wt, { recursive: true });
+      writeFileSync(join(wt, '.git'), `gitdir: ${join(mainRoot, '.git', 'worktrees', name)}\n`, 'utf8');
+      writeFileSync(join(mainRoot, '.git', 'worktrees', name, 'gitdir'), `${join(wt, '.git')}\n`, 'utf8');
+    }
+    assert.throws(() => assertOutPathOutsideRepo(join(otherWt, 'out.json'), thisWt), /不能指向仓库内路径/);
+    assert.throws(() => assertOutPathOutsideRepo(join(mainRoot, 'out.json'), thisWt), /不能指向仓库内路径/);
+    const okPath = join(dir, 'outside.json');
+    assert.equal(assertOutPathOutsideRepo(okPath, thisWt), okPath);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('B4 记录形状：blocked / not_found 与 ok 用同一套键，缺项用 null 而不是缺键', async () => {
+  const okKeys = Object.keys(extractFixture('PD99999901')).sort();
+  const dirs = [];
+  const tmpFor = (prefix) => {
+    const made = mkdtempSync(join(tmpdir(), prefix));
+    dirs.push(made);
+    return made;
+  };
+  try {
+    // ① 页面报"查无结果"与 ② 登录/验证码墙：走抽取值路径。
+    for (const no of ['PD99999903', 'PD99999904']) {
+      assert.deepEqual(Object.keys(extractFixture(no)).sort(), okKeys, `${no} 的键形状必须与 ok 一致`);
+    }
+
+    // ③ 联网遇 403 ⇒ blocked（fetchImpl 为桩，绝不触达任何站点）。
+    const plan403 = makeRunPlan({
+      registrations: ['PD99999901'],
+      baseUrl: 'https://www.icama.cn',
+      outPath: join(tmpFor('gy-icama-403-'), 'out.json'),
+      minIntervalMs: MIN_INTERVAL_FLOOR_MS,
+      mode: 'network'
+    });
+    const blocked403 = (await runFetch({
+      plan: plan403,
+      now: () => FIXED_NOW,
+      fetchImpl: async () => ({ status: 403, arrayBuffer: async () => new ArrayBuffer(0) }),
+      sleepImpl: async () => {}
+    })).records[0];
+    assert.equal(blocked403.status, 'blocked');
+    assert.deepEqual(Object.keys(blocked403).sort(), okKeys, 'http 403 记录的键形状必须与 ok 一致');
+    assert.equal(blocked403.factsSha256, null, '阻断记录没有事实指纹');
+    assert.equal(blocked403.registrationNoInPage, null);
+    assert.equal(blocked403.validity, 'unknown', '阻断 ≠ 无效：有效期只是未查明');
+    assert.equal(blocked403.payloadSha256, sha256Hex(Buffer.alloc(0)));
+
+    // ④ 离线 fixture 缺失 ⇒ blocked。
+    const planMissing = makeRunPlan({
+      registrations: ['PD99999901'],
+      baseUrl: 'https://www.icama.cn',
+      outPath: join(tmpFor('gy-icama-miss-'), 'out.json'),
+      minIntervalMs: MIN_INTERVAL_FLOOR_MS,
+      mode: 'fixture'
+    });
+    const missing = (await runFetch({
+      plan: planMissing,
+      fixtureDir: tmpFor('gy-icama-empty-'),
+      now: () => FIXED_NOW,
+      sleepImpl: async () => {}
+    })).records[0];
+    assert.equal(missing.status, 'blocked');
+    assert.deepEqual(Object.keys(missing).sort(), okKeys, 'fixture 缺失记录的键形状必须与 ok 一致');
+    assert.equal(missing.payloadSha256, null);
+    assert.equal(missing.factsSha256, null);
+  } finally {
+    for (const made of dirs) rmSync(made, { recursive: true, force: true });
+  }
 });

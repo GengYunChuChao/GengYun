@@ -13,12 +13,17 @@
 //   3) **不绕过**任何登录 / 验证码 / 反爬：只用站点公开的标签查看地址；一旦出现登录页、验证码、
 //      HTTP 403/429，立即停止整轮并如实报告（不换 UA、不换代理、不猜口令继续试）；
 //   4) **不补造**：抓不到的字段写 null 并在 `nullReasons` 记原因；任何非空字段都必须能在 payload
-//      原文（空白归一化后）中**逐字定位**，否则 `assertNoUnsourcedFacts` 抛 UNSOURCED_FACT ——
-//      这条不变式使"凭空构造的用量字段"无法通过校验；
+//      原文（空白归一化后）中**逐字定位**，否则 `assertNoUnsourcedFacts` 抛 UNSOURCED_FACT。
+//      ⚠️ 该不变式是**页级包含**检查：**保证字符串可在原文定位，不保证字段归属** —— 它不保证该取值
+//      取自它所属的分节/单元格，故跨节拼接、跨单元格拼接与错列取值**不在覆盖内**（**已知限制**，
+//      本工具不主张字段级归属校验；页面里凭空构造的取值仍会被拒）；
 //   5) `reviewedBy` 恒为 null（AI 不是独立核实人）；`licensed` 恒为 false、`licenseSurveyStatus`
 //      恒为 `not_established`（未取得书面许可，站方声明保留版权）；
-//   6) 原始页面/图片/大段文本**一律不入库**：输出必须写到**仓库之外**，仓内路径一律拒绝；本工具
-//      不提供"保存原始 payload"的开关；
+//   6) 原始页面/图片/大段文本**一律不入库**：输出必须写到**本仓库之外**（本仓库 = 当前 worktree、
+//      主检出与同仓库其它 worktree）。守卫是**词法 + realpath** 双重口径：先按词法比较拒绝仓内路径
+//      及其大小写/尾随空格与点/`..` 归一/ADS 变体，再把**符号链接与 junction 解析后的 realpath**
+//      （含最近的已存在祖先）与各工作树根比较；realpath 解析失败 ⇒ **一律拒绝**（fail-closed）；
+//      并**显式拒绝** `\\?\` / `\\.\` 扩展长度前缀与 UNC 路径。本工具不提供"保存原始 payload"的开关；
 //   7) `validity` 只在标签页明确载明登记有效期时才落值，否则 `unknown` 并记原因；`restrictedOrBanned`
 //      只是**标签原文文本扫描**的结果，不是法律判定，也不替代全国/地方禁限用公告核对；
 //   8) 两个指纹语义不同、不得混用：`payloadSha256` 是**该次检索**的载荷指纹（站点每次请求都会换一个
@@ -30,10 +35,11 @@
 //   `source_versions.content_hash` 等"内容哈希"一律取 **`factsSha256`** ✓；
 //   `payloadSha256` 只作**抓取证据**（记录某一次取回的字节）✓，**不得**当内容哈希 ✗。
 // 产物与许可状态（**抓取内容尚未入库**）：
-//   抓取产物只落**仓外**（例如 `<仓外>/icama-labels/labels-20.json`）；来源站点的网站声明要求
-//   书面许可，在取得明确许可前**不把抓取内容入库、不对外分发**；记录内 `licensed=false` 只表示
-//   许可未确立，**不得**写成已许可 ✗。`validity=unknown` / `reviewedBy=null` / `restrictedOrBanned`
-//   仅为标签原文扫描 ⇒ 这批事实**不得作为真实用量依据或评估答案键** ✗。
+//   抓取产物只落**仓外**（例如 `<仓外>/icama-labels/labels-20.json`）；来源站点的网站声明（见
+//   {@link SITE_STATEMENT_URL}）**要求书面许可**，在取得明确许可前**内容不入库**（不随仓库提交）、
+//   **不对外分发**、**不得用于训练** ✗；记录内 `licensed=false` 只表示许可未确立，**不得**写成
+//   已许可 ✗。`validity=unknown` / `reviewedBy=null` / `restrictedOrBanned` 仅为标签原文扫描 ⇒
+//   这批事实**不得作为真实用量依据或评估答案键** ✗。
 //
 // 用法（离线自测）：node tools/knowledge/fetch-icama-label.mjs --fixture-dir <fixture 目录> \
 //   --registration PD99999901 --out <仓外 JSON>
@@ -41,8 +47,8 @@
 //   --registrations docs/research/gy-i03-public-label-index-20261011.json --bucket in_scope_text_candidate \
 //   --out <仓外 JSON> [--min-interval-ms 4000] [--limit 20]
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -61,7 +67,8 @@ export const REGISTRATION_NO_PATTERN = /^PD\d{8}$/;
 
 /** 站点声明要点（转述，不复制原文）：页面所涉资料版权归农业农村部农药检定所与资料提供者，
  *  未经书面许可不得引用/复制/转载/摘编。站点声明页：{@link SITE_STATEMENT_URL}。
- *  因此本工具只入"抽取后的事实字段 + 来源指针"，且输出强制落在仓库之外。 */
+ *  因此本工具只入"抽取后的事实字段 + 来源指针"，且输出必须落在**本仓库各级工作树之外**
+ *  （词法 + realpath 守卫，见 {@link assertOutPathOutsideRepo}）。 */
 export const SITE_STATEMENT_URL = 'http://www.chinapesticide.org.cn/zwb/website_statement';
 
 /** 标签页内的分节标签（顺序即出现顺序，用于取"本节文本"的右边界）。 */
@@ -214,23 +221,15 @@ export function countLabelOccurrences(flatText, label) {
 
 // ---------------------------------------------------------------- 抽取
 /**
- * 纯函数抽取：同样入参 ⇒ 同样结果（时间与来源由调用方注入）。
- * 返回记录带 `status`：ok / not_found / blocked / unrecognized。
+ * 记录骨架：ok / not_found / blocked / unrecognized **一律共用同一套键**，缺项写 `null`
+ * 而不是"缺键"（阻断记录与正常记录形状一致，下游可按同一 schema 读取）。
+ * `nullReasons` 用 `nullReason` 传单个整页级原因（落成 `{ all: ... }`）。
  */
-export function extractLabelFacts(html, options = {}) {
-  const sourceUrl = options.sourceUrl ?? null;
-  const retrievedAt = options.retrievedAt ?? null;
-  const payloadSha256 = options.payloadSha256 ?? null;
-  const requestedRegistrationNo = options.registrationNo ?? null;
-  const text = htmlToText(html);
-  const flat = normalizeForMatch(text);
-  const warnings = [];
-  const nullReasons = {};
-
-  const base = {
+export function makeRecordBase(options = {}) {
+  return {
     schema: SCHEMA,
-    status: 'unrecognized',
-    registrationNo: requestedRegistrationNo,
+    status: options.status ?? 'unrecognized',
+    registrationNo: options.registrationNo ?? null,
     registrationNoInPage: null,
     productName: null,
     holder: null,
@@ -247,17 +246,39 @@ export function extractLabelFacts(html, options = {}) {
     validity: 'unknown',
     restrictedOrBanned: null,
     restrictedOrBannedCheck: 'label_text_scan_only',
-    sourceUrl,
-    retrievedAt,
-    payloadSha256,
+    blockedKind: options.blockedKind ?? null,
+    httpStatus: options.httpStatus ?? null,
+    sourceUrl: options.sourceUrl ?? null,
+    retrievedAt: options.retrievedAt ?? null,
+    payloadSha256: options.payloadSha256 ?? null,
     factsSha256: null,
     reviewedBy: null,
     licensed: false,
     licenseSurveyStatus: 'not_established',
     extraction: { tool: TOOL_ID, mode: options.mode ?? 'fixture', schema: SCHEMA },
-    nullReasons,
-    extractionWarnings: warnings
+    nullReasons: options.nullReason === undefined ? {} : { all: options.nullReason },
+    extractionWarnings: []
   };
+}
+
+/**
+ * 纯函数抽取：同样入参 ⇒ 同样结果（时间与来源由调用方注入）。
+ * 返回记录带 `status`：ok / not_found / blocked / unrecognized。
+ */
+export function extractLabelFacts(html, options = {}) {
+  const text = htmlToText(html);
+  const flat = normalizeForMatch(text);
+
+  const base = makeRecordBase({
+    status: 'unrecognized',
+    registrationNo: options.registrationNo ?? null,
+    sourceUrl: options.sourceUrl ?? null,
+    retrievedAt: options.retrievedAt ?? null,
+    payloadSha256: options.payloadSha256 ?? null,
+    mode: options.mode ?? 'fixture'
+  });
+  const warnings = base.extractionWarnings;
+  const nullReasons = base.nullReasons;
 
   // 先判阻断与"无结果"，避免把墙页当成标签页。
   // 注意：登录墙的"验证码/账号/密码"只出现在 input 的 placeholder 属性里，故同时扫原文属性。
@@ -344,6 +365,7 @@ export function extractLabelFacts(html, options = {}) {
     const seen = countLabelOccurrences(flat, label);
     if (seen > 1) warnings.push(`duplicate_marker:${label}x${seen}`);
   }
+  const requestedRegistrationNo = base.registrationNo;
   if (registrationNoInPage !== null && requestedRegistrationNo !== null && registrationNoInPage !== requestedRegistrationNo) {
     warnings.push(`registration_no_mismatch:requested=${requestedRegistrationNo};in_page=${registrationNoInPage}`);
   }
@@ -443,8 +465,13 @@ export function collectSourcedValues(record) {
 }
 
 /**
- * 反补造不变式：记录里每个非空的"原文照录"字段，都必须能在 payload 原文（空白归一化后）
- * 逐字定位；否则抛 UNSOURCED_FACT。凭空构造的用量/注意事项在这里被拒。
+ * 反补造不变式（**页级包含**检查）：记录里每个非空的"原文照录"字段，都必须能在 payload 原文
+ * （空白归一化后）逐字定位；否则抛 UNSOURCED_FACT。页面里凭空构造的用量/注意事项在这里被拒。
+ *
+ * ⚠️ 覆盖边界：**保证字符串可在原文定位，不保证字段归属** —— 该检查拿**整页**文本做包含判定，
+ * 不校验取值来自它所属的分节/单元格，因此跨节拼接、跨相邻单元格拼接与错列取值同样会通过
+ * （**已知限制**，本工具不主张字段级归属校验）。各字段实际取自何处由 `extractLabelFacts` 的
+ * 分节/单元格逻辑决定（`labeledValue` / `sectionValue` / `extractUsageTable`）。
  */
 export function assertNoUnsourcedFacts(record, payloadText) {
   const haystack = normalizeForMatch(htmlToText(payloadText));
@@ -472,16 +499,98 @@ export function buildLabelUrl(baseUrl, registrationNo) {
   return `${base.origin}${LABEL_PATH}?pdno=${no}`;
 }
 
-/** 输出必须落在仓库之外：本工具不把抓取结果写进受版本管理的目录。 */
+/** 候选路径是否落在某个根之内。Windows 上跨盘符时 relative() 返回绝对路径 ⇒ 视为"在外面"。 */
+function isInsideRoot(candidate, root) {
+  const rel = relative(root, candidate).replace(/\\/g, '/');
+  return !(isAbsolute(rel) || rel === '..' || rel.startsWith('../'));
+}
+
+/** realpath 解析（允许末尾若干段尚不存在）：从完整路径向上找到**最近的已存在祖先**，解析它的
+ *  符号链接 / junction 后再把缺失段拼回。真解析失败（非 ENOENT/ENOTDIR，或走到盘符根仍失败）
+ *  一律抛出 ⇒ 调用方**拒绝**该路径（fail-closed，不退回纯词法判断）。 */
+export function realpathAllowingMissing(absPath) {
+  const missing = [];
+  let current = absPath;
+  for (;;) {
+    let real = null;
+    try {
+      real = realpathSync.native(current);
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error;
+    }
+    if (real !== null) return missing.length === 0 ? real : join(real, ...missing.reverse());
+    const parent = dirname(current);
+    if (parent === current) {
+      throw new UsageError(`--out 路径解析不出任何已存在的祖先（realpath 失败即拒绝）：${absPath}`);
+    }
+    missing.push(basename(current));
+    current = parent;
+  }
+}
+
+/** 本仓库的工作树根集合：当前 worktree + 主检出 + 同仓库其它 worktree（同一份 `.git` 共用）。
+ *  只读 `.git` 指针与 `worktrees/<name>/gitdir`，不调用 git 命令、不读任何仓库内容；
+ *  读不到 git 元数据时只保留当前 worktree 根（**已有判定绝不放宽**，只是少列几个根）。 */
+export function repoWorktreeRoots(repoRoot = REPO_ROOT) {
+  const root = resolve(repoRoot);
+  const roots = new Set([root]);
+  try {
+    const dotGit = join(root, '.git');
+    let commonDir = null;
+    if (statSync(dotGit).isDirectory()) commonDir = dotGit;
+    else {
+      const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'));
+      if (pointer !== null) {
+        const gitDir = resolve(root, pointer[1]);
+        commonDir = /[\\/]worktrees[\\/][^\\/]+$/.test(gitDir) ? resolve(gitDir, '..', '..') : gitDir;
+      }
+    }
+    if (commonDir === null) return [...roots];
+    if (basename(commonDir) === '.git') roots.add(dirname(commonDir));
+    for (const entry of readdirSync(join(commonDir, 'worktrees'), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const target = readFileSync(join(commonDir, 'worktrees', entry.name, 'gitdir'), 'utf8').trim();
+      if (target !== '') roots.add(dirname(resolve(target)));
+    }
+  } catch {
+    // 读不到 git 元数据：只守当前 worktree 根，不放宽既有判定。
+  }
+  return [...roots];
+}
+
+/**
+ * 输出必须落在**本仓库之外**（含主检出与同仓库其它 worktree）：本工具不把抓取结果写进受版本
+ * 管理的目录。守卫是**词法 + realpath** 双重口径：
+ *   1) `\\?\` / `\\.\` 扩展长度前缀与 UNC 路径**显式拒绝**（无法可靠判定它落在哪个卷/共享上）；
+ *   2) 词法比较拒绝仓内路径及其大小写 / 尾随空格与点 / `..` 归一 / ADS 变体；
+ *   3) 再对**符号链接与 junction 解析后的 realpath**（含最近的已存在祖先）比较；
+ *   4) realpath 解析失败 ⇒ **拒绝**（fail-closed）。
+ * 注意：这里只做路径守卫，不创建文件；返回值是词法绝对路径（写文件由调用方负责）。
+ */
 export function assertOutPathOutsideRepo(outPath, repoRoot = REPO_ROOT) {
-  const abs = resolve(isAbsolute(outPath) ? outPath : resolve(process.cwd(), outPath));
-  const rel = relative(resolve(repoRoot), abs).replace(/\\/g, '/');
-  // 注意：Windows 上跨盘符时 relative() 会返回绝对路径，故用 isAbsolute(rel) 一并判定"在仓外"。
-  const outside = isAbsolute(rel) || rel === '..' || rel.startsWith('../');
-  if (!outside) {
+  const raw = String(outPath ?? '').trim();
+  if (raw === '') throw new UsageError('--out 不能为空');
+  if (/^[\\/]{2}/.test(raw)) {
     throw new UsageError(
-      `--out 不能指向仓库内路径（原始标签内容与抽取结果都不入仓）：${abs}；本工具只写仓外路径`
+      `--out 不接受 UNC 路径或 \\\\?\\ / \\\\.\\ 扩展长度前缀（无法可靠判定是否落在仓库内）：${raw}`
     );
+  }
+  const abs = resolve(isAbsolute(raw) ? raw : resolve(process.cwd(), raw));
+  const real = realpathAllowingMissing(abs);
+  for (const root of repoWorktreeRoots(repoRoot)) {
+    const rootAbs = resolve(root);
+    let rootReal = rootAbs;
+    try {
+      rootReal = realpathSync.native(rootAbs);
+    } catch {
+      // 根不存在/解析不出：仍按词法根比较，不因此放行。
+    }
+    if (isInsideRoot(abs, rootAbs) || isInsideRoot(real, rootReal)) {
+      throw new UsageError(
+        `--out 不能指向仓库内路径（原始标签内容与抽取结果都不入仓；含主检出与同仓库其它 worktree，` +
+        `以及符号链接/junction 解析后的 realpath）：${abs}；本工具只写仓外路径`
+      );
+    }
   }
   return abs;
 }
@@ -587,20 +696,16 @@ export async function runFetch({
       const res = await httpFetchPayload(item.url, { fetchImpl });
       if (res.status === 403 || res.status === 429) {
         aborted = { kind: 'site_blocked', registrationNo: item.registrationNo, httpStatus: res.status };
-        records.push({
-          schema: SCHEMA,
+        records.push(makeRecordBase({
           status: 'blocked',
           registrationNo: item.registrationNo,
           sourceUrl: item.url,
           retrievedAt: now(),
           payloadSha256: sha256Hex(res.bytes),
           httpStatus: res.status,
-          reviewedBy: null,
-          licensed: false,
-          licenseSurveyStatus: 'not_established',
-          nullReasons: { all: `http_${res.status}_stop_run_no_retry_no_bypass` },
-          extractionWarnings: []
-        });
+          mode: plan.mode,
+          nullReason: `http_${res.status}_stop_run_no_retry_no_bypass`
+        }));
         log(`ABORT ${item.registrationNo} http=${res.status} —— 站点阻断，停止整轮（不重试、不绕过）`);
         break;
       }
@@ -609,19 +714,14 @@ export async function runFetch({
       const file = fixturePathFor(fixtureDir, item.registrationNo);
       if (!existsSync(file)) {
         aborted = { kind: 'fixture_missing', registrationNo: item.registrationNo };
-        records.push({
-          schema: SCHEMA,
+        records.push(makeRecordBase({
           status: 'blocked',
           registrationNo: item.registrationNo,
           sourceUrl: item.url,
           retrievedAt: now(),
-          payloadSha256: null,
-          reviewedBy: null,
-          licensed: false,
-          licenseSurveyStatus: 'not_established',
-          nullReasons: { all: 'offline_fixture_not_found' },
-          extractionWarnings: []
-        });
+          mode: plan.mode,
+          nullReason: 'offline_fixture_not_found'
+        }));
         break;
       }
       const bytes = readFileSync(file);
@@ -684,8 +784,10 @@ async function main(argv) {
     sequential: true,
     concurrency: 1,
     sourceNotice:
-      '来源为公开标签查看页；站方声明保留版权、未取得书面许可，故本文件只含抽取后事实字段与来源指针，' +
-      '不得再分发；不随仓库提交。',
+      '来源为公开标签查看页（匿名读取）；站方声明保留版权并**要求书面许可**（' + SITE_STATEMENT_URL + '）。' +
+      '在取得明确许可前：本文件只含抽取后事实字段与来源指针，**内容不入库**（不随仓库提交）、' +
+      '不再分发、**不得用于训练**；记录内 licensed=false 只表示许可未确立，不得写成已许可。' +
+      'validity/reviewedBy 未经核实 ⇒ **不得作为真实用量依据或评估答案键**。',
     requestedCount: plan.urls.length,
     okCount: records.filter((r) => r.status === 'ok').length,
     notFoundCount: records.filter((r) => r.status === 'not_found').length,
@@ -708,7 +810,7 @@ const invokedDirectly = process.argv[1] !== undefined &&
 if (invokedDirectly) {
   main(process.argv.slice(2)).catch((error) => {
     console.error(`失败：${error?.message ?? error}`);
-    process.exitCode = error instanceof UsageError ? 1 : 1;
+    process.exitCode = 1;
   });
 }
 
