@@ -461,6 +461,40 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ajv: { customOptions: { removeAdditional: false } },
   });
 
+  // GY-I16（#16；Refs #7）真机阻断缺陷修复：**空请求体的写请求按「无请求体」处理**。
+  //
+  // 现象：微信 `wx.request` 默认注入 `content-type: application/json`，而取消收藏的
+  // `DELETE /api/v1/favorites/{id}` **没有请求体**。Fastify 对 `bodywith` 方法
+  // （DELETE/POST/PUT/PATCH/OPTIONS）**只凭该头**就进 JSON 解析器
+  // （`node_modules/fastify/lib/handle-request.js`），空体被判 `FST_ERR_CTP_EMPTY_JSON_BODY`
+  // ⇒ 被下方错误处理器映射成 400 `INVALID_REQUEST`「请求体格式错误」。
+  // 该 400 发生在**路由、鉴权与 schema 校验之前**（真机日志 0.5737 ms 返回、`connection: close`），
+  // 因此真机上「取消收藏」100% 失败，且连 401/428/409 都被它遮住；同类无体写请求
+  // （history/community/identify 的 DELETE、无体 POST）一并被拒——是**整类**而不是收藏单点。
+  //
+  // 修法：与 Fastify 自身 `isEmptyBody`（`lib/handle-request.js`）**同口径**判定"确无请求体"
+  // （无 `transfer-encoding`，且 `content-length` 缺失或为 `0`）：此时请求声明的 JSON 内容类型
+  // 没有可解析的体，摘掉该声明让请求走 Fastify 的"无体"分支（与客户端根本没发这个头**逐字一致**），
+  // 而不是进解析器。**不替换**默认 JSON 解析器：非空体仍由 Fastify 默认解析器
+  // （`secure-json-parse`，含防原型/构造器污染）处理，非法 JSON 仍照旧 400。
+  //
+  // **不放宽任何校验**：鉴权（401）、`If-Match` 必填（428）、版本比对（409）、
+  // `Idempotency-Key` 要求、归属与非本人同形 404 全部照常执行；声明了 `schema.body` 的路由
+  // 遇到空体仍被 schema 拒绝（400 `INVALID_REQUEST`，语义比"请求体格式错误"更准）。
+  // 边界（如实记录）：`transfer-encoding: chunked` 的空体不在此列（无法在解析前确知为空），
+  // 微信 `wx.request` 的无体请求不发该头。
+  app.addHook('onRequest', (request, _reply, done) => {
+    const headers = request.headers;
+    if (
+      headers['content-type'] !== undefined &&
+      headers['transfer-encoding'] === undefined &&
+      (headers['content-length'] === undefined || headers['content-length'] === '0')
+    ) {
+      delete headers['content-type'];
+    }
+    done();
+  });
+
   const clock = now ?? (() => new Date());
   const messagesService = config.executionMode === 'real' ? null : createMessagesService({
     store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
