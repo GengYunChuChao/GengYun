@@ -46,10 +46,16 @@
           <view class="panel-head__title">我的档案</view>
           <view class="pill pill--gray">单项作物 · 浙江市县</view>
         </view>
-        <!-- 读取失败时本面板**不**留“待读取”的静默占位：直接给出可见失败态 + 重试入口（GY-I05）。
-             统一走 state-view(status="error")，不另写一行灰字当失败提示（docs/ui-state-inventory.md:80）。 -->
+        <!-- 读取中/读取失败时本面板**不**留“待读取”的静默占位：加载态与失败态都有可见反馈，
+             失败态还带重试入口（GY-I05）。统一走 state-view，不另写一行灰字当失败提示
+             （docs/ui-state-inventory.md:80）。 -->
         <state-view
-          wx:if="{{loadError}}"
+          wx:if="{{busy && !loaded}}"
+          status="loading"
+          title="正在读取档案与目录"
+        ></state-view>
+        <state-view
+          wx:elif="{{loadError}}"
           status="error"
           title="档案暂时读取失败"
           desc="{{loadError}}"

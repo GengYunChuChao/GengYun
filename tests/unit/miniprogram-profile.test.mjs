@@ -197,12 +197,16 @@ test('GET /me/profile 503 时档案入口给出可见失败态与重试，不再
  assert.ok(f.page.data.message.length>0,'hint 行也不得为空');
  // 失败态由 state-view(status="error") 呈现，且自带重试入口（不是自写一行灰字）
  const wxml=readFileSync(root+'/miniprogram/pages/profile/profile.wxml','utf8');
- const failure=wxml.match(/<state-view\b[^>]*wx:if="\{\{loadError\}\}"[^>]*>/);
+ const failure=wxml.match(/<state-view\b[^>]*wx:(?:if|elif)="\{\{loadError\}\}"[^>]*>/);
  assert.ok(failure,'失败态 state-view 未接线到 loadError——正则失配必须失败，不得静默通过');
  assert.match(failure[0],/status="error"/);
  assert.match(failure[0],/desc="\{\{loadError\}\}"/);
  assert.match(failure[0],/action-text="重试读取档案"/);
  assert.match(failure[0],/bind:action="loadProfile"/,'失败态必须带可用的重试入口');
+ // 读取中同样不得静默（loading → 失败/成功 的可见反馈）
+ const loading=wxml.match(/<state-view\b[^>]*status="loading"[^>]*>/);
+ assert.ok(loading,'读取中必须有可见加载态');
+ assert.match(loading[0],/wx:if="\{\{busy && !loaded\}\}"/,'加载态只在首次/重试读取在途时出现，不能盖住保存流程');
  // 2) 点「档案编辑入口」必须有可见反馈（改前 onEdit 静默 return，data 一个字段都不变 ⇒ 真红）
  const before=JSON.stringify(f.page.data);
  f.page.onEdit();
@@ -215,8 +219,10 @@ test('GET /me/profile 503 时档案入口给出可见失败态与重试，不再
  f.page.openReference();
  assert.match(f.page.data.message,/还没有读取成功/);
  assert.equal(f.routes.length,routes,'档案未读取成功时不得跳转');
- // 4) 重试入口真的重发读取；改判 200 后失败态消失，档案可渲染、可编辑（与既有行为一致）
+ // 4) 重试入口真的重发读取；重试在途必须是可见加载态（loading → 成功）
  f.page.loadProfile();
+ assert.equal(f.page.data.busy,true);assert.equal(f.page.data.loaded,false);assert.equal(f.page.data.loadError,'');
+ assert.match(f.page.data.message,/正在读取/);
  f.answer(f.last('/me/profile'),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1',revision:1});
  f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});
  f.answer(f.last('/catalog/regions'),{items:regions,next_cursor:null});
