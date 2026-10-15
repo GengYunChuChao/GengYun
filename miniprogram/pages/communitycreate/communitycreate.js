@@ -6,8 +6,9 @@
 //   - **图片帖本轮未取得**：契约允许 `media_ids` ≤3，但规则层对带媒体目标一律不判通过
 //     （`packages/moderation/merge.mjs` 明确声明这是跨片依赖），因此页面**不提供**图片上传，
 //     并如实说明原因，而不是让用户传完图再被服务端拒绝；
-//   - 审核结果只以**服务端返回**为准：通过则 201；未通过则按契约错误码展示原因码，
-//     页面不会显示"已提交成功"。
+//   - 审核结果只以**服务端返回**为准：未通过则按契约错误码展示原因码，页面不会显示"已提交成功"；
+//     201 也只是"服务端已受理"，是否公开一律按返回的 `visibility`/`audit_state` 如实提示
+//     （判据与措辞逐字取自详情页／列表页既有实现，见 onSubmit，本页不再自造第二套说法）。
 const pageGate = require('../../utils/page-gate')
 const fontScale = require('../../utils/font-scale')
 const navigation = require('../../utils/navigation')
@@ -88,7 +89,17 @@ Page({
     this.setData({ submitting: true, errorText: '' })
     api.createPost(input).then(function (result) {
       that.setData({ submitting: false })
-      wx.showToast({ title: '已发布并通过先行审核', icon: 'success' })
+      // 审核结论只以**服务端返回**为准。判据与措辞**逐字**取自**既有**的详情页与列表页，
+      // 本页不自造第二套说法：通过 ⇒ 详情页的 `publicLabel`（`communitydetail.js:105`）；
+      // 其余 ⇒ 详情页的作者侧 `stateLabel`（`:106-108`）＝列表页 `stateLabel`
+      // （`community.js:130-133`）：已下架 ⇒ '已下架（仅本人可见）'，否则 '待审／未公开'。
+      // 此前这里是无条件宣称"已发布并通过先行审核"——服务端从未这么说过。
+      const post = result.post
+      const approved = post.visibility === 'published' && post.audit_state === 'approved'
+      wx.showToast({
+        title: approved ? '已通过先行审核' : (post.visibility === 'hidden' ? '已下架（仅本人可见）' : '待审／未公开'),
+        icon: approved ? 'success' : 'none'
+      })
       navigation.openTarget('/pages/communitydetail/communitydetail?id=' + encodeURIComponent(result.post.id), true, function () {})
     }).catch(function (error) {
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ submitting: false, guest: true }); return }
