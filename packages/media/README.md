@@ -71,11 +71,12 @@ initiated → uploaded → processing → ready
 本模块只消费该结构；一致性由 `tests/media/schema.test.mjs` 断言（枚举、列、CHECK、
 300 秒 TTL）。生产部署须以对象存储适配器 + 单事务/行版本 CAS 实现同一 `commit` 契约（同 GY-I27）。
 
-## services/api 挂载示例（媒体 HTTP 路由尚未接线）
+## services/api 挂载示例（媒体 HTTP 路由已接线；未接线的是**句柄消费网关**）
 
 `service.mjs` 是**纯模块**，不直接改 `services/api/src/app.ts`（该文件归 GY-I02）。
-认证与授权组件已通过 PR #59、#61、#63 合并；媒体模块仍须由服务端会话层注入身份并挂载路由。
-以下仅为接线示例，不代表已运行的 HTTP 接口：
+认证与授权组件已通过 PR #59、#61、#63 合并；媒体 7 条 HTTP 路由**已由服务端会话层注入身份挂载**（唯一注册点 `services/api/src/routes/media.ts` 的 `registerMediaRoutes`，装配点 `services/api/src/app.ts`；回归见 `tests/unit/media-http-upload.test.mjs`、`tests/unit/media-http-access.test.mjs`）。
+**仍未接线的**是**句柄消费网关**（owner 短效句柄的**消费端**，部署期访问网关）与真实对象存储/COS 适配：契约内没有私有媒体内容路由，本模块也不宣称真实取图已通。
+以下示例为**模块 API 的产品侧调用形态**（语义与已注册路由一致；鉴权、强 ETag 与契约封套由 `registerMediaRoutes` 承担）：
 
 ```js
 import { createMediaService } from '../packages/media/service.mjs';
