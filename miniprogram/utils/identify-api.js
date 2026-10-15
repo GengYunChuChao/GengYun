@@ -9,6 +9,15 @@
 //   cancelJob          POST   /jobs/{id}/cancel                 → JobEnvelope
 //   createUpload       POST   /media/uploads                    → 201 UploadGrantEnvelope（real 照片链路）
 //
+// GY-I10 标签 OCR（#10，本片追加；**只复用既有 operation，不新增契约**）：
+//   createOcr          POST   /ocr                              → 202 JobEnvelope（kind=ocr）
+//   getOcrJob          GET    /jobs/{id}                        → JobEnvelope（kind=ocr；七类 JobState 唯一可读面）
+//   cancelOcrJob       POST   /jobs/{id}/cancel                 → JobEnvelope（**本基线 OCR 域无取消能力**
+//                                                               ⇒ 服务端如实 503 PROVIDER_UNAVAILABLE(retryable)，
+//                                                                 与「作业不存在」的 404 必须区分）
+//   标签正文读面 `GET /ocr/{id}` 已由 `utils/history-api.js` 的 `getOcr`/`ocrDetailView` 消费（本片**复用**，
+//   不重造第二套 OCR 校验，也不在该读面上渲染任何用量数字）。
+//
 // 硬口径：
 // 1) **只有 succeeded 才算识别成功**。uncertain / failed / timed_out / cancelled 一律不得
 //    被渲染成「识别成功」的 Top3，也不得自动进入关联科普查询路径（见 viewModelForJob）。
@@ -23,6 +32,15 @@ const EXECUTION_MODES = ['real', 'stub', 'preset_demo']
 const MAX_CANDIDATES = 3
 const MEDIA_STATES = ['initiated', 'uploaded', 'processing', 'ready', 'rejected', 'deleting', 'deleted']
 const MEDIA_PURPOSE = 'weed_recognition'
+
+/** 会话失效类错误码（401/403 归因与页面门禁关闭共用同一闭集）。 */
+const SESSION_LOSS_CODES = ['SESSION_REQUIRED', 'SESSION_CHANGED', 'SESSION_EXPIRED']
+
+/** 本客户端允许经私有媒体链路上传的**图片**用途（契约 `MediaPurpose` 的图片成员）。 */
+const IMAGE_MEDIA_PURPOSES = ['weed_recognition', 'label_ocr']
+
+/** 标签 OCR 任务的媒体用途（#10）：与识别图**同限额**（≤2 MiB；仅 jpeg/png/webp）。 */
+const OCR_MEDIA_PURPOSE = 'label_ocr'
 
 /**
  * 媒体上传链路上**服务端可能如实返回**的契约错误码闭集。
@@ -211,6 +229,30 @@ function uploadFailureOf(statusCode, payload, fallback) {
   return e
 }
 
+/**
+ * 401/403 的**如实**归因。
+ *
+ * 401 一律按会话失效处理；403 则要看契约封套：它可能是 `SCOPE_DENIED` / `CONSENT_REQUIRED` /
+ * `ACCOUNT_INACTIVE` 这类**与授权有关**的拒绝（会话本身可能仍然有效），把它们一律说成
+ * "登录状态已失效，请重新登录"是把用户指向错误原因（且会误清会话，导致连"去授权"都做不了）。
+ * 封套读不到、或给出会话类码 ⇒ 仍按 `SESSION_REQUIRED`（并清会话）——**不放宽**任何守卫。
+ *
+ * 非会话类码**原样带出**（由 `messageFor`/`ocrMessageFor` 的措辞表如实呈现，不发明文案）。
+ */
+function errorCodeOf(payload) {
+  if (!object(payload) || !object(payload.error) || typeof payload.error.code !== 'string') return null
+  return text(payload.error.code, 80) ? payload.error.code : null
+}
+
+function forbiddenOrSessionLoss(statusCode, payload) {
+  const code = errorCodeOf(payload)
+  const surface = statusCode === 403 && code !== null && SESSION_LOSS_CODES.indexOf(code) === -1 ? code : 'SESSION_REQUIRED'
+  if (surface === 'SESSION_REQUIRED') auth.clearSession()
+  const e = failure(surface)
+  e.status = statusCode
+  e.retryable = object(payload) && object(payload.error) && payload.error.retryable === true
+  return e
+}
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
 function current(b) { const now = binding(); return !!b && !!now && b.token === now.token && b.epoch === now.epoch }
 
@@ -268,6 +310,39 @@ function validateJob(job) {
     deadline_at: job.deadline_at, created_at: job.created_at, error_code: job.error_code, result: value }
 }
 
+/**
+ * 校验标签 OCR（#10）的契约 `Job`（九键、`kind='ocr'`、`target_ref.type='ocr'`）。
+ *
+ * 与 `validateJob`（识别域）同形，差异只有 `kind`/`target_ref.type` 的闭集成员：
+ * OCR 没有专属的任务状态端点 ⇒ `GET /jobs/{id}` 是读七类 `JobState` 与 `error_code` 的**唯一**契约面。
+ *
+ * `result.value`（标签正文 `LabelFields` + `Verification`）**不在这里深校验**：展示一律走
+ * `GET /ocr/{id}`（`utils/history-api.js` 的 `getOcr` 逐字段校验后交给 `ocrDetailView`），
+ * 本层只确认"结果存在且是对象"，既不重造第二套 OCR 校验，也不放宽任何字段。
+ */
+function validateOcrJob(job) {
+  keys(job, ['id', 'revision', 'kind', 'target_ref', 'state', 'deadline_at', 'created_at', 'error_code', 'result'])
+  if (typeof job.id !== 'string' || !UUID.test(job.id) || !integer(job.revision, 1)) throw failure('INVALID_RESPONSE')
+  if (job.kind !== 'ocr') throw failure('INVALID_RESPONSE')
+  keys(job.target_ref, ['type', 'id', 'revision'])
+  if (job.target_ref.type !== 'ocr' || typeof job.target_ref.id !== 'string' || !UUID.test(job.target_ref.id) ||
+      !integer(job.target_ref.revision, 1)) throw failure('INVALID_RESPONSE')
+  if (!one(job.state, JOB_STATES)) throw failure('INVALID_RESPONSE')
+  if (!timestamp(job.deadline_at) || !timestamp(job.created_at)) throw failure('INVALID_RESPONSE')
+  if (!(job.error_code === null || typeof job.error_code === 'string')) throw failure('INVALID_RESPONSE')
+  let hasResult = false
+  if (job.result !== null) {
+    keys(job.result, ['kind', 'value'])
+    if (job.result.kind !== 'ocr' || !object(job.result.value)) throw failure('INVALID_RESPONSE')
+    hasResult = true
+  }
+  // 只有 succeeded / uncertain 允许带结果；failed / timed_out / cancelled 带结果即视为响应异常。
+  if (hasResult && job.state !== 'succeeded' && job.state !== 'uncertain') throw failure('INVALID_RESPONSE')
+  return { id: job.id, revision: job.revision, state: job.state,
+    target_ref: { type: 'ocr', id: job.target_ref.id, revision: job.target_ref.revision },
+    deadline_at: job.deadline_at, created_at: job.created_at, error_code: job.error_code, hasResult: hasResult }
+}
+
 function request(method, path, options) {
   const opts = options || {}
   const b = binding()
@@ -281,7 +356,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 202 || r.statusCode === 200) {
@@ -348,13 +423,45 @@ async function deleteRecognition(recognitionId, revision) {
   return { accepted: true, mode: r.mode }
 }
 
-function validateUploadGrant(data) {
+// ---------------------------------------------------------------- 标签 OCR（#10）
+
+/** 受理标签 OCR 任务；body 恰为 `MediaJobInput`（与识草同一形状，**不新增字段**）。 */
+async function createOcr(mediaId, mediaRevision) {
+  if (typeof mediaId !== 'string' || !UUID.test(mediaId)) throw failure('INVALID_INPUT')
+  if (!integer(mediaRevision, 1)) throw failure('INVALID_INPUT')
+  const r = await request('POST', '/ocr', { body: { media_id: mediaId, media_revision: mediaRevision }, idempotencyKey: newKey('ocr-create') })
+  return { job: validateOcrJob(r.data), mode: r.mode }
+}
+
+/** 读标签 OCR 任务状态（七类 `JobState` + `error_code` 的唯一契约面）。 */
+async function getOcrJob(jobId) {
+  if (typeof jobId !== 'string' || !UUID.test(jobId)) throw failure('INVALID_INPUT')
+  const r = await request('GET', '/jobs/' + jobId, {})
+  return { job: validateOcrJob(r.data), mode: r.mode }
+}
+
+/**
+ * 请求取消标签 OCR 任务。
+ *
+ * **本基线 OCR 域不提供取消能力**：服务端注册表先确认作业存在，再按契约返回
+ * `503 PROVIDER_UNAVAILABLE`（`retryable: true`，语义="该作业所属能力尚未提供取消"），
+ * **不伪造** `cancelled`、也**不用 404 谎称作业不存在**。错误码**原样保留**（不改成客户端私有码），
+ * 由 `ocrMessageFor(e, 'cancel')` 给出专属文案，与 `NOT_FOUND`（"任务或识别记录不存在"）明确区分。
+ */
+async function cancelOcrJob(jobId, revision) {
+  if (typeof jobId !== 'string' || !UUID.test(jobId) || !integer(revision, 1)) throw failure('INVALID_INPUT')
+  const r = await request('POST', '/jobs/' + jobId + '/cancel', { ifMatch: '"' + revision + '"', idempotencyKey: newKey('ocr-cancel') })
+  return { job: validateOcrJob(r.data), mode: r.mode }
+}
+
+function validateUploadGrant(data, expectedPurpose) {
   keys(data, ['media', 'upload'])
   const media = data.media
   const upload = data.upload
   keys(media, ['id', 'revision', 'purpose', 'mime', 'bytes', 'duration_ms', 'state', 'sha256', 'failure_code'])
   if (typeof media.id !== 'string' || !UUID.test(media.id) || !integer(media.revision, 1)) throw failure('INVALID_RESPONSE')
-  if (media.purpose !== MEDIA_PURPOSE || !one(media.state, MEDIA_STATES)) throw failure('INVALID_RESPONSE')
+  // 用途必须**回显为本次请求的用途**（识别图 weed_recognition / 标签图 label_ocr）：不静默接受别的用途。
+  if (media.purpose !== expectedPurpose || !one(media.state, MEDIA_STATES)) throw failure('INVALID_RESPONSE')
   if (!integer(media.bytes, 1) || typeof media.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(media.sha256)) throw failure('INVALID_RESPONSE')
   keys(upload, ['url', 'expires_at', 'method', 'access_token'])
   if (typeof upload.url !== 'string' || !/^https:\/\//.test(upload.url) || upload.method !== 'PUT') throw failure('INVALID_RESPONSE')
@@ -366,29 +473,36 @@ function validateUploadGrant(data) {
  * real 模式：按契约走私有媒体上传链路（createUpload → PUT 句柄 URL → completeUpload）。
  * 任何一步失败都**如实抛出**，绝不回退替身、绝不伪造 media_id。
  *
+ * `purpose` 可选（默认 `weed_recognition`；只接受契约图片用途闭集 `IMAGE_MEDIA_PURPOSES`）：
+ * 标签 OCR 传 `label_ocr`（契约 `MediaPurpose` 成员，与识别图同限额）——**不新增契约字段**。
+ *
  * `POST /media/uploads` 非 201 时**读契约封套 `error.code`** 归因（见 `uploadFailureOf`）：
  *   503 PROVIDER_UNAVAILABLE ⇒ 服务端真实对象存储未接线；
  *   400/413/415（INVALID_REQUEST / MEDIA_TOO_LARGE / MEDIA_TYPE_UNSUPPORTED）⇒ 照片不符合用途限制；
  * 封套读不到时才回落 `MEDIA_CHANNEL_UNAVAILABLE`（媒体路由**已挂载**，不得再断言"未挂载"）。
  */
-function uploadPrivatePhoto(tempFilePath, declaration) {
+function uploadPrivatePhoto(tempFilePath, declaration, purpose) {
   const b = binding()
   if (!b || !auth.networkEnabled()) return Promise.reject(failure('SESSION_REQUIRED'))
   if (typeof tempFilePath !== 'string' || tempFilePath === '') return Promise.reject(failure('INVALID_INPUT'))
-  const header = { authorization: 'Bearer ' + b.token, 'content-type': 'application/json', 'Cache-Control': 'no-cache', 'Idempotency-Key': newKey('identify-upload') }
+  const mediaPurpose = purpose === undefined ? MEDIA_PURPOSE : purpose
+  if (IMAGE_MEDIA_PURPOSES.indexOf(mediaPurpose) === -1) return Promise.reject(failure('INVALID_INPUT'))
+  const keyPrefix = mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-upload' : 'identify-upload'
+  const donePrefix = mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-complete' : 'identify-complete'
+  const header = { authorization: 'Bearer ' + b.token, 'content-type': 'application/json', 'Cache-Control': 'no-cache', 'Idempotency-Key': newKey(keyPrefix) }
   return new Promise(function (resolve, reject) {
     wx.request({
       url: runtime.apiBaseUrl + '/media/uploads', method: 'POST', timeout: 15000, header: header,
-      data: { purpose: MEDIA_PURPOSE, mime: declaration.mime, bytes: declaration.bytes, sha256: declaration.sha256 },
+      data: { purpose: mediaPurpose, mime: declaration.mime, bytes: declaration.bytes, sha256: declaration.sha256 },
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         let grant
         try {
           if (r.statusCode !== 201) { reject(uploadFailureOf(r.statusCode, r.data, 'MEDIA_CHANNEL_UNAVAILABLE')); return }
           keys(r.data, ['data', 'meta'])
           validateMeta(r.data.meta)
-          grant = validateUploadGrant(r.data.data)
+          grant = validateUploadGrant(r.data.data, mediaPurpose)
         } catch (e) { reject(e); return }
         wx.getFileSystemManager().readFile({
           filePath: tempFilePath,
@@ -400,11 +514,11 @@ function uploadPrivatePhoto(tempFilePath, declaration) {
                 if (put.statusCode !== 200 && put.statusCode !== 201 && put.statusCode !== 204) { reject(failure('MEDIA_CHANNEL_UNAVAILABLE')); return }
                 wx.request({
                   url: runtime.apiBaseUrl + '/media/uploads/' + grant.media.id + '/complete', method: 'POST', timeout: 30000,
-                  header: { authorization: 'Bearer ' + b.token, 'content-type': 'application/json', 'If-Match': '"' + grant.media.revision + '"', 'Idempotency-Key': newKey('identify-complete') },
+                  header: { authorization: 'Bearer ' + b.token, 'content-type': 'application/json', 'If-Match': '"' + grant.media.revision + '"', 'Idempotency-Key': newKey(donePrefix) },
                   data: { sha256: declaration.sha256, bytes: declaration.bytes },
                   success: function (done) {
                     try {
-                      if (done.statusCode !== 202) { reject(failure('MEDIA_CHANNEL_UNAVAILABLE')); return }
+                      if (done.statusCode !== 202) { reject(uploadFailureOf(done.statusCode, done.data, 'MEDIA_CHANNEL_UNAVAILABLE')); return }
                       keys(done.data, ['data', 'meta'])
                       validateMeta(done.data.meta)
                       const media = done.data.data
@@ -427,7 +541,20 @@ function uploadPrivatePhoto(tempFilePath, declaration) {
   })
 }
 
-/** 读服务端执行模式（用公开主页 meta，不发任何私有数据）；失败如实抛出。 */
+/**
+ * 读服务端执行模式（用公开读面 `GET /public/home` 的**契约封套 meta**，不发任何私有数据）。
+ *
+ * **为什么不能要求 200**（既有缺陷 1-D，本片附带修复）：`/public/home` 的**数据**只在
+ * `real` + 已接库时才可用（`services/api/src/db/catalog.ts:15-16` 的 fail-closed，
+ * `tests/unit/public-home.test.mjs` 对 real/stub/preset_demo 逐模式断言 503），
+ * 真机实测该 503 已登记（`.pg17/handoff/device-fullchain-a4-2044.md:178`）。
+ * 旧写法把"数据不可用（按设计）"当成"执行模式不可读" ⇒ `stub`/`preset_demo` 下识别入口
+ * **在第一步就死掉**（页面显示"识别服务暂不可用"），与"替身模式明确标注"的既有设计矛盾。
+ *
+ * 契约事实：`Meta`（`request_id`/`contract_version`/`execution_mode`）在**成功与错误封套里都必填**
+ * （`openapi.json` 的 `ErrorEnvelope.required = [error, meta]`）⇒ 非 200 时**仍可如实**读出执行模式。
+ * 只有"封套里没有可核对的 meta"或网络失败才如实报不可用（不猜、不兜底）。
+ */
 function serverMode() {
   const b = binding()
   if (!b || !auth.networkEnabled()) return Promise.reject(failure('SESSION_REQUIRED'))
@@ -435,9 +562,10 @@ function serverMode() {
     wx.request({
       url: runtime.apiBaseUrl + '/public/home', method: 'GET', timeout: 15000, header: { 'Cache-Control': 'no-cache' },
       success: function (r) {
+        if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
-          if (r.statusCode !== 200) { reject(failure('UNAVAILABLE')); return }
-          keys(r.data, ['data', 'meta'])
+          if (!object(r.data) || !object(r.data.meta)) { reject(failure('UNAVAILABLE')); return }
           resolve(validateMeta(r.data.meta))
         } catch (e) { reject(e) }
       },
@@ -618,8 +746,39 @@ function messageFor(e) {
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
+    // 403 的**非会话类**契约码：会话仍有效，如实说明原因（不得说成"登录失效"）。
+    SCOPE_DENIED: '当前会话无权执行该操作（权限范围不足），已停止；请改用有权限的账号或联系管理员。',
+    ACCOUNT_INACTIVE: '账号已停用或受限，服务端拒绝该操作；请按停用/注销流程处理。',
     UNAVAILABLE: '识别服务暂不可用，已停止显示，请重试。'
   }[code] || '识别服务暂不可用，已停止显示，请重试。'
+}
+
+/**
+ * 标签 OCR（#10）路径的**站点特定**归因（唯二两处；其余码一律走 `messageFor` 的**同一措辞表**）。
+ *
+ * 为什么必须按调用点区分（不合并成一句）：
+ *   1. `PROVIDER_UNAVAILABLE`（503）在本仓库有**两个不同的未接线后端**——
+ *      媒体域的真实**对象存储**（`POST /media/uploads`；切片 B `27aa07c` 的措辞指向它）与
+ *      OCR 域的**真实 OCR 提供者**（`POST /ocr`）。本路径指向后者，指错就是把用户引向错误原因。
+ *   2. `POST /jobs/{id}/cancel` 对 OCR 作业按契约返回 `503 PROVIDER_UNAVAILABLE`(`retryable`)，
+ *      语义是"**该作业所属能力尚未提供取消**"（`jobs/registry.ts` 的注释与实现），
+ *      **不是**"作业不存在"（`NOT_FOUND`）⇒ `site='cancel'` 时必须给专属文案，两者不得混用。
+ *
+ * `site` 省略 ⇒ 创建/读取 OCR 任务的站点。未知码一律回落到 `messageFor`（不发明文案）。
+ */
+function ocrMessageFor(e, site) {
+  const code = e && e.code
+  if (code === 'PROVIDER_UNAVAILABLE' && site === 'cancel' && e.retryable === true) {
+    return '服务端尚未提供标签识别任务的取消能力（该能力未接线）：本次没有取消，任务仍在服务端运行或已按截止时间落定。'
+      + '这不是"任务不存在"，请稍后重读任务状态。'
+  }
+  if (code === 'PROVIDER_UNAVAILABLE') {
+    return '标签识别服务当前不可用（服务端真实 OCR 提供者未接线或缺少凭据），本任务未创建/未完成；不会用替身结果顶替。'
+  }
+  if (code === 'OBJECT_UNAVAILABLE') {
+    return '该照片当前不可用于标签识别（媒体引用未就绪，或服务端媒体端口未接线），请重新拍照上传。'
+  }
+  return messageFor(e)
 }
 
 module.exports = {
@@ -633,6 +792,16 @@ module.exports = {
   deleteRecognition: deleteRecognition,
   uploadPrivatePhoto: uploadPrivatePhoto,
   serverMode: serverMode,
+  // ---- GY-I10 标签 OCR（#10）：创建/状态读/取消 + 站点特定归因（全部复用既有 operation） ----
+  createOcr: createOcr,
+  getOcrJob: getOcrJob,
+  cancelOcrJob: cancelOcrJob,
+  validateOcrJob: validateOcrJob,
+  ocrMessageFor: ocrMessageFor,
+  OCR_MEDIA_PURPOSE: OCR_MEDIA_PURPOSE,
+  IMAGE_MEDIA_PURPOSES: IMAGE_MEDIA_PURPOSES.slice(),
+  MEDIA_USE_LIMIT_TEXT: MEDIA_USE_LIMIT_TEXT,
+  MEDIA_UPLOAD_ERROR_CODES: MEDIA_UPLOAD_ERROR_CODES.slice(),
   describeJobState: describeJobState,
   isSuccessState: isSuccessState,
   isTerminalState: isTerminalState,
