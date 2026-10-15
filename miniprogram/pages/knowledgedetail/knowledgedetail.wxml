@@ -37,6 +37,13 @@
       <view>资料修订：{{item.revision}}</view><view>来源取得时间：{{item.source.updated_at}}</view><view>来源有效性：{{item.source.validity === 'valid' ? '有效' : '待确认'}}</view>
       <view class="source-url">{{item.source.url}}</view><button class="btn btn--secondary btn--block" bindtap="copySource">复制原文来源链接</button>
     </view>
+    <!-- GY-I16 切片A：收藏／取消收藏（独立卡片 + 独立状态字段；不参与上面的读取状态机） -->
+    <view wx:if="{{favState !== 'idle'}}" class="card">
+      <view class="card-title">收藏</view>
+      <view class="notice">收藏只表示保存了这条资料，不代表已核对、已使用或已确认适用性。</view>
+      <view class="status" role="status">{{favNote}}</view>
+      <button wx:if="{{favSupported}}" class="btn btn--secondary btn--block" bindtap="toggleFavorite" loading="{{favBusy}}" disabled="{{favBusy}}">{{favLabel}}</button>
+    </view>
   </block>
   <button class="btn btn--primary btn--block" bindtap="retry" loading="{{busy}}" disabled="{{busy}}">{{gatePassed ? "重新核对／重试" : "核实登录／重试"}}</button>
   <button class="btn btn--secondary btn--block" bindtap="back">返回继续查询</button>
