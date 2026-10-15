@@ -55,6 +55,7 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+import { createReferenceIntegrity } from './admin/reference-integrity.ts';
 import type { AdminCallContext } from './admin/types.ts';
 // GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
 import {
@@ -849,7 +850,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 因此传入 `gatedGuards`（= 原守卫 + 开关门；先鉴权、后判开关）。守卫链语义与错误码次序不变。
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
-  registerKnowledgeRoutes(app, config, pool, gatedGuards);
+  // GY-I07 第二片（跨线 **#7 公开读 × #18 引用失效**）：把**后台资料来源存储**里既有的
+  // 「读取时重算」解析器注入公开读**详情面**（`createReferenceIntegrity(store).resolve`）。
+  // 接线点仅此一处、纯追加：用的是本函数上方**已经建好的那一个** `adminContentStore`
+  // （`adminInjection?.contentStore ?? createAdminContentStore(...)`，见上方装配），
+  // **不新建第二份 store**、不改它的创建或注入口径、不改任何既有实参。
+  // 回退方式：删掉这里的第 5 个实参即可回到接线前行为（`deps.resolve === undefined` ⇒ 不判定）。
+  // 生产默认：该 store 在 `real` 模式下**空且只读**（后台写口整域 fail-closed）⇒ `resolve()` 恒
+  // `unverifiable` ⇒ 详情面照旧可见，即"失效拦截"在生产尚未全面生效（见 PR 正文"未取得项"）。
+  registerKnowledgeRoutes(app, config, pool, gatedGuards, {
+    resolve: createReferenceIntegrity(adminContentStore).resolve,
+  });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
   registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
