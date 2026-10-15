@@ -15,7 +15,10 @@
 | **未取得 CI 读数** | 是（本分支无 CI 运行记录；本文**不把 CI 配置当成已验证**） |
 
 原始日志（UTF-8）另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\`：`test-docs.txt`、`test-docs-after.txt`、`test-docs-final.txt`、`test-contract.txt`、`test-contract-final.txt`、`validate-contracts.txt`、`test-contracts-py.txt`、`verify-status.txt`、`verify-status-runtime.txt`、`verify-status-runtime-final.txt`、`hashes.txt`、`npm-ls.txt`、`versions.txt`、`ui-adaptive-baseline.txt`、`gate-diff.txt`、`selfcheck-a.txt`、`selfcheck-b.txt`。
+本轮返修（r2）日志另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\fix-r2\`：`crosscheck-lf.sh`／`crosscheck-lf.txt`（跨平台复核命令原样实跑＋GNU `sha256sum` 独立复核）、`form-cmd.cmd`（cmd.exe）、`repro-min.sh`（Git Bash）、`diag-quoting.sh`／`diag-msys.sh`（shell 引号差异定位）、`gate-*.txt`（返修门禁与负控制原始输出）。
 本记录在基线 `24fac03` 之上**只新增这一份文档**（`git diff --name-only upstream/main...HEAD` 实测见 §6.1）；该提交的短 SHA 以回传 handoff 为准。
+
+**修订记录（r2，2026-10-15；返修单 `.pg17/dispatch/issue1-freeze-fix.md`，2026-10-15）**：增量复审判「需修改」⇒ 本版只改本文档、修正三处：**B1（阻塞）** §2 改以 **LF 归一化 sha256** 为跨平台判据并写入跨平台复核命令（原 CRLF 工作区值保留，降级为"仅登记、不作判据"）；**C1** §4.2 微信基础库引用真身由 `local-wechat.yml:6` 更正为 `.github/workflows/engineering-shell.yml:6`；**C2** §1.1#17／§4.2 的 CI Node pin 与 `npm ci` 计数按实测更正。**本记录仍是记录，不构成 #1 的验收结论**（§9）。
 
 ## 1 侦察结论：已存在、可直接复用 vs 缺失、需本次补
 
@@ -25,7 +28,7 @@
 
 | # | 已有成果 | 位置（file:line） | 一句话说明 |
 | --- | --- | --- | --- |
-| 1 | 正式契约三件 + 示例 + 运行基线 | `packages/contracts/openapi.json`（462,211 B）、`operations.json`（18,839 B）、`states.json`（2,887 B）、`examples.json`（208,172 B）、`runtime-baseline.json`（2,359 B） | 契约 `1.0.0`、提案修订 `2`；三件即本记录要冻结指纹的对象 |
+| 1 | 正式契约三件 + 示例 + 运行基线 | `packages/contracts/openapi.json`（LF 445,338 B／本机 CRLF 462,211 B）、`operations.json`（18,049／18,839 B）、`states.json`（2,730／2,887 B）、`examples.json`（201,929／208,172 B）、`runtime-baseline.json`（2,329／2,359 B） | 契约 `1.0.0`、提案修订 `2`；三件即本记录要冻结指纹的对象。字节数**前为 git blob（LF 仓库字节，跨平台）**，**后为本机 CRLF 工作区大小（机器相关，仅登记）**——两者差异见 §2.2 |
 | 2 | 契约目录自带状态声明 | `packages/contracts/README.md:3` | 原文「GY-I01 / #1，**待监工冻结**；没有已运行API」⇒ 现状是**待冻结**，不是已冻结 |
 | 3 | 契约版本变更规则（同 PR 更新消费者） | `packages/contracts/README.md:14` | 「版本变化须同PR更新消费者、枚举、索引、行为说明与示例」 |
 | 4 | 冻结提案与变更分级口径 | `docs/architecture/adr-001-initial-architecture.md:3`、`:68` | `:3` 状态「提交监工审查，**尚未冻结生效**」；`:68` minor／patch／major 与 `/api/v2`、同 PR 更新消费者 |
@@ -47,8 +50,8 @@
 
 | # | 缺失项 | 侦察依据（file:line 或命令） | 本片处理 |
 | --- | --- | --- | --- |
-| 1 | 三个契约文件的**登记在案指纹**（sha256／git blob） | 全仓搜索本次算出的指纹：`git grep -e e677d805df1b925f -e 3804c64b3cdda57e …` ⇒ **0 命中** | 本次补入 §2（实测命令 + 原始输出） |
-| 2 | 「**本地实测**」与「**CI 声称**」**分述**的运行版本记录 | 既有 `docs/verification/**` 无此类记录；`docs/architecture/validation.md:23` 只记「Node24.16.0/npm11.13.0 实际运行版本已读」，未与 CI 声称分列 | 本次补入 §5（分列 5.1／5.2／5.3） |
+| 1 | 三个契约文件的**登记在案指纹**（sha256／git blob） | ① 本机 **CRLF 工作区 sha256** 与 **git blob**：`git grep -e e677d805df1b925f -e 3804c64b3cdda57e …` ⇒ 除本文档自身外 **0 命中**；② **LF 归一化 sha256**（§2.2(b)）：全仓 **5/5 已登记**——`docs/verification/assets/i07-wechat-main8932ba5-pr80b5a6468/merged-source-equivalence.json:1818-1842`，逐条 `"rule": "UTF-8 CRLF to LF"` | 本次补入 §2（实测命令 + 原始输出）。②说明**本记录的跨平台判据与仓库既有约定同源**（同一算法、同一行尾口径），非本片新发明 |
+| 2 | 「**本地实测**」与「**CI 声称**」**分述**的运行版本记录 | 本次检索范围内 `docs/verification/**` 无此类记录；`docs/architecture/validation.md:23` 只记「Node24.16.0/npm11.13.0 实际运行版本已读」，未与 CI 声称分列（范围外已有：`deploy/cloudrun/README.md:16-17` 的 Node `24.16.0`／npm `11.13.0` 实测 + 来源表） | 本次补入 §5（分列 5.1／5.2／5.3） |
 | 3 | 版本真源文件 `.nvmrc`／`.node-version`／`.tool-versions` | `git ls-files` 匹配 `nvmrc\|node-version` ⇒ **0 命中** | 本片**不新增**（新增版本文件属工程变更，超出"记录"范围）；如实登记为缺口 |
 | 4 | `engines` 的机器强制 | `git grep engines` 仅命中 3 个 `package.json`，无工具／测试消费；无 `.npmrc`（`git ls-files` 0 命中）、无 `engine-strict` | 本片**不改代码**；登记为"仅声明，无门禁" |
 | 5 | `runtime-baseline.json` 的陈旧声明 | `packages/contracts/runtime-baseline.json`：`verification.clean_install = "pending"` | 与本次实测（§3.3 `npm ci` exit 0）不一致；该文件属**冻结件**，本片**不修改**，只登记待监工裁定（见 §9） |
@@ -73,10 +76,15 @@ foreach ($f in @(
 }
 ```
 
-- `Get-FileHash -Algorithm SHA256` 对**文件原始字节**做 SHA-256（等价算法同 GNU `sha256sum`；**本机无 `sha256sum`，未做交叉复核**，如实说明）。
+- `Get-FileHash -Algorithm SHA256` 对**文件原始字节**做 SHA-256；在本机该原始字节即 **CRLF 工作区字节**（根因：机器级 `core.autocrlf=true`（`D:/Git/etc/gitconfig`）+ 本仓**无**仓库级 `.gitattributes`；`git ls-files --eol packages/contracts/` = `i/lf  w/crlf  attr/`）⇒ **该值随检出时的行尾转换而变，机器相关，不是冻结判据**。其算法等价于 GNU `sha256sum`，但**只在与本机同为 CRLF 工作区时可比对**；本仓 15 处 `runs-on` 全为 `ubuntu-24.04`（`git grep runs-on -- .github/workflows/` 实测，共 10 个 workflow），CI／Linux 检出的是 LF 字节，按该值复核**必然不等**——故 §2.2(a) 的 `sha256` 列**只登记、不作判据**。
+- **冻结判据 = §2.2 的 `blob` 列（`git rev-parse HEAD:<path>`，与行尾转换无关）＋ §2.2(b) 的 LF 归一化 sha256**；二者跨平台一致。此口径与仓库既有约定同源，非本片新发明：`docs/verification/gy-i20-real-samples-20261014.md:55`「该文件级摘要**随检出时的行尾转换而变**；**冻结判定不依赖它**——冻结用的是规范化 `indexSha256`」；`docs/verification/gy-i26-demo-align-20261014.md:23`「本仓 `core.autocrlf=true`…**sha256 差异仅由行尾造成**；比对时按 **LF 归一化**」。
 - `git hash-object` 给 **git blob** 哈希（`sha1("blob <len>\0" + 内容)`），与 `git rev-parse HEAD:<path>` 一致（§2.3 已核对）。
 
 ### 2.2 原始输出（2026-10-15，worktree HEAD `24fac03`，工作区无改动）
+
+#### 2.2(a) 本机 CRLF 工作区字节（**机器相关，仅登记，不作判据**）
+
+§2.1 命令原样输出（`sha256` 列＝本机 CRLF 工作区字节；`blob` 列＝git 对象，跨平台）：
 
 ```
 packages/contracts/openapi.json  sha256=e677d805df1b925f0c36d53441ae80e8dc2e0e12261ee9be574b1b57a247d9d8  blob=3804c64b3cdda57ef1f87d5a569c74d712ffefa6
@@ -85,6 +93,43 @@ packages/contracts/states.json  sha256=18802f45fc819481f16da98963101f39de255e77f
 packages/contracts/examples.json  sha256=014bbb1d3e840b871df8e95cae2207e274798a302d03d7664dabd5e47870df89  blob=b8bb9a5f601edd1364898755e76fcb7926990a93
 packages/contracts/runtime-baseline.json  sha256=9869bd5feb3343bebe0be6f279a3c3f5791277a19c12838dfb368a4eaa5122bc  blob=10ddf580544ae847698ac83abeddde4a4f4fcfea
 ```
+
+#### 2.2(b) LF 归一化 sha256（**跨平台判据**）
+
+对 **git blob 内容**直接取 sha256：git 对象存储不做行尾转换（`i/lf`），blob 内容即 LF 字节 ⇒ 任何平台检出同一提交都得到同一结果（blob 与提交对象的绑定见 §2.3）。
+
+跨平台复核命令（仅用 Node 内置 `crypto` + `git`，无第三方依赖）：
+
+```
+$ node -e "const{execFileSync}=require('child_process'),c=require('crypto');for(const f of ['openapi','operations','states','examples','runtime-baseline']){const p='packages/contracts/'+f+'.json';const h=execFileSync('git',['rev-parse','HEAD:'+p],{encoding:'utf8'}).trim();const b=execFileSync('git',['cat-file','blob',h]);console.log(p,'blob='+h,'lfSha256='+c.createHash('sha256').update(b).digest('hex'),'bytes='+b.length)}"
+packages/contracts/openapi.json blob=3804c64b3cdda57ef1f87d5a569c74d712ffefa6 lfSha256=8a7714983711e4b349f44c84c20bb138ea822b8ae0dd7bc0d983f0989fba89d0 bytes=445338
+packages/contracts/operations.json blob=06b82fc7094821e7aab4ee6e994ad81daecdfedf lfSha256=d5b29a1877ed22c91f69919def6d2348d736087403af954500298d74f5a13a8a bytes=18049
+packages/contracts/states.json blob=e78510c0a65b4d186ae870cd4902bf910d0fc55c lfSha256=5b4ff78cc9da79acfe03b454ca9fc609c13aeee0bb09c6efa92f71a917d2b3b1 bytes=2730
+packages/contracts/examples.json blob=b8bb9a5f601edd1364898755e76fcb7926990a93 lfSha256=871786b56030f9e7d6beaa3e4e9310cb64bf553b55bc38d9ee0a05d5d5f902e8 bytes=201929
+packages/contracts/runtime-baseline.json blob=10ddf580544ae847698ac83abeddde4a4f4fcfea lfSha256=b95c77e9855130067925996d6ae0b25872832d2b0152e6823d00ef5e7a204eda bytes=2329
+# EXITCODE: 0
+```
+
+- **Windows PowerShell 5.1** 会把传给原生程序的**内层引号全部剥掉**（实测 `SyntaxError: Invalid or unexpected token`），故该 shell 下须写成 `node --% -e "…"`（`--%` 之后的文本原样传递）；**PowerShell 7 与 bash 可原样执行**。此三条实跑输出逐字符相同（原始输出见 §6.2）。
+- 等价 POSIX 写法（GNU coreutils；`sha256sum` 直接消费 `git cat-file blob` 的字节）：
+
+```
+$ for f in openapi operations states examples runtime-baseline; do p="packages/contracts/$f.json"; h=$(git rev-parse "HEAD:$p"); printf '%s blob=%s lfSha256=%s bytes(lf)=%s\n' "$p" "$h" "$(git cat-file blob "$h" | sha256sum | cut -d' ' -f1)" "$(git cat-file -s "$h")"; done
+```
+
+- **`indexSha256` 同源佐证**：上列五个 LF 值**已登记在仓内既有记录** `docs/verification/assets/i07-wechat-main8932ba5-pr80b5a6468/merged-source-equivalence.json:1818-1842`（每条 `"rule": "UTF-8 CRLF to LF"`），**5/5 与本表相同** ⇒ 本判据与仓库既有行尾口径一致（§1.2 第 1 项）。
+
+汇总表（五份文件）：
+
+| 文件 | blob sha1（跨平台） | **LF 归一化 sha256（跨平台判据）** | LF 字节 | 本机 CRLF 工作区 sha256（机器相关，仅登记） | CRLF 字节 |
+| --- | --- | --- | --- | --- | --- |
+| `packages/contracts/openapi.json` | `3804c64b3cdda57ef1f87d5a569c74d712ffefa6` | `8a7714983711e4b349f44c84c20bb138ea822b8ae0dd7bc0d983f0989fba89d0` | 445,338 | `e677d805df1b925f0c36d53441ae80e8dc2e0e12261ee9be574b1b57a247d9d8` | 462,211 |
+| `packages/contracts/operations.json` | `06b82fc7094821e7aab4ee6e994ad81daecdfedf` | `d5b29a1877ed22c91f69919def6d2348d736087403af954500298d74f5a13a8a` | 18,049 | `a1d9eea897bcc4c269bd6256e82db2cb4672d286668ddf4b7872669586a051b7` | 18,839 |
+| `packages/contracts/states.json` | `e78510c0a65b4d186ae870cd4902bf910d0fc55c` | `5b4ff78cc9da79acfe03b454ca9fc609c13aeee0bb09c6efa92f71a917d2b3b1` | 2,730 | `18802f45fc819481f16da98963101f39de255e77fa470afa4ccc0b233753857e` | 2,887 |
+| `packages/contracts/examples.json` | `b8bb9a5f601edd1364898755e76fcb7926990a93` | `871786b56030f9e7d6beaa3e4e9310cb64bf553b55bc38d9ee0a05d5d5f902e8` | 201,929 | `014bbb1d3e840b871df8e95cae2207e274798a302d03d7664dabd5e47870df89` | 208,172 |
+| `packages/contracts/runtime-baseline.json` | `10ddf580544ae847698ac83abeddde4a4f4fcfea` | `b95c77e9855130067925996d6ae0b25872832d2b0152e6823d00ef5e7a204eda` | 2,329 | `9869bd5feb3343bebe0be6f279a3c3f5791277a19c12838dfb368a4eaa5122bc` | 2,359 |
+
+**冻结与改错判定请用中间两列（blob／LF 归一化 sha256）＋ LF 字节**；最右两列只在与本机同为 CRLF 工作区时有意义。
 
 ### 2.3 指纹自绑（blob 与提交对象一致，实测）
 
@@ -95,7 +140,7 @@ $ git rev-parse HEAD:packages/contracts/openapi.json HEAD:packages/contracts/ope
 e78510c0a65b4d186ae870cd4902bf910d0fc55c
 ```
 
-⇒ 上表 blob 列即该提交（`24fac03`）内的对象身份，可被 `git cat-file -p <blob>` 直接取回。
+⇒ §2.2(a)／§2.2(b) 的 `blob` 列即该提交（`24fac03`）内的对象身份，可被 `git cat-file -p <blob>` 直接取回；**其内容即 §2.2(b) 计算 LF 归一化 sha256 所用的字节**（故该判据与 blob 一体、跨平台恒定）。
 
 ### 2.4 冻结口径（**引用仓库既有政策，未自行发明**）
 
@@ -256,7 +301,7 @@ $ git diff --name-only origin/main -- packages/contracts/
 
 ### 5.1 实验 (a)：把本文档里的一个契约指纹**改错一位** ⇒ 门禁是否变红？
 
-改法：把 §2.2 `states.json` 的 sha256 末位 `e` 改成 `f`（未提交，仅工作区）。
+改法：把 §2.2(a) `states.json` 的 CRLF 工作区 sha256 末位 `e` 改成 `f`（未提交，仅工作区）。
 运行的检查：`npm run test:docs`、`npm run test:contract`、`node --test tests/ui-adaptive.test.mjs`、`git diff --check`。
 
 结果（实测原始输出摘要）：
@@ -279,7 +324,9 @@ $ git diff --check
 ⇒ **全部仍然 PASS／exit 0**（无任何检查变红）。
 
 ⇒ **本记录登记的指纹没有任何机器门禁校验**。仓库现有的契约相关自动检查（`tests/contract/*.test.mjs`、`tools/validate_contracts.py`、`tools/test_contracts.py`、`tools/verify-contract-status.mjs`、`tests/ui-adaptive.test.mjs`）**都不读本文档的哈希值**。
-**因此本文档的指纹只能靠人工复核**：按 §2.1 命令重算并与 §2.2 逐字符比对。**本记录不暗示存在自动校验**。
+**因此本文档的指纹只能靠人工复核**：按 **§2.2(b) 的跨平台命令**重算，并与 §2.2(b) 的 **LF 归一化 sha256 / LF 字节**逐字符比对（§2.2(a) 的 CRLF 工作区值**只在同为 CRLF 工作区的机器上可比，不作判据**，否则 CI 上必然假红）。**本记录不暗示存在自动校验**。
+
+**返修后复跑（2026-10-15，r2）**：负控制改用**新判据列**——把 §2.2(b) `states.json` 的 **LF 归一化 sha256** 末位 `1` 改成 `2`（未提交，仅工作区），同一组检查仍**全 PASS／exit 0** ⇒ 结论不变（原始输出见 §6.2）。
 
 ### 5.2 实验 (b)：改**契约文件本身** ⇒ 既有门禁是否变红？（证明该门禁确实活着）
 
