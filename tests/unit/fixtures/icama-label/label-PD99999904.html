@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<!-- 合成夹具（synthetic fixture）：站点把请求弹回登录/验证码页的形状。
+     用于验证"遇到账号或验证码 ⇒ 立即停止，不绕过、不猜口令、不改 UA 重试"。 -->
+<html lang="zh-CN">
+<head><meta charset="UTF-8" /><title>农药数字监督管理平台</title></head>
+<body>
+  <div>用户登录</div>
+  <form name='login' id="loginfrm" action="#">
+    <input class="text1" id="username" name="username" placeholder="请输入账号" type="text" />
+    <input class="text1" id="passowrd" name="passowrd" placeholder="请输入密码" type="password" />
+    <input class="text2" id="yanzhm" name="yanzhm" placeholder="请输入验证码" type="text" />
+    <input class="submit" id="loginSubmit" value="" type="button" />
+  </form>
+</body>
+</html>
