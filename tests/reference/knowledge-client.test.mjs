@@ -127,7 +127,7 @@ test('the result area keeps one WXML sibling chain: every state renders exactly 
     const rendered = renderWxml(tree, data, [], dangling).filter(e => e.tag !== '#text');
     return rendered.filter(isStatusBlock);
   };
-  for (const stateKind of ['idle', 'ready', 'loading', 'empty', 'error', 'out-of-coverage']) {
+  for (const stateKind of ['idle', 'ready', 'loading', 'empty', 'error', 'out-of-coverage', 'uncollected']) {
     const blocks = count({ gatePassed: true, status: '合成状态文案', stateKind, items: [], nextCursor: null, profileNote: '', advanced: false });
     assert.equal(blocks.length, 1, `stateKind=${stateKind} 必须恰渲染 1 个 .status 块（多个 ⇒ 独立 wx:if 与回退 wx:else 并列）`);
     assert.equal(blocks.filter(paintsStatus).length, 1, `stateKind=${stateKind} 必须恰打印 1 次 status 文案（不得重复）`);
@@ -251,4 +251,102 @@ test('invalid filters and IDs are rejected before network; no client identity or
 test('wrong detail identity and wrong contract metadata are rejected', async () => {
   const f = fixture(); f.login(); const p = f.api.detail(id, {}); f.answer(f.last('/knowledge/'), record({ id: '44444444-4444-4444-8444-444444444444' })); await assert.rejects(p, e => e.code === 'INVALID_RESPONSE');
   for (const patch of [{ contract_version: '2.0.0' }, { execution_mode: 'local_stub' }, { request_id: [id] }]) { const p = f.api.list({}); const body = envelope({ items: [], next_cursor: null }); Object.assign(body.meta, patch); f.last('/knowledge').success({ statusCode: 200, data: body }); await assert.rejects(p, e => e.code === 'INVALID_RESPONSE') }
+});
+
+// ---- GY-I07／差距侦察 3-B：把"恒空条件"变成**可解释**状态 ----
+// growth_stage／planting_method／use_scene 任一非空时，服务端可见性过滤**必然**返回 0 条
+// （services/api/src/knowledge/service.ts:64 注释 "Current schema has no stage/method/scene evidence"、
+// :66 的 `&& !filter.growth_stage && !filter.planting_method && !filter.use_scene`）⇒ 原因是
+// **当前资料未采集该维度**，不是"没有符合条件的资料"。修复前页面只给泛化空态
+// "没有符合条件的资料，请调整条件继续查询。" ⇒ 用户无法分辨"真的没有"与"资料没采集"（本切片要消灭的误导）。
+// 服务端行为不变：条件仍原样发出，服务端仍返回空。
+const pageWxml = () => parseWxml(readFileSync(resolve(root, 'pages/knowledge/knowledge.wxml'), 'utf8'));
+const renderPage = data => renderWxml(pageWxml(), data, [], []).filter(e => e.tag !== '#text');
+const mustache = (raw, data) => { const m = /^\{\{([\s\S]*)\}\}$/.exec(String(raw).trim()); return m ? wxmlExpr(m[1], data) : String(raw) };
+const nodeText = (el, data) => mustache(el.children.filter(c => c.tag === '#text').map(c => c.value).join(''), data);
+const stateViews = data => renderPage(data).filter(e => e.tag === 'state-view');
+test('a filled condition dimension is named as not collected instead of a generic empty result', async () => {
+  const f = fixture(); f.login(); f.show(); await flush();
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush();
+  f.page.input({ currentTarget: { dataset: { field: 'growth_stage' } }, detail: { value: '幼苗期' } }); f.page.search();
+  const u = new URL(f.last('/knowledge').url);
+  assert.equal(u.searchParams.get('growth_stage'), '幼苗期', '服务端行为不变：条件仍原样发出（服务端仍返回空）');
+  assert.equal(f.page.data.stateKind, 'loading'); const pending = f.last('/knowledge');
+  f.answer(pending, { items: [], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'uncollected', '条件维度非空 + 空结果 ⇒ 必须是"未采集"这一类，不是泛化空态');
+  assert.match(f.page.data.status, /当前资料未采集生育期条件/);
+  assert.doesNotMatch(f.page.data.status, /^没有符合条件的资料/);
+  // 用户看到的是 wxml 渲染出来的文案，不只是 data 字段。
+  const views = stateViews(f.page.data);
+  assert.equal(views.length, 1, '结果区恰 1 个 state-view');
+  assert.equal(views[0].attrs.title, '当前资料未采集该条件');
+  assert.match(String(mustache(views[0].attrs.desc, f.page.data)), /当前资料未采集生育期条件/);
+  assert.equal(views[0].attrs['action-text'], '清空该条件继续查询');
+  assert.ok(!renderPage(f.page.data).some(e => e.tag === 'state-view' && /^没有符合条件的资料/.test(e.attrs.title || '')), '不得同时渲染泛化空态标题');
+});
+test('the region picker states the province-only tier and never claims local coverage', () => {
+  const f = fixture(); const d = f.page.data; const page = Object.assign({}, d, { gatePassed: true });
+  assert.match(d.regionNote, /^地区筛选仅浙江省级（330000）/, '地区说明必须点名"仅浙江省级（330000）"');
+  assert.match(d.regionNote, /当前资料只登记到省级/, '与 #168 的档案提示同一口径（只到省级）');
+  const rendered = renderPage(page);
+  const notes = rendered.filter(e => /(^|\s)region-note(\s|$)/.test(e.attrs.class || ''));
+  assert.equal(notes.length, 1, 'wxml 必须渲染恰 1 条 .region-note');
+  assert.equal(nodeText(notes[0], page), d.regionNote);
+  // 说明必须紧邻地区选择器（在其后），且在结果区之前 —— 否则"下拉有说明"对用户不成立。
+  const order = rendered.indexOf(notes[0]);
+  assert.ok(order > rendered.findIndex(e => e.tag === 'picker' && e.attrs['data-field'] === 'regionIndex'), '.region-note 必须在地区选择器之后');
+  assert.ok(order < rendered.findIndex(isStatusBlock), '.region-note 必须在结果区之前');
+  // 目录仍保留市／县（说明存在的理由）；说明本身不得暗示"资料已覆盖到市／县"。
+  assert.ok(d.regions.some(r => r.code === '330100') && d.regions.some(r => r.code === '330102'));
+  assert.doesNotMatch(d.regionNote, /已覆盖|已登记到市|已登记到县|本地适用/);
+});
+test('clearing just the uncollected dimensions restores the previous query and keeps other filters', async () => {
+  const f = fixture(); f.login(); f.show(); await flush();
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush();
+  f.page.pick({ currentTarget: { dataset: { field: 'cropIndex' } }, detail: { value: '1' } });
+  f.page.input({ currentTarget: { dataset: { field: 'growth_stage' } }, detail: { value: '幼苗期' } });
+  f.page.input({ currentTarget: { dataset: { field: 'use_scene' } }, detail: { value: '稻田除草' } });
+  f.page.search();
+  let u = new URL(f.last('/knowledge').url);
+  assert.equal(u.searchParams.get('crop_id'), 'crop_rice'); assert.equal(u.searchParams.get('growth_stage'), '幼苗期'); assert.equal(u.searchParams.get('use_scene'), '稻田除草');
+  f.answer(f.last('/knowledge'), { items: [], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'uncollected');
+  assert.match(f.page.data.status, /当前资料未采集生育期条件；当前资料未采集使用场景条件/, '每个被填的维度都要点名');
+  assert.match(f.page.data.status, /清空该条件继续查询/);
+  f.page.clearUncollected();
+  u = new URL(f.last('/knowledge').url);
+  assert.equal(u.searchParams.get('growth_stage'), null, '清空该条件后不得再带该条件');
+  assert.equal(u.searchParams.get('use_scene'), null);
+  assert.equal(u.searchParams.get('crop_id'), 'crop_rice', '其余条件保持不变');
+  assert.equal(f.page.data.growth_stage + f.page.data.planting_method + f.page.data.use_scene, '');
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'ready'); assert.equal(f.page.data.items.length, 1);
+  assert.doesNotMatch(f.page.data.status, /未采集/, '清空后回到原有查询文案');
+});
+test('no invented "not collected" state: genuine empty results and blank input keep the generic copy', async () => {
+  const f = fixture(); f.login(); f.show(); await flush();
+  f.answer(f.last('/knowledge'), { items: [], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'empty', '三个条件都没填 ⇒ 仍是既有泛化空态');
+  assert.equal(f.page.data.status, '没有符合条件的资料，请调整条件继续查询。');
+  assert.equal(stateViews(f.page.data)[0].attrs.title, '没有符合条件的资料');
+  assert.doesNotMatch(f.page.data.status, /未采集/);
+  // 已采集的维度（关键词）非空但无结果 ⇒ 不得谎称"未采集"。
+  f.page.setData({ q: '合成查询' }); f.page.search();
+  assert.equal(new URL(f.last('/knowledge').url).searchParams.get('q'), '合成查询');
+  f.answer(f.last('/knowledge'), { items: [], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'empty'); assert.doesNotMatch(f.page.data.status, /未采集/);
+  // 纯空白不算"填了条件"（conditions() trim 后根本不发该条件）。
+  f.page.input({ currentTarget: { dataset: { field: 'growth_stage' } }, detail: { value: '   ' } }); f.page.search();
+  assert.equal(new URL(f.last('/knowledge').url).searchParams.get('growth_stage'), null);
+  f.answer(f.last('/knowledge'), { items: [], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'empty'); assert.doesNotMatch(f.page.data.status, /未采集/);
+});
+test('a filled dimension never masks real results as "not collected"', async () => {
+  const f = fixture(); f.login(); f.show(); await flush();
+  f.answer(f.last('/knowledge'), { items: [], next_cursor: null }); await flush();
+  f.page.input({ currentTarget: { dataset: { field: 'planting_method' } }, detail: { value: ' 移栽 ' } }); f.page.search();
+  assert.equal(new URL(f.last('/knowledge').url).searchParams.get('planting_method'), '移栽', 'trim 后发出，与 conditions() 一致');
+  f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush();
+  assert.equal(f.page.data.stateKind, 'ready'); assert.equal(f.page.data.items.length, 1);
+  assert.doesNotMatch(f.page.data.status, /未采集/, '有结果时不得声称资料未采集该维度');
 });
