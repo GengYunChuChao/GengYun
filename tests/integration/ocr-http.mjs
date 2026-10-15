@@ -668,17 +668,31 @@ try {
       .split(/\r?\n/)
       .find((line) => line.includes('registerOcrRoutes(app, config,'));
     assert.ok(ocrRegistrationLine !== undefined, 'app.ts 必须有 registerOcrRoutes 装配行');
-    // 只允许 `guards`（鉴权守卫，本行必填）与两个**隐私域**端口（consent/egress）；
+    // 只允许 `guards`（鉴权守卫，本行必填）与两个**隐私域**端口（consent/egress），
+    // 以及 `#181`（`b6f8c1b`）新增的 `history` 槽位；
     // 不得出现 provider/store/media/reference/service 等**适配器**端口注入。
     // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
     //   （实测原始输出见交接文档）——它写于该行还是简写 `{ guards, … }` 的时代，`guards` 无冒号故不被
     //   正则计入；此后该行改为 `guards: gatedGuards`（全局开关门），`guards` 才被计入。原意（"不得塞入
     //   provider/store/媒体/登记库端口"）不变，故把必填的 `guards` 显式列入白名单，而非放宽其它项。
+    // ⚠ 同轮**口径如实登记（不得含糊）**：`history` 为 `#181`（`b6f8c1b`）新增的**识别历史域写入端口**
+    //   （端口定义 `app.ts:668-675`：`recordHistoryTerminal` → `appendHistory`），**不是** provider/store/media
+    //   泄漏，故同列入白名单；但这使"零端口注入"这一结构属性的口径**实质变宽**——从"只允许隐私域
+    //   `consent`/`egress`"变为"隐私域 + 识别历史域写入端口"。本注释**不**主张"零端口注入仍成立"。
+    //   下方另补**值断言**：钉住 `guards` 槽位装的确实是 `gatedGuards`（旗标门包装）。
     const ocrInjectedKeys = [...ocrRegistrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
     assert.deepEqual(
       ocrInjectedKeys,
-      ['consent', 'egress', 'guards'].sort(),
-      `装配行只允许鉴权守卫与隐私域 consent/egress 端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
+      ['consent', 'egress', 'guards', 'history'].sort(),
+      `装配行只允许 guards 槽位、隐私域 consent/egress 端口与识别历史域 history 写入端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
+    );
+    // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，不是裸 `guards`
+    //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
+    assert.equal(/\bguards: gatedGuards\b/.test(ocrRegistrationLine), true, `装配行 guards 槽位必须装 gatedGuards（旗标门），实际：${ocrRegistrationLine.trim()}`);
+    assert.equal(
+      /const gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/.test(appText),
+      true,
+      'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）',
     );
     for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference', 'ocr/service']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);

@@ -678,15 +678,23 @@ try {
   });
 
   // ============================== 四、结构性证据（默认关闭不是开关） ==============================
-  await check('S01 结构·app.ts（去注释）不 import 真实适配器端口构造器；接线恰好一处调用', async () => {
+  await check('S01 结构·app.ts（去注释）不 import 真实适配器端口构造器；接线恰好一处调用，且 guards 槽位装旗标门 gatedGuards', async () => {
     const source = readFileSync(new URL('../../services/api/src/app.ts', import.meta.url), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     assert.equal(/createLiveTtsProvider/.test(code), false, 'app.ts 不得引用真实发送构造器');
     assert.equal(/live-ports/.test(code), false, 'app.ts 不得引用端口模块');
     assert.equal(/RealTtsPorts/.test(code), false);
-    assert.equal((code.match(/registerSynthesisRoutes\(app, config, guards, synthesisService, consentGate\);/g) ?? []).length, 1);
+    // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
+    //   （实测原始输出见交接文档）——它写于 `#145`（`b054dc3`）之前的精确串时代，当时第三个实参是裸
+    //   `guards`；`#145` 把它换成 `gatedGuards`（同名下的旗标门包装，**槽位与签名未变**）⇒ 精确串命中数
+    //   变 0。该断言的本意是"接线恰好一处"，与对象名无关，故精确串改为 `gatedGuards`；语义本身未被放宽。
+    assert.equal((code.match(/registerSynthesisRoutes\(app, config, gatedGuards, synthesisService, consentGate\);/g) ?? []).length, 1);
+    // 值断言（键/串存在 ≠ 值正确）：钉住第三个实参是**旗标门包装后的** `gatedGuards`，而不是裸 `guards`
+    //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
+    assert.match(code, /\bconst gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/, 'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）');
+    assert.equal(/registerSynthesisRoutes\(app, config, guards,/.test(code), false, '装配不得退回裸 guards 槽位');
     assert.equal(/createTtsProvider\(\{ executionMode: config\.executionMode \}\)/.test(code), true);
-    return 'app.ts 无 createLiveTtsProvider / 无 live-ports；注册恰好一处';
+    return 'app.ts 无 createLiveTtsProvider / 无 live-ports；注册恰好一处且装 gatedGuards';
   });
 
   await check('S02 结构·路由插件（去注释）不构造任何提供者/产物/核对源（签名只收服务）', async () => {
