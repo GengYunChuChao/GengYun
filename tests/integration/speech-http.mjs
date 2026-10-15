@@ -478,8 +478,13 @@ try {
       // 结构性证据（读源码文本，不靠行为推断）：
       const appText = readFileSync(new URL('services/api/src/app.ts', root), 'utf8');
       const providerText = readFileSync(new URL('services/api/src/speech/provider.ts', root), 'utf8');
-      // 默认仍是零端口注入：注册行只出现 guards + 四个**可选**注入值（不传即 undefined ⇒ 插件按模式自建），
+      // 默认仍是零端口注入：注册行只出现 `guards` 槽位 + 四个**可选**注入值（不传即 undefined ⇒ 插件按模式自建），
       // 以及 GY-I27 接线单追加的**隐私域**授权中间件端口 `consent`（与提供者/存储/媒体端口无关）。
+      // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
+      //   （实测原始输出见交接文档）——它写于该行还是简写 `{ guards, … }` 的时代，`guards` 无冒号故不被
+      //   正则计入；此后该行改为 `guards: gatedGuards`（全局开关门），`guards` 才被计入。原意（"只允许
+      //   这个槽位，不得塞入 provider/store/媒体/作业端口"）不变，故把必填的 `guards` 显式列入白名单。
+      //   下方另补**值断言**：钉住该槽位装的确实是 `gatedGuards`（旗标门包装），防"键在值换"被漏过。
       const registrationLine = appText
         .split(/\r?\n/)
         .find((line) => line.includes('registerSpeechRoutes(app, config,'));
@@ -504,8 +509,16 @@ try {
       const injectedKeys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
       assert.deepEqual(
         injectedKeys,
-        ['consent', 'egress', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
+        ['consent', 'egress', 'guards', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
         `注册行不允许出现其它注入键：${injectedKeys.join(', ')}`,
+      );
+      // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，
+      // 不是裸 `guards`（`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
+      assert.equal(/\bguards: gatedGuards\b/.test(registrationLine), true, `注册行 guards 槽位必须装 gatedGuards（旗标门），实际：${registrationLine.trim()}`);
+      assert.equal(
+        /const gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/.test(appText),
+        true,
+        'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）',
       );
       // 装配路径对 speech/{store,provider,media} 的引用**只能是 import type**（运行时被类型擦除）。
       for (const mod of ['speech/store', 'speech/provider', 'speech/media']) {
