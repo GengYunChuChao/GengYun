@@ -24,7 +24,7 @@ import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
 import { registerSpeechRoutes } from './routes/speech.ts';
 import { createJobRegistry } from './jobs/registry.ts';
-import { createRecognitionJobSource, createSynthesisJobSource, createTranscriptionJobSource } from './jobs/sources.ts';
+import { createOcrJobSource, createRecognitionJobSource, createSynthesisJobSource, createTranscriptionJobSource } from './jobs/sources.ts';
 import { registerJobRoutes } from './jobs/routes.ts';
 import type { SpeechStore } from './speech/store.ts';
 import type { SpeechProvider } from './speech/provider.ts';
@@ -1051,6 +1051,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 PROVIDER_UNAVAILABLE
     // (`retryable`) 如实拒绝，**不伪造** `cancelled`。
     createSynthesisJobSource(synthesisService),
+    // GY-I10（#10）标签 OCR 域作业源（**纯追加，不重排上面四项**）：`GET /jobs/{id}` 现可返回
+    // `kind=ocr` 的契约 `Job`（九键、七类 `JobState` 与 `error_code` 逐类可读；读面**只读复用** OCR 域
+    // 已合并的 `getJob`，域内投影本就是契约形状 ⇒ 装配点不 import 该域适配器、不新增契约字段）。
+    // 此前该 kind 未接线 ⇒ 与「作业不存在」同形 404，且 `GET /ocr/{id}` 只在产出记录后可读
+    // ⇒ `failed`/`timed_out` 与"仍在处理"同形。
+    // `cancel` **不提供**（OCR 域本基线无取消入口）⇒ 注册表先确认作业存在，再 503
+    // PROVIDER_UNAVAILABLE (`retryable`) 如实拒绝，**不伪造** `cancelled`、不谎称作业不存在。
+    createOcrJobSource(app.ocrService),
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
