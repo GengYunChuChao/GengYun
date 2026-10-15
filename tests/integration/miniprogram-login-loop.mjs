@@ -75,6 +75,7 @@ try {
         if (dep.endsWith('/font-scale')) return load('utils/font-scale.js', {});
         if (dep.endsWith('/auth')) return cold;
         if (dep.endsWith('/page-gate')) return gate;
+        if (dep.endsWith('/profile-api')) return load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
         if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
         throw Error('Unexpected page dependency');
       } });
