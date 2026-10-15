@@ -279,7 +279,7 @@ $ git diff --name-only origin/main -- packages/contracts/
 | Python | `.github/workflows/engineering-shell.yml:24`、`.github/workflows/development-docs.yml:36` | 仅 `python3 --version`（**未锁版本**） | **否** | 用 runner 自带 `python3`，无 `setup-python`、无版本 pin |
 | npm | 无 | CI 无 npm 版本 pin | **否** | 由 Node 发行包自带 npm 决定 |
 | 依赖 | `.github/workflows/engineering-shell.yml:40,54,68,82,96` | `npm ci --no-audit --no-fund`（锁文件） | **否** | 与本地同命令，但**本次未取得 CI 日志** |
-| 微信基础库 | 无 | CI **无**基础库／编译步骤 | **否** | `local-wechat.yml` 只做 Node 静态与诊断检查（`:55-63`），文件头 `:6` 注明「微信开发者工具编译与真机是**本机任务**，不在本 CI」 |
+| 微信基础库 | 无 | CI **无**基础库／编译步骤 | **否** | `local-wechat.yml` 只做 Node 静态与诊断检查（`.github/workflows/local-wechat.yml:55-63`）；该句出自 **`.github/workflows/engineering-shell.yml:6`** 文件头——「微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充。」（**原文误引为 `local-wechat.yml:6`**；该行实为 `      - 'project*.json*'`，且该句在本机 `local-wechat.yml` 内**零命中**，实测：`git grep -n "本机任务" -- .github/workflows/`） |
 
 ### 4.3 历史实测（**引用既有记录，本次未复测，不得当作本次读数**）
 
