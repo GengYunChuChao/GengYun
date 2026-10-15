@@ -433,8 +433,10 @@ async function main() {
     target = describeTarget(info)
     console.log(JSON.stringify({ platform: info && info.platform, SDKVersion: info && info.SDKVersion }))
     console.log('目标：' + target.label)
-    if (!target.isDevice) {
-      console.warn('NOTICE: platform=' + String(target.platform) + ' 表示当前连的是模拟器；真机验证需要 platform=android 或 ios，两者结论不可互相顶替。')
+    if (target.platform === 'devtools') {
+      console.warn('NOTICE: platform=devtools 表示当前连的是模拟器；真机验证需要 platform=android 或 ios，两者结论不可互相顶替。')
+    } else if (!target.isDevice) {
+      console.warn('NOTICE: platform=' + String(target.platform) + ' 既不是 devtools 也不是 android/ios ⇒ **无法判定是真机还是模拟器**；本轮结果不构成真机证据，也不能与模拟器结论互相顶替。')
     }
 
     await waitForReadyPage(mini, target)
@@ -518,6 +520,44 @@ async function main() {
       console.log('PASS --expect-login-gate：' + gated.length + ' 个 Tab 在未登录时被 ' + LOGIN_ROUTE + ' 接管，' + rendered.length + ' 个 Tab 正常渲染。')
     }
 
+    // --- 迟到复核（F1）：整轮"都渲染成功"时，循环之后再核一次落点与会话 ---
+    // 为什么需要：上面只覆盖**被观察到**的接管。`requireLogin → verifySession()` 是 `GET /auth/session`
+    // 的异步往返（网络失败或非 200 都会 goLogin），而 automator 的 `switchTab` 内部固定 `sleep(3000)`；
+    // 慢网／共享 API 不可达／会话过期时，登录门的 reLaunch 可能**晚于**本轮落点与判据断言到达，
+    // 于是留下"整轮都 PASS、随后才被顶走"的残留路径。这里在循环之后补一次落点 + 会话复核。
+    if (gated.length === 0 && rendered.length === expectation.tabs.length) {
+      const finalRoute = await currentRoute(mini)
+      let finalSession = null
+      let finalSessionKnown = true
+      try {
+        finalSession = await readSession(mini)
+      } catch (error) {
+        if (error && error.smokeFailure && /BLOCKED_AT/.test(error.message)) throw error
+        finalSessionKnown = false
+      }
+      const sessionGone = finalSessionKnown && isSessionAbsent(finalSession)
+      if (finalRoute === LOGIN_ROUTE || sessionGone) {
+        const detail = '落点=' + String(finalRoute) +
+          (finalSessionKnown ? '，本地会话=' + (sessionGone ? '已消失/不合格' : '仍在') : '，本地会话读取失败（该半判定不确定）')
+        if (options.expectLoginGate) {
+          console.log('PASS (--expect-login-gate) 迟到复核：' + expectation.tabs.length + ' 个 Tab 都曾渲染，但循环结束后登录门已接管（' + detail + '）。')
+        } else {
+          console.error('GUEST_STATE: 迟到复核发现登录门已接管（' + detail + '）——循环中观察到的渲染结果不能算通过。')
+          await saveScreenshot(mini, 'wechat-' + mode + '-guest-gate.png', 'guest 登录门证据（迟到复核）')
+          fail('GUEST_STATE: 当前连接的' + target.label + '在整轮 Tab 核对之后被 ' + LOGIN_ROUTE + ' 的登录门接管（' + detail + '）。\n' +
+            '  已渲染 ' + rendered.length + '/' + expectation.tabs.length + ' 个 Tab 的观测结果**不计 PASS**。\n' +
+            '  机制：utils/auth.requireLogin → verifySession()（GET /auth/session；网络失败或非 200 都会 goLogin）' +
+            '＋ automator 的 switchTab 内部固定 sleep(3000) ⇒ 慢网／会话过期／共享 API 不可达时，\n' +
+            '  登录门的 wx.reLaunch 会晚于本轮的落点与判据断言到达，形成"看着全绿、随后被顶走"的残留路径。\n' +
+            '  这不是本脚本的通过条件。请在' + target.kind + '的微信里确认登录态后重跑；\n' +
+            '  如果本次只想验证登录门本身（不要求 Tab 渲染），请显式加 --expect-login-gate。')
+        }
+      } else {
+        console.log('收尾复核：循环后落点 ' + String(finalRoute) + '、' +
+          (finalSessionKnown ? '本地会话仍在' : '本地会话未读成功（本次只核对了落点）') + ' ⇒ 无迟到接管。')
+      }
+    }
+
     // --- 首页与本地替身诊断（沿用原有语义，只把选择器与失败原因改成随当前工程可定位的写法）---
     let home = null
     try {
@@ -595,7 +635,8 @@ async function main() {
     }
 
     await saveScreenshot(mini, 'wechat-' + mode + '-smoke.png', '冒烟完成证据')
-    console.log('PASS 本地冒烟完成：目标 ' + target.label + '（Tab 用例来自 ' + APP_JSON + '，' + expectation.tabs.length + ' 项，自定义 tabBar=' + expectation.custom + '）')
+    console.log('PASS 本地冒烟完成：目标 ' + target.label + '（Tab 用例来自 ' + APP_JSON + '，' + expectation.tabs.length + ' 项，已渲染 ' +
+      rendered.length + '/' + expectation.tabs.length + '，自定义 tabBar=' + expectation.custom + '）')
     console.log('PASS 免责：仅本机自动化走查，不构成真机业务、真实登录、AI、域名或比赛验收。')
   } finally {
     clearTimeout(deadline)
