@@ -30,7 +30,7 @@ import {
   createJobRegistry,
   isTerminalJobState,
 } from '../../services/api/src/jobs/registry.ts';
-import { createRecognitionJobSource, createTranscriptionJobSource } from '../../services/api/src/jobs/sources.ts';
+import { createOcrJobSource, createRecognitionJobSource, createTranscriptionJobSource } from '../../services/api/src/jobs/sources.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const openapi = JSON.parse(readFileSync(resolve(root, 'packages/contracts/openapi.json'), 'utf8'));
@@ -319,6 +319,109 @@ test('适配层·域内 NOT_FOUND ⇒ null（同形）；域内其它错误原�
     (e) => e instanceof ApiError && e.code === 'REQUEST_IN_PROGRESS',
   );
   assert.equal((await recognition.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k' })).state, 'cancelled');
+});
+
+// ---------------------------------------------------------------- GY-I10 接线：标签 OCR 作业源（#10）
+
+/** 契约合法的 OCR `result.value`（六键全必填；`additionalProperties:false`）。 */
+function validOcrValue(overrides = {}) {
+  return {
+    id: RESULT_ID,
+    revision: 1,
+    raw_fields: {
+      registration_number: 'PD20210001',
+      name: '替身示例草甘膦水剂',
+      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+      dosage_form: '水剂',
+    },
+    corrected_fields: {
+      registration_number: 'PD20210001',
+      name: '替身示例草甘膦水剂',
+      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+      dosage_form: '水剂',
+    },
+    verification: { match_state: 'matched', registration: null, conflict_fields: [], missing_fields: [], dose_cards: [] },
+    model_version: 'stub-v1',
+    ...overrides,
+  };
+}
+
+/** 契约合法的 OCR `Job`（默认 succeeded 带 result）。 */
+function validOcrJob(overrides = {}) {
+  return validJob({
+    kind: 'ocr',
+    target_ref: { type: 'ocr', id: TARGET_ID, revision: 1 },
+    result: { kind: 'ocr', value: validOcrValue() },
+    ...overrides,
+  });
+}
+
+test('适配层·OCR 源（GY-I10 接线）：kind=ocr／域内 NOT_FOUND ⇒ null（同形）／**不暴露 cancel**（如实缺失取消能力）／其它错误原样抛', async () => {
+  const calls = { get: 0 };
+  const service = {
+    async getJob({ jobId }) {
+      calls.get += 1;
+      if (jobId !== JOB_ID) throw new ApiError('NOT_FOUND', '任务不存在');
+      return validOcrJob();
+    },
+  };
+  const ocr = createOcrJobSource(service);
+  assert.equal(ocr.kind, 'ocr');
+  assert.equal(ocr.cancel, undefined, 'OCR 域本基线无取消入口 ⇒ 不暴露 cancel（不假装支持）');
+  assert.equal(await ocr.get({ userId: 'u', jobId: 'missing' }), null, '域内 NOT_FOUND ⇒ null（与识别/转写/合成源同一口径）');
+  const read = await ocr.get({ userId: 'u', jobId: JOB_ID });
+  assert.equal(read.id, JOB_ID);
+  assert.equal(read.kind, 'ocr');
+  assert.equal(read.result.kind, 'ocr');
+  assert.equal(calls.get, 2);
+
+  // 只读复用：适配层不改写域内语义 ⇒ 域内其它错误（非 NOT_FOUND）原样透出
+  const broken = createOcrJobSource({
+    async getJob() {
+      throw new ApiError('OBJECT_UNAVAILABLE', '记录当前不可用');
+    },
+  });
+  await assert.rejects(
+    () => broken.get({ userId: 'u', jobId: JOB_ID }),
+    (error) => error instanceof ApiError && error.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+test('注册表·OCR 无取消能力：作业存在 ⇒ cancel 503 PROVIDER_UNAVAILABLE（**不得 404、更不得 200**）；不存在仍同形 404；出口过 ocr 分支契约镜像', async () => {
+  const unknownId = '99999999-9999-4999-8999-999999999999';
+  const jobs = new Map([[JOB_ID, validOcrJob({ state: 'running', error_code: null, result: null })]]);
+  const ocr = createOcrJobSource({
+    async getJob({ jobId }) {
+      const job = jobs.get(jobId);
+      if (job === undefined) throw new ApiError('NOT_FOUND', '任务不存在');
+      return job;
+    },
+  });
+  const registry = createJobRegistry([ocr]);
+  assert.deepEqual(registry.kinds, ['ocr']);
+
+  // 读面：出口由 assertContractJob 重建（本用例同时证明 ocr 分支的嵌套镜像可接受真实域内投影）
+  const read = await registry.get({ userId: 'u', jobId: JOB_ID });
+  assert.equal(read.kind, 'ocr');
+  assert.equal(read.state, 'running');
+  assert.equal(read.result, null);
+
+  // 取消：作业**存在**但该域没有取消能力 ⇒ 503（能力未接线），不谎称对象状态、不伪造 cancelled
+  const error = await registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"4"', idempotencyKey: 'k' }).then(
+    () => null,
+    (e) => e,
+  );
+  assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(error?.status, 503);
+  assert.equal(error?.retryable, true, '未接线属可重试（接线后同一请求即可成功）');
+  assert.equal(jobs.get(JOB_ID).state, 'running', '状态不得被改动（没有伪造 cancelled）');
+  assert.equal(jobs.get(JOB_ID).revision, 3, 'revision 不得因失败的取消而递增');
+
+  // 作业**不存在**（未接线/不存在/越权一律同形）⇒ 仍是 404，而不是 503
+  await assert.rejects(
+    () => registry.cancel({ userId: 'u', jobId: unknownId, ifMatch: '"1"', idempotencyKey: 'k' }),
+    (e) => e instanceof ApiError && e.code === 'NOT_FOUND' && e.status === 404,
+  );
 });
 
 // ---------------------------------------------------------------- 钉子（预审要求）：无取消能力 kind 的 cancel 错误码**顺序语义**

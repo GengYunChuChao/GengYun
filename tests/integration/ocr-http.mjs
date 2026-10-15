@@ -31,9 +31,20 @@ import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.t
 import { createAuthGuards } from '../../services/api/src/auth/middleware.ts';
 import { registerOcrRoutes } from '../../services/api/src/routes/ocr.ts';
 import { createUnwiredReferencePort } from '../../services/api/src/ocr/reference.ts';
+import { createJobRegistry } from '../../services/api/src/jobs/registry.ts';
+import { createOcrJobSource } from '../../services/api/src/jobs/sources.ts';
+import { registerJobRoutes } from '../../services/api/src/jobs/routes.ts';
+import { collectResultValueIssues } from '../../services/api/src/jobs/result-shape.ts';
 
 const API = '/api/v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 契约 `Job` 九键（`additionalProperties:false` ⇒ 键集合必须恰好是这九个）。 */
+const JOB_KEYS = ['id', 'revision', 'kind', 'target_ref', 'state', 'deadline_at', 'created_at', 'error_code', 'result'];
+/** 契约 `JobState` 七值闭集（逐项抄录）。 */
+const JOB_STATES = ['queued', 'running', 'succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
+const TERMINAL_STATES = ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'];
+/** 识别域替身"正常"分桶的媒体 id（取自 GY-I09 既有集成脚本的同口径常量，用于"不回归"对照）。 */
+const RECOGNITION_OK_MEDIA = '11111111-1111-4111-8111-111111111111';
 
 const DOSE_CONDITIONS_COMPLETE = {
   crop_id: 'rice',
@@ -143,13 +154,32 @@ async function createOcr(base, token, mediaId, key = nextKey()) {
 }
 
 /**
- * **注入式接缝**（唯一不走产品装配的一段）。
+ * **纯 HTTP** 轮询**作业读面**到终态（`GET /jobs/{id}`；本片新接线的读面本身就是被测对象）。
+ *
+ * 每一步都断言 **200**：该 kind 未接线时这里必然是 `404 NOT_FOUND`（与"作业不存在"同形）
+ * ⇒ 这条断言就是"接线与否"的红绿分界（撤下 `app.ts` 的注册项 ⇒ 本函数第一轮即失败）。
+ */
+async function waitForTerminalJob(base, token, jobId, tries = 400) {
+  let last = null;
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const response = await call(base, token, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(response.status, 200, `GET /jobs/{id} 必须 200（未接线时是 404）：${JSON.stringify(response.json)}`);
+    last = response.json.data;
+    if (TERMINAL_STATES.includes(last.state)) return last;
+    await sleep(5);
+  }
+  throw new Error(`等待作业终态超时：${jobId}（最后 state=${String(last?.state)}）`);
+}
+
+/**
+ * **注入式接缝（第一段）**：仅用于"登记库未接线 ⇒ unavailable"这一分支。
  *
  * 产品装配 `app.ts` 只传 `{ guards }`（零端口注入）——这本身是**默认关闭**的安全属性，
  * 但也意味着"真实登记库未接线 ⇒ unavailable"这一分支**无法**经产品装配构造
  * （real 模式下提供者先 fail-closed，HTTP 上根本走不到登记库那一步）。
  * 因此该分支用**路由插件自身的 `deps` 接缝**在本测试内最小化装配；
  * 组 8 已用产品装配的**结构断言**钉住"产品路径不暴露该注入面"。
+ * （本文件的**第二段接缝**见 `buildInjectedProviderApp`，只用于构造失败/超时终态与确定性"运行中"。）
  */
 function buildInjectedReferenceApp(config, authStore) {
   const app = Fastify({
@@ -170,6 +200,62 @@ function buildInjectedReferenceApp(config, authStore) {
   const guards = createAuthGuards({ store: authStore, now: () => new Date() });
   registerOcrRoutes(app, config, { guards, reference: createUnwiredReferencePort() });
   return app;
+}
+
+/**
+ * **注入式接缝（第二段）**：只用于构造"失败/超时终态"与**确定性**的"运行中"。
+ *
+ * 为什么必须走接缝：产品装配对 OCR 路由**零端口注入**（只传 `guards`/`consent`/`egress`，组 8 有结构证据），
+ * 而替身提供者按 `media_id` 分六个桶、**六桶全部是"已完成"**（没有失败桶）⇒ "失败态"无法经产品装配构造。
+ * 本接缝**只**替换**提供者**与 **deadline**，装配件全部复用产品同一套：`registerOcrRoutes`（产品同一函数）
+ * + `registerJobRoutes` + 真实注册表（含 `createOcrJobSource`）⇒ 作业读面的分派与契约校验路径与产品装配逐字相同。
+ */
+function buildInjectedProviderApp(config, authStore, options = {}) {
+  const app = Fastify({
+    logger: false,
+    genReqId: () => randomUUID(),
+    ajv: { customOptions: { removeAdditional: false } },
+  });
+  for (const key of ['userId', 'authEpoch', 'role', 'sessionId', 'sessionExpiresAt', 'accountRevision', 'authScopes']) {
+    app.decorateRequest(key, null);
+  }
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof ApiError) {
+      reply.status(error.status).send(buildErrorEnvelope(error, { request_id: request.id, execution_mode: config.executionMode }));
+      return;
+    }
+    reply.status(500).send({ error: { message: '内部错误', retryable: false, details: [] }, meta: { request_id: request.id } });
+  });
+  const guards = createAuthGuards({ store: authStore, now: () => new Date() });
+  const service = registerOcrRoutes(app, config, {
+    guards,
+    provider: options.provider,
+    jobDeadlineMs: options.jobDeadlineMs,
+  });
+  registerJobRoutes(app, config, guards, createJobRegistry([createOcrJobSource(service)]));
+  return app;
+}
+
+/**
+ * 接缝替身提供者（**明确标注的替身**，不触达任何真实供应商）：
+ * 按 `media_id` 的 sha256 分桶（与 `ocr/provider.ts` 的 `bucketOf` 同口径）
+ *   - 桶 0 ⇒ **悬挂**（永不返回）⇒ 由服务端 deadline 落 `timed_out` + `PROVIDER_TIMEOUT`；
+ *   - 桶 1 ⇒ **强制失败** `PROVIDER_OUTCOME_UNKNOWN` ⇒ 落 `failed` + 同一码（非超时失败，刻意与桶 0 分开）；
+ *   - 其余桶 ⇒ 抛错（宁可让用例失败，也不静默给出成功）。
+ */
+function seamProvider() {
+  return {
+    executionMode: 'stub',
+    modelVersion: 'stub-seam-v1',
+    available: true,
+    unavailableReason: null,
+    async extract({ mediaId }) {
+      const bucket = createHash('sha256').update(mediaId).digest()[0] % 6;
+      if (bucket === 0) return new Promise(() => {});
+      if (bucket === 1) return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
+      throw new Error(`接缝替身只支持桶 0/1，收到桶 ${bucket}`);
+    },
+  };
 }
 
 // ---------------------------------------------------------------- 主流程
@@ -199,6 +285,15 @@ const seamAuthStore = createMemoryAuthStore();
 const seamApp = buildInjectedReferenceApp(stubConfig, seamAuthStore);
 const seamBase = await seamApp.listen({ host: '127.0.0.1', port: 0 });
 const seamToken = await seedSession(seamAuthStore, 'synthetic-ocr-seam');
+
+// —— 实例 4：**注入式接缝（第二段）**（悬挂/失败提供者 + 1s deadline；仅用于失败态与确定性"运行中"）——
+const providerSeamAuthStore = createMemoryAuthStore();
+const providerSeamApp = buildInjectedProviderApp(stubConfig, providerSeamAuthStore, {
+  provider: seamProvider(),
+  jobDeadlineMs: 1000,
+});
+const providerSeamBase = await providerSeamApp.listen({ host: '127.0.0.1', port: 0 });
+const providerSeamToken = await seedSession(providerSeamAuthStore, 'synthetic-ocr-provider-seam');
 
 try {
   console.log('== GY-I10 阶段 2b 真实装配 + 回环 HTTP 集成回归 ==');
@@ -573,12 +668,17 @@ try {
       .split(/\r?\n/)
       .find((line) => line.includes('registerOcrRoutes(app, config,'));
     assert.ok(ocrRegistrationLine !== undefined, 'app.ts 必须有 registerOcrRoutes 装配行');
-    // 只允许 `guards` + 两个**隐私域**端口（consent/egress）；不得出现 provider/store/media/端口注入。
+    // 只允许 `guards`（鉴权守卫，本行必填）与两个**隐私域**端口（consent/egress）；
+    // 不得出现 provider/store/media/reference/service 等**适配器**端口注入。
+    // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
+    //   （实测原始输出见交接文档）——它写于该行还是简写 `{ guards, … }` 的时代，`guards` 无冒号故不被
+    //   正则计入；此后该行改为 `guards: gatedGuards`（全局开关门），`guards` 才被计入。原意（"不得塞入
+    //   provider/store/媒体/登记库端口"）不变，故把必填的 `guards` 显式列入白名单，而非放宽其它项。
     const ocrInjectedKeys = [...ocrRegistrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
     assert.deepEqual(
       ocrInjectedKeys,
-      ['consent', 'egress'].sort(),
-      `装配行只允许隐私域 consent/egress 端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
+      ['consent', 'egress', 'guards'].sort(),
+      `装配行只允许鉴权守卫与隐私域 consent/egress 端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
     );
     for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference', 'ocr/service']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);
@@ -596,9 +696,157 @@ try {
     record('8) 产品装配 real：受理前 503 PROVIDER_UNAVAILABLE、providerCalls=0、不回退替身（real-unconfigured）；+ 结构证据（app.ts 零端口注入/不 import 适配器、provider.ts 无网络客户端、real 分支无替身回退）');
   }
 
+  // ---- 10) 接线（本片）：OCR 作业经**共享作业读面**可读（此前该 kind 未接线 ⇒ 404）----
+  {
+    const created = await createOcr(base, tokenA, mediaIdForBucket(0));
+    assert.equal(created.response.status, 202, 'createOCR 契约规定 202');
+    const accepted = created.response.json.data;
+    assert.equal(accepted.kind, 'ocr');
+    assert.equal(accepted.state, 'queued');
+
+    // 受理后**立刻**读作业面：本片之前这里是 404 NOT_FOUND（与"作业不存在"同形、不泄露存在性）。
+    const early = await call(base, tokenA, 'GET', `${API}/jobs/${accepted.id}`);
+    assert.equal(early.status, 200, `GET /jobs/{ocrJobId} 必须 200，实际 ${early.status}：${JSON.stringify(early.json)}`);
+    assert.equal(early.headers.get('cache-control'), 'no-store');
+    assert.equal(early.json.meta.contract_version, '1.0.0');
+    assert.equal(early.json.meta.execution_mode, 'stub');
+    const observed = early.json.data;
+    assert.deepEqual(Object.keys(observed).sort(), [...JOB_KEYS].sort(), 'Job 键集合必须恰好九个（additionalProperties:false）');
+    assert.equal(early.headers.get('etag'), `"${observed.revision}"`, 'ETag 必须是资源 revision 的强 ETag');
+    assert.equal(observed.kind, 'ocr');
+    assert.equal(observed.id, accepted.id);
+    assert.equal(observed.target_ref.type, 'ocr');
+    assert.match(observed.target_ref.id, UUID_RE);
+    assert.match(observed.id, UUID_RE);
+    assert.equal(Number.isNaN(Date.parse(observed.deadline_at)), false);
+    assert.equal(Number.isNaN(Date.parse(observed.created_at)), false);
+    // **状态可见**（不再是 404）：替身无 I/O，落定极快 ⇒ 这里如实接受"已终态"，
+    // 确定性的"运行中"样本由组 12 的悬挂提供者给出；两种情形都必须**可区分**。
+    assert.ok(JOB_STATES.includes(observed.state), `state 必须落在契约七值闭集内，实际 ${observed.state}`);
+    if (observed.result === null) {
+      assert.equal(observed.error_code, null, '非终态读取不得凭空带 error_code');
+    } else {
+      assert.ok(['succeeded', 'uncertain'].includes(observed.state), 'result 只允许出现在 succeeded/uncertain');
+    }
+
+    // 成功路径：经**同一个作业读面**轮询到落定，结果过契约分支镜像（不手抄契约）
+    const settled = await waitForTerminalJob(base, tokenA, accepted.id);
+    assert.equal(settled.state, 'succeeded', `替身分桶 0 应落 succeeded，实际 ${settled.state}`);
+    assert.equal(settled.error_code, null);
+    assert.deepEqual(Object.keys(settled.result).sort(), ['kind', 'value']);
+    assert.equal(settled.result.kind, 'ocr');
+    assert.deepEqual(collectResultValueIssues('ocr', settled.result.value), [], 'result.value 必须过 ocr 分支的契约镜像');
+    assert.equal(settled.result.value.model_version, 'stub-v1', '替身必须如实标注 model_version');
+    assert.equal(settled.result.value.id, accepted.target_ref.id);
+    assert.equal(settled.result.value.revision, settled.target_ref.revision, '作业面 target_ref.revision 必须与记录 revision 一致');
+
+    // 既有记录读面与作业读面对齐（`GET /ocr/{id}` 的既有行为未变）
+    const record2 = await call(base, tokenA, 'GET', `${API}/ocr/${accepted.target_ref.id}`);
+    assert.equal(record2.status, 200);
+    assert.equal(record2.json.data.id, settled.result.value.id);
+    assert.equal(record2.json.data.revision, settled.target_ref.revision);
+
+    // 作用域：未登录 ⇒ 401；他人作业与"不存在"逐字段同形 404（不泄露存在性）
+    const guestJob = await call(base, null, 'GET', `${API}/jobs/${accepted.id}`);
+    assert.equal(guestJob.status, 401);
+    assert.equal(guestJob.json.error.code, 'SESSION_REQUIRED');
+    const foreignJob = await call(base, tokenB, 'GET', `${API}/jobs/${accepted.id}`);
+    const missingJob = await call(base, tokenB, 'GET', `${API}/jobs/${randomUUID()}`);
+    assert.equal(foreignJob.status, 404);
+    assert.equal(missingJob.status, 404);
+    assert.equal(foreignJob.json.error.code, 'NOT_FOUND');
+    assert.deepEqual(foreignJob.json.error, missingJob.json.error, '他人作业与不存在必须逐字段同形');
+    record(`10) 接线·OCR 作业经 \`GET /jobs/{id}\` 可读：200 + 九键 + kind=ocr + 状态可见（此前 404）；受理后立刻读到 state=${observed.state}；终态 state=${settled.state}/error_code=${String(settled.error_code)}/result.kind=${settled.result.kind} 且过 ocr 契约镜像；与 \`GET /ocr/{id}\` 对齐（revision=${settled.target_ref.revision}）；未登录 401／他人与不存在同形 404`);
+  }
+
+  // ---- 11) 不回归：识别域仍 200；OCR 无取消能力 ⇒ cancel 如实 503（不得 200/404）----
+  {
+    // 对照（同一次运行内）：识别域经**同一个** `/jobs/{id}` 路由仍可读 ⇒ 证明 404 的消失只来自 OCR 接线。
+    const recognition = await call(base, tokenA, 'POST', `${API}/recognitions`, {
+      headers: { 'idempotency-key': nextKey('recognitions-regression') },
+      body: { media_id: RECOGNITION_OK_MEDIA, media_revision: 1 },
+    });
+    assert.equal(recognition.status, 202, JSON.stringify(recognition.json));
+    const recognitionJob = await waitForTerminalJob(base, tokenA, recognition.json.data.id);
+    assert.equal(recognitionJob.kind, 'recognition');
+    assert.equal(recognitionJob.state, 'succeeded');
+
+    const created = await createOcr(base, tokenA, mediaIdForBucket(0));
+    assert.equal(created.response.status, 202);
+    const jobId = created.response.json.data.id;
+    const before = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(before.status, 200, '取消前必须先能读到该作业');
+
+    const cancelled = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': `"${before.json.data.revision}"`, 'idempotency-key': nextKey('cancel-ocr') },
+    });
+    assert.equal(cancelled.status, 503, `OCR 域本基线无取消能力 ⇒ 如实 503（不得 200，也不得 404）：${JSON.stringify(cancelled.json)}`);
+    assert.equal(cancelled.json.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(cancelled.json.error.retryable, true, '能力未接线属可重试（接线后同一请求即可成功）');
+
+    // 不得伪造 cancelled、不得改 revision、不得影响可读性
+    const after = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    assert.equal(after.status, 200);
+    assert.equal(after.json.data.state, before.json.data.state, '取消能力缺失 ⇒ 状态不得被改动（没有伪造 cancelled）');
+    assert.equal(after.json.data.revision, before.json.data.revision, '失败的取消不得递增 revision');
+
+    // 缺头次序与既有 kind 逐字一致（400/428 先于 503；由共享请求头前置校验代答）
+    const noKey = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, { headers: { 'if-match': '"1"' } });
+    assert.equal(noKey.status, 400);
+    assert.equal(noKey.json.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+    const noVersion = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'idempotency-key': nextKey('cancel-ocr-428') },
+    });
+    assert.equal(noVersion.status, 428);
+    assert.equal(noVersion.json.error.code, 'REVISION_REQUIRED');
+
+    // 越权者也不能取消他人的 OCR 作业（同形 404，而不是先告诉他"存在但不可取消"）
+    const foreignCancel = await call(base, tokenB, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': '"1"', 'idempotency-key': nextKey('cancel-ocr-b') },
+    });
+    assert.equal(foreignCancel.status, 404);
+    assert.equal(foreignCancel.json.error.code, 'NOT_FOUND');
+    record(`11) 不回归·识别域仍 200 succeeded（同一 \`/jobs/{id}\` 路由）；OCR 无取消能力 ⇒ cancel 503 ${cancelled.json.error.code}(retryable=${String(cancelled.json.error.retryable)})（不得 200/404）、状态与 revision 未被改动（state=${after.json.data.state} revision=${after.json.data.revision}）、缺头仍 400/428、越权 cancel 同形 404`);
+  }
+
+  // ---- 12) 失败可区分（**注入式接缝**：悬挂 / 强制失败；见 buildInjectedProviderApp）----
+  {
+    // 运行中：悬挂提供者（永不返回）+ 1s deadline ⇒ 作业读面**读得到** queued/running。
+    const hung = await createOcr(providerSeamBase, providerSeamToken, mediaIdForBucket(0), nextKey('seam-hang'));
+    assert.equal(hung.response.status, 202, JSON.stringify(hung.response.json));
+    const hungJob = hung.response.json.data;
+    assert.equal(hungJob.state, 'queued');
+    const runningRead = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/jobs/${hungJob.id}`);
+    assert.equal(runningRead.status, 200, `运行中必须可读（不得与"作业不存在"同形 404）：${JSON.stringify(runningRead.json)}`);
+    const running = runningRead.json.data;
+    assert.ok(['queued', 'running'].includes(running.state), `运行中状态应是 queued/running，实际 ${running.state}`);
+    assert.equal(running.error_code, null, '运行中不得带 error_code');
+    assert.equal(running.result, null, '运行中不得带 result');
+
+    // 终态（超时）：同一读面读出 `timed_out` + 契约 `error_code`（悬挂 ⇒ deadline 触发）
+    const timedOut = await waitForTerminalJob(providerSeamBase, providerSeamToken, hungJob.id);
+    assert.equal(timedOut.state, 'timed_out');
+    assert.equal(timedOut.error_code, 'PROVIDER_TIMEOUT', '超时必须带契约 error_code（不得报成无原因）');
+    assert.equal(timedOut.result, null, 'timed_out 不得携带 result');
+    assert.notEqual(timedOut.state, running.state, '失败/超时不得与"仍在处理"同形（这正是本片要解封的）');
+    // 记录面在失败下**仍是 404**（失败不产出记录）⇒ 如实说明"为什么非有作业读面不可"
+    const recordGap = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/ocr/${hungJob.target_ref.id}`);
+    assert.equal(recordGap.status, 404, '失败/超时在记录面上与"仍在处理"同形（既有事实，本片不改 OCR 域语义）');
+
+    // 强制失败（非超时失败码）：`failed` + 契约 `error_code`，且与 `timed_out` 可区分
+    const forced = await createOcr(providerSeamBase, providerSeamToken, mediaIdForBucket(1), nextKey('seam-failed'));
+    assert.equal(forced.response.status, 202, JSON.stringify(forced.response.json));
+    const failed = await waitForTerminalJob(providerSeamBase, providerSeamToken, forced.response.json.data.id);
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.error_code, 'PROVIDER_OUTCOME_UNKNOWN');
+    assert.equal(failed.result, null);
+    assert.notEqual(failed.state, timedOut.state, 'failed 与 timed_out 必须彼此可区分');
+    record(`12) 失败可区分（接缝：悬挂⇒timed_out+PROVIDER_TIMEOUT／强制⇒failed+PROVIDER_OUTCOME_UNKNOWN）：同一 \`GET /jobs/{id}\` 200 且 state/error_code 可见 —— 运行中 state=${running.state}/error_code=${String(running.error_code)}；超时 state=${timedOut.state}/error_code=${String(timedOut.error_code)}；强制失败 state=${failed.state}/error_code=${String(failed.error_code)}；运行中与失败态**不再同形**；记录面在失败下仍 404（如实）`);
+  }
+
   console.log(`PASS ${results.length} 组：经真实装配的 app（buildApp）+ 本机回环 HTTP；合成身份/替身提供者/内存 store；未联网、未连库、未调真实供应商`);
   console.log('NOTE 未覆盖（如实声明）：小程序 identify 页标签模式与打包白名单、真实 OCR 供应商、真实登记库/用量来源、标签类真实样本 0 ⇒ 不声称任何准确率、真机、PG 持久化');
-  console.log('NOTE 唯一非产品装配的一段：组 3d「登记库未接线 ⇒ unavailable」用路由插件 deps 接缝构造（产品装配刻意零端口注入，故该分支无法经产品装配构造）');
+  console.log('NOTE 非产品装配的两段（均为路由插件 deps 接缝，产品装配刻意零端口注入）：组 3d「登记库未接线 ⇒ unavailable」；组 12「失败/超时终态与确定性运行中」（悬挂/失败提供者 + 1s deadline）');
 } finally {
-  await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close()]);
+  await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close(), providerSeamApp.close()]);
 }
