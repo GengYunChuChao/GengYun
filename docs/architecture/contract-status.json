@@ -1487,7 +1487,7 @@
           "name": "收藏HTTP：增→列→取消 的契约形状、头部与"
         }
       ],
-      "blocker": "GY-I16 本片只交付内存存储（进程重启即丢，无数据库迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；引用可用性端口生产默认未接线 ⇒ 一律 reference_state=unavailable（不假装可用）。归属/去重/取消/分页/读取时重查已由 HTTP + 域测试覆盖（见证据）"
+      "blocker": "GY-I16 本片只交付内存存储（进程重启即丢，无数据库迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；引用可用性端口**已于 #167 接线**（`createWiredVisibilityPort`；装配点 `services/api/src/app.ts` 的 `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）。#167 之前该端口生产默认未接线 ⇒ 那时一律 reference_state=unavailable（不假装可用）。归属/去重/取消/分页/读取时重查已由 HTTP + 域测试覆盖（见证据）"
     },
     {
       "id": "createFavorite",
@@ -1562,7 +1562,7 @@
           "name": "历史HTTP：任务状态端口已接线到已合并读取口 ⇒ 失败状态真实可见（读取时重查）"
         }
       ],
-      "blocker": "GY-I16 本片只交付内存存储（无数据库迁移）⇒ real 模式整域 503。**识别/OCR → 历史的写入接线属跨线**：本片只交付内部口 historyService.appendHistory()（非契约 operationId、不注册路由，签名见 services/api/src/history/service.ts），那一句调用待指挥另行派单。引用可用性端口生产默认未接线 ⇒ reference_state 一律 unavailable"
+      "blocker": "GY-I16 本片只交付内存存储（无数据库迁移）⇒ real 模式整域 503。**识别/OCR → 历史的写入接线属跨线**：本片只交付内部口 historyService.appendHistory()（非契约 operationId、不注册路由，签名见 services/api/src/history/service.ts），那一句调用待指挥另行派单。引用可用性端口**已于 #167 接线**（`createWiredVisibilityPort`；装配点 `services/api/src/app.ts` 的 `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）。#167 之前该端口生产默认未接线 ⇒ 那时 reference_state 一律 unavailable"
     },
     {
       "id": "deleteHistory",
