@@ -56,8 +56,11 @@ Page({
   // GY-I04 6-A：游客态的「去登录」按钮必须真的去登录（此前绑到 onBack：只回社区列表，
   // 与文案不符）。与 page-gate / communitydetail 同一口径：登记本页为返回目标 → reLaunch 登录页，
   // 登录成功后回本页；门禁拦截语义不变（未登录仍被拦，不放行任何提交）。
+  // N1（对抗性审查 §4）：核实成功（ok）说明会话已获服务端确认 ⇒ 取消被本次核实取代的旧
+  // 门禁周期，并按「重新进入本页」重跑门禁，让页面可见地放行（改前此处无任何可见反应）。
   onLogin: function () {
-    require('../../utils/auth').requireLogin(function () {})
+    const self = this
+    require('../../utils/auth').requireLogin(function (ok) { if (ok) { pageGate.cancel(self); self.onShow() } })
   },
 
   onBack: function () {
