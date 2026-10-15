@@ -27,9 +27,10 @@
  * ## 未取得（如实声明，不得当作已完成）
  *
  * - 只有内存存储（进程重启即丢），**没有**数据库迁移；real 模式下收藏域整体不可用（见 `app.ts`）。
- * - **可见性端口默认未接线**（`createUnwiredVisibilityPort`）⇒ 生产装配下所有收藏
- *   `reference_state` 恒为 `unavailable`。本片**不宣称**收藏已端到端可用；
- *   真实接线 = 把一个 `VisibilityPort` 传进装配（一次可审查的变更）。
+ * - 引用可用性端口**已于 #167 接线**（`createWiredVisibilityPort`；装配点 `app.ts` 的
+ *   `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）⇒ 无库装配
+ *   （`pool === null`）或核不到时仍如实 `unavailable`，绝不假装可用。
+ *   本片**不宣称**收藏已端到端可用；测试仍可注入自己的 `VisibilityPort` 覆盖缺省。
  * - 契约里 `Favorite.unavailable_reason` 是 `string(1..80)|null`，本片只取**冻结闭集**
  *   （`REFERENCE_UNAVAILABLE_REASONS`）内的三条非披露说明，不细分为"已隐藏/不存在"。
  */

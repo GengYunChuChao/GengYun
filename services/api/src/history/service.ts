@@ -29,8 +29,11 @@
  * ## 未取得（如实声明，不得当作已完成）
  *
  * - 只有内存存储（进程重启即丢），**没有**数据库迁移；real 模式下历史域整体不可用（见 `app.ts`）。
- * - **任务状态端口默认未接线**、**可见性端口默认未接线** ⇒ 生产装配下历史行显示入库时的
- *   最后已知状态 + `reference_state: unavailable`。本片**不宣称**历史已端到端可用。
+ * - **任务状态端口默认接线到已合并的公开读取口**（`recognitionService.getJob` #9 ／
+ *   `ocrService.getJob` #10，见 `app.ts`）⇒ 读取时能取到实时状态，核不到才退回入库值。
+ * - 引用可用性端口**已于 #167 接线**（`createWiredVisibilityPort`；装配点 `app.ts` 的
+ *   `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）⇒ 无库装配
+ *   （`pool === null`）或核不到时仍如实 `unavailable`。本片**不宣称**历史已端到端可用。
  * - **识别/OCR → 历史的写入接线属跨线**（要在 `recognitions/**`／`ocr/**` 里加一次调用），
  *   本片只交付内部口 `appendHistory` 与其测试；那一句由指挥另行派单。
  * - 契约对 `deleteHistory` 描述的"同时启动关联识别/OCR 私有结果/媒体和外发删除"同属跨线：
