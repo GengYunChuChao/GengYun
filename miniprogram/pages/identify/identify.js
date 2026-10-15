@@ -1,16 +1,24 @@
 // 识别页（GY-I09）：拍照/选图 → 私有媒体引用 → 创建识别任务 → 按 JobState 分七类呈现
 // → Top3 候选 → 用户选择 → 关联科普查询 → 私有历史。
 //
+// GY-I10 标签 OCR（#10）本片追加：**标签识别**入口走与识草**同一套**私有媒体上传与**既有** OCR 路由
+// （`POST /ocr` → `GET /jobs/{id}` 轮询七类 JobState → `GET /ocr/{id}` 读标签正文），
+// **只读**展示原样文本 + 来源/状态标签；OCR 结果是**机器读数、不是权威判读**，且**永不展示任何用量数字**。
+//
 // 硬口径：
 // - 门禁语义保留 page-gate（未登录/门禁拒绝时不动作、不伪造结果）；字号保留 font-scale。
 // - 只有 succeeded 才算识别成功；uncertain 的候选必须经用户「人工核对」显式确认才允许记录选择，
 //   failed / timed_out / cancelled 不显示任何候选、也不进入关联科普路径。
 // - real 模式走契约私有上传链路；该链路不可用时**如实报不可用**，绝不用替身结果顶替。
 // - stub / preset_demo 模式使用**明确标注的替身媒体引用**：照片不会上传，页面显著标注。
+// - 失败一律按契约 `error.code` **如实归因**（含 OCR 域 503「未提供取消能力」与 404「作业不存在」的区分）。
 const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const identifyApi = require('../../utils/identify-api')
+// 标签正文读面（`GET /ocr/{id}`）的**既有**消费层（#10 + #16 已合并）：逐字段校验 + 原样文本/更正/核对
+// 三分 + "不显示用量与配比"口径。本片**复用**它，不重造第二套 OCR 校验（避免两套口径漂移）。
+const historyApi = require('../../utils/history-api')
 // 参考域查询模块按需加载（懒 require）：页面注册阶段不引入 data/** 依赖，
 // 使页面在只打包必要依赖的场景下也能加载；白名单仍须包含 utils/reference.js。
 
@@ -57,6 +65,13 @@ const UUID_HEX = '0123456789abcdef'
  */
 const RECOGNITION_MAX_BYTES = 2 * 1024 * 1024
 const MIB = 1024 * 1024
+
+/**
+ * 标签图用途字节上限（契约 `MediaPurpose.label_ocr`，与识别图**同值** ≤2 MiB，见
+ * `packages/media/constants.mjs` 的 `MEDIA_PURPOSE_MAX_BYTES`）。同样是**上传前预检**：
+ * 超限直接给可操作提示、**不发任何请求**；服务端仍独立核验真实字节（不放宽任何守卫）。
+ */
+const OCR_MAX_BYTES = 2 * 1024 * 1024
 
 /** 替身媒体引用（本地生成的 uuid v4 形状）。仅用于 stub/preset_demo 联调，不代表真实上传。 */
 function syntheticMediaId() {
@@ -152,7 +167,7 @@ Page({
     fontScale: fontScale.DEFAULT_FONT_SCALE,
     modes: [
       { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍照片识别田里的杂草，给出至多 3 个候选', action: '拍照识别' },
-      { key: 'ocr', iconClass: 'gy-icon--tag', title: '标签识别', desc: '拍包装读出药名与成分（尚未接入）', action: '尚未接入' },
+      { key: 'ocr', iconClass: 'gy-icon--tag', title: '标签识别', desc: '拍农药包装读出标签文字（机器读数，非权威判读）', action: '拍照识别' },
       { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问（尚未接入）', action: '尚未接入' }
     ],
     guest: true,
@@ -162,6 +177,12 @@ Page({
     substituteNotice: '',
     job: null,
     stateView: null,
+    /**
+     * 标签 OCR（#10）区块的展示状态；未发起过标签识别时为 `null`。
+     * 与识别域字段**完全分开**：`state`/`stateTitle`/`stateDesc`/`tone`/`terminal`/`success`/`errorCode`
+     * 逐项来自 `describeJobState`（七类）与契约 `Job.error_code`；`record` 是 `GET /ocr/{id}` 的只读视图。
+     */
+    ocr: null,
     /** 六类失败/边界分支归类（不属于六类时为 null）与其指引（落点 + 可重试语义）。 */
     branch: null,
     branchInfo: null,
@@ -241,7 +262,7 @@ Page({
     const patch = {
       guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
-      recordId: null, recordRevision: 0, job: null, stateView: null, historyNote: '', candidateSource: 'job',
+      recordId: null, recordRevision: 0, job: null, stateView: null, ocr: null, historyNote: '', candidateSource: 'job',
       branch: null, branchInfo: null, doseGuard: null,
       busy: false, substituteNotice: ''
     }
@@ -254,11 +275,10 @@ Page({
   onShoot: function (event) {
     if (this.data.guest || this.data.busy) return
     const key = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.mode : null
-    if (key !== 'weed') {
-      wx.showToast({ title: '该入口尚未接入', icon: 'none' })
-      return
-    }
-    this.choosePhoto()
+    if (key === 'weed') { this.choosePhoto(); return }
+    // GY-I10：标签识别入口已接入（走既有 `POST /ocr` + `GET /jobs/{id}` + `GET /ocr/{id}`）。
+    if (key === 'ocr') { this.chooseOcrPhoto(); return }
+    wx.showToast({ title: '该入口尚未接入', icon: 'none' })
   },
 
   /** 录音入口：**尚未接入真实录音**，只切换按钮文案；不调用任何录音能力、不采集、不上传。 */
@@ -294,7 +314,7 @@ Page({
   prepareMedia: async function (tempFilePath) {
     if (this.data.guest) return
     const gen = this.beginOperation()
-    this.setData({ busy: true, errorText: '', substituteNotice: '', stateView: null, job: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
+    this.setData({ busy: true, errorText: '', substituteNotice: '', stateView: null, job: null, ocr: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
     let media
     try {
       const mode = await identifyApi.serverMode()
@@ -340,6 +360,199 @@ Page({
     }
   },
 
+  // -------------------------------------------------------------- 标签 OCR（#10）
+
+  /** 标签识别入口的选图（与识草同一 `wx.chooseMedia` 口径：单张、相机/相册、压缩图）。 */
+  chooseOcrPhoto: function () {
+    if (this.data.guest) return
+    const that = this
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image'],
+      sourceType: ['camera', 'album'],
+      sizeType: ['compressed'],
+      success: function (result) {
+        const file = result && result.tempFiles && result.tempFiles[0]
+        if (!file || typeof file.tempFilePath !== 'string') { that.setData({ errorText: '未取得照片，请重试。' }); return }
+        that.prepareOcrMedia(file.tempFilePath)
+      },
+      fail: function () { that.setData({ errorText: '未选择照片，已取消。' }) }
+    })
+  },
+
+  /**
+   * 取得标签 OCR 任务的媒体引用并受理任务：
+   * real ⇒ 走**与识草同一套**私有媒体上传（用途 `label_ocr`，契约既有成员）；
+   * stub / preset_demo ⇒ 明确标注的替身媒体引用（照片不上传）。
+   * 随后 `POST /ocr` 受理，成功后进入**与识草同一套**的轮询（间隔/上限/停止条件一致）。
+   */
+  prepareOcrMedia: async function (tempFilePath) {
+    if (this.data.guest) return
+    const gen = this.beginOperation()
+    this.stopPoll()
+    this.setData({ busy: true, errorText: '', substituteNotice: '', ocr: null, stateView: null, job: null, branch: null, branchInfo: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
+    let media
+    try {
+      const mode = await identifyApi.serverMode()
+      if (!this.isCurrentOperation(gen)) return
+      this.setData({ modeNote: modeNoteFor(mode, 'ocr') })
+      if (mode === 'real') {
+        const mime = mimeOfPath(tempFilePath)
+        if (mime === null) { this.setData({ busy: false, errorText: '无法确定照片类型，请改用 JPG / PNG / WebP。' }); return }
+        const info = await readFileInfo(tempFilePath)
+        if (!this.isCurrentOperation(gen)) return
+        // 上传前尺寸预检（与识草同一口径）：超限直接给可操作提示，**不发出** POST /media/uploads（服务端必拒）。
+        if (info.size > OCR_MAX_BYTES) {
+          this.setData({
+            busy: false,
+            errorText: '照片过大（' + (info.size / MIB).toFixed(1) + ' MiB）：标签图上限 ' + (OCR_MAX_BYTES / MIB) +
+              ' MiB，请重新拍摄或压缩后再试；本条未上传任何照片。'
+          })
+          return
+        }
+        // 用途声明为契约既有成员 `label_ocr`（与识别图同限额：≤2 MiB、jpeg/png/webp）。
+        media = await identifyApi.uploadPrivatePhoto(tempFilePath, { mime: mime, bytes: info.size, sha256: info.digest }, identifyApi.OCR_MEDIA_PURPOSE)
+      } else {
+        this.setData({ substituteNotice: '替身模式（' + mode + '）：照片不会上传，标签识别使用替身媒体引用，结果不代表真实识别。' })
+        media = { mediaId: syntheticMediaId(), mediaRevision: 1 }
+      }
+      if (!this.isCurrentOperation(gen)) return
+    } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      // 本段失败发生在**媒体/模式**这一侧（读模式、读文件、私有媒体上传）⇒ 用**媒体站点**的
+      // 措辞表（与识草同一句）：例如上传 503 指向"真实对象存储未接线"，**不得**说成 OCR 提供者。
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
+      this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
+      return
+    }
+    try {
+      const created = await identifyApi.createOcr(media.mediaId, media.mediaRevision)
+      if (!this.isCurrentOperation(gen)) return
+      this.setData({ modeNote: modeNoteFor(created.mode, 'ocr') })
+      this.applyOcrJob(created.job, gen)
+      this.startOcrPoll(gen)
+    } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.ocrMessageFor(error)); return }
+      this.setData({ busy: false, errorText: identifyApi.ocrMessageFor(error) })
+    }
+  },
+
+  /** 与识草 `startPoll` **同一口径**（1000 ms × 60 次、代次与对象双约束、上限即停并如实提示）。 */
+  startOcrPoll: function (gen) {
+    const that = this
+    const generation = gen === undefined ? this._generation : gen
+    this.stopPoll()
+    let ticks = 0
+    this._ocrPollTimer = setInterval(function () {
+      ticks += 1
+      if (!that.isCurrentOperation(generation) || !that.data.ocr || that.data.ocr.terminal === true) { that.stopPoll(); return }
+      if (ticks > POLL_MAX_TICKS) {
+        that.stopPoll()
+        that.setData({ busy: false, errorText: '轮询已达上限，请重新查询任务状态。' })
+        return
+      }
+      that.refreshOcrJob(generation)
+    }, POLL_INTERVAL_MS)
+  },
+
+  refreshOcrJob: async function (gen) {
+    if (!this.data.ocr || this.data.ocr.terminal === true) return
+    const generation = gen === undefined ? this._generation : gen
+    const jobId = this.data.ocr.jobId
+    try {
+      const r = await identifyApi.getOcrJob(jobId)
+      if (!this.isCurrentOperation(generation)) return
+      if (!this.data.ocr || this.data.ocr.jobId !== jobId) return
+      await this.applyOcrJob(r.job, generation)
+    } catch (error) {
+      if (!this.isCurrentOperation(generation)) return
+      this.stopPoll()
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.ocrMessageFor(error)); return }
+      this.setData({ busy: false, errorText: identifyApi.ocrMessageFor(error) })
+    }
+  },
+
+  /**
+   * 由**已校验**的 OCR 任务决定标签识别区的展示：七类 JobState 逐类呈现（复用 `describeJobState`），
+   * `error_code` 原样带出。**只有** succeeded 才去读标签正文；uncertain 的正文标注"不可信"后如实展示。
+   */
+  applyOcrJob: function (job, gen) {
+    if (gen !== undefined && !this.isCurrentOperation(gen)) return undefined
+    const view = identifyApi.describeJobState(job.state)
+    const previous = this.data.ocr
+    const patch = {
+      busy: view.terminal !== true,
+      ocr: {
+        jobId: job.id,
+        revision: job.revision,
+        ocrId: job.target_ref.id,
+        state: job.state,
+        stateTitle: view.title,
+        stateDesc: view.desc,
+        tone: view.tone,
+        terminal: view.terminal,
+        success: view.success,
+        errorCode: job.error_code,
+        hasResult: job.hasResult === true,
+        cancelled: job.state === 'cancelled',
+        record: previous && previous.jobId === job.id ? previous.record : null,
+        recordNote: '',
+        cancelNote: ''
+      }
+    }
+    if (view.terminal === true) this.stopPoll()
+    this.setData(patch)
+    if (view.terminal === true && job.hasResult === true) return this.loadOcrRecord(job, gen)
+    return undefined
+  },
+
+  /** 读标签正文（`GET /ocr/{id}`，经既有 `history-api` 消费层逐字段校验）；读不到时**如实说明**，不顶替。 */
+  loadOcrRecord: async function (job, gen) {
+    const generation = gen === undefined ? this._generation : gen
+    try {
+      const r = await historyApi.getOcr(job.target_ref.id)
+      if (!this.isCurrentOperation(generation)) return
+      if (!this.data.ocr || this.data.ocr.jobId !== job.id) return
+      this.setData({ ocr: Object.assign({}, this.data.ocr, { record: ocrResultView(r.ocr, job, r.mode), recordNote: '' }) })
+    } catch (error) {
+      if (!this.isCurrentOperation(generation)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.ocrMessageFor(error)); return }
+      // 任务已落定但正文读不到：如实说明"未取得正文"，**不用**任何缓存/替身正文顶替。
+      this.setData({ ocr: Object.assign({}, this.data.ocr, { record: null, recordNote: '任务已落定，但未取得标签正文：' + identifyApi.ocrMessageFor(error) }) })
+    }
+  },
+
+  /**
+   * 取消标签 OCR 任务：走**既有**契约面 `POST /jobs/{id}/cancel`。
+   * 本基线 OCR 域**没有**取消能力 ⇒ 服务端如实 503（`retryable`）；页面必须把它与
+   * 「作业不存在（404）」区分开（专属文案见 `identify-api.ocrMessageFor(e, 'cancel')`），**不得**伪称已取消。
+   */
+  onCancelOcrJob: async function () {
+    const ocr = this.data.ocr
+    if (!ocr || ocr.terminal === true || this.data.busy !== true) return
+    const gen = this._generation
+    const jobId = ocr.jobId
+    try {
+      const r = await identifyApi.cancelOcrJob(jobId, ocr.revision)
+      if (!this.isCurrentOperation(gen)) return
+      if (!this.data.ocr || this.data.ocr.jobId !== jobId) return
+      await this.applyOcrJob(r.job, gen)
+    } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.ocrMessageFor(error)); return }
+      this.setData({ ocr: Object.assign({}, this.data.ocr, { cancelNote: '未取消：' + identifyApi.ocrMessageFor(error, 'cancel') }) })
+    }
+  },
+
+  /** 重新拍摄标签（只清空本区块并重开选图；不动识别域的任何状态）。 */
+  onOcrRetry: function () {
+    this.stopPoll()
+    if (this.data.guest === true) return
+    this.setData({ ocr: null, errorText: '' })
+    this.chooseOcrPhoto()
+  },
+
   // ------------------------------------------------------------------ 轮询
 
   startPoll: function (gen) {
@@ -361,6 +574,7 @@ Page({
 
   stopPoll: function () {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null }
+    if (this._ocrPollTimer) { clearInterval(this._ocrPollTimer); this._ocrPollTimer = null }
   },
 
   refreshJob: async function (gen) {
@@ -437,7 +651,7 @@ Page({
   onRetry: function () {
     this.stopPoll()
     this.beginOperation()
-    this.setData({ job: null, stateView: null, branch: null, branchInfo: null, doseGuard: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
+    this.setData({ job: null, stateView: null, ocr: null, branch: null, branchInfo: null, doseGuard: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
   },
 
   /** 点候选：succeeded 直接记录选择；uncertain 必须先显式「人工核对」确认。 */
@@ -771,9 +985,56 @@ function queryRelatedKnowledge(speciesId, conditions) {
   }
 }
 
-function modeNoteFor(mode) {
-  if (mode === 'real') return '服务端为 real 模式：照片经私有媒体链路处理，识别由真实提供者完成（当前真实提供者未接入时如实报不可用）。'
-  if (mode === 'preset_demo') return '服务端为 preset_demo（预设演示）模式：结果明显标注为演示，不代表真实识别。'
-  if (mode === 'stub') return '服务端为 stub（替身）模式：结果来自替身，仅供联调，不代表真实识别。'
-  return '未取得服务端执行模式，识别结果状态未确认。'
+/**
+ * 标签 OCR（#10）的**只读**结果视图：原样文本 + 来源/状态标签。
+ *
+ * 硬口径（与 `utils/history-api.js` 的 `ocrDetailView` 同一口径，不另造一套）：
+ *   1. **原样文本**：`raw_fields` 逐字段照录（缺项如实写"（未读出）"，不补造、不改写、不做任何换算）；
+ *   2. **来源/状态标签**：`model_version`（来源版本）+ `revision` + 契约 `Job.state`/`error_code`
+ *      + 核对 `verification.match_state` / `has_registration` / `conflict_fields` / `missing_fields`；
+ *   3. **不是权威判读**：页面必须显著标注（机器读数，须与包装实物核对；登记信息以官方登记为准）；
+ *   4. **不得出现任何剂量数字**：`verification.dose_cards` **只计条数**、绝不渲染正文
+ *      （沿用 `history-api.js:385` 的 `doseSafetyNote` 口径）；
+ *   5. **只读**：本页不提供编辑标签文本、也不提交人工核对（能力未接入，**不发明**编辑动作）。
+ */
+function ocrResultView(ocr, job, mode) {
+  const detail = historyApi.ocrDetailView(ocr)
+  const rows = function (fields) {
+    return [
+      { label: '登记证号', value: fields.registration_number === null ? '（未读出）' : fields.registration_number },
+      { label: '药名', value: fields.name === null ? '（未读出）' : fields.name },
+      { label: '剂型', value: fields.dosage_form === null ? '（未读出）' : fields.dosage_form },
+      { label: '有效成分', value: fields.ingredients.length === 0 ? '（未读出）' : fields.ingredients.join('；') }
+    ]
+  }
+  return {
+    readRows: rows(detail.raw),
+    correctedRows: rows(detail.corrected),
+    correctedDiffers: detail.correctedDiffers,
+    matchState: detail.verification.matchState,
+    matchLabel: detail.verification.matchLabel,
+    hasRegistration: detail.verification.hasRegistration,
+    conflictFields: detail.verification.conflictFields,
+    missingFields: detail.verification.missingFields,
+    // 用药安全：只给"存在 N 条用量卡"的**条数**，正文一律不渲染（该数字不是剂量值）。
+    doseCardCount: detail.verification.doseCardCount,
+    sourceVersion: detail.sourceVersion,
+    revision: detail.revision,
+    jobState: job.state,
+    jobErrorCode: job.error_code,
+    mode: mode,
+    // 如实标注：机器读数、非权威判读（与页面顶部 pill 同一句）。
+    authorityNote: '标签识别是机器读数，不是权威判读：请与农药包装实物逐项核对；登记信息以官方登记为准。',
+    readOnlyNote: '本页只读：不提供编辑标签文本、也不提交人工核对（该能力未接入，本页不发明任何编辑动作）。',
+    // 用量口径取自既有 `history-api`（不显示用量与配比），本条不含任何剂量数字。
+    doseNote: detail.doseSafetyNote
+  }
+}
+
+function modeNoteFor(mode, kind) {
+  const noun = kind === 'ocr' ? '标签识别' : '识别'
+  if (mode === 'real') return '服务端为 real 模式：照片经私有媒体链路处理，' + noun + '由真实提供者完成（当前真实提供者未接入时如实报不可用）。'
+  if (mode === 'preset_demo') return '服务端为 preset_demo（预设演示）模式：结果明显标注为演示，不代表真实' + noun + '。'
+  if (mode === 'stub') return '服务端为 stub（替身）模式：结果来自替身，仅供联调，不代表真实' + noun + '。'
+  return '未取得服务端执行模式，' + noun + '结果状态未确认。'
 }
