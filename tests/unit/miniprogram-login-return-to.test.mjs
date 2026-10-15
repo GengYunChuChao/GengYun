@@ -255,6 +255,52 @@ test('missing navigation dependency remains a diagnostic error, never swallowed 
   assert.throws(() => vm.runInNewContext(source, { require(id) { if (id === './navigation') throw Error('navigation missing'); return {}; } }), /navigation missing/);
 });
 
+// ---------------------------------------------------------------------------
+// GY-I04 6-A：受保护页的「去登录」只允许一套口径 —— 与 page-gate 同一路径
+// （auth.requireLogin：登记本页为返回目标 → reLaunch 登录页 → 登录后回原页）。
+// 历史并列实现里的第二套口径（favorites/history/historydetail/profile 的 onLogin
+// 直接 navigateTo／reLaunch 登录页）会把登录页 push 进返回栈，且按钮自己不登记目标
+// ⇒ 登录成功后停在默认页 HOME。门禁拦截语义不因统一而放宽：登录前不得跳向任何受保护目标。
+// ---------------------------------------------------------------------------
+const LOGIN_ENTRY_PAGES = [
+  ['favorites', null], ['history', null], ['profile', null], ['messages', null],
+  ['community', null], ['communitycreate', null],
+  ['historydetail', { id: '6b1d0f2a-3c4e-4f50-8a91-2b3c4d5e6f70' }],
+  ['communitydetail', { id: '0a9f8e7d-6c5b-4a39-8271-6f5e4d3c2b1a' }],
+];
+for (const [name, options] of LOGIN_ENTRY_PAGES) {
+  test(`${name}: guest 去登录 shares the gate path with its own return target`, () => {
+    const b = fixture();
+    const page = b.page(name);
+    if (options) page.options = options;
+    const route = `pages/${name}/${name}`;
+    const own = '/' + route + (options ? `?id=${options.id}` : '');
+    page.onShow();
+    // 门禁失败必须保持游客态；无会话时不得发起任何业务读取。
+    assert.equal(page.data.guest === true || page.data.gatePassed === false, true, 'guest gate must fail closed');
+    assert.equal(b.requests.length, 0);
+    // ① 页面必须提供「去登录」处理，且该处理与门禁同一路径（reLaunch 清栈，不 push 登录页）。
+    assert.equal(typeof page.onLogin, 'function', '页面必须提供「去登录」处理');
+    page.onLogin();
+    assert.equal(b.routes.at(-1).url, b.nav.LOGIN);
+    assert.equal(b.routes.at(-1).method, 'reLaunch', '登录页不得被 push 进返回栈');
+    assert.equal(b.nav.peekReturnTo(), own, '去登录必须登记本页为返回目标');
+    assert.ok(b.routes.every((entry) => entry.url === b.nav.LOGIN), '登录前不得跳向任何受保护目标');
+    // ② 返回目标必须由按钮自己登记：上一次意图（门禁登记 / 登录页离页 / 退出）失效后，
+    //    点「去登录」仍须回本页，而不是因为目标为空而停在默认页。
+    b.nav.clearReturnTo();
+    page.onLogin();
+    assert.equal(b.nav.peekReturnTo(), own, '按钮必须自己登记返回目标');
+    const id = b.login();
+    assert.equal(b.auth.resumeAfterLogin(id), true);
+    const last = b.routes.at(-1);
+    assert.equal(last.url, own, '登录成功后必须回到原页');
+    assert.notEqual(last.url, b.nav.HOME, '不得停在默认页');
+    assert.equal(last.method, b.nav.TAB_PAGES.indexOf(route) !== -1 ? 'switchTab' : 'reLaunch');
+    assert.equal(b.nav.peekReturnTo(), null, '返回目标一次性消费');
+  });
+}
+
 const detailCases = [
   ['referencedetail', 'gy-i03-hb-001', 'detail'],
   ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item'],
