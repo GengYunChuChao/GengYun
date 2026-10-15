@@ -31,6 +31,7 @@
         wx:key="key"
         class="feature-card"
         hover-class="feature-card--hover"
+        data-key="{{item.key}}"
         bindtap="onEntryTap"
       >
         <view class="feature-card__icon"><view class="gy-icon {{item.iconClass}}"></view></view>
