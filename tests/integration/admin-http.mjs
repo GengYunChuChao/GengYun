@@ -28,7 +28,7 @@ import { createAdminRuntime } from '../../services/api/src/admin/runtime.ts';
 import { createMemoryAdminJobPort } from '../../services/api/src/admin/ops/jobs.ts';
 import { CONTRACT_FLAG_KEYS } from '../../services/api/src/admin/ops/flags.ts';
 import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
-import { makeHarness as makeCommunityHarness, USER_A, USER_B } from '../unit/community-fixtures.mjs';
+import { makeHarness as makeCommunityHarness, makeSyntheticPassPort, USER_A, USER_B } from '../unit/community-fixtures.mjs';
 
 const API = '/api/v1';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -224,16 +224,30 @@ const wiredApp = buildApp({
   config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
   store: wiredAuth,
   adminInjection: { contentStore: adminContentStore, opsStore: adminOpsStore, jobPort, communityStore },
+  communityInjection: { store: communityStore },
 });
 const wiredOrigin = await wiredApp.listen({ host: '127.0.0.1', port: 0 });
 const http = makeHttp(wiredOrigin);
 
 console.log(`loopback default=${defaultOrigin} wired=${wiredOrigin}`);
 
+// C) **默认装配（不注入任何 store）**：只给合成 pass 审核端口（stub 审核域"未结论"⇒ 隔离，
+//    帖子根本落不了行 ⇒ 就没有"已知帖"可下架）。用于钉住 F1（切片①审查）：默认装配下社区 store
+//    由 `app.ts` **只声明一次**，社区服务 / 后台 `hidePost` 端口 / 审核域同源权威**三方共用同一份**。
+const sameSourceAuth = createMemoryAuthStore();
+const sameSourceApp = buildApp({
+  config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+  store: sameSourceAuth,
+  moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+});
+const sameSourceOrigin = await sameSourceApp.listen({ host: '127.0.0.1', port: 0 });
+const sameSourceHttp = makeHttp(sameSourceOrigin);
+
 const adminAll = await seedAdminSession(wiredAuth, 'all', ALL_SCOPES);
 const adminReadOnly = await seedAdminSession(wiredAuth, 'readonly', ['sources:read']);
 const userSession = await seedUserSession(wiredAuth, 'user');
 const defaultAdminAll = await seedAdminSession(defaultAuth, 'default-all', ALL_SCOPES);
+const sameSourceAdmin = await seedAdminSession(sameSourceAuth, 'same-source', ALL_SCOPES);
 
 // ---------------------------------------------------------------- 34 项实测映射表
 const mappingRows = [];
@@ -447,6 +461,46 @@ await group('[正控制/反例] hidePost：默认装配下社区存储已接线 
   });
   assert.equal(res.status, 404, JSON.stringify(res.body));
   assert.equal(res.body.error.code, 'NOT_FOUND');
+});
+
+await group('[正控制] hidePost：默认装配（不注入任何 store）三方向源 ⇒ 已知帖 200 且审核域 withdrawn', async () => {
+  // **F1 钉子**（切片①审查）：默认装配下社区 store 由 `app.ts:517` **只声明一次**，由
+  // 社区服务（`:756`）、后台 `hidePost` 端口（`:770-771` 的回退）与审核域**同源内容权威**
+  // （`:520-523`）三方共用。上面那条"未知帖子 404"钉不住它：`ops.hidePost` 在联动之前就抛
+  // `NOT_FOUND` ⇒ "同源"与"两份 store 分叉"两种装配**同样是 404**。只有"**已知帖** ⇒ 200"能钉住：
+  // 若日后删掉 `app.ts:771` 的 `?? withTakedownObserver(communityStore, …)` 回退，默认装配的
+  // 后台帖子端口即缺线（503 `STORE_UNAVAILABLE`），或审核域权威读到另一份 store（503
+  // `PROVIDER_UNAVAILABLE`），本组立刻变红。
+  // 实例只注入**合成 pass 审核端口**（`tests/unit/community-fixtures.mjs` 既有写法，同
+  // `tests/unit/community-http.test.mjs:72`）：审核端口不是 store，三段 store 接线保持默认。
+  const post = await sameSourceApp.communityService.createPost(
+    USER_A,
+    { title: '稗草防除经验交流', body: '今年雨水偏多，我按标签说明选择登记药剂，先看苗情再决定。', media_ids: [] },
+    { idempotencyKey: 'gyi18-http-same-source-post' },
+  );
+  assert.equal(post.visibility, 'published', '已知帖必须先真的公开可读（否则钉不住下架联动）');
+
+  const hidden = await probe('hidePost', 'POST', `${API}/admin/posts/${post.id}/hide`, {
+    api: sameSourceHttp, token: sameSourceAdmin.token, note: '默认装配=三方向源（已知帖子）',
+    body: { reason: '示例：默认装配下架联动' },
+    headers: { 'idempotency-key': newKey('hide-known'), 'if-match': `"${post.revision}"` },
+  });
+  assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
+  assert.equal(hidden.body.data.accepted, true);
+
+  // 下架联动的**审核域撤回**确实落到同一份内容上（若内容权威读到的是另一份 store，
+  // 这里会以 `OBJECT_UNAVAILABLE` 抛错）；撤回标记是永久的，同一目标再撤回幂等返回 `withdrawn=true`。
+  const withdrawn = await sameSourceApp.communityModerationLink.withdraw({
+    actor: { userId: sameSourceAdmin.adminId, role: 'admin', authEpoch: 1 },
+    target_ref: { type: 'post', id: post.id, revision: post.revision },
+    reason_code: 'admin_hide',
+  });
+  assert.equal(withdrawn.withdrawn, true);
+
+  // 社区读面读到的就是后台改的那一行（三方向源的社区侧证据）。
+  const authorView = await sameSourceApp.communityService.getPost(USER_A, post.id);
+  assert.equal(authorView.visibility, 'hidden');
+  assert.equal(authorView.revision, post.revision + 1);
 });
 
 // —— 审计只读（**放在最后**：此时五类写操作都已发生） ——
@@ -857,6 +911,7 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
     config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     store: portsAuth,
     adminInjection: { jobPort: createMemoryAdminJobPort(jobSeed()), communityStore },
+    communityInjection: { store: communityStore },
   });
   const portsOrigin = await portsApp.listen({ host: '127.0.0.1', port: 0 });
   const portsHttp = makeHttp(portsOrigin);
