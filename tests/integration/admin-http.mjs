@@ -224,6 +224,7 @@ const wiredApp = buildApp({
   config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
   store: wiredAuth,
   adminInjection: { contentStore: adminContentStore, opsStore: adminOpsStore, jobPort, communityStore },
+  communityInjection: { store: communityStore },
 });
 const wiredOrigin = await wiredApp.listen({ host: '127.0.0.1', port: 0 });
 const http = makeHttp(wiredOrigin);
@@ -857,6 +858,7 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
     config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     store: portsAuth,
     adminInjection: { jobPort: createMemoryAdminJobPort(jobSeed()), communityStore },
+    communityInjection: { store: communityStore },
   });
   const portsOrigin = await portsApp.listen({ host: '127.0.0.1', port: 0 });
   const portsHttp = makeHttp(portsOrigin);
