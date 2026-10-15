@@ -173,3 +173,71 @@ test('frontend profile message table only names contract error codes or codes th
  // 反向：契约闭集里本片会触达的错误码，前端要么有专文，要么走通用兜底——两者都必须是"非成功"文案。
  assert.ok(keys.includes('REVISION_CONFLICT')&&keys.includes('INVALID_CURSOR'),'契约错误码在前端文案表里缺失');
 });
+
+// —— GY-I05 真机走查缺陷（Refs #5）：「点『档案』没有任何反应」 ——
+// 真机走查时 /me/profile 与 /catalog/* 全部 503（服务端未启用该接口）。改前：读取失败只落一行
+// 灰色 hint，而**真正的入口**被 disabled 掉 ⇒ 点击既不进 handler、也没有任何可见变化。
+// 本用例锁死修后口径：失败态可见（state-view error + 重试入口）+ 点击入口必有可见反馈。
+const sessionBody=()=>({audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});
+async function unavailableLoad(){
+ const f=fixture();f.seed();f.page.onShow();
+ f.answer(f.last('/auth/session'),sessionBody());
+ f.answer(f.last('/me/profile'),'PROVIDER_UNAVAILABLE',503);
+ f.answer(f.last('/catalog/crops'),'PROVIDER_UNAVAILABLE',503);
+ f.answer(f.last('/catalog/regions'),'PROVIDER_UNAVAILABLE',503);
+ await flush();return f;
+}
+test('GET /me/profile 503 时档案入口给出可见失败态与重试，不再点了没反应',async()=>{
+ const f=await unavailableLoad();
+ // 1) 不是游客态、也不是「待读取」静默占位：读取失败必须留下**可见失败态**
+ assert.equal(f.page.data.guest,false,'会话已核实：本条复现的前提是登录态');
+ assert.equal(f.page.data.loaded,false);assert.equal(f.page.data.busy,false);
+ assert.equal(f.page.data.needsReload,true);
+ assert.match(f.page.data.loadError,/档案暂时读取失败（服务端未启用该接口）/,'失败态文案必须如实说明服务端未启用该接口');
+ assert.ok(f.page.data.message.length>0,'hint 行也不得为空');
+ // 失败态由 state-view(status="error") 呈现，且自带重试入口（不是自写一行灰字）
+ const wxml=readFileSync(root+'/miniprogram/pages/profile/profile.wxml','utf8');
+ const failure=wxml.match(/<state-view\b[^>]*wx:(?:if|elif)="\{\{loadError\}\}"[^>]*>/);
+ assert.ok(failure,'失败态 state-view 未接线到 loadError——正则失配必须失败，不得静默通过');
+ assert.match(failure[0],/status="error"/);
+ assert.match(failure[0],/desc="\{\{loadError\}\}"/);
+ assert.match(failure[0],/action-text="重试读取档案"/);
+ assert.match(failure[0],/bind:action="loadProfile"/,'失败态必须带可用的重试入口');
+ // 读取中同样不得静默（loading → 失败/成功 的可见反馈）
+ const loading=wxml.match(/<state-view\b[^>]*status="loading"[^>]*>/);
+ assert.ok(loading,'读取中必须有可见加载态');
+ assert.match(loading[0],/wx:if="\{\{busy && !loaded\}\}"/,'加载态只在首次/重试读取在途时出现，不能盖住保存流程');
+ // 2) 点「档案编辑入口」必须有可见反馈（改前 onEdit 静默 return，data 一个字段都不变 ⇒ 真红）
+ const before=JSON.stringify(f.page.data);
+ f.page.onEdit();
+ assert.notEqual(JSON.stringify(f.page.data),before,'点击档案入口后页面状态零变化 = 用户看到的「点了没反应」');
+ assert.match(f.page.data.message,/还没有读取成功/);
+ assert.equal(f.page.data.editing,false,'守卫不得放宽：读不到档案仍不得进入编辑');
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+ // 3) 依赖同一接口（GET /me/profile）的入口同样不得静默
+ const routes=f.routes.length;
+ f.page.openReference();
+ assert.match(f.page.data.message,/还没有读取成功/);
+ assert.equal(f.routes.length,routes,'档案未读取成功时不得跳转');
+ // 4) 重试入口真的重发读取；重试在途必须是可见加载态（loading → 成功）
+ f.page.loadProfile();
+ assert.equal(f.page.data.busy,true);assert.equal(f.page.data.loaded,false);assert.equal(f.page.data.loadError,'');
+ assert.match(f.page.data.message,/正在读取/);
+ f.answer(f.last('/me/profile'),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1',revision:1});
+ f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});
+ f.answer(f.last('/catalog/regions'),{items:regions,next_cursor:null});
+ await flush();
+ assert.equal(f.page.data.loadError,'');assert.equal(f.page.data.loaded,true);assert.equal(f.page.data.needsReload,false);
+ assert.equal(f.page.data.cropName,'水稻');assert.equal(f.page.data.regionName,'上城区');
+ f.page.onEdit();assert.equal(f.page.data.editing,true);
+});
+test('档案入口的 disabled 只剩 busy：读取失败不得把入口禁成「点了没反应」（回归防线）',()=>{
+ const wxml=readFileSync(root+'/miniprogram/pages/profile/profile.wxml','utf8');
+ for(const handler of ['onEdit','openReference']){
+  const button=new RegExp('<button[^>]*bindtap="'+handler+'"[^>]*>').exec(wxml);
+  assert.ok(button,handler+' 入口按钮未找到——正则失配必须失败，不得静默通过');
+  const disabled=/disabled="\{\{([^}]*)\}\}"/.exec(button[0]);
+  assert.ok(disabled,handler+' 入口未声明 disabled');
+  assert.equal(disabled[1].trim(),'busy',handler+' 入口只能因 busy 禁用；把 !loaded/needsReload 写进 disabled 会让失败态下的点击没有任何反馈');
+ }
+});
