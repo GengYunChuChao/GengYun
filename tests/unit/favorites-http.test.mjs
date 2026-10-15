@@ -116,7 +116,8 @@ test('收藏HTTP：增→列→取消 的契约形状、头部与"去重不产�
   for (const forbidden of ['used', 'usage', 'used_at', 'last_used_at', 'count']) {
     assert.equal(Object.hasOwn(first.body.data, forbidden), false, `投影不应含 ${forbidden}`);
   }
-  // 默认可见性端口未接线 ⇒ 如实 unavailable，绝不假装可用。
+  // 默认引用可用性端口已于 #167 接线，但本夹具不传 pool（`pool === null`）⇒ 公开读面核不到
+  // ⇒ 如实 unavailable，绝不假装可用。
   assert.equal(first.body.data.reference_state, 'unavailable');
   assert.equal(typeof first.body.data.unavailable_reason, 'string');
   const createdId = first.body.data.id;
