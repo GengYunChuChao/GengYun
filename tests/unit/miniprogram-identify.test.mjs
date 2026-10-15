@@ -27,6 +27,8 @@ globalThis.wx = {
   showToast: () => {},
   showModal: () => {},
   request: () => {},
+  // 切片 A：关联资料条目跳详情页（由测试内替换以便断言 URL，见文末用例）。
+  navigateTo: () => {},
   chooseMedia: () => {},
   getFileInfo: () => {},
   getFileSystemManager: () => ({ readFile: () => {} })
@@ -683,6 +685,18 @@ test('GY-I09 小程序：记录选择后的关联科普**恒不含用量**，并
   }
   const related = page.data.relatedKnowledge;
   assert.ok(related !== null && typeof related === 'object', '选择后必须解析关联科普');
+  // —— 切片 A 的口径断言：空集**不再**算通过 ——
+  // 旧口径用结构化 `species_id` 查本地资料层，本地记录永远不可能命中 ⇒ `items` 恒 0，
+  // 而上面所有"恒不给用量"的断言在**空集上也成立**，本片会被同一条绿测试掩盖。
+  // 因此这里必须明确要求：命中 `species_barnyardgrass`（组名「稗草」）时 `items` 非空。
+  assert.ok(related.items.length > 0, '按名称文本匹配后必须命中资料（空集不得算通过）');
+  assert.equal(related.matchState, 'matched');
+  // 查询口径必须如实带出，且不得再带结构化 `species_id` 条件。
+  assert.equal(related.speciesName, '稗草');
+  assert.ok(/未结构化标注杂草对象/.test(related.matchNote), related.matchNote);
+  assert.ok(/按名称文本匹配/.test(related.matchNote), related.matchNote);
+  const source = readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  assert.equal(/queryParams\s*=\s*\{\s*species_id/.test(source), false, '不得再用结构化 species_id 查询本地资料');
   // 用量恒不可展示（页面上也不会出现任何剂量数字字段）。
   assert.equal(related.dose.renderable, false);
   assert.equal(related.dose.card, null);
@@ -696,5 +710,36 @@ test('GY-I09 小程序：记录选择后的关联科普**恒不含用量**，并
   for (const item of related.items) {
     assert.equal(item.doseRenderable, false);
     assert.equal(item.doseRuleVersion, identifyApi.APPLICABILITY_RULE_VERSION);
+    // 逐条归因必须与页面口径一致（不是"功能开关已关闭"）。
+    assert.equal(item.doseReason, '识别/选择路径恒不给用量');
+    assert.equal(item.doseBlockCode, identifyApi.DOSE_PATH_BLOCK_CODE);
+    // 来源/审核标签必须带出（页面据此渲染，不得丢字段）。
+    assert.equal(typeof item.labels, 'object');
+    assert.ok(item.labels.source_kind.length > 0);
+    assert.ok(item.labels.review_status.length > 0);
+    // record_id 形状必须与 referencedetail 页的 id 校验一致，否则"点进去"必然落空态。
+    assert.match(item.recordId, /^[A-Za-z0-9_-]{1,128}$/);
   }
+  // —— 点击条目 → 资料详情（路由 + id 形状 + 非法 id 不跳转）——
+  const navigations = [];
+  const originalNavigate = globalThis.wx.navigateTo;
+  globalThis.wx.navigateTo = options => navigations.push(options.url);
+  try {
+    page.onOpenKnowledgeDetail({ currentTarget: { dataset: { id: related.items[0].recordId } } });
+    // 形状非法的 id 一律不跳转（不把任意字符串拼进查询串）。
+    page.onOpenKnowledgeDetail({ currentTarget: { dataset: { id: '../../etc/passwd' } } });
+    page.onOpenKnowledgeDetail({});
+  } finally {
+    globalThis.wx.navigateTo = originalNavigate;
+  }
+  assert.equal(navigations.length, 1, '只有合法 record_id 才允许跳转');
+  assert.equal(navigations[0],
+    '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(related.items[0].recordId));
+  // 页面模板必须真的把这些条目接到该动作上（不是只有 JS 里存在这个方法）。
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  assert.ok(/bindtap="onOpenKnowledgeDetail"/.test(wxml), '关联资料条目缺少 bindtap');
+  assert.ok(/data-id="\{\{item\.recordId\}\}"/.test(wxml), '关联资料条目未带 recordId');
+  assert.ok(/item\.labels\.source_kind/.test(wxml), '来源/审核标签未渲染');
+  assert.ok(/item\.doseBlockCode/.test(wxml), '逐条用量归因未与页面口径对齐');
+  assert.equal(/GY-I08 判定/.test(wxml), false, '逐条用量不得再归因于「GY-I08 判定」开关原因');
 });

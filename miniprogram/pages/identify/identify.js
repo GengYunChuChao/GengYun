@@ -430,6 +430,20 @@ Page({
 
   onCancelManual: function () { this.setData({ pendingManualId: null }) },
 
+  /**
+   * 关联科普条目 → 资料详情（GY-I07 页面）。
+   *
+   * id 口径与 `pages/referencedetail/referencedetail.js:22-29` 的 `detailId` 校验一致
+   * （`[A-Za-z0-9_-]{1,128}`；条目 id 取自参考域 `record_id`）；
+   * 形状不符即**不跳转**（不把任意字符串拼进查询串），跳法与 `pages/reference/reference.js:171-174` 相同。
+   * 本页不在跳转处做任何权限判定：详情页自己走门禁与档案核对（档案未确认时仍不给用量）。
+   */
+  onOpenKnowledgeDetail: function (event) {
+    const recordId = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.id : null
+    if (typeof recordId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(recordId)) return
+    wx.navigateTo({ url: '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(recordId) })
+  },
+
   /** 记录用户选择（独立于模型原始候选），随后才查询关联科普。 */
   recordSelection: async function (speciesId) {
     if (this.data.guest === true || this.data.recordId === null || this.data.recordRevision < 1) return
@@ -587,6 +601,27 @@ function readFileInfo(filePath) {
 }
 
 /**
+ * 识别对象（`species_id`）→ 可用的**名称文本**：只取目录里的品种**组名**。
+ *
+ * 为什么按名称查（而不是结构化 `species_id`）：
+ *   本地资料层 `reference.query` 对 `species_id` 的结构化判定是「记录未结构化标注杂草对象，
+ *   无法按所选杂草确认」（`utils/reference.js:218`）⇒ 本地记录**永远不可能**按 `species_id` 命中，
+ *   该字段只能如实反映"本地没有这层标注"，不能作为查询条件。名称文本匹配（`keyword`）才是
+ *   本地真实存在的关联依据（`utils/reference.js:228-231`，命中面含防治对象 `target_original`）。
+ *   这里**只取组名**（不并入学名/别名）：不扩大匹配面，页面如实标注本次口径。
+ */
+function speciesNameText(speciesId) {
+  if (typeof speciesId !== 'string' || speciesId === '') return ''
+  try {
+    const reference = require('../../utils/reference')
+    const entry = (reference.species || []).filter(function (s) { return s && s.id === speciesId })[0]
+    return entry && typeof entry.group_name === 'string' ? entry.group_name : ''
+  } catch (error) {
+    return ''
+  }
+}
+
+/**
  * 关联科普查询（本地参考域查询组件 + **GY-I08 用量守卫**）。
  *
  * 硬规则（与 `services/api/src/recognitions/linkage.ts` 同口径）：
@@ -597,14 +632,21 @@ function readFileInfo(filePath) {
  *   3. **禁止经识别绕过用量守卫**：本路径恒不展示用量
  *      （`dose.renderable === false`、`dose.card === null`、恒定阻断 `no_dose_source`），
  *      即便条件完整也一样；具体用量必须走 GY-I08 授权的资料/详情消费面；
+ *      **逐条归因必须与页面同一口径**（"识别/选择路径恒不给用量"），不得写成
+ *      "功能开关已关闭"——那是开关级原因，会被误读为本路径"本可给用量"；
  *   4. 规则版本与 GY-I08 一致（`APPLICABILITY_RULE_VERSION`），不一致由回归测试拦住。
+ *
+ * 查询口径（如实化）：按**识别对象名称文本**查（`keyword`），因为本地资料未结构化标注杂草对象；
+ * 本函数返回的 `matchNote` 必须原样呈现给用户。
  *
  * 资料条目为种子整理稿，呈现时必须标注「待核实 · 非权威」。
  */
 function queryRelatedKnowledge(speciesId, conditions) {
   const guard = identifyApi.dosePathGuard(conditions)
+  const speciesName = speciesNameText(speciesId)
   const base = {
     speciesId: speciesId,
+    speciesName: speciesName,
     ruleVersion: guard.ruleVersion,
     dose: guard,
     conditionsComplete: guard.conditionsComplete,
@@ -613,9 +655,13 @@ function queryRelatedKnowledge(speciesId, conditions) {
   }
   try {
     const reference = require('../../utils/reference')
-    const queryParams = { species_id: speciesId, limit: 5 }
+    // 结构化 `species_id` **不进**参考域查询：本地层无该标注，带上它只会让每条记录
+    // 都落"未结构化标注杂草对象"⇒ 恒 0 条（且不能靠放宽 eligibility 来"有结果"）。
+    const queryParams = { limit: 5 }
+    if (speciesName !== '') queryParams.keyword = speciesName
     // 只把**非空**条件交给查询：空串不得被当成"已采集"（与域库 matchConditions 同口径）。
     for (const field of identifyApi.DOSE_CONDITION_FIELDS) {
+      if (field === 'species_id') continue
       const value = conditions && typeof conditions[field] === 'string' ? conditions[field].trim() : ''
       if (value !== '') queryParams[field] = value
     }
@@ -623,6 +669,8 @@ function queryRelatedKnowledge(speciesId, conditions) {
     const items = (result && result.items ? result.items : []).map(function (item) {
       // 逐条跑 GY-I08 用量描述符：**只用于如实说明为什么不能给用量**，
       // 其结果不会被本页用来渲染任何剂量数字。
+      // 注意：描述符的 `reason` 是**开关级**原因（"用量卡片已关闭（功能开关）"），
+      // 与页面口径（本路径恒不给用量）不同源 ⇒ 页面不渲染它（见 identify.wxml 的用量行）。
       const descriptor = reference.doseCardDescriptor(item, {
         doseCardEnabled: false,
         context: queryParams
@@ -635,13 +683,20 @@ function queryRelatedKnowledge(speciesId, conditions) {
         useScene: item.use_scene,
         labels: item.labels,
         doseRenderable: descriptor.renderable === true,
-        doseReason: descriptor.reason,
+        // 页面口径的归因（与顶部用量守卫同一句），不再逐条引用开关原因。
+        doseReason: '识别/选择路径恒不给用量',
+        doseBlockCode: identifyApi.DOSE_PATH_BLOCK_CODE,
         doseRuleVersion: descriptor.rule_version
       }
     })
     return Object.assign({}, base, {
       matchState: result.match_state,
       matchStateLabel: reference.matchStateLabel(result.match_state),
+      matchSpeciesName: speciesName,
+      // 如实标注本次查询口径（本地资料没有杂草对象的结构化标注）。
+      matchNote: speciesName === ''
+        ? '本地资料未结构化标注杂草对象：未取得所选对象的名称文本，本次未按名称文本匹配。'
+        : '本地资料未结构化标注杂草对象，本次按名称文本匹配（品种组名「' + speciesName + '」）。',
       reasons: result.reasons.concat(result.simulated_excluded > 0 ? ['已排除 ' + result.simulated_excluded + ' 条模拟资料'] : []),
       items: items,
       note: '资料为种子整理稿（' + reference.catalogVersionText() + '），须以官方登记信息核对；本页不提供用量（识别路径恒不可给用量）。'
@@ -650,6 +705,8 @@ function queryRelatedKnowledge(speciesId, conditions) {
     return Object.assign({}, base, {
       matchState: 'unavailable',
       matchStateLabel: '查询未取得结果',
+      matchSpeciesName: speciesName,
+      matchNote: '本地资料未结构化标注杂草对象；本次按名称文本匹配未能完成。',
       reasons: ['关联科普查询未取得结果：' + (error && error.message ? error.message : '未知原因')],
       items: [],
       note: '未取得结果时不会用本地缓存顶替，也不会给出任何用量。'
