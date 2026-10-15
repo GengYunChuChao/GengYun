@@ -22,6 +22,7 @@
       <view class="field-label">搜索科普资料</view>
       <view class="search-input"><image class="search-icon" src="/assets/knowledge/search.png" aria-hidden="true" /><input class="query-input" placeholder="输入药名或科普关键词" maxlength="80" value="{{q}}" data-field="q" bindinput="input" /></view>
     </view>
+    <view class="notice profile-note" wx:if="{{profileNote}}">{{profileNote}}</view>
     <view class="filter-panel">
       <view class="field-label">筛选条件</view>
       <view class="chips">
@@ -40,6 +41,10 @@
     </view>
     <view class="directory-note">{{directoryNote}}</view>
 
+    <!-- 档案地区核不出/不在浙江省内：不代按省级查询，如实说明资料覆盖范围与去向。 -->
+    <view class="status" wx:if="{{stateKind === 'out-of-coverage'}}">
+      <state-view status="empty" title="无法按我的档案地区查询" desc="{{status}}" action-text="清空条件继续查询" bind:action="reset"></state-view>
+    </view>
     <view class="status" wx:if="{{stateKind === 'loading'}}">
       <state-view status="loading" title="正在核对当前资料" desc="{{status}}"></state-view>
     </view>
