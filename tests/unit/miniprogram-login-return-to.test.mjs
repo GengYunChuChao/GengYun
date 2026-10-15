@@ -32,14 +32,14 @@ function fixture() {
     if (b.failNextRoute) { b.failNextRoute = false; opts.fail?.({}); }
     else opts.success?.({});
   };
-  // 切片 E N1：门禁一旦放行，各页会立刻发业务读取。这里给业务 API 客户端一个「永不落地」的
-  // 替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
-  const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
   globalThis.wx = wx;
   globalThis.getCurrentPages = () => b.pages;
   for (const file of ['auth.js', 'navigation.js']) delete requireHere.cache[requireHere.resolve(join(directory, 'utils', file))];
   b.auth = requireHere(join(directory, 'utils/auth.js')); b.nav = requireHere(join(directory, 'utils/navigation.js'));
   b.wx = wx;
+  // 切片 E N1 ／ 追加单 N1（对抗性审查 §4）：门禁一旦放行，各页会立刻发业务读取。这里给所有
+  // *-api 客户端一个「永不落地」的替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
+  const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
   b.page = (name) => {
     let def;
     const fontModule = { exports: {} };
@@ -259,58 +259,48 @@ test('missing navigation dependency remains a diagnostic error, never swallowed 
 });
 
 // ---------------------------------------------------------------------------
-// 切片 E（对抗性审查报告 §4 N1）：community / communitydetail 的门禁核实**失败或在途**时
-// 点「去登录」此前无任何可见反应（页面停在游客态，需离开重进）。最小修法同 6-A 先例＝按钮
-// 回调在核实成功（ok）时重跑本页门禁 ⇒ 页面可见地放行。覆盖：
-//   ① 门禁那一轮核实仍在途时点按钮 ⇒ 本次核实通过后必须重跑门禁并放行本页；
-//      门禁第 1 轮的迟到响应不得关闭已放行的页面；
-//   ② 护栏（改前即绿，防「提示但放行」）：核实失败时按钮只去登录页，绝不放行、无业务请求。
+// GY-I04 6-A：受保护页的「去登录」只允许一套口径 —— 与 page-gate 同一路径
+// （auth.requireLogin：登记本页为返回目标 → reLaunch 登录页 → 登录后回原页）。
+// 历史并列实现里的第二套口径（favorites/history/historydetail/profile 的 onLogin
+// 直接 navigateTo／reLaunch 登录页）会把登录页 push 进返回栈，且按钮自己不登记目标
+// ⇒ 登录成功后停在默认页 HOME。门禁拦截语义不因统一而放宽：登录前不得跳向任何受保护目标。
 // ---------------------------------------------------------------------------
-const N1_PAGES = [['community', null], ['communitydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }]];
-// 门禁放行判据：gatePassed 页看 gatePassed，guest 页看 !guest。
-const opened = (page) => page.data.gatePassed === undefined ? page.data.guest === false : page.data.gatePassed === true;
-for (const [name, options] of N1_PAGES) {
-  test(`${name}: 门禁在途时点「去登录」⇒ 核实成功后本页可见放行（N1）`, () => {
+const LOGIN_ENTRY_PAGES = [
+  ['favorites', null], ['history', null], ['profile', null], ['messages', null],
+  ['community', null], ['communitycreate', null],
+  ['historydetail', { id: '6b1d0f2a-3c4e-4f50-8a91-2b3c4d5e6f70' }],
+  ['communitydetail', { id: '0a9f8e7d-6c5b-4a39-8271-6f5e4d3c2b1a' }],
+];
+for (const [name, options] of LOGIN_ENTRY_PAGES) {
+  test(`${name}: guest 去登录 shares the gate path with its own return target`, () => {
     const b = fixture();
-    b.storage.set('gengyun.session', cache());
     const page = b.page(name);
     if (options) page.options = options;
-    page.onShow();                                  // 门禁第 1 轮核实（在途，先不回答）
-    assert.equal(b.requests.length, 1); assert.equal(b.requests[0].url.endsWith('/auth/session'), true);
-    assert.equal(opened(page), false, '核实在途时仍是游客态（fail-closed）');
-    page.onLogin();                                 // 在途时点「去登录」
-    assert.equal(b.requests.length, 2, '按钮自己发起一次核实');
-    verified(b.requests[1]);                        // 服务端确认会话有效 ⇒ 必须出现可见反馈
-    assert.equal(b.requests.length, 3, '核实成功后必须重跑本页门禁（可见放行），不得静默无反应');
-    verified(b.requests[2]);                        // 重跑的门禁核实通过
-    assert.equal(opened(page), true, '页面必须可见放行');
-    assert.equal(b.nav.peekReturnTo(), null, '放行后不得留下待返回目标');
-    assert.ok(b.routes.every((entry) => entry.url === b.nav.LOGIN), '不得跳向任何受保护目标');
-    assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '门禁之前不得发生业务请求');
-    verified(b.requests[0]);                        // 门禁第 1 轮的迟到响应（已被取代）
-    assert.equal(opened(page), true, '迟到的门禁核实不得关闭已放行的页面');
-  });
-  test(`${name}: 核实失败时点「去登录」只去登录页，可见且不放行（N1 护栏）`, () => {
-    for (const outcome of ['rejected', 'network']) {
-      const b = fixture();
-      b.storage.set('gengyun.session', cache());
-      const page = b.page(name);
-      if (options) page.options = options;
-      page.onShow();
-      const first = b.requests[0];
-      if (outcome === 'network') first.fail({}); else first.success({ statusCode: 401, data: {} });
-      assert.equal(opened(page), false);
-      page.onLogin();                                       // 点「去登录」
-      const last = b.requests.at(-1);
-      if (last !== first) {                                 // 网络失败不清会话 ⇒ 按钮再核实一次
-        assert.equal(last.url.endsWith('/auth/session'), true);
-        if (outcome === 'network') last.fail({}); else last.success({ statusCode: 401, data: {} });
-      }
-      assert.equal(b.routes.at(-1).url, b.nav.LOGIN, '核实失败必须去登录页（可见反馈）');
-      assert.equal(b.routes.at(-1).method, 'reLaunch');
-      assert.equal(opened(page), false, '不得因点按钮而放行');
-      assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '不得发生业务请求');
-    }
+    const route = `pages/${name}/${name}`;
+    const own = '/' + route + (options ? `?id=${options.id}` : '');
+    page.onShow();
+    // 门禁失败必须保持游客态；无会话时不得发起任何业务读取。
+    assert.equal(page.data.guest === true || page.data.gatePassed === false, true, 'guest gate must fail closed');
+    assert.equal(b.requests.length, 0);
+    // ① 页面必须提供「去登录」处理，且该处理与门禁同一路径（reLaunch 清栈，不 push 登录页）。
+    assert.equal(typeof page.onLogin, 'function', '页面必须提供「去登录」处理');
+    page.onLogin();
+    assert.equal(b.routes.at(-1).url, b.nav.LOGIN);
+    assert.equal(b.routes.at(-1).method, 'reLaunch', '登录页不得被 push 进返回栈');
+    assert.equal(b.nav.peekReturnTo(), own, '去登录必须登记本页为返回目标');
+    assert.ok(b.routes.every((entry) => entry.url === b.nav.LOGIN), '登录前不得跳向任何受保护目标');
+    // ② 返回目标必须由按钮自己登记：上一次意图（门禁登记 / 登录页离页 / 退出）失效后，
+    //    点「去登录」仍须回本页，而不是因为目标为空而停在默认页。
+    b.nav.clearReturnTo();
+    page.onLogin();
+    assert.equal(b.nav.peekReturnTo(), own, '按钮必须自己登记返回目标');
+    const id = b.login();
+    assert.equal(b.auth.resumeAfterLogin(id), true);
+    const last = b.routes.at(-1);
+    assert.equal(last.url, own, '登录成功后必须回到原页');
+    assert.notEqual(last.url, b.nav.HOME, '不得停在默认页');
+    assert.equal(last.method, b.nav.TAB_PAGES.indexOf(route) !== -1 ? 'switchTab' : 'reLaunch');
+    assert.equal(b.nav.peekReturnTo(), null, '返回目标一次性消费');
   });
 }
 
@@ -415,4 +405,64 @@ for (const stage of ['wx', 'server']) {
       assert.equal(b.nav.peekReturnTo(), null);
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// GY-I04 6-A 追加单 N1（对抗性审查报告 §4 N1）：门禁核实**失败或在途**时点「去登录」
+// 此前无任何可见反应（页面停在游客态，需离开重进）。最小修法＝按钮回调在核实成功（ok）
+// 时重跑本页门禁 ⇒ 页面可见地放行。覆盖：
+//   ① 门禁那一轮核实仍在途时点按钮 ⇒ 本次核实通过后必须重跑门禁并放行本页；
+//      门禁第 1 轮的迟到响应不得关闭已放行的页面；
+//   ② 护栏（改前即绿，防「提示但放行」）：核实失败时按钮只去登录页，绝不放行、无业务请求。
+// ---------------------------------------------------------------------------
+// 覆盖页并集（8 页）＝ #176 6-A 的 favorites/history/profile/messages/communitycreate/
+//   historydetail ＋ 切片 E 的 community/communitydetail（guest 族，无 gatePassed 字段）。
+const N1_PAGES = [['favorites', null], ['history', null], ['profile', null], ['messages', null],
+  ['communitycreate', null], ['historydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }],
+  ['community', null], ['communitydetail', { id: 'c4d5e6f7-0a1b-4c2d-9e3f-4a5b6c7d8e9f' }]];
+// 门禁放行判据：gatePassed 页看 gatePassed，guest 页看 !guest。
+const opened = (page) => page.data.gatePassed === undefined ? page.data.guest === false : page.data.gatePassed === true;
+for (const [name, options] of N1_PAGES) {
+  test(`${name}: 门禁在途时点「去登录」⇒ 核实成功后本页可见放行（N1）`, () => {
+    const b = fixture();
+    b.storage.set('gengyun.session', cache());
+    const page = b.page(name);
+    if (options) { page.options = options; page._query = { valid: true, id: options.id, ignored: [] }; }
+    page.onShow();                                  // 门禁第 1 轮核实（在途，先不回答）
+    assert.equal(b.requests.length, 1); assert.equal(b.requests[0].url.endsWith('/auth/session'), true);
+    assert.equal(opened(page), false, '核实在途时仍是游客态（fail-closed）');
+    page.onLogin();                                 // 在途时点「去登录」
+    assert.equal(b.requests.length, 2, '按钮自己发起一次核实');
+    verified(b.requests[1]);                        // 服务端确认会话有效 ⇒ 必须出现可见反馈
+    assert.equal(b.requests.length, 3, '核实成功后必须重跑本页门禁（可见放行），不得静默无反应');
+    verified(b.requests[2]);                        // 重跑的门禁核实通过
+    assert.equal(opened(page), true, '页面必须可见放行');
+    assert.equal(b.nav.peekReturnTo(), null, '放行后不得留下待返回目标');
+    assert.ok(b.routes.every((entry) => entry.url === b.nav.LOGIN), '不得跳向任何受保护目标');
+    assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '门禁之前不得发生业务请求');
+    verified(b.requests[0]);                        // 门禁第 1 轮的迟到响应（已被取代）
+    assert.equal(opened(page), true, '迟到的门禁核实不得关闭已放行的页面');
+  });
+  test(`${name}: 核实失败时点「去登录」只去登录页，可见且不放行（N1 护栏）`, () => {
+    for (const outcome of ['rejected', 'network']) {
+      const b = fixture();
+      b.storage.set('gengyun.session', cache());
+      const page = b.page(name);
+      if (options) { page.options = options; page._query = { valid: true, id: options.id, ignored: [] }; }
+      page.onShow();
+      const first = b.requests[0];
+      if (outcome === 'network') first.fail({}); else first.success({ statusCode: 401, data: {} });
+      assert.equal(opened(page), false);
+      page.onLogin();                                       // 点「去登录」
+      const last = b.requests.at(-1);
+      if (last !== first) {                                 // 网络失败不清会话 ⇒ 按钮再核实一次
+        assert.equal(last.url.endsWith('/auth/session'), true);
+        if (outcome === 'network') last.fail({}); else last.success({ statusCode: 401, data: {} });
+      }
+      assert.equal(b.routes.at(-1).url, b.nav.LOGIN, '核实失败必须去登录页（可见反馈）');
+      assert.equal(b.routes.at(-1).method, 'reLaunch');
+      assert.equal(opened(page), false, '不得因点按钮而放行');
+      assert.ok(b.requests.every((entry) => entry.url.endsWith('/auth/session')), '不得发生业务请求');
+    }
+  });
 }

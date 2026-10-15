@@ -11,7 +11,7 @@
     status="guest"
     desc="投稿需要登录；登录仅用于保存你的记录。"
     action-text="去登录"
-    bind:action="onBack"
+    bind:action="onLogin"
   ></state-view>
 
   <block wx:else>
