@@ -553,3 +553,55 @@ test('详情页收藏（切片A，验收4）：不接可见性端口 ⇒ 页面�
   // 收藏卡片与既有读取状态机是**两套**独立字段。
   assert.match(js, /favSupported: false, favState: 'idle', favLabel: '收藏'/);
 });
+
+test('详情页收藏（切片A，F1）：在途 401（会话失效：favorites-api 先 clearSession 再 reject）必须复位 favBusy 并按既有错误映射说明', async () => {
+  // 复现审查 F1 的机理：401/403 时 `favorites-api` **先** `auth.clearSession()`（世代 +1）再
+  // reject `SESSION_REQUIRED` ⇒ 页面 `favAlive()` 在 catch 里必为假。修复前两条 catch 在此
+  // 直接 return，`favBusy` 永久为 true（WXML 按钮 `disabled="{{favBusy}}"` 卡死），
+  // 文案停在"正在核对收藏状态…"／"正在收藏…"（此时已无任何在途请求）。
+  const wxml = readFileSync(root + '/miniprogram/pages/knowledgedetail/knowledgedetail.wxml', 'utf8');
+  assert.match(wxml, /bindtap="toggleFavorite" loading="\{\{favBusy\}\}" disabled="\{\{favBusy\}\}"/, '卡死的载体就是 favBusy 绑定的 disabled');
+
+  // 1) 回填路径：GET /favorites 在途时 401。
+  const f = detailFixture();
+  assert.equal(await login(f), true);
+  await openDetailPage(f, knowledgeItem());
+  assert.equal(f.page.data.favState, 'loading');
+  assert.equal(f.page.data.favBusy, true, '回填已进入在途');
+
+  const scan = f.requests.at(-1);
+  scan.success({ statusCode: 401, data: { error: { code: 'SESSION_REQUIRED', message: '需要登录', retryable: false } } });
+  await flush();
+  assert.equal(f.auth.isLoggedIn(), false, '401 由消费层先清会话（世代 +1）再 reject');
+  assert.equal(f.page.data.favBusy, false, '在途 401 后 favBusy 必须复位（否则按钮永久 disabled）');
+  assert.notEqual(f.page.data.favState, 'loading', '不得停在"正在核对收藏状态…"的在途态');
+  assert.equal(f.page.data.favState, 'unknown', '不臆断已收藏／未收藏');
+  assert.equal(f.page.data.favLabel, '收藏');
+  assert.equal(f.page.data.favSupported, true, '入口仍在，用户可由既有「重新核对／重试」恢复');
+  assert.equal(f.page.data.favNote, f.favorites.messageFor({ code: 'SESSION_REQUIRED' }), '文案取既有错误映射（与收藏页同口径）');
+  assert.match(f.page.data.favNote, /登录状态已失效/);
+  assert.equal(/正在核对收藏状态|正在收藏/.test(f.page.data.favNote), false);
+
+  // 2) 收藏（POST）路径：同一 401 也必须在 setData 复位之后才返回。
+  const g = detailFixture();
+  assert.equal(await login(g), true);
+  await openDetailPage(g, knowledgeItem());
+  answer(g, { items: [], next_cursor: null });
+  await flush();
+  assert.equal(g.page.data.favState, 'none');
+
+  g.page.toggleFavorite();
+  const create = g.requests.at(-1);
+  assert.equal(create.method, 'POST');
+  assert.equal(g.page.data.favBusy, true, '收藏已进入在途');
+  assert.equal(g.page.data.favNote, '正在收藏…');
+
+  create.success({ statusCode: 401, data: { error: { code: 'SESSION_REQUIRED', message: '需要登录', retryable: false } } });
+  await flush();
+  assert.equal(g.auth.isLoggedIn(), false);
+  assert.equal(g.page.data.favBusy, false, '在途 401 后 favBusy 必须复位（否则按钮永久 disabled）');
+  assert.equal(g.page.data.favState, 'unknown', '不臆断已收藏／未收藏');
+  assert.equal(g.page.data.favLabel, '收藏');
+  assert.equal(g.page.data.favNote, g.favorites.messageFor({ code: 'SESSION_REQUIRED' }));
+  assert.equal(/正在收藏…/.test(g.page.data.favNote), false, '不得留"正在收藏…"（此时无在途请求）');
+});
