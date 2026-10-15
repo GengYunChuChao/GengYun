@@ -155,6 +155,8 @@ function samePlan(a, b) {
  * 3. **`listened` 只在整份计划自然播完后为真**；`stop()`/失败/中断/`release()` 都不置位；
  * 4. **`release()` 幂等且彻底**：退订全部监听、销毁句柄、清空计划；此后迟到的
  *    `ended`/`error`/`interrupt` 回调**一律不生效**（代次守卫），也不会创建新句柄；
+ *    **段级守卫**：只接受当前段句柄的事件——上一段/已作废段（及同一事件重复投递）的迟到
+ *    回调一律丢弃：不推进段号、不跳过下一段、不置「已听取」、不把已完成会话翻成失败；
  * 5. 失败必带可展示四要素且 `recordsListened: false`；
  * 6. **替身播放端口不得假记「已听取」**：端口声明 `substitute: true` 时，整份计划播完
  *    只置 `substituteCompleted`（页面据此显示「替身播放：非真实音频，不计入『已听取』」），
@@ -234,8 +236,13 @@ function createPlaybackController(options) {
   function attach(target, token) {
     const bind = function (event, handler) {
       const unsubscribe = target.on(event, function (payload) {
-        // 代次守卫：release()/换计划之后，迟到的回调一律不生效（后台残留的负例判据）。
+        // 代次守卫：release()/换计划之后（含换计划的旧句柄），迟到的回调一律不生效。
         if (released || token !== generation) return
+        // 段级守卫：只接受**当前段**句柄的事件。上一段/已作废段的迟到或重复回调（平台在途
+        // 投递、同一事件重复触发）一律丢弃——否则一个迟到的 `ended` 会推进段号、跳过下一段，
+        // 甚至把并未播完的计划记成「已听取」。`handle === null` 表示本段已结束并已销毁，
+        // 同样丢弃（末段播完后迟到的 ended/error 不得再次置位或把状态翻成失败）。
+        if (target !== handle) return
         handler(payload)
       })
       if (typeof unsubscribe === 'function') unsubscribes.push(unsubscribe)
