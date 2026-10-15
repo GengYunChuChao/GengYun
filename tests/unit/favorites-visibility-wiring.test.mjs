@@ -165,6 +165,7 @@ test('收藏可见性接线③：未登录仍 401 SESSION_REQUIRED（登录门�
     });
     assert.equal(result.status, 401, `${method} ${FAVORITES} 未登录必须 401：${failNote(result)}`);
     assert.equal(result.body.error.code, 'SESSION_REQUIRED');
+    t.diagnostic(`${method} ${FAVORITES}（未登录）=> ${result.status} ${result.body.error.code}`);
   }
 });
 
@@ -185,6 +186,7 @@ test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 
   assert.equal(created.body.data.reference_state, 'available', '当前可读的资料收藏后必须显示「可用」：' + failNote(created));
   assert.equal(created.body.data.unavailable_reason, null);
   const favoriteId = created.body.data.id;
+  t.diagnostic(`读数开（视图）：GET /knowledge/${knowledgeId} => 200 revision=${detail.body.data.revision}；POST /favorites => ${created.status} reference_state=${created.body.data.reference_state} unavailable_reason=${String(created.body.data.unavailable_reason)}`);
 
   const list = await f.http(FAVORITES, token);
   assert.equal(list.body.data.items.length, 1);
@@ -202,6 +204,7 @@ test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 
   assert.equal(typeof reason, 'string');
   assert.ok(reason.length >= 1 && reason.length <= 80, 'unavailable_reason 必须落在契约 1..80 字符内');
   assert.equal((await f.http(`${KNOWLEDGE}/${knowledgeId}`, token)).status, 404, '下架后详情面必须与收藏面一致（不再可打开）');
+  t.diagnostic(`下架（visibility=hidden）后同一收藏行 ${favoriteId} => reference_state=${afterWithdraw.body.data.items[0].reference_state} unavailable_reason=${String(reason)}；GET /knowledge/{id} => 404`);
 
   // 失效是**判定**而非不可逆标记：恢复上架后同一行重新可用（不重启、不重建行）。
   await f.db.query("UPDATE knowledge_versions SET visibility='published' WHERE knowledge_id=$1", [knowledgeId]);
@@ -210,6 +213,7 @@ test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 
   assert.equal(back.body.data.items[0].reference_state, 'available', '恢复上架后同一收藏行必须重新可用');
   assert.equal(back.body.data.items[0].unavailable_reason, null);
   assert.equal((await f.http(`${KNOWLEDGE}/${knowledgeId}`, token)).status, 200);
+  t.diagnostic(`恢复上架后同一收藏行 ${favoriteId} => reference_state=${back.body.data.items[0].reference_state} unavailable_reason=${String(back.body.data.items[0].unavailable_reason)}（失效是判定，不是不可逆标记）`);
 
   // 改版（新修订）⇒ 旧 `target_ref.revision` 不再可用（同审核域 `REVISION_SUPERSEDED` 口径）。
   await f.publishNextRevision(knowledgeId, version);
@@ -217,6 +221,7 @@ test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 
   assert.equal(superseded.body.data.items[0].id, favoriteId);
   assert.equal(superseded.body.data.items[0].reference_state, 'unavailable', '版本已替换 ⇒ 旧引用不可用');
   assert.equal(typeof superseded.body.data.items[0].unavailable_reason, 'string');
+  t.diagnostic(`改版（发布 revision=2）后同一收藏行 ${favoriteId} => reference_state=${superseded.body.data.items[0].reference_state}（旧 target_ref.revision=1）`);
 });
 
 test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙江首批投影）收藏后必须「可用」且详情可打开', async (t) => {
@@ -256,6 +261,11 @@ test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙�
     );
     assert.equal(created.body.data.unavailable_reason, null);
   }
+  t.diagnostic(
+    '读数开（浙江首批投影）：' + picked
+      .map((item) => `${item.type} ${item.id} rev=${item.revision} → 详情 200、收藏行 available`)
+      .join('；'),
+  );
 
   const page = await f.http(FAVORITES, token);
   assert.equal(page.body.data.items.length, picked.length);
@@ -286,4 +296,8 @@ test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙�
     id: speciesItem.id,
     revision: speciesItem.revision,
   });
+  t.diagnostic(
+    `反例（fail-closed，不泄露存在性）：读面里没有的 id => ${missing.body.data.reference_state}`
+    + `（${String(missing.body.data.unavailable_reason)}）；类型不符（把 species 资料声明成 scheme）=> ${wrongType.body.data.reference_state}`,
+  );
 });
