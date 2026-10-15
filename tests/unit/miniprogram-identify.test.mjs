@@ -42,6 +42,7 @@ function instance() {
   page.data = JSON.parse(JSON.stringify(captured.data));
   page.setData = function (patch) { Object.assign(this.data, patch); };
   page._pollTimer = null;
+  page._generation = 0;
   return page;
 }
 
@@ -180,12 +181,23 @@ test('GY-I09 小程序：打包白名单必须包含识别页依赖（既往 MOD
 // 手动解析 wx.request，以复现「门禁未核实/失效仍展示私有数据」与「在途响应淘汰」两个实际反例。
 // 合成身份与合成响应，绝不外发；不作为微信工具或真机证据。
 // ---------------------------------------------------------------------------
-function lifecycle(sharedStorage) {
+const JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const RECORD_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const REQUEST_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const MEDIA_ID = '99999999-9999-4999-8999-999999999999';
+/** 合成 sha256（64 位十六进制）：满足契约 pattern，不代表任何真实照片的摘要。 */
+const SYNTHETIC_SHA256 = 'a'.repeat(64);
+/** 契约识别图用途上限：2 MiB（`packages/media/constants.mjs` MEDIA_PURPOSE_MAX_BYTES.weed_recognition）。 */
+const RECOGNITION_MAX_BYTES = 2 * 1024 * 1024;
+
+function lifecycle(sharedStorage, options) {
   // 传入共享 storage 可模拟「同一份本地存储 + 两个独立启动（新 VM、新模块实例）」。
   const storage = sharedStorage instanceof Map ? sharedStorage : new Map();
   const requests = [];
   const launches = [];
   const cache = new Map();
+  const opts = options || {};
+  const fileInfo = typeof opts.fileInfo === 'function' ? opts.fileInfo : null;
   const expires = () => new Date(Date.now() + 3600_000).toISOString();
   let definition = null;
   const context = {
@@ -201,8 +213,20 @@ function lifecycle(sharedStorage) {
       showToast: () => {},
       showModal: options => { if (options && typeof options.success === 'function') options.success({ confirm: true }); },
       chooseMedia: () => {},
-      getFileInfo: () => {},
-      getFileSystemManager: () => ({ readFile: () => {} })
+      getFileInfo: fileInfo === null
+        ? () => {}
+        : request => {
+            const info = fileInfo(request);
+            if (info === null || info === undefined) { if (typeof request.fail === 'function') request.fail({}); return; }
+            request.success(info);
+          },
+      getFileSystemManager: () => ({
+        readFile: request => {
+          if (fileInfo === null) return;
+          // 句柄 PUT 用**合成字节**（不是真实照片）：只为走通链路形状，不伪造任何识别结果。
+          request.success({ data: Uint8Array.from([0x89, 0x50, 0x4e, 0x47]) });
+        }
+      })
     },
     getApp: () => ({ globalData: { fontScale: 1 } }),
     App: () => {},
@@ -237,6 +261,9 @@ function lifecycle(sharedStorage) {
     instance.data = JSON.parse(JSON.stringify(pageDefinition.data));
     instance.setData = function (patch) { Object.assign(this.data, patch); };
     instance._pollTimer = null;
+    // onLoad 会置位本字段；直接构造实例时（不经 onLoad）必须同样就位，
+    // 否则 beginOperation/isCurrentOperation 的世代比对恒不成立（页面方法会静默早退）。
+    instance._generation = 0;
     return instance;
   }
   function seedSession(accessToken) {
@@ -247,15 +274,12 @@ function lifecycle(sharedStorage) {
       executionMode: 'stub'
     });
   }
-  function acceptVerification(request) {
-    request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() } } });
+  function acceptVerification(request, executionMode) {
+    const mode = typeof executionMode === 'string' && executionMode !== '' ? executionMode : (opts.mode || 'stub');
+    request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: mode } } });
   }
-  return { storage, requests, launches, auth, page, seedSession, acceptVerification, load };
+  return { storage, requests, launches, auth, page, seedSession, acceptVerification, load, mode: opts.mode || 'stub' };
 }
-
-const JOB_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const RECORD_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const REQUEST_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 function recognitionValue(overrides) {
   return Object.assign({
@@ -548,6 +572,211 @@ test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何
   page.data.guest = true;
   page.onShoot({ currentTarget: { dataset: { mode: 'weed' } } });
   assert.equal(calls, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 切片 B：real 模式媒体失败的**如实归因** + 上传前 2 MiB 预检（解除 1-B / 1-C / 7-H）。
+//
+// 断言口径：①超限 ⇒ 零上传请求 + 页面可操作提示；②PROVIDER_UNAVAILABLE ⇒ 新文案，
+// 且不再出现"/media 内容端点未挂载"这类与事实不符的断言；③INVALID_REQUEST ⇒ 用途限制口径；
+// ④不回归：未登录/门禁拒绝仍零请求（见上文「未登录…不发任何请求」用例），正常小图逐跳行为不变。
+// ---------------------------------------------------------------------------
+
+/** 取本轮发往 `POST /media/uploads` 的请求（含创建句柄与完成上传两跳）。 */
+function mediaUploadRequests(requests) {
+  return requests.filter(r => typeof r.url === 'string' && r.url.includes('/media/uploads'));
+}
+
+/** 取本轮创建识别任务的请求。 */
+function recognitionRequests(requests) {
+  return requests.filter(r => typeof r.url === 'string' && r.url.includes('/recognitions'));
+}
+
+/**
+ * 走真实门禁：seedSession → onLoad → onShow → 接受一次会话核实（与既有 B 系列同法）。
+ * 未通过门禁时页面**不动作**，因此切片 B 的用例必须先过门禁再谈请求。
+ *
+ * 返回的 `requests` 是**动态视图**（门禁核实之后的请求），不是快照 ——
+ * 否则在 prepareMedia 之后再取会漏掉新发出的请求。
+ */
+function gatedPage(h) {
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  const verification = h.requests.at(-1);
+  h.acceptVerification(verification);
+  assert.ok(h.requests.length >= 1, '门禁必须发出一次会话核实请求');
+  const gateIndex = h.requests.indexOf(verification);
+  return {
+    page,
+    get requests() { return h.requests.slice(gateIndex + 1); }
+  };
+}
+
+test('GY-I09 切片B①：>2 MiB 照片上传前预检 ⇒ 不发任何 POST /media/uploads，且给出可操作提示', async () => {
+  const oversized = RECOGNITION_MAX_BYTES + 1;
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: request => {
+      assert.equal(request.digestAlgorithm, 'sha256', 'readFileInfo 必须按契约取 sha256 摘要');
+      return { size: oversized, digest: SYNTHETIC_SHA256 };
+    }
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareMedia('/synthetic/tmp/oversized.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1, '第一次请求必须是读执行模式');
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await pending;
+  // 只允许发一次「读执行模式」的公开请求；**不得**发出任何上传请求、也不得建识别任务。
+  assert.equal(gated.requests.length, 1, '超限时必须只发一次读模式请求，不得再有其它请求');
+  assert.equal(gated.requests[0].url.endsWith('/public/home'), true, '唯一请求必须是读执行模式的 GET /public/home');
+  assert.equal(gated.requests[0].method, 'GET');
+  assert.deepEqual(mediaUploadRequests(gated.requests), [], '超限时不得发出任何 POST /media/uploads');
+  assert.deepEqual(recognitionRequests(gated.requests), [], '超限时不得创建识别任务');
+  assert.equal(page.data.busy, false, '预检拦截后必须结束忙态');
+  assert.equal(typeof page.data.errorText, 'string');
+  assert.ok(page.data.errorText.includes('照片过大'), '必须给出「照片过大」类可操作提示，实际：' + page.data.errorText);
+  assert.ok(page.data.errorText.includes('未上传任何照片'), '提示必须如实说明本次未上传，实际：' + page.data.errorText);
+});
+
+test('GY-I09 切片B①负控制：恰为 2 MiB 的照片必须放行走到上传（不得连带挡掉合规照片）', async () => {
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: () => ({ size: RECOGNITION_MAX_BYTES, digest: SYNTHETIC_SHA256 })
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareMedia('/synthetic/tmp/exactly-2mib.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1, '合规尺寸必须继续走到上传（读模式请求）');
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  // 等预检与 readFileInfo 的微任务落地：放行 ⇒ 发出 POST /media/uploads。
+  await new Promise(resolve => setImmediate(resolve));
+  const uploads = mediaUploadRequests(gated.requests);
+  assert.equal(uploads.length, 1, '恰为上限（2 MiB）必须放行上传，不得被预检误挡');
+  assert.equal(uploads[0].method, 'POST');
+  assert.equal(uploads[0].data.bytes, RECOGNITION_MAX_BYTES, '上传声明必须带真实字节数');
+  assert.equal(page.data.errorText, '', '合规照片不得被写入错误提示');
+  uploads[0].success({ statusCode: 500, data: {} });
+  await pending;
+});
+
+test('GY-I09 切片B②：POST /media/uploads 返回 503 PROVIDER_UNAVAILABLE ⇒ 文案指向「真实对象存储未接线」，不再说「/media 内容端点未挂载」', async () => {
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: () => ({ size: 1024, digest: SYNTHETIC_SHA256 })
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const viaMessage = h.load(resolve(root, 'miniprogram/utils/identify-api.js')).messageFor({ code: 'PROVIDER_UNAVAILABLE' });
+  assert.ok(viaMessage.includes('服务端真实对象存储尚未接线'), 'PROVIDER_UNAVAILABLE 文案必须指向真实对象存储未接线，实际：' + viaMessage);
+  assert.equal(viaMessage.includes('未挂载'), false, '不得再出现「未挂载」归因');
+  assert.equal(viaMessage.includes('识别服务当前不可用'), false, '不得沿用「识别服务当前不可用」的旧口径');
+
+  const pending = page.prepareMedia('/synthetic/tmp/small.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1);
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const uploads = mediaUploadRequests(gated.requests);
+  assert.equal(uploads.length, 1, '合规照片必须发出一次 POST /media/uploads');
+  // 服务端**如实**返回契约错误封套（与 packages/media 的 toErrorEnvelope 同形）。
+  uploads[0].success({
+    statusCode: 503,
+    data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '对象存储未接线', retryable: false, details: [] } }
+  });
+  await pending;
+  assert.equal(page.data.busy, false);
+  assert.equal(page.data.errorText, viaMessage, '页面文案必须与 messageFor 的如实文案逐字一致');
+  assert.equal(page.data.errorText.includes('未挂载'), false, '不得再出现「未挂载」归因');
+  assert.equal(mediaUploadRequests(gated.requests).length, 1, '归因失败后不得再发起上传或重试请求');
+});
+
+test('GY-I09 切片B③：400 INVALID_REQUEST / 413 MEDIA_TOO_LARGE ⇒ 文案指向用途限制（≤2 MiB / 仅 JPG·PNG·WebP）', () => {
+  const invalid = identifyApi.messageFor({ code: 'INVALID_REQUEST' });
+  assert.ok(invalid.includes('照片不符合用途限制'), 'INVALID_REQUEST 必须指向用途限制，实际：' + invalid);
+  assert.ok(invalid.includes('2 MiB'), '用途限制文案必须写明 2 MiB 上限');
+  assert.ok(invalid.includes('JPG'), '用途限制文案必须写明允许的图片类型');
+  for (const code of ['MEDIA_TOO_LARGE', 'MEDIA_TYPE_UNSUPPORTED']) {
+    assert.equal(identifyApi.messageFor({ code }), invalid, code + ' 必须与 INVALID_REQUEST 同口径');
+  }
+  // 未知错误码不得被当成契约事实呈现。
+  assert.equal(identifyApi.messageFor({ code: 'NOT_A_CONTRACT_CODE' }).includes('NOT_A_CONTRACT_CODE'), false);
+});
+
+test('GY-I09 切片B④不回归：正常小图逐跳行为不变（建句柄 → PUT 句柄 URL → 完成上传 → 返回媒体引用）', async () => {
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: () => ({ size: 1024, digest: SYNTHETIC_SHA256 })
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareMedia('/synthetic/tmp/small.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1, '第一次请求必须是读执行模式');
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const create = mediaUploadRequests(gated.requests)[0];
+  assert.ok(create, '必须发出创建上传句柄请求');
+  assert.equal(create.url.endsWith('/media/uploads'), true);
+  assert.equal(create.method, 'POST');
+  // 沙箱（vm 新 realm）里的对象原型与测试 realm 不同，故逐字段比较而非 deepEqual。
+  assert.equal(create.data.purpose, 'weed_recognition');
+  assert.equal(create.data.mime, 'image/jpeg');
+  assert.equal(create.data.bytes, 1024);
+  assert.equal(create.data.sha256, SYNTHETIC_SHA256);
+  assert.deepEqual(Object.keys(create.data).sort(), ['bytes', 'mime', 'purpose', 'sha256'], '上传声明必须恰为契约 UploadInput 四字段');
+  // 合法 201 句柄（字段与契约 UploadGrantEnvelope 逐项一致）。
+  create.success({
+    statusCode: 201,
+    data: {
+      data: {
+        media: { id: MEDIA_ID, revision: 1, purpose: 'weed_recognition', mime: 'image/jpeg', bytes: 1024, duration_ms: null, state: 'initiated', sha256: SYNTHETIC_SHA256, failure_code: null },
+        upload: { url: 'https://synthetic.invalid/put/handle', expires_at: new Date(Date.now() + 300000).toISOString(), method: 'PUT', access_token: 'synthetic-handle-token' }
+      },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const put = gated.requests.find(r => r.url === 'https://synthetic.invalid/put/handle');
+  assert.ok(put, '必须把字节 PUT 到服务端给出的句柄 URL');
+  assert.equal(put.method, 'PUT');
+  put.success({ statusCode: 200 });
+  await new Promise(resolve => setImmediate(resolve));
+  const complete = mediaUploadRequests(gated.requests).find(r => r.url.endsWith('/complete'));
+  assert.ok(complete, '必须调用 completeUpload');
+  assert.equal(complete.header['If-Match'], '"1"', 'completeUpload 必须带 If-Match 版本');
+  complete.success({
+    statusCode: 202,
+    data: {
+      data: { id: MEDIA_ID, revision: 2, purpose: 'weed_recognition', mime: 'image/jpeg', bytes: 1024, duration_ms: null, state: 'ready', sha256: SYNTHETIC_SHA256, failure_code: null },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const recognition = recognitionRequests(gated.requests)[0];
+  assert.ok(recognition, '媒体就绪后必须按既有行为创建识别任务');
+  // 沙箱（vm 新 realm）里的对象原型与测试 realm 不同，故逐字段比较而非 deepEqual。
+  assert.equal(recognition.data.media_id, MEDIA_ID, '识别任务必须引用真实媒体引用');
+  assert.equal(recognition.data.media_revision, 2);
+  assert.deepEqual(Object.keys(recognition.data).sort(), ['media_id', 'media_revision'], '识别任务体必须恰为契约字段');
+  recognition.success({ statusCode: 500, data: {} });
+  await pending;
 });
 
 // ---------------------------------------------------------------------------
