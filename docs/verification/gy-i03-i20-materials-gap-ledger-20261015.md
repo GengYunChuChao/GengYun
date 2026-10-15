@@ -73,10 +73,10 @@ upstream/main                = 24fac034276c26b0e870e8ea8ea7f4349a8f8a89
 | --- | --- | --- | --- |
 | 抽取器（零依赖 ZIP + PNG） | `tools/evaluation/extract-docx-weed-samples.mjs`；`:1-19` 用途 / 约束 / 用法；`:8-12` 三条约束（只标准库 / 原始媒体写仓外 `rawMediaCommitted=false` / 答案键逐字交叉核对否则退出）；`:32-37` `repoRelativeRef` 防绝对路径入索引 | #130 | CLI：`--docx`（仓外）`--out-dir`（仓外）`--path-map`（仓外）`--labels` `--index` |
 | 冻结与复算 | `tools/evaluation/freeze-real-samples.mjs`（`--out` / `--verify`，不符退出码 1） | #130 | 冻结清单可复算 |
-| 离线评估入口 | `tools/evaluation/run-evaluation.mjs` | #130 | 消费 index + predictions + manifest + coverage |
-| schema 校验 | `tools/evaluation/validate-evaluation-samples.mjs` | #130 | 硬红线程序校验 |
-| 覆盖范围复核 | `tools/evaluation/knowledge-scope.mjs` | #130 | 复核"承诺类未越界" |
-| 样本 schema | `packages/evaluation/schema/sample.schema.json`；`:8-22` required 13 项；`:36-39` `split`；`:40-48` `clusterId` / `captureSeriesId`；`:59-62` `sourceKind` 4 值闭集；`:63-68` `sourceRef` 脱敏；`:74-77` `coverage`；`:78-81` `quality`；`:86-90` `gold`；`:94-99` `annotation.method`；`:101` `reviewedBy` 可空；`:102-105` `modelGenerated` **const false**；`:108-111` `rawMediaCommitted` **const false** | #130 | schema 说明另见 `docs/evaluation/sample-index-schema.md:25-31`（`:29` `rawMediaCommitted` const false 硬约束） |
+| 离线评估入口 | `tools/evaluation/run-evaluation.mjs` | #47 | 消费 index + predictions + manifest + coverage |
+| schema 校验 | `tools/evaluation/validate-evaluation-samples.mjs` | #47 | 硬红线程序校验 |
+| 覆盖范围复核 | `tools/evaluation/knowledge-scope.mjs` | #47 | 复核"承诺类未越界" |
+| 样本 schema | `packages/evaluation/schema/sample.schema.json`；`:8-22` required 13 项；`:36-39` `split`；`:40-48` `clusterId` / `captureSeriesId`；`:59-62` `sourceKind` 4 值闭集；`:63-68` `sourceRef` 脱敏；`:74-77` `coverage`；`:78-81` `quality`；`:86-90` `gold`；`:94-99` `annotation.method`；`:101` `reviewedBy` 可空；`:102-105` `modelGenerated` **const false**；`:108-111` `rawMediaCommitted` **const false** | #47 | schema 说明另见 `docs/evaluation/sample-index-schema.md:25-31`（`:29` `rawMediaCommitted` const false 硬约束） |
 | **样本产物** | `packages/evaluation/samples/` | #130 | `gy-i20-weeds-real-index.json`（172 条）、`gy-i20-weeds-labels.json`（172 条 entry）、`gy-i20-weeds-coverage-manifest.json`、`gy-i20-weeds-frozen-manifest.json`、`gy-i20-weeds-predictions-none.json`（空 `{}`） |
 | 冻结清单绑定块 | `packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json` | #130 | `indexVersion=gy-i20-weeds-real-2026.10.14`、`split=test`、`recordCount=172`、`indexSha256=36053ceed50abbeb…c78f`、`frozenAt=2026-10-14T12:05:00+08:00`、`coverage.weedPhotoCoveredClasses` 8 个规范物种 ID + `coverageSha256` + `basisRef` |
 | 流程与红线 | `docs/evaluation/README.md:72-84` | 早于 #130 | 10 条程序强制硬红线（`:74` rawMediaCommitted=false；`:75` modelGenerated=false；`:76` 同簇不跨 split；`:81` 任一条件不满足即 `isRealEvaluation=false`；`:82` 原始媒体与令牌不入仓） |
@@ -307,7 +307,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | G5 | **含个人信息的内容**：聊天目录、账号路径、真实姓名、手机号、真实 URL、原始路径 | `workbook-staging-design.md:45`（`filename` **只存文件名，不存聊天目录或账号路径**）；`sample.schema.json:63-68`（`sourceRef` **不得含个人身份、真实 URL 或原始路径**）；`docs/implementation-requirements.md:276`（日志不记令牌/密码/完整媒体/私人联系方式） |
 | G6 | **仓外绝对路径** | `extract-docx-weed-samples.mjs:32-37`（`repoRelativeRef`；仓外路径只留文件名）；仓内派生数据一律用 `repo-external://samples/<文件名>` 相对形式（`db/seeds/seed_zhejiang_materials.sql:12`） |
 | G7 | **用量 / 剂量 / 混配换算 / 处方** | `docs/verification/gy-i03-zhejiang-materials.md:296`（**严禁**推断或补造用量）；`workbook-staging-design.md:39`（不能进入用量卡）；`packages/knowledge/zhejiang/README.md:98`（不生成处方、混配、剂量换算） |
-| G8 | **未核实许可而写"已许可"** | `docs/verification/gy-i03-zhejiang-materials.md:301`（`licensed=false`，**不得写为已许可**）；`workbook-staging-design.md:99` 同义；`coverage-report.json:105` |
+| G8 | **未核实许可而写"已许可"** | `docs/verification/gy-i03-zhejiang-materials.md:301`（`licensed=false`，**不得写为已许可**）；`packages/knowledge/zhejiang/README.md:99` 同义；`coverage-report.json:105` |
 | G9 | **"绝对安全" / "零药害" 类文案** | `packages/knowledge/zhejiang/README.md:98`；`docs/evaluation/README.md` 相关红线 |
 | G10 | **模型生成的"标准答案"** | `sample.schema.json:102-105` `modelGenerated` const `false`；`docs/evaluation/README.md:75` |
 | G11 | **合成 / 演示样本冒充真实评估** | `docs/evaluation/README.md:81`；`docs/evaluation/sample-gap-register.md:54`（风险400/ASR50/问答120/TTS30及两类图片**均不可用演示样本替代**） |
