@@ -84,26 +84,34 @@ Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频
 
 ## 推荐任务推进列表
 
-核对基线：2026-10-11，main `441acc1`（已合并 [PR #80](https://github.com/GengYunChuChao/GengYun/pull/80)）。下表是接续建议，不重新分配任务或改变正式依赖；最新领取、提交和批复以对应 issue／PR 为准。原 27 项总体目标保留，组件验收与整项完成分开记录。
+建议接下来围绕 **“在 Android 手机上走通一段完整 Demo”** 推进。刚核对，上游仍为 `976b808`；已有组件可以直接接续，当前重点是页面接线、真实操作和缺项收尾。
 
-| 优先级 | 原 issue → 建议独立验收结果 | 可复用成果 | 前置依赖与剩余验收 |
-| --- | --- | --- | --- |
-| **阶段一（M1）首：基础并行收口**（边界标记，非新增任务） | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结、[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动、[#27](https://github.com/GengYunChuChao/GengYun/issues/27) 平台／服务、[#29](https://github.com/GengYunChuChao/GengYun/issues/29) 用途守卫、[#4](https://github.com/GengYunChuChao/GengYun/issues/4) 正式会话、[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | 沿用下方优先级 1、2、6 行的既有可复用成果，不重复分配 | 来源：[开发顺序](docs/development-order.md) 第 13 行“基础并行收口”批次；M1 窗口 10-03 至 10-10 见[阶段计划](docs/development-plan.md) 第 14 行。不新增依赖、不改验收口径，正式依赖以[任务台账](docs/initial-issues.json)为准 |
-| **阶段一（M1）尾：媒体及资料／样本准备**（边界标记，非新增任务） | [#3](https://github.com/GengYunChuChao/GengYun/issues/3) 核准资料、[#20](https://github.com/GengYunChuChao/GengYun/issues/20) 冻结样本、[#6](https://github.com/GengYunChuChao/GengYun/issues/6) 私有媒体 | 沿用下方优先级 3 行的既有可复用成果，不重复分配 | 来源：[开发顺序](docs/development-order.md) 第 14 行“资料与样本持续准备”（#3、#20）与第 16 行“安全资料与媒体”（#6，同批 #8 不在本边界列举内）；“媒体及资料／样本准备”见[阶段计划](docs/development-plan.md) 第 14 行。不新增依赖、不改验收口径 |
-| 1：先收尾 | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结；[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动；[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | #33 契约、#43 工程、#69 五 Tab、#71 工具与设备基线 | 可并行：区分已实现／规划接口；复现 API、后台和小程序启动；补齐当前五 Tab Demo 样式与关键按钮操作证据；适老字号专项后续。页面骨架不等待所有业务能力 |
-| 2：首段用户链路 | [#4](https://github.com/GengYunChuChao/GengYun/issues/4) 正式会话；[#5](https://github.com/GengYunChuChao/GengYun/issues/5) 作物／地区；[#7](https://github.com/GengYunChuChao/GengYun/issues/7) 知识查询 | #59／#68／#78 会话与返回；#74／#77 资料与手选地区；#79／#80 查询 API 与原生消费者 | 复用冻结接口，补知识运行组的受限启动接续；验证正式微信身份→作物／地区→列表／详情→失效／退出。手选地区不等待定位；科普查询不等待识草、OCR 或 DoseCard |
-| 3：并行补基础 | [#3](https://github.com/GengYunChuChao/GengYun/issues/3) 核准资料；[#20](https://github.com/GengYunChuChao/GengYun/issues/20) 冻结样本；[#6](https://github.com/GengYunChuChao/GengYun/issues/6) 私有媒体；[#8](https://github.com/GengYunChuChao/GengYun/issues/8) 条件匹配与原文用量 | #73／#81 来源候选；#47 评估工具；#60 媒体参考组件；#64 查询参考组件 | 四线可并行：来源候选补有效标签与适用条件，样本调参前独立冻结，媒体补 HTTP／存储／清理，规则补未知条件拒绝与用量卡守卫。#8 接续 [PR #82 批复](https://github.com/GengYunChuChao/GengYun/pull/82#pullrequestreview-5482804369)，保留已有工作 |
-| 4：分能力交付 | [#12](https://github.com/GengYunChuChao/GengYun/issues/12) 文字问答优先；[#9](https://github.com/GengYunChuChao/GengYun/issues/9) 识草、[#10](https://github.com/GengYunChuChao/GengYun/issues/10) OCR、[#11](https://github.com/GengYunChuChao/GengYun/issues/11) ASR、[#13](https://github.com/GengYunChuChao/GengYun/issues/13) TTS、[#14](https://github.com/GengYunChuChao/GengYun/issues/14) 审核 | #40／#42 供应商接入证据；#72 LLM 探针；现有入口与用途守卫 | 文字问答不等完整 ASR；各能力按输入依赖接媒体、用途授权和审核。复用供应商证据，每项能力随交付完成必要独立评估，接入成功不等于质量门槛通过 |
-| 5：社区与配套 | [#15](https://github.com/GengYunChuChao/GengYun/issues/15) 社区、[#18](https://github.com/GengYunChuChao/GengYun/issues/18) 后台；再接 [#16](https://github.com/GengYunChuChao/GengYun/issues/16) 收藏／历史、[#17](https://github.com/GengYunChuChao/GengYun/issues/17) 消息 | 既有鉴权、资料 API、前端骨架与独立后台工程 | 社区发布依赖适用审核；后台资料管理可先独立验收。知识收藏可先于识别历史，消息接实际事件，不重复搭建已有组件 |
-| 6：贯穿开发 | [#27](https://github.com/GengYunChuChao/GengYun/issues/27) 平台／服务；[#29](https://github.com/GengYunChuChao/GengYun/issues/29) 用途守卫；[#19](https://github.com/GengYunChuChao/GengYun/issues/19) 删除恢复；[#21](https://github.com/GengYunChuChao/GengYun/issues/21) 能力评估 | 接入、授权、撤回、数据库恢复和离线评估组件 | 按服务、用途、数据域分别接续验收；真实外发前满足授权与撤回守卫，新增持久数据同步接删除。全模块删除、第三方完成证据与评估汇总留在集成验收，不重复阻塞无关局部交付 |
-| 7：最终集成与发布 | [#22](https://github.com/GengYunChuChao/GengYun/issues/22) 安全回归、[#23](https://github.com/GengYunChuChao/GengYun/issues/23) Android 真机、[#24](https://github.com/GengYunChuChao/GengYun/issues/24) 发布 | 复用各组件测试、工具与设备证据 | 在所需组件就绪后验完整业务链、权限与删除恢复、Android 操作和发布配置；仅全部必要子结果通过后关闭总体 issue。iOS 本阶段暂缓 |
+下面是建议顺序，沿用已有 issue 和负责人；组件开发可以并行，不必等前置整项关闭才开始。[现行依赖规则](https://github.com/GengYunChuChao/GengYun/blob/main/docs/development-order.md)
 
-- **资源缺口按功能记录：** 正式微信身份、合法网络出口／域名配置阻塞对应正式联调；核准标签与条件阻塞真实农药资料和用量展示；独立样本阻塞质量验收。它们不阻塞隔离环境下的页面、接口或模板组件开发。
-- **新增需求单独接续：** [情景视频](docs/features/pesticide-demo-video.md)先做模板／播放器，扫描入口接 #10，保存按需接 #6；输出应为可播放视频，并标识“演示视频，非真实效果预测”。资料库切换、地区／毒性筛选、风险标签和 IP 属地纳入后续前端接续，正式字段、来源与分类规则 TODO；危险评估与毒性分类不混用。增补不计入原 27 项完成数。
-- **领取与审查：** 先读当前 issue 批复和 PR，沿用已有负责人、分支与成果；没有 assignee 不代表无人开发。负责人缺项由指挥确认，监工不派发。软件组件、资料、跨模块联调、发布分别验收，局部 PR 使用 `Refs`，整项满足条件才关闭。
-- **阶段一边界标记：** 表格首部两行为阶段一（M1）的边界标记（首：基础并行收口；尾：媒体及资料／样本准备），把此前散见下方各行（尤以优先级 1 行、3 行）的 M1 内容集中对照，便于一眼看到阶段一的起止；二者是标记而非新增任务，不改变任何任务分配、优先级、依赖或验收口径，不改变[任务台账](docs/initial-issues.json)的正式依赖，也不代表任何项已完成。编号提醒：[开发顺序](docs/development-order.md) 明确 GY-I25／26／27 的实际编号分别为 #27／#28／#29，不能按任务尾号猜编号。
+| 顺序 | 推进内容 | 本批完成标志 |
+|---|---|---|
+| **1．完成五 Tab Demo 的正常使用** | **#28**：复用已合入的 #142 组件，统一首页、社区、识别、消息、我的样式；补齐跳转、返回、空态、加载、失败和重试。游客按现有规则进入登录页 | 在微信工具及现有 Android 手机上确认关键页面能看、按钮能点、导航能返回；模拟内容标识明确 |
+| **2．贯通第一条用户链路** | **#4 → #5 → #7，接 #16 的知识收藏**：登录→手选作物／地区→搜索→详情→收藏／取消收藏→退出 | 用户能连续完成这段操作；退出或来源失效后，页面和接口处理一致。手选地区先完成，自动定位随后补 |
+| **3．把识别入口做成完整流程** | **#6、#9、#10、#8，接 #16 的识别历史**：上传／拍照→处理状态→结果核对→资料详情→历史。前端先复用明确标注的模拟数据；真实服务按依赖接入 | 先交付可操作的 Demo 流程，再分别证明真实识草、OCR 接入。无法确认来源或条件时不展示实际用量 |
+| **4．接文字问答，再增加语音** | **#12 → #11 → #13**：先完成输入文字、返回有来源回答和失败提示，再接语音转文字及播报 | 文字问答独立可用；语音逐步完成“录音→核对文字→发送→播放”。复用已有 OCR／ASR／TTS 调用证据，仅补产品链路缺项 |
+| **5．贯通社区、消息和必要后台** | **#14 → #15，配合 #17、#18**：先完成发帖与审核状态，再接评论、点赞、消息跳转及下架联动；后台优先支持这段流程必需的操作 | Demo 状态与真实审核清楚区分；真实发布满足审核要求，消息只能跳转到当前用户可访问的对象 |
+| **6．完成整体验收和交付** | **#19、#21、#22、#23、#24**：汇总真实能力、持久化、删除恢复、权限、Android 完整演示和部署准备 | 各项承诺都有对应证据，剩余限制明确；满足全部验收的 issue 才关闭 |
 
-详细依赖见[开发顺序](docs/development-order.md)和[任务台账](docs/initial-issues.json)。本表未创建新的 GitHub 子 issue，不代表已完成拆分或追加验收通过。
+**有三条工作应从现在并行推进，避免后面等待：**
+
+- **基础收尾：#1、#2。** #1 重点补正式契约和运行版本冻结记录；#2 复用已有安装、构建、启动证据，核清剩余条件。这两项值得优先争取关闭，无需等待全部业务功能。
+- **资料与样本：#3、#20。** 持续准备核准资料、标签和独立样本；按能力分批准备，避免最后集中补齐。
+- **真实接入与隐私：#27、#29，以及 #6 的存储接入。** 按正在接入的功能补服务配置、用途授权和持久化。新增数据同步登记删除处理，完整删除恢复在集成阶段验收。
+
+可以同时推进**眼前最优先的三件事是：**
+
+1. **完成一次五 Tab 的正常操作走查。** 当前真机已经连通，旧冒烟脚本仍依赖过期页面结构。可先用简短人工走查取得有效证据；继续使用脚本时，只修正页面定位、Tab 顺序和登录态判断。[现场记录](https://github.com/GengYunChuChao/GengYun/issues/23#issuecomment-6182823911)
+2. **完成登录→手选档案→查询详情→收藏这条连续流程。** 每次提交交付一个用户能实际完成的操作。
+3. **并行收尾 #1／#2。** 随后核对 #28 是否满足当前 Demo 阶段的完整条件，满足即可关闭；不要追加全业务、适老或完整 AI 质量验收。
+
+适老专项和 iOS 继续后置。情景视频的模板／播放器可在主链稳定后并行推进，先用合成输入，扫描入口再接 OCR。
+
+审查随每批交付进行：已有有效证据直接复用，只补本次变化对应的缺口。下一阶段最有价值的进度标志是：**手机上新增了哪一段可以连续完成的操作。**
 
 ## 当前范围与入口
 
