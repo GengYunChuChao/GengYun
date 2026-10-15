@@ -279,3 +279,37 @@ test('[口径] 「设计覆盖 ≠ 运行通过」不冲突，程序硬口径齐
     assert.ok(summary.includes(hard), `汇总应保留程序硬口径 ${hard}`);
   }
 });
+
+// —— 7. 引用真实存在：内容锚点断言（行号漂移即红）——
+// 本片（#158 收尾加固）新增：把「引用真实存在」变成机器门禁。
+// 每条锚点 = 「该文件第 N 行**确实含**该原文片段」＋「汇总文档**确实引用了** `:N`」；
+// 片段即断言依据：上游挪行 ⇒ 红，届时在同一提交里同时改引用与断言，不允许引用悬空。
+const CITATIONS = [
+  { rel: 'docs/implementation-requirements.md', line: 489, fragment: '必须在对应首版范围通过' },
+  { rel: 'docs/implementation-requirements.md', line: 487, fragment: '交付比赛演示版' },
+  { rel: 'docs/architecture/acceptance-map.md', line: 26, fragment: '没有首版接口' },
+  { rel: 'docs/initial-issues.md', line: 600, fragment: 'M4只是全量复评与汇总签核' },
+  { rel: 'docs/initial-issues.md', line: 11, fragment: 'M4汇总签核' },
+  { rel: 'docs/issue-revision-log.md', line: 24, fragment: 'M4 汇总签核' },
+  { rel: 'docs/ui-contract-binding.md', line: 107, fragment: 'AC15 核查过程' },
+  { rel: 'docs/ui-contract-binding.md', line: 102, fragment: '零命中' },
+];
+
+test('[引用] 逐条锚点断言：该行确实含该原文片段，且汇总确实引用了该行', () => {
+  assert.equal(CITATIONS.length, 8, '锚点清单应逐条列全 8 处引用（删项即红）');
+  for (const { rel, line, fragment } of CITATIONS) {
+    const target = lines(readRepo(rel))[line - 1];
+    assert.ok(target !== undefined, `${rel} 不足 ${line} 行（引用已漂移）`);
+    assert.ok(target.includes(fragment), `${rel}:${line} 应含「${fragment}」，实际：${target.slice(0, 90)}`);
+    assert.ok(summary.includes('`:' + line + '`'), `汇总应引用 ${rel}:${line}（反引号行号标记）`);
+  }
+});
+
+test('[引用] AC15 的结论性表述带证据指针（删掉指针即红）', () => {
+  const table = tableWithHeader('门槛归属');
+  const iAc = column(table, 'AC');
+  const iStatus = column(table, '现状三态');
+  const row = table.rows.find((cells) => cells[iAc] === 'AC15');
+  assert.ok(row, 'AC 表应含 AC15 行');
+  assert.ok(row[iStatus].includes('ui-contract-binding.md'), `AC15 的现状三态格应给出证据指针，实际：${row[iStatus]}`);
+});
