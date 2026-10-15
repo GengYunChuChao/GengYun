@@ -35,6 +35,51 @@ function fixture(name = 'knowledge') {
   function show(options = {}) { page.options = options; page.onLoad(options); page.onShow(); const r = last('/auth/session'); if (r) { answer(r, { audience: 'user', expires_at: new Date(Date.now() + 3600000).toISOString() }); if (last('/me/profile')) answerProfile() } }
   return { page, wx, requests, routes, clips, auth, api, nav, answer, answerProfile, login, show, last };
 }
+// ---- 只读 WXML 兄弟链语义求值（用于钉住科普页结果区"任一状态恰渲染 1 个 .status"）----
+// WXML 规则：wx:elif / wx:else 只延续**同一父节点下紧邻**的 wx:if / wx:elif；自带 wx:if 的节点
+// 开启**新链**，不会继承上一条链的"已命中"状态。这里不跑编译器、无视觉证据，只做结构语义求值。
+const VOID_TAGS = new Set(['image', 'input', 'icon', 'import', 'include', 'wxs']);
+function parseWxml(src) {
+  const text = src.replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, ' ')); // 注释置空（保行号）
+  const tagRe = /<(\/?)([A-Za-z][\w-]*)((?:"[^"]*"|'[^']*'|[^>"'])*?)(\/?)>/g;
+  const root = { tag: '#root', attrs: {}, children: [] };
+  const stack = [root];
+  let m, prevEnd = 0;
+  while ((m = tagRe.exec(text)) !== null) {
+    const between = text.slice(prevEnd, m.index);
+    if (between.trim()) stack[stack.length - 1].children.push({ tag: '#text', value: between });
+    prevEnd = tagRe.lastIndex;
+    if (m[1]) { if (stack.length > 1) stack.pop(); continue }
+    const attrs = {};
+    const ar = /([A-Za-z_:][-\w:.]*)(?:\s*=\s*"([^"]*)")?/g;
+    let a; while ((a = ar.exec(m[3])) !== null) attrs[a[1]] = a[2];
+    const el = { tag: m[2], attrs, children: [], selfClosing: m[4] === '/' || VOID_TAGS.has(m[2]) };
+    stack[stack.length - 1].children.push(el);
+    if (!el.selfClosing) stack.push(el);
+  }
+  return root;
+}
+const wxmlExpr = (raw, data) => vm.runInNewContext(String(raw).replace(/^\{\{/, '').replace(/\}\}$/, '').trim(), Object.assign(Object.create(null), data));
+function renderWxml(node, data, out = [], dangling = []) {
+  let chain = null; // { taken } = 当前打开的链；null = 没有可延续的链
+  for (const child of node.children) {
+    if (child.tag === '#text') { if (child.value.trim()) chain = null; out.push(child); continue }
+    const attrs = child.attrs;
+    const kind = 'wx:if' in attrs ? 'if' : 'wx:elif' in attrs ? 'elif' : 'wx:else' in attrs ? 'else' : null;
+    let show = true;
+    if (kind === 'if') { chain = { taken: !!wxmlExpr(attrs['wx:if'], data) }; show = chain.taken }
+    else if (kind === 'elif') { if (!chain) { dangling.push(child); show = false } else { const v = !!wxmlExpr(attrs['wx:elif'], data); show = !chain.taken && v; chain.taken = chain.taken || v } }
+    else if (kind === 'else') { if (!chain) { dangling.push(child); show = false } else { show = !chain.taken; chain.taken = true } }
+    else chain = null; // 无条件兄弟终止链
+    if (!show) continue;
+    const times = 'wx:for' in attrs ? (Array.isArray(wxmlExpr(attrs['wx:for'], data)) ? wxmlExpr(attrs['wx:for'], data).length : 0) : 1;
+    for (let i = 0; i < times; i++) { out.push(child); renderWxml(child, data, out, dangling) }
+  }
+  return out;
+}
+const isStatusBlock = el => el.tag === 'view' && /(^|\s)status(\s|$)/.test(el.attrs.class || '');
+const paintsStatus = el => el.tag === '#text' ? /\{\{\s*status\s*\}\}/.test(el.value)
+  : /\{\{\s*status\s*\}\}/.test(Object.values(el.attrs).join(' ')) || el.children.some(paintsStatus);
 test('actual guest gate denies both new pages before any knowledge request', () => {
   for (const n of ['knowledge', 'knowledgedetail']) { const f = fixture(n); f.page.onLoad({ id }); f.page.onShow(); assert.equal(f.page.data.gatePassed, false); assert.equal(f.requests.length, 0); assert.equal(f.routes.at(-1), '/pages/login/login') }
 });
@@ -71,6 +116,42 @@ test('a profile region outside the covered province is never replaced by the pro
   assert.equal(f.page.data.stateKind, 'out-of-coverage'); assert.equal(f.page.data.profileState, 'out-of-coverage');
   assert.match(f.page.data.status, /当前资料仅覆盖浙江省/); assert.match(f.page.data.status, /没有用省级资料代替/);
   assert.doesNotMatch(f.page.data.status, /已按浙江省查询/); assert.match(f.page.data.status, /清空条件继续查询/);
+});
+// 返修 A：结果区各状态块必须是**唯一一条兄弟链**。修复前 :48 另起一条独立 wx:if，与链头 :45 并列
+// ⇒ stateKind='out-of-coverage' 时末行 wx:else 的回退块**一并渲染**：出现两个 .status（与页面顶部
+// "保留 .status 供既有 automator 脚本定位"的注释冲突），约 120 字的诚实文案被打印两次。
+test('the result area keeps one WXML sibling chain: every state renders exactly one .status block', () => {
+  const tree = parseWxml(readFileSync(resolve(root, 'pages/knowledge/knowledge.wxml'), 'utf8'));
+  const dangling = [];
+  const count = data => {
+    const rendered = renderWxml(tree, data, [], dangling).filter(e => e.tag !== '#text');
+    return rendered.filter(isStatusBlock);
+  };
+  for (const stateKind of ['idle', 'ready', 'loading', 'empty', 'error', 'out-of-coverage']) {
+    const blocks = count({ gatePassed: true, status: '合成状态文案', stateKind, items: [], nextCursor: null, profileNote: '', advanced: false });
+    assert.equal(blocks.length, 1, `stateKind=${stateKind} 必须恰渲染 1 个 .status 块（多个 ⇒ 独立 wx:if 与回退 wx:else 并列）`);
+    assert.equal(blocks.filter(paintsStatus).length, 1, `stateKind=${stateKind} 必须恰打印 1 次 status 文案（不得重复）`);
+  }
+  assert.equal(count({ gatePassed: false, status: '合成状态文案', stateKind: 'idle', items: [], nextCursor: null, profileNote: '', advanced: false }).length, 1, '游客门禁态也必须恰 1 个 .status 块');
+  assert.deepEqual(dangling.map(e => e.tag + '[' + (e.attrs['wx:elif'] || e.attrs['wx:else'] || '') + ']'), [], '不得有悬空的 wx:elif / wx:else（没有同链 wx:if 前驱）');
+});
+// 返修 B：INVALID_RESPONSE 是 validProfile 的**通用**失败码。反例：档案 region_code='330102'
+// （确在浙江省内）但 revision=0 ⇒ 修复前页面断言"核不到你档案里的地区是否在覆盖范围内…可回「我的」
+// 改选浙江省内地区"，即**断言了它建立不了的诊断**，还可能引导用户去改一个本来正确的地区。
+test('a generic profile contract failure never claims the archived region is out of coverage', async () => {
+  const f = fixture(); f.login(); f.page.onShow();
+  f.answer(f.last('/auth/session'), { audience: 'user', expires_at: new Date(Date.now() + 3600000).toISOString() });
+  f.answerProfile({ crop_id: 'crop_rice', region_code: '330102', region_catalog_version: 'mca-xzqh-2023', revision: 0 }); await flush();
+  assert.equal(f.requests.filter(r => r.url.includes('/knowledge')).length, 0, '核不出档案响应时不得自动查询');
+  assert.equal(f.page.data.stateKind, 'out-of-coverage');
+  assert.doesNotMatch(f.page.data.status, /核不到你档案里的地区|不在覆盖范围内|改选浙江省内地区/, '不得断言档案地区不在覆盖范围内，也不得让用户改地区');
+  // 三条实质陈述仍为真：资料只到省级 / 未用省级资料代查 / 手选出口可用。
+  assert.match(f.page.data.status, /当前资料仅覆盖浙江省，只登记到省级（330000）/);
+  assert.match(f.page.data.status, /没有用省级资料代替/); assert.match(f.page.data.status, /原因未定/);
+  assert.match(f.page.data.status, /清空条件继续查询/);
+  f.page.reset(); await flush();
+  const u = new URL(f.last('/knowledge').url);
+  assert.equal(u.searchParams.get('region_code'), null, '手选出口必须真实可达且不带档案地区');
 });
 test('an unreadable profile is reported and the conditions are not silently substituted', async () => {
   const f = fixture(); f.login(); f.page.onShow();
