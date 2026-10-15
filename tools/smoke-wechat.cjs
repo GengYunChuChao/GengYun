@@ -417,7 +417,19 @@ async function main() {
     }
     if (!mini) fail('未能建立自动化连接（' + WS_ENDPOINT + '）。')
 
-    const info = await bounded('systemInfo()', () => mini.systemInfo(), STEP_TIMEOUT_MS)
+    // systemInfo() 是「通道是否真的活着」的最小探针：握手成功但这一步失败，说明小程序侧不响应，
+    // 而不是 Tab 期望有问题——必须把这一点写清楚，且此时 platform 未知、不得硬说是真机或模拟器。
+    let info
+    try {
+      info = await bounded('systemInfo()', () => mini.systemInfo(), STEP_TIMEOUT_MS)
+    } catch (error) {
+      fail('自动化通道已建立，但目标不响应：systemInfo() 失败 —— ' + (error && error.message ? error.message : String(error)) + '\n' +
+        '  端点：' + WS_ENDPOINT + '（端口可连接，握手成功）\n' +
+        '  当前目标：**尚未取得 platform ⇒ 无法判定是真机还是模拟器**（真机 android/ios 与模拟器 devtools 的结论不可互相顶替）\n' +
+        '  含义：WebSocket 通、开发者工具也在，但小程序侧没有回应最基础的 automator 调用（systemInfo／currentPage 都不回应）。\n' +
+        '  常见原因：真机息屏或小程序被挂起/切到后台、真机调试会话已断开或被另一个自动化会话顶掉、调试会话刚结束需要重新「真机调试」。\n' +
+        '  处理：把小程序切到前台并保持屏幕常亮后重跑。**这条与 Tab 期望无关，不要据此改本脚本的 PAGE_MARKER 或 app.json。**')
+    }
     target = describeTarget(info)
     console.log(JSON.stringify({ platform: info && info.platform, SDKVersion: info && info.SDKVersion }))
     console.log('目标：' + target.label)
