@@ -694,8 +694,49 @@ try {
       true,
       'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）',
     );
-    for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference', 'ocr/service']) {
+    // ⚠ 2026-10-16（指挥裁定 `.pg17/dispatch/ruling-ocr-http-import-guard.md`）**清单收窄（保留意图）**：
+    //   原清单含 `'ocr/service'`（写于 `#104`/`8c9ace8`，当时该行还是 `{ guards }` 的**零端口注入**时代）；
+    //   `#181`（`b6f8c1b`）为装配 `history` 端口必须在 `app.ts:33`
+    //   `import { createUnwiredOcrTerminalHistoryPort, type … } from './ocr/service.ts'`，使整条 `'ocr/service'` 为假红
+    //   （**非**适配器泄漏：同域端口工厂所在地，不接触 provider/store/media）。
+    //   裁定：**不整条删掉**，收窄为"**只放行 `createUnwiredOcrTerminalHistoryPort` 这一个符号**"——
+    //   既放行 `#181` 必需的那一个 import，又**仍然拦住** `ocr/service` 的**其它符号**（`createOcrService`、
+    //   `createOcrServiceForMode`、…）与 `ocr/store`、`ocr/provider`、`ocr/media` 的**任何** import（含符号级）。
+    for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);
+    }
+    // 收窄后的符号级断言：`./ocr/…` 的**每一条** import 都必须是白名单符号（白名单外一律红 ⇒ 护栏未丢）。
+    // 口径：只钉**运行时值符号**——`import type { … }` 与 `{ type X }` 内联类型说明符**运行时被擦除**，
+    // 不产生任何端口/适配器引用，故不计入；**值符号**白名单恰为 1 个（裁定授权的那个端口工厂）。
+    const OCR_SERVICE_ALLOWED_SYMBOLS = ['createUnwiredOcrTerminalHistoryPort'];
+    const ocrDomainImports = [...appText.matchAll(/^[^\S\r\n]*import(\s+type)?\s+([^'\r\n]*?)\s+from\s+'\.\/ocr\/([A-Za-z0-9._/-]+)';/gm)];
+    assert.ok(ocrDomainImports.length > 0, 'app.ts 应有经窄口白名单校验的 ./ocr/** import（装配路径）');
+    for (const [, typeOnly, clause, moduleName] of ocrDomainImports) {
+      if (moduleName !== 'service.ts') {
+        assert.fail(`app.ts 不得 import ./ocr/${moduleName}（装配路径不得接触适配器；仅 ./ocr/service.ts 的该端口工厂符号经裁定放行）`);
+      }
+      if (typeOnly) continue; // `import type { … }` ⇒ 运行期全部擦除，不构成端口/适配器引用
+      // 逐条取**运行时值说明符**：`{ … }` 内的具名说明符逐个校验（剥掉 `type ` 前缀即被擦除者，
+      // `X as Y` 取原始符号 X）；`}` 之后的 default 说明符同样校验。**不得**只看 `}` 之后
+      // ——否则具名导入（含非法符号）会被整体漏过，护栏名存实亡（负控制实测已抓到此盲点）。
+      const braceStart = clause.indexOf('{');
+      const braceEnd = clause.lastIndexOf('}');
+      const specifiers = [];
+      if (braceStart !== -1 && braceEnd > braceStart) {
+        specifiers.push(...clause.slice(braceStart + 1, braceEnd).split(','));
+        specifiers.push(...clause.slice(braceEnd + 1).split(','));
+      } else {
+        specifiers.push(clause);
+      }
+      for (const specifier of specifiers) {
+        const trimmed = specifier.trim();
+        if (trimmed === '' || trimmed.startsWith('type ')) continue;
+        const name = trimmed.split(/\s+as\s+/)[0].trim();
+        assert.ok(
+          OCR_SERVICE_ALLOWED_SYMBOLS.includes(name),
+          `app.ts 对 ./ocr/service.ts 只允许 import ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}，实际出现值符号：${name}（收窄后的护栏：其它符号仍是服务构造器/适配器泄漏面）`,
+        );
+      }
     }
     const providerText = readFileSync(new URL('../../services/api/src/ocr/provider.ts', import.meta.url), 'utf8');
     for (const network of ['fetch(', 'node:https', 'node:http', 'undici', 'axios', 'XMLHttpRequest']) {
