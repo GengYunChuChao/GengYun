@@ -10,11 +10,12 @@
 | 分支 | `docs/gy-i01-freeze-record` |
 | 基线 `upstream/main` | `24fac034276c26b0e870e8ea8ea7f4349a8f8a89`（短 `24fac03`；`git fetch upstream --prune` 后读取） |
 | 同点 `origin/main` | `24fac03`（与基线同一提交，故 `origin/main...HEAD` 的三点差集可信） |
-| 取证机 | Windows（`Microsoft Windows 11 家庭版`），PowerShell；本机 Node `v24.16.0`、npm `11.13.0`、Python `3.14.3` |
+| 取证机 | `Microsoft Windows 11 家庭版 中文版`（NT `10.0.26200.0`），取证 shell 为 **Windows PowerShell 5.1.26100.8875**；本机 Node `v24.16.0`、npm `11.13.0`、Python `3.14.3` |
 | **未 push** | 是（写手不持有 GitHub 凭据；推送与建 PR 由指挥执行） |
 | **未取得 CI 读数** | 是（本分支无 CI 运行记录；本文**不把 CI 配置当成已验证**） |
 
-原始日志（UTF-8）另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\`（`test-docs.txt`、`test-contract.txt`、`verify-status.txt`、`verify-status-runtime.txt`、`hashes.txt`、`npm-ls.txt`、`versions.txt`、`ui-adaptive-baseline.txt`）。
+原始日志（UTF-8）另存**仓库外** `E:\GengYunCommander\.pg17\tmp-i01-freeze\`：`test-docs.txt`、`test-docs-after.txt`、`test-docs-final.txt`、`test-contract.txt`、`test-contract-final.txt`、`validate-contracts.txt`、`test-contracts-py.txt`、`verify-status.txt`、`verify-status-runtime.txt`、`verify-status-runtime-final.txt`、`hashes.txt`、`npm-ls.txt`、`versions.txt`、`ui-adaptive-baseline.txt`、`gate-diff.txt`、`selfcheck-a.txt`、`selfcheck-b.txt`。
+本记录在基线 `24fac03` 之上**只新增这一份文档**（`git diff --name-only upstream/main...HEAD` 实测见 §6.1）；该提交的短 SHA 以回传 handoff 为准。
 
 ## 1 侦察结论：已存在、可直接复用 vs 缺失、需本次补
 
@@ -116,7 +117,7 @@ e78510c0a65b4d186ae870cd4902bf910d0fc55c
 
 ## 3 可复核命令与本次实测输出
 
-### 3.1 契约一致性（CI 也跑的两条离线命令）
+### 3.1 契约一致性（CI 也跑的离线命令）
 
 ```
 $ npm run test:contract
@@ -140,7 +141,23 @@ $ npm run test:contract
 # EXITCODE: 0
 ```
 
-⇒ 该命令验的是**代码与契约一致**，**不验指纹、也不证明契约未被改动**（见 §6）。
+⇒ 该命令验的是**代码与契约一致**，**不验指纹、也不证明契约未被改动**（见 §5）。
+
+`development-docs.yml:38-39` 还会在 CI 跑两条纯 Python 离线检查，本次也实跑留档：
+
+```
+$ python3 tools/validate_contracts.py
+PASS: 112 operations; contract consistency; 29 fixtures; 30 media traces; 8 knowledge roundtrips (design only, not runtime tests)
+# EXITCODE: 0
+
+$ python3 tools/test_contracts.py
+... Ran 8 tests in 0.163s
+
+OK
+# EXITCODE: 0
+```
+
+⇒ 二者验的是**契约自身一致性与检查器负例**（设计层，非运行层），同样**不比对文件指纹**。
 
 ### 3.2 契约覆盖与装配（独立命令，未接 CI）
 
@@ -201,10 +218,10 @@ $ git diff --name-only origin/main -- packages/contracts/
 | Node | `package.json:8`、`services/api/package.json:10`、`apps/admin/package.json:9` | `>=24.16.0 <25` | `v24.16.0` | `node --version` | 满足（下界恰好命中） |
 | npm | `package.json:9` | `>=11.13.0` | `11.13.0` | `npm --version` | 满足（下界恰好命中） |
 | Python | `README.md:27` | `3.11+`（文档检查用） | `3.14.3` | `python3 --version` | 满足 |
-| 平台 | `packages/contracts/runtime-baseline.json`（`platform`） | 未约束 | Windows 11 家庭版 | — | 仅登记 |
+| 平台 | `packages/contracts/runtime-baseline.json`（`platform` 记 `Windows x64`） | 未约束 | `Microsoft Windows 11 家庭版 中文版`，NT `10.0.26200.0` | `(Get-CimInstance Win32_OperatingSystem).Caption`、`[System.Environment]::OSVersion` | 仅登记（非兼容结论） |
 | 依赖（API） | `services/api/package.json:21-22` | fastify `5.12.5`、pg `8.23.1` | 5.12.5、8.23.1 | `npm ls … --depth=0` | 一致 |
 | 依赖（后台） | `apps/admin/package.json:18-23` | vue `3.5.43`、@vitejs/plugin-vue `6.0.9`、@vue/compiler-sfc `3.5.43`、vite `7.3.6` | 同左，逐项一致 | `npm ls … --depth=0` | 一致 |
-| 依赖（根） | `package.json:28-31` | typescript `5.9.3`、@types/node `24.19.1` | typescript 5.9.3 | `npm ls … --depth=0` | 一致（@types/node 未列入本次查询） |
+| 依赖（根） | `package.json:28-31` | typescript `5.9.3`、@types/node `24.19.1` | typescript 5.9.3（实测）；**@types/node 未测** | `npm ls … --depth=0` | typescript 一致；@types/node 列为未取得 |
 | 锁文件策略 | `package-lock.json`（已提交）、`.gitignore` 无锁文件例外 | `npm ci` 锁文件安装 | `lockfileVersion = 3`、156 条 `packages`、`npm ci` exit 0（103 包） | `node -e "…package-lock.json…"`、`npm ci` | 成立 |
 | 微信基础库 | `project.config.json:7`、`miniprogram/project.config.json:27` | `libVersion: 3.17.3` | **本次未实测**（本片未开微信开发者工具）；历史实测见 4.3 | — | **未取得** |
 
@@ -212,7 +229,7 @@ $ git diff --name-only origin/main -- packages/contracts/
 
 | 项 | 位置（file:line） | CI 配置值 | 本次是否实跑 | 说明 |
 | --- | --- | --- | --- | --- |
-| Node | `.github/workflows/engineering-shell.yml:38,52,66,80,94` | `node-version: '24.16.0'` | **否** | 六个 job（docs/static/unit/contract/evaluation/build）各自内联；与 `engines` 下界字面相同 |
+| Node | `.github/workflows/engineering-shell.yml:38,52,66,80,94` | `node-version: '24.16.0'` | **否** | **五个** job（static/unit/contract/evaluation/build）各自内联；同文件的 `docs` job（`:17-27`）**不装 Node**。与 `engines` 下界字面相同 |
 | Node | `.github/workflows/local-wechat.yml:53` | `node-version: '24.16.0'` | **否** | 该 workflow **只在指定 paths 变更时触发**（`:4-20`、`:23-39`） |
 | Python | `.github/workflows/engineering-shell.yml:24`、`.github/workflows/development-docs.yml:36` | 仅 `python3 --version`（**未锁版本**） | **否** | 用 runner 自带 `python3`，无 `setup-python`、无版本 pin |
 | npm | 无 | CI 无 npm 版本 pin | **否** | 由 Node 发行包自带 npm 决定 |
@@ -242,7 +259,24 @@ $ git diff --name-only origin/main -- packages/contracts/
 改法：把 §2.2 `states.json` 的 sha256 末位 `e` 改成 `f`（未提交，仅工作区）。
 运行的检查：`npm run test:docs`、`npm run test:contract`、`node --test tests/ui-adaptive.test.mjs`、`git diff --check`。
 
-结果（实测）：**全部仍然 PASS／exit 0**。
+结果（实测原始输出摘要）：
+
+```
+# 指纹已在工作区改错一位（states.json 末位 e → f）
+$ npm run test:docs
+PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+# EXITCODE: 0
+$ npm run test:contract
+ℹ pass 6   ℹ fail 0
+# EXITCODE: 0
+$ node --test tests/ui-adaptive.test.mjs
+ℹ pass 26   ℹ fail 0
+# EXITCODE: 0
+$ git diff --check
+# EXITCODE: 0
+```
+
+⇒ **全部仍然 PASS／exit 0**（无任何检查变红）。
 
 ⇒ **本记录登记的指纹没有任何机器门禁校验**。仓库现有的契约相关自动检查（`tests/contract/*.test.mjs`、`tools/validate_contracts.py`、`tools/test_contracts.py`、`tools/verify-contract-status.mjs`、`tests/ui-adaptive.test.mjs`）**都不读本文档的哈希值**。
 **因此本文档的指纹只能靠人工复核**：按 §2.1 命令重算并与 §2.2 逐字符比对。**本记录不暗示存在自动校验**。
@@ -251,8 +285,30 @@ $ git diff --name-only origin/main -- packages/contracts/
 
 做法（**临时**，随后完全回退）：在 `packages/contracts/states.json` 末尾追加一个空格 ⇒ 提交一个临时提交 ⇒ 跑 `node --test tests/ui-adaptive.test.mjs`。
 
-预期与实测：断言 `tests/ui-adaptive.test.mjs:320` 报 `不得修改冻结契约`，测试**变红（exit 1）**。
-随后 `git reset --hard 24fac03` 回退该临时提交，确认 `git log -1` 回到 `24fac03`、`git status --porcelain` 为空。
+实测原始输出（节选）：
+
+```
+✖ 本任务未改动冻结契约与本地配置隔离规则 (74.601ms)
+ℹ tests 26
+ℹ pass 25
+ℹ fail 1
+✖ failing tests:
+  AssertionError [ERR_ASSERTION]: 不得修改冻结契约
+      at TestContext.<anonymous> (file:///…/tests/ui-adaptive.test.mjs:320:10)
+# EXITCODE: 1
+```
+
+⇒ 断言 `tests/ui-adaptive.test.mjs:320` 报 `不得修改冻结契约`，测试**变红（exit 1）**。
+随后 `git reset --hard <本片文档提交>` 回退该临时提交，并复核：
+
+```
+$ git log --oneline -1
+docs(GY-I01): 补正式契约与运行版本冻结记录（含实测指纹与可复核命令）(Refs #1)
+$ git status --porcelain      # 空
+$ git diff --name-only origin/main -- packages/contracts/   # 空 ⇒ 零差异
+$ git hash-object packages/contracts/states.json
+e78510c0a65b4d186ae870cd4902bf910d0fc55c    # 与 §2.2 blob 列一致，契约已还原
+```
 
 ⇒ **"不得修改冻结契约"这条有机器门禁，且实测可被触发**。但有三点限制，**不能当成"契约指纹有门禁"**：
 
@@ -276,6 +332,8 @@ $ git diff --name-only origin/main -- packages/contracts/
 | --- | --- | --- | --- |
 | 文档检查 | `npm run test:docs` | **0** | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
 | 契约一致性 | `npm run test:contract` | **0** | `ℹ tests 6 / pass 6 / fail 0` |
+| 契约自身一致性（设计层） | `python3 tools/validate_contracts.py` | **0** | `PASS: 112 operations; contract consistency; 29 fixtures; 30 media traces; 8 knowledge roundtrips (design only, not runtime tests)` |
+| 契约检查器负例 | `python3 tools/test_contracts.py` | **0** | `Ran 8 tests … OK` |
 | 契约覆盖与装配 | `node tools/verify-contract-status.mjs --runtime` | **0** | 112 操作、99 装配、13／86／13、8 维度、中文表一致；stub 装配一致 |
 | 改动面 | `git diff --name-only upstream/main...HEAD` | — | 见 §6.1（**只 1 份文档**） |
 | 工作区 | `git status --porcelain` | — | 空（`node_modules` 被忽略，未入库） |
@@ -295,18 +353,14 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 ```
 $ git diff --name-only upstream/main...HEAD
 docs/verification/gy-i01-contract-runtime-freeze-20261015.md
+
+$ git status --porcelain          # 空
+$ git diff --check                # 无输出
+# EXITCODE(diff --check): 0
 ```
 
-```
-$ git diff --cached --stat          # 提交前（暂存区）实测
- .../gy-i01-contract-runtime-freeze-20261015.md     | 342 +++++++++++++++++++++
- 1 file changed, 342 insertions(+)
-
-$ git diff --cached --numstat
-342	0	docs/verification/gy-i01-contract-runtime-freeze-20261015.md
-```
-
-（除该文件外**无任何其他改动**；`git diff --name-only upstream/main...HEAD` 的实测输出见上一段，提交后同集。）
+（上为**提交后**实测；`git diff --name-only` 结果只有本文件一项，除该文件外**无任何其他改动**。
+`git diff --stat upstream/main...HEAD` 的插入行数**不在本文件内自引用**——该数字会随本文件自身增删而变，故只在回传 handoff 中登记最终实测值。）
 
 ⇒ 只新增 1 份文档，**未改** `packages/contracts/**`、`services/**`、`package.json`、`.github/workflows/**`、`README.md`、`AGENTS.md`。故**本次新增 docs 会触发** `.github/workflows/development-docs.yml`（`paths` 含 `docs/**`，`:5`）——但**本片未取得该 workflow 的运行读数**（§4.2）。
 
