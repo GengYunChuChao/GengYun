@@ -191,7 +191,9 @@ Page({
     if (!p.crop_id || !p.region_code) { this.setData({ message: '请先设置档案。' }); return }
     wx.navigateTo({ url: '/pages/reference/reference?crop_id=' + encodeURIComponent(p.crop_id) + '&region_code=' + encodeURIComponent(p.region_code) })
   },
-  onLogin: function () { wx.reLaunch({ url: '/pages/login/login' }) },
+  // GY-I04 6-A：与 page-gate 同一登录口径（登记本页为返回目标 → reLaunch 登录页），
+  // 登录成功后回到本页；门禁拦截语义不变（未登录仍被拦，按钮不放行任何数据）。
+  onLogin: function () { auth.requireLogin(function () {}) },
   logout: function () {
     const self = this; pageGate.cancel(this)
     auth.logout(function (result) {

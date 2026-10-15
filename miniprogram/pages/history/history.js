@@ -121,7 +121,9 @@ Page({
     })
   },
 
+  // GY-I04 6-A：与 page-gate 同一登录口径（登记本页为返回目标 → reLaunch 登录页），
+  // 登录成功后回到本页；门禁拦截语义不变（未登录仍被拦，按钮不放行任何数据）。
   onLogin: function () {
-    wx.navigateTo({ url: '/pages/login/login' })
+    auth.requireLogin(function () {})
   }
 })

@@ -53,6 +53,13 @@ Page({
   onCropChange: function (event) { this.setData({ cropIndex: Number(event.detail.value) }) },
   onRegionChange: function (event) { this.setData({ regionIndex: Number(event.detail.value) }) },
 
+  // GY-I04 6-A：游客态的「去登录」按钮必须真的去登录（此前绑到 onBack：只回社区列表，
+  // 与文案不符）。与 page-gate / communitydetail 同一口径：登记本页为返回目标 → reLaunch 登录页，
+  // 登录成功后回本页；门禁拦截语义不变（未登录仍被拦，不放行任何提交）。
+  onLogin: function () {
+    require('../../utils/auth').requireLogin(function () {})
+  },
+
   onBack: function () {
     navigation.openTarget('/pages/community/community', true, function () {})
   },
