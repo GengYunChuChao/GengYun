@@ -19,7 +19,7 @@ const TARGET = '11111111-1111-4111-8111-111111111111';
 const future = () => new Date(Date.now() + 3600_000).toISOString();
 const flush = () => new Promise((r) => setImmediate(r));
 
-function fixture({ mode = 'local' } = {}) {
+function fixture({ mode = 'local', route = 'pages/favorites/favorites' } = {}) {
   const requests = [];
   const storage = new Map();
   const wx = {
@@ -29,11 +29,14 @@ function fixture({ mode = 'local' } = {}) {
     request: (o) => requests.push(o),
     showModal: (o) => o.success({ confirm: true }),
     navigateTo: () => {},
+    navigateBack: () => {},
+    redirectTo: () => {},
     reLaunch: () => {},
     switchTab: () => {},
+    setClipboardData: () => {},
     showToast: () => {}
   };
-  const page = { route: 'pages/favorites/favorites', options: {}, data: {}, setData(p) { Object.assign(this.data, p) } };
+  const page = { route, options: {}, data: {}, setData(p) { Object.assign(this.data, p) } };
   const cache = new Map();
   function load(path) {
     path = resolve(path);
@@ -327,4 +330,226 @@ test('级联披露（非契约标记）三态文案不同，未接线明确说�
   assert.notEqual(unwired, f.history.cascadeNote('initiated'));
   assert.match(f.history.cascadeNote(null), /未取得/);
   assert.ok(f.history.messageFor({ code: 'NOT_FOUND' }).length > 0);
+});
+
+// ===========================================================================
+// GY-I16 切片A：**详情页**收藏／取消收藏的接线（合成响应驱动页面实例；
+// 仍**不是**真机、微信开发者工具或渲染证据 —— 本片按要求未 attach 9420）。
+//
+// 覆盖断点 4-A（详情页没有任何收藏入口）与 4-B（从收藏进详情后无法就地取消）。
+// ===========================================================================
+
+const DETAIL_PAGE = root + '/miniprogram/pages/knowledgedetail/knowledgedetail.js';
+
+/** `GET /knowledge/{id}` 投影（Knowledge.type 闭集取值由用例指定）。 */
+function knowledgeItem(overrides = {}) {
+  return Object.assign({
+    id: TARGET,
+    revision: 7,
+    type: 'species',
+    title: '稻飞虱的识别与田间核对',
+    body: '正文（合成演示内容，不代表真实资料）。',
+    source: {
+      id: UUID_B,
+      version: 'v1.0.0',
+      title: '示范资料来源',
+      url: 'https://example.org/knowledge/demo-1',
+      publisher: '示范出版方',
+      source_kind: 'verified_seed',
+      evidence_kind: 'research',
+      validity: 'valid',
+      review_status: 'verified',
+      updated_at: '2026-10-01T00:00:00.000Z'
+    },
+    conditions: null,
+    reference_state: 'available',
+    dose_cards: []
+  }, overrides);
+}
+
+/**
+ * 打开详情页到"资料已读到"这一步：门禁核实（GET /auth/session，函数内作答）
+ * → GET /knowledge/{id}（函数内作答）→ 收藏状态回填请求（**留给用例作答**）。
+ */
+async function openDetailPage(f, item) {
+  f.page.onLoad({ id: item.id });
+  f.page.onShow();
+  const gate = f.requests.filter((r) => r.url.endsWith('/auth/session')).at(-1);
+  gate.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: future() } } });
+  await flush();
+  const detail = f.requests.filter((r) => r.url.includes('/knowledge/')).at(-1);
+  detail.success({ statusCode: 200, data: { data: item, meta: meta() } });
+  await flush();
+  return f.requests.filter((r) => r.url.includes('/favorites')).at(-1);
+}
+
+function detailFixture() {
+  const f = fixture({ route: 'pages/knowledgedetail/knowledgedetail' });
+  f.load(DETAIL_PAGE);
+  return f;
+}
+
+const favoriteRequests = (f) => f.requests.filter((r) => r.url.includes('/favorites'));
+
+test('详情页收藏（切片A，断点4-B）：进详情即按服务端收藏回填，可就地取消并带 If-Match／幂等键', async () => {
+  const f = detailFixture();
+  assert.equal(await login(f), true);
+  const item = knowledgeItem();
+  await openDetailPage(f, item);
+  // read() 的既有语义不得被收藏接线改变。
+  assert.equal(f.page.data.stateKind, 'ready');
+  assert.equal(f.page.data.status, '已重新读取当前资料。');
+  assert.equal(f.page.data.item.id, item.id);
+
+  // 回填：逐次读 GET /favorites（第一页，服务端上限 limit=50）。
+  const scan = f.requests.at(-1);
+  assert.equal(scan.method, 'GET');
+  assert.match(scan.url, /\/favorites\?limit=50$/);
+  assert.equal(scan.header.authorization, 'Bearer synthetic-i16-token');
+  // 服务端当前对收藏目标**恒派生 unavailable**（可见性端口未接线）——
+  // 本页不得因此把收藏入口判为失败，也不得据此展示任何可用性结论。
+  answer(f, {
+    items: [favorite({
+      id: UUID_A, revision: 3,
+      target_ref: { type: 'species', id: item.id, revision: item.revision },
+      reference_state: 'unavailable',
+      unavailable_reason: '目标已下架、已失效、已隐藏、已删除或不属于当前账号'
+    })],
+    next_cursor: null
+  });
+  await flush();
+  assert.equal(f.page.data.favSupported, true);
+  assert.equal(f.page.data.favState, 'favorited');
+  assert.equal(f.page.data.favLabel, '取消收藏');
+  assert.equal(f.page.data.favNote, '已收藏该资料。');
+  assert.equal(f.page.data.favBusy, false);
+  assert.equal(/不可用|不存在/.test(f.page.data.favNote), false, '收藏入口不得复述或推断可用性结论');
+
+  // 就地取消（断点 4-B 的正解）：DELETE /favorites/{服务端给的 id} + If-Match + Idempotency-Key。
+  const before = f.requests.length;
+  f.page.toggleFavorite();
+  assert.equal(f.requests.length, before + 1, '取消收藏只发一条请求');
+  const remove = f.requests.at(-1);
+  assert.equal(remove.method, 'DELETE');
+  assert.ok(remove.url.endsWith('/favorites/' + UUID_A));
+  assert.equal(remove.header['If-Match'], '"3"');
+  assert.ok(remove.header['Idempotency-Key'].length >= 8);
+  answer(f, { accepted: true });
+  await flush();
+  assert.equal(f.page.data.favState, 'none');
+  assert.equal(f.page.data.favLabel, '收藏');
+  assert.equal(f.page.data.favNote, '已取消收藏。');
+  assert.equal(f.page.data.favBusy, false);
+});
+
+test('详情页收藏（切片A，断点4-A）：未收藏时发 POST /favorites，返回行决定下一次取消的 id 与 revision', async () => {
+  const f = detailFixture();
+  assert.equal(await login(f), true);
+  const item = knowledgeItem({ type: 'herbicide', revision: 5 });
+  await openDetailPage(f, item);
+  answer(f, { items: [], next_cursor: null });
+  await flush();
+  assert.equal(f.page.data.favState, 'none');
+  assert.equal(f.page.data.favLabel, '收藏');
+
+  f.page.toggleFavorite();
+  const create = f.requests.at(-1);
+  assert.equal(create.method, 'POST');
+  assert.ok(create.url.endsWith('/favorites'));
+  assert.deepEqual(JSON.parse(JSON.stringify(create.data)), { target_ref: { type: 'herbicide', id: item.id, revision: 5 } });
+  assert.ok(create.header['Idempotency-Key'].length >= 8);
+  assert.equal(create.header['If-Match'], undefined, '新建收藏不得携带 If-Match');
+  answer(f, favorite({ id: UUID_B, revision: 4, target_ref: { type: 'herbicide', id: item.id, revision: 5 } }), 201, { ETag: '"4"' });
+  await flush();
+  assert.equal(f.page.data.favState, 'favorited');
+  assert.equal(f.page.data.favLabel, '取消收藏');
+
+  // 取消必须用**服务端返回行**的 id/revision，不得用资料自身的 revision(5) 冒充。
+  f.page.toggleFavorite();
+  const remove = f.requests.at(-1);
+  assert.equal(remove.method, 'DELETE');
+  assert.ok(remove.url.endsWith('/favorites/' + UUID_B));
+  assert.equal(remove.header['If-Match'], '"4"');
+  answer(f, { accepted: true });
+  await flush();
+  assert.equal(f.page.data.favState, 'none');
+  assert.equal(f.page.data.favNote, '已取消收藏。');
+});
+
+test('详情页收藏（切片A）：闭集外目标（static_region）不给入口、不发任何收藏请求', async () => {
+  const f = detailFixture();
+  assert.equal(await login(f), true);
+  const item = knowledgeItem({ type: 'static_region' });
+  assert.equal(await openDetailPage(f, item), undefined);
+  assert.equal(favoriteRequests(f).length, 0, '闭集外目标不得回填收藏');
+  assert.equal(f.page.data.favSupported, false);
+  assert.equal(f.page.data.favState, 'unsupported');
+  assert.match(f.page.data.favNote, /不在收藏范围内/);
+
+  // 即便被误触发也不得发请求（闭集在本地拦住，服务端 schema 只作第二道）。
+  const before = f.requests.length;
+  f.page.toggleFavorite();
+  assert.equal(f.requests.length, before);
+  assert.equal(f.page.data.favState, 'unsupported');
+});
+
+test('详情页收藏（切片A，验收3）：未登录时页面侧门禁拦住，不发任何收藏请求（接口侧 401 见 favorites-http）', async () => {
+  const f = detailFixture();
+  f.page.onLoad({ id: TARGET });
+  f.page.onShow();
+  await flush();
+  assert.equal(f.page.data.gatePassed, false);
+  assert.equal(f.page.data.item, null);
+  assert.equal(f.page.data.favState, 'idle');
+  assert.equal(f.page.data.favSupported, false);
+  assert.equal(f.page.data.favBusy, false);
+  assert.equal(f.requests.length, 0, '未经服务端核实的会话不得发出任何请求');
+  assert.equal(favoriteRequests(f).length, 0);
+});
+
+test('详情页收藏（切片A）：回填失败如实报"未取得"，不臆断已收藏／未收藏；再点收藏由服务端去重兜底', async () => {
+  const f = detailFixture();
+  assert.equal(await login(f), true);
+  const item = knowledgeItem();
+  await openDetailPage(f, item);
+  const scan = f.requests.at(-1);
+  assert.match(scan.url, /\/favorites/);
+  scan.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '收藏持久存储尚未接线', retryable: true } } });
+  await flush();
+  assert.equal(f.page.data.favState, 'unknown');
+  assert.equal(f.page.data.favSupported, true);
+  assert.equal(f.page.data.favLabel, '收藏');
+  assert.match(f.page.data.favNote, /不会用本地数据顶替/);
+  assert.equal(f.page.data.favBusy, false);
+
+  // 未知状态下点「收藏」⇒ POST；服务端 `(user,target)` 唯一索引兜底去重，回既有行。
+  f.page.toggleFavorite();
+  const create = f.requests.at(-1);
+  assert.equal(create.method, 'POST');
+  answer(f, favorite({ id: UUID_A, revision: 2, target_ref: { type: 'species', id: item.id, revision: item.revision } }), 201, { ETag: '"2"' });
+  await flush();
+  assert.equal(f.page.data.favState, 'favorited');
+  assert.equal(f.page.data.favLabel, '取消收藏');
+
+  // 取消失败（版本冲突）不得显示成"已取消"，也不得残留"已收藏"。
+  f.page.toggleFavorite();
+  const remove = f.requests.at(-1);
+  assert.equal(remove.method, 'DELETE');
+  remove.success({ statusCode: 409, data: { error: { code: 'REVISION_CONFLICT', message: '收藏版本已变化，请刷新后重试', retryable: false } } });
+  await flush();
+  assert.equal(f.page.data.favState, 'unknown');
+  assert.equal(f.page.data.favLabel, '收藏');
+  assert.match(f.page.data.favNote, /收藏已被更新/);
+});
+
+test('详情页收藏（切片A，验收4）：不接可见性端口 ⇒ 页面不做"可用／查看资料"断言，也不读收藏的 reference_state', () => {
+  const js = readFileSync(DETAIL_PAGE, 'utf8');
+  const wxml = readFileSync(root + '/miniprogram/pages/knowledgedetail/knowledgedetail.wxml', 'utf8');
+  assert.equal(/reference_state|describeFavorite/.test(js), false, '详情页不得消费收藏的可见性字段');
+  assert.equal(/查看资料/.test(js + wxml), false, '详情页不得展示资料跳转入口');
+  assert.equal(/canOpen/.test(js), false);
+  assert.match(wxml, /不代表已核对、已使用或已确认适用性/);
+  assert.match(wxml, /bindtap="toggleFavorite"/);
+  // 收藏卡片与既有读取状态机是**两套**独立字段。
+  assert.match(js, /favSupported: false, favState: 'idle', favLabel: '收藏'/);
 });
