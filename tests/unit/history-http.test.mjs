@@ -16,6 +16,7 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { STUB_APP_ID, STUB_LOOKUP_KEY, STUB_OPENID_PREFIX, computeSubjectLookup } from '../../services/api/src/auth/wechat.ts';
 import { createMemoryRecognitionStore } from '../../services/api/src/recognitions/store.ts';
+import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
 import { createSubstituteMediaPort } from '../../services/api/src/recognitions/media.ts';
 import { createStubRecognitionProvider } from '../../services/api/src/recognitions/provider.ts';
 import { createUnwiredHistoryCascadePort, createWiredHistoryCascadePort } from '../../services/api/src/history/cascade.ts';
@@ -80,6 +81,48 @@ async function waitForTerminal(base, actor, jobId) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+/** 轮询 `GET /jobs/{id}` 直到状态落在给定集合内（用于"任务已 running，可以取消了"）。 */
+async function waitForStateIn(base, actor, jobId, states, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const response = await fetch(`${base}/api/v1/jobs/${jobId}`, { headers: { authorization: `Bearer ${actor.token}` } });
+    assert.equal(response.status, 200, `GET /jobs/${jobId}`);
+    const body = await response.json();
+    if (states.includes(body.data.state)) return body.data;
+    if (Date.now() > deadline) throw new Error(`等待任务状态 ${states.join('/')} 超时：${body.data.state}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/** `POST /jobs/{id}/cancel`（契约要求 `Idempotency-Key` + `If-Match`）。 */
+async function cancelJob(base, actor, jobId, revision, key) {
+  const response = await fetch(`${base}/api/v1/jobs/${jobId}/cancel`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${actor.token}`,
+      'idempotency-key': key,
+      'if-match': `"${revision}"`,
+    },
+  });
+  const text = await response.text();
+  return { status: response.status, body: text === '' ? null : JSON.parse(text) };
+}
+
+/** 可显式放行的提供者调用（用于构造"取消之后迟到的终态"这一条真实路径）。 */
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+const VALID_CANDIDATES = [
+  { species_id: 'synthetic_weed_a', rank: 1, model_score: 0.81 },
+  { species_id: 'synthetic_weed_b', rank: 2, model_score: 0.42 },
+  { species_id: 'synthetic_weed_c', rank: 3, model_score: 0.17 },
+];
 
 /**
  * 替身提供者的分桶（`recognitions/provider.ts`）：`bucketOf(media_id, 4) === 0` ⇒ 3 条有分数候选
@@ -600,6 +643,16 @@ test('历史HTTP·接线：失败/超时也各追加 1 条，job_state 与任务
     assert.notEqual(item.job_state, 'succeeded', '失败/超时绝不因写了历史而变成成功');
     assert.equal(item.kind, 'recognition');
   }
+
+  // F2（对抗性审查登记项，最短落点）：`failed`/`timed_out` **不建识别记录行**，因此这两类历史行的
+  // `target_ref` 指向不存在的记录（`revision` 是占位 1）⇒ 详情面**如实 404 `NOT_FOUND`**：
+  // 「列表可见、详情 404」，客户端 `historydetail.js:129-139` 走 `errorText` 分支
+  // （`history-api.js:395` 的文案）如实报错，**不崩、不泄露、不用链接里的旧状态顶替**。
+  for (const [label, entry] of [['failed', failed], ['timed_out', timedOut]]) {
+    const detail = await h.call('GET', `/api/v1/recognitions/${entry.body.data.target_ref.id}`, actor);
+    assert.equal(detail.status, 404, `${label} 历史行的详情面必须是 404（该终态不建识别记录行）`);
+    assert.equal(detail.body.error.code, 'NOT_FOUND');
+  }
 });
 
 test('历史HTTP·接线：OCR 终态同样追加 1 条（kind=ocr，详情面走 GET /ocr/{id}）', async (t) => {
@@ -694,4 +747,152 @@ test('历史HTTP·接线：real 模式仍整域 503（不放宽守卫），且�
   assert.equal(page.body.error.code, 'PROVIDER_UNAVAILABLE');
   // 端口如实标注自身未接线（**不**回退替身、不伪造一片可用历史）。
   assert.equal(real.app.recognitionService.describe().historyPort, 'unwired');
+});
+
+// ---------------------------------------------------------------------------
+// 追加返修（`.pg17/dispatch/slice3C-followup.md` §2-2/§2-3/§2-5）：补两道**回归防线**＋取消口径用例。
+//
+// 这三条锁的都是"实现正确但当时无用例"的不变量（对抗性审查 F3/F4/F5）：
+//   F3：「`store.commitTerminal` 未成功（返回 `null`，例如任务已被取消）⇒ **不得**投递历史行」；
+//   F4：「装配层传下来的 `event_key` **必须确定性**，且幂等**不依赖**第二道目标去重」；
+//   F5：「`cancelled` 终态**不产行**」（口径以"是否产出识别记录"为准：失败/超时**产行**，取消不产）。
+// 三条都打**生产装配**的完整通路（登录 → 受理 → 异步执行/取消 → 终态提交 → 历史端口）。
+// ---------------------------------------------------------------------------
+
+test('历史HTTP·接线·F3：取消后迟到的终态（CAS 失败）不得投递历史行 —— 含正控制对照', async (t) => {
+  const MEDIA_KEEP = mediaIdForStubBucket(0);
+  const MEDIA_CANCEL = '00000000-0000-4000-8000-0000000000e1';
+  /** 按媒体引用分派的可控提供者：两个调用都**悬挂**，由用例在取消之后显式放行。 */
+  const gates = new Map();
+  const h = await fixture(t, {
+    jobDeadlineMs: 5000,
+    recognitionMedia: createSubstituteMediaPort(),
+    recognitionProvider: {
+      executionMode: 'stub',
+      modelVersion: 'stub-history-wire-deferred-v1',
+      available: true,
+      unavailableReason: null,
+      recognize({ mediaId }) {
+        const gate = deferred();
+        gates.set(mediaId, gate);
+        return gate.promise;
+      },
+    },
+  });
+  const actor = await h.login('synthetic-history-wire-f3');
+
+  const keep = await createRecognition(h.base, actor, MEDIA_KEEP, 'wire-f3-keep-0001');
+  assert.equal(keep.status, 202, JSON.stringify(keep.body));
+  const cancel = await createRecognition(h.base, actor, MEDIA_CANCEL, 'wire-f3-cancel-0001');
+  assert.equal(cancel.status, 202, JSON.stringify(cancel.body));
+
+  // 两个任务都已 running（提供者悬挂）；用**实时 revision** 取消第二个任务。
+  const running = await waitForStateIn(h.base, actor, cancel.body.data.id, ['running']);
+  const cancelled = await cancelJob(h.base, actor, cancel.body.data.id, running.revision, 'wire-f3-cancel-key');
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  assert.equal(cancelled.body.data.state, 'cancelled');
+
+  // 取消**之后**才放行两个提供者调用：被取消那个的终态提交必然 CAS 失败（revision 已被取消自增）。
+  gates.get(MEDIA_KEEP).resolve({ kind: 'completed', candidates: VALID_CANDIDATES, uncertainty_reasons: [] });
+  gates.get(MEDIA_CANCEL).resolve({ kind: 'completed', candidates: VALID_CANDIDATES, uncertainty_reasons: [] });
+  await h.app.recognitionService.settle();
+
+  const kept = await h.call('GET', `/api/v1/jobs/${keep.body.data.id}`, actor);
+  assert.equal(kept.body.data.state, 'succeeded', '正控制：未被取消的任务必须正常成功');
+  const stillCancelled = await h.call('GET', `/api/v1/jobs/${cancel.body.data.id}`, actor);
+  assert.equal(stillCancelled.body.data.state, 'cancelled', '取消后迟到的成功结果不得复活任务');
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.status, 200);
+  assert.equal(page.body.data.items.length, 1, '正控制：正常任务恰 1 行（说明本用例看得见历史行）');
+  assert.equal(page.body.data.items[0].target_ref.id, keep.body.data.target_ref.id);
+  assert.equal(
+    page.body.data.items.some((item) => item.target_ref.id === cancel.body.data.target_ref.id),
+    false,
+    'CAS 失败（取消后迟到终态）不得投递历史行',
+  );
+});
+
+test('历史HTTP·接线·F5：cancelled 终态不产历史行（口径：只有产出识别记录的终态才产行）', async (t) => {
+  const MEDIA_HANG = '00000000-0000-4000-8000-0000000000e2';
+  const h = await fixture(t, {
+    // 短截止：取消之后让服务层的截止时间**自然到点**（提供者永不返回），
+    // 于是"终态提交尝试"真实发生一次且必然 CAS 失败。
+    jobDeadlineMs: 400,
+    recognitionMedia: createSubstituteMediaPort(),
+    recognitionProvider: {
+      executionMode: 'stub',
+      modelVersion: 'stub-history-wire-hang-v1',
+      available: true,
+      unavailableReason: null,
+      async recognize() {
+        return new Promise(() => {}); // 永不返回：只能由截止时间收口
+      },
+    },
+  });
+  const actor = await h.login('synthetic-history-wire-f5');
+
+  const created = await createRecognition(h.base, actor, MEDIA_HANG, 'wire-f5-cancel-0001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const running = await waitForStateIn(h.base, actor, created.body.data.id, ['running']);
+  const cancelled = await cancelJob(h.base, actor, created.body.data.id, running.revision, 'wire-f5-cancel-key');
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+  assert.equal(cancelled.body.data.state, 'cancelled');
+
+  // 等截止时间到点（内部会尝试提交 timed_out，但 CAS 已失败）⇒ 不得改写终态、不得产行。
+  await h.app.recognitionService.settle();
+  const job = await h.call('GET', `/api/v1/jobs/${created.body.data.id}`, actor);
+  assert.equal(job.body.data.state, 'cancelled', '取消后到点的截止时间不得把任务改写成 timed_out');
+  assert.equal(job.body.data.error_code, null);
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.status, 200);
+  assert.deepEqual(page.body.data.items, [], 'cancelled 终态不产历史行（取消不算一次识别结果）');
+  // 关键反例：0 行**不是**"没接线"造成的 —— 端口在生产装配下确实是 wired。
+  assert.equal(h.app.recognitionService.describe().historyPort, 'wired');
+});
+
+test('历史HTTP·接线·F4：入库 event_key 必须确定性，且幂等不依赖第二道目标去重', async (t) => {
+  /** 旁路：包装历史 store，记录**每一次真正进入 store 的插入尝试**（第二道去重若被动用即暴露）。 */
+  const inner = createMemoryHistoryStore();
+  const attemptedKeys = [];
+  const store = Object.create(inner);
+  store.insertHistory = async (record) => {
+    attemptedKeys.push(record.event_key);
+    return inner.insertHistory(record);
+  };
+  const h = await fixture(t, {
+    historyInjection: { store },
+    recognitionProvider: createStubRecognitionProvider(),
+    recognitionMedia: createSubstituteMediaPort(),
+  });
+  const actor = await h.login('synthetic-history-wire-f4');
+  const created = await createRecognition(h.base, actor, mediaIdForStubBucket(0), 'wire-f4-key-0001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const job = created.body.data;
+  const terminal = await waitForTerminal(h.base, actor, job.id);
+
+  // ① 一次成功终态 ⇒ 恰好一次插入尝试，且键**恰为** `<kind>:<job_id>`（含时间戳/随机数即失败）。
+  assert.equal(attemptedKeys.length, 1, '一次成功终态只允许一次插入尝试');
+  const key = attemptedKeys[0];
+  assert.equal(key, `recognition:${job.id}`, 'event_key 必须恰为 recognition:<job_id>（确定性、不含时间戳/随机数）');
+  assert.ok(
+    /^recognition:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(key),
+    `event_key 形状非法（末尾不得有任何数字后缀）：${key}`,
+  );
+
+  // ② 用**捕获到的真键**重放 ⇒ 必须由第一道 `(owner_id, event_key)` 去重挡下：
+  //    插入尝试次数**不增**（若增，说明幂等其实落在第二道目标索引上 ⇒ 键确定性未被验证）。
+  const replay = await h.app.historyService.appendHistory({
+    owner_id: actor.userId,
+    kind: 'recognition',
+    target_ref: terminal.target_ref,
+    job_id: job.id,
+    job_state: terminal.state,
+    event_key: key,
+  });
+  assert.equal(replay.created, false);
+  assert.equal(attemptedKeys.length, 1, '重放必须由 event_key 索引挡下，不得动用第二道目标去重');
+  assert.deepEqual(attemptedKeys, [key], '全程只允许这一个确定性键进入 store');
+  assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1);
 });
