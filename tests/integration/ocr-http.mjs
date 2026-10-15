@@ -21,6 +21,9 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
 import { buildApp } from '../../services/api/src/app.ts';
@@ -35,6 +38,176 @@ import { createJobRegistry } from '../../services/api/src/jobs/registry.ts';
 import { createOcrJobSource } from '../../services/api/src/jobs/sources.ts';
 import { registerJobRoutes } from '../../services/api/src/jobs/routes.ts';
 import { collectResultValueIssues } from '../../services/api/src/jobs/result-shape.ts';
+
+// ───────────────────────── TS AST 判据（r4 路线）─────────────────────────
+// `typescript@5.9.3` 是本仓 devDependency（下方 require 即为"可解析"的自证）。
+// 用 `createRequire` 取 CJS 导出，避免 ESM/CJS 互操作差异 ⇒ 用**解析器**判定结构，不做文本正则。
+const require = createRequire(import.meta.url);
+const ts = require('typescript');
+
+/** 仓根（从本脚本位置回推：`<root>/tests/integration/`）—— 仅用于把解析结果裁成"仓根相对"。 */
+const REPO_ROOT_FOR_PATHS = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** `app.ts` 所在目录：模块说明符按**该目录**解析（与真实装配的解析基准一致）。 */
+const APP_SOURCE_DIR = resolvePath(REPO_ROOT_FOR_PATHS, 'services', 'api', 'src');
+/** 本域内**唯一**允许被装配路径引用的模块（仓根相对、已归一化，用于比较）。 */
+const OCR_SERVICE_MODULE_PATH = normalizeModulePath('services/api/src/ocr/service.ts');
+/** 该模块**唯一**允许的值符号（裁定授权的端口工厂）。 */
+const OCR_SERVICE_ALLOWED_SYMBOLS = ['createUnwiredOcrTerminalHistoryPort'];
+/** 第二道网（裁定保留的四条**原文子串**禁项，走 `appText` 原文）。 */
+const OCR_FORBIDDEN_SUBSTRINGS = ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference'];
+
+/** 归一化：percent-decode → 剥 `?`/`#` → `\`→`/` → 去 `.` 段与空段 → 解析 `..` → 大小写不敏感。 */
+function normalizeModulePath(specifier) {
+  let decoded = specifier;
+  try {
+    decoded = decodeURIComponent(specifier);
+  } catch {
+    decoded = specifier;
+  }
+  const segments = [];
+  for (const segment of decoded.split('?')[0].split('#')[0].replace(/\\/g, '/').split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') { if (segments.length > 0) segments.pop(); continue; }
+    segments.push(segment);
+  }
+  return segments.join('/').toLowerCase();
+}
+
+/** 解析为"仓根相对"的归一化路径；非相对（裸模块）记为 `bare:` 前缀 ⇒ 不属本判据范围。 */
+function resolveModuleTarget(specifierText, fromDir) {
+  if (specifierText.startsWith('.')) {
+    return normalizeModulePath(resolvePath(fromDir, specifierText).slice(REPO_ROOT_FOR_PATHS.length).replace(/\\/g, '/'));
+  }
+  if (specifierText.startsWith('/')) return normalizeModulePath(specifierText);
+  return `bare:${specifierText}`;
+}
+
+const isOcrDomainTarget = (target) => /(^|\/)ocr\/[^/]+$/.test(target);
+const isServiceTarget = (target) => target.endsWith('ocr/service.ts');
+const isAllowedOcrModuleTarget = (target) => normalizeModulePath(OCR_SERVICE_MODULE_PATH).endsWith(normalizeModulePath(target));
+const literalText = (node) => (node !== undefined && typeof node.text === 'string' ? node.text : null);
+
+/**
+ * 判据函数：返回**违规清单**（空数组 = 通过）。自测与真实用例走**同一函数** ⇒ 判据退化必被自测抓住。
+ *
+ * 路线（r4）：`ts.createSourceFile` + 遍历 `ImportDeclaration` / `ExportDeclaration` /
+ * 动态 `import()`（`CallExpression` + `ImportKeyword`）/ `require(...)`，取 `moduleSpecifier.text`。
+ * 由此**一次性消除**：注释与字符串互相干扰、`%XX` 编码、引号种类、多行、有无分号等**整类**问题。
+ *
+ * ⚠ **显式书面取舍（本判据覆盖不到，不得读成"覆盖全部形态"）**：
+ *   ① **运行时拼接**：`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``（AST 只见表达式，无可核对的字面量）；
+ *   ② **变量/间接 require**：`require(someVar)`、经中间模块转出的再引用；
+ *   ③ 因此本判据针对的是"**显式模块引用**"这一类腐化（本仓 `app.ts` 为静态源码 ⇒ 该目标可达）。
+ */
+function evaluateOcrImports(sourceText, fromDir) {
+  const violations = [];
+  const fail = (message) => violations.push(message);
+  const sourceFile = ts.createSourceFile('app.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+
+  const checkNamedImports = (namedBindings) => {
+    if (namedBindings === undefined) return;
+    if (ts.isNamespaceImport(namedBindings)) {
+      fail('OCRCONTRACT: 不得以 `* as ns` 命名空间导入 ./ocr/service.ts');
+      return;
+    }
+    if (!ts.isNamedImports(namedBindings)) return;
+    for (const element of namedBindings.elements) {
+      if (element.isTypeOnly === true) continue; // `{ type X }`：运行期擦除
+      const name = (element.propertyName ?? element.name).text; // `X as Y` 按**原名**判定
+      if (!OCR_SERVICE_ALLOWED_SYMBOLS.includes(name)) {
+        fail(`OCRSYMBOL: ./ocr/service.ts 只允许 ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}（值符号），实际出现：${name}`);
+      }
+    }
+  };
+
+  const checkNamedExports = (exportClause) => {
+    if (ts.isNamespaceExport(exportClause)) {
+      fail('OCRCONTRACT: 不得 `export * as ns` 自 ./ocr/service.ts');
+      return;
+    }
+    if (!ts.isNamedExports(exportClause)) return;
+    for (const element of exportClause.elements) {
+      if (element.isTypeOnly === true) continue;
+      const name = (element.propertyName ?? element.name).text;
+      if (!OCR_SERVICE_ALLOWED_SYMBOLS.includes(name)) {
+        fail(`OCRSYMBOL: ./ocr/service.ts 只允许 ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}（值符号），实际出现：${name}`);
+      }
+    }
+  };
+
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifierNode = node.moduleSpecifier;
+      if (specifierNode !== undefined) {
+        const text = literalText(specifierNode);
+        if (text === null) {
+          fail('OCRTEXT: 模块说明符不是静态字符串字面量（运行时拼接/插值 ⇒ 无从核对）');
+        } else {
+          const target = resolveModuleTarget(text, fromDir);
+          if (!target.startsWith('bare:') && isOcrDomainTarget(target) && !isAllowedOcrModuleTarget(target)) {
+            fail(`OCRMODULE: ./ocr/ 下只允许 service.ts，实际归一化到 ${target}`);
+          } else if (!target.startsWith('bare:') && isServiceTarget(target)) {
+            if (ts.isImportDeclaration(node)) {
+              if (node.isTypeOnly === true) {
+                // `import type …`：整句运行期擦除 ⇒ 放行（含 `import type * as`）
+              } else if (node.importClause === undefined) {
+                fail('OCRSIDEEFFECT: 不得对 ./ocr/service.ts 做副作用导入（无说明符 ⇒ 无法核对装的是什么）');
+              } else if (node.importClause.isTypeOnly === true) {
+                // 同上：整句擦除
+              } else if (node.importClause.name !== undefined) {
+                fail('OCRFORM: 不得对 ./ocr/service.ts 使用默认导入');
+              } else {
+                checkNamedImports(node.importClause.namedBindings);
+              }
+            } else if (node.isTypeOnly === true) {
+              // `export type … from`：擦除
+            } else if (node.exportClause === undefined) {
+              fail('OCRCONTRACT: 不得 `export *` 自 ./ocr/service.ts');
+            } else {
+              checkNamedExports(node.exportClause);
+            }
+          }
+        }
+      }
+    } else if (ts.isCallExpression(node)
+      && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const text = literalText(node.arguments[0]);
+      if (isDynamicImport) {
+        if (text === null) fail('OCRTEXT: 动态 import() 的参数不是静态字符串字面量（运行时拼接/插值 ⇒ 无从核对）');
+        else if (isServiceTarget(resolveModuleTarget(text, fromDir))) fail('OCRDYNAMIC: 不得用动态 import() 引用 ./ocr/service.ts');
+      } else if (text !== null && isServiceTarget(resolveModuleTarget(text, fromDir))) {
+        fail('OCRDYNAMIC: 不得用 require() 引用 ./ocr/service.ts');
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return violations;
+}
+
+/** 第二道网：四条**原文子串**禁项；对 `%XX` 拼写**逐说明符**解码后复查一遍。 */
+function evaluateForbiddenSubstrings(sourceText) {
+  const violations = [];
+  for (const forbidden of OCR_FORBIDDEN_SUBSTRINGS) {
+    if (sourceText.includes(forbidden)) {
+      violations.push(`INCLUDES: 原文命中 ${forbidden}`);
+      continue;
+    }
+    const specifiers = [...sourceText.matchAll(/(?:from\s*|import\s*\(\s*|require\s*\(\s*)(['"`])([^'"`\r\n]*)\1/g)].map((match) => match[2]);
+    const decodedHit = specifiers.some((specifier) => {
+      try {
+        return decodeURIComponent(specifier).includes(forbidden);
+      } catch {
+        return false;
+      }
+    });
+    if (decodedHit) violations.push(`INCLUDES_DECODED: 解码后命中 ${forbidden}`);
+  }
+  return violations;
+}
+// ─────────────────────── TS AST 判据结束 ───────────────────────
 
 const API = '/api/v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -699,101 +872,81 @@ try {
     //   `#181`（`b6f8c1b`）为装配 `history` 端口必须在 `app.ts:33`
     //   `import { createUnwiredOcrTerminalHistoryPort, type … } from './ocr/service.ts'`，使整条 `'ocr/service'` 为假红
     //   （**非**适配器泄漏：同域端口工厂所在地，不接触 provider/store/media）。
-    //   裁定：**不整条删掉**，收窄为"**只放行 `createUnwiredOcrTerminalHistoryPort` 这一个符号**"——
+    //   裁定：**不整条删掉**，收窄为"**只放行 `createUnwiredOcrTerminalHistoryPort` 这一个值符号**"——
     //   既放行 `#181` 必需的那一个 import，又**仍然拦住** `ocr/service` 的**其它符号**（`createOcrService`、
-    //   `createOcrServiceForMode`、…）与 `ocr/store`、`ocr/provider`、`ocr/media` 的**任何** import（含符号级）。
+    //   `createOcrServiceForMode`、…）与 `ocr/store`、`ocr/provider`、`ocr/media` 的**任何**引用（含符号级）。
     for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference']) {
       assert.equal(appText.includes(forbidden), false, `app.ts 不得 import ${forbidden}（装配路径不得接触适配器）`);
     }
-    // **判据式**护栏（对抗性审查 F1′ 加固后）：口径 = **归一化后比较**，不依赖引号种类与排版假设。
-    // 归一化步骤：取任意引号（含反引号）的字符串字面量 → 剥 `?`/`#` → `\`→`/` → 去掉 `.` 段与空段
-    //   → 解析 `..` 段 → **大小写不敏感**比较（`./OCR/service.ts` 与 `./ocr/service.ts` 视为同一模块）。
-    // 口径边界（如实声明，勿读成"覆盖全部形态"✗）：字符串**拼接**（`'./ocr/' + 'service.ts'`）与
-    //   运行时算出的路径**不覆盖**（字面量判据的固有边界）；整行 `//` 注释会被剥离，**行尾** `//` 注释保留原文。
-    // 三处判读（与下方代码一一对应）：
-    //   ① **选择器 ⊇ 匹配器（显式不变量）**：凡归一化后指向本域的**字面量**，若未被任何 import/export 语句覆盖
-    //      ⇒ 一律判红（**不得** `continue` 跳过 —— 这正是 F1′ 的根因：选择器与匹配器共用同一锚定模式）。
-    //   ② **语句级**：语句边界以 `^\s*(import|export)\b` 为界（**不**只用 `;` ⇒ 无分号合法导入不再吸收下一行）。
-    //   ③ **说明符**：`{…}` 内外合并后逐条比对**运行时值符号**白名单（恰 1 个）；`X as Y` 按**原名**；
-    //      `import type …` 整句与 `{ type X }` 内联类型说明符按运行期擦除跳过（故 `import type * as` 放行）。
-    const OCR_SERVICE_ALLOWED_SYMBOLS = ['createUnwiredOcrTerminalHistoryPort'];
-    const OCR_SERVICE_MODULE_KEY = 'ocr/service.ts';
-    const appTextNoComments = appText
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^[^\S\r\n]*\/\/.*$/gm, '');
-    const normalizeModuleSpecifier = (spec) => {
-      const segments = [];
-      for (const segment of spec.split('?')[0].split('#')[0].replace(/\\/g, '/').split('/')) {
-        if (segment === '' || segment === '.') continue;
-        if (segment === '..') { if (segments.length > 0) segments.pop(); continue; }
-        segments.push(segment);
-      }
-      return segments.join('/').toLowerCase();
-    };
-    const refersToOcrDomain = (raw) => /^(\.{1,2}\/)*ocr\/[A-Za-z0-9._-]/.test(normalizeModuleSpecifier(raw));
+    // **判据式护栏（r4：TS AST 路线）**：用 `ts.createSourceFile` 遍历 AST 取模块说明符，
+    // 再用「归一化后是否指向 `ocr/service.ts`」+「值符号白名单（恰 1 个）」判定。
+    // 由此**一次性消除**：注释/字符串互相干扰（含字符串里的 `/*`）、`%XX` 百分号编码、引号种类、
+    //   多行、有无分号等**整类**问题 —— 判据不再依赖任何排版假设。
+    //
+    // ⚠ **显式书面取舍（不得读成"覆盖全部形态"）**：本判据**看不到**
+    //   ① **运行时拼接**（`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``）；
+    //   ② **变量/间接 require**（`require(someVar)`、经中间模块转出）。
+    //   ③ 为何可接受：本仓 `app.ts` 是**静态源码**，本护栏的目标是拦"**显式模块引用**"的腐化；
+    //      上面两类即便写出来也**没有可核对的字面量**，属另一层（运行时/构建期）问题，见交接文档"未取得项"。
+    //   ④ 另注：四条 `includes` 走 `appText` **原文子串**，**注释不例外**（`ocr/store` 出现在注释里同样判红）。
+    const ocrVerdict = evaluateOcrImports(appText, APP_SOURCE_DIR);
+    if (ocrVerdict.length > 0) assert.fail(`app.ts 的 OCR 域模块引用不合规：${ocrVerdict.join(' ｜ ')}`);
+    const forbiddenVerdict = evaluateForbiddenSubstrings(appText);
+    if (forbiddenVerdict.length > 0) assert.fail(`app.ts 命中禁项子串：${forbiddenVerdict.join(' ｜ ')}`);
 
-    // 语句（匹配器）：逐条记录其覆盖区间，供 ① 证明"选择器 ⊇ 匹配器"
-    const statementPattern = /^[^\S\r\n]*(import|export)\b((?:(?!^[^\S\r\n]*(?:import|export)\b)[\s\S])*?)from\s*(['"`])([^'"`\r\n]*)\3/gm;
-    const coveredRanges = [];
-    for (const match of appTextNoComments.matchAll(statementPattern)) {
-      coveredRanges.push([match.index, match.index + match[0].length]);
-      if (normalizeModuleSpecifier(match[4]) !== OCR_SERVICE_MODULE_KEY) continue;
-      const keyword = match[1];
-      const rawSpecifierText = match[2];
-      // 全类型语句（`import type …`）：运行期整体擦除 ⇒ 放行（含 `* as` 命名空间形态）
-      if (/^[^\S\r\n]*type\b/.test(rawSpecifierText)) continue;
-      if (keyword === 'import' && rawSpecifierText.trim() === '') {
-        assert.fail(`app.ts 不得对 ./ocr/service.ts 做**副作用导入**（无说明符 ⇒ 无法核对装的是什么）：${match[0].trim()}`);
-      }
-      for (const piece of rawSpecifierText.replace(/[{}]/g, ' ').split(',')) {
-        const trimmed = piece.trim();
-        if (trimmed === '' || trimmed.startsWith('type ')) continue; // `type X` 运行期擦除
-        if (trimmed.includes('*')) {
-          assert.fail(`app.ts 不得 import/export 通配（\`*\`）自 ./ocr/service.ts：${match[0].trim()}`);
-        }
-        const name = trimmed.split(/\s+as\s+/)[0].trim();
-        assert.ok(
-          OCR_SERVICE_ALLOWED_SYMBOLS.includes(name),
-          `app.ts 对 ./ocr/service.ts 只允许 import ${OCR_SERVICE_ALLOWED_SYMBOLS.join('/')}（值符号），实际出现：${name}`,
-        );
-      }
-    }
-
-    // 字面量闭合（选择器）：未被上述语句覆盖 ⇒ 判红（含反引号动态 `import()`、冗余段、查询串/fragment 等）
-    let ocrDomainLiteralCount = 0;
-    for (const match of appTextNoComments.matchAll(/(['"`])([^'"`\r\n]*)\1/g)) {
-      if (!refersToOcrDomain(match[2])) continue;
-      ocrDomainLiteralCount += 1;
-      const start = match.index;
-      const end = match.index + match[0].length;
-      const covered = coveredRanges.some(([from, to]) => start >= from && end <= to);
-      if (!covered) {
-        assert.fail(`app.ts 中指向 ./ocr/** 的字面量必须写在 import/export 语句里（不得用动态 import()、拼接或裸字面量绕过核对）：${match[2]}`);
-      }
+    // 判据**自测**（对判据整体做负控制，不只测某条正则）：每例断言"判据必须**恰好**给出 N 条违规"。
+    // 它把前三轮 F1′/F1″/F2″ 家族的复发点逐条钉住 —— 下列任一种**判据退化**都会让某条 `assert.equal(…, N)` 失败：
+    //   (a) **选择器收窄**（例如只认 `./ocr/` 前缀、只认单引号、给 `resolveModuleTarget` 加路径限制）
+    //       ⇒ 若把 `'.//ocr/service.ts'` / `%XX` / `#` / `?` / 多行 / 动态 import 任一跳过，对应条数即失配；
+    //   (b) **把 `assert.fail` 语义改回"跳过"**（`continue` / 提前 `return` / 只收集不判红）
+    //       ⇒ 非法例的违规数会从 N 掉到 0 ⇒ 立刻失配；
+    //   (c) **删掉任一形态的判据**（副作用导入、默认导入、`* as`、`export *`、动态 import、本域其它模块、
+    //       字符串里的 `/*` 不得吞掉 import）⇒ 对应自测条目的期望条数随之失配。
+    // ⇒ 自测条数与下方数组**逐字一致**（改判据必须同步改数组与总数，否则本用例红）。
+    const selfTestCases = [
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts';", 0], // 合法 import（唯一允许的值符号）
+      ['import { createUnwiredOcrTerminalHistoryPort } from "./ocr/service.ts";', 0], // 双引号
+      [`import {${String.fromCharCode(10)}  createUnwiredOcrTerminalHistoryPort,${String.fromCharCode(10)}} from './ocr/service.ts';`, 0], // 多行
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts'", 0],   // 无分号
+      ["import { createUnwiredOcrTerminalHistoryPort } from './/ocr/service.ts';", 0], // 冗余空段（同一模块）
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts#probe';", 0], // fragment
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts?probe=1';", 0], // 查询串
+      ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/servic%65.ts';", 0],      // 百分号编码（同一模块）
+      ["import type * as ocrTypes from './ocr/service.ts';", 0],                     // 全类型擦除
+      ["import { type OcrTerminalHistoryInput } from './ocr/service.ts';", 0],       // 内联类型说明符
+      ["import { createUnwiredOcrTerminalHistoryPort as portAlias } from './ocr/service.ts';", 0], // 合法符号别名
+      ["export { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts';", 0], // 白名单符号再导出
+      ["import { createOcrService } from './ocr/service.ts';", 1],                   // 非白名单值符号
+      ["import { createUnwiredOcrTerminalHistoryPort, createOcrService } from './ocr/service.ts';", 1],
+      ["import { createOcrService as x } from './ocr/service.ts';", 1],              // 别名按**原名**判
+      ["import * as svc from './ocr/service.ts';", 1],                               // 命名空间
+      ["import svcDefault from './ocr/service.ts';", 1],                             // 默认导入
+      ["import './ocr/service.ts';", 1],                                             // 副作用导入
+      ["export * from './ocr/service.ts';", 1],                                      // 再导出通配
+      ["export * as ns from './ocr/service.ts';", 1],
+      ["export { createOcrService } from './ocr/service.ts';", 1],
+      ["await import('./ocr/service.ts');", 1],                                      // 动态 import()
+      ['await import(`./ocr/service.ts`);', 1],                                      // 反引号动态 import()
+      ["import { createOcrService } from './ocr/%73ervice.ts';", 1],                 // percent-encoded 非法符号
+      ["import { createOcrService } from '././ocr/service.ts';", 1],                 // 冗余段 + 非法符号
+      ["import { createOcrService } from './/ocr/service.ts';", 1],
+      ["import { createOcrService } from './ocr/../ocr/service.ts';", 1],            // `..` 解析
+      ["import { createOcrService } from './ocr/service.ts?probe=1';", 1],           // 查询串 + 非法符号
+      ["import { createOcrService } from './ocr/service.ts#probe';", 1],             // fragment + 非法符号
+      ["import { normalizeLabelFields } from './ocr/state.ts';", 1],                 // 本域其它模块
+      ["import { createMemoryOcrStore } from './ocr/%73tore.ts';", 1],               // percent-encoded 禁模块
+      ["const __i1 = '/*'; import { createOcrService } from './ocr/service.ts'; const __i2 = '*/';", 1], // 字符串里的 /* 不得吞掉 import
+      ["const __m = './ocr/' + 'service.ts';", 0],                                   // 已书面声明：运行时拼接不覆盖
+    ];
+    assert.equal(selfTestCases.length, 33, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
+    for (const [source, expectedViolations] of selfTestCases) {
+      const verdict = evaluateOcrImports(source, APP_SOURCE_DIR);
       assert.equal(
-        normalizeModuleSpecifier(match[2]),
-        OCR_SERVICE_MODULE_KEY,
-        `app.ts 不得引用 ./ocr/ 下的其它模块（归一化后实际为 ${normalizeModuleSpecifier(match[2])}；仅 ./ocr/service.ts 的该端口工厂符号经裁定放行）`,
+        verdict.length,
+        expectedViolations,
+        `判据自测未通过：期望 ${expectedViolations} 条违规，实际 ${verdict.length} 条 —— ${JSON.stringify(source)} ⇒ ${JSON.stringify(verdict)}`,
       );
     }
-
-    // **不变量自测（选择器 ⊇ 匹配器）**：下面两条合成断言若有一条不成立，本用例立刻红 ——
-    // 它钉住"选择器必须比匹配器宽"，防未来有人把 ① 段的选择器改窄成与匹配器同源（F1′ 的复发点）。
-    const selfTestCovered = [...'import{createUnwiredOcrTerminalHistoryPort}from\'./ocr/service.ts\';'.matchAll(statementPattern)];
-    assert.equal(selfTestCovered.length, 1, '不变量自测：匹配器必须覆盖规范形式的 import 语句');
-    // 下列四条各自独立断言：任一条被改回"选择器=匹配器"的写法即立刻红 —— 这是 F1′ 的复发点。
-    const selfTestUncovered = [...'await import(\'./ocr/service.ts\');'.matchAll(statementPattern)];
-    assert.equal(selfTestUncovered.length, 0, '不变量自测：选择器必须比匹配器宽（动态 import 不产生 from 语句位）');
-    const selfTestSideEffect = [...'import \'./ocr/service.ts\';'.matchAll(statementPattern)];
-    assert.equal(selfTestSideEffect.length, 0, '不变量自测：副作用导入不得被匹配器误纳（应由语句级判据按"无说明符"判红）');
-    const selfTestBacktick = [...'await import(`./ocr/service.ts`);'.matchAll(statementPattern)];
-    assert.equal(selfTestBacktick.length, 0, '不变量自测：反引号动态 import 同样不产生 from 语句位');
-    const selfTestMultiLine = [...`import {${String.fromCharCode(10)}  createOcrService,${String.fromCharCode(10)}} from './ocr/service.ts';`.matchAll(statementPattern)];
-    assert.equal(selfTestMultiLine.length, 1, '不变量自测：跨行 import 必须仍被匹配器覆盖');
-    assert.ok(
-      ocrDomainLiteralCount > 0,
-      'app.ts 应含指向 ./ocr/** 的字面量（选择器命中数 > 0；若为 0 说明选择器失效或装配路径已改）',
-    );
     const providerText = readFileSync(new URL('../../services/api/src/ocr/provider.ts', import.meta.url), 'utf8');
     for (const network of ['fetch(', 'node:https', 'node:http', 'undici', 'axios', 'XMLHttpRequest']) {
       assert.equal(providerText.includes(network), false, `OCR 提供者层不得含网络调用：${network}`);
@@ -804,7 +957,7 @@ try {
     );
     assert.ok(realSlice.length > 0, 'real 分支切片应非空');
     assert.equal(realSlice.includes('createStubOcrProvider'), false, 'real 分支不得回退替身');
-    record('8) 产品装配 real：受理前 503 PROVIDER_UNAVAILABLE、providerCalls=0、不回退替身（real-unconfigured）；+ 结构证据（app.ts 零端口注入/不 import 适配器、provider.ts 无网络客户端、real 分支无替身回退）');
+    record('8) 产品装配 real：受理前 503 PROVIDER_UNAVAILABLE、providerCalls=0、不回退替身（real-unconfigured）；+ 结构证据（app.ts 经 TS AST 核对：OCR 域只引用 service.ts 的 createUnwiredOcrTerminalHistoryPort；不 import store/provider/media/reference；provider.ts 无网络客户端；real 分支无替身回退）');
   }
 
   // ---- 10) 接线（本片）：OCR 作业经**共享作业读面**可读（此前该 kind 未接线 ⇒ 404）----
