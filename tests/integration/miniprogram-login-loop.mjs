@@ -81,15 +81,16 @@ try {
     const cold = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
     assert.equal(cold.isLoggedIn(), false);
     const gate = load('utils/page-gate.js', { './auth': cold });
+    const profileApi = load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
     let definition;
     vm.runInNewContext(source(`pages/${name}/${name}.js`), { Page: (value) => { definition = value; }, wx,
       require: (dep) => {
         if (dep.endsWith('/font-scale')) return load('utils/font-scale.js', {});
         if (dep.endsWith('/auth')) return cold;
         if (dep.endsWith('/page-gate')) return gate;
-        if (dep.endsWith('/profile-api')) return load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
+        if (dep.endsWith('/profile-api')) return profileApi;
         if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
-        throw Error('Unexpected page dependency');
+        throw Error('Unexpected page dependency ' + dep);
       } });
     const page = { ...definition, route: `pages/${name}/${name}`, options: id ? { id } : {},
       data: { ...definition.data }, setData(patch) { Object.assign(this.data, patch); } };
