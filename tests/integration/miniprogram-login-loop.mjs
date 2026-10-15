@@ -90,7 +90,7 @@ try {
         if (dep.endsWith('/page-gate')) return gate;
         if (dep.endsWith('/profile-api')) return profileApi;
         if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
-        throw Error('Unexpected page dependency');
+        throw Error('Unexpected page dependency ' + dep);
       } });
     const page = { ...definition, route: `pages/${name}/${name}`, options: id ? { id } : {},
       data: { ...definition.data }, setData(patch) { Object.assign(this.data, patch); } };
