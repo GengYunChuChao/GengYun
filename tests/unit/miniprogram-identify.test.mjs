@@ -743,3 +743,59 @@ test('GY-I09 小程序：记录选择后的关联科普**恒不含用量**，并
   assert.ok(/item\.doseBlockCode/.test(wxml), '逐条用量归因未与页面口径对齐');
   assert.equal(/GY-I08 判定/.test(wxml), false, '逐条用量不得再归因于「GY-I08 判定」开关原因');
 });
+
+test('GY-I09 小程序：目录外对象（stub 替身候选）不得下发无条件查询，更不得显示为「已找到」', async () => {
+  // F1/F2 护栏：stub 模式的三个替身候选（services/api/src/recognitions/provider.ts:54
+  // 的 synthetic_weed_a/b/c）都不在本地杂草目录里 ⇒ speciesNameText 取不到名称文本。
+  // 此时若"清空查询条件"下发 reference.query({limit:5})，本地层按**无条件**语义全量命中
+  // （match_state='matched'、total=20），页面会渲染「关联科普（已找到符合条件的资料）」
+  // ＋ 5 条与该对象毫无关联的除草剂 —— 假关联／错误指导。
+  // 正确行为：不下发查询、items 为空、matchState 不得为 matched、文案如实。
+  // 边界：目录外 id 也一并覆盖（不依赖替身命名的具体值）。
+  const OUT_OF_CATALOG = ['synthetic_weed_a', 'synthetic_weed_b', 'synthetic_weed_c', 'species_not_in_catalog'];
+  const original = identifyApi.selectSpecies;
+  try {
+    for (const speciesId of OUT_OF_CATALOG) {
+      const page = instance();
+      page.data.guest = false;
+      page.data.recordId = '66666666-6666-4666-8666-666666666666';
+      page.data.recordRevision = 1;
+      page._generation = 7;
+      page._ownerKey = 'synthetic-owner-key';
+      identifyApi.selectSpecies = async () => ({
+        recognition: {
+          id: page.data.recordId, revision: 2,
+          candidates: [{ species_id: speciesId, rank: 1, model_score: 0.77 }],
+          uncertainty_reasons: [], selected_species_id: speciesId, model_version: 'stub-v1'
+        }
+      });
+      await page.recordSelection(speciesId);
+      const related = page.data.relatedKnowledge;
+      assert.ok(related !== null && typeof related === 'object', `${speciesId}：选择后必须解析关联科普`);
+      assert.equal(related.speciesName, '', `${speciesId}：本地目录里不存在该对象，名称文本必须为空`);
+      assert.equal(related.items.length, 0, `${speciesId}：不得下发无条件查询换来"有资料"（items 必须为空）`);
+      assert.notEqual(related.matchState, 'matched', `${speciesId}：不得显示为已匹配`);
+      // 页面标题取自 matchStateLabel ⇒ 绝不能是「已找到符合条件的资料」。
+      assert.notEqual(related.matchStateLabel, '已找到符合条件的资料', `${speciesId}：不得显示为已找到资料`);
+      assert.ok(/不在本地杂草目录/.test(related.matchNote), `${speciesId}：口径未如实标注 -> ${related.matchNote}`);
+      assert.ok(/未取得名称文本/.test(related.matchNote), `${speciesId}：口径未如实标注 -> ${related.matchNote}`);
+      assert.ok(/本次不进行资料匹配/.test(related.matchNote), `${speciesId}：口径未如实标注 -> ${related.matchNote}`);
+      // 用量守卫在该分支同样不得放松。
+      assert.equal(related.dose.renderable, false, `${speciesId}：识别路径恒不给用量`);
+      assert.equal(related.dose.card, null);
+      assert.equal(related.dose.blockCode, identifyApi.DOSE_PATH_BLOCK_CODE);
+      // 每轮结束时不得残留条目（页面不得有可点进详情的假关联）。
+      assert.equal(related.items.length, 0, `${speciesId}：不得留下任何可点条目`);
+    }
+  } finally {
+    identifyApi.selectSpecies = original;
+  }
+  // 模板层：标题仍取自 matchStateLabel（本分支已确认它不是「已找到符合条件的资料」）。
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  assert.ok(/关联科普（\{\{relatedKnowledge\.matchStateLabel\}\}）/.test(wxml), '标题口径漂移');
+  // 源码层：查询必须由名称文本派生 ⇒ 不存在"无条件下发"的空条件查询。
+  const source = readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  assert.ok(/if \(speciesName === ''\) \{/.test(source), '缺少"取不到名称文本"的 fail-closed 分支');
+  assert.equal(/if \(speciesName !== ''\) queryParams\.keyword/.test(source), false,
+    'keyword 必须是该分支之后的必填项，不得再写成"可有可无"');
+});

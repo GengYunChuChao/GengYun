@@ -639,6 +639,11 @@ function speciesNameText(speciesId) {
  * 查询口径（如实化）：按**识别对象名称文本**查（`keyword`），因为本地资料未结构化标注杂草对象；
  * 本函数返回的 `matchNote` 必须原样呈现给用户。
  *
+ * 取不到名称文本时（所选对象不在本地杂草目录，例如 stub 替身候选 `synthetic_weed_a/b/c`）
+ * **不得**下发"无条件查询"：本地层的"无条件"语义是**全量命中**（`match_state='matched'`），
+ * 会被页面渲染成"已找到符合条件的资料"＋若干与该对象无关的资料（假关联 / 错误指导）。
+ * 该分支 fail-closed：`items: []`、`matchState: 'unavailable'`（沿用既有语义，不新造状态）。
+ *
  * 资料条目为种子整理稿，呈现时必须标注「待核实 · 非权威」。
  */
 function queryRelatedKnowledge(speciesId, conditions) {
@@ -653,12 +658,24 @@ function queryRelatedKnowledge(speciesId, conditions) {
     missingConditions: guard.missingConditions,
     missingConditionLabels: guard.missingConditionLabels
   }
+  // 取不到名称文本 ⇒ 本次**没有任何匹配依据**：不下发查询，如实说明（不是"查询未取得结果"）。
+  if (speciesName === '') {
+    return Object.assign({}, base, {
+      matchState: 'unavailable',
+      matchStateLabel: '本次未进行资料匹配',
+      matchSpeciesName: '',
+      matchNote: '所选对象不在本地杂草目录，未取得名称文本 ⇒ 本次不进行资料匹配。',
+      reasons: ['所选对象不在本地杂草目录，未取得可用的名称文本；本地资料未结构化标注杂草对象，本次不展示任何资料。'],
+      items: [],
+      note: '未取得名称文本时不下发"无条件查询"（那会变成全量命中），也不会给出任何用量。'
+    })
+  }
   try {
     const reference = require('../../utils/reference')
     // 结构化 `species_id` **不进**参考域查询：本地层无该标注，带上它只会让每条记录
     // 都落"未结构化标注杂草对象"⇒ 恒 0 条（且不能靠放宽 eligibility 来"有结果"）。
     const queryParams = { limit: 5 }
-    if (speciesName !== '') queryParams.keyword = speciesName
+    queryParams.keyword = speciesName
     // 只把**非空**条件交给查询：空串不得被当成"已采集"（与域库 matchConditions 同口径）。
     for (const field of identifyApi.DOSE_CONDITION_FIELDS) {
       if (field === 'species_id') continue
@@ -706,7 +723,11 @@ function queryRelatedKnowledge(speciesId, conditions) {
       matchState: 'unavailable',
       matchStateLabel: '查询未取得结果',
       matchSpeciesName: speciesName,
-      matchNote: '本地资料未结构化标注杂草对象；本次按名称文本匹配未能完成。',
+      // F3：本分支在**无名称文本**时也可能被触达（名称非空但条件非法等），
+      // 措辞不得声称"按名称文本匹配未能完成"。
+      matchNote: speciesName === ''
+        ? '所选对象不在本地杂草目录，未取得名称文本 ⇒ 本次未进行名称文本匹配。'
+        : '本地资料未结构化标注杂草对象；本次按名称文本匹配未能完成。',
       reasons: ['关联科普查询未取得结果：' + (error && error.message ? error.message : '未知原因')],
       items: [],
       note: '未取得结果时不会用本地缓存顶替，也不会给出任何用量。'
