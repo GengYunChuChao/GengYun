@@ -372,9 +372,9 @@ e78510c0a65b4d186ae870cd4902bf910d0fc55c    # 与 §2.2 blob 列一致，契约�
 | 代码与契约一致 | `npm run test:contract` | **否** | exit 0（§3.1） |
 | 契约覆盖与装配 | `node tools/verify-contract-status.mjs [--runtime]` | **否** | exit 0（§3.2） |
 | 契约文件未被改动 | `tests/ui-adaptive.test.mjs:320`（`local-wechat.yml` 内） | **否**（只比路径） | 基线 exit 0（26/26）；负控制见 §5.2 |
-| **本文档的 sha256／blob 指纹** | **无** | — | **无机器门禁，人工复核** |
+| **本文档的 blob／LF 归一化 sha256 指纹** | **无** | — | **无机器门禁，人工复核**（r2 负控制复跑见 §6.2(b)） |
 
-## 6 门禁执行记录（本片改动＝只新增 1 份文档）
+## 6 门禁执行记录（本片改动＝只新增 1 份文档；r2 只在该文档上修改）
 
 | 门禁 | 命令 | 退出码 | 输出摘要 |
 | --- | --- | --- | --- |
@@ -410,7 +410,57 @@ $ git diff --check                # 无输出
 （上为**提交后**实测；`git diff --name-only` 结果只有本文件一项，除该文件外**无任何其他改动**。
 `git diff --stat upstream/main...HEAD` 的插入行数**不在本文件内自引用**——该数字会随本文件自身增删而变，故只在回传 handoff 中登记最终实测值。）
 
-⇒ 只新增 1 份文档，**未改** `packages/contracts/**`、`services/**`、`package.json`、`.github/workflows/**`、`README.md`、`AGENTS.md`。故**本次新增 docs 会触发** `.github/workflows/development-docs.yml`（`paths` 含 `docs/**`，`:5`）——但**本片未取得该 workflow 的运行读数**（§4.2）。
+⇒ 相对 `upstream/main` **只新增 1 份文档**（r2 的返修改动也只落在该文档内），**未改** `packages/contracts/**`、`services/**`、`package.json`、`.github/workflows/**`、`README.md`、`AGENTS.md`。故**本次新增 docs 会触发** `.github/workflows/development-docs.yml`（`paths` 含 `docs/**`，`:5`）——但**本片未取得该 workflow 的运行读数**（§4.2）。
+
+### 6.2 返修（r2）自证与负控制原始输出
+
+**(a) §2.2(b) 跨平台复核命令在三种 shell 下实跑**（命令文本**取自本文件 §2.2(b) 代码块、未经改写**，提取脚本记录 `has-brackets=1`）：
+
+```
+$ cmd.exe /c run-from-doc.cmd                                   # (A) Windows cmd.exe
+packages/contracts/openapi.json blob=3804c64b3cdda57ef1f87d5a569c74d712ffefa6 lfSha256=8a7714983711e4b349f44c84c20bb138ea822b8ae0dd7bc0d983f0989fba89d0 bytes=445338
+packages/contracts/operations.json blob=06b82fc7094821e7aab4ee6e994ad81daecdfedf lfSha256=d5b29a1877ed22c91f69919def6d2348d736087403af954500298d74f5a13a8a bytes=18049
+packages/contracts/states.json blob=e78510c0a65b4d186ae870cd4902bf910d0fc55c lfSha256=5b4ff78cc9da79acfe03b454ca9fc609c13aeee0bb09c6efa92f71a917d2b3b1 bytes=2730
+packages/contracts/examples.json blob=b8bb9a5f601edd1364898755e76fcb7926990a93 lfSha256=871786b56030f9e7d6beaa3e4e9310cb64bf553b55bc38d9ee0a05d5d5f902e8 bytes=201929
+packages/contracts/runtime-baseline.json blob=10ddf580544ae847698ac83abeddde4a4f4fcfea lfSha256=b95c77e9855130067925996d6ae0b25872832d2b0152e6823d00ef5e7a204eda bytes=2329
+# EXITCODE: 0
+
+$ bash run-from-doc.sh                                          # (B) Git for Windows bash（MINGW64_NT-10.0-26200）
+# 同上五行，逐字符相同
+# EXITCODE: 0
+
+$ powershell -NoProfile -File run-from-doc-ps51.ps1              # (C) Windows PowerShell 5.1.26100.8875（按 §2.2(b) 说明加 --%）
+# check: prefix node --% -e = True
+# 同上五行，逐字符相同
+# EXITCODE: 0
+```
+
+逐字符比对（提取本文件 §2.2(b) 与汇总表中的该格式行，`Compare-Object -SyncWindow 0`）：`(A) lines=5 逐字符相同 = True`、`(B) lines=5 逐字符相同 = True`、`(C) lines=5 逐字符相同 = True`。
+独立实现复核：GNU coreutils 8.32 的 `sha256sum` 直接消费 `git cat-file blob` 的字节 ⇒ 五行 `lfSha256` 与 §2.2(b) **5/5 相同**；且与仓内既有记录 `merged-source-equivalence.json:1818-1842` **5/5 相同**。
+
+**(b) 负控制：把 §2.2(b) `states.json` 的 LF 归一化 sha256 末位 `1` 改成 `2`（未提交，仅工作区）**：
+
+```
+$ git diff --stat
+ docs/verification/gy-i01-contract-runtime-freeze-20261015.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+$ npm run test:docs
+PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+# EXITCODE(test:docs): 0
+$ npm run test:contract
+ℹ tests 6   ℹ pass 6   ℹ fail 0
+# EXITCODE(test:contract): 0
+$ node --test tests/ui-adaptive.test.mjs
+ℹ tests 26   ℹ pass 26   ℹ fail 0
+# EXITCODE(ui-adaptive): 0
+$ git diff --check
+# （无输出）
+# EXITCODE(diff --check): 0
+```
+
+⇒ **新判据（LF 归一化 sha256）改错一位，四个检查全 PASS／exit 0** ⇒ §5.1 的"无机器门禁、只能人工复核"结论**在 r2 复跑后仍成立**。随后 `git checkout -- <本文件>` 还原：`git status --porcelain` 空、`git diff --stat` 空、`git diff --name-only upstream/main...HEAD` 仍只有本文件。
+
+**(c) 返修门禁（r2，提交后实测）**：`npm run test:docs` ⇒ exit 0（原文同上）；`git diff --name-only upstream/main...HEAD` ⇒ 仅本文件；`git status --porcelain` ⇒ 空；`git diff --check`（**两点**：工作区↔索引）与 `git diff --check upstream/main...HEAD`（**三点**：基线↔HEAD，**以三点为准**）⇒ **均无输出、exit 0**。本节自身为记录新增、其后再提交，故**最终 HEAD 上同一组门禁的原始输出登记在回传 handoff**（值相同）；`fix-r2\gate-negative-control-r2.txt`、`gate-x-cmd.txt`、`gate-x-bash.txt`、`gate-x-ps51.txt` 为上述原始输出存档（仓库外）。
 
 ## 7 未取得项（**单列；不计入通过、不冒称**）
 
@@ -440,7 +490,7 @@ $ git diff --check                # 无输出
 ## 9 诚实边界与交付声明
 
 - **本文档是记录，不构成 #1 的验收结论**。#1 的关闭由监工按其验收项（`docs/initial-issues.json` GY-I01 的 `acceptance`，含「监工审查确认契约后，下游才按冻结版本开发；改变契约必须同步文档与依赖」）判定。
-- 本片**只新增 1 份文档**：`docs/verification/gy-i01-contract-runtime-freeze-20261015.md`。
+- 本片**只涉及 1 份文档**：`docs/verification/gy-i01-contract-runtime-freeze-20261015.md`（初版为新增；r2 返修仅在该文件内修改，未新增／改动其他文件）。
 - **未改** `packages/contracts/**`（冻结件）、`services/**`、`package.json` 版本约束、CI workflow、`README`／`AGENTS.md`。
 - **未 push、未合并、未 force**；写手不持有 GitHub 凭据。
 - **未读取或打印任何密钥**；§3.2 的 `--runtime` 在无凭据 stub 子进程中运行，不监听端口、不请求业务服务。
