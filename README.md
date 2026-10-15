@@ -88,6 +88,8 @@ Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频
 
 | 优先级 | 原 issue → 建议独立验收结果 | 可复用成果 | 前置依赖与剩余验收 |
 | --- | --- | --- | --- |
+| **阶段一（M1）首：基础并行收口**（边界标记，非新增任务） | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结、[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动、[#27](https://github.com/GengYunChuChao/GengYun/issues/27) 平台／服务、[#29](https://github.com/GengYunChuChao/GengYun/issues/29) 用途守卫、[#4](https://github.com/GengYunChuChao/GengYun/issues/4) 正式会话、[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | 沿用下方优先级 1、2、6 行的既有可复用成果，不重复分配 | 来源：[开发顺序](docs/development-order.md) 第 13 行“基础并行收口”批次；M1 窗口 10-03 至 10-10 见[阶段计划](docs/development-plan.md) 第 14 行。不新增依赖、不改验收口径，正式依赖以[任务台账](docs/initial-issues.json)为准 |
+| **阶段一（M1）尾：媒体及资料／样本准备**（边界标记，非新增任务） | [#3](https://github.com/GengYunChuChao/GengYun/issues/3) 核准资料、[#20](https://github.com/GengYunChuChao/GengYun/issues/20) 冻结样本、[#6](https://github.com/GengYunChuChao/GengYun/issues/6) 私有媒体 | 沿用下方优先级 3 行的既有可复用成果，不重复分配 | 来源：[开发顺序](docs/development-order.md) 第 14 行“资料与样本持续准备”（#3、#20）与第 16 行“安全资料与媒体”（#6，同批 #8 不在本边界列举内）；“媒体及资料／样本准备”见[阶段计划](docs/development-plan.md) 第 14 行。不新增依赖、不改验收口径 |
 | 1：先收尾 | [#1](https://github.com/GengYunChuChao/GengYun/issues/1) 契约冻结；[#2](https://github.com/GengYunChuChao/GengYun/issues/2) 可复现启动；[#28](https://github.com/GengYunChuChao/GengYun/issues/28) 五 Tab 页面骨架 | #33 契约、#43 工程、#69 五 Tab、#71 工具与设备基线 | 可并行：区分已实现／规划接口；复现 API、后台和小程序启动；补齐当前五 Tab Demo 样式与关键按钮操作证据；适老字号专项后续。页面骨架不等待所有业务能力 |
 | 2：首段用户链路 | [#4](https://github.com/GengYunChuChao/GengYun/issues/4) 正式会话；[#5](https://github.com/GengYunChuChao/GengYun/issues/5) 作物／地区；[#7](https://github.com/GengYunChuChao/GengYun/issues/7) 知识查询 | #59／#68／#78 会话与返回；#74／#77 资料与手选地区；#79／#80 查询 API 与原生消费者 | 复用冻结接口，补知识运行组的受限启动接续；验证正式微信身份→作物／地区→列表／详情→失效／退出。手选地区不等待定位；科普查询不等待识草、OCR 或 DoseCard |
 | 3：并行补基础 | [#3](https://github.com/GengYunChuChao/GengYun/issues/3) 核准资料；[#20](https://github.com/GengYunChuChao/GengYun/issues/20) 冻结样本；[#6](https://github.com/GengYunChuChao/GengYun/issues/6) 私有媒体；[#8](https://github.com/GengYunChuChao/GengYun/issues/8) 条件匹配与原文用量 | #73／#81 来源候选；#47 评估工具；#60 媒体参考组件；#64 查询参考组件 | 四线可并行：来源候选补有效标签与适用条件，样本调参前独立冻结，媒体补 HTTP／存储／清理，规则补未知条件拒绝与用量卡守卫。#8 接续 [PR #82 批复](https://github.com/GengYunChuChao/GengYun/pull/82#pullrequestreview-5482804369)，保留已有工作 |
@@ -99,6 +101,7 @@ Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频
 - **资源缺口按功能记录：** 正式微信身份、合法网络出口／域名配置阻塞对应正式联调；核准标签与条件阻塞真实农药资料和用量展示；独立样本阻塞质量验收。它们不阻塞隔离环境下的页面、接口或模板组件开发。
 - **新增需求单独接续：** [情景视频](docs/features/pesticide-demo-video.md)先做模板／播放器，扫描入口接 #10，保存按需接 #6；输出应为可播放视频，并标识“演示视频，非真实效果预测”。资料库切换、地区／毒性筛选、风险标签和 IP 属地纳入后续前端接续，正式字段、来源与分类规则 TODO；危险评估与毒性分类不混用。增补不计入原 27 项完成数。
 - **领取与审查：** 先读当前 issue 批复和 PR，沿用已有负责人、分支与成果；没有 assignee 不代表无人开发。负责人缺项由指挥确认，监工不派发。软件组件、资料、跨模块联调、发布分别验收，局部 PR 使用 `Refs`，整项满足条件才关闭。
+- **阶段一边界标记：** 表格首部两行为阶段一（M1）的边界标记（首：基础并行收口；尾：媒体及资料／样本准备），把此前散见下方各行（尤以优先级 1 行、3 行）的 M1 内容集中对照，便于一眼看到阶段一的起止；二者是标记而非新增任务，不改变任何任务分配、优先级、依赖或验收口径，不改变[任务台账](docs/initial-issues.json)的正式依赖，也不代表任何项已完成。编号提醒：[开发顺序](docs/development-order.md) 明确 GY-I25／26／27 的实际编号分别为 #27／#28／#29，不能按任务尾号猜编号。
 
 详细依赖见[开发顺序](docs/development-order.md)和[任务台账](docs/initial-issues.json)。本表未创建新的 GitHub 子 issue，不代表已完成拆分或追加验收通过。
 
