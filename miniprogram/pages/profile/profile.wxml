@@ -46,7 +46,17 @@
           <view class="panel-head__title">我的档案</view>
           <view class="pill pill--gray">单项作物 · 浙江市县</view>
         </view>
-        <view class="info-list">
+        <!-- 读取失败时本面板**不**留“待读取”的静默占位：直接给出可见失败态 + 重试入口（GY-I05）。
+             统一走 state-view(status="error")，不另写一行灰字当失败提示（docs/ui-state-inventory.md:80）。 -->
+        <state-view
+          wx:if="{{loadError}}"
+          status="error"
+          title="档案暂时读取失败"
+          desc="{{loadError}}"
+          action-text="重试读取档案"
+          bind:action="loadProfile"
+        ></state-view>
+        <view class="info-list" wx:else>
           <view class="info-row">
             <view class="info-row__copy">
               <text class="info-row__title">所在地区</text>
@@ -70,8 +80,9 @@
         <view class="hint" role="status">{{message}}</view>
 
         <view class="row-actions">
+          <!-- 入口保持可点：读取失败/目录为空时由 onEdit 给出可见原因，不靠 disabled 静默吞掉点击（GY-I05）。 -->
           <button class="btn btn--secondary row-actions__item" bindtap="loadProfile" disabled="{{busy}}">重新读取档案</button>
-          <button wx:if="{{!editing}}" class="btn btn--primary row-actions__item" bindtap="onEdit" disabled="{{busy || !loaded || needsReload || !crops.length || !cities.length}}">手选作物与市县</button>
+          <button wx:if="{{!editing}}" class="btn btn--primary row-actions__item" bindtap="onEdit" disabled="{{busy}}">手选作物与市县</button>
         </view>
 
         <block wx:if="{{editing}}">
@@ -113,7 +124,7 @@
     </view>
 
     <view class="row-actions">
-      <button class="btn btn--secondary row-actions__item" bindtap="openReference" disabled="{{busy || !loaded || needsReload || !profile.crop_id}}">按当前档案查科普资料</button>
+      <button class="btn btn--secondary row-actions__item" bindtap="openReference" disabled="{{busy}}">按当前档案查科普资料</button>
       <button class="btn btn--secondary row-actions__item" bindtap="logout">退出登录</button>
     </view>
   </block>

@@ -6,11 +6,26 @@ const locationRegion = require('../../utils/location-region')
 // GY-I16：收藏与识别历史各自有独立页面；本页只显示**已加载条数**并给出入口。
 const favoritesApi = require('../../utils/favorites-api')
 const historyApi = require('../../utils/history-api')
-function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', needsReload: false, retryPending: false } }
+function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', loadError: '', needsReload: false, retryPending: false } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
   return messages[code] || '档案暂时无法读取或保存，请重试。'
 }
+/**
+ * 读取（GET /me/profile 与 /catalog/*）失败时的**可见失败态**说明：
+ * 只如实描述失败原因，不粉饰成成功、不吞掉、也不用本地数据顶替。
+ * 失败态统一由 state-view(status="error") 呈现（见 docs/ui-state-inventory.md:80
+ * 「各页面不得再自写一行灰字当失败提示」）。
+ */
+function readFailure(code) {
+  if (code === 'PROVIDER_UNAVAILABLE') return '档案暂时读取失败（服务端未启用该接口）。档案与作物、市县目录都没有读到，本页不会用本地数据顶替，可重试读取。'
+  if (code === 'NETWORK_UNCERTAIN') return '档案暂时读取失败（网络中断，读取结果未确认）。请确认网络后重试，本页不会用本地数据顶替。'
+  return '档案暂时读取失败（' + (code || '未返回可读原因') + '）。请重试读取，本页不会用本地数据顶替。'
+}
+// 入口在「档案还没读成功 / 需要重读」时的统一解释：入口保持可点，点击必须给出可见原因，不静默 return。
+const NOT_READY = '档案还没有读取成功，暂时不能进入编辑。请先点“重试读取档案”。'
+const REREAD_REQUIRED = '档案需要重新读取后才能编辑。请先点“重新读取档案”。'
+const REFERENCE_NOT_READY = '档案还没有读取成功，暂时不能按档案查资料。请先点“重试读取档案”。'
 Page({
   data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—' }, empty()),
   onLoad: function () { fontScale.applyFontScale(this) },
@@ -65,11 +80,12 @@ Page({
       if (!this.live(op, b)) { this.identityFailure(op); return }
       const roots = result[2].filter(function (r) { return r.parent_code === null })
       const cities = result[2].filter(function (r) { return roots.some(function (p) { return p.code === r.parent_code }) })
-      this.setData({ crops: result[1], regions: result[2], cities: cities, loaded: true, busy: false, message: !result[1].length || !cities.length ? '支持目录为空，暂时不能选择档案。' : '' })
+      this.setData({ crops: result[1], regions: result[2], cities: cities, loaded: true, busy: false, loadError: '', message: !result[1].length || !cities.length ? '支持目录为空，暂时不能选择档案。' : '' })
       this.display(result[0])
     } catch (e) {
       if (!this.live(op, b)) { this.identityFailure(op); return }
-      this.setData({ busy: false, message: message(e.code), needsReload: true })
+      // 不静默：失败原因如实进 message，并由 loadError 驱动可见失败态 + 重试入口。
+      this.setData({ busy: false, message: message(e.code), loadError: readFailure(e.code), needsReload: true })
     }
   },
   subjectCurrent: function () {
@@ -78,7 +94,13 @@ Page({
   },
   onEdit: function () {
     if (!this.subjectCurrent()) return
-    if (this.data.guest || !this.data.loaded || this.data.busy || this.data.needsReload || this._pendingSave) return
+    if (this.data.guest || this.data.busy) return
+    // 读取失败/未读完/待重读：入口**保持可点**并如实说明原因（不静默吞掉点击），但**不**进入编辑。
+    if (!this.data.loaded || !this.data.profile) { this.setData({ message: NOT_READY }); return }
+    if (this.data.needsReload) { this.setData({ message: REREAD_REQUIRED }); return }
+    if (this._pendingSave) { this.setData({ message: '上一次保存还没处理完，请先重试同一次保存或重新读取档案。' }); return }
+    // 目录为空时同样不进入编辑（守卫不放宽），只给可见原因。
+    if (!this.data.crops.length || !this.data.cities.length) { this.setData({ message: '支持目录为空，暂时不能选择档案。请稍后点“重新读取档案”。' }); return }
     const p = this.data.profile, regions = this.data.regions
     const selected = regions.find(function (r) { return r.code === p.region_code && r.catalog_version === p.region_catalog_version })
     const cityIndex = this.data.cities.findIndex(function (r) { return selected && (r.code === selected.code || r.code === selected.parent_code) })
@@ -160,8 +182,11 @@ Page({
     }
   },
   openReference: function () {
-    if (this.data.guest || !this.data.profile || !this.data.loaded || this.data.busy || this.data.needsReload) return
+    if (this.data.guest || this.data.busy) return
     if (!this.subjectCurrent()) return
+    // 依赖同一接口（GET /me/profile）的入口同样不静默：读不到就给可见原因，且不跳转。
+    if (!this.data.loaded || !this.data.profile) { this.setData({ message: REFERENCE_NOT_READY }); return }
+    if (this.data.needsReload) { this.setData({ message: REREAD_REQUIRED }); return }
     const p = this.data.profile
     if (!p.crop_id || !p.region_code) { this.setData({ message: '请先设置档案。' }); return }
     wx.navigateTo({ url: '/pages/reference/reference?crop_id=' + encodeURIComponent(p.crop_id) + '&region_code=' + encodeURIComponent(p.region_code) })
