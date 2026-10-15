@@ -1,6 +1,6 @@
 name: Engineering shell gates
 
-# 分层 CI：文档检查 / 静态检查 / 确定性单元 / 契约测试 / 评估回归 / 后台与 API 构建。
+# 分层 CI：文档检查 / 静态检查 / 确定性单元 / 集成回环（无 PG／无工具／无外网）/ 契约测试 / 评估回归 / 后台与 API 构建。
 # 每层是独立 job，检查名固定，便于后续 PR 作为必需检查引用。
 # 评估回归（GY-I20）只用 Node 标准库、任何真实外部调用一律禁用（合成/程序验证夹具）。
 # 微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充。
@@ -53,6 +53,24 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run test:unit
+
+  integration:
+    name: integration-http
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # `tests/integration/**` 里**逐个列出**的回环脚本（无 PG／无微信开发者工具／无外网）。
+      # 名单写在 `package.json` 的 `test:integration:http` 里，**不得**改成 glob：
+      # `tests/integration/**` 还有需 PG（`*-pg.mjs`）与需微信工具（`local-dev-*.cjs`）的脚本，
+      # 一把抓会把它们拖进必跑路径 ⇒ 必然红。
+      - run: npm run test:integration:http
 
   contract:
     name: contract-tests
