@@ -7,9 +7,10 @@ import { runInNewContext } from 'node:vm';
 // 离线运行实际页面及 main 的 auth 模块，防止界面合并丢失游客门禁和退出行为。
 // 合成 wx 只记录请求，绝不外发；不作为微信工具或真机证据。
 const root = resolve(import.meta.dirname, '../..');
+const read = (p) => readFileSync(resolve(root, p), 'utf8');
 function harness() {
   const storage = new Map();
-  const requests = [], launches = [], tabs = [], toasts = [];
+  const requests = [], launches = [], tabs = [], navigates = [], toasts = [];
   const cache = new Map();
   const expires = () => new Date(Date.now() + 3600_000).toISOString();
   const wx = {
@@ -20,6 +21,7 @@ function harness() {
     request: (options) => requests.push(options),
     reLaunch: (options) => launches.push(options.url),
     switchTab: (options) => tabs.push(options.url),
+    navigateTo: (options) => navigates.push(options.url),
     showModal: (options) => options.success({ confirm: true }),
     showToast: (options) => toasts.push(options.title),
     getAppBaseInfo: () => ({ fontSizeSetting: systemPx }),
@@ -60,7 +62,7 @@ function harness() {
     requests.at(-1).success({ statusCode: 200, data: { data: { access_token: 'synthetic-token', audience: 'user', expires_at: expires() }, meta: { execution_mode: 'stub' } } });
     assert.equal(auth.isLoggedIn(), true);
   }
-  return { auth, page, seedCache, acceptVerification, login, requests, launches, tabs, toasts, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
+  return { auth, page, seedCache, acceptVerification, login, requests, launches, tabs, navigates, toasts, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
 }
 
 for (const name of ['identify', 'community', 'messages', 'profile']) {
@@ -119,6 +121,56 @@ test('首页已核实用户进入识别 Tab，退出后的 onShow 恢复游客',
   h.auth.clearSession();
   page.onShow();
   assert.equal(page.data.guest, true);
+});
+
+// GY-I12：首页能力卡的目标由 `data-key` 决定（语音/问答卡不再被送进识别页）。
+const homeEntryTap = (key) => ({ currentTarget: { dataset: key === undefined ? {} : { key } } });
+
+test('首页能力卡按 data-key 分派：语音/问答卡进播报页，识别卡按现状进识别 Tab', () => {
+  const h = harness();
+  h.login();
+  const page = h.page('home');
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  page.onEntryTap(homeEntryTap('weed'));
+  h.acceptVerification(h.requests.at(-1));
+  assert.deepEqual(h.tabs, ['/pages/identify/identify'], '拍草识别卡仍进识别 Tab');
+  page.onEntryTap(homeEntryTap('ocr'));
+  h.acceptVerification(h.requests.at(-1));
+  assert.deepEqual(h.tabs, ['/pages/identify/identify', '/pages/identify/identify'], '农药标签识别卡按现状进识别 Tab');
+  assert.deepEqual(h.navigates, [], '前两张卡不跳任何非 Tab 页');
+  page.onEntryTap(homeEntryTap('voice'));
+  h.acceptVerification(h.requests.at(-1));
+  assert.deepEqual(h.navigates, ['/pages/voice/voice'], '语音/问答卡进播报页，不再进识别页');
+  assert.equal(h.tabs.length, 2, '语音卡不得再进识别 Tab');
+});
+
+test('未登录点语音卡与识别卡同口径被拦：引导登录页，不放行播报页', () => {
+  const h = harness();
+  const nav = h.load(resolve(root, 'miniprogram/utils/navigation.js'));
+  const page = h.page('home');
+  page.onLoad();
+  page.onShow();
+  assert.equal(page.data.guest, true);
+  assert.equal(h.requests.length, 0);
+  page.onEntryTap(homeEntryTap('weed'));
+  assert.equal(nav.peekReturnTo(), '/pages/identify/identify', '识别卡未登录时记下识别页为回跳目标');
+  page.onEntryTap(homeEntryTap('voice'));
+  assert.deepEqual(h.launches, ['/pages/login/login', '/pages/login/login'], '两张卡未登录时同口径引导到独立登录页');
+  assert.deepEqual(h.navigates, [], '未登录不得放行播报页');
+  assert.deepEqual(h.tabs, [], '未登录不得放行任何 Tab');
+  assert.equal(nav.peekReturnTo(), '/pages/voice/voice', '登录后应回到播报页而不是识别页');
+});
+
+test('home.wxml：能力卡逐一透传既有 key（未新增 key、未改导航白名单语义）', () => {
+  const wxml = read('miniprogram/pages/home/home.wxml');
+  const js = read('miniprogram/pages/home/home.js');
+  assert.match(wxml, /data-key="\{\{item\.key\}\}"/, '能力卡需把既有 key 透传给 onEntryTap');
+  assert.match(wxml, /bindtap="onEntryTap"/, '能力卡仍绑 onEntryTap');
+  assert.deepEqual([...js.matchAll(/key: '([a-z]+)'/g)].map((m) => m[1]), ['weed', 'ocr', 'voice'], '沿用既有 key 体系，不新造 key');
+  const nav = harness().load(resolve(root, 'miniprogram/utils/navigation.js'));
+  assert.ok(nav.PAGES.includes('pages/voice/voice'), '播报页已在既有导航白名单内');
+  assert.ok(!nav.TAB_PAGES.includes('pages/voice/voice'), '播报页不是底部 Tab（应按 navigateTo 打开）');
 });
 
 test('我的保留 main 的退出调用与撤销未确认提示', () => {
