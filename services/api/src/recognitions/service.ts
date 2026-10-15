@@ -17,6 +17,11 @@
  * - 取消或超时之后到达的提供者结果**不复活**任务（CAS 版本守卫）；
  * - 越权与不存在一律 NOT_FOUND，不泄露存在性；
  * - selection 只写 selected_species_id，绝不回写 candidates / model_score / model_version。
+ *
+ * GY-I16（#16）跨线接线：任务进入**终态且提交成功**后，把该终态交给历史端口
+ * （`RecognitionTerminalHistoryPort`，装配层接到历史域的内部创建口 `appendHistory`）——
+ * 因此「我的 → 识别历史」不再恒空，且 `failed`/`timed_out`/`uncertain` 原样可见。
+ * 状态以 `commitTerminal` 的**返回值**为准（不是本域的乐观值），CAS 失败时**不写历史**。
  */
 import { randomUUID } from 'node:crypto';
 import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
@@ -91,12 +96,78 @@ export interface JobProjection {
   result: { kind: 'recognition'; value: RecognitionProjection } | null;
 }
 
+/**
+ * 识别任务**终态**写入服务端识别历史的端口（GY-I16 #16 的跨线接线）。
+ *
+ * ## 为什么是一个端口、而不是本域直接 import 历史域
+ * 历史域的**内部创建口** `AppHistoryService.appendHistory(input)` 住在
+ * `services/api/src/history/service.ts`（不是契约 operationId、**不注册路由**）。识别域只声明
+ * 「我要把一次已落库的终态交给历史域」这一件事的形状，接线（真正调用 `appendHistory`）由**装配层**
+ * `services/api/src/app.ts` 完成 —— 与 `recognitionEgress`、`linkage` 等既有跨线端口的做法一致，
+ * 本域**不** import 历史域、不新增契约出口。
+ *
+ * ## 调用契约（接线方必须满足）
+ * - **只在终态提交成功之后调用**（`commitTerminal` 返回非 `null`）：CAS 失败（任务已被取消或已终态）
+ *   时**不得**调用，否则会把一次从未发生的终态写进历史；
+ * - `target_ref` 的 `id` 是**识别记录 id**（任务创建时即分配的内部分配 id）、`revision` 是提交时
+ *   识别记录的 `revision`；
+ * - **`job_state` 必须是实际落库的终态**（取 `commitTerminal` 的返回值，不取本域的乐观值）；
+ * - 幂等由**装配层**用**确定性** `event_key`（由本任务的稳定标识派生，**不含**时间戳/随机数）
+ *   保证：同一次任务重复投递是 **no-op**，不得产生第二条历史行。
+ *
+ * ## 失败边界
+ * 历史行是**可浏览性**的产物，不是任务结果的权威（权威在识别 store）。因此端口抛错
+ * （历史域未装配、入参不合约、存储异常）由本域**吞掉并记一条告警**，绝不把已落库的终态任务
+ * 回滚或改写成失败 —— 但也**绝不**伪造一条"成功"的历史。
+ */
+export interface RecognitionTerminalHistoryInput {
+  /** 归属者（服务端解析出的用户 id，绝不来自客户端）。 */
+  owner_id: string;
+  kind: 'recognition';
+  target_ref: { type: 'recognition'; id: string; revision: number };
+  /** 内部作业标识（历史行读取时用它核对实时状态）。 */
+  job_id: string;
+  /** **实际落库**的终态。 */
+  job_state: JobState;
+}
+
+export interface RecognitionTerminalHistoryPort {
+  /** 端口接线状态：`wired`=装配层已接到历史域内部创建口；`unwired`=未接线（只告警，不写）。 */
+  readonly kind: 'wired' | 'unwired';
+  /** 供证据文档/诊断引用的说明（可安全公开：不含归属与目标正文）。 */
+  readonly note: string;
+  recordTerminal(input: RecognitionTerminalHistoryInput): Promise<void>;
+}
+
+/**
+ * 未接线端口（**合法**的 fail-closed 端口：识别域照常跑，只是历史里没有它的一行）。
+ *
+ * 不是产品默认：`app.ts` 的装配默认已接到历史域（stub/preset_demo）；
+ * `real` 模式下历史域整域关闭（`historyService === null`）⇒ 本端口就是这一支。
+ */
+export function createUnwiredRecognitionTerminalHistoryPort(
+  note = '识别终态写入历史的端口尚未接线：任务照常执行，但不产生服务端历史行',
+): RecognitionTerminalHistoryPort {
+  return {
+    kind: 'unwired',
+    note,
+    async recordTerminal() {
+      // 未接线 = 什么都不做（**不是**假装写成功、也不是回退替身）。
+    },
+  };
+}
+
 export interface RecognitionServiceOptions {
   store: RecognitionStore;
   provider: RecognitionProvider;
   media: RecognitionMediaPort;
   /** 幂等请求摘要密钥（服务端密钥，不入库、不下发）。 */
   idempotencyHmacKey: string;
+  /**
+   * 终态写入服务端识别历史的端口（**可选**；缺省 = 未接线 fail-closed，见端口注释）。
+   * 接线属跨线，装配点唯一：`services/api/src/app.ts`。
+   */
+  history?: RecognitionTerminalHistoryPort;
   /**
    * 选择后关联科普与条件的**只读**资料端口（可选）。
    *
@@ -215,6 +286,8 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
    */
   const linkagePort =
     options.linkage ?? createReferenceLinkagePort({ requireVerified: provider.executionMode === 'real' });
+  /** 终态 → 服务端识别历史（GY-I16 #16 接线；缺省未接线，见 `RecognitionTerminalHistoryPort`）。 */
+  const historyPort = options.history ?? createUnwiredRecognitionTerminalHistoryPort();
   const inFlight = new Set<Promise<void>>();
 
   function scopeFor(userId: string, method: string, routePath: string): string {
@@ -471,6 +544,11 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
 
   /**
    * 原子提交终态：CAS 失败（任务已被取消或已终态）→ 什么也不写，**旧回调不复活**。
+   *
+   * 提交**成功后**（只有这一次 CAS 会成功）把该终态交给历史端口落一行服务端识别历史（GY-I16 #16）：
+   * - `job_state` 取**返回值**（实际落库的终态），不取本域的乐观值；
+   * - 端口抛错只记告警：历史行不是任务结果的权威，已落库的终态**不因历史写入失败而改写**；
+   * - 端口实现方（装配层）用确定性 `event_key` 去重 ⇒ 同一次任务重复投递是 no-op。
    */
   async function commitTerminal(
     jobId: string,
@@ -479,7 +557,30 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     recognition: RecognitionRow | null,
   ): Promise<JobRow | null> {
     const at = now();
-    return store.commitTerminal(jobId, running.revision, terminal, recognition, at);
+    const committed = await store.commitTerminal(jobId, running.revision, terminal, recognition, at);
+    if (committed !== null) {
+      await recordTerminalHistory({
+        owner_id: committed.ownerUserId,
+        kind: 'recognition',
+        target_ref: { type: 'recognition', id: committed.recognitionId, revision: recognition === null ? 1 : recognition.revision },
+        job_id: committed.id,
+        job_state: committed.state,
+      });
+    }
+    return committed;
+  }
+
+  /** 把一次**已落库**的终态交给历史端口（吞掉端口异常，不改变任务结果）。 */
+  async function recordTerminalHistory(input: RecognitionTerminalHistoryInput): Promise<void> {
+    try {
+      await historyPort.recordTerminal(input);
+    } catch (error) {
+      // 只记一条告警（含端口接线状态与任务 id 形状，不含归属身份/媒体引用/候选）。
+      console.warn(
+        `GY-I16 识别终态历史写入失败（端口=${historyPort.kind}，job_state=${input.job_state}）：`,
+        error instanceof Error ? error.message : typeof error,
+      );
+    }
   }
 
   async function getRecognition(input: { userId: string; recognitionId: string }): Promise<RecognitionProjection> {
@@ -733,6 +834,9 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
       /** 选择后关联端口（只读资料层；用量恒被 GY-I08 守卫阻断）。 */
       linkagePort: linkagePort.kind,
       linkageNote: linkagePort.note,
+      /** 终态 → 服务端识别历史的端口（GY-I16 #16 接线；未接线时任务照常执行）。 */
+      historyPort: historyPort.kind,
+      historyNote: historyPort.note,
       /** 人工选择一律不计模型成绩（来源闭集与模型成绩无交集）。 */
       selectionProvenance: 'human',
       selectionModelAttributable: false,

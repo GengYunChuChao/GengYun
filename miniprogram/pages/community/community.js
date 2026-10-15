@@ -175,6 +175,7 @@ Page({
   },
 
   onLogin: function () {
-    auth.requireLogin(function () {})
+    const self = this
+    auth.requireLogin(function (ok) { if (ok) { pageGate.cancel(self); self.onShow() } })
   }
 })

@@ -31,8 +31,14 @@ const identifyApi = require('../../utils/identify-api')
  *   不做"沿用展示"；
  * - 同进程内的账号切换隔离保持：内存条目仍按已核实会话世代 `ownerKey` 逐条过滤。
  *
- * 代价（如实记录）：本机识别历史不再跨应用重启；服务端仍是历史的事实来源，后续可经服务端读取接口
- * （如 `GET /history`，属 GY-I20 范围）补回。
+ * 代价（如实记录）：本机识别历史不再跨应用重启。当时服务端读取接口（`GET /history`，GY-I16 #16）
+ * 已在契约与列表页里，但**没有任何写入点**，因此"跨启动可浏览"当时并不成立。
+ *
+ * GY-I16（#16）接线后的现状（本片交付）：服务端识别历史**已有写入点** —— 识别/OCR 任务终态提交
+ * 成功后由服务端落一行（`services/api/src/app.ts` 的终态历史端口 → `history/service.ts#appendHistory`，
+ * 确定性 `event_key` + 幂等去重）。页面因此给出一条到 `/pages/history/history` 的入口
+ * （`onOpenServerHistory`）。本机索引的这一段 **fail-closed 论证不变**：它仍只在本次打开期间有效，
+ * **不**持久化、**不**跨启动。
  */
 const historyByOwner = new Map()
 const HISTORY_KEY_LEGACY = 'gengyun.identify.history'
@@ -41,6 +47,16 @@ const HISTORY_MAX = 10
 const POLL_INTERVAL_MS = 1000
 const POLL_MAX_TICKS = 60
 const UUID_HEX = '0123456789abcdef'
+
+/**
+ * 识别图用途字节上限（契约 `MediaPurpose.weed_recognition` ≤2 MiB，见
+ * `packages/media/constants.mjs` 的 `MEDIA_PURPOSE_MAX_BYTES`）。
+ *
+ * 这里是**上传前预检**：超限直接给可操作提示、**不发任何请求**。
+ * 服务端仍会独立核验真实字节（客户端预检**不放宽**任何守卫，只是不做必然被拒的往返）。
+ */
+const RECOGNITION_MAX_BYTES = 2 * 1024 * 1024
+const MIB = 1024 * 1024
 
 /** 替身媒体引用（本地生成的 uuid v4 形状）。仅用于 stub/preset_demo 联调，不代表真实上传。 */
 function syntheticMediaId() {
@@ -289,6 +305,15 @@ Page({
         if (mime === null) { this.setData({ busy: false, errorText: '无法确定照片类型，请改用 JPG / PNG / WebP。' }); return }
         const info = await readFileInfo(tempFilePath)
         if (!this.isCurrentOperation(gen)) return
+        // 上传前尺寸预检：超限直接给可操作提示，**不发出** POST /media/uploads（服务端必拒）。
+        if (info.size > RECOGNITION_MAX_BYTES) {
+          this.setData({
+            busy: false,
+            errorText: '照片过大（' + (info.size / MIB).toFixed(1) + ' MiB）：识别图上限 ' + (RECOGNITION_MAX_BYTES / MIB) +
+              ' MiB，请重新拍摄或压缩后再试；本条未上传任何照片。'
+          })
+          return
+        }
         media = await identifyApi.uploadPrivatePhoto(tempFilePath, { mime: mime, bytes: info.size, sha256: info.digest })
       } else {
         // 替身模式：照片**不上传**，使用本地生成的替身媒体引用（服务端 meta.execution_mode 已如实标注）。
@@ -576,6 +601,17 @@ Page({
     // 旧持久化键（若有残留）一并清理，避免下次启动出现无法核实归属的数据。
     try { wx.removeStorageSync(historyKeyFor(ownerKey)) } catch (_) {}
     this.setData({ history: [] })
+  },
+
+  /**
+   * 打开服务端识别历史（`GET /history`，见 `pages/history`）。
+   *
+   * 与「我的 → 识别历史」是**同一个**入口页（`profile.js` 的 `openHistory` 同 URL），
+   * 不另造第二套历史面。服务端历史行由识别/OCR 任务终态写入（GY-I16 #16 接线）。
+   */
+  onOpenServerHistory: function () {
+    if (this.data.guest === true) return
+    wx.navigateTo({ url: '/pages/history/history' })
   }
 })
 
