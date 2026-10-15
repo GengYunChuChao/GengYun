@@ -44,7 +44,7 @@
 | 14 | 运行候选基线（含未验证声明） | `packages/contracts/runtime-baseline.json` | `status = candidate_pending_GY-I02_GY-I25`；`verification.*` 多项仍 `pending` |
 | 15 | 微信基础库目标 | `project.config.json:7`、`miniprogram/project.config.json:27` | 两处 `"libVersion": "3.17.3"`（同一口径） |
 | 16 | 既有运行版本**实测**证据（历史） | `docs/verification/gy-i02-clean-repro-20261014.md` §1、§4.10 | 记：Node `v24.16.0`／npm `11.13.0`／Python `3.14.3`；模拟器 `SDKVersion=3.17.3`（**devtools，不是真机**） |
-| 17 | CI 中锁定的 Node 版本 | `.github/workflows/engineering-shell.yml:38,52,66,80,94`、`.github/workflows/local-wechat.yml:53` | 六处均为 `node-version: '24.16.0'` |
+| 17 | CI 中锁定的 Node 版本 | **13 处 / 9 个 workflow**（共 10 个 workflow 文件，实测见 §4.2）：`.github/workflows/engineering-shell.yml:38,52,66,80,94`、`.github/workflows/local-wechat.yml:53`、`.github/workflows/access-verification.yml:19`、`.github/workflows/auth-privacy-postgres.yml:31`、`.github/workflows/catalog-postgres.yml:31`、`.github/workflows/consent-grant-postgres.yml:31`、`.github/workflows/source-lifecycle-postgres.yml:31`、`.github/workflows/staging-intake-postgres.yml:31`、`.github/workflows/workbook-staging.yml:39` | 13 处均为 `node-version: '24.16.0'`；`git grep -c "node-version: '24.16.0'" -- .github/workflows/` 逐文件合计即 13（**原文写"六处"，漏记 7 处，本次按实测更正**） |
 
 ### 1.2 缺失、需本次补（本次按"只加 1 份文档"补齐；**不改代码**）
 
@@ -274,11 +274,12 @@ $ git diff --name-only origin/main -- packages/contracts/
 
 | 项 | 位置（file:line） | CI 配置值 | 本次是否实跑 | 说明 |
 | --- | --- | --- | --- | --- |
+| Node | **全仓合计：13 处 / 9 个 workflow**（`git grep -c "node-version: '24.16.0'" -- .github/workflows/`，共 10 个 workflow 文件） | `node-version: '24.16.0'` | **否** | `engineering-shell.yml` 5 处、`local-wechat.yml:53`、`access-verification.yml:19`、`auth-privacy-postgres.yml:31`、`catalog-postgres.yml:31`、`consent-grant-postgres.yml:31`、`source-lifecycle-postgres.yml:31`、`staging-intake-postgres.yml:31`、`workbook-staging.yml:39`。**原文只写"六处"，本次按实测更正** |
 | Node | `.github/workflows/engineering-shell.yml:38,52,66,80,94` | `node-version: '24.16.0'` | **否** | **五个** job（static/unit/contract/evaluation/build）各自内联；同文件的 `docs` job（`:17-27`）**不装 Node**。与 `engines` 下界字面相同 |
 | Node | `.github/workflows/local-wechat.yml:53` | `node-version: '24.16.0'` | **否** | 该 workflow **只在指定 paths 变更时触发**（`:4-20`、`:23-39`） |
 | Python | `.github/workflows/engineering-shell.yml:24`、`.github/workflows/development-docs.yml:36` | 仅 `python3 --version`（**未锁版本**） | **否** | 用 runner 自带 `python3`，无 `setup-python`、无版本 pin |
 | npm | 无 | CI 无 npm 版本 pin | **否** | 由 Node 发行包自带 npm 决定 |
-| 依赖 | `.github/workflows/engineering-shell.yml:40,54,68,82,96` | `npm ci --no-audit --no-fund`（锁文件） | **否** | 与本地同命令，但**本次未取得 CI 日志** |
+| 依赖 | **全仓 `npm ci`：12 处 / 8 个 workflow**（其中带 `--no-audit --no-fund` 的 **11 处 / 7 个**）：`engineering-shell.yml:40,54,68,82,96`、`auth-privacy-postgres.yml:33`、`catalog-postgres.yml:33`、`consent-grant-postgres.yml:33`、`source-lifecycle-postgres.yml:33`、`staging-intake-postgres.yml:33`、`workbook-staging.yml:41`，另 `local-wechat.yml:54` 为**不带 flags** 的 `npm ci` | `npm ci --no-audit --no-fund`（锁文件） | **否** | 命令与本地一致，但**本次未取得 CI 日志**。口径：`git grep -c "npm ci" -- .github/workflows/`（**原文只列 engineering-shell 的 5 处，本次按实测更正**） |
 | 微信基础库 | 无 | CI **无**基础库／编译步骤 | **否** | `local-wechat.yml` 只做 Node 静态与诊断检查（`.github/workflows/local-wechat.yml:55-63`）；该句出自 **`.github/workflows/engineering-shell.yml:6`** 文件头——「微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充。」（**原文误引为 `local-wechat.yml:6`**；该行实为 `      - 'project*.json*'`，且该句在本机 `local-wechat.yml` 内**零命中**，实测：`git grep -n "本机任务" -- .github/workflows/`） |
 
 ### 4.3 历史实测（**引用既有记录，本次未复测，不得当作本次读数**）
@@ -291,7 +292,7 @@ $ git diff --name-only origin/main -- packages/contracts/
 
 ### 4.4 本地实测与 CI 声称的差异
 
-1. **Node 一致**：本机 `v24.16.0` 与六处 CI pin 字面相同；但 `engines` 是**声明**，无 `engine-strict`／`.npmrc`（§1.2 第 4 项），**不构成机器强制**。
+1. **Node 一致**：本机 `v24.16.0` 与 **13 处 / 9 个 workflow** 的 CI pin 字面相同；但 `engines` 是**声明**，无 `engine-strict`／`.npmrc`（§1.2 第 4 项），**不构成机器强制**。
 2. **npm 无 CI pin**：CI 用 Node 自带 npm，是否 ≥ `11.13.0` 未在 CI 侧核对。
 3. **Python 无 CI pin**：本地 `3.14.3`（满足 `README.md:27` 的 3.11+），CI 仅打印 `python3 --version`，**版本未锁定、本次未读到 CI 读数**。
 4. **基础库完全不在 CI**：`libVersion` 只有配置文件与历史模拟器实测，**无 CI 覆盖**。
