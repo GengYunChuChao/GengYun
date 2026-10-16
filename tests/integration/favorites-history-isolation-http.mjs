@@ -109,6 +109,23 @@ function itemById(body, id) {
   return items === null ? null : (items.find((item) => item.id === id) ?? null);
 }
 
+// 断言失败必须**有界地**以非 0 退出：用例③/④ 也各自 `await fixture()` 新建监听中的服务，若失败路径
+// 不关掉它们，事件循环永不退出 ⇒ 本地"红"会退化成 CI 上"挂到 GitHub 默认 360 分钟"
+// （`.github/workflows/engineering-shell.yml` 全文件无 `timeout-minutes`，`package.json` 的
+// `test:integration:http` 又是 `&&` 串联：一个进程不返回则整链不返回）。
+// ⇒ 把每个已开的 app 登记在册，失败时统一关闭、再确定性退出。
+const openApps = new Set();
+async function closeAllFixtures() {
+  for (const app of openApps) {
+    try {
+      await app.close();
+    } catch {
+      // 关闭失败不得掩盖原始断言（原始错误已打印在 catch 内）
+    }
+  }
+  openApps.clear();
+}
+
 async function fixture() {
   const clock = scriptedClock(START);
   const visibility = makeControllableVisibility();
@@ -124,6 +141,7 @@ async function fixture() {
     recognitionMedia: createSubstituteMediaPort(),
   });
   await app.listen({ host: '127.0.0.1', port: 0 });
+  openApps.add(app);
   const address = app.server.address();
   assert.equal(typeof address, 'object');
   const base = `http://127.0.0.1:${address.port}`;
@@ -131,6 +149,7 @@ async function fixture() {
     return await buildHandle();
   } catch (error) {
     // 装配/登录阶段失败也要关掉监听中的服务（诚实失败，不挂死进程）。
+    openApps.delete(app);
     await app.close().catch(() => {});
     throw error;
   }
@@ -300,6 +319,9 @@ async function testPrivateIsolation(h) {
   assert.deepEqual(bList.body.data, { items: [], next_cursor: null }, '私有隔离：B 的列表不得看到 A 的收藏');
 
   // B 直接拿 A 的**收藏 id** 做删除：必须非成功（404 NOT_FOUND），且与"完全不存在的 id"**逐字段同形**。
+  // 如实口径：收藏域**没有** `GET /favorites/{id}` 详情路由（`services/api/src/routes/favorites.ts` 只注册
+  // `GET /favorites` 列表、`POST /favorites`、`DELETE /favorites/{id}`）⇒ 越权**读取**只可能发生在列表上，
+  // 本脚本**不声称**断言过不存在的详情路径（历史侧同一现象见下方 `GET /history/{id}` 未注册断言）。
   const foreignDelete = await h.deleteFavorite(sessionB.token, favorite.id, favorite.revision, 'fav-b');
   const absentDelete = await h.deleteFavorite(sessionB.token, ABSENT_ID, 1, 'fav-b');
   assert.equal(foreignDelete.status, 404);
@@ -371,7 +393,7 @@ async function testPrivateIsolation(h) {
   );
 
   note('setup', `A 收藏=${favorite.id}(rev=${favorite.revision}) 识别=${recognitionId} 历史=${history.id}(rev=${history.revision}) 任务=${jobId} 终态=${job.state}`);
-  note('case1', `B 列表：收藏=${JSON.stringify(bList.body.data)} 历史=${JSON.stringify(listItems(bHistory.body))}；B 直取 A 的收藏/历史 id ⇒ ${foreignDelete.status}/${foreignHistoryDelete.status} ${foreignDelete.body.error.code}（与"不存在"同形=${JSON.stringify(foreignDelete.body.error) === JSON.stringify(absentDelete.body.error)}；GET 历史详情未注册=${unregistered.status}）`);
+  note('case1', `B 列表：收藏=${JSON.stringify(bList.body.data)} 历史=${JSON.stringify(listItems(bHistory.body))}；B 直接拿 A 的收藏/历史 id 发 DELETE ⇒ ${foreignDelete.status}/${foreignHistoryDelete.status} ${foreignDelete.body.error.code}（与"不存在"同形=${JSON.stringify(foreignDelete.body.error) === JSON.stringify(absentDelete.body.error)}；两域均无 {id} 详情读路由，GET 历史详情未注册=${unregistered.status}）`);
   return { favorite, history, recognitionId, jobId };
 }
 
@@ -518,8 +540,9 @@ async function main() {
     await testUnpublishDoesNotRepublish();
     await testNoRecommendationRevival();
   } finally {
-    // 断言失败也必须关掉监听中的服务，否则事件循环不退出（诚实失败，不挂死）。
-    if (h !== null) await h.app.close();
+    // 断言失败也必须关掉**所有**监听中的服务（含用例③/④ 各自的 fixture），
+    // 否则事件循环不退出（诚实失败，不挂死）。
+    await closeAllFixtures();
   }
   note('done', '全部断言通过：两账号私有隔离、删除不可取回、下架/失效不因缓存或旧链接重新公开、旧收藏不恢复推荐资格');
   console.log(`PASS ${name}; synthetic identities + controllable visibility substitute; real loopback HTTP; no PG, no supplier, no WeChat devtools`);
@@ -532,5 +555,13 @@ try {
 } catch (error) {
   console.error('[GY-I16-E2E] FAIL 断言失败（原始输出如下，未跳过、未吞错）：');
   console.error(error);
+  // 失败路径必须**有界**：先关掉所有监听中的服务（用例③/④ 的 fixture 也在内），
+  // 再用 50ms 让已排队的 stdout/stderr 落地（避免 `process.exit` 截断断言文本），
+  // 最后以非 0 码确定性退出 —— "红"必须是 ≤1s 的退出码 1，而不是挂到 CI 超时。
+  await closeAllFixtures();
   process.exitCode = 1;
+  await new Promise((resolve) => {
+    setTimeout(resolve, 50);
+  });
+  process.exit(1);
 }
