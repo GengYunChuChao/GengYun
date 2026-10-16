@@ -1,5 +1,5 @@
 /**
- * GY-I12（#12）· 文字问答子域的 **PostgreSQL 实现**（迁移 `0012_conversations.sql`）。
+ * GY-I12（#12）· 文字问答子域的 **PostgreSQL 实现**（迁移 `0013_conversations.sql`）。
  *
  * 连接方式**沿用仓库既有 PG 方式**，没有任何第二套连接池或迁移器：
  *   - 本文件接的是 `app.ts` 已有的 `PgPool`（唯一构造点是 `services/api/src/server.ts`
@@ -7,7 +7,7 @@
  *     `pool.connect()` → `BEGIN` → `SET LOCAL lock_timeout = '4s'` → 业务 SQL → `COMMIT`
  *     （异常 `ROLLBACK`；`57014` 语句超时 / `55P03` 锁不可得 ⇒ `PROVIDER_TIMEOUT`，
  *     其余数据库异常 ⇒ `PROVIDER_UNAVAILABLE`，与资料域同口径）；
- *   - 迁移只写 `services/api/db/migrations/0012_conversations.sql`，由仓库**唯一**的
+ *   - 迁移只写 `services/api/db/migrations/0013_conversations.sql`，由仓库**唯一**的
  *     运行器 `services/api/src/db/migrate.ts` 执行（找不到 DATABASE_URL 即明确失败）；
  *   - 幂等台账口径**沿用** `auth/idempotency.ts` 的 scope = `<主体>\n<METHOD>\n<路径>` 与
  *     HMAC 请求摘要（不另造摘要算法）；但台账**本片是进程内实现**（见 `service.ts` 的

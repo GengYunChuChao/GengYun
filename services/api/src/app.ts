@@ -1092,7 +1092,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //
   // 1) 存储：非 `real` 用进程内 store（删除是**显式级联**：会话→轮次→回答）；
   //    `real` 用 PG store（同一事务内 `SELECT ... FOR UPDATE` + CAS 删除，迁移
-  //    `services/api/db/migrations/0012_conversations.sql` 的三张表 + `ON DELETE CASCADE`）。
+  //    `services/api/db/migrations/0013_conversations.sql` 的三张表 + `ON DELETE CASCADE`）。
   //    为什么 `real` + `pool === null` 时整域置 `null`：把内存 store 交给 real 模式的服务层
   //    = 在真实模式下声称成功、进程重启即丢（与 `app.ts` 既有的收藏/历史口径逐字一致）。
   const conversationStore: ConversationStore | null =

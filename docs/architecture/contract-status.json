@@ -1017,7 +1017,7 @@
           "name": "契约一致性：实现的路由集合覆盖 operations.json 里全部七个问答 operation，且不多出契约外路径"
         }
       ],
-      "blocker": "文字问答受理面已装配（路由 services/api/src/routes/conversations.ts；服务层 services/api/src/conversations/service.ts；PG 持久化 services/api/src/conversations/store-pg.ts 与迁移 services/api/db/migrations/0012_conversations.sql，沿用既有连接池与迁移运行器）；**未接真实模型**：回答的 model_version / prompt_version / rule_version 一律带 unimplemented:no-real- 前缀，正文是确定性检索条目摘录，不是模型结果；真实检索资料覆盖面有限（浙江首批 159 条记录 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发与 external_inference 同意闸、原生 PG17 实例上的迁移执行、120 题评估仍待后续片"
+      "blocker": "文字问答受理面已装配（路由 services/api/src/routes/conversations.ts；服务层 services/api/src/conversations/service.ts；PG 持久化 services/api/src/conversations/store-pg.ts 与迁移 services/api/db/migrations/0013_conversations.sql，沿用既有连接池与迁移运行器）；**未接真实模型**：回答的 model_version / prompt_version / rule_version 一律带 unimplemented:no-real- 前缀，正文是确定性检索条目摘录，不是模型结果；真实检索资料覆盖面有限（浙江首批 159 条记录 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发与 external_inference 同意闸、原生 PG17 实例上的迁移执行、120 题评估仍待后续片"
     },
     {
       "id": "listConversations",
@@ -1082,7 +1082,7 @@
           "lines": "146-150"
         },
         {
-          "path": "services/api/db/migrations/0012_conversations.sql"
+          "path": "services/api/db/migrations/0013_conversations.sql"
         },
         {
           "test": "tests/unit/conversation-http.test.mjs",
@@ -1093,7 +1093,7 @@
           "name": "删除级联：删会话连带其下轮次与回答；删轮次连带其回答"
         }
       ],
-      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409）；级联由 services/api/db/migrations/0012_conversations.sql 的外键 ON DELETE CASCADE（内存实现为显式级联）负责，PG 侧另有删除级联与数据库约束用例；本迁移只碰自己的三张表，不删他人媒体；**未接真实模型**（删除不改写任何版本串）；注销全量擦除尚未并入既有注销模块闭集（tests/unit/user-data-deletion.test.mjs 逐字锁住 ['favorites','history']，本片改为同协议的自有模块 conversations 并已注册，见 verify 用例）；原生 PG17 实例上的迁移执行仍待后续片"
+      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409）；级联由 services/api/db/migrations/0013_conversations.sql 的外键 ON DELETE CASCADE（内存实现为显式级联）负责，PG 侧另有删除级联与数据库约束用例；本迁移只碰自己的三张表，不删他人媒体；**未接真实模型**（删除不改写任何版本串）；注销全量擦除尚未并入既有注销模块闭集（tests/unit/user-data-deletion.test.mjs 逐字锁住 ['favorites','history']，本片改为同协议的自有模块 conversations 并已注册，见 verify 用例）；原生 PG17 实例上的迁移执行仍待后续片"
     },
     {
       "id": "createTurn",

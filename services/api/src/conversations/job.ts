@@ -6,7 +6,7 @@
  * 在 `JobResult.oneOf` 里 —— 但注册表里**没有任何源**，因此该 202 作业在跨 kind 读面上永远
  * `NOT_FOUND`。本文件补上这个源（**只追加一个源，不发明新状态、不改注册表**）。
  *
- * 作业状态的唯一事实源是**轮次行上的作业快照**（迁移 0012 的 `job_state` /
+ * 作业状态的唯一事实源是**轮次行上的作业快照**（迁移 0013 的 `job_state` /
  * `job_error_code` / `job_deadline_at` / `job_created_at`）—— 它是受理时写下、之后只在真发生
  * 跃迁时被 CAS 更新的值，**不是**读的时候重新估算出来的。因此：
  *   - `get` 只做投影，不做状态推断（`registry.assertContractJob` 会逐键复核，

@@ -26,11 +26,11 @@ function poolOf(db) {
   return { query: runner.query, connect: async () => ({ query: runner.query, release: () => {} }) };
 }
 
-/** 建带 `users` 的库并应用到 0012（会话域自己的迁移）。 */
+/** 建带 `users` 的库并应用到 0013（会话域自己的迁移）。 */
 async function migratedDatabase() {
   const db = new PGlite();
   await db.exec(migrationSql('0001_initial_schema.sql'));
-  await db.exec(migrationSql('0012_conversations.sql'));
+  await db.exec(migrationSql('0013_conversations.sql'));
   const owner = await db.query('INSERT INTO users DEFAULT VALUES RETURNING id');
   const other = await db.query('INSERT INTO users DEFAULT VALUES RETURNING id');
   return { db, ownerId: String(owner.rows[0].id), otherId: String(other.rows[0].id) };
@@ -88,10 +88,10 @@ function answerRecord(ownerId, turnId, n, options = {}) {
   };
 }
 
-test('0012 会话迁移在内存 PostgreSQL 引擎可整体执行，且回滚脚本把三张表撤回', async () => {
+test('0013 会话迁移在内存 PostgreSQL 引擎可整体执行，且回滚脚本把三张表撤回', async () => {
   const db = new PGlite();
   await db.exec(migrationSql('0001_initial_schema.sql'));
-  await db.exec(migrationSql('0012_conversations.sql'));
+  await db.exec(migrationSql('0013_conversations.sql'));
   const created = await db.query(
     `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'conversation%' ORDER BY tablename`,
   );
@@ -101,7 +101,7 @@ test('0012 会话迁移在内存 PostgreSQL 引擎可整体执行，且回滚脚
     'conversations',
   ]);
 
-  await db.exec(readFileSync(resolve(migrationsDir, 'rollback/0012_conversations.down.sql'), 'utf8'));
+  await db.exec(readFileSync(resolve(migrationsDir, 'rollback/0013_conversations.down.sql'), 'utf8'));
   const reverted = await db.query(
     `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'conversation%'`,
   );
