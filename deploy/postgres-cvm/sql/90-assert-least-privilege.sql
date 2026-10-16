@@ -182,7 +182,7 @@ WITH checks(label, ok, detail) AS (
          -- GY-I19 追加（只**增强**本断言：不删除、不弱化上面任何既有条件）。
          -- 注销请求表的写侧列权限同样不得直授运行时角色：它只能经
          -- public.request_account_deletion(...) 在同一事务内写入（见下方 deletion_function_* 断言）。
-         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.deletion_requests', 'INSERT,UPDATE,DELETE,REFERENCES'),
+         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.deletion_requests', 'INSERT,UPDATE,REFERENCES'),
          '注销/撤销/权限字段只能由运营方操作'
 
   UNION ALL
