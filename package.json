@@ -21,7 +21,7 @@
     "test:contract": "node --test \"tests/contract/*.test.mjs\"",
     "test:reference": "node --test \"tests/reference/*.test.mjs\"",
     "test:evaluation": "node --test \"tests/evaluation/*.test.mjs\"",
-    "test:integration:http": "node tests/integration/knowledge-consumer-http.mjs && node tests/integration/miniprogram-login-loop.mjs && node tests/integration/admin-http.mjs && node tests/integration/profile-ui-http.test.mjs && node tests/integration/recognitions-http.mjs && node tests/integration/jobs-http.mjs",
+    "test:integration:http": "node tests/integration/knowledge-consumer-http.mjs && node tests/integration/miniprogram-login-loop.mjs && node tests/integration/admin-http.mjs && node tests/integration/profile-ui-http.test.mjs && node tests/integration/recognitions-http.mjs && node tests/integration/jobs-http.mjs && node tests/integration/account-deletion-http.mjs",
     "test:mini": "node tools/check-wechat-project.mjs && node --test tests/local-debug.test.mjs",
     "test:docs": "node tools/run-python.mjs tools/validate_development_docs.py",
     "db:migrate": "npm run db:migrate --workspace @gengyun/api"
