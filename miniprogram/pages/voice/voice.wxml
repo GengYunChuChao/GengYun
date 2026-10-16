@@ -99,10 +99,17 @@
       <view class="pill pill--gray">语音球 · 播放/暂停/停止/重播</view>
     </view>
     <view class="panel">
+      <!-- 来源如实：契约里没有面向客户端的音频出口 ⇒ 取不到可播放来源时**显式**写明，
+           绝不显示「播放中／已播放」，也不用别的音频顶替（口径见 utils/voice-api.js）。 -->
+      <view class="notice notice--danger" wx:if="{{sourceNotice}}">
+        <text class="notice__icon">🔇</text>
+        <text class="notice__text">{{sourceNotice}}</text>
+      </view>
+
       <view class="notice notice--stub" wx:if="{{localEnabled && substituteWalkthrough}}">
         <text class="notice__icon">🧪</text>
-        <text class="notice__text">替身播放已开启：非真实音频，不产生任何声音、不朗读任何内容，
-          只走控件与事件生命周期；替身播放不计入「已听取」。</text>
+        <text class="notice__text">替身播放已开启（本地替身工程显式开启）：非真实音频，不产生任何声音、不朗读任何内容，
+          只走控件与事件生命周期；替身播放不计入「已听取」，也不代表已取得可播放来源。</text>
       </view>
 
       <gy-voice-ball

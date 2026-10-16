@@ -4,17 +4,23 @@
 //   ① 安全检查：`utils/speech-text.js` 的 `assertSpeakable`（只有 `check_state === 'passed'`
 //      才放行）。**未通过 ⇒ 不发起任何合成请求、不创建播放器**（可复核：请求数为 0）；
 //   ② 合成：`POST /speech/synthesis`（带 `Idempotency-Key`）→ 轮询 `GET /jobs/{id}` 到终态，
-//      七类 `JobState` 与 `error_code` 逐类如实显示，不折叠成"成功/失败"；
-//   ③ 播放：只有"任务成功 **且** 有可播放的音频源"才自动播放；否则**自动播放失败** ⇒
-//      文案 + 主动播放按钮，并且**不记「已听取」**。
+//      七类 `JobState` 与 `error_code` 逐类如实显示，不折叠成"成功/失败"。
+//      目标引用（type/id/revision）**取契约值**：经 `voiceApi.checkedContentRefForSample()`，
+//      并**优先**采用服务端回传的 revision（`rememberServerRevision`）；页面**不内联** `revision: 1`。
+//   ③ 播放：只有"任务成功 **且** 有可播放的音频源"才自动播放；**契约里没有面向客户端的音频出口**
+//      （见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）⇒ 取不到可播放来源 ⇒ **自动播放失败**：
+//      页面如实写「本环境无可播放音频（契约无客户端音频出口）」+ 文案 + 主动播放按钮，
+//      **不显示「播放中／已播放」**、**不伪造音频**、**不记「已听取」**。
 //
 // 离页口径（返回 / 切页 / 隐藏三条路径共用同一个出口）：
 //   取消本机在途请求与轮询 + `controller.release()`（退订全部监听、销毁音频句柄）；
 //   合成任务**没有服务端取消能力**，因此**不谎称**服务端任务已取消（文案见
 //   `utils/voice-api.js` 的 `EXIT_CANCELLATION_NOTE`）。
 //
-// 替身边界（本地替身工程专用，默认关闭）：本页在 `debug.localEnabled` 为真时才提供
-// **明确标注的替身样本**与**替身播放端口**走查开关；替身播放不产生任何声音、**不计入「已听取」**。
+// 替身边界（本地替身工程专用，**默认关闭**）：本页在 `debug.localEnabled` 为真时才提供
+// **明确标注的替身样本**与**替身播放端口**走查开关；替身走查默认**关**（否则会出现
+// "没有可播放来源 + 正在播报"的自相矛盾状态 ✗），由本地替身工程显式开启；
+// 替身播放不产生任何声音、**不计入「已听取」**、也不冒充真实音频。
 const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
@@ -143,7 +149,20 @@ Page({
     failure: null,
     ballLabel: '播报已核对内容',
     ballHint: '',
-    substituteWalkthrough: true,
+    /**
+     * 来源的**如实**口径（取不到可播放来源时非空；见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）。
+     * 与「播放中」互斥：取不到来源时页面只会显示失败态 + 本提示，不会显示「正在播报」。
+     */
+    sourceNotice: '',
+    /**
+     * 本地替身工程的**显式**走查开关：**默认关闭**。
+     *
+     * 默认关闭是本片刻意选择的：契约取不到可播放来源，若默认开启替身走查，页面会在
+     * 「没有可播放的音频源」的同时显示「正在播报」，等于给出假播放状态 ✗。
+     * 关掉（默认）时页面如实走失败出口 + 来源提示；需要走查控件生命周期时，
+     * 由本地替身工程**显式**开启（非真实音频、不产生任何声音、不计「已听取」）。
+     */
+    substituteWalkthrough: false,
     failureProbe: '',
     probing: false,
     // 录音控件（独立）：默认**不录音**，各态逐态可分辨（idle/recording/stopped/uploading/failed）
@@ -187,7 +206,7 @@ Page({
     this.setData({
       selectedSampleId: '', checkState: '', checkPassed: false, checkMessage: '',
       checkedText: '', segmentCount: 0, segmentPreview: '',
-      stage: 'check', busy: false, mode: '', job: null, synthesisNote: ''
+      stage: 'check', busy: false, mode: '', job: null, synthesisNote: '', sourceNotice: ''
     })
   },
 
@@ -208,7 +227,7 @@ Page({
     }
     this.setData({
       playbackState: 'idle', listened: false, substituteCompleted: false, failure: null,
-      busy: false, exitReason: typeof reason === 'string' ? reason : ''
+      sourceNotice: '', busy: false, exitReason: typeof reason === 'string' ? reason : ''
     })
   },
 
@@ -311,6 +330,8 @@ Page({
       mode: '',
       job: null,
       synthesisNote: '',
+      // 换样本 ⇒ 上一份来源口径作废（不得把上一条的提示留在新样本上）。
+      sourceNotice: '',
       playbackState: 'idle',
       listened: false,
       substituteCompleted: false,
@@ -330,11 +351,24 @@ Page({
     const selectedId = this.data.selectedSampleId
     const sample = this.data.samples.filter(function (item) { return item.id === selectedId })[0]
     if (!sample) return
+    // 目标引用一律**取契约值**（服务端回传的 revision 优先），页面**不得**内联拼 `revision: 1`。
+    const ref = voiceApi.checkedContentRefForSample(sample)
+    if (ref === null) {
+      // 样本没有声明契约目标引用 ⇒ 不发明内容来源、不发起任何请求（如实说明）。
+      this.setData({
+        busy: false,
+        stage: 'synthesis',
+        synthesisNote: '该样本没有声明契约目标引用（type/id/revision）：为不发明内容来源，本次未发起任何合成请求。'
+      })
+      return
+    }
     const generation = this.beginOperation()
     this.setData({ busy: true, stage: 'synthesis', synthesisNote: '', job: null, failure: null, listened: false, substituteCompleted: false, playbackState: 'idle' })
     try {
-      const created = await voiceApi.createSynthesis({ type: 'answer', id: sample.id, revision: 1 })
+      const created = await voiceApi.createSynthesis(ref)
       if (!this.isCurrent(generation)) return
+      // 采纳**服务端回传的** revision（受理响应里的 `target_ref`）。
+      voiceApi.rememberServerRevision(created.job)
       this.setData({ mode: created.mode, job: describe(created.job), busy: !voiceApi.isTerminal(created.job.state) })
       if (voiceApi.isTerminal(created.job.state)) { this.afterSynthesis(created.job, created.mode, generation); return }
       this.startPoll(created.job.id, created.mode, generation)
@@ -372,6 +406,8 @@ Page({
       const read = await voiceApi.getJob(jobId)
       if (!this.isCurrent(generation)) return
       if (!this.data.job || this.data.job.id !== jobId) return
+      // 读面同样回传 `target_ref`：一并采纳服务端 revision（重复记同值不改变任何行为）。
+      voiceApi.rememberServerRevision(read.job)
       this.setData({ mode: read.mode, job: describe(read.job), busy: !voiceApi.isTerminal(read.job.state) })
       if (voiceApi.isTerminal(read.job.state)) { this.stopPoll(); this.afterSynthesis(read.job, read.mode, generation) }
     } catch (error) {
@@ -384,7 +420,13 @@ Page({
 
   // ---------------------------------------------------------------- ③ 播放
 
-  /** 合成落定后进入播放段：先判可播源，再决定自动播报或如实走失败出口。 */
+  /**
+   * 合成落定后进入播放段：先判可播源，再决定自动播报或如实走失败出口。
+   *
+   * 可播源在契约层面取不到（见 `voiceApi.audioSourceForJob` / `NO_CLIENT_AUDIO_EGRESS_NOTE`）：
+   * 页面如实呈现该口径，**不显示「播放中／已播放」**、不伪造音频、不记「已听取」。
+   * 唯一的例外是**本地替身工程的显式走查开关**（非真实音频、不产生声音、不计已听取）。
+   */
   afterSynthesis: function (job, mode, generation, synthesisError) {
     if (!this.isCurrent(generation)) return
     this.stopPoll()
@@ -403,12 +445,13 @@ Page({
       substituteCompleted: false,
       failure: null
     })
+    // 无论是否替身走查，都先如实写下**来源**口径（有真实源时才清空）。
+    this.applyModeNotice(source)
     if (segments.length === 0) {
       // 自动播放失败：**文案 + 主动播放按钮**，并且不记「已听取」。
       this.ensureController().play([], { auto: true })
       return
     }
-    this.applyModeNotice(source)
     this.ensureController().play(segments, { auto: true })
   },
 
@@ -434,9 +477,20 @@ Page({
     })
   },
 
+  /**
+   * 来源口径的**如实**呈现（无论走查开不开都要写）。
+   *
+   * - 有真实可播源 ⇒ 清空来源提示（本片恒不可用，见 `voiceApi.audioSourceForJob`）；
+   * - 取不到 ⇒ 写 `NO_CLIENT_AUDIO_EGRESS_NOTE` + 该分支的具体原因（契约缺口，不是网络问题），
+   *   并保留既有「没有可播放的音频源：…」一句；页面**不得**因此显示「播放中／已播放」。
+   */
   applyModeNotice: function (source) {
-    if (source.ok === true) return
+    if (source.ok === true) {
+      this.setData({ sourceNotice: '' })
+      return
+    }
     this.setData({
+      sourceNotice: voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE + '（具体原因：' + String(source.reason) + '）',
       synthesisNote: this.data.synthesisNote === ''
         ? ('没有可播放的音频源：' + String(source.reason))
         : this.data.synthesisNote
@@ -498,7 +552,7 @@ Page({
       if (this._controller !== null) { this._controller.release(); this._controller = null }
       this._plan = []
     }
-    this.setData({ substituteWalkthrough: next, playbackState: 'idle', listened: false, substituteCompleted: false, failure: null, ballHint: '' })
+    this.setData({ substituteWalkthrough: next, substitute: false, playbackState: 'idle', listened: false, substituteCompleted: false, failure: null, ballHint: '' })
   },
 
   onPickFailureProbe: function (event) {
