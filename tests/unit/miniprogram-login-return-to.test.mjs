@@ -40,12 +40,21 @@ function fixture() {
   // 切片 E N1 ／ 追加单 N1（对抗性审查 §4）：门禁一旦放行，各页会立刻发业务读取。这里给所有
   // *-api 客户端一个「永不落地」的替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
   const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
-  b.page = (name) => {
+  b.page = (name, loadOptions = {}) => {
     let def;
     const fontModule = { exports: {} };
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.25 } }) });
     const gateModule = { exports: {} };
-    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => b.auth });
+    // 门禁模块的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
+    // `miniprogram/utils/page-gate.js:3` 只有 `require('./auth')` 一条。改前是 `require: () => b.auth`
+    // 的 blanket —— 而且这里返回的是**真实模块**（`requireHere` 从临时目录载入的 miniprogram/utils/auth.js 副本）：
+    // page-gate.js 将来 require 别的模块，也会被静默喂成真实 auth，用例仍绿、看着在测真实门禁。
+    // 未登记 ⇒ 显式失败并带依赖名（沿用仓库既有口径）。已登记项取值与改前逐字相同。
+    const gateDependencies = new Map([['./auth', b.auth]]);
+    vm.runInNewContext(loadOptions.gateSource ?? readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), {
+      module: gateModule,
+      require: (id) => { if (!gateDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return gateDependencies.get(id); },
+    });
     const profileModule = { exports: {} };
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/profile-api.js'), 'utf8'), { module: profileModule, require: (id) => id.endsWith('/auth') ? b.auth : id.endsWith('/runtime') ? requireHere(join(directory, 'config/runtime.js')) : { localEnabled: () => false } });
     const profileApi = profileModule.exports;
@@ -466,3 +475,17 @@ for (const [name, options] of N1_PAGES) {
     }
   });
 }
+// 负控制：登记的说明符是**完整且唯一**的。把真实 page-gate 源码的 `require('./auth')` 换成相近写法
+// （`./auth.js`／`./Auth`／`./utils/auth`／`./auth/`／`../utils/auth`）后重跑**本站点自己的**装载器
+// ⇒ 必须显式失败并带原名，不得近似命中（改前是 blanket `require: () => b.auth`，且返回**真实模块**：
+// 这些写法都会被静默喂成真实 auth，用例照样绿、看着在测真实门禁）。
+test('page-gate 未登记说明符：显式失败并带名，零近似命中', () => {
+  const gateSource = readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8');
+  assert.ok(gateSource.includes("require('./auth')"), '真实源码的 require 说明符变了，登记表须同步');
+  assert.doesNotThrow(() => fixture().page('home', { gateSource }), '已登记项必须照常装载');
+  for (const spec of ['./auth.js', './Auth', './utils/auth', './auth/', '../utils/auth']) {
+    assert.throws(() => fixture().page('home', { gateSource: gateSource.replace("require('./auth')", "require('" + spec + "')") }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
+});
