@@ -25,7 +25,7 @@
 | `docs` | `:17-28` | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（**不装 Node**） |
 | `static-check` | `:30-43` | `setup-node` 固定 `24.16.0` → `npm ci --no-audit --no-fund` → `npm run lint` |
 | `unit-tests` | `:45-58` | 同上安装 → `npm run test:unit` |
-| `integration-http` | `:60-77` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 9 个回环脚本；**无需 PG／微信开发者工具／外网**；约 28–31 秒，量级参考） |
+| `integration-http` | `:60-77` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 11 个回环脚本，当前链长以 `package.json` 为准；**无需 PG／微信开发者工具／外网**；约 28–31 秒，量级参考） |
 | `contract-tests` | `:79-92` | 同上安装 → `npm run test:contract` |
 | `evaluation-tests` | `:94-107` | 同上安装 → `npm run test:evaluation` |
 | `build` | `:109-122` | 同上安装 → `npm run build` |
