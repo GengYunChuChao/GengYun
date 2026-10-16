@@ -123,6 +123,29 @@ test('消息实际HTTP：严格输入及无请求体，不接受客户端归属/
   assert.equal(h.messages.snapshotCounts().read_transitions, 0);
 });
 
+test('消息实际HTTP：微信零长body带application/json不再400，真实body仍拒绝', async t => {
+  const h = await fixture(t);
+  const added = await h.append();
+  // 微信 wx.request 对 PUT 固定补 content-type: application/json 且发零长 body
+  // （客户端不设 content-type 也会被平台补上，见模拟器 network 记录 "data":""）。
+  // 此前 Fastify 默认 JSON 解析器对零长 body 抛 FST_ERR_CTP_EMPTY_JSON_BODY，
+  // 被 app.ts 映射为 400 INVALID_REQUEST；契约错误码闭集没有该码，
+  // 客户端只能降级报 INVALID_RESPONSE，「标为已读」在真实微信端不可用。
+  const wechat = await h.call('PUT', read(added.message.id), h.a, {
+    headers: { ...write('messages-wechat-empty-body-001'), 'content-type': 'application/json' },
+  });
+  assert.equal(wechat.status, 200);
+  assert.notEqual(wechat.data.data.read_at, null);
+  assert.equal(wechat.etag, '"2"');
+  assert.equal((await h.call('GET', unread)).data.data.count, 0);
+  // 语义不变：带真实 body 仍按「此接口不接受请求体」拒绝，不因放宽空 body 而放开。
+  const other = await h.append(h.a, 'wechat-body-reject');
+  error(await h.call('PUT', read(other.message.id), h.a, {
+    headers: write('messages-body-reject-001'), payload: { owner_id: h.b.user.id },
+  }), 400, 'INVALID_REQUEST');
+  assert.equal(h.messages.snapshotCounts().read_transitions, 1);
+});
+
 test('消息实际HTTP：相同回执重放重新核验目标可见性，不恢复已失效引用', async t => {
   let visible = true, probes = 0;
   const reference = createWiredReferencePort({ resolve: async () => { probes++; return visible ? 'available' : 'unavailable'; } });

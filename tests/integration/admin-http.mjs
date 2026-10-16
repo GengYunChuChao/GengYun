@@ -464,11 +464,11 @@ await group('[正控制/反例] hidePost：默认装配下社区存储已接线 
 });
 
 await group('[正控制] hidePost：默认装配（不注入任何 store）三方向源 ⇒ 已知帖 200 且审核域 withdrawn', async () => {
-  // **F1 钉子**（切片①审查）：默认装配下社区 store 由 `app.ts:517` **只声明一次**，由
-  // 社区服务（`:756`）、后台 `hidePost` 端口（`:770-771` 的回退）与审核域**同源内容权威**
-  // （`:520-523`）三方共用。上面那条"未知帖子 404"钉不住它：`ops.hidePost` 在联动之前就抛
+  // **F1 钉子**（切片①审查）：默认装配下社区 store 由 `app.ts:546` **只声明一次**，由
+  // 社区服务（`:790`）、后台 `hidePost` 端口（`:805` 的回退）与审核域**同源内容权威**
+  // （`:549-552`）三方共用。上面那条"未知帖子 404"钉不住它：`ops.hidePost` 在联动之前就抛
   // `NOT_FOUND` ⇒ "同源"与"两份 store 分叉"两种装配**同样是 404**。只有"**已知帖** ⇒ 200"能钉住：
-  // 若日后删掉 `app.ts:771` 的 `?? withTakedownObserver(communityStore, …)` 回退，默认装配的
+  // 若日后删掉 `app.ts:805` 的 `?? withTakedownObserver(communityStore, …)` 回退，默认装配的
   // 后台帖子端口即缺线（503 `STORE_UNAVAILABLE`），或审核域权威读到另一份 store（503
   // `PROVIDER_UNAVAILABLE`），本组立刻变红。
   // 实例只注入**合成 pass 审核端口**（`tests/unit/community-fixtures.mjs` 既有写法，同

@@ -17,7 +17,7 @@ test('local profile bootstrap has a strict target guard before any mutation',asy
 test('synthetic bootstrap heals old LOGIN membership, preserves data and refuses unsafe identity',async()=>{
  const db=new PGlite();
  try {
-  for(const file of ['0001_initial_schema.sql','0002_knowledge_catalog.sql','0003_privacy_consent.sql','0005_catalog_read_views.sql','0008_auth_session.sql','0009_consent_policy.sql','0010_knowledge_read_views.sql'])await db.exec(read('services/api/db/migrations/'+file));
+  for(const file of ['0001_initial_schema.sql','0002_knowledge_catalog.sql','0003_privacy_consent.sql','0005_catalog_read_views.sql','0008_auth_session.sql','0009_consent_policy.sql','0010_knowledge_read_views.sql','0012_knowledge_created_at.sql'])await db.exec(read('services/api/db/migrations/'+file));
   await db.exec(read('services/api/db/roles/auth_privacy.sql'));
   await db.exec('CREATE ROLE gengyun_local_runtime LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT gengyun_auth_privacy TO gengyun_local_runtime');
   // PGlite cannot rename/connect to a named database. This one target-probe

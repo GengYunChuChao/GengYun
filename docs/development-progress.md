@@ -1,6 +1,6 @@
 # 当前进度
 
-核对日期：2026-10-14；正式 main 基线 `15c3003efc221407734ea26366a7538ae23ddcbb`。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
+核对日期：2026-10-14（当时 main `15c3003efc221407734ea26366a7538ae23ddcbb`）；现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先71个提交。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
 
 ## 已合组件与剩余验收
 
@@ -29,7 +29,7 @@
 | [#130](https://github.com/GengYunChuChao/GengYun/pull/130)／[#131](https://github.com/GengYunChuChao/GengYun/pull/131) | `de1004c`／`a15a7f1` | 样本与资料准备已合，不计模型指标或标签用量最终验收 |
 | [#117](https://github.com/GengYunChuChao/GengYun/pull/117) | 未合 | 两份状态文档冲突已在候选协调，待新SHA复查；历史CI付款拒绝不改记成功 |
 
-当前112条业务契约中73条已装配、39条未装配。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布11 implemented／81 partial／20 planned，横切维度2 implemented／6 partial。注册数量只说明路由装配，不代表真实能力与整项验收。
+当前112条业务契约中99条已装配、13条未装配（按 `docs/architecture/contract-status.json` 及 `node tools/verify-contract-status.mjs` 现行输出）。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布13 implemented／86 partial／13 planned，横切维度2 implemented／6 partial。注册数量只说明路由装配，不代表真实能力与整项验收。
 
 复用各已合组件的绑定SHA证据；本轮只做文档事实、机器／中文同步及无凭据stub装配核对，不冒称重跑业务、PG、微信／Android或供应商。本机 `D:\challenge_cup` main已快进到上述基线。没有部署或切换共享认证。历史证据与本轮返修见[记录](verification/gy-i01-status-sync-20261013.md)。
 

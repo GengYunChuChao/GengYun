@@ -49,6 +49,7 @@ async function fixture() {
     '0008_auth_session',
     '0009_consent_policy',
     '0010_knowledge_read_views',
+    '0012_knowledge_created_at',
   ]) {
     await db.exec(read('services/api/db/migrations/' + name + '.sql'));
   }
@@ -230,9 +231,21 @@ test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙�
   const token = await f.login('synthetic-i16-vis-seed');
 
   // 与小程序收藏页同一取数口径：可收藏目标来自 `GET /knowledge` 列表。
-  const list = await f.http(`${KNOWLEDGE}?limit=50`, token);
-  assert.equal(list.status, 200, failNote(list));
-  const items = list.body.data.items;
+  // 契约排序为 (created_at DESC,id DESC)（迁移 0012 后由创建时点决定），三类条目不再
+  // 保证同处首屏 ⇒ 按游标翻完整个读面再收集；口径不变（三类都必须在读面里取到）。
+  const items = [];
+  let cursor = null;
+  for (let page = 0; page < 20; page += 1) {
+    const list = await f.http(
+      `${KNOWLEDGE}?limit=50` + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`),
+      token,
+    );
+    assert.equal(list.status, 200, failNote(list));
+    items.push(...list.body.data.items);
+    cursor = list.body.data.next_cursor;
+    if (cursor === null) break;
+  }
+  assert.equal(cursor, null, '读面必须能翻到末页（否则三类齐全断言不成立）');
   assert.ok(items.length > 0, '浙江首批真实资料必须并入读面（否则本用例退化为空跑）');
 
   const picked = [];

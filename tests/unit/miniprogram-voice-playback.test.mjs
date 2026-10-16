@@ -386,7 +386,23 @@ test('失败·中断（来电/其它音频/蓝牙切换）不记已听取，并�
   assert.equal(failures[0].actionText.length > 0, true);
 });
 
-test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', () => {
+test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', { timeout: 5000 }, (t) => {
+  // **确定性同步**（既不靠墙钟等待，也不靠"回调待触发"）：替身端口每段的"播放"就是
+  // `timer = setTimeout(function () { emit('ended') }, segmentMs)`
+  // （`miniprogram/utils/substitute-player.js:65`，本用例 `segmentMs: 0`）⇒ 整份计划需要
+  // **每段一个定时器回合**；控制器侧没有任何别的定时器/时钟依赖（`miniprogram/utils/audio-playback.js`
+  // 全文无 setTimeout/setInterval，也无 Date.now()/performance.now()）。
+  // 原先"真睡 40 ms 再看快照"是墙钟竞态：事件循环若被并发跑的测试饿住 ≥40 ms，libuv 会把第 1 段的
+  // `ended` 与已到期的检查定时器放进**同一个** timer 阶段（第 1 段的 ended 按到期时间先跑掉；它在
+  // 该阶段内新排的下一段 0 ms 定时器只能等下一阶段），检查回调于是看到"整份计划还差最后一段"的快照
+  // ⇒ 假红（`substituteCompleted` `false !== true`）。
+  // 现在把这段时间改成**假定时器的虚拟时间**并同步推进：`tick(0)` ×2 走完两段计划（第 1 段 ended →
+  // 第 2 段 → 第 2 段 ended），`tick(40)` 等价于原来那 40 ms 检查窗口到期；随后**同步**读快照断言——
+  // 没有回调、没有 `await`、与墙钟无关。三行 `tick` 是唯一的推进器：万一被误删，断言照常执行并**如实
+  // 变红**（不会像"回调永不触发"那样挂住）；用例上的 `{ timeout: 5000 }` 只是额外保险。
+  // 只接管 `setTimeout`（Node 24 的 `apis` 不接受 `clearTimeout`——配对的 clearTimeout 由 mock 一并
+  // 接管）；`Date.now()`/`performance.now()` 未被 mock，本用例也不需要。
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const port = substitutePlayer.createSubstitutePlayerPort({ segmentMs: 0 });
   const states = [];
   const listened = [];
@@ -398,20 +414,18 @@ test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记
   assert.equal(port.substitute, true);
   const result = controller.play(['substitute://0', 'substitute://1'], { auto: true });
   assert.equal(result.ok, true);
-  return new Promise((done) => {
-    setTimeout(() => {
-      const snapshot = controller.snapshot();
-      assert.equal(snapshot.substitute, true);
-      assert.equal(snapshot.substituteCompleted, true, '替身播放应如实标记"计划已走完"');
-      assert.equal(snapshot.listened, false, '替身没有声音，不得记为「已听取」');
-      assert.deepEqual(listened, [], 'onListened 在替身端口下永不触发');
-      assert.equal(states.includes('playing'), true);
-      assert.equal(states.includes('stopped'), true);
-      controller.release();
-      assert.equal(controller.listenerCount(), 0);
-      done();
-    }, 40);
-  });
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(40);
+  const snapshot = controller.snapshot();
+  assert.equal(snapshot.substitute, true);
+  assert.equal(snapshot.substituteCompleted, true, '替身播放应如实标记"计划已走完"');
+  assert.equal(snapshot.listened, false, '替身没有声音，不得记为「已听取」');
+  assert.deepEqual(listened, [], 'onListened 在替身端口下永不触发');
+  assert.equal(states.includes('playing'), true);
+  assert.equal(states.includes('stopped'), true);
+  controller.release();
+  assert.equal(controller.listenerCount(), 0);
 });
 
 test('真机端口缺能力 ⇒ 如实失败（不伪造播放完成、不记已听取）', () => {
