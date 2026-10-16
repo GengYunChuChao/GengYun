@@ -54,8 +54,17 @@ test('search emits controlled input, keyboard confirmation and clear', () => {
 
 test('specimen host writes back search confirmation and chip selection', () => {
   let page;
+  // 兜底说明：`miniprogram/pages/specimen/specimen.js` 只 require `../../utils/font-scale` 与
+  // `../../utils/debug` 两条，这里各给一个**最小壳**（`{}`，**非真实模块**）—— 本用例只验
+  // onKitConfirm/onKitSelect/onKitClear 的受控回写，不验字号与本地诊断。
+  // 改前是 `require() { return {}; }` 的 blanket：specimen.js 将来新增任何 require 都会被静默喂成空壳。
+  // 现在按**完整说明符**登记，未登记 ⇒ 显式失败并带依赖名（已登记项的取值与改前逐字相同）。
+  const specimenDependencies = new Map([
+    ['../../utils/font-scale', {}],
+    ['../../utils/debug', {}],
+  ]);
   vm.runInNewContext(readFileSync('miniprogram/pages/specimen/specimen.js', 'utf8'), {
-    require() { return {}; },
+    require(id) { if (!specimenDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return specimenDependencies.get(id); },
     Page(value) { page = value; }
   });
   const data = {};

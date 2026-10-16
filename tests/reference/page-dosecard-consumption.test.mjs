@@ -71,10 +71,21 @@ function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice
     regions: () => Promise.resolve([]),
     save: () => Promise.reject(new Error('not used')),
   };
+  // 页面依赖按**完整说明符**登记（逐字取自 pages/referencedetail/referencedetail.js 的 require），
+  // 不做后缀匹配：`id.endsWith('/reference')` 一类会把 `require('../../data/reference')` 静默喂成
+  // 已登记替身 —— 看着在测真页面，其实测了替身。未登记（将来新增依赖）⇒ 显式失败并带依赖名。
+  // 登记表随每次 loadPage() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
+  const pageDependencies = new Map([
+    ['../../utils/page-gate', gate.exports],
+    ['../../utils/font-scale', font.exports],
+    ['../../utils/auth', auth],
+    ['../../utils/profile-api', profileApi],
+    ['../../utils/reference', reference],
+  ]);
   const sandbox = {
     Page(def) { page = { ...def, data: structuredClone(def.data), setData(p) { Object.assign(this.data, p); } }; },
     wx: { navigateBack() {}, redirectTo() {}, setClipboardData() {} },
-    require: (id) => (id.endsWith('/page-gate') ? gate.exports : id.endsWith('/font-scale') ? font.exports : id.endsWith('/auth') ? auth : id.endsWith('/profile-api') ? profileApi : reference),
+    require: (id) => { if (!pageDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return pageDependencies.get(id); },
   };
   vm.runInNewContext(read('pages/referencedetail/referencedetail.js'), sandbox);
   return { page, calls, profileApi };

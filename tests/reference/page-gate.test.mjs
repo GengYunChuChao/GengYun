@@ -86,6 +86,17 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
     regions: () => Promise.resolve([]),
     save: () => Promise.reject(new Error('not used')),
   };
+  // 页面依赖按**完整说明符**登记（逐字取自 PAGES 四个页面源码里的 require），不做**子串**匹配：
+  // 改前是 `id.indexOf('reference') !== -1` 一类（本仓最宽的匹配形态），连 `require('../../data/reference')`、
+  // `require('../../data/authorization')` 都会被静默喂成已登记替身/空壳 —— 看着在测真页面，其实测了替身。
+  // 未登记（将来新增依赖）⇒ 显式失败并带依赖名。登记表随每次 loadPage() 新建，已登记项行为逐字不变。
+  const pageDependencies = new Map([
+    ['../../utils/font-scale', fontModule.exports],
+    ['../../utils/page-gate', gateModule.exports],
+    ['../../utils/auth', auth],
+    ['../../utils/profile-api', profileApi],
+    ['../../utils/reference', fakeReference()],
+  ]);
   const sandbox = {
     Page(def) { Object.assign(page, def); },
     wx: {
@@ -96,7 +107,7 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
       setClipboardData() {},
     },
     console,
-    require: (id) => (id.indexOf('font-scale') !== -1 ? fontModule.exports : id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('profile-api') !== -1 ? profileApi : id.indexOf('reference') !== -1 ? fakeReference() : {}),
+    require: (id) => { if (!pageDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return pageDependencies.get(id); },
   };
   vm.runInNewContext(readFileSync(pagePath(rel), 'utf8'), sandbox);
   return { page, calls };

@@ -33,7 +33,18 @@ function fixture(name,verified=true,gateSource=read('utils/page-gate.js')){let p
   const gate={exports:loadGate(gateSource)};
   const font={exports:{}};vm.runInNewContext(read('utils/font-scale.js'),{module:font});
   const adapter={...reference,detail:id=>{calls.lookup.push(id);return reference.detail(id)},seedHerbicideDetail:id=>{calls.lookup.push(id);return reference.seedHerbicideDetail(id)}};
-  vm.runInNewContext(read('pages/'+name+'/'+name+'.js'),{Page:d=>{page={...d,data:structuredClone(d.data),setData(p){Object.assign(this.data,p)}}},wx:{navigateBack:o=>calls.backs.push(o),redirectTo:o=>calls.redirects.push(o.url)},require:id=>id.endsWith('/page-gate')?gate.exports:id.endsWith('/font-scale')?font.exports:id.endsWith('/auth')?auth:id.endsWith('/profile-api')?profileApiStub(calls):adapter});
+  // 页面依赖按**完整说明符**登记（逐字取自 referencedetail / referenceseeddetail 两个页面的 require），
+  // 不做后缀匹配：`id.endsWith('/reference')` 一类会把 `require('../../data/reference')` 静默喂成
+  // 已登记替身 —— 看着在测真页面，其实测了替身。未登记（将来新增依赖）⇒ 显式失败并带依赖名。
+  // 登记表随每次 fixture() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
+  const pageDependencies=new Map([
+    ['../../utils/page-gate',gate.exports],
+    ['../../utils/font-scale',font.exports],
+    ['../../utils/auth',auth],
+    ['../../utils/profile-api',profileApiStub(calls)],
+    ['../../utils/reference',adapter],
+  ]);
+  vm.runInNewContext(read('pages/'+name+'/'+name+'.js'),{Page:d=>{page={...d,data:structuredClone(d.data),setData(p){Object.assign(this.data,p)}}},wx:{navigateBack:o=>calls.backs.push(o),redirectTo:o=>calls.redirects.push(o.url)},require:id=>{if(!pageDependencies.has(id))throw Error('Unexpected page dependency '+id);return pageDependencies.get(id)}});
   return {page,calls};
 }
 for(const name of ['referencedetail','referenceseeddetail']){
