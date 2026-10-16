@@ -271,7 +271,71 @@ function describeJob(job) {
   }
 }
 
-/** 错误码 → 页面可展示的一句话（不改变判定，只做措辞；未收录一律给出中性兜底）。 */
+/** 单次录音最长 60 秒 / 语音用途上限 10 MiB（契约 `UploadInput.duration_ms.maximum`、`voice_question` 限额）。 */
+const RECORD_MAX_DURATION_MS = 60000
+const VOICE_MAX_BYTES = 10 * 1048576
+
+/**
+ * 录音上传失败的**如实归因**文案（按契约错误码逐码给词，**不**把不同的 403 折叠成同一句话）。
+ *
+ * 红线（与仓库既有口径一致，见 `utils/identify-api.js` 的 `forbiddenOrSessionLoss` 注释）：
+ *   - `503 PROVIDER_UNAVAILABLE` ⇒ 指向**真实对象存储未接线**，**不得**说成网络问题；
+ *   - `403 CONSENT_REQUIRED`（缺用途授权）与 `403 SCOPE_DENIED`（会话无权）必须**各不相同**，
+ *     且都**不得**写成"登录失效"（那会把用户指向错误原因，还会误清会话导致连"去授权"都做不了）；
+ *   - 只有 `SESSION_REQUIRED` / `SESSION_EXPIRED` / `SESSION_CHANGED` 才是登录/会话类问题。
+ */
+const RECORD_UPLOAD_MESSAGES = Object.freeze({
+  // 本地前置校验（未发出任何请求）
+  INVALID_INPUT: '录音参数不合法（时长/编码/摘要缺失或超限）：本次未上传任何音频。',
+  RECORDER_UNAVAILABLE: '当前环境不提供录音能力：不会采集、不会上传，也不假装在录。',
+  RECORD_AUTH_DENIED: '麦克风授权被拒绝：本页没有开始录音，也没有上传任何音频。请在微信设置里授权「录音」后重试。',
+  RECORD_PERMISSION_DENIED: '麦克风授权不可用：本页没有开始录音，也没有上传任何音频。',
+  RECORD_FAILED: '录音未能完成（平台未返回可用产物）：本次未上传任何音频。',
+  RECORD_INTERRUPTED: '录音被中断（来电／其它应用抢占／系统回收）：本次未上传任何音频，请重新录制。',
+  RECORD_NOT_STARTED: '当前没有正在进行的录音。',
+  RECORD_ALREADY_RUNNING: '已在录音中，请先停止再开始下一次。',
+  // 会话 / 门禁
+  SESSION_REQUIRED: '登录状态已失效，请重新登录后再录音上传。',
+  SESSION_EXPIRED: '登录状态已过期，请重新登录后再录音上传。',
+  SESSION_CHANGED: '会话已变化：本次上传已作废，请重新进入本页。',
+  // 403：三类拒绝**各不相同**（不得都写成"登录失效"）
+  SCOPE_DENIED: '当前会话无权使用该能力（403 SCOPE_DENIED）：本次未上传，请在具备该能力的账号下重试。',
+  CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：语音问答需要「录音 / 媒体处理 / 对外推理」授权，未授权时不会上传。',
+  ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：本次未上传。',
+  // 400 / 413 / 415：用途与限制
+  MEDIA_TOO_LARGE: '录音过大（语音问答单次 ≤10 MiB）：本次未上传，请缩短录制后重试。',
+  MEDIA_TYPE_UNSUPPORTED: '录音编码不在契约允许范围（仅 MP3 / WAV / AAC）：本次未上传。',
+  INVALID_REQUEST: '服务端按契约拒绝该录音（用途/时长/大小/类型不符）：本次未上传。',
+  // 404 / 409 / 428 / 429
+  NOT_FOUND: '媒体对象不存在或不可见（可能不属于当前账号）。',
+  OBJECT_UNAVAILABLE: '媒体对象不可用：已如实拒绝，不伪造上传结果。',
+  REVISION_CONFLICT: '媒体版本已变化：请重新录制后再上传。',
+  REVISION_REQUIRED: '缺少媒体版本信息：请刷新后重试。',
+  IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
+  IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
+  RATE_LIMITED: '请求过于频繁，请稍后重试。',
+  PROVIDER_QUOTA_EXCEEDED: '提供者配额不足：本次未上传。',
+  // 503 / 504：**真实对象存储未接线**（不得说成网络问题）
+  PROVIDER_UNAVAILABLE: '真实对象存储未接线（503 PROVIDER_UNAVAILABLE）：录音已录到本机，但服务端没有可写入的对象存储，本次未上传成功。',
+  PROVIDER_OUTCOME_UNKNOWN: '提供者结果未知（503 PROVIDER_OUTCOME_UNKNOWN）：上传结果无法确认，已如实停止，不记为成功。',
+  PROVIDER_TIMEOUT: '提供者超时（504 PROVIDER_TIMEOUT）：上传未完成，不记为成功。',
+  // 通道与响应
+  MEDIA_CHANNEL_UNAVAILABLE: '私有媒体上传通道不可用（未取到契约封套的 error.code）：本次未上传成功，也不伪造 media_id。',
+  INVALID_RESPONSE: '服务端响应无法核对：已停止，不伪造上传结果。',
+  NETWORK_UNCERTAIN: '网络未能确认结果：已停止，请重试。',
+  UNAVAILABLE: '媒体上传暂不可用：已停止，请重试。'
+})
+
+/** 录音上传失败的逐码文案；未收录一律给中性兜底（不发明原因）。 */
+function recordUploadMessageFor(error) {
+  const code = error && error.code
+  const text = RECORD_UPLOAD_MESSAGES[code]
+  return typeof text === 'string' ? text : '录音上传未成功（未收录的错误码：' + String(code) + '）：已停止，不记为成功。'
+}
+
+/**
+ * 错误码 → 页面可展示的一句话（不改变判定，只做措辞；未收录一律给出中性兜底）。
+ */
 function messageFor(error) {
   const code = error && error.code
   return {
@@ -314,6 +378,10 @@ module.exports = {
   SUBSTITUTE_SPEAK_SAMPLES: SUBSTITUTE_SPEAK_SAMPLES,
   SUBSTITUTE_NOTE: SUBSTITUTE_NOTE,
   EXIT_CANCELLATION_NOTE: EXIT_CANCELLATION_NOTE,
+  RECORD_MAX_DURATION_MS: RECORD_MAX_DURATION_MS,
+  VOICE_MAX_BYTES: VOICE_MAX_BYTES,
+  RECORD_UPLOAD_MESSAGES: RECORD_UPLOAD_MESSAGES,
+  recordUploadMessageFor: recordUploadMessageFor,
   substituteSamplesEnabled: substituteSamplesEnabled,
   validateCheckedContentRef: validateCheckedContentRef,
   validateJob: validateJob,
