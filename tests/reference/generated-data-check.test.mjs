@@ -139,3 +139,45 @@ test('changed source fails check without rewriting generated data', (t) => {
   assert.match(result.stderr, /\[drift\] miniprogram\/data\/crops\.js/);
   assert.deepEqual(snapshot(f.outputs), before);
 });
+
+// ---------------------------------------------------------------------------
+// GY-I07 D4：对**真实仓库**跑 --check。
+// 上面各用例一律使用离岸合成夹具（不触碰生产资料），本用例补上真实数据的同步钉证据：
+// 改了 packages/knowledge/** 就必须重跑 tools/knowledge/build_miniprogram_data.mjs，
+// 否则 miniprogram/data/*.js（含 records-2026.js）与资料契约不同步 —— 生成物禁止手改。
+//
+// 有界重试：tests/reference/contract.test.mjs 会在用例内把「缺 source_kind 的变体」临时写回
+// 真实 records-2026.json、断言后复原，而 `node --test` 并发跑同目录各文件 —— 该窗口内 --check
+// 会如实报出 records-2026.js 漂移。真实的不同步不会因重试而自愈（重试耗尽仍然失败），
+// 故此处的重试只用于吸收并发改写窗口，不掩盖真实漂移。
+// ---------------------------------------------------------------------------
+const GENERATED_DIR = join(repo, 'miniprogram/data');
+
+test('real repository: --check passes for all 10 outputs and never rewrites them', () => {
+  const buildScript = join(repo, 'tools/knowledge/build_miniprogram_data.mjs');
+  const namesBefore = readdirSync(GENERATED_DIR).sort();
+  assert.equal(namesBefore.length, 10, `miniprogram/data 应有 10 个生成物，实为 ${namesBefore.length}`);
+  const bytesBefore = namesBefore.map((name) => readFileSync(join(GENERATED_DIR, name)).toString('hex'));
+
+  let result = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    result = spawnSync(process.execPath, [buildScript, '--check'], {
+      cwd: repo, encoding: 'utf8', timeout: 20000, windowsHide: true,
+    });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    if (result.status === 0) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  assert.equal(result.status, 0, `真实仓库 --check 未通过：${result.stdout}${result.stderr}`);
+  assert.match(result.stdout, /OK：miniprogram\/data 与 packages\/knowledge 契约一致/);
+
+  const namesAfter = readdirSync(GENERATED_DIR).sort();
+  assert.deepEqual(namesAfter, namesBefore, '--check 不得新增或删除生成物');
+  assert.deepEqual(
+    namesAfter.map((name) => readFileSync(join(GENERATED_DIR, name)).toString('hex')),
+    bytesBefore,
+    '--check 不得改写任何生成物',
+  );
+});
+
