@@ -647,8 +647,12 @@ function loadPageHarness(options = {}) {
       recorder, recorderOptions: options.recorderOptions || {}, wxCalls,
       uploads: () => uploadCount,
       deferredOf: () => deferred,
-      /** 端口模块本体（与页面用的是**同一份** vm 内实例）：用于端口层确定性用例。 */
-      portModule: loadReal(bySuffix('recorder-port.js'), resolveDep)
+      /**
+       * 端口模块本体（与页面用的是**同一份** vm 内实例）：用于端口层确定性用例。
+       * **惰性**取用（getter）：只被端口层用例需要。若在装配时就读取，"撤下实现"的变异会让
+       * 每个页面用例都在装配阶段抛错，产生与被测语义无关的级联红（把"新用例必红"的读数污染成噪声）。
+       */
+      get portModule() { return loadReal(bySuffix('recorder-port.js'), resolveDep) }
     };
   } finally {
     delete globalThis.wx;
