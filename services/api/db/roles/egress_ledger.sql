@@ -20,12 +20,14 @@ GRANT SELECT (id,capability,policy_version,retention_online_days,retention_backu
   ON recipients TO gengyun_egress_ledger;
 
 -- 外发账本：可读、可登记预留、可迁移状态与写墓碑；**不可删除行**、不可改冻结快照列。
-GRANT SELECT (id,user_id,object_type,object_id,object_revision,purpose,consent_id,consent_epoch,
+-- 0014（GY-I27 第三片）新增 `object_key`（非媒体资料的对象标识）：列级授权**必须同步**补上，
+-- 否则本角色 INSERT 报 42501（被 mapPgError 笼统映射为 503 PROVIDER_UNAVAILABLE）。
+GRANT SELECT (id,user_id,object_type,object_id,object_key,object_revision,purpose,consent_id,consent_epoch,
               required_consents,recipient_id,recipient_config_version,source_version,state,
               requested_at,sent_at,provider_request_ref_cipher,deletion_state,auth_epoch,
               created_at,updated_at,revision,error_code,job_id,cancelled_at,cancellation_reason)
   ON exports TO gengyun_egress_ledger;
-GRANT INSERT (user_id,object_type,object_id,object_revision,purpose,consent_id,consent_epoch,
+GRANT INSERT (user_id,object_type,object_id,object_key,object_revision,purpose,consent_id,consent_epoch,
               required_consents,recipient_id,recipient_config_version,source_version,state,
               provider_request_ref_cipher,deletion_state,auth_epoch,revision)
   ON exports TO gengyun_egress_ledger;

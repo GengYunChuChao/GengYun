@@ -37,11 +37,7 @@
  *     某一时刻的快照，可能过期，**不构成安全保证**；权威判定一律由 `commit` 给出。
  */
 import { randomUUID } from 'node:crypto';
-import {
-  CONSENT_PURPOSES,
-  MEDIA_PURPOSES,
-  MEDIA_PURPOSE_REQUIRED_CONSENTS,
-} from './constants.mjs';
+import { CONSENT_PURPOSES, MEDIA_PURPOSES, requiredConsentsForDataType } from './constants.mjs';
 import { PrivacyError } from './errors.mjs';
 import { createPrivacyGuard } from './guard.mjs';
 import { createCommitGate, COMMIT_REASON_ERROR_CODES } from './commit-gate.mjs';
@@ -51,6 +47,12 @@ import {
   writebackMediumWrite,
   writebackMediumRead,
 } from './writeback.mjs';
+
+/**
+ * 非媒体资料的对象键（`object_key`）形状：与 `ledger-pg.ts` 的 `OBJECT_KEY` 逐字同源
+ * （1..128 字符、小写字母/数字/`_-.:`，首尾为字母或数字 ⇒ 拒空串、拒超长、拒空白与注入字符）。
+ */
+const OBJECT_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9_.:-]{0,126}[a-z0-9])?$/;
 
 /**
  * @param {{
@@ -217,6 +219,7 @@ export function createExportLedger({
     authEpoch,
     objectType,
     objectId,
+    objectKey = null,
     objectRevision,
     dataType,
     purpose,
@@ -226,7 +229,27 @@ export function createExportLedger({
     if (!objectType || typeof objectType !== 'string') {
       throw new PrivacyError('INVALID_REQUEST', 'object_type 缺失');
     }
-    if (!objectId) throw new PrivacyError('INVALID_REQUEST', 'object_id 缺失');
+    // 资料类型判定 = **媒体维 ∪ 非媒体维**（GY-I27 第三片）。此判定**无条件**执行：
+    // 未知/缺失/两维都不认识的类型一律逐字拒 `SCOPE_DENIED 未知资料类型：<v>`（既有口径逐字不变，
+    // 不给「省略 data_type 就跳过判定」的旁路）。
+    if (requiredConsentsForDataType(dataType) === null) {
+      throw new PrivacyError('SCOPE_DENIED', `未知资料类型：${dataType}`);
+    }
+    // 对象标识：**媒体资料**用 uuid（`objectId`，既有口径不变）；**非媒体资料**用文本型键
+    // （`objectKey`，1..128 字符、字符集受限）—— 已核对正文的 id 是任意字符串
+    // （如 `sample-i13-passed`），不是 uuid。二者恰好给一个，**不得都缺、不得都给**。
+    const expectsTextKey = !MEDIA_PURPOSES.includes(dataType);
+    const key = expectsTextKey ? objectKey : objectId;
+    if (expectsTextKey) {
+      if (typeof objectKey !== 'string' || !OBJECT_KEY_PATTERN.test(objectKey)) {
+        throw new PrivacyError('INVALID_REQUEST', 'object_key 缺失或非法');
+      }
+      if (objectId !== undefined && objectId !== null) {
+        throw new PrivacyError('INVALID_REQUEST', '非媒体资料的 object_id 必须为空（用 object_key）');
+      }
+    } else if (!objectId) {
+      throw new PrivacyError('INVALID_REQUEST', 'object_id 缺失');
+    }
     if (!Number.isInteger(objectRevision) || objectRevision < 1) {
       throw new PrivacyError('INVALID_REQUEST', 'object_revision 非法');
     }
@@ -236,11 +259,9 @@ export function createExportLedger({
     }
     assertValidPurpose(purpose);
 
-    // 错用途：purpose 必须属于 data_type 的必需集合。
-    if (!MEDIA_PURPOSES.includes(dataType)) {
-      throw new PrivacyError('SCOPE_DENIED', `未知资料类型：${dataType}`);
-    }
-    if (!MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType].includes(purpose)) {
+    // 错用途：purpose 必须属于 data_type 的必需集合（**媒体维 ∪ 非媒体维**，各自核验）。
+    const requiredForDataType = requiredConsentsForDataType(dataType);
+    if (!requiredForDataType.includes(purpose)) {
       throw new PrivacyError(
         'SCOPE_DENIED',
         `用途 ${purpose} 与资料类型 ${dataType} 不匹配（错用途）`,
@@ -252,7 +273,7 @@ export function createExportLedger({
 
     // 保存全部必需用途的 epoch 快照（缺授权 → CONSENT_REQUIRED）。
     const requiredConsents = {};
-    for (const p of MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType]) {
+    for (const p of requiredForDataType) {
       const granted = await consentStore.isGranted({ userId, purpose: p });
       if (!granted) {
         throw new PrivacyError('CONSENT_REQUIRED', `缺少用途授权：${p}`);
@@ -268,7 +289,7 @@ export function createExportLedger({
     if (!recipient.enabled) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', `接收方未启用：${recipientId}`);
     }
-    for (const p of MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType]) {
+    for (const p of requiredForDataType) {
       const consent = await consentStore.getConsent({ userId, purpose: p });
       if (!consent || !consent.recipientIds.includes(recipientId)) {
         throw new PrivacyError(
@@ -292,7 +313,7 @@ export function createExportLedger({
       id: randomUUID(),
       userId,
       objectType,
-      objectId,
+      objectId: key,
       objectRevision,
       purpose,
       consentEpoch: requiredConsents[purpose],

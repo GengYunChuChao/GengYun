@@ -35,7 +35,8 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { SYNTHESIS_TARGET_TYPES } from '../tts/state.ts';
 import type { SynthesisService } from '../tts/service.ts';
-import type { ConsentGate } from '../privacy/egress.ts';
+import { withPrivacyErrors, type ConsentGate } from '../privacy/egress.ts';
+import type { SynthesisEgress } from '../privacy/synthesis-egress.ts';
 import { buildMeta } from './support.ts';
 
 /** `Idempotency-Key` 头：与既有路由同一口径（缺/非法 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED）。 */
@@ -68,6 +69,18 @@ export function registerSynthesisRoutes(
    * 未注入 ⇒ 行为与接线前逐字相同。
    */
   consent?: ConsentGate,
+  /**
+   * GY-I27（#29）·**可选**外发账本端口（第二维度 `checked_content`）。注入（且执行模式 `real`）后：
+   * 受理前先 `reserveForAcceptance` 冻结「执行期会重读到的同一份已核对正文快照」；
+   * `real` 未接真实传输 ⇒ **在任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`（零 `sent`）。
+   * 实际派发/回写在提供者包装侧（`privacy/synthesis-egress.ts`）。
+   *
+   * **为什么预留必须在受理处**：真实外发发生在**执行期**（作业入队后由 `execute` 调提供者），
+   * 而「已核对正文」的读取端口只在执行期才拿到实际快照；若不在受理处预留，执行期就没有
+   * 「已登记的这一次外发」可用于 `markSent` 授权判定。故与识别/转写/OCR 三域同形。
+   * 未注入 ⇒ 与接线前逐字相同（`real` 仍由提供者 fail-closed 拦截）。
+   */
+  egress?: SynthesisEgress,
 ): void {
 
   // 与契约 `SynthesisInput` 逐项一致（`additionalProperties:false` ⇒ 多余字段由 schema 拦下；
@@ -100,20 +113,52 @@ export function registerSynthesisRoutes(
           : [guards.requireUser, consent({ purpose: 'external_inference' })],
       schema: { body },
     },
-    async (request, reply) => {
+    withPrivacyErrors(async (request, reply) => {
       // 服务端权威身份（客户端无法通过 body/query/自定义头声明身份）。
       const identity = currentIdentity(request);
       const key = requireIdempotencyKeyHeader(request);
-      const result = await service.createSynthesis({
-        userId: identity.userId,
-        body: request.body,
-        idempotencyKey: key,
-      });
+      // schema 已保证形状（`checked_content_ref{type,id,revision}` 必填、`additionalProperties:false`）。
+      const ref = (
+        request.body as { checked_content_ref: { type: string; id: string; revision: number } }
+      ).checked_content_ref;
+      // GY-I27：本次受理的账本门面（只认本属主）。`undefined`（未装配账本）⇒ 一行账本访问都没有。
+      const scoped = egress === undefined ? null : egress.withOwner(identity.userId);
+      const reservation =
+        scoped === null
+          ? null
+          : await scoped.reserveForAcceptance({
+              userId: identity.userId,
+              authEpoch: identity.authEpoch,
+              // 账本对象键由 egress 侧**重读**已核对正文后派生（`<type>:<id>`），
+              // 不直接采信客户端在 body 里声称的标识。
+              contentType: ref.type,
+              contentId: ref.id,
+              contentRevision: ref.revision,
+            });
+      let result;
+      try {
+        result = await service.createSynthesis({
+          userId: identity.userId,
+          body: request.body,
+          idempotencyKey: key,
+        });
+      } catch (error) {
+        // 预留后受理失败 ⇒ 预留置终态（不留残留 `reserved` 行）。
+        if (reservation !== null && scoped !== null) {
+          await scoped.abandonReservation({ exportId: reservation.exportId });
+        }
+        throw error;
+      }
+      if (result.replayed === true && reservation !== null && scoped !== null) {
+        // 幂等重放：服务层**不再调提供者** ⇒ 本次不会派发，预留行必须收回，
+        // 否则会留下一条永不派发的 `reserved`（既占账本又误导排查）。
+        await scoped.abandonReservation({ exportId: reservation.exportId });
+      }
       return reply
         .header('ETag', `"${result.job.revision}"`)
         .header('Cache-Control', 'no-store')
         .status(result.status)
         .send({ data: result.job, meta: buildMeta(request, config) });
-    },
+    }),
   );
 }
