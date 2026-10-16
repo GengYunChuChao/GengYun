@@ -10,11 +10,14 @@ const regions=[{code:'330000',name:'浙江省',parent_code:null,catalog_version:
 const profile=(revision=1)=>({crop_id:null,region_code:null,region_catalog_version:null,revision});
 const saved=(revision=2)=>({crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1',revision});
 const flush=()=>new Promise(r=>setImmediate(r));
-function fixture() {
+// overrides：可选的「模块 id(绝对路径) -> 模块导出对象」替身表（GY-I05 D2 用）。默认 undefined ⇒
+// 行为与改前逐字相同：全部走真实文件。仅用于在**不落地任何真实几何资源文件**的前提下，
+// 证明「资源存在且校验通过 ⇒ 页面注入点自动接线」这条路径真的可达。
+function fixture(overrides) {
  const storage=new Map(),requests=[],routes=[],cache=new Map();let page;
  const wx={getStorageSync:k=>storage.get(k),setStorageSync:(k,v)=>storage.set(k,v),removeStorageSync:k=>storage.delete(k),request:o=>requests.push(o),showModal:o=>o.success({confirm:true}),reLaunch:o=>routes.push(o.url),navigateTo:o=>routes.push(o.url),showToast:()=>{}};
- function load(path) { path=resolve(path);if(path.endsWith('runtime.js'))return {mode:'local',apiBaseUrl:'http://127.0.0.1:1234/api/v1'};if(cache.has(path))return cache.get(path).exports;
- const m={exports:{}};cache.set(path,m);vm.runInNewContext('(function(require,module){'+readFileSync(path,'utf8')+'\n})',{wx,Page:d=>{page={...d,data:structuredClone(d.data),route:'pages/profile/profile',options:{},setData(p){Object.assign(this.data,p)}}},getCurrentPages:()=>[page]})((id)=>load(resolve(dirname(path),id+'.js')),m);return m.exports; }
+ function load(path) { path=resolve(path);if(overrides&&Object.prototype.hasOwnProperty.call(overrides,path))return overrides[path];if(path.endsWith('runtime.js'))return {mode:'local',apiBaseUrl:'http://127.0.0.1:1234/api/v1'};if(cache.has(path))return cache.get(path).exports;
+ const m={exports:{}};cache.set(path,m);vm.runInNewContext('(function(require,module){'+readFileSync(path,'utf8')+'\n})',{wx,Page:d=>{page={...d,data:structuredClone(d.data),route:'pages/profile/profile',options:{},setData(p){Object.assign(this.data,p)}}},getCurrentPages:()=>[page]})((id)=>load(resolve(dirname(path),/\.js$/.test(id)?id:id+'.js')),m);return m.exports; }
  const auth=load(root+'/miniprogram/utils/auth.js');load(root+'/miniprogram/pages/profile/profile.js');
  function seed(token='synthetic-a'){auth.setSession({accessToken:token,audience:'user',expiresAt:new Date(Date.now()+3600000).toISOString(),executionMode:'stub'});}
  function answer(req,data,statusCode=200){req.success({statusCode,data:statusCode===200?{data}:{error:{code:data}}});}
@@ -240,4 +243,75 @@ test('档案入口的 disabled 只剩 busy：读取失败不得把入口禁成�
   assert.ok(disabled,handler+' 入口未声明 disabled');
   assert.equal(disabled[1].trim(),'busy',handler+' 入口只能因 busy 禁用；把 !loaded/needsReload 写进 disabled 会让失败态下的点击没有任何反馈');
  }
+});
+
+// —— GY-I05 D2：地区转换资源装配（去掉 profile.js 的 `regionConverter: null` 硬编码） ——
+// 契约不变：坐标只在内存里经入参交给 convert，不入存储、不进请求体、不上服务端；定位只预选，
+// 用户确认前不落库。region_code 的合法性判据是**两份目录**（miniprogram/data/regions.js 与
+// packages/knowledge/catalog/regions-zhejiang.json）；下文期望值一律从目录派生，⛔ 不硬编码绕过校验。
+const regionConverterModule=createRequire(import.meta.url)(root+'/miniprogram/utils/region-converter.js');
+const mpCatalog=createRequire(import.meta.url)(root+'/miniprogram/data/regions.js');
+const mpCodes=new Set(mpCatalog.regions.map(r=>r.code));
+const knowledgeCodes=new Set(JSON.parse(readFileSync(root+'/packages/knowledge/catalog/regions-zhejiang.json','utf8')).regions.map(r=>r.code));
+const RESOURCE_ID=resolve(root+'/miniprogram/data/region-centroids.js');
+// 夹具目录里的叶子节点=县区（派生，不手写）；坐标是合成假坐标，不是任何真实质心。
+const FIXTURE_COUNTY=regions.find(r=>r.parent_code&&!regions.some(x=>x.parent_code===r.code));
+const SYNTHETIC={latitude:27.9013,longitude:119.9027};
+const SYNTHETIC_TEXT=['27.9013','119.9027'];
+function syntheticResource(code){return {schema:regionConverterModule.SCHEMA,state:'available',source:'测试合成（不是真实几何数据）',license:'测试合成',retrieved_at:'2026-10-17',catalog_version:mpCatalog.catalog_version,max_distance_km:5,points:[{code:code,latitude:SYNTHETIC.latitude,longitude:SYNTHETIC.longitude}]};}
+
+test('D2 profile.js 不再写死转换资源：注入点即装配模块 build()，资源缺席时如实回退手选且不落库',async()=>{
+ const source=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');
+ assert.equal(/regionConverter\s*:\s*null/.test(source),false,'profile.js 不得再写死 regionConverter: null');
+ assert.match(source,/regionConverter\s*:\s*regionConverterResource\.build\(\)/,'注入点必须是装配模块的 build()');
+ assert.match(source,/require\('\.\.\/\.\.\/utils\/region-converter'\)/);
+ const f=fixture();await f.ready();
+ assert.equal(f.page.regionConverter,regionConverterModule.build(),'页面注入点必须等于装配模块的结果');
+ assert.equal(f.page.regionConverter,null,'仓库内没有几何资源 ⇒ fail-closed 为 null（U3 未取得）');
+ assert.equal(regionConverterModule.describe().wired,false);
+ assert.equal(regionConverterModule.describe().reason,'resource-missing');
+ const writes=[];const raw=f.wx.setStorageSync;f.wx.setStorageSync=(k,v)=>{writes.push([k,v]);return raw(k,v)};
+ f.wx.getLocation=o=>o.success(sentinel);
+ f.page.onEdit();f.page.onLocate();await flush();
+ assert.ok(f.page.data.message.includes('地区转换资源尚未接入'),f.page.data.message);
+ assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0,'定位只预选：用户确认前不得落库');
+ assert.equal(JSON.stringify(f.page.data).includes('123.4567'),false);
+ assert.equal(JSON.stringify(writes).includes('123.4567'),false);
+ assert.equal(JSON.stringify(f.requests).includes('123.4567'),false);
+});
+
+test('D2 页面装配·资源就位即自动接线：region_code 经两份目录校验、未确认不落库、坐标零外泄',async()=>{
+ assert.equal(mpCodes.has(FIXTURE_COUNTY.code),true,'夹具县区码必须真实存在于目录：'+FIXTURE_COUNTY.code);
+ assert.equal(knowledgeCodes.has(FIXTURE_COUNTY.code),true);
+ const f=fixture({[RESOURCE_ID]:syntheticResource(FIXTURE_COUNTY.code)});await f.ready();
+ assert.equal(typeof f.page.regionConverter,'function','资源合规 ⇒ 页面注入点自动接线，无需改页面');
+ assert.equal(f.page.regionConverter.provenance.source,'测试合成（不是真实几何数据）');
+ assert.equal(f.page.regionConverter.provenance.catalog_version,mpCatalog.catalog_version);
+ const inner=f.page.regionConverter,seen=[];
+ f.page.regionConverter=(lat,lng)=>{seen.push([lat,lng]);return inner(lat,lng)};
+ const writes=[];const raw=f.wx.setStorageSync;f.wx.setStorageSync=(k,v)=>{writes.push([k,v]);return raw(k,v)};
+ f.wx.getLocation=o=>o.success(SYNTHETIC);
+ f.page.onEdit();f.page.onLocate();await flush();
+ assert.deepEqual(seen,[[SYNTHETIC.latitude,SYNTHETIC.longitude]],'坐标只按 (latitude, longitude) 交给转换资源一次');
+ assert.equal(f.page.data.cities[0].code,FIXTURE_COUNTY.parent_code);
+ assert.equal(f.page.data.cityIndex,0);assert.equal(f.page.data.countyIndex,0);
+ assert.equal(f.page.data.counties[0].code,FIXTURE_COUNTY.code);
+ assert.match(f.page.data.message,/请确认后保存档案/);
+ assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0,'定位只预选：用户确认前不得落库');
+ for(const text of SYNTHETIC_TEXT){
+  assert.equal(JSON.stringify(f.page.data).includes(text),false,'页面状态不得含坐标 '+text);
+  assert.equal(JSON.stringify(writes).includes(text),false,'存储不得含坐标 '+text);
+  assert.equal(JSON.stringify(f.requests).includes(text),false,'请求不得含坐标 '+text);
+ }
+ f.page.onCrop({detail:{value:'0'}});f.page.onSave();f.page.onSave();
+ const put=f.last('/me/profile');assert.equal(put.method,'PUT');
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);
+ assert.equal(put.data.region_code,FIXTURE_COUNTY.code);
+ assert.equal(mpCodes.has(put.data.region_code),true,'落库的 region_code 必须在 miniprogram/data/regions.js 目录里');
+ assert.equal(knowledgeCodes.has(put.data.region_code),true,'落库的 region_code 必须在 regions-zhejiang.json 目录里');
+ assert.deepEqual(Object.keys(put.data).sort(),['crop_id','region_catalog_version','region_code'],'请求体仍只含三个目录字段');
+ assert.equal(JSON.stringify(put.data).includes('27.9013'),false);
+ assert.equal(JSON.stringify(put.header).includes('27.9013'),false);
 });
