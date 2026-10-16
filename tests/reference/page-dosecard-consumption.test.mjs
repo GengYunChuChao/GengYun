@@ -28,14 +28,22 @@ const read = (p) => readFileSync(path.join(root, 'miniprogram', p), 'utf8');
  * @param {{mode:'ok'|'empty'|'fail', crop_id?:string, region_code?:string}} [opts.profile]
  *        profile-api.read() 的模拟结果
  */
-function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice', region_code: '330100' } } = {}) {
+function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice', region_code: '330100' }, gateSource = read('utils/page-gate.js') } = {}) {
   let page;
   const calls = { gate: 0, reads: 0 };
   // 身份世代：changeIdentity() 模拟换账号/重新登录，使旧 binding 不再 current。
   const identity = { epoch: 1 };
   const auth = { isLoggedIn: () => verified, requireLogin(cb) { calls.gate += 1; cb(verified); } };
+  // 门禁模块的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
+  // `miniprogram/utils/page-gate.js:3` 只有 `require('./auth')` 一条。改前是 `require: () => auth`
+  // 的 blanket —— page-gate.js 将来 require 别的模块，也会被**静默喂成 auth 替身**，用例仍绿。
+  // 未登记 ⇒ 显式失败并带依赖名（沿用仓库既有口径）。已登记项取值与改前逐字相同。
+  const gateDependencies = new Map([['./auth', auth]]);
   const gate = { exports: {} };
-  vm.runInNewContext(read('utils/page-gate.js'), { module: gate, require: () => auth });
+  vm.runInNewContext(gateSource, {
+    module: gate,
+    require: (id) => { if (!gateDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return gateDependencies.get(id) },
+  });
   const font = { exports: {} };
   vm.runInNewContext(read('utils/font-scale.js'), { module: font });
   const profileApi = {
@@ -63,10 +71,21 @@ function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice
     regions: () => Promise.resolve([]),
     save: () => Promise.reject(new Error('not used')),
   };
+  // 页面依赖按**完整说明符**登记（逐字取自 pages/referencedetail/referencedetail.js 的 require），
+  // 不做后缀匹配：`id.endsWith('/reference')` 一类会把 `require('../../data/reference')` 静默喂成
+  // 已登记替身 —— 看着在测真页面，其实测了替身。未登记（将来新增依赖）⇒ 显式失败并带依赖名。
+  // 登记表随每次 loadPage() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
+  const pageDependencies = new Map([
+    ['../../utils/page-gate', gate.exports],
+    ['../../utils/font-scale', font.exports],
+    ['../../utils/auth', auth],
+    ['../../utils/profile-api', profileApi],
+    ['../../utils/reference', reference],
+  ]);
   const sandbox = {
     Page(def) { page = { ...def, data: structuredClone(def.data), setData(p) { Object.assign(this.data, p); } }; },
     wx: { navigateBack() {}, redirectTo() {}, setClipboardData() {} },
-    require: (id) => (id.endsWith('/page-gate') ? gate.exports : id.endsWith('/font-scale') ? font.exports : id.endsWith('/auth') ? auth : id.endsWith('/profile-api') ? profileApi : reference),
+    require: (id) => { if (!pageDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return pageDependencies.get(id); },
   };
   vm.runInNewContext(read('pages/referencedetail/referencedetail.js'), sandbox);
   return { page, calls, profileApi };
@@ -214,4 +233,18 @@ test('阻塞 C：页面经 profile-api 读取档案，不凭未接线字段构�
   assert.ok(src.includes('profileApi.read()'), '应经 profile-api 读取档案');
   assert.ok(src.includes('profileConfirmed'), '应有已确认标志');
   assert.ok(!src.includes('this.data.profile.ingredient_content'), '不得凭未接线字段构造上下文');
+});
+// 负控制：登记的说明符是**完整且唯一**的。把真实 page-gate 源码的 `require('./auth')` 换成相近写法
+// （`./auth.js`／`./Auth`／`./utils/auth`／`./auth/`／`../utils/auth`）后重跑**本站点自己的**装载器
+// ⇒ 必须显式失败并带原名，不得近似命中（改前是 blanket `require: () => auth`：这些写法都会被
+// **静默喂成 auth 替身**，用例照样绿）。
+test('page-gate 未登记说明符：显式失败并带名，零近似命中', () => {
+  const gateSource = read('utils/page-gate.js');
+  assert.ok(gateSource.includes("require('./auth')"), '真实源码的 require 说明符变了，登记表须同步');
+  assert.doesNotThrow(() => loadPage({ verified: true, gateSource }), '已登记项必须照常装载');
+  for (const spec of ['./auth.js', './Auth', './utils/auth', './auth/', '../utils/auth']) {
+    assert.throws(() => loadPage({ verified: true, gateSource: gateSource.replace("require('./auth')", "require('" + spec + "')") }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
 });

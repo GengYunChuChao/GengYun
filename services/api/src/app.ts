@@ -47,7 +47,7 @@ import { createRecognitionProvider, type RecognitionProvider } from './recogniti
 import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
-import { createCheckedContentPort, type CheckedContentPort } from './tts/content.ts';
+import { createCheckedContentPort, type CheckedContentPort, type SubstituteCheckedContentEntry } from './tts/content.ts';
 import { createSynthesisMediaPort, type SynthesisMediaPort } from './tts/media.ts';
 import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
@@ -273,7 +273,10 @@ export interface BuildAppOptions {
   synthesisProvider?: TtsProvider;
   /** 测试注入：替换合成产物存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
   synthesisMedia?: SynthesisMediaPort;
-  /** 测试注入：替换「已核对内容」读取端口（默认按 executionMode；stub 下为空替身源）。 */
+  /**
+   * 测试注入：替换「已核对内容」读取端口（默认按 executionMode；`stub`/`preset_demo` 下为
+   * **带明确标注替身条目**的内存源 `SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，`real` 下为未接线端口）。
+   */
   synthesisContent?: CheckedContentPort;
   /** 合成任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   synthesisJobDeadlineMs?: number;
@@ -511,6 +514,32 @@ function withModerationTakedownLink(
  * （索引签名），对象字面量别名才有隐式索引签名（与 `db/catalog.ts` 的既有写法一致）。
  */
 type PublicKnowledgeReadRow = { id: string; revision: number; type: string };
+
+/**
+ * GY-I13 缩片（合成 → 播放 · 受理链路打通）：`stub`/`preset_demo` 下注入的**替身核对条目**。
+ *
+ * 边界（逐条刻意收窄，见 `.pg17/ruling-451-narrow-scope.md`）：
+ * - **只在替身模式生效**：`createCheckedContentPort(executionMode, entries)` 对 `real` **忽略** `entries`，
+ *   一律返回未接线端口（`tts/content.ts:105-110`）⇒ real 仍 fail-closed，不因本条目放宽 ✗；
+ * - **不改任何服务端语义**：条目只是「已核对内容读取端口」的数据；`decideCheckedContent` 的
+ *   归属/核对状态/revision/正文判定与拒绝码**完全未改**（`tts/state.ts`），TTS 提供者与产物端口未改；
+ * - **与客户端替身样本是同一对值**：id/revision/正文必须与 `miniprogram/utils/voice-api.js` 的
+ *   `SUBSTITUTE_SPEAK_SAMPLES[0].targetRef` 与其 `checkedText` 逐字一致；该配对由回归用例锁定
+ *   （`tests/unit/miniprogram-voice-playback.test.mjs` 直接比对本常量与客户端夹具）。
+ * - 条目**明确标注为替身**：非真实资料库、非真实核对结论、不构成任何用药建议；正文是**非音频**文本
+ *   （音频出口的缺口见 `ruling-451` §三：契约没有面向客户端的音频出口）。
+ */
+export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedContentEntry[] = [
+  {
+    type: 'answer',
+    id: 'sample-i13-passed',
+    revision: 1,
+    auditState: 'approved',
+    // 与客户端替身样本逐字一致（含标点与空格），不得改写、不得归一化。
+    text: '稗草苗后茎叶处理：每亩用 30 毫升，兑水 30 升常规喷雾。'
+      + '不得在高温时段施药，不要与碱性药剂混用；安全间隔期 14 天。',
+  },
+];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
 export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
@@ -761,11 +790,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 「已核对内容」读取端口同样按执行模式解析（real 未接线 ⇒ 受理前拒绝）。
   // **应用装配路径永不注入真实适配器端口**：真实发送只能经 `createLiveTtsProvider(ports)` 触达，
   // 而本文件不 import 它（零端口注入）。
+  //
+  // 缩片（GY-I13 「合成 → 播放」·受理链路打通）：替身模式带上**明确标注的替身核对条目**
+  // （`SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，见其定义处的边界说明），使客户端替身样本能走完
+  // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 由 `createCheckedContentPort` 自行忽略该实参
+  // （仍返回未接线端口）⇒ real 语义逐字未变；服务层判定与拒绝码亦未改。
   const synthesisService = createSynthesisService({
     store: synthesisStore ?? createMemorySynthesisStore(),
     provider: synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode }),
     media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode),
-    content: synthesisContent ?? createCheckedContentPort(config.executionMode),
+    content: synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     now: clock,
     ...(synthesisJobDeadlineMs === undefined ? {} : { jobDeadlineMs: synthesisJobDeadlineMs }),
