@@ -154,6 +154,14 @@ export function registerSynthesisRoutes(
         // 否则会留下一条永不派发的 `reserved`（既占账本又误导排查）。
         await scoped.abandonReservation({ exportId: reservation.exportId });
       }
+      // GY-I27 P1-1：把本次受理的**任务**绑定到它的属主 —— `synthesize` 入参不含属主，
+      // 执行期只能靠这份绑定确定「该按谁过滤预留行」。未绑定 ⇒ 执行期拒绝派发（fail-closed），
+      // 绝不退化成按对象版本全局匹配（那会让并发用户的同版本预留互相串用）。
+      // 重放不派发 ⇒ 不绑定（绑了也没有派发会发生）。绑定本身不构成授权：
+      // 授权仍由执行期的「按属主查预留行」+ `assertExecutable` + `markSent` 三段把守。
+      if (egress !== undefined && result.replayed !== true) {
+        egress.bindJobOwner({ jobId: result.job.id, userId: identity.userId });
+      }
       return reply
         .header('ETag', `"${result.job.revision}"`)
         .header('Cache-Control', 'no-store')

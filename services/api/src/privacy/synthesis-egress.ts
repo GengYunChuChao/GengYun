@@ -86,6 +86,16 @@ export interface SynthesisEgress {
    * 且**不依赖任何时序假设**（绑定先于服务调用发生）。
    */
   withOwner(userId: string): SynthesisEgress;
+  /**
+   * 把**一个已受理的任务**绑定到它的属主（受理处拿到服务层返回的 `jobId` 后立即调用）。
+   *
+   * 为什么必须显式绑定：`synthesize` 的入参只有 `{jobId,text,locale,targetRef}`，**不含属主**，
+   * 而账本行必须按属主定位。若执行期不按本次派发的属主过滤，两用户对**同一对象版本**各持
+   * `reserved` 时，B 的派发会命中 A 的行并把 A 的外发翻成 `sent`、把 B 的 `job_id` 记到 A 名下
+   * （跨用户串用，全程静默）。绑定后执行期只按该属主过滤（`findReservedByObject({userId})`），
+   * 不绑定 ⇒ **拒绝派发**（fail-closed，绝不回退到「不按属主过滤」的全局查询）。
+   */
+  bindJobOwner(input: { jobId: string; userId: string }): void;
 }
 
 /**
@@ -114,12 +124,16 @@ export function createSynthesisEgress(deps: {
   const now = deps.now ?? (() => new Date());
   const engaged = executionMode === 'real';
   /**
-   * 属主槽（本次受理允许在账本上留下外发痕迹的用户）与
-   * 「已登记过外发的对象版本 → 允许的属主集合」索引（用于按属主过滤定位预留行，不靠全局扫描）。
-   * 由基础实例与它派生的门面**共享**。
+   * 属主槽：**按任务**记录「这次派发允许在账本上留下外发痕迹的属主」。
+   *
+   * 为什么必须按任务而不是按对象版本：`synthesize` 的入参不含属主，而两用户可以对**同一
+   * 对象版本**各持一行 `reserved`（受理时各冻结一次快照）。若执行期先按「对象版本」全局定位
+   * 再回头核对属主，就会命中他人的行（B 的派发把 A 的外发翻成 `sent`、把 B 的 `job_id` 记到
+   * A 名下）。按 `jobId` 绑定属主后，查询本身带属主过滤 ⇒ 结构上不可能命中他人行。
    */
-  const owners = new Set<string>();
-  const index = new Map<string, Set<string>>();
+  const jobOwners = new Map<string, string>();
+  /** 已预留的外发（`exportId` → 属主），仅用于诊断与自证，不参与定位。 */
+  const reservations = new Map<string, string>();
   let providerAvailable = false;
   let providerUnavailableReason: string | null = null;
 
@@ -127,7 +141,8 @@ export function createSynthesisEgress(deps: {
     ? '真实外发消费者已接管：reserve → assertExecutable → markSent → 提供者 → saveResult'
     : `替身/演示模式（${executionMode}）：不发生真实外发，外发账本不记账`;
 
-  const versionedKey = (objectRevision: number, objectKey: string): string => `${objectRevision}\u0000${objectKey}`;
+  /** 任务属主键：`jobId` 与属主一一对应；未绑定的任务没有属主 ⇒ 拒绝派发。 */
+  const jobKey = (jobId: string): string => jobId;
 
   /**
    * 重读已核对正文，返回**实际被朗读快照**派生出的账本对象键与 revision；
@@ -167,42 +182,36 @@ export function createSynthesisEgress(deps: {
     return { objectKey, objectRevision: revision as number };
   }
 
-  /** 预留成功后登记「对象版本 → 属主」，供执行期按属主定位预留行。 */
-  function noteReservation(record: ExportRecord): void {
-    const key = versionedKey(record.objectRevision, record.objectId);
-    const existing = index.get(key);
-    if (existing === undefined) index.set(key, new Set([record.userId]));
-    else existing.add(record.userId);
-  }
-
   /**
-   * 定位本次派发对应的预留行：
-   *   1. 先按「登记过该对象版本的属主」逐个查（每个候选都带 `userId` 过滤）—— 不会命中他人的行；
-   *   2. 一个候选都没登记过（进程重启后的孤儿预留行）⇒ 退化为按对象版本查一次；
-   *   3. 查到属主不在本次受理的属主集合内 ⇒ **拒绝派发**（绝不替他人在账本上留下外发痕迹）。
+   * 定位本次派发对应的预留行：**只按本次派发所属的属主**过滤（`userId` 进查询条件），
+   * 因此永远不会命中他人的预留行。
+   *
+   *   1. 任务已由受理处绑定属主 ⇒ 按 `(属主, 对象类型, 对象键, revision)` 查一次；查不到 ⇒ 拒绝派发；
+   *   2. 任务未绑定属主 ⇒ **拒绝派发**（fail-closed）。绝不退化成「不按属主过滤」的全局查询 ——
+   *      那正是跨用户串用预留行的入口（B 的派发消耗 A 的预留）。
    */
-  async function resolveObject(input: { objectKey: string; objectRevision: number }): Promise<ExportRecord | null> {
-    const candidates = index.get(versionedKey(input.objectRevision, input.objectKey)) ?? new Set<string>();
-    for (const userId of candidates) {
-      const found = await ledger.findReservedByObject({
-        objectType: SYNTHESIS_LEDGER_OBJECT_TYPE,
-        objectKey: input.objectKey,
-        objectRevision: input.objectRevision,
-        userId,
-      });
-      if (found !== null) return found;
+  async function resolveObject(input: { jobId: string; objectKey: string; objectRevision: number }): Promise<ExportRecord | null> {
+    const owner = jobOwners.get(jobKey(input.jobId));
+    if (owner === undefined) {
+      throw new PrivacyError('OBJECT_UNAVAILABLE', '本次派发未绑定属主，禁止派发（不按对象版本全局匹配预留行）');
     }
-    const unscoped = await ledger.findReservedByObject({
+    return ledger.findReservedByObject({
       objectType: SYNTHESIS_LEDGER_OBJECT_TYPE,
       objectKey: input.objectKey,
       objectRevision: input.objectRevision,
+      userId: owner,
     });
-    if (unscoped === null) return null;
-    if (owners.size === 0) return unscoped;
-    if (!owners.has(unscoped.userId)) {
-      throw new PrivacyError('OBJECT_UNAVAILABLE', '外发预留不属于本次受理的属主，禁止派发');
-    }
-    return unscoped;
+  }
+
+  /**
+   * 把任务绑定到属主（受理处在拿到 `jobId` 后调用）。**只记录**、不校验账本状态：
+   * 定位与授权仍然由执行期的「按属主查预留行」+ `assertExecutable` + `markSent` 三段把守，
+   * 绑定本身不构成授权。
+   */
+  function bindJobOwner(input: { jobId: string; userId: string }): void {
+    if (typeof input.jobId !== 'string' || input.jobId.length === 0) return;
+    if (typeof input.userId !== 'string' || input.userId.length === 0) return;
+    jobOwners.set(jobKey(input.jobId), input.userId);
   }
 
   /** 一次受理的预留实现（`userId` 由闭包固定；门面与基础实例共用）。 */
@@ -216,7 +225,6 @@ export function createSynthesisEgress(deps: {
         { retryable: true },
       );
     }
-    owners.add(userId);
     // 受理时就重读快照并冻结标识（执行期会再重读一次；不一致 ⇒ 找不到同版本预留行 ⇒ 拒绝派发）。
     const snapshot = await readSnapshot({
       type: input.contentType,
@@ -235,7 +243,7 @@ export function createSynthesisEgress(deps: {
       recipientId,
       sourceVersion: null,
     });
-    noteReservation(record);
+    reservations.set(record.id, record.userId);
     return { exportId: record.id };
   }
 
@@ -261,12 +269,18 @@ export function createSynthesisEgress(deps: {
       if (target === undefined || target === null || typeof target !== 'object') {
         throw new PrivacyError('OBJECT_UNAVAILABLE', '缺少已核对正文引用，禁止派发');
       }
+      // 属主绑定：`synthesize` 入参不含属主，任务与属主的对应由受理处登记（`bindJobOwner`）。
+      // 未登记 ⇒ 拒绝派发（fail-closed）——否则就得按对象版本全局匹配预留行，那是跨用户串用的入口。
+      const jobId = input?.jobId;
+      if (typeof jobId !== 'string' || jobId.length === 0) {
+        throw new PrivacyError('OBJECT_UNAVAILABLE', '缺少任务标识，禁止派发（无法确定外发属主）');
+      }
       const snapshot = await readSnapshot({
         type: String(target.type),
         id: String(target.id),
         revision: Number(target.revision),
       });
-      const record = await resolveObject(snapshot);
+      const record = await resolveObject({ jobId, ...snapshot });
       if (record === null) {
         // 未登记即派发 ⇒ 拒绝（fail-closed），不产生任何外发。
         throw new PrivacyError('OBJECT_UNAVAILABLE', '无外发预留（未登记的外发被拒绝）');
@@ -276,7 +290,8 @@ export function createSynthesisEgress(deps: {
       if (Number.isFinite(requestedAt) && requestedAt + deadlineMs < now().getTime()) {
         throw new PrivacyError('OBJECT_UNAVAILABLE', '外发预留已超过授权时效，禁止派发');
       }
-      if (typeof input.jobId === 'string') await ledger.linkJob({ exportId: record.id, jobId: input.jobId });
+      // 任务标识已在入口校验为非空字符串 ⇒ 直接登记（不重复判空）。
+      await ledger.linkJob({ exportId: record.id, jobId });
       await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
       const sent = await ledger.markSent(record.id);
       let outcome: unknown;
@@ -311,9 +326,10 @@ export function createSynthesisEgress(deps: {
     reserveForAcceptance: (input) => reserveFor(input.userId, input),
     abandonReservation: (input) => abandon(input.exportId),
     provider,
+    bindJobOwner,
     withOwner(userId: string): SynthesisEgress {
-      // 同形门面：只把「预留/放弃/属主绑定」固定到本次受理的属主，
-      // `provider`/`engaged`/`note`/`dataType` **沿用基础实例**（提供者包装只做一次）。
+      // 同形门面：只把「预留/放弃」固定到本次受理的属主，
+      // `provider`/`engaged`/`note`/`dataType`/`bindJobOwner` **沿用基础实例**（提供者包装只做一次）。
       return {
         engaged,
         note,
@@ -321,6 +337,7 @@ export function createSynthesisEgress(deps: {
         provider: base.provider,
         reserveForAcceptance: (input) => reserveFor(userId, input),
         abandonReservation: base.abandonReservation,
+        bindJobOwner: base.bindJobOwner,
         withOwner: base.withOwner,
       };
     },
