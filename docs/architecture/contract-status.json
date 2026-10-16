@@ -553,7 +553,7 @@
           "lines": "1-33"
         }
       ],
-      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；synthesis 的读面早已接线（#152，零契约变更），ocr 的**读面**已于 #183（1078566）接为纯追加作业源（读面复用 ocr/service.ts 的 getJob）⇒ 经该路径读取 ocr/synthesis 作业现可返回契约 Job 与 error_code；answer 仍无作业源（读取与「作业不存在」同形 404）；ocr/synthesis 无取消入口 ⇒ 取消一侧仍不接线、由作业面如实 503 拒绝（见 cancelJob）；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
+      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；synthesis 的读面早已接线（#152，零契约变更），ocr 的**读面**已于 #183（1078566）接为纯追加作业源（读面复用 ocr/service.ts 的 getJob）⇒ 经该路径读取 ocr/synthesis 作业现可返回契约 Job 与 error_code；answer 的**读面**已于 #12 片接为纯追加作业源（读面复用对话域轮次上的作业快照，services/api/src/conversations/job.ts）⇒ 经该路径读取 answer 作业现可返回契约 Job 与 error_code（真值来自入库快照，绝不凭空升级为 succeeded）；ocr/synthesis 无取消入口 ⇒ 取消一侧仍不接线、由作业面如实 503 拒绝（见 cancelJob）；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
     },
     {
       "id": "cancelJob",
@@ -578,7 +578,7 @@
           "lines": "1-33"
         }
       ],
-      "blocker": "取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域与审核域（GY-I14，kind=moderation）无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 与 ocr 的**读面**已接线（#152；#183 追加 kind=ocr 作业源），但两者本基线均无取消入口 ⇒ 取消一侧仍未接线，由作业面在确认作业存在后同样如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；answer 仍无作业源（读取/取消皆与「作业不存在」同形 404）；持久租约与外发撤销待接线"
+      "blocker": "取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域与审核域（GY-I14，kind=moderation）无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 与 ocr 的**读面**已接线（#152；#183 追加 kind=ocr 作业源），但两者本基线均无取消入口 ⇒ 取消一侧仍未接线，由作业面在确认作业存在后同样如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code，但**取消仍未接线**（对话域不提供取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；持久租约与外发撤销待接线"
     },
     {
       "id": "listKnowledge",
@@ -999,10 +999,25 @@
       "route": "/api/v1/conversations",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "113-117"
+        },
+        {
+          "path": "services/api/src/conversations/service.ts"
+        },
+        {
+          "path": "services/api/src/conversations/store-pg.ts"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "契约一致性：实现的路由集合覆盖 operations.json 里全部七个问答 operation，且不多出契约外路径"
+        }
+      ],
+      "blocker": "文字问答受理面已装配（路由 services/api/src/routes/conversations.ts；服务层 services/api/src/conversations/service.ts；PG 持久化 services/api/src/conversations/store-pg.ts 与迁移 services/api/db/migrations/0013_conversations.sql，沿用既有连接池与迁移运行器）；**未接真实模型**：回答的 model_version / prompt_version / rule_version 一律带 unimplemented:no-real- 前缀，正文是确定性检索条目摘录，不是模型结果；真实检索资料覆盖面有限（浙江首批 159 条记录 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发与 external_inference 同意闸、原生 PG17 实例上的迁移执行、120 题评估仍待后续片"
     },
     {
       "id": "listConversations",
@@ -1011,10 +1026,22 @@
       "route": "/api/v1/conversations",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "124-128"
+        },
+        {
+          "path": "services/api/src/conversations/service.ts"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "分页：游标翻页互不重不漏，会话与轮次两条列表都按契约给 next_cursor"
+        }
+      ],
+      "blocker": "会话列表已装配（路由 services/api/src/routes/conversations.ts；服务层 services/api/src/conversations/service.ts；PG 持久化 services/api/src/conversations/store-pg.ts，keyset 分页 created_at DESC, id DESC）；列表按契约**不**下发 ETag，仅 Cache-Control: no-store；游标为 HMAC 签名（15 分钟 TTL，绑定主体与 auth_epoch，跨用户不可用）⇒ 无跨片共享的全量导出；**未接真实模型**（列表本身不产回答，但其中的回答一律带 unimplemented:no-real- 版本串）；真实资料覆盖有限、120 题评估未做"
     },
     {
       "id": "getConversation",
@@ -1023,10 +1050,22 @@
       "route": "/api/v1/conversations/:id",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "134-138"
+        },
+        {
+          "path": "services/api/src/conversations/service.ts"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "归属不可越权：他人与不存在逐键同形（404），跨用户游标不可用"
+        }
+      ],
+      "blocker": "会话读取已装配（路由 services/api/src/routes/conversations.ts；服务层 services/api/src/conversations/service.ts；PG 持久化 services/api/src/conversations/store-pg.ts），单资源下发强 ETag（revision）与 Cache-Control: no-store；他人资源与不存在逐键同形 404（不泄露存在性）；**未接真实模型**：其下的回答一律带 unimplemented:no-real- 版本串；真实资料覆盖有限、external_inference 同意闸与 120 题评估仍待后续片"
     },
     {
       "id": "deleteConversation",
@@ -1035,10 +1074,26 @@
       "route": "/api/v1/conversations/:id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "146-150"
+        },
+        {
+          "path": "services/api/db/migrations/0013_conversations.sql"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "删会话：202 受理，其下轮次与回答一并处理，且后续读取如实 404"
+        },
+        {
+          "test": "tests/unit/conversation-store-pg.test.mjs",
+          "name": "删除级联：删会话连带其下轮次与回答；删轮次连带其回答"
+        }
+      ],
+      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409）；级联由 services/api/db/migrations/0013_conversations.sql 的外键 ON DELETE CASCADE（内存实现为显式级联）负责，PG 侧另有删除级联与数据库约束用例；本迁移只碰自己的三张表，不删他人媒体；**未接真实模型**（删除不改写任何版本串）；注销全量擦除尚未并入既有注销模块闭集（tests/unit/user-data-deletion.test.mjs 逐字锁住 ['favorites','history']，本片改为同协议的自有模块 conversations 并已注册，见 verify 用例）；原生 PG17 实例上的迁移执行仍待后续片"
     },
     {
       "id": "createTurn",
@@ -1047,10 +1102,29 @@
       "route": "/api/v1/conversations/:id/turns",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "159-163"
+        },
+        {
+          "path": "services/api/src/conversations/job.ts"
+        },
+        {
+          "path": "services/api/src/conversations/guard.ts"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "answer 作业：202 受理后可被跨 kind 读面读到，状态与失败可区分，且不伪造取消"
+        },
+        {
+          "test": "tests/unit/conversation-answer-guard.test.mjs",
+          "name": "NC2 绿：回答器无法决定版本串 —— 注入自称\"真实模型\"的替身，落库与读面仍是未接真实模型"
+        }
+      ],
+      "blocker": "受理已装配为 202 + JobEnvelope（文字轮次直接受理；语音轮次须 confirmed 转写，端口未接线时如实 422 INPUT_UNCERTAIN、查不到 404，均不落假成功）；answer 作业源已接入跨 kind 作业读面（services/api/src/conversations/job.ts，GET /jobs/{id} 可返回契约 Job 与 error_code，取消仍如实 503）；回答经输出守卫（services/api/src/conversations/guard.ts）：引用只能逐字取自本次检索集合、用量卡只能取自确定性权威路径，越界一律拒绝并如实记因；**未接真实模型**：model_version/prompt_version/rule_version 一律带 unimplemented:no-real- 前缀且可被机器判据检出，正文是确定性检索条目摘录而非模型结果；真实检索资料覆盖有限（浙江首批 159 条 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发、external_inference 同意闸与 120 题评估仍待后续片"
     },
     {
       "id": "listTurns",
@@ -1059,10 +1133,22 @@
       "route": "/api/v1/conversations/:id/turns",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "172-176"
+        },
+        {
+          "path": "services/api/src/conversations/service.ts"
+        },
+        {
+          "test": "tests/unit/conversation-http.test.mjs",
+          "name": "分页：游标翻页互不重不漏，会话与轮次两条列表都按契约给 next_cursor"
+        }
+      ],
+      "blocker": "轮次列表已装配（含每轮的回答与 job_id；列表按契约不下发 ETag，仅 Cache-Control: no-store；游标 HMAC 签名、绑定主体与 auth_epoch）；他人会话与不存在同形 404；**未接真实模型**：列表中的回答一律带 unimplemented:no-real- 版本串，未接真实模型的事实可被机器判据检出；真实资料覆盖有限、120 题评估未做"
     },
     {
       "id": "deleteTurn",
@@ -1071,10 +1157,26 @@
       "route": "/api/v1/conversations/:id/turns/:turn_id",
       "scope": "user",
       "version_required": true,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/conversations.ts",
+          "lines": "182-186"
+        },
+        {
+          "path": "services/api/src/conversations/cascade.ts"
+        },
+        {
+          "test": "tests/unit/conversation-deletion.test.mjs",
+          "name": "deleteTurn：202 受理、回答随轮次消失、会话仍在，并如实披露级联处置"
+        },
+        {
+          "test": "tests/unit/conversation-deletion.test.mjs",
+          "name": "级联端口三态：已接线清理器 ⇒ initiated / 有 unsupported ⇒ unwired / 抛错 ⇒ failed（都不改写成删除失败）"
+        }
+      ],
+      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409），随轮次一并处理其回答，并以非契约披露头 X-GY-Cascade 如实区分 initiated / unwired / failed（未接线即如实披露，不谎称已完成，也不回滚已完成的删除）；级联音频/结果/外发处理的真实清理器未接线（本片只有端口与注册点）；**未接真实模型**：删除不改写任何版本串；原生 PG17 实例上的迁移执行仍待后续片"
     },
     {
       "id": "listPosts",
