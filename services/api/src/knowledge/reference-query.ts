@@ -59,6 +59,13 @@ function rethrowDomainError(error: unknown): never {
 /**
  * 浙江首批条目 → 与读视图同形的行（真实定位进 body，用量恒缺项）。
  *
+ * `created_at`（契约排序第一分量）：本批次**没有**逐条创建时点，故取该条目来源版本的
+ * 检索/发布时点 `item.source.updated_at`（由 `packages/reference/zhejiang.mjs` 从清单
+ * 的 `sources[].retrieved_at` 确定性转换而来，即批次日期 `2026-10-14T00:00:00.000Z`）——
+ * **不是**运行期时钟、**不是**迁移时间，同一条目在任何时间/环境都得到同一排序键。
+ * 这也是 0012 迁移对历史行回填所用的同一批次日期常量，故数据库投影行与并入种子行
+ * 落在同一 created_at 上，全序由 `id DESC` 决定且确定性。
+ *
  * **纯函数**（供测试注入同构条目做负例回归）。失效/下架条目在此**退出**查询面：
  * `validity !== 'valid'`（expired/withdrawn/conflicting/unknown）与
  * `visibility ∈ {hidden, deleted}` 一律不并入 —— 与「下架/失效退出有效查询，列表与详情一致」同口径。
@@ -69,6 +76,7 @@ export function toSeedRows(items: readonly ZhejiangKnowledgeItem[]): KnowledgeRo
     .map((item: ZhejiangKnowledgeItem) => ({
       id: item.knowledge.id,
       revision: item.knowledge.revision,
+      created_at: item.source.updated_at,
       type: item.knowledge.type,
       title: item.knowledge.title,
       body: item.knowledge.body,

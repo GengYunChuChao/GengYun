@@ -336,6 +336,10 @@ def build_zhejiang(root: str) -> dict:
     with open(zj_path, "rb") as fh:
         zj_bytes = fh.read()
     release = zj["release"]
+    # 列表排序键 created_at 必须与环境时区无关：批次日期补成显式 UTC 瞬时，
+    # 与迁移 0012 的回填常量逐字一致（裸日期字面量的瞬时随会话 TimeZone 变化，
+    # 会让同一份种子在不同环境落成不同时刻）。
+    release_utc = f"{release}T00:00:00Z"
 
     sources = zj["sources"]
     src_db = {s["id"]: uid(f"source:{s['id']}") for s in sources}
@@ -448,15 +452,21 @@ def build_zhejiang(root: str) -> dict:
                    f"WHERE id = {q(src_db[s['id']])}::uuid;\n")
 
     out.append(f"\n-- 浙江适用条目 {len(rows)} 条（杂草/防除时期/药剂适用；逐条带来源定位与行哈希）\n")
+    out.append(
+        "-- created_at = 本批次日期 release 的显式 UTC 瞬时（**不是**转录/检索/导入时刻，也不是裸日期\n"
+        "-- 字面量）：种子行是历史批次资料，创建时点取版本库里已冻结的批次事实，与迁移 0012 对历史行的\n"
+        "-- 确定性回填同一取值规则；显式 UTC 保证任何时间、任何时区、任何环境重放本种子都得到同一\n"
+        "-- created_at（列表排序键 (created_at DESC,id DESC)）。\n"
+    )
     for item_id, title, body, ktype, sid, crop_ids, species_ids in rows:
         kid = uid(f"knowledge:zhejiang:{item_id}")
         rid = uid(f"knowledge_row:zhejiang:{item_id}:1")
         out.append(
             "INSERT INTO knowledge_versions (id, knowledge_id, revision, title, body, type, "
-            "source_version_id, crop_ids, species_ids, region_codes, visibility) VALUES "
+            "source_version_id, crop_ids, species_ids, region_codes, visibility, created_at) VALUES "
             f"({q(rid)}::uuid, {q(kid)}::uuid, 1, {q(title)}, {q(json.dumps(body, ensure_ascii=False, separators=(',', ':')))}, "
             f"{q(ktype)}, {q(ver_db[sid])}::uuid, {qj(crop_ids)}, {qj(species_ids)}, "
-            f"{qj(['330000'])}, 'private') ON CONFLICT (id) DO NOTHING;\n"
+            f"{qj(['330000'])}, 'private', {q(release_utc)}::timestamptz) ON CONFLICT (id) DO NOTHING;\n"
         )
 
     run_id = uid(f"import_run:{ZJ_DATASET}")
