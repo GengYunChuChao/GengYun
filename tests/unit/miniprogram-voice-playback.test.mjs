@@ -386,7 +386,22 @@ test('失败·中断（来电/其它音频/蓝牙切换）不记已听取，并�
   assert.equal(failures[0].actionText.length > 0, true);
 });
 
-test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', () => {
+test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', (t) => {
+  // **确定性同步**（不靠墙钟等待）：替身端口每段的"播放"就是
+  // `timer = setTimeout(function () { emit('ended') }, segmentMs)`
+  // （`miniprogram/utils/substitute-player.js:65`，本用例 `segmentMs: 0`）⇒ 整份计划需要
+  // **每段一个定时器回合**；控制器侧没有任何别的定时器/时钟依赖（`miniprogram/utils/audio-playback.js`
+  // 全文无 setTimeout/setInterval，也无 Date.now()/performance.now()）。
+  // 原先"真睡 40 ms 再看快照"是墙钟竞态：事件循环若被并发跑的测试饿住 ≥40 ms，libuv 会把第 1 段的
+  // `ended` 与已到期的检查定时器放进**同一个** timer 阶段（第 1 段的 ended 按到期时间先跑掉；它在
+  // 该阶段内新排的下一段 0 ms 定时器只能等下一阶段），检查回调于是看到"整份计划还差最后一段"的快照
+  // ⇒ 假红（`substituteCompleted` `false !== true`）。
+  // 这里把同一段等待改成**假定时器的虚拟时间**：下面的检查窗口仍登记为 `setTimeout(…, 40)`，但只有
+  // `t.mock.timers.tick` 才推进它——每段一次 `tick(0)`，再一次 `tick(40)` 让窗口到期；全程同步、
+  // 与墙钟无关，也不留余量。**断言一字未动**。
+  // 只接管 `setTimeout`（Node 24 的 `apis` 不接受 `clearTimeout`——配对的 clearTimeout 由 mock 一并
+  // 接管）；`Date.now()`/`performance.now()` 未被 mock，本用例也不需要。
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const port = substitutePlayer.createSubstitutePlayerPort({ segmentMs: 0 });
   const states = [];
   const listened = [];
@@ -411,6 +426,10 @@ test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记
       assert.equal(controller.listenerCount(), 0);
       done();
     }, 40);
+    // 虚拟时间推进：第 1 段 → 第 2 段 → 检查窗口到期（顺序即真实时序；不需要任何墙钟等待）。
+    t.mock.timers.tick(0);
+    t.mock.timers.tick(0);
+    t.mock.timers.tick(40);
   });
 });
 
