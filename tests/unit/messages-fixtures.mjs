@@ -5,7 +5,7 @@
  *   这里的消息、目标引用与端口实现都是**合成输入**，用于验证确定性服务语义
  *   （归属、未读一致性、引用 fail-closed、幂等/CAS、分页、不可变出口）。
  *   它们**不是**真实事件流量，也**不是**"消息系统已端到端可用"的证据：
- *   本文件不经 HTTP 路由（消息三端点路由已装配，见 services/api/src/app.ts:1066）、没有持久化、目标读取端口生产实现未接线。
+ *   本文件不经 HTTP 路由（消息三端点路由已装配，见 services/api/src/app.ts:1100）、没有持久化、目标读取端口生产实现未接线。
  */
 import { ApiError, buildErrorEnvelope } from '../../services/api/src/errors.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';

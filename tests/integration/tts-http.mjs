@@ -10,17 +10,15 @@
 //  - 纯回环：只连 `127.0.0.1:<随机端口>`，**不发出任何对外/付费请求**；不读凭据、不读 `.env`。
 //  - 提供者与产物都是**明确标注的替身**：产物是明文标注的**非音频**占位，不落盘、不写对象存储。
 //  - 契约里该域**只有 POST**：平台级 `GET /jobs/{id}` 由**共享作业面装配**（GY-I01），且 **`synthesis` kind
-//    已接入该面**（作业源 `createSynthesisJobSource`，`#152` `22fb5bf`）⇒ 合成任务**可经该 HTTP 读面读取**
-//    （`services/api/src/app.ts:1053` 装配、`tests/unit/tts-jobs-http.test.mjs:129` 已钉住）。
-//    本脚本为**只读 POST 面**，其终态仍经 `app.synthesisService` / 注入的 store 观察（**不额外发 HTTP 请求**，
-//    也不据此声称读面行为 —— 读面由上述钉住用例负责）。
+//    已接入该面**（作业源 `createSynthesisJobSource`，`#152` `22fb5bf`，`services/api/src/app.ts:1087` 装配）
+//    ⇒ 合成任务**可经该 HTTP 读面读取**（本文件 P01/P03 已实测 202 → `GET /jobs/{id}` 200）；终态亦可经 `app.synthesisService` 观察。
 //  - `real` 实例用**合成占位配置**触达 `config.ts` 的 real 校验链路；**合成占位配置不代表真实凭据可用**。
 //  - 真实 TTS 样本为 0 ⇒ 本脚本**不产生也不声称**任何音色/自然度/听感或能力结论。
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { buildApp } from '../../services/api/src/app.ts';
+import { buildApp, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { createMemoryIdempotencyStore } from '../../services/api/src/auth/idempotency.ts';
@@ -46,9 +44,18 @@ import { TtsLocalInputError } from '../../services/api/src/tts/live-ports.ts';
 
 const SYNTHESIS_URL = '/api/v1/speech/synthesis';
 const LOGIN_URL = '/api/v1/auth/wechat';
+const JOBS_URL = '/api/v1/jobs';
+const MEDIA_URL = '/api/v1/media';
 const REF = { type: 'answer', id: 'answer-http-approved', revision: 3 };
 const TEXT = '合成用例文本：稻田稗草三到五叶期，每亩用 25% 制剂 40 毫升。';
 const LONG_TEXT = '药'.repeat(101);
+
+/**
+ * **客户端替身样本的契约目标引用**（`miniprogram/utils/voice-api.js` 的
+ * `SUBSTITUTE_SPEAK_SAMPLES[0].targetRef`；该文件里的字面量与这里逐项一致，
+ * 客户端侧由 `tests/unit/miniprogram-voice-playback.test.mjs` 锁定，服务端侧由本文件锁定）。
+ */
+const CLIENT_SAMPLE_REF = { type: 'answer', id: 'sample-i13-passed', revision: 1 };
 
 /**
  * **合成占位配置**（`synthetic-not-a-real-*`）：只为通过 `config.ts` 的 real 校验链路。
@@ -265,6 +272,8 @@ const appA = await bootAppFor(stubConfig(), {
 });
 // D：**产品默认装配**（不注入任何合成端口）
 const appD = await bootAppFor(stubConfig());
+// P：**preset_demo 默认装配**（缩片：替身核对条目在两种替身模式下都必须生效）
+const appP = await bootAppFor(loadConfig({ APP_EXECUTION_MODE: 'preset_demo', LOG_LEVEL: 'silent' }));
 // B：real 实例（**合成占位配置**），默认提供者（fail-closed）+ 计数 store
 const realConfig = loadConfig({ APP_EXECUTION_MODE: 'real', LOG_LEVEL: 'silent', ...REAL_ENV });
 const appB = await bootAppFor(realConfig, { synthesis: { store: countingStore() } });
@@ -283,9 +292,10 @@ try {
   const identityB = await seedSession(appA.authStore, 'b');
   foreignEntry.ownerUserId = identityB.userId;
   const identityD = await seedSession(appD.authStore, 'd');
+  const identityP = await seedSession(appP.authStore, 'preset');
   const identityReal = await seedSession(appB.authStore, 'real');
 
-  console.log(`--- 产品装配实例：A(stub+注入)=${appA.base}｜D(stub+默认)=${appD.base}｜B(real+合成占位)=${appB.base} ---`);
+  console.log(`--- 产品装配实例：A(stub+注入)=${appA.base}｜D(stub+默认)=${appD.base}｜P(preset_demo+默认)=${appP.base}｜B(real+合成占位)=${appB.base} ---`);
 
   // ============================== 一、产品装配回环（原 2a 的 26 组，现经 buildApp） ==============================
   await check('C01 路由范围·GET/DELETE /speech/synthesis 不存在（契约只有 POST，未自造读/删端点）', async () => {
@@ -542,7 +552,7 @@ try {
     return `rev2=${stale.status} rev9=${ahead.status}`;
   });
 
-  await check('C22 正控制·202 受理 → 完成 → Synthesis 四字段（终态经 app.synthesisService 观察；`synthesis` kind 已接入共享读面（`#152` `22fb5bf`），本用例不发该 HTTP 请求）', async () => {
+  await check('C22 正控制·202 受理 → 完成 → Synthesis 四字段（服务层读面 `app.synthesisService.inspectJob`；HTTP 读面 `GET /jobs/{id}` 由 P01/P03 实测）', async () => {
     assert.notEqual(positiveJobId, null, 'C03 未产出任务');
     await appA.app.synthesisService.settle();
     const job = await appA.app.synthesisService.inspectJob({ userId: userIdA, jobId: positiveJobId });
@@ -587,10 +597,10 @@ try {
   });
 
   // ============================== 二、产品默认装配（不注入任何合成端口） ==============================
-  await check('D01 默认装配·未注入核对源时任何已核对形状请求 ⇒ 404 NOT_FOUND（本阶段无真实内容源，不伪造可播内容）', async () => {
+  await check('D01 默认装配·**非替身夹具 id** 一律 404 NOT_FOUND（默认替身核对源只含客户端替身样本，真实内容源仍未接线）', async () => {
     const response = await call(appD.base, 'POST', SYNTHESIS_URL, { token: identityD.token, key: nextKey(), body: body(REF) });
     assertEnvelope(response, 404, 'NOT_FOUND');
-    return '404 NOT_FOUND（默认替身核对源为空）';
+    return '404 NOT_FOUND（该 id 不在替身核对条目内）';
   });
 
   await check('D02 默认装配·鉴权/形状边界与注入实例同口径（401/400/400/404）', async () => {
@@ -677,6 +687,111 @@ try {
     } finally {
       await new Promise((resolve) => realCounting.app.close(resolve));
     }
+  });
+
+  // ============================== 三b、缩片（`ruling-451`）：替身模式下「受理 → 读面」打通，来源如实不可播 ==============================
+  //
+  // 范围（**不放开契约、不改服务端语义**）：装配层在 `stub`/`preset_demo` 下注入**明确标注的替身核对条目**，
+  // 使客户端替身样本能走完「202 受理 → `GET /jobs/{id}` 读到 succeeded + media_id」；
+  // 音频来源**仍不可播**（契约没有面向客户端的音频出口）⇒ 客户端只能 `SOURCE_UNAVAILABLE`（页面侧由
+  // `tests/unit/miniprogram-voice-playback.test.mjs` 锁定）。real 不受替身条目影响，仍受理前 503。
+  let clientSampleMediaId = null;
+
+  await check('P00 配对·服务端装配替身条目 == 客户端替身样本的契约目标引用（id/type/revision 逐项一致）', async () => {
+    assert.equal(SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT.length, 1, '装配层只注入正例那一条替身条目');
+    const entry = SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT[0];
+    assert.deepEqual(
+      { type: entry.type, id: entry.id, revision: entry.revision },
+      CLIENT_SAMPLE_REF,
+      '服务端替身条目必须与客户端替身样本的 targetRef 逐项一致',
+    );
+    assert.equal(entry.auditState, 'approved');
+    assert.equal(typeof entry.text, 'string');
+    assert.ok(entry.text.length > 0);
+    return `${entry.type}/${entry.id}#${entry.revision}（auditState=${entry.auditState}）`;
+  });
+
+  await check('P01 缩片·stub 默认装配：客户端替身样本 ⇒ 202 受理 → `GET /jobs/{id}` 读到 succeeded + media_id（改前是 404）', async () => {
+    const accepted = await call(appD.base, 'POST', SYNTHESIS_URL, {
+      token: identityD.token,
+      key: nextKey(),
+      body: body(CLIENT_SAMPLE_REF),
+    });
+    assert.equal(accepted.status, 202, `应 202，实际 ${accepted.status}（${accepted.text.slice(0, 200)}）`);
+    assert.equal(accepted.headers.get('etag'), '"1"');
+    assert.equal(accepted.headers.get('cache-control'), 'no-store');
+    assert.equal(accepted.json.meta.execution_mode, 'stub');
+    assert.equal(accepted.json.data.kind, 'synthesis');
+    assert.equal(accepted.json.data.state, 'queued');
+    assert.deepEqual(accepted.json.data.target_ref, CLIENT_SAMPLE_REF, '受理响应必须回绑客户端传的契约目标引用');
+    const jobId = accepted.json.data.id;
+
+    await appD.app.synthesisService.settle();
+    const read = await call(appD.base, 'GET', `${JOBS_URL}/${jobId}`, { token: identityD.token });
+    assert.equal(read.status, 200, `读面应 200，实际 ${read.status}（${read.text.slice(0, 200)}）`);
+    assert.equal(read.json.data.kind, 'synthesis');
+    assert.equal(read.json.data.state, 'succeeded');
+    assert.equal(read.json.data.error_code, null);
+    assert.equal(read.json.data.result.kind, 'synthesis');
+    assert.match(read.json.data.result.value.media_id, /^[0-9a-f-]{36}$/i);
+    assert.deepEqual(read.json.data.result.value.checked_content_ref, CLIENT_SAMPLE_REF, '结果必须回绑同一个目标与 revision');
+    clientSampleMediaId = read.json.data.result.value.media_id;
+    return `202 → ${read.json.data.state} media_id=${clientSampleMediaId.slice(0, 8)}…`;
+  });
+
+  await check('P02 缩片·revision 绑定不放宽：同 id 传 revision+1 ⇒ 409 REVISION_CONFLICT（替身条目的 revision 被锁定）', async () => {
+    const stale = await call(appD.base, 'POST', SYNTHESIS_URL, {
+      token: identityD.token,
+      key: nextKey(),
+      body: body({ ...CLIENT_SAMPLE_REF, revision: CLIENT_SAMPLE_REF.revision + 1 }),
+    });
+    const error = assertEnvelope(stale, 409, 'REVISION_CONFLICT');
+    assert.equal(error.details[0]?.code, 'REVISION_MISMATCH');
+    return `409 ${error.code}/${error.details[0]?.code}`;
+  });
+
+  await check('P03 缩片·preset_demo 默认装配：同一条替身条目同样生效（202 → succeeded）', async () => {
+    const accepted = await call(appP.base, 'POST', SYNTHESIS_URL, {
+      token: identityP.token,
+      key: nextKey(),
+      body: body(CLIENT_SAMPLE_REF),
+    });
+    assert.equal(accepted.status, 202, `应 202，实际 ${accepted.status}（${accepted.text.slice(0, 200)}）`);
+    assert.equal(accepted.json.meta.execution_mode, 'preset_demo');
+    await appP.app.synthesisService.settle();
+    const read = await call(appP.base, 'GET', `${JOBS_URL}/${accepted.json.data.id}`, { token: identityP.token });
+    assert.equal(read.status, 200);
+    assert.equal(read.json.data.state, 'succeeded');
+    return `preset_demo 202 → ${read.json.data.state}`;
+  });
+
+  await check('P04 缩片·来源如实：既有 media 途径取不到合成产物 ⇒ `POST /media/{id}/access` 404、`GET /media/{id}/content` 无此 operation', async () => {
+    assert.notEqual(clientSampleMediaId, null, 'P01 未产出 media_id');
+    const grant = await call(appD.base, 'POST', `${MEDIA_URL}/${clientSampleMediaId}/access`, {
+      token: identityD.token,
+      key: nextKey(),
+      headers: { 'if-match': '"1"' },
+    });
+    // 合成 `media_id` 属合成域的替身产物存储，**不在**媒体域 ⇒ 与「媒体不存在」同形 404（不是网络问题、不是登录失效）。
+    assertEnvelope(grant, 404, 'NOT_FOUND');
+    const content = await call(appD.base, 'GET', `${MEDIA_URL}/${clientSampleMediaId}/content`, { token: identityD.token });
+    assertEnvelope(content, 404, 'NOT_FOUND');
+    assert.match(content.json.error.message, /未实现的路径/, '契约里没有 owner 私有媒体字节读取 operation');
+    return `access=${grant.status} content=${content.status}（客户端据此只能 SOURCE_UNAVAILABLE）`;
+  });
+
+  await check('P05 缩片·替身条目不放宽 real：real 默认装配 + 客户端替身样本 ⇒ 503 PROVIDER_UNAVAILABLE，提供者 0 次、不建任务', async () => {
+    const before = { ...counters };
+    const response = await call(appB.base, 'POST', SYNTHESIS_URL, {
+      token: identityReal.token,
+      key: nextKey(),
+      body: body(CLIENT_SAMPLE_REF),
+    });
+    assertEnvelope(response, 503, 'PROVIDER_UNAVAILABLE');
+    assert.equal(response.json.meta.execution_mode, 'real');
+    assert.equal(counters.providerCalls - before.providerCalls, 0, '不得调用提供者');
+    assert.equal(counters.insertJobs - before.insertJobs, 0, '不得建任务');
+    return '503 PROVIDER_UNAVAILABLE；提供者调用+0 任务+0';
   });
 
   // ============================== 四、结构性证据（默认关闭不是开关） ==============================
@@ -791,6 +906,7 @@ try {
 } finally {
   await new Promise((resolve) => appA.app.close(resolve));
   await new Promise((resolve) => appD.app.close(resolve));
+  await new Promise((resolve) => appP.app.close(resolve));
   await new Promise((resolve) => appB.app.close(resolve));
 }
 
@@ -803,6 +919,7 @@ if (summary.fail > 0) {
   process.exitCode = 1;
 } else {
   console.log('RESULT=PASS 真实产品装配（buildApp）+ 本机回环 HTTP；合成身份 + 替身提供者 + 内存 store；未发出任何对外/付费请求');
-  console.log('SCOPE=product_assembly_http_loopback; 共享读面 `GET /jobs/{id}` 已装配（GY-I01），`synthesis` kind 亦已接入（`#152` `22fb5bf`）；本脚本对合成任务**不请求**该读面，其终态一律经 app.synthesisService 观察（读面行为见 tests/unit/tts-jobs-http.test.mjs）；');
+  console.log('SCOPE=product_assembly_http_loopback; 共享读面 `GET /jobs/{id}` 已接入 `synthesis` kind（P01/P03 经 HTTP 实测）；');
+  console.log('      缩片：stub/preset_demo 受理与读面打通；**可播放来源仍不可得**（契约无客户端音频出口，P04），real 未接线仍 503（P05）；');
   console.log('      real 实例为**合成占位配置**（不代表真实凭据可用）；真实 TTS 样本 0，不声称任何音质/自然度结论');
 }

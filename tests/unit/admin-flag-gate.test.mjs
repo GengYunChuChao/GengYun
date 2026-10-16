@@ -8,7 +8,7 @@
 //   D. **开关不改变适用判定结论**：开启时结果与不加闸门逐字节相同；关闭时是"拒绝"而不是"改过的结论"。
 //   E. HTTP 跨端点：/herbicides 关闭 ⇒ 拒绝且响应里没有制剂/用量/成分任何字段；
 //      断言顺序（未登录仍 401，开关状态不泄露给未鉴权方）；未受控面（/knowledge 列表、/health）不受影响。
-//   F. 投稿面（本用例在服务层生效；社区 16 条路由已装配，投稿面经 `gatedGuards` 判开关，见 services/api/src/app.ts:1075）：关闭 ⇒ createPost 拒绝且**零落库**。
+//   F. 投稿面（本用例在服务层生效；社区 16 条路由已装配，投稿面经 `gatedGuards` 判开关，见 services/api/src/app.ts:1109）：关闭 ⇒ createPost 拒绝且**零落库**。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -204,7 +204,7 @@ test('B6. 未命中受控面的路由/操作不被判定（不得因"没查到"�
 });
 
 // ---------------------------------------------------------------------------
-// F. 投稿面：关闭 ⇒ 拒绝且零落库（本用例在服务层生效；社区路由已装配，投稿面经 gatedGuards 判开关，见 services/api/src/app.ts:1075）
+// F. 投稿面：关闭 ⇒ 拒绝且零落库（本用例在服务层生效；社区路由已装配，投稿面经 gatedGuards 判开关，见 services/api/src/app.ts:1109）
 // ---------------------------------------------------------------------------
 
 test('F. submissions_enabled 关闭 ⇒ createPost 拒绝且**一条内容都没落库**；开启 ⇒ 正常发布', async () => {

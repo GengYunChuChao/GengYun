@@ -8,12 +8,16 @@
 // 1) **客户端不说内容**：请求体只有 `checked_content_ref`（type/id/revision）与 `locale:'zh-CN'`，
 //    与契约 `SynthesisInput` 的 `additionalProperties:false` 逐项一致；正文一律由服务端从
 //    「已核对内容」读出，客户端**没有任何**把自由文本送去合成的入口。
+// 1b) **revision 不硬编码**：目标引用一律经 `checkedContentRefForSample()` 取契约值，
+//    且**优先**用服务端回传的 revision（`rememberServerRevision`）；样本未声明 `targetRef` ⇒ 返回 null，
+//    调用方据此**不发起**合成（绝不内联拼一个 `revision: 1`）。
 // 2) **安全检查在前**：本层**不**自己放行任何内容——调用方必须先过 `utils/speech-text.js` 的
 //    `assertSpeakable`（`check_state === 'passed'`）；本层只负责把 ref 发出去。
 // 3) **无取消能力如实登记**：契约**没有**「取消合成任务」的语义（`tts/service.ts` 也没有取消入口）。
 //    离页时本层只做**客户端侧**的在途请求失效与轮询停止，**绝不**谎称服务端任务已取消。
 // 4) **不产生、不顶替音频**：`audioSourceForJob()` 只如实回答"现在有没有可播放的音频源"；
-//    替身产物不是音频 ⇒ 一律 `SOURCE_UNAVAILABLE`，**不得**用别的音频顶替。
+//    替身产物不是音频、契约也没有面向客户端的音频出口 ⇒ 一律 `SOURCE_UNAVAILABLE`，
+//    **不得**用别的音频顶替、**不得**假装能播；页面口径见 `NO_CLIENT_AUDIO_EGRESS_NOTE`。
 'use strict'
 
 const auth = require('./auth')
@@ -47,6 +51,14 @@ const IDEMPOTENCY_MAX = 128
  * 它们不是真实资料、不是任何真实核对结论，也不构成任何用药建议或用量结论；
  * 只用于离线核对「安全检查断路」与播报控件的分段/关键令牌复核。
  * `blocked` 那条是**反例样本**：安全检查未过时，页面必须既不合成也不播报。
+ *
+ * `targetRef` ＝ 契约 `SynthesisTarget`（`type`/`id`/`revision` 三键，逐项一致）：
+ * 页面**不得**内联拼 `revision: 1`，一律经 `checkedContentRefForSample()` 取契约值
+ * （并且**优先**采用服务端回传的 revision，见 `rememberServerRevision`）。
+ * 正例样本的 `targetRef` 必须与服务端装配层注入的替身核对条目
+ * （`services/api/src/app.ts` 的 `SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`）逐项一致、正文逐字一致，
+ * 该配对由回归用例直接比对锁定；`blocked` 反例刻意**不声明** `targetRef`：
+ * 安全检查不通过 ⇒ 页面永不发起合成，它也就不该有可合成的契约目标引用。
  */
 const SUBSTITUTE_SPEAK_SAMPLES = [
   {
@@ -54,7 +66,8 @@ const SUBSTITUTE_SPEAK_SAMPLES = [
     label: '替身样本 · 已通过核对（正例）',
     checkState: 'passed',
     checkedText: '稗草苗后茎叶处理：每亩用 30 毫升，兑水 30 升常规喷雾。'
-      + '不得在高温时段施药，不要与碱性药剂混用；安全间隔期 14 天。'
+      + '不得在高温时段施药，不要与碱性药剂混用；安全间隔期 14 天。',
+    targetRef: { type: 'answer', id: 'sample-i13-passed', revision: 1 }
   },
   {
     id: 'sample-i13-blocked',
@@ -66,6 +79,20 @@ const SUBSTITUTE_SPEAK_SAMPLES = [
 
 const SUBSTITUTE_NOTE = '替身样本：非真实资料、非真实核对结论、不是音频，也不构成任何用药建议；'
   + '只在本地替身工程里用于离线核对控件与安全检查断路，不得当作真实播报内容。'
+
+/**
+ * **页面必须原样展示的如实口径**（契约层面的结构性事实；既不是网络问题，也不是临时故障）。
+ *
+ * 依据（实读证据：`.pg17/handoff/slice451-synthesis-playback-b619e62.md`）：
+ * 冻结契约 85 条路径里**没有**面向客户端的音频出口 —— `POST /media/{id}/access` 只回句柄
+ * （`AccessGrant` 无字节），其 `url` 是部署期访问网关占位域，`GET /media/{id}/content` 不存在，
+ * 唯一返回媒体字节的 `GET /community/media/{grant_id}/content` 硬要求社区图片上下文。
+ * ⇒ 合成成功后**也**取不到可播放来源：页面不得显示「播放中／已播放」、不得伪造音频、
+ * 不得用别的音频顶替；真实可播放来源需先放开契约（属监制/用户裁定）。
+ */
+const NO_CLIENT_AUDIO_EGRESS_NOTE = '本环境无可播放音频（契约无客户端音频出口）：'
+  + '契约只提供合成受理与任务读取，没有面向客户端的音频下载 operation，合成成功也取不到可播放来源；'
+  + '本页不伪造音频、不用别的音频顶替、不记「已听取」。'
 
 function failure(code) { const error = new Error(code); error.code = code; return error }
 function object(value) { return !!value && typeof value === 'object' && !Array.isArray(value) }
@@ -200,8 +227,65 @@ function newKey(prefix) {
 }
 
 /**
+ * **服务端已回传的 revision**（按 `type\u0000id` 记，进程内；不落盘、不上报）。
+ *
+ * 为什么需要它：契约里**没有**「读某个已核对目标当前 revision」的 operation
+ * （TTS 域只有 `POST /speech/synthesis`），因此客户端唯一能拿到的**权威** revision
+ * 就是服务端在响应里回传的那个（`Job.target_ref.revision`，与 `Synthesis.checked_content_ref.revision`
+ * 由 `validateJob` 校验为同一个）。页面**不得**内联硬编码 `revision: 1`。
+ */
+const serverRevisions = {}
+
+function targetKeyOf(ref) {
+  return String(ref.type) + '\u0000' + String(ref.id)
+}
+
+/**
+ * 记下服务端回传的 revision（受理响应与 `GET /jobs/{id}` 读面都调用）。
+ *
+ * 只认形状合法的 `target_ref`（三键、type 在闭集内、id 1..80、revision ≥1 整数）；
+ * 按 `(type,id)` 归位 ⇒ **不会**把别的目标的 revision 张冠李戴到本样本上。
+ * 不合法一律**不记**（返回 null），由调用方继续用先前值，绝不猜。
+ */
+function rememberServerRevision(job) {
+  const ref = object(job) ? job.target_ref : null
+  if (!object(ref) || !sameKeys({ type: ref.type, id: ref.id, revision: ref.revision }, ['type', 'id', 'revision'])) return null
+  if (!one(ref.type, SYNTHESIS_TARGET_TYPES) || !text(ref.id, TARGET_ID_MAX) || !integer(ref.revision, 1)) return null
+  serverRevisions[targetKeyOf(ref)] = ref.revision
+  return ref.revision
+}
+
+/** 清空本机记住的服务端 revision（离页/切账号时调用；幂等）。 */
+function forgetServerRevisions() {
+  for (const key of Object.keys(serverRevisions)) delete serverRevisions[key]
+}
+
+/**
+ * 取某个样本的**契约目标引用**（`SynthesisTarget` 三键）。
+ *
+ * 优先级刻意如此：
+ *  1. **服务端回传的 revision**（`rememberServerRevision` 记下的；这是唯一权威值）；
+ *  2. 否则用样本**声明的** `targetRef`（替身夹具；与装配层替身条目配对，由回归用例锁定）。
+ * 样本没有声明 `targetRef`（如安全检查反例样本）⇒ 返回 `null`：调用方**不得**发明引用、
+ * 不得发起合成（页面据此如实提示，而不是拼一个 `revision: 1` 出来）。
+ */
+function checkedContentRefForSample(sample) {
+  const declared = object(sample) ? sample.targetRef : null
+  if (!object(declared)) return null
+  let ref
+  try {
+    ref = validateCheckedContentRef({ type: declared.type, id: declared.id, revision: declared.revision })
+  } catch (error) {
+    return null
+  }
+  const remembered = serverRevisions[targetKeyOf(ref)]
+  return { type: ref.type, id: ref.id, revision: integer(remembered, 1) ? remembered : ref.revision }
+}
+
+/**
  * `POST /speech/synthesis`：受理一次合成。
  * 调用方**必须**先过安全检查闸门（`speech-text.assertSpeakable`）；本层不代替闸门。
+ * 受理成功后调用方应把响应交给 `rememberServerRevision`（采纳服务端回传的 revision）。
  */
 async function createSynthesis(checkedContentRef, idempotencyKey) {
   const ref = validateCheckedContentRef(checkedContentRef)
@@ -229,16 +313,19 @@ function isTerminal(state) {
 }
 
 /**
- * **如实回答"现在有没有可播放的音频源"**（不顶替、不猜测）。
+ * **如实回答"现在有没有可播放的音频源"**（不顶替、不猜测、不假装能播）。
  *
  * 逐项 fail-closed：
  *  - 任务不是 `succeeded` ⇒ 没有产物；
- *  - `stub`/`preset_demo` 的替身产物**不是音频**（服务端 `tts/provider.ts` 的标注产物）⇒ 不可播放；
- *  - `real` 模式下契约**没有**面向客户端的音频下载端点，`media_id` 需要走已合并的媒体访问授权链，
- *    本片**未接** ⇒ 不可播放。
+ *  - `stub`/`preset_demo` 的替身产物**不是音频**（服务端 `tts/provider.ts` 的明文标注占位
+ *    `application/x-gengyun-tts-substitute`，替身端口与产物校验都拒绝 `audio/*`）⇒ 不可播放；
+ *  - `real` 模式下契约**没有**面向客户端的音频出口（`POST /media/{id}/access` 只回句柄、
+ *    `AccessGrant.url` 是部署期网关占位域、没有 owner 私有媒体字节读取 operation）
+ *    ⇒ 同样取不到可播放来源。
  *
- * 因此本片在离线/替身环境下**恒**得到 `SOURCE_UNAVAILABLE`，页面据此给出文案与主动播放按钮，
- * 并且**不得**记「已听取」。可播放路径由注入的替身播放端口在离线走查/回归里覆盖。
+ * 因此本片在离线/替身与 real 未接线两种情形下**恒**得到 `SOURCE_UNAVAILABLE`；页面据此展示
+ * `NO_CLIENT_AUDIO_EGRESS_NOTE`（如实说明契约缺口）与主动播放按钮，**不得**显示「播放中／已播放」、
+ * **不得**伪造音频、**不得**记「已听取」。可播放路径的真实接线需先放开契约（属监制/用户裁定）。
  */
 function audioSourceForJob(job, mode) {
   if (!object(job) || !one(job.state, JOB_STATES)) return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '任务状态无法核对。' }
@@ -246,9 +333,19 @@ function audioSourceForJob(job, mode) {
     return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '合成任务未成功完成（state=' + job.state + '），没有可播放的产物。' }
   }
   if (mode !== 'real') {
-    return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '当前为替身执行模式（' + String(mode) + '）：替身产物不是音频，不可播放；本页不用别的音频顶替。' }
+    return {
+      ok: false,
+      code: 'SOURCE_UNAVAILABLE',
+      reason: '当前为替身执行模式（' + String(mode) + '）：替身产物是明确标注的**非音频**占位，'
+        + '不可播放；本页不用别的音频顶替、不假装能播。'
+    }
   }
-  return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '真实合成产物的下载链路（媒体访问授权）尚未接线：本页如实报不可播放。' }
+  return {
+    ok: false,
+    code: 'SOURCE_UNAVAILABLE',
+    reason: '契约没有面向客户端的音频出口（没有私有媒体字节读取 operation，'
+      + '`AccessGrant.url` 是部署期网关占位域）：真实合成产物也取不到可播放来源，本页如实报不可播。'
+  }
 }
 
 /** 任务状态 → 页面一行说明（七类逐类呈现，不折叠成"成功/失败"）。 */
@@ -377,6 +474,7 @@ module.exports = {
   SYNTHESIS_KEYS: SYNTHESIS_KEYS.slice(),
   SUBSTITUTE_SPEAK_SAMPLES: SUBSTITUTE_SPEAK_SAMPLES,
   SUBSTITUTE_NOTE: SUBSTITUTE_NOTE,
+  NO_CLIENT_AUDIO_EGRESS_NOTE: NO_CLIENT_AUDIO_EGRESS_NOTE,
   EXIT_CANCELLATION_NOTE: EXIT_CANCELLATION_NOTE,
   RECORD_MAX_DURATION_MS: RECORD_MAX_DURATION_MS,
   VOICE_MAX_BYTES: VOICE_MAX_BYTES,
@@ -385,6 +483,13 @@ module.exports = {
   substituteSamplesEnabled: substituteSamplesEnabled,
   validateCheckedContentRef: validateCheckedContentRef,
   validateJob: validateJob,
+  checkedContentRefForSample: checkedContentRefForSample,
+  rememberServerRevision: rememberServerRevision,
+  forgetServerRevisions: forgetServerRevisions,
+  serverRevisionFor: function (ref) {
+    const remembered = object(ref) ? serverRevisions[targetKeyOf(ref)] : undefined
+    return integer(remembered, 1) ? remembered : null
+  },
   createSynthesis: createSynthesis,
   getJob: getJob,
   isTerminal: isTerminal,
