@@ -77,7 +77,7 @@ import {
 import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
-import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
+import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
 import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
@@ -293,9 +293,18 @@ export interface BuildAppOptions {
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
-  // `real` ⇒ 未接线对象存储（整域 fail-closed 503），`stub`/`preset_demo` ⇒ 明确标注的替身。
-  /** 测试注入：替换对象存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
+  // 装配层不把 `process.env` 交给解析器，真实适配器只能经下面的显式注入开启），
+  // `stub`/`preset_demo` ⇒ 明确标注的替身。
+  /** 测试注入：替换对象存储端口（**这也是真实适配器的唯一开启方式**；默认 real=fail-closed 未接线，其余=明确标注的替身）。 */
   mediaObjectStore?: MediaObjectStore;
+  /**
+   * **真实媒体接线的显式批准能力**（r3 运行期构造期主闸门；`approveRealMediaWiring()` 铸造，
+   * non-defaultable）。`real` 下**必须**与 `mediaObjectStore` 同时给出才可能走真实分支。
+   * 装配层**绝不自行铸造**、也不从 env／原型链／全局对象派生 —— 只把调用方给出的能力对象转发给
+   * `createAppMediaService`（见 `media/service.ts` 的闸门说明）。
+   */
+  realMediaApproval?: RealMediaWiringApproval;
   /** 测试注入：替换公开内容来源（默认为**关闭**：社区取图统一 404，不误放行）。 */
   mediaContentSource?: PublishedContentSource;
   /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
@@ -542,7 +551,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -934,12 +943,38 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
   //
-  // **零真实存储注入**：对象存储端口按执行模式解析 —— `real` 一律 `unwired`（整域 fail-closed
-  // 503 PROVIDER_UNAVAILABLE，绝不把内存/替身存储记成真实持久化），`stub`/`preset_demo` 用
-  // **明确标注的替身**（句柄域名 `substitute.invalid`，不在响应里冒充真实网关）。
-  // 将来接真实对象存储必须在**这里显式**改为传入 `createS3CompatibleObjectStore(...)`
-  // ——判据是端口的 `kind`，不是任何自述持久化的布尔标志（同监工对 #121 的 P1 口径）。
+  // **对象存储端口的唯一起因是显式注入**（`mediaObjectStore` 选项）：注入什么端口就用什么端口，
+  // 装配层在这里**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
+  // **ambient `process.env` 不是开启真实适配器的门**：
+  //   - **未显式注入** ⇒ 一律 `resolveMediaObjectStore({ executionMode })`（**不传 `env`**）：
+  //     `real` ⇒ `unwired`（整域 fail-closed 503 `PROVIDER_UNAVAILABLE`，与接线前逐字一致，
+  //     **环境里四个 `OBJECT_STORAGE_*` 键齐备也一样** —— 缺配置不是放行理由，配置齐备也不是）；
+  //     `stub`/`preset_demo` ⇒ **明确标注的替身**（句柄域名 `substitute.invalid`，不冒充真实网关）。
+  //   - **显式注入**（运维/启动代码在**已审查**的前提下构造端口，或测试注入）⇒ 按注入的端口装配，
+  //     与执行模式无关：注入 `kind === 's3_compatible'` 才走真实分支。
+  //
+  // 为什么必须有这道门（监工对 PR #193 的 P1，裁定见仓库外 `.pg17/ruling-issue193-supervisor-p1.md`；
+  // 派单 `.pg17/dispatch/issue193-refailclosed.md` A 项）：这 4 个 `OBJECT_STORAGE_*` 键**正是 real
+  // 模式的启动必填项**（见 `config.ts` 的 `REQUIRED_WHEN_REAL`）⇒「运维不设键」**不可能**充当
+  // 「可启动的 real 环境」的门 —— 把 ambient env 交给 resolver 等于**配置即门控**，
+  // 在隐私守卫（上传路由用途授权／撤回 epoch，见 `routes/media.ts` 的 `createUpload` 只经
+  // `guards.requireUser`）与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
+  // 仍是进程内 `Map`，重启即丢 owner/版本/rawRef 与回收依据）尚未接妥前，会为真实用户媒体开门。
+  // 这两片落地前，真实适配器只允许经**显式注入**装配；**不得**用布尔自述标志当门控
+  // （判据是端口的 `kind`，同监工对 #121 的 P1 口径）。
+  // 桶私有性、≤300 秒短效句柄与私有内容网关仍属部署期接线（ADR-001 的门控不在本片）。
   // 公开内容来源默认**关闭**：社区取图统一 404，不误放行；真实来源属社区/审核线，跨线接线。
+  //
+  // r3（第二轮对抗性复审后的**方向性改判**，裁定 `.pg17/ruling-i193-runtime-gate.md`）：
+  // 上面的静态判据（AST 审计 + 端口溯源 + 运行时 env 探针）**已降级为启发式**，不再是唯一依据 ——
+  // 两轮返修的失败同源：判据是**封闭世界静态检查**，只要把来源放在被审文件之外
+  // （新增模块 + 签名默认值、`Object.prototype` 投毒、链路文件 1 行副作用 import、动态取键）
+  // 就能全绿而 `POST /api/v1/media/uploads` 返回 201。**主闸门已移到运行期构造期**：
+  // 见 `media/service.ts` 的 `approveRealMediaWiring` / `RealMediaWiringApproval` —— `real` 下
+  // `createAppMediaService` 必须收到**显式批准能力**（对象身份、WeakSet 品牌、不可从
+  // env／`options.env`／原型链／全局对象派生），否则整域 fail-closed 503，与「环境里有没有那四个键」
+  // 「谁读了 env」「端口从哪个模块来」全都无关。
+  // ⛔ 装配层**不得自行铸造**该能力（那等于自我批准）：这里只**转发**调用方给出的选项。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
@@ -947,6 +982,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     contentSource: mediaContentSource ?? createClosedContentSource(),
     ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
+    // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
+    ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
     now: clock,
   });
 
