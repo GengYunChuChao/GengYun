@@ -75,7 +75,7 @@ initiated → uploaded → processing → ready
 
 `service.mjs` 是**纯模块**，不直接改 `services/api/src/app.ts`（该文件归 GY-I02）。
 认证与授权组件已通过 PR #59、#61、#63 合并；媒体 7 条 HTTP 路由**已由服务端会话层注入身份挂载**（唯一注册点 `services/api/src/routes/media.ts` 的 `registerMediaRoutes`，装配点 `services/api/src/app.ts`；回归见 `tests/unit/media-http-upload.test.mjs`、`tests/unit/media-http-access.test.mjs`）。
-**仍未接线的**是**句柄消费网关**（owner 短效句柄的**消费端**，部署期访问网关）与真实对象存储/COS 适配：契约内没有私有媒体内容路由，本模块也不宣称真实取图已通。
+**仍未接线的**是**句柄消费网关**（owner 短效句柄的**消费端**，部署期访问网关）与真实对象存储/COS 适配：冻结契约（`packages/contracts/openapi.json`，85 条路径 / 112 条 operation）内**没有**满足「owner 私有媒体字节读取」语义的那一条 operation——`POST /media/{id}/access` 只签发 `AccessGrant` 短效 https 句柄（本仓库占位域 `media.gengyun.local`），契约内唯一返回二进制的 `GET /community/media/{grant_id}/content`（`image/jpeg`、`image/png`、`image/webp`）只服务**社区公开已审**上下文。故本仓库不提供读私有媒体字节的数据面：**客户端经契约取不到私有媒体字节**（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」；对照 `POST /media/{id}/access`、`GET /media/{id}`、`GET /community/media/{grant_id}/content` 未带会话时均 401），本模块也不宣称真实取图已通。
 以下示例为**模块 API 的产品侧调用形态**（语义与已注册路由一致；鉴权、强 ETag 与契约封套由 `registerMediaRoutes` 承担）：
 
 ```js
