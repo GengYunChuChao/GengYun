@@ -207,7 +207,98 @@
       </view>
 
       <view class="demo-caption">录音控件与上方播报控件是两个独立控件：录音不会触发播报，播报也不采集任何音频。</view>
-      <view class="demo-caption">本页只做到「录音 + 按用途上传」：真实 ASR／转写结果不在本页，未接线前不显示任何结论。</view>
+      <view class="demo-caption">录音按用途 voice_question 上传（真实模式）；转写、核对与发送见下方「转写核对」区，未经明确确认不会发送任何问答。</view>
+    </view>
+  </view>
+
+  <!-- ④ 转写核对（GY-I11 客户端切片，stub/preset_demo 局部实现）：
+       受理 → 轮询记录 → 可编辑正文 → 用户明确确认 → 才发送语音轮次。
+       取消／失败／迟到回调一律不外发；确认与发送都带幂等键。真实 ASR 未接线前，
+       替身文本明确标注，不构成任何识别效果或准确率证据。 -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">④ 转写核对（可编辑 · 确认后发送）</view>
+      <view class="section-head__meta">{{transcriptStage === '' ? '未开始' : transcriptStage}}</view>
+    </view>
+    <view class="panel">
+      <view class="hint">链路：受理转写 → 等待记录 → 核对并编辑正文 → 明确确认后发送到问答。
+        未经确认不外发；已取消、失败终态、迟到响应都不会外发。</view>
+
+      <view class="notice notice--stub" wx:if="{{transcriptSampleNote}}">
+        <text class="notice__icon">🧪</text>
+        <text class="notice__text">{{transcriptSampleNote}}</text>
+      </view>
+
+      <view class="row-actions" wx:if="{{transcriptSamples.length > 0}}">
+        <button
+          wx:for="{{transcriptSamples}}"
+          wx:key="id"
+          class="btn {{selectedTranscriptSampleId === item.id ? 'btn--primary' : 'btn--secondary'}} row-actions__item"
+          aria-role="button"
+          aria-label="{{item.label}}"
+          data-id="{{item.id}}"
+          bindtap="onPickTranscriptSample"
+        >{{item.label}}</button>
+      </view>
+
+      <view class="hint" wx:if="{{uploadedMediaId !== '' && uploadedMediaRevision >= 1}}">
+        当前录音引用：真实上传 media_id {{uploadedMediaId}}（revision {{uploadedMediaRevision}}，用途 voice_question）
+      </view>
+      <view class="hint" wx:elif="{{transcriptMediaLabel}}">当前录音引用：{{transcriptMediaLabel}}</view>
+
+      <view class="row-actions">
+        <button
+          class="btn btn--secondary row-actions__item voice-submit"
+          aria-role="button"
+          aria-label="受理本条录音的转写"
+          disabled="{{guest || transcriptBusy || (uploadedMediaId === '' && selectedTranscriptSampleId === '')}}"
+          bindtap="onRequestTranscript"
+        >{{transcriptStage === 'requesting' ? '正在受理…' : '转写本条录音'}}</button>
+      </view>
+
+      <view class="hint" wx:if="{{transcriptId}}">
+        转写 {{transcriptId}} · revision {{transcriptRevision}} · model_version {{transcriptModel || '（未取得）'}}
+      </view>
+      <view class="hint" wx:if="{{transcriptSpans.length > 0}}">
+        不确定区间 {{transcriptSpans.length}} 处（服务端如实上报，本页不删改）：
+      </view>
+      <view class="hint" wx:for="{{transcriptSpans}}" wx:key="reason">
+        [{{item.start}}, {{item.end}}] {{item.reason}}
+      </view>
+
+      <!-- 可编辑正文：确认发送前一律可改；草稿不写已确认快照 -->
+      <textarea
+        class="input textarea"
+        value="{{transcriptDraft}}"
+        maxlength="{{8000}}"
+        placeholder="转写正文将显示在这里，可编辑后确认发送"
+        disabled="{{guest || transcriptBusy || transcriptStage !== 'ready'}}"
+        bindinput="onTranscriptInput"
+      ></textarea>
+
+      <view class="row-actions">
+        <button
+          class="btn btn--primary row-actions__item voice-submit"
+          aria-role="button"
+          aria-label="核对并发送：确认后才会把该正文作为语音轮次发送"
+          disabled="{{guest || transcriptBusy || transcriptStage !== 'ready'}}"
+          bindtap="onConfirmAndSend"
+        >{{transcriptStage === 'confirming' ? '正在确认…' : (transcriptStage === 'sending' ? '正在发送…' : '核对并发送')}}</button>
+        <button
+          class="btn btn--ghost row-actions__item voice-submit"
+          aria-role="button"
+          aria-label="取消本次转写：取消后不会发送任何问答"
+          disabled="{{guest || transcriptBusy || transcriptStage === '' || transcriptStage === 'cancelled' || transcriptStage === 'sent'}}"
+          bindtap="onCancelTranscript"
+        >{{transcriptStage === 'cancelling' ? '正在取消…' : '取消（不发送）'}}</button>
+      </view>
+
+      <view class="notice notice--danger" wx:if="{{transcriptNote}}">
+        <text class="notice__text">{{transcriptNote}}</text>
+      </view>
+      <view class="hint" wx:if="{{transcriptErrorCode}}">错误码：{{transcriptErrorCode}}（未收录的码一律如实带出，不折叠成"失败"）</view>
+      <view class="hint" wx:if="{{sendJobId}}">回答任务 {{sendJobId}} · state {{sendJobState}}（回答内容不在本页呈现）</view>
+      <view class="demo-caption">确认与发送都带幂等键：同一尝试的重试不会重复确认或重复发送；双击被在途守卫挡下。</view>
     </view>
   </view>
 </view>

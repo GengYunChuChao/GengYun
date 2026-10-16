@@ -28,3 +28,17 @@
   white-space: normal;
   word-break: break-word;
 }
+
+/* 转写核对的可编辑正文（GY-I11）：与全局 .input 同底色/边框/圆角，只增加高度与行距；
+   跟随字体放大，不用固定高度裁切文字。 */
+.textarea {
+  width: 100%;
+  min-height: calc(140px * var(--font-scale, 1));
+  border: 1px solid var(--green-field);
+  background: var(--green-paper-soft);
+  border-radius: 8px;
+  padding: calc(10px * var(--font-scale, 1));
+  font-size: calc(15px * var(--font-scale, 1));
+  line-height: 1.5;
+  box-sizing: border-box;
+}
