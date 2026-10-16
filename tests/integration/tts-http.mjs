@@ -9,9 +9,11 @@
 // 口径：
 //  - 纯回环：只连 `127.0.0.1:<随机端口>`，**不发出任何对外/付费请求**；不读凭据、不读 `.env`。
 //  - 提供者与产物都是**明确标注的替身**：产物是明文标注的**非音频**占位，不落盘、不写对象存储。
-//  - 契约里该域**只有 POST**：平台级 `GET /jobs/{id}` 已由**共享作业面装配**（GY-I01），但 **`synthesis` kind
-//    尚未接入该面**（无作业源）⇒ 合成任务经 `GET /jobs/{id}` **仍为 404**，其终态**只能**经
-//    `app.synthesisService` / 注入的 store 观察（显式标注，不冒充 HTTP 读面）。
+//  - 契约里该域**只有 POST**：平台级 `GET /jobs/{id}` 由**共享作业面装配**（GY-I01），且 **`synthesis` kind
+//    已接入该面**（作业源 `createSynthesisJobSource`，`#152` `22fb5bf`）⇒ 合成任务**可经该 HTTP 读面读取**
+//    （`services/api/src/app.ts:1053` 装配、`tests/unit/tts-jobs-http.test.mjs:129` 已钉住）。
+//    本脚本为**只读 POST 面**，其终态仍经 `app.synthesisService` / 注入的 store 观察（**不额外发 HTTP 请求**，
+//    也不据此声称读面行为 —— 读面由上述钉住用例负责）。
 //  - `real` 实例用**合成占位配置**触达 `config.ts` 的 real 校验链路；**合成占位配置不代表真实凭据可用**。
 //  - 真实 TTS 样本为 0 ⇒ 本脚本**不产生也不声称**任何音色/自然度/听感或能力结论。
 import assert from 'node:assert/strict';
@@ -540,7 +542,7 @@ try {
     return `rev2=${stale.status} rev9=${ahead.status}`;
   });
 
-  await check('C22 正控制·202 受理 → 完成 → Synthesis 四字段（经 app.synthesisService 观察；`synthesis` kind 未接入共享读面 ⇒ GET /jobs/{id} 仍 404）', async () => {
+  await check('C22 正控制·202 受理 → 完成 → Synthesis 四字段（终态经 app.synthesisService 观察；`synthesis` kind 已接入共享读面（`#152` `22fb5bf`），本用例不发该 HTTP 请求）', async () => {
     assert.notEqual(positiveJobId, null, 'C03 未产出任务');
     await appA.app.synthesisService.settle();
     const job = await appA.app.synthesisService.inspectJob({ userId: userIdA, jobId: positiveJobId });
@@ -801,6 +803,6 @@ if (summary.fail > 0) {
   process.exitCode = 1;
 } else {
   console.log('RESULT=PASS 真实产品装配（buildApp）+ 本机回环 HTTP；合成身份 + 替身提供者 + 内存 store；未发出任何对外/付费请求');
-  console.log('SCOPE=product_assembly_http_loopback; 共享读面 `GET /jobs/{id}` 已装配（GY-I01）但 `synthesis` kind 未接入 ⇒ 该 kind 的终态经 app.synthesisService 观察；');
+  console.log('SCOPE=product_assembly_http_loopback; 共享读面 `GET /jobs/{id}` 已装配（GY-I01），`synthesis` kind 亦已接入（`#152` `22fb5bf`）；本脚本对合成任务**不请求**该读面，其终态一律经 app.synthesisService 观察（读面行为见 tests/unit/tts-jobs-http.test.mjs）；');
   console.log('      real 实例为**合成占位配置**（不代表真实凭据可用）；真实 TTS 样本 0，不声称任何音质/自然度结论');
 }
