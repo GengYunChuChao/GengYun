@@ -42,6 +42,21 @@ const IMAGE_MEDIA_PURPOSES = ['weed_recognition', 'label_ocr']
 /** 标签 OCR 任务的媒体用途（#10）：与识别图**同限额**（≤2 MiB；仅 jpeg/png/webp）。 */
 const OCR_MEDIA_PURPOSE = 'label_ocr'
 
+/** 语音问答（#11）的媒体用途：契约 `MediaPurpose` 的**音频**成员，与图片用途同链路。 */
+const VOICE_MEDIA_PURPOSE = 'voice_question'
+
+/** 契约音频用途允许的真实编码（`UploadInput.mime` 的音频子集；不信扩展名）。 */
+const AUDIO_MEDIA_MIMES = ['audio/mpeg', 'audio/wav', 'audio/aac']
+
+/** 单次录音时长上限（`UploadInput.duration_ms.maximum = 60000`，与 `MEDIA_MAX_DURATION_MS` 同值）。 */
+const MEDIA_MAX_DURATION_MS = 60000
+
+/** 语音用途字节上限（契约 `voice_question` ≤10 MiB，= 全局上限 `UploadInput.bytes.maximum`）。 */
+const VOICE_MAX_BYTES = 10 * 1048576
+
+/** 语音用途的**唯一**文案（录音不符合用途限制时的如实提示）。 */
+const VOICE_USE_LIMIT_TEXT = '录音不符合用途限制（语音问答 ≤10 MiB / ≤60 秒 / 仅 MP3·WAV·AAC），请重新录制。'
+
 /**
  * 媒体上传链路上**服务端可能如实返回**的契约错误码闭集。
  *
@@ -473,27 +488,34 @@ function validateUploadGrant(data, expectedPurpose) {
  * real 模式：按契约走私有媒体上传链路（createUpload → PUT 句柄 URL → completeUpload）。
  * 任何一步失败都**如实抛出**，绝不回退替身、绝不伪造 media_id。
  *
- * `purpose` 可选（默认 `weed_recognition`；只接受契约图片用途闭集 `IMAGE_MEDIA_PURPOSES`）：
- * 标签 OCR 传 `label_ocr`（契约 `MediaPurpose` 成员，与识别图同限额）——**不新增契约字段**。
+ * `purposes` 是本次允许的契约用途闭集，`purpose` 为其中一项（缺省取第一项）：
+ *   照片（识别图 / 标签图）传 `IMAGE_MEDIA_PURPOSES`；
+ *   语音问答（#11）传 `[voice_question]` —— **同一落盘链路**，只是声明形状按契约音频分支不同。
  *
  * `POST /media/uploads` 非 201 时**读契约封套 `error.code`** 归因（见 `uploadFailureOf`）：
  *   503 PROVIDER_UNAVAILABLE ⇒ 服务端真实对象存储未接线；
- *   400/413/415（INVALID_REQUEST / MEDIA_TOO_LARGE / MEDIA_TYPE_UNSUPPORTED）⇒ 照片不符合用途限制；
+ *   400/413/415（INVALID_REQUEST / MEDIA_TOO_LARGE / MEDIA_TYPE_UNSUPPORTED）⇒ 媒体不符合用途限制；
  * 封套读不到时才回落 `MEDIA_CHANNEL_UNAVAILABLE`（媒体路由**已挂载**，不得再断言"未挂载"）。
  */
-function uploadPrivatePhoto(tempFilePath, declaration, purpose) {
+function uploadPrivateMedia(tempFilePath, declaration, purposes, purpose) {
   const b = binding()
   if (!b || !auth.networkEnabled()) return Promise.reject(failure('SESSION_REQUIRED'))
   if (typeof tempFilePath !== 'string' || tempFilePath === '') return Promise.reject(failure('INVALID_INPUT'))
-  const mediaPurpose = purpose === undefined ? MEDIA_PURPOSE : purpose
-  if (IMAGE_MEDIA_PURPOSES.indexOf(mediaPurpose) === -1) return Promise.reject(failure('INVALID_INPUT'))
-  const keyPrefix = mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-upload' : 'identify-upload'
-  const donePrefix = mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-complete' : 'identify-complete'
+  const mediaPurpose = purpose === undefined ? purposes[0] : purpose
+  if (purposes.indexOf(mediaPurpose) === -1) return Promise.reject(failure('INVALID_INPUT'))
+  // 契约 `UploadInput.additionalProperties=false`：图片**不得**带 `duration_ms`，音频**必须**带。
+  const wantsDuration = declaration !== null && typeof declaration === 'object' && declaration.durationMs !== undefined
+  if (wantsDuration !== (mediaPurpose === VOICE_MEDIA_PURPOSE)) return Promise.reject(failure('INVALID_INPUT'))
+  const keyPrefix = mediaPurpose === VOICE_MEDIA_PURPOSE ? 'voice-upload' : (mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-upload' : 'identify-upload')
+  const donePrefix = mediaPurpose === VOICE_MEDIA_PURPOSE ? 'voice-complete' : (mediaPurpose === OCR_MEDIA_PURPOSE ? 'ocr-complete' : 'identify-complete')
+  const declared = wantsDuration
+    ? { purpose: mediaPurpose, mime: declaration.mime, bytes: declaration.bytes, sha256: declaration.sha256, duration_ms: declaration.durationMs }
+    : { purpose: mediaPurpose, mime: declaration.mime, bytes: declaration.bytes, sha256: declaration.sha256 }
   const header = { authorization: 'Bearer ' + b.token, 'content-type': 'application/json', 'Cache-Control': 'no-cache', 'Idempotency-Key': newKey(keyPrefix) }
   return new Promise(function (resolve, reject) {
     wx.request({
       url: runtime.apiBaseUrl + '/media/uploads', method: 'POST', timeout: 15000, header: header,
-      data: { purpose: mediaPurpose, mime: declaration.mime, bytes: declaration.bytes, sha256: declaration.sha256 },
+      data: declared,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
@@ -541,6 +563,38 @@ function uploadPrivatePhoto(tempFilePath, declaration, purpose) {
   })
 }
 
+function uploadPrivatePhoto(tempFilePath, declaration, purpose) {
+  return uploadPrivateMedia(tempFilePath, declaration, IMAGE_MEDIA_PURPOSES, purpose === undefined ? MEDIA_PURPOSE : purpose)
+}
+
+/**
+ * 按**契约既有成员** `voice_question` 上传一次录音产物（**不新增用途、不新增字段**）。
+ *
+ * 与照片链路唯一的三处差异，且都由契约束定：
+ *   1. 用途 = `voice_question`（`MediaPurpose` 音频成员）；
+ *   2. 声明**必须**带 `duration_ms`（服务端 `validateUploadInput`：语音缺时长直接 400 INVALID_REQUEST）；
+ *   3. 真实编码只接受 `audio/mpeg | audio/wav | audio/aac`（服务端按魔数核验，不信扩展名）。
+ *
+ * `declaration` 由调用方从**平台真实回调**取（`durationMs` 来自 `onStop` 的 `res.duration`，
+ * `bytes`/`sha256` 来自 `wx.getFileInfo({ digestAlgorithm:'sha256' })`）；本函数**不**猜测时长。
+ *
+ * 失败归因：`uploadFailureOf` 原样带出契约封套的 `error.code`
+ * （503 PROVIDER_UNAVAILABLE = 真实对象存储未接线；400/413/415 = 用途限制；
+ *   403 CONSENT_REQUIRED / SCOPE_DENIED 由 `forbiddenOrSessionLoss` 原样带出，**不**折叠成"登录失效"）。
+ *
+ * @param {string} tempFilePath `wx.getRecorderManager().onStop` 给出的本地临时文件路径。
+ * @param {{ mime:string, bytes:number, sha256:string, durationMs:number }} declaration
+ * @returns {Promise<{ mediaId:string, mediaRevision:number }>}
+ */
+function uploadVoiceQuestion(tempFilePath, declaration) {
+  if (declaration === null || typeof declaration !== 'object') return Promise.reject(failure('INVALID_INPUT'))
+  if (typeof declaration.mime !== 'string' || AUDIO_MEDIA_MIMES.indexOf(declaration.mime) === -1) return Promise.reject(failure('INVALID_INPUT'))
+  if (!integer(declaration.bytes, 1) || declaration.bytes > VOICE_MAX_BYTES) return Promise.reject(failure('INVALID_INPUT'))
+  if (typeof declaration.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(declaration.sha256)) return Promise.reject(failure('INVALID_INPUT'))
+  if (!integer(declaration.durationMs, 1) || declaration.durationMs > MEDIA_MAX_DURATION_MS) return Promise.reject(failure('INVALID_INPUT'))
+  return uploadPrivateMedia(tempFilePath, declaration, [VOICE_MEDIA_PURPOSE], VOICE_MEDIA_PURPOSE)
+}
+
 /**
  * 读服务端执行模式（用公开读面 `GET /public/home` 的**契约封套 meta**，不发任何私有数据）。
  *
@@ -554,6 +608,12 @@ function uploadPrivatePhoto(tempFilePath, declaration, purpose) {
  * 契约事实：`Meta`（`request_id`/`contract_version`/`execution_mode`）在**成功与错误封套里都必填**
  * （`openapi.json` 的 `ErrorEnvelope.required = [error, meta]`）⇒ 非 200 时**仍可如实**读出执行模式。
  * 只有"封套里没有可核对的 meta"或网络失败才如实报不可用（不猜、不兜底）。
+ *
+ * 200 时**仍须**核对**成功封套键集**（契约实读：`HomeEnvelope` 恰为 `{data, meta}`，
+ * `additionalProperties: false`、`required: [data, meta]` —— `packages/contracts/openapi.json:14789-14804`）：
+ * 缺键／多键／非对象／`meta` 类型不符一律判 `INVALID_RESPONSE`（沿用既有错误码），
+ * 与"数据不可用（503 等）"严格区分——畸形 200 若被当成"已读到执行模式"放行，
+ * 入口就会按一个**未经核对**的模式继续跑（伪造模式比报错更危险）。
  */
 function serverMode() {
   const b = binding()
@@ -565,6 +625,12 @@ function serverMode() {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
+          if (r.statusCode === 200) {
+            // 成功封套键集与契约一致才放行（缺键／多键／非对象／`meta` 类型不符 ⇒ INVALID_RESPONSE）。
+            keys(r.data, ['data', 'meta'])
+            resolve(validateMeta(r.data.meta))
+            return
+          }
           if (!object(r.data) || !object(r.data.meta)) { reject(failure('UNAVAILABLE')); return }
           resolve(validateMeta(r.data.meta))
         } catch (e) { reject(e) }
@@ -791,6 +857,13 @@ module.exports = {
   selectSpecies: selectSpecies,
   deleteRecognition: deleteRecognition,
   uploadPrivatePhoto: uploadPrivatePhoto,
+  // ---- GY-I11 语音问答（#11）：同一私有媒体链路上的音频用途（契约既有成员 voice_question） ----
+  uploadVoiceQuestion: uploadVoiceQuestion,
+  VOICE_MEDIA_PURPOSE: VOICE_MEDIA_PURPOSE,
+  AUDIO_MEDIA_MIMES: AUDIO_MEDIA_MIMES.slice(),
+  VOICE_MAX_BYTES: VOICE_MAX_BYTES,
+  VOICE_USE_LIMIT_TEXT: VOICE_USE_LIMIT_TEXT,
+  MEDIA_MAX_DURATION_MS: MEDIA_MAX_DURATION_MS,
   serverMode: serverMode,
   // ---- GY-I10 标签 OCR（#10）：创建/状态读/取消 + 站点特定归因（全部复用既有 operation） ----
   createOcr: createOcr,

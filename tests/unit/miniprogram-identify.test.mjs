@@ -1308,7 +1308,9 @@ test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归�
   const e = await uploadOnce(502, errorEnvelope('SYNTHETIC_UNKNOWN_CODE', false));
   assert.equal(e.error.code, 'MEDIA_CHANNEL_UNAVAILABLE', '未知码不得当契约事实透出');
   assert.equal(api.messageFor(e.error).includes('SYNTHETIC_UNKNOWN_CODE'), false);
-  // ④ 用途白名单：只放行契约图片用途（音频用途本地即拒，不发请求）。
+  // ④ 用途白名单：**本函数**只放行契约图片用途。
+  //    音频用途（voice_question）走**同一个私有媒体链路**的另一个入口 `uploadVoiceQuestion`
+  //    （见本文件下一用例）：这里断言"照片入口不吃音频用途"，不是"音频用途不存在"。
   const beforeReject = h.requests.length;
   const rejected = await api.uploadPrivatePhoto(OCR_TMP_PATH, declaration, 'voice_question').then(() => null, err => err);
   assert.equal(rejected.code, 'INVALID_INPUT');
@@ -1337,6 +1339,45 @@ test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归�
   assert.equal(modeNoMeta.error.code, 'UNAVAILABLE', '封套无 meta ⇒ 如实报不可用（不猜执行模式）');
   const modeNetworkFail = await serverModeOnce(null);
   assert.equal(modeNetworkFail.error.code, 'NETWORK_UNCERTAIN');
+
+  // ⑥ 负控制·**畸形 200**（4 类：缺键／多键／非对象／字段类型不符）⇒ 一律 `INVALID_RESPONSE`（沿用既有错误码）。
+  //    契约实读：`HomeEnvelope` 键集恰为 `{data, meta}`、`additionalProperties: false`、
+  //    `required: [data, meta]`（`packages/contracts/openapi.json:14789-14804`），`meta` 是 `Meta` 对象（:11066-11086）。
+  //    改前（补回键集校验之前）这 4 类**都拿不到** `INVALID_RESPONSE`：缺键/多键被当成"已读到执行模式"放行，
+  //    非对象 / `meta` 类型不符被误报 `UNAVAILABLE`（"数据不可用"与"响应无法核对"是两种原因，不得混同）。
+  async function malformed200(label, payload) {
+    const outcome = await serverModeOnce({ statusCode: 200, data: payload });
+    assert.equal('mode' in outcome, false, label + '：畸形 200 不得被当成"读到执行模式"放行（mode=' + JSON.stringify(outcome.mode) + '）');
+    assert.equal(outcome.error && outcome.error.code, 'INVALID_RESPONSE', label + '：畸形 200 必须判 INVALID_RESPONSE，实际 ' + JSON.stringify(outcome.error && outcome.error.code));
+  }
+  const HOME_OK = { previews: [], human_review_state: 'under_construction' };
+  // ① 缺键（`data`／`meta` 至少一个不在封套里）
+  await malformed200('缺键·缺 data', { meta: syntheticMeta() });
+  await malformed200('缺键·缺 meta', { data: HOME_OK });
+  // ② 多键（契约 `additionalProperties: false` ⇒ 多余顶层键即与契约不符）
+  await malformed200('多键·多余顶层键', { data: HOME_OK, meta: syntheticMeta(), extra: 1 });
+  // ③ 非对象（整个响应体不是对象）
+  await malformed200('非对象·字符串', 'synthetic-not-an-envelope');
+  await malformed200('非对象·数组', []);
+  await malformed200('非对象·null', null);
+  // ④ 字段类型不符（`meta` 不是对象；以及 `meta` 内字段类型与契约不符）
+  await malformed200('类型不符·meta 为字符串', { data: HOME_OK, meta: 'stub' });
+  await malformed200('类型不符·meta 为数组', { data: HOME_OK, meta: [] });
+  await malformed200('类型不符·request_id 非 UUID', { data: HOME_OK, meta: { request_id: 'synthetic-not-a-uuid', contract_version: '1.0.0', execution_mode: 'stub' } });
+  await malformed200('类型不符·execution_mode 非字符串', { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 3 } });
+
+  // ⑦ 正控制·**非法 mode** 分支逐字不变（既有分支）：封套可核对但 `execution_mode` 不在契约闭集
+  //    ⇒ 仍判 `INVALID_RESPONSE`（不猜、不回落 `UNAVAILABLE`）；键集校验**不得**顺带放宽字段校验。
+  const modeIllegal503 = await serverModeOnce({
+    statusCode: 503,
+    data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '主页资料数据库尚未接入', retryable: false, details: [] }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal503.error.code, 'INVALID_RESPONSE', '非法 mode（503 封套）仍判 INVALID_RESPONSE');
+  const modeIllegal200 = await serverModeOnce({
+    statusCode: 200,
+    data: { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal200.error.code, 'INVALID_RESPONSE', '非法 mode（200 封套）仍判 INVALID_RESPONSE（不放宽字段校验）');
 
   // —— `POST /ocr` 非 2xx：站点特定归因（不得指向对象存储） ——
   async function createOnce(statusCode, payload) {
@@ -1396,6 +1437,160 @@ test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归�
   const sessionLost = await createOnce(401, errorEnvelope('SESSION_REQUIRED', false));
   assert.equal(sessionLost.code, 'SESSION_REQUIRED');
   assert.equal(h.auth.isLoggedIn(), false, '401 必须清会话（守卫不放宽）');
+});
+
+test('GY-I11 小程序：语音问答录音按契约既有用途 voice_question 走**同一条**私有媒体链路（带真实 duration_ms）', async () => {
+  // 与 `verifiedPage()` 同一装配，只额外放行 `wx.getFileSystemManager().readFile`（PUT 句柄需要字节）。
+  const h = lifecycle(undefined, { mode: 'real', fileInfo: () => ({ size: 8192, digest: SYNTHETIC_SHA256 }) });
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false, '合成会话核实后必须通过门禁');
+  const api = h.load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const voicePath = '/tmp/synthetic-question.aac';
+
+  // 用途与限额出处是 `packages/media/constants.mjs`（同一份常量被服务端与测试共享）。
+  const mediaConstants = await import('../../packages/media/constants.mjs');
+  assert.equal(api.VOICE_MEDIA_PURPOSE, 'voice_question');
+  assert.equal(mediaConstants.MEDIA_PURPOSES.includes(api.VOICE_MEDIA_PURPOSE), true, '用途必须是契约 MediaPurpose 既有成员');
+  assert.equal(mediaConstants.MEDIA_PURPOSE_KIND.voice_question, 'audio');
+  assert.equal(mediaConstants.MEDIA_PURPOSE_MAX_BYTES.voice_question, 10 * mediaConstants.MIB);
+  assert.equal(api.VOICE_MAX_BYTES, mediaConstants.MEDIA_PURPOSE_MAX_BYTES.voice_question, '客户端上限必须与契约同值');
+  assert.equal(api.MEDIA_MAX_DURATION_MS, mediaConstants.MEDIA_MAX_DURATION_MS, '时长上限必须与契约同值');
+  assert.deepEqual([...api.AUDIO_MEDIA_MIMES].sort(), [...mediaConstants.MEDIA_PURPOSE_MIME.voice_question].sort(),
+    '音频编码闭集必须与契约逐项一致');
+
+  const declaration = { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 };
+
+  // ---- 本地前置校验：图片用途/越界时长/超限字节/缺摘要 ⇒ 一律 INVALID_INPUT 且不发请求 ----
+  for (const bad of [
+    { mime: 'image/jpeg', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 0 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 60001 },
+    { mime: 'audio/aac', bytes: api.VOICE_MAX_BYTES + 1, sha256: SYNTHETIC_SHA256, durationMs: 1000 },
+    { mime: 'audio/aac', bytes: 8192, sha256: 'not-a-sha', durationMs: 1000 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256 }
+  ]) {
+    const before = h.requests.length;
+    const err = await api.uploadVoiceQuestion(voicePath, bad).then(() => null, e => e);
+    assert.equal(err.code, 'INVALID_INPUT', JSON.stringify(bad));
+    assert.equal(h.requests.length, before, '本地校验不通过时不得发出任何请求');
+  }
+
+  // ---- 正向：createUpload → PUT 句柄 URL → completeUpload（三跳与照片链路完全一致） ----
+  const pending = api.uploadVoiceQuestion(voicePath, declaration);
+  await waitForRequests(h, 1);
+  const create = h.requests.at(-1);
+  assert.equal(create.method, 'POST');
+  assert.equal(create.url.endsWith('/media/uploads'), true);
+  assert.deepEqual(Object.keys(create.data).sort(), ['bytes', 'duration_ms', 'mime', 'purpose', 'sha256'],
+    '语音上传声明必须恰为 UploadInput 五字段（带 duration_ms，不多不少）');
+  assert.equal(create.data.purpose, 'voice_question', '用途必须是契约既有成员，不得新造');
+  assert.equal(create.data.mime, 'audio/aac');
+  assert.equal(create.data.bytes, 8192);
+  assert.equal(create.data.duration_ms, 4321, 'duration_ms 必须是平台真实时长');
+  assert.equal(create.data.sha256, SYNTHETIC_SHA256);
+  assert.equal(typeof create.header['Idempotency-Key'], 'string');
+
+  create.success({
+    statusCode: 201,
+    data: {
+      data: {
+        media: { id: MEDIA_ID, revision: 1, purpose: 'voice_question', mime: 'audio/aac', bytes: 8192, duration_ms: 4321, state: 'initiated', sha256: SYNTHETIC_SHA256, failure_code: null },
+        upload: { url: 'https://synthetic.invalid/put/voice', expires_at: new Date(Date.now() + 300000).toISOString(), method: 'PUT', access_token: 'synthetic-handle-token' }
+      },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const put = h.requests.find(r => r.url === 'https://synthetic.invalid/put/voice');
+  assert.ok(put, '必须把音频字节 PUT 到服务端给出的句柄 URL');
+  assert.equal(put.method, 'PUT');
+  assert.equal(put.header['content-type'], 'audio/aac');
+  put.success({ statusCode: 200 });
+  await new Promise(resolve => setImmediate(resolve));
+
+  const complete = h.requests.find(r => r.url.endsWith('/complete'));
+  assert.ok(complete, '必须调用 completeUpload');
+  assert.equal(complete.header['If-Match'], '"1"');
+  assert.deepEqual(Object.keys(complete.data).sort(), ['bytes', 'sha256'], 'complete 体恰为 UploadCompleteInput 两字段');
+  complete.success({
+    statusCode: 202,
+    data: {
+      data: { id: MEDIA_ID, revision: 2, purpose: 'voice_question', mime: 'audio/aac', bytes: 8192, duration_ms: 4321, state: 'ready', sha256: SYNTHETIC_SHA256, failure_code: null },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  const media = await pending;
+  assert.equal(media.mediaId, MEDIA_ID);
+  assert.equal(media.mediaRevision, 2);
+});
+
+test('GY-I11 小程序：录音上传失败按契约 error.code 如实归因（503 指对象存储 / 403 两类各不相同 / 不折叠成"登录失效"）', async () => {
+  const { h } = await verifiedPage();
+  const api = h.load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const voiceApi = h.load(resolve(root, 'miniprogram/utils/voice-api.js'));
+  const declaration = { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 };
+
+  /** 发一次真实语音上传调用并喂入非 201 响应；返回（请求, 错误, 文案）。 */
+  async function uploadFail(statusCode, payload) {
+    const before = h.requests.length;
+    const pending = api.uploadVoiceQuestion('/tmp/synthetic-question.aac', declaration);
+    await waitForRequests(h, before + 1);
+    const request = h.requests.at(-1);
+    assert.equal(request.data.purpose, 'voice_question');
+    request.success({ statusCode, data: payload });
+    const error = await pending.then(() => null, e => e);
+    return { request, error, text: voiceApi.recordUploadMessageFor(error) };
+  }
+
+  // ① 503 ⇒ **真实对象存储未接线**（不得说成网络问题）。
+  const a = await uploadFail(503, errorEnvelope('PROVIDER_UNAVAILABLE', true));
+  assert.equal(a.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(a.error.status, 503);
+  assert.ok(/对象存储未接线/.test(a.text), a.text);
+  assert.equal(/网络/.test(a.text), false, '503 不得说成网络问题：' + a.text);
+  // ② 400/413/415 ⇒ 用途限制（各按契约码给词，互不相同）。
+  const b = await uploadFail(400, errorEnvelope('INVALID_REQUEST', false));
+  assert.equal(b.error.code, 'INVALID_REQUEST');
+  assert.ok(/用途/.test(b.text), b.text);
+  const c = await uploadFail(413, errorEnvelope('MEDIA_TOO_LARGE', false));
+  assert.equal(c.error.code, 'MEDIA_TOO_LARGE');
+  assert.ok(/≤10 MiB/.test(c.text), c.text);
+  const d = await uploadFail(415, errorEnvelope('MEDIA_TYPE_UNSUPPORTED', false));
+  assert.equal(d.error.code, 'MEDIA_TYPE_UNSUPPORTED');
+  assert.ok(/MP3/.test(d.text), d.text);
+  // ③ 两类 403 必须**各不相同**，且都不是"登录失效"。
+  const consent = await uploadFail(403, errorEnvelope('CONSENT_REQUIRED', false));
+  assert.equal(consent.error.code, 'CONSENT_REQUIRED');
+  assert.equal(consent.error.status, 403);
+  assert.ok(/缺少用途授权/.test(consent.text), consent.text);
+  const scope = await uploadFail(403, errorEnvelope('SCOPE_DENIED', false));
+  assert.equal(scope.error.code, 'SCOPE_DENIED');
+  assert.ok(/无权使用该能力/.test(scope.text), scope.text);
+  assert.notEqual(consent.text, scope.text, '两类 403 不得折叠成同一句');
+  for (const item of [consent, scope]) {
+    assert.equal(/登录状态已失效/.test(item.text), false, '403 不得一律说成「登录失效」：' + item.text);
+    assert.equal(/网络/.test(item.text), false, '403 不得说成网络问题：' + item.text);
+  }
+  assert.equal(h.auth.isLoggedIn(), true, '403（授权/权限类）不得误清会话');
+  // ④ 无封套/未知码 ⇒ 如实回落"通道不可用"，且不透出未知码。
+  const e = await uploadFail(500, null);
+  assert.equal(e.error.code, 'MEDIA_CHANNEL_UNAVAILABLE');
+  assert.equal(e.text.includes('MEDIA_CHANNEL_UNAVAILABLE'), false, '内部码不得当用户可见事实透出');
+  assert.ok(/上传通道不可用/.test(e.text), e.text);
+  const f = await uploadFail(502, errorEnvelope('SYNTHETIC_UNKNOWN_CODE', false));
+  assert.equal(f.error.code, 'MEDIA_CHANNEL_UNAVAILABLE', '未知码不得当契约事实透出');
+  assert.equal(f.text.includes('SYNTHETIC_UNKNOWN_CODE'), false);
+  // ⑤ 401 仍按会话失效处理（守卫不放宽），文案与会话类码一致。
+  const lost = await uploadFail(401, errorEnvelope('SESSION_REQUIRED', false));
+  assert.equal(lost.error.code, 'SESSION_REQUIRED');
+  assert.ok(/重新登录/.test(lost.text), lost.text);
+  // ⑥ 文案逐码互不相同（除刻意同口径的 400/413/415 之外，仍须可区分原因）。
+  const texts = [a, b, c, d, consent, scope, e, f].map(x => x.text);
+  assert.equal(new Set(texts).size >= 6, true, '失败文案必须可区分原因，不得全部同句');
 });
 
 test('GY-I10 小程序：标签区块绑定门禁、模板只读且不渲染任何用量正文', () => {
