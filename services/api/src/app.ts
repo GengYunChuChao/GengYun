@@ -107,6 +107,21 @@ import {
   type BackupPurgePort,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
+// GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
+// （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
+//   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
+//     `packages/privacy/deletion-modules.mjs::receipt()` 投影，**不新建第二套台账/迁移**；
+//   - 幂等走既有 `runIdempotent()`（24h 台账）；回执 bearer 用既有 `mintOpaqueToken()`，
+//     服务端只存 sha256 摘要；
+//   - `real` 模式**未接线**（无注销请求持久表）⇒ `available: false` ⇒ 两个 operation
+//     一律 503 `PROVIDER_UNAVAILABLE`，**不**回 200 空壳、**不**假装删除成功。
+import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
+import {
+  createAccountDeletionRequestService,
+  createDeletionReceiptRegistry,
+  type AccountDeletionRequestService,
+  type DeletionReceiptRegistry,
+} from './privacy/account-deletion.ts';
 // GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
 import { registerCommunityRoutes } from './routes/community.ts';
 import { createCommunityService, type CommunityService } from './community/service.ts';
@@ -211,6 +226,14 @@ declare module 'fastify' {
      * `packages/privacy` 删除注册协议上（不另起一套）。供回归测试与后续 GY-I19 接线驱动。
      */
     userDataDeletion: UserDataDeletionRegistry;
+    /**
+     * GY-I19（#19）本片：注销申请服务（`POST /me/account/deletion` 的唯一实现）。
+     * **装配透明性/回归取证**用：`available === false`（`real` 模式）时路由整域 503，
+     * 此装饰只如实反映装配结果，不参与鉴权判定。
+     */
+    accountDeletion: AccountDeletionRequestService;
+    /** GY-I19（#19）本片：回执 bearer 台账（只存 sha256 摘要；取证用，不暴露明文）。 */
+    deletionReceipts: DeletionReceiptRegistry;
     /**
      * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
      * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
@@ -1117,9 +1140,31 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
+    // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
+    // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
+    now: clock,
     ...(userDataDeletionInjection?.backupPurge === undefined
       ? {}
       : { backupPurge: userDataDeletionInjection.backupPurge }),
+  });
+
+  // GY-I19（#19）本片：注销/删除申请 HTTP 面的装配（两个 operation）。
+  //   - `deletionReceipts`：回执 bearer 台账（只存 sha256 摘要；有效期 35 日）；
+  //   - `accountDeletion`：申请服务，**复用**上面那份 `userDataDeletion`（模块闭集与处理器同源，
+  //     不新建第二套台账、不新增迁移）；
+  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式下注销请求**没有**
+  //     持久存储（`packages/privacy` 的删除注册表是进程内的，契约里也没有注销请求的持久表），
+  //     因此**不接线**：`available: false` ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`
+  //     （`retryable: true`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
+  //     是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用；
+  //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
+  //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
+  //     绝不回 `completed`。
+  const deletionReceipts = createDeletionReceiptRegistry({ now: clock });
+  const accountDeletion = createAccountDeletionRequestService({
+    deletion: userDataDeletion,
+    receipts: deletionReceipts,
+    available: config.executionMode !== 'real',
   });
 
   // =====================================================================================
@@ -1213,6 +1258,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('favoritesService', favoritesService);
   app.decorate('historyService', historyService);
   app.decorate('userDataDeletion', userDataDeletion);
+  // GY-I19（#19）本片：注销装配的只读取证面（回执台账只含 sha256 摘要，不含明文 bearer）。
+  app.decorate('accountDeletion', accountDeletion);
+  app.decorate('deletionReceipts', deletionReceipts);
   app.decorate('communityService', communityService);
   // GY-I12（#12）：问答服务与注销删除注册（供回归测试与 GY-I19 统一编排驱动）。
   app.decorate('conversationService', conversationService);
@@ -1308,6 +1356,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
   registerFavoriteRoutes(app, config, guards, favoritesService);
   registerHistoryRoutes(app, config, guards, historyService);
+  // GY-I19（#19）本片：注销/删除申请 2 条路由（`requestAccountDeletion` / `getDeletionReceipt`）
+  // 的**唯一注册点**。`real` 模式 ⇒ `accountDeletion.available === false` ⇒ 这两个 operation
+  // 全程 503 `PROVIDER_UNAVAILABLE`（如实失败，不回 200 空壳、不假装删除成功）。
+  // 注：必需模块闭集若未注册齐，由既有协调器在**受理处**抛 `OBJECT_UNAVAILABLE`(409)
+  // （`deletion-modules.mjs` 的既有语义）——本片不另加一层「假装能完成」的兜底。
+  const accountDeletionWired = accountDeletion.available ? accountDeletion : null;
+  registerAccountDeletionRoutes(app, config, guards, {
+    service: accountDeletionWired,
+    receipts: accountDeletionWired === null ? null : deletionReceipts,
+    deletion: accountDeletionWired === null ? null : userDataDeletion,
+    // 幂等台账用既有认证服务（24h 台账；同键同体重新签发，不回放旧 bearer）。
+    authService: service,
+    now: clock,
+  });
   // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
   // 本片起：投稿/评论两条 **POST** 面（`POST /posts`、`POST /posts/:id/comments`）纳入全局开关
   // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
