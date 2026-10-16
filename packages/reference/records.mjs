@@ -373,7 +373,21 @@ export function deterministicUuid(seed) {
  * 任一缺失即**不满足契约前提** → 携带缺项说明退出投影（**不编造枚举、不填非法占位**）。
  */
 export function loadHerbicideRecords() {
-  const doc = readJson(CATALOG_PATHS.herbicides);
+  return projectHerbicideRecords(readJson(CATALOG_PATHS.herbicides));
+}
+
+/**
+ * 纯投影：由**已解析的记录文档**产出 `{ docMeta, items, skipped }` —— **不读盘、不写盘**。
+ *
+ * 为何单独导出：「读真实资料文件」与「按契约前提投影」是两件事。要检验「缺枚举字段的记录
+ * 在投影前被 fail-closed 排除」，需要一份**变体文档**；变体若靠就地改写
+ * `packages/knowledge/herbicides/records-2026.json` 造出来，就会与同一批 `node --test` 中
+ * 并发读该文件的用例抢跑（PR #237 的 CI 实测逐字红点：
+ * `test at tests/reference/i08-scenarios-100.test.mjs:525:1` /
+ * `AssertionError [ERR_ASSERTION]: 应有≥20 条真实记录，实际 19`）。
+ * 因此把投影暴露为纯函数：变体只存在于内存，真实资料文件**零写入**。
+ */
+export function projectHerbicideRecords(doc) {
   const raw = doc.records ?? [];
   const skipped = [];
   const items = [];
