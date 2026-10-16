@@ -399,6 +399,40 @@ function writeFileAtomicSync(target, data) {
   }
 }
 
+/**
+ * 诊断归属：双失败可归因 —— 变体写（writeMutated）与 finally 复原写（restore）
+ * 都失败时，被抛出的必须是**首个**失败（变体写），复原写的失败挂在它的
+ * `cause.restores` 上（两者都可见，不丢失其一 ✓）。
+ * 断言阶段（assertLoaded，可选）在变体写之后、复原写之前执行：断言失败时
+ * 复原写仍照常执行（与原 try/finally 语义一致 ✓）。
+ */
+function runWithRestoreOnFailure(writeMutated, restore, assertLoaded) {
+  let first = null;
+  try {
+    writeMutated();
+    if (assertLoaded) assertLoaded();
+  } catch (err) {
+    first = err;
+    throw err; // 单失败路径：首个失败保持原样、栈指向首个失败点 ✓
+  } finally {
+    try {
+      restore();
+    } catch (restoreErr) {
+      if (!first) throw restoreErr; // 只有复原失败：异常照旧指向复原写 ✓
+      // 双失败：首个失败已带原生栈，把复原失败挂到它的 cause 上 ✓
+      const cur = first.cause;
+      if (cur && typeof cur === 'object' && Array.isArray(cur.restores)) {
+        cur.restores.push(restoreErr); // 连续双失败场景（暂无）：累计复原异常
+      } else {
+        first.cause = Object.assign(
+          new Error(`复原写也失败：${restoreErr && restoreErr.message ? restoreErr.message : String(restoreErr)}`),
+          { restores: [restoreErr] },
+        );
+      }
+    }
+  }
+}
+
 /** 构造缺字段变体记录（基于首条真实记录，**逐字节复制后仅删指定字段**）。 */
 function variantOfFirstRecord(mutate) {
   const first = JSON.parse(
@@ -440,19 +474,70 @@ test('H2：缺枚举字段的记录在投影前被排除（items 不含、skippe
   assert.equal(baseline.skipped.length, 0, '真实 20 条来源齐备，不应被排除');
   const variant = JSON.parse(backup);
   delete variant.records[0].source.source_kind; // 仅缺 source_kind
-  try {
-    writeFileAtomicSync(dataPath, JSON.stringify(variant));
-    const loaded = loadHerbicideRecords();
-    assert.equal(loaded.items.length, 19, '缺枚举字段的记录不得进入投影集合');
-    assert.equal(loaded.skipped.length, 1);
-    assert.deepEqual(loaded.skipped[0].missing, ['来源类型（source_kind）']);
-    assert.ok(loaded.skipped[0].reason.includes('来源类型（source_kind）'), '缺项说明须如实列出缺失字段');
-    // 被排除的记录不得出现在任何对外投影中
-    assert.ok(!loaded.items.some((it) => it.contract.source.source_kind === '未采集'), '契约为外部消费者所依赖，不得含非枚举占位');
-  } finally {
-    writeFileAtomicSync(dataPath, backup);
-  }
+  runWithRestoreOnFailure(
+    () => writeFileAtomicSync(dataPath, JSON.stringify(variant)),
+    () => writeFileAtomicSync(dataPath, backup),
+    () => {
+      const loaded = loadHerbicideRecords();
+      assert.equal(loaded.items.length, 19, '缺枚举字段的记录不得进入投影集合');
+      assert.equal(loaded.skipped.length, 1);
+      assert.deepEqual(loaded.skipped[0].missing, ['来源类型（source_kind）']);
+      assert.ok(loaded.skipped[0].reason.includes('来源类型（source_kind）'), '缺项说明须如实列出缺失字段');
+      // 被排除的记录不得出现在任何对外投影中
+      assert.ok(!loaded.items.some((it) => it.contract.source.source_kind === '未采集'), '契约为外部消费者所依赖，不得含非枚举占位');
+    },
+  );
   assert.equal(loadHerbicideRecords().items.length, 20, '数据文件须已复原');
+});
+
+test('H2：变体写与复原写双双失败时，首个失败（变体写）不被复原失败顶掉（双失败可归因）', () => {
+  // 场外复现机制（真实 EPERM/ENOENT 不可在仓内稳定注入，改为注入式失败）：
+  // writeMutated 抛 errA，restore 也抛 errB ⇒ 断言被抛出的是 errA、errB 挂在其 cause.restores。
+  const errA = new Error('变体写失败（注入：EPERM）');
+  const errB = new Error('复原写失败（注入：EACCES）');
+  assert.throws(
+    () => runWithRestoreOnFailure(
+      () => { throw errA; },
+      () => { throw errB; },
+    ),
+    (thrown) => {
+      assert.equal(thrown, errA, '被抛出的必须是首个失败（变体写），不得被复原失败顶掉');
+      assert.ok(thrown.cause instanceof Error, '复原失败须挂在首个失败的 cause 上（双失败均可见）');
+      assert.match(thrown.cause.message, /复原写也失败/);
+      assert.equal(thrown.cause.message.includes('复原写失败（注入：EACCES）'), true);
+      assert.ok(Array.isArray(thrown.cause.restores) && thrown.cause.restores[0] === errB);
+      return true;
+    },
+  );
+});
+
+test('H2：单失败（仅变体写失败、复原成功）时，异常仍指向首个失败且不带复原 cause', () => {
+  const errA = new Error('变体写失败（注入：EBUSY）');
+  assert.throws(
+    () => runWithRestoreOnFailure(
+      () => { throw errA; },
+      () => {},
+    ),
+    (thrown) => {
+      assert.equal(thrown, errA);
+      assert.equal(thrown.cause, undefined, '复原成功时不得挂任何 cause');
+      return true;
+    },
+  );
+});
+
+test('H2：单失败（仅复原写失败、变体写成功）时，异常指向复原写', () => {
+  const errB = new Error('复原写失败（注入：EPERM）');
+  assert.throws(
+    () => runWithRestoreOnFailure(
+      () => {},
+      () => { throw errB; },
+    ),
+    (thrown) => {
+      assert.equal(thrown, errB, '只有复原失败时，异常须照旧指向复原写');
+      return true;
+    },
+  );
 });
 
 test('H2：直接投影时枚举字段**永不**承载非枚举值（缺失则整体不写出，绝不编造）', async () => {

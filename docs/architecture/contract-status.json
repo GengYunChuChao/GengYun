@@ -388,10 +388,39 @@
       "route": "/api/v1/me/account/deletion",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/account-deletion.ts",
+          "lines": "128-181"
+        },
+        {
+          "path": "services/api/src/privacy/account-deletion.ts",
+          "lines": "176-205"
+        },
+        {
+          "path": "services/api/src/app.ts",
+          "lines": "1046-1051"
+        },
+        {
+          "path": "services/api/src/app.ts",
+          "lines": "1157-1165"
+        },
+        {
+          "test": "tests/integration/account-deletion-http.mjs",
+          "name": "[0] 契约两个 operation 的**成功形状**"
+        },
+        {
+          "test": "tests/integration/account-deletion-http.mjs",
+          "name": "[3] **级联真的删了**"
+        },
+        {
+          "test": "tests/unit/account-deletion-receipts.test.mjs",
+          "name": "GY-I19：受理即驱动既有级联（在线真删、只删绑定主体），备份未接线如实 pending"
+        }
+      ],
+      "blocker": "GY-I19 本片只交付**受理 HTTP 面**：202 走既有删除台账（services/api/src/privacy/user-data-deletion.ts 的 favorites/history 处理器 + packages/privacy/deletion-modules.mjs 的模块闭集与受理协议），幂等键必填、24h 台账、同键异体 409 IDEMPOTENCY_CONFLICT、同键同体重新签发回执而不回放旧 bearer。**未取得**：docs/architecture/state-contract.md:105 要求的受理「同一事务」撤全部会话/角色、auth_epoch 递增、冻结外发与在途回写**未实现**（本片不用「先撤会话再受理」伪造该语义）；真实删除执行仍在**进程内**注册表（无注销请求持久表、本片不新建迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE，不新建第二套存储；备份副本清除未接线 ⇒ 各模块 backup_state 停留 pending，完成判定（completionStatus）因此为 blocked，不谎称 completed；第三方删除证据、7/30 日到期的真实执行与恢复清单重放未验收"
     },
     {
       "id": "getDeletionReceipt",
@@ -400,10 +429,39 @@
       "route": "/api/v1/account/deletions/:id",
       "scope": "receipt",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/account-deletion.ts",
+          "lines": "183-205"
+        },
+        {
+          "path": "services/api/src/privacy/account-deletion.ts",
+          "lines": "96-141"
+        },
+        {
+          "path": "services/api/src/privacy/account-deletion.ts",
+          "lines": "218-275"
+        },
+        {
+          "path": "services/api/src/app.ts",
+          "lines": "1157-1165"
+        },
+        {
+          "test": "tests/integration/account-deletion-http.mjs",
+          "name": "[4] **回执 bearer 不是登录会话**"
+        },
+        {
+          "test": "tests/integration/account-deletion-http.mjs",
+          "name": "[5] **失败与未装配可区分**"
+        },
+        {
+          "test": "tests/unit/account-deletion-receipts.test.mjs",
+          "name": "GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换发即作废旧摘要"
+        }
+      ],
+      "blocker": "GY-I19 本片交付**专用 deletionReceipt bearer 回执查询**（契约 securitySchemes.deletionReceipt 逐字「单注销请求最小进度查询，非登录会话」，故该路由不挂用户会话守卫）：35 日固定期限、台账只存 sha256 摘要、换发即作废旧 bearer、未知/过期/跨请求一律 401、请求不可达 404 NOT_FOUND（不是 200 空壳）。**未取得**：回执只投影**进程内**台账，无持久化 ⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；docs/architecture/state-contract.md:107「completed 必须所有 module_handler 和第三方在线/备份证据均完成」当前只对已登记模块（favorites/history）成立，备份与第三方证据缺失 ⇒ 实际停在 blocked，不把时钟到期当完成；35 日之后的行为与逾期展示未做真人/真实备份恢复验证"
     },
     {
       "id": "createUpload",
