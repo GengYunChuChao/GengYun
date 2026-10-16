@@ -22,7 +22,10 @@
 // 并在 `t.after` 里**逐键还原**（该用例与其它用例都不依赖这两个变量此前是否存在）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
@@ -314,12 +317,15 @@ test('GY-I06 1-A 装配：real 缺任一 OBJECT_STORAGE_* ⇒ 仍 unwired（逐�
 // 不把 `process.env` 交给解析器（改回 `env: process.env` 即红）。
 // ===================================================================================
 
-/** 把对象存储 4 键注入 ambient `process.env`，返回**逐键还原**函数（重入安全：先存再写）。 */
-function injectAmbientStorageEnv() {
+/**
+ * 把一批键注入 ambient `process.env`，返回**逐键还原**函数（重入安全：先存再写，缺失键还原为 delete）。
+ * 还原是逐字节的：`t.after` 里调用它即可，用例失败也照样还原（见下方各用例的 `t.after`）。
+ */
+function injectAmbientEnv(entries) {
   const saved = new Map();
-  for (const key of REQUIRED_STORAGE_KEYS) {
+  for (const [key, value] of Object.entries(entries)) {
     saved.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
-    process.env[key] = SYNTHETIC_STORAGE_ENV[key];
+    process.env[key] = value;
   }
   return () => {
     for (const [key, value] of saved) {
@@ -327,6 +333,15 @@ function injectAmbientStorageEnv() {
       else process.env[key] = value;
     }
   };
+}
+
+/**
+ * 把对象存储 4 键注入 ambient `process.env`，返回**逐键还原**函数。
+ * （r2 起它只是 `injectAmbientEnv` 的逐字等价别名：键与值仍取 `SYNTHETIC_STORAGE_ENV`，
+ * 语义与 r1 完全一致；既有负控制用例调用点未变。）
+ */
+function injectAmbientStorageEnv() {
+  return injectAmbientEnv(SYNTHETIC_STORAGE_ENV);
 }
 
 /**
@@ -495,5 +510,754 @@ test('GY-I06 1-A 结构性判据：app.ts 媒体装配层**不得**把 `process.
     block,
     /const mediaObjectStore = mediaObjectStoreOption \?\? resolveMediaObjectStore\(\{ executionMode: config\.executionMode \}\);/,
     '装配行必须是 `mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode })`',
+  );
+});
+
+// ===================================================================================
+// r2（PR #193 第二轮返修）：B1 —— 判据强度从「装配块内一行」扩到「整个 app.ts + 媒体链路」，
+// 并把「唯一显式注入来源」证成**机械事实**（AST 溯源），而不是靠某处标准拼写。
+//
+// 为什么必须扩（对抗性复审 M19，见 `.pg17/adv-verdict-i06-media-refailclosed-eee87c7.md`）：
+// 只锁「装配块里那一行」时，下面这种同形变体下上一个版本的 9 条用例**全绿**，而危害可达
+// （`POST /api/v1/media/uploads` ⇒ 201 + 预签名 URL）：
+//   · resolver 换名；
+//   · 装配块内**逐字保留**那句装饰性装配行（于是块内判据照旧通过）；
+//   · 真实端口挪到 `createAppMediaService({ objectStore: … })` 实参位置（**块外**，块内判据看不见）；
+//   · 门用**非 canonical ambient 键**（`OBJECT_STORAGE_ALLOW_REAL === '1'`）而不是那 4 个标准键。
+// 所以这里改成两条**全文件／全链路**判据：
+//   A)「ambient env 读取」审计（AST）：`app.ts` 只允许读 3 个与存储无关的键（逐字枚举），
+//      `services/api/src/media/**` 与 `routes/media.ts` **一次都不许读**。覆盖
+//      `process.env`、`process['env']`、`globalThis.process.env`、`import.meta.env`，
+//      以及**整表传递／别名／解构／对象展开／动态取键**（这些一律视为违规，因为没有"按名读某个键"可核对）。
+//   B)「唯一显式注入来源」溯源（AST）：端口变量的声明初值、`createAppMediaService` 的 `objectStore`
+//      实参、以及该名字在全文件的**每一处**出现，必须逐处等于枚举出来的角色（多一处即红）；
+//      并且 `services/api/src/**` 内两个工厂的生产调用点各**恰好 1 处**（真实工厂的唯一样点就在
+//      `resolveMediaObjectStore` 内部）。
+// 判据自身的灵敏度由用例「B1 判据自检」用合成夹具钉住：M19 同形必须判违规，canonical 源码必须无违规。
+// ⛔ 不新增第二套孤立解析器：用仓库既有依赖 `typescript`（`node_modules/typescript`，与 `npm run lint`
+//    的 tsc 同一份）的官方解析器，与仓内既有「读源码文本」判据（`tests/integration/tts-http.mjs` S01、
+//    `tests/integration/ocr-http.mjs`）同一思路；差别只在于那两处按**文本**断言，而 `app.ts` 的
+//    **单行注释**里合法含 `/*` 字面（见 `readMediaAssemblyBlock` 的说明），盲去注释不可靠，
+//    因此这里升级为按 AST 断言（仍是只读源码，不引入新依赖、不另写正则解析器）。
+// ===================================================================================
+
+/** 仓库根（本文件位于 `<root>/tests/unit/`）。 */
+const REPO_ROOT_URL = new URL('../../', import.meta.url);
+
+/** `app.ts` 允许读取的 ambient 键：逐字枚举，**全部与存储/媒体无关**（键名形状由用例断言）。 */
+const APP_AMBIENT_ENV_ALLOWLIST = Object.freeze([
+  'RECOGNITION_PROVIDER_URL',
+  'RECOGNITION_PROVIDER_KEY',
+  'APP_KNOWLEDGE_UNVERIFIED_SEED',
+]);
+
+/** 除上表外只允许 **Node/运行时内部**读取的键；出现未列出的键 ⇒ 判据红（见运行时探针用例）。 */
+const RUNTIME_AMBIENT_ENV_ALLOWLIST = Object.freeze([
+  'NODE_V8_COVERAGE', 'FORCE_COLOR', 'NO_COLOR', 'COLORTERM', 'TERM', 'COLUMNS', 'LINES',
+  'NODE_ENV', 'NODE_OPTIONS', 'NODE_NO_WARNINGS', 'CI', 'TZ', 'LANG', 'LC_ALL', 'TZDIR',
+]);
+
+/** **存储/媒体形状**的键名：装配期一个都不许读（不管是标准键还是自造键）。 */
+const STORAGE_SHAPED_ENV_KEY = /OBJECT_STORAGE|S3|COS|STORAGE|BUCKET|MEDIA_STORE/i;
+
+/** **存储形状**的服务入参名（AST 审计用；`objectStore` 命中 `store`）。 */
+const STORAGE_SHAPED_PROPERTY = /store|storage|bucket|s3|cos|object_storage/i;
+
+/** 媒体端口变量的名字（装配层唯一输入/端口的名字，逐字）。 */
+const MEDIA_PORT_VARIABLE = 'mediaObjectStore';
+const MEDIA_PORT_OPTION = 'mediaObjectStoreOption';
+const MEDIA_RESOLVER = 'resolveMediaObjectStore';
+const REAL_STORE_FACTORY = 'createS3CompatibleObjectStore';
+
+/** ambient env 对象的可能写法（整表读取/别名识别用）。 */
+const PROCESS_ROOTS = new Set([
+  'process',
+  'globalThis.process',
+  'global.process',
+  'globalThis["process"]',
+  'global["process"]',
+  'window.process',
+]);
+
+/** 媒体链路上**一次都不许读 ambient env** 的文件（相对仓库根）。 */
+const MEDIA_CHAIN_FILES = Object.freeze([
+  'services/api/src/media/object-store.ts',
+  'services/api/src/media/service.ts',
+  'services/api/src/routes/media.ts',
+]);
+
+const compactNodeText = (node, source) => node.getText(source).replace(/\s+/g, '').replace(/['"]/g, '"');
+const lineOf = (node, source) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+const oneLine = (text) => text.replace(/\s+/g, ' ').trim();
+const shortText = (node, source, limit = 110) => oneLine(node.getText(source)).slice(0, limit);
+
+/** 该节点是不是 `process.env`／`process['env']`／`globalThis.process.env`／`import.meta.env`。 */
+function ambientEnvNodeOf(node, source) {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'env') {
+    const base = compactNodeText(node.expression, source);
+    if (PROCESS_ROOTS.has(base)) return { base, form: 'property-access' };
+    if (base === 'import.meta') return { base, form: 'import-meta-env' };
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    node.argumentExpression &&
+    ts.isStringLiteralLike(node.argumentExpression) &&
+    node.argumentExpression.text === 'env'
+  ) {
+    const base = compactNodeText(node.expression, source);
+    if (PROCESS_ROOTS.has(base)) return { base, form: 'element-access' };
+    if (base === 'import.meta') return { base, form: 'import-meta-env' };
+  }
+  return null;
+}
+
+/** 这次读取取的是哪个键；返回 `null` 表示「没有按名读某个键」（整表/动态）。 */
+function ambientEnvKeyOf(envNode, source) {
+  const parent = envNode.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === envNode) return parent.name.text;
+  if (ts.isElementAccessExpression(parent) && parent.expression === envNode) {
+    const argument = parent.argumentExpression;
+    if (argument && ts.isStringLiteralLike(argument)) return argument.text;
+    return null;
+  }
+  return null;
+}
+
+/** 整表传递／别名／解构／展开／动态取键的说明；`null` 表示这是一次**按名**读取。 */
+function ambientEnvTableUseOf(envNode, source) {
+  const parent = envNode.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === envNode) return null;
+  if (ts.isElementAccessExpression(parent) && parent.expression === envNode) {
+    const argument = parent.argumentExpression;
+    if (argument && ts.isStringLiteralLike(argument)) return null;
+    return `动态取键（键名无法逐字核对）：${shortText(parent, source)}`;
+  }
+  return `整表传递/别名/解构/展开（父节点 ${ts.SyntaxKind[parent.kind]}）：${shortText(parent, source)}`;
+}
+
+/** 审计一个已解析文件里的 ambient env 读取：返回**发现**（读数）与**违规**（判据）。 */
+function auditAmbientEnv(parsed, allowedKeys) {
+  const { source } = parsed;
+  const findings = [];
+  const visit = (node) => {
+    const access = ambientEnvNodeOf(node, source);
+    if (access) {
+      const tableUse = ambientEnvTableUseOf(node, source);
+      findings.push({
+        line: lineOf(node, source),
+        form: access.form,
+        base: access.base,
+        key: tableUse === null ? ambientEnvKeyOf(node, source) : null,
+        tableUse,
+        snippet: shortText(node.parent, source),
+      });
+    }
+    // `const { env } = process` 形态：没有 `process.env` 节点，单独识别。
+    if (ts.isObjectBindingPattern(node)) {
+      const declaration = ts.isVariableDeclaration(node.parent) ? node.parent : null;
+      const initializer = declaration?.initializer;
+      const bindsEnv = node.elements.some(
+        (element) =>
+          ts.isBindingElement(element) &&
+          element.propertyName === undefined &&
+          element.name.getText(source) === 'env',
+      );
+      if (bindsEnv && initializer !== undefined && ts.isIdentifier(initializer) && initializer.text === 'process') {
+        findings.push({
+          line: lineOf(node, source),
+          form: 'destructure',
+          base: 'process',
+          key: 'env',
+          tableUse: '解构 ambient env 对象本身',
+          snippet: shortText(declaration, source),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  const violations = [];
+  for (const finding of findings) {
+    if (finding.tableUse !== null) {
+      violations.push({ rule: 'R-A1 整表/动态读取 ambient env', ...finding });
+    } else if (!allowedKeys.includes(finding.key)) {
+      violations.push({ rule: 'R-A2 读取了未列入白名单的 ambient 键', ...finding });
+    }
+  }
+  return { findings, violations };
+}
+
+/** 端口名在文件里的每一处出现，按**角色**归类（多出任何角色都会被判违规）。 */
+function mediaPortIdentifierRole(node, source) {
+  const parent = node.parent;
+  if (ts.isVariableDeclaration(parent) && parent.name === node) return 'declaration';
+  if (ts.isBindingElement(parent) && parent.propertyName === node) {
+    return `binding-element:propertyName→${parent.name.getText(source)}`;
+  }
+  if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
+    return `property-assignment:${parent.name.getText(source)}`;
+  }
+  if (ts.isPropertySignature(parent) && parent.name === node) return 'property-signature';
+  if (ts.isCallExpression(parent)) {
+    return `call-argument:${oneLine(parent.expression.getText(source)).slice(0, 40)}`;
+  }
+  return `other:${ts.SyntaxKind[parent.kind]}`;
+}
+
+/**
+ * 「唯一显式注入来源」溯源：端口变量的声明初值、服务的 `objectStore` 实参、
+ * 以及端口名在全文件的每一处出现，逐处核对。
+ */
+function auditMediaPortProvenance(parsed) {
+  const { source } = parsed;
+  const declarations = [];
+  const identifierRoles = [];
+  const resolverCalls = [];
+  const serviceProperties = [];
+
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === MEDIA_PORT_VARIABLE
+    ) {
+      declarations.push({
+        line: lineOf(node, source),
+        initializer: node.initializer === undefined ? null : oneLine(node.initializer.getText(source)),
+      });
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node.text === MEDIA_PORT_VARIABLE &&
+      !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node)
+    ) {
+      identifierRoles.push({ line: lineOf(node, source), role: mediaPortIdentifierRole(node, source) });
+    }
+    if (ts.isCallExpression(node)) {
+      const callee = compactNodeText(node.expression, source);
+      if (callee === MEDIA_RESOLVER) {
+        const argument = node.arguments[0];
+        const properties =
+          argument && ts.isObjectLiteralExpression(argument)
+            ? argument.properties.map((property) =>
+                ts.isPropertyAssignment(property) ? property.name.getText(source) : ts.SyntaxKind[property.kind],
+              )
+            : null;
+        resolverCalls.push({
+          line: lineOf(node, source),
+          argument: argument === undefined ? null : oneLine(argument.getText(source)),
+          properties,
+        });
+      }
+      if (callee === 'createAppMediaService' && node.arguments[0] && ts.isObjectLiteralExpression(node.arguments[0])) {
+        for (const property of node.arguments[0].properties) {
+          serviceProperties.push(
+            ts.isPropertyAssignment(property)
+              ? { name: property.name.getText(source), initializer: oneLine(property.initializer.getText(source)) }
+              : { name: ts.SyntaxKind[property.kind], initializer: null },
+          );
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  const violations = [];
+  const canonicalInitializer = `${MEDIA_PORT_OPTION} ?? ${MEDIA_RESOLVER}({ executionMode: config.executionMode })`;
+  if (declarations.length !== 1) {
+    violations.push({ rule: 'R-B1 端口变量必须恰好声明一处', detail: declarations });
+  }
+  if (declarations.length === 1 && declarations[0].initializer !== canonicalInitializer) {
+    violations.push({
+      rule: 'R-B2 端口初值必须是「显式注入选项 ?? 只按执行模式解析」',
+      expected: canonicalInitializer,
+      actual: declarations[0].initializer,
+    });
+  }
+  const objectStoreArguments = serviceProperties.filter((property) => property.name === 'objectStore');
+  if (objectStoreArguments.length !== 1) {
+    violations.push({ rule: 'R-B3 服务装配必须恰好一个 objectStore 实参', detail: objectStoreArguments });
+  } else if (objectStoreArguments[0].initializer !== MEDIA_PORT_VARIABLE) {
+    violations.push({
+      rule: 'R-B4 objectStore 实参必须**就是**那个端口变量（不得再包一层解析/条件）',
+      expected: MEDIA_PORT_VARIABLE,
+      actual: objectStoreArguments[0].initializer,
+    });
+  }
+  const storageShapedProperties = serviceProperties.filter(
+    (property) => property.name !== 'objectStore' && STORAGE_SHAPED_PROPERTY.test(property.name),
+  );
+  if (storageShapedProperties.length > 0) {
+    violations.push({ rule: 'R-B5 服务装配不得有第二个存储形状入参', detail: storageShapedProperties });
+  }
+  const unexpectedRoles = identifierRoles.filter(
+    (entry) => !['declaration', 'property-assignment:objectStore', 'property-signature'].includes(entry.role) &&
+      !entry.role.startsWith('binding-element:propertyName→') &&
+      !entry.role.startsWith('call-argument:app.decorate'),
+  );
+  if (unexpectedRoles.length > 0) {
+    violations.push({ rule: 'R-B6 端口名不得出现在枚举角色之外的位置', detail: unexpectedRoles });
+  }
+  if (resolverCalls.length !== 1) {
+    violations.push({ rule: 'R-B7 装配层必须恰好一处 resolver 调用', detail: resolverCalls });
+  }
+  for (const call of resolverCalls) {
+    if (call.properties === null || call.properties.length !== 1 || call.properties[0] !== 'executionMode') {
+      violations.push({ rule: 'R-B8 resolver 的参数只允许 executionMode 一个键', detail: call });
+    }
+  }
+  return { violations, declarations, identifierRoles, resolverCalls, serviceProperties };
+}
+
+/** 解析仓库内文件（只读）。 */
+function parseRepoFile(repoPath) {
+  const text = readFileSync(new URL(repoPath, REPO_ROOT_URL), 'utf8');
+  return { repoPath, text, source: ts.createSourceFile(repoPath, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS) };
+}
+
+/** 解析一段合成源码（判据自检用，不落盘）。 */
+function parseSynthetic(label, text) {
+  return { repoPath: label, text, source: ts.createSourceFile(label, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS) };
+}
+
+/** 枚举 `services/api/src/**` 下两个工厂的**生产调用点**（含所在文件与外层函数名）。 */
+function productionStoreFactoryCallSites(relativeDir, factoryNames) {
+  const root = fileURLToPath(new URL(relativeDir, REPO_ROOT_URL));
+  const files = [];
+  for (const dirent of readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (!dirent.isFile() || !/\.(ts|mts|mjs)$/.test(dirent.name)) continue;
+    files.push(join(dirent.parentPath ?? root, dirent.name));
+  }
+  const sites = [];
+  const candidates = [];
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    if (!factoryNames.some((name) => text.includes(name))) continue;
+    candidates.push(file);
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+    const visit = (node) => {
+      if (ts.isCallExpression(node)) {
+        const callee = compactNodeText(node.expression, source);
+        if (factoryNames.includes(callee)) {
+          let enclosing = null;
+          for (let parent = node.parent; parent !== undefined; parent = parent.parent) {
+            if (ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent) || ts.isMethodDeclaration(parent)) {
+              enclosing = parent.name === undefined ? '(匿名)' : parent.name.getText(source);
+              break;
+            }
+            if (ts.isArrowFunction(parent)) {
+              enclosing = '(箭头函数)';
+              break;
+            }
+          }
+          sites.push({
+            name: callee,
+            file: file.slice(file.replace(/\\/g, '/').indexOf('/services/') + 1).replace(/\\/g, '/'),
+            line: lineOf(node, source),
+            enclosing,
+          });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return { scannedFiles: files.length, candidateFiles: candidates.length, sites };
+}
+
+/** 共享断言：媒体域整域 fail-closed 的封套（503 + PROVIDER_UNAVAILABLE + retryable + 无 data）。 */
+function expectMediaDomainClosed(response, label) {
+  assert.equal(response.status, 503, `${label} → ${response.status} ${JSON.stringify(response.body)}`);
+  assert.equal(response.body.error.code, 'PROVIDER_UNAVAILABLE', label);
+  assert.equal(response.body.error.retryable, true, `${label} 必须标记可重试`);
+  assert.equal(response.body.data, undefined, `${label} 不得带任何成功封套`);
+  assert.equal(response.body.meta.execution_mode, 'real', label);
+}
+
+/** 媒体域 ambient env 探针：记录装配期/请求期每一次 `process.env` 读取与整表枚举。 */
+function installAmbientEnvProbe() {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'env');
+  const target = process.env;
+  const reads = [];
+  const enumerations = [];
+  const proxy = new Proxy(target, {
+    get(inner, property) {
+      if (typeof property === 'string') reads.push({ phase: probe.phase, key: property });
+      return Reflect.get(inner, property);
+    },
+    set: (inner, property, value) => Reflect.set(inner, property, value),
+    has: (inner, property) => Reflect.has(inner, property),
+    ownKeys(inner) {
+      enumerations.push(`ownKeys（阶段 ${probe.phase}）`);
+      return Reflect.ownKeys(inner);
+    },
+    getOwnPropertyDescriptor(inner, property) {
+      if (typeof property === 'string') enumerations.push(`getOwnPropertyDescriptor:${property}（阶段 ${probe.phase}）`);
+      return Reflect.getOwnPropertyDescriptor(inner, property);
+    },
+    defineProperty: (inner, property, attributes) => Reflect.defineProperty(inner, property, attributes),
+    deleteProperty: (inner, property) => Reflect.deleteProperty(inner, property),
+  });
+  const probe = { phase: 'assembly', reads, enumerations, detached: false };
+  Object.defineProperty(process, 'env', { ...(descriptor ?? {}), value: proxy });
+  probe.detach = () => {
+    if (probe.detached) return;
+    probe.detached = true;
+    Object.defineProperty(
+      process,
+      'env',
+      descriptor ?? { value: target, writable: true, configurable: true, enumerable: true },
+    );
+  };
+  return probe;
+}
+
+test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— 声明初值/服务实参/全文件角色逐处枚举，生产调用点各恰一处', () => {
+  const app = parseRepoFile('services/api/src/app.ts');
+  const audit = auditMediaPortProvenance(app);
+
+  // 无违规：端口初值只允许 `mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })`。
+  assert.deepEqual(audit.violations, [], 'app.ts 的媒体端口溯源必须零违规');
+  assert.equal(audit.declarations.length, 1, '端口变量必须恰好一处声明');
+  assert.equal(
+    audit.declarations[0].initializer,
+    `${MEDIA_PORT_OPTION} ?? ${MEDIA_RESOLVER}({ executionMode: config.executionMode })`,
+    '端口初值只允许「显式注入选项 ?? 只按执行模式解析」',
+  );
+  assert.deepEqual(
+    audit.resolverCalls.map((call) => call.properties),
+    [['executionMode']],
+    'resolver 调用必须恰好一处，参数只允许 executionMode 一个键（⛔ 不得传 env）',
+  );
+
+  // 端口名在全文件的**每一处**出现都必须落在枚举角色里（多一处即红）。
+  assert.deepEqual(
+    audit.identifierRoles.map((entry) => entry.role).sort(),
+    [
+      'binding-element:propertyName→mediaObjectStoreOption',
+      'call-argument:app.decorate',
+      'declaration',
+      'property-assignment:objectStore',
+      'property-signature',
+      'property-signature',
+    ],
+    '端口名只允许出现在：类型声明（注入选项/装饰）×2、解构绑定（唯一输入）、端口声明、objectStore 实参、测试装饰',
+  );
+  // 唯一输入：解构绑定必须把 `BuildAppOptions.mediaObjectStore` 绑定为 `mediaObjectStoreOption`。
+  assert.ok(
+    audit.identifierRoles.some((entry) => entry.role === 'binding-element:propertyName→mediaObjectStoreOption'),
+    '显式注入选项必须经唯一的解构绑定进入装配',
+  );
+  // 服务装配里不得有第二个存储形状入参（例如 `objectStoreOverride`/`storage`/`bucket`）。
+  assert.deepEqual(
+    audit.serviceProperties
+      .filter((property) => STORAGE_SHAPED_PROPERTY.test(property.name))
+      .map((property) => property.name),
+    ['objectStore'],
+    'createAppMediaService 只允许 objectStore 一个存储形状入参',
+  );
+
+  // 生产调用点：真实工厂**唯一**的样点在 resolver 内部；resolver **唯一**的样点是那次只带执行模式的回退。
+  const counts = productionStoreFactoryCallSites('services/api/src', [MEDIA_RESOLVER, REAL_STORE_FACTORY]);
+  assert.ok(counts.scannedFiles > 100, `必须真扫到生产源码（实测 ${counts.scannedFiles} 个文件）`);
+  const resolverSites = counts.sites.filter((site) => site.name === MEDIA_RESOLVER);
+  const factorySites = counts.sites.filter((site) => site.name === REAL_STORE_FACTORY);
+  assert.deepEqual(resolverSites.map((site) => [site.file, site.enclosing]), [['services/api/src/app.ts', 'buildApp']], 'resolver 在生产源码里只允许被 buildApp 调用一次');
+  assert.deepEqual(
+    factorySites.map((site) => [site.file, site.enclosing]),
+    [['services/api/src/media/object-store.ts', MEDIA_RESOLVER]],
+    '真实适配器工厂在生产源码里只允许被 resolver 调用一次（其余一律不得构造真实端口）',
+  );
+});
+
+test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许 3 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
+  const app = parseRepoFile('services/api/src/app.ts');
+  const audit = auditAmbientEnv(app, APP_AMBIENT_ENV_ALLOWLIST);
+
+  // 白名单本身必须是「非存储形状」的键（否则白名单会变成后门）。
+  for (const key of APP_AMBIENT_ENV_ALLOWLIST) {
+    assert.ok(!STORAGE_SHAPED_ENV_KEY.test(key), `白名单键 ${key} 不得是存储/媒体形状`);
+  }
+  assert.deepEqual(audit.violations, [], 'app.ts 不得读取任何未列入白名单的 ambient 键（含整表传递/动态取键）');
+  // 读数证据：实测读取点必须**恰好**等于白名单（多了少了都红）。
+  assert.deepEqual(
+    audit.findings.map((finding) => finding.key).sort(),
+    [...APP_AMBIENT_ENV_ALLOWLIST].sort(),
+    'app.ts 的 ambient env 读取点必须恰好是那 3 个非媒体键',
+  );
+  for (const finding of audit.findings) {
+    assert.equal(finding.tableUse, null, `第 ${finding.line} 行必须是按名读取：${finding.snippet}`);
+  }
+
+  // 媒体链路：一次都不许读 ambient env（存储端口的唯一输入是显式参数/显式注入）。
+  for (const repoPath of MEDIA_CHAIN_FILES) {
+    const parsed = parseRepoFile(repoPath);
+    const chainAudit = auditAmbientEnv(parsed, []);
+    assert.deepEqual(
+      chainAudit.findings,
+      [],
+      `${repoPath} 不得读取 ambient env（实测：${JSON.stringify(chainAudit.findings)}）`,
+    );
+  }
+});
+
+test('GY-I06 1-A B1（判据自检）：M19 同形必须判违规，canonical 源码必须零违规', () => {
+  // 夹具 1：对抗性复审的 M19 同形 —— resolver 换名、装配块内保留逐字装饰行、
+  // 真实端口挪到 `objectStore:` 实参位置、门用非 canonical ambient 键。
+  const m19 = parseSynthetic(
+    'm19-fixture.ts',
+    [
+      "import { createS3CompatibleObjectStore, readObjectStorageConfig } from './media/object-store.ts';",
+      'function resolveStoreFromAmbient(ambientEnv) {',
+      "  if (ambientEnv['OBJECT_STORAGE_ALLOW_REAL'] !== '1') return null;",
+      '  const { config } = readObjectStorageConfig(ambientEnv);',
+      '  return config === null ? null : createS3CompatibleObjectStore(config);',
+      '}',
+      'function buildApp({ mediaObjectStore: mediaObjectStoreOption }) {',
+      '  const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });',
+      '  const mediaService = createAppMediaService({',
+      '    executionMode: config.executionMode,',
+      '    objectStore: resolveStoreFromAmbient(process.env) ?? mediaObjectStore,',
+      '  });',
+      '  return mediaService;',
+      '}',
+    ].join('\n'),
+  );
+  const m19Ambient = auditAmbientEnv(m19, APP_AMBIENT_ENV_ALLOWLIST);
+  const m19Provenance = auditMediaPortProvenance(m19);
+  assert.ok(m19Ambient.violations.length > 0, 'M19 同形必须被 ambient 审计判违规（整表把 process.env 交出去）');
+  assert.ok(
+    m19Ambient.violations.some((violation) => violation.rule.startsWith('R-A1')),
+    `M19 同形的整表传递必须被点名：${JSON.stringify(m19Ambient.violations)}`,
+  );
+  assert.ok(m19Provenance.violations.length > 0, 'M19 同形必须被端口溯源判违规（真实端口挪到了 objectStore 实参）');
+  const relocated = m19Provenance.violations.find((violation) => violation.rule.startsWith('R-B4'));
+  assert.ok(relocated, `M19 同形必须点名 objectStore 实参不是端口变量本身：${JSON.stringify(m19Provenance.violations)}`);
+  assert.match(
+    String(relocated.actual),
+    /process\.env/,
+    '违规读数必须逐字给出真实端口的来源表达式（含 process.env）',
+  );
+  assert.ok(
+    m19Provenance.violations.some((violation) => violation.rule.startsWith('R-B6')),
+    'M19 同形把端口名用在了枚举角色之外（`?? mediaObjectStore`）⇒ 必须被判违规',
+  );
+
+  // 夹具 2：非 canonical 键被**直接**按名读取（证明键名会被逐字点到）。
+  const nonCanonical = parseSynthetic(
+    'non-canonical-key-fixture.ts',
+    "const mediaService = createAppMediaService({ objectStore: process.env['OBJECT_STORAGE_ALLOW_REAL'] === '1' ? realStore : mediaObjectStore });",
+  );
+  const nonCanonicalAudit = auditAmbientEnv(nonCanonical, APP_AMBIENT_ENV_ALLOWLIST);
+  assert.ok(
+    nonCanonicalAudit.findings.some((finding) => finding.key === 'OBJECT_STORAGE_ALLOW_REAL'),
+    `非 canonical 键必须被逐字点到：${JSON.stringify(nonCanonicalAudit.findings)}`,
+  );
+  assert.ok(nonCanonicalAudit.violations.some((violation) => violation.rule.startsWith('R-A2')), '非 canonical 键不在白名单 ⇒ 违规');
+
+  // 夹具 3：元素访问 / 整表别名 / 解构 / 对象展开 —— 四种读取形状都必须被判违规。
+  const shapes = [
+    ['globalThis.process["env"]', 'const mediaObjectStore = globalThis.process["env"]["OBJECT_STORAGE_ENDPOINT"] ? a : b;'],
+    ['整表别名', 'const ambientEnv = process.env;\nconst mediaObjectStore = ambientEnv.OBJECT_STORAGE_ENDPOINT ? a : b;'],
+    ['解构 process.env 对象', 'const { env } = process;\nconst mediaObjectStore = env.OBJECT_STORAGE_ENDPOINT ? a : b;'],
+    ['对象展开', 'const mediaObjectStore = readObjectStorageConfig({ ...process.env });'],
+    ['import.meta.env', 'const mediaObjectStore = import.meta.env.OBJECT_STORAGE_ENDPOINT ? a : b;'],
+  ];
+  for (const [label, text] of shapes) {
+    const audit = auditAmbientEnv(parseSynthetic(`${label}.ts`, text), APP_AMBIENT_ENV_ALLOWLIST);
+    assert.ok(audit.violations.length > 0, `${label} 形状必须被判违规（实测 ${JSON.stringify(audit.findings)}）`);
+  }
+
+  // 夹具 4：忠实换名（语义等价、无 bypass）—— ambient 审计必须**零违规**（不误报），
+  // 端口溯源必须红（判据只认那一种写法：换名/移位必须同步更新判据，属**故意**的 fail-closed 过敏感）。
+  const faithfulRename = parseSynthetic(
+    'faithful-rename-fixture.ts',
+    [
+      'function buildApp({ mediaObjectStore: mediaObjectStoreOption }) {',
+      '  const mediaObjectStore = mediaObjectStoreOption ?? resolveStoreByMode({ executionMode: config.executionMode });',
+      '  const mediaService = createAppMediaService({ executionMode: config.executionMode, objectStore: mediaObjectStore });',
+      '  return mediaService;',
+      '}',
+    ].join('\n'),
+  );
+  assert.deepEqual(
+    auditAmbientEnv(faithfulRename, APP_AMBIENT_ENV_ALLOWLIST).violations,
+    [],
+    '忠实换名（不读 ambient env）不得被 ambient 审计误报',
+  );
+  assert.ok(
+    auditMediaPortProvenance(faithfulRename).violations.length > 0,
+    '换名/移位必须让端口溯源自红（判据只认枚举出来的写法，改名须人工同步）',
+  );
+
+  // 正控制：真实源码必须零违规（判据不得对 canonical 装配误报）。
+  const realApp = parseRepoFile('services/api/src/app.ts');
+  assert.deepEqual(auditAmbientEnv(realApp, APP_AMBIENT_ENV_ALLOWLIST).violations, []);
+  assert.deepEqual(auditMediaPortProvenance(realApp).violations, []);
+});
+
+test('GY-I06 1-A 负控制（非 canonical ambient 键）：OBJECT_STORAGE_ALLOW_REAL 等键齐备也不得改变默认装配 ⇒ 仍整域 503', async (t) => {
+  // 对抗性复审 M19 用的门是**非 canonical** 键（`OBJECT_STORAGE_ALLOW_REAL === '1'`）。
+  // 本用例把「标准 4 键 + 一切像开关的自造键」一起注入 ambient env，默认装配（不注入端口）仍必须 fail-closed。
+  const restoreEnv = injectAmbientEnv({
+    ...SYNTHETIC_STORAGE_ENV,
+    OBJECT_STORAGE_ALLOW_REAL: '1',
+    OBJECT_STORAGE_MODE: 'real',
+    OBJECT_STORAGE_ENABLED: 'true',
+    S3_ENABLE_REAL: '1',
+    COS_ENABLE_REAL: '1',
+    MEDIA_OBJECT_STORE: 's3',
+    GY_I06_REAL_MEDIA: '1',
+  });
+  t.after(() => restoreEnv());
+
+  const store = createMemoryAuthStore();
+  const app = buildApp({ config: { ...baseConfig(), executionMode: 'real' }, store });
+  t.after(() => app.close());
+  const token = await synthesizeSession(store, 'synthetic-non-canonical-env-01');
+
+  assert.equal(app.mediaObjectStore.kind, 'unwired', '非 canonical ambient 键不得把默认装配变成真实适配器');
+  assert.notEqual(app.mediaService.failClosedReason, null);
+  assert.equal(app.mediaService.objectStore.kind, 'unwired');
+  assert.equal(app.mediaObjectStore.externalRequestCount, 0);
+
+  const routes = [
+    ['POST', '/api/v1/media/uploads', { payload: DECLARED, headers: { 'idempotency-key': KEY('noncanon-create') } }],
+    ['POST', `/api/v1/media/uploads/${MEDIA_ID}/complete`, {
+      payload: { sha256: DECLARED.sha256, bytes: DECLARED.bytes },
+      headers: { 'idempotency-key': KEY('noncanon-complete'), 'if-match': '"1"' },
+    }],
+    ['GET', `/api/v1/media/${MEDIA_ID}`, {}],
+    ['DELETE', `/api/v1/media/${MEDIA_ID}`, { headers: { 'idempotency-key': KEY('noncanon-delete'), 'if-match': '"1"' } }],
+    ['POST', `/api/v1/media/${MEDIA_ID}/access`, { headers: { 'idempotency-key': KEY('noncanon-access'), 'if-match': '"1"' } }],
+    ['POST', '/api/v1/community/media-access', {
+      payload: {
+        content_ref: { type: 'post', id: MEDIA_ID, revision: 1 },
+        media_ref: { media_id: MEDIA_ID, media_revision: 1 },
+        slot: 'attachment',
+        author_revision: null,
+      },
+      headers: { 'idempotency-key': KEY('noncanon-community'), 'if-match': '"1"' },
+    }],
+    ['GET', `/api/v1/community/media/${MEDIA_ID}/content`, { headers: { 'x-media-access-token': 'synthetic-token' } }],
+  ];
+  for (const [method, url, options] of routes) {
+    expectMediaDomainClosed(await call(app, method, url, token, options), `${method} ${url}`);
+  }
+  assert.equal(app.mediaObjectStore.externalRequestCount, 0, '不得发起任何真实对象存储请求');
+});
+
+test('GY-I06 1-A B1（运行时来源检查）：装配期与请求期不得读取任何存储形状 ambient 键（env 探针实测）', async (t) => {
+  // 先注入「标准键 + 像开关的自造键」，再挂 env 探针：任何一次**存储形状**的 ambient 读取都会被记录。
+  const restoreEnv = injectAmbientEnv({
+    ...SYNTHETIC_STORAGE_ENV,
+    OBJECT_STORAGE_ALLOW_REAL: '1',
+    S3_ENABLE_REAL: '1',
+    COS_ENABLE_REAL: '1',
+    MEDIA_OBJECT_STORE: 's3',
+  });
+  t.after(() => restoreEnv());
+  const probe = installAmbientEnvProbe();
+  t.after(() => probe.detach());
+
+  probe.phase = 'assembly';
+  const store = createMemoryAuthStore();
+  const app = buildApp({ config: { ...baseConfig(), executionMode: 'real' }, store });
+  t.after(() => app.close());
+  const token = await synthesizeSession(store, 'synthetic-runtime-source-01');
+
+  probe.phase = 'request';
+  const response = await call(app, 'POST', '/api/v1/media/uploads', token, {
+    payload: DECLARED,
+    headers: { 'idempotency-key': KEY('runtime-source') },
+  });
+  probe.detach();
+
+  // 来源检查（一）：默认装配**不得**读取任何存储形状的 ambient 键（标准键、自造键都不行）。
+  const storageReads = probe.reads.filter((entry) => STORAGE_SHAPED_ENV_KEY.test(entry.key));
+  assert.deepEqual(storageReads, [], '装配期/请求期都不得读取存储形状的 ambient 键');
+  // 来源检查（二）：不得整表枚举 ambient env（`Object.keys`/展开/env 快照）。
+  assert.deepEqual(probe.enumerations, [], '不得整表枚举 ambient env');
+  // 来源检查（三）：读到的键必须是「3 个非媒体键（app.ts 白名单）」或「Node/运行时内部键」；
+  // 出现新键 ⇒ 要么它确实来自运行时（核后补注列入），要么装配路径新增了一条 ambient 输入 —— 两者都必须人工过一遍。
+  const unknownKeys = [
+    ...new Set(
+      probe.reads
+        .map((entry) => entry.key)
+        .filter((key) => !APP_AMBIENT_ENV_ALLOWLIST.includes(key) && !RUNTIME_AMBIENT_ENV_ALLOWLIST.includes(key)),
+    ),
+  ];
+  assert.deepEqual(
+    unknownKeys,
+    [],
+    `出现未列入白名单的 ambient 键读取：${JSON.stringify(unknownKeys)}（若确实来自 Node 运行时，核后补注列入；否则说明装配路径新增了 ambient 输入）`,
+  );
+  // 探针有效性（非真空）：必须真的观测到装配期的按名读取，否则说明探针没挂上/被测代码绕开了 process.env 代理。
+  assert.ok(
+    probe.reads.some((entry) => entry.phase === 'assembly' && APP_AMBIENT_ENV_ALLOWLIST.includes(entry.key)),
+    `探针必须观测到装配期的 ambient 读取（实测：${JSON.stringify(probe.reads)}）`,
+  );
+
+  // 运行时来源/身份（一）：行为发生在**端口身份**上 —— 未注入 ⇒ 未接线端口 ⇒ 整域 503。
+  assert.equal(app.mediaObjectStore.kind, 'unwired');
+  assert.equal(app.mediaService.objectStore.kind, 'unwired');
+  assert.notEqual(app.mediaService.failClosedReason, null);
+  expectMediaDomainClosed(response, 'POST /api/v1/media/uploads（非 canonical 键注入下）');
+  assert.equal(app.mediaObjectStore.externalRequestCount, 0);
+
+  // 运行时来源/身份（二）：判据是端口 `kind`，不是「是否 real」这个布尔 —— 2×2 矩阵
+  // （real/stub × 未接线/真实端口）只有端口 `kind` 决定结果。
+  const unwiredPort = createUnwiredObjectStore('测试注入的未接线端口（2×2 矩阵）');
+  const realPort = createS3CompatibleObjectStore({
+    endpoint: 'https://cos.ap-shanghai.myqcloud.com',
+    bucket: 'gengyun-media-placeholder',
+    accessKey: 'synthetic-access-key-id',
+    secretKey: 'synthetic-secret-key-value',
+    region: 'ap-shanghai',
+    forcePathStyle: false,
+  });
+  const outcomes = [];
+  for (const [executionMode, port, expected] of [
+    ['real', undefined, { kind: 'unwired', status: 503 }],
+    ['stub', unwiredPort, { kind: 'unwired', status: 503 }],
+    ['real', realPort, { kind: 's3_compatible', status: 201 }],
+    ['stub', realPort, { kind: 's3_compatible', status: 201 }],
+  ]) {
+    const modeStore = createMemoryAuthStore();
+    const modeApp = buildApp({
+      config: { ...baseConfig(), executionMode },
+      store: modeStore,
+      ...(port === undefined ? {} : { mediaObjectStore: port }),
+    });
+    const modeToken = await synthesizeSession(modeStore, `synthetic-2x2-${executionMode}-${expected.kind}`);
+    const created = await call(modeApp, 'POST', '/api/v1/media/uploads', modeToken, {
+      payload: DECLARED,
+      headers: { 'idempotency-key': KEY(`2x2-${executionMode}-${expected.kind}`) },
+    });
+    outcomes.push({
+      executionMode,
+      port: port === undefined ? '(未注入)' : port.kind,
+      kind: modeApp.mediaObjectStore.kind,
+      status: created.status,
+      failClosedReason: modeApp.mediaService.failClosedReason === null ? null : '(fail-closed)',
+      externalRequests: modeApp.mediaObjectStore.externalRequestCount,
+    });
+    await modeApp.close();
+    assert.equal(modeApp.mediaObjectStore.kind, expected.kind, `${executionMode} + ${port === undefined ? '未注入' : port.kind}`);
+    assert.equal(created.status, expected.status, JSON.stringify(created.body));
+    assert.equal(modeApp.mediaObjectStore.externalRequestCount, 0, '预签名是纯本地计算，不得外发');
+  }
+  assert.deepEqual(
+    outcomes,
+    [
+      { executionMode: 'real', port: '(未注入)', kind: 'unwired', status: 503, failClosedReason: '(fail-closed)', externalRequests: 0 },
+      { executionMode: 'stub', port: 'unwired', kind: 'unwired', status: 503, failClosedReason: null, externalRequests: 0 },
+      { executionMode: 'real', port: 's3_compatible', kind: 's3_compatible', status: 201, failClosedReason: null, externalRequests: 0 },
+      { executionMode: 'stub', port: 's3_compatible', kind: 's3_compatible', status: 201, failClosedReason: null, externalRequests: 0 },
+    ],
+    '判据必须只跟随端口 kind：同样 real 模式，注入真实端口即可用、未注入即整域 503；'
+      + '未接线端口在 stub 下也一律 503（此时 503 由端口本身拒绝产生，服务层不加 failClosedReason）',
   );
 });
