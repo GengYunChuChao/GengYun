@@ -293,9 +293,9 @@ const OCR_REGISTRY_BASELINE_KEYS = new Set(
   OCR_REGISTRY_BASELINE_EDGES.map((edge) => `${edge.loader}|${edge.specifier}|${edge.target}`),
 );
 /** 登记到的、从受护文件可达的 OCR 域装载**边**（去重，key = loader|specifier|target）。 */
-const collectOcrRegistryEdges = () => {
+const collectOcrRegistryEdges = (source = moduleLoadRegistry.entries) => {
   const edges = new Map();
-  for (const entry of moduleLoadRegistry.entries) {
+  for (const entry of source) {
     if (entry.specifier === null) continue; // 只看带 specifier 的 resolve 边
     const target = repoRelativeFromUrl(entry.url);
     if (target === null || !isOcrDomainTarget(target)) continue;
@@ -307,10 +307,10 @@ const collectOcrRegistryEdges = () => {
   }
   return [...edges.values()];
 };
-/** 归类：可达的 OCR 域装载边**剔除冻结基线**后即为违规。 */
-const collectOcrRegistryFindings = () => {
+/** 归类：可达的 OCR 域装载边**剔除冻结基线**后即为违规（可传入**指定登记切片** ⇒ 形态钉子只看"该形态自己"的边）。 */
+const collectOcrRegistryFindings = (source = moduleLoadRegistry.entries) => {
   const findings = [];
-  for (const edge of collectOcrRegistryEdges()) {
+  for (const edge of collectOcrRegistryEdges(source)) {
     if (OCR_REGISTRY_BASELINE_KEYS.has(edge.key)) continue;
     findings.push({
       ...edge,
@@ -397,11 +397,16 @@ if (registryProbeFormId !== null) {
     process.exit(3);
   }
   let runtimeError = null;
+  // ⚠ r7b：钉子只认**该形态自己**新增的登记（`entries` 里先前的边来自本进程的真实装配；受护文件被注入时
+  //   那条边也在这里）⇒ 否则「不装载」钉子在**已被注入**的仓库上会误报（实测踩到：`factory-bind-no-load`
+  //   因为受护文件自己装载了 `./ocr/state.ts` 而报 `PROBE-UNEXPECTED-LOAD`，把"判据抓到了"混成"钉子坏了"）。
+  const entryCountBefore = moduleLoadRegistry.entries.length;
   try {
     await form.run();
   } catch (error) {
     runtimeError = error;
   }
+  const ownEntries = moduleLoadRegistry.entries.slice(entryCountBefore);
   if (form.expectRuntimeError !== undefined) {
     const actual = runtimeError === null ? '(无异常)' : runtimeError.constructor.name;
     if (actual !== form.expectRuntimeError) {
@@ -415,7 +420,7 @@ if (registryProbeFormId !== null) {
     console.error(`PROBE-UNEXPECTED-ERROR ${form.id} ${runtimeError.constructor.name}: ${runtimeError.message}`);
     process.exit(6);
   }
-  const registered = moduleLoadRegistry.entries.some(
+  const registered = ownEntries.some(
     (entry) => entry.specifier === form.expectSpecifier && entry.url.endsWith(form.expectUrlSuffix),
   );
   if (form.expectLoad === false) {
@@ -430,15 +435,28 @@ if (registryProbeFormId !== null) {
     console.error(`PROBE-UNREGISTERED ${form.id}（登记器没登记 ${form.expectSpecifier} ⇒ 判据无意义）`);
     process.exit(2);
   }
+  // 主判据的**同一份**归类逻辑，只喂"该形态自己"的登记切片 ⇒ 钉子与真实攻击走同一条判定。
+  const ownFindings = collectOcrRegistryFindings(ownEntries);
   if (form.expectViolation) {
-    assertRegistryClean(`子进程形态探针 ${form.id}`);
-    console.error(`PROBE-NOT-CAUGHT ${form.id}（期望判红却没有判红）`);
-    process.exit(0);
+    if (ownFindings.length === 0) {
+      console.error(`PROBE-NOT-CAUGHT ${form.id}（期望判红却没有判红）`);
+      process.exit(0);
+    }
+    console.error(`OCRREGISTRY: 子进程形态探针 ${form.id} —— 该形态自身在运行期装载了 ${form.expectSpecifier}（OCR 域内且不在 r7 冻结基线的 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法边内）⇒ 收尾断言必判红：${ownFindings[0].message}`);
+    process.exit(1);
   }
-  const findings = assertRegistryClean(`子进程对照 ${form.id}`);
-  console.log(`PROBE-CLEAN ${form.id} findings=${findings} entries=${moduleLoadRegistry.entries.length} registered=${form.expectSpecifier}`);
+  if (ownFindings.length > 0) {
+    console.error(`PROBE-UNEXPECTED-LOAD ${form.id}（对照形态却产生了 OCR 域装载边：${ownFindings[0].message}）`);
+    process.exit(4);
+  }
+  console.log(`PROBE-CLEAN ${form.id} findings=0 entries=${moduleLoadRegistry.entries.length} registered=${form.expectSpecifier}`);
   process.exit(0);
 }
+
+// r7b：受护文件的引用图**刚刚装载完** ⇒ 立刻先做一次主判据断言（fail-fast）。理由：注入受护文件时应当**第一时间**
+//   由主判据本身报出"经 <路径> 装载了 <specifier> → <URL>"，而不是让后续自测钉子以二手现象（形态探针登记不到）报错
+//   ——后者的首条失败信息会掩盖真正的归因（实测踩到）。收尾处仍有第二次断言（覆盖请求期才懒加载的边）。
+assertRegistryClean('受护文件引用图装载完成后（早于自测与回环 HTTP 回归）');
 
 /**
  * 判据函数：返回**违规清单**（空数组 = 通过）。自测与真实用例走**同一函数** ⇒ 判据退化必被自测抓住。
