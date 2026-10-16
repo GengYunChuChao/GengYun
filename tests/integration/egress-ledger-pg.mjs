@@ -213,11 +213,20 @@ try {
   for (const name of ['0001_initial_schema.sql', '0003_privacy_consent.sql', '0008_auth_session.sql', '0009_consent_policy.sql', '0011_export_ledger.sql']) {
     await owner.query(sqlFile(`migrations/${name}`));
   }
+  // 0014（GY-I27 #29 本片新增）把 `exports.object_key` 加进 `egress_ledger` 角色的列级
+  // SELECT/INSERT 白名单（`roles/egress_ledger.sql`）⇒ 必须先应用该列，角色脚本才建得起来。
+  // 应用后再走 0011 回滚演练：0011 down 只删自己加的列，**不得**牵连 0014 的对象标识列。
+  await owner.query(sqlFile('migrations/0014_export_object_key.sql'));
   await owner.query(sqlFile('migrations/rollback/0011_export_ledger.down.sql'));
   assert.equal((await owner.query("SELECT to_regclass('export_writebacks') x")).rows[0].x, null);
   assert.equal(
     (await owner.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_name='exports' AND column_name='cancelled_at'")).rows[0].n,
     0,
+  );
+  assert.equal(
+    (await owner.query("SELECT count(*)::int n FROM information_schema.columns WHERE table_name='exports' AND column_name='object_key'")).rows[0].n,
+    1,
+    '0011 回滚不得牵连 0014 新增的对象标识列',
   );
   await owner.query(sqlFile('migrations/0011_export_ledger.sql'));
   say('fresh native PG17.11：0001/0003/0008/0009/0011 up，0011 down 后表与列如实消失，再 up 成功');
@@ -461,12 +470,21 @@ try {
   await app?.close?.();
   await realFallbackApp?.close?.();
   await pool?.end?.();
-  for (const role of createdRoles.reverse()) {
-    await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${role}`).catch(() => {});
-    await owner.query(`DROP OWNED BY ${role}`).catch(() => {});
-    await owner.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
+  // `EGRESS_LEDGER_KEEP=1`：保留角色/表/数据，供后继只追加脚本（如
+  // `egress-object-key-pg.mjs` 的 0014 迁移演练）在**已有行**的库上继续验收。
+  // 默认（不设该变量）行为逐字未变：清理角色与回写表。
+  if (process.env.EGRESS_LEDGER_KEEP !== '1') {
+    for (const role of createdRoles.reverse()) {
+      await owner.query(`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${role}`).catch(() => {});
+      await owner.query(`DROP OWNED BY ${role}`).catch(() => {});
+      await owner.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
+    }
+    await owner.query('DROP TABLE IF EXISTS export_writebacks').catch(() => {});
   }
-  await owner.query('DROP TABLE IF EXISTS export_writebacks').catch(() => {});
   await owner.end();
-  console.log('CLEANUP=done（角色与回写表已清理；库由运行器删除）');
+  console.log(
+    process.env.EGRESS_LEDGER_KEEP === '1'
+      ? 'CLEANUP=skipped（EGRESS_LEDGER_KEEP=1：角色/表/夹具行按要求保留，供后继只追加脚本在既有行的库上继续验收）'
+      : 'CLEANUP=done（角色与回写表已清理；库由运行器删除）',
+  );
 }

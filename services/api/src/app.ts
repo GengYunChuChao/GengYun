@@ -85,6 +85,7 @@ import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
 import { createPostgresExportLedger, createPostgresPrivacyPorts } from './privacy/ledger-pg.ts';
 import { createMediaJobEgress, type MediaJobEgress } from './privacy/task-egress.ts';
+import { createSynthesisEgress, type SynthesisEgress } from './privacy/synthesis-egress.ts';
 import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs';
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
@@ -827,11 +828,30 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // （`SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，见其定义处的边界说明），使客户端替身样本能走完
   // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 由 `createCheckedContentPort` 自行忽略该实参
   // （仍返回未接线端口）⇒ real 语义逐字未变；服务层判定与拒绝码亦未改。
+  // GY-I27（#29）·合成域外发账本接线（与识别/转写/OCR 三域同形）：
+  // real 模式且账本可用时，用**出站包装器**接管 `synthesize` 的派发顺序
+  // （无预留 ⇒ `OBJECT_UNAVAILABLE`；`markSent` 是唯一权威授权边界）。
+  // 记账对象标识取**执行期重读的已核对正文快照**（`checked_content_ref` 的 1..80 文本 id），
+  // 存进 0014 新增的 `exports.object_key` 列 ⇒ 不需要把非 uuid 标识硬塞进 uuid 列。
+  // 账本/在途守卫未装配（未配置数据库或连接池不可用）⇒ 返回 `undefined` ⇒ 路由与包装逐字不变。
+  const synthesisContentResolved =
+    synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT);
+  const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode });
+  const synthesisEgress: SynthesisEgress | undefined =
+    egressLedger === null || privacyInFlight === null
+      ? undefined
+      : createSynthesisEgress({
+          ledger: egressLedger,
+          inFlight: privacyInFlight,
+          executionMode: config.executionMode,
+          content: synthesisContentResolved,
+          capability: 'tts',
+        });
   const synthesisService = createSynthesisService({
     store: synthesisStore ?? createMemorySynthesisStore(),
-    provider: synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode }),
+    provider: synthesisEgress === undefined ? synthesisProviderResolved : synthesisEgress.provider(synthesisProviderResolved),
     media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode),
-    content: synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT),
+    content: synthesisContentResolved,
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     now: clock,
     ...(synthesisJobDeadlineMs === undefined ? {} : { jobDeadlineMs: synthesisJobDeadlineMs }),
@@ -1304,7 +1324,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
   registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
-  registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
+  registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
   registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入（识别域 + 转写域 + 审核域 + 合成域 + OCR 域，共 5 个）；未接线的 kind ⇒ 与「作业不存在」同形 404。

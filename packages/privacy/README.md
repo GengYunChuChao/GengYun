@@ -88,7 +88,7 @@ app.route({
 | --- | --- | --- |
 | 需要用途授权的执行入口（`POST /recognitions`、`POST /speech/transcriptions`、`POST /ocr`、`POST /speech/synthesis`，以及派生内容写面：选择/确认/校正/核对） | `ConsentGate({ purpose, dataType })` 作为路由 `preHandler`（紧随 `guards.requireUser`） | **已接线**（`app.ts` 装配；注入优先，否则配置了数据库时用 `consent-pg.requireConsent`） |
 | 读取（GET）与删除（DELETE） | 不挂 | 有意不挂：撤回后用户仍须能取回/删除自己的数据 |
-| 外发登记（预留/派发） | `services/api/src/privacy/task-egress.ts` 的 `reserveForAcceptance` → `ledger.markSent`（在提供者包装内，随后 `saveResult`/`markFailed`） | **已接线（识别/转写/OCR）**：`app.ts` 在配置了数据库时装配持久账本（`ledger-pg.ts`），提供者包装在 `task-egress.ts`；**合成域未接线**（`exports.object_id uuid` 与 `checked_content_ref.id` 不兼容，需 schema/决策） |
+| 外发登记（预留/派发） | `services/api/src/privacy/task-egress.ts` 的 `reserveForAcceptance` → `ledger.markSent`（在提供者包装内，随后 `saveResult`/`markFailed`） | **已接线（识别/转写/OCR/合成）**：`app.ts` 在配置了数据库时装配持久账本（`ledger-pg.ts`），提供者包装在 `task-egress.ts`；**合成域已接线**（迁移 `0014_export_object_key.sql` 新增文本型对象标识列 `object_key`；装配在 `synthesis-egress.ts`，资料类型走契约外第二维度） |
 | 任务执行前 | `in-flight.assertExecutable({ exportId, userId })` | **已接线**（同上，持久账本路径） |
 | 结果保存前 | `in-flight.saveResult({ exportId, userId, objectVersion, result })` | **已接线**（回写与校验同事务；不过 ⇒ 零写入） |
 | 版本取消 | 账本 `cancelVersion` / `cancelForJob`（墓碑 `cancelled_at`，只增不减） | **已接线**：识别域作业取消成功后经 `jobs/sources.ts` 的可选钩子写墓碑 |
@@ -134,8 +134,12 @@ PostgreSQL 上按 `README`「提交一致性契约」的部署义务实现为**�
   `roles/egress_ledger.sql`。`app.ts` 在**配置了数据库**（且连接池具备 `connect()`）时装配；
   提交边界在**单事务**内完成「校验读取 + 实际写入」，结果回写落在 `export_writebacks`
   （只增不改；只落结构分类，**不落私有正文/媒体/坐标/凭据**）。
-  **合成域（TTS）未接入账本**：`exports.object_id` 是 uuid 而 `checked_content_ref.id` 是任意字符串
-  ⇒ 需一次 schema/契约决策；**注销的 HTTP 触发面** `requestAccountDeletion` 在契约里仍为 `planned`（属 GY-I19），
+  **合成域（TTS）已接入账本（第三片）**：迁移 `0014_export_object_key.sql` 新增**文本型对象标识列**
+  `object_key varchar(128)`（既有 `object_id uuid NOT NULL` 列类型一字未改；两列**恰好给一个**，
+  数据库侧 `exports_object_ident_xor` CHECK 兜底，非媒体行写全零哨兵 uuid），装配在
+  `services/api/src/privacy/synthesis-egress.ts`；资料类型走**契约外第二维度**
+  `NON_MEDIA_DATA_TYPES = ['checked_content']`（只要求 `external_inference`，**不因媒体维多要 `recording`**）。
+  **注销的 HTTP 触发面** `requestAccountDeletion` 在契约里仍为 `planned`（属 GY-I19），
   本模块只交付消费者接口，不自造路由。
   真实第三方外发仍未授权：`real` 未接真实传输 ⇒ 受理处在**任何账本变更之前** 503
   `PROVIDER_UNAVAILABLE`(retryable)，**零 `sent` 记录**；替身/演示**不记账**。
