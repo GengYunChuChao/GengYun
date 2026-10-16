@@ -5,7 +5,7 @@
   "source_of_operations": "packages/contracts/operations.json",
   "generated_by": "人工核对状态与缺口；tools/verify-contract-status.mjs 校验并同步中文表格（不是冻结契约事实源）",
   "status_definitions": {
-    "implemented": "main 上已装配 http 路由，且行为有可复核证据（源码路径+行 或 测试文件+用例名）",
+    "implemented": "main 上已装配 http 路由，且行为有可复核证据（源码路径+行 或 测试文件+可定位文本片段）",
     "partial": "有对应操作代码，但产品 HTTP 未装配、缺运行条件/分支，或存在已记录的契约偏差",
     "planned": "未取得对应操作的产品实现证据；可能已有相关领域库，但尚无此 HTTP 服务，不推断已完成"
   },
@@ -398,10 +398,6 @@
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "lines": "176-205"
-        },
-        {
-          "path": "services/api/src/app.ts",
-          "lines": "1163-1168"
         },
         {
           "path": "services/api/src/app.ts",
@@ -866,7 +862,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
-          "lines": "192-196"
+          "lines": "224-257"
         },
         {
           "test": "tests/integration/ocr-http.mjs"
@@ -926,7 +922,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
-          "lines": "224-228"
+          "lines": "274-290"
         },
         {
           "test": "tests/integration/ocr-http.mjs"
@@ -946,7 +942,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
-          "lines": "242-246"
+          "lines": "292-308"
         },
         {
           "test": "tests/integration/ocr-http.mjs"
