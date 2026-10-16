@@ -1,5 +1,5 @@
 /** Contract projection checks; semantic completion remains a human judgement. */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -18,6 +18,11 @@ if ([...flags].some(flag => !['--runtime', '--write-doc'].includes(flag))) {
 }
 const errors = [];
 const check = (condition, message) => { if (!condition) errors.push(message); };
+// 引用必须是**文件**：目录（以及 FIFO、socket 等非常规文件）自己不是可读证据。
+// statSync 会跟随符号链接，仓库边界仍由 evidenceWithinRepository 单独判定。
+const isRegularFile = path => {
+  try { return statSync(path).isFile(); } catch { return false; }
+};
 const status = JSON.parse(readFileSync(STATUS_FILE, 'utf8'));
 const operations = JSON.parse(readFileSync(OPERATIONS_FILE, 'utf8'));
 const statuses = new Set(['implemented', 'partial', 'planned']);
@@ -78,8 +83,8 @@ function checkEntry(entry, owner) {
       continue;
     }
     const absolute = resolve(ROOT, path);
-    check(existsSync(absolute), `${owner}: 证据文件不存在 ${path}`);
-    if (!existsSync(absolute)) continue;
+    check(isRegularFile(absolute), `${owner}: 证据文件不存在或不是文件 ${path}`);
+    if (!isRegularFile(absolute)) continue;
     const text = readFileSync(absolute, 'utf8');
     if (typeof item.name === 'string' && item.name !== '') check(text.includes(item.name), `${owner}: ${path} 中找不到用例名「${item.name}」`);
     if (item.lines !== undefined) {
