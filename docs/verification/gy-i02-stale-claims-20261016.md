@@ -3,7 +3,7 @@
 - 日期：2026-10-16（本机 +08:00）
 - 范围：**只订正被实测证伪的「未接线／未实现」类断言**；文档加「校订注」保留原文（⛔ 不静默抹掉历史），小程序**只改文案字符串**（⛔ 不改条件分支／请求路径）。
 - 本片**不动**：`services/api/src/**`（同批另一位写手）、`packages/contracts/**`、`.github/workflows/**`、`package.json`、`docs/verification/how-to-read-ci-runs.md`、`docs/development-guide.md`、`docs/development-progress.md`、`docs/architecture/contract-status*.{json,md}`。
-- 本页是**本轮唯一新增文件**；其余改动都是对既有文件加校订注或改文案。
+- 本页是本片（首轮 ＋ 返修提交合计）**唯一新增文件**；其余改动都是对既有文件加校订注或改文案。
 
 ## 0. 实测基线（先 fetch 后实测）
 
@@ -34,7 +34,7 @@
 ### 1.1 本条必须点名：`docs/verification/how-to-read-ci-runs.md` 有**同源过期读数**，但**本轮禁改**
 
 该文里「`npm run test:integration:http` 串 **8** 条脚本」的计数已过期——实测 `package.json:24`（基线 `3bc7451`）逐字为 **9 条**脚本，末条为 `node tests/integration/account-deletion-http.mjs`（**本片同基线实跑 = 9 条脚本串、63 条 `PASS`／0 条 `FAIL`**）。
-> **复算命令与输出**（2026-10-16 返修时实测，用于订正本行原先自相矛盾的「共 8 个脚本段」）：
+> **复算命令与输出**（2026-10-16 返修时实测，用于订正本行**原先误写的脚本段小计数**：原值 `8`，实测 `9`）：
 > `node -e "const a=require('./package.json').scripts['test:integration:http'].split(' && ');console.log(a.length+' 条');console.log(a[8])"` ⇒ `9 条` ＋ `node tests/integration/account-deletion-http.mjs`；
 > `npm run test:integration:http 2>&1 | Select-String -Pattern '^PASS ' | Measure-Object -Line` ⇒ `63`。
 ⛔ 该文件在**本轮避让清单**内，故**未改**；此处只留可追溯记录，请下一片（或该文件归属方）按 9 条刷新。
