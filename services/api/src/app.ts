@@ -132,6 +132,38 @@ import { createModerationService } from './moderation/service.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
 import type { ContentAuthorityPort } from './moderation/types.ts';
+// GY-I12（#12）文字问答子域：**追加式**装配（只加 import + 一个可选注入项 + 一处 decorate
+// + 一处作业源注册 + 一处路由注册 + 一处检索读面复用）。跨线披露：本块为纯追加
+// （不改既有域行为、不重排既有装配）；回退 = 删除本块六处。
+import { registerConversationRoutes } from './routes/conversations.ts';
+import {
+  createConversationGuard,
+  createConversationService,
+  createDeterministicAnswerComposer,
+  createMemoryConversationIdempotencyLedger,
+  createTranscriptionPort,
+  type ConversationIdempotencyLedger,
+  type ConversationService,
+  type AnswerComposer,
+  type TranscriptionPort,
+} from './conversations/service.ts';
+import {
+  createMemoryConversationStore,
+  type ConversationStore,
+} from './conversations/store.ts';
+import { createPostgresConversationStore } from './conversations/store-pg.ts';
+import type { AnswerGuard, DoseAuthority, RetrievalPort } from './conversations/guard.ts';
+import { createUnwiredRetrievalPort } from './conversations/guard.ts';
+import { createKnowledgeService } from './knowledge/service.ts';
+import { createDeterministicDoseAuthority } from './conversations/dose.ts';
+import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
+import { createAnswerJobSource } from './conversations/job.ts';
+import {
+  createConversationDeletion,
+  createUnwiredTurnCascadePort,
+  type ConversationDeletionRegistration,
+  type TurnCascadePort,
+} from './conversations/cascade.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -190,6 +222,16 @@ declare module 'fastify' {
    * 仅作装配透明性与**证据/回归**用；业务判定只在服务层内部发生。
    */
   communityModerationLink: CommunityModerationLink | null;
+  /**
+   * GY-I12 文字问答子域（#12）。**未接线**时为 `null`（`real` 模式下缺签名密钥或存储未就绪）
+   * ⇒ 七条问答路由一律 503 `PROVIDER_UNAVAILABLE`（retryable），不返回空页、不假成功。
+   */
+  conversationService: ConversationService | null;
+  /**
+   * GY-I12（#12）· 会话/轮次/回答接入 **F13 注销删除注册协议**的注册结果。
+   * 存储未就绪（`real` 且无 `DATABASE_URL`）时为 `null`（无数据可清 ⇒ 也不注册处理器）。
+   */
+  conversationDeletion: ConversationDeletionRegistration | null;
   }
 }
 
@@ -339,6 +381,26 @@ export interface BuildAppOptions {
    * 目标逐字节保持接线前行为（只多一条 `serializers.req`，见 `requestLogFields`）。
    */
   logStream?: { write(chunk: string): void };
+  // GY-I12 文字问答子域注入项（#12）。**全部可选**：不传时——
+  //   * `store`：非 real 模式用进程内内存 store（显式级联删除），**real 模式用 PG store**
+  //     （`pool === null` ⇒ real 下整域 503，绝不用内存 store 在真实模式下声称成功）；
+  //   * `retrieval`：接线到**与 `/knowledge` 同一个**读面实例（视图 + 同一模式门 + 同一
+  //     `APP_KNOWLEDGE_UNVERIFIED_SEED` 开关 + 同一会话校验），不新建第二套资料读服务；
+  //   * `dose`：接线到 GY-I08 的确定性描述子 `doseCardDescriptor`（本片唯一权威路径）；
+  //   * `guard`/`composer`：确定性守卫与确定性回答器（**没有语言模型**）；`composer` 的注入
+  //     口是**负控制**用的：回答器**无法**决定 `model_version`/`prompt_version`（那三个版本串
+  //     只由服务层常量填充），所以替身不可能把自己标成真实模型；
+  //   * `transcription`：语音轮次的转写核对端口（缺省复用 `app.speechService.getTranscription`）。
+  conversationInjection?: {
+    store?: ConversationStore;
+    ledger?: ConversationIdempotencyLedger;
+    retrieval?: RetrievalPort;
+    dose?: DoseAuthority;
+    guard?: AnswerGuard;
+    composer?: AnswerComposer;
+    transcription?: TranscriptionPort;
+    cascade?: TurnCascadePort;
+  };
 }
 
 /** 把 pg 连接池适配为认证层的 SqlExecutor（只暴露 query）。 */
@@ -489,7 +551,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -957,6 +1019,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       config.executionMode !== 'real' && /^(1|true)$/i.test(process.env['APP_KNOWLEDGE_UNVERIFIED_SEED'] ?? ''),
   });
   /**
+   * `/knowledge` 查询面的**唯一实例**（GY-I12 跨片复用缝，纯追加）。
+   *
+   * 本片把它同时交给：
+   *   1) `registerKnowledgeRoutes`（经 `KnowledgeRouteDeps.service` 覆盖项；不传时该函数
+   *      按原样自建，行为不变）；
+   *   2) 文字问答域的检索端口（`createKnowledgeRetrievalPort({ face })`）。
+   * 这样"引用只能取自**本次**检索集合"里的检索集合，与用户直接 `GET /knowledge` 读到的
+   * 是**同一个实例、同一份视图投影、同一模式门、同一显式开关**，不存在第二套读法。
+   * `pool === null`（无 `DATABASE_URL`）时为 `null` ⇒ `/knowledge` 自己就是 503，
+   * 问答域随之**未接线检索面**（`createUnwiredRetrievalPort` ⇒ 集合恒为空 ⇒ 守卫如实
+   * 判 `insufficient`，**不编造**引用）。
+   */
+  const knowledgeQueryFace = pool === null
+    ? null
+    : createKnowledgeService(pool, config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, {
+        extraRows: () => publicKnowledgeSeedFace.seedRows(),
+      });
+  /**
    * 公开读面里该 id 的**当前**投影（只取判定所需两列）；读面无法核对时返回 `null`。
    *
    * - 没有数据库（`pool === null`）时 `/knowledge` 自己就是 503（`routes/knowledge.ts#ready`）
@@ -1042,6 +1122,75 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : { backupPurge: userDataDeletionInjection.backupPurge }),
   });
 
+  // =====================================================================================
+  // GY-I12（#12）文字问答子域装配（**纯追加**）
+  // =====================================================================================
+  // 本块只**新增**局部量与一处 decorate，不改上面任何既有域的实参/行为。回退 = 删本块。
+  //
+  // 1) 存储：非 `real` 用进程内 store（删除是**显式级联**：会话→轮次→回答）；
+  //    `real` 用 PG store（同一事务内 `SELECT ... FOR UPDATE` + CAS 删除，迁移
+  //    `services/api/db/migrations/0013_conversations.sql` 的三张表 + `ON DELETE CASCADE`）。
+  //    为什么 `real` + `pool === null` 时整域置 `null`：把内存 store 交给 real 模式的服务层
+  //    = 在真实模式下声称成功、进程重启即丢（与 `app.ts` 既有的收藏/历史口径逐字一致）。
+  const conversationStore: ConversationStore | null =
+    conversationInjection?.store ??
+    (config.executionMode === 'real'
+      ? (pool === null ? null : createPostgresConversationStore(pool))
+      : createMemoryConversationStore());
+  // 2) 幂等台账：**本域自带**（`ConversationOutcome` 只存 `conversation_id`/`turn_id` 引用，
+  //    不含正文与凭据）。为什么不复用 `auth/idempotency.ts` 的台账：它的
+  //    `IdempotencyOutcome` 是 `{sessionId,audience} | {accepted:true}` 闭联合，
+  //    且被既有断言逐字锁住（`tests/unit/auth-store-pg.test.mjs`：`idempotency_keys` 列集、
+  //    `outcome = {accepted:true}`）⇒ 扩展它会迫使放宽既有断言。故只**复用其口径**
+  //    （scope 三段式 `sha256(subject\\nMETHOD\\npath)` + HMAC 请求摘要 + 占位行），存储自持。
+  const conversationLedger: ConversationIdempotencyLedger =
+    conversationInjection?.ledger ?? createMemoryConversationIdempotencyLedger();
+  // 3) 检索集合：接线到**与 `/knowledge` 同一个**读面实例（`knowledgeQueryFace`，见下），
+  //    保证"引用只能取自本次检索集合"的判据与用户实际能读到的资料**同一份**。
+  const conversationRetrieval: RetrievalPort =
+    conversationInjection?.retrieval ??
+    (knowledgeQueryFace === null
+      ? createUnwiredRetrievalPort(
+          '资料读面未配置（无 DATABASE_URL）：检索集合恒为空，拒绝在没有依据的情况下产出任何引用',
+        )
+      : createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));
+  // 4) 用量权威：只接 GY-I08 的**确定性**描述子（`doseCardDescriptor`）；本片**没有**语言模型，
+  //    因此未取得确定性判定通过前**不产出**任何用量卡（域库本基线恒 `renderable:false`）。
+  const conversationDose: DoseAuthority = conversationInjection?.dose ?? createDeterministicDoseAuthority();
+  // 5) 输出守卫（引用只能取自本次检索集合 + 用量卡只能取自确定性权威路径）与**确定性**回答器
+  //    （候选正文由检索条目逐字组成，不经任何模型）。
+  const conversationGuard: AnswerGuard = conversationInjection?.guard ?? createConversationGuard({ dose: conversationDose });
+  const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();
+  // 6) 语音轮次：只读复用已合并的 `app.speechService.getTranscription`（受理时核对
+  //    `transcription_id` + `transcription_revision` + `confirmed`），不新建第二套转写存储。
+  const conversationTranscription = conversationInjection?.transcription ?? createTranscriptionPort({
+    getTranscription: (input) => app.speechService.getTranscription(input),
+  });
+  const conversationCascade: TurnCascadePort = conversationInjection?.cascade ?? createUnwiredTurnCascadePort();
+  const conversationService: ConversationService | null =
+    // `real` 下只有 `persistent === true` 的 store 才配得上"真实成功"：无 `DATABASE_URL` 时
+    // `conversationStore` 为 null，**注入的内存 store 也不例外**（否则测试注入口就成了绕过
+    // fail-closed 的后门）。非 `real` 模式照旧用内存 store，与收藏/历史口径一致。
+    conversationStore === null || (config.executionMode === 'real' && !conversationStore.persistent)
+      ? null
+      : createConversationService({
+          store: conversationStore,
+          retrieval: conversationRetrieval,
+          guard: conversationGuard,
+          composer: conversationComposer,
+          transcription: conversationTranscription,
+          cascade: conversationCascade,
+          ledger: conversationLedger,
+          signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+          now: clock,
+        });
+  // 7) 注销删除：把本域三个模块注册进**已合并的** `packages/privacy` F13 协议
+  //    （`createConversationDeletion`：只含 `conversations` 一个必需模块，理由见该函数注释）。
+  //    在线部分**真的**按主体清理并留证据（`conversations:online-purged:<n>`）；备份副本清除
+  //    属 GY-I19 ⇒ 回执如实 `backupState: 'pending'`（不谎称完成）。
+  const conversationDeletion =
+    conversationStore === null ? null : createConversationDeletion(conversationStore, { now: clock });
+
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -1065,6 +1214,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('historyService', historyService);
   app.decorate('userDataDeletion', userDataDeletion);
   app.decorate('communityService', communityService);
+  // GY-I12（#12）：问答服务与注销删除注册（供回归测试与 GY-I19 统一编排驱动）。
+  app.decorate('conversationService', conversationService);
+  app.decorate('conversationDeletion', conversationDeletion);
   // GY-I14 ⇄ GY-I15 联动接线：把装配好的联动端口挂出来（只读用途；业务判定仍在服务层内部）。
   app.decorate('communityModerationLink', communityModerationLink);
 
@@ -1097,6 +1249,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `unverifiable` ⇒ 详情面照旧可见，即"失效拦截"在生产尚未全面生效（见 PR 正文"未取得项"）。
   registerKnowledgeRoutes(app, config, pool, gatedGuards, {
     resolve: createReferenceIntegrity(adminContentStore).resolve,
+    // GY-I12 复用缝（纯追加的两个覆盖项）：把上面建好的**同一个实例**交给读面，
+    // 使文字问答域的检索集合与 `/knowledge` 逐字节同源。不传时本函数自建，行为不变。
+    reference: publicKnowledgeSeedFace,
+    service: knowledgeQueryFace,
   });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
   registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
@@ -1130,6 +1286,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `cancel` **不提供**（OCR 域本基线无取消入口）⇒ 注册表先确认作业存在，再 503
     // PROVIDER_UNAVAILABLE (`retryable`) 如实拒绝，**不伪造** `cancelled`、不谎称作业不存在。
     createOcrJobSource(app.ocrService),
+    // GY-I12（#12）文字问答域作业源（**纯追加，不重排上面五项**）：`GET /jobs/{id}` 现可返回
+    // `kind=answer` 的契约 `Job`（`AnswerResult.kind='answer'` 分支契约里本就有；`result` 只在
+    // 作业落终态 `succeeded`/`uncertain` 且回答行存在时给出 ⇒ 与注册表的如实性不变式一致）。
+    // 作业 id 是 `createTurn` 受理时写下的 `Job.id`（**与 `Turn.id` 不同**），
+    // 读面按 `(job_id, owner_id)` 查轮次 ⇒ 越权与不存在**同形** `NOT_FOUND`。
+    // `cancel` **不提供**（本基线无问答取消入口）⇒ 注册表先确认作业存在，再 503
+    // PROVIDER_UNAVAILABLE (`retryable`) 如实拒绝，**不伪造** `cancelled`、不谎称作业不存在。
+    createAnswerJobSource({
+      findByJobId: async ({ userId, jobId }) => {
+        const service = app.conversationService;
+        if (service === null) return null;
+        return service.store.findTurnByJobId(jobId, userId);
+      },
+    }),
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
@@ -1144,6 +1314,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
   // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
   registerCommunityRoutes(app, config, gatedGuards, communityService);
+  // GY-I12（#12）文字问答域 7 条路由的**唯一注册点**（契约 `operations.json` 里本域的
+  // 全部 operation，逐条一一对应；未实现的相邻路径不注册 ⇒ 由 404 处理器如实兜底）。
+  // 这一段刻意**排在 `registerJobRoutes` 之后**：作业源在注册表构造时就捕获了
+  // `app.conversationService` 的求值闭包，而路由注册只影响 HTTP 面的可见性，两者无次序耦合。
+  // `real` 且无 `DATABASE_URL` ⇒ `conversationService === null` ⇒ 整域 503（不假成功）。
+  registerConversationRoutes(app, config, guards, conversationService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
