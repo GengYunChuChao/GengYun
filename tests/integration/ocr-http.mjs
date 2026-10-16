@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { createRequire, registerHooks } from 'node:module';
+import { createRequire, isBuiltin, registerHooks } from 'node:module';
 // r7 形态钉子：`import { createRequire as cr } from 'node:module'` 这类**静态 import 别名**同样是运行期一条
 //   真实路径 ⇒ 这里真写一条别名导入，供 `registryProbeForms` 的 `static-import-alias` 在子进程里真跑（非"模拟"）。
 import { createRequire as createRequireViaStaticImport } from 'node:module';
@@ -88,6 +88,8 @@ const { collectResultValueIssues } = await import('../../services/api/src/jobs/r
 
 /** 仓根（从本脚本位置回推：`<root>/tests/integration/`）—— 仅用于把解析结果裁成"仓根相对"。 */
 const REPO_ROOT_FOR_PATHS = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/** 仓根的 POSIX 形态（r8 fail-closed 判据里做前缀比较用；Windows 上盘符大小写差异由 `normalizeModulePath` 抹平）。 */
+const REPO_ROOT_POSIX_PREFIX = normalizeModulePath(REPO_ROOT_FOR_PATHS.replace(/\\/g, '/')).replace(/\/+$/, '');
 /** `app.ts` 所在目录：模块说明符按**该目录**解析（与真实装配的解析基准一致）。 */
 const APP_SOURCE_DIR = resolvePath(REPO_ROOT_FOR_PATHS, 'services', 'api', 'src');
 /** 本域内**唯一**允许被装配路径引用的模块（仓根相对、已归一化，用于比较）。 */
@@ -292,25 +294,147 @@ const OCR_REGISTRY_BASELINE_EDGES = [
 const OCR_REGISTRY_BASELINE_KEYS = new Set(
   OCR_REGISTRY_BASELINE_EDGES.map((edge) => `${edge.loader}|${edge.specifier}|${edge.target}`),
 );
-/** 登记到的、从受护文件可达的 OCR 域装载**边**（去重，key = loader|specifier|target）。 */
+/**
+ * r8（阻断 B 返修）：**解析被第三方改写**的 fail-closed 判据。
+ *
+ * 被审版本（r7c，`8e3b350`）的 `collectOcrRegistryEdges` 以 `if (target === null || !isOcrDomainTarget(target)) continue;`
+ * 静默丢弃**一切**非 `file:` / 仓外的解析结果。复审实测（`.pg17/adv-verdict-ocr-guard-runtime-registry-8e3b350.md` §8）：
+ * `services/api/src/config.ts` 在装载期抢先注册**第二个** `registerHooks`，把 `app.ts → './routes/ocr.ts'` 的 resolve
+ * 改写成 `data:text/javascript;base64,…` ⇒ `repoRelativeFromUrl()` 返回 `null` ⇒ 该边被 `continue` **静默丢弃**
+ * ⇒ 护栏 **exit 0 ＋ `PASS 14 组` 全绿（假绿）**。故这里把"目标不是仓内 `file:` URL"从"忽略"改成**判红**。
+ *
+ * 判据取值（派单口径：`target === null` 的边**一律**计入 findings，内建模块走**显式白名单**）：
+ *   「`resolve` 结果**不是仓内 `file:` URL**、且 `specifier` **不是内建模块** ⇒ 判红」（不附加可达性前置条件）。
+ * 为什么内建要显式豁免：未改动的仓库运行期本来就有 **82 条**非 `file:` 解析结果（实测全部是 `node:` 内建，如
+ * `node:crypto`/`node:fs`/…）⇒ 按字面一律判红会把**未改动**的仓库判红（等于把工具做成坏的，与 r7 基线同一条理由）。
+ * 为什么不附加"parentUrl 必须可达"：附加可达性会给「把 `app.ts` 自身的解析改写成 `data:`」这类形状留口子 ——
+ * 那时受护引用图整体不可达、可达边集合塌缩为 0，而本判据按"基线之外"计数，塌缩反而**全绿**（实测口径推演）。
+ * 判词含 `parentUrl` / `specifier` / `loader` 三要素，并尽量给出"照常应解析到"的期望路径（含是否落 OCR 域）。
+ */
+const expectedRepoRelativeFromSpecifier = (parentUrl, specifier) => {
+  if (typeof specifier !== 'string') return null;
+  if (isBuiltin(specifier)) return null; // 内建（`node:fs` / `fs` / `node:fs/promises`）⇒ 合法非 `file:` 目标
+  const parentAbsolute = (() => {
+    if (typeof parentUrl !== 'string' || !parentUrl.startsWith('file:')) return null;
+    try { return fileURLToPath(parentUrl); } catch { return null; }
+  })();
+  const parentDirectory = parentAbsolute === null ? null : dirname(parentAbsolute);
+  if (parentDirectory === null) return null; // 装载者本身不是仓内文件 ⇒ 无从判断"照常会解析到哪里"，不臆断
+  let expected = null;
+  try {
+    expected = normalizeModulePath(resolvePath(parentDirectory, specifier).replace(/\\/g, '/'));
+  } catch {
+    return null;
+  }
+  const relative = expected.startsWith(REPO_ROOT_POSIX_PREFIX)
+    ? expected.slice(REPO_ROOT_POSIX_PREFIX.length).replace(/^\/+/, '')
+    : null;
+  return { relative, absolute: expected };
+};
+/** 登记到的、从受护文件可达的 OCR 域装载**边**（去重，key = loader|specifier|target）；r8 起在最前面并入 fail-closed 命中项。 */
 const collectOcrRegistryEdges = (source = moduleLoadRegistry.entries) => {
   const edges = new Map();
+  const failClosed = [];
+  // r8 自检（复审 §8 建议／派单字面口径）：「同一 `parentUrl` 不得出现重复 resolve 记录」⇒ 出现即 fail-closed。
+  //   ⚠ 计数口径必须按 **(parentUrl, specifier) 对**，不能按纯 `parentUrl`：实测未改动仓库里单个 parentUrl 最多有
+  //   **78** 条 resolve（同一模块装载多个不同 specifier）⇒ 按纯 parentUrl 计数会大量误报。
+  //   ⚠ 判红条件必须再限定为「**同一对解析出不同 URL**」。字面口径（同一对出现 ≥2 次即判红）在**未改动**仓库上
+  //   实测误报 **7** 条（原始读数：`…\r8\guard-r8-green-6.txt` —— `node_modules/ajv/**` 与 `node_modules/ajv-formats/**`
+  //   在 Fastify schema 编译阶段对同一 (parentUrl, specifier) **幂等重解析**，前后 URL **完全相同**）⇒ 字面口径下收尾
+  //   负控制 `assert.equal(registrySummary.failClosedEdges, 0, …)` **不可满足**（等于把工具做成坏的）。
+  //   URL 相同的重解析不携带任何"解析被改写"的信号 ⇒ 只计数（`countRepeatResolvePairs`，见汇总行），不判红；
+  //   URL 不同则是第二个 `registerHooks` 改写/劫持的确定信号 ⇒ 判红（fail-closed）。
+  const resolvedByPair = new Map();
   for (const entry of source) {
     if (entry.specifier === null) continue; // 只看带 specifier 的 resolve 边
+    const pairKey = `${String(entry.parentUrl)}|${entry.specifier}`;
+    const previousUrls = resolvedByPair.get(pairKey);
+    if (previousUrls !== undefined) {
+      const previousUrl = [...previousUrls][0];
+      if (!previousUrls.has(entry.url)) {
+        const loader = repoRelativeFromUrl(entry.parentUrl) ?? String(entry.parentUrl);
+        failClosed.push({
+          key: `duplicate-resolve|${pairKey}`,
+          loader,
+          specifier: entry.specifier,
+          target: `(重复 resolve：同一 (parentUrl, specifier) 解析出 ${previousUrls.size + 1} 个**不同** URL)`,
+          url: entry.url,
+          parentUrl: entry.parentUrl,
+          expectedTarget: null,
+          failClosed: true,
+          message: `${describeLoadPath(entry.parentUrl, entry.specifier, entry.url)}（⚠ **重复 resolve 记录**：parentUrl=${String(entry.parentUrl)} specifier='${entry.specifier}' loader=${loader} —— 同一 (parentUrl, specifier) 先解析到 \`${previousUrl}\`、又解析到 \`${entry.url}\`（URL **不一致**）⇒ 装载器被第二个 registerHooks 改写/劫持，判据 fail-closed）`,
+        });
+      }
+    }
+    const pairUrls = previousUrls ?? new Set();
+    pairUrls.add(entry.url);
+    resolvedByPair.set(pairKey, pairUrls);
     const target = repoRelativeFromUrl(entry.url);
-    if (target === null || !isOcrDomainTarget(target)) continue;
+    if (target === null) {
+      // 派单口径（字面）：`target === null` 的边**一律**计入 findings（fail-closed），只有内建模块走**显式白名单**。
+      //   ⚠ 不附加"parentUrl 必须从受护文件可达"：字面口径下**任何**非仓内 `file:` 的解析结果都判红（未改动仓库
+      //   实测这类记录 82 条且全部是内建 ⇒ 负控制仍为 0）；附加可达性反而会给"把 app.ts 自身的解析改写成 data:"
+      //   这类形状留口子（此时受护引用图整体不可达、边集合塌缩为 0，而按"基线之外"的口径依然全绿）。
+      if (isBuiltin(entry.specifier)) continue; // 内建（`node:*` / 裸名）：合法非 `file:` 目标（未改动仓库实测 82 条）
+      const loader = repoRelativeFromUrl(entry.parentUrl) ?? String(entry.parentUrl);
+      const expectation = expectedRepoRelativeFromSpecifier(entry.parentUrl, entry.specifier);
+      const expectedText = expectation === null
+        ? '（无法推断"照常应解析到"哪条仓内路径：装载者或 specifier 不构成仓内相对解析）'
+        : `照常应解析到${expectation.relative === null ? `仓外路径 \`${expectation.absolute}\`` : `仓内路径 '${expectation.relative}'`}`;
+      const ocrDomainNote = expectation !== null && expectation.relative !== null && isOcrDomainTarget(expectation.relative)
+        ? '，且该路径**落在 OCR 域**'
+        : '';
+      failClosed.push({
+        key: `unresolved-target|${loader}|${entry.specifier}|${entry.url}`,
+        loader,
+        specifier: entry.specifier,
+        target: `(解析结果非仓内 file: URL ⇒ ${entry.url})`,
+        url: entry.url,
+        parentUrl: entry.parentUrl,
+        expectedTarget: expectation === null ? null : expectation.relative,
+        failClosed: true,
+        message: `${describeLoadPath(entry.parentUrl, entry.specifier, entry.url)}（⚠ 解析被改写：parentUrl=${String(entry.parentUrl)} specifier='${entry.specifier}' loader=${loader} —— 实际解析结果 \`${entry.url}\` **不是仓内 file: URL**；${expectedText}${ocrDomainNote} ⇒ 判据 fail-closed）`,
+      });
+      continue;
+    }
+    if (!isOcrDomainTarget(target)) continue;
     if (entry.parentUrl === null || entry.parentUrl === undefined || !isReachableFromApp(entry.parentUrl)) continue;
     const loader = repoRelativeFromUrl(entry.parentUrl) ?? entry.parentUrl;
     const key = `${loader}|${entry.specifier}|${target}`;
     if (edges.has(key)) continue;
-    edges.set(key, { key, loader, specifier: entry.specifier, target, url: entry.url, parentUrl: entry.parentUrl });
+    edges.set(key, { key, loader, specifier: entry.specifier, target, url: entry.url, parentUrl: entry.parentUrl, expectedTarget: null });
   }
-  return [...edges.values()];
+  return [...failClosed, ...edges.values()];
+};
+/**
+ * r8 自检的**计数**侧：同一 `(parentUrl, specifier)` 对出现 ≥2 条 resolve 记录的**对数**（不看 URL 是否相同）。
+ * 只作透明计数写进汇总行（`幂等重解析`），**不作判红条件** —— 实测未改动仓库在回环 HTTP 阶段就有这类幂等重解析
+ * （`node_modules/ajv/**`、`node_modules/ajv-formats/**`，前后 URL 完全相同；原始读数 `…\r8\guard-r8-green-6.txt`）。
+ * 判红条件是**同一对解析出不同 URL**（见 `collectOcrRegistryEdges` 的 `duplicate-resolve` 命中项）。
+ */
+const countRepeatResolvePairs = (source = moduleLoadRegistry.entries) => {
+  const seenPairs = new Map();
+  let repeats = 0;
+  for (const entry of source) {
+    if (entry.specifier === null) continue;
+    const pairKey = `${String(entry.parentUrl)}|${entry.specifier}`;
+    const count = (seenPairs.get(pairKey) ?? 0) + 1;
+    seenPairs.set(pairKey, count);
+    if (count === 2) repeats += 1;
+  }
+  return repeats;
 };
 /** 归类：可达的 OCR 域装载边**剔除冻结基线**后即为违规（可传入**指定登记切片** ⇒ 形态钉子只看"该形态自己"的边）。 */
 const collectOcrRegistryFindings = (source = moduleLoadRegistry.entries) => {
   const findings = [];
   for (const edge of collectOcrRegistryEdges(source)) {
+    // ⚠ 判据必须看**显式标记** `failClosed`，不能看 `expectedTarget !== null`：重复 resolve 命中项的
+    //   `expectedTarget` 本来就是 `null`（它记的是"同一对解析出两个不同 URL"，不是"照常应落 OCR 域"）
+    //   ⇒ 按 `expectedTarget` 判会把它当成普通边、把 fail-closed 判词**覆盖成基线文案**（实测踩到，r8 自测抓出）。
+    if (edge.failClosed === true) {
+      findings.push(edge); // r8 fail-closed（解析被改写/重复 resolve）：一律判红，不参与基线豁免
+      continue;
+    }
     if (OCR_REGISTRY_BASELINE_KEYS.has(edge.key)) continue;
     findings.push({
       ...edge,
@@ -331,12 +455,16 @@ const assertRegistryClean = (label) => {
 const describeRegistrySummary = () => {
   const resolveCount = moduleLoadRegistry.entries.filter((entry) => entry.hook === 'resolve').length;
   const edges = collectOcrRegistryEdges();
+  const failClosedEdges = edges.filter((edge) => edge.failClosed === true);
+  const baselineAndNew = edges.filter((edge) => edge.failClosed !== true);
   return {
     resolveCount,
     loadCount: moduleLoadRegistry.entries.length - resolveCount,
-    ocrReachableEdges: edges.length,
-    baselineEdges: edges.filter((edge) => OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
-    newEdges: edges.filter((edge) => !OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
+    ocrReachableEdges: baselineAndNew.length,
+    baselineEdges: baselineAndNew.filter((edge) => OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
+    newEdges: baselineAndNew.filter((edge) => !OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
+    failClosedEdges: failClosedEdges.length,
+    repeatResolvePairs: countRepeatResolvePairs(),
     positiveControl: moduleLoadRegistry.entries.some((entry) => entry.specifier === 'node:os' && entry.url === 'node:os'),
   };
 };
@@ -344,6 +472,15 @@ const describeRegistrySummary = () => {
 /** 形态探针的受护文件（`app.ts`）相对基准：与真实攻击**同一条解析路径**。 */
 const OCR_PROBE_SPECIFIER = './ocr/state.ts';
 const OCR_PROBE_HARMLESS_SPECIFIER = './contract.ts';
+/** r8：取「`app.ts` 真装载 `./ocr/state.ts`」那条**真实登记记录**（两条改写形态钉子以它为基底注入）。 */
+const findAppOcrStateEntry = () => {
+  const recorded = moduleLoadRegistry.entries.find(
+    (entry) => entry.specifier === OCR_PROBE_SPECIFIER && entry.parentUrl === APP_MODULE_URL
+      && repoRelativeFromUrl(entry.url) === 'services/api/src/ocr/state.ts',
+  );
+  if (recorded === undefined) throw new Error('登记器里没有 app.ts → ./ocr/state.ts 的真实记录 ⇒ 该形态钉子无意义');
+  return recorded;
+};
 /**
  * r7 负/正控制形态表（**运行期**等价于「经某条路径装载某个模块」）。
  * 逐条在**子进程**里真跑（`node <本脚本> --registry-probe=<id>`）：`expectViolation: true` ⇒ r7 主判据**必须**判红
@@ -384,6 +521,38 @@ const registryProbeForms = [
   { id: 'unbound-null', title: '`const r = null; r(…)` —— 实测运行期 `TypeError`', expectViolation: false, expectRuntimeError: 'TypeError', expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const r = null; return r(OCR_PROBE_SPECIFIER); } },
   { id: 'harmless-app-relative', title: '（对照）经别名装载 app 目录下的无害模块', expectViolation: false, expectSpecifier: OCR_PROBE_HARMLESS_SPECIFIER, expectUrlSuffix: '/services/api/src/contract.ts', run: () => createRequire(APP_MODULE_URL)(OCR_PROBE_HARMLESS_SPECIFIER) },
   { id: 'harmless-builtin', title: '（对照）经别名装载内建模块', expectViolation: false, expectSpecifier: 'node:path', expectUrlSuffix: 'node:path', run: () => createRequire(APP_MODULE_URL)('node:path') },
+  // ───────── r8（阻断 B 返修）：两条**登记器被改写**的形态钉子 ─────────
+  // 为什么是"注入登记记录"而不是"在子进程里真装一个抢跑的 registerHooks"：后者需要往**本脚本之外**写一个模块
+  //   才能抢在 `import.meta.url` 之前注册（`node --import=<文件>`），而本片边界是"只改 tests/integration/ocr-http.mjs"
+  //   ⇒ 不新增文件。改为在子进程里**真调用**与真实攻击同一条 `registerHooks` 的 `resolve` 钩子（拿真实
+  //   `(parentUrl, specifier)`），再按复审实测的 `data:` URL 改写形状注入一条**重复 resolve 记录** ⇒ 走的是
+  //   主判据的**同一份** `collectOcrRegistryEdges`/`collectOcrRegistryFindings`，不是另写一套判据。
+  {
+    id: 'duplicate-resolve-rewrite',
+    title: '同一 (parentUrl, specifier) 出现重复 resolve 记录且解析结果不一致（复审 §8：第二个 registerHooks 抢跑改写的登记特征）',
+    expectViolation: true,
+    expectSpecifier: OCR_PROBE_SPECIFIER,
+    expectUrlSuffix: '/services/api/src/ocr/state.ts',
+    expectFragment: '重复 resolve 记录',
+    run: () => {
+      createRequire(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); // 真装载（与 `direct` 形态同一条解析路径）⇒ 登记器里必有该边
+      const recorded = findAppOcrStateEntry();
+      moduleLoadRegistry.entries.push({ ...recorded, url: 'data:text/javascript;base64,ZHVwbXktZHVwbGljYXRl' });
+    },
+  },
+  {
+    id: 'resolve-target-rewritten-nonfile',
+    title: '照常落 OCR 域的 specifier 被改写成非仓内 file: URL（复审 §8 实测形状：`app.ts → ./ocr/state.ts` ⇒ `data:text/javascript;base64,…`）',
+    expectViolation: true,
+    expectSpecifier: OCR_PROBE_SPECIFIER,
+    expectUrlSuffix: '/services/api/src/ocr/state.ts',
+    expectFragment: '不是仓内 file: URL',
+    run: () => {
+      createRequire(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); // 真装载（同上）
+      const recorded = findAppOcrStateEntry();
+      moduleLoadRegistry.entries.push({ ...recorded, url: 'data:text/javascript;base64,ZHVwbXktcmV3cml0dGVu' });
+    },
+  },
 ];
 /** 子进程形态探针：`node <本脚本> --registry-probe=<id>` ⇒ 真装载 ⇒ 主判据必须抓住（或对照必须不判红）。 */
 const registryProbeFormId = (() => {
@@ -442,7 +611,10 @@ if (registryProbeFormId !== null) {
       console.error(`PROBE-NOT-CAUGHT ${form.id}（期望判红却没有判红）`);
       process.exit(0);
     }
-    console.error(`OCRREGISTRY: 子进程形态探针 ${form.id} —— 该形态自身在运行期装载了 ${form.expectSpecifier}（OCR 域内且不在 r7 冻结基线的 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法边内）⇒ 收尾断言必判红：${ownFindings[0].message}`);
+    // ⚠ 必须打印**全部**命中项的判词（不能只打 `ownFindings[0]`）：同一形态可能同时命中多条 fail-closed
+    //   判据（实测：`resolve-target-rewritten-nonfile` 会同时命中「重复 resolve」与「解析结果非仓内 file: URL」
+    //   —— 先命中的那条会掩盖后一条的理由，自测的判词钉子就永远看不到后一条 ⇒ 实测踩到并改为此处逐条打印）。
+    console.error(`OCRREGISTRY: 子进程形态探针 ${form.id} —— 该形态自身在运行期装载了 ${form.expectSpecifier}（OCR 域内且不在 r7 冻结基线的 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法边内）⇒ 收尾断言必判红（命中 ${ownFindings.length} 条）：\n${ownFindings.map((finding) => `  · ${finding.message}`).join('\n')}`);
     process.exit(1);
   }
   if (ownFindings.length > 0) {
@@ -744,6 +916,21 @@ async function call(base, token, method, path, options = {}) {
   const headers = { ...(options.headers ?? {}) };
   if (token !== null) headers.authorization = `Bearer ${token}`;
   if (options.body !== undefined) headers['content-type'] = 'application/json';
+  // r8（阻断 A 返修）：**显式要求每条回环请求用完即关**，不让 undici 的全局连接池在两次请求之间保留 keep-alive socket。
+  //   被审版本（r7c）在本函数里用全局 `fetch`，而组 8 内 31 个 `spawnSync` 子进程探针（见 `registryProbeForms` 循环）
+  //   会插入约 **21.9 秒**的空闲窗口；复审实测该窗口后**下一条**请求会复用**已被回收**的 socket ⇒ 随机
+  //   `TypeError: fetch failed` / `cause: Error: read ECONNRESET`（`errno: -4077`），且恒在 `PASS 8)` 之后
+  //   （三树对照：r6 `4c411e84` 0/10 红、被审树 `8e3b350` 3/10 红、合并预演树 2/3 红）。
+  //   为什么选"请求侧显式 `connection: close`"而不是另外三条（取舍理由，逐条对照）：
+  //     ② `new Agent({ keepAliveTimeout })` —— 本仓**顶层无 `undici` 依赖**（`require.resolve('undici')` 实测
+  //        `MODULE_NOT_FOUND`），要引入新依赖 ⇒ 超出"只改本文件"的返修边界，且给护栏加了包依赖风险；
+  //     ③ 探针跑完显式关闭/重建连接池 —— 同样要拿到 undici 的 dispatcher/Agent 句柄（同②的依赖问题），
+  //        且"关掉全局池"会影响后续请求的连接复用语义（面更大）；
+  //     ④ 对 `ECONNRESET` 一次性重试 —— 会**把红改成绿**：真实回归被 socket 复用掩盖成"重试后通过"，
+  //        与"护栏要能判红"的目的一致相反（重试计数还会让"读到几次红"失去意义）。
+  //   ① 是在**请求语义**层面消除复用（HTTP/1.1 标准头，Node 内建 fetch/undici 原生支持，零新依赖、零全局副作用），
+  //      且不改任何断言 ⇒ 最保守、最小改动。副作用只在本脚本的测试客户端：每次请求新建连接（回环，代价可忽略）。
+  headers.connection = 'close';
   const response = await fetch(base + path, {
     method,
     headers,
@@ -1598,6 +1785,9 @@ try {
       assert.equal(probe.status, 1, `经 ${form.id} 真装载 OCR 域模块 ⇒ r7 主判据必须判红（exit=1），实际 ${probe.status}；${tailText}`);
       assert.ok(combined.includes('OCRREGISTRY'), `判红消息必须含 OCRREGISTRY：${form.id}；${tailText}`);
       assert.ok(combined.includes(form.expectSpecifier), `判红消息必须打印被装载的 specifier（${form.expectSpecifier}）：${form.id}；${tailText}`);
+      if (form.expectFragment !== undefined) {
+        assert.ok(combined.includes(form.expectFragment), `r8 fail-closed 判词的判红理由不符：期望含 ${form.expectFragment}：${form.id}；${tailText}`);
+      }
       probeCaught += 1;
     }
     console.log(`PASS 判据自测 ${selfTestCases.length} 条（静态启发式逐例核对：应红/应绿）· 消息级钉子 ${messageCases.length} 条 · 运行期探针钉子 ${registryProbeForms.length} 条（子进程真装载：应红 ${probeCaught} 条；对照与运行期事实 ${registryProbeForms.length - probeCaught} 条）`);
@@ -1768,9 +1958,14 @@ try {
   //   （每个用例都真跑 HTTP；若某条路径在请求期才装载 OCR 域模块，也会落进登记集合）。
   const registrySummary = describeRegistrySummary();
   const newEdgeCount = assertRegistryClean('收尾（真实装配 + 回环 HTTP 全部跑完）');
+  // r8 负控制（**必须为 0**，否则 r8 的 fail-closed 判据就是"把未改动的仓库判红"）：未改动仓库里**不得**有任何
+  //   「`specifier` 不是内建却解析出非仓内 `file:` URL」或「同一 (parentUrl, specifier) 解析出**不同** URL」的命中
+  //   （实测：非 `file:` 解析结果 82 条**全部**是 `node:` 内建 ⇒ 经 `isBuiltin` 白名单后为 0；幂等重解析对只计数不判红）。
+  assert.equal(registrySummary.failClosedEdges, 0, `r8 fail-closed 判据在**未改动**仓库上不得命中（否则是把合法解析判红）：实际 ${registrySummary.failClosedEdges} 条`);
   assert.equal(registrySummary.positiveControl, true, '正控制必须成立：登记集合里必须能看到无害模块 `node:os`（否则是"登记器恒空 ⇒ 恒绿"的退化）');
-  console.log(`PASS r7 主判据·运行期装载登记：resolve=${registrySummary.resolveCount} load=${registrySummary.loadCount}；从受护文件可达的 OCR 域装载边=${registrySummary.ocrReachableEdges}（冻结基线命中 ${registrySummary.baselineEdges} 条；基线之外 ${newEdgeCount} 条）；正控制 \`node:os\` 已在登记集合中`);
+  console.log(`PASS r7 主判据·运行期装载登记：resolve=${registrySummary.resolveCount} load=${registrySummary.loadCount}；从受护文件可达的 OCR 域装载边=${registrySummary.ocrReachableEdges}（冻结基线命中 ${registrySummary.baselineEdges} 条；基线之外 ${newEdgeCount} 条）；r8 fail-closed 命中 ${registrySummary.failClosedEdges} 条（幂等重解析对 ${registrySummary.repeatResolvePairs} 对，只计数不判红）；正控制 \`node:os\` 已在登记集合中`);
   console.log(`NOTE r7 主判据口径（如实声明，不得读成"放行"）：断言的是「**没有任何 OCR 域装载边落在基线之外**」，而非派单字面的「登记集合内无任何 OCR 域条目」—— 因为**未改动**的仓库运行期本来就有 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法 OCR 域边（\`app.ts → routes/ocr.ts\` 是合法装配；\`routes/ocr.ts\` 静态装载 \`../ocr/{service,store,provider,media,reference}.ts\`，其中 \`service.ts\`/\`store.ts\`/\`reference.ts\` 又各自装载 \`./state.ts\`）。基线是"当前事实的冻结记录"，**任何新边（含以任意间接形态装载既有 OCR 域模块）一律判红**（fail-closed）；合法装配变化时本判据会判红并要求显式更新基线表（有意如此，宁可要求人复核）。`);
+  console.log('NOTE r8 fail-closed（阻断 B 返修，如实声明口径与边界）：被审版本（r7c）以 `if (target === null || !isOcrDomainTarget(target)) continue;` **静默丢弃**一切非仓内 `file:` 的解析结果 —— 复审实测 `services/api/src/config.ts` 在装载期抢先注册第二个 `registerHooks`，把 `app.ts → \'./routes/ocr.ts\'` 改写成 `data:text/javascript;base64,…` ⇒ 该边被丢弃 ⇒ 护栏 exit 0 且 `PASS 14 组` 全绿（**假绿**）。r8 起两条 fail-closed 判据：①**「`resolve` 结果不是仓内 `file:` URL、且 `specifier` 不是内建模块」⇒ 判红**（派单口径：`target === null` 的边一律计入 findings；内建模块经 `isBuiltin` 走**显式白名单**——未改动仓库运行期实测有 82 条 `node:` 解析结果，按字面一律判红会把未改动仓库判红。**不附加**"parentUrl 从受护文件可达"前置条件：附加可达性会给「把 `app.ts` 自身的解析改写成 `data:`」留口子 —— 那时受护引用图整体不可达、可达边集合塌缩为 0，而本判据按"基线之外"计数 ⇒ 塌缩反而**全绿**）；②**「同一 `(parentUrl, specifier)` 解析出**不同** URL」⇒ 判红**（计数口径必须按 (parentUrl, specifier) **对**：实测未改动仓库单个 parentUrl 最多 78 条 resolve ⇒ 按纯 parentUrl 会大量误报；判红条件还必须限定"URL 不一致"—— 字面口径"同一对出现 ≥2 次即判红"在**未改动**仓库上实测误报 7 条（`node_modules/ajv/**`、`ajv-formats/**` 在 Fastify schema 编译阶段**幂等重解析**，前后 URL 完全相同），会使收尾负控制 `failClosedEdges === 0` 不可满足 ⇒ URL 相同的重解析只计数、写进汇总行的"幂等重解析对"）。两条判词都含 `parentUrl` / `specifier` / `loader` 三要素。边界（如实声明）：本判据覆盖的是**经本进程模块装载器**发生的改写；`node --import` 抢跑的第二个 `registerHooks` 若**不改写 URL**（例如只在 `load` 钩子里替换源码）不在本判据范围内（属"不经解析改写"的另一类通道，未取得见证）。');
   console.log('NOTE r7 主判据覆盖边界（如实声明）：登记的是**本脚本自身运行期**真实发生的解析/装载（CJS `require` 与 ESM `import` 两条路径都被拦）；**不覆盖**：①不经模块装载器的路径（直接读文件/`vm`/把源码内联进 `eval`）；②在本进程之外发生的装载（另起进程/子进程）；③**从不装载**的形状（实测 `createRequire.bind(null, url)(spec)` 只返回 require 函数、不装载任何模块 ⇒ 登记器如实没有该边，这不是盲区而是运行期事实）；④`undefined`/`null` 之类的"假 require"（运行期先抛 `ReferenceError`/`TypeError`，到不了装载器）。');
 
   console.log(`PASS ${results.length} 组：经真实装配的 app（buildApp）+ 本机回环 HTTP；合成身份/替身提供者/内存 store；未联网、未连库、未调真实供应商`);
