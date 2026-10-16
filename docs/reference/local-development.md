@@ -23,7 +23,7 @@
 | Node | 24.16.0；`package.json` 的 engines 为 `>=24.16.0 <25` |
 | npm | >= 11.13.0 |
 | 系统 | Windows；脚本是 Windows PowerShell 5.1 语法 |
-| PostgreSQL | 自备 PostgreSQL 17 的 `bin` 目录，必须**同时**含 `initdb.exe` 与 `pg_ctl.exe` |
+| PostgreSQL | 自备 PostgreSQL 17 的 `bin` 目录，必须**同时**含 `initdb.exe` 与 `pg_ctl.exe`；仓库不内置、也不通过 npm 提供，用官方 Windows 安装包的安装目录或解压版都行，不必加进 PATH |
 | 权限 | 不需要管理员权限、不需要预先注册 PG 服务、不需要全局 `pg_ctl` 在 PATH |
 | 目录 | 每人一套自己的检出与自己的 `.local/local-dev` |
 
@@ -96,7 +96,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 
 - 导入 `.local/wechat-local`；诊断替身默认 `http://127.0.0.1:4318`，`apiBaseUrl` 是**客户端拼接基址**（客户端自行拼 `/auth/…`、`/me/profile`），所以接真实本地 API 时必须写成 `http://127.0.0.1:<api端口>/api/v1`，否则登录会打到 `/auth/wechat` 而 404。
 - 输出已存在时拒绝覆盖；终端 Ctrl+C 停。`release` 生成关闭网络的安全准备副本，不能直接用于比赛。
-- 本页已改为以现役 `tools/local-dev/*` 为主路径；旧替身**不是**“本地开发”的等价替代。仓库其它位置（`README.md`、`docs/development-guide.md`、`docs/archive/`、`docs/ui-demo/`、`.github/workflows/local-wechat.yml`）仍按旧替身叙述，未在本页范围内同步。
+- 本页已改为以现役 `tools/local-dev/*` 为主路径；旧替身**不是**“本地开发”的等价替代。工具／手机与历史兼容记录见[原微信调试记录](../archive/development-2026-10-10/docs/local-wechat-debug.md)；仓库其它位置（`README.md`、`docs/development-guide.md`、`docs/archive/`、`docs/ui-demo/`、`.github/workflows/local-wechat.yml`）仍按旧替身叙述，未在本页范围内同步。
 
 ## 已知不一致与缺陷
 
