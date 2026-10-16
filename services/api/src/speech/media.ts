@@ -5,10 +5,14 @@
  * 必须在受理前确认该私有媒体（**普通话录音**）属于调用者且版本一致，否则不得创建任务。
  *
  * 现状（如实记录，见汇报与 PR 正文）：
- * - `packages/media/**` 是纯模块，**媒体 HTTP 路由尚未接线**；契约把上传句柄 URL 限定为 `^https://`，
- *   本地 loopback 无法提供该 https 数据面，因此**本片不接线媒体 HTTP 路由**（属既有媒体任务的
- *   剩余接线工作，避免越界）。
- * - 后果：`real` 模式下没有可核验的真实媒体来源 → **fail-closed**（一律 `OBJECT_UNAVAILABLE`）；
+ * - 媒体 **HTTP 路由已注册、可调用**（`services/api/src` 下 `routes` 目录的 `media.ts`，导出
+ *   `registerMediaRoutes`；装配点 `services/api/src/app.ts` 的 `buildApp`；7 条 operation 逐个对齐契约）；
+ *   **未接线的是真实对象存储适配与句柄消费网关**（`services/api/src/media/object-store.ts` 的
+ *   `createUnwiredObjectStore`；真实开启需 `app.ts` 的 `mediaObjectStore` ＋
+ *   `approveRealMediaWiring()` 显式批准，装配路径不自行铸造、不从 env 派生）
+ *   ⇒ `real` 模式下媒体域 7 条路由整域 503 `PROVIDER_UNAVAILABLE`（fail-closed）。
+ * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担
+ *   ⇒ `POST /speech/transcriptions` 在受理前一律如实 `OBJECT_UNAVAILABLE`(409)；
  *   `stub` / `preset_demo` 模式使用**明确标注的替身媒体引用**（合成，非真实上传、不读取任何录音字节）。
  * - 替身端口**不校验归属**（没有媒体存储可供查询），因此它只在 `stub` / `preset_demo` 下接线，
  *   绝不用于生产判定；生产路径一律走未接线端口。
@@ -52,8 +56,10 @@ export function createSubstituteMediaPort(): SpeechMediaPort {
 }
 
 /**
- * 未接线端口：媒体 HTTP 层缺席时使用（real 模式）。一律 `OBJECT_UNAVAILABLE`，
+ * 未接线端口：本域**未接真实对象存储**时使用（real 模式）。一律 `OBJECT_UNAVAILABLE`，
  * 不泄露媒体是否存在，也不以「本地兜底」方式放行。
+ * ⚠ 默认 `reason` 文案含「媒体 HTTP 层尚未接线」，属**运行期字符串**（会进 `note`），
+ * 本片按零行为改动**原样保留**；媒体 HTTP 路由其实已注册，见文件头与交接未取得项。
  */
 export function createUnwiredMediaPort(reason = '媒体 HTTP 层尚未接线，无法核验私有录音'): SpeechMediaPort {
   return {

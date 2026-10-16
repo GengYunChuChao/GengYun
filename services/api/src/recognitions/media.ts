@@ -5,11 +5,17 @@
  * 在受理前确认该私有媒体**属于调用者**且版本一致，否则不得创建任务。
  *
  * 现状（如实记录，见证据文档与 PR 正文）：
- * - `packages/media/**` 是纯模块，**媒体 HTTP 路由尚未接线**（该模块 README §“services/api 挂载示例”
- *   明确标注「媒体 HTTP 路由尚未接线」），且契约把上传句柄 URL 限定为 `^https://`，本地 loopback
- *   无法提供该 https 数据面，因此**本片不接线媒体 HTTP 路由**（属 GY-I06 的剩余接线工作，避免越界）。
- * - 后果：`real` 模式下没有可核验的真实媒体来源 → **fail-closed**（一律 `OBJECT_UNAVAILABLE`），
- *   绝不静默放过；`stub` / `preset_demo` 模式使用**明确标注的替身媒体引用**（合成，非真实上传）。
+ * - 媒体 **HTTP 路由已注册、可调用**（`services/api/src/routes/media.ts` 的 `registerMediaRoutes`，
+ *   装配点 `services/api/src/app.ts` 的 `buildApp`；7 条 operation 逐个对齐契约）。原稿曾据
+ *   `packages/media/README.md` §「services/api 挂载示例」称「媒体 HTTP 路由尚未接线」——该 README
+ *   **现已改为**「媒体 HTTP 路由已接线；**未接线的是句柄消费网关**」：仍未接线的是**真实对象存储适配**
+ *   （`services/api/src/media/object-store.ts` 的 `createUnwiredObjectStore`；真实开启需 `app.ts` 的
+ *   `mediaObjectStore` ＋ `approveRealMediaWiring()` 显式批准）与**句柄消费网关**（部署期数据面；契约内
+ *   没有返回 owner 私有媒体字节的 operation）⇒ `real` 下媒体域 7 条路由整域 503 `PROVIDER_UNAVAILABLE`
+ *   （fail-closed）。
+ * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担
+ *   ⇒ `POST /recognitions` 在受理前一律如实 `OBJECT_UNAVAILABLE`(409)，绝不静默放过；
+ *   `stub` / `preset_demo` 模式使用**明确标注的替身媒体引用**（合成，非真实上传）。
  */
 
 export type MediaResolutionCode = 'NOT_FOUND' | 'REVISION_CONFLICT' | 'OBJECT_UNAVAILABLE';
@@ -46,8 +52,10 @@ export function createSubstituteMediaPort(): RecognitionMediaPort {
 }
 
 /**
- * 未接线端口：媒体 HTTP 层缺席时使用（real 模式）。一律 `OBJECT_UNAVAILABLE`，
+ * 未接线端口：本域**未接真实对象存储**时使用（real 模式）。一律 `OBJECT_UNAVAILABLE`，
  * 不泄露媒体是否存在，也不以「本地兜底」方式放行。
+ * ⚠ 默认 `reason` 文案含「媒体 HTTP 层尚未接线」，属**运行期字符串**（会进 `note`），
+ * 本片按零行为改动**原样保留**；媒体 HTTP 路由其实已注册，见文件头与交接未取得项。
  */
 export function createUnwiredMediaPort(reason = '媒体 HTTP 层尚未接线，无法核验私有媒体'): RecognitionMediaPort {
   return {

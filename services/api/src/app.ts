@@ -1,11 +1,20 @@
 /**
  * Fastify 应用装配。
  *
- * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
- * /api/v1 下的认证与后台认证、授权列表／授予及受限撤回路由、契约错误封套、404、
- * 个人档案与资料查询，以及 GY-I09 的识别任务闭路（/recognitions/**、/jobs/{id}[/cancel]）。
- * 其余业务路由（问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
- * 不伪造成功。
+ * 已装配（每个域的**唯一注册点**都在 `buildApp` 尾部，按 `register*` 调用逐条可核；路径均带 `API_PREFIX`）：
+ * 运营 `/health`；游客主页科普预览 `/public/home`；认证 `/auth/**` 与后台认证 `/admin/auth/**`；
+ * 授权 `/me/consents**`；个人档案与目录查询 `/me/profile`、`/catalog/{kind}`；
+ * 资料查询 `/knowledge/**`、`/herbicides/**`（GY-I07）；识别 `/recognitions/**`（GY-I09）；
+ * 标签 OCR `/ocr/**`（GY-I10）；转写 `/speech/transcriptions/**`（GY-I11）；合成 `/speech/synthesis`（GY-I13）；
+ * 跨 kind 作业读／取消 `/jobs/{id}`、`/jobs/{id}/cancel`（GY-I01）；媒体 `/media/**`、
+ * `/community/media-access`、`/community/media/{grant_id}/content`（GY-I06）；消息 `/messages/**`；
+ * 收藏／历史 `/favorites/**`、`/history/**`（GY-I16）；注销 `/me/account/deletion`、
+ * `/account/deletions/{id}`（GY-I19）；社区 `/posts/**`、`/comments/**`、`/reports/**`（GY-I15）；
+ * 文字问答 `/conversations/**`（GY-I12）；后台 `/admin/**`。
+ *
+ * **未注册的路径没有兜底实现**：一律由 `setNotFoundHandler` 返回契约 `NOT_FOUND`（`未实现的路径：…`），
+ * 不伪造成功。`real` 模式下缺少持久依赖或未获显式批准的域由其服务为 `null`／未接线端口承担 ⇒
+ * 整域 503 `PROVIDER_UNAVAILABLE`（既不是 404，也不降级成内存替身）。
  */
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
@@ -303,9 +312,11 @@ export interface BuildAppOptions {
   synthesisContent?: CheckedContentPort;
   /** 合成任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   synthesisJobDeadlineMs?: number;
-  // GY-I18 后台域注入项。**全部可选**：不传时与接线前**逐字节同行为** ——
-  // 内容/运营存储为空种子，`AdminJobPort` 与社区帖子端口**未接线**，
-  // 因此作业读/取消与隐藏帖子按服务层 fail-closed 返回 503（不返回空页、不伪造状态）。
+  // GY-I18 后台域注入项。**全部可选**：不传时自建空种子内存 store ——
+  // 内容/运营存储为空种子；`AdminJobPort` **仍缺省未接线** ⇒ 作业读/取消按服务层 fail-closed
+  // 返回 503（不返回空页、不伪造状态）；**社区帖子端口已接线**（下方 `communityPostPortForAdmin`，
+  // 与社区服务**同一份** store）⇒ `hidePost` 按社区 CAS 语义如实作答（未知帖子 404、成功 200、
+  // 已删除/未发布 409），只有显式传入未接线端口时才是 503。
   /** 测试注入：后台资料存储（默认新建内存 store）。 */
   adminInjection?: {
     contentStore?: AdminContentServiceOptions['store'];
@@ -1283,8 +1294,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
   registerProfileRoutes(app, config, pool, guards);
-  // 本片起：以下五个域的输出面受**全局开关**控制（受控面清单见 `admin/ops/flag-gate.ts`），
-  // 因此传入 `gatedGuards`（= 原守卫 + 开关门；先鉴权、后判开关）。守卫链语义与错误码次序不变。
+  // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
+  // `admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`：除草剂列表／详情、社区 `createPost`／
+  // `createComment`、识别、OCR、转写、合成），因此传入 `gatedGuards`（= 原守卫 + 开关门；
+  // 先鉴权、后判开关）。守卫链语义与错误码次序不变。
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
   // GY-I07 第二片（跨线 **#7 公开读 × #18 引用失效**）：把**后台资料来源存储**里既有的
@@ -1307,7 +1320,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
   registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
-  // 各域以作业源形式接入（识别域 + 转写域 + 审核域 + 合成域 + OCR 域，共 5 个）；未接线的 kind ⇒ 与「作业不存在」同形 404。
+  // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
+  // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
   // GY-I27 第二片：识别域取消成功后写外发取消墓碑（只增不减 ⇒ 晚到回调不可复活）。
   registerJobRoutes(app, config, guards, createJobRegistry([

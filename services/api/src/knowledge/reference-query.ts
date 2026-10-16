@@ -2,7 +2,9 @@
  * GY-I07 · 科普／除草剂查询的**服务端装配**（HTTP 路由的领域层）。
  *
  * 职责边界（不改契约、不改他人已合并实现）：
- *   1. `/herbicides`、`/herbicides/{id}`：挂载 issue #7 中**尚未装配**的两条契约 operation，
+ *   1. `/herbicides`、`/herbicides/{id}`：**已装配、可调用**的两条契约 operation（HTTP 注册点在
+ *      `services/api/src/routes/knowledge.ts` 的 `registerKnowledgeRoutes`，装配点在
+ *      `services/api/src/app.ts` 的 `buildApp`；本文件是它们的领域层），
  *      领域逻辑与数据**复用已合入的 `packages/reference` 适配层**
  *      （`packages/knowledge/herbicides/records-2026.json`：真实公告附表记录，
  *      制剂身份 = 登记号 + 剂型/成分含量哈希，**不按模糊药名合并不同含量剂型**）。

@@ -1,5 +1,7 @@
 /**
- * GY-I13 普通话 TTS 合成 · HTTP 路由（阶段 2a：**只新增本文件，不注册到 app.ts**）。
+ * GY-I13 普通话 TTS 合成 · HTTP 路由（**已注册**：`services/api/src/app.ts` 的 `buildApp` 调用
+ * `registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate)`，本函数是
+ * `/speech/synthesis` 的唯一注册点，并受全局开关门控 —— 受控面清单见 `admin/ops/flag-gate.ts`）。
  *
  * 契约（`packages/contracts/openapi.json` 原文）：
  *   POST /speech/synthesis   operationId `createSynthesis`   → 202 `JobEnvelope`
@@ -9,10 +11,12 @@
  *   202 响应头：`ETag`（资源 revision 强 ETag）、`Cache-Control`（私有/授权访问 no-store）
  *   `x-version-required: false` ⇒ 本端点**没有** `If-Match` 参数
  *
- * **读面缺口（如实登记，未自造端点）**：该域契约里**只有 POST**，没有 TTS 专属的读/删端点；
- * 读 JobState 的唯一接口是**平台级** `GET /jobs/{id}`（`getJob`，`JobResult.oneOf` 含
- * `SynthesisResult`），它属 GY-I01/#9 且**当前未装配**（`services/api/src/routes/` 下无 jobs 路由）。
- * 因此本轮经 HTTP **无法**读取任务终态——这属预期缺口，本文件**不新增** GET/DELETE。
+ * **读面**：读 JobState 的唯一接口是**平台级** `GET /jobs/{id}`（`getJob`，`JobResult.oneOf` 含
+ * `SynthesisResult`），它属 GY-I01/#9，**已装配**：注册点 `services/api/src/jobs/routes.ts` 的
+ * `registerJobRoutes`，装配点 `services/api/src/app.ts` 的 `buildApp`
+ * （`createSynthesisJobSource(synthesisService)`），因此 `kind=synthesis` 的终态**可以**经 HTTP 读到；
+ * `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 `PROVIDER_UNAVAILABLE`
+ * (`retryable`) 如实拒绝，**不伪造** `cancelled`。该域契约里**只有 POST**，故本文件**不新增** GET/DELETE 端点。
  *
  * **默认关闭必须保持**：应用装配路径**永不注入**真实适配器端口。本文件只调用
  * `createTtsProvider({ executionMode })`；`executionMode:'real'` 时它返回 `createRealTtsProvider`
