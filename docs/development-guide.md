@@ -1,6 +1,6 @@
 # 开发指南
 
-面向接手项目的新开发者。更新：2026-10-10；人工核对基线 main `7ec4c85`（2026-10-10，代码核对当时 main，Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)）；该基线上一次记载的领先数为 147，本次现场实测为：`git rev-list --count 7ec4c85..upstream/main` ⇒ **152** 个提交（2026-10-16 实测，当时 `upstream/main` = `bdd12bd2d1578bcfcf285f1234725c800b339c61`，2026-10-16，[#220](https://github.com/GengYunChuChao/GengYun/pull/220)）；该读数只是当时读数，`upstream/main` 一前进即失效，须按上述命令重测；状态值未逐条重核。
+面向接手项目的新开发者。更新：2026-10-10；人工核对基线 main `7ec4c85`（2026-10-10，代码核对当时 main，Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)）；该基线上一次记载的领先数为 147，并回新 main 前实测为 **152** 个提交（当时 `upstream/main` = `bdd12bd2d1578bcfcf285f1234725c800b339c61`，2026-10-16，[#220](https://github.com/GengYunChuChao/GengYun/pull/220)）；并回新 main 后现测为：`git rev-list --count 7ec4c85..upstream/main` ⇒ **159** 个提交（2026-10-16 实测，当时 `upstream/main` = `3bc745184c9a7c168ef01337b4db1297ea0cc72e`，[#225](https://github.com/GengYunChuChao/GengYun/pull/225)）；这些读数都只是当时读数，`upstream/main` 一前进即失效，须按上述命令重测；状态值未逐条重核。
 “已合组件”不等于整项功能验收；最新状态见[进度](development-progress.md)。
 
 ## 1 项目与范围
