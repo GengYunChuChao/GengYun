@@ -32,7 +32,7 @@
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:529-573；tests/unit/recognitions-api.test.mjs::状态 7 cancelled；services/api/src/jobs/routes.ts:64-80；services/api/src/jobs/registry.ts:281-307；services/api/src/routes/admin.ts:316-324 | 共享Job识别取消及转写读取已合（#106/#125）；合成读取已合（#152）、OCR 读取已合（#183）⇒ 共享作业面现按 kind 分派 recognition/transcription/moderation/synthesis/ocr 五个读面；取消能力仍只有识别域，转写/合成/OCR 取消缺能力，503 PROVIDER_UNAVAILABLE，不伪造cancelled；问答（answer）读取与取消均未接共享作业源。后台cancelAdminJob已装配（#121），真实任务端口/持久租约/外发撤销及跨域生命周期仍待验收 |
 | 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:57-60；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:410-427；services/api/src/ocr/service.ts:52-58；services/api/src/speech/service.ts:590-608；services/api/src/tts/service.ts:549-565；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果；问答 HTTP 阶段仍缺，持久任务的 15 秒租约/5 秒心跳与重启恢复尚未实现；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
-## 3 已装配操作（99 条）
+## 3 已装配操作（101 条）
 
 装配只表示存在产品路由；请同时读状态和限制。
 
@@ -52,6 +52,8 @@
 | `listConsents` | GET /me/consents | `partial` | services/api/src/routes/consents.ts:40-49；services/api/src/privacy/consent-pg.ts:109-120；services/api/src/privacy/consent-pagination.ts:24-65；tests/unit/consent-pagination-http.test.mjs::授权分页走实际产品 HTTP 与受限 SQL | 授权列表签名、主体/auth_epoch/水位绑定、稳定排序和15分钟固定期限已合（#109）；真实授权政策/接收方配置与用途链路仍须验收，grant依赖运维导入consent_policies，不把列表合成记录证据当真实授权全链完成 |
 | `grantConsent` | POST /me/consents | `partial` | services/api/src/routes/consents.ts:24-39；services/api/src/privacy/grant-pg.ts:26-97；tests/integration/consent-grant-pg.mjs::normal production app rejects synthetic registry | 该 purpose 的已核验可用政策行须先落入 consent_policies，否则 403 CONSENT_REQUIRED；合成政策注入/组件 PG 测试不等于真实授权来源和全消费者验收 |
 | `withdrawConsent` | DELETE /me/consents/{purpose} | `partial` | services/api/src/routes/consents.ts:50-64；services/api/src/privacy/consent-pg.ts:135-179 | PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线 |
+| `requestAccountDeletion` | POST /me/account/deletion | `partial` | services/api/src/routes/account-deletion.ts:128-181；services/api/src/privacy/account-deletion.ts:176-205；services/api/src/app.ts:1046-1051；services/api/src/app.ts:1157-1165；tests/integration/account-deletion-http.mjs::[0] 契约两个 operation 的**成功形状**；tests/integration/account-deletion-http.mjs::[3] **级联真的删了**；tests/unit/account-deletion-receipts.test.mjs::GY-I19：受理即驱动既有级联（在线真删、只删绑定主体），备份未接线如实 pending | GY-I19 本片只交付**受理 HTTP 面**：202 走既有删除台账（services/api/src/privacy/user-data-deletion.ts 的 favorites/history 处理器 + packages/privacy/deletion-modules.mjs 的模块闭集与受理协议），幂等键必填、24h 台账、同键异体 409 IDEMPOTENCY_CONFLICT、同键同体重新签发回执而不回放旧 bearer。**未取得**：docs/architecture/state-contract.md:105 要求的受理「同一事务」撤全部会话/角色、auth_epoch 递增、冻结外发与在途回写**未实现**（本片不用「先撤会话再受理」伪造该语义）；真实删除执行仍在**进程内**注册表（无注销请求持久表、本片不新建迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE，不新建第二套存储；备份副本清除未接线 ⇒ 各模块 backup_state 停留 pending，完成判定（completionStatus）因此为 blocked，不谎称 completed；第三方删除证据、7/30 日到期的真实执行与恢复清单重放未验收 |
+| `getDeletionReceipt` | GET /account/deletions/{id} | `partial` | services/api/src/routes/account-deletion.ts:183-205；services/api/src/privacy/account-deletion.ts:96-141；services/api/src/privacy/account-deletion.ts:218-275；services/api/src/app.ts:1157-1165；tests/integration/account-deletion-http.mjs::[4] **回执 bearer 不是登录会话**；tests/integration/account-deletion-http.mjs::[5] **失败与未装配可区分**；tests/unit/account-deletion-receipts.test.mjs::GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换发即作废旧摘要 | GY-I19 本片交付**专用 deletionReceipt bearer 回执查询**（契约 securitySchemes.deletionReceipt 逐字「单注销请求最小进度查询，非登录会话」，故该路由不挂用户会话守卫）：35 日固定期限、台账只存 sha256 摘要、换发即作废旧 bearer、未知/过期/跨请求一律 401、请求不可达 404 NOT_FOUND（不是 200 空壳）。**未取得**：回执只投影**进程内**台账，无持久化 ⇒ real 模式整域 503 PROVIDER_UNAVAILABLE；docs/architecture/state-contract.md:107「completed 必须所有 module_handler 和第三方在线/备份证据均完成」当前只对已登记模块（favorites/history）成立，备份与第三方证据缺失 ⇒ 实际停在 blocked，不把时钟到期当完成；35 日之后的行为与逾期展示未做真人/真实备份恢复验证 |
 | `createUpload` | POST /media/uploads | `partial` | services/api/src/routes/media.ts:157-165；services/api/src/media/service.ts:1-40；tests/unit/media-http-upload.test.mjs::GY-I06 HTTP 上传面 | 媒体域 7 条路由已装配（services/api/src/routes/media.ts 单一注册点，注册进 app.ts）；对象存储按执行模式解析 —— stub/preset_demo 为**明确标注的替身**（句柄域 substitute.invalid），real 未接真实存储时整域 503 PROVIDER_UNAVAILABLE（fail-closed）；真实对象存储/COS、上传访问网关与真实微信登录态未接线、未验收 |
 | `completeUpload` | POST /media/uploads/{id}/complete | `partial` | services/api/src/routes/media.ts:175-183；services/api/src/media/service.ts:1-40；tests/unit/media-http-upload.test.mjs::GY-I06 HTTP 上传面 | 完成接口按契约只收 {sha256,bytes}，服务端从对象存储取回字节后核验魔数/hash/字节数/音频真实时长并做 EXIF 结构性清除；失败与取消即回收对象（含 24h 过期回收）；真实对象存储未接线，real 一律 fail-closed；真实容器解码库、实库事务与网关直传数据面未验收 |
 | `getMedia` | GET /media/{id} | `partial` | services/api/src/routes/media.ts:199-207；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 仅 owner 可读私有元数据，非本人与不存在**逐字节同形** 404；内存记录 store（本片无持久化实现）；冻结契约（85 条路径 / 112 条 operation）内没有满足「owner 私有媒体字节读取」语义的那一条 operation（复现：GET /api/v1/media/{id}/content ⇒ 404「未实现的路径」）；owner 短效句柄 URL 由部署期访问网关承担，未接线未验收 |
@@ -138,7 +140,7 @@
 | `grantCommunityMediaAccess` | POST /community/media-access | `partial` | services/api/src/routes/media.ts:257-265；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入 |
 | `readCommunityMediaContent` | GET /community/media/{grant_id}/content | `partial` | services/api/src/routes/media.ts:276-284；services/api/src/media/service.ts:1-40；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面；tests/unit/media-real-mode-fail-closed.test.mjs::GY-I06 real 模式 | 取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收 |
 
-## 4 未装配操作（13 条）
+## 4 未装配操作（11 条）
 
 以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。
 
@@ -147,8 +149,6 @@
 | `listSpecies` | GET /catalog/species | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 | `getPrivacyPolicy` | GET /me/privacy-policy | `planned` | — | 未装配 |
 | `listExports` | GET /me/exports | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
-| `requestAccountDeletion` | POST /me/account/deletion | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
-| `getDeletionReceipt` | GET /account/deletions/{id} | `planned` | — | 导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册 |
 | `verifyRegistration` | POST /registrations/verify | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 | `createConversation` | POST /conversations | `planned` | — | 此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS |
 | `listConversations` | GET /conversations | `planned` | — | 此文字问答 HTTP 操作未装配；检索/资料守卫与供应商/评估组件不能替代问答任务闭环；按 GY-I12 推进，不等待 ASR/TTS |
@@ -162,7 +162,7 @@
 
 | 范围 | implemented | partial | planned | 合计 |
 | --- | --- | --- | --- | --- |
-| 契约操作 | 13 | 86 | 13 | 112 |
+| 契约操作 | 13 | 88 | 11 | 112 |
 | 横切维度 | 2 | 6 | 0 | 8 |
 <!-- contract-status-tables:end -->
 

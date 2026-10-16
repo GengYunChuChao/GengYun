@@ -110,6 +110,7 @@ export function registerAccountDeletionRoutes(
   guards: AuthGuards,
   deps: AccountDeletionRoutesDeps,
 ): void {
+  /** 幂等键域：与 `app.post` 声明处**同一路径字面量**（声明处必须是字面量，见下）。 */
   const routePath = `${API_PREFIX}/me/account/deletion`;
 
   /** 未装配 ⇒ 503（fail-closed）。**先判**，保证未装配时零状态变更。 */
@@ -122,8 +123,10 @@ export function registerAccountDeletionRoutes(
     return { service: deps.service, receipts: deps.receipts, deletion: deps.deletion };
   }
 
+  // 路径写成**字面量**：仓库的静态装配扫描（`tools/contract-status-core.mjs`）按
+  // `app.post('<字面量>'` 识别装配（同目录既有路由皆如此），写成变量会让台账与一致性用例判为「未装配」。
   app.post(
-    routePath,
+    `${API_PREFIX}/me/account/deletion`,
     {
       preHandler: guards.requireUser,
       schema: { querystring: emptyQuery, body: deleteInput },
