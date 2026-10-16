@@ -47,7 +47,15 @@ function fixture() {
     const gateModule = { exports: {} };
     vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => b.auth });
     const profileModule = { exports: {} };
-    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/profile-api.js'), 'utf8'), { module: profileModule, require: (id) => id.endsWith('/auth') ? b.auth : id.endsWith('/runtime') ? requireHere(join(directory, 'config/runtime.js')) : { localEnabled: () => false } });
+    // profile-api 的依赖按**完整说明符**登记（逐字取自 miniprogram/utils/profile-api.js 的 require），
+    // 不做后缀匹配：改前 `id.endsWith('/auth')`／`id.endsWith('/runtime')` 会把 `require('./auth.js')`、
+    // `require('../../config/runtime')` 一类静默喂成已登记替身或最小壳（`{ localEnabled: () => false }`）。
+    // 未登记（将来新增依赖）⇒ 显式失败并带依赖名。
+    const profileApiDependencies = new Map([
+      ['./auth', b.auth],
+      ['../config/runtime', requireHere(join(directory, 'config/runtime.js'))],
+    ]);
+    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/profile-api.js'), 'utf8'), { module: profileModule, require: (id) => { if (!profileApiDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return profileApiDependencies.get(id); } });
     const profileApi = profileModule.exports;
     // 合成档案替身：只接线页面用到的 binding/current/read。身份绑定跟随 fixture 里的
     // 真实 auth 当前会话（token+epoch），身份变化立即失效，不在生产代码打补丁。
@@ -59,9 +67,35 @@ function fixture() {
         return Promise.resolve(Object.assign({}, PROFILE));
       }
     };
+    // 页面依赖按**完整说明符**登记（逐字取自被加载页面源码里的 require），不做后缀/兜底匹配：
+    // 改前 `id.endsWith('-api')`／`id.endsWith('/auth')` 一类会把 `require('../../data/knowledge-api')`、
+    // `require('../../utils/auth/')` 一类静默喂成替身，末段 blanket 更会把**任何**新增依赖静默喂成
+    // `{ localEnabled: () => false }` —— 看着在测真页面，其实测了替身。未登记 ⇒ 显式失败并带依赖名。
+    // 登记表随每次 b.page() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
+    const pageDependencies = new Map([
+      ['../../utils/font-scale', fontModule.exports],
+      ['../../utils/page-gate', gateModule.exports],
+      ['../../utils/profile-api', profile],
+      ['../../utils/reference', requireHere(join(root, 'miniprogram/utils/reference.js'))],
+      ['../../utils/auth', b.auth],
+      ['../../utils/navigation', b.nav],
+      // 业务客户端：本组用例只验「门禁放行」这一可见状态，登记为「永不落地」替身（**非真实模块**）。
+      ['../../utils/favorites-api', pendingApi],
+      ['../../utils/knowledge-api', pendingApi],
+      ['../../utils/history-api', pendingApi],
+      ['../../utils/messages-api', pendingApi],
+      ['../../utils/community-api', pendingApi],
+      ['../../utils/identify-api', pendingApi],
+      // 本组不涉及的数据/调试/地区目录：登记为**最小壳**（**非真实模块**，改前同样落到 blanket），
+      // 仅为保持既有语义逐字不变；新增依赖一律走上面的显式失败。
+      ['../../utils/location-region', { localEnabled: () => false }],
+      ['../../utils/debug', { localEnabled: () => false }],
+      ['../../data/crops', { localEnabled: () => false }],
+      ['../../data/regions', { localEnabled: () => false }],
+    ]);
     vm.runInNewContext(readFileSync(join(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
       Page: (value) => { def = value; }, wx, console,
-      require: (id) => id.endsWith('/font-scale') ? fontModule.exports : id.endsWith('/page-gate') ? gateModule.exports : id.endsWith('/profile-api') ? profile : id.endsWith('/reference') ? requireHere(join(root, 'miniprogram/utils/reference.js')) : id.endsWith('/auth') ? b.auth : id.endsWith('/navigation') ? b.nav : id.endsWith('-api') ? pendingApi : { localEnabled: () => false },
+      require: (id) => { if (!pageDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return pageDependencies.get(id); },
     });
     const page = { ...def, route: `pages/${name}/${name}`, options: {}, data: { ...def.data }, setData(value) { Object.assign(this.data, value); } };
     b.pages = [page]; return page;
