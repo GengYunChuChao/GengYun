@@ -62,7 +62,7 @@ function errorEnvelope(code, details = []) {
 /** 让用例自行应答（`respond` 返回该哨兵时替身不代替用例回答）；既有用例不返回它，行为不变。 */
 const DEFER = Symbol('defer');
 
-/** 载入真实适配层；`respond` 决定每个请求的替身响应。 */
+/** 载入真实适配层；`respond` 决定每个请求的替身响应。`options.source` 只给负控制注入改动过的源码。 */
 function load(respond, file = 'miniprogram/utils/community-api.js', options = {}) {
   const loggedIn = options.loggedIn !== false;
   const calls = [];
@@ -88,10 +88,19 @@ function load(respond, file = 'miniprogram/utils/community-api.js', options = {}
     showToast(options) { toasts.push(options); },
   };
   const box = { exports: {} };
-  vm.runInNewContext(readFileSync(resolve(root, file), 'utf8'), {
+  // 适配层的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
+  // `miniprogram/utils/community-api.js:11` `require('./auth')`、`:12` `require('../config/runtime')`。
+  // 改前是 `(id) => (id === './auth' ? auth : { apiBaseUrl: … })` 的 else 兜底 —— 适配层将来 require
+  // 任何第三个模块（例如某个新 `./util`），都会被**静默喂成 runtime 替身**，用例仍绿、看着在测真实适配层。
+  // 未登记 ⇒ 显式失败并带依赖名（沿用仓库既有口径）。已登记项取值与改前逐字相同。
+  const dependencies = new Map([
+    ['./auth', auth],
+    ['../config/runtime', { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }],
+  ]);
+  vm.runInNewContext(options.source ?? readFileSync(resolve(root, file), 'utf8'), {
     module: box,
     wx,
-    require: (id) => (id === './auth' ? auth : { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }),
+    require: (id) => { if (!dependencies.has(id)) throw Error('Unexpected page dependency ' + id); return dependencies.get(id) },
   });
   return { api: box.exports, calls, cleared, toasts, routes, wx };
 }
@@ -591,4 +600,27 @@ test('投稿页 B2-1 失败路径不回归：网络未能确认时同样不弹�
   assert.equal(page.data.submitting, false);
   assert.equal(page.data.errorText, h.api.message({ code: 'NETWORK_UNCERTAIN' }));
   assert.doesNotMatch(page.data.errorText, /已通过/);
+});
+// 负控制：登记的说明符是**完整且唯一**的。把真实适配层源码的两条 require 换成相近写法后重跑
+// **本站点自己的**装载器（`load()` 第三参 `options.source`）⇒ 必须显式失败并带原名，不得近似命中。
+// 改前是 `(id) => (id === './auth' ? auth : { apiBaseUrl: … })` 的 else 兜底：除 `'./auth'` 外的**任何**
+// 说明符（含适配层将来新增的第三个依赖）都会被**静默喂成 runtime 替身** —— "看着在测真实适配层，
+// 其实依赖拿了替身"，用例照样绿。
+test('适配层未登记说明符：显式失败并带名，零近似命中', () => {
+  const apiSource = readFileSync(resolve(root, 'miniprogram/utils/community-api.js'), 'utf8');
+  const respond = () => ({ statusCode: 200, data: envelope({ items: [], next_cursor: null }) });
+  const withSpec = (from, spec) => apiSource.replace(from, "require('" + spec + "')");
+  assert.ok(apiSource.includes("const auth = require('./auth')") && apiSource.includes("require('../config/runtime')"),
+    '真实源码的 require 说明符变了，登记表须同步');
+  assert.doesNotThrow(() => load(respond, undefined, { source: apiSource }), '已登记项必须照常装载');
+  for (const spec of ['./auth.js', './Auth', './utils/auth', './auth/', '../utils/auth']) {
+    assert.throws(() => load(respond, undefined, { source: withSpec("require('./auth')", spec) }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
+  for (const spec of ['../config/runtime.js', './runtime', '../../config/runtime']) {
+    assert.throws(() => load(respond, undefined, { source: withSpec("require('../config/runtime')", spec) }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
 });
