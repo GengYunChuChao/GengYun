@@ -7,7 +7,7 @@ import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { createKnowledgeService, type KnowledgeQuery } from '../knowledge/service.ts';
-import { createReferenceQueryService } from '../knowledge/reference-query.ts';
+import { createReferenceQueryService, type ReferenceQueryService } from '../knowledge/reference-query.ts';
 import { decidePublicVisibility, type ReferenceResolver } from '../knowledge/public-invalidation.ts';
 import { buildMeta } from './support.ts';
 
@@ -25,6 +25,21 @@ export interface KnowledgeRouteDeps {
    * 缺省 `undefined` ⇒ 详情面不判定（接线前行为）。
    */
   resolve?: ReferenceResolver;
+  /**
+   * GY-I12（#12，跨片复用）· **实例复用**覆盖项（纯追加）。
+   *
+   * 文字问答域的输出守卫要求「引用只能取自**本次检索集合**」，而检索集合必须与
+   * `/knowledge` 读面**同源**（同一份视图投影 + 同一模式门 + 同一
+   * `APP_KNOWLEDGE_UNVERIFIED_SEED` 开关 + 同一会话校验）。为保证两域拿到的是
+   * **字面同一个实例**（而不是两份参数相同的副本），装配层可在此传入自己建好的对象；
+   * 不传（`undefined`）⇒ 本函数按原样自建，**与接线前逐字节同行为**。
+   */
+  reference?: ReferenceQueryService;
+  /**
+   * 同上：查询面实例覆盖项。显式传 `null` 表示"本进程没有可用读面"（⇒ 503），
+   * 与"未传"（⇒ 按 `pool` 自建）语义不同，故判据用 `!== undefined` 而不是真值判断。
+   */
+  service?: ReturnType<typeof createKnowledgeService> | null;
 }
 
 /**
@@ -109,11 +124,15 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
   // 这与仓库既有口径一致（`v_queryable_seed_version` 仅供 stub 联调，消费方必须标注未核对）。
   // 逐条仍以 `SourceRef.review_status='unverified'` 如实呈现（见 knowledge/reference-query.ts）。
   const unverifiedSeedEnabled = /^(1|true)$/i.test(process.env['APP_KNOWLEDGE_UNVERIFIED_SEED'] ?? '');
-  const reference = createReferenceQueryService({
+  // GY-I12 复用缝：装配层已建好实例时**直接复用**（同一份视图投影/同一开关/同一个会话校验，
+  // 让文字问答的检索集合与 `/knowledge` 读面同源）；未传时按原样自建，行为不变。
+  const reference = deps.reference ?? createReferenceQueryService({
     includeUnverifiedSeed: config.executionMode !== 'real' && unverifiedSeedEnabled,
   });
-  const service = pool === null ? null : createKnowledgeService(pool,config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-    {extraRows: () => reference.seedRows()});
+  const service = deps.service !== undefined
+    ? deps.service
+    : (pool === null ? null : createKnowledgeService(pool,config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+      {extraRows: () => reference.seedRows()}));
   const text = {type:'string',minLength:1,maxLength:80};
   const filters = {crop_id:text,region_code:{type:'string',pattern:'^33[0-9]{4}$'},species_id:text,growth_stage:text,planting_method:text,use_scene:text};
   const pagination = {cursor:{type:'string',minLength:1,maxLength:2048},limit:{type:'integer',minimum:1,maximum:50,default:20}};

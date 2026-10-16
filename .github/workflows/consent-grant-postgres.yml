@@ -34,3 +34,14 @@ jobs:
       - run: node tests/integration/consent-grant-pg.mjs
         env:
           CONSENT_GRANT_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_consent_grant_test
+      # `egress-ledger-pg.mjs` 硬钉 `url.pathname === '/gengyun_egress_test'` 且**首行断言 public 表数 = 0**，
+      # 因此不能与上一个脚本共库；`services.postgres` 只按 `POSTGRES_DB` 建一个库（改它会打断既有
+      # `gengyun_consent_grant_test`），故在本 step 内先建**专用空库**再真跑该脚本（只回环 PG，无外发）。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_egress_test' && node tests/integration/egress-ledger-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_consent_grant_test
+          EGRESS_LEDGER_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_egress_test
