@@ -18,6 +18,9 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8');
 
 const M0001 = read('services/api/db/migrations/0001_initial_schema.sql');
 const M0002 = read('services/api/db/migrations/0002_knowledge_catalog.sql');
+const M0005 = read('services/api/db/migrations/0005_catalog_read_views.sql');
+const M0010 = read('services/api/db/migrations/0010_knowledge_read_views.sql');
+const M0012 = read('services/api/db/migrations/0012_knowledge_created_at.sql');
 const DOWN0002 = read('services/api/db/migrations/rollback/0002_knowledge_catalog.down.sql');
 const SEED_REF = read('db/seeds/seed_reference.sql');
 const SEED_HB = read('db/seeds/seed_herbicides_verified.sql');
@@ -30,10 +33,17 @@ async function count(db, table) {
   return r.rows[0].c;
 }
 
-async function freshDb() {
+async function freshDb(options = {}) {
   const db = new PGlite();
   await db.exec(M0001);
   await db.exec(M0002);
+  if (options.readProjections === true) {
+    // 浙江种子现在显式写 created_at（由 0012 引入），而 created_at 只在完整迁移阶梯里
+    // 存在（0012 的投影一节依赖 0005/0010）。这里按真实顺序加载真实迁移文件，不手搓列定义。
+    await db.exec(M0005);
+    await db.exec(M0010);
+    await db.exec(M0012);
+  }
   return db;
 }
 
@@ -146,7 +156,7 @@ test('0002 down 可执行：删除 0002 对象，保留 0001 对象', async () =
 test('浙江首批资料种子：幂等、用量缺项门、批次精确回滚', async () => {
   const SEED_ZJ = read('db/seeds/seed_zhejiang_materials.sql');
   const ROLLBACK_ZJ = read('db/seeds/rollback_zhejiang_materials.sql');
-  const db = await freshDb();
+  const db = await freshDb({ readProjections: true });
   await applySeeds(db);
   const base = {
     sources: await count(db, 'sources'),
@@ -170,6 +180,22 @@ test('浙江首批资料种子：幂等、用量缺项门、批次精确回滚',
       `SELECT count(*)::int AS c FROM knowledge_versions WHERE region_codes <> '["330000"]'::jsonb OR visibility <> 'private'`,
     )).rows[0].c,
     0, '条目限于浙江且未发布',
+  );
+
+  // 创建时点（列表排序键 created_at DESC,id DESC 的第一列）必须是可复现的批次常量：
+  // 取数据集 release，不是种子导入时刻、不是迁移执行时刻。
+  const createdAt = (await db.query(
+    `SELECT count(*)::int AS total,
+            count(DISTINCT created_at)::int AS distinct_at,
+            count(*) FILTER (WHERE created_at = timestamptz '2026-10-14T00:00:00Z')::int AS frozen
+     FROM knowledge_versions`,
+  )).rows[0];
+  assert.equal(createdAt.total, 159);
+  assert.equal(createdAt.distinct_at, 1, '批次内创建时点只能有一个值（冻结常量）');
+  assert.equal(
+    createdAt.frozen,
+    159,
+    '创建时点必须逐行等于数据集 release 2026-10-14（可复现），与导入/迁移时刻无关',
   );
 
   const bodyCount = async (re) => (await db.query(

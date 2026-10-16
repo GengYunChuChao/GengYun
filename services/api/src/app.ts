@@ -1222,7 +1222,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate);
   registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
-  // 各域以作业源形式接入（本片：识别域 + 转写域）；未接线的 kind ⇒ 与「作业不存在」同形 404。
+  // 各域以作业源形式接入（识别域 + 转写域 + 审核域 + 合成域 + OCR 域，共 5 个）；未接线的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
   // GY-I27 第二片：识别域取消成功后写外发取消墓碑（只增不减 ⇒ 晚到回调不可复活）。
   registerJobRoutes(app, config, guards, createJobRegistry([
