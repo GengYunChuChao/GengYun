@@ -77,7 +77,7 @@ import {
 import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
-import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter } from './media/service.ts';
+import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
 import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
@@ -256,6 +256,13 @@ export interface BuildAppOptions {
   // `stub`/`preset_demo` ⇒ 明确标注的替身。
   /** 测试注入：替换对象存储端口（**这也是真实适配器的唯一开启方式**；默认 real=fail-closed 未接线，其余=明确标注的替身）。 */
   mediaObjectStore?: MediaObjectStore;
+  /**
+   * **真实媒体接线的显式批准能力**（r3 运行期构造期主闸门；`approveRealMediaWiring()` 铸造，
+   * non-defaultable）。`real` 下**必须**与 `mediaObjectStore` 同时给出才可能走真实分支。
+   * 装配层**绝不自行铸造**、也不从 env／原型链／全局对象派生 —— 只把调用方给出的能力对象转发给
+   * `createAppMediaService`（见 `media/service.ts` 的闸门说明）。
+   */
+  realMediaApproval?: RealMediaWiringApproval;
   /** 测试注入：替换公开内容来源（默认为**关闭**：社区取图统一 404，不误放行）。 */
   mediaContentSource?: PublishedContentSource;
   /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
@@ -482,7 +489,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -895,6 +902,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // （判据是端口的 `kind`，同监工对 #121 的 P1 口径）。
   // 桶私有性、≤300 秒短效句柄与私有内容网关仍属部署期接线（ADR-001 的门控不在本片）。
   // 公开内容来源默认**关闭**：社区取图统一 404，不误放行；真实来源属社区/审核线，跨线接线。
+  //
+  // r3（第二轮对抗性复审后的**方向性改判**，裁定 `.pg17/ruling-i193-runtime-gate.md`）：
+  // 上面的静态判据（AST 审计 + 端口溯源 + 运行时 env 探针）**已降级为启发式**，不再是唯一依据 ——
+  // 两轮返修的失败同源：判据是**封闭世界静态检查**，只要把来源放在被审文件之外
+  // （新增模块 + 签名默认值、`Object.prototype` 投毒、链路文件 1 行副作用 import、动态取键）
+  // 就能全绿而 `POST /api/v1/media/uploads` 返回 201。**主闸门已移到运行期构造期**：
+  // 见 `media/service.ts` 的 `approveRealMediaWiring` / `RealMediaWiringApproval` —— `real` 下
+  // `createAppMediaService` 必须收到**显式批准能力**（对象身份、WeakSet 品牌、不可从
+  // env／`options.env`／原型链／全局对象派生），否则整域 fail-closed 503，与「环境里有没有那四个键」
+  // 「谁读了 env」「端口从哪个模块来」全都无关。
+  // ⛔ 装配层**不得自行铸造**该能力（那等于自我批准）：这里只**转发**调用方给出的选项。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
@@ -902,6 +920,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     contentSource: mediaContentSource ?? createClosedContentSource(),
     ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
+    // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
+    ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
     now: clock,
   });
 

@@ -37,10 +37,19 @@ import {
   readObjectStorageConfig,
   resolveMediaObjectStore,
 } from '../../services/api/src/media/object-store.ts';
+// r3 主闸门（运行期构造期批准能力）：铸造点、品牌判定与拒绝原因文案。
+import {
+  approveRealMediaWiring,
+  createAppMediaService,
+  isRealMediaWiringApproved,
+  REAL_MEDIA_APPROVAL_REQUIRED_REASON,
+} from '../../services/api/src/media/service.ts';
 import { sha256Hex } from '../../packages/media/validate.mjs';
 import { jpegWithExif } from '../media/_fixtures.mjs';
 
 const KEY = (name) => `media-real-${name}-0000`;
+/** r3：真实媒体接线的**显式批准能力**夹具（唯一铸造点 `approveRealMediaWiring`）。 */
+const mintApproval = (label) => approveRealMediaWiring({ reason: `r3 测试夹具：${label}（合成端点，零外呼）` });
 const MEDIA_ID = '55555555-5555-4555-8555-555555555555';
 const jpeg = jpegWithExif();
 const DECLARED = { purpose: 'label_ocr', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
@@ -173,8 +182,22 @@ test('GY-I06 显式放行：注入真实适配器（仅构造 + 本地预签名�
     config: { ...baseConfig(), executionMode: 'real' },
     store,
     mediaObjectStore: realStore,
+    // r3 主闸门：真实分支还**必须**显式给出批准能力（non-defaultable；铸造点唯一）。
+    realMediaApproval: mintApproval('显式放行'),
   });
   t.after(() => app.close());
+  // 反面对照（同一真实端口、**不给批准能力**）⇒ 仍整域 fail-closed：闸门是构造期能力，不是端口来源。
+  const unapprovedApp = buildApp({
+    config: { ...baseConfig(), executionMode: 'real' },
+    store: createMemoryAuthStore(),
+    mediaObjectStore: realStore,
+  });
+  t.after(() => unapprovedApp.close());
+  assert.equal(
+    unapprovedApp.mediaService.failClosedReason,
+    REAL_MEDIA_APPROVAL_REQUIRED_REASON,
+    '显式注入真实端口但缺少批准能力 ⇒ failClosedReason 必须点名「缺少批准能力」',
+  );
   const token = await synthesizeSession(store, 'synthetic-real-wired-01');
 
   // createUpload 只做本地预签名（不触碰桶），用于证明「显式放行」这条接线路径确实存在。
@@ -457,6 +480,8 @@ test('GY-I06 1-A 正控制：ambient 4 键齐备时**显式注入**真实 kind �
     config: { ...baseConfig(), executionMode: 'real' },
     store,
     mediaObjectStore: realStore,
+    // r3 主闸门：显式注入端口**并**显式给出批准能力，才走真实分支。
+    realMediaApproval: mintApproval('1-A 正控制'),
   });
   t.after(() => app.close());
   const token = await synthesizeSession(store, 'synthetic-real-explicit-injection-01');
@@ -867,6 +892,48 @@ function productionStoreFactoryCallSites(relativeDir, factoryNames) {
   return { scannedFiles: files.length, candidateFiles: candidates.length, sites };
 }
 
+/**
+ * 媒体路由装配守卫（启发式）：枚举 `routes/media.ts` 里对 `service` 的全部成员取用
+ * 与 7 条路由注册的 `preHandler`，用于回归时提示「端口/存储被暴露到路由层」或「入口丢了守卫」。
+ */
+function mediaRouteRegistrationGuard(parsed) {
+  const { source } = parsed;
+  const serviceProps = new Set();
+  const registrations = [];
+  let requireUserOccurrences = 0;
+  const visit = (node) => {
+    if (ts.isPropertyAccessExpression(node) && node.expression.getText(source) === 'service') {
+      serviceProps.add(node.name.getText(source));
+    }
+    if (ts.isPropertyAccessExpression(node) && node.getText(source) === 'guards.requireUser') {
+      requireUserOccurrences += 1;
+    }
+    if (
+      ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && /^app\.(get|post|put|patch|delete)$/.test(node.expression.getText(source))
+    ) {
+      const [pathArg, optionsArg] = node.arguments;
+      const preHandler = optionsArg !== undefined && ts.isObjectLiteralExpression(optionsArg)
+        ? optionsArg.properties.find((property) => ts.isPropertyAssignment(property) && property.name.getText(source) === 'preHandler')
+        : undefined;
+      registrations.push({
+        method: node.expression.name.getText(source),
+        path: pathArg === undefined ? '(动态)' : compactNodeText(pathArg, source),
+        preHandler: preHandler === undefined ? null : compactNodeText(preHandler.initializer, source),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return {
+    serviceProps: [...serviceProps].sort(),
+    // 注释里的同名字样不算（AST 口径）：只数真正的 `guards.requireUser` 引用。
+    requireUserCount: requireUserOccurrences,
+    registrations,
+  };
+}
+
 /** 共享断言：媒体域整域 fail-closed 的封套（503 + PROVIDER_UNAVAILABLE + retryable + 无 data）。 */
 function expectMediaDomainClosed(response, label) {
   assert.equal(response.status, 503, `${label} → ${response.status} ${JSON.stringify(response.body)}`);
@@ -1219,17 +1286,22 @@ test('GY-I06 1-A B1（运行时来源检查）：装配期与请求期不得读�
     forcePathStyle: false,
   });
   const outcomes = [];
-  for (const [executionMode, port, expected] of [
-    ['real', undefined, { kind: 'unwired', status: 503 }],
-    ['stub', unwiredPort, { kind: 'unwired', status: 503 }],
-    ['real', realPort, { kind: 's3_compatible', status: 201 }],
-    ['stub', realPort, { kind: 's3_compatible', status: 201 }],
+  const approval = mintApproval('2×2 矩阵');
+  for (const [executionMode, port, approved, expected] of [
+    ['real', undefined, false, { kind: 'unwired', status: 503 }],
+    ['stub', unwiredPort, false, { kind: 'unwired', status: 503 }],
+    ['real', realPort, true, { kind: 's3_compatible', status: 201 }],
+    ['stub', realPort, false, { kind: 's3_compatible', status: 201 }],
+    // r3 主闸门：端口**确实**是真实 kind，但 real 下**没给批准能力** ⇒ 服务层必须整域关闭
+    // （端口身份不变，闸门在构造期能力上）。
+    ['real', realPort, false, { kind: 's3_compatible', status: 503 }],
   ]) {
     const modeStore = createMemoryAuthStore();
     const modeApp = buildApp({
       config: { ...baseConfig(), executionMode },
       store: modeStore,
       ...(port === undefined ? {} : { mediaObjectStore: port }),
+      ...(approved ? { realMediaApproval: approval } : {}),
     });
     const modeToken = await synthesizeSession(modeStore, `synthetic-2x2-${executionMode}-${expected.kind}`);
     const created = await call(modeApp, 'POST', '/api/v1/media/uploads', modeToken, {
@@ -1256,8 +1328,359 @@ test('GY-I06 1-A B1（运行时来源检查）：装配期与请求期不得读�
       { executionMode: 'stub', port: 'unwired', kind: 'unwired', status: 503, failClosedReason: null, externalRequests: 0 },
       { executionMode: 'real', port: 's3_compatible', kind: 's3_compatible', status: 201, failClosedReason: null, externalRequests: 0 },
       { executionMode: 'stub', port: 's3_compatible', kind: 's3_compatible', status: 201, failClosedReason: null, externalRequests: 0 },
+      { executionMode: 'real', port: 's3_compatible', kind: 's3_compatible', status: 503, failClosedReason: '(fail-closed)', externalRequests: 0 },
     ],
-    '判据必须只跟随端口 kind：同样 real 模式，注入真实端口即可用、未注入即整域 503；'
-      + '未接线端口在 stub 下也一律 503（此时 503 由端口本身拒绝产生，服务层不加 failClosedReason）',
+    '判据必须只跟随端口 kind：同样 real 模式，注入真实端口 + 显式批准能力即可用、未注入即整域 503；'
+      + '未接线端口在 stub 下也一律 503（此时 503 由端口本身拒绝产生，服务层不加 failClosedReason）；'
+      + 'r3：真实端口 + real 但**缺少批准能力** ⇒ 端口 kind 仍是 s3_compatible 而服务层整域 503',
   );
+});
+
+// ===================================================================================
+// r3（裁定 `ruling-i193-runtime-gate.md`）：真实媒体的**主闸门**是运行期构造期
+// 「显式批准能力」，不是任何静态/文本判据。上面的结构性判据已降级为**启发式回归护栏**
+// （覆盖与未覆盖清单见本文件末尾那条用例打印）。下面五条是 B1–B4 的运行期判据，
+// 全部用合成 `.invalid` 端点/合成凭据的自造等价夹具，零真实外呼、不读密钥。
+// ===================================================================================
+
+/** 合成真实适配器配置（`.invalid` 保留域，永不解析；与既有用例同形）。 */
+const R3_SYNTHETIC_STORE_CONFIG = {
+  endpoint: 'https://cos.ap-shanghai.myqcloud.com',
+  bucket: 'gengyun-media-placeholder',
+  accessKey: 'synthetic-access-key-id',
+  secretKey: 'synthetic-secret-key-value',
+  region: 'ap-shanghai',
+  forcePathStyle: false,
+};
+
+/** 7 条媒体路由的请求清单（与 1-A 负控制逐条同形；`label` 只用于保证幂等键互不冲突）。 */
+function mediaRouteRequests(label) {
+  return [
+    ['POST', '/api/v1/media/uploads', { payload: DECLARED, headers: { 'idempotency-key': KEY(`${label}-create`) } }],
+    ['POST', `/api/v1/media/uploads/${MEDIA_ID}/complete`, { payload: { sha256: DECLARED.sha256, bytes: DECLARED.bytes }, headers: { 'idempotency-key': KEY(`${label}-complete`), 'if-match': '"1"' } }],
+    ['GET', `/api/v1/media/${MEDIA_ID}`, {}],
+    ['DELETE', `/api/v1/media/${MEDIA_ID}`, { headers: { 'idempotency-key': KEY(`${label}-delete`), 'if-match': '"1"' } }],
+    ['POST', `/api/v1/media/${MEDIA_ID}/access`, { headers: { 'idempotency-key': KEY(`${label}-access`), 'if-match': '"1"' } }],
+    ['POST', '/api/v1/community/media-access', {
+      payload: { content_ref: { type: 'post', id: MEDIA_ID, revision: 1 }, media_ref: { media_id: MEDIA_ID, media_revision: 1 }, slot: 'attachment', author_revision: null },
+      headers: { 'idempotency-key': KEY(`${label}-community`), 'if-match': '"1"' },
+    }],
+    ['GET', `/api/v1/community/media/${MEDIA_ID}/content`, { headers: { 'x-media-access-token': 'synthetic-token' } }],
+  ];
+}
+
+test('GY-I06 r3 B1（运行期主闸门）：ambient 四键齐备 + 真实端口，但未提供批准能力 ⇒ real 仍整域 503 且 failClosedReason 点名批准', async (t) => {
+  // 最恶劣的一条路径（正是 r2 被判漏的形状）：环境里四键齐备、调用方显式注入了一个**真实**端口，
+  // 但**没有**任何批准能力 ⇒ 服务层必须在构造期整域关闭，7 条入口一律 503。
+  const restoreEnv = injectAmbientStorageEnv();
+  t.after(() => restoreEnv());
+  const realStore = createS3CompatibleObjectStore(R3_SYNTHETIC_STORE_CONFIG);
+  const store = createMemoryAuthStore();
+  const app = buildApp({
+    config: { ...baseConfig(), executionMode: 'real' },
+    store,
+    mediaObjectStore: realStore,
+  });
+  t.after(() => app.close());
+  const token = await synthesizeSession(store, 'synthetic-r3-gate-no-approval');
+
+  // 端口身份如实保留（装配层不擅自改写注入对象），但执行端口被整域换成未接线端口。
+  assert.equal(app.mediaObjectStore, realStore, '注入的端口必须被原样装配（不得悄悄替换）');
+  assert.equal(app.mediaObjectStore.kind, 's3_compatible');
+  assert.equal(app.mediaService.objectStore.kind, 'unwired', '未批准 ⇒ 服务层必须换成未接线端口');
+  assert.equal(app.mediaService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+  assert.match(String(app.mediaService.failClosedReason), /缺少真实媒体接线的显式批准能力/);
+
+  for (const [method, url, options] of mediaRouteRequests('r3-no-approval')) {
+    const response = await call(app, method, url, token, options);
+    expectMediaDomainClosed(response, `${method} ${url}（真实端口 + ambient 四键齐备，但无批准能力）`);
+  }
+  assert.equal(realStore.externalRequestCount, 0, '整轮不得有任何真实对象存储请求');
+});
+
+test('GY-I06 r3 批准能力：不可伪造/不可派生/不可默认化，显式批准 + 真实端口才走真实分支', async (t) => {
+  // 1) 伪造与派生一律不是能力（形状相同不算，只认铸造点的对象身份）。
+  const genuine = mintApproval('r3 判据 2 夹具');
+  assert.equal(isRealMediaWiringApproved(genuine), true, '铸造点给出的对象必须被认作批准能力');
+  assert.equal(Object.isFrozen(genuine), true, '批准能力必须冻结（防止事后改写自述字段）');
+  const forged = [
+    ['布尔 true', true],
+    ['字符串', 'approved'],
+    ['同形状字面量', { reason: 'r3 夹具', approvedAt: '2026-10-16T00:00:00.000Z' }],
+    ['冻结的同形状对象', Object.freeze({ reason: 'r3 夹具', approvedAt: '2026-10-16T00:00:00.000Z' })],
+    ['Object.create(批准能力) 原型继承', Object.create(genuine)],
+    ['structuredClone 弱拷贝', structuredClone(genuine)],
+    ['JSON 往返副本', JSON.parse(JSON.stringify(genuine))],
+    ['Proxy 包装', new Proxy(genuine, {})],
+    ['undefined', undefined],
+    ['null', null],
+  ];
+  for (const [label, value] of forged) {
+    assert.equal(isRealMediaWiringApproved(value), false, `${label} 不得被认作批准能力`);
+  }
+
+  // 2) 能力不可从 ambient env 派生：注入一堆"看起来像批准"的键也改变不了判定。
+  const restoreEnv = injectAmbientEnv({
+    ...SYNTHETIC_STORAGE_ENV,
+    OBJECT_STORAGE_ALLOW_REAL: '1',
+    GY_I06_REAL_MEDIA_APPROVED: '1',
+    REAL_MEDIA_APPROVAL: 'granted',
+  });
+  t.after(() => restoreEnv());
+  assert.equal(
+    isRealMediaWiringApproved({ reason: 'r3 夹具', approvedAt: '2026-10-16T00:00:00.000Z' }),
+    false,
+    'ambient 键不得把同形状对象变成批准能力',
+  );
+
+  // 3) 生效路径：显式批准 + 真实端口（real）⇒ 真实分支可用（仅本地预签名，零外呼）。
+  const realStore = createS3CompatibleObjectStore(R3_SYNTHETIC_STORE_CONFIG);
+  const store = createMemoryAuthStore();
+  const app = buildApp({
+    config: { ...baseConfig(), executionMode: 'real' },
+    store,
+    mediaObjectStore: realStore,
+    realMediaApproval: genuine,
+  });
+  t.after(() => app.close());
+  const token = await synthesizeSession(store, 'synthetic-r3-approval-positive');
+  const created = await call(app, 'POST', '/api/v1/media/uploads', token, {
+    payload: DECLARED,
+    headers: { 'idempotency-key': KEY('r3-approval-create') },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.meta.execution_mode, 'real');
+  assert.equal(app.mediaService.failClosedReason, null);
+  assert.match(created.body.data.upload.url, /^https:\/\/gengyun-media-placeholder\.cos\.ap-shanghai\.myqcloud\.com\//);
+  assert.ok(!created.body.data.upload.url.includes('synthetic-secret-key-value'), '签名密钥绝不进 URL');
+  assert.equal(realStore.externalRequestCount, 0, '预签名是纯本地计算，不得外发');
+
+  // 4) 能力不能替代端口：批准 + 未接线端口 ⇒ 仍整域 503。
+  const closedStore = createMemoryAuthStore();
+  const closedApp = buildApp({
+    config: { ...baseConfig(), executionMode: 'real' },
+    store: closedStore,
+    mediaObjectStore: createUnwiredObjectStore('r3 夹具：批准但端口未接线'),
+    realMediaApproval: genuine,
+  });
+  t.after(() => closedApp.close());
+  const closedToken = await synthesizeSession(closedStore, 'synthetic-r3-approval-unwired-port');
+  expectMediaDomainClosed(
+    await call(closedApp, 'POST', '/api/v1/media/uploads', closedToken, { payload: DECLARED, headers: { 'idempotency-key': KEY('r3-approval-unwired') } }),
+    '批准能力 + 未接线端口',
+  );
+
+  // 5) **显式传 `undefined` 等同于没提供**（能力是不可默认化的；缺省不是「放宽」）。
+  const undefinedStore = createMemoryAuthStore();
+  const undefinedApp = buildApp({
+    config: { ...baseConfig(), executionMode: 'real' },
+    store: undefinedStore,
+    mediaObjectStore: realStore,
+    realMediaApproval: undefined,
+  });
+  t.after(() => undefinedApp.close());
+  const undefinedToken = await synthesizeSession(undefinedStore, 'synthetic-r3-approval-undefined');
+  const undefinedResponse = await call(undefinedApp, 'POST', '/api/v1/media/uploads', undefinedToken, {
+    payload: DECLARED,
+    headers: { 'idempotency-key': KEY('r3-approval-undefined') },
+  });
+  expectMediaDomainClosed(undefinedResponse, 'realMediaApproval 显式 undefined');
+  assert.equal(undefinedApp.mediaService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+});
+
+test('GY-I06 r3 B3（等价夹具）：模块求值期副作用把真实端口挂到全局 ⇒ 默认装配仍整域 503，零外呼', async (t) => {
+  // 等价于复审 r2-B3 的「链路文件里加 1 行副作用 import / 在模块求值期构造真实适配器」：
+  // 这里把副作用直接摆在进程里（构造真实端口并挂到 globalThis），同时把 ambient 四键也注入齐备。
+  // 判据：默认装配（不注入端口、不注入批准）必须仍整域 503，且副作用端口一次都没被调用。
+  const restoreEnv = injectAmbientStorageEnv();
+  t.after(() => restoreEnv());
+  const sideEffectStore = createS3CompatibleObjectStore(R3_SYNTHETIC_STORE_CONFIG);
+  const globalKey = '__GY_I06_R3_SIDE_EFFECT_STORE__';
+  globalThis[globalKey] = sideEffectStore;
+  t.after(() => {
+    delete globalThis[globalKey];
+  });
+  assert.equal(sideEffectStore.externalRequestCount, 0);
+
+  const store = createMemoryAuthStore();
+  const app = buildApp({ config: { ...baseConfig(), executionMode: 'real' }, store });
+  t.after(() => app.close());
+  const token = await synthesizeSession(store, 'synthetic-r3-side-effect');
+
+  assert.equal(app.mediaObjectStore.kind, 'unwired', '全局上的真实端口不得被默认装配采信');
+  assert.equal(app.mediaService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+  for (const [method, url, options] of mediaRouteRequests('r3-side-effect')) {
+    expectMediaDomainClosed(await call(app, method, url, token, options), `${method} ${url}（模块求值期副作用端口）`);
+  }
+  assert.equal(sideEffectStore.externalRequestCount, 0, '副作用构造的适配器一次都不得被调用');
+  assert.equal(globalThis[globalKey], sideEffectStore, '取证：副作用端口确实一直挂在全局上（判据不是靠它不存在）');
+});
+
+test('GY-I06 r3 B4（等价夹具）：原型链上的端口/批准能力一律不算数，单次启动内改装配值也不开闸，且零残留', async (t) => {
+  const prototypeBefore = Object.getOwnPropertyNames(Object.prototype).sort();
+  const restoreEnv = injectAmbientStorageEnv();
+  t.after(() => restoreEnv());
+
+  // 1) 等价于复审 r2-B4 的 `Object.prototype` 投毒：端口与批准能力**沿原型链可达但不是自有属性**。
+  //    这里用 `Object.create` 造等价的「被污染选项对象」而不是真的污染 `Object.prototype`：
+  //    进程级污染会让 Fastify/ajv 的 schema 遍历把原型属性当成 schema 节点 ⇒ 栈溢出（测试环境自身
+  //    的副作用，HTTP 夹具无法表达）；判定逻辑是同一处 `Object.hasOwn` + 同一处 WeakSet 品牌检查。
+  const poisonProto = {
+    objectStore: createS3CompatibleObjectStore(R3_SYNTHETIC_STORE_CONFIG),
+    realMediaApproval: { reason: 'r3 原型投毒夹具', approvedAt: '2026-10-16T00:00:00.000Z' },
+  };
+  const poisonedOptions = Object.create(poisonProto);
+  poisonedOptions.executionMode = 'real';
+  poisonedOptions.tokenSecret = 'synthetic-token-secret';
+  const poisonedService = createAppMediaService(poisonedOptions);
+  assert.equal(poisonedService.objectStore.kind, 'unwired', '原型链上的端口不得成为执行端口');
+  assert.equal(poisonedService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON, '原型链上的批准能力不得被采信');
+
+  // 同一原型、把批准能力放成**自有属性** ⇒ 立刻可用（证明否定的只是「原型链来源」，不是能力本身/端口本身）。
+  const ownOptions = Object.create(poisonProto);
+  ownOptions.executionMode = 'real';
+  ownOptions.tokenSecret = 'synthetic-token-secret';
+  ownOptions.realMediaApproval = mintApproval('r3 B4 自有属性夹具');
+  const ownService = createAppMediaService(ownOptions);
+  assert.equal(ownService.failClosedReason, null, '自有属性提供的批准能力必须被采信');
+  assert.equal(ownService.objectStore.kind, 's3_compatible');
+  assert.equal(poisonProto.objectStore.externalRequestCount, 0, '能力判定本身不得引发任何外呼');
+
+  // 2) 等价的「进程级原型投毒」在 app 边界上表达：选项对象从原型上**继承**端口与批准能力
+  //    （`buildApp` 的形参解构会沿原型链取值 ⇒ 端口**确实**被装成真实端口），但服务层按
+  //    `Object.hasOwn` 判定 ⇒ 原型来源的批准能力不算数 ⇒ 媒体域仍整域 503。
+  //    注：直接污染真正的 `Object.prototype`（对象值）在本进程内**无法**与 Fastify/ajv 共存：
+  //    任何 `for…in` 遍历都会顺着原型自我递归而栈溢出（已实测 `RangeError: Maximum call stack size exceeded`），
+  //    因此用「选项对象带原型」这一同机制夹具表达。判据落在同一处 `Object.hasOwn`。
+  const prototypePortedStore = createS3CompatibleObjectStore(R3_SYNTHETIC_STORE_CONFIG);
+  const poisonedAppOptions = Object.create({
+    mediaObjectStore: prototypePortedStore,
+    realMediaApproval: { reason: 'r3 原型投毒夹具（对象值）', approvedAt: '2026-10-16T00:00:00.000Z' },
+  });
+  poisonedAppOptions.config = { ...baseConfig(), executionMode: 'real' };
+  const poisonedStore = createMemoryAuthStore();
+  poisonedAppOptions.store = poisonedStore;
+  const poisonedApp = buildApp(poisonedAppOptions);
+  t.after(() => poisonedApp.close());
+  const poisonedToken = await synthesizeSession(poisonedStore, 'synthetic-r3-prototype-poison');
+  assert.equal(
+    poisonedApp.mediaObjectStore,
+    prototypePortedStore,
+    '取证：原型上的端口确实被装配层装上了（这不是判据失败 —— 闸门在批准能力上）',
+  );
+  assert.equal(poisonedApp.mediaService.objectStore.kind, 'unwired', '原型来源的批准能力不得打开执行端口');
+  assert.equal(poisonedApp.mediaService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+  for (const [method, url, options] of mediaRouteRequests('r3-prototype')) {
+    expectMediaDomainClosed(await call(poisonedApp, method, url, poisonedToken, options), `${method} ${url}（原型链投毒）`);
+  }
+  assert.equal(prototypePortedStore.externalRequestCount, 0, '原型投毒端口一次都不得被调用');
+
+  // 3) 单次启动内改装配值（one-launch tamper）：装饰值被改成谎报 kind 的假端口，
+  //    服务层只信构造期端口与构造期批准能力 ⇒ 仍整域 503（假 kind 骗不过闸门）。
+  const tamperStore = createMemoryAuthStore();
+  const app = buildApp({ config: { ...baseConfig(), executionMode: 'real' }, store: tamperStore });
+  t.after(() => app.close());
+  const tamperToken = await synthesizeSession(tamperStore, 'synthetic-r3-one-launch-tamper');
+  const beforeTamper = await call(app, 'POST', '/api/v1/media/uploads', tamperToken, {
+    payload: DECLARED,
+    headers: { 'idempotency-key': KEY('r3-tamper-before') },
+  });
+  expectMediaDomainClosed(beforeTamper, '改装配值之前');
+  app.mediaObjectStore = {
+    kind: 's3_compatible',
+    note: 'r3 夹具：谎报 kind 的假端口',
+    externalRequestCount: 0,
+    putObject: async () => {},
+    getObject: async () => null,
+    hasObject: async () => false,
+    deleteObject: async () => {},
+    objectCount: async () => 0,
+    presignUpload: async () => ({ method: 'PUT', url: 'https://synthetic-object-storage.invalid/', headers: {}, expiresAt: new Date().toISOString() }),
+    presignDownload: async () => ({ method: 'GET', url: 'https://synthetic-object-storage.invalid/', headers: {}, expiresAt: new Date().toISOString() }),
+  };
+  const afterTamper = await call(app, 'POST', '/api/v1/media/uploads', tamperToken, {
+    payload: DECLARED,
+    headers: { 'idempotency-key': KEY('r3-tamper-after') },
+  });
+  expectMediaDomainClosed(afterTamper, '改装配值之后（谎报 kind 的假端口）');
+  assert.equal(app.mediaService.objectStore.kind, 'unwired', '服务层端口来自构造期，不来自可变的装饰值');
+  assert.equal(app.mediaService.failClosedReason, REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+
+  // 4) 零残留。
+  assert.deepEqual(Object.getOwnPropertyNames(Object.prototype).sort(), prototypeBefore, 'Object.prototype 必须零残留');
+  assert.equal(poisonProto.objectStore.externalRequestCount, 0);
+});
+
+test('GY-I06 r3 路由装配守卫：媒体路由只允许经 service 的具名操作与 failClosedReason 取端口，7 条入口都仍在 requireUser 之后', () => {
+  const parsed = parseRepoFile('services/api/src/routes/media.ts');
+  const guard = mediaRouteRegistrationGuard(parsed);
+
+  // 该文件对 `service` 的全部取用必须是**具名操作**或 fail-closed 读点，不得把端口/存储暴露给路由层。
+  assert.deepEqual(
+    guard.serviceProps,
+    [
+      'completeUpload',
+      'deleteMedia',
+      'failClosedReason',
+      'getMedia',
+      'grantCommunityMediaAccess',
+      'grantMediaAccess',
+      'initiateUpload',
+      'readCommunityMediaContent',
+    ],
+    '媒体路由只允许这些 service 成员（新增/挪动端口取用 ⇒ 本判据红，需人工确认）',
+  );
+  assert.equal(guard.registrations.length, 7, `媒体路由必须恰好 7 条，实测 ${JSON.stringify(guard.registrations.map((r) => `${r.method} ${r.path}`))}`);
+  for (const registration of guard.registrations) {
+    assert.ok(
+      String(registration.preHandler).includes('guards.requireUser'),
+      `${registration.method} ${registration.path} 必须在 guards.requireUser 之后（实测 preHandler=${registration.preHandler}）`,
+    );
+  }
+  assert.equal(guard.requireUserCount, 7, 'requireUser 必须逐条出现在 7 条入口上（少一条即红）');
+});
+
+test('GY-I06 r3 启发式覆盖清单：静态判据已降级为回归护栏（打印覆盖与未覆盖，供审查对照）', () => {
+  // 静态/文本判据**不是**安全闸门（r2 的 B1–B5 已证明封闭世界的静态判据可被整体绕过），
+  // 它们只是「有人在 app.ts 里重新引入 ambient 门控」这类回归的早期告警。这里把它们跑一遍，
+  // 并把**覆盖**与**未覆盖**如实打印出来（`node --test` 默认吞掉 stdout，加 `--test-reporter=spec` 可见）。
+  const app = parseRepoFile('services/api/src/app.ts');
+  const provenance = auditMediaPortProvenance(app);
+  const ambient = auditAmbientEnv(app, APP_AMBIENT_ENV_ALLOWLIST);
+  const callSites = productionStoreFactoryCallSites('services/api/src', [MEDIA_RESOLVER, REAL_STORE_FACTORY]);
+  const ownedMediaChain = MEDIA_CHAIN_FILES.map((repoPath) => ({ repoPath, findings: auditAmbientEnv(parseRepoFile(repoPath), []).findings }));
+
+  assert.deepEqual(provenance.violations, [], '启发式：app.ts 端口溯源零违规');
+  assert.deepEqual(ambient.violations, [], '启发式：app.ts ambient env 读取零违规');
+  assert.ok(ownedMediaChain.every((entry) => entry.findings.length === 0), '启发式：媒体链路文件不得读 ambient env');
+  assert.deepEqual(
+    callSites.sites.filter((site) => site.name === MEDIA_RESOLVER).map((site) => `${site.file}#${site.enclosing}`),
+    ['services/api/src/app.ts#buildApp'],
+    '启发式：resolver 生产调用点必须恰好一处（app.ts 的 buildApp）',
+  );
+  assert.deepEqual(
+    callSites.sites.filter((site) => site.name === REAL_STORE_FACTORY).map((site) => `${site.file}#${site.enclosing}`),
+    ['services/api/src/media/object-store.ts#resolveMediaObjectStore'],
+    '启发式：真实适配器工厂生产调用点必须恰好一处（resolver 内部）',
+  );
+
+  const coverage = [
+    '【启发式覆盖（回归护栏，非安全闸门）】',
+    `1. app.ts 端口溯源：声明/初值/服务实参/角色枚举 → ${provenance.violations.length} 违规`,
+    `2. app.ts ambient env 读取：整表/动态/未白名单键 → ${ambient.violations.length} 违规（白名单恰 ${ambient.findings.length} 个非媒体键）`,
+    `3. 媒体链路文件（${MEDIA_CHAIN_FILES.length} 个）ambient env 读取 → ${ownedMediaChain.reduce((sum, entry) => sum + entry.findings.length, 0)} 违规`,
+    `4. 生产调用点：${MEDIA_RESOLVER} → 1 处（app.ts#buildApp）、${REAL_STORE_FACTORY} → 1 处（object-store.ts#resolveMediaObjectStore）`,
+    `5. 扫描面：services/api/src 下 ${callSites.scannedFiles} 个 .ts/.mts/.mjs，其中 ${callSites.candidateFiles} 个提到过工厂名`,
+    '6. 运行时来源/身份：装配期与请求期的 env 探针（上一条用例）+ 服务层构造期身份（本文件 3 条 r3 用例）',
+    '',
+    '【未覆盖 / 已知盲区（静态判据一律抓不到，只能由运行期闸门兜底）】',
+    'a. 被测文件之外的入口层：services/api/src/server.ts、tools/**、scripts/** 或任何调用方自行铸造批准的包装 —— 静态扫描不覆盖这些路径（本次实测 server.ts 未接线）。',
+    'b. 自造等价构造：改名/包装工厂、自建 makeObjectStore() 返回真实适配器、monkey-patch 已审工厂 —— 只认对象身份与调用点名字的文本判据无感。',
+    'c. 动态取用：import { env } from \'node:process\'、globalThis[\'pro\'+\'cess\'].env、eval/Function 构造 —— AST 规则只识别已枚举的 process 根与字面键。',
+    'd. 模拟/伪造测试环境：把 approveRealMediaWiring 换成同名伪造导出、篡改 WeakSet、在测试进程里预置批准 —— 单测无法自证「测试环境本身没被替换」。',
+    'e. 真实 COS/S3 往返、桶侧 ACL/生命周期、预签名有效期与撤销 —— 本任务不授权真实外呼，一律未取得。',
+    'f. 采样盲区：运行时探针只覆盖「一次装配 + 一轮请求」，未触达的惰性分支不会被记录。',
+    'g. 时间窗：构造之后的进程级篡改只在一定程度上被服务层构造期身份兜底；批准能力一旦被真实接线方持有，其后续用途不在此判据范围内。',
+  ];
+  console.log(coverage.join('\n'));
 });

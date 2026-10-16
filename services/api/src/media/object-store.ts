@@ -418,6 +418,13 @@ export interface ResolveObjectStoreOptions {
 }
 
 /**
+ * 未显式传入 `env` 时使用的空配置表：**null 原型** ⇒ 即使 `Object.prototype` 被投毒
+ * （对抗性复审 B2/B3 的机制：`Object.defineProperty(Object.prototype, 'OBJECT_STORAGE_*', …)`）
+ * 也供不出任何 `OBJECT_STORAGE_*` 键。
+ */
+const NO_STORAGE_ENV: Record<string, string | undefined> = Object.create(null) as Record<string, string | undefined>;
+
+/**
  * 按执行模式解析对象存储端口。
  *
  * - `real` 且**显式传入的** `env` 里 `OBJECT_STORAGE_*` **齐备**（`readObjectStorageConfig` 无 issue）
@@ -431,10 +438,15 @@ export interface ResolveObjectStoreOptions {
  * 原因见下表与 `app.ts` 媒体装配点的长注释：这 4 个键正是 real 模式**启动必填**项 ⇒ 传 ambient env
  * 等于「配置即门控」，会在隐私守卫与媒体元数据可恢复化落地前为真实用户媒体开门
  * （监工对 PR #193 的 P1）。装配层的唯一开启方式是**显式注入**一个已构造的端口实例。
+ *
+ * ⛔ 另外（r3，对抗性复审 B2/B3 的机制）：未传 `env` 时用的是**null 原型空表**（见
+ * `NO_STORAGE_ENV`）——`env[name]` 走原型链，若用普通 `{}`，被投毒的 `Object.prototype` 能凭空
+ * 供出整套 `OBJECT_STORAGE_*`。真实闸门在 {@link createAppMediaService} 的批准能力上，
+ * 这里只是同一方向上的加固（不让污染面**产出**真实端口）。
  */
 export function resolveMediaObjectStore(options: ResolveObjectStoreOptions): MediaObjectStore {
   if (options.executionMode === 'real') {
-    const { config } = readObjectStorageConfig(options.env ?? {});
+    const { config } = readObjectStorageConfig(options.env ?? NO_STORAGE_ENV);
     if (config === null) return createUnwiredObjectStore();
     return createS3CompatibleObjectStore(config);
   }
