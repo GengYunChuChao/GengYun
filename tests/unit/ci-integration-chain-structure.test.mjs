@@ -66,6 +66,11 @@ const FROZEN_CHAIN = Object.freeze([
  */
 const UNWIRED_DECLARATIONS = Object.freeze([
   {
+    path: 'tests/integration/account-deletion-pg.mjs',
+    reason: '需真实 PG 且硬钉库名 `gengyun_deletion_test`（本机原生 PG 隔离集群，仅回环端口）；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/auth-privacy-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
