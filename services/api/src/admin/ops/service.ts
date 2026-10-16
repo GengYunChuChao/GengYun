@@ -78,7 +78,8 @@ export interface AdminOpsServiceOptions {
   categorySeed?: readonly CategoryView[];
   /**
    * 账号权威种子（阶段 2 由 `users` 表注入）。**不给 = 账号面未接线** ⇒ `listAdminUsers` /
-   * `suspendUser` 一律 503 `PROVIDER_UNAVAILABLE`（不返回空页、不伪造"账号不存在"/成功）。
+   * `suspendUser` 一律 503 `PROVIDER_UNAVAILABLE`、**`retryable: false`**（接线是运维动作，
+   * 重试不可能成功）；不返回空页、不伪造"账号不存在"/成功。
    */
   accountSeed?: readonly AccountView[];
   now?: () => Date;
@@ -319,8 +320,11 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // -------------------------------------------------------------------------
 
   /**
-   * 账号面**没有认证权威**时的统一 fail-closed（口径与作业面 `requireWiredJobPort` 逐条一致）：
-   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）且 `retryable: true`，
+   * 账号面**没有认证权威**时的统一 fail-closed（形态照作业面 `requireWiredJobPort`；
+   * 但 `retryable` 按裁定取 `false`，见下）：
+   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）且 **`retryable: false`** —— "能力未接线"是**运维动作**，
+   * 同一请求在无运维介入下稍后重试**不可能**成功，故不得宣称可重试
+   * （口径来源：指挥裁定 `STATE-current.md` §40；作业面旧形态的 `retryable: true` 由统一口径片改，本片不代改）：
    * - **不返回空页**：空页会被读成"平台当前没有账号"，那是无法确认的结论（伪造）；
    * - **不返回 404**：账号在不在，本进程根本无权回答，报"账号不存在"就是伪造否定；
    * - **不写审计、不迁移状态、不占幂等键**：本片把判断放在写外壳**之前**，故连占位都不会发生。
@@ -330,7 +334,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
    */
   function requireWiredAccountAuthority(): void {
     if (!store.accountsWired) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', '账号读/停用面尚未接线到认证权威', { retryable: true });
+      throw new ApiError('PROVIDER_UNAVAILABLE', '账号读/停用面尚未接线到认证权威', { retryable: false });
     }
   }
 

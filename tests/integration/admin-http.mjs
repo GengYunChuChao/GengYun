@@ -353,7 +353,7 @@ await group('[正控制] 账号：list 200 → suspend 200；重复 suspend 幂�
   assert.equal(again.body.data.revision, 2, '重复停用不得再迁移');
 });
 
-// —— 账号（GY-I22 缺陷①：无认证权威 ⇒ fail-closed；口径与下面的作业面逐条一致） ——
+// —— 账号（GY-I22 缺陷①：无认证权威 ⇒ fail-closed；形态同作业面，`retryable` 按裁定取 false） ——
 await group('[正控制] 账号：**默认装配无认证权威** ⇒ list 与 suspend 都 503（不返回空页、不伪造"账号不存在"）', async () => {
   // 接线状态先落到可核对的面上：默认装配（不注入 opsStore）≠ 有权威。
   assert.equal(defaultApp.adminOpsService.accountsWired, false, '默认装配不得声称账号权威已接线');
@@ -364,7 +364,7 @@ await group('[正控制] 账号：**默认装配无认证权威** ⇒ list 与 s
   });
   assert.equal(listed.status, 503, JSON.stringify(listed.body));
   assert.equal(listed.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(listed.body.error.retryable, true);
+  assert.equal(listed.body.error.retryable, false, '接线是运维动作：不得宣称可重试（STATE-current §40）');
   assert.equal(listed.body.data, undefined, '不得返回空页冒充"平台没有账号"');
 
   const suspended = await probe('suspendUser', 'POST', `${API}/admin/accounts/${UNKNOWN_UUID}/suspend`, {
@@ -373,7 +373,7 @@ await group('[正控制] 账号：**默认装配无认证权威** ⇒ list 与 s
   });
   assert.equal(suspended.status, 503, JSON.stringify(suspended.body));
   assert.equal(suspended.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(suspended.body.error.retryable, true);
+  assert.equal(suspended.body.error.retryable, false, '接线是运维动作：不得宣称可重试（STATE-current §40）');
   assert.equal(suspended.body.data, undefined, '不得把"没有权威"报成"账号不存在"或伪造成功');
 });
 
