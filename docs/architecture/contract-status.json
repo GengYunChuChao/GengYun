@@ -2885,7 +2885,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（app.ts:392-407）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（services/api/src/app.ts:1440-1454）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
     },
     {
       "key": "pagination",
