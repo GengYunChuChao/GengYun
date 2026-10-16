@@ -49,7 +49,7 @@ export function createSubstituteMediaPort(): RecognitionMediaPort {
  * 未接线端口：媒体 HTTP 层缺席时使用（real 模式）。一律 `OBJECT_UNAVAILABLE`，
  * 不泄露媒体是否存在，也不以「本地兜底」方式放行。
  */
-export function createUnwiredMediaPort(reason = '媒体 HTTP 层尚未接线，无法核验私有媒体'): RecognitionMediaPort {
+export function createUnwiredMediaPort(reason = '媒体 HTTP 路由已注册，但未接真实对象存储：无法读取私有媒体字节'): RecognitionMediaPort {
   return {
     kind: 'unwired',
     note: `${reason}（fail-closed）`,

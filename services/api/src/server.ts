@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
     { execution_mode: config.executionMode, database_configured: config.databaseUrl !== null },
-    'gengyun api 已启动（已装配认证与后台认证路由；其余业务路由未实现）',
+    'gengyun api 已启动（认证、后台认证与各业务域路由均已注册；各域真实后端未接线者按域 fail-closed，不以替身数据返回成功）',
   );
 }
 
