@@ -83,8 +83,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/egress-object-key-pg.mjs',
-    reason: '需真实 PG 且硬钉前置：先跑 `egress-ledger-pg.mjs` 并置 `EGRESS_LEDGER_KEEP=1` 保留角色/夹具行，'
-      + '不进无 PG 的回环链（接线片另开）。',
+    reason: '需真实 PG 且硬钉前置：由 `consent-grant-postgres.yml` 在同一 `gengyun_egress_test` 上紧跟'
+      + ' `egress-ledger-pg.mjs`（`EGRESS_LEDGER_KEEP=1` 保留角色/夹具行）之后运行，不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/favorites-history-isolation-http.reverse-control.mjs',

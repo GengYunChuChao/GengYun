@@ -37,6 +37,8 @@ jobs:
       # `egress-ledger-pg.mjs` 硬钉 `url.pathname === '/gengyun_egress_test'` 且**首行断言 public 表数 = 0**，
       # 因此不能与上一个脚本共库；`services.postgres` 只按 `POSTGRES_DB` 建一个库（改它会打断既有
       # `gengyun_consent_grant_test`），故在本 step 内先建**专用空库**再真跑该脚本（只回环 PG，无外发）。
+      # `EGRESS_LEDGER_KEEP=1`：该库改为**两段串联**（本脚本 → 只追加的 `egress-object-key-pg.mjs`）共用夹具，
+      # 账本脚本因此不得在收尾 DROP 角色/表——否则后继脚本的硬前置（既有导出行 + 三个最小权限角色）一并消失。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_egress_test' && node tests/integration/egress-ledger-pg.mjs
         env:
           PGHOST: 127.0.0.1
@@ -44,4 +46,13 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_consent_grant_test
+          EGRESS_LEDGER_KEEP: '1'
+          EGRESS_LEDGER_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_egress_test
+      # `egress-object-key-pg.mjs` **只追加**：把 0014/0015 的对象标识形状与最小权限演练叠加在上一步保留下来的
+      # 行/角色上，故必须紧跟上一 step 共用同一 `gengyun_egress_test`（单独跑会在 :232 断言「需要既有导出行」处红）。
+      # 该脚本用 `psql -f/-c` 真跑迁移与回滚文件，其 `psqlBin()` 在非 Windows 上只认 `W116_PSQL`（脚本自带的
+      # 文档化覆盖钩子）；这里由 runner 上已被上一 step 证实在 PATH 上的 `psql` 解析出绝对路径，解析不到脚本即以
+      # `找不到 psql.exe（可用 W116_PSQL 指定）` 非零退出——不做任何降级。
+      - run: W116_PSQL="$(command -v psql)" node tests/integration/egress-object-key-pg.mjs
+        env:
           EGRESS_LEDGER_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_egress_test
