@@ -608,6 +608,12 @@ function uploadVoiceQuestion(tempFilePath, declaration) {
  * 契约事实：`Meta`（`request_id`/`contract_version`/`execution_mode`）在**成功与错误封套里都必填**
  * （`openapi.json` 的 `ErrorEnvelope.required = [error, meta]`）⇒ 非 200 时**仍可如实**读出执行模式。
  * 只有"封套里没有可核对的 meta"或网络失败才如实报不可用（不猜、不兜底）。
+ *
+ * 200 时**仍须**核对**成功封套键集**（契约实读：`HomeEnvelope` 恰为 `{data, meta}`，
+ * `additionalProperties: false`、`required: [data, meta]` —— `packages/contracts/openapi.json:14789-14804`）：
+ * 缺键／多键／非对象／`meta` 类型不符一律判 `INVALID_RESPONSE`（沿用既有错误码），
+ * 与"数据不可用（503 等）"严格区分——畸形 200 若被当成"已读到执行模式"放行，
+ * 入口就会按一个**未经核对**的模式继续跑（伪造模式比报错更危险）。
  */
 function serverMode() {
   const b = binding()
@@ -619,6 +625,12 @@ function serverMode() {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
+          if (r.statusCode === 200) {
+            // 成功封套键集与契约一致才放行（缺键／多键／非对象／`meta` 类型不符 ⇒ INVALID_RESPONSE）。
+            keys(r.data, ['data', 'meta'])
+            resolve(validateMeta(r.data.meta))
+            return
+          }
           if (!object(r.data) || !object(r.data.meta)) { reject(failure('UNAVAILABLE')); return }
           resolve(validateMeta(r.data.meta))
         } catch (e) { reject(e) }
