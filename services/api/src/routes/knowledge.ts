@@ -15,7 +15,9 @@ import { buildMeta } from './support.ts';
  * GY-I07 第二片 · **公开读路由的接线依赖**（`Refs #7`；跨线 `Refs #18`）。
  *
  * **纯追加**：不传任何依赖时（`{}` / 省略）与接线前**逐字节同行为** —— 不判定 ⇒
- * 详情面照旧可见，既有装配点（`app.ts:852`）与既有回归不需要同步改动。
+ * 详情面照旧可见，既有装配点（`services/api/src/app.ts` 的 `registerKnowledgeRoutes(...)`
+ * 调用处，把 `createReferenceIntegrity(adminContentStore).resolve` 作为第 5 个实参注入）与
+ * 既有回归不需要同步改动。
  */
 export interface KnowledgeRouteDeps {
   /**

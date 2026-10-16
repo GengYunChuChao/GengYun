@@ -21,7 +21,7 @@
  *   - 身份版本缺失/null → SESSION_REQUIRED；身份版本非正整数 → INVALID_REQUEST；
  *     身份版本与当前不一致（旧会话）→ ACCOUNT_INACTIVE。
  */
-import { CONSENT_PURPOSES, MEDIA_PURPOSES, MEDIA_PURPOSE_REQUIRED_CONSENTS } from './constants.mjs';
+import { CONSENT_PURPOSES, requiredConsentsForDataType } from './constants.mjs';
 import { PrivacyError } from './errors.mjs';
 
 /**
@@ -95,10 +95,12 @@ export function createPrivacyGuard({ account, consentStore, now = () => new Date
     }
 
     if (dataType !== undefined && dataType !== null) {
-      if (!MEDIA_PURPOSES.includes(dataType)) {
+      // 资料类型判定 = **媒体维 ∪ 非媒体维**（GY-I27 第三片）：两维各自核验自己的必需用途集合，
+      // 未知类型（含两维都不认识的）仍逐字拒 `SCOPE_DENIED 未知资料类型：<v>`。
+      const required = requiredConsentsForDataType(dataType);
+      if (required === null) {
         throw new PrivacyError('SCOPE_DENIED', `未知资料类型：${dataType}`);
       }
-      const required = MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType];
       if (!required.includes(purpose)) {
         throw new PrivacyError(
           'SCOPE_DENIED',
@@ -117,7 +119,7 @@ export function createPrivacyGuard({ account, consentStore, now = () => new Date
 
     // 资料类型需要多用途时，逐个补齐校验（缺任一即 CONSENT_REQUIRED）。
     if (dataType !== undefined && dataType !== null) {
-      for (const p of MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType]) {
+      for (const p of requiredConsentsForDataType(dataType)) {
         if (!(await consentStore.isGranted({ userId, purpose: p }))) {
           throw new PrivacyError('CONSENT_REQUIRED', `缺少用途授权：${p}`);
         }

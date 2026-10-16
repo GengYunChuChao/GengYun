@@ -223,7 +223,7 @@ reference,moderation,contract,evaluation}` 与 `tests/local-debug.test.mjs`）�
 | # | 项 | 状态 | 原因 |
 | --- | --- | --- | --- |
 | 1 | **真实第三方外发** | **未验证** | 未授权付费/真实调用；`real` 未接真实传输一律 503，且**零 sent 记录**。第 3 节 6–9 的"实际派发"用的是**测试内合成 real 传输**（不联网，脚本内明确标注） |
-| 2 | **合成域（TTS）的在途守卫接入** | **未接线** | 迁移 0003 的 `exports.object_id` 是 **uuid**，而 `createSynthesis` 的 `checked_content_ref.id` 是 1..80 的**任意字符串**（合成目标不一定是 uuid）⇒ 需要一次**schema/契约决策**（例如新增文本型对象标识列），本片不自造 |
+| 2 | **合成域（TTS）的在途守卫接入** | **已接线（后续片，2026-10-16）** | 本页记录当时状态：迁移 0003 的 `exports.object_id` 是 **uuid**，而 `createSynthesis` 的 `checked_content_ref.id` 是 1..80 的**任意字符串**（合成目标不一定是 uuid）⇒ 需要一次 **schema/契约决策**（例如新增文本型对象标识列），本片不自造。**该决策已由 GY-I27 第三片落地**：迁移 `0014_export_object_key.sql` 新增文本型对象标识列 `object_key varchar(128)`（既有列类型未改），装配在 `services/api/src/privacy/synthesis-egress.ts`；本页第 2 节读数照旧（当时确未接线） |
 | 3 | **注销的 HTTP 触发面** | **未接线**（契约仍 `planned`） | `requestAccountDeletion` 在契约里仍是 `planned`（属 GY-I19），**不得自造契约外路由**。本片交付消费者接口并在第 3 节 11 按 `state-contract §105` 口径**模拟**注销提交（同一提交里 `deletion_pending` + `auth_epoch+1`）后验证：入口拒绝、在途撤销、晚到零写入 |
 | 4 | **真实微信身份 / 真机** | **未验证** | 合成身份（替身 wechat 提供者）；无小程序改动 |
 | 5 | **真实媒体/对象存储** | **未验证** | 第 3 节用 `createSubstituteMediaPort()`（合成媒体引用端口）；本片测的是账本，不是存储 |
@@ -296,7 +296,8 @@ async 化（但会失去持久账本支持，须与 ledger-pg 一并回退）。
 原 `409` 负例逐字保留并升级为"消费者不可用时必须拒绝"的负控制。详见证据页第 3.2 节。
 
 未取得：真实第三方外发（未授权，real 一律 503 且零 sent）、合成域(TTS)在途守卫（exports.object_id
-为 uuid 与 checked_content_ref.id 不兼容 ⇒ 需 schema/契约决策）、注销 HTTP 触发面（契约仍 planned）、
+为 uuid 与 checked_content_ref.id 不兼容 ⇒ 需 schema/契约决策；**该待办已由 GY-I27 第三片以迁移
+0014 的 object_key 文本型对象标识列 + synthesis-egress.ts 接线完成**）、注销 HTTP 触发面（契约仍 planned）、
 真实微信身份/真机、真实媒体存储、export_writebacks 的 7/30 日删除与恢复（GY-I19）、域名/网关/CDN。
 
 门禁：lint / test:unit(1800，0 fail) / privacy+unit 冒烟组 110/110 / 真 PG 三支

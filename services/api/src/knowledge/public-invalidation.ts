@@ -25,11 +25,22 @@
  * `resolve()` 由调用方注入（结构注入，不导入实现）⇒ 本模块是纯函数：同样输入同样输出，
  * 无副作用、无 I/O。
  *
- * ## 如实登记的未取得项（请勿读成"失效拦截已生效"）
- * - 本片**没有任何路由消费**这个判定：`/knowledge`、`/knowledge/{id}`、`/herbicides`、
- *   `/herbicides/{id}`（`routes/knowledge.ts`，装配点 `app.ts`）**尚未接线**，属下一片。
- * - 后台 store 为空时 `resolve()` 恒为 `unverifiable` ⇒ 生产默认行为**不变**（内容照旧可见）；
- *   即"引用不可用 ⇒ 隐藏"这条尚未在任何真实请求路径上生效。
+ * ## 消费方与如实登记的未取得项（请勿读成"失效拦截已生效"）
+ * - **消费方（实测，非承诺）**：`routes/knowledge.ts` 已 import 本模块的 `decidePublicVisibility`，
+ *   并由该文件的 `assertPubliclyVisible(resolve, …)` 调用 ⇒ **两个详情面**
+ *   `/knowledge/{id}`、`/herbicides/{id}` 已在写响应头**之前**消费本判定（不可用 ⇒ 与"不存在"
+ *   同形 404）。装配点＝`services/api/src/app.ts` 的 `registerKnowledgeRoutes(...)` 调用处：
+ *   该处把 `createReferenceIntegrity(adminContentStore).resolve` 作为 `resolve` 依赖注入
+ *   （`routes/knowledge.ts` 的 `KnowledgeRouteDeps.resolve`；不传 ⇒ 不判定）。
+ * - **列表面** `/knowledge`、`/herbicides` **仍不消费**本判定（刻意不改，见 `routes/knowledge.ts`
+ *   注册处的注释）；`routes/knowledge.ts` 调用本判定时传的 `family` 恒为 `'knowledge'`。
+ * - 后台 store 为空时 `resolve()` 恒为 `unverifiable` ⇒ 生产默认行为**不变**（内容照旧可见）。
+ *   如实登记的未取得项：`real` 模式下默认 store 是**空的内存实现**
+ *   （`admin/store.ts#createAdminContentStore`：`persistent: false`，进程启动即空、无持久化），
+ *   且**没有任何请求路径能往里写**（`services/api/src/app.ts` 的 `adminRealUnwired` 判定
+ *   把 34 条后台路由一律 fail-closed 成 503 PROVIDER_UNAVAILABLE；`adminInjection?.contentStore`
+ *   仅测试注入可用）。因此"引用不可用 ⇒ 隐藏"这一支在 `real` 模式下**尚无真实请求路径可达**，
+ *   目前只由注入 store 的单元测试覆盖。
  */
 import type { AdminFamily } from '../admin/types.ts';
 import type { ReferenceResolution, ReferenceState } from '../admin/reference-integrity.ts';

@@ -82,6 +82,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG 且硬钉库名 `gengyun_egress_test`：由 `consent-grant-postgres.yml` 先建库再运行。',
   },
   {
+    path: 'tests/integration/egress-object-key-pg.mjs',
+    reason: '需真实 PG 且硬钉前置：先跑 `egress-ledger-pg.mjs` 并置 `EGRESS_LEDGER_KEEP=1` 保留角色/夹具行，'
+      + '不进无 PG 的回环链（接线片另开）。',
+  },
+  {
     path: 'tests/integration/favorites-history-isolation-http.reverse-control.mjs',
     reason: '反向控制运行器，**故意**不在门禁名单内（需显式运行，自证见同目录正向脚本注释）。',
   },
@@ -102,16 +107,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
   },
   {
-    path: 'tests/integration/speech-http.mjs',
-    reason: '回环 HTTP 但需真实 ASR 提供者／媒体装配，尚未并入无供应商的回环链（在途片接线对象）。',
-  },
-  {
     path: 'tests/integration/staging-intake-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/staging-intake-postgres.yml` 用独立测试集群运行。',
-  },
-  {
-    path: 'tests/integration/tts-http.mjs',
-    reason: '回环 HTTP 但需真实 TTS 提供者／产物端口，尚未并入无供应商的回环链（在途片接线对象）。',
   },
   {
     path: 'tests/integration/workbook-staging-pg.mjs',
