@@ -2,5 +2,18 @@
  * ---------------------------------------------------------------------------
  * 页面形态走 styles/components.wxss 的 demo 组件层（info-row／info-list／panel／pill／
  * demo-caption）。demo 的 .message-list／.message-row／.message-icon／.message-copy／
- * .unread-dot 已落入样式层，供消息数据接入后复用；本轮为空态，不生成模拟通知。
+ * .unread-dot 已落入样式层，本页按 GY-I17（#17）接入真实消息数据后直接复用，
+ * 不新增第二套列表样式；本文件只补两处与样式层默认值不同的声明。
  */
+
+/* 消息行图标：沿用样式层 .message-icon 的 36px 底框，图标取 21px 基准
+ * （与底部 Tab 一致，仍随 --font-scale 放大；样式层默认值 21px 保持不变）。 */
+.message-row .gy-icon {
+  --gy-icon-size: 21px;
+}
+
+/* 消息行内的操作按钮：与社区列表一致，按钮不占满整行、不挤压正文。 */
+.message-row .row-actions {
+  justify-content: flex-start;
+  margin-top: 10px;
+}

@@ -78,6 +78,24 @@
   background: #6d944d;
 }
 
+/* 未读角标（GY-I17 #17）：绝对定位在图标右上角 ⇒ **不改变 .tab 的高度与布局**
+ * （tools/verify-layout.mjs 按 .tab-bar/.tab 的声明复算的末屏预留不受影响）。
+ * 取色用既有语义令牌 --color-error（tokens.wxss 的「警告红」），不新立色板。 */
+.tab__badge {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(6px);
+  min-width: calc(16px * var(--font-scale, 1));
+  padding: 0 calc(4px * var(--font-scale, 1));
+  border-radius: calc(8px * var(--font-scale, 1));
+  background: var(--color-error, #c53030);
+  color: #FFFFFF;
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: calc(16px * var(--font-scale, 1));
+  text-align: center;
+}
+
 /* demo [data-route="identify"]：居中凸起的识别按钮 */
 .tab--identify {
   --gy-icon-size: 26px;
