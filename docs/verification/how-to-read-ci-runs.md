@@ -12,24 +12,27 @@
 
 检查名是 PR 上可直接引用的必需检查名。下表逐项给出**触发条件**与**实际执行**的 `file:line`。
 
-### 1.1 `.github/workflows/engineering-shell.yml`（工程六项检查）
+### 1.1 `.github/workflows/engineering-shell.yml`（工程七项检查）
 
 | 项 | 值 | 位置 |
 | --- | --- | --- |
 | 触发 | `pull_request`（全部路径）；`push` 限定 `main` | `.github/workflows/engineering-shell.yml:8-11` |
 | 权限 | `contents: read` | `:13-14` |
-| runner | `ubuntu-24.04`（六个 job 均同） | `:19,31,45,59,73,87` |
+| runner | `ubuntu-24.04`（七个 job 均同） | `:19,31,45,59,77,91,105` |
 
 | job 名（= 检查名） | 位置 | 实际执行 |
 | --- | --- | --- |
 | `docs` | `:17-27` | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（**不装 Node**） |
 | `static-check` | `:29-41` | `setup-node` 固定 `24.16.0` → `npm ci --no-audit --no-fund` → `npm run lint` |
 | `unit-tests` | `:43-55` | 同上安装 → `npm run test:unit` |
-| `contract-tests` | `:57-69` | 同上安装 → `npm run test:contract` |
-| `evaluation-tests` | `:71-83` | 同上安装 → `npm run test:evaluation` |
-| `build` | `:85-96` | 同上安装 → `npm run build` |
+| `integration-http` | `:57-73` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 6 个回环脚本；**无需 PG／微信开发者工具／外网**；约 12–17 秒，量级参考） |
+| `contract-tests` | `:75-87` | 同上安装 → `npm run test:contract` |
+| `evaluation-tests` | `:89-101` | 同上安装 → `npm run test:evaluation` |
+| `build` | `:103-115` | 同上安装 → `npm run build` |
 
 文件头另有一条**边界声明**（不是检查）：`:6` 明写"微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充"。
+
+`integration-http` 挑脚本的方式与其它 job 不同：名单写在 `package.json` 的 `test:integration:http` 里**逐个列出**（不是 glob）——`tests/integration/**` 另含需 PG（`*-pg.mjs`）与需微信开发者工具（`local-dev-*.cjs`）的脚本，一把抓会把它们拖进必跑路径。该 job 只用内存存储与 `127.0.0.1` 回环：不起库、不调真实供应商；脚本里出现的 `*.invalid` 域名是**内容数据**（RFC 2606 保留、不可解析），不是请求目标。
 
 ### 1.2 `.github/workflows/development-docs.yml`（文档检查）
 
@@ -40,7 +43,7 @@
 | job 名（= 检查名） | `development-docs` | `:29-30` |
 | 实际执行 | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（与 `engineering-shell.yml` 的 `docs` job 同三条命令，**不装 Node**） | `:36-39` |
 
-⇒ 只改 `docs/**` 的 PR，**只会**命中 `development-docs`；六个工程 job 在 `engineering-shell.yml` 上**不带 `paths` 过滤**，所以文档 PR 也会触发它们。
+⇒ 只改 `docs/**` 的 PR，**只会**命中 `development-docs`；七个工程 job 在 `engineering-shell.yml` 上**不带 `paths` 过滤**，所以文档 PR 也会触发它们。
 
 ### 1.3 `.github/workflows/local-wechat.yml`（本机准备）
 
@@ -145,9 +148,9 @@ curl -sS -H "Accept: application/vnd.github+json" \
 | `status` 非 `completed`（`queued`/`in_progress`） | **尚无结论**，稍后重取 |
 
 4. **"没有运行"与"运行失败"要分开**：路径过滤（1.2、1.3）会让检查根本不产生；运行 ID 过期、分支被删、squash 合并使旧分支尖端不在 `main` 上，也都会让原链接失去可判读的对应关系。此时应写明"未取得"，**不要**用邻近提交的 success 顶替。
-5. **工程六项检查不覆盖的范围**（不得用其 success 冒称）：
+5. **工程七项检查不覆盖的范围**（不得用其 success 冒称）：
    - 微信开发者工具编译、真机渲染、基础库版本 —— 见 `engineering-shell.yml:6` 的边界声明；本机任务，不在该 CI。
-   - 真实 PostgreSQL 结构/行为 —— 由独立的工作流承担（本仓库另有 `staging-intake-postgres.yml`／`workbook-staging.yml` 等起真实 PG17 的 job）；`engineering-shell.yml` 的六项里**没有**起库步骤。
+   - 真实 PostgreSQL 结构/行为 —— 由独立的工作流承担（本仓库另有 5 个检查名以 `-postgres-17.11` 结尾的 job：`auth-privacy-postgres-17.11`／`catalog-postgres-17.11`／`consent-grant-postgres-17.11`／`source-lifecycle-postgres-17.11`／`staging-intake-postgres-17.11`，外加 `workbook-staging.yml` 的 `staging-pg17`）；`engineering-shell.yml` 的七项里**没有**起库步骤。
    - 真实供应商（AI/OCR/ASR/TTS 等）能力 —— CI 内一律禁用真实外部调用。
    - `a0cab31`/`857a683` 一类历史基线的读数 —— 只能各自现场取数，不互相顶替。
 
