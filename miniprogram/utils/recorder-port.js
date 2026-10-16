@@ -176,8 +176,28 @@ function createRecorderPort() {
 
   let recording = false
   let released = false
-  /** 当前会话的兑现器：`stop()` 等平台 `onStop`/`onError` 落定。 */
-  let settle = null
+  /**
+   * 在途 `start()` 的兑现器：**兑现即清空**（见 `finish`）。
+   *
+   * 为什么必须清空：平台会在**达到 `duration` 上限时自行 `onStop`**（不经调用方 `stop()`）。
+   * 若 `start()` 兑现后槽位仍留着那个已兑现的兑现器，平台的自动停止就会落进一个**空操作**
+   * ⇒ 产物（tempFilePath/duration/format）被静默吞掉，页面随后只能拿到 `RECORD_NOT_STARTED`
+   * （界面上表现为"当前没有正在进行的录音"，而实际已录满上限）。
+   */
+  let pendingStart = null
+  /** 在途 `stop()` 的兑现器：**只在 `stop()` 等待平台落定期间存在**。 */
+  let pendingStop = null
+  /**
+   * 平台已产出、但调用方尚未取走的**产物或错误**。
+   *
+   * 平台**自行**停止（录满时长上限／系统回收）或自行报错时没有在途 `stop()` 可交付
+   * ⇒ 结果落进本槽，由**下一次 `stop()` 如实交出**；**绝不丢弃**。
+   */
+  let lastProduct = null
+  /** 本次会话请求的时长上限（`start()` 兑现时如实回填）。 */
+  let requestedDuration = MAX_DURATION_MS
+  /** `cancel()` 之后的下一次平台结果一律丢弃（用户已取消，产物不得再交给任何调用方）。 */
+  let discardNext = false
 
   function managerOf() {
     if (!supported || released) return null
@@ -187,6 +207,49 @@ function createRecorderPort() {
     return manager
   }
 
+  /**
+   * 平台事件 → 统一分发（在途 `stop()` 优先；否则存产物槽；`start()` 在途则一并如实兑现）。
+   *
+   * @param {object} out 统一出参：`{ ok:true, tempFilePath, durationMs, format, mime }` 或 `{ ok:false, code, errMsg }`
+   * @param {boolean} isProduct 结果是否为**产物**（true）而非错误（false）
+   */
+  function deliver(out, isProduct) {
+    const startDone = pendingStart
+    pendingStart = null
+    const stopDone = pendingStop
+    pendingStop = null
+    if (discardNext === true) {
+      // `cancel()` 已声明丢弃：结果不得交给任何人，也不得留槽。
+      discardNext = false
+      lastProduct = null
+      if (startDone !== null) startDone(failure(CODES.FAILED, '录音已取消'))
+      if (stopDone !== null) stopDone(failure(CODES.FAILED, '录音已取消'))
+      return
+    }
+    // `start()` 若仍在途（极快停止／立刻报错）：录音确实开始过 ⇒ 产物按 `ok:true` 兑现，错误如实兑现。
+    const startOutcome = isProduct === true ? { ok: true, maxDurationMs: requestedDuration } : out
+    if (stopDone === null) {
+      // 平台**自行**停止／报错：没有在途 `stop()` ⇒ 存槽，由下一次 `stop()` 如实交出。
+      lastProduct = out
+      if (startDone !== null) startDone(startOutcome)
+      return
+    }
+    if (startDone !== null) startDone(startOutcome)
+    stopDone(out)
+  }
+
+  /** 把平台 `onStop` 的回传解析成统一产物出参（三要素缺一不可 ⇒ 如实失败，绝不编造）。 */
+  function productOf(res) {
+    const tempFilePath = res && typeof res.tempFilePath === 'string' ? res.tempFilePath : ''
+    const durationMs = res && Number.isFinite(res.duration) ? Math.round(res.duration) : NaN
+    const format = res && typeof res.format === 'string' ? res.format : ''
+    const mime = mimeForFormat(format)
+    if (tempFilePath === '') return failure(CODES.FAILED, '录音未返回文件')
+    if (!Number.isFinite(durationMs) || durationMs < 1) return failure(CODES.FAILED, '录音未返回有效时长')
+    if (mime === null) return failure(CODES.FAILED, '录音编码不在契约允许范围（mp3/wav/aac）')
+    return { ok: true, tempFilePath: tempFilePath, durationMs: durationMs, format: format, mime: mime }
+  }
+
   /** 只绑定一次：平台录音器是单例，重复 `onXxx` 会覆盖监听。 */
   function bindOnce(instance) {
     if (bound || instance === null) return
@@ -194,35 +257,18 @@ function createRecorderPort() {
 
     const onStop = function (res) {
       recording = false
-      const done = settle
-      settle = null
-      if (done === null) return
-      const tempFilePath = res && typeof res.tempFilePath === 'string' ? res.tempFilePath : ''
-      const durationMs = res && Number.isFinite(res.duration) ? Math.round(res.duration) : NaN
-      const format = res && typeof res.format === 'string' ? res.format : ''
-      const mime = mimeForFormat(format)
-      // 产物三要素缺一不可：拿不到文件 / 时长 / 契约内编码 ⇒ 如实失败，绝不编造。
-      if (tempFilePath === '') { done(failure(CODES.FAILED, '录音未返回文件')); return }
-      if (!Number.isFinite(durationMs) || durationMs < 1) { done(failure(CODES.FAILED, '录音未返回有效时长')); return }
-      if (mime === null) { done(failure(CODES.FAILED, '录音编码不在契约允许范围（mp3/wav/aac）')); return }
-      done({ ok: true, tempFilePath: tempFilePath, durationMs: durationMs, format: format, mime: mime })
+      deliver(productOf(res), true)
     }
 
     const onError = function (error) {
       recording = false
-      const done = settle
-      settle = null
-      if (done === null) return
       const errMsg = error && typeof error.errMsg === 'string' ? error.errMsg : ''
-      done(failure(isAuthDenial(errMsg) ? CODES.AUTH_DENIED : CODES.FAILED, errMsg))
+      deliver(failure(isAuthDenial(errMsg) ? CODES.AUTH_DENIED : CODES.FAILED, errMsg), false)
     }
 
     const onInterruptionBegin = function (error) {
       recording = false
-      const done = settle
-      settle = null
-      if (done === null) return
-      done(failure(CODES.INTERRUPTED, error && typeof error.errMsg === 'string' ? error.errMsg : ''))
+      deliver(failure(CODES.INTERRUPTED, error && typeof error.errMsg === 'string' ? error.errMsg : ''), false)
     }
 
     try {
@@ -261,6 +307,11 @@ function createRecorderPort() {
       if (requested < 1) return Promise.resolve(failure(CODES.INVALID_INPUT, '录音时长上限必须为正整数'))
       const duration = Math.min(requested, MAX_DURATION_MS)
 
+      // 新会话：清掉上一次未被取走的产物/错误与取消标记，避免把旧结果当成这一次的结果（不串台）。
+      lastProduct = null
+      discardNext = false
+      requestedDuration = duration
+
       return permissionState().then(function (permission) {
         if (permission.state === 'denied') return failure(CODES.AUTH_DENIED, 'scope.record=false')
         const instance = managerOf()
@@ -270,13 +321,14 @@ function createRecorderPort() {
 
         return new Promise(function (resolve) {
           let settled = false
+          /** 兑现器：**兑现即把 `pendingStart` 清空** —— 否则平台的自动 `onStop` 会落进空操作（见字段注释）。 */
           const finish = function (value) {
             if (settled) return
             settled = true
+            if (pendingStart === finish) pendingStart = null
             resolve(value)
           }
-          // 平台回调把「失败」也当结果传回：与同步失败走同一个兑现器，形状已统一。
-          settle = function (value) { finish(value) }
+          pendingStart = finish
           recording = true
           try {
             instance.start({
@@ -288,11 +340,10 @@ function createRecorderPort() {
             })
           } catch (error) {
             recording = false
-            settle = null
             finish(failure(CODES.FAILED, error && error.message ? error.message : '录音启动异常'))
             return
           }
-          // `start()` 是同步返回的：平台若立刻拒绝（授权/占用），`onError` 会把 settle 收走。
+          // `start()` 是同步返回的：平台若立刻拒绝（授权/占用），`onError` 会把 `pendingStart` 收走。
           // 这里在下一个微任务确认「仍未被 onError 抢走」才认为已开始。
           Promise.resolve().then(function () {
             if (settled) return
@@ -303,9 +354,22 @@ function createRecorderPort() {
       })
     },
 
-    /** 停止并取回产物（时长/编码都来自平台真实回调，不由调用方声明）。 */
+    /**
+     * 停止并取回产物（时长/编码都来自平台真实回调，不由调用方声明）。
+     *
+     * **平台已自行停止**（录满 `duration` 上限／系统回收）时，端口里已有产物
+     * ⇒ 直接如实交出，**不得**报 `RECORD_NOT_STARTED`（那会把"已录满"说成"没在录"，并丢掉产物）。
+     */
     stop: function () {
-      if (released || recording !== true) return Promise.resolve(failure(CODES.NOT_RECORDING))
+      if (released) return Promise.resolve(failure(CODES.NOT_RECORDING))
+      if (recording !== true) {
+        if (lastProduct !== null) {
+          const product = lastProduct
+          lastProduct = null
+          return Promise.resolve(product)
+        }
+        return Promise.resolve(failure(CODES.NOT_RECORDING))
+      }
       const instance = managerOf()
       if (instance === null) { recording = false; return Promise.resolve(failure(CODES.UNAVAILABLE)) }
       return new Promise(function (resolve) {
@@ -313,11 +377,10 @@ function createRecorderPort() {
         const finish = function (value) {
           if (settled) return
           settled = true
-          if (settle === wrapper) settle = null
+          if (pendingStop === finish) pendingStop = null
           resolve(value)
         }
-        const wrapper = function (value) { finish(value) }
-        settle = wrapper
+        pendingStop = finish
         try {
           instance.stop()
         } catch (error) {
@@ -332,24 +395,32 @@ function createRecorderPort() {
       if (recording !== true) return Promise.resolve({ ok: true, code: CODES.NOT_RECORDING })
       const instance = managerOf()
       recording = false
-      const done = settle
-      settle = null
-      if (done !== null) done(failure(CODES.FAILED, '录音已取消'))
+      // 用户已取消：在途 stop() 如实失败，平台随后回传的产物一并丢弃（`discardNext`）。
+      const stopDone = pendingStop
+      pendingStop = null
+      if (stopDone !== null) stopDone(failure(CODES.FAILED, '录音已取消'))
+      lastProduct = null
+      discardNext = true
       if (instance === null) return Promise.resolve({ ok: true, code: CODES.UNAVAILABLE })
-      try { instance.stop() } catch (error) { /* 已停止 */ }
+      try { instance.stop() } catch (error) { discardNext = false }
       return Promise.resolve({ ok: true, code: null })
     },
 
-    /** 离页释放：停止录音 → 摘掉兑现器 → 清掉平台监听（不留挂起定时器/监听）。 */
+    /** 离页释放：停止录音 → 摘掉在途兑现器与产物槽 → 清掉平台监听（不留挂起定时器/监听）。 */
     release: function () {
       if (released) return
       const instance = manager
       const wasRecording = recording
       recording = false
       released = true
-      const done = settle
-      settle = null
-      if (done !== null) done(failure(CODES.FAILED, '录音端口已释放'))
+      const startDone = pendingStart
+      pendingStart = null
+      const stopDone = pendingStop
+      pendingStop = null
+      lastProduct = null
+      discardNext = false
+      if (startDone !== null) startDone(failure(CODES.FAILED, '录音端口已释放'))
+      if (stopDone !== null) stopDone(failure(CODES.FAILED, '录音端口已释放'))
       if (instance !== null) {
         if (wasRecording) { try { instance.stop() } catch (error) { /* 已停止 */ } }
         for (const off of ['offStop', 'offError', 'offInterruptionBegin']) {

@@ -191,8 +191,7 @@ test('录音与播放为两个独立按钮，播放需先有录音', () => {
   assert.ok(/bindtap="onPlay"/.test(wxml), '缺少独立播放按钮');
   assert.ok(/disabled="\{\{guest \|\| !hasRecording\}\}"/.test(wxml), '播放按钮未在无录音时禁用');
   const js = read('miniprogram/pages/identify/identify.js');
-  // 识别页**不接**录音/播放能力（真实录音只出现在播报页，且必须经 utils/recorder-port.js）。
-  assert.ok(!/wx\.getRecorderManager\s*\(|wx\.createInnerAudioContext\s*\(/.test(js), '识别页不应调用录音或播放能力');
+  assert.ok(!/getRecorderManager|createInnerAudioContext/.test(js), '不应在未接入时调用录音或播放能力');
 });
 
 test('界面文案不含绝对化风险表述', () => {

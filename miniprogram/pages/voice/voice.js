@@ -44,6 +44,17 @@ const RECORD_NOTE = '录音走小程序原生能力（wx.getRecorderManager）�
 const VOICE_LIMIT_NOTE = '用途 voice_question：仅 MP3 / WAV / AAC，单次 ≤60 秒、≤10 MiB；'
   + '录音上传只走既有私有媒体通道，本页不新增用途、不新增字段。'
 
+/**
+ * 「在途上传被作废」的原因措辞（`releaseAll` 的 reason ⇒ 用户可读的一句）。
+ *
+ * 只用于**如实说明**在途上传为何没有结果；不改变任何判定，也不谎称服务端任务被取消。
+ */
+const LEAVE_REASON_TEXT = Object.freeze({
+  hide: '已离开本页',
+  unload: '已离开本页',
+  gate: '会话／门禁已失效'
+})
+
 Page({
   onLoad: function () {
     fontScale.applyFontScale(this)
@@ -179,7 +190,7 @@ Page({
     this.beginOperation()
     this._plan = []
     // 录音：离页必须**停止并释放**，不留挂起状态（也不留下会继续计时的定时器）。
-    this.releaseRecorder()
+    this.releaseRecorder(reason)
     if (this._controller !== null) {
       this._controller.release()
       this._controller = null
@@ -198,12 +209,19 @@ Page({
   },
 
   /**
-   * 释放录音端口：停止录音 → 作废在途上传 → 清掉计时器。
+   * 释放录音端口：停止录音 → 作废在途上传 → 清掉计时器 → **把录音控件无条件复位到默认**。
    *
-   * 三条离页路径（返回 / 切页 / 隐藏）与门禁失效共用本出口；`onUnload` 亦复用。
-   * 幂等：端口为 null 时只清计时器。
+   * 三条离页路径（返回 / 切页 / 隐藏）、门禁失效、`onUnload` 共用本出口。
+   *
+   * ⚠️ 复位**必须无条件**（与 `releaseAll` 对 `playbackState` 的写法对称）：
+   * 在途上传已被 `_uploadEpoch` 作废 ⇒ 它**永远不会**再落定，若此时只复位"录音中"而不复位"上传中"，
+   * 页面就会永久停在 `recordState='uploading'`、录音按钮被 WXML 的 `disabled` 表达式永久禁用
+   * —— 那正是"离页/取消不得留挂起状态"被违反的形态。所以在途（录音中或上传中）一律复位，
+   * 并**如实**说明"本次上传已作废"，而不是留一句"上传中"。
+   *
+   * 幂等：端口为 null 时只清计时器与在途上传代次。
    */
-  releaseRecorder: function () {
+  releaseRecorder: function (reason) {
     this.clearRecTimer()
     // 作废在途上传：迟到的响应不再落 UI（服务端任务本就没有客户端取消能力，不谎称已取消）。
     this._uploadEpoch = (this._uploadEpoch || 0) + 1
@@ -212,12 +230,22 @@ Page({
       this._recorder.release()
       this._recorder = null
     }
-    if (this.data.recording === true || this.data.recordState === 'recording') {
-      this.setData({
-        recording: false, recordState: 'idle', recordLabel: '开始录音',
-        recordElapsedMs: 0, recordStageNote: '已离开本页：录音已停止并释放麦克风。'
-      })
+    const wasUploading = this.data.recordState === 'uploading'
+    const inFlight = this.data.recording === true || this.data.recordState === 'recording' || wasUploading
+    if (inFlight !== true) return
+    const patch = {
+      recording: false, recordState: 'idle', recordLabel: '开始录音',
+      recordElapsedMs: 0, recordDurationMs: 0, recordedMime: '', hasRecording: false,
+      uploadedMediaId: null, uploadedPurpose: '', uploadErrorCode: ''
     }
+    if (wasUploading) {
+      // 上传中被作废：如实说明"没有上传成功、也没有 media_id"，并明确"可以重新录音"（不得留挂起态）。
+      patch.recordStageNote = '本次上传已作废（' + (LEAVE_REASON_TEXT[reason] || LEAVE_REASON_TEXT.hide)
+        + '）：没有上传成功、也没有 media_id；可以重新录音。'
+    } else {
+      patch.recordStageNote = '已离开本页：录音已停止并释放麦克风。'
+    }
+    this.setData(patch)
   },
 
   /** 惰性建端口（与 `ensureController` 同一写法；端口不可用时如实返回 null）。 */

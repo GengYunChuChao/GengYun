@@ -442,6 +442,11 @@ test('真机端口缺能力 ⇒ 如实失败（不伪造播放完成、不记已
  *   - `failStart: '…'`    ⇒ `start()` 后立刻抛 `onError`（含授权类文案）；
  *   - `interrupt: true`   ⇒ `start()` 后抛 `onInterruptionBegin`；
  *   - `format`/`duration` ⇒ `onStop` 回传的产物形状（默认 aac / 1234ms）。
+ *
+ * **`_autoStop()`：平台自行停止（`duration` 上限到达／系统回收）** —— 按平台语义，此时
+ * `onStop` 会被触发**而不经调用方 `stop()`**。这是唯一能结构上覆盖"平台自动停止"的形态：
+ * 若替身只会在被调 `stop()` 时回 `onStop`，该分支根本无法被测到。
+ *
  * 本探针**不产生任何音频**、不访问麦克风。
  */
 function observableRecorderManager(options = {}) {
@@ -449,6 +454,18 @@ function observableRecorderManager(options = {}) {
   const handlers = {};
   let recording = false;
   let lastStart = null;
+  /** 产物形状：显式给出的 override **优先**（含显式空串 ⇒ 用于构造"平台未返回文件"的反例）。 */
+  const pick = (overrides, key, fallback) => {
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) return overrides[key];
+    if (Object.prototype.hasOwnProperty.call(options, key)) return options[key];
+    return fallback;
+  };
+  const productOf = (overrides = {}) => ({
+    tempFilePath: pick(overrides, 'tempFilePath', 'wxfile://tmp/voice-question-test.aac'),
+    duration: Number.isFinite(pick(overrides, 'duration', NaN)) ? pick(overrides, 'duration', NaN) : 1234,
+    fileSize: Number.isFinite(pick(overrides, 'fileSize', NaN)) ? pick(overrides, 'fileSize', NaN) : 4096,
+    format: pick(overrides, 'format', 'aac')
+  });
   const manager = {
     onStart: (fn) => { handlers.start = fn },
     onStop: (fn) => { handlers.stop = fn },
@@ -469,14 +486,27 @@ function observableRecorderManager(options = {}) {
       calls.push({ api: 'stop' });
       if (!recording) return;
       recording = false;
-      if (handlers.stop) {
-        handlers.stop({
-          tempFilePath: options.tempFilePath || 'wxfile://tmp/voice-question-test.aac',
-          duration: Number.isFinite(options.duration) ? options.duration : 1234,
-          fileSize: Number.isFinite(options.fileSize) ? options.fileSize : 4096,
-          format: options.format || 'aac'
-        });
-      }
+      if (handlers.stop) handlers.stop(productOf());
+    },
+    /**
+     * 平台**自行**停止（录满 `duration` 上限／系统回收）：记为 `autoStop`，
+     * 与调用方的 `stop()` 在 `_calls` 里**可区分**（用于证明"这次确实不是我们停的"）。
+     */
+    _autoStop: (overrides = {}) => {
+      calls.push({ api: 'autoStop' });
+      if (!recording) return;
+      recording = false;
+      if (handlers.stop) handlers.stop(productOf(overrides));
+    },
+    /**
+     * 平台**自行**报错（录音开始后系统回收麦克风等）：同样**不经**调用方 `stop()`。
+     * 用于验证"没有在途 stop() 时结果也**不得**被吞"。
+     */
+    _autoError: (errMsg) => {
+      calls.push({ api: 'autoError' });
+      if (!recording) return;
+      recording = false;
+      if (handlers.error) handlers.error({ errMsg: typeof errMsg === 'string' ? errMsg : 'operateRecorder:fail system error' });
     },
     isRecording: () => recording,
     _calls: calls,
@@ -571,6 +601,11 @@ function loadPageHarness(options = {}) {
    * `tests/unit/miniprogram-identify.test.mjs` 对同一份实现断言（本片在那里补音频用例）。
    */
   let uploadCount = 0;
+  /**
+   * `deferredUpload: true` ⇒ 上传**保持在途**（不自动落定），由用例用 `deferredOf()` 决定何时
+   * resolve/reject。这是覆盖「上传中离页」「上传中 401」的必要形态：上传必须真的挂在那里。
+   */
+  let deferred = null;
   const identifyApi = {
     VOICE_MEDIA_PURPOSE: 'voice_question',
     serverMode: () => Promise.resolve(serverMode),
@@ -582,6 +617,9 @@ function loadPageHarness(options = {}) {
         e.code = options.uploadError.code;
         e.status = options.uploadError.status;
         return Promise.reject(e);
+      }
+      if (options.deferredUpload === true) {
+        return new Promise((resolve, reject) => { deferred = { resolve, reject } });
       }
       return Promise.resolve({ mediaId: '00000000-0000-4000-8000-0000000000vv', mediaRevision: 1 });
     }
@@ -607,7 +645,10 @@ function loadPageHarness(options = {}) {
     return {
       page, requests, toasts, sets, auth, runtime, wx: fakeWx,
       recorder, recorderOptions: options.recorderOptions || {}, wxCalls,
-      uploads: () => uploadCount
+      uploads: () => uploadCount,
+      deferredOf: () => deferred,
+      /** 端口模块本体（与页面用的是**同一份** vm 内实例）：用于端口层确定性用例。 */
+      portModule: loadReal(bySuffix('recorder-port.js'), resolveDep)
     };
   } finally {
     delete globalThis.wx;
@@ -620,6 +661,22 @@ function bootPage(options = {}) {
   harness.page.onLoad();
   harness.page.onShow();
   return harness;
+}
+
+/** 把在途 promise 链推到底（`setImmediate` 之间微任务会被排干，比单纯 `await` 更可靠）。 */
+async function flushMicrotasks(rounds = 8) {
+  for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * 录音按钮是否禁用：**直接取 `voice.wxml` 的 `disabled` 表达式**并按同一判据求值
+ * （不复制语义：表达式若被改动，本辅助函数会先失败）。
+ */
+function recordButtonDisabled(page) {
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  const match = /disabled="\{\{(guest \|\| recordState === 'uploading')\}\}"/.exec(wxml);
+  assert.ok(match, '录音按钮的 disabled 表达式必须仍是 guest || recordState === \'uploading\'');
+  return page.data.guest === true || page.data.recordState === 'uploading';
 }
 
 test('宿主页·安全检查未过 ⇒ **零**合成请求、无播放器、不播报（反例）', () => {
@@ -968,6 +1025,174 @@ test('验收4·onHide 走同一释放出口（切页/隐藏与返回同口径）
   assert.equal(h.page._recTimer, null);
   assert.equal(h.page.data.exitReason, 'hide');
   assert.equal(h.page.data.recording, false);
+});
+
+// ============================================================ 5c. r2 返修：F1 挂起态 / F2 产物被吞
+
+test('验收F1a·上传中 onHide（切走再回）⇒ 录音态复位到可再次录音、清除「上传中」，迟到落定不复活挂起态', async () => {
+  const h = bootPage({ deferredUpload: true, recorderOptions: { duration: 4321 } });
+  await h.page.onRecord();
+  void h.page.onRecord();                       // 停止并进入上传（**不 await**：上传保持挂起）
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading', '先确认确实进入「上传中」');
+  assert.equal(h.uploads(), 1, '上传已在途');
+  assert.equal(recordButtonDisabled(h.page), true, '上传中按钮按 WXML 表达式应为禁用');
+
+  h.page.onHide();                              // ← 上传中切页（改前：recordState 永久残留 uploading）
+  assert.equal(h.page.data.recordState, 'idle', '离页不得残留「上传中」');
+  assert.equal(h.page.data.recordLabel, '开始录音');
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('没有上传成功、也没有 media_id'), true);
+  assert.equal(h.page.data.uploadedMediaId, null, '不得伪造 media_id');
+
+  h.page.onShow();                              // 切回来
+  assert.notEqual(h.page.data.recordState, 'uploading', '回页后不得仍显示「上传中」挂起态');
+  assert.equal(recordButtonDisabled(h.page), false, '回页后录音按钮必须可用（不得永久禁用）');
+
+  // 迟到的上传落定：作废的上传不得复活挂起态、也不得写入 media_id。
+  h.deferredOf().resolve({ mediaId: '00000000-0000-4000-8000-0000000000vv', mediaRevision: 1 });
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'idle', '迟到落定不得复活「上传中」');
+  assert.equal(h.page.data.uploadedMediaId, null, '已作废的上传不得写入 media_id');
+  assert.equal(recordButtonDisabled(h.page), false, '按钮仍须可用');
+
+  // 关键：复位后**必须真的能再次录音**
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, true, '复位后必须可以再次录音');
+  assert.equal(h.page.data.recordState, 'recording');
+  h.page.onUnload();
+});
+
+test('验收F1b·上传中收到 401/会话失效 ⇒ 录音态复位到可再次录音、清除「上传中」，不伪造结果', async () => {
+  const h = bootPage({ deferredUpload: true });
+  await h.page.onRecord();
+  void h.page.onRecord();
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading');
+
+  const sessionLost = new Error('SESSION_REQUIRED');
+  sessionLost.code = 'SESSION_REQUIRED';
+  h.deferredOf().reject(sessionLost);
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '401 后不得残留「上传中」');
+  assert.notEqual(h.page.data.recordState, 'uploading');
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.page.data.uploadedMediaId, null, '会话失效不得伪造 media_id');
+  assert.equal(recordButtonDisabled(h.page), false, '401 后录音按钮不得永久禁用');
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('会话'), true, h.page.data.recordStageNote);
+  h.page.onUnload();
+});
+
+test('验收F2a·端口层：平台按 duration 自行 onStop（不经 stop()）⇒ 产物存入槽并由下一次 stop() 如实交出', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    const started = await port.start({ format: 'aac' });
+    assert.equal(started.ok, true, 'start 必须成功：' + JSON.stringify(started));
+
+    // 平台**自行**停止：调用方一次都没调 stop()。
+    h.recorder._autoStop({ duration: 60000 });
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '证明这次不是调用方停的');
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'autoStop').length, 1);
+    assert.equal(port.isRecording(), false, '端口应已知平台已停止');
+
+    const product = await port.stop();
+    assert.equal(product.ok, true, '产物**必须**被接收（不得被吞）：' + JSON.stringify(product));
+    assert.equal(product.tempFilePath, 'wxfile://tmp/voice-question-test.aac');
+    assert.equal(product.durationMs, 60000, '时长取平台真实值（不是本地计时）');
+    assert.equal(product.mime, 'audio/aac');
+
+    // 产物只能被取走一次：不得把同一份结果重复交出。
+    const again = await port.stop();
+    assert.equal(again.ok, false);
+    assert.equal(again.code, 'RECORD_NOT_STARTED');
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
+});
+
+test('验收F2b·页面层：录满上限时平台自动停止 ⇒ 页面到点出口接收产物并**恰一次**上传（duration_ms 为平台值）', async () => {
+  const h = bootPage({ recorderOptions: { duration: 60000, format: 'aac' } });
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, true);
+  assert.equal(h.recorder.isRecording(), true);
+
+  // 平台在 duration 上限处**自行** onStop（这正是真机上先于页面 100ms tick 发生的那条路径）。
+  h.recorder._autoStop({ duration: 60000 });
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '平台自行停止：调用方未调 stop()');
+  assert.equal(h.recorder.isRecording(), false);
+  assert.equal(h.uploads(), 0, '此刻页面尚未到点，还没有上传');
+
+  // 页面"到达上限"的出口 —— 与 100ms tick 到 60000ms 时调用的是**同一个**函数。
+  await h.page.stopAndUpload();
+
+  assert.equal(h.uploads(), 1, '产物必须被接收并上传，**恰一次**');
+  const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
+  assert.ok(upload, '必须走既有私有媒体上传通道');
+  assert.equal(upload.declaration.durationMs, 60000, 'duration_ms 仍取平台真实值');
+  assert.equal(upload.declaration.mime, 'audio/aac');
+  assert.equal(h.page.data.recordDurationMs, 60000);
+  assert.equal(h.page.data.recordState, 'stopped', '应落在「已录音」而非失败态');
+  assert.equal(h.page.data.uploadErrorCode, '', '不得出现任何失败码');
+  assert.equal(/没有正在进行的录音/.test(h.page.data.recordStageNote), false,
+    '不得把"已录满"说成"没有正在进行的录音"：' + h.page.data.recordStageNote);
+  assert.equal(h.page.data.uploadedMediaId, '00000000-0000-4000-8000-0000000000vv');
+  h.page.onUnload();
+});
+
+test('验收F2c·页面层：平台自动停止且产物不可用（无文件）⇒ 如实失败，不伪造上传', async () => {
+  const h = bootPage({ recorderOptions: { duration: 60000 } });
+  await h.page.onRecord();
+  h.recorder._autoStop({ duration: 60000, tempFilePath: '' });
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0);
+  await h.page.stopAndUpload();
+  assert.equal(h.uploads(), 0, '无产物不得上传');
+  assert.equal(h.page.data.recordState, 'failed');
+  assert.equal(h.page.data.recordStageNote.includes('录音未能完成'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.uploadedMediaId, null);
+  h.page.onUnload();
+});
+
+test('验收F2d·端口层：cancel() 后平台回传的产物一律丢弃（不得交给下一次 stop()）', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    await port.start({ format: 'aac' });
+    await port.cancel();
+    const after = await port.stop();
+    assert.equal(after.ok, false);
+    assert.equal(after.code, 'RECORD_NOT_STARTED', '取消后的产物不得被交出：' + JSON.stringify(after));
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
+});
+
+test('验收F2e·端口层：平台自行报错（无在途 stop()）⇒ 结果存入槽并由下一次 stop() 如实交出，不静默丢失', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    await port.start({ format: 'aac' });
+    // 录音开始后平台**自行**报错：没有在途 stop()。
+    h.recorder._autoError('operateRecorder:fail system error');
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '证明不是调用方停的');
+    assert.equal(port.isRecording(), false);
+
+    const outcome = await port.stop();
+    assert.equal(outcome.ok, false, '平台报错必须如实交出为失败');
+    assert.equal(outcome.code, 'RECORD_FAILED', '失败码如实：' + JSON.stringify(outcome));
+    assert.notEqual(outcome.code, 'RECORD_NOT_STARTED', '不得把"平台已报错"说成"没有正在进行的录音"');
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
 });
 
 test('边界·重复 stop / 未录音时 stop ⇒ RECORD_NOT_STARTED（幂等安全，不抛异常、不发请求）', async () => {
