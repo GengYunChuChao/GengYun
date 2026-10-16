@@ -21,29 +21,68 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { createRequire, registerHooks } from 'node:module';
+// r7 形态钉子：`import { createRequire as cr } from 'node:module'` 这类**静态 import 别名**同样是运行期一条
+//   真实路径 ⇒ 这里真写一条别名导入，供 `registryProbeForms` 的 `static-import-alias` 在子进程里真跑（非"模拟"）。
+import { createRequire as createRequireViaStaticImport } from 'node:module';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
-import { buildApp } from '../../services/api/src/app.ts';
-import { loadConfig } from '../../services/api/src/config.ts';
-import { ApiError, buildErrorEnvelope } from '../../services/api/src/errors.ts';
-import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
-import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
-import { createAuthGuards } from '../../services/api/src/auth/middleware.ts';
-import { registerOcrRoutes } from '../../services/api/src/routes/ocr.ts';
-import { createUnwiredReferencePort } from '../../services/api/src/ocr/reference.ts';
-import { createJobRegistry } from '../../services/api/src/jobs/registry.ts';
-import { createOcrJobSource } from '../../services/api/src/jobs/sources.ts';
-import { registerJobRoutes } from '../../services/api/src/jobs/routes.ts';
-import { collectResultValueIssues } from '../../services/api/src/jobs/result-shape.ts';
+// ⚠ r7：受护文件的**全部**应用侧依赖改为「下方 `registerHooks` 生效之后」动态装载。
+//   实测理由：ESM 静态 import 在本模块任何语句执行**之前**求值 ⇒ 若在此静态装载，受护文件的引用图会
+//   先于登记器被解析/缓存，登记器只能看到 `app.ts` 的**直接**边、看不到下一层（覆盖不完整，复审 blocking ①的根因同类）。
+//   改为动态装载后：登记器在**任何**应用侧模块解析/装载之前生效 ⇒ `app.ts` 的**整张引用图**都被登记。
 
 // ───────────────────────── TS AST 判据（r4 路线）─────────────────────────
 // `typescript@5.9.3` 是本仓 devDependency（下方 require 即为"可解析"的自证）。
 // 用 `createRequire` 取 CJS 导出，避免 ESM/CJS 互操作差异 ⇒ 用**解析器**判定结构，不做文本正则。
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
+
+// ═══════════════ r7 主判据：受护文件的**运行期装载登记** ═══════════════
+// 立法依据：静态形状表**不可能穷举** JS 的调用/别名/间接空间（本片已连吃 7 轮同族返修）⇒ 主判据改为运行期登记：
+// 用 `node:module` 的 `registerHooks`（Node ≥22.15；本机 v24.16.0）在**本脚本自己的运行期**拦截**每一次**
+// 模块解析/装载，把「specifier → 最终模块 URL + 装载者（parentURL）」登记进集合；脚本收尾断言：
+//   「从受护文件 `app.ts` 可达的装载中，没有任何 OCR 域模块（`services/api/src/ocr/service.ts` 白名单除外）」。
+// 分工：**本登记是主判据**（判「运行期真的装载了什么」）；TS AST 判据降为**启发式**（判「源码里写了什么形状」），
+// 其无法判定的形状一律进 `unjudged` 清单并在正常路径打印（fail-closed，不沉默）。
+// ⛔ 不得退化成「登记器从不登记 ⇒ 恒绿」：正控制（下方先装载无害模块 ⇒ 集合里必须出现它）+ 负控制
+//   （子进程逐形态**真装载** OCR 域模块 ⇒ 断言必须红）在自测里逐条钉死（见 `registryProbeForms`）。
+const moduleLoadRegistry = { entries: [], edges: new Map() };
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const result = nextResolve(specifier, context);
+    moduleLoadRegistry.entries.push({ hook: 'resolve', specifier, url: result.url, parentUrl: context.parentURL ?? null });
+    if (context.parentURL !== undefined) {
+      const list = moduleLoadRegistry.edges.get(result.url) ?? [];
+      list.push({ parentUrl: context.parentURL, specifier });
+      moduleLoadRegistry.edges.set(result.url, list);
+    }
+    return result;
+  },
+  load(url, context, nextLoad) {
+    moduleLoadRegistry.entries.push({ hook: 'load', specifier: null, url, parentUrl: null });
+    return nextLoad(url, context);
+  },
+});
+/** 受护文件 URL：登记图与「从受护文件可达」判定的根。 */
+const APP_MODULE_URL = new URL('../../services/api/src/app.ts', import.meta.url).href;
+/** 正控制：先装载一个无害的内建模块 ⇒ 下方断言登记集合里必须出现它（否则登记器恒空、判据无意义）。 */
+await import('node:os');
+// 应用侧依赖一律在登记器生效**之后**动态装载（见上方 ESM 静态 import 的实测理由）⇒ `app.ts` 整张引用图都被登记。
+const { buildApp } = await import(APP_MODULE_URL);
+const { loadConfig } = await import('../../services/api/src/config.ts');
+const { ApiError, buildErrorEnvelope } = await import('../../services/api/src/errors.ts');
+const { createMemoryAuthStore } = await import('../../services/api/src/auth/store.ts');
+const { hashToken, mintOpaqueToken } = await import('../../services/api/src/auth/tokens.ts');
+const { createAuthGuards } = await import('../../services/api/src/auth/middleware.ts');
+const { registerOcrRoutes } = await import('../../services/api/src/routes/ocr.ts');
+const { createUnwiredReferencePort } = await import('../../services/api/src/ocr/reference.ts');
+const { createJobRegistry } = await import('../../services/api/src/jobs/registry.ts');
+const { createOcrJobSource } = await import('../../services/api/src/jobs/sources.ts');
+const { registerJobRoutes } = await import('../../services/api/src/jobs/routes.ts');
+const { collectResultValueIssues } = await import('../../services/api/src/jobs/result-shape.ts');
 
 /** 仓根（从本脚本位置回推：`<root>/tests/integration/`）—— 仅用于把解析结果裁成"仓根相对"。 */
 const REPO_ROOT_FOR_PATHS = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -172,6 +211,233 @@ const literalText = (node) => {
   return ts.isStringLiteralLike(current) ? current.text : null;
 };
 
+// ─────────── r7：装载登记的归类、断言与「子进程形态探针」───────────
+/** 仓根相对（归一化）路径；非 `file:` 或落在仓外 ⇒ `null`。 */
+const repoRelativeFromUrl = (url) => {
+  if (typeof url !== 'string' || !url.startsWith('file:')) return null;
+  try {
+    const absolute = fileURLToPath(url);
+    if (!absolute.startsWith(REPO_ROOT_FOR_PATHS)) return null;
+    return normalizeModulePath(absolute.slice(REPO_ROOT_FOR_PATHS.length).replace(/\\/g, '/'));
+  } catch {
+    return null;
+  }
+};
+/** 从受护文件 `app.ts` 是否可达该 URL（沿登记到的装载边反向遍历）。 */
+const isReachableFromApp = (url) => {
+  if (url === APP_MODULE_URL) return true;
+  const seen = new Set([url]);
+  let frontier = [url];
+  while (frontier.length > 0) {
+    const next = [];
+    for (const current of frontier) {
+      for (const edge of moduleLoadRegistry.edges.get(current) ?? []) {
+        if (edge.parentUrl === APP_MODULE_URL) return true;
+        if (!seen.has(edge.parentUrl)) {
+          seen.add(edge.parentUrl);
+          next.push(edge.parentUrl);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return false;
+};
+/** 逐字满足派单要求：打印「经 <哪条路径> 装载了 <specifier> → <URL>」。 */
+const describeLoadPath = (parentUrl, specifier, url) => {
+  const chain = [];
+  let current = parentUrl;
+  const seen = new Set();
+  while (current !== null && current !== undefined && current !== APP_MODULE_URL && !seen.has(current)) {
+    seen.add(current);
+    const edges = moduleLoadRegistry.edges.get(current) ?? [];
+    const edge = edges.find((candidate) => candidate.parentUrl === APP_MODULE_URL) ?? edges[0];
+    if (edge === undefined) break;
+    chain.push(edge.specifier);
+    current = edge.parentUrl;
+  }
+  chain.reverse();
+  const owner = parentUrl === null || parentUrl === undefined ? '(未知装载者)' : (repoRelativeFromUrl(parentUrl) ?? parentUrl);
+  const prefix = parentUrl === APP_MODULE_URL ? 'app.ts' : `app.ts → ${chain.join(' → ')}`;
+  return `经 ${prefix}（装载者 ${owner}）装载了 '${specifier}' → ${url}`;
+};
+/**
+ * **冻结基线**（r7，逐条实测量于**未改动**的 `app.ts` 引用图）：本仓装配路径今天合法装载的 **9 条** OCR 域装载边。
+ *
+ * 为什么必须有基线（实测结论，不得读成"放宽"）：派单的字面要求是「登记集合内**无任何** OCR 域条目」，
+ *   但**未改动**的仓库运行期就有 9 条 OCR 域边 —— `app.ts → routes/ocr.ts` 是合法装配，而 `routes/ocr.ts`
+ *   静态装载 `../ocr/{service,store,provider,media,reference}.ts`，其中 `service.ts`/`store.ts`/`reference.ts`
+ *   又各自装载 `./state.ts` ⇒ 按字面断言会把**未改动**的仓库判红（等于把工具本身做成坏的）。
+ *   故判据口径定为**边级**：「**没有任何 OCR 域装载边落在基线之外**」——基线内 9 条＝既有合法装配，
+ *   **任何新边一律判红**（fail-closed，不静默）。
+ * 为什么是**边**（loader + specifier + target 三元）而不是"目标 URL 白名单"：`app.ts` 自己用
+ *   `(rq as any)('./ocr/state.ts')` 装载的是**同一个** `ocr/state.ts`，差别只在**加载者与 specifier**
+ *   ⇒ 只有边级口径才能既放过既有装配、又抓住注入（15 形态实测：全部记为 `app.ts` 出发的**新边**）。
+ * ⚠ 基线是"当前事实的冻结记录"：合法装配若变化（例如 `routes/ocr.ts` 改引用别的 ocr 模块），本判据会判红并
+ *   要求显式更新此表 —— 这是**有意的**（宁可要求人复核，也不静默放过新增的 OCR 域引用）。
+ */
+const OCR_REGISTRY_BASELINE_EDGES = [
+  { loader: 'services/api/src/app.ts', specifier: './ocr/service.ts', target: 'services/api/src/ocr/service.ts' },
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/service.ts', target: 'services/api/src/ocr/service.ts' },
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/store.ts', target: 'services/api/src/ocr/store.ts' },
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/provider.ts', target: 'services/api/src/ocr/provider.ts' },
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/media.ts', target: 'services/api/src/ocr/media.ts' },
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/reference.ts', target: 'services/api/src/ocr/reference.ts' },
+  { loader: 'services/api/src/ocr/service.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
+  { loader: 'services/api/src/ocr/store.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
+  { loader: 'services/api/src/ocr/reference.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
+];
+const OCR_REGISTRY_BASELINE_KEYS = new Set(
+  OCR_REGISTRY_BASELINE_EDGES.map((edge) => `${edge.loader}|${edge.specifier}|${edge.target}`),
+);
+/** 登记到的、从受护文件可达的 OCR 域装载**边**（去重，key = loader|specifier|target）。 */
+const collectOcrRegistryEdges = () => {
+  const edges = new Map();
+  for (const entry of moduleLoadRegistry.entries) {
+    if (entry.specifier === null) continue; // 只看带 specifier 的 resolve 边
+    const target = repoRelativeFromUrl(entry.url);
+    if (target === null || !isOcrDomainTarget(target)) continue;
+    if (entry.parentUrl === null || entry.parentUrl === undefined || !isReachableFromApp(entry.parentUrl)) continue;
+    const loader = repoRelativeFromUrl(entry.parentUrl) ?? entry.parentUrl;
+    const key = `${loader}|${entry.specifier}|${target}`;
+    if (edges.has(key)) continue;
+    edges.set(key, { key, loader, specifier: entry.specifier, target, url: entry.url, parentUrl: entry.parentUrl });
+  }
+  return [...edges.values()];
+};
+/** 归类：可达的 OCR 域装载边**剔除冻结基线**后即为违规。 */
+const collectOcrRegistryFindings = () => {
+  const findings = [];
+  for (const edge of collectOcrRegistryEdges()) {
+    if (OCR_REGISTRY_BASELINE_KEYS.has(edge.key)) continue;
+    findings.push({
+      ...edge,
+      message: `${describeLoadPath(edge.parentUrl, edge.specifier, edge.url)}（注意：该边**不在** r7 冻结基线的 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法边内）`,
+    });
+  }
+  return findings;
+};
+/** 主判据断言：从受护文件可达的 OCR 域装载边里，**不得**出现基线之外的新边。 */
+const assertRegistryClean = (label) => {
+  const findings = collectOcrRegistryFindings();
+  if (findings.length > 0) {
+    assert.fail(`OCRREGISTRY: ${label} —— 运行期装载登记抓到 ${findings.length} 条**基线之外**的 OCR 域装载边（r7 主判据）：\n${findings.map((finding) => `  · ${finding.message}`).join('\n')}`);
+  }
+  return findings.length;
+};
+/** 登记概况（正常路径打印；含正控制是否成立与基线命中数）。 */
+const describeRegistrySummary = () => {
+  const resolveCount = moduleLoadRegistry.entries.filter((entry) => entry.hook === 'resolve').length;
+  const edges = collectOcrRegistryEdges();
+  return {
+    resolveCount,
+    loadCount: moduleLoadRegistry.entries.length - resolveCount,
+    ocrReachableEdges: edges.length,
+    baselineEdges: edges.filter((edge) => OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
+    newEdges: edges.filter((edge) => !OCR_REGISTRY_BASELINE_KEYS.has(edge.key)).length,
+    positiveControl: moduleLoadRegistry.entries.some((entry) => entry.specifier === 'node:os' && entry.url === 'node:os'),
+  };
+};
+
+/** 形态探针的受护文件（`app.ts`）相对基准：与真实攻击**同一条解析路径**。 */
+const OCR_PROBE_SPECIFIER = './ocr/state.ts';
+const OCR_PROBE_HARMLESS_SPECIFIER = './contract.ts';
+/**
+ * r7 负/正控制形态表（**运行期**等价于「经某条路径装载某个模块」）。
+ * 逐条在**子进程**里真跑（`node <本脚本> --registry-probe=<id>`）：`expectViolation: true` ⇒ r7 主判据**必须**判红
+ * （exit 1 + `OCRREGISTRY` + specifier 原文）；`expectViolation: false`（对照）⇒ 必须**被登记但不判红**。
+ * 每条都先断言「登记器确实登记了该 specifier」（否则是「登记器恒空 ⇒ 恒绿」的退化，判据无意义）⇒ 双向自证。
+ * 另有两条**如实固定**的非装载/非可执行形状（`expectLoad: false` / `expectRuntimeError`）：
+ *   它们是**运行期事实**的钉子（不是判据盲区，也不冒充"抓住"），防止后人把"这条跑不了"误读成"判据覆盖了"。
+ */
+const registryProbeForms = [
+  { id: 'direct', title: 'createRequire(app)(…) 直接调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => createRequire(APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'call', title: 'rq.call(null, …)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return rq.call(null, OCR_PROBE_SPECIFIER); } },
+  { id: 'apply', title: 'rq.apply(null, [ … ])', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return rq.apply(null, [OCR_PROBE_SPECIFIER]); } },
+  { id: 'bind', title: 'rq.bind(null)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return rq.bind(null)(OCR_PROBE_SPECIFIER); } },
+  { id: 'reflect-apply', title: 'Reflect.apply(rq, null, [ … ])', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return Reflect.apply(rq, null, [OCR_PROBE_SPECIFIER]); } },
+  { id: 'construct', title: 'new (rq)(…) 构造调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return new rq(OCR_PROBE_SPECIFIER); } },
+  { id: 'factory-call', title: 'createRequire.call(null, url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => createRequire.call(null, APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'factory-apply', title: 'createRequire.apply(null, [url])(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => createRequire.apply(null, [APP_MODULE_URL])(OCR_PROBE_SPECIFIER) },
+  { id: 'factory-bind-no-load', title: 'createRequire.bind(null, url)(…) —— 实测该形状**不装载**（返回 require 函数本身）', expectViolation: false, expectLoad: false, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => createRequire.bind(null, APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'factory-comma', title: '(0, createRequire)(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => (0, createRequire)(APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'factory-paren', title: '(createRequire)(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => (createRequire)(APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'factory-nested-comma', title: '((0, createRequire))(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => ((0, createRequire))(APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'namespace', title: "import('node:module') 后的 mod.createRequire(url)(…)", expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const mod = await import('node:module'); return mod.createRequire(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); } },
+  { id: 'namespace-var', title: 'const q2 = mod.createRequire(url); q2(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const mod = await import('node:module'); const q2 = mod.createRequire(APP_MODULE_URL); return q2(OCR_PROBE_SPECIFIER); } },
+  { id: 'namespace-default', title: 'mod.default.createRequire(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const mod = await import('node:module'); return mod.default.createRequire(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); } },
+  { id: 'destructure', title: 'const { createRequire: cr } = await import(…); cr(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const { createRequire: cr } = await import('node:module'); return cr(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); } },
+  { id: 'import-alias', title: 'const { createRequire: cr } = ns; cr(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const ns = await import('node:module'); const cr = ns.createRequire; return cr(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); } },
+  { id: 'static-import-alias', title: 'import { createRequire as cr } 静态别名; cr(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => createRequireViaStaticImport(APP_MODULE_URL)(OCR_PROBE_SPECIFIER) },
+  { id: 'default-property', title: 'const cr = ns.default.createRequire; cr(url)(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: async () => { const ns = await import('node:module'); const cr = ns.default.createRequire; return cr(APP_MODULE_URL)(OCR_PROBE_SPECIFIER); } },
+  { id: 'handoff-identity', title: '别名经恒等函数转手后调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); const identity = (value) => value; return identity(rq)(OCR_PROBE_SPECIFIER); } },
+  { id: 'handoff-object', title: '别名放进对象再取回调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); const box = { load: rq }; return box.load(OCR_PROBE_SPECIFIER); } },
+  { id: 'handoff-array', title: '别名放进数组再取回调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); const list = [rq]; return list[0](OCR_PROBE_SPECIFIER); } },
+  { id: 'handoff-assertion-chain', title: '(rq as unknown as NodeRequire) 断言链转手后调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); const f = rq; return f(OCR_PROBE_SPECIFIER); } },
+  { id: 'returned', title: '函数返回别名后再调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const make = () => createRequire(APP_MODULE_URL); return make()(OCR_PROBE_SPECIFIER); } },
+  { id: 'optional-call', title: 'rq?.(…) 可选调用', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return rq?.(OCR_PROBE_SPECIFIER); } },
+  { id: 'deep-comma', title: '(0, (0, rq))(…) 深层逗号序列', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); return (0, (0, rq))(OCR_PROBE_SPECIFIER); } },
+  { id: 'bound-alias', title: 'const bound = rq.bind(null); bound(…)', expectViolation: true, expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const rq = createRequire(APP_MODULE_URL); const bound = rq.bind(null); return bound(OCR_PROBE_SPECIFIER); } },
+  { id: 'unbound', title: '未绑定 require（`const r = require; r(…)`）—— 本进程里 `require` 由脚本自身定义（`createRequire(import.meta.url)`）⇒ 退化为"以本脚本目录为基准解析 ⇒ 找不到模块"的 `Error`（不装载本域模块；受护文件是 ESM，`require` 未定义 ⇒ 运行期 `ReferenceError`，两者都到不了装载器）', expectViolation: false, expectRuntimeError: 'Error', expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const r = require; return r(OCR_PROBE_SPECIFIER); } },
+  { id: 'unbound-null', title: '`const r = null; r(…)` —— 实测运行期 `TypeError`', expectViolation: false, expectRuntimeError: 'TypeError', expectSpecifier: OCR_PROBE_SPECIFIER, expectUrlSuffix: '/services/api/src/ocr/state.ts', run: () => { const r = null; return r(OCR_PROBE_SPECIFIER); } },
+  { id: 'harmless-app-relative', title: '（对照）经别名装载 app 目录下的无害模块', expectViolation: false, expectSpecifier: OCR_PROBE_HARMLESS_SPECIFIER, expectUrlSuffix: '/services/api/src/contract.ts', run: () => createRequire(APP_MODULE_URL)(OCR_PROBE_HARMLESS_SPECIFIER) },
+  { id: 'harmless-builtin', title: '（对照）经别名装载内建模块', expectViolation: false, expectSpecifier: 'node:path', expectUrlSuffix: 'node:path', run: () => createRequire(APP_MODULE_URL)('node:path') },
+];
+/** 子进程形态探针：`node <本脚本> --registry-probe=<id>` ⇒ 真装载 ⇒ 主判据必须抓住（或对照必须不判红）。 */
+const registryProbeFormId = (() => {
+  const argument = process.argv.slice(2).find((value) => value.startsWith('--registry-probe='));
+  return argument === undefined ? null : argument.slice('--registry-probe='.length);
+})();
+if (registryProbeFormId !== null) {
+  const form = registryProbeForms.find((candidate) => candidate.id === registryProbeFormId);
+  if (form === undefined) {
+    console.error(`PROBE-UNKNOWN ${registryProbeFormId}`);
+    process.exit(3);
+  }
+  let runtimeError = null;
+  try {
+    await form.run();
+  } catch (error) {
+    runtimeError = error;
+  }
+  if (form.expectRuntimeError !== undefined) {
+    const actual = runtimeError === null ? '(无异常)' : runtimeError.constructor.name;
+    if (actual !== form.expectRuntimeError) {
+      console.error(`PROBE-UNEXPECTED-ERROR ${form.id}（期望 ${form.expectRuntimeError}，实际 ${actual}）`);
+      process.exit(5);
+    }
+    console.log(`PROBE-RUNTIME-${form.expectRuntimeError.toUpperCase()} ${form.id}（如实固定：该形状在运行期就抛 ${actual} ⇒ 到不了装载器，**不是**判据抓到的）`);
+    process.exit(0);
+  }
+  if (runtimeError !== null) {
+    console.error(`PROBE-UNEXPECTED-ERROR ${form.id} ${runtimeError.constructor.name}: ${runtimeError.message}`);
+    process.exit(6);
+  }
+  const registered = moduleLoadRegistry.entries.some(
+    (entry) => entry.specifier === form.expectSpecifier && entry.url.endsWith(form.expectUrlSuffix),
+  );
+  if (form.expectLoad === false) {
+    if (registered) {
+      console.error(`PROBE-UNEXPECTED-LOAD ${form.id}（期望该形状不装载，却登记到了 ${form.expectSpecifier}）`);
+      process.exit(4);
+    }
+    console.log(`PROBE-NO-LOAD ${form.id}（实测该形状**不装载**目标模块 ⇒ 登记器如实没有该边；运行期事实，不冒充"判据抓住了"）`);
+    process.exit(0);
+  }
+  if (!registered) {
+    console.error(`PROBE-UNREGISTERED ${form.id}（登记器没登记 ${form.expectSpecifier} ⇒ 判据无意义）`);
+    process.exit(2);
+  }
+  if (form.expectViolation) {
+    assertRegistryClean(`子进程形态探针 ${form.id}`);
+    console.error(`PROBE-NOT-CAUGHT ${form.id}（期望判红却没有判红）`);
+    process.exit(0);
+  }
+  const findings = assertRegistryClean(`子进程对照 ${form.id}`);
+  console.log(`PROBE-CLEAN ${form.id} findings=${findings} entries=${moduleLoadRegistry.entries.length} registered=${form.expectSpecifier}`);
+  process.exit(0);
+}
+
 /**
  * 判据函数：返回**违规清单**（空数组 = 通过）。自测与真实用例走**同一函数** ⇒ 判据退化必被自测抓住。
  *
@@ -188,14 +454,17 @@ const literalText = (node) => {
  *   `parseDiagnostics` 并返回一棵**残缺 AST** ⇒ 本函数先查诊断，非空**即判红**（`OCRPARSE`，逐条打印原文），
  *   绝不在残缺 AST 上得出"0 违规"的结论（复审 N1 实测：未闭合块注释可让整份文件静默 0 违规）。
  *
- * ⚠ **显式书面取舍（本判据覆盖不到，不得读成"覆盖全部形态"）**：
+ * ⚠ **显式书面取舍（r7 口径；本判据覆盖不到的部分，不得读成"覆盖全部形态"）**：
  *   ① **运行时拼接/插值**：`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``（AST 只见表达式，无可核对的字面量）；
  *   ② **非字面量实参**：`require(someVar)`、`require(String('./ocr/state.ts'))`（静态期取不到值）；
- *   ③ **其它 require 通道**：`module.require(…)`、`globalThis.require(…)`、`eval('require')(…)`、
- *      `require.resolve(…)` / `import.meta.resolve(…)`（后两者只解析路径、不加载模块）；
+ *   ③ **已收口（r7，不再是盲区）**：callee **无法归属**的调用，只要实参是**本域字面量**，一律 `OCRUNJUDGED` 判红
+ *      （fail-closed）⇒ `module.require('./ocr/state.ts')`、`globalThis.require(…)`、`eval('require')(…)`、
+ *      `require.resolve(…)`、`box.load('./ocr/state.ts')`、`list[0](…)` 这类"看不懂就静默放行"已不存在；
  *   ④ **再转手**：把别名或 `createRequire` 传给别的函数/模块后再调用（跨模块数据流不在本判据内）；
- *   ⑤ 以上未覆盖面在**正常路径**由 stdout 的 `NOTE 判据未覆盖（r6 如实声明）` 逐条打印（见文件尾部）；
+ *   ⑤ 以上未覆盖面在**正常路径**由 stdout 的 `NOTE 判据未覆盖（r7 如实声明）` 逐条打印（见文件尾部）；
  *   ⑥ 本判据针对的是"**显式模块引用**"这一类腐化（本仓 `app.ts` 为静态源码 ⇒ 该目标可达）。
+ *   ⑦ **r7 主判据**（运行期装载登记）与"能否用静态形状穷举"**无关**：它拦的是"**真的装载了什么**"，
+ *      故 ①②④ 这些静态盲区只要最终发生装载就会被抓住（本函数降为**启发式**，用于早期定位与可读报错）。
  */
 function evaluateOcrImports(sourceText, fromDir) {
   const violations = [];
@@ -246,17 +515,48 @@ function evaluateOcrImports(sourceText, fromDir) {
     // ⚠ 初始化表达式**同样经唯一归一化入口 `stripSequence` 剥壳**：`const rq = (createRequire)(…)`、
     //   `const rq = createRequire(…) as NodeRequire`、`const rq = (0, createRequire)(…)` 都必须登记
     //   —— 不得在此另写一套形状判定（r6 复审：类型包装族正是靠"别名 + 包装"绕过静态判据的，见 W1–W7）。
-    if (ts.isVariableDeclaration(node) && node.initializer !== undefined && ts.isIdentifier(node.name)) {
+    if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
+      // r7（复审 blocking ②）：登记点必须与**别处同源** —— 初始化表达式经唯一入口 `stripSequence` 剥壳**之后**，
+      //   callee 还要经**同一个** `normalizeCallee` 归属。旧写法 `ts.isIdentifier(initializer.expression)`
+      //   只认"裸 `createRequire`" ⇒ `const rq = (createRequire)(url)`、`(0, createRequire)(url)`、
+      //   `((0, createRequire))(url)`、`(createRequire as any)(url)` 全都**不登记**（复审实测 4 种形状全漏）。
       const initializer = stripSequence(node.initializer);
-      if (initializer !== undefined && ts.isCallExpression(initializer)
-        && ts.isIdentifier(initializer.expression) && initializer.expression.text === 'createRequire') {
+      // 形状 A：`const X = <callee>(…)`，其中 callee 经共用归一化归属为 `createRequire` 或**已登记别名**。
+      if (ts.isIdentifier(node.name) && initializer !== undefined && ts.isCallExpression(initializer)) {
+        const initializerCallee = normalizeCallee(initializer.expression, requireAliases);
+        if (initializerCallee !== null && initializerCallee.kind === 'identifier'
+          && (initializerCallee.name === 'createRequire' || requireAliases.has(initializerCallee.name))) {
+          requireAliases.add(node.name.text);
+        }
+      }
+      // 形状 B：`const X = <mod>.createRequire`（命名空间属性取值，如 `const cr = ns.createRequire`）。
+      if (ts.isIdentifier(node.name) && initializer !== undefined && ts.isPropertyAccessExpression(initializer)
+        && initializer.name.text === 'createRequire') {
         requireAliases.add(node.name.text);
+      }
+      // 形状 C：`const { createRequire: X } = <mod>`（解构取值）。
+      if (ts.isObjectBindingPattern(node.name)) {
+        for (const element of node.name.elements) {
+          if (element.propertyName !== undefined && ts.isIdentifier(element.propertyName)
+            && element.propertyName.text === 'createRequire' && ts.isIdentifier(element.name)) {
+            requireAliases.add(element.name.text);
+          }
+        }
       }
     }
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const specifierNode = node.moduleSpecifier;
       if (specifierNode !== undefined) {
         const text = literalText(specifierNode);
+        // r7（复审 blocking ②补丁）：`import { createRequire as cr } from 'node:module'` 这类**静态 import 别名**
+        //   也是 createRequire 的一条真实来路 ⇒ 必须登记（否则 `cr('./ocr/state.ts')` 在静态判据里成为缺口）。
+        if (ts.isImportDeclaration(node) && text === 'node:module' && node.importClause !== undefined
+          && node.importClause.namedBindings !== undefined && ts.isNamedImports(node.importClause.namedBindings)) {
+          for (const element of node.importClause.namedBindings.elements) {
+            const imported = element.propertyName ?? element.name;
+            if (ts.isIdentifier(imported) && imported.text === 'createRequire') requireAliases.add(element.name.text);
+          }
+        }
         if (text === null) {
           fail('OCRTEXT: 模块说明符不是静态字符串字面量（运行时拼接/插值 ⇒ 无从核对）');
         } else {
@@ -310,11 +610,25 @@ function evaluateOcrImports(sourceText, fromDir) {
           fail(`OCRDYNAMIC: 不得用 ${label} 引用 ./ocr/service.ts`);
         }
         }
+      } else {
+        // r7：callee **无法归属**（既不是动态 `import`，也不是 `require`/已知别名/`createRequire(…)` 当场调用）
+        //   ⇒ 若其**实参**是 OCR 域字面量，则 fail-closed 判红（`OCRUNJUDGED`），而不是"看不懂就放行"。
+        //   依据：复审 blocking ① 的第二族正落在这里 —— `box.load('./ocr/state.ts')`、`list[0](…)`、
+        //   `module.require(…)`、`eval('require')(…)`、`require.resolve(…)` 在 r6 全部静默通过。
+        //   口径：**只在"实参是本域字面量"时判红**（否则任何 `foo()` 都会变成噪声；`foo('fastify')` 不管）。
+        const text = literalText(node.arguments[0]);
+        if (text !== null) {
+          const target = resolveModuleTarget(text, fromDir);
+          if (!target.startsWith('bare:') && isOcrDomainTarget(target)) {
+            fail(`OCRUNJUDGED: 调用点的 callee 无法归属（\`${node.expression.getText(sourceFile)}\`），但实参是 OCR 域说明符（归一化到 ${target}）⇒ 无从核对装的是什么，按不通过处理（fail-closed）`);
+          }
+        }
       }
-      // ⚠ **显式登记盲区（r6）**：callee 为 `module.require(…)` / `globalThis.require(…)` / `eval('require')(…)` /
-      //   `require.resolve(…)` 等**本判据不识别**的表达式时，**上面不进域检查**（r5 曾把"裸 `createRequire(…)`
-      //   当场调用"登记在此，r6 已收口 ⇒ 不再是盲区）。这些形态在**运行期正常路径**由 stdout 的 NOTE 逐条打印，
-      //   不得读成"覆盖全部形态"；不把它写成放行理由，只作登记。
+      // ⚠ **盲区（r7 起收窄为 fail-closed）**：callee 为本判据**不识别**的表达式时，只要实参是 OCR 域字面量，
+      //   上面那条 `OCRUNJUDGED` 就会判红（r6 旧行为是"静默不进域检查" ⇒ 复审 blocking ① 借此逃逸）。
+      //   仍然**看不到**的只剩两类：①非字面量实参（`require(someVar)`、`String(…)` 包装、拼接/插值）；
+      //   ②压根不是"一次调用"的数据流（别名/`createRequire` 转手后再调用）。这两类由 r7 主判据
+      //   （运行期装载登记）兜住 —— 无论用什么形状，模块最终都要经装载器 ⇒ 登记集合必然出现该边。
       //   注意：**不得**在此提前 `return`（那会跳过下面的 `ts.forEachChild`，等于放弃整棵子树 —— 静态 `import`
       //   分支之外的所有节点都靠它递归下来）。
     }
@@ -1173,26 +1487,68 @@ try {
       //    说明符判定 ⇒ 1→0。这是**判据更准**而非放宽：域内的同形态在 ⓓ 仍是 1）。
       ["const __z6 = import('node:fs' as any);", 0],
       ["const rq = createRequire(import.meta.url); const __z7 = (0, rq as any)('./knowledge/service.ts');", 0],
-      // ⓗ **已书面声明的盲区**（期望 0 = 现状；与文件尾部 `NOTE 判据未覆盖（r6 如实声明）` 一一对应）。
+      // ⓗ **判据覆盖边界钉死**（r7 口径：①非字面量实参仍看不到；②"看不懂的 callee + OCR 域字面量"已 fail-closed）。
       //    ⚠ 这些用例把"当前看不到"钉成事实记录：若将来收口，**必须同步改这里的期望值**，不得悄悄放宽。
-      ["const __b1 = module.require('./ocr/state.ts');", 0],
-      ["const __b2 = globalThis.require('./ocr/state.ts');", 0],
-      ["const __b3 = eval('require')('./ocr/state.ts');", 0],
+      //    **仍看不到**（期望 0；与文件尾部 `NOTE 判据未覆盖` 一一对应）—— 实参在静态期取不到字面量，
+      //    且子树里**没有**任何"无法归属的 callee + OCR 域字面量"的调用可抓：
       ["const __b4 = require('' + './ocr/state.ts');", 0],
-      ["const __b5 = require(String('./ocr/state.ts'));", 0],
-      ["const __b6 = require.resolve('./ocr/state.ts');", 0],
+      //    **r7 已收口**（期望 1 = `OCRUNJUDGED`：callee 无法归属 + 实参是本域字面量 ⇒ 按不通过处理，fail-closed）：
+      ["const __b1 = module.require('./ocr/state.ts');", 1],
+      ["const __b2 = globalThis.require('./ocr/state.ts');", 1],
+      ["const __b3 = eval('require')('./ocr/state.ts');", 1],
+      ["const __b6 = require.resolve('./ocr/state.ts');", 1],
+      //    注：`__b5` 的判红来自**内层** `String('./ocr/state.ts')`（同样"callee 无法归属 + 本域字面量"）
+      ["const __b5 = require(String('./ocr/state.ts'));", 1],
+      // ⓙ **登记点形状钉子**（r7 修复审 blocking ②：登记点与别处**共用**同一归一化入口 `stripSequence` + `normalizeCallee`）。
+      //    这些正是 r6 实测**不登记**的形状（旧写法 `ts.isIdentifier(initializer.expression)` 只认裸 `createRequire`）
+      //    ⇒ 旧版下 `rq('./ocr/state.ts')` 因"别名未知"而静默通过；期望 1 = 经 `间接 require()` 判红。
+      ["const rq = (createRequire)(import.meta.url); const __n1 = rq('./ocr/state.ts');", 1],
+      ["const rq = (0, createRequire)(import.meta.url); const __n2 = rq('./ocr/state.ts');", 1],
+      ["const rq = ((0, createRequire))(import.meta.url); const __n3 = rq('./ocr/state.ts');", 1],
+      ["const rq = (createRequire as any)(import.meta.url); const __n4 = rq('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url)!; const __n5 = rq('./ocr/state.ts');", 1],
+      ["const rq = <NodeRequire>createRequire(import.meta.url); const __n6 = rq('./ocr/state.ts');", 1],
+      ["const cr = ns.createRequire; const __n7 = cr('./ocr/state.ts');", 1],
+      ["const { createRequire: cr } = ns; const __n8 = cr('./ocr/state.ts');", 1],
+      ["import { createRequire as cr } from 'node:module'; const __n9 = cr('./ocr/state.ts');", 1],
+      //    域外对照：登记点扩形**不得**变成"见 `.createRequire` 就报"（`cr('fastify')` 与 deps 注入无关 ⇒ 0）
+      ["const cr = ns.createRequire; const __n10 = cr('fastify');", 0],
+      ["const rq = (0, createRequire)(import.meta.url); const __n11 = rq('./knowledge/service.ts');", 0],
       // ⓘ **未闭合块注释**（复审点名的 fail-closed 负控制）：注释在**语句位置**未闭合 ⇒ 实测恰好 1 条诊断
       //    （`'*/' expected.`）⇒ 1 条 `OCRPARSE`。⚠ 若把它写成上半句已截断的形状（`const x = /*`），TS 会给出
       //    2 条诊断 ⇒ 2 条违规；本用例刻意选**单诊断**形状以免把诊断条数钉死（条数随 TS 版本可变）。
       ["const __p9 = 1; /* 未闭合块注释", 1],
     ];
-    assert.equal(selfTestCases.length, 92, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
+    assert.equal(selfTestCases.length, 103, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
     for (const [source, expectedViolations] of selfTestCases) {
       const verdict = evaluateOcrImports(source, APP_SOURCE_DIR);
       assert.equal(
         verdict.length,
         expectedViolations,
         `判据自测未通过：期望 ${expectedViolations} 条违规，实际 ${verdict.length} 条 —— ${JSON.stringify(source)} ⇒ ${JSON.stringify(verdict)}`,
+      );
+    }
+    // r7 追补：**消息级**钉子（条数钉子无法区分"别名登记生效 ⇒ 经 `间接 require() 引用`"与"callee 无法归属 ⇒
+    //   `OCRUNJUDGED`"——两者都是 1 条违规。这里把**判词**也钉死，给 blocking ②（登记点形状）装上真牙）。
+    const messageCases = [
+      // 登记点经共用归一化入口（`stripSequence` + `normalizeCallee`）后必须归属为**间接 require**：
+      ["const rq = (createRequire)(import.meta.url); const __q1 = rq('./ocr/state.ts');", '间接 require()'],
+      ["const rq = (0, createRequire)(import.meta.url); const __q2 = rq('./ocr/state.ts');", '间接 require()'],
+      ["const rq = (createRequire as any)(import.meta.url); const __q3 = rq('./ocr/state.ts');", '间接 require()'],
+      ["const cr = ns.createRequire; const __q4 = cr('./ocr/state.ts');", '间接 require()'],
+      ["const { createRequire: cr } = ns; const __q5 = cr('./ocr/state.ts');", '间接 require()'],
+      ["import { createRequire as cr } from 'node:module'; const __q6 = cr('./ocr/state.ts');", '间接 require()'],
+      // 对照：**无法归属**的 callee（对象属性取值 / 下标取值 / `module.require`）必须判成 `OCRUNJUDGED`（不是"静默放行"）：
+      ["const box = { load: require }; const __q7 = box.load('./ocr/state.ts');", 'OCRUNJUDGED'],
+      ["const list = [require]; const __q8 = list[0]('./ocr/state.ts');", 'OCRUNJUDGED'],
+      ["const __q9 = module.require('./ocr/state.ts');", 'OCRUNJUDGED'],
+    ];
+    for (const [source, expectedFragment] of messageCases) {
+      const verdict = evaluateOcrImports(source, APP_SOURCE_DIR);
+      assert.equal(verdict.length, 1, `消息级钉子应恰好 1 条违规：${JSON.stringify(source)} ⇒ ${JSON.stringify(verdict)}`);
+      assert.ok(
+        verdict[0].includes(expectedFragment),
+        `消息级钉子判词不符：期望含 ${expectedFragment}，实际 ${JSON.stringify(verdict[0])} —— ${JSON.stringify(source)}`,
       );
     }
     const providerText = readFileSync(new URL('../../services/api/src/ocr/provider.ts', import.meta.url), 'utf8');
@@ -1356,11 +1712,22 @@ try {
     record(`12) 失败可区分（接缝：悬挂⇒timed_out+PROVIDER_TIMEOUT／强制⇒failed+PROVIDER_OUTCOME_UNKNOWN）：同一 \`GET /jobs/{id}\` 200 且 state/error_code 可见 —— 运行中 state=${running.state}/error_code=${String(running.error_code)}；超时 state=${timedOut.state}/error_code=${String(timedOut.error_code)}；强制失败 state=${failed.state}/error_code=${String(failed.error_code)}；运行中与失败态**不再同形**；记录面在失败下仍 404（如实）`);
   }
 
+  // ───────────────────────── r7 主判据：运行期装载登记（收尾断言） ─────────────────────────
+  // 断言「从受护文件 `app.ts` 可达的装载边里，没有任何 OCR 域装载边落在冻结基线之外」。
+  // 放在**全部真实装配与回环 HTTP 回归跑完之后**：此时 `app.ts` 的整张引用图都已装载 ⇒ 登记最完整
+  //   （每个用例都真跑 HTTP；若某条路径在请求期才装载 OCR 域模块，也会落进登记集合）。
+  const registrySummary = describeRegistrySummary();
+  const newEdgeCount = assertRegistryClean('收尾（真实装配 + 回环 HTTP 全部跑完）');
+  assert.equal(registrySummary.positiveControl, true, '正控制必须成立：登记集合里必须能看到无害模块 `node:os`（否则是"登记器恒空 ⇒ 恒绿"的退化）');
+  console.log(`PASS r7 主判据·运行期装载登记：resolve=${registrySummary.resolveCount} load=${registrySummary.loadCount}；从受护文件可达的 OCR 域装载边=${registrySummary.ocrReachableEdges}（冻结基线命中 ${registrySummary.baselineEdges} 条；基线之外 ${newEdgeCount} 条）；正控制 \`node:os\` 已在登记集合中`);
+  console.log(`NOTE r7 主判据口径（如实声明，不得读成"放行"）：断言的是「**没有任何 OCR 域装载边落在基线之外**」，而非派单字面的「登记集合内无任何 OCR 域条目」—— 因为**未改动**的仓库运行期本来就有 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法 OCR 域边（\`app.ts → routes/ocr.ts\` 是合法装配；\`routes/ocr.ts\` 静态装载 \`../ocr/{service,store,provider,media,reference}.ts\`，其中 \`service.ts\`/\`store.ts\`/\`reference.ts\` 又各自装载 \`./state.ts\`）。基线是"当前事实的冻结记录"，**任何新边（含以任意间接形态装载既有 OCR 域模块）一律判红**（fail-closed）；合法装配变化时本判据会判红并要求显式更新基线表（有意如此，宁可要求人复核）。`);
+  console.log('NOTE r7 主判据覆盖边界（如实声明）：登记的是**本脚本自身运行期**真实发生的解析/装载（CJS `require` 与 ESM `import` 两条路径都被拦）；**不覆盖**：①不经模块装载器的路径（直接读文件/`vm`/把源码内联进 `eval`）；②在本进程之外发生的装载（另起进程/子进程）；③**从不装载**的形状（实测 `createRequire.bind(null, url)(spec)` 只返回 require 函数、不装载任何模块 ⇒ 登记器如实没有该边，这不是盲区而是运行期事实）；④`undefined`/`null` 之类的"假 require"（运行期先抛 `ReferenceError`/`TypeError`，到不了装载器）。');
+
   console.log(`PASS ${results.length} 组：经真实装配的 app（buildApp）+ 本机回环 HTTP；合成身份/替身提供者/内存 store；未联网、未连库、未调真实供应商`);
   console.log('NOTE 未覆盖（如实声明）：小程序 identify 页标签模式与打包白名单、真实 OCR 供应商、真实登记库/用量来源、标签类真实样本 0 ⇒ 不声称任何准确率、真机、PG 持久化');
   console.log('NOTE 非产品装配的两段（均为路由插件 deps 接缝，产品装配刻意零端口注入）：组 3d「登记库未接线 ⇒ unavailable」；组 12「失败/超时终态与确定性运行中」（悬挂/失败提供者 + 1s deadline）');
   // r6：把判据**看不到**的形态在**正常路径**逐条打印（复审要求：只写注释不算 ⇒ 这里进 stdout；与自测数组 ⓗ 组对应）
-  console.log('NOTE 判据未覆盖（r6 如实声明）：①实参拼接/插值（`require(\'./ocr/\' + \'state.ts\')`、模板字面量）；②非字面量实参（`require(someVar)`、`require(String(\'./ocr/state.ts\'))`）；③其它 require 通道（`module.require(…)`、`globalThis.require(…)`、`eval(\'require\')(…)`、`require.resolve(…)`、`import.meta.resolve(…)`）；④把别名/`createRequire` 再转手传出后再调用。以上形态本判据**不判红**（自测数组 ⓗ 组即这些现状的钉死记录）；⑤嵌套目录 `./ocr/nested/state.ts`（r6 已按 `ocr/` **段**任意深度收口 ⇒ **不再是盲区**，此处只声明判据口径）；⑥解析诊断非空时本判据整体 fail-closed（`OCRPARSE`，逐条打印诊断原文）⇒ 语法错误（含 `(import)(…)` 这类解析错误）不会得出"0 违规"。');
+  console.log('NOTE 启发式判据未覆盖（r7 如实声明；自测数组 ⓗ/ⓙ 组是这些现状的钉死记录）：①实参拼接/插值（`require(\'./ocr/\' + \'state.ts\')`、模板字面量）；②非字面量实参（`require(someVar)`、`require(String(\'./ocr/state.ts\'))` 的**外层**）；③把别名/`createRequire` 再转手传出后再调用。以上三类**本启发式不判红** —— 但它们**都逃不过 r7 主判据**（运行期装载登记）：任何形态只要最终真的装载了模块，登记集合就会出现该边并在收尾断言判红。已收口（不再是盲区）：callee 无法归属 + 本域字面量 ⇒ `OCRUNJUDGED`（`module.require(…)`/`globalThis.require(…)`/`eval(\'require\')(…)`/`require.resolve(…)`/`box.load(…)`/`list[0](…)` 等）；嵌套目录 `./ocr/nested/state.ts` 按 `ocr/` **段**任意深度收口；解析诊断非空整体 fail-closed（`OCRPARSE`）。');
 } finally {
   await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close(), providerSeamApp.close()]);
 }
