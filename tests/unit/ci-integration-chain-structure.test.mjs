@@ -102,16 +102,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
   },
   {
-    path: 'tests/integration/speech-http.mjs',
-    reason: '回环 HTTP 但需真实 ASR 提供者／媒体装配，尚未并入无供应商的回环链（在途片接线对象）。',
-  },
-  {
     path: 'tests/integration/staging-intake-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/staging-intake-postgres.yml` 用独立测试集群运行。',
-  },
-  {
-    path: 'tests/integration/tts-http.mjs',
-    reason: '回环 HTTP 但需真实 TTS 提供者／产物端口，尚未并入无供应商的回环链（在途片接线对象）。',
   },
   {
     path: 'tests/integration/workbook-staging-pg.mjs',
