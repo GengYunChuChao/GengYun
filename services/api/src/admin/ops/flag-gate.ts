@@ -229,6 +229,14 @@ export interface FeatureFlagGate {
   surfaces(): readonly FlagGatedSurface[];
 }
 
+// 两条分流的 `retryable` 口径复核结论（依据 `services/api/src/errors.ts` 的口径原文；两者语义不同类，不得合并）：
+//   · 409 `OBJECT_UNAVAILABLE`（`closedError`）= "**已识别的确定性状态**"：管理员**明确**把开关设成
+//     `false`（或键缺失但被判定为关闭）⇒ 对象当前不可用是**有意的确定状态**，同一请求重试不会变
+//     ⇒ `retryable: false`（保留现状，省略即 false，且 `:14-15` 的注释已给出同一理由）。
+//   · 503 `PROVIDER_UNAVAILABLE`（`failClosedError`）= "**当前读不出来**"：开关行缺失/`enabled` 非布尔/
+//     `key` 越界/读取抛错 ⇒ 服务端**不知道**它开还是关，只能 fail-closed 拒绝；这是**瞬时读取态**，
+//     无人工介入下稍后重试**可能**成功（如存储抖动恢复）⇒ `retryable: true`（保留现状：消息逐字含"**当前**取值
+//     不可识别"，与"能力未装配／未接线"不同类，故不受四域统一为 false 的影响）。
 function closedError(surface: string, key: FlagKey): ApiError {
   return new ApiError('OBJECT_UNAVAILABLE', `「${surface}」已被全局开关关闭（${key}=false），本输出面拒绝产出`, {
     details: [{ field: 'feature_flag', code: 'FLAG_CLOSED' }],
@@ -236,6 +244,7 @@ function closedError(surface: string, key: FlagKey): ApiError {
 }
 
 function failClosedError(surface: string, key: FlagKey): ApiError {
+  // `retryable: true` 是瞬时读取态，不是"能力未接线"：见上方复核结论。
   return new ApiError(
     'PROVIDER_UNAVAILABLE',
     `全局开关 ${key} 的当前取值不可识别（缺失/非布尔/越界），「${surface}」按 fail-closed 拒绝产出`,

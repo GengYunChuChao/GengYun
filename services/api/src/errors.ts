@@ -25,6 +25,19 @@ export interface ErrorEnvelope {
   };
 }
 
+/**
+ * `retryable` 的唯一口径（全仓通用，改任何一处前先读这段）：
+ *
+ * - `retryable = true` **仅当同一请求在无人工/运维介入下稍后重试可能成功**（瞬时故障）。
+ * - **能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`** —— 那需要运维改配置，不是时间能解决的。
+ *
+ * 推论（本仓已按此收敛）：
+ * - 四个受理面的 real 缺凭据 ⇒ `PROVIDER_UNAVAILABLE`(503) 且 `retryable === false`；
+ * - 作业取消面「该域没有取消能力（未接线）」同理 `false`；
+ * - 只有"同一请求自己会好"的瞬时态才可以写 `true`（例：全局开关**当前**取值读不出来 ⇒ fail-closed 503）。
+ *
+ * 契约不裁决本字段（`Error.retryable` 只有 `{"type":"boolean"}`）⇒ 口径由本注释承载，勿在调用点各写一套。
+ */
 /** 业务错误：携带契约错误码，HTTP 状态由错误码映射决定（不接受调用方自定义）。 */
 export class ApiError extends Error {
   readonly code: ErrorCode;

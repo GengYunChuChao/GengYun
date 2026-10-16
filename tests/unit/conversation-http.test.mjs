@@ -365,7 +365,11 @@ test('answer 作业：202 受理后可被跨 kind 读面读到，状态与失败
   });
   assert.equal(cancel.status, 503, '该源没有 cancel：必须如实 503，不得伪造 cancelled');
   assert.equal(cancel.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(cancel.body.error.retryable, true);
+  assert.equal(
+    cancel.body.error.retryable,
+    false,
+    '该源没有取消能力（未接线）⇒ 需运维改配置，同一请求重试不会成功 ⇒ 不得标为可重试',
+  );
 
   const absent = await fixture.call('GET', `${JOBS}/${ABSENT_ID}`);
   assert.equal(absent.status, 404, '未接线 kind 与作业不存在同形');

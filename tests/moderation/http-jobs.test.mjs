@@ -170,7 +170,11 @@ test('POST /jobs/{id}/cancel：审核作业**不提供取消** ⇒ 契约 503 PR
   });
   assert.equal(cancelled.status, 503);
   assert.equal(cancelled.data.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(cancelled.data.error.retryable, true);
+  assert.equal(
+    cancelled.data.error.retryable,
+    false,
+    '审核域无取消能力（未接线）⇒ 需运维改派能力，同一请求重试不会成功 ⇒ 不得标为可重试',
+  );
 
   // 状态未被伪造：仍是 succeeded/approved
   const after = await h.call('GET', `${API}/jobs/${task.job_id}`, h.a);

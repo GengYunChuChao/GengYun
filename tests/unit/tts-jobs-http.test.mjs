@@ -239,7 +239,7 @@ test('状态流转·无取消能力：cancel 如实 503 PROVIDER_UNAVAILABLE(ret
   });
   assert.equal(cancelled.status, 503);
   assert.equal(cancelled.data.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(cancelled.data.error.retryable, true, '能力未接线属可重试（接线后同一请求即可成功）');
+  assert.equal(cancelled.data.error.retryable, false, '合成域无取消能力（未接线）⇒ 同一请求重试不会成功，不得标为可重试');
 
   const after = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
   assert.equal(after.state, before.state, '取消能力缺失 ⇒ 状态不得被改动（没有伪造 cancelled）');
@@ -312,7 +312,7 @@ test('real 未接真实 TTS ⇒ 受理前 503 PROVIDER_UNAVAILABLE(retryable)，
   });
   assert.equal(refused.status, 503, 'real 未接真实依赖必须 fail-closed');
   assert.equal(refused.data.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(refused.data.error.retryable, true);
+  assert.equal(refused.data.error.retryable, false, '真实 TTS 未接线 ⇒ 需运维改配置，不是瞬时故障 ⇒ 不得标为可重试');
 
   // 不落任务：没有任何可读作业（与「作业不存在」同形 404，不谎称有任务）
   const described = real.app.synthesisService.describe();

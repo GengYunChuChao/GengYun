@@ -299,8 +299,10 @@ export function createJobRegistry(sources: readonly JobSourcePort[]): JobRegistr
         // 按契约 `cancelJob` 的响应闭集，503 = `PROVIDER_UNAVAILABLE`（`x-error-status-map["503"]`），
         // 并沿用项目"未接线 ⇒ fail-closed 503"的口径（先例：`db/catalog.ts` 的"尚未接入"、
         // admin 的 `AdminJobPort`）⇒ **不谎称对象状态**（故不用 409 `OBJECT_UNAVAILABLE`）。
-        // `retryable: true`：接线后同一请求即可成功（契约为 503 保留 `Retry-After`）。
-        throw new ApiError('PROVIDER_UNAVAILABLE', '该作业所属能力尚未提供取消（未接线）', { retryable: true });
+        // `retryable: false`：接线（给该域补上取消能力）是**运维/发版动作**，不是时间能解决的 ——
+        // 同一请求原样重试不会成功，故不置 true。（契约为 503 保留 `Retry-After` 只表示"服务端可以给出
+        // 建议等待时长"，不等于"重试即可成功"。口径原文见 `services/api/src/errors.ts` 的 `ApiError` 注释。）
+        throw new ApiError('PROVIDER_UNAVAILABLE', '该作业所属能力尚未提供取消（未接线）', { retryable: false });
       }
       throw new ApiError('NOT_FOUND', '作业不存在');
     },

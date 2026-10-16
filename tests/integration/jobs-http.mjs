@@ -345,7 +345,11 @@ try {
     // "该域根本没有取消能力"（能力未接线）≠"对象当前不可用"，故用 503 而不是 409，且不谎称对象状态。
     assert.equal(rejected.status, 503, JSON.stringify(rejected.body));
     assert.equal(rejected.body.error.code, 'PROVIDER_UNAVAILABLE', '不得假装取消成功，也不得冒充对象不可用');
-    assert.equal(rejected.body.error.retryable, true);
+    assert.equal(
+      rejected.body.error.retryable,
+      false,
+      '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试',
+    );
     const after = (await readJob(transcriptionJobId)).body.data;
     assert.equal(after.state, before.state, '不得伪造 cancelled');
     assert.equal(after.revision, before.revision);
@@ -536,7 +540,7 @@ try {
     });
     assert.equal(bothHeaders.status, 503, `两头齐备应 503（该 kind 无取消能力），实际 ${bothHeaders.status}`);
     assert.equal(bothHeaders.body.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(bothHeaders.body.error.retryable, true);
+    assert.equal(bothHeaders.body.error.retryable, false, '该 kind 无取消能力（未接线）⇒ 不得标为可重试');
     const after = (await readJob(transcriptionJobId)).body.data;
     assert.equal(after.state, before.state, '三次失败调用都不得改动作业状态');
     assert.equal(after.revision, before.revision);
