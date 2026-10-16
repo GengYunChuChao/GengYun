@@ -494,7 +494,7 @@ try {
         lines.push(`${label} → ${res.status} ${res.body?.error?.code ?? 'JobEnvelope（被当作成功透出！）'}`);
         assert.equal(res.status, 503, `${label} 必须 503，实际 ${res.status}`);
         assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
-        assert.equal(res.body.error.retryable, true);
+        assert.equal(res.body.error.retryable, false);
         assert.equal(res.body.data, undefined, `${label} 不得带 data（不得把坏结果当作业透出）`);
       } finally {
         await probe.close();

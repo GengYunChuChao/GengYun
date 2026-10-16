@@ -253,3 +253,47 @@ test('G4b. 【负控制】权威端口换成替身副本 ⇒ 审核域下架不�
   assert.equal((await h.service.listPosts(USER_B)).items.length, 1, '社区读取面仍把它当作公开内容');
   assert.equal((await h.service.getPost(USER_B, post.id)).visibility, 'published');
 });
+
+// ---------------------------------------------------------------------------
+// G3-d 审核域**端口形状不可读**（未接线/不合约）⇒ 后台联动失败的分类必须诚实
+// ---------------------------------------------------------------------------
+
+/**
+ * 只把 `withdraw` 换成"形状不可读"（返回非对象）：其余端口**原样委托**真实实现
+ * （判定、台账、社区真实行都不受影响）。用于驱动
+ * `services/api/src/community/moderation-link.ts:367` 的 `shapeUnavailable('下架结论')`
+ * —— 即"审核域端口未接线/不合约"在**真实链路**上的等价形态。
+ */
+function unreadableWithdrawPort(moderation) {
+  return {
+    get execution_mode() {
+      return moderation.execution_mode;
+    },
+    submitScreening: (input) => moderation.submitScreening(input),
+    withdraw: () => null,
+    readView: (input) => moderation.readView(input),
+    tasks: (targetRef) => moderation.tasks(targetRef),
+    counts: () => moderation.counts(),
+  };
+}
+
+test('G3d. 审核域下架端口形状不可读 ⇒ 后台联动如实 503 且 retryable=false（不得劝客户端重试）', async () => {
+  const h = makeWiredHarness({
+    ports: { tms: passingPort() },
+    moderationPortWrapper: unreadableWithdrawPort,
+  });
+  const post = await publishPost(h);
+  const hidden = await hideViaAdminRoute(h, post.id, '"1"', 'gy-i14i15-hide-g3d');
+  assert.equal(hidden.status, 503, JSON.stringify(hidden.body));
+  assert.equal(hidden.body.error.code, 'PROVIDER_UNAVAILABLE');
+  // 形状不可读＝能力未接线/不合约 ⇒ 需运维排查端口，同一请求稍后重试不会自行成功 ⇒ 必须为 false。
+  // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
+  assert.equal(
+    hidden.body.error.retryable,
+    false,
+    '审核域端口形状不可读 ⇒ retryable 必须为 false（不得把"未接线/不合约"说成瞬时故障）',
+  );
+  // 下架本身**已生效**：联动失败不得回滚可见性，也不得谎报"没下架"。
+  assert.equal((await h.store.getPost(post.id)).visibility, 'hidden');
+  assert.deepEqual(await h.service.listPosts(USER_B), { items: [], next_cursor: null });
+});

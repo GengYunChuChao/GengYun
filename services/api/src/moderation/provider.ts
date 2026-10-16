@@ -6,7 +6,7 @@
  *     `policySelectionVerified` 恒为 `false`，BizType 是自描述占位值），因此本片**不内置任何真实端口**，
  *     也不读环境变量、不发网络请求。
  *   - `execution_mode === 'real'`：**永不回退替身**；缺真实端口即 fail-closed
- *     （服务边界抛契约 503 `PROVIDER_UNAVAILABLE` + `retryable: true`）。
+ *     （服务边界抛契约 503 `PROVIDER_UNAVAILABLE` + `retryable: false`）。
  *   - `stub` / `preset_demo`：使用**明确标注的替身**端口；替身对任何内容一律回报 `unsure`
  *     （**无结论**）⇒ 合流层按 fail-closed 判 `quarantined`。
  *     **替身不会放行任何内容**：它只能用来跑通链路与隔离回归，不能用来产出"审核通过"。

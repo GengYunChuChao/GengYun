@@ -358,7 +358,7 @@ await group('[正控制] 作业：**默认装配未接线** ⇒ list 与 cancel 
   const listed = await probe('listAdminJobs', 'GET', `${API}/admin/jobs`, { api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=未接线' });
   assert.equal(listed.status, 503, JSON.stringify(listed.body));
   assert.equal(listed.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(listed.body.error.retryable, true);
+  assert.equal(listed.body.error.retryable, false);
   assert.equal(listed.body.data, undefined, '不得返回空页冒充"平台没有作业"');
 
   const cancelled = await probe('cancelAdminJob', 'POST', `${API}/admin/jobs/${JOB_QUEUED}/cancel`, {

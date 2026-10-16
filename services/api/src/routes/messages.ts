@@ -14,7 +14,8 @@ export function registerMessageRoutes(
   const emptyQuery = { type: 'object', additionalProperties: false, properties: {} };
   function ready(request: FastifyRequest): MessagesService {
     if (request.body !== undefined) throw new ApiError('INVALID_REQUEST', '此接口不接受请求体');
-    if (service === null) throw new ApiError('PROVIDER_UNAVAILABLE', '消息持久存储尚未接线', { retryable: true });
+    // 持久存储尚未接线 ＝未接线：retryable 必须为 false。
+    if (service === null) throw new ApiError('PROVIDER_UNAVAILABLE', '消息持久存储尚未接线', { retryable: false });
     return service;
   }
   const noStore = async (_request: FastifyRequest, reply: import('fastify').FastifyReply) => {

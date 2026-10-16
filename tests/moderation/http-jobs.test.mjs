@@ -211,7 +211,7 @@ test('real 模式：审核域整域 fail-closed（送审 503），作业读面�
   assert.ok(refused, 'real 模式送审必须被拒');
   assert.equal(refused.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(refused.status, 503);
-  assert.equal(refused.retryable, true);
+  assert.equal(refused.retryable, false, 'real 模式审核域整域未接线（无真实端口）⇒ 需运维接线，同一请求原样重试不会成功');
 
   const missing = await h.call('GET', `${API}/jobs/00000000-0000-4000-8500-00000000dead`, h.a);
   assert.equal(missing.status, 404);

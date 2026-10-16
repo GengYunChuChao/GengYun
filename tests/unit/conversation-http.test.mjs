@@ -455,6 +455,14 @@ test('语音轮次：转写端口未接线 ⇒ 422 INPUT_UNCERTAIN；已接线�
   });
   assert.equal(response.status, 422);
   assert.equal(response.body.error.code, 'INPUT_UNCERTAIN');
+  // 新增（本文件此前对这条路径**零** `retryable` 断言）：未接线＝能力未装配 ⇒ 需运维接线，
+  // 同一请求在无人工/运维介入下稍后重试不会成功 ⇒ 必须为 false（不得暗示"稍后自己会好"）。
+  // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
+  assert.equal(
+    response.body.error.retryable,
+    false,
+    '转写端口未接线 ⇒ retryable 必须为 false（能力未装配不是瞬时故障）',
+  );
   assert.equal(unwired.conversationStore.snapshot().turns.length, 0, '未受理就不得留下轮次行（不得半截写入）');
   assert.equal(unwired.conversationStore.snapshot().answers.length, 0);
 
@@ -477,7 +485,7 @@ test('未接线如实失败（两态对照）：整域未接线 ⇒ 契约路径
   const created = await fixture.call('POST', CONVERSATIONS, fixture.a, { payload: {}, headers: { 'idempotency-key': 'idem-unwired-1' } });
   assert.equal(created.status, 503);
   assert.equal(created.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(created.body.error.retryable, true);
+  assert.equal(created.body.error.retryable, false);
   const list = await fixture.call('GET', CONVERSATIONS);
   assert.equal(list.status, 503);
   assert.equal(list.body.error.code, 'PROVIDER_UNAVAILABLE');

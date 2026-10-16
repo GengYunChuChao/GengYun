@@ -56,7 +56,29 @@ export interface FlagRecordLike {
 }
 
 /**
- * 开关读取口。**只有** `read()` 一个入口，且把"不可识别"显式建模成 `null`：
+ * fail-closed 的**原因**：决定 503 的 `retryable`（口径原文见 `services/api/src/errors.ts` 的
+ * `ApiError` 注释）。四类失败原先被折叠成同一个 `null` ⇒ 无法为 `retryable: true` 给出具体机制，
+ * 故这里把原因显式建模出来（**additive**：不新增契约词表，`details.code` 仍是 `FLAG_UNRECOGNIZED`）。
+ *
+ * - `read_error`：开关存储的**读取本身抛错**（连接抖动 / 超时 / 存储短暂不可用）—— 没有任何人
+ *   改过配置，同一请求稍后重试**可能**成功 ⇒ `retryable: true`（真瞬时，机制可命名）。
+ * - `unrecognized`：读到的东西**形状不合法**（整行缺失 / `enabled` 非布尔 / `key` 不在契约闭集 /
+ *   `revision` 非法）—— 这是配置或数据事故，**需运维修复**后同一请求才会成功 ⇒ `retryable: false`。
+ */
+export type FlagGateFailCause = 'read_error' | 'unrecognized';
+
+/** 带原因的读取结果：`ok` ⇒ 记录；`fail` ⇒ 原因（**不丢原因**，供 `retryable` 判定）。 */
+export type FlagReadOutcome =
+  | { readonly kind: 'ok'; readonly record: FlagRecordLike }
+  | { readonly kind: 'fail'; readonly cause: FlagGateFailCause };
+
+/** 按原因取 `retryable`（唯一判据，勿在调用点各写一套）。 */
+export function failClosedRetryableFor(cause: FlagGateFailCause): boolean {
+  return cause === 'read_error';
+}
+
+/**
+ * 开关读取口。`read()` 把"不可识别"显式建模成 `null`：
  * 调用方无法把 `null` 误当成 `false`（关闭）或 `true`（开启）——两者都必须经 `valueOf()` 判定。
  */
 export interface FlagReader {
@@ -64,30 +86,44 @@ export interface FlagReader {
   read(key: FlagKey): FlagRecordLike | null;
   /** 已识别 ⇒ 布尔值；不可识别 ⇒ `null`。 */
   valueOf(key: FlagKey): boolean | null;
+  /**
+   * **可选**：带原因读取（`read()` 的加强版，两者必须同源）。缺省时判定层按 `unrecognized`
+   * 处理 —— 宁可声明"确定性故障"（不置 `retryable`），也不空口声称"稍后重试会成功"。
+   */
+  readWithCause?(key: FlagKey): FlagReadOutcome;
 }
 
-function recognize(raw: unknown): FlagRecordLike | null {
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+function recognizeOutcome(raw: unknown): FlagReadOutcome {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'fail', cause: 'unrecognized' };
   const record = raw as Record<string, unknown>;
   // key 必须是契约闭集成员（闭集外的行一律不认，避免"库里多了个键"被当成有效状态）。
-  if (typeof record.key !== 'string' || !(CONTRACT_FLAG_KEYS as readonly string[]).includes(record.key)) return null;
-  if (typeof record.enabled !== 'boolean') return null;
-  if (!Number.isInteger(record.revision) || (record.revision as number) < 1) return null;
-  return { key: record.key, enabled: record.enabled, revision: record.revision as number };
+  if (typeof record.key !== 'string' || !(CONTRACT_FLAG_KEYS as readonly string[]).includes(record.key)) {
+    return { kind: 'fail', cause: 'unrecognized' };
+  }
+  if (typeof record.enabled !== 'boolean') return { kind: 'fail', cause: 'unrecognized' };
+  if (!Number.isInteger(record.revision) || (record.revision as number) < 1) {
+    return { kind: 'fail', cause: 'unrecognized' };
+  }
+  return { kind: 'ok', record: { key: record.key, enabled: record.enabled, revision: record.revision as number } };
 }
 
 /** 由后台开关存储构造读取口（只依赖 `getFlag` 一个方法，便于测试注入畸形实现）。 */
 export function createStoreFlagReader(source: { getFlag(key: FlagKey): unknown }): FlagReader {
-  const read = (key: FlagKey): FlagRecordLike | null => {
+  const readWithCause = (key: FlagKey): FlagReadOutcome => {
     try {
-      return recognize(source.getFlag(key));
+      return recognizeOutcome(source.getFlag(key));
     } catch {
-      // 读取抛错 = 无法识别 ⇒ fail-closed（调用方会以 503 拒绝），**不**当成开启。
-      return null;
+      // 读取抛错 = 存储层**瞬时**故障（连接抖动/超时），fail-closed 但可重试：**不**当成开启。
+      return { kind: 'fail', cause: 'read_error' };
     }
+  };
+  const read = (key: FlagKey): FlagRecordLike | null => {
+    const outcome = readWithCause(key);
+    return outcome.kind === 'ok' ? outcome.record : null;
   };
   return {
     read,
+    readWithCause,
     valueOf(key) {
       const record = read(key);
       return record === null ? null : record.enabled;
@@ -213,6 +249,8 @@ export interface FlagGateVerdict {
   /** 判定依据：已配置的存储值 / 无权威来源（未接线或不可识别）。 */
   readonly decidedBy: 'configured' | 'unavailable';
   readonly revision: number | null;
+  /** 仅 `state === 'fail_closed'` 时给出：fail-closed 的原因（决定 503 的 `retryable`）。 */
+  readonly cause?: FlagGateFailCause;
 }
 
 export interface FeatureFlagGate {
@@ -231,24 +269,30 @@ export interface FeatureFlagGate {
 
 // 两条分流的 `retryable` 口径复核结论（依据 `services/api/src/errors.ts` 的口径原文；两者语义不同类，不得合并）：
 //   · 409 `OBJECT_UNAVAILABLE`（`closedError`）= "**已识别的确定性状态**"：管理员**明确**把开关设成
-//     `false`（或键缺失但被判定为关闭）⇒ 对象当前不可用是**有意的确定状态**，同一请求重试不会变
-//     ⇒ `retryable: false`（保留现状，省略即 false，且 `:14-15` 的注释已给出同一理由）。
-//   · 503 `PROVIDER_UNAVAILABLE`（`failClosedError`）= "**当前读不出来**"：开关行缺失/`enabled` 非布尔/
-//     `key` 越界/读取抛错 ⇒ 服务端**不知道**它开还是关，只能 fail-closed 拒绝；这是**瞬时读取态**，
-//     无人工介入下稍后重试**可能**成功（如存储抖动恢复）⇒ `retryable: true`（保留现状：消息逐字含"**当前**取值
-//     不可识别"，与"能力未装配／未接线"不同类，故不受四域统一为 false 的影响）。
+//     `false` ⇒ 对象当前不可用是**有意的确定状态**，同一请求重试不会变 ⇒ `retryable: false`
+//     （保留现状，省略即 false，且 `:14-15` 的注释已给出同一理由）。
+//   · 503 `PROVIDER_UNAVAILABLE`（`failClosedError`）= "**当前读不出来**"：消息逐字含"**当前**取值
+//     不可识别"，与"能力未装配／未接线"不同类，故不受四域统一为 false 的影响；但**四类失败不都是
+//     瞬时的**，故按 `FlagGateFailCause` 拆分（扩展派单要求"真瞬时必须给出具体机制"）：
+//       - `read_error`（读取抛错：存储抖动/超时）⇒ 真瞬时 ⇒ `retryable: true`；
+//       - `unrecognized`（行缺失/`enabled` 非布尔/`key` 越界/`revision` 非法）= 配置或数据事故，
+//         **需运维修复**后同一请求才会成功 ⇒ `retryable: false`。
 function closedError(surface: string, key: FlagKey): ApiError {
   return new ApiError('OBJECT_UNAVAILABLE', `「${surface}」已被全局开关关闭（${key}=false），本输出面拒绝产出`, {
     details: [{ field: 'feature_flag', code: 'FLAG_CLOSED' }],
   });
 }
 
-function failClosedError(surface: string, key: FlagKey): ApiError {
-  // `retryable: true` 是瞬时读取态，不是"能力未接线"：见上方复核结论。
+function failClosedError(surface: string, key: FlagKey, cause: FlagGateFailCause): ApiError {
+  // `retryable` 由原因决定，不写死：见 `FlagGateFailCause` 与上方复核结论。
+  const hint =
+    cause === 'read_error'
+      ? '（开关存储读取失败：连接抖动/超时，稍后重试可能成功）'
+      : '（开关配置或数据形状非法，需运维修复后重试才会成功）';
   return new ApiError(
     'PROVIDER_UNAVAILABLE',
-    `全局开关 ${key} 的当前取值不可识别（缺失/非布尔/越界），「${surface}」按 fail-closed 拒绝产出`,
-    { retryable: true, details: [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }] },
+    `全局开关 ${key} 的当前取值不可识别（缺失/非布尔/越界）${hint}，「${surface}」按 fail-closed 拒绝产出`,
+    { retryable: failClosedRetryableFor(cause), details: [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }] },
   );
 }
 
@@ -266,15 +310,33 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
   const armed = options.armed ?? true;
   const reader = options.reader;
 
+  /** 带原因读取：优先用读取口的 `readWithCause`；没有则退回 `read()`（见下方注释）。 */
+  function readOutcomeFor(key: FlagKey): FlagReadOutcome {
+    if (typeof reader.readWithCause === 'function') return reader.readWithCause(key);
+    // 自定义注入的读取口可能只有 `read()`：此时 `null` 无法区分原因 ⇒ 按 `unrecognized` 处理
+    // （宁可声明"需运维修复"，也不空口声称"稍后重试会成功"）。
+    const record = reader.read(key);
+    return record === null ? { kind: 'fail', cause: 'unrecognized' } : { kind: 'ok', record };
+  }
+
   function verdictFor(key: FlagKey, surface: string): FlagGateVerdict {
     if (!armed) {
       // 未接线：不判（保持既有产出）。state 仍如实报 `open`，但 decidedBy 说明"没有权威来源"。
       return { state: 'open', key, surface, decidedBy: 'unavailable', revision: null };
     }
-    const record = reader.read(key);
-    if (record === null) {
-      return { state: 'fail_closed', key, surface, decidedBy: 'unavailable', revision: null };
+    const outcome = readOutcomeFor(key);
+    if (outcome.kind === 'fail') {
+      // 原因一并带出（决定 503 的 retryable），供证据页/测试直接核对而无需解析消息。
+      return {
+        state: 'fail_closed',
+        key,
+        surface,
+        decidedBy: 'unavailable',
+        revision: null,
+        cause: outcome.cause,
+      };
     }
+    const record = outcome.record;
     return {
       state: record.enabled ? 'open' : 'closed',
       key,
@@ -287,7 +349,7 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
   function assertOpen(key: FlagKey, surface: string): void {
     const verdict = verdictFor(key, surface);
     if (verdict.state === 'closed') throw closedError(surface, key);
-    if (verdict.state === 'fail_closed') throw failClosedError(surface, key);
+    if (verdict.state === 'fail_closed') throw failClosedError(surface, key, verdict.cause ?? 'unrecognized');
   }
 
   const byRoute = new Map<string, FlagGatedSurface>();

@@ -420,7 +420,7 @@ try {
   });
   assert.equal(deniedD.status, 503, JSON.stringify(deniedD.body));
   assert.equal(deniedD.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(deniedD.body.error.retryable, true);
+  assert.equal(deniedD.body.error.retryable, false);
   assert.equal(await countExports(d.id), 0, 'real 未接真实传输：不得产生任何账本行（零 sent）');
   say('real 未接真实传输 ⇒ 受理处 503 PROVIDER_UNAVAILABLE(retryable)，且该用户**零 sent 记录**（在任何账本变更之前拒绝）');
 

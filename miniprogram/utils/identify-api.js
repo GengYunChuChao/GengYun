@@ -459,7 +459,7 @@ async function getOcrJob(jobId) {
  * 请求取消标签 OCR 任务。
  *
  * **本基线 OCR 域不提供取消能力**：服务端注册表先确认作业存在，再按契约返回
- * `503 PROVIDER_UNAVAILABLE`（`retryable: true`，语义="该作业所属能力尚未提供取消"），
+ * `503 PROVIDER_UNAVAILABLE`（`retryable: false`，语义="该作业所属能力尚未提供取消"），
  * **不伪造** `cancelled`、也**不用 404 谎称作业不存在**。错误码**原样保留**（不改成客户端私有码），
  * 由 `ocrMessageFor(e, 'cancel')` 给出专属文案，与 `NOT_FOUND`（"任务或识别记录不存在"）明确区分。
  */

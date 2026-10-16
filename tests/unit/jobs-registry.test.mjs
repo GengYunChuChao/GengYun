@@ -79,7 +79,7 @@ function assertViolation(job, label) {
       assert.equal(error?.name, 'ApiError', `${label} 应走统一 fail-closed 通道（ApiError），实际 ${error?.name}`);
       assert.equal(error?.code, 'PROVIDER_UNAVAILABLE', `${label} 错误码应为 PROVIDER_UNAVAILABLE`);
       assert.equal(error?.status, 503, `${label} 状态应为 503`);
-      assert.equal(error?.retryable, true, `${label} 应标记 retryable（端口回传不可信）`);
+      assert.equal(error?.retryable, false, `${label} 端口回传不可信属确定性契约违反（需修代码/装配），不是瞬时故障 ⇒ 不得标 retryable`);
       assert.equal(typeof error.message, 'string');
       assert.ok(error.message.includes('不合契约'), `${label} 的 message 应说明违规，实际：${error.message}`);
       return true;

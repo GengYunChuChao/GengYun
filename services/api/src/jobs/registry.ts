@@ -92,7 +92,7 @@ export interface JobSourceCancelInput extends JobSourceGetInput {
  *
  * - `get`：返回该域视角的契约 `Job`；**不存在或越权一律返回 `null`**（调用方不得据此区分二者）。
  * - `cancel`：**可选**。缺失表示「该域没有取消能力」——注册表会先确认作业确实存在，再以
- *   **`503 PROVIDER_UNAVAILABLE`（`retryable: true`，"该作业所属能力尚未提供取消"）** 如实拒绝
+ *   **`503 PROVIDER_UNAVAILABLE`（`retryable: false`，"该作业所属能力尚未提供取消"）** 如实拒绝
  *   （**不假装取消成功，也不为它另写状态机**）。
  *   有取消能力的域**必须复用域内既有实现**（含 `If-Match`/幂等/终态语义），本层不再判状态。
  */
@@ -123,12 +123,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * 域源/端口回传**不合契约**时的统一 fail-closed 拒绝路径。
  *
  * **沿用仓库既有机制**：与 `services/api/src/admin/ops/service.ts` 的 `portIntegrityFailure`
- * 同形——503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）+ `retryable: true`，含义是"端口回传不可信 ⇒
+ * 同形——503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）+ `retryable: false`，含义是"端口回传不可信 ⇒
  * 拒绝投影，既不登记成功也不把不合契约的记录当状态发出"。**只有一个错误通道**（本函数），
  * 不再另造；也**不放宽**冻结契约。
  */
 export function contractViolation(where: string, reason: string): ApiError {
-  return new ApiError('PROVIDER_UNAVAILABLE', `作业投影不合契约（${where}）：${reason}`, { retryable: true });
+  // 端口回传不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+  return new ApiError('PROVIDER_UNAVAILABLE', `作业投影不合契约（${where}）：${reason}`, { retryable: false });
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], where: string, what: string): void {

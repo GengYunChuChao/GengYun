@@ -23,7 +23,7 @@
  * - **「已受理」绝不写成「已删除」**：202 如实回 `state: 'blocked'`（未接线的备份阶段恒 `pending`
  *   ⇒ 该请求此刻确实无法完成）；`completed` **只能**在全模块在线与备份证据齐备时出现。
  * - **未装配**：`service`/`receipts`/`deletion` 任一为 `null` ⇒ 两个 operation 都在**任何状态变更之前**
- *   抛 `PROVIDER_UNAVAILABLE`(503, `retryable: true`)，**不**回 200 空壳、**不**假装删除成功。
+ *   抛 `PROVIDER_UNAVAILABLE`(503, `retryable: false`)，**不**回 200 空壳、**不**假装删除成功。
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.ts';
@@ -117,7 +117,9 @@ export function registerAccountDeletionRoutes(
   function requireWired(): WiredDeletion {
     if (deps.service === null || deps.receipts === null || deps.deletion === null) {
       throw new ApiError('PROVIDER_UNAVAILABLE', ACCOUNT_DELETION_UNAVAILABLE_MESSAGE, {
-        retryable: true,
+        // 未接线／确定性缺陷 ⇒ 同一请求重试不会成功（需运维改配置或修缺陷）：retryable 必须为 false。
+        // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
+        retryable: false,
       });
     }
     return { service: deps.service, receipts: deps.receipts, deletion: deps.deletion };

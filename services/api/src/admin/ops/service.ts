@@ -366,17 +366,19 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   function requireWiredJobPort(): void {
     if (!jobPort.wired) {
       // 不返回空页：空页会被读成"平台当前没有作业"，那是无法确认的结论（伪造）。
-      throw new ApiError('PROVIDER_UNAVAILABLE', '平台级作业读/取消面尚未接线（等共享读面工单）', { retryable: true });
+      // 未接线／端口回传不可信 ⇒ 同一请求重试不会成功：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '平台级作业读/取消面尚未接线（等共享读面工单）', { retryable: false });
     }
   }
 
   /**
    * 端口回传**不可信**时的统一 fail-closed 错误。
-   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码），`retryable: true`：
+   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码），`retryable: false`：
    * 既可能是端口暂时行为异常，也可能是接线错误；一律**不登记成功、不写审计**。
    */
   function portIntegrityFailure(message: string): ApiError {
-    return new ApiError('PROVIDER_UNAVAILABLE', message, { retryable: true });
+    // 未接线／端口回传不可信 ⇒ 同一请求重试不会成功：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    return new ApiError('PROVIDER_UNAVAILABLE', message, { retryable: false });
   }
 
   /**
@@ -431,7 +433,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
             case 'TERMINAL':
               throw new ApiError('OBJECT_UNAVAILABLE', '作业已处于终态，不可取消');
             case 'PORT_UNAVAILABLE':
-              throw new ApiError('PROVIDER_UNAVAILABLE', '平台级作业取消面尚未接线', { retryable: true });
+              // 未接线／端口回传不可信 ⇒ 同一请求重试不会成功：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+              throw new ApiError('PROVIDER_UNAVAILABLE', '平台级作业取消面尚未接线', { retryable: false });
             default:
               throw new ApiError('REVISION_CONFLICT', '作业修订已变化，If-Match 与当前 ETag 不匹配');
           }
@@ -588,7 +591,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
             case 'REVISION_CONFLICT':
               throw new ApiError('REVISION_CONFLICT', '帖子修订已变化，If-Match 与当前 ETag 不匹配');
             default:
-              throw new ApiError('PROVIDER_UNAVAILABLE', '社区帖子存储尚未接线', { retryable: true });
+              // 未接线／端口回传不可信 ⇒ 同一请求重试不会成功：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+              throw new ApiError('PROVIDER_UNAVAILABLE', '社区帖子存储尚未接线', { retryable: false });
           }
         }
         if (!outcome.changed) {

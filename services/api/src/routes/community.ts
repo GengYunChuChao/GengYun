@@ -191,7 +191,9 @@ export function registerCommunityRoutes(
   /** 未接线（`real` 模式无真实持久存储）⇒ 契约闭集内 503，绝不返回空页/假成功。 */
   function ready(): CommunityService {
     if (service === null) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', '社区持久存储尚未接线', { retryable: true });
+      // 未接线／确定性缺陷 ⇒ 同一请求重试不会成功（需运维改配置或修缺陷）：retryable 必须为 false。
+      // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '社区持久存储尚未接线', { retryable: false });
     }
     return service;
   }

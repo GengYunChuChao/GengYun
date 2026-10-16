@@ -100,7 +100,7 @@ PostgreSQL 上按 `README`「提交一致性契约」的部署义务实现为**�
 `in-flight.mjs` / `egress.mjs` 对账本访问统一 `async/await` —— 对内存账本（同步）零成本，对持久账本正确等待。
 
 派发顺序即安全保证：`transport.available !== true`（`real` 未接真实适配器）⇒ 在任何账本变更**之前**
-`PROVIDER_UNAVAILABLE`(503, `retryable: true`)；记录非 `reserved` ⇒ 拒绝（零重复外发）；
+`PROVIDER_UNAVAILABLE`(503, `retryable: false`)；记录非 `reserved` ⇒ 拒绝（零重复外发）；
 `ledger.markSent` 的同步原子边界是唯一权威授权判定（被拒 ⇒ **零外发**）；实际网络调用在临界区之外；
 外部失败落 `failed`/`outcome_unknown`，**绝不**写成成功。
 

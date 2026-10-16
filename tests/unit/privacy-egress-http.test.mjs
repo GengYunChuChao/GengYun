@@ -2,7 +2,7 @@
  * GY-I27（#29）· `services/api` 侧装配回归：授权中间件（Fastify preHandler）+ real 模式 fail-closed。
  *
  * 监工对 #121 的 P1 口径在此复验：`real` 模式下真实依赖未接入 ⇒ **fail-closed**
- * （契约内 `PROVIDER_UNAVAILABLE`，503，`retryable: true`），**不得**用替身返回成功封套；
+ * （契约内 `PROVIDER_UNAVAILABLE`，503，`retryable: false`：真实传输未接线＝能力未装配，需运维接线），**不得**用替身返回成功封套；
  * 替身只允许在明确标注的 `stub` / `preset_demo` 下出现（同一路由的 stub 对照用例）。
  *
  * 本文件**不改任何既有路由/装配文件**：自己起一个最小 Fastify 实例，
@@ -184,7 +184,7 @@ test('real 未接真实依赖 ⇒ 503 PROVIDER_UNAVAILABLE(retryable)：零外�
     const res = await inject(app);
     assert.equal(res.statusCode, 503, res.body);
     assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(res.json().error.retryable, true);
+    assert.equal(res.json().error.retryable, false);
     assert.equal(res.json().data, undefined, '不得返回成功封套');
     assert.equal(res.json().meta.execution_mode, 'real');
   } finally {
