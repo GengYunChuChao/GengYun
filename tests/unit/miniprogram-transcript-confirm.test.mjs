@@ -11,12 +11,13 @@
  *   C. 幂等键：同一尝试（同正文同 revision）的重试复用同一把键，改正文即换键；
  *   D. 页面·未确认不外发：记录就绪前／空草稿 ⇒ 零 PATCH、零轮次请求；
  *   E. 页面·确认后发送全链路：请求形状（If-Match、幂等键、两字段/四字段闭集体）逐项核对；
- *   F. 页面·网络未确认后的重试：同一把键（服务端同键回放，不重复确认/发送）；
- *   G. 页面·双击守卫：在途确认期间第二次点击 ⇒ 仍然只有一次请求；
- *   H. 页面·取消与迟到回调不得外发：取消先关闸门再 DELETE；迟到响应不改状态、不触发发送；
- *   I. 页面·迟到轮询不冲掉已确认快照（revision 只进不退）；
- *   J. 页面·失败终态不得外发：截止时间内取不到记录 ⇒ 如实失败、零轮次请求；
- *   K. 页面·离页作废：离页后迟到响应零外发。
+ *   F. 页面·网络未确认后的重试：同一把键（确认/发送/受理各自按尝试固化）；
+ *   G. 页面·双击与在途取消：在途确认期间再点 ⇒ 一次请求；受理在途取消 ⇒ 迟到 202 零外发；
+ *   H. 页面·版本冲突重读：确认撞 409 ⇒ 按服务端最新记录刷新，"他人已确认"不得自动发送；
+ *   I. 页面·取消与迟到回调不得外发：取消先关闸门再 DELETE；迟到响应不改状态、不触发发送；
+ *   J. 页面·迟到轮询不冲掉已确认快照（revision 只进不退）；
+ *   K. 页面·失败终态不得外发：截止时间内取不到记录 ⇒ 如实失败、零轮次请求；
+ *   L. 页面·离页作废：离页后迟到响应零外发、不改 UI。
  *
  * 边界（如实标注）：
  * - **不触达任何真实服务**：全部响应由假 transport 脚本化；不发起外网请求、不连接数据库；
@@ -518,7 +519,106 @@ test('页面·在途确认期间再次点击 ⇒ 仍然只有一次确认请求�
   h.page.onUnload()
 })
 
-// ============================================================ H. 页面·取消与迟到不外发
+// ============================================================ G. 页面·受理幂等与在途取消
+
+test('页面·受理也按尝试固化幂等键：网络未确认后重试同一把键；落定后再转写是新尝试', async () => {
+  const h = bootTranscriptPage()
+  h.page.onPickTranscriptSample({ currentTarget: { dataset: { id: 'sample-i11-normal' } } })
+  // 受理第一次走网络失败通道（响应丢失 ⇒ NETWORK_UNCERTAIN）。
+  let failNextCreate = true
+  const realCreate = h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.create)[0].handler
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.create)[0].handler = function (call) {
+    if (failNextCreate) { failNextCreate = false; return new Promise((_resolve, reject) => reject(new Error('network down'))) }
+    return realCreate(call)
+  }
+  await h.page.onRequestTranscript()
+  assert.equal(h.page.data.transcriptStage, 'failed', '网络未确认必须停在 failed（不谎称已受理）')
+  assert.match(h.page.data.transcriptNote, /网络未能确认结果/)
+
+  // 重试同一动作 ⇒ 同一把受理键（服务端同键回放同一任务，不二次调用提供者）。
+  await h.page.onRequestTranscript()
+  const posts = h.http.find('POST', h.paths.create)
+  assert.equal(posts.length, 2)
+  assert.equal(posts[1].header['Idempotency-Key'], posts[0].header['Idempotency-Key'], '同尝试重试必须复用同一把受理键')
+  await settle()
+  assert.equal(h.page.data.transcriptStage, 'ready')
+
+  // 已落定 ⇒ 尝试结束：再点一次是**新**尝试（新键、新任务），不与上次混用。
+  await h.page.onRequestTranscript()
+  const postsAfter = h.http.find('POST', h.paths.create)
+  assert.equal(postsAfter.length, 3)
+  assert.notEqual(postsAfter[2].header['Idempotency-Key'], posts[0].header['Idempotency-Key'], '新尝试必须换新键')
+  h.page.onUnload()
+})
+
+test('页面·受理在途时取消：本地作废在途请求，迟到 202 不开始轮询、零外发', async () => {
+  const h = bootTranscriptPage()
+  let releaseCreate = null
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.create)[0].handler = function () {
+    return new Promise((resolve) => { releaseCreate = resolve })
+  }
+  h.page.onPickTranscriptSample({ currentTarget: { dataset: { id: 'sample-i11-normal' } } })
+  const pending = h.page.onRequestTranscript()
+  await flushMicrotasks(2)
+  assert.equal(h.page.data.transcriptStage, 'requesting')
+
+  await h.page.onCancelTranscript()
+  assert.equal(h.page.data.transcriptStage, 'cancelled')
+  assert.match(h.page.data.transcriptNote, /尚未产生转写任务/)
+  assert.equal(h.http.find('GET', h.paths.record).length, 0, '未受理成功不得轮询')
+  assert.equal(h.http.find('POST', h.paths.turns).length, 0, '取消受理不得外发')
+
+  // 迟到的 202 此刻才兑现：代次已作废 ⇒ 不开始轮询、不改状态。
+  releaseCreate({ status: 202, data: { data: transcriptionJobFixture(h.transcriptionId, new Date(Date.now() + 30000).toISOString()), meta: metaFixture() }, headers: { ETag: '"1"' } })
+  await pending
+  await settle(30)
+  assert.equal(h.page.data.transcriptStage, 'cancelled', '迟到 202 不得复活已取消的受理')
+  assert.equal(h.http.find('GET', h.paths.record).length, 0, '迟到 202 不得开始轮询')
+  assert.equal(h.http.find('POST', h.paths.turns).length, 0, '迟到 202 不得外发')
+  h.page.onUnload()
+})
+
+// ============================================================ H. 页面·版本冲突重读
+
+test('页面·确认撞版本冲突后重读刷新；"他人已确认"不得自动发送，须本机重新明确确认', async () => {
+  const h = bootTranscriptPage()
+  await readyTranscript(h)
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  // 第一次 PATCH：409 版本冲突（别的会话改动过记录）。
+  let patchCount = 0
+  h.http.routes.filter((r) => r.method === 'PATCH' && r.path === h.paths.confirm)[0].handler = function (call) {
+    patchCount += 1
+    if (patchCount === 1) return { status: 409, data: { error: { code: 'REVISION_CONFLICT' } } }
+    return { status: 200, data: { data: recordFixture(h.transcriptionId, { revision: 3, confirmed_text: call.data.confirmed_text, confirmed_at: new Date().toISOString() }), meta: metaFixture() }, headers: { ETag: '"3"' } }
+  }
+  // 冲突后的重读：服务端最新记录是 revision 2 且**已被他人确认**。
+  h.http.routes.filter((r) => r.method === 'GET' && r.path === h.paths.record)[0].handler = () => ({
+    status: 200,
+    data: { data: recordFixture(h.transcriptionId, { revision: 2, confirmed_text: '他人已确认的正文', confirmed_at: '2026-10-16T01:00:00.000Z' }), meta: metaFixture() },
+    headers: { ETag: '"2"' }
+  })
+
+  await h.page.onConfirmAndSend()
+  assert.equal(h.page.data.transcriptStage, 'ready')
+  assert.equal(h.page.data.transcriptRevision, 2, '必须按服务端最新 revision 刷新')
+  assert.match(h.page.data.transcriptNote, /版本已变化/)
+  assert.equal(h.http.find('POST', h.paths.turns).length, 0, '他人确认过不得自动发送（闸门只认本机一次成功确认）')
+
+  // 用户重新明确确认（新 If-Match、新尝试键）之后才发送。
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  await h.page.onConfirmAndSend()
+  const patches = h.http.find('PATCH', h.paths.confirm)
+  assert.equal(patches.length, 2)
+  assert.equal(patches[1].header['If-Match'], '"2"', '重读后必须使用新 revision')
+  assert.notEqual(patches[1].header['Idempotency-Key'], patches[0].header['Idempotency-Key'], '冲突后必须是新尝试（新键）')
+  const turns = h.http.find('POST', h.paths.turns)
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].data.transcription_revision, 3, '必须发送重新确认后的 revision')
+  assert.equal(h.page.data.transcriptStage, 'sent')
+  h.page.onUnload()
+})
+
+// ============================================================ I. 页面·取消与迟到不外发
 
 test('页面·取消：先关闸门再 DELETE；取消后迟到响应与再次点击都零外发', async () => {
   const h = bootTranscriptPage()
@@ -582,7 +682,7 @@ test('页面·取消的删除失败也绝不重开发送资格（本地取消是
   h.page.onUnload()
 })
 
-// ============================================================ I. 页面·迟到轮询不冲掉已确认快照
+// ============================================================ J. 页面·迟到轮询不冲掉已确认快照
 
 test('页面·迟到轮询响应（旧 revision）不得冲掉已确认快照，发送仍用确认后 revision', async () => {
   const h = bootTranscriptPage()
@@ -603,7 +703,7 @@ test('页面·迟到轮询响应（旧 revision）不得冲掉已确认快照，
   h.page.onUnload()
 })
 
-// ============================================================ J. 页面·失败终态不外发
+// ============================================================ K. 页面·失败终态不外发
 
 test('页面·截止时间内取不到记录 ⇒ 如实失败（TRANSCRIPT_NOT_PRODUCED），零轮次请求', async () => {
   const h = bootTranscriptPage({ deadlineInMs: -1000 }) // 截止时间已过：第一拍即越界
@@ -634,7 +734,7 @@ test('页面·转写受理失败（提供者未接线 503）⇒ 如实归因、�
   h.page.onUnload()
 })
 
-// ============================================================ K. 页面·离页作废
+// ============================================================ L. 页面·离页作废
 
 test('页面·离页（onHide）后迟到响应零外发、不改 UI', async () => {
   const h = bootTranscriptPage()
@@ -655,7 +755,7 @@ test('页面·离页（onHide）后迟到响应零外发、不改 UI', async () 
   h.page.onUnload()
 })
 
-// ============================================================ L. 静态口径
+// ============================================================ M. 静态口径
 
 test('静态·页面不得直接调用平台能力；替身引用与闸门口径落在工具模块', () => {
   const pageSource = read('miniprogram/pages/voice/voice.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

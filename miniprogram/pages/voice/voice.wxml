@@ -288,7 +288,7 @@
           class="btn btn--ghost row-actions__item voice-submit"
           aria-role="button"
           aria-label="取消本次转写：取消后不会发送任何问答"
-          disabled="{{guest || transcriptBusy || transcriptStage === '' || transcriptStage === 'cancelled' || transcriptStage === 'sent'}}"
+          disabled="{{guest || transcriptStage === '' || transcriptStage === 'confirming' || transcriptStage === 'sending' || transcriptStage === 'cancelling' || transcriptStage === 'cancelled' || transcriptStage === 'sent'}}"
           bindtap="onCancelTranscript"
         >{{transcriptStage === 'cancelling' ? '正在取消…' : '取消（不发送）'}}</button>
       </view>
