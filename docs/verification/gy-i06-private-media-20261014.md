@@ -226,7 +226,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 | 项 | 状态 |
 | --- | --- |
 | 真实对象存储（腾讯云 COS / S3 兼容桶） | **未验证**。`createS3CompatibleObjectStore` / `presignS3Url` 的代码路径在本仓库内**从未被实际调用**；未对接任何真实桶、未做签名往返核验；测试只覆盖结构断言（https、必需 `X-Amz-*` 查询参数、未发起网络请求）。 |
-| 上传/读取访问网关、CDN、原桶 URL 重定向策略 | **未接线**。契约内**没有**私有媒体内容路由（`/media/{id}/content` 不在冻结契约里），`grantMediaAccess` 的句柄 URL 消费端属部署期网关；本仓库不提供该数据面。 |
+| 上传/读取访问网关、CDN、原桶 URL 重定向策略 | **未接线**。冻结契约（85 条路径 / 112 条 operation）内**没有**满足「owner 私有媒体字节读取」语义的那一条 operation：`/media/{id}/content` 不在契约里（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」；契约内唯一返回二进制的 `GET /community/media/{grant_id}/content` 只服务社区公开已审上下文）；`grantMediaAccess` 的句柄 URL 消费端属部署期网关，本仓库不提供该数据面 ⇒ **客户端经契约取不到私有媒体字节**。 |
 | 真实微信登录态 | **未验证**。测试用合成身份（stub 登录替身或直接注入合成会话）；微信开发者工具未运行。 |
 | 真机 / Android / iOS / 小程序端 | **未验证**。本片不含客户端改动，也未在真机或微信开发者工具中验证。 |
 | 真实供应商（ASR/识别/TTS） | 本片不涉及；音频只按契约枚举与真实时长核验，**不**把产品限额冒充供应商接口限制。 |
@@ -240,7 +240,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 
 1. **媒体记录不持久**：进程重启即丢；`real` 模式下已被 fail-closed 挡住，但 `stub`/`preset_demo`
    与测试之外的任何「准生产」用法都应视为不可用。持久化实现（PG + 行版本 CAS）属后续接线。
-2. **私有媒体内容读取尚无产品端点**：契约只提供短效句柄，字节读取由部署期访问网关承担。
+2. **owner 私有媒体字节读取在契约内没有对应 operation**：契约只签发短效句柄（`AccessGrant.url` 为 https，本仓库占位域 `media.gengyun.local`），字节读取由部署期访问网关承担；契约内唯一返回二进制的 operation 是 `GET /community/media/{grant_id}/content`，只服务社区公开已审上下文，不能用于 owner 私有媒体 ⇒ **客户端经契约取不到私有媒体字节**（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」）。
    若监工认为需要 API 侧网关端点，那属于**扩展冻结契约**，须先走契约变更流程。
 3. **「每帖 ≤3 图」的判定点**：冻结契约的 `UploadInput` 没有帖子上下文，真正的「每帖」判定在
    **附件挂载**（社区线 GY-I15）。本片用「同一 owner 名下存活的 `community_image` 计数」作为
