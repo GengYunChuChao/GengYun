@@ -18,17 +18,17 @@
 | --- | --- | --- |
 | 触发 | `pull_request`（全部路径）；`push` 限定 `main` | `.github/workflows/engineering-shell.yml:8-11` |
 | 权限 | `contents: read` | `:13-14` |
-| runner | `ubuntu-24.04`（七个 job 均同） | `:19,31,45,59,77,91,105` |
+| runner | `ubuntu-24.04`（七个 job 均同） | `:19,32,47,62,81,96,111` |
 
 | job 名（= 检查名） | 位置 | 实际执行 |
 | --- | --- | --- |
-| `docs` | `:17-27` | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（**不装 Node**） |
-| `static-check` | `:29-41` | `setup-node` 固定 `24.16.0` → `npm ci --no-audit --no-fund` → `npm run lint` |
-| `unit-tests` | `:43-55` | 同上安装 → `npm run test:unit` |
-| `integration-http` | `:57-73` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 6 个回环脚本；**无需 PG／微信开发者工具／外网**；约 12–17 秒，量级参考） |
-| `contract-tests` | `:75-87` | 同上安装 → `npm run test:contract` |
-| `evaluation-tests` | `:89-101` | 同上安装 → `npm run test:evaluation` |
-| `build` | `:103-115` | 同上安装 → `npm run build` |
+| `docs` | `:17-28` | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（**不装 Node**） |
+| `static-check` | `:30-43` | `setup-node` 固定 `24.16.0` → `npm ci --no-audit --no-fund` → `npm run lint` |
+| `unit-tests` | `:45-58` | 同上安装 → `npm run test:unit` |
+| `integration-http` | `:60-77` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 8 个回环脚本；**无需 PG／微信开发者工具／外网**；约 12–17 秒，量级参考） |
+| `contract-tests` | `:79-92` | 同上安装 → `npm run test:contract` |
+| `evaluation-tests` | `:94-107` | 同上安装 → `npm run test:evaluation` |
+| `build` | `:109-122` | 同上安装 → `npm run build` |
 
 文件头另有一条**边界声明**（不是检查）：`:6` 明写"微信开发者工具编译与真机是**本机任务**，不在本 CI，也不由 Node 检查冒充"。
 

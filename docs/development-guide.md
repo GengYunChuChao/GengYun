@@ -1,6 +1,6 @@
 # 开发指南
 
-面向接手项目的新开发者。更新：2026-10-10；人工核对基线 main `7ec4c85`（2026-10-10，代码核对当时 main，Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)）；现行 main `cc07de8`（2026-10-16，[#215](https://github.com/GengYunChuChao/GengYun/pull/215)）领先147个提交；状态值未逐条重核。
+面向接手项目的新开发者。更新：2026-10-10；人工核对基线 main `7ec4c85`（= `5c6ce2af51354a7f04b8757fb48f58daf104f1fe`，2026-10-10，代码核对当时 main，Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)）；该基线上一次记载的领先数为 147，本次现场实测为：`git rev-list --count 7ec4c85..upstream/main` ⇒ **152** 个提交（2026-10-16 实测，当时 `upstream/main` = `bdd12bd2d1578bcfcf285f1234725c800b339c61`，2026-10-16，[#220](https://github.com/GengYunChuChao/GengYun/pull/220)）；该读数只是当时读数，`upstream/main` 一前进即失效，须按上述命令重测；状态值未逐条重核。
 “已合组件”不等于整项功能验收；最新状态见[进度](development-progress.md)。
 
 ## 1 项目与范围

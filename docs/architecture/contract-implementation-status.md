@@ -1,6 +1,6 @@
 # GY-I01 契约实现状态对照
 
-更新：2026-10-16。人工核对基线 `72c4923a8ec058399a51609e1cf1e3c70a890b4a`（2026-10-14，GY-I07／[#135](https://github.com/GengYunChuChao/GengYun/pull/135)）；现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先67个提交，机器校验（`node tools/verify-contract-status.mjs`，exit 0）已在该 HEAD 通过、状态值未逐条重核。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
+更新：2026-10-16。人工核对基线 `72c4923a8ec058399a51609e1cf1e3c70a890b4a`（2026-10-14，GY-I07／[#135](https://github.com/GengYunChuChao/GengYun/pull/135)）；该基线上一次记载的领先数为 67，本次现场实测为：`git rev-list --count 72c4923a8ec058399a51609e1cf1e3c70a890b4a..upstream/main` ⇒ **82** 个提交（2026-10-16 实测，当时 `upstream/main` = `bdd12bd2d1578bcfcf285f1234725c800b339c61`，2026-10-16，[#220](https://github.com/GengYunChuChao/GengYun/pull/220)；该基线与该 HEAD 均已核对为 `upstream/main` 的祖先）。两个数都只是**当时读数**：`upstream/main` 一前进即失效，须按上述命令重测，不得沿用任一历史值。机器校验（`node tools/verify-contract-status.mjs`，exit 0）已在该 HEAD 通过、状态值未逐条重核。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
 
 ## 1 判据与事实源
 
