@@ -233,6 +233,8 @@ function lifecycle(sharedStorage, options) {
   const storage = sharedStorage instanceof Map ? sharedStorage : new Map();
   const requests = [];
   const launches = [];
+  // GY-I10：选图请求（`wx.chooseMedia` 的 options）按调用顺序入列，由用例决定"选了什么图 / 取消"。
+  const media = [];
   const cache = new Map();
   const opts = options || {};
   const fileInfo = typeof opts.fileInfo === 'function' ? opts.fileInfo : null;
@@ -250,7 +252,8 @@ function lifecycle(sharedStorage, options) {
       navigateTo: options => launches.push(options.url),
       showToast: () => {},
       showModal: options => { if (options && typeof options.success === 'function') options.success({ confirm: true }); },
-      chooseMedia: () => {},
+      // 本片（GY-I10）追加：选图请求按调用顺序入列，由用例决定"选了什么图 / 取消"。
+      chooseMedia: options => media.push(options),
       getFileInfo: fileInfo === null
         ? () => {}
         : request => {
@@ -316,7 +319,7 @@ function lifecycle(sharedStorage, options) {
     const mode = typeof executionMode === 'string' && executionMode !== '' ? executionMode : (opts.mode || 'stub');
     request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: mode } } });
   }
-  return { storage, requests, launches, auth, page, seedSession, acceptVerification, load, mode: opts.mode || 'stub' };
+  return { storage, requests, launches, media, auth, page, seedSession, acceptVerification, load, mode: opts.mode || 'stub' };
 }
 
 function recognitionValue(overrides) {
@@ -605,10 +608,19 @@ test('GY-I09 小程序：未登录/无网络时请求直接拒绝，不发任何
   // 会话未建立（无 storage 会话）→ SESSION_REQUIRED，且不发起请求。
   await assert.rejects(() => identifyApi.createRecognition('11111111-1111-4111-8111-111111111111', 1), e => e.code === 'SESSION_REQUIRED');
   await assert.rejects(() => identifyApi.serverMode(), e => e.code === 'SESSION_REQUIRED');
+  // GY-I10 标签 OCR：三条**既有**契约调用同样零请求（未登录一律不得外发）。
+  await assert.rejects(() => identifyApi.createOcr('11111111-1111-4111-8111-111111111111', 1), e => e.code === 'SESSION_REQUIRED');
+  await assert.rejects(() => identifyApi.getOcrJob('11111111-1111-4111-8111-111111111111'), e => e.code === 'SESSION_REQUIRED');
+  await assert.rejects(() => identifyApi.cancelOcrJob('11111111-1111-4111-8111-111111111111', 1), e => e.code === 'SESSION_REQUIRED');
+  await assert.rejects(
+    () => identifyApi.uploadPrivatePhoto('/tmp/synthetic-label.jpg', { mime: 'image/jpeg', bytes: 1024, sha256: 'a'.repeat(64) }, identifyApi.OCR_MEDIA_PURPOSE),
+    e => e.code === 'SESSION_REQUIRED',
+  );
   assert.equal(calls, 0, '未登录时不得发起任何网络请求');
-  // 页面在游客态点击入口不动作。
+  // 页面在游客态点击入口不动作（含新接入的标签识别入口）。
   page.data.guest = true;
   page.onShoot({ currentTarget: { dataset: { mode: 'weed' } } });
+  page.onShoot({ currentTarget: { dataset: { mode: 'ocr' } } });
   assert.equal(calls, 0);
 });
 
@@ -1063,4 +1075,600 @@ test('GY-I09 小程序：目录外对象（stub 替身候选）不得下发无�
   assert.ok(/if \(speciesName === ''\) \{/.test(source), '缺少"取不到名称文本"的 fail-closed 分支');
   assert.equal(/if \(speciesName !== ''\) queryParams\.keyword/.test(source), false,
     'keyword 必须是该分支之后的必填项，不得再写成"可有可无"');
+});
+
+// ---------------------------------------------------------------------------
+// GY-I10 第三片：标签 OCR（#10）客户端入口。
+//
+// 口径：走**与识草同一套**私有媒体上传与**既有** OCR 路由（`POST /ocr` → `GET /jobs/{id}` →
+// `GET /ocr/{id}`），七类 JobState 逐类呈现；标签正文**只读**展示（原样文本 + 来源/状态标签）；
+// **不是权威判读**；**永不渲染任何剂量数字**（用量卡只报条数）。
+// 全部为合成身份与合成响应，绝不外发；不作为微信工具或真机证据。
+// ---------------------------------------------------------------------------
+
+const OCR_JOB_ID = '11111111-2222-4333-8444-555555555555';
+const OCR_RECORD_ID = '99999999-8888-4777-8666-555555555555';
+const OCR_TMP_PATH = '/tmp/synthetic-label.jpg';
+/** 剂量哨兵：替身用量卡的正文（**不得**出现在页面任何位置）。 */
+const OCR_DOSE_SENTINEL = '每公顷 1234 毫升（剂量哨兵：不得渲染）';
+
+/** 等待页面把第 n 个请求发出来（不依赖真实定时器与真实网络）。 */
+async function waitForRequests(h, n) {
+  for (let i = 0; i < 500; i += 1) {
+    if (h.requests.length >= n) return;
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  throw new Error('等待请求超时：期望 ' + n + ' 个，实际 ' + h.requests.length);
+}
+
+function syntheticMeta() {
+  return { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'stub' };
+}
+
+/** 契约错误封套（与 `errors.ts` 同形）。 */
+function errorEnvelope(code, retryable) {
+  return { error: { code, message: '合成错误（测试）', retryable: retryable === true, details: [] }, meta: syntheticMeta() };
+}
+
+/** 标签 OCR 任务封套（`POST /ocr` 202 与 `GET /jobs/{id}` 200 同形；九键、kind='ocr'）。 */
+function ocrJobEnvelope(state, result, ids) {
+  const jobId = (ids && ids.job) || OCR_JOB_ID;
+  const ocrId = (ids && ids.ocr) || OCR_RECORD_ID;
+  return {
+    data: {
+      id: jobId,
+      revision: state === 'queued' ? 1 : state === 'running' ? 2 : 3,
+      kind: 'ocr',
+      target_ref: { type: 'ocr', id: ocrId, revision: 1 },
+      state,
+      deadline_at: '2026-10-16T10:00:00.000Z',
+      created_at: '2026-10-16T09:59:30.000Z',
+      error_code: state === 'timed_out' ? 'PROVIDER_TIMEOUT' : state === 'failed' ? 'PROVIDER_OUTCOME_UNKNOWN' : null,
+      result: result === undefined ? null : { kind: 'ocr', value: result }
+    },
+    meta: syntheticMeta()
+  };
+}
+
+/** 契约 `OCR` 投影（六键）：原样文本 + 核对结论；用量卡**正文**只存在于响应里（页面不得渲染）。 */
+function ocrRecordValue(overrides) {
+  const fields = () => ({
+    registration_number: 'PD20210001',
+    name: '替身示例草甘膦水剂',
+    ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+    dosage_form: '水剂'
+  });
+  return Object.assign({
+    id: OCR_RECORD_ID,
+    revision: 1,
+    raw_fields: fields(),
+    corrected_fields: fields(),
+    verification: {
+      match_state: 'matched',
+      registration: { id: 'synthetic-registration' },
+      conflict_fields: [],
+      missing_fields: [],
+      dose_cards: [{ dose_text: OCR_DOSE_SENTINEL }]
+    },
+    model_version: 'stub-v1'
+  }, overrides || {});
+}
+
+function ocrRecordEnvelope(overrides) { return { data: ocrRecordValue(overrides), meta: syntheticMeta() }; }
+
+/** 已登录 + 门禁已核实的页面（沙箱内真实页面与真实 auth/identify-api 模块实例）。 */
+async function verifiedPage() {
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false, '合成会话核实后必须通过门禁');
+  return { h, page };
+}
+
+test('GY-I10 小程序：标签识别入口 → 既有 OCR 路由 → 七类状态轮询 → 只读展示（无剂量数字）', async () => {
+  const { h, page } = await verifiedPage();
+  // —— 入口：卡片已接入（不再是「尚未接入」的 toast），点击必须打开选图 ——
+  const ocrMode = page.data.modes.filter(m => m.key === 'ocr')[0];
+  assert.equal(ocrMode.action, '拍照识别', '标签识别卡片仍是「尚未接入」');
+  assert.ok(/非权威判读/.test(ocrMode.desc), ocrMode.desc);
+  page.onShoot({ currentTarget: { dataset: { mode: 'ocr' } } });
+  assert.equal(h.media.length, 1, '标签识别入口必须打开选图');
+  assert.equal(h.media[0].mediaType.length, 1);
+  assert.equal(h.media[0].mediaType[0], 'image');
+  assert.equal(h.media[0].count, 1);
+  // 取消选图：如实提示、零请求。
+  const beforeCancel = h.requests.length;
+  h.media[0].fail({});
+  assert.equal(h.requests.length, beforeCancel, '取消选图不得发请求');
+  assert.equal(page.data.errorText, '未选择照片，已取消。');
+
+  // —— 选图 → 替身模式（照片不上传）→ `POST /ocr` 受理 202 ——
+  let flow = null;
+  const originalPrepare = page.prepareOcrMedia;
+  page.prepareOcrMedia = function (path) { flow = originalPrepare.call(this, path); return flow; };
+  page.onShoot({ currentTarget: { dataset: { mode: 'ocr' } } });
+  h.media.at(-1).success({ tempFiles: [{ tempFilePath: OCR_TMP_PATH }] });
+  assert.ok(flow !== null, '选图成功后必须进入标签识别流程');
+  await waitForRequests(h, 2);
+  assert.ok(/\/public\/home$/.test(h.requests[1].url), '必须先读服务端执行模式');
+  h.requests[1].success({ statusCode: 200, data: { data: {}, meta: syntheticMeta() } });
+  await waitForRequests(h, 3);
+  const created = h.requests[2];
+  assert.equal(created.method, 'POST');
+  assert.ok(/\/ocr$/.test(created.url), '标签任务必须走既有 POST /ocr：' + created.url);
+  assert.deepEqual(Object.keys(created.data).sort(), ['media_id', 'media_revision'], 'body 必须恰为 MediaJobInput');
+  assert.match(created.data.media_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  assert.equal(created.data.media_revision, 1);
+  assert.ok(typeof created.header['Idempotency-Key'] === 'string' && created.header['Idempotency-Key'].length >= 8);
+  assert.ok(/照片不会上传/.test(page.data.substituteNotice), page.data.substituteNotice);
+  created.success({ statusCode: 202, data: ocrJobEnvelope('queued') });
+  await flow;
+  page.stopPoll();
+  assert.equal(page.data.ocr.state, 'queued');
+  assert.equal(page.data.ocr.stateTitle, identifyApi.describeJobState('queued').title);
+  assert.equal(page.data.ocr.terminal, false);
+  assert.equal(page.data.ocr.ocrId, OCR_RECORD_ID);
+  assert.equal(page.data.ocr.errorCode, null);
+  assert.equal(page.data.busy, true);
+
+  // —— 轮询（与识草同一读面与停止条件）：running → succeeded ——
+  const gen = page._generation;
+  let poll = page.refreshOcrJob(gen);
+  await waitForRequests(h, 4);
+  assert.equal(h.requests[3].method, 'GET');
+  assert.ok(/\/jobs\//.test(h.requests[3].url), '状态必须从既有 GET /jobs/{id} 读：' + h.requests[3].url);
+  h.requests[3].success({ statusCode: 200, data: ocrJobEnvelope('running') });
+  await poll;
+  assert.equal(page.data.ocr.state, 'running');
+  assert.equal(page.data.ocr.terminal, false);
+  assert.equal(page.data.busy, true);
+
+  poll = page.refreshOcrJob(gen);
+  await waitForRequests(h, 5);
+  h.requests[4].success({ statusCode: 200, data: ocrJobEnvelope('succeeded', ocrRecordValue()) });
+  await waitForRequests(h, 6);
+  assert.equal(h.requests[5].method, 'GET');
+  assert.ok(/\/ocr\//.test(h.requests[5].url), '任务成功后必须读既有 GET /ocr/{id}');
+  h.requests[5].success({ statusCode: 200, data: ocrRecordEnvelope() });
+  await poll;
+
+  const ocr = page.data.ocr;
+  assert.equal(ocr.state, 'succeeded');
+  assert.equal(ocr.terminal, true);
+  assert.equal(ocr.success, true);
+  assert.equal(page.data.busy, false);
+  assert.equal(page._ocrPollTimer, null, '终态后必须停止轮询');
+  assert.equal(ocr.errorCode, null);
+  // 原样文本：逐字段照录（含来源/状态标签）
+  assert.deepEqual(Array.from(ocr.record.readRows, row => row.label), ['登记证号', '药名', '剂型', '有效成分']);
+  assert.equal(ocr.record.readRows[0].value, 'PD20210001');
+  assert.equal(ocr.record.readRows[1].value, '替身示例草甘膦水剂');
+  assert.equal(ocr.record.readRows[3].value, '草甘膦 41%');
+  assert.equal(ocr.record.sourceVersion, 'stub-v1');
+  assert.equal(ocr.record.revision, 1);
+  assert.equal(ocr.record.matchLabel, '已匹配到登记资料');
+  assert.equal(ocr.record.hasRegistration, true);
+  assert.equal(ocr.record.correctedDiffers, false);
+  assert.equal(ocr.record.jobState, 'succeeded');
+  // 如实标注：**不是权威判读** + 只读（不发明编辑能力）
+  assert.ok(/不是权威判读/.test(ocr.record.authorityNote), ocr.record.authorityNote);
+  assert.ok(/只读/.test(ocr.record.readOnlyNote), ocr.record.readOnlyNote);
+  // —— 用药安全：用量卡只报条数，正文与任何剂量数字都不得出现 ——
+  assert.equal(ocr.record.doseCardCount, 1, '用量卡只允许报条数');
+  const serialized = JSON.stringify(page.data);
+  assert.equal(serialized.includes(OCR_DOSE_SENTINEL), false, '用量卡正文不得进入页面数据');
+  assert.equal(serialized.includes('dose_cards'), false, '用量卡结构不得进入页面数据');
+  assert.equal(/每公顷/.test(serialized), false, '不得出现任何剂量数字');
+  // 私有关闭：离页必须清空标签区块（与识别域同口径）。
+  page.onHide();
+  assert.equal(page.data.ocr, null);
+  assert.equal(page._ocrPollTimer, null);
+});
+
+test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归因（不得一律「未挂载」）', async () => {
+  const { h, page } = await verifiedPage();
+  void page;
+  const api = h.load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const declaration = { mime: 'image/jpeg', bytes: 1024, sha256: 'a'.repeat(64) };
+  /** 发一次真实上传调用并喂入合成响应；返回（请求, 错误）。 */
+  async function uploadOnce(statusCode, payload, purpose) {
+    const before = h.requests.length;
+    const pending = api.uploadPrivatePhoto(OCR_TMP_PATH, declaration, purpose === undefined ? api.OCR_MEDIA_PURPOSE : purpose);
+    await waitForRequests(h, before + 1);
+    const request = h.requests.at(-1);
+    assert.equal(request.method, 'POST');
+    assert.ok(/\/media\/uploads$/.test(request.url));
+    request.success({ statusCode, data: payload });
+    return { request, error: await pending.then(() => null, e => e) };
+  }
+
+  // ① 503 PROVIDER_UNAVAILABLE ⇒ 指向**真实对象存储未接线**；不得再断言「/media 端点未挂载」。
+  const a = await uploadOnce(503, errorEnvelope('PROVIDER_UNAVAILABLE', true));
+  assert.equal(a.request.data.purpose, 'label_ocr', '标签图必须声明契约既有用途 label_ocr');
+  assert.equal(a.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(a.error.status, 503);
+  const textA = api.messageFor(a.error);
+  assert.equal(/未挂载|尚未接入服务端/.test(textA), false, '不得再一律说成"通道未挂载"：' + textA);
+  assert.ok(/对象存储/.test(textA), textA);
+  // ② 400/413/415 ⇒ 用途限制（同一句，不冒充其它原因）。
+  const b = await uploadOnce(400, errorEnvelope('INVALID_REQUEST', false));
+  assert.equal(b.error.code, 'INVALID_REQUEST');
+  assert.equal(api.messageFor(b.error), api.MEDIA_USE_LIMIT_TEXT);
+  const c = await uploadOnce(413, errorEnvelope('MEDIA_TOO_LARGE', false));
+  assert.equal(api.messageFor(c.error), api.MEDIA_USE_LIMIT_TEXT);
+  const t = await uploadOnce(415, errorEnvelope('MEDIA_TYPE_UNSUPPORTED', false));
+  assert.equal(api.messageFor(t.error), api.MEDIA_USE_LIMIT_TEXT);
+  // ③ 无封套 / 未知码 ⇒ 如实回落"上传未完成"，且**不透出**未知码。
+  const d = await uploadOnce(500, null);
+  assert.equal(d.error.code, 'MEDIA_CHANNEL_UNAVAILABLE');
+  assert.equal(/未挂载/.test(api.messageFor(d.error)), false, api.messageFor(d.error));
+  const e = await uploadOnce(502, errorEnvelope('SYNTHETIC_UNKNOWN_CODE', false));
+  assert.equal(e.error.code, 'MEDIA_CHANNEL_UNAVAILABLE', '未知码不得当契约事实透出');
+  assert.equal(api.messageFor(e.error).includes('SYNTHETIC_UNKNOWN_CODE'), false);
+  // ④ 用途白名单：**本函数**只放行契约图片用途。
+  //    音频用途（voice_question）走**同一个私有媒体链路**的另一个入口 `uploadVoiceQuestion`
+  //    （见本文件下一用例）：这里断言"照片入口不吃音频用途"，不是"音频用途不存在"。
+  const beforeReject = h.requests.length;
+  const rejected = await api.uploadPrivatePhoto(OCR_TMP_PATH, declaration, 'voice_question').then(() => null, err => err);
+  assert.equal(rejected.code, 'INVALID_INPUT');
+  assert.equal(h.requests.length, beforeReject, '用途非法时不得发出请求');
+
+  // ⑤ 执行模式探测（既有缺陷 1-D 的修复）：`/public/home` 的数据在非 real 模式下**按设计 503**
+  //    （db/catalog.ts 的 fail-closed），但契约 `ErrorEnvelope.meta` 必填 ⇒ 仍须如实读出执行模式；
+  //    **只有**封套无可核对 meta 或网络失败才报不可用（不猜模式、不把入口在第一步打死）。
+  async function serverModeOnce(response) {
+    const before = h.requests.length;
+    const pending = api.serverMode();
+    await waitForRequests(h, before + 1);
+    const request = h.requests.at(-1);
+    assert.ok(/\/public\/home$/.test(request.url), request.url);
+    if (response === null) request.fail({}); else request.success(response);
+    return await pending.then(mode => ({ mode }), error => ({ error }));
+  }
+  const modeFromErrorEnvelope = await serverModeOnce({
+    statusCode: 503,
+    data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '主页资料数据库尚未接入', retryable: false, details: [] }, meta: syntheticMeta() },
+  });
+  assert.equal(modeFromErrorEnvelope.mode, 'stub', '非 real 模式下公共读面按设计 503，但封套 meta 仍须如实给出执行模式');
+  const modeOk = await serverModeOnce({ statusCode: 200, data: { data: { previews: [], human_review_state: 'under_construction' }, meta: syntheticMeta() } });
+  assert.equal(modeOk.mode, 'stub');
+  const modeNoMeta = await serverModeOnce({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE' } } });
+  assert.equal(modeNoMeta.error.code, 'UNAVAILABLE', '封套无 meta ⇒ 如实报不可用（不猜执行模式）');
+  const modeNetworkFail = await serverModeOnce(null);
+  assert.equal(modeNetworkFail.error.code, 'NETWORK_UNCERTAIN');
+
+  // ⑥ 负控制·**畸形 200**（4 类：缺键／多键／非对象／字段类型不符）⇒ 一律 `INVALID_RESPONSE`（沿用既有错误码）。
+  //    契约实读：`HomeEnvelope` 键集恰为 `{data, meta}`、`additionalProperties: false`、
+  //    `required: [data, meta]`（`packages/contracts/openapi.json:14789-14804`），`meta` 是 `Meta` 对象（:11066-11086）。
+  //    改前（补回键集校验之前）这 4 类**都拿不到** `INVALID_RESPONSE`：缺键/多键被当成"已读到执行模式"放行，
+  //    非对象 / `meta` 类型不符被误报 `UNAVAILABLE`（"数据不可用"与"响应无法核对"是两种原因，不得混同）。
+  async function malformed200(label, payload) {
+    const outcome = await serverModeOnce({ statusCode: 200, data: payload });
+    assert.equal('mode' in outcome, false, label + '：畸形 200 不得被当成"读到执行模式"放行（mode=' + JSON.stringify(outcome.mode) + '）');
+    assert.equal(outcome.error && outcome.error.code, 'INVALID_RESPONSE', label + '：畸形 200 必须判 INVALID_RESPONSE，实际 ' + JSON.stringify(outcome.error && outcome.error.code));
+  }
+  const HOME_OK = { previews: [], human_review_state: 'under_construction' };
+  // ① 缺键（`data`／`meta` 至少一个不在封套里）
+  await malformed200('缺键·缺 data', { meta: syntheticMeta() });
+  await malformed200('缺键·缺 meta', { data: HOME_OK });
+  // ② 多键（契约 `additionalProperties: false` ⇒ 多余顶层键即与契约不符）
+  await malformed200('多键·多余顶层键', { data: HOME_OK, meta: syntheticMeta(), extra: 1 });
+  // ③ 非对象（整个响应体不是对象）
+  await malformed200('非对象·字符串', 'synthetic-not-an-envelope');
+  await malformed200('非对象·数组', []);
+  await malformed200('非对象·null', null);
+  // ④ 字段类型不符（`meta` 不是对象；以及 `meta` 内字段类型与契约不符）
+  await malformed200('类型不符·meta 为字符串', { data: HOME_OK, meta: 'stub' });
+  await malformed200('类型不符·meta 为数组', { data: HOME_OK, meta: [] });
+  await malformed200('类型不符·request_id 非 UUID', { data: HOME_OK, meta: { request_id: 'synthetic-not-a-uuid', contract_version: '1.0.0', execution_mode: 'stub' } });
+  await malformed200('类型不符·execution_mode 非字符串', { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 3 } });
+
+  // ⑦ 正控制·**非法 mode** 分支逐字不变（既有分支）：封套可核对但 `execution_mode` 不在契约闭集
+  //    ⇒ 仍判 `INVALID_RESPONSE`（不猜、不回落 `UNAVAILABLE`）；键集校验**不得**顺带放宽字段校验。
+  const modeIllegal503 = await serverModeOnce({
+    statusCode: 503,
+    data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '主页资料数据库尚未接入', retryable: false, details: [] }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal503.error.code, 'INVALID_RESPONSE', '非法 mode（503 封套）仍判 INVALID_RESPONSE');
+  const modeIllegal200 = await serverModeOnce({
+    statusCode: 200,
+    data: { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal200.error.code, 'INVALID_RESPONSE', '非法 mode（200 封套）仍判 INVALID_RESPONSE（不放宽字段校验）');
+
+  // —— `POST /ocr` 非 2xx：站点特定归因（不得指向对象存储） ——
+  async function createOnce(statusCode, payload) {
+    const before = h.requests.length;
+    const pending = api.createOcr(OCR_RECORD_ID, 1);
+    await waitForRequests(h, before + 1);
+    const request = h.requests.at(-1);
+    assert.ok(/\/ocr$/.test(request.url));
+    request.success({ statusCode, data: payload });
+    return await pending.then(() => null, err => err);
+  }
+  const f = await createOnce(503, errorEnvelope('PROVIDER_UNAVAILABLE', true));
+  assert.equal(f.code, 'PROVIDER_UNAVAILABLE');
+  assert.ok(/OCR 提供者/.test(api.ocrMessageFor(f)), api.ocrMessageFor(f));
+  assert.equal(/对象存储/.test(api.ocrMessageFor(f)), false, '不得把 OCR 提供者未接线说成对象存储未接线');
+  const g = await createOnce(409, errorEnvelope('OBJECT_UNAVAILABLE', false));
+  assert.equal(g.code, 'OBJECT_UNAVAILABLE');
+  assert.ok(/标签识别/.test(api.ocrMessageFor(g)), api.ocrMessageFor(g));
+  const consent = await createOnce(403, errorEnvelope('CONSENT_REQUIRED', false));
+  assert.equal(consent.code, 'CONSENT_REQUIRED', '403 的授权类拒绝必须按契约码如实带出（不得说成"登录失效"）');
+  assert.equal(consent.status, 403);
+  assert.ok(/授权/.test(api.ocrMessageFor(consent)), api.ocrMessageFor(consent));
+  assert.equal(h.auth.isLoggedIn(), true, '403 CONSENT_REQUIRED 不得误清会话（用户只是没授权）');
+
+  // —— 404「作业不存在」 vs 503「取消能力未接线」：必须可区分（不得混用同一句） ——
+  const jobsBefore = h.requests.length;
+  const jobRead = api.getOcrJob(OCR_JOB_ID);
+  await waitForRequests(h, jobsBefore + 1);
+  assert.ok(/\/jobs\//.test(h.requests.at(-1).url));
+  h.requests.at(-1).success({ statusCode: 404, data: errorEnvelope('NOT_FOUND', false) });
+  const notFound = await jobRead.then(() => null, err => err);
+  assert.equal(notFound.code, 'NOT_FOUND');
+  assert.ok(/不存在/.test(api.ocrMessageFor(notFound)), api.ocrMessageFor(notFound));
+
+  const cancelBefore = h.requests.length;
+  const cancel = api.cancelOcrJob(OCR_JOB_ID, 1);
+  await waitForRequests(h, cancelBefore + 1);
+  const cancelRequest = h.requests.at(-1);
+  assert.equal(cancelRequest.method, 'POST');
+  assert.ok(/\/jobs\/[0-9a-f-]+\/cancel$/.test(cancelRequest.url), cancelRequest.url);
+  assert.equal(cancelRequest.header['If-Match'], '"1"');
+  assert.ok(typeof cancelRequest.header['Idempotency-Key'] === 'string');
+  cancelRequest.success({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE', true) });
+  const cancelError = await cancel.then(() => null, err => err);
+  assert.equal(cancelError.code, 'PROVIDER_UNAVAILABLE', '错误码必须原样保留（不改写成私有码）');
+  assert.equal(cancelError.retryable, true);
+  const cancelText = api.ocrMessageFor(cancelError, 'cancel');
+  assert.ok(/取消能力/.test(cancelText), cancelText);
+  assert.ok(/不是"任务不存在"/.test(cancelText), cancelText);
+  assert.notEqual(cancelText, api.ocrMessageFor(notFound), '取消未接线不得与"作业不存在"同句');
+
+  // —— 作业形状守卫：识别域作业塞进 OCR 校验 ⇒ INVALID_RESPONSE（fail-closed，不放宽） ——
+  assert.throws(() => api.validateOcrJob(jobEnvelope('succeeded', recognitionValue()).data),
+    err => err.code === 'INVALID_RESPONSE');
+
+  // —— 对照：401 仍按会话失效处理（并清会话）——不得因为上面的 403 改动而放宽 ——
+  const sessionLost = await createOnce(401, errorEnvelope('SESSION_REQUIRED', false));
+  assert.equal(sessionLost.code, 'SESSION_REQUIRED');
+  assert.equal(h.auth.isLoggedIn(), false, '401 必须清会话（守卫不放宽）');
+});
+
+test('GY-I11 小程序：语音问答录音按契约既有用途 voice_question 走**同一条**私有媒体链路（带真实 duration_ms）', async () => {
+  // 与 `verifiedPage()` 同一装配，只额外放行 `wx.getFileSystemManager().readFile`（PUT 句柄需要字节）。
+  const h = lifecycle(undefined, { mode: 'real', fileInfo: () => ({ size: 8192, digest: SYNTHETIC_SHA256 }) });
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false, '合成会话核实后必须通过门禁');
+  const api = h.load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const voicePath = '/tmp/synthetic-question.aac';
+
+  // 用途与限额出处是 `packages/media/constants.mjs`（同一份常量被服务端与测试共享）。
+  const mediaConstants = await import('../../packages/media/constants.mjs');
+  assert.equal(api.VOICE_MEDIA_PURPOSE, 'voice_question');
+  assert.equal(mediaConstants.MEDIA_PURPOSES.includes(api.VOICE_MEDIA_PURPOSE), true, '用途必须是契约 MediaPurpose 既有成员');
+  assert.equal(mediaConstants.MEDIA_PURPOSE_KIND.voice_question, 'audio');
+  assert.equal(mediaConstants.MEDIA_PURPOSE_MAX_BYTES.voice_question, 10 * mediaConstants.MIB);
+  assert.equal(api.VOICE_MAX_BYTES, mediaConstants.MEDIA_PURPOSE_MAX_BYTES.voice_question, '客户端上限必须与契约同值');
+  assert.equal(api.MEDIA_MAX_DURATION_MS, mediaConstants.MEDIA_MAX_DURATION_MS, '时长上限必须与契约同值');
+  assert.deepEqual([...api.AUDIO_MEDIA_MIMES].sort(), [...mediaConstants.MEDIA_PURPOSE_MIME.voice_question].sort(),
+    '音频编码闭集必须与契约逐项一致');
+
+  const declaration = { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 };
+
+  // ---- 本地前置校验：图片用途/越界时长/超限字节/缺摘要 ⇒ 一律 INVALID_INPUT 且不发请求 ----
+  for (const bad of [
+    { mime: 'image/jpeg', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 0 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 60001 },
+    { mime: 'audio/aac', bytes: api.VOICE_MAX_BYTES + 1, sha256: SYNTHETIC_SHA256, durationMs: 1000 },
+    { mime: 'audio/aac', bytes: 8192, sha256: 'not-a-sha', durationMs: 1000 },
+    { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256 }
+  ]) {
+    const before = h.requests.length;
+    const err = await api.uploadVoiceQuestion(voicePath, bad).then(() => null, e => e);
+    assert.equal(err.code, 'INVALID_INPUT', JSON.stringify(bad));
+    assert.equal(h.requests.length, before, '本地校验不通过时不得发出任何请求');
+  }
+
+  // ---- 正向：createUpload → PUT 句柄 URL → completeUpload（三跳与照片链路完全一致） ----
+  const pending = api.uploadVoiceQuestion(voicePath, declaration);
+  await waitForRequests(h, 1);
+  const create = h.requests.at(-1);
+  assert.equal(create.method, 'POST');
+  assert.equal(create.url.endsWith('/media/uploads'), true);
+  assert.deepEqual(Object.keys(create.data).sort(), ['bytes', 'duration_ms', 'mime', 'purpose', 'sha256'],
+    '语音上传声明必须恰为 UploadInput 五字段（带 duration_ms，不多不少）');
+  assert.equal(create.data.purpose, 'voice_question', '用途必须是契约既有成员，不得新造');
+  assert.equal(create.data.mime, 'audio/aac');
+  assert.equal(create.data.bytes, 8192);
+  assert.equal(create.data.duration_ms, 4321, 'duration_ms 必须是平台真实时长');
+  assert.equal(create.data.sha256, SYNTHETIC_SHA256);
+  assert.equal(typeof create.header['Idempotency-Key'], 'string');
+
+  create.success({
+    statusCode: 201,
+    data: {
+      data: {
+        media: { id: MEDIA_ID, revision: 1, purpose: 'voice_question', mime: 'audio/aac', bytes: 8192, duration_ms: 4321, state: 'initiated', sha256: SYNTHETIC_SHA256, failure_code: null },
+        upload: { url: 'https://synthetic.invalid/put/voice', expires_at: new Date(Date.now() + 300000).toISOString(), method: 'PUT', access_token: 'synthetic-handle-token' }
+      },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const put = h.requests.find(r => r.url === 'https://synthetic.invalid/put/voice');
+  assert.ok(put, '必须把音频字节 PUT 到服务端给出的句柄 URL');
+  assert.equal(put.method, 'PUT');
+  assert.equal(put.header['content-type'], 'audio/aac');
+  put.success({ statusCode: 200 });
+  await new Promise(resolve => setImmediate(resolve));
+
+  const complete = h.requests.find(r => r.url.endsWith('/complete'));
+  assert.ok(complete, '必须调用 completeUpload');
+  assert.equal(complete.header['If-Match'], '"1"');
+  assert.deepEqual(Object.keys(complete.data).sort(), ['bytes', 'sha256'], 'complete 体恰为 UploadCompleteInput 两字段');
+  complete.success({
+    statusCode: 202,
+    data: {
+      data: { id: MEDIA_ID, revision: 2, purpose: 'voice_question', mime: 'audio/aac', bytes: 8192, duration_ms: 4321, state: 'ready', sha256: SYNTHETIC_SHA256, failure_code: null },
+      meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' }
+    }
+  });
+  const media = await pending;
+  assert.equal(media.mediaId, MEDIA_ID);
+  assert.equal(media.mediaRevision, 2);
+});
+
+test('GY-I11 小程序：录音上传失败按契约 error.code 如实归因（503 指对象存储 / 403 两类各不相同 / 不折叠成"登录失效"）', async () => {
+  const { h } = await verifiedPage();
+  const api = h.load(resolve(root, 'miniprogram/utils/identify-api.js'));
+  const voiceApi = h.load(resolve(root, 'miniprogram/utils/voice-api.js'));
+  const declaration = { mime: 'audio/aac', bytes: 8192, sha256: SYNTHETIC_SHA256, durationMs: 4321 };
+
+  /** 发一次真实语音上传调用并喂入非 201 响应；返回（请求, 错误, 文案）。 */
+  async function uploadFail(statusCode, payload) {
+    const before = h.requests.length;
+    const pending = api.uploadVoiceQuestion('/tmp/synthetic-question.aac', declaration);
+    await waitForRequests(h, before + 1);
+    const request = h.requests.at(-1);
+    assert.equal(request.data.purpose, 'voice_question');
+    request.success({ statusCode, data: payload });
+    const error = await pending.then(() => null, e => e);
+    return { request, error, text: voiceApi.recordUploadMessageFor(error) };
+  }
+
+  // ① 503 ⇒ **真实对象存储未接线**（不得说成网络问题）。
+  const a = await uploadFail(503, errorEnvelope('PROVIDER_UNAVAILABLE', true));
+  assert.equal(a.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(a.error.status, 503);
+  assert.ok(/对象存储未接线/.test(a.text), a.text);
+  assert.equal(/网络/.test(a.text), false, '503 不得说成网络问题：' + a.text);
+  // ② 400/413/415 ⇒ 用途限制（各按契约码给词，互不相同）。
+  const b = await uploadFail(400, errorEnvelope('INVALID_REQUEST', false));
+  assert.equal(b.error.code, 'INVALID_REQUEST');
+  assert.ok(/用途/.test(b.text), b.text);
+  const c = await uploadFail(413, errorEnvelope('MEDIA_TOO_LARGE', false));
+  assert.equal(c.error.code, 'MEDIA_TOO_LARGE');
+  assert.ok(/≤10 MiB/.test(c.text), c.text);
+  const d = await uploadFail(415, errorEnvelope('MEDIA_TYPE_UNSUPPORTED', false));
+  assert.equal(d.error.code, 'MEDIA_TYPE_UNSUPPORTED');
+  assert.ok(/MP3/.test(d.text), d.text);
+  // ③ 两类 403 必须**各不相同**，且都不是"登录失效"。
+  const consent = await uploadFail(403, errorEnvelope('CONSENT_REQUIRED', false));
+  assert.equal(consent.error.code, 'CONSENT_REQUIRED');
+  assert.equal(consent.error.status, 403);
+  assert.ok(/缺少用途授权/.test(consent.text), consent.text);
+  const scope = await uploadFail(403, errorEnvelope('SCOPE_DENIED', false));
+  assert.equal(scope.error.code, 'SCOPE_DENIED');
+  assert.ok(/无权使用该能力/.test(scope.text), scope.text);
+  assert.notEqual(consent.text, scope.text, '两类 403 不得折叠成同一句');
+  for (const item of [consent, scope]) {
+    assert.equal(/登录状态已失效/.test(item.text), false, '403 不得一律说成「登录失效」：' + item.text);
+    assert.equal(/网络/.test(item.text), false, '403 不得说成网络问题：' + item.text);
+  }
+  assert.equal(h.auth.isLoggedIn(), true, '403（授权/权限类）不得误清会话');
+  // ④ 无封套/未知码 ⇒ 如实回落"通道不可用"，且不透出未知码。
+  const e = await uploadFail(500, null);
+  assert.equal(e.error.code, 'MEDIA_CHANNEL_UNAVAILABLE');
+  assert.equal(e.text.includes('MEDIA_CHANNEL_UNAVAILABLE'), false, '内部码不得当用户可见事实透出');
+  assert.ok(/上传通道不可用/.test(e.text), e.text);
+  const f = await uploadFail(502, errorEnvelope('SYNTHETIC_UNKNOWN_CODE', false));
+  assert.equal(f.error.code, 'MEDIA_CHANNEL_UNAVAILABLE', '未知码不得当契约事实透出');
+  assert.equal(f.text.includes('SYNTHETIC_UNKNOWN_CODE'), false);
+  // ⑤ 401 仍按会话失效处理（守卫不放宽），文案与会话类码一致。
+  const lost = await uploadFail(401, errorEnvelope('SESSION_REQUIRED', false));
+  assert.equal(lost.error.code, 'SESSION_REQUIRED');
+  assert.ok(/重新登录/.test(lost.text), lost.text);
+  // ⑥ 文案逐码互不相同（除刻意同口径的 400/413/415 之外，仍须可区分原因）。
+  const texts = [a, b, c, d, consent, scope, e, f].map(x => x.text);
+  assert.equal(new Set(texts).size >= 6, true, '失败文案必须可区分原因，不得全部同句');
+});
+
+test('GY-I10 小程序：标签区块绑定门禁、模板只读且不渲染任何用量正文', () => {
+  const source = readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  // 入口与路由：**只复用既有 operation**（不新增契约操作、不新增服务端调用点）。
+  assert.ok(/key === 'ocr'/.test(source), '缺少 ocr 入口分支');
+  assert.ok(/identifyApi\.createOcr\(/.test(source), '标签任务未走既有 POST /ocr');
+  assert.ok(/identifyApi\.getOcrJob\(/.test(source), '任务状态未走既有 GET /jobs/{id}');
+  assert.ok(/identifyApi\.cancelOcrJob\(/.test(source), '取消未走既有 POST /jobs/{id}/cancel');
+  assert.ok(/historyApi\.getOcr\(/.test(source), '标签正文未复用既有 GET /ocr/{id} 消费层');
+  assert.ok(/identifyApi\.OCR_MEDIA_PURPOSE/.test(source), '标签图未声明契约既有用途 label_ocr');
+  assert.equal(/我造|fallbackFields|fakeFields/.test(source), false, '不得伪造标签字段');
+  // 模板：门禁、状态、原样文本、来源/状态标签、非权威、只读、无用量正文。
+  assert.ok(/wx:if="\{\{ocr && !guest\}\}"/.test(wxml), '标签区块未绑定门禁（guest 时不得展示）');
+  assert.ok(/bindtap="onCancelOcrJob"/.test(wxml), '缺少取消入口');
+  assert.ok(/bindtap="onOcrRetry"/.test(wxml), '缺少重新拍摄入口');
+  assert.ok(/ocr\.record\.readRows/.test(wxml), '原样文本未渲染');
+  assert.ok(/ocr\.record\.sourceVersion/.test(wxml), '来源版本标签未渲染');
+  assert.ok(/ocr\.record\.matchLabel/.test(wxml), '核对状态标签未渲染');
+  assert.ok(/机器读数 · 非权威判读 · 不提供用量/.test(wxml), '缺少非权威判读标注');
+  assert.ok(/用量：不可展示/.test(wxml), '缺少用量阻断标注');
+  assert.equal(/dose_cards/.test(wxml), false, '模板不得引用用量卡结构（只允许条数）');
+  // 源码层：OCR 分支不得出现任何"给用量/给数字"的写法。
+  assert.equal(/doseCard\s*(:|\.card)/.test(source), false, '不得构造用量卡对象');
+});
+
+/** 标签 OCR 任务创建请求（`POST /ocr`）。 */
+function ocrCreateRequests(list) {
+  return list.filter(request => request.method === 'POST' && /\/ocr$/.test(request.url));
+}
+
+test('GY-I10：>2 MiB 标签图上传前预检 ⇒ 不发任何 POST /media/uploads、也不建任务（与识草同一口径）', async () => {
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: () => ({ size: 2 * 1024 * 1024 + 1, digest: SYNTHETIC_SHA256 })
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareOcrMedia('/synthetic/tmp/oversized-label.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1, '第一次请求必须是读执行模式');
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await pending;
+  assert.equal(gated.requests.length, 1, '超限时只能发一次读模式请求，不得再有其它请求');
+  assert.deepEqual(mediaUploadRequests(gated.requests), [], '超限时不得发出任何 POST /media/uploads');
+  assert.deepEqual(ocrCreateRequests(gated.requests), [], '超限时不得创建标签 OCR 任务');
+  assert.equal(page.data.busy, false);
+  assert.ok(page.data.errorText.includes('照片过大'), '必须给出「照片过大」类可操作提示，实际：' + page.data.errorText);
+  assert.ok(page.data.errorText.includes('未上传任何照片'), '提示必须如实说明本次未上传，实际：' + page.data.errorText);
+});
+
+test('GY-I10 负控制：恰为 2 MiB 的标签图必须放行走到上传（否则合规照片被连带挡掉）', async () => {
+  const h = lifecycle(undefined, {
+    mode: 'real',
+    fileInfo: () => ({ size: 2 * 1024 * 1024, digest: SYNTHETIC_SHA256 })
+  });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareOcrMedia('/synthetic/tmp/exactly-2mib-label.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gated.requests.length, 1, '合规尺寸必须继续走到上传（读模式请求）');
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const uploads = mediaUploadRequests(gated.requests);
+  assert.equal(uploads.length, 1, '恰为上限（2 MiB）必须放行上传');
+  assert.equal(uploads[0].data.bytes, 2 * 1024 * 1024, '上传声明必须带真实字节数');
+  assert.equal(uploads[0].data.purpose, 'label_ocr', '标签图必须声明契约既有用途 label_ocr（不是 weed_recognition）');
+  assert.equal(page.data.errorText, '');
+  uploads[0].success({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE', true) });
+  await pending;
+  // 失败发生在**上传**这一步 ⇒ 必须用媒体站点的措辞（对象存储未接线），不得说成 OCR 提供者未接线。
+  assert.equal(page.data.errorText.includes('对象存储'), true, 'real 模式对象存储未接线必须如实归因，实际：' + page.data.errorText);
+  assert.equal(page.data.errorText.includes('OCR 提供者'), false, '上传失败不得归因到 OCR 提供者（站点串了），实际：' + page.data.errorText);
 });

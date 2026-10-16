@@ -72,7 +72,12 @@ test('actual HTTP service is synthetic, no-store and has no business routes', as
 test('client blocks trial/release/unknown environments and labels stub or failure', () => {
   const script = readFileSync(join(root, 'miniprogram/utils/debug.js'), 'utf8');
   function load(runtime) {
-    const box = { module: { exports: {} }, require: () => runtime };
+    // 兜底说明：`miniprogram/utils/debug.js` 只 require `../config/runtime` 一条；这里把它**按完整说明符**
+    // 登记为传入的替身（**非真实模块**，用于注入 local／disabled 两态，本用例的注入机制本身）。
+    // 改前是 `require: () => runtime` 的 blanket：debug.js 将来新增任何 require 都会被静默喂成 runtime。
+    // 现在未登记 ⇒ 显式失败并带依赖名（已登记项的取值与改前逐字相同）。
+    const debugDependencies = new Map([['../config/runtime', runtime]]);
+    const box = { module: { exports: {} }, require: (id) => { if (!debugDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return debugDependencies.get(id); } };
     vm.runInNewContext(script, box); return box.module.exports;
   }
   const local = load({ mode: 'local', apiBaseUrl: 'http://127.0.0.1:4318' });
@@ -153,7 +158,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'components/state-view/state-view.wxss',
     ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
-    // GY-I13 播报域：统一语音球组件与五个适配层（漏打包 ⇒ 播报页 MODULE_NOT_FOUND / 组件解析失败）
+    // GY-I13 播报域 + GY-I11 语音问答录音域：统一语音球组件与六个适配层
+    // （漏打包 ⇒ 播报/录音页 MODULE_NOT_FOUND / 组件解析失败）
     ...['gy-voice-ball'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
     'utils/speech-text.js',
@@ -161,6 +167,7 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'utils/inner-audio-port.js',
     'utils/substitute-player.js',
     'utils/voice-api.js',
+    'utils/recorder-port.js',
     'data/crops.js',
     'data/species.js',
     'data/regions.js',

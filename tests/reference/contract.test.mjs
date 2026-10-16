@@ -1,7 +1,7 @@
 // GY-I07 契约一致性：本地枚举与 packages/contracts/openapi.json + states.json 对齐。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import {
   CONTRACT_VERSION,
   SOURCE_KINDS,
@@ -335,6 +335,70 @@ test('H2：来源/剂型缺失时，普通 string 必填字段以「未采集」
 //       不可确认时 fail-closed（在投影/查询前排除，并保持 queryable 与契约合法性一致）。
 // ---------------------------------------------------------------------------
 
+/**
+ * 原子替换写入：先在同目录（同卷 ⇒ rename 才是原子操作）写临时文件，内容写全后
+ * `renameSync` 覆盖目标。**写入内容字节与原先完全一致**（语义不变）。
+ *
+ * 为何不用 `writeFileSync(target, data, 'utf8')`：它默认 flag `'w'`，会**先把目标截断为
+ * 0 字节**再写内容。本文件写的 `packages/knowledge/herbicides/records-2026.json` 是**被 git
+ * 跟踪的真实资料**，而同一批 `node --test` 里另有测试并发 `JSON.parse(readFileSync(...))`
+ * 读它（如 `tests/reference/i08-scenarios-100.test.mjs`）；读者一旦落在截断窗口内就抛
+ * `SyntaxError: Unexpected end of JSON input`。改为临时文件 + rename 后，读者**要么看到旧
+ * 内容、要么看到新内容**，永远看不到 0 字节或半截。
+ *
+ * 异常路径删除临时文件，不留垃圾。
+ *
+ * 为何 `rename` 还要有界重试：Windows 的 `MoveFileEx(REPLACE_EXISTING)` 在**此刻无法替换目标**
+ * 时返回 `ERROR_ACCESS_DENIED`（Node 映射成 `EPERM`）——并发读者打开着目标、或实时防护正在扫描
+ * 刚落盘的文件，都会造成瞬时不可替换。它不影响读者看到的原子性（读者仍只会看到旧内容或新内容），
+ * 但会让**写者**失败；而 `finally` 里的复原写一旦失败，就会把**被 git 跟踪的资料文件留在变体
+ * 状态**，后续测试全部级联变红。故失败后必须在 `RENAME_RETRY_DEADLINE_MS` 内继续重试。
+ *
+ * 为何是**细粒度 + 抖动**而不是指数退避：可替换窗口与并发读者的「打开-关闭」周期同量级且很短，
+ * 粗退避会系统性错过窗口——实测 6 个并发读者在场时，封顶 200ms 的退避下 5 次真实执行 0 绿；
+ * 而同负载下改用 ~1ms 轮询的替换实测 374/374 成功（p50 0ms、p99 1ms）。抖动用于打散相位，
+ * 避免与读者的打开-关闭周期锁相。正常无竞争时首次 `rename` 即成功，不产生任何等待。
+ */
+
+/** 同步休眠（Node 主线程允许 `Atomics.wait`），仅用于下面的重试退避，不引入依赖。 */
+const retrySleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+function sleepSync(ms) {
+  Atomics.wait(retrySleepBuffer, 0, 0, ms);
+}
+
+/** 可替换窗口的重试期限（毫秒）与轮询间隔；正常无竞争时首次 rename 即成功，不产生任何等待。 */
+const RENAME_RETRY_DEADLINE_MS = 10_000;
+const RENAME_RETRY_MIN_DELAY_MS = 1;
+const RENAME_RETRY_JITTER_MS = 2;
+function renameSyncWithRetry(tmp, target) {
+  const deadline = Date.now() + RENAME_RETRY_DEADLINE_MS;
+  for (;;) {
+    try {
+      return renameSync(tmp, target);
+    } catch (err) {
+      const transient = err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EBUSY';
+      if (!transient || Date.now() >= deadline) throw err;
+      sleepSync(RENAME_RETRY_MIN_DELAY_MS + Math.floor(Math.random() * RENAME_RETRY_JITTER_MS));
+    }
+  }
+}
+
+function writeFileAtomicSync(target, data) {
+  const name = target.pathname.slice(target.pathname.lastIndexOf('/') + 1);
+  const tmp = new URL(`./.${name}.${process.pid}.tmp`, target);
+  try {
+    writeFileSync(tmp, data, 'utf8');
+    renameSyncWithRetry(tmp, target);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // 临时文件未创建，或已被 rename 移走：无需清理
+    }
+    throw err;
+  }
+}
+
 /** 构造缺字段变体记录（基于首条真实记录，**逐字节复制后仅删指定字段**）。 */
 function variantOfFirstRecord(mutate) {
   const first = JSON.parse(
@@ -377,7 +441,7 @@ test('H2：缺枚举字段的记录在投影前被排除（items 不含、skippe
   const variant = JSON.parse(backup);
   delete variant.records[0].source.source_kind; // 仅缺 source_kind
   try {
-    writeFileSync(dataPath, JSON.stringify(variant), 'utf8');
+    writeFileAtomicSync(dataPath, JSON.stringify(variant));
     const loaded = loadHerbicideRecords();
     assert.equal(loaded.items.length, 19, '缺枚举字段的记录不得进入投影集合');
     assert.equal(loaded.skipped.length, 1);
@@ -386,7 +450,7 @@ test('H2：缺枚举字段的记录在投影前被排除（items 不含、skippe
     // 被排除的记录不得出现在任何对外投影中
     assert.ok(!loaded.items.some((it) => it.contract.source.source_kind === '未采集'), '契约为外部消费者所依赖，不得含非枚举占位');
   } finally {
-    writeFileSync(dataPath, backup, 'utf8');
+    writeFileAtomicSync(dataPath, backup);
   }
   assert.equal(loadHerbicideRecords().items.length, 20, '数据文件须已复原');
 });

@@ -46,17 +46,21 @@ try {
     'utils/history-api.js',
     // 社区域适配层（GY-I15）：社区列表/投稿/详情页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/community-api.js',
+    // 消息域适配层（GY-I17）：消息页与底部 Tab 未读角标依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/messages-api.js',
     // 播报域适配层（GY-I13）：播报页依赖它们；漏加会导致标准包 MODULE_NOT_FOUND。
     //   audio-playback：播放生命周期控制器（端口注入，纯逻辑）
     //   inner-audio-port：wx.createInnerAudioContext 的唯一出现处
     //   substitute-player：明确标注的替身播放端口（仅本地替身工程走查，不计「已听取」）
     //   speech-text：安全检查闸门与播报计划复核（数字/单位/制剂条件/否定词）
     //   voice-api：POST /speech/synthesis 与 GET /jobs/{id} 的消费层
+    //   recorder-port：wx.getRecorderManager 的唯一出现处（GY-I11 语音问答真实录音）
     'utils/speech-text.js',
     'utils/audio-playback.js',
     'utils/inner-audio-port.js',
     'utils/substitute-player.js',
     'utils/voice-api.js',
+    'utils/recorder-port.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',

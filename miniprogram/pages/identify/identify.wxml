@@ -78,6 +78,61 @@
     </view>
   </view>
 
+  <!--
+    标签 OCR（#10）：与识草共用同一套私有媒体上传与既有 OCR 路由；
+    任务状态取契约 Job（GET /jobs/{id}）七类逐类呈现；标签正文取 GET /ocr/{id}，**只读**展示原样文本 +
+    来源/状态标签。硬口径：**机器读数、非权威判读**；**永不渲染用量正文或任何剂量数字**（只报条数）。
+  -->
+  <view class="section" wx:if="{{ocr && !guest}}">
+    <view class="section-head">
+      <view class="section-head__title">标签识别（OCR）</view>
+      <view class="pill pill--blue">JobState：{{ocr.state}}</view>
+    </view>
+    <view class="state-chip state-chip--{{ocr.tone}}">
+      <text class="state-chip__code">JobState：{{ocr.state}}</text>
+      <text class="state-chip__title">{{ocr.stateTitle}}</text>
+      <text class="state-chip__desc">{{ocr.stateDesc}}</text>
+      <text class="state-chip__err" wx:if="{{ocr.errorCode}}">服务端错误码：{{ocr.errorCode}}</text>
+    </view>
+    <view class="row-actions" wx:if="{{!ocr.terminal}}">
+      <button class="btn btn--secondary row-actions__item" bindtap="onCancelOcrJob">取消本次标签识别</button>
+    </view>
+    <view class="hint" wx:if="{{ocr.cancelNote}}">{{ocr.cancelNote}}</view>
+
+    <block wx:if="{{ocr.record}}">
+      <view class="pill pill--amber">机器读数 · 非权威判读 · 不提供用量</view>
+      <view class="hint">{{ocr.record.authorityNote}}</view>
+      <view class="hint" wx:if="{{!ocr.success}}">该任务未成功完成（JobState：{{ocr.record.jobState}}）：以下标签文本不可作为结论，请人工核对或重拍。</view>
+      <!-- 原样文本（raw_fields 逐字段照录；缺项写「（未读出）」，不改写、不做任何换算） -->
+      <view class="knowledge" wx:for="{{ocr.record.readRows}}" wx:key="label">
+        <view class="knowledge__name">{{item.label}}：{{item.value}}</view>
+      </view>
+      <!-- 来源 / 状态标签 -->
+      <view class="knowledge__meta">来源版本：{{ocr.record.sourceVersion}} · 记录版本：{{ocr.record.revision}} · 执行模式：{{ocr.record.mode}}</view>
+      <view class="knowledge__meta">登记核对：{{ocr.record.matchLabel}}（是否命中登记：{{ocr.record.hasRegistration ? '是' : '否'}}）</view>
+      <view class="reasons__item" wx:for="{{ocr.record.missingFields}}" wx:key="*this">· 缺项字段：{{item}}</view>
+      <view class="reasons__item" wx:for="{{ocr.record.conflictFields}}" wx:key="*this">· 与登记冲突字段：{{item}}</view>
+      <!-- 人工更正字段（若由**其他**客户端提交过）：只读展示；本页不提交任何更正 -->
+      <block wx:if="{{ocr.record.correctedDiffers}}">
+        <view class="knowledge__meta">该记录另有已提交的人工更正字段（非本页提交，本页只读）：</view>
+        <view class="knowledge__meta" wx:for="{{ocr.record.correctedRows}}" wx:key="label">{{item.label}}：{{item.value}}</view>
+      </block>
+      <!-- 用药安全：只报用量卡条数，绝不渲染正文与任何剂量数字 -->
+      <view class="dose-guard">
+        <view class="dose-guard__row">
+          <text class="dose-guard__tag">用量：不可展示</text>
+          <text class="dose-guard__reason">{{ocr.record.doseNote}}登记用量卡 {{ocr.record.doseCardCount}} 条，本页不渲染正文与任何剂量数字。</text>
+        </view>
+      </view>
+      <view class="hint">{{ocr.record.readOnlyNote}}</view>
+    </block>
+
+    <view class="notice notice--warn" wx:if="{{ocr.recordNote}}">{{ocr.recordNote}}</view>
+    <view class="row-actions" wx:if="{{ocr.terminal}}">
+      <button class="btn btn--secondary row-actions__item" bindtap="onOcrRetry">重新拍摄标签</button>
+    </view>
+  </view>
+
   <!-- 不确定原因：如实列出，不隐藏、不改写成成功 -->
   <view class="notice notice--warn reasons" wx:if="{{uncertaintyReasons.length && !guest}}">
     <view class="reasons__body">

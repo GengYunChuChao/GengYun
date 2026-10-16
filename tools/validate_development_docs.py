@@ -49,7 +49,7 @@ for item in tasks:
     number, url = item.get("github_number"), item.get("github_url")
     check((number is None) == (url is None), f"{item['id']}: incomplete GitHub mapping")
     if number is not None:
-        check(url == f"https://github.com/Sek1ro-oka/GengYun/issues/{number}", f"{item['id']}: unexpected issue URL")
+        check(url == f"https://github.com/GengYunChuChao/GengYun/issues/{number}", f"{item['id']}: unexpected issue URL")
 
 visiting, visited = set(), set()
 

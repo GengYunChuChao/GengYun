@@ -24,6 +24,9 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+// 服务端**装配层**注入的替身核对条目（`ruling-451` 缩片）：与客户端替身样本是同一对夹具，
+// 这里直接比对两者，锁定「id / revision / 正文」不会单边漂移。
+import { SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT } from '../../services/api/src/app.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -431,13 +434,100 @@ test('真机端口缺能力 ⇒ 如实失败（不伪造播放完成、不记已
   });
 });
 
+// ============================================================ 4b. 真实录音端口（GY-I11 语音问答）
+
+/**
+ * 探针录音管理器：完全按 `wx.getRecorderManager()` 的事件语义回放，
+ * 并把**每一次平台调用**记进 `calls`（判据：确实调用了 `start`/`stop`，而不是切文案）。
+ *
+ * 可注入的失败面：
+ *   - `deny: true`        ⇒ `wx.getSetting` 报 `scope.record=false`；
+ *   - `failStart: '…'`    ⇒ `start()` 后立刻抛 `onError`（含授权类文案）；
+ *   - `interrupt: true`   ⇒ `start()` 后抛 `onInterruptionBegin`；
+ *   - `format`/`duration` ⇒ `onStop` 回传的产物形状（默认 aac / 1234ms）。
+ *
+ * **`_autoStop()`：平台自行停止（`duration` 上限到达／系统回收）** —— 按平台语义，此时
+ * `onStop` 会被触发**而不经调用方 `stop()`**。这是唯一能结构上覆盖"平台自动停止"的形态：
+ * 若替身只会在被调 `stop()` 时回 `onStop`，该分支根本无法被测到。
+ *
+ * 本探针**不产生任何音频**、不访问麦克风。
+ */
+function observableRecorderManager(options = {}) {
+  const calls = [];
+  const handlers = {};
+  let recording = false;
+  let lastStart = null;
+  /** 产物形状：显式给出的 override **优先**（含显式空串 ⇒ 用于构造"平台未返回文件"的反例）。 */
+  const pick = (overrides, key, fallback) => {
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) return overrides[key];
+    if (Object.prototype.hasOwnProperty.call(options, key)) return options[key];
+    return fallback;
+  };
+  const productOf = (overrides = {}) => ({
+    tempFilePath: pick(overrides, 'tempFilePath', 'wxfile://tmp/voice-question-test.aac'),
+    duration: Number.isFinite(pick(overrides, 'duration', NaN)) ? pick(overrides, 'duration', NaN) : 1234,
+    fileSize: Number.isFinite(pick(overrides, 'fileSize', NaN)) ? pick(overrides, 'fileSize', NaN) : 4096,
+    format: pick(overrides, 'format', 'aac')
+  });
+  const manager = {
+    onStart: (fn) => { handlers.start = fn },
+    onStop: (fn) => { handlers.stop = fn },
+    onError: (fn) => { handlers.error = fn },
+    onInterruptionBegin: (fn) => { handlers.interruption = fn },
+    offStop: () => { delete handlers.stop },
+    offError: () => { delete handlers.error },
+    offInterruptionBegin: () => { delete handlers.interruption },
+    start: (opts) => {
+      calls.push({ api: 'start', options: opts });
+      lastStart = opts;
+      recording = true;
+      if (options.failStart) { if (handlers.error) handlers.error({ errMsg: options.failStart }); return }
+      if (options.interrupt) { if (handlers.interruption) handlers.interruption({ errMsg: 'recorder interruption begin' }); return }
+      if (handlers.start) handlers.start({});
+    },
+    stop: () => {
+      calls.push({ api: 'stop' });
+      if (!recording) return;
+      recording = false;
+      if (handlers.stop) handlers.stop(productOf());
+    },
+    /**
+     * 平台**自行**停止（录满 `duration` 上限／系统回收）：记为 `autoStop`，
+     * 与调用方的 `stop()` 在 `_calls` 里**可区分**（用于证明"这次确实不是我们停的"）。
+     */
+    _autoStop: (overrides = {}) => {
+      calls.push({ api: 'autoStop' });
+      if (!recording) return;
+      recording = false;
+      if (handlers.stop) handlers.stop(productOf(overrides));
+    },
+    /**
+     * 平台**自行**报错（录音开始后系统回收麦克风等）：同样**不经**调用方 `stop()`。
+     * 用于验证"没有在途 stop() 时结果也**不得**被吞"。
+     */
+    _autoError: (errMsg) => {
+      calls.push({ api: 'autoError' });
+      if (!recording) return;
+      recording = false;
+      if (handlers.error) handlers.error({ errMsg: typeof errMsg === 'string' ? errMsg : 'operateRecorder:fail system error' });
+    },
+    isRecording: () => recording,
+    _calls: calls,
+    _lastStart: () => lastStart
+  };
+  return manager;
+}
+
 // ============================================================ 5. 宿主页行为（离页取消与释放、零请求）
 
 /** 在受控环境里加载真实页面/工具模块（依赖通过 vm 注入，模块本身是仓库里的真代码）。 */
-function loadPageHarness() {
+function loadPageHarness(options = {}) {
   const requests = [];
   const toasts = [];
   const sets = [];
+  const recorder = options.recorder || observableRecorderManager(options.recorderOptions || {});
+  /** 平台调用序列（`getRecorderManager` + 管理器上的 start/stop）。 */
+  const wxCalls = [];
 
   const auth = {
     isLoggedIn: () => true,
@@ -449,16 +539,71 @@ function loadPageHarness() {
   };
   const runtime = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3000' };
   const debug = { localEnabled: (wxApi) => runtime.mode === 'local' && !!wxApi && typeof wxApi.getAccountInfoSync === 'function' };
-  const pageGate = { start: (page, callback) => callback(true), cancel: () => {} };
+  /**
+   * 门禁替身。
+   *
+   * **默认（简化）**：`start()` 同步 `callback(true)`、`cancel()` 空转 —— 既有用例建立在这个简化上
+   * （例如"离页后在途请求作废"那条既有用例假定离页后 `guest` 仍为 false），故**不改动**它。
+   *
+   * **`faithfulGate: true`（与真实 `utils/page-gate.js` 同形）**：
+   *   `start()` 记 `page._gateClose = () => callback(false)`，**先** `callback(false)`（未通过），
+   *     再在用户核实后 `callback(verified)`；
+   *   `cancel()` 调 `page._gateClose()` ⇒ `callback(false)`。
+   *   这一点是覆盖 **OBS-1**（离页路径的作废原因实际恒为 `gate`）与 **F1-R2**（门禁核实窗口）
+   *   的**前提**：真实离页会**先触发门禁关闭**，而默认替身的空转 `cancel()` 结构上测不到该分支。
+   *
+   * `gateDeferAfterFirst: true` ⇒ 首次 `start()` 仍同步核实（让页面正常可用），
+   * **之后**的核实结果扣在手里，由用例显式 `verifyGate()` 兑现 —— 从而打开"门禁核实窗口"。
+   * `gateDeferVerification: true` ⇒ 连首次也扣住。
+   */
+  const faithfulGate = options.faithfulGate === true || options.gateDeferVerification === true || options.gateDeferAfterFirst === true;
+  let gateVerify = null;
+  let gateStartCount = 0;
+  const pageGate = faithfulGate
+    ? {
+        start: (page, callback) => {
+          page._gateClose = () => callback(false);
+          callback(false);
+          gateStartCount += 1;
+          const deferThis = options.gateDeferVerification === true ||
+            (options.gateDeferAfterFirst === true && gateStartCount > 1);
+          if (deferThis) { gateVerify = () => callback(true); return }
+          callback(true);
+        },
+        cancel: (page) => {
+          if (page && typeof page._gateClose === 'function') page._gateClose();
+          else if (page && typeof page.setData === 'function') page.setData({ gatePassed: false });
+        }
+      }
+    : { start: (page, callback) => callback(true), cancel: () => {} };
   const fontScale = { applyFontScale: () => {}, currentFontScale: () => 1, DEFAULT_FONT_SCALE: 1 };
+  /** 服务端执行模式探针（`identify-api.serverMode` 经 `GET /public/home` 的 meta 读出）。 */
+  const serverMode = options.serverMode === undefined ? 'real' : options.serverMode;
+  /** `deferredFileInfo: true` ⇒ `wx.getFileInfo` **保持在途**，由用例决定何时兑现（打开 F1-R2 的读摘要窗口）。 */
+  let fileInfoDeferred = null;
 
   const fakeWx = {
-    request: (options) => { requests.push(options); },
+    request: (o) => { requests.push(o); },
     getAccountInfoSync: () => ({ miniProgram: { envVersion: 'develop' } }),
-    showToast: (options) => { toasts.push(options); },
+    showToast: (o) => { toasts.push(o); },
     getStorageSync: () => '',
     setStorageSync: () => {},
-    removeStorageSync: () => {}
+    removeStorageSync: () => {},
+    getSetting: (o) => { if (o && o.success) o.success({ authSetting: { 'scope.record': options.recorderOptions && options.recorderOptions.deny ? false : true } }) },
+    getRecorderManager: () => { wxCalls.push({ api: 'getRecorderManager' }); return recorder },
+    getFileSystemManager: () => ({ readFile: (o) => { if (o && o.success) o.success({ data: 'SYNTHETIC_AUDIO_BYTES' }) } }),
+    getFileInfo: (o) => {
+      const info = { size: options.fileSize === undefined ? 4096 : options.fileSize, digest: 'a'.repeat(64) };
+      if (options.deferredFileInfo === true) {
+        fileInfoDeferred = {
+          size: info.size,
+          resolve: (overrides) => { const self = fileInfoDeferred; fileInfoDeferred = null; o.success(Object.assign({}, info, overrides || {})); void self },
+          reject: () => { fileInfoDeferred = null; if (o && typeof o.fail === 'function') o.fail({}) }
+        };
+        return;
+      }
+      if (o && o.success) o.success(info);
+    }
   };
 
   const cache = new Map();
@@ -490,34 +635,127 @@ function loadPageHarness() {
     if (base === 'inner-audio-port') return loadReal(bySuffix('inner-audio-port.js'), resolveDep);
     if (base === 'substitute-player') return loadReal(bySuffix('substitute-player.js'), resolveDep);
     if (base === 'voice-api') return loadReal(bySuffix('voice-api.js'), resolveDep);
+    // GY-I11：录音端口是**真代码**（内含真实的 wx.getRecorderManager 调用），只把平台换成探针。
+    if (base === 'recorder-port') return loadReal(bySuffix('recorder-port.js'), resolveDep);
+    // 上传链路：`uploadVoiceQuestion` 的真实实现（requests/wxCalls 记录其发出的每一个请求）。
+    if (base === 'identify-api') return identifyApi;
     throw new Error('unexpected require: ' + id);
   };
 
-  let definition = null;
-  // `wx` 必须在**模块加载期与调用期**都可见（voice-api/inner-audio-port 在调用时读 `typeof wx`）。
-  globalThis.wx = fakeWx;
-  globalThis.Page = (value) => { definition = value; };
-  try {
-    loadReal(join(ROOT, 'miniprogram', 'pages', 'voice', 'voice.js'), resolveDep);
-  } finally {
-    delete globalThis.Page;
-  }
-  assert.ok(definition, '播报页必须注册 Page');
+  /**
+   * 上传链路探针：**逐字镜像** `utils/identify-api.js` 对页面暴露的 `uploadVoiceQuestion` 契约
+   * （同样的入参形状与 `{ mediaId, mediaRevision }` 出参），并记录页面真正发出的每一个请求。
+   *
+   * 它**不**代替被测对象：被测的是页面「按用途 voice_question + 带 duration_ms」的调用形状；
+   * 真实 3 段上传流程（createUpload → PUT → completeUpload）由
+   * `tests/unit/miniprogram-identify.test.mjs` 对同一份实现断言（本片在那里补音频用例）。
+   */
+  let uploadCount = 0;
+  /**
+   * `deferredUpload: true` ⇒ 上传**保持在途**（不自动落定），由用例用 `deferredOf()` 决定何时
+   * resolve/reject。这是覆盖「上传中离页」「上传中 401」的必要形态：上传必须真的挂在那里。
+   */
+  let deferred = null;
+  const identifyApi = {
+    VOICE_MEDIA_PURPOSE: 'voice_question',
+    serverMode: () => Promise.resolve(serverMode),
+    uploadVoiceQuestion: (tempFilePath, declaration) => {
+      uploadCount += 1;
+      requests.push({ stage: 'uploadVoiceQuestion', tempFilePath, declaration: Object.assign({}, declaration) });
+      if (options.uploadError) {
+        const e = new Error(options.uploadError.code);
+        e.code = options.uploadError.code;
+        e.status = options.uploadError.status;
+        return Promise.reject(e);
+      }
+      if (options.deferredUpload === true) {
+        return new Promise((resolve, reject) => { deferred = { resolve, reject } });
+      }
+      return Promise.resolve({ mediaId: '00000000-0000-4000-8000-0000000000vv', mediaRevision: 1 });
+    }
+  };
 
-  const page = Object.assign({}, definition, {
-    data: JSON.parse(JSON.stringify(definition.data)),
-    setData(patch) { Object.assign(this.data, patch); sets.push(patch); },
-    route: 'pages/voice/voice'
-  });
-  return { page, requests, toasts, sets, auth, runtime, wx: fakeWx };
+  // `wx` 必须在**模块加载期与调用期**都可见（voice-api/recorder-port/identify-api 在调用时读 `typeof wx`）。
+  globalThis.wx = fakeWx;
+  try {
+    let definition = null;
+    globalThis.Page = (value) => { definition = value; };
+    try {
+      loadReal(join(ROOT, 'miniprogram', 'pages', 'voice', 'voice.js'), resolveDep);
+    } finally {
+      delete globalThis.Page;
+    }
+    assert.ok(definition, '播报页必须注册 Page');
+
+    const page = Object.assign({}, definition, {
+      data: JSON.parse(JSON.stringify(definition.data)),
+      setData(patch) { Object.assign(this.data, patch); sets.push(patch); },
+      route: 'pages/voice/voice'
+    });
+    return {
+      page, requests, toasts, sets, auth, runtime, wx: fakeWx,
+      recorder, recorderOptions: options.recorderOptions || {}, wxCalls,
+      uploads: () => uploadCount,
+      deferredOf: () => deferred,
+      fileInfoOf: () => fileInfoDeferred,
+      /** 兑现被扣住的门禁核实（`gateDeferVerification: true` 时使用）。 */
+      verifyGate: () => { const run = gateVerify; gateVerify = null; if (run !== null) run() },
+      /**
+       * 端口模块本体（与页面用的是**同一份** vm 内实例）：用于端口层确定性用例。
+       * **惰性**取用（getter）：只被端口层用例需要。若在装配时就读取，"撤下实现"的变异会让
+       * 每个页面用例都在装配阶段抛错，产生与被测语义无关的级联红（把"新用例必红"的读数污染成噪声）。
+       */
+      get portModule() { return loadReal(bySuffix('recorder-port.js'), resolveDep) },
+      voiceApi: loadReal(bySuffix('voice-api.js'), resolveDep)
+    };
+  } finally {
+    delete globalThis.wx;
+  }
 }
 
-function bootPage() {
-  const harness = loadPageHarness();
+function bootPage(options = {}) {
+  const harness = loadPageHarness(options);
   globalThis.wx = harness.wx;
   harness.page.onLoad();
   harness.page.onShow();
   return harness;
+}
+
+/** 把在途 promise 链推到底（`setImmediate` 之间微任务会被排干，比单纯 `await` 更可靠）。 */
+async function flushMicrotasks(rounds = 8) {
+  for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * 录音按钮是否禁用：**直接取 `voice.wxml` 的 `disabled` 表达式**并按同一判据求值
+ * （不复制语义：表达式若被改动，本辅助函数会先失败）。
+ */
+function recordButtonDisabled(page) {
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  const match = /disabled="\{\{(guest \|\| recordState === 'uploading')\}\}"/.exec(wxml);
+  assert.ok(match, '录音按钮的 disabled 表达式必须仍是 guest || recordState === \'uploading\'');
+  return page.data.guest === true || page.data.recordState === 'uploading';
+}
+
+/**
+ * 隔离出「**录音态**导致的禁用」：把 `guest` **固定为 false** 求值同一表达式。
+ *
+ * 为什么必须隔离：门禁关闭（`guest=true`）本身就会禁用按钮，那是**正常语义**（用户已离页/未登录），
+ * 不是挂起态；只有 `recordState === 'uploading'` 造成的禁用才是 F1／F1-R2 的判定对象。
+ */
+function recordButtonDisabledByState(page) {
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  const match = /disabled="\{\{(guest \|\| recordState === 'uploading')\}\}"/.exec(wxml);
+  assert.ok(match, '录音按钮的 disabled 表达式必须仍是 guest || recordState === \'uploading\'');
+  const guest = false; // 固定门禁为"通过"，隔离出录音态那一半
+  return guest || page.data.recordState === 'uploading';
+}
+
+/** 提取页面 `setData` 轨迹里"录音态相关"的写入（用于逐帧核对是否有矛盾写入）。 */
+function recordTrace(harness) {
+  return harness.sets
+    .filter((patch) => patch.recordState !== undefined || patch.recordLabel !== undefined || patch.recordStageNote !== undefined)
+    .map((patch) => ({ state: patch.recordState, label: patch.recordLabel, note: patch.recordStageNote }));
 }
 
 test('宿主页·安全检查未过 ⇒ **零**合成请求、无播放器、不播报（反例）', () => {
@@ -603,9 +841,190 @@ test('宿主页·合成成功但无可播音频 ⇒ 自动播放失败：文案 
   h.page.onUnload();
 });
 
+// ============================================================ 5b. 缩片（`ruling-451`）：受理链路打通 + 如实不可播
+//
+// 范围（不放开契约、不改服务端语义）：① stub/preset_demo 下经装配层替身条目打通「受理 202 →
+// `GET /jobs/{id}` 读面」；② 取不到可播放来源 ⇒ 仍 `SOURCE_UNAVAILABLE` 且页面**如实**写
+// 「本环境无可播放音频（契约无客户端音频出口）」，**不得**显示「播放中／已播放」；
+// ③ 客户端**不得**硬编码 `revision: 1`（取契约值，且**优先**服务端回传的 revision）。
+
+/** 契约 `Job`（九键）夹具；`target` 同时用于 `target_ref` 与 `result.value.checked_content_ref`（二者必须一致）。 */
+function jobFixture(input = {}) {
+  const target = input.target === undefined ? { type: 'answer', id: 'sample-i13-passed', revision: 1 } : input.target;
+  const suffix = input.suffix === undefined ? '1' : input.suffix;
+  return {
+    id: `00000000-0000-4000-8000-00000000000${suffix}`,
+    revision: 3,
+    kind: 'synthesis',
+    target_ref: { ...target },
+    state: 'succeeded',
+    deadline_at: '2026-10-14T06:00:30.000Z',
+    created_at: '2026-10-14T06:00:00.000Z',
+    error_code: null,
+    result: {
+      kind: 'synthesis',
+      value: {
+        id: `00000000-0000-4000-8000-0000000000${suffix}1`,
+        revision: 1,
+        checked_content_ref: { ...target },
+        media_id: `00000000-0000-4000-8000-0000000000${suffix}2`
+      }
+    }
+  };
+}
+
+function acceptJob(request, job, mode = 'stub') {
+  request.success({
+    statusCode: 202,
+    data: { data: job, meta: { request_id: job.id, contract_version: '1.0.0', execution_mode: mode } },
+    header: { ETag: '"3"' }
+  });
+}
+
+test('缩片·配对夹具：客户端替身样本的 targetRef 与服务端装配层替身核对条目逐项一致（含正文逐字一致）', () => {
+  const h = loadPageHarness();
+  const samples = h.voiceApi.SUBSTITUTE_SPEAK_SAMPLES;
+  const declared = samples.filter((sample) => sample.targetRef !== undefined);
+  assert.equal(declared.length, 1, '本片刻度：只有正例样本声明契约目标引用');
+  const sample = declared[0];
+  assert.deepEqual(
+    { type: sample.targetRef.type, id: sample.targetRef.id, revision: sample.targetRef.revision },
+    { type: 'answer', id: 'sample-i13-passed', revision: 1 }
+  );
+  // 反例样本刻意不声明（安全检查不通过 ⇒ 永不合成 ⇒ 不该有可合成引用）。
+  assert.equal(samples.filter((item) => item.id === 'sample-i13-blocked')[0].targetRef, undefined);
+
+  assert.equal(SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT.length, 1, '装配层只注入正例那一条替身条目');
+  const entry = SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT[0];
+  assert.equal(entry.type, sample.targetRef.type, '服务端条目 type 必须与客户端样本一致');
+  assert.equal(entry.id, sample.targetRef.id, '服务端条目 id 必须与客户端样本一致');
+  assert.equal(entry.revision, sample.targetRef.revision, '服务端条目 revision 必须与客户端样本一致');
+  assert.equal(entry.auditState, 'approved', '替身条目必须是「已核对通过」，否则受理必被拒');
+  assert.equal(entry.text, sample.checkedText, '服务端条目正文必须与客户端样本逐字一致（不得改写/归一化）');
+});
+
+test('反例·revision 不硬编码：首次取样本声明的契约值，之后**优先**服务端回传的 revision，且不得张冠李戴', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+
+  // ① 首次提交：revision = 样本声明的契约值（1），且页面**代码**里没有内联字面量。
+  //    判据按仓库既有做法先**去注释**（注释里说明"不得内联"是允许的，被检的是可执行代码）。
+  const pageSource = read('miniprogram/pages/voice/voice.js');
+  const pageCode = pageSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(/voiceApi\.checkedContentRefForSample\(/.test(pageCode), '页面必须经契约取值函数取目标引用');
+  assert.equal(/revision:\s*1\b/.test(pageCode), false, '页面代码不得内联硬编码 revision: 1（注释不算）');
+  assert.ok(/revision:\s*1\b/.test(pageSource), '页面须保留一行注释说明该口径（便于审阅者复核）');
+
+  const first = h.page.onBroadcast();
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0].data.checked_content_ref)), {
+    type: 'answer', id: 'sample-i13-passed', revision: 1
+  });
+
+  // ② 服务端回传一个**不同**的 revision（权威值由服务端给出）⇒ 客户端必须采纳。
+  acceptJob(h.requests[0], jobFixture({ target: { type: 'answer', id: 'sample-i13-passed', revision: 7 }, suffix: '7' }));
+  await first;
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'sample-i13-passed' }), 7, '必须记下服务端回传的 revision');
+
+  const second = h.page.onBroadcast();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].data.checked_content_ref.revision, 7, '第二次必须用服务端回传的 revision（而不是夹具里的 1）');
+
+  // ③ 负例·张冠李戴：服务端这次回的是**别的内容目标**（id 不同）⇒ 不得把它的 revision 记到本样本上。
+  acceptJob(h.requests[1], jobFixture({ target: { type: 'answer', id: 'answer-other-target', revision: 9 }, suffix: '9' }));
+  await second;
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'sample-i13-passed' }), 7, '别的目标的 revision 不得被记到本样本');
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'answer-other-target' }), 9, '该记在它自己的 (type,id) 下');
+
+  const third = h.page.onBroadcast();
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[2].data.checked_content_ref.revision, 7, '仍然用本样本自己的服务端 revision');
+  assert.equal(h.requests[2].data.checked_content_ref.id, 'sample-i13-passed', '目标引用不得被别的目标顶替');
+  third.catch(() => {});
+  h.page.onUnload();
+});
+
+test('反例·样本未声明契约目标引用 ⇒ 不发明引用、零合成请求（如实说明）', () => {
+  const h = bootPage();
+  // 手工构造一个「安全检查通过、却没声明 targetRef」的样本（模拟夹具缺字段/被改坏）。
+  h.page.setData({
+    samples: [{ id: 'sample-no-ref', label: '无契约引用的样本', checkState: 'passed', checkedText: SAMPLE }],
+    selectedSampleId: 'sample-no-ref',
+    checkPassed: true,
+    checkedText: SAMPLE
+  });
+  h.page.onBroadcast();
+  assert.equal(h.requests.length, 0, '没有契约目标引用时不得发起任何合成请求');
+  assert.ok(h.page.data.synthesisNote.includes('没有声明契约目标引用'), h.page.data.synthesisNote);
+  h.page.onUnload();
+});
+
+test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境无可播放音频（契约无客户端音频出口）」，绝不显示「播放中／已播放」', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  assert.equal(h.page.data.substituteWalkthrough, false, '替身走查默认必须是关（否则会出现"没有来源 + 正在播报"的自相矛盾态）');
+
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '3' }));
+  await pending;
+
+  // ① 终态：失败出口（不是「正在播报」），且没有替身计划、没有记已听取。
+  assert.equal(h.page.data.job.state, 'succeeded', '受理与读面必须如实打通（合成确实成功了）');
+  assert.equal(h.page.data.playbackState, 'failed', '取不到来源必须是失败态，绝不能是 playing/stopped');
+  assert.equal(h.page.data.listened, false);
+  assert.equal(h.page.data.substitute, false, '不得把替身当真实播放');
+  assert.equal(h.page._plan.length, 0, '没有可播放来源 ⇒ 计划为空');
+  assert.equal(h.page.data.ballHint, '');
+
+  // ② 文案口径：必须是**契约层**事实，不是"网络问题"，且与客户端常量逐字一致。
+  const note = h.page.data.sourceNotice;
+  assert.ok(note.includes('本环境无可播放音频'), note);
+  assert.ok(note.includes('契约无客户端音频出口'), note);
+  assert.equal(note.startsWith(h.voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE), true, '页面必须原样展示该常量（不得自造措辞）');
+
+  // ③ 客户端 API 层：stub 与 real 两支都如实不可播，且原因各不相同（不得都写成"网络问题/登录失效"）。
+  const stubSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '4' }), 'stub');
+  const realSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '5' }), 'real');
+  assert.equal(stubSource.code, 'SOURCE_UNAVAILABLE');
+  assert.equal(realSource.code, 'SOURCE_UNAVAILABLE');
+  assert.notEqual(stubSource.reason, realSource.reason, 'stub 与 real 的如实原因必须各自可指出');
+  assert.ok(stubSource.reason.includes('非音频'), stubSource.reason);
+  assert.ok(realSource.reason.includes('契约没有面向客户端的音频出口'), realSource.reason);
+
+  // ④ 静态口径：wxml 必须渲染该提示，且**渲染内容**里没有任何「已播放」表述（注释不算）。
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  assert.ok(/wx:if="\{\{sourceNotice\}\}"/.test(wxml), 'wxml 必须渲染 sourceNotice');
+  assert.ok(wxml.includes('{{sourceNotice}}'), 'wxml 必须原样展示该提示文本');
+  const wxmlRendered = wxml.replace(/<!--[\s\S]*?-->/g, '');
+  assert.equal(wxmlRendered.includes('已播放'), false, '页面渲染内容不得出现「已播放」表述');
+  h.page.onUnload();
+});
+
+test('缩片·替身走查**显式**开启时：只走控件生命周期、仍不记已听取、且明示不代表已取得可播放来源', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  h.page.setData({ substituteWalkthrough: true });
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '6' }));
+  await pending;
+
+  assert.equal(h.page.data.playbackState, 'playing', '替身走查是**显式**开启的控件生命周期走查');
+  assert.equal(h.page.data.substitute, true, '必须如实标记为替身');
+  assert.equal(h.page.data.listened, false, '替身没有声音，绝不记「已听取」');
+  assert.ok(h.page._plan.every((item) => String(item.src).startsWith('substitute://segment/')), '替身计划的源必须是标注占位，不得是真实音频');
+  // 来源口径必须仍在（走查不改变"契约无客户端音频出口"这一事实）。
+  assert.ok(h.page.data.sourceNotice.includes('契约无客户端音频出口'), h.page.data.sourceNotice);
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  assert.ok(wxml.includes('不代表已取得可播放来源'), '替身走查提示必须明示它不代表已取得可播放来源');
+  h.page.onUnload();
+});
+
 test('宿主页·离页（隐藏/卸载）取消在途请求并释放播放器：监听 0、句柄 0、迟到回调无效', async () => {
   const h = bootPage();
   h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  // 缩片（`ruling-451`）起：替身走查**默认关闭**（默认下页面如实走"无可播放来源"出口，
+  // 不显示「正在播报」）。本用例的意图是"释放一份**活动**的播报计划"，因此**显式**开启走查开关。
+  h.page.setData({ substituteWalkthrough: true });
   const job = {
     id: '00000000-0000-4000-8000-000000000009',
     revision: 3,
@@ -670,13 +1089,536 @@ test('宿主页·离页（隐藏/卸载）取消在途请求并释放播放器�
   assert.equal(h.page.data.exitReason, 'unload');
 });
 
-test('宿主页·录音控件与播报控件分离，且录音如实标注未接线（不调用任何录音能力）', () => {
-  const js = read('miniprogram/pages/voice/voice.js');
+test('宿主页·录音控件与播报控件分离（独立入口/独立状态，页面仍不直接引用平台录音与播放能力）', () => {
+  const raw = read('miniprogram/pages/voice/voice.js');
+  // 只检查**代码**：注释里出现平台 API 名字是说明，不是调用（本片新增的注释就解释了端口边界）。
+  const js = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const wxml = read('miniprogram/pages/voice/voice.wxml');
-  assert.equal(/getRecorderManager/.test(js), false, '未接线时不得调用录音能力');
   assert.ok(/bindtap="onRecord"/.test(wxml), '录音入口必须是独立控件');
   assert.ok(/bindtap="onBroadcast"/.test(wxml), '提交（合成）入口必须存在');
-  assert.equal(/hasRecording/.test(wxml), false, '录音未接线：不得假装有录音可播');
+  // 分离判据：录音态与播报态是两组互不复用的 data 键。
+  assert.ok(/recording/.test(js) && /playbackState/.test(js), '录音态与播报态必须各自独立');
+  // 只禁「真的调用」：注释与用户可见文案里出现能力名字是说明，不是调用。
+  assert.equal(/wx\.getRecorderManager\s*\(/.test(js), false, '页面不得直接调用平台录音能力（只能经 recorder-port）');
+  assert.equal(/wx\.createInnerAudioContext\s*\(/.test(js), false, '页面不得直接调用平台音频播放能力（只能经注入端口）');
+  assert.equal(/recordNote:\s*RECORD_NOTE/.test(js), true, '录音说明必须由页面常量给出（含麦克风授权口径）');
+  // 端口是**唯一**引用平台录音 API 的地方（可复核：其它 miniprogram 代码一次都不出现）。
+  const port = read('miniprogram/utils/recorder-port.js');
+  assert.ok(/wx\.getRecorderManager\(\)/.test(port), '唯一出现处必须是 recorder-port');
+});
+
+// ============================================================ 5b. GY-I11 真实录音 + 按用途上传（验收 1–4）
+
+test('验收1·探针下桩 wx.getRecorderManager ⇒ 确实调用了 start/stop（贴出真实调用序列）', async () => {
+  const h = bootPage();
+  assert.equal(h.page.data.recordSupported, true, '探针提供 getRecorderManager ⇒ 能力自述应为可用');
+
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, true, '端口真的开始后才进入录音态');
+  assert.equal(h.page.data.recordState, 'recording');
+  assert.equal(h.recorder.isRecording(), true, '平台录音器必须真的在录');
+
+  const start = h.recorder._lastStart();
+  assert.equal(start.format, 'aac', '编码必须是契约允许的 aac（容器 m4a ⇒ audio/aac）');
+  assert.equal(start.duration, 60000, '时长上限必须由契约收口（duration_ms.maximum = 60000）');
+  assert.equal(start.numberOfChannels, 1, '单声道');
+  assert.equal(start.sampleRate, 16000);
+
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, false);
+  const sequence = h.wxCalls.concat(h.recorder._calls).map((c) => c.api);
+  assert.deepEqual(sequence, ['getRecorderManager', 'start', 'stop'], '调用序列：' + JSON.stringify(sequence));
+  assert.equal(h.page.data.recordState, 'stopped', '录音完成后应落在「已录音」态');
+  assert.equal(h.page.data.recordDurationMs, 1234, '时长必须取平台 onStop 的真实 duration');
+  assert.equal(h.page.data.hasRecording, true);
+  h.page.onUnload();
+});
+
+test('验收1反例·拒绝授权 ⇒ 无 start、有如实提示（不假装在录）', async () => {
+  const h = bootPage({ recorderOptions: { deny: true } });
+  await h.page.onRecord();
+
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'start').length, 0, '授权被拒时不得调用 start');
+  assert.equal(h.recorder.isRecording(), false, '授权被拒时平台录音器不得处于录音中');
+  assert.equal(h.page.data.recording, false, '不得假装在录');
+  assert.equal(h.page.data.recordState, 'failed', '必须落在可分辨的失败态');
+  assert.equal(h.page.data.recordStageNote.includes('麦克风授权被拒绝'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('没有开始录音'), true);
+  assert.equal(h.page.data.uploadErrorCode, 'RECORD_AUTH_DENIED');
+  assert.equal(h.requests.length, 0, '拒绝授权不得发出任何上传请求');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得伪造 media_id');
+  h.page.onUnload();
+});
+
+test('验收1反例·录音启动失败/中断 ⇒ 如实呈现，不伪造「已录音」', async () => {
+  for (const scenario of [
+    { options: { failStart: 'operateRecorder:fail auth deny' }, code: 'RECORD_AUTH_DENIED', expect: '麦克风授权被拒绝' },
+    { options: { failStart: 'operateRecorder:fail system error' }, code: 'RECORD_FAILED', expect: '录音未能完成' },
+    { options: { interrupt: true }, code: 'RECORD_INTERRUPTED', expect: '录音被中断' }
+  ]) {
+    const h = bootPage({ recorderOptions: scenario.options });
+    await h.page.onRecord();
+    assert.equal(h.page.data.recordState, 'failed', JSON.stringify(scenario.options));
+    assert.equal(h.page.data.recording, false);
+    assert.equal(h.page.data.hasRecording, false, '失败不得留下"有录音可播"的假象');
+    assert.equal(h.page.data.uploadErrorCode, scenario.code);
+    assert.equal(h.page.data.recordStageNote.includes(scenario.expect), true, h.page.data.recordStageNote);
+    assert.equal(h.requests.length, 0);
+    h.page.onUnload();
+  }
+});
+
+test('验收2·上传参数：purpose=voice_question 在场且带真实 duration_ms（贴请求摘要，不打印音频体）', async () => {
+  const h = bootPage({ recorderOptions: { duration: 4321, format: 'aac' } });
+  await h.page.onRecord();
+  await h.page.onRecord();
+
+  assert.equal(h.uploads(), 1, '恰好多一次上传调用');
+  const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
+  assert.ok(upload, '必须经既有私有媒体上传通道（uploadVoiceQuestion）');
+  assert.equal(upload.tempFilePath, 'wxfile://tmp/voice-question-test.aac', '上传的是平台真实产物路径');
+  assert.equal(upload.declaration.mime, 'audio/aac');
+  assert.equal(upload.declaration.durationMs, 4321, 'duration_ms 必须是平台真实时长');
+  assert.equal(upload.declaration.bytes, 4096, 'bytes 来自 wx.getFileInfo');
+  assert.equal(upload.declaration.sha256, 'a'.repeat(64), 'sha256 来自 wx.getFileInfo');
+  // 上传链路只被喂了这四个声明字段：不新造字段、不打印任何二进制体。
+  assert.deepEqual(Object.keys(upload.declaration).sort(), ['bytes', 'durationMs', 'mime', 'sha256']);
+  assert.equal(h.page.data.uploadedPurpose, 'voice_question', '用途必须是契约既有成员 voice_question');
+  assert.equal(h.page.data.uploadedMediaId, '00000000-0000-4000-8000-0000000000vv');
+  assert.equal(h.page.data.recordStageNote.includes('voice_question'), true);
+  assert.equal(h.page.data.recordStageNote.includes('已回答'), true, '必须显式声明本页不显示「已回答」一类结论');
+  h.page.onUnload();
+});
+
+test('验收2·上传前预检：时长/字节超契约上限 ⇒ 零请求、如实提示（服务端必拒的不发出去）', async () => {
+  const h = bootPage({ recorderOptions: { duration: 60001 }, fileSize: 10 * 1048576 + 1 });
+  await h.page.onRecord();
+  await h.page.onRecord();
+  assert.equal(h.requests.filter((r) => r.stage === 'uploadVoiceQuestion').length, 0, '超时长上限不得发出上传请求');
+  assert.equal(h.page.data.recordState, 'failed');
+  assert.equal(h.page.data.uploadErrorCode, 'INVALID_INPUT');
+  assert.equal(h.page.data.recordStageNote.includes('超过契约上限'), true, h.page.data.recordStageNote);
+
+  const oversized = bootPage({ fileSize: 10 * 1048576 + 1 * 1048576 });
+  oversized.page.setData({ recordDurationMs: 0 });
+  await oversized.page.onRecord();
+  await oversized.page.onRecord();
+  assert.equal(oversized.requests.filter((r) => r.stage === 'uploadVoiceQuestion').length, 0, '超字节上限不得发出上传请求');
+  assert.equal(oversized.page.data.uploadErrorCode, 'MEDIA_TOO_LARGE');
+  assert.equal(oversized.page.data.recordStageNote.includes('超过用途上限'), true, oversized.page.data.recordStageNote);
+  h.page.onUnload();
+  oversized.page.onUnload();
+});
+
+test('验收2·非 real 执行模式（真实对象存储未接线）⇒ 不上传、不伪造 media_id、如实标注「待接线」', async () => {
+  const h = bootPage({ serverMode: 'stub' });
+  await h.page.onRecord();
+  await h.page.onRecord();
+  assert.equal(h.uploads(), 0, '非 real 模式不得上传');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得伪造 media_id');
+  assert.equal(h.page.data.recordState, 'stopped');
+  assert.equal(h.page.data.recordStageNote.includes('stub'), true);
+  assert.equal(h.page.data.recordStageNote.includes('真实对象存储未接线'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('没有上传'), true);
+  h.page.onUnload();
+});
+
+test('验收3·失败态按契约错误码如实归因：503/413/415/403(CONSENT_REQUIRED)/403(SCOPE_DENIED) 文案各不相同', async () => {
+  const cases = [
+    { code: 'PROVIDER_UNAVAILABLE', status: 503, must: '真实对象存储未接线', mustNot: '网络' },
+    { code: 'MEDIA_TOO_LARGE', status: 413, must: '≤10 MiB', mustNot: '网络' },
+    { code: 'MEDIA_TYPE_UNSUPPORTED', status: 415, must: '仅 MP3 / WAV / AAC', mustNot: '登录' },
+    { code: 'CONSENT_REQUIRED', status: 403, must: '缺少用途授权', mustNot: '登录状态已失效' },
+    { code: 'SCOPE_DENIED', status: 403, must: '无权使用该能力', mustNot: '登录状态已失效' }
+  ];
+  const seen = new Map();
+  for (const item of cases) {
+    const h = bootPage({ uploadError: { code: item.code, status: item.status } });
+    await h.page.onRecord();
+    await h.page.onRecord();
+    const note = h.page.data.recordStageNote;
+    assert.equal(h.page.data.recordState, 'failed', item.code);
+    assert.equal(h.page.data.uploadErrorCode, item.code, '错误码必须原样带出：' + item.code);
+    assert.equal(note.includes(item.must), true, `${item.code} 文案缺少「${item.must}」：${note}`);
+    assert.equal(note.includes(item.mustNot), false, `${item.code} 文案不得含「${item.mustNot}」：${note}`);
+    assert.equal(h.page.data.uploadedMediaId, null, '失败不得伪造 media_id');
+    seen.set(item.code, note);
+    h.page.onUnload();
+  }
+  // 两个 403 必须**各不相同**，且都不是"登录失效"。
+  assert.notEqual(seen.get('CONSENT_REQUIRED'), seen.get('SCOPE_DENIED'), '两类 403 不得折叠成同一句');
+  for (const note of seen.values()) {
+    assert.equal(note.includes('登录状态已失效'), false, '不得把所有 403 说成「登录失效」：' + note);
+  }
+  assert.equal(new Set(seen.values()).size, cases.length, '五种失败态文案必须两两不同');
+});
+
+test('验收4·录音中触发出页 ⇒ stop 被调用、计时器清零、无残留挂起状态（贴输出）', async () => {
+  const h = bootPage();
+  await h.page.onRecord();
+  assert.equal(h.recorder.isRecording(), true);
+  const timerBefore = h.page._recTimer;
+  assert.ok(timerBefore !== null && timerBefore !== undefined, '录音中应存在已录计时器');
+
+  h.page.onUnload();
+  const sequence = h.wxCalls.concat(h.recorder._calls).map((c) => c.api);
+  assert.deepEqual(sequence, ['getRecorderManager', 'start', 'stop'], '出页必须调用 stop：' + JSON.stringify(sequence));
+  assert.equal(h.page._recTimer, null, '离页不得残留计时器');
+  assert.equal(h.page._recorder, null, '离页必须释放录音端口');
+  assert.equal(h.page.data.recording, false, '离页不得留「录音中」挂起态');
+  assert.equal(h.page.data.recordState, 'idle');
+  assert.equal(h.page.data.exitReason, 'unload');
+  assert.equal(h.page.data.recordStageNote.includes('录音已停止并释放麦克风'), true);
+
+  // 出页后再点录音：端口已释放 ⇒ 如实提示，不偷偷重启一个麦克风。
+  await h.page.onRecord();
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'start').length, 1, '释放后不得再调用 start');
+  assert.equal(h.page.data.recording, false);
+});
+
+test('验收4·onHide 走同一释放出口（切页/隐藏与返回同口径）', async () => {
+  const h = bootPage();
+  await h.page.onRecord();
+  h.page.onHide();
+  const sequence = h.wxCalls.concat(h.recorder._calls).map((c) => c.api);
+  assert.deepEqual(sequence, ['getRecorderManager', 'start', 'stop']);
+  assert.equal(h.page._recTimer, null);
+  assert.equal(h.page.data.exitReason, 'hide');
+  assert.equal(h.page.data.recording, false);
+});
+
+// ============================================================ 5c. r2 返修：F1 挂起态 / F2 产物被吞
+
+test('验收F1a·上传中 onHide（切走再回）⇒ 录音态复位到可再次录音、清除「上传中」，迟到落定不复活挂起态', async () => {
+  const h = bootPage({ deferredUpload: true, recorderOptions: { duration: 4321 } });
+  await h.page.onRecord();
+  void h.page.onRecord();                       // 停止并进入上传（**不 await**：上传保持挂起）
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading', '先确认确实进入「上传中」');
+  assert.equal(h.uploads(), 1, '上传已在途');
+  assert.equal(recordButtonDisabled(h.page), true, '上传中按钮按 WXML 表达式应为禁用');
+
+  h.page.onHide();                              // ← 上传中切页（改前：recordState 永久残留 uploading）
+  assert.equal(h.page.data.recordState, 'idle', '离页不得残留「上传中」');
+  assert.equal(h.page.data.recordLabel, '开始录音');
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('没有上传成功、也没有 media_id'), true);
+  assert.equal(h.page.data.uploadedMediaId, null, '不得伪造 media_id');
+
+  h.page.onShow();                              // 切回来
+  assert.notEqual(h.page.data.recordState, 'uploading', '回页后不得仍显示「上传中」挂起态');
+  assert.equal(recordButtonDisabled(h.page), false, '回页后录音按钮必须可用（不得永久禁用）');
+
+  // 迟到的上传落定：作废的上传不得复活挂起态、也不得写入 media_id。
+  h.deferredOf().resolve({ mediaId: '00000000-0000-4000-8000-0000000000vv', mediaRevision: 1 });
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'idle', '迟到落定不得复活「上传中」');
+  assert.equal(h.page.data.uploadedMediaId, null, '已作废的上传不得写入 media_id');
+  assert.equal(recordButtonDisabled(h.page), false, '按钮仍须可用');
+
+  // 关键：复位后**必须真的能再次录音**
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, true, '复位后必须可以再次录音');
+  assert.equal(h.page.data.recordState, 'recording');
+  h.page.onUnload();
+});
+
+test('验收F1b·上传中收到 401/会话失效 ⇒ 录音态复位到可再次录音、清除「上传中」，不伪造结果', async () => {
+  const h = bootPage({ deferredUpload: true });
+  await h.page.onRecord();
+  void h.page.onRecord();
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading');
+
+  const sessionLost = new Error('SESSION_REQUIRED');
+  sessionLost.code = 'SESSION_REQUIRED';
+  h.deferredOf().reject(sessionLost);
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '401 后不得残留「上传中」');
+  assert.notEqual(h.page.data.recordState, 'uploading');
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.page.data.uploadedMediaId, null, '会话失效不得伪造 media_id');
+  assert.equal(recordButtonDisabled(h.page), false, '401 后录音按钮不得永久禁用');
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.recordStageNote.includes('会话'), true, h.page.data.recordStageNote);
+  h.page.onUnload();
+});
+
+test('验收F2a·端口层：平台按 duration 自行 onStop（不经 stop()）⇒ 产物存入槽并由下一次 stop() 如实交出', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    const started = await port.start({ format: 'aac' });
+    assert.equal(started.ok, true, 'start 必须成功：' + JSON.stringify(started));
+
+    // 平台**自行**停止：调用方一次都没调 stop()。
+    h.recorder._autoStop({ duration: 60000 });
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '证明这次不是调用方停的');
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'autoStop').length, 1);
+    assert.equal(port.isRecording(), false, '端口应已知平台已停止');
+
+    const product = await port.stop();
+    assert.equal(product.ok, true, '产物**必须**被接收（不得被吞）：' + JSON.stringify(product));
+    assert.equal(product.tempFilePath, 'wxfile://tmp/voice-question-test.aac');
+    assert.equal(product.durationMs, 60000, '时长取平台真实值（不是本地计时）');
+    assert.equal(product.mime, 'audio/aac');
+
+    // 产物只能被取走一次：不得把同一份结果重复交出。
+    const again = await port.stop();
+    assert.equal(again.ok, false);
+    assert.equal(again.code, 'RECORD_NOT_STARTED');
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
+});
+
+test('验收F2b·页面层：录满上限时平台自动停止 ⇒ 页面到点出口接收产物并**恰一次**上传（duration_ms 为平台值）', async () => {
+  const h = bootPage({ recorderOptions: { duration: 60000, format: 'aac' } });
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, true);
+  assert.equal(h.recorder.isRecording(), true);
+
+  // 平台在 duration 上限处**自行** onStop（这正是真机上先于页面 100ms tick 发生的那条路径）。
+  h.recorder._autoStop({ duration: 60000 });
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '平台自行停止：调用方未调 stop()');
+  assert.equal(h.recorder.isRecording(), false);
+  assert.equal(h.uploads(), 0, '此刻页面尚未到点，还没有上传');
+
+  // 页面"到达上限"的出口 —— 与 100ms tick 到 60000ms 时调用的是**同一个**函数。
+  await h.page.stopAndUpload();
+
+  assert.equal(h.uploads(), 1, '产物必须被接收并上传，**恰一次**');
+  const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
+  assert.ok(upload, '必须走既有私有媒体上传通道');
+  assert.equal(upload.declaration.durationMs, 60000, 'duration_ms 仍取平台真实值');
+  assert.equal(upload.declaration.mime, 'audio/aac');
+  assert.equal(h.page.data.recordDurationMs, 60000);
+  assert.equal(h.page.data.recordState, 'stopped', '应落在「已录音」而非失败态');
+  assert.equal(h.page.data.uploadErrorCode, '', '不得出现任何失败码');
+  assert.equal(/没有正在进行的录音/.test(h.page.data.recordStageNote), false,
+    '不得把"已录满"说成"没有正在进行的录音"：' + h.page.data.recordStageNote);
+  assert.equal(h.page.data.uploadedMediaId, '00000000-0000-4000-8000-0000000000vv');
+  h.page.onUnload();
+});
+
+test('验收F2c·页面层：平台自动停止且产物不可用（无文件）⇒ 如实失败，不伪造上传', async () => {
+  const h = bootPage({ recorderOptions: { duration: 60000 } });
+  await h.page.onRecord();
+  h.recorder._autoStop({ duration: 60000, tempFilePath: '' });
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0);
+  await h.page.stopAndUpload();
+  assert.equal(h.uploads(), 0, '无产物不得上传');
+  assert.equal(h.page.data.recordState, 'failed');
+  assert.equal(h.page.data.recordStageNote.includes('录音未能完成'), true, h.page.data.recordStageNote);
+  assert.equal(h.page.data.uploadedMediaId, null);
+  h.page.onUnload();
+});
+
+test('验收F2d·端口层：cancel() 后平台回传的产物一律丢弃（不得交给下一次 stop()）', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    await port.start({ format: 'aac' });
+    await port.cancel();
+    const after = await port.stop();
+    assert.equal(after.ok, false);
+    assert.equal(after.code, 'RECORD_NOT_STARTED', '取消后的产物不得被交出：' + JSON.stringify(after));
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
+});
+
+test('验收F2e·端口层：平台自行报错（无在途 stop()）⇒ 结果存入槽并由下一次 stop() 如实交出，不静默丢失', async () => {
+  const h = loadPageHarness({ recorderOptions: { duration: 60000 } });
+  globalThis.wx = h.wx;
+  try {
+    const port = h.portModule.createRecorderPort();
+    await port.start({ format: 'aac' });
+    // 录音开始后平台**自行**报错：没有在途 stop()。
+    h.recorder._autoError('operateRecorder:fail system error');
+    assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '证明不是调用方停的');
+    assert.equal(port.isRecording(), false);
+
+    const outcome = await port.stop();
+    assert.equal(outcome.ok, false, '平台报错必须如实交出为失败');
+    assert.equal(outcome.code, 'RECORD_FAILED', '失败码如实：' + JSON.stringify(outcome));
+    assert.notEqual(outcome.code, 'RECORD_NOT_STARTED', '不得把"平台已报错"说成"没有正在进行的录音"');
+    port.release();
+  } finally {
+    delete globalThis.wx;
+  }
+});
+
+// ============================================================ 5d. r3 返修：读摘要在途离页（F1-R2）／作废原因文案（OBS-1）
+
+/**
+ * 打开「已拿到平台产物、`wx.getFileInfo` 读摘要在途」窗口，返回该 harness。
+ * 断言前置条件（否则后面的用例会因为窗口没开而变成假绿）。
+ */
+async function openReadSummaryWindow(options = {}) {
+  const h = bootPage(Object.assign({ faithfulGate: true, deferredFileInfo: true }, options));
+  await h.page.onRecord();
+  void h.page.onRecord();                     // 停止并进入"读摘要"（**不 await**）
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading', '应处于「上传中」');
+  assert.equal(h.page.data.recordStageNote.includes('正在读取文件摘要'), true, h.page.data.recordStageNote);
+  assert.ok(h.fileInfoOf() !== null, 'wx.getFileInfo 必须已在途（窗口已打开）');
+  return h;
+}
+
+/** 逐帧核对：最后一次写入「本次上传已作废」之后，不得再出现任何「上传中／正在上传」写入。 */
+function assertNoUploadArmingAfterVoid(h) {
+  const trace = recordTrace(h);
+  const voidIndexes = trace.map((t, i) => (t.note && t.note.includes('本次上传已作废') ? i : -1)).filter((i) => i >= 0);
+  assert.ok(voidIndexes.length >= 1, '轨迹里必须存在如实作废说明');
+  const after = trace.slice(voidIndexes[voidIndexes.length - 1] + 1)
+    .filter((t) => t.state === 'uploading' || /正在上传|按用途 voice_question 上传/.test(t.note || ''));
+  assert.deepEqual(after, [], '作废之后不得再写入「上传中／正在上传」（不得先说作废、再偷偷上传）');
+}
+
+test('验收F1-R2a·离页落在读摘要窗口 ⇒ 迟到摘要不得把状态写回「上传中」，零上传、作废说明不被覆盖', async () => {
+  const h = await openReadSummaryWindow();
+
+  h.page.onHide();                            // ← 摘要仍在途时离页（真机：后台可能推迟 JS 回调）
+  assert.equal(h.page.data.recordState, 'idle', '离页必须复位');
+  const voidNote = h.page.data.recordStageNote;
+  assert.equal(voidNote.includes('本次上传已作废'), true, voidNote);
+
+  h.fileInfoOf().resolve();                   // 迟到摘要落定
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '离页后迟到摘要不得把状态写回「上传中」');
+  assert.equal(recordButtonDisabledByState(h.page), false, '不得因挂起态禁用按钮');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得写入 media_id');
+  assert.equal(h.uploads(), 0, '已被作废的上传不得真的发出去（POST=0）');
+  assert.equal(h.page.data.recordStageNote, voidNote, '作废说明不得被后续写入覆盖');
+  assertNoUploadArmingAfterVoid(h);
+  h.page.onUnload();
+});
+
+test('验收F1-R2b·摘要回调落在门禁核实**窗口内** ⇒ idle + 按钮可用（按录音态求值）+ 如实作废 + 零上传', async () => {
+  const h = await openReadSummaryWindow({ gateDeferAfterFirst: true });
+
+  h.page.onHide();                            // 离页 → 复位 + 如实作废
+  assert.equal(h.page.data.recordState, 'idle');
+  h.page.onShow();                            // 回页：门禁核实被扣住（窗口打开）
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, true, '核实未完成前门禁应为未通过（这正是窗口）');
+
+  h.fileInfoOf().resolve();                   // 摘要落在核实窗口内
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '不得残留「上传中」');
+  assert.equal(recordButtonDisabledByState(h.page), false, '不得因挂起态禁用');
+  assert.equal(h.uploads(), 0, '零上传（POST=0）');
+  assert.equal(h.page.data.uploadedMediaId, null);
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assertNoUploadArmingAfterVoid(h);
+
+  h.verifyGate();                             // 核实完成
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, false, '核实后门禁通过');
+  assert.equal(h.page.data.recordState, 'idle', '核实完成后仍不得出现「上传中」');
+  assert.equal(recordButtonDisabled(h.page), false, '回页核实后录音按钮必须可用');
+  assert.equal(h.uploads(), 0, '核实完成也不得补发这个已被作废的上传');
+  h.page.onUnload();
+});
+
+test('验收F1-R2c·摘要回调落在核实**之后** ⇒ 两种结果互斥：已作废就绝不偷偷上传（POST=0、无 media_id）', async () => {
+  const h = await openReadSummaryWindow({ gateDeferAfterFirst: true });
+
+  h.page.onHide();
+  const voidNote = h.page.data.recordStageNote;
+  assert.equal(voidNote.includes('本次上传已作废'), true, voidNote);
+
+  h.page.onShow();
+  h.verifyGate();                             // 核实**先**完成（guest 回到 false —— 旧实现正是借此"偷偷上传"）
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, false, '此时门禁已通过：这正是旧实现会做完上传的时序');
+
+  h.fileInfoOf().resolve();                   // 摘要**晚于**核实落定
+  await flushMicrotasks();
+
+  assert.equal(h.uploads(), 0, '已被作废的上传不得发出任何请求（POST=0）');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得写入 media_id');
+  assert.equal(h.page.data.recordStageNote, voidNote, '作废说明不得被"上传成功"覆盖');
+  assert.equal(h.page.data.recordState, 'idle');
+  assertNoUploadArmingAfterVoid(h);
+  h.page.onUnload();
+});
+
+test('验收OBS-1·离页路径的作废原因必须与用户动作相符（"已离开本页"，不得说成"会话／门禁已失效"）', async () => {
+  // 必须用**忠实门禁**：真实离页会 `page._gateClose()` ⇒ `callback(false)`，这才是 OBS-1 的成因。
+  const h = await openReadSummaryWindow();
+
+  h.page.onHide();
+  const note = h.page.data.recordStageNote;
+  assert.equal(note.includes('本次上传已作废'), true, note);
+  assert.equal(note.includes('已离开本页'), true, '用户主动离页 ⇒ 原因必须是"已离开本页"：' + note);
+  assert.equal(note.includes('会话／门禁已失效'), false,
+    '用户主动离页时不得说成会话/门禁失效（会被读成"掉登录"）：' + note);
+
+  // 对照：门禁失效（上传中 401）的措辞必须仍是门禁类 —— 两条原因**都可达且可区分**。
+  h.fileInfoOf().resolve();
+  await flushMicrotasks();
+  h.page.onUnload();
+});
+
+test('验收OBS-1对照·上传中 401 的作废原因仍是门禁类（两条原因都可达、互不混用）', async () => {
+  const h = bootPage({ faithfulGate: true, deferredUpload: true });
+  await h.page.onRecord();
+  void h.page.onRecord();
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading');
+
+  const sessionLost = new Error('SESSION_REQUIRED');
+  sessionLost.code = 'SESSION_REQUIRED';
+  h.deferredOf().reject(sessionLost);
+  await flushMicrotasks();
+
+  const note = h.page.data.recordStageNote;
+  assert.equal(note.includes('本次上传已作废'), true, note);
+  assert.equal(note.includes('会话／门禁已失效'), true, '门禁失效 ⇒ 必须是门禁类措辞：' + note);
+  assert.equal(note.includes('已离开本页'), false, '未经离页的门禁失效不得说成"已离开本页"：' + note);
+  h.page.onUnload();
+});
+
+test('边界·重复 stop / 未录音时 stop ⇒ RECORD_NOT_STARTED（幂等安全，不抛异常、不发请求）', async () => {
+  const h = bootPage();
+  const port = h.page.ensureRecorder();
+  const idle = await port.stop();
+  assert.equal(idle.ok, false);
+  assert.equal(idle.code, 'RECORD_NOT_STARTED');
+  assert.equal(h.recorder._calls.filter((c) => c.api === 'stop').length, 0, '未录音时不得调用平台 stop');
+
+  await h.page.onRecord();
+  const first = await port.stop();
+  assert.equal(first.ok, true);
+  const second = await port.stop();
+  assert.equal(second.ok, false, '重复 stop 必须如实失败，不得返回旧产物');
+  assert.equal(second.code, 'RECORD_NOT_STARTED');
+  h.page.onUnload();
+});
+
+test('边界·端口在不支持录音的环境里如实失败（RECORDER_UNAVAILABLE，零采集零上传）', async () => {
+  const h = bootPage();
+  // 平台缺能力：把探针摘掉（页面必须如实报不可用，而不是假装在录）。
+  h.wx.getRecorderManager = undefined;
+  h.page._recorder = null;
+  h.page.setData({ recordSupported: false });
+  await h.page.onRecord();
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.page.data.recordState, 'failed');
+  assert.equal(h.page.data.uploadErrorCode, 'RECORDER_UNAVAILABLE');
+  assert.equal(h.page.data.recordStageNote.includes('不提供录音能力'), true);
+  assert.equal(h.requests.length, 0);
+  h.page.onUnload();
 });
 
 // ============================================================ 6. 静态可访问性 / 布局 / 清单一致

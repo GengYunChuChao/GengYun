@@ -9,6 +9,11 @@
  *   - 错误封套按契约错误码抛出，并保留规则层原因码（供页面如实展示"未通过审核"）；
  *   - 401/403 清本地会话并报 `SESSION_REQUIRED`；非本会话世代的迟到响应被丢弃。
  *
+ * 末节追加**页面口径**回归（切片 B2-1，Refs #15／#14）：把**真实**投稿页接到同一个真实适配层
+ * 与合成 `wx` 上，核对 201 之后的提示只按服务端返回的 `visibility`/`audit_state` 如实给出，
+ * 并与**真实**详情页／列表页的既有标注逐字对照（不另写一套期望文案）。门禁、真机渲染与
+ * 真实审核能力不在该节范围（门禁另有 miniprogram-login-return-to.test.mjs 覆盖）。
+ *
  * 边界：替身 `wx` 是**合成**的；本文件不证明页面视觉、真机或真实审核能力。
  */
 import { test } from 'node:test';
@@ -54,13 +59,19 @@ function errorEnvelope(code, details = []) {
   };
 }
 
-/** 载入真实适配层；`respond` 决定每个请求的替身响应。 */
-function load(respond) {
+/** 让用例自行应答（`respond` 返回该哨兵时替身不代替用例回答）；既有用例不返回它，行为不变。 */
+const DEFER = Symbol('defer');
+
+/** 载入真实适配层；`respond` 决定每个请求的替身响应。`options.source` 只给负控制注入改动过的源码。 */
+function load(respond, file = 'miniprogram/utils/community-api.js', options = {}) {
+  const loggedIn = options.loggedIn !== false;
   const calls = [];
   const cleared = { count: 0 };
+  const toasts = [];
+  const routes = [];
   const auth = {
-    isLoggedIn: () => true,
-    getSession: () => ({ accessToken: 'synthetic-token', audience: 'user', expiresAt: '2099-01-01T00:00:00.000Z', executionMode: 'stub' }),
+    isLoggedIn: () => loggedIn,
+    getSession: () => loggedIn ? { accessToken: 'synthetic-token', audience: 'user', expiresAt: '2099-01-01T00:00:00.000Z', executionMode: 'stub' } : null,
     sessionEpoch: () => '7:3',
     networkEnabled: () => true,
     clearSession: () => { cleared.count += 1 },
@@ -69,17 +80,29 @@ function load(respond) {
     request(options) {
       calls.push(options);
       const result = respond(options, calls.length);
+      if (result === DEFER) return;
       if (result && result.fail) { options.fail({ errMsg: 'synthetic network failure' }); return }
       options.success(result);
     },
+    // 页面级用例：只记录，不外发（适配层本身不弹提示）。
+    showToast(options) { toasts.push(options); },
   };
   const box = { exports: {} };
-  vm.runInNewContext(readFileSync(resolve(root, 'miniprogram/utils/community-api.js'), 'utf8'), {
+  // 适配层的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
+  // `miniprogram/utils/community-api.js:11` `require('./auth')`、`:12` `require('../config/runtime')`。
+  // 改前是 `(id) => (id === './auth' ? auth : { apiBaseUrl: … })` 的 else 兜底 —— 适配层将来 require
+  // 任何第三个模块（例如某个新 `./util`），都会被**静默喂成 runtime 替身**，用例仍绿、看着在测真实适配层。
+  // 未登记 ⇒ 显式失败并带依赖名（沿用仓库既有口径）。已登记项取值与改前逐字相同。
+  const dependencies = new Map([
+    ['./auth', auth],
+    ['../config/runtime', { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }],
+  ]);
+  vm.runInNewContext(options.source ?? readFileSync(resolve(root, file), 'utf8'), {
     module: box,
     wx,
-    require: (id) => (id === './auth' ? auth : { apiBaseUrl: 'http://127.0.0.1:4318/api/v1' }),
+    require: (id) => { if (!dependencies.has(id)) throw Error('Unexpected page dependency ' + id); return dependencies.get(id) },
   });
-  return { api: box.exports, calls, cleared };
+  return { api: box.exports, calls, cleared, toasts, routes, wx };
 }
 
 /** 跨 vm realm 的形状比较：对象的原型来自另一个 realm，deepStrictEqual 会因此失败。 */
@@ -224,6 +247,34 @@ test('错误封套：契约错误码与规则层原因码如实透传；未通�
   assert.equal((await rejects(malformed.api.getPost(POST_ID))).code, 'INVALID_RESPONSE');
 });
 
+test('文案：422 INPUT_UNCERTAIN（审核隔离/未结论）与 503 PROVIDER_UNAVAILABLE 必须明确区分', async () => {
+  // 契约实读（改本用例前先读这几行）：
+  //   - 422 的允许错误码含 INPUT_UNCERTAIN：packages/contracts/states.json:137-141、services/api/src/contract.ts:22；
+  //   - 社区域语义 = 审核域「隔离/未结论」（services/api/src/community/service.ts:389-396），
+  //     与 400 INVALID_REQUEST 的「明确驳回」刻意分开（service.ts:373-381、:383-388 注释）；
+  //   - 503 的允许错误码是 PROVIDER_UNAVAILABLE（states.json:149-150），语义 = 社区整域未接线真实存储；
+  //   - `Retry-After` 只随 409/429/503 下发（packages/contracts/openapi.json:16733-16740）⇒ 422 不是"稍后再试"型。
+  const isolated = load(() => ({
+    statusCode: 422,
+    data: errorEnvelope('INPUT_UNCERTAIN', [{ field: 'reason_codes', code: 'NOT_SCREENED' }]),
+  }));
+  const isolatedError = await rejects(isolated.api.createPost({ title: 't', body: 'b', media_ids: [] }));
+  assert.equal(isolatedError.code, 'INPUT_UNCERTAIN', '错误码如实透传，不得被改写成别的码');
+  assert.deepEqual(plain(isolated.api.reasonCodes(isolatedError)), ['NOT_SCREENED'], '契约 details 的原因码保留（供页面按需展示）');
+  const isolatedText = isolated.api.message(isolatedError);
+  assert.match(isolatedText, /审核|筛查|复核/, '422 必须收口到审核类提示');
+  assert.match(isolatedText, /(不会公开|不会发布|不能发布|不得发布|暂不能发布)/, '必须如实说明本条不会被公开');
+  assert.doesNotMatch(isolatedText, /暂不可用/, '422 不得冒充"服务暂不可用"（那是 503 的口径）');
+  assert.doesNotMatch(isolatedText, /请(稍后)?重试|稍后再试|再试一次|重新提交/, '422 不得给出"重试即可"式暗示：重试注定同样结果');
+
+  // 503 文案保持既有口径（见上一个用例的 /暂不可用/ 断言），且与 422 不是同一句。
+  const down = load(() => ({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }));
+  const downError = await rejects(down.api.listPosts({}));
+  assert.equal(downError.code, 'PROVIDER_UNAVAILABLE');
+  assert.match(down.api.message(downError), /暂不可用/, '503 仍为"服务暂不可用"');
+  assert.notEqual(isolatedText, down.api.message(downError), '422 与 503 不得共用同一句文案');
+});
+
 test('会话：401/403 清本地会话并报 SESSION_REQUIRED；网络失败按 SESSION_CHANGED 折叠', async () => {
   const unauthorized = load(() => ({ statusCode: 401, data: errorEnvelope('SESSION_REQUIRED') }));
   const error = await rejects(unauthorized.api.listPosts({}));
@@ -249,4 +300,327 @@ test('入参预检：非法 uuid / 非闭集举报原因 / 超长正文在本地
   const created = await h.api.createPost({ title: 't', body: 'b', media_ids: [] });
   assert.equal(created.post.id, POST_ID);
   assert.equal(h.calls.length, 1, '只有 createPost 真正发出（其余在本地被拒）');
+});
+
+// ---------------------------------------------------------------------------
+// GY-I17（#17）消息读面：契约**既有 3 条 operation** 的客户端消费回归（与社区同口径：
+// 封套/实体形状/闭集/头部逐项核对，不符即 INVALID_RESPONSE；不新增契约、不发明字段）。
+//   - `Message` 的键**恰为 7 项**，契约里没有 title/body/actor ⇒ 适配层不得靠猜补字段；
+//   - 未读数是**派生量**：适配层只转发服务端每次现算的值，本地不维护计数器；
+//   - real 未接线 ⇒ 503 `PROVIDER_UNAVAILABLE` 如实上报，**不得**被当成"空列表/暂无消息"。
+// ---------------------------------------------------------------------------
+const MESSAGE_ID = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
+const loadMessages = (respond, options) => load(respond, 'miniprogram/utils/messages-api.js', options);
+function msg(over = {}) {
+  return {
+    id: MESSAGE_ID, revision: 1, type: 'moderation', target_ref: { type: 'post', id: 'post-1', revision: 2 },
+    reference_state: 'unavailable', read_at: null, created_at: '2026-10-16T04:00:00.000Z', ...over,
+  };
+}
+
+test('消息：3 条契约 operation 的方法/路径/头部逐项正确（读路径无幂等键；写路径带幂等键与强 ETag）', async () => {
+  const h = loadMessages((options) => {
+    if (options.url.includes('/unread-count')) return { statusCode: 200, data: envelope({ count: 2 }) };
+    if (options.method === 'PUT') return { statusCode: 200, data: envelope(msg({ revision: 2, read_at: '2026-10-16T05:00:00.000Z' })) };
+    return { statusCode: 200, data: envelope({ items: [msg()], next_cursor: 'cursor-1' }) };
+  });
+  const page = await h.api.listMessages({ cursor: 'c1', limit: 20 });
+  assert.equal(h.calls[0].method, 'GET');
+  assert.equal(h.calls[0].url, 'http://127.0.0.1:4318/api/v1/messages?cursor=c1&limit=20');
+  assert.equal(h.calls[0].header.authorization, 'Bearer synthetic-token');
+  assert.equal(h.calls[0].header['Idempotency-Key'], undefined, '读路径不带幂等键');
+  assert.equal(page.items.length, 1);
+  assert.equal(page.nextCursor, 'cursor-1');
+  assert.equal(page.mode, 'stub');
+  assert.match(h.api.modeNote('stub'), /替身/);
+
+  const unread = await h.api.getUnreadCount();
+  assert.equal(h.calls[1].method, 'GET');
+  assert.equal(h.calls[1].url, 'http://127.0.0.1:4318/api/v1/messages/unread-count', '未读数路径无查询参数');
+  assert.equal(h.calls[1].header['Idempotency-Key'], undefined, '读路径不带幂等键');
+  assert.equal(unread.count, 2);
+
+  const marked = await h.api.markMessageRead(MESSAGE_ID, 1);
+  const call = h.calls[2];
+  assert.equal(call.method, 'PUT');
+  assert.equal(call.url, 'http://127.0.0.1:4318/api/v1/messages/' + MESSAGE_ID + '/read');
+  assert.equal(call.header['If-Match'], '"1"', 'If-Match 必须是目标当前强 ETag');
+  assert.match(call.header['Idempotency-Key'], /^gyc-/);
+  assert.ok(call.header['Idempotency-Key'].length >= 8 && call.header['Idempotency-Key'].length <= 128);
+  assert.equal(call.data, undefined, '契约 markMessageRead 没有请求体');
+  assert.equal(marked.message.read_at, '2026-10-16T05:00:00.000Z');
+  assert.equal(marked.message.revision, 2);
+});
+
+test('消息：Message 键集恰 7 项／闭集／时间戳不符即 INVALID_RESPONSE（缺键、多键、闭集外）', async () => {
+  const cases = [
+    ['契约外字段（title）——契约 Message 没有 title/body/actor', msg({ title: '审核通过' })],
+    ['缺 read_at', (() => { const m = msg(); delete m.read_at; return m; })()],
+    ['type 不在闭集', msg({ type: 'promo' })],
+    ['reference_state 不在闭集', msg({ reference_state: 'maybe' })],
+    ['id 非 uuid', msg({ id: 'not-a-uuid' })],
+    ['revision 非正整数', msg({ revision: 0 })],
+    ['created_at 非法时间戳', msg({ created_at: '2026-10-16 04:00' })],
+    ['read_at 非 null 且非时间戳', msg({ read_at: 'now' })],
+    ['target_ref 缺 revision', msg({ target_ref: { type: 'post', id: 'post-1' } })],
+    ['target_ref.type 不在 16 项闭集', msg({ target_ref: { type: 'poster', id: 'post-1', revision: 1 } })],
+    ['无目标却声称 target 可用（服务端 fail-closed 不变式）', msg({ target_ref: null, reference_state: 'available' })],
+  ];
+  for (const [label, item] of cases) {
+    const h = loadMessages(() => ({ statusCode: 200, data: envelope({ items: [item], next_cursor: null }) }));
+    assert.equal((await rejects(h.api.listMessages({}))).code, 'INVALID_RESPONSE', label);
+  }
+  // 契约内的形状（无目标 + unavailable；已读 + 时间戳）必须被接受。
+  const ok = loadMessages(() => ({
+    statusCode: 200,
+    data: envelope({ items: [msg({ target_ref: null, read_at: '2026-10-16T06:00:00.000Z', type: 'system' })], next_cursor: null }),
+  }));
+  const page = await ok.api.listMessages({});
+  assert.equal(page.items[0].target_ref, null);
+  assert.equal(page.items[0].reference_state, 'unavailable');
+  // 同一页里重复 id 不得被静默接受（游标分页去重的契约纪律，与社区同口径）。
+  const dup = loadMessages(() => ({ statusCode: 200, data: envelope({ items: [msg(), msg()], next_cursor: null }) }));
+  assert.equal((await rejects(dup.api.listMessages({}))).code, 'INVALID_RESPONSE');
+});
+
+test('消息：未读数是派生量 ⇒ 只转发服务端值（本地不递减），角标文案 0 不显示、>99 显示 99+', async () => {
+  const h = loadMessages((options) => options.url.includes('/unread-count')
+    ? { statusCode: 200, data: envelope({ count: 5 }) }
+    : { statusCode: 200, data: envelope(msg({ revision: 2, read_at: '2026-10-16T05:00:00.000Z' })) });
+  assert.equal((await h.api.getUnreadCount()).count, 5);
+  await h.api.markMessageRead(MESSAGE_ID, 1);
+  // 标记已读不会在客户端"减一"：仍以服务端下一次现算为准（这里替身恒返回 5）。
+  assert.equal((await h.api.getUnreadCount()).count, 5, '客户端不得维护本地未读计数器');
+  assert.equal(h.calls.filter((call) => call.url.includes('/unread-count')).length, 2, '每次都重新读取服务端派生值');
+
+  // count 形状不符即 INVALID_RESPONSE（不把 1.5/-1/"x" 当未读数）。
+  for (const count of [1.5, -1, '2', null]) {
+    const bad = loadMessages(() => ({ statusCode: 200, data: envelope({ count }) }));
+    assert.equal((await rejects(bad.api.getUnreadCount())).code, 'INVALID_RESPONSE', String(count));
+  }
+  // 角标文案：0 不显示数字；>99 折叠为 99+（口径的唯一实现处）。
+  assert.equal(h.api.unreadText(0), '');
+  assert.equal(h.api.unreadText(1), '1');
+  assert.equal(h.api.unreadText(99), '99');
+  assert.equal(h.api.unreadText(100), '99+');
+  assert.equal(h.api.unreadText(150), '99+');
+});
+
+test('消息：real 未接线 503 如实上报（绝不折叠成空列表），401/403 清会话，网络失败按 NETWORK_UNCERTAIN', async () => {
+  const down = loadMessages(() => ({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }));
+  const listError = await rejects(down.api.listMessages({}));
+  assert.equal(listError.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(down.api.unwired(listError), true, 'real 未接线必须可被页面识别为「服务未接线」');
+  assert.match(down.api.stateTitle(listError), /未接线/);
+  assert.match(down.api.message(listError), /未接线/);
+  assert.doesNotMatch(down.api.message(listError), /暂无消息/, '未接线不得被说成「暂无消息」');
+  assert.equal((await rejects(down.api.getUnreadCount())).code, 'PROVIDER_UNAVAILABLE');
+
+  const unauthorized = loadMessages(() => ({ statusCode: 401, data: errorEnvelope('SESSION_REQUIRED') }));
+  assert.equal((await rejects(unauthorized.api.listMessages({}))).code, 'SESSION_REQUIRED');
+  assert.equal(unauthorized.cleared.count, 1, '401 必须清理本地会话，避免缓存被当成登录态');
+  const forbidden = loadMessages(() => ({ statusCode: 403, data: errorEnvelope('SCOPE_DENIED') }));
+  assert.equal((await rejects(forbidden.api.getUnreadCount())).code, 'SESSION_REQUIRED');
+  assert.equal(forbidden.cleared.count, 1);
+  assert.match(forbidden.api.message({ code: 'SCOPE_DENIED' }), /无权/, 'SCOPE_DENIED 文案沿用既有口径');
+
+  const offline = loadMessages(() => ({ fail: true }));
+  assert.equal((await rejects(offline.api.listMessages({}))).code, 'NETWORK_UNCERTAIN');
+  assert.match(offline.api.message({ code: 'NETWORK_UNCERTAIN' }), /网络/);
+
+  const malformed = loadMessages(() => ({ statusCode: 500, data: { unexpected: true } }));
+  assert.equal((await rejects(malformed.api.listMessages({}))).code, 'INVALID_RESPONSE');
+
+  // 未登录（无绑定）⇒ SESSION_REQUIRED 且**一次请求都不发**（门禁拦截口径）。
+  const guest = loadMessages(() => ({ statusCode: 200, data: envelope({ items: [], next_cursor: null }) }), { loggedIn: false });
+  assert.equal((await rejects(guest.api.listMessages({}))).code, 'SESSION_REQUIRED');
+  assert.equal(guest.calls.length, 0, '未登录不得发出任何消息请求');
+  assert.equal((await rejects(guest.api.getUnreadCount())).code, 'SESSION_REQUIRED');
+  assert.equal(guest.calls.length, 0);
+});
+
+test('消息：入参预检（非法 uuid / revision）在本地即拒绝，不发请求', async () => {
+  const h = loadMessages(() => ({ statusCode: 200, data: envelope(msg()) }));
+  assert.equal((await rejects(h.api.markMessageRead('x', 1))).code, 'INVALID_INPUT');
+  assert.equal((await rejects(h.api.markMessageRead(MESSAGE_ID, 0))).code, 'INVALID_INPUT');
+  assert.equal((await rejects(h.api.markMessageRead(MESSAGE_ID, 1.5))).code, 'INVALID_INPUT');
+  assert.equal(h.calls.length, 0, '本地拒绝不得发出任何请求');
+});
+
+// ---------------------------------------------------------------------------
+// 切片 B2-1（Refs #15, Refs #14）：投稿页不得无条件宣称"已通过先行审核"。
+//
+// 断点（侦察实测）：`communitycreate.js` 的成功分支此前**无条件**
+// `wx.showToast({ title: '已发布并通过先行审核', icon: 'success' })`；而服务端返回的
+// `Post.audit_state` 可能是 `pending`/`quarantined`/`rejected`、`visibility` 也可能不是
+// `published` —— 那句"已通过"是服务端没说过的话。
+//
+// 口径来源＝**既有**的正确实现，不另立第二套：
+//   - 详情页 `communitydetail.js:105-108`：`publicLabel` = `published ∧ approved` ?
+//     '已通过先行审核' : '未公开／待审'；`stateLabel` = hidden ? '已下架（仅本人可见）' :
+//     (`published ∧ approved` ? '' : '待审／未公开')；
+//   - 列表页 `community.js:130-133`：`stateLabel` 同判据、同措辞。
+// 因此这里在同一个 vm 里装载**真实的**三页，用**同一份**服务端返回做对照：投稿页的提示必须与
+// 详情页／列表页的作者侧标签（`stateLabel`）逐字一致，只有真正通过时才允许出现"已通过"。
+// ---------------------------------------------------------------------------
+const dataCache = new Map();
+/** 真实数据目录（`miniprogram/data/*.js` 只做 `module.exports`，无 wx 依赖）。 */
+function dataModule(name) {
+  if (!dataCache.has(name)) {
+    const box = { exports: {} };
+    vm.runInNewContext(readFileSync(resolve(root, `miniprogram/data/${name}.js`), 'utf8'), { module: box });
+    dataCache.set(name, box.exports);
+  }
+  return dataCache.get(name);
+}
+
+/**
+ * 装载**真实页面**（投稿页／详情页／列表页）：接到同一份真实适配层与同一份合成 `wx`。
+ * 门禁/字体/导航用最小替身：本用例只驱动提交流程本身，受保护页门禁另有单列用例覆盖。
+ */
+function loadPage(h, name) {
+  const stubs = {
+    '../../utils/community-api': h.api,
+    '../../utils/auth': { requireLogin() {} },
+    '../../utils/page-gate': { start() {}, cancel() {} },
+    '../../utils/font-scale': { DEFAULT_FONT_SCALE: 1, applyFontScale() {}, currentFontScale() { return 1 } },
+    '../../utils/navigation': {
+      openTarget(url, resume, done) { h.routes.push({ url: url, resume: resume }); if (done) done(); },
+    },
+    '../../data/crops': dataModule('crops'),
+    '../../data/regions': dataModule('regions'),
+  };
+  let definition = null;
+  vm.runInNewContext(readFileSync(resolve(root, `miniprogram/pages/${name}/${name}.js`), 'utf8'), {
+    Page: (value) => { definition = value; },
+    wx: h.wx,
+    require: (id) => {
+      if (!Object.prototype.hasOwnProperty.call(stubs, id)) throw new Error('未预期的依赖：' + id);
+      return stubs[id];
+    },
+  });
+  assert.ok(definition && typeof definition === 'object', `${name} 未注册 Page`);
+  const page = Object.assign({}, definition);
+  page.data = Object.assign({}, definition.data);
+  page.setData = function (patch) { Object.assign(this.data, patch); };
+  return page;
+}
+
+/** 发起一次投稿提交（替身按 `DEFER` 不代替用例回答）：先钉住"服务端还没回话"的中间态。 */
+function submit(h) {
+  const page = loadPage(h, 'communitycreate');
+  page.setData({ title: '稗草防除的一次记录', body: '按标签说明选择登记药剂。' });
+  page.onSubmit();
+  assert.equal(h.calls.length, 1, '提交必须真的发出请求（不得本地乐观成功）');
+  const request = h.calls[0];
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'http://127.0.0.1:4318/api/v1/posts');
+  assert.ok(request.header['Idempotency-Key'].length >= 8, '写路径必须带幂等键');
+  assert.equal(request.header['If-Match'], undefined, '创建不需要 If-Match');
+  assert.deepEqual(plain(request.data), { title: '稗草防除的一次记录', body: '按标签说明选择登记药剂。', media_ids: [] });
+  assert.deepEqual(h.toasts, [], '服务端回话之前不得预告任何结果');
+  assert.deepEqual(h.routes, [], '服务端回话之前不得跳详情页');
+  assert.equal(page.data.submitting, true);
+  return page;
+}
+
+function flush() { return new Promise((resolve) => setImmediate(resolve)); }
+
+/** 四种审核结论＋两种非公开组合：服务端返回什么，页面就说什么。 */
+const AUDIT_CASES = [
+  ['通过（published ∧ approved）', 'published', 'approved', '已通过先行审核', 'success'],
+  ['待审（审核未结论）', 'published', 'pending', '待审／未公开', 'none'],
+  ['隔离（quarantined）', 'published', 'quarantined', '待审／未公开', 'none'],
+  ['拒绝（rejected）', 'published', 'rejected', '待审／未公开', 'none'],
+  ['未公开（private ∧ approved）', 'private', 'approved', '待审／未公开', 'none'],
+  ['已下架（hidden）', 'hidden', 'approved', '已下架（仅本人可见）', 'none'],
+];
+for (const [label, visibility, audit_state, expectedTitle, expectedIcon] of AUDIT_CASES) {
+  test(`投稿页 B2-1：${label} ⇒ 按服务端返回如实提示，且与详情页／列表页标注逐字一致`, async () => {
+    const h = load(() => DEFER);
+    const page = submit(h);
+    h.calls[0].success({ statusCode: 201, data: envelope(post({ visibility, audit_state })) });
+    await flush();
+
+    assert.equal(h.toasts.length, 1, '一次提交只应有一个结果提示');
+    assert.equal(h.toasts[0].title, expectedTitle);
+    assert.equal(h.toasts[0].icon, expectedIcon);
+    assert.equal(page.data.submitting, false);
+    assert.equal(page.data.errorText, '');
+    assert.deepEqual(h.routes, [{ url: '/pages/communitydetail/communitydetail?id=' + POST_ID, resume: true }],
+      '受理后仍进详情页（成功路径行为不回归）');
+
+    // 同一份服务端返回，三个页面必须说同一件事（对照**既有**实现，而不是另写一套期望文案）。
+    const item = post({ visibility, audit_state });
+    const detail = loadPage(h, 'communitydetail')._decoratePost(item);
+    const list = loadPage(h, 'community')._decorate([item])[0];
+    assert.equal(detail.stateLabel, list.stateLabel, '详情页与列表页本就必须同口径');
+    if (visibility === 'published' && audit_state === 'approved') {
+      assert.equal(detail.publicLabel, '已通过先行审核');
+      assert.equal(detail.stateLabel, '', '真正通过时详情页不显示失效标签');
+      assert.equal(h.toasts[0].title, detail.publicLabel, '只有真正通过才可提示通过，且逐字等于详情页的公开标签');
+    } else {
+      assert.equal(h.toasts[0].title, detail.stateLabel, '与详情页作者侧标签逐字一致');
+      assert.equal(h.toasts[0].title, list.stateLabel, '与列表页作者侧标签逐字一致');
+      assert.doesNotMatch(h.toasts[0].title, /已通过/, '未通过审核时不得出现"已通过"');
+      assert.doesNotMatch(JSON.stringify(page.data), /已通过/, '页面整体（含 errorText）不得出现"已通过"');
+    }
+  });
+}
+
+/** 失败路径：错误码路径仍只走 `errorText`（页面不得改成"已通过"式成功提示）。 */
+const FAILURE_CASES = [
+  ['422 审核隔离／未结论', { statusCode: 422, data: errorEnvelope('INPUT_UNCERTAIN', [{ field: 'reason_codes', code: 'NOT_SCREENED' }]) },
+    { code: 'INPUT_UNCERTAIN' }],
+  ['400 明确驳回', { statusCode: 400, data: errorEnvelope('INVALID_REQUEST', [{ field: 'reason_codes', code: 'DANGEROUS_MIX' }]) },
+    { code: 'INVALID_REQUEST', details: ['DANGEROUS_MIX'] }],
+  ['409 目标不可用', { statusCode: 409, data: errorEnvelope('OBJECT_UNAVAILABLE') }, { code: 'OBJECT_UNAVAILABLE' }],
+  ['503 未接线真实存储', { statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }, { code: 'PROVIDER_UNAVAILABLE' }],
+];
+for (const [label, reply, error] of FAILURE_CASES) {
+  test(`投稿页 B2-1 失败路径不回归：${label} ⇒ 只展示适配层的如实文案，不弹任何成功提示`, async () => {
+    const h = load(() => DEFER);
+    const page = submit(h);
+    h.calls[0].success(reply);
+    await flush();
+    assert.deepEqual(h.toasts, [], '未被受理时不得弹任何提示');
+    assert.deepEqual(h.routes, [], '未被受理时不得跳详情页');
+    assert.equal(page.data.submitting, false);
+    assert.equal(page.data.errorText, h.api.message(error), '页面展示的就是适配层的如实文案');
+    assert.doesNotMatch(page.data.errorText, /已通过/);
+  });
+}
+test('投稿页 B2-1 失败路径不回归：网络未能确认时同样不弹成功提示', async () => {
+  const h = load(() => DEFER);
+  const page = submit(h);
+  h.calls[0].fail({ errMsg: 'synthetic network failure' });
+  await flush();
+  assert.deepEqual(h.toasts, []);
+  assert.deepEqual(h.routes, []);
+  assert.equal(page.data.submitting, false);
+  assert.equal(page.data.errorText, h.api.message({ code: 'NETWORK_UNCERTAIN' }));
+  assert.doesNotMatch(page.data.errorText, /已通过/);
+});
+// 负控制：登记的说明符是**完整且唯一**的。把真实适配层源码的两条 require 换成相近写法后重跑
+// **本站点自己的**装载器（`load()` 第三参 `options.source`）⇒ 必须显式失败并带原名，不得近似命中。
+// 改前是 `(id) => (id === './auth' ? auth : { apiBaseUrl: … })` 的 else 兜底：除 `'./auth'` 外的**任何**
+// 说明符（含适配层将来新增的第三个依赖）都会被**静默喂成 runtime 替身** —— "看着在测真实适配层，
+// 其实依赖拿了替身"，用例照样绿。
+test('适配层未登记说明符：显式失败并带名，零近似命中', () => {
+  const apiSource = readFileSync(resolve(root, 'miniprogram/utils/community-api.js'), 'utf8');
+  const respond = () => ({ statusCode: 200, data: envelope({ items: [], next_cursor: null }) });
+  const withSpec = (from, spec) => apiSource.replace(from, "require('" + spec + "')");
+  assert.ok(apiSource.includes("const auth = require('./auth')") && apiSource.includes("require('../config/runtime')"),
+    '真实源码的 require 说明符变了，登记表须同步');
+  assert.doesNotThrow(() => load(respond, undefined, { source: apiSource }), '已登记项必须照常装载');
+  for (const spec of ['./auth.js', './Auth', './utils/auth', './auth/', '../utils/auth']) {
+    assert.throws(() => load(respond, undefined, { source: withSpec("require('./auth')", spec) }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
+  for (const spec of ['../config/runtime.js', './runtime', '../../config/runtime']) {
+    assert.throws(() => load(respond, undefined, { source: withSpec("require('../config/runtime')", spec) }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
+  }
 });

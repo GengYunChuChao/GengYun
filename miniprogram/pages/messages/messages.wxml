@@ -18,19 +18,65 @@
   <block wx:else>
     <view class="section-head">
       <view class="section-head__title">互动通知</view>
-      <view class="pill pill--gray">暂无消息</view>
+      <view class="pill pill--gray">{{unreadNote}}</view>
     </view>
 
+    <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
+
+    <!-- 失败与空态必须可分辨：服务端 real 模式未接线真实消息存储时给「服务未接线」，不写「暂无消息」。 -->
     <state-view
+      wx:elif="{{status === 'error'}}"
+      status="error"
+      title="{{stateTitle}}"
+      desc="{{stateDesc}}"
+    ></state-view>
+
+    <state-view
+      wx:elif="{{status === 'empty'}}"
       status="empty"
       title="暂无消息"
-      desc="消息中心尚未接入，不会生成任何模拟通知。后续开放后，真实互动与系统提醒会显示在这里。"
+      desc="服务端当前没有你的消息（这是「查到了空列表」，不是「服务未接线」）。审核结果产生后会出现这里。"
     ></state-view>
+
+    <block wx:else>
+      <view class="message-list">
+        <view class="message-row" wx:for="{{items}}" wx:key="id">
+          <view class="message-icon"><view class="gy-icon gy-icon--{{item.icon}}"></view></view>
+          <view class="message-copy">
+            <view class="message-copy__title">{{item.label}}<view wx:if="{{item.unread}}" class="unread-dot"></view></view>
+            <view class="message-copy__text">{{item.referenceNote}}</view>
+            <view class="message-copy__time">{{item.time}}{{item.unread ? ' · 未读' : ' · 已读'}}</view>
+            <view wx:if="{{item.unread}}" class="row-actions">
+              <button
+                class="btn btn--secondary"
+                data-id="{{item.id}}"
+                data-revision="{{item.revision}}"
+                bindtap="onMarkRead"
+                disabled="{{markingId === item.id}}"
+              >{{markingId === item.id ? '正在标记…' : '标记已读'}}</button>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="row-actions">
+        <gy-ui-button
+          wx:if="{{nextCursor}}"
+          label="{{loadingMore ? '正在加载…' : '加载更多'}}"
+          variant="ghost"
+          loading="{{loadingMore}}"
+          bind:tap="onLoadMore"
+        ></gy-ui-button>
+        <view wx:else class="demo-caption">已经到底了。</view>
+      </view>
+
+      <view class="demo-caption">{{modeNote}}</view>
+    </block>
 
     <view class="section">
       <view class="section-head">
         <view class="section-head__title">首版消息类型</view>
-        <view class="section-head__meta">尚未接入</view>
+        <view class="section-head__meta">当前仅「内容审核结果」有生产路径</view>
       </view>
       <view class="panel">
         <view class="info-list">
@@ -49,7 +95,7 @@
             </view>
           </view>
           <view class="info-row">
-            <view class="tiny-art"><view class="gy-icon gy-icon--bell"></view></view>
+            <view class="tiny-art"><view class="gy-icon gy-icon--tab-bell"></view></view>
             <view class="info-row__copy">
               <text class="info-row__title">系统通知</text>
               <text class="info-row__desc">资料下架、来源失效等重要变更</text>
@@ -57,7 +103,7 @@
           </view>
         </view>
       </view>
-      <view class="demo-caption">消息中心为后续任务交付；本页不展示任何模拟通知。</view>
+      <view class="demo-caption">上面的列表只呈现服务端已产生的消息：当前服务端只为「内容审核结果」写入了消息，「评论与点赞」「系统通知」尚无可产生消息的服务端路径（属另一片，本页不假装齐全），本页不展示任何模拟通知。</view>
     </view>
   </block>
 </view>

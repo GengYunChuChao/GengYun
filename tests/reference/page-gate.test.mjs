@@ -48,7 +48,7 @@ function fakeReference() {
 }
 
 /** 构造最小微信运行时；verified 控制 async 门禁结果，loggedInDirect 控制同步兜底。 */
-function loadPage(rel, { verified, loggedInDirect }) {
+function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pagePath('utils/page-gate.js'), 'utf8') }) {
   const calls = { setData: [], reLaunch: [] };
   const page = { data: {}, setData(patch) { calls.setData.push(patch); Object.assign(page.data, patch); } };
   const auth = {
@@ -65,8 +65,16 @@ function loadPage(rel, { verified, loggedInDirect }) {
   };
   const fontModule = { exports: {} };
   vm.runInNewContext(readFileSync(pagePath('utils/font-scale.js'), 'utf8'), { module: fontModule, getApp: () => ({ globalData: { fontScale: 1.3 } }) });
+  // 门禁模块的**完整说明符登记表**（登记项逐字取自被加载源码里的 require）：
+  // `miniprogram/utils/page-gate.js:3` 只有 `require('./auth')` 一条。改前是 `require: () => auth`
+  // 的 blanket —— page-gate.js 将来 require 别的模块，也会被**静默喂成 auth 替身**，用例仍绿。
+  // 未登记 ⇒ 显式失败并带依赖名（沿用仓库既有口径）。已登记项取值与改前逐字相同。
+  const gateDependencies = new Map([['./auth', auth]]);
   const gateModule = { exports: {} };
-  vm.runInNewContext(readFileSync(pagePath('utils/page-gate.js'), 'utf8'), { module: gateModule, require: () => auth });
+  vm.runInNewContext(gateSource, {
+    module: gateModule,
+    require: (id) => { if (!gateDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return gateDependencies.get(id) },
+  });
   // PR #82 阻塞 C：referencedetail 现在经 utils/profile-api 读取**已确认档案**。
   // 这里给出同步替身（默认成功且档案已确认），使既有门禁断言继续有效；
   // 档案未确认/读取失败的真实路径由 page-dosecard-consumption.test.mjs 覆盖。
@@ -78,6 +86,17 @@ function loadPage(rel, { verified, loggedInDirect }) {
     regions: () => Promise.resolve([]),
     save: () => Promise.reject(new Error('not used')),
   };
+  // 页面依赖按**完整说明符**登记（逐字取自 PAGES 四个页面源码里的 require），不做**子串**匹配：
+  // 改前是 `id.indexOf('reference') !== -1` 一类（本仓最宽的匹配形态），连 `require('../../data/reference')`、
+  // `require('../../data/authorization')` 都会被静默喂成已登记替身/空壳 —— 看着在测真页面，其实测了替身。
+  // 未登记（将来新增依赖）⇒ 显式失败并带依赖名。登记表随每次 loadPage() 新建，已登记项行为逐字不变。
+  const pageDependencies = new Map([
+    ['../../utils/font-scale', fontModule.exports],
+    ['../../utils/page-gate', gateModule.exports],
+    ['../../utils/auth', auth],
+    ['../../utils/profile-api', profileApi],
+    ['../../utils/reference', fakeReference()],
+  ]);
   const sandbox = {
     Page(def) { Object.assign(page, def); },
     wx: {
@@ -88,7 +107,7 @@ function loadPage(rel, { verified, loggedInDirect }) {
       setClipboardData() {},
     },
     console,
-    require: (id) => (id.indexOf('font-scale') !== -1 ? fontModule.exports : id.indexOf('page-gate') !== -1 ? gateModule.exports : id.indexOf('auth') !== -1 ? auth : id.indexOf('profile-api') !== -1 ? profileApi : id.indexOf('reference') !== -1 ? fakeReference() : {}),
+    require: (id) => { if (!pageDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return pageDependencies.get(id); },
   };
   vm.runInNewContext(readFileSync(pagePath(rel), 'utf8'), sandbox);
   return { page, calls };
@@ -231,5 +250,21 @@ test('F3：资料页随全局字号放大，门禁未通过时仍保持空数据
     page.onShow();
     assert.equal(page.data.fontScale, 1.3);
     assertEmpty(page, rel, listKey);
+  }
+});
+// 负控制：登记的说明符是**完整且唯一**的。把真实 page-gate 源码的 `require('./auth')` 换成相近写法
+// （`./auth.js`／`./Auth`／`./utils/auth`／`./auth/`／`../utils/auth`）后重跑**本站点自己的**装载器
+// ⇒ 必须显式失败并带原名，不得近似命中（改前是 blanket `require: () => auth`：这些写法都会被
+// **静默喂成 auth 替身**，用例照样绿）。
+test('page-gate 未登记说明符：显式失败并带名，零近似命中', () => {
+  const gateSource = readFileSync(pagePath('utils/page-gate.js'), 'utf8');
+  const options = { verified: true, loggedInDirect: true };
+  assert.ok(gateSource.includes("require('./auth')"), '真实源码的 require 说明符变了，登记表须同步');
+  assert.doesNotThrow(() => loadPage('pages/reference/reference.js', { ...options, gateSource }), '已登记项必须照常装载');
+  for (const spec of ['./auth.js', './Auth', './utils/auth', './auth/', '../utils/auth']) {
+    assert.throws(
+      () => loadPage('pages/reference/reference.js', { ...options, gateSource: gateSource.replace("require('./auth')", "require('" + spec + "')") }),
+      new RegExp('Unexpected page dependency ' + spec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'),
+      '近似说明符 ' + spec + ' 未被显式拒绝');
   }
 });

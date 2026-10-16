@@ -20,3 +20,11 @@
   word-break: break-word;
   font-size: calc(16px * var(--font-scale, 1));
 }
+
+/* 录音按钮（与提交按钮同一 44px 触控下限；各态文案长短不一，只补足换行与不裁切）。 */
+.voice-record {
+  min-height: var(--tap-min, 44px);
+  font-size: calc(18px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
