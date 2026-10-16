@@ -1,8 +1,12 @@
 <view class="page" style="--font-scale: {{fontScale}}">
   <view class="title">识草查药 · 科普资料查询</view>
 
-  <!-- 替身边界说明：未联网时给出的是本地资料读数，不是在线权威查询结果。 -->
+  <!-- 替身边界说明 + **可判定数据来源标记**：服务端 /herbicides 读数与随包离线副本必须能区分。 -->
   <view class="banner">{{modeNote}}</view>
+  <view class="catalog-version source-line" wx:if="{{dataSourceLabel}}">{{dataSourceLabel}}</view>
+  <view class="reasons" wx:if="{{queryError}}">
+    <view class="reason">{{queryError}}</view>
+  </view>
   <view class="catalog-version">目录版本：{{catalogVersion}}</view>
 
   <!-- 导航：作物 → 杂草 → 地区（除草方式由关键词/结构化条件表达） -->
@@ -43,21 +47,23 @@
   <view class="reasons" wx:if="{{simulatedExcluded}}">
     <view class="reason">· 已排除 {{simulatedExcluded}} 条模拟演示记录（非真实资料，不计入查询结果）</view>
   </view>
-  <view class="result-count" wx:if="{{total}}">共 {{total}} 条符合条件</view>
+  <view class="result-count" wx:if="{{countNote}}">{{countNote}}</view>
 
-  <!-- 列表：每条展示同一 source_version；不合并不同含量的剂型 -->
-  <view class="card item" wx:for="{{items}}" wx:key="record_id" bindtap="goDetail" data-id="{{item.record_id}}">
+  <!-- 列表：每条展示同一 source_version 与同一数据来源标记；不合并不同含量的剂型 -->
+  <view class="card item" wx:for="{{items}}" wx:key="record_id" bindtap="goDetail" data-id="{{item.record_id}}" data-source="{{item.data_source}}">
     <view class="item-head">
-      <text class="item-name">{{item.registered_name}}</text>
-      <text class="item-reg">{{item.registration_number}}</text>
+      <text class="item-name">{{item.registered_name || item.registration_number}}</text>
+      <text class="item-reg" wx:if="{{item.registered_name}}">{{item.registration_number}}</text>
     </view>
-    <view class="item-line">剂型：{{item.dosage_form}} · 毒性：{{item.toxicity}}</view>
+    <view class="item-line" wx:if="{{item.dosage_form || item.toxicity}}">剂型：{{item.dosage_form || '接口未提供'}} · 毒性：{{item.toxicity || '接口未提供'}}</view>
     <view class="item-line">有效成分：{{item.ingredients_text}}</view>
-    <view class="item-line">作物／场所：{{item.use_scene}}</view>
+    <view class="item-line" wx:if="{{item.use_scene}}">作物／场所：{{item.use_scene}}</view>
+    <view class="item-line" wx:if="{{item.risk_text}}">{{item.risk_text}}</view>
     <view class="tags">
       <text class="tag">{{item.labels.source_kind}}</text>
       <text class="tag">{{item.labels.review_status}}</text>
       <text class="tag tag-warn">{{item.labels.record_status}}</text>
+      <text class="tag tag-source" wx:if="{{item.source_marker}}">{{item.source_marker}}</text>
     </view>
     <view class="item-src">来源版本：{{item.source_version}}</view>
   </view>

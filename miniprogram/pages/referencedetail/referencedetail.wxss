@@ -2,6 +2,8 @@
 .banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: calc(16px * var(--font-scale, 1)); }
 
 .state-bar { border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; font-size: calc(16px * var(--font-scale, 1)); line-height: 1.6; }
+/* GY-I07 D1：可判定的数据来源标记（服务端接口 / 随包离线副本），常驻可见、不与正文混淆。 */
+.source-marker { color: #52665a; margin: -4rpx 0 12rpx; font-size: calc(15px * var(--font-scale, 1)); line-height: 1.6; }
 .state-unavailable { background: #FDECEA; color: #B71C1C; }
 .state-ok { background: #E8F5E9; color: #1B5E20; }
 

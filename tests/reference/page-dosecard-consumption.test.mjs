@@ -75,12 +75,23 @@ function loadPage({ verified = true, profile = { mode: 'ok', crop_id: 'crop_rice
   // 不做后缀匹配：`id.endsWith('/reference')` 一类会把 `require('../../data/reference')` 静默喂成
   // 已登记替身 —— 看着在测真页面，其实测了替身。未登记（将来新增依赖）⇒ 显式失败并带依赖名。
   // 登记表随每次 loadPage() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
+  // GY-I07 D1：referencedetail 新增 require('../../utils/knowledge-api')（服务端 `/herbicides/{id}` 消费者）。
+  // 登记**真实模块**并把 runtime 固定为关闭联网，使「UUID ⇒ 服务端 / 非 UUID ⇒ 随包」的路由判据仍由
+  // 真源码的 `validId` 决定；本文件的 id 是随包记录 id（`reference.records[0].record_id`，非 UUID）
+  // ⇒ 一律走随包路径，不产生任何网络请求，已登记项行为逐字不变。
+  const knowledgeModule = { exports: {} };
+  vm.runInNewContext(read('utils/knowledge-api.js'), { module: knowledgeModule, require: (id) => {
+    if (id === './auth') return auth;
+    if (id === '../config/runtime') return { mode: 'disabled', apiBaseUrl: '' };
+    throw Error('Unexpected dependency ' + id);
+  } });
   const pageDependencies = new Map([
     ['../../utils/page-gate', gate.exports],
     ['../../utils/font-scale', font.exports],
     ['../../utils/auth', auth],
     ['../../utils/profile-api', profileApi],
     ['../../utils/reference', reference],
+    ['../../utils/knowledge-api', knowledgeModule.exports],
   ]);
   const sandbox = {
     Page(def) { page = { ...def, data: structuredClone(def.data), setData(p) { Object.assign(this.data, p); } }; },
