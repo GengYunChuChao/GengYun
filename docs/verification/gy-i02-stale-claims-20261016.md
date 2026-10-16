@@ -23,27 +23,28 @@
 
 | 文件 | 位置（改后行号） | 过期断言 | 实测 |
 | --- | --- | --- | --- |
-| `docs/verification/gy-i01-contract-status-20261011.md` | `:241` 新增「本表后续校订」，`:237` 表内加指向 | 「媒体路由本身也未装配」 | `services/api/src/app.ts:1354` `registerMediaRoutes(app, config, guards, mediaService);`；媒体域 7 条路由全注册（`services/api/src/routes/media.ts:157/175/199/217/237/257/276`）。**「未取得」结论仍成立**：真实对象存储适配器未接线（`services/api/src/media/object-store.ts:136` `export const UNWIRED_OBJECT_STORE_REASON = '真实对象存储（S3/COS 兼容）尚未接线…'`；`:143` `export function createUnwiredObjectStore(reason = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore`；`:450` 在 `resolveMediaObjectStore`（定义于 `:447`）的 `options.executionMode === 'real'` 分支内 `if (config === null) return createUnwiredObjectStore();` ⇒ 503 fail-closed） |
+| `docs/verification/gy-i01-contract-status-20261011.md` | `:241` 新增「本表后续校订」，`:237` 表内加指向 | 「媒体路由本身也未装配」 | `services/api/src/app.ts:1354` `registerMediaRoutes(app, config, guards, mediaService);`；媒体域 7 条路由全注册（`services/api/src/routes/media.ts:157/175/199/217/237/257/276`）。**「未取得」结论仍成立**：真实对象存储适配器未接线（`services/api/src/media/object-store.ts:136-137` `export const UNWIRED_OBJECT_STORE_REASON = '真实对象存储（S3/COS 兼容）尚未接线…'`（常量声明在 `:136`、字符串值在 `:137`，跨两行）；`:143` `export function createUnwiredObjectStore(reason = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore`；`:450` 在 `resolveMediaObjectStore`（定义于 `:447`）的 `options.executionMode === 'real'` 分支内 `if (config === null) return createUnwiredObjectStore();` ⇒ 503 fail-closed） |
 | `docs/verification/gy-i06-private-media-20261014.md` | `:19`（原文转述在 `:17`） | 转述「媒体 HTTP 路由尚未接线」 | `packages/media/README.md:74` 标题已改为「媒体 HTTP 路由已接线；未接线的是**句柄消费网关**」；三处接力点 `services/api/src/{recognitions,speech,ocr}/media.ts` 文件头随之更新。**仍未接线**：句柄消费网关、真实对象存储 |
 | `docs/verification/gy-i07-detail-route-20261011.md` | `:53` | 「关联图文/用量查询整体仍未接线」 | `/knowledge/:id`、`/herbicides/:id` 均已注册（`app.ts:1298` `registerKnowledgeRoutes`）；`/api/v1/herbicides`、`/api/v1/herbicides/:id` 运行期在册 |
 | `docs/verification/gy-i07-knowledge-api-20261011.md` | `:48` | 「尚未装配的 herbicides 列表/详情…仍 404」 | 同上，herbicides 两条**已装配**；**仍成立**：`staging`、`registrations` 仍 404（4 条 `planned` operation 之内）。同文 `:44`「旧测试仍假定知识路由未装配」是**引述失败原因**的历史叙述 ⇒ 仍成立，未动 |
 | `docs/verification/gy-i09-identify-loop-20261011.md` | `:184`（本条在 `:183`） | 「**媒体 HTTP 未接线**」及其括注 | 同 gy-i01/gy-i06 行；本条其余（`real` 模式如实 fail-closed、未取得成功上传证据、本片不接线 `/media/**` 的范围决定）**均仍成立** |
 | `docs/verification/gy-i11-speech-http-20261012.md` | `:135` | 第 1 条「`getJob`／取消未装配 ⇒ 失败终态不可经 HTTP 轮询」 | 运行期存在 `GET,HEAD /api/v1/jobs/:id` 与 `POST /api/v1/jobs/:id/cancel`（注册点 `app.ts:1313` `registerJobRoutes`）；脚本内当年观测到的 `[gap] … 404` 属**历史证据**，未据此重跑或改写。第 2–6 条未复核出过期 |
-| `docs/verification/gy-i22-cross-module-security-e2e-20261027.md` | `§0 :32-37` 校订记录、`:51`／`:55` 逐条标注、`§0.1`（`:58-83`）、§7 第 5 项（`:480`） | ①「`tests/moderation/**` 无 CI 覆盖」②「专用 workflow 按名运行的 `*-pg.mjs` 计数过期」 | ① `package.json:20` `test:unit` **逐字**含 `"tests/moderation/*.test.mjs"`，且 `.github/workflows/engineering-shell.yml:46` `name: unit-tests` 在 `:58` 跑 `npm run test:unit` ⇒ **该断言不成立**（本片同 HEAD 实跑含 moderation 用例，`pass 2344 / fail 0`）。② 逐字读 `.github/workflows/`：`tests/integration/**` 34 个脚本中 **16** 个有 CI 覆盖（workflow 按名 8 个 ∪ `test:integration:http` 串的 9 个，交集 `profile-ui-http.test.mjs`），**18** 个只由作者显式跑；「通用 glob 不进 CI」仍成立 |
+| `docs/verification/gy-i22-cross-module-security-e2e-20261027.md` | `§0 :32-37` 校订记录、`:51`／`:55` 逐条标注、`§0.1`（`:58-83`）、§7 第 5 项（`:480`） | ①「`tests/moderation/**` 无 CI 覆盖」②「专用 workflow 按名运行的 `*-pg.mjs` 计数过期」 | ① `package.json:20` `test:unit` **逐字**含 `"tests/moderation/*.test.mjs"`，且 `.github/workflows/engineering-shell.yml:46` `name: unit-tests` 在 `:58` 跑 `npm run test:unit` ⇒ **该断言不成立**（本片同 HEAD 实跑含 moderation 用例，`pass 2344 / fail 0`）。② 逐字读 `.github/workflows/`：`tests/integration/**` **34** 个脚本（枚举口径＝`*.mjs` **22** ＋ `*.cjs` **12**；同目录实际 **35** 个文件，多出的 1 个是 `tests/integration/knowledge-native-pg.ps1`、不计入脚本口径；本片实测 `total=35 mjs=22 cjs=12 ps1=1`，命令见 §5）中 **16** 个有 CI 覆盖（workflow 按名 8 个 ∪ `test:integration:http` 串的 9 个，交集 `profile-ui-http.test.mjs`），**18** 个只由作者显式跑；「通用 glob 不进 CI」仍成立 |
 
 ### 1.1 本条必须点名：`docs/verification/how-to-read-ci-runs.md` 有**同源过期读数**，但**本轮禁改**
 
-该文 `:28` 逐字写作「`package.json` 里**逐个列出**的 6 个回环脚本」；而实测 `package.json:24`（基线 `3bc7451`）同一链逐字为 **9 条**脚本，末条为 `node tests/integration/account-deletion-http.mjs`（**本片同基线实跑 = 9 条脚本串、63 条 `PASS`／0 条 `FAIL`**）⇒ 该文读数比实测**少 3 条**（同源过期读数）。
+该文在**本片基线 `3bc7451`** 上 `:28` 逐字写作「`package.json` 里**逐个列出**的 6 个回环脚本」；而**同一基线 `3bc7451`** 上 `package.json:24` 的 `test:integration:http` 链逐字为 **9 条**脚本，末条为 `node tests/integration/account-deletion-http.mjs`（**本片同基线实跑 = 9 条脚本串、63 条 `PASS`／0 条 `FAIL`**）⇒ **在该基线上**该文读数比实测**少 3 条**（同源过期读数）。
+> **时点说明（2026-10-17 复核）**：该文件随后已被其它片刷新——在 `1480aab3383b16daf7a5b5088c3e21cc12c422d3` 上 `:28` 逐字写 **9** 个回环脚本（`git show 1480aab:docs/verification/how-to-read-ci-runs.md`），而**同一 SHA** 的 `package.json` 链实测为 **11** 条（`git show 1480aab:package.json` 按 ` && ` 切分；末两条 `node tests/integration/speech-http.mjs`、`node tests/integration/tts-http.mjs`）⇒ 该文件该行在 `1480aab` 上**仍比真值少 2 条**。故本页所有读数**一律以各自标注的 SHA 为准**，⛔ 不随 `upstream/main` 前进而重写。
 > **复算命令与输出**（2026-10-16 返修时实测，用于订正本行**原先误写的脚本段小计数**：原值 `8`，实测 `9`）：
 > `node -e "const a=require('./package.json').scripts['test:integration:http'].split(' && ');console.log(a.length+' 条');console.log(a[8])"` ⇒ `9 条` ＋ `node tests/integration/account-deletion-http.mjs`；
 > `npm run test:integration:http 2>&1 | Select-String -Pattern '^PASS ' | Measure-Object -Line` ⇒ `63`。
-⛔ 该文件在**本轮避让清单**内，故**未改**；此处只留可追溯记录，请下一片（或该文件归属方）按 9 条刷新。
+⛔ 该文件在**本轮避让清单**内，故**未改**；此处只留可追溯记录——该文件随后已被其它片刷新（见上「时点说明」），后续对照值以该段各自标注的 SHA 为准。
 
 ## 2. 交付 B：小程序 11 处——判据到**页面行为层**（页面是否真调该端点）
 
 判据来源：`miniprogram/utils/*-api.js` 的实际请求路径 + `miniprogram/pages/**` 的调用点 + `services/api/src/app.ts` 的注册点（**不看注释自述**）。`runtime.apiBaseUrl` 是**客户端拼接基址**（`miniprogram/config/runtime.js` 出厂 `mode:'disabled'`／`apiBaseUrl:''`；本地联调工具才写入 `http://127.0.0.1:<port>/api/v1`），所以路径字面量出现在 `utils/*-api.js` 里而非 `pages/**`。
 
-**分类小结（11 处按条目计）**：**已过期 8**（#1–#7、#11b）、**仍成立 4**（#8、#9、#10、#11）、**无法判定 0**。
+**分类小结**（两种口径并列，⛔ 勿混读）：**按主条 = 11 项**（#1–#11；#11b 是 #11 的补充行，不另计为主条）——其中 **#1–#7 共 7 项已过期**、**#8–#11 共 4 项仍成立**（7＋4＝11）；**按 §2 表行数 = 12 行**（因 **#11 跨两个文件**、按文件拆成 #11 与 #11b 两行）——**已过期 8 行**（#1–#7、#11b）、**仍成立 4 行**（#8、#9、#10、#11）、**无法判定 0 行**（8＋4＋0＝12）。两口径相差 1 ＝ #11 在两个文件上结论不同（`utils/messages-api.js` 侧**仍成立**／`pages/messages/messages.js:29-30` 侧**已过期**），故 #11 在主条口径下不并入单侧。
 > 过程留痕：#11 初判为"无法判定"（以为消息域端口装配属禁改范围、无法证实），随后按 `services/api/src/app.ts:631` + `messages/reference.ts:59` 实测**改判为"仍成立"**，并把 `utils/messages-api.js` 的运行时文案**保持原样**；只有 `pages/messages/messages.js` 的**静态**文案因"把前端待接线读成服务端待接线"改为行为陈述。
 
 **已接线（页面真的在调）**：`/auth/*`、`/me/profile`、`/catalog/*`、`/knowledge`、`/knowledge/:id`、`/public/home`、`/recognitions` + `/jobs/:id` + `/recognitions/:id/selection` + `DELETE /recognitions/:id`、`/ocr` + `/jobs/:id` + `/ocr/:id`、`/media/uploads` + `/media/uploads/:id/complete`、`/favorites`、`/history`、`/messages` + `/messages/unread-count` + `PUT /messages/:id/read`、`/speech/synthesis` + `/jobs/:id`、社区域（`utils/community-api.js`）。
@@ -58,14 +59,14 @@
 | 6 | `miniprogram/pages/identify/identify.js:171`：`文字提问 … （尚未接入）／尚未接入` → `打字提问在语音页（本页此处不发起）／去语音页` | **已过期** | 服务端 `/conversations`（问答）**已接线**：`app.ts:1384` `registerConversationRoutes(...)`，`services/api/src/routes/conversations.ts:113/124/134/146/159/172/182` 七条在册；`miniprogram` 全域**无** `/conversations` 调用（`grep -r "conversations" miniprogram` = 0 命中）⇒ 过期的是**能力不存在**这一说法，本页入口不发起属**本页范围** |
 | 7 | `miniprogram/pages/identify/identify.js:281`：toast `该入口尚未接入` → `文字提问请到语音页；本页此处不发起` | **已过期** | 同 #6；⛔ 未改分支与跳转逻辑（仍 `showToast`） |
 | 8 | `miniprogram/pages/identify/identify.js:284`／`:293`：`尚未接入真实录音`／`播放能力尚未接入` | **仍成立** | 本页 `onRecord`/`onPlay` 只切文案，不调 `utils/recorder-port.js`／`utils/audio-playback.js`（那两个仅语音页用）；真实录音／播放确未接 |
-| 9 | `miniprogram/pages/voice/voice.js:770`：`（真实对象存储未接线）` | **仍成立** | 与 `services/api/src/media/object-store.ts:143` `createUnwiredObjectStore`（原因常量 `:136`；`real` 模式默认走它，调用点 `:450`）的 fail-closed 一致；非 real 模式本就不上传 |
+| 9 | `miniprogram/pages/voice/voice.js:770`：`（真实对象存储未接线）` | **仍成立** | 与 `services/api/src/media/object-store.ts:143` `createUnwiredObjectStore`（原因常量 `:136-137`；`real` 模式默认走它，调用点 `:450`）的 fail-closed 一致；非 real 模式本就不上传 |
 | 10 | `miniprogram/utils/identify-api.js:838`／`:842`／`:845` 与 `miniprogram/pages/identify/identify.js:1028`／`:1036`：取消能力／真实 OCR 提供者／媒体端口未接线、本页只读 | **仍成立** | 无取消路由（`app.ts:1313` 的 job 注册表内无标签识别取消能力）；真实 OCR 提供者未接线；`PATCH /ocr/:id` 虽在册（`routes/ocr.ts:274`）但**客户端从不调用** ⇒ 「不提交人工核对」为真 |
 | 11 | **两个文件**（行号分属两文件，勿混读）：`miniprogram/utils/messages-api.js:22`（注释「目标可用性端口未接线」）＋同文件 `:202`／`:209-216`／`:230`（运行时文案：`服务端真实模式；消息持久存储未接线时不会返回成功。`／`消息服务未接线`／`消息服务暂不可用（服务端未接线真实消息存储）…`）；`miniprogram/pages/messages/messages.js:27`（注释「端口未接线时**不**假装可跳」）／`:29-30`（本片已改）／`:136`（`未读数未取得：服务端未接线`） | **仍成立（已复核，非"无法判定"）** | 运行期 `/messages*` 已注册（`app.ts:1355`、`routes/messages.ts:42/52/58`）；**消息域的目标读取端口确未接线**：`services/api/src/app.ts:631` `reference: messagesInjection?.reference ?? createUnwiredReferencePort(),`，端口实现 `services/api/src/messages/reference.ts:59` 恒 `unavailable`（`service.ts:227` `referenceStateFor` 逐次经该端口派生）⇒ 带目标的消息 `reference_state` **恒 `unavailable`**（`tests/unit/community-http.test.mjs:506` 同口径）。**对照**：收藏／历史两域走 `services/api/src/targetref/visibility.ts` 的**真实**可见性端口，已接线 ⇒ 两域说法不通用。服务端 `messages/index.ts:8-9`、`messages/service.ts:32-33` 的同一说法**同属仍成立**，本片未改（也不需改） |
 | 11b | `miniprogram/pages/messages/messages.js:29-30`：`跳转入口尚未接线`／`（服务端目标读取端口未接线）` → `本页只列出消息，不提供跳转入口` | **已过期（改因）** | 前端**始终**不提供跳转（全域无目标读取调用），"尚未接线"读起来像**前端**待接线；且 `available` 分支永远走不到（服务端恒 `unavailable`）⇒ 改成对**本页行为**的陈述，去掉会误导的因果。⛔ 同一函数只改这两个字符串，未改分支与数据流 |
 
 ### 2.1 明确「仍成立」的其它同源文案（本片**未改**，防止误伤）
 
-`miniprogram/utils/{community,favorites,history,messages,voice,identify}-api.js` 里的 `PROVIDER_UNAVAILABLE`／`OBJECT_UNAVAILABLE` 文案一律指向**真实持久存储／真实提供者／对象存储／TTS**未接线——与 `services/api/src/media/object-store.ts:143` `createUnwiredObjectStore`（原因常量 `:136`、`real` 模式默认路径 `:450`）的 fail-closed 一致，**仍成立**；`miniprogram/utils/debug.js:18` 同理（且 `tests/local-debug.test.mjs:96` 断言其含「未接入」，改字会连带本地联调工具 `tools/local-dev/prepare.mjs:34` 的替换串失效 ⇒ 属**另一片**范围，本片只记录不改）。
+`miniprogram/utils/{community,favorites,history,messages,voice,identify}-api.js` 里的 `PROVIDER_UNAVAILABLE`／`OBJECT_UNAVAILABLE` 文案一律指向**真实持久存储／真实提供者／对象存储／TTS**未接线——与 `services/api/src/media/object-store.ts:143` `createUnwiredObjectStore`（原因常量 `:136-137`、`real` 模式默认路径 `:450`）的 fail-closed 一致，**仍成立**；`miniprogram/utils/debug.js:18` 同理（且 `tests/local-debug.test.mjs:96` 断言其含「未接入」，改字会连带本地联调工具 `tools/local-dev/prepare.mjs:34` 的替换串失效 ⇒ 属**另一片**范围，本片只记录不改）。
 
 ## 3. 门禁读数（在**本分支 HEAD**（含返修提交）上实测；⛔ 本页不内嵌 SHA，校验请现场跑 `git rev-parse HEAD`）
 
@@ -98,6 +99,9 @@ git rev-list --left-right --count HEAD...upstream/main
 npm ci                                   # 无 node_modules 时必做，否则 unit 会假红 55 条
 npm run lint && npm run test:docs && npm run test:unit && npm run test:integration:http && npm run test:mini
 node tools/verify-contract-status.mjs
+git ls-tree -r --name-only HEAD -- tests/integration | wc -l             # 35 个文件（§1 交付 A ② 的脚本枚举口径）
+git ls-tree -r --name-only HEAD -- tests/integration | grep -c '\.mjs$'   # 22
+git ls-tree -r --name-only HEAD -- tests/integration | grep -c '\.cjs$'   # 12 ⇒ 脚本口径 = 22 + 12 = 34，余 1 个 *.ps1 不计入
 grep -n 'test:unit' package.json          # 看到 tests/moderation/*.test.mjs
 grep -n 'npm run test:unit' .github/workflows/engineering-shell.yml
 grep -rn "conversations" miniprogram      # 0 命中 ⇒ 前端未接问答端点
@@ -110,7 +114,7 @@ grep -rn "conversations" miniprogram      # 0 命中 ⇒ 前端未接问答端�
 | 项 | 原（本页返修前） | 现（实测后） |
 | --- | --- | --- |
 | **D2** 自指 SHA 失效 | §0 表内写「提交前最后一次 amend 后的短 SHA 为 `ca86d63`」（**已淘汰、不可引用，此处仅存历史**） | 实测该短 SHA 是**倒数第二次 amend 的中间态**、不在任何 ref（`git for-each-ref --contains ca86d63…` = **空**）⇒ **§0 已删除自指 SHA**，改用**稳定外部锚点**：基线（父）提交 `3bc745184c9a7c168ef01337b4db1297ea0cc72e` ＋ 提交标题；校验一律现场跑 `git rev-parse HEAD`／`git log --oneline 3bc7451..HEAD` |
-| **D3** 行号处为空 | §1 表 gy-i01 行、§2 表 #9 行、§2.1 三处引 `services/api/src/media/object-store.ts:132` 作 fail-closed 位置 | 实测 `:132` = `}`（上一函数结尾，**该行没有任何 fail-closed 逻辑**）⇒ 三处改指**实测存在且语义正确**的位置：`:136` 原因常量 `export const UNWIRED_OBJECT_STORE_REASON = …`、`:143` `export function createUnwiredObjectStore(...)`、`:450` `if (config === null) return createUnwiredObjectStore();`（所在函数 `resolveMediaObjectStore`，定义于 `:447`）。**结论不变**（`real` 模式默认 fail-closed 503） |
+| **D3** 行号处为空 | §1 表 gy-i01 行、§2 表 #9 行、§2.1 三处引 `services/api/src/media/object-store.ts:132` 作 fail-closed 位置 | 实测 `:132` = `}`（上一函数结尾，**该行没有任何 fail-closed 逻辑**）⇒ 三处改指**实测存在且语义正确**的位置：`:136-137` 原因常量（`:136` = `export const UNWIRED_OBJECT_STORE_REASON =`、`:137` = 字符串值 `'真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套'`）、`:143` `export function createUnwiredObjectStore(...)`、`:450` `if (config === null) return createUnwiredObjectStore();`（所在函数 `resolveMediaObjectStore`，定义于 `:447`）。**结论不变**（`real` 模式默认 fail-closed 503） |
 | **N9** 同句数字矛盾 | §1.1 写「共 **8** 个脚本段」而同一句又写「**9** 条脚本」 | 实测 `package.json:24` 的 `test:integration:http` 链 = **9** 条 ⇒ 统一为 **9 条脚本串**（63 条 `PASS`／0 条 `FAIL`），并附复算命令与输出（见 §1.1） |
 | **N3** 被引行号偏移 | §1 表 gy-i22 行标 §7 第 5 项 `:478`、`§0` 记 `:32-36`、`§0.1` 记 `:58-81` | 实测 §7 第 5 项在 **`:480`**（`git diff -U0` 的 `@@ -443 +480 @@`）；校订记录实际占 `:32-37`、§0.1 实际占 `:58-83` ⇒ 三处行号已按实测改写 |
 | **N4** 表头未区分文件（可选） | §2 表 #11 位置列把 `utils/messages-api.js` 与 `pages/messages/messages.js` 的行号混写在同一括号内 | 已在**不改引用事实**的前提下分行写明：`utils/messages-api.js:22`＋`:202`／`:209-216`／`:230`；`pages/messages/messages.js:27`／`:29-30`／`:136`（逐行复核命中） |
@@ -118,7 +122,7 @@ grep -rn "conversations" miniprogram      # 0 命中 ⇒ 前端未接问答端�
 
 **返修后的行号↔内容逐条复核**（本页全部 `file:line` 引用，2026-10-16 实测：行号＋行内容要点＋所在函数/位置）：
 
-- `services/api/src/media/object-store.ts:132` = `}`（**空引用，已改**）；`:134` = 注释「未接线（fail-closed）」；`:136` = `export const UNWIRED_OBJECT_STORE_REASON = '真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套'`；`:143` = `export function createUnwiredObjectStore(reason: string = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore`；`:145` = `new MediaError('PROVIDER_UNAVAILABLE', …（fail-closed）, { retryable: true })`；`:447` = `export function resolveMediaObjectStore(options: ResolveObjectStoreOptions): MediaObjectStore`；`:450` = `if (config === null) return createUnwiredObjectStore();`（在 `options.executionMode === 'real'` 分支内）。
+- `services/api/src/media/object-store.ts:132` = `}`（**空引用，已改**）；`:134` = 注释「未接线（fail-closed）」；`:136` = `export const UNWIRED_OBJECT_STORE_REASON =`（**跨行**）；`:137` = `  '真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套';`；`:143` = `export function createUnwiredObjectStore(reason: string = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore`；`:145` = `new MediaError('PROVIDER_UNAVAILABLE', …（fail-closed）, { retryable: true })`；`:447` = `export function resolveMediaObjectStore(options: ResolveObjectStoreOptions): MediaObjectStore`；`:450` = `if (config === null) return createUnwiredObjectStore();`（在 `options.executionMode === 'real'` 分支内）。
 - `services/api/src/app.ts` 的 `:631`／`:1298`／`:1305`／`:1306`／`:1307`／`:1308`／`:1313`／`:1354`／`:1355`／`:1378`／`:1384` 逐行与各调用一致 ✔（例：`:1354` = `registerMediaRoutes(app, config, guards, mediaService);`；`:1384` = `registerConversationRoutes(app, config, guards, conversationService);`）。
 - `services/api/src/routes/media.ts:157/175/199/217/237/257/276` = 7 处 `app.<method>(` ✔；`services/api/src/routes/conversations.ts:113/124/134/146/159/172/182` = 7 处 `app.<method>(` ✔；`services/api/src/routes/ocr.ts:274` = `app.patch(` ✔；`services/api/src/routes/messages.ts:42/52/58` = `/messages`、`/messages/unread-count`、`/messages/:id/read` 三处注册 ✔。
 - `packages/media/README.md:74` = `## services/api 挂载示例（媒体 HTTP 路由已接线；未接线的是**句柄消费网关**）` ✔。
@@ -127,3 +131,14 @@ grep -rn "conversations" miniprogram      # 0 命中 ⇒ 前端未接问答端�
 - `miniprogram/app.js` 的改动行实测为 **`:5-6`**（原 §2 表 #1 写 `:7`，`:7` 是空注释行 ` *`）⇒ 已按实测改。
 
 **本轮改动仍只落在文档正文/注释与文案字符串**：`git diff -U0 upstream/main...HEAD -- miniprogram` 与上一轮**逐字相同**（仍全是同行数替换/注释拆分，无逻辑、无条件分支、无请求路径改动）；`tests/**`、`packages/contracts/**`、`services/api/src/**`、`.github/workflows/**`、`package.json` 继续 **0 改动**（读数见交接「返修记录」节）。
+
+## 7. 返修记录（2026-10-17，第三轮：本页三处口径与行号精度 ＋ §1.1 时点绑定）
+
+本轮只动本页，**新开提交**（⛔ 不 amend／不 rebase／不 force），订正上一轮遗留的三处表述精度问题（P1–P3），并按 `upstream/main` 前进后的实测补一处**时点绑定**（P4）；**分类与证据条目一律未增删、未改判**，P1–P4 **均未改动既有实测数字**。
+
+| 项 | 原（本轮改前，逐字） | 现（实测后，逐字） | 判定 |
+| --- | --- | --- | --- |
+| **P1** §2 分类小结总数与分项对不上 | `**分类小结（11 处按条目计）**：**已过期 8**（#1–#7、#11b）、**仍成立 4**（#8、#9、#10、#11）、**无法判定 0**。` | 改为**两种口径并列**：**按主条 = 11 项**（#1–#11；#11b 是 #11 的补充行）⇒ 7 项已过期 ＋ 4 项仍成立 ＝ 11；**按 §2 表行数 = 12 行**（#11 跨两个文件、拆成 #11／#11b 两行）⇒ 8 行已过期 ＋ 4 行仍成立 ＋ 0 行无法判定 ＝ 12 | **单位混用**（非总数错）：`11` 是**主条**数、`8＋4＋0＝12` 是**表行**数，差额 1 ＝ #11 在 `utils/messages-api.js` 侧仍成立／`pages/messages/messages.js:29-30` 侧已过期。分项分类本身无误，故**未改任何条目或类别** |
+| **P2** §1 交付 A ② 的「34 个脚本」未写明枚举口径 | `tests/integration/**` 34 个脚本中 **16** 个有 CI 覆盖 | `tests/integration/**` **34** 个脚本（枚举口径＝`*.mjs` **22** ＋ `*.cjs` **12**；同目录实际 **35** 个文件，多出的 1 个是 `tests/integration/knowledge-native-pg.ps1`、不计入脚本口径；本片实测 `total=35 mjs=22 cjs=12 ps1=1`，命令见 §5） | **口径未写明**（非计数错）：34 只在 `*.mjs`／`*.cjs` 口径下成立，同口径出处是被引的 `docs/verification/gy-i22-cross-module-security-e2e-20261027.md:74`；已在**本页行内**写明枚举与差额 |
+| **P3** 原因常量被合写成单行 `:136` | §1 表 gy-i01 行、§2 表 #9 行、§2.1、§6 D3 行、§6 复核清单五处均引 `services/api/src/media/object-store.ts:136`（其中复核清单写成 `:136` = `export const UNWIRED_OBJECT_STORE_REASON = '…'`） | 五处一律改指 **`:136-137`**（常量**跨两行**）：`:136` = `export const UNWIRED_OBJECT_STORE_REASON =`、`:137` = `  '真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套';` | **行号精度不足**（非空引用）：实测 `:136` 行末为 `=`、字符串值在 `:137`；按「引用的文本落在哪一行就给哪一行／跨行给区间」订正。`:143`／`:145`／`:447`／`:450` 四行经复核均为单行完整内容，**未改** |
+| **P4** §1.1 对被引文件的读数未绑定测量时点 | `该文 `:28` 逐字写作「…的 6 个回环脚本」；而实测 `package.json:24`（基线 `3bc7451`）同一链逐字为 **9 条**…` | 两侧读数**各自绑定 SHA**（**均＝本片基线 `3bc7451`**），并加「**时点说明（2026-10-17 复核）**」：在 `1480aab3383b16daf7a5b5088c3e21cc12c422d3` 上该文件 `:28` 逐字写 **9**、而**同一 SHA** 的链实测 **11** 条（末两条 `node tests/integration/speech-http.mjs`、`node tests/integration/tts-http.mjs`）⇒ 该行在 `1480aab` 上**仍比真值少 2 条**；本页读数一律以各自标注的 SHA 为准。§1.1 末行「请下一片…按 9 条刷新」改为指向该时点说明 | **被引文件已刷新**（非本页计数错）：`1480aab:docs/verification/how-to-read-ci-runs.md` 的 blob 已由 `2c486f48f67c27e51af2fd0c57ed80b0f166e4b1` 变为 `6c31e055e4670f727767ae28743040b3545d4719` ⇒ `:36` 原「6」的表述在并入后的 main 上会与实文不符。两侧数字（`6`／`9`、`9`／`11`）**一律未改**，只加 SHA 绑定与时点说明 |
