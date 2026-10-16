@@ -349,7 +349,13 @@ const SUBMISSION_SURFACE: Readonly<Record<string, string>> = Object.freeze({
  *
  * 为什么是装饰而不是改 `community/service.ts`：投稿面属 #15 线，本片不改其实现；
  * 同时装饰副本让"开关关闭 ⇒ 投稿**零落库**"成为可判定事实（产出方根本没被调用）。
- * 社区路由尚未装配（属 #15 阶段 2），因此当前只在服务层生效 —— 如实记入"未取得项"。
+ * 生效范围（**已更新**）：社区路由**早已装配**（app.ts 内 `registerCommunityRoutes(app,
+ * config, gatedGuards, communityService)` 是唯一装配点，`routes/community.ts` 注册 16 条），
+ * 投稿面因此**已经过 HTTP 闸门**——`gatedGuards` 按 (method, 路由模板) 命中本文件
+ * `FLAG_GATED_SURFACES` 内两条 `submissions_enabled` 受控面（`createPost` ⇒
+ * `POST /posts`、`createComment` ⇒ `POST /posts/:id/comments`），与开关 key 同源。
+ * 本装饰器是**服务层**兜底：给不经 HTTP 直接调用社区服务的消费方同一口径判定；应用装配
+ * 当前未调用它（装配级调用点只有 `tests/unit/admin-flag-gate.test.mjs`）—— 如实记入"未取得项"。
  */
 export function gateCommunityService<T extends object>(service: T, gate: FeatureFlagGate): T {
   const source = service as unknown as Record<string, unknown>;
