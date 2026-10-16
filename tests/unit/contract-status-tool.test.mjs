@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,6 +124,44 @@ test('CLI 正例及反例：陈旧路由/文档失败，错误时不写表格，
   status.operations.push({ ...status.operations[0] });
   save();
   assert.match(run().stderr, /重复条目/);
+});
+
+test('证据项指向真实存在的目录时必须受控失败（不得崩溃），改为常规文件后通过', t => {
+  const { root, put } = fixture(t);
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs']) {
+    put('tools/' + name, '');
+    copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
+  }
+  const op = { id: 'getJob', method: 'get', path: '/jobs/{id}' };
+  const fileEvidence = [{ path: 'services/api/src/app.ts', lines: '1-3' }];
+  const status = {
+    contract_version: 'test', operations: [{ ...op, route_mounted: true, status: 'partial', evidence: [{ path: 'services/api/src/jobs' }], blocker: '仅局部实现' }],
+    dimensions: ['error_codes', 'pagination', 'versioning', 'idempotency', 'source_kind', 'execution_modes', 'cancel', 'timeout'].map(key => ({ key, title: key, status: 'partial', source_anchor: 'test', evidence: fileEvidence, blocker: 'test scope' })),
+  };
+  put('packages/contracts/operations.json', JSON.stringify({ contract_version: 'test', operations: [op] }));
+  const save = () => put('docs/architecture/contract-status.json', JSON.stringify(status));
+  save();
+  const docPath = join(root, 'docs/architecture/contract-implementation-status.md');
+  put('docs/architecture/contract-implementation-status.md', 'prefix\n' + renderStatusTables(status) + '\nsuffix');
+  const run = (...flags) => spawnSync(process.execPath, [join(root, 'tools/verify-contract-status.mjs'), ...flags], { encoding: 'utf8' });
+  // 靶心前提：夹具里的 services/api/src/jobs 是**真实存在的目录**，不是一个缺失路径。
+  assert.equal(statSync(join(root, 'services/api/src/jobs')).isDirectory(), true);
+  const before = readFileSync(docPath, 'utf8');
+  const rejected = run('--write-doc');
+  assert.equal(rejected.status, 1);
+  assert.equal(rejected.signal, null);
+  assert.match(rejected.stderr, /证据文件不存在或不是文件 services\/api\/src\/jobs/);
+  assert.match(rejected.stderr, /FAIL: 契约实现状态对照校验未通过（1 项）/);
+  // 崩溃泄漏守门：目录不得走成未捕获异常（旧版是 EISDIR 栈，退出码同样是 1）。
+  assert.doesNotMatch(rejected.stderr + rejected.stdout, /EISDIR|node:fs:/);
+  // 受控失败 ⇒ 中文对照表不得被改写。
+  assert.equal(readFileSync(docPath, 'utf8'), before);
+  // 正控制：同一位置改为指向真实常规文件 ⇒ 通过（证明上面的红来自"是目录"，不是夹具别处出错）。
+  status.operations[0].evidence = fileEvidence;
+  save();
+  const accepted = run('--write-doc');
+  assert.equal(accepted.status, 0);
+  assert.match(accepted.stdout, /中文表格一致/);
 });
 
 test('运行时清除继承配置/凭据与 NODE_OPTIONS；实际注册与静态不一致时不会假通过', t => {
