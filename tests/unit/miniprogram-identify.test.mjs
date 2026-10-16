@@ -1338,6 +1338,45 @@ test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归�
   const modeNetworkFail = await serverModeOnce(null);
   assert.equal(modeNetworkFail.error.code, 'NETWORK_UNCERTAIN');
 
+  // ⑥ 负控制·**畸形 200**（4 类：缺键／多键／非对象／字段类型不符）⇒ 一律 `INVALID_RESPONSE`（沿用既有错误码）。
+  //    契约实读：`HomeEnvelope` 键集恰为 `{data, meta}`、`additionalProperties: false`、
+  //    `required: [data, meta]`（`packages/contracts/openapi.json:14789-14804`），`meta` 是 `Meta` 对象（:11066-11086）。
+  //    改前（补回键集校验之前）这 4 类**都拿不到** `INVALID_RESPONSE`：缺键/多键被当成"已读到执行模式"放行，
+  //    非对象 / `meta` 类型不符被误报 `UNAVAILABLE`（"数据不可用"与"响应无法核对"是两种原因，不得混同）。
+  async function malformed200(label, payload) {
+    const outcome = await serverModeOnce({ statusCode: 200, data: payload });
+    assert.equal('mode' in outcome, false, label + '：畸形 200 不得被当成"读到执行模式"放行（mode=' + JSON.stringify(outcome.mode) + '）');
+    assert.equal(outcome.error && outcome.error.code, 'INVALID_RESPONSE', label + '：畸形 200 必须判 INVALID_RESPONSE，实际 ' + JSON.stringify(outcome.error && outcome.error.code));
+  }
+  const HOME_OK = { previews: [], human_review_state: 'under_construction' };
+  // ① 缺键（`data`／`meta` 至少一个不在封套里）
+  await malformed200('缺键·缺 data', { meta: syntheticMeta() });
+  await malformed200('缺键·缺 meta', { data: HOME_OK });
+  // ② 多键（契约 `additionalProperties: false` ⇒ 多余顶层键即与契约不符）
+  await malformed200('多键·多余顶层键', { data: HOME_OK, meta: syntheticMeta(), extra: 1 });
+  // ③ 非对象（整个响应体不是对象）
+  await malformed200('非对象·字符串', 'synthetic-not-an-envelope');
+  await malformed200('非对象·数组', []);
+  await malformed200('非对象·null', null);
+  // ④ 字段类型不符（`meta` 不是对象；以及 `meta` 内字段类型与契约不符）
+  await malformed200('类型不符·meta 为字符串', { data: HOME_OK, meta: 'stub' });
+  await malformed200('类型不符·meta 为数组', { data: HOME_OK, meta: [] });
+  await malformed200('类型不符·request_id 非 UUID', { data: HOME_OK, meta: { request_id: 'synthetic-not-a-uuid', contract_version: '1.0.0', execution_mode: 'stub' } });
+  await malformed200('类型不符·execution_mode 非字符串', { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 3 } });
+
+  // ⑦ 正控制·**非法 mode** 分支逐字不变（既有分支）：封套可核对但 `execution_mode` 不在契约闭集
+  //    ⇒ 仍判 `INVALID_RESPONSE`（不猜、不回落 `UNAVAILABLE`）；键集校验**不得**顺带放宽字段校验。
+  const modeIllegal503 = await serverModeOnce({
+    statusCode: 503,
+    data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '主页资料数据库尚未接入', retryable: false, details: [] }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal503.error.code, 'INVALID_RESPONSE', '非法 mode（503 封套）仍判 INVALID_RESPONSE');
+  const modeIllegal200 = await serverModeOnce({
+    statusCode: 200,
+    data: { data: HOME_OK, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'synthetic_unknown_mode' } },
+  });
+  assert.equal(modeIllegal200.error.code, 'INVALID_RESPONSE', '非法 mode（200 封套）仍判 INVALID_RESPONSE（不放宽字段校验）');
+
   // —— `POST /ocr` 非 2xx：站点特定归因（不得指向对象存储） ——
   async function createOnce(statusCode, payload) {
     const before = h.requests.length;
