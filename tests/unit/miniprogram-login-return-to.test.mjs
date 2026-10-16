@@ -60,7 +60,7 @@ function fixture() {
   // 参考族页面：本片 D1 起联网时走服务端 `/herbicides`、`/herbicides/{id}`，这几页必须拿到**真实**知识
   // 客户端（见 b.page() 的 knowledgeModule 注释）。其余页面（含 `miniprogram/pages/favorites/favorites.js:19`
   // 这类同样 `require('../../utils/knowledge-api')` 的门禁页）保持「永不落地」替身，以维持本组用例
-  // `tests/unit/miniprogram-login-return-to.test.mjs:541`「门禁之前不得发生业务请求」护栏的既有语义。
+  // `tests/unit/miniprogram-login-return-to.test.mjs:550`「门禁之前不得发生业务请求」护栏的既有语义。
   const REFERENCE_FAMILY = new Set(['reference', 'referenceseed', 'referencedetail', 'referenceseeddetail']);
   b.page = (name, loadOptions = {}) => {
     let def;
@@ -133,9 +133,9 @@ function fixture() {
       ['../../utils/favorites-api', pendingApi],
       // 知识客户端：**只对参考族页面登记真实模块**（见上）——`miniprogram/pages/favorites/favorites.js:19`
       // 也 `require('../../utils/knowledge-api')`，如果对全部页面都喂真实模块，门禁放行后 favorites 会真的
-      // 发起业务读取，`tests/unit/miniprogram-login-return-to.test.mjs:541`（本组「门禁之前不得发生业务请求」
-      // 的护栏，靠 :128-134 的替身组保证）就会红 —— 那是本组替身设计被绕过，不是页面回归。实测：只对参考族
-      // 登记真实模块时，:531/:534/:536 的 1/2/3 条请求计数与 :541 全部成立（门禁放行前的流量仍只有门禁核实）。
+      // 发起业务读取，`tests/unit/miniprogram-login-return-to.test.mjs:550`（本组「门禁之前不得发生业务请求」
+      // 的护栏，靠 :133 的替身登记保证）就会红 —— 那是本组替身设计被绕过，不是页面回归。实测：只对参考族
+      // 登记真实模块时，:540/:543/:545 的 1/2/3 条请求计数与 :550 全部成立（门禁放行前的流量仍只有门禁核实）。
       ['../../utils/knowledge-api', REFERENCE_FAMILY.has(name) ? knowledgeModule.exports : pendingApi],
       ['../../utils/history-api', pendingApi],
       ['../../utils/messages-api', pendingApi],
