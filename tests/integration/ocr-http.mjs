@@ -82,55 +82,92 @@ function resolveModuleTarget(specifierText, fromDir) {
   return `bare:${specifierText}`;
 }
 
-const isOcrDomainTarget = (target) => /(^|\/)ocr\/[^/]+$/.test(target);
+/**
+ * 本域判据（r6 收紧为**任意深度**）：路径里出现 `ocr/` **段**即属 OCR 域
+ * ⇒ `./ocr/state.ts` 与 `./ocr/nested/state.ts` 同判（r5 写 `[^/]+$` 只匹配单层，
+ * 复审 N6/F 系列实测 `import { X } from './ocr/nested/state.ts'` **0 命中**）。
+ * ⚠ 配合"白名单是**全路径**精确"（`services/api/src/ocr/service.ts`）：域内非该模块一律判红。
+ */
+const isOcrDomainTarget = (target) => /(^|\/)ocr\//.test(target);
 const isServiceTarget = (target) => target.endsWith('ocr/service.ts');
 const isAllowedOcrModuleTarget = (target) => normalizeModulePath(OCR_SERVICE_MODULE_PATH).endsWith(normalizeModulePath(target));
 /**
- * **共用"剥括号"判据**（r5）：实参侧与 callee 侧**都必须**先过这一个函数，再判节点种类。
+ * **唯一"剥壳"归一化入口**（r6）：括号 + TS **类型包装**（`as` / 非空断言 `!` / 尖括号断言 `<T>` / `satisfies`）。
  *
- * ⚠ 写成**一个**函数而不是两处各写一套内联 `while`，正是为消除 r3/r4 踩过的坑——
- *   "同一语义在两处各写一套形状不同的判定，必然分叉"：
- *   实参侧原写 `while (ts.isParenthesizedExpression(current)) …`，而 callee 侧**完全没写**
- *   ⇒ `(require)('./ocr/state.ts')` **一行括号**即可绕过（callee 是 ParenthesizedExpression，
- *   既不等于 `ImportKeyword`，也不是 `Identifier`）。两侧共用本函数后，语义不可能再分叉。
- *
- * ⚠ 本函数**只剥括号**，不判种类、不判 `require`；调用方一律拿**返回值**再判（见 `literalText` 与调用侧）。
+ * ⚠ 全文件**只此一处**剥壳：实参侧（`literalText`）、callee 侧（`normalizeCallee`）、别名登记处**都**经它，
+ *   不得在别处再写第二套 —— r3/r4 已有一次"同一语义两处各写一套 ⇒ 必然分叉"的教训，r5 又抓出 callee 侧漏剥；
+ *   r6 复审再抓出**类型包装**这一整族（W1–W7 静态全 0 违规而运行期真加载）。
+ * ⚠ r6 复审实测：`(rq as any)('./ocr/state.ts')` 与 `createRequire(import.meta.url)('./ocr/state.ts')`
+ *   在**真实受护文件**里**运行期可达**（`require` 语义 + `services/api/package.json` 的 `"type": "module"`），
+ *   故这两族不再只是"静态防腐"，必须收口。
+ * ⚠ 本函数**只剥壳**，不判种类、不判 `require`；调用方一律拿**返回值**再判。
  */
-const peelParentheses = (node) => {
+const peelShells = (node) => {
   let current = node;
-  while (current !== undefined && ts.isParenthesizedExpression(current)) current = current.expression;
+  while (current !== undefined && (
+    ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isSatisfiesExpression(current)
+  )) current = current.expression;
   return current;
 };
 /**
- * **共用 callee 归一化判据**（r5）：动态 `import(...)` 与 `require(...)`/间接别名调用 `X(...)` 的**唯一**识别入口。
- * 先 `peelParentheses`，再剥逗号表达式，最后**恰好**剩：`ImportKeyword`（动态 import）或 Identifier（`require`/登记别名）。
- * ⇒ 覆盖 `import(…)`、`require(…)`、`(require)(…)`、`((require))(…)`、`(0, require)(…)`、`(0, (require))(…)` 及各类别名（含 `(rq)(…)`）。
+ * **唯一"序列归一化"入口**（r6）：`peelShells` + 逗号序列（`(0, require)`、`(0, rq as any)`、`(0, (require))`）。
+ * ⚠ callee 侧与**实参侧**共用本函数 ⇒ `require((0, './ocr/state.ts'))` 也不再是盲区（复审 N7/F41）。
+ */
+const stripSequence = (node) => {
+  let current = peelShells(node);
+  while (current !== undefined && ts.isBinaryExpression(current)
+    && current.operatorToken.kind === ts.SyntaxKind.CommaToken) current = peelShells(current.right);
+  return current;
+};
+/**
+ * **唯一 callee 归一化判据**（r6）：动态 `import(...)`、`require(...)`/间接别名调用 `X(...)`、
+ * 以及 `createRequire(…)(…)` **当场调用**的**唯一**识别入口。先 `stripSequence`（剥壳 + 剥逗号），
+ * 最后**恰好**剩三种之一：
+ *   · `ImportKeyword` ⇒ `dynamic-import`；· Identifier ⇒ `identifier`（`require`/登记别名）；
+ *   · `CallExpression` ⇒ **递归**判其 callee 是否为 `createRequire` 或登记别名 ⇒ `immediate-require`。
+ * ⇒ 覆盖 `import(…)`、`require(…)`、`(require)(…)`、`((require))(…)`、`(0, require)(…)`、`(require as any)(…)`、
+ *   `(require!)(…)`、`(0, require as any)(…)`、各类别名（含 `(rq as any)(…)`）、
+ *   `createRequire(import.meta.url)(…)`、`(0, createRequire(import.meta.url))(…)`。
  *
  * ⚠ **两侧同源**：不在别处另写一套 —— 调用侧直接复用本函数结果，否则又会分叉出
- *   "别名侧认括号、动态 import 侧不认"这一类不对称漏分支（r5 实测过一次，被自测当场抓红）。
- * ⚠ 不用 `ts.isIdentifier(peelParentheses(...))` 一把梭：那样 `(0, require)(…)` 会因 callee 是
- *   `BinaryExpression` 而**仍然绕过**——本函数同时覆盖序列式与括号两条扩展轴。
+ *   "别名侧认包装、动态 import 侧不认"这一类不对称漏分支（r5 实测过一次，被自测当场抓红）。
+ * ⚠ 递归**只经本函数自身**（唯一入口），深度 = callee 链长度（静态源码、有限）。
  */
-const normalizeCallee = (node) => {
-  let current = peelParentheses(node);
-  while (current !== undefined && ts.isBinaryExpression(current)
-    && current.operatorToken.kind === ts.SyntaxKind.CommaToken) current = peelParentheses(current.right);
-  if (current !== undefined && current.kind === ts.SyntaxKind.ImportKeyword) return { kind: 'dynamic-import' };
-  if (current !== undefined && ts.isIdentifier(current)) return { kind: 'identifier', name: current.text };
+const normalizeCallee = (node, requireAliases) => {
+  const current = stripSequence(node);
+  if (current === undefined) return null;
+  if (current.kind === ts.SyntaxKind.ImportKeyword) return { kind: 'dynamic-import' };
+  if (ts.isIdentifier(current)) return { kind: 'identifier', name: current.text };
+  if (ts.isCallExpression(current)) {
+    const inner = normalizeCallee(current.expression, requireAliases);
+    if (inner !== null && inner.kind === 'identifier'
+      && (inner.name === 'createRequire' || requireAliases.has(inner.name))) {
+      return { kind: 'immediate-require', name: inner.name };
+    }
+  }
   return null;
 };
 /** callee 的 `require` 语义标签；**不是** require 则返回 null（`import(...)`、域外标识符、其它表达式） */
 const requireCalleeLabel = (node, requireAliases) => {
-  const callee = normalizeCallee(node);
-  if (callee === null || callee.kind !== 'identifier') return null;
-  if (callee.name === 'require') return 'require()';
-  return requireAliases.has(callee.name) ? '间接 require()' : null;
+  const callee = normalizeCallee(node, requireAliases);
+  if (callee === null) return null;
+  if (callee.kind === 'identifier') {
+    if (callee.name === 'require') return 'require()';
+    return requireAliases.has(callee.name) ? '间接 require()' : null;
+  }
+  if (callee.kind === 'immediate-require') return '`createRequire(…)` 当场调用';
+  return null;
 };
 const literalText = (node) => {
-  // 剥掉括号包裹：`require(('./ocr/state.ts'))` 的 `arguments[0]` 是 ParenthesizedExpression
-  const current = peelParentheses(node); // ⚠ 与 callee 侧**同一个**函数（见上）
+  // 剥壳 + 剥逗号序列：`require(('./ocr/state.ts'))`、`require('./ocr/state.ts' as any)`、
+  // `require((0, './ocr/state.ts'))` 的 `arguments[0]` 都不是裸字面量
+  const current = stripSequence(node); // ⚠ 与 callee 侧**同一个**归一化入口（见上）
   // ⚠ 必须按**节点种类**判定，不能只看"有没有 `.text`"：`Identifier` 也有 `.text`
-  //   ⇒ 那样会把 `import(someVar)` / `require(someVar)` 误当成字面量 `someVar` 而**静默放行**（本轮实测抓到）。
+  //   ⇒ 那样会把 `import(someVar)` / `require(someVar)` 误当成字面量 `someVar` 而**静默放行**（r4 实测抓到）。
   if (current === undefined) return null;
   return ts.isStringLiteralLike(current) ? current.text : null;
 };
@@ -142,20 +179,36 @@ const literalText = (node) => {
  * 动态 `import()`（`CallExpression` + `ImportKeyword`）/ `require(...)`，取 `moduleSpecifier.text`。
  * 由此**一次性消除**：注释与字符串互相干扰、`%XX` 编码、引号种类、多行、有无分号等**整类**问题。
  *
+ * ⚠ **归一化只有一个入口（r6）**：callee 与实参**都**经 `stripSequence`（先剥壳：括号 / `as` /
+ *   非空断言 `!` / 尖括号断言 `<T>` / `satisfies`；再剥逗号序列）⇒ `(require as any)(…)`、`(rq!)(…)`、
+ *   `(0, require)(…)`、`createRequire(import.meta.url)(…)`、`require('./ocr/state.ts' as any)` 走**同一条**判定。
+ *   ⛔ 不得在别处再写第二套形状判定（r3/r4：两处各写一套 ⇒ 必然分叉；r5/r6：先漏 callee 侧、再漏类型包装）。
+ *
+ * ⚠ **解析失败 fail-closed（r6）**：`ts.createSourceFile` 遇语法错误**不抛异常**，只把诊断留在
+ *   `parseDiagnostics` 并返回一棵**残缺 AST** ⇒ 本函数先查诊断，非空**即判红**（`OCRPARSE`，逐条打印原文），
+ *   绝不在残缺 AST 上得出"0 违规"的结论（复审 N1 实测：未闭合块注释可让整份文件静默 0 违规）。
+ *
  * ⚠ **显式书面取舍（本判据覆盖不到，不得读成"覆盖全部形态"）**：
  *   ① **运行时拼接/插值**：`'./ocr/' + 'service.ts'`、`` `./ocr/${name}.ts` ``（AST 只见表达式，无可核对的字面量）；
- *   ② **间接 require 的其余形态**：本判据**已覆盖** `createRequire(…)` 直接别名（`const X = createRequire(…); X('./ocr/…')`，
- *      经 `requireAliases` 追踪）**及其括号/逗号变体**（r5：`(X)('./ocr/…')`、`(0, X)('./ocr/…')`），
- *      但**未覆盖** `require(someVar)`（参数非字面量）、把别名再转手传出的间接引用、
- *      **裸 `createRequire(…)` 当场调用**（`createRequire(import.meta.url)('./ocr/state.ts')`）、
- *      以及经**中间模块**转出的再引用；
- *   ③ 因此本判据针对的是"**显式模块引用**"这一类腐化（本仓 `app.ts` 为静态源码 ⇒ 该目标可达）。
+ *   ② **非字面量实参**：`require(someVar)`、`require(String('./ocr/state.ts'))`（静态期取不到值）；
+ *   ③ **其它 require 通道**：`module.require(…)`、`globalThis.require(…)`、`eval('require')(…)`、
+ *      `require.resolve(…)` / `import.meta.resolve(…)`（后两者只解析路径、不加载模块）；
+ *   ④ **再转手**：把别名或 `createRequire` 传给别的函数/模块后再调用（跨模块数据流不在本判据内）；
+ *   ⑤ 以上未覆盖面在**正常路径**由 stdout 的 `NOTE 判据未覆盖（r6 如实声明）` 逐条打印（见文件尾部）；
+ *   ⑥ 本判据针对的是"**显式模块引用**"这一类腐化（本仓 `app.ts` 为静态源码 ⇒ 该目标可达）。
  */
 function evaluateOcrImports(sourceText, fromDir) {
   const violations = [];
   const fail = (message) => violations.push(message);
   const requireAliases = new Set(); // `createRequire(…)` 的别名（间接 require）
   const sourceFile = ts.createSourceFile('app.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  // ⚠ **fail-closed（r6，复审 N1）**：`ts.createSourceFile` 遇语法错误**不抛异常**，只把诊断放进
+  //   `parseDiagnostics` 并照常返回一棵**残缺 AST** ⇒ 修复前"未闭合注释/残缺语法"会让本判据**静默 0 违规**。
+  //   这里**先**查诊断：非空即判红，并把每条诊断原文打印出来（不得在残缺 AST 上下"通过"的结论）。
+  for (const diagnostic of sourceFile.parseDiagnostics) {
+    const text = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ');
+    fail(`OCRPARSE: app.ts 解析失败（判据拒绝在残缺 AST 上下结论）：${text}`);
+  }
 
   const checkNamedImports = (namedBindings) => {
     if (namedBindings === undefined) return;
@@ -189,11 +242,16 @@ function evaluateOcrImports(sourceText, fromDir) {
   };
 
   const visit = (node) => {
-    // 记录 `const X = createRequire(…)` 产生的**间接 require**（否则 `X('./ocr/state.ts')` 会成为未声明缺口）
-    if (ts.isVariableDeclaration(node) && node.initializer !== undefined
-      && ts.isCallExpression(node.initializer) && ts.isIdentifier(node.initializer.expression)
-      && node.initializer.expression.text === 'createRequire' && ts.isIdentifier(node.name)) {
-      requireAliases.add(node.name.text);
+    // 记录 `const X = createRequire(…)` 产生的**间接 require**（否则 `X('./ocr/state.ts')` 会成为未声明缺口）。
+    // ⚠ 初始化表达式**同样经唯一归一化入口 `stripSequence` 剥壳**：`const rq = (createRequire)(…)`、
+    //   `const rq = createRequire(…) as NodeRequire`、`const rq = (0, createRequire)(…)` 都必须登记
+    //   —— 不得在此另写一套形状判定（r6 复审：类型包装族正是靠"别名 + 包装"绕过静态判据的，见 W1–W7）。
+    if (ts.isVariableDeclaration(node) && node.initializer !== undefined && ts.isIdentifier(node.name)) {
+      const initializer = stripSequence(node.initializer);
+      if (initializer !== undefined && ts.isCallExpression(initializer)
+        && ts.isIdentifier(initializer.expression) && initializer.expression.text === 'createRequire') {
+        requireAliases.add(node.name.text);
+      }
     }
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       const specifierNode = node.moduleSpecifier;
@@ -229,10 +287,11 @@ function evaluateOcrImports(sourceText, fromDir) {
         }
       }
     } else if (ts.isCallExpression(node)) {
-      // ⚠ callee 侧**必须先归一化**（剥括号 + 剥逗号表达式），且与实参侧共用 `peelParentheses`；
+      // ⚠ callee 侧**必须先归一化**（剥壳 + 剥逗号序列 + 当场调用递归），且与实参侧共用**同一个**入口；
       //   否则 `(require)('./ocr/state.ts')` 的 callee 是 ParenthesizedExpression —— 既不等于 `ImportKeyword`，
-      //   也不是 `Identifier` ⇒ **一行括号绕过**（r5 实测）。动态 `import(...)` 与 require 走**同一** `normalizeCallee`。
-      const callee = normalizeCallee(node.expression);
+      //   也不是 `Identifier` ⇒ **一行括号绕过**（r5 实测）。动态 `import(...)`、`require`、间接别名、
+      //   `createRequire(import.meta.url)(…)` **当场调用**全部走**同一** `normalizeCallee`（r6）。
+      const callee = normalizeCallee(node.expression, requireAliases);
       const isDynamicImport = callee !== null && callee.kind === 'dynamic-import';
       const requireLabel = requireCalleeLabel(node.expression, requireAliases);
       if (isDynamicImport || requireLabel !== null) {
@@ -252,10 +311,12 @@ function evaluateOcrImports(sourceText, fromDir) {
         }
         }
       }
-      // ⚠ **显式登记盲区（r5）**：callee 为 `createRequire(...)`（如 `createRequire(import.meta.url)('./ocr/state.ts')`）
-      //   或任一非 Identifier 调用表达式时，**上面不进域检查**，随后由本行 `ts.forEachChild` 递归进 callee 与实参。
-      //   这是**已知未覆盖形态**，不得读成"覆盖全部形态"；不把它写成放行理由，只作登记。
-      //   注意：**不得**在此提前 `return`（那会跳过下面的 `ts.forEachChild`，等于放弃整棵子树）。
+      // ⚠ **显式登记盲区（r6）**：callee 为 `module.require(…)` / `globalThis.require(…)` / `eval('require')(…)` /
+      //   `require.resolve(…)` 等**本判据不识别**的表达式时，**上面不进域检查**（r5 曾把"裸 `createRequire(…)`
+      //   当场调用"登记在此，r6 已收口 ⇒ 不再是盲区）。这些形态在**运行期正常路径**由 stdout 的 NOTE 逐条打印，
+      //   不得读成"覆盖全部形态"；不把它写成放行理由，只作登记。
+      //   注意：**不得**在此提前 `return`（那会跳过下面的 `ts.forEachChild`，等于放弃整棵子树 —— 静态 `import`
+      //   分支之外的所有节点都靠它递归下来）。
     }
     ts.forEachChild(node, visit);
   };
@@ -982,7 +1043,20 @@ try {
     //   (e) **删掉"动态 import 非字面量 ⇒ OCRTEXT"判据**（`await import(someVar)` 条目失配）；
     //   (f) **callee 侧不归一化**（r5 新增：把 callee 判定改回"只认裸 Identifier"，则
     //       `(require)('./ocr/state.ts')` 等 callee 形态负控制全部由 1 掉到 0 ⇒ 失配）。
-    //   上述 (a)–(f) 均在 `SEL1…SEL5` 及 r5 的 callee 变异下**实测**被本自测抓住；**本清单之外的形态未逐一枚举** ✗。
+      //   —— r6 新增（**逐层**撤掉后逐条实测判红，原始输出见交接记录「牙验证注入矩阵」）：
+      //   (g) **撤"括号"层**（`ts.isParenthesizedExpression` 恒 false ⇒ 首条失配 `__c1`）；
+      //   (h) **撤"`as`"层**（删 `ts.isAsExpression` ⇒ `__r1` 失配）；
+      //   (i) **撤"非空断言 `!`"层**（删 `ts.isNonNullExpression` ⇒ `__r3` 失配）；
+      //   (j) **撤"尖括号断言 `<T>`"层**（删 `ts.isTypeAssertionExpression` ⇒ `__r8` 失配）；
+      //   (k) **撤"`satisfies`"层**（删 `ts.isSatisfiesExpression` ⇒ `__r7` 失配）；
+      //   (l) **撤"逗号序列"层**（删 `stripSequence` 的 `CommaToken` 循环 ⇒ `__c3` 失配）；
+      //   (m) **撤"当场调用"层**（删 `normalizeCallee` 的 `CallExpression` 递归 ⇒ `__r9` 失配）；
+      //   (n) **撤 `parseDiagnostics` fail-closed**（删诊断循环 ⇒ `import { X } from './ocr/` 失配）；
+      //   (o) **域判据退回单层**（改回 `/(^|\/)ocr\/[^/]+$/` ⇒ `./ocr/nested/state.ts` 失配）；
+      //   (p) **域判据子串化**（改成 `/ocr\//` ⇒ `./xocr/state.ts` 期望 0 却得 1 ⇒ 失配，钉"不误报"）；
+      //   (q) **白名单退化**（改成 `target.endsWith('service.ts')` ⇒ `../knowledge/ocr/service.ts` 失配）。
+      //   上述 (a)–(q) 均在 `SEL1…SEL5`、r5 的 callee 变异与 r6 的 11 条逐层变异下**实测**被本自测抓住；
+      //   **本清单之外的形态未逐一枚举** ✗（例如"整体删掉 `isAllowedOcrModuleTarget`"之类未逐条跑过）。
     // ⇒ 自测条数与下方数组**逐字一致**（改判据必须同步改数组与总数，否则本用例红）。
     const selfTestCases = [
       ["import { createUnwiredOcrTerminalHistoryPort } from './ocr/service.ts';", 0], // 合法 import（唯一允许的值符号）
@@ -1040,10 +1114,79 @@ try {
       // ⚠ **不设** `(import)('./ocr/state.ts')` 用例：r5 用 `ts.createSourceFile` 实测（AST dump + parseDiagnostics），
       //   TS 解析器在 `(import)` 处报 "Expression expected."，产出的 callee 是**空文本 Identifier**（不是 `ImportKeyword`），
       //   整个 `(import)(…)` 被解析成"ParenthesizedExpression + 另一条 ExpressionStatement" ⇒ **它根本不是 CallExpression**。
-      //   故该形态既非本判据缺口、也无法作为负控制（写成断言只会是假红）。同 `(0, import)(…)` 同理。
+      //   故该形态既非 callee 负控制（写成 1 条期望只会是假红）。⚠ r6 起它由 `parseDiagnostics` **fail-closed**
+      //   覆盖：实测该句产出 3 条诊断 ⇒ `OCRPARSE` 判红（判据拒绝在残缺 AST 上得出"0 违规"）。
       //   动态 import 的 callee 只能是**裸** `import` 关键字（`import(…)`），本判据已覆盖其字符串实参。
+      // ══ r6 新增（44 条）：阻断 B1/B2 的回归钉子 + 复审 N1/N2/N6/N7 钉子。期望值均为**改后实测**读数 ══
+      // ⓐ 阻断 B1：`createRequire` 别名 + **类型包装**（`as any`／`as NodeRequire`／非空断言 `!`／`satisfies`／
+      //    尖括号断言／嵌套 `as`／逗号序列）—— 改前静态全 0 **且运行期真加载**（复审 W1–W5 实测）。每层包装
+      //    各一条 ⇒ "撤掉该层归一化即红"的牙验证有对应钉子（见交接记录注入矩阵）。
+      ["const rq = createRequire(import.meta.url); const __r1 = (rq as any)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r2 = (rq as NodeRequire)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r3 = (rq!)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r4 = ((rq as unknown) as any)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r5 = (0, rq as any)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r6 = (rq as any)('./ocr/service.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r7 = (rq satisfies NodeRequire)('./ocr/state.ts');", 1],
+      ["const rq = createRequire(import.meta.url); const __r8 = (<NodeRequire>rq)('./ocr/state.ts');", 1],
+      // ⓑ 阻断 B2：**当场调用** `createRequire(…)`（裸／括号／逗号序列／类型包装），含指向 service 的那条
+      //    （改前连 OCRDYNAMIC 都整条绕过）。改前静态 0 且运行期真加载（复审 W6/W7 实测）。
+      ["const __r9 = createRequire(import.meta.url)('./ocr/state.ts');", 1],
+      ["const __r10 = (createRequire(import.meta.url))('./ocr/state.ts');", 1],
+      ["const __r11 = (0, createRequire(import.meta.url))('./ocr/state.ts');", 1],
+      ["const __r12 = (createRequire(import.meta.url) as NodeRequire)('./ocr/state.ts');", 1],
+      ["const __r13 = createRequire(import.meta.url)('./ocr/service.ts');", 1],
+      // ⓒ 裸 `require` 的类型包装族（复审 F18–F27 整族静态 0）—— 与 ⓐ 共用**同一个** `peelShells`。
+      ["const __r14 = (require as any)('./ocr/state.ts');", 1],
+      ["const __r15 = (require!)('./ocr/state.ts');", 1],
+      ["const __r16 = (0, require as any)('./ocr/state.ts');", 1],
+      ["const __r17 = ((require as unknown) as any)('./ocr/state.ts');", 1],
+      ["const __r18 = ((require as NodeRequire))('./ocr/state.ts');", 1],
+      // ⓓ **实参侧**同源归一化（复审 N7/F41/F45/F46/F48）：`as`／`satisfies`／`!`／尖括号断言／逗号序列，
+      //    动态 `import()` 与 `require()` 两条通道各覆盖一遍 —— 证明剥壳不是只给 callee 用的补丁。
+      ["const __r19 = require('./ocr/state.ts' as any);", 1],
+      ["const __r20 = require('./ocr/state.ts' satisfies string);", 1],
+      ["const __r21 = require('./ocr/state.ts'!);", 1],
+      ["const __r22 = require((0, './ocr/state.ts'));", 1],
+      ["const __r23 = require(<any>'./ocr/state.ts');", 1],
+      ["const __r24 = import('./ocr/state.ts' as any);", 1],
+      ["const __r25 = import((0, './ocr/state.ts'));", 1],
+      // ⓔ **解析失败 fail-closed**（复审 N1）：语法错误（未闭合字符串 ⇒ 实测 1 条诊断）⇒ 判红并打印诊断原文。
+      //    ⚠ 本用例钉的是"非空诊断 ⇒ 判红"这一语义，不钉诊断**条数**（同源多诊断会逐条判红，例如未闭合块注释
+      //    在 typescript@5.9.3 下产出 2 条 ⇒ 2 条违规；条数随 TS 版本可能变化，故不写进断言）。
+      ["import { X } from './ocr/", 1],
+      // ⓕ N2/N6 钉子：白名单必须是**全路径**精确（`../knowledge/ocr/service.ts` 归一化后不是白名单模块 ⇒ 1，
+      //    此条钉死"白名单退化成 `endsWith('service.ts')`"）；域判据按 **`ocr/` 段**匹配且**任意深度**。
+      ["import { createUnwiredOcrTerminalHistoryPort } from '../knowledge/ocr/service.ts';", 1],
+      ["import { X } from './ocr/nested/state.ts';", 1],
+      ["import { X } from '../ocr/state.ts';", 1],
+      ["import { normalizeLabelFields } from './knowledge/ocr/state.ts';", 1],
+      //    N6 反向钉子：`xocr` **不是** `ocr/` 段 ⇒ 必须 0（钉死"域判据子串化成 `includes('ocr/')`"的误报退化）。
+      ["import { X } from './xocr/state.ts';", 0],
+      // ⓖ 域外对照：类型包装／当场调用**不得**退化成"见包装就报"（改前改后均 0；撤掉域判据反而会变红）。
+      ["const rq = createRequire(import.meta.url); const __z1 = (rq as any)('fastify');", 0],
+      ["const rq = createRequire(import.meta.url); const __z2 = (rq as any)('./knowledge/service.ts');", 0],
+      ["const __z3 = createRequire(import.meta.url)('node:fs');", 0],
+      ["const __z4 = (require as any)('fastify');", 0],
+      ["const __z5 = require((0, 'fastify'));", 0],
+      //    动态 import 的实参**可静态求值**且域外 ⇒ 0（改前因"非字面量"误判为 OCRTEXT=1；r6 剥壳后按真实
+      //    说明符判定 ⇒ 1→0。这是**判据更准**而非放宽：域内的同形态在 ⓓ 仍是 1）。
+      ["const __z6 = import('node:fs' as any);", 0],
+      ["const rq = createRequire(import.meta.url); const __z7 = (0, rq as any)('./knowledge/service.ts');", 0],
+      // ⓗ **已书面声明的盲区**（期望 0 = 现状；与文件尾部 `NOTE 判据未覆盖（r6 如实声明）` 一一对应）。
+      //    ⚠ 这些用例把"当前看不到"钉成事实记录：若将来收口，**必须同步改这里的期望值**，不得悄悄放宽。
+      ["const __b1 = module.require('./ocr/state.ts');", 0],
+      ["const __b2 = globalThis.require('./ocr/state.ts');", 0],
+      ["const __b3 = eval('require')('./ocr/state.ts');", 0],
+      ["const __b4 = require('' + './ocr/state.ts');", 0],
+      ["const __b5 = require(String('./ocr/state.ts'));", 0],
+      ["const __b6 = require.resolve('./ocr/state.ts');", 0],
+      // ⓘ **未闭合块注释**（复审点名的 fail-closed 负控制）：注释在**语句位置**未闭合 ⇒ 实测恰好 1 条诊断
+      //    （`'*/' expected.`）⇒ 1 条 `OCRPARSE`。⚠ 若把它写成上半句已截断的形状（`const x = /*`），TS 会给出
+      //    2 条诊断 ⇒ 2 条违规；本用例刻意选**单诊断**形状以免把诊断条数钉死（条数随 TS 版本可变）。
+      ["const __p9 = 1; /* 未闭合块注释", 1],
     ];
-    assert.equal(selfTestCases.length, 47, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
+    assert.equal(selfTestCases.length, 92, '自测条数必须与被声明的条数逐字一致（改判据即改此处与总数）');
     for (const [source, expectedViolations] of selfTestCases) {
       const verdict = evaluateOcrImports(source, APP_SOURCE_DIR);
       assert.equal(
@@ -1216,6 +1359,8 @@ try {
   console.log(`PASS ${results.length} 组：经真实装配的 app（buildApp）+ 本机回环 HTTP；合成身份/替身提供者/内存 store；未联网、未连库、未调真实供应商`);
   console.log('NOTE 未覆盖（如实声明）：小程序 identify 页标签模式与打包白名单、真实 OCR 供应商、真实登记库/用量来源、标签类真实样本 0 ⇒ 不声称任何准确率、真机、PG 持久化');
   console.log('NOTE 非产品装配的两段（均为路由插件 deps 接缝，产品装配刻意零端口注入）：组 3d「登记库未接线 ⇒ unavailable」；组 12「失败/超时终态与确定性运行中」（悬挂/失败提供者 + 1s deadline）');
+  // r6：把判据**看不到**的形态在**正常路径**逐条打印（复审要求：只写注释不算 ⇒ 这里进 stdout；与自测数组 ⓗ 组对应）
+  console.log('NOTE 判据未覆盖（r6 如实声明）：①实参拼接/插值（`require(\'./ocr/\' + \'state.ts\')`、模板字面量）；②非字面量实参（`require(someVar)`、`require(String(\'./ocr/state.ts\'))`）；③其它 require 通道（`module.require(…)`、`globalThis.require(…)`、`eval(\'require\')(…)`、`require.resolve(…)`、`import.meta.resolve(…)`）；④把别名/`createRequire` 再转手传出后再调用。以上形态本判据**不判红**（自测数组 ⓗ 组即这些现状的钉死记录）；⑤嵌套目录 `./ocr/nested/state.ts`（r6 已按 `ocr/` **段**任意深度收口 ⇒ **不再是盲区**，此处只声明判据口径）；⑥解析诊断非空时本判据整体 fail-closed（`OCRPARSE`，逐条打印诊断原文）⇒ 语法错误（含 `(import)(…)` 这类解析错误）不会得出"0 违规"。');
 } finally {
   await Promise.allSettled([stubApp.close(), realApp.close(), seamApp.close(), providerSeamApp.close()]);
 }
