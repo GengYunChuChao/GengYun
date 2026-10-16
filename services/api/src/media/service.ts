@@ -34,7 +34,7 @@
  *
  * ## real 模式 fail-closed（监工对 #121 的 P1 裁定）
  * `executionMode === 'real'` 且注入的对象存储端口 `kind !== 's3_compatible'` ⇒ **整个媒体域**
- * 一律 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。判据是端口的 `kind`，不是自述布尔标志；
+ * 一律 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。判据是端口的 `kind`，不是自述布尔标志；
  * 将来接真实存储必须在装配层**显式**传入真实适配器。装配路径默认给 `real` 的是 `unwired` 端口。
  */
 import { randomUUID } from 'node:crypto';
@@ -441,10 +441,11 @@ export function isRealMediaWiringApproved(value: unknown): value is RealMediaWir
 
 /**
  * real 模式且真实对象存储未接线（或缺少批准能力）⇒ **整域** `PROVIDER_UNAVAILABLE`
- * （503，`retryable: true`）。绝不返回任何成功封套（那等于把内存/替身存储记成真实持久化）。
+ * （503，`retryable: false`）。绝不返回任何成功封套（那等于把内存/替身存储记成真实持久化）。
  */
 export function createFailClosedMediaService(reason: string): AppMediaService {
-  const fail = (): ApiError => new ApiError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: true });
+  // 媒体域未接线（fail-closed 替身／计数器未接入）：retryable 必须为 false。
+  const fail = (): ApiError => new ApiError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: false });
   const objectStore = createUnwiredObjectStore(reason);
   const contentSource = createClosedContentSource();
   const attachmentCounter = createUnwiredAttachmentCounter();
@@ -649,7 +650,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     });
     if (counted === null) {
       throw new ApiError('PROVIDER_UNAVAILABLE', '无法判定「每帖 ≤3 张」图片槽位：计数器未接线', {
-        retryable: true,
+        // 媒体域未接线（fail-closed 替身／计数器未接入）：retryable 必须为 false。
+        retryable: false,
       });
     }
     return counted;

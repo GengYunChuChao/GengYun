@@ -220,7 +220,8 @@ export function createPostgresConversationStore(
         [record.id, record.owner_id, record.revision, record.conditions === null ? null : JSON.stringify(record.conditions), record.created_at],
       );
       const row = rows[0];
-      if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: true });
+      // 写库未返回结果行 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+      if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: false });
       return toConversation(row);
     },
 
@@ -293,7 +294,8 @@ export function createPostgresConversationStore(
         ],
       );
       const row = rows[0];
-      if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: true });
+      // 写库未返回结果行 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+      if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: false });
       return toTurn(row);
     },
 
@@ -387,7 +389,8 @@ export function createPostgresConversationStore(
             ],
           );
           if (inserted.rows.length !== 1) {
-            throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: true });
+            // 写库未返回结果行 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+            throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: false });
           }
           answerId = String(inserted.rows[0]?.['id']);
         }

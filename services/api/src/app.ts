@@ -528,11 +528,15 @@ function withModerationTakedownLink(
           reason_code: reason,
         });
       } catch (error) {
+        // 真瞬时（端口自己声明可重试）原样上抛，保留端口给出的结论。
         if (error instanceof ApiError && error.retryable) throw error;
+        // 走到这里只剩三类：确定性缺陷／能力未接线（端口 fail-closed 形状不可用）／无法归类。
+        // 同一请求在无运维介入下稍后重试都不会成功 ⇒ retryable 必须为 false。
+        // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
         throw new ApiError(
           'PROVIDER_UNAVAILABLE',
-          '后台下架已生效，但审核域缓存失效未完成（fail-closed，可重试）',
-          { retryable: true },
+          '后台下架已生效，但审核域缓存失效未完成（fail-closed；需先排查审核域端口或缺陷，重试同一请求不会自行恢复）',
+          { retryable: false },
         );
       }
       return response;
@@ -1175,7 +1179,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式下注销请求**没有**
   //     持久存储（`packages/privacy` 的删除注册表是进程内的，契约里也没有注销请求的持久表），
   //     因此**不接线**：`available: false` ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`
-  //     （`retryable: true`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
+  //     （`retryable: false`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
   //     是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用；
   //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
   //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），

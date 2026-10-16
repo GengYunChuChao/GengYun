@@ -201,7 +201,11 @@ test('real + 未接真实依赖 ⇒ fail-closed：503 PROVIDER_UNAVAILABLE(retry
       assert.ok(err instanceof PrivacyError);
       assert.equal(err.code, 'PROVIDER_UNAVAILABLE');
       assert.equal(err.status, 503, '契约 error_status_map：503');
-      assert.equal(err.retryable, true, '必须可重试');
+      assert.equal(
+        err.retryable,
+        false,
+        '未接真实依赖＝能力未装配（需运维接线），同一请求重试不会成功 ⇒ retryable 必须为 false（口径见 services/api/src/errors.ts）',
+      );
       return true;
     },
   );

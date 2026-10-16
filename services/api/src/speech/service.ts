@@ -422,8 +422,12 @@ export function createSpeechService(options: SpeechServiceOptions) {
     const mediaJobInput = requireMediaJobInput(input.body);
     const key = requireIdempotencyKey(input.idempotencyKey);
     // real 缺凭据/无已审适配器：**受理前** fail-closed，不建任务、不排队、不回退替身。
+    // `retryable: false` 显式写出（与省略时的默认值一致，但不再依赖默认值）：这是"能力未装配／未接线"
+    // （需运维改配置），不是瞬时故障 —— 同一请求原样重试不会成功。口径原文见 `services/api/src/errors.ts`。
     if (!provider.available) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? 'ASR 提供者不可用');
+      throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? 'ASR 提供者不可用', {
+        retryable: false,
+      });
     }
     const resolution = await media.resolve({
       ownerUserId: input.userId,

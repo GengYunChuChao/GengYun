@@ -192,7 +192,8 @@ function auditStateOf(value: unknown): LinkAuditState | null {
 /** 形状不可用 ⇒ 契约 503（fail-closed；**绝不**把"读不懂"当成"通过了"）。 */
 function shapeUnavailable(what: string): ApiError {
   return new ApiError('PROVIDER_UNAVAILABLE', `审核域${what}形状不可用（fail-closed，不得视为通过）`, {
-    retryable: true,
+    // 审核域端口形状不可用／无法归类 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。
+    retryable: false,
   });
 }
 
@@ -204,7 +205,8 @@ function shapeUnavailable(what: string): ApiError {
  */
 function asApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
-  return new ApiError('PROVIDER_UNAVAILABLE', '审核域调用失败且无法归类（fail-closed）', { retryable: true });
+  // 审核域端口形状不可用／无法归类 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。
+  return new ApiError('PROVIDER_UNAVAILABLE', '审核域调用失败且无法归类（fail-closed）', { retryable: false });
 }
 
 interface TaskRead {

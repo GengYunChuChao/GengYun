@@ -1484,6 +1484,13 @@ try {
     });
     assert.equal(rejected.status, 503, 'real 缺凭据必须受理前 503');
     assert.equal(rejected.json.error.code, 'PROVIDER_UNAVAILABLE');
+    // 新增（原文件此前**零** `retryable` 断言 ⇒ 这是"能力未接线"口径在本面长期无声漂移的缺口）：
+    // 「真实 OCR 提供者未接线」需运维改配置，不是时间能解决的 ⇒ 不得声称"重试就会好"。
+    assert.equal(
+      rejected.json.error.retryable,
+      false,
+      'OCR 受理面：能力未接线 ⇒ retryable 必须为 false（口径原文见 services/api/src/errors.ts）',
+    );
     assert.equal(realApp.ocrService.describe().providerCalls, 0, '受理前 fail-closed 不得调用提供者');
     // 不建任务：换一个键再来一次仍是 503，且调用计数仍为 0。
     const again = await call(realBase, realToken, 'POST', `${API}/ocr`, {
@@ -1491,6 +1498,13 @@ try {
       body: { media_id: mediaIdForBucket(0), media_revision: 1 },
     });
     assert.equal(again.status, 503);
+    assert.equal(again.json.error.code, 'PROVIDER_UNAVAILABLE');
+    // 重试不会好：连第二次请求也如实是 `retryable:false`（不是"第一次没准备好"）。
+    assert.equal(
+      again.json.error.retryable,
+      false,
+      'OCR 受理面：同一请求重试后仍不可用 ⇒ 更证明其非瞬时故障，retryable 必须为 false',
+    );
     assert.equal(realApp.ocrService.describe().providerCalls, 0);
 
     // —— 代码层结构证据（"默认关闭"是结构属性，不是约定）——
@@ -1890,7 +1904,11 @@ try {
     });
     assert.equal(cancelled.status, 503, `OCR 域本基线无取消能力 ⇒ 如实 503（不得 200，也不得 404）：${JSON.stringify(cancelled.json)}`);
     assert.equal(cancelled.json.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(cancelled.json.error.retryable, true, '能力未接线属可重试（接线后同一请求即可成功）');
+    assert.equal(
+      cancelled.json.error.retryable,
+      false,
+      '能力未接线（OCR 域无取消能力）⇒ 需运维接线，同一请求重试不会成功 ⇒ retryable 必须为 false',
+    );
 
     // 不得伪造 cancelled、不得改 revision、不得影响可读性
     const after = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);

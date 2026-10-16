@@ -26,7 +26,7 @@
  * 2. **未覆盖 ⇒ 不可完成**：`backupPurge` 未接线 ⇒ 每个模块 `backup_state: 'pending'`
  *    ⇒ 全模块完成判定恒不成立（缺口对用户与监工可见，不谎称完成）。
  * 3. **未装配 ⇒ 503**：服务端执行模式不允许本片（`real`）时，两个 operation **不注册任何回退**，
- *   由 `registerAccountDeletionRoutes()` 抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ *   由 `registerAccountDeletionRoutes()` 抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  *
  * ## 已知缺口（如实登记，不在本文件掩盖）
  * - **进程内状态**：删除请求与回执映射都在内存（既有 `createUserDataDeletion()` 本就在内存），
@@ -143,7 +143,7 @@ export function createDeletionReceiptRegistry(input: { now?: () => Date } = {}):
 /**
  * 注销申请服务（`POST /me/account/deletion` 的唯一实现）。
  *
- * `available === false` ⇒ 路由**不注册回退**：抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ * `available === false` ⇒ 路由**不注册回退**：抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  */
 export interface AccountDeletionRequestService {
   readonly available: boolean;

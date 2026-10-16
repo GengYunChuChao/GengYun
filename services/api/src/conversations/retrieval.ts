@@ -54,7 +54,8 @@ function requiredString(record: Record<string, unknown>, key: string, where: str
   const value = record[key];
   if (typeof value !== 'string' || value.length === 0) {
     throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${where} 的来源字段 ${key} 缺失或非字符串`, {
-      retryable: true,
+      // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+      retryable: false,
     });
   }
   return value;
@@ -69,19 +70,23 @@ function requiredString(record: Record<string, unknown>, key: string, where: str
  */
 export function retrievalItemOf(value: unknown, where = 'unknown'): RetrievalItem {
   if (!isPlainObject(value)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${where} 不是对象`, { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${where} 不是对象`, { retryable: false });
   }
   const id = value['id'];
   const revision = value['revision'];
   const source = value['source'];
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 id 不是 uuid：${String(id)}`, { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 id 不是 uuid：${String(id)}`, { retryable: false });
   }
   if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的 revision 不是 >=1 的整数`, { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的 revision 不是 >=1 的整数`, { retryable: false });
   }
   if (!isPlainObject(source)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 缺少来源对象（无法核对引用）`, { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 缺少来源对象（无法核对引用）`, { retryable: false });
   }
   const ref: SourceRef = {
     id: requiredString(source, 'id', id),
@@ -97,7 +102,8 @@ export function retrievalItemOf(value: unknown, where = 'unknown'): RetrievalIte
   };
   if (ref.id !== id) {
     // 读面把条目 id 与来源 id 混为一谈 ⇒ 引用核对会失去意义。
-    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的来源 id 与条目 id 不一致`, { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `检索集合条目 ${id} 的来源 id 与条目 id 不一致`, { retryable: false });
   }
   return {
     id,
@@ -113,7 +119,8 @@ export function retrievalItemOf(value: unknown, where = 'unknown'): RetrievalIte
 /** 读面返回体 → 条目数组（形状不对 ⇒ 503，不把 `undefined` 当成空集合）。 */
 export function retrievalItemsOf(result: unknown): unknown[] {
   if (!isPlainObject(result) || !Array.isArray(result['items'])) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '资料读面返回体缺少 items 数组', { retryable: true });
+    // 读面投影不合契约 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', '资料读面返回体缺少 items 数组', { retryable: false });
   }
   return result['items'];
 }

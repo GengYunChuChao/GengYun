@@ -7,12 +7,12 @@
  * | kind | 何时使用 | 行为 |
  * | --- | --- | --- |
  * | `substitute` | `stub` / `preset_demo` / 测试注入 | 进程内内存对象存储；**明确标注的替身**，不发起任何网络请求 |
- * | `unwired` | `real` 且未**显式注入**真实适配器（含装配点不传 `env` 的情形） | 每个操作抛 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）；**fail-closed** |
+ * | `unwired` | `real` 且未**显式注入**真实适配器（含装配点不传 `env` 的情形） | 每个操作抛 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）；**fail-closed** |
  * | `s3_compatible` | 装配层**显式注入**已构造的实例，或测试显式传入齐备的合成 `env` | S3/COS 兼容真实适配器（SigV4 预签名 + `fetch` 传输） |
  *
  * 硬性纪律（来自监工对 #121 的 P1 裁定）：
  * - `real` 模式下真实存储/持久端口未真正接入 ⇒ **必须 fail-closed**，以契约内的
- *   `PROVIDER_UNAVAILABLE`（503，`retryable: true`）明确拒绝，**不得**用内存/替身实现返回成功封套。
+ *   `PROVIDER_UNAVAILABLE`（503，`retryable: false`）明确拒绝，**不得**用内存/替身实现返回成功封套。
  * - 判据是**注入端口的 `kind`**，不是一个自述「我已持久化」的布尔标志：接真实存储必须是**装配层**
  *   一次可审查的接线变更 —— 而该变更自 PR #193 的 P1 起**只允许是显式注入端口实例**，
  *   **不允许**把 ambient `process.env` 交给 `resolveMediaObjectStore`（那等于"配置即门控"）。
@@ -137,12 +137,13 @@ export const UNWIRED_OBJECT_STORE_REASON =
   '真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套';
 
 /**
- * 未接线端口（`real` 模式的默认装配路径）：每个操作**一律** `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ * 未接线端口（`real` 模式的默认装配路径）：每个操作**一律** `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  * 不泄露对象是否存在，也不以「本地兜底」方式放行。
  */
 export function createUnwiredObjectStore(reason: string = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore {
   const fail = (): MediaError =>
-    new MediaError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: true });
+    // 对象存储未接线（未注入真实适配器）：retryable 必须为 false。
+    new MediaError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: false });
   return {
     kind: 'unwired',
     note: `${reason}（fail-closed）`,
