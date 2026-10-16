@@ -1,6 +1,6 @@
 # 开发指南
 
-面向接手项目的新开发者。更新：2026-10-10；代码核对基线 main `7ec4c85`。
+面向接手项目的新开发者。更新：2026-10-10；人工核对基线 main `7ec4c85`（2026-10-10，代码核对当时 main，Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)）；现行 main `cc07de8`（2026-10-16，[#215](https://github.com/GengYunChuChao/GengYun/pull/215)）领先147个提交；状态值未逐条重核。
 “已合组件”不等于整项功能验收；最新状态见[进度](development-progress.md)。
 
 ## 1 项目与范围

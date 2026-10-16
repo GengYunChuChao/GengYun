@@ -1,6 +1,6 @@
 # 当前进度
 
-核对日期：2026-10-14（当时 main `15c3003efc221407734ea26366a7538ae23ddcbb`）；现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先71个提交。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
+核对日期：2026-10-14（当时 main `15c3003efc221407734ea26366a7538ae23ddcbb`）；该时点读数：现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先71个提交；**现测**（2026-10-16）：`cc07de8fd2fabfcd51b11c37962994631ecfbed5`（[#215](https://github.com/GengYunChuChao/GengYun/pull/215)）领先82个提交（`git rev-list --count 3000e2e0f42c2d3f4196baad5269ebcec9264f82..upstream/main`=10，71+10=82）。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
 
 ## 已合组件与剩余验收
 
@@ -13,7 +13,7 @@
 | 身份／档案／隐私 | 两端鉴权、手选档案、授权签名列表、科普／目录固定15分钟分页；后台及档案／授权新回执24h；外发账本／在途守卫／删除注册协议（#128） | 正式微信身份／Android、定位成功、真实政策／接收方、撤回消费者及注销全链；#133用途消费者接线未合，不计本基线 |
 | 媒体／评估 | 7个私有媒体HTTP操作及归属／EXIF组件（#129）；真实杂草样本登记／答案键／冻结清单与离线评估接入（#130） | 存储网关、持久化及跨模块消费者；样本登记不等于独立评估达标或真实识别能力通过 |
 | 识别／OCR／语音 | 领域HTTP、状态／版本／幂等／阶段超时；共享Job识别与转写读取、识别取消 | 真实媒体／供应商接线及独立评估；转写取消503，OCR／合成／问答／审核公共作业源、持久租约与恢复未接线 |
-| 问答／社区／消息／后台 | 独立领域服务；34个后台HTTP操作与fail-closed端口（#121） | 文字问答HTTP、安全来源消费、社区／消息装配、收藏历史；后台真实端口／存储与UI联调 |
+| 问答／社区／消息／后台 | 独立领域服务；34个后台HTTP操作与fail-closed端口（#121）；社区16条业务契约（帖子9／评论5／举报2）与消息3端点（列表／未读数／读标记）路由已装配（判据见 `docs/architecture/contract-implementation-status.md:19`） | 文字问答HTTP、安全来源消费、收藏历史；社区real模式整域503 `PROVIDER_UNAVAILABLE`、**真实持久存储未交付**；消息只服务进程内存储、real持久存储未接线；后台真实端口／存储与UI联调 |
 | 部署／演示 | 容器、VPC和CVM PostgreSQL安装／角色／备份恢复准备物；独立界面Demo可编辑源（#132） | 云上实际部署／迁移／恢复及联网验收；界面Demo不等于原生微信业务验收 |
 | 情景视频 | 已确认模板合成方案 | 接口、素材、时长／保存期限与播放器链待交付；演示不代表真实长期药效 |
 
