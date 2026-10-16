@@ -1,6 +1,6 @@
 # GY-I01 契约实现状态对照
 
-更新：2026-10-14。正式 main 基线 `72c4923a8ec058399a51609e1cf1e3c70a890b4a`。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
+更新：2026-10-16。人工核对基线 `72c4923a8ec058399a51609e1cf1e3c70a890b4a`（2026-10-14，GY-I07／[#135](https://github.com/GengYunChuChao/GengYun/pull/135)）；现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先67个提交，机器校验（`node tools/verify-contract-status.mjs`，exit 0）已在该 HEAD 通过、状态值未逐条重核。Refs [#1](https://github.com/GengYunChuChao/GengYun/issues/1)。保留最新主线的作业/目录分页、34个后台与7个媒体端点事实，协调 #117 的授权分页、知识排序及幂等维度修订；历史记录保留，不关闭整项。
 
 ## 1 判据与事实源
 
@@ -14,9 +14,9 @@
 
 事实源为 `packages/contracts/openapi.json`、`operations.json` 与 `states.json`；语义约定见[状态协议](state-contract.md)。[JSON 副本](contract-status.json)人工维护状态、证据和缺口，以下表格从该副本同步，脚本不会自动判定 implemented。
 
-当前 `services/api/src/app.ts:320-340` 装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台和媒体。健康不计入112条业务契约。共享 Job 读取已接识别/转写/审核/合成/OCR（OCR 读面见 #183，`services/api/src/jobs/routes.ts:51-62`；合成读面见 #152），取消仅识别；转写/合成/OCR 取消503 PROVIDER_UNAVAILABLE，未接作业源（如 answer）与不存在同形404。
+当前 `services/api/src/app.ts:1040-1109` 装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台、媒体、消息、收藏/历史与社区（各自真实运行条件与缺口见下表）。健康不计入112条业务契约。共享 Job 读取已接识别/转写/审核/合成/OCR（OCR 读面见 #183，`services/api/src/jobs/routes.ts:51-62`；合成读面见 #152），取消仅识别；转写/合成/OCR 取消503 PROVIDER_UNAVAILABLE，未接作业源（如 answer）与不存在同形404。
 
-后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项保持独立服务、未装配；消息列表、未读数量与读标记已装配为partial，real尚未接持久存储，明确503。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
+后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项（帖子9／评论5／举报2）已装配为partial、real模式整域503 PROVIDER_UNAVAILABLE、真实持久存储未交付；消息列表、未读数量与读标记已装配为partial，real尚未接持久存储，明确503。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
 
 <!-- contract-status-tables:start -->
 ## 2 横切约定
