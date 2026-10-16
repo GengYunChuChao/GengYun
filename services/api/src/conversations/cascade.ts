@@ -1,0 +1,204 @@
+/**
+ * GY-I12（#12）· 会话/轮次级联删除端口（契约 `deleteTurn` 的 description：
+ * 「If-Match对应turn；级联音频/结果/外发处理但不删他人媒体。」）。
+ *
+ * 端口范式**逐条沿用**已合并的 `services/api/src/history/cascade.ts`（#16）：
+ *   - 端口自述 `kind`（`'wired' | 'unwired'`）与 `available` 两个字段，
+ *     **未接线与就绪对调用方可见**，不靠"没有异常"暗示成功；
+ *   - 处置结果是**闭集** `'initiated' | 'unwired' | 'failed'`：只区分「已启动 / 未接线 / 失败」，
+ *     **绝不**声称"已完成删除"（真正的完成证据属删除协议回执，不属本端口的返回值）；
+ *   - `failed` **不回滚已完成的主体删除**：轮次行已经删掉了，级联处置失败必须如实披露
+ *     （响应头 `X-GY-Cascade`），而不是把删除改写成失败。
+ *
+ * 本片**不**实现音频/外发处理的实际删除（转写媒体归语音域、外发副本归删除协议 GY-I19）：
+ * 因此默认实现是 `createUnwiredTurnCascadePort()`，如实返回 `unwired`。这与契约的 202
+ * `AckEnvelope`（`accepted: true`）不矛盾 —— 202 表达的是"删除请求已受理并生效于本域行"，
+ * 不是"跨域副本都已清除"。
+ */
+import type { DeletionCoordinator } from '../../../../packages/privacy/deletion-modules.mjs';
+import { createDeletionRegistry } from '../../../../packages/privacy/deletion.mjs';
+import { createPrivacyDeletionCoordinator } from '../privacy/egress.ts';
+
+/** 级联处置结果闭集（与 `history/cascade.ts` 的 `CascadeDisclosure` 同口径）。 */
+export const CASCADE_DISCLOSURE = ['initiated', 'unwired', 'failed'] as const;
+export type CascadeDisclosure = (typeof CASCADE_DISCLOSURE)[number];
+
+export interface TurnCascadeRequest {
+  userId: string;
+  conversationId: string;
+  turnId: string;
+  /** 被删轮次引用的转写（`TargetRef`）：文字输入为 `null`（无音频可级联）。 */
+  transcriptionRef: { type: string; id: string; revision: number } | null;
+  /** 该轮次的回答 id（若已有回答）：结果副本的清理目标。 */
+  answerId: string | null;
+}
+
+export interface TurnCascadeOutcome {
+  disposition: CascadeDisclosure;
+  note: string;
+}
+
+export interface TurnCascadePort {
+  readonly kind: 'wired' | 'unwired';
+  readonly note: string;
+  readonly available: boolean;
+  /** 处置一个**已被删除**的轮次所留下的跨域副本（音视频/结果/外发）。 */
+  initiate(request: TurnCascadeRequest): Promise<TurnCascadeOutcome>;
+}
+
+/** 未接线的级联端口：如实返回 `unwired`，不假装完成。 */
+export function createUnwiredTurnCascadePort(
+  note = '音频/结果/外发副本的级联处理尚未接线（属语音域与删除协议 GY-I19）：本端口不声称完成',
+): TurnCascadePort {
+  return {
+    kind: 'unwired',
+    note,
+    available: false,
+    async initiate() {
+      return { disposition: 'unwired', note };
+    },
+  };
+}
+
+/**
+ * 装置一个**已接线**的级联端口：实际处置动作由调用方给定的 `cleaners` 承担。
+ *
+ * 语义硬边界（与 #16 同口径）：
+ *   - 任一清理器抛错 ⇒ 整体 `failed`（**不**静默忽略、**不**回滚已完成的删除）；
+ *   - 清理器报 `'unsupported'` ⇒ 该项如实记为未接线（`unwired`），不当作成功；
+ *   - 全部清理器报 `'cleaned'` 才算 `initiated`（"已启动并执行到位"，仍不等于跨域回执完成）。
+ */
+export interface TurnCleanerResult {
+  state: 'cleaned' | 'unsupported' | 'failed';
+  note?: string;
+}
+
+export function createWiredTurnCascadePort(options: {
+  cleaners: ReadonlyArray<(request: TurnCascadeRequest) => Promise<TurnCleanerResult>>;
+  note?: string;
+}): TurnCascadePort {
+  const note = options.note ?? '级联处置已接线：逐项由本域清理器执行，失败如实披露';
+  return {
+    kind: 'wired',
+    note,
+    available: true,
+    async initiate(request) {
+      let sawUnsupported = false;
+      for (const clean of options.cleaners) {
+        let result: TurnCleanerResult;
+        try {
+          result = await clean(request);
+        } catch {
+          return { disposition: 'failed', note };
+        }
+        if (result.state === 'failed') return { disposition: 'failed', note };
+        if (result.state === 'unsupported') sawUnsupported = true;
+      }
+      return { disposition: sawUnsupported ? 'unwired' : 'initiated', note };
+    },
+  };
+}
+
+/** F13 注销删除协议里的模块名（闭集内的名字，见 `createDeletionCoordinator`）。 */
+export const CONVERSATIONS_DELETION_MODULE = 'conversations';
+
+/** 本域在 F13 协议里需要的存储原语（只暴露按主体清空这一个能力）。 */
+export interface ConversationPurgeStore {
+  deleteAllByOwner(ownerId: string): Promise<number>;
+}
+
+export interface ConversationDeletionRegistration {
+  module: string;
+  /** 随 F13 请求绑定主体的删除请求（处理器按 `requestId` 反查主体 ⇒ 只清理该主体）。 */
+  requestDeletionFor(userId: string, options?: { generation?: number; receiptInput?: string | null }): Record<string, unknown>;
+  executeHandlers(requestId: string): Promise<Record<string, unknown>>;
+  completionStatus(requestId: string): { state: string; completed: boolean; missingModules: readonly string[] };
+  receipt(requestId: string): Record<string, unknown> | null;
+  /** 诊断审计（只含模块名/行数/状态，不含任何私有正文）。 */
+  audit(): Array<{ requestId: string; userId: string; onlineRemoved: number; backupState: string; at: string }>;
+}
+
+/**
+ * 把**会话/轮次/回答**注册进已合并的 F13 删除注册协议（`packages/privacy`，**不另起一套**）。
+ *
+ * 为什么单独建一个协调器而不是改 `privacy/user-data-deletion.ts`：那个文件（#16）的必需模块闭集
+ * 被既有断言逐字锁住（`tests/unit/user-data-deletion.test.mjs`：`['favorites','history']`），
+ * 本片**不得放宽或删除任何既有断言**，因此本域自带一个只含本模块的闭集，
+ * 由装配层同时持有（注销清理由 GY-I19 统一编排）。
+ *
+ * 处理器语义（逐条与已合并协议对齐）：
+ *   - `onlineState`：本模块**真的**删掉了该主体的会话行 ⇒ `completed`，
+ *     证据为 `conversations:online-purged:<会话行数>`（计数即证据，不含私有正文）；
+ *   - `backupState`：备份副本清除本片未实现（属 GY-I19）⇒ 恒 `pending`（**不谎称完成**）；
+ *   - 反查不到主体 ⇒ 抛错，由协议折叠为 `blocked`（绝不用空主体清理）。
+ */
+export function createConversationDeletionRegistration(
+  store: ConversationPurgeStore,
+  options: { coordinator: DeletionCoordinator; now?: () => Date },
+): ConversationDeletionRegistration {
+  const now = options.now ?? (() => new Date());
+  const coordinator = options.coordinator;
+  const subjectByRequest = new Map<string, string>();
+  const auditLog: Array<{ requestId: string; userId: string; onlineRemoved: number; backupState: string; at: string }> = [];
+
+  coordinator.registerModule(CONVERSATIONS_DELETION_MODULE, async (input: Record<string, unknown>) => {
+    const requestId = String(input['requestId'] ?? '');
+    const userId = subjectByRequest.get(requestId);
+    if (userId === undefined) throw new Error('删除请求未绑定主体：拒绝清理');
+    const onlineRemoved = await store.deleteAllByOwner(userId);
+    const backupState = 'pending';
+    auditLog.push({ requestId, userId, onlineRemoved, backupState, at: now().toISOString() });
+    return {
+      onlineState: 'completed',
+      backupState,
+      evidenceRef: `${CONVERSATIONS_DELETION_MODULE}:online-purged:${onlineRemoved}`,
+      errorCode: null,
+    };
+  });
+
+  return {
+    module: CONVERSATIONS_DELETION_MODULE,
+    requestDeletionFor(userId, opts = {}) {
+      if (typeof userId !== 'string' || userId.length === 0) {
+        throw new Error('注销删除请求必须绑定非空主体');
+      }
+      const request = coordinator.createDeletionRequest(opts);
+      subjectByRequest.set(String(request['id']), userId);
+      return request;
+    },
+    executeHandlers: (requestId) => coordinator.executeHandlers(requestId),
+    completionStatus: (requestId) => coordinator.completionStatus(requestId),
+    receipt: (requestId) => coordinator.receipt(requestId),
+    audit: () => auditLog.map((entry) => ({ ...entry })),
+  };
+}
+
+/** 契约 `TargetRef`（只用到三键，避免依赖具体域的类型文件）。 */
+export interface CascadeTargetRef {
+  type: string;
+  id: string;
+  revision: number;
+}
+
+/**
+ * 建**只含本模块**的 F13 删除协调器并注册处理器（装配层一行接线）。
+ *
+ * 为什么必需模块闭集只有 `conversations` 一项：`privacy/user-data-deletion.ts`（#16）的
+ * `USER_DATA_DELETION_MODULES` 被既有断言逐字锁住（`tests/unit/user-data-deletion.test.mjs`），
+ * 本片**不得放宽或删除任何既有断言**；而 `packages/privacy/deletion-modules.mjs` 的闭集注释
+ * 明确写着"其它域各自注册自己的模块"。因此本域自带一个闭集，由装配层同时持有两者，
+ * 由 GY-I19 统一编排（本片只保证：本域模块**在启动时已注册**、可被驱动、回执如实）。
+ */
+export function createConversationDeletion(
+  store: ConversationPurgeStore,
+  options: { now?: () => Date } = {},
+): ConversationDeletionRegistration {
+  const now = options.now ?? (() => new Date());
+  const registry = createDeletionRegistry({ now });
+  const coordinator = createPrivacyDeletionCoordinator({
+    registry,
+    requiredModules: [CONVERSATIONS_DELETION_MODULE],
+    now,
+  });
+  return createConversationDeletionRegistration(store, { coordinator, now });
+}
