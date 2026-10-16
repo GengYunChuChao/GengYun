@@ -13,8 +13,12 @@
  * 文字问答 `/conversations/**`（GY-I12）；后台 `/admin/**`。
  *
  * **未注册的路径没有兜底实现**：一律由 `setNotFoundHandler` 返回契约 `NOT_FOUND`（`未实现的路径：…`），
- * 不伪造成功。`real` 模式下缺少持久依赖或未获显式批准的域由其服务为 `null`／未接线端口承担 ⇒
- * 整域 503 `PROVIDER_UNAVAILABLE`（既不是 404，也不降级成内存替身）。
+ * 不伪造成功。`real` 模式下缺持久依赖或未获显式批准的域**在触达该真实依赖的那一步 fail-closed**：
+ * 依赖数据库／对象存储／真实供应商的路由如实返回 503 `PROVIDER_UNAVAILABLE`（实测：`/messages`、
+ * `/favorites`、`/history`、`/conversations`、`/posts`、`/me/profile`、`/knowledge`、`/media/{id}`、
+ * `/account/deletions/{id}`），既不 404 也不降级成内存替身；只跑在进程内 store 或静态种子上的路由照常
+ * 作答（实测：`GET /herbicides` ⇒ 200；`GET /ocr/{id}`、`GET /speech/transcriptions/{id}`、
+ * `GET /jobs/{id}` 对未知 id ⇒ 404「不存在」）。
  */
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
@@ -316,7 +320,8 @@ export interface BuildAppOptions {
   // 内容/运营存储为空种子；`AdminJobPort` **仍缺省未接线** ⇒ 作业读/取消按服务层 fail-closed
   // 返回 503（不返回空页、不伪造状态）；**社区帖子端口已接线**（下方 `communityPostPortForAdmin`，
   // 与社区服务**同一份** store）⇒ `hidePost` 按社区 CAS 语义如实作答（未知帖子 404、成功 200、
-  // 已删除/未发布 409），只有显式传入未接线端口时才是 503。
+  // 已删除/未发布 409）；缺省装配下不是 503 —— 只有显式传入未接线端口、或适配器返回清单外的未知
+  // 原因时，服务层才走同一 503 兜底。
   /** 测试注入：后台资料存储（默认新建内存 store）。 */
   adminInjection?: {
     contentStore?: AdminContentServiceOptions['store'];

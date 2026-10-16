@@ -13,8 +13,12 @@
  *   `mediaObjectStore` ＋ `approveRealMediaWiring()` 显式批准）与**句柄消费网关**（部署期数据面；契约内
  *   没有返回 owner 私有媒体字节的 operation）⇒ `real` 下媒体域 7 条路由整域 503 `PROVIDER_UNAVAILABLE`
  *   （fail-closed）。
- * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担
- *   ⇒ `POST /recognitions` 在受理前一律如实 `OBJECT_UNAVAILABLE`(409)，绝不静默放过；
+ * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担。
+ *   该端口只在受理函数的**媒体校验步骤**（`createRecognition` 里的 `media.resolve`）被触达，而它前面还有
+ *   域级供应商闸门（同一函数里 `provider.available` 的判定先于 `media.resolve`）：`real` 缺真实识别供应商
+ *   凭据时先返回 503 `PROVIDER_UNAVAILABLE`；只有该域供应商判定**可用**时（显式注入已接线 provider，或
+ *   ambient env `RECOGNITION_PROVIDER_URL` / `RECOGNITION_PROVIDER_KEY` 配齐 —— 识别域装配会读这两个 env），
+ *   才轮到本端口 ⇒ 409 `OBJECT_UNAVAILABLE`（如实拒绝，绝不静默放过）。
  *   `stub` / `preset_demo` 模式使用**明确标注的替身媒体引用**（合成，非真实上传）。
  */
 

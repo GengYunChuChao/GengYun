@@ -14,7 +14,8 @@
  * **读面**：读 JobState 的唯一接口是**平台级** `GET /jobs/{id}`（`getJob`，`JobResult.oneOf` 含
  * `SynthesisResult`），它属 GY-I01/#9，**已装配**：注册点 `services/api/src/jobs/routes.ts` 的
  * `registerJobRoutes`，装配点 `services/api/src/app.ts` 的 `buildApp`
- * （`createSynthesisJobSource(synthesisService)`），因此 `kind=synthesis` 的终态**可以**经 HTTP 读到；
+ * （`createSynthesisJobSource(synthesisService)`），因此**作业存在时** `kind=synthesis` 的终态**可以**经
+ * HTTP 读到（`real` 下合成受理本身先 fail-closed ⇒ 不会有新作业，见下方「默认关闭必须保持」）；
  * `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 `PROVIDER_UNAVAILABLE`
  * (`retryable`) 如实拒绝，**不伪造** `cancelled`。该域契约里**只有 POST**，故本文件**不新增** GET/DELETE 端点。
  *

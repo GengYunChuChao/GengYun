@@ -11,8 +11,12 @@
  *   `createUnwiredObjectStore`；真实开启需 `app.ts` 的 `mediaObjectStore` ＋
  *   `approveRealMediaWiring()` 显式批准，装配路径不自行铸造、不从 env 派生）
  *   ⇒ `real` 模式下媒体域 7 条路由整域 503 `PROVIDER_UNAVAILABLE`（fail-closed）。
- * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担
- *   ⇒ `POST /speech/transcriptions` 在受理前一律如实 `OBJECT_UNAVAILABLE`(409)；
+ * - 本文件这套**按域**媒体引用端口并未改接媒体域：`real` 下仍由 `createUnwiredMediaPort` 承担。
+ *   该端口只在受理函数的**媒体校验步骤**（`createTranscription` 里的 `media.resolve`）被触达，而它前面还有
+ *   域级供应商闸门（同一函数里 `provider.available` 的判定先于 `media.resolve`）：`real` 缺真实 ASR 供应商
+ *   凭据时（产品装配只传 `executionMode`，不传 endpoint/apiKey），先返回 503 `PROVIDER_UNAVAILABLE`；
+ *   只有该域供应商判定**可用**时（显式注入已接线 provider —— 转写装配不读供应商 env），才轮到本端口
+ *   ⇒ 409 `OBJECT_UNAVAILABLE`（如实拒绝）。
  *   `stub` / `preset_demo` 模式使用**明确标注的替身媒体引用**（合成，非真实上传、不读取任何录音字节）。
  * - 替身端口**不校验归属**（没有媒体存储可供查询），因此它只在 `stub` / `preset_demo` 下接线，
  *   绝不用于生产判定；生产路径一律走未接线端口。
