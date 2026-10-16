@@ -8,6 +8,27 @@ module.exports = {
   "achieved": 20,
   "gap": 0,
   "missing_registration_numbers": [],
+  "provenance_policy": {
+    "schema_note": "本块声明本文件的可追溯性与缺项表达口径：缺项一律逐条落在 records[].verification.gaps，不以空白、占位符、推测值或模型补写填充。",
+    "review_status_meaning": {
+      "verified": "已与来源原文逐字段复核（本文件当前 0 条）",
+      "unverified": "字段已转录自来源，但未与原文逐字段复核（本文件当前 20 条）"
+    },
+    "gap_codes": {
+      "source_lacks_field": "来源公告附表本身不含该字段（不是采集遗漏，也不是空值）",
+      "not_collected": "来源可能含该字段但本轮未采集",
+      "unverified_transcription": "字段已转录，但本机未取得原文/登记详情，未逐字段复核",
+      "crop_unmapped": "使用场所提及的作物不在 catalog/crops.json 首批范围内，无对应 crop_id，不编造映射",
+      "crop_coverage": "使用场所映射到的作物未列入该记录 crop_ids"
+    },
+    "traceability": "records[].provenance 逐条声明来源编号、期号与附表指针；须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致。",
+    "forbidden_fill": [
+      "空字符串",
+      "占位符（待补、暂无、N/A 等）",
+      "推测值或剂量换算值",
+      "模型生成文本"
+    ]
+  },
   "records": [
     {
       "record_id": "gy-i03-hb-001",
@@ -38,6 +59,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -62,7 +99,48 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          },
+          {
+            "code": "crop_unmapped",
+            "fields": [
+              "小麦田"
+            ],
+            "detail": "使用场所提及「小麦田」，catalog/crops.json 首批仅覆盖水稻/玉米/大豆/油菜，无对应 crop_id；不编造映射。"
+          }
+        ]
       }
     },
     {
@@ -94,6 +172,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -118,7 +212,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -150,6 +278,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -174,7 +318,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -206,6 +384,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -230,7 +424,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -262,6 +490,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -286,7 +530,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -318,6 +596,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -342,7 +636,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -374,6 +702,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -398,7 +742,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -430,6 +808,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -454,7 +848,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -486,6 +914,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -510,7 +954,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -542,6 +1020,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -566,7 +1060,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -598,6 +1126,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -622,7 +1166,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -655,6 +1233,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -679,7 +1273,49 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          },
+          {
+            "code": "crop_unmapped",
+            "fields": [
+              "花生田",
+              "马铃薯田"
+            ],
+            "detail": "使用场所提及「花生田、马铃薯田」，catalog/crops.json 首批仅覆盖水稻/玉米/大豆/油菜，无对应 crop_id；不编造映射。"
+          }
+        ]
       }
     },
     {
@@ -711,6 +1347,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -735,7 +1387,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -767,6 +1453,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -791,7 +1493,48 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          },
+          {
+            "code": "crop_unmapped",
+            "fields": [
+              "花生田"
+            ],
+            "detail": "使用场所提及「花生田」，catalog/crops.json 首批仅覆盖水稻/玉米/大豆/油菜，无对应 crop_id；不编造映射。"
+          }
+        ]
       }
     },
     {
@@ -823,6 +1566,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -847,7 +1606,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -879,6 +1672,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -903,7 +1712,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -935,6 +1778,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -959,7 +1818,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -991,6 +1884,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第1期）",
+        "published_at": "2026-03-26",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202603/t20260325_6482643.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202603/P020260325742775767461.xls",
+        "attachment_sha256": "c82c43361c0b75303287de7cf92f91a3574bdde58f3d63fcde93719ab6d5462d",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32280",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -1015,7 +1924,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -1048,6 +1991,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -1072,7 +2031,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     },
     {
@@ -1105,6 +2098,22 @@ module.exports = {
         "retrieved_at": "2026-10-04",
         "source_validity": "valid"
       },
+      "provenance": {
+        "source_id": "src_moa_pd_2026",
+        "issue": "农药登记信息（2026年第9期）",
+        "published_at": "2026-06-04",
+        "page_url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+        "attachment_url": "https://zzys.moa.gov.cn/gzdt/202606/P020260604741615151859.xls",
+        "attachment_sha256": "bfe97d34e2197341ba37571615c771147e7215c1b99d4210f6b0f7d397ace768",
+        "index_url": "http://www.chinapesticide.org.cn/zwb/detail/32599",
+        "catalog": "packages/knowledge/catalog/sources.json",
+        "original_recheck": {
+          "attachment": false,
+          "icama_detail": false
+        },
+        "review_status": "unverified",
+        "note": "逐条指向已登记来源与附表（须与 catalog/sources.json 同 source_id 的 issues[] 逐字一致）；本机未取得附表原文与 ICAMA 登记详情，原文复核未完成。"
+      },
       "record_status": "partial",
       "verification": {
         "source_checked": true,
@@ -1129,7 +2138,41 @@ module.exports = {
         "review_status": "unverified",
         "card_eligible": false,
         "usable_as_dose": false,
-        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。"
+        "note": "字段来自官方公告附表原文；未逐字段与ICAMA登记详情/标签原文复核，禁止作为用药量依据。",
+        "gaps": [
+          {
+            "code": "source_lacks_field",
+            "fields": [
+              "用药量（制剂量/亩）",
+              "施用方法",
+              "注意事项",
+              "登记有效期起止日期"
+            ],
+            "detail": "catalog/sources.json#src_moa_pd_2026.note 明确公告附表字段清单不含这 4 项：来源本身无此列，故不采集、不推断、不以空白填充。"
+          },
+          {
+            "code": "not_collected",
+            "fields": [
+              "禁限用状态"
+            ],
+            "detail": "本轮未采集禁限用状态；适用性规则按 unknown fail-closed，不得据此视为不禁用。"
+          },
+          {
+            "code": "unverified_transcription",
+            "fields": [
+              "登记证号",
+              "农药名称",
+              "登记证持有人",
+              "剂型",
+              "毒性",
+              "有效成分及其含量",
+              "农药类别",
+              "作物/场所",
+              "防治对象"
+            ],
+            "detail": "这 9 项已按公告附表转录，但本机未取得附表原文与 ICAMA 登记详情，未做逐字段复核，故 review_status 保持 unverified，card_eligible 与 usable_as_dose 均为 false。"
+          }
+        ]
       }
     }
   ]
