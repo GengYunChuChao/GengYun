@@ -24,6 +24,9 @@ import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+// 服务端**装配层**注入的替身核对条目（`ruling-451` 缩片）：与客户端替身样本是同一对夹具，
+// 这里直接比对两者，锁定「id / revision / 正文」不会单边漂移。
+import { SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT } from '../../services/api/src/app.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -509,7 +512,7 @@ function loadPageHarness() {
     setData(patch) { Object.assign(this.data, patch); sets.push(patch); },
     route: 'pages/voice/voice'
   });
-  return { page, requests, toasts, sets, auth, runtime, wx: fakeWx };
+  return { page, requests, toasts, sets, auth, runtime, wx: fakeWx, voiceApi: loadReal(bySuffix('voice-api.js'), resolveDep) };
 }
 
 function bootPage() {
@@ -603,9 +606,190 @@ test('宿主页·合成成功但无可播音频 ⇒ 自动播放失败：文案 
   h.page.onUnload();
 });
 
+// ============================================================ 5b. 缩片（`ruling-451`）：受理链路打通 + 如实不可播
+//
+// 范围（不放开契约、不改服务端语义）：① stub/preset_demo 下经装配层替身条目打通「受理 202 →
+// `GET /jobs/{id}` 读面」；② 取不到可播放来源 ⇒ 仍 `SOURCE_UNAVAILABLE` 且页面**如实**写
+// 「本环境无可播放音频（契约无客户端音频出口）」，**不得**显示「播放中／已播放」；
+// ③ 客户端**不得**硬编码 `revision: 1`（取契约值，且**优先**服务端回传的 revision）。
+
+/** 契约 `Job`（九键）夹具；`target` 同时用于 `target_ref` 与 `result.value.checked_content_ref`（二者必须一致）。 */
+function jobFixture(input = {}) {
+  const target = input.target === undefined ? { type: 'answer', id: 'sample-i13-passed', revision: 1 } : input.target;
+  const suffix = input.suffix === undefined ? '1' : input.suffix;
+  return {
+    id: `00000000-0000-4000-8000-00000000000${suffix}`,
+    revision: 3,
+    kind: 'synthesis',
+    target_ref: { ...target },
+    state: 'succeeded',
+    deadline_at: '2026-10-14T06:00:30.000Z',
+    created_at: '2026-10-14T06:00:00.000Z',
+    error_code: null,
+    result: {
+      kind: 'synthesis',
+      value: {
+        id: `00000000-0000-4000-8000-0000000000${suffix}1`,
+        revision: 1,
+        checked_content_ref: { ...target },
+        media_id: `00000000-0000-4000-8000-0000000000${suffix}2`
+      }
+    }
+  };
+}
+
+function acceptJob(request, job, mode = 'stub') {
+  request.success({
+    statusCode: 202,
+    data: { data: job, meta: { request_id: job.id, contract_version: '1.0.0', execution_mode: mode } },
+    header: { ETag: '"3"' }
+  });
+}
+
+test('缩片·配对夹具：客户端替身样本的 targetRef 与服务端装配层替身核对条目逐项一致（含正文逐字一致）', () => {
+  const h = loadPageHarness();
+  const samples = h.voiceApi.SUBSTITUTE_SPEAK_SAMPLES;
+  const declared = samples.filter((sample) => sample.targetRef !== undefined);
+  assert.equal(declared.length, 1, '本片刻度：只有正例样本声明契约目标引用');
+  const sample = declared[0];
+  assert.deepEqual(
+    { type: sample.targetRef.type, id: sample.targetRef.id, revision: sample.targetRef.revision },
+    { type: 'answer', id: 'sample-i13-passed', revision: 1 }
+  );
+  // 反例样本刻意不声明（安全检查不通过 ⇒ 永不合成 ⇒ 不该有可合成引用）。
+  assert.equal(samples.filter((item) => item.id === 'sample-i13-blocked')[0].targetRef, undefined);
+
+  assert.equal(SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT.length, 1, '装配层只注入正例那一条替身条目');
+  const entry = SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT[0];
+  assert.equal(entry.type, sample.targetRef.type, '服务端条目 type 必须与客户端样本一致');
+  assert.equal(entry.id, sample.targetRef.id, '服务端条目 id 必须与客户端样本一致');
+  assert.equal(entry.revision, sample.targetRef.revision, '服务端条目 revision 必须与客户端样本一致');
+  assert.equal(entry.auditState, 'approved', '替身条目必须是「已核对通过」，否则受理必被拒');
+  assert.equal(entry.text, sample.checkedText, '服务端条目正文必须与客户端样本逐字一致（不得改写/归一化）');
+});
+
+test('反例·revision 不硬编码：首次取样本声明的契约值，之后**优先**服务端回传的 revision，且不得张冠李戴', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+
+  // ① 首次提交：revision = 样本声明的契约值（1），且页面**代码**里没有内联字面量。
+  //    判据按仓库既有做法先**去注释**（注释里说明"不得内联"是允许的，被检的是可执行代码）。
+  const pageSource = read('miniprogram/pages/voice/voice.js');
+  const pageCode = pageSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(/voiceApi\.checkedContentRefForSample\(/.test(pageCode), '页面必须经契约取值函数取目标引用');
+  assert.equal(/revision:\s*1\b/.test(pageCode), false, '页面代码不得内联硬编码 revision: 1（注释不算）');
+  assert.ok(/revision:\s*1\b/.test(pageSource), '页面须保留一行注释说明该口径（便于审阅者复核）');
+
+  const first = h.page.onBroadcast();
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.requests[0].data.checked_content_ref)), {
+    type: 'answer', id: 'sample-i13-passed', revision: 1
+  });
+
+  // ② 服务端回传一个**不同**的 revision（权威值由服务端给出）⇒ 客户端必须采纳。
+  acceptJob(h.requests[0], jobFixture({ target: { type: 'answer', id: 'sample-i13-passed', revision: 7 }, suffix: '7' }));
+  await first;
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'sample-i13-passed' }), 7, '必须记下服务端回传的 revision');
+
+  const second = h.page.onBroadcast();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].data.checked_content_ref.revision, 7, '第二次必须用服务端回传的 revision（而不是夹具里的 1）');
+
+  // ③ 负例·张冠李戴：服务端这次回的是**别的内容目标**（id 不同）⇒ 不得把它的 revision 记到本样本上。
+  acceptJob(h.requests[1], jobFixture({ target: { type: 'answer', id: 'answer-other-target', revision: 9 }, suffix: '9' }));
+  await second;
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'sample-i13-passed' }), 7, '别的目标的 revision 不得被记到本样本');
+  assert.equal(h.voiceApi.serverRevisionFor({ type: 'answer', id: 'answer-other-target' }), 9, '该记在它自己的 (type,id) 下');
+
+  const third = h.page.onBroadcast();
+  assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[2].data.checked_content_ref.revision, 7, '仍然用本样本自己的服务端 revision');
+  assert.equal(h.requests[2].data.checked_content_ref.id, 'sample-i13-passed', '目标引用不得被别的目标顶替');
+  third.catch(() => {});
+  h.page.onUnload();
+});
+
+test('反例·样本未声明契约目标引用 ⇒ 不发明引用、零合成请求（如实说明）', () => {
+  const h = bootPage();
+  // 手工构造一个「安全检查通过、却没声明 targetRef」的样本（模拟夹具缺字段/被改坏）。
+  h.page.setData({
+    samples: [{ id: 'sample-no-ref', label: '无契约引用的样本', checkState: 'passed', checkedText: SAMPLE }],
+    selectedSampleId: 'sample-no-ref',
+    checkPassed: true,
+    checkedText: SAMPLE
+  });
+  h.page.onBroadcast();
+  assert.equal(h.requests.length, 0, '没有契约目标引用时不得发起任何合成请求');
+  assert.ok(h.page.data.synthesisNote.includes('没有声明契约目标引用'), h.page.data.synthesisNote);
+  h.page.onUnload();
+});
+
+test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境无可播放音频（契约无客户端音频出口）」，绝不显示「播放中／已播放」', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  assert.equal(h.page.data.substituteWalkthrough, false, '替身走查默认必须是关（否则会出现"没有来源 + 正在播报"的自相矛盾态）');
+
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '3' }));
+  await pending;
+
+  // ① 终态：失败出口（不是「正在播报」），且没有替身计划、没有记已听取。
+  assert.equal(h.page.data.job.state, 'succeeded', '受理与读面必须如实打通（合成确实成功了）');
+  assert.equal(h.page.data.playbackState, 'failed', '取不到来源必须是失败态，绝不能是 playing/stopped');
+  assert.equal(h.page.data.listened, false);
+  assert.equal(h.page.data.substitute, false, '不得把替身当真实播放');
+  assert.equal(h.page._plan.length, 0, '没有可播放来源 ⇒ 计划为空');
+  assert.equal(h.page.data.ballHint, '');
+
+  // ② 文案口径：必须是**契约层**事实，不是"网络问题"，且与客户端常量逐字一致。
+  const note = h.page.data.sourceNotice;
+  assert.ok(note.includes('本环境无可播放音频'), note);
+  assert.ok(note.includes('契约无客户端音频出口'), note);
+  assert.equal(note.startsWith(h.voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE), true, '页面必须原样展示该常量（不得自造措辞）');
+
+  // ③ 客户端 API 层：stub 与 real 两支都如实不可播，且原因各不相同（不得都写成"网络问题/登录失效"）。
+  const stubSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '4' }), 'stub');
+  const realSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '5' }), 'real');
+  assert.equal(stubSource.code, 'SOURCE_UNAVAILABLE');
+  assert.equal(realSource.code, 'SOURCE_UNAVAILABLE');
+  assert.notEqual(stubSource.reason, realSource.reason, 'stub 与 real 的如实原因必须各自可指出');
+  assert.ok(stubSource.reason.includes('非音频'), stubSource.reason);
+  assert.ok(realSource.reason.includes('契约没有面向客户端的音频出口'), realSource.reason);
+
+  // ④ 静态口径：wxml 必须渲染该提示，且**渲染内容**里没有任何「已播放」表述（注释不算）。
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  assert.ok(/wx:if="\{\{sourceNotice\}\}"/.test(wxml), 'wxml 必须渲染 sourceNotice');
+  assert.ok(wxml.includes('{{sourceNotice}}'), 'wxml 必须原样展示该提示文本');
+  const wxmlRendered = wxml.replace(/<!--[\s\S]*?-->/g, '');
+  assert.equal(wxmlRendered.includes('已播放'), false, '页面渲染内容不得出现「已播放」表述');
+  h.page.onUnload();
+});
+
+test('缩片·替身走查**显式**开启时：只走控件生命周期、仍不记已听取、且明示不代表已取得可播放来源', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  h.page.setData({ substituteWalkthrough: true });
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '6' }));
+  await pending;
+
+  assert.equal(h.page.data.playbackState, 'playing', '替身走查是**显式**开启的控件生命周期走查');
+  assert.equal(h.page.data.substitute, true, '必须如实标记为替身');
+  assert.equal(h.page.data.listened, false, '替身没有声音，绝不记「已听取」');
+  assert.ok(h.page._plan.every((item) => String(item.src).startsWith('substitute://segment/')), '替身计划的源必须是标注占位，不得是真实音频');
+  // 来源口径必须仍在（走查不改变"契约无客户端音频出口"这一事实）。
+  assert.ok(h.page.data.sourceNotice.includes('契约无客户端音频出口'), h.page.data.sourceNotice);
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  assert.ok(wxml.includes('不代表已取得可播放来源'), '替身走查提示必须明示它不代表已取得可播放来源');
+  h.page.onUnload();
+});
+
 test('宿主页·离页（隐藏/卸载）取消在途请求并释放播放器：监听 0、句柄 0、迟到回调无效', async () => {
   const h = bootPage();
   h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  // 缩片（`ruling-451`）起：替身走查**默认关闭**（默认下页面如实走"无可播放来源"出口，
+  // 不显示「正在播报」）。本用例的意图是"释放一份**活动**的播报计划"，因此**显式**开启走查开关。
+  h.page.setData({ substituteWalkthrough: true });
   const job = {
     id: '00000000-0000-4000-8000-000000000009',
     revision: 3,
