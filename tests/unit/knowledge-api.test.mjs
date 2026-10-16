@@ -13,7 +13,7 @@ async function fixture(){
   const native=process.env.GY_KNOWLEDGE_TEST_OWNER_URL;
   if(native){const url=new URL(native);assert.equal(url.hostname,'127.0.0.1');assert.match(url.pathname,/^\/gy_i07_test_[a-z0-9_]+$/);owner=new pg.Pool({connectionString:native});db={exec:s=>owner.query(s),query:(...a)=>owner.query(...a)};assert.equal((await db.query("SELECT count(*)::int n FROM information_schema.tables WHERE table_schema='public'")).rows[0].n,0);}
   else db=new PGlite();
-  for(const name of ['0001_initial_schema','0002_knowledge_catalog','0003_privacy_consent','0005_catalog_read_views','0008_auth_session','0009_consent_policy','0010_knowledge_read_views'])await db.exec(read('services/api/db/migrations/'+name+'.sql'));
+  for(const name of ['0001_initial_schema','0002_knowledge_catalog','0003_privacy_consent','0005_catalog_read_views','0008_auth_session','0009_consent_policy','0010_knowledge_read_views','0012_knowledge_created_at'])await db.exec(read('services/api/db/migrations/'+name+'.sql'));
   for(const name of ['auth_privacy','knowledge_runtime'])await db.exec(read('services/api/db/roles/'+name+'.sql'));
   const password=randomBytes(24).toString('hex');
   await db.exec(`CREATE ROLE gy_i07_test_runtime ${native?'LOGIN':'NOLOGIN'} INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS ${native?"PASSWORD '"+password+"'":''}; GRANT gengyun_auth_privacy,gengyun_knowledge_runtime TO gy_i07_test_runtime`);
@@ -37,7 +37,7 @@ async function fixture(){
     await db.query("INSERT INTO source_versions(id,source_id,version,content_hash,locator,retrieved_at,valid_from,validity,review_status,reviewed_by,reviewed_at) VALUES($1,$2,'synthetic-v1',repeat('a',64),'synthetic:page1',now(),now()-interval '1 day','valid','verified',$3,now())",[version,source,admin]);
     await db.query('UPDATE sources SET current_version_id=$1 WHERE id=$2',[version,source]);
     const ids=[];
-    for(let i=0;i<3;i++){const id=randomUUID();ids.push(id);await db.query("INSERT INTO knowledge_versions(id,knowledge_id,revision,title,body,type,source_version_id,crop_ids,species_ids,region_codes,visibility) VALUES($1,$2,1,$3,'Synthetic educational body only','species',$4,'[\"crop_rice\"]','[\"synthetic_weed\"]','[\"330102\"]','published')",[randomUUID(),id,'Synthetic '+i,version]);}
+    for(let i=0;i<3;i++){const id=randomUUID();ids.push(id);await db.query("INSERT INTO knowledge_versions(id,knowledge_id,revision,title,body,type,source_version_id,crop_ids,species_ids,region_codes,visibility,created_at) VALUES($1,$2,1,$3,'Synthetic educational body only','species',$4,'[\"crop_rice\"]','[\"synthetic_weed\"]','[\"330102\"]','published',timestamptz '2026-10-01T00:00:00Z')",[randomUUID(),id,'Synthetic '+i,version]);}
     return {admin,source,version,ids:ids.sort()};
   }
   return {db,pool,app,http,a,b,seed,native,cursorKey,intercept(marker,cb){intercept={marker,cb}},async close(){await app.close();if(native){await actual.end();await owner.end()}else{await queue;await db.close()}}};
@@ -65,8 +65,9 @@ test('knowledge real projection and limited runtime over loopback HTTP (syntheti
     assert.equal(second.status,200);assert.ok(second.data.data.next_cursor);
     const next=JSON.parse(Buffer.from(second.data.data.next_cursor.split('.')[0],'base64url').toString('utf8'));
     assert.equal(next.expires,value.expires,'second page must preserve the first 15min deadline');
+    // 契约排序 (created_at DESC,id DESC)：三行同刻（种子显式给同一 created_at）⇒ 次序由 id DESC 决定。
     const tail=await http('/knowledge?limit=2&cursor='+encodeURIComponent(cursor),a);
-    assert.deepEqual(tail.data.data.items.map(x=>x.id),s.ids.slice(1));assert.equal(tail.data.data.next_cursor,null);
+    assert.deepEqual(tail.data.data.items.map(x=>x.id),s.ids.slice(0,2).reverse());assert.equal(tail.data.data.next_cursor,null);
     for(const modified of [{...value,auth_epoch:value.auth_epoch+1},{...value,v:2},{...value,expires:Date.now()-1}]) {
       const denied=await http('/knowledge?cursor='+encodeURIComponent(resign(modified)),a);
       assert.equal(denied.status,400);assert.equal(denied.data.error.code,'INVALID_CURSOR');
