@@ -96,10 +96,21 @@ Page({
   },
 
   // 返回 / 切页 / 隐藏：三条路径都走同一个释放出口。
-  onHide: function () { pageGate.cancel(this); this.releaseAll('hide') },
+  //
+  // ⚠️ 顺序有意为之（OBS-1）：**先**按"离页"释放录音，**再**让门禁出口收尾其余私有展示。
+  // 原因是 `pageGate.cancel()` 会调 `page._gateClose()` ⇒ `callback(false)` ⇒ `closePrivate()`
+  // ⇒ `releaseAll('gate')`；若让门禁先跑，作废说明就会写成"会话／门禁已失效"（而用户其实是**主动离页**，
+  // 这么写会被读成"掉登录"）。先跑离页出口 ⇒ 用户看到的原因与他的实际动作一致；
+  // 其后门禁/`releaseAll` 的重复调用都是幂等空转（状态已复位，`inFlight` 判据为假）。
+  onHide: function () {
+    this.releaseRecorder('hide')
+    pageGate.cancel(this)
+    this.releaseAll('hide')
+  },
   onUnload: function () {
     // 卸载后本页不会再有 `onShow`：标记为"已消失"，杜绝任何入口在卸载后重新打开麦克风。
     this._gone = true
+    this.releaseRecorder('unload')
     pageGate.cancel(this)
     this.releaseAll('unload')
   },
@@ -574,6 +585,13 @@ Page({
    *
    * 时长 `duration_ms` 只取**平台 `onStop` 的真实 duration**（不取本地计时），
    * 与 `duration_ms.maximum = 60000` 一并作为上传前预检。
+   *
+   * ⚠️ **在整个异步窗口内都必须复查在途资格**（F1-R2）：拿到产物之后立刻锁定
+   * `epoch`（上传代次）与 `generation`（页面操作世代），此后**每一次**异步落点
+   * （`readFileInfo` 的兑现/失败、`serverMode`、上传落定）之前都要用同一对值复查。
+   * 否则离页/门禁失效恰好落在"已拿到产物、读摘要在途"这段窗口时，续跑会在复位**之后**
+   * 再次把状态写成「上传中」（按钮永久禁用、文案谎称正在上传）或**把已被宣告作废的上传真的做完**
+   * —— 同一路径两种互相矛盾的结果，且都由门禁时序而非"作废代次"决定。
    */
   stopAndUpload: async function () {
     if (this.data.guest || this._gone === true) return
@@ -591,6 +609,7 @@ Page({
       result = { ok: false, code: error && error.code ? error.code : 'RECORD_FAILED' }
     }
     if (result.ok !== true) {
+      if (this.uploadStillValid(this._generation, this._uploadEpoch || 0) !== true) return
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', recordStageNote: voiceApi.recordUploadMessageFor({ code: result.code }),
@@ -599,6 +618,11 @@ Page({
       })
       return
     }
+
+    // 拿到产物 ⇒ **立刻**锁定本次上传的世代（此后所有异步落点都用这一对值复查）。
+    const epoch = this._uploadEpoch || 0
+    const generation = this.beginOperation()
+    if (this.uploadStillValid(generation, epoch) !== true) return
 
     this.setData({
       recordDurationMs: result.durationMs,
@@ -624,6 +648,8 @@ Page({
     try {
       info = await readFileInfo(result.tempFilePath)
     } catch (error) {
+      // 窗口内页面可能已被作废：作废就**不改 UI**（保留已写好的如实作废说明），也不谎称失败原因。
+      if (this.uploadStillValid(generation, epoch) !== true) return
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_CHANNEL_UNAVAILABLE',
@@ -632,6 +658,8 @@ Page({
       })
       return
     }
+    // **F1-R2 关键复查**：`readFileInfo` 是异步的 —— 离页/门禁失效/代次变化都必须在此收手。
+    if (this.uploadStillValid(generation, epoch) !== true) return
     if (info.size > voiceApi.VOICE_MAX_BYTES) {
       this._recPending = false
       this.setData({
@@ -643,13 +671,28 @@ Page({
       return
     }
 
-    await this.uploadRecording(port, result, info)
+    await this.uploadRecording(port, result, info, generation, epoch)
   },
 
-  /** 上传录音产物：用途 `voice_question`（契约既有成员）+ 真实 `duration_ms`。 */
-  uploadRecording: async function (port, result, info) {
-    const epoch = this._uploadEpoch || 0
-    const generation = this.beginOperation()
+  /**
+   * 本次在途上传是否仍然有效（代次 + 门禁 + 页面世代）。
+   *
+   * `generation`/`epoch` 必须由调用方在**拿到产物时**捕获；若在异步窗口之后再捕获，
+   * 离页已经把 `_uploadEpoch` 递增过 ⇒ 判据会恒等成立而**完全失效**（F1-R2 的根因之一）。
+   */
+  uploadStillValid: function (generation, epoch) {
+    return this.isCurrent(generation) === true && (this._uploadEpoch || 0) === epoch
+  },
+
+  /**
+   * 上传录音产物：用途 `voice_question`（契约既有成员）+ 真实 `duration_ms`。
+   *
+   * `generation`/`epoch` 由 `stopAndUpload` 在拿到产物时捕获并传入。
+   * ⚠️ **守卫先于任何 UI 写入**：先复查再 `setData({recordState:'uploading'})`，
+   * 否则离页复位之后又会被重新写成「上传中」，而该续跑随后静默 return ⇒ 无人再复位（F1-R2）。
+   */
+  uploadRecording: async function (port, result, info, generation, epoch) {
+    if (this.uploadStillValid(generation, epoch) !== true) return
     this.setData({
       recordState: 'uploading', recordLabel: '正在上传…',
       recordStageNote: '按用途 voice_question 上传（' + (result.durationMs / 1000).toFixed(1) + ' 秒 · '
@@ -663,7 +706,7 @@ Page({
     } catch (error) {
       mode = null
     }
-    if (!this.isCurrent(generation) || (this._uploadEpoch || 0) !== epoch) return
+    if (this.uploadStillValid(generation, epoch) !== true) return
 
     // 非 real 模式：不上传，明确标注为「待接线」（本页不伪造 media_id）。
     if (mode !== null && mode !== 'real') {
@@ -680,7 +723,7 @@ Page({
       const media = await identifyApi.uploadVoiceQuestion(result.tempFilePath, {
         mime: result.mime, bytes: info.size, sha256: info.digest, durationMs: result.durationMs
       })
-      if (!this.isCurrent(generation) || (this._uploadEpoch || 0) !== epoch) return
+      if (this.uploadStillValid(generation, epoch) !== true) return
       this._recPending = false
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音', uploadErrorCode: '',
@@ -691,8 +734,9 @@ Page({
           + '也不显示任何「已回答」一类结论。'
       })
     } catch (error) {
+      // 守卫先于任何状态写入：已作废的在途上传**不得**再改 UI（也不得谎称失败原因）。
+      if (this.uploadStillValid(generation, epoch) !== true) return
       this._recPending = false
-      if (!this.isCurrent(generation) || (this._uploadEpoch || 0) !== epoch) return
       if (isGateLoss(error)) { this.closePrivate(); return }
       this.setData({
         recordState: 'failed', recordLabel: '重新录音',

@@ -536,10 +536,48 @@ function loadPageHarness(options = {}) {
   };
   const runtime = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3000' };
   const debug = { localEnabled: (wxApi) => runtime.mode === 'local' && !!wxApi && typeof wxApi.getAccountInfoSync === 'function' };
-  const pageGate = { start: (page, callback) => callback(true), cancel: () => {} };
+  /**
+   * 门禁替身。
+   *
+   * **默认（简化）**：`start()` 同步 `callback(true)`、`cancel()` 空转 —— 既有用例建立在这个简化上
+   * （例如"离页后在途请求作废"那条既有用例假定离页后 `guest` 仍为 false），故**不改动**它。
+   *
+   * **`faithfulGate: true`（与真实 `utils/page-gate.js` 同形）**：
+   *   `start()` 记 `page._gateClose = () => callback(false)`，**先** `callback(false)`（未通过），
+   *     再在用户核实后 `callback(verified)`；
+   *   `cancel()` 调 `page._gateClose()` ⇒ `callback(false)`。
+   *   这一点是覆盖 **OBS-1**（离页路径的作废原因实际恒为 `gate`）与 **F1-R2**（门禁核实窗口）
+   *   的**前提**：真实离页会**先触发门禁关闭**，而默认替身的空转 `cancel()` 结构上测不到该分支。
+   *
+   * `gateDeferAfterFirst: true` ⇒ 首次 `start()` 仍同步核实（让页面正常可用），
+   * **之后**的核实结果扣在手里，由用例显式 `verifyGate()` 兑现 —— 从而打开"门禁核实窗口"。
+   * `gateDeferVerification: true` ⇒ 连首次也扣住。
+   */
+  const faithfulGate = options.faithfulGate === true || options.gateDeferVerification === true || options.gateDeferAfterFirst === true;
+  let gateVerify = null;
+  let gateStartCount = 0;
+  const pageGate = faithfulGate
+    ? {
+        start: (page, callback) => {
+          page._gateClose = () => callback(false);
+          callback(false);
+          gateStartCount += 1;
+          const deferThis = options.gateDeferVerification === true ||
+            (options.gateDeferAfterFirst === true && gateStartCount > 1);
+          if (deferThis) { gateVerify = () => callback(true); return }
+          callback(true);
+        },
+        cancel: (page) => {
+          if (page && typeof page._gateClose === 'function') page._gateClose();
+          else if (page && typeof page.setData === 'function') page.setData({ gatePassed: false });
+        }
+      }
+    : { start: (page, callback) => callback(true), cancel: () => {} };
   const fontScale = { applyFontScale: () => {}, currentFontScale: () => 1, DEFAULT_FONT_SCALE: 1 };
   /** 服务端执行模式探针（`identify-api.serverMode` 经 `GET /public/home` 的 meta 读出）。 */
   const serverMode = options.serverMode === undefined ? 'real' : options.serverMode;
+  /** `deferredFileInfo: true` ⇒ `wx.getFileInfo` **保持在途**，由用例决定何时兑现（打开 F1-R2 的读摘要窗口）。 */
+  let fileInfoDeferred = null;
 
   const fakeWx = {
     request: (o) => { requests.push(o); },
@@ -552,7 +590,16 @@ function loadPageHarness(options = {}) {
     getRecorderManager: () => { wxCalls.push({ api: 'getRecorderManager' }); return recorder },
     getFileSystemManager: () => ({ readFile: (o) => { if (o && o.success) o.success({ data: 'SYNTHETIC_AUDIO_BYTES' }) } }),
     getFileInfo: (o) => {
-      if (o && o.success) o.success({ size: options.fileSize === undefined ? 4096 : options.fileSize, digest: 'a'.repeat(64) });
+      const info = { size: options.fileSize === undefined ? 4096 : options.fileSize, digest: 'a'.repeat(64) };
+      if (options.deferredFileInfo === true) {
+        fileInfoDeferred = {
+          size: info.size,
+          resolve: (overrides) => { const self = fileInfoDeferred; fileInfoDeferred = null; o.success(Object.assign({}, info, overrides || {})); void self },
+          reject: () => { fileInfoDeferred = null; if (o && typeof o.fail === 'function') o.fail({}) }
+        };
+        return;
+      }
+      if (o && o.success) o.success(info);
     }
   };
 
@@ -647,6 +694,9 @@ function loadPageHarness(options = {}) {
       recorder, recorderOptions: options.recorderOptions || {}, wxCalls,
       uploads: () => uploadCount,
       deferredOf: () => deferred,
+      fileInfoOf: () => fileInfoDeferred,
+      /** 兑现被扣住的门禁核实（`gateDeferVerification: true` 时使用）。 */
+      verifyGate: () => { const run = gateVerify; gateVerify = null; if (run !== null) run() },
       /**
        * 端口模块本体（与页面用的是**同一份** vm 内实例）：用于端口层确定性用例。
        * **惰性**取用（getter）：只被端口层用例需要。若在装配时就读取，"撤下实现"的变异会让
@@ -681,6 +731,27 @@ function recordButtonDisabled(page) {
   const match = /disabled="\{\{(guest \|\| recordState === 'uploading')\}\}"/.exec(wxml);
   assert.ok(match, '录音按钮的 disabled 表达式必须仍是 guest || recordState === \'uploading\'');
   return page.data.guest === true || page.data.recordState === 'uploading';
+}
+
+/**
+ * 隔离出「**录音态**导致的禁用」：把 `guest` **固定为 false** 求值同一表达式。
+ *
+ * 为什么必须隔离：门禁关闭（`guest=true`）本身就会禁用按钮，那是**正常语义**（用户已离页/未登录），
+ * 不是挂起态；只有 `recordState === 'uploading'` 造成的禁用才是 F1／F1-R2 的判定对象。
+ */
+function recordButtonDisabledByState(page) {
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  const match = /disabled="\{\{(guest \|\| recordState === 'uploading')\}\}"/.exec(wxml);
+  assert.ok(match, '录音按钮的 disabled 表达式必须仍是 guest || recordState === \'uploading\'');
+  const guest = false; // 固定门禁为"通过"，隔离出录音态那一半
+  return guest || page.data.recordState === 'uploading';
+}
+
+/** 提取页面 `setData` 轨迹里"录音态相关"的写入（用于逐帧核对是否有矛盾写入）。 */
+function recordTrace(harness) {
+  return harness.sets
+    .filter((patch) => patch.recordState !== undefined || patch.recordLabel !== undefined || patch.recordStageNote !== undefined)
+    .map((patch) => ({ state: patch.recordState, label: patch.recordLabel, note: patch.recordStageNote }));
 }
 
 test('宿主页·安全检查未过 ⇒ **零**合成请求、无播放器、不播报（反例）', () => {
@@ -1197,6 +1268,140 @@ test('验收F2e·端口层：平台自行报错（无在途 stop()）⇒ 结果�
   } finally {
     delete globalThis.wx;
   }
+});
+
+// ============================================================ 5d. r3 返修：读摘要在途离页（F1-R2）／作废原因文案（OBS-1）
+
+/**
+ * 打开「已拿到平台产物、`wx.getFileInfo` 读摘要在途」窗口，返回该 harness。
+ * 断言前置条件（否则后面的用例会因为窗口没开而变成假绿）。
+ */
+async function openReadSummaryWindow(options = {}) {
+  const h = bootPage(Object.assign({ faithfulGate: true, deferredFileInfo: true }, options));
+  await h.page.onRecord();
+  void h.page.onRecord();                     // 停止并进入"读摘要"（**不 await**）
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading', '应处于「上传中」');
+  assert.equal(h.page.data.recordStageNote.includes('正在读取文件摘要'), true, h.page.data.recordStageNote);
+  assert.ok(h.fileInfoOf() !== null, 'wx.getFileInfo 必须已在途（窗口已打开）');
+  return h;
+}
+
+/** 逐帧核对：最后一次写入「本次上传已作废」之后，不得再出现任何「上传中／正在上传」写入。 */
+function assertNoUploadArmingAfterVoid(h) {
+  const trace = recordTrace(h);
+  const voidIndexes = trace.map((t, i) => (t.note && t.note.includes('本次上传已作废') ? i : -1)).filter((i) => i >= 0);
+  assert.ok(voidIndexes.length >= 1, '轨迹里必须存在如实作废说明');
+  const after = trace.slice(voidIndexes[voidIndexes.length - 1] + 1)
+    .filter((t) => t.state === 'uploading' || /正在上传|按用途 voice_question 上传/.test(t.note || ''));
+  assert.deepEqual(after, [], '作废之后不得再写入「上传中／正在上传」（不得先说作废、再偷偷上传）');
+}
+
+test('验收F1-R2a·离页落在读摘要窗口 ⇒ 迟到摘要不得把状态写回「上传中」，零上传、作废说明不被覆盖', async () => {
+  const h = await openReadSummaryWindow();
+
+  h.page.onHide();                            // ← 摘要仍在途时离页（真机：后台可能推迟 JS 回调）
+  assert.equal(h.page.data.recordState, 'idle', '离页必须复位');
+  const voidNote = h.page.data.recordStageNote;
+  assert.equal(voidNote.includes('本次上传已作废'), true, voidNote);
+
+  h.fileInfoOf().resolve();                   // 迟到摘要落定
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '离页后迟到摘要不得把状态写回「上传中」');
+  assert.equal(recordButtonDisabledByState(h.page), false, '不得因挂起态禁用按钮');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得写入 media_id');
+  assert.equal(h.uploads(), 0, '已被作废的上传不得真的发出去（POST=0）');
+  assert.equal(h.page.data.recordStageNote, voidNote, '作废说明不得被后续写入覆盖');
+  assertNoUploadArmingAfterVoid(h);
+  h.page.onUnload();
+});
+
+test('验收F1-R2b·摘要回调落在门禁核实**窗口内** ⇒ idle + 按钮可用（按录音态求值）+ 如实作废 + 零上传', async () => {
+  const h = await openReadSummaryWindow({ gateDeferAfterFirst: true });
+
+  h.page.onHide();                            // 离页 → 复位 + 如实作废
+  assert.equal(h.page.data.recordState, 'idle');
+  h.page.onShow();                            // 回页：门禁核实被扣住（窗口打开）
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, true, '核实未完成前门禁应为未通过（这正是窗口）');
+
+  h.fileInfoOf().resolve();                   // 摘要落在核实窗口内
+  await flushMicrotasks();
+
+  assert.equal(h.page.data.recordState, 'idle', '不得残留「上传中」');
+  assert.equal(recordButtonDisabledByState(h.page), false, '不得因挂起态禁用');
+  assert.equal(h.uploads(), 0, '零上传（POST=0）');
+  assert.equal(h.page.data.uploadedMediaId, null);
+  assert.equal(h.page.data.recordStageNote.includes('本次上传已作废'), true, h.page.data.recordStageNote);
+  assertNoUploadArmingAfterVoid(h);
+
+  h.verifyGate();                             // 核实完成
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, false, '核实后门禁通过');
+  assert.equal(h.page.data.recordState, 'idle', '核实完成后仍不得出现「上传中」');
+  assert.equal(recordButtonDisabled(h.page), false, '回页核实后录音按钮必须可用');
+  assert.equal(h.uploads(), 0, '核实完成也不得补发这个已被作废的上传');
+  h.page.onUnload();
+});
+
+test('验收F1-R2c·摘要回调落在核实**之后** ⇒ 两种结果互斥：已作废就绝不偷偷上传（POST=0、无 media_id）', async () => {
+  const h = await openReadSummaryWindow({ gateDeferAfterFirst: true });
+
+  h.page.onHide();
+  const voidNote = h.page.data.recordStageNote;
+  assert.equal(voidNote.includes('本次上传已作废'), true, voidNote);
+
+  h.page.onShow();
+  h.verifyGate();                             // 核实**先**完成（guest 回到 false —— 旧实现正是借此"偷偷上传"）
+  await flushMicrotasks();
+  assert.equal(h.page.data.guest, false, '此时门禁已通过：这正是旧实现会做完上传的时序');
+
+  h.fileInfoOf().resolve();                   // 摘要**晚于**核实落定
+  await flushMicrotasks();
+
+  assert.equal(h.uploads(), 0, '已被作废的上传不得发出任何请求（POST=0）');
+  assert.equal(h.page.data.uploadedMediaId, null, '不得写入 media_id');
+  assert.equal(h.page.data.recordStageNote, voidNote, '作废说明不得被"上传成功"覆盖');
+  assert.equal(h.page.data.recordState, 'idle');
+  assertNoUploadArmingAfterVoid(h);
+  h.page.onUnload();
+});
+
+test('验收OBS-1·离页路径的作废原因必须与用户动作相符（"已离开本页"，不得说成"会话／门禁已失效"）', async () => {
+  // 必须用**忠实门禁**：真实离页会 `page._gateClose()` ⇒ `callback(false)`，这才是 OBS-1 的成因。
+  const h = await openReadSummaryWindow();
+
+  h.page.onHide();
+  const note = h.page.data.recordStageNote;
+  assert.equal(note.includes('本次上传已作废'), true, note);
+  assert.equal(note.includes('已离开本页'), true, '用户主动离页 ⇒ 原因必须是"已离开本页"：' + note);
+  assert.equal(note.includes('会话／门禁已失效'), false,
+    '用户主动离页时不得说成会话/门禁失效（会被读成"掉登录"）：' + note);
+
+  // 对照：门禁失效（上传中 401）的措辞必须仍是门禁类 —— 两条原因**都可达且可区分**。
+  h.fileInfoOf().resolve();
+  await flushMicrotasks();
+  h.page.onUnload();
+});
+
+test('验收OBS-1对照·上传中 401 的作废原因仍是门禁类（两条原因都可达、互不混用）', async () => {
+  const h = bootPage({ faithfulGate: true, deferredUpload: true });
+  await h.page.onRecord();
+  void h.page.onRecord();
+  await flushMicrotasks();
+  assert.equal(h.page.data.recordState, 'uploading');
+
+  const sessionLost = new Error('SESSION_REQUIRED');
+  sessionLost.code = 'SESSION_REQUIRED';
+  h.deferredOf().reject(sessionLost);
+  await flushMicrotasks();
+
+  const note = h.page.data.recordStageNote;
+  assert.equal(note.includes('本次上传已作废'), true, note);
+  assert.equal(note.includes('会话／门禁已失效'), true, '门禁失效 ⇒ 必须是门禁类措辞：' + note);
+  assert.equal(note.includes('已离开本页'), false, '未经离页的门禁失效不得说成"已离开本页"：' + note);
+  h.page.onUnload();
 });
 
 test('边界·重复 stop / 未录音时 stop ⇒ RECORD_NOT_STARTED（幂等安全，不抛异常、不发请求）', async () => {
