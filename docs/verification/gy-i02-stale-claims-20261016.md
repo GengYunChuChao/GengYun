@@ -33,7 +33,7 @@
 
 ### 1.1 本条必须点名：`docs/verification/how-to-read-ci-runs.md` 有**同源过期读数**，但**本轮禁改**
 
-该文里「`npm run test:integration:http` 串 **8** 条脚本」的计数已过期——实测 `package.json:24`（基线 `3bc7451`）逐字为 **9 条**脚本，末条为 `node tests/integration/account-deletion-http.mjs`（**本片同基线实跑 = 9 条脚本串、63 条 `PASS`／0 条 `FAIL`**）。
+该文 `:28` 逐字写作「`package.json` 里**逐个列出**的 6 个回环脚本」；而实测 `package.json:24`（基线 `3bc7451`）同一链逐字为 **9 条**脚本，末条为 `node tests/integration/account-deletion-http.mjs`（**本片同基线实跑 = 9 条脚本串、63 条 `PASS`／0 条 `FAIL`**）⇒ 该文读数比实测**少 3 条**（同源过期读数）。
 > **复算命令与输出**（2026-10-16 返修时实测，用于订正本行**原先误写的脚本段小计数**：原值 `8`，实测 `9`）：
 > `node -e "const a=require('./package.json').scripts['test:integration:http'].split(' && ');console.log(a.length+' 条');console.log(a[8])"` ⇒ `9 条` ＋ `node tests/integration/account-deletion-http.mjs`；
 > `npm run test:integration:http 2>&1 | Select-String -Pattern '^PASS ' | Measure-Object -Line` ⇒ `63`。
