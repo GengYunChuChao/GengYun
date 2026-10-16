@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
@@ -264,4 +265,167 @@ test('message(status) 是 MESSAGES 闭集加 failed 兜底：六档文案都指�
   assert.match(locationRegion.EXPLAIN, /不会持续跟踪/);
   assert.match(locationRegion.EXPLAIN, /不会保存原始坐标/);
   assert.match(locationRegion.EXPLAIN, /确认/);
+});
+
+// —— GY-I05 D2：地区转换资源**装配**（miniprogram/utils/region-converter.js）——
+//
+// 本片把 pages/profile/profile.js 的 `regionConverter: null` 硬编码换成装配模块的 build()。这里钉三件事：
+//   ① 资源缺席 ⇒ build() 返回 null ⇒ locate 如实 unavailable（fail-closed，不假装转换成功）；
+//   ② 资源**存在但校验不通过** ⇒ 同样不接线（宁可回退手选，也不用来源不明/口径不符的数据）；
+//   ③ 资源**存在且校验通过** ⇒ 自动接线并返回浙江行政区代码，且该代码**必须能在
+//      miniprogram/data/regions.js 与 packages/knowledge/catalog/regions-zhejiang.json 两份目录里查到**。
+//      下文所有期望值都**从目录派生**（省根 → 市 → 县区），⛔ 不硬编码 region_code 绕过校验。
+//
+// 合成资源坐标为下标确定性生成的**假坐标**，不是任何真实质心，也不代表仓库取得了几何数据；
+// 真实的 miniprogram/data/region-centroids.js 截至 2026-10-17 仍**未取得**（见交接 U3）。
+
+const regionConverter = createRequire(import.meta.url)(root + '/miniprogram/utils/region-converter.js');
+const mpCatalog = createRequire(import.meta.url)(root + '/miniprogram/data/regions.js');
+const knowledgeCatalog = createRequire(import.meta.url)(root + '/packages/knowledge/catalog/regions-zhejiang.json');
+const RESOURCE_ABSENT = !existsSync(resolve(root, 'miniprogram/data/region-centroids.js'));
+const MP_CODES = new Set(mpCatalog.regions.map((r) => r.code));
+const KNOWLEDGE_CODES = new Set(knowledgeCatalog.regions.map((r) => r.code));
+const PROVINCE_ROOT = mpCatalog.regions.find((r) => r.parent_code === null);
+const CITY_CODES = new Set(mpCatalog.regions.filter((r) => r.parent_code === PROVINCE_ROOT.code).map((r) => r.code));
+const COUNTY_CODES = mpCatalog.regions.filter((r) => CITY_CODES.has(r.parent_code)).map((r) => r.code);
+// 形状合法（^33[0-9]{4}$）但**不在目录里**的代码，由目录枚举得出，不是手写的。
+const ABSENT_CODE = (() => {
+  for (let i = 0; i < 10000; i += 1) { const code = '33' + String(i).padStart(4, '0'); if (!KNOWLEDGE_CODES.has(code)) return code; }
+  throw new Error('无法从 33xxxx 空间里找到不在目录中的代码');
+})();
+
+function syntheticDocument(overrides) {
+  const points = COUNTY_CODES.slice(0, 6).map((code, index) => ({ code, latitude: 27.9 + index * 0.05, longitude: 119.9 + index * 0.05 }));
+  return Object.assign({
+    schema: regionConverter.SCHEMA, state: 'available',
+    source: '测试合成（不是真实几何数据）', license: '测试合成', retrieved_at: '2026-10-17',
+    catalog_version: mpCatalog.catalog_version, max_distance_km: 5, points,
+  }, overrides);
+}
+
+test('D2 装配·U3 未取得：仓库内没有 region-centroids.js ⇒ build() 返回 null，locate 落 unavailable 且坐标不外泄', async () => {
+  const described = regionConverter.describe();
+  assert.equal(described.resource_file, 'miniprogram/data/region-centroids.js');
+  assert.equal(described.resource_module, '../data/region-centroids.js');
+  assert.equal(described.wired, false);
+  assert.equal(described.reason, 'resource-missing');
+  assert.equal(described.point_count, 0);
+  assert.equal(described.max_distance_km, null);
+  assert.equal(described.source, null);
+  assert.equal(described.license, null);
+  // U3 如实登记：本片**未取得**几何资源。资源落地后本条必红，须显式更新交接与文档。
+  assert.equal(RESOURCE_ABSENT, true, 'miniprogram/data/region-centroids.js 已出现：请更新 U3 登记与来源标注');
+  const converter = regionConverter.build();
+  assert.equal(converter, null);
+  const h = harness((o) => o.success(SENTINEL), converter);
+  const result = plain(await h.spawn());
+  assert.deepEqual(result, { status: 'unavailable' });
+  assert.match(locationRegion.message(result.status), MANUAL);
+  assert.deepEqual(h.seen.convertArgs, []);
+  assert.equal(h.seen.getLocationOptions.length, 1);
+  assert.deepEqual(h.seen.forbidden, []);
+  for (const text of SENTINEL_TEXT) assert.equal(JSON.stringify(result).includes(text), false);
+});
+
+test('D2 装配·资源存在但校验不通过一律不接线：逐条 reason + build() 为 null + locate 仍 unavailable', async () => {
+  const valid = syntheticDocument();
+  assert.equal(typeof regionConverter.build({ resource: valid }), 'function', '正例自检：合规文档必须接线，否则下表可能因恒不接线而全绿');
+  const cases = [
+    ['资源显式缺席', { resource: null }, 'resource-missing'],
+    ['资源是字符串', { resource: 'region-centroids' }, 'resource-invalid'],
+    ['资源是数组', { resource: [] }, 'resource-invalid'],
+    ['schema 不符', { resource: syntheticDocument({ schema: 'gengyun.knowledge.regions.v1' }) }, 'schema'],
+    ['state 未声明 available', { resource: syntheticDocument({ state: 'unavailable' }) }, 'state:unavailable'],
+    ['缺 source', { resource: syntheticDocument({ source: '' }) }, 'source'],
+    ['缺 license', { resource: syntheticDocument({ license: '   ' }) }, 'license'],
+    ['缺 retrieved_at', { resource: syntheticDocument({ retrieved_at: null }) }, 'retrieved_at'],
+    ['max_distance_km 非正', { resource: syntheticDocument({ max_distance_km: 0 }) }, 'max_distance_km'],
+    ['points 为空', { resource: syntheticDocument({ points: [] }) }, 'points'],
+    ['catalog_version 与目录不符', { resource: syntheticDocument({ catalog_version: 'mca-xzqh-1999' }) }, 'catalog-version'],
+    ['点不是对象', { resource: syntheticDocument({ points: [null] }) }, 'point-invalid:0'],
+    ['点 code 形状非法', { resource: syntheticDocument({ points: [{ code: '440102', latitude: 28, longitude: 120 }] }) }, 'point-code:0'],
+    ['点 code 不在目录', { resource: syntheticDocument({ points: [{ code: ABSENT_CODE, latitude: 28, longitude: 120 }] }) }, 'code-not-in-catalog:' + ABSENT_CODE],
+    ['点 code 重复', { resource: syntheticDocument({ points: [valid.points[0], Object.assign({}, valid.points[0], { latitude: 28.5 })] }) }, 'duplicate-code:' + valid.points[0].code],
+    ['纬度越界', { resource: syntheticDocument({ points: [{ code: valid.points[0].code, latitude: 91, longitude: 120 }] }) }, 'point-latitude:0'],
+    ['纬度非有限数', { resource: syntheticDocument({ points: [{ code: valid.points[0].code, latitude: '28', longitude: 120 }] }) }, 'point-latitude:0'],
+    ['经度越界', { resource: syntheticDocument({ points: [{ code: valid.points[0].code, latitude: 28, longitude: 181 }] }) }, 'point-longitude:0'],
+  ];
+  for (const [label, options, reason] of cases) {
+    const described = regionConverter.describe(options);
+    assert.equal(described.reason, reason, label + ' 的 reason 不符');
+    assert.equal(described.wired, false, label + ' 不得接线');
+    const converter = regionConverter.build(options);
+    assert.equal(converter, null, label + ' 不得给出转换函数');
+    const h = harness((o) => o.success(SENTINEL), converter);
+    assert.deepEqual(plain(await h.spawn()), { status: 'unavailable' }, label + ' 不得假装转换成功');
+    assert.deepEqual(h.seen.convertArgs, [], label + ' 不得把坐标交给任何东西');
+  }
+});
+
+test('D2 装配·资源合规即接线：region_code 经两份目录校验、最近质心、超出范围即 null、附来源', async () => {
+  const document = syntheticDocument();
+  const snapshot = plain(document);
+  const convert = regionConverter.build({ resource: document });
+  assert.equal(typeof convert, 'function');
+  for (let index = 0; index < document.points.length; index += 1) {
+    const point = document.points[index];
+    const code = convert(point.latitude, point.longitude);
+    assert.equal(code, point.code, '最近质心应命中该点自身（第 ' + index + ' 点）');
+    assert.match(code, /^33[0-9]{4}$/);
+    assert.equal(MP_CODES.has(code), true, 'miniprogram/data/regions.js 目录里必须有：' + code);
+    assert.equal(KNOWLEDGE_CODES.has(code), true, 'packages/knowledge/catalog/regions-zhejiang.json 目录里必须有：' + code);
+    assert.equal(COUNTY_CODES.includes(code), true);
+  }
+  // 超出 max_distance_km 一律 null（不是「就近猜一个」）：0.01° 纬度约 1.11km，阈值取 0.5km。
+  const near = regionConverter.build({ resource: syntheticDocument({ max_distance_km: 0.5 }) });
+  assert.equal(near(document.points[0].latitude + 0.01, document.points[0].longitude), null);
+  assert.equal(near(document.points[0].latitude, document.points[0].longitude), document.points[0].code);
+  // 合成哨兵离所有合成点都很远 ⇒ null；非法入参一律 null 且不得抛错。
+  assert.equal(convert(SENTINEL.latitude, SENTINEL.longitude), null);
+  for (const args of [[undefined, undefined], [null, null], ['28', 120], [NaN, 120], [28, NaN], [Infinity, 120], [{}, []]]) {
+    assert.equal(convert(args[0], args[1]), null, '非法入参必须 null：' + JSON.stringify(args));
+  }
+  // 来源可追溯：装配结果自带 provenance，且与资源声明一致。
+  assert.equal(convert.provenance.schema, regionConverter.SCHEMA);
+  assert.equal(convert.provenance.source, document.source);
+  assert.equal(convert.provenance.license, document.license);
+  assert.equal(convert.provenance.retrieved_at, document.retrieved_at);
+  assert.equal(convert.provenance.catalog_version, mpCatalog.catalog_version);
+  assert.equal(convert.provenance.point_count, document.points.length);
+  assert.equal(convert.provenance.max_distance_km, document.max_distance_km);
+  assert.equal(convert.provenance.method, 'nearest-centroid');
+  assert.equal(regionConverter.describe({ resource: document }).wired, true);
+  assert.equal(regionConverter.describe({ resource: document }).source, document.source);
+  // 只读消费：转换不得改写资源文档。
+  assert.deepEqual(plain(document), snapshot);
+});
+
+test('D2 装配·接线后 locate 成功路径：region_code 来自目录校验、坐标只在入参出现一次、省外仍 out_of_coverage', async () => {
+  const document = syntheticDocument();
+  const convert = regionConverter.build({ resource: document });
+  const target = document.points[2];
+  const h = harness((o) => o.success({ latitude: target.latitude, longitude: target.longitude }), convert);
+  const result = plain(await h.spawn());
+  assert.deepEqual(Object.keys(result).sort(), ['region_code', 'status']);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.region_code, target.code);
+  assert.equal(MP_CODES.has(result.region_code), true);
+  assert.equal(KNOWLEDGE_CODES.has(result.region_code), true);
+  // getLocation 入参逐字段固定；坐标只交给内存转换资源一次；不碰跟踪/存储/请求接口。
+  const options = h.seen.getLocationOptions[0];
+  assert.deepEqual(Object.keys(options).sort(), ['fail', 'success', 'type']);
+  assert.equal(options.type, 'wgs84');
+  assert.equal(typeof options.success, 'function');
+  assert.equal(typeof options.fail, 'function');
+  assert.equal('latitude' in options, false);
+  assert.equal('longitude' in options, false);
+  assert.deepEqual(plain(h.seen.convertArgs), [[target.latitude, target.longitude]]);
+  assert.deepEqual(h.seen.forbidden, []);
+  for (const text of [String(target.latitude), String(target.longitude)]) {
+    assert.equal(JSON.stringify(result).includes(text), false);
+    assert.equal(JSON.stringify(plain(h.seen.getLocationOptions)).includes(text), false);
+  }
+  // 覆盖范围之外：接线了也不假装成功，如实回 out_of_coverage。
+  const far = harness((o) => o.success(SENTINEL), convert);
+  assert.deepEqual(plain(await far.spawn()), { status: 'out_of_coverage' });
 });
