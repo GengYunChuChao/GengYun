@@ -16,6 +16,14 @@
 三处注释均把接线工作记为 **GY-I06 的剩余工作**）。本片接上契约的 7 个 operationId，补齐
 **异步对象存储端口**、**real 模式 fail-closed**、**同键并发保护**与**社区审核上下文**。
 
+> **校订（2026-10-16 实测；测量基线 `3bc7451`）**：上段**转述**的那句「媒体 HTTP 路由尚未接线」**已过期**——`packages/media/README.md:74`
+> 现标题为「services/api 挂载示例（媒体 HTTP 路由已接线；未接线的是**句柄消费网关**）」，同名接力点
+> `services/api/src/{recognitions,speech,ocr}/media.ts` 的**文件头仍为旧措辞**（实测三份的 `:8` 均逐字含「媒体 HTTP 路由尚未接线」；
+> `services/api/src/recognitions/media.ts:10`、`services/api/src/speech/media.ts:9`、`services/api/src/ocr/media.ts:9` 写「本片不接线媒体 HTTP 路由」），
+> **本页不引用其文件头为现状**，订正由**在飞 PR #235**（`fix/gy-i02-stale-wiring-comments`，head 实测 `84de2ce4e65972595f3b3f4d2fd8fbfa6d9e9729`，OPEN／非草稿／未合并）承载。本节转述的是**改前**状态
+> （该片当时**就是**在接这条线），故"三处注释把接线记为 GY-I06 剩余工作"作为**过程记录**仍成立，**不作现状引用**。
+> **仍未接线、不受本次校订影响的是**：句柄消费网关（owner 私有媒体字节数据面）与**真实对象存储适配器**。
+
 ## 2 改前 / 改后（运行时原始输出）
 
 探针：`buildApp` + 合成会话，打三条媒体路径与一条对照路径（`services/api/src/app.ts` 的 404 处理器兜底）。

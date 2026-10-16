@@ -45,6 +45,12 @@ Refs #7，基线 main `487918856a0099d6c7ee5f083069bd415b095bee`。这是两个�
 
 本轮仅同步 tests/integration/catalog-pg.mjs：知识列表与详情的无登录请求必须401 SESSION_REQUIRED；尚未装配的 herbicides 列表/详情、staging、registrations仍404。保留迁移重入/漂移/失败回滚、受限真实LOGIN/PUBLIC/私有表/跨视图/写/DDL/TEMP/owner升级拒绝、未批准种子排除、source生命周期与登记证据以及0005回滚等全部原断言。
 
+> **校订（2026-10-16 实测；上段为 2026-10-11 快照，⛔ 原文保留不删）**：上段的「尚未装配的 herbicides 列表/详情」**已过期**——
+> 实测 `/api/v1/herbicides`、`/api/v1/herbicides/:id` **已注册**（注册点 `services/api/src/app.ts:1298` `registerKnowledgeRoutes(...)`；
+> 运行期 `/knowledge`、`/knowledge/:id`、`/herbicides`、`/herbicides/:id` 四条全在）。
+> 上段其余半句**仍成立**：`staging`、`registrations` 仍 404（`POST /registrations/verify` 在未装配的 4 条 `planned` operation 内）。
+> 同文 `:44`「旧测试仍假定知识路由未装配」是**引述当时失败原因**的历史叙述 ⇒ **仍成立**，不属过期断言。
+
 实际执行与 .github/workflows/catalog-postgres.yml 相同入口 `node tests/integration/catalog-pg.mjs`，DATABASE_TEST_URL 仅在内存指向自己PG17.11隔离cluster新空 gengyun_catalog_test 库，六组PASS、退出0。实际运行身份是独立随机密码 preview/evidence LOGIN，API不是owner；所有资料synthetic或保留未核状态的公开种子。未在该preview专用库伪造知识授权角色。有效身份空列表/无数据库503/knowledge_runtime私有表权限的既有 knowledge-api 回归保留，affected+contract重跑24项23通过、1原生专项明确跳过；上轮独立knowledge限权LOGIN9/9证据复用（service/views/roles本轮未变），不能把它替代本次实际catalog入口。
 
 本轮docs与diff通过，自己cluster启动PID43464已按绝对datadir停止，55472关闭。CI修订后的远端结果仍待维护者允许运行与监工复验，不自批、合并或将本地PASS写成CI成功。local-dev新组接线、前后端/320px/Android、herbicides与整项#7验收仍未完成。

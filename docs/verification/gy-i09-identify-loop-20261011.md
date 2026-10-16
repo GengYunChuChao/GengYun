@@ -181,6 +181,11 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
 
 1. **PG 持久化未实现**：识别任务/识别记录在内存 store，重启丢失；无迁移、无 RLS/权限证据。
 2. **媒体 HTTP 未接线**：`packages/media/**` 是纯模块（其 README 明确「媒体 HTTP 路由尚未接线」），且契约把上传句柄 URL 限定为 `^https://`，
+   > **校订（2026-10-16 实测；本条为 2026-10-11 过程记录，⛔ 原文保留不删）**：标题句与括注**已过期**——
+   > `services/api/src/app.ts:1354` `registerMediaRoutes(app, config, guards, mediaService);`，媒体域 **7** 条路由全部已注册；
+   > `packages/media/README.md:74` 现标题为「媒体 HTTP 路由**已接线**；未接线的是**句柄消费网关**」。
+   > **仍未接线的是**：句柄消费网关（owner 私有媒体字节数据面）与真实对象存储适配器 ⇒ 下方"`real` 模式如实 fail-closed"
+   > 与"未取得一次成功上传的证据"**仍成立**，本节"本片不接线 `/media/**`"作为**当年的范围决定**也仍成立。
    本机 loopback 无法提供该 https 数据面。故本片**不接线 `/media/**`**（属 GY-I06 剩余工作，避免越界）；
    后果：`real` 模式更不可能上传照片 → 如实 fail-closed；`stub/preset_demo` 使用**明确标注的替身媒体引用**。
    小程序侧已按契约实现 `createUpload → PUT 句柄 URL → completeUpload` 调用链（`utils/identify-api.js#uploadPrivatePhoto`），

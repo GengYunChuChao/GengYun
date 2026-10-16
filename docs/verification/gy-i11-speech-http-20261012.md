@@ -132,6 +132,12 @@ PASS 11 loopback HTTP groups; production pipeline (buildApp) with only the speec
 
 ## 契约缺口与实现层选择（如实登记，不改契约）
 
+> **校订注（2026-10-16 实测）**：本节的 1–6 条是**本片当年**（2026-10-12）的登记，标题里的"缺口"是**当时**事实，逐条保留。
+> 其中**第 1 条**的现在时断言已过期：`getJob` / 取消**已装配**——运行期存在 `GET,HEAD /api/v1/jobs/:id` 与
+> `POST /api/v1/jobs/:id/cancel`（注册点 `services/api/src/app.ts:1313` `registerJobRoutes(...)`）。
+> 因此"`getJob` 未装配 ⇒ 失败终态不可经 HTTP 轮询"**不再成立**；但本片当年**脚本里**的 `[gap] … 404` 观测与
+> "未覆盖 `running`/`cancelled`"的**声明**属历史证据，⛔ 不据此重跑或改写。第 2–6 条未复核出过期，保持原样。
+
 1. **`getJob` 未装配 ⇒ 失败终态不可经 HTTP 轮询**。契约存在 `GET /jobs/{id}`（`x-task: GY-I01`），不属本派单的四个操作，脚本只**观测并打印**（`[gap] … 404 NOT_FOUND`）而未据此断言。后果：`failed`／`timed_out`／`uncertain` 在 HTTP 上只能表现为「该转写记录 `GET` 404（未产生记录）」；`running` 与本阶段无阻断语义的 `cancelled` 在 HTTP 层**没有任何观测点**。第 2 组因此覆盖 `queued`（202）+ `succeeded`（200）+ `failed`/`timed_out`/`uncertain`（404 无记录），并显式声明未覆盖 `running`/`cancelled`。
 2. **`DELETE` 不下发 `ETag`**。`AckEnvelope` 只有 `accepted`，没有可绑定的 revision；契约 202 的 `ETag` 头未标 `required`（`openapi 202.headers`），故只下发 `Cache-Control: no-store`，不伪造 ETag。
 3. **路径 `id` 不做 Fastify `format: uuid` 校验**，交由服务层统一按 `NOT_FOUND` 处理：避免 ajv 的 uuid 版本／变体严格度与 `service.ts` 的宽松形状判定不一致，导致同一非法 id 时而 400、时而 404。两种都是契约声明的响应码；本实现选择与阶段 1 已合并语义保持一致（不泄露资源是否存在）。
