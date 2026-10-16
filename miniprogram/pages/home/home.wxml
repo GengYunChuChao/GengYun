@@ -37,7 +37,7 @@
         <view class="feature-card__icon"><view class="gy-icon {{item.iconClass}}"></view></view>
         <view class="feature-card__title">{{item.title}}</view>
         <view class="feature-card__desc">{{item.desc}}</view>
-        <view class="badge badge--stub feature-card__stub">未接入</view>
+        <view class="badge badge--stub feature-card__stub">演示</view>
       </button>
     </view>
   </view>
@@ -82,8 +82,8 @@
     </view>
     <state-view
       status="stub"
-      title="功能尚未接入"
-      desc="拍草识别、标签识别、语音提问与社区均未接入真实服务。本页仅用于界面与导航走查，所列内容不能作为用药依据。"
+      title="演示与走查状态"
+      desc="拍草识别、标签识别、语音提问与社区已接服务端；真实提供者、真实数据与真机验收未完成，本页所列内容不能作为用药依据。"
     ></state-view>
   </view>
 

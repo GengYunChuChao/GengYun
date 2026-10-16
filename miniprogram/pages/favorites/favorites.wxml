@@ -50,7 +50,7 @@
         wx:else
         status="{{targetError ? 'error' : 'empty'}}"
         title="{{targetError ? '资料列表不可用' : '暂无可收藏的资料'}}"
-        desc="{{targetError || '已上架资料为空，或当前尚未接入资料查询。收藏列表本身仍可查看与取消。'}}"
+        desc="{{targetError || '已上架资料为空，或资料查询暂不可用。收藏列表本身仍可查看与取消。'}}"
       ></state-view>
 
       <view class="demo-caption">

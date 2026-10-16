@@ -50,4 +50,11 @@ node tests/integration/local-dev-detail-route.cjs <miniprogram-automator目录> 
 
 本次不关闭 #7。客户端目前读取随包资料；实际 `services/api/src/app.ts` 仅装配 health、auth、admin auth、consents、profile，尚未装配知识／除草剂查询路由。本地 `GET /api/v1/knowledge` 实测 404，因此生产来源下架及在线治理更新尚未接线，离线失效测试不能称为实时同步验收。
 
+> **校订（2026-10-16 实测；上段为 2026-10-11 快照，原文保留不删）**：上段是**当时**的实测。现在时断言已过期：
+> `services/api/src/app.ts:1298` 已装配知识路由（`registerKnowledgeRoutes(...)`），运行期 `/api/v1/knowledge`、`/api/v1/knowledge/:id`、
+> `/api/v1/herbicides`、`/api/v1/herbicides/:id` **四条全部已注册**（复核：`node tools/verify-contract-status.mjs` ⇒ 112 条契约操作 / 已装配 108）。
+> 因此"尚未装配知识／除草剂查询路由"与"本地 `GET /api/v1/knowledge` 实测 404"**均不再成立**。
+> **仍未取消的边界**：`#7` 的**整项**验收（生产来源下架后的在线治理更新、真实资料审批与真机）仍未完成 ⇒ 本页"本次不关闭 #7"的结论不变，
+> 只是**不能再以"路由未装配"为由**。客户端是否已消费该端点、以及消费到哪一步，属**另一件事**，不由本页与本节判定。
+
 可选定位仍需获准的坐标到市县转换资源与拒绝／失败处理；生产资料需批准导入与来源证据；真实微信身份和 Android 真机验收仍需设备协作。现有 AppID 与密钥无需再次提供。未新增付费供应商请求，也未部署云端服务。
