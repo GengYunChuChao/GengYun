@@ -7,7 +7,9 @@ const require = createRequire(import.meta.url), { createFixture, ID, item } = re
 const f = createFixture(); await new Promise(r => f.server.listen(0, '127.0.0.1', r)); const base = 'http://127.0.0.1:' + f.server.address().port + '/api/v1';
 let token = f.token, epoch = 1; const auth = { getSession: () => token ? { accessToken: token } : null, isLoggedIn: () => !!token, networkEnabled: () => true, sessionEpoch: () => epoch, clearSession: () => { token = null; epoch++ } };
 const box = { exports: {} }; const wx = { request: o => { fetch(o.url, { method: o.method, headers: o.header }).then(async r => o.success({ statusCode: r.status, data: await r.json() })).catch(() => o.fail({})) } };
-vm.runInNewContext(readFileSync(new URL('../../miniprogram/utils/knowledge-api.js', import.meta.url), 'utf8'), { module: box, wx, require: p => p === './auth' ? auth : { apiBaseUrl: base } }); const api = box.exports;
+// 依赖按**完整说明符**登记，不做 else 兜底：未登记（新增 require）⇒ 显式失败并带依赖名，而不是静默喂 `{ apiBaseUrl }` 空壳。
+const knowledgeApiDependencies = new Map([['./auth', auth], ['../config/runtime', { apiBaseUrl: base }]]);
+vm.runInNewContext(readFileSync(new URL('../../miniprogram/utils/knowledge-api.js', import.meta.url), 'utf8'), { module: box, wx, require: p => { if (!knowledgeApiDependencies.has(p)) throw Error('Unexpected page dependency ' + p); return knowledgeApiDependencies.get(p); } }); const api = box.exports;
 try {
  const p = await api.list({ q: '稗草 &水稻', crop_id: 'crop_rice', region_code: '330102', limit: 20 }); assert.equal(p.items[0].id, ID); assert.equal(p.mode, 'stub'); assert.equal(f.requests.at(-1).query.q, '稗草 &水稻');
  api.remember(p.items[0], { crop_id: 'crop_rice' }); const d = await api.detail(ID, { crop_id: 'crop_rice' }); assert.equal(api.fingerprint(d.item), api.expected(ID).fingerprint); assert.equal(d.item.conditions, null); assert.equal(d.item.dose_cards.length, 0);

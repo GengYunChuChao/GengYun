@@ -83,14 +83,20 @@ try {
     const gate = load('utils/page-gate.js', { './auth': cold });
     const profileApi = load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
     let definition;
+    // 页面依赖按**完整相对路径**登记（与 miniprogram/pages/*/*.js 内的 require 说明符逐字相同），
+    // 不做后缀匹配：`dep.endsWith('/reference')` 会把 `require('../../data/reference')` 静默喂成
+    // `utils/reference.js` —— 看着在测真页面，其实测了替身。未登记 ⇒ 显式失败并带依赖名。
+    const pageDependencies = new Map([
+      ['../../utils/font-scale', () => load('utils/font-scale.js', {})],
+      ['../../utils/auth', () => cold],
+      ['../../utils/page-gate', () => gate],
+      ['../../utils/profile-api', () => profileApi],
+      ['../../utils/reference', () => requireData('../../miniprogram/utils/reference.js')],
+    ]);
     vm.runInNewContext(source(`pages/${name}/${name}.js`), { Page: (value) => { definition = value; }, wx,
       require: (dep) => {
-        if (dep.endsWith('/font-scale')) return load('utils/font-scale.js', {});
-        if (dep.endsWith('/auth')) return cold;
-        if (dep.endsWith('/page-gate')) return gate;
-        if (dep.endsWith('/profile-api')) return profileApi;
-        if (dep.endsWith('/reference')) return requireData('../../miniprogram/utils/reference.js');
-        throw Error('Unexpected page dependency ' + dep);
+        if (!pageDependencies.has(dep)) throw Error('Unexpected page dependency ' + dep);
+        return pageDependencies.get(dep)();
       } });
     const page = { ...definition, route: `pages/${name}/${name}`, options: id ? { id } : {},
       data: { ...definition.data }, setData(patch) { Object.assign(this.data, patch); } };
