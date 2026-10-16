@@ -342,7 +342,7 @@
         },
         {
           "test": "tests/integration/consent-grant-pg.mjs",
-          "name": "normal production app rejects synthetic registry",
+          "name": "normal production app rejects synthetic registry; only explicit test injection permits fixture policy",
           "ci": true
         }
       ],
@@ -401,19 +401,19 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "1046-1051"
+          "lines": "1163-1168"
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "1157-1165"
+          "lines": "1151-1168"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
-          "name": "[0] 契约两个 operation 的**成功形状**"
+          "name": "assert.equal(accepted.etag, `\"${acceptedData.deletion.revision}\"`, '契约要求 202 带资源 revision 强 ETag');"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
-          "name": "[3] **级联真的删了**"
+          "name": "assert.equal(afterHisA.body.data.items.length, 0, 'A 的历史必须被真的删除（不得只删收藏）');"
         },
         {
           "test": "tests/unit/account-deletion-receipts.test.mjs",
@@ -445,16 +445,20 @@
           "lines": "218-275"
         },
         {
-          "path": "services/api/src/app.ts",
-          "lines": "1157-1165"
+          "test": "tests/integration/account-deletion-http.mjs",
+          "name": "assert.equal(receiptRead.etag, `\"${receiptRead.body.data.revision}\"`);"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
-          "name": "[4] **回执 bearer 不是登录会话**"
+          "name": "失败路径：无会话 401 SESSION_REQUIRED；缺键/短键 400 IDEMPOTENCY_KEY_REQUIRED；confirmation 非法或多余字段 400 INVALID_REQUEST；存储零变更"
         },
         {
-          "test": "tests/integration/account-deletion-http.mjs",
-          "name": "[5] **失败与未装配可区分**"
+          "test": "tests/unit/account-deletion-receipts.test.mjs",
+          "name": "GY-I19：空主体/空回执明文一律拒绝且不留任何状态；未接线模式给契约不可用文案"
+        },
+        {
+          "test": "tests/unit/account-deletion-receipts.test.mjs",
+          "name": "GY-I19：回执投影只做形状归一 —— 非法枚举折叠，错误码只透白名单"
         },
         {
           "test": "tests/unit/account-deletion-receipts.test.mjs",
@@ -820,7 +824,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "102-106"
+          "lines": "148-160"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -841,7 +845,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "87-91"
+          "lines": "130-146"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -882,7 +886,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
-          "lines": "209-213"
+          "lines": "259-272"
         },
         {
           "test": "tests/integration/ocr-http.mjs"
@@ -902,7 +906,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
-          "lines": "260-264"
+          "lines": "310-328"
         },
         {
           "test": "tests/integration/ocr-http.mjs"
@@ -1761,7 +1765,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
-          "lines": "24-33"
+          "lines": "42-51"
         },
         {
           "test": "tests/unit/messages-http.test.mjs",
@@ -1782,7 +1786,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
-          "lines": "34-39"
+          "lines": "52-57"
         },
         {
           "test": "tests/unit/messages-http.test.mjs",
@@ -3064,11 +3068,11 @@
       "evidence": [
         {
           "path": "services/api/src/recognitions/service.ts",
-          "lines": "529-573"
+          "lines": "756-796"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
-          "name": "状态 7 cancelled"
+          "name": "状态 7 cancelled：取消后**迟到的提供者结果不复活任务**"
         },
         {
           "path": "services/api/src/jobs/routes.ts",
@@ -3110,6 +3114,10 @@
         {
           "path": "services/api/src/recognitions/service.ts",
           "lines": "410-427"
+        },
+        {
+          "path": "services/api/src/recognitions/service.ts",
+          "lines": "524-543"
         },
         {
           "path": "services/api/src/ocr/service.ts",
