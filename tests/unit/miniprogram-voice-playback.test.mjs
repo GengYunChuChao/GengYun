@@ -386,7 +386,7 @@ test('失败·中断（来电/其它音频/蓝牙切换）不记已听取，并�
   assert.equal(failures[0].actionText.length > 0, true);
 });
 
-test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', (t) => {
+test('替身播放·整份计划走完只置 substituteCompleted，**绝不**记「已听取」', { timeout: 5000 }, (t) => {
   // **确定性同步**（不靠墙钟等待）：替身端口每段的"播放"就是
   // `timer = setTimeout(function () { emit('ended') }, segmentMs)`
   // （`miniprogram/utils/substitute-player.js:65`，本用例 `segmentMs: 0`）⇒ 整份计划需要
