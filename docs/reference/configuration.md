@@ -15,7 +15,7 @@ API 只读进程环境。下面列变量名、默认值和条件，不列真实�
 | DELETION_LEDGER_KEY | real 必填 | 当前启动检查；配置存在不证明独立删除账本已接线 |
 | WECHAT_APP_ID | real 必填 | AppID 公开标识；服务端身份交换使用 |
 | WECHAT_APP_SECRET | real 必填、秘密 | 不进客户端 |
-| OBJECT_STORAGE_ENDPOINT | real 必填 | 当前启动校验，完整存储消费者待验 |
+| OBJECT_STORAGE_ENDPOINT | real 必填 | 仅**启动校验**。四项**不是**媒体域门控：装配点（`app.ts`）**不读也不传** ambient `process.env`，`resolveMediaObjectStore` 的 `env` 形参只供显式装配／测试使用；因此 real 下四项齐备时默认装配仍整域 fail-closed 503（`unwired`），真实适配器只允许经**显式注入** `BuildAppOptions.mediaObjectStore` 装配；真实桶往返仍**未验证** |
 | OBJECT_STORAGE_BUCKET | real 必填 | 同上 |
 | OBJECT_STORAGE_ACCESS_KEY | real 必填、秘密 | 同上 |
 | OBJECT_STORAGE_SECRET_KEY | real 必填、秘密 | 同上 |
