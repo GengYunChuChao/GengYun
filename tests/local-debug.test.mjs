@@ -153,7 +153,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'components/state-view/state-view.wxss',
     ...['gy-ui-button', 'gy-ui-card', 'gy-ui-chip', 'gy-ui-search'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
-    // GY-I13 播报域：统一语音球组件与五个适配层（漏打包 ⇒ 播报页 MODULE_NOT_FOUND / 组件解析失败）
+    // GY-I13 播报域 + GY-I11 语音问答录音域：统一语音球组件与六个适配层
+    // （漏打包 ⇒ 播报/录音页 MODULE_NOT_FOUND / 组件解析失败）
     ...['gy-voice-ball'].flatMap(name =>
       ['.js', '.json', '.wxml', '.wxss'].map(ext => `components/${name}/${name}${ext}`)),
     'utils/speech-text.js',
@@ -161,6 +162,7 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'utils/inner-audio-port.js',
     'utils/substitute-player.js',
     'utils/voice-api.js',
+    'utils/recorder-port.js',
     'data/crops.js',
     'data/species.js',
     'data/regions.js',

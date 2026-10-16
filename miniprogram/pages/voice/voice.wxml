@@ -155,24 +155,52 @@
     </view>
   </view>
 
-  <!-- 录音控件：与播报控件**分离**的独立控件（如实标注未接线） -->
+  <!-- 录音控件：与播报控件**分离**的独立控件。真调用原生录音能力，各态逐态可分辨、如实呈现。 -->
   <view class="section">
     <view class="section-head">
       <view class="section-head__title">录音（独立控件）</view>
-      <view class="section-head__meta">尚未接线</view>
+      <view class="section-head__meta">{{recordState === 'recording' ? '录音中' : (recordState === 'uploading' ? '上传中' : (recordState === 'stopped' ? '已录音' : (recordState === 'failed' ? '未成功' : '未录音')))}}</view>
     </view>
     <view class="panel">
       <view class="hint">{{recordNote}}</view>
+      <view class="hint">{{voiceLimitNote}}</view>
+      <view class="hint" wx:if="{{recordSupportNote}}">能力自述：{{recordSupportNote}}</view>
+      <view class="notice notice--warn" wx:if="{{!recordSupported}}">
+        <text class="notice__icon">🎙️</text>
+        <text class="notice__text">当前环境不提供录音能力：本页不会采集、不会上传，也不假装在录。</text>
+      </view>
+
+      <!-- 各态可分辨：录音中显示已录时长与上限；上传中/失败/完成各自一句，互不混淆 -->
+      <view class="hint" wx:if="{{recordState === 'recording'}}">
+        已录 {{recordElapsedMs}} ms / 上限 {{recordMaxMs}} ms（契约 UploadInput.duration_ms.maximum）。停止后按真实时长上传。
+      </view>
+      <view class="hint" wx:if="{{recordDurationMs > 0}}">
+        本次录音：{{recordDurationMs}} ms · {{recordedMime || '（未取得编码）'}}
+      </view>
+      <view class="notice {{recordState === 'failed' ? 'notice--danger' : (recordState === 'stopped' ? 'notice--stub' : '')}}" wx:if="{{recordStageNote}}">
+        <text class="notice__text">{{recordStageNote}}</text>
+      </view>
+      <view class="hint" wx:if="{{uploadErrorCode}}">错误码：{{uploadErrorCode}}（未收录的码一律如实带出，不折叠成"失败"）</view>
+      <view class="hint" wx:if="{{uploadedMediaId}}">已上传 media_id：{{uploadedMediaId}} · 用途：{{uploadedPurpose}}</view>
+      <view class="hint" wx:if="{{recordState === 'stopped' && !uploadedMediaId}}">录音已在本机完成，但没有成功上传：本页不伪造 media_id，也不显示"已发送／已回答"一类结论。</view>
+
       <view class="row-actions">
         <button
-          class="btn btn--secondary row-actions__item"
+          class="btn {{recordState === 'recording' ? 'btn--primary' : 'btn--secondary'}} row-actions__item voice-record"
           aria-role="button"
-          aria-label="开始或停止录音（尚未接线）"
-          disabled="{{guest}}"
+          aria-label="{{recordLabel}}"
+          disabled="{{guest || recordState === 'uploading'}}"
           bindtap="onRecord"
-        >{{recording ? '录音中…（尚未接线）' : '开始录音（尚未接线）'}}</button>
+        >{{recordLabel}}</button>
       </view>
+
+      <view class="notice" wx:if="{{recordState === 'failed'}}">
+        <text class="notice__icon">🎙️</text>
+        <text class="notice__text">{{recordPermissionNote}}</text>
+      </view>
+
       <view class="demo-caption">录音控件与上方播报控件是两个独立控件：录音不会触发播报，播报也不采集任何音频。</view>
+      <view class="demo-caption">本页只做到「录音 + 按用途上传」：真实 ASR／转写结果不在本页，未接线前不显示任何结论。</view>
     </view>
   </view>
 </view>
