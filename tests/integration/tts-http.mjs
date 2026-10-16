@@ -9,9 +9,9 @@
 // 口径：
 //  - 纯回环：只连 `127.0.0.1:<随机端口>`，**不发出任何对外/付费请求**；不读凭据、不读 `.env`。
 //  - 提供者与产物都是**明确标注的替身**：产物是明文标注的**非音频**占位，不落盘、不写对象存储。
-//  - 契约里该域**只有 POST**：平台级 `GET /jobs/{id}` 已由**共享作业面装配**（GY-I01），但 **`synthesis` kind
-//    尚未接入该面**（无作业源）⇒ 合成任务经 `GET /jobs/{id}` **仍为 404**，其终态**只能**经
-//    `app.synthesisService` / 注入的 store 观察（显式标注，不冒充 HTTP 读面）。
+//  - 契约里该域**只有 POST**：平台级 `GET /jobs/{id}` 由**共享作业面装配**（GY-I01），且 **`synthesis` kind
+//    已接入该面**（作业源 `createSynthesisJobSource`，`#152` `22fb5bf`，`services/api/src/app.ts:1087` 装配）
+//    ⇒ 合成任务**可经该 HTTP 读面读取**（本文件 P01/P03 已实测 202 → `GET /jobs/{id}` 200）；终态亦可经 `app.synthesisService` 观察。
 //  - `real` 实例用**合成占位配置**触达 `config.ts` 的 real 校验链路；**合成占位配置不代表真实凭据可用**。
 //  - 真实 TTS 样本为 0 ⇒ 本脚本**不产生也不声称**任何音色/自然度/听感或能力结论。
 import assert from 'node:assert/strict';

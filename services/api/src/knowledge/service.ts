@@ -10,6 +10,32 @@ export interface KnowledgeQuery {
   species_id?: string; growth_stage?: string; planting_method?: string; use_scene?: string;
 }
 type Row = Record<string, any>;
+
+/**
+ * 读取层排序 —— 与冻结契约 `(created_at DESC, id DESC)` 逐字对应
+ * （`docs/architecture/state-contract.md:32`），并与 `pagination.ts` 的游标自述
+ * `sort='created_at_desc'` 同一口径。四点纪律：
+ *   1. SQL 的 `ORDER BY` 与下面的 JS 比较器**必须同序**，否则数据库投影与并入种子的
+ *      归并次序会与分页切片错位；
+ *   2. 排序键来自行自身的 `created_at`（0012 迁移落到 `knowledge_versions` 并由
+ *      `catalog_read.current_knowledge` 投影出来），**不再用 id、也不复用 `updated_at`**；
+ *   3. `created_at` 必须按**时间点**比较：驱动（pg / PGlite）把 timestamptz 解成 `Date`，
+ *      直接字符串化会退化成 `"Wed Oct 14 2026 …"` 这类**星期名**字典序
+ *      （实测 `Thu > Sat > Fri`），与 SQL 的 `ORDER BY created_at DESC` 不同序 ——
+ *      故先取毫秒时间戳，只在无法解析时退到 `-Infinity`（确定性排最后，不抛错）；
+ *   4. `id` 是 UUID 文本，全序比较必须逐码元（不用 `localeCompare`，避免区域设置改变结果）。
+ */
+function instantOf(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  const parsed = Date.parse(String(value));
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+function compareKnowledgeRows(a: Row, b: Row): number {
+  const left = instantOf(a.created_at), right = instantOf(b.created_at);
+  if (left !== right) return left > right ? -1 : 1;
+  const aid = String(a.id), bid = String(b.id);
+  return aid === bid ? 0 : aid < bid ? 1 : -1;
+}
 export interface KnowledgeServiceOptions {
   /**
    * 额外并入查询面的行（与 `catalog_read.current_knowledge` 同形）。
@@ -44,15 +70,18 @@ export function createKnowledgeService(pool: PgPool, key: string, options: Knowl
       if (!session.rows.length) throw new ApiError('SESSION_EXPIRED', '会话已失效');
       // One fresh statement snapshot includes body, source version, validity and
       // latest revision. No process cache or static seed fallback is consulted.
-      const dbResult = await client.query('SELECT * FROM catalog_read.current_knowledge ORDER BY id');
+      // 排序由**查询自身**给出（不依赖视图定义顺序）：冻结契约的
+      // `(created_at DESC, id DESC)` —— created_at 由 0012 迁移落到表并投影出来。
+      const dbResult = await client.query(
+        'SELECT * FROM catalog_read.current_knowledge ORDER BY created_at DESC, id DESC');
       // GY-I07：把已合入的真实种子资料（浙江首批，未发布/未核对）并入**同一份**快照。
       // 同 id 以数据库投影为准（视图只含已核对+已发布，种子只含未核对+未发布，正常不重叠）。
-      // 归并后按 id 升序 —— 与游标自述的 sort=id_asc 一致且确定性可复现
-      // （数据库投影本已 ORDER BY id，排序不改变其相对顺序）。
+      // 归并后按契约排序 `(created_at DESC, id DESC)` 重排 —— 与游标自述的
+      // sort=created_at_desc 一致且确定性可复现（同一份快照恒得同一次序）。
       const extra = options.extraRows === undefined ? [] : await options.extraRows();
       const known = new Set(dbResult.rows.map((row: Row) => row.id));
       const rows = [...dbResult.rows, ...extra.filter((row) => !known.has(row.id))]
-        .sort((a: Row, b: Row) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        .sort(compareKnowledgeRows);
       const filter = {q: query.q ?? null, crop_id: query.crop_id ?? null, region_code: query.region_code ?? null,
         species_id: query.species_id ?? null, growth_stage: query.growth_stage ?? null,
         planting_method: query.planting_method ?? null, use_scene: query.use_scene ?? null};
