@@ -264,6 +264,12 @@ export interface AppMediaServiceOptions {
   attachmentCounter?: CommunityAttachmentCounter;
   now?: () => Date;
   idFactory?: () => string;
+  /**
+   * **真实媒体接线的显式批准能力**（non-defaultable）：`real` 下唯一能让服务走真实分支的凭据。
+   * 不提供（或提供的不是 {@link approveRealMediaWiring} 铸造的对象）⇒ `real` 构造即整域
+   * fail-closed，**与端口来源／环境配置无关**。装配层不得自行铸造。
+   */
+  realMediaApproval?: RealMediaWiringApproval;
 }
 
 // --------------------------------------------------------------------- 端口替身
@@ -382,11 +388,60 @@ function isUuidLike(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
+// ------------------------------------------- 真实媒体接线的显式批准能力（r3 运行期闸门）
+
+/**
+ * 真实媒体接线的**显式批准能力**（r3 主闸门）。
+ *
+ * 为什么不复用「配置／端口 kind／来源模块」：`real` 媒体域能否对外服务**不能**由环境决定 ——
+ * `process.env`、`options.env`、端口从哪个模块来、以及任何自述标志都属「配置即门控」。
+ * 两轮对抗性复审已实测：只要把来源放在被审文件之外（新增模块 ＋ 签名默认值、
+ * `Object.prototype` 四键投毒、链路文件里 1 行副作用 import、动态取键），
+ * **封闭世界的静态判据全绿而 `POST /api/v1/media/uploads` 返回 201**。
+ * ⇒ 闸门必须落在**运行期、被执行的那条路径**上：{@link createAppMediaService} 在 `real` 下
+ * **必须**收到一个由 {@link approveRealMediaWiring} 铸造的本能力对象，否则直接整域 fail-closed。
+ *
+ * 该能力**不可默认化、不可伪造、不可派生**：
+ *   - 唯一铸造点是 {@link approveRealMediaWiring}（显式、可 grep、可审查的一次调用）；
+ *   - 判定只认模块私有 `WeakSet` 中的**对象身份**（不是形状、不是标志位）：形状相同的字面量、
+ *     `Object.create(token)` 派生物、`Proxy` 包装、结构化克隆／JSON 往返副本一律无效；
+ *   - 取值走 `Object.hasOwn`（**不读原型链**）：`Object.prototype` 上的同名属性不算提供。
+ *
+ * ⛔ 装配层（`app.ts`）**不得**自行铸造（那等于自我批准）；它只转发调用方给出的能力对象。
+ */
+export interface RealMediaWiringApproval {
+  /** 批准理由（仅审计回显，不参与判定）。 */
+  readonly reason: string;
+  /** 批准时刻（ISO 8601，仅审计）。 */
+  readonly approvedAt: string;
+}
+
+/** 缺少批准能力时 `real` 的 fail-closed 原因（对外仍是既有 503 `PROVIDER_UNAVAILABLE` 语义）。 */
+export const REAL_MEDIA_APPROVAL_REQUIRED_REASON =
+  'real 模式缺少真实媒体接线的显式批准能力：媒体域不可用（拒绝以内存/替身存储返回成功应答）';
+
+const APPROVED_REAL_MEDIA_WIRINGS = new WeakSet<object>();
+
+/** 铸造一份真实媒体接线批准能力（**唯一铸造点**；每个调用点都是一次需审查的显式接线决定）。 */
+export function approveRealMediaWiring(input: { reason: string; approvedAt?: string }): RealMediaWiringApproval {
+  const approval: RealMediaWiringApproval = Object.freeze({
+    reason: input.reason,
+    approvedAt: input.approvedAt ?? new Date().toISOString(),
+  });
+  APPROVED_REAL_MEDIA_WIRINGS.add(approval);
+  return approval;
+}
+
+/** 只认「由 {@link approveRealMediaWiring} 铸造」的对象身份；形状相同／派生／代理／克隆一律 false。 */
+export function isRealMediaWiringApproved(value: unknown): value is RealMediaWiringApproval {
+  return typeof value === 'object' && value !== null && APPROVED_REAL_MEDIA_WIRINGS.has(value);
+}
+
 // ------------------------------------------------------------- 整域 fail-closed
 
 /**
- * real 模式且真实对象存储未接线 ⇒ **整域** `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
- * 绝不返回任何成功封套（那等于把内存/替身存储记成真实持久化）。
+ * real 模式且真实对象存储未接线（或缺少批准能力）⇒ **整域** `PROVIDER_UNAVAILABLE`
+ * （503，`retryable: true`）。绝不返回任何成功封套（那等于把内存/替身存储记成真实持久化）。
  */
 export function createFailClosedMediaService(reason: string): AppMediaService {
   const fail = (): ApiError => new ApiError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: true });
@@ -445,15 +500,25 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
 /**
  * 建立媒体域服务。
  *
- * `real` 且对象存储端口 `kind !== 's3_compatible'` ⇒ 直接返回整域 fail-closed 实例
- * （判据是端口 `kind`，不是自述标志）。
+ * **r3 运行期构造期闸门**：`real` 必须先拿到**显式批准能力**（{@link approveRealMediaWiring}
+ * 铸造；non-defaultable、不可从 `process.env`／`options.env`／原型链／全局对象派生）——
+ * 缺失即整域 fail-closed（`failClosedReason` 点名「缺少批准能力」），
+ * 与「环境里有没有那四个 `OBJECT_STORAGE_*` 键」「谁读了 env」「端口从哪个模块来」**全都无关**。
+ * 拿到批准后仍要求端口 `kind === 's3_compatible'`（判据是端口 `kind`，不是自述标志）。
  */
 export function createAppMediaService(options: AppMediaServiceOptions): AppMediaService {
   const { executionMode, objectStore } = options;
-  if (executionMode === 'real' && objectStore.kind !== 's3_compatible') {
-    return createFailClosedMediaService(
-      'real 模式未接真实对象存储：媒体域不可用（拒绝以内存/替身存储返回成功应答）',
-    );
+  if (executionMode === 'real') {
+    // 只认**自有属性**：`Object.prototype.realMediaApproval`（污染）不算「提供了批准能力」。
+    const approval: unknown = Object.hasOwn(options, 'realMediaApproval') ? options.realMediaApproval : undefined;
+    if (!isRealMediaWiringApproved(approval)) {
+      return createFailClosedMediaService(REAL_MEDIA_APPROVAL_REQUIRED_REASON);
+    }
+    if (objectStore.kind !== 's3_compatible') {
+      return createFailClosedMediaService(
+        'real 模式未接真实对象存储：媒体域不可用（拒绝以内存/替身存储返回成功应答）',
+      );
+    }
   }
 
   const contentSource = options.contentSource ?? createClosedContentSource();

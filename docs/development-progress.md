@@ -1,6 +1,6 @@
 # 当前进度
 
-核对日期：2026-10-14（当时 main `15c3003efc221407734ea26366a7538ae23ddcbb`）；该时点读数：现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先71个提交；**现测**（2026-10-16）：`cc07de8fd2fabfcd51b11c37962994631ecfbed5`（[#215](https://github.com/GengYunChuChao/GengYun/pull/215)）领先82个提交（`git rev-list --count 3000e2e0f42c2d3f4196baad5269ebcec9264f82..upstream/main`=10，71+10=82）。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
+核对日期：2026-10-14（当时 main `15c3003efc221407734ea26366a7538ae23ddcbb`）；该时点读数：现行 main `3000e2e0f42c2d3f4196baad5269ebcec9264f82`（2026-10-16，[#204](https://github.com/GengYunChuChao/GengYun/pull/204)）领先71个提交（基数＝核对基线 `15c3003efc221407734ea26366a7538ae23ddcbb` 不含自身，`git rev-list --count 15c3003efc221407734ea26366a7538ae23ddcbb..3000e2e0f42c2d3f4196baad5269ebcec9264f82`=71）；同日另测：`cc07de8fd2fabfcd51b11c37962994631ecfbed5`（[#215](https://github.com/GengYunChuChao/GengYun/pull/215)）领先82个提交（基数＝`15c3003efc221407734ea26366a7538ae23ddcbb^` 含核对基线自身，`git rev-list --count 15c3003efc221407734ea26366a7538ae23ddcbb^..cc07de8fd2fabfcd51b11c37962994631ecfbed5`=82；同一提交按不含自身的 `git rev-list --count 15c3003efc221407734ea26366a7538ae23ddcbb..cc07de8fd2fabfcd51b11c37962994631ecfbed5` 计为81，两个基数不可混算）；**现测**（2026-10-16 18:54 +08:00，`git fetch upstream --prune` 后）：`bdd12bd2d1578bcfcf285f1234725c800b339c61`（[#220](https://github.com/GengYunChuChao/GengYun/pull/220)）领先86个提交（基数＝核对基线 `15c3003efc221407734ea26366a7538ae23ddcbb` 不含自身，`git rev-list --count 15c3003efc221407734ea26366a7538ae23ddcbb..upstream/main`=86；同一基线按 `git rev-list --count 3000e2e0f42c2d3f4196baad5269ebcec9264f82..upstream/main` 计为15）。实时状态以 [GitHub](https://github.com/GengYunChuChao/GengYun/issues) 和固定 SHA 批复为准；下方10月11日原文保留为历史快照。
 
 ## 已合组件与剩余验收
 
@@ -12,8 +12,8 @@
 | 资料／数据库 | 科普受限PG查询、来源生命周期、暂存导入、本地启动；浙江首批资料清单与适配验证（#131）；标签原文资格守卫 | 完整核准标签／条件／原文用量、正式用户链和云库／全库恢复；资料清单不等于可用DoseCard |
 | 身份／档案／隐私 | 两端鉴权、手选档案、授权签名列表、科普／目录固定15分钟分页；后台及档案／授权新回执24h；外发账本／在途守卫／删除注册协议（#128） | 正式微信身份／Android、定位成功、真实政策／接收方、撤回消费者及注销全链；#133用途消费者接线未合，不计本基线 |
 | 媒体／评估 | 7个私有媒体HTTP操作及归属／EXIF组件（#129）；真实杂草样本登记／答案键／冻结清单与离线评估接入（#130） | 存储网关、持久化及跨模块消费者；样本登记不等于独立评估达标或真实识别能力通过 |
-| 识别／OCR／语音 | 领域HTTP、状态／版本／幂等／阶段超时；共享Job识别与转写读取、识别取消 | 真实媒体／供应商接线及独立评估；转写取消503，OCR／合成／问答／审核公共作业源、持久租约与恢复未接线 |
-| 问答／社区／消息／后台 | 独立领域服务；34个后台HTTP操作与fail-closed端口（#121）；社区16条业务契约（帖子9／评论5／举报2）与消息3端点（列表／未读数／读标记）路由已装配（判据见 `docs/architecture/contract-implementation-status.md:19`） | 文字问答HTTP、安全来源消费、收藏历史；社区real模式整域503 `PROVIDER_UNAVAILABLE`、**真实持久存储未交付**；消息只服务进程内存储、real持久存储未接线；后台真实端口／存储与UI联调 |
+| 识别／OCR／语音 | 领域HTTP、状态／版本／幂等／阶段超时；共享Job识别与转写读取、识别取消 | 真实媒体／供应商接线及独立评估；转写取消503，OCR／合成／问答／审核公共作业源取消、持久租约与恢复未接线 |
+| 问答／社区／消息／后台 | 独立领域服务；34个后台HTTP操作与fail-closed端口（#121）；社区16条业务契约（帖子9／评论5／举报2）与消息3端点（列表／未读数／读标记）路由已装配（判据见 `docs/architecture/contract-implementation-status.md:19`）；文字问答HTTP已交付（GY-I12／[#12](https://github.com/GengYunChuChao/GengYun/issues/12)，[#214](https://github.com/GengYunChuChao/GengYun/pull/214) 并入 main，合并提交 `cf2f5ed`）：契约内7条会话／轮次操作已有HTTP面（`services/api/src/routes/conversations.ts:75`）、PG持久化（`services/api/src/conversations/store-pg.ts:210`、`services/api/src/app.ts:1101`）与库级级联（`services/api/db/migrations/0013_conversations.sql:64`）、answer作业源已接跨kind读面（`services/api/src/conversations/job.ts:64`、`services/api/src/app.ts:1259`）、回答经输出守卫（`services/api/src/conversations/guard.ts:250`） | 安全来源消费、收藏历史；问答未接真实模型——每个 Answer 的 `model_version`／`prompt_version`／`rule_version` 一律带 `unimplemented:no-real-` 前缀、正文是确定性检索条目摘录而非模型结果（判据 `services/api/src/conversations/types.ts:52`、`services/api/src/conversations/service.ts:75-84`），用量卡在本基线恒不可产出（真实检索资料为浙江首批159条 review_status=unverified）；问答取消未接、如实 503 `PROVIDER_UNAVAILABLE`（与转写／合成／OCR 取消同一口径），轮次级联端口默认未接线（`services/api/src/app.ts:1132`），持久租约（15秒／5秒心跳）与重启恢复、真实外发与 external_inference 同意闸、原生 PG17 迁移执行与120题评估仍待后续片；社区real模式整域503 `PROVIDER_UNAVAILABLE`、**真实持久存储未交付**；消息只服务进程内存储、real持久存储未接线；后台真实端口／存储与UI联调 |
 | 部署／演示 | 容器、VPC和CVM PostgreSQL安装／角色／备份恢复准备物；独立界面Demo可编辑源（#132） | 云上实际部署／迁移／恢复及联网验收；界面Demo不等于原生微信业务验收 |
 | 情景视频 | 已确认模板合成方案 | 接口、素材、时长／保存期限与播放器链待交付；演示不代表真实长期药效 |
 
@@ -29,7 +29,7 @@
 | [#130](https://github.com/GengYunChuChao/GengYun/pull/130)／[#131](https://github.com/GengYunChuChao/GengYun/pull/131) | `de1004c`／`a15a7f1` | 样本与资料准备已合，不计模型指标或标签用量最终验收 |
 | [#117](https://github.com/GengYunChuChao/GengYun/pull/117) | 未合 | 两份状态文档冲突已在候选协调，待新SHA复查；历史CI付款拒绝不改记成功 |
 
-当前112条业务契约中99条已装配、13条未装配（按 `docs/architecture/contract-status.json` 及 `node tools/verify-contract-status.mjs` 现行输出）。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布13 implemented／86 partial／13 planned，横切维度2 implemented／6 partial。注册数量只说明路由装配，不代表真实能力与整项验收。
+当前112条业务契约中106条已装配、6条未装配（按 `docs/architecture/contract-status.json` 及 `node tools/verify-contract-status.mjs` 现行输出；读数 2026-10-16，main `bdd12bd2d1578bcfcf285f1234725c800b339c61`，该命令原样输出「已装配 106 条；implemented 13 / partial 93 / planned 6」）。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布13 implemented／93 partial／6 planned，横切维度8条中2 implemented／6 partial。6条未装配均为planned且当前HTTP路径返回NOT_FOUND：`listSpecies`、`getPrivacyPolicy`、`listExports`、`requestAccountDeletion`、`getDeletionReceipt`、`verifyRegistration`（本读数不含在途 #217 账户注销HTTP与 #193 媒体运行期闸门）。注册数量只说明路由装配，不代表真实能力与整项验收。
 
 复用各已合组件的绑定SHA证据；本轮只做文档事实、机器／中文同步及无凭据stub装配核对，不冒称重跑业务、PG、微信／Android或供应商。本机 `D:\challenge_cup` main已快进到上述基线。没有部署或切换共享认证。历史证据与本轮返修见[记录](verification/gy-i01-status-sync-20261013.md)。
 
