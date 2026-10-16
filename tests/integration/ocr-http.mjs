@@ -19,6 +19,8 @@
  * 运行：`node tests/integration/ocr-http.mjs`（退出码 0 表示通过；任何断言失败以非 0 退出并打印原始断言）
  */
 import assert from 'node:assert/strict';
+// r7 运行期钉子：自测里逐形态在**子进程**里真跑 `--registry-probe=<id>`（见 `registryProbeForms`）。
+import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire, registerHooks } from 'node:module';
@@ -1551,6 +1553,36 @@ try {
         `消息级钉子判词不符：期望含 ${expectedFragment}，实际 ${JSON.stringify(verdict[0])} —— ${JSON.stringify(source)}`,
       );
     }
+    // r7 追补：**运行期**钉子 —— 逐形态在**子进程**里真装载 OCR 域模块，r7 主判据必须判红（exit=1 + `OCRREGISTRY`
+    //   + 被装载的 specifier 原文）；对照形态必须**不**判红（exit=0 + `PROBE-CLEAN`）；两条如实固定的运行期事实
+    //   （`expectLoad: false` / `expectRuntimeError`）必须打印对应标记而不是冒充"判据抓住了"。
+    //   为什么必须起子进程：本进程的登记集合要如实反映**真实装配**（收尾断言只认它），不能被探针自己装载的边污染。
+    let probeCaught = 0;
+    for (const form of registryProbeForms) {
+      const probe = spawnSync(process.execPath, [fileURLToPath(import.meta.url), `--registry-probe=${form.id}`], { encoding: 'utf8' });
+      const combined = `${probe.stdout ?? ''}${probe.stderr ?? ''}`;
+      const tailText = combined.slice(-700);
+      if (form.expectRuntimeError !== undefined) {
+        assert.equal(probe.status, 0, `"运行期先抛 ${form.expectRuntimeError}" 是运行期事实（到不了装载器）⇒ 必须如实退出 0：${form.id} status=${probe.status}；${tailText}`);
+        assert.ok(combined.includes(`PROBE-RUNTIME-${form.expectRuntimeError.toUpperCase()}`), `该形态必须打印运行期事实标记：${form.id}；${tailText}`);
+        continue;
+      }
+      if (form.expectLoad === false) {
+        assert.equal(probe.status, 0, `"不装载"形态必须如实退出 0（登记器如实没有该边）：${form.id} status=${probe.status}；${tailText}`);
+        assert.ok(combined.includes('PROBE-NO-LOAD'), `该形态必须打印 PROBE-NO-LOAD（不得冒充"判据抓住了"）：${form.id}；${tailText}`);
+        continue;
+      }
+      if (form.expectViolation === false) {
+        assert.equal(probe.status, 0, `对照形态必须**不**判红：${form.id} status=${probe.status}；${tailText}`);
+        assert.ok(combined.includes('PROBE-CLEAN'), `对照形态必须打印 PROBE-CLEAN：${form.id}；${tailText}`);
+        continue;
+      }
+      assert.equal(probe.status, 1, `经 ${form.id} 真装载 OCR 域模块 ⇒ r7 主判据必须判红（exit=1），实际 ${probe.status}；${tailText}`);
+      assert.ok(combined.includes('OCRREGISTRY'), `判红消息必须含 OCRREGISTRY：${form.id}；${tailText}`);
+      assert.ok(combined.includes(form.expectSpecifier), `判红消息必须打印被装载的 specifier（${form.expectSpecifier}）：${form.id}；${tailText}`);
+      probeCaught += 1;
+    }
+    console.log(`PASS 判据自测 ${selfTestCases.length} 条（静态启发式逐例核对：应红/应绿）· 消息级钉子 ${messageCases.length} 条 · 运行期探针钉子 ${registryProbeForms.length} 条（子进程真装载：应红 ${probeCaught} 条；对照与运行期事实 ${registryProbeForms.length - probeCaught} 条）`);
     const providerText = readFileSync(new URL('../../services/api/src/ocr/provider.ts', import.meta.url), 'utf8');
     for (const network of ['fetch(', 'node:https', 'node:http', 'undici', 'axios', 'XMLHttpRequest']) {
       assert.equal(providerText.includes(network), false, `OCR 提供者层不得含网络调用：${network}`);
