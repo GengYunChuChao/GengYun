@@ -248,9 +248,10 @@ export interface BuildAppOptions {
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
-  // `real` ⇒ 按 `OBJECT_STORAGE_*` 是否齐备取真实适配器／未接线 fail-closed（整域 503），
+  // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
+  // 装配层不把 `process.env` 交给解析器，真实适配器只能经下面的显式注入开启），
   // `stub`/`preset_demo` ⇒ 明确标注的替身。
-  /** 测试注入：替换对象存储端口（默认 real=按 `OBJECT_STORAGE_*` 解析：缺任一即未接线 fail-closed，其余=明确标注的替身）。 */
+  /** 测试注入：替换对象存储端口（**这也是真实适配器的唯一开启方式**；默认 real=fail-closed 未接线，其余=明确标注的替身）。 */
   mediaObjectStore?: MediaObjectStore;
   /** 测试注入：替换公开内容来源（默认为**关闭**：社区取图统一 404，不误放行）。 */
   mediaContentSource?: PublishedContentSource;
@@ -839,17 +840,28 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
   //
-  // **对象存储端口按执行模式 + `OBJECT_STORAGE_*` 解析**（配置只经 `process.env`，不回显任何值）：
-  // `real` 且四个必填键齐备 ⇒ **真实适配器**（`s3_compatible`：构造与预签名都是纯本地计算，
-  // 只有显式 `putObject`/`getObject`/… 才会发网络请求）；`real` 且**缺任一** ⇒ `unwired`
-  // （整域 fail-closed 503 PROVIDER_UNAVAILABLE，与接线前逐字一致 —— 绝不把内存/替身存储记成
-  // 真实持久化）；`stub`/`preset_demo` 用**明确标注的替身**（句柄域名 `substitute.invalid`，
-  // 不在响应里冒充真实网关）。
-  // 判据是端口的 `kind`，不是任何自述持久化的布尔标志（同监工对 #121 的 P1 口径）；
+  // **对象存储端口的唯一起因是显式注入**（`mediaObjectStore` 选项）：注入什么端口就用什么端口，
+  // 装配层在这里**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
+  // **ambient `process.env` 不是开启真实适配器的门**：
+  //   - **未显式注入** ⇒ 一律 `resolveMediaObjectStore({ executionMode })`（**不传 `env`**）：
+  //     `real` ⇒ `unwired`（整域 fail-closed 503 `PROVIDER_UNAVAILABLE`，与接线前逐字一致，
+  //     **环境里四个 `OBJECT_STORAGE_*` 键齐备也一样** —— 缺配置不是放行理由，配置齐备也不是）；
+  //     `stub`/`preset_demo` ⇒ **明确标注的替身**（句柄域名 `substitute.invalid`，不冒充真实网关）。
+  //   - **显式注入**（运维/启动代码在**已审查**的前提下构造端口，或测试注入）⇒ 按注入的端口装配，
+  //     与执行模式无关：注入 `kind === 's3_compatible'` 才走真实分支。
+  //
+  // 为什么必须有这道门（监工对 PR #193 的 P1，裁定见仓库外 `.pg17/ruling-issue193-supervisor-p1.md`；
+  // 派单 `.pg17/dispatch/issue193-refailclosed.md` A 项）：这 4 个 `OBJECT_STORAGE_*` 键**正是 real
+  // 模式的启动必填项**（见 `config.ts` 的 `REQUIRED_WHEN_REAL`）⇒「运维不设键」**不可能**充当
+  // 「可启动的 real 环境」的门 —— 把 ambient env 交给 resolver 等于**配置即门控**，
+  // 在隐私守卫（上传路由用途授权／撤回 epoch，见 `routes/media.ts` 的 `createUpload` 只经
+  // `guards.requireUser`）与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
+  // 仍是进程内 `Map`，重启即丢 owner/版本/rawRef 与回收依据）尚未接妥前，会为真实用户媒体开门。
+  // 这两片落地前，真实适配器只允许经**显式注入**装配；**不得**用布尔自述标志当门控
+  // （判据是端口的 `kind`，同监工对 #121 的 P1 口径）。
   // 桶私有性、≤300 秒短效句柄与私有内容网关仍属部署期接线（ADR-001 的门控不在本片）。
   // 公开内容来源默认**关闭**：社区取图统一 404，不误放行；真实来源属社区/审核线，跨线接线。
-  const mediaObjectStore =
-    mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode, env: process.env });
+  const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
     objectStore: mediaObjectStore,
