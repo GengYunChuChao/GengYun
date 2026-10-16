@@ -76,6 +76,10 @@ export interface AdminOpsServiceOptions {
   /** 允许注入 store（测试用）；缺省用下面的种子新建内存 store。 */
   store?: AdminOpsStore;
   categorySeed?: readonly CategoryView[];
+  /**
+   * 账号权威种子（阶段 2 由 `users` 表注入）。**不给 = 账号面未接线** ⇒ `listAdminUsers` /
+   * `suspendUser` 一律 503 `PROVIDER_UNAVAILABLE`（不返回空页、不伪造"账号不存在"/成功）。
+   */
   accountSeed?: readonly AccountView[];
   now?: () => Date;
   /** 幂等请求摘要与游标签名用的服务端密钥；只经内存传入，不入库。 */
@@ -94,6 +98,8 @@ export interface AdminOpsServiceOptions {
 export interface AdminOpsService {
   readonly store: AdminOpsStore;
   readonly jobPort: AdminJobPort;
+  /** 账号面是否已接线到认证权威（`false` ⇒ 账号读/写面 503 fail-closed）；供测试与接线回归直接核对。 */
+  readonly accountsWired: boolean;
   /** 本片实现的 operationId 全集（应恰好 9 个）。 */
   readonly operationIds: readonly string[];
 
@@ -309,11 +315,28 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   }
 
   // -------------------------------------------------------------------------
-  // 账号
+  // 账号（认证权威；未接线 ⇒ fail-closed）
   // -------------------------------------------------------------------------
+
+  /**
+   * 账号面**没有认证权威**时的统一 fail-closed（口径与作业面 `requireWiredJobPort` 逐条一致）：
+   * 503 `PROVIDER_UNAVAILABLE`（契约闭集内的码）且 `retryable: true`，
+   * - **不返回空页**：空页会被读成"平台当前没有账号"，那是无法确认的结论（伪造）；
+   * - **不返回 404**：账号在不在，本进程根本无权回答，报"账号不存在"就是伪造否定；
+   * - **不写审计、不迁移状态、不占幂等键**：本片把判断放在写外壳**之前**，故连占位都不会发生。
+   *
+   * 接线口径：`accountsWired` 由 store 在构造时定（今天唯一形态 = 注入了账号种子）；
+   * 接真实 `users` 表权威属后续片，本片不声称已接。
+   */
+  function requireWiredAccountAuthority(): void {
+    if (!store.accountsWired) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '账号读/停用面尚未接线到认证权威', { retryable: true });
+    }
+  }
 
   async function listAdminUsers(ctx: AdminCallContext, query: PageQuery = {}) {
     const context = resolveContext(ctx, OPS_SCOPES.listAdminUsers);
+    requireWiredAccountAuthority();
     return pageOf(context, store.listAccounts(), query, 'accounts', byId);
   }
 
@@ -322,6 +345,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     const expectedRevision = parseIfMatchHeader(context.ifMatch);
     opsValidator.assertInput('ReasonInput', body);
     const normalizedId = normalizeIdParam(id);
+    // 在**任何**副作用之前（含写外壳的幂等占位）：无权威 ⇒ 一律 503。
+    requireWiredAccountAuthority();
 
     return runIdempotentWrite(
       writeDeps,
@@ -612,6 +637,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   return {
     store,
     jobPort,
+    accountsWired: store.accountsWired,
     operationIds: OPS_OPERATION_IDS,
 
     listAdminCategories,
