@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { resolve, join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   scanMountedRoutes, mountedMismatches, runtimeMountedRoutes, evidenceWithinRepository,
   renderStatusTables, replaceStatusTables,
+  routeDeclarations, declarationSegments, assertionArgumentRanges, operationMentions,
 } from '../../tools/contract-status-core.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -209,4 +211,186 @@ test('实际 buildApp 注册清单与当前契约表一致；消息与社区均�
   }
   // `hidePost` 属 #18，仍由后台路由装配（不是社区路由）。
   assert.equal(mounted.has('post /admin/posts/{id}/hide'), true);
+});
+
+// —— evidence 语义校验：负控制（草稿 4 类变异，两臂各一）与正控制（真实台账两臂 PASS） ——
+const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const OCR_ROUTE_SOURCE = [
+  'export function registerOcr(app) {',
+  '  app.post(',
+  '    `${API_PREFIX}/ocr`,',
+  '    async request => {',
+  '      const created = await ready().createOCR(actorOf(request));',
+  '      return created;',
+  '    },',
+  '  );',
+  '',
+  '  app.get(',
+  '    `${API_PREFIX}/ocr/:id`,',
+  '    async request => {',
+  '      const found = await ready().getOCR(actorOf(request));',
+  '      return found;',
+  '    },',
+  '  );',
+  '',
+  '  app.delete(',
+  '    `${API_PREFIX}/ocr/:id`,',
+  '    async request => {',
+  '      await ready().deleteOCR(actorOf(request));',
+  '      return null;',
+  '    },',
+  '  );',
+  '}',
+].join('\n') + '\n';
+const OCR_ASSERTION_SOURCE = "test('OCR 主流程', async () => {\n  assert.equal(created.status, 202, 'createOCR 契约规定 202');\n  assert.equal(deleted.status, 202, 'deleteOCR 契约规定 202');\n});\n";
+
+function semanticFixture(t) {
+  const { root, put } = fixture(t);
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs']) {
+    put('tools/' + name, '');
+    copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
+  }
+  // 只看 OCR 路由：清空夹具 app.ts，避免 jobs 路由被装配后与对照表不符。
+  put('services/api/src/app.ts', '');
+  put('services/api/src/routes/ocr.ts', OCR_ROUTE_SOURCE);
+  put('tests/integration/ocr-http.mjs', OCR_ASSERTION_SOURCE);
+  const evidence = [{ path: 'services/api/src/app.ts', lines: '1-1' }];
+  const op = (id, method, path, items) => ({ id, method, path, route_mounted: false, status: 'partial', evidence: items, blocker: '仅局部实现' });
+  const route = 'services/api/src/routes/ocr.ts';
+  const docPath = join(root, 'docs/architecture/contract-implementation-status.md');
+  const status = {
+    contract_version: 'test',
+    operations: [
+      op('createOCR', 'post', '/ocr', [{ path: route, lines: '2-8' }, { test: 'tests/integration/ocr-http.mjs', name: 'createOCR 契约规定 202' }]),
+      op('getOCR', 'get', '/ocr/{id}', [{ path: route, lines: '10-16' }]),
+      op('deleteOCR', 'delete', '/ocr/{id}', [{ path: route, lines: '18-24' }]),
+    ],
+    dimensions: ['error_codes', 'pagination', 'versioning', 'idempotency', 'source_kind', 'execution_modes', 'cancel', 'timeout'].map(key => ({ key, title: key, status: 'partial', source_anchor: 'test', evidence, blocker: 'test scope' })),
+  };
+  put('packages/contracts/operations.json', JSON.stringify({
+    contract_version: 'test',
+    operations: status.operations.map(({ id, method, path }) => ({ id, method, path })),
+  }));
+  const save = () => put('docs/architecture/contract-status.json', JSON.stringify(status));
+  // 渲染当前 status，保证「表格已同步」这个前提本身成立；漂移另有一条独立的失败路径。
+  const setDoc = content => put('docs/architecture/contract-implementation-status.md', content);
+  const syncDoc = (value = status) => {
+    const content = 'prefix\n' + renderStatusTables(value) + '\nsuffix';
+    setDoc(content);
+    return content;
+  };
+  const run = (...flags) => spawnSync(process.execPath, [join(root, 'tools/verify-contract-status.mjs'), ...flags], { encoding: 'utf8' });
+  save();
+  const pristineDoc = syncDoc();
+  return { status, save, syncDoc, setDoc, run, docPath, pristineDoc };
+}
+
+// 两臂都必须红：plain 直接拦；--write-doc 同样拦且不得写盘（否则错误区间会被固化进对照表）。
+// 阶段 1 让表格保持同步，证明语义错误可以被独立看见；阶段 2 让表格陈旧，证明写盘被拒绝。
+function assertSemanticFailure(t, expected) {
+  const { status, save, syncDoc, setDoc, run, docPath, pristineDoc } = semanticFixture(t);
+  expected.mutate(status);
+  save();
+  const syncedDoc = syncDoc();
+  const plain = run();
+  assert.equal(plain.status, 1, '表格已同步时语义错误仍必须让 plain 臂失败');
+  assert.match(plain.stderr, expected.error);
+  assert.match(plain.stderr, /形状错误 0 \/ 语义错误 \d+ \/ 表格漂移 0/);
+  assert.doesNotMatch(plain.stdout, /中文表格一致/, '语义失败时不得输出表格一致');
+  const syncedWrite = run('--write-doc');
+  assert.equal(syncedWrite.status, 1, '--write-doc 不得把语义错误同步成通过');
+  assert.equal(readFileSync(docPath, 'utf8'), syncedDoc);
+  setDoc(pristineDoc);
+  const before = sha256(docPath);
+  const stalePlain = run();
+  assert.equal(stalePlain.status, 1);
+  assert.match(stalePlain.stderr, expected.error);
+  assert.match(stalePlain.stderr, /形状错误 0 \/ 语义错误 \d+ \/ 表格漂移 1/, '语义错误与表格漂移分开计数，互不冒充');
+  const write = run('--write-doc');
+  assert.equal(write.status, 1, '--write-doc 不得把语义错误同步成通过');
+  assert.match(write.stderr, expected.error);
+  assert.match(write.stderr, /中文对照表与 JSON 不一致；因存在语义错误，--write-doc 未写盘/);
+  assert.equal(sha256(docPath), before, '--write-doc 语义失败时不得写盘');
+  assert.equal(readFileSync(docPath, 'utf8'), pristineDoc);
+  assert.doesNotMatch(`${plain.stdout}${write.stdout}`, /中文表格一致/);
+}
+
+test('语义负控制：区间指向同文件另一操作的注册块，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => { status.operations.find(op => op.id === 'getOCR').evidence[0].lines = '2-8'; },
+    error: /getOCR: services\/api\/src\/routes\/ocr\.ts:2-8 区间覆盖的是 post \/ocr 的注册块，与 get \/ocr\/\{id\} 不符/,
+  });
+});
+
+test('语义负控制：两条操作区间互换，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => {
+      const get = status.operations.find(op => op.id === 'getOCR');
+      const del = status.operations.find(op => op.id === 'deleteOCR');
+      [get.evidence[0].lines, del.evidence[0].lines] = [del.evidence[0].lines, get.evidence[0].lines];
+    },
+    error: /deleteOCR: services\/api\/src\/routes\/ocr\.ts:10-16 区间覆盖的是 get \/ocr\/\{id\} 的注册块，与 delete \/ocr\/\{id\} 不符/,
+  });
+});
+
+test('语义负控制：区间放宽到整文件，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => { status.operations.find(op => op.id === 'getOCR').evidence[0].lines = '1-25'; },
+    error: /getOCR: services\/api\/src\/routes\/ocr\.ts:1-25 区间等于整个文件，无法定位具体实现/,
+  });
+});
+
+test('语义负控制：片段换成同文件另一操作的断言原文，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => { status.operations.find(op => op.id === 'getOCR').evidence.push({ test: 'tests/integration/ocr-http.mjs', name: 'deleteOCR 契约规定 202' }); },
+    error: /getOCR: tests\/integration\/ocr-http\.mjs 片段「deleteOCR 契约规定 202」取自 deleteOCR 的断言，与 getOCR 不符/,
+  });
+});
+
+test('语义正控制：夹具台账两臂通过，可核与不可核分开计数', t => {
+  const { run, docPath } = semanticFixture(t);
+  const plain = run();
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.match(plain.stdout, /形状错误 0 项；语义错误 0 项/);
+  assert.match(plain.stdout, /语义可核 3 条区间 \+ 1 条片段；不可核 0 条区间 \+ 0 条片段/);
+  assert.match(plain.stdout, /PASS: 中文表格一致/);
+  const before = sha256(docPath);
+  const write = run('--write-doc');
+  assert.equal(write.status, 0, write.stderr);
+  assert.equal(sha256(docPath), before);
+  assert.doesNotMatch(write.stdout, /SYNC: /);
+});
+
+test('语义正控制：真实台账 plain 臂通过且零误报', () => {
+  const result = spawnSync(process.execPath, [join(ROOT, 'tools/verify-contract-status.mjs')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /形状错误 0 项；语义错误 0 项/);
+  assert.match(result.stdout, /语义可核 \d+ 条区间 \+ \d+ 条片段；不可核 \d+ 条区间 \+ \d+ 条片段/);
+  assert.match(result.stdout, /PASS: 中文表格一致/);
+});
+
+test('语义正控制：真实台账 --write-doc 臂不改写文档', () => {
+  const docPath = join(ROOT, 'docs/architecture/contract-implementation-status.md');
+  const before = sha256(docPath);
+  const result = spawnSync(process.execPath, [join(ROOT, 'tools/verify-contract-status.mjs'), '--write-doc'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(sha256(docPath), before);
+  assert.doesNotMatch(result.stdout, /SYNC: /);
+});
+
+test('语义辅助：注册块归属、断言实参范围与操作 id 边界', () => {
+  const declarations = routeDeclarations(OCR_ROUTE_SOURCE);
+  assert.deepEqual(declarations.map(item => `${item.method} ${item.path} ${item.line}`), ['post /ocr 2', 'get /ocr/{id} 10', 'delete /ocr/{id} 18']);
+  const segments = declarationSegments(OCR_ROUTE_SOURCE, declarations);
+  assert.deepEqual(segments.map(segment => `${segment.from}-${segment.to} ${segment.routes.join('、')}`), [
+    '2-8 post /ocr', '10-16 get /ocr/{id}', '18-25 delete /ocr/{id}',
+  ]);
+  const ranges = assertionArgumentRanges(OCR_ASSERTION_SOURCE);
+  assert.equal(ranges.length, 2);
+  const snippetAt = OCR_ASSERTION_SOURCE.indexOf('deleteOCR 契约规定 202');
+  assert.ok(ranges.some(([start, end]) => start <= snippetAt && snippetAt < end));
+  assert.equal(OCR_ASSERTION_SOURCE.slice(ranges[0][0], ranges[0][1] + 1).includes('createOCR 契约规定 202'), true);
+  assert.deepEqual(operationMentions('deleteOCR 契约规定 202', ['createOCR', 'getOCR', 'deleteOCR', 'verifyOCR']), ['deleteOCR']);
+  assert.deepEqual(operationMentions('verifyOcr 200', ['verifyOCR', 'getOCR']), ['verifyOCR']);
+  assert.deepEqual(operationMentions('unlikePosts', ['likePosts']), []);
 });
