@@ -18,7 +18,7 @@
  *   D. **负控制**：① 无预留就出站 ⇒ `OBJECT_UNAVAILABLE`；② 用途未授权 ⇒ `CONSENT_REQUIRED`；
  *      ③ 对象标识非法（空 / >128 / 非法字符 / 未登记）⇒ 拒绝；
  *   E. **多要授权回归钉子**：新维度**不得**要求 `recording`（只授 `external_inference` ⇒ 受理成功）；
- *   F. **默认仍失败关闭**：real 未接真实传输 ⇒ 受理处 503 `PROVIDER_UNAVAILABLE`(retryable)，
+ *   F. **默认仍失败关闭**：real 未接真实传输（能力未接线／缺凭据）⇒ 受理处 503 `PROVIDER_UNAVAILABLE`(retryable=false)，
  *      且该用户**零账本行**（在任何账本变更之前拒绝）。
  */
 import assert from 'node:assert/strict';
@@ -688,7 +688,12 @@ try {
 
   // P2-c 故障注入②（HTTP 端到端，**这就是「漏授 ⇒ 静默全失败」那条结论的真库证据**）：
   // 授权必须处于 REVOKE 状态 ⇒ 同一用户的**新**一次合成受理必须在任何账本变更之前 503
-  // `PROVIDER_UNAVAILABLE`(retryable)，且**零新增账本行、零出站**。随后 GRANT 复原 ⇒ 同一路径必须成功。
+  // `PROVIDER_UNAVAILABLE`(retryable=**false**)，且**零新增账本行、零出站**。随后 GRANT 复原 ⇒ 同一路径必须成功。
+  //
+  // retryable 口径（对齐 #233/#255）：只有「无人工介入、稍后重试可能成功」才是 true。ACL 撤权是
+  // **配置/权限类**故障，重试恒定失败；`services/api/src/privacy/ledger-pg.ts` 的 `mapPgError` 因此把
+  // `42501`（权限不足）与 `3D000/28P01/42P01` 一并归入 `PROVIDER_UNAVAILABLE` 且 **retryable:false**
+  // （与 `services/api/src/errors.ts` 的「能力未装配／未接线一律 false」同口径）。
   //
   // 注意：`0014` 重放段（上方 :586）已按**运维动作**把列级授权补回来（`DROP COLUMN` 连带撤销过它），
   // 所以这里必须**重新**注入撤权——否则本段测的是「授权就位」，只会拿到 202（实测红点即此）。
@@ -700,14 +705,18 @@ try {
   const deniedByAcl = await postSynthesis(p.token, { type: 'answer', id: APPROVED_ID, revision: 1 }, 'acl-revoked');
   assert.equal(deniedByAcl.status, 503, JSON.stringify(deniedByAcl.body));
   assert.equal(deniedByAcl.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(deniedByAcl.body.error.retryable, true);
+  assert.equal(
+    deniedByAcl.body.error.retryable,
+    false,
+    'ACL 撤权属配置/权限类（42501）：重试恒定失败，retryable 必须为 false（对齐 #233/#255 口径）',
+  );
   assert.equal(
     Number((await owner.query('SELECT count(*)::int n FROM exports WHERE user_id=$1', [p.id])).rows[0].n),
     sentBeforeRevoked,
     '漏授时不得留下任何账本行（拒绝发生在账本变更之前）',
   );
   assert.equal(transport.calls.length, callsBeforeRevoked, '漏授时不得出站（不得"先外发再记账"）');
-  say('P2-c 故障注入②（真 PG + HTTP）：漏授 object_key 列级权限 ⇒ 合成受理 503 PROVIDER_UNAVAILABLE(retryable)，零账本行、零出站');
+  say('P2-c 故障注入②（真 PG + HTTP）：漏授 object_key 列级权限 ⇒ 合成受理 503 PROVIDER_UNAVAILABLE(retryable=false)，零账本行、零出站');
 
   await owner.query('GRANT SELECT (object_key), INSERT (object_key) ON exports TO gengyun_egress_ledger');
   assert.deepEqual(await ledgerAcl(), [true, true], 'GRANT 复原后列级授权必须就位');
@@ -1016,11 +1025,15 @@ try {
   });
   assert.equal(denied.status, 503, JSON.stringify(denied.body));
   assert.equal(denied.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(denied.body.error.retryable, true);
+  assert.equal(
+    denied.body.error.retryable,
+    false,
+    'real 缺真实传输凭据属未接线/配置类：重试不会成功，retryable 必须为 false（对齐 #233/#255 口径）',
+  );
   assert.equal((await exportRowsFor(v.id)).length, 0, 'real 未接真实传输：不得产生任何账本行（零 sent）');
   await fallbackApp.close();
   http = makeHttp(origin);
-  say('默认仍失败关闭：real 未接真实传输 ⇒ 503 PROVIDER_UNAVAILABLE(retryable)，该用户零账本行（任何账本变更之前拒绝）');
+  say('默认仍失败关闭：real 未接真实传输 ⇒ 503 PROVIDER_UNAVAILABLE(retryable=false)，该用户零账本行（任何账本变更之前拒绝）');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求；未使用真实 TTS 供应商`);
 } finally {
