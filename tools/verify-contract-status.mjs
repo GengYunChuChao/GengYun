@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   operationKey, scanMountedRoutes, mountedMismatches, runtimeMountedRoutes,
   evidenceWithinRepository, replaceStatusTables,
+  routeDeclarations, declarationSegments, assertionArgumentRanges, operationMentions,
 } from './contract-status-core.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,6 +19,18 @@ if ([...flags].some(flag => !['--runtime', '--write-doc'].includes(flag))) {
 }
 const errors = [];
 const check = (condition, message) => { if (!condition) errors.push(message); };
+// 三类输出互不冒充：形状错误（引用形式）、语义错误（引用与操作的对应关系）、表格漂移（文档未同步）。
+// 三者分开收集、分开计数，任何一类都不得被另一类的通过冲掉。
+const semanticErrors = [];
+const driftErrors = [];
+const semanticCounts = { intervals: 0, snippets: 0 };
+const uncertifiable = { intervals: 0, snippets: 0 };
+let synchronized = false;
+const evidenceTexts = new Map();
+const readEvidence = absolute => {
+  if (!evidenceTexts.has(absolute)) evidenceTexts.set(absolute, readFileSync(absolute, 'utf8'));
+  return evidenceTexts.get(absolute);
+};
 // 引用必须是**文件**：目录（以及 FIFO、socket 等非常规文件）自己不是可读证据。
 // statSync 会跟随符号链接，仓库边界仍由 evidenceWithinRepository 单独判定。
 const isRegularFile = path => {
@@ -95,23 +108,108 @@ function checkEntry(entry, owner) {
   }
 }
 
+// 语义可核校验：只判「引用位置与操作身份可证伪地冲突」的形态；判不了的如实记不可核，不默认通过。
+// 形状错误（形式/边界/文件存在性）已由 checkEntry 收集，这里不重复判定，也不冒充形状通过。
+const operationIds = (status.operations ?? []).map(entry => entry.id).filter(id => typeof id === 'string');
+function checkSemantics(entry, owner) {
+  for (const item of entry.evidence ?? []) {
+    const path = [item.path, item.test].find(value => typeof value === 'string');
+    if (path === undefined || !evidenceWithinRepository(ROOT, path)) continue;
+    const absolute = resolve(ROOT, path);
+    if (!isRegularFile(absolute)) continue;
+    const text = readEvidence(absolute);
+    if (typeof item.name === 'string' && item.name !== '') checkSnippetSemantics(entry, owner, path, text, item);
+    if (item.lines !== undefined) checkIntervalSemantics(entry, owner, path, text, item);
+  }
+}
+function checkIntervalSemantics(entry, owner, path, text, item) {
+  const match = /^(\d+)-(\d+)$/.exec(item.lines);
+  if (!match) return; // 形状错误已单独报告
+  const lines = text.split('\n');
+  const from = Number(match[1]), to = Number(match[2]);
+  if (from < 1 || to < from || to > lines.length) return; // 越界已单独报告
+  if (from === 1 && to >= lines.length - 1) {
+    semanticErrors.push(`${owner}: ${path}:${item.lines} 区间等于整个文件，无法定位具体实现`);
+    return;
+  }
+  const declarations = routeDeclarations(text);
+  if (declarations.length === 0) { uncertifiable.intervals += 1; return; }
+  const segments = declarationSegments(text, declarations);
+  const covered = segments.filter(segment => from <= segment.from && segment.to <= to);
+  if (covered.length >= 2) {
+    semanticErrors.push(`${owner}: ${path}:${item.lines} 区间跨越 ${covered.length} 个操作注册块（${covered.map(segment => segment.routes.join('/')).join('、')}）`);
+    return;
+  }
+  if (covered.length === 1) {
+    const [segment] = covered;
+    const key = operationKey(entry.method, entry.path);
+    if (!segment.routes.includes(key)) {
+      semanticErrors.push(`${owner}: ${path}:${item.lines} 区间覆盖的是 ${segment.routes.join('、')} 的注册块，与 ${key} 不符`);
+      return;
+    }
+    semanticCounts.intervals += 1;
+    return;
+  }
+  const key = operationKey(entry.method, entry.path);
+  const enclosing = segments.find(segment => segment.from <= from && to <= segment.to);
+  if (enclosing === undefined) { uncertifiable.intervals += 1; return; }
+  if (enclosing.routes.includes(key)) { semanticCounts.intervals += 1; return; }
+  // 区间落在另一个操作的注册块里（未覆盖任何本操作注册块）：这是可证伪的错位，不是「不可核」。
+  semanticErrors.push(`${owner}: ${path}:${item.lines} 区间落在 ${enclosing.routes.join('、')} 的注册块内，未覆盖任何本操作注册块，与 ${key} 不符`);
+}
+function checkSnippetSemantics(entry, owner, path, text, item) {
+  const positions = [];
+  for (let index = text.indexOf(item.name); index !== -1; index = text.indexOf(item.name, index + 1)) positions.push(index);
+  if (positions.length === 0) return; // 「找不到用例名」已作为形状错误报告
+  const ranges = assertionArgumentRanges(text);
+  const insideAssertion = positions.every(position => ranges.some(([start, end]) => start <= position && position + item.name.length <= end));
+  if (!insideAssertion) { uncertifiable.snippets += 1; return; }
+  const mentioned = operationMentions(item.name, operationIds);
+  const foreign = mentioned.filter(id => id !== entry.id);
+  if (foreign.length > 0 && !mentioned.includes(entry.id)) {
+    semanticErrors.push(`${owner}: ${path} 片段「${item.name}」取自 ${foreign.join('、')} 的断言，与 ${entry.id} 不符`);
+    return;
+  }
+  semanticCounts.snippets += 1;
+}
+for (const entry of status.operations ?? []) checkSemantics(entry, entry.id ?? operationKey(entry.method, entry.path));
+
 // Only regenerate tables after coverage, evidence and assembly have passed.
 if (errors.length === 0) {
   try {
     const original = readFileSync(DOCUMENT_FILE, 'utf8').replaceAll('\r\n', '\n');
     const expected = replaceStatusTables(original, status);
-    if (flags.has('--write-doc')) {
-      if (original !== expected) writeFileSync(DOCUMENT_FILE, expected);
-    } else check(original === expected, '中文对照表与 JSON 不一致；核对状态后使用 --write-doc 同步表格');
+    if (original !== expected) {
+      if (!flags.has('--write-doc')) {
+        driftErrors.push('中文对照表与 JSON 不一致；核对状态后使用 --write-doc 同步表格');
+      } else if (semanticErrors.length > 0) {
+        // 语义错误存在时不得写盘：同步会把错误引用固化进对照表，从此不可见。
+        driftErrors.push('中文对照表与 JSON 不一致；因存在语义错误，--write-doc 未写盘');
+      } else {
+        writeFileSync(DOCUMENT_FILE, expected);
+        synchronized = true;
+      }
+    }
   } catch (error) { errors.push(`文档校验失败：${error.message}`); }
 }
-if (errors.length > 0) {
-  console.error(errors.map(error => `ERROR: ${error}`).join('\n'));
-  console.error(`FAIL: 契约实现状态对照校验未通过（${errors.length} 项）`);
+const failures = [
+  ...errors.map(message => ({ kind: '形状错误', message })),
+  ...semanticErrors.map(message => ({ kind: '语义错误', message })),
+  ...driftErrors.map(message => ({ kind: '表格漂移', message })),
+];
+if (failures.length > 0) {
+  console.error(failures.map(({ kind, message }) => `ERROR: ${kind} · ${message}`).join('\n'));
+  const count = kind => failures.filter(failure => failure.kind === kind).length;
+  // 分类计数附在括注里，保留既有「（N 项）」前缀供旧断言使用；三类互不冒充。
+  const prefix = `[形状错误 ${count('形状错误')} / 语义错误 ${count('语义错误')} / 表格漂移 ${count('表格漂移')}]`;
+  console.error(`FAIL: 契约实现状态对照校验未通过（${failures.length} 项）${prefix}`);
   process.exit(1);
 }
 const count = (list, value) => list.filter(entry => entry.status === value).length;
-console.log(`PASS: 覆盖 ${status.operations.length} 条契约操作；已装配 ${mounted.size} 条；implemented ${count(status.operations, 'implemented')} / partial ${count(status.operations, 'partial')} / planned ${count(status.operations, 'planned')}；横切维度 ${status.dimensions.length} 条；中文表格一致`);
+console.log(`PASS: 覆盖 ${status.operations.length} 条契约操作；已装配 ${mounted.size} 条；implemented ${count(status.operations, 'implemented')} / partial ${count(status.operations, 'partial')} / planned ${count(status.operations, 'planned')}；横切维度 ${status.dimensions.length} 条；形状错误 0 项；语义错误 0 项`);
+console.log(`PASS: 语义可核 ${semanticCounts.intervals} 条区间 + ${semanticCounts.snippets} 条片段；不可核 ${uncertifiable.intervals} 条区间 + ${uncertifiable.snippets} 条片段（不可核不计入通过）`);
+if (synchronized) console.log('SYNC: 中文表格此前不是「中文表格一致」状态，已按 JSON 重写；本次重写不计入通过。');
+else console.log('PASS: 中文表格一致');
 if (flags.has('--runtime')) console.log('PASS: 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致（不监听 / 不请求服务）。');
 if (unassembled.length) console.log(`未装配的路由文件：${unassembled.join('、')}`);
 console.log('PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。');
