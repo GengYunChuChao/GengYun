@@ -38,6 +38,7 @@ import {
   OcrProtocolError,
   decideMatchState,
   gateDoseCards,
+  isTerminalJobState,
   normalizeConditions,
   normalizeLabelFields,
   sanitizeRegistryLookup,
@@ -674,6 +675,60 @@ export function createOcrService(options: OcrServiceOptions) {
   }
 
   /**
+   * 取消作业：`queued` / `running` → `cancelled`，revision **恰好 +1**（单次 CAS，不 +2）。
+   *
+   * 口径与校正/删除一致：`Idempotency-Key` 幂等 + `If-Match` 乐观并发；状态机由 OCR 域
+   * 自己决定（`canTransitionJob` 已允许 queued→cancelled、running→cancelled，不新增迁移边）：
+   * - 终态（succeeded / uncertain / failed / timed_out / cancelled）不可再取消 ⇒ OBJECT_UNAVAILABLE；
+   * - 版本不符 ⇒ REVISION_CONFLICT；
+   * - 取消后 `execute` 的迟到结果因 `commitTerminal` 的 CAS 失败**不复活**（状态机保证，
+   *   而非「删除记录」），因此这里既不删记录、也不改写已落库的 OCR。
+   */
+  async function cancelJob(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<JobProjection> {
+    const key = requireIdempotencyKey(input.idempotencyKey);
+    const expectedRevision = requireIfMatch(input.ifMatch);
+    // 归属检查先行：越权/不存在同形 NOT_FOUND，且不消耗调用方的 Idempotency-Key。
+    const row = await getOwnedJob(input.userId, input.jobId);
+    const at = now();
+    const scope = scopeFor(input.userId, 'POST', `${API_PREFIX}/jobs/${input.jobId}/cancel`);
+    const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idempotencyHmacKey);
+    // 幂等占位先于版本/终态校验：首次成功取消的**原样重试**必须回放首次结果，
+    // 而不是被已自增的 revision 判成 409、或被已落地的 cancelled 判成冲突。
+    const claim = await claimIdempotentScope(scope, key, requestHash, {}, at);
+    if (claim.kind === 'existing') {
+      if (claim.pending) throw inProgress();
+      return getJob({ userId: input.userId, jobId: input.jobId });
+    }
+    try {
+      if (row.revision !== expectedRevision) {
+        throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+      }
+      if (isTerminalJobState(row.state)) {
+        throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${row.state}，不可取消`);
+      }
+      const updated = await store.updateJob(row.id, expectedRevision, (current) => ({
+        ...current,
+        state: 'cancelled',
+        errorCode: null,
+        revision: current.revision + 1,
+        updatedAt: at,
+      }));
+      if (updated === null) throw new ApiError('REVISION_CONFLICT', '作业状态已变化，未能取消');
+      await finalizeIdempotentScope(scope, key, { job_id: updated.id });
+      // cancelled 不产出 OCR 记录 ⇒ result 恒为 null（与 failed / timed_out 同形）。
+      return toJob(updated, null);
+    } catch (error) {
+      await releaseIdempotentScope(scope, key);
+      throw error;
+    }
+  }
+
+  /**
    * 用户校正：**只写 corrected_fields**，raw_fields 原样保留，revision 递增，
    * 并按 corrected_fields **重算** verification（旧登记核对随之失效，不留陈旧结论）。
    *
@@ -853,6 +908,7 @@ export function createOcrService(options: OcrServiceOptions) {
     createOcr,
     getOcr,
     getJob,
+    cancelJob,
     correctOcr,
     verifyOcr,
     verifyOcrWithRevision,

@@ -56,7 +56,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\.local\local-dev\start.ps1
 | 绑定地址 | 工具写死回环 `127.0.0.1`（API 与 PG 都是），不支持 `0.0.0.0` |
 | 产物与仓库根对应关系 | `.local/local-dev/settings.json`（含 `repoRoot`/`postgresBin`/`nodePath`/两个端口） |
 | 私密目录 | `.local/local-dev/private/`（口令、PG 数据、日志、`api.pid`） |
-| 日志 | `private/init.log`、`private/pg.log`、`private/pg-start.log`、`private/pg-start-error.log`、`private/api.log`、`private/api-error.log` |
+| 日志 | `start.ps1` 写 `private/init.log`（`initdb` 输出重定向）、`private/pg.log`（`pg_ctl -l`）、`private/pg-start.log`、`private/pg-start-error.log`（`pg_ctl start` 的 stdout/stderr 重定向）、`private/api.log`、`private/api-error.log`（API 进程的 stdout/stderr 重定向）；`stop.ps1` 写 `private/pg-stop.log`、`private/pg-stop-error.log`（`pg_ctl stop` 的 stdout/stderr 重定向） |
 | 整棵树 | `.local/` 已被 git 忽略，永远不要把它的内容提交或贴进 issue |
 
 - **换端口**：`prepare.mjs` 对已有产物直接拒绝（`Output exists; preserve it or use its existing start/stop scripts`）。改端口要先停服，再删掉整个 `.local/local-dev`，然后用新参数重跑 `prepare.mjs`。

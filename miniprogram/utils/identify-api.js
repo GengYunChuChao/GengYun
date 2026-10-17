@@ -12,8 +12,10 @@
 // GY-I10 标签 OCR（#10，本片追加；**只复用既有 operation，不新增契约**）：
 //   createOcr          POST   /ocr                              → 202 JobEnvelope（kind=ocr）
 //   getOcrJob          GET    /jobs/{id}                        → JobEnvelope（kind=ocr；七类 JobState 唯一可读面）
-//   cancelOcrJob       POST   /jobs/{id}/cancel                 → JobEnvelope（**本基线 OCR 域无取消能力**
-//                                                               ⇒ 服务端如实 503 PROVIDER_UNAVAILABLE(retryable)，
+//   cancelOcrJob       POST   /jobs/{id}/cancel                 → JobEnvelope（**已接线**：GY-I10 取消片，
+//                                                                 域内实现 `services/api/src/ocr/service.ts:687`；
+//                                                                 queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1，
+//                                                                 终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；
 //                                                                 与「作业不存在」的 404 必须区分）
 //   correctOCR         PATCH  /ocr/{id}/correction             → 200 OCREnvelope（人工校正；
 //                                                               **只写 corrected_fields**，raw_fields 原样保留）
