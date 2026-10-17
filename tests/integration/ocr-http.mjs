@@ -1928,7 +1928,7 @@ try {
     record(`10) 接线·OCR 作业经 \`GET /jobs/{id}\` 可读：200 + 九键 + kind=ocr + 状态可见（此前 404）；受理后立刻读到 state=${observed.state}；终态 state=${settled.state}/error_code=${String(settled.error_code)}/result.kind=${settled.result.kind} 且过 ocr 契约镜像；与 \`GET /ocr/{id}\` 对齐（revision=${settled.target_ref.revision}）；未登录 401／他人与不存在同形 404`);
   }
 
-  // ---- 11) 不回归：识别域仍 200；OCR 无取消能力 ⇒ cancel 如实 503（不得 200/404）----
+  // ---- 11) 本片：OCR 作业可取消（queued/running ⇒ cancelled，revision 恰好 +1，终态不可复活）----
   {
     // 对照（同一次运行内）：识别域经**同一个** `/jobs/{id}` 路由仍可读 ⇒ 证明 404 的消失只来自 OCR 接线。
     const recognition = await call(base, tokenA, 'POST', `${API}/recognitions`, {
@@ -1940,46 +1940,89 @@ try {
     assert.equal(recognitionJob.kind, 'recognition');
     assert.equal(recognitionJob.state, 'succeeded');
 
-    const created = await createOcr(base, tokenA, mediaIdForBucket(0));
-    assert.equal(created.response.status, 202);
+    // 用**悬挂提供者**接缝构造确定的"运行中"作业：它自己跑不完（1s 后 deadline 到期），
+    // 取消语义因此可稳定观测，且能顺带证明"迟到的超时结果不复活已取消的作业"。
+    const created = await createOcr(providerSeamBase, providerSeamToken, mediaIdForBucket(0), nextKey('cancel-ocr'));
+    assert.equal(created.response.status, 202, JSON.stringify(created.response.json));
     const jobId = created.response.json.data.id;
-    const before = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    const before = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/jobs/${jobId}`);
     assert.equal(before.status, 200, '取消前必须先能读到该作业');
+    const beforeJob = before.json.data;
+    assert.ok(['queued', 'running'].includes(beforeJob.state), `取消前的状态应是 queued/running，实际 ${beforeJob.state}`);
+    const cancelKey = nextKey('cancel-ocr-once');
 
-    const cancelled = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
-      headers: { 'if-match': `"${before.json.data.revision}"`, 'idempotency-key': nextKey('cancel-ocr') },
+    const cancelled = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': `"${beforeJob.revision}"`, 'idempotency-key': cancelKey },
     });
-    assert.equal(cancelled.status, 503, `OCR 域本基线无取消能力 ⇒ 如实 503（不得 200，也不得 404）：${JSON.stringify(cancelled.json)}`);
-    assert.equal(cancelled.json.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(
-      cancelled.json.error.retryable,
-      false,
-      '能力未接线（OCR 域无取消能力）⇒ 需运维接线，同一请求重试不会成功 ⇒ retryable 必须为 false',
-    );
+    assert.equal(cancelled.status, 200, `OCR 域已接线取消 ⇒ 合法请求必须 200：${JSON.stringify(cancelled.json)}`);
+    assert.equal(cancelled.headers.get('cache-control'), 'no-store');
+    assert.equal(cancelled.json.meta.contract_version, '1.0.0');
+    const cancelledJob = cancelled.json.data;
+    assert.deepEqual(Object.keys(cancelledJob).sort(), [...JOB_KEYS].sort(), '取消响应必须是完整 Job 投影（与 GET /jobs/{id} 同构）');
+    assert.equal(cancelledJob.kind, 'ocr');
+    assert.equal(cancelledJob.state, 'cancelled');
+    assert.equal(cancelledJob.error_code, null, '用户主动取消不是失败 ⇒ error_code 必须为 null');
+    assert.equal(cancelledJob.result, null, 'cancelled 不产出结果（不得伪造字段）');
+    assert.equal(cancelledJob.revision, beforeJob.revision + 1, '取消只允许自增一次 revision');
+    assert.equal(cancelledJob.target_ref.id, beforeJob.target_ref.id, '取消不得改目标引用');
+    assert.equal(cancelledJob.target_ref.revision, beforeJob.target_ref.revision, '取消不得改目标引用的 revision');
+    assert.equal(cancelled.headers.get('etag'), `"${cancelledJob.revision}"`);
 
-    // 不得伪造 cancelled、不得改 revision、不得影响可读性
-    const after = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
+    // 同键原样重放 ⇒ 回放首次结果，**不得**再自增（否则"重试"会变成第二次取消）。
+    const replay = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': `"${beforeJob.revision}"`, 'idempotency-key': cancelKey },
+    });
+    assert.equal(replay.status, 200, JSON.stringify(replay.json));
+    assert.equal(replay.json.data.state, 'cancelled');
+    assert.equal(replay.json.data.revision, cancelledJob.revision, '幂等重放不得再自增 revision');
+
+    // 已终态再取消（新键 + 当前 revision）⇒ 409 OBJECT_UNAVAILABLE，且状态/revision 不变。
+    const again = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${jobId}/cancel`, {
+      headers: { 'if-match': `"${cancelledJob.revision}"`, 'idempotency-key': nextKey('cancel-ocr-again') },
+    });
+    assert.equal(again.status, 409, `终态再取消 ⇒ 409 OBJECT_UNAVAILABLE：${JSON.stringify(again.json)}`);
+    assert.equal(again.json.error.code, 'OBJECT_UNAVAILABLE');
+
+    // 等过接缝的 1s deadline：迟到的超时结果**不得**复活作业、不得再自增 revision。
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const after = await call(providerSeamBase, providerSeamToken, 'GET', `${API}/jobs/${jobId}`);
     assert.equal(after.status, 200);
-    assert.equal(after.json.data.state, before.json.data.state, '取消能力缺失 ⇒ 状态不得被改动（没有伪造 cancelled）');
-    assert.equal(after.json.data.revision, before.json.data.revision, '失败的取消不得递增 revision');
+    assert.equal(after.json.data.state, 'cancelled', '取消后迟到结果不得复活作业（已终态不可改写）');
+    assert.equal(after.json.data.revision, cancelledJob.revision, '取消后迟到结果不得再自增 revision');
+    assert.equal(after.headers.get('etag'), `"${cancelledJob.revision}"`);
 
-    // 缺头次序与既有 kind 逐字一致（400/428 先于 503；由共享请求头前置校验代答）
-    const noKey = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, { headers: { 'if-match': '"1"' } });
+    // 请求头前置校验仍先答（400/428/400），且**先于**存在性 ⇒ 用随机 uuid 证明次序没有被取消接线打乱。
+    const probeId = randomUUID();
+    const noKey = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${probeId}/cancel`, {
+      headers: { 'if-match': '"1"' },
+    });
     assert.equal(noKey.status, 400);
     assert.equal(noKey.json.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
-    const noVersion = await call(base, tokenA, 'POST', `${API}/jobs/${jobId}/cancel`, {
+    const noVersion = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${probeId}/cancel`, {
       headers: { 'idempotency-key': nextKey('cancel-ocr-428') },
     });
     assert.equal(noVersion.status, 428);
     assert.equal(noVersion.json.error.code, 'REVISION_REQUIRED');
+    const badVersion = await call(providerSeamBase, providerSeamToken, 'POST', `${API}/jobs/${probeId}/cancel`, {
+      headers: { 'if-match': 'abc', 'idempotency-key': nextKey('cancel-ocr-badrev') },
+    });
+    assert.equal(badVersion.status, 400, JSON.stringify(badVersion.json));
+    assert.equal(badVersion.json.error.code, 'INVALID_REQUEST');
 
     // 越权者也不能取消他人的 OCR 作业（同形 404，而不是先告诉他"存在但不可取消"）
-    const foreignCancel = await call(base, tokenB, 'POST', `${API}/jobs/${jobId}/cancel`, {
+    const owned = await createOcr(base, tokenA, mediaIdForBucket(1));
+    assert.equal(owned.response.status, 202, JSON.stringify(owned.response.json));
+    const foreignCancel = await call(base, tokenB, 'POST', `${API}/jobs/${owned.response.json.data.id}/cancel`, {
       headers: { 'if-match': '"1"', 'idempotency-key': nextKey('cancel-ocr-b') },
     });
+    const missingCancel = await call(base, tokenB, 'POST', `${API}/jobs/${randomUUID()}/cancel`, {
+      headers: { 'if-match': '"1"', 'idempotency-key': nextKey('cancel-ocr-missing') },
+    });
     assert.equal(foreignCancel.status, 404);
+    assert.equal(missingCancel.status, 404);
     assert.equal(foreignCancel.json.error.code, 'NOT_FOUND');
-    record(`11) 不回归·识别域仍 200 succeeded（同一 \`/jobs/{id}\` 路由）；OCR 无取消能力 ⇒ cancel 503 ${cancelled.json.error.code}(retryable=${String(cancelled.json.error.retryable)})（不得 200/404）、状态与 revision 未被改动（state=${after.json.data.state} revision=${after.json.data.revision}）、缺头仍 400/428、越权 cancel 同形 404`);
+    assert.deepEqual(foreignCancel.json.error, missingCancel.json.error, '他人作业与不存在必须逐字段同形');
+    record(`11) 本片·OCR 可取消：\`POST /jobs/{id}/cancel\` ${beforeJob.state}→${cancelledJob.state}，revision ${beforeJob.revision}→${cancelledJob.revision}（恰好 +1）、error_code=null、result=null、九键与 ETag/no-store 同 \`GET /jobs/{id}\`；同键重放仍 revision=${replay.json.data.revision}（不被已自增的 revision 判成 409）；终态再取消 ${again.status} ${again.json.error.code}；过 1s deadline 后仍 state=${after.json.data.state}/revision=${after.json.data.revision}（迟到结果不复活）；缺头 400/428、坏版本 400、越权与不存在同形 404`);
   }
 
   // ---- 12) 失败可区分（**注入式接缝**：悬挂 / 强制失败；见 buildInjectedProviderApp）----
