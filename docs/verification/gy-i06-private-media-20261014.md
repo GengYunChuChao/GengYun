@@ -162,7 +162,13 @@
 - 孤立对象：每次失败/取消后断言替身存储对象数回到基线；删除后断言 `原始件 + 衍生件` 两件被回收。
 - 同形 404：对 `getMedia`/`complete`/`delete`/`access` 逐条比较「非本人」与「不存在」的
   `error` 对象 `deepEqual`（含 `message` 与空 `details`）。
-- real fail-closed：7 条路由全部 503 且 `retryable === true`、**无 `data` 字段**（不得返回成功封套）。
+- real fail-closed：7 条路由全部 503 且 `retryable === false`、**无 `data` 字段**（不得返回成功封套）。
+  **订正（绑实测 SHA `95b8e7cf`）**：此处原文写 `retryable === true`，与现行代码／断言不符。现行口径是
+  「能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`」（`services/api/src/errors.ts:32`，
+  另见 `:35`），服务层的 fail-closed 构造器同样显式 `retryable: false`
+  （`services/api/src/media/service.ts:448`；槽位判定处 `:652-654`），测试断言
+  `tests/unit/media-real-mode-fail-closed.test.mjs:949`（同文件 `:126-127` 断言 503 ＋ `PROVIDER_UNAVAILABLE`）。
+  §2 的 2026-10-14 探针输出与 §10 所记裁定原文**按原样保留**，不追改；口径差异见 §8.1 末段。
 
 ## 6 real fail-closed 反例：若不修会怎样
 
@@ -244,12 +250,68 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 | 有损 WebP / 动画 WebP | **受控拒绝**（沿用 `packages/media` 的既定边界：本仓库只有 VP8L 无损真实解码器）。 |
 | 真实个人原始媒体 / 真实 `.env` / 密钥 | **未使用、未入库**（仓库卫生扫描通过）。 |
 
+### 8.1 复核补充：在现行 `upstream/main` 上新增的三项证据缺口
+
+> **测量基线**：`upstream/main` = `95b8e7cf67106391a61e88090d3c7cb6f820a99b`（`%cI` = `2026-10-16T22:16:13Z`）。
+> **测量时间**：`2026-10-17T12:14+08:00`（本地）。本节每条 `file:line` 均在该 blob 上逐文件复算，
+> 行号为 `git show upstream/main:<path>` 的 1-based 行号；只登记事实与口径，不写修法。
+
+1. **「每帖 ≤3 张」的权威计数器在 `real` 路径上不可得 ⇒ 该用途恒 503（既不是 201，也不是 400）**。
+   槽位判定点是 `services/api/src/media/service.ts:645` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
+   `null` 时，`services/api/src/media/service.ts:652` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
+   （`:653-654` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
+   （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
+   （`services/api/src/media/service.ts:293-299`；`:296` 自述「拒绝 community_image 上传（fail-closed）」）。
+   生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
+   （`services/api/src/app.ts:1047`；`:1041` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
+   同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
+   （`services/api/src/app.ts:1036-1039`）。
+   ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
+   `services/api/src/media/service.ts:282-290`）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
+   `real` 下该用途**恒 503**，与 §9 第 3 条「`real` 下未接线即拒绝该用途」一致，**不是**「≤3 张已生效」。
+   复现：`git grep -n "计数器未接线" upstream/main -- services/api/src/media/service.ts` ⇒ **2 处命中
+   （`:296`／`:652`）**（按输出行计数为 2；`:296` 即上文 `:264` 已自引的那条 fail-closed 自述）。
+2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
+   `services/api/src/app.ts:1041-1042`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
+   `services/api/src/app.ts:834`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
+   合成域在 `services/api/src/app.ts:873`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
+   两处都只**按执行模式新建**，不接收也不引用媒体域的服务或对象存储。
+   `services/api/src/recognitions/media.ts:16` 文件头逐字自述：「本文件这套**按域**媒体引用端口并未改接媒体域：
+   `real` 下仍由 `createUnwiredMediaPort` 承担」；同文件 `:17-21` 说明该端口只在受理函数的媒体校验步骤被触达，
+   `real` 缺供应商凭据时**先**返回 503，只有供应商判定可用时才轮到该端口 ⇒ 409 `OBJECT_UNAVAILABLE`。
+   复现：`git grep -n "createRecognitionMediaPort\|createSynthesisMediaPort" upstream/main -- services/api/src/app.ts`
+   ⇒ **2 处命中（`:834`／`:873`）**（`services/api/src/app.ts:60`／`:64` 为导入行，不计）。
+   ⇒ 上传面即使接线成功，也**不构成**识别／语音／TTS 可用的证据：三个消费域与本域不共享任何媒体事实。
+3. **生命周期清扫有机制、无生产触发点**：本片点到的 `expireInitiated()` 与 `cleanupOrphans()` 在全生产面
+   **零调用点**，24h 过期回收与失败／取消后的孤立对象回收**在运行时永不发生**（只在测试里被直接调用）。
+   本节实测（命中数按命令输出计数）：
+
+   - `git grep -n -E "expireInitiated|cleanupOrphans" upstream/main -- services/ packages/ apps/ tools/ miniprogram/`
+     ⇒ **12 处命中**，全部是接口声明（`services/api/src/media/service.ts:238`／`:245`）、`real` 替身实现（`:479`／`:482`）、
+     真实实现（`:1123`／`:1134`）、注释（`:569`／`:587`）与 `packages/media/service.mjs` 的定义／导出
+     （`:520`／`:536`／`:572`／`:573`）——无一处调用；
+   - `git grep -n -E "\.(cleanupOrphans|expireInitiated)\(" upstream/main` ⇒ **9 处命中，全部在 `tests/`**
+     （`tests/media/lifecycle.test.mjs:141`／`:146`、`tests/unit/media-http-upload.test.mjs:407`／`:410`／`:437`、
+     `tests/unit/media-http-access.test.mjs:248`／`:278`／`:285`／`:348`）⇒ **生产代码 0 处**；
+   - `git grep -n "setInterval" upstream/main -- services/api/src` ⇒ **0 处命中（exit 1）**；`services/api/src` 内
+     `setTimeout` 共 16 处，全是请求级超时／重试等待（如 `services/api/src/auth/wechat.ts:95`、
+     `services/api/src/ocr/service.ts:610`、`services/api/src/recognitions/service.ts:533`），**无周期调度器**。
+
+   `services/api/src/media/service.ts:1108` 的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
+
+**与 §10 所记裁定的口径差异（不追改历史）**：§10 记的「2026-10-14 监工对 #121 的 P1 裁定」要求
+`retryable: true`；现行代码按 `services/api/src/errors.ts:32`／`:35` 收敛为 `false`，断言见
+`tests/unit/media-real-mode-fail-closed.test.mjs:949`。该裁定原文、§2 的 2026-10-14 探针输出与 §11 的批复原文
+**均按原样保留**；本片只在 §5 断言清单就地订正，见本文件 `:165` 起。
+
 ## 9 剩余风险与已知缺口
 
 1. **媒体记录不持久**：进程重启即丢；`real` 模式下已被 fail-closed 挡住，但 `stub`/`preset_demo`
    与测试之外的任何「准生产」用法都应视为不可用。持久化实现（PG + 行版本 CAS）属后续接线。
 2. **owner 私有媒体字节读取在契约内没有对应 operation**：契约只签发短效句柄（`AccessGrant.url` 为 https，本仓库占位域 `media.gengyun.local`），字节读取由部署期访问网关承担；契约内唯一返回二进制的 operation 是 `GET /community/media/{grant_id}/content`，只服务社区公开已审上下文，不能用于 owner 私有媒体 ⇒ **客户端经契约取不到私有媒体字节**（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」）。
    若监工认为需要 API 侧网关端点，那属于**扩展冻结契约**，须先走契约变更流程。
+   （2026-10-17 校订：本节「本仓库占位域 `media.gengyun.local`」的表述已不成立 —— 句柄 host 已改为配置项
+   `MEDIA_ACCESS_GRANT_ORIGIN`，缺省为不可解析占位域；原文保留为当时记录，现行口径见 §12。）
 3. **「每帖 ≤3 图」的判定点**：冻结契约的 `UploadInput` 没有帖子上下文，真正的「每帖」判定在
    **附件挂载**（社区线 GY-I15）。本片用「同一 owner 名下存活的 `community_image` 计数」作为
    **保守替身**（`real` 下未接线即拒绝该用途），已在源码与对照表中显式标注为保守替身。
@@ -326,3 +388,58 @@ refs after cleanup    → rawRef=null derivativeRef=null
 
 **未取得项不变**：真实对象存储、访问网关、持久化媒体记录、真机、微信工具与供应商音频适配仍未验证；
 监工未验收，本片**不关闭 #6**。
+
+## 12 校订记录：`AccessGrant.url` 的 host 改为配置项（D3 裁定，2026-10-17）
+
+监工裁定（`.pg17/ruling-i06-i08-disposition-20261017.md` §2 **D3**）采方案 (b)：保留「句柄由部署期访问网关解析」
+的语义，但代码里**不得继续保留形似可用域名的字面量**（读者会把它当成已经接好的地址）。本片照此把两类句柄的
+host 改为配置项，默认值是**占位/不可解析**域。
+
+**改前（逐字，`services/api/src/media/service.ts` 改前行号）**：
+
+```
+// :931（owner 句柄）
+        url: `https://media.gengyun.local/api/v1/media/${record.id}/content`,
+// :1051（社区句柄）
+          url: `https://media.gengyun.local/api/v1/community/media/${grantId}/content`,
+```
+
+**改后（逐字）**：
+
+```
+// 构造期（real 闸门之后）：注入值优先，缺省为占位/不可解析域；非法即抛错
+  const accessGrantOrigin = normalizeMediaAccessGrantOrigin(
+    options.accessGrantOrigin ?? DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN,
+  );
+// 工厂顶部常量：RFC 6761 保留、永不解析的显式占位
+export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.invalid';
+// owner 句柄
+        url: `${accessGrantOrigin}/api/v1/media/${record.id}/content`,
+// 社区句柄（与 owner 同源）
+          url: `${accessGrantOrigin}/api/v1/community/media/${grantId}/content`,
+```
+
+**默认值策略与理由**：缺省 `https://media.placeholder.invalid` —— `invalid` 是 RFC 6761 保留给「永不解析」的
+顶级域，`media.placeholder.invalid` **解析不到任何主机**，既不是线上域名也不回指本服务。未配置时句柄刻意不可用，
+而不是给出一个「看起来能用」的地址。**`AccessGrant.url` 的 host 来自配置，默认值为占位/不可解析域；句柄由部署期
+网关解析。** 注入链：装配层读 `MEDIA_ACCESS_GRANT_ORIGIN`（`services/api/src/config.ts` 新增可选字段
+`AppConfig.mediaAccessGrantOrigin`，非法值进 `ConfigError`）⇒ `createAppMediaService({ accessGrantOrigin })`。
+`services/api/src/media/**` 一次都不读 ambient env（沿用 `tests/unit/media-real-mode-fail-closed.test.mjs` 的 AST
+审计红线），非法注入（http／凭据／路径／查询／片段）在**构造期**抛 `TypeError`，不静默退回占位域。
+
+**测试**（`tests/unit/media-grant-url-origin.test.mjs`，6/6 通过）：①缺省＝`.invalid` 占位且契约路径、
+令牌不入 URL 的形态不变；②两个不同配置值（含 `:8443`）⇒ owner 与社区句柄的 host/port 各自跟随；
+③8 个非法注入 ⇒ 构造期抛错；④`normalizeMediaAccessGrantOrigin` 规范化（大小写、`:443` 省略、`:8443` 保留）；
+⑤`loadConfig` 缺省/空白 ⇒ `null`、合法值规范化、http ⇒ `ConfigError`（`MEDIA_ACCESS_GRANT_ORIGIN`／`INVALID_VALUE`）；
+⑥源码防回归：不含 `media.gengyun.local` 且含默认常量字面。既有测试**未删改**（原有断言只检查 `/^https:\/\//`，
+没有一处钉该域名字面量，故无需同步任何期望值）。
+
+**绑定 SHA（实测）**：本节所述实现见提交 `438847ae448f5d887538735eb1561e12edb37fad`
+（`git cat-file -t 438847ae448f5d887538735eb1561e12edb37fad` ⇒ `commit`；父提交
+`95b8e7cf67106391a61e88090d3c7cb6f820a99b`）；本文件所在文档提交紧随其后。
+
+**未取得项（本节新增）**：装配层注入点 `services/api/src/app.ts` 的 `buildApp` 正被 #239
+（`feat/gy-i19-deletion-persistence`）改动，本次**未接线**；合入后须在装配处补
+`accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined`，否则配置项不会生效（缺省仍为占位域，
+行为安全但配置无效）。`packages/media/service.mjs` 的**同形字面量**（参考实现，`:227/:371/:474`）与
+`packages/media/README.md:78` 的说明文字不在本派单范围，**未改**。

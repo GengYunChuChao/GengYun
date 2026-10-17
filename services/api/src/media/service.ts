@@ -146,7 +146,11 @@ export interface CommunityContentOutcome {
  * （属社区线 GY-I15），不在本端点。这里显式建模为端口，避免悄悄放宽或悄悄按错口径计数：
  * - `substitute`（stub/preset_demo/测试）：按**同一 owner 名下存活的 `community_image` 记录数**计数 ——
  *   这是**保守替身**（大于等于真实每帖数），并已如实标注；
- * - `unwired`（real）：无法判定 ⇒ 拒绝该用途的 `createUpload`（503），**不猜测**。
+ * - `unwired`（real 默认）：端口自己无法判定（恒 `null`）⇒ 该用途的 `createUpload` **仍 503
+ *   fail-closed**，文案明确到「每帖上限计数未接线」。**不得**改用同一 owner 名下存活记录数顶替：
+ *   那是**生命周期累计**口径，而清理器（`expireInitiated`／`cleanupOrphans`）与权威每帖计数
+ *   （GY-I15）今天都没有生产调用者 ⇒ 累计数会让用户传满 3 张后**永久锁死**，且「先数后写」之间
+ *   存在 TOCTOU（并发可超发）。**缺清理器／权威计数器时不得放行**。
  */
 export interface CommunityAttachmentCounter {
   readonly kind: 'substitute' | 'unwired' | 'injected';
@@ -270,6 +274,18 @@ export interface AppMediaServiceOptions {
    * fail-closed，**与端口来源／环境配置无关**。装配层不得自行铸造。
    */
   realMediaApproval?: RealMediaWiringApproval;
+  /**
+   * `AccessGrant.url` 的**访问网关原点**（`https://<host>[:port]`，例如 `https://media.example.com`）。
+   *
+   * 由装配层从配置读取后显式注入（配置项 `MEDIA_ACCESS_GRANT_ORIGIN`，见 `services/api/src/config.ts`
+   * 的 `AppConfig.mediaAccessGrantOrigin`）。**本文件不读 ambient env**（既有 AST 审计：
+   * `tests/unit/media-real-mode-fail-closed.test.mjs` 对 `services/api/src/media/**` 的
+   * `process.env`／`import.meta.env` 读取一律判违规），所以配置只能沿「装配层 → 本选项」入。
+   *
+   * 缺省 = {@link DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN}（占位、**不可解析**：RFC 6761 保留域 `.invalid`）。
+   * 注入值非法（http、带路径/查询/凭据）⇒ 构造期抛错，不静默退回占位域。
+   */
+  accessGrantOrigin?: string;
 }
 
 // --------------------------------------------------------------------- 端口替身
@@ -289,11 +305,23 @@ export function createSubstituteAttachmentCounter(): CommunityAttachmentCounter 
   };
 }
 
-/** 未接线计数器（real）：无法判定 ⇒ null ⇒ 拒绝该用途（不猜测、不放宽）。 */
+/**
+ * 未接线计数器（real 默认）：端口**不做判定**（恒 `null`）。
+ *
+ * 服务层据此**继续拒绝** `community_image` 上传：`attachmentLimitFor` 的 `null` 分支 ⇒
+ * `503 PROVIDER_UNAVAILABLE`（`retryable: false`），文案明确到「每帖上限计数未接线」。
+ *
+ * ⛔ **不得**把本计数器改成「按同一 owner 名下存活 `community_image` 记录数计数」：那是
+ * **生命周期累计**口径，与缺位的清理器／权威每帖计数（GY-I15）叠加会变成「传满 3 张即永久
+ * 锁死（只能手删）」，并且「先数后写」之间有 TOCTOU（并发可超发）。见
+ * `.pg17/ruling-i06-d1-substitute-rework-20261017.md` 方案 A。
+ */
 export function createUnwiredAttachmentCounter(): CommunityAttachmentCounter {
   return {
     kind: 'unwired',
-    note: '图片槽位计数器未接线（real）：无法判定「每帖 ≤3 张」⇒ 拒绝 community_image 上传（fail-closed）。',
+    note:
+      '每帖上限计数未接线（real 默认）：端口不做判定（恒 null）⇒ 该用途上传 503 fail-closed；'
+      + '不按本地存活记录数顶替（累计口径会永久锁死且 TOCTOU 超发，权威每帖计数属 GY-I15 附件挂载）。',
     countFor() {
       return null;
     },
@@ -310,6 +338,17 @@ export function createInjectedAttachmentCounter(
     countFor: count,
   };
 }
+
+/**
+ * 每帖上限计数缺位时 `createUpload` 的 **503 文案**（`real` 默认的 `unwired` 装配走这里）。
+ *
+ * 必须**具体到「每帖上限计数未接线」**：泛化的「服务不可用」会把「能力未装配」误报成瞬时故障，
+ * 既误导调用方重试，也会掩盖真实缺口（见 `.pg17/ruling-i06-d1-substitute-rework-20261017.md`）。
+ * 配套的机器可读判别在 `details`（`post_image_limit_unwired`），与 400 的
+ * `post_image_limit` 区分开。
+ */
+const ATTACHMENT_LIMIT_UNWIRED_MESSAGE =
+  '每帖上限计数未接线：无法判定「每帖 ≤3 张」图片槽位（缺权威每帖计数，社区图片上传暂不可用）';
 
 // --------------------------------------------------------------------- 工具
 
@@ -496,6 +535,52 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
   };
 }
 
+// ---------------------------------------------------- AccessGrant 的访问网关原点
+
+/**
+ * `AccessGrant.url` 的**默认**访问网关原点（scheme + host）。
+ *
+ * **占位、不可解析**：`.invalid` 是 RFC 6761 保留给「永不解析」的顶级域（RFC 2606 同样收录），
+ * 因此 `media.placeholder.invalid` **解析不到任何主机**——它不是线上域名、也不回指本服务，
+ * 只是「句柄由部署期访问网关解析」的显式占位。
+ *
+ * 真实部署必须由装配层注入实际的网关原点（选项 {@link AppMediaServiceOptions.accessGrantOrigin}，
+ * 配置项 `MEDIA_ACCESS_GRANT_ORIGIN`）；未注入时句柄不可用，这是**刻意的**（宁可不可解析，
+ * 也不给出一个「看起来能用」的地址）。
+ */
+export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.invalid';
+
+/**
+ * 校验并规范化 `AccessGrant.url` 的访问网关原点：只接受 `https://<host>[:port]`。
+ *
+ * 拒绝 http、内嵌凭据、路径、查询、片段与首尾空白——这些要么把句柄降级成明文传输，
+ * 要么让拼接出的路径指向非预期位置；非法即**抛错**，绝不静默退回占位域或截断成 `new URL().origin`。
+ */
+export function normalizeMediaAccessGrantOrigin(value: string): string {
+  if (typeof value !== 'string' || value === '' || value.trim() !== value) {
+    throw new TypeError('AccessGrant 网关原点必须是非空、且无首尾空白的字符串');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError(`AccessGrant 网关原点不是合法 URL：${value}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new TypeError(`AccessGrant 网关原点必须是 https（契约句柄不得降级为明文）：${value}`);
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw new TypeError(`AccessGrant 网关原点不得内嵌凭据：${value}`);
+  }
+  if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
+    throw new TypeError(`AccessGrant 网关原点只能是 scheme + host[:port]，不得带路径/查询/片段：${value}`);
+  }
+  if (parsed.hostname === '') {
+    throw new TypeError(`AccessGrant 网关原点缺少主机名：${value}`);
+  }
+  return parsed.origin;
+}
+
 // --------------------------------------------------------------------- 实现
 
 /**
@@ -521,6 +606,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       );
     }
   }
+
+  // 访问网关原点：配置注入值优先；缺省为占位/不可解析域（见 DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN）。
+  // 注入值非法即在构造期抛错（不静默降级）。放在 real 闸门**之后**：real 未接线时仍是整域 fail-closed。
+  const accessGrantOrigin = normalizeMediaAccessGrantOrigin(
+    options.accessGrantOrigin ?? DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN,
+  );
 
   const contentSource = options.contentSource ?? createClosedContentSource();
   const attachmentCounter =
@@ -606,7 +697,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     return revoked;
   }
 
-  /** 同一 owner 名下存活的 community_image 记录数（保守替身计数器的输入）。 */
+  /**
+   * 同一 owner 名下存活的 community_image 记录数。
+   *
+   * 只作为**已接线**端口的输入（`substitute` 的占位数、`injected` 探针的 `liveCommunityImages`）。
+   * `unwired` **不使用**它——见 `attachmentLimitFor` 的 `null` 分支（累计口径会锁死 + TOCTOU）。
+   */
   function liveCommunityImageCount(ownerId: string): number {
     let count = 0;
     for (const record of records.values()) {
@@ -642,16 +738,33 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     };
   }
 
+  /**
+   * 「每帖 ≤3 张」的上传侧判定输入（`createUpload` 的 `mediaCountForPost`）。
+   *
+   * 口径（本片返修确立；来源：GY-I06 验收缺口 C5／最小闭环 D1，见 `#6`；决定见
+   * `.pg17/ruling-i06-d1-substitute-rework-20261017.md` 方案 A）：
+   * - **判定只认端口**：`substitute`／`injected` 由 `countFor` 给出占位数，语义不变
+   *   （`substitute` ＝同一 owner 名下存活 `community_image` 记录数，上传侧**保守替身**）。
+   * - 端口返回 `null`（含 `real` 默认的 `unwired`）⇒ `503 PROVIDER_UNAVAILABLE`
+   *   （`retryable: false`），文案明确到「每帖上限计数未接线」，**不猜测、不放宽**。
+   * - ⛔ **不得**用同一 owner 名下存活记录数顶替 `unwired`：那是**生命周期累计**口径，而清理器
+   *   （`expireInitiated`／`cleanupOrphans`）与权威每帖计数（GY-I15）今天都没有生产调用者
+   *   ⇒ 累计数会让用户传满 3 张后**永久锁死**（只能手删），并且「先数后写」之间存在 TOCTOU
+   *   （并发可超发）。**缺清理器／权威计数器时不得放行**。
+   */
   function attachmentLimitFor(actor: MediaActor, purpose: unknown): number {
     if (purpose !== 'community_image') return 0;
+    const liveCommunityImages = liveCommunityImageCount(actor.ownerId);
     const counted = attachmentCounter.countFor({
       ownerId: actor.ownerId,
-      liveCommunityImages: liveCommunityImageCount(actor.ownerId),
+      liveCommunityImages,
     });
     if (counted === null) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', '无法判定「每帖 ≤3 张」图片槽位：计数器未接线', {
-        // 媒体域未接线（fail-closed 替身／计数器未接入）：retryable 必须为 false。
+      throw new ApiError('PROVIDER_UNAVAILABLE', ATTACHMENT_LIMIT_UNWIRED_MESSAGE, {
+        // 能力未装配（每帖上限计数缺位，非瞬时故障）：retryable 必须为 false，
+        // 且 details 给出机器可读判别，避免与 400 的 post_image_limit 混淆。
         retryable: false,
+        details: [{ field: '/purpose', code: 'post_image_limit_unwired' }],
       });
     }
     return counted;
@@ -924,11 +1037,13 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     });
     // 契约 `AccessGrant.url` 必须是 https 句柄；本端点的字节读取由部署期访问网关承担
     // （冻结契约内**没有**私有媒体内容路由，见证据文档「契约缺口」）。
+    // host 来自配置（`AppMediaServiceOptions.accessGrantOrigin` ⇒ 配置 `MEDIA_ACCESS_GRANT_ORIGIN`），
+    // 未配置时是本文件顶部的**不可解析占位域**，绝不硬编码任何形似线上域名的主机。
     return {
       status: 200,
       mediaRevision: record.revision,
       grant: {
-        url: `https://media.gengyun.local/api/v1/media/${record.id}/content`,
+        url: `${accessGrantOrigin}/api/v1/media/${record.id}/content`,
         expires_at: iso(expiresAt),
         method: 'GET',
         access_token: token,
@@ -1038,6 +1153,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       expiresAt,
       revokedAt: null,
     });
+    // 句柄 host 与 owner 句柄同源：配置注入的网关原点（缺省为不可解析的占位域）。
     return {
       status: 200,
       contentRevision: contentRef.revision,
@@ -1048,7 +1164,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         slot,
         author_revision: slot === 'author_avatar' ? content.authorRevision : null,
         access: {
-          url: `https://media.gengyun.local/api/v1/community/media/${grantId}/content`,
+          url: `${accessGrantOrigin}/api/v1/community/media/${grantId}/content`,
           expires_at: iso(expiresAt),
           method: 'GET',
           access_token: token,
