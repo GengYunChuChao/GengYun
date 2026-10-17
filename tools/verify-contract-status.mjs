@@ -150,9 +150,12 @@ function checkIntervalSemantics(entry, owner, path, text, item) {
     semanticCounts.intervals += 1;
     return;
   }
+  const key = operationKey(entry.method, entry.path);
   const enclosing = segments.find(segment => segment.from <= from && to <= segment.to);
-  if (enclosing && enclosing.routes.includes(operationKey(entry.method, entry.path))) semanticCounts.intervals += 1;
-  else uncertifiable.intervals += 1;
+  if (enclosing === undefined) { uncertifiable.intervals += 1; return; }
+  if (enclosing.routes.includes(key)) { semanticCounts.intervals += 1; return; }
+  // 区间落在另一个操作的注册块里（未覆盖任何本操作注册块）：这是可证伪的错位，不是「不可核」。
+  semanticErrors.push(`${owner}: ${path}:${item.lines} 区间落在 ${enclosing.routes.join('、')} 的注册块内，未覆盖任何本操作注册块，与 ${key} 不符`);
 }
 function checkSnippetSemantics(entry, owner, path, text, item) {
   const positions = [];

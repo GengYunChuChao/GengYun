@@ -347,6 +347,23 @@ test('语义负控制：片段换成同文件另一操作的断言原文，两�
   });
 });
 
+// 区间只覆盖另一个操作的处理体（未覆盖整块）时，旧实现会当成「无法机械判定」而放行；
+// 这是可证伪的错位（落在别人的注册块里），必须与「覆盖整块」同等判错。
+test('语义负控制：区间落在另一操作的注册块内但未覆盖整块，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => { status.operations.find(op => op.id === 'createOCR').evidence[0].lines = '11-13'; },
+    error: /createOCR: services\/api\/src\/routes\/ocr\.ts:11-13 区间落在 get \/ocr\/\{id\} 的注册块内，未覆盖任何本操作注册块，与 post \/ocr 不符/,
+  });
+});
+
+// 跨块分支（covered.length >= 2）的看守：区间从 2 行起、完整覆盖两个注册块。
+test('语义负控制：区间从上一操作起跨越两个注册块，两臂都失败且不写盘', t => {
+  assertSemanticFailure(t, {
+    mutate: status => { status.operations.find(op => op.id === 'getOCR').evidence[0].lines = '2-16'; },
+    error: /getOCR: services\/api\/src\/routes\/ocr\.ts:2-16 区间跨越 2 个操作注册块（post \/ocr、get \/ocr\/\{id\}）/,
+  });
+});
+
 test('语义正控制：夹具台账两臂通过，可核与不可核分开计数', t => {
   const { run, docPath } = semanticFixture(t);
   const plain = run();
