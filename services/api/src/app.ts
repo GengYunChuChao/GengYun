@@ -1007,7 +1007,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
   //
   // **对象存储端口的唯一起因是显式注入**（`mediaObjectStore` 选项）：注入什么端口就用什么端口，
-  // 装配层在这里**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
+  // 端口这一侧**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
   // **ambient `process.env` 不是开启真实适配器的门**：
   //   - **未显式注入** ⇒ 一律 `resolveMediaObjectStore({ executionMode })`（**不传 `env`**）：
   //     `real` ⇒ `unwired`（整域 fail-closed 503 `PROVIDER_UNAVAILABLE`，与接线前逐字一致，
@@ -1038,6 +1038,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // env／`options.env`／原型链／全局对象派生），否则整域 fail-closed 503，与「环境里有没有那四个键」
   // 「谁读了 env」「端口从哪个模块来」全都无关。
   // ⛔ 装配层**不得自行铸造**该能力（那等于自我批准）：这里只**转发**调用方给出的选项。
+  //
+  // 访问网关原点（契约 `AccessGrant.url` 的 host）**只来自配置层**：`config.mediaAccessGrantOrigin`
+  // 已由 `config.ts` 校验（https、无凭据、无路径/查询），这里**原样透传**；未配置（`null`）就
+  // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
+  // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
@@ -1047,6 +1052,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
     // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
     ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
+    // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
+    ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
     now: clock,
   });
 
