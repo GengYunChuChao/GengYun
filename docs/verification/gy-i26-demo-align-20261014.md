@@ -767,3 +767,17 @@ $ node --check miniprogram/pages/specimen/specimen.js ; node --check tests/integ
 
 Refs #28（不关闭整项）
 ```
+
+## 12. 真机项台账（2026-10-17 追加，如实登记）
+
+本节只登记**未取得**项与取得条件，不改写 §8／§11 的任何既有读数，也不把模拟器或工具内结果算作真机结论。工具内 `MiniProgram.remote(true)` 实测能切到真机（`RMX3706`／Android 15／355×792／SDK 3.17.4），但随后的 AppService 调用与 `remote(false)` 均 `timeout waiting for automator response`，端口卡死需换新 `--auto-port` —— 因此下列五项仍为「未取得」。
+
+| 项目 | 状态 | 缺什么条件 | 复核入口 |
+| --- | --- | --- | --- |
+| 真机逐页走查（Android／iOS） | 未取得 | 需一台可扫码的 Android 真机与一台 iOS 真机，且 automator 端口稳定；当前只有模拟器与工具内截图，真机 automator 在 remote 切换后超时 | 真机调试 → 五 Tab 逐页打开并记录异常与首屏耗时 |
+| 真机 systemInfo 视口与字体倍率 | 未取得 | 需在真机 `wx.getSystemInfoSync` 读取 `windowWidth`／`windowHeight`／`pixelRatio`，并在系统「显示大小」「字体大小」各档位各取一次；当前只拿到一台 Android 的静态指纹（355×792，Android 15，SDK 3.17.4），字体档位未取到 | 页面内临时打印 systemInfo，逐档记录并与 `tools/verify-layout.mjs` 的静态核算对账 |
+| 五 Tab 视觉截图（真机，与原 demo 并列） | 未取得 | 需真机截图与原 demo 同视口并排对照；当前只有模拟器（390×753）与工具内计算样式证据 | 五 Tab 各截一张，按 §11 的并列方式补入 |
+| Android 真机安装与启动 | 未取得 | 需 Android 真机 + 体验版二维码 + 已登录的测试微信号；当前无可用设备与稳定端口 | 扫码安装 → 冷启动 → 记录首屏与崩溃日志 |
+| iOS 真机安装与启动 | 未取得 | 需 iOS 真机 + 体验版二维码 + 开发者证书与设备 UDID 登记；当前无 iOS 设备 | 扫码安装 → 冷启动 → 记录首屏与崩溃日志 |
+
+以上均为未取得项，不构成条款 2 通过。模拟器与工具内的编译、截图、计算样式只证明可构建与样式静态一致，不替代真机验收；适老版仍属后续阶段，不在本节范围。台账与 `tests/reference/i26-tabbar-skeleton.test.mjs` 的「五条只许未取得、不得同时出现在通过型表述」断言一一对应。
