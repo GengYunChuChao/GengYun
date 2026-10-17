@@ -37,10 +37,31 @@ assert.ok(
   'disposable test maintenance DB only（库名为 postgres 或 *_test）',
 );
 
-/** 迁移总数一律由迁移器自清点，不写死数字：迁移目录新增一片时本测试不因计数过期而红。
- *  取数来源与 runner（`discoverMigrations()` 默认参数 `DEFAULT_MIGRATIONS_DIR`）完全相同。 */
+/** 迁移总数由迁移器自清点，取数来源与 runner（`discoverMigrations()` 默认参数 `DEFAULT_MIGRATIONS_DIR`）完全相同。
+ *  **刻意不写死总数 16**：合流时（2026-10-18）在飞分支已各带一条新迁移（0017／0018），
+ *  写死数字会让「新增迁移先合入」把本测试变成时炸弹。改用两条**结构不变量**：
+ *    ① 版本序列在 1..max 上连续无缺号（缺号点名到具体版本）；
+ *    ② 总数 === 最大版本号（编号自 0001 起、无错位）。
+ *  二者对「新增迁移」自动放行，对「发现器静默漏项」变红（实测变异：发现器跳过 0015 ⇒ 两条各自都会红）。
+ *  纯派生（只把 `discoverMigrations().length` 与自身比）曾实测无牙：同一次漏片下本测试仍 11/11 绿。 */
 const MIGRATIONS = discoverMigrations();
 const MIGRATION_COUNT = MIGRATIONS.length;
+const VERSION_NUMBER_SET = new Set(MIGRATIONS.map((migration) => Number(migration.version)));
+const LAST_VERSION_NUMBER = Math.max(...VERSION_NUMBER_SET);
+const MISSING_VERSIONS = [];
+for (let expected = 1; expected <= LAST_VERSION_NUMBER; expected += 1) {
+  if (!VERSION_NUMBER_SET.has(expected)) MISSING_VERSIONS.push(String(expected).padStart(4, '0'));
+}
+assert.deepEqual(
+  MISSING_VERSIONS,
+  [],
+  `迁移版本号必须在 1..${LAST_VERSION_NUMBER} 上连续无缺号（缺号＝发现器静默漏项：${MISSING_VERSIONS.join(', ')}）`,
+);
+assert.equal(
+  MIGRATION_COUNT,
+  LAST_VERSION_NUMBER,
+  `迁移总数必须等于最大版本号（编号自 0001 起、无错位；实测 count=${MIGRATION_COUNT}，max=${LAST_VERSION_NUMBER}）`,
+);
 const LAST_VERSION = MIGRATIONS[MIGRATION_COUNT - 1].version;
 /** 「0016 待应用」现场：全部迁移已应用，只把最后一片的台账行删掉。 */
 const PENDING_LEDGER = MIGRATION_COUNT - 1;
