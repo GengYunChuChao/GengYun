@@ -178,7 +178,11 @@ WITH checks(label, ok, detail) AS (
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'wechat_subject_cipher', 'SELECT')
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.sessions', 'auth_epoch', 'UPDATE')
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.admin_accounts', 'credential_hash', 'UPDATE')
-         AND NOT has_column_privilege('gengyun_api_runtime', 'public.admin_scopes', 'scope', 'UPDATE'),
+         AND NOT has_column_privilege('gengyun_api_runtime', 'public.admin_scopes', 'scope', 'UPDATE')
+         -- GY-I19 追加（只**增强**本断言：不删除、不弱化上面任何既有条件）。
+         -- 注销请求表的写侧列权限同样不得直授运行时角色：它只能经
+         -- public.request_account_deletion(...) 在同一事务内写入（见下方 deletion_function_* 断言）。
+         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.deletion_requests', 'INSERT,UPDATE,REFERENCES'),
          '注销/撤销/权限字段只能由运营方操作'
 
   UNION ALL
@@ -246,6 +250,86 @@ WITH checks(label, ok, detail) AS (
   -- 15. 运行时可连接业务库（否则 API 起不来，属配置缺失而非安全越权）
   SELECT 'runtime_can_connect',
          has_database_privilege('gengyun_api_runtime', current_database(), 'CONNECT'),
+         '运行时应能连接业务库'
+
+  -- ---------------------------------------------------------------------------
+  -- GY-I19（#19）追加：注销受理**唯一写路径**的函数级契约断言（裁定 §3.3 允许的唯一一类新增）。
+  -- 背景：运行时角色对 public.users 的 state/auth_epoch/revision 与 public.deletion_requests
+  -- **没有**任何直接列权限（见上面 protected_columns），注销只能经窄口径 SECURITY DEFINER 函数完成；
+  -- 因此必须把「函数确实存在、确实是 SECURITY DEFINER、search_path 确实固定、属主确实是能写这些
+  -- 列的运营方角色且运行时无法 SET ROLE 成为它、EXECUTE 确实只授予运行时角色」全部钉死。
+  -- ⛔ 这五条**不**放松任何既有断言，也**不**给运行时角色补任何列权限。
+  -- ---------------------------------------------------------------------------
+  UNION ALL
+  -- 16. 唯一写路径必须恰存在一个（名字 + 精确签名）
+  SELECT 'deletion_function_exists',
+         to_regprocedure(
+           'public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)'
+         ) IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'request_account_deletion'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '注销受理唯一写路径必须恰为 public.request_account_deletion(uuid,uuid,text,integer,timestamptz×5)'
+
+  UNION ALL
+  -- 17. 必须真的是 SECURITY DEFINER（整个方案的前提；否则函数以调用者身份执行，写入必然被拒）
+  SELECT 'deletion_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'request_account_deletion'),
+         '注销受理函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 18. search_path 必须固定为 pg_catalog（不做 search_path 劫持的入口），且时区固定为 UTC
+  SELECT 'deletion_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'request_account_deletion'),
+         '注销受理函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 19. 属主正确：必须是能改 users.state/auth_epoch/revision 且能写 deletion_requests 的角色，
+  --     且运行时角色既不是它、也不能 SET ROLE 成为它（否则可绕过列授权）
+  SELECT 'deletion_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'state', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'auth_epoch', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'revision', 'UPDATE')
+                 AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.deletion_requests', 'INSERT')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'request_account_deletion'),
+         '函数属主必须是能改 users.state/auth_epoch/revision 并写 deletion_requests 的运营方角色，且运行时角色无法成为它'
+
+  UNION ALL
+  -- 20. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'deletion_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'request_account_deletion'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'request_account_deletion'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '注销受理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
          '运行时应能连接业务库'
 )
 
