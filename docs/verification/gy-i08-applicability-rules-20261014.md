@@ -91,6 +91,12 @@ patched_old_mirror: removed 2 lines
 开关只影响「是否产出建议／卡片」，**不改变适用结论**（`applicable` 仍如实反映条件是否适用），
 因此页面能把「条件不适用」与「开关已关闭」分开表达。
 
+> **订正（绑实测 SHA `95b8e7cf`）**：上表与下段的开关口径**只对域库函数与小程序页面成立**，不是服务端运维开关。
+> 服务端 API 不读这两个键：三符号在 `services/api/src` 下实测 **0 处命中**（定义在
+> `packages/reference/deterministic.mjs:97-100`／`:121`／`:137`）；会话域的用量权威以**无参**构造
+> （`services/api/src/app.ts:1244`）⇒ `doseCardEnabled` 恒 `true`（`services/api/src/conversations/dose.ts:42`）。
+> 详见 §7.1 第 1 条。本节原表**未删改**，仅补适用范围。
+
 ### 2.5 跨线纳入同一规则版本：`services/api/src/ocr/state.ts` 声明 `gy-i08/1.2.0`
 
 > **口径（监工 2026-10-14 CHANGES_REQUESTED 第 2 点）**：本节及全文出现「统一」时，
@@ -252,6 +258,49 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
    只读文件可用性。
 7. **契约侧缺口（沿用 GY-I07 登记）**：冻结契约 `Knowledge`／`Herbicide` 无 `visibility` 字段，
    `private`（未发布）只能在装配闸门与域库内表达，**无法**字段化到响应体。
+
+### 7.1 复核补充：在现行 `upstream/main` 上新增的两条
+
+> **测量基线**：`upstream/main` = `95b8e7cf67106391a61e88090d3c7cb6f820a99b`（`%cI` = `2026-10-16T22:16:13Z`）。
+> **测量时间**：`2026-10-17T12:14+08:00`（本地）。行号按 `git show upstream/main:<path>` 的 1-based 行号复算。
+
+1. **服务端「功能关闭开关」形同不存在（订正，绑实测 SHA `95b8e7cf`）**。两个开关 ID 只在域库函数里成立
+   （`packages/reference/deterministic.mjs:97-100` 定义 `APP_GY_I08_EXECUTABLE_ENABLED`／`APP_GY_I08_DOSE_CARD_ENABLED`，
+   `:121` `readFeatureSwitches`，`:137` `resolveFeatureSwitches`）；**服务端 API 一处也没读**（`services/api/src` 下
+   三符号合计 0 处命中）。会话域是服务端唯一的用量卡 HTTP 消费点，其权威在装配处**无参构造**：
+   `services/api/src/app.ts:1244` ——
+   `const conversationDose: DoseAuthority = conversationInjection?.dose ?? createDeterministicDoseAuthority();`
+   而唯一的开关入参默认 `true`（`services/api/src/conversations/dose.ts:42`：
+   `const doseCardEnabled = options.doseCardEnabled ?? true;`），文件头明写「固定以 `doseCardEnabled: true` 询问」
+   （`services/api/src/conversations/dose.ts:12-13`），询问点在 `services/api/src/conversations/dose.ts:51`。
+   ⇒ 部署侧设 `APP_GY_I08_DOSE_CARD_ENABLED=0`／`APP_GY_I08_EXECUTABLE_ENABLED=0` 对本基线**任何 HTTP 响应无效**，
+   也**不会**产生 `feature_closed` 理由。本条与 §2.4 不冲突，只是把 §2.4 的口径限定为**域库函数**与**小程序页面**
+   （已在该节就地订正）⇒ 本页**不声称**服务端存在可操作的运维关停开关。
+   复现：`git grep -n -E "readFeatureSwitches|FEATURE_SWITCH_IDS|resolveFeatureSwitches" upstream/main -- services/api/src`
+   ⇒ **0 处命中（exit 1）**。
+2. **两端输入数据不同源，八维在小程序侧不可判**。八维清单是 `packages/reference/constants.mjs:256-265`
+   （`valid_source`／`banned_restricted`／`crop`／`growth_stage`／`region`／`dosage_form`／`ingredient_content`／`use_scene`）；
+   域库目录常量在 `packages/reference/constants.mjs:292`（`CATALOG_PATHS.herbicides` →
+   `packages/knowledge/herbicides/records-2026.json`）。两处字段清单（本节逐条数过，不转抄他处读数）：
+
+   - **HTTP 域库侧** `packages/knowledge/herbicides/records-2026.json`：`records` **20 条**，记录字段并集 **16 个**——
+     `crop_ids`、`dosage_form`、`ingredients_text`、`pesticide_class`、`producer`、`product_standard`、`provenance`、
+     `record_id`、`record_status`、`registered_name`、`registration_number`、`source`、`target_original`、`toxicity`、
+     `use_scene`、`verification`；**无** `growth_stage`／`region`／`banned_restricted`／`valid_source` 四个同名字段；
+     `usable_as_dose`／`card_ready`／`dose_text` 三键在 20 条里**一条也没有**（覆盖率读数
+     `packages/knowledge/coverage-report.json:48` = `"dose_text": "0/20"`、`:55` = `"usable_as_dose": 0`、
+     `:56` = `"card_eligible": 0`）。
+   - **小程序侧** `miniprogram/data/seed-herbicides.js`：`count` **96**（`:10`），声明 `fields` **6 个**（`:11-18`：
+     `name`／`aliases`／`hazard_level`／`hazard_detail`／`target_weeds`／`regions`），元数据
+     `source_kind: "seed_unverified"`（`:4`）、`authority: "NONE"`（`:5`）、`originals_committed: false`（`:9`）；
+     实测 96 条 item 的键并集只有 **7 个**（上述 6 个 ＋ `_source`），**八维逐个命中数全为 0**
+     （`crop_ids`／`registration_number`／`record_id` 亦 0）。
+   - **无共同主键**：小程序 96 条无 `record_id`／`registration_number`；域库 20 条有 `registration_number`
+     （20/20，`packages/knowledge/coverage-report.json:40`）⇒ 两集合**无法逐条比对**。
+
+   ⇒ 八维中 `crop`／`dosage_form`／`ingredient_content`／`use_scene` 在域库侧有直接字段支撑，小程序侧八维**全部不可判**；
+   §2.3 的跨端断言钉的是**常量闭集**（14 类阻断／2 个开关／16 条映射），**不涉及输入数据** ⇒
+   两端「同规则版本」不等于「同数据源」。
 
 ## 8 PR 正文（可粘贴）
 
