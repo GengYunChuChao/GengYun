@@ -31,6 +31,14 @@ export interface AppConfig {
   sessionSigningKey: string | null;
   /** 首次启动的管理员初始化凭据（可选；仅从环境变量读取，出库为 scrypt 摘要）。 */
   adminBootstrap: { loginName: string; password: string } | null;
+  /**
+   * `AccessGrant.url` 的访问网关原点（`https://<host>[:port]`，来自 `MEDIA_ACCESS_GRANT_ORIGIN`）。
+   *
+   * `null` = 未配置 ⇒ 媒体域沿用**占位、不可解析**的默认域（RFC 6761 `.invalid`，句柄由部署期
+   * 访问网关解析，本仓库不提供该数据面）；非 `null` 时装配层须显式注入
+   * `createAppMediaService({ accessGrantOrigin })`（媒体域文件**不读** ambient env，见其选项注释）。
+   */
+  mediaAccessGrantOrigin: string | null;
 }
 
 export interface ConfigIssue {
@@ -121,6 +129,27 @@ function isPostgresUrl(value: string): boolean {
 }
 
 /**
+ * 校验访问网关原点：只接受 `https://<host>[:port]`（不带路径/查询/凭据），返回规范化 origin。
+ *
+ * 与 `services/api/src/media/service.ts` 的 `normalizeMediaAccessGrantOrigin` 判据同形 —— 两处都校验
+ * 是**刻意的纵深**：这里挡住「配置读入错」，那里挡住「装配层注入错」；不共用是为了不让配置模块反向
+ * 依赖媒体域（媒体域也不读 ambient env）。
+ */
+function asHttpsOrigin(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  if (parsed.username !== '' || parsed.password !== '') return null;
+  if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') return null;
+  if (parsed.hostname === '') return null;
+  return parsed.origin;
+}
+
+/**
  * 从环境变量加载配置；不合法则抛出 ConfigError，issues 列出全部问题字段。
  */
 export function loadConfig(env: Env = process.env): AppConfig {
@@ -202,6 +231,21 @@ export function loadConfig(env: Env = process.env): AppConfig {
   const wechatAppSecret = trimmed(env, 'WECHAT_APP_SECRET') ?? null;
   const sessionSigningKey = trimmed(env, 'SESSION_SIGNING_KEY') ?? null;
   const adminBootstrap = asBootstrap(env, issues);
+  // 访问网关原点：可选。未配置 ⇒ null（媒体域用占位/不可解析默认域，句柄由部署期网关解析）。
+  const mediaOriginRaw = trimmed(env, 'MEDIA_ACCESS_GRANT_ORIGIN');
+  let mediaAccessGrantOrigin: string | null = null;
+  if (mediaOriginRaw !== undefined) {
+    const normalized = asHttpsOrigin(mediaOriginRaw);
+    if (normalized === null) {
+      issues.push({
+        field: 'MEDIA_ACCESS_GRANT_ORIGIN',
+        code: 'INVALID_VALUE',
+        reason: '必须是 https://<host>[:port] 形式的访问网关原点（不带路径/查询/凭据）',
+      });
+    } else {
+      mediaAccessGrantOrigin = normalized;
+    }
+  }
 
   if (executionMode === 'real') {
     for (const field of REQUIRED_WHEN_REAL) {
@@ -234,5 +278,6 @@ export function loadConfig(env: Env = process.env): AppConfig {
     wechatAppSecret,
     sessionSigningKey,
     adminBootstrap,
+    mediaAccessGrantOrigin,
   };
 }
