@@ -34,3 +34,8 @@ jobs:
       - run: node tests/integration/auth-privacy-pg.mjs
         env:
           AUTH_PRIVACY_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_auth_privacy_test
+      # GY-I02 迁移负例：半截失败必须回滚干净 / 重放不得部分再执行 / 0016 up→down 可逆。
+      # 脚本在本服务库上自建并自删 gengyun_migrations_negative_{a,b,c}，不改既有库内容。
+      - run: node tests/integration/migrations-negative-pg.mjs
+        env:
+          MIGRATIONS_NEGATIVE_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_auth_privacy_test
