@@ -184,7 +184,8 @@ export function createSubstituteContentAuthority(): SubstituteContentAuthority {
 export function createUnwiredContentAuthority(): ContentAuthorityPort {
   const deny = (): never => {
     throw new ApiError('PROVIDER_UNAVAILABLE', '真实内容权威未接线：审核可见性不可核对（fail-closed）', {
-      retryable: true,
+      // 内容可见性权威未接线（deny 替身）：retryable 必须为 false。
+      retryable: false,
     });
   };
   return {

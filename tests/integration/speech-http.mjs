@@ -471,6 +471,13 @@ try {
       });
       assert.equal(res.status, 503, JSON.stringify(res.body));
       assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
+      // 新增（本文件此前**零** `retryable` 断言；OCR/ASR 两面都没有，正是跨域口径长期不一致的原因）：
+      // 「真实 ASR 提供者未接线」需运维改配置（凭据/适配器），不是时间能解决的 ⇒ 不得声称"重试就会好"。
+      assert.equal(
+        res.body.error.retryable,
+        false,
+        'ASR 受理面：能力未接线 ⇒ retryable 必须为 false（口径原文见 services/api/src/errors.ts）',
+      );
       assert.equal(res.body.meta.execution_mode, 'real');
       assert.equal(res.text.includes('stub'), false, '响应不得出现替身标识');
       assert.equal(realApp.speechService.describe().providerCalls, 0, '受理前 fail-closed 不得调用提供者');

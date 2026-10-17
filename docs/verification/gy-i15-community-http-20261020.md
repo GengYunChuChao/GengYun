@@ -296,7 +296,7 @@ Error: Unexpected page dependency
 ```
 
 原因与归属（已核验，**与本单改动无关**）：该脚本第 73–80 行的页面 `require` 白名单只映射 `font-scale`/`auth`/`page-gate`/`reference`，而
-`miniprogram/pages/referencedetail/referencedetail.js:17` 自 `b1f6ab0`（GY-I08 / 承接 #82，**早于基线 `fcfa6de`**）起就 `require('../../utils/profile-api')`。
+`miniprogram/pages/referencedetail/referencedetail.js:26` 自 `b1f6ab0`（GY-I08 / 承接 #82，**早于基线 `fcfa6de`**）起就 `require('../../utils/profile-api')`。
 证据：`git diff --name-only upstream/main...HEAD -- tests/integration/miniprogram-login-loop.mjs miniprogram/pages/referencedetail miniprogram/utils/profile-api.js` 输出为空（本单未触碰这三处）。
 该脚本**不在任何 CI glob 内**（`test:unit`/`test:mini` 均不包含 `tests/integration/**`）。修复它属于参考/档案线（GY-I04/I05/I07/I08）的跨线改动，**按派单 §5 停下报告**，未修改。
 

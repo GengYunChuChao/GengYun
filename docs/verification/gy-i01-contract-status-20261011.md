@@ -234,9 +234,20 @@ PASS: 状态为人工判定；本脚本只校验覆盖性、装配一致性与�
 | 正式 AppID / AppSecret 下的真实微信登录 | **未取得** | 本机实测走的是 stub 合成身份；`real` 分支的 `sns/jscode2session` 调用本轮未发生 |
 | 微信开发者工具编译 / 真机 / 双平台 | **未取得** | `check-wechat-project.mjs` 自身声明不是编译器或真机测试；本机无工具号与真机 |
 | AI 供应商联网与额度 | **未取得** | 属 GY-I25；本轮与对照表不触发任何外发 |
-| 对象存储 | **未取得** | 属 GY-I25；媒体路由本身也未装配 |
+| 对象存储 | **未取得** | 属 GY-I25；媒体路由本身也未装配（**半句已校订，见本表下方第 2 条**） |
 | 部署 | **未取得** | 本轮只在本机 loopback 上验证 |
 | CI | **未运行** | 提交前该分支无 CI 记录；不把 `action_required` 当通过 |
+
+**本表后续校订（2026-10-16 实测；测量基线 `3bc7451`；只订正被证伪的半句，⛔ 其余行与"未取得"结论一字未动）：**
+
+1. "对象存储"行括注的**「媒体路由本身也未装配」已过期**。实测 `services/api/src/app.ts:1354` `registerMediaRoutes(app, config, guards, mediaService);`，
+   媒体域 **7** 条路由全部已注册（`services/api/src/routes/media.ts:158/176/200/218/238/258/277`）。
+   （行号绑基线 `3bc7451`；对照读数：测量时 `upstream/main` = `1480aab3383b16daf7a5b5088c3e21cc12c422d3`，同一调用在 `services/api/src/app.ts:1374`。）
+2. **该行的"未取得"结论仍成立，且理由更精确**：未取得的是**真实对象存储适配器**。装配点 `resolveMediaObjectStore`
+   （`services/api/src/media/object-store.ts:447`）在 `real` 模式下于此返回未接线端口——同文件 `:450`：`if (config === null) return createUnwiredObjectStore();`；
+   被调函数 `createUnwiredObjectStore`（同文件 `:143`）的默认理由常量 `UNWIRED_OBJECT_STORE_REASON`（同文件 `:136-137`）为
+   「真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套」⇒ 每次对象操作 503 `PROVIDER_UNAVAILABLE`（fail-closed），
+   **不是** HTTP 路由未装配。两者在本文档写作时被并成一句，现拆开登记。
 
 ## 7 本轮改动范围自查
 

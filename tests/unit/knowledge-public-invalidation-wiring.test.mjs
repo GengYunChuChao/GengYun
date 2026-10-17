@@ -11,7 +11,7 @@
 //   ③ 来源发新版本后**旧版本引用持续不可用**；
 //   ④ **正控制**：改引**新版本**并发布 ⇒ 恢复可见；
 //   ⑤ `unverifiable`（来源不在本存储里）⇒ **保持可见**，不得谎称失效（生产默认行为不变）；
-//   ⑥ 列表面口径**本片刻意未改**（登记边界，见 PR 正文"跨线"一节）。
+//   ⑥ 列表面与详情面**同一判定来源**：来源失效后列表**不再返回**该行（`unverifiable` 行仍可见）。
 //
 // 说明：所有"来源状态"都由**既有后台服务**驱动（建草稿/发布/撤回），不手写 lifecycle；
 // `/knowledge` 的读取走**脚本化假连接池**（只回答既有读服务会发出的那几条 SQL，不连真库）；
@@ -391,10 +391,10 @@ test('⑤b /herbicides/{id}：库外来源保持可见；把该来源接进后�
 });
 
 // ---------------------------------------------------------------------------
-// ⑥ 列表面口径：本片**刻意未改**（登记的边界，供监工裁定）
+// ⑥ 列表面与详情面**同源判定**（`Refs #7` 列表面接线）
 // ---------------------------------------------------------------------------
 
-test('⑥ 列表面口径登记：本片只拦详情面，列表**仍返回**该行（刻意边界，理由与影响面见 PR 正文）', async () => {
+test('⑥ 列表面与详情面同源：来源失效后列表**不再返回**该行，`unverifiable` 行仍可见', async () => {
   const harness = createHarness();
   const { service, store: contentStore } = harness;
 
@@ -406,26 +406,31 @@ test('⑥ 列表面口径登记：本片只拦详情面，列表**仍返回**该
   const rowsRef = { rows: [knowledgeRow({ id: knowledgeId, sourceId, sourceVersion: '2026-09' })] };
   const { app, token } = await newWiredApp({ rowsRef, contentStore });
   try {
+    // 正控制：未失效时列表照常返回该行（否则下面的"不返回"会因装配没接上而假绿）。
+    const before = await get(app, '/api/v1/knowledge?limit=50', token);
+    assert.equal(before.statusCode, 200);
+    assert.equal(before.json().data.items.length, 1, '未失效时列表照常返回该行');
+    assert.equal((await get(app, `/api/v1/knowledge/${knowledgeId}`, token)).statusCode, 200);
+
     await withdrawRevision(SOURCES, service, sourceId, 1);
 
-    // 详情面：已 404。
+    // 详情面：已 404（口径不放宽）。
     assert.equal((await get(app, `/api/v1/knowledge/${knowledgeId}`, token)).statusCode, 404);
 
-    // 列表面：**口径未改** ⇒ 仍返回该行，分页封套/游标语义与接线前逐字相同。
+    // 列表面：与详情面**同一判定来源** ⇒ 该行不再返回；分页封套/游标语义不变。
     const list = await get(app, '/api/v1/knowledge?limit=50', token);
     assert.equal(list.statusCode, 200);
     assert.equal(list.headers['etag'], undefined, '列表不带 ETag（既有口径）');
     const items = list.json().data.items;
-    assert.equal(items.length, 1, '列表口径未改：仍返回该行');
-    assert.equal(items[0].id, knowledgeId);
+    assert.equal(items.length, 0, '引用不可用 ⇒ 列表面不返回该行（与详情面同源判定）');
     assert.deepEqual(Object.keys(list.json().data).sort(), ['items', 'next_cursor']);
     assert.equal(list.json().data.next_cursor, null, '单页取尽 ⇒ 游标语义未变');
 
-    // /herbicides 列表同样未按引用可用性过滤（其游标由域层 registration_number 派生，
-    // 事后过滤会打断游标；详见 PR 正文影响面一节）。
+    // /herbicides 列表：20 条种子行的来源**不在注入 store 里** ⇒ `unverifiable` ⇒ 保持可见
+    //（不谎称失效，生产默认行为不变）；条目顺序与游标语义亦不变。
     const hb = await get(app, '/api/v1/herbicides', token);
     assert.equal(hb.statusCode, 200);
-    assert.equal(hb.json().data.items.length, 20, '/herbicides 列表口径未改');
+    assert.equal(hb.json().data.items.length, 20, '`unverifiable` ⇒ 列表面保持可见');
     assert.equal(hb.json().data.next_cursor, null);
   } finally { await app.close(); }
 });

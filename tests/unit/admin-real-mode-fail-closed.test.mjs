@@ -165,7 +165,7 @@ test('real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVI
       if (res.statusCode !== 503) succeeded.push(`${row.op} ${row.method} ${row.url} -> ${res.statusCode}`);
       assert.equal(res.statusCode, 503, `${row.method} ${row.url} 在 real 默认装配下必须 503，实际 ${res.statusCode}`);
       assert.equal(body.error.code, 'PROVIDER_UNAVAILABLE', `${row.method} ${row.url}`);
-      assert.equal(body.error.retryable, true, `${row.method} ${row.url} 必须可重试`);
+      assert.equal(body.error.retryable, false, `${row.method} ${row.url} 未接线 ⇒ 需运维接线，同一请求原样重试不会成功`);
       assert.equal(body.data, undefined, `${row.method} ${row.url} 不得返回成功封套`);
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);

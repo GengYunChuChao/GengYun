@@ -70,17 +70,31 @@ function safeReason(value: unknown): string {
   return typeof value === 'string' && SAFE_TOKEN.test(value) ? value : 'cancelled';
 }
 
-/** PostgreSQL 错误 → 契约错误（不透出驱动原文；连接/超时按可重试如实分类）。 */
+/**
+ * PostgreSQL 错误 → 契约错误（不透出驱动原文）。按裁定逐类分档：
+ * - 超时（57014 语句取消 / 55P03 拿不到锁）⇒ `PROVIDER_TIMEOUT`(retryable:true)；
+ * - 连接层故障（08xxx）、管理员干预（53xxx / 57P0x）、串行化冲突与死锁（40001 / 40P01）
+ *   ⇒ 瞬时故障，`PROVIDER_UNAVAILABLE`(retryable:true)：同一请求稍后重试**确实**可能成功；
+ * - 配置/接线类（3D000 库不存在 / 28P01 凭据不匹配 / 42P01 表缺失 / 42501 权限不足）
+ *   与无法归类的其余驱动错误 ⇒ 需运维改配置或修缺陷，**不是时间能解决的** ⇒ retryable:false
+ *   （口径原文见 `services/api/src/errors.ts` 的 `ApiError` 注释）。
+ */
 function mapPgError(error: unknown): never {
   if (error instanceof PrivacyError) throw error;
   const code = (error as { code?: unknown })?.code;
   if (code === '57014' || code === '55P03') {
     throw new PrivacyError('PROVIDER_TIMEOUT', '外发账本事务超时', { retryable: true });
   }
-  if (typeof code === 'string' && /^(08|53|57P0|3D000|28P01|42P01|42501)/.test(code)) {
+  if (typeof code === 'string' && /^(08|53|57P0|40001|40P01)/.test(code)) {
+    // 瞬时：连接层故障 / 管理员干预 / 串行化冲突、死锁 ⇒ 同一请求稍后重试可能成功。
     throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: true });
   }
-  throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: true });
+  if (typeof code === 'string' && /^(3D000|28P01|42P01|42501)/.test(code)) {
+    // 未配置/未接线（库不存在、凭据不匹配、表缺失、权限不足）⇒ 需运维改配置 ⇒ 不可重试。
+    throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用（数据库配置/权限不满足）', { retryable: false });
+  }
+  // 无法归类的数据库错误 ⇒ 确定性缺陷，重试不会改善。
+  throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: false });
 }
 
 /** 账本行 → 账本记录（与 `packages/privacy/ledger.mjs` 的内部记录同形，供 egress.mjs 投影）。 */

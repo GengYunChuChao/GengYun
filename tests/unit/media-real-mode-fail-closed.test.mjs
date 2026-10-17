@@ -1,7 +1,7 @@
 // GY-I06（#6）媒体域 · real 模式 fail-closed 反例 + 对象存储端口如实标注。
 //
 // 本文件是「若不修就会失败」的**负控制**：real 模式下真实对象存储未接线时，
-// 媒体域必须整域 503 `PROVIDER_UNAVAILABLE`（`retryable: true`），**绝不**用内存/替身实现
+// 媒体域必须整域 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），**绝不**用内存/替身实现
 // 返回成功封套。若把 `resolveMediaObjectStore('real')` 改回替身、或去掉
 // `createAppMediaService` 的 `kind !== 's3_compatible'` 判据，本文件会立刻失败。
 //
@@ -125,7 +125,11 @@ test('GY-I06 real 模式 + 未接真实对象存储：整域 503 PROVIDER_UNAVAI
     const response = await call(app, method, url, token, options);
     assert.equal(response.status, 503, `${method} ${url} → ${response.status} ${JSON.stringify(response.body)}`);
     assert.equal(response.body.error.code, 'PROVIDER_UNAVAILABLE', `${method} ${url}`);
-    assert.equal(response.body.error.retryable, true, `${method} ${url} 必须标记可重试`);
+    assert.equal(
+      response.body.error.retryable,
+      false,
+      `${method} ${url} 未接线（需运维接线）⇒ 不得标记可重试：同一请求重试不会成功`,
+    );
     // 不得返回任何成功封套。
     assert.equal(response.body.data, undefined, `${method} ${url} 不得带 data`);
     assert.equal(response.body.meta.execution_mode, 'real');
@@ -161,7 +165,7 @@ test('GY-I06 端口级 fail-closed：把未接线端口注入**非 real** 模式
   });
   assert.equal(created.status, 503, JSON.stringify(created.body));
   assert.equal(created.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(created.body.error.retryable, true);
+  assert.equal(created.body.error.retryable, false);
 });
 
 test('GY-I06 显式放行：注入真实适配器（仅构造 + 本地预签名，零网络）后 real 模式可用', async (t) => {
@@ -231,7 +235,7 @@ test('GY-I06 对象存储端口：如实标注、构造校验与配置读取', a
   const unwired = createUnwiredObjectStore();
   assert.equal(unwired.kind, 'unwired');
   assert.match(unwired.note, /fail-closed/);
-  await assert.rejects(() => unwired.putObject('obj_x', new Uint8Array([1]), 'image/jpeg'), (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true);
+  await assert.rejects(() => unwired.putObject('obj_x', new Uint8Array([1]), 'image/jpeg'), (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === false);
   await assert.rejects(() => unwired.objectCount(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
 
   // 按执行模式解析：real + **缺任一** `OBJECT_STORAGE_*` ⇒ 未接线（fail-closed）；替身/演示才给替身。
@@ -273,14 +277,14 @@ test('GY-I06 对象存储端口：如实标注、构造校验与配置读取', a
 });
 
 test('GY-I06 1-A 装配：real 缺任一 OBJECT_STORAGE_* ⇒ 仍 unwired（逐字 fail-closed）；显式传入齐备 env ⇒ s3_compatible（零网络）', async () => {
-  // 1) 缺 env（默认装配路径）⇒ 与接线前**逐字一致**：同一个 reason/note，且每个操作仍 503 retryable。
+  // 1) 缺 env（默认装配路径）⇒ 与接线前**逐字一致**：同一个 reason/note，且每个操作仍 503（`retryable: false`：未接线＝能力未装配，需运维接线）。
   const absent = resolveMediaObjectStore({ executionMode: 'real', env: {} });
   assert.equal(absent.kind, 'unwired');
   assert.equal(absent.note, createUnwiredObjectStore().note, '缺 env 的 reason/note 必须与接线前逐字一致');
   assert.equal(absent.externalRequestCount, 0);
   await assert.rejects(
     () => absent.putObject('obj_synthetic', new Uint8Array([1]), 'image/jpeg'),
-    (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
+    (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === false,
   );
 
   // 2) 缺**任一**必填键都不得放行（缺配置 ≠ 放行）；明文 http endpoint 同理。
@@ -291,7 +295,7 @@ test('GY-I06 1-A 装配：real 缺任一 OBJECT_STORAGE_* ⇒ 仍 unwired（逐�
     assert.equal(store.kind, 'unwired', `缺 ${missing} 时不得构造真实适配器`);
     await assert.rejects(
       () => store.presignUpload({ key: 'obj_synthetic', contentType: 'image/jpeg', expiresInSeconds: 300 }),
-      (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
+      (error) => error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === false,
       `缺 ${missing} 时预签名必须仍被 fail-closed 拒绝`,
     );
   }
@@ -448,7 +452,11 @@ test('GY-I06 1-A 负控制：real 装配下把 OBJECT_STORAGE_* 注入 ambient e
       `${method} ${url} → ${response.status} ${JSON.stringify(response.body)}（ambient 配置齐备不得放行）`,
     );
     assert.equal(response.body.error.code, 'PROVIDER_UNAVAILABLE', `${method} ${url}`);
-    assert.equal(response.body.error.retryable, true, `${method} ${url} 必须标记可重试`);
+    assert.equal(
+      response.body.error.retryable,
+      false,
+      `${method} ${url} 未接线（需运维接线）⇒ 不得标记可重试：同一请求重试不会成功`,
+    );
     assert.equal(response.body.data, undefined, `${method} ${url} 不得带 data`);
     assert.equal(response.body.meta.execution_mode, 'real');
   }
@@ -938,7 +946,7 @@ function mediaRouteRegistrationGuard(parsed) {
 function expectMediaDomainClosed(response, label) {
   assert.equal(response.status, 503, `${label} → ${response.status} ${JSON.stringify(response.body)}`);
   assert.equal(response.body.error.code, 'PROVIDER_UNAVAILABLE', label);
-  assert.equal(response.body.error.retryable, true, `${label} 必须标记可重试`);
+  assert.equal(response.body.error.retryable, false, `${label}：未接线＝能力未装配，需运维接线，同一请求原样重试不会成功`);
   assert.equal(response.body.data, undefined, `${label} 不得带任何成功封套`);
   assert.equal(response.body.meta.execution_mode, 'real', label);
 }

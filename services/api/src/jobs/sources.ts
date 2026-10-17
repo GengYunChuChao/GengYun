@@ -78,7 +78,7 @@ export function createRecognitionJobSource(
  *
  * **取消能力：本基线没有**——`speech/service.ts` 只提供受理/读取/确认/删除，没有取消入口；
  * 派单明令"不得在作业面上另写一套状态机""不得改动各域服务语义"，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）**（"该作业所属能力尚未提供取消"）
+ * 注册表会先确认作业确实存在，再以 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）**（"该作业所属能力尚未提供取消"）
  * 如实拒绝；**不会**假装取消成功，也**不会**为它伪造 `cancelled` 状态。
  */
 export function createTranscriptionJobSource(service: SpeechService): JobSourcePort {
@@ -106,7 +106,7 @@ export function createTranscriptionJobSource(service: SpeechService): JobSourceP
  *
  * **取消能力：本基线没有**——`tts/service.ts` 只提供受理/读取/校验，没有取消入口；派单明令
  * 「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）** 如实拒绝。
+ * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）** 如实拒绝。
  * 合成作业不在 `states.json.job_transitions` 之外新增任何迁移语义，本层不判状态、不改 revision。
  *
  * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中
@@ -140,7 +140,7 @@ export function createSynthesisJobSource(service: SynthesisService): JobSourcePo
  *
  * **取消能力：本基线没有**——`ocr/service.ts` 只提供受理/读取/校正/核对/删除，**没有**取消入口；
  * 派单明令「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: true`）** 如实拒绝
+ * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）** 如实拒绝
  * （**不伪造** `cancelled`，也**不**用 404 谎称作业不存在）。本层不判状态、不改 revision。
  *
  * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中

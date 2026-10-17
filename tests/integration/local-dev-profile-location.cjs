@@ -118,6 +118,45 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     return { keys: info2.keys, values: JSON.stringify(values) };
   });
 
+  // —— GY-I05 D2：**真页面默认装配**（不覆盖 regionConverter）——
+  // 页面注入点来自 miniprogram/utils/region-converter.js：资源缺席 ⇒ 显式 null（fail-closed），
+  // 资源就位且校验通过 ⇒ 自动接线。下面先读真值，再据实决定期望分支，**不**改写页面注入点。
+  const pageSource = fs.readFileSync(path.resolve(__dirname, '../../miniprogram/pages/profile/profile.js'), 'utf8');
+  assert.equal(/regionConverter\s*:\s*null/.test(pageSource), false, 'profile.js 仍在写死 regionConverter: null');
+  assert.match(pageSource, /regionConverter\s*:\s*regionConverterResource\.build\(\)/, '注入点未走装配模块 build()');
+  const assembly = await mini.evaluate(() => {
+    const p = getCurrentPages().slice(-1)[0];
+    const c = p.regionConverter;
+    return { type: typeof c, provenance: typeof c === 'function' && c.provenance ? JSON.parse(JSON.stringify(c.provenance)) : null };
+  });
+  report.assembly = assembly;
+  assert.notEqual(assembly.type, 'undefined', '页面注入点缺失：regionConverter 未被装配（应为函数或显式 null）');
+  if (assembly.type === 'function') {
+    // 资源就位：来源必须可追溯（source/license/retrieved_at 非空），否则视为来源不明的几何数据。
+    for (const field of ['schema', 'source', 'license', 'retrieved_at', 'catalog_version']) {
+      assert.ok(assembly.provenance && String(assembly.provenance[field] || '').length > 0, '装配来源缺字段 ' + field);
+    }
+    assert.equal(assembly.provenance.method, 'nearest-centroid');
+  } else {
+    assert.equal(assembly.type, 'null', 'regionConverter 既不是函数也不是 null：' + assembly.type);
+  }
+  const defaultSetup = async () => {
+    await mini.evaluate((lat, lng) => { wx.__gyGetLocation = wx.__gyGetLocation || wx.getLocation; wx.getLocation = o => o.success({ latitude: lat, longitude: lng }); }, SENTINEL.lat, SENTINEL.lng);
+  };
+  if (assembly.type === 'null') {
+    // U3 未取得（截至 2026-10-17 的真实状态）：装配如实回 null ⇒ 定位成功后必须回落 unavailable。
+    const entry = await branch('真页面默认装配·资源缺席即 fail-closed', '地区转换资源尚未接入', defaultSetup, null);
+    report.defaultAssembly = { type: assembly.type, message: entry.message };
+  } else {
+    // 资源就位：同一路径必须给出预选或如实报省外；若预选，region_code 必须能在真实区划目录里查到。
+    const entry = await branch('真页面默认装配·资源就位即接线', '已按定位预选|不在首版覆盖的浙江省', defaultSetup, null);
+    report.defaultAssembly = { type: assembly.type, message: entry.message, provenance: assembly.provenance };
+    if (/已按定位预选/.test(String(entry.message))) {
+      const picked = await mini.evaluate(() => { const d = getCurrentPages().slice(-1)[0].data; return { code: d.counties[0] && d.counties[0].code, regions: d.regions.map(r => r.code) }; });
+      assert.ok(picked.code && picked.regions.includes(picked.code), '预选的 region_code 不在真实区划目录里：' + picked.code);
+    }
+  }
+
   // 1. 确认框里改用手选（不触发任何定位 API）
   await mini.mockWxMethod('showModal', { confirm: false, cancel: true, errMsg: 'showModal:ok' });
   await branch('确认框选改用手选', '已选择手选', null, null);

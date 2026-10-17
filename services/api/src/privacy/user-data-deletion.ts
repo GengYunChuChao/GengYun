@@ -8,8 +8,20 @@
  *   - 用已合并的 `services/api/src/privacy/egress.ts::createPrivacyDeletionCoordinator()`
  *     （它本身就是 `packages/privacy/deletion-modules.mjs` 的封套）建成"全模块"协调器；
  *   - 只把**本片自己的两个模块** `favorites` / `history` 注册进去，各带一个删除处理器。
- * 本文件**不实现**删除流程本身（7 日在线 / 30 日备份 / 第三方证据 / 恢复清单重放属 GY-I19），
+ * 本文件**不实现**删除流程本身（7 日在线 / 30 日备份的执行、第三方证据、恢复清单重放仍待后续片），
  * 也不注册任何契约路由。
+ *
+ * ## GY-I19（#19）追加：受理＝一次窄口径 `SECURITY DEFINER` 函数调用
+ * 裁定一要求「注销请求持久化 + 同一事务内撤销 + `auth_epoch` 递增」全部经**唯一一个**
+ * 窄口径函数完成（运行时角色对 `users.state`/`auth_epoch`/`revision` 与
+ * `deletion_requests` **没有**任何直接列权限，见
+ * `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的 `protected_columns`）。
+ * 因此 `requests` 端口**接线**后：
+ *   - `requestDeletionFor()` 在绑定主体之后**启动**持久化受理（同一事务，见
+ *     `services/api/src/privacy/deletion-requests-pg.ts`）；
+ *   - `executeHandlers()` 第一步 await 它 ⇒ 事务未提交就**不会**进入级联、不会签发回执、不会返回 202；
+ *   - **未接线**（`requests` 缺省）时行为与追加前**逐字一致**：纯进程内，如实不持久化。
+ * 仍未实现并如实登记为缺口：outbox、7/30 日到期执行、第三方完成证据、备份副本清除、恢复清单重放。
  *
  * ## 已合并协议的两个约束（如实适配，不改协议）
  * 1. **处理器拿不到主体**：`executeHandlers` 调用处理器时只传 `{ requestId, module }`。
@@ -29,6 +41,11 @@
 import { createDeletionRegistry } from '../../../../packages/privacy/deletion.mjs';
 import type { DeletionCoordinator } from '../../../../packages/privacy/deletion-modules.mjs';
 import { createPrivacyDeletionCoordinator } from './egress.ts';
+import type {
+  CreateDeletionRequestInput,
+  DeletionRequestRecord,
+  DeletionRequestStore,
+} from './deletion-requests-pg.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -70,6 +87,18 @@ export interface UserDataDeletionDeps {
   historyStore: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
+  /**
+   * GY-I19（#19）· 注销请求的**持久化受理端口**。不传即保持既有的进程内行为
+   * （**不伪造持久化**）；接线后「受理」＝一次窄口径 `SECURITY DEFINER` 函数调用：
+   * 同一事务内完成账号状态迁移 + `auth_epoch` 递增 + 全部会话撤销 + 注销请求落库。
+   */
+  requests?: DeletionRequestStore;
+  /**
+   * 回执 bearer 的有效期（毫秒）。接线 `requests` 时**必须显式给出**：
+   * 持久列 `receipt_expires_at` 记录的期限必须与受理服务的回执期限**同源**，
+   * 这里不接受第二套默认值（那会变成两套期限各自漂移）。
+   */
+  receiptTtlMs?: number;
   now?: () => Date;
 }
 
@@ -112,6 +141,13 @@ export interface UserDataDeletionRegistry {
 export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDeletionRegistry {
   const now = input.now ?? (() => new Date());
   const backupPurge = input.backupPurge ?? createUnwiredBackupPurgePort();
+  const requests = input.requests ?? null;
+  const receiptTtlMs = input.receiptTtlMs ?? null;
+  // 接线持久化受理 ⇒ 必须与受理服务的回执期限同源；缺参数就**拒绝装配**（fail closed），
+  // 而不是悄悄用另一个默认 TTL 写出与回执不符的期限。
+  if (requests !== null && (receiptTtlMs === null || !Number.isSafeInteger(receiptTtlMs) || receiptTtlMs <= 0)) {
+    throw new Error('接线持久化注销请求时必须显式给出 receiptTtlMs（须与受理服务的回执期限同源）');
+  }
   const registry = createDeletionRegistry({ now });
   const coordinator = createPrivacyDeletionCoordinator({
     registry,
@@ -121,6 +157,47 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   /** 请求 → 主体绑定（已合并协议的处理器入参不含主体，故在此绑定）。 */
   const subjectByRequest = new Map<string, string>();
   const auditLog: PurgeAuditEntry[] = [];
+  /** 受理时**已启动**的持久化事务（按请求 id 挂起；由 `executeHandlers()` 先行 await）。 */
+  const durableByRequest = new Map<string, Promise<DeletionRequestRecord>>();
+
+  function requireDate(value: unknown, field: string): string {
+    if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+      throw new Error(`注销删除请求缺少可解析时刻：${field}`);
+    }
+    return value.toISOString();
+  }
+
+  /**
+   * 启动持久化受理（三处写入在同一事务内，见 `services/api/db/migrations/0016_account_deletion_persistence.sql`）。
+   *
+   * 这里**只启动、不 await**：`requestDeletionFor` 必须保持同步（已合并协议与既有调用方的期望），
+   * 真正的 await 落在 `executeHandlers()` 的第一步。因此受理路由在签回执/返回 202 之前，
+   * 事务必然已经提交；失败也必然**在 202 之前**抛出，不会出现「已答应受理但库里什么都没有」。
+   */
+  function startDurableAcceptance(
+    requestId: string,
+    userId: string,
+    request: Record<string, unknown>,
+  ): Promise<DeletionRequestRecord> {
+    const issuedAt = now().toISOString();
+    const durableInput: CreateDeletionRequestInput = {
+      id: requestId,
+      userId,
+      receiptHash: String(request['receiptHash']),
+      generation: Number(request['generation']),
+      requestedAt: requireDate(request['requestedAt'], 'requestedAt'),
+      onlineDueAt: requireDate(request['onlineDueAt'], 'onlineDueAt'),
+      backupDueAt: requireDate(request['backupDueAt'], 'backupDueAt'),
+      receiptIssuedAt: issuedAt,
+      // 与受理服务的回执期限同源：同一 `clock()`、同一 TTL 常量（由装配处传入 `RECEIPT_TTL_MS`）。
+      receiptExpiresAt: new Date(Date.parse(issuedAt) + (receiptTtlMs as number)).toISOString(),
+    };
+    const pending = (requests as DeletionRequestStore).createRequest(durableInput);
+    // 启动即挂空 catch：否则一个未处理的拒绝会终止进程。
+    // 真正的失败在 `executeHandlers()` 处 await 同一个 promise 时如实暴露（同一个拒绝可被多次 await）。
+    pending.catch(() => {});
+    return pending;
+  }
 
   function subjectOf(requestId: string): string {
     const userId = subjectByRequest.get(requestId);
@@ -171,9 +248,17 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const request = coordinator.createDeletionRequest(options);
       const id = String(request['id']);
       subjectByRequest.set(id, userId);
+      if (requests !== null) {
+        durableByRequest.set(id, startDurableAcceptance(id, userId, request));
+      }
       return request;
     },
-    executeHandlers: (requestId) => coordinator.executeHandlers(requestId),
+    async executeHandlers(requestId) {
+      // 持久化受理（同一事务）必须先有结论：失败 ⇒ 在此抛出，**不进入级联、不签发回执、不返回 202**。
+      const pending = durableByRequest.get(requestId);
+      if (pending !== undefined) await pending;
+      return coordinator.executeHandlers(requestId);
+    },
     completionStatus: (requestId) => coordinator.completionStatus(requestId),
     receipt: (requestId) => coordinator.receipt(requestId),
     audit: () => auditLog.map((entry) => ({ ...entry })),

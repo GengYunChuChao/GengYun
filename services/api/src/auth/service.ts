@@ -355,7 +355,8 @@ export class AuthService {
     if (this.executionMode === 'real' && !this.store.persistent) {
       // real 模式不得以进程内存储冒充持久会话：如实拒绝，不签发不可撤销的令牌。
       throw new ApiError('PROVIDER_UNAVAILABLE', `${operation}需要持久化会话存储（数据库未配置或不可用）`, {
-        retryable: true,
+        // real 模式下 store 自称非持久＝持久会话存储未接线（不是时间能解决的）：retryable 必须为 false。
+        retryable: false,
       });
     }
   }

@@ -164,7 +164,7 @@ function assertRejected(kind, value, label) {
       assert.equal(error?.name, 'ApiError', `${label} 应走统一 fail-closed 通道，实际 ${error?.name}`);
       assert.equal(error?.code, 'PROVIDER_UNAVAILABLE', `${label} 错误码`);
       assert.equal(error?.status, 503, `${label} 状态码`);
-      assert.equal(error?.retryable, true, `${label} retryable`);
+      assert.equal(error?.retryable, false, `${label} retryable`);
       assert.ok(error.message.includes('result.value'), `${label} 的 message 应指向 result.value，实际：${error.message}`);
       return true;
     },

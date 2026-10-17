@@ -24,6 +24,48 @@ test('actual native page and client over loopback HTTP: profile catalog save rer
   assert.match(k.data.profileNote,/来自我的档案/);assert.match(k.data.profileNote,/上城区/);
   assert.match(k.data.profileNote,/当前资料只登记到省级，已按浙江省查询/);assert.equal(k.data.profileState,'applied');
   const token=auth.getSession().accessToken;const other=await fetch(base+'/api/v1/me/profile',{method:'PUT',headers:{authorization:'Bearer '+token,'content-type':'application/json','Idempotency-Key':'synthetic-other-tab','If-Match':'"2"'},body:JSON.stringify({crop_id:'crop_rice',region_code:'330100',region_catalog_version:p.data.profile.region_catalog_version})});assert.equal(other.status,200);p.onEdit();p.onSave();await until(()=>!p.data.busy);assert.equal(p.data.needsReload,true);assert.equal(p.data.profile.revision,2);p.loadProfile();await until(()=>p.data.loaded&&!p.data.busy);assert.equal(p.data.profile.revision,3);assert.equal(p.data.regionName,'杭州市');
+  // GY-I05 D2：定位→地区的等价回环（本机没有微信开发者工具 automator，tests/integration/local-dev-profile-location.cjs
+  // 无法真跑；本段在链内用**真页面 + 真回环 HTTP** 钉同一行为。哨兵坐标是合成值，不是任何真实质心/边界数据）。
+  const locate=load(root+'/miniprogram/utils/location-region.js'),profileSrc=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');
+  const SENTINEL={latitude:27.1234,longitude:119.5678},putsBefore=requests.filter(r=>r.method==='PUT').length;
+  assert.equal(p.regionConverter,null,'资源缺席时必须 fail-closed 装配为 null（页面不得内置坐标/边界资源）');
+  assert.doesNotMatch(profileSrc,/regionConverter\s*:\s*null/,'不得退回硬编码 regionConverter: null（须经 regionConverterResource.build() 装配）');
+  assert.doesNotMatch(profileSrc,/startLocationUpdate|onLocationChange/,'定位只用于即时选择地区，不做持续跟踪');
+  assert.equal('startLocationUpdate' in wx,false);assert.equal('onLocationChange' in wx,false);
+  const leak=()=>{const n=[String(SENTINEL.latitude),String(SENTINEL.longitude)],hits=[];const scan=(w,t)=>{if(typeof t==='string'&&n.some(v=>t.includes(v)))hits.push(w)};
+    for(const [k,v] of storage){scan('storage:'+k,k);scan('storage:'+k,typeof v==='string'?v:JSON.stringify(v))}
+    requests.forEach((r,i)=>{scan('request#'+i+' url',r.url);scan('request#'+i+' header',JSON.stringify(r.header));scan('request#'+i+' data',JSON.stringify(r.data))});
+    routes.forEach((u,i)=>scan('route#'+i,u));return hits};
+  p.onEdit();assert.equal(p.data.editing,true,'定位入口只在编辑态可用');
+  const before={cityIndex:p.data.cityIndex,countyIndex:p.data.countyIndex};
+  const located=[];wx.getLocation=o=>{located.push(o);o.success({latitude:SENTINEL.latitude,longitude:SENTINEL.longitude})};
+  modal=true;p.onLocate();await until(()=>!p.data.locating);
+  assert.equal(p.data.message,locate.MESSAGES.unavailable,'资源未接入必须逐字回落 unavailable，不得假装转换成功');
+  assert.equal(located.length,1);assert.equal(located[0].type,'wgs84');
+  assert.equal(p.data.cityIndex,before.cityIndex);assert.equal(p.data.countyIndex,before.countyIndex,'资源缺席时不得预选任何地区');
+  assert.deepEqual(leak(),[],'原始坐标不得进入存储、请求体或路由');
+  assert.equal(requests.filter(r=>r.method==='PUT').length,putsBefore,'资源缺席时不得触发保存');
+  // 正控制：注入合成转换资源（返回真目录内的县码），走同一条真页面路径证明「资源就位即可用」。
+  const countyCode='330102',county=p.data.regions.find(r=>r.code===countyCode);
+  assert.ok(county&&county.parent_code,'正控制用的编码必须来自真目录');
+  const seen=[];p.regionConverter=(latitude,longitude)=>{seen.push([latitude,longitude]);return countyCode};
+  p.onLocate();await until(()=>!p.data.locating);
+  assert.deepEqual(seen,[[SENTINEL.latitude,SENTINEL.longitude]],'坐标只在内存里按 convert(latitude, longitude) 入参交给资源');
+  assert.equal(p.data.cities[p.data.cityIndex].code,county.parent_code);
+  assert.equal(p.data.counties[p.data.countyIndex].code,countyCode);
+  assert.equal(p.data.message,'已按定位预选 '+county.name+'，请确认后保存档案。');
+  modal=false;p.onSave();assert.equal(requests.filter(r=>r.method==='PUT').length,putsBefore,'未确认不得保存');
+  modal=true;p.onSave();await until(()=>!p.data.busy&&!p.data.editing);
+  const put=requests.filter(r=>r.method==='PUT').at(-1),mp=load(root+'/miniprogram/data/regions.js'),kb=JSON.parse(readFileSync(root+'/packages/knowledge/catalog/regions-zhejiang.json','utf8'));
+  assert.equal(requests.filter(r=>r.method==='PUT').length,putsBefore+1);
+  assert.deepEqual(Object.keys(put.data).sort(),['crop_id','region_catalog_version','region_code'],'请求体只含档案字段，坐标永不进入');
+  const inMp=mp.regions.find(r=>r.code===put.data.region_code),inKb=kb.regions.find(r=>r.code===put.data.region_code);
+  assert.ok(inMp&&inKb,'保存的地区码必须同时存在于小程序目录与知识目录（不得硬编码绕过校验）');
+  assert.equal(inKb.name,inMp.name);assert.equal(put.data.region_code,p.data.counties[p.data.countyIndex].code);
+  assert.equal(put.data.region_catalog_version,mp.catalog_version);
+  assert.deepEqual(leak(),[],'保存后复核：原始坐标仍不得出现在存储或任何请求体');
+  p.regionConverter=null;
+  console.log('PASS GY-I05 D2 loopback: fail-closed unavailable without resource; injected converter preselects a real catalog county; raw coordinates stay in memory');
   p.logout();await until(()=>auth.getSession()===null);assert.equal(p.data.profile,null);const refused=await fetch(base+'/api/v1/me/profile',{headers:{authorization:'Bearer '+token}});assert.equal(refused.status,401);
   console.log('PASS '+f.kind+'; synthetic identity/catalog fixture; real loopback HTTP and actual frontend modules; no suppliers');
  }finally{await Promise.allSettled([...pending]);await f.close()}

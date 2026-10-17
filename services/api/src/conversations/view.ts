@@ -24,7 +24,8 @@ import {
 
 function iso(value: Date, field: string): string {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `内部记录字段 ${field} 不是合法时间`, { retryable: true });
+    // 内部记录自相矛盾 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', `内部记录字段 ${field} 不是合法时间`, { retryable: false });
   }
   return value.toISOString();
 }
@@ -76,10 +77,12 @@ export function answerViewOf(record: AnswerRecord): AnswerView {
 export function turnViewOf(record: TurnRecord, answer: AnswerRecord | null): TurnView {
   // 回答行存在但记录里没挂上 ⇒ 内部不一致，宁可 503 也不透出"半个回答"。
   if (record.answer_id !== null && answer === null) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '轮次记录指向的回答行缺失（拒绝透出）', { retryable: true });
+    // 内部记录自相矛盾 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', '轮次记录指向的回答行缺失（拒绝透出）', { retryable: false });
   }
   if (record.answer_id === null && answer !== null) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '未挂载回答的轮次出现了回答行（拒绝透出）', { retryable: true });
+    // 内部记录自相矛盾 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+    throw new ApiError('PROVIDER_UNAVAILABLE', '未挂载回答的轮次出现了回答行（拒绝透出）', { retryable: false });
   }
   return {
     id: record.id,

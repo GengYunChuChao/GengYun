@@ -2,16 +2,26 @@
 //
 // 验收（#7）：「下架／失效退出有效查询，详情与列表一致」+
 // 提交证据「来源版本与下架缓存回归」。
+//
+// 末段为 #7② 的**数据侧**回归样本（下架/失效/撤回/未来生效/有效期未知/缺来源），
+// 与 tests/unit/knowledge-api.test.mjs:85 的 DB 侧口径同名，用真实记录作基线。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  SOURCE_VALIDITIES,
+  activeEtag,
+  applyGovernanceChange,
+  checkSourceContractReadiness,
   createVersionIndex,
   etagFor,
-  activeEtag,
+  evaluateEligibility,
   isActiveVersion,
-  applyGovernanceChange,
+  loadCatalog,
   loadHerbicideRecords,
+  runQuery,
+  toDetail,
 } from '../../packages/reference/index.mjs';
+
 import { createReferenceService } from '../../packages/reference/service.mjs';
 
 const doc = loadHerbicideRecords();
@@ -109,3 +119,105 @@ test('ETag 对单条记录（详情）与集合（列表）均为稳定强 ETag'
   const list = etagFor(doc.items);
   assert.match(list, new RegExp(`^"sv-${doc.items.length}-[0-9a-f]{32}"$`));
 });
+
+// ---------------------------------------------------------------------------
+// #7② 数据侧回归样本：下架 / 失效 / 撤回 / 未来生效 / 有效期未知 / 缺来源
+//   与 tests/unit/knowledge-api.test.mjs:85（DB 侧 withdrawn/expired/future/missing source）
+//   同名同形，这里以**真实记录**为基线，钉三件事：
+//     ① 样本退出有效集合（isActiveVersion=false）且有效集合 ETag 变化；
+//     ② 查询命中集合不含该记录（列表侧退出）；
+//     ③ 详情投影与列表**共用同一判据**（同一 reason 文案，无第二条路径）。
+//   注：HTTP 列表面（services/api/src/routes/knowledge.ts）刻意不拦截未发布种子，属 D5 范围；
+//   本块钉的是数据 + 域库判据层（runQuery 命中集合与 toDetail 同用 evaluateEligibility）。
+// ---------------------------------------------------------------------------
+const catalog = loadCatalog();
+const baseline = doc.items;
+const sampleBase = baseline[0];
+const HIT_QUERY = Object.freeze({ crop_id: 'crop_rice', limit: 50 });
+
+test('#7② 数据侧基线：治理前该记录可查询、且出现在列表命中集合中', () => {
+  assert.equal(evaluateEligibility(sampleBase).queryable, true);
+  assert.equal(toDetail(sampleBase, catalog).queryable, true);
+  const hits = runQuery(baseline, HIT_QUERY, catalog);
+  assert.ok(
+    hits.matched_items.some((x) => x.record_id === sampleBase.record_id),
+    `${sampleBase.record_id} 应出现在基线命中集合中（否则样本无意义）`,
+  );
+});
+
+test('#7② 五类治理样本退出有效查询：列表命中与详情投影同一判据（下架/失效/撤回/未来/未知）', () => {
+  // 'future' 不在 SOURCE_VALIDITIES 内 ⇒ 靠 evaluateEligibility 的兜底文案 fail-closed。
+  assert.ok(!SOURCE_VALIDITIES.includes('future'), "'future' 不是合法枚举，必须靠兜底拒绝");
+  const cases = [
+    { name: '下架', change: { visibility: 'hidden' }, reason: '该记录已下架' },
+    { name: '失效', change: { validity: 'expired' }, reason: '来源已过期' },
+    { name: '撤回', change: { validity: 'withdrawn' }, reason: '来源已撤回' },
+    { name: '未来生效', change: { validity: 'future' }, reason: '来源有效期不可用' },
+    { name: '有效期未知', change: { validity: 'unknown' }, reason: '来源有效期未知' },
+  ];
+
+  const beforeEtag = activeEtag(baseline);
+  const beforeActive = baseline.filter(isActiveVersion).length;
+
+  for (const c of cases) {
+    const after = applyGovernanceChange(baseline, { record_id: sampleBase.record_id, ...c.change });
+    const item = after.find((x) => x.record_id === sampleBase.record_id);
+
+    // ① 退出有效集合 + 缓存失效
+    assert.equal(isActiveVersion(item), false, `${c.name}：必须退出有效集合`);
+    assert.equal(item.reference_state, 'unavailable', `${c.name}：引用状态须为 unavailable`);
+    assert.equal(after.filter(isActiveVersion).length, beforeActive - 1, `${c.name}：有效集合应恰好减少 1 条`);
+    assert.notEqual(activeEtag(after), beforeEtag, `${c.name}：有效集合 ETag 必须变化（否则缓存不失效）`);
+
+    // ② 列表命中集合退出（同一条件下其他记录仍命中，证明是「退出」而非「全空」）
+    const hits = runQuery(after, HIT_QUERY, catalog);
+    assert.ok(
+      !hits.matched_items.some((x) => x.record_id === sampleBase.record_id),
+      `${c.name}：命中集合不得含该记录`,
+    );
+    assert.ok(hits.matched_items.length > 0, `${c.name}：其他记录不应被连带排除`);
+
+    // ③ 详情与列表同一判据
+    const verdict = evaluateEligibility(item);
+    assert.equal(verdict.queryable, false, `${c.name}：不可查询`);
+    assert.equal(verdict.reason, c.reason, `${c.name}：不可查询原因文案必须逐字一致`);
+    const detail = toDetail(item, catalog);
+    assert.equal(detail.queryable, false, `${c.name}：详情不可查询`);
+    assert.equal(detail.unavailable_reason, c.reason, `${c.name}：详情与列表判定不一致`);
+    // 治理不得波及其他记录
+    assert.equal(after.length, baseline.length);
+    assert.equal(runQuery(after, HIT_QUERY, catalog).matched_items.length, hits.matched_items.length);
+  }
+});
+
+test('#7② 缺来源（source_kind 缺失）：契约前提先于有效期判定 fail-closed，同样退出命中集合', () => {
+  const missing = Object.freeze({
+    ...sampleBase,
+    source: Object.freeze({ ...sampleBase.source, source_kind: undefined }),
+  });
+  // 装载层会先把这类记录 fail-closed 排除（packages/reference/records.mjs:82-98 ⇒ skipped），
+  // 此处直接对条目判定，验证「契约前提 → 可见性/有效期」的判定次序。
+  const readiness = checkSourceContractReadiness(missing);
+  assert.equal(readiness.ok, false);
+  assert.deepEqual(readiness.missing, ['来源类型（source_kind）']);
+
+  const verdict = evaluateEligibility(missing);
+  assert.equal(verdict.queryable, false);
+  assert.equal(verdict.reason, '来源类型缺失或非法枚举，无法满足契约必填（不编造来源类型）');
+  // 有效期仍是 valid、可见性仍是 published ⇒ 说明拒绝来自契约前提（不编造来源类型），而非有效期
+  assert.equal(missing.source.source_validity, 'valid');
+  assert.equal(missing.visibility, 'published');
+
+  const withMissing = baseline.map((x) => (x.record_id === sampleBase.record_id ? missing : x));
+  const hits = runQuery(withMissing, HIT_QUERY, catalog);
+  assert.ok(
+    !hits.matched_items.some((x) => x.record_id === sampleBase.record_id),
+    '缺来源字段的记录不得进入命中集合（不得靠默认值补出 source_kind）',
+  );
+  assert.equal(toDetail(missing, catalog).queryable, false);
+  assert.equal(
+    toDetail(missing, catalog).unavailable_reason,
+    '来源类型缺失或非法枚举，无法满足契约必填（不编造来源类型）',
+  );
+});
+

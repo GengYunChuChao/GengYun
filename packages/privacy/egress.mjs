@@ -8,7 +8,7 @@
  *   - 无授权／错用途 ⇒ **零调用**（不是"发了再回滚"）；
  *   - 撤回／注销 ⇒ 新外发被拒、在途结果不得回写（由 `in-flight.mjs` + 账本提交边界保证）；
  *   - `real` 模式**未接真实依赖** ⇒ **fail-closed**（契约内 `PROVIDER_UNAVAILABLE`，503，
- *     `retryable: true`），**绝不**用内存/替身实现返回成功封套；
+ *     `retryable: false`），**绝不**用内存/替身实现返回成功封套；
  *   - `stub` / `preset_demo` 的替身只允许出现在**明确标注**的模式下，并在回执与日志里如实标明。
  *
  * ## 与旧版的区别（本轮剩余项：真实外发消费者）
@@ -41,7 +41,7 @@ export const PRESET_DEMO_EGRESS_LABEL = '预设演示外发消费者（preset_de
 
 /** real 模式未接真实适配器时的如实说明（进回执/日志，不含凭据）。 */
 export const REAL_EGRESS_UNWIRED_NOTE =
-  '真实外发适配器尚未接入：real 模式 fail-closed（PROVIDER_UNAVAILABLE / 503 / retryable=true），不回退替身';
+  '真实外发适配器尚未接入：real 模式 fail-closed（PROVIDER_UNAVAILABLE / 503 / retryable=false），不回退替身';
 
 /** real 模式启用真实外发的唯一开关（必须由接线方显式放行）。 */
 export const REAL_EGRESS_APPROVAL_REQUIRED =
@@ -98,7 +98,7 @@ export function createStubEgressTransport({ executionMode = 'stub' } = {}) {
 /**
  * 真实传输（`real`）。**fail-closed**：
  * - 未注入已审适配器（或未显式放行）⇒ `available=false`，消费者在**任何账本变更之前**
- *   抛 `PROVIDER_UNAVAILABLE`（503、`retryable: true`），**不返回成功封套**；
+ *   抛 `PROVIDER_UNAVAILABLE`（503、`retryable: false`（未接线＝能力未装配，需运维接线；口径见 services/api/src/errors.ts 的 ApiError 注释）），**不返回成功封套**；
  * - 即使注入了适配器，`createEgressConsumer` 仍要求 `transport.kind === 'real'` 且显式放行，
  *   替身**不可能**出现在 real 路径上（构造期即拒绝）。
  */
@@ -113,7 +113,8 @@ export function createRealEgressTransport({ adapter = null } = {}) {
     unavailableReason: wired ? null : REAL_EGRESS_UNWIRED_NOTE,
     async send(entry) {
       if (!wired) {
-        throw new PrivacyError('PROVIDER_UNAVAILABLE', REAL_EGRESS_UNWIRED_NOTE, { retryable: true });
+        // 真实外发适配器／传输未接线：retryable 必须为 false（口径见 services/api/src/errors.ts 的 ApiError 注释）。
+        throw new PrivacyError('PROVIDER_UNAVAILABLE', REAL_EGRESS_UNWIRED_NOTE, { retryable: false });
       }
       return adapter.send(entry);
     },
@@ -213,7 +214,8 @@ export function createEgressConsumer({ ledger, transport, executionMode, logSink
       throw new PrivacyError(
         'PROVIDER_UNAVAILABLE',
         transport.unavailableReason ?? REAL_EGRESS_UNWIRED_NOTE,
-        { retryable: true },
+        // 真实外发适配器／传输未接线：retryable 必须为 false（口径见 services/api/src/errors.ts 的 ApiError 注释）。
+        { retryable: false },
       );
     }
   }

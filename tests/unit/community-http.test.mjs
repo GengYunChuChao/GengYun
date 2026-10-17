@@ -558,7 +558,7 @@ test('HTTP real 模式：16 条社区路由一律 503 PROVIDER_UNAVAILABLE（不
   for (const [method, path, actor, options] of rows) {
     const result = await h.call(method, path, actor, options);
     error(result, 503, 'PROVIDER_UNAVAILABLE');
-    assert.equal(result.body.error.retryable, true, `${method} ${path} 必须可重试`);
+    assert.equal(result.body.error.retryable, false, `${method} ${path} 域未接线 ⇒ 需运维接线，同一请求原样重试不会成功`);
     // 游客仍然先被鉴权挡住（不得因为"域未接线"就放弃鉴权）。
     error(await h.call(method, path, null, options), 401, 'SESSION_REQUIRED');
   }

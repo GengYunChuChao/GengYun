@@ -1,11 +1,24 @@
 /**
  * Fastify 应用装配。
  *
- * 已装配：/health（运营）、游客主页科普预览（/api/v1/public/home）、
- * /api/v1 下的认证与后台认证、授权列表／授予及受限撤回路由、契约错误封套、404、
- * 个人档案与资料查询，以及 GY-I09 的识别任务闭路（/recognitions/**、/jobs/{id}[/cancel]）。
- * 其余业务路由（问答、社区、媒体等）尚未实现；未实现路径返回契约 NOT_FOUND，
- * 不伪造成功。
+ * 已装配（每个域的**唯一注册点**都在 `buildApp` 尾部，按 `register*` 调用逐条可核；路径均带 `API_PREFIX`）：
+ * 运营 `/health`；游客主页科普预览 `/public/home`；认证 `/auth/**` 与后台认证 `/admin/auth/**`；
+ * 授权 `/me/consents**`；个人档案与目录查询 `/me/profile`、`/catalog/{kind}`；
+ * 资料查询 `/knowledge/**`、`/herbicides/**`（GY-I07）；识别 `/recognitions/**`（GY-I09）；
+ * 标签 OCR `/ocr/**`（GY-I10）；转写 `/speech/transcriptions/**`（GY-I11）；合成 `/speech/synthesis`（GY-I13）；
+ * 跨 kind 作业读／取消 `/jobs/{id}`、`/jobs/{id}/cancel`（GY-I01）；媒体 `/media/**`、
+ * `/community/media-access`、`/community/media/{grant_id}/content`（GY-I06）；消息 `/messages/**`；
+ * 收藏／历史 `/favorites/**`、`/history/**`（GY-I16）；注销 `/me/account/deletion`、
+ * `/account/deletions/{id}`（GY-I19）；社区 `/posts/**`、`/comments/**`、`/reports/**`（GY-I15）；
+ * 文字问答 `/conversations/**`（GY-I12）；后台 `/admin/**`。
+ *
+ * **未注册的路径没有兜底实现**：一律由 `setNotFoundHandler` 返回契约 `NOT_FOUND`（`未实现的路径：…`），
+ * 不伪造成功。`real` 模式下缺持久依赖或未获显式批准的域**在触达该真实依赖的那一步 fail-closed**：
+ * 依赖数据库／对象存储／真实供应商的路由如实返回 503 `PROVIDER_UNAVAILABLE`（实测：`/messages`、
+ * `/favorites`、`/history`、`/conversations`、`/posts`、`/me/profile`、`/knowledge`、`/media/{id}`、
+ * `/account/deletions/{id}`），既不 404 也不降级成内存替身；只跑在进程内 store 或静态种子上的路由照常
+ * 作答（实测：`GET /herbicides` ⇒ 200；`GET /ocr/{id}`、`GET /speech/transcriptions/{id}`、
+ * `GET /jobs/{id}` 对未知 id ⇒ 404「不存在」）。
  */
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
@@ -111,18 +124,28 @@ import {
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
-//     `packages/privacy/deletion-modules.mjs::receipt()` 投影，**不新建第二套台账/迁移**；
+//     `packages/privacy/deletion-modules.mjs::receipt()` 投影，**不新建第二套台账**；
 //   - 幂等走既有 `runIdempotent()`（24h 台账）；回执 bearer 用既有 `mintOpaqueToken()`，
 //     服务端只存 sha256 摘要；
-//   - `real` 模式**未接线**（无注销请求持久表）⇒ `available: false` ⇒ 两个 operation
+//   - GY-I19 本片（#19）在其上追加**持久化受理**：有真库（`pool`）时 `userDataDeletion`
+//     接线 `requests` 端口 ⇒ 受理在**同一事务**内落库（账号状态 + `auth_epoch` + 全会话撤销 +
+//     注销请求），走窄口径 `SECURITY DEFINER` 函数，见 `privacy/deletion-requests-pg.ts`
+//     与迁移 `services/api/db/migrations/0016_account_deletion_persistence.sql`
+//     （**复用** 0003 已建的 `public.deletion_requests` 表，不新建第二套表）；
+//   - `real` 模式**整域不接线**（本片红线）⇒ `available: false` ⇒ 两个 operation
 //     一律 503 `PROVIDER_UNAVAILABLE`，**不**回 200 空壳、**不**假装删除成功。
 import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
 import {
   createAccountDeletionRequestService,
   createDeletionReceiptRegistry,
+  RECEIPT_TTL_MS,
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
 } from './privacy/account-deletion.ts';
+import {
+  createPostgresDeletionRequestStore,
+  type DeletionRequestStore,
+} from './privacy/deletion-requests-pg.ts';
 // GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
 import { registerCommunityRoutes } from './routes/community.ts';
 import { createCommunityService, type CommunityService } from './community/service.ts';
@@ -304,9 +327,12 @@ export interface BuildAppOptions {
   synthesisContent?: CheckedContentPort;
   /** 合成任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   synthesisJobDeadlineMs?: number;
-  // GY-I18 后台域注入项。**全部可选**：不传时与接线前**逐字节同行为** ——
-  // 内容/运营存储为空种子，`AdminJobPort` 与社区帖子端口**未接线**，
-  // 因此作业读/取消与隐藏帖子按服务层 fail-closed 返回 503（不返回空页、不伪造状态）。
+  // GY-I18 后台域注入项。**全部可选**：不传时自建空种子内存 store ——
+  // 内容/运营存储为空种子；`AdminJobPort` **仍缺省未接线** ⇒ 作业读/取消按服务层 fail-closed
+  // 返回 503（不返回空页、不伪造状态）；**社区帖子端口已接线**（下方 `communityPostPortForAdmin`，
+  // 与社区服务**同一份** store）⇒ `hidePost` 按社区 CAS 语义如实作答（未知帖子 404、成功 200、
+  // 已删除/未发布 409）；缺省装配下不是 503 —— 只有显式传入未接线端口、或适配器返回清单外的未知
+  // 原因时，服务层才走同一 503 兜底。
   /** 测试注入：后台资料存储（默认新建内存 store）。 */
   adminInjection?: {
     contentStore?: AdminContentServiceOptions['store'];
@@ -378,8 +404,13 @@ export interface BuildAppOptions {
     job?: HistoryJobPort;
     cascade?: HistoryCascadePort;
   };
-  /** GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。 */
-  userDataDeletionInjection?: { backupPurge?: BackupPurgePort };
+  /**
+   * GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。
+   * GY-I19（#19）追加 `requests`：持久化受理端口的注入点（缺省＝按是否有真库自动装配；
+   * 显式传入用于**故障注入**——例如让第 ③ 步 INSERT 撞回执摘要唯一索引，
+   * 以实测「同一事务整体回滚、旧 token 不复活」这条安全性质）。
+   */
+  userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore | null };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
   //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
@@ -528,11 +559,15 @@ function withModerationTakedownLink(
           reason_code: reason,
         });
       } catch (error) {
+        // 真瞬时（端口自己声明可重试）原样上抛，保留端口给出的结论。
         if (error instanceof ApiError && error.retryable) throw error;
+        // 走到这里只剩三类：确定性缺陷／能力未接线（端口 fail-closed 形状不可用）／无法归类。
+        // 同一请求在无运维介入下稍后重试都不会成功 ⇒ retryable 必须为 false。
+        // 口径原文见 services/api/src/errors.ts 的 ApiError 注释。
         throw new ApiError(
           'PROVIDER_UNAVAILABLE',
-          '后台下架已生效，但审核域缓存失效未完成（fail-closed，可重试）',
-          { retryable: true },
+          '后台下架已生效，但审核域缓存失效未完成（fail-closed；需先排查审核域端口或缺陷，重试同一请求不会自行恢复）',
+          { retryable: false },
         );
       }
       return response;
@@ -1157,6 +1192,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I16 第 4 项：**复用已合并的** `packages/privacy` 删除注册协议（不另起一套），
   // 只把本片自己的 `favorites`/`history` 两个模块注册进去（在线部分真的清理并留证据；
   // 备份副本清除未接线 ⇒ `backupState: 'pending'`，如实显示未完成）。
+  // GY-I19（#19）本片：注销请求的**持久化受理端口**。
+  //   - 有真库（`pool !== null`）⇒ 接线：受理经窄口径 `SECURITY DEFINER` 函数在**同一事务**内
+  //     完成「账号改 deletion_pending + auth_epoch 递增 + 撤全部会话 + 注销请求落库」；
+  //   - 无真库（内存模式，含既有集成测试与 `real` 不接线路径）⇒ **不**接线，行为与追加前逐字一致；
+  //   - `requests: null` 可显式关闭（故障注入方向的反向控制用）。
+  //   - `receiptTtlMs` 必须与受理服务的回执期限**同源** ⇒ 直接复用 `RECEIPT_TTL_MS` 常量
+  //     （第二个默认 TTL 会让持久列与回执各说一套）。
+  const injectedDeletionRequests = userDataDeletionInjection?.requests;
+  const durableDeletionRequests: DeletionRequestStore | null =
+    injectedDeletionRequests === undefined
+      ? (pool === null ? null : createPostgresDeletionRequestStore({ pool }))
+      : injectedDeletionRequests;
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1166,16 +1213,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(userDataDeletionInjection?.backupPurge === undefined
       ? {}
       : { backupPurge: userDataDeletionInjection.backupPurge }),
+    ...(durableDeletionRequests === null
+      ? {}
+      : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),
   });
 
   // GY-I19（#19）本片：注销/删除申请 HTTP 面的装配（两个 operation）。
   //   - `deletionReceipts`：回执 bearer 台账（只存 sha256 摘要；有效期 35 日）；
   //   - `accountDeletion`：申请服务，**复用**上面那份 `userDataDeletion`（模块闭集与处理器同源，
-  //     不新建第二套台账、不新增迁移）；
-  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式下注销请求**没有**
-  //     持久存储（`packages/privacy` 的删除注册表是进程内的，契约里也没有注销请求的持久表），
+  //     不新建第二套台账）；本片新增的只有**受理持久化**（迁移 0016，复用 0003 已建的
+  //     `public.deletion_requests` 表；见上方 `durableDeletionRequests` 装配）；
+  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式**整域不接线**
+  //     ——真实执行链路（7 日在线 / 30 日备份 / 第三方完成证据）尚未实现，
   //     因此**不接线**：`available: false` ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`
-  //     （`retryable: true`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
+  //     （`retryable: false`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
   //     是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用；
   //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
   //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
@@ -1303,8 +1354,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
   registerProfileRoutes(app, config, pool, guards);
-  // 本片起：以下五个域的输出面受**全局开关**控制（受控面清单见 `admin/ops/flag-gate.ts`），
-  // 因此传入 `gatedGuards`（= 原守卫 + 开关门；先鉴权、后判开关）。守卫链语义与错误码次序不变。
+  // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
+  // `admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`：除草剂列表／详情、社区 `createPost`／
+  // `createComment`、识别、OCR、转写、合成），因此传入 `gatedGuards`（= 原守卫 + 开关门；
+  // 先鉴权、后判开关）。守卫链语义与错误码次序不变。
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
   // GY-I07 第二片（跨线 **#7 公开读 × #18 引用失效**）：把**后台资料来源存储**里既有的
@@ -1327,7 +1380,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
   registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
-  // 各域以作业源形式接入（识别域 + 转写域 + 审核域 + 合成域 + OCR 域，共 5 个）；未接线的 kind ⇒ 与「作业不存在」同形 404。
+  // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
+  // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。
   // 必须在 registerSpeechRoutes 之后：转写服务由该插件装配并装饰为 app.speechService。
   // GY-I27 第二片：识别域取消成功后写外发取消墓碑（只增不减 ⇒ 晚到回调不可复活）。
   registerJobRoutes(app, config, guards, createJobRegistry([

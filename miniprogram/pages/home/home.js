@@ -10,8 +10,8 @@ Page({
   data: { fontScale: 1, guest: true, entries: [
       { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
       { key: 'ocr', iconClass: 'gy-icon--tag', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
-      { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '说话提问，也可打字' }
-    ], local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、社区、消息与我的等业务尚未接入。' },
+      { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '合成播报已接服务端；录音转写（ASR）尚未接线' }
+    ], local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
   onShow: function () {
     this._active = true
     const action = this._action = (this._action || 0) + 1
@@ -37,7 +37,7 @@ Page({
     navigation.goLogin(op.id)
   },
   // GY-I12：能力卡把既有 key 透传过来（`data-key="{{item.key}}"`），按 key 分派目标：
-  // 只有「语音提问」（key `voice`，说话提问，也可打字）进播报页 `/pages/voice/voice`
+  // 只有「语音提问」（key `voice`，合成播报已接服务端；录音转写尚未接线）进播报页 `/pages/voice/voice`
   // （该页已在 utils/navigation.js 白名单内）；其余 key 与无 key（hero 的「开始识别」）
   // 一律保持原有进识别页的口径。门禁与未登录行为完全复用 openGated，不放宽任何判定。
   onEntryTap: function (event) {

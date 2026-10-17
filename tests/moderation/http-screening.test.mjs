@@ -307,7 +307,7 @@ test('real 未接真实供应商：整域 fail-closed 503 PROVIDER_UNAVAILABLE�
     const error = await captureError(run);
     assert.equal(error.code, 'PROVIDER_UNAVAILABLE', String(error.message));
     assert.equal(error.status, 503);
-    assert.equal(error.retryable, true, '未接线能力必须标 retryable（接线后同一请求可成功）');
+    assert.equal(error.retryable, false, '未接线能力（需运维接线后才可用）不是瞬时故障：同一请求原样重试不会成功 ⇒ 不得标 retryable');
     refused.push(error);
   }
   assert.equal(tms.calls.count, 0, 'real 不得调用任何注入端口（也不得静默回退替身）');
@@ -319,7 +319,7 @@ test('real 未接真实供应商：整域 fail-closed 503 PROVIDER_UNAVAILABLE�
   // 契约 503 封套（HTTP 传输层形态；本片不新增路由，故这里直接核对共享错误封套）
   const envelope = buildErrorEnvelope(refused[0], { request_id: 'synthetic-request-id', execution_mode: 'real' });
   assert.equal(envelope.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(envelope.error.retryable, true);
+  assert.equal(envelope.error.retryable, false);
   assert.deepEqual(envelope.error.details, []);
   assert.equal(envelope.meta.execution_mode, 'real');
   assert.equal(envelope.meta.contract_version, '1.0.0');

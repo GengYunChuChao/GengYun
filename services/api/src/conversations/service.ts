@@ -367,7 +367,8 @@ function parseOutcome(raw: unknown): ConversationOutcome {
   ) {
     return { resource: 'conversation', conversation_id: record['conversation_id'] };
   }
-  throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账结果引用格式非法（拒绝据此产出回答）', { retryable: true });
+  // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+  throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账结果引用格式非法（拒绝据此产出回答）', { retryable: false });
 }
 
 /**
@@ -384,7 +385,8 @@ function assertAnswerContract(view: AnswerView): void {
     throw new ApiError(
       'PROVIDER_UNAVAILABLE',
       `回答不满足契约 Answer 形状（拒绝落库与外发）：${issues.slice(0, 5).join('; ')}`,
-      { retryable: true },
+      // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+      { retryable: false },
     );
   }
 }
@@ -617,7 +619,8 @@ export function createConversationService(deps: ConversationServiceDeps) {
         if (outcome.resource !== 'conversation') throw new ApiError('IDEMPOTENCY_CONFLICT', '同键请求内容不一致（结果引用不是会话）');
         const stored = await store.getConversation(outcome.conversation_id, identity.userId);
         // 台账命中但资源已被删除：如实 503（**不**重放一个已经不存在的资源）。
-        if (stored === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但会话已不存在', { retryable: true });
+        // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        if (stored === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但会话已不存在', { retryable: false });
         return { data: conversationViewOf(stored), etag: strongEtagOf(stored.revision) };
       },
     });
@@ -705,11 +708,14 @@ export function createConversationService(deps: ConversationServiceDeps) {
         if (code === 'NOT_FOUND') throw notFound();
         if (code === 'REVISION_CONFLICT') throw new ApiError('REVISION_CONFLICT', '转写版本与 If-Match 不一致');
         throw new ApiError('INPUT_UNCERTAIN', transcription.available ? '转写尚未经用户核对（confirmed_text 为空）' : transcription.note, {
-          retryable: !transcription.available,
+          // 两条路都不是"稍后自己会好"：端口未接线 ⇒ 需运维接线；已接线但 confirmed_text 为空 ⇒ 需**用户先核对**。
+          // 口径（services/api/src/errors.ts 的 ApiError 注释）：true 仅当同一请求在**无人工/运维介入**下稍后重试可能成功。
+          retryable: false,
         });
       }
       if (verdict.text === undefined || verdict.ref === undefined) {
-        throw new ApiError('PROVIDER_UNAVAILABLE', '转写端口回传不完整（拒绝受理）', { retryable: true });
+        // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        throw new ApiError('PROVIDER_UNAVAILABLE', '转写端口回传不完整（拒绝受理）', { retryable: false });
       }
       speech = { text: verdict.text, ref: verdict.ref };
     }
@@ -754,7 +760,8 @@ export function createConversationService(deps: ConversationServiceDeps) {
       replay: async (outcome) => {
         if (outcome.resource !== 'turn') throw new ApiError('IDEMPOTENCY_CONFLICT', '同键请求内容不一致（结果引用不是轮次）');
         const found = await store.getTurn(conversationId, outcome.turn_id, identity.userId);
-        if (found === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但轮次已不存在', { retryable: true });
+        // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        if (found === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但轮次已不存在', { retryable: false });
         return { data: jobViewOf(found.turn, found.answer), etag: strongEtagOf(found.turn.revision) };
       },
     });

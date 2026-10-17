@@ -347,7 +347,8 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
       }
 
       if (candidate.text.trim().length === 0) {
-        throw new ApiError('PROVIDER_UNAVAILABLE', '生成侧给出了空正文（拒绝产出空回答）', { retryable: true });
+        // 生成侧回传空正文 ⇒ 端口回传不可信（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        throw new ApiError('PROVIDER_UNAVAILABLE', '生成侧给出了空正文（拒绝产出空回答）', { retryable: false });
       }
       return {
         status: 'answered',

@@ -144,6 +144,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'utils/reference.js',
     'utils/profile-api.js',
     'utils/location-region.js',
+    // 地区转换资源装配（GY-I05 D2）：profile 页 require 它，漏打包会让标准包 MODULE_NOT_FOUND
+    'utils/region-converter.js',
     'utils/knowledge-api.js',
     // 社区域适配层（GY-I15）：社区三页依赖它
     'utils/community-api.js',

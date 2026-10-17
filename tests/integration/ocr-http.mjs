@@ -295,6 +295,15 @@ const OCR_REGISTRY_BASELINE_KEYS = new Set(
   OCR_REGISTRY_BASELINE_EDGES.map((edge) => `${edge.loader}|${edge.specifier}|${edge.target}`),
 );
 /**
+ * r9：基线 **key ⇄ 描述符** 的唯一检索表（**由**上面两份既有常量派生 ⇒ 不新造第二份基线表）。
+ * 用途：`collectMissingBaselineEdges` 判红时要点名**丢了哪一条**（loader / specifier / target 三要素）。
+ * ⚠ 顺序对齐由**语言规范**保证：`OCR_REGISTRY_BASELINE_KEYS` 是 `OCR_REGISTRY_BASELINE_EDGES.map(…)` 的结果，
+ *   Set 的迭代顺序即插入顺序 ⇒ 第 i 个 key 恰对应第 i 条边（不得在此之外另建一张映射表）。
+ */
+const OCR_REGISTRY_BASELINE_EDGES_BY_KEY = new Map(
+  [...OCR_REGISTRY_BASELINE_KEYS].map((key, index) => [key, OCR_REGISTRY_BASELINE_EDGES[index]]),
+);
+/**
  * r8（阻断 B 返修）：**解析被第三方改写**的 fail-closed 判据。
  *
  * 被审版本（r7c，`8e3b350`）的 `collectOcrRegistryEdges` 以 `if (target === null || !isOcrDomainTarget(target)) continue;`
@@ -443,11 +452,49 @@ const collectOcrRegistryFindings = (source = moduleLoadRegistry.entries) => {
   }
   return findings;
 };
-/** 主判据断言：从受护文件可达的 OCR 域装载边里，**不得**出现基线之外的新边。 */
+/**
+ * r9（复审 r8 非阻塞项 ③）：**基线必须全部命中** —— 主判据只判「基线之外**多出来**的边」，
+ *   **不判「基线之内少掉的边」**。
+ *
+ * 缺陷形状（实测，不是推演）：把任一条基线边从登记集合里剔掉（探针＝本片副本里对
+ *   `routes/ocr.ts|../ocr/provider.ts` 一条直接 `continue` 不收集）⇒ 可达边 9→8、基线之外 0、fail-closed 0
+ *   ⇒ 旧断言**全绿**，汇总行只是把「冻结基线命中 8 条」当**读数**打印出去，没有任何断言比对 8 ≠ 9
+ *   ⇒ **丢掉一条基线边仍然 exit 0（假绿）**。
+ *
+ * 判据：`OCR_REGISTRY_BASELINE_KEYS` − 命中集合 = ∅。命中集合取主判据**同一份** `collectOcrRegistryEdges`；
+ *   fail-closed 命中项**不算**基线命中（它由 r8 判据单独判红，`key` 也与基线 key 不同形状）。
+ * ⚠ 只做差集，不新造基线表。
+ */
+const collectMissingBaselineEdges = (source = moduleLoadRegistry.entries) => {
+  const hitKeys = new Set();
+  for (const edge of collectOcrRegistryEdges(source)) {
+    if (edge.failClosed === true) continue;
+    hitKeys.add(edge.key);
+  }
+  return [...OCR_REGISTRY_BASELINE_KEYS]
+    .filter((key) => !hitKeys.has(key))
+    .map((key) => ({ key, edge: OCR_REGISTRY_BASELINE_EDGES_BY_KEY.get(key) }));
+};
+/** 基线丢失项的判词（**点名丢哪一条**：loader → specifier → target ＋ key 原文）。 */
+const describeMissingBaselineEdges = (missing) => missing
+  .map(({ key, edge }) => `  · ${edge.loader} → '${edge.specifier}' → ${edge.target}（key=${key}）`)
+  .join('\n');
+/**
+ * 主判据断言：**两条鉴别力合并**，作用域比"OCR 域装载边"更宽 ⇒ 判词必须与作用域一致（复审非阻塞 ②）：
+ *   · r7 侧（作用域＝**OCR 域装载边**）：从受护文件可达的 OCR 域装载边里，**不得**出现基线之外的新边。
+ *   · r8 侧（作用域＝**域无关**）：两类 fail-closed 命中一律判红 ——「解析结果不是仓内 `file:` URL 且
+ *     `specifier` 不是内建模块」与「同一 `(parentUrl, specifier)` 解析出**不同** URL」。
+ * ⚠ 为什么**不**把 r8 侧收窄到 OCR 域（非阻塞 ② 的二选一，这里选"保留宽判据 ＋ 改文案"）：复审 F3 实测
+ *   重复 resolve 先落在 `node_modules/ajv-formats/**` 这类**非 OCR 域**模块上；若按 OCR 域过滤，
+ *   「先把非 OCR 模块改写成 `data:`／两个不同 URL，再从那里绕回 OCR 域」这条通道就重新静默放行
+ *   ⇒ 收窄会**削弱鉴别力**，故判据保持宽，只把判词改成如实的分项计数。
+ */
 const assertRegistryClean = (label) => {
   const findings = collectOcrRegistryFindings();
   if (findings.length > 0) {
-    assert.fail(`OCRREGISTRY: ${label} —— 运行期装载登记抓到 ${findings.length} 条**基线之外**的 OCR 域装载边（r7 主判据）：\n${findings.map((finding) => `  · ${finding.message}`).join('\n')}`);
+    const failClosedHits = findings.filter((finding) => finding.failClosed === true);
+    const baselineOutsideEdges = findings.filter((finding) => finding.failClosed !== true);
+    assert.fail(`OCRREGISTRY: ${label} —— 运行期装载登记抓到 ${findings.length} 条判红项（其中「基线之外的 OCR 域装载边」${baselineOutsideEdges.length} 条 ＋「域无关的 fail-closed 解析命中」${failClosedHits.length} 条；r7 ＋ r8 两条判据）：\n${findings.map((finding) => `  · ${finding.message}`).join('\n')}`);
   }
   return findings.length;
 };
@@ -1484,6 +1531,13 @@ try {
     });
     assert.equal(rejected.status, 503, 'real 缺凭据必须受理前 503');
     assert.equal(rejected.json.error.code, 'PROVIDER_UNAVAILABLE');
+    // 新增（原文件此前**零** `retryable` 断言 ⇒ 这是"能力未接线"口径在本面长期无声漂移的缺口）：
+    // 「真实 OCR 提供者未接线」需运维改配置，不是时间能解决的 ⇒ 不得声称"重试就会好"。
+    assert.equal(
+      rejected.json.error.retryable,
+      false,
+      'OCR 受理面：能力未接线 ⇒ retryable 必须为 false（口径原文见 services/api/src/errors.ts）',
+    );
     assert.equal(realApp.ocrService.describe().providerCalls, 0, '受理前 fail-closed 不得调用提供者');
     // 不建任务：换一个键再来一次仍是 503，且调用计数仍为 0。
     const again = await call(realBase, realToken, 'POST', `${API}/ocr`, {
@@ -1491,6 +1545,13 @@ try {
       body: { media_id: mediaIdForBucket(0), media_revision: 1 },
     });
     assert.equal(again.status, 503);
+    assert.equal(again.json.error.code, 'PROVIDER_UNAVAILABLE');
+    // 重试不会好：连第二次请求也如实是 `retryable:false`（不是"第一次没准备好"）。
+    assert.equal(
+      again.json.error.retryable,
+      false,
+      'OCR 受理面：同一请求重试后仍不可用 ⇒ 更证明其非瞬时故障，retryable 必须为 false',
+    );
     assert.equal(realApp.ocrService.describe().providerCalls, 0);
 
     // —— 代码层结构证据（"默认关闭"是结构属性，不是约定）——
@@ -1890,7 +1951,11 @@ try {
     });
     assert.equal(cancelled.status, 503, `OCR 域本基线无取消能力 ⇒ 如实 503（不得 200，也不得 404）：${JSON.stringify(cancelled.json)}`);
     assert.equal(cancelled.json.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(cancelled.json.error.retryable, true, '能力未接线属可重试（接线后同一请求即可成功）');
+    assert.equal(
+      cancelled.json.error.retryable,
+      false,
+      '能力未接线（OCR 域无取消能力）⇒ 需运维接线，同一请求重试不会成功 ⇒ retryable 必须为 false',
+    );
 
     // 不得伪造 cancelled、不得改 revision、不得影响可读性
     const after = await call(base, tokenA, 'GET', `${API}/jobs/${jobId}`);
@@ -1963,8 +2028,34 @@ try {
   //   （实测：非 `file:` 解析结果 82 条**全部**是 `node:` 内建 ⇒ 经 `isBuiltin` 白名单后为 0；幂等重解析对只计数不判红）。
   assert.equal(registrySummary.failClosedEdges, 0, `r8 fail-closed 判据在**未改动**仓库上不得命中（否则是把合法解析判红）：实际 ${registrySummary.failClosedEdges} 条`);
   assert.equal(registrySummary.positiveControl, true, '正控制必须成立：登记集合里必须能看到无害模块 `node:os`（否则是"登记器恒空 ⇒ 恒绿"的退化）');
+  // ── r9（复审非阻塞 ③）：**基线 9 条必须全部命中** ──
+  // 为什么需要第三条断言：上面两条 + 主判据只覆盖"基线之外**多出来**的边"，**不覆盖"基线之内少掉的边"**。
+  //   实测（本片探针，改动前）：剔掉 `routes/ocr.ts → '../ocr/provider.ts'` 一条 ⇒ 可达边 9→8、基线之外 0、
+  //   failClosed 0、正控制照旧成立 ⇒ **exit 0 全绿**，汇总行只把「冻结基线命中 8 条」当读数打印，无人比对 ⇒ 假绿。
+  //   故这里同时钉住**计数**（`baselineEdges === 基线条数`）与**集合相等**（`基线集合 − 命中集合 = ∅`），
+  //   判红时点名**丢的是哪一条**（loader / specifier / target ＋ key 原文）。
+  //   ⚠ 还有第三种假绿要堵：**只做差集**时，把基线表缩成空集（或删到 1 条）会让"基线集合 − 命中集合"**恒空**
+  //     ⇒ 空表恒绿。故先钉**表本身的条数**（字面量 `9`，即 r7 冻结记录；复审建议
+  //     `assert.equal(registrySummary.baselineEdges, 9, …)` 的同义实现）。表若有**有意**变化，必须连这个字面量
+  //     一起改 —— 这点"摩擦"是故意的（与主判据"合法装配变化时要求人复核"同口径）。
+  assert.equal(
+    OCR_REGISTRY_BASELINE_EDGES.length,
+    9,
+    `r9 基线表本身被改动：r7 冻结记录是 9 条，实际 ${OCR_REGISTRY_BASELINE_EDGES.length} 条（若确为合法装配变化，请连同本断言的 9 一并显式更新）`,
+  );
+  const missingBaselineEdges = collectMissingBaselineEdges();
+  assert.equal(
+    registrySummary.baselineEdges,
+    OCR_REGISTRY_BASELINE_EDGES.length,
+    `r9 基线边命中数不符：冻结基线 ${OCR_REGISTRY_BASELINE_EDGES.length} 条，实际命中 ${registrySummary.baselineEdges} 条（丢 ${missingBaselineEdges.length} 条）：\n${describeMissingBaselineEdges(missingBaselineEdges)}`,
+  );
+  assert.deepEqual(
+    missingBaselineEdges.map(({ edge }) => edge),
+    [],
+    `r9 基线边**必须全部命中**（缺一条即判红；"基线之外没有新边"不等于"基线之内没少边"）：\n${describeMissingBaselineEdges(missingBaselineEdges)}`,
+  );
   console.log(`PASS r7 主判据·运行期装载登记：resolve=${registrySummary.resolveCount} load=${registrySummary.loadCount}；从受护文件可达的 OCR 域装载边=${registrySummary.ocrReachableEdges}（冻结基线命中 ${registrySummary.baselineEdges} 条；基线之外 ${newEdgeCount} 条）；r8 fail-closed 命中 ${registrySummary.failClosedEdges} 条（幂等重解析对 ${registrySummary.repeatResolvePairs} 对，只计数不判红）；正控制 \`node:os\` 已在登记集合中`);
-  console.log(`NOTE r7 主判据口径（如实声明，不得读成"放行"）：断言的是「**没有任何 OCR 域装载边落在基线之外**」，而非派单字面的「登记集合内无任何 OCR 域条目」—— 因为**未改动**的仓库运行期本来就有 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法 OCR 域边（\`app.ts → routes/ocr.ts\` 是合法装配；\`routes/ocr.ts\` 静态装载 \`../ocr/{service,store,provider,media,reference}.ts\`，其中 \`service.ts\`/\`store.ts\`/\`reference.ts\` 又各自装载 \`./state.ts\`）。基线是"当前事实的冻结记录"，**任何新边（含以任意间接形态装载既有 OCR 域模块）一律判红**（fail-closed）；合法装配变化时本判据会判红并要求显式更新基线表（有意如此，宁可要求人复核）。`);
+  console.log(`NOTE r7 主判据口径（如实声明，不得读成"放行"）：断言的是「**没有任何 OCR 域装载边落在基线之外**」，而非派单字面的「登记集合内无任何 OCR 域条目」—— 因为**未改动**的仓库运行期本来就有 ${OCR_REGISTRY_BASELINE_EDGES.length} 条合法 OCR 域边（\`app.ts → routes/ocr.ts\` 是合法装配；\`routes/ocr.ts\` 静态装载 \`../ocr/{service,store,provider,media,reference}.ts\`，其中 \`service.ts\`/\`store.ts\`/\`reference.ts\` 又各自装载 \`./state.ts\`）。基线是"当前事实的冻结记录"，**任何新边（含以任意间接形态装载既有 OCR 域模块）一律判红**（fail-closed）；合法装配变化时本判据会判红并要求显式更新基线表（有意如此，宁可要求人复核）。**r9 起再加一条（复审非阻塞 ③）**：上面这条只判「基线之外多出来的边」，**不判「基线之内少掉的边」** —— 实测在副本里剔掉 \`routes/ocr.ts → '../ocr/provider.ts'\` 一条基线边，可达边 9→8、基线之外 0、failClosed 0 ⇒ 仍 exit 0 全绿（本片的假绿探针）。故收尾处另加 \`collectMissingBaselineEdges()\`：「基线集合 − 命中集合 = ∅」，且 \`baselineEdges === 基线条数\`，丢哪一条就点名哪一条（loader / specifier / target ＋ key 原文）。`);
   console.log('NOTE r8 fail-closed（阻断 B 返修，如实声明口径与边界）：被审版本（r7c）以 `if (target === null || !isOcrDomainTarget(target)) continue;` **静默丢弃**一切非仓内 `file:` 的解析结果 —— 复审实测 `services/api/src/config.ts` 在装载期抢先注册第二个 `registerHooks`，把 `app.ts → \'./routes/ocr.ts\'` 改写成 `data:text/javascript;base64,…` ⇒ 该边被丢弃 ⇒ 护栏 exit 0 且 `PASS 14 组` 全绿（**假绿**）。r8 起两条 fail-closed 判据：①**「`resolve` 结果不是仓内 `file:` URL、且 `specifier` 不是内建模块」⇒ 判红**（派单口径：`target === null` 的边一律计入 findings；内建模块经 `isBuiltin` 走**显式白名单**——未改动仓库运行期实测有 82 条 `node:` 解析结果，按字面一律判红会把未改动仓库判红。**不附加**"parentUrl 从受护文件可达"前置条件：附加可达性会给「把 `app.ts` 自身的解析改写成 `data:`」留口子 —— 那时受护引用图整体不可达、可达边集合塌缩为 0，而本判据按"基线之外"计数 ⇒ 塌缩反而**全绿**）；②**「同一 `(parentUrl, specifier)` 解析出**不同** URL」⇒ 判红**（计数口径必须按 (parentUrl, specifier) **对**：实测未改动仓库单个 parentUrl 最多 78 条 resolve ⇒ 按纯 parentUrl 会大量误报；判红条件还必须限定"URL 不一致"—— 字面口径"同一对出现 ≥2 次即判红"在**未改动**仓库上实测误报 7 条（`node_modules/ajv/**`、`ajv-formats/**` 在 Fastify schema 编译阶段**幂等重解析**，前后 URL 完全相同），会使收尾负控制 `failClosedEdges === 0` 不可满足 ⇒ URL 相同的重解析只计数、写进汇总行的"幂等重解析对"）。两条判词都含 `parentUrl` / `specifier` / `loader` 三要素。边界（如实声明）：本判据覆盖的是**经本进程模块装载器**发生的改写；`node --import` 抢跑的第二个 `registerHooks` 若**不改写 URL**（例如只在 `load` 钩子里替换源码）不在本判据范围内（属"不经解析改写"的另一类通道，未取得见证）。');
   console.log('NOTE r7 主判据覆盖边界（如实声明）：登记的是**本脚本自身运行期**真实发生的解析/装载（CJS `require` 与 ESM `import` 两条路径都被拦）；**不覆盖**：①不经模块装载器的路径（直接读文件/`vm`/把源码内联进 `eval`）；②在本进程之外发生的装载（另起进程/子进程）；③**从不装载**的形状（实测 `createRequire.bind(null, url)(spec)` 只返回 require 函数、不装载任何模块 ⇒ 登记器如实没有该边，这不是盲区而是运行期事实）；④`undefined`/`null` 之类的"假 require"（运行期先抛 `ReferenceError`/`TypeError`，到不了装载器）。');
 

@@ -1,9 +1,11 @@
 <view class="page" style="--font-scale: {{fontScale}}">
   <view class="banner">{{modeNote}}</view>
+  <!-- GY-I07 D1：逐条可判定的来源标记（服务端 /herbicides/{id} / 随包离线副本），不互相冒充。 -->
+  <view class="source-marker" wx:if="{{sourceMarker}}">来源标记：{{sourceMarker}}</view>
 
   <view wx:if="{{!found}}" class="card">
     <view class="title">未找到该记录</view>
-    <view>该记录不存在，或已被下架、失效而不在有效资料中。</view>
+    <view>{{notFoundText || '该记录不存在，或已被下架、失效而不在有效资料中。'}}</view>
     <button class="btn btn-primary" bindtap="backToList">返回继续查询</button>
   </view>
 
@@ -15,8 +17,8 @@
 
     <view class="card">
       <view class="item-head">
-        <text class="item-name">{{detail.registered_name}}</text>
-        <text class="item-reg">{{detail.registration_number}}</text>
+        <text class="item-name">{{detail.registered_name || detail.registration_number}}</text>
+        <text class="item-reg" wx:if="{{detail.registered_name}}">{{detail.registration_number}}</text>
       </view>
       <view class="tags">
         <text class="tag">{{labels.source_kind}}</text>
@@ -30,30 +32,35 @@
     <view class="card">
       <view class="section-title">制剂信息</view>
       <view class="row"><text class="k">登记证号</text><text class="v">{{detail.registration_number}}</text></view>
-      <view class="row"><text class="k">登记名称</text><text class="v">{{detail.registered_name}}</text></view>
-      <view class="row"><text class="k">登记证持有人</text><text class="v">{{detail.producer}}</text></view>
-      <view class="row"><text class="k">剂型</text><text class="v">{{detail.dosage_form}}</text></view>
-      <view class="row"><text class="k">有效成分及含量</text><text class="v">{{detail.ingredients_text}}</text></view>
+      <!-- 登记名称/毒性/作物场所等字段在 Herbicide 契约里不存在：接口未提供时不代填、不拼接冒名。 -->
+      <view class="row" wx:if="{{detail.registered_name}}"><text class="k">登记名称</text><text class="v">{{detail.registered_name}}</text></view>
+      <view class="row" wx:if="{{detail.producer}}"><text class="k">登记证持有人</text><text class="v">{{detail.producer}}</text></view>
+      <view class="row" wx:if="{{detail.dosage_form}}"><text class="k">剂型</text><text class="v">{{detail.dosage_form}}</text></view>
+      <view class="row" wx:if="{{detail.ingredients_text}}"><text class="k">有效成分及含量</text><text class="v">{{detail.ingredients_text}}</text></view>
     </view>
 
     <!-- 条件 -->
-    <view class="card">
+    <view class="card" wx:if="{{detail.use_scene || detail.target_original}}">
       <view class="section-title">适用条件</view>
-      <view class="row"><text class="k">作物／场所</text><text class="v">{{detail.use_scene}}</text></view>
-      <view class="row"><text class="k">防治对象</text><text class="v">{{detail.target_original}}</text></view>
+      <view class="row" wx:if="{{detail.use_scene}}"><text class="k">作物／场所</text><text class="v">{{detail.use_scene}}</text></view>
+      <view class="row" wx:if="{{detail.target_original}}"><text class="k">防治对象</text><text class="v">{{detail.target_original}}</text></view>
     </view>
 
     <!-- 风险 -->
     <view class="card">
       <view class="section-title">风险与注意事项</view>
-      <view class="row"><text class="k">毒性</text><text class="v">{{detail.toxicity}}</text></view>
+      <view class="row" wx:if="{{detail.toxicity}}"><text class="k">毒性</text><text class="v">{{detail.toxicity}}</text></view>
       <view class="row"><text class="k">用药量</text><text class="v">{{labels.dose}}</text></view>
-      <view class="note">{{detail.note}}</view>
+      <view class="note" wx:if="{{detail.risk_text}}">{{detail.risk_text}}</view>
+      <view class="note" wx:if="{{detail.note}}">{{detail.note}}</view>
     </view>
 
     <!-- GY-I08 标签原文用量安全边界（DoseCard） -->
     <view class="card">
       <view class="section-title">用量安全边界（标签原文）</view>
+      <!-- GY-I07 D1：服务端 /herbicides/{id} 不提供用量卡与适用性字段 ⇒ 如实说明，不展示任何用量。 -->
+      <view wx:if="{{dataSource === 'server'}}" class="state-bar state-unavailable">{{doseCardNote}}</view>
+      <block wx:else>
       <!-- PR #82 阻塞 C：档案未确认/读取失败时明确拒绝，不按空上下文放行具体用量。 -->
       <view wx:if="{{!profileConfirmed}}" class="state-bar state-unavailable">
         尚未确认当前适用条件{{profileError ? '：' + profileError : ''}}。资料可查阅，但不提供可执行用量。
@@ -86,6 +93,7 @@
         </view>
       </block>
       <button wx:if="{{!profileConfirmed}}" class="btn btn-ghost" bindtap="retryProfile">重试档案读取</button>
+      </block>
     </view>
 
     <!-- 原文来源 -->
@@ -93,7 +101,8 @@
       <view class="section-title">原文来源</view>
       <view class="row"><text class="k">发布机构</text><text class="v">{{detail.source.publisher}}</text></view>
       <view class="row" wx:if="{{detail.source.issue}}"><text class="k">期号／文件</text><text class="v">{{detail.source.issue}}</text></view>
-      <view class="row"><text class="k">采集日期</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <!-- 服务端 SourceRef.updated_at 不是采集日期：标签由 sourceDateLabel 如实切换。 -->
+      <view class="row"><text class="k">{{sourceDateLabel}}</text><text class="v">{{detail.source.retrieved_at}}</text></view>
       <view class="src-url" bindtap="copySource">{{detail.source.original_url}}</view>
       <view class="src-hint">点击链接文本可复制原始来源地址</view>
     </view>
@@ -102,15 +111,19 @@
     <view class="card">
       <view class="section-title">来源版本与核对范围</view>
       <view class="row"><text class="k">来源版本</text><text class="v mono">{{detail.source_version}}</text></view>
-      <view class="row"><text class="k">更新时间</text><text class="v">{{detail.source.retrieved_at}}</text></view>
-      <view class="sub-title">已核对字段</view>
-      <view class="chips">
-        <text class="chip" wx:for="{{verifiedScope}}" wx:key="*this">{{item}}</text>
-      </view>
-      <view class="sub-title">未采集字段（如实列出，不代填）</view>
-      <view class="chips">
-        <text class="chip chip-muted" wx:for="{{notCollected}}" wx:key="*this">{{item}}</text>
-      </view>
+      <view class="row" wx:if="{{sourceDateLabel === '采集日期'}}"><text class="k">更新时间</text><text class="v">{{detail.source.retrieved_at}}</text></view>
+      <block wx:if="{{verifiedScope.length}}">
+        <view class="sub-title">已核对字段</view>
+        <view class="chips">
+          <text class="chip" wx:for="{{verifiedScope}}" wx:key="*this">{{item}}</text>
+        </view>
+      </block>
+      <block wx:if="{{notCollected.length}}">
+        <view class="sub-title">未采集字段（如实列出，不代填）</view>
+        <view class="chips">
+          <text class="chip chip-muted" wx:for="{{notCollected}}" wx:key="*this">{{item}}</text>
+        </view>
+      </block>
     </view>
 
     <button class="btn btn-ghost" bindtap="backToList">返回继续查询</button>

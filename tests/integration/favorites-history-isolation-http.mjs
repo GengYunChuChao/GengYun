@@ -110,9 +110,10 @@ function itemById(body, id) {
 }
 
 // 断言失败必须**有界地**以非 0 退出：用例③/④ 也各自 `await fixture()` 新建监听中的服务，若失败路径
-// 不关掉它们，事件循环永不退出 ⇒ 本地"红"会退化成 CI 上"挂到 GitHub 默认 360 分钟"
-// （`.github/workflows/engineering-shell.yml` 全文件无 `timeout-minutes`，`package.json` 的
-// `test:integration:http` 又是 `&&` 串联：一个进程不返回则整链不返回）。
+// 不关掉它们，事件循环永不退出 ⇒ 本地"红"会退化成 CI 上"挂到该 job 的 `timeout-minutes` 才被杀"
+// （`.github/workflows/engineering-shell.yml` 全部 7 个 job 都设了 `timeout-minutes: 15`，`integration`
+// job 亦然；而 `package.json` 的 `test:integration:http` 是 `&&` 串联：一个进程不返回则整链不返回
+// ⇒ 15 分钟内拿不到任何有意义的失败点，只看到一条超时）。
 // ⇒ 把每个已开的 app 登记在册，失败时统一关闭、再确定性退出。
 const openApps = new Set();
 async function closeAllFixtures() {

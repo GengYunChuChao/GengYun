@@ -26,15 +26,30 @@
  * 2. **未覆盖 ⇒ 不可完成**：`backupPurge` 未接线 ⇒ 每个模块 `backup_state: 'pending'`
  *    ⇒ 全模块完成判定恒不成立（缺口对用户与监工可见，不谎称完成）。
  * 3. **未装配 ⇒ 503**：服务端执行模式不允许本片（`real`）时，两个 operation **不注册任何回退**，
- *   由 `registerAccountDeletionRoutes()` 抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ *   由 `registerAccountDeletionRoutes()` 抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
+ *
+ * ## GY-I19 本片追加：持久化受理 ＋ 同事务撤销（撤销上面两条缺口的部分）
+ * - **持久化受理**：`public.deletion_requests` 表**不是本片新建的** —— 它由**已合并的**
+ *   `services/api/db/migrations/0003_privacy_consent.sql` 建好（主键、`user_id` 外键、
+ *   状态闭集、`generation` 唯一）；本片只补**写入路径**与两个期限列（`receipt_expires_at`、
+ *   `receipt_issued_at`），见 `services/api/db/migrations/0016_account_deletion_persistence.sql`
+ *   ＋ `services/api/src/privacy/deletion-requests-pg.ts`。因此**仍然只有一套台账**。
+ * - **同一事务内撤销**（`docs/architecture/state-contract.md:105`「注销须在同一事务内撤销会话/
+ *   角色/外发/在途回写」）**本片实现会话 ＋ `auth_epoch` 那一半**：受理走唯一一个窄口径
+ *   `SECURITY DEFINER` 函数，在同一事务内完成「账号 `state` → `deletion_pending`、
+ *   `auth_epoch + 1`、撤销该账号**全部** `sessions` 行、注销请求落库」；
+ *   `services/api/src/privacy/user-data-deletion.ts` 的 `requestDeletionFor()` **只启动**该事务，
+ *   `executeHandlers()` 第一步 await 它 ⇒ 事务未提交就**不会**进入级联、不会签发回执、不会 202。
+ *   调用方仍**不是** `account-deletion.ts`（它不碰这个端口）：由 `app.ts` 把 `requests` 端口
+ *   装在 `userDataDeletion` 上。
+ * - **仍未实现（照旧如实登记）**：outbox／7 日在线与 30 日备份的**到期执行**、第三方完成证据、
+ *   备份副本清除、恢复清单重放、**外发与在途回写的撤销**（`state-contract.md:105` 的另外一半）
+ *   —— 细目与阻塞原因见交接 md 的「未取得项」。
  *
  * ## 已知缺口（如实登记，不在本文件掩盖）
- * - **进程内状态**：删除请求与回执映射都在内存（既有 `createUserDataDeletion()` 本就在内存），
- *   `packages/contracts` / `packages/privacy` 里**没有**注销请求的持久表 ⇒ 本片**不新建迁移**
- *   （那会是第二套台账）。因此**重启后旧回执 id 一律 404** —— 这是缺口，见交接 §8。
- * - **同事务撤会话/角色/外发/在途回写**（`docs/architecture/state-contract.md:105`）**未实现**：
- *   本片只受理并如实回报状态。该缺口已如实登记，**不**在本片用「先撤会话再受理」的方式
- *   伪造（那会让 202 永远回不去，是更坏的谎）。
+ * - **回执 bearer 仍是进程内**：`DeletionReceiptRegistry` 的 `tokenHash` 台账只在内存
+ *   （**明文与摘要都不落库**），持久表只记请求本身与 `receipt_expires_at` 期限。
+ *   因此**重启后旧回执 id 仍然一律 404** —— 这是缺口，见交接 §8。
  */
 import { mintOpaqueToken, hashToken } from '../auth/tokens.ts';
 // 复用**已合并**协议的安全错误码白名单（`services/api/src/privacy/deletion-reference.d.ts:14`）：
@@ -48,9 +63,15 @@ export const RECEIPT_TTL_MS = 35 * 24 * 60 * 60 * 1000;
 /** `GET /account/deletions/{id}` 的鉴权方式（契约 `deletionReceipt`）：**非登录会话**。 */
 export const RECEIPT_AUTH_KIND = 'deletionReceipt';
 
-/** 契约为注销申请声明的两个执行模式之外的模式一律 503（见文件头边界 3）。 */
+/**
+ * 契约未允许本片执行模式时的 503 文案。
+ *
+ * 注意：**本片（GY-I19 持久化受理）之后，注销请求已有持久写路径**，因此这句话只在
+ * `real` 模式的**执行链路**（7 日在线／30 日备份执行、第三方完成证据）缺失时成立 ——
+ * 文案说的是「执行链路未接线」，不是「没有持久表」（后者已不成立，勿再照抄旧文案）。
+ */
 export const ACCOUNT_DELETION_UNAVAILABLE_MESSAGE =
-  '注销删除请求存储未接线（本基线为进程内、无注销请求持久表）：如实拒绝，不伪造受理';
+  '注销删除执行链路未接线（7 日在线／30 日备份执行与第三方完成证据缺失）：如实拒绝，不伪造受理';
 
 /** 202 响应体（契约 `DeletionAcceptedEnvelope` 的 `data`；`meta` 由路由层补）。 */
 export interface DeletionAcceptedProjection {
@@ -143,7 +164,7 @@ export function createDeletionReceiptRegistry(input: { now?: () => Date } = {}):
 /**
  * 注销申请服务（`POST /me/account/deletion` 的唯一实现）。
  *
- * `available === false` ⇒ 路由**不注册回退**：抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ * `available === false` ⇒ 路由**不注册回退**：抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  */
 export interface AccountDeletionRequestService {
   readonly available: boolean;

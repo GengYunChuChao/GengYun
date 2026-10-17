@@ -403,13 +403,13 @@ async function main() {
     });
     assert.equal(realAccepted.status, 503, JSON.stringify(realAccepted.body));
     assert.equal(realAccepted.body.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(realAccepted.body.error.retryable, true);
+    assert.equal(realAccepted.body.error.retryable, false);
     assert.equal(realAccepted.body.meta.execution_mode, 'real');
     const realReceipt = await realHttp(`${API}/account/deletions/${randomUUID()}`, { token: mintOpaqueToken() });
     assert.equal(realReceipt.status, 503, JSON.stringify(realReceipt.body));
     assert.equal(realReceipt.body.error.code, 'PROVIDER_UNAVAILABLE');
     assert.equal(realApp.deletionReceipts.liveCount(), 0, '未装配路径不得留下任何状态');
-    note('real 模式：POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=true)，零状态变更');
+    note('real 模式：POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false)，零状态变更');
   } finally {
     await realApp.close();
   }

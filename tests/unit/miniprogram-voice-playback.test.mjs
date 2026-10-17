@@ -806,7 +806,7 @@ test('宿主页·安全检查通过 ⇒ 恰好一次 POST /speech/synthesis（�
     locale: 'zh-CN'
   });
   // 服务端如实拒绝（真实提供者未接线 / 替身核对源无该条目）：页面如实显示，不伪造任务
-  request.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE', retryable: true } }, header: {} });
+  request.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE', retryable: false } }, header: {} });
   await pending;
   assert.equal(h.requests.length, 1, '失败不得重试发出额外请求');
   assert.equal(h.page.data.synthesisNote.includes('真实 TTS 提供者未接线'), true);

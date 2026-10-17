@@ -168,7 +168,7 @@ Page({
     modes: [
       { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍照片识别田里的杂草，给出至多 3 个候选', action: '拍照识别' },
       { key: 'ocr', iconClass: 'gy-icon--tag', title: '标签识别', desc: '拍农药包装读出标签文字（机器读数，非权威判读）', action: '拍照识别' },
-      { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问（尚未接入）', action: '尚未接入' }
+      { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问入口尚未接入（本页此处不发起）', action: '尚未接入' }
     ],
     guest: true,
     busy: false,
@@ -278,7 +278,8 @@ Page({
     if (key === 'weed') { this.choosePhoto(); return }
     // GY-I10：标签识别入口已接入（走既有 `POST /ocr` + `GET /jobs/{id}` + `GET /ocr/{id}`）。
     if (key === 'ocr') { this.chooseOcrPhoto(); return }
-    wx.showToast({ title: '该入口尚未接入', icon: 'none' })
+    // 文字提问入口未接入：不指向语音页（该页无任何文字输入控件、也不接受查询参数），不新增跳转。
+    wx.showToast({ title: '文字提问入口尚未接入；本页此处不发起', icon: 'none' })
   },
 
   /** 录音入口：**尚未接入真实录音**，只切换按钮文案；不调用任何录音能力、不采集、不上传。 */
@@ -672,9 +673,11 @@ Page({
   /**
    * 关联科普条目 → 资料详情（GY-I07 页面）。
    *
-   * id 口径与 `pages/referencedetail/referencedetail.js:22-29` 的 `detailId` 校验一致
+   * id 口径与 `pages/referencedetail/referencedetail.js` 的 `detailId`（该文件里同名函数的**定义处**）校验一致
    * （`[A-Za-z0-9_-]{1,128}`；条目 id 取自参考域 `record_id`）；
-   * 形状不符即**不跳转**（不把任意字符串拼进查询串），跳法与 `pages/reference/reference.js:171-174` 相同。
+   * 形状不符即**不跳转**（不把任意字符串拼进查询串），跳法与 `pages/reference/reference.js` 里 `goDetail`
+   * 方法的**定义处**相同。此处不写死任何行号：目标文件在本片内自身即有改动，裸行号必然随下次编辑
+   * 漂移，定位一律按上述符号名检索；
    * 本页不在跳转处做任何权限判定：详情页自己走门禁与档案核对（档案未确认时仍不给用量）。
    */
   onOpenKnowledgeDetail: function (event) {

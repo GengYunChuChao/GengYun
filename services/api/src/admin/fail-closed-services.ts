@@ -43,13 +43,14 @@ export interface FailClosedAdminServices {
 /**
  * 生成"一律 503"的后台服务对。
  *
- * 抛 `ApiError('PROVIDER_UNAVAILABLE', …, { retryable: true })`：`app.ts` 的 errorHandler
+ * 抛 `ApiError('PROVIDER_UNAVAILABLE', …, { retryable: false })`：`app.ts` 的 errorHandler
  * 会按契约把它映射为 **503 + `ErrorEnvelope`**（与既有 `PROVIDER_UNAVAILABLE` 同形），
  * 因此调用方拿不到任何成功封套，也不会有内存副作用（不写审计、不定型幂等）。
  */
 export function createFailClosedAdminServices(reason: string): FailClosedAdminServices {
   const reject = async (): Promise<never> => {
-    throw new ApiError('PROVIDER_UNAVAILABLE', reason, { retryable: true });
+    // 后台域整体 fail-closed 替身＝能力未接线（解除要装配层显式放行）：retryable 必须为 false。
+    throw new ApiError('PROVIDER_UNAVAILABLE', reason, { retryable: false });
   };
 
   // 方法名 = 契约 operationId（与真实服务同形），逐条显式列出而非用 Proxy：
