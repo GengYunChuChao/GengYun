@@ -597,7 +597,7 @@ test('反例·real 缺凭据 ⇒ 受理前 503 PROVIDER_UNAVAILABLE，不建任�
     'real 缺凭据',
   );
   assertString(error.message, 'error.message');
-  assert.equal(error.retryable, true);
+  assert.equal(error.retryable, false, 'real 缺凭据＝能力未接线 ⇒ 需运维介入，同一请求重试不会成功');
   assert.equal(spy.state.insertedJobs, 0, '不得排队');
 });
 

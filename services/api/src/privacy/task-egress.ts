@@ -88,7 +88,8 @@ export function createMediaJobEgress(deps: {
         throw new PrivacyError(
           'PROVIDER_UNAVAILABLE',
           providerUnavailableReason ?? '真实外发传输未接入：real 模式 fail-closed',
-          { retryable: true },
+          // 真实外发传输未接入＝未接线：retryable 必须为 false。
+          { retryable: false },
         );
       }
       const recipientId = await ledger.resolveRecipient({ userId: input.userId, purpose, capability });

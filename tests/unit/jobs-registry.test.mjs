@@ -79,7 +79,7 @@ function assertViolation(job, label) {
       assert.equal(error?.name, 'ApiError', `${label} 应走统一 fail-closed 通道（ApiError），实际 ${error?.name}`);
       assert.equal(error?.code, 'PROVIDER_UNAVAILABLE', `${label} 错误码应为 PROVIDER_UNAVAILABLE`);
       assert.equal(error?.status, 503, `${label} 状态应为 503`);
-      assert.equal(error?.retryable, true, `${label} 应标记 retryable（端口回传不可信）`);
+      assert.equal(error?.retryable, false, `${label} 端口回传不可信属确定性契约违反（需修代码/装配），不是瞬时故障 ⇒ 不得标 retryable`);
       assert.equal(typeof error.message, 'string');
       assert.ok(error.message.includes('不合契约'), `${label} 的 message 应说明违规，实际：${error.message}`);
       return true;
@@ -270,7 +270,7 @@ test('取消·**域内无取消能力但作业存在 ⇒ 503 PROVIDER_UNAVAILABL
   // "该域根本没有取消能力"（能力未接线）不得用 409 OBJECT_UNAVAILABLE 冒充"对象当前不可用"。
   assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(error?.status, 503);
-  assert.equal(error?.retryable, true, '未接线属可重试（接线后同一请求即可成功）');
+  assert.equal(error?.retryable, false, '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试');
   // 作业状态**未被改动**（没有伪造 cancelled），仅多了一次确认存在性的读取
   assert.equal(jobs.get(JOB_ID).state, 'running');
   assert.equal(jobs.get(JOB_ID).revision, 3);
@@ -413,7 +413,7 @@ test('注册表·OCR 无取消能力：作业存在 ⇒ cancel 503 PROVIDER_UNAV
   );
   assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(error?.status, 503);
-  assert.equal(error?.retryable, true, '未接线属可重试（接线后同一请求即可成功）');
+  assert.equal(error?.retryable, false, '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试');
   assert.equal(jobs.get(JOB_ID).state, 'running', '状态不得被改动（没有伪造 cancelled）');
   assert.equal(jobs.get(JOB_ID).revision, 3, 'revision 不得因失败的取消而递增');
 
@@ -483,7 +483,7 @@ test('钉子·无取消能力 kind 的 cancel 错误码（缺 Key ⇒ 400 / 缺 
     .then(() => null, (e) => e);
   assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(error?.status, 503);
-  assert.equal(error?.retryable, true);
+  assert.equal(error?.retryable, false, '能力未接线 ⇒ 非瞬时故障，同一请求重试不会成功（口径原文见 errors.ts）');
   // 依赖的真实形态（实测修正预判）：注册表 cancel **会遍历全部源**，
   //  ⇒ (a)/(b) 的 400/428 来自"某个**有取消能力的源**所做的共享请求头前置校验"，
   //     与它在注册顺序中的位置**无关**（换序后仍是 400，见下）；

@@ -160,7 +160,7 @@ test('G6a. 【反例】real 未接真实供应商：整域 503 PROVIDER_UNAVAILA
     headers: { 'idempotency-key': 'gy-i14i15-real-post-0001' },
     payload: postInput(),
   });
-  errorEnvelope(created, 503, 'PROVIDER_UNAVAILABLE', { retryable: true });
+  errorEnvelope(created, 503, 'PROVIDER_UNAVAILABLE', { retryable: false });
   // 零内容行、零端口调用、零任务：不得用内存/替身返回成功封套。
   assert.deepEqual(h.store.snapshotCounts(), { posts: 0, comments: 0, reports: 0, moderation: 0 });
   assert.equal(counted.requests.length, 0, 'real 下注入的合成端口必须被**忽略**（零调用）');
@@ -176,7 +176,7 @@ test('G6a. 【反例】real 未接真实供应商：整域 503 PROVIDER_UNAVAILA
     'PROVIDER_UNAVAILABLE',
     503,
   );
-  assert.equal(error.retryable, true);
+  assert.equal(error.retryable, false);
   assert.equal(counted.requests.length, 0);
 });
 
@@ -187,7 +187,7 @@ test('G6b. 【反例·服务边界】real 下投稿在送审审核域这一步 f
     'PROVIDER_UNAVAILABLE',
     503,
   );
-  assert.equal(error.retryable, true, 'real 的不可用必须如实标 retryable');
+  assert.equal(error.retryable, false, 'real 的不可用必须如实标 retryable');
   // 内容行与**拒绝结论**都没有：失败发生在规则的放行之后、审核域 seam 上（不是规则拒绝、不是未结论）。
   assert.deepEqual(h.store.snapshotCounts(), { posts: 0, comments: 0, reports: 0, moderation: 0 });
   assert.equal(h.moderation.counts().tasks, 0);

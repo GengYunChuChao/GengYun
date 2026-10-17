@@ -37,15 +37,23 @@ export const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60;
  * - 登录类：`{ sessionId, audience }` —— 用于重放前核验关联会话与账号当前状态，
  *   并在**同一会话**上换发新令牌（同一可撤销登录结果）；
  * - 退出类：`{ accepted: true }` —— 成功标记，无凭据。
+ * - 注销类（GY-I19）：`{ deletion_id }` —— 内核 id 不是凭据，但 `DELETE` 的删除请求是；
+ *   `deletion_id` 只用于**按结果引用重新投影/重新签发**回执 bearer，**绝不**回放旧 bearer。
  */
 export type IdempotencyOutcome =
   | { sessionId: string; audience: 'user' | 'admin' }
-  | { accepted: true };
+  | { accepted: true }
+  | { deletion_id: string };
 
 /** 登录类结果引用（含会话 id 与受众）。 */
 export interface LoginOutcomeReference {
   sessionId: string;
   audience: 'user' | 'admin';
+}
+
+/** 注销类结果引用（GY-I19：只含删除请求 id，不含任何凭据）。 */
+export interface DeletionOutcomeReference {
+  deletion_id: string;
 }
 
 export function isLoginOutcomeReference(outcome: IdempotencyOutcome): outcome is LoginOutcomeReference {
@@ -134,6 +142,10 @@ export function parseIdempotencyOutcome(value: unknown): IdempotencyOutcome {
       return { sessionId: record['sessionId'], audience: record['audience'] };
     }
     if (record['accepted'] === true) return { accepted: true };
+    // GY-I19：注销类结果引用（只含删除请求 id，凭据一律不入台账）。
+    if (typeof record['deletion_id'] === 'string' && record['deletion_id'].length > 0) {
+      return { deletion_id: record['deletion_id'] };
+    }
   }
   throw new Error('幂等台账结果引用格式非法');
 }

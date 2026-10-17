@@ -38,6 +38,10 @@ try {
     'utils/profile-api.js',
     // 定位即时选地区（GY-I05／F02）：仅授权与失败分支，不内置坐标→地区转换资源。
     'utils/location-region.js',
+    // 地区转换资源装配（GY-I05 D2）：profile 页 require 它；漏加会导致标准包 MODULE_NOT_FOUND。
+    // 资源就位（U3 取得）后，转换数据副本也必须一并加入本清单：
+    // 'data/region-centroids.js',
+    'utils/region-converter.js',
     'utils/knowledge-api.js',
     // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/identify-api.js',

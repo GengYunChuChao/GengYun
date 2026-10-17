@@ -31,7 +31,7 @@ import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
 import {
   EXPORT_STATES,
   MEDIA_PURPOSES,
-  MEDIA_PURPOSE_REQUIRED_CONSENTS,
+  requiredConsentsForDataType,
 } from '../../../../packages/privacy/constants.mjs';
 import { redactForLog } from '../../../../packages/privacy/redact.mjs';
 import type { PgPool } from '../db/pool.ts';
@@ -39,6 +39,25 @@ import type { PgPool } from '../db/pool.ts';
 type Row = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_TOKEN = /^[a-z0-9_:-]{1,40}$/;
+/**
+ * 非媒体资料的对象键形状（0014 的 `exports.object_key`，1..128 字符）：
+ * 首尾为小写字母或数字，中间允许小写字母/数字/`_`/`-`/`.`/`:`。
+ * 长度上限 128 = 「对象类型 ≤ 40 ＋ `:` ＋ 正文标识 ≤ 80」的最坏组合（合成域键形如 `<type>:<id>`），
+ * 留出 7 字符余量；**不做截断**，超长一律拒绝（`INVALID_REQUEST`），避免静默改标识。
+ * 逐字同源于 `packages/privacy/ledger.mjs` 的 `OBJECT_KEY_PATTERN`（内存参考实现与 PG 实现同口径）。
+ */
+const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,126}[a-z0-9])?$/;
+const OBJECT_KEY_MAX = 128;
+/**
+ * 非媒体（文本键）行的 `object_id` 占位值（**全零 uuid 哨兵**）。
+ *
+ * `exports.object_id` 是 0003 就有的 `uuid NOT NULL` 列，本片**不放宽既有列**（不改类型、不去 NOT NULL）。
+ * 因此文本键行必须在 `object_id` 里写这个哨兵，同时把真实标识写进 `object_key`；
+ * 数据库侧 `exports_object_ident_xor` 约束只允许「object_key 为 NULL」或「object_id = 本哨兵」两种形态，
+ * 从而在**库层**钉住「要么 uuid 标识、要么文本标识」，并保证既有（uuid）行逐字不变。
+ * 该哨兵**不是**任何真实对象 id，读取侧一律以 `object_key` 为准（见 `toRecord`）。
+ */
+const OBJECT_KEY_SENTINEL_UUID = '00000000-0000-0000-0000-000000000000';
 
 function int(value: unknown): number {
   const n = Number(value);
@@ -51,17 +70,31 @@ function safeReason(value: unknown): string {
   return typeof value === 'string' && SAFE_TOKEN.test(value) ? value : 'cancelled';
 }
 
-/** PostgreSQL 错误 → 契约错误（不透出驱动原文；连接/超时按可重试如实分类）。 */
+/**
+ * PostgreSQL 错误 → 契约错误（不透出驱动原文）。按裁定逐类分档：
+ * - 超时（57014 语句取消 / 55P03 拿不到锁）⇒ `PROVIDER_TIMEOUT`(retryable:true)；
+ * - 连接层故障（08xxx）、管理员干预（53xxx / 57P0x）、串行化冲突与死锁（40001 / 40P01）
+ *   ⇒ 瞬时故障，`PROVIDER_UNAVAILABLE`(retryable:true)：同一请求稍后重试**确实**可能成功；
+ * - 配置/接线类（3D000 库不存在 / 28P01 凭据不匹配 / 42P01 表缺失 / 42501 权限不足）
+ *   与无法归类的其余驱动错误 ⇒ 需运维改配置或修缺陷，**不是时间能解决的** ⇒ retryable:false
+ *   （口径原文见 `services/api/src/errors.ts` 的 `ApiError` 注释）。
+ */
 function mapPgError(error: unknown): never {
   if (error instanceof PrivacyError) throw error;
   const code = (error as { code?: unknown })?.code;
   if (code === '57014' || code === '55P03') {
     throw new PrivacyError('PROVIDER_TIMEOUT', '外发账本事务超时', { retryable: true });
   }
-  if (typeof code === 'string' && /^(08|53|57P0|3D000|28P01|42P01|42501)/.test(code)) {
+  if (typeof code === 'string' && /^(08|53|57P0|40001|40P01)/.test(code)) {
+    // 瞬时：连接层故障 / 管理员干预 / 串行化冲突、死锁 ⇒ 同一请求稍后重试可能成功。
     throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: true });
   }
-  throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: true });
+  if (typeof code === 'string' && /^(3D000|28P01|42P01|42501)/.test(code)) {
+    // 未配置/未接线（库不存在、凭据不匹配、表缺失、权限不足）⇒ 需运维改配置 ⇒ 不可重试。
+    throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用（数据库配置/权限不满足）', { retryable: false });
+  }
+  // 无法归类的数据库错误 ⇒ 确定性缺陷，重试不会改善。
+  throw new PrivacyError('PROVIDER_UNAVAILABLE', '外发账本暂不可用', { retryable: false });
 }
 
 /** 账本行 → 账本记录（与 `packages/privacy/ledger.mjs` 的内部记录同形，供 egress.mjs 投影）。 */
@@ -70,7 +103,13 @@ function toRecord(row: Row) {
     id: String(row['id']),
     userId: String(row['user_id']),
     objectType: String(row['object_type']),
-    objectId: String(row['object_id']),
+    // 对象标识：**媒体维走 `object_id`(uuid)**；**非媒体维走 `object_key`(text)**，并在 `object_id`
+    // 写全零哨兵（`object_id` 仍是 0003 的 `uuid NOT NULL`，本片不放宽既有列）。两者恰好给一个：
+    // 不得都缺、不得都给（数据库侧 `exports_object_ident_xor` 同口径兜底）。
+    // 读取侧以 `object_key` 优先（见 `toRecord`），因此哨兵不会被误当成真实对象 id。
+    objectId: row['object_key'] === null || row['object_key'] === undefined
+      ? String(row['object_id'])
+      : String(row['object_key']),
     objectRevision: int(row['object_revision']),
     purpose: String(row['purpose']),
     consentEpoch: int(row['consent_epoch']),
@@ -102,7 +141,10 @@ export interface PostgresExportLedger {
     userId: string;
     authEpoch: number;
     objectType: string;
-    objectId: string;
+    /** 媒体资料（`MEDIA_PURPOSES`）的对象标识，必须是 uuid；非媒体资料必须**不传**。 */
+    objectId?: string;
+    /** 非媒体资料的对象标识（0014 的 `object_key`，文本型 1..128）；媒体资料必须**不传**。 */
+    objectKey?: string;
     objectRevision: number;
     dataType: string;
     purpose: string;
@@ -112,7 +154,16 @@ export interface PostgresExportLedger {
   get(id: string): Promise<ExportRecord | null>;
   list(input: { userId: string; limit?: number; cursor?: string | null }): Promise<{ items: ExportRecord[]; nextCursor: string | null }>;
   resolveRecipient(input: { userId: string; purpose: string; capability: string }): Promise<string>;
-  findReservedByObject(input: { objectType: string; objectId: string; objectRevision: number }): Promise<ExportRecord | null>;
+  findReservedByObject(input: {
+    objectType: string;
+    /** 媒体维：uuid 标识（与 `objectKey` 恰好给一个）。 */
+    objectId?: string;
+    /** 非媒体维：文本型标识（与 `objectId` 恰好给一个）。 */
+    objectKey?: string;
+    objectRevision: number;
+    /** 传入时按属主过滤（防止跨用户命中他人的预留行）；不传保持既有「不按用户过滤」口径。 */
+    userId?: string;
+  }): Promise<ExportRecord | null>;
   linkJob(input: { exportId: string; jobId: string }): Promise<void>;
   markSent(id: string): Promise<ExportRecord>;
   markFailed(id: string, options?: { errorCode?: string | null }): Promise<ExportRecord>;
@@ -290,11 +341,10 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
   }
 
   async function reserve(input: Parameters<PostgresExportLedger['reserve']>[0]): Promise<ExportRecord> {
-    const { userId, authEpoch, objectType, objectId, objectRevision, dataType, purpose, recipientId, sourceVersion = null } = input ?? {};
+    const { userId, authEpoch, objectType, objectId, objectKey, objectRevision, dataType, purpose, recipientId, sourceVersion = null } = input ?? {};
     if (!objectType || typeof objectType !== 'string' || objectType.length > 40) {
       throw new PrivacyError('INVALID_REQUEST', 'object_type 缺失或过长');
     }
-    if (typeof objectId !== 'string' || !UUID.test(objectId)) throw new PrivacyError('INVALID_REQUEST', 'object_id 缺失或非 uuid');
     if (!Number.isInteger(objectRevision) || objectRevision < 1) throw new PrivacyError('INVALID_REQUEST', 'object_revision 非法');
     if (!Number.isInteger(authEpoch) || authEpoch < 1) throw new PrivacyError('SESSION_REQUIRED', '缺少身份版本（auth_epoch）');
     if (typeof userId !== 'string' || !UUID.test(userId)) throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
@@ -304,22 +354,47 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     if (sourceVersion !== null && (typeof sourceVersion !== 'string' || sourceVersion.length > 40)) {
       throw new PrivacyError('INVALID_REQUEST', 'source_version 非法');
     }
-    if (!MEDIA_PURPOSES.includes(dataType)) throw new PrivacyError('SCOPE_DENIED', `未知资料类型：${dataType}`);
-    const requiredPurposes = MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType] ?? [];
+    // 资料类型判定 = **媒体维 ∪ 非媒体维**（GY-I27 第三片）：未知类型仍逐字拒 SCOPE_DENIED。
+    const requiredPurposes = requiredConsentsForDataType(dataType);
+    if (requiredPurposes === null) throw new PrivacyError('SCOPE_DENIED', `未知资料类型：${dataType}`);
     if (!requiredPurposes.includes(purpose)) {
       throw new PrivacyError('SCOPE_DENIED', `用途 ${purpose} 与资料类型 ${dataType} 不匹配（错用途）`);
     }
+    // 对象标识：**媒体维必须 uuid**（既有口径逐字不变）；**非媒体维必须是文本型键** ——
+    // 两者恰好给一个，不得都缺、不得都给（数据库侧另有 `exports_object_ident_xor` 同口径兜底）。
+    const expectsTextKey = !MEDIA_PURPOSES.includes(dataType);
+    const hasObjectId = typeof objectId === 'string' && objectId.length > 0;
+    const hasObjectKey = typeof objectKey === 'string' && objectKey.length > 0;
+    if (expectsTextKey) {
+      if (objectId !== undefined && objectId !== null) {
+        throw new PrivacyError('INVALID_REQUEST', '非媒体资料的对象标识用 object_key，不得传 object_id');
+      }
+      if (!hasObjectKey || !OBJECT_KEY.test(objectKey as string) || (objectKey as string).length > OBJECT_KEY_MAX) {
+        throw new PrivacyError('INVALID_REQUEST', 'object_key 缺失或非法（1..128 小写字母/数字/_-.:）');
+      }
+    } else {
+      if (objectKey !== undefined && objectKey !== null) {
+        throw new PrivacyError('INVALID_REQUEST', '媒体资料的对象标识用 object_id，不得传 object_key');
+      }
+      if (!hasObjectId || !UUID.test(objectId as string)) throw new PrivacyError('INVALID_REQUEST', 'object_id 缺失或非 uuid');
+    }
+    const objectKeyValue: string | null = expectsTextKey ? (objectKey as string) : null;
+    const objectIdValue: string | null = expectsTextKey ? null : (objectId as string);
+    // 供「取消墓碑」等按维度分支的查询使用（与 `objectIdValue`/`objectKeyValue` 同源，恰一个非 null）。
+    const keyValue = expectsTextKey ? objectKeyValue : objectIdValue;
 
     await assertProvisioned();
     return withTransaction(async (client) => {
       await assertAccount(client, userId, authEpoch);
       // 取消墓碑：同一 (user, object, revision) 一旦取消，**不得再次预留**（不可复活）。
+      // 对象标识按维度分支：媒体维 `object_id=$3::uuid`，非媒体维 `object_key=$3`（两者互斥，恰一个非空）。
       const tombstone = (
         await client.query(
           `SELECT id FROM public.exports
-            WHERE user_id=$1::uuid AND object_type=$2 AND object_id=$3::uuid AND object_revision=$4
-              AND cancelled_at IS NOT NULL LIMIT 1`,
-          [userId, objectType, objectId, objectRevision],
+            WHERE user_id=$1::uuid AND object_type=$2 AND object_revision=$4
+              AND cancelled_at IS NOT NULL
+              AND ${expectsTextKey ? 'object_key=$3' : 'object_id=$3::uuid'} LIMIT 1`,
+          [userId, objectType, keyValue, objectRevision],
         )
       ).rows[0];
       if (tombstone) throw new PrivacyError('OBJECT_UNAVAILABLE', '该对象版本已取消，禁止再次外发');
@@ -358,15 +433,18 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
         }
       }
 
+      // 插入：两列**都写**。媒体维 `object_id` = 真实 uuid、`object_key` = NULL；
+      // 非媒体维 `object_id` = 全零哨兵、`object_key` = 文本键 ⇒ 满足
+      // `exports_object_ident_xor`（`object_key IS NULL OR object_id = 哨兵`）。
       const inserted = await client.query(
-        `INSERT INTO public.exports(user_id,object_type,object_id,object_revision,purpose,consent_id,
+        `INSERT INTO public.exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_id,
             consent_epoch,required_consents,recipient_id,recipient_config_version,source_version,state,auth_epoch,revision)
-          VALUES($1::uuid,$2,$3::uuid,$4,$5::consent_purpose,$6::uuid,$7,$8::jsonb,$9,$10,$11,'reserved',$12,1)
+          VALUES($1::uuid,$2,$3::uuid,$4,$5,$6::consent_purpose,$7::uuid,$8,$9::jsonb,$10,$11,$12,'reserved',$13,1)
           RETURNING *`,
         [
-          userId, objectType, objectId, objectRevision, purpose, consentId,
-          requiredConsents[purpose], JSON.stringify(requiredConsents), recipientId, configVersion,
-          sourceVersion, authEpoch,
+          userId, objectType, objectIdValue ?? OBJECT_KEY_SENTINEL_UUID, objectKeyValue, objectRevision,
+          purpose, consentId, requiredConsents[purpose], JSON.stringify(requiredConsents), recipientId,
+          configVersion, sourceVersion, authEpoch,
         ],
       );
       return toRecord(inserted.rows[0] as Row);
@@ -437,17 +515,35 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     }
   }
 
-  async function findReservedByObject(input: { objectType: string; objectId: string; objectRevision: number }) {
-    const { objectType, objectId, objectRevision } = input ?? {};
-    if (typeof objectId !== 'string' || !UUID.test(objectId)) return null;
+  async function findReservedByObject(input: {
+    objectType: string;
+    objectId?: string;
+    objectKey?: string;
+    objectRevision: number;
+    userId?: string;
+  }) {
+    const { objectType, objectId, objectKey, objectRevision, userId } = input ?? {};
+    // 维度分支：给了 objectKey 走文本列（非媒体维，0014），否则走 uuid 列（媒体维，既有口径）。
+    const byKey = typeof objectKey === 'string' && objectKey.length > 0;
+    if (byKey) {
+      if (!OBJECT_KEY.test(objectKey as string) || (objectKey as string).length > OBJECT_KEY_MAX) return null;
+    } else if (typeof objectId !== 'string' || !UUID.test(objectId)) {
+      return null;
+    }
+    // `userId` 可选：传入时按属主过滤（调用方要防止跨用户命中他人预留行）；不传保持既有口径。
+    const scoped = typeof userId === 'string' && UUID.test(userId);
     try {
       const rows = (
         await pool.query(
           `SELECT * FROM public.exports
-            WHERE object_type=$1 AND object_id=$2::uuid AND object_revision=$3
+            WHERE object_type=$1 AND object_revision=$3
+              AND ${byKey ? 'object_key=$2' : 'object_id=$2::uuid'}
+              ${scoped ? 'AND user_id=$4::uuid' : ''}
               AND state='reserved' AND cancelled_at IS NULL
             ORDER BY created_at DESC LIMIT 1`,
-          [objectType, objectId, objectRevision],
+          scoped
+            ? [objectType, byKey ? objectKey : objectId, objectRevision, userId]
+            : [objectType, byKey ? objectKey : objectId, objectRevision],
         )
       ).rows;
       return rows[0] ? toRecord(rows[0] as Row) : null;

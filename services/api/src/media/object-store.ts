@@ -7,19 +7,24 @@
  * | kind | 何时使用 | 行为 |
  * | --- | --- | --- |
  * | `substitute` | `stub` / `preset_demo` / 测试注入 | 进程内内存对象存储；**明确标注的替身**，不发起任何网络请求 |
- * | `unwired` | `real` 且真实存储未接线（默认装配路径） | 每个操作抛 `PROVIDER_UNAVAILABLE`（503，`retryable: true`）；**fail-closed** |
- * | `s3_compatible` | 仅由**显式**接线变更注入 | S3/COS 兼容真实适配器（SigV4 预签名 + `fetch` 传输） |
+ * | `unwired` | `real` 且未**显式注入**真实适配器（含装配点不传 `env` 的情形） | 每个操作抛 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）；**fail-closed** |
+ * | `s3_compatible` | 装配层**显式注入**已构造的实例，或测试显式传入齐备的合成 `env` | S3/COS 兼容真实适配器（SigV4 预签名 + `fetch` 传输） |
  *
  * 硬性纪律（来自监工对 #121 的 P1 裁定）：
  * - `real` 模式下真实存储/持久端口未真正接入 ⇒ **必须 fail-closed**，以契约内的
- *   `PROVIDER_UNAVAILABLE`（503，`retryable: true`）明确拒绝，**不得**用内存/替身实现返回成功封套。
- * - 判据是**注入端口的 `kind`**，不是一个自述「我已持久化」的布尔标志：将来接真实存储必须在
- *   装配层显式传入 `createS3CompatibleObjectStore(...)`（一次可审查的接线变更）。
- * - 应用装配路径（`app.ts`）**永远不构造** `s3_compatible` 适配器；本文件也不发起任何真实调用。
+ *   `PROVIDER_UNAVAILABLE`（503，`retryable: false`）明确拒绝，**不得**用内存/替身实现返回成功封套。
+ * - 判据是**注入端口的 `kind`**，不是一个自述「我已持久化」的布尔标志：接真实存储必须是**装配层**
+ *   一次可审查的接线变更 —— 而该变更自 PR #193 的 P1 起**只允许是显式注入端口实例**，
+ *   **不允许**把 ambient `process.env` 交给 `resolveMediaObjectStore`（那等于"配置即门控"）。
+ * - **缺任一必填配置（或 endpoint 非 https）⇒ 仍 `unwired`（fail-closed，与接线前逐字一致）**：
+ *   配置缺失**不**构成放行理由，也**不**退回替身；缺失字段名由启动期 `loadConfig`（real 必填）报出。
+ * - 本文件不发起任何真实调用：真实适配器的**构造与预签名都是纯本地计算**，只有显式
+ *   `putObject`/`getObject`/`deleteObject` 才会 `fetch`。
  *
  * **未验证声明（如实）**：`createS3CompatibleObjectStore` / `presignS3Url` 在本仓库内**从未被实际调用**，
- * 未对接任何真实 COS/S3 桶、未做真实签名往返核验。它们只是可审查的接线代码；真实对象存储、
- * CDN、访问网关属部署期接线。测试只覆盖结构断言（https、必需查询参数、未发起网络请求）。
+ * 未对接任何真实 COS/S3 桶、未做真实签名往返核验（本次接线亦未发起过任何真实请求）。它们只是可审查的
+ * 接线代码；真实对象存储、CDN、访问网关属部署期接线。测试只覆盖结构断言
+ * （https、必需查询参数、未发起网络请求）。
  * 见 `docs/verification/gy-i06-private-media-20261014.md`。
  */
 import { createHash, createHmac } from 'node:crypto';
@@ -132,12 +137,13 @@ export const UNWIRED_OBJECT_STORE_REASON =
   '真实对象存储（S3/COS 兼容）尚未接线：媒体域不可用，拒绝以内存/替身存储返回成功封套';
 
 /**
- * 未接线端口（`real` 模式的默认装配路径）：每个操作**一律** `PROVIDER_UNAVAILABLE`（503，`retryable: true`）。
+ * 未接线端口（`real` 模式的默认装配路径）：每个操作**一律** `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  * 不泄露对象是否存在，也不以「本地兜底」方式放行。
  */
 export function createUnwiredObjectStore(reason: string = UNWIRED_OBJECT_STORE_REASON): MediaObjectStore {
   const fail = (): MediaError =>
-    new MediaError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: true });
+    // 对象存储未接线（未注入真实适配器）：retryable 必须为 false。
+    new MediaError('PROVIDER_UNAVAILABLE', `${reason}（fail-closed）`, { retryable: false });
   return {
     kind: 'unwired',
     note: `${reason}（fail-closed）`,
@@ -309,9 +315,10 @@ export function presignS3Url(options: {
 /**
  * S3/COS 兼容真实适配器。
  *
- * **本仓库内从未被调用**：`app.ts` 的装配路径永远不构造它（见 `resolveMediaObjectStore`）。
- * 构造只做配置校验，**不发起任何网络请求**；只有 `putObject` / `getObject` / `deleteObject`
- * 等显式调用才会。构造不合法（缺 endpoint/bucket/凭据，或非 https）时**立即抛错**，绝不退回替身。
+ * **本仓库内从未被实际调用**：装配路径只在 `real` 且 `OBJECT_STORAGE_*` 齐备时**构造**它
+ * （见 `resolveMediaObjectStore`），而构造不发起任何网络请求；只有 `putObject` / `getObject` /
+ * `deleteObject` 等显式调用才会。构造不合法（缺 endpoint/bucket/凭据，或非 https）时**立即抛错**，
+ * 绝不退回替身。
  */
 export function createS3CompatibleObjectStore(config: ObjectStorageConfig): MediaObjectStore {
   const missing =
@@ -402,16 +409,47 @@ export function createS3CompatibleObjectStore(config: ObjectStorageConfig): Medi
 
 export interface ResolveObjectStoreOptions {
   executionMode: string;
+  /**
+   * 对象存储配置来源。⛔ **只供显式装配／测试使用：装配层（`app.ts`）不得传 ambient `process.env`** ✗
+   * （这是监工对 PR #193 的 P1：那 4 个键正是 real 启动必填项 ⇒ 传 ambient env 等于"配置即门控"）。
+   * **可选**：不传等同于"没有任何配置" ⇒ 保持 fail-closed。
+   * 只读取 `OBJECT_STORAGE_*` 键名，**不回显任何值**（见 `readObjectStorageConfig`）。
+   */
+  env?: Record<string, string | undefined>;
 }
+
+/**
+ * 未显式传入 `env` 时使用的空配置表：**null 原型** ⇒ 即使 `Object.prototype` 被投毒
+ * （对抗性复审 B2/B3 的机制：`Object.defineProperty(Object.prototype, 'OBJECT_STORAGE_*', …)`）
+ * 也供不出任何 `OBJECT_STORAGE_*` 键。
+ */
+const NO_STORAGE_ENV: Record<string, string | undefined> = Object.create(null) as Record<string, string | undefined>;
 
 /**
  * 按执行模式解析对象存储端口。
  *
- * - `real` ⇒ **一律** `unwired`（fail-closed）。即使 `OBJECT_STORAGE_*` 齐备也**不**构造真实适配器：
- *   本任务未授权真实对象存储调用，接真实存储必须是**显式**的接线变更。
- * - `stub` / `preset_demo` ⇒ 明确标注的替身。
+ * - `real` 且**显式传入的** `env` 里 `OBJECT_STORAGE_*` **齐备**（`readObjectStorageConfig` 无 issue）
+ *   ⇒ `s3_compatible` 真实适配器。**构造与预签名都是纯本地**：不发起任何网络请求，只有显式调用
+ *   对象操作才会。
+ * - `real` 且**缺任一**必填键（或 endpoint 非 https / 未注入 `env`） ⇒ `unwired`
+ *   （fail-closed）：reason/note 与接线前**逐字一致**，不因"缺配置"退回替身或放行。
+ * - `stub` / `preset_demo` ⇒ 明确标注的替身（`env` **不参与**该分支，与接线前逐字一致）。
+ *
+ * ⛔ **`env` 只供显式装配／测试使用：装配层（`app.ts`）不得把 ambient `process.env` 传进来** ✗。
+ * 原因见下表与 `app.ts` 媒体装配点的长注释：这 4 个键正是 real 模式**启动必填**项 ⇒ 传 ambient env
+ * 等于「配置即门控」，会在隐私守卫与媒体元数据可恢复化落地前为真实用户媒体开门
+ * （监工对 PR #193 的 P1）。装配层的唯一开启方式是**显式注入**一个已构造的端口实例。
+ *
+ * ⛔ 另外（r3，对抗性复审 B2/B3 的机制）：未传 `env` 时用的是**null 原型空表**（见
+ * `NO_STORAGE_ENV`）——`env[name]` 走原型链，若用普通 `{}`，被投毒的 `Object.prototype` 能凭空
+ * 供出整套 `OBJECT_STORAGE_*`。真实闸门在 {@link createAppMediaService} 的批准能力上，
+ * 这里只是同一方向上的加固（不让污染面**产出**真实端口）。
  */
 export function resolveMediaObjectStore(options: ResolveObjectStoreOptions): MediaObjectStore {
-  if (options.executionMode === 'real') return createUnwiredObjectStore();
+  if (options.executionMode === 'real') {
+    const { config } = readObjectStorageConfig(options.env ?? NO_STORAGE_ENV);
+    if (config === null) return createUnwiredObjectStore();
+    return createS3CompatibleObjectStore(config);
+  }
   return createSubstituteObjectStore();
 }

@@ -1420,14 +1420,22 @@ test('GY-I10 小程序：标签 OCR 失败一律按契约 error.code 如实归�
   assert.ok(/\/jobs\/[0-9a-f-]+\/cancel$/.test(cancelRequest.url), cancelRequest.url);
   assert.equal(cancelRequest.header['If-Match'], '"1"');
   assert.ok(typeof cancelRequest.header['Idempotency-Key'] === 'string');
-  cancelRequest.success({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE', true) });
+  // 服务端返回 `retryable:false`（能力未接线在四域统一为 false；口径原文见 `services/api/src/errors.ts`）：
+  // 客户端**不得**再用该字段判"取消未接线"，判据是调用点 `site`。
+  cancelRequest.success({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE', false) });
   const cancelError = await cancel.then(() => null, err => err);
   assert.equal(cancelError.code, 'PROVIDER_UNAVAILABLE', '错误码必须原样保留（不改写成私有码）');
-  assert.equal(cancelError.retryable, true);
+  assert.equal(cancelError.retryable, false, '服务端字段如实带出（客户端不得改写它）');
   const cancelText = api.ocrMessageFor(cancelError, 'cancel');
   assert.ok(/取消能力/.test(cancelText), cancelText);
   assert.ok(/不是"任务不存在"/.test(cancelText), cancelText);
   assert.notEqual(cancelText, api.ocrMessageFor(notFound), '取消未接线不得与"作业不存在"同句');
+  // 反向控制：同一个 `retryable:false` 的 `PROVIDER_UNAVAILABLE` 在**受理面**仍是"OCR 提供者"归因
+  // （若判据错误地仍是 `retryable`，cancel 面会在这里掉进受理面文案 ⇒ 本组断言会红）。
+  const acceptText = api.ocrMessageFor(cancelError);
+  assert.ok(/OCR 提供者/.test(acceptText), acceptText);
+  assert.equal(/取消能力/.test(acceptText), false, '受理面不得误用取消面文案');
+  assert.notEqual(cancelText, acceptText, '两条归因必须按调用点区分，不得合并成一句');
 
   // —— 作业形状守卫：识别域作业塞进 OCR 校验 ⇒ INVALID_RESPONSE（fail-closed，不放宽） ——
   assert.throws(() => api.validateOcrJob(jobEnvelope('succeeded', recognitionValue()).data),

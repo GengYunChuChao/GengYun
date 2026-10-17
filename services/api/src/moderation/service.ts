@@ -14,7 +14,7 @@
  *   AI 失败 / 超时 / 无结论 ⇒ **一律隔离**（`quarantined` + `uncertain`），**绝不记通过**。
  *
  * fail-closed（派单 §3）：`execution_mode === 'real'` 且真实供应商**未授权/未接线** ⇒
- *   整域按契约 503 `PROVIDER_UNAVAILABLE`（`retryable: true`）拒绝，**不得**用内存/替身返回成功封套。
+ *   整域按契约 503 `PROVIDER_UNAVAILABLE`（`retryable: false`）拒绝，**不得**用内存/替身返回成功封套。
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -321,7 +321,8 @@ function noPortsForReal(): ApiError {
   return new ApiError(
     'PROVIDER_UNAVAILABLE',
     'real 模式未接真实审核供应商（tms/ims 未授权、BizType 未核验）：审核不可用，拒绝以替身/内存返回成功封套',
-    { retryable: true },
+    // real 模式未注入审核端口＝未接线：retryable 必须为 false。
+    { retryable: false },
   );
 }
 

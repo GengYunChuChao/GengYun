@@ -30,7 +30,10 @@ export interface OpsStoreOptions {
   runtime?: AdminRuntime;
   /** 分类种子（阶段 2 由真实库注入）。默认空 ⇒ 列表为空页、编辑一律 NOT_FOUND。 */
   categorySeed?: readonly CategoryView[];
-  /** 账号种子（阶段 2 由 `users` 表注入）。默认空。 */
+  /**
+   * 账号种子（阶段 2 由 `users` 表注入）。**不给 = 账号面未接线**：没有一份权威账号清单，
+   * 服务层据此 fail-closed（503），不返回空页。传 `[]` 是**明确声明**（"权威说当前没有账号"）。
+   */
   accountSeed?: readonly AccountView[];
   /** 开关初值；缺省用契约 3 键 + `enabled:false`。 */
   flagSeed?: readonly FlagView[];
@@ -40,6 +43,12 @@ export interface AdminOpsStore {
   readonly persistent: false;
   readonly runtime: AdminRuntime;
   readonly audit: AdminRuntime['audit'];
+  /**
+   * 账号面是否已接线到**认证权威**（今天唯一形态 = 构造时给定了 `accountSeed`）。
+   * `false` ⇒ 账号读/写面一律 fail-closed：本 store 里的账号数组只是**内存投影**，
+   * 既不是"平台当前没有账号"的证据，也不能承接停用（会伪造一次成功）。
+   */
+  readonly accountsWired: boolean;
 
   listCategories(): readonly CategoryView[];
   getCategory(id: string): CategoryView | null;
@@ -98,6 +107,8 @@ export function createAdminOpsStore(options: OpsStoreOptions = {}): AdminOpsStor
   }
 
   const accountSeed = options.accountSeed ?? [];
+  // 接线状态**只看"有没有被给定权威来源"**，不看种子条数：空种子是一句明确声明，不是"没接线"。
+  const accountsWired = options.accountSeed !== undefined;
   assertUniqueIds(accountSeed, '账号');
   for (const record of accountSeed) {
     assertSeedContract('AdminAccountView', record);
@@ -128,6 +139,7 @@ export function createAdminOpsStore(options: OpsStoreOptions = {}): AdminOpsStor
     persistent: false,
     runtime,
     audit: runtime.audit,
+    accountsWired,
 
     listCategories() {
       return listOf(categories, (record) => record.id);

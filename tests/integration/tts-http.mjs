@@ -805,7 +805,18 @@ try {
     //   （实测原始输出见交接文档）——它写于 `#145`（`b054dc3`）之前的精确串时代，当时第三个实参是裸
     //   `guards`；`#145` 把它换成 `gatedGuards`（同名下的旗标门包装，**槽位与签名未变**）⇒ 精确串命中数
     //   变 0。该断言的本意是"接线恰好一处"，与对象名无关，故精确串改为 `gatedGuards`；语义本身未被放宽。
-    assert.equal((code.match(/registerSynthesisRoutes\(app, config, gatedGuards, synthesisService, consentGate\);/g) ?? []).length, 1);
+    // ⚠ 2026-10-16（GY-I02 集成门禁红点修复片）**同类第二次复发**：`#227`（`0a6d43a`）给这同一次调用
+    //   加了第 6 个实参（`app.ts` 现读为 `registerSynthesisRoutes(app, config, gatedGuards, synthesisService,
+    //   consentGate, synthesisEgress);`；该形参在 `routes/synthesis.ts` 里的名字是 `egress?: SynthesisEgress`，
+    //   `synthesisEgress` 是调用处的**实参名**）⇒ 五实参精确串命中数**又**变 0。`tts-http.mjs` 自 `#229`
+    //   （`40bade2`）起被接进 `test:integration:http` 链，故该失配自那时起使整条集成门禁变红（非本片引入）。
+    //   修法与前次同类：**只把精确串更新为现读到的六实参调用**；判据（"恰好一处"）与计数 `1` 均不变，
+    //   不改成子串/存在性判断、不删任何既有断言。
+    assert.equal((code.match(/registerSynthesisRoutes\(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress\);/g) ?? []).length, 1);
+    // 追加断言（2026-10-16 本片新增，**并列**于上面那条，不是替换）：只钉到第三个实参的前缀"恰好一处"。
+    //   两条互补——精确串鉴别"实参逐个正确"（实参增减时会失效），前缀计数鉴别"调用点只有一个"
+    //   （与实参个数无关）。判据只增不减 ⇒ 未放宽。
+    assert.equal((code.match(/registerSynthesisRoutes\(app, config, gatedGuards,/g) ?? []).length, 1, 'registerSynthesisRoutes 接线点必须恰好一处（前缀计数，与实参个数无关）');
     // 值断言（键/串存在 ≠ 值正确）：钉住第三个实参是**旗标门包装后的** `gatedGuards`，而不是裸 `guards`
     //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
     assert.match(code, /\bconst gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/, 'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）');

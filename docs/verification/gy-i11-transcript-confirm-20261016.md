@@ -1,8 +1,8 @@
 # GY-I11 语音转写核对（可编辑 · 确认后发送）客户端切片 — 2026-10-16
 
-范围：**仅 stub/preset_demo 局部实现**（派单口径）。基线 `main@cf2f5ed`，工作分支
-`step/gy-i11-transcript-confirm-20261016`。写手：WorkBuddy Step（本地实现与自检，
-未推送、未建 PR、未改 main）。
+范围：**仅 stub/preset_demo 局部实现**（派单口径）。实现基线 `main@cf2f5ed`，工作分支
+`step/gy-i11-transcript-confirm-20261016`。写手：WorkBuddy Step（本地实现与自检）；
+由指挥侧推送并提交 PR，未直接改 main。
 
 分支现有两个本地提交：`d99a093`（切片主体）与随后的完善提交（受理幂等、受理在途取消、
 版本冲突重读三项加固及回归）。两者均可由指挥 squash 后建 PR。
@@ -84,4 +84,4 @@
 | 8 | 既有页面行为不回归 | `miniprogram-voice-playback` 58/58 |
 | 9 | 全量单测无新增失败 | `npm run test:unit`；注意既有 `tests/moderation/http-screening.test.mjs` 4 项 cancelledByParent 在基线 cf2f5ed 同样复现，与本片无关 |
 | 10 | 替身如实标注、不冒充真实能力 | `SUBSTITUTE_RECORD_NOTE`、替身 model_version 断言、本文件 §4 |
-| 11 | 未推送/未建 PR/未改 main；`Refs #11` 不关整项 | `git log`（分支仅本地提交）、本文件 §4 |
+| 11 | 已由指挥侧推送并提交 PR；未直接改 main；`Refs #11` 不关整项 | PR #248、固定 HEAD `2f0ddf8`、本文件 §4 |

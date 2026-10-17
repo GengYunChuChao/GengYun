@@ -3,6 +3,10 @@ const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const api = require('../../utils/profile-api')
 const locationRegion = require('../../utils/location-region')
+// GY-I05 D2：地区转换资源经装配模块注入，页面不再写死转换函数。资源缺席或校验不通过时
+// regionConverterResource.build() 返回 null，定位入口按契约如实回落到「地区转换资源尚未接入」
+// 并保留手选（fail-closed），不假装转换成功；资源就位且校验通过即自动接线。
+const regionConverterResource = require('../../utils/region-converter')
 // GY-I16：收藏与识别历史各自有独立页面；本页只显示**已加载条数**并给出入口。
 const favoritesApi = require('../../utils/favorites-api')
 const historyApi = require('../../utils/history-api')
@@ -117,9 +121,10 @@ Page({
   },
   onCounty: function (event) { if (this.editable()) this.setData({ countyIndex: Number(event.detail.value) }) },
   useCity: function () { if (this.editable()) this.setData({ countyIndex: -1 }) },
-  // 地区转换资源尚未接入：为 null 时定位入口只处理授权／拒绝／取消／超时并回退手选，不假装转换成功。
-  // 接入时替换为转换函数；坐标只在内存中交给它，不写入存储或请求。
-  regionConverter: null,
+  // 地区转换资源来自 utils/region-converter.js 的装配结果：资源缺席／校验不通过时为 null，
+  // 定位入口只处理授权／拒绝／取消／超时并回退手选，不假装转换成功。
+  // 坐标只在内存中经入参交给它（convert(latitude, longitude)），不写入存储，也不进入任何请求体。
+  regionConverter: regionConverterResource.build(),
   onLocate: function () {
     if (!this.editable() || this.data.locating) return
     const self = this, op = this._operation, b = this._subjectBinding

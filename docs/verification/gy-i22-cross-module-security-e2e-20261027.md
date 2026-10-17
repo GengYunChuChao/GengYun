@@ -29,6 +29,12 @@
 - **实现者 = 写手；推送者 = 指挥**。本片**不持有任何 GitHub 凭据**、**未 push**。
 - **未改动**：`packages/contracts/**`（0 字节改动）、任何他人已合并实现的语义、任何既有断言（只**新增**用例，无修改、无跳过）。
 
+> **校订记录（2026-10-16，后于本片提交）**：本页 §0 有两处 CI glob 事实陈述**已实测证伪**，
+> 由**后续**校订片逐条订正，订正内容见 **§0.1**；§0 原文与 §7 第 5 项括注均**保留不删**（不静默抹掉历史）。
+> 该次校订是本页**首次**对已存在正文的改动：上表"提交链/`git diff --stat`"描述的是**本片当年**的提交链，
+> 未包含该次校订；校订后的被测 HEAD 与新增节见提交信息与 §0.1（⛔ 不重写当年账目）。
+> 校订时实测 `upstream/main` = `3bc745184c9a7c168ef01337b4db1297ea0cc72e`（2026-10-16 11:32:58 +0000，`git fetch upstream --prune` 后 `git rev-list --left-right --count HEAD...upstream/main` = `0 0`）。
+
 ---
 
 ## 0 事实更正：实际 CI glob 与派单书不一致（必须先读）
@@ -42,8 +48,39 @@ package.json:
 ```
 
 - `tests/moderation/**` **不在任何 npm script、也不在任何 workflow** ⇒ 只能由作者显式运行；
+  > **2026-10-16 校订（本条为假，原文保留以存历史）**：见 §0.1。`tests/moderation/*.test.mjs` 已逐字写在
+  > `package.json` 的 `test:unit` 里，并由 `engineering-shell.yml` 的 `unit-tests` job 执行 ⇒ 该断言**不成立**。
 - `tests/integration/**` 只有 6 个具名 `*-pg.mjs` 由专用 workflow（带 postgres service）运行，
   `tests/integration/profile-ui-http.test.mjs` 由 `local-wechat.yml` 运行；**通用 `tests/integration/**` 不在任何 CI glob 内**。
+  > **2026-10-16 校订（计数过期，原文保留）**：见 §0.1。实测由专用 workflow 按名运行的 `*-pg.mjs` 是 **7** 个（多出
+  > `egress-ledger-pg.mjs`）；另有 `test:integration:http` 通过 `&&` 串联的 **9** 个非 PG 回环脚本同样在 CI 内。
+
+### 0.1 后续订正：`tests/moderation/**` 确实在 CI 内（2026-10-16 实测）
+
+本节由**后续**复核补写，不是本片当年的结论。⛔ 上方 §0 的原文**保留不动**，此处只登记"哪一条被证伪、证据是什么"，
+不静默抹掉历史。
+
+| 事实 | 逐字证据（2026-10-16 实测） |
+| --- | --- |
+| `test:unit` 的 glob 含 moderation | `package.json:20`：`"test:unit": "node --test \"tests/unit/*.test.mjs\" \"tests/privacy/*.test.mjs\" \"tests/media/*.test.mjs\" \"tests/reference/*.test.mjs\" \"tests/moderation/*.test.mjs\""` |
+| 该 script 在 CI 内被原样执行 | `.github/workflows/engineering-shell.yml:58`：`- run: npm run test:unit`（job `unit-tests`） |
+| 该目录确有可跑的用例 | `tests/moderation/` 下 **17** 个 `*.test.mjs`（另有 3 个 `_*fixtures.mjs` 夹具，非用例文件） |
+
+⇒ §0 第 1 条「`tests/moderation/**` 不在任何 npm script、也不在任何 workflow」**不成立**；§7 第 5 项括注
+「不在任何 CI glob」同属不成立（"本片未执行"这一事实本身仍成立）。该结论与审核域自己的记录一致：
+`docs/verification/gy-i14-moderation-rules-20261011.md:49`、`docs/verification/gy-i14-moderation-model-20261012.md:467`、
+`docs/verification/gy-i14-moderation-http-20261014.md:211` 均写明 `tests/moderation/*.test.mjs` 已在 `test:unit` glob 内。
+
+§0 第 2 条只有**计数**过期（不改"夹带风险"这一论证方向）：实测 `tests/integration/**` 共 **34** 个 `*.mjs|*.cjs`
+脚本，其中 **8** 个被 workflow 按名执行（7 个 `*-pg.mjs`＋`profile-ui-http.test.mjs`，后者由 `local-wechat.yml:62`
+的 `node --test` 跑），另 **9** 个由 `test:integration:http`（`package.json:24`，`&&` 串联）在 CI 内执行——
+两个集合的交集是 `profile-ui-http.test.mjs`（`test:integration:http` 的第 4 条即 `node tests/integration/profile-ui-http.test.mjs`）
+⇒ **并集 16** 个有 CI 覆盖，**18** 个只由作者显式跑（含 `local-dev-*.cjs` 这类需微信工具的脚本）；
+「通用 glob（`tests/integration/**` 通配）不进 CI」这一结论**仍成立**。
+
+**性质与边界**：上述只说明这些用例**会在 CI 里被执行**，**不证明**审核域的真实模型、真实供应商或整项验收已通过
+（审核域模型层用例显式声明是**合成夹具**上的确定性回归，见 `docs/verification/gy-i14-moderation-rules-20261011.md:187`）。
+本页 §7 的"未取得"清单不因本节而放宽。§0 原文与本节并存，**以本节为准**。
 
 ⇒ 本片三个新文件全部落在 **`tests/unit/*.test.mjs`**，即 `npm run test:unit`（`engineering-shell.yml` 的 `unit-tests` job）**会执行**。
 本片**没有**使用 `tests/integration/**`。
@@ -440,7 +477,7 @@ test:unit-exit=0
    PG 侧证据**引用既有**：`tests/integration/auth-privacy-pg.mjs`、`consent-grant-pg.mjs`（由各自 workflow 运行），本片**不重跑**。
 3. **真机 / 微信开发者工具 / 多机型字体矩阵**：**未跑**，属 **#23**，不在本片。
 4. **部署、域名、网关、CDN**：**未做**。
-5. **`tests/moderation/**`**：**未执行**（不在任何 CI glob）。本片未改动审核域，也未引用其结论。
+5. **`tests/moderation/**`**：**未执行**（原文括注"不在任何 CI glob"**已证伪**，见 §0.1；"本片未执行"仍成立）。本片未改动审核域，也未引用其结论。
 6. **`real` 模式下 4 个 AI 受理面的真实外发链路**：**未验证**（未接真实供应商 ⇒ 按设计 fail-closed）。
    即"撤回后不再外发"在 `real` 下**只验证到 fail-closed 边界**；真实传输接入后的行为属后续接线验收。
 7. **新增"取消后同对象同版本冷静期"**：**未做**（新造业务语义，见 §2.3 说明），留待裁定。

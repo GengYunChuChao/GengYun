@@ -20,7 +20,7 @@
  *
  * ## real 模式红线（监工对 #121 的 P1 口径）
  * `real` 模式下若真实依赖（真实外发适配器）**未真正接入**，必须 **fail-closed**：
- * 契约内 `PROVIDER_UNAVAILABLE` / 503 / `retryable: true`。**不得**用替身实现返回成功封套；
+ * 契约内 `PROVIDER_UNAVAILABLE` / 503 / `retryable: false`。**不得**用替身实现返回成功封套；
  * 替身只允许出现在明确标注的 `stub` / `preset_demo`。将来接真实后端必须在装配处
  * **显式放行**（`realTransportApproved: true` + 注入已审适配器），不靠自述自动启用。
  */

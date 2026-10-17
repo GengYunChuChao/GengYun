@@ -3,7 +3,11 @@
 // 覆盖（每条都是实测断言，不是设计声明）：
 //   A. 受控面清单与契约镜像一致（`FLAG_GATED_SURFACES` ⟷ `packages/contracts/operations.json`）。
 //   B. 闸门语义：已配置开 ⇒ 放行；已配置关 ⇒ 409 `OBJECT_UNAVAILABLE`（retryable:false）；
-//      缺失/非布尔/key 越界/读取抛错 ⇒ 503 `PROVIDER_UNAVAILABLE`（retryable:true，fail-closed）。
+//      fail-closed 的 503 `PROVIDER_UNAVAILABLE` **按原因**取 retryable（口径原文见
+//      services/api/src/errors.ts 的 `ApiError` 注释）：
+//        · 数据形状不可识别（行缺失/非布尔/key 越界/revision 非法）⇒ retryable:false（需运维修复）；
+//        · 读取本身抛错（存储抖动/超时）⇒ retryable:true（真瞬时，同一请求稍后可能成功）。
+//      两条都是 503 + `details.code = FLAG_UNRECOGNIZED`（词表未新增，见 `FlagGateFailCause`）。
 //   C. **零产出**：关闭时代理层一次都不会调用被包装的产出方（调用计数恒 0）。
 //   D. **开关不改变适用判定结论**：开启时结果与不加闸门逐字节相同；关闭时是"拒绝"而不是"改过的结论"。
 //   E. HTTP 跨端点：/herbicides 关闭 ⇒ 拒绝且响应里没有制剂/用量/成分任何字段；
@@ -109,7 +113,10 @@ test('B3. 未识别取值 ⇒ 一律 fail-closed 503（绝不把"读不到"当�
   ];
   for (const [label, records] of malformed) {
     const gate = createFeatureFlagGate({ reader: readerOf(records) });
-    assert.equal(gate.verdictFor(KEY, SURFACE).state, 'fail_closed', `${label} 必须 fail-closed`);
+    const verdict = gate.verdictFor(KEY, SURFACE);
+    assert.equal(verdict.state, 'fail_closed', `${label} 必须 fail-closed`);
+    // 原因必须是"数据形状不可识别"（不是"读取抛错"）：`readerOf` 只返回 null，从不抛错。
+    assert.equal(verdict.cause, 'unrecognized', `${label} 的原因必须是 unrecognized`);
     let error = null;
     try {
       gate.assertOpen(KEY, SURFACE);
@@ -119,7 +126,7 @@ test('B3. 未识别取值 ⇒ 一律 fail-closed 503（绝不把"读不到"当�
     assert.ok(error, `${label} 必须拒绝`);
     assert.equal(error.code, 'PROVIDER_UNAVAILABLE', label);
     assert.equal(error.status, 503, label);
-    assert.equal(error.retryable, true, label);
+    assert.equal(error.retryable, false, `${label}：形状非法需运维修复 ⇒ 不得声称"重试就会好"`);
     assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }], label);
   }
 });
@@ -132,8 +139,23 @@ test('B4. 读取本身抛错 ⇒ 同样 fail-closed（不是 500，也不是放�
       },
     }),
   });
-  assert.equal(gate.verdictFor(KEY, SURFACE).state, 'fail_closed');
-  assert.throws(() => gate.assertOpen(KEY, SURFACE), (e) => e.code === 'PROVIDER_UNAVAILABLE');
+  const verdict = gate.verdictFor(KEY, SURFACE);
+  assert.equal(verdict.state, 'fail_closed');
+  // 读取抛错 = 存储层瞬时故障（连接抖动/超时），**无人工介入**下稍后重试可能成功
+  // ⇒ 这是本仓唯一保留 `retryable: true` 的 fail-closed 原因（cause='read_error'）。
+  assert.equal(verdict.cause, 'read_error', '读取抛错必须归类为 read_error（真瞬时），不是 unrecognized');
+  let error = null;
+  try {
+    gate.assertOpen(KEY, SURFACE);
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error, '读取抛错必须拒绝（不是放行）');
+  assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(error.status, 503, '必须 503，不是 500');
+  assert.equal(error.retryable, true, '存储抖动属瞬时故障 ⇒ 必须如实声称可重试（否则调用方会无谓放弃）');
+  assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }]);
+  assert.match(error.message, /读取失败/, '消息必须给出具体机制（"连接抖动/超时"），不能只说"不可识别"');
 });
 
 test('B5. `armed:false`（real 未接线）⇒ 不判开关、不拒绝用户面产出（如实声明，非 fail-open 静默）', () => {
@@ -458,7 +480,9 @@ test('E5. 端到端 fail-closed：开关行被写坏（enabled 非布尔）⇒ �
     const res = await app.inject({ method: 'GET', url: `${API}/herbicides`, headers: { authorization: `Bearer ${userToken}` } });
     assert.equal(res.statusCode, 503, res.body);
     assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(res.json().error.retryable, true);
+    // 形状非法（`enabled: 'yes'`）= 配置/数据事故 ⇒ 需运维修复，同一请求重试不会成功 ⇒ false。
+    assert.equal(res.json().error.retryable, false, '形状非法需运维修复 ⇒ 不得声称"重试就会好"');
+    assert.deepEqual(res.json().error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }], '词表未新增（仍是 FLAG_UNRECOGNIZED）');
     assert.equal(res.json().data, undefined);
     // 未受控面照旧（脏数据只影响它自己守的那一面）。
     assert.equal((await app.inject({ method: 'GET', url: '/health' })).statusCode, 200);
@@ -576,6 +600,34 @@ test('E6. real 模式（后台域未接线）⇒ 开关门不启用：不拿未�
     const admin = await app.inject({ method: 'GET', url: `${API}/admin/feature-flags`, headers: { authorization: `Bearer ${token}` } });
     assert.equal(admin.statusCode, 403, admin.body);
     assert.equal(admin.json().error.code, 'SCOPE_DENIED');
+  } finally {
+    await app.close();
+  }
+});
+
+test('E5b. 端到端 fail-closed：开关**存储读取抛错**（连接抖动/超时）⇒ 受控面 503 且如实声称可重试', async () => {
+  const config = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
+  const store = createMemoryAuthStore();
+  // 与 E5 的区别只有一处：E5 是"那一行被写坏"（形状非法，**需运维修复** ⇒ retryable:false），
+  // E5b 是"读这一行本身失败"（存储抖动/超时，**真瞬时** ⇒ retryable:true）。
+  // 这两条端到端证据共同钉住 `failClosedRetryableFor` 的分档，防止以后又把两类折叠成一个取值。
+  const flaky = createAdminOpsStore();
+  flaky.getFlag = (key) => {
+    if (key === 'specific_herbicide_output_enabled') throw new Error('store connection reset');
+    return { key, enabled: true, revision: 1 };
+  };
+  const app = buildApp({ config, store, idempotency: createMemoryIdempotencyStore(), adminInjection: { opsStore: flaky } });
+  try {
+    const userToken = await loginUser(app);
+    const res = await app.inject({ method: 'GET', url: `${API}/herbicides`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(res.statusCode, 503, res.body);
+    assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(res.json().error.retryable, true, '存储读取抛错属瞬时故障 ⇒ 必须如实声称可重试（否则调用方会无谓放弃）');
+    assert.deepEqual(res.json().error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }], '词表未新增（仍是 FLAG_UNRECOGNIZED）');
+    assert.match(res.json().error.message, /读取失败/, '消息必须给出具体机制（"连接抖动/超时"），不能只说"不可识别"');
+    assert.equal(res.json().data, undefined, '不得返回空页冒充"平台没有除草剂数据"');
+    // 未受控面照旧（读取失败只影响它自己守的那一面），且**不**是 500。
+    assert.equal((await app.inject({ method: 'GET', url: '/health' })).statusCode, 200);
   } finally {
     await app.close();
   }

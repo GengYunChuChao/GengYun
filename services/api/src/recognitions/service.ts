@@ -387,10 +387,11 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     const mediaJobInput = requireMediaJobInput(input.body);
     const key = requireIdempotencyKey(input.idempotencyKey);
     // real 缺凭据/无已审适配器：受理前 fail-closed，不排队、不回退替身。
-    // `retryable: true` 与仓库既有口径一致（媒体域 / 隐私外发域的 PROVIDER_UNAVAILABLE 同）。
+    // `retryable: false`：这是"能力未装配／未接线"（需运维改配置），不是瞬时故障 —— 同一请求原样重试不会成功。
+    // 口径原文见 `services/api/src/errors.ts` 的 `ApiError` 上方注释。
     if (!provider.available) {
       throw new ApiError('PROVIDER_UNAVAILABLE', provider.unavailableReason ?? '识别提供者不可用', {
-        retryable: true,
+        retryable: false,
       });
     }
     const resolution = await media.resolve({

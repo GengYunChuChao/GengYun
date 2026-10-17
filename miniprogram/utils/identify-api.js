@@ -459,7 +459,7 @@ async function getOcrJob(jobId) {
  * 请求取消标签 OCR 任务。
  *
  * **本基线 OCR 域不提供取消能力**：服务端注册表先确认作业存在，再按契约返回
- * `503 PROVIDER_UNAVAILABLE`（`retryable: true`，语义="该作业所属能力尚未提供取消"），
+ * `503 PROVIDER_UNAVAILABLE`（`retryable: false`，语义="该作业所属能力尚未提供取消"），
  * **不伪造** `cancelled`、也**不用 404 谎称作业不存在**。错误码**原样保留**（不改成客户端私有码），
  * 由 `ocrMessageFor(e, 'cancel')` 给出专属文案，与 `NOT_FOUND`（"任务或识别记录不存在"）明确区分。
  */
@@ -829,12 +829,14 @@ function messageFor(e) {
  *   2. `POST /jobs/{id}/cancel` 对 OCR 作业按契约返回 `503 PROVIDER_UNAVAILABLE`(`retryable`)，
  *      语义是"**该作业所属能力尚未提供取消**"（`jobs/registry.ts` 的注释与实现），
  *      **不是**"作业不存在"（`NOT_FOUND`）⇒ `site='cancel'` 时必须给专属文案，两者不得混用。
+ *      判据是 `site`，**不再**是 `retryable`：能力未接线在四域统一为 `retryable=false`（口径原文见
+ *      `services/api/src/errors.ts` 的 `ApiError` 注释），故不能再用该字段区分"取消未接线"与"受理面未接线"。
  *
  * `site` 省略 ⇒ 创建/读取 OCR 任务的站点。未知码一律回落到 `messageFor`（不发明文案）。
  */
 function ocrMessageFor(e, site) {
   const code = e && e.code
-  if (code === 'PROVIDER_UNAVAILABLE' && site === 'cancel' && e.retryable === true) {
+  if (code === 'PROVIDER_UNAVAILABLE' && site === 'cancel') {
     return '服务端尚未提供标签识别任务的取消能力（该能力未接线）：本次没有取消，任务仍在服务端运行或已按截止时间落定。'
       + '这不是"任务不存在"，请稍后重读任务状态。'
   }

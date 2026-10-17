@@ -25,6 +25,39 @@ export const MEDIA_PURPOSES = Object.freeze([
   'community_image',
 ]);
 
+/**
+ * **非媒体**资料维度（GY-I27 第三片 · 合成域外发账本）。
+ *
+ * 为什么必须有第二维度（而不是往 `MEDIA_PURPOSES` 里加成员）：
+ *   - `MEDIA_PURPOSES` 是**冻结契约** `states.MediaPurpose` 的逐项镜像
+ *     （`tests/privacy/contract.test.mjs:28` 与 `tests/media/contract.test.mjs:30` 的
+ *     `assert.deepEqual(MEDIA_PURPOSES, states.MediaPurpose)`）⇒ 加成员会立刻打红，属改契约 ✗；
+ *   - 复用媒体维度还会**多要授权**：`MEDIA_PURPOSE_REQUIRED_CONSENTS` 里每个媒体类型都要求
+ *     `media_processing`，而 `voice_question` 还要求 `recording` —— 一个只授 `external_inference`
+ *     的合成请求会被索要 `recording`（`CONSENT_REQUIRED`），这既非契约要求也非用户预期。
+ * 因此第二维度**只声明「非媒体」资料类型**与各自的**最小必需用途集合**，与媒体维度并列
+ * （不是覆盖、不是替代）：判定放行 = 媒体维 ∪ 非媒体维，任一维命中即按**该维自己的**必需集合核验。
+ *
+ * 边界（如实登记）：本维度**不在冻结契约内**（契约没有第二个资料类型枚举），因此不得外传为
+ * 契约字段，也不得被客户端声明；它只由服务端装配层（`ledger-pg.ts` / `task-egress` 侧）在
+ * 「同一后端在服务端执行的一次真实外发」上声明，用于给外发账本一个**如实的数据对象维度**。
+ */
+export const NON_MEDIA_DATA_TYPES = Object.freeze(['checked_content']);
+
+/**
+ * 每个**非媒体**资料类型必须同时满足的一组用途授权（与
+ * `MEDIA_PURPOSE_REQUIRED_CONSENTS` 同形、同口径，但**只含该类型真正需要的用途**）。
+ *
+ * `checked_content`（已核对正文的朗读外发）：合成请求本身已由合成域的授权门要求
+ * `external_inference`（`routes/synthesis.ts:99-100`），且执行期会**重读**已核对正文
+ * （不读客户端自由文本）⇒ 必需集合就是 `['external_inference']`：
+ *   - **不得**含 `recording`（合成不发麦克风录音、不采音频）；含它会让只授外发用途的用户被判 `CONSENT_REQUIRED`；
+ *   - **不得**含 `media_processing`（合成目标不是媒体对象、不读照片/录音字节）。
+ */
+export const NON_MEDIA_REQUIRED_CONSENTS = Object.freeze({
+  checked_content: Object.freeze(['external_inference']),
+});
+
 /** consent 状态（granted / withdrawn）。 */
 export const CONSENT_STATES = Object.freeze(['granted', 'withdrawn']);
 
@@ -99,4 +132,26 @@ export function statusForErrorCode(code) {
     throw new Error(`契约错误码没有对应 HTTP 状态：${code}`);
   }
   return status;
+}
+
+/**
+ * 已知资料类型（媒体维 ∪ 非媒体维）的必需用途集合；未知类型返回 `null`。
+ *
+ * **放行范围因此是「两维并集」，但每一维各自核验**：媒体类型仍只按
+ * `MEDIA_PURPOSE_REQUIRED_CONSENTS` 判定（合成域的出现不会给任何媒体类型减一项），
+ * 非媒体类型只按 `NON_MEDIA_REQUIRED_CONSENTS` 判定。
+ */
+export function requiredConsentsForDataType(dataType) {
+  if (MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType] !== undefined) {
+    return MEDIA_PURPOSE_REQUIRED_CONSENTS[dataType];
+  }
+  if (NON_MEDIA_REQUIRED_CONSENTS[dataType] !== undefined) {
+    return NON_MEDIA_REQUIRED_CONSENTS[dataType];
+  }
+  return null;
+}
+
+/** 资料类型是否已知（媒体维 ∪ 非媒体维）。 */
+export function isKnownDataType(dataType) {
+  return requiredConsentsForDataType(dataType) !== null;
 }

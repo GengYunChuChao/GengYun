@@ -770,6 +770,6 @@ test('real 模式未配置数据库时拒绝签发会话（503，不假装持久
   const res = await login(app, 'code-real');
   assert.equal(res.statusCode, 503);
   assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(res.json().error.retryable, true);
+  assert.equal(res.json().error.retryable, false);
   await app.close();
 });

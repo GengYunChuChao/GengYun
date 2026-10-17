@@ -1,5 +1,7 @@
 /**
- * GY-I13 普通话 TTS 合成 · HTTP 路由（阶段 2a：**只新增本文件，不注册到 app.ts**）。
+ * GY-I13 普通话 TTS 合成 · HTTP 路由（**已注册**：`services/api/src/app.ts` 的 `buildApp` 调用
+ * `registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate)`，本函数是
+ * `/speech/synthesis` 的唯一注册点，并受全局开关门控 —— 受控面清单见 `admin/ops/flag-gate.ts`）。
  *
  * 契约（`packages/contracts/openapi.json` 原文）：
  *   POST /speech/synthesis   operationId `createSynthesis`   → 202 `JobEnvelope`
@@ -9,10 +11,13 @@
  *   202 响应头：`ETag`（资源 revision 强 ETag）、`Cache-Control`（私有/授权访问 no-store）
  *   `x-version-required: false` ⇒ 本端点**没有** `If-Match` 参数
  *
- * **读面缺口（如实登记，未自造端点）**：该域契约里**只有 POST**，没有 TTS 专属的读/删端点；
- * 读 JobState 的唯一接口是**平台级** `GET /jobs/{id}`（`getJob`，`JobResult.oneOf` 含
- * `SynthesisResult`），它属 GY-I01/#9 且**当前未装配**（`services/api/src/routes/` 下无 jobs 路由）。
- * 因此本轮经 HTTP **无法**读取任务终态——这属预期缺口，本文件**不新增** GET/DELETE。
+ * **读面**：读 JobState 的唯一接口是**平台级** `GET /jobs/{id}`（`getJob`，`JobResult.oneOf` 含
+ * `SynthesisResult`），它属 GY-I01/#9，**已装配**：注册点 `services/api/src/jobs/routes.ts` 的
+ * `registerJobRoutes`，装配点 `services/api/src/app.ts` 的 `buildApp`
+ * （`createSynthesisJobSource(synthesisService)`），因此**作业存在时** `kind=synthesis` 的终态**可以**经
+ * HTTP 读到（`real` 下合成受理本身先 fail-closed ⇒ 不会有新作业，见下方「默认关闭必须保持」）；
+ * `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 `PROVIDER_UNAVAILABLE`
+ * (`retryable`) 如实拒绝，**不伪造** `cancelled`。该域契约里**只有 POST**，故本文件**不新增** GET/DELETE 端点。
  *
  * **默认关闭必须保持**：应用装配路径**永不注入**真实适配器端口。本文件只调用
  * `createTtsProvider({ executionMode })`；`executionMode:'real'` 时它返回 `createRealTtsProvider`
@@ -35,7 +40,8 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { SYNTHESIS_TARGET_TYPES } from '../tts/state.ts';
 import type { SynthesisService } from '../tts/service.ts';
-import type { ConsentGate } from '../privacy/egress.ts';
+import { withPrivacyErrors, type ConsentGate } from '../privacy/egress.ts';
+import type { SynthesisEgress } from '../privacy/synthesis-egress.ts';
 import { buildMeta } from './support.ts';
 
 /** `Idempotency-Key` 头：与既有路由同一口径（缺/非法 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED）。 */
@@ -68,6 +74,18 @@ export function registerSynthesisRoutes(
    * 未注入 ⇒ 行为与接线前逐字相同。
    */
   consent?: ConsentGate,
+  /**
+   * GY-I27（#29）·**可选**外发账本端口（第二维度 `checked_content`）。注入（且执行模式 `real`）后：
+   * 受理前先 `reserveForAcceptance` 冻结「执行期会重读到的同一份已核对正文快照」；
+   * `real` 未接真实传输 ⇒ **在任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`（零 `sent`）。
+   * 实际派发/回写在提供者包装侧（`privacy/synthesis-egress.ts`）。
+   *
+   * **为什么预留必须在受理处**：真实外发发生在**执行期**（作业入队后由 `execute` 调提供者），
+   * 而「已核对正文」的读取端口只在执行期才拿到实际快照；若不在受理处预留，执行期就没有
+   * 「已登记的这一次外发」可用于 `markSent` 授权判定。故与识别/转写/OCR 三域同形。
+   * 未注入 ⇒ 与接线前逐字相同（`real` 仍由提供者 fail-closed 拦截）。
+   */
+  egress?: SynthesisEgress,
 ): void {
 
   // 与契约 `SynthesisInput` 逐项一致（`additionalProperties:false` ⇒ 多余字段由 schema 拦下；
@@ -100,20 +118,60 @@ export function registerSynthesisRoutes(
           : [guards.requireUser, consent({ purpose: 'external_inference' })],
       schema: { body },
     },
-    async (request, reply) => {
+    withPrivacyErrors(async (request, reply) => {
       // 服务端权威身份（客户端无法通过 body/query/自定义头声明身份）。
       const identity = currentIdentity(request);
       const key = requireIdempotencyKeyHeader(request);
-      const result = await service.createSynthesis({
-        userId: identity.userId,
-        body: request.body,
-        idempotencyKey: key,
-      });
+      // schema 已保证形状（`checked_content_ref{type,id,revision}` 必填、`additionalProperties:false`）。
+      const ref = (
+        request.body as { checked_content_ref: { type: string; id: string; revision: number } }
+      ).checked_content_ref;
+      // GY-I27：本次受理的账本门面（只认本属主）。`undefined`（未装配账本）⇒ 一行账本访问都没有。
+      const scoped = egress === undefined ? null : egress.withOwner(identity.userId);
+      const reservation =
+        scoped === null
+          ? null
+          : await scoped.reserveForAcceptance({
+              userId: identity.userId,
+              authEpoch: identity.authEpoch,
+              // 账本对象键由 egress 侧**重读**已核对正文后派生（`<type>:<id>`），
+              // 不直接采信客户端在 body 里声称的标识。
+              contentType: ref.type,
+              contentId: ref.id,
+              contentRevision: ref.revision,
+            });
+      let result;
+      try {
+        result = await service.createSynthesis({
+          userId: identity.userId,
+          body: request.body,
+          idempotencyKey: key,
+        });
+      } catch (error) {
+        // 预留后受理失败 ⇒ 预留置终态（不留残留 `reserved` 行）。
+        if (reservation !== null && scoped !== null) {
+          await scoped.abandonReservation({ exportId: reservation.exportId });
+        }
+        throw error;
+      }
+      if (result.replayed === true && reservation !== null && scoped !== null) {
+        // 幂等重放：服务层**不再调提供者** ⇒ 本次不会派发，预留行必须收回，
+        // 否则会留下一条永不派发的 `reserved`（既占账本又误导排查）。
+        await scoped.abandonReservation({ exportId: reservation.exportId });
+      }
+      // GY-I27 P1-1：把本次受理的**任务**绑定到它的属主 —— `synthesize` 入参不含属主，
+      // 执行期只能靠这份绑定确定「该按谁过滤预留行」。未绑定 ⇒ 执行期拒绝派发（fail-closed），
+      // 绝不退化成按对象版本全局匹配（那会让并发用户的同版本预留互相串用）。
+      // 重放不派发 ⇒ 不绑定（绑了也没有派发会发生）。绑定本身不构成授权：
+      // 授权仍由执行期的「按属主查预留行」+ `assertExecutable` + `markSent` 三段把守。
+      if (egress !== undefined && result.replayed !== true) {
+        egress.bindJobOwner({ jobId: result.job.id, userId: identity.userId });
+      }
       return reply
         .header('ETag', `"${result.job.revision}"`)
         .header('Cache-Control', 'no-store')
         .status(result.status)
         .send({ data: result.job, meta: buildMeta(request, config) });
-    },
+    }),
   );
 }

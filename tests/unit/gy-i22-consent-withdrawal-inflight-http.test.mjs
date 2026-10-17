@@ -380,28 +380,33 @@ test('跨模块·real 未接真实依赖：4 个真实受理面一致 503 PROVID
     uniformEnvelope: false,
   });
 
-  // 跨域观察（**如实登记现状**，不是断言"理应如此"）：同一个 `PROVIDER_UNAVAILABLE`
-  // 在四个域上的 `retryable` 并不一致 —— 识别/合成标 `true`，OCR/ASR 标 `false`。
-  // 契约只约束「错误码 → HTTP 状态」，两者都不违约；但**同一错误码给出不同可重试性**
-  // 属跨域口径不一致，已在证据页「发现与披露（本片未修）」登记。
-  // 这里把现状显式钉住，使将来任何一方改动都必须是有意为之、而不是无声漂移。
+  // 跨域观察（**口径已统一，此前不一致**）：同一个 `PROVIDER_UNAVAILABLE`（能力未接线造成的 503）
+  // 在四个域上一律 `retryable === false`。统一前识别/合成标 `true`、OCR/ASR 标 `false`（本文件曾把
+  // 那处不一致显式钉住并登记在证据页「发现与披露」）；现按 `services/api/src/errors.ts` 的口径原文收敛：
+  // "能力未装配／未接线"需运维改配置、不是时间能解决的 ⇒ 不得声称"重试就会好"。
+  // 这里把四个域**逐一**钉死（不是只看总数），使任何一域无声漂移都会立刻变红。
   const retryableByFace = {};
   for (const [index, face] of AI_FACES.entries()) {
     const result = await post(h.app, face, h.token, index);
     assert.equal(result.status, 503, `${face.label}：期望 503`);
     assert.equal(result.body.data, undefined, `${face.label}：不得返回成功封套`);
     assert.equal(typeof result.body.error.retryable, 'boolean', `${face.label}：retryable 必须是布尔`);
+    assert.equal(
+      result.body.error.retryable,
+      false,
+      `${face.label}：能力未接线 ⇒ retryable 必须为 false（同一请求重试不会成功）`,
+    );
     retryableByFace[face.label] = result.body.error.retryable;
   }
   assert.deepEqual(
     retryableByFace,
     {
-      '识别受理 POST /recognitions': true,
+      '识别受理 POST /recognitions': false,
       '图文受理 POST /ocr': false,
       '转写受理 POST /speech/transcriptions': false,
-      '合成受理 POST /speech/synthesis': true,
+      '合成受理 POST /speech/synthesis': false,
     },
-    'PROVIDER_UNAVAILABLE 的 retryable 跨域不一致须被显式钉住（见证据页「发现与披露」）',
+    'PROVIDER_UNAVAILABLE（能力未接线）的 retryable 在四域必须一致为 false（口径原文见 services/api/src/errors.ts）',
   );
   // **零外发**：提供者（=真实供应商调用的唯一出口）一次都没有被调用。
   assert.deepEqual(calls, { recognize: 0, transcribe: 0, synthesize: 0 }, 'fail-closed 必须发生在任何供应商调用之前');

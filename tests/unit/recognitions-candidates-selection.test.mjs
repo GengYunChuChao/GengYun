@@ -663,7 +663,11 @@ test('GY-I09 real 未接真实提供者 fail-closed（契约内 503 / failed）�
     assert.equal(r.statusCode, 503, r.body);
     const body = r.json();
     assert.equal(body.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(body.error.retryable, true);
+    assert.equal(
+      body.error.retryable,
+      false,
+      '能力未接线（受理前 fail-closed）⇒ retryable 必须为 false：同一请求重试不会成功，需运维改配置',
+    );
     assert.equal(body.data, undefined, '不得以内存/替身返回成功封套');
     // 不得回退替身：没有任何 Job/候选/模型版本字段。
     assert.equal(body.error.details.length, 0);

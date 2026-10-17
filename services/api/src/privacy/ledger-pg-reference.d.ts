@@ -34,6 +34,12 @@ declare module '*packages/privacy/constants.mjs' {
   export const HANDLER_STATES: readonly string[];
   export const ACCOUNT_STATES: readonly string[];
   export const MEDIA_PURPOSE_REQUIRED_CONSENTS: Readonly<Record<string, readonly string[]>>;
+  /** GY-I27 第三片：契约外的**非媒体**资料维度（合成域已核对正文的朗读外发）。 */
+  export const NON_MEDIA_DATA_TYPES: readonly string[];
+  export const NON_MEDIA_REQUIRED_CONSENTS: Readonly<Record<string, readonly string[]>>;
+  /** 已知资料类型（媒体维 ∪ 非媒体维）的必需用途集合；未知类型返回 null。 */
+  export function requiredConsentsForDataType(dataType: string): readonly string[] | null;
+  export function isKnownDataType(dataType: string): boolean;
   export const ERROR_STATUS_MAP: Readonly<Record<number, readonly string[]>>;
   export function isErrorCode(value: string): boolean;
   export function statusForErrorCode(code: string): number;

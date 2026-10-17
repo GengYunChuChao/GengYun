@@ -81,7 +81,8 @@ export function createWechatIdentityProvider(options: WechatProviderOptions): We
       const appSecret = options.appSecret;
       if (appId === null || appSecret === null) {
         throw new ApiError('PROVIDER_UNAVAILABLE', '微信登录未配置（服务端缺少 AppID/AppSecret）', {
-          retryable: true,
+          // 未配置 AppID/AppSecret ＝未接线（需运维改配置）：retryable 必须为 false。
+          retryable: false,
         });
       }
 

@@ -86,6 +86,9 @@ function fixture() {
       ['../../utils/page-gate', gateModule.exports],
       ['../../utils/profile-api', profile],
       ['../../utils/reference', requireHere(join(root, 'miniprogram/utils/reference.js'))],
+      // GY-I05 D2：profile 页在定义期 require 它并调用 build()（装配地区转换资源）。
+      // 登记**真实模块**：仓库内无几何资源 ⇒ build() 返回 null，本组用例看到的页面状态与改前逐字相同。
+      ['../../utils/region-converter', requireHere(join(root, 'miniprogram/utils/region-converter.js'))],
       ['../../utils/auth', b.auth],
       ['../../utils/navigation', b.nav],
       // 业务客户端：本组用例只验「门禁放行」这一可见状态，登记为「永不落地」替身（**非真实模块**）。

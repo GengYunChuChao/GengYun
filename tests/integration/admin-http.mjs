@@ -353,12 +353,71 @@ await group('[正控制] 账号：list 200 → suspend 200；重复 suspend 幂�
   assert.equal(again.body.data.revision, 2, '重复停用不得再迁移');
 });
 
+// —— 账号（GY-I22 缺陷①：无认证权威 ⇒ fail-closed；形态同作业面，`retryable` 按裁定取 false） ——
+await group('[正控制] 账号：**默认装配无认证权威** ⇒ list 与 suspend 都 503（不返回空页、不伪造"账号不存在"）', async () => {
+  // 接线状态先落到可核对的面上：默认装配（不注入 opsStore）≠ 有权威。
+  assert.equal(defaultApp.adminOpsService.accountsWired, false, '默认装配不得声称账号权威已接线');
+  assert.equal(wiredApp.adminOpsService.accountsWired, true, '注入带账号种子的 store 才是已接线');
+
+  const listed = await probe('listAdminUsers', 'GET', `${API}/admin/accounts`, {
+    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=账号权威未接线',
+  });
+  assert.equal(listed.status, 503, JSON.stringify(listed.body));
+  assert.equal(listed.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(listed.body.error.retryable, false, '接线是运维动作：不得宣称可重试（STATE-current §40）');
+  assert.equal(listed.body.data, undefined, '不得返回空页冒充"平台没有账号"');
+
+  const suspended = await probe('suspendUser', 'POST', `${API}/admin/accounts/${UNKNOWN_UUID}/suspend`, {
+    api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=账号权威未接线',
+    body: { reason: '示例：停用' }, headers: { 'idempotency-key': newKey('acc0'), 'if-match': '"1"' },
+  });
+  assert.equal(suspended.status, 503, JSON.stringify(suspended.body));
+  assert.equal(suspended.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(suspended.body.error.retryable, false, '接线是运维动作：不得宣称可重试（STATE-current §40）');
+  assert.equal(suspended.body.data, undefined, '不得把"没有权威"报成"账号不存在"或伪造成功');
+});
+
+await group('[反例] 账号：默认装配下**鉴权/越权/格式校验都先于 503**（不得被接线状态顶掉）', async () => {
+  // 默认装配有**自己的** auth store（上面的 adminReadOnly / userSession 长在 wiredAuth 上）⇒ 本组自造会话。
+  const defaultAdminReadOnly = await seedAdminSession(defaultAuth, 'default-readonly', ['sources:read']);
+  const defaultUser = await seedUserSession(defaultAuth, 'default-user');
+
+  const anon = await defaultHttp(`${API}/admin/accounts`);
+  assert.equal(anon.status, 401, JSON.stringify(anon.body));
+  assert.equal(anon.body.error.code, 'SESSION_REQUIRED');
+
+  const asUser = await defaultHttp(`${API}/admin/accounts`, { token: defaultUser.token });
+  assert.equal(asUser.status, 403, JSON.stringify(asUser.body));
+  assert.equal(asUser.body.error.code, 'SCOPE_DENIED');
+
+  const noRead = await defaultHttp(`${API}/admin/accounts`, { token: defaultAdminReadOnly.token });
+  assert.equal(noRead.status, 403, '缺 accounts:read 仍是 403：接线状态不得顶掉越权判定');
+  assert.equal(noRead.body.error.code, 'SCOPE_DENIED');
+
+  const noSuspend = await defaultHttp(`${API}/admin/accounts/${UNKNOWN_UUID}/suspend`, {
+    method: 'POST', token: defaultAdminReadOnly.token,
+    headers: { 'content-type': 'application/json', 'idempotency-key': newKey('acc-noscope'), 'if-match': '"1"' },
+    body: JSON.stringify({ reason: '示例：无权限停用' }),
+  });
+  assert.equal(noSuspend.status, 403, JSON.stringify(noSuspend.body));
+  assert.equal(noSuspend.body.error.code, 'SCOPE_DENIED');
+
+  // 格式错误与"不存在"的分工在未接线时同样保持：非法 uuid 仍是 400（不是 503）。
+  const badId = await defaultHttp(`${API}/admin/accounts/not-a-uuid/suspend`, {
+    method: 'POST', token: defaultAdminAll.token,
+    headers: { 'content-type': 'application/json', 'idempotency-key': newKey('acc-badid'), 'if-match': '"1"' },
+    body: JSON.stringify({ reason: '示例：停用' }),
+  });
+  assert.equal(badId.status, 400, JSON.stringify(badId.body));
+  assert.equal(badId.body.error.code, 'INVALID_REQUEST');
+});
+
 // —— 作业 ——
 await group('[正控制] 作业：**默认装配未接线** ⇒ list 与 cancel 都 503（不返回空页、不伪造状态）', async () => {
   const listed = await probe('listAdminJobs', 'GET', `${API}/admin/jobs`, { api: defaultHttp, token: defaultAdminAll.token, note: '默认装配=未接线' });
   assert.equal(listed.status, 503, JSON.stringify(listed.body));
   assert.equal(listed.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(listed.body.error.retryable, true);
+  assert.equal(listed.body.error.retryable, false);
   assert.equal(listed.body.data, undefined, '不得返回空页冒充"平台没有作业"');
 
   const cancelled = await probe('cancelAdminJob', 'POST', `${API}/admin/jobs/${JOB_QUEUED}/cancel`, {

@@ -514,7 +514,7 @@ test('详情页收藏（切片A）：回填失败如实报"未取得"，不臆�
   await openDetailPage(f, item);
   const scan = f.requests.at(-1);
   assert.match(scan.url, /\/favorites/);
-  scan.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '收藏持久存储尚未接线', retryable: true } } });
+  scan.success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE', message: '收藏持久存储尚未接线', retryable: false } } });
   await flush();
   assert.equal(f.page.data.favState, 'unknown');
   assert.equal(f.page.data.favSupported, true);
