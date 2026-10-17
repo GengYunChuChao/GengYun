@@ -80,8 +80,10 @@
 
   <!--
     标签 OCR（#10）：与识草共用同一套私有媒体上传与既有 OCR 路由；
-    任务状态取契约 Job（GET /jobs/{id}）七类逐类呈现；标签正文取 GET /ocr/{id}，**只读**展示原样文本 +
-    来源/状态标签。硬口径：**机器读数、非权威判读**；**永不渲染用量正文或任何剂量数字**（只报条数）。
+    任务状态取契约 Job（GET /jobs/{id}）七类逐类呈现；标签正文取 GET /ocr/{id}：机器原样读数（raw_fields）
+    与当前生效字段（corrected_fields）**同时**呈现、差异逐项标记；人工核对后的更正只写 corrected_fields
+    （PATCH /ocr/{id}/correction，恰好一次请求，冲突则重读后再确认而非静默重试）。
+    硬口径：**机器读数、非权威判读**；**永不渲染用量正文或任何剂量数字**（只报条数）。
   -->
   <view class="section" wx:if="{{ocr && !guest}}">
     <view class="section-head">
@@ -112,11 +114,16 @@
       <view class="knowledge__meta">登记核对：{{ocr.record.matchLabel}}（是否命中登记：{{ocr.record.hasRegistration ? '是' : '否'}}）</view>
       <view class="reasons__item" wx:for="{{ocr.record.missingFields}}" wx:key="*this">· 缺项字段：{{item}}</view>
       <view class="reasons__item" wx:for="{{ocr.record.conflictFields}}" wx:key="*this">· 与登记冲突字段：{{item}}</view>
-      <!-- 人工更正字段（若由**其他**客户端提交过）：只读展示；本页不提交任何更正 -->
-      <block wx:if="{{ocr.record.correctedDiffers}}">
-        <view class="knowledge__meta">该记录另有已提交的人工更正字段（非本页提交，本页只读）：</view>
-        <view class="knowledge__meta" wx:for="{{ocr.record.correctedRows}}" wx:key="label">{{item.label}}：{{item.value}}</view>
-      </block>
+      <!--
+        当前生效字段（corrected_fields）：与上面机器读数**逐项并排**，被人工改过的整行标记并回显机器读数，
+        未改过的行注明「与机器读数一致」——不隐藏任何一格，也不把更正后的值冒充机器读数。
+      -->
+      <view class="knowledge__meta" wx:if="{{ocr.record.correctedDiffers}}">以下为当前生效字段（corrected_fields，含已提交的人工更正）：</view>
+      <view class="knowledge__meta" wx:else>当前生效字段（corrected_fields）与机器读数一致，尚无人工更正。</view>
+      <view class="{{item.changed ? 'knowledge knowledge--changed' : 'knowledge'}}" wx:for="{{ocr.record.diffRows}}" wx:key="label">
+        <view class="knowledge__name">{{item.label}}：{{item.corrected}}</view>
+        <view class="corr-diff__flag" wx:if="{{item.changed}}">人工已更正；机器原样读数为「{{item.raw}}」</view>
+      </view>
       <!-- 用药安全：只报用量卡条数，绝不渲染正文与任何剂量数字 -->
       <view class="dose-guard">
         <view class="dose-guard__row">
@@ -125,6 +132,51 @@
         </view>
       </view>
       <view class="hint">{{ocr.record.readOnlyNote}}</view>
+      <view class="hint">{{ocr.record.correctionNote}}</view>
+      <!-- 人工校正入口：任务未成功（或被取消）时不给入口，避免"看起来能改"的错觉 -->
+      <view class="row-actions" wx:if="{{ocr.record.canCorrect && !labelCorrection}}">
+        <button class="btn btn--secondary row-actions__item" bindtap="onStartCorrection">对照包装核对并更正字段</button>
+      </view>
+      <!--
+        校正面板：输入框**不设 maxlength**（不裁剪用户输入），超长一律在提交前被校验拒绝并提示实际长度；
+        未勾选「已对照包装核对」时提交不会发出任何请求。
+      -->
+      <view class="corr" wx:if="{{labelCorrection}}">
+        <view class="corr__title">人工核对与更正（只写 corrected_fields）</view>
+        <view class="corr__meta">基准记录版本：{{labelCorrection.revision}}（提交时按 If-Match 逐字带上该版本；服务端版本已变则本次更正不会被接受）</view>
+        <view class="corr__conflict" wx:if="{{labelCorrection.conflictText}}">{{labelCorrection.conflictText}}</view>
+        <view class="corr__success" wx:if="{{labelCorrection.successText}}">{{labelCorrection.successText}}</view>
+        <view class="corr__error" wx:if="{{labelCorrection.errorText}}">{{labelCorrection.errorText}}</view>
+        <view class="corr__blocked" wx:if="{{labelCorrection.blockedNote}}">{{labelCorrection.blockedNote}}</view>
+
+        <view class="corr__row" wx:for="{{labelCorrection.fields}}" wx:key="key">
+          <view class="corr__label">{{item.label}}</view>
+          <input class="input corr__input" value="{{item.value}}" data-index="{{index}}" bindinput="onCorrectionFieldInput" placeholder="未读出可留空（留空按未读出提交，不补造内容）" />
+          <view class="corr__count">{{item.value.length}} / {{item.maxLength}} 字（超长会被拒绝，不会被截断）</view>
+        </view>
+
+        <view class="corr__sub">有效成分（最多 20 条；整行留空的行提交时被丢弃，半空行会被拒绝）</view>
+        <view class="corr__ing" wx:for="{{labelCorrection.ingredients}}" wx:key="key">
+          <view class="corr__label">第 {{index + 1}} 条</view>
+          <input class="input corr__input" value="{{item.name}}" data-index="{{index}}" data-part="name" bindinput="onCorrectionIngredientInput" placeholder="成分名称" />
+          <input class="input corr__input" value="{{item.content_text}}" data-index="{{index}}" data-part="content_text" bindinput="onCorrectionIngredientInput" placeholder="含量（照录包装上的数字）" />
+          <input class="input corr__input" value="{{item.unit_text}}" data-index="{{index}}" data-part="unit_text" bindinput="onCorrectionIngredientInput" placeholder="单位（如 %、克/升）" />
+          <button class="text-btn corr__remove" data-index="{{index}}" bindtap="onCorrectionRemoveIngredient">删除这一条</button>
+        </view>
+        <view class="row-actions">
+          <button class="btn btn--secondary row-actions__item" bindtap="onCorrectionAddIngredient">增加一条有效成分</button>
+        </view>
+
+        <!-- 显式核对：ambiguous/conflict（含同名不同制剂）与冲突重读后都要求重新勾选，不静默匹配 -->
+        <view class="corr__confirm {{labelCorrection.confirmed ? 'corr__confirm--on' : ''}}" bindtap="onCorrectionToggleConfirm">
+          <text class="corr__check">{{labelCorrection.confirmed ? '☑' : '☐'}}</text>
+          <text class="corr__confirm-text">我已对照农药包装实物逐项核对（同名不同制剂或多条可能匹配时，本页不替你挑一条）</text>
+        </view>
+        <view class="row-actions">
+          <button class="btn btn--secondary row-actions__item" bindtap="onCorrectionSubmit">{{labelCorrection.submitting ? '提交中…' : '提交更正'}}</button>
+          <button class="btn btn--secondary row-actions__item" bindtap="onCorrectionCancel">取消并保留现有内容</button>
+        </view>
+      </view>
     </block>
 
     <view class="notice notice--warn" wx:if="{{ocr.recordNote}}">{{ocr.recordNote}}</view>
