@@ -19,6 +19,23 @@ const cache = (token = 'synthetic-token') => ({ accessToken: token, audience: 'u
 const PROFILE = { crop_id: null, region_code: null, region_catalog_version: null, revision: 1 };
 const REF = '/pages/reference/reference';
 const SEED = '/pages/referenceseed/referenceseed';
+// GY-I07 D1：`reference` 列表页在**启用联网**时改走服务端 `GET /herbicides`（随包副本只作显式标注的
+// 离线回退），所以本组用例要回放一条真目录读取。下面是**合成**的契约形状 Herbicide + 响应封套
+// （不是真实登记资料，也不代表任何用药依据）。
+const CATALOG_ITEM = {
+  id: '6b1d0f2a-3c4e-4f50-8a91-2b3c4d5e6f70', revision: 1,
+  formulation: {
+    id: '0a9f8e7d-6c5b-4a39-8271-6f5e4d3c2b1a', registration_number: 'PD2026-SYN-0001',
+    producer: '合成生产方', dosage_form: '悬浮剂', ingredients: [{ name: '合成成分甲', content_text: '20', unit_text: '克/升' }],
+  },
+  source: {
+    id: '33333333-3333-4333-8333-333333333333', version: 'synthetic-catalog-v1', title: '合成来源（测试）',
+    url: 'https://example.test/source', publisher: '测试发布方', source_kind: 'simulation', evidence_kind: 'research',
+    validity: 'valid', review_status: 'unverified', updated_at: '2026-10-11T01:00:00Z',
+  },
+  risk_text: '合成风险说明，不作为用药依据。', reference_state: 'available',
+};
+const CATALOG_META = { request_id: '55555555-5555-4555-8555-555555555555', contract_version: '1.0.0', execution_mode: 'stub' };
 function fixture() {
   const storage = new Map(), requests = [], modals = [], routes = [], wxLogins = [];
   const b = { storage, requests, modals, routes, wxLogins, pages: [], failNextRoute: false, profileReads: [] };
@@ -40,6 +57,14 @@ function fixture() {
   // 切片 E N1 ／ 追加单 N1（对抗性审查 §4）：门禁一旦放行，各页会立刻发业务读取。这里给所有
   // *-api 客户端一个「永不落地」的替身：只让「门禁放行」这一可见状态成立，不引入假数据或未处理异常。
   const pendingApi = new Proxy({}, { get: () => () => new Promise(() => {}) });
+  // 参考族页面：本片 D1 起联网时走服务端 `/herbicides`、`/herbicides/{id}`，这几页必须拿到**真实**知识
+  // 客户端（见 b.page() 的 knowledgeModule 注释）。其余页面（含 `miniprogram/pages/favorites/favorites.js:19`
+  // 这类同样 `require('../../utils/knowledge-api')` 的门禁页）保持「永不落地」替身，以维持本组用例
+  // 结尾那条 `b.requests.every` 护栏（消息「门禁之前不得发生业务请求」）的既有语义。
+  // 该护栏按**断言原文**锚定、不写行号（行号随本文件增删与合流漂移，两次复审判红均源于此）：
+  // `git grep -nF` 其消息的 ASCII 单引号形态在本文件命中恰 1 行 —— 本注释用「」包裹、故意不复制
+  // 代码字节，以免自己把命中数变成 2；用例体内三条计数断言同样按原文锚定。
+  const REFERENCE_FAMILY = new Set(['reference', 'referenceseed', 'referencedetail', 'referenceseeddetail']);
   b.page = (name, loadOptions = {}) => {
     let def;
     const fontModule = { exports: {} };
@@ -76,6 +101,25 @@ function fixture() {
         return Promise.resolve(Object.assign({}, PROFILE));
       }
     };
+    const knowledgeModule = { exports: {} };
+    // GY-I07 D1 起：`reference`／`referencedetail` 两页在**启用联网**时改走服务端 `/herbicides`、
+    // `/herbicides/{id}`（随包副本只作显式标注的离线回退）。因此知识客户端必须登记**真实模块**：
+    // 「永不落地」替身会让 `knowledgeApi.validId(...)` 返回一个 Promise（真值）而把随包记录 id
+    // 误判成服务端 id，也会让列表页停在未落地状态 —— 那是替身行为，不是页面行为。
+    // 依赖按**完整说明符**登记（逐字取自 miniprogram/utils/knowledge-api.js 的 require）。
+    const knowledgeDependencies = new Map([
+      ['./auth', b.auth],
+      ['../config/runtime', requireHere(join(directory, 'config/runtime.js'))],
+    ]);
+    vm.runInNewContext(readFileSync(join(root, 'miniprogram/utils/knowledge-api.js'), 'utf8'), {
+      module: knowledgeModule,
+      // `miniprogram/utils/knowledge-api.js` 用**全局 `wx`** 发请求（`wx.request`）：vm 沙箱必须
+      // 注入同一个 fixture wx —— 否则 `wx` 未定义、`wx.request` 抛 ReferenceError，页面只看到
+      // 未映射的错误对象（落到默认文案、`matchState:'unavailable'`）且**一条请求都不会入队**，
+      // 看上去像「页面没联网」，实际是替身缺项。
+      wx: b.wx,
+      require: (id) => { if (!knowledgeDependencies.has(id)) throw Error('Unexpected page dependency ' + id); return knowledgeDependencies.get(id); },
+    });
     // 页面依赖按**完整说明符**登记（逐字取自被加载页面源码里的 require），不做后缀/兜底匹配：
     // 改前 `id.endsWith('-api')`／`id.endsWith('/auth')` 一类会把 `require('../../data/knowledge-api')`、
     // `require('../../utils/auth/')` 一类静默喂成替身，末段 blanket 更会把**任何**新增依赖静默喂成
@@ -93,7 +137,17 @@ function fixture() {
       ['../../utils/navigation', b.nav],
       // 业务客户端：本组用例只验「门禁放行」这一可见状态，登记为「永不落地」替身（**非真实模块**）。
       ['../../utils/favorites-api', pendingApi],
-      ['../../utils/knowledge-api', pendingApi],
+      // 知识客户端：**只对参考族页面登记真实模块**（见上）——`miniprogram/pages/favorites/favorites.js:19`
+      // 也 `require('../../utils/knowledge-api')`，如果对全部页面都喂真实模块，门禁放行后 favorites 会真的
+      // 发起业务读取，本组「门禁之前不得发生业务请求」护栏（`b.requests.every` 那条，锚定方式见上）就会红
+      // —— 那是本组替身设计被绕过，不是页面回归。该护栏的保证机制＝**紧接下面的 knowledge-api 三元登记**
+      // （`REFERENCE_FAMILY.has(name)` 才给真实模块、其余页面含 favorites 仍给「永不落地」替身），**不是**上面
+      // 那条 favorites-api 替身登记（它只覆盖 favorites 调 favorites-api 的路径）。
+      // 实测：只对参考族登记真实模块时，N1 用例体内 `assert.equal(b.requests.length, …)` 的 1／2／3 条计数
+      // 与该护栏全部成立（门禁放行前的流量仍只有门禁核实）。
+      // 断言与登记项一律按原文锚定、不写行号（`git grep -nF` 各命中恰 1 行；行号随本文件增删漂移，
+      // 上一轮与本轮复审判红均源于此）。
+      ['../../utils/knowledge-api', REFERENCE_FAMILY.has(name) ? knowledgeModule.exports : pendingApi],
       ['../../utils/history-api', pendingApi],
       ['../../utils/messages-api', pendingApi],
       ['../../utils/community-api', pendingApi],
@@ -425,11 +479,30 @@ for (const [name, id, resultKey] of detailCases) {
   });
 }
 for (const [name, key] of [['reference', 'items'], ['referenceseed', 'list']]) {
-  test(`${name}: cached startup also shares verification and renders actual catalog`, () => {
+  test(`${name}: cached startup also shares verification and renders actual catalog`, async () => {
     const b = fixture(); b.storage.set('gengyun.session', cache()); const page = b.page(name);
+    const used = new Set();
+    const gateRequest = () => b.requests.find((req) => !used.has(req) && /\/auth\/session(\?|$)/.test(req.url));
+    // GY-I07 D1：`reference` 在启用联网时目录取自服务端 `GET /herbicides`（随包副本只作离线回退），
+    // 所以门禁放行后**必须回放这条目录读取**才算「渲染出真目录」；`referenceseed` 未改动，仍由随包目录
+    // 同步渲染（对它而言本循环不再有待答请求，条件立即成立）。
+    const renderCatalog = async () => {
+      for (let i = 0; i < 8 && page.data[key].length === 0; i++) {
+        for (const req of b.requests) {
+          if (used.has(req) || !/\/herbicides/.test(req.url)) continue;
+          used.add(req);
+          req.success({ statusCode: 200, data: { data: { items: [CATALOG_ITEM], next_cursor: null }, meta: CATALOG_META } });
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
     page.onLoad(); page.onShow(); assert.equal(b.requests.length, 1); assert.equal(page.data[key].length, 0);
-    verified(b.requests[0]); assert.equal(page.data.gatePassed, true); assert.ok(page.data[key].length > 0);
-    page.onHide(); assert.equal(page.data[key].length, 0); page.onShow(); verified(b.requests[1]); assert.ok(page.data[key].length > 0);
+    const first = gateRequest(); assert.ok(first, 'expected the lifecycle session verification'); used.add(first);
+    verified(first); await renderCatalog();
+    assert.equal(page.data.gatePassed, true); assert.ok(page.data[key].length > 0);
+    page.onHide(); assert.equal(page.data[key].length, 0);
+    page.onShow(); const second = gateRequest(); assert.ok(second, 'expected the re-entry session verification'); used.add(second);
+    verified(second); await renderCatalog(); assert.ok(page.data[key].length > 0);
   });
 }
 for (const stage of ['wx', 'server']) {

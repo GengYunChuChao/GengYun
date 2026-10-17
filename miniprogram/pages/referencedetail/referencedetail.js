@@ -11,11 +11,21 @@ const fontScale = require('../../utils/font-scale')
 // - GY-I08 / PR #82：用量卡片资格绑定当前适用判定；适用上下文来自**已确认档案**
 //   （`utils/profile-api` → `/me/profile`），档案未确认/读取失败/身份变化时**不**默认
 //   为空上下文放行具体用量（阻塞 C）。
+//
+// GY-I07 D1 数据来源（两条路径，逐条可判定，互不冒充）：
+// - `data_source='server'`：recordId 是 UUID ⇒ 走服务端 `GET /herbicides/{id}`
+//   （miniprogram/utils/knowledge-api.js）。该接口**不提供**用量卡与适用性字段，
+//   页面据此如实说明并**不展示任何用量**；`registered_name`/`toxicity`/`use_scene`
+//   在 Herbicide 契约里不存在，页面按「接口未提供」呈现，不用成分名拼接冒名登记名称。
+// - `data_source='bundled-offline'`：非 UUID 的随包记录 id（如 gy-i03-hb-001）⇒ 读随包
+//   离线副本（utils/reference.js），页面显式标注离线来源与 GY-I08 用量资格口径。
+// 失败一律按冻结闭集文案提示（404 ⇒ `NOT_FOUND`），**不落回离线副本**。
 
 const auth = require('../../utils/auth')
 const pageGate = require('../../utils/page-gate')
 const profileApi = require('../../utils/profile-api')
 const reference = require('../../utils/reference')
+const knowledgeApi = require('../../utils/knowledge-api')
 
 // External links may contain malformed percent encoding. Reject before lookup,
 // but always continue into the existing identity gate and empty state.
@@ -51,6 +61,16 @@ Page({
     unavailableReason: '',
     queryable: true,
     modeNote: '',
+    // GY-I07 D1：可判定的数据来源标记（'server' / 'bundled-offline'）与逐条来源标签；
+    // notFoundText 只取冻结闭集文案（服务端 404 与随包未命中各一套，不互相顶替）。
+    dataSource: '',
+    sourceMarker: '',
+    notFoundText: '',
+    // 服务端 SourceRef 的 updated_at 不是采集日期：标签如实切换，不冒称。
+    sourceDateLabel: '采集日期',
+    // 服务端除草剂接口不提供用量卡/适用性字段时的如实说明。
+    doseCardNote: '',
+    busy: false,
     // GY-I08：标签原文用量卡片（DoseCard）与适用过滤结论。
     // doseCardEnabled 是 issue #8 要求的**功能关闭开关**：关闭后不产出可执行建议，也不产出用量卡。
     doseCardEnabled: true,
@@ -80,10 +100,24 @@ Page({
     const self = this
     pageGate.start(this, function (loggedIn) {
       if (!loggedIn) {
-        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
+        self._detailActive = false
+        self._detailOperation = (self._detailOperation || 0) + 1
+        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '', dataSource: '', sourceMarker: '', notFoundText: '', doseCardNote: '', busy: false })
         return
       }
-      self.setData({ gatePassed: true, recordId: recordId, modeNote: reference.modeNote() })
+      // 路由判定（可判定，不靠文案）：UUID ⇒ 服务端 `GET /herbicides/{id}`；
+      // 其余（随包记录 id，如 gy-i03-hb-001）⇒ 随包离线副本。
+      const server = knowledgeApi.validId(recordId)
+      self.setData({
+        gatePassed: true,
+        recordId: recordId,
+        dataSource: server ? knowledgeApi.HERBICIDE_SOURCES.SERVER : knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
+        sourceMarker: server ? '服务端接口 /herbicides/{id}' : '随包离线副本',
+        // 服务端读数未返回前只给「来源待定」口径：不宣称已取得接口数据。
+        modeNote: server ? knowledgeApi.modeNote('') : reference.modeNote(),
+        notFoundText: ''
+      })
+      if (server) { self.loadServerDetail(recordId); return }
       // 阻塞 C：先读取**已确认档案**，再装载详情；档案未确认时不放行用量资格。
       self.loadProfileContext(recordId)
     })
@@ -100,11 +134,16 @@ Page({
     // 失效在途档案读取：旧回调不得再回填资料/用量状态。
     this._profileOperation = (this._profileOperation || 0) + 1
     this._profileActive = false
+    // 同样失效在途服务端除草剂详情读取：离页后旧回包不得再回填。
+    this._detailOperation = (this._detailOperation || 0) + 1
+    this._detailActive = false
   },
   onUnload: function () {
     pageGate.cancel(this)
     this._profileOperation = (this._profileOperation || 0) + 1
     this._profileActive = false
+    this._detailOperation = (this._detailOperation || 0) + 1
+    this._detailActive = false
   },
 
   /**
@@ -152,6 +191,8 @@ Page({
 
   /** 重试档案读取（页面入口）。 */
   retryProfile: function () {
+    // 服务端除草剂路径不读档案（该接口无用量/适用性字段），此入口对其无意义。
+    if (this.data.dataSource === knowledgeApi.HERBICIDE_SOURCES.SERVER) return
     if (this.data.profileLoading || !this.data.gatePassed) return
     this.loadProfileContext(this._detailId || '')
   },
@@ -187,6 +228,84 @@ Page({
   },
 
   /**
+   * GY-I07 D1：服务端除草剂详情（`GET /herbicides/{id}`）。
+   * 异步 ⇒ 世代号 + 活跃标志丢弃过期回包；失败按冻结闭集文案提示（404 ⇒ NOT_FOUND），
+   * **不落回离线副本**（否则会把随包数据冒充成服务端读数）。
+   */
+  loadServerDetail: function (recordId) {
+    const self = this
+    const operation = (self._detailOperation = (self._detailOperation || 0) + 1)
+    self._detailActive = true
+    self.setData({ busy: true, notFoundText: '', profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
+    const alive = function () {
+      return self._detailActive === true && self._detailOperation === operation && self.data.gatePassed === true && auth.isLoggedIn()
+    }
+    knowledgeApi.detailHerbicide(recordId).then(function (result) {
+      if (!alive()) return
+      const row = knowledgeApi.herbicideRow(result.item), src = result.item.source
+      self.setData({
+        busy: false,
+        found: true,
+        queryable: true,
+        unavailableReason: '',
+        notFoundText: '',
+        dataSource: knowledgeApi.HERBICIDE_SOURCES.SERVER,
+        sourceMarker: '服务端接口 /herbicides/{id}',
+        modeNote: knowledgeApi.herbicideModeNote(result.mode),
+        detail: {
+          record_id: row.record_id,
+          registration_number: row.registration_number,
+          registered_name: row.registered_name,
+          producer: row.producer,
+          dosage_form: row.dosage_form,
+          ingredients_text: row.ingredients_text,
+          toxicity: row.toxicity,
+          use_scene: row.use_scene,
+          risk_text: row.risk_text,
+          note: '',
+          source_version: row.source_version,
+          // 服务端 SourceRef（id/version/title/url/publisher/source_kind/evidence_kind/
+          // validity/review_status/updated_at）→ 页面既有槽位，语义逐项对得上：
+          // title ⇒ 「期号／文件」；url ⇒ 原始链接；updated_at 的标签由 sourceDateLabel
+          // 如实切换为「来源更新时间」，**不冒称采集日期**。
+          source: { publisher: src.publisher, issue: src.title, original_url: src.url, retrieved_at: src.updated_at }
+        },
+        labels: row.labels,
+        verifiedScope: [],
+        notCollected: [],
+        sourceDateLabel: '来源更新时间',
+        // 该接口不提供用量卡与适用性字段：如实说明，且不展示任何用量。
+        doseCardNote: '本页经由服务端接口 /herbicides/{id} 读取：该接口不提供用量卡与适用性字段，本页不展示任何用量。',
+        doseCard: null,
+        applicability: null,
+        advice: null
+      })
+    }).catch(function (error) {
+      if (!alive()) return
+      const session = error && (error.code === 'SESSION_REQUIRED' || error.code === 'SESSION_CHANGED')
+      self.setData({
+        busy: false,
+        gatePassed: session ? false : self.data.gatePassed,
+        found: false,
+        detail: null,
+        labels: null,
+        verifiedScope: [],
+        notCollected: [],
+        unavailableReason: '',
+        queryable: false,
+        doseCard: null,
+        applicability: null,
+        advice: null,
+        // 冻结闭集文案（含 404 ⇒ NOT_FOUND）：不在此另写未核对文本。
+        notFoundText: knowledgeApi.message(error),
+        dataSource: knowledgeApi.HERBICIDE_SOURCES.SERVER,
+        sourceMarker: '服务端接口 /herbicides/{id}',
+        doseCardNote: ''
+      })
+    })
+  },
+
+  /**
    * 装载资料详情。
    * @param {string} recordId 记录 id
    * @param {string|null} [profileNote] 档案未确认时的说明（仍装载资料，但不给用量资格）
@@ -198,12 +317,15 @@ Page({
   load: function (recordId, profileNote) {
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。
     if (!this.data.gatePassed || !auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null })
+      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, dataSource: '', sourceMarker: '', notFoundText: '', busy: false })
       return
     }
     const detail = typeof recordId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(recordId) ? reference.detail(recordId) : null
     if (!detail) {
-      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: false, doseCard: null, applicability: null, advice: null })
+      this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: false, doseCard: null, applicability: null, advice: null,
+        // 随包未命中：固定文案（与服务端 404 的闭集文案分列，不互相顶替）。
+        dataSource: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE, sourceMarker: '随包离线副本',
+        notFoundText: '该记录不存在，或已被下架、失效而不在有效资料中。' })
       return
     }
     const base = {
@@ -214,6 +336,13 @@ Page({
       notCollected: detail.not_collected || [],
       unavailableReason: detail.unavailable_reason || '',
       queryable: detail.queryable === true,
+      // 随包离线副本：逐条可判定来源标记 + 明确标注（不冒充服务端读数）。
+      dataSource: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
+      sourceMarker: '随包离线副本',
+      sourceDateLabel: '采集日期',
+      doseCardNote: '',
+      notFoundText: '',
+      busy: false
     };
     // 阻塞 C：适用上下文必须来自已确认档案；未确认时**不**给用量资格（也不给适用结论）。
     const ctx = this.confirmedContext()
@@ -246,6 +375,8 @@ Page({
   // GY-I08：用量卡片功能关闭开关（满足规格「有功能关闭开关」）。
   // 注意：开关只是附加条件；关闭不能代替资格验证（PR #82）；关闭后不产出可执行建议与用量卡。
   toggleDoseCard: function (e) {
+    // 服务端除草剂路径：该接口不提供用量卡与适用性字段，开关不改动任何用量展示。
+    if (this.data.dataSource === knowledgeApi.HERBICIDE_SOURCES.SERVER) return
     const enabled = e && e.detail && typeof e.detail.value === 'boolean' ? e.detail.value : !this.data.doseCardEnabled;
     this.setData({ doseCardEnabled: enabled });
     if (this.data.detail) {
