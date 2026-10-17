@@ -146,7 +146,9 @@ export interface CommunityContentOutcome {
  * （属社区线 GY-I15），不在本端点。这里显式建模为端口，避免悄悄放宽或悄悄按错口径计数：
  * - `substitute`（stub/preset_demo/测试）：按**同一 owner 名下存活的 `community_image` 记录数**计数 ——
  *   这是**保守替身**（大于等于真实每帖数），并已如实标注；
- * - `unwired`（real）：无法判定 ⇒ 拒绝该用途的 `createUpload`（503），**不猜测**。
+ * - `unwired`（real 默认）：端口自己无法判定 ⇒ `createUpload` **不再 503**，改由
+ *   `attachmentLimitFor` 用同一 owner 名下的存活 `community_image` 记录数兜底
+ *   （**上传侧保守上限**，见该函数注释；权威每帖计数仍属 GY-I15 附件挂载）。
  */
 export interface CommunityAttachmentCounter {
   readonly kind: 'substitute' | 'unwired' | 'injected';
@@ -289,11 +291,20 @@ export function createSubstituteAttachmentCounter(): CommunityAttachmentCounter 
   };
 }
 
-/** 未接线计数器（real）：无法判定 ⇒ null ⇒ 拒绝该用途（不猜测、不放宽）。 */
+/**
+ * 未接线计数器（real 默认）：端口**不做判定**（恒 `null`）。
+ *
+ * 服务层不再因此拒绝 `community_image` 上传：`attachmentLimitFor` 在 `unwired` 时改用
+ * **同一 owner 名下存活的 `community_image` 记录数**（上传侧保守上限；权威每帖计数属
+ * GY-I15 附件挂载）。`null` 的 fail-closed 语义**仍保留给已接线端口**（`injected` 返回
+ * `null`，以及任何未来的真实计数器无法判定时 ⇒ 仍 503）。
+ */
 export function createUnwiredAttachmentCounter(): CommunityAttachmentCounter {
   return {
     kind: 'unwired',
-    note: '图片槽位计数器未接线（real）：无法判定「每帖 ≤3 张」⇒ 拒绝 community_image 上传（fail-closed）。',
+    note:
+      '图片槽位计数器未接线（real 默认）：端口不做判定 ⇒ 上传侧改按同一 owner 名下存活的 ' +
+      'community_image 记录数保守计数（上传侧保守上限，权威每帖计数属 GY-I15 附件挂载）。',
     countFor() {
       return null;
     },
@@ -642,11 +653,27 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     };
   }
 
+  /**
+   * 「每帖 ≤3 张」的**上传侧保守上限**（`createUpload` 的 `mediaCountForPost` 输入）。
+   *
+   * 口径（本单确立；来源：GY-I06 验收缺口 C5／最小闭环 D1，见 `#6`）：
+   * - **已接线**（`substitute`／`injected`）⇒ 仍**只**由端口判定，语义不变；端口返回 `null`
+   *   仍 `503`（不猜测、不放宽）。
+   * - **未接线**（`unwired`，即 `real` 模式的默认装配）⇒ **不再 503**，改用同一 owner 名下
+   *   **存活**的 `community_image` 记录数（`liveCommunityImageCount`：排除已删除／已拒绝，
+   *   其中上传句柄过期会转成 `rejected`+`failure_code='expired'`，因此过期记录不计入）。
+   *
+   * 这个数是**上传侧保守上限**：按 **owner 累计**（冻结契约的 `UploadInput` 没有帖子上下文，
+   * 本端点无从得知是哪一帖）⇒ 恒 ≥ 单帖真实张数，宁紧不松。它**不是**「每帖」的**权威**计数 ——
+   * 权威判定属 **GY-I15 的附件挂载**；本函数不因未接线而声称已实现每帖计数。
+   */
   function attachmentLimitFor(actor: MediaActor, purpose: unknown): number {
     if (purpose !== 'community_image') return 0;
+    const liveCommunityImages = liveCommunityImageCount(actor.ownerId);
+    if (attachmentCounter.kind === 'unwired') return liveCommunityImages;
     const counted = attachmentCounter.countFor({
       ownerId: actor.ownerId,
-      liveCommunityImages: liveCommunityImageCount(actor.ownerId),
+      liveCommunityImages,
     });
     if (counted === null) {
       throw new ApiError('PROVIDER_UNAVAILABLE', '无法判定「每帖 ≤3 张」图片槽位：计数器未接线', {
