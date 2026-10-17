@@ -146,9 +146,11 @@ export interface CommunityContentOutcome {
  * （属社区线 GY-I15），不在本端点。这里显式建模为端口，避免悄悄放宽或悄悄按错口径计数：
  * - `substitute`（stub/preset_demo/测试）：按**同一 owner 名下存活的 `community_image` 记录数**计数 ——
  *   这是**保守替身**（大于等于真实每帖数），并已如实标注；
- * - `unwired`（real 默认）：端口自己无法判定 ⇒ `createUpload` **不再 503**，改由
- *   `attachmentLimitFor` 用同一 owner 名下的存活 `community_image` 记录数兜底
- *   （**上传侧保守上限**，见该函数注释；权威每帖计数仍属 GY-I15 附件挂载）。
+ * - `unwired`（real 默认）：端口自己无法判定（恒 `null`）⇒ 该用途的 `createUpload` **仍 503
+ *   fail-closed**，文案明确到「每帖上限计数未接线」。**不得**改用同一 owner 名下存活记录数顶替：
+ *   那是**生命周期累计**口径，而清理器（`expireInitiated`／`cleanupOrphans`）与权威每帖计数
+ *   （GY-I15）今天都没有生产调用者 ⇒ 累计数会让用户传满 3 张后**永久锁死**，且「先数后写」之间
+ *   存在 TOCTOU（并发可超发）。**缺清理器／权威计数器时不得放行**。
  */
 export interface CommunityAttachmentCounter {
   readonly kind: 'substitute' | 'unwired' | 'injected';
@@ -294,17 +296,20 @@ export function createSubstituteAttachmentCounter(): CommunityAttachmentCounter 
 /**
  * 未接线计数器（real 默认）：端口**不做判定**（恒 `null`）。
  *
- * 服务层不再因此拒绝 `community_image` 上传：`attachmentLimitFor` 在 `unwired` 时改用
- * **同一 owner 名下存活的 `community_image` 记录数**（上传侧保守上限；权威每帖计数属
- * GY-I15 附件挂载）。`null` 的 fail-closed 语义**仍保留给已接线端口**（`injected` 返回
- * `null`，以及任何未来的真实计数器无法判定时 ⇒ 仍 503）。
+ * 服务层据此**继续拒绝** `community_image` 上传：`attachmentLimitFor` 的 `null` 分支 ⇒
+ * `503 PROVIDER_UNAVAILABLE`（`retryable: false`），文案明确到「每帖上限计数未接线」。
+ *
+ * ⛔ **不得**把本计数器改成「按同一 owner 名下存活 `community_image` 记录数计数」：那是
+ * **生命周期累计**口径，与缺位的清理器／权威每帖计数（GY-I15）叠加会变成「传满 3 张即永久
+ * 锁死（只能手删）」，并且「先数后写」之间有 TOCTOU（并发可超发）。见
+ * `.pg17/ruling-i06-d1-substitute-rework-20261017.md` 方案 A。
  */
 export function createUnwiredAttachmentCounter(): CommunityAttachmentCounter {
   return {
     kind: 'unwired',
     note:
-      '图片槽位计数器未接线（real 默认）：端口不做判定 ⇒ 上传侧改按同一 owner 名下存活的 ' +
-      'community_image 记录数保守计数（上传侧保守上限，权威每帖计数属 GY-I15 附件挂载）。',
+      '每帖上限计数未接线（real 默认）：端口不做判定（恒 null）⇒ 该用途上传 503 fail-closed；'
+      + '不按本地存活记录数顶替（累计口径会永久锁死且 TOCTOU 超发，权威每帖计数属 GY-I15 附件挂载）。',
     countFor() {
       return null;
     },
@@ -321,6 +326,17 @@ export function createInjectedAttachmentCounter(
     countFor: count,
   };
 }
+
+/**
+ * 每帖上限计数缺位时 `createUpload` 的 **503 文案**（`real` 默认的 `unwired` 装配走这里）。
+ *
+ * 必须**具体到「每帖上限计数未接线」**：泛化的「服务不可用」会把「能力未装配」误报成瞬时故障，
+ * 既误导调用方重试，也会掩盖真实缺口（见 `.pg17/ruling-i06-d1-substitute-rework-20261017.md`）。
+ * 配套的机器可读判别在 `details`（`post_image_limit_unwired`），与 400 的
+ * `post_image_limit` 区分开。
+ */
+const ATTACHMENT_LIMIT_UNWIRED_MESSAGE =
+  '每帖上限计数未接线：无法判定「每帖 ≤3 张」图片槽位（缺权威每帖计数，社区图片上传暂不可用）';
 
 // --------------------------------------------------------------------- 工具
 
@@ -617,7 +633,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     return revoked;
   }
 
-  /** 同一 owner 名下存活的 community_image 记录数（保守替身计数器的输入）。 */
+  /**
+   * 同一 owner 名下存活的 community_image 记录数。
+   *
+   * 只作为**已接线**端口的输入（`substitute` 的占位数、`injected` 探针的 `liveCommunityImages`）。
+   * `unwired` **不使用**它——见 `attachmentLimitFor` 的 `null` 分支（累计口径会锁死 + TOCTOU）。
+   */
   function liveCommunityImageCount(ownerId: string): number {
     let count = 0;
     for (const record of records.values()) {
@@ -654,31 +675,32 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   }
 
   /**
-   * 「每帖 ≤3 张」的**上传侧保守上限**（`createUpload` 的 `mediaCountForPost` 输入）。
+   * 「每帖 ≤3 张」的上传侧判定输入（`createUpload` 的 `mediaCountForPost`）。
    *
-   * 口径（本单确立；来源：GY-I06 验收缺口 C5／最小闭环 D1，见 `#6`）：
-   * - **已接线**（`substitute`／`injected`）⇒ 仍**只**由端口判定，语义不变；端口返回 `null`
-   *   仍 `503`（不猜测、不放宽）。
-   * - **未接线**（`unwired`，即 `real` 模式的默认装配）⇒ **不再 503**，改用同一 owner 名下
-   *   **存活**的 `community_image` 记录数（`liveCommunityImageCount`：排除已删除／已拒绝，
-   *   其中上传句柄过期会转成 `rejected`+`failure_code='expired'`，因此过期记录不计入）。
-   *
-   * 这个数是**上传侧保守上限**：按 **owner 累计**（冻结契约的 `UploadInput` 没有帖子上下文，
-   * 本端点无从得知是哪一帖）⇒ 恒 ≥ 单帖真实张数，宁紧不松。它**不是**「每帖」的**权威**计数 ——
-   * 权威判定属 **GY-I15 的附件挂载**；本函数不因未接线而声称已实现每帖计数。
+   * 口径（本片返修确立；来源：GY-I06 验收缺口 C5／最小闭环 D1，见 `#6`；决定见
+   * `.pg17/ruling-i06-d1-substitute-rework-20261017.md` 方案 A）：
+   * - **判定只认端口**：`substitute`／`injected` 由 `countFor` 给出占位数，语义不变
+   *   （`substitute` ＝同一 owner 名下存活 `community_image` 记录数，上传侧**保守替身**）。
+   * - 端口返回 `null`（含 `real` 默认的 `unwired`）⇒ `503 PROVIDER_UNAVAILABLE`
+   *   （`retryable: false`），文案明确到「每帖上限计数未接线」，**不猜测、不放宽**。
+   * - ⛔ **不得**用同一 owner 名下存活记录数顶替 `unwired`：那是**生命周期累计**口径，而清理器
+   *   （`expireInitiated`／`cleanupOrphans`）与权威每帖计数（GY-I15）今天都没有生产调用者
+   *   ⇒ 累计数会让用户传满 3 张后**永久锁死**（只能手删），并且「先数后写」之间存在 TOCTOU
+   *   （并发可超发）。**缺清理器／权威计数器时不得放行**。
    */
   function attachmentLimitFor(actor: MediaActor, purpose: unknown): number {
     if (purpose !== 'community_image') return 0;
     const liveCommunityImages = liveCommunityImageCount(actor.ownerId);
-    if (attachmentCounter.kind === 'unwired') return liveCommunityImages;
     const counted = attachmentCounter.countFor({
       ownerId: actor.ownerId,
       liveCommunityImages,
     });
     if (counted === null) {
-      throw new ApiError('PROVIDER_UNAVAILABLE', '无法判定「每帖 ≤3 张」图片槽位：计数器未接线', {
-        // 媒体域未接线（fail-closed 替身／计数器未接入）：retryable 必须为 false。
+      throw new ApiError('PROVIDER_UNAVAILABLE', ATTACHMENT_LIMIT_UNWIRED_MESSAGE, {
+        // 能力未装配（每帖上限计数缺位，非瞬时故障）：retryable 必须为 false，
+        // 且 details 给出机器可读判别，避免与 400 的 post_image_limit 混淆。
         retryable: false,
+        details: [{ field: '/purpose', code: 'post_image_limit_unwired' }],
       });
     }
     return counted;
