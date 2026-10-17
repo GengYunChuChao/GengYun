@@ -186,6 +186,7 @@ import {
   type AnswerComposer,
   type TranscriptionPort,
 } from './conversations/service.ts';
+import { createModerationRiskScreen, type RiskScreen } from './conversations/screen.ts';
 import {
   createMemoryConversationStore,
   type ConversationStore,
@@ -453,6 +454,11 @@ export interface BuildAppOptions {
     dose?: DoseAuthority;
     guard?: AnswerGuard;
     composer?: AnswerComposer;
+    /**
+     * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
+     * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
+     */
+    riskScreen?: RiskScreen;
     transcription?: TranscriptionPort;
     cascade?: TurnCascadePort;
   };
@@ -1277,6 +1283,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    （候选正文由检索条目逐字组成，不经任何模型）。
   const conversationGuard: AnswerGuard = conversationInjection?.guard ?? createConversationGuard({ dose: conversationDose });
   const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();
+  // 5b) 风险/注入筛查（问题 + 资料原文）：**复用** `packages/moderation` 现成的
+  //     `dangerous_usage` + `prompt_injection` 规则层，不新写第二套规则；缺省启用（fail-closed）。
+  const conversationRiskScreen: RiskScreen = conversationInjection?.riskScreen ?? createModerationRiskScreen();
   // 6) 语音轮次：只读复用已合并的 `app.speechService.getTranscription`（受理时核对
   //    `transcription_id` + `transcription_revision` + `confirmed`），不新建第二套转写存储。
   const conversationTranscription = conversationInjection?.transcription ?? createTranscriptionPort({
@@ -1294,6 +1303,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           retrieval: conversationRetrieval,
           guard: conversationGuard,
           composer: conversationComposer,
+          riskScreen: conversationRiskScreen,
           transcription: conversationTranscription,
           cascade: conversationCascade,
           ledger: conversationLedger,
