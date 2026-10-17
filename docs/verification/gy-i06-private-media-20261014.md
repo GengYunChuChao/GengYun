@@ -400,4 +400,3 @@ export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.inva
 **绑定 SHA（实测）**：本补记所述实现见提交 `ab7fe679ee39ea5cfdc1ddba812d56ff334513c1`
 （`git cat-file -t ab7fe679ee39ea5cfdc1ddba812d56ff334513c1` ⇒ `commit`；父提交
 `5c81cc2c861ea75c7970613f70961f2a06d195ef`）；本文件所在文档提交紧随其后。
-
