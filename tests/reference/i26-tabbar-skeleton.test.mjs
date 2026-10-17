@@ -286,6 +286,21 @@ test('五 Tab 页的失败态入口必须走 state-view，不得自写状态块'
       )
     }
 
+    // 覆盖面声明（本文件只做静态结构校验，勿读成运行期验证）：
+    //   · 全文件只断言仓库里的**静态文本与文件结构**：五 Tab 四件套（js/json/wxml/wxss）
+    //     的存在性与 `pagePath` 一致性、`state-view` 八态闭集三方相等（§2 文档表＝
+    //     `PRESETS` 键＝本文件常量）、以及真机台账的措辞。不编译 WXML/WXSS、不启动
+    //     微信开发者工具、不触真机 ⇒ 不证明真机渲染、不证明 TabBar 图标视觉、
+    //     不证明开发者工具内编译通过（真机五项仍为「未取得」，见证据文档 §12）。
+    //   · 下面这段只把页面 JS 的 `status: '…'` 字面量与 WXML 的 state-view 渲染令牌
+    //     对表，且**仅对 loading/error/empty 三类失败态**要求「WXML 有对应令牌」：
+    //     不判该字面量是否属于八态闭集，也不推断运行期实际取值 ⇒ 闭集外的
+    //     `status: 'idle'`（messages.js 既有）不会被报出。闭集归属只对
+    //     「渲染令牌」那一侧生效（见上一个断言块）。
+    //   · `{{…}}` 内没有字面量的计算态不产生任何令牌（如 identify.wxml 的
+    //     `status="{{stateView.component}}"`），故不参与本用例的断言。
+    //   · 未在自身 json 里注册 state-view 的页面不在本用例范围（与「引用 state-view
+    //     的页面」这一口径一致）；这类页面即便新增 status 也不会被判红。
     // 页面 JS 置的失败/加载/空态，必须在 WXML 里有对应 state-view 渲染令牌。
     const js = readText(`miniprogram/pages/${name}/${name}.js`)
     const jsTokens = [...js.matchAll(/status:\s*'([a-z_]+)'/g)].map((m) => m[1])
