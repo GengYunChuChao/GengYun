@@ -32,7 +32,7 @@
 | `tests/unit/history-http.test.mjs` | 改动 | 同上两处（行内 real 块改注释并保留无 `pool` 臂；独立接线用例拆成无 `pool`／有 `pool` 两条） |
 | `tests/unit/favorites-history-store-pg.test.mjs` | 新增 | store 逐方法语义（8 组）：读回／去重／归属／CAS 四态／台账／`awaitIdempotencySettled`／计行数／回滚 |
 | `tests/unit/favorites-history-deletion-registration.test.mjs` | 新增 | 注销清空**经 app 装配**打到 PG 表：真表清零、行数进证据 |
-| `tests/integration/favorites-history-pg.mjs` | 新增 | 真 PG17 端到端（**12 组**，脚本内逐个 `PASS n:` 计数）；未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时**显式打印 SKIP**（不静默绿） |
+| `tests/integration/favorites-history-pg.mjs` | 新增 | 真 PG17 端到端（**12 组**，脚本内逐个 `PASS n:` 计数）；未设 `FAVORITES_HISTORY_PG_TEST_URL` 时**显式跳过**、逐字打印 `SKIP real PG17: … 未设置 —— 本次运行没有验证真库持久化（不是通过，也不是失败）。` 且 `exit 0` —— **跳过不是通过，也不是验证**：该臂下真库持久化一条都没测到，⛔ 不得读成「已验证通过」 |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | 改动 | 白名单追加本片真库脚本＋原因（该门禁要求「未接线必须显式声明」） |
 
 ## 2 迁移 0018：表、约束、索引
@@ -47,9 +47,33 @@
 - 排序索引：`(owner_id, created_at DESC, id DESC)` 两域各一，与 `compareFavoritesDescending`／`compareHistoryDescending` 同口径。
 - `target_id`／`job_id`／`event_key` **故意不用 uuid**：契约允许任意文本（既有用例就传 `spc-1`、`job-page-0`）。
 - `reference_state` **不入库**：引用可用性由读取时逐次派生（既有实现口径），落库只会变成过期快照。
-- 删除是**物理删除**（与内存实现一致）。`owner_id` 是**裸外键** `REFERENCES users (id)`，**不带**
-  `ON DELETE CASCADE`（上一版措辞写错，审查已指出）：全仓**没有任何** `DELETE FROM users`（已 grep 确认），
-  故当前不会产生孤儿行；这是**已知边界**而非疏漏 —— 若将来引入物理删用户，需先清子表或补级联。
+- 删除是**物理删除**（与内存实现一致）。`owner_id` 是**裸外键** `REFERENCES users (id)`（默认 `NO ACTION`），
+  **不带** `ON DELETE CASCADE`（上一版措辞写错，审查已指出）。
+- **`DELETE FROM users` 的实测（口径 29：读数绑定测量 SHA `6479d1b`；本片相对基线未改任何代码／迁移／测试）**：
+  上一版在此写的是**假断言**（引文「全仓无此语句／已 grep 确认」），本轮删除并换成下面的可复现读数 —— 三档必须分开写：
+
+| 档 | 命令（均落在 `6479d1b` 的 `HEAD` 树上） | 命中 | 说明 |
+| --- | --- | --- | --- |
+| 生产代码 | `git grep -n 'DELETE FROM users' HEAD -- services/api/src` | **0**（`exit 1`） | 扩到 `services apps packages miniprogram tools scripts .github` 仍 **0**（`exit 1`）⇒ 生产**无删用户路径** |
+| 测试代码 | `git grep -n 'DELETE FROM users' HEAD -- tests` | **3** | 2 处**真执行** ＋ 1 处**拒绝断言**（逐处见下） |
+| 全仓（含本页） | `git grep -n 'DELETE FROM users' HEAD` | **4** | ＝ 生产 0 ＋ 测试 3 ＋ 本页 1（本页自述，见下方自指说明） |
+
+- **测试里那 3 处逐条列明（符号锚，不用裸行号；这两个文件都不在本片三点 diff 内 ⇒ 读数不受本片改动影响）**：
+  - `tests/integration/egress-object-key-pg.mjs` **真执行 ×2**：① 「P2-c 故障注入」段里的
+    `await owner.query('DELETE FROM users WHERE id=$1', [uA])`（该段以 `say('P2-c 故障注入①（真 PG）…')` 收尾）；
+    ② 脚本末尾 `finally` 清理块里的 `DELETE FROM users WHERE wechat_subject_lookup=decode($1,'hex')`
+    （在 `GRANT … ON exports TO gengyun_egress_ledger` 复原之前）。两处删的都是该脚本自造的夹具用户；
+    该脚本**不应用 `0018`**（`git grep -c '0018' HEAD -- tests/integration/egress-object-key-pg.mjs` ⇒ `exit 1`／0 命中；
+    它应用的迁移只有 `0014`／`0015`）⇒ 这两次删除不落在本片四张表上，不产生本片孤儿子行。
+  - `tests/integration/auth-privacy-pg.mjs` **1 处，但不是删用户路径**：`'DELETE FROM users'` 是「受限 LOGIN 必须被
+    `42501` 拒绝」的 11 条 SQL 负向清单里的一项（`for (const sql of […])` ＋
+    `await assert.rejects(pool.query(sql), e => e.code === '42501')`）⇒ **期望被拒绝**，不是可用的删除能力。
+- ⚠ **自指说明（可复现性）**：本页自身含 `DELETE FROM users` 字面量（上面就是命令示例），⇒「全仓」计数会随本页措辞
+  变动；**稳定可复现的是 scoped 两档**（`-- tests` = 3、`-- services/api/src` = 0）。`全仓 4` 绑定改前 `6479d1b`，
+  与审查报告 §8 的独立实测一致（上一轮的 0 命中是在过期主检出的工作树上测的，故不成立）。
+- ⇒ 结论：**生产代码没有删用户路径**（`services/api/src/**` 0 命中）⇒ 本片四张表的裸 FK 当前无触发点、不产生孤儿行；
+  这是**已知边界**而非疏漏。裸 FK（默认 `NO ACTION`）本身 fail-safe：将来若引入物理删用户，删 `users` 行会因 FK
+  **报错阻止**（不是静默留孤儿），届时需先用 `deleteAllByOwner` 清 `favorites`／`history` 或补级联。
 
 ## 3 store 实现：逐方法对齐内存实现
 
