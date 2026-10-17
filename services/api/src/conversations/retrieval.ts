@@ -20,11 +20,18 @@
  *     `conflicting` 额外**单独标注**：计入 `note` 并用既有措辞「来源相互冲突」说明
  *     "冲突、资料不足"；**不**解释冲突内容 —— 本层没有核对冲突的事实依据，
  *     编造冲突解释正是要防的失真。
- *  6. **预排序（GY-I12 D3②）**：按与 `question` 的**字面重合度**排序（规则
- *     `cjk-bigram+word-match/1`，与回答器同规则），同分保持**读面顺序**。排序发生在
- *     **截断之前**，所以候选池超出本层上限时丢掉的是"最不相关"的条目，而不是读面顺序
- *     里的尾部条目。排序只改变**顺序**，不放宽也不收紧任何过滤，更不改变
- *     "同一读面同一快照"这一来源（读面仍是一次 `list` 调用，见文件头第 1 条）。
+ *  6. **不按提问排序（无死代码）**：本层**不做**"按 `question` 字面重合度预排序"。
+ *     理由是可观测性，不是偏好：真实装配下读面一次最多给 `RETRIEVAL_LIMIT` 条
+ *     （`knowledge/pagination.ts` 对 `limit` 做 1..50 校验并切片，检索端口的
+ *     `query.limit` 恒等于 `RETRIEVAL_LIMIT`），所以候选池恒 ≤ 上限，排序**只能**
+ *     改集合内部顺序、改不了集合成员；而回答器本来就按同一规则重排（见
+ *     `conversations/service.ts` 的 `RELEVANCE_RULE`，同分按 id 升序），集合顺序对
+ *     `Answer` 没有影响。实测（真实回环装配、真实读面分页、60/80/120 条语料、24 个提问）：
+ *     有排序与无排序的集合**成员逐条相同**、`Answer` 逐字节相同（`citations` /
+ *     `checked_text` / `status` / `check_state` / `dose_cards` 全同）；差异只出现在
+ *     "读面无视 `limit` 一次返回全部"这种**真实装配下不可达**的情形（`limit > 50`
+ *     在读面直接 `INVALID_REQUEST`）。既然只在不可达读面上才有效果，保留它就是把
+ *     未走到的分支当能力宣称，故删除整族排序代码。
  *
  * 条件收窄（与 `knowledge/service.ts` 的既有口径逐字对齐）：只应用读面**能证成**的三个条件
  * （`crop_id` / `region_code` / `species_id`）。会话如果带上了读面**无法证成**的条件
@@ -89,18 +96,6 @@ const VALIDITY_REASONS: Readonly<Record<string, string>> = {
 const VALIDITY_REASON_FALLBACK = '来源有效期不可用';
 const REVIEW_STATUS_REASON = '未通过核对';
 
-/**
- * 预排序规则名（**与回答器同规则**，`conversations/service.ts` 的 `RELEVANCE_RULE`）。
- *
- * 为什么本文件内单独实现最小分词：`service.ts` 是 D2 片的改动面（派单 §2 第 3 项），
- * 本层不 import 它以避开同文件争用；"两处规则一致"由
- * `tests/unit/conversation-retrieval-validity.test.mjs` 的
- * 「预排序顺序必须与回答器引用顺序一致」断言锁住（规则名/分词/评分任一漂移，该断言必红）。
- */
-export const RETRIEVAL_RANK_RULE = 'cjk-bigram+word-match/1';
-const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
-const WORD_RUN = /[a-z0-9]{2,}/g;
-
 /** 一条被有效性判定剔除的条目（**逐条留痕**，供 `note` 如实说明"为什么没有依据"）。 */
 export interface UnusableSource {
   readonly usable: false;
@@ -140,54 +135,6 @@ export function validityVerdictOf(source: SourceRef): ValidityVerdict {
     };
   }
   return { usable: true };
-}
-
-/**
- * 提问 → 字面 shingle 集合（与回答器同规则：单字 CJK 直接入集，否则全部 bigram + ascii 词）。
- *
- * 空提问/无可用字符 ⇒ 空集合 ⇒ 排序退化为"保持读面顺序"（不因为排序把集合清空）。
- */
-export function questionShingles(question: string): Set<string> {
-  const shingles = new Set<string>();
-  for (const run of question.toLocaleLowerCase('zh-CN').match(CJK_RUN) ?? []) {
-    if (run.length === 1) {
-      shingles.add(run);
-      continue;
-    }
-    for (let index = 0; index + 1 < run.length; index += 1) shingles.add(run.slice(index, index + 2));
-  }
-  for (const word of question.toLocaleLowerCase('zh-CN').match(WORD_RUN) ?? []) shingles.add(word);
-  return shingles;
-}
-
-/** 一条资料与提问的字面重合度（命中 shingle 个数；只作排序键，不代表"可靠"）。 */
-export function questionMatchScore(
-  shingles: ReadonlySet<string>,
-  item: { readonly title: string; readonly body: string },
-): number {
-  const itemShingles = questionShingles(`${item.title}\n${item.body}`);
-  let score = 0;
-  for (const shingle of itemShingles) {
-    if (shingles.has(shingle)) score += 1;
-  }
-  return score;
-}
-
-/**
- * 按提问预排序（`RETRIEVAL_RANK_RULE`）：分数降序，**同分保持读面顺序**（稳定）。
- *
- * 排序不是过滤：这里既不新增也不删除条目，候选池的成员由读面与有效性判定决定。
- */
-export function rankByQuestion<T extends { readonly title: string; readonly body: string }>(
-  items: readonly T[],
-  question: string,
-): T[] {
-  const shingles = questionShingles(question);
-  if (shingles.size === 0) return [...items];
-  return items
-    .map((item, index) => ({ item, index, score: questionMatchScore(shingles, item) }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map((entry) => entry.item);
 }
 
 /** 剔除清单 → `note` 里的计数摘要（按 `field=value` 稳定排序，便于逐字核对）。 */
@@ -317,7 +264,7 @@ export function createKnowledgeRetrievalPort(options: { face: KnowledgeReadFace;
     note:
       options.note ??
       '检索集合 = 与 /knowledge 同一读面（视图 catalog_read.current_knowledge + 同一浙江种子开关 + 同一会话校验）的本次读取结果',
-    async read({ identity, question, token, conditions }): Promise<RetrievalSet> {
+    async read({ identity, token, conditions }): Promise<RetrievalSet> {
       const { query, unprovable } = knowledgeQueryOf(conditions);
       if (unprovable.length > 0) {
         // 既有读面对这三个条件"证不成就返回空，不静默放宽"；本层不把它们悄悄丢掉，
@@ -342,9 +289,9 @@ export function createKnowledgeRetrievalPort(options: { face: KnowledgeReadFace;
         if (verdict.usable) usableItems.push(item);
         else excluded.push(verdict);
       }
-      // 预排序在**截断之前**（文件头第 6 条）：候选池大于上限时，丢的是最不相关的条目。
-      const ranked = rankByQuestion(usableItems, question);
-      const items = ranked.slice(0, RETRIEVAL_LIMIT);
+      // 不排序（文件头第 6 条）：集合顺序就是读面顺序；上限截断只是契约上限的兜底，
+      // 真实读面已按 `query.limit` 限制过条数（`limit > 50` 在读面直接拒绝）。
+      const items = usableItems.slice(0, RETRIEVAL_LIMIT);
       const conflicts = excluded.filter((entry) => entry.conflicting);
       const noteParts = [
         `本次检索集合：${items.length} 条（读面 /knowledge 同一快照；上限 ${RETRIEVAL_LIMIT} 条，未翻页）`,
@@ -360,9 +307,11 @@ export function createKnowledgeRetrievalPort(options: { face: KnowledgeReadFace;
             '「来源相互冲突、该条资料不足」，不解释冲突内容',
         );
       }
-      if (ranked.length > items.length) {
+      if (usableItems.length > items.length) {
+        // 只有读面无视 `limit` 才会走到这里（真实装配下不可达）：如实说明"按读面顺序截断"，
+        // 不声称任何"相关性"上的取舍。
         noteParts.push(
-          `候选池 ${ranked.length} 条超出上限，按与提问的字面重合度（${RETRIEVAL_RANK_RULE}）保留前 ${items.length} 条`,
+          `候选池 ${usableItems.length} 条超出上限，按读面顺序保留前 ${items.length} 条`,
         );
       }
       return { user_id: identity.userId, items, note: noteParts.join('；') };

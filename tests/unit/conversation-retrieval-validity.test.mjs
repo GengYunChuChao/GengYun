@@ -1,13 +1,16 @@
-// GY-I12（#12）D3：检索集合的**有效性判定**与**按提问预排序**回归（纯代码，无真实外发）。
+// GY-I12（#12）D3：检索集合的**有效性判定**回归（纯代码，无真实外发）。
 //
 // 覆盖（派单 §1.4 三条判据）：
 //  1) `expired` / `withdrawn` / `conflicting`（外加 `rejected` / `unknown`）三/五条资料的行为读数：
 //     过期 ⇒ 不引用、撤回 ⇒ 不引用、冲突 ⇒ 不引用**并如实标注「来源相互冲突」**（不解释冲突内容）；
-//  2) 同一 ≥60 条资料集、同六个提问，top-3 命中率**改动前 vs 改动后**两组数字（同一跑出，相对比较）；
+//  2) 同一 ≥60 条资料集、同六个提问，top-3 命中率**父版（`54ce029`）vs 新实现**两组数字 ——
+//     **同一合规读面**（真实 `paginateKnowledge`，`limit = RETRIEVAL_LIMIT`）同比、同一跑出；
+//     实测读数为**相同**（父版 3/6，新实现 3/6），因此这里断言"无提升"，不写任何提升结论；
 //  3) 集合仍来自**同一个读面实例**（`face` 身份 + 单次 `list` + 原样查询参数 + 装配层单实例静态断言）。
 //
-// 另覆盖：`UNPROVABLE_CONDITIONS` 短路与 `SESSION_REQUIRED` 既有行为不变、排序稳定且不放宽过滤、
-// 候选池超出上限时"排序先于截断"。
+// 另覆盖：`UNPROVABLE_CONDITIONS` 短路与 `SESSION_REQUIRED` 既有行为不变、
+// 读面无视上限时"按读面顺序截断"（真实装配不可达，仅记录兜底语义）、
+// 以及"本层不做提问排序"（排序在真实装配下不可观测，故整族删除，避免死代码）。
 //
 // 全部资料为**合成替身**（`example.invalid`、`测试替身`），不读真实资料库、不接真实模型、不发外发调用。
 // 本文件是**新增文件**：不改动任何既有 `conversation-*` 断言（派单 §1.5）。
@@ -16,19 +19,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { conversationFixture, JOBS, retrievalItem, retrievalSet } from './conversation-fixtures.mjs';
 import { createWiredRetrievalPort } from '../../services/api/src/conversations/guard.ts';
-import {
-  RELEVANCE_RULE,
-  createDeterministicAnswerComposer,
-  relevanceScore,
-  relevanceShingles,
-} from '../../services/api/src/conversations/service.ts';
+import { ApiError } from '../../services/api/src/errors.ts';
+import { paginateKnowledge } from '../../services/api/src/knowledge/pagination.ts';
+import { RELEVANCE_RULE, createDeterministicAnswerComposer } from '../../services/api/src/conversations/service.ts';
 import {
   RETRIEVAL_LIMIT,
-  RETRIEVAL_RANK_RULE,
   createKnowledgeRetrievalPort,
-  questionMatchScore,
-  questionShingles,
-  rankByQuestion,
+  knowledgeQueryOf,
+  retrievalItemOf,
+  retrievalItemsOf,
   validityVerdictOf,
 } from '../../services/api/src/conversations/retrieval.ts';
 
@@ -193,12 +192,15 @@ test('行为读数：过期 ⇒ 不引用；撤回 ⇒ 不引用；冲突 ⇒ �
 });
 
 // ---------------------------------------------------------------------------
-// ③ top-3 命中率：改动前 vs 改动后（同一资料集、同一提问集）
+// ③ top-3 命中率：父版 vs 新实现 —— **同一个合规读面**（真实分页，limit = RETRIEVAL_LIMIT）
 // ---------------------------------------------------------------------------
 
 const CORPUS_SIZE = 60;
 const COVERED_TERMS = ['稗草', '千金子', '鸭舌草', '矮慈姑', '水莎草', '异型莎草'];
-/** 目标条目的读面位置：前三个在"读面顺序前 50 条"内，后三个在**之外**（改动前根本读不到）。 */
+/**
+ * 目标条目的**语料位置**：前三个 < `RETRIEVAL_LIMIT`（合规读面读得到），
+ * 后三个 >= `RETRIEVAL_LIMIT`（合规读面本来就读不到）。
+ */
 const COVERED_POSITIONS = [4, 20, 40, 52, 56, 59];
 
 function corpusId(index) {
@@ -208,8 +210,8 @@ function corpusId(index) {
 /**
  * ≥60 条合成资料：六个"目标条目"（各自带一个**只在本条出现**的主题词）+ 54 条填充条目。
  *
- * 填充正文刻意与六个提问**零字面重合**：字面打分对它们恒为 0，所以命中与否只取决于
- * "目标条目是否在候选池里、是否排在前面"这两件事 —— 这正是 D3② 要测的东西。
+ * 填充正文刻意与六个提问**零字面重合**：字面打分对它们恒为 0，所以"是否命中"只取决于
+ * "目标条目是否在读面本次返回的 50 条里"这一件事 —— 这正是要测的读面读数。
  */
 function buildCorpus() {
   const targets = new Map();
@@ -241,16 +243,54 @@ function buildCorpus() {
 const { corpus: CORPUS, targets: COVERED_TARGETS } = buildCorpus();
 const COVERED_QUESTIONS = COVERED_TERMS.map((term) => ({ term, question: `${term}怎么处理？` }));
 
-test(`top-3 命中率（同一 ${CORPUS_SIZE} 条资料集、同 ${COVERED_QUESTIONS.length} 个提问）：改动后不低于改动前`, async (t) => {
-  // 「改动前」的读法替身：同一资料集，按**读面顺序**取前 RETRIEVAL_LIMIT 条（不判有效性、不排序）。
-  const baselinePort = createWiredRetrievalPort({
-    note: '基线替身：改动前的读法（读面顺序前 50 条，不判有效性、不按提问排序）',
-    async read({ identity }) {
-      return retrievalSet(identity.userId, CORPUS.slice(0, RETRIEVAL_LIMIT));
+/**
+ * 合规读面：**真实** `paginateKnowledge`（`services/api/src/knowledge/pagination.ts`）。
+ *
+ * 它做 `limit` 的 1..50 校验并按 `query.limit` 切片 —— 这就是 `/knowledge` 与检索端口
+ * 实际共享的那一层。两个端口都接**同一个** face 实例，因此看到的是**同一份** 50 条。
+ */
+function compliantFace(items, calls = []) {
+  return {
+    calls,
+    async list(input, query) {
+      calls.push(query);
+      return paginateKnowledge(items, {
+        userId: input.identity.userId,
+        authEpoch: 1,
+        hmacKey: 'synthetic-i12-hmac-key',
+        filter: {},
+        snapshot: items,
+        limit: query.limit,
+      });
+    },
+  };
+}
+
+/**
+ * 父版（`54ce029`）读法：把读面返回的条目**原样透出**。
+ *
+ * 父版原句是 `const items = retrievalItemsOf(result).map((row, index) => retrievalItemOf(row, \`#${index}\`));`
+ * —— 不判有效性、不排序、**不截断**。基线必须与父版同形，才谈得上"同一读面同比"；
+ * 上一版给基线强加 `CORPUS.slice(0, RETRIEVAL_LIMIT)` 正是虚假提升的来源（父版没有这句）。
+ */
+function parentBaselinePort(face) {
+  return createWiredRetrievalPort({
+    note: '基线：父版读法（同一读面原样透出，不判有效性、不排序、不截断）',
+    async read({ identity, token, conditions }) {
+      const { query } = knowledgeQueryOf(conditions);
+      if (token === null) throw new ApiError('SESSION_REQUIRED', '检索集合读取需要受理时捕获的用户会话凭据');
+      const result = await face.list({ identity, token }, query);
+      const items = retrievalItemsOf(result).map((row, index) => retrievalItemOf(row, `#${index}`));
+      return retrievalSet(identity.userId, items);
     },
   });
-  // 「改动后」：真实装配（`createKnowledgeRetrievalPort` + 同一 `face` 返回同一资料集）。
-  const newPort = createKnowledgeRetrievalPort({ face: { list: async () => ({ items: CORPUS }) } });
+}
+
+test(`top-3 命中率（同一合规读面、同一 ${CORPUS_SIZE} 条资料集、同 ${COVERED_QUESTIONS.length} 个提问）：父版与新实现读数相同`, async (t) => {
+  const faceCalls = [];
+  const face = compliantFace(CORPUS, faceCalls);
+  const baselinePort = parentBaselinePort(face);
+  const newPort = createKnowledgeRetrievalPort({ face });
 
   const baselineFixture = await conversationFixture(t, { injection: { retrieval: baselinePort } });
   const newFixture = await conversationFixture(t, { injection: { retrieval: newPort } });
@@ -263,13 +303,26 @@ test(`top-3 命中率（同一 ${CORPUS_SIZE} 条资料集、同 ${COVERED_QUEST
     const baselineIds = citationIds(baselineAnswer);
     const newIds = citationIds(newAnswer);
     assert.ok(baselineIds.length <= 3 && newIds.length <= 3, 'top-3 判据：引用条数不得超过 3');
+
+    // 集合层读数：同一读面下两个端口拿到的成员与顺序逐一相同（不靠 HTTP 反推）。
+    const baselineSet = await readOnce(baselinePort, baselineFixture, question);
+    const newSet = await readOnce(newPort, newFixture, question);
+    assert.ok(
+      baselineSet.items.length === RETRIEVAL_LIMIT && newSet.items.length === RETRIEVAL_LIMIT,
+      `${term}：两个端口都只拿到读面给的 ${RETRIEVAL_LIMIT} 条（上限来自读面，不是测试侧切片）`,
+    );
+    assert.deepEqual(
+      newSet.items.map((item) => item.id),
+      baselineSet.items.map((item) => item.id),
+      `${term}：同一读面下检索集合必须逐条相同（成员与顺序）`,
+    );
+
     rows.push({
       term,
       baseline: baselineIds.includes(target.id),
       after: newIds.includes(target.id),
       baselineIds,
       newIds,
-      newTop: newIds[0],
       targetId: target.id,
     });
   }
@@ -280,23 +333,30 @@ test(`top-3 命中率（同一 ${CORPUS_SIZE} 条资料集、同 ${COVERED_QUEST
   const baselineRate = baselineHits / total;
   const newRate = newHits / total;
   t.diagnostic(
-    `top-3 命中率：改动前 ${baselineHits}/${total}=${(baselineRate * 100).toFixed(1)}% → 改动后 ${newHits}/${total}=${(newRate * 100).toFixed(1)}%（同一 ${CORPUS_SIZE} 条资料集、同 ${total} 个提问）`,
+    `top-3 命中率（同一合规读面，limit=${RETRIEVAL_LIMIT}）：父版 ${baselineHits}/${total}=${(baselineRate * 100).toFixed(1)}% → 新实现 ${newHits}/${total}=${(newRate * 100).toFixed(1)}%（差 ${newHits - baselineHits}）`,
   );
   for (const row of rows) {
-    t.diagnostic(`  ${row.term}：改动前 ${row.baseline ? '命中' : '未命中'} ${JSON.stringify(row.baselineIds)} → 改动后 ${row.after ? '命中' : '未命中'} ${JSON.stringify(row.newIds)}`);
+    t.diagnostic(`  ${row.term}：父版 ${row.baseline ? '命中' : '未命中'} ${JSON.stringify(row.baselineIds)} → 新实现 ${row.after ? '命中' : '未命中'} ${JSON.stringify(row.newIds)}`);
   }
 
-  // 硬判据：改动后不低于改动前（派单 §1.4②）。
-  assert.ok(
-    newHits >= baselineHits,
-    `top-3 命中率不得回落：改动前 ${baselineHits}/${total}，改动后 ${newHits}/${total}`,
+  // 读数落点（**实测，不美化**）：同一合规读面下父版 3/6、新实现 3/6，差 0 —— 没有提升可宣称。
+  assert.equal(baselineHits, 3, `父版读数应为 3/${total}（读面只给出前 ${RETRIEVAL_LIMIT} 条，只覆盖前三个目标），实得 ${baselineHits}`);
+  assert.equal(newHits, baselineHits, `同一读面下不得声称任何提升：父版 ${baselineHits}/${total}，新实现 ${newHits}/${total}`);
+  assert.equal(newHits, 3, `新实现读数应为 3/${total}（与父版相同），实得 ${newHits}`);
+  // 每个提问的引用逐条相同（顺序也相同）——这是"同一读面同一读数"的直接证据。
+  for (const row of rows) {
+    assert.deepEqual(row.newIds, row.baselineIds, `${row.term}：同一读面下引用必须逐条相同`);
+  }
+  // 未命中项正是"读面读不到"的那三个（位置 >= 上限）：原因是读面上限，不是排序。
+  assert.deepEqual(
+    rows.filter((row) => !row.after).map((row) => row.term),
+    ['矮慈姑', '水莎草', '异型莎草'],
+    '未命中的必须是位置 >= RETRIEVAL_LIMIT 的三个目标',
   );
-  // 读数落点：前三个目标在改动前也能命中（它们在"读面顺序前 50 条"里），后三个必然读不到。
-  assert.equal(baselineHits, 3, `改动前的基线读数应为 3/${total}（读面顺序前 50 条只覆盖前三个目标），实得 ${baselineHits}`);
-  assert.equal(newHits, total, `改动后应 ${total}/${total} 全命中（排序把读面顺序第 50 条以后的目标提到前面），实得 ${newHits}`);
-  // 排在最前的是目标条目本身（不是"碰巧也在 top-3 里"）。
-  for (const row of rows) assert.equal(row.newTop, row.targetId, `${row.term}：预排序后第一条必须是与提问最重合的目标条目`);
-  assert.equal(RETRIEVAL_RANK_RULE, 'cjk-bigram+word-match/1');
+  assert.deepEqual(COVERED_POSITIONS.filter((position) => position >= RETRIEVAL_LIMIT), [52, 56, 59]);
+  // 读面确实按 limit=RETRIEVAL_LIMIT 被调用（合规读面的上限即检索端口的读面上限）。
+  assert.deepEqual([...new Set(faceCalls.map((query) => query.limit))], [RETRIEVAL_LIMIT], '读面调用必须带 limit=RETRIEVAL_LIMIT');
+  assert.ok(COVERED_POSITIONS.some((position) => position >= RETRIEVAL_LIMIT), '语料必须覆盖"读面读不到"的位置，否则测不出上限');
 });
 
 // ---------------------------------------------------------------------------
@@ -346,7 +406,7 @@ test('集合仍来自同一读面实例：face 身份不变、一次读取只调
 });
 
 // ---------------------------------------------------------------------------
-// ⑤ 既有行为不变：UNPROVABLE_CONDITIONS 短路、SESSION_REQUIRED、候选池先排序后截断
+// ⑤ 既有行为不变：UNPROVABLE_CONDITIONS 短路、SESSION_REQUIRED
 // ---------------------------------------------------------------------------
 
 test('既有短路话术与凭据行为不变：无法证成的条件直接空集合（不读面）、缺凭据仍抛 SESSION_REQUIRED', async (t) => {
@@ -372,66 +432,93 @@ test('既有短路话术与凭据行为不变：无法证成的条件直接空�
   );
 });
 
-test('候选池超出上限：先按提问排序再截断，保留的是最重合的条目（不是读面顺序的尾部）', async (t) => {
-  const port = createKnowledgeRetrievalPort({ face: { list: async () => ({ items: CORPUS }) } });
+test('读面无视上限（真实装配不可达）：按读面顺序截断保留前 50 条，不放宽过滤，也不声称相关性取舍', async (t) => {
+  // 违约读面：忽略 `query.limit` 一次返回全部。真实装配下不可达（见本用例末尾的机械判据），
+  // 这里只用来把"兜底截断"的语义与措辞钉死，不当作能力宣称。
+  const violatingFace = { async list() { return { items: CORPUS }; } };
+  const port = createKnowledgeRetrievalPort({ face: violatingFace });
   const fixture = await conversationFixture(t, { injection: { retrieval: port } });
 
-  // 「异型莎草」的目标条目在读面顺序第 59 位（远超上限 50）——排序必须先于截断才留得住它。
   const term = '异型莎草';
   const target = COVERED_TARGETS.get(term);
   const set = await readOnce(port, fixture, `${term}怎么处理？`);
 
   assert.equal(set.items.length, RETRIEVAL_LIMIT, `集合长度必须是上限 ${RETRIEVAL_LIMIT}`);
-  assert.equal(set.items[0].id, target.id, '与提问最重合的条目必须排第一（且不被截断丢掉）');
+  assert.equal(set.items[0].id, CORPUS[0].id, '顺序就是读面顺序（本层不按提问重排）');
+  assert.equal(
+    set.items.some((item) => item.id === target.id),
+    false,
+    '读面顺序第 59 位的目标被上限截掉 —— 如实为未命中，不靠排序把它"提"进来',
+  );
   assert.match(set.note, new RegExp(`候选池 ${CORPUS_SIZE} 条超出上限`, 'u'));
-  assert.match(set.note, /按与提问的字面重合度（cjk-bigram\+word-match\/1）保留前 50 条/u);
+  assert.match(set.note, /按读面顺序保留前 50 条/u);
+  assert.doesNotMatch(set.note, /重合度|cjk-bigram|相关性/u, '不得声称任何"按相关性取舍"的效果');
   // 截断后集合内仍是"有效"条目：没有把剔除项混回来。
   for (const item of set.items) assert.equal(validityVerdictOf(item.source).usable, true);
+
+  // 机械判据：这一读面在真实装配下不可达 —— 真实分页对 limit > 50 直接拒绝。
+  assert.throws(
+    () => paginateKnowledge(CORPUS, {
+      userId: '11111111-1111-4111-8111-111111111111',
+      authEpoch: 1,
+      hmacKey: 'synthetic-i12-hmac-key',
+      filter: {},
+      snapshot: CORPUS,
+      limit: RETRIEVAL_LIMIT + 1,
+    }),
+    (error) => error.code === 'INVALID_REQUEST',
+    `真实读面对 limit > ${RETRIEVAL_LIMIT} 必须拒绝（因此读面不会返回超过上限的候选池）`,
+  );
+  assert.equal(RETRIEVAL_LIMIT, 50, '读面上限即检索上限（同一个数，不另立一套）');
 });
 
-test('预排序：按提问字面重合度降序、同分保持读面顺序（稳定），不放宽过滤', () => {
-  const shingles = questionShingles('稗草怎么处理？');
-  assert.ok(shingles.has('稗草'), '中文必须切成 bigram（稗草 应命中）');
-  assert.ok(shingles.size > 0);
-
-  const low = retrievalItem({ id: corpusId(0), title: '合成资料：与本轮无关', body: '占位正文。' });
-  const high = retrievalItem({ id: corpusId(1), title: '合成资料：稗草的识别', body: '关于稗草的正文。' });
-  const tie = retrievalItem({ id: corpusId(2), title: '合成资料：稗草相关', body: '关于稗草的正文。' });
-  assert.ok(questionMatchScore(shingles, high) > questionMatchScore(shingles, low), '重合度高者分数必须更高');
-
-  const ranked = rankByQuestion([low, high, tie], '稗草怎么处理？');
-  assert.deepEqual(ranked.map((item) => item.id), [high.id, tie.id, low.id], '分数降序、同分保持输入顺序');
-  assert.equal(ranked.length, 3, '排序不增删条目（过滤由有效性判定负责，不由排序负责）');
-  // 空提问 ⇒ 不排序，读面顺序原样（不因为"没有提问"就把集合清空）。
-  assert.deepEqual(rankByQuestion([low, high], '').map((item) => item.id), [low.id, high.id]);
-
-  // 规则与回答器一致：本层不 import `service.ts`（D2 改动面），所以由这条断言锁住"两处规则同源"。
-  // 一旦任一侧的规则名/分词/评分漂移，这里必红。
-  const question = '稗草怎么处理？';
-  assert.equal(RETRIEVAL_RANK_RULE, RELEVANCE_RULE, '预排序规则名必须与回答器一致');
+test('无死代码：本层不做提问排序（排序族已整族删除），排序规则只在回答器且引用顺序与集合顺序无关', async (t) => {
+  // 行为判据：同一读面、不同提问 ⇒ 集合成员与顺序逐一相同。
+  // （若本层按提问排序，两个提问的相对顺序不可能恒等 —— 本用例的语料里目标条目分数两两不同。）
+  const face = { async list() { return { items: CORPUS }; } };
+  const port = createKnowledgeRetrievalPort({ face });
+  const fixture = await conversationFixture(t, { injection: { retrieval: port } });
+  const first = await readOnce(port, fixture, '稗草怎么处理？');
+  const second = await readOnce(port, fixture, '异型莎草怎么处理？');
   assert.deepEqual(
-    [...questionShingles(question)].sort(),
-    [...relevanceShingles(question)].sort(),
-    '分词必须与回答器逐字一致',
+    first.items.map((item) => item.id),
+    second.items.map((item) => item.id),
+    '提问不得影响集合顺序（本层不排序）',
   );
-  for (const item of [low, high, tie]) {
-    assert.equal(
-      questionMatchScore(questionShingles(question), item),
-      relevanceScore(relevanceShingles(question), item),
-      '评分必须与回答器一致',
-    );
-  }
-  // 回答器引用的顺序 = 本层预排序（本条资料集里分数两两不同，二者可逐位比较）。
-  const composed = createDeterministicAnswerComposer().compose({
-    question,
-    conditions: null,
-    set: { user_id: '11111111-1111-4111-8111-111111111111', items: [low, high, tie], note: '合成检索集合（测试替身）' },
+  assert.deepEqual(
+    first.items.map((item) => item.id),
+    CORPUS.slice(0, RETRIEVAL_LIMIT).map((item) => item.id),
+    '集合顺序 = 读面顺序',
+  );
+  assert.ok(first.items.length === RETRIEVAL_LIMIT, `集合长度应为 ${RETRIEVAL_LIMIT}`);
+
+  // 源码判据：排序族不得以任何形式留存（删除即删除，不留"半死"分支）。
+  const source = readFileSync(new URL('../../services/api/src/conversations/retrieval.ts', import.meta.url), 'utf8');
+  const code = source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/\/\/[^\n]*/gu, '');
+  assert.doesNotMatch(code, /rankByQuestion|questionShingles|questionMatchScore|RETRIEVAL_RANK_RULE/u, '排序死代码必须整族移除');
+  assert.doesNotMatch(code, /重合度/u, '注释之外的代码里不得再出现"按相关性排序"的措辞');
+  assert.equal((code.match(/validityVerdictOf\(item\.source\)/gu) ?? []).length, 1, '有效性判定必须保留且只有唯一一处调用点');
+  assert.equal((source.match(/来源相互冲突/u) ?? []).length, 1, '冲突措辞逐字复用既有口径，不新增解释');
+
+  // 回答器侧：规则名不变；引用顺序由分数 + id 决定，与集合顺序无关。
+  assert.equal(RELEVANCE_RULE, 'cjk-bigram+word-match/1');
+  const question = '稗草怎么处理？';
+  const items = [
+    retrievalItem({ id: corpusId(0), title: '合成资料：稗草的识别（测试替身）', body: '关于稗草的合成正文。' }),
+    retrievalItem({ id: corpusId(1), title: '合成资料：稗草相关（测试替身）', body: '关于稗草的合成正文。' }),
+  ];
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const forward = createDeterministicAnswerComposer().compose({
+    question, conditions: null, set: retrievalSet(userId, items),
+  });
+  const reversed = createDeterministicAnswerComposer().compose({
+    question, conditions: null, set: retrievalSet(userId, [...items].reverse()),
   });
   assert.deepEqual(
-    composed.citations.map((source) => source.id),
-    rankByQuestion([low, high, tie], question).filter((item) => questionMatchScore(questionShingles(question), item) > 0)
-      .slice(0, composed.citations.length)
-      .map((item) => item.source.id),
-    '预排序顺序必须与回答器引用顺序一致',
+    forward.citations.map((source) => source.id),
+    reversed.citations.map((source) => source.id),
+    '引用顺序必须与集合顺序无关（集合顺序因此不是可观测输出）',
   );
+  assert.deepEqual(forward.checked_text, reversed.checked_text, 'checked_text 必须与集合顺序无关');
+  assert.ok(forward.citations.length > 0, '合成条目必须真被引用（否则上面的"顺序无关"是空断言）');
 });
