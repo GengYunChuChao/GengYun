@@ -29,7 +29,7 @@ Refs **#5**（**不关闭 #5**、不自评验收通过）。任务映射：**F02
 - [miniprogram/pages/profile/profile.js:79-108](../../miniprogram/pages/profile/profile.js#L79)：新增 `regionConverter`（打包产物中为 `null`）、`onLocate`（先弹用途说明，再请求定位）、`applyLocatedRegion`（只在已加载目录内预选，**不自动保存**）。所有失败分支只写提示，`editing` 保持为真，手选入口不动。
 - [miniprogram/pages/profile/profile.wxml:33-35](../../miniprogram/pages/profile/profile.wxml#L33)：编辑态新增"使用定位选地区（可改手选）"按钮；说明文案改为如实描述定位用途、不保存坐标、失败可手选。
 - [miniprogram/app.json:23-30](../../miniprogram/app.json#L23)：新增 `permission.scope.userLocation.desc` 与 `requiredPrivateInfos: ["getLocation"]`，使该调用在平台上合法声明；**未改** `miniprogram/config/runtime.js`（仍逐字节为 `mode: 'disabled', apiBaseUrl: ''`）。
-- [tools/prepare-wechat.mjs:34](../../tools/prepare-wechat.mjs#L34)：把新模块加入标准打包允许清单（否则页面 `require` 会在打包产物里 `MODULE_NOT_FOUND`）。
+- [tools/prepare-wechat.mjs](../../tools/prepare-wechat.mjs)：把新模块加入标准打包允许清单（否则页面 `require` 会在打包产物里 `MODULE_NOT_FOUND`）——清单项 `'utils/location-region.js'` 本身：引入提交 `e22dbeb` 实测 `:35`（原记 `:34` 是该项上方的注释行），测量基线 `6c22000` 实测 `:40`。
 
 ### 2.2 接口影响
 
