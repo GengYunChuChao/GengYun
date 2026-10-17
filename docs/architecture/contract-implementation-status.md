@@ -14,7 +14,7 @@
 
 事实源为 `packages/contracts/openapi.json`、`operations.json` 与 `states.json`；语义约定见[状态协议](state-contract.md)。[JSON 副本](contract-status.json)人工维护状态、证据和缺口，以下表格从该副本同步，脚本不会自动判定 implemented。
 
-当前 `services/api/src/app.ts:1040-1109` 装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台、媒体、消息、收藏/历史与社区（各自真实运行条件与缺口见下表）。健康不计入112条业务契约。共享 Job 读取已接识别/转写/审核/合成/OCR（OCR 读面见 #183，`services/api/src/jobs/routes.ts:51-62`；合成读面见 #152），取消仅识别；转写/合成/OCR 取消503 PROVIDER_UNAVAILABLE，未接作业源（如 answer）与不存在同形404。
+当前 `services/api/src/app.ts` 的 `buildApp` 尾部 `register*Routes` 连续装配块装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台、媒体、消息、收藏/历史与社区（各自真实运行条件与缺口见下表）。锚点以符号定位，勿按行号复现：测量基线 `6c22000` 实测该块为 `:1365-1478`（19 处 `register*Routes`），本文早先记载的 `:1040-1109` 对应提交 `09abaee`／`9fa045a`，已随合并漂移。健康不计入112条业务契约。共享 Job 读取已接识别/转写/审核/合成/OCR（OCR 读面见 #183，`services/api/src/jobs/routes.ts` 的 `GET ${API_PREFIX}/jobs/:id` 处理器，基线 `6c22000` 实测 `:51-62`；合成读面见 #152），取消仅识别；转写/合成/OCR 取消503 PROVIDER_UNAVAILABLE，未接作业源（如 answer）与不存在同形404。
 
 后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项（帖子9／评论5／举报2）已装配为partial、real模式整域503 PROVIDER_UNAVAILABLE、真实持久存储未交付；消息列表、未读数量与读标记已装配为partial，real尚未接持久存储，明确503。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
 
