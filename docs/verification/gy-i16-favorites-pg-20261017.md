@@ -9,8 +9,13 @@
   的 `0017_account_suspend_authority.sql` 占用（实测：`git ls-tree feat/gy-i22-suspend-authority --
   services/api/db/migrations/` ⇒ 该文件存在；`discoverMigrations()` 对同版本号实现在 `seen` 表上**直接抛错**
   「迁移版本号重复」，两片并入 main 后会让所有碰库测试硬红，故让号）
-- **本机 PG 可用性（实测）**：`Get-Command psql` 无、无 `*postgres*` 服务、无 `docker`
-  ⇒ **本片未取得真库读数**（如实列在 §5.3，不以 PGlite 冒充）
+- **本机 PG 可用性（实测，已订正）**：仓库自带 `.pg17\pgsql\bin` 里有 `psql`／`initdb`／`pg_ctl`，
+  `psql --version` = **`psql (PostgreSQL) 17.11`**（只是不在 `PATH`，故 `Get-Command psql` 查不到——
+  上一版据此写「本机无 psql／未取得真库读数」**是伪断言**，审查已驳回）。本片自起隔离集群：
+  `initdb -D E:\GengYunCommander\.pg17\tmp-i16-pg17\data -U postgres -A trust -E UTF8 --locale=C`，
+  `pg_ctl -D … -o "-p 55449 -c listen_addresses=127.0.0.1"`（55441 已被**与本片无关**的外部 postgres 占用，
+  未动它），`SHOW server_version` = `17.11`、`SHOW listen_addresses` = `127.0.0.1`；
+  ⇒ **§5.2／§5.3 的真库读数全部为本人实跑**（收工 `pg_ctl stop`，55449 零监听）
 - **未发起任何真实第三方／付费调用**；未使用任何真实凭据
 
 ## 1 交付物
@@ -27,7 +32,7 @@
 | `tests/unit/history-http.test.mjs` | 改动 | 同上两处（行内 real 块改注释并保留无 `pool` 臂；独立接线用例拆成无 `pool`／有 `pool` 两条） |
 | `tests/unit/favorites-history-store-pg.test.mjs` | 新增 | store 逐方法语义（8 组）：读回／去重／归属／CAS 四态／台账／`awaitIdempotencySettled`／计行数／回滚 |
 | `tests/unit/favorites-history-deletion-registration.test.mjs` | 新增 | 注销清空**经 app 装配**打到 PG 表：真表清零、行数进证据 |
-| `tests/integration/favorites-history-pg.mjs` | 新增 | 真 PG17 端到端（8 组）；未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时**显式打印 SKIP**（不静默绿） |
+| `tests/integration/favorites-history-pg.mjs` | 新增 | 真 PG17 端到端（**12 组**，脚本内逐个 `PASS n:` 计数）；未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时**显式打印 SKIP**（不静默绿） |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | 改动 | 白名单追加本片真库脚本＋原因（该门禁要求「未接线必须显式声明」） |
 
 ## 2 迁移 0018：表、约束、索引
@@ -42,7 +47,9 @@
 - 排序索引：`(owner_id, created_at DESC, id DESC)` 两域各一，与 `compareFavoritesDescending`／`compareHistoryDescending` 同口径。
 - `target_id`／`job_id`／`event_key` **故意不用 uuid**：契约允许任意文本（既有用例就传 `spc-1`、`job-page-0`）。
 - `reference_state` **不入库**：引用可用性由读取时逐次派生（既有实现口径），落库只会变成过期快照。
-- 删除是**物理删除**（与内存实现一致）；`owner_id` 上的外键带 `ON DELETE CASCADE` 语境下不会产生孤儿行。
+- 删除是**物理删除**（与内存实现一致）。`owner_id` 是**裸外键** `REFERENCES users (id)`，**不带**
+  `ON DELETE CASCADE`（上一版措辞写错，审查已指出）：全仓**没有任何** `DELETE FROM users`（已 grep 确认），
+  故当前不会产生孤儿行；这是**已知边界**而非疏漏 —— 若将来引入物理删用户，需先清子表或补级联。
 
 ## 3 store 实现：逐方法对齐内存实现
 
@@ -106,27 +113,28 @@ store，也**绕过不了**这道理。`createUserDataDeletion({ favoritesStore,
    `{favorites: 1, history: 2}`，回执模块行 `online_state='completed'`／`backup_state='pending'`；
    无行时如实记 0。
 6. **真库脚本**（`tests/integration/favorites-history-pg.mjs`）覆盖同一批断言 + 迁移重复应用 no-op +
-   回滚：**本次未取得读数**（见 §5.3）。
+   回滚：**已在真 PG17 17.11 上 12/12 组全绿**（本人实跑，读数见 §5.3）。
 
 ### 5.2 已取得的读数（本机，`node v24.16.0`）
 
 | 门禁 | 命令 | 读数 |
 | --- | --- | --- |
 | 静态检查 | `npm run lint` | **PASS**（`tsc --noEmit` ×2 + 仓库卫生扫描）`exit 0` |
-| 单元测试 | `npm run test:unit` | 见 §5.2 附注（本轮读数） |
+| 单元测试 | `npm run test:unit` | **tests 2453 / pass 2452 / fail 0 / skipped 1（既有跳过）/ `52475.7ms`**，`exit 0`；逐文件读数见 §5.2 附注 |
 | HTTP 回环集成 | `npm run test:integration:http` | **exit 0**（11 个回环脚本串行全绿） |
 | 文档校验 | `npm run test:docs` | **PASS**（27 项初始任务、依赖无环、F/AC/Q 映射完整）`exit 0` |
 | 契约状态 | `node tools/verify-contract-status.mjs` | **PASS**（112 条操作／已装配 108／implemented 13・partial 95・planned 4；横切 8 条）`exit 0` |
 | 空白检查 | `git diff --check`、`git diff --cached --check` | `exit 0`（无空白错误） |
 | 本片三文件 | `node --test tests/unit/{favorites-http,history-http,favorites-history-store-pg,favorites-history-deletion-registration}.test.mjs` | 逐文件读数见 §5.2 附注 |
-| 真库 | `node tests/integration/favorites-history-pg.mjs`（未设 URL） | 打印 `SKIP real PG17: …未设置 —— 本次运行没有验证真库持久化`，`exit 0`（**不是通过**） |
+| 真库（**本人实跑**，§5.3） | `$env:FAVORITES_HISTORY_PG_TEST_URL='postgres://postgres@127.0.0.1:55449/gengyun_favorites_history_test'; node tests/integration/favorites-history-pg.mjs` | `Real PostgreSQL patch: 17.11` → `PASS 1:`…`PASS 12:` → **`ALL PASS (12 groups) — real PG17 17.11`**，`exit 0`，**4803ms** |
 
 **§5.2 附注（逐文件读数，均为本机实测）**：
 `tests/unit/favorites-http.test.mjs` ⇒ 8 tests / pass 8 / fail 0（2918ms，其中 PG 臂 1531ms）；
 `tests/unit/history-http.test.mjs` ⇒ 17 / pass 17 / fail 0（4122ms，PG 臂 1785ms）；
 `tests/unit/favorites-history-store-pg.test.mjs` ⇒ 8 / pass 8 / fail 0（31137ms）；
 `tests/unit/favorites-history-deletion-registration.test.mjs` ⇒ 2 / pass 2 / fail 0（3898ms）；
-全量 `npm run test:unit` ⇒ **tests 2453／pass 2452／fail 0／skipped 1（既有跳过，非本片）／48379ms**，`exit 0`。
+全量 `npm run test:unit` ⇒ **tests 2453／pass 2452／fail 0／skipped 1（既有跳过，非本片）**，`exit 0`；
+两次读数：`91c7329` 轮 `48379ms`、文档修订后复跑一轮 `52475.7ms`（数字同形，耗时随机器负载浮动）。
 
 - 修好 `ci-integration-chain-structure` 之前的一轮曾 **fail 2**：该门禁要求「未接线的新脚本必须显式声明」，
   白名单补上原因后复跑全绿 —— 这是本片**真的**踩到并修掉的仓库守卫，不是放宽（白名单只登记「为何不进
@@ -135,12 +143,39 @@ store，也**绕过不了**这道理。`createUserDataDeletion({ favoritesStore,
   的 `expired` 用例得 `blocked` 而非 `insufficient`；**单跑该文件 7/7 通过**，问答域本片一行未改，判为
   高负载下的时序偶发（本片新增多个 PGlite 实例抬高了并发压力）。如实记录，不掩盖、也不据此改别人的断言。
 
-### 5.3 未取得项（如实单列，不以推断代替读数）
+### 5.3 真库读数（PostgreSQL **17.11**，本人实跑；隔离集群 `127.0.0.1:55449`）
 
-1. **真 PG17 读数：未取得。** 本机无 PostgreSQL、无 `psql`、无 `docker`；`tests/integration/favorites-history-pg.mjs`
-   只跑到「未配置 URL ⇒ SKIP」分支。⇒ 「迁移在真库可应用／可重复应用／可回滚」「`pg` 驱动 + `createPool`
-   + `buildApp` 在真库上的 201/404 同形」**尚无真机证据**，只有 PGlite（真 SQL 引擎，非 PG17）与既有
-   迁移运行器的单元证据。
+**A. 端到端脚本** `tests/integration/favorites-history-pg.mjs`（12 组逐条打印）：首行
+`Real PostgreSQL patch: 17.11`，末行 **`ALL PASS (12 groups) — real PG17 17.11`**，`exit 0`，**4803ms**。
+
+| # | 组（脚本原话摘要） | 结果 |
+| --- | --- | --- |
+| 1 | `0018` 在真库应用成功（4 张表）、重复应用 no-op | PASS |
+| 2 | 两个 store 如实声明 `persistent=true` | PASS |
+| 3 | 收藏/历史写入后逐字段读回（`job_state` 终态不被折叠） | PASS |
+| 4 | 收藏/历史双路去重均由唯一约束裁决，行数不增 | PASS |
+| 5 | 同一目标不同主体各一行；列表/去重只按 `owner_id` 过滤 | PASS |
+| 6 | CAS 删除：版本不符/他人/不存在逐条拒绝，命中即物理删除 | PASS |
+| 7 | 幂等台账真落库：claim/complete/release/过期清理与内存同语义 | PASS |
+| 8 | `awaitIdempotencySettled` 由**独立连接**的写入唤醒（非进程内假象） | PASS |
+| 9 | HTTP 面：real+pool 真的 201/200 落库；他人 id 与不存在同形 404 | PASS |
+| 10 | 进程重连（新连接池）后收藏行仍在 | PASS |
+| 11 | 注销清空 `deleteAllByOwner` 返回真实删除行数（两域各一次，他人行不受影响） | PASS |
+| 12 | 回滚脚本 `0018_favorites_history.down.sql` 整表拆干净 | PASS |
+
+**B. 并发探针**（临时脚本、跑完即删，未入库；连接池 `createPool(url.href)` 即生产同款 `max: 4`）：
+24 路并发同一收藏目标 ⇒ `inserted=1 duplicate=23 rows=1`；16 路并发同一 `event_key` ⇒
+`inserted=1 duplicate=15 rows=1`；2 路并发 CAS 删除同一行（同 `revision=1`）⇒
+`ok=1 refused=[NOT_FOUND] remaining_rows=0`。⇒ 去重不是先查后写的假象，输的那一路读到的是
+「行已不存在」（`NOT_FOUND`），不是「版本变了」。
+
+**C.** 注销清库的 `audit()` 计数 `{favorites: 1, history: 2}` 由单测（PGlite 引擎）取得，见 §5.1 第 5 条；
+真库侧对应证据是上表第 11 组（返回真实删除行数），两者不互相冒充。
+
+### 5.4 未取得项（如实单列，不以推断代替读数）
+
+1. ~~真 PG17 读数：未取得~~ → **已取得**（§5.3）。上一版写「本机无 psql」是伪断言（`psql` 17.11 在
+   `.pg17\pgsql\bin`，只是不在 `PATH`）；PGlite 仍只作 SQL 语义旁证，不冒充 PG17 证据。
 2. **CI workflow：未新增。** 其它 `*-pg.mjs` 各有 `*-postgres.yml`，本片未加；已在
    `ci-integration-chain-structure.test.mjs` 白名单写明原因（「本片未新增对应 CI workflow」）。
 3. **`privacy/**`、`account-deletion-pg.mjs`、`db/pool.ts`**：按派单禁区**未改**（#256 在飞）。
