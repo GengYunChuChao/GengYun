@@ -460,6 +460,9 @@ try {
   ).rows[0].p;
   assert.equal(tableLevel, null, '该角色在 exports 上**没有**表级授权（全列级）⇒ 撤掉 object_key 的列级授权必须真的挡住 INSERT');
   await owner.query(`GRANT ${['gengyun_auth_privacy', 'gengyun_consent_granter', 'gengyun_egress_ledger'].join(',')} TO ${loginName}`);
+  // runtimeUrl 的密码是本脚本自己 randomBytes 出来的，与前置账本脚本给角色写下的那个不是同一个：
+  // trust 认证下看不出差别，但 CI 的 PostgreSQL 17 默认 scram-sha-256 ⇒ 不把这个密码落到角色上，下一句首连就 28P01。
+  await owner.query(`ALTER ROLE ${loginName} PASSWORD '${runtimeUrl.password}'`);
   const runtimePool = createPool(runtimeUrl.href);
   await runtimePool.query(
     `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
