@@ -127,28 +127,33 @@ test('返回登录/验证码页 ⇒ blocked，立即停止整轮（不绕过）'
 
 test('离线运行：默认模式绝不发起任何网络请求，遇墙即停', async () => {
   const calls = [];
-  const plan = makeRunPlan({
-    registrations: ['PD99999901', 'PD99999904', 'PD99999902'],
-    baseUrl: 'https://www.icama.cn',
-    outPath: join(mkdtempSync(join(tmpdir(), 'gy-icama-run-')), 'out.json'),
-    minIntervalMs: MIN_INTERVAL_FLOOR_MS,
-    mode: 'fixture'
-  });
-  const { records, aborted } = await runFetch({
-    plan,
-    fixtureDir: FIXTURE_DIR,
-    now: () => FIXED_NOW,
-    fetchImpl: (...args) => {
-      calls.push(args);
-      throw new Error('离线模式不得发起网络请求');
-    },
-    sleepImpl: async () => {}
-  });
-  assert.deepEqual(calls, []);
-  assert.equal(records.length, 2, '遇到登录墙后不得继续抓后面的证号');
-  assert.equal(records[0].status, 'ok');
-  assert.equal(records[1].status, 'blocked');
-  assert.deepEqual(aborted, { kind: 'login_or_captcha_wall', registrationNo: 'PD99999904' });
+  const runDir = mkdtempSync(join(tmpdir(), 'gy-icama-run-'));
+  try {
+    const plan = makeRunPlan({
+      registrations: ['PD99999901', 'PD99999904', 'PD99999902'],
+      baseUrl: 'https://www.icama.cn',
+      outPath: join(runDir, 'out.json'),
+      minIntervalMs: MIN_INTERVAL_FLOOR_MS,
+      mode: 'fixture'
+    });
+    const { records, aborted } = await runFetch({
+      plan,
+      fixtureDir: FIXTURE_DIR,
+      now: () => FIXED_NOW,
+      fetchImpl: (...args) => {
+        calls.push(args);
+        throw new Error('离线模式不得发起网络请求');
+      },
+      sleepImpl: async () => {}
+    });
+    assert.deepEqual(calls, []);
+    assert.equal(records.length, 2, '遇到登录墙后不得继续抓后面的证号');
+    assert.equal(records[0].status, 'ok');
+    assert.equal(records[1].status, 'blocked');
+    assert.deepEqual(aborted, { kind: 'login_or_captcha_wall', registrationNo: 'PD99999904' });
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
 });
 
 test('输出守卫：仓内路径一律拒绝（抽取结果与原始页面都不入仓）', () => {
