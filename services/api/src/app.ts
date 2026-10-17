@@ -26,6 +26,7 @@ import type { FastifyInstance } from 'fastify';
 import { CONTRACT_VERSION } from './contract.ts';
 import type { AppConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope } from './errors.ts';
+import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
 import type { PgPool } from './db/pool.ts';
 import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
@@ -630,8 +631,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
     // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
     // 以确保「客户端不可指定 openid / 角色 / 用户 id」在 API 层被显式拦下（400）。
-    ajv: { customOptions: { removeAdditional: false } },
+    // GY-I02：选项常量与下方的 2020-12 校验器**共用一份**（`schema-validator.ts`），
+    // 换方言不换校验口径。
+    ajv: { customOptions: RUNTIME_AJV_CUSTOM_OPTIONS },
   });
+
+  // GY-I02（#2）：运行时校验器切到契约声明的 dialect——JSON Schema **2020-12**（`Ajv2020`）。
+  //
+  // 改前 Fastify 走默认 `@fastify/ajv-compiler`（`ajv` 的 draft-07 入口）：2020-12 专有关键字
+  // （`prefixItems`、`$dynamicRef`、`unevaluatedProperties`…）要么编译报错，要么被静默忽略后放行请求。
+  // 必须在**任何路由注册之前**设置：Fastify 在 `ready()` 时按此编译器编译全部路由 schema。
+  // 逐项对照见 `./schema-validator.ts` 与 `tests/unit/openapi-2020-fastify-adapter.test.mjs`。
+  app.setValidatorCompiler(createJsonSchema2020ValidatorCompiler());
 
   // GY-I16（#16；Refs #7）真机阻断缺陷修复：**空请求体的写请求按「无请求体」处理**。
   //

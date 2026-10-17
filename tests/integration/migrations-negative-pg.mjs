@@ -37,6 +37,14 @@ assert.ok(
   'disposable test maintenance DB only（库名为 postgres 或 *_test）',
 );
 
+/** 迁移总数一律由迁移器自清点，不写死数字：迁移目录新增一片时本测试不因计数过期而红。
+ *  取数来源与 runner（`discoverMigrations()` 默认参数 `DEFAULT_MIGRATIONS_DIR`）完全相同。 */
+const MIGRATIONS = discoverMigrations();
+const MIGRATION_COUNT = MIGRATIONS.length;
+const LAST_VERSION = MIGRATIONS[MIGRATION_COUNT - 1].version;
+/** 「0016 待应用」现场：全部迁移已应用，只把最后一片的台账行删掉。 */
+const PENDING_LEDGER = MIGRATION_COUNT - 1;
+
 const apiDir = fileURLToPath(new URL('../../services/api/', import.meta.url));
 const SQL_0016_DOWN = 'migrations/rollback/0016_account_deletion_persistence.down.sql';
 const FUNCTION_0016 =
@@ -135,18 +143,18 @@ try {
   const a = await connect(DB_A);
   let run = runUp(DB_A);
   assert.equal(run.status, 0, `基线全量迁移必须成功；stderr=${run.stderr}`);
-  assert.match(run.stdout, /发现 16 个迁移/);
+  assert.match(run.stdout, new RegExp(`发现 ${MIGRATION_COUNT} 个迁移`));
   assert.match(run.stdout, /已应用：0001/);
-  assert.equal((await ledgerRows(a)).length, 16);
-  say('A0 基线：空库 `up` 依次应用 0001–0016，台账 16 行（三臂的前提现场可复现）');
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT);
+  say(`A0 基线：空库 \`up\` 依次应用 0001–${LAST_VERSION}，台账 ${MIGRATION_COUNT} 行（三臂的前提现场可复现）`);
 
   // 把现场倒回「0001…0015 已应用、0016 待应用」：跑既有 down 脚本 + 删台账行
   // （既有 down 脚本不回写台账，这正是文档里记录的已知缺口）。
   await a.query(sqlFile(SQL_0016_DOWN));
   await a.query("DELETE FROM schema_migrations WHERE version = '0016'");
   assert.deepEqual(await snapshot0016(a), ABSENT_0016, '倒回现场后 0016 的四类对象必须都不存在');
-  assert.equal((await ledgerRows(a)).length, 15);
-  say('A1 现场置回「0016 待应用」：四类对象计数 0、台账 15 行');
+  assert.equal((await ledgerRows(a)).length, PENDING_LEDGER);
+  say(`A1 现场置回「0016 待应用」：四类对象计数 0、台账 ${PENDING_LEDGER} 行`);
 
   // 注入冲突：先占住 0016 第 2 条语句要建的索引名，让迁移在「第 1 条 ALTER 已成功」之后失败。
   await a.query('CREATE INDEX deletion_requests_user_requested_idx ON public.deletion_requests (requested_at)');
@@ -163,9 +171,9 @@ try {
   assert.equal(afterFailure.function_present, false);
   assert.match(afterFailure.index_definition, /\(requested_at\)/, '注入的冲突索引仍在 ⇒ 失败确由注入冲突引起');
   const ledgerAfterFailure = await ledgerRows(a);
-  assert.equal(ledgerAfterFailure.length, 15, '半截失败不得让台账多出 0016 行');
+  assert.equal(ledgerAfterFailure.length, PENDING_LEDGER, '半截失败不得让台账多出 0016 行');
   assert.ok(!ledgerAfterFailure.some((row) => row.startsWith('0016 ')), '台账里不得出现 0016');
-  say('A2 半截失败：退出码 1，0016 的三列/CHECK/函数全被回滚，台账仍 15 行且无 0016 行');
+  say(`A2 半截失败：退出码 1，0016 的三列/CHECK/函数全被回滚，台账仍 ${PENDING_LEDGER} 行且无 0016 行`);
 
   // 解除冲突后 `up` 必须补上 ⇒ 失败可归因于注入冲突，而不是迁移器自身缺陷。
   await a.query('DROP INDEX public.deletion_requests_user_requested_idx');
@@ -177,8 +185,8 @@ try {
   assert.equal(recovered.constraint_present, true);
   assert.equal(recovered.function_present, true);
   assert.match(recovered.index_definition, /user_id, requested_at DESC, id DESC/);
-  assert.equal((await ledgerRows(a)).length, 16);
-  say('A3 冲突解除后 `up` 补上 0016：四类对象与 16 行台账全部恢复');
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT);
+  say(`A3 冲突解除后 \`up\` 补上 0016：四类对象与 ${MIGRATION_COUNT} 行台账全部恢复`);
 
   // A4：迁移文件字面「先建表、后写坏语句」——半截失败不留表、不留台账行。
   const halfBroken = syntheticDir({
@@ -191,7 +199,7 @@ try {
   );
   const probe = await a.query("SELECT to_regclass('public.migneg_half_broken_probe') AS oid");
   assert.equal(probe.rows[0].oid, null, '半截失败不得留下已建的表');
-  assert.equal((await ledgerRows(a)).length, 16, '半截失败不得写台账行（0099）');
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT, '半截失败不得写台账行（0099）');
   say('A4 合成迁移「先建表后写坏语句」：抛错、建表被回滚、台账无 0099 行');
 
   // A5/A6：证明迁移器自身的 per-migration BEGIN/COMMIT 是承重的。
@@ -206,11 +214,11 @@ try {
   await applyMigrations(a, noBeginMigrations);
   const afterNoBegin = await a.query("SELECT to_regclass('public.migneg_no_begin_probe') AS oid");
   assert.notEqual(afterNoBegin.rows[0].oid, null, '正控：无 BEGIN 的迁移在正常路径下必须落地');
-  assert.equal((await ledgerRows(a)).length, 17);
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT + 1);
   await a.query('DROP TABLE public.migneg_no_begin_probe');
   await a.query("DELETE FROM schema_migrations WHERE version = '0100'");
-  assert.equal((await ledgerRows(a)).length, 16);
-  say('A5 事务正控：不带 `BEGIN` 的合成迁移 0100 由迁移器事务包住，正常路径落地且台账 +1，复原后台账 16 行');
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT);
+  say(`A5 事务正控：不带 \`BEGIN\` 的合成迁移 0100 由迁移器事务包住，正常路径落地且台账 +1，复原后台账 ${MIGRATION_COUNT} 行`);
 
   const ledgerFails = {
     async query(text, values) {
@@ -227,7 +235,7 @@ try {
   );
   const leaked = await a.query("SELECT to_regclass('public.migneg_no_begin_probe') AS oid");
   assert.equal(leaked.rows[0].oid, null, '台账写入失败后，同一迁移里已执行的建表必须被回滚（证明 BEGIN 承重）');
-  assert.equal((await ledgerRows(a)).length, 16, '失败的迁移不得留下台账行');
+  assert.equal((await ledgerRows(a)).length, MIGRATION_COUNT, '失败的迁移不得留下台账行');
   say('A6 事务负例：台账 INSERT 失败后，无 `BEGIN` 迁移里已建的表不残留、台账无行（runner 的 BEGIN 承重）');
 
   // ===========================================================================
@@ -239,7 +247,7 @@ try {
   assert.equal(run.status, 0, `B 臂基线 \`up\` 必须成功；stderr=${run.stderr}`);
   assert.match(run.stdout, /已存在跳过：（无）/);
   const ledgerBeforeReplay = await ledgerRows(b);
-  assert.equal(ledgerBeforeReplay.length, 16);
+  assert.equal(ledgerBeforeReplay.length, MIGRATION_COUNT);
   // 台账之外的哨兵：重放既不得删表，也不得重复执行任何 DDL/DML。
   await b.query('CREATE TABLE public.migneg_replay_sentinel (id integer PRIMARY KEY)');
   await b.query('INSERT INTO public.migneg_replay_sentinel (id) VALUES (1)');
@@ -248,13 +256,13 @@ try {
   run = runUp(DB_B);
   assert.equal(run.status, 0, `重放必须幂等成功；stderr=${run.stderr}`);
   assert.match(run.stdout, /已应用：（无）/);
-  assert.match(run.stdout, /已存在跳过：0001, 0002/);
-  assert.match(run.stdout, /0016/);
+  assert.match(run.stdout, new RegExp(`已存在跳过：0001, 0002`));
+  assert.match(run.stdout, new RegExp(LAST_VERSION));
   assert.deepEqual(await ledgerRows(b), ledgerBeforeReplay, '重放不得改台账（版本/校验和/applied_at 全不变）');
   assert.equal(await publicObjects(b), objectsBeforeReplay, '重放入口不得新建或删除 public 对象');
   const sentinel = await b.query('SELECT count(*)::int AS n FROM public.migneg_replay_sentinel');
   assert.equal(sentinel.rows[0].n, 1);
-  say('B1 重放：退出码 0，`已应用：（无）`＋`已存在跳过：0001…0016`，台账指纹/对象数/哨兵行完全不变');
+  say(`B1 重放：退出码 0，\`已应用：（无）\`＋\`已存在跳过：0001…${LAST_VERSION}\`，台账指纹/对象数/哨兵行完全不变`);
 
   // B2：磁盘文件被改（drift）⇒ 明确失败且状态不变，这是「重放」的另一个合法结局。
   const tampered = syntheticDir({ '0001_tampered.sql': 'SELECT 1;\n' });
@@ -306,8 +314,12 @@ try {
   assert.equal(boundaryRow.receipt_hash_present, true, 'down 不得删 0003 的既有列');
   assert.equal(boundaryRow.legacy_constraints, 2, 'down 不得删 0003 的两条 CHECK');
 
-  // 既有 down 脚本不回写台账（已知缺口）：台账仍 16 行，直接 `up` 会跳过 0016。
-  assert.equal((await ledgerRows(c)).length, 16, '既有 down 脚本不回写 schema_migrations（已知缺口）');
+  // 既有 down 脚本不回写台账（已知缺口）：台账仍 MIGRATION_COUNT 行，直接 `up` 会跳过 0016。
+  assert.equal(
+    (await ledgerRows(c)).length,
+    MIGRATION_COUNT,
+    '既有 down 脚本不回写 schema_migrations（已知缺口）',
+  );
   await c.query("DELETE FROM schema_migrations WHERE version = '0016'");
   run = runUp(DB_C);
   assert.equal(run.status, 0, `回滚后重新 \`up\` 必须成功；stderr=${run.stderr}`);

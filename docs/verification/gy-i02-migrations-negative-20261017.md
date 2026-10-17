@@ -11,6 +11,7 @@
 | worktree | `E:\GengYunCommander\GengYun_W02mig`（独立 worktree；未切指挥仓库的分支） |
 | 分支 | `feat/gy-i02-migrations-negative` |
 | 基线 `upstream/main` | `6c2200087ae5f8841a04505cb1c226284cee7f1b`（短 `6c22000`；`git fetch upstream --prune` 后读取，与派单签发基线一致） |
+| 合流基线 | `git merge --no-ff upstream/main` 前实测 `upstream/main` = `98658d563f7fb35dc5518fda8117a0100aecbd56`（`#262`/`#261` 已并入）；冲突仅 `docs/verification/gy-i02-clean-repro-20261014.md` 一行区，按**并集**解（两侧各留一行「已取得」＋各自证据页）；迁移数改由迁移器自清点，见 §7 |
 | 起点状态 | 新建 worktree，`git status --short` 为空；`npm ci --no-audit --no-fund` 安装依赖后开工 |
 | 是否 push | **否**（写手不持有推送凭据；推送与 PR 由指挥执行，故下文 CI 读数标注「未跑」） |
 
@@ -98,18 +99,20 @@ AssertionError [ERR_ASSERTION]: 台账写入失败后，同一迁移里已执行
 | 未接进 `test:integration:http` 链 | 是（该链需无 PG 环境可跑）；改为在 `tests/unit/ci-integration-chain-structure.test.mjs:107` 的白名单里声明「需真 PG、由 workflow 另起一步」，否则结构测试断言 4 会红 |
 | **CI 未跑** | **是：本片只本地提交、未推送，workflow 未触发；上述 CI 读数待推送后验证** |
 
-## 5 六项门禁读数（本机实测，全部退出码 0）
+## 5 六项门禁读数（合流后重跑，本机实测，全部退出码 0）
 
 | 门禁 | 退出码 | 关键读数 |
 | --- | --- | --- |
 | ① `npm run lint` | 0 | `PASS tsc --noEmit services/api/tsconfig.json`；`PASS tsc --noEmit apps/admin/tsconfig.json`；`PASS 仓库卫生扫描` |
-| ② `npm run test:unit` | 0 | `tests 2441`；`pass 2440`；`fail 0`；`skipped 1`（既有跳过项，本片未新增跳过）；`duration_ms 71810.5888` |
+| ② `npm run test:unit` | 0 | `tests 2451`；`pass 2450`；`fail 0`；`skipped 1`（既有跳过项，本片未新增跳过）；`duration_ms 44313.8339`（合流后读数；合流前为 `tests 2441`／`pass 2440`） |
 | ③ `npm run test:integration:http` | 0 | `CHECKS pass=42 fail=0`；`RESULT=PASS 真实产品装配（buildApp）+ 本机回环 HTTP` |
 | ④ `node tools/verify-contract-status.mjs` | 0 | `PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4` |
 | ⑤ `npm run test:docs` | 0 | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
 | ⑥ `git diff --check` | 0 | 三个口径均 0 且无输出，见下 |
 
 `git diff --check` 三口径：`git diff --check`（工作区）、`git diff --check upstream/main...HEAD`（三点）、`git diff --check upstream/main HEAD`（两点）。
+
+结构门禁（合流后重跑）：`node --test tests/unit/ci-integration-chain-structure.test.mjs` 退出码 0，`tests 7`／`pass 7`／`fail 0`。
 
 ## 6 未取得／已知缺口（逐条如实）
 
@@ -121,7 +124,7 @@ AssertionError [ERR_ASSERTION]: 台账写入失败后，同一迁移里已执行
 | 4 | 回滚覆盖范围 | 只实测 `0016_account_deletion_persistence` 这一对（`0001` 无 down 文件，其余 14 对未逐对实测） |
 | 5 | 故障注入覆盖 | A 臂注入的是 0016 第 2 条语句（同名索引冲突）＋合成 `0099_half_broken.sql`；未对 16 个迁移逐个注入 |
 | 6 | 「文件自带事务」边界 | **16 个 up 迁移里只有 10 个**自带 `BEGIN;`：`0002:36`、`0003:26`、`0004:3`、`0008:38`、`0009:3`、`0011:22`、`0013:37`、`0014:32`、`0015:28`、`0016:51`；`0001`、`0005`、`0006`、`0007`、`0010`、`0012` 六个**不含**，它们的「半截失败即整体回滚」正依赖 runner 的 `BEGIN/COMMIT`——A5/A6 用不带 `BEGIN` 的合成迁移对这条路径取证；若将来出现把语句写在文件 `COMMIT` 之后的迁移，那种写法本身不合规，本页**未取证**其行为 |
-| 7 | OpenAPI 2020-12 与 Fastify 适配实测 | **未取得**（属 GY-I02 验收表其余项，本片不冒称） |
+| 7 | OpenAPI 2020-12 与 Fastify 适配实测 | **已取得**（**不属本片**：`#262`（`98658d5`）并入 `upstream/main`，证据页 `docs/verification/gy-i02-openapi-2020-fastify-20261017.md`；本页原记的「未取得」随合流订正，不再代表现状） |
 
 ## 7 复核命令
 
@@ -132,6 +135,10 @@ node tests/integration/migrations-negative-pg.mjs
 
 # 迁移器零改动
 git -C E:\GengYunCommander\GengYun_W02mig diff upstream/main...HEAD -- services/api/src/db/migrate.ts
+
+# 迁移数取数（测试不再写死数字：断言一律取 `discoverMigrations().length`，与 runner 同一来源）
+node -e "import('./services/api/src/db/migrate.ts').then(m => console.log(m.discoverMigrations().length))"
+# 合流后实测：16（0001–0016；`git ls-tree --name-only upstream/main services/api/db/migrations/*.sql` 同为 16）
 
 # 结构测试（白名单声明 + 集成链完整性）
 node --test tests/unit/ci-integration-chain-structure.test.mjs
