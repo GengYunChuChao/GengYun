@@ -287,8 +287,11 @@ violating=0        # 逐条核对：usable_as_dose=false、dose_text=null、card
      `crop_ids`、`dosage_form`、`ingredients_text`、`pesticide_class`、`producer`、`product_standard`、`provenance`、
      `record_id`、`record_status`、`registered_name`、`registration_number`、`source`、`target_original`、`toxicity`、
      `use_scene`、`verification`；**无** `growth_stage`／`region`／`banned_restricted`／`valid_source` 四个同名字段；
-     `usable_as_dose`／`card_ready`／`dose_text` 三键在 20 条里**一条也没有**（覆盖率读数
-     `packages/knowledge/coverage-report.json:48` = `"dose_text": "0/20"`、`:55` = `"usable_as_dose": 0`、
+     真正的缺口是**无可用值**而非**无该键**：`usable_as_dose` 与 `card_eligible` 都在 `verification` 内
+     **20/20 存在**、值**全为 `false`**（`true` 计数 **0**）；**真缺席**的只有 `card_ready` 与 `dose_text`
+     （20 条记录的顶层键并集与 `verification` 键并集里均无此二者，全文 `dose_text` 字面量 0 处）。
+     计数口径：读同一 blob 后逐条按 `Object.prototype.hasOwnProperty` 判键是否存在、按 `=== true` 计真值。
+     覆盖率读数（`packages/knowledge/coverage-report.json:48` = `"dose_text": "0/20"`、`:55` = `"usable_as_dose": 0`、
      `:56` = `"card_eligible": 0`）。
    - **小程序侧** `miniprogram/data/seed-herbicides.js`：`count` **96**（`:10`），声明 `fields` **6 个**（`:11-18`：
      `name`／`aliases`／`hazard_level`／`hazard_detail`／`target_weeds`／`regions`），元数据

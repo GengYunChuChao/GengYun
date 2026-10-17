@@ -269,7 +269,8 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
    `services/api/src/media/service.ts:282-290`）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
    `real` 下该用途**恒 503**，与 §9 第 3 条「`real` 下未接线即拒绝该用途」一致，**不是**「≤3 张已生效」。
-   复现：`git grep -n "计数器未接线" upstream/main -- services/api/src/media/service.ts` ⇒ **1 处命中（`:652`）**。
+   复现：`git grep -n "计数器未接线" upstream/main -- services/api/src/media/service.ts` ⇒ **2 处命中
+   （`:296`／`:652`）**（按输出行计数为 2；`:296` 即上文 `:264` 已自引的那条 fail-closed 自述）。
 2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
    `services/api/src/app.ts:1041-1042`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
    `services/api/src/app.ts:834`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
@@ -286,7 +287,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    本节实测（命中数按命令输出计数）：
 
    - `git grep -n -E "expireInitiated|cleanupOrphans" upstream/main -- services/ packages/ apps/ tools/ miniprogram/`
-     ⇒ **11 处命中**，全部是接口声明（`services/api/src/media/service.ts:238`／`:245`）、`real` 替身实现（`:479`／`:482`）、
+     ⇒ **12 处命中**，全部是接口声明（`services/api/src/media/service.ts:238`／`:245`）、`real` 替身实现（`:479`／`:482`）、
      真实实现（`:1123`／`:1134`）、注释（`:569`／`:587`）与 `packages/media/service.mjs` 的定义／导出
      （`:520`／`:536`／`:572`／`:573`）——无一处调用；
    - `git grep -n -E "\.(cleanupOrphans|expireInitiated)\(" upstream/main` ⇒ **9 处命中，全部在 `tests/`**
