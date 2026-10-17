@@ -210,6 +210,31 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 3. `node tools/evaluation/run-evaluation.mjs --index … --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json --manifest … --coverage … --out <仓外>` → `isRealEvaluation=false`
 4. `node --test tests/evaluation/gy-i20-real-samples.test.mjs` → 11/11 通过
 5. 抽取器需**仓库外**的来源 docx：`sha256=624ee4d5…a3b8`；媒体与路径映射一律写在仓外
+6. `node tools/verify-sample-gap.mjs` → 缺口 6 键与核准标签现场复算（命令与登记值见 §7.1）
+
+## 7.1 缺口 6 键与核准标签一条命令复算（第二片补登）
+
+```
+$ node tools/verify-sample-gap.mjs
+realIndexCount=172
+covered=7
+outOfCoverage=165
+perCoveredClassMin=0
+lowQuality=0
+approvedLabels=0
+observedAt=2026-10-11
+```
+
+逐键口径（数字为现场复算，改数须同步本页与 `tests/evaluation/gy-i20-sample-gap-recompute.test.mjs`）：
+
+- `perCoveredClassMin=0`：**承诺 8 类**（见 §5 覆盖清单，含 `species_nettle_group`）的逐类最小值——荨麻类 0 条样本。
+- `coveredClassCount=7`（派生，不占 6 键）：有样本的覆盖类数，七类各 1。两个数分别回答「最弱承诺类」与「已触及类数」，
+  不得互相冒充（`packages/evaluation/src/gaps.mjs` 的 `Math.min(...)` 口径给出 0）。
+- `approvedLabels=0`：口径 `reviewedBy != null && licensed === true`，只读仓内
+  `docs/research/gy-i03-public-label-index-20261011.json`（24 条均无该两字段 ⇒ 0）；**不读仓外私有标签目录**，
+  以免 CI 依赖仓外产物；仓外抓取成功 ≠ 已核准。
+- `observedAt=2026-10-11`：取自标签快照自身 `observed_at`；样本侧冻结时点另记 `frozenAt=2026-10-14T12:05:00+08:00`
+  （`gy-i20-weeds-frozen-manifest.json`），两者不可混用，否则是把旧快照当现状。
 
 ## 8 提交 blob 复核（不依赖工作区）
 

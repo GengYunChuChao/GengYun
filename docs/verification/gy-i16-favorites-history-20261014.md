@@ -19,11 +19,13 @@
 
 | operationId | 方法 路径 | 实现位置 | 关键契约纪律 |
 | --- | --- | --- | --- |
-| `listFavorites` | `GET /api/v1/favorites` | `services/api/src/routes/favorites.ts:60-72` | 只有 `cursor`/`limit`（多余查询参数 400）；列表**无 `ETag`**；`Cache-Control: no-store` |
-| `createFavorite` | `POST /api/v1/favorites` | `routes/favorites.ts:74-88` | 201 + `FavoriteEnvelope` + `ETag: "<revision>"`；`Idempotency-Key` 必填；body 恰为 `{target_ref}`，`type` 3 项闭集 |
-| `deleteFavorite` | `DELETE /api/v1/favorites/{id}` | `routes/favorites.ts:90-102` | 200 + `AckEnvelope`；`If-Match` 必填（缺失 428／非强 ETag 400／不符 409）；**不回 ETag**（资源已删除，口径同 `DELETE /recognitions/{id}`） |
-| `listHistory` | `GET /api/v1/history` | `routes/history.ts:55-62` | 同上列表纪律 |
-| `deleteHistory` | `DELETE /api/v1/history/{id}` | `routes/history.ts:64-80` | 200 + `AckEnvelope` + `X-GY-Cascade`（**非契约披露标记**） |
+| `listFavorites` | `GET /api/v1/favorites` | `registerFavoriteRoutes` 的 `app.get`（`/favorites`） | 只有 `cursor`/`limit`（多余查询参数 400）；列表**无 `ETag`**；`Cache-Control: no-store` |
+| `createFavorite` | `POST /api/v1/favorites` | 同函数 `app.post`（`/favorites`） | 201 + `FavoriteEnvelope` + `ETag: "<revision>"`；`Idempotency-Key` 必填；body 恰为 `{target_ref}`，`type` 3 项闭集 |
+| `deleteFavorite` | `DELETE /api/v1/favorites/{id}` | 同函数 `app.delete`（`/favorites/:id`） | 200 + `AckEnvelope`；`If-Match` 必填（缺失 428／非强 ETag 400／不符 409）；**不回 ETag**（资源已删除，口径同 `DELETE /recognitions/{id}`） |
+| `listHistory` | `GET /api/v1/history` | `registerHistoryRoutes` 的 `app.get`（`/history`） | 同上列表纪律 |
+| `deleteHistory` | `DELETE /api/v1/history/{id}` | 同函数 `app.delete`（`/history/:id`） | 200 + `AckEnvelope` + `X-GY-Cascade`（**非契约披露标记**） |
+
+**实现位置按符号检索，勿按行号复现**：五个 handler 分别在 `services/api/src/routes/favorites.ts` 的 `registerFavoriteRoutes` 与 `services/api/src/routes/history.ts` 的 `registerHistoryRoutes` 内。读数对照——交付提交 `1b0b3d6` 实测 `favorites.ts` `:87`／`:92`／`:107`、`history.ts` `:78`／`:83`；测量基线 `6c22000` 实测 `:89`／`:94`／`:109` 与 `:80`／`:85`。本表原记的 `60-72`／`74-88`／`90-102`／`55-62`／`64-80` 在交付提交上即不成立（该二文件在本文声明基线 `fcfa6de9` 与并入基线 `c85a1e8` 上均尚不存在），已按上式订正。
 
 **刻意不注册 `GET /history/{id}`**：契约里 `/history/{id}` **只有 `delete`**。因此"历史详情"由客户端用第 7 项
 `target_ref` 去读**已合并**的 `GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10）组合出来

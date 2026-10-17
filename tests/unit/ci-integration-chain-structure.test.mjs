@@ -71,6 +71,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/account-suspend-pg.mjs',
+    reason: '需真实 PG 17.11 隔离集群且必须传两个连接串参数（管理员 URL + 运行时角色 URL）：'
+      + '本片用它取迁移三连／最小权限／A–F／失败注入回滚的真库读数；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/auth-privacy-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
@@ -102,6 +108,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/local-knowledge-smoke.mjs',
     reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
+  },
+  {
+    path: 'tests/integration/migrations-negative-pg.mjs',
+    reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
+      + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因，'
+      + '故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/profile-ui-fixture.mjs',
