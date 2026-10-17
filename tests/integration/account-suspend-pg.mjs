@@ -490,5 +490,30 @@ try {
 } finally {
   await cleanup();
 }
-if (failure !== null) throw failure;
-note('ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数');
+const unreadNotes = notes.filter((line) => line.startsWith('未取得 '));
+
+// 结论行**只**在「运行时 URL 已提供 ＋ 零 `未取得` ＋ 零失败」时才允许是 ALL PASS。
+// 省略 argv[3]（第二个连接串）是本文件头部已声明的支持跑法 ⇒ 此时只有库侧 [M] 为真，[P]/[A]–[F] 一律未取得
+// ⇒ 必须打印 `PARTIAL` 且**非零退出**：⛔ 不得把「跳过／未取得」洗成「通过」（旧版在缺参时
+// 仍无条件打印 ALL PASS 并 exit 0，属假绿结论行）。
+if (failure !== null) {
+  // 读数未全部通过：逐条列出未取得项，并把首个失败写到末行，非零退出（throw ⇒ exit 1）。
+  for (const line of unreadNotes) console.error(`未取得项：${line}`);
+  note(
+    runtimeUrl === null
+      ? `FAIL：未提供运行时角色 URL（argv[3]）且库侧读数未通过 —— 首个失败：${String(failure.message).slice(0, 300)}`
+      : `FAIL：有运行时 URL 但读数未全部通过 —— 首个失败：${String(failure.message).slice(0, 300)}`,
+  );
+  throw failure;
+}
+if (runtimeUrl === null || unreadNotes.length > 0) {
+  note(
+    runtimeUrl === null
+      ? 'PARTIAL：未取得真库读数 —— 未提供运行时角色 URL（argv[3]），仅库侧 [M] 为真；[P]/[A]–[F] 未取得'
+      : `PARTIAL：未取得全部真库读数 —— 仍有 ${unreadNotes.length} 条未取得`,
+  );
+  for (const line of unreadNotes) console.error(`未取得项：${line}`);
+  process.exitCode = 2;
+} else {
+  note('ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数');
+}
