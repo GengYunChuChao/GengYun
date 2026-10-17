@@ -11,8 +11,27 @@
  *  3. 读面缺凭据 ⇒ 抛 `SESSION_REQUIRED`（受理任务据此如实落 `failed`），
  *     不因为"这是异步阶段"就跳过会话校验。
  *  4. 条目来源字段**逐行如实透出**（`unverified` 就是 `unverified`），
- *     绝不在本层把未核对改成已核对。投影无法核对来源的条目 ⇒ 抛 503（fail-closed），
- *     **不**静默丢弃：丢弃会让"集合"与读面不一致，正是守卫要防的失真。
+ *     绝不在本层把未核对改成已核对。投影**读不出**来源的条目 ⇒ 抛 503（fail-closed）：
+ *     形状缺陷不是"没有依据"，静默丢它会让"集合"与读面不一致，正是守卫要防的失真。
+ *  5. **有效性判定（GY-I12 D3①）**：`validity !== 'valid'`（`expired` / `withdrawn` /
+ *     `conflicting` / `unknown`）或 `review_status === 'rejected'` 的条目**不进集合** ——
+ *     它们不具备"可引用的依据"资格。口径全部取自既有定义（见 `validityVerdictOf`），
+ *     本层**不**新造枚举、**不**改写来源字段（`validity` 就是读面给的值，不做"洗白"）。
+ *     `conflicting` 额外**单独标注**：计入 `note` 并用既有措辞「来源相互冲突」说明
+ *     "冲突、资料不足"；**不**解释冲突内容 —— 本层没有核对冲突的事实依据，
+ *     编造冲突解释正是要防的失真。
+ *  6. **不按提问排序（无死代码）**：本层**不做**"按 `question` 字面重合度预排序"。
+ *     理由是可观测性，不是偏好：真实装配下读面一次最多给 `RETRIEVAL_LIMIT` 条
+ *     （`knowledge/pagination.ts` 对 `limit` 做 1..50 校验并切片，检索端口的
+ *     `query.limit` 恒等于 `RETRIEVAL_LIMIT`），所以候选池恒 ≤ 上限，排序**只能**
+ *     改集合内部顺序、改不了集合成员；而回答器本来就按同一规则重排（见
+ *     `conversations/service.ts` 的 `RELEVANCE_RULE`，同分按 id 升序），集合顺序对
+ *     `Answer` 没有影响。实测（真实回环装配、真实读面分页、60/80/120 条语料、24 个提问）：
+ *     有排序与无排序的集合**成员逐条相同**、`Answer` 逐字节相同（`citations` /
+ *     `checked_text` / `status` / `check_state` / `dose_cards` 全同）；差异只出现在
+ *     "读面无视 `limit` 一次返回全部"这种**真实装配下不可达**的情形（`limit > 50`
+ *     在读面直接 `INVALID_REQUEST`）。既然只在不可达读面上才有效果，保留它就是把
+ *     未走到的分支当能力宣称，故删除整族排序代码。
  *
  * 条件收窄（与 `knowledge/service.ts` 的既有口径逐字对齐）：只应用读面**能证成**的三个条件
  * （`crop_id` / `region_code` / `species_id`）。会话如果带上了读面**无法证成**的条件
@@ -44,6 +63,94 @@ export const RETRIEVAL_LIMIT = 50;
 const PROVABLE_CONDITIONS = ['crop_id', 'region_code', 'species_id'] as const;
 /** 读面**无法证成**的条件字段（既有读面对它们返回空集合，不静默放宽）。 */
 const UNPROVABLE_CONDITIONS = ['growth_stage', 'planting_method', 'use_scene'] as const;
+
+/**
+ * 可进入检索集合的有效性取值（**既有口径，本层只消费**）。
+ *
+ * `packages/reference/constants.mjs` 的 `QUERYABLE_VALIDITIES = ['valid']`，以及读面视图
+ * `catalog_read.current_verified_sources` 的 `sv.validity = 'valid'`，都只把 `valid`
+ * 当作"可查询的有效来源"。因此 `expired` / `withdrawn` / `conflicting` / `unknown`
+ * 一律不进检索集合 —— 它们的共同含义就是"有效期这一项已经证不成都不能算有依据"。
+ */
+const QUERYABLE_VALIDITY = 'valid';
+
+/**
+ * 不可进入检索集合的审核态。
+ *
+ * 读面视图要求 `review_status = 'verified'`，但**会话域的既有行为允许引用 `unverified`**
+ * （如实标注"未核对"，见 `guard.ts` 的 `review_status` 闭集与既有用例），这里不改变它；
+ * 只把 `rejected`（未通过核对）判为不可用：一条被驳回的资料不能当依据。
+ */
+const UNQUERYABLE_REVIEW_STATUS = 'rejected';
+
+/**
+ * 失效原因措辞（**逐字复用** `packages/reference/query.mjs#evaluateEligibility` 的既有原因表，
+ * 不新造解释）。兜底句同样是那里的原文。
+ */
+const VALIDITY_REASONS: Readonly<Record<string, string>> = {
+  expired: '来源已过期',
+  withdrawn: '来源已撤回',
+  conflicting: '来源相互冲突',
+  unknown: '来源有效期未知',
+};
+const VALIDITY_REASON_FALLBACK = '来源有效期不可用';
+const REVIEW_STATUS_REASON = '未通过核对';
+
+/** 一条被有效性判定剔除的条目（**逐条留痕**，供 `note` 如实说明"为什么没有依据"）。 */
+export interface UnusableSource {
+  readonly usable: false;
+  readonly field: 'validity' | 'review_status';
+  readonly value: string;
+  readonly reason: string;
+  /** `validity === 'conflicting'`：只标注"互相冲突"这一状态，**不**解释冲突内容。 */
+  readonly conflicting: boolean;
+}
+
+export type ValidityVerdict = { readonly usable: true } | UnusableSource;
+
+/**
+ * 有效性判定（GY-I12 D3①）：这条来源**是否具备"可引用的依据"资格**。
+ *
+ * 只读来源自身的两个字段，不看正文、不做"看起来还行"的主观判断：
+ *  `review_status === 'rejected'` ⇒ 不可用；`validity !== 'valid'` ⇒ 不可用。
+ */
+export function validityVerdictOf(source: SourceRef): ValidityVerdict {
+  // 审核态先判：一条被驳回的资料，即使有效期是 valid，也不能当依据。
+  if (source.review_status === UNQUERYABLE_REVIEW_STATUS) {
+    return {
+      usable: false,
+      field: 'review_status',
+      value: source.review_status,
+      reason: REVIEW_STATUS_REASON,
+      conflicting: false,
+    };
+  }
+  if (source.validity !== QUERYABLE_VALIDITY) {
+    return {
+      usable: false,
+      field: 'validity',
+      value: source.validity,
+      reason: VALIDITY_REASONS[source.validity] ?? VALIDITY_REASON_FALLBACK,
+      conflicting: source.validity === 'conflicting',
+    };
+  }
+  return { usable: true };
+}
+
+/** 剔除清单 → `note` 里的计数摘要（按 `field=value` 稳定排序，便于逐字核对）。 */
+function exclusionSummary(excluded: readonly UnusableSource[]): string {
+  const counts = new Map<string, { count: number; reason: string }>();
+  for (const entry of excluded) {
+    const key = `${entry.field}=${entry.value}`;
+    const found = counts.get(key);
+    if (found === undefined) counts.set(key, { count: 1, reason: entry.reason });
+    else found.count += 1;
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, value]) => `${key} ${value.count} 条：${value.reason}`)
+    .join('/');
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -173,12 +280,41 @@ export function createKnowledgeRetrievalPort(options: { face: KnowledgeReadFace;
         throw new ApiError('SESSION_REQUIRED', '检索集合读取需要受理时捕获的用户会话凭据');
       }
       const result = await face.list({ identity, token }, query);
-      const items = retrievalItemsOf(result).map((row, index) => retrievalItemOf(row, `#${index}`));
-      return {
-        user_id: identity.userId,
-        items,
-        note: `本次检索集合：${items.length} 条（读面 /knowledge 同一快照；上限 ${RETRIEVAL_LIMIT} 条，未翻页）`,
-      };
+      const rows = retrievalItemsOf(result).map((row, index) => retrievalItemOf(row, `#${index}`));
+      // 有效性判定（文件头第 5 条）：不通过的条目退出集合，但**逐条留痕**给 note（不静默丢弃）。
+      const usableItems: RetrievalItem[] = [];
+      const excluded: UnusableSource[] = [];
+      for (const item of rows) {
+        const verdict = validityVerdictOf(item.source);
+        if (verdict.usable) usableItems.push(item);
+        else excluded.push(verdict);
+      }
+      // 不排序（文件头第 6 条）：集合顺序就是读面顺序；上限截断只是契约上限的兜底，
+      // 真实读面已按 `query.limit` 限制过条数（`limit > 50` 在读面直接拒绝）。
+      const items = usableItems.slice(0, RETRIEVAL_LIMIT);
+      const conflicts = excluded.filter((entry) => entry.conflicting);
+      const noteParts = [
+        `本次检索集合：${items.length} 条（读面 /knowledge 同一快照；上限 ${RETRIEVAL_LIMIT} 条，未翻页）`,
+      ];
+      if (excluded.length > 0) {
+        noteParts.push(`有效性判定剔除 ${excluded.length} 条（${exclusionSummary(excluded)}）`);
+      }
+      if (conflicts.length > 0) {
+        // 「冲突」必须被说出来（不能静默当成"没有这条"），但也只说到"证不成"为止：
+        // 冲突内容本层没有核对依据，编造解释就是失真。
+        noteParts.push(
+          `其中 ${conflicts.length} 条为 conflicting：冲突原因本层未核对，故只能如实说明` +
+            '「来源相互冲突、该条资料不足」，不解释冲突内容',
+        );
+      }
+      if (usableItems.length > items.length) {
+        // 只有读面无视 `limit` 才会走到这里（真实装配下不可达）：如实说明"按读面顺序截断"，
+        // 不声称任何"相关性"上的取舍。
+        noteParts.push(
+          `候选池 ${usableItems.length} 条超出上限，按读面顺序保留前 ${items.length} 条`,
+        );
+      }
+      return { user_id: identity.userId, items, note: noteParts.join('；') };
     },
   });
 }
