@@ -10,7 +10,7 @@
 | 技术 | 仓库现用 | 上游状态（2026-10-18 读数） | 决定 | 来源数 |
 | --- | --- | --- | --- | --- |
 | Node.js | 24.16.0（engines `>=24.16.0 <25`） | 24 为 Active LTS，2026-10-20 转维护期，EOL 2028-04-30 | 沿用；补丁可升 24.22.0 | 2 |
-| TypeScript | 5.9.3 | 上游 latest 7.0.2（2026-08-20 发布） | 沿用；跨大版本迁移单独立项 | 2 |
+| TypeScript | 5.9.3 | 上游 latest 7.0.2（npm registry 读数；发布日未取得） | 沿用；跨大版本迁移单独立项 | 2 |
 | Fastify | 5.12.5 | 文档站 latest 5.12.7；5.x 支持期内（End Of LTS 未定） | 沿用 5.12.x | 2 |
 | PostgreSQL | 17.11（CI 镜像） | 17.11 为当前小版本，支持到 2029-11-08 | 沿用 PG17，不跨大版本 | 2 |
 | 微信小程序原生框架 | 原生 + 基础库 3.17.3 | 基础库随客户端携带上一稳定版发布，灰度 12–24 小时 | 沿用；升级约束见 §5 | 1（部分未取得） |
@@ -43,7 +43,7 @@
 | 项 | 内容 |
 | --- | --- |
 | 现用版本（证据命令） | `node -p "require('./package-lock.json').packages['node_modules/typescript'].version"` ⇒ 5.9.3；许可证字段 Apache-2.0；`@types/node` ⇒ 24.19.1；`services/api/tsconfig.json`：target ES2023、module `nodenext`、strict、verbatimModuleSyntax、erasableSyntaxOnly、rewriteRelativeImportExtensions |
-| 上游维护状态 | 本轮 latest 7.0.2：npm 元数据 2026-10-18 读数，license Apache-2.0，engines `node >=16.20.0`，`type: module`；GitHub release v7.0.2 发布于 2026-08-20，说明指向 devblogs 的 TypeScript 7.0 公告，并注明最初在 typescript-go 仓库发布（原生移植编译器） |
+| 上游维护状态 | 本轮 latest 7.0.2：npm 元数据 2026-10-18 读数，license Apache-2.0，engines `node >=16.20.0`，`type: module`；官网首页显示「TypeScript 7.0 is now available」。**发布日与发布说明未取得**：`api.github.com/repos/microsoft/TypeScript/releases/latest` 本轮返回 HTTP 403（限流/未授权），npm `latest` 包文档也不含 `time` 字段 ⇒ 不写发布日期，也不据 release 正文推断发布内容 |
 | 可复用部分 | 类型检查面：`services/api/tsconfig.json` 的 `include` 覆盖 `services/api/src` 175 个 `.ts`（`git ls-files "services/api/src/**/*.ts"` ⇒ 175）；`apps/admin/tsconfig.json` 覆盖 4 个 `.ts`（`src/App.vue` 不在 tsc 面内）；`tools/lint-workspaces.mjs` 对两个 tsconfig 各跑一次 `node node_modules/typescript/bin/tsc -p <cfg> --noEmit`（`npm run lint` 第一步） |
 | 许可证与署名 | Apache-2.0（npm 元数据读数）；署名要求需按 Apache-2.0 保留 NOTICE/版权声明，具体以官方许可页为准——本轮未抓取许可全文 ⇒ 细节未取得 |
 | 兼容性 | 5.9.3 与 7.x 是两个编译器世代（7.x 为 Go 原生移植），`tsc -p --noEmit` 的诊断与规则差异未验证；仓库 `npm run lint` 依赖本 worktree 的 `node_modules/typescript/bin/tsc`（本片在自有 worktree 独立 `npm ci`，未建任何联接） |
@@ -55,7 +55,7 @@
 | # | URL | 本轮读数 |
 | --- | --- | --- |
 | 1 | https://registry.npmjs.org/typescript/latest | 7.0.2，Apache-2.0，engines node >=16.20.0，unpackedSize 2497498，含平台二进制 optionalDependencies |
-| 2 | https://api.github.com/repos/microsoft/TypeScript/releases/latest | tag v7.0.2，published_at 2026-08-20，正文链接 announce blog，并说明最初在 typescript-go 仓库发布 |
+| 2 | https://www.typescriptlang.org/ | 首页显示「TypeScript 7.0 is now available」；无具体发布日与补丁号（发布日见 §9 未取得） |
 
 ## 3 Fastify
 
@@ -63,7 +63,7 @@
 | --- | --- |
 | 现用版本（证据命令） | `node -p "require('./package-lock.json').packages['node_modules/fastify'].version"` ⇒ 5.12.5；`services/api/package.json` dependencies 为 `fastify: 5.12.5`；许可证字段 MIT |
 | 上游维护状态 | 文档站 latest 显示 v5.12.7；LTS 政策：每个 major 自发布起至少支持 6 个月，转入下一个 major 后再给 6 个月安全更新；5.0.0 于 2024-09-17 发布，End Of LTS 为 TBD；测试覆盖 Node.js LTS 线（表列 Node 20、22）；另提供 HeroDevs 商业支持 |
-| 可复用部分 | HTTP 装配层：`services/api/src/app.ts` 的 `buildApp` 是唯一装配入口，26 个文件 `from 'fastify'`（`git grep -l "from 'fastify'" -- services/api` ⇒ 26，含插件、路由与错误映射）；`tests/integration/*.mjs` 27 个脚本经 `buildApp` 装配后跑真实回环（`npm run test:integration:http`） |
+| 可复用部分 | HTTP 装配层：`services/api/src/app.ts` 的 `buildApp` 是唯一装配入口，`git grep -l "from 'fastify'" -- services/api` ⇒ 26 个文件（含插件、路由与错误映射）。三个数互不相等，不能互相外推：`git ls-files "tests/integration/*.mjs"` ⇒ 27 个文件；`git grep -l "buildApp" -- tests/integration` ⇒ 21 个脚本引用 `buildApp`；`npm run test:integration:http` 的实际串跑清单（`package.json` 里以 `&&` 串联的 `node tests/integration/…`）只含 12 个脚本，其中 10 个引用 `buildApp`，`knowledge-consumer-http.mjs` 与 `profile-ui-http.test.mjs` 不引用。本片不跑该脚本（抢回环端口） |
 | 许可证与署名 | MIT（npm 元数据读数）；MIT 要求保留版权与许可声明，具体文本本轮未抓取 ⇒ 全文未取得 |
 | 兼容性 | 仓库 API 为 `type: module` 的 ESM；Fastify 5 支持 ESM，但本仓库用到的插件组合未在本片验证；上游测试矩阵列 Node 20/22，未列 24，属未知项 |
 | 引入成本 | 已在用；上游包 unpackedSize 2970996（约 2.97 MB），15 个运行时依赖 |
@@ -120,7 +120,7 @@
 | --- | --- |
 | 现用版本（证据命令） | `README.md:27`「Python 3.11+ 用于文档检查」；CI docs job 只跑 `python3 --version`，不锁版本；本机 `python -V` 与 `python3 -V` 均 3.14.3；`tools/run-python.mjs` 依次尝试 `$PYTHON` → `python3` → `python` |
 | 上游维护状态 | 生命周期约 5 年（约 2 年 bugfix + 3 年 security）：3.14 处于 bugfix，2025-10-07 首发，EOL 2030-10；3.15 进入 bugfix（2026-10-09 首发，EOL 2031-10）；3.11 为 security，EOL 2027-10；3.10 已于 2026-10-01 EOL。官网当前补丁：3.15.0、3.14.8、3.11.17 |
-| 可复用部分 | 仓内 14 个 `tools/**/*.py`（`git ls-files "tools/*.py" "tools/knowledge/*.py"` ⇒ 14）：`validate_development_docs.py`、`validate_contracts.py`、`test_contracts.py` 由 `npm run test:docs` 与 CI docs job 调用，`tools/knowledge/*.py` 10 个用于知识库构建与校验；`tools/run-python.mjs` 依次试 `$PYTHON`→`python3`→`python`，是本项唯一解释器入口 |
+| 可复用部分 | 仓内 14 个 `tools/**/*.py`（`git ls-files "tools/*.py" "tools/knowledge/*.py"` ⇒ 14）。调用关系不能一概而论：`npm run test:docs` 只调用 `validate_development_docs.py`（`node -p "require('./package.json').scripts['test:docs']"` ⇒ `node tools/run-python.mjs tools/validate_development_docs.py`）；CI 另跑两个校验器——`.github/workflows/engineering-shell.yml` 的 docs job 与 `development-docs.yml` 各有三行 `run: python3 tools/…`（`validate_development_docs.py`、`validate_contracts.py`、`test_contracts.py`，`git grep -n "tools/.*\.py" -- .github/workflows` 可核）。`tools/knowledge/*.py` 10 个用于知识库构建与校验；`tools/run-python.mjs` 依次试 `$PYTHON`→`python3`→`python`，是本项唯一解释器入口 |
 | 许可证与署名 | 「All Python releases are Open Source」并指向许可页（PSF 许可）；全文本轮未抓取 ⇒ 条款细节未取得 |
 | 兼容性 | 校验脚本只用标准库，3.11+ 均可运行；CI 未固定小版本 ⇒ 上下游版本漂移只影响文档检查 |
 | 引入成本 | 已在用；校验脚本无第三方依赖 |
@@ -159,7 +159,7 @@
 | 1 | https://endoflife.date/api/nodejs.json | Node 24 latest 24.22.0、support 2026-10-20、eol 2028-04-30 | §1 |
 | 2 | https://nodejs.org/en/about/previous-releases | v24 Krypton LTS，v26 Current，latest LTS v24.22.0 | §1 |
 | 3 | https://registry.npmjs.org/typescript/latest | TypeScript 7.0.2，Apache-2.0，engines node >=16.20.0 | §2 |
-| 4 | https://api.github.com/repos/microsoft/TypeScript/releases/latest | v7.0.2，published 2026-08-20，原生移植编译器说明 | §2 |
+| 4 | https://www.typescriptlang.org/ | 首页「TypeScript 7.0 is now available」，无发布日 | §2 |
 | 5 | https://fastify.dev/docs/latest/Reference/LTS/ | 5.0.0 2024-09-17，End Of LTS TBD，Node 20/22 | §3 |
 | 6 | https://registry.npmjs.org/fastify/latest | 5.12.7，MIT，15 个运行时依赖，约 2.97 MB | §3 |
 | 7 | https://www.postgresql.org/support/versioning/ | 17.11 supported 至 2029-11-08；18.6 至 2030-11-14；19 RC1 | §4 |
@@ -179,6 +179,7 @@
 | 微信小程序稳定版版本号 | 开发者工具稳定版页只返回导航骨架，无版本读数 | 用官方下载页或更新日志复核 |
 | 微信小程序许可证条款 | 未抓取许可页 | 同上 |
 | actions/checkout、actions/setup-node 许可证 | 未抓取仓库许可页 | 补抓 LICENSE 或仓库 API |
+| TypeScript 7.0.2 的发布日与发布说明 | `api.github.com/repos/microsoft/TypeScript/releases/latest` 本轮返回 HTTP 403；npm `latest` 文档无 `time` 字段 | 用 npm registry 全量文档的 `time` 或官网 release 页复核，届时不改本记录结论 |
 | TypeScript 5.9.3→7.0.2 迁移成本、Fastify 5.12.5→5.12.7 变更记录 | 本轮未抓 changelog | 升级前单独检索并留痕 |
 
 ## 10 复核命令
@@ -203,4 +204,9 @@ git grep -c "runs-on:" -- .github/workflows
 git grep -nE "actions/(checkout|setup-node)@" -- .github/workflows
 git ls-remote --tags https://github.com/actions/checkout "refs/tags/v4.2.2"
 git ls-remote --tags https://github.com/actions/setup-node "refs/tags/v4*"
+# 可复用面计数（27/21/12 三个数互不相等）
+git ls-files "tests/integration/*.mjs"
+git grep -l "buildApp" -- tests/integration
+node -p "require('./package.json').scripts['test:integration:http']"
+node -p "require('./package.json').scripts['test:docs']"
 ```
