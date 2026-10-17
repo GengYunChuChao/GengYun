@@ -1035,8 +1035,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 派单 `.pg17/dispatch/issue193-refailclosed.md` A 项）：这 4 个 `OBJECT_STORAGE_*` 键**正是 real
   // 模式的启动必填项**（见 `config.ts` 的 `REQUIRED_WHEN_REAL`）⇒「运维不设键」**不可能**充当
   // 「可启动的 real 环境」的门 —— 把 ambient env 交给 resolver 等于**配置即门控**，
-  // 在隐私守卫（上传路由用途授权／撤回 epoch，见 `routes/media.ts` 的 `createUpload` 只经
-  // `guards.requireUser`）与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
+  // 在隐私守卫（上传受理的用途授权已由 GY-I27 第三片接上，但**缺数据库时不挂**；撤回 epoch 未接）
+  // 与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
   // 仍是进程内 `Map`，重启即丢 owner/版本/rawRef 与回收依据）尚未接妥前，会为真实用户媒体开门。
   // 这两片落地前，真实适配器只允许经**显式注入**装配；**不得**用布尔自述标志当门控
   // （判据是端口的 `kind`，同监工对 #121 的 P1 口径）。
@@ -1425,7 +1425,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
-  registerMediaRoutes(app, config, guards, mediaService);
+  // GY-I27 第三片（C7）：把与识别/转写/合成/OCR **同源的那一个** `consentGate` 交给媒体域，
+  // 媒体域只在 `POST /media/uploads` 上按请求体 `purpose` 用它（其余 6 条入口不挂）。
+  // 缺数据库且未注入 ⇒ `consentGate === undefined` ⇒ 媒体域拿到缺省 passthrough，行为不变。
+  registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate });
   registerMessageRoutes(app, config, guards, messagesService);
   // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
   registerFavoriteRoutes(app, config, guards, favoritesService);
