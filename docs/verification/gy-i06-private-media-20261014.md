@@ -310,6 +310,8 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    与测试之外的任何「准生产」用法都应视为不可用。持久化实现（PG + 行版本 CAS）属后续接线。
 2. **owner 私有媒体字节读取在契约内没有对应 operation**：契约只签发短效句柄（`AccessGrant.url` 为 https，本仓库占位域 `media.gengyun.local`），字节读取由部署期访问网关承担；契约内唯一返回二进制的 operation 是 `GET /community/media/{grant_id}/content`，只服务社区公开已审上下文，不能用于 owner 私有媒体 ⇒ **客户端经契约取不到私有媒体字节**（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」）。
    若监工认为需要 API 侧网关端点，那属于**扩展冻结契约**，须先走契约变更流程。
+   （2026-10-17 校订：本节「本仓库占位域 `media.gengyun.local`」的表述已不成立 —— 句柄 host 已改为配置项
+   `MEDIA_ACCESS_GRANT_ORIGIN`，缺省为不可解析占位域；原文保留为当时记录，现行口径见 §12。）
 3. **「每帖 ≤3 图」的判定点**：冻结契约的 `UploadInput` 没有帖子上下文，真正的「每帖」判定在
    **附件挂载**（社区线 GY-I15）。本片用「同一 owner 名下存活的 `community_image` 计数」作为
    **保守替身**（`real` 下未接线即拒绝该用途），已在源码与对照表中显式标注为保守替身。
@@ -386,3 +388,58 @@ refs after cleanup    → rawRef=null derivativeRef=null
 
 **未取得项不变**：真实对象存储、访问网关、持久化媒体记录、真机、微信工具与供应商音频适配仍未验证；
 监工未验收，本片**不关闭 #6**。
+
+## 12 校订记录：`AccessGrant.url` 的 host 改为配置项（D3 裁定，2026-10-17）
+
+监工裁定（`.pg17/ruling-i06-i08-disposition-20261017.md` §2 **D3**）采方案 (b)：保留「句柄由部署期访问网关解析」
+的语义，但代码里**不得继续保留形似可用域名的字面量**（读者会把它当成已经接好的地址）。本片照此把两类句柄的
+host 改为配置项，默认值是**占位/不可解析**域。
+
+**改前（逐字，`services/api/src/media/service.ts` 改前行号）**：
+
+```
+// :931（owner 句柄）
+        url: `https://media.gengyun.local/api/v1/media/${record.id}/content`,
+// :1051（社区句柄）
+          url: `https://media.gengyun.local/api/v1/community/media/${grantId}/content`,
+```
+
+**改后（逐字）**：
+
+```
+// 构造期（real 闸门之后）：注入值优先，缺省为占位/不可解析域；非法即抛错
+  const accessGrantOrigin = normalizeMediaAccessGrantOrigin(
+    options.accessGrantOrigin ?? DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN,
+  );
+// 工厂顶部常量：RFC 6761 保留、永不解析的显式占位
+export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.invalid';
+// owner 句柄
+        url: `${accessGrantOrigin}/api/v1/media/${record.id}/content`,
+// 社区句柄（与 owner 同源）
+          url: `${accessGrantOrigin}/api/v1/community/media/${grantId}/content`,
+```
+
+**默认值策略与理由**：缺省 `https://media.placeholder.invalid` —— `invalid` 是 RFC 6761 保留给「永不解析」的
+顶级域，`media.placeholder.invalid` **解析不到任何主机**，既不是线上域名也不回指本服务。未配置时句柄刻意不可用，
+而不是给出一个「看起来能用」的地址。**`AccessGrant.url` 的 host 来自配置，默认值为占位/不可解析域；句柄由部署期
+网关解析。** 注入链：装配层读 `MEDIA_ACCESS_GRANT_ORIGIN`（`services/api/src/config.ts` 新增可选字段
+`AppConfig.mediaAccessGrantOrigin`，非法值进 `ConfigError`）⇒ `createAppMediaService({ accessGrantOrigin })`。
+`services/api/src/media/**` 一次都不读 ambient env（沿用 `tests/unit/media-real-mode-fail-closed.test.mjs` 的 AST
+审计红线），非法注入（http／凭据／路径／查询／片段）在**构造期**抛 `TypeError`，不静默退回占位域。
+
+**测试**（`tests/unit/media-grant-url-origin.test.mjs`，6/6 通过）：①缺省＝`.invalid` 占位且契约路径、
+令牌不入 URL 的形态不变；②两个不同配置值（含 `:8443`）⇒ owner 与社区句柄的 host/port 各自跟随；
+③8 个非法注入 ⇒ 构造期抛错；④`normalizeMediaAccessGrantOrigin` 规范化（大小写、`:443` 省略、`:8443` 保留）；
+⑤`loadConfig` 缺省/空白 ⇒ `null`、合法值规范化、http ⇒ `ConfigError`（`MEDIA_ACCESS_GRANT_ORIGIN`／`INVALID_VALUE`）；
+⑥源码防回归：不含 `media.gengyun.local` 且含默认常量字面。既有测试**未删改**（原有断言只检查 `/^https:\/\//`，
+没有一处钉该域名字面量，故无需同步任何期望值）。
+
+**绑定 SHA（实测）**：本节所述实现见提交 `438847ae448f5d887538735eb1561e12edb37fad`
+（`git cat-file -t 438847ae448f5d887538735eb1561e12edb37fad` ⇒ `commit`；父提交
+`95b8e7cf67106391a61e88090d3c7cb6f820a99b`）；本文件所在文档提交紧随其后。
+
+**未取得项（本节新增）**：装配层注入点 `services/api/src/app.ts` 的 `buildApp` 正被 #239
+（`feat/gy-i19-deletion-persistence`）改动，本次**未接线**；合入后须在装配处补
+`accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined`，否则配置项不会生效（缺省仍为占位域，
+行为安全但配置无效）。`packages/media/service.mjs` 的**同形字面量**（参考实现，`:227/:371/:474`）与
+`packages/media/README.md:78` 的说明文字不在本派单范围，**未改**。

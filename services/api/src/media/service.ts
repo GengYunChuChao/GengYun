@@ -274,6 +274,18 @@ export interface AppMediaServiceOptions {
    * fail-closed，**与端口来源／环境配置无关**。装配层不得自行铸造。
    */
   realMediaApproval?: RealMediaWiringApproval;
+  /**
+   * `AccessGrant.url` 的**访问网关原点**（`https://<host>[:port]`，例如 `https://media.example.com`）。
+   *
+   * 由装配层从配置读取后显式注入（配置项 `MEDIA_ACCESS_GRANT_ORIGIN`，见 `services/api/src/config.ts`
+   * 的 `AppConfig.mediaAccessGrantOrigin`）。**本文件不读 ambient env**（既有 AST 审计：
+   * `tests/unit/media-real-mode-fail-closed.test.mjs` 对 `services/api/src/media/**` 的
+   * `process.env`／`import.meta.env` 读取一律判违规），所以配置只能沿「装配层 → 本选项」入。
+   *
+   * 缺省 = {@link DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN}（占位、**不可解析**：RFC 6761 保留域 `.invalid`）。
+   * 注入值非法（http、带路径/查询/凭据）⇒ 构造期抛错，不静默退回占位域。
+   */
+  accessGrantOrigin?: string;
 }
 
 // --------------------------------------------------------------------- 端口替身
@@ -523,6 +535,52 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
   };
 }
 
+// ---------------------------------------------------- AccessGrant 的访问网关原点
+
+/**
+ * `AccessGrant.url` 的**默认**访问网关原点（scheme + host）。
+ *
+ * **占位、不可解析**：`.invalid` 是 RFC 6761 保留给「永不解析」的顶级域（RFC 2606 同样收录），
+ * 因此 `media.placeholder.invalid` **解析不到任何主机**——它不是线上域名、也不回指本服务，
+ * 只是「句柄由部署期访问网关解析」的显式占位。
+ *
+ * 真实部署必须由装配层注入实际的网关原点（选项 {@link AppMediaServiceOptions.accessGrantOrigin}，
+ * 配置项 `MEDIA_ACCESS_GRANT_ORIGIN`）；未注入时句柄不可用，这是**刻意的**（宁可不可解析，
+ * 也不给出一个「看起来能用」的地址）。
+ */
+export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.invalid';
+
+/**
+ * 校验并规范化 `AccessGrant.url` 的访问网关原点：只接受 `https://<host>[:port]`。
+ *
+ * 拒绝 http、内嵌凭据、路径、查询、片段与首尾空白——这些要么把句柄降级成明文传输，
+ * 要么让拼接出的路径指向非预期位置；非法即**抛错**，绝不静默退回占位域或截断成 `new URL().origin`。
+ */
+export function normalizeMediaAccessGrantOrigin(value: string): string {
+  if (typeof value !== 'string' || value === '' || value.trim() !== value) {
+    throw new TypeError('AccessGrant 网关原点必须是非空、且无首尾空白的字符串');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError(`AccessGrant 网关原点不是合法 URL：${value}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new TypeError(`AccessGrant 网关原点必须是 https（契约句柄不得降级为明文）：${value}`);
+  }
+  if (parsed.username !== '' || parsed.password !== '') {
+    throw new TypeError(`AccessGrant 网关原点不得内嵌凭据：${value}`);
+  }
+  if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
+    throw new TypeError(`AccessGrant 网关原点只能是 scheme + host[:port]，不得带路径/查询/片段：${value}`);
+  }
+  if (parsed.hostname === '') {
+    throw new TypeError(`AccessGrant 网关原点缺少主机名：${value}`);
+  }
+  return parsed.origin;
+}
+
 // --------------------------------------------------------------------- 实现
 
 /**
@@ -548,6 +606,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       );
     }
   }
+
+  // 访问网关原点：配置注入值优先；缺省为占位/不可解析域（见 DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN）。
+  // 注入值非法即在构造期抛错（不静默降级）。放在 real 闸门**之后**：real 未接线时仍是整域 fail-closed。
+  const accessGrantOrigin = normalizeMediaAccessGrantOrigin(
+    options.accessGrantOrigin ?? DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN,
+  );
 
   const contentSource = options.contentSource ?? createClosedContentSource();
   const attachmentCounter =
@@ -973,11 +1037,13 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     });
     // 契约 `AccessGrant.url` 必须是 https 句柄；本端点的字节读取由部署期访问网关承担
     // （冻结契约内**没有**私有媒体内容路由，见证据文档「契约缺口」）。
+    // host 来自配置（`AppMediaServiceOptions.accessGrantOrigin` ⇒ 配置 `MEDIA_ACCESS_GRANT_ORIGIN`），
+    // 未配置时是本文件顶部的**不可解析占位域**，绝不硬编码任何形似线上域名的主机。
     return {
       status: 200,
       mediaRevision: record.revision,
       grant: {
-        url: `https://media.gengyun.local/api/v1/media/${record.id}/content`,
+        url: `${accessGrantOrigin}/api/v1/media/${record.id}/content`,
         expires_at: iso(expiresAt),
         method: 'GET',
         access_token: token,
@@ -1087,6 +1153,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       expiresAt,
       revokedAt: null,
     });
+    // 句柄 host 与 owner 句柄同源：配置注入的网关原点（缺省为不可解析的占位域）。
     return {
       status: 200,
       contentRevision: contentRef.revision,
@@ -1097,7 +1164,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         slot,
         author_revision: slot === 'author_avatar' ? content.authorRevision : null,
         access: {
-          url: `https://media.gengyun.local/api/v1/community/media/${grantId}/content`,
+          url: `${accessGrantOrigin}/api/v1/community/media/${grantId}/content`,
           expires_at: iso(expiresAt),
           method: 'GET',
           access_token: token,
