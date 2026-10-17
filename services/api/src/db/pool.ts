@@ -73,6 +73,29 @@ export function classifyDatabaseError(error: unknown): DatabaseErrorCategory {
   }
 }
 
+/** 驱动/网络层的瞬时代码（连接被拒/重置、DNS 抖动、套接字超时）：同一请求稍后重试可能成功。 */
+const TRANSIENT_DRIVER_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE']);
+
+/**
+ * 判定一个数据库故障是否属于**瞬时**类（`retryable` 口径见 `services/api/src/errors.ts` 的 `ApiError` 注释：
+ * 仅当同一请求在无人工/运维介入下稍后重试可能成功才为 `true`）。
+ *
+ * 与 `services/api/src/privacy/ledger-pg.ts` 的 `mapPgError()` 逐条同源，**只此一处**定义，调用点不得各写一套正则：
+ * - 驱动/网络层：`TRANSIENT_DRIVER_CODES`（连接被拒/重置、DNS 抖动、套接字超时）；
+ * - SQLSTATE：`57014`/`55P03`（语句取消/拿不到锁，超时类，调用方通常另映射为 `PROVIDER_TIMEOUT`）、
+ *   `08xxx`（连接层故障）、`53xxx`（管理员干预）、`57P0x`（含 `57P01` 管理员重启）、
+ *   `40001`（串行化失败）、`40P01`（死锁）。
+ *
+ * 其余（`3D000` 库不存在、`28P01` 凭据不匹配、`42P01` 表缺失、`42501` 权限不足、`42883` 函数缺失，
+ * 以及无 `code` 的无法归类错误）⇒ 需运维改配置或修缺陷，**不是时间能解决的** ⇒ `false`。
+ */
+export function isTransientDatabaseError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code !== 'string' || code.length === 0) return false;
+  if (TRANSIENT_DRIVER_CODES.has(code)) return true;
+  return /^(08|53|57P0|40001|40P01|57014|55P03)/.test(code);
+}
+
 /**
  * 执行一次最小只读查询确认连接可用。不修改任何数据。
  * 未配置连接串时返回 not_configured（不视为通过）。

@@ -5,8 +5,9 @@
  *   - 本文件接的是 `app.ts` 已有的 `PgPool`（唯一构造点是 `services/api/src/server.ts`
  *     的 `createPool`），事务模式抄 `knowledge/service.ts`：
  *     `pool.connect()` → `BEGIN` → `SET LOCAL lock_timeout = '4s'` → 业务 SQL → `COMMIT`
- *     （异常 `ROLLBACK`；`57014` 语句超时 / `55P03` 锁不可得 ⇒ `PROVIDER_TIMEOUT`，
- *     其余数据库异常 ⇒ `PROVIDER_UNAVAILABLE`，与资料域同口径）；
+ *     （异常 `ROLLBACK`；`57014` 语句超时 / `55P03` 锁不可得 ⇒ `PROVIDER_TIMEOUT`，其余数据库异常 ⇒
+ *      `PROVIDER_UNAVAILABLE`，与资料域同口径；`retryable` 按 `../db/pool.ts` 的 `isTransientDatabaseError()`
+ *      分档：瞬时类为 `true`，配置/权限类与无法归类者为 `false`，口径原文见 `../errors.ts` 的 `ApiError` 注释）；
  *   - 迁移只写 `services/api/db/migrations/0013_conversations.sql`，由仓库**唯一**的
  *     运行器 `services/api/src/db/migrate.ts` 执行（找不到 DATABASE_URL 即明确失败）；
  *   - 幂等台账口径**沿用** `auth/idempotency.ts` 的 scope = `<主体>\n<METHOD>\n<路径>` 与
@@ -19,6 +20,7 @@
  *   CAS 删除仍带 `expected_revision`，以 `rowCount` 判定成功/失败原因。
  */
 import { ApiError } from '../errors.ts';
+import { isTransientDatabaseError } from '../db/pool.ts';
 import type {
   AnswerRecord,
   AnswerStatus,
@@ -60,7 +62,10 @@ export function classifyConversationDatabaseError(error: unknown): never {
     throw new ApiError('PROVIDER_TIMEOUT', '问答数据库响应超时', { retryable: true });
   }
   if (error instanceof ApiError) throw error;
-  throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库暂不可用', { retryable: true });
+  // 分档（口径原文见 `../errors.ts` 的 `ApiError` 注释）：连接层故障（08xxx）、管理员干预（53xxx / 57P0x）、
+  // 串行化冲突（40001）、死锁（40P01）⇒ 同一请求稍后重试**确实**可能成功 ⇒ retryable:true；
+  // 配置/权限类（3D000 / 28P01 / 42P01 / 42501 / 42883）与无法归类的其余驱动错误 ⇒ 需运维改配置或修缺陷 ⇒ false。
+  throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库暂不可用', { retryable: isTransientDatabaseError(error) });
 }
 
 function parseJson(value: unknown): unknown {
