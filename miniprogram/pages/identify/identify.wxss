@@ -214,3 +214,143 @@
   color: var(--color-text-sub);
   line-height: 1.7;
 }
+
+/* ------------------------------------------------- 人工校正（#10 AC①） */
+
+/* 被人工改过的字段整行加左侧标记条，与未改过的行一眼可辨（不隐藏机器读数）。 */
+.knowledge--changed {
+  border-left: 6rpx solid #C46A1A;
+  background: #FFF6EC;
+}
+
+.corr-diff__flag {
+  font-size: calc(13px * var(--font-scale, 1));
+  color: #A33A1A;
+  line-height: 1.6;
+}
+
+.corr {
+  margin-top: 16rpx;
+  padding: 16rpx;
+  border: 1px solid #E3D9C8;
+  border-radius: 12rpx;
+  background: #FFFDF8;
+}
+
+.corr__title {
+  font-size: calc(16px * var(--font-scale, 1));
+  font-weight: 600;
+}
+
+.corr__meta {
+  margin-top: 6rpx;
+  font-size: calc(13px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+  line-height: 1.6;
+}
+
+/* 冲突重读 / 提交成功 / 校验失败 / 用量阻断：四种反馈各有独立底色，避免混成一句。 */
+.corr__conflict,
+.corr__success,
+.corr__error,
+.corr__blocked {
+  margin-top: 12rpx;
+  padding: 10rpx 12rpx;
+  border-radius: 8rpx;
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.7;
+}
+
+.corr__conflict {
+  background: #FFF3E0;
+  border: 1px solid #E8C48A;
+  color: #8A5A00;
+}
+
+.corr__success {
+  background: #EDF7EE;
+  border: 1px solid #B9DDBD;
+  color: #2F6B38;
+}
+
+.corr__error {
+  background: #FDEDEA;
+  border: 1px solid #F0C0B4;
+  color: #A33A1A;
+}
+
+.corr__blocked {
+  background: #FDF3F3;
+  border: 1px solid #E9B7B7;
+  color: #8C2F2F;
+}
+
+.corr__row,
+.corr__ing {
+  margin-top: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.corr__ing {
+  padding-top: 12rpx;
+  border-top: 1px dashed #E3D9C8;
+}
+
+.corr__label {
+  font-size: calc(15px * var(--font-scale, 1));
+  font-weight: 600;
+}
+
+/* 不复用 maxlength：输入框只承载原文，超长由 `buildCorrectionInput` 在提交前拒绝并给出实际长度。 */
+.corr__input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: calc(40px * var(--font-scale, 1));
+}
+
+.corr__count {
+  font-size: calc(12px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+}
+
+.corr__sub {
+  margin-top: 18rpx;
+  font-size: calc(14px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+  line-height: 1.7;
+}
+
+.corr__remove {
+  align-self: flex-start;
+  font-size: calc(13px * var(--font-scale, 1));
+  color: #A33A1A;
+}
+
+.corr__confirm {
+  margin-top: 18rpx;
+  padding: 12rpx;
+  display: flex;
+  align-items: flex-start;
+  gap: 8rpx;
+  border: 1px solid #D8CDB8;
+  border-radius: 10rpx;
+  background: #FFFFFF;
+}
+
+.corr__confirm--on {
+  border-color: #4E7A3A;
+  background: #F2F8EE;
+}
+
+.corr__check {
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.4;
+}
+
+.corr__confirm-text {
+  flex: 1;
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.6;
+}
