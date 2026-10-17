@@ -60,7 +60,10 @@ function fixture() {
   // 参考族页面：本片 D1 起联网时走服务端 `/herbicides`、`/herbicides/{id}`，这几页必须拿到**真实**知识
   // 客户端（见 b.page() 的 knowledgeModule 注释）。其余页面（含 `miniprogram/pages/favorites/favorites.js:19`
   // 这类同样 `require('../../utils/knowledge-api')` 的门禁页）保持「永不落地」替身，以维持本组用例
-  // `tests/unit/miniprogram-login-return-to.test.mjs:550`「门禁之前不得发生业务请求」护栏的既有语义。
+  // 结尾那条 `b.requests.every` 护栏（消息「门禁之前不得发生业务请求」）的既有语义。
+  // 该护栏按**断言原文**锚定、不按行号（行号随本文件增删与合流漂移）：`git grep -nF` 其消息的 ASCII 单引号
+  // 形态在本文件命中恰 1 行 —— 本注释用「」包裹、故意不复制代码字节，以免自己把命中数变成 2。行号仅辅助：
+  // 目标 SHA 95b8e7cf67106391a61e88090d3c7cb6f820a99b（合流树实测）在 `:553`，父提交 `5615558` 在 `:550`。
   const REFERENCE_FAMILY = new Set(['reference', 'referenceseed', 'referencedetail', 'referenceseeddetail']);
   b.page = (name, loadOptions = {}) => {
     let def;
@@ -133,9 +136,16 @@ function fixture() {
       ['../../utils/favorites-api', pendingApi],
       // 知识客户端：**只对参考族页面登记真实模块**（见上）——`miniprogram/pages/favorites/favorites.js:19`
       // 也 `require('../../utils/knowledge-api')`，如果对全部页面都喂真实模块，门禁放行后 favorites 会真的
-      // 发起业务读取，`tests/unit/miniprogram-login-return-to.test.mjs:550`（本组「门禁之前不得发生业务请求」
-      // 的护栏，靠 :133 的替身登记保证）就会红 —— 那是本组替身设计被绕过，不是页面回归。实测：只对参考族
-      // 登记真实模块时，:540/:543/:545 的 1/2/3 条请求计数与 :550 全部成立（门禁放行前的流量仍只有门禁核实）。
+      // 发起业务读取，本组「门禁之前不得发生业务请求」护栏（`b.requests.every` 那条，锚定方式见上）就会红
+      // —— 那是本组替身设计被绕过，不是页面回归。该护栏的保证机制＝**紧接下面的 knowledge-api 三元登记**
+      // （`REFERENCE_FAMILY.has(name)` 才给真实模块、其余页面含 favorites 仍给「永不落地」替身），**不是**上面
+      // 那条 favorites-api 替身登记（它只覆盖 favorites 调 favorites-api 的路径）。
+      // 实测：只对参考族登记真实模块时，N1 用例体内 `assert.equal(b.requests.length, …)` 的 1／2／3 条计数
+      // 与该护栏全部成立（门禁放行前的流量仍只有门禁核实）。
+      // 断言与登记项一律按原文锚定（`git grep -nF` 各自命中恰 1 行）；行号仅辅助，目标 SHA
+      // 95b8e7cf67106391a61e88090d3c7cb6f820a99b（合流树实测）：knowledge-api 三元登记 `:142`、favorites-api
+      // 替身 `:136`、计数 `:543`／`:546`／`:548`、护栏 `:553`；父提交 `5615558` 上依次 `:139`／`:133`／
+      // `:540`／`:543`／`:545`／`:550`。
       ['../../utils/knowledge-api', REFERENCE_FAMILY.has(name) ? knowledgeModule.exports : pendingApi],
       ['../../utils/history-api', pendingApi],
       ['../../utils/messages-api', pendingApi],
