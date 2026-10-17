@@ -1,6 +1,6 @@
 # 2026-10-18 当前技术栈复用决策基线
 
-- 基线：`d4e6b2d0a5ee8376f9661a4bd34962602b98370d`（2026-10-18 返修时 `git rev-parse upstream/main` 逐字实测；首版记录基线为 `98658d563f7fb35dc5518fda8117a0100aecbd56`，因上游前进 9 个提交，本文件所有计数已按新基线重算，见 §0 计数口径）。
+- 基线：`a6c3df82c030866a66eb2eebf03c6effc3042cd4`（r4 合并后的 `upstream/main`，`git rev-parse upstream/main` 逐字实测）。本分支 r4 用 `git merge --no-ff` 合入该基线；前一基线 `d4e6b2d0a5ee8376f9661a4bd34962602b98370d` 是它的祖先、也是 r1–r3 的计数基线（两基线对 §0 全部计数读数相同，合并后已重跑）；首版记录基线为 `98658d563f7fb35dc5518fda8117a0100aecbd56`。
 - 检索日期：2026-10-18。
 - 检索方式：直接抓取官方页面／官方 API，**未使用检索词**；逐项 URL 与读数见各节「检索来源」与 §8。
 - 口径：只写本轮实测读数；取不到的写「未取得」并说明原因（§9），不按已确认处理，不补写任何历史片当时的调研。
@@ -10,14 +10,14 @@
 | 技术 | 仓库现用 | 上游状态（2026-10-18 读数） | 决定 | 来源数 |
 | --- | --- | --- | --- | --- |
 | Node.js | 24.16.0（engines `>=24.16.0 <25`） | 24 为 Active LTS，2026-10-20 转维护期，EOL 2028-04-30 | 沿用；补丁可升 24.22.0 | 2 |
-| TypeScript | 5.9.3 | 上游 latest 7.0.2（npm registry 读数；发布日未取得） | 沿用；跨大版本迁移单独立项 | 2 |
+| TypeScript | 5.9.3 | 上游 latest 7.0.2（2026-08-20 发布，API 实测 200） | 沿用；跨大版本迁移单独立项 | 2 |
 | Fastify | 5.12.5 | 文档站 latest 5.12.7；5.x 支持期内（End Of LTS 未定） | 沿用 5.12.x | 2 |
 | PostgreSQL | 17.11（CI 镜像） | 17.11 为当前小版本，支持到 2029-11-08 | 沿用 PG17，不跨大版本 | 2 |
 | 微信小程序原生框架 | 原生 + 基础库 3.17.3 | 基础库随客户端携带上一稳定版发布，灰度 12–24 小时 | 沿用；升级约束见 §5 | 1（部分未取得） |
 | Python | 3.11+（文档校验脚本） | 3.14 处于 bugfix（EOL 2030-10） | 沿用标准库脚本 | 2 |
 | GitHub Actions | ubuntu-24.04，checkout/setup-node 固定 SHA | checkout pin = v4.2.2（轻量 tag）；setup-node pin = v4.4.0（`refs/tags/v4` 同指） | 沿用固定 SHA 策略 | 2 |
 
-计数口径（均在基线 `d4e6b2d0…` 上实测，三个口径互不相等、不可互相外推）：`workflow 文件数` = `git ls-tree -r --name-only HEAD .github/workflows/` ⇒ 11；`含 node-version: '24.16.0' 的 workflow 数与出现次数` = `git grep -l "node-version: '24.16.0'" -- .github/workflows` ⇒ 10 个、`git grep -o …` ⇒ 15 处；`含 image: postgres: 的 workflow 数` = `git grep -l "image: postgres:" -- .github/workflows` ⇒ 6 个（5×`postgres:17.11`＋`workbook-staging.yml` 的 `postgres:17`）。差异来源：`development-docs.yml` 不含 setup-node，`evaluation-chain.yml` 不含 PG 镜像。
+计数口径（均在基线 `a6c3df82c0…` 上实测；r4 合并后逐条重跑，与 r3 的 `d4e6b2d0…` 读数相同。三个口径互不相等、不可互相外推）：`workflow 文件数` = `git ls-tree -r --name-only HEAD .github/workflows/` ⇒ 11；`含 node-version: '24.16.0' 的 workflow 数与出现次数` = `git grep -l "node-version: '24.16.0'" -- .github/workflows` ⇒ 10 个、`git grep -o …` ⇒ 15 处；`含 image: postgres: 的 workflow 数` = `git grep -l "image: postgres:" -- .github/workflows` ⇒ 6 个（5×`postgres:17.11`＋`workbook-staging.yml` 的 `postgres:17`）。差异来源：`development-docs.yml` 不含 setup-node，`evaluation-chain.yml` 不含 PG 镜像。
 
 ## 1 Node.js
 
@@ -43,8 +43,8 @@
 | 项 | 内容 |
 | --- | --- |
 | 现用版本（证据命令） | `node -p "require('./package-lock.json').packages['node_modules/typescript'].version"` ⇒ 5.9.3；许可证字段 Apache-2.0；`@types/node` ⇒ 24.19.1；`services/api/tsconfig.json`：target ES2023、module `nodenext`、strict、verbatimModuleSyntax、erasableSyntaxOnly、rewriteRelativeImportExtensions |
-| 上游维护状态 | 本轮 latest 7.0.2：npm 元数据 2026-10-18 读数，license Apache-2.0，engines `node >=16.20.0`，`type: module`；官网首页显示「TypeScript 7.0 is now available」。**发布日与发布说明未取得**：`api.github.com/repos/microsoft/TypeScript/releases/latest` 本轮返回 HTTP 403（限流/未授权），npm `latest` 包文档也不含 `time` 字段 ⇒ 不写发布日期，也不据 release 正文推断发布内容 |
-| 可复用部分 | 类型检查面：`services/api/tsconfig.json` 的 `include` 覆盖 `services/api/src` 175 个 `.ts`（`git ls-files "services/api/src/**/*.ts"` ⇒ 175）；`apps/admin/tsconfig.json` 覆盖 4 个 `.ts`（`src/App.vue` 不在 tsc 面内）；`tools/lint-workspaces.mjs` 对两个 tsconfig 各跑一次 `node node_modules/typescript/bin/tsc -p <cfg> --noEmit`（`npm run lint` 第一步） |
+| 上游维护状态 | 本轮 latest 7.0.2：npm 元数据 2026-10-18 读数，license Apache-2.0，engines `node >=16.20.0`，`type: module`；GitHub release `v7.0.2` 的 `published_at` = `2026-08-20T18:09:49Z`（重试实测 200），说明指向 devblogs 的 TypeScript 7.0 公告，并注明最初在 typescript-go 仓库发布（原生移植编译器）。r3 曾记该 URL 为 HTTP 403，系未认证 API 速率限制 60 次/时，见 §9 复现说明 |
+| 可复用部分 | 类型检查面：`services/api/tsconfig.json` 的 `include` 覆盖 `services/api` 181 个 `.ts`——`git ls-files -- '*.ts'` 后筛 `services/api/` ⇒ 181；`node node_modules/typescript/bin/tsc -p services/api/tsconfig.json --listFilesOnly`（输出 445 行）筛 `services/api/` 且排除 `node_modules` ⇒ 181，两数一致。注意 `git ls-files "services/api/src/**/*.ts"` ⇒ 175 是 pathspec 伪影（`**/` 至少要一层子目录，漏掉 `services/api/src/*.ts` 顶层 6 个：`app.ts`、`config.ts`、`contract.ts`、`errors.ts`、`schema-validator.ts`、`server.ts`），不能用作覆盖数。`apps/admin/tsconfig.json` 覆盖 4 个 `.ts`（`src/App.vue` 不在 tsc 面内）；`tools/lint-workspaces.mjs` 对两个 tsconfig 各跑一次 `node node_modules/typescript/bin/tsc -p <cfg> --noEmit`（`npm run lint` 第一步） |
 | 许可证与署名 | Apache-2.0（npm 元数据读数）；署名要求需按 Apache-2.0 保留 NOTICE/版权声明，具体以官方许可页为准——本轮未抓取许可全文 ⇒ 细节未取得 |
 | 兼容性 | 5.9.3 与 7.x 是两个编译器世代（7.x 为 Go 原生移植），`tsc -p --noEmit` 的诊断与规则差异未验证；仓库 `npm run lint` 依赖本 worktree 的 `node_modules/typescript/bin/tsc`（本片在自有 worktree 独立 `npm ci`，未建任何联接） |
 | 引入成本 | 升级到 7.x 的成本未实测（需重跑 lint/typecheck 与受影响测试） |
@@ -55,7 +55,7 @@
 | # | URL | 本轮读数 |
 | --- | --- | --- |
 | 1 | https://registry.npmjs.org/typescript/latest | 7.0.2，Apache-2.0，engines node >=16.20.0，unpackedSize 2497498，含平台二进制 optionalDependencies |
-| 2 | https://www.typescriptlang.org/ | 首页显示「TypeScript 7.0 is now available」；无具体发布日与补丁号（发布日见 §9 未取得） |
+| 2 | https://api.github.com/repos/microsoft/TypeScript/releases/latest | `tag_name` v7.0.2，`published_at` 2026-08-20T18:09:49Z，正文链接 announce blog，并说明最初在 typescript-go 仓库发布（重试实测 200，见 §9） |
 
 ## 3 Fastify
 
@@ -159,7 +159,7 @@
 | 1 | https://endoflife.date/api/nodejs.json | Node 24 latest 24.22.0、support 2026-10-20、eol 2028-04-30 | §1 |
 | 2 | https://nodejs.org/en/about/previous-releases | v24 Krypton LTS，v26 Current，latest LTS v24.22.0 | §1 |
 | 3 | https://registry.npmjs.org/typescript/latest | TypeScript 7.0.2，Apache-2.0，engines node >=16.20.0 | §2 |
-| 4 | https://www.typescriptlang.org/ | 首页「TypeScript 7.0 is now available」，无发布日 | §2 |
+| 4 | https://api.github.com/repos/microsoft/TypeScript/releases/latest | v7.0.2，published_at 2026-08-20T18:09:49Z，原生移植编译器说明（重试 200） | §2 |
 | 5 | https://fastify.dev/docs/latest/Reference/LTS/ | 5.0.0 2024-09-17，End Of LTS TBD，Node 20/22 | §3 |
 | 6 | https://registry.npmjs.org/fastify/latest | 5.12.7，MIT，15 个运行时依赖，约 2.97 MB | §3 |
 | 7 | https://www.postgresql.org/support/versioning/ | 17.11 supported 至 2029-11-08；18.6 至 2030-11-14；19 RC1 | §4 |
@@ -179,8 +179,9 @@
 | 微信小程序稳定版版本号 | 开发者工具稳定版页只返回导航骨架，无版本读数 | 用官方下载页或更新日志复核 |
 | 微信小程序许可证条款 | 未抓取许可页 | 同上 |
 | actions/checkout、actions/setup-node 许可证 | 未抓取仓库许可页 | 补抓 LICENSE 或仓库 API |
-| TypeScript 7.0.2 的发布日与发布说明 | `api.github.com/repos/microsoft/TypeScript/releases/latest` 本轮返回 HTTP 403；npm `latest` 文档无 `time` 字段 | 用 npm registry 全量文档的 `time` 或官网 release 页复核，届时不改本记录结论 |
 | TypeScript 5.9.3→7.0.2 迁移成本、Fastify 5.12.5→5.12.7 变更记录 | 本轮未抓 changelog | 升级前单独检索并留痕 |
+
+复现说明（TypeScript 发布日，对应 r3 的「403 未取得」）：r3 用 `api.github.com/repos/microsoft/TypeScript/releases/latest` 实测 HTTP 403；本轮先复现同一 403——时间 2026-10-18T02:59:20+08:00，响应头 `X-RateLimit-Limit: 60`、`X-RateLimit-Remaining: 0`、`X-RateLimit-Reset: 1792264028`（= `2026-10-17T19:07:08Z`）——配额重置后于 2026-10-18T03:07:41+08:00 重试返回 **200**（`tag_name` v7.0.2、`published_at` 2026-08-20T18:09:49Z、`X-RateLimit-Remaining: 56`）。⇒ 403 属未认证 API 速率限制（60 次/时），不是端点失效；已把该 URL 放回 §2 来源表，发布日按实测 200 写。
 
 ## 10 复核命令
 
@@ -209,4 +210,7 @@ git ls-files "tests/integration/*.mjs"
 git grep -l "buildApp" -- tests/integration
 node -p "require('./package.json').scripts['test:integration:http']"
 node -p "require('./package.json').scripts['test:docs']"
+# TypeScript 覆盖数（181；`services/api/src/**/*.ts` 只有 175，是 pathspec 伪影，勿用）
+git ls-files -- '*.ts'
+node node_modules/typescript/bin/tsc -p services/api/tsconfig.json --listFilesOnly
 ```
