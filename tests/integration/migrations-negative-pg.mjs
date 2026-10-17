@@ -194,6 +194,42 @@ try {
   assert.equal((await ledgerRows(a)).length, 16, '半截失败不得写台账行（0099）');
   say('A4 合成迁移「先建表后写坏语句」：抛错、建表被回滚、台账无 0099 行');
 
+  // A5/A6：证明迁移器自身的 per-migration BEGIN/COMMIT 是承重的。
+  // 0016 这类文件自带 BEGIN…COMMIT，合成 0099 又是单条多语句（PG 隐式事务兜底），
+  // 二者都测不出 runner 去掉 BEGIN 的后果；这里用一个**不带** BEGIN 的合成迁移，
+  // 只把「台账 INSERT」弄失败，看同一迁移里已执行的建表是否残留。
+  const noBegin = syntheticDir({
+    '0100_no_begin_probe.sql': 'CREATE TABLE public.migneg_no_begin_probe (id integer PRIMARY KEY);\n',
+  });
+  const noBeginMigrations = discoverMigrations(noBegin);
+  assert.equal(noBeginMigrations.length, 1);
+  await applyMigrations(a, noBeginMigrations);
+  const afterNoBegin = await a.query("SELECT to_regclass('public.migneg_no_begin_probe') AS oid");
+  assert.notEqual(afterNoBegin.rows[0].oid, null, '正控：无 BEGIN 的迁移在正常路径下必须落地');
+  assert.equal((await ledgerRows(a)).length, 17);
+  await a.query('DROP TABLE public.migneg_no_begin_probe');
+  await a.query("DELETE FROM schema_migrations WHERE version = '0100'");
+  assert.equal((await ledgerRows(a)).length, 16);
+  say('A5 事务正控：不带 `BEGIN` 的合成迁移 0100 由迁移器事务包住，正常路径落地且台账 +1，复原后台账 16 行');
+
+  const ledgerFails = {
+    async query(text, values) {
+      if (typeof text === 'string' && text.startsWith('INSERT INTO schema_migrations')) {
+        throw new Error('probe-ledger-write-failure');
+      }
+      return a.query(text, values);
+    },
+  };
+  await assert.rejects(
+    applyMigrations(ledgerFails, noBeginMigrations),
+    /迁移 0100_no_begin_probe\.sql 执行失败：probe-ledger-write-failure/,
+    '台账写入失败必须让 applyMigrations 抛错',
+  );
+  const leaked = await a.query("SELECT to_regclass('public.migneg_no_begin_probe') AS oid");
+  assert.equal(leaked.rows[0].oid, null, '台账写入失败后，同一迁移里已执行的建表必须被回滚（证明 BEGIN 承重）');
+  assert.equal((await ledgerRows(a)).length, 16, '失败的迁移不得留下台账行');
+  say('A6 事务负例：台账 INSERT 失败后，无 `BEGIN` 迁移里已建的表不残留、台账无行（runner 的 BEGIN 承重）');
+
   // ===========================================================================
   // 臂 B：重放不得部分再执行
   // ===========================================================================

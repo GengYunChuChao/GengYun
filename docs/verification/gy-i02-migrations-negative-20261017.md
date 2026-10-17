@@ -27,7 +27,7 @@
 
 ## 2 三臂读数（本机真 PG17.11，逐字）
 
-隔离集群：临时数据目录 `E:\GengYunCommander\gytmp-migneg\pgdata`，`postgres.exe -p 55441 -h 127.0.0.1`（回环；`psql -tAc "select version()"` ⇒ `PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35211, 64-bit`）。
+隔离集群：临时数据目录 `E:\GengYunCommander\gytmp-migneg\pgdata`，`postgres.exe -p 55441 -h 127.0.0.1`（回环；`psql -tAc "select version()"` ⇒ `PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit`）。
 命令与 CI 完全同一条（只换连接串）：
 
 ```powershell
@@ -43,19 +43,22 @@ PASS 2: A1 现场置回「0016 待应用」：四类对象计数 0、台账 15 �
 PASS 3: A2 半截失败：退出码 1，0016 的三列/CHECK/函数全被回滚，台账仍 15 行且无 0016 行
 PASS 4: A3 冲突解除后 `up` 补上 0016：四类对象与 16 行台账全部恢复
 PASS 5: A4 合成迁移「先建表后写坏语句」：抛错、建表被回滚、台账无 0099 行
-PASS 6: B1 重放：退出码 0，`已应用：（无）`＋`已存在跳过：0001…0016`，台账指纹/对象数/哨兵行完全不变
-PASS 7: B2 drift：篡改 0001 的磁盘内容后抛「迁移校验和 drift，拒绝继续」，台账与对象数不变
-PASS 8: C1 0016 up→down：四类对象回到 up 前状态，快照与 up 前 deepEqual
-PASS 9: C2 两轮 down→up→down：快照守恒，且 down 不碰 0003 的表/唯一索引/既有列/两条 CHECK
-ALL 9 migration negative groups passed against native PG17.11; only 0016's up/down pair is exercised, the runner has no down command, and down scripts do not update the ledger.
+PASS 6: A5 事务正控：不带 `BEGIN` 的合成迁移 0100 由迁移器事务包住，正常路径落地且台账 +1，复原后台账 16 行
+PASS 7: A6 事务负例：台账 INSERT 失败后，无 `BEGIN` 迁移里已建的表不残留、台账无行（runner 的 BEGIN 承重）
+PASS 8: B1 重放：退出码 0，`已应用：（无）`＋`已存在跳过：0001…0016`，台账指纹/对象数/哨兵行完全不变
+PASS 9: B2 drift：篡改 0001 的磁盘内容后抛「迁移校验和 drift，拒绝继续」，台账与对象数不变
+PASS 10: C1 0016 up→down：四类对象回到 up 前状态，快照与 up 前 deepEqual
+PASS 11: C2 两轮 down→up→down：快照守恒，且 down 不碰 0003 的表/唯一索引/既有列/两条 CHECK
+ALL 11 migration negative groups passed against native PG17.11; only 0016's up/down pair is exercised, the runner has no down command, and down scripts do not update the ledger.
 ```
 
 | 臂 | 断言（不满足即红） | 读数 |
 | --- | --- | --- |
 | A 半截失败 | 注入冲突使 0016 第 2 条语句失败 ⇒ 退出码非 0，且该迁移已执行的第 1 条语句（三列/CHECK）被回滚、台账不新增行；冲突解除后同一命令可补齐 | PASS 3、PASS 4 |
 | A 半截失败（合成） | 「先建表、后写坏语句」的合成迁移 0099 ⇒ 抛错、建表被回滚、台账无 0099 行 | PASS 5 |
-| B 重放 | 已迁移库再跑 `up` ⇒ 退出码 0、`已应用：（无）`、`已存在跳过：0001…0016`，台账指纹／对象数／哨兵行数全不变（无任何语句被再执行一次）；篡改磁盘内容 ⇒ 明确失败且状态不变 | PASS 6、PASS 7 |
-| C up→down 可逆 | 0016 先 up 再 down ⇒ up 前不存在的四类对象全部重新消失，快照与 up 前 `deepEqual`；两轮 down→up→down 快照守恒；down 不触碰 0003 建立的表／唯一索引／既有列／两条 CHECK | PASS 8、PASS 9 |
+| A 事务承重（正控＋负例） | 不带 `BEGIN` 的合成迁移 0100：正常路径落地（正控）；只把台账 INSERT 弄失败后，同一迁移已建的 `public.migneg_no_begin_probe` 必须消失、台账不留行（负例，即 §3 负控制要红的断言） | PASS 6、PASS 7 |
+| B 重放 | 已迁移库再跑 `up` ⇒ 退出码 0、`已应用：（无）`、`已存在跳过：0001…0016`，台账指纹／对象数／哨兵行数全不变（无任何语句被再执行一次）；篡改磁盘内容 ⇒ 明确失败且状态不变 | PASS 8、PASS 9 |
+| C up→down 可逆 | 0016 先 up 再 down ⇒ up 前不存在的四类对象全部重新消失，快照与 up 前 `deepEqual`；两轮 down→up→down 快照守恒；down 不触碰 0003 建立的表／唯一索引／既有列／两条 CHECK | PASS 10、PASS 11 |
 
 **SKIP 口径（无库时不静默绿）**：不设 `MIGRATIONS_NEGATIVE_TEST_URL` 时逐字打印下列三行并 `exit 0`（不算通过，CI 里由 workflow 显式给 env，不会走到这里）：
 
@@ -65,20 +68,24 @@ SKIP migrations-negative-pg：MIGRATIONS_NEGATIVE_TEST_URL 未设置，三臂 A/
   启用：MIGRATIONS_NEGATIVE_TEST_URL=postgres://<user>@127.0.0.1:<port>/<test_db>（维护连接须可 CREATE/DROP DATABASE）。
 ```
 
-## 3 负控制（先红后绿：证明测试能抓住回滚缺失）
+## 3 负控制（先红后绿：证明测试能抓住「事务承重」缺失）
 
-为确认三臂不是「无论迁移器怎样都绿」，做了一次**临时**变异（未入提交）：
+早先做过的一次性变异（把 `BEGIN`／`ROLLBACK`／`COMMIT` 三行一起注释）只让套件红在 stderr 文案正则上：`0016` 自带 `BEGIN`(`:51`)／`COMMIT`(`:176`)、合成 `0099` 又是「单条 Query 多语句」被 PG 隐式事务兜住，因此那次变异**不能**证明测试对迁移器的事务敏感。本页的负控制已换成落在事务性断言上的这一条（临时变异，未入提交）：
 
-1. 把 `services/api/src/db/migrate.ts` 里的 `await client.query('BEGIN');`、`await client.query('ROLLBACK');`、`await client.query('COMMIT');` 三行替换为注释（`git diff --stat` ⇒ 3 insertions / 3 deletions）。
-2. 复跑同一条命令 ⇒ **转红**，退出码 1，逐字：
+1. 只把 `services/api/src/db/migrate.ts:150` 的 `      await client.query('BEGIN');` 换成一行注释，`COMMIT`(`:157`) 与 `ROLLBACK`(`:159`) 原样保留（`git diff --stat` ⇒ `services/api/src/db/migrate.ts | 3 ++-`）。
+2. 复跑同一条命令 ⇒ **转红在 A6 的「表残留」断言上**（A0–A5 仍绿，红点唯一），退出码 1，逐字：
 
 ```text
-AssertionError [ERR_ASSERTION]: The input did not match the regular expression /迁移 0016_account_deletion_persistence\.sql 执行失败：/. Input: '迁移失败： current transaction is aborted, commands ignored until end of transaction block\n'
+AssertionError [ERR_ASSERTION]: 台账写入失败后，同一迁移里已执行的建表必须被回滚（证明 BEGIN 承重）
++ actual - expected
++ 'migneg_no_begin_probe'
+- null
+    at file:///E:/GengYunCommander/GengYun_W02mig/tests/integration/migrations-negative-pg.mjs:229:10
 ```
 
-3. `git checkout -- services/api/src/db/migrate.ts` 复原（`git diff --stat` 为空、`git status --short` 只剩新测试文件），复跑 ⇒ 恢复 9 条 PASS、退出码 0。
+3. `git checkout -- services/api/src/db/migrate.ts` 复原（`git diff --stat` 只剩测试文件新增的 36 行），复跑 ⇒ 恢复 11 条 PASS、退出码 0。
 
-即：测试依赖的正是迁移器的 per-migration 事务管道；该管道被拿掉后 A 臂立刻失败。**提交里的迁移器零改动**（`git diff upstream/main...HEAD -- services/api/src/db/migrate.ts` 为空）。
+即：A5 在 runner 正常路径上证明「不带 `BEGIN` 的迁移文件也会被包进一个事务」，A6 证明「事务内后续语句失败时，同一迁移已执行的部分必须整体消失」；拿掉 runner 的 `BEGIN` 后 A6 立刻红在 `migneg_no_begin_probe` 残留上。**提交里的迁移器零改动**（`git diff upstream/main...HEAD -- services/api/src/db/migrate.ts` 为空）。
 
 ## 4 CI 接线（挂进已有 workflow，未新建）
 
@@ -96,7 +103,7 @@ AssertionError [ERR_ASSERTION]: The input did not match the regular expression /
 | 门禁 | 退出码 | 关键读数 |
 | --- | --- | --- |
 | ① `npm run lint` | 0 | `PASS tsc --noEmit services/api/tsconfig.json`；`PASS tsc --noEmit apps/admin/tsconfig.json`；`PASS 仓库卫生扫描` |
-| ② `npm run test:unit` | 0 | `tests 2441`；`pass 2440`；`fail 0`；`skipped 1`（既有跳过项，本片未新增跳过）；`duration_ms 49302.3059` |
+| ② `npm run test:unit` | 0 | `tests 2441`；`pass 2440`；`fail 0`；`skipped 1`（既有跳过项，本片未新增跳过）；`duration_ms 71810.5888` |
 | ③ `npm run test:integration:http` | 0 | `CHECKS pass=42 fail=0`；`RESULT=PASS 真实产品装配（buildApp）+ 本机回环 HTTP` |
 | ④ `node tools/verify-contract-status.mjs` | 0 | `PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4` |
 | ⑤ `npm run test:docs` | 0 | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
@@ -113,7 +120,7 @@ AssertionError [ERR_ASSERTION]: The input did not match the regular expression /
 | 3 | down 脚本回写台账 | **不做**：0016 down 之后 `schema_migrations` 仍留 0016 行，直接再 `up` 会按台账跳过而不重建对象；C 臂里显式 `DELETE FROM schema_migrations WHERE version='0016'` 才复原现场。本片未改此既有语义 |
 | 4 | 回滚覆盖范围 | 只实测 `0016_account_deletion_persistence` 这一对（`0001` 无 down 文件，其余 14 对未逐对实测） |
 | 5 | 故障注入覆盖 | A 臂注入的是 0016 第 2 条语句（同名索引冲突）＋合成 `0099_half_broken.sql`；未对 16 个迁移逐个注入 |
-| 6 | 「文件自带事务」边界 | 16 个 up 迁移文件都自带 `BEGIN…COMMIT`，故失败语句位于文件事务内；若将来出现把语句写在文件 `COMMIT` 之后的迁移，runner 的 `BEGIN/COMMIT` 之外还有 PG 对「单条 Query 多语句」的隐式事务兜底，但那种写法本身不合规，本页**未取证**其行为 |
+| 6 | 「文件自带事务」边界 | **16 个 up 迁移里只有 10 个**自带 `BEGIN;`：`0002:36`、`0003:26`、`0004:3`、`0008:38`、`0009:3`、`0011:22`、`0013:37`、`0014:32`、`0015:28`、`0016:51`；`0001`、`0005`、`0006`、`0007`、`0010`、`0012` 六个**不含**，它们的「半截失败即整体回滚」正依赖 runner 的 `BEGIN/COMMIT`——A5/A6 用不带 `BEGIN` 的合成迁移对这条路径取证；若将来出现把语句写在文件 `COMMIT` 之后的迁移，那种写法本身不合规，本页**未取证**其行为 |
 | 7 | OpenAPI 2020-12 与 Fastify 适配实测 | **未取得**（属 GY-I02 验收表其余项，本片不冒称） |
 
 ## 7 复核命令
