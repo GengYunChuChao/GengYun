@@ -61,9 +61,9 @@ function fixture() {
   // 客户端（见 b.page() 的 knowledgeModule 注释）。其余页面（含 `miniprogram/pages/favorites/favorites.js:19`
   // 这类同样 `require('../../utils/knowledge-api')` 的门禁页）保持「永不落地」替身，以维持本组用例
   // 结尾那条 `b.requests.every` 护栏（消息「门禁之前不得发生业务请求」）的既有语义。
-  // 该护栏按**断言原文**锚定、不按行号（行号随本文件增删与合流漂移）：`git grep -nF` 其消息的 ASCII 单引号
-  // 形态在本文件命中恰 1 行 —— 本注释用「」包裹、故意不复制代码字节，以免自己把命中数变成 2。行号仅辅助：
-  // 目标 SHA 95b8e7cf67106391a61e88090d3c7cb6f820a99b（合流树实测）在 `:553`，父提交 `5615558` 在 `:550`。
+  // 该护栏按**断言原文**锚定、不写行号（行号随本文件增删与合流漂移，两次复审判红均源于此）：
+  // `git grep -nF` 其消息的 ASCII 单引号形态在本文件命中恰 1 行 —— 本注释用「」包裹、故意不复制
+  // 代码字节，以免自己把命中数变成 2；用例体内三条计数断言同样按原文锚定。
   const REFERENCE_FAMILY = new Set(['reference', 'referenceseed', 'referencedetail', 'referenceseeddetail']);
   b.page = (name, loadOptions = {}) => {
     let def;
@@ -142,10 +142,8 @@ function fixture() {
       // 那条 favorites-api 替身登记（它只覆盖 favorites 调 favorites-api 的路径）。
       // 实测：只对参考族登记真实模块时，N1 用例体内 `assert.equal(b.requests.length, …)` 的 1／2／3 条计数
       // 与该护栏全部成立（门禁放行前的流量仍只有门禁核实）。
-      // 断言与登记项一律按原文锚定（`git grep -nF` 各自命中恰 1 行）；行号仅辅助，目标 SHA
-      // 95b8e7cf67106391a61e88090d3c7cb6f820a99b（合流树实测）：knowledge-api 三元登记 `:142`、favorites-api
-      // 替身 `:136`、计数 `:543`／`:546`／`:548`、护栏 `:553`；父提交 `5615558` 上依次 `:139`／`:133`／
-      // `:540`／`:543`／`:545`／`:550`。
+      // 断言与登记项一律按原文锚定、不写行号（`git grep -nF` 各命中恰 1 行；行号随本文件增删漂移，
+      // 上一轮与本轮复审判红均源于此）。
       ['../../utils/knowledge-api', REFERENCE_FAMILY.has(name) ? knowledgeModule.exports : pendingApi],
       ['../../utils/history-api', pendingApi],
       ['../../utils/messages-api', pendingApi],
