@@ -586,7 +586,7 @@
           "name": "GY-I06 HTTP 访问面"
         }
       ],
-      "blocker": "仅 owner 且仅 ready 才签发短效句柄（最长 300 秒，令牌不入 URL）；非本人统一 404；冻结契约内没有满足「owner 私有媒体字节读取」语义的那一条 operation（AccessGrant.url 只是 https 句柄，本仓库占位域 media.gengyun.local；唯一返回二进制的 GET /community/media/{grant_id}/content 只服务社区公开已审上下文）；句柄消费端（访问网关）未接线，未取得真实取图证据"
+      "blocker": "仅 owner 且仅 ready 才签发短效句柄（最长 300 秒，令牌不入 URL）；非本人统一 404；冻结契约内没有满足「owner 私有媒体字节读取」语义的那一条 operation（AccessGrant.url 只是 https 句柄：host 来自配置项 MEDIA_ACCESS_GRANT_ORIGIN，未配置时缺省为 RFC 6761 保留、永不解析的占位域 media.placeholder.invalid，本仓库不提供该数据面，句柄由部署期访问网关解析；唯一返回二进制的 GET /community/media/{grant_id}/content 只服务社区公开已审上下文）；句柄消费端（访问网关）未接线，未取得真实取图证据"
     },
     {
       "id": "getJob",
