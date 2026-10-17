@@ -16,6 +16,10 @@
  * 全部 `security: userSession`（本文件统一挂 `guards.requireUser`）；成功响应统一带
  * `Cache-Control: no-store`（契约「私有/授权访问 no-store」）与强 `ETag`（`"<revision>"`）。
  *
+ * 用途授权（GY-I27 第三片）：`createUpload` 是**唯一**挂授权前置的入口，且仅在 `deps.consent`
+ * 注入时挂（缺省 passthrough ⇒ 行为与接线前逐字相同）。按请求体 `purpose` 解析资料类型后问授权端口，
+ * 拒绝复用既有 403 `CONSENT_REQUIRED`／`SCOPE_DENIED`，**不新增契约字段或错误码**。
+ *
  * 分层（HTTP 层只做「形状」，语义全在服务层）：
  * - HTTP 层：`Idempotency-Key` / 路径 uuid 形状 / 请求体 schema（`additionalProperties:false`，
  *   `app.ts` 已关闭 `removeAdditional`，多余字段不会被静默剔除）⇒ 400；Header 取值非法 ⇒ 400；
@@ -32,6 +36,7 @@ import { currentIdentity, type AuthGuards } from '../auth/middleware.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { isMediaIdLike, MEDIA_LIMITS, type AppMediaService, type MediaActor } from '../media/service.ts';
+import type { ConsentGate } from '../privacy/egress.ts';
 import { buildMeta } from './support.ts';
 
 /** 契约 `UploadInput`（`additionalProperties:false`，required = purpose/mime/bytes/sha256）。 */
@@ -139,12 +144,59 @@ function actorOf(request: FastifyRequest): MediaActor {
   return { ownerId: identity.userId, authEpoch: identity.authEpoch, sessionRef: identity.sessionId };
 }
 
+/**
+ * 媒体用途 ⇒ 授权要求的**资料类型**（`ConsentRequirement.dataType`，用途表见
+ * `packages/privacy/constants.mjs` 的 `REQUIRED_CONSENTS_BY_DATA_TYPE`）。
+ *
+ * 与三个已接线域（识别／转写／标签 OCR）的关键差别：那三域的资料类型在**注册期**就是常量，
+ * 而本域四条 `MediaPurpose` 的资料类型**随请求体变化**（`voice_question` 还要求 `recording`、
+ * `community_image` 还要求 `public_posting`）⇒ 只能在**请求期**按 `request.body.purpose` 解析。
+ * 本文件只提供 `dataType` 字符串；「某资料类型需要哪些用途码」「缺哪个」全部由授权端口判定，
+ * **不在路由层重写授权事实**（本文件不 import `packages/privacy`）。
+ */
+const CONSENT_DATA_TYPE_BY_PURPOSE: Readonly<Record<string, string>> = Object.freeze({
+  weed_recognition: 'weed_recognition',
+  label_ocr: 'label_ocr',
+  voice_question: 'voice_question',
+  community_image: 'community_image',
+});
+
+/**
+ * `POST /media/uploads` 的**动态**授权前置（GY-I27 第三片，方案 A）。
+ *
+ * 每次请求按 `request.body.purpose` 取资料类型，按**资料类型**缓存授权中间件（4 个枚举 ⇒ ≤4 个），
+ * 再以 `{ purpose: 'media_processing', dataType }` 交给授权端口：`media_processing` 是四条媒体用途
+ * 的**公有**必需码，其余必需码（`recording`／`public_posting`／`external_inference`）由端口按
+ * `dataType` 逐条补齐校验。**不省 `dataType`**：省掉会同时丢掉多用途校验与「错用途」分支。
+ *
+ * 调用时机在 `guards.requireUser` **之后**（此时 `request.userId` / `request.authEpoch` 已由会话层填好），
+ * 且 body schema 已通过 ⇒ `purpose` 必为四枚举之一。
+ */
+function uploadConsentPreHandler(consent: ConsentGate): (request: FastifyRequest) => Promise<void> {
+  const byDataType = new Map<string, (request: FastifyRequest) => Promise<void>>();
+  return async function mediaUploadConsentPreHandler(request: FastifyRequest): Promise<void> {
+    const purpose = (request.body as { purpose?: unknown } | null)?.purpose;
+    const dataType = typeof purpose === 'string' ? CONSENT_DATA_TYPE_BY_PURPOSE[purpose] : undefined;
+    if (dataType === undefined) {
+      // 已过 schema ⇒ 不可达。仍**显式拒绝**而不是放行：取不到资料类型就不得跳过授权（fail-closed）。
+      throw new ApiError('INVALID_REQUEST', '请求体 purpose 必须是媒体用途枚举之一');
+    }
+    let middleware = byDataType.get(dataType);
+    if (middleware === undefined) {
+      middleware = consent({ purpose: 'media_processing', dataType });
+      byDataType.set(dataType, middleware);
+    }
+    await middleware(request);
+  };
+}
+
 /** 注册媒体域全部 7 条路由（唯一注册点）。 */
 export function registerMediaRoutes(
   app: FastifyInstance,
   config: AppConfig,
   guards: AuthGuards,
   service: AppMediaService,
+  deps: { consent?: ConsentGate } = {},
 ): void {
   if (service.failClosedReason !== null) {
     app.log.warn(
@@ -153,10 +205,19 @@ export function registerMediaRoutes(
     );
   }
 
+  // GY-I27 第三片（C7）：用途授权前置——**可选注入**，缺省即 passthrough（行为与接线前逐字相同）。
+  // 只挂**上传受理**（`createUpload`）：读句柄/删除/授权/社区读面一律不挂 —— 撤回用途后用户仍须能
+  // 取回并删除自己的数据（与 `routes/recognitions.ts` 同一口径）。授权事实源与错误码全在授权端口，
+  // 本文件只决定「哪条入口、按哪个资料类型」问它。
+  const uploadConsent =
+    deps.consent === undefined
+      ? async function mediaUploadConsentPassthrough(): Promise<void> {}
+      : uploadConsentPreHandler(deps.consent);
+
   // ---------------------------------------------------------------- createUpload
   app.post(
     `${API_PREFIX}/media/uploads`,
-    { preHandler: guards.requireUser, schema: { body: UPLOAD_INPUT, querystring: NO_QUERY } },
+    { preHandler: [guards.requireUser, uploadConsent], schema: { body: UPLOAD_INPUT, querystring: NO_QUERY } },
     async (request, reply) => {
       const outcome = await service.initiateUpload({
         actor: actorOf(request),
