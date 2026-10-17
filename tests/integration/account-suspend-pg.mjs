@@ -11,9 +11,12 @@
 //
 // 本脚本只讲一件事：**停用/恢复是一个单事务的四步写**，且**唯一写路径是一个窄口径
 // `SECURITY DEFINER` 函数**（迁移 0017）。运行时角色 `gengyun_api_runtime` 对
-// `users.state` / `users.auth_epoch` / `users.revision` / `sessions.revoked_at` /
-// `admin_audit_events` **没有任何直接写权限**，因此「绕过函数直接改列、直接写审计」
-// 在本脚本里是**权限拒绝（42501）**，不是约定、不是口头承诺。
+// `users.state` / `users.auth_epoch` / `users.revision` / `admin_audit_events`
+// **没有任何直接写权限**，因此「绕过函数改状态、推进纪元、直接写审计」在本脚本里是
+// **权限拒绝（42501）**，不是约定、不是口头承诺。至于 `sessions.revoked_at`：
+// `auth_privacy.sql` 自 0001 起就给了运行时 `UPDATE (token_hash,revoked_at)`（见本文件
+// `:203-204` 的断言），撤会话单独做得到，但那只是把人踢下线——账号仍是 active、
+// 旧 token 也不会因此失效，所以停用必须走函数。
 //
 // 覆盖的读数（编号与派单 §3 对齐）：
 //   [M] 迁移三连：清单无重复版本号且含 0017 ⇒ UP（对象出现）⇒ ROLLBACK（对象消失）⇒ REPLAY（再出现）；

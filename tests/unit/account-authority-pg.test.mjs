@@ -180,7 +180,7 @@ test('参数校验先于开事务：非法 uuid / 非法 expectedRevision ⇒ IN
   assert.equal(statements.length, 0);
 });
 
-test('返回形状不符 ⇒ PROVIDER_UNAVAILABLE（事务已提交，不在解析阶段再发 ROLLBACK）', async () => {
+test('返回形状不符 ⇒ PROVIDER_UNAVAILABLE 且不可重试（事务已提交，不在解析阶段再发 ROLLBACK）', async () => {
   const broken = [
     null,
     [],
@@ -197,7 +197,8 @@ test('返回形状不符 ⇒ PROVIDER_UNAVAILABLE（事务已提交，不在解�
       () => authority.suspend(ACTION),
       (error) => {
         assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
-        assert.equal(error.retryable, true);
+        // 形状校验跑在 COMMIT 之后（写已落地），带旧 If-Match 重试必然撞 G0003 409 ⇒ 不可重试。
+        assert.equal(error.retryable, false);
         return true;
       },
     );

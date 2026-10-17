@@ -4,9 +4,13 @@
  * ## 为什么需要这一层
  * `services/api/db/roles/auth_privacy.sql` 授予运行时角色 `gengyun_api_runtime` 的
  * `public.users` 列权限只有 `SELECT (id,state,auth_epoch,revision,wechat_subject_lookup)`
- * 与 `UPDATE (updated_at)`，`public.sessions` 只有 `UPDATE (token_hash,revoked_at)`。
+ * 与 `UPDATE (updated_at)`（**写不了** `state`/`auth_epoch`/`revision`）；
+ * `public.sessions` 自 0001 起本就有 `UPDATE (token_hash,revoked_at)`；
+ * `public.admin_audit_events` 对运行时完全不可写。
  * 派单 §1 要求「停用某账号时在**单个数据库事务**内完成：写 state + 递增 auth_epoch +
- * 撤会话 + 写审计」，这四步在运行时角色下**没有任何一条能直接做**（`42501`）。
+ * 撤会话 + 写审计」，四步里只有「撤会话」这一步运行时能单独做（其余三步一律 `42501`），
+ * 而单独做它恰恰最坏：会话撤了、账号还是 `active`、`auth_epoch` 没动、也没有审计——
+ * 用户被踢下线却随时能再登回来，且重试还要面对没变的 `revision`。
  * 因此与 GY-I19（注销受理，`privacy/deletion-requests-pg.ts`）走**同一条已裁定路线**：
  * 四步收进窄口径 `SECURITY DEFINER` 函数（迁移 `0017_account_suspend_authority.sql`），
  * 运行时只拿 EXECUTE。本文件是那次调用在 Node 侧的唯一落点：
@@ -95,9 +99,15 @@ export interface AdminAccountAuthority {
   restore(action: AccountAuthorityAction): Promise<AccountAuthorityOutcome>;
 }
 
+/**
+ * 形状/契约校验失败一律 `retryable: false`：这些检查全部跑在 `COMMIT` **之后**
+ * （`call()` 里 `toOutcome(raw)` 位于事务之外），写早已落地。此刻若标可重试，调用方
+ * 会带着同一个旧 `If-Match` 重跑，必然撞 `G0003` 409——重试一定不成功（`errors.ts` 对
+ * `retryable` 的定义就是「重试能否成功」），故如实标为不可重试。
+ */
 function asNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `账号停用返回缺少字段 ${field}`, { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', `账号停用返回缺少字段 ${field}`, { retryable: false });
   }
   return value;
 }
@@ -105,7 +115,7 @@ function asNonEmptyString(value: unknown, field: string): string {
 function asInteger(value: unknown, field: string): number {
   const n = typeof value === 'string' ? Number(value) : value;
   if (typeof n !== 'number' || !Number.isSafeInteger(n)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', `账号停用返回字段 ${field} 不是整数`, { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', `账号停用返回字段 ${field} 不是整数`, { retryable: false });
   }
   return n;
 }
@@ -116,20 +126,20 @@ function asInteger(value: unknown, field: string): number {
  */
 function toOutcome(raw: unknown): AccountAuthorityOutcome {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回不是对象', { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回不是对象', { retryable: false });
   }
   const row = raw as Record<string, unknown>;
   const state = asNonEmptyString(row['state'], 'state');
   if (!ACCOUNT_STATES_SET.includes(state)) {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回的 state 不在契约闭集内', { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回的 state 不在契约闭集内', { retryable: false });
   }
   const auditIdRaw = row['audit_id'];
   if (auditIdRaw !== null && typeof auditIdRaw !== 'string') {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回字段 audit_id 形状不对', { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回字段 audit_id 形状不对', { retryable: false });
   }
   const changed = row['changed'];
   if (typeof changed !== 'boolean') {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回字段 changed 不是布尔', { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用返回字段 changed 不是布尔', { retryable: false });
   }
   return {
     account: {

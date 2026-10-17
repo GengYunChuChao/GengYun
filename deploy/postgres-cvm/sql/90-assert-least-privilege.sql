@@ -334,9 +334,11 @@ WITH checks(label, ok, detail) AS (
 
   -- ---------------------------------------------------------------------------
   -- GY-I22（#22）追加：账号停用/恢复**唯一写路径**与审计台账的函数级/表级契约断言。
-  -- 背景：运行时角色对 public.users 的 state/auth_epoch/revision、public.sessions 的 revoked_at
-  -- 以及 public.admin_audit_events **没有任何直接权限**（见上面 protected_columns；该断言逐字未动），
-  -- 停用只能经窄口径 SECURITY DEFINER 函数完成；因此把「函数确实存在、确实是 SECURITY DEFINER、
+  -- 背景：运行时角色对 public.users 的 state/auth_epoch/revision 与 public.admin_audit_events
+  -- **没有任何直接权限**（见上面 protected_columns——它钉的是 sessions.auth_epoch，该断言逐字未动）；
+  -- public.sessions 的 (token_hash,revoked_at) 自 0001 起本就授予运行时 UPDATE（auth_privacy.sql），
+  -- 撤会话单独做得到，但单靠它做不到「同事务内改状态 + 推进纪元 + 落审计」，
+  -- 所以停用只能经窄口径 SECURITY DEFINER 函数完成；因此把「函数确实存在、确实是 SECURITY DEFINER、
   -- search_path 确实固定、属主确实能写这些列、EXECUTE 确实只授予运行时角色、审计台账确实只可追加」
   -- 全部钉死。⛔ 这十条**不**放松任何既有断言，也**不**给运行时角色补任何列权限。
   -- 反向控制（不在此文件断言，见交接证据）：以 gengyun_api_runtime 直接

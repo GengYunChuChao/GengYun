@@ -252,10 +252,12 @@ GRANT EXECUTE ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
--- 运行时角色对 `public.users` 的 `state`/`auth_epoch`/`revision`、`public.sessions` 的
--- `revoked_at` 以及 `public.admin_audit_events` **仍然没有任何直接权限**（`90-assert-least-privilege.sql`
--- 的 `protected_columns` 与新增的函数级/表级断言同时钉死这条），只能经这两个函数在
--- **同一事务**内完成：状态迁移 + `auth_epoch` 递增 + 全会话撤销 + 审计事件落库。
+-- 运行时角色对 `public.users` 的 `state`/`auth_epoch`/`revision` 与
+-- `public.admin_audit_events` **仍然没有任何直接权限**（`90-assert-least-privilege.sql`
+-- 的 `protected_columns` 与新增的函数级/表级断言同时钉死这条）。`public.sessions` 自 0001
+-- 起本就有 `UPDATE (token_hash,revoked_at)`，撤会话这一步运行时能单独做，但单靠它无法在
+-- **同一事务**里改状态、推进纪元、落审计，所以停用/恢复仍然只能经这两个函数完成：
+-- 状态迁移 + `auth_epoch` 递增 + 全会话撤销 + 审计事件落库。
 -- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败
 -- （绝不留一个「看似已收敛、实际无法停用」的运行态）。
 -- #region gy-i22-suspend-grant
