@@ -33,7 +33,7 @@
 //   [10] 幂等重放：同一 `Idempotency-Key` 重放 ⇒ 会话已在受理时被撤销 ⇒ 鉴权层先拦，
 //       台账不得出现第二行；
 //   [11] `real` 模式整域不可用：`available === false`，POST/GET 均 503
-//       `PROVIDER_UNAVAILABLE`(`retryable=true`)，零状态变更。
+//       `PROVIDER_UNAVAILABLE`(`retryable=false`：未接线属确定性缺陷，重试不会成功)，零状态变更。
 //
 // 时钟口径（踩过的坑，别再踩）：注入的 `now` **必须是真时钟**。`idempotency_keys` 表有
 // CHECK `expires_at > created_at`，而该表由**两条不同来源**的语句写入——台账 `claim()` 的
@@ -688,7 +688,10 @@ try {
   const realPost = await requestDeletion(realHttp, tokenI1, 'i19-del-i-key-1');
   assert.equal(realPost.status, 503, JSON.stringify(realPost.body));
   assert.equal(realPost.body.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(realPost.body.error.retryable, true);
+  // 现状说明：未接线／未装配属**确定性缺陷**（要运维改配置才能好），同一请求重试不会成功 ⇒ 口径必须是
+  // `retryable:false`（唯一口径见 `services/api/src/errors.ts:31-32`；同族断言在 main 的
+  // `tests/integration/account-deletion-http.mjs:406` 已按 #233 收敛为 false）。
+  assert.equal(realPost.body.error.retryable, false);
   const realGet = await realHttp(`${API}/account/deletions/${requestId}`, { token: receiptToken });
   assert.equal(realGet.status, 503, 'real 下回执面同样 503（门先于存在性判断）');
   const iRow = await userRow(userI);
@@ -697,7 +700,7 @@ try {
   assert.equal(await activeSessions(userI), 1);
   assert.equal(await requestCount(userI), 0);
   assert.equal(realApp.deletionReceipts.liveCount(), 0);
-  say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=true)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
+  say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false：未接线不可重试)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外付费请求；发现迁移 ${discovered.length} 个`);
 } finally {
