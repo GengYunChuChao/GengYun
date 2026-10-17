@@ -1,8 +1,9 @@
-// 历史：真实回环 HTTP（合成账号/合成任务行；无 PG、无真实识别提供者）。
+// 历史：真实回环 HTTP（合成账号/合成任务行；无真实识别提供者）。
 //
 // 覆盖 issue #16 的历史验收：时间/任务类型/失败状态真实可见、**候选与人工选择分开**
 // （历史响应只给引用，候选/选择/OCR 核对/来源版本由已合并的详情面提供）、
-// 归属与越权（同形 404）、分页、删除的历史行 + 级联披露、契约形状、real 模式整域关闭。
+// 归属与越权（同形 404）、分页、删除的历史行 + 级联披露、契约形状、**real 模式的二分语义**
+// （无 `pool` ⇒ 整域 503；有 `pool` ⇒ 接 `0018` 的 PG store 并真的落库）。
 //
 // 任务状态端口在**生产装配**下就已接线到已合并的公开读取口
 // （`recognitionService.getJob` / `ocrService.getJob`），本文件用真实的内存识别 store
@@ -26,6 +27,7 @@ import {
   USER_A,
   USER_B,
   makeControllableVisibility,
+  pglitePool,
   scriptedClock,
 } from './favorites-history-fixtures.mjs';
 
@@ -178,6 +180,7 @@ async function fixture(t, options = {}) {
   const clock = scriptedClock(START);
   const auth = createMemoryAuthStore();
   const recognitionStore = createMemoryRecognitionStore();
+  const pool = options.pool ?? undefined;
   const config = {
     ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     ...(options.real === true ? { executionMode: 'real', requiresRealCredentials: true } : {}),
@@ -187,6 +190,7 @@ async function fixture(t, options = {}) {
     store: auth,
     now: clock.now,
     recognitionStore,
+    ...(pool === undefined ? {} : { pool }),
     ...(options.historyInjection === undefined ? {} : { historyInjection: options.historyInjection }),
     // 端到端通路（末三条用例）：**生产装配**的替身提供者与替身媒体端口 ——
     // 不注入就等于「注入前的默认行为」，这里显式注入只为让用例自证"走的是替身、不是真实供应商"。
@@ -484,7 +488,7 @@ test('历史HTTP：无体 DELETE 带微信默认 JSON content-type 时不得被�
   assert.equal((await h.call('GET', HISTORY)).body.data.items.length, 0);
 });
 
-test('历史HTTP：请求校验、分页与 real 模式整域关闭', async (t) => {
+test('历史HTTP：请求校验、分页与 real 无 pool 时整域 503', async (t) => {
   const h = await fixture(t);
   // 内部创建口：未知字段（含任何"已使用"类字段）一律拒绝。
   for (const extra of [{ used: true }, { reference_state: 'available' }, { id: 'x' }, { revision: 9 }, { created_at: 'x' }]) {
@@ -534,6 +538,7 @@ test('历史HTTP：请求校验、分页与 real 模式整域关闭', async (t) 
   assert.notEqual(page1.body.data.items[0].id, page2.body.data.items[0].id);
   assert.equal((await h.call('GET', `${HISTORY}?kind=ocr`)).status, 400, '契约没有按任务类型筛选的参数');
 
+  // real 模式的**二分臂之一**：无 `pool` ⇒ 仍整域 503（有 `pool` 的分支见下方专用用例）。
   const real = await fixture(t, { real: true });
   for (const [method, path, extra] of [
     ['GET', HISTORY, {}],
@@ -739,7 +744,7 @@ test('历史HTTP·接线：同一次任务重复投递终态 ⇒ no-op（确定�
   assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1, '越权删除不得影响本人历史');
 });
 
-test('历史HTTP·接线：real 模式仍整域 503（不放宽守卫），且终态历史端口未接线', async (t) => {
+test('历史HTTP·接线：real 无 pool ⇒ 仍整域 503（不放宽守卫），且终态历史端口未接线', async (t) => {
   const real = await fixture(t, { real: true });
   assert.equal(real.app.historyService, null);
   const page = await real.call('GET', HISTORY, real.a);
@@ -747,6 +752,40 @@ test('历史HTTP·接线：real 模式仍整域 503（不放宽守卫），且�
   assert.equal(page.body.error.code, 'PROVIDER_UNAVAILABLE');
   // 端口如实标注自身未接线（**不**回退替身、不伪造一片可用历史）。
   assert.equal(real.app.recognitionService.describe().historyPort, 'unwired');
+});
+
+test('历史HTTP·接线：real 有 pool ⇒ 接 PG store，历史行真的落库（二分臂之二，不再是恒 503）', async (t) => {
+  const { db, pool } = await pglitePool(t);
+  const h = await fixture(t, { real: true, pool });
+  // 历史行有 `owner_id → users(id)` 外键：会话来自内存 auth store ⇒ 把主体如实写进真表
+  // （不关外键、不改 schema 迁就测试）。
+  for (const account of [h.a, h.b]) {
+    await db.query('INSERT INTO users (id) VALUES ($1::uuid)', [account.user.id]);
+  }
+  assert.notEqual(h.app.historyService, null, 'real + 真实持久 store ⇒ 服务必须开启（有 pool 的分支）');
+
+  const appended = await append(h.app, { owner_id: h.a.user.id, job_state: 'failed' });
+  assert.equal(appended.created, true);
+
+  // 落库证据：真表里恰一行，且**失败终态原样入库**（不被折叠成 succeeded）。
+  const stored = await db.query('SELECT owner_id, kind, job_state, event_key FROM history');
+  assert.equal(stored.rows.length, 1);
+  assert.equal(stored.rows[0].owner_id, h.a.user.id);
+  assert.equal(stored.rows[0].job_state, 'failed');
+
+  const page = await h.call('GET', HISTORY, h.a);
+  assert.equal(page.status, 200, JSON.stringify(page.body));
+  assert.equal(page.body.data.items.length, 1);
+  assert.equal(page.body.data.items[0].job_state, 'failed', '读取时核不到实时状态就如实退回入库值');
+
+  // 归属域：他人列表仍为空（PG 版只按 owner_id 过滤）。
+  assert.deepEqual((await h.call('GET', HISTORY, h.b)).body.data, { items: [], next_cursor: null });
+
+  // 去重仍在数据库级：同 (owner_id, event_key) 再来一次 ⇒ created=false、行数不增。
+  const again = await append(h.app, { owner_id: h.a.user.id, job_state: 'failed' });
+  assert.equal(again.created, false);
+  const afterSecond = await db.query('SELECT count(*)::int AS n FROM history');
+  assert.equal(afterSecond.rows[0].n, 1);
 });
 
 // ---------------------------------------------------------------------------
