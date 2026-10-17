@@ -37,16 +37,20 @@ import { createUnwiredTurnCascadePort, type CascadeDisclosure, type TurnCascadeP
 import {
   UNIMPLEMENTED_VERSION_PREFIX,
   type AnswerRecord,
+  type AnswerStatus,
   type AnswerView,
+  type CheckState,
   type Conditions,
   type ConversationActor,
   type ConversationRecord,
   type ConversationView,
+  type DoseCard,
   type SourceRef,
   type TurnInput,
   type TurnRecord,
   type TurnView,
 } from './types.ts';
+import { createModerationRiskScreen, RISK_BLOCK_TEXT, type RiskScreen } from './screen.ts';
 import { parseListQuery, validateConversationInput, validateTurnInput } from './validate.ts';
 import { answerViewOf, conversationViewOf, turnViewOf } from './view.ts';
 import type { AnswerInsert, ConversationStore, ListPosition, TurnInsert } from './store.ts';
@@ -307,6 +311,11 @@ export interface ConversationServiceDeps {
   retrieval: RetrievalPort;
   guard: AnswerGuard;
   composer: AnswerComposer;
+  /**
+   * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
+   * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
+   */
+  riskScreen?: RiskScreen;
   /** 幂等台账（缺省为进程内实现；real 模式下装配层拒绝把内存存储交给服务层）。 */
   ledger?: ConversationIdempotencyLedger;
   transcription?: TranscriptionPort;
@@ -402,6 +411,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
   const retrieval = deps.retrieval;
   const guard = deps.guard;
   const composer = deps.composer;
+  const riskScreen = deps.riskScreen ?? createModerationRiskScreen();
   const ledger = deps.ledger ?? createMemoryConversationIdempotencyLedger();
   const transcription = deps.transcription ?? createUnwiredTranscriptionPort();
   const cascade = deps.cascade ?? createUnwiredTurnCascadePort();
@@ -866,6 +876,38 @@ export function createConversationService(deps: ConversationServiceDeps) {
   // -------------------------------------------------------------------------
   // 受理后的确定性回答（**没有真实模型**）
   // -------------------------------------------------------------------------
+
+  /**
+   * 回答行（`AnswerInsert`）的**唯一**构造点：正文/状态一律来自守卫或筛查结论，
+   * 本函数不做任何判定；三个版本串**全部**带 `unimplemented:no-real-` 前缀（红线②，机器可判据）。
+   */
+  function answerRowOf(
+    target: { turnId: string; ownerId: string },
+    verdict: {
+      status: AnswerStatus;
+      check_state: CheckState;
+      checked_text: string;
+      citations: readonly SourceRef[];
+      dose_cards: readonly DoseCard[];
+    },
+  ): AnswerInsert {
+    return {
+      id: newId(),
+      turn_id: target.turnId,
+      owner_id: target.ownerId,
+      status: verdict.status,
+      checked_text: verdict.checked_text,
+      check_state: verdict.check_state,
+      citations: [...verdict.citations],
+      dose_cards: [...verdict.dose_cards],
+      // 红线②：三个版本串**全部**带 `unimplemented:no-real-` 前缀（机器可判据）。
+      model_version: ANSWER_MODEL_VERSION,
+      prompt_version: ANSWER_PROMPT_VERSION,
+      rule_version: answerRuleVersion(doseRuleVersionOf(guard.dose)),
+      created_at: now(),
+    };
+  }
+
   function scheduleAnswer(session: ConversationSession, turn: TurnRecord, conditions: Conditions | null): void {
     const actor = session.identity;
     const task = (async () => {
@@ -884,6 +926,50 @@ export function createConversationService(deps: ConversationServiceDeps) {
         return;
       }
       try {
+        // 成功结算的**唯一**出口（契约形状闸门 + 结算）：筛查阻断与守卫结论两条路径共用。
+        const settleAnswer = async (answer: AnswerInsert): Promise<void> => {
+          // 契约形状闸门：过不了就**不落库**，由 catch 如实落 failed。
+          assertAnswerContract(
+            answerViewOf({
+              ...answer,
+              revision: 1,
+              citations: [...answer.citations],
+              dose_cards: [...answer.dose_cards],
+              updated_at: answer.created_at,
+            }),
+          );
+          await store.settleTurnJob({
+            turnId: claimed.id,
+            ownerId: actor.userId,
+            state: 'succeeded',
+            errorCode: null,
+            answer,
+            at: now(),
+          });
+        };
+
+        // ---- 风险/注入筛查（问题侧）：**在检索、生成与守卫之前** ----
+        // 命中或无法判定 ⇒ 整轮拒答：不检索资料、不调用回答器、不进守卫，也不产出任何
+        // 结论/用量；只落一行固定话术的阻断回答（不含命中原文）。
+        const questionScreen = riskScreen.screenQuestion({ turnId: claimed.id, text: claimed.input_text });
+        if (questionScreen.blocked) {
+          await settleAnswer(
+            answerRowOf(
+              { turnId: claimed.id, ownerId: actor.userId },
+              {
+                status: 'blocked',
+                // 与守卫的「资料不足」（`insufficient`/`passed`）在响应里可区分：
+                // 这里是**筛查阻断**（`blocked`/`blocked` + 固定话术）。
+                check_state: 'blocked',
+                checked_text: RISK_BLOCK_TEXT,
+                citations: [],
+                dose_cards: [],
+              },
+            ),
+          );
+          return;
+        }
+
         // 检索集合：与 `/knowledge` **同一读面、同一会话校验**（凭据在受理时捕获），
         // 并按本会话条件收窄。
         const set = await retrieval.read({
@@ -892,46 +978,23 @@ export function createConversationService(deps: ConversationServiceDeps) {
           token: session.token,
           conditions: conditions === null ? null : { ...conditions },
         });
-        const candidate = composer.compose({ question: claimed.input_text, conditions, set });
+        // ---- 风险/注入筛查（来源侧）：污染条目从**本次检索集合**剔除 ----
+        // 剔除发生在生成与守卫之前：被剔除的条目既不可能成为引用，也不可能成为用量卡来源。
+        // 剔除后若集合为空 ⇒ 生成侧给空正文、守卫按既有「资料不足」路径如实置
+        // `insufficient`/`passed`（不编造依据、不把"没有可用来源"说成"没有问题"）。
+        const screenedSources = riskScreen.screenSources({
+          turnId: claimed.id,
+          items: set === null ? [] : set.items,
+        });
+        const safeSet = set === null ? null : { ...set, items: screenedSources.items };
+        const candidate = composer.compose({ question: claimed.input_text, conditions, set: safeSet });
         const verdict = guard.check({
           candidate,
-          set,
+          set: safeSet,
           question: claimed.input_text,
           conditions: conditions === null ? null : { ...conditions },
         });
-        const answer: AnswerInsert = {
-          id: newId(),
-          turn_id: claimed.id,
-          owner_id: actor.userId,
-          status: verdict.status,
-          checked_text: verdict.checked_text,
-          check_state: verdict.check_state,
-          citations: verdict.citations,
-          dose_cards: verdict.dose_cards,
-          // 红线②：三个版本串**全部**带 `unimplemented:no-real-` 前缀（机器可判据）。
-          model_version: ANSWER_MODEL_VERSION,
-          prompt_version: ANSWER_PROMPT_VERSION,
-          rule_version: answerRuleVersion(doseRuleVersionOf(guard.dose)),
-          created_at: now(),
-        };
-        // 契约形状闸门：过不了就**不落库**，由 catch 如实落 failed。
-        assertAnswerContract(
-          answerViewOf({
-            ...answer,
-            revision: 1,
-            citations: [...answer.citations],
-            dose_cards: [...answer.dose_cards],
-            updated_at: answer.created_at,
-          }),
-        );
-        await store.settleTurnJob({
-          turnId: claimed.id,
-          ownerId: actor.userId,
-          state: 'succeeded',
-          errorCode: null,
-          answer,
-          at: now(),
-        });
+        await settleAnswer(answerRowOf({ turnId: claimed.id, ownerId: actor.userId }, verdict));
       } catch (error) {
         // 任何异常**绝不**落 succeeded：超时 ⇒ timed_out，其余 ⇒ failed（附契约错误码）。
         const code = settleCodeOf(error);
@@ -965,6 +1028,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
     retrieval,
     guard,
     composer,
+    riskScreen,
     transcription,
     cascade,
     createConversation,
