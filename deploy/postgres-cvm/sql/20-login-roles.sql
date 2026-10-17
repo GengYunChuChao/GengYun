@@ -223,6 +223,33 @@ GRANT gengyun_consent_granter TO gengyun_api_runtime;  -- 用途授权与撤回�
 GRANT gengyun_profile_runtime TO gengyun_api_runtime;  -- 作物/地区目录与单作物档案
 GRANT gengyun_knowledge_runtime TO gengyun_api_runtime; -- catalog_read.current_knowledge 只读
 
+-- --- D. 注销受理：唯一写路径的 EXECUTE（GY-I19 / 迁移 0016）------------------
+-- 迁移 0016 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
+-- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
+-- 运行时角色对 `public.users` 的 `state`/`auth_epoch`/`revision` 以及
+-- `public.deletion_requests` **仍然没有任何直接列权限**（`sql/90-assert-least-privilege.sql`
+-- 的 `protected_columns` 与新增的函数级断言同时钉死这条），
+-- 只能经此函数在**同一事务**内完成：状态迁移 + `auth_epoch` 递增 + 全会话撤销 + 注销请求落库。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即说明迁移没跑完，
+-- 必须在此显式失败（而不是留一个「看似已收敛、实际无法注销」的运行态）。
+-- #region gy-i19-deletion-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）：
+-- `tests/integration/account-deletion-pg.mjs` 抽取本区域并原样执行，以证明出厂的授权语句本身可用。
+DO $$
+BEGIN
+  IF to_regprocedure(
+       'public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)'
+     ) IS NULL THEN
+    RAISE EXCEPTION '缺少 public.request_account_deletion(...)：迁移 0016 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) TO gengyun_api_runtime;
+-- #endregion gy-i19-deletion-grant
+
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
+\echo '20-login-roles.sql：已授予 public.request_account_deletion(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'

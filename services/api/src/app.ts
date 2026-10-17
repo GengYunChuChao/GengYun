@@ -124,18 +124,28 @@ import {
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
-//     `packages/privacy/deletion-modules.mjs::receipt()` 投影，**不新建第二套台账/迁移**；
+//     `packages/privacy/deletion-modules.mjs::receipt()` 投影，**不新建第二套台账**；
 //   - 幂等走既有 `runIdempotent()`（24h 台账）；回执 bearer 用既有 `mintOpaqueToken()`，
 //     服务端只存 sha256 摘要；
-//   - `real` 模式**未接线**（无注销请求持久表）⇒ `available: false` ⇒ 两个 operation
+//   - GY-I19 本片（#19）在其上追加**持久化受理**：有真库（`pool`）时 `userDataDeletion`
+//     接线 `requests` 端口 ⇒ 受理在**同一事务**内落库（账号状态 + `auth_epoch` + 全会话撤销 +
+//     注销请求），走窄口径 `SECURITY DEFINER` 函数，见 `privacy/deletion-requests-pg.ts`
+//     与迁移 `services/api/db/migrations/0016_account_deletion_persistence.sql`
+//     （**复用** 0003 已建的 `public.deletion_requests` 表，不新建第二套表）；
+//   - `real` 模式**整域不接线**（本片红线）⇒ `available: false` ⇒ 两个 operation
 //     一律 503 `PROVIDER_UNAVAILABLE`，**不**回 200 空壳、**不**假装删除成功。
 import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
 import {
   createAccountDeletionRequestService,
   createDeletionReceiptRegistry,
+  RECEIPT_TTL_MS,
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
 } from './privacy/account-deletion.ts';
+import {
+  createPostgresDeletionRequestStore,
+  type DeletionRequestStore,
+} from './privacy/deletion-requests-pg.ts';
 // GY-I15 社区域（#15）阶段 2：服务层 + 装配层接线（关联可用性端口、事件投递、下架观察器）。
 import { registerCommunityRoutes } from './routes/community.ts';
 import { createCommunityService, type CommunityService } from './community/service.ts';
@@ -394,8 +404,13 @@ export interface BuildAppOptions {
     job?: HistoryJobPort;
     cascade?: HistoryCascadePort;
   };
-  /** GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。 */
-  userDataDeletionInjection?: { backupPurge?: BackupPurgePort };
+  /**
+   * GY-I16 注销删除注入项：备份副本清除端口（缺省未接线 ⇒ `backupState: 'pending'`，不谎称完成）。
+   * GY-I19（#19）追加 `requests`：持久化受理端口的注入点（缺省＝按是否有真库自动装配；
+   * 显式传入用于**故障注入**——例如让第 ③ 步 INSERT 撞回执摘要唯一索引，
+   * 以实测「同一事务整体回滚、旧 token 不复活」这条安全性质）。
+   */
+  userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore | null };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
   //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
@@ -1184,6 +1199,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I16 第 4 项：**复用已合并的** `packages/privacy` 删除注册协议（不另起一套），
   // 只把本片自己的 `favorites`/`history` 两个模块注册进去（在线部分真的清理并留证据；
   // 备份副本清除未接线 ⇒ `backupState: 'pending'`，如实显示未完成）。
+  // GY-I19（#19）本片：注销请求的**持久化受理端口**。
+  //   - 有真库（`pool !== null`）⇒ 接线：受理经窄口径 `SECURITY DEFINER` 函数在**同一事务**内
+  //     完成「账号改 deletion_pending + auth_epoch 递增 + 撤全部会话 + 注销请求落库」；
+  //   - 无真库（内存模式，含既有集成测试与 `real` 不接线路径）⇒ **不**接线，行为与追加前逐字一致；
+  //   - `requests: null` 可显式关闭（故障注入方向的反向控制用）。
+  //   - `receiptTtlMs` 必须与受理服务的回执期限**同源** ⇒ 直接复用 `RECEIPT_TTL_MS` 常量
+  //     （第二个默认 TTL 会让持久列与回执各说一套）。
+  const injectedDeletionRequests = userDataDeletionInjection?.requests;
+  const durableDeletionRequests: DeletionRequestStore | null =
+    injectedDeletionRequests === undefined
+      ? (pool === null ? null : createPostgresDeletionRequestStore({ pool }))
+      : injectedDeletionRequests;
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1193,14 +1220,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(userDataDeletionInjection?.backupPurge === undefined
       ? {}
       : { backupPurge: userDataDeletionInjection.backupPurge }),
+    ...(durableDeletionRequests === null
+      ? {}
+      : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),
   });
 
   // GY-I19（#19）本片：注销/删除申请 HTTP 面的装配（两个 operation）。
   //   - `deletionReceipts`：回执 bearer 台账（只存 sha256 摘要；有效期 35 日）；
   //   - `accountDeletion`：申请服务，**复用**上面那份 `userDataDeletion`（模块闭集与处理器同源，
-  //     不新建第二套台账、不新增迁移）；
-  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式下注销请求**没有**
-  //     持久存储（`packages/privacy` 的删除注册表是进程内的，契约里也没有注销请求的持久表），
+  //     不新建第二套台账）；本片新增的只有**受理持久化**（迁移 0016，复用 0003 已建的
+  //     `public.deletion_requests` 表；见上方 `durableDeletionRequests` 装配）；
+  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式**整域不接线**
+  //     ——真实执行链路（7 日在线 / 30 日备份 / 第三方完成证据）尚未实现，
   //     因此**不接线**：`available: false` ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`
   //     （`retryable: false`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
   //     是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用；

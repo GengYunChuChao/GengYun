@@ -673,9 +673,11 @@ Page({
   /**
    * 关联科普条目 → 资料详情（GY-I07 页面）。
    *
-   * id 口径与 `pages/referencedetail/referencedetail.js:22-29` 的 `detailId` 校验一致
+   * id 口径与 `pages/referencedetail/referencedetail.js` 的 `detailId`（该文件里同名函数的**定义处**）校验一致
    * （`[A-Za-z0-9_-]{1,128}`；条目 id 取自参考域 `record_id`）；
-   * 形状不符即**不跳转**（不把任意字符串拼进查询串），跳法与 `pages/reference/reference.js:171-174` 相同。
+   * 形状不符即**不跳转**（不把任意字符串拼进查询串），跳法与 `pages/reference/reference.js` 里 `goDetail`
+   * 方法的**定义处**相同。此处不写死任何行号：目标文件在本片内自身即有改动，裸行号必然随下次编辑
+   * 漂移，定位一律按上述符号名检索；
    * 本页不在跳转处做任何权限判定：详情页自己走门禁与档案核对（档案未确认时仍不给用量）。
    */
   onOpenKnowledgeDetail: function (event) {

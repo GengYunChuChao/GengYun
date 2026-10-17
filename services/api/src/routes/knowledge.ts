@@ -90,26 +90,61 @@ function sourceReferenceOf(data: unknown): { source_id: string; source_version: 
  * 判定是**每次请求重算**的纯函数，不缓存、不落"失效标记"，因此失效前的缓存副本与旧 ETag
  * 不会让内容复活（响应恒 `Cache-Control: no-store`，且本函数在写响应头之前抛出）。
  */
+/**
+ * **本文件唯一一处**公开可见性判定：详情面与列表面都走这里。
+ *
+ * 列表面接线（`Refs #7`）不再另写判据 —— 两侧共用同一个 `decidePublicVisibility` 与同一个
+ * 注入的 `resolve`，因此"列表面返回了详情面会拒的记录"在结构上不可能出现。
+ */
+function isPubliclyVisible(resolve: ReferenceResolver, family: 'knowledge', data: unknown): boolean {
+  const content = sourceReferenceOf(data);
+  // 投影还原不出引用 ⇒ 不判定（核不到 ≠ 失效）。
+  if (content === null) return true;
+  return decidePublicVisibility({ family, content, resolve }).visible;
+}
+
+/**
+ * 详情面的公开读判定：`unavailable` 抛**同形** 404（与"不存在"同响应，不泄露存在性），
+ * `available` / `unverifiable` 正常返回。
+ */
 function assertPubliclyVisible(
   resolve: ReferenceResolver,
   family: 'knowledge',
   data: unknown,
   message: string,
 ): void {
-  const content = sourceReferenceOf(data);
-  // 投影还原不出引用 ⇒ 不判定（核不到 ≠ 失效）。
-  if (content === null) return;
-  if (decidePublicVisibility({ family, content, resolve }).visible) return;
+  if (isPubliclyVisible(resolve, family, data)) return;
   throw new ApiError('NOT_FOUND', message);
+}
+
+/**
+ * 列表面的同源接线（`Refs #7`）：逐条过**详情面同一个** `isPubliclyVisible`。
+ *
+ * 差别只在失败形态：详情面没有"逐条状态码"可用 ⇒ 抛同形 404；列表面 ⇒ **整条剔除**。
+ * 判定结论两侧必然一致，故列表面不会返回详情面会拒的行；投影还原不出引用的条目保持返回
+ *（`unverifiable` 同理，不谎称失效 ⇒ 未接真实库时生产默认行为不变）。
+ *
+ * 最小接线：只过滤**本页**条目，分页游标仍由域层按过滤前的页派生 ⇒ 单页可见条数可能少于
+ * `limit`（不新增分页实现，也不放宽判定）。
+ */
+function filterVisiblePage(data: unknown, resolve: ReferenceResolver | undefined): unknown {
+  if (resolve === undefined) return data;
+  const items = (data as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return data;
+  return {
+    ...(data as Record<string, unknown>),
+    items: items.filter((item) => isPubliclyVisible(resolve, 'knowledge', item)),
+  };
 }
 
 export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,pool: PgPool|null,guards: AuthGuards,deps: KnowledgeRouteDeps = {}): void {
   // GY-I07 第二片 · 公开读「引用失效」判定接线（`Refs #7`；跨线 `Refs #18`）。
   //
-  // 只接线**详情面**（`/knowledge/{id}`、`/herbicides/{id}`）：判定走既有
+  // **详情面与列表面共用同一判定来源**（`isPubliclyVisible`）：判定走既有
   // `createReferenceIntegrity(store).resolve`（由装配点注入，本文件不导入实现），
-  // `unavailable ⇒ 同形 404`、`unverifiable ⇒ 保持可见`。
-  // **列表面本片刻意不改**（理由、影响面与回退方式见 PR 正文"跨线"一节）。
+  // `unavailable ⇒ 不可见`、`unverifiable ⇒ 保持可见`。
+  // 差别只在失败形态：详情面抛**与"不存在"同形**的 404，列表面**整条剔除**。
+  // 两侧同源 ⇒ 列表面不会返回详情面会拒的记录（`Refs #7`）。
   const resolveReference = deps.resolve;
   // GY-I07（#7）装配点。
   //
@@ -153,7 +188,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
   app.get(`${API_PREFIX}/knowledge`,{preHandler:guards.requireUser,schema:{querystring:{type:'object',additionalProperties:false,properties:{...filters,
     q:text,...pagination}}}},async(request,reply)=>{
     const data = await ready().list(input(request),request.query as KnowledgeQuery);
-    return reply.header('Cache-Control','no-store').send({data,meta:buildMeta(request,config)});
+    return reply.header('Cache-Control','no-store').send({data:filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
   });
   app.get(`${API_PREFIX}/knowledge/:id`,{preHandler:guards.requireUser,schema:{params:{type:'object',additionalProperties:false,required:['id'],properties:{id:{type:'string',format:'uuid'}}},
     querystring:{type:'object',additionalProperties:false,properties:filters}}},async(request,reply)=>{
@@ -167,7 +202,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
     properties:{q:text,registration_number:text,...pagination}}}},async(request,reply)=>{
     const {data} = reference.listHerbicides(queryOf(request));
     // 契约 200 头说明：授权访问 no-store；列表不带 ETag（与 /knowledge 列表一致）。
-    return reply.header('Cache-Control','no-store').send({data,meta:buildMeta(request,config)});
+    // 与 `/knowledge` 列表面同一接线：整条剔除引用不可用的行（详见 `filterVisiblePage`）。
+    return reply.header('Cache-Control','no-store').send({data:filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
   });
   app.get(`${API_PREFIX}/herbicides/:id`,{preHandler:guards.requireUser,schema:{params:{type:'object',additionalProperties:false,required:['id'],properties:{id:{type:'string',format:'uuid'}}},
     querystring:{type:'object',additionalProperties:false,properties:{}}}},async(request,reply)=>{

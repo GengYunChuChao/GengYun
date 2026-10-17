@@ -46,7 +46,14 @@ const GATE_VERIFICATION = { method: 'GET', path: '/api/v1/auth/session' };
 // 必须恰好多一条 GET /api/v1/me/profile。断言整段请求序列（条数 + 方法 + 路径 + 先后），
 // 因此**任何额外/无关/顺序错误的请求仍会失败**，而不是退化成「至少一次」。
 const PROFILE_READ = { method: 'GET', path: '/api/v1/me/profile' };
-const expectedRequests = (lifecycles, profileReads) => Array.from({ length: lifecycles }).flatMap(() => profileReads ? [GATE_VERIFICATION, PROFILE_READ] : [GATE_VERIFICATION]);
+// GY-I07 D1：`reference`（科普／除草剂列表页）在启用联网且没有作物／杂草／地区条件时，经
+// miniprogram/utils/knowledge-api.js 走服务端真实接口 `GET /herbicides`。本用例的 runtime 是
+// mode='local' + 真 socket 的 apiBaseUrl ⇒ 该请求**真的**发生（见下方实测：冷生命周期观测序列
+// ["GET /api/v1/auth/session","GET /api/v1/herbicides"]），因此必须逐条进入期望序列；页面上
+// 是否真的用了服务端读数另有 dataSource 断言，不靠请求条数推断。
+const HERBICIDES_LIST = { method: 'GET', path: '/api/v1/herbicides' };
+const expectedRequests = (lifecycles, profileReads, extras = []) => Array.from({ length: lifecycles })
+  .flatMap(() => (profileReads ? [GATE_VERIFICATION, PROFILE_READ] : [GATE_VERIFICATION]).concat(extras));
 function assertRequestSequence(observed, expected, label) {
   const shape = (list) => list.map((req) => `${req.method} ${req.path}`);
   assert.deepEqual(shape(observed), shape(expected),
@@ -73,10 +80,12 @@ try {
   pass('returned page requires actual GET session verification');
   // Cold module + actual repository pages, not an isolated requireLogin callback.
   // profileReads: 该页在门禁核实后是否合法读取一次档案（仅 referencedetail，自 PR #90 起需要已确认档案上下文）。
-  for (const [name, id, resultKey, profileReads] of [
+  for (const [name, id, resultKey, profileReads, extras] of [
     ['referencedetail', 'gy-i03-hb-001', 'detail', true],
     ['referenceseeddetail', 'gy-i07-seed-hb-001', 'item', false],
-    ['reference', null, 'items', false], ['referenceseed', null, 'list', false],
+    // 列表页 id 非 UUID（`reference`）或非本片页面（`referenceseed`）⇒ 只有 `reference` 会多发
+    // 一条 `GET /api/v1/herbicides`；另外两个用例的期望序列因此逐字不变。
+    ['reference', null, 'items', false, [HERBICIDES_LIST]], ['referenceseed', null, 'list', false],
   ]) {
     const cold = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
     assert.equal(cold.isLoggedIn(), false);
@@ -92,6 +101,11 @@ try {
       ['../../utils/page-gate', () => gate],
       ['../../utils/profile-api', () => profileApi],
       ['../../utils/reference', () => requireData('../../miniprogram/utils/reference.js')],
+      // GY-I07 D1：列表页/详情页新增 require('../../utils/knowledge-api')（服务端 `/herbicides`、
+      // `/herbicides/{id}` 消费者）。载入**真实模块**并沿用本用例的 runtime（mode='local' + 真
+      // socket 的 apiBaseUrl）⇒ 列表页在无结构化条件时**真的**发出 `GET /api/v1/herbicides`；
+      // 该请求因此必须出现在期望序列里（见下 HERBICIDES_LIST），不能靠「少发一条就不比」蒙过。
+      ['../../utils/knowledge-api', () => load('utils/knowledge-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } })],
     ]);
     vm.runInNewContext(source(`pages/${name}/${name}.js`), { Page: (value) => { definition = value; }, wx,
       require: (dep) => {
@@ -104,14 +118,21 @@ try {
     page.onLoad(page.options); page.onShow();
     assert.equal(page.data.gatePassed, false);
     while (pending.size) await Promise.all([...pending]);
-    assertRequestSequence(requests.slice(before), expectedRequests(1, profileReads), `${name} cold lifecycle`);
+    assertRequestSequence(requests.slice(before), expectedRequests(1, profileReads, extras), `${name} cold lifecycle`);
     assert.equal(cold.isLoggedIn(), true); assert.equal(page.data.gatePassed, true);
     if (id) { assert.equal(page.data.found, true); assert.ok(page.data[resultKey]); }
     else assert.ok(page.data[resultKey].length > 0);
+    if (name === 'reference') {
+      // 真实回环（真 Fastify socket + 真客户端）下的**来源可判定**：列表页必须自报 server，
+      // 且每一行都带服务端来源标记；一条离线行混进来即失败（反冒充）。
+      assert.equal(page.data.dataSource, 'server');
+      assert.equal(page.data.items.every((row) => row.data_source === 'server'), true);
+      assert.equal(page.data.items.slice(0, 3).every((row) => typeof row.source_version === 'string' && row.source_version.length > 0), true);
+    }
     page.onHide(); assert.equal(page.data.gatePassed, false); page.onShow();
     while (pending.size) await Promise.all([...pending]);
     assert.equal(page.data.gatePassed, true);
-    assertRequestSequence(requests.slice(before), expectedRequests(2, profileReads), `${name} re-entry`);
+    assertRequestSequence(requests.slice(before), expectedRequests(2, profileReads, extras), `${name} re-entry`);
     pass(`actual ${name} cold lifecycle renders catalog after HTTP verification and re-entry`);
   }
   const headers = { authorization: 'Bearer ' + currentToken };

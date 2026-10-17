@@ -53,6 +53,10 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
   const page = { data: {}, setData(patch) { calls.setData.push(patch); Object.assign(page.data, patch); } };
   const auth = {
     isLoggedIn: () => Boolean(loggedInDirect),
+    // GY-I07 D1：真实 utils/auth.js 导出 networkEnabled（auth.js:37）。列表页据此在
+    // 「联网可用」与「随包离线副本」两条路径之间做**可判定**选择；替身必须逐字带上同一判据，
+    // 否则页面会把它当成联网可用而走服务端路径。这里固定为 false（本文件测门禁，不测联网路径）。
+    networkEnabled: () => false,
     // 与真实 utils/auth.js 语义一致：未通过核实即 `wx.reLaunch` 到登录页，然后回调 false。
     requireLogin(callback) {
       if (!verified) {
@@ -86,6 +90,19 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
     regions: () => Promise.resolve([]),
     save: () => Promise.reject(new Error('not used')),
   };
+  // GY-I07 D1：reference/referencedetail 新增 require('../../utils/knowledge-api')（服务端
+  // `/herbicides`、`/herbicides/{id}` 消费者）。登记**真实模块**（runtime 固定关闭联网），
+  // 使「UUID ⇒ 服务端 / 非 UUID ⇒ 随包」的路由判据仍由真源码决定；本文件两个用例的 id 均非 UUID
+  // （reference 无 id，referencedetail id='rec-1'）⇒ 走随包路径，不产生任何网络请求。
+  const knowledgeModule = { exports: {} };
+  vm.runInNewContext(readFileSync(pagePath('utils/knowledge-api.js'), 'utf8'), {
+    module: knowledgeModule,
+    require: (id) => {
+      if (id === './auth') return auth;
+      if (id === '../config/runtime') return { mode: 'disabled', apiBaseUrl: '' };
+      throw Error('Unexpected dependency ' + id);
+    },
+  });
   // 页面依赖按**完整说明符**登记（逐字取自 PAGES 四个页面源码里的 require），不做**子串**匹配：
   // 改前是 `id.indexOf('reference') !== -1` 一类（本仓最宽的匹配形态），连 `require('../../data/reference')`、
   // `require('../../data/authorization')` 都会被静默喂成已登记替身/空壳 —— 看着在测真页面，其实测了替身。
@@ -96,6 +113,7 @@ function loadPage(rel, { verified, loggedInDirect, gateSource = readFileSync(pag
     ['../../utils/auth', auth],
     ['../../utils/profile-api', profileApi],
     ['../../utils/reference', fakeReference()],
+    ['../../utils/knowledge-api', knowledgeModule.exports],
   ]);
   const sandbox = {
     Page(def) { Object.assign(page, def); },

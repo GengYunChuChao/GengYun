@@ -1,6 +1,8 @@
 /* GY-I07 列表页样式。沿用全局卡片风格。 */
 .banner { background: #FFF8E1; border-left: 8rpx solid #F9A825; border-radius: 12rpx; padding: 20rpx 24rpx; margin: 16rpx 0; color: #6D4C00; line-height: 1.6; font-size: calc(16px * var(--font-scale, 1)); }
 .catalog-version { color: #52665a; font-size: calc(16px * var(--font-scale, 1)); margin-top: 8rpx; }
+/* GY-I07 D1：可判定的数据来源标注（服务端接口 / 随包离线副本），常驻可见。 */
+.source-line { color: #52665a; margin-top: 4rpx; }
 
 .nav-row { display: flex; align-items: center; margin: 18rpx 0; }
 .nav-label { width: 140rpx; color: #52665a; }

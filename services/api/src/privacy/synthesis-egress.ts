@@ -217,12 +217,15 @@ export function createSynthesisEgress(deps: {
   /** 一次受理的预留实现（`userId` 由闭包固定；门面与基础实例共用）。 */
   async function reserveFor(userId: string, input: SynthesisEgressReserveInput): Promise<{ exportId: string } | null> {
     if (!engaged) return null;
-    // 红线：real 且真实传输未接入 ⇒ **在任何账本变更之前** fail-closed（503，可重试）。
+    // 红线：real 且真实传输未接入／缺真实 TTS 凭据 ⇒ **在任何账本变更之前** fail-closed（503，**不可重试**）。
+    // 未接线、缺凭据都属配置类：需运维改配置，单靠等待时间不会自愈 ⇒ `retryable` 必须为 false
+    // 口径见 `services/api/src/errors.ts:32/:35`；与 `privacy/task-egress.ts:91-92`、
+    // `packages/privacy/egress.mjs:116-117` 同形。
     if (!providerAvailable) {
       throw new PrivacyError(
         'PROVIDER_UNAVAILABLE',
         providerUnavailableReason ?? '真实外发传输未接入：real 模式 fail-closed',
-        { retryable: true },
+        { retryable: false },
       );
     }
     // 受理时就重读快照并冻结标识（执行期会再重读一次；不一致 ⇒ 找不到同版本预留行 ⇒ 拒绝派发）。
