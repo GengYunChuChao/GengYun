@@ -104,6 +104,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
   },
   {
+    path: 'tests/integration/migrations-negative-pg.mjs',
+    reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
+      + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因，'
+      + '故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/profile-ui-fixture.mjs',
     reason: '夹具模块：被已接线的 `profile-ui-http.test.mjs` import，不是独立可执行脚本。',
   },
