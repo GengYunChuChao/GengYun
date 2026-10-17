@@ -383,3 +383,21 @@ export const DEFAULT_MEDIA_ACCESS_GRANT_ORIGIN = 'https://media.placeholder.inva
 `accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined`，否则配置项不会生效（缺省仍为占位域，
 行为安全但配置无效）。`packages/media/service.mjs` 的**同形字面量**（参考实现，`:227/:371/:474`）与
 `packages/media/README.md:78` 的说明文字不在本派单范围，**未改**。
+
+**补记：装配层接线已落地（#239 并入 main 后，2026-10-17）**：上面那条「未接线」已按原计划补上，
+保留为当时记录。`services/api/src/app.ts` 的媒体装配块现以
+`...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin })`
+原样透传配置层已校验的值（语义与上面预写的 `?? undefined` 写法一致：未配置即**不带该属性**，不是传 `undefined`）；
+装配块顶部那句「装配层只做 `??` 兜底、不读取也不传递任何环境配置」同时限缩为「**端口**这一侧」，并写明网关原点
+只来自配置层、**不**是真实端口的门。装配层测试 `tests/unit/media-grant-origin-assembly.test.mjs`（3/3 通过）断言
+目标是 `buildApp` 组装出的 `app.mediaService`（不是测试里另建的实例）：不设 ⇒ `config.mediaAccessGrantOrigin`
+为 `null`、句柄 origin 仍是 `https://media.placeholder.invalid` 且契约路径不变；设两个配置值（含 `:8443`）⇒
+句柄 origin/host/port 逐字跟随且互不相同；大小写与 `:443` 规范化结果原样出现在句柄里。
+**反向控制（实测）**：仅删掉那行注入（其余逐字节复原，复原后文件 SHA-256 与删前一致）⇒ 该文件 2/3 红
+（`actual 'https://media.placeholder.invalid'` vs `expected 'https://media-gateway-a.example.test'`），
+「不设 env」那条仍绿 ⇒ 缺省行为未变、配置失效必红。`REQUIRED_WHEN_REAL` **未列入** `MEDIA_ACCESS_GRANT_ORIGIN`：
+列入会新增 real 模式启动必填项（行为变更），而真实媒体接线仍只由显式注入 + 批准能力决定，占位域不构成放行。
+**绑定 SHA（实测）**：本补记所述实现见提交 `ab7fe679ee39ea5cfdc1ddba812d56ff334513c1`
+（`git cat-file -t ab7fe679ee39ea5cfdc1ddba812d56ff334513c1` ⇒ `commit`；父提交
+`5c81cc2c861ea75c7970613f70961f2a06d195ef`）；本文件所在文档提交紧随其后。
+
