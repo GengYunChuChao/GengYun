@@ -13,7 +13,10 @@
  * - 社区帖子可见性 ← `community/store.ts` 的 CAS 原语（只读 import，不另写一套判定）。
  *
  * 存储是**进程内内存 store**（`execution_mode: 'stub'`），**未接真实 PostgreSQL**。
+ * 例外（GY-I22）：账号**停用**在注入 `accountAuthority`（`account-authority-pg.ts`）时走真实库的
+ * 单事务路径，见 `suspendUser` 内的分支；未注入 ⇒ 与既有口径一致地 fail-closed。
  */
+import { randomUUID } from 'node:crypto';
 import { ApiError } from '../../errors.ts';
 import type { ExecutionMode } from '../../contract.ts';
 import { cloneDeep } from '../immutable.ts';
@@ -40,6 +43,7 @@ import { classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } 
 import type { FlagEffect, FlagKey } from './flags.ts';
 import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
+import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
@@ -82,6 +86,12 @@ export interface AdminOpsServiceOptions {
    * 重试不可能成功）；不返回空页、不伪造"账号不存在"/成功。
    */
   accountSeed?: readonly AccountView[];
+  /**
+   * 真实账号写权威（GY-I22 接线）。给了它 ⇒ `suspendUser` 走**单事务**的真实路径
+   * （`users.state` + `auth_epoch` + 会话撤销 + 审计四步原子）；保留在 `accountSeed` 之上，
+   * 因为读面（`listAdminUsers`）仍按种子判定是否接线。
+   */
+  accountAuthority?: AdminAccountAuthority | null;
   now?: () => Date;
   /** 幂等请求摘要与游标签名用的服务端密钥；只经内存传入，不入库。 */
   signingKey: string;
@@ -161,6 +171,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     categorySeed: options.categorySeed,
     accountSeed: options.accountSeed,
   });
+  const accountAuthority: AdminAccountAuthority | null = options.accountAuthority ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
   const idempotencyTtlSeconds = options.idempotencyTtlSeconds ?? DEFAULT_IDEMPOTENCY_TTL_SECONDS;
@@ -349,15 +360,32 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     const expectedRevision = parseIfMatchHeader(context.ifMatch);
     opsValidator.assertInput('ReasonInput', body);
     const normalizedId = normalizeIdParam(id);
-    // 在**任何**副作用之前（含写外壳的幂等占位）：无权威 ⇒ 一律 503。
-    requireWiredAccountAuthority();
+    // 在**任何**副作用之前（含写外壳的幂等占位）：既无真实权威、也无内存种子 ⇒ 一律 503。
+    // 有真实权威时不再要求种子（写面真实性不依赖读面是否接线），读面由 `listAdminUsers` 自己守。
+    if (accountAuthority === null && !store.accountsWired) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '账号停用面尚未接线到认证权威', { retryable: false });
+    }
 
     return runIdempotentWrite(
       writeDeps,
       context,
       { method: 'POST', path: `/admin/accounts/${normalizedId}/suspend`, expectedStatus: 200 },
       body,
-      () => {
+      async () => {
+        if (accountAuthority !== null) {
+          // 真实路径（GY-I22）：四步（state / auth_epoch / 撤会话 / 审计）在 `suspend_account()`
+          // 内部由 PostgreSQL **同一事务**完成，任一步失败整笔回滚，本层不可能写出半成品。
+          // 幂等与状态守卫由函数按当前行判定（已停用 ⇒ `changed=false`，不写审计、不递增 epoch、
+          // 不撤会话），因此这里**不先读库**：读后写会把并发重复停用放大成两笔审计。
+          const outcome = await accountAuthority.suspend({
+            actorId: context.identity.userId,
+            auditId: randomUUID(),
+            userId: normalizedId,
+            expectedRevision,
+            requestId: context.requestId,
+          });
+          return singleResponse(context, executionMode, 200, outcome.account, etagOf(outcome.account.revision));
+        }
         const current = store.getAccount(normalizedId);
         if (current === null) throw new ApiError('NOT_FOUND', '账号不存在');
         assertIfMatchMatches(expectedRevision, current.revision);

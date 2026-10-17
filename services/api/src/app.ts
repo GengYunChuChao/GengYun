@@ -71,6 +71,8 @@ import { createAdminContentService } from './admin/service.ts';
 import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
+import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
@@ -342,6 +344,11 @@ export interface BuildAppOptions {
     communityStore?: AdminOpsServiceOptions['community'];
     /** 注入 flag 语义分类表：用于验证"含放宽语义 ⇒ 拒绝接线"（默认出厂表）。 */
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
+    /**
+     * 真实账号写权威（GY-I22）：不传时 `real` 下按 `pool !== null` 自建
+     * `createPostgresAccountAuthority({ pool })`；`pool === null` ⇒ 账号停用面继续整域 503。
+     */
+    accountAuthority?: AdminOpsServiceOptions['accountAuthority'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -996,8 +1003,37 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
     adminContentService = failClosed.content;
-    adminOpsService = failClosed.ops;
-    app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+    // **GY-I22（#22）唯一显式放行**：账号停用面已接上真实持久权威（迁移 0017 的
+    // `public.suspend_account()`：`users.state` + `auth_epoch` + 撤会话 + 审计**同一事务**）。
+    // 放行条件只有"拿到真实库池 / 显式注入权威"，**不看**任何自述持久化标志；
+    // 其余 33 条后台路由（含账号读面 `listAdminUsers`）仍逐条 503
+    // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
+    const realAccountAuthority =
+      adminInjection?.accountAuthority ??
+      (pool === null ? null : createPostgresAccountAuthority({ pool }));
+    if (realAccountAuthority === null) {
+      adminOpsService = failClosed.ops;
+      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+    } else {
+      adminOpsService = restrictAdminOpsToAccountsAuthority(
+        createAdminOpsService({
+          store: adminOpsStore,
+          now: clock,
+          signingKey: adminSigningKey,
+          executionMode: config.executionMode,
+          accountAuthority: realAccountAuthority,
+          jobPort: adminInjection?.jobPort,
+          // GY-I15 接线同上：`hidePost` 在 real 下不放行，但端口仍按同一份社区 store 装配。
+          community: communityPostPortForAdmin,
+          flagEffects: adminInjection?.flagEffects,
+        }),
+        reason,
+      );
+      app.log.warn(
+        { executionMode: config.executionMode },
+        'GY-I22 账号停用已接真实认证权威 ⇒ POST /admin/accounts/{id}/suspend 走单事务真实写；其余 33 条后台路由仍 503 PROVIDER_UNAVAILABLE',
+      );
+    }
   } else {
     adminContentService = createAdminContentService({
       store: adminContentStore,
@@ -1010,6 +1046,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       now: clock,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
+      // GY-I22：**只经显式注入**开启真实停用权威（与 `mediaObjectStore` 同一口径：
+      // 不读 ambient 配置、不因"有 pool"就自动在 stub 域里接真实写）。
+      accountAuthority: adminInjection?.accountAuthority,
       jobPort: adminInjection?.jobPort,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
