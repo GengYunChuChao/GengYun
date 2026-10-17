@@ -18,7 +18,10 @@
  *   6. **取消墓碑**：`POST /jobs/{id}/cancel` ⇒ 墓碑只增不减；晚到结果零写入；**同对象同版本不得再次预留**；
  *   7. `real` 未接真实传输 ⇒ **在任何账本变更之前** 503，且该用户**零 sent 记录**；
  *   8. 注销/停用（按 state-contract §105 在同一提交里 state+auth_epoch 前进）⇒ 入口拒绝 + 在途撤销
- *      + 晚到结果零写入（HTTP 触发面 `requestAccountDeletion` 仍为 planned，本脚本用契约口径模拟）。
+ *      + 晚到结果零写入（HTTP 触发面 `requestAccountDeletion` 仍为 planned，本脚本用契约口径模拟）；
+ *   9. `findReservedByObject` 的**属主过滤 fail-closed**（GY-I22 #22）：同一 object 两个属主各持
+ *      `reserved` 时只命中自己那行（不是「全局最新」那行）；合法 uuid 未命中 ⇒ null；**非 uuid 属主**
+ *      ⇒ `SESSION_REQUIRED` 且零账本变更（改前会静默退回全局最新行）；不传属主口径逐字不变。
  *
  * 不联网（除本机回环 PG）；不发任何真实第三方请求；不打印凭据。
  */
@@ -464,6 +467,93 @@ try {
     (error) => ['ACCOUNT_INACTIVE', 'OBJECT_UNAVAILABLE'].includes(error.code),
   );
   say('注销/停用（真 PG，契约口径模拟）：入口 403 ACCOUNT_INACTIVE + 在途撤销 + 晚到结果零写入（HTTP 触发面 requestAccountDeletion 仍为 planned）');
+
+  // ---------------------------------------------------------------- 11. findReservedByObject 属主过滤 fail-closed（#22）
+  //
+  // 改前缺陷：本函数用 `scoped = typeof userId === 'string' && UUID.test(userId)` 决定是否拼
+  // `AND user_id=$4::uuid` ⇒ 传了**非 uuid** 的属主时该条件被整段省掉，查询**静默**退回
+  // 「该对象最新 reserved 行」，可能取到**别人属主**的行（`synthesis-egress.ts:211-214` 的
+  // `bindJobOwner` 只判非空字符串、不校 uuid，正是可达入口）。改后：传了就必须是合法 uuid，
+  // 否则 `SESSION_REQUIRED`（401，固定文案、不含入参），一次查询都不发。
+  const ownerF = await login('ledger-f-owner');
+  const ownerG = await login('ledger-g-other');
+  await grantForRecognition(ownerF.token);
+  await grantForRecognition(ownerG.token);
+  const sharedMedia = randomUUID();
+  const reserveMedia = (who, objectId) =>
+    ledger.reserve({
+      userId: who.id,
+      authEpoch: 1,
+      objectType: 'media',
+      objectId,
+      objectRevision: 1,
+      dataType: 'weed_recognition',
+      purpose: 'external_inference',
+      recipientId: 'fixture-weed',
+    });
+  // F 先预留、G 后预留 ⇒ G 的行是该对象上**最新**的 reserved 行（改前「不带属主」的查询先命中它）。
+  const reservedF = await reserveMedia(ownerF, sharedMedia);
+  const reservedG = await reserveMedia(ownerG, sharedMedia);
+  const newestOnObject = (
+    await owner.query(
+      `SELECT user_id FROM exports WHERE object_type='media' AND object_id=$1::uuid AND object_revision=1
+         AND state='reserved' AND cancelled_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+      [sharedMedia],
+    )
+  ).rows[0].user_id;
+  assert.equal(newestOnObject, ownerG.id, '构造前提：另一属主 G 的行必须是该对象上最新的 reserved 行');
+
+  // ③ 合法 uuid 命中 + **同一对象另一属主有 reserved 的对照**（本片核心读数）：只能命中自己那行。
+  const foundF = await ledger.findReservedByObject({
+    objectType: 'media',
+    objectId: sharedMedia,
+    objectRevision: 1,
+    userId: ownerF.id,
+  });
+  assert.equal(foundF.id, reservedF.id, 'F 必须命中自己更早的那行，而不是最新一行（G 的）');
+  assert.equal(foundF.userId, ownerF.id);
+  assert.equal(foundF.state, 'reserved');
+  const foundG = await ledger.findReservedByObject({
+    objectType: 'media',
+    objectId: sharedMedia,
+    objectRevision: 1,
+    userId: ownerG.id,
+  });
+  assert.equal(foundG.id, reservedG.id, 'G 必须命中自己的行');
+  assert.equal(foundG.userId, ownerG.id);
+  // ② 合法 uuid 但该属主在该对象上没有 reserved ⇒ null（不得借到 F/G 的行）。
+  const foundNobody = await ledger.findReservedByObject({
+    objectType: 'media',
+    objectId: sharedMedia,
+    objectRevision: 1,
+    userId: d.id,
+  });
+  assert.equal(foundNobody, null, '合法 uuid 未命中 ⇒ null（不得取到 F/G 的行）');
+  // ① 非 uuid 属主 ⇒ 显式抛错（code 稳定、文案固定、不含入参）。
+  for (const bad of ['', 'abc', '123', ` ${ownerF.id}`, ownerF.id.slice(0, -1), 'ledger-f-owner']) {
+    await assert.rejects(
+      () => ledger.findReservedByObject({ objectType: 'media', objectId: sharedMedia, objectRevision: 1, userId: bad }),
+      (error) => {
+        assert.equal(error.code, 'SESSION_REQUIRED', `${JSON.stringify(bad)}：错误码必须稳定`);
+        assert.equal(error.message, '缺少身份上下文', `${JSON.stringify(bad)}：文案必须固定`);
+        assert.equal(error.status, 401);
+        if (bad.length > 0) assert.equal(error.message.includes(bad), false, '消息不得回显入参');
+        return true;
+      },
+    );
+  }
+  // 真库读数：非法属主**零账本变更**（拒绝发生在任何查询之前，不是「查到再过滤」）。
+  const stillReserved = await owner.query(
+    "SELECT count(*)::int n FROM exports WHERE object_type='media' AND object_id=$1::uuid AND state='reserved'",
+    [sharedMedia],
+  );
+  assert.equal(Number(stillReserved.rows[0].n), 2, '两行仍为 reserved：非法属主未触碰账本');
+  // 未提供属主：既有口径逐字不变 —— 仍返回该对象**最新**的 reserved 行（正是调用方必须传属主的原因）。
+  const unscoped = await ledger.findReservedByObject({ objectType: 'media', objectId: sharedMedia, objectRevision: 1 });
+  assert.equal(unscoped.id, reservedG.id, '不传属主仍取最新 reserved 行（媒体维 task-egress 依赖此口径）');
+  say(
+    'findReservedByObject 属主过滤（真 PG）：合法 uuid 只命中自己的行（同对象另一属主的更新行不被取走）、未命中 ⇒ null、非 uuid 属主 ⇒ SESSION_REQUIRED 且零账本变更、不传属主语义不变',
+  );
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求`);
 } finally {
