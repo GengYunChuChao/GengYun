@@ -7,8 +7,10 @@
  *   `result` 判别子不一致、终态不得带 result、succeeded 不得带 error_code、failed/timed_out 必须带 error_code；
  * - 出口重建：返回的是**新对象**（不共享输入引用，`result.value` 亦为深拷贝）；
  * - 注册表分派：按 kind 命中；不存在/越权/未接线 kind 一律**同形** `NOT_FOUND`；kind 重复装配 ⇒ 装配期抛错；
- * - 取消：有能力的源被复用；**域内无取消能力但作业存在 ⇒ `OBJECT_UNAVAILABLE`**（不假装取消、不伪造状态）；
- *   域内的冲突码（如 `REVISION_CONFLICT`）**原样透出**，本层不重写状态机；
+ * - 取消：有能力的源被复用；**域内根本没接取消能力、但作业存在 ⇒ 如实 503 `PROVIDER_UNAVAILABLE`**
+ *   （不假装取消、不伪造状态、不谎称对象状态）；OCR 源自 GY-I10 取消片起已接线，`queued`/`running`
+ *   ⇒ `cancelled` 且 revision 恰好 +1；域内的冲突/终态码（如 `REVISION_CONFLICT`、`OBJECT_UNAVAILABLE`）
+ *   **原样透出**，本层不重写状态机；
  * - 适配层：域内 `NOT_FOUND` ⇒ `null`（⇒ 同形）；其它错误原样抛。
  *
  * 断言一律先判 `typeof`/`Array.isArray` 再判值。
@@ -356,24 +358,50 @@ function validOcrJob(overrides = {}) {
   });
 }
 
-test('适配层·OCR 源（GY-I10 接线）：kind=ocr／域内 NOT_FOUND ⇒ null（同形）／**不暴露 cancel**（如实缺失取消能力）／其它错误原样抛', async () => {
-  const calls = { get: 0 };
+test('适配层·OCR 源（GY-I10 接线 + 取消片）：kind=ocr／域内 NOT_FOUND ⇒ null（同形）／**已接线 cancel**（与识别源同构）／其它错误原样抛', async () => {
+  const calls = { get: 0, cancel: 0 };
+  const hookCalls = [];
   const service = {
     async getJob({ jobId }) {
       calls.get += 1;
       if (jobId !== JOB_ID) throw new ApiError('NOT_FOUND', '任务不存在');
       return validOcrJob();
     },
+    async cancelJob({ jobId, ifMatch, idempotencyKey }) {
+      calls.cancel += 1;
+      if (jobId !== JOB_ID) throw new ApiError('NOT_FOUND', '任务不存在');
+      assert.equal(ifMatch, '"3"', 'If-Match 必须原样下传（适配层不解释版本）');
+      assert.equal(idempotencyKey, 'k-ocr', 'Idempotency-Key 必须原样下传（适配层不重造 Key）');
+      return validOcrJob({ state: 'cancelled', revision: 3 + 1, result: null });
+    },
   };
-  const ocr = createOcrJobSource(service);
+  const ocr = createOcrJobSource(service, {
+    async onCancelled(input) {
+      hookCalls.push(input);
+      throw new Error('钩子异常不得外抛');
+    },
+  });
   assert.equal(ocr.kind, 'ocr');
-  assert.equal(ocr.cancel, undefined, 'OCR 域本基线无取消入口 ⇒ 不暴露 cancel（不假装支持）');
+  assert.equal(typeof ocr.cancel, 'function', '取消能力已接线（GY-I10 取消片）⇒ 必须暴露 cancel');
   assert.equal(await ocr.get({ userId: 'u', jobId: 'missing' }), null, '域内 NOT_FOUND ⇒ null（与识别/转写/合成源同一口径）');
   const read = await ocr.get({ userId: 'u', jobId: JOB_ID });
   assert.equal(read.id, JOB_ID);
   assert.equal(read.kind, 'ocr');
   assert.equal(read.result.kind, 'ocr');
   assert.equal(calls.get, 2);
+
+  // 取消面（GY-I10 取消片）：与识别源同构 —— 域内 NOT_FOUND ⇒ null（同形）；成功提交后调用一次钩子，
+  // 钩子自身异常不外抛（取消已提交，不得因钩子失败改成错误响应）
+  assert.equal(
+    await ocr.cancel({ userId: 'u', jobId: 'missing', ifMatch: '"1"', idempotencyKey: 'k-ocr' }),
+    null,
+    '域内 NOT_FOUND ⇒ null（与识别/转写/合成源同一口径）',
+  );
+  const cancelled = await ocr.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k-ocr' });
+  assert.equal(cancelled.state, 'cancelled');
+  assert.equal(cancelled.result, null, 'cancelled 不产出 OCR 记录 ⇒ result 恒为 null');
+  assert.equal(calls.cancel, 2);
+  assert.deepEqual(hookCalls, [{ jobId: JOB_ID, userId: 'u' }], '钩子只在**成功提交后**调用，且只调用一次');
 
   // 只读复用：适配层不改写域内语义 ⇒ 域内其它错误（非 NOT_FOUND）原样透出
   const broken = createOcrJobSource({
@@ -387,14 +415,27 @@ test('适配层·OCR 源（GY-I10 接线）：kind=ocr／域内 NOT_FOUND ⇒ nu
   );
 });
 
-test('注册表·OCR 无取消能力：作业存在 ⇒ cancel 503 PROVIDER_UNAVAILABLE（**不得 404、更不得 200**）；不存在仍同形 404；出口过 ocr 分支契约镜像', async () => {
+test('注册表·OCR 已接线取消（GY-I10 取消片）：running ⇒ cancelled 且 revision **恰好 +1**；终态再取消 ⇒ OBJECT_UNAVAILABLE；不存在仍同形 404；**无取消能力的源仍如实 503**；出口过 ocr 分支契约镜像', async () => {
   const unknownId = '99999999-9999-4999-8999-999999999999';
   const jobs = new Map([[JOB_ID, validOcrJob({ state: 'running', error_code: null, result: null })]]);
+  const seen = [];
   const ocr = createOcrJobSource({
     async getJob({ jobId }) {
       const job = jobs.get(jobId);
       if (job === undefined) throw new ApiError('NOT_FOUND', '任务不存在');
       return job;
+    },
+    async cancelJob(input) {
+      seen.push(input);
+      const job = jobs.get(input.jobId);
+      if (job === undefined) throw new ApiError('NOT_FOUND', '任务不存在');
+      if (input.ifMatch !== `"${job.revision}"`) throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+      if (job.state !== 'queued' && job.state !== 'running') {
+        throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${job.state}，不可取消`);
+      }
+      const next = { ...job, state: 'cancelled', error_code: null, revision: job.revision + 1 };
+      jobs.set(input.jobId, next);
+      return next;
     },
   });
   const registry = createJobRegistry([ocr]);
@@ -406,22 +447,55 @@ test('注册表·OCR 无取消能力：作业存在 ⇒ cancel 503 PROVIDER_UNAV
   assert.equal(read.state, 'running');
   assert.equal(read.result, null);
 
-  // 取消：作业**存在**但该域没有取消能力 ⇒ 503（能力未接线），不谎称对象状态、不伪造 cancelled
-  const error = await registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"4"', idempotencyKey: 'k' }).then(
-    () => null,
-    (e) => e,
+  // 取消：作业**存在且已接线** ⇒ 200 形投影（cancelled、revision 恰好 +1、result 置空、error_code 清空）
+  const cancelled = await registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k' });
+  assert.equal(cancelled.state, 'cancelled');
+  assert.equal(cancelled.revision, 4, 'revision 必须**恰好 +1**（不得 +2，不得不变）');
+  assert.equal(cancelled.result, null, 'cancelled 不产出 OCR 记录 ⇒ result 恒为 null');
+  assert.equal(cancelled.error_code, null, '取消必须清空 error_code');
+  assert.equal(jobs.get(JOB_ID).state, 'cancelled');
+  assert.equal(jobs.get(JOB_ID).revision, 4);
+  assert.equal(seen.length, 1, '适配层只调用域内 cancelJob 一次');
+  assert.equal(seen[0].ifMatch, '"3"', 'If-Match 原样下传（适配层不解释版本）');
+  assert.equal(seen[0].idempotencyKey, 'k', 'Idempotency-Key 原样下传（适配层不重造 Key）');
+  assert.equal(seen[0].userId, 'u');
+
+  // 终态不可再取消 ⇒ 域内 OBJECT_UNAVAILABLE 原样透出，**不伪造**第二次取消、revision 不再递增
+  await assert.rejects(
+    () => registry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"4"', idempotencyKey: 'k2' }),
+    (e) => e instanceof ApiError && e.code === 'OBJECT_UNAVAILABLE',
   );
-  assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(error?.status, 503);
-  assert.equal(error?.retryable, false, '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试');
-  assert.equal(jobs.get(JOB_ID).state, 'running', '状态不得被改动（没有伪造 cancelled）');
-  assert.equal(jobs.get(JOB_ID).revision, 3, 'revision 不得因失败的取消而递增');
+  assert.equal(jobs.get(JOB_ID).state, 'cancelled');
+  assert.equal(jobs.get(JOB_ID).revision, 4, '失败/冲突的取消不得递增 revision');
 
   // 作业**不存在**（未接线/不存在/越权一律同形）⇒ 仍是 404，而不是 503
   await assert.rejects(
     () => registry.cancel({ userId: 'u', jobId: unknownId, ifMatch: '"1"', idempotencyKey: 'k' }),
     (e) => e instanceof ApiError && e.code === 'NOT_FOUND' && e.status === 404,
   );
+
+  // 原用例语义改由**无取消能力**的合成源承载（在 OCR 接线之前 OCR 源即此形态，口径仍须钉住）：
+  // 作业**存在**但该域没有取消能力 ⇒ 503（能力未接线），不谎称对象状态、不伪造 cancelled
+  const noCancel = createJobRegistry([
+    {
+      kind: 'synthesis',
+      async get() {
+        return validJob({
+          kind: 'synthesis',
+          target_ref: { type: 'synthesis', id: TARGET_ID, revision: 1 },
+          state: 'running',
+          error_code: null,
+          result: null,
+        });
+      },
+    },
+  ]);
+  const error = await noCancel
+    .cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k' })
+    .then(() => null, (e) => e);
+  assert.equal(error?.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(error?.status, 503);
+  assert.equal(error?.retryable, false, '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试');
 });
 
 // ---------------------------------------------------------------- 钉子（预审要求）：无取消能力 kind 的 cancel 错误码**顺序语义**
