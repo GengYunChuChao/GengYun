@@ -575,7 +575,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "237-245"
+          "lines": "298-315"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -1002,7 +1002,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "167-171"
+          "lines": "210-228"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -1022,7 +1022,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "187-191"
+          "lines": "230-248"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -1492,7 +1492,7 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "304-304"
+        "lines": "305-312"
        },
         {
           "path": "services/api/src/community/service.ts",
