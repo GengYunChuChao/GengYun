@@ -353,7 +353,8 @@ RESULT: OK
 | 默认端口 3000 的 `/health` 可信证据 | **未取得 + 原因** | 本机 3000 被无关 node 进程（pid 41000）占用，探针打到他人服务 | 见 §4.7；空闲端口复现：`$env:API_PORT='3001'; $env:APP_EXECUTION_MODE='stub'; npm run dev:api` |
 | 业务路由实际可用 | **未取得** | 无数据库，`/api/v1/public/home` 返回 503 `PROVIDER_UNAVAILABLE` | 需 `DATABASE_URL` ＋ 迁移后复跑 |
 | `npm run test:unit` 跳过项 | **未取得 + 原因** | 需原生双连接数据库（`# SKIP`） | 配置原生库后复跑 `npm run test:unit` |
-| 原生库迁移负例、OpenAPI 2020-12 与 Fastify 适配实测 | **未取得** | 属 GY-I02 验收表其余项，需数据库／独立工作，本片不冒称 | `docs/architecture/acceptance-map.md` GY-I02 行 |
+| 原生库迁移负例 | **未取得** | 属 GY-I02 验收表其余项，需数据库；本片不冒称 | `docs/architecture/acceptance-map.md` GY-I02 行 |
+| **OpenAPI 2020-12 与 Fastify 适配实测** | **已取得，见新证据页** | 2026-10-17 补记：运行时校验器切到 `Ajv2020`，正/反例、draft-07 双向对照与反向控制均实跑（本页其余读数保持 2026-10-14 原样） | [gy-i02-openapi-2020-fastify-20261017.md](gy-i02-openapi-2020-fastify-20261017.md) |
 | 真机 `SDKVersion`／真机渲染 | **未取得** | 本片只到模拟器；真机通道历史上对 AppService 调用超时 | 见 `docs/verification/gy-i26-demo-align-20261014.md` 第 11.6 节 |
 
 ## 6 构建产物与忽略规则核对
