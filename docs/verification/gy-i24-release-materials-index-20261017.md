@@ -1,6 +1,8 @@
 # GY-I24 部署／备份／恢复／回滚材料索引与离线核验（2026-10-17）
 
-- 基线：`upstream/main` = `95b8e7c`（`docs(GY-I02): 订正过期读数与载荷自相矛盾… (#244)`）；本分支相对该基线只有本地提交，未推送、未建 PR。
+- 基线：`upstream/main` = `60aa9ad`（`test(GY-I02): 为调研记录建立机械门禁并把 §4 按项来源接入 CI (#277)`）。
+- **刷新记录（2026-10-18）**：本分支原基于 `95b8e7c`（提交 `58fdbfc`）；应指挥派发，已 rebase 到
+  `60aa9ad` 并按新基线重跑门禁、刷新全部读数。迁移数在两代基线间由 15 变为 17（见 §5-F1）。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -22,7 +24,7 @@
 | [`../../deploy/cloudrun/service-settings.md`](../../deploy/cloudrun/service-settings.md) | 平台字段与依据、健康检查语义、环境变量/机密清单、官方链接、运行时 import 闭包 | ✅ 在册；其环境变量清单与 `deploy/cloudrun/env.placeholder.json`、`services/api/src/config.ts` 的口径已交叉核对（见 §3 第 4 项） |
 | [`../../deploy/cloudrun/Dockerfile`](../../deploy/cloudrun/Dockerfile) | API 镜像（Node 24.16.0、`npm ci --omit=dev`、非 root、SIGTERM 优雅退出） | ✅ 在册；镜像 Node 版本与根 `package.json` 的 `engines.node`（`>=24.16.0 <25`）逐位一致；**镜像构建本身需 Docker，属运行期，未核验** |
 | [`../../deploy/cloudrun/Dockerfile.dockerignore`](../../deploy/cloudrun/Dockerfile.dockerignore) | 与 Dockerfile 配套的构建忽略清单 | ✅ 在册 |
-| [`../../deploy/cloudrun/env.placeholder.json`](../../deploy/cloudrun/env.placeholder.json) | 平台「环境变量 JSON 导入」模板（全部空值/非机密） | ✅ 在册；**键集 ⊇ 配置面且无多余键、机密类键全部为空值**（门禁第 5 项） |
+| [`../../deploy/cloudrun/env.placeholder.json`](../../deploy/cloudrun/env.placeholder.json) | 平台「环境变量 JSON 导入」模板（全部空值/非机密） | ✅ 在册；**键集 ⊇ 配置面且无多余键、机密类键全部为空值**（门禁第 5 项）。本片刷新时按新基线配置面补入 `MEDIA_ACCESS_GRANT_ORIGIN`（可选键，见 §5-F4） |
 | [`../../deploy/cloudrun/container.config.json.example`](../../deploy/cloudrun/container.config.json.example) | 官方模板 `container.config.json` 字段对照（本路线不使用该文件） | ✅ 在册 |
 | [`../../deploy/cloudrun/local-check.ps1`](../../deploy/cloudrun/local-check.ps1) | 本地自检：构建镜像 + 容器内 `/health`（需本机 Docker） | ✅ 在册；**执行需 Docker，属运行期，未核验** |
 | [`../../deploy/cloudrun-vpc/README.md`](../../deploy/cloudrun-vpc/README.md) | 云托管关联腾讯云账号与 VPC 互联：事实分级、判定框架、只读实测摘要 | ✅ 在册 |
@@ -60,24 +62,24 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **15** 个：`0001..0015`） | ✅ down 脚本覆盖 `0002..0015`（14 个）、无 `0001`（门禁第 8 项） |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **17** 个：`0001..0017`） | ✅ down 脚本覆盖 `0002..0017`（16 个）、无 `0001`（门禁第 8 项） |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
 ## 4. 离线核验方法与读数（全部可复跑）
 
-门禁：`node tools/verify-release-materials.mjs`（10 项，退出码 0 = 通过）。逐项判据与读数：
+门禁：`node tools/verify-release-materials.mjs`（15 项，退出码 0 = 通过）。逐项判据与读数：
 
-| # | 判据 | 命令/来源 | 读数（基线 `95b8e7c`） |
+| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`，2026-10-18 复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
 | 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 29/29 覆盖，无悬空路径 |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
 | 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
-| 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（7）＝16；模板 16 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
+| 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 15 个；`rollback/` 14 个；`migrate.ts` 报错文本 | ✅ 一致 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 17 个；`rollback/` 16 个；`migrate.ts` 报错文本 | ✅ 一致 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 
@@ -90,9 +92,10 @@
 
 | # | 问题 | 证据 | 影响与建议 |
 | --- | --- | --- | --- |
-| F1 | **runbook / roles-and-migration 的迁移数量读数过期**：`runbook.md:331`「全部 10 个版本」、`:343` 期望输出「10 个版本已全部应用（0001 … 0010）」；`roles-and-migration.md:240`「全部 10 个版本」；`runbook.md:507`「rollback 存在（0002–0010，没有 0001）」 | 实测 `services/api/db/migrations/` = **15** 个（`0001..0015`）；`rollback/` = **14** 个（`0002..0015`，仍无 `0001`） | 未来执行者按旧读数会误判「迁移没跑全」。`evidence/local-self-check.md:825/887` 的「10 个版本」是 2026-10-13 真跑的**历史输出**（当时确为 10 个），按「不改写历史证据」原则应保留；**建议由 GY-I25（#27）材料Owner** 在 runbook §步骤2/3 与 §5.4 增加「当时 10 个／现有 15 个」的时点说明 |
+| F1 | **runbook / roles-and-migration 的迁移数量读数过期**：`runbook.md:331`「全部 10 个版本」、`:343` 期望输出「10 个版本已全部应用（0001 … 0010）」；`roles-and-migration.md:240`「全部 10 个版本」；`runbook.md:507`「rollback 存在（0002–0010，没有 0001）」 | 实测（基线 `60aa9ad`）`services/api/db/migrations/` = **17** 个（`0001..0017`）；`rollback/` = **16** 个（`0002..0017`，仍无 `0001`）。**两代基线均未修**：`95b8e7c` 上为 15/14，`60aa9ad` 上为 17/16，文档读数始终停在 10/9 | 未来执行者按旧读数会误判「迁移没跑全」。`evidence/local-self-check.md:825/887` 的「10 个版本」是 2026-10-13 真跑的**历史输出**（当时确为 10 个），按「不改写历史证据」原则应保留；**建议由 GY-I25（#27）材料Owner** 在 runbook §步骤2/3 与 §5.4 增加「当时 10 个／现有 N 个（随基线变）」的时点说明，或改为引用门禁输出 |
 | F2 | **LF 判据的工作区假象**（第 9 项） | `core.autocrlf=true` | 已在本片工具中按 blob 判据固化；建议后续所有「行尾必查」都注明「查 blob，不查工作区」 |
-| F3 | 无 | — | 除 F1/F2 外，本轮离线核验未发现其他文档与仓库事实不符 |
+| F3 | **`service-settings.md` 对 `OBJECT_STORAGE_*` 的「当前无代码消费」已过期**：该表四行（`:61`-`:64`）称 object storage 相关键「当前无代码消费（识别/合成媒体端口在 real 下未接线、fail-closed）」 | 新基线上 `services/api/src/media/object-store.ts:209` 实际读取 `OBJECT_STORAGE_ENDPOINT`（并在 `:214/226` 参与校验与报错）；`app.ts:1127` 在 `mediaAccessGrantOrigin !== null` 时注入 `accessGrantOrigin`。即 PR #193「媒体对象存储显式接线」之后这些键**已被消费**（凭据齐备才构造真实适配器、缺任一保持 fail-closed 的口径不变） | 会影响运维对「填了是否起作用」的判断。同表 `DELETION_LEDGER_KEY` 的「无代码消费」**仍成立**（`grep` 确认 config.ts 之外无消费者）⇒ 不是整表过期，建议材料Owner 只订正 object storage 四行 |
+| F4 | **环境变量模板缺 `MEDIA_ACCESS_GRANT_ORIGIN`**（新基线配置面新增的可选键） | 门禁第 5 项在 `60aa9ad` 上实测转红：模板 16 键 vs 配置面 17 键 | **本片已修**：模板补入该键（空值；该键可选，未配置时媒体域用 `.invalid` 占位域，`config.ts:234-248`）。属「模板与配置面保持一致」的补齐，不改变任何部署行为 |
 
 ## 6. 离线核验**不能**覆盖的项（不得据本索引推断为已验收）
 
@@ -108,4 +111,4 @@
 - 本片只做**索引 + 离线文档核验**：新增 1 份索引（本文件）、1 个门禁工具、1 项回归；
   **未改动** `deploy/**`、`docs/verification/**` 既有材料正文，未改契约与服务端代码。
 - `Refs #24`，**不关闭整项 issue**；GY-I24 整项未完成（见 §6）。
-- 本索引的读数一律绑定基线 `95b8e7c`；基线前进后应复跑门禁并更新读数。
+- 本索引的读数一律绑定基线 `60aa9ad`；基线前进后应复跑门禁并更新读数（本分支即由 `95b8e7c` 刷新而来，刷新方法：rebase 到新 main → 跑门禁 → 按输出改数 → 复跑回归）。
