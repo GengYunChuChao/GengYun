@@ -4,7 +4,9 @@
  * 为什么要这份测试（2026-10-18 审查实测同一份门禁的两个洞）：
  *   ① 索引页的 `N/N` 覆盖计数根本没人核 —— 把 `29/29` 改成 `30/30`、`30/31`，门禁照样 exit 0；
  *   ② 覆盖判定是「页面里随便哪一行同时含 ✅ 和该路径」—— 删掉 §2 某个文件的专用表格行后，
- *      §4 说明句 / §1 交叉引用里还写着这个路径且带 ✅，判据依然绿，等于「正文提一句就算收录」。
+ *      §4 说明句 / §1 交叉引用里还写着这个路径且带 ✅，判据依然绿，等于「正文提一句就算收录」；
+ *   ③ 覆盖判定只查「整行任意处含 ✅」—— 把该行的 ✅ 挪到中间列、核验列写成 `❌ 未核验`，
+ *      门禁照样 exit 0 / 15/15（2026-10-18 复审实测）⇒ 判据必须落到**末列（核验列）列位**上。
  *
  * 做法：在 `os.tmpdir()` 下铺一个**能跑门禁的镜像仓**（工具 + 索引页 + `deploy/**` + 固定路径输入 +
  * migrations + 索引相对链接目标），先证明一字不改时全绿，再逐条把索引页改坏，要求门禁 exit 1、
@@ -269,4 +271,30 @@ test('反例4：把路径写成另一个在册文件 ⇒ 缺行 点名原路径'
   const run = gateWithIndex(mutated);
   expectCoverageRed(run, ['未索引：', missingPath]);
   t.diagnostic(`反例4: ${failLines(run.stdout)[0]}`);
+});
+
+// --------------------------------------------------------------------------- 反例 5
+test('反例5：✅ 挪到该行中间列、核验列写 ❌ 未核验 ⇒ 未索引 点名', (t) => {
+  // 2026-10-18 复审实测的第三个洞：判据若只查 `row.line.includes('✅')`，把该行的 ✅ 挪到第 2 列、
+  // 末列（核验列）改写成 `❌ 未核验`，门禁仍 exit 0 / 15/15 —— 等于「行内标过 ✅ 就算核验过」。
+  const target = 'deploy/postgres-cvm/runbook.md';
+  const rows = ownRows(ORIGINAL, target);
+  assert.equal(rows.length, 1, `夹具前提：${target} 必须恰好有一行专用表格行；实际 ${rows.length}`);
+
+  const { head, cell, tail } = splitFirstCell(rows[0]);
+  // tail 形如 `| 第2列 | 第3列 |`：切出中间列与末列（末列 = 核验列）。
+  const tailCells = tail.replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/);
+  assert.equal(tailCells.length, 2, `夹具前提：该行必须是三列（首列 + 作用列 + 核验列）；实际 tail=「${tail}」`);
+  assert.ok(tailCells[1].trim().startsWith('✅'), `夹具前提：核验列原本必须以 ✅ 开头；实际：「${tailCells[1].trim()}」`);
+
+  // ✅ 从核验列挪到中间列，核验列改写为 ❌ —— 首列路径没变、整行仍含 ✅，只是 ✅ 换了列。
+  const mutatedRow = `${head}${cell}| ✅ ${tailCells[0].trim()} | ❌ 未核验 |`;
+  const mutated = ORIGINAL.replace(rows[0], mutatedRow);
+  assert.equal(ownRows(mutated, target).length, 1, '路径还在同一行、只是 ✅ 换了列 —— 判据必须看列位而不是「行内有 ✅」');
+  assert.ok(mutatedRow.includes('✅'), `夹具前提：✅ 仍在本行内（旧判据 row.line.includes('✅') 会判绿）：${mutatedRow}`);
+  assert.ok(mutatedRow.trimEnd().endsWith('| ❌ 未核验 |'), `夹具前提：核验列必须已写成 ❌ 未核验：${mutatedRow}`);
+
+  const run = gateWithIndex(mutated);
+  expectCoverageRed(run, ['未索引：', target]);
+  t.diagnostic(`反例5: ${failLines(run.stdout)[0]}`);
 });
