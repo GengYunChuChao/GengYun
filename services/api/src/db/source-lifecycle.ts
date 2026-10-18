@@ -1,5 +1,5 @@
 import { ApiError } from '../errors.ts';
-import type { PgPool } from './pool.ts';
+import { isTransientDatabaseError, type PgPool } from './pool.ts';
 
 export interface SourceOperation {
   operationId: string;
@@ -69,8 +69,13 @@ export async function applySourceOperation(pool: PgPool, input: SourceOperation)
       case '57014': throw new ApiError('PROVIDER_TIMEOUT','来源操作超时',{retryable:true});
       default: {
         const unknown = typeof code !== 'string' || ['ECONNRESET','EPIPE','ETIMEDOUT'].includes(code);
+        // retryable 分档（口径原文见 `../errors.ts` 的 `ApiError` 注释）：
+        // - 结果未知（无 code / 连接中断）⇒ 用**同一操作编号**核对后重试是设计内的恢复路径，瞬时 ⇒ true；
+        // - 已归类的 `PROVIDER_UNAVAILABLE` ⇒ 只有瞬时类（08/53/57P0/40001/40P01）可重试；
+        //   配置/权限类（3D000/28P01/42P01/42501/42883）与无法归类者需运维介入 ⇒ false。
         throw new ApiError(unknown ? 'PROVIDER_OUTCOME_UNKNOWN' : 'PROVIDER_UNAVAILABLE',
-          '来源操作结果未确认，请使用同一操作编号核对后重试',{retryable:true});
+          '来源操作结果未确认，请使用同一操作编号核对后重试',
+          { retryable: unknown || isTransientDatabaseError(error) });
       }
     }
   }
