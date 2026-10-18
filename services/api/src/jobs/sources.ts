@@ -15,10 +15,10 @@
  * `createTranscriptionJobSource` 同形**省略 `cancel`**（注册表对已存在的合成作业如实 503
  * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
  *
- * GY-I10 追加（**纯追加，不改既有四个源**）：新增 `createOcrJobSource`（#10 标签 OCR 域）。
+ * GY-I10 追加（**纯追加，不改既有五个源**）：新增 `createOcrJobSource`（#10 标签 OCR 域）。
  * 读面复用已合并的 `ocr/service.ts` 的 `getJob`（域内 `toJob` 产物**已是**契约 `Job` 九键形状）；
- * OCR 域本基线**没有**取消入口 ⇒ 同样**省略 `cancel`**（注册表对已存在的 OCR 作业如实 503
- * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
+ * 取消面复用同文件的 `cancelJob`（`queued`/`running` → `cancelled`，revision 恰好 +1，终态不可
+ * 取消）⇒ 与识别源同构地**提供 `cancel`**，版本冲突/终态等语义仍由 OCR 域自己决定。
  */
 import { ApiError } from '../errors.ts';
 import type { OcrService } from '../ocr/service.ts';
@@ -138,16 +138,24 @@ export function createSynthesisJobSource(service: SynthesisService): JobSourcePo
  * 归属与不存在**同形**：域内 `getOwnedJob` 对「不存在」与「他人作业」都抛 `ApiError('NOT_FOUND')`
  * （非法 uuid 亦同），本适配层把它映射为 `null` ⇒ 注册表无法、也不需要区分二者（与识别/转写/合成源同一口径）。
  *
- * **取消能力：本基线没有**——`ocr/service.ts` 只提供受理/读取/校正/核对/删除，**没有**取消入口；
- * 派单明令「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）** 如实拒绝
- * （**不伪造** `cancelled`，也**不**用 404 谎称作业不存在）。本层不判状态、不改 revision。
+ * **取消能力：已接线**（GY-I10 取消片）——`ocr/service.ts` 的 `cancelJob` 把 `queued`/`running`
+ * 原子迁到 `cancelled`（单次 CAS ⇒ revision **恰好 +1**、`error_code` 清空）；终态（`succeeded`/
+ * `uncertain`/`failed`/`timed_out`/`cancelled`）不可再取消，域内抛 `OBJECT_UNAVAILABLE`，本层原样透出。
+ * 取消后的迟到结果由域内 `commitTerminal` 的 CAS + 状态机拦住 ⇒ **不复活**（不靠删记录）。
+ * 本层不判状态、不改 revision、不另写状态机（与识别源同一口径）。
  *
  * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中
  * `JobResult` 的 `ocr` 分支镜像在 `./result-shape.ts` 的 `OCR`（`id`/`revision`/`raw_fields`/
  * `corrected_fields`/`verification`/`model_version` 六键，`additionalProperties:false`）。
  */
-export function createOcrJobSource(service: OcrService): JobSourcePort {
+export function createOcrJobSource(
+  service: OcrService,
+  /**
+   * 与识别源同形的**追加式**取消钩子（可选）：取消**成功提交后**调用；钩子异常不改变取消结果
+   * （取消已提交），只保证不外抛（原始错误由调用方记日志）。
+   */
+  hooks: { onCancelled?(input: { jobId: string; userId: string }): Promise<void> } = {},
+): JobSourcePort {
   return {
     kind: 'ocr',
     async get(input: JobSourceGetInput) {
@@ -157,6 +165,25 @@ export function createOcrJobSource(service: OcrService): JobSourcePort {
         if (isNotFound(error)) return null;
         throw error;
       }
+    },
+    async cancel(input: JobSourceCancelInput) {
+      let cancelled;
+      try {
+        cancelled = await service.cancelJob({
+          userId: input.userId,
+          jobId: input.jobId,
+          ifMatch: input.ifMatch,
+          idempotencyKey: input.idempotencyKey,
+        });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+      if (cancelled !== null && hooks.onCancelled !== undefined) {
+        // 取消已提交：钩子失败不得回滚取消，也不得改写成失败响应（原始错误只进日志）。
+        await hooks.onCancelled({ jobId: input.jobId, userId: input.userId }).catch(() => {});
+      }
+      return cancelled;
     },
   };
 }

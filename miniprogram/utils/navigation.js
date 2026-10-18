@@ -91,6 +91,18 @@ function captureCurrent() {
 }
 
 // Correct route API per tabBar. Failure fallback never overrides a newer intent.
+// GY-I28：「我的耕云」的「我的发布」跳到社区（底部 Tab）时要预选「我的投稿」筛选，
+// 但 switchTab **不接受**查询参数。这里用一个一次性、仅进程内存在的意图标记把这件事
+// 交给社区页消费：不是授权、不落存储、读完即清（与上面的 returnTo 同一设计口径，
+// 应用重启即消失；社区页自己仍按门禁与契约 `mine` 参数取数）。
+let communityMineIntent = false
+function requestCommunityMine() { communityMineIntent = true }
+function consumeCommunityMine() {
+  const hit = communityMineIntent
+  communityMineIntent = false
+  return hit
+}
+
 function openTarget(candidate, replace, callback) {
   const done = typeof callback === 'function' ? callback : function () {}
   const target = normalizeTarget(candidate) || HOME
@@ -132,4 +144,5 @@ function goLogin(id, callback) {
 }
 module.exports = { PAGES, TAB_PAGES, HOME, LOGIN, MAX_PATH_LENGTH, normalizeTarget,
   epoch, isCurrent, beginReturnTo, clearReturnTo, peekReturnTo, consumeReturnTo,
-  currentPage, captureCurrent, openTarget, goLogin }
+  currentPage, captureCurrent, requestCommunityMine, consumeCommunityMine,
+  openTarget, goLogin }

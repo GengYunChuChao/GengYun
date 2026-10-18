@@ -4,7 +4,7 @@
  * 用途：把「小程序样式层与 docs/ui-demo 的对应关系」从主观描述变成**可复算的比对**，
  * 并保证 WXSS 里的图标几何确实来自 Demo 源码，而不是手抄。
  *
- * 核对四件事：
+ * 核对五件事：
  *   1. 令牌值集合比对：demo dist/styles.css 的 :root 色板 → miniprogram/styles/tokens.wxss
  *      必须逐值相同（--green/--ink/--muted/--paper/--line/--lime）。
  *   2. 关键类名存在性：五 Tab 与 article／post 详情用到的 demo 类，必须在 WXSS 样式层
@@ -13,6 +13,10 @@
  *      SVG path 数据重新生成的结果（--write-icons 重写）。
  *   4. 可访问性门槛不被样式对齐破坏：样式层不得出现未乘 --font-scale 的裸 px 字号，
  *      交互类必须有 ≥44px 的高度下限。
+ *   5. demo 视图承接：demo.html 的 render() 分发视图（含 article／post 动态路由）逐个要求
+ *      小程序有承接页；确无页的视图（当前 video／chat）必须登记进 ALLOWED_MISSING_VIEWS，
+ *      输出里逐行打印 `MISSING(allowed): <view>`。白名单是**显式声明**，不是静默排除：
+ *      白名单外的缺失视图、已过期（本该有页）的白名单项都判失败。
  *
  * 边界：本脚本只读文本、只做静态比对；它**不运行微信工具、不渲染页面、不测量真机**。
  *      demo 与小程序的实际视觉差异仍须在微信开发者工具／真机复核（本片未取得）。
@@ -30,6 +34,8 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 
 const DEMO_CSS = 'docs/ui-demo/dist/styles.css';
 const DEMO_JS = 'docs/ui-demo/dist/app.js';
+const DEMO_HTML = 'docs/ui-demo/demo.html';
+const APP_JSON = 'miniprogram/app.json';
 const TOKENS_WXSS = 'miniprogram/styles/tokens.wxss';
 const ICONS_WXSS = 'miniprogram/styles/icons.wxss';
 const COMPONENTS_WXSS = 'miniprogram/styles/components.wxss';
@@ -208,9 +214,9 @@ export const OMITTED_CLASSES = [
   // 模拟登录弹窗：小程序登录是独立页面，属 GY-I04 已交付成果，不重写
   ['.modal / .modal-backdrop / .modal-header / .modal-close / .login-mark / .login-copy / .agreement / .modal-note', 'demo 的模拟登录弹窗；小程序为 pages/login 独立页（GY-I04），本片不接管'],
   ['#toast', 'demo 的浏览器 toast；小程序用 wx.showToast 原生能力，不用样式层复刻'],
-  // 本片不新建的页面
-  ['.video-* / .periods / .period / .time-node / .timeline-bar / .play-circle / .generation-orb', 'demo 的情景视频页；小程序无此页，见「适老版与后续单」声明'],
-  ['.chat-* / .bubble* / .suggestions / .sound-active', 'demo 的农事问答页；小程序无独立问答页，界面留后续单'],
+  // 本片不新建的页面（视图级缺失已由第 5 组 ALLOWED_MISSING_VIEWS 显式登记，不再靠本条静默排除）
+  ['.video-* / .periods / .period / .time-node / .timeline-bar / .play-circle / .generation-orb', 'demo 的情景视频页类；小程序无 video 视图，视图缺失见 ALLOWED_MISSING_VIEWS（第 5 组打印 MISSING(allowed): video）'],
+  ['.chat-* / .bubble* / .suggestions / .sound-active', 'demo 的农事问答页类；小程序无 chat 视图，视图缺失见 ALLOWED_MISSING_VIEWS（第 5 组打印 MISSING(allowed): chat）'],
   ['.crop-select-grid / .crop-choice', 'demo 的作物选择弹窗；小程序用原生 picker（「我的」已交付）'],
   ['.result-hero / .result-candidate / .stat strong 的大数字', 'demo 的识别结果页；小程序识别页为既有候选卡实现（GY-I09），本片只对齐样式令牌'],
   // WXSS 无需或等价物不同
@@ -219,6 +225,38 @@ export const OMITTED_CLASSES = [
   ['.backdrop-filter / mask-image / isolation', 'demo 顶栏毛玻璃与网格遮罩；WXSS 支持不稳定，改为不透明底色'],
   ['display:grid 多列排版', 'WXSS 的 grid 在旧基础库支持不一致，样式层用 flex + 百分比宽度等价实现']
 ];
+
+/* ---------------------------- 视图承接 ---------------------------- */
+
+/**
+ * demo 视图（render() 的顶层分发 + article／post 动态路由）→ 小程序承接页。
+ * 值即 app.json.pages 里的页面路径；判定「有页」＝该路径已在 app.json.pages 注册，
+ * 且 miniprogram/<路径>.wxml 存在。空数组＝**已核实小程序确无承接页**，
+ * 这类视图必须同时登记进 ALLOWED_MISSING_VIEWS，否则第 5 组核对直接报 MISSING。
+ */
+export const VIEW_PAGES = {
+  home: ['pages/home/home'],
+  identify: ['pages/identify/identify'],
+  // demo 的 result 是独立视图；小程序由识别页内嵌候选区承接（GY-I09 既有实现）
+  result: ['pages/identify/identify'],
+  library: ['pages/knowledge/knowledge', 'pages/reference/reference', 'pages/referenceseed/referenceseed'],
+  // 情景视频：demo 有页（demo.html 的 function video()），小程序 0 文件 · 真无页
+  video: [],
+  // 农事问答：同上
+  chat: [],
+  community: ['pages/community/community'],
+  article: ['pages/knowledgedetail/knowledgedetail', 'pages/referencedetail/referencedetail', 'pages/referenceseeddetail/referenceseeddetail'],
+  post: ['pages/communitydetail/communitydetail'],
+  messages: ['pages/messages/messages'],
+  profile: ['pages/profile/profile']
+};
+
+/**
+ * 允许缺失的视图白名单：只收纳「demo 有、小程序确无页」的视图，且每项都会在输出里
+ * 打印一行 `MISSING(allowed): <view>`。白名单不是豁免通道——本脚本会反向校验：
+ * 白名单项若已登记承接页（白名单过期），或根本不是 demo 的视图，同样判失败。
+ */
+export const ALLOWED_MISSING_VIEWS = ['video', 'chat'];
 
 /* ------------------------------ 解析 ------------------------------ */
 
@@ -245,6 +283,83 @@ export function readDemoIconPaths() {
   const out = {};
   for (const m of body.matchAll(/([A-Za-z0-9_]+)\s*:\s*'([^']*)'/g)) out[m[1]] = m[2];
   return out;
+}
+
+/**
+ * 从 demo.html 的 render() 分发处解析视图集合，不手抄：
+ *   const content=({home,identify,result,library,video,chat,community,messages,profile}[page]||
+ *     (()=>page==='article'?article(id):page==='post'?postDetail(id):home()))()
+ * 前一段给 9 个顶层视图，后一段的 `page==='<name>'` 给 article／post 两个动态路由。
+ */
+export function readDemoViews() {
+  const html = read(DEMO_HTML);
+  const m = html.match(/const content=\(\{([^}]*)\}\[page\]/);
+  if (!m) throw new Error(`${DEMO_HTML} 未找到 render() 的视图分发表 const content=({…}[page])，请同步本脚本`);
+  const views = m[1]
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // 动态路由（article/:id、post/:id）与导航里复用的视图名都可能出现在 page==='x' 里，去重后并入
+  for (const d of html.matchAll(/page==='([a-z]+)'/g)) views.push(d[1]);
+  return [...new Set(views)];
+}
+
+/** 读小程序已注册页面清单（app.json pages 顺序即注册序） */
+export function readAppPages() {
+  const pages = JSON.parse(read(APP_JSON)).pages;
+  if (!Array.isArray(pages) || !pages.length) throw new Error(`${APP_JSON} 未读到 pages 数组`);
+  return pages;
+}
+
+/**
+ * 第 5 组核对：demo 视图承接。
+ * options.views / options.allowedMissingViews 供测试注入变体（CLI 与默认调用用真实仓库数据）。
+ */
+export function auditViews(options = {}) {
+  const views = options.views || readDemoViews();
+  const allowed = options.allowedMissingViews || ALLOWED_MISSING_VIEWS;
+  const registered = new Set(readAppPages());
+  const rows = [];
+  const problems = [];
+
+  for (const view of views) {
+    const pages = VIEW_PAGES[view];
+    if (!pages) {
+      rows.push({ view, pages: [], state: 'UNMAPPED' });
+      problems.push(`MISSING ${view}：demo 有此视图，但 VIEW_PAGES 未登记承接页（新视图先登记承接页，或列入 ALLOWED_MISSING_VIEWS 并写明理由）`);
+      continue;
+    }
+    if (!pages.length) {
+      const ok = allowed.includes(view);
+      rows.push({ view, pages, state: ok ? 'MISSING(allowed)' : 'MISSING' });
+      if (!ok) problems.push(`MISSING ${view}：demo 有此视图，小程序无承接页，且未列入 ALLOWED_MISSING_VIEWS 白名单`);
+      continue;
+    }
+    const broken = pages.filter((p) => !registered.has(p) || !existsSync(join(ROOT, `miniprogram/${p}.wxml`)));
+    if (broken.length) {
+      rows.push({ view, pages, state: 'MISSING', broken });
+      problems.push(`MISSING ${view}：承接页未在 app.json.pages 注册或 .wxml 缺失：${broken.join('、')}`);
+      continue;
+    }
+    rows.push({ view, pages, state: 'OK' });
+  }
+
+  // 白名单自校验：防止「静默排除」借白名单还魂
+  for (const view of allowed) {
+    if (!views.includes(view)) {
+      problems.push(`ALLOWED_MISSING_VIEWS 含 ${view}，但它不是 demo 的视图（白名单只收纳 demo 有、小程序确无页的视图）`);
+    } else if (VIEW_PAGES[view] && VIEW_PAGES[view].length) {
+      problems.push(`ALLOWED_MISSING_VIEWS 含 ${view}，但 VIEW_PAGES 已登记承接页 ${VIEW_PAGES[view].join('、')}（有页的视图必须移出白名单）`);
+    }
+  }
+
+  return {
+    views,
+    rows,
+    problems,
+    present: rows.filter((r) => r.state === 'OK').length,
+    allowedMissing: rows.filter((r) => r.state === 'MISSING(allowed)').map((r) => r.view)
+  };
 }
 
 /** 读 WXSS 样式层 page 块里的令牌 */
@@ -336,7 +451,7 @@ export function tapMinUses(css) {
 
 /* ------------------------------ 核对 ------------------------------ */
 
-export function check() {
+export function check(options = {}) {
   const problems = [];
   const rows = [];
 
@@ -387,6 +502,17 @@ export function check() {
   if (!/min-height:\s*var\(--tap-min/.test(comp)) problems.push(`${COMPONENTS_WXSS} 交互类未引用 --tap-min 触控区令牌`);
   rows.push({ kind: 'a11y' });
 
+  // 5 demo 视图承接：白名单外的缺失视图 / 过期的白名单项都判失败
+  const viewAudit = auditViews(options);
+  for (const p of viewAudit.problems) problems.push(p);
+  rows.push({
+    kind: 'view',
+    rows: viewAudit.rows,
+    views: viewAudit.views,
+    present: viewAudit.present,
+    allowedMissing: viewAudit.allowedMissing
+  });
+
   return { rows, problems };
 }
 
@@ -426,6 +552,17 @@ function main() {
       console.log('');
       console.log('4) 可访问性门槛');
       console.log('   样式层无裸 px 字号（全部 calc(Npx * var(--font-scale, 1))）；交互类引用 --tap-min');
+    } else if (r.kind === 'view') {
+      console.log('');
+      console.log('5) demo 视图承接（demo.html render() 分发 → app.json pages 注册页）');
+      console.log(`   ${r.views.length} 个视图；有承接页 ${r.present} 个；白名单允许缺失 ${r.allowedMissing.length} 个`);
+      for (const row of r.rows) {
+        if (row.state === 'MISSING(allowed)') continue;
+        console.log(`   ${pad(row.view, 10)} ${pad(row.pages.length ? row.pages.join(' / ') : '—', 56)} ${row.state}`);
+      }
+      for (const row of r.rows) {
+        if (row.state === 'MISSING(allowed)') console.log(`MISSING(allowed): ${row.view}`);
+      }
     }
   }
   console.log('');
@@ -434,7 +571,7 @@ function main() {
     for (const p of problems) console.log(`  - ${p}`);
     process.exitCode = 1;
   } else {
-    console.log('PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门槛未被破坏。');
+    console.log('PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门槛未被破坏、demo 视图承接已逐个核对。');
     console.log('未覆盖：微信开发者工具／模拟器／真机渲染与截图（本片未取得）。');
   }
 }

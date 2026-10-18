@@ -62,10 +62,12 @@
 
 | operationId | 方法 路径（契约 `/api/v1` 前缀下） | 注册位置 | 成功状态与头部 | 失败码（本层实测） |
 | --- | --- | --- | --- | --- |
-| `createTranscription` | `POST /speech/transcriptions` | `routes/speech.ts:114` | **202** + `ETag: "<job.revision>"` + `Cache-Control: no-store` | 400 `INVALID_REQUEST`／400 `IDEMPOTENCY_KEY_REQUIRED`／401 `SESSION_REQUIRED`／409 `IDEMPOTENCY_CONFLICT`／503 `PROVIDER_UNAVAILABLE`／409 `OBJECT_UNAVAILABLE`（real 媒体未接线） |
-| `getTranscription` | `GET /speech/transcriptions/{id}` | `routes/speech.ts:135` | **200** + `ETag: "<revision>"` + `Cache-Control: no-store` | 400 `INVALID_REQUEST`／401／404 `NOT_FOUND` |
-| `deleteTranscription` | `DELETE /speech/transcriptions/{id}` | `routes/speech.ts:149` | **202** + `Cache-Control: no-store`（见下"未下发 ETag"说明） | 400／401／404／409 `REVISION_CONFLICT`／428 `REVISION_REQUIRED` |
-| `confirmTranscription` | `PATCH /speech/transcriptions/{id}/confirmation` | `routes/speech.ts:169` | **200** + `ETag: "<revision>"` + `Cache-Control: no-store` | 400／401／404／409／428 |
+| `createTranscription` | `POST /speech/transcriptions` | `registerSpeechRoutes` 的 `app.post`（`/speech/transcriptions`） | **202** + `ETag: "<job.revision>"` + `Cache-Control: no-store` | 400 `INVALID_REQUEST`／400 `IDEMPOTENCY_KEY_REQUIRED`／401 `SESSION_REQUIRED`／409 `IDEMPOTENCY_CONFLICT`／503 `PROVIDER_UNAVAILABLE`／409 `OBJECT_UNAVAILABLE`（real 媒体未接线） |
+| `getTranscription` | `GET /speech/transcriptions/{id}` | `registerSpeechRoutes` 的 `app.get`（`/speech/transcriptions/:id`） | **200** + `ETag: "<revision>"` + `Cache-Control: no-store` | 400 `INVALID_REQUEST`／401／404 `NOT_FOUND` |
+| `deleteTranscription` | `DELETE /speech/transcriptions/{id}` | `registerSpeechRoutes` 的 `app.delete`（`/speech/transcriptions/:id`） | **202** + `Cache-Control: no-store`（见下"未下发 ETag"说明） | 400／401／404／409 `REVISION_CONFLICT`／428 `REVISION_REQUIRED` |
+| `confirmTranscription` | `PATCH /speech/transcriptions/{id}/confirmation` | `registerSpeechRoutes` 的 `app.patch`（`/speech/transcriptions/:id/confirmation`） | **200** + `ETag: "<revision>"` + `Cache-Control: no-store` | 400／401／404／409／428 |
+
+**注册位置一律按符号检索，勿按行号复现**：四条均为 `services/api/src/routes/speech.ts` 的 `registerSpeechRoutes` 内 `app.{post,get,delete,patch}` 调用。读数对照——阶段 2a 快照 `c3aa79e`（本表原数字的来源）实测 `:114`／`:135`／`:149`／`:169`；交付提交 `a249e77`（2b 在文件头插入 18 行后）实测 `:132`／`:153`／`:167`／`:187`；测量基线 `6c22000` 实测 `:160`／`:196`／`:210`／`:230`。原表未随 2b 的 18 行插入更新，故在交付提交上即已错位（四条统一偏 +18），按上式补记。
 
 本模块是**薄适配层**：幂等占位、`If-Match` 判定、归属、fail-closed 终态全部由阶段 1 的 `speech/service.ts` 负责，本层只做身份读取、契约 body schema 校验、封套与头部装配。**未新增任何契约字段**。
 

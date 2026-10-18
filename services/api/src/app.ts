@@ -26,6 +26,7 @@ import type { FastifyInstance } from 'fastify';
 import { CONTRACT_VERSION } from './contract.ts';
 import type { AppConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope } from './errors.ts';
+import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
 import type { PgPool } from './db/pool.ts';
 import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
@@ -71,6 +72,8 @@ import { createAdminContentService } from './admin/service.ts';
 import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
+import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
@@ -186,6 +189,7 @@ import {
   type AnswerComposer,
   type TranscriptionPort,
 } from './conversations/service.ts';
+import { createModerationRiskScreen, type RiskScreen } from './conversations/screen.ts';
 import {
   createMemoryConversationStore,
   type ConversationStore,
@@ -341,6 +345,11 @@ export interface BuildAppOptions {
     communityStore?: AdminOpsServiceOptions['community'];
     /** 注入 flag 语义分类表：用于验证"含放宽语义 ⇒ 拒绝接线"（默认出厂表）。 */
     flagEffects?: AdminOpsServiceOptions['flagEffects'];
+    /**
+     * 真实账号写权威（GY-I22）：不传时 `real` 下按 `pool !== null` 自建
+     * `createPostgresAccountAuthority({ pool })`；`pool === null` ⇒ 账号停用面继续整域 503。
+     */
+    accountAuthority?: AdminOpsServiceOptions['accountAuthority'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -453,6 +462,11 @@ export interface BuildAppOptions {
     dose?: DoseAuthority;
     guard?: AnswerGuard;
     composer?: AnswerComposer;
+    /**
+     * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
+     * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
+     */
+    riskScreen?: RiskScreen;
     transcription?: TranscriptionPort;
     cascade?: TurnCascadePort;
   };
@@ -624,8 +638,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
     // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
     // 以确保「客户端不可指定 openid / 角色 / 用户 id」在 API 层被显式拦下（400）。
-    ajv: { customOptions: { removeAdditional: false } },
+    // GY-I02：选项常量与下方的 2020-12 校验器**共用一份**（`schema-validator.ts`），
+    // 换方言不换校验口径。
+    ajv: { customOptions: RUNTIME_AJV_CUSTOM_OPTIONS },
   });
+
+  // GY-I02（#2）：运行时校验器切到契约声明的 dialect——JSON Schema **2020-12**（`Ajv2020`）。
+  //
+  // 改前 Fastify 走默认 `@fastify/ajv-compiler`（`ajv` 的 draft-07 入口）：2020-12 专有关键字
+  // （`prefixItems`、`$dynamicRef`、`unevaluatedProperties`…）要么编译报错，要么被静默忽略后放行请求。
+  // 必须在**任何路由注册之前**设置：Fastify 在 `ready()` 时按此编译器编译全部路由 schema。
+  // 逐项对照见 `./schema-validator.ts` 与 `tests/unit/openapi-2020-fastify-adapter.test.mjs`。
+  app.setValidatorCompiler(createJsonSchema2020ValidatorCompiler());
 
   // GY-I16（#16；Refs #7）真机阻断缺陷修复：**空请求体的写请求按「无请求体」处理**。
   //
@@ -990,8 +1014,37 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
     adminContentService = failClosed.content;
-    adminOpsService = failClosed.ops;
-    app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+    // **GY-I22（#22）唯一显式放行**：账号停用面已接上真实持久权威（迁移 0017 的
+    // `public.suspend_account()`：`users.state` + `auth_epoch` + 撤会话 + 审计**同一事务**）。
+    // 放行条件只有"拿到真实库池 / 显式注入权威"，**不看**任何自述持久化标志；
+    // 其余 33 条后台路由（含账号读面 `listAdminUsers`）仍逐条 503
+    // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
+    const realAccountAuthority =
+      adminInjection?.accountAuthority ??
+      (pool === null ? null : createPostgresAccountAuthority({ pool }));
+    if (realAccountAuthority === null) {
+      adminOpsService = failClosed.ops;
+      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+    } else {
+      adminOpsService = restrictAdminOpsToAccountsAuthority(
+        createAdminOpsService({
+          store: adminOpsStore,
+          now: clock,
+          signingKey: adminSigningKey,
+          executionMode: config.executionMode,
+          accountAuthority: realAccountAuthority,
+          jobPort: adminInjection?.jobPort,
+          // GY-I15 接线同上：`hidePost` 在 real 下不放行，但端口仍按同一份社区 store 装配。
+          community: communityPostPortForAdmin,
+          flagEffects: adminInjection?.flagEffects,
+        }),
+        reason,
+      );
+      app.log.warn(
+        { executionMode: config.executionMode },
+        'GY-I22 账号停用已接真实认证权威 ⇒ POST /admin/accounts/{id}/suspend 走单事务真实写；其余 33 条后台路由仍 503 PROVIDER_UNAVAILABLE',
+      );
+    }
   } else {
     adminContentService = createAdminContentService({
       store: adminContentStore,
@@ -1004,6 +1057,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       now: clock,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
+      // GY-I22：**只经显式注入**开启真实停用权威（与 `mediaObjectStore` 同一口径：
+      // 不读 ambient 配置、不因"有 pool"就自动在 stub 域里接真实写）。
+      accountAuthority: adminInjection?.accountAuthority,
       jobPort: adminInjection?.jobPort,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
@@ -1022,7 +1078,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
   //
   // **对象存储端口的唯一起因是显式注入**（`mediaObjectStore` 选项）：注入什么端口就用什么端口，
-  // 装配层在这里**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
+  // 端口这一侧**只**做 `??` 兜底，**不**读取、也**不**传递任何环境配置 —— 因此
   // **ambient `process.env` 不是开启真实适配器的门**：
   //   - **未显式注入** ⇒ 一律 `resolveMediaObjectStore({ executionMode })`（**不传 `env`**）：
   //     `real` ⇒ `unwired`（整域 fail-closed 503 `PROVIDER_UNAVAILABLE`，与接线前逐字一致，
@@ -1035,8 +1091,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 派单 `.pg17/dispatch/issue193-refailclosed.md` A 项）：这 4 个 `OBJECT_STORAGE_*` 键**正是 real
   // 模式的启动必填项**（见 `config.ts` 的 `REQUIRED_WHEN_REAL`）⇒「运维不设键」**不可能**充当
   // 「可启动的 real 环境」的门 —— 把 ambient env 交给 resolver 等于**配置即门控**，
-  // 在隐私守卫（上传路由用途授权／撤回 epoch，见 `routes/media.ts` 的 `createUpload` 只经
-  // `guards.requireUser`）与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
+  // 在隐私守卫（上传受理的用途授权已由 GY-I27 第三片接上，但**缺数据库时不挂**；撤回 epoch 未接）
+  // 与可恢复媒体元数据（`media/service.ts` 的 `records`/`grants`/`idempotency`
   // 仍是进程内 `Map`，重启即丢 owner/版本/rawRef 与回收依据）尚未接妥前，会为真实用户媒体开门。
   // 这两片落地前，真实适配器只允许经**显式注入**装配；**不得**用布尔自述标志当门控
   // （判据是端口的 `kind`，同监工对 #121 的 P1 口径）。
@@ -1053,6 +1109,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // env／`options.env`／原型链／全局对象派生），否则整域 fail-closed 503，与「环境里有没有那四个键」
   // 「谁读了 env」「端口从哪个模块来」全都无关。
   // ⛔ 装配层**不得自行铸造**该能力（那等于自我批准）：这里只**转发**调用方给出的选项。
+  //
+  // 访问网关原点（契约 `AccessGrant.url` 的 host）**只来自配置层**：`config.mediaAccessGrantOrigin`
+  // 已由 `config.ts` 校验（https、无凭据、无路径/查询），这里**原样透传**；未配置（`null`）就
+  // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
+  // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
   const mediaService = createAppMediaService({
     executionMode: config.executionMode,
@@ -1062,6 +1123,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
     // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
     ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
+    // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
+    ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
     now: clock,
   });
 
@@ -1277,6 +1340,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    （候选正文由检索条目逐字组成，不经任何模型）。
   const conversationGuard: AnswerGuard = conversationInjection?.guard ?? createConversationGuard({ dose: conversationDose });
   const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();
+  // 5b) 风险/注入筛查（问题 + 资料原文）：**复用** `packages/moderation` 现成的
+  //     `dangerous_usage` + `prompt_injection` 规则层，不新写第二套规则；缺省启用（fail-closed）。
+  const conversationRiskScreen: RiskScreen = conversationInjection?.riskScreen ?? createModerationRiskScreen();
   // 6) 语音轮次：只读复用已合并的 `app.speechService.getTranscription`（受理时核对
   //    `transcription_id` + `transcription_revision` + `confirmed`），不新建第二套转写存储。
   const conversationTranscription = conversationInjection?.transcription ?? createTranscriptionPort({
@@ -1294,6 +1360,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           retrieval: conversationRetrieval,
           guard: conversationGuard,
           composer: conversationComposer,
+          riskScreen: conversationRiskScreen,
           transcription: conversationTranscription,
           cascade: conversationCascade,
           ledger: conversationLedger,
@@ -1425,7 +1492,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   ]));
   registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
-  registerMediaRoutes(app, config, guards, mediaService);
+  // GY-I27 第三片（C7）：把与识别/转写/合成/OCR **同源的那一个** `consentGate` 交给媒体域，
+  // 媒体域只在 `POST /media/uploads` 上按请求体 `purpose` 用它（其余 6 条入口不挂）。
+  // 缺数据库且未注入 ⇒ `consentGate === undefined` ⇒ 媒体域拿到缺省 passthrough，行为不变。
+  registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate });
   registerMessageRoutes(app, config, guards, messagesService);
   // GY-I16 收藏／历史 5 条路由的唯一注册点（real 模式 service 为 null ⇒ 一律 503）。
   registerFavoriteRoutes(app, config, guards, favoritesService);

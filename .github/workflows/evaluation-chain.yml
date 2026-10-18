@@ -1,0 +1,75 @@
+name: Evaluation chain readout
+
+# GY-I21（#21）：三条评估入口 run-evaluation / freeze-real-samples --verify /
+# validate-evaluation-samples 此前只被 tests/evaluation 的单测间接覆盖，从未被任何
+# workflow 真跑。本 workflow 只读：不接触数据库、不需要任何凭据、不做任何真实外部调用。
+# 红意味着「门禁读数与仓库约定不一致」，必须解释后再说合并；绿只说明读数与约定一致，
+# 不表示真实评估成立（空预测下 isRealEvaluation=false、gateStatus=not_evaluated）。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  evaluation-chain:
+    name: evaluation-chain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 三条评估命令逐条落盘并打印（退出码 + 完整输出）
+        run: |
+          set -u
+          out="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain"
+          rm -rf "$out"
+          mkdir -p "$out"
+          a=0
+          node tools/evaluation/run-evaluation.mjs \
+            --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+            --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json \
+            --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json \
+            --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+            --out "$out/run-evaluation-report.json" \
+            > "$out/run-evaluation.log" 2>&1 || a=$?
+          b=0
+          node tools/evaluation/freeze-real-samples.mjs \
+            --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+            --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+            --index-version gy-i20-weeds-real-2026.10.14 \
+            --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json \
+            > "$out/freeze-real-samples.log" 2>&1 || b=$?
+          c=0
+          node tools/evaluation/validate-evaluation-samples.mjs \
+            --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+            > "$out/validate-evaluation-samples.log" 2>&1 || c=$?
+          echo "run-evaluation exit=$a / freeze-real-samples --verify exit=$b / validate-evaluation-samples exit=$c"
+          # 报告 JSON（约 26 KB）同时经 stdout 落入 run-evaluation.log（第 2 行起即整份 JSON，人读摘要在其后）；
+          # --out 再落一份 run-evaluation-report.json，供第 4 个参数直接解析。
+          for f in run-evaluation freeze-real-samples validate-evaluation-samples; do
+            echo "===== $f.log ====="
+            cat "$out/$f.log"
+            echo "===== end $f.log ====="
+          done
+          if [ "$a" -ne 0 ] || [ "$b" -ne 0 ] || [ "$c" -ne 0 ]; then
+            echo "FAIL：三条评估命令必须全部 exit 0（退出码与输出见上）"
+            exit 1
+          fi
+      - name: 断言读数含 not_evaluated 与样本缺口桶 16/17，并核对报告结构
+        if: always()
+        run: |
+          node tools/evaluation/verify-gate-readout.mjs \
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/run-evaluation.log" \
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/freeze-real-samples.log" \
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/validate-evaluation-samples.log" \
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/run-evaluation-report.json"

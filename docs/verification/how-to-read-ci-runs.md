@@ -8,7 +8,7 @@
 
 ---
 
-## 1 读什么：三个工作流的触发条件与内容（file:line）
+## 1 读什么：四个工作流的触发条件与内容（file:line）
 
 检查名是 PR 上可直接引用的必需检查名。下表逐项给出**触发条件**与**实际执行**的 `file:line`。
 
@@ -25,7 +25,7 @@
 | `docs` | `:17-28` | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（**不装 Node**） |
 | `static-check` | `:30-43` | `setup-node` 固定 `24.16.0` → `npm ci --no-audit --no-fund` → `npm run lint` |
 | `unit-tests` | `:45-58` | 同上安装 → `npm run test:unit` |
-| `integration-http` | `:60-77` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 11 个回环脚本，当前链长以 `package.json` 为准；**无需 PG／微信开发者工具／外网**；约 28–31 秒，量级参考） |
+| `integration-http` | `:60-77` | 同上安装 → `npm run test:integration:http`（`package.json` 里**逐个列出**的 12 个回环脚本；2026-10-17 实测 12 条，当前链长以 `package.json` 为准；**无需 PG／微信开发者工具／外网**；约 28–31 秒，量级参考） |
 | `contract-tests` | `:79-92` | 同上安装 → `npm run test:contract` |
 | `evaluation-tests` | `:94-107` | 同上安装 → `npm run test:evaluation` |
 | `build` | `:109-122` | 同上安装 → `npm run build` |
@@ -43,7 +43,7 @@
 | job 名（= 检查名） | `development-docs` | `:29-30` |
 | 实际执行 | `python3 --version` → `validate_development_docs.py` → `validate_contracts.py` → `test_contracts.py`（与 `engineering-shell.yml` 的 `docs` job 同三条命令，**不装 Node**） | `:36-39` |
 
-⇒ 只改 `docs/**` 的 PR，**只会**命中 `development-docs`；七个工程 job 在 `engineering-shell.yml` 上**不带 `paths` 过滤**，所以文档 PR 也会触发它们。
+⇒ 只改 `docs/**` 的 PR，在**带 `paths` 过滤**的工作流里只会命中 `development-docs`；但 `engineering-shell.yml` 的七个 job 与 1.4 的 `evaluation-chain` **都不带 `paths` 过滤**，所以文档 PR 也会触发它们（白白多跑一轮，不是失败）。
 
 ### 1.3 `.github/workflows/local-wechat.yml`（本机准备）
 
@@ -56,6 +56,46 @@
 | 实际执行 | `setup-node 24.16.0` →`npm ci` →`check-wechat-project.mjs` →`node --check tools/smoke-wechat.cjs`（**仅语法**）→ 四个 `node --test` →`demo-align.mjs` →`verify-layout.mjs` → 忽略规则双向断言 | `:51-64` |
 
 ⚠️ **路径过滤造成的"没有读数"不等于 PASS**：`docs/**` 改动**不**命中 1.3 的 `paths`，该检查**不会被触发**，因而不会有 success 结论；判读时按第 5 节处理，**不得**把"未触发"记成通过。
+
+### 1.4 `.github/workflows/evaluation-chain.yml`（评估链读数，只读）
+
+| 项 | 值 | 位置 |
+| --- | --- | --- |
+| 触发 | `pull_request`（全部路径，**不带** `paths` 过滤）；`push` 限定 `main` | `.github/workflows/evaluation-chain.yml:9-12` |
+| 权限 | `contents: read`；**不接触数据库、不需要任何凭据、不做真实外部调用** | `:14-15` |
+| runner | `ubuntu-24.04`（与本仓其余 workflow 一致，**不用** `ubuntu-latest`，理由见本节末） | `:20` |
+| job 名（= 检查名） | `evaluation-chain` | `:18-19` |
+| 实际执行 | `setup-node 24.16.0` →`npm ci --no-audit --no-fund` → 三条命令**逐条**落盘（`$RUNNER_TEMP/gy-evaluation-chain/*.log`，stderr 并入同一文件；`run-evaluation` 的报告 JSON 约 26 KB **同时经 stdout 落入 `run-evaluation.log`**——第 2 行起即整份 JSON、人读摘要在其后；`--out` 再落一份 `run-evaluation-report.json`，供第 4 个参数直接解析）→ 打印三条退出码并 `cat` 三份日志 → `node tools/evaluation/verify-gate-readout.mjs` 用**四个**参数断言读数（三份日志 ＋ 报告 JSON） | `:23-75` |
+
+三条命令（参数写死，全部读仓内文件，无外网、无数据库）：
+
+1. `node tools/evaluation/run-evaluation.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json --out "$RUNNER_TEMP/gy-evaluation-chain/run-evaluation-report.json"`（`:38-44`；同一份 JSON 也经 stdout 落在 `run-evaluation.log` 里，报告文件被第 5 步当第 4 个参数读回）
+2. `node tools/evaluation/freeze-real-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json --index-version gy-i20-weeds-real-2026.10.14 --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json`（`:46-51`；`--verify` 只核对，不写盘）
+3. `node tools/evaluation/validate-evaluation-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json`（`:53-55`）
+
+行号按**带第 4 个参数**的版本测量：`.github/workflows/evaluation-chain.yml` 在本片改过（加 `--out` 与第 4 个参数），旧行号（`:38-43`／`:45-50`／`:52-54`／`:23-71`）对应的是三参版本；r2 把 `:57` 的一行注释拆成两行，断言步由 `:67-74` 移到 `:68-75`。
+
+**这个 job 红了意味着什么**（`tools/evaluation/verify-gate-readout.mjs` 的断言）：
+
+- 三条命令任一退出码非 0 ⇒ `FAIL：三条评估命令必须全部 exit 0`，先看对应 `.log` 的报错行；
+- 三份输出缺约定读数 ⇒ `FAIL <文件>: 缺 "<字面量>"（为什么必须出现）`。必须出现的读数：`run-evaluation.log` 的 `not_evaluated`、`"isRealEvaluation": false`、`样本缺口桶：16/17 未达标`；`freeze-real-samples.log` 的 `复算核对`、`冻结=通过`、`覆盖绑定：通过`；`validate-evaluation-samples.log` 的 `样本索引：`、`校验结果：通过（无错误）`；
+- 断言字面量被改成空串、或改成一个不存在的值 ⇒ 同样红（防止「把断言改成永远成立」）；
+- 参数不是三个或四个 ⇒ 断言脚本以 exit 2 退出（用法错误，与读数不符区分）；stderr 共两行——首行仍是原文案，第二行说明可选第 4 个参数；
+- 第 4 个参数（`run-evaluation-report.json`）给出的报告结构不对 ⇒ `FAIL 结构化断言：…` 且 exit 1，四类新增红：
+  - 报告读不到、不是合法 JSON、顶层不是对象 ⇒ 分别点名「读不到报告 JSON」／「报告不是合法 JSON」／「报告顶层必须是对象」，各自单独报错、不吞异常；
+  - `schemaVersion` 不等于 `1.0.0` ⇒ 点名实测值（如 `（实测 "1.0.1"）`）；
+  - `isRealEvaluation` 不是 `false`、或任一 `tasks.<任务>.gateStatus` 不是 `not_evaluated` ⇒ 点名到字段（如 `tasks.weed_photo.gateStatus 必须是 "not_evaluated"（实测 "pass"）`）；
+  - `gaps` 与日志里的 `样本缺口桶：X/Y 未达标` 对不上 ⇒ 两边读数一起打印（如 `日志缺口桶 15/17 与报告不一致（报告：未达标 16 桶 / 共 17 桶）`）；`tasks`／`gaps` 为空、或日志缺这一行 ⇒ 同样红，**空集不算证据**。
+
+结构化断言**不是**换一批字面量：它按字段核形状与取值，因此「报告里少了一个 task」「缺口桶数字被改一位」「日志与报告各说各话」都逃不掉；三参模式（只有三份日志）在**合法三参运行**下的 stdout 与退出码与旧版逐字相同（参数个数错时 stderr 多一行说明，首行文案不变）。
+
+**绿不等于真实评估成立**：本 job 用**空预测**（`gy-i20-weeds-predictions-none.json`）喂真实冻结样本，报告自陈 `isRealEvaluation=false`、门禁 `gateStatus=not_evaluated`，缺口桶仍是 `16/17 未达标`。绿只说明「这三条命令在本提交上跑得通、读数与仓库约定一致」（含报告 JSON 的 `schemaVersion`／`isRealEvaluation`／每个 `gateStatus`／缺口桶数字都对得上）。
+
+**与 1.1 的 `evaluation-tests` 不是一回事**：`evaluation-tests` 跑 `npm run test:evaluation`（`tests/evaluation/*.test.mjs` 的纯函数单测，见 `engineering-shell.yml:94-107`），**不跑**这三个 CLI 入口；本 job 是这三个入口在 CI 里唯一的执行点。
+
+**为什么不用 `ubuntu-latest`**：本仓 `runs-on` 统一为 `ubuntu-24.04`，第 5 节第 1 条也按该值判读；浮动标签会让「镜像里预装了哪个 Python／Node」的读数漂移。
+
+⚠️ 本 job **不带** `paths` 过滤，任何 PR 都会触发；没看到它的结论时按第 5 节处理，**不得**把「未出现」记成通过。
 
 ---
 
@@ -114,7 +154,7 @@ curl -sS -H "Accept: application/vnd.github+json" \
 ## 3 判读：结论必须绑定 SHA 并写清"跑在哪个提交上"
 
 1. **先记 SHA，再看结论**。README/设计文档里常见的写法是"某提交的检查已 success"——`success` 只对该 SHA 成立。记录形式建议：`<检查名> @ <完整 40 位 SHA> = <conclusion>`。
-2. **把"检查名"与"结论"分开记**：检查名是稳定的（1.1–1.3 已列全），结论是易变的。
+2. **把"检查名"与"结论"分开记**：检查名是稳定的（1.1–1.4 已列全），结论是易变的。
 3. **区分 PR 读数与 `push: main` 读数**：`event` 字段给出触发方式（`pull_request` / `push`）；同一 workflow 在两者上的运行是不同运行。
 4. **"未触发"要显式写成未触发**：路径过滤（1.2、1.3）会让某些检查根本不出现；这与 `failure`、与 `success` 都不同。
 5. **结论不与"整项验收"挂钩**：本仓库口径中，CI 只覆盖 Node／Python 层的离线检查；真实 PG 结构行为、真机渲染、真实供应商各自另有门禁（第 5 节第 5 条）。
@@ -134,7 +174,7 @@ curl -sS -H "Accept: application/vnd.github+json" \
 
 ## 5 两条（及以上）诚实口径
 
-1. **本机读数 ≠ `ubuntu-24.04` CI 读数。** 本仓库 CI 的 runner 固定为 `ubuntu-24.04`（1.1 各 job 的 `runs-on`），Node 版本由 workflow 固定为 `24.16.0`；本机是 Windows + 各自安装的 Node/npm/Python 版本。同一提交上，操作系统、依赖解析结果、环境变量、并行时序都不同 ⇒ **本机跑绿不能代替 CI 读数，CI 跑绿也不能代替真机/真实服务读数**。两者只能各自如实标注。
+1. **本机读数 ≠ `ubuntu-24.04` CI 读数。** 本仓库 CI 的 runner 固定为 `ubuntu-24.04`（1.1 各 job 与 1.4 的 `runs-on`），Node 版本由 workflow 固定为 `24.16.0`；本机是 Windows + 各自安装的 Node/npm/Python 版本。同一提交上，操作系统、依赖解析结果、环境变量、并行时序都不同 ⇒ **本机跑绿不能代替 CI 读数，CI 跑绿也不能代替真机/真实服务读数**。两者只能各自如实标注。
 2. **推送新提交即失效。** 检查运行绑定 SHA，**结论必须绑定 SHA** 才有意义；`main` 前进后，旧 SHA 的 success 不再描述当前 `main`。引用读数时写清"跑在哪个 SHA 上"，并注明它是否为当前 `main` 的祖先。
 3. **`conclusion` 取值必须逐字判读**，常见取值：
 
@@ -152,6 +192,7 @@ curl -sS -H "Accept: application/vnd.github+json" \
    - 微信开发者工具编译、真机渲染、基础库版本 —— 见 `engineering-shell.yml:6` 的边界声明；本机任务，不在该 CI。
    - 真实 PostgreSQL 结构/行为 —— 由独立的工作流承担（本仓库另有 5 个检查名以 `-postgres-17.11` 结尾的 job：`auth-privacy-postgres-17.11`／`catalog-postgres-17.11`／`consent-grant-postgres-17.11`／`source-lifecycle-postgres-17.11`／`staging-intake-postgres-17.11`，外加 `workbook-staging.yml` 的 `staging-pg17`）；`engineering-shell.yml` 的七项里**没有**起库步骤。
    - 真实供应商（AI/OCR/ASR/TTS 等）能力 —— CI 内一律禁用真实外部调用。
+   - 真实模型效果 —— 1.4 的 `evaluation-chain` 只证明三条离线命令在该 SHA 上退出码为 0、读数与约定一致；空预测下报告自陈 `isRealEvaluation=false`、`gateStatus=not_evaluated`，**不**证明识别/问答真实能力。
    - `a0cab31`/`857a683` 一类历史基线的读数 —— 只能各自现场取数，不互相顶替。
 
 ---
