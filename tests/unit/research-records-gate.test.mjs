@@ -582,3 +582,68 @@ test('带「技术」列的总览表不参与按行来源计数 ⇒ exit 0', (t)
   const result = runGate(dir);
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+// —— r4 回归：豁免必须是锚定白名单、编号分隔符要放宽（审查给的三个 false-pass 向量） ——
+// 这三条都是"形状上的小改动能把整个技术段放过去"的方向：豁免词当标题、豁免词当子串、编号带点。
+
+test('技术段标题恰好是「## 1 检索」且无字段 ⇒ exit 1（豁免只认整体等于结构性小节名）', (t) => {
+  // 审查向量 v1：子串豁免把「标题里带 检索」的段落当结构性小节，整段 7 项被跳过。
+  const body = [
+    `# ${DAY} 夹具标题即豁免词`,
+    '',
+    ...recordHead(),
+    '',
+    '## 1 检索',
+    '',
+    `- ${URL_A}`,
+    `- ${URL_B}`,
+    '',
+    '决定：自研。理由：夹具。',
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-heading-exempt-word.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /技术项「1 检索」缺少字段：现用版本/u);
+});
+
+test('完整记录内「## 2 Fastify 检索证据」无字段 ⇒ exit 1（豁免词不得作子串命中）', (t) => {
+  // 审查向量 v2：第 2 段标题含「检索证据」，子串豁免把它整段放过，按项 ≥2 也没核。
+  const body = [
+    `# ${DAY} 夹具标题含豁免词`,
+    '',
+    ...recordHead(),
+    '',
+    ...techSection(1, 'Node.js', [URL_A, URL_B]),
+    '## 2 Fastify 检索证据',
+    '',
+    '夹具：该段故意不给字段与来源。',
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-heading-contains-exempt.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /技术项「2 Fastify 检索证据」缺少字段：现用版本/u);
+  assert.match(result.stdout, /技术项「2 Fastify 检索证据」的来源 URL 少于 2 条/u);
+});
+
+test('编号带点分隔符「## 1. Fastify」且无字段 ⇒ exit 1（不得因编号形状漏判）', (t) => {
+  // 审查向量 v3：旧正则只认 `1 `，带点编号整段漏判成非技术节。
+  const body = [
+    `# ${DAY} 夹具点号编号`,
+    '',
+    ...recordHead(),
+    '',
+    '## 1. Fastify',
+    '',
+    `- ${URL_A}`,
+    `- ${URL_B}`,
+    '',
+    '决定：引入。理由：夹具。',
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-dotted-number.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /技术项「1\. Fastify」缺少字段：现用版本/u);
+});

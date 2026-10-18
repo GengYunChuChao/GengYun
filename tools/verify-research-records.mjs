@@ -346,16 +346,22 @@ function collectFields(lines, tables, from, to) {
  * 该记录就按完整记录核，不论段内还有没有七项字段或 `### 检索来源` 子标题。
  * 早先按"段内有字段／有来源子标题"判，会把"七项连同来源子表一起删掉"的技术段降级成最短记录
  * 而静默放行（c17），删证据反而变绿——这正是分类必须前置到记录级的原因。
- * 真实记录里的非技术编号节（`## 0 总览`、`## 8 检索证据总表`、`## 9 未取得项`、`## 10 复核命令`）
- * 按标题关键词豁免，否则制度性小节会被当成技术项误红。
+ *
+ * 豁免只给**标题整体恰好**是结构性小节的编号节（裁定 r4 §1）：白名单全串锚定，⛔ 不用
+ * 「含 检索／来源／决定／复核」这类子串豁免——`## 1 检索`、`## 2 Fastify 检索证据` 里
+ * 恰好带这些词，子串豁免会把真技术段整段放过（新的 false-pass）。
+ *
+ * 编号分隔符按常见 Markdown 写法放宽到 `1`／`1.`／`1、`／`1)`／`1）`（裁定 r4 §2），
+ * 否则 `## 1. Fastify` 这种形状差异会漏判成非技术节。
  */
-const NON_TECHNICAL_TITLE = /总览|未取得|复核|证据总表|决定|检索|来源/u;
+const STRUCTURAL_SECTION_TITLE = /^(?:总览|检索证据总表|未取得项?|复核读数|复核命令)$/u;
+const NUMBERED_HEADING = /^(\d+)[.、)）]?\s+(\S.*)$/u;
 
 function isTechnicalSection(section) {
   if (section.level !== 2) return false;
-  const match = /^(\d+)\s+(\S.*)$/u.exec(section.title);
+  const match = NUMBERED_HEADING.exec(section.title);
   if (match === null || Number(match[1]) < 1) return false;
-  return !NON_TECHNICAL_TITLE.test(match[2]);
+  return !STRUCTURAL_SECTION_TITLE.test(match[2]);
 }
 
 /** 表头里出现这些词，才算「来源表」；总览表（技术｜仓库现用｜上游状态｜决定）不算。 */
