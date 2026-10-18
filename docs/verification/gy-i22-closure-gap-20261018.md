@@ -71,7 +71,7 @@
 - `services/api/src/admin/ops/service.ts:346-350` —— `requireWiredAccountAuthority()`：
   `throw new ApiError('PROVIDER_UNAVAILABLE', '账号读/停用面尚未接线到认证权威', { retryable: false });`
 - `services/api/src/admin/ops/service.ts:352-356` —— `listAdminUsers` **先** `requireWiredAccountAuthority()` 再分页 ⇒ 读面 503。
-- `services/api/db/migrations/0017_account_suspend_authority.sql`（311 行）—— 四步单事务权威：
+- `services/api/db/migrations/0017_account_suspend_authority.sql`（**339 行 / 16448 B**，blob `099892fabe82f3b7e6aae8c55baf97f7fc704078`）—— 四步单事务权威：
   `public.suspend_account(uuid,uuid,uuid,integer,uuid)` / `public.restore_account(...)` + `admin_audit_events` + append-only 触发器。
 
 ⇒ **判读**：旧页 §5.1 的**三句话全部不再成立**（200 空页→503；404→200；停用后 200→401）。
@@ -300,13 +300,33 @@ $ @(Get-Process postgres).Count                                      ⇒ 0（无
 2. **`deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的整体 verdict 未取得**：该文件含 psql 元命令，
    脚本自述「由 `psql -f` 单独执行（本脚本不代跑）」（`tests/integration/account-suspend-pg.mjs:442` 附近同类口径），
    本轮**未跑** `psql -f`，故无该文件 `verdict` 读数。最小权限结论只来自脚本内 6 条 42501 反向控制。
-3. **scram 集群下双参形态不可用（实测，非推断）**：把 `pg_hba.conf` 首行改为 `host all all 127.0.0.1/32 scram-sha-256` 并
-   `pg_ctl reload` 后重跑**同一**双参命令 ⇒ exit **1**，逐字：
-   `首个失败读数：password authentication failed for user "gengyun_api_runtime"` /
-   `FAIL：有运行时 URL 但读数未全部通过 —— 首个失败：password authentication failed for user "gengyun_api_runtime"`。
-   机制：`tests/integration/account-suspend-pg.mjs:167` `CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${randomBytes(24).toString('hex')}'`
-   —— 口令**运行时随机生成且不回显**，故 argv[3] 的口令只可能在 `trust` 集群上"对得上"。
-   **本页不据此断言任何产品缺陷**，只登记"该用例的可复现性依赖 trust 回环集群"。
+3. **scram 集群下双参形态不可用（实测，非推断；本轮按对抗性审查订正为两个变体）**：同一隔离集群上把
+   `pg_hba.conf` **首行插入**一条 scram 规则再 `pg_ctl reload`，两种钉法的**首条错误不同**——以下均为
+   2026-10-18 本人复跑的原始输出（同一 `gengyun_suspend_test`；改 hba **之前**先用 trust 连接重建空库，
+   避免 `dropdb`/`createdb` 在 scram 规则下等口令输入）：
+
+   - **变体 A（规则钉到全体回环）**：首行 `host all all 127.0.0.1/32 scram-sha-256`
+     ⇒ `node tests/integration/account-suspend-pg.mjs <owner> <runtime>` **exit 1**，首个错误发生在
+     **owner 连接**上，`[M]` 一行都还没打印（日志 23 行，全部是错误栈与 PowerShell 的
+     `NativeCommandError` 包装，无任何 `[M]`/`[P]` 行）：
+     ```
+     Error: SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string
+         at Object.continueSession (...\node_modules\pg\lib\crypto\sasl.js:67:11)
+     ```
+     （`[M]` 在 `Client.connect` 之后才打印，故该变体**连库侧读数都取不到**。）
+   - **变体 B（规则钉到运行时角色）**：首行 `host all gengyun_api_runtime 127.0.0.1/32 scram-sha-256`
+     ⇒ 同一命令 **exit 1**；owner 走 trust 正常，`[M]` 四行与 `[P]` 一行照常打印，随后首个错误逐字：
+     ```
+     首个失败读数：password authentication failed for user "gengyun_api_runtime"
+     FAIL：有运行时 URL 但读数未全部通过 —— 首个失败：password authentication failed for user "gengyun_api_runtime"
+     ```
+     （`code: '28P01'`、`routine: 'auth_failed'`。）
+   - **订正声明**：初版 §6.3 把「`host all all …` 变体」与上述 28P01 两行写在一起 ——**该 28P01 只在变体 B 成立**；
+     变体 A 根本取不到这两行（owner 先被 SASL 拦下）。两变体的共同机制不变：
+     `tests/integration/account-suspend-pg.mjs:167`
+     `CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${randomBytes(24).toString('hex')}'`
+     —— 口令**运行时随机生成且不回显**，argv[3] 的口令只可能在 `trust` 集群上"对得上"。
+     **本页不据此断言任何产品缺陷**，只登记「该用例的可复现性依赖 trust 回环集群」（建议归口径片）。
 4. **`#279`（`feat/gy-i18-admin-accounts-read`）未合并 ⇒ 读面的真实可用读数未取得**：本页只有"503 未接线"的读数，
    没有"读面已接线后的真实分页读数"。**待 `#279` 合并后复测。**
 5. **`#256`（`fix/gy-i22-retryable-sweep-residual`）未合并 ⇒ 残余扫尾未复测**（§4）。
@@ -321,3 +341,9 @@ $ @(Get-Process postgres).Count                                      ⇒ 0（无
 - 复现命令（本页全部读数）：§5.1–§5.6 各命令块；临时物只在 `.pg17\tmp\i22closure\`。
 - `git diff --check`（工作树 / `upstream/main` 两点 / 三点）与 `git merge-tree --write-tree upstream/main HEAD` 读数见 §5.5；
   收工 `git status --short` **0 行**；集群已停、58760 监听归零（§5.6）。
+- **本轮订正（按对抗性审查 2 条必改；只改文字，不动结论方向与证据链）**：
+  ① §2.2 `services/api/db/migrations/0017_account_suspend_authority.sql` 行数 `311` → **`339`**。
+  错因实测：`git cat-file blob 5250520:<path> | Measure-Object -Line` **只数非空行**（总 339 / 非空 311 / 空行 28）；
+  已改用逐字节 `ReadAllLines` 口径，并同时钉 blob `099892fabe82f3b7e6aae8c55baf97f7fc704078` / 16448 B。
+  ② §6.3 scram 步骤拆成**变体 A（`host all all`）/ 变体 B（钉到 `gengyun_api_runtime`）**并各自复跑贴首条错误，
+  明确「初版所记 `28P01` 只在变体 B 成立」（见 §6.3 订正声明）。
