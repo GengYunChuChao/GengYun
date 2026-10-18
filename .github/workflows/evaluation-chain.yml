@@ -54,7 +54,8 @@ jobs:
             --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
             > "$out/validate-evaluation-samples.log" 2>&1 || c=$?
           echo "run-evaluation exit=$a / freeze-real-samples --verify exit=$b / validate-evaluation-samples exit=$c"
-          # 报告 JSON（约 26 KB）不进日志：只作为第 4 个参数交给 verify-gate-readout.mjs 做结构化断言。
+          # 报告 JSON（约 26 KB）同时经 stdout 落入 run-evaluation.log（第 2 行起即整份 JSON，人读摘要在其后）；
+          # --out 再落一份 run-evaluation-report.json，供第 4 个参数直接解析。
           for f in run-evaluation freeze-real-samples validate-evaluation-samples; do
             echo "===== $f.log ====="
             cat "$out/$f.log"
