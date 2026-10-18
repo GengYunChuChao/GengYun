@@ -65,22 +65,31 @@
 | 权限 | `contents: read`；**不接触数据库、不需要任何凭据、不做真实外部调用** | `:14-15` |
 | runner | `ubuntu-24.04`（与本仓其余 workflow 一致，**不用** `ubuntu-latest`，理由见本节末） | `:20` |
 | job 名（= 检查名） | `evaluation-chain` | `:18-19` |
-| 实际执行 | `setup-node 24.16.0` →`npm ci --no-audit --no-fund` → 三条命令**逐条**落盘（`$RUNNER_TEMP/gy-evaluation-chain/*.log`，stderr 并入同一文件）→ 打印三条退出码并 `cat` 三份日志 → `node tools/evaluation/verify-gate-readout.mjs` 断言读数 | `:23-71` |
+| 实际执行 | `setup-node 24.16.0` →`npm ci --no-audit --no-fund` → 三条命令**逐条**落盘（`$RUNNER_TEMP/gy-evaluation-chain/*.log`，stderr 并入同一文件；`run-evaluation` 的报告 JSON 约 26 KB **同时经 stdout 落入 `run-evaluation.log`**——第 2 行起即整份 JSON、人读摘要在其后；`--out` 再落一份 `run-evaluation-report.json`，供第 4 个参数直接解析）→ 打印三条退出码并 `cat` 三份日志 → `node tools/evaluation/verify-gate-readout.mjs` 用**四个**参数断言读数（三份日志 ＋ 报告 JSON） | `:23-75` |
 
 三条命令（参数写死，全部读仓内文件，无外网、无数据库）：
 
-1. `node tools/evaluation/run-evaluation.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json`（`:38-43`）
-2. `node tools/evaluation/freeze-real-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json --index-version gy-i20-weeds-real-2026.10.14 --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json`（`:45-50`；`--verify` 只核对，不写盘）
-3. `node tools/evaluation/validate-evaluation-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json`（`:52-54`）
+1. `node tools/evaluation/run-evaluation.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json --out "$RUNNER_TEMP/gy-evaluation-chain/run-evaluation-report.json"`（`:38-44`；同一份 JSON 也经 stdout 落在 `run-evaluation.log` 里，报告文件被第 5 步当第 4 个参数读回）
+2. `node tools/evaluation/freeze-real-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json --index-version gy-i20-weeds-real-2026.10.14 --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json`（`:46-51`；`--verify` 只核对，不写盘）
+3. `node tools/evaluation/validate-evaluation-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json`（`:53-55`）
+
+行号按**带第 4 个参数**的版本测量：`.github/workflows/evaluation-chain.yml` 在本片改过（加 `--out` 与第 4 个参数），旧行号（`:38-43`／`:45-50`／`:52-54`／`:23-71`）对应的是三参版本；r2 把 `:57` 的一行注释拆成两行，断言步由 `:67-74` 移到 `:68-75`。
 
 **这个 job 红了意味着什么**（`tools/evaluation/verify-gate-readout.mjs` 的断言）：
 
 - 三条命令任一退出码非 0 ⇒ `FAIL：三条评估命令必须全部 exit 0`，先看对应 `.log` 的报错行；
 - 三份输出缺约定读数 ⇒ `FAIL <文件>: 缺 "<字面量>"（为什么必须出现）`。必须出现的读数：`run-evaluation.log` 的 `not_evaluated`、`"isRealEvaluation": false`、`样本缺口桶：16/17 未达标`；`freeze-real-samples.log` 的 `复算核对`、`冻结=通过`、`覆盖绑定：通过`；`validate-evaluation-samples.log` 的 `样本索引：`、`校验结果：通过（无错误）`；
 - 断言字面量被改成空串、或改成一个不存在的值 ⇒ 同样红（防止「把断言改成永远成立」）；
-- 参数不是三个 ⇒ 断言脚本以 exit 2 退出（用法错误，与读数不符区分）。
+- 参数不是三个或四个 ⇒ 断言脚本以 exit 2 退出（用法错误，与读数不符区分）；stderr 共两行——首行仍是原文案，第二行说明可选第 4 个参数；
+- 第 4 个参数（`run-evaluation-report.json`）给出的报告结构不对 ⇒ `FAIL 结构化断言：…` 且 exit 1，四类新增红：
+  - 报告读不到、不是合法 JSON、顶层不是对象 ⇒ 分别点名「读不到报告 JSON」／「报告不是合法 JSON」／「报告顶层必须是对象」，各自单独报错、不吞异常；
+  - `schemaVersion` 不等于 `1.0.0` ⇒ 点名实测值（如 `（实测 "1.0.1"）`）；
+  - `isRealEvaluation` 不是 `false`、或任一 `tasks.<任务>.gateStatus` 不是 `not_evaluated` ⇒ 点名到字段（如 `tasks.weed_photo.gateStatus 必须是 "not_evaluated"（实测 "pass"）`）；
+  - `gaps` 与日志里的 `样本缺口桶：X/Y 未达标` 对不上 ⇒ 两边读数一起打印（如 `日志缺口桶 15/17 与报告不一致（报告：未达标 16 桶 / 共 17 桶）`）；`tasks`／`gaps` 为空、或日志缺这一行 ⇒ 同样红，**空集不算证据**。
 
-**绿不等于真实评估成立**：本 job 用**空预测**（`gy-i20-weeds-predictions-none.json`）喂真实冻结样本，报告自陈 `isRealEvaluation=false`、门禁 `gateStatus=not_evaluated`，缺口桶仍是 `16/17 未达标`。绿只说明「这三条命令在本提交上跑得通、读数与仓库约定一致」。
+结构化断言**不是**换一批字面量：它按字段核形状与取值，因此「报告里少了一个 task」「缺口桶数字被改一位」「日志与报告各说各话」都逃不掉；三参模式（只有三份日志）在**合法三参运行**下的 stdout 与退出码与旧版逐字相同（参数个数错时 stderr 多一行说明，首行文案不变）。
+
+**绿不等于真实评估成立**：本 job 用**空预测**（`gy-i20-weeds-predictions-none.json`）喂真实冻结样本，报告自陈 `isRealEvaluation=false`、门禁 `gateStatus=not_evaluated`，缺口桶仍是 `16/17 未达标`。绿只说明「这三条命令在本提交上跑得通、读数与仓库约定一致」（含报告 JSON 的 `schemaVersion`／`isRealEvaluation`／每个 `gateStatus`／缺口桶数字都对得上）。
 
 **与 1.1 的 `evaluation-tests` 不是一回事**：`evaluation-tests` 跑 `npm run test:evaluation`（`tests/evaluation/*.test.mjs` 的纯函数单测，见 `engineering-shell.yml:94-107`），**不跑**这三个 CLI 入口；本 job 是这三个入口在 CI 里唯一的执行点。
 
