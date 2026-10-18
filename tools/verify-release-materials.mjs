@@ -4,7 +4,10 @@
  * 运行：`node tools/verify-release-materials.mjs`（退出码 0 = 全部通过；1 = 有失败项）。
  *
  * 核验对象是**文档与仓库事实**，不是运行环境：
- *   1. 索引存在且覆盖 `deploy/**` 全部在册文件（不漏、不列不存在的路径）；
+ *   1. 索引存在且覆盖 `deploy/**` 全部在册文件（不漏、不列不存在的路径）。覆盖判据是**表格行级**：
+ *      某个表格行的首列必须逐字等于该路径、且该行含 ✅——散文、§4 说明句、引用块、代码块里的提及
+ *      一律不算收录（2026-10-18 审查实测：只删表格行、正文还写着路径时旧判据仍 exit 0）；
+ *      同一项里还核 `N/N` 覆盖计数：分子分母都必须等于在册文件数（旧的 `30/30` 无人核对）；
  *   2. 索引里的相对链接都能解析、被索引文件都非空；
  *   3. 5 个 CVM 脚本：`bash -n` 语法、`set -euo pipefail`、**提交内容（blob）为 LF**；
  *   4. 云托管环境变量模板 ⊇ 配置面（`REQUIRED_WHEN_REAL` ∪ config.ts 实际读取的键），且无多余键；
@@ -78,6 +81,44 @@ function blobCrBytes(path) {
   return count;
 }
 
+/**
+ * 取出正文里的 Markdown 表格行，并按**未转义**的 `|` 切好单元格。
+ *
+ * 只认「去掉行首空白后以 `|` 开头」的行；` ``` ` / `~~~` 围栏内的内容整体跳过（代码块里的表格样子
+ * 是示例，不是索引），分隔行（`| --- | --- |`）也跳过。返回 `{ rows: [{ line, cells }] }`，
+ * 其中 `line` 是原始行，供「该行是否含 ✅」这类同行判据使用。
+ */
+function parseMarkdownTables(text) {
+  const rows = [];
+  let inFence = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*(?:```|~~~)/.test(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) continue;
+    const cells = trimmed.replace(/^\|/, '').replace(/\|$/, '')
+      .split(/(?<!\\)\|/).map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
+    rows.push({ line, cells });
+  }
+  return { rows };
+}
+
+/**
+ * 表格首列 → 期望的仓库相对路径：去 Markdown 链接留文字、去反引号、去前后空白、去前导 `../`。
+ *
+ * 首列两种写法都在用：``[`../../deploy/a.sh`](../../deploy/a.sh)`` 与 `` `deploy/a.sh` ``。
+ * 解析结果必须**逐字等于**在册路径；带说明文字的（如 `deploy/a.sh（新增）`）按严格模式**不算**收录——
+ * 宁可让作者写成规范的一格，也不让「提了一句」蒙过去。
+ */
+function markdownCellToPath(cell) {
+  return cell.replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1')
+    .replace(/`/g, '').trim()
+    .replace(/^(?:\.\.\/)+/, '')
+    .replace(/^\.\//, '')
+    .replace(/[。，、；;]+$/, '');
+}
+
 try {
   // ---------------------------------------------------------------- 1. 索引存在
   check('索引文档存在', exists(INDEX), INDEX);
@@ -86,11 +127,38 @@ try {
 
   // ---------------------------------------------------------------- 2. 覆盖 deploy/**
   const deployFiles = gitFiles('deploy');
-  // 覆盖判据取「带 ✅ 的索引表行」：散落散文提及不算索引（防"提了一句即算收录"）。
-  const verifiedRows = indexText.split('\n').filter((line) => line.trim().startsWith('|') && line.includes('✅'));
-  const missing = deployFiles.filter((p) => !verifiedRows.some((row) => row.includes(p)));
-  check('索引覆盖 deploy/ 全部在册文件', missing.length === 0,
-    missing.length === 0 ? `${deployFiles.length} 个文件全部在索引表行中` : `未索引：${missing.join(', ')}`);
+  // 覆盖判据取「表格行首列逐字等于路径 + 该行带 ✅」：散落正文提及不算索引
+  //（防"正文提了一句即算收录"——2026-10-18 审查实测过这个洞：删掉 §2 的专用行后，
+  // §4 说明句与 §1 交叉引用的正文里仍有该路径且带 ✅，旧的「任意一行含路径」判据照样绿）。
+  const { rows: tableRows } = parseMarkdownTables(indexText);
+  const coveredPaths = new Set();
+  for (const row of tableRows) {
+    if (!row.line.includes('✅')) continue;
+    const path = markdownCellToPath(row.cells[0]);
+    if (path !== '') coveredPaths.add(path);
+  }
+  const missing = deployFiles.filter((p) => !coveredPaths.has(p));
+
+  // 计数一致性：页面写「N/N 覆盖」的地方，分子与分母都必须等于在册文件数。
+  // 只认同一行里同时出现「覆盖」与 `deploy/` 的表格行——页面上还有 `5/5 通过`、`200/503`、
+  // `10/9`、`17/16`、`模板 17 键` 这些语义不同的数字，⛔ 不能一把抓（其余读数见交接）。
+  // 一行都找不到也判红：否则把计数删掉就能绕过。
+  const coverageCounts = [];
+  for (const row of tableRows) {
+    if (!row.line.includes('覆盖') || !row.line.includes('deploy/')) continue;
+    for (const m of row.line.matchAll(/(\d+)\s*\/\s*(\d+)/g)) {
+      coverageCounts.push({ num: Number(m[1]), den: Number(m[2]) });
+    }
+  }
+  const badCounts = coverageCounts.filter((c) => c.num !== deployFiles.length || c.den !== deployFiles.length);
+  const countDetail = coverageCounts.length === 0
+    ? `未找到 N/N 覆盖计数（应在覆盖判据行写 ${deployFiles.length}/${deployFiles.length}）`
+    : badCounts.length === 0
+      ? `覆盖计数 ${deployFiles.length}/${deployFiles.length}`
+      : `覆盖计数不符：${badCounts.map((c) => `${c.num}/${c.den} ≠ 在册 ${deployFiles.length}`).join('；')}`;
+  check('索引覆盖 deploy/ 全部在册文件', missing.length === 0 && badCounts.length === 0 && coverageCounts.length > 0,
+    [missing.length === 0 ? `${deployFiles.length} 个文件全部在索引表行中` : `未索引：${missing.join(', ')}`, countDetail]
+      .join('；'));
 
   // 索引里出现的 deploy 路径（反引号字面量或链接目标，允许 `../../` 前缀）必须真实存在；
   // glob 写法（含 *）是行文，不是路径。
