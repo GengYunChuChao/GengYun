@@ -132,6 +132,94 @@ export function createStoreFlagReader(source: { getFlag(key: FlagKey): unknown }
 }
 
 /**
+ * 真实 PG 端口读取口（GY-I18 接线）：**同步快照 + 判定前异步预取**。
+ *
+ * ## 为什么不是异步读取口
+ * `FlagReader` 的读取/判定接口是**同步**的（`assertSurfaceOpen` 在既有单测里被同步直接调用，
+ * 且守卫 `requireUser` 的语义要求"判定是纯内存操作"）。端口只有异步 `list()`，因此不在判定
+ * 路径上等数据库，而是：`prepare()` 在**进入受控路由的守卫时**刷新一次快照，判定读快照。
+ *
+ * ## fail-closed 口径（与内存读取口逐字同源）
+ * - 从未成功预取 ⇒ `unrecognized`（装配 bug，需修）；
+ * - 预取抛错 ⇒ `read_error`（瞬时，可重试），且**丢掉旧快照**：库不可用时不拿过期的「开」放行；
+ * - 行缺失 ⇒ `unrecognized`（缺行不是关，更不是开）；
+ * - 形状非法（key 越界/非布尔/revision 非法）⇒ `unrecognized`；重复 key 同理。
+ */
+export interface PortFlagReader extends FlagReader {
+  /** 重新从端口读一次快照；**不抛**（失败通过 `readWithCause` 的可重试原因体现）。 */
+  refresh(): Promise<void>;
+}
+
+/** 由端口构造读取口（`list()` 每行按 `recognizeOutcome` 同一套形状规则校验）。 */
+export function createPortFlagReader(port: {
+  list(): Promise<readonly FlagRecordLike[]>;
+}): PortFlagReader {
+  let snapshot: ReadonlyMap<string, FlagRecordLike> | null = null;
+  let lastFailure: FlagGateFailCause = 'unrecognized';
+  let refreshed = false;
+
+  async function refresh(): Promise<void> {
+    try {
+      const rows = await port.list();
+      if (!Array.isArray(rows)) {
+        snapshot = null;
+        lastFailure = 'unrecognized';
+        refreshed = true;
+        return;
+      }
+      const next = new Map<string, FlagRecordLike>();
+      let duplicate = false;
+      for (const raw of rows) {
+        const outcome = recognizeOutcome(raw);
+        if (outcome.kind === 'fail') {
+          snapshot = null;
+          lastFailure = 'unrecognized';
+          refreshed = true;
+          return;
+        }
+        if (next.has(outcome.record.key)) duplicate = true;
+        next.set(outcome.record.key, outcome.record);
+      }
+      if (duplicate) {
+        snapshot = null;
+        lastFailure = 'unrecognized';
+        refreshed = true;
+        return;
+      }
+      snapshot = next;
+      lastFailure = 'unrecognized';
+      refreshed = true;
+    } catch {
+      // 读取抛错 = 瞬时故障 ⇒ 可重试；同时**丢弃**旧快照（不拿过期状态放行）。
+      snapshot = null;
+      lastFailure = 'read_error';
+      refreshed = true;
+    }
+  }
+
+  const readWithCause = (key: FlagKey): FlagReadOutcome => {
+    if (!refreshed) return { kind: 'fail', cause: 'unrecognized' };
+    if (snapshot === null) return { kind: 'fail', cause: lastFailure };
+    const record = snapshot.get(key);
+    if (record === undefined) return { kind: 'fail', cause: 'unrecognized' };
+    return { kind: 'ok', record };
+  };
+  const read = (key: FlagKey): FlagRecordLike | null => {
+    const outcome = readWithCause(key);
+    return outcome.kind === 'ok' ? outcome.record : null;
+  };
+  return {
+    refresh,
+    read,
+    readWithCause,
+    valueOf(key) {
+      const record = read(key);
+      return record === null ? null : record.enabled;
+    },
+  };
+}
+
+/**
  * 受控输出面（契约镜像）。
  *
  * `routePattern` 与 Fastify 的 `request.routeOptions.url` 同形（参数写 `:id`），
@@ -256,6 +344,11 @@ export interface FlagGateVerdict {
 export interface FeatureFlagGate {
   /** `false` ⇒ 本进程不判开关（real 模式后台域未接线，见文件头边界说明）。 */
   readonly armed: boolean;
+  /**
+   * **可选**：判定前的异步预取（真实 PG 读取口用；内存读取口不需要）。
+   * 只有 `createFlagGatedGuards` 在命中受控面且守卫通过后调用它。
+   */
+  readonly prepare?: () => Promise<void>;
   verdictFor(key: FlagKey, surface: string): FlagGateVerdict;
   /** 开关关闭 / 不可识别 ⇒ 抛契约错误；开启 ⇒ 静默返回。 */
   assertOpen(key: FlagKey, surface: string): void;
@@ -304,6 +397,11 @@ export interface FeatureFlagGateOptions {
    * 那时开关没有权威来源，**不**以未接线的开关拒绝用户面产出（如实声明，见文件头）。
    */
   readonly armed?: boolean;
+  /**
+   * **可选**：判定前的异步预取。真实 PG 读取口（`createPortFlagReader`）在这里刷新快照；
+   * 内存读取口不传 ⇒ 判定路径与接线前逐字相同（纯同步）。
+   */
+  readonly prepare?: () => Promise<void>;
 }
 
 export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureFlagGate {
@@ -359,6 +457,7 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
 
   return {
     armed,
+    ...(options.prepare === undefined ? {} : { prepare: options.prepare }),
     verdictFor,
     assertOpen,
     assertSurfaceOpen(method, routePattern) {
@@ -398,7 +497,14 @@ export function createFlagGatedGuards(guards: AuthGuards, gate: FeatureFlagGate)
   const requireUser: preHandlerHookHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     await innerRequireUser(request, reply);
     // Fastify 5：`routeOptions.url` 是已注册的路由模板（含前缀与 `:param`）。
-    gate.assertSurfaceOpen(request.method, request.routeOptions?.url ?? '');
+    const route = request.routeOptions?.url ?? '';
+    const method = request.method.toUpperCase();
+    // 只对**受控面**预取：未命中的路由不多打一次数据库（行为与接线前逐字相同）。
+    if (gate.prepare !== undefined) {
+      const gated = gate.surfaces().some((entry) => entry.method === method && entry.routePattern === route);
+      if (gated) await gate.prepare();
+    }
+    gate.assertSurfaceOpen(request.method, route);
   };
   return {
     requireUser,

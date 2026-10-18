@@ -73,6 +73,7 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+import { createPostgresFeatureFlags } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
@@ -84,10 +85,13 @@ import type { AdminCallContext } from './admin/types.ts';
 import {
   createFeatureFlagGate,
   createFlagGatedGuards,
+  createPortFlagReader,
   createStoreFlagReader,
   flagSeedFromBaseline,
   FLAG_WIRING_BASELINE,
   type FeatureFlagGate,
+  type FlagReader,
+  type PortFlagReader,
 } from './admin/ops/flag-gate.ts';
 // GY-I18 本片：人工评审入口**空态**（无假任务/审核人/投票/专家认证）。
 import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
@@ -350,6 +354,12 @@ export interface BuildAppOptions {
      * `createPostgresAccountAuthority({ pool })`；`pool === null` ⇒ 账号停用面继续整域 503。
      */
     accountAuthority?: AdminOpsServiceOptions['accountAuthority'];
+    /**
+     * 真实开关读写端口（GY-I18）：不传时 `real` 且 `pool !== null` 按
+     * `createPostgresFeatureFlags({ pool })` 自建；`pool === null` ⇒ 开关面继续 503、开关门不武装。
+     * 注入优先（测试用它钉住"注入端口才接线"，不依赖真实库）。
+     */
+    flagsPort?: AdminOpsServiceOptions['flagsPort'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -989,9 +999,27 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 全局开关门：读取**当前**开关状态。real 模式后台域整体 fail-closed ⇒ 开关没有权威来源，
   // 此时 `armed:false`（保持既有产出行为，不拿未接线的开关中断用户面）—— 见证据页「未取得项」。
   const adminRealUnwired = config.executionMode === 'real';
+  // **GY-I18 接线（#18）**：`real` 且拿到真实库池 ⇒ 开关读写走迁移 0020 的 `public.feature_flags`
+  // （读面 `listFlags`、写面 `setFlag`：单事务 CAS + 审计）。显式注入优先（测试用它钉住接线点，
+  // 不依赖真库）；`pool === null` ⇒ `flagsPort` 为 null，开关面继续 503、开关门不武装
+  // —— 与接线前逐字相同。
+  const flagsPort =
+    adminInjection?.flagsPort ??
+    (adminRealUnwired && pool !== null ? createPostgresFeatureFlags({ pool }) : null);
+  const flagsWired = flagsPort !== null;
+  // 开关**唯一权威**：接了真实端口就只信库（内存 store 的播种状态不再参与判定，
+  // 避免"库说关、内存说开"的双权威）；未接端口时维持既有内存读取口。
+  const flagGateReader: FlagReader =
+    flagsPort === null ? createStoreFlagReader(adminOpsStore) : createPortFlagReader(flagsPort);
+  const flagGatePrepare =
+    flagsPort === null ? undefined : () => (flagGateReader as PortFlagReader).refresh();
   const featureFlagGate = createFeatureFlagGate({
-    reader: createStoreFlagReader(adminOpsStore),
-    armed: !adminRealUnwired,
+    reader: flagGateReader,
+    // **武装判据只有一条**：开关读写是否已接真实持久端口。stub/preset_demo 用内存 store
+    // （已按 `FLAG_WIRING_BASELINE` 播种）⇒ 武装；real 未接端口 ⇒ 不武装（不拿未接线的开关
+    // 中断用户面，口径同前）；real 已接端口 ⇒ 库是唯一权威，必须武装（否则"关了却照样产出"）。
+    armed: !adminRealUnwired || flagsWired,
+    ...(flagGatePrepare === undefined ? {} : { prepare: flagGatePrepare }),
   });
   // 受控输出面的守卫链：**先鉴权（401/403 次序不变）、后判开关**。
   const gatedGuards = createFlagGatedGuards(guards, featureFlagGate);
@@ -1005,8 +1033,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 口径与本仓一致：real 永远走 fail-closed 实现（缺真实后端即 503，**严禁静默回退替身**）。
   // **刻意不依赖任何"自述持久化"的布尔标志**：将来后台域接上真实持久 store 时，必须在这里
   // **显式放行**（一次可审查的接线变更），而不是靠替身自称真实就能自动启用。
-  // （`adminRealUnwired` 已在上方与开关门一并判定：它同时决定后台域是否 fail-closed
-  //  以及开关门是否有权威来源。）
+  // （`adminRealUnwired` 已在上方与开关门一并判定：它决定是否进入「整域 fail-closed」分支；
+  //   开关门是否武装、开关面是否放行，另由 `flagsWired` 单独决定。）
 
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
@@ -1014,15 +1042,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
     adminContentService = failClosed.content;
-    // **GY-I22（#22）唯一显式放行**：账号停用面已接上真实持久权威（迁移 0017 的
-    // `public.suspend_account()`：`users.state` + `auth_epoch` + 撤会话 + 审计**同一事务**）。
-    // 放行条件只有"拿到真实库池 / 显式注入权威"，**不看**任何自述持久化标志；
-    // 其余 33 条后台路由（含账号读面 `listAdminUsers`）仍逐条 503
+    // **real 下的两条显式放行**（每条都必须有真实持久权威，逐个列出、不整对象透传）：
+    // 1. **GY-I22（#22）账号停用**：迁移 0017 的 `public.suspend_account()`（`users.state` +
+    //    `auth_epoch` + 撤会话 + 审计**同一事务**）；
+    // 2. **GY-I18（#18）开关读写**：迁移 0020 的 `public.feature_flags` + `public.set_feature_flag()`
+    //    （`listFlags` 读、`setFlag` 单事务 CAS + 审计）。
+    // 放行条件只有"拿到真实库池 / 显式注入权威/端口"，**不看**任何自述持久化标志；
+    // 其余后台路由（含账号读面 `listAdminUsers`、分类、作业、下架）仍逐条 503
     // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
     const realAccountAuthority =
       adminInjection?.accountAuthority ??
       (pool === null ? null : createPostgresAccountAuthority({ pool }));
-    if (realAccountAuthority === null) {
+    if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
@@ -1033,16 +1064,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           signingKey: adminSigningKey,
           executionMode: config.executionMode,
           accountAuthority: realAccountAuthority,
+          // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
+          ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminInjection?.jobPort,
           // GY-I15 接线同上：`hidePost` 在 real 下不放行，但端口仍按同一份社区 store 装配。
           community: communityPostPortForAdmin,
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
+        { flagsWired },
       );
+      const released: string[] = [];
+      if (realAccountAuthority !== null) released.push('账号停用');
+      if (flagsWired) released.push('开关读写');
       app.log.warn(
         { executionMode: config.executionMode },
-        'GY-I22 账号停用已接真实认证权威 ⇒ POST /admin/accounts/{id}/suspend 走单事务真实写；其余 33 条后台路由仍 503 PROVIDER_UNAVAILABLE',
+        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库单事务；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -1060,6 +1097,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // GY-I22：**只经显式注入**开启真实停用权威（与 `mediaObjectStore` 同一口径：
       // 不读 ambient 配置、不因"有 pool"就自动在 stub 域里接真实写）。
       accountAuthority: adminInjection?.accountAuthority,
+      // GY-I18：stub 域**只**经显式注入接真实开关端口（默认仍是内存 store；不因"有 pool"自动接库）。
+      ...(flagsPort === null ? {} : { flagsPort }),
       jobPort: adminInjection?.jobPort,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
