@@ -40,6 +40,7 @@ jobs:
             --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json \
             --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json \
             --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+            --out "$out/run-evaluation-report.json" \
             > "$out/run-evaluation.log" 2>&1 || a=$?
           b=0
           node tools/evaluation/freeze-real-samples.mjs \
@@ -53,6 +54,8 @@ jobs:
             --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
             > "$out/validate-evaluation-samples.log" 2>&1 || c=$?
           echo "run-evaluation exit=$a / freeze-real-samples --verify exit=$b / validate-evaluation-samples exit=$c"
+          # 报告 JSON（约 26 KB）同时经 stdout 落入 run-evaluation.log（第 2 行起即整份 JSON，人读摘要在其后）；
+          # --out 再落一份 run-evaluation-report.json，供第 4 个参数直接解析。
           for f in run-evaluation freeze-real-samples validate-evaluation-samples; do
             echo "===== $f.log ====="
             cat "$out/$f.log"
@@ -62,10 +65,11 @@ jobs:
             echo "FAIL：三条评估命令必须全部 exit 0（退出码与输出见上）"
             exit 1
           fi
-      - name: 断言读数含 not_evaluated 与样本缺口桶 16/17
+      - name: 断言读数含 not_evaluated 与样本缺口桶 16/17，并核对报告结构
         if: always()
         run: |
           node tools/evaluation/verify-gate-readout.mjs \
             "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/run-evaluation.log" \
             "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/freeze-real-samples.log" \
-            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/validate-evaluation-samples.log"
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/validate-evaluation-samples.log" \
+            "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gy-evaluation-chain/run-evaluation-report.json"
