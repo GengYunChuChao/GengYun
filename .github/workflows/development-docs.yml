@@ -10,6 +10,7 @@ on:
       - 'tools/validate_contracts.py'
       - 'tools/test_contracts.py'
       - 'tools/validate_openapi_standard.py'
+      - 'tools/verify-research-records.mjs'
       - 'packages/contracts/**'
   push:
     branches: [main]
@@ -22,6 +23,7 @@ on:
       - 'tools/validate_contracts.py'
       - 'tools/test_contracts.py'
       - 'tools/validate_openapi_standard.py'
+      - 'tools/verify-research-records.mjs'
       - 'packages/contracts/**'
 permissions:
   contents: read
@@ -37,3 +39,7 @@ jobs:
       - run: python3 tools/validate_development_docs.py
       - run: python3 tools/validate_contracts.py
       - run: python3 tools/test_contracts.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.16.0'
+      - run: node tools/verify-research-records.mjs
