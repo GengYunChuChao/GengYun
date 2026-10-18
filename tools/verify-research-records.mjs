@@ -235,7 +235,7 @@ function parseTables(lines) {
       rows.push({ line: cursor + 1, cells: splitCells(lines[cursor]) });
       cursor += 1;
     }
-    tables.push({ startLine: index + 1, header: splitCells(lines[index]), rows });
+    tables.push({ startLine: index + 1, endLine: cursor, header: splitCells(lines[index]), rows });
     index = cursor - 1;
   }
   return tables;
@@ -318,7 +318,10 @@ function collectFields(lines, tables, from, to) {
   const names = new Set();
   const unexpected = [];
   for (const table of tables) {
-    if (table.startLine <= from || table.startLine > to) continue;
+    // 闭区间 [from, to]（都是 1 基行号）：段外独立字段表按「它自己」的起止行传进来，
+    // 起点行必须算在内，所以用 `<` 而不是 `<=`——早先的 `<=` 会让单行退化区间
+    // `[startLine, startLine]` 把表自身排除，于是永远报缺七项。
+    if (table.startLine < from || table.startLine > to) continue;
     const column = findFieldColumn(table);
     if (column === -1) continue;
     for (const row of table.rows) {
@@ -339,32 +342,57 @@ function collectFields(lines, tables, from, to) {
 }
 
 /**
- * 技术段：`## N <技术>`（N ≥ 1），且段内出现七项字段（表或列表）或 `### 检索来源` 子标题。
- * 只看"有技术载荷"的编号节，是为了不把 `## 0 总览`、`## 8 检索证据总表`、`## 9 未取得项`、
- * `## 10 复核命令` 这类编号节误判成技术项。
+ * 完整记录的分类**只看标题形状**（裁定 r3 §1）：只要出现 `## N <名称>`（N ≥ 1），
+ * 该记录就按完整记录核，不论段内还有没有七项字段或 `### 检索来源` 子标题。
+ * 早先按"段内有字段／有来源子标题"判，会把"七项连同来源子表一起删掉"的技术段降级成最短记录
+ * 而静默放行（c17），删证据反而变绿——这正是分类必须前置到记录级的原因。
+ * 真实记录里的非技术编号节（`## 0 总览`、`## 8 检索证据总表`、`## 9 未取得项`、`## 10 复核命令`）
+ * 按标题关键词豁免，否则制度性小节会被当成技术项误红。
  */
-function isTechnicalSection(section, lines, tables) {
+const NON_TECHNICAL_TITLE = /总览|未取得|复核|证据总表|决定|检索|来源/u;
+
+function isTechnicalSection(section) {
   if (section.level !== 2) return false;
-  const match = /^(\d+)\s+\S/u.exec(section.title);
+  const match = /^(\d+)\s+(\S.*)$/u.exec(section.title);
   if (match === null || Number(match[1]) < 1) return false;
-  const { names } = collectFields(lines, tables, section.line, section.end);
-  if (names.size > 0) return true;
-  for (let index = section.index + 1; index < section.end; index += 1) {
-    const heading = /^###\s+(.+?)\s*$/u.exec(lines[index]);
-    if (heading !== null && /来源/u.test(heading[1])) return true;
+  return !NON_TECHNICAL_TITLE.test(match[2]);
+}
+
+/** 表头里出现这些词，才算「来源表」；总览表（技术｜仓库现用｜上游状态｜决定）不算。 */
+const SOURCE_TABLE_HEADER = /来源|URL|链接|读数|证据/iu;
+
+/** 表格上方的最近标题（用来判断表是否挂在 `### …来源…` 子标题下）。 */
+function nearestHeading(lines, startIndex) {
+  for (let index = startIndex; index >= 0; index -= 1) {
+    const match = /^(#{1,6})\s+(.+?)\s*$/u.exec(lines[index]);
+    if (match !== null) return { level: match[1].length, index, title: match[2] };
   }
-  return false;
+  return null;
 }
 
 /**
- * 「按项来源」：给带「技术」列的表逐行核来源。
+ * 是不是来源表（裁定 r3 §3）：表头含 来源／URL／链接／读数／证据，或整张表挂在
+ * `### …来源…` 子标题下。只有来源表才做「按行 ≥2 条」；其它表（含带「技术」列的总览表）
+ * 不参与按行计数。
+ */
+function isSourceTable(lines, table) {
+  if (SOURCE_TABLE_HEADER.test(table.header.join(' '))) return true;
+  const heading = nearestHeading(lines, table.startLine - 2);
+  return heading !== null && heading.level >= 3 && /来源/u.test(heading.title);
+}
+
+/**
+ * 「按项来源」：给**来源表**里带「技术」列的行逐行核来源（裁定 r3 §3）。
  * 一行算几个来源＝该行 URL ∪ 记录里路径段含该项名的 URL——同一项技术的原始页与
  * registry JSON 页往往分属两张表，人眼看的是"这一项有几条来源"，不是"这一格有几条"。
  * 路径段**整段**相等才算（`typescript` 不会命中 `test.html`），避免把无关 URL 收进来。
+ * 只有来源表参与：总览表（`| 技术 | 仓库现用 | 上游状态 | 决定 |`）只是列清单，
+ * 按行核会把"先列技术清单、再给来源"的合法记录误红（c32）。
  */
-function inspectSourceTableRows(text, tables, fail) {
+function inspectSourceTableRows(text, lines, tables, fail) {
   const allUrls = extractUrls(text);
   for (const table of tables) {
+    if (!isSourceTable(lines, table)) continue;
     const column = table.header.findIndex((cell) => /技术/u.test(cell));
     if (column === -1) continue;
     for (const row of table.rows) {
@@ -437,7 +465,7 @@ function inspectRecord(filePath, fileName) {
 
   const fieldTables = tables.filter(isFieldTable);
   const sections = parseSections(lines);
-  const technicalSections = sections.filter((section) => isTechnicalSection(section, lines, tables));
+  const technicalSections = sections.filter((section) => isTechnicalSection(section));
   const isComplete = technicalSections.length > 0 || fieldTables.length > 0;
 
   if (isComplete) {
@@ -458,7 +486,7 @@ function inspectRecord(filePath, fileName) {
         (section) => table.startLine > section.line && table.startLine <= section.end
       );
       if (insideSection) continue;
-      const { names, unexpected } = collectFields(lines, tables, table.startLine - 1, table.startLine - 1);
+      const { names, unexpected } = collectFields(lines, tables, table.startLine, table.endLine);
       reasons.push(...unexpected);
       const missing = TECHNICAL_FIELDS.filter((field) => !names.has(field));
       if (missing.length > 0) {
@@ -474,7 +502,7 @@ function inspectRecord(filePath, fileName) {
     if (recordKeys.size < 2) {
       reasons.push(`来源 URL 少于 2 条（去重后 ${recordKeys.size} 条）`);
     }
-    inspectSourceTableRows(masked, tables, (reason) => reasons.push(reason));
+    inspectSourceTableRows(masked, lines, tables, (reason) => reasons.push(reason));
     if (!/决定/u.test(masked)) {
       reasons.push(
         '最短记录缺少「决定」（README §7：检索日期＋检索方式＋来源版本或提交＋≥2 来源＋决定＋理由）'

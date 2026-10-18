@@ -510,3 +510,75 @@ test('仓库真实 docs/research ⇒ exit 0（不许把既有记录打红）', (
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /研究记录校验：3 通过 \/ 0 失败 \/ 4 legacy 已钉住/u);
 });
+
+// —— r3 回归：分类与来源范围（审查 c17／c20／c31／c32 的对照组） ——
+// 这三条各自锁住一个"越删越绿"的方向：删字段不能降级、段外字段表要认、总览表不能当来源表。
+
+test('完整记录·技术段的七项与「检索来源」子标题一起删掉 ⇒ exit 1（不得降级成最短记录）', (t) => {
+  // 审查 c17：七项和 `### 检索来源` 一并删除、只剩两条裸 URL 时，v2 会把它当最短记录放行。
+  // 分类按标题形状（`## N <名称>`）前置到记录级，删证据只能让它变红。
+  const body = [
+    `# ${DAY} 夹具删段记录`,
+    '',
+    ...recordHead(),
+    '',
+    '## 1 Node.js',
+    '',
+    `- ${URL_A}`,
+    `- ${URL_B}`,
+    '',
+    '经比较后决定沿用，理由是零依赖。',
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-strip-section.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /技术项「1 Node\.js」缺少字段：现用版本/u);
+});
+
+test('段外独立的 `| 字段 | 含义 |` 表（七项齐全）⇒ exit 0', (t) => {
+  // 审查 c20／c31：段外字段表曾被 `[startLine - 1, startLine - 1]` 退化区间排除，恒报缺七项。
+  const body = [
+    `# ${DAY} 夹具段外字段表`,
+    '',
+    ...recordHead(),
+    '',
+    '## 检索',
+    '',
+    '| 字段 | 含义 |',
+    '| --- | --- |',
+    ...FIELDS.map(([field, value]) => `| ${field} | ${value} |`),
+    '',
+    `- 来源：${URL_A}`,
+    `- 来源：${URL_B}`,
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-standalone-field-table.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test('带「技术」列的总览表不参与按行来源计数 ⇒ exit 0', (t) => {
+  // 审查 c32：v1 形态的总览表（技术｜仓库现用｜上游状态｜决定）曾被逐行核来源而误红。
+  const body = [
+    `# ${DAY} 夹具总览表`,
+    '',
+    ...recordHead(),
+    `- 来源：${URL_A}`,
+    `- 来源：${URL_B}`,
+    '',
+    '## 总览',
+    '',
+    '| 技术 | 仓库现用 | 上游状态 | 决定 |',
+    '| --- | --- | --- | --- |',
+    '| Node.js | v24.16.0 | 活跃 | 复用 |',
+    '',
+    '## 决定',
+    '',
+    '复用。理由：夹具。',
+    ''
+  ].join('\n');
+  const dir = makeWorkspace(t, { [`${DAY}-fixture-overview-table.md`]: body });
+  const result = runGate(dir);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
