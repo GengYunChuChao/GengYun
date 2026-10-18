@@ -205,6 +205,12 @@ test('反例1：删掉表格专用行（§4 正文/交叉引用仍写着该路�
   assert.ok(fooled.length >= 1, `夹具前提：正文/交叉引用里必须仍写着 ${target}（否则反例证明不了旧判据会被骗）`);
   assert.equal(ownRows(mutated, target).length, 0, '夹具前提：新判据下已没有任何行首列等于该路径');
 
+  // 把旧判据（「任意一行含 ✅ 且含该路径」，2026-10-18 修掉的版本）原样跑一遍，要求它在这份改坏的页面上
+  // **仍然判绿**：否则这条反例就没打在真正的盲区上，红也说明不了修复了什么。
+  const oldRuleMissing = DEPLOY_FILES.filter((path) =>
+    !mutated.split('\n').some((line) => isTableRow(line) && line.includes('✅') && line.includes(path)));
+  assert.deepEqual(oldRuleMissing, [], `旧判据本该被骗过：${oldRuleMissing.join(', ')}`);
+
   const run = gateWithIndex(mutated);
   expectCoverageRed(run, ['未索引：', target]);
   t.diagnostic(`反例1: ${failLines(run.stdout)[0]}`);
@@ -212,6 +218,8 @@ test('反例1：删掉表格专用行（§4 正文/交叉引用仍写着该路�
 
 // --------------------------------------------------------------------------- 反例 2
 test('反例2：覆盖计数被改（29/30、28/28）⇒ 计数不符', (t) => {
+  // 旧工具根本不读这处数字（审查实测 30/30、30/31 全绿），所以这里没有「旧判据」可回放：
+  // 本条证明的是新增的计数一致性判据本身有牙。
   const countLine = ORIGINAL.split('\n').find((line) =>
     isTableRow(line) && line.includes('覆盖') && line.includes('deploy/') && /\d+\s*\/\s*\d+/.test(line));
   assert.ok(countLine, '夹具前提：索引页必须有一行同时写「覆盖」「deploy/」「N/N」');
