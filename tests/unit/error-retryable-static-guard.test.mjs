@@ -90,15 +90,6 @@ const ALLOWED_RETRYABLE = [
       '既有合法瞬时分支（mapPgError 的 08/53/57P0/40001/40P01 档，见该文件 73-81 行注释）；'
       + '本片不改它，登记在此以免守卫误报——它的分档正是本片其它站点的先例。',
   },
-  {
-    file: 'services/api/src/privacy/synthesis-egress.ts',
-    retryable: 'true',
-    message: '真实外发传输未接入：real 模式 fail-closed',
-    reason:
-      '⛔ 限期豁免（**不属于本片领域**）：该站点是「真实外发传输未接线」却写 retryable:true，'
-      + '按口径应为 false，已由分支 fix/gy-i22-synthesis-egress-retryable（feb785f）修正，但该提交**尚未并入** '
-      + 'upstream/main。合入后本条目必须删除，否则守卫会因「表达式文本不再是 true」而红——那正是预期行为。',
-  },
 ];
 
 function scopeFiles() {
