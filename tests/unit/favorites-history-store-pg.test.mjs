@@ -252,6 +252,72 @@ test('PG store：deleteAllByOwner 返回**真实删除行数**，他人行不受
   assert.equal((await db.query('SELECT count(*)::int n FROM history WHERE owner_id = $1', [ownerB])).rows[0].n, 1);
 });
 
+// 监工 P1 返修（2026-10-17）：注销清空原先只删 `favorites`／`history` 正文表，本主体在
+// `favorites_idempotency`／`history_idempotency` 的台账行（`scope` 第一段就是主体 uuid +
+// 方法 + 路径）留了下来，删除协调器却已宣告该模块在线清除完成。下面逐条锁：
+// 同一事务内按主体**精确**清台账、分表计数如实、其他主体一行不动。
+test('PG store：注销清空同一事务清掉本主体幂等台账（分表计数、他人台账不动）', async (t) => {
+  const { db, favorites, history, ownerA, ownerB } = await setup(t);
+  const scopeOf = (subject, method, path) => `${subject}\n${method}\n${path}`;
+  const expires = Date.now() + 60_000;
+  const claim = (store, scope, key) =>
+    store.claimIdempotency(scope, key, { request_hash: 'h'.repeat(64), response_status: 200, expires_at: expires });
+  const ledgerRows = async (table, subject) =>
+    (
+      await db.query(
+        `SELECT count(*)::int n FROM ${table}
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)`,
+        [subject],
+      )
+    ).rows[0].n;
+
+  // A：收藏域两条（一条已完成、一条只认领未完成）＋ 历史域一条；B：两域各一条，必须原样保留。
+  const favPostA = scopeOf(ownerA, 'POST', '/api/v1/favorites');
+  const favDeleteA = scopeOf(ownerA, 'DELETE', '/api/v1/favorites/00000000-0000-4000-8a00-000000000001');
+  assert.equal(await claim(favorites, favPostA, '1'.repeat(64)), true);
+  assert.equal(
+    await favorites.completeIdempotency(favPostA, '1'.repeat(64), {
+      response_status: 200,
+      outcome: { kind: 'favorite', id: '00000000-0000-4000-8a00-000000000002', revision: 1 },
+    }),
+    true,
+  );
+  // 只认领、未完成（`outcome IS NULL`）：`expires_at` 不是删除保证，它不会自己消失。
+  assert.equal(await claim(favorites, favDeleteA, '2'.repeat(64)), true);
+  assert.equal(await claim(favorites, scopeOf(ownerB, 'POST', '/api/v1/favorites'), '3'.repeat(64)), true);
+  const histDeleteA = scopeOf(ownerA, 'DELETE', '/api/v1/history/00000000-0000-4000-8b00-000000000001');
+  assert.equal(await claim(history, histDeleteA, '4'.repeat(64)), true);
+  assert.equal(
+    await claim(history, scopeOf(ownerB, 'DELETE', '/api/v1/history/00000000-0000-4000-8b00-000000000002'), '5'.repeat(64)),
+    true,
+  );
+
+  // 只有台账、没有正文行：台账清理不得依赖正文行数（"正文 0 行"不能成为跳过后半段的理由）。
+  assert.deepEqual(await favorites.purgeOwnerData(ownerA), { records: 0, idempotency: 2 });
+  assert.equal(await ledgerRows('favorites_idempotency', ownerA), 0, 'A 的收藏台账清空');
+  assert.equal(await ledgerRows('favorites_idempotency', ownerB), 1, 'B 的收藏台账一行不动');
+  assert.equal(await ledgerRows('history_idempotency', ownerA), 1, '收藏域清理不得越界删历史域台账');
+
+  // 正文行 + 台账行一起清：`deleteAllByOwner` 仍回正文行数，`purgeOwnerData` 分表给数。
+  await favorites.insertFavorite(favorite(ownerA));
+  await favorites.insertFavorite(favorite(ownerB));
+  await history.insertHistory(historyRow(ownerA));
+  await history.insertHistory(
+    historyRow(ownerB, {
+      target_ref: { type: 'recognition', id: 'rec-b', revision: 1 },
+      job_id: 'job-b',
+      event_key: 'evt-b',
+    }),
+  );
+  assert.deepEqual(await favorites.purgeOwnerData(ownerA), { records: 1, idempotency: 0 });
+  assert.deepEqual(await history.purgeOwnerData(ownerA), { records: 1, idempotency: 1 }, '历史域正文与台账分表计数');
+  assert.equal(await ledgerRows('history_idempotency', ownerA), 0);
+  assert.equal(await ledgerRows('history_idempotency', ownerB), 1, 'B 的历史台账一行不动');
+  assert.equal(await history.deleteAllByOwner(ownerA), 0, '再清一次 ⇒ 正文 0 行（幂等）');
+  assert.equal((await db.query('SELECT count(*)::int n FROM favorites WHERE owner_id = $1', [ownerB])).rows[0].n, 1);
+  assert.equal((await db.query('SELECT count(*)::int n FROM history WHERE owner_id = $1', [ownerB])).rows[0].n, 1);
+});
+
 test('迁移 0018：回滚脚本把四张表整表拆干净（纯新增 ⇒ 不动既有表）', async (t) => {
   const { db } = await setup(t);
   const down = readFileSync(

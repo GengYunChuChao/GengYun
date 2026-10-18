@@ -225,3 +225,67 @@ npm run test:docs && node tools/verify-contract-status.mjs && git diff --check
 FAVORITES_HISTORY_PG_TEST_URL=postgres://postgres@127.0.0.1:5432/gengyun_favorites_history_test \
   node tests/integration/favorites-history-pg.mjs
 ```
+
+## 8 监工 P1 返修（2026-10-18，本机实测；只追加，不改上文结论）
+
+**监工判定**（PR #272，reviewed_sha `7e1c60f`）：`deleteAllByOwner` 只删 `favorites`／`history` 正文表；
+本片新建的两张幂等台账 `scope` 是**明文主体 uuid + 方法 + 路径**（`services/api/src/auth/idempotency.ts:111-112`，
+调用点 `services/api/src/favorites/service.ts:363`、`:431`、`services/api/src/history/service.ts:374`），
+`outcome` 保存私有结果引用；`services/api/src/privacy/user-data-deletion.ts:215-217` 在该方法成功后即产出
+online-purged 证据并报 completed ⇒ 局部清空被写成模块在线清除完成。`expires_at`／`release` 不是删除保证
+（过期清理只在同 `scope`/`key` 再读时触发，未完成 claim 的 `release` 也不删已完成台账）。
+
+**修法（范围只在本片两张台账 + 完成状态/证据；未删表、未退回内存实现、未动路由/服务/协议签名）**：
+
+- 两个 PG store 新增 `purgeOwnerData(ownerId): Promise<OwnerPurgeCounts>`（`{ records, idempotency }`），
+  正文与台账在**同一事务**里删；`deleteAllByOwner` 委托它并只回正文行数（保持既有「真实删除行数」语义）。
+- 台账删除用**精确前缀**：`left(scope, char_length($1::text) + 1) = $1::text || chr(10)`。主体是定长 uuid，
+  其他主体的行不会被命中；不用 `LIKE '%…%'` 这类模糊匹配。
+- 完成状态/证据：`user-data-deletion.ts` 的 `makeHandler` 在 store 提供 `purgeOwnerData` 时把两个真实计数
+  都写进证据（形如 `favorites:online-purged:1;favorites:idempotency-purged:2`），并新增诊断视图
+  `evidenceOf(requestId)`。契约回执 `receipt()` 的 handler 行形状由 openapi 冻结、**不含 evidence**
+  （`packages/privacy/deletion-modules.mjs:190-219`），故证据走同源诊断视图；`audit()` 键集与既有断言未动。
+- `expires_at` 不作删除保证：用例里 A 的台账含「只认领未完成」与 24h 后才过期的行，仍必须当场清掉。
+
+**真库残留行数读数**（`PostgreSQL 17.11`，隔离集群 `127.0.0.1:55502`，库 `gengyun_favorites_history_test`；
+探针 `.pg17\tmp\counter\probe-residual.mjs` 跑完即弃、未入库）：
+
+| 主体 | 时点 | favorites | history | favorites_idempotency | history_idempotency |
+| --- | --- | --- | --- | --- | --- |
+| A | 删除前 | 1 | 1 | 2 | 1 |
+| A | 删除后 | 0 | 0 | 0 | 0 |
+| B | 删除前 | 1 | 1 | 1 | 1 |
+| B | 删除后 | 1 | 1 | 1 | 1 |
+
+证据串：`{"favorites":"favorites:online-purged:1;favorites:idempotency-purged:2","history":"history:online-purged:1;history:idempotency-purged:1"}`；
+`VERDICT allZeroA=true bUntouched=true`。
+
+**反证（只停用本机副本的台账 `DELETE`、未提交；复原后哈希对齐）**：
+
+- 单测（PGlite）：`✖ 注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，清空后真表为 0 且行数进证据`；
+  `AssertionError [ERR_ASSERTION]: 注销清空后本主体收藏台账残留 0 行`；`2 !== 0`
+  （`tests/unit/favorites-history-deletion-registration.test.mjs:142`）。
+- 真库：`AssertionError [ERR_ASSERTION]: 注销后 A 的四张表残留均为 0（含未完成 claim、未过期行）`；
+  actual `{favorites:0, history:0, favorites_idempotency:2, history_idempotency:1}`
+  （`tests/integration/favorites-history-pg.mjs:460` 的 `deepEqual` 调用处）。
+- 复原后 `git hash-object` 与停用前一致：`services/api/src/favorites/store-pg.ts` `415901cd…`、
+  `services/api/src/history/store-pg.ts` `343291ec…`。⇒ 该两条 `DELETE` 是残留归零的唯一原因。
+
+**门禁读数（同轮串行，逐条 exit 码）**：
+
+| 门禁 | 命令 | 读数 / exit |
+| --- | --- | --- |
+| 静态检查 | `npm run lint` | PASS（`tsc --noEmit` ×2 + 卫生扫描）；`exit 0` |
+| 单元测试 | `npm run test:unit` | tests 2454 / pass 2453 / fail 0 / skipped 1；`exit 0` |
+| 契约测试 | `npm run test:contract` | 6 tests / pass 6 / fail 0；`exit 0` |
+| 文档校验 | `npm run test:docs` | PASS（27 项初始任务）；`exit 0` |
+| HTTP 回环链 | `npm run test:integration:http` | 11 脚本串行全绿；`exit 0` |
+| 真库 | `node tests/integration/favorites-history-pg.mjs`（`FAVORITES_HISTORY_PG_TEST_URL=postgres://postgres@127.0.0.1:55502/gengyun_favorites_history_test`） | `ALL PASS (13 groups) — real PG17 17.11`；`exit 0` |
+| 空白检查 | `git diff --check`（工作区）与 `upstream/main...HEAD` | 均 `exit 0` |
+| 合并预检 | `git merge-tree --write-tree upstream/main HEAD` | `exit 0`（tree `a55eba8`） |
+| 契约状态 | `node tools/verify-contract-status.mjs` | PASS（112／108；13／95／4）；`exit 0` |
+
+**改动面**：7 文件 +436/−18（`services/api/src/favorites/store-pg.ts` +51/−7、
+`services/api/src/history/store-pg.ts` +48/−7、`services/api/src/privacy/user-data-deletion.ts` +37/−3、
+`tests/integration/favorites-history-pg.mjs` +119/−1、`tests/unit/favorites-history-deletion-registration.test.mjs` +51/−0、
+`tests/unit/favorites-history-store-pg.test.mjs` +66/−0、本页 +64/−0）。

@@ -13,7 +13,9 @@
  *   - `deleteHistory`：同一事务内 `SELECT ... FOR UPDATE` + `DELETE ... AND owner_id AND revision`，
  *     物理删除；并发删除只成功一次。
  *   - `findByEventKey` / `findByTarget` / `listHistoryByOwner`：只按 `owner_id` 过滤。
- *   - `deleteAllByOwner`：注销清理原语，`DELETE ... RETURNING id` 的行数即证据。
+ *   - `deleteAllByOwner`：注销清理原语，**同一事务**内按主体清空 `history` 正文行与本域幂等
+ *     台账 `history_idempotency`（`scope` 的第一段就是主体 uuid）；返回正文表行数，台账行数由
+ *     `purgeOwnerData` 一并给出（注销证据里的两个计数）。他人主体的行一行不动。
  *   - 幂等台账真落库（`history_idempotency`），`outcome` 里多一个 `cascade` 披露字段。
  */
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -119,11 +121,48 @@ async function withTransaction<T>(pool: TransactionalPool, run: (sql: SqlRunner)
   }
 }
 
+/**
+ * 注销清空的**分表**真实行数：正文表（`records`）与本域幂等台账（`idempotency`）各计各的。
+ * 两项都进在线清除证据（`<module>:online-purged:<records>;<module>:idempotency-purged:<idempotency>`）。
+ */
+export interface OwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+}
+
+/** PG 历史存储：在 `HistoryStore` 之上多一个**分表计数**的注销清理（注销证据用）。 */
+export interface PgHistoryStore extends HistoryStore {
+  purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts>;
+}
+
 export function createPostgresHistoryStore(
   pool: TransactionalPool,
   options: { now?: () => number } = {},
-): HistoryStore {
+): PgHistoryStore {
   const nowMs = options.now ?? (() => Date.now());
+
+  /**
+   * 按主体清空：`history` 正文行 + `history_idempotency` 台账，**同一事务**（任一失败整体回滚）。
+   *
+   * `scope` 由 `auth/idempotency.ts` 的 `idempotencyScope(subject, method, route)` 拼成
+   * `<主体 uuid>\n<METHOD>\n<路径>`；本主体的行**恰好**是以 `<主体 uuid>` + 换行开头的前缀行。
+   * 用 `left(...)` 做精确比较（不是 `LIKE '%…%'`）：其他主体的定长 uuid 不会被命中。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<OwnerPurgeCounts> {
+    return withTransaction(pool, async (sql) => {
+      const records = await sql.query(
+        'DELETE FROM history WHERE owner_id = $1::uuid RETURNING id',
+        [ownerId],
+      );
+      const idempotency = await sql.query(
+        `DELETE FROM history_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+          RETURNING scope`,
+        [ownerId],
+      );
+      return { records: records.rows.length, idempotency: idempotency.rows.length };
+    });
+  }
 
   return {
     persistent: true,
@@ -217,11 +256,13 @@ export function createPostgresHistoryStore(
     },
 
     async deleteAllByOwner(ownerId: string): Promise<number> {
-      const result = await pool.query(
-        'DELETE FROM history WHERE owner_id = $1::uuid RETURNING id',
-        [ownerId],
-      );
-      return result.rows.length;
+      // 正文行数是本方法的既有契约；台账在同一事务里一并清掉，行数经 `purgeOwnerData` 给出。
+      return (await purgeOwnerRows(ownerId)).records;
+    },
+
+    /** 注销清理的**分表计数**（正文行 + 幂等台账）；协调器用它把两张表的行数都写进证据。 */
+    async purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts> {
+      return purgeOwnerRows(ownerId);
     },
 
     // ---- 幂等台账（真落库） ----

@@ -8,6 +8,10 @@
 //     且协调器记录的行数＝真实删除行数（`audit().onlineRemoved`）。
 // 计数不是猜的：`deleteAllByOwner` 的实现是 `DELETE … RETURNING id` 计行数，行数直接进证据。
 //
+// 监工 P1 返修（2026-10-17）：正文表之外，`favorites_idempotency`／`history_idempotency` 的
+// `scope` 第一段就是主体 uuid（+ 方法 + 路径），注销清空也必须**精确**清掉，且行数出现在证据里；
+// 否则"局部清空"会被写成模块在线清除完成。下面同时锁：本主体两域归 0、他人两域各留 1 行。
+//
 // PGlite 只证明 SQL 语义与装配；真库覆盖在 `tests/integration/favorites-history-pg.mjs`
 // （那边是同一批 `deleteAllByOwner` 断言 + 真 PG17）。
 import { test } from 'node:test';
@@ -88,6 +92,38 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal((await db.query('SELECT count(*)::int n FROM favorites')).rows[0].n, 2);
   assert.equal((await db.query('SELECT count(*)::int n FROM history')).rows[0].n, 2);
 
+  // 也造**幂等台账**行（监工 P1 返修）：`scope` 第一段就是主体 uuid，注销清空必须一起精确删掉，
+  // 不能等 `expires_at` 过期。本主体：收藏域 2 行（1 已完成 + 1 只认领未完成）、历史域 1 行；
+  // 他人：两域各 1 行，必须原样保留。
+  const scopeOf = (subject, method, path) => `${subject}\n${method}\n${path}`;
+  const expiresAt = Date.now() + 60_000;
+  const claim = (store, scope, key) =>
+    store.claimIdempotency(scope, key, { request_hash: 'h'.repeat(64), response_status: 200, expires_at: expiresAt });
+  const ledgerRows = async (table, subject) =>
+    (
+      await db.query(
+        `SELECT count(*)::int n FROM ${table}
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)`,
+        [subject],
+      )
+    ).rows[0].n;
+
+  const mineFavPost = scopeOf(mine.id, 'POST', '/api/v1/favorites');
+  assert.equal(await claim(favorites, mineFavPost, 'a'.repeat(64)), true);
+  assert.equal(
+    await favorites.completeIdempotency(mineFavPost, 'a'.repeat(64), {
+      response_status: 201,
+      outcome: { kind: 'favorite', id: randomUUID(), revision: 1 },
+    }),
+    true,
+  );
+  assert.equal(await claim(favorites, scopeOf(mine.id, 'DELETE', `/api/v1/favorites/${randomUUID()}`), 'b'.repeat(64)), true);
+  assert.equal(await claim(history, scopeOf(mine.id, 'DELETE', `/api/v1/history/${randomUUID()}`), 'c'.repeat(64)), true);
+  assert.equal(await claim(favorites, scopeOf(others.id, 'POST', '/api/v1/favorites'), 'd'.repeat(64)), true);
+  assert.equal(await claim(history, scopeOf(others.id, 'DELETE', `/api/v1/history/${randomUUID()}`), 'e'.repeat(64)), true);
+  assert.equal(await ledgerRows('favorites_idempotency', mine.id), 2);
+  assert.equal(await ledgerRows('history_idempotency', mine.id), 1);
+
   // 模块闭集不变（本片没有偷偷加第三个模块、也没有把 favorites/history 从闭集里摘掉）。
   assert.deepEqual(app.userDataDeletion.requiredModules(), [...USER_DATA_DELETION_MODULES]);
   assert.deepEqual(app.userDataDeletion.requiredModules(), ['favorites', 'history']);
@@ -102,6 +138,11 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal((await db.query('SELECT count(*)::int n FROM history WHERE owner_id = $1', [mine.id])).rows[0].n, 0);
   assert.equal((await db.query('SELECT count(*)::int n FROM favorites WHERE owner_id = $1', [others.id])).rows[0].n, 1);
   assert.equal((await favorites.listFavoritesByOwner(others.id)).length, 1);
+  // 幂等台账：本主体两域都归 0（含只认领未完成、不会自己过期的那行），他人一行不动。
+  assert.equal(await ledgerRows('favorites_idempotency', mine.id), 0, '注销清空后本主体收藏台账残留 0 行');
+  assert.equal(await ledgerRows('history_idempotency', mine.id), 0, '注销清空后本主体历史台账残留 0 行');
+  assert.equal(await ledgerRows('favorites_idempotency', others.id), 1, '他人收藏台账不动');
+  assert.equal(await ledgerRows('history_idempotency', others.id), 1, '他人历史台账不动');
 
   // 行数进证据：favorites 1 行、history 2 行（与真实删除行数逐一对上）。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
@@ -122,6 +163,12 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     assert.equal(byModule.get(module).error_code, null);
   }
   assert.equal(app.userDataDeletion.completionStatus(requestId).completed, false);
+
+  // 证据里**看得见**两张台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
+  // 契约回执形状按 openapi 固定（不含 evidence），证据走同源的诊断视图。
+  const evidence = app.userDataDeletion.evidenceOf(requestId);
+  assert.equal(evidence.favorites, 'favorites:online-purged:1;favorites:idempotency-purged:2');
+  assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
 });
 
 test('注销清空·再次清空：0 行也如实回 0（不省略、不当作失败）', async (t) => {
@@ -148,4 +195,8 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.deepEqual(removed, { favorites: 0, history: 0 }, '无行时两个模块都记 0（不是缺项）');
   const receipt = app.userDataDeletion.receipt(requestId);
   for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
+  // 台账计数同样如实给 0（不省略计数、也不因为在跑就假装清过台账）。
+  const evidence = app.userDataDeletion.evidenceOf(requestId);
+  assert.equal(evidence.favorites, 'favorites:online-purged:0;favorites:idempotency-purged:0');
+  assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
 });

@@ -18,7 +18,9 @@
  *     `DELETE ... AND owner_id AND revision` 在**同一事务**内完成 ⇒ 并发取消只成功一次；
  *     删除是**物理删除**，取消后再收藏会得到新 `id`，旧行不复活。
  *   - `findByTarget` / `listFavoritesByOwner`：只按 `owner_id` 过滤（他人行不出存储层）。
- *   - `deleteAllByOwner`：注销清理原语，`DELETE ... RETURNING id` 的**行数**即证据。
+ *   - `deleteAllByOwner`：注销清理原语，**同一事务**内按主体清空 `favorites` 正文行与本域
+ *     幂等台账 `favorites_idempotency`（`scope` 的第一段就是主体 uuid）；返回正文表行数，
+ *     台账行数由 `purgeOwnerData` 一并给出（注销证据里的两个计数）。他人主体的行一行不动。
  *   - 幂等台账**真落库**（`favorites_idempotency`）：`claim`/`complete`/`release` 各是**一条**
  *     带条件的语句，`outcome IS NULL` = 已认领未完成；`awaitIdempotencySettled` 有界轮询
  *     （25ms 间隔、总时长沿用 `waitMs`）**每次真读库**，不用进程内 Map 假装。
@@ -121,10 +123,25 @@ async function withTransaction<T>(pool: TransactionalPool, run: (sql: SqlRunner)
   }
 }
 
+/**
+ * 注销清空的**分表**真实行数：正文表（`records`）与本域幂等台账（`idempotency`）各计各的。
+ * 两项都进在线清除证据（`<module>:online-purged:<records>;<module>:idempotency-purged:<idempotency>`），
+ * 避免"只清了正文表"被读成"该模块在线数据已全部清除"。
+ */
+export interface OwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+}
+
+/** PG 收藏存储：在 `FavoritesStore` 之上多一个**分表计数**的注销清理（注销证据用）。 */
+export interface PgFavoritesStore extends FavoritesStore {
+  purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts>;
+}
+
 export function createPostgresFavoritesStore(
   pool: TransactionalPool,
   options: { now?: () => number } = {},
-): FavoritesStore {
+): PgFavoritesStore {
   // 幂等窗口比较必须与服务使用同一个时钟（脚本化时钟不会被真实 Date.now() 判成过期）。
   const nowMs = options.now ?? (() => Date.now());
 
@@ -132,6 +149,31 @@ export function createPostgresFavoritesStore(
     const result = await sql.query(`SELECT ${FAVORITE_COLUMNS} FROM favorites WHERE id = $1::uuid`, [id]);
     const row = result.rows[0];
     return row === undefined ? null : toFavorite(row);
+  }
+
+  /**
+   * 按主体清空：`favorites` 正文行 + `favorites_idempotency` 台账，**同一事务**（任一失败整体回滚）。
+   *
+   * 台账的 `scope` 由 `auth/idempotency.ts` 的 `idempotencyScope(subject, method, route)` 拼成
+   * `<主体 uuid>\n<METHOD>\n<路径>`，因此本主体的行**恰好**是 `scope` 以 `<主体 uuid>` + 换行开头
+   * 的那些行。这里用 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)` 做**精确**
+   * 前缀比较：不解释通配符（`_`/`%` 不会走样），也不是 `LIKE '%…%'` 那种会误伤其他主体的模糊匹配。
+   * 主体是定长 uuid ⇒ 其他主体（各自的 uuid 不同）的行不会被这条前缀命中。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<OwnerPurgeCounts> {
+    return withTransaction(pool, async (sql) => {
+      const records = await sql.query(
+        'DELETE FROM favorites WHERE owner_id = $1::uuid RETURNING id',
+        [ownerId],
+      );
+      const idempotency = await sql.query(
+        `DELETE FROM favorites_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+          RETURNING scope`,
+        [ownerId],
+      );
+      return { records: records.rows.length, idempotency: idempotency.rows.length };
+    });
   }
 
   return {
@@ -212,11 +254,13 @@ export function createPostgresFavoritesStore(
     },
 
     async deleteAllByOwner(ownerId: string): Promise<number> {
-      const result = await pool.query(
-        'DELETE FROM favorites WHERE owner_id = $1::uuid RETURNING id',
-        [ownerId],
-      );
-      return result.rows.length;
+      // 正文行数是本方法的既有契约；台账在同一事务里一并清掉，行数经 `purgeOwnerData` 给出。
+      return (await purgeOwnerRows(ownerId)).records;
+    },
+
+    /** 注销清理的**分表计数**（正文行 + 幂等台账）；协调器用它把两张表的行数都写进证据。 */
+    async purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts> {
+      return purgeOwnerRows(ownerId);
     },
 
     // ---- 幂等台账（真落库） ----

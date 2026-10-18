@@ -13,7 +13,9 @@
  *   6. 幂等台账**真落库**（`claim/complete/release/过期清理`），且 `awaitIdempotencySettled`
  *      能被**另一条独立连接**写入的结果唤醒 ⇒ 证明它每次真读库、不是进程内 Map 假装；
  *   7. 注销清空 `deleteAllByOwner` 返回**真实删除行数**（收藏与历史各一次，他人行不受影响）；
- *   8. 进程重连（关掉连接池再新建）后数据仍在。
+ *   8. 进程重连（关掉连接池再新建）后数据仍在；
+ *   9. 注销清空覆盖**幂等台账**（监工 P1 返修）：A 的四张表残留均 0（含未完成 claim、未过期行），
+ *      B 的四张表逐表与删除前相等，证据里可见两张台账各清了几行。
  *
  * 运行：`FAVORITES_HISTORY_PG_TEST_URL=postgres://…/gengyun_favorites_history_test \
  *        node tests/integration/favorites-history-pg.mjs`
@@ -32,6 +34,7 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
+import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const ENV = 'FAVORITES_HISTORY_PG_TEST_URL';
 const raw = process.env[ENV] ?? '';
@@ -357,6 +360,121 @@ try {
   assert.equal(await favorites2.deleteAllByOwner(ownerB), 1, '收藏域同样返回真实行数');
   assert.equal((await owner.query('SELECT count(*)::int n FROM history')).rows[0].n, 0);
   say('注销清空 deleteAllByOwner 返回真实删除行数（两域各一次，他人行不受影响）');
+
+  // ---- 9. 注销清空必须覆盖幂等台账（监工 P1 返修） ------------------------
+  // 真库、两个全新主体：A 的正文行与台账行（含"只认领未完成"、`expires_at` 尚未到期的行）全部清空，
+  // B 的四张表逐表与删除前相等（行、列、值都不变）；证据里必须看得见两张台账各清了几行。
+  const purgeA = (await owner.query('INSERT INTO users DEFAULT VALUES RETURNING id')).rows[0].id;
+  const purgeB = (await owner.query('INSERT INTO users DEFAULT VALUES RETURNING id')).rows[0].id;
+  const scopeOf = (subject, method, path) => `${subject}\n${method}\n${path}`;
+  // 24 小时后的过期时刻：`expires_at` 绝不是删除保证 —— 这行不会被"等过期"清掉。
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+  const claim = (store, scope, key) =>
+    store.claimIdempotency(scope, key, { request_hash: 'h'.repeat(64), response_status: 200, expires_at: expiresAt });
+
+  for (const [subject, targetId] of [
+    [purgeA, 'spc-purge-a'],
+    [purgeB, 'spc-purge-b'],
+  ]) {
+    assert.equal(
+      await favorites2.insertFavorite({
+        id: randomUUID(),
+        revision: 1,
+        owner_id: subject,
+        target_ref: { type: 'species', id: targetId, revision: 1 },
+        created_at: new Date().toISOString(),
+      }),
+      'inserted',
+    );
+  }
+  for (const [subject, kind, tag] of [
+    [purgeA, 'recognition', 'a'],
+    [purgeB, 'ocr', 'b'],
+  ]) {
+    assert.equal(
+      await history2.insertHistory({
+        id: randomUUID(),
+        revision: 1,
+        owner_id: subject,
+        kind,
+        target_ref: { type: kind, id: `rec-purge-${tag}`, revision: 1 },
+        job_id: `job-purge-${tag}`,
+        job_state: 'succeeded',
+        created_at: new Date().toISOString(),
+        event_key: `evt-purge-${tag}`,
+      }),
+      'inserted',
+    );
+  }
+
+  // A：收藏域 2 条台账（1 已完成 + 1 只认领未完成）、历史域 1 条；B：两域各 1 条，必须原样保留。
+  const purgeAFavPost = scopeOf(purgeA, 'POST', '/api/v1/favorites');
+  assert.equal(await claim(favorites2, purgeAFavPost, '1'.repeat(64)), true);
+  assert.equal(
+    await favorites2.completeIdempotency(purgeAFavPost, '1'.repeat(64), {
+      response_status: 201,
+      outcome: { kind: 'favorite', id: randomUUID(), revision: 1 },
+    }),
+    true,
+  );
+  assert.equal(await claim(favorites2, scopeOf(purgeA, 'DELETE', `/api/v1/favorites/${randomUUID()}`), '2'.repeat(64)), true);
+  assert.equal(await claim(history2, scopeOf(purgeA, 'DELETE', `/api/v1/history/${randomUUID()}`), '3'.repeat(64)), true);
+  assert.equal(await claim(favorites2, scopeOf(purgeB, 'POST', '/api/v1/favorites'), '4'.repeat(64)), true);
+  assert.equal(await claim(history2, scopeOf(purgeB, 'DELETE', `/api/v1/history/${randomUUID()}`), '5'.repeat(64)), true);
+
+  // 主体前缀即 `scope` 第一段（uuid 定长 + 换行），不用 `LIKE`（`_`/`%` 会误伤）。
+  const ownerPrefix = `left(scope, char_length($1::text) + 1) = $1::text || chr(10)`;
+  const snapshotOf = async (subject) => ({
+    favorites: (await owner.query('SELECT * FROM favorites WHERE owner_id = $1 ORDER BY id', [subject])).rows,
+    history: (await owner.query('SELECT * FROM history WHERE owner_id = $1 ORDER BY id', [subject])).rows,
+    favorites_idempotency: (
+      await owner.query(`SELECT * FROM favorites_idempotency WHERE ${ownerPrefix} ORDER BY scope, key_hash`, [subject])
+    ).rows,
+    history_idempotency: (
+      await owner.query(`SELECT * FROM history_idempotency WHERE ${ownerPrefix} ORDER BY scope, key_hash`, [subject])
+    ).rows,
+  });
+  const beforeB = await snapshotOf(purgeB);
+  assert.equal(beforeB.favorites.length, 1, 'B 的收藏行已在（下面的"逐表相等"不能对着空快照成立）');
+  assert.equal(beforeB.history.length, 1);
+  assert.equal(beforeB.favorites_idempotency.length, 1);
+  assert.equal(beforeB.history_idempotency.length, 1);
+  const beforeA = await snapshotOf(purgeA);
+  assert.equal(beforeA.favorites_idempotency.length, 2);
+  assert.equal(beforeA.history_idempotency.length, 1);
+
+  const deletion = createUserDataDeletion({ favoritesStore: favorites2, historyStore: history2 });
+  const purgeRequestId = String(deletion.requestDeletionFor(purgeA).id);
+  await deletion.executeHandlers(purgeRequestId);
+
+  const residualOf = async (subject) => ({
+    favorites: (await owner.query('SELECT count(*)::int n FROM favorites WHERE owner_id = $1', [subject])).rows[0].n,
+    history: (await owner.query('SELECT count(*)::int n FROM history WHERE owner_id = $1', [subject])).rows[0].n,
+    favorites_idempotency: (
+      await owner.query(`SELECT count(*)::int n FROM favorites_idempotency WHERE ${ownerPrefix}`, [subject])
+    ).rows[0].n,
+    history_idempotency: (
+      await owner.query(`SELECT count(*)::int n FROM history_idempotency WHERE ${ownerPrefix}`, [subject])
+    ).rows[0].n,
+  });
+  assert.deepEqual(
+    await residualOf(purgeA),
+    { favorites: 0, history: 0, favorites_idempotency: 0, history_idempotency: 0 },
+    '注销后 A 的四张表残留均为 0（含未完成 claim、未过期行）',
+  );
+  assert.deepEqual(await snapshotOf(purgeB), beforeB, '注销 A 不得改动 B 的任何一行（四张表逐表相等）');
+
+  const handlers = new Map(deletion.receipt(purgeRequestId).handlers.map((row) => [row.module, row]));
+  assert.equal(handlers.get('favorites').online_state, 'completed');
+  // 契约回执形状按 openapi 固定（不含 evidence）；证据走同源的诊断视图。
+  const evidence = deletion.evidenceOf(purgeRequestId);
+  assert.equal(
+    evidence.favorites,
+    'favorites:online-purged:1;favorites:idempotency-purged:2',
+    '收藏域证据须同时含正文行数与台账行数',
+  );
+  assert.equal(evidence.history, 'history:online-purged:1;history:idempotency-purged:1');
+  say('注销清空覆盖幂等台账：A 四表残留 0、B 逐表相等、证据可见台账行数');
 
   // ---- 1（续）. 回滚脚本 -------------------------------------------------
   await owner.query(sqlFile('migrations/rollback/0018_favorites_history.down.sql'));
