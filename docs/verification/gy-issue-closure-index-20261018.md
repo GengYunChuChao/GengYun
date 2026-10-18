@@ -15,6 +15,15 @@
 | 待真机 | 需要真机或微信开发者工具上的实测记录 | 否 |
 | 待外部 | 需要外部账号、真实供应商、实库或用户侧材料 | 否 |
 
+- **issue 级结论**（由逐条判定汇总，四档之外不另设隐含档）：
+
+| 结论 | 含义 | 本页命中 |
+| --- | --- | --- |
+| 可关 | 全部条款可判真，且无待裁／待真机／待外部，也无其它列明的前置 | #7、#8 |
+| 待前置 | 条款已可判真，但端到端仍缺本页逐条列明的前置。两种情形：①仍有待裁／待真机／待外部条款；②条款全可判真、缺的是运行态前置（如 #17 `real` 模式无持久存储恒 503，待阶段 2 PG 持久化）。两种均**不是**代码缺陷 | #4、#16、#17、#27 |
+| 待裁 | 有权裁定方（监工／用户）对口径或严重性未定，本页不自裁（#3 的 `unverified` 形态、#22 的两个发现严重性） | #3、#22 |
+| 不可关 | 存在本轮会被判否或缺关键事实的条款，本页明确不提交关闭（逐条理由见 §2） | §2 五张 |
+
 - **引用口径**：issue 正文「验收」段为复选框列表，本页**逐字引用**该列表，不改写、不合并、不省略；判定表 `C1…Cn` 与引用顺序一一对应。
 - **命令口径**：每节末尾的复现命令按 `C1…Cn` 同序排列，注释里写明预期读数；命令来自 Windows PowerShell 7，退出码取 `$LASTEXITCODE`。
 
@@ -23,7 +32,7 @@
 - **URL**：`https://github.com/GengYunChuChao/GengYun/issues/3`
 - **状态**：`open`（`gh api repos/GengYunChuChao/GengYun/issues/3` 实测）
 - **验收条款**：AC02、AC12、AC22；逐条引用共 **3** 条
-- **本页结论**：**可关** —— 三条均具仓库内可复现证据；issue 正文要求的「20 条」指条目数，本页如实区分「条目 20 条」与「逐字段复核 0 条」。
+- **本页结论**：**待裁** —— 三条证据均已在仓库内就位（记录 20 条、`source_validity: valid` 20 处、公开来源审计页在库），但「20 条 `review_status: unverified`／`achieved: 20` 是否算 #3 关闭」是口径裁定，本页不自裁：`.pg17/ruling-i03i20-five-items.md` 首块逐字「本裁定**不关闭** #3/#20 任何验收项 ✓；若监工另有口径，以监工批复为准 ✓」，且明确「不得声称资料/样本“已就绪/已核实/已达标”」。issue 正文「20 条」指条目数，本页如实区分「条目 20 条」与「逐字段复核 0 条」。
 
 **逐条验收原文（逐字引用 issue 正文，未改写）**
 
@@ -35,7 +44,7 @@
 
 | 条款 | 判定 | 证据（`文件:行`，绑 5250520；被引文件在本页零改动） |
 | --- | --- | --- |
-| **C1** | **可判真** | `packages/knowledge/herbicides/records-2026.json:13` 逐字「字段已转录自来源，但未与原文逐字段复核（本文件当前 20 条）」；同文件 `:5` `"target": 20`、`:6` `"achieved": 20`（条目数，不等於已核对）；`packages/reference/constants.mjs:157` `FORBIDDEN_LABELS` |
+| **C1** | **可判真** | `packages/knowledge/herbicides/records-2026.json:13` 逐字「字段已转录自来源，但未与原文逐字段复核（本文件当前 20 条）」；同文件 `:5` `"target": 20`、`:6` `"achieved": 20`（条目数，不等于已核对）；`packages/reference/constants.mjs:157` `FORBIDDEN_LABELS` |
 | **C2** | **可判真** | `records-2026.json:99` 起 `"usable_as_dose": false` 共 20 处（末处 `:2138`）；`:23` `forbidden_fill` 列「空字符串／占位符／推测值或剂量换算值／模型生成文本」；`docs/verification/provider-matrix.md:40` 关系数据库行状态列逐字「阻塞」（真实库未接即登记缺项） |
 | **C3** | **可判真** | `records-2026.json:3` notice 逐字「登记证号与字段均取自农业农村部农药管理司公开公告附表（登记延续信息），非编造…记录状态为 partial，不可作为用药依据。」；`:32` `"record_id": "gy-i03-hb-001"`（20 条同构，`"source_validity": "valid"` 共 20 处）；`docs/verification/gy-i03-public-source-audit-20261011.md` |
 
@@ -48,8 +57,8 @@ node --test tests/unit/knowledge-herbicides-http.test.mjs tests/reference/herbic
 # C2｜预期：`20`
 git show 5250520:packages/knowledge/herbicides/records-2026.json | Select-String '"usable_as_dose": false' | Measure-Object | Select-Object -ExpandProperty Count
 
-# C3｜预期：`20`（20 条条目清单可复核）
-同上命令改匹配 `"source_validity": "valid"`
+# C3｜预期：`20`（20 条条目清单可复核；与 C2 同形，仅改匹配串）
+git show 5250520:packages/knowledge/herbicides/records-2026.json | Select-String '"source_validity": "valid"' | Measure-Object | Select-Object -ExpandProperty Count
 ```
 
 ## 1.2 #4 [初版 GY-I04] 实现微信登录、游客限制与服务端归属权限
@@ -78,8 +87,8 @@ git show 5250520:packages/knowledge/herbicides/records-2026.json | Select-String
 **复现命令**
 
 ```powershell
-# C1｜预期：1 行，状态列非「已测」
-git show 5250520:docs/verification/platform-checklist.md | Select-String '正式 AppID'
+# C1｜预期：1 行（正则限定表格行，GY-I25 scope 句不计数）；状态列逐字「账号类型已确认／服务端鉴权已测」，无真机／业务登录证据
+git show 5250520:docs/verification/platform-checklist.md | Select-String '^\| 正式 AppID'
 
 # C2｜预期：exit 0，`tests 9 / pass 9 / fail 0`
 node --test tests/unit/gy-i22-session-inflight-cross-module.test.mjs
@@ -324,7 +333,7 @@ git show 5250520:docs/verification/provider-matrix.md | Select-String '是否影
 
 | issue | 条款数 | 可判真 | 待裁 | 待真机 | 待外部 | 结论 |
 | --- | --- | --- | --- | --- | --- | --- |
-| #3 | 3 | 3 | 0 | 0 | 0 | 可关 |
+| #3 | 3 | 3 | 0 | 0 | 0 | 待裁 |
 | #4 | 4 | 2 | 0 | 1 | 1 | 待前置 |
 | #7 | 3 | 3 | 0 | 0 | 0 | 可关 |
 | #8 | 4 | 4 | 0 | 0 | 0 | 可关 |
@@ -332,10 +341,11 @@ git show 5250520:docs/verification/provider-matrix.md | Select-String '是否影
 | #17 | 4 | 4 | 0 | 0 | 0 | 待前置 |
 | #22 | 3 | 2 | 1 | 0 | 0 | 待裁 |
 | #27 | 3 | 1 | 1 | 0 | 1 | 待前置 |
-| **合计** | **28** | **22** | **2** | **2** | **2** | 3 可关 / 4 待前置 / 1 待裁 |
+| **合计** | **28** | **22** | **2** | **2** | **2** | 2 可关 / 4 待前置 / 2 待裁 |
 
-- 「可关」＝全部条款均可判真且本页附了复现命令；「待前置」＝存在待裁／待真机／待外部条款，缺的是本页列明的外部条件，**不是**代码缺陷。
+- 汇总表口径见 §0「判定四档」与「issue 级结论」：`可关`＝全条款可判真且无列明前置；`待前置`＝或仍有待裁／待真机／待外部条款，或条款全可判真但端到端缺列明的前置（#17 的 `real` 模式无持久存储恒 503 属此情形）；`待裁`＝口径／严重性裁定权在监工或用户。
 - 本页**不作**「验收通过」结论：判定只到「具备可关闭条件」或「待 X」。
+- 注意列义不同：`待裁／待真机／待外部` 三列是**条款级**计数，`结论` 列是 **issue 级**。故 `#3` 三列均为 0 而结论为 `待裁`——其 3 条条款全部可判真，待裁的是「`review_status: unverified` 形态能否算 #3 关闭」这一口径（依据见 §1.1）。
 
 ## 4 本轮实测读数（本页作者亲自执行，原样摘录）
 
@@ -389,7 +399,10 @@ node --test tests/unit/i08-dose-switch-default.test.mjs
   → exit 0 ｜ tests 5 / pass 5 / fail 0
 
 git show 5250520:packages/knowledge/herbicides/records-2026.json   （计数）
-  → exit 0 ｜ usable_as_dose false = 20；card_eligible false = 20；source_validity valid = 20；review_status unverified = 40（20 条记录各 2 处）；文件 2177 行 / 72693 字节
+  → exit 0 ｜ usable_as_dose false = 20；card_eligible false = 20；source_validity valid = 20；review_status unverified = 40（20 条记录各 2 处）；行数 2177 行
+
+git cat-file -s 5250520:packages/knowledge/herbicides/records-2026.json
+  → exit 0 ｜ 90131（字节，按 blob 计；worktree 的 CRLF 版为 92308 字节，72693 是字符数，不作字节数用）
 
 git diff --numstat 5250520..HEAD
   → exit 0 ｜ 只有本页一行新增；被引文件零改动
@@ -417,3 +430,4 @@ npm run lint
 6. **微信扫码登录的浏览器端到端**：未跑（需正式 AppID 与真机路径，属 #4 前置）。
 7. **#22 §5.1 / §5.2 两个发现的严重性裁定**：未取得，属监工/指挥职责。
 8. **新增本页后的复跑**：`npm run test:docs` exit 0、`npm run lint` exit 0（读数见 §4 的「门禁」块）；其余门禁（`git diff --check` 两点／三点、`git merge-tree --write-tree`）只能在提交后实测，读数记入交接件，不在本页伪造。
+9. **本页数字与判定档位无门禁看守**：`npm run test:docs` 只校验文档结构与表格列数（`tools/validate_development_docs.py`），**不校验** §4 的读数、逐条判定与汇总表数字——这些只能人工复核；改数字或改档位不会让任何门禁变红。
