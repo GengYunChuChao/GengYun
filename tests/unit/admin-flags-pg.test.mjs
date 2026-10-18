@@ -13,7 +13,9 @@
  *    ⛔ 不返回"三键全 false"的假封套；
  * 8. `createPortFlagReader`：未预取 ⇒ `unrecognized`；读取抛错 ⇒ `read_error` 且**丢弃旧快照**；
  * 9. `createFlagGatedGuards`：只对受控面预取，判定仍是同步的；
- * 10. `flagReasonCode`：理由归一短码（纯中文/空 ⇒ `ADMIN_SET_FLAG`）。
+ * 10. `flagReasonCode`：理由归一短码（纯中文/空 ⇒ `ADMIN_SET_FLAG`）；
+ * 11. 适配层错误映射：`55P03`/`57014` ⇒ 504 `PROVIDER_TIMEOUT`(retryable:true)，`42501` ⇒ 503 对照
+ *    （防两类 SQLSTATE 被折叠成一个分支）。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -22,6 +24,7 @@ import { createAdminOpsStore } from '../../services/api/src/admin/ops/store.ts';
 import { CONTRACT_FLAG_KEYS } from '../../services/api/src/admin/ops/flags.ts';
 import {
   DEFAULT_FLAG_REASON_CODE,
+  createPostgresFeatureFlags,
   flagReasonCode,
 } from '../../services/api/src/admin/ops/flags-pg.ts';
 import {
@@ -323,4 +326,61 @@ test('flagReasonCode：归一短码，纯中文/空理由回落到 ADMIN_SET_FLA
   assert.equal(flagReasonCode(''), DEFAULT_FLAG_REASON_CODE);
   assert.equal(flagReasonCode(null), DEFAULT_FLAG_REASON_CODE);
   assert.equal(flagReasonCode('_weird__start'), 'WEIRD_START');
+});
+
+/**
+ * 写面 stub pool：BEGIN / `SET LOCAL lock_timeout` 正常返回，**唯一一条函数调用**抛指定 SQLSTATE。
+ * 用来钉住 `mapFlagWriteError` 的分支——不同 SQLSTATE 绝不能折叠成同一个 503。
+ */
+function stubWritePool(sqlState) {
+  const calls = [];
+  const client = {
+    async query(text) {
+      calls.push(text);
+      if (typeof text === 'string' && text.includes('set_feature_flag')) {
+        const failure = new Error(`synthetic ${sqlState}`);
+        failure.code = sqlState;
+        throw failure;
+      }
+      return { rows: [] };
+    },
+    release() {
+      calls.push('release');
+    },
+  };
+  return { calls, pool: { connect: async () => client } };
+}
+
+const stubCommitOptions = () => ({ changedBy: ADMIN_USER_ID, reason: 'synthetic mapping probe' });
+
+test('55P03/57014 ⇒ 504 PROVIDER_TIMEOUT(retryable:true)，不得折叠成 503', async () => {
+  for (const sqlState of ['55P03', '57014']) {
+    const { calls, pool } = stubWritePool(sqlState);
+    const port = createPostgresFeatureFlags({ pool });
+    const error = await port
+      .commitIfCurrent('ai_enabled', 1, { enabled: true }, stubCommitOptions())
+      .then(() => null, (thrown) => thrown);
+    assert.notEqual(error, null, `${sqlState} 必须抛出，不得返回成功`);
+    assert.equal(error.code, 'PROVIDER_TIMEOUT', `${sqlState}（行锁不可用/语句超时）必须映射 PROVIDER_TIMEOUT`);
+    assert.equal(error.status, 504, `${sqlState} 必须是 504`);
+    assert.equal(error.retryable, true, `${sqlState} 是同一请求稍后重试可能成功的瞬时故障`);
+    assert.notEqual(error.code, 'PROVIDER_UNAVAILABLE', `${sqlState} 不得与 42501 折叠成同一分支`);
+    assert.ok(
+      calls.some((text) => typeof text === 'string' && text.trim().toUpperCase() === 'ROLLBACK'),
+      '失败必须回滚事务',
+    );
+    assert.ok(calls.includes('release'), '失败必须释放连接');
+  }
+});
+
+test('42501（权限不足）仍映射 503 PROVIDER_UNAVAILABLE(retryable:false) 的对照支', async () => {
+  const { pool } = stubWritePool('42501');
+  const port = createPostgresFeatureFlags({ pool });
+  const error = await port
+    .commitIfCurrent('ai_enabled', 1, { enabled: true }, stubCommitOptions())
+    .then(() => null, (thrown) => thrown);
+  assert.notEqual(error, null, '42501 必须抛出');
+  assert.equal(error.code, 'PROVIDER_UNAVAILABLE', '权限不足是「不可用」而不是「超时」');
+  assert.equal(error.status, 503, '42501 必须是 503');
+  assert.equal(error.retryable, false, '缺权限重试也不会成功，必须标不可重试');
 });

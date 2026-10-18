@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GY-I18（#18）· `feature_flags` 持久化真库验收（迁移 `0020_feature_flags.sql`）。
  *
  * 口径来源：`.pg17/ruling-feature-flags-persistence-20261018.md` §1/§3/§4。
@@ -21,6 +21,9 @@
  *   [D] 并发两笔同 revision ⇒ 恰一笔成功、一笔冲突、审计恰 1 行
  *   [E] 真实 HTTP：listFlags/PUT/If-Match 409/值未变短路/`/herbicides` 关→409 开→恢复 + 并发 PUT
  *   [F] `pool === null` 的 real 装配与今天逐字相同：后台 503 fail-closed、开关门不 armed
+ *   [H] 行锁的行为分量（证伪 `SELECT … FOR UPDATE`）：外部会话持行锁 + 端口「值未变」短路
+ *       ⇒ 等锁 ≥3000ms 后 504 PROVIDER_TIMEOUT(retryable:true)；删掉 FOR UPDATE 则数毫秒返回成功，
+ *       耗时下界断言必红。HTTP 的 PUT 到不了这里（service 层「值未变」在端口之前就返回 200）。
  *
  * 说明：本分支缺 `0018`/`0019`（在途 PR），故不跑 `migrations-negative-pg.mjs` 的「无缺号」断言；
  * 合并顺序 `#272`(0018) → 消息片(0019) → 本片(0020) → 账号读面片(0021)。
@@ -222,9 +225,15 @@ async function provisionRoles() {
   assert.equal((region.match(/GRANT SELECT ON TABLE public\.feature_flags/g) ?? []).length, 1, '区域必须恰好一条 SELECT 授权');
 
   if (providedRuntimeUrl === null) {
-    await owner.query(`DROP OWNED BY ${RUNTIME_ROLE}`).catch(() => {});
-    await owner.query(`DROP ROLE IF EXISTS ${RUNTIME_ROLE}`).catch(() => {});
-    await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
+    const existing = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [RUNTIME_ROLE]);
+    if (existing.rowCount === 0) {
+      await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
+    } else {
+      // 上一轮（或其它片）留下的同名角色可能被**别的数据库**的对象依赖 ⇒ 删不掉，也不能删；
+      // 只重置密码复用，保证本脚本连跑幂等。
+      await owner.query(`ALTER ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
+      note(`[P] 复用已存在的运行时角色 ${RUNTIME_ROLE}（跨库依赖使其不可 DROP；非本轮残留）`);
+    }
     const derived = new URL(ownerUrl.href);
     derived.username = RUNTIME_ROLE;
     derived.password = runtimePassword;
@@ -446,6 +455,61 @@ async function portArms() {
   assert.equal(submissions.revision, 2, '并发后 revision 只能 +1');
   assert.equal((await auditRows('submissions_enabled')).length, 1, '并发后审计只能一行');
   note('[D] Promise.all 两笔同 revision ⇒ 恰一笔成功一笔 REVISION_CONFLICT，revision 只 +1，审计恰 1 行');
+
+  // [H] 行锁的行为分量（能证伪 `SELECT … FOR UPDATE`）：外部会话持行锁，再调端口走
+  //     「值未变 ⇒ 幂等短路」路径。带锁 ⇒ 短路判定被行锁挡住，4s（`SET LOCAL lock_timeout='4s'`）
+  //     后 55P03 ⇒ 504 PROVIDER_TIMEOUT；删掉 FOR UPDATE ⇒ 读快照数毫秒返回 ok:true ⇒ 耗时下界必红。
+  //     注：HTTP 的 PUT 到不了这里（service.ts 的「值未变」分支在端口之前就返回 200），故本用例按
+  //     审查者的同一探针在端口层取证；生产代码按 r2 派单 §2 不改。
+  const locked = await flagRow('ai_enabled');
+  const auditBeforeLock = (await auditRows('ai_enabled')).length;
+  let lockElapsedMs = -1;
+  let lockError = null;
+  await owner.query('BEGIN');
+  try {
+    await owner.query("SELECT 1 FROM public.feature_flags WHERE key = 'ai_enabled' FOR UPDATE");
+    const lockStartedAt = Date.now();
+    try {
+      lockError = await port.commitIfCurrent(
+        'ai_enabled',
+        locked.revision,
+        { enabled: locked.enabled },
+        { changedBy: admin.adminId, reason: 'lock-wait probe' },
+      );
+    } catch (error) {
+      lockError = error;
+    } finally {
+      lockElapsedMs = Date.now() - lockStartedAt;
+    }
+  } finally {
+    await owner.query('ROLLBACK');
+  }
+  assert.ok(
+    lockElapsedMs >= 3000,
+    `外部持锁时「值未变」短路必须等锁到 lock_timeout（≥3000ms）；实测 ${lockElapsedMs}ms ⇒ 行锁没有行为分量（删掉 FOR UPDATE 会在 10ms 内返回成功）`,
+  );
+  assert.ok(lockError instanceof Error, '带锁调用必须失败（504 PROVIDER_TIMEOUT），不得静默返回陈旧成功');
+  assert.equal(lockError.status, 504, '带锁调用必须是 504');
+  assert.equal(lockError.code, 'PROVIDER_TIMEOUT', '带锁调用必须是 PROVIDER_TIMEOUT');
+  assert.equal(lockError.retryable, true, '锁超时是可重试的瞬时故障');
+  assert.notEqual(lockError.code, 'PROVIDER_UNAVAILABLE', '不得把锁超时折叠成 503');
+
+  // 反面对照：锁释放后同一笔请求 ⇒ 成功、revision 不变、审计不增（证明上一条 504 不是环境噪声）。
+  const unlocked = await port.commitIfCurrent(
+    'ai_enabled',
+    locked.revision,
+    { enabled: locked.enabled },
+    { changedBy: admin.adminId, reason: 'lock-wait probe' },
+  );
+  assert.equal(unlocked.ok, true, '锁释放后同一笔「值未变」请求必须成功');
+  assert.equal(unlocked.record.revision, locked.revision, '幂等短路不得改 revision');
+  assert.equal(unlocked.record.enabled, locked.enabled, '幂等短路不得改值');
+  assert.equal((await flagRow('ai_enabled')).revision, locked.revision, '行锁探针不得改变库内 revision');
+  assert.equal((await auditRows('ai_enabled')).length, auditBeforeLock, '幂等短路不得写审计');
+  note(
+    `[H] 外部持锁 + 「值未变」commitIfCurrent ⇒ 等锁 ${lockElapsedMs}ms 后 504 PROVIDER_TIMEOUT(retryable:true)；` +
+      '释放后同请求 ⇒ ok、revision 不变、审计 0 增（删掉 FOR UPDATE 则本行必红）',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -681,7 +745,7 @@ try {
   await portArms();
   await httpArm();
   await nullPoolArm();
-  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ 全部取得');
+  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 全部取得');
 } catch (error) {
   process.exitCode = 1;
   console.error('[FAIL]', error?.message ?? error);
