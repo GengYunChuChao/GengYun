@@ -331,6 +331,184 @@ WITH checks(label, ok, detail) AS (
          '注销受理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
          '运行时应能连接业务库'
+
+  -- ---------------------------------------------------------------------------
+  -- GY-I22（#22）追加：账号停用/恢复**唯一写路径**与审计台账的函数级/表级契约断言。
+  -- 背景：运行时角色对 public.users 的 state/auth_epoch/revision 与 public.admin_audit_events
+  -- **没有任何直接权限**（见上面 protected_columns——它钉的是 sessions.auth_epoch，该断言逐字未动）；
+  -- public.sessions 的 (token_hash,revoked_at) 自 0001 起本就授予运行时 UPDATE（auth_privacy.sql），
+  -- 撤会话单独做得到，但单靠它做不到「同事务内改状态 + 推进纪元 + 落审计」，
+  -- 所以停用只能经窄口径 SECURITY DEFINER 函数完成；因此把「函数确实存在、确实是 SECURITY DEFINER、
+  -- search_path 确实固定、属主确实能写这些列、EXECUTE 确实只授予运行时角色、审计台账确实只可追加」
+  -- 全部钉死。⛔ 这十条**不**放松任何既有断言，也**不**给运行时角色补任何列权限。
+  -- 反向控制（不在此文件断言，见交接证据）：以 gengyun_api_runtime 直接
+  -- `UPDATE public.users SET auth_epoch = auth_epoch + 1` 仍必须 permission denied。
+  -- ---------------------------------------------------------------------------
+  UNION ALL
+  -- 21. 停用唯一写路径必须恰存在一个（名字 + 精确签名）
+  SELECT 'suspend_function_exists',
+         to_regprocedure('public.suspend_account(uuid,uuid,uuid,integer,uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'suspend_account'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '账号停用唯一写路径必须恰为 public.suspend_account(uuid,uuid,uuid,integer,uuid)'
+
+  UNION ALL
+  -- 22. 必须真的是 SECURITY DEFINER（否则函数以调用者身份执行，写 users 必然被拒）
+  SELECT 'suspend_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'suspend_account'),
+         '账号停用函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 23. search_path 必须固定为 pg_catalog，且时区固定为 UTC
+  SELECT 'suspend_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'suspend_account'),
+         '账号停用函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 24. 属主正确：必须能改 users.state/auth_epoch/revision、能撤 sessions、能写审计台账，
+  --     且运行时角色既不是它、也不能 SET ROLE 成为它（否则可绕过列授权）
+  SELECT 'suspend_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'state', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'auth_epoch', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'revision', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.sessions', 'revoked_at', 'UPDATE')
+                 AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.admin_audit_events', 'INSERT')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'suspend_account'),
+         '函数属主必须能改 users.state/auth_epoch/revision、撤 sessions.revoked_at 并写 admin_audit_events，且运行时角色无法成为它'
+
+  UNION ALL
+  -- 25. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'suspend_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.suspend_account(uuid,uuid,uuid,integer,uuid)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'suspend_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'suspend_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '账号停用函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
+  UNION ALL
+  -- 26. 恢复唯一写路径必须恰存在一个（名字 + 精确签名）
+  SELECT 'restore_function_exists',
+         to_regprocedure('public.restore_account(uuid,uuid,uuid,integer,uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'restore_account'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '账号恢复唯一写路径必须恰为 public.restore_account(uuid,uuid,uuid,integer,uuid)'
+
+  UNION ALL
+  -- 27. 恢复也必须真的是 SECURITY DEFINER
+  SELECT 'restore_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'restore_account'),
+         '账号恢复函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 28. 恢复函数的 search_path / 时区同样固定
+  SELECT 'restore_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'restore_account'),
+         '账号恢复函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 29. 恢复函数据属主与 EXECUTE 口径与停用完全一致（同一套最小权限）
+  SELECT 'restore_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'state', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'auth_epoch', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'revision', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.sessions', 'revoked_at', 'UPDATE')
+                 AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.admin_audit_events', 'INSERT')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'restore_account'),
+         '恢复函数属主必须能改 users.state/auth_epoch/revision、撤 sessions.revoked_at 并写 admin_audit_events，且运行时角色无法成为它'
+
+  UNION ALL
+  SELECT 'restore_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.restore_account(uuid,uuid,uuid,integer,uuid)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'restore_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'restore_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '账号恢复函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
+  UNION ALL
+  -- 30. 审计台账：只可追加（触发器在岗）+ 运行时角色零直接权限（连 SELECT 都不给）
+  SELECT 'audit_ledger_append_only',
+         to_regclass('public.admin_audit_events') IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+             FROM pg_trigger t
+            WHERE t.tgrelid = to_regclass('public.admin_audit_events')
+              AND t.tgname = 'admin_audit_events_append_only'
+              AND t.tgenabled <> 'D'
+         )
+         AND to_regprocedure('public.admin_audit_events_reject_mutation()') IS NOT NULL
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'DELETE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'TRUNCATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'SELECT'),
+         '审计台账必须只可追加（append-only 触发器在岗），且运行时角色对其没有任何直接权限（插入只发生在 SECURITY DEFINER 函数内）'
+
+  UNION ALL
+  -- 31. 展示名投影函数：纯投影（非 SECURITY DEFINER，不可借它提权），search_path 固定
+  SELECT 'account_display_name_projection',
+         to_regprocedure('public.admin_account_display_name(text,uuid)') IS NOT NULL
+         AND (SELECT NOT p.prosecdef
+                     AND p.proconfig @> ARRAY['search_path=pg_catalog']
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname = 'admin_account_display_name'),
+         'admin_account_display_name(text,uuid) 必须是固定 search_path 的纯投影函数（非 SECURITY DEFINER）'
 )
 
 SELECT CASE

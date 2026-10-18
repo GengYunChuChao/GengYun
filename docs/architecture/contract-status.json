@@ -575,7 +575,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "237-245"
+          "lines": "298-315"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -611,7 +611,7 @@
           "lines": "1-33"
         }
       ],
-      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；synthesis 的读面早已接线（#152，零契约变更），ocr 的**读面**已于 #183（1078566）接为纯追加作业源（读面复用 ocr/service.ts 的 getJob）⇒ 经该路径读取 ocr/synthesis 作业现可返回契约 Job 与 error_code；answer 的**读面**已于 #12 片接为纯追加作业源（读面复用对话域轮次上的作业快照，services/api/src/conversations/job.ts）⇒ 经该路径读取 answer 作业现可返回契约 Job 与 error_code（真值来自入库快照，绝不凭空升级为 succeeded）；ocr/synthesis 无取消入口 ⇒ 取消一侧仍不接线、由作业面如实 503 拒绝（见 cancelJob）；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
+      "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；synthesis 的读面早已接线（#152，零契约变更），ocr 的**读面**已于 #183（1078566）接为纯追加作业源（读面复用 ocr/service.ts 的 getJob）⇒ 经该路径读取 ocr/synthesis 作业现可返回契约 Job 与 error_code；answer 的**读面**已于 #12 片接为纯追加作业源（读面复用对话域轮次上的作业快照，services/api/src/conversations/job.ts）⇒ 经该路径读取 answer 作业现可返回契约 Job 与 error_code（真值来自入库快照，绝不凭空升级为 succeeded）；ocr 的**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE，提供者迟到结果因 revision 前进而写不进去、不复活作业；synthesis 无取消入口 ⇒ 取消一侧仍不接线、由作业面如实 503 拒绝（见 cancelJob）；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
     },
     {
       "id": "cancelJob",
@@ -636,7 +636,7 @@
           "lines": "1-33"
         }
       ],
-      "blocker": "取消经共享作业面按 kind 分派；仅识别域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域与审核域（GY-I14，kind=moderation）无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 与 ocr 的**读面**已接线（#152；#183 追加 kind=ocr 作业源），但两者本基线均无取消入口 ⇒ 取消一侧仍未接线，由作业面在确认作业存在后同样如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code，但**取消仍未接线**（对话域不提供取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；持久租约与外发撤销待接线"
+      "blocker": "取消经共享作业面按 kind 分派；识别域与 OCR 域提供取消能力（含 If-Match、幂等重放与终态守卫）；转写域与审核域（GY-I14，kind=moderation）无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（retryable）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 的**读面**已接线（#152），但本基线仍无取消入口 ⇒ 取消一侧仍未接线，由作业面在确认作业存在后同样如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；ocr 的**读面**（#183 追加 kind=ocr 作业源）与**取消**（GY-I10 取消片，services/api/src/jobs/sources.ts:169-186、services/api/src/ocr/service.ts:687）均已接线：queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code，但**取消仍未接线**（对话域不提供取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；持久租约与外发撤销待接线"
     },
     {
       "id": "listKnowledge",
@@ -868,7 +868,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**仍未接线（OCR 域无取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
     },
     {
       "id": "getOCR",
@@ -888,7 +888,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**仍未接线（OCR 域无取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
     },
     {
       "id": "deleteOCR",
@@ -908,7 +908,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**仍未接线（OCR 域无取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
     },
     {
       "id": "correctOCR",
@@ -928,7 +928,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**仍未接线（OCR 域无取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
     },
     {
       "id": "verifyOCR",
@@ -948,7 +948,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**仍未接线（OCR 域无取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled、不谎称作业不存在；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:169-186、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
     },
     {
       "id": "createTranscription",
@@ -1002,7 +1002,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "167-171"
+          "lines": "210-228"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -1022,7 +1022,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "187-191"
+          "lines": "230-248"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -1492,7 +1492,7 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "304-304"
+        "lines": "305-312"
        },
         {
           "path": "services/api/src/community/service.ts",
@@ -3083,7 +3083,7 @@
           "lines": "316-324"
         }
       ],
-      "blocker": "共享作业面现由 `services/api/src/app.ts:1313` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1314`）、transcription（`:1320`）、moderation（`:1323`）、synthesis（`:1328`）、ocr（`:1336`）、answer（`:1344`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力仍只有识别域：`services/api/src/jobs/sources.ts:35` 的识别源是唯一实现 `cancel` 的源（`services/api/src/jobs/sources.ts:54`），其余五域（transcription / moderation / synthesis / ocr / answer）均省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:282-306`（`createJobRegistry`，`:264`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
+      "blocker": "共享作业面现由 `services/api/src/app.ts:1313` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1314`）、transcription（`:1320`）、moderation（`:1323`）、synthesis（`:1328`）、ocr（`:1336`）、answer（`:1344`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别域与 OCR 域：识别源（`services/api/src/jobs/sources.ts:35`，`cancel` 见 `services/api/src/jobs/sources.ts:54`）与 OCR 源（GY-I10 取消片，`cancel` 见 `services/api/src/jobs/sources.ts:169-186`，域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余四域（transcription / moderation / synthesis / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:283-309`（`createJobRegistry`，`:264`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（retryable），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",

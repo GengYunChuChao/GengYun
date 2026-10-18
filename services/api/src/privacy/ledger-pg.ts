@@ -161,7 +161,10 @@ export interface PostgresExportLedger {
     /** 非媒体维：文本型标识（与 `objectId` 恰好给一个）。 */
     objectKey?: string;
     objectRevision: number;
-    /** 传入时按属主过滤（防止跨用户命中他人的预留行）；不传保持既有「不按用户过滤」口径。 */
+    /**
+     * 传入时按属主过滤（防止跨用户命中他人的预留行）；不传保持既有「不按用户过滤」口径。
+     * **传了就必须是合法 uuid**：非法值直接抛 `SESSION_REQUIRED`（不落库、不退回全局最新行）。
+     */
     userId?: string;
   }): Promise<ExportRecord | null>;
   linkJob(input: { exportId: string; jobId: string }): Promise<void>;
@@ -530,8 +533,14 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     } else if (typeof objectId !== 'string' || !UUID.test(objectId)) {
       return null;
     }
-    // `userId` 可选：传入时按属主过滤（调用方要防止跨用户命中他人预留行）；不传保持既有口径。
-    const scoped = typeof userId === 'string' && UUID.test(userId);
+    // `userId` 可选：**未提供**（`undefined`）时保持既有口径（不筛属主，如媒体维 `task-egress`）；
+    // **一旦提供**就必须是合法 uuid —— 非法值一律抛错，**绝不**静默退回「全局最新 reserved」：
+    // 那会把别人的预留行当成自己的（跨用户串行 / 越权外发），比直接拒绝更坏的失败方式。
+    // 错误码与消息同 `reserve`/`list`/`resolveRecipient` 对同一字段的既有口径（不含任何用户数据）。
+    if (userId !== undefined && (typeof userId !== 'string' || !UUID.test(userId))) {
+      throw new PrivacyError('SESSION_REQUIRED', '缺少身份上下文');
+    }
+    const scoped = userId !== undefined;
     try {
       const rows = (
         await pool.query(

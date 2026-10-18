@@ -525,17 +525,41 @@ test('GY-I08：风险文字不得出现绝对安全／零药害承诺（全量�
 test('GY-I08 缺项登记：真实资料无用量列 ⇒ 用量正例为缺项/未取得，不补造', () => {
   const doc = loadHerbicideRecords();
   assert.ok(doc.items.length >= 20, `应有≥20 条真实记录，实际 ${doc.items.length}`);
+  // 登记值：与证据页 / 缺口台账登记的「真实用量正例数」一致（当前 0）。把它改成非 0 而数据里
+  // 没有正例 ⇒ 下面的断言立即转红（正确修法是补真实数据后同步登记值，不是改数据凑绿）。
+  const DOSE_POSITIVE_COUNT_REGISTERED = 0;
   let renderable = 0;
+  let dosePositive = 0;
   for (const record of doc.items) {
     // 缺项：真实资料没有用量列 ⇒ dose_text=null、usable_as_dose=false、card_ready=false。
     assert.equal(record.verification?.usable_as_dose, false, `${record.registration_number} 不得标为可用于用量`);
     assert.equal(record.verification?.dose_text ?? null, null, `${record.registration_number} 的 dose_text 必须保持 null`);
     assert.equal(record.verification?.card_ready ?? false, false, `${record.registration_number} 的 card_ready 必须为 false`);
+    if (
+      record.verification?.usable_as_dose === true &&
+      typeof record.verification?.dose_text === 'string' &&
+      record.verification.dose_text.trim() !== ''
+    ) {
+      dosePositive += 1;
+    }
     const boundary = evaluateDoseBoundary(record, {});
     if (boundary.renderable) renderable += 1;
     assert.equal(boundary.dose_count, 0, `${record.registration_number} 不得产出用量卡`);
   }
-  console.log(`[GY-I08] 真实资料 DosCard 渲染计数=${renderable}（期望 0；用量正例为缺项/未取得）`);
+  const output = `[GY-I08] 真实资料 DosCard 渲染计数=${renderable}（期望 0；真实用量正例 ${DOSE_POSITIVE_COUNT_REGISTERED}：缺项/未取得，不补造）`;
+  console.log(output);
+  assert.ok(
+    output.includes(`真实用量正例 ${DOSE_POSITIVE_COUNT_REGISTERED}`),
+    `对外文案必须写明登记的真实用量正例数，实际：${output}`,
+  );
+  if (DOSE_POSITIVE_COUNT_REGISTERED === 0) {
+    assert.ok(output.includes('正例 0'), `N=0 时对外文案必须写明「正例 0」，实际：${output}`);
+  }
+  assert.equal(
+    dosePositive,
+    DOSE_POSITIVE_COUNT_REGISTERED,
+    `实测真实用量正例=${dosePositive}，与登记值 ${DOSE_POSITIVE_COUNT_REGISTERED} 不符：数据变了必须同步登记值（不得改数据凑绿）`,
+  );
   assert.equal(renderable, 0, '真实资料无用量列，DoseCard 计数必须保持 0');
 });
 

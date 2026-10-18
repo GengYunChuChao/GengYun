@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "hashMethod": "sha256-utf8-lf-normalized",
+  "hashMethodNote": "哈希口径：先做 LF 归一化（CRLF 的两个字节 0x0D 0x0A 收成一个 0x0A，单独的 CR 原样保留），再对 UTF-8 字节求 sha256。本仓库 core.autocrlf=true 且没有 .gitattributes，工作区检出是 CRLF、CI（ubuntu）检出是 LF；若按工作区原始字节计算，同一个提交在两平台会得到两个哈希，门禁就成了平台囚徒。",
+  "policy": "本清单只收容 R10《docs/research》制度建立之前落地的历史记录。它们的内容不得改写（README 明文），因此不能按当前的命名与十项字段校验，只能按内容哈希钉住：登记后一旦被改动一个字节，tools/verify-research-records.mjs 即失败。新增记录一律走 `YYYY-MM-DD-<主题>.md`，不进本清单。",
+  "files": {
+    "gy-i03-label-evidence-increment-20261011.json": {
+      "sha256": "b7cd3a5c6fb35e5738d0e4d3c1c3314e65dea9d99b533ed8f802d994823d5550",
+      "reason": "GY-I03 标签证据增量（机器可读的结构化证据），随同批 Markdown 一起落地，早于 docs/research 制度，历史文件不得改写。"
+    },
+    "gy-i03-label-evidence-increment-20261011.md": {
+      "sha256": "4ce0a3d3448b88e0a904ca68310350775ca928d4540360920a3137f763f1b6ba",
+      "reason": "GY-I03 标签证据增量的正文本记录，日期写在文件名末尾（gy-i03- 前缀 ＋ 末尾日期），不匹配新的 YYYY-MM-DD-<主题>.md 命名，历史文件不得改写。"
+    },
+    "gy-i03-public-label-index-20261011.json": {
+      "sha256": "7cdc3a8a0e8b722a2b09f18a7b362aae20246477879b4a86703095b9a6d9c16e",
+      "reason": "GY-I03 公开标签索引快照（真值数据），是来源审计的取数依据，早于 docs/research 制度，历史文件不得改写。"
+    },
+    "gy-i03-public-source-audit-20261011.md": {
+      "sha256": "a55e7601023f87bb6569f53296323d24535412191b62126ed818be0c18257052",
+      "reason": "GY-I03 公开来源审计记录，给出索引快照的逐条来源，早于 docs/research 制度，历史文件不得改写。"
+    }
+  }
+}

@@ -183,6 +183,16 @@ Page({
      * 逐项来自 `describeJobState`（七类）与契约 `Job.error_code`；`record` 是 `GET /ocr/{id}` 的只读视图。
      */
     ocr: null,
+    /**
+     * 人工校正面板（#10 AC①）：未打开时为 `null`；打开后**整对象重建**（不用 setData 路径写法，
+     * 便于纯 JS 单测与替身 `setData` 直接断言）。
+     *
+     * 键：`open`／`submitting`／`revision`（If-Match 基准）／`fields`（三个可空文本）／
+     * `ingredients`（成分行，逐行三项）／`errorText`（校验或提交失败）／`conflictText`
+     * （`REVISION_CONFLICT` 后"已重读、请再确认"）／`successText`／`confirmed`（是否已显式核对包装）
+     * ＋ `blockedNote`（ambiguous/conflict 的用量阻断说明）。
+     */
+    labelCorrection: null,
     /** 六类失败/边界分支归类（不属于六类时为 null）与其指引（落点 + 可重试语义）。 */
     branch: null,
     branchInfo: null,
@@ -262,7 +272,7 @@ Page({
     const patch = {
       guest: true, historyOwner: '', history: [], candidates: [], showTop3: false, candidatesTrusted: false,
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
-      recordId: null, recordRevision: 0, job: null, stateView: null, ocr: null, historyNote: '', candidateSource: 'job',
+      recordId: null, recordRevision: 0, job: null, stateView: null, ocr: null, labelCorrection: null, historyNote: '', candidateSource: 'job',
       branch: null, branchInfo: null, doseGuard: null,
       busy: false, substituteNotice: ''
     }
@@ -550,8 +560,221 @@ Page({
   onOcrRetry: function () {
     this.stopPoll()
     if (this.data.guest === true) return
-    this.setData({ ocr: null, errorText: '' })
+    this.setData({ ocr: null, labelCorrection: null, errorText: '' })
     this.chooseOcrPhoto()
+  },
+
+  // ------------------------------------------------- 人工校正（#10 AC①）
+
+  /**
+   * 打开校正面板：草稿基线取**当前生效的** `corrected_fields`（未经校正时即机器读数）。
+   *
+   * 为什么草稿只预填"当前字段"而不是机器读数：用户要改的是**已生效**的那一份；把 raw 再填一遍
+   * 会让第二次提交把第一次的人工更正**静默回退**成机器读数。
+   */
+  onStartCorrection: function () {
+    const record = this.data.ocr && this.data.ocr.record
+    if (!record || record.canCorrect !== true) return
+    this.setData({
+      labelCorrection: {
+        open: true,
+        submitting: false,
+        revision: record.revision,
+        fields: correctionFieldRows(record.fields),
+        ingredients: correctionIngredientRows(record.fields),
+        errorText: '',
+        conflictText: '',
+        successText: '',
+        confirmed: record.needsExplicitReview !== true,
+        blockedNote: record.needsExplicitReview === true ? record.doseBlockReason : ''
+      }
+    })
+  },
+
+  /** 单个可空文本输入：**原样**存草稿（不裁剪、不 trim；超长由提交前的统一校验拒绝）。 */
+  onCorrectionFieldInput: function (event) {
+    const lc = this.data.labelCorrection
+    if (!lc) return
+    const index = Number(event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.index : NaN)
+    if (!Number.isInteger(index) || index < 0 || index >= lc.fields.length) return
+    const value = event.detail && typeof event.detail.value === 'string' ? event.detail.value : ''
+    const fields = lc.fields.slice()
+    fields[index] = Object.assign({}, fields[index], { value: value })
+    this.setData({ labelCorrection: Object.assign({}, lc, { fields: fields, errorText: '', successText: '' }) })
+  },
+
+  /** 成分行局部输入：`data-index` + `data-part`（name／content_text／unit_text）。 */
+  onCorrectionIngredientInput: function (event) {
+    const lc = this.data.labelCorrection
+    if (!lc) return
+    const dataset = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset : {}
+    const index = Number(dataset.index)
+    const part = dataset.part
+    if (!Number.isInteger(index) || index < 0 || index >= lc.ingredients.length) return
+    if (['name', 'content_text', 'unit_text'].indexOf(part) === -1) return
+    const value = event.detail && typeof event.detail.value === 'string' ? event.detail.value : ''
+    const ingredients = lc.ingredients.slice()
+    const row = Object.assign({}, ingredients[index])
+    row[part] = value
+    ingredients[index] = row
+    this.setData({ labelCorrection: Object.assign({}, lc, { ingredients: ingredients, errorText: '', successText: '' }) })
+  },
+
+  /** 增加一行成分：到契约 20 条上限即停（**不截断已填行**，只拒绝再加）。 */
+  onCorrectionAddIngredient: function () {
+    const lc = this.data.labelCorrection
+    if (!lc || lc.ingredients.length >= identifyApi.LABEL_MAX_INGREDIENTS) return
+    const ingredients = lc.ingredients.concat([{ name: '', content_text: '', unit_text: '' }])
+    this.setData({ labelCorrection: Object.assign({}, lc, { ingredients: ingredients, errorText: '', successText: '' }) })
+  },
+
+  /** 删除一行成分（下标非合法整数一律忽略，不做隐式末行删除）。 */
+  onCorrectionRemoveIngredient: function (event) {
+    const lc = this.data.labelCorrection
+    if (!lc) return
+    const index = Number(event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.index : NaN)
+    if (!Number.isInteger(index) || index < 0 || index >= lc.ingredients.length) return
+    const ingredients = lc.ingredients.slice()
+    ingredients.splice(index, 1)
+    this.setData({ labelCorrection: Object.assign({}, lc, { ingredients: ingredients, errorText: '', successText: '' }) })
+  },
+
+  /**
+   * 显式核对开关：`ambiguous` / `conflict`（含同名不同制剂这类"多条可能匹配"）下**必须**先勾选
+   * 「我已对照包装核对」才允许提交 —— 不静默匹配、不替用户挑一条。`REVISION_CONFLICT` 重读后
+   * 也会把 `confirmed` 置回 false 强制再确认。
+   */
+  onCorrectionToggleConfirm: function () {
+    const lc = this.data.labelCorrection
+    if (!lc) return
+    this.setData({ labelCorrection: Object.assign({}, lc, { confirmed: lc.confirmed !== true, errorText: '' }) })
+  },
+
+  /** 关闭校正面板（不提交、不动已展示的记录）。 */
+  onCorrectionCancel: function () {
+    if (!this.data.labelCorrection) return
+    this.setData({ labelCorrection: null })
+  },
+
+  /**
+   * 提交人工校正：`PATCH /ocr/{id}/correction`（**恰好一次**，不重试）。
+   *
+   * 顺序是刻意的：
+   *   1. 未显式核对 ⇒ 零请求，先让用户确认（ambiguous/conflict 的用量阻断说明同时在场）；
+   *   2. `buildCorrectionInput` **发请求前**就做字段校验：超长/半空成分一律拒绝（不裁剪），
+   *      因此非法输入**不会**产生任何 PATCH；
+   *   3. 成功 ⇒ 用响应里的新记录重建 `ocr.record`（raw 与 corrected 同时呈现、差异标记随之更新）；
+   *   4. `REVISION_CONFLICT` ⇒ 交给 `reloadAfterCorrectionConflict`（重读 + 请再确认，**不**自动重发）。
+   */
+  onCorrectionSubmit: async function () {
+    const lc = this.data.labelCorrection
+    const ocr = this.data.ocr
+    if (!lc || lc.submitting === true || !ocr || !ocr.record) return
+    if (lc.confirmed !== true) {
+      this.setData({
+        labelCorrection: Object.assign({}, lc, {
+          errorText: '请先对照农药包装实物逐项核对，并勾选「我已对照包装核对」后再提交：本页不会替你静默匹配，也不会自动重发更正。'
+        })
+      })
+      return
+    }
+    const draft = {
+      registration_number: lc.fields[0].value,
+      name: lc.fields[1].value,
+      dosage_form: lc.fields[2].value,
+      ingredients: lc.ingredients
+    }
+    let corrected
+    try {
+      corrected = identifyApi.buildCorrectionInput(draft)
+    } catch (error) {
+      this.setData({ labelCorrection: Object.assign({}, lc, { errorText: correctionMessageFor(error) }) })
+      return
+    }
+    const gen = this._generation
+    const ocrId = ocr.ocrId
+    const revision = lc.revision
+    this.setData({ labelCorrection: Object.assign({}, lc, { submitting: true, errorText: '', conflictText: '', successText: '' }) })
+    let result
+    try {
+      result = await identifyApi.correctOcrLabel(ocrId, revision, corrected)
+    } catch (error) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
+      if (error.code === 'REVISION_CONFLICT' || error.code === 'REVISION_REQUIRED') {
+        await this.reloadAfterCorrectionConflict(error)
+        return
+      }
+      this.setData({
+        labelCorrection: Object.assign({}, this.data.labelCorrection || lc, {
+          submitting: false, errorText: '未提交更正：' + identifyApi.ocrMessageFor(error)
+        })
+      })
+      return
+    }
+    if (!this.isCurrentOperation(gen)) return
+    if (!this.data.ocr || this.data.ocr.ocrId !== ocrId) return
+    const job = { state: this.data.ocr.state, error_code: this.data.ocr.errorCode }
+    const record = ocrResultView(result.ocr, job, result.mode)
+    this.setData({
+      ocr: Object.assign({}, this.data.ocr, { record: record }),
+      labelCorrection: Object.assign({}, this.data.labelCorrection || lc, {
+        submitting: false,
+        revision: record.revision,
+        fields: correctionFieldRows(record.fields),
+        ingredients: correctionIngredientRows(record.fields),
+        successText: '已提交更正（记录版本 ' + record.revision + '）：机器原始读数原样保留，核对结论已按更正后的字段重算；仍以包装实物与官方登记为准，不代表识别准确。',
+        blockedNote: record.needsExplicitReview === true ? record.doseBlockReason : ''
+      })
+    })
+  },
+
+  /**
+   * `REVISION_CONFLICT` / `REVISION_REQUIRED` 的**唯一**处置：重新 `GET /ocr/{id}` 拿最新 revision，
+   * 把草稿重置到最新字段，并请用户**再确认**。
+   *
+   * ⛔ 不静默重试：本方法只发一次 GET，绝不重发 PATCH。理由：重发会把用户"看着旧版本改出来的"
+   * 更正悄悄写到新版本上，用户无法知道自己改的到底是哪一版；正确做法把新版本摆回界面再让用户确认。
+   */
+  reloadAfterCorrectionConflict: async function (error) {
+    const ocr = this.data.ocr
+    if (!ocr) return
+    const ocrId = ocr.ocrId
+    const gen = this._generation
+    const because = error && error.code === 'REVISION_REQUIRED'
+      ? '提交缺少版本信息'
+      : '记录已被更新（可能由其他客户端更正过）'
+    try {
+      const fresh = await historyApi.getOcr(ocrId)
+      if (!this.isCurrentOperation(gen)) return
+      if (!this.data.ocr || this.data.ocr.ocrId !== ocrId) return
+      const job = { state: this.data.ocr.state, error_code: this.data.ocr.errorCode }
+      const record = ocrResultView(fresh.ocr, job, fresh.mode)
+      this.setData({
+        ocr: Object.assign({}, this.data.ocr, { record: record }),
+        labelCorrection: {
+          open: true,
+          submitting: false,
+          revision: record.revision,
+          fields: correctionFieldRows(record.fields),
+          ingredients: correctionIngredientRows(record.fields),
+          errorText: '',
+          conflictText: because + '：已重新读取最新内容（记录版本 ' + record.revision + '），请逐项重新核对后再确认提交；本页不会自动重发更正。',
+          successText: '',
+          confirmed: false,
+          blockedNote: record.needsExplicitReview === true ? record.doseBlockReason : ''
+        }
+      })
+    } catch (reloadError) {
+      if (!this.isCurrentOperation(gen)) return
+      if (isGateLossError(reloadError)) { this.closePrivate(identifyApi.messageFor(reloadError)); return }
+      this.setData({
+        labelCorrection: Object.assign({}, this.data.labelCorrection || {}, {
+          submitting: false,
+          errorText: because + '；且未能重新读取最新内容：' + identifyApi.ocrMessageFor(reloadError) + '。本页不会自动重发更正。'
+        })
+      })
+    }
   },
 
   // ------------------------------------------------------------------ 轮询
@@ -1010,10 +1233,37 @@ function ocrResultView(ocr, job, mode) {
       { label: '有效成分', value: fields.ingredients.length === 0 ? '（未读出）' : fields.ingredients.join('；') }
     ]
   }
+  const rawRows = rows(detail.raw)
+  const correctedRows = rows(detail.corrected)
+  /*
+   * 逐字段对照：**机器原样**与**人工更正**并排，`changed` 标出被改过的字段。
+   * 两者恒同时给出（不是"有更正才显示"），否则用户无法判断"哪一格还是机器读数"。
+   */
+  const diffRows = rawRows.map(function (row, index) {
+    const fixed = correctedRows[index]
+    return { label: row.label, raw: row.value, corrected: fixed.value, changed: row.value !== fixed.value }
+  })
+  // 可编辑副本取自**已生效**的 corrected_fields（结构化四字段，不是拼接后的展示文本）。
+  const current = ocr.corrected_fields
+  const fields = {
+    registration_number: current.registration_number,
+    name: current.name,
+    dosage_form: current.dosage_form,
+    ingredients: current.ingredients.map(function (item) {
+      return { name: item.name, content_text: item.content_text, unit_text: item.unit_text }
+    })
+  }
+  // `ambiguous`（含同名不同制剂这类"多条可能匹配"）/ `conflict` ⇒ 用量展示阻断 + 必须显式核对。
+  const explicit = detail.verification.matchState === 'ambiguous' || detail.verification.matchState === 'conflict'
   return {
-    readRows: rows(detail.raw),
-    correctedRows: rows(detail.corrected),
+    readRows: rawRows,
+    correctedRows: correctedRows,
+    diffRows: diffRows,
     correctedDiffers: detail.correctedDiffers,
+    fields: fields,
+    // 只有 succeeded / uncertain 才可能带着正文 ⇒ 也只有这两类允许提交更正。
+    canCorrect: job.state === 'succeeded' || job.state === 'uncertain',
+    needsExplicitReview: explicit,
     matchState: detail.verification.matchState,
     matchLabel: detail.verification.matchLabel,
     hasRegistration: detail.verification.hasRegistration,
@@ -1028,10 +1278,61 @@ function ocrResultView(ocr, job, mode) {
     mode: mode,
     // 如实标注：机器读数、非权威判读（与页面顶部 pill 同一句）。
     authorityNote: '标签识别是机器读数，不是权威判读：请与农药包装实物逐项核对；登记信息以官方登记为准。',
-    readOnlyNote: '本页只读：不提供编辑标签文本、也不提交人工核对（该能力未接入，本页不发明任何编辑动作）。',
+    // 用量**恒**不展示；ambiguous/conflict 额外说明"已阻断 + 需显式确认"（不静默取一条）。
+    doseBlocked: true,
+    doseBlockReason: explicit
+      ? '登记核对为「' + detail.verification.matchLabel +
+        '」：用量展示已阻断（同名不同制剂/多条可能匹配一律不静默取一条），请先对照包装实物逐项确认字段。' +
+        detail.doseSafetyNote
+      : detail.doseSafetyNote,
+    // 只读的边界说清楚：raw_fields 不接受编辑，可写面只有 corrected_fields。
+    readOnlyNote: '机器原始读数（raw_fields）只读：本页不提供编辑原始读数的动作，它原样保留以便复核；' +
+      '人工更正只写入 corrected_fields，且校正不计入模型准确率。',
+    correctionNote: '可人工核对并更正字段：提交只写 corrected_fields，机器原始读数不被改写；' +
+      '更正后仍是机器读数与人工输入的混合，不代表识别准确，也不构成本页面给出的用药依据。',
     // 用量口径取自既有 `history-api`（不显示用量与配比），本条不含任何剂量数字。
     doseNote: detail.doseSafetyNote
   }
+}
+
+/** 校正面板的三个可空文本行（顺序即 `onCorrectionSubmit` 取草稿的顺序）。 */
+function correctionFieldRows(fields) {
+  return [
+    { key: 'registration_number', label: '登记证号', value: fields.registration_number === null ? '' : fields.registration_number, maxLength: identifyApi.LABEL_TEXT_MAX },
+    { key: 'name', label: '药名', value: fields.name === null ? '' : fields.name, maxLength: identifyApi.LABEL_TEXT_MAX },
+    { key: 'dosage_form', label: '剂型', value: fields.dosage_form === null ? '' : fields.dosage_form, maxLength: identifyApi.LABEL_TEXT_MAX }
+  ]
+}
+
+/** 校正面板的成分行（每行三项；空白行由用户在界面上删掉或留空——留空行在提交时被丢弃）。 */
+function correctionIngredientRows(fields) {
+  return fields.ingredients.map(function (item) {
+    return { name: item.name, content_text: item.content_text, unit_text: item.unit_text }
+  })
+}
+
+/** 校正输入被拒时的人话：指出**哪一格**、为什么（超长给出实际长度，绝不悄悄截断）。 */
+function correctionMessageFor(error) {
+  const field = error && typeof error.field === 'string' ? error.field : ''
+  const reason = error && error.reason
+  const at = function (name) { return field === name ? '（' + field + '）' : '' }
+  if (reason === 'TOO_LONG') {
+    return '有字段超长（上限 ' + identifyApi.LABEL_TEXT_MAX + ' 字' +
+      (typeof error.length === 'number' ? '，当前 ' + error.length + ' 字' : '') +
+      '）：' + (field || '未知字段') + '。请自行删减到上限内，本页不会替你截断后提交。'
+  }
+  if (reason === 'EMPTY') {
+    return '有效成分第 ' + (Number(error.index) + 1) + ' 行的「' + (error.part || '') + '」为空：' +
+      '请补齐这一行的三项，或先把该行删掉再提交（本页不补造缺失内容）。'
+  }
+  if (reason === 'TOO_MANY') {
+    return '有效成分超过 ' + identifyApi.LABEL_MAX_INGREDIENTS + ' 条上限（当前 ' +
+      (typeof error.length === 'number' ? error.length : '未知') + ' 条）：请自行合并或删减，本页不会截断后提交。'
+  }
+  if (reason === 'NOT_ARRAY' || reason === 'NOT_OBJECT' || reason === 'NOT_TEXT') {
+    return '更正内容格式不合法' + at(field) + '：已停止提交，未发出任何请求。'
+  }
+  return '更正内容未通过本地校验' + (field ? '（' + field + '）' : '') + '：已停止提交，未发出任何请求。'
 }
 
 function modeNoteFor(mode, kind) {

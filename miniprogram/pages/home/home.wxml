@@ -46,6 +46,13 @@
     <view class="panel">
       <view class="panel-head">
         <view class="panel-head__title">田间知识，一点点积累</view>
+        <!-- demo .home-bottom 第一个 panel 的 panel-head 里是 link('查看资料库 →','library')，
+             即 <button class="text-btn" data-route="library">。这里落到既有路由 pages/knowledge/knowledge，
+             与下方「科普知识」info-row 共用 goKnowledge 的门禁跳转（不新增页面、不新增接口）。 -->
+        <button class="text-btn" bindtap="goKnowledge">
+          查看资料库
+          <view class="gy-icon gy-icon--arrow"></view>
+        </button>
       </view>
       <view class="info-list">
         <button class="info-row" bindtap="goKnowledge">

@@ -77,6 +77,89 @@ export function evidenceWithinRepository(root,path){
  return !existsSync(absolute)||safe(relative(realpathSync(root),realpathSync(absolute)).replaceAll('\\','/'));
 }
 
+/** Route declarations used by evidence semantic checks; unresolved templates are skipped, never thrown. */
+export function routeDeclarations(text){
+ const source=withoutComments(text),declarations=[];
+ for(const match of source.matchAll(/app\.(get|post|put|patch|delete)\(\s*[`']([^`']+)[`']/g)){
+  let paths=[match[2].replaceAll('${API_PREFIX}','/api/v1')];
+  if(paths[0].includes('${kind}'))paths=['crops','regions'].map(kind=>paths[0].replaceAll('${kind}',kind));
+  const line=source.slice(0,match.index).split('\n').length;
+  for(const path of paths){
+   if(path.includes('${'))continue;
+   const normalized=path.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g,'{$1}');
+   if(normalized==='/health'||!normalized.startsWith('/api/v1/'))continue;
+   declarations.push({method:match[1],path:normalized.slice('/api/v1'.length),line});
+  }
+ }
+ const seen=new Set();
+ return declarations.filter(entry=>{
+  const key=`${entry.method} ${entry.path} ${entry.line}`;
+  if(seen.has(key))return false;
+  seen.add(key);
+  return true;
+ });
+}
+
+/** A registration block runs from its declaration line to the line before the next declaration, without trailing blanks. */
+export function declarationSegments(text,declarations){
+ const lines=text.split('\n'),byLine=new Map();
+ for(const entry of declarations){
+  const block=byLine.get(entry.line)??{line:entry.line,routes:[]};
+  const key=operationKey(entry.method,entry.path);
+  if(!block.routes.includes(key))block.routes.push(key);
+  byLine.set(entry.line,block);
+ }
+ const blocks=[...byLine.values()].sort((left,right)=>left.line-right.line);
+ return blocks.map((block,index)=>{
+  let to=(blocks[index+1]?.line??lines.length+1)-1;
+  while(to>block.line&&(lines[to-1]??'').trim()==='')to-=1;
+  return {from:block.line,to,routes:block.routes};
+ });
+}
+
+/** Character ranges of assertion-call arguments, used to prove a snippet was lifted from another operation's assertion. */
+export function assertionArgumentRanges(text){
+ const ranges=[];
+ for(const match of text.matchAll(/\b(?:assert|expect)\b\s*(?:\.\s*[A-Za-z_$][\w$]*\s*)*/g)){
+  let cursor=match.index+match[0].length,end=-1;
+  while(true){
+   const open=text.indexOf('(',cursor);
+   if(open<0)break;
+   let depth=0,closed=-1;
+   for(let index=open;index<text.length;index+=1){
+    const char=text[index];
+    if(char==='"'||char==="'"||char==='`'){
+     for(index+=1;index<text.length;index+=1){
+      if(text[index]==='\\'){index+=1;continue;}
+      if(text[index]===char)break;
+     }
+     continue;
+    }
+    if(char==='(')depth+=1;
+    else if(char===')'){depth-=1;if(depth===0){closed=index;break;}}
+   }
+   if(closed<0)break;
+   end=closed;
+   const chained=/^\s*\.\s*[A-Za-z_$][\w$]*\s*/.exec(text.slice(closed+1));
+   if(!chained)break;
+   cursor=closed+1+chained[0].length;
+  }
+  if(end>=0)ranges.push([match.index,end]);
+ }
+ return ranges;
+}
+
+/** Contract operation ids mentioned by text, with identifier boundaries and camel/acronym variants (verifyOCR/verifyOcr). */
+export function operationMentions(text,ids){
+ return ids.filter(id=>{
+  const acronym=id.replace(/([A-Z]+)(?=[A-Z][a-z]|$)/g,run=>run[0]+run.slice(1).toLowerCase());
+  return [id,acronym].some(variant=>{
+   const escaped=variant.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+   return new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`,'i').test(text);
+  });
+ });
+}
+
 export const TABLE_START='<!-- contract-status-tables:start -->';
 export const TABLE_END='<!-- contract-status-tables:end -->';
 

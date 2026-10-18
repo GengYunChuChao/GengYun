@@ -12,9 +12,13 @@
 // GY-I10 标签 OCR（#10，本片追加；**只复用既有 operation，不新增契约**）：
 //   createOcr          POST   /ocr                              → 202 JobEnvelope（kind=ocr）
 //   getOcrJob          GET    /jobs/{id}                        → JobEnvelope（kind=ocr；七类 JobState 唯一可读面）
-//   cancelOcrJob       POST   /jobs/{id}/cancel                 → JobEnvelope（**本基线 OCR 域无取消能力**
-//                                                               ⇒ 服务端如实 503 PROVIDER_UNAVAILABLE(retryable)，
+//   cancelOcrJob       POST   /jobs/{id}/cancel                 → JobEnvelope（**已接线**：GY-I10 取消片，
+//                                                                 域内实现 `services/api/src/ocr/service.ts:687`；
+//                                                                 queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1，
+//                                                                 终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；
 //                                                                 与「作业不存在」的 404 必须区分）
+//   correctOCR         PATCH  /ocr/{id}/correction             → 200 OCREnvelope（人工校正；
+//                                                               **只写 corrected_fields**，raw_fields 原样保留）
 //   标签正文读面 `GET /ocr/{id}` 已由 `utils/history-api.js` 的 `getOcr`/`ocrDetailView` 消费（本片**复用**，
 //   不重造第二套 OCR 校验，也不在该读面上渲染任何用量数字）。
 //
@@ -469,6 +473,152 @@ async function cancelOcrJob(jobId, revision) {
   return { job: validateOcrJob(r.data), mode: r.mode }
 }
 
+// ------------------------------------------------- 人工校正（#10 AC①，PATCH /ocr/{id}/correction）
+
+/**
+ * 契约 `LabelFields` 的文本上限：与 `services/api/src/ocr/state.ts:58` 的
+ * `MAX_LABEL_TEXT_LENGTH = 80` 同值（`routes/ocr.ts:125` 的 `nullableLabelText` 也是 80）。
+ * 客户端按同一上限**拒绝**（不是裁剪）：超长本地就拦下，不必等服务端 400。
+ */
+const LABEL_TEXT_MAX = 80
+
+/** 契约 `LabelFields.ingredients` 条数上限（`services/api/src/ocr/state.ts:50` 的 `MAX_INGREDIENTS = 20`）。 */
+const LABEL_MAX_INGREDIENTS = 20
+
+const CORRECTION_TEXT_KEYS = ['registration_number', 'name', 'dosage_form']
+const INGREDIENT_PARTS = ['name', 'content_text', 'unit_text']
+
+/** 带**字段定位**的 `INVALID_INPUT`：页面据此指出哪一格超长/为空，而不是笼统"参数不合法"。 */
+function inputError(field, reason, extra) {
+  const e = failure('INVALID_INPUT')
+  e.field = field
+  e.reason = reason
+  if (extra) {
+    Object.keys(extra).forEach(function (k) { e[k] = extra[k] })
+  }
+  return e
+}
+
+/** 可空标签文本：空串 / null / undefined ⇒ null（契约 nullable 分支）；否则**原样**返回（不 trim、不改写）。 */
+function labelTextOf(raw, field) {
+  if (raw === undefined || raw === null || raw === '') return null
+  if (typeof raw !== 'string') throw inputError(field, 'NOT_TEXT')
+  if (raw.length > LABEL_TEXT_MAX) throw inputError(field, 'TOO_LONG', { length: raw.length })
+  return raw
+}
+
+/** 单个成分行：三项全必填、逐项 ≤80、超出即拒绝（**不截断**）。 */
+function ingredientOf(row, index) {
+  if (!object(row)) throw inputError('/corrected_fields/ingredients/' + index, 'NOT_OBJECT', { index: index })
+  const out = {}
+  for (let i = 0; i < INGREDIENT_PARTS.length; i += 1) {
+    const part = INGREDIENT_PARTS[i]
+    const field = '/corrected_fields/ingredients/' + index + '/' + part
+    const raw = row[part]
+    if (typeof raw !== 'string') throw inputError(field, 'NOT_TEXT', { index: index, part: part })
+    if (raw.length === 0) throw inputError(field, 'EMPTY', { index: index, part: part })
+    if (raw.length > LABEL_TEXT_MAX) throw inputError(field, 'TOO_LONG', { index: index, part: part, length: raw.length })
+    out[part] = raw
+  }
+  return out
+}
+
+/**
+ * 成分数组：**整行全空**视为未填并丢弃（不补造占位文本）；半空行拒绝；超过 20 条拒绝（不截断）。
+ */
+function ingredientsOf(raw) {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw inputError('/corrected_fields/ingredients', 'NOT_ARRAY')
+  const out = []
+  for (let index = 0; index < raw.length; index += 1) {
+    const row = raw[index]
+    if (object(row)) {
+      const blank = INGREDIENT_PARTS.every(function (part) {
+        return row[part] === undefined || row[part] === null || row[part] === ''
+      })
+      if (blank) continue
+    }
+    out.push(ingredientOf(row, index))
+  }
+  if (out.length > LABEL_MAX_INGREDIENTS) throw inputError('/corrected_fields/ingredients', 'TOO_MANY', { length: out.length })
+  return out
+}
+
+/**
+ * 把**页面草稿**归一化为契约 `OCRCorrectionInput.corrected_fields`（四字段，键序同契约）。
+ *
+ * 对应派单口径「字段长度按 `labelFieldsSchema` **校验并拒绝**（不是裁剪用户输入）」：
+ *   1. 可空文本空串 ⇒ `null`（**不发空串**，也不补造占位文本），非空则**原样**提交；
+ *   2. 超长 ⇒ 抛 `INVALID_INPUT`（`e.field` 指位置、`e.length` 给实际长度），**绝不 slice 后照发**；
+ *   3. 成分逐项校验（见 `ingredientsOf`），>20 条拒绝。
+ * 纯函数、不碰 wx / 网络 ⇒ 可单测，也可被页面在**发请求前**先用来拦下非法输入（零请求）。
+ */
+function buildCorrectionInput(draft) {
+  if (!object(draft)) throw inputError('/corrected_fields', 'NOT_OBJECT')
+  const out = {}
+  for (let i = 0; i < CORRECTION_TEXT_KEYS.length; i += 1) {
+    const key = CORRECTION_TEXT_KEYS[i]
+    out[key] = labelTextOf(draft[key], '/corrected_fields/' + key)
+  }
+  return {
+    registration_number: out.registration_number,
+    name: out.name,
+    ingredients: ingredientsOf(draft.ingredients),
+    dosage_form: out.dosage_form
+  }
+}
+
+/** 只核对四字段的**可渲染性**（四键齐全、类型对）；语义校验留在 `utils/history-api.js`。 */
+function labelFieldsShape(value, where) {
+  keys(value, ['registration_number', 'name', 'ingredients', 'dosage_form'])
+  if (!Array.isArray(value.ingredients)) throw failure('INVALID_RESPONSE')
+  for (let i = 0; i < value.ingredients.length; i += 1) {
+    keys(value.ingredients[i], ['name', 'content_text', 'unit_text'])
+  }
+  return value
+}
+
+/**
+ * 校正响应的**最小**结构核对：六键齐全、`id` 回显为本次请求的那条记录、`revision` 合法、四字段可渲染。
+ *
+ * 为什么本模块不做**深度**逐字段校验：`utils/history-api.js` 已 `require('./identify-api')`
+ * （其 `getOcr`/`ocrDetailView` 消费本模块）⇒ 本模块反过来 require 它会**成环**；而 80 字上限、
+ * 成分逐项、`Verification` 闭集的深度校验已在 `history-api.js` 的 `validateOcr` 一处实现，
+ * 重造第二套必然漂移。故此处只守住"这份投影能不能安全交给 `ocrDetailView` 渲染"。
+ */
+function validateOcrEcho(data, expectedId) {
+  keys(data, ['id', 'revision', 'raw_fields', 'corrected_fields', 'verification', 'model_version'])
+  if (typeof data.id !== 'string' || !UUID.test(data.id) || data.id !== expectedId) throw failure('INVALID_RESPONSE')
+  if (!integer(data.revision, 1) || !text(data.model_version, 80)) throw failure('INVALID_RESPONSE')
+  labelFieldsShape(data.raw_fields, 'raw_fields')
+  labelFieldsShape(data.corrected_fields, 'corrected_fields')
+  if (!object(data.verification)) throw failure('INVALID_RESPONSE')
+  return data
+}
+
+/**
+ * 提交人工校正：`PATCH /ocr/{id}/correction`（契约 `correctOCR`）。
+ *
+ * 硬口径：
+ *   1. **恰好一次** PATCH：本函数只发一次请求、**不内置重试**。`REVISION_CONFLICT` 原样抛出，
+ *      由页面重新 `GET /ocr/{id}` 并请用户再确认 —— 静默重试会把用户的更正悄悄写到新版本上，
+ *      用户以为改的是自己看过的那一版；
+ *   2. `If-Match: "<revision>"` 逐字用记录当前版本（不带 `W/` 弱校验前缀）；
+ *   3. `Idempotency-Key` 为 8..128 字符（`ocr-correct-<ts>-<rand>` ≈ 34 字符），一次提交一个键；
+ *   4. body **恰为** `{ corrected_fields }`：多余键一律不发（契约 `additionalProperties:false`）。
+ */
+async function correctOcrLabel(ocrId, revision, draft) {
+  if (typeof ocrId !== 'string' || !UUID.test(ocrId)) throw failure('INVALID_INPUT')
+  if (!integer(revision, 1)) throw failure('INVALID_INPUT')
+  const correctedFields = buildCorrectionInput(draft)
+  const r = await request('PATCH', '/ocr/' + ocrId + '/correction', {
+    body: { corrected_fields: correctedFields },
+    ifMatch: '"' + revision + '"',
+    idempotencyKey: newKey('ocr-correct')
+  })
+  return { ocr: validateOcrEcho(r.data, ocrId), mode: r.mode, etag: r.etag }
+}
+
 function validateUploadGrant(data, expectedPurpose) {
   keys(data, ['media', 'upload'])
   const media = data.media
@@ -871,6 +1021,11 @@ module.exports = {
   createOcr: createOcr,
   getOcrJob: getOcrJob,
   cancelOcrJob: cancelOcrJob,
+  // 人工校正（#10 AC①）：既有契约 `correctOCR` 的**唯一**调用点（恰好一次 PATCH，不重试）。
+  correctOcrLabel: correctOcrLabel,
+  buildCorrectionInput: buildCorrectionInput,
+  LABEL_TEXT_MAX: LABEL_TEXT_MAX,
+  LABEL_MAX_INGREDIENTS: LABEL_MAX_INGREDIENTS,
   validateOcrJob: validateOcrJob,
   ocrMessageFor: ocrMessageFor,
   OCR_MEDIA_PURPOSE: OCR_MEDIA_PURPOSE,
