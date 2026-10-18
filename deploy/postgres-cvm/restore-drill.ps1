@@ -41,11 +41,14 @@ root/runuser/systemd，走 TCP + 口令文件，不切换到系统用户）。
   ... -DumpFile <路径>.dump
 
 已证明 / 未证明（与 shell 版同样克制）：
-  证明：该 dump 能在同主版本 PG17 上完整重建 schema + 数据 + 属主/授权，且
+  证明：该 dump 能在同主版本 PG17 上完整重建 schema + 数据 + 对象属主，且
         迁移版本、表/视图数量、关键表行数与清单逐项一致。
-  未证明：CVM 上的 systemd/runuser/Unix socket 路径、异地或全新集群灾备（需先重建
-        角色）、PITR（无 WAL 归档）、逐用户删除清单重放、RPO/RTO 指标；
-        **也不证明生产可用或"数据库已验收"**。
+  未证明：授权面（GRANT/ACL）**不在五条判据内** —— 对象属主可用
+        pg_get_userbyid 读回，ACL 要另跑 has_table_privilege /
+        has_function_privilege（证据页 §2 有本机一次人工回读）；
+        CVM 上的 systemd/runuser/Unix socket 路径、异地或全新集群灾备
+        （需先重建角色）、PITR（无 WAL 归档）、逐用户删除清单重放、
+        RPO/RTO 指标；**也不证明生产可用或"数据库已验收"**。
 #>
 [CmdletBinding()]
 param(
@@ -616,9 +619,10 @@ if ($script:Incomplete) {
 }
 Write-Output ''
 Write-Output ("[{0}] 结论：恢复演练【通过】。" -f $ScriptName)
-Write-Output '  本次证明了：该 dump 可在同主版本 PG17 上完整重建 schema+数据+属主/授权，'
+Write-Output '  本次证明了：该 dump 可在同主版本 PG17 上完整重建 schema+数据+对象属主，'
 Write-Output '              迁移版本、基本表/视图数量与清单列出的关键表行数逐项一致。'
-Write-Output '  本次未证明：异地或全新集群灾备（需先重建角色）、PITR（无 WAL 归档）、'
-Write-Output '              逐用户删除清单重放、RPO/RTO 指标、CVM 上 systemd/runuser 路径。'
+Write-Output '  本次未证明：授权面（GRANT/ACL 不在五条判据内）、异地或全新集群灾备'
+Write-Output '              （需先重建角色）、PITR（无 WAL 归档）、逐用户删除清单重放、'
+Write-Output '              RPO/RTO 指标、CVM 上 systemd/runuser 路径。'
 Write-Output '  仍不得据此宣布数据库已验收或整项完成。'
 exit 0
