@@ -21,6 +21,9 @@
  *   [D] 并发两笔同 revision ⇒ 恰一笔成功、一笔冲突、审计恰 1 行
  *   [E] 真实 HTTP：listFlags/PUT/If-Match 409/值未变短路/`/herbicides` 关→409 开→恢复 + 并发 PUT
  *   [F] `pool === null` 的 real 装配与今天逐字相同：后台 503 fail-closed、开关门不 armed
+ *   [G] 武装就绪探测（T-R12-08R）：只应用迁移子集的库（没有 0020 的表）⇒ 探测 false、门不武装、
+ *       `/herbicides` 200 —— 与 CI 里 `egress-ledger-pg.mjs:322` 修好后的 202 同一机制；
+ *       同一库补齐全部迁移 ⇒ 探测 true、门武装、默认 false ⇒ 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)
  *   [H] 行锁的行为分量（证伪 `SELECT … FOR UPDATE`）：外部会话持行锁 + 端口「值未变」短路
  *       ⇒ 等锁 ≥3000ms 后 504 PROVIDER_TIMEOUT(retryable:true)；删掉 FOR UPDATE 则数毫秒返回成功，
  *       耗时下界断言必红。HTTP 的 PUT 到不了这里（service 层「值未变」在端口之前就返回 200）。
@@ -709,6 +712,98 @@ async function nullPoolArm() {
 }
 
 // ---------------------------------------------------------------------------
+// [G] 武装就绪探测：子集迁移库不武装，补齐 0020 后武装（T-R12-08R）
+// ---------------------------------------------------------------------------
+/** 与 `tests/integration/egress-ledger-pg.mjs:216` 完全相同的迁移子集（CI 红的那台库的库形状）。 */
+const SUBSET_MIGRATIONS = [
+  '0001_initial_schema.sql',
+  '0003_privacy_consent.sql',
+  '0008_auth_session.sql',
+  '0009_consent_policy.sql',
+  '0011_export_ledger.sql',
+];
+
+async function applyMigrationFiles(names) {
+  for (const name of names) await owner.query(readSql(`migrations/${name}`));
+}
+
+async function armingArm() {
+  // --- 场景 1：只应用迁移子集 ⇒ 库里没有 public.feature_flags
+  await resetDatabase();
+  await applyMigrationFiles(SUBSET_MIGRATIONS);
+  const missing = (await owner.query("SELECT to_regclass('public.feature_flags') AS oid")).rows[0].oid;
+  assert.equal(missing, null, '子集库必须没有 public.feature_flags（这正是 CI 的库形状）');
+  const subsetToken = await seedUserToken();
+
+  const subsetApp = buildApp({
+    config: loadConfig(REAL_ENV),
+    pool: ownerPool,
+    wechat: wechatPort,
+    now: () => new Date(),
+  });
+  registeredApps.push(subsetApp);
+  assert.equal(
+    subsetApp.featureFlagGate.armed,
+    true,
+    '探测前的静态口径：real + 有池 ⇒ 初始 armed=true（本次修复要把它按探测结果降下来）',
+  );
+  await subsetApp.ready();
+  assert.equal(
+    subsetApp.featureFlagGate.armed,
+    false,
+    '子集库 ⇒ to_regclass 探测 false ⇒ 开关门必须永久降级未武装',
+  );
+  const subsetHerbicides = await injectCall(subsetApp, `${API}/herbicides`, { token: subsetToken });
+  assert.equal(
+    subsetHerbicides.status,
+    200,
+    `未武装时 /herbicides 不得被开关拦（不得 503/409），实际 ${subsetHerbicides.status}`,
+  );
+  note(
+    '[G] 子集迁移库（0001/0003/0008/0009/0011，无 0020）：onReady 探测 false ⇒ 门 armed=false，/herbicides 200（CI 的 503 不再发生）',
+  );
+
+  // --- 场景 2：同一库补齐全部迁移（含 0020）⇒ 表就绪 ⇒ 武装且按库判定
+  await resetDatabase();
+  const allNames = readdirSync(migrationsDir)
+    .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
+    .sort();
+  await applyMigrationFiles(allNames);
+  const oid = (await owner.query("SELECT to_regclass('public.feature_flags') AS oid")).rows[0].oid;
+  assert.notEqual(oid, null, '补齐全部迁移后 public.feature_flags 必须存在');
+  const seeded = await q('SELECT key, enabled FROM public.feature_flags ORDER BY key');
+  assert.equal(seeded.length, 3, '迁移种子必须恰好 3 行');
+  assert.ok(seeded.every((row) => row.enabled === false), '迁移种子必须全 false（默认关闭）');
+  const armedToken = await seedUserToken();
+
+  const armedApp = buildApp({
+    config: loadConfig(REAL_ENV),
+    pool: ownerPool,
+    wechat: wechatPort,
+    now: () => new Date(),
+  });
+  registeredApps.push(armedApp);
+  await armedApp.ready();
+  assert.equal(
+    armedApp.featureFlagGate.armed,
+    true,
+    '表就绪 ⇒ 必须武装（否则"关了却照常产出"的老问题会回来）',
+  );
+  const armedHerbicides = await injectCall(armedApp, `${API}/herbicides`, { token: armedToken });
+  assert.equal(
+    armedHerbicides.status,
+    409,
+    `武装后默认 false ⇒ /herbicides 必须 409，实际 ${armedHerbicides.status}`,
+  );
+  assert.equal(armedHerbicides.body.error.code, 'OBJECT_UNAVAILABLE');
+  const detailCodes = (armedHerbicides.body.error.details ?? []).map((detail) => detail.code);
+  assert.ok(detailCodes.includes('FLAG_CLOSED'), '409 必须带既有 flag-gate 的 FLAG_CLOSED 证据');
+  note(
+    '[G] 同一库补齐全部迁移（含 0020）：探测 true ⇒ 门 armed=true；默认 false ⇒ /herbicides 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 收尾
 // ---------------------------------------------------------------------------
 async function cleanup() {
@@ -745,7 +840,8 @@ try {
   await portArms();
   await httpArm();
   await nullPoolArm();
-  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 全部取得');
+  await armingArm();
+  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 + 武装就绪探测 全部取得');
 } catch (error) {
   process.exitCode = 1;
   console.error('[FAIL]', error?.message ?? error);

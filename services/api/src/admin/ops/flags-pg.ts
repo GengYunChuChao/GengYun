@@ -281,3 +281,33 @@ export function createPostgresFeatureFlags({ pool }: { pool: PgPool }): FeatureF
 
   return { persistent: true, list, get, commitIfCurrent };
 }
+
+/**
+ * 装配期的**只读就绪探测**：`public.feature_flags` 是否真的存在。
+ *
+ * 为什么需要：真库集成测试会只应用**迁移子集**建库（例如
+ * `tests/integration/egress-ledger-pg.mjs` 只跑 0001/0003/0008/0009/0011），该库里没有 0020 的表。
+ * 那种库上若仍按「real + 有池 ⇒ 武装」，开关门会在首个受控面请求上预取失败并 503 fail-closed，
+ * 把与开关无关的既有面（识别受理等）打红。武装必须以「表真实可用」为前提，而不是「池非空」。
+ *
+ * 口径：
+ * - 只跑 `to_regclass('public.feature_flags')`：schema 全限定，运行时角色受限的 `search_path`
+ *   也解析得到；表不存在返回 `NULL`（不是报错），**不依赖**表级 SELECT 权限；
+ * - 只有结果严格为 `true` 才算就绪；任何异常（权限/连接/形状）一律 `false` ⇒ 调用方降级未武装，
+ *   **不**把探测失败变成用户面的 503；
+ * - 不在本函数内缓存：探测只跑一次由调用方（`flag-gate.ts` 的 `armingProbe`）负责。
+ */
+export const FEATURE_FLAGS_TABLE = 'public.feature_flags';
+const TABLE_READY_SQL = "SELECT to_regclass('public.feature_flags') IS NOT NULL AS ready";
+
+export async function featureFlagsTableReady(
+  pool: Pick<PgPool, 'query'> | null | undefined,
+): Promise<boolean> {
+  if (!pool || typeof pool.query !== 'function') return false;
+  try {
+    const result = await pool.query(TABLE_READY_SQL);
+    return result?.rows?.[0]?.['ready'] === true;
+  } catch {
+    return false;
+  }
+}

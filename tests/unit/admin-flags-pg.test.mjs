@@ -15,7 +15,11 @@
  * 9. `createFlagGatedGuards`：只对受控面预取，判定仍是同步的；
  * 10. `flagReasonCode`：理由归一短码（纯中文/空 ⇒ `ADMIN_SET_FLAG`）；
  * 11. 适配层错误映射：`55P03`/`57014` ⇒ 504 `PROVIDER_TIMEOUT`(retryable:true)，`42501` ⇒ 503 对照
- *    （防两类 SQLSTATE 被折叠成一个分支）。
+ *    （防两类 SQLSTATE 被折叠成一个分支）；
+ * 12. 就绪探测 `featureFlagsTableReady`：只有 `to_regclass(...) IS NOT NULL` 严格为 `true` 才就绪，
+ *    缺表/形状不符/抛错/没有池一律 `false`（子集迁移库里没有 0020 的表）；
+ * 13. `armingProbe`：false 或抛错 ⇒ 门**永久降级未武装**且**不预取**（不把探测错误变成用户面 503）；
+ *    true ⇒ 保持武装、探测只跑一次而预取逐次刷新。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -25,6 +29,7 @@ import { CONTRACT_FLAG_KEYS } from '../../services/api/src/admin/ops/flags.ts';
 import {
   DEFAULT_FLAG_REASON_CODE,
   createPostgresFeatureFlags,
+  featureFlagsTableReady,
   flagReasonCode,
 } from '../../services/api/src/admin/ops/flags-pg.ts';
 import {
@@ -383,4 +388,122 @@ test('42501（权限不足）仍映射 503 PROVIDER_UNAVAILABLE(retryable:false)
   assert.equal(error.code, 'PROVIDER_UNAVAILABLE', '权限不足是「不可用」而不是「超时」');
   assert.equal(error.status, 503, '42501 必须是 503');
   assert.equal(error.retryable, false, '缺权限重试也不会成功，必须标不可重试');
+});
+
+// ---------------------------------------------------------------- 就绪探测与武装降级（T-R12-08R）
+
+test('featureFlagsTableReady：只有 to_regclass 严格为 true 才就绪；缺表/形状不符/抛错/无池一律 false', async () => {
+  const seen = [];
+  const readyPool = {
+    query: async (text) => {
+      seen.push(text);
+      return { rows: [{ ready: true }] };
+    },
+  };
+  assert.equal(await featureFlagsTableReady(readyPool), true);
+  assert.match(seen[0], /to_regclass\('public\.feature_flags'\) IS NOT NULL AS ready/, '探测必须是这一条只读 SQL');
+
+  const missingTable = { query: async () => ({ rows: [{ ready: false }] }) };
+  assert.equal(await featureFlagsTableReady(missingTable), false, '表不存在（to_regclass IS NULL）⇒ 未就绪');
+
+  const oddShape = { query: async () => ({ rows: [] }) };
+  assert.equal(await featureFlagsTableReady(oddShape), false, '形状不符不得被当成就绪');
+
+  const denied = {
+    query: async () => {
+      const failure = new Error('permission denied for schema public');
+      failure.code = '42501';
+      throw failure;
+    },
+  };
+  assert.equal(await featureFlagsTableReady(denied), false, '探测抛错（42501/连接失败）必须降级 false，不得抛给调用方');
+
+  assert.equal(await featureFlagsTableReady(null), false);
+  assert.equal(await featureFlagsTableReady({}), false, '没有 query 能力的池一律未就绪');
+});
+
+test('armingProbe=false ⇒ 门永久降级未武装：不预取、不判、不 503（子集迁移库场景）', async () => {
+  const { state, port } = fakePort();
+  const reader = createPortFlagReader(port);
+  let refreshes = 0;
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    armingProbe: async () => false,
+    prepare: async () => {
+      refreshes += 1;
+      await reader.refresh();
+    },
+  });
+
+  assert.equal(gate.armed, true, '探测前的静态口径仍是武装（real 且已接端口）');
+  await gate.prepare();
+  assert.equal(gate.armed, false, '探测 false ⇒ 永久未武装');
+  assert.equal(refreshes, 0, '表不可用时不得预取（否则预取失败会 503 打红无关面）');
+  assert.equal(state.listCalls, 0, '不得为此打库');
+  assert.equal(gate.verdictFor('ai_enabled', 'POST /recognitions').state, 'open', '未武装 ⇒ 不判开关');
+  assert.doesNotThrow(() => gate.assertSurfaceOpen('POST', '/api/v1/recognitions'));
+
+  await gate.prepare();
+  assert.equal(state.listCalls, 0, '再次 prepare 也不得预取');
+  assert.equal(refreshes, 0);
+});
+
+test('armingProbe 抛错（42501/连接失败）⇒ 同样降级未武装，且错误只吞在门内', async () => {
+  const { state, port } = fakePort();
+  const reader = createPortFlagReader(port);
+  let refreshes = 0;
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    armingProbe: async () => {
+      const failure = new Error('permission denied for table feature_flags');
+      failure.code = '42501';
+      throw failure;
+    },
+    prepare: async () => {
+      refreshes += 1;
+      await reader.refresh();
+    },
+  });
+
+  await assert.doesNotReject(() => gate.prepare(), '探测错误绝不能被当成请求错误抛出');
+  assert.equal(gate.armed, false);
+  assert.equal(refreshes, 0);
+  assert.equal(state.listCalls, 0);
+  const verdict = gate.verdictFor('specific_herbicide_output_enabled', 'GET /api/v1/herbicides');
+  assert.equal(verdict.state, 'open');
+  assert.equal(verdict.decidedBy, 'unavailable');
+  assert.doesNotThrow(() => gate.assertSurfaceOpen('GET', '/api/v1/herbicides'));
+});
+
+test('armingProbe=true ⇒ 保持武装并预取；探测只跑一次，预取逐次刷新', async () => {
+  const { state, port } = fakePort();
+  const reader = createPortFlagReader(port);
+  let probes = 0;
+  let refreshes = 0;
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    armingProbe: async () => {
+      probes += 1;
+      return true;
+    },
+    prepare: async () => {
+      refreshes += 1;
+      await reader.refresh();
+    },
+  });
+
+  await gate.prepare();
+  await gate.prepare();
+  assert.equal(probes, 1, '就绪探测只跑一次');
+  assert.equal(refreshes, 2, '预取必须逐次刷新（存储抖动是瞬时的，不得缓存失败）');
+  assert.equal(gate.armed, true);
+  assert.equal(state.listCalls, 2);
+  const verdict = gate.verdictFor('specific_herbicide_output_enabled', 'GET /api/v1/herbicides');
+  // 假端口种子全 false：武装后必须**按库判定**（closed/configured），而不是继续"未接线 ⇒ open"。
+  assert.equal(verdict.state, 'closed');
+  assert.equal(verdict.decidedBy, 'configured');
+  assert.equal(verdict.revision, 1);
 });

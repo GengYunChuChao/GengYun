@@ -342,7 +342,7 @@ export interface FlagGateVerdict {
 }
 
 export interface FeatureFlagGate {
-  /** `false` ⇒ 本进程不判开关（real 模式后台域未接线，见文件头边界说明）。 */
+  /** `false` ⇒ 本进程不判开关（real 模式后台域未接线或开关表未就绪，见文件头边界说明）。 */
   readonly armed: boolean;
   /**
    * **可选**：判定前的异步预取（真实 PG 读取口用；内存读取口不需要）。
@@ -398,6 +398,16 @@ export interface FeatureFlagGateOptions {
    */
   readonly armed?: boolean;
   /**
+   * **可选**：武装前的只读就绪探测（真实 PG 端口用 `featureFlagsTableReady`）。
+   *
+   * 语义（T-R12-08R）：`real` 且拿到池**不等于**开关可用 —— 集成测试会只应用迁移子集，
+   * 库里根本没有 `public.feature_flags`。这种库上若照样武装，首个受控面请求的预取会失败并
+   * 503，把与开关无关的既有面打红。因此：探测只跑一次（首次 `prepare`），返回 `true` 才继续
+   * 预取与判定；返回 `false` 或抛错 ⇒ `armed` 永久降级为 `false`（行为与接线前逐字相同：
+   * 不判开关、不预取、不 503）。探测错误**绝不**抛给请求路径。
+   */
+  readonly armingProbe?: () => Promise<boolean>;
+  /**
    * **可选**：判定前的异步预取。真实 PG 读取口（`createPortFlagReader`）在这里刷新快照；
    * 内存读取口不传 ⇒ 判定路径与接线前逐字相同（纯同步）。
    */
@@ -405,8 +415,40 @@ export interface FeatureFlagGateOptions {
 }
 
 export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureFlagGate {
-  const armed = options.armed ?? true;
   const reader = options.reader;
+  // 武装是**运行时**状态（不再是构造期常量）：real 模式下先等只读探测，探测失败就永久未武装。
+  // stub / 未接端口时没有探测，取值与构造参数逐字相同。
+  let armed = options.armed ?? true;
+  const armingProbe = options.armingProbe;
+  const refresh = options.prepare;
+  let probed = false;
+  let tableReady = false;
+
+  /**
+   * 就绪探测（只跑一次）+ 预取（每次判前都刷新）。
+   *
+   * 探测只缓存**结果**而不是整个 promise：失败后不重试（表要么由迁移建好、要么不该本进程反复探），
+   * 而预取必须逐次重试 —— 存储抖动是瞬时的，缓存一次 `read_error` 会让门永久 503。
+   */
+  async function ensureReady(): Promise<void> {
+    if (armingProbe !== undefined && !probed) {
+      try {
+        tableReady = (await armingProbe()) === true;
+      } catch {
+        tableReady = false;
+      }
+      probed = true;
+    }
+    if (armingProbe !== undefined && !tableReady) {
+      // 表不存在 ⇒ 本进程没有权威开关来源 ⇒ 退回未武装（不预取、不判、不 503）。
+      armed = false;
+      return;
+    }
+    if (refresh !== undefined) await refresh();
+  }
+
+  const prepare =
+    armingProbe === undefined && refresh === undefined ? undefined : ensureReady;
 
   /** 带原因读取：优先用读取口的 `readWithCause`；没有则退回 `read()`（见下方注释）。 */
   function readOutcomeFor(key: FlagKey): FlagReadOutcome {
@@ -456,8 +498,12 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
   for (const entry of FLAG_GATED_SURFACES) byOperation.set(entry.operationId, entry);
 
   return {
-    armed,
-    ...(options.prepare === undefined ? {} : { prepare: options.prepare }),
+    // 取值器而非快照：`armingProbe` 可在 `prepare()` 里把武装降级为 false，调用方（含测试与
+    // 证据页）读到的必须是最新状态，否则「已降级」这件事对断言不可见。
+    get armed(): boolean {
+      return armed;
+    },
+    ...(prepare === undefined ? {} : { prepare }),
     verdictFor,
     assertOpen,
     assertSurfaceOpen(method, routePattern) {
