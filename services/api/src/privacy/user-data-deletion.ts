@@ -34,9 +34,12 @@
  *      阶段 2 的 PG store 还能在同一事务里清掉**本域幂等台账**（`favorites_idempotency` /
  *      `history_idempotency`）并给出分表行数 ⇒ 证据追加
  *      `";<module>:idempotency-purged:<台账行数>"`，两张表都清干净才判 `completed`；
- *    - `backupState`：备份副本的清除**本片未实现**（属 GY-I19）⇒ 默认 `pending`
- *      （**不谎称 completed**）。接线的 `backupPurge` 端口返回已清除且有证据时才置 `completed`。
- *      因此在备份清除接线之前，回执会如实显示该模块**未完成**（这是缺口，不是通过）。
+ *    - `backupState`：备份副本的清除**未实现**（属 GY-I19）⇒ 默认 `pending`（**不谎称 completed**）。
+ *      接线的 `backupPurge` 端口返回已清除且有证据时才置 `completed`。**未接线的真实原因**是
+ *      仓内不存在逐用户备份副本域：迁移里没有备份/快照副本表（也没有软删列），运维侧唯一备份产物是
+ *      `deploy/postgres-cvm/backup-postgres.sh` 的整库 `pg_dump -Fc`，不能逐用户删除（普查见
+ *      `docs/verification/gy-i19-backup-domain-20261018.md`）。因此在备份域与端口接线之前，回执会
+ *      如实显示该模块**未完成**（这是缺口，不是通过）；不许把「没有副本可删」的空集当成清除成功。
  *
  * ## 与「收藏／历史不自动转成已使用事实」的关系
  * 本文件是**删除**方向的接线（用户权利），与"收藏=已使用"毫无关系；它不写任何使用类字段。
@@ -78,6 +81,12 @@ export interface OwnerPurgeStore {
 /**
  * 备份副本清除端口。**默认未接线** ⇒ `backupState: 'pending'`（不谎称完成）。
  * 接线（GY-I19）后返回 `{ purged: true, evidenceRef }` 即置 `completed`。
+ *
+ * 接线前提（不是本文件能自证的事）：被清对象必须**真实存在**。本仓至今没有逐用户备份副本表、
+ * 也没有任何真实备份系统接线；运维备份只有整库 `pg_dump -Fc`（见
+ * `docs/verification/gy-i19-backup-domain-20261018.md`）。因此「新增一个恒返回
+ * `{ purged: true }` 的端口」不是接线，而是把空集当成功；未接线时 `available: false`、
+ * 回执 `pending` 才是如实状态。
  */
 export interface BackupPurgePort {
   readonly kind: 'wired' | 'unwired';
@@ -86,7 +95,7 @@ export interface BackupPurgePort {
 }
 
 export function createUnwiredBackupPurgePort(
-  note = '备份副本清除尚未接线（属 GY-I19）：备份状态保持 pending，不谎称完成',
+  note = '备份副本清除未接线：仓内无逐用户备份副本域（唯一备份产物是整库 pg_dump），备份状态保持 pending，不谎称完成',
 ): BackupPurgePort {
   void note;
   return {

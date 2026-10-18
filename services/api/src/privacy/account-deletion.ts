@@ -24,7 +24,9 @@
  *    整体 `state` 由协议如实回落为 `blocked`（`state-contract.md:107` 逐字「不能完成时显示blocked
  *    和逾期，不把时钟到期当完成」）；`completed` 只有在**全模块在线与备份证据齐备**时才可能出现。
  * 2. **未覆盖 ⇒ 不可完成**：`backupPurge` 未接线 ⇒ 每个模块 `backup_state: 'pending'`
- *    ⇒ 全模块完成判定恒不成立（缺口对用户与监工可见，不谎称完成）。
+ *    ⇒ 全模块完成判定恒不成立（缺口对用户与监工可见，不谎称完成）。未接线的根因是**仓内没有
+ *    可清的逐用户备份副本域**：迁移里无备份/快照副本表，运维备份是整库 `pg_dump -Fc`，
+ *    逐用户不可删（普查见 `docs/verification/gy-i19-backup-domain-20261018.md`）。
  * 3. **未装配 ⇒ 503**：服务端执行模式不允许本片（`real`）时，两个 operation **不注册任何回退**，
  *   由 `registerAccountDeletionRoutes()` 抛契约 `PROVIDER_UNAVAILABLE`（503，`retryable: false`）。
  *
@@ -43,8 +45,9 @@
  *   调用方仍**不是** `account-deletion.ts`（它不碰这个端口）：由 `app.ts` 把 `requests` 端口
  *   装在 `userDataDeletion` 上。
  * - **仍未实现（照旧如实登记）**：outbox／7 日在线与 30 日备份的**到期执行**、第三方完成证据、
- *   备份副本清除、恢复清单重放、**外发与在途回写的撤销**（`state-contract.md:105` 的另外一半）
- *   —— 细目与阻塞原因见交接 md 的「未取得项」。
+ *   备份副本清除（仓内无逐用户备份副本域，需新增域后再接线，见
+ *   `docs/verification/gy-i19-backup-domain-20261018.md`）、恢复清单重放、**外发与在途回写的撤销**
+ *   （`state-contract.md:105` 的另外一半）—— 细目与阻塞原因见交接 md 的「未取得项」。
  *
  * ## 已知缺口（如实登记，不在本文件掩盖）
  * - **回执 bearer 仍是进程内**：`DeletionReceiptRegistry` 的 `tokenHash` 台账只在内存
