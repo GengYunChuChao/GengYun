@@ -38,3 +38,55 @@
 
 - 未安装上述任一包，安装时长与真实构建耗时未实测。
 - 未评估解析器方案对 141 条既有 `name` 片段的覆盖率；本片未收窄 `name` 口径。
+
+## 补充留痕（2026-10-18 审计后补）
+
+> 依据：`T-R11-02` 审计（@`3b776a8`）判定本记录有 F1（「可复用部分」缺计数命令与读数，对应 `docs/research/README.md` §3 的该字段要求）、F2（来源表 4 行中 3 行各仅 1 条 URL，对应 §4「每项 ≥2 条」）两处缺项；处置按 `.pg17/ruling-research-record-addendum-20261018.md` 的选项 B——**就地追加**本节，原文一字未改（append-only，0 行删除、0 行修改）。
+> 本轮抓取／复算时点：2026-10-18 09:48（本机 `Get-Date`，UTC+08:00）；基线 `upstream/main = 3b776a8b7bf8fecd9b271f880c549aa5df4f2704`。
+
+### 补 F1：可复用部分的计数命令 ⇒ 读数
+
+命令 1（本仓是否引入或拷贝上游解析器包源码）：
+
+```text
+git ls-files | grep -Ec '(^|/)(acorn|@babel/parser|es-module-lexer)(/|$)'
+⇒ 0
+```
+
+读数 `0`（`grep` 无匹配行时退出码为 1，属正常「无命中」，不是失败）；分母 `git ls-files` 共 **1231** 个受控文件。⇒ 本仓**未引入、也未拷贝复用** `acorn`／`@babel/parser`／`es-module-lexer` 的任何源码或目录。口径说明：本机 `grep` 不在 `PATH`，实测经 Git for Windows 自带的 `D:\Git\usr\bin\grep.exe`（GNU grep）执行，读数与直接 `grep` 等价。
+
+命令 2（自研扫描器脚本的复用面，即 README §3「复用的目录／脚本与数量」的对应物）：
+
+```text
+git grep -c "export function " -- tools/contract-status-core.mjs
+⇒ tools/contract-status-core.mjs:10
+```
+
+读数 **10**：该脚本共 10 个 `export function`。逐函数清单（`git grep -n "^export function " -- tools/contract-status-core.mjs`，实测 10 行）：`scanMountedRoutes`(15)、`mountedMismatches`(56)、`runtimeMountedRoutes`(62)、`evidenceWithinRepository`(72)、`routeDeclarations`(81)、`declarationSegments`(104)、`assertionArgumentRanges`(121)、`operationMentions`(153)、`replaceStatusTables`(166)、`renderStatusTables`(174)。
+
+本记录「决定」段点名的 4 个函数逐一实测存在，复用面如下：
+
+| 复用函数 | 实测行号 | 在本片中的作用 |
+| --- | --- | --- |
+| `routeDeclarations` | 81 | 取注册声明行及其调用的字符区间 |
+| `declarationSegments` | 104 | 由声明行切出注册块片段 |
+| `assertionArgumentRanges` | 121 | 取 `assert`／`expect` 实参的字符范围 |
+| `operationMentions` | 153 | 判片段是否点名其它契约操作 |
+
+⇒ 复用面 = **1 个脚本（`tools/contract-status-core.mjs`）／其 10 个导出函数中的 4 个**；实现为自研「正则 ＋ 字符串感知括号配对」，**0 行**来自上游解析器包（命令 1 读数 `0` 佐证）。
+
+### 补 F2：逐项补充来源（各 ≥1 条与原文行不同页面、本轮实抓）
+
+| 技术 | 本轮实抓 URL（与原文行不同页面） | 本轮读数 |
+| --- | --- | --- |
+| `@babel/parser` | <https://registry.npmjs.org/@babel/parser> | 版本 8.0.7；许可证 MIT；发布 2026-10-07T10:00:37.851Z；`dist.fileCount` 8；`dist.unpackedSize` 579648 |
+| `es-module-lexer` | <https://registry.npmjs.org/es-module-lexer> | 版本 3.0.4；许可证 MIT；发布 2026-10-15T04:35:33.820Z；`dist.fileCount` 11；`dist.unpackedSize` 254251；`gitHead` 1c17334d2c3bc0eed6a92022e16254a28bb9ebea |
+| `typescript` | <https://registry.npmjs.org/typescript> | 版本 7.0.2；许可证 Apache-2.0；发布 2026-07-08T15:55:18.431Z；`dist.fileCount` 416；`dist.unpackedSize` 2497498；`gitHead` 2bd066d87f5bafd315be9f40889d0a60b9e58e0b |
+
+- 每项 URL 条数（原文 ＋ 本轮）：`acorn` 2 条（原文已满足）、`@babel/parser` 2 条、`es-module-lexer` 2 条、`typescript` 2 条 ⇒ **四项均 ≥2 条**，满足 README §4。页面区分：本轮新页在 `registry.npmjs.org`（registry JSON 文档），原页在 `www.npmjs.com`（包展示页），域名与页面均不同，非同一页面转载。
+- 读数复核：本轮三行读数与原文来源表**逐字一致**（8.0.7／MIT／2026-10-07；3.0.4／MIT／2026-10-15；7.0.2／Apache-2.0／2026-07-08）⇒ 原文读数无订正项。
+- 抓取方式：本机 `Invoke-RestMethod` 直取上述 registry JSON 文档（未使用检索词，未走镜像，未凭记忆）。另为取「不同页面类型」试过 `https://api.github.com/repos/<owner>/<repo>/releases/latest`（`babel/babel`、`guybedford/es-module-lexer`、`microsoft/TypeScript` 各 1 次），三次均返回 `403 已禁止`（本机出网策略）⇒ 该路为**附加**尝试，不影响 §4 的 ≥2 条要求；所需三项来源**未取得 0 条**。
+
+### 结论不变声明
+
+本节只补 README §3／§4 的结构字段，**不改变原记录的结论**：仍为「不引入 `acorn`／`@babel/parser`／`es-module-lexer`，自研轻量扫描」，决定与 4 条理由见上文原文「决定」段，逐字未改。
