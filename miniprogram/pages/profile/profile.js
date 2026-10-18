@@ -10,6 +10,11 @@ const regionConverterResource = require('../../utils/region-converter')
 // GY-I16：收藏与识别历史各自有独立页面；本页只显示**已加载条数**并给出入口。
 const favoritesApi = require('../../utils/favorites-api')
 const historyApi = require('../../utils/history-api')
+// GY-I28：「我的发布」＝社区页的「我的投稿」（契约 `mine`）。社区是底部 Tab，switchTab 不接受
+// 查询参数，故用 navigation 的一次性进程内意图把「预选我的投稿」交给社区页；条数仍按本页既有
+// 口径取「第一页已加载条数」（服务端封套没有总数），读不到就显示 —，绝不用本地数据凑数。
+const navigation = require('../../utils/navigation')
+const communityApi = require('../../utils/community-api')
 function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', loadError: '', needsReload: false, retryPending: false } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
@@ -31,13 +36,13 @@ const NOT_READY = '档案还没有读取成功，暂时不能进入编辑。请�
 const REREAD_REQUIRED = '档案需要重新读取后才能编辑。请先点“重新读取档案”。'
 const REFERENCE_NOT_READY = '档案还没有读取成功，暂时不能按档案查资料。请先点“重试读取档案”。'
 Page({
-  data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—' }, empty()),
+  data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—', myPostCount: '—' }, empty()),
   onLoad: function () { fontScale.applyFontScale(this) },
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
     // 计数一律清零：不把上一个会话的条数留在界面上。
-    this.setData({ favoriteCount: '—', historyCount: '—' })
+    this.setData({ favoriteCount: '—', historyCount: '—', myPostCount: '—' })
     pageGate.start(this, function (ok) {
       self.invalidate()
       self.setData(Object.assign({ guest: !ok }, empty()))
@@ -45,7 +50,7 @@ Page({
     })
   },
   /**
-   * 收藏／识别历史的**已加载条数**（不是总数，契约封套没有计数字段）：
+   * 收藏／识别历史／我的发布的**已加载条数**（不是总数，契约封套没有计数字段）：
    * 只读第一页，`N+` 表示还有下一页；读不到就如实显示 `—`（绝不用本地数据凑数）。
    */
   loadCounts: function () {
@@ -57,9 +62,25 @@ Page({
     historyApi.listHistory('', 20).then(function (result) {
       self.setData({ historyCount: result.items.length + (result.nextCursor ? '+' : '') })
     }).catch(function () { self.setData({ historyCount: '—' }) })
+    // GY-I28：契约既有 `GET /posts?mine=true`（community-api listPosts 的 `mine` 参数，
+    // 与社区页「我的投稿」同一查询），不新增后端接口。
+    communityApi.listPosts({ mine: true, limit: 20 }).then(function (result) {
+      self.setData({ myPostCount: result.items.length + (result.nextCursor ? '+' : '') })
+    }).catch(function () { self.setData({ myPostCount: '—' }) })
   },
   openFavorites: function () { wx.navigateTo({ url: '/pages/favorites/favorites' }) },
   openHistory: function () { wx.navigateTo({ url: '/pages/history/history' }) },
+  /**
+   * 「我的发布」（demo profile 的 `data-action="my-posts"`）：小程序没有独立的「我的发布」页，
+   * 如实跳到**既有路由**社区页并预选「我的投稿」筛选（同一契约查询 `mine=true`），
+   * 不新建页面、不伪造列表。社区页自身仍按登录门禁与 state-view 收口失败／空态。
+   */
+  openMyPosts: function () {
+    navigation.requestCommunityMine()
+    navigation.openTarget('/pages/community/community', false, function (error) {
+      if (error) wx.showToast({ title: error, icon: 'none' })
+    })
+  },
   invalidate: function () { this._operation = (this._operation || 0) + 1; this._pendingSave = null; this._subjectBinding = null },
   onHide: function () { pageGate.cancel(this) },
   onUnload: function () { pageGate.cancel(this) },
