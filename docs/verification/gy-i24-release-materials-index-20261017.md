@@ -75,7 +75,7 @@
 | 1 | 索引存在 | 文件在册 | ✅ |
 | 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 29/29 覆盖，无悬空路径 |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
-| 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
+| 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`（**blob 内容喂 stdin，不传文件路径**）；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
@@ -94,6 +94,7 @@
 | --- | --- | --- | --- |
 | F1 | **runbook / roles-and-migration 的迁移数量读数过期**：`runbook.md:331`「全部 10 个版本」、`:343` 期望输出「10 个版本已全部应用（0001 … 0010）」；`roles-and-migration.md:240`「全部 10 个版本」；`runbook.md:507`「rollback 存在（0002–0010，没有 0001）」 | 实测（基线 `60aa9ad`）`services/api/db/migrations/` = **17** 个（`0001..0017`）；`rollback/` = **16** 个（`0002..0017`，仍无 `0001`）。**两代基线均未修**：`95b8e7c` 上为 15/14，`60aa9ad` 上为 17/16，文档读数始终停在 10/9 | 未来执行者按旧读数会误判「迁移没跑全」。`evidence/local-self-check.md:825/887` 的「10 个版本」是 2026-10-13 真跑的**历史输出**（当时确为 10 个），按「不改写历史证据」原则应保留；**建议由 GY-I25（#27）材料Owner** 在 runbook §步骤2/3 与 §5.4 增加「当时 10 个／现有 N 个（随基线变）」的时点说明，或改为引用门禁输出 |
 | F2 | **LF 判据的工作区假象**（第 9 项） | `core.autocrlf=true` | 已在本片工具中按 blob 判据固化；建议后续所有「行尾必查」都注明「查 blob，不查工作区」 |
+| F5 | **`bash -n` 不得传文件路径**（监工在 WSL 下实测转红后修复）：旧写法 `execFileSync('bash',['-n', join(ROOT, script)])` 把 Windows 路径传给 bash，MSYS bash 吃 `D://…`（本机因此 5/5 假绿）、**WSL 只吃 `/mnt/d/…`（监工环境 5/5 找不到文件）**、Linux CI 吃 `/…`——三种解释互不相容 | 修复：`bash -n` 改为**读 blob 内容喂 stdin**（`execFileSync('bash',['-n'],{input})`），与路径解释完全无关，且与 LF 判据同源（检查提交内容而非工作区）；`tests/unit/release-materials-index.test.mjs` 增加结构化回归钉住该形态（不得再出现给 bash 传路径的调用） | 已修复并复跑通过；教训：跨平台门禁里，**凡是把本机路径交给外部程序的调用都要按「调用方可能是另一种路径哲学」设计**（stdin/stdout 优先，路径探测兜底） |
 | F3 | **`service-settings.md` 对 `OBJECT_STORAGE_*` 的「当前无代码消费」已过期**：该表四行（`:61`-`:64`）称 object storage 相关键「当前无代码消费（识别/合成媒体端口在 real 下未接线、fail-closed）」 | 新基线上 `services/api/src/media/object-store.ts:209` 实际读取 `OBJECT_STORAGE_ENDPOINT`（并在 `:214/226` 参与校验与报错）；`app.ts:1127` 在 `mediaAccessGrantOrigin !== null` 时注入 `accessGrantOrigin`。即 PR #193「媒体对象存储显式接线」之后这些键**已被消费**（凭据齐备才构造真实适配器、缺任一保持 fail-closed 的口径不变） | 会影响运维对「填了是否起作用」的判断。同表 `DELETION_LEDGER_KEY` 的「无代码消费」**仍成立**（`grep` 确认 config.ts 之外无消费者）⇒ 不是整表过期，建议材料Owner 只订正 object storage 四行 |
 | F4 | **环境变量模板缺 `MEDIA_ACCESS_GRANT_ORIGIN`**（新基线配置面新增的可选键） | 门禁第 5 项在 `60aa9ad` 上实测转红：模板 16 键 vs 配置面 17 键 | **本片已修**：模板补入该键（空值；该键可选，未配置时媒体域用 `.invalid` 占位域，`config.ts:234-248`）。属「模板与配置面保持一致」的补齐，不改变任何部署行为 |
 

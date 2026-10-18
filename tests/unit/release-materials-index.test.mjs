@@ -50,6 +50,19 @@ test('索引·当前读数与文件系统一致（迁移/down/deploy 文件数�
   assert.equal(downs.length, migrations.length - 1, 'down 数必须等于迁移数减一（无 0001）');
 });
 
+test('门禁·bash 调用不得传入文件路径（Windows/WSL 路径解释分歧的根因）', () => {
+  // 监工在 WSL 下实测：把 join(ROOT, script) 的 Windows 路径传给 bash -n，5/5 「找不到文件」
+  // （MSYS bash 吃 D:\…、WSL 只吃 /mnt/d/…、Linux CI 吃 /…）。修法是把 blob 内容喂 stdin。
+  // 本条把该形态钉住：工具里对 bash 的调用只能是 ['-n'] + input，不得出现路径参数。
+  const source = read(TOOL);
+  assert.ok(/execFileSync\('bash',\s*\['-n'\],\s*\{\s*input:/.test(source),
+    'bash -n 必须改用 stdin 喂入（blob 内容），不得传文件路径');
+  assert.equal(/execFileSync\('bash',\s*\['-n',/.test(source), false,
+    '不得再给 bash 传文件路径参数');
+  assert.ok(/git cat-file blob/.test(source) || /cat-file/.test(source),
+    '语法检查的内容必须取自提交 blob（与 LF 判据同源，避免工作区 CRLF 假红）');
+});
+
 test('索引·载明边界：Refs #24、不关闭整项、离线核验不代表验收', () => {
   const index = read(INDEX);
   assert.ok(index.includes('Refs #24'), '必须使用 Refs #24');

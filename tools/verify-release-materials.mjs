@@ -45,6 +45,31 @@ function gitFiles(prefix) {
   return out.split('\n').map((s) => s.trim()).filter((s) => s !== '');
 }
 
+/**
+ * `bash -n` 语法检查：把**提交内容（blob）**喂给 bash 的 stdin，**不传文件路径**。
+ *
+ * 为什么不传路径（监工在 WSL 下实测 5/5「找不到文件」后定位）：Windows 上 `bash` 至少有三种
+ * 化身——MSYS/Cygwin（吃 `D:\…`）、WSL（只吃 `/mnt/d/…`）、Linux CI（吃 `/…`）。
+ * 传 `join(ROOT, script)` 出来的 Windows 路径给后两种必失败；`cygpath`/`wslpath` 探测又脆。
+ * 喂 stdin 与路径解释完全无关，且顺带解决两个一致性问题：
+ *   ① 与 LF 判据同源——检查的是 **blob**（CI/Linux 看到的内容），不是工作区
+ *      （`core.autocrlf=true` 下工作区是 CRLF，可能造成与线上无关的假红）；
+ *   ② 不依赖任何路径转换工具。
+ */
+function bashSyntaxError(script) {
+  const content = execFileSync('git', ['cat-file', 'blob', `HEAD:${script}`], {
+    cwd: ROOT,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  try {
+    execFileSync('bash', ['-n'], { input: content });
+    return null;
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'bash 不可用（PATH 上没有 bash）：无法执行语法检查';
+    return String(error.stderr || error.message).split('\n')[0];
+  }
+}
+
 /** 提交内容（blob）里的 CR 字节数；工作区在 autocrlf 下不可用作判据（见文件头）。 */
 function blobCrBytes(path) {
   const buf = execFileSync('git', ['cat-file', 'blob', `HEAD:${path}`], { cwd: ROOT, maxBuffer: 32 * 1024 * 1024 });
@@ -103,13 +128,10 @@ try {
   const scripts = gitFiles('deploy').filter((p) => p.endsWith('.sh'));
   const syntaxBad = [];
   for (const script of scripts) {
-    try {
-      execFileSync('bash', ['-n', join(ROOT, script)], { encoding: 'utf8' });
-    } catch (error) {
-      syntaxBad.push(`${script}: ${String(error.stderr || error.message).split('\n')[0]}`);
-    }
+    const problem = bashSyntaxError(script);
+    if (problem !== null) syntaxBad.push(`${script}: ${problem}`);
   }
-  check('CVM 脚本 bash -n 语法通过', syntaxBad.length === 0,
+  check('CVM 脚本 bash -n 语法通过（blob 喂 stdin，不传路径）', syntaxBad.length === 0,
     syntaxBad.length === 0 ? `${scripts.length} 个脚本全部通过` : syntaxBad.join('；'));
 
   const noPipefail = scripts.filter((s) => !read(s).includes('set -euo pipefail'));
