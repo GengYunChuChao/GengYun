@@ -49,6 +49,7 @@
 | [`../../deploy/postgres-cvm/provision-db.sh`](../../deploy/postgres-cvm/provision-db.sh) | 角色引导与最小权限断言（幂等、默认不轮换口令） | ✅ 同上三件套 |
 | [`../../deploy/postgres-cvm/backup-postgres.sh`](../../deploy/postgres-cvm/backup-postgres.sh) | 备份（pg_dump + 可读性校验 + 清单 + 保留期清理） | ✅ 同上三件套 |
 | [`../../deploy/postgres-cvm/restore-drill.sh`](../../deploy/postgres-cvm/restore-drill.sh) | 恢复演练（隔离库重建，逐项比对） | ✅ 同上三件套 |
+| [`../../deploy/postgres-cvm/restore-drill.ps1`](../../deploy/postgres-cvm/restore-drill.ps1) | 本机（Windows ＋ 便携 PG 17.11）的恢复演练脚本：与 `restore-drill.sh` **同五条判据、同退出码语义**（0＝五条全 PASS／1＝有 FAIL／2＝缺清单不算通过）；演练库只在 `drill`/`restore` 命名空间内重建，口令只从文件读 | ✅ 在册；**需本机 PG，属运行期，未在 CVM 上核验**（门禁第 4 项只查 `.sh`，不覆盖本脚本；真跑读数见[证据页](../../docs/verification/gy-i24-restore-drill-local-20261018.md)，**不代表已验收**） |
 | [`../../deploy/postgres-cvm/verify-cvm-postgres.sh`](../../deploy/postgres-cvm/verify-cvm-postgres.sh) | 可执行判据一键核验（退出码 0/1/2 语义见 runbook §步骤4） | ✅ 同上三件套 |
 | [`../../deploy/postgres-cvm/conf/10-gengyun-postgres.conf`](../../deploy/postgres-cvm/conf/10-gengyun-postgres.conf) | 监听地址/端口等配置模板 | ✅ 在册 |
 | [`../../deploy/postgres-cvm/conf/pg_hba.gengyun.conf`](../../deploy/postgres-cvm/conf/pg_hba.gengyun.conf) | 认证规则模板（仅回环 + VPC 私网） | ✅ 在册 |
@@ -77,7 +78,7 @@
 | # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 8 项按 2026-10-18 并流后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
-| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 29/29 覆盖，无悬空路径 |
+| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 30 个文件全部在索引表行中（30/30 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出本分支新增的 `deploy/postgres-cvm/restore-drill.ps1` |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
 | 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`（**blob 内容喂 stdin，不传文件路径**）；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
