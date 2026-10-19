@@ -4,13 +4,49 @@ import { fileURLToPath } from 'node:url';
 import { readLocalConfig, configArgument } from './local-debug-config.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const APP_ID_PATTERN = /^wx[0-9a-f]{16}$/;
+// 测试号申请入口（微信公众平台 → 开发 → 开发管理 → 开发设置 → 开发者工具 → 测试号）。
+// 2026-10-19 实测该 URL 可打开，但正文由微信公众平台前端渲染，需在浏览器登录后查看。
+const TEST_ACCOUNT_URL = 'https://mp.weixin.qq.com/wxamp/sandbox?doc=1';
+
+/**
+ * 从 local 的参数里摘出可选的 `--appid <wx…>`，其余参数原样交给 --config 校验。
+ * 只改**被忽略的生成副本**里的 appid：协作者账号不是共享工程的小程序项目成员时，
+ * 共享工程的官方 AppID 在微信开发者工具里会直接拦住登录调试；换成自己扫码的测试号 AppID
+ * 即可零成员资格走通 wx.login → code2session。共享工程本身绝不改写。
+ * 所有校验都在 mkdir 之前完成，非法值不会留下任何半成品目录。
+ */
+function takeAppId(args) {
+  const rest = [];
+  let appId = null;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--appid') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) throw new Error('--appid 缺少取值：应写成 `--appid wx…`（wx + 16 位小写十六进制）；未生成任何目录。');
+      if (!APP_ID_PATTERN.test(value)) throw new Error('--appid 格式非法：' + JSON.stringify(value) + ' 不匹配 ^wx[0-9a-f]{16}$；未生成任何目录，共享工程与 release 副本不受影响。');
+      if (appId !== null) throw new Error('--appid 只能出现一次；未生成任何目录。');
+      appId = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--appid=')) throw new Error('--appid 只支持空格分隔写法 `--appid wx…`，不支持等号形式；未生成任何目录。');
+    rest.push(arg);
+  }
+  return { appId, rest };
+}
+
 try {
-  const [mode, ...args] = process.argv.slice(2);
-  if (!['local', 'release'].includes(mode)) throw new Error('Usage: node tools/prepare-wechat.mjs local --config <file> | release');
+  const [mode, ...argv] = process.argv.slice(2);
+  if (!['local', 'release'].includes(mode)) throw new Error('Usage: node tools/prepare-wechat.mjs local --config <file> [--appid <wx…>] | release');
+  // release 副本固定沿用共享工程的官方 AppID：覆盖只服务于本地调试，越界即拒。
+  if (mode === 'release' && argv.some(arg => arg.startsWith('--appid'))) throw new Error('release 不接受 --appid：release 副本固定使用共享工程官方 AppID。协作者本地调试请用 `local --config <file> --appid wx…`。');
+  const { appId: appIdOverride, rest: args } = mode === 'local' ? takeAppId(argv) : { appId: null, rest: argv };
   const runtime = mode === 'local' ? readLocalConfig(configArgument(args)) : { mode: 'disabled', apiBaseUrl: '' };
   if (mode === 'release' && args.length) throw new Error('Release does not accept a local configuration.');
   const config = JSON.parse(readFileSync(join(root, 'project.config.json'), 'utf8'));
   if (config.compileType !== 'miniprogram' || config.miniprogramRoot !== 'miniprogram/' || config.setting.urlCheck !== true) throw new Error('Shared project must use native miniprogram and domain validation.');
+  const sharedAppId = config.appid;
   const sharedRuntime = readFileSync(join(root, 'miniprogram/config/runtime.js'), 'utf8').replace(/\r\n/g, '\n');
   if (sharedRuntime !== "// Shared source always has networking disabled. Local preparation writes only an ignored copy.\nmodule.exports = { mode: 'disabled', apiBaseUrl: '' }\n") throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.');
   const out = join(root, '.local', 'wechat-' + mode);
@@ -131,6 +167,9 @@ try {
     mkdirSync(dirname(target), { recursive: true });
     copyFileSync(join(root, 'miniprogram', file), target);
   }
+  // 只有**生成副本**的 appid 允许覆盖；共享工程两份 project.config.json 全程只读
+  // （tests/local-debug.test.mjs 按字节比对原文，覆盖值不可能回流到仓库）。
+  if (appIdOverride !== null) config.appid = appIdOverride;
   writeFileSync(join(out, 'project.config.json'), JSON.stringify(config, null, 2) + '\n');
   // 生成物里的 apiBaseUrl 就是**客户端拼接基址**（客户端以 `runtime.apiBaseUrl + '/auth/…'` 等自行拼接）：
   // 指向真实本地 API 时须含业务前缀（如 http://127.0.0.1:3100/api/v1），诊断替身用 origin 形态即可。
@@ -139,4 +178,12 @@ try {
   console.log(mode === 'local'
     ? 'Local client base (runtime.apiBaseUrl): ' + runtime.apiBaseUrl + ' ; diagnostic stub only; enable the personal domain exception only in this isolated project if needed.'
     : 'Networking disabled, urlCheck=true. This is not a working competition release.');
+  // 以下三行是协作者真实登录的判据：AppID 用哪个号、服务端必须配同一个号、测试号入口在哪。
+  const appIdInCopy = appIdOverride === null ? sharedAppId : appIdOverride;
+  console.log('生成副本 AppID：' + appIdInCopy + (appIdOverride === null
+    ? '（来源：共享工程 project.config.json 默认值）'
+    : '（来源：--appid 覆盖值；共享工程仍为 ' + sharedAppId + '，未被改写）'));
+  console.log('服务端必须同号：WECHAT_APP_ID 必须等于上面这个 AppID，WECHAT_APP_SECRET 必须是同一个号后台生成的密钥；两者不配对时 code2session 必然返回 appid/secret 不匹配类错误，登录一定失败。');
+  console.log('测试号申请入口（没有「小程序项目成员」资格也能扫码登录）：' + TEST_ACCOUNT_URL + ' ；该页需在浏览器登录微信公众平台后由前端渲染。');
+  if (appIdOverride !== null) console.log('注意：测试号 openid 与正式号不同，服务端身份摘要把 appId 与 openid 一起做 HMAC，故测试号账号/数据与正式环境不互通，不能作为正式验收证据。');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
