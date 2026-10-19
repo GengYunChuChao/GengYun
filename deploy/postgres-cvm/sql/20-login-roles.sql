@@ -286,8 +286,49 @@ GRANT EXECUTE ON FUNCTION public.admin_account_display_name(text,uuid) TO gengyu
 REVOKE ALL ON TABLE public.admin_audit_events FROM PUBLIC;
 -- #endregion gy-i22-suspend-grant
 
+-- ---------------------------------------------------------------------------
+-- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权
+--
+-- 为什么这里也有一份（`services/api/db/roles/auth_privacy.sql` 里已有同一组 GRANT）：
+-- `provision-db.sh` 只在组**不存在**时才执行 `roles/*.sql`（见该脚本的逐组循环），
+-- 已存在的部署升级到 0023 时不会重跑它 ⇒ 授权必须在**每次都会执行**的本文件里再收敛一次，
+-- 否则运行时在受理事务里写清单行会 42501，202 变成 500。
+--
+-- 口径（与本文件其它区域一致，**不是**放宽「唯一写路径」）：
+--   * 注销请求/账号状态仍然只能经 `public.request_account_deletion(...)` 写；
+--     本表不是状态机表，是运行时要自己写、自己读、自己落证据的**清单**；
+--   * 一律按**列**授予，⛔ 不给表级 DML —— `90-assert-least-privilege.sql` 的
+--     `table_dml_allowlist` 只允许 `idempotency_keys` 有表级写入；
+--   * ⛔ 不给 DELETE/TRUNCATE：清单行是「清过」的唯一证据（设计 §5.3）。
+--
+-- 前置：表必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本；缺失即显式失败，
+-- 绝不留一个「看似已收敛、实际写不进清单」的运行态。
+-- #region gy-i19-backup-copies-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regclass('public.user_backup_copies') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.user_backup_copies：迁移 0023 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.user_backup_copies FROM PUBLIC;
+-- SELECT 必须含 `request_id,user_id,module,state,retention_until`：UPDATE 的 WHERE 要读它们；
+-- 还必须含 `purge_attempts`：失败留痕是 `purge_attempts = purge_attempts + 1`，读右边也要 SELECT 权。
+GRANT SELECT (id,user_id,request_id,module,scope,state,retention_until,payload_digest,evidence_ref,purge_attempts)
+  ON public.user_backup_copies TO gengyun_auth_privacy;
+GRANT INSERT (id,user_id,request_id,module,scope,delete_generation,lineage,covered_through,
+              payload,payload_digest,state,retention_until,purge_attempts,created_at,updated_at)
+  ON public.user_backup_copies TO gengyun_auth_privacy;
+-- 清除路径只改这几列：payload 置 null、state→purged/failed、证据、尝试次数、时间。
+GRANT UPDATE (payload,state,purged_at,evidence_ref,last_error_code,purge_attempts,updated_at)
+  ON public.user_backup_copies TO gengyun_auth_privacy;
+-- #endregion gy-i19-backup-copies-grant
+
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
 \echo '20-login-roles.sql：已授予 public.request_account_deletion(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.suspend_account(...) / public.restore_account(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
+\echo '20-login-roles.sql：已授予 public.user_backup_copies 的列级 SELECT/INSERT/UPDATE（运行时自写的备份副本清单；无表级 DML、无 DELETE/TRUNCATE）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'
