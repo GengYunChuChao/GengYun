@@ -65,7 +65,11 @@
   `rollback/` **22** 个（`0002..0023`，仍无 `0001`）、`deploy/` 在册 **30** 个；
   本片树此前两处缺号（`0021`／`0022`）由本次叠放一次补齐。
   **本行由叠在 #296 新 head 之上的合流复核更新，旧值＝21/20/30（本片树）／22/21/30（#296 旧 head `a6e3101` 侧）。**
-  §2 表行与 §4 第 8 项已按合流后的树实测同步。
+  §2 表行与 §4 第 8 项已按合流后的树实测同步。同轮按 `#312`「跳过即未取得」口径修正本分支自有脚本
+  `tests/integration/backup-purge-pg.mjs`：缺 `GY_PG_BIN` 时由 `exit 0` 改为 `exit 77`
+  （`--allow-skip`／`GY_ALLOW_SKIP=1` 才显式取 0），SKIP 判定条件与全部断言未改。
+  本轮真库臂在本机原生 PG 17.11 上实测 `PASS 1 … PASS 13`（`RESULT=PASS 13 组`，自起自停临时集群、仅回环，收尾 `CLEANUP=done`）；
+  `migrations-negative-pg` 实测 `PASS 1 … PASS 11`（`ALL 11 … passed against native PG17.11`）；全量单测 `tests 1876 / pass 1875 / fail 0 / skipped 1`。
 - **合流复核六（2026-10-19，#296 侧合流 main `607c03c`）**：#15 在其树上再 `git merge --no-ff upstream/main`
   = `607c03c`（含 `#312` 集成脚本门禁覆盖，以及 I14 的 `#310`、I22 的 `#309`、I18 后台账号目录的 `#311`）——
   上游未带新迁移，`0022_community_persistence.sql` 仍在末位；按合流后的树逐条实测：迁移数 **22** 个
