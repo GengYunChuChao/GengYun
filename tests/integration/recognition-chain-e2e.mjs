@@ -279,6 +279,8 @@ async function runChain(arm) {
   assert.ok(value.model_version.length > 0, '结果必须带模型版本');
   assert.ok(Array.isArray(value.candidates) && value.candidates.length >= 1, '成功结果必须至少有一条候选');
   assert.ok(value.candidates.length <= 3, '候选不得超过契约上限 3 条');
+  // 替身对 MEDIA_SYNTH 的确定性产出就是 2 条：少给不行，**补造第 3 条也不行**（只断上界挡不住补造）。
+  assert.equal(value.candidates.length, 2, '该媒体只有 2 条候选 ⇒ 不得补造第 3 条');
   // rank 1..n 连续且唯一；species_id 非空字符串；分数为 number|null（不得是字符串/NaN）。
   value.candidates.forEach((candidate, index) => {
     assert.equal(candidate.rank, index + 1, `候选 rank 必须 1..n 连续：${JSON.stringify(value.candidates)}`);

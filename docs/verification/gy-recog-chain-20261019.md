@@ -20,13 +20,13 @@
 | issue | AC 编号 | 本片判定 | 证据位置 |
 | --- | --- | --- | --- |
 | `#9` | AC1 实际服务调用有证据 | 未取得 | 无凭据；`real` 模式 `available:false`、上传 503 `PROVIDER_UNAVAILABLE`（fail-closed 不回退替身），本脚本全程 `execution_mode=stub`；见 §6 第 1 行 |
-| `#9` | AC2 无可信分数不伪造高置信、候选少于 3 不补造 | 部分成立 | `:283`、`:287`、`:291`、`:295`、`:315`、`:319`、`:328`（无分数保持 `null`、候选 2 条不补第 3 条、`succeeded` 不得携带不确定原因）；「预设与用户手改不计准确率」未取得（需真实模型评估） |
-| `#9` | AC3 任务归属与重试安全 | 部分成立 | `:257`、`:262`、`:437`、`:442`、`:447`（重放同一 job、他人 id 与不存在 id 404 同形）；「不能跳过 GY-I08」未取得（本链路不经药剂面） |
+| `#9` | AC2 无可信分数不伪造高置信、候选少于 3 不补造 | 部分成立 | `:283`（**候选数恰为 2**：只断上界 `<=3` 挡不住「补造第 3 条」）、`:285`、`:289`、`:293`、`:297`、`:317`、`:321`、`:330`（无分数保持 `null`、`succeeded` 不得携带不确定原因）；「预设与用户手改不计准确率」未取得（需真实模型评估） |
+| `#9` | AC3 任务归属与重试安全 | 部分成立 | `:257`、`:262`、`:439`、`:444`、`:449`（重放同一 job、他人 id 与不存在 id 404 同形）；「不能跳过 GY-I08」未取得（本链路不经药剂面） |
 | `#9` | AC4 实现时运行第 6 节评估 | 未取得 | 替身提供者不产生真实识别质量，无评估读数；见 §6 |
-| `#16` | AC1 他人不能读取私有历史 | 部分成立 | `:437`、`:442`、`:445`、`:447`、`:499`、`:501`（越权读/删与不存在 id 同形）；「旧收藏不恢复失效推荐资格」需收藏面，未覆盖 |
-| `#16` | AC2 候选与人工选择分开、失败任务真实可见 | 成立（限 API 层） | `:296`（`selected_species_id=null`，结果不自带「已选中」）、`:363`（`job_state=uncertain` 原样入历史） |
-| `#16` | AC3 识别不自动转成已使用事实 | 成立（限 API 层） | `:347`、`:348`、`:296`（历史投影键集恰等 7 键、无 `owner_id`、无「已使用」字段） |
-| `#16` | AC4 读取时重查对象权限及当前可见性 | 不成立 | `:355`：只披露 `reference_state=unavailable`，**没有在读取时重查对象权限与当前可见性**；缺 `/knowledge` 引用读面（待实现缺口见 §6） |
+| `#16` | AC1 他人不能读取私有历史 | 部分成立 | `:439`、`:444`、`:447`、`:449`、`:501`、`:503`（越权读/删与不存在 id 同形）；「旧收藏不恢复失效推荐资格」需收藏面，未覆盖 |
+| `#16` | AC2 候选与人工选择分开、失败任务真实可见 | 部分成立 | `:298`（本片只证「识别结果不自带已选中」）；`:365`（`job_state=uncertain` 原样入历史，失败任务真实可见）；「人工选择独立记录且不回写 `candidates`/`model_score`」**本片未断言**（脚本未调用 `PATCH /recognitions/{id}/selection`），由既有单测 `tests/unit/recognitions-candidates-selection.test.mjs` 覆盖（非本片断言），见 §6 |
+| `#16` | AC3 识别不自动转成已使用事实 | 成立（限 API 层） | `:349`、`:350`、`:298`（历史投影键集恰等 7 键、无 `owner_id`、无「已使用」字段） |
+| `#16` | AC4 读取时重查对象权限及当前可见性 | 不成立 | `:357`：只披露 `reference_state=unavailable`，**没有在读取时重查对象权限与当前可见性**；缺 `/knowledge` 引用读面（待实现缺口见 §6） |
 | `#6` | AC1 伪扩展名/超限/越权 URL/重复/取消 | 未取得 | 本链路不覆盖：只用替身 `media_id` 引用，这些边界由媒体域自身验收 |
 | `#6` | AC2 原始位置／私人媒体不出现在公共列表或普通日志 | 未取得 | 本链路不覆盖：无真实媒体内容与普通日志面，该断言无从验证 |
 | `#6` | AC3 音频编码与服务商适配真实核实 | 未取得 | 本链路不覆盖：无音频编码与供应商适配 |
@@ -40,7 +40,7 @@
 | `#10` | AC3 冲突阻断用量卡片、服务失败／超时不伪造成功 | 未取得 | 本链路不覆盖：无登记冲突对用量卡片的阻断面（OCR 域超时语义由 `tests/integration/ocr-http.mjs` 覆盖，不是本片证据） |
 | `#10` | AC4 实现时运行第 6 节评估 | 未取得 | 本链路不覆盖：无 OCR 评估读数 |
 
-矩阵合计 **20 行**：**成立** 2 行（`#16 AC2`、`#16 AC3`）、**部分成立** 3 行（`#9 AC2`、`#9 AC3`、`#16 AC1`）、**不成立** 1 行（`#16 AC4`）、**未取得** 14 行（`#9 AC1`、`#9 AC4`，以及 `#6`×4、`#8`×4、`#10`×4）。⇒ 本页**不**声称 `#6`/`#8`/`#10` 的任何 AC 已满足，也**不**声称 `#16 AC4` 已满足。
+矩阵合计 **20 行**：**成立** 1 行（`#16 AC3`）、**部分成立** 4 行（`#9 AC2`、`#9 AC3`、`#16 AC1`、`#16 AC2`）、**不成立** 1 行（`#16 AC4`）、**未取得** 14 行（`#9 AC1`、`#9 AC4`，以及 `#6`×4、`#8`×4、`#10`×4）。⇒ 本页**不**声称 `#6`/`#8`/`#10` 的任何 AC 已满足，也**不**声称 `#16 AC4` 已满足，也不把「人工选择独立记录」算作本片证据。
 
 ## 2 证明边界
 
@@ -122,27 +122,28 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 | 2 上传受理 | `POST /api/v1/recognitions`，`{"media_id":"11111111-1111-4111-8111-111111111111","media_revision":1}` + `Idempotency-Key` | 202；`data.state=queued`；`data.id`（jobId）与 `data.target_ref.id`（识别记录 id）都是 uuid 且互不相等；`meta.execution_mode=stub`；`Cache-Control: no-store` | `status=202 job=35692229-… recognition=b952b796-… state=queued cache=no-store` | `:254`（受理）、`:257`（两个 id 不相等） | `#9 AC3`；`#16 AC3`（识别不是「已使用」） |
 | 3 同键重放（创建） | 同一条请求原样再发一次 | 回放**同一个** job 与同一个识别记录；不产生第二个任务 | 同一 job；回放的是该任务**当前**投影（`state=succeeded`），不是受理瞬间快照 | `:262` | `#9 AC3` |
 | 4 拿结果 | `GET /api/v1/jobs/{jobId}`（≤3s 有界轮询） | 终态 `succeeded`；`error_code=null`；`target_ref` 指向识别记录；`result.kind=recognition` | `state=succeeded elapsed=2ms model_version=stub-v1`；候选 2 条：`synthetic_weed_a` 0.64 / `synthetic_weed_b` 0.28；`reasons=[]` | `:272`（终态）、`:274`（target_ref） | `#9 AC2` |
-| 5 可信度依据 | 同上结果体 | 候选 `rank` 1..n 连续；`species_id` 非空；至少一条**数值** `model_score`；`uncertainty_reasons=[]`；候选不得自造 `category` 字段；结果不自带「已选中」 | 2 条候选均带数值分数（类别 + 置信度两样依据齐备）；未补造第 3 条；`selected_species_id=null` | `:283`（逐候选）、`:288`（禁自造 category）、`:291`（至少一条数值分数）、`:296`（无「已选中」） | `#9 AC2`；`#16 AC2`（候选与人工选择分开） |
-| 6 结果面读回 | `GET /api/v1/recognitions/{id}` | 200 + `ETag: "1"` + `no-store`，且与 `job.result.value` **逐字段相等** | 200 `etag="1"`；与任务面投影完全一致（两套字段没漂移） | `:305`、`:307`、`:308` | `#9 AC2`；`#16 AC4`（读取时重查，不靠缓存公开） |
-| 7 不确定分支 | `POST /recognitions` `media_id=77777777-…` → 轮询任务 | 终态 `uncertain`（**与 succeeded 可区分**）；至少一条非空原因；无分候选保持 `model_score=null`（不补造） | `state=uncertain`；`candidates` 2 条分数均为 `null`；`reasons=["替身未给出可信分数，需重拍或人工核对"]` | `:315`、`:317`、`:319`、`:328` | `#9 AC2`（无可信分数不伪造高置信） |
-| 8 落历史 | `GET /api/v1/history`（有界轮询，见 `:171` 的 `waitHistoryFor`） | 恰一条命中该识别；键集**恰等**契约 7 键；无 `owner_id`；`job_state=succeeded`；`revision=1`；`created_at` 可解析；`reference_state=unavailable` | `history=f6668f10-… rev=1 appeared_after_job=5ms`，键集与契约一致 | `:347`（键集）、`:348`（无 owner_id）、`:355`（reference_state） | `#16 AC2`、`#16 AC3`（无「已使用」字段） |
-| 9 非成功终态入历史 | 同上（不确定任务） | `job_state=uncertain` **原样保留**，不改写成 succeeded | `history=f75b4338-… job_state=uncertain` | `:363` | `#16 AC2`（失败/不确定任务真实可见） |
-| 10 重放不长行 | 同键再发上传 | 该识别的历史仍**恰 1 条**；提供者累计调用仍为 2（两次上传各一次） | 1 条；`calls=2` | `:376` | `#9 AC3` |
-| 11 时间序稳定 | `GET /api/v1/history` ×3 | 三次返回的 id 顺序完全一致；`created_at` 非递增；`next_cursor=null` | 三次一致；倒序成立 | `:385` | `#16 AC2` |
-| 12 跨用户不可见（读） | B：`GET /api/v1/history`；`GET /api/v1/recognitions/{A 的识别 id}` | B 列表 `{items:[],next_cursor:null}`；读 A 的识别 404，且错误体与「不存在 id」**逐字段同形** | B 列表空；404 同形=true | `:437`、`:442` | `#16 AC1` |
-| 13 跨用户不可见（删/详情） | B：`DELETE /api/v1/history/{A 的历史 id}`；`GET /api/v1/history/{id}` | 删除 404 `NOT_FOUND`；`GET /history/{id}` 404（契约未注册该路径，不得悄悄长出） | 均 404；A 的历史仍 2 条未被动 | `:445`（未注册读详情）、`:447`（越权删除） | `#16 AC1` |
-| 14 删除历史 | `DELETE /api/v1/history/{id}` + `Idempotency-Key` + `If-Match: "1"` | 200 `{accepted:true}`；`meta.execution_mode=stub`；`X-GY-Cascade` 落闭集；只删被点的那一条 | 200 accepted=true `cascade=unwired`；剩余 1 条 | `:462`、`:465` | `#16 AC2` |
-| 15 再读为空 | 删第二条 → `GET /api/v1/history` | `{items:[],next_cursor:null}`，且无 `ETag` | 一致 | `:483`、`:485` | `#16 AC1` |
-| 16 同键重放删除 | 用**同一个**幂等键再删同一条 | 200 回放首次结果与同一份级联披露；**不复活**数据 | 200 accepted=true cascade=unwired；列表仍空 | `:492`、`:494` | `#16 AC1` |
-| 17 换键重复删除 | 用**新键**再删同一条 | 404 `NOT_FOUND`，与「从不存在 id」的 404 逐字段同形 | 404 同形=true；对**从不存在**的 id 删除同样 404（不泄露存在性） | `:499`、`:501`、`:503` | `#16 AC1` |
-| 18 真库直查（删前） | 独立 `pg.Client`：`SELECT … FROM history WHERE job_id=$1` | 恰 1 行；`event_key=recognition:<jobId>`；`owner_id` 指向真库 `users` 行；他人 0 行；`(owner,event_key)` 唯一 | 1 行；`users=2` 行；他人历史=0；唯一性=1 行 | `:405`、`:427` | `#16 AC3` |
-| 19 真库直查（删后） | 同上连接：`count(*) FROM history` / `users` / `history_idempotency` | `history` 0 行（物理删除）；`users` 仍 2 行；台账 ≥ 2 行 | 0 / 2 / 2 | `:514` | `#16 AC1` |
+| 5 可信度依据 | 同上结果体 | 候选**恰 2 条**（该媒体只有 2 条 ⇒ 补造第 3 条即红）；`rank` 1..n 连续；`species_id` 非空；至少一条**数值** `model_score`；`uncertainty_reasons=[]`；候选不得自造 `category` 字段；结果不自带「已选中」 | 2 条候选均带数值分数（类别 + 置信度两样依据齐备）；未补造第 3 条；`selected_species_id=null` | `:283`（候选数恰 2）、`:285`（逐候选）、`:290`（禁自造 category）、`:293`（至少一条数值分数）、`:298`（无「已选中」） | `#9 AC2`；`#16 AC2`（候选与人工选择分开，仅前半句） |
+| 6 结果面读回 | `GET /api/v1/recognitions/{id}` | 200 + `ETag: "1"` + `no-store`，且与 `job.result.value` **逐字段相等** | 200 `etag="1"`；与任务面投影完全一致（两套字段没漂移） | `:307`、`:309`、`:310` | `#9 AC2`（结果面与任务面同一份投影）；**不**断言 `#16 AC4` 的读时重查 |
+| 7 不确定分支 | `POST /recognitions` `media_id=77777777-…` → 轮询任务 | 终态 `uncertain`（**与 succeeded 可区分**）；至少一条非空原因；无分候选保持 `model_score=null`（不补造） | `state=uncertain`；`candidates` 2 条分数均为 `null`；`reasons=["替身未给出可信分数，需重拍或人工核对"]` | `:317`、`:319`、`:321`、`:330` | `#9 AC2`（无可信分数不伪造高置信） |
+| 8 落历史 | `GET /api/v1/history`（有界轮询，见 `:171` 的 `waitHistoryFor`） | 恰一条命中该识别；键集**恰等**契约 7 键；无 `owner_id`；`job_state=succeeded`；`revision=1`；`created_at` 可解析；`reference_state=unavailable` | `history=f6668f10-… rev=1 appeared_after_job=5ms`，键集与契约一致 | `:349`（键集）、`:350`（无 owner_id）、`:357`（reference_state） | `#16 AC3`（无「已使用」字段） |
+| 9 非成功终态入历史 | 同上（不确定任务） | `job_state=uncertain` **原样保留**，不改写成 succeeded | `history=f75b4338-… job_state=uncertain` | `:365` | `#16 AC2`（失败/不确定任务真实可见） |
+| 10 重放不长行 | 同键再发上传 | 该识别的历史仍**恰 1 条**；提供者累计调用仍为 2（两次上传各一次） | 1 条；`calls=2` | `:378` | `#9 AC3` |
+| 11 时间序稳定 | `GET /api/v1/history` ×3 | 三次返回的 id 顺序完全一致；`created_at` 非递增；`next_cursor=null` | 三次一致；倒序成立 | `:387` | —（契约：列表排序/分页稳定，不隶属任一 AC） |
+| 12 跨用户不可见（读） | B：`GET /api/v1/history`；`GET /api/v1/recognitions/{A 的识别 id}` | B 列表 `{items:[],next_cursor:null}`；读 A 的识别 404，且错误体与「不存在 id」**逐字段同形** | B 列表空；404 同形=true | `:439`、`:444` | `#16 AC1` |
+| 13 跨用户不可见（删/详情） | B：`DELETE /api/v1/history/{A 的历史 id}`；`GET /api/v1/history/{id}` | 删除 404 `NOT_FOUND`；`GET /history/{id}` 404（契约未注册该路径，不得悄悄长出） | 均 404；A 的历史仍 2 条未被动 | `:447`（未注册读详情）、`:449`（越权删除） | `#16 AC1` |
+| 14 删除历史 | `DELETE /api/v1/history/{id}` + `Idempotency-Key` + `If-Match: "1"` | 200 `{accepted:true}`；`meta.execution_mode=stub`；`X-GY-Cascade` 落闭集；只删被点的那一条 | 200 accepted=true `cascade=unwired`；剩余 1 条 | `:464`、`:467` | `#16 AC1`（本人可删；他人不可删的补集见步骤 13） |
+| 15 再读为空 | 删第二条 → `GET /api/v1/history` | `{items:[],next_cursor:null}`，且无 `ETag` | 一致 | `:485`、`:487` | `#16 AC1` |
+| 16 同键重放删除 | 用**同一个**幂等键再删同一条 | 200 回放首次结果与同一份级联披露；**不复活**数据 | 200 accepted=true cascade=unwired；列表仍空 | `:494`、`:496` | `#16 AC1` |
+| 17 换键重复删除 | 用**新键**再删同一条 | 404 `NOT_FOUND`，与「从不存在 id」的 404 逐字段同形 | 404 同形=true；对**从不存在**的 id 删除同样 404（不泄露存在性） | `:501`、`:503`、`:505` | `#16 AC1` |
+| 18 真库直查（删前） | 独立 `pg.Client`：`SELECT … FROM history WHERE job_id=$1` | 恰 1 行；`event_key=recognition:<jobId>`；`owner_id` 指向真库 `users` 行；他人 0 行；`(owner,event_key)` 唯一 | 1 行；`users=2` 行；他人历史=0；唯一性=1 行 | `:407`、`:429` | `#16 AC3` |
+| 19 真库直查（删后） | 同上连接：`count(*) FROM history` / `users` / `history_idempotency` | `history` 0 行（物理删除）；`users` 仍 2 行；台账 ≥ 2 行 | 0 / 2 / 2 | `:516` | `#16 AC1` |
 
 ## 6 未取得／未覆盖项（不硬凑，逐条列明）
 
 | 项 | 状态 | 原因与已取得的最接近证据 |
 | --- | --- | --- |
-| `#16 AC4` 读取时重查对象权限及当前可见性 | **不成立（待实现缺口）** | 基线只把 `reference_state=unavailable` 写进历史投影，**没有**在读取时重查目标权限与当前可见性 ⇒ 这不是核验结论，而是「读面不存在」的如实披露。实现它需要两个组件：① **引用读面** —— 按 `target_ref`（`recognition`/`ocr` 等）回读目标当前状态；现有 `historyVisibility` 只对 `species` / `herbicide` / `scheme` 三种核 `/knowledge`，识别/OCR 目标恒 `unavailable`。② **读时状态复算** —— 列表与删除路径每次读取都重算 `reference_state`（含权限、当前可见性、对象是否已删），而不是写入时定型或读缓存。已取得的最接近证据：`:355` 断言的就是这个 `unavailable` 披露值本身 |
+| `#16 AC2` 后半句「人工选择独立记录」 | 未取得（本片不覆盖） | 脚本**未调用** `PATCH /recognitions/{id}/selection`，故证不了「人工选择独立记录、且不回写 `candidates`/`model_score`/`model_version`」。该写入面由既有单测 `tests/unit/recognitions-candidates-selection.test.mjs` 覆盖（**非本片证据**，本片未复核其全部断言）。已取得的最接近证据：`:298` 只证「识别结果不自带已选中」 |
+| `#16 AC4` 读取时重查对象权限及当前可见性 | **不成立（待实现缺口）** | 基线只把 `reference_state=unavailable` 写进历史投影，**没有**在读取时重查目标权限与当前可见性 ⇒ 这不是核验结论，而是「读面不存在」的如实披露。实现它需要两个组件：① **引用读面** —— 按 `target_ref`（`recognition`/`ocr` 等）回读目标当前状态；现有 `historyVisibility` 只对 `species` / `herbicide` / `scheme` 三种核 `/knowledge`，识别/OCR 目标恒 `unavailable`。② **读时状态复算** —— 列表与删除路径每次读取都重算 `reference_state`（含权限、当前可见性、对象是否已删），而不是写入时定型或读缓存。已取得的最接近证据：`:357` 断言的就是这个 `unavailable` 披露值本身 |
 | 真实 OCR/识别供应商调用（`#9 AC1`） | 未取得 | 仓内无 provider 凭据；`real` 模式构造的提供者 `available:false`、上传 503 `PROVIDER_UNAVAILABLE`，**fail-closed 不回退替身**。已取得：替身链路上的 `meta.execution_mode=stub` 处处如实标注 |
 | 「同分候选 ⇒ uncertain」区分 | 未取得（登记，不写死期望） | 依赖**未合** PR #299：本基线 `services/api/src/recognitions/state.ts` 没有同分判定规则，且替身脚本不产出同分候选 ⇒ **没有任何 HTTP 输入**能造出同分；脚本内 `step=skip-tie` 显式打印 SKIP，不把「想当然的期望」写成断言 |
 | 「无效登记 ⇒ conflict」 | 未取得 | 同属未合 PR #299 的下游语义，本链路不涉及登记面（`#10`），未断言 |
@@ -160,9 +161,9 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 
 | 门禁 | 命令 | 实测 | 结论 |
 | --- | --- | --- | --- |
-| ① 工作树 | `git status --porcelain` | 逐行：` M package.json`、`?? tests/integration/recognition-chain-e2e.mjs`、`?? docs/verification/gy-recog-chain-20261019.md` | 只有本片 3 个文件，无越界改动 |
-| ② 单测全量 | `node --test "tests/unit/*.test.mjs"` | 本树：`tests 1617 / pass 1616 / fail 0 / skipped 1 / todo 0`，退出码 0（末次 52.8s）；同 SHA 干净基线树（`upstream/main` = `8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`，独立 worktree）：`tests 1617 / pass 1616 / fail 0 / skipped 1`，退出码 0（70.2s） | 与干净基线**同数**，未放宽、未删测试 |
-| ③ 链路端到端 | `node tests/integration/recognition-chain-e2e.mjs` | 内存臂 PASS；真库臂（带 `RECOGNITION_CHAIN_PG_TEST_URL`，并用 `RECOGNITION_CHAIN_PG_RESET=1` 重建 `public` 后重跑）PASS，36 条证据行、2364ms；不带 env 时真库臂显式 SKIP；三种跑法退出码均 0。**返修后复跑**（仅内存臂，本树当前工作树）：`arm=memory PASS`、`arm=pg SKIP`、`合计 17 条证据行`、退出码 0（真库臂本轮未起库，不以历史读数冒充本轮） | 本页 §5 的 19 组断言全部实测通过 |
+| ① 工作树 | `git status --porcelain` | **提交后复跑：0 行**（干净）；本轮返修改动提交前曾是 ` M docs/verification/gy-recog-chain-20261019.md` + ` M tests/integration/recognition-chain-e2e.mjs` 两行 | 只有本片 3 个文件被改/增，无越界改动 |
+| ② 单测全量 | `node --test "tests/unit/*.test.mjs"` | 本树（断言补充后复跑）：`tests 1617 / pass 1616 / fail 0 / skipped 1 / todo 0`，退出码 0（52.98s）；同 SHA 干净基线树（`upstream/main` = `8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`，独立 worktree）：`tests 1617 / pass 1616 / fail 0 / skipped 1` | 与干净基线**同数**，未放宽、未删测试 |
+| ③ 链路端到端 | `node tests/integration/recognition-chain-e2e.mjs` | **断言补充后复跑（两臂都重跑）**：内存臂 `arm=memory PASS`、`合计 17 条证据行；耗时 241ms`；真库臂 `arm=pg PASS`、`real PostgreSQL patch: 17.11`、迁移 `0001`+`0018`（重复应用 no-op）、`合计 36 条证据行；耗时 754ms`（`RECOGNITION_CHAIN_PG_RESET=1` 重建 `public`）；不带 env 时真库臂显式 SKIP。三种跑法退出码均 0。新增断言 `:283`（候选数恰 2）在两臂都过 | 本页 §5 的 19 组断言（含新增的候选数断言）全部实测通过 |
 | ④ 契约状态 | `node tools/verify-contract-status.mjs` / `--runtime` | 均 `PASS：覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；形状错误 0 项；语义错误 0 项`；`--runtime` 额外 `PASS 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致` | 未改契约，读数与基线一致 |
 | ⑤ 文档校验 | `python -B tools/validate_development_docs.py` | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` | 含新增本页的链接与表格校验 |
 | ⑥ 空白/补丁卫生 | `git diff upstream/main --check` | 无输出，退出码 0 | 无行尾空白/空白错误 |
