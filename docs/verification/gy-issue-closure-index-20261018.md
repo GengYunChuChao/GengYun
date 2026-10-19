@@ -407,7 +407,7 @@ git cat-file -s 5250520:packages/knowledge/herbicides/records-2026.json
   → exit 0 ｜ 90131（字节，按 blob 计；worktree 的 CRLF 版为 92308 字节，72693 是字符数，不作字节数用）
 
 git diff --numstat 5250520..HEAD   （post-merge；HEAD 含合流 upstream/main 的 9 个提交）
-  → exit 0 ｜ 46 个文件 / +6524 / −104；本页 `435/0`（整份新增），另 7 个 `docs/verification/*` 由合流带入；本页**自身提交**只改本页 18/16，被引文件零改动
+  → exit 0 ｜ 46 个文件 / +6524 / −104；本页 `435/0`（整份新增），另 7 个 `docs/verification/*` 由合流带入；本页**自身提交**只改本页 20/18，被引文件零改动
 ```
 
 - **与派单示例的差异（如实记录）**：派单写的 `tests/reference/herbicides-provenance.test.mjs` 在 5250520 **不存在**；实际为 `tests/reference/herbicide-provenance.test.mjs`（单数）。本页命令一律按实测文件名。
