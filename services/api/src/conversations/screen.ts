@@ -96,6 +96,20 @@ export interface RiskScreen {
 export interface RiskScreenDeps {
   /** 规则子集（缺省 = 两类别全部规则；注入只用于负控制，不改默认行为）。 */
   rules?: ReadonlyArray<ModerationRuleDescriptor>;
+  /**
+   * 规则层的时钟（**可选**，只供确定性测试注入冻结时钟）。
+   *
+   * 缺省（不传 / `undefined`）⇒ 规则层沿用自带的 `Date.now`，与不传该字段**逐字等价**。
+   * 注入它**不改**预算、不改判定口径、不放宽超时：超时仍是 `quarantined`（fail-closed）。
+   */
+  clock?: () => number;
+  /**
+   * 规则层单次扫描的预算（毫秒，**可选**，只供确定性测试显式给定）。
+   *
+   * 缺省（不传 / `undefined`）⇒ 规则层沿用 `DEFAULT_RULE_BUDGET_MS`（50ms 墙钟，
+   * 超时 ⇒ `RULE_TIMEOUT` ⇒ `quarantined`）。**默认值不在这里改**。
+   */
+  budget_ms?: number;
 }
 
 /** 从规则目录里选出本文件消费的两类规则（**不复制规则正文**，只按类别过滤）。 */
@@ -138,6 +152,11 @@ function pushUnique(target: string[], values: readonly string[]): void {
 export function createModerationRiskScreen(deps: RiskScreenDeps = {}): RiskScreen {
   const rules = selectRiskRules(deps.rules ?? RULES);
   const ruleVersion = deriveRuleVersion(rules, { ...MATCHERS }, { ...MATCHER_REVISIONS });
+  // 注入缝（**可选**）：两个字段都缺省时，下面的 `ruleOptions` 与改动前逐字等价——只有
+  // `rules` 一个键，规则层照旧用 `Date.now` + 默认 50ms 预算。注入后也只是把时钟/预算
+  // **原样**交给规则层，判定口径（含超时 ⇒ `quarantined`）一行未改。
+  const clock = deps.clock;
+  const budgetMs = deps.budget_ms;
 
   /**
    * 对一段文本求值（可能分块）。`targetId` 只用于规则层的 `target_ref`（≤ 80 字符；
@@ -154,7 +173,12 @@ export function createModerationRiskScreen(deps: RiskScreenDeps = {}): RiskScree
       try {
         outcome = evaluateHardRules(
           { target_ref: { type: 'answer', id: targetId, revision: 1 }, text: chunk, media: [] },
-          { rules: [...rules] },
+          {
+            rules: [...rules],
+            // 条件展开：未注入时对象里**没有**这两个键（与改动前的 `{ rules: [...] }` 逐字等价）。
+            ...(clock === undefined ? {} : { clock }),
+            ...(budgetMs === undefined ? {} : { budget_ms: budgetMs }),
+          },
         );
       } catch {
         // 规则层抛错 ⇒ 无法判定 ⇒ fail-closed（不把"没扫成"当成"没问题"）。

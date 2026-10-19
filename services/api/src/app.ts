@@ -397,6 +397,9 @@ export interface BuildAppOptions {
     ports?: { tms?: unknown; ims?: unknown };
     authority?: ContentAuthorityPort;
     callbackKey?: string;
+    // 规则层选项（**可选**，只供回归测试注入冻结时钟）。不传 ⇒ `createModerationService`
+    // 内部沿用默认口径（真实 `Date.now` + 默认 50ms 预算，超时 ⇒ 隔离），与不传该字段等价。
+    ruleOptions?: Record<string, unknown>;
   };
   // GY-I16 收藏（#16）注入项。**全部可选**：不传时——收藏域新建内存 store；引用可用性端口
   // **已于 #167 接线**（缺省即同文件 `defaultVisibility`：`createWiredVisibilityPort`，可用性按
@@ -774,6 +777,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           ? {}
           : { authority: communityContentAuthority }),
       ...(moderationInjection?.callbackKey === undefined ? {} : { callbackKey: moderationInjection.callbackKey }),
+      // 规则层选项：未注入时该键不出现（与 `createModerationService` 的默认口径逐字等价）。
+      ...(moderationInjection?.ruleOptions === undefined
+        ? {}
+        : { ruleOptions: moderationInjection.ruleOptions }),
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。
