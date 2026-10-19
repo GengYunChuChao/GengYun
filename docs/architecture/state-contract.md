@@ -110,4 +110,6 @@ Deletion状态 `requested → processing → completed`，失败 `blocked` 可�
 
 删除清单先在独立受控追加存储落 durable tombstone（opaque object refs、delete generation、范围、期限、处理证据），worker ACK前不丢任务。账户可识别映射在在线期限内删除；公开作者改随机注销引用，不能从日志/审计/外发账本反查。清单必要对象引用受限加密，权限与业务库分离，备份不覆盖该清单；每个备份有 lineage 和截至水位。恢复关闭入口与外发，加载比快照新的清单→删除身份/媒体/缓存并重播第三方待删→验证无复活→开流量，失败保持隔离。
 
+> **边界（GY-I19，只记录事实，不改上面的语义）**：本仓当前**不存在逐用户「备份副本」域**——`services/api/db/migrations/` 0001–0018（18 个迁移文件、54 处 `CREATE TABLE` 去重 52 张表）没有任何备份/快照副本表，也没有软删列（`deleted_at/is_deleted/purged` 唯一命中是 `0018_favorites_history.sql:36` 自述「物理删除、无软删」的注释，真实软删列 0）；唯一备份产物是 `deploy/postgres-cvm/backup-postgres.sh` 的**整库** `pg_dump -Fc`，其 30 天是备份文件保留期、**没有逐用户删除语义**（该脚本与 `deploy/postgres-cvm/README.md:459`、`runbook.md:540`、`verify-checklist.md:211`、`roles-and-migration.md:256-257` 都自认未实现）。因此上面「备份证据／每个备份的 lineage 与截至水位」在新增备份域并接线 `BackupPurgePort` 之前**必然缺失**：`backup_state` 如实停留 `pending`、完成判定为 `blocked`，不以时钟到期或空集冒充完成。普查证据见 [docs/verification/gy-i19-backup-domain-20261018.md](../verification/gy-i19-backup-domain-20261018.md)。
+
 首版训练关闭；未来实际启用前独立 ADR/同意/谱系和可控模型停部署、切换、7/30日权重删除、重训重验门槛，不能用本契约称已实现训练删除。已脱敏匿名统计可保留；合法最小证据留存须明确用途与期限，不能一概保留账号可逆映射。

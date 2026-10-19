@@ -107,15 +107,19 @@ import { createEgressRevoker, createInFlightGuard } from '../../../packages/priv
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
+import { createPostgresMessagesStore } from './messages/store-pg.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
 // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域 + 注销删除接线（F13 协议复用）。
 import { registerFavoriteRoutes } from './routes/favorites.ts';
 import { registerHistoryRoutes } from './routes/history.ts';
 import { createFavoritesService, type FavoritesService } from './favorites/service.ts';
 import { createMemoryFavoritesStore, type FavoritesStore } from './favorites/store.ts';
+// GY-I16 阶段 2：收藏/历史的 PG 实现（迁移 `0018_favorites_history.sql`，`persistent: true`）。
+import { createPostgresFavoritesStore } from './favorites/store-pg.ts';
 import { isFavoriteTargetType } from './favorites/types.ts';
 import { createHistoryService, type HistoryService } from './history/service.ts';
 import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
+import { createPostgresHistoryStore } from './history/store-pg.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
 import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
 import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
@@ -202,6 +206,7 @@ import { createKnowledgeService } from './knowledge/service.ts';
 import { createDeterministicDoseAuthority } from './conversations/dose.ts';
 import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
 import { createAnswerJobSource } from './conversations/job.ts';
+import type { ConversationContextPort } from './conversations/context.ts';
 import {
   createConversationDeletion,
   createUnwiredTurnCascadePort,
@@ -470,6 +475,12 @@ export interface BuildAppOptions {
     riskScreen?: RiskScreen;
     transcription?: TranscriptionPort;
     cascade?: TurnCascadePort;
+    /**
+     * 追问上下文端口（缺省由服务层自建：`createStoreConversationContext(store)`，只读本会话 +
+     * 本主体的最近若干轮）。注入口只用于负控制：断言"上下文读失败 ⇒ 轮次显式 failed"，
+     * 以及断言上下文**不**跨会话、**不**扩引用集合。
+     */
+    context?: ConversationContextPort;
   };
 }
 
@@ -686,14 +697,59 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     done();
   });
 
-  const clock = now ?? (() => new Date());
-  const messagesService = config.executionMode === 'real' ? null : createMessagesService({
-    store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
-    reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
-    signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-    now: clock,
-    idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+  // ---------------------------------------------------------------------------
+  // GY-I22 缺陷 F-01（Refs #22）：**拒绝类响应的缓存头统一出口**。
+  //
+  // 实测缺陷（I22 安全矩阵，`docs/verification/gy-i22-secmatrix-20261019.md` 的 F-01）：
+  // 23 个游客面 401 响应缺 `Cache-Control: no-store`（无 `public`、无 `max-age`、无数据泄露
+  // ⇒ 不阻塞发布，但属真实缺陷）。归因不是「忘了写头」，而是**头写在了错误的位置**：
+  //   - 有头的两处是 `onRequest` 钩子：`routes/messages.ts:21-23`、`routes/community.ts:181-183`——
+  //     钩子先于鉴权执行，所以**成功与失败响应都带** no-store；
+  //   - 其余域把 `reply.header('Cache-Control', 'no-store')` 写在**成功分支**里，鉴权失败抛
+  //     `ApiError` 后直接进本文件下面的 `setErrorHandler`，于是 401/403/404/409/422/503 全部缺该头。
+  //
+  // 修法：不逐路由补漏（23 个面 × 每个域各自的错误路径 ⇒ 必然再漏），改在**响应统一出口**判定一次：
+  // 状态码 ≥ 400（鉴权失败、授权拒绝、同形 404、校验失败、500 全在这一类）就补 `no-store`。
+  //
+  // 为什么是 `onSend` 而不是只改 `setErrorHandler`：`setErrorHandler` 覆盖不到
+  // `setNotFoundHandler`（未匹配路径的 404，见本文件末尾）与将来任何在路由里直接
+  // `reply.status(4xx).send(...)` 的拒绝面；`onSend` 是这三条路径**共同的唯一**出口，
+  // 一处实现即可锁住不变量（本文件末尾两个处理器处另有交叉引用注释，避免以后重复添加）。
+  //
+  // 边界（不允许被误读）：
+  //   - **只写错误响应**：`statusCode < 400` 一律不碰 ⇒ 公共只读成功面（`/health`、`/public/home`、
+  //     `/herbicides` 等）的缓存语义保持接线前**逐字节相同**，不会因为本片被一律关掉缓存；
+  //   - **不覆盖路由已写的值**：已有 `Cache-Control` 时原样保留（现状里所有成功分支写的就是
+  //     `no-store`，本钩子只补齐「缺」的那些，不改变任何既有取值）；
+  //   - **只加一个响应头**：状态码、错误封套结构、`ETag`/`Retry-After` 等既有头、
+  //     错误码判定次序与鉴权逻辑全部不变。
+  // ---------------------------------------------------------------------------
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode >= 400 && reply.getHeader('cache-control') === undefined) {
+      reply.header('Cache-Control', 'no-store');
+    }
+    return payload;
   });
+
+  const clock = now ?? (() => new Date());
+  // GY-I17（#17）阶段 2：`real` 且真实连接池已接入 ⇒ 消息域走 PostgreSQL 持久化；
+  // `real` 但 `pool === null` ⇒ 维持整域 fail-closed（服务为 null，路由 503），
+  // 注入的内存 store 在 `real` 下**不**能冒充持久化（`tests/unit/messages-http.test.mjs` 钉住这条）。
+  const messagesService = config.executionMode === 'real'
+    ? (pool === null ? null : createMessagesService({
+        store: createPostgresMessagesStore({ pool }),
+        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        now: clock,
+        idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+      }))
+    : createMessagesService({
+        store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
+        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        now: clock,
+        idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+      });
   // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：社区 store 与作者投影**只声明一次**，
   // 由社区服务、后台 `hidePost` 与审核域的**同源内容权威端口**三方共用同一实例。
   // 说明：这两行原在下方"社区装配"块内；本接线只把**声明**前移到审核域构造之前
@@ -1138,10 +1194,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
   //
-  // **real 模式整体关闭**（与本仓「real 永远 fail-closed、严禁静默回退替身」一致）：
-  // 两域当前只有**内存** store，若在 real 下仍交出服务层，写操作会返回成功封套而落点易失
-  // —— 那是"在真实模式下声称成功、重启即丢"。因此 real ⇒ 服务为 `null` ⇒ 5 条路由 503
-  // PROVIDER_UNAVAILABLE。将来接真实持久 store 时必须**在这里显式放行**（一次可审查的变更）。
+  // **real 模式按「有没有真实持久化落点」二分**（与本仓「real 永远 fail-closed、严禁静默回退
+  // 替身」一致，且与问答域的 `conversationStore` 门禁同一口径）：
+  //   - `real` + 有 `pool` ⇒ 接 PG store（`persistent: true`，迁移 `0018`）⇒ 服务**开启**，
+  //     写操作落到真实库表，进程重启后仍在；
+  //   - `real` + 无 `pool`（没配 `DATABASE_URL`）⇒ 服务仍为 `null` ⇒ 5 条路由**保持 503**
+  //     PROVIDER_UNAVAILABLE（绝不静默回退内存替身去声称成功）；
+  //   - 非 `real`（stub/演示）⇒ 内存 store + 服务开启（既有行为不变）。
+  // 判据是 **`store.persistent`** 而不是只看 `config.executionMode`：注入进来的内存 store
+  // 在 real 下同样必须 503（见下方 `favoritesService` / `historyService` 的门禁表达式，
+  // 与问答域 `conversationStore === null || (real && !conversationStore.persistent)` 逐字同形）。
   //
   // **引用可用性端口接线到公开读面**（本片接线，替代此前的 `createUnwiredVisibilityPort`：
   // 未接线时收藏/历史 `reference_state` 恒为 `unavailable` ⇒ 收藏页「查看资料」永不可跳转）。
@@ -1160,8 +1222,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `ocrService.getJob`（#10）—— 只调用公开方法、不改他人文件。这样历史列表/详情的
   // `job_state` 在读取时能取到**实时**状态（失败/超时/取消原样可见），核不到时才退回入库值。
   // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
-  const favoritesStore = favoritesInjection?.store ?? createMemoryFavoritesStore({ now: () => clock().getTime() });
-  const historyStore = historyInjection?.store ?? createMemoryHistoryStore({ now: () => clock().getTime() });
+  // store 选择：**real 且有 `pool` 才接 PG**（`persistent: true`），否则内存实现。
+  //
+  // 这两个变量是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
+  // store 而不是 service。`real` 且无 `pool` 时仍需一个可调用对象 ⇒ 选内存实现，但下方
+  // 服务层门禁会把它判成"不持久" ⇒ 服务为 `null` ⇒ 该 store **不接收本域任何写入**，
+  // 注销清空只会得到 0 行（不会凭空产生"已清空 N 行"的证据）。
+  const favoritesStore: FavoritesStore =
+    favoritesInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresFavoritesStore(pool, { now: () => clock().getTime() })
+      : createMemoryFavoritesStore({ now: () => clock().getTime() }));
+  const historyStore: HistoryStore =
+    historyInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
+      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   /** 浙江首批投影面（与 `/knowledge` 同源同过滤同开关）；开关关闭时它恒为空集合。 */
   const publicKnowledgeSeedFace = createReferenceQueryService({
     includeUnverifiedSeed:
@@ -1240,8 +1316,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       },
     });
   const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();
+  // 服务层门禁（**唯一**开关）：只有"有真实持久化落点"时才交出服务。
+  //   - 非 `real` ⇒ 开启（内存 store，既有行为）；
+  //   - `real` + `store.persistent === true`（PG store）⇒ 开启；
+  //   - `real` + 不持久（无 `pool` 时的内存实现 / 外部注入的内存替身）⇒ `null` ⇒ 5 条路由 503。
+  // 表达式与问答域 `conversationStore === null || (real && !conversationStore.persistent)` 同形，
+  // 理由也相同：注入的内存 store 在 real 下**不得**绕过 fail-closed。
   const favoritesService =
-    config.executionMode === 'real'
+    config.executionMode === 'real' && !favoritesStore.persistent
       ? null
       : createFavoritesService({
           store: favoritesStore,
@@ -1250,7 +1332,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           now: clock,
         });
   const historyService =
-    config.executionMode === 'real'
+    config.executionMode === 'real' && !historyStore.persistent
       ? null
       : createHistoryService({
           store: historyStore,
@@ -1371,6 +1453,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           riskScreen: conversationRiskScreen,
           transcription: conversationTranscription,
           cascade: conversationCascade,
+          // 追问上下文：缺省由服务层按自己的 store 自建（见 `conversations/context.ts`）。
+          ...(conversationInjection?.context === undefined ? {} : { context: conversationInjection.context }),
           ledger: conversationLedger,
           signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
           now: clock,
@@ -1538,6 +1622,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
     // 未匹配的 URL 可能携带被拒的坐标参数（同一 `logSafePath` 口径）。
+    // 缓存头（GY-I22 F-01）不在这里写：`onSend` 钩子已按「状态码 ≥ 400 ⇒ no-store」统一补齐，
+    // 本处理器只负责状态码与封套，不重复写头（见上方 `app.addHook('onSend', …)` 的说明）。
     const path = logSafePath(request.url);
     const error = new ApiError('NOT_FOUND', `未实现的路径：${request.method}${path === null ? '' : ` ${path}`}`);
     reply
@@ -1546,6 +1632,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
 
   app.setErrorHandler((error, request, reply) => {
+    // 缓存头（GY-I22 F-01）：本处理器只决定**状态码与封套**，`Cache-Control: no-store` 由
+    // 上方 `onSend` 钩子按「状态码 ≥ 400」统一补齐——鉴权失败的 `ApiError`、schema 校验失败、
+    // Fastify 内容类型错误与 500 兜底都在同一处生效，不在此逐分支重复写头。
     const envelope = (apiError: ApiError) =>
       buildErrorEnvelope(apiError, { request_id: request.id, execution_mode: config.executionMode });
 

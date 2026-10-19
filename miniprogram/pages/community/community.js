@@ -25,6 +25,9 @@ Page({
     status: 'loading',
     errorText: '',
     modeNote: '',
+    // GY-I26：服务端 `mode` 为 stub／preset_demo 时的**置顶**替身标注（页尾小字不足以「明显」）。
+    // 逐字取 `api.modeNote(mode)`，不新造第二套替身文案；real 模式保持为空，只留页尾说明。
+    stubNote: '',
     posts: [],
     nextCursor: null,
     loadingMore: false,
@@ -45,6 +48,10 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const that = this
+    // GY-I28：「我的耕云」的「我的发布」经 switchTab 进来（Tab 页不能带查询参数），
+    // 消费一次性的进程内意图：命中即预选「我的投稿」（契约 `mine`），读完立刻清除。
+    // 筛选只是**查询条件**，取数仍走 pageGate 门禁与 GET /posts?mine=true，不用本地数据顶替。
+    if (navigation.consumeCommunityMine()) this.setData({ filterMine: true })
     this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
     pageGate.start(this, function (ok) {
       that.setData({ guest: !ok })
@@ -67,17 +74,19 @@ Page({
     this.setData({ status: 'loading', errorText: '', posts: [], nextCursor: null })
     api.listPosts(this._query(null)).then(function (page) {
       if (epoch !== that._epoch) return
+      const mode = page.mode
       that.setData({
         status: page.items.length ? 'ready' : 'empty',
         posts: that._decorate(page.items),
         nextCursor: page.nextCursor,
-        modeNote: api.modeNote(page.mode)
+        modeNote: api.modeNote(mode),
+        stubNote: mode === 'stub' || mode === 'preset_demo' ? api.modeNote(mode) : ''
       })
       if (done) done()
     }).catch(function (error) {
       if (epoch !== that._epoch) return
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true }); if (done) done(); return }
-      that.setData({ status: 'error', errorText: api.message(error), modeNote: '' })
+      that.setData({ status: 'error', errorText: api.message(error), modeNote: '', stubNote: '' })
       if (done) done()
     })
   },
@@ -153,6 +162,7 @@ Page({
     this.setData({ regionIndex: Number(event.detail.value) }, this.reload.bind(this))
   },
 
+  /** 失败态的可点重试入口（community.wxml 的 error 分支 bind:action="onRetry"）。 */
   onRetry: function () { this.reload() },
 
   onOpenPost: function (event) {

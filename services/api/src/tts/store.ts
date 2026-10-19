@@ -18,7 +18,7 @@
  * request_hash 含请求体），但**独立存放**，不改动既有认证幂等存储。
  */
 
-import type { ErrorCode } from '../contract.ts';
+import type { ErrorCode, ExecutionMode } from '../contract.ts';
 import { canTransitionJob, type JobState, type SynthesisTargetRef } from './state.ts';
 
 export interface SynthesisJobRow {
@@ -26,6 +26,11 @@ export interface SynthesisJobRow {
   revision: number;
   kind: 'synthesis';
   ownerUserId: string;
+  /**
+   * 受理该任务的执行模式（`stub` / `preset_demo` / `real`）。**不是**契约字段、不进任何投影：
+   * 只用于读面判定「当前装配能不能解释这个任务的状态」（模式交叉不得撒谎，见 service.ts）。
+   */
+  executionMode: ExecutionMode;
   /** 本次任务将要/已经产出的合成记录 id（占位前生成，作为幂等占位的原子凭据）。 */
   synthesisId: string;
   /** 已核对目标引用：任务与结果共用同一个（结果必须属于同一 target_ref 与 revision）。 */

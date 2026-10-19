@@ -16,19 +16,49 @@
   ></state-view>
 
   <block wx:else>
+    <!-- GY-I26：服务端 mode 为 stub／preset_demo 时**置顶**显眼标注替身数据（页尾小字不足以「明显」）。 -->
+    <view class="notice notice--stub" wx:if="{{stubNote}}">
+      <text class="notice__icon">🧪</text>
+      <text class="notice__text">{{stubNote}}</text>
+    </view>
+
     <view class="section-head">
       <view class="section-head__title">互动通知</view>
       <view class="pill pill--gray">{{unreadNote}}</view>
     </view>
 
+    <!-- demo messages 页的 .section-head：左侧筛选 chips（demo `.chips > .chip`／`.chip.active`
+         ⇒ 本仓 `.chips`／`.chip`／`.chip--active`），右侧「全部已读」ghost 按钮。
+         筛选档位见 messages.js 顶部 FILTERS：`全部`／`未读` 是派单要求的读写视角，
+         `互动`／`系统` 是 demo 原有两档（audit M1），每档都只过滤**已加载的真实消息**。 -->
+    <view class="section-head">
+      <view class="chips">
+        <view
+          wx:for="{{filters}}"
+          wx:key="value"
+          class="chip {{filter === item.value ? 'chip--active' : ''}}"
+          data-filter="{{item.value}}"
+          bindtap="onFilter"
+        >{{item.label}}</view>
+      </view>
+      <button
+        class="btn btn--ghost"
+        disabled="{{markingAll || !hasUnread}}"
+        bindtap="onMarkAllRead"
+      >{{markingAll ? '正在标记…' : '全部已读'}}</button>
+    </view>
+
     <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
     <!-- 失败与空态必须可分辨：服务端 real 模式未接线真实消息存储时给「服务未接线」，不写「暂无消息」。 -->
+    <!-- 失败态必须给出可点的重试入口（messages.js 的 onRetry：重读列表 + 重读未读数）。 -->
     <state-view
       wx:elif="{{status === 'error'}}"
       status="error"
       title="{{stateTitle}}"
       desc="{{stateDesc}}"
+      action-text="重新读取"
+      bind:action="onRetry"
     ></state-view>
 
     <state-view
@@ -39,8 +69,17 @@
     ></state-view>
 
     <block wx:else>
-      <view class="message-list">
-        <view class="message-row" wx:for="{{items}}" wx:key="id">
+      <!-- 某一档筛选下没有命中的消息：沿用 state-view 的 empty 口径（不新造状态、
+           不伪造数据），并指明这不是「服务端没有消息」。 -->
+      <state-view
+        wx:if="{{!visibleItems.length}}"
+        status="empty"
+        title="「{{filterLabel}}」下没有消息"
+        desc="当前已加载的消息里没有符合「{{filterLabel}}」的项；切回「全部」可查看已加载的全部通知。"
+      ></state-view>
+
+      <view class="message-list" wx:else>
+        <view class="message-row" wx:for="{{visibleItems}}" wx:key="id">
           <view class="message-icon"><view class="gy-icon gy-icon--{{item.icon}}"></view></view>
           <view class="message-copy">
             <view class="message-copy__title">{{item.label}}<view wx:if="{{item.unread}}" class="unread-dot"></view></view>
@@ -59,18 +98,20 @@
         </view>
       </view>
 
-      <view class="row-actions">
+      <view class="row-actions" wx:if="{{visibleItems.length}}">
         <gy-ui-button
-          wx:if="{{nextCursor}}"
+          wx:if="{{nextCursor && filter === 'all'}}"
           label="{{loadingMore ? '正在加载…' : '加载更多'}}"
           variant="ghost"
           loading="{{loadingMore}}"
           bind:tap="onLoadMore"
         ></gy-ui-button>
+        <view wx:elif="{{filter !== 'all'}}" class="demo-caption">「{{filterLabel}}」只筛当前已加载的消息；切回「全部」可继续加载。</view>
         <view wx:else class="demo-caption">已经到底了。</view>
       </view>
 
-      <view class="demo-caption">{{modeNote}}</view>
+      <!-- 替身模式已在顶部置顶标注，页尾不重复同一句；real 模式保留来源说明。 -->
+      <view class="demo-caption" wx:if="{{visibleItems.length && modeNote && !stubNote}}">{{modeNote}}</view>
     </block>
 
     <view class="section">

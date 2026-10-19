@@ -1,6 +1,6 @@
 import type { ExecutionMode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
-import { classifyDatabaseError, type PgPool } from './pool.ts';
+import { classifyDatabaseError, isTransientDatabaseError, type PgPool } from './pool.ts';
 
 export interface HomePreview {
   id: string;
@@ -22,7 +22,12 @@ export async function readHomePreviews(pool: PgPool | null, mode: ExecutionMode)
     return result.rows;
   } catch (error) {
     const timeout = classifyDatabaseError(error) === 'timeout' || (error as { code?: unknown })?.code === '57014';
-    throw new ApiError(timeout ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', '主页资料数据库暂不可用', { retryable: true });
+    // `retryable` 按 `errors.ts` 的唯一口径分档（本文件两处 catch 同口径）：
+    // 超时类 ⇒ `PROVIDER_TIMEOUT` 且可重试；连接层/管理员干预/串行化冲突/死锁 ⇒ 瞬时，可重试；
+    // 其余（28P01 凭据、3D000 库缺失、42501 权限、无 code 的无法归类错误）⇒ 需运维介入，**不可重试**。
+    throw new ApiError(timeout ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', '主页资料数据库暂不可用', {
+      retryable: isTransientDatabaseError(error),
+    });
   }
 }
 
@@ -40,7 +45,11 @@ export async function readRegistrationEvidence(pool: PgPool | null, mode: Execut
       values: [registrationNumber],
     });
     return result.rows;
-  } catch {
-    throw new ApiError('PROVIDER_UNAVAILABLE', '登记资料数据库暂不可用', { retryable: true });
+  } catch (error) {
+    // 与 `readHomePreviews()` 同一口径（此处保留既有 `PROVIDER_UNAVAILABLE` 状态码不变，只订正 `retryable`）：
+    // 瞬时类可重试；配置/权限/无法归类 ⇒ 不可重试。
+    throw new ApiError('PROVIDER_UNAVAILABLE', '登记资料数据库暂不可用', {
+      retryable: isTransientDatabaseError(error),
+    });
   }
 }

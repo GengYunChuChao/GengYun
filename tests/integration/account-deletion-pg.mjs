@@ -21,7 +21,8 @@
 //       ⇒ 会话门先命中）；**臂 6**：仅 `auth_epoch+1`（state 仍 active、不撤会话）⇒ **403
 //       `ACCOUNT_INACTIVE`**，message 是「会话已因账号变更失效」＝**epoch 分支**；
 //       **臂 8**：仅撤会话行（state/epoch 不动）⇒ 401 `SESSION_EXPIRED`。三者互相可分辨。
-//   [6] 臂 2 事务原子性：在 COMMIT 之前注入失败 ⇒ 503、库内 state/epoch/会话/台账**全部原样**、
+//   [6] 臂 2 事务原子性：在 COMMIT 之前注入**真瞬时类**失败（`40001`，故 503 且
+//       `retryable:true`）⇒ 库内 state/epoch/会话/台账**全部原样**、
 //       旧 token **仍 200**（不复活也不被误杀）；「反向控制的反向控制」⇒ 去掉事务包装
 //       （自动提交）后同一注入 ⇒ 库断言**全部翻转**，证明上一条的「原样」是事务的功劳；
 //   [7] 级联失败**不得**回退撤销（提交点在级联之前）：收藏清理抛错 ⇒ 202 但 `state=blocked`
@@ -248,7 +249,14 @@ async function requestDeletion(http, token, key) {
   });
 }
 
-/** 一条注入式「函数已执行、提交前已失败」的 pool 代理（**只**对注销受理那一句生效）。 */
+/**
+ * 一条注入式「函数已执行、提交前已失败」的 pool 代理（**只**对注销受理那一句生效）。
+ *
+ * 注入码必须是**真瞬时类**：用 `40001`（serialization_failure）——PG 因序列化冲突中止整个事务，
+ * 客户端换同一操作编号重试是设计内的恢复路径 ⇒ store 必须回 503 且 `retryable:true`。
+ * ⛔ 不得换成编造／不可归类的码（例如 `G0006`）：按 `services/api/src/privacy/deletion-requests-pg.ts`
+ * 的口径那属于「返回形状/调用契约确定性不符 ⇒ retryable:false」，臂 2 就测不到「瞬时可重试」的能力了。
+ */
 function failingPoolAfterFunction(real) {
   const clientProxy = (client) => ({
     release: () => client.release(),
@@ -256,7 +264,9 @@ function failingPoolAfterFunction(real) {
       const result = await client.query(text, values);
       if (typeof text === 'string' && text.includes('request_account_deletion')) {
         // 三处写入**已在事务内生效**，但提交尚未发生 ⇒ 正确行为是整体回滚。
-        throw Object.assign(new Error('注入故障：函数已执行、COMMIT 之前失败'), { code: 'G0006' });
+        throw Object.assign(new Error('注入故障（40001 serialization_failure）：函数已执行、COMMIT 之前失败'), {
+          code: '40001',
+        });
       }
       return result;
     },
@@ -280,7 +290,7 @@ const TRANSACTION_CONTROL_SQL = new Set(['BEGIN', 'COMMIT', 'ROLLBACK']);
  *
  * 与 [6] 的注入**共用同一个真 store 工厂、同一份错误映射**，唯一差别是
  * `BEGIN`/`COMMIT`/`ROLLBACK`/`SET LOCAL` 不再发给服务器 ⇒ 那句函数调用变成**自动提交**
- * （语句级提交，服务器端真的落库），随后注入的 `G0006` 仍会让 store 抛出 503。
+ * （语句级提交，服务器端真的落库），随后注入的 `40001`（瞬时类）仍会让 store 抛出 503。
  * 因此两条臂只在「有没有事务」这一个变量上不同：若无事务时库断言立刻翻转，
  * 就证明 [6] 的整体回滚是**承重**的，而不是碰巧因为别的原因没写进去。
  */
@@ -601,7 +611,7 @@ try {
   const dTokenAfter = await http(SESSION_PROBE_PATH, { token: tokenD1 });
   assert.equal(dTokenAfter.status, 200, '事务内失败不得误杀旧 token（库内零写入 ⇒ 会话理论仍有效）');
   say(
-    '臂 2（真库·事务内失败）：受理在 COMMIT 前抛错 ⇒ 503 PROVIDER_UNAVAILABLE(retryable)、零回执、库内 state/epoch/会话/删除请求**全部原样**、旧 token **仍 200**（未复活也未被误杀）',
+    '臂 2（真库·事务内失败·注入 40001 serialization_failure）：受理在 COMMIT 前抛错 ⇒ 503 PROVIDER_UNAVAILABLE(retryable:true＝瞬时类)、零回执、库内 state/epoch/会话/删除请求**全部原样**、旧 token **仍 200**（未复活也未被误杀）',
   );
 
   // 反向控制的反向控制：**去掉事务包装**（BEGIN/COMMIT/ROLLBACK/SET LOCAL 全部空操作）⇒

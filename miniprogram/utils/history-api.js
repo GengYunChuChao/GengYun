@@ -351,6 +351,29 @@ function recognitionDetailView(recognition, jobState) {
   }
 }
 
+/**
+ * 冲突字段 token → 人话标签。**只用于页面显示**：`conflictFields` 原值照录不动
+ * （token 原样保留，便于复核与后续映射），这里只补一层中文。
+ *
+ * `source.validity` / `source.review_status` 不是某一格读错，而是这条登记记录**自身**
+ * 已失效/被拒（服务端在 `conflict_fields` 里用 `source.<字段>` 表达，见
+ * `services/api/src/ocr/state.ts` 的 `registrationStateConflicts`）。
+ * 未知 token **原样返回**：不猜、不改写成看起来更确定的说法。
+ */
+var CONFLICT_FIELD_LABELS = {
+  registration_number: '登记证号',
+  dosage_form: '剂型',
+  ingredients: '有效成分',
+  'source.validity': '登记记录已失效或撤销',
+  'source.review_status': '登记记录已被拒绝核对'
+}
+
+function conflictFieldLabels(list) {
+  return list.map(function (token) {
+    return Object.prototype.hasOwnProperty.call(CONFLICT_FIELD_LABELS, token) ? CONFLICT_FIELD_LABELS[token] : token
+  })
+}
+
 /** 标签（OCR）详情呈现：**模型原始字段**与**人工更正字段**、核对结果三者分开。 */
 function ocrDetailView(ocr) {
   function fieldView(fields) {
@@ -376,6 +399,7 @@ function ocrDetailView(ocr) {
       }[verification.match_state] || '状态未知',
       hasRegistration: verification.has_registration,
       conflictFields: verification.conflict_fields.slice(),
+      conflictLabels: conflictFieldLabels(verification.conflict_fields),
       missingFields: verification.missing_fields.slice(),
       doseCardCount: verification.dose_card_count
     },
@@ -433,6 +457,7 @@ module.exports = {
   historyItemView: historyItemView,
   recognitionDetailView: recognitionDetailView,
   ocrDetailView: ocrDetailView,
+  conflictFieldLabels: conflictFieldLabels,
   cascadeNote: cascadeNote,
   messageFor: messageFor,
   newKey: newKey,

@@ -30,6 +30,20 @@ const REFERENCE_NOTES = {
   unavailable: '关联内容当前不可查看，本页只列出消息，不提供跳转入口。'
 }
 const NO_TARGET_NOTE = '本条不带关联目标（服务端只给事件类型与对象引用，不给正文）。'
+/**
+ * 筛选 chips（demo messages 页 `.chips > .chip`／`.chip.active`，docs/ui-demo/demo.html:73）。
+ * 四档并列落地，每档都是**对已加载真实消息的本地过滤**：
+ *   - `全部`／`未读`：派单要求的读写视角（未读与「全部已读」互补，后者是批量动作）；
+ *   - `互动`／`系统`：demo 原有的两档（audit M1「无 chips 全部/互动/系统」），
+ *     按契约 `Message.type` 闭集映射（互动 = comment+like，系统 = moderation+system），
+ *     映射由契约类型决定，不是本地编造的分类。
+ */
+const FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'unread', label: '未读', unreadOnly: true },
+  { value: 'interaction', label: '互动', types: ['comment', 'like'] },
+  { value: 'system', label: '系统', types: ['moderation', 'system'] }
+]
 
 Page({
   onLoad: function () {
@@ -44,10 +58,21 @@ Page({
     stateTitle: '',
     stateDesc: '',
     modeNote: '',
+    // GY-I26：服务端 `mode` 为 stub／preset_demo 时的**置顶**替身标注（页尾小字不足以「明显」）。
+    // 逐字取 `api.modeNote(mode)`，不新造第二套替身文案；real 模式保持为空。
+    stubNote: '',
     items: [],
+    // 筛选（demo messages 页的 chips，见顶部 FILTERS）：'all'／'unread'／'interaction'／'system'。
+    // **只筛「当前已加载」的消息**（服务端游标分页，本地不重排、不补数据）。
+    filter: 'all',
+    filterLabel: '全部',
+    filters: FILTERS.map(function (item) { return { value: item.value, label: item.label } }),
+    visibleItems: [],
+    hasUnread: false,
     nextCursor: null,
     loadingMore: false,
     markingId: '',
+    markingAll: false,
     unreadText: '',
     unreadNote: '未读数尚未读取'
   },
@@ -79,11 +104,16 @@ Page({
     this.setData({ status: 'loading', errorText: '', stateTitle: '', stateDesc: '' })
     api.listMessages({}).then(function (page) {
       if (epoch !== that._epoch) return
+      const items = that._decorate(page.items)
+      const mode = page.mode
       that.setData({
-        status: page.items.length ? 'ready' : 'empty',
-        items: that._decorate(page.items),
+        status: items.length ? 'ready' : 'empty',
+        items: items,
+        visibleItems: that._visible(items, that.data.filter),
+        hasUnread: that._hasUnread(items),
         nextCursor: page.nextCursor,
-        modeNote: api.modeNote(page.mode)
+        modeNote: api.modeNote(mode),
+        stubNote: mode === 'stub' || mode === 'preset_demo' ? api.modeNote(mode) : ''
       })
       if (done) done()
     }).catch(function (error) {
@@ -94,12 +124,14 @@ Page({
         errorText: api.message(error),
         stateTitle: api.stateTitle(error),
         stateDesc: api.message(error),
-        modeNote: ''
+        modeNote: '',
+        stubNote: ''
       })
       if (done) done()
     })
   },
 
+  /** 失败态的可点重试入口（messages.wxml 的 error 分支 bind:action="onRetry"）。 */
   onRetry: function () { this.reload(); this.refreshUnread() },
 
   onLoadMore: function () {
@@ -109,8 +141,11 @@ Page({
     const epoch = this._epoch
     api.listMessages({ cursor: this.data.nextCursor }).then(function (page) {
       if (epoch !== that._epoch) return
+      const items = that.data.items.concat(that._decorate(page.items))
       that.setData({
-        items: that.data.items.concat(that._decorate(page.items)),
+        items: items,
+        visibleItems: that._visible(items, that.data.filter),
+        hasUnread: that._hasUnread(items),
         nextCursor: page.nextCursor,
         loadingMore: false
       })
@@ -163,16 +198,53 @@ Page({
   },
 
   /**
-   * 标记已读：契约 `markMessageRead` 幂等且单调；`If-Match` 用**当前** revision。
-   * 成功只采信服务端返回的消息本体（不本地猜测 read_at/revision），随后重新读取未读数。
+   * 筛选用的派生列表：`all` 原样返回、`unread` 只留未读项、`interaction`／`system`
+   * 按契约 `Message.type` 闭集取子集。纯展示派生，不改契约语义、不改数据。
    */
-  onMarkRead: function (event) {
-    const id = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.id : ''
-    const revision = Number(event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.revision : NaN)
-    if (!id || this.data.markingId) return
+  _visible: function (items, filter) {
+    const spec = FILTERS.filter(function (item) { return item.value === filter })[0]
+    if (!spec) return items
+    if (spec.unreadOnly) return items.filter(function (item) { return item.unread })
+    if (spec.types) {
+      return items.filter(function (item) { return spec.types.indexOf(item.type) !== -1 })
+    }
+    return items
+  },
+
+  /** 「全部已读」按钮的禁用依据：当前已加载的消息里是否还有未读项。 */
+  _hasUnread: function (items) {
+    return items.some(function (item) { return item.unread })
+  },
+
+  /**
+   * 筛选切换（demo messages 页 `.chip`／`.chip.active` ⇒ `.chip--active`）：
+   * 只切本地视图，不重新请求、不改任何数据；切到某一档后若一条都没命中，
+   * WXML 沿用 state-view 的 empty 口径如实说明（不新造状态、不伪造消息）。
+   */
+  onFilter: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+      ? event.currentTarget.dataset
+      : {}
+    const next = dataset.filter
+    const spec = FILTERS.filter(function (item) { return item.value === next })[0]
+    if (!spec) return
+    if (next === this.data.filter) return
+    this.setData({
+      filter: next,
+      filterLabel: spec.label,
+      visibleItems: this._visible(this.data.items, next)
+    })
+  },
+
+  /**
+   * 标记已读：契约 `markMessageRead` 幂等且单调；`If-Match` 用**当前** revision。
+   * 成功只采信服务端返回的消息本体（不本地猜测 read_at/revision）。
+   * 单条按钮与「全部已读」共用本函数：一条一条走**同一个既有写接口**，不新增批量接口。
+   */
+  _markReadOne: function (id, revision) {
     const that = this
     this.setData({ markingId: id })
-    api.markMessageRead(id, revision).then(function (result) {
+    return api.markMessageRead(id, revision).then(function (result) {
       that.setData({ markingId: '' })
       const items = that.data.items.map(function (item) {
         if (item.id !== result.message.id) return item
@@ -185,12 +257,71 @@ Page({
             : REFERENCE_NOTES[result.message.reference_state]
         })
       })
-      that.setData({ items: items })
-      that.refreshUnread()
+      that.setData({
+        items: items,
+        visibleItems: that._visible(items, that.data.filter),
+        hasUnread: that._hasUnread(items)
+      })
+      return result
     }).catch(function (error) {
       that.setData({ markingId: '' })
+      throw error
+    })
+  },
+
+  onMarkRead: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+      ? event.currentTarget.dataset
+      : {}
+    const id = dataset.id || ''
+    const revision = Number(dataset.revision)
+    if (!id || this.data.markingId || this.data.markingAll) return
+    const that = this
+    this._markReadOne(id, revision).then(function () {
+      that.refreshUnread()
+    }).catch(function (error) {
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true, status: 'idle' }); return }
       wx.showToast({ title: api.message(error), icon: 'none' })
     })
+  },
+
+  /**
+   * 「全部已读」（demo `data-action="read-all"`）：**逐个串行**复用上面的单条路径，
+   * 不并发（并发会拿同一份 revision 打服务端）、不新增批量接口；任一条失败即停：
+   * 已标记的保持已标记，如实告知标记了几条、停在哪一步，不假装整批成功。
+   * 结束时**只**重新读一次未读数（不随条数放大请求）。
+   */
+  onMarkAllRead: function () {
+    if (this.data.markingAll || this.data.markingId) return
+    const targets = this.data.items.filter(function (item) { return item.unread })
+    if (!targets.length) return
+    const that = this
+    let index = 0
+    let marked = 0
+    this.setData({ markingAll: true })
+    const step = function () {
+      if (index >= targets.length) {
+        that.setData({ markingAll: false })
+        that.refreshUnread()
+        wx.showToast({ title: '已将 ' + marked + ' 条消息标为已读', icon: 'none' })
+        return
+      }
+      const target = targets[index]
+      index += 1
+      that._markReadOne(target.id, target.revision).then(function () {
+        marked += 1
+        step()
+      }).catch(function (error) {
+        that.setData({ markingAll: false })
+        that.refreshUnread()
+        if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true, status: 'idle' }); return }
+        wx.showModal({
+          title: '全部已读未完成',
+          content: '已按顺序标记 ' + marked + ' 条，下一条失败即停：' + api.message(error),
+          showCancel: false
+        })
+      })
+    }
+    step()
   }
 })

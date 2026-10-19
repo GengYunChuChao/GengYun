@@ -175,6 +175,12 @@ Page({
     errorText: '',
     modeNote: '',
     substituteNotice: '',
+    /**
+     * GY-I26：#28「已删除」这一状态的**可见**反馈。删除成功后记录区会整块复位（onRetry），
+     * 若不给一句明确的完成语，用户看到的就是「内容凭空消失」。只写服务端确实做过的事
+     * （DELETE 成功 + 本机索引同步移除），不承诺「已从备份彻底清除」。
+     */
+    deleteNote: '',
     job: null,
     stateView: null,
     /**
@@ -274,7 +280,7 @@ Page({
       uncertaintyReasons: [], pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null,
       recordId: null, recordRevision: 0, job: null, stateView: null, ocr: null, labelCorrection: null, historyNote: '', candidateSource: 'job',
       branch: null, branchInfo: null, doseGuard: null,
-      busy: false, substituteNotice: ''
+      busy: false, substituteNotice: '', deleteNote: ''
     }
     if (typeof message === 'string' && message !== '') patch.errorText = message
     this.setData(patch)
@@ -325,7 +331,7 @@ Page({
   prepareMedia: async function (tempFilePath) {
     if (this.data.guest) return
     const gen = this.beginOperation()
-    this.setData({ busy: true, errorText: '', substituteNotice: '', stateView: null, job: null, ocr: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
+    this.setData({ busy: true, deleteNote: '', errorText: '', substituteNotice: '', stateView: null, job: null, ocr: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
     let media
     try {
       const mode = await identifyApi.serverMode()
@@ -401,7 +407,7 @@ Page({
     if (this.data.guest) return
     const gen = this.beginOperation()
     this.stopPoll()
-    this.setData({ busy: true, errorText: '', substituteNotice: '', ocr: null, stateView: null, job: null, branch: null, branchInfo: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
+    this.setData({ busy: true, deleteNote: '', errorText: '', substituteNotice: '', ocr: null, stateView: null, job: null, branch: null, branchInfo: null, candidates: [], showTop3: false, uncertaintyReasons: [], recordId: null, recordRevision: 0, pendingManualId: null, selectedSpeciesId: null, relatedKnowledge: null })
     let media
     try {
       const mode = await identifyApi.serverMode()
@@ -875,7 +881,7 @@ Page({
   onRetry: function () {
     this.stopPoll()
     this.beginOperation()
-    this.setData({ job: null, stateView: null, ocr: null, branch: null, branchInfo: null, doseGuard: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
+    this.setData({ job: null, stateView: null, ocr: null, branch: null, branchInfo: null, doseGuard: null, candidates: [], showTop3: false, uncertaintyReasons: [], errorText: '', substituteNotice: '', deleteNote: '', selectedSpeciesId: null, relatedKnowledge: null, pendingManualId: null, recordId: null, recordRevision: 0, busy: false, historyNote: '', candidateSource: 'job' })
   },
 
   /** 点候选：succeeded 直接记录选择；uncertain 必须先显式「人工核对」确认。 */
@@ -977,7 +983,8 @@ Page({
     if (this.data.guest === true || this.data.historyOwner === '') return
     const gen = this.beginOperation()
     const previousRecordId = this.data.recordId
-    this.setData({ busy: true, errorText: '' })
+    // 打开另一条记录属于新上下文：上一条的「已删除」完成语必须清掉，不能挂在新记录上方。
+    this.setData({ busy: true, errorText: '', deleteNote: '' })
     try {
       const r = await identifyApi.getRecognition(recordId)
       // 代次 + 对象版本双约束：离页/重试/切换对象后的旧响应不得恢复展示。
@@ -1024,7 +1031,9 @@ Page({
           const items = readHistory(ownerKey).filter(function (item) { return item.recordId !== recordId })
           writeHistory(ownerKey, items)
           that.onRetry()
-          that.setData({ history: items, errorText: '' })
+          // onRetry 会把整块识别结果复位（记录消失是正确行为），因此必须补一句**可见**的完成语，
+          // 否则「删除成功」看起来和「点了没反应」一样。删除尚未清空服务端备份，故不写「彻底清除」。
+          that.setData({ history: items, errorText: '', deleteNote: '已删除这条识别记录；服务端已受理删除，本机索引已同步移除。' })
         } catch (error) {
           if (!that.isCurrentOperation(gen)) return
           if (isGateLossError(error)) { that.closePrivate(identifyApi.messageFor(error)); return }
@@ -1268,6 +1277,8 @@ function ocrResultView(ocr, job, mode) {
     matchLabel: detail.verification.matchLabel,
     hasRegistration: detail.verification.hasRegistration,
     conflictFields: detail.verification.conflictFields,
+    // 同一组冲突字段的中文标签（`source.validity` 这类 token 不能直接给用户看）。
+    conflictLabels: detail.verification.conflictLabels,
     missingFields: detail.verification.missingFields,
     // 用药安全：只给"存在 N 条用量卡"的**条数**，正文一律不渲染（该数字不是剂量值）。
     doseCardCount: detail.verification.doseCardCount,
@@ -1282,8 +1293,8 @@ function ocrResultView(ocr, job, mode) {
     doseBlocked: true,
     doseBlockReason: explicit
       ? '登记核对为「' + detail.verification.matchLabel +
-        '」：用量展示已阻断（同名不同制剂/多条可能匹配一律不静默取一条），请先对照包装实物逐项确认字段。' +
-        detail.doseSafetyNote
+        '」：用量展示已阻断（同名不同制剂/多条可能匹配一律不静默取一条；登记记录已失效或被拒绝核对时也不作为核对通过），' +
+        '请先对照包装实物逐项确认字段。' + detail.doseSafetyNote
       : detail.doseSafetyNote,
     // 只读的边界说清楚：raw_fields 不接受编辑，可写面只有 corrected_fields。
     readOnlyNote: '机器原始读数（raw_fields）只读：本页不提供编辑原始读数的动作，它原样保留以便复核；' +

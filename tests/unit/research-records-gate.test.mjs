@@ -508,7 +508,7 @@ test('多余参数 ⇒ exit 2（口径不明时不猜目录）', () => {
 test('仓库真实 docs/research ⇒ exit 0（不许把既有记录打红）', () => {
   const result = runGate(REPO_ROOT, []);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /研究记录校验：3 通过 \/ 0 失败 \/ 4 legacy 已钉住/u);
+  assert.match(result.stdout, /研究记录校验：4 通过 \/ 0 失败 \/ 4 legacy 已钉住/u);
 });
 
 // —— r3 回归：分类与来源范围（审查 c17／c20／c31／c32 的对照组） ——
