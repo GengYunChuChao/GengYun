@@ -572,6 +572,17 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
    * **全部保留** ⇒ 宁严不松。
    */
   function versionFreshnessOf(task: ModerationTaskRecord): { stale: boolean; reason_codes: string[] } {
+    // **只有已生效（approved）的结论才有"过期"可言**：过期改变的是"这条结论还能不能继续当已审/
+    // 已公开"。`pending`（模型层还没求值）连结论都没有；`rejected`/`quarantined` 的内容本就不公开、
+    // 也从不放行，标"过期"不改变任何行为，却会把原因码掺进读面与 422 的原因集合。
+    //
+    // 更关键：引擎的"自相矛盾"判据是为**已出结论**的旧判定设计的——`packages/moderation/review.mjs:169-172`
+    // 的 `hardRulePassed === true && decision !== DECISION_APPROVED ⇒ DECISION_INCONSISTENT`。而"规则层已过、
+    // 模型层还没有结论"的任务正是 `decision !== 'approved'` + `hard_rule_passed === true`，套上去必然产出
+    // `DECISION_INCONSISTENT`，再被当成"版本过期"→ 读面 `RESCREEN_REQUIRED` 与该码一起漏进社区 422 的原因码
+    // 集合（CI `#310` 的 AC08-a：期望 `["MODEL_NOT_EVALUATED"]`，实得 `["MODEL_NOT_EVALUATED","DECISION_INCONSISTENT"]`）。
+    // 因此这里按"结论是否生效"收敛：非 approved 一律不判过期（不是"未知也判过期"）。
+    if (task.decision !== 'approved') return { stale: false, reason_codes: [] };
     const ruleVersion = currentRuleVersion();
     if (ruleVersion === null) {
       // 当前规则集取不到 ⇒ 无法证明"结论仍然新鲜"，按未知处理（不得当已审）。

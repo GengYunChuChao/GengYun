@@ -66,3 +66,23 @@ test('模型版本前进 ⇒ 已发布内容的旧结论过期：任务视图 st
   assert.equal(sameView.visible, true, '同版本下不得误伤可见性');
   assert.ok(!sameView.reason_codes.includes('RESCREEN_REQUIRED'));
 });
+
+test('未生效的结论（quarantined／未求值）不得被判"过期"：过期只对 approved 有意义', async () => {
+  // 与集成装配里 `strictApp` 同形：模型端口不给结论 ⇒ 合流层记 `MODEL_NOT_EVALUATED`、判隔离。
+  const tms = countingPort('tms', {
+    evaluate: () => ({ label: 'unsure', reason_codes: [], summary: 'no conclusion' }),
+  });
+  const h = makeHarness({ ports: { tms: tms.port } });
+  const out = await h.service.submitScreening({ actor: USER_A, content: textContent() });
+  assert.equal(out.tasks[0].decision, 'quarantined', '前提：模型层无结论 ⇒ 隔离（不是通过）');
+
+  const tasks = await h.service.tasks(TARGET_V1);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].decision, 'quarantined');
+  assert.equal(tasks[0].stale, false, '没有生效的结论就没有"结论过期"：隔离任务不得被标成待重评');
+  assert.deepEqual(tasks[0].stale_reason_codes, [],
+    '引擎的"自相矛盾"判据（hard_rule_passed=true 且 decision≠approved）不得被当成版本过期原因码');
+  assert.ok(tasks[0].reason_codes.includes('MODEL_NOT_EVALUATED'), '未结论的原因码必须照实保留');
+  assert.equal(tasks[0].reason_codes.includes('DECISION_INCONSISTENT'), false,
+    '隔离不是"自相矛盾"：不得凭空多出矛盾码（CI #310 的 AC08-a 即此）');
+});
