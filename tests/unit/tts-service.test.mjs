@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { STUB_IDEMPOTENCY_HMAC_KEY } from '../../services/api/src/auth/service.ts';
 import {
+  JOB_EXPIRY_GRACE_MS,
   SYNTHESIS_ACCEPTED_STATUS,
   createSynthesisService,
 } from '../../services/api/src/tts/service.ts';
@@ -1122,4 +1123,116 @@ test('替身提供者·确定性、非音频、不伪造时长与音色（不构
   assert.equal(real.executionMode, 'real');
   assert.equal(real.available, false, 'real 缺凭据必须 fail-closed');
   assert.notEqual(real.providerVersion, 'stub-tts-v1', '不得静默回退替身');
+});
+
+// ---------------------------------------------------------------- 超时可见 / 重试幂等（AC-2）
+
+test('超时裁定·执行器没落终态时，过截止（+宽限）的任务必须在读面显式落 timed_out，绝不永远报 queued', async () => {
+  const START_MS = Date.parse('2026-10-14T06:00:00Z');
+  const DEADLINE_MS = 60 * 1000;
+  const clock = { ms: START_MS };
+  const base = createMemorySynthesisStore();
+  // 让执行器拿不到「queued → running」的那次 CAS：任务停在 queued
+  // （等价于执行器缺失 / 进程在受理后重启 / store 写异常）。
+  const store = {
+    ...base,
+    async updateJob() {
+      return null;
+    },
+  };
+  const spy = withStoreSpy(store);
+  const scripted = scriptedProvider(substituteOutcome);
+  const { service } = boot({
+    store: spy.store,
+    provider: scripted.provider,
+    jobDeadlineMs: DEADLINE_MS,
+    now: () => new Date(clock.ms),
+  });
+
+  const created = await service.createSynthesis({ userId: USER, body: body(), idempotencyKey: nextKey() });
+  await service.settle();
+  const stuck = await base.getJob(created.job.id);
+  assert.equal(stuck.state, 'queued', '前置：执行器未能推进，任务停在 queued');
+  assert.equal(stuck.revision, 1);
+
+  // 宽限内：仍是 queued（不提前判死，给执行器留出提交窗口）。
+  clock.ms = START_MS + DEADLINE_MS + JOB_EXPIRY_GRACE_MS - 1;
+  const before = await service.inspectJob({ userId: USER, jobId: created.job.id });
+  assert.equal(before.state, 'queued');
+  assert.equal(before.result, null);
+
+  // 越过宽限：读面必须显式裁定 timed_out，而不是继续报 queued。
+  clock.ms += 1;
+  const after = await service.inspectJob({ userId: USER, jobId: created.job.id });
+  assert.equal(after.state, 'timed_out', '过截止的任务不得永远报 queued（超时必须在读面可见）');
+  assert.equal(after.error_code, 'PROVIDER_TIMEOUT', '超时必须带契约闭集内的错误码');
+  assert.equal(after.result, null, '超时不得携带任何产物');
+  assert.equal(after.revision, before.revision + 1, '裁定必须是一次真实的 CAS 写入');
+  assert.equal(Object.keys(after).sort().join(','), Object.keys(before).sort().join(','), '投影键集合不得变化');
+
+  // 幂等读取：终态任务不会被每次读都改写。
+  const again = await service.inspectJob({ userId: USER, jobId: created.job.id });
+  assert.equal(again.state, 'timed_out');
+  assert.equal(again.revision, after.revision, '终态任务的 revision 不得因再次读取而变化');
+
+  // 裁定不补调提供者、不新建任务、不给产物。
+  assert.equal(scripted.state.calls, 0, '超时裁定不得补调提供者');
+  assert.equal(spy.state.insertedJobs, 1);
+  const stored = await base.getJob(created.job.id);
+  assert.equal(stored.state, 'timed_out');
+  assert.equal(stored.errorCode, 'PROVIDER_TIMEOUT');
+  assert.equal(await base.getSynthesis(stored.synthesisId), null, '超时不得写任何合成记录（不凭空给 media_id）');
+});
+
+test('重试·失败任务同键重放不复活、不再调提供者；换新键重试允许，旧失败任务保持原样且不留两条活跃任务', async () => {
+  const spy = withStoreSpy(createMemorySynthesisStore());
+  let failing = true;
+  const scripted = scriptedProvider((input) =>
+    failing ? { kind: 'failed', code: 'PROVIDER_QUOTA_EXCEEDED' } : substituteOutcome(input),
+  );
+  const provider = scripted.provider;
+  const { service } = boot({ store: spy.store, provider });
+
+  const firstKey = nextKey();
+  const first = await service.createSynthesis({ userId: USER, body: body(), idempotencyKey: firstKey });
+  await service.settle();
+  const failed = await service.inspectJob({ userId: USER, jobId: first.job.id });
+  assert.equal(failed.state, 'failed', '提供者配额失败必须落 failed（不得静默变成功）');
+  assert.equal(failed.error_code, 'PROVIDER_QUOTA_EXCEEDED');
+  assert.equal(failed.result, null);
+  const callsAfterFailure = scripted.state.calls;
+  assert.equal(callsAfterFailure, 1);
+
+  // 同键重放：仍是同一条失败任务，不复活、不再调提供者、不新建任务（不重复计费）。
+  const replay = await service.createSynthesis({ userId: USER, body: body(), idempotencyKey: firstKey });
+  await service.settle();
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.job.id, first.job.id);
+  assert.equal(replay.job.state, 'failed', '重放不得把失败任务改写成 succeeded/queued');
+  assert.equal(replay.job.error_code, 'PROVIDER_QUOTA_EXCEEDED');
+  assert.equal(replay.job.result, null);
+  assert.equal(scripted.state.calls, callsAfterFailure, '重放不得再调提供者（不重复计费语义）');
+  assert.equal(spy.state.insertedJobs, 1, '重放不得新建任务');
+
+  const stillFailed = await service.inspectJob({ userId: USER, jobId: first.job.id });
+  assert.equal(stillFailed.state, 'failed');
+  assert.equal(stillFailed.revision, failed.revision, '重放不得改写失败任务的 revision');
+
+  // 换新键重试：允许（重试路径存在）⇒ 新任务；旧失败任务原样保留，任一时刻只有一条活跃任务。
+  assert.equal(['failed', 'timed_out', 'cancelled', 'succeeded'].includes(stillFailed.state), true);
+  failing = false;
+  const second = await service.createSynthesis({ userId: USER, body: body(), idempotencyKey: nextKey() });
+  await service.settle();
+  assert.equal(second.replayed, false);
+  assert.notEqual(second.job.id, first.job.id, '换新键重试必须是一条新任务');
+  assert.equal(spy.state.insertedJobs, 2);
+  assert.equal(scripted.state.calls, callsAfterFailure + 1, '每个新任务恰好一次提供者调用（不重复计费）');
+
+  const retried = await service.inspectJob({ userId: USER, jobId: second.job.id });
+  assert.equal(retried.state, 'succeeded');
+  assert.equal(retried.result.kind, 'synthesis');
+  const old = await service.inspectJob({ userId: USER, jobId: first.job.id });
+  assert.equal(old.state, 'failed', '重试不得把旧的失败任务改写掉');
+  assert.equal(old.error_code, 'PROVIDER_QUOTA_EXCEEDED');
+  assert.equal(old.result, null);
 });
