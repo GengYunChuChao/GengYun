@@ -582,6 +582,105 @@ WITH checks(label, ok, detail) AS (
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'created_at', 'SELECT')
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'deletion_generation', 'SELECT'),
          '账号读面不得以补列授权实现：运行时对 users.nickname/created_at/deletion_generation 必须仍无 SELECT'
+
+  -- --- GY-I18：功能开关唯一写路径（SECURITY DEFINER 提权函数）的看守 -------------------
+  -- 编号 38–44 顺延（32–37 由 0021 账号读面片实占，⛔ 不复用）。
+  -- set_feature_flag 会在函数内写 public.admin_audit_events（运行时对该表零权限），
+  -- ⇒ 它是提权面；缺了这组断言，红线就只剩「没人改它」的自觉。
+  UNION ALL
+  -- 38. 开关唯一写路径必须恰存在一个（名字 + 精确签名）
+  SELECT 'feature_flag_function_exists',
+         to_regprocedure('public.set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'set_feature_flag'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '开关唯一写路径必须恰为 public.set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)'
+
+  UNION ALL
+  -- 39. 必须真的是 SECURITY DEFINER（否则函数内对审计表的 INSERT 会以调用者身份失败）
+  SELECT 'feature_flag_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'set_feature_flag'),
+         '开关写路径必须声明 SECURITY DEFINER（唯一写审计的提权入口）'
+
+  UNION ALL
+  -- 40. search_path 只允许 pg_catalog（不接受再带 public 等可被注入的 schema），时区固定 UTC
+  SELECT 'feature_flag_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) AS cfg
+                    WHERE cfg LIKE 'search_path=%'
+                      AND cfg <> 'search_path=pg_catalog'
+                 )
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'set_feature_flag'),
+         '开关写路径必须设 SET search_path = pg_catalog（不得追加其它 schema）与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 41. 属主不得是运行时角色，且运行时不得通过成员链继承它
+  SELECT 'feature_flag_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'set_feature_flag'),
+         '开关写路径的属主不得是 gengyun_api_runtime，运行时也不得继承/成为它'
+
+  UNION ALL
+  -- 42. EXECUTE 只授予运行时（PUBLIC 与其他角色一律不得执行）
+  --     ⚠️ 用 regprocedure/oid 重载求值：函数被删时返回 NULL 而不是抛错，
+  --        这样证伪时仍能打印出标签（而不是让整个文件 exit=3）。
+  SELECT 'feature_flag_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           to_regprocedure('public.set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)'),
+           'EXECUTE'
+         ) IS TRUE
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'set_feature_flag'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'set_feature_flag'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '开关写路径的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
+  UNION ALL
+  -- 43. 运行时对开关表仍只有 SELECT（写只发生在 SECURITY DEFINER 函数内）
+  SELECT 'feature_flag_table_select_only',
+         to_regclass('public.feature_flags') IS NOT NULL
+         AND has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'SELECT') IS TRUE
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'DELETE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'TRUNCATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'REFERENCES')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'TRIGGER')
+         AND NOT has_any_column_privilege('gengyun_api_runtime', to_regclass('public.feature_flags'), 'UPDATE'),
+         '运行时对 public.feature_flags 只能有 SELECT：写入必须走 public.set_feature_flag(...)'
+
+  UNION ALL
+  -- 44. 审计台账对运行时仍零直接权限（写入只发生在 SECURITY DEFINER 函数内）
+  SELECT 'feature_flag_audit_ledger_untouched',
+         NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'DELETE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'TRUNCATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'SELECT'),
+         '运行时对 public.admin_audit_events 必须仍无任何直接权限（开关审计只经唯一写路径写入）'
 )
 
 SELECT CASE

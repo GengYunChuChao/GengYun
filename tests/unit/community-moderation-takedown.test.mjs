@@ -228,18 +228,28 @@ test('G4a. 跨域同源：审核域下架/读取重查作用在社区真实内�
 // ---------------------------------------------------------------------------
 
 test('G4b. 【负控制】权威端口换成替身副本 ⇒ 审核域下架不改动社区真实行（证明 G4a 测的是同源）', async () => {
-  const substitute = createSubstituteContentAuthority();
-  const h = makeWiredHarness({ ports: { tms: passingPort() }, authority: substitute });
+  // 先由**同源装配**把内容写进社区 store（发布闸门已接进社区写路径：发布必须经同源权威落行，
+  // 见 G6c/G1d）。随后用**共用同一份 store** 的另一套装配把权威端口换成替身副本 ——
+  // 本负控制要证明的是"下架只作用于权威端口指向的那份数据"，与发布路径无关。
+  const h = makeWiredHarness({ ports: { tms: passingPort() } });
   const post = await publishPost(h);
+
+  const substitute = createSubstituteContentAuthority();
+  const detached = makeWiredHarness({ store: h.store, ports: { tms: passingPort() }, authority: substitute });
 
   // 替身副本自行登记同一目标（它不是社区存储，只是另一份内存表）。
   substitute.seed(
     { type: 'post', id: post.id, revision: 1 },
     { visibility: 'published', author_state: 'active', source_kind: 'simulation', owner_id: USER_A.userId },
   );
-  assert.equal(h.moderation.counts().authority_origin, 'substitute', '前提：本用例的权威端口是替身副本');
+  assert.equal(
+    detached.moderation.counts().authority_origin,
+    'substitute',
+    '前提：本用例的权威端口是替身副本',
+  );
+  assert.equal(detached.store, h.store, '前提：两套装配共用**同一份**社区 store（否则"不受影响"没有意义）');
 
-  const outcome = await h.moderation.withdraw({
+  const outcome = await detached.moderation.withdraw({
     actor: MODERATION_ADMIN,
     target_ref: { type: 'post', id: post.id, revision: 1 },
     reason_code: 'compliance_takedown',
@@ -247,11 +257,11 @@ test('G4b. 【负控制】权威端口换成替身副本 ⇒ 审核域下架不�
   assert.equal(outcome.withdrawn, true, '替身副本上"下架成功"——正是非同源时的假象');
 
   // **社区真实内容行完全不受影响**：仍公开可见（这就是必须接线到社区 store 的理由）。
-  const row = await h.store.getPost(post.id);
+  const row = await detached.store.getPost(post.id);
   assert.equal(row.visibility, 'published');
   assert.equal(row.revision, 1);
-  assert.equal((await h.service.listPosts(USER_B)).items.length, 1, '社区读取面仍把它当作公开内容');
-  assert.equal((await h.service.getPost(USER_B, post.id)).visibility, 'published');
+  assert.equal((await detached.service.listPosts(USER_B)).items.length, 1, '社区读取面仍把它当作公开内容');
+  assert.equal((await detached.service.getPost(USER_B, post.id)).visibility, 'published');
 });
 
 // ---------------------------------------------------------------------------
@@ -270,6 +280,7 @@ function unreadableWithdrawPort(moderation) {
       return moderation.execution_mode;
     },
     submitScreening: (input) => moderation.submitScreening(input),
+    publish: (input) => moderation.publish(input),
     withdraw: () => null,
     readView: (input) => moderation.readView(input),
     tasks: (targetRef) => moderation.tasks(targetRef),

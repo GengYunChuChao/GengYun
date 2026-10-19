@@ -20,7 +20,7 @@
 //   B. 浙江首批真实资料投影（`APP_KNOWLEDGE_UNVERIFIED_SEED`，本地联调与 Demo 的实际可收藏集合）。
 // 用例 A 的第一条断言即"**列表里能读到的资料，收藏后必须可用**"——它同时锁住"读面开关"
 // 在 `app.ts`（接线）与 `routes/knowledge.ts`（列表/详情）两处不会漂移。
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -31,7 +31,28 @@ import { REFERENCE_UNAVAILABLE_REASONS } from '../../services/api/src/targetref/
 
 // 本地联调（`tools/local-dev/api.mjs`）与 Demo 用同一开关：浙江首批真实资料并入 `/knowledge`。
 // 必须在 `buildApp` **之前**设置——`routes/knowledge.ts` 在注册路由时读取该开关。
-process.env['APP_KNOWLEDGE_UNVERIFIED_SEED'] = '1';
+// 但**不得**写成模块级赋值：`node --test --test-isolation=none` 让同进程的所有用例文件共享
+// 同一个 `process.env`，模块级写 `'1'` 会一路带到后面跑的文件（本文件 `f…` 排在 `knowledge-*`
+// 之前），使本该读到空列表的 `/knowledge` 用例读进 159 条未发布投影。故改成「用例内打开 +
+// 结束复原」，并把复原本身变成断言（泄漏即变红，而不是靠人盯）。
+// 见 `docs/verification/gy-test-env-isolation-20261019.md`。
+const UNVERIFIED_SEED = 'APP_KNOWLEDGE_UNVERIFIED_SEED';
+// 模块加载瞬间的原值：整个文件跑完必须回到它（文件末尾的 `after` 自证）。
+const UNVERIFIED_SEED_AT_LOAD = process.env[UNVERIFIED_SEED];
+
+/**
+ * 在用例内打开浙江首批投影开关，并把复原动作挂到该用例的 `t.after`：
+ * 记下进来时的原值，用例结束后写回（原本不存在就 `delete`），随后断言确实已复原。
+ */
+function armUnverifiedSeed(t) {
+  const previous = process.env[UNVERIFIED_SEED];
+  process.env[UNVERIFIED_SEED] = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env[UNVERIFIED_SEED];
+    else process.env[UNVERIFIED_SEED] = previous;
+    assert.equal(process.env[UNVERIFIED_SEED], previous, `用例结束后必须复原 ${UNVERIFIED_SEED}（不得跨文件泄漏）`);
+  });
+}
 
 const FAVORITES = '/api/v1/favorites';
 const KNOWLEDGE = '/api/v1/knowledge';
@@ -152,6 +173,7 @@ async function fixture() {
 const failNote = (response) => JSON.stringify(response.body);
 
 test('收藏可见性接线③：未登录仍 401 SESSION_REQUIRED（登录门口径不变）', async (t) => {
+  armUnverifiedSeed(t);
   const f = await fixture();
   t.after(() => f.close());
   for (const method of ['GET', 'POST']) {
@@ -171,6 +193,7 @@ test('收藏可见性接线③：未登录仍 401 SESSION_REQUIRED（登录门�
 });
 
 test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 收藏行「可用」；下架/改版/恢复逐次重派生', async (t) => {
+  armUnverifiedSeed(t);
   const f = await fixture();
   t.after(() => f.close());
   const token = await f.login('synthetic-i16-vis-db');
@@ -226,6 +249,7 @@ test('收藏可见性接线①：数据库读视图里当前可读的资料 ⇒ 
 });
 
 test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙江首批投影）收藏后必须「可用」且详情可打开', async (t) => {
+  armUnverifiedSeed(t);
   const f = await fixture();
   t.after(() => f.close());
   const token = await f.login('synthetic-i16-vis-seed');
@@ -312,5 +336,15 @@ test('收藏可见性接线②：`/knowledge` 列表里能读到的资料（浙�
   t.diagnostic(
     `反例（fail-closed，不泄露存在性）：读面里没有的 id => ${missing.body.data.reference_state}`
     + `（${String(missing.body.data.unavailable_reason)}）；类型不符（把 species 资料声明成 scheme）=> ${wrongType.body.data.reference_state}`,
+  );
+});
+
+// 文件级自证（默认隔离下恒真；`--test-isolation=none` 下才是真检查）：本文件跑完后，
+// 开关必须与模块加载时逐字相同——即本文件没有向后跑的文件泄漏任何环境变量。
+after(() => {
+  assert.equal(
+    process.env[UNVERIFIED_SEED],
+    UNVERIFIED_SEED_AT_LOAD,
+    `${UNVERIFIED_SEED} 在本文件跑完后仍未复原（跨文件环境变量泄漏）`,
   );
 });

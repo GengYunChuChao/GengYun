@@ -1,9 +1,13 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {resolve,dirname} from 'node:path';import vm from 'node:vm';import {createRequire} from 'node:module';import {createProfileFixture} from './profile-ui-fixture.mjs';
 // 浙江首批真实资料（未发布/未核对）默认关闭；本片要核对"档案驱动查询"确实取到资料，显式接线。
 // 只影响 stub 执行模式下的 `/knowledge` 查询面，不改服务端代码与契约。
-process.env.APP_KNOWLEDGE_UNVERIFIED_SEED='1';
+// 但**不得**写成模块级赋值：`node --test --test-isolation=none` 下同进程共享 `process.env`，
+// 模块级写会把开关泄漏给后面跑的文件。改为用例内打开、`finally` 里复原（开关在夹具
+// `buildApp` 时读取）。见 `docs/verification/gy-test-env-isolation-20261019.md`。
+const UNVERIFIED_SEED='APP_KNOWLEDGE_UNVERIFIED_SEED',UNVERIFIED_SEED_AT_LOAD=process.env[UNVERIFIED_SEED];
 const root=resolve(import.meta.dirname,'../..'),nativeRequire=createRequire(import.meta.url),tick=()=>new Promise(r=>setTimeout(r,10));
 test('actual native page and client over loopback HTTP: profile catalog save reread query and conflict',async()=>{
+ const previousSeed=process.env[UNVERIFIED_SEED];process.env[UNVERIFIED_SEED]='1';
  const f=await createProfileFixture();const base=await f.app.listen({host:'127.0.0.1',port:0});const storage=new Map(),requests=[],routes=[],cache=new Map();let page,definition,identity='profile-ui-synthetic-a',modal=true;const pending=new Set();
  const wx={getStorageSync:k=>storage.get(k),setStorageSync:(k,v)=>storage.set(k,v),removeStorageSync:k=>storage.delete(k),login:o=>o.success({code:identity}),showModal:o=>o.success({confirm:modal}),showToast:()=>{},navigateTo:o=>routes.push(o.url),reLaunch:o=>routes.push(o.url),request(o){requests.push(o);const p=fetch(o.url,{method:o.method,headers:o.header,...(o.data===undefined?{}:{body:JSON.stringify(o.data)})}).then(async r=>o.success({statusCode:r.status,data:await r.json()})).catch(()=>o.fail({})).finally(()=>pending.delete(p));pending.add(p)}};
  function load(path){path=resolve(path);if(path.endsWith('runtime.js'))return {mode:'local',apiBaseUrl:base+'/api/v1'};if(path.includes('/data/')||path.includes('\\data\\'))return nativeRequire(path);if(cache.has(path))return cache.get(path).exports;const m={exports:{}};cache.set(path,m);vm.runInNewContext('(function(require,module){'+readFileSync(path,'utf8')+'\n})',{wx,Page:d=>{definition=d},getCurrentPages:()=>[page]})((id)=>load(resolve(dirname(path),id.endsWith('.js')?id:id+'.js')),m);return m.exports}
@@ -68,5 +72,11 @@ test('actual native page and client over loopback HTTP: profile catalog save rer
   console.log('PASS GY-I05 D2 loopback: fail-closed unavailable without resource; injected converter preselects a real catalog county; raw coordinates stay in memory');
   p.logout();await until(()=>auth.getSession()===null);assert.equal(p.data.profile,null);const refused=await fetch(base+'/api/v1/me/profile',{headers:{authorization:'Bearer '+token}});assert.equal(refused.status,401);
   console.log('PASS '+f.kind+'; synthetic identity/catalog fixture; real loopback HTTP and actual frontend modules; no suppliers');
- }finally{await Promise.allSettled([...pending]);await f.close()}
+ }finally{await Promise.allSettled([...pending]);await f.close();if(previousSeed===undefined)delete process.env[UNVERIFIED_SEED];else process.env[UNVERIFIED_SEED]=previousSeed}
+});
+
+// 文件级自证（默认隔离下恒真；`--test-isolation=none` 下才是真检查）：跑完后开关必须与模块
+// 加载时逐字相同——本文件不向同进程的后续文件泄漏环境变量。
+test('环境变量复原：本文件跑完后 '+UNVERIFIED_SEED+' 与模块加载时逐字相同（不跨文件泄漏）',()=>{
+ assert.equal(process.env[UNVERIFIED_SEED],UNVERIFIED_SEED_AT_LOAD,UNVERIFIED_SEED+' 在本文件跑完后仍未复原（跨文件环境变量泄漏）');
 });

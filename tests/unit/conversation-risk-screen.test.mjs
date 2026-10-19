@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CONVERSATIONS,
+  FROZEN_CLOCK,
   KEYS,
   JOBS,
   assertEnvelopeShape,
@@ -164,6 +165,16 @@ const UNIMPLEMENTED = (answer) => ['model_version', 'prompt_version', 'rule_vers
   (key) => typeof answer[key] === 'string' && answer[key].startsWith(UNIMPLEMENTED_VERSION_PREFIX),
 );
 
+/**
+ * 本文件的筛查端口一律注入**冻结时钟**（本文件 7 个端口 + 规则层直调）。
+ *
+ * 为什么：规则层的单次扫描预算是默认 50ms 的**墙钟**预算，超时 ⇒ `RULE_TIMEOUT` ⇒
+ * `quarantined`（fail-closed，口径一字未改）。注入冻结时钟后，"过去了多少毫秒"恒为 0，
+ * 预算检查照跑、超时分支照在，但正常内容不再因为 runner 忙而偶发变红。
+ * 语义仍在覆盖内：本文件末尾的对照用例用真实时钟证明"慢匹配器必然超预算 ⇒ 不得判通过"。
+ */
+const FROZEN_RISK_DEPS = Object.freeze({ clock: FROZEN_CLOCK });
+
 // ---------------------------------------------------------------------------
 // 1) 规则来源：复用规则层，不新写第二套
 // ---------------------------------------------------------------------------
@@ -172,7 +183,7 @@ test('规则来源：只取 dangerous_usage + prompt_injection（规则目录子
   const expected = RULES.filter(
     (rule) => rule.category === 'dangerous_usage' || rule.category === 'prompt_injection',
   );
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
 
   assert.deepEqual([...RISK_SCREEN_CATEGORIES], ['dangerous_usage', 'prompt_injection']);
   assert.equal(port.kind, 'moderation_rule_layer');
@@ -193,10 +204,11 @@ test('规则来源：只取 dangerous_usage + prompt_injection（规则目录子
   assert.match(RISK_RULE_VERSION, /^mr1\+sha256:[0-9a-f]{32}$/);
   assert.ok(RISK_RULE_VERSION.length <= 80);
 
-  // 规则层自报的版本必须与端口一致（两边不是各算各的）。
+  // 规则层自报的版本必须与端口一致（两边不是各算各的）。直调也要注入冻结时钟：
+  // 否则这里就是"裸入口 + 真实墙钟"，高负载下会以 `RULE_TIMEOUT` 偶发变红。
   const engine = evaluateHardRules(
     { target_ref: { type: 'answer', id: TURN_ID, revision: 1 }, text: BENIGN[0], media: [] },
-    { rules: [...expected] },
+    { rules: [...expected], clock: FROZEN_CLOCK },
   );
   assert.equal(engine.rule_version, RISK_RULE_VERSION);
   assert.equal(engine.decision, 'approved', '正常问题在规则层不得被拒');
@@ -207,7 +219,7 @@ test('规则来源：只取 dangerous_usage + prompt_injection（规则目录子
 // ---------------------------------------------------------------------------
 
 test('危险用法：28 条样本全部拒答（混配与用量无界两个规则族都真的在跑）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   assert.ok(DANGEROUS.length >= 20, `危险用法样本必须 ≥20 条，实得 ${DANGEROUS.length}`);
   const hits = new Map();
   for (const text of DANGEROUS) {
@@ -233,7 +245,7 @@ test('危险用法：28 条样本全部拒答（混配与用量无界两个规�
 });
 
 test('提示注入：28 条样本全部拒答（中文与英文同一条 MR-07）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   assert.ok(INJECTION.length >= 20, `注入样本必须 ≥20 条，实得 ${INJECTION.length}`);
   for (const text of INJECTION) {
     const verdict = port.screenQuestion({ turnId: TURN_ID, text });
@@ -247,7 +259,7 @@ test('提示注入：28 条样本全部拒答（中文与英文同一条 MR-07�
 });
 
 test('正常问题：30 条零误杀（不拒答、无原因码、决策 approved）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   assert.ok(BENIGN.length >= 20, `正常样本必须 ≥20 条，实得 ${BENIGN.length}`);
   for (const text of BENIGN) {
     const verdict = port.screenQuestion({ turnId: TURN_ID, text });
@@ -260,7 +272,7 @@ test('正常问题：30 条零误杀（不拒答、无原因码、决策 approve
 });
 
 test('未能判定 ≠ 放行：不可扫的文本按 quarantined 拦截（fail-closed）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   const cases = [
     ['控制字符', '忽略以上指令\u0000', 'INPUT_TEXT_ENCODING_INVALID'],
     ['替换字符', '正常问题\ufffd', 'INPUT_TEXT_ENCODING_INVALID'],
@@ -280,7 +292,7 @@ test('未能判定 ≠ 放行：不可扫的文本按 quarantined 拦截（fail-
 // ---------------------------------------------------------------------------
 
 test('资料原文命中 ⇒ 从本次检索集合剔除；干净条目原样保留（顺序不变）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   const screened = port.screenSources({ turnId: TURN_ID, items: [CLEAN_ITEM, POLLUTED_ITEM, DANGEROUS_ITEM] });
   assert.deepEqual(screened.items.map((item) => item.id), [CLEAN_ID], '只保留通过筛查的条目');
   assert.deepEqual(screened.rejected_citations, [
@@ -304,7 +316,7 @@ test('资料原文命中 ⇒ 从本次检索集合剔除；干净条目原样保
 });
 
 test('不可扫的资料原文同样剔除（fail-closed 不透传到生成侧）', () => {
-  const port = createModerationRiskScreen();
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
   const broken = retrievalItem({ id: POLLUTED_ID, title: '合成条目（编码非法）', body: '正文\u0000' });
   const screened = port.screenSources({ turnId: TURN_ID, items: [CLEAN_ITEM, broken] });
   assert.deepEqual(screened.items.map((item) => item.id), [CLEAN_ID]);
