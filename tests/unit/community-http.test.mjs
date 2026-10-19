@@ -26,6 +26,7 @@ import { createKnowledgeAvailabilityPort } from '../../services/api/src/communit
 import { createMessagesCommunityEventsPort, communityEventKey } from '../../services/api/src/community/events.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { CLEAN_BODY, CLEAN_TITLE, DANGEROUS_BODY, makeGate, makeSyntheticPassPort } from './community-fixtures.mjs';
+import { frozenModerationInjection } from './stall-hygiene-fixtures.mjs';
 
 const API = '/api/v1';
 const START = Date.UTC(2026, 9, 20, 4, 0, 0);
@@ -69,7 +70,19 @@ async function fixture(t, options = {}) {
     // 四个网络 seam「持有即抛错」、不联网）来跑通"可发布"分支；`real` 模式下审核域
     // 会忽略任何注入端口（本文件另有 real fail-closed 用例）。
     // **不得**读成真实 tms/ims 已接通：真实供应商未授权，本片零真实调用。
-    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+    //
+    // 规则层时钟冻结（stall 臂回归）：`makeGate()` 只冻住了社区发布闸门那一支；审核域服务是
+    // 规则层的**第二个装配点**，`app.ts` 没有 `ruleOptions` 缝，不冻它则墙钟预算
+    // （`DEFAULT_RULE_BUDGET_MS = 50`）在机器抖动/插桩下会误判 `RULE_TIMEOUT` ⇒ 隔离 ⇒ 422。
+    // 注入的服务与 `app.ts:766-777` 默认装配逐字段同形，唯一差别是 `clock` 常量化。
+    // `real` 模式下审核域整域 fail-closed、规则层根本不跑，故 real 路径保持原形不动。
+    moderationInjection: config.executionMode === 'real'
+      ? { ports: { tms: makeSyntheticPassPort('tms') } }
+      : frozenModerationInjection({
+        executionMode: config.executionMode,
+        ports: { tms: makeSyntheticPassPort('tms') },
+        store: community,
+      }),
   });
   async function user(subject) {
     const created = await auth.createUser(subject.repeat(64));
