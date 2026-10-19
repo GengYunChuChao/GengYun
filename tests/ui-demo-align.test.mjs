@@ -7,7 +7,10 @@
  *   3. 图标几何：styles/icons.wxss 等于用 demo app.js 的 SVG path 重新生成的结果；
  *   4. 可访问性门槛未被对齐破坏：样式层无裸 px 字号，且每个「允许承载按钮语义」
  *      的 demo 组件类都声明了 ≥44px 的触控下限（按钮类白名单不是放松，而是换等价约束）；
- *   5. 打包允许清单随样式层同步：app.wxss 依赖 styles/*.wxss，漏打包会整站丢样式。
+ *   5. 打包允许清单随样式层同步：app.wxss 依赖 styles/*.wxss，漏打包会整站丢样式；
+ *   6. demo 视图承接：demo.html render() 分发的 11 个视图逐个要有小程序承接页，
+ *      白名单（ALLOWED_MISSING_VIEWS）只允许 video／chat，且白名单本身受反向校验
+ *      （删项即红／过期项即红／掺入非 demo 视图即红），见本文件末三例。
  *
  * 边界：这是静态文本比对，**不是**微信工具编译或真机渲染。真机／模拟器／开发者工具
  * 截图在本环境未取得，见 docs/verification/gy-i26-demo-align-20261014.md。
@@ -17,7 +20,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { check, LAYER_FILES, stripComments, PALETTE_TOKENS } from '../tools/demo-align.mjs';
+import {
+  check,
+  LAYER_FILES,
+  stripComments,
+  PALETTE_TOKENS,
+  ALLOWED_MISSING_VIEWS,
+  VIEW_PAGES,
+  readDemoViews
+} from '../tools/demo-align.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -109,5 +120,78 @@ test('打包允许清单随样式层同步：漏打包 styles/*.wxss 会让隔�
 test('样式层文件存在于仓库且非空', () => {
   for (const file of LAYER_FILES) {
     assert.ok(read(file).length > 200, `${file} 内容异常`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// demo 视图承接（第 5 组）：白名单是显式声明，不是静默排除。以下三例互为「牙齿」。
+// ---------------------------------------------------------------------------
+
+test('demo 视图白名单删项即红：白名单外的缺失视图必须报 MISSING（exit 1 的来源）', () => {
+  const { problems } = check({ allowedMissingViews: [] });
+  for (const view of ['video', 'chat']) {
+    assert.ok(
+      problems.some((p) => p.startsWith(`MISSING ${view}：`)),
+      `删掉 ALLOWED_MISSING_VIEWS 里的 ${view} 后未报 MISSING，白名单退化成静默排除；实际 problems=${JSON.stringify(problems)}`
+    );
+  }
+});
+
+test('demo 视图白名单不能豁免已过期项或非 demo 视图项', () => {
+  // ① 白名单过期：library 已有承接页，仍被塞进白名单 ⇒ 必须红
+  const stale = check({ allowedMissingViews: [...ALLOWED_MISSING_VIEWS, 'library'] });
+  assert.ok(
+    stale.problems.some((p) => p.startsWith('ALLOWED_MISSING_VIEWS 含 library') && p.includes('已登记承接页')),
+    `把有页的 library 塞进白名单后未报错；实际 problems=${JSON.stringify(stale.problems)}`
+  );
+  // ② 掺入不是 demo 视图的名字（小程序有同名页也不算数）⇒ 必须红
+  const bogus = check({ allowedMissingViews: [...ALLOWED_MISSING_VIEWS, 'favorites'] });
+  assert.ok(
+    bogus.problems.some((p) => p.includes('ALLOWED_MISSING_VIEWS 含 favorites') && p.includes('不是 demo 的视图')),
+    `把非 demo 视图 favorites 塞进白名单后未报错；实际 problems=${JSON.stringify(bogus.problems)}`
+  );
+  // ③ demo 新增视图但小程序无页、又没登记白名单 ⇒ 必须红（新视图不会白嫖通过）
+  const added = check({ views: [...readDemoViews(), 'records'] });
+  assert.ok(
+    added.problems.some((p) => p.startsWith('MISSING records：')),
+    `demo 新增未承接视图 records 后未报 MISSING；实际 problems=${JSON.stringify(added.problems)}`
+  );
+});
+
+test('demo 视图承接现状：11 个视图／9 个有承接页／白名单只留 video、chat', () => {
+  const { rows, problems } = check();
+  assert.deepEqual(problems, []);
+
+  // 视图清单从 demo.html 的 render() 分发处解析，不手抄
+  assert.deepEqual(readDemoViews(), [
+    'home',
+    'identify',
+    'result',
+    'library',
+    'video',
+    'chat',
+    'community',
+    'messages',
+    'profile',
+    'article',
+    'post'
+  ]);
+  assert.deepEqual(ALLOWED_MISSING_VIEWS, ['video', 'chat']);
+  // 白名单项在 VIEW_PAGES 里必须「零承接页」，否则这行断言就把白名单过期变成红灯
+  for (const view of ALLOWED_MISSING_VIEWS) {
+    assert.deepEqual(VIEW_PAGES[view], [], `${view} 已登记承接页，必须移出 ALLOWED_MISSING_VIEWS`);
+  }
+
+  const group = rows.find((r) => r.kind === 'view');
+  assert.ok(group, 'check() 未输出第 5 组 demo 视图承接');
+  assert.equal(group.views.length, 11);
+  assert.equal(group.present, 9);
+  assert.deepEqual(group.allowedMissing, ['video', 'chat']);
+  // 有承接页的视图必须逐个 OK，且承接页都在 app.json.pages 里注册过
+  const registered = new Set(JSON.parse(read('miniprogram/app.json')).pages);
+  for (const row of group.rows) {
+    if (row.state !== 'OK') continue;
+    assert.ok(row.pages.length > 0, `${row.view} 判定有页却没列承接页`);
+    for (const page of row.pages) assert.ok(registered.has(page), `${row.view} 的承接页 ${page} 未在 app.json.pages 注册`);
   }
 });

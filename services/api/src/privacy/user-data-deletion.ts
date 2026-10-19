@@ -30,10 +30,16 @@
  * 2. **`onlineState`/`backupState` 必须都在白名单内**，且 `completed` 必须带非空 `evidenceRef`。
  *    本适配器的两条状态各有事实依据：
  *    - `onlineState`：本模块**真的**把该主体的在线行删掉了 ⇒ `completed`，
- *      证据为 `"<module>:online-purged:<删除行数>"`（计数即证据，不含任何私有正文）；
- *    - `backupState`：备份副本的清除**本片未实现**（属 GY-I19）⇒ 默认 `pending`
- *      （**不谎称 completed**）。接线的 `backupPurge` 端口返回已清除且有证据时才置 `completed`。
- *      因此在备份清除接线之前，回执会如实显示该模块**未完成**（这是缺口，不是通过）。
+ *      证据为 `"<module>:online-purged:<删除行数>"`（计数即证据，不含任何私有正文）。
+ *      阶段 2 的 PG store 还能在同一事务里清掉**本域幂等台账**（`favorites_idempotency` /
+ *      `history_idempotency`）并给出分表行数 ⇒ 证据追加
+ *      `";<module>:idempotency-purged:<台账行数>"`，两张表都清干净才判 `completed`；
+ *    - `backupState`：备份副本的清除**未实现**（属 GY-I19）⇒ 默认 `pending`（**不谎称 completed**）。
+ *      接线的 `backupPurge` 端口返回已清除且有证据时才置 `completed`。**未接线的真实原因**是
+ *      仓内不存在逐用户备份副本域：迁移里没有备份/快照副本表（也没有软删列），运维侧唯一备份产物是
+ *      `deploy/postgres-cvm/backup-postgres.sh` 的整库 `pg_dump -Fc`，不能逐用户删除（普查见
+ *      `docs/verification/gy-i19-backup-domain-20261018.md`）。因此在备份域与端口接线之前，回执会
+ *      如实显示该模块**未完成**（这是缺口，不是通过）；不许把「没有副本可删」的空集当成清除成功。
  *
  * ## 与「收藏／历史不自动转成已使用事实」的关系
  * 本文件是**删除**方向的接线（用户权利），与"收藏=已使用"毫无关系；它不写任何使用类字段。
@@ -54,14 +60,33 @@ export const HISTORY_DELETION_MODULE = 'history';
 /** 必需模块闭集（本轮只声明本片的两个模块；其它域各自注册自己的模块）。 */
 export const USER_DATA_DELETION_MODULES = [FAVORITES_DELETION_MODULE, HISTORY_DELETION_MODULE] as const;
 
+/** 按主体清理的**分表**真实行数：正文表与幂等台账各计各的（两项都进在线清除证据）。 */
+export interface OwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+}
+
 /** 按主体清空的存储原语（只用得到这一个方法，避免本适配器拿到多余能力）。 */
 export interface OwnerPurgeStore {
   deleteAllByOwner(ownerId: string): Promise<number>;
+  /**
+   * 能**一次性**给出"正文表 + 幂等台账"两表真实行数的实现（阶段 2 的 PG store 就是）。
+   * 提供它就表示：该实现已在**同一事务**里把本主体的幂等台账也清掉，行数如实返回；
+   * 证据因此追加 `idempotency-purged`，不会只报正文行数就宣告"在线清除完成"。
+   * 不提供则退回 `deleteAllByOwner` 的既有语义（只报正文行数）。
+   */
+  purgeOwnerData?(ownerId: string): Promise<OwnerPurgeCounts>;
 }
 
 /**
  * 备份副本清除端口。**默认未接线** ⇒ `backupState: 'pending'`（不谎称完成）。
  * 接线（GY-I19）后返回 `{ purged: true, evidenceRef }` 即置 `completed`。
+ *
+ * 接线前提（不是本文件能自证的事）：被清对象必须**真实存在**。本仓至今没有逐用户备份副本表、
+ * 也没有任何真实备份系统接线；运维备份只有整库 `pg_dump -Fc`（见
+ * `docs/verification/gy-i19-backup-domain-20261018.md`）。因此「新增一个恒返回
+ * `{ purged: true }` 的端口」不是接线，而是把空集当成功；未接线时 `available: false`、
+ * 回执 `pending` 才是如实状态。
  */
 export interface BackupPurgePort {
   readonly kind: 'wired' | 'unwired';
@@ -70,7 +95,7 @@ export interface BackupPurgePort {
 }
 
 export function createUnwiredBackupPurgePort(
-  note = '备份副本清除尚未接线（属 GY-I19）：备份状态保持 pending，不谎称完成',
+  note = '备份副本清除未接线：仓内无逐用户备份副本域（唯一备份产物是整库 pg_dump），备份状态保持 pending，不谎称完成',
 ): BackupPurgePort {
   void note;
   return {
@@ -124,6 +149,8 @@ export interface UserDataDeletionRegistry {
   executeHandlers(requestId: string): Promise<Record<string, unknown>>;
   completionStatus(requestId: string): { state: string; completed: boolean; missingModules: readonly string[] };
   receipt(requestId: string): Record<string, unknown> | null;
+  /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
+  evidenceOf(requestId: string): Record<string, string>;
   /** 诊断审计（内部；只含模块名/行数/状态，不含任何私有正文或凭据）。 */
   audit(): PurgeAuditEntry[];
 }
@@ -133,7 +160,8 @@ export interface UserDataDeletionRegistry {
  *
  * 处理器语义（逐条与已合并协议对齐）：
  *   - 只清理 `requestId` 绑定的那个主体的数据；反查不到主体 ⇒ 抛错（协议折叠为 `blocked`）；
- *   - `onlineState`：`deleteAllByOwner` 成功 ⇒ `completed` + 证据 `<module>:online-purged:<n>`；
+ *   - `onlineState`：`deleteAllByOwner`（或分表计数的 `purgeOwnerData`）成功 ⇒ `completed`，
+ *     证据 `<module>:online-purged:<n>`；`purgeOwnerData` 可用时追加 `;<module>:idempotency-purged:<n>`；
  *   - `backupState`：`backupPurge` 已接线且返回 `purged:true` 且有证据 ⇒ `completed`
  *     （证据 `<module>:backup-purged`）；否则 `pending`；
  *   - 抛出任何异常都由协议折叠为 `blocked`（本适配器不吞错）。
@@ -157,6 +185,8 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   /** 请求 → 主体绑定（已合并协议的处理器入参不含主体，故在此绑定）。 */
   const subjectByRequest = new Map<string, string>();
   const auditLog: PurgeAuditEntry[] = [];
+  /** 请求 → 各模块最终证据串（诊断用；契约回执形状不含证据，故在此留存完整证据）。 */
+  const evidenceByRequest = new Map<string, Record<string, string>>();
   /** 受理时**已启动**的持久化事务（按请求 id 挂起；由 `executeHandlers()` 先行 await）。 */
   const durableByRequest = new Map<string, Promise<DeletionRequestRecord>>();
 
@@ -212,9 +242,20 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     return async (input_: Record<string, unknown>): Promise<Record<string, unknown>> => {
       const requestId = String(input_['requestId'] ?? '');
       const userId = subjectOf(requestId);
-      const onlineRemoved = await store.deleteAllByOwner(userId);
+      // 能分表计数的实现（本片 PG store）走 `purgeOwnerData`：正文表＋本域幂等台账**同一事务**
+      // 清掉，两个真实行数都进证据；只提供 `deleteAllByOwner` 的实现保持既有语义（只报正文行数）。
+      const purgeOwnerData = store.purgeOwnerData;
+      const purged: OwnerPurgeCounts =
+        typeof purgeOwnerData === 'function'
+          ? await purgeOwnerData.call(store, userId)
+          : { records: await store.deleteAllByOwner(userId), idempotency: 0 };
+      const onlineRemoved = purged.records;
       let backupState = 'pending';
       let evidenceRef = `${module}:online-purged:${onlineRemoved}`;
+      if (typeof purgeOwnerData === 'function') {
+        // 台账也清了 ⇒ 两个计数都写进证据（不能只报正文行数就宣告该模块在线清除完成）。
+        evidenceRef = `${evidenceRef};${module}:idempotency-purged:${purged.idempotency}`;
+      }
       if (backupPurge.available) {
         const backup = await backupPurge.purge({ userId, module, onlineRemoved });
         const backupEvidence = typeof backup.evidenceRef === 'string' ? backup.evidenceRef.trim() : '';
@@ -231,6 +272,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         backupState,
         at: now().toISOString(),
       });
+      evidenceByRequest.set(requestId, { ...(evidenceByRequest.get(requestId) ?? {}), [module]: evidenceRef });
       return { onlineState: 'completed', backupState, evidenceRef, errorCode: null };
     };
   }
@@ -261,6 +303,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     },
     completionStatus: (requestId) => coordinator.completionStatus(requestId),
     receipt: (requestId) => coordinator.receipt(requestId),
+    evidenceOf: (requestId) => ({ ...(evidenceByRequest.get(requestId) ?? {}) }),
     audit: () => auditLog.map((entry) => ({ ...entry })),
   };
 }

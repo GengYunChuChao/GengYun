@@ -10,6 +10,8 @@
  *   - **识别/OCR → 历史的写入接线属跨线**（本片只交付内部口），因此本夹具用内部口
  *     `appendHistory` 直接落行 —— 这正是"替身/未验证"的一部分。
  */
+import { readFileSync } from 'node:fs';
+import { PGlite } from '@electric-sql/pglite';
 import { ApiError, buildErrorEnvelope } from '../../services/api/src/errors.ts';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createFavoritesService } from '../../services/api/src/favorites/service.ts';
@@ -40,6 +42,34 @@ export {
 
 /** 仅测试用签名密钥（不是真实密钥、不入库、不入日志）。 */
 export const TEST_SIGNING_KEY = 'gy-i16-favorites-history-test-signing-key';
+
+// ---------------------------------------------------------------------------
+// PGlite 夹具（本片两个 HTTP 用例的「real + 有 pool」臂共用；GY-I16 阶段 2 追加）
+//
+// 只证明 **SQL 语义**：唯一约束去重、CAS 删除、幂等台账真落库。
+// **不构成** PG17 真机验收 —— 真库覆盖在 `tests/integration/favorites-history-pg.mjs`，
+// 同一批断言在那里面再跑一遍（迁移由同一个运行器按序号应用）。
+// ---------------------------------------------------------------------------
+
+/** 收藏/历史落库所需的最小迁移集：`0001`（`users` 外键目标）+ `0018`（本片新表）。 */
+export const PG_MIGRATIONS = ['0001_initial_schema', '0018_favorites_history'];
+
+export function migrationSql(name) {
+  return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');
+}
+
+/**
+ * 迁移后的 PGlite 池（结构上与 `db/pool.ts` 的 `PgPool` 兼容：`query` + `connect().release()`）。
+ * 返回 `{ db, pool }`；`db` 供用例直接核对**真表**行（不是看内存 Map 自证）。
+ */
+export async function pglitePool(t) {
+  const db = new PGlite();
+  for (const name of PG_MIGRATIONS) await db.exec(migrationSql(name));
+  t.after(() => db.close());
+  const run = (...args) => db.query(...args);
+  return { db, pool: { query: run, connect: async () => ({ query: run, release: () => {} }) } };
+}
+
 
 export const USER_A = Object.freeze({
   userId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

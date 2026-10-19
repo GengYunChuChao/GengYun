@@ -28,11 +28,15 @@
       <text class="stat__value">{{historyCount}}</text>
       <text class="stat__label">识别历史</text>
     </view>
-    <view class="stat">
-      <text class="stat__value">0</text>
+    <!-- demo .stat-grid 的三项都是可点的 <button class="stat">：我的发布 → 社区页「我的投稿」。
+         小程序没有独立的「我的发布」页，故跳既有路由并按契约 `mine` 预选筛选（不新建页面）。 -->
+    <view class="stat" bindtap="openMyPosts" role="button" aria-label="我的发布（在社区页按我的投稿查看）">
+      <text class="stat__value">{{myPostCount}}</text>
       <text class="stat__label">我的发布</text>
     </view>
   </view>
+
+  <view class="demo-caption">「我的发布」显示社区「我的投稿」第一页的已加载条数（带 + 表示还有下一页；服务端封套不提供总数），点开即到社区页并预选「我的投稿」。</view>
 
   <view class="notice notice--warn" wx:if="{{guest}}">
     <text class="notice__icon">🔒</text>
@@ -134,6 +138,25 @@
       <button class="btn btn--secondary row-actions__item" bindtap="logout">退出登录</button>
     </view>
   </block>
+
+  <!-- demo profile 的「关于这次体验」面板：静态说明，无数据源、无交互歧义。
+       措辞按小程序端**实测事实**写：demo 那句「登录、授权和资料保存均为本地模拟」是网页原型的
+       自述，小程序端登录走微信登录、档案走服务端，照抄即为假，故只保留可核对的部分
+       （见 docs/verification/gy-i28-demo-parity-20261018.md 的逐条对照）。 -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">关于这次体验</view>
+    </view>
+    <view class="panel">
+      <view class="setting-row">
+        <text class="setting-row__label">耕云 Demo</text>
+        <text class="setting-row__value">Demo 阶段</text>
+      </view>
+      <view class="card-text">耕云 · 看见田间的可能</view>
+      <view class="card-text">覆盖五个主入口与核心探索流程，与网页版 demo 同一套视觉与交互口径。</view>
+      <view class="demo-caption">登录、档案、收藏与识别历史均走微信登录与后端服务读取（非本地模拟）；本页不展示任何本地伪造数据。版本号无构建来源，故不显示具体版本。</view>
+    </view>
+  </view>
 
   <view class="section">
     <view class="section-head">
