@@ -80,7 +80,7 @@
 | ① 读时权限重查（下架/隐藏/删除/注销/权限变化） | **成立** | 服务层每次读取都走 `deriveVisibility`（无缓存）；列表逐行派生、幂等重放重新派生（§4-A3）、翻页逐页派生（§4-A4）；既有断言 §3 第 1/3/5 行；集成 case3（下架后重复读 3 次仍 unavailable、版本前进后旧收藏仍不可用、按账号分别派生、`Cache-Control: no-store`） |
 | ② 失效不得复活 + 取消去重 | **成立** | 旧收藏不恢复推荐资格（`:91` + `:119`）；取消为物理删除、无墓碑（真表 `count(*)=0`）；同键重放 200（§4-A1）、同键异体 409（§4-A2）、异键 404（既有）；取消后重收藏得新 id（既有 + A1） |
 | ③ 候选与人工选择分开 | **成立** | 选择只写 `selected_species_id`（`recognitions/service.ts:634-645`），历史投影恰 7 字段不含候选/选择；详情视图两字段分离；人工选择永不计模型成绩（`recognitions-candidates-selection.test.mjs:391`） |
-| ④ 失败任务可见 + 不记成已使用 | **成立** | failed/timed_out/uncertain 终态自动写入并逐类可见（`:339`/`:606`），读时实时重查绝不升级为 succeeded（`job.ts:102-110` + `:196`）；「已使用」类字段在投影与创建口双向封闭（`:50`、`:125-128`、`:493`）；小程序无「标记已使用」入口（`:551`）。**边界**：用户主动**取消**的任务不产历史行（`history-http.test.mjs:855-892`，有断言 + 「端口确实 wired」的反例），见 §8-① |
+| ④ 失败任务可见 + 不记成已使用 | **成立** | failed/timed_out/uncertain 终态自动写入并逐类可见（`:339`/`:606`），读时实时重查绝不升级为 succeeded（`job.ts:102-110` + `:196`）；「已使用」类字段在投影与创建口双向封闭（`:50`、`:125-128`、`:493`）；小程序无「标记已使用」入口（`:551`）。**边界（已裁定）**：用户主动**取消**的任务不产历史行（`history-http.test.mjs:855-892`，有断言 + 「端口确实 wired」的反例），口径「取消不算一次识别结果」成立、不属「失败任务」，**保持现状**，见 §8.1-① |
 
 ## 6 门禁读数（全部本机实测）
 
@@ -169,8 +169,8 @@ node tools/verify-contract-status.mjs --runtime
 ```
 
 注：派单里写的 `--check` **不是**本工具支持的旗标（`tools/verify-contract-status.mjs:16-18` 只认
-`--runtime` / `--write-doc`，传 `--check` 直接打印用法并 `exit 1`）。本片改用**无旗标（静态）**与 `--runtime`
-两档实跑，读数见上；这是旗标口径差异，不是失败。
+`--runtime` / `--write-doc`，传 `--check` 直接打印用法并 `exit 1`）。派单方已确认这是**派单笔误**，后续口径为
+**无旗标（静态）+ `--runtime` 两档**；`--write-doc`（同步生成区）只在需要时由派单方批准后使用。本片按此口径实跑，读数见上。
 
 ```
 python -B tools/validate_development_docs.py     ⇒ PASS（见 §6.6 收尾复跑）
@@ -189,7 +189,25 @@ git diff upstream/main --check                              ⇒ 空
 git status --porcelain                                      ⇒ 提交后为空（读数见交接文件）
 ```
 
-交接文件：`E:\GengYunCommander\.pg17\handoff\i16-semantics-<sha前7位>.md`。
+交接文件：`E:\GengYunCommander\.pg17\handoff\i16-semantics-d5c3aa5.md`。
+
+### 6.7 合流 upstream/main 后复跑
+
+合流方式：`git merge --no-ff 8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`（在 `feat/gy-i16-semantics` 上），
+**无冲突**，自动合入 4 个文件（`README.md`、`docs/reference/local-development.md`、`tests/local-debug.test.mjs`、
+`tools/prepare-wechat.mjs`；均与本片零重叠，`package.json`/`package-lock.json` 未变 ⇒ `npm ci` 无需重跑，
+`node_modules` 沿用已装的 103 包）。
+
+```
+受影响 9 文件单测   tests 101 / pass 101 / fail 0 / cancelled 0 / skipped 0 / todo 0   (exit 0, 24.9s)
+node tests/integration/favorites-history-isolation-http.mjs               ⇒ PASS (exit 0)
+node tests/integration/favorites-history-isolation-http.reverse-control.mjs ⇒ PASS (exit 0；被改文件期望红 exit 1，原文件 blob 3bc97bd7… 前后一致、git status 未变)
+node tools/verify-contract-status.mjs            ⇒ PASS（4 行，同 §6.5，exit 0）
+node tools/verify-contract-status.mjs --runtime  ⇒ PASS（同上 + 5 行 runtime 装配一致，exit 0）
+python -B tools/validate_development_docs.py     ⇒ PASS: 27 initial tasks; …; Markdown links and tables (exit 0)
+git diff upstream/main --check                   ⇒ 空
+git status --porcelain                           ⇒ 空（CLEAN）
+```
 
 ## 7 未取得项（不得当成通过）
 
@@ -201,14 +219,22 @@ git status --porcelain                                      ⇒ 提交后为空�
 | bash 语法/脚本校验 | **未取得** | 本机 `bash` 是 WSL 存根（`bash -n` 空转 exit 0 不构成证据） |
 | 收藏/历史「详情读」路由级证据 | **不适用** | 契约无 `GET /favorites/{id}`、无 `GET /history/{id}`；详情由列表 + 识别详情合成，已如实登记 |
 
-## 8 风险与需要裁定
+## 8 已裁定事项与遗留
 
-1. **用户主动取消的任务不产历史行**（`tests/unit/history-http.test.mjs:855-892`，口径「取消不算一次识别结果」，
-   并有「历史端口确实是 wired」的反例）。这满足「失败任务可见」对 failed/timed_out/uncertain 的覆盖，
-   但**取消**这一种终态在历史里不可见。请裁定：该口径是否可接受？若要求「取消也留痕」，需另开片改
-   `recognitions/service.ts` 的终态投递条件（本片未改产品代码）。
-2. **派单门禁旗标 `--check` 不存在**（见 §6.5）。请确认后续派单统一改为「无旗标静态 + `--runtime`」两档。
-3. **上游漂移**：`upstream/main` 已前进到 `8cc9dd8`（+2 提交，均为 README/本地调试工具，与本片零重叠）。
-   本片门禁读数是在 `0856e49` + 本片改动这棵树上取的；若要合并，建议按常规 rebase 后复跑 §6.3/§6.5。
-4. **`--test-isolation=none` 下的 8 条 knowledge 失败**（§6.3）是既有跨文件干扰，本片未触碰；但它们会让
-   「全量单测 exit 0」这条门禁长期不可达，建议另开片处理（本片不越界）。
+### 8.1 已裁定（派单方裁定，本片照此执行）
+
+1. **用户主动取消的任务不产历史行 —— 保持现状，属显式判定而非缺口。**
+   口径：「取消不算一次识别结果」，故不属于「失败任务」范畴。证据：`tests/unit/history-http.test.mjs:855-892`
+   （F5：cancelled 终态不产历史行，且含「历史端口确实是 wired `:891`」的反例，证明不是端口未接线导致的空结果）。
+   判定：**不修改** `services/api/src/recognitions/service.ts` 的终态投递条件；「失败任务可见」的覆盖范围是
+   failed / timed_out / uncertain / queued（`history-http.test.mjs:339`、`favorites-history-visibility.test.mjs:170`），
+   这三类非成功终态均已实测可见（§5-④）。
+2. **门禁旗标 `--check` 是派单笔误。** 后续统一按「静态无参 + `--runtime`」两档执行；
+   `--write-doc` 仅在需要同步生成区时使用，且必须由派单方批准（见 §6.5 注）。
+3. **合并前必须合流**：本片已在 `feat/gy-i16-semantics` 上 `git merge --no-ff 8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`，
+   无冲突，冲突策略未启用（若出现则「保留本片新增断言 + 上游改动照抄」）；合流后全部门禁已复跑，读数见 §6.7。
+
+### 8.2 遗留（不阻塞、不另开片、不修）
+
+1. **`--test-isolation=none` 全量单测恒有 8 条 knowledge 失败**（§6.3，干净基线同样、逐项同名）
+   —— 判定为**既有跨文件干扰，与本片无关**；按裁定不另开片、不修，也不作为本片门禁失败依据。
