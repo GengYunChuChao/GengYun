@@ -5,6 +5,12 @@
 本页记录**一条真实 HTTP 链路**的本机实测：上传识别（合成 `media_id` + 替身提供者）→ 拿结果 → 看可信度与理由 → 加入识别历史 → 从历史读回 → 跨用户隔离 → 删除历史 → 再读为空 → 重放语义。
 脚本：[`tests/integration/recognition-chain-e2e.mjs`](../../tests/integration/recognition-chain-e2e.mjs)（本片唯一新增的可执行交付物，已接进 `package.json` 的 `test:integration:http` 链，见 [`package.json`](../../package.json)）。
 
+**合流复核（2026-10-19，main `31a746d`，PR #304）**：本片分支 `test/gy-recog-chain-e2e` 以 `git merge --no-ff upstream/main` 合流
+`31a746d676975cf41e995b0641ff9999f9def705`（含 `#282`／`#305`／`#306`／`#307`／`#308` 五张 squash）后，本页读数按**合并后的树**重测，
+并绑定两行口径：**被审提交 ＝ 本次 merge HEAD**（双亲 `2bcf635` + `31a746d`）、**基线 ＝ `31a746d`**。
+合流时唯一冲突是 `docs/verification/gy-i24-release-materials-index-20261017.md`（与识别链无关：取上游版本并补「合流复核」条目）；
+`package.json` 的 `test:integration:http` 链取**并集**（本片成员保留，上游新增项一条不少，结构门禁正向断言）。
+
 ## 1 结论
 
 - 链路**在 API 层跑通**：两条臂（内存存储 / 真实 PG17 存储）跑**同一段**断言，全部通过，退出码 0。
@@ -161,9 +167,9 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 
 | 门禁 | 命令 | 实测 | 结论 |
 | --- | --- | --- | --- |
-| ① 工作树 | `git status --porcelain` | **提交后复跑：0 行**（干净）；本轮返修改动提交前曾是 ` M docs/verification/gy-recog-chain-20261019.md` + ` M tests/integration/recognition-chain-e2e.mjs` 两行 | 只有本片 3 个文件被改/增，无越界改动 |
-| ② 单测全量 | `node --test "tests/unit/*.test.mjs"` | 本树（断言补充后复跑）：`tests 1617 / pass 1616 / fail 0 / skipped 1 / todo 0`，退出码 0（52.98s）；同 SHA 干净基线树（`upstream/main` = `8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`，独立 worktree）：`tests 1617 / pass 1616 / fail 0 / skipped 1` | 与干净基线**同数**，未放宽、未删测试 |
-| ③ 链路端到端 | `node tests/integration/recognition-chain-e2e.mjs` | **断言补充后复跑（两臂都重跑）**：内存臂 `arm=memory PASS`、`合计 17 条证据行；耗时 241ms`；真库臂 `arm=pg PASS`、`real PostgreSQL patch: 17.11`、迁移 `0001`+`0018`（重复应用 no-op）、`合计 36 条证据行；耗时 754ms`（`RECOGNITION_CHAIN_PG_RESET=1` 重建 `public`）；不带 env 时真库臂显式 SKIP。三种跑法退出码均 0。新增断言 `:283`（候选数恰 2）在两臂都过 | 本页 §5 的 19 组断言（含新增的候选数断言）全部实测通过 |
+| ① 工作树 | `git status --porcelain` | **提交后复跑：0 行**（干净） | 合流把 `31a746d` 的 5 张 squash 一并带进合并提交（42 个索引条目，无未解冲突）；本片自有改动仍只有 `package.json` 链 1 条、本页、`tests/integration/recognition-chain-e2e.mjs` 三个文件，无越界改动 |
+| ② 单测全量 | `node --test "tests/unit/*.test.mjs"` | **被审提交＝本次 merge HEAD**（合流后、默认隔离复跑）：`tests 1733 / pass 1732 / fail 0 / skipped 1 / todo 0`，退出码 0（60.82s）；**基线＝`31a746d`**：本分支在 `tests/unit` 下**新增 0 个用例、0 个子用例**（`git diff 31a746d HEAD -- tests/unit` 里 `+test(` 与 `+ t.test(` 均为 0，只有 11 个文件收紧断言），故合流后读数即基线读数；更早旧基线 `8cc9dd8` 上的 `1617/1616/0/1` 只作时点对比 | 与基线**同数**，未放宽、未删测试。⚠ 本机曾因 64 个 node 进程争用出现 10 项超时转红（`contract-status-tool` 的 15s `spawnSync` 超时、PGlite 组 23–48s 文件级超时、`release-materials-index` 119s），逐文件复跑与本次默认并发复跑均全绿 |
+| ③ 链路端到端 | `node tests/integration/recognition-chain-e2e.mjs` | **合流后复跑（两臂都重跑）**：内存臂 `arm=memory PASS`、`合计 17 条证据行；耗时 514ms`；真库臂 `arm=pg PASS`、`real PostgreSQL patch: 17.11`、迁移 `0001`+`0018`（重复应用 no-op）、`合计 36 条证据行；耗时 4326ms`（`RECOGNITION_CHAIN_PG_RESET=1` 重建 `public`）；不带 env 时真库臂显式 SKIP（`arm=pg SKIP`，不计通过）。三种跑法退出码均 0。新增断言 `:283`（候选数恰 2）在两臂都过 | 本页 §5 的 19 组断言（含新增的候选数断言）全部实测通过 |
 | ④ 契约状态 | `node tools/verify-contract-status.mjs` / `--runtime` | 均 `PASS：覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；形状错误 0 项；语义错误 0 项`；`--runtime` 额外 `PASS 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致` | 未改契约，读数与基线一致 |
 | ⑤ 文档校验 | `python -B tools/validate_development_docs.py` | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` | 含新增本页的链接与表格校验 |
 | ⑥ 空白/补丁卫生 | `git diff upstream/main --check` | 无输出，退出码 0 | 无行尾空白/空白错误 |

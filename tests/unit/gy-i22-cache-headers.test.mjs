@@ -40,6 +40,7 @@ import { createSubstituteObjectStore } from '../../services/api/src/media/object
 import { sha256Hex } from '../../packages/media/validate.mjs';
 import { pngPlain } from '../media/_fixtures.mjs';
 import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from './community-fixtures.mjs';
+import { frozenModerationInjection } from './stall-hygiene-fixtures.mjs';
 import { makeControllableVisibility } from './favorites-history-fixtures.mjs';
 
 const API = '/api/v1';
@@ -85,7 +86,15 @@ function makeWorld(t, options = {}) {
     historyInjection: { store: history, visibility: visibility.port },
     messagesInjection: { store: messages },
     communityInjection: { store: community, gate: makeGate() },
-    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+    // 规则层时钟冻结（stall 臂回归）：`makeGate()` 只冻住社区发布闸门这一支，审核域服务是
+    // 规则层的**第二个装配点**（`app.ts` 无 `ruleOptions` 缝）。不冻它，墙钟预算
+    // （`DEFAULT_RULE_BUDGET_MS = 50`）在机器抖动下会误判 `RULE_TIMEOUT` ⇒ 隔离 ⇒ 422，
+    // 与"缓存头/读取时重查"要测的东西无关。注入的服务与 `app.ts:766-777` 默认装配逐字段同形。
+    moderationInjection: frozenModerationInjection({
+      executionMode: config.executionMode,
+      ports: { tms: makeSyntheticPassPort('tms') },
+      store: community,
+    }),
   });
   t.after(() => app.close());
   return { app, auth, clock, favorites, history, messages, community, objectStore, visibility, config };

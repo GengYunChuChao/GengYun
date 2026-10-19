@@ -286,8 +286,41 @@ GRANT EXECUTE ON FUNCTION public.admin_account_display_name(text,uuid) TO gengyu
 REVOKE ALL ON TABLE public.admin_audit_events FROM PUBLIC;
 -- #endregion gy-i22-suspend-grant
 
+-- --- F. 功能开关：读表 + 唯一写路径的 EXECUTE（GY-I18 / 迁移 0020）-------------
+-- 迁移 0020 把写面收进 `SECURITY DEFINER` 函数 `public.set_feature_flag(...)`，并对
+-- `public.feature_flags` 与函数都 `REVOKE ALL ... FROM PUBLIC`。此处只授予运行时角色：
+--   1. `public.feature_flags` 的 **SELECT**（读面与开关门按库判定，单表三行只读）；
+--   2. `public.set_feature_flag(...)` 的 **EXECUTE**（写面唯一路径：行锁 + CAS + 同事务审计）。
+-- 运行时仍然：⛔ 无 `feature_flags` 的 INSERT/UPDATE/DELETE（表级写一律不给）；
+-- ⛔ 对 `admin_audit_events` 连 SELECT 都没有（0017 固化；反向控制见
+-- `tests/integration/account-suspend-pg.mjs` 的 `[P]` 组）。
+-- `90-assert-least-privilege.sql` 的表级 DML 清单只约束**写**权限 ⇒ 上面的 SELECT 不触发
+-- `table_dml_allowlist` 守卫（`audit_ledger_append_only` 仍逐条断言审计表零权限）。
+-- 本片不改 90-assert（不在裁定允许的改动面内）；函数级 EXECUTE 的唯一性与表级零写入
+-- 由 `tests/integration/admin-flags-pg.mjs` 以运行时角色实测钉住。
+-- 前置：迁移 0020 必须先执行（缺失即显式失败，绝不留「看似收敛、实际改不了开关」的运行态）。
+-- #region gy-i18-flags-grant
+DO $$
+BEGIN
+  IF to_regclass('public.feature_flags') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.feature_flags：迁移 0020 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+  IF to_regprocedure('public.set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.set_feature_flag(...)：迁移 0020 未执行。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.feature_flags FROM PUBLIC;
+GRANT SELECT ON TABLE public.feature_flags TO gengyun_api_runtime;
+
+REVOKE ALL ON FUNCTION public.set_feature_flag(text, integer, boolean, uuid, uuid, uuid, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.set_feature_flag(text, integer, boolean, uuid, uuid, uuid, text, text) TO gengyun_api_runtime;
+-- #endregion gy-i18-flags-grant
+
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
 \echo '20-login-roles.sql：已授予 public.request_account_deletion(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.suspend_account(...) / public.restore_account(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
+\echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'

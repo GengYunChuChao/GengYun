@@ -98,12 +98,26 @@ export function createCommunityContentAuthority(options: {
       // 已删除是单向门：审核域**不得**复活它，也不得把它改成别的可见性。
       throw new ApiError('OBJECT_UNAVAILABLE', '目标内容已删除，审核域不得改写其可见性（单向门）');
     }
-    if (record.visibility === visibility) return; // 幂等：已是目标可见性，不改写（不动 revision）
+    // 幂等：已是目标可见性 ⇒ **没有写入**，不涉及版本核对（见下方 setPublishedRevision 同口径）。
+    // 既有接线口径：后台隐藏已把行置 `hidden` 并推进 revision 后，审核域会按**处置前**版本
+    // 补一次"未发布"声明；那一版已不是社区当前版本，但该调用不改变任何字段，属纯声明。
+    // 该 revision 口径差异是已登记的 P2 项（诊断 3-5），不属本片范围。
+    if (record.visibility === visibility) return;
+    // **旧版本不得改可见性**：请求核对的是 `target.revision` 那一版；社区行已不是那一版
+    // （版本前进=旧链接/旧结论）⇒ 抛错且**零副作用**，绝不把旧请求写到新版本上。
+    if (record.revision !== target.revision) {
+      throw new ApiError(
+        'REVISION_CONFLICT',
+        `可见性写入未生效（目标 revision=${target.revision} 不是社区当前版本 ${record.revision}：旧版本不得改可见性）`,
+      );
+    }
     // 审核域**不推进**社区 revision：版本推进属内容写路径（投稿/编辑/后台隐藏）的职责。
     const patch = visibility === 'published'
       ? { visibility, audit_state: 'approved' as const }
       : { visibility };
-    const expected = { revision: record.revision, visibility: record.visibility, audit_state: record.audit_state };
+    // CAS 的期望版本**取自请求要核对的 `target.revision`**（不取行自身当前值）：
+    // 两者不等已在上面拒绝，这里再进 CAS 是为了让并发推进版本时的拒绝也落在"目标版本"上。
+    const expected = { revision: target.revision, visibility: record.visibility, audit_state: record.audit_state };
     const casRefusal = (reason: string): ApiError =>
       // CAS 失败（revision/可见性/状态已变）⇒ 如实拒绝，绝不谎报"已改写"。
       new ApiError('REVISION_CONFLICT', `可见性写入未生效（社区 CAS 拒绝：${reason}）`);
@@ -143,7 +157,17 @@ export function createCommunityContentAuthority(options: {
     async setPublishedRevision(target_ref, revision) {
       const record = await recordOf(target_ref);
       if (record === null) throw new ApiError('OBJECT_UNAVAILABLE', '目标内容不存在（社区存储：未登记）');
+      // 声明/收回"已发布版本"同样只能针对权威当前版本：旧 revision 的声明一律拒绝（零副作用）。
+      // 但**不改变任何声明的幂等调用**不在此列：`revision===null` 且派生值本就是 `null`
+      // （下架后补一次"未发布"声明），或声明值恰好等于派生值 —— 两者都不写任何字段。
       const derived = publishedRevisionOf(record);
+      const declaresNothing = revision === null ? derived === null : derived === revision;
+      if (!declaresNothing && record.revision !== target_ref.revision) {
+        throw new ApiError(
+          'REVISION_CONFLICT',
+          `拒绝声明已发布 revision=${revision ?? 'null'}：目标 revision=${target_ref.revision} 不是社区当前版本 ${record.revision}`,
+        );
+      }
       if (revision === null) {
         if (derived !== null) {
           throw new ApiError('REVISION_CONFLICT', '拒绝声明"未发布"：社区行仍是已发布状态（事实来源不一致）');

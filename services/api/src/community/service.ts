@@ -810,7 +810,13 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       return { items, next_cursor };
     },
 
-    /** `createPost`：`POST /posts`。先审后发；未获批准一律**不落内容行**。 */
+    /**
+     * `createPost`：`POST /posts`。先审后发；未获批准一律**不落内容行**。
+     *
+     * 通过筛查后仍是**两步**（GY-I14 P1-1）：先以「私有 / 待审」落库，再由审核域发布闸门
+     * （`CommunityModerationLink.publish`）写 `published` + `approved`。闸门拒绝时行保留为
+     * `pending_review`（仅作者可见），错误原样上抛 —— 绝不出现"本域自己宣布已发布"。
+     */
     async createPost(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Post> {
       const user = requireUserActor(actor);
       const body: PostInput = validatePostInput(input);
@@ -843,12 +849,18 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           // GY-I14 联动接线：规则先挡放行后、**落内容行之前**送审审核域 —— 建立该 revision 的
           // 版本级审核任务（`GET /jobs/{id}` 可读）；**未获明确放行**（明确驳回 / 隔离 / 未结论）
           // 一律不落内容行、不公开（B09：服务失败或无法判断不公开）。
-          await requireDomainClearance(await screenWithModeration(user, target, text, body.media_ids), target, outcome, text);
+          const screen = await screenWithModeration(user, target, text, body.media_ids);
+          await requireDomainClearance(screen, target, outcome, text);
           if (body.media_ids.length > 0) {
             // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
             // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
             throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
           }
+          const link = moderationLink;
+          // **发布闸门不在本域**（GY-I14 P1-1）：联动已接线时，内容先以「待审 / 私有」落库，
+          // 只有审核域的发布闸门写成功后才会变成 `published` + `approved`。
+          // ⛔ 本域**不再**写死 `visibility:'published'` + `audit_state:'approved'`。
+          const awaitingPublish = screen !== null && link !== null;
           const timestamp = nowIso();
           const record: PostRecord = {
             id,
@@ -860,8 +872,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
             linked_knowledge_ref: linkTarget,
-            visibility: 'published',
-            audit_state: 'approved',
+            visibility: awaitingPublish ? 'private' : 'published',
+            audit_state: awaitingPublish ? 'pending' : 'approved',
             created_at: timestamp,
             updated_at: timestamp,
           };
@@ -870,9 +882,23 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!inserted) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '内容 id 冲突（内部不变式违反）');
           }
+          let committedRecord: PostRecord = record;
+          if (awaitingPublish && link !== null) {
+            // 第二步：交审核域发布。闸门拒绝 ⇒ **行保留为 pending_review**（私有 / 待审，
+            // 不静默丢弃、也不留 published），错误原样上抛（fail-closed）。
+            await link.publish({
+              actor: linkActorOf(user),
+              content: { target_ref: target, text, media: mediaInputs(body.media_ids) },
+            });
+            const published = await store.getPost(id);
+            if (published === null) {
+              throw new ApiError('PROVIDER_UNAVAILABLE', '发布后读不到内容行（内部不变式违反）');
+            }
+            committedRecord = published;
+          }
           // 审核结果事件（已提交的 revision）投递到消息中心公开端口；失败不回滚内容。
           await publishModerationResult(user.userId, { type: 'post', id, revision: 1 }, outcome.decision, outcome.reason_codes);
-          return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(record) };
+          return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(committedRecord) };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
       );
@@ -939,10 +965,15 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           // GY-I14 联动接线：**新 revision 必须重新送审**（新版本级任务 + 新输入绑定），
           // 旧版本的审核域结论**不得**套到新版本上（版本级绑定由审核域自己保证）；
           // 新版本未获明确放行（驳回 / 隔离）同样不得落库、不得公开。
-          await requireDomainClearance(await screenWithModeration(user, target, text, body.media_ids), target, outcome, text);
+          const screen = await screenWithModeration(user, target, text, body.media_ids);
+          await requireDomainClearance(screen, target, outcome, text);
           if (body.media_ids.length > 0) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
           }
+          const link = moderationLink;
+          // 与 `createPost` 同一口径：联动已接线时先落「待审 / 私有」，再由审核域发布闸门
+          // 把该**新 revision** 写成 `published` + `approved`（⛔ 本域不写死 approved）。
+          const awaitingPublish = screen !== null && link !== null;
           const patch: PostCommitPatch = {
             revision,
             title: body.title,
@@ -951,8 +982,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
             linked_knowledge_ref: nextLink,
-            visibility: 'published',
-            audit_state: 'approved',
+            visibility: awaitingPublish ? 'private' : 'published',
+            audit_state: awaitingPublish ? 'pending' : 'approved',
             updated_at: nowIso(),
           };
           // 检查（revision/归属/未删除）与写入在**同一原子提交**内完成；
@@ -964,6 +995,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             buildVerdict(target, outcome, text),
           );
           if (!committed.ok) throw commitRefusal(committed.reason);
+          let committedRecord: PostRecord = committed.record;
+          if (awaitingPublish && link !== null) {
+            // 第二步：交审核域发布该新 revision。闸门拒绝 ⇒ **行保留为 pending_review**
+            // （私有 / 待审，不静默丢弃、也不留 published），错误原样上抛（fail-closed）。
+            await link.publish({
+              actor: linkActorOf(user),
+              content: { target_ref: target, text, media: mediaInputs(body.media_ids) },
+            });
+            const published = await store.getPost(postId);
+            if (published === null) {
+              throw new ApiError('PROVIDER_UNAVAILABLE', '发布后读不到内容行（内部不变式违反）');
+            }
+            committedRecord = published;
+          }
           await publishModerationResult(
             user.userId,
             { type: 'post', id: postId, revision },
@@ -972,7 +1017,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           );
           return {
             outcome: { kind: 'post' as const, id: postId, revision },
-            result: await projectPost(committed.record),
+            result: await projectPost(committedRecord),
           };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
@@ -1105,15 +1150,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           }
           // GY-I14 联动接线：评论同样**先审后发**（版本级任务绑定该评论 revision）；
           // 未获明确放行（驳回 / 隔离）一律不落评论行、不公开。
-          await requireDomainClearance(await screenWithModeration(user, target, text, []), target, outcome, text);
+          const screen = await screenWithModeration(user, target, text, []);
+          await requireDomainClearance(screen, target, outcome, text);
+          const link = moderationLink;
+          // 与 `createPost` 同一口径：联动已接线时先落「待审 / 私有」，再由审核域发布闸门
+          // 把该评论 revision 写成 `published` + `approved`（⛔ 本域不写死 approved）。
+          const awaitingPublish = screen !== null && link !== null;
           const record: CommentRecord = {
             id,
             revision: 1,
             post_id: parentId,
             author_id: user.userId,
             body: body.body,
-            visibility: 'published',
-            audit_state: 'approved',
+            visibility: awaitingPublish ? 'private' : 'published',
+            audit_state: awaitingPublish ? 'pending' : 'approved',
             created_at: nowIso(),
           };
           // 插入评论时在**同一临界区**再校验父帖（存在、未删除、revision 未变），
@@ -1125,13 +1175,30 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           if (!inserted) {
             throw new ApiError('REVISION_CONFLICT', '父帖已被删除或版本已变化，请刷新后重试');
           }
+          let committedRecord: CommentRecord = record;
+          if (awaitingPublish && link !== null) {
+            // 第二步：交审核域发布该评论 revision。闸门拒绝 ⇒ **行保留为 pending_review**
+            // （私有 / 待审，不静默丢弃、也不留 `published`），错误原样上抛（fail-closed）。
+            await link.publish({
+              actor: linkActorOf(user),
+              content: { target_ref: target, text, media: [] },
+            });
+            const published = await store.getComment(id);
+            if (published === null) {
+              throw new ApiError('PROVIDER_UNAVAILABLE', '发布后读不到评论行（内部不变式违反）');
+            }
+            committedRecord = published;
+          }
           await publishModerationResult(
             user.userId,
             { type: 'comment', id, revision: 1 },
             outcome.decision,
             outcome.reason_codes,
           );
-          return { outcome: { kind: 'comment' as const, id, revision: 1 }, result: await projectComment(record) };
+          return {
+            outcome: { kind: 'comment' as const, id, revision: 1 },
+            result: await projectComment(committedRecord),
+          };
         },
         async (ref) => projectComment(await readableComment(user, ref.id)),
       );
@@ -1178,12 +1245,16 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           }
           // GY-I14 联动接线：评论编辑生成的新 revision 同样必须先送审（旧结论不得套新版本）；
           // 未获明确放行（驳回 / 隔离）同样不得落库、不得公开。
-          await requireDomainClearance(await screenWithModeration(user, target, text, []), target, outcome, text);
+          const screen = await screenWithModeration(user, target, text, []);
+          await requireDomainClearance(screen, target, outcome, text);
+          const link = moderationLink;
+          // 与 `editPost` 同一口径：先落「待审 / 私有」，再由审核域发布闸门发布**该新 revision**。
+          const awaitingPublish = screen !== null && link !== null;
           const patch: CommentCommitPatch = {
             revision,
             body: body.body,
-            visibility: 'published',
-            audit_state: 'approved',
+            visibility: awaitingPublish ? 'private' : 'published',
+            audit_state: awaitingPublish ? 'pending' : 'approved',
           };
           const committed = await store.commitCommentIfCurrent(
             commentId,
@@ -1192,6 +1263,19 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             buildVerdict(target, outcome, text),
           );
           if (!committed.ok) throw commitRefusal(committed.reason);
+          let committedRecord: CommentRecord = committed.record;
+          if (awaitingPublish && link !== null) {
+            // 闸门拒绝 ⇒ 新 revision 停在待审、公开面消失（旧版本结论不得继续放行）。
+            await link.publish({
+              actor: linkActorOf(user),
+              content: { target_ref: target, text, media: [] },
+            });
+            const published = await store.getComment(commentId);
+            if (published === null) {
+              throw new ApiError('PROVIDER_UNAVAILABLE', '发布后读不到评论行（内部不变式违反）');
+            }
+            committedRecord = published;
+          }
           await publishModerationResult(
             user.userId,
             { type: 'comment', id: commentId, revision },
@@ -1200,7 +1284,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           );
           return {
             outcome: { kind: 'comment' as const, id: commentId, revision },
-            result: await projectComment(committed.record),
+            result: await projectComment(committedRecord),
           };
         },
         async (ref) => projectComment(await readableComment(user, ref.id)),
