@@ -23,10 +23,24 @@ import { createCommunityModerationLink } from '../../services/api/src/community/
 import { createCommunityContentAuthority } from '../../services/api/src/community/moderation-authority.ts';
 import { createCommunityService } from '../../services/api/src/community/service.ts';
 import { createModerationService } from '../../services/api/src/moderation/service.ts';
-import { CLEAN_BODY, CLEAN_TITLE, USER_A, USER_B, idem, makeGate, makeIdFactory } from './community-fixtures.mjs';
-import { blockVerdict, makePort, passVerdict } from '../moderation/_model-fixtures.mjs';
+import { CLEAN_BODY, CLEAN_TITLE, FROZEN_CLOCK, USER_A, USER_B, idem, makeGate, makeIdFactory } from './community-fixtures.mjs';
+import { RULE_BUDGET_MS, blockVerdict, makePort, passVerdict } from '../moderation/_model-fixtures.mjs';
 
 export { CLEAN_BODY, CLEAN_TITLE, USER_A, USER_B, idem, makeGate };
+
+/**
+ * 审核域默认规则层选项（**只给测试**）：
+ *
+ * 规则层默认预算 50ms 是**墙钟**预算（`DEFAULT_RULE_BUDGET_MS`，超时 ⇒ `RULE_TIMEOUT` ⇒ 隔离，
+ * fail-closed 口径一行未改）。不注入时钟时，一台负载高的机器上"扫一遍 11 条规则"就可能跨过
+ * 50ms，内容用例会随机变成 `quarantined` —— 那是**机器负载**在决定判定，不是内容在决定判定。
+ *
+ * 因此本目录的 harness 一律注入冻结时钟（`FROZEN_CLOCK`）：预算检查路径照跑、超时闸门照在，
+ * 但墙钟不再参与判定。"预算耗尽 ⇒ 不得放行"的语义由
+ * `tests/unit/community-gate.test.mjs:277-309`（真实时钟必超时 / 冻结时钟 approved 对照）
+ * 与 `tests/moderation/rules.test.mjs` 继续守着，本文件不重复。
+ */
+export const FROZEN_RULE_OPTIONS = Object.freeze({ clock: FROZEN_CLOCK, budget_ms: RULE_BUDGET_MS });
 
 export const API = '/api/v1';
 export const START = Date.UTC(2026, 9, 20, 4, 0, 0);
@@ -223,6 +237,8 @@ export function makeHarness(options = {}) {
       ...(injectedService === undefined ? {} : { service: injectedService }),
       ...(options.ports === undefined ? {} : { ports: options.ports }),
       ...(options.authority === undefined ? {} : { authority: options.authority }),
+      // 规则层时钟：默认冻结（见 `FROZEN_RULE_OPTIONS` 的说明）；用例可显式覆盖。
+      ruleOptions: options.ruleOptions ?? FROZEN_RULE_OPTIONS,
     },
   });
   return {
@@ -379,6 +395,8 @@ export function makeWiredHarness(options = {}) {
           executionMode,
           ...(options.ports === undefined ? {} : { ports: options.ports }),
           authority,
+          // 冻结时钟（见 `FROZEN_RULE_OPTIONS`）：规则层预算检查照跑，但不读真实墙钟。
+          ruleOptions: options.ruleOptions ?? FROZEN_RULE_OPTIONS,
         });
       const linkModeration =
         options.moderationPortWrapper === undefined ? moderation : options.moderationPortWrapper(moderation);
@@ -412,6 +430,8 @@ export function makeServiceHarness(options = {}) {
       executionMode,
       ...(options.ports === undefined ? {} : { ports: options.ports }),
       ...(options.authority === undefined ? {} : { authority: options.authority }),
+      // 冻结时钟（见 `FROZEN_RULE_OPTIONS`）：规则层预算检查照跑，但不读真实墙钟。
+      ruleOptions: options.ruleOptions ?? FROZEN_RULE_OPTIONS,
     });
   const link = options.link ?? createCommunityModerationLink({ moderation });
   const store = options.store ?? createMemoryCommunityStore({ now: () => START });
