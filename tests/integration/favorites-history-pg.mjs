@@ -19,7 +19,8 @@
  *
  * 运行：`FAVORITES_HISTORY_PG_TEST_URL=postgres://…/gengyun_favorites_history_test \
  *        node tests/integration/favorites-history-pg.mjs`
- * 未配置该变量 ⇒ 打印 `SKIP` 并以 0 退出：本次运行**没有**验证真库（不是通过）。
+ * 未配置该变量 ⇒ 打印 `SKIP` 并以 **77** 退出（POSIX「skipped」）：本次运行**没有**验证真库（不是通过）。
+ *   本机明知无真库、只想看跳过原因时可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
  * `npm run test:integration:http` 不包含本文件（它需要真库），需显式运行。
  */
 import assert from 'node:assert/strict';
@@ -38,11 +39,18 @@ import { createUserDataDeletion } from '../../services/api/src/privacy/user-data
 
 const ENV = 'FAVORITES_HISTORY_PG_TEST_URL';
 const raw = process.env[ENV] ?? '';
+// 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 if (raw === '') {
   // 显式跳过并打印：**不得**被当成"真库已验证"（绿），也不静默失败。
   console.log(`SKIP real PG17: ${ENV} 未设置 —— 本次运行没有验证真库持久化（不是通过，也不是失败）。`);
   console.log(`     运行方式：${ENV}=postgres://postgres@127.0.0.1:5432/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs`);
-  process.exit(0);
+  if (ALLOW_SKIP) {
+    console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+    process.exit(0);
+  }
+  console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。');
+  process.exit(77);
 }
 
 const url = new URL(raw);

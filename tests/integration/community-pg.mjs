@@ -11,7 +11,9 @@
  *   createdb gengyun_community_test
  *   COMMUNITY_PG_TEST_URL=postgres://postgres@127.0.0.1:55432/gengyun_community_test \
  *     node tests/integration/community-pg.mjs
- * 未设置 `COMMUNITY_PG_TEST_URL` 时脚本**跳过并明说没验证**（不是通过，也不是失败）。
+ * 未设置 `COMMUNITY_PG_TEST_URL` ⇒ 打印 `SKIP` 并以 **77** 退出（POSIX「skipped」）：本次运行**没有**验证真库（不是通过）。
+ *   本机明知无真库、只想看跳过原因时可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
+ * `npm run test:integration:http` 不包含本文件（它需要真库），需显式运行。
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -28,11 +30,20 @@ import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from '../uni
 
 const ENV = 'COMMUNITY_PG_TEST_URL';
 const rawUrl = process.env[ENV];
+// 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 if (rawUrl === undefined || rawUrl.trim() === '') {
   console.log(
     `SKIP real PG17: ${ENV} 未设置 —— 本次运行没有验证真库持久化（不是通过，也不是失败）。`,
   );
-  process.exit(0);
+  if (ALLOW_SKIP) {
+    console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+    process.exit(0);
+  }
+  console.log(
+    'EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。',
+  );
+  process.exit(77);
 }
 const url = new URL(rawUrl);
 assert.ok(['postgres:', 'postgresql:'].includes(url.protocol), `${ENV} 必须是 postgres URL`);
@@ -117,8 +128,8 @@ async function main() {
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022');
     assert.deepEqual(
       versions.filter((v) => ['0020', '0021'].includes(v)),
-      ['0020'],
-      '0020 属 I18 切片 #282，已随 upstream/main（31a746d）合入；0021 属 I18 切片 #279（未合）；'
+      ['0020', '0021'],
+      '0020 属 I18 切片 #282（随 upstream/main `31a746d` 合入）、0021 属 I18 切片 #279（随 `145ebe4` → `607c03c` 合入）；'
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 

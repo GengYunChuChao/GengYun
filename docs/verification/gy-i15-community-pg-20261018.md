@@ -25,7 +25,7 @@
 | `services/api/src/community/store-pg.ts` | 新增 | `createPostgresCommunityStore({ pool })` 实现既有 `CommunityStore` 全部 20 个方法，`persistent: true` |
 | `services/api/src/app.ts` | 改动（3 处） | ① 导入 `createPostgresCommunityStore`；② 装配选型：`pool !== null` ⇒ PG store，否则内存 store；③ real 门禁表达式改为 `executionMode === 'real' && !communityStore.persistent`，503 文案同步为「无连接池 ⇒ 内存 store 不持久」 |
 | `tests/unit/community-store-pg-contract.test.mjs` | 新增 | 记录型假池锁**语句形状**与语义（23 项） |
-| `tests/integration/community-pg.mjs` | 新增 | 真 PG17 端到端（**23 组**，逐组 `PASS n:` 计数）；未设 `COMMUNITY_PG_TEST_URL` 时**显式跳过并明说没验证** |
+| `tests/integration/community-pg.mjs` | 新增 | 真 PG17 端到端（**23 组**，逐组 `PASS n:` 计数）；未设 `COMMUNITY_PG_TEST_URL` 时**显式跳过并明说没验证**，按 main 上 `#312` 的口径以 **77** 退出（`--allow-skip`／`GY_ALLOW_SKIP=1` 才显式取 0） |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | 改动 | `UNWIRED_DECLARATIONS` 登记本片真库脚本 + 原因（该门禁要求「未接线必须显式声明」） |
 | `docs/verification/gy-i24-release-materials-index-20261017.md` | 改动 | 当前读数 18/17 ⇒ **19/18**；并写明 `0019`–`0021` 为有意缺号（`tests/unit/release-materials-index.test.mjs` 要求索引写明当前数量） |
 
@@ -169,7 +169,7 @@ tests/unit/knowledge-herbicides-http.test.mjs` ⇒ `tests 13 / pass 12 / fail 1`
 | # | 未取得 | 原因 / 边界 |
 | --- | --- | --- |
 | F1 | **real 模式下的真实写入 201** | `POST /api/v1/posts`（带 `idempotency-key`）在 `executionMode:'real'` 下返回 503 `PROVIDER_UNAVAILABLE`，原文：`real 模式未接真实审核供应商（tms/ims 未授权、BizType 未核验）：审核不可用，拒绝以替身/内存返回成功封套`。存储门禁本身**已开**（`app.communityService !== null` 断言通过），503 来自**审核域**（派单明示供应商外部阻塞、不在本片范围）。因此 HTTP 写入/点赞/举报的端到端断言在 **stub 配置 + 真 pool** 下完成（store 仍是 PG）：`PASS 21` 证明 201/200 各对应真库一行 |
-| F2 | **本片没有自己的 CI workflow** | 派单禁止改 `.github/`；`community-pg.mjs` 因此不进 `test:integration:http` 链，只在 `UNWIRED_DECLARATIONS` 里白名单登记（不设 env 时显式 SKIP，不静默绿）。要接 CI 需另开切片加 workflow |
+| F2 | **本片没有自己的 CI workflow** | 派单禁止改 `.github/`；`community-pg.mjs` 因此不进 `test:integration:http` 链，只在 `UNWIRED_DECLARATIONS` 里白名单登记（不设 env 时显式 SKIP 并以 **77** 退出，不静默绿；`--allow-skip`／`GY_ALLOW_SKIP=1` 仅本机取 0）。要接 CI 需另开切片加 workflow |
 | F3 | **`auth-privacy-postgres-17.11` 会因缺号转红（已知、必红）** | `tests/integration/migrations-negative-pg.mjs:47-63` 断言「版本号在 `1..max` 上连续无缺号」且「迁移数 === 最大版本号」；本片引入 `0022` 而 `0019`–`0021` 缺号 ⇒ 该脚本在模块顶层断言失败，而它正是 `auth-privacy-postgres.yml:39` 的步骤。**未放宽、未修改该断言**（派单禁止）。合流时的处置二选一：等 I17/I18 把 `0019`–`0021` 补齐后自然转绿，或由指挥裁定本片改用连号 |
 | F4 | **媒体投影仍为空** | `projectPost` 的 `media: []` 是既有行为（媒体域未接线），本片只持久化 `media_ids` 快照，未接 `content_media_refs`/签名 URL |
 | F5 | **未做注销清理接线与后台清理任务** | 本片未在注销（`purgeOwnerData`）路径上登记社区数据；台账过期行靠「查询时顺带物理删除」，无定时清理。二者都需改本片范围外的装配，见 §7-R1/R2 |
@@ -210,5 +210,20 @@ node tests/integration/community-pg.mjs
 node tools/verify-contract-status.mjs
 node tools/verify-release-materials.mjs
 ```
+
+## 9 合流复核五（2026-10-19，main `607c03c` 之后）
+
+- **合流**：`git merge --no-ff upstream/main` = `607c03c`（含 `#312` 集成脚本门禁覆盖，以及 I14 的 `#310`、I22 的 `#309`、I18 后台账号目录的 `#311`），合流提交 `e92ae99`（第一父 `a6e3101`，第二父 `607c03c`）。合流后按 `git ls-files` 实测：迁移 **22** 个（`0001..0022`，连续无缺号）、`rollback/` **21** 个（`0002..0022`，仍无 `0001`）、`deploy/` 在册 **30** 个。
+- **同轮两处口径修正（不含产品代码、未放宽断言）**：
+  - `tests/integration/community-pg.mjs` 的整链 SKIP 分支：`process.exit(0)` → `process.exit(77)`，输出补 `EXITCODE=77 表示未取得，不是通过`，仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0（提交 `a6dac18`）；**SKIP 判定条件本身未改**（仍是 `COMMUNITY_PG_TEST_URL` 未设）。
+  - 同文件迁移号段期望按合流后的树修正：`['0020']` → `['0020','0021']`（`0021` 属 #279，已随 `145ebe4` 入 main；原期望写于 `31a746d` 时点，`145ebe4` 合流时漏刷，合流后即红）。
+- **门禁读数**（本机 Windows PowerShell 5.1 + 原生 PG **17.11** 临时集群，端口 `55480`）：
+  - `node --test "tests/unit/*.test.mjs"`：`tests 1830 / pass 1829 / fail 0 / skipped 1`，exit 0。
+  - `COMMUNITY_PG_TEST_URL=postgres://postgres@127.0.0.1:55480/gengyun_community_test node tests/integration/community-pg.mjs`：`PASS 1 … PASS 23`，末行「全部 23 组真库断言通过。」exit 0。
+  - `MIGRATIONS_NEGATIVE_TEST_URL=postgres://postgres@127.0.0.1:55480/postgres node tests/integration/migrations-negative-pg.mjs`：`PASS 1 … PASS 11`（`PASS 1` 现场读到「空库 up 依次应用 0001–0022，台账 22 行」，`PASS 10` 为 0016 up→down 快照守恒），exit 0。⇒ 原 **F3「缺号必红」已被 main 侧补齐 `0019`–`0021` 自然解除**，本片未改该脚本任何断言。
+  - `npm run test:integration:http`：13 段全绿，exit 0（本文件脚本不在链内，见 F2）。
+  - `node tools/verify-release-materials.mjs`：**15/15 通过**，exit 0；其中 down 覆盖读数为「迁移 22 个（`0001..0022`），down 21 个（`0002..0022`），无 `0001`」。
+  - `git diff --check` 与 `git add -A; git diff --cached --check`：均 0 行，exit 0。
+- **单测权威跑法**：`node --test "tests/unit/*.test.mjs"`（默认隔离）。§8 里的 `--test-isolation=none` 是当时写法，现行口径以上面的跑法为准。
 
 > 本页只写**实测读数与未取得项**；「离线/本机通过」不等于部署、云端或运行期已验收，也不等于审核准确率证据。
