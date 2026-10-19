@@ -30,6 +30,7 @@ const innerAudioPort = require('../../utils/inner-audio-port')
 const substitutePlayer = require('../../utils/substitute-player')
 const voiceApi = require('../../utils/voice-api')
 const recorderPort = require('../../utils/recorder-port')
+const speechTranscript = require('../../utils/speech-transcript')
 const identifyApi = require('../../utils/identify-api')
 
 const POLL_INTERVAL_MS = 1000
@@ -77,6 +78,14 @@ Page({
     this._uploadEpoch = 0
     /** 页面已卸载：此后**任何**入口都不得再重新打开麦克风。 */
     this._gone = false
+    // ④ 转写核对流（GY-I11 客户端切片）：同一时刻只有一条在途转写。
+    this._transcript = null
+    this._transcriptTimer = null
+    this._createAttempt = null
+    this._confirmAttempt = null
+    this._sendAttempt = null
+    this._cancelAttempt = null
+    this._conversation = null
   },
 
   onShow: function () {
@@ -95,7 +104,10 @@ Page({
         substituteNote: localEnabled ? voiceApi.SUBSTITUTE_NOTE : '',
         recordSupported: support.ok === true,
         recordSupportNote: support.note,
-        recordMaxMs: support.maxDurationMs
+        recordMaxMs: support.maxDurationMs,
+        // ④ 转写核对的替身录音引用（仅本地替身工程；共享源码下为空数组，页面不发明引用）
+        transcriptSamples: localEnabled ? speechTranscript.SUBSTITUTE_RECORD_SAMPLES : [],
+        transcriptSampleNote: localEnabled ? speechTranscript.SUBSTITUTE_RECORD_NOTE : ''
       })
       if (loggedIn !== true) that.closePrivate()
     })
@@ -185,7 +197,27 @@ Page({
     recordNote: RECORD_NOTE,
     voiceLimitNote: VOICE_LIMIT_NOTE,
     exitNote: voiceApi.EXIT_CANCELLATION_NOTE,
-    exitReason: ''
+    exitReason: '',
+    uploadedMediaRevision: 0,
+    // ④ 转写核对（GY-I11 客户端切片）：可编辑 + 用户明确确认后才发送；取消/失败/迟到一律不外发
+    transcriptStage: '',
+    transcriptBusy: false,
+    transcriptNote: '',
+    transcriptErrorCode: '',
+    transcriptSamples: [],
+    transcriptSampleNote: '',
+    selectedTranscriptSampleId: '',
+    transcriptMediaLabel: '',
+    transcriptId: '',
+    transcriptRevision: 0,
+    transcriptRaw: '',
+    transcriptSpans: [],
+    transcriptModel: '',
+    transcriptDraft: '',
+    transcriptConfirmedText: '',
+    transcriptConfirmedAt: '',
+    sendJobId: '',
+    sendJobState: ''
   },
 
   // ---------------------------------------------------------------- 操作代次
@@ -208,6 +240,7 @@ Page({
       checkedText: '', segmentCount: 0, segmentPreview: '',
       stage: 'check', busy: false, mode: '', job: null, synthesisNote: '', sourceNotice: ''
     })
+    this.resetTranscript('会话／门禁已失效：转写核对已作废，未发送任何问答。')
   },
 
   /**
@@ -217,6 +250,9 @@ Page({
   releaseAll: function (reason) {
     this.stopPoll()
     voiceApi.cancelAll()
+    // 转写链路同样只在客户端侧作废（服务端转写任务没有取消 operation，不谎称已取消）。
+    speechTranscript.cancelAll()
+    this.stopTranscriptPoll()
     this.beginOperation()
     this._plan = []
     // 录音：离页必须**停止并释放**，不留挂起状态（也不留下会继续计时的定时器）。
@@ -782,6 +818,7 @@ Page({
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音', uploadErrorCode: '',
         uploadedMediaId: media.mediaId,
+        uploadedMediaRevision: media.mediaRevision,
         uploadedPurpose: identifyApi.VOICE_MEDIA_PURPOSE,
         recordStageNote: '录音已按用途 voice_question 上传完成（media_id ' + media.mediaId
           + '，时长 ' + result.durationMs + ' ms）。本页只做到「已上传」：转写与问答结果不在本页，'
@@ -797,6 +834,499 @@ Page({
         uploadErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
         uploadedMediaId: null, uploadedPurpose: '',
         recordStageNote: voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）'
+      })
+    }
+  },
+
+  // ---------------------------------------------------------------- ④ 转写核对（GY-I11 客户端切片）
+  //
+  // 链路：转写受理（POST /speech/transcriptions）→ 轮询记录（GET，404 是正常中间态）→
+  //       **可编辑**正文 → 用户明确确认（PATCH /confirmation）→ 发送语音轮次（POST /conversations/{id}/turns）。
+  //
+  // 三条红线（全部有回归用例锁定）：
+  //   1. **未经明确确认不外发**：发送前必须过 `speechTranscript.evaluateSendGate`；未确认/取消/
+  //      记录缺失/版本不符/操作作废，一律零请求；
+  //   2. **取消/失败/迟到不得外发**：取消先本地关闸门再发 DELETE；轮询迟到响应只允许**单调**更新
+  //      展示（revision 只进不退），永远不写 `flow.confirmed`（只有成功的 PATCH 能写）、
+  //      永远不在取消/换代次后触发发送；
+  //   3. **确认与发送都幂等**：同一次尝试（同正文同 revision）的重试复用同一 Idempotency-Key；
+  //      双击由 `transcriptBusy` 守卫挡下（零第二发）。
+
+  /** 复位整条转写流（换样本/门禁失效/重新转写共用）；`note` 为空表示静默复位。 */
+  resetTranscript: function (note) {
+    this.stopTranscriptPoll()
+    this._transcript = null
+    this._createAttempt = null
+    this._confirmAttempt = null
+    this._sendAttempt = null
+    this._cancelAttempt = null
+    const patch = {
+      transcriptStage: '', transcriptBusy: false, transcriptErrorCode: '',
+      transcriptId: '', transcriptRevision: 0, transcriptRaw: '', transcriptSpans: [], transcriptModel: '',
+      transcriptDraft: '', transcriptConfirmedText: '', transcriptConfirmedAt: '',
+      sendJobId: '', sendJobState: ''
+    }
+    if (typeof note === 'string' && note !== '') patch.transcriptNote = note
+    this.setData(patch)
+  },
+
+  /**
+   * 当前可用的**录音引用**（`MediaJobInput` 两键）：
+   *   1. real 模式真实上传产物（`uploadedMediaId` + `uploadedMediaRevision`，服务端回传值）；
+   *   2. 否则本地替身工程显式选中的替身引用（明确标注，非真实上传）。
+   * 两者都取不到 ⇒ null：页面**不发明**媒体引用、不发起转写。
+   */
+  transcriptMediaRef: function () {
+    if (this.data.uploadedMediaId !== '' && this.data.uploadedMediaRevision >= 1) {
+      return { media_id: this.data.uploadedMediaId, media_revision: this.data.uploadedMediaRevision }
+    }
+    const sampleId = this.data.selectedTranscriptSampleId
+    const sample = this.data.transcriptSamples.filter(function (item) { return item.id === sampleId })[0]
+    if (sample && sample.mediaRef) {
+      return { media_id: sample.mediaRef.media_id, media_revision: sample.mediaRef.media_revision }
+    }
+    return null
+  },
+
+  onPickTranscriptSample: function (event) {
+    if (this.data.guest || this.data.transcriptSamples.length === 0) return
+    const sampleId = event && event.currentTarget && event.currentTarget.dataset ? event.currentTarget.dataset.id : null
+    const sample = this.data.transcriptSamples.filter(function (item) { return item.id === sampleId })[0]
+    if (!sample) return
+    this.resetTranscript('')
+    this.setData({
+      selectedTranscriptSampleId: sample.id,
+      transcriptMediaLabel: '替身录音引用 ' + sample.mediaRef.media_id + '（revision ' + sample.mediaRef.media_revision
+        + '，非真实上传）：' + sample.label
+    })
+  },
+
+  onTranscriptInput: function (event) {
+    const value = event && event.detail ? event.detail.value : ''
+    // 只更新草稿：不触碰已确认快照（`flow.confirmed` 只有成功 PATCH 能写）。
+    this.setData({ transcriptDraft: typeof value === 'string' ? value.slice(0, speechTranscript.TEXT_MAX) : '' })
+  },
+
+  /** 受理一次转写（202 + Job[queued]），随后按 `deadline_at` 轮询记录。 */
+  onRequestTranscript: async function () {
+    if (this.data.guest || this._gone === true || this.data.transcriptBusy) return
+    const mediaRef = this.transcriptMediaRef()
+    if (mediaRef === null) {
+      this.setData({
+        transcriptNote: '没有可用的录音引用：真实上传产物未取得，也未选择替身样本。本页不发明媒体引用、不发起转写。'
+      })
+      return
+    }
+    const generation = this.beginOperation()
+    this.stopTranscriptPoll()
+    this._transcript = { id: '', mediaRef: mediaRef, record: null, confirmed: null, cancelled: false, deadlineMs: 0 }
+    this._confirmAttempt = null
+    this._sendAttempt = null
+    this._cancelAttempt = null
+    // 受理也按「尝试」固化幂等键：网络未能确认结果后重试同一动作 ⇒ 同一把键，
+    // 服务端同键回放同一任务（不重复调用提供者、不建第二个任务）。
+    const createDescriptor = 'create:' + mediaRef.media_id + ':' + mediaRef.media_revision
+    const createKey = speechTranscript.stableKey(this._createAttempt, createDescriptor, 'i11-transcribe')
+    this._createAttempt = { descriptor: createDescriptor, key: createKey }
+    this.setData({
+      transcriptBusy: true, transcriptStage: 'requesting', transcriptErrorCode: '',
+      transcriptNote: '正在受理转写（用途引用 ' + mediaRef.media_id + '）…',
+      transcriptId: '', transcriptRevision: 0, transcriptRaw: '', transcriptSpans: [], transcriptModel: '',
+      transcriptDraft: '', transcriptConfirmedText: '', transcriptConfirmedAt: '', sendJobId: '', sendJobState: ''
+    })
+    try {
+      const created = await speechTranscript.createTranscription(mediaRef, createKey)
+      if (!this.isCurrent(generation)) return
+      const flow = this._transcript
+      if (flow === null) return
+      flow.id = created.transcriptionId
+      // 受理已落定 ⇒ 本次尝试结束：清掉尝试键，下一次「转写本条录音」是新尝试（新键）。
+      // 反之，若 202 响应丢失（网络未能确认），错误分支**保留**尝试键 ⇒ 重试同一把键，
+      // 服务端同键回放同一任务，不会建出第二个任务、不会二次调用提供者。
+      this._createAttempt = null
+      // 轮询边界以服务端 202 回传的截止时间为准（迟到结果不复活任务，客户端也不无限轮）。
+      flow.deadlineMs = Date.parse(created.job.deadline_at) + speechTranscript.POLL_INTERVAL_MS
+      this.setData({
+        transcriptId: created.transcriptionId, transcriptStage: 'pending', transcriptBusy: false,
+        transcriptNote: '转写已受理（job ' + created.job.id + ' · state ' + created.job.state + '）：正在等待转写记录，失败终态不产生记录。'
+      })
+      this.startTranscriptPoll(generation)
+    } catch (error) {
+      if (!this.isCurrent(generation)) return
+      if (isGateLoss(error)) { this.closePrivate(); return }
+      this.setData({
+        transcriptStage: 'failed', transcriptBusy: false,
+        transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）'
+      })
+    }
+  },
+
+  startTranscriptPoll: function (generation) {
+    this.stopTranscriptPoll()
+    const that = this
+    let ticks = 0
+    this._transcriptTimer = setInterval(function () {
+      ticks += 1
+      if (!that.isCurrent(generation)) { that.stopTranscriptPoll(); return }
+      const flow = that._transcript
+      if (flow === null || flow.cancelled === true || flow.id === '') { that.stopTranscriptPoll(); return }
+      const deadlineMs = flow.deadlineMs > 0 ? flow.deadlineMs : 0
+      if (ticks > speechTranscript.POLL_MAX_TICKS || (deadlineMs > 0 && Date.now() >= deadlineMs)) {
+        that.stopTranscriptPoll()
+        // 到达截止仍未取得记录：无有效语音/失败/超时**都不产生记录** ⇒ 如实失败，不编造、不发送。
+        that.setData({
+          transcriptStage: 'failed', transcriptBusy: false, transcriptErrorCode: 'TRANSCRIPT_NOT_PRODUCED',
+          transcriptNote: '转写未在截止时间内产出可核对记录（无有效语音／失败／超时均不产生记录）：'
+            + '不编造文本、不发送任何问答。可取消后重新转写。'
+        })
+        return
+      }
+      that.refreshTranscript(generation)
+    }, speechTranscript.POLL_INTERVAL_MS)
+  },
+
+  stopTranscriptPoll: function () {
+    if (this._transcriptTimer) { clearInterval(this._transcriptTimer); this._transcriptTimer = null }
+  },
+
+  /**
+   * 轮询一拍：404 是正常中间态（继续等）；迟到响应**只允许单调更新**展示。
+   *
+   * 迟到保护（F1-R2 同思路）：
+   *   - 换代次/取消/换流 ⇒ 直接丢弃，不改 UI、不触发任何发送；
+   *   - `record.revision` 只进不退：确认后到达的旧 revision 响应不得把已确认快照冲掉；
+   *   - 本函数**永不写** `flow.confirmed`（唯一写入点是成功的 PATCH 确认）。
+   */
+  refreshTranscript: async function (generation) {
+    const flow = this._transcript
+    if (flow === null || flow.id === '') return
+    let read
+    try {
+      read = await speechTranscript.getTranscription(flow.id)
+    } catch (error) {
+      if (!this.isCurrent(generation)) return
+      if (error.code === 'NOT_FOUND') return // 记录未产出：正常中间态，由定时器边界收口
+      this.stopTranscriptPoll()
+      if (isGateLoss(error)) { this.closePrivate(); return }
+      this.setData({
+        transcriptStage: 'failed', transcriptBusy: false,
+        transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）'
+      })
+      return
+    }
+    if (!this.isCurrent(generation)) return
+    const now = this._transcript
+    if (now === null || now.id !== flow.id || now.cancelled === true) return
+    if (now.record !== null && read.record.revision < now.record.revision) return
+    now.record = read.record
+    this.setData({
+      transcriptStage: 'ready', transcriptBusy: false, transcriptErrorCode: '',
+      transcriptRevision: read.record.revision,
+      transcriptRaw: read.record.raw_text,
+      transcriptSpans: read.record.uncertain_spans,
+      transcriptModel: read.record.model_version,
+      transcriptDraft: read.record.raw_text,
+      transcriptConfirmedText: read.record.confirmed_text === null ? '' : read.record.confirmed_text,
+      transcriptConfirmedAt: read.record.confirmed_at === null ? '' : read.record.confirmed_at,
+      transcriptNote: '转写记录已取得（model_version ' + read.record.model_version + '）：'
+        + '请核对并编辑正文，点击「核对并发送」前不会发送任何内容。'
+    })
+    this.stopTranscriptPoll()
+  },
+
+  /**
+   * **核对并发送**：先 PATCH 明确确认，再过发送闸门，最后才 POST 语音轮次。
+   *
+   * 两段式缺一不可：PATCH 是「用户明确确认」的唯一契约入口；闸门在发送前用**服务端刚回传的**
+   * 记录复核（确认正文非空、revision 一致、服务端同样已确认、操作未作废、未取消）。
+   */
+  onConfirmAndSend: async function () {
+    if (this.data.guest || this._gone === true || this.data.transcriptBusy) return
+    const flow = this._transcript
+    if (flow === null || flow.id === '' || flow.cancelled === true) return
+    const draft = this.data.transcriptDraft
+    if (typeof draft !== 'string' || draft.trim() === '') {
+      this.setData({ transcriptNote: '正文为空：不确认、不发送。请先编辑转写正文。' })
+      return
+    }
+    const generation = this.beginOperation()
+    const recordRevision = flow.record === null ? 0 : flow.record.revision
+    if (recordRevision < 1) {
+      this.setData({ transcriptNote: '尚未取得转写记录：不确认、不发送。' })
+      return
+    }
+    // **发送未确认后的重试**：本机已成功确认过、且服务端状态与当前正文/版本一致 ⇒ 不再 PATCH，
+    // 直接复用「原发送身份」（同一 transcriptionRevision + 同一把发送键）重发。
+    // 为什么不能再确认：服务端 `confirmTranscription` 对每把**新**键都会 `revision + 1`；
+    // 若重试时以新键再确认，发送描述符（含 revision）随之变化 ⇒ 换新发送键 ⇒ 服务端把这次
+    // 重发当成**另一笔**发送（重复轮次），而用户以为只是重试。只有**正文变化**或
+    // **revision 变化**（记录被重读/他人改动）才算新尝试，才重新确认。
+    const reuseConfirmed = flow.confirmed !== null
+      && flow.confirmed.text === draft
+      && flow.record !== null
+      && flow.record.revision === flow.confirmed.revision
+      && flow.record.confirmed_text === draft
+      && flow.record.confirmed_at !== null
+    if (reuseConfirmed !== true) {
+      this.setData({ transcriptBusy: true, transcriptStage: 'confirming', transcriptErrorCode: '', transcriptNote: '正在确认核对结果…' })
+
+      // 第一段：用户明确确认（同一次尝试的重试复用同一把键）。
+      const confirmDescriptor = 'confirm:' + flow.id + ':' + recordRevision + ':' + draft
+      const confirmKey = speechTranscript.stableKey(this._confirmAttempt, confirmDescriptor, 'i11-confirm')
+      this._confirmAttempt = { descriptor: confirmDescriptor, key: confirmKey }
+      let confirmed
+      try {
+        confirmed = await speechTranscript.confirmTranscription({
+          transcriptionId: flow.id,
+          revision: recordRevision,
+          confirmedText: draft,
+          idempotencyKey: confirmKey
+        })
+      } catch (error) {
+        if (!this.isCurrent(generation)) return
+        if (isGateLoss(error)) { this.closePrivate(); return }
+        if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') {
+          // 记录已被别的会话改动/删除：**重读一次**再让用户决定——
+          // 不拿着过期 revision 反复重试（那样每次都会同样冲突，用户没有出路）。
+          await this.resyncTranscriptAfterConflict(generation, flow, error)
+          return
+        }
+        this.setData({
+          transcriptStage: 'ready', transcriptBusy: false,
+          transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+          transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未确认、未发送。'
+        })
+        return
+      }
+      if (!this.isCurrent(generation)) return
+      const live = this._transcript
+      if (live === null || live.id !== flow.id || live.cancelled === true) return
+      // 唯一写 `confirmed` 的地方：用户明确确认的服务端回传结果。
+      live.record = confirmed.record
+      live.confirmed = {
+        text: confirmed.record.confirmed_text,
+        revision: confirmed.record.revision,
+        at: confirmed.record.confirmed_at
+      }
+      this.setData({
+        transcriptStage: 'confirmed', transcriptBusy: false,
+        transcriptRevision: confirmed.record.revision,
+        transcriptConfirmedText: confirmed.record.confirmed_text,
+        transcriptConfirmedAt: confirmed.record.confirmed_at,
+        transcriptNote: '已确认（revision ' + confirmed.record.revision + '）：正在发送到问答…'
+      })
+    } else {
+      this.setData({
+        transcriptBusy: true, transcriptStage: 'confirmed', transcriptErrorCode: '',
+        transcriptNote: '本条正文已确认（revision ' + flow.confirmed.revision + '）：正在重试发送——'
+          + '复用同一发送身份（同 revision、同一把键），不重新确认、不产生新版本。'
+      })
+    }
+
+    // 两条路径共用：代次/流校验后进入发送闸门（fail-closed；任何一条不满足都零请求）。
+    if (!this.isCurrent(generation)) return
+    const live = this._transcript
+    if (live === null || live.id !== flow.id || live.cancelled === true) return
+    const gate = speechTranscript.evaluateSendGate({
+      record: live.record,
+      confirmed: live.confirmed,
+      cancelled: live.cancelled === true,
+      current: this.isCurrent(generation)
+    })
+    if (gate.ok !== true) {
+      this.setData({
+        transcriptStage: 'ready', transcriptBusy: false, transcriptErrorCode: gate.code,
+        transcriptNote: gate.message + '（' + gate.code + '）'
+      })
+      return
+    }
+
+    this.setData({ transcriptBusy: true, transcriptStage: 'sending', transcriptNote: '正在发送已确认的语音轮次…' })
+    try {
+      if (this._conversation === null) {
+        const created = await speechTranscript.createConversation()
+        if (!this.isCurrent(generation)) return
+        this._conversation = { id: created.conversation.id, revision: created.conversation.revision }
+      }
+      const sendDescriptor = 'send:' + live.id + ':' + live.confirmed.revision
+      const sendKey = speechTranscript.stableKey(this._sendAttempt, sendDescriptor, 'i11-send')
+      this._sendAttempt = { descriptor: sendDescriptor, key: sendKey }
+      const sent = await speechTranscript.sendSpeechTurn({
+        conversationId: this._conversation.id,
+        conversationRevision: this._conversation.revision,
+        transcriptionId: live.id,
+        transcriptionRevision: live.confirmed.revision,
+        idempotencyKey: sendKey
+      })
+      if (!this.isCurrent(generation)) return
+      this.setData({
+        transcriptStage: 'sent', transcriptBusy: false, transcriptErrorCode: '',
+        sendJobId: sent.job.id, sendJobState: sent.job.state,
+        transcriptNote: '已发送：问答任务已受理（job ' + sent.job.id + ' · state ' + sent.job.state
+          + '）。回答内容不在本页呈现；未确认前不会发送，取消后也不会补发。'
+      })
+    } catch (error) {
+      if (!this.isCurrent(generation)) return
+      if (isGateLoss(error)) { this.closePrivate(); return }
+      if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') {
+        // 冲突/缺失可能出在**会话侧**（本地丢会话记录、下次重建即可重试），也可能出在
+        // **转写侧**（记录被他人改动 ⇒ 原发送身份的 revision 已过期，原样重试必然再冲突）。
+        // 重读一次记录来区分，出口见 `resyncAfterSendConflict`。
+        this._conversation = null
+        await this.resyncAfterSendConflict(generation, flow, error)
+        return
+      }
+      this.setData({
+        transcriptStage: 'ready', transcriptBusy: false,
+        transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未发送成功，可重试（同一尝试复用同一发送身份：同正文、同 revision、同一把键）。'
+      })
+    }
+  },
+
+  /**
+   * 确认撞上版本冲突/记录缺失后的**重读出口**：按服务端最新记录刷新展示与快照。
+   *
+   * - 记录仍在 ⇒ 更新 `flow.record`、清掉确认尝试键（旧 revision 作废），回到 ready
+   *   让用户**重新明确确认**（闸门只认本机一次成功 PATCH，不会因为"别人确认过"就放行）；
+   * - 记录已不存在 ⇒ 如实失败并保持本流关闭（不再外发），引导重新转写。
+   */
+  resyncTranscriptAfterConflict: async function (generation, flow, error) {
+    let read = null
+    try {
+      read = await speechTranscript.getTranscription(flow.id)
+    } catch (readError) {
+      read = null
+    }
+    if (!this.isCurrent(generation)) return
+    const live = this._transcript
+    if (live === null || live.id !== flow.id || live.cancelled === true) return
+    if (read === null) {
+      this.setData({
+        transcriptStage: 'failed', transcriptBusy: false, transcriptErrorCode: 'NOT_FOUND',
+        transcriptNote: '转写记录已不存在（可能已被删除）：本流不再外发任何问答；可取消后重新转写。'
+      })
+      return
+    }
+    live.record = read.record
+    this._confirmAttempt = null
+    this.setData({
+      transcriptStage: 'ready', transcriptBusy: false, transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+      transcriptRevision: read.record.revision,
+      transcriptRaw: read.record.raw_text,
+      transcriptSpans: read.record.uncertain_spans,
+      transcriptModel: read.record.model_version,
+      transcriptDraft: read.record.confirmed_text === null ? read.record.raw_text : read.record.confirmed_text,
+      transcriptConfirmedText: read.record.confirmed_text === null ? '' : read.record.confirmed_text,
+      transcriptConfirmedAt: read.record.confirmed_at === null ? '' : read.record.confirmed_at,
+      transcriptNote: '转写版本已变化（' + String(error && error.code) + '）：已按服务端最新记录刷新'
+        + '（revision ' + read.record.revision + '）。请重新核对正文并再次点击「核对并发送」——'
+        + '未经本机一次明确确认，不会发送。'
+    })
+  },
+
+  /**
+   * 发送撞上版本冲突/记录缺失后的**重读出口**（与确认路径同构，但保留"可重试"）：
+   *
+   * - 记录仍在且 revision 与已确认快照一致 ⇒ 冲突在**会话侧**：转写身份未变，回到 ready
+   *   让用户重试（同一尝试复用同一把发送键；会话已在调用方丢弃，下次自动重建）；
+   * - 记录仍在但 revision 变了 ⇒ 转写版本已变化：按服务端最新记录刷新展示与快照、
+   *   清掉确认尝试键，回到 ready 让用户**重新明确确认**（闸门只认本机一次成功 PATCH，
+   *   「他人已确认」不自动放行）；
+   * - 记录已不存在 ⇒ 如实失败并保持本流关闭（不再外发），引导重新转写。
+   */
+  resyncAfterSendConflict: async function (generation, flow, error) {
+    let read = null
+    try {
+      read = await speechTranscript.getTranscription(flow.id)
+    } catch (readError) {
+      read = null
+    }
+    if (!this.isCurrent(generation)) return
+    const live = this._transcript
+    if (live === null || live.id !== flow.id || live.cancelled === true) return
+    if (read === null) {
+      this.setData({
+        transcriptStage: 'failed', transcriptBusy: false, transcriptErrorCode: 'NOT_FOUND',
+        transcriptNote: '转写记录已不存在（可能已被删除）：本流不再外发任何问答；可取消后重新转写。'
+      })
+      return
+    }
+    const identityUnchanged = live.confirmed !== null && read.record.revision === live.confirmed.revision
+    live.record = read.record
+    this._confirmAttempt = null
+    this.setData({
+      transcriptStage: 'ready', transcriptBusy: false, transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+      transcriptRevision: read.record.revision,
+      transcriptRaw: read.record.raw_text,
+      transcriptSpans: read.record.uncertain_spans,
+      transcriptModel: read.record.model_version,
+      transcriptDraft: read.record.confirmed_text === null ? read.record.raw_text : read.record.confirmed_text,
+      transcriptConfirmedText: read.record.confirmed_text === null ? '' : read.record.confirmed_text,
+      transcriptConfirmedAt: read.record.confirmed_at === null ? '' : read.record.confirmed_at,
+      transcriptNote: identityUnchanged
+        ? '会话侧版本变化（' + String(error && error.code) + '）：转写身份未变，可重试——复用同一把发送键，会话将自动重建。'
+        : '转写版本已变化（' + String(error && error.code) + '）：已按服务端最新记录刷新（revision '
+          + read.record.revision + '）。请重新核对正文并再次点击「核对并发送」——未经本机一次明确确认，不会发送。'
+    })
+  },
+
+  /**
+   * **取消**：先本地永久关闭闸门（取消后任何在途/迟到响应都不得外发），再发 DELETE。
+   *
+   * 删除失败也**不重开**发送资格（本地取消是用户的最终决定）；服务端删除未成功如实说明，
+   * 用户可重新转写（新流），但这条转写永远不会再外发。
+   */
+  onCancelTranscript: async function () {
+    if (this.data.guest || this._gone === true) return
+    // 只挡「写操作在途」的三个态；**受理在途（requesting）必须允许取消**——
+    // 那正是用户最需要中止的时刻（请求挂着没有响应）。其余禁态由 WXML 的 disabled 同步表达。
+    const stage = this.data.transcriptStage
+    if (stage === 'confirming' || stage === 'sending' || stage === 'cancelling') return
+    const flow = this._transcript
+    if (flow === null || flow.cancelled === true) return
+    const generation = this.beginOperation()
+    flow.cancelled = true
+    this.stopTranscriptPoll()
+    speechTranscript.cancelAll()
+    if (flow.id === '') {
+      // 受理还在途（尚未拿到任务 id）：本地作废在途请求即可，服务端没有任务可取消，
+      // **不**谎称已取消服务端任务；迟到的 202 响应会被代次守卫丢掉，不会开始轮询。
+      this.setData({
+        transcriptStage: 'cancelled', transcriptBusy: false,
+        transcriptNote: '已取消受理：尚未产生转写任务，无需删除；未发送任何问答，也不会补发。'
+      })
+      return
+    }
+    const revision = flow.record === null ? (flow.confirmed === null ? 0 : flow.confirmed.revision) : flow.record.revision
+    if (revision < 1) {
+      this.setData({
+        transcriptStage: 'cancelled', transcriptBusy: false,
+        transcriptNote: '已取消：尚未取得转写记录，无需删除；不会发送任何问答。'
+      })
+      return
+    }
+    this.setData({ transcriptBusy: true, transcriptStage: 'cancelling', transcriptNote: '正在取消（删除转写记录）…' })
+    const cancelDescriptor = 'cancel:' + flow.id + ':' + revision
+    const cancelKey = speechTranscript.stableKey(this._cancelAttempt, cancelDescriptor, 'i11-cancel')
+    this._cancelAttempt = { descriptor: cancelDescriptor, key: cancelKey }
+    try {
+      await speechTranscript.deleteTranscription({ transcriptionId: flow.id, revision: revision, idempotencyKey: cancelKey })
+      if (!this.isCurrent(generation)) return
+      this.setData({
+        transcriptStage: 'cancelled', transcriptBusy: false,
+        transcriptNote: '已取消：转写记录已删除，未发送任何问答，也不会补发。'
+      })
+    } catch (error) {
+      if (!this.isCurrent(generation)) return
+      if (isGateLoss(error)) { this.closePrivate(); return }
+      this.setData({
+        transcriptStage: 'cancelled', transcriptBusy: false,
+        transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：'
+          + '服务端删除未成功，但本页已停止外发——不会发送任何问答；如需重来请重新转写。'
       })
     }
   }
