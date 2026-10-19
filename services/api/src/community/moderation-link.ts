@@ -33,7 +33,7 @@
  *
  * | 态 | 判据 | 社区侧处置 |
  * | --- | --- | --- |
- * | **可发布** `publishable` | `decision === 'approved'`（任务集非空且全部通过） | 允许落内容行并公开 |
+ * | **可发布** `publishable` | `decision === 'approved'`（任务集非空且全部通过） | 允许落内容行并公开（**经审核域 `publish` 闸门**写成 `published`） |
  * | **驳回** `vetoed` | 存在 `rejected` 任务（规则层或模型层） | **不落库**（400）+ 读取面退出公开面 |
  * | **隔离** `isolation` | 其余（`quarantined` / `pending` / 超时 / 未接线 / 无结论） | **不落库**（422）+ 读取面退出公开面 |
  *
@@ -99,6 +99,20 @@ export interface LinkScreenResult {
   execution_mode: string;
 }
 
+/**
+ * 发布闸门的结果口径（社区**只读**它，绝不自己写 `published`/`approved`）。
+ *
+ * `published === false` 一律按"未发布"处理（fail-closed）；审核域拒绝发布时是**抛错**，
+ * 不会走到这里 —— 社区看到的错误码与 `details.reason_codes` 即拒绝原因。
+ */
+export interface LinkPublishResult {
+  target_ref: LinkTargetRef;
+  published: boolean;
+  visibility: string | null;
+  published_revision: number | null;
+  cache_keys_invalidated: string[];
+}
+
 /** 该版本在审核域台账里的**当前**结论（读取时重查用；同步读，不发起审核）。 */
 export interface LinkConclusion {
   /** 台账里是否有该 `(target, revision)` 的版本级任务。 */
@@ -145,6 +159,12 @@ export interface LinkReadResult {
 export interface ModerationDomainPort {
   readonly execution_mode?: string;
   submitScreening(input: unknown): Promise<unknown>;
+  /**
+   * **发布闸门**（与筛查分开的第二步）：社区把"已获筛查放行"的内容交给审核域发布，
+   * 由审核域按自己的端口重跑模型层可发布判定与重审判定后才写可见性。
+   * **不得**由社区自己写 `published`/`approved`。
+   */
+  publish(input: unknown): Promise<unknown>;
   withdraw(input: unknown): Promise<unknown>;
   readView(input: unknown): Promise<unknown>;
   tasks(target_ref: unknown): unknown;
@@ -166,6 +186,14 @@ export interface CommunityModerationLink {
   readonly note: string;
   /** 送审：建立/刷新该版本的版本级审核任务，并回读判定（**不吞错**）。 */
   screen(input: { actor: LinkActor; content: LinkContent }): Promise<LinkScreenResult>;
+  /**
+   * 发布（**筛查通过后的第二步**）：把该版本交给审核域的发布闸门，由其按自己的端口重跑
+   * 模型层可发布判定与重审判定并写可见性。
+   *
+   * 社区**不得**自己写 `visibility:'published'` + `audit_state:'approved'`；
+   * 审核域拒绝发布时**抛错**（不吞错），调用方必须保持"未发布"。
+   */
+  publish(input: { actor: LinkActor; content: LinkContent }): Promise<LinkPublishResult>;
   /** 下架（管理员动作）：驱动审核域整链缓存失效 + 该版本永久不可复活。 */
   withdraw(input: { actor: LinkActor; target_ref: LinkTargetRef; reason_code: string }): Promise<LinkWithdrawResult>;
   /** 读取时重查（隐藏/未发布/旧链接/账号状态不因缓存或旧链接复活）。 */
@@ -353,6 +381,32 @@ export function createCommunityModerationLink(options: {
     };
   }
 
+  async function publish(input: { actor: LinkActor; content: LinkContent }): Promise<LinkPublishResult> {
+    let raw: unknown;
+    try {
+      raw = await moderation.publish({ actor: input.actor, content: input.content });
+    } catch (error) {
+      // **不吞错**：审核域拒绝发布（REVISION_CONFLICT / INPUT_UNCERTAIN / OBJECT_UNAVAILABLE …）
+      // 必须原样到达调用方 —— 内容**不得**因此变成"已发布"。
+      throw asApiError(error);
+    }
+    if (!isPlainObject(raw)) throw shapeUnavailable('发布结论');
+    // 形状不可读／没写成 ⇒ 一律按"未发布"拒绝（fail-closed；**绝不**当成发布成功）。
+    if (raw['published'] !== true) {
+      throw new ApiError('INPUT_UNCERTAIN', '审核域发布未生效（fail-closed，不得视为已发布）', {
+        retryable: false,
+      });
+    }
+    const publishedRevision = raw['published_revision'];
+    return {
+      target_ref: targetOf(raw['target_ref']),
+      published: true,
+      visibility: typeof raw['visibility'] === 'string' ? raw['visibility'] : null,
+      published_revision: typeof publishedRevision === 'number' ? publishedRevision : null,
+      cache_keys_invalidated: stringArray(raw['cache_keys_invalidated']),
+    };
+  }
+
   async function withdraw(input: {
     actor: LinkActor;
     target_ref: LinkTargetRef;
@@ -455,6 +509,7 @@ export function createCommunityModerationLink(options: {
       options.note ??
       '版本级审核任务与结论来自已合并审核域（services/api/src/moderation/**）；社区只做读取与否决，不重写判定',
     screen: submit,
+    publish,
     withdraw,
     readView,
     conclusionFor,
