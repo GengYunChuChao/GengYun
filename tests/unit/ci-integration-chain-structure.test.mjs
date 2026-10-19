@@ -115,6 +115,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
   },
   {
+    path: 'tests/integration/messages-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_messages_test`（本机便携集群，仅回环端口）：'
+      + '本片用它取消息域迁移三连／重复判定／已读并发收敛／派生计数／分页的真库读数；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/migrations-negative-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
       + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因，'

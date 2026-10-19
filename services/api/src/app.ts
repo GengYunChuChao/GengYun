@@ -106,6 +106,7 @@ import { createEgressRevoker, createInFlightGuard } from '../../../packages/priv
 import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
+import { createPostgresMessagesStore } from './messages/store-pg.ts';
 import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
 // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域 + 注销删除接线（F13 协议复用）。
 import { registerFavoriteRoutes } from './routes/favorites.ts';
@@ -689,13 +690,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
 
   const clock = now ?? (() => new Date());
-  const messagesService = config.executionMode === 'real' ? null : createMessagesService({
-    store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
-    reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
-    signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-    now: clock,
-    idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
-  });
+  // GY-I17（#17）阶段 2：`real` 且真实连接池已接入 ⇒ 消息域走 PostgreSQL 持久化；
+  // `real` 但 `pool === null` ⇒ 维持整域 fail-closed（服务为 null，路由 503），
+  // 注入的内存 store 在 `real` 下**不**能冒充持久化（`tests/unit/messages-http.test.mjs` 钉住这条）。
+  const messagesService = config.executionMode === 'real'
+    ? (pool === null ? null : createMessagesService({
+        store: createPostgresMessagesStore({ pool }),
+        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        now: clock,
+        idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+      }))
+    : createMessagesService({
+        store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
+        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        now: clock,
+        idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
+      });
   // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：社区 store 与作者投影**只声明一次**，
   // 由社区服务、后台 `hidePost` 与审核域的**同源内容权威端口**三方共用同一实例。
   // 说明：这两行原在下方"社区装配"块内；本接线只把**声明**前移到审核域构造之前
