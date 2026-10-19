@@ -102,3 +102,64 @@ test('接线状态如实暴露：accountsWired 固定 false，store/jobPort/oper
     assert.equal(typeof shell[name], 'function', `${name} 必须存在（契约闭集不得因外壳缺项）`);
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GY-I18/T-R12-03 新增（⛔ 未改动上面三条既有断言）：读面在真实目录注入时放行。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('第三参 accountsReadWired: true ⇒ 只多放行 listAdminUsers（其余仍逐条 503）', async () => {
+  const { inner, calls } = recordingService();
+  const shell = restrictAdminOpsToAccountsAuthority(inner, REASON, { accountsReadWired: true });
+
+  const context = { identity: { userId: 'u1' } };
+  assert.equal(typeof shell.listAdminUsers, 'function');
+
+  // 读面：原样转发 inner（参数不变、返回值不变、恰好被调一次）。
+  const out = await shell.listAdminUsers(context, { limit: '2', cursor: null });
+  assert.deepEqual(out, { status: 200 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'listAdminUsers');
+  assert.deepEqual(calls[0].args, [context, { limit: '2', cursor: null }]);
+
+  // 停用面：本壳本来就没挡（既有行为），这里只确认它没有在读面放行后被顺手改写。
+  const suspended = await shell.suspendUser(context, 'acc-1', { reason_code: 'account_suspended' });
+  assert.deepEqual(suspended, { status: 200, headers: {}, body: { state: 'suspended' } });
+  assert.equal(calls.length, 2);
+
+  // 其余 7 个操作：仍逐条 503，措辞同源，且一个都没真的被调。
+  for (const name of REJECTED.filter((item) => item !== 'listAdminUsers')) {
+    await assert.rejects(
+      () => shell[name](context, 'acc-1', {}),
+      (error) => {
+        assert.equal(error.code, 'PROVIDER_UNAVAILABLE', `${name} 必须仍 503`);
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, false);
+        assert.equal(error.message, REASON);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(calls.map((call) => call.name), ['listAdminUsers', 'suspendUser'], '放行集合恰为两项');
+});
+
+test('第三参默认/显式 false ⇒ listAdminUsers 与首版逐字相同（仍 503）', async () => {
+  for (const options of [undefined, {}, { accountsReadWired: false }]) {
+    const { inner, calls } = recordingService();
+    const shell = options === undefined
+      ? restrictAdminOpsToAccountsAuthority(inner, REASON)
+      : restrictAdminOpsToAccountsAuthority(inner, REASON, options);
+
+    await assert.rejects(
+      () => shell.listAdminUsers({ identity: { userId: 'u1' } }),
+      (error) => {
+        assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, false);
+        assert.equal(error.message, REASON);
+        return true;
+      },
+    );
+    assert.deepEqual(calls, [], '未接线时读面不得触达内层服务');
+    assert.equal(shell.accountsWired, false, 'accountsWired 不随 accountsReadWired 变成 true');
+  }
+});

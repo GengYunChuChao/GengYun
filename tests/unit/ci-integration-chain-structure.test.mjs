@@ -77,6 +77,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-accounts-read-pg.mjs',
+    reason: '需真实 PG 17.11 隔离集群且必须传运行时角色 URL：本片用它取迁移三连／最小权限反向控制／'
+      + '真实模式 HTTP（三态账号、NULL/空白 nickname、游标翻页、两条负控制）的真库读数；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/admin-flags-pg.mjs',
     reason: '需真实 PG 17.11 隔离集群且硬钉库名 `gengyun_flags_test`（脚本自建运行时角色并重放'
       + ' `gy-i18-flags-grant` 区域）；本片未新增对应 CI workflow（如实登记为未取得项），'

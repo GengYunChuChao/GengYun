@@ -162,9 +162,15 @@ export interface WithdrawOutcome {
   target_ref: TargetRef;
   visibility: Visibility;
   withdrawn: boolean;
+  /**
+   * 本次下架**实际失效掉的读缓存键**（`post|id|revision`，revision＝被处置的那一版）。
+   *
+   * 这里是下架对外**唯一**的信号：失效在 `withdraw()` 内同步完成（把结论写进
+   * `moderation_ledger` 的 `withdrawn` 标记后，同一把锁内清缓存），因此不需要、
+   * 也不再产出任何"事件"字段——那类字段零订阅方，留着只会让下游误以为存在
+   * 异步失效通道（历史问题见 `.pg17/analysis/i14-moderation-gaps-20261019.md` R5/R6）。
+   */
   invalidated_cache_keys: string[];
-  /** 下架事件（供缓存/列表/详情订阅；**不下发**任何正文）。 */
-  event: { kind: 'moderation.takedown'; target_ref: TargetRef; reason_code: string; at: string };
 }
 
 export interface ReadViewOutcome extends ReadVerdict {
@@ -554,6 +560,53 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     };
   }
 
+  /**
+   * **版本新鲜度**（读面口径）：只按结论绑定的版本三元组与"当前版本"比对，
+   * 判断这份结论是否已因版本前进而失效。
+   *
+   * 为什么不直接拿 `evaluateModelReReview(...)` 的 `stale` 就用：读面（`tasks` / `readView` /
+   * 社区联动端口）拿不到正文，而引擎在"没给 input"时会按 `MODEL_LAYER_INPUT_BINDING_UNVERIFIED`
+   * 把结论判成失效——那是**发布/重审**路径才能核的事（它们带 content）。读面照抄会把
+   * "内容摘要未核验"误报成"版本过期"，结果是所有已发布内容一律不可读。这里只滤掉这一条
+   * （它只可能在"没给 input"时出现），其余原因码（版本变化/未知、规则层失效、结论自相矛盾…）
+   * **全部保留** ⇒ 宁严不松。
+   */
+  function versionFreshnessOf(task: ModerationTaskRecord): { stale: boolean; reason_codes: string[] } {
+    // **只有已生效（approved）的结论才有"过期"可言**：过期改变的是"这条结论还能不能继续当已审/
+    // 已公开"。`pending`（模型层还没求值）连结论都没有；`rejected`/`quarantined` 的内容本就不公开、
+    // 也从不放行，标"过期"不改变任何行为，却会把原因码掺进读面与 422 的原因集合。
+    //
+    // 更关键：引擎的"自相矛盾"判据是为**已出结论**的旧判定设计的——`packages/moderation/review.mjs:169-172`
+    // 的 `hardRulePassed === true && decision !== DECISION_APPROVED ⇒ DECISION_INCONSISTENT`。而"规则层已过、
+    // 模型层还没有结论"的任务正是 `decision !== 'approved'` + `hard_rule_passed === true`，套上去必然产出
+    // `DECISION_INCONSISTENT`，再被当成"版本过期"→ 读面 `RESCREEN_REQUIRED` 与该码一起漏进社区 422 的原因码
+    // 集合（CI `#310` 的 AC08-a：期望 `["MODEL_NOT_EVALUATED"]`，实得 `["MODEL_NOT_EVALUATED","DECISION_INCONSISTENT"]`）。
+    // 因此这里按"结论是否生效"收敛：非 approved 一律不判过期（不是"未知也判过期"）。
+    if (task.decision !== 'approved') return { stale: false, reason_codes: [] };
+    const ruleVersion = currentRuleVersion();
+    if (ruleVersion === null) {
+      // 当前规则集取不到 ⇒ 无法证明"结论仍然新鲜"，按未知处理（不得当已审）。
+      return { stale: true, reason_codes: ['RULE_VERSION_UNKNOWN'] };
+    }
+    const modelVersion = currentModelVersion(task.content_kind) ?? task.model_version;
+    const promptVersion = currentPromptVersion(task.evidence.media_count);
+    const report = evaluateModelReReview(task.gate_holder, {
+      rule_version: ruleVersion,
+      ...(modelVersion === null ? {} : { model_version: modelVersion }),
+      ...(promptVersion === null ? {} : { prompt_version: promptVersion }),
+      target_ref: task.target_ref,
+    });
+    const reasonCodes = report.reason_codes.filter(
+      (code) => code !== 'MODEL_LAYER_INPUT_BINDING_UNVERIFIED' && code !== 'NOT_PUBLISHABLE',
+    );
+    return { stale: reasonCodes.length > 0, reason_codes: reasonCodes };
+  }
+
+  /** 读面统一投影：台账记录 + **实时**新鲜度（结论过期 ⇒ `stale`，不得当"已审"）。 */
+  function viewOf(record: ModerationTaskRecord): ModerationTaskView {
+    return taskView(record, versionFreshnessOf(record));
+  }
+
   async function screen(args: {
     actor: ModerationActor;
     content: ModerationContent;
@@ -666,7 +719,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
     return {
       target_ref: target,
-      tasks: stored.map(taskView),
+      tasks: stored.map(viewOf),
       overall: {
         decision: overallDecision,
         reason_codes: orderedReasonCodes(stored.flatMap((record) => record.reason_codes)),
@@ -804,13 +857,13 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     await authority.setVisibility(target, 'hidden');
     await authority.setPublishedRevision(target, null);
     ledger.markWithdrawn(target);
+    // 失效在**同一次调用内同步完成**：返回的键就是这次真正清掉的键（不另发事件）。
     const invalidated = cache.invalidateTarget(target);
     return {
       target_ref: target,
       visibility: 'hidden',
       withdrawn: true,
       invalidated_cache_keys: invalidated,
-      event: { kind: 'moderation.takedown', target_ref: target, reason_code: args.reason_code, at: nowIso() },
     };
   }
 
@@ -831,6 +884,35 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       published_revision: published,
       cache_entry: cached,
     });
+    // ---- 结论新鲜度：读面**不得**把"待重评"当"已审"返回 ----
+    // 已公开的内容只要有一条任务的结论过期（规则集/模型/prompt 版本前进），它就不再等于
+    // "已审"：给 `RESCREEN_REQUIRED`、判为不可见，并把缓存条目清掉（缓存只知道可见性，
+    // 不知道"结论新鲜度"这一维，留着就是脏条目）。契约状态**不新增**：过期沿用既有原因码
+    // 词汇（`*_VERSION_CHANGED`/`*_UNKNOWN`），对用户的"待重评"由社区读面既有的
+    // `audit_state: 'pending'` 表达。
+    const staleReasons =
+      verdict.visible && verdict.visibility === 'published'
+        ? [
+            ...new Set(
+              ledger.forRevision(target).flatMap((task) => {
+                const fresh = versionFreshnessOf(task);
+                return fresh.stale ? fresh.reason_codes : [];
+              }),
+            ),
+          ].slice(0, 30)
+        : [];
+    if (staleReasons.length > 0) {
+      const keys = cache.invalidateTarget(target);
+      return {
+        visible: false,
+        visibility: snapshot === null ? null : snapshot.visibility,
+        reason_codes: ['RESCREEN_REQUIRED', ...staleReasons],
+        cache_hit: cached !== null,
+        cache_entry_stale: cached !== null,
+        cache_keys_invalidated: [...new Set([...verdict.cache_keys_invalidated, ...keys])],
+        target_ref: target,
+      };
+    }
     let invalidated: string[] = [];
     if (verdict.cache_entry_stale || (!verdict.visible && cached !== null)) {
       // 缓存与权威不一致（或内容已不可见）⇒ **立即失效整链**，而不是把脏条目留在缓存里。
@@ -1085,7 +1167,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       accepted: true,
       reason_codes: [],
       issues: [],
-      task: taskView(updated),
+      task: viewOf(updated),
       contract_error_code: null,
     };
   }
@@ -1100,10 +1182,10 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     readView,
     reReview,
     ingestCallback,
-    tasks: (target_ref) => ledger.forRevision(target_ref).map(taskView),
+    tasks: (target_ref) => ledger.forRevision(target_ref).map(viewOf),
     taskByJobId: (jobId) => {
       const record = ledger.byJobId(jobId);
-      return record === null ? null : taskView(record);
+      return record === null ? null : viewOf(record);
     },
     humanReview: () => humanReviewQueue(),
     counts: () => ({

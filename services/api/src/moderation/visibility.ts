@@ -6,9 +6,12 @@
  *      发布是**独立一步**（`service.publish`），且发布前必须重跑版本/证据/输入绑定闸门。
  *   2) **读取时重查权限与可见性**：读缓存**永远不是**事实来源。每次读取都问权威端口；
  *      命中缓存但权威说不 ⇒ 一律不可见，并**顺手失效**该缓存条目。
- *      隐藏 / 已删除 / 账号停用或去身份 / 旧 revision 链接 **不得**因缓存或旧链接重新公开。
- *   3) **下架事件驱动缓存失效**：下架 = 可见性转 `hidden` + 已发布 revision 置空 +
- *      失效该目标**全部 revision** 的缓存条目（返回被失效的键，可断言）。
+ *      隐藏 / 已删除 / 账号停用或去身份 / 旧 revision 链接 **不得**因缓存或旧链接重新公开；
+ *      结论过期（规则集/模型/prompt 版本在结论之后前进）的已发布内容同样**不得**按"已审"返回
+ *      （`RESCREEN_REQUIRED`）。
+ *   3) **下架 = 同步失效**：下架 = 可见性转 `hidden` + 已发布 revision 置空 +
+ *      失效该目标**全部 revision** 的缓存条目（返回被失效的键，可断言）。失效在同一次
+ *      `withdraw()` 内完成，**不依赖**任何事件/订阅方（原先那类零订阅方的"事件"已删除）。
  */
 import { ApiError } from '../errors.ts';
 import { PUBLIC_VOTE_ENABLED, type AuthoritySnapshot, type ContentAuthorityPort, type ModerationActor, type TargetRef, type Visibility } from './types.ts';
@@ -26,6 +29,11 @@ export const VISIBILITY_REASON_CODES = Object.freeze([
   'SCOPE_DENIED',
   'VISIBILITY_UNVERIFIED',
   'CACHE_ENTRY_STALE',
+  /**
+   * 结论已过期（规则集／模型／prompt 版本在结论之后前进）：内容本身仍可能已发布，
+   * 但**不得**再按"已审"返回，必须重评后才恢复可见（服务层在高版本任务过期时给出）。
+   */
+  'RESCREEN_REQUIRED',
 ]);
 
 export interface ReadVerdict {

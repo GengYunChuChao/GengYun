@@ -73,6 +73,7 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createAdminContentStore } from './admin/store.ts';
@@ -1154,6 +1155,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const realAccountAuthority =
       adminInjection?.accountAuthority ??
       (pool === null ? null : createPostgresAccountAuthority({ pool }));
+    // **GY-I18/T-R12-03 第三个显式放行（读面）**：真实账号目录只在**确实拿到库池**时构造；
+    // `pool === null` ⇒ 目录为 null ⇒ 读面保持 503（⛔ 不拿内存种子冒充真实账号，也⛔ 不返回空页）。
+    // 读的是迁移 0021 的窄口径函数 `public.list_admin_accounts()`（运行时角色只有 EXECUTE）。
+    const realAccountsDirectory = pool === null ? null : createPostgresAccountsDirectory({ pool });
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
@@ -1165,6 +1170,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           signingKey: adminSigningKey,
           executionMode: config.executionMode,
           accountAuthority: realAccountAuthority,
+          accountsDirectory: realAccountsDirectory,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminInjection?.jobPort,
@@ -1173,14 +1179,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
-        { flagsWired },
+        // 判据是**能力对象存在**：目录构造成功才放行读面；否则 `listAdminUsers` 仍逐条 503。
+        { accountsReadWired: realAccountsDirectory !== null, flagsWired },
       );
       const released: string[] = [];
       if (realAccountAuthority !== null) released.push('账号停用');
+      if (realAccountsDirectory !== null) released.push('账号读面');
       if (flagsWired) released.push('开关读写');
       app.log.warn(
-        { executionMode: config.executionMode },
-        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库单事务；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        { executionMode: config.executionMode, accountsReadWired: realAccountsDirectory !== null, flagsWired },
+        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021）；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {

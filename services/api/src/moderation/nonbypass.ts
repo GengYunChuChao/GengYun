@@ -7,7 +7,10 @@
  *      ⇒ 整条回报**拒绝**（按 fail-closed 归类为形状不可信 ⇒ 隔离），
  *      **不是静默丢弃**：静默丢弃会让"模型试图提权"这一事实消失。
  *   2) **不得改来源**：目标的内容来源（`source_kind` ∈ database | verified_seed | simulation）只能由
- *      资料/人工链路写；审核前后必须逐字节一致，`assertSourceUnchanged` 是判据。
+ *      资料/人工链路写。判据是**结构性的**：审核域的内容权威端口（`ContentAuthorityPort`）根本没有
+ *      写来源的方法（只有 `setVisibility`/`setPublishedRevision`），因此"审核前后来源一致"不靠
+ *      运行时断言来证明——**没有可写入口**才是保证（原先的 `assertSourceUnchanged` 零调用、恒真，
+ *      已删除；不要再用一个恒为 `true` 的函数冒充判据）。
  *   3) **不得标"专家已审"**：首版**没有**人工审核队列，人审入口是**空态**
  *      （`HUMAN_REVIEW_STATE = 'under_construction'`，取自契约 `Home.human_review_state` 的 const）。
  *      公众票决同样**不进入首版**（`PUBLIC_VOTE_ENABLED === false`）。
@@ -145,23 +148,23 @@ export function guardModelPort<T extends { evaluate: (request: unknown) => unkno
 }
 
 /**
- * 来源未被审核改动（AC08「AI 不改来源」）。
- * 返回 `false` 即**不得**沿用本次审核结论，调用方须按 `SOURCE_CHANGED_BY_MODEL` 拒绝。
- */
-export function assertSourceUnchanged(before: string | null, after: string | null): boolean {
-  return before === after;
-}
-
-/**
  * 人审入口：**空态**（不造假任务、不造假审核人、不造假专家认证、不做票决）。
  * 返回结构里的 `items` 恒为空数组——只有真实人审线合并后才会返回非空。
+ *
+ * `voting` **跟着唯一事实源走**（`PUBLIC_VOTE_ENABLED`，取自契约常量）：
+ * 首版该常量为 `false` ⇒ `'disabled'`；它一旦翻成 `true`，这里立刻变 `'enabled'`，
+ * 不会出现"常量说开了、入口说关着"的两套口径（旧写法两臂同值，翻转常量时不会有任何反应）。
+ *
+ * `assumptions.public_vote_enabled` 只是**测试缝**：用来证明"两臂真的不同"（若写回两臂同值，
+ * 这条断言立刻变红）。生产调用方一律不传，取值仍由 `PUBLIC_VOTE_ENABLED` 决定。
  */
-export function humanReviewQueue(): {
+export function humanReviewQueue(assumptions: { public_vote_enabled?: boolean } = {}): {
   human_review_state: typeof HUMAN_REVIEW_STATE;
-  voting: 'disabled';
+  voting: 'disabled' | 'enabled';
   items: readonly never[];
 } {
-  return { human_review_state: HUMAN_REVIEW_STATE, voting: PUBLIC_VOTE_ENABLED ? 'disabled' : 'disabled', items: [] };
+  const votingEnabled = assumptions.public_vote_enabled ?? PUBLIC_VOTE_ENABLED;
+  return { human_review_state: HUMAN_REVIEW_STATE, voting: votingEnabled ? 'enabled' : 'disabled', items: [] };
 }
 
 /** 该回报是否试图标注"专家已审"（首版无此能力 ⇒ 拒绝）。 */

@@ -15,6 +15,8 @@
  * 存储是**进程内内存 store**（`execution_mode: 'stub'`），**未接真实 PostgreSQL**。
  * 例外（GY-I22）：账号**停用**在注入 `accountAuthority`（`account-authority-pg.ts`）时走真实库的
  * 单事务路径，见 `suspendUser` 内的分支；未注入 ⇒ 与既有口径一致地 fail-closed。
+ * 例外（GY-I18/T-R12-03）：账号**读面**在注入 `accountsDirectory`（`accounts-pg.ts`）时读真实
+ * `public.users`，见 `listAdminUsers` 内的分支；未注入 ⇒ 与既有口径一致地 fail-closed。
  */
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../../errors.ts';
@@ -44,6 +46,7 @@ import type { FlagEffect, FlagKey } from './flags.ts';
 import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
+import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { FeatureFlagsPort } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
@@ -58,6 +61,7 @@ import type {
   CancelJobOutcome,
 } from './types.ts';
 import { TERMINAL_JOB_STATES } from './types.ts';
+import { ACCOUNT_STATES } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // 契约信封
@@ -91,9 +95,18 @@ export interface AdminOpsServiceOptions {
   /**
    * 真实账号写权威（GY-I22 接线）。给了它 ⇒ `suspendUser` 走**单事务**的真实路径
    * （`users.state` + `auth_epoch` + 会话撤销 + 审计四步原子）；保留在 `accountSeed` 之上，
-   * 因为读面（`listAdminUsers`）仍按种子判定是否接线。
+   * 因为读面仍按「是否注入了真实目录」判定是否接线（见下一个字段）。
    */
   accountAuthority?: AdminAccountAuthority | null;
+  /**
+   * 真实账号读目录（GY-I18/T-R12-03 接线：`accounts-pg.ts` 读 `public.users`）。
+   * 给了它 ⇒ `listAdminUsers` 读真实库后仍走既有 `pageOf()`（分页/游标/封套语义不变）；
+   * 缺省/`null` ⇒ 维持内存种子路径（`requireWiredAccountAuthority()` + `store.listAccounts()`）。
+   *
+   * **残余限制（如实声明）**：真实目录是**一次全表读**（`ORDER BY created_at ASC, id ASC`），
+   * 分页在服务层对内存数组切片，**不是** SQL 侧分页；账号规模上万时需要 keyset 分页（后续片）。
+   */
+  accountsDirectory?: AdminAccountsDirectory | null;
   /**
    * 真实开关端口（GY-I18 接线，`flags-pg.ts`）。给了它 ⇒ `listFlags`/`setFlag` 的**读写都走库**：
    * 读面从 `public.feature_flags` 取三行（缺行/多行/闭集外 ⇒ 503 fail-closed，**不**返回三键全 false），
@@ -181,6 +194,10 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     accountSeed: options.accountSeed,
   });
   const accountAuthority: AdminAccountAuthority | null = options.accountAuthority ?? null;
+  // 真实账号读目录（GY-I18/T-R12-03）：未注入/显式 null ⇒ 读面维持内存种子 + 既有 fail-closed。
+  // 判据是**能力对象存在**（`app.ts` 只在真的构造出 `createPostgresAccountsDirectory()` 时传），
+  // ⛔ 不读任何自述持久化布尔标志。
+  const accountsDirectory: AdminAccountsDirectory | null = options.accountsDirectory ?? null;
   const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
@@ -351,7 +368,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
    * - **不写审计、不迁移状态、不占幂等键**：本片把判断放在写外壳**之前**，故连占位都不会发生。
    *
    * 接线口径：`accountsWired` 由 store 在构造时定（今天唯一形态 = 注入了账号种子）；
-   * 接真实 `users` 表权威属后续片，本片不声称已接。
+   * 注入了真实目录（`accountsDirectory`）时读面**不经过**本函数——真实性由能力对象本身保证，
+   * 此时本函数只守「降级到内存种子」的那条路径（两条件互斥，不会出现双路径任选其一）。
    */
   function requireWiredAccountAuthority(): void {
     if (!store.accountsWired) {
@@ -359,8 +377,35 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     }
   }
 
+  /**
+   * 真实目录是**注入的能力**而不是类型保证：出口逐行核对契约闭集。
+   * 一条越界（如 `'banned'`）就让整页失败 ⇒ 503，⛔ 不静默折叠成 `active`、⛔ 不丢弃该行
+   * （丢弃会让「有账号但状态未知」被读成「平台没有这个账号」）。
+   */
+  function assertAccountsInContract(items: readonly AccountView[]): void {
+    for (const item of items) {
+      if (!(ACCOUNT_STATES as readonly string[]).includes(item.state)) {
+        throw new ApiError(
+          'PROVIDER_UNAVAILABLE',
+          `账号读面返回的 state 不在契约闭集内：${String(item.state)}`,
+          { retryable: false },
+        );
+      }
+      if (typeof item.display_name !== 'string' || item.display_name.length === 0) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '账号读面返回的 display_name 为空', { retryable: false });
+      }
+    }
+  }
+
   async function listAdminUsers(ctx: AdminCallContext, query: PageQuery = {}) {
     const context = resolveContext(ctx, OPS_SCOPES.listAdminUsers);
+    if (accountsDirectory !== null) {
+      // 真实目录（迁移 0021 的 `public.list_admin_accounts()`）：分页/游标/封套语义仍走**同一套**
+      // `pageOf()`，本分支只替换数据来源。残余限制：一次全表读，无 SQL 侧分页（见选项注释）。
+      const items = await accountsDirectory.list();
+      assertAccountsInContract(items);
+      return pageOf(context, items, query, 'accounts', byId);
+    }
     requireWiredAccountAuthority();
     return pageOf(context, store.listAccounts(), query, 'accounts', byId);
   }
