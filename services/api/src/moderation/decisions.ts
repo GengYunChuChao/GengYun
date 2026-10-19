@@ -419,8 +419,17 @@ export function createModerationLedger(): ModerationLedger {
   };
 }
 
-/** 台账记录 → 读面投影（不含租约、不含闸门载体内部的非必要字段）。 */
-export function taskView(record: ModerationTaskRecord): ModerationTaskView {
+/**
+ * 台账记录 → 读面投影（不含租约、不含闸门载体内部的非必要字段）。
+ *
+ * `freshness` 是**实时派生**的过期判定（`stale`/`reason_codes`），必须由调用方按
+ * "当前规则／模型／prompt 版本"算好再传入——**故意不给默认值**：默认 `stale:false`
+ * 会让"没人算新鲜度"悄悄变成"结论永远新鲜"。
+ */
+export function taskView(
+  record: ModerationTaskRecord,
+  freshness: { stale: boolean; reason_codes: readonly string[] },
+): ModerationTaskView {
   return {
     job_id: record.job_id,
     job_revision: record.job_revision,
@@ -451,6 +460,8 @@ export function taskView(record: ModerationTaskRecord): ModerationTaskView {
     submitted_by: record.submitted_by,
     deadline_at: record.deadline_at,
     superseded: record.superseded,
+    stale: freshness.stale === true,
+    stale_reason_codes: [...freshness.reason_codes],
   };
 }
 

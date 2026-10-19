@@ -504,7 +504,9 @@ test('HTTP 消息事件：投稿/评论/下架投递到消息域公开端口，�
     '评论作者（b）只收到自己评论的审核结果事件',
   );
 
-  // 下架 ⇒ takedown 事件（版本取**被处置的那一刻**）。
+  // 下架 ⇒ 新增一条 takedown 消息：版本取**被下架/被缓存的那一版**（＝处置前 revision），
+  // 不取处置后的 revision（诊断 R6：事件若带处置后版本，任何按事件失效缓存的消费者都会算错键）。
+  const beforeHide = (await h.call('GET', `${API}/messages`, h.a)).body.data.items.map((item) => item.id);
   const admin = await h.admin();
   const hidden = await h.call('POST', `${API}/admin/posts/${post.id}/hide`, admin, {
     headers: write('gy-http-evt-hide-1', '"1"'),
@@ -512,10 +514,12 @@ test('HTTP 消息事件：投稿/评论/下架投递到消息域公开端口，�
   });
   assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
   const after = await h.call('GET', `${API}/messages`, h.a);
-  const added = after.body.data.items.filter((item) => item.target_ref.revision === 2);
-  assert.equal(added.length, 1, '下架必须投递一条事件');
+  const added = after.body.data.items.filter((item) => !beforeHide.includes(item.id));
+  assert.equal(added.length, 1, '下架必须投递一条消息');
   assert.equal(added[0].type, 'moderation');
   assert.equal(added[0].target_ref.type, 'post');
+  assert.equal(added[0].target_ref.revision, 1,
+    '下架消息版本必须与被下架/被缓存的那一版一致（处置前 revision）');
   assert.equal(added[0].reference_state, 'unavailable', '消息域目标读取端口未接线 ⇒ fail-closed 不可用');
 
   // 去重：同一事件重复投递命中去重键 ⇒ 不产生第二条消息、不重置读状态。
