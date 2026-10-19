@@ -35,6 +35,11 @@
  *   本层在这种模式下 `armed:false`：**保持既有产出行为**，不拿一个未接线的开关去中断用户面。
  *   这是装配层的显式决定（见 `app.ts`），并作为"未取得项"记入证据页；
  *   一旦后台域接上真实持久存储并解除 fail-closed，开关在 real 模式下即为权威。
+ * - **就绪探测的三态（#282 P1 修复）**：`real` 且开关端口已接线时，`onReady` 先探测
+ *   `public.feature_flags` 是否存在，结果分 `ready` / `missing` / `unknown`：
+ *   只有**确认未安装**（`missing`，迁移子集库）才把门降级为未武装；**探测异常（`unknown`）不得
+ *   退成 `open`** —— 保持武装并 fail-closed，且下一次判前**重探**。已接真实端口的门因此不会
+ *   因为一次连接/权限抖动而永久放行受控面（旧实现把异常折叠成"表不存在"，正是该缺陷）。
  * - **合并增量口径**：`upstream/main` 新装配的受控面按**同一原口径**纳入 ——
  *   判据是"该 operationId 是否已登记在本清单里"（清单＝契约镜像，早已含 `createPost`/`createComment`），
  *   并只把装配基线对齐到"该面真的在产出"；**不新增受控面、不改清单**。
@@ -342,7 +347,11 @@ export interface FlagGateVerdict {
 }
 
 export interface FeatureFlagGate {
-  /** `false` ⇒ 本进程不判开关（real 模式后台域未接线或开关表未就绪，见文件头边界说明）。 */
+  /**
+   * `false` ⇒ 本进程不判开关（real 模式后台域未接线，或开关表被**确认**未安装，见文件头边界说明）。
+   * 注意：仅仅是"探测抛错/读不出来"（`unknown`）**不会**把已接真实端口的门降级成 `false` —— 那种
+   * 情况保持武装并 fail-closed（#282）。
+   */
   readonly armed: boolean;
   /**
    * **可选**：判定前的异步预取（真实 PG 读取口用；内存读取口不需要）。
@@ -389,6 +398,38 @@ function failClosedError(surface: string, key: FlagKey, cause: FlagGateFailCause
   );
 }
 
+/**
+ * 武装探测的三态结论（#282 P1 修复）。
+ *
+ * - `ready`：开关表**确认存在**（`to_regclass(...) IS NOT NULL` 严格为 `true`）⇒ 可武装并按库判定；
+ * - `missing`：开关表**确认未安装**（严格为 `false`/`NULL`，迁移子集库）⇒ 允许永久降级为未武装，
+ *   行为与接线前逐字相同（不判、不预取、不 503）；
+ * - `unknown`：**探不了**（抛错/形状读不懂）⇒ **未知 ≠ 未安装**：必须保持 fail-closed（503），
+ *   且**不得缓存成永久结论**，下一次判前重探。把 `unknown` 折叠成 `missing` 正是本片的缺陷成因
+ *   （一次连接/权限抖动 ⇒ 已接真实端口的开关门永久退回 `open`，库里的 `false` 不再阻断）。
+ */
+export type ArmingProbeState = 'ready' | 'missing' | 'unknown';
+
+/** 探测口返回的三态对象（首选形式）。 */
+export interface ArmingProbeResult {
+  readonly state: ArmingProbeState;
+}
+
+/** 探测口返回值：三态对象（首选）或**布尔兼容形式**（`true` ⇒ `ready`，`false` ⇒ `missing`）。 */
+export type ArmingProbeValue = ArmingProbeResult | boolean;
+
+/**
+ * 把探测口返回值归一成三态。⛔ 任何**读不懂**的形状（`undefined`/`null`/字符串/缺少 `state`）
+ * 都归 `unknown` —— 宁可 503，也绝不由"看不懂"推出"表不存在 ⇒ 放行"。
+ */
+function normalizeProbeValue(value: unknown): ArmingProbeState {
+  if (value === true) return 'ready';
+  if (value === false) return 'missing';
+  const state = (value as { state?: unknown } | null | undefined)?.state;
+  if (state === 'ready' || state === 'missing') return state;
+  return 'unknown';
+}
+
 export interface FeatureFlagGateOptions {
   readonly reader: FlagReader;
   /**
@@ -398,15 +439,19 @@ export interface FeatureFlagGateOptions {
    */
   readonly armed?: boolean;
   /**
-   * **可选**：武装前的只读就绪探测（真实 PG 端口用 `featureFlagsTableReady`）。
+   * **可选**：武装前的只读就绪探测（真实 PG 端口用 `probeFeatureFlagsTable`）。
    *
-   * 语义（T-R12-08R）：`real` 且拿到池**不等于**开关可用 —— 集成测试会只应用迁移子集，
-   * 库里根本没有 `public.feature_flags`。这种库上若照样武装，首个受控面请求的预取会失败并
-   * 503，把与开关无关的既有面打红。因此：探测只跑一次（首次 `prepare`），返回 `true` 才继续
-   * 预取与判定；返回 `false` 或抛错 ⇒ `armed` 永久降级为 `false`（行为与接线前逐字相同：
-   * 不判开关、不预取、不 503）。探测错误**绝不**抛给请求路径。
+   * 语义（T-R12-08R + #282 P1 修复）：`real` 且拿到池**不等于**开关可用 —— 集成测试会只应用
+   * 迁移子集，库里根本没有 `public.feature_flags`。这种库上若照样武装，首个受控面请求的预取会
+   * 失败并 503，把与开关无关的既有面打红。因此探测结果按**三态**裁决：
+   * - `ready` ⇒ 保持/进入武装，并继续预取与判定；
+   * - `missing`（**确认**未安装）⇒ `armed` 永久降级 `false`（行为与接线前逐字相同）；
+   * - `unknown`（抛错/形状读不懂）⇒ **保持武装**、继续预取，并在下一次判前**重探**；
+   *   刷新读成功就按库里真实取值判定（关闭继续阻断），读失败则由判定路径 fail-closed 503。
+   *   ⛔ 绝不因探测异常退回 `open`（#282 的缺陷正是把异常当成"表不存在"）。
+   * 探测错误**绝不**抛给请求路径。布尔兼容形式仍接受：`true`⇒`ready`，`false`⇒`missing`。
    */
-  readonly armingProbe?: () => Promise<boolean>;
+  readonly armingProbe?: () => Promise<ArmingProbeValue>;
   /**
    * **可选**：判定前的异步预取。真实 PG 读取口（`createPortFlagReader`）在这里刷新快照；
    * 内存读取口不传 ⇒ 判定路径与接线前逐字相同（纯同步）。
@@ -416,34 +461,40 @@ export interface FeatureFlagGateOptions {
 
 export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureFlagGate {
   const reader = options.reader;
-  // 武装是**运行时**状态（不再是构造期常量）：real 模式下先等只读探测，探测失败就永久未武装。
-  // stub / 未接端口时没有探测，取值与构造参数逐字相同。
+  // 武装是**运行时**状态（不再是构造期常量）。三态（#282 P1 修复）：只有 `missing`（**确认**未安装）
+  // 才允许把它降级成 `false`；`unknown`（探不了）必须保持武装并 fail-closed，且下次重探。
   let armed = options.armed ?? true;
   const armingProbe = options.armingProbe;
   const refresh = options.prepare;
-  let probed = false;
-  let tableReady = false;
+  let armingState: 'unprobed' | ArmingProbeState = 'unprobed';
 
   /**
-   * 就绪探测（只跑一次）+ 预取（每次判前都刷新）。
+   * 就绪探测（三态，只缓存**确定**结论）+ 预取（每次判前都刷新）。
    *
-   * 探测只缓存**结果**而不是整个 promise：失败后不重试（表要么由迁移建好、要么不该本进程反复探），
-   * 而预取必须逐次重试 —— 存储抖动是瞬时的，缓存一次 `read_error` 会让门永久 503。
+   * 缓存口径（#282 的修复点）：
+   * - `ready` / `missing` 是确定结论，缓存后不再重探（表要么由迁移建好、要么不该本进程反复探）；
+   * - `unknown` **不缓存**：探测异常（连接/权限/超时）是瞬时的，下一次判前必须重探，
+   *   ⛔ 不得像旧实现那样把一次异常变成永久的 `armed = false`（那等于永久放行受控面）。
+   * 预取本来就必须逐次重试 —— 存储抖动是瞬时的，缓存一次 `read_error` 会让门永久 503。
    */
   async function ensureReady(): Promise<void> {
-    if (armingProbe !== undefined && !probed) {
+    if (armingProbe !== undefined && (armingState === 'unprobed' || armingState === 'unknown')) {
       try {
-        tableReady = (await armingProbe()) === true;
+        armingState = normalizeProbeValue(await armingProbe());
       } catch {
-        tableReady = false;
+        // 探测抛错 ⇒ 状态**未知**（≠「表不存在」）：保持武装，让下面的刷新/判定按 fail-closed 处理。
+        armingState = 'unknown';
       }
-      probed = true;
     }
-    if (armingProbe !== undefined && !tableReady) {
-      // 表不存在 ⇒ 本进程没有权威开关来源 ⇒ 退回未武装（不预取、不判、不 503）。
+    if (armingProbe !== undefined && armingState === 'missing') {
+      // 表**确认**不存在 ⇒ 本进程没有权威开关来源 ⇒ 退回未武装（不预取、不判、不 503）。
       armed = false;
       return;
     }
+    // `ready` 与 `unknown` 都走刷新：
+    // - `ready`：按库判定；
+    // - `unknown`：读成功 ⇒ 按库里真实取值判定（`false` 必须继续阻断受控面）；
+    //   读失败 ⇒ 判定路径给出 `fail_closed`/503（fail-closed），**不是** `open`。
     if (refresh !== undefined) await refresh();
   }
 

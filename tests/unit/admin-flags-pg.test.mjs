@@ -16,10 +16,17 @@
  * 10. `flagReasonCode`：理由归一短码（纯中文/空 ⇒ `ADMIN_SET_FLAG`）；
  * 11. 适配层错误映射：`55P03`/`57014` ⇒ 504 `PROVIDER_TIMEOUT`(retryable:true)，`42501` ⇒ 503 对照
  *    （防两类 SQLSTATE 被折叠成一个分支）；
- * 12. 就绪探测 `featureFlagsTableReady`：只有 `to_regclass(...) IS NOT NULL` 严格为 `true` 才就绪，
- *    缺表/形状不符/抛错/没有池一律 `false`（子集迁移库里没有 0020 的表）；
- * 13. `armingProbe`：false 或抛错 ⇒ 门**永久降级未武装**且**不预取**（不把探测错误变成用户面 503）；
- *    true ⇒ 保持武装、探测只跑一次而预取逐次刷新。
+ * 12. 就绪探测 `probeFeatureFlagsTable`：三态 `ready`/`missing`/`unknown`。
+ *    `ready` 仅当 `to_regclass(...) IS NOT NULL` **严格为 `true`**；严格 `false` ⇒ `missing`
+ *    （子集迁移库里没有 0020 的表）；形状不符/抛错/没有池 ⇒ `unknown`（**不是** `missing`）。
+ *    布尔便捷形式 `featureFlagsTableReady` 只有 `ready` 才是 `true`。
+ * 13. `armingProbe`：`missing`（含布尔 `false`）⇒ 门**降级未武装**且**不预取**（不把"确认缺表"
+ *    变成用户面 503）；`ready`/`true` ⇒ 保持武装、探测只跑一次而预取逐次刷新。
+ * 14. **#282 P1 回归**：`armingProbe` **抛错/返回读不懂的形状** ⇒ `unknown`（未知 ≠ 未安装）⇒
+ *    门**保持武装**、仍然刷新并按库判定（`false` 继续阻断），且下一次判前**重探**；
+ *    ⛔ 绝不退回 `armed=false` + `verdict=open`（那是永久 fail-open，本片要修的缺陷）。
+ * 15. **关键路径**：首次探测异常、之后恢复、库里真实开关仍关闭 ⇒ 受控面仍被阻断，
+ *    且断言恢复后**确实重新探测 + 重新读库**。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -31,12 +38,17 @@ import {
   createPostgresFeatureFlags,
   featureFlagsTableReady,
   flagReasonCode,
+  probeFeatureFlagsTable,
 } from '../../services/api/src/admin/ops/flags-pg.ts';
 import {
   createFeatureFlagGate,
   createFlagGatedGuards,
   createPortFlagReader,
 } from '../../services/api/src/admin/ops/flag-gate.ts';
+import { buildApp } from '../../services/api/src/app.ts';
+import { loadConfig } from '../../services/api/src/config.ts';
+import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
+import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import {
   ADMIN_USER_ID,
   OPS_SIGNING_KEY,
@@ -392,7 +404,7 @@ test('42501（权限不足）仍映射 503 PROVIDER_UNAVAILABLE(retryable:false)
 
 // ---------------------------------------------------------------- 就绪探测与武装降级（T-R12-08R）
 
-test('featureFlagsTableReady：只有 to_regclass 严格为 true 才就绪；缺表/形状不符/抛错/无池一律 false', async () => {
+test('probeFeatureFlagsTable：三态 ready/missing/unknown；只有严格 true 才就绪，异常是 unknown（≠缺表）', async () => {
   const seen = [];
   const readyPool = {
     query: async (text) => {
@@ -400,14 +412,21 @@ test('featureFlagsTableReady：只有 to_regclass 严格为 true 才就绪；缺
       return { rows: [{ ready: true }] };
     },
   };
-  assert.equal(await featureFlagsTableReady(readyPool), true);
+  assert.deepEqual(await probeFeatureFlagsTable(readyPool), { state: 'ready' });
+  assert.equal(await featureFlagsTableReady(readyPool), true, '布尔便捷形式：就绪即 true');
   assert.match(seen[0], /to_regclass\('public\.feature_flags'\) IS NOT NULL AS ready/, '探测必须是这一条只读 SQL');
 
   const missingTable = { query: async () => ({ rows: [{ ready: false }] }) };
-  assert.equal(await featureFlagsTableReady(missingTable), false, '表不存在（to_regclass IS NULL）⇒ 未就绪');
+  assert.deepEqual(await probeFeatureFlagsTable(missingTable), { state: 'missing' }, '严格 false ⇒ 确认缺表');
+  assert.equal(await featureFlagsTableReady(missingTable), false);
 
   const oddShape = { query: async () => ({ rows: [] }) };
-  assert.equal(await featureFlagsTableReady(oddShape), false, '形状不符不得被当成就绪');
+  assert.deepEqual(
+    await probeFeatureFlagsTable(oddShape),
+    { state: 'unknown', reason: 'unexpected_shape' },
+    '形状不符是「未知」，⛔ 不得当成「缺表 ⇒ 可永久未武装」',
+  );
+  assert.equal(await featureFlagsTableReady(oddShape), false);
 
   const denied = {
     query: async () => {
@@ -416,13 +435,18 @@ test('featureFlagsTableReady：只有 to_regclass 严格为 true 才就绪；缺
       throw failure;
     },
   };
-  assert.equal(await featureFlagsTableReady(denied), false, '探测抛错（42501/连接失败）必须降级 false，不得抛给调用方');
+  assert.deepEqual(
+    await probeFeatureFlagsTable(denied),
+    { state: 'unknown', reason: 'probe_error' },
+    '探测抛错（42501/连接失败）必须是 unknown —— 旧实现返回 false（=缺表）正是 #282 的缺陷',
+  );
+  assert.equal(await featureFlagsTableReady(denied), false, '布尔兼容形式仍不抛');
 
-  assert.equal(await featureFlagsTableReady(null), false);
-  assert.equal(await featureFlagsTableReady({}), false, '没有 query 能力的池一律未就绪');
+  assert.deepEqual(await probeFeatureFlagsTable(null), { state: 'unknown', reason: 'no_pool' });
+  assert.deepEqual(await probeFeatureFlagsTable({}), { state: 'unknown', reason: 'no_pool' }, '没有 query 能力的池是未知');
 });
 
-test('armingProbe=false ⇒ 门永久降级未武装：不预取、不判、不 503（子集迁移库场景）', async () => {
+test('armingProbe=missing（布尔 false）⇒ 门降级未武装：不预取、不判、不 503（确认缺表的子集迁移库场景）', async () => {
   const { state, port } = fakePort();
   const reader = createPortFlagReader(port);
   let refreshes = 0;
@@ -449,14 +473,16 @@ test('armingProbe=false ⇒ 门永久降级未武装：不预取、不判、不 
   assert.equal(refreshes, 0);
 });
 
-test('armingProbe 抛错（42501/连接失败）⇒ 同样降级未武装，且错误只吞在门内', async () => {
+test('armingProbe 抛错（42501/连接失败）⇒ 未知**不得**退成 open：保持武装、仍刷新、按库关闭值阻断', async () => {
   const { state, port } = fakePort();
   const reader = createPortFlagReader(port);
+  let probes = 0;
   let refreshes = 0;
   const gate = createFeatureFlagGate({
     reader,
     armed: true,
     armingProbe: async () => {
+      probes += 1;
       const failure = new Error('permission denied for table feature_flags');
       failure.code = '42501';
       throw failure;
@@ -468,13 +494,133 @@ test('armingProbe 抛错（42501/连接失败）⇒ 同样降级未武装，且�
   });
 
   await assert.doesNotReject(() => gate.prepare(), '探测错误绝不能被当成请求错误抛出');
-  assert.equal(gate.armed, false);
-  assert.equal(refreshes, 0);
-  assert.equal(state.listCalls, 0);
+
+  // ⚠️ 这里曾是缺陷的"成功断言"：`armed=false` + `verdict=open`。修复后必须**反过来**。
+  assert.equal(gate.armed, true, '探测异常是「未知」而不是「确认缺表」⇒ 门必须保持武装（旧实现退成 false=永久放行）');
+  assert.equal(probes, 1, '首次判前探测一次');
+  assert.equal(refreshes, 1, '未知态仍要刷新：库里的真实关闭值必须继续生效');
+  assert.equal(state.listCalls, 1, '未知态确实重新读了库，而不是拿"探不了"当放行');
+
   const verdict = gate.verdictFor('specific_herbicide_output_enabled', 'GET /api/v1/herbicides');
-  assert.equal(verdict.state, 'open');
-  assert.equal(verdict.decidedBy, 'unavailable');
-  assert.doesNotThrow(() => gate.assertSurfaceOpen('GET', '/api/v1/herbicides'));
+  assert.equal(verdict.state, 'closed', '刷新成功且库里是 false ⇒ 关闭（不是 open）');
+  assert.equal(verdict.decidedBy, 'configured');
+  assert.equal(verdict.revision, 1);
+  assert.throws(
+    () => gate.assertSurfaceOpen('GET', '/api/v1/herbicides'),
+    (error) => {
+      assert.equal(error.code, 'OBJECT_UNAVAILABLE');
+      assert.equal(error.status, 409);
+      assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_CLOSED' }]);
+      return true;
+    },
+    '受控面必须仍被关闭值阻断',
+  );
+
+  // `unknown` 是**不可缓存**的结论：异常是瞬时的，下一次判前必须重探。
+  await gate.prepare();
+  assert.equal(probes, 2, 'unknown 不得缓存：下一次判前必须重新探测');
+  assert.equal(state.listCalls, 2, '重探之后照常刷新（逐次重试）');
+});
+
+test('armingProbe 抛错且库也读不出来 ⇒ 503 PROVIDER_UNAVAILABLE（fail-closed，可重试），⛔ 不得放行', async () => {
+  const { state, port } = fakePort();
+  state.failList = true; // 探测与读取同时抖动的极端瞬时态
+  const reader = createPortFlagReader(port);
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    armingProbe: async () => {
+      const failure = new Error('connect ECONNRESET');
+      failure.code = 'ECONNRESET';
+      throw failure;
+    },
+    prepare: async () => {
+      await reader.refresh();
+    },
+  });
+
+  await gate.prepare();
+  assert.equal(gate.armed, true, '未知 ≠ 缺表：门不得降级');
+  const verdict = gate.verdictFor('ai_enabled', 'POST /api/v1/recognitions');
+  assert.equal(verdict.state, 'fail_closed', '读不出来 ⇒ fail-closed（503），不是 open');
+  assert.equal(verdict.cause, 'read_error', '读取抛错是瞬时原因 ⇒ retryable');
+  assert.throws(
+    () => gate.assertSurfaceOpen('POST', '/api/v1/recognitions'),
+    (error) => {
+      assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+      assert.equal(error.status, 503);
+      assert.equal(error.retryable, true);
+      assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }]);
+      return true;
+    },
+  );
+});
+
+test('关键路径：首次探测异常 → 恢复后库里真实开关仍关闭 ⇒ 受控面仍被阻断，且恢复后确实重新读取', async () => {
+  const { state, port } = fakePort([
+    { key: 'submissions_enabled', enabled: true, revision: 1 },
+    // 库里真实取值：**关闭**（受控面必须一直被阻断，跨"探测异常 → 恢复"两段）。
+    { key: 'specific_herbicide_output_enabled', enabled: false, revision: 3 },
+    { key: 'ai_enabled', enabled: true, revision: 1 },
+  ]);
+  const reader = createPortFlagReader(port);
+  let probes = 0;
+  let refreshes = 0;
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    armingProbe: async () => {
+      probes += 1;
+      if (probes === 1) {
+        // 首次：权限/连接抖动 ⇒ unknown（旧实现会把这次异常永久变成 armed=false ⇒ 放行）。
+        const failure = new Error('connection reset by peer');
+        failure.code = 'ECONNRESET';
+        throw failure;
+      }
+      // 恢复：真实探测函数在表可用时的返回值（三态对象）。
+      return probeFeatureFlagsTable({ query: async () => ({ rows: [{ ready: true }] }) });
+    },
+    prepare: async () => {
+      refreshes += 1;
+      await reader.refresh();
+    },
+  });
+  const guards = createFlagGatedGuards(
+    {
+      async requireUser() {},
+      async requireAdmin() {},
+      requireScope: () => async () => {},
+    },
+    gate,
+  );
+  const gatedRequest = { method: 'GET', routeOptions: { url: '/api/v1/herbicides' } };
+
+  // 第 1 次请求（探测异常）：仍按库里的真实关闭值阻断，而不是 200 放行。
+  await assert.rejects(
+    () => guards.requireUser(gatedRequest, {}),
+    (error) => error.code === 'OBJECT_UNAVAILABLE' && error.status === 409,
+    '首次探测异常不得让受控面放行',
+  );
+  assert.equal(gate.armed, true, '异常后门仍是武装的');
+  assert.equal(state.listCalls, 1, '异常当次也已经读了库（关闭值照常生效）');
+
+  // 第 2 次请求（探测恢复）：必须重探 + 重新读库，且真实关闭值继续阻断。
+  await assert.rejects(
+    () => guards.requireUser(gatedRequest, {}),
+    (error) => error.code === 'OBJECT_UNAVAILABLE' && error.status === 409,
+    '恢复后真实关闭值必须继续阻断受控面',
+  );
+  assert.equal(probes, 2, '恢复后必须重新探测（unknown 不缓存）');
+  assert.equal(refreshes, 2, '恢复后必须重新预取');
+  assert.equal(state.listCalls, 2, '断言"恢复后确实重新读取"：库被第二次读到，而不是复用首次快照');
+  const verdict = gate.verdictFor('specific_herbicide_output_enabled', 'GET /api/v1/herbicides');
+  assert.equal(verdict.state, 'closed');
+  assert.equal(verdict.decidedBy, 'configured');
+  assert.equal(verdict.revision, 3, '判的是库里最新的真实 revision');
+
+  // 非受控面不因探测/刷新被额外打库（本片不改变非受控面行为）。
+  await guards.requireUser({ method: 'GET', routeOptions: { url: '/api/v1/not-gated' } }, {});
+  assert.equal(state.listCalls, 2);
 });
 
 test('armingProbe=true ⇒ 保持武装并预取；探测只跑一次，预取逐次刷新', async () => {
@@ -506,4 +652,67 @@ test('armingProbe=true ⇒ 保持武装并预取；探测只跑一次，预取�
   assert.equal(verdict.state, 'closed');
   assert.equal(verdict.decidedBy, 'configured');
   assert.equal(verdict.revision, 1);
+});
+
+// ---------------------------------------------------------------- #282 P1 · HTTP 装配层关键路径
+
+test('关键路径（真实装配）：onReady 探测异常 ⇒ /herbicides 仍按库里关闭值 409，且请求路径重探、重读', async () => {
+  const base = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: 'synthetic-i18-flags-probe-key-0123456789' });
+  const config = { ...base, executionMode: 'real', requiresRealCredentials: true, logLevel: 'silent' };
+  const store = createMemoryAuthStore();
+  const { state, port } = fakePort([
+    { key: 'submissions_enabled', enabled: true, revision: 1 },
+    // 库里真实取值：关闭（revision 5）。受控面必须一直被它阻断。
+    { key: 'specific_herbicide_output_enabled', enabled: false, revision: 5 },
+    { key: 'ai_enabled', enabled: true, revision: 1 },
+  ]);
+  let probes = 0;
+  // 真实装配里 `armingProbe` 用的就是 `probeFeatureFlagsTable(pool)`：这里让**池**抛错，
+  // 即 #282 的触发条件（连接/权限抖动），而不是注入一个假的探测函数。
+  const probePool = {
+    async query() {
+      probes += 1;
+      const failure = new Error('connection reset by peer');
+      failure.code = 'ECONNRESET';
+      throw failure;
+    },
+  };
+  const app = buildApp({ config, store, pool: probePool, adminInjection: { flagsPort: port } });
+  try {
+    await app.ready();
+    assert.equal(probes, 1, 'onReady 必须在服务接请求之前探测（不是懒到首个受控面请求）');
+    assert.equal(
+      app.featureFlagGate.armed,
+      true,
+      '探测异常是 unknown：已接真实端口的门**不得**降级 —— 旧实现此处 armed=false ⇒ /herbicides 200（永久 fail-open）',
+    );
+
+    const token = 'synthetic-i18-flags-probe-error-token';
+    const user = await store.createUser('synthetic-i18-flags-probe-error');
+    await store.createSession({
+      userId: user.id,
+      tokenHashHex: hashToken(token),
+      authEpoch: user.authEpoch,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      audience: 'user',
+    });
+
+    const first = await app.inject({ method: 'GET', url: '/api/v1/herbicides', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(first.statusCode, 409, `探测异常时受控面必须仍被库里的关闭值阻断，实际 ${first.statusCode} ${first.body}`);
+    assert.equal(first.json().error.code, 'OBJECT_UNAVAILABLE');
+    assert.ok(
+      (first.json().error.details ?? []).some((detail) => detail.code === 'FLAG_CLOSED'),
+      '409 必须带 FLAG_CLOSED 证据（关闭语义，不是"未接线 ⇒ 放行"）',
+    );
+    assert.equal(probes, 2, 'unknown 不缓存：请求路径必须重新探测');
+    assert.equal(state.listCalls, 2, '异常当次与本次请求各读了一次库（真实关闭值继续生效）');
+
+    // 第二次请求：探测仍异常，门仍不降级、关闭值仍阻断（不是"第二次就放行"）。
+    const second = await app.inject({ method: 'GET', url: '/api/v1/herbicides', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(second.statusCode, 409);
+    assert.equal(app.featureFlagGate.armed, true);
+    assert.equal(state.listCalls, 3);
+  } finally {
+    await app.close();
+  }
 });

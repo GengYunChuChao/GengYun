@@ -73,7 +73,7 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
-import { createPostgresFeatureFlags, featureFlagsTableReady } from './admin/ops/flags-pg.ts';
+import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
@@ -1010,16 +1010,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     adminInjection?.flagsPort ??
     (adminRealUnwired && pool !== null ? createPostgresFeatureFlags({ pool }) : null);
   const flagsWired = flagsPort !== null;
-  // **武装的前置条件（T-R12-08R）**：`real` + 有池 + **表真实可用**，三者缺一不可。
+  // **武装的前置条件（T-R12-08R）**：`real` + 有池 + **表确认可用**，三者缺一不可。
   // 只应用迁移子集的库（例如 `egress-ledger-pg.mjs` 只跑 0001/0003/0008/0009/0011）里没有
   // 0020 的 `public.feature_flags`；那种库上不能武装：否则首个受控面请求预取失败 ⇒ 503，
   // 把与开关无关的既有面打红。探测是只读的 `to_regclass`，在 `onReady` 里跑一次
-  // （服务开始接请求之前）；探测 false/抛错 ⇒ 门永久降级为未武装（与接线前逐字相同）。
+  // （服务开始接请求之前）。
+  // **#282 P1 修复**：探测结果改**三态**（`probeFeatureFlagsTable`）—— 只有**确认未安装**
+  // （`missing`）才让门永久降级未武装（与接线前逐字相同）；探测**异常/形状读不懂**（`unknown`）
+  // 绝不再当成"表不存在"，门保持武装并 fail-closed，且下一次判前重探。否则一次连接/权限抖动
+  // 就会把已接真实端口的开关门永久退成 `open`，库里的 `false` 不再阻断受控面（旧 `false` 语义）。
   // 注意：开关端口本身仍保留 —— 缺表时它的读写自然 503（不伪造成功封套），与未接线时的
-  // 用户可见行为一致；开关门的武装则严格以「表真实可用」为准。
+  // 用户可见行为一致；开关门的武装则严格以「表**确认**可用」为准。
   const flagArmingProbe =
     adminRealUnwired && pool !== null && flagsPort !== null
-      ? () => featureFlagsTableReady(pool)
+      ? () => probeFeatureFlagsTable(pool)
       : undefined;
   // 开关**唯一权威**：接了真实端口就只信库（内存 store 的播种状态不再参与判定，
   // 避免"库说关、内存说开"的双权威）；未接端口时维持既有内存读取口。
@@ -1030,7 +1034,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const featureFlagGate = createFeatureFlagGate({
     reader: flagGateReader,
     // 静态口径（`stub` ⇒ 武装；`real` 未接端口 ⇒ 不武装）由 `armed` 表达；`real` 已接端口时
-    // 还须先过 `armingProbe` 的运行时探测，表不可用就降级未武装 —— 见 `flag-gate.ts`。
+    // 还须先过 `armingProbe` 的运行时探测：只有**确认缺表**（`missing`）才降级未武装，
+    // 探测异常/读不懂（`unknown`）保持武装并 fail-closed（#282 P1 修复）—— 见 `flag-gate.ts`。
     armed: !adminRealUnwired || flagsWired,
     ...(flagArmingProbe === undefined ? {} : { armingProbe: flagArmingProbe }),
     ...(flagGatePrepare === undefined ? {} : { prepare: flagGatePrepare }),

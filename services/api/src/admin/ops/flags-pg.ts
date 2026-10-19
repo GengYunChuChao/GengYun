@@ -293,21 +293,73 @@ export function createPostgresFeatureFlags({ pool }: { pool: PgPool }): FeatureF
  * 口径：
  * - 只跑 `to_regclass('public.feature_flags')`：schema 全限定，运行时角色受限的 `search_path`
  *   也解析得到；表不存在返回 `NULL`（不是报错），**不依赖**表级 SELECT 权限；
- * - 只有结果严格为 `true` 才算就绪；任何异常（权限/连接/形状）一律 `false` ⇒ 调用方降级未武装，
- *   **不**把探测失败变成用户面的 503；
- * - 不在本函数内缓存：探测只跑一次由调用方（`flag-gate.ts` 的 `armingProbe`）负责。
+ * - 只有结果严格为 `true` 才算就绪；
+ * - 不在本函数内缓存：是否复用由调用方按三态裁决（`flag-gate.ts` 的 `ensureReady`：
+ *   确定结论 `ready`/`missing` 缓存，`unknown` 下一次判前重探）。
+ *
+ * ## 三态（#282 P1 修复，逐字对应监工要求）
+ * 旧实现把「**确认未安装**」与「**探测异常（未知）**」折叠成同一个 `false`。这看似保守，
+ * 实际是 fail-open：已接真实端口时 `flag-gate.ts` 收到 `false` 就把 `armed` 永久置 `false`，
+ * 于是「一次连接/权限抖动」⇒ 开关门永久不判 ⇒ 库里的 `ai_enabled=false` 不再阻断受控面，
+ * 且直到重启都不再读库。因此探测结果必须区分三态：
+ * - `ready`：`to_regclass(...) IS NOT NULL` 严格为 `true` ⇒ 表真实存在，可武装并按库判定；
+ * - `missing`：严格为 `false`（`NULL` ⇒ 表确实不在，迁移子集库的兼容场景）⇒ **确认未安装**，
+ *   调用方允许降级（不判开关，与接线前逐字相同）；
+ * - `unknown`：探测抛错（权限/连接/超时）或返回形状读不懂 ⇒ **未知 ≠ 未安装**。调用方必须
+ *   保持 fail-closed（503）并允许后续重试，⛔ 不得据此退回 `open`。
  */
 export const FEATURE_FLAGS_TABLE = 'public.feature_flags';
 const TABLE_READY_SQL = "SELECT to_regclass('public.feature_flags') IS NOT NULL AS ready";
 
+/**
+ * 就绪探测的**三态**结果。
+ *
+ * `unknown` 是最重要的那一态：它**不是** `missing` —— 把「探不了」当成「没有」正是 #282 的
+ * 缺陷成因（一次抖动 ⇒ 开关永久失效）。
+ */
+export type FeatureFlagsTableProbe =
+  | { readonly state: 'ready' }
+  | { readonly state: 'missing' }
+  | {
+      readonly state: 'unknown';
+      /** 未知的具体来路（只用于诊断，不参与放行判定）。 */
+      readonly reason: 'probe_error' | 'unexpected_shape' | 'no_pool';
+    };
+
+/**
+ * 只读就绪探测（三态）。**不抛**：任何失败都以 `unknown` 返回，由调用方决定 fail-closed 策略。
+ *
+ * 注意「无池」也归 `unknown` 而不是 `missing`：没有连接不等于表不存在，绝不能由它推出「未武装 ⇒ 放行」。
+ */
+export async function probeFeatureFlagsTable(
+  pool: Pick<PgPool, 'query'> | null | undefined,
+): Promise<FeatureFlagsTableProbe> {
+  if (!pool || typeof pool.query !== 'function') return { state: 'unknown', reason: 'no_pool' };
+  let rows: unknown;
+  try {
+    const result = await pool.query(TABLE_READY_SQL);
+    rows = result?.rows;
+  } catch {
+    // 权限/连接/超时：**状态未知**。⛔ 不得返回 `missing`（那会让调用方永久 fail-open）。
+    return { state: 'unknown', reason: 'probe_error' };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return { state: 'unknown', reason: 'unexpected_shape' };
+  const ready = (rows[0] as Record<string, unknown> | null | undefined)?.['ready'];
+  if (ready === true) return { state: 'ready' };
+  if (ready === false) return { state: 'missing' };
+  // 形状读不懂 ⇒ 不知道表在不在 ⇒ 未知（既不是「未就绪」，更不是「可以放行」）。
+  return { state: 'unknown', reason: 'unexpected_shape' };
+}
+
+/**
+ * 布尔便捷形式（保留给只问「就绪了吗」的调用点与既有单测）：只有**确认存在**才是 `true`，
+ * `missing` 与 `unknown` 都是 `false`。
+ *
+ * ⚠️ 武装判定**不要**用它 —— 它丢掉了 `missing`/`unknown` 的区别，正是 #282 的缺陷成因；
+ * 武装必须走 `probeFeatureFlagsTable`。
+ */
 export async function featureFlagsTableReady(
   pool: Pick<PgPool, 'query'> | null | undefined,
 ): Promise<boolean> {
-  if (!pool || typeof pool.query !== 'function') return false;
-  try {
-    const result = await pool.query(TABLE_READY_SQL);
-    return result?.rows?.[0]?.['ready'] === true;
-  } catch {
-    return false;
-  }
+  return (await probeFeatureFlagsTable(pool)).state === 'ready';
 }

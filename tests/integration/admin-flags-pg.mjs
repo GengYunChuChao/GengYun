@@ -21,9 +21,13 @@
  *   [D] 并发两笔同 revision ⇒ 恰一笔成功、一笔冲突、审计恰 1 行
  *   [E] 真实 HTTP：listFlags/PUT/If-Match 409/值未变短路/`/herbicides` 关→409 开→恢复 + 并发 PUT
  *   [F] `pool === null` 的 real 装配与今天逐字相同：后台 503 fail-closed、开关门不 armed
- *   [G] 武装就绪探测（T-R12-08R）：只应用迁移子集的库（没有 0020 的表）⇒ 探测 false、门不武装、
- *       `/herbicides` 200 —— 与 CI 里 `egress-ledger-pg.mjs:322` 修好后的 202 同一机制；
- *       同一库补齐全部迁移 ⇒ 探测 true、门武装、默认 false ⇒ 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)
+ *   [G] 武装就绪探测（T-R12-08R / #282）：只应用迁移子集的库（没有 0020 的表）⇒ 探测 **missing**
+ *       （to_regclass IS NULL，**确认**缺表）、门不武装、`/herbicides` 200 —— 与 CI 里
+ *       `egress-ledger-pg.mjs:322` 修好后的 202 同一机制；
+ *       同一库补齐全部迁移 ⇒ 探测 ready、门武装、默认 false ⇒ 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)。
+ *       #282 补的一句：**探测异常/读不懂必须是 `unknown`（保持武装 + fail-closed），不得退成
+ *       `missing`（未武装 ⇒ 放行）** —— 旧实现把两者折叠成一个 `false`，一次连接/权限抖动就会
+ *       让已接真实端口的门永久放行受控面。
  *   [H] 行锁的行为分量（证伪 `SELECT … FOR UPDATE`）：外部会话持行锁 + 端口「值未变」短路
  *       ⇒ 等锁 ≥3000ms 后 504 PROVIDER_TIMEOUT(retryable:true)；删掉 FOR UPDATE 则数毫秒返回成功，
  *       耗时下界断言必红。HTTP 的 PUT 到不了这里（service 层「值未变」在端口之前就返回 200）。
@@ -745,13 +749,13 @@ async function armingArm() {
   assert.equal(
     subsetApp.featureFlagGate.armed,
     true,
-    '探测前的静态口径：real + 有池 ⇒ 初始 armed=true（本次修复要把它按探测结果降下来）',
+    '探测前的静态口径：real + 有池 ⇒ 初始 armed=true（确认缺表/探测异常才由运行时探测裁决）',
   );
   await subsetApp.ready();
   assert.equal(
     subsetApp.featureFlagGate.armed,
     false,
-    '子集库 ⇒ to_regclass 探测 false ⇒ 开关门必须永久降级未武装',
+    '子集库 ⇒ to_regclass IS NULL ⇒ 探测 **missing**（确认缺表）⇒ 开关门降级未武装',
   );
   const subsetHerbicides = await injectCall(subsetApp, `${API}/herbicides`, { token: subsetToken });
   assert.equal(
@@ -760,7 +764,7 @@ async function armingArm() {
     `未武装时 /herbicides 不得被开关拦（不得 503/409），实际 ${subsetHerbicides.status}`,
   );
   note(
-    '[G] 子集迁移库（0001/0003/0008/0009/0011，无 0020）：onReady 探测 false ⇒ 门 armed=false，/herbicides 200（CI 的 503 不再发生）',
+    '[G] 子集迁移库（0001/0003/0008/0009/0011，无 0020）：onReady 探测 missing（to_regclass IS NULL）⇒ 门 armed=false，/herbicides 200（CI 的 503 不再发生）',
   );
 
   // --- 场景 2：同一库补齐全部迁移（含 0020）⇒ 表就绪 ⇒ 武装且按库判定
@@ -799,7 +803,7 @@ async function armingArm() {
   const detailCodes = (armedHerbicides.body.error.details ?? []).map((detail) => detail.code);
   assert.ok(detailCodes.includes('FLAG_CLOSED'), '409 必须带既有 flag-gate 的 FLAG_CLOSED 证据');
   note(
-    '[G] 同一库补齐全部迁移（含 0020）：探测 true ⇒ 门 armed=true；默认 false ⇒ /herbicides 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)',
+    '[G] 同一库补齐全部迁移（含 0020）：探测 ready ⇒ 门 armed=true；默认 false ⇒ /herbicides 409 OBJECT_UNAVAILABLE(FLAG_CLOSED)',
   );
 }
 
