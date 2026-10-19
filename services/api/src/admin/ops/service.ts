@@ -39,11 +39,12 @@ import type { MetaValue, ResolvedContext } from '../identity.ts';
 import { runIdempotentWrite } from '../idempotent-write.ts';
 import type { AdminCallContext, AuditResult, ServiceResponse, TargetRefValue } from '../types.ts';
 import { opsValidator } from './fields.ts';
-import { classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } from './flags.ts';
+import { CONTRACT_FLAG_KEYS, classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } from './flags.ts';
 import type { FlagEffect, FlagKey } from './flags.ts';
 import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
+import type { FeatureFlagsPort } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
@@ -52,6 +53,7 @@ import type {
   AdminJobView,
   CategoryView,
   CommunityPostPort,
+  FlagView,
   JobState,
   CancelJobOutcome,
 } from './types.ts';
@@ -92,6 +94,13 @@ export interface AdminOpsServiceOptions {
    * 因为读面（`listAdminUsers`）仍按种子判定是否接线。
    */
   accountAuthority?: AdminAccountAuthority | null;
+  /**
+   * 真实开关端口（GY-I18 接线，`flags-pg.ts`）。给了它 ⇒ `listFlags`/`setFlag` 的**读写都走库**：
+   * 读面从 `public.feature_flags` 取三行（缺行/多行/闭集外 ⇒ 503 fail-closed，**不**返回三键全 false），
+   * 写面经 `commitIfCurrent` 单事务 CAS + 审计。未给 ⇒ 与既有口径逐字一致地走内存 store
+   * （既有单测/stub 行为不变）。
+   */
+  flagsPort?: FeatureFlagsPort | null;
   now?: () => Date;
   /** 幂等请求摘要与游标签名用的服务端密钥；只经内存传入，不入库。 */
   signingKey: string;
@@ -172,6 +181,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     accountSeed: options.accountSeed,
   });
   const accountAuthority: AdminAccountAuthority | null = options.accountAuthority ?? null;
+  const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
   const idempotencyTtlSeconds = options.idempotencyTtlSeconds ?? DEFAULT_IDEMPOTENCY_TTL_SECONDS;
@@ -553,9 +563,106 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 功能开关
   // -------------------------------------------------------------------------
 
+  /** 端口读失败 ⇒ 503。传输/超时类按可重试（读面幂等）；形状不符由 `flagShapeFailure` 判不可重试。 */
+  function flagReadFailure(error: unknown): never {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', { retryable: true });
+  }
+
+  /** 库内数据与契约闭集不一致 ⇒ **失败关闭**（`unrecognized`），⛔ 不许伪造成「三键全 false」。 */
+  function flagShapeFailure(message: string): never {
+    throw new ApiError('PROVIDER_UNAVAILABLE', message, {
+      retryable: false,
+      details: [{ field: 'flags', code: 'FLAG_UNRECOGNIZED' }],
+    });
+  }
+
+  /** 单行定义域校验：只认三个契约键、`enabled` 布尔、`revision` 正整数。 */
+  function acceptFlagRow(row: unknown): FlagView {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) {
+      flagShapeFailure('全局开关行不是对象');
+    }
+    const record = row as Partial<FlagView>;
+    const key = record.key;
+    if (typeof key !== 'string' || !(CONTRACT_FLAG_KEYS as readonly string[]).includes(key)) {
+      flagShapeFailure('全局开关行含契约闭集外的 key');
+    }
+    if (typeof record.enabled !== 'boolean') {
+      flagShapeFailure(`全局开关 ${key} 的 enabled 不是布尔`);
+    }
+    const revision = record.revision;
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+      flagShapeFailure(`全局开关 ${key} 的 revision 不是正整数`);
+    }
+    return { key: key as FlagKey, enabled: record.enabled, revision };
+  }
+
+  /**
+   * 读面：从库读三行并按契约声明序（`CONTRACT_FLAG_KEYS`）返回。
+   * 缺任何一键都**失败关闭** —— 缺行不等于「关」，更不等于「开」；也不返回三键全 false 的假封套。
+   */
+  async function readFlagsFromPort(port: FeatureFlagsPort): Promise<readonly FlagView[]> {
+    let rows: unknown;
+    try {
+      rows = await port.list();
+    } catch (error) {
+      flagReadFailure(error);
+    }
+    if (!Array.isArray(rows)) flagShapeFailure('全局开关读取返回不是数组');
+    const byKey = new Map<string, FlagView>();
+    for (const raw of rows) {
+      const row = acceptFlagRow(raw);
+      if (byKey.has(row.key)) flagShapeFailure(`全局开关 ${row.key} 出现重复行`);
+      byKey.set(row.key, row);
+    }
+    if (byKey.size !== CONTRACT_FLAG_KEYS.length) {
+      flagShapeFailure('全局开关行数与契约闭集不一致');
+    }
+    return CONTRACT_FLAG_KEYS.map((key) => {
+      const row = byKey.get(key);
+      if (row === undefined) flagShapeFailure(`全局开关缺少契约键 ${key}`);
+      return row;
+    });
+  }
+
+  /** 写面前置读：单行不存在 ⇒ `null`（调用方据此 404），形状不符 ⇒ 503 fail-closed。 */
+  async function readFlagFromPort(port: FeatureFlagsPort, key: FlagKey): Promise<FlagView | null> {
+    let row: unknown;
+    try {
+      row = await port.get(key);
+    } catch (error) {
+      flagReadFailure(error);
+    }
+    if (row === null) return null;
+    return acceptFlagRow(row);
+  }
+
+  /** 写面：端口内部已完成 CAS + 审计；这里只把非 ApiError 的异常如实变成 503（不可重试）。 */
+  async function commitFlagToPort(
+    port: FeatureFlagsPort,
+    key: FlagKey,
+    expectedRevision: number,
+    enabled: boolean,
+    reason: string | null,
+    context: ResolvedContext,
+  ): Promise<{ ok: true; record: FlagView } | { ok: false; reason: string }> {
+    try {
+      return await port.commitIfCurrent(
+        key,
+        expectedRevision,
+        { enabled },
+        { changedBy: context.identity.userId, reason, requestId: context.requestId },
+      );
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关写入暂不可用', { retryable: false });
+    }
+  }
+
   async function listFlags(ctx: AdminCallContext, query: PageQuery = {}) {
     const context = resolveContext(ctx, OPS_SCOPES.listFlags);
-    return pageOf(context, store.listFlags(), query, 'flags', (flag) => flag.key);
+    const flags = flagsPort === null ? store.listFlags() : await readFlagsFromPort(flagsPort);
+    return pageOf(context, flags, query, 'flags', (flag) => flag.key);
   }
 
   async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {
@@ -592,20 +699,27 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
       context,
       { method: 'PUT', path: `/admin/feature-flags/${flagKey}`, expectedStatus: 200 },
       body,
-      () => {
-        const current = store.getFlag(flagKey);
+      async () => {
+        // 有端口 ⇒ 读/写都走库；无端口 ⇒ 与既有内存 store 路径逐字一致（单测/stub 不变）。
+        const current = flagsPort === null
+          ? store.getFlag(flagKey)
+          : await readFlagFromPort(flagsPort, flagKey);
         if (current === null) throw new ApiError('NOT_FOUND', '开关不存在');
         assertIfMatchMatches(expectedRevision, current.revision);
         // 幂等：值未变 ⇒ 不再迁移、不再记审计（与 public/withdraw 同口径）。
         if (current.enabled === input.enabled) {
           return singleResponse(context, executionMode, 200, current, etagOf(current.revision));
         }
-        const result = store.commitFlagIfCurrent(flagKey, expectedRevision, { enabled: input.enabled });
+        const result = flagsPort === null
+          ? store.commitFlagIfCurrent(flagKey, expectedRevision, { enabled: input.enabled })
+          : await commitFlagToPort(flagsPort, flagKey, expectedRevision, input.enabled, input.reason, context);
         if (!result.ok) {
           throw result.reason === 'NOT_FOUND'
             ? new ApiError('NOT_FOUND', '开关不存在')
             : new ApiError('REVISION_CONFLICT', '目标修订已变化，If-Match 与当前 ETag 不匹配');
         }
+        // 内存台账照旧记一行（既有单测与审计读面依赖这个入口）；库内审计由端口在**同事务**写入，
+        // 两者文本不同源：库里是裁定 §3 的 `set_flag`/`flags:write`/`<flag key>`，这里保持既有口径。
         appendAudit(context, {
           action: 'flag.set',
           scope: OPS_SCOPES.setFlag,

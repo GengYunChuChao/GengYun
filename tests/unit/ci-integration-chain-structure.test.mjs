@@ -77,6 +77,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-flags-pg.mjs',
+    reason: '需真实 PG 17.11 隔离集群且硬钉库名 `gengyun_flags_test`（脚本自建运行时角色并重放'
+      + ' `gy-i18-flags-grant` 区域）；本片未新增对应 CI workflow（如实登记为未取得项），'
+      + '故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/auth-privacy-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },

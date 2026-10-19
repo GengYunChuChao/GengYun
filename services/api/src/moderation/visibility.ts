@@ -144,9 +144,23 @@ export function createSubstituteContentAuthority(): SubstituteContentAuthority {
     async setVisibility(target, visibility) {
       const row = rowOf(target);
       if (row === null) throw new ApiError('OBJECT_UNAVAILABLE', '目标内容不存在（替身权威：未登记）');
+      // 与同源权威同口径：**旧版本的可见性写入一律拒绝，且零副作用**。
+      if (row.current_revision !== target.revision) {
+        throw new ApiError(
+          'REVISION_CONFLICT',
+          `可见性写入未生效（目标 revision=${target.revision} 不是替身权威当前版本 ${row.current_revision}：旧版本不得改可见性）`,
+        );
+      }
       row.visibility = visibility;
     },
     async setPublishedRevision(target, revision) {
+      const row = rowOf(target);
+      if (row !== null && row.current_revision !== target.revision) {
+        throw new ApiError(
+          'REVISION_CONFLICT',
+          `拒绝声明已发布 revision=${revision ?? 'null'}：目标 revision=${target.revision} 不是替身权威当前版本 ${row.current_revision}`,
+        );
+      }
       published.set(targetScope(target), revision);
     },
     async publishedRevision(target) {
