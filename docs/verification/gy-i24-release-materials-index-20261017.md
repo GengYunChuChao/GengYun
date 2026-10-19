@@ -7,10 +7,13 @@
   并入 `53922eb`（含上面的 `0017_account_suspend_authority.sql`），叠加本片的 `0018_favorites_history.sql`
   ⇒ 迁移数 **18**（`0001..0018`）、`rollback/` **17**（`0002..0018`）、`deploy/` 在册仍 **29**；
   §2 表与 §4 第 8 项的「当前读数」已按本分支实测改写（`60aa9ad` 时代的历史读数按原样保留）。
-- **二次并流（2026-10-18，#282）**：`feat/gy-i18-feature-flags-pg` 以 `git merge --no-ff upstream/main`（`0856e49`）
-  并入本分支的 `0020_feature_flags.sql` ⇒ 迁移数 **19**（`0001..0018`＋`0020`）、`rollback/` **18**
-  （`0002..0018`＋`0020`）；在途 `0019`（#278）仍未合入。§2 表与 §4 第 8 项的「当前读数」已按合并后的树
-  再次改写（上面两代读数按原样保留为历史）。
+- **合流复核（2026-10-18，PR #278）**：再合流 `upstream/main` = `0856e49` 后，本片 `2f0946b`（消息域持久化）带入
+  `0019_messages_persistence.sql` 及其 down 脚本 ⇒ 迁移数 **19**（`0001..0019`）、`rollback/` **18**（`0002..0019`）、
+  `deploy/` 在册 **30**；§2 表与 §4 第 8 项的「当前读数」已按合流后的树实测同步（上面那条的 18/17/29 是 `53922eb` 时点的读数，按原样保留）。
+- **三次并流（2026-10-19，#282）**：`feat/gy-i18-feature-flags-pg` 先于 `0856e49` 上并流、带入 `0020_feature_flags.sql`
+  及其 down 脚本（当时 `0019` 在途 ⇒ 19 个：`0001..0018`＋`0020`）；本次再 `git merge --no-ff upstream/main`
+  = `d131e47`（含 `0019_messages_persistence.sql`）⇒ 迁移数 **20**（`0001..0020`，连续无缺号）、`rollback/` **19**
+  （`0002..0020`）、`deploy/` 在册仍 **30**；§2 表与 §4 第 8 项的「当前读数」已按合并后的树实测改写（上面三代读数按原样保留为历史）。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -71,7 +74,7 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **19** 个：`0001..0018`＋`0020`；在途 `0019` 未合入） | ✅ down 脚本覆盖 `0002..0018`＋`0020`（18 个）、无 `0001`（门禁第 8 项） |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **20** 个：`0001..0020`，连续无缺号） | ✅ down 脚本覆盖 `0002..0020`（19 个）、无 `0001`（门禁第 8 项） |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -79,7 +82,7 @@
 
 门禁：`node tools/verify-release-materials.mjs`（15 项，退出码 0 = 通过）。逐项判据与读数：
 
-| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 8 项按 2026-10-18 并流后的树复跑） |
+| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 8 项按 2026-10-19 合流 `d131e47` 后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
 | 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 30 个文件全部在索引表行中（30/30 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出本分支新增的 `deploy/postgres-cvm/restore-drill.ps1` |
@@ -88,7 +91,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 19 个；`rollback/` 18 个；`migrate.ts` 报错文本 | ✅ 一致 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 20 个；`rollback/` 19 个；`migrate.ts` 报错文本 | ✅ 一致 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 
@@ -101,7 +104,7 @@
 
 | # | 问题 | 证据 | 影响与建议 |
 | --- | --- | --- | --- |
-| F1 | **runbook / roles-and-migration 的迁移数量读数过期**：`runbook.md:331`「全部 10 个版本」、`:343` 期望输出「10 个版本已全部应用（0001 … 0010）」；`roles-and-migration.md:240`「全部 10 个版本」；`runbook.md:507`「rollback 存在（0002–0010，没有 0001）」 | 实测（基线 `60aa9ad`）`services/api/db/migrations/` = **17** 个（`0001..0017`）；`rollback/` = **16** 个（`0002..0017`，仍无 `0001`）。**两代基线均未修**：`95b8e7c` 上为 15/14，`60aa9ad` 上为 17/16，文档读数始终停在 10/9；2026-10-18 并流 `53922eb` ＋ `0018` 后为 18/17（见头部「并流刷新」）；同日二次并流 `0856e49` ＋ `0020` 后为 19/18（见头部「二次并流」） | 未来执行者按旧读数会误判「迁移没跑全」。`evidence/local-self-check.md:825/887` 的「10 个版本」是 2026-10-13 真跑的**历史输出**（当时确为 10 个），按「不改写历史证据」原则应保留；**建议由 GY-I25（#27）材料Owner** 在 runbook §步骤2/3 与 §5.4 增加「当时 10 个／现有 N 个（随基线变）」的时点说明，或改为引用门禁输出 |
+| F1 | **runbook / roles-and-migration 的迁移数量读数过期**：`runbook.md:331`「全部 10 个版本」、`:343` 期望输出「10 个版本已全部应用（0001 … 0010）」；`roles-and-migration.md:240`「全部 10 个版本」；`runbook.md:507`「rollback 存在（0002–0010，没有 0001）」 | 实测（基线 `60aa9ad`）`services/api/db/migrations/` = **17** 个（`0001..0017`）；`rollback/` = **16** 个（`0002..0017`，仍无 `0001`）。**两代基线均未修**：`95b8e7c` 上为 15/14，`60aa9ad` 上为 17/16，文档读数始终停在 10/9；2026-10-18 并流 `53922eb` ＋ `0018` 后为 18/17（见头部「并流刷新」）；再合流 `0856e49` ＋ `0019` 后为 19/18（见头部「合流复核」）；2026-10-19 合流 `d131e47` ＋ `0020` 后为 20/19（见头部「三次并流」） | 未来执行者按旧读数会误判「迁移没跑全」。`evidence/local-self-check.md:825/887` 的「10 个版本」是 2026-10-13 真跑的**历史输出**（当时确为 10 个），按「不改写历史证据」原则应保留；**建议由 GY-I25（#27）材料Owner** 在 runbook §步骤2/3 与 §5.4 增加「当时 10 个／现有 N 个（随基线变）」的时点说明，或改为引用门禁输出 |
 | F2 | **LF 判据的工作区假象**（第 9 项） | `core.autocrlf=true` | 已在本片工具中按 blob 判据固化；建议后续所有「行尾必查」都注明「查 blob，不查工作区」 |
 | F5 | **`bash -n` 不得传文件路径**（监工在 WSL 下实测转红后修复）：旧写法 `execFileSync('bash',['-n', join(ROOT, script)])` 把 Windows 路径传给 bash，MSYS bash 吃 `D://…`（本机因此 5/5 假绿）、**WSL 只吃 `/mnt/d/…`（监工环境 5/5 找不到文件）**、Linux CI 吃 `/…`——三种解释互不相容 | 修复：`bash -n` 改为**读 blob 内容喂 stdin**（`execFileSync('bash',['-n'],{input})`），与路径解释完全无关，且与 LF 判据同源（检查提交内容而非工作区）；`tests/unit/release-materials-index.test.mjs` 增加结构化回归钉住该形态（不得再出现给 bash 传路径的调用） | 已修复并复跑通过；教训：跨平台门禁里，**凡是把本机路径交给外部程序的调用都要按「调用方可能是另一种路径哲学」设计**（stdin/stdout 优先，路径探测兜底） |
 | F3 | **`service-settings.md` 对 `OBJECT_STORAGE_*` 的「当前无代码消费」已过期**：该表四行（`:61`-`:64`）称 object storage 相关键「当前无代码消费（识别/合成媒体端口在 real 下未接线、fail-closed）」 | 新基线上 `services/api/src/media/object-store.ts:209` 实际读取 `OBJECT_STORAGE_ENDPOINT`（并在 `:214/226` 参与校验与报错）；`app.ts:1127` 在 `mediaAccessGrantOrigin !== null` 时注入 `accessGrantOrigin`。即 PR #193「媒体对象存储显式接线」之后这些键**已被消费**（凭据齐备才构造真实适配器、缺任一保持 fail-closed 的口径不变） | 会影响运维对「填了是否起作用」的判断。同表 `DELETION_LEDGER_KEY` 的「无代码消费」**仍成立**（`grep` 确认 config.ts 之外无消费者）⇒ 不是整表过期，建议材料Owner 只订正 object storage 四行 |
@@ -121,5 +124,5 @@
 - 本片只做**索引 + 离线文档核验**：新增 1 份索引（本文件）、1 个门禁工具、1 项回归；
   **未改动** `deploy/**`、`docs/verification/**` 既有材料正文，未改契约与服务端代码。
 - `Refs #24`，**不关闭整项 issue**；GY-I24 整项未完成（见 §6）。
-- 本索引的读数一律绑定**测量时的树**：`60aa9ad`（初版）与 2026-10-18 顶层并流后的合并树（见头部「并流刷新」）；
+- 本索引的读数一律绑定**测量时的树**：`60aa9ad`（初版）与 2026-10-18 顶层并流／再合流、2026-10-19 三次并流后的合并树（见头部「并流刷新」「合流复核」「三次并流」）；
   基线前进后应复跑门禁并更新读数（刷新方法：并入新 `upstream/main` → 跑门禁 → 按输出改数 → 复跑回归）。

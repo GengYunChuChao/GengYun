@@ -58,6 +58,9 @@ Page({
     stateTitle: '',
     stateDesc: '',
     modeNote: '',
+    // GY-I26：服务端 `mode` 为 stub／preset_demo 时的**置顶**替身标注（页尾小字不足以「明显」）。
+    // 逐字取 `api.modeNote(mode)`，不新造第二套替身文案；real 模式保持为空。
+    stubNote: '',
     items: [],
     // 筛选（demo messages 页的 chips，见顶部 FILTERS）：'all'／'unread'／'interaction'／'system'。
     // **只筛「当前已加载」的消息**（服务端游标分页，本地不重排、不补数据）。
@@ -102,13 +105,15 @@ Page({
     api.listMessages({}).then(function (page) {
       if (epoch !== that._epoch) return
       const items = that._decorate(page.items)
+      const mode = page.mode
       that.setData({
         status: items.length ? 'ready' : 'empty',
         items: items,
         visibleItems: that._visible(items, that.data.filter),
         hasUnread: that._hasUnread(items),
         nextCursor: page.nextCursor,
-        modeNote: api.modeNote(page.mode)
+        modeNote: api.modeNote(mode),
+        stubNote: mode === 'stub' || mode === 'preset_demo' ? api.modeNote(mode) : ''
       })
       if (done) done()
     }).catch(function (error) {
@@ -119,12 +124,14 @@ Page({
         errorText: api.message(error),
         stateTitle: api.stateTitle(error),
         stateDesc: api.message(error),
-        modeNote: ''
+        modeNote: '',
+        stubNote: ''
       })
       if (done) done()
     })
   },
 
+  /** 失败态的可点重试入口（messages.wxml 的 error 分支 bind:action="onRetry"）。 */
   onRetry: function () { this.reload(); this.refreshUnread() },
 
   onLoadMore: function () {

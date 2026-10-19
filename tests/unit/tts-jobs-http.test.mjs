@@ -59,12 +59,12 @@ function failingProvider() {
 }
 
 async function buildFixture(t, options = {}) {
-  const auth = createMemoryAuthStore();
+  const auth = options.auth ?? createMemoryAuthStore();
   const baseConfig = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' });
   // real 模式：沿用既有回归的装配口径（stub 配置 + 显式切模式），**不提供任何真实凭据**，
   // 因此校验必然落到 fail-closed 分支（这正是本用例要证明的）。
   const config = options.real === true ? { ...baseConfig, executionMode: 'real', requiresRealCredentials: true } : baseConfig;
-  const store = createMemorySynthesisStore();
+  const store = options.store ?? createMemorySynthesisStore();
   const app = buildApp({
     config,
     store: auth,
@@ -85,8 +85,8 @@ async function buildFixture(t, options = {}) {
     });
     return { user, token };
   };
-  const a = await account('a');
-  const b = await account('b');
+  const a = options.actorA ?? (await account('a'));
+  const b = options.actorB ?? (await account('b'));
   t.after(() => app.close());
 
   const call = async (method, path, actor = a, { headers = {}, payload } = {}) => {
@@ -341,4 +341,77 @@ test('real 未接真实 TTS ⇒ 受理前 503 PROVIDER_UNAVAILABLE(retryable)，
     '替身提供者版本不得伪装成真实音频来源',
   );
   assert.equal(stub.app.synthesisService.describe().mediaNote.includes('替身'), true);
+});
+
+// ---------------------------------------------------------------- 模式交叉不撒谎 / 音频归属
+
+test('模式交叉·stub 受理的任务标识在 real 装配下 503 可解释，绝不把替身产物当成 real 的成功作业读出', async (t) => {
+  // 反事实：只有「同一 store 被两套模式共享」时才可能把 stub 任务读成 real 作业
+  // （生产默认各进程独立内存 store；这里刻意共享，用来证明读面不会撒谎）。
+  const shared = createMemorySynthesisStore();
+  const stub = await buildFixture(t, { store: shared });
+  const job = await acceptOne(stub);
+
+  const own = await stub.call('GET', `${API}/jobs/${job.id}`, stub.a);
+  assert.equal(own.status, 200, '前置：同一模式下读得到该作业');
+  assert.equal(own.data.data.state, 'succeeded');
+  assert.equal(own.data.data.result.kind, 'synthesis');
+  const stubMediaId = own.data.data.result.value.media_id;
+
+  // 同一 auth store / 同一主体 / 同一 synthesis store，但装配切到 real（无真实凭据）。
+  const real = await buildFixture(t, {
+    real: true,
+    store: shared,
+    auth: stub.auth,
+    actorA: stub.a,
+    actorB: stub.b,
+  });
+  assert.equal(real.app.synthesisService.describe().executionMode, 'real');
+  assert.equal(real.app.synthesisService.describe().providerAvailable, false);
+
+  const crossed = await real.call('GET', `${API}/jobs/${job.id}`, real.a);
+  assert.equal(crossed.status, 503, `real 装配读 stub 任务必须 503，实际 ${crossed.status}：${JSON.stringify(crossed.data)}`);
+  assert.equal(crossed.data.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(crossed.data.error.retryable, false, '模式不符不是瞬时故障 ⇒ 不得标为可重试');
+  assert.match(crossed.data.error.message, /stub/);
+  assert.match(crossed.data.error.message, /real/);
+  assert.equal(crossed.data.data, undefined, '503 不得携带任何作业投影（不冒充成功、不泄 media_id）');
+  assert.equal(JSON.stringify(crossed.data).includes(stubMediaId), false, '响应体不得泄露 stub 产物 id');
+
+  // 交叉读取绝不改动原任务：stub 装配下它仍是原本的 succeeded + 同一 revision。
+  const reread = await stub.call('GET', `${API}/jobs/${job.id}`, stub.a);
+  assert.equal(reread.status, 200);
+  assert.equal(reread.data.data.state, 'succeeded');
+  assert.equal(reread.data.data.revision, own.data.data.revision, '交叉模式读取不得改写任务 revision');
+  assert.deepEqual(reread.data.data.result, own.data.data.result);
+});
+
+test('音频归属与访问·合成 media_id 在媒体域无隐式出口：属主读与不存在同形 404，他人读同形 404（需显式凭据）', async (t) => {
+  const h = await buildFixture(t);
+  const job = await acceptOne(h);
+  const read = await h.call('GET', `${API}/jobs/${job.id}`, h.a);
+  assert.equal(read.status, 200);
+  const mediaId = read.data.data.result.value.media_id;
+  assert.match(mediaId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+  // 属主直接读媒体域：合成产物不因「同一属主」而被旁路读出，与不存在的媒体同形。
+  const owner = await h.call('GET', `${API}/media/${mediaId}`, h.a);
+  const missing = await h.call('GET', `${API}/media/${MISSING_JOB_ID}`, h.a);
+  assert.equal(owner.status, 404, `合成产物不得在媒体域被隐式读出，实际 ${owner.status}：${JSON.stringify(owner.data)}`);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(owner.data.error, missing.data.error, '属主读合成产物与「媒体不存在」必须逐字段同形');
+
+  // 他人读同一条 id：同形 404（不泄露「这条 id 存在」）。
+  const foreign = await h.call('GET', `${API}/media/${mediaId}`, h.b);
+  assert.equal(foreign.status, 404);
+  assert.deepEqual(foreign.data.error, owner.data.error, '跨用户读合成产物必须与不存在同形');
+
+  // 访问凭据入口也不认它：没有显式 grant 就没有访问，不得凭空发凭据。
+  for (const actor of [h.a, h.b]) {
+    const grant = await h.call('POST', `${API}/media/${mediaId}/access`, actor, {
+      headers: { 'if-match': '"1"', 'idempotency-key': nextKey() },
+    });
+    assert.equal(grant.status, 404, `无显式凭据不得发放访问授权，实际 ${grant.status}：${JSON.stringify(grant.data)}`);
+    assert.equal(grant.data.error.code, 'NOT_FOUND');
+  }
 });

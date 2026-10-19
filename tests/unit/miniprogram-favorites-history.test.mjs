@@ -12,6 +12,12 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import vm from 'node:vm';
 
+// 跨端一致性锚点：小程序侧的「冲突字段人话标签」必须认识服务端下发的这两个 token。
+import {
+  CONFLICT_FIELD_SOURCE_VALIDITY,
+  CONFLICT_FIELD_SOURCE_REVIEW,
+} from '../../services/api/src/ocr/state.ts';
+
 const root = resolve(import.meta.dirname, '../..');
 const UUID_A = '00000000-0000-4000-8a00-000000000001';
 const UUID_B = '00000000-0000-4000-8b00-000000000002';
@@ -258,6 +264,27 @@ test('历史详情：实时读取优先；实时未命中时快照只用于定�
   assert.equal(await missing, null);
 });
 
+test('历史详情：实时改为不可用时，不得用快照里的旧 available 顶替（失效不复活）', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+  // 列表页写入的引用快照是"当时可用"——这正是旧链接/旧缓存的形态。
+  f.history.remember([historyItem({ job_state: 'succeeded', reference_state: 'available' })]);
+
+  // 详情页实时读取拿到的是"现在不可用"：必须以实时为准，快照里的旧 available 一律作废。
+  const live = f.history.locateHistory(UUID_B, 50);
+  answer(f, { items: [historyItem({ job_state: 'succeeded', reference_state: 'unavailable' })], next_cursor: null });
+  const located = await live;
+  assert.equal(located.locatedBy, 'live');
+  assert.equal(located.referenceState, 'unavailable', '实时不可用必须压过快照里的旧 available');
+  assert.equal(located.referenceState === 'available', false, '页面不得给出"打开资料"的入口');
+  assert.equal(located.jobState, 'succeeded', '可见性变化不影响任务状态如实呈现');
+
+  // 反向对照：实时可用时才允许 available（不是把页面做成恒不可用）。
+  const back = f.history.locateHistory(UUID_B, 50);
+  answer(f, { items: [historyItem({ job_state: 'succeeded', reference_state: 'available' })], next_cursor: null });
+  assert.equal((await back).referenceState, 'available');
+});
+
 test('历史详情视图：候选与人工选择分开、失败不当作成功、分数不是准确率', () => {
   const f = fixture();
   const succeeded = f.history.recognitionDetailView(recognition(), 'succeeded');
@@ -304,6 +331,8 @@ test('OCR 视图：原始字段/人工更正/核对结果分开，只报用量�
   assert.equal(view.verification.matchState, 'matched');
   assert.match(view.verification.matchLabel, /已匹配/);
   assert.deepEqual([...view.verification.conflictFields], ['dosage_form']);
+  // 原 token 照录不动，另给同序的中文标签（页面只显示中文，机器 token 仍可复核）。
+  assert.deepEqual([...view.verification.conflictLabels], ['剂型']);
   assert.deepEqual([...view.verification.missingFields], ['registration_number']);
   assert.equal(view.verification.doseCardCount, 1);
   assert.equal(JSON.stringify(view).includes('original_text'), false, '不得渲染用量卡正文');
@@ -319,6 +348,22 @@ test('OCR 视图：原始字段/人工更正/核对结果分开，只报用量�
   const bad2 = f.history.getOcr(TARGET);
   answer(f, ocr({ verification: Object.assign(ocr().verification, { match_state: 'weird' }) }));
   await assert.rejects(() => bad2, (e) => e.code === 'INVALID_RESPONSE');
+});
+
+test('冲突字段人话标签：来源失效/被拒有中文说法，未知 token 原样保留（不改写、不猜）', () => {
+  const f = fixture();
+  assert.deepEqual(
+    [...f.history.conflictFieldLabels([
+      CONFLICT_FIELD_SOURCE_VALIDITY,
+      CONFLICT_FIELD_SOURCE_REVIEW,
+      'dosage_form',
+      'ingredients',
+      'mystery_token',
+    ])],
+    ['登记记录已失效或撤销', '登记记录已被拒绝核对', '剂型', '有效成分', 'mystery_token'],
+  );
+  // 空清单照旧为空：不补造任何一条冲突说法。
+  assert.deepEqual([...f.history.conflictFieldLabels([])], []);
 });
 
 test('级联披露（非契约标记）三态文案不同，未接线明确说明只删了记录本身', () => {
