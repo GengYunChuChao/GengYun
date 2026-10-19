@@ -13,6 +13,8 @@
 // - 服务端语义（占位幂等、同键回放、失败终态不写记录）由 `tests/integration/speech-http.mjs`
 //   与 `tests/unit/speech-service.test.mjs` 锁定；本文件只补**客户端消费层**对真实装配的端到端形状：
 //   确认幂等（同键回放不重复写入）、发送幂等（同键回放不建第二条轮次）、
+//   **发送结果未知后重试**（响应丢失 ⇒ 同一把键同一 revision 重发 ⇒ 服务端仍只一条轮次、
+//   revision 不推进；GY-I11 P2 定向）、
 //   **未确认/已删除不得外发**（服务端同样拒绝，纵深防御）、迟到/取消不产生任何外发。
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
@@ -330,6 +332,67 @@ try {
     assert.match(described.providerNote, /替身/);
     assert.ok(described.providerCalls >= 3, '三次成功受理各一次真实调用（计数点在最发起处）');
     observations.push('[5] providerCalls=' + described.providerCalls + ' storePersistent=' + described.storePersistent);
+  });
+
+  // ---------------------------------------------------------------- [6] 发送结果未知后重试（GY-I11 P2 定向）
+  await group('[6] 发送结果未知（响应丢失）后重试：同一把键同一 revision ⇒ 服务端零第二条轮次、零新 revision', async () => {
+    const created = await client.createTranscription({ media_id: mediaNormal, media_revision: 1 }, client.newKey('i11-create'));
+    const transcriptionId = created.transcriptionId;
+    const read1 = await waitForRecord(transcriptionId);
+    const confirmedText = read1.record.raw_text + '（结果未知重试场景校对）';
+    const confirmed = await client.confirmTranscription({
+      transcriptionId, revision: read1.record.revision, confirmedText, idempotencyKey: client.newKey('i11-confirm'),
+    });
+    assert.equal(confirmed.record.revision, 2, '确认必须递增 revision');
+
+    const conversation = await client.createConversation(client.newKey('i11-conversation'));
+    const sendKey = client.newKey('i11-send');
+
+    // 第一次发送：请求照常发出、服务端照常处理，但**响应丢失** ⇒ 客户端结果未知
+    // （最危险的子场景：写可能已发生）。客户端只能如实报 NETWORK_UNCERTAIN。
+    const realRequest = wx.request;
+    let dropNextTurnResponse = true;
+    wx.request = function (o) {
+      if (dropNextTurnResponse === true && o.method === 'POST' && o.url.endsWith('/turns')) {
+        dropNextTurnResponse = false;
+        realRequest.call(wx, Object.assign({}, o, { success: function () { if (o.fail) o.fail({}) } }));
+        return;
+      }
+      return realRequest.call(wx, o);
+    };
+    let uncertain = null;
+    try {
+      await client.sendSpeechTurn({
+        conversationId: conversation.conversation.id,
+        conversationRevision: conversation.conversation.revision,
+        transcriptionId,
+        transcriptionRevision: confirmed.record.revision,
+        idempotencyKey: sendKey,
+      });
+    } catch (error) {
+      uncertain = error;
+    } finally {
+      wx.request = realRequest;
+    }
+    assert.ok(uncertain !== null, '响应丢失必须如实报错（不谎称已发送）');
+    assert.equal(uncertain.code, 'NETWORK_UNCERTAIN');
+
+    // 重试：**同一把键、同一 revision**（页面在正文/版本未变时即此形态）。
+    // 服务端按请求哈希回放首次结果 ⇒ 不建第二条轮次、不重复执行副作用。
+    const resent = await client.sendSpeechTurn({
+      conversationId: conversation.conversation.id,
+      conversationRevision: conversation.conversation.revision,
+      transcriptionId,
+      transcriptionRevision: confirmed.record.revision,
+      idempotencyKey: sendKey,
+    });
+    assert.equal(resent.job.kind, 'answer');
+    const turns = await http(`${API}/conversations/${conversation.conversation.id}/turns`, { token: session.token });
+    assert.equal(turns.body.data.items.length, 1, '结果未知后同键重试不得创建第二条轮次');
+    assert.equal(turns.body.data.items[0].transcription_ref.revision, 2, '轮次必须绑定确认后 revision');
+    const after = await client.getTranscription(transcriptionId);
+    assert.equal(after.record.revision, 2, '重试不得推进 revision（没有第二次确认）');
+    observations.push('[6] uncertain=' + uncertain.code + ' turns=' + turns.body.data.items.length + ' revision=' + after.record.revision);
   });
 
   console.log('PASS ' + passed + ' groups; loopback only, stub substitute ASR, no database, no external network');

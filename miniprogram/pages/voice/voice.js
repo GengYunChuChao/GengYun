@@ -1057,55 +1057,78 @@ Page({
       this.setData({ transcriptNote: '尚未取得转写记录：不确认、不发送。' })
       return
     }
-    this.setData({ transcriptBusy: true, transcriptStage: 'confirming', transcriptErrorCode: '', transcriptNote: '正在确认核对结果…' })
+    // **发送未确认后的重试**：本机已成功确认过、且服务端状态与当前正文/版本一致 ⇒ 不再 PATCH，
+    // 直接复用「原发送身份」（同一 transcriptionRevision + 同一把发送键）重发。
+    // 为什么不能再确认：服务端 `confirmTranscription` 对每把**新**键都会 `revision + 1`；
+    // 若重试时以新键再确认，发送描述符（含 revision）随之变化 ⇒ 换新发送键 ⇒ 服务端把这次
+    // 重发当成**另一笔**发送（重复轮次），而用户以为只是重试。只有**正文变化**或
+    // **revision 变化**（记录被重读/他人改动）才算新尝试，才重新确认。
+    const reuseConfirmed = flow.confirmed !== null
+      && flow.confirmed.text === draft
+      && flow.record !== null
+      && flow.record.revision === flow.confirmed.revision
+      && flow.record.confirmed_text === draft
+      && flow.record.confirmed_at !== null
+    if (reuseConfirmed !== true) {
+      this.setData({ transcriptBusy: true, transcriptStage: 'confirming', transcriptErrorCode: '', transcriptNote: '正在确认核对结果…' })
 
-    // 第一段：用户明确确认（同一次尝试的重试复用同一把键）。
-    const confirmDescriptor = 'confirm:' + flow.id + ':' + recordRevision + ':' + draft
-    const confirmKey = speechTranscript.stableKey(this._confirmAttempt, confirmDescriptor, 'i11-confirm')
-    this._confirmAttempt = { descriptor: confirmDescriptor, key: confirmKey }
-    let confirmed
-    try {
-      confirmed = await speechTranscript.confirmTranscription({
-        transcriptionId: flow.id,
-        revision: recordRevision,
-        confirmedText: draft,
-        idempotencyKey: confirmKey
-      })
-    } catch (error) {
-      if (!this.isCurrent(generation)) return
-      if (isGateLoss(error)) { this.closePrivate(); return }
-      if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') {
-        // 记录已被别的会话改动/删除：**重读一次**再让用户决定——
-        // 不拿着过期 revision 反复重试（那样每次都会同样冲突，用户没有出路）。
-        await this.resyncTranscriptAfterConflict(generation, flow, error)
+      // 第一段：用户明确确认（同一次尝试的重试复用同一把键）。
+      const confirmDescriptor = 'confirm:' + flow.id + ':' + recordRevision + ':' + draft
+      const confirmKey = speechTranscript.stableKey(this._confirmAttempt, confirmDescriptor, 'i11-confirm')
+      this._confirmAttempt = { descriptor: confirmDescriptor, key: confirmKey }
+      let confirmed
+      try {
+        confirmed = await speechTranscript.confirmTranscription({
+          transcriptionId: flow.id,
+          revision: recordRevision,
+          confirmedText: draft,
+          idempotencyKey: confirmKey
+        })
+      } catch (error) {
+        if (!this.isCurrent(generation)) return
+        if (isGateLoss(error)) { this.closePrivate(); return }
+        if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') {
+          // 记录已被别的会话改动/删除：**重读一次**再让用户决定——
+          // 不拿着过期 revision 反复重试（那样每次都会同样冲突，用户没有出路）。
+          await this.resyncTranscriptAfterConflict(generation, flow, error)
+          return
+        }
+        this.setData({
+          transcriptStage: 'ready', transcriptBusy: false,
+          transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+          transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未确认、未发送。'
+        })
         return
       }
+      if (!this.isCurrent(generation)) return
+      const live = this._transcript
+      if (live === null || live.id !== flow.id || live.cancelled === true) return
+      // 唯一写 `confirmed` 的地方：用户明确确认的服务端回传结果。
+      live.record = confirmed.record
+      live.confirmed = {
+        text: confirmed.record.confirmed_text,
+        revision: confirmed.record.revision,
+        at: confirmed.record.confirmed_at
+      }
       this.setData({
-        transcriptStage: 'ready', transcriptBusy: false,
-        transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
-        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未确认、未发送。'
+        transcriptStage: 'confirmed', transcriptBusy: false,
+        transcriptRevision: confirmed.record.revision,
+        transcriptConfirmedText: confirmed.record.confirmed_text,
+        transcriptConfirmedAt: confirmed.record.confirmed_at,
+        transcriptNote: '已确认（revision ' + confirmed.record.revision + '）：正在发送到问答…'
       })
-      return
+    } else {
+      this.setData({
+        transcriptBusy: true, transcriptStage: 'confirmed', transcriptErrorCode: '',
+        transcriptNote: '本条正文已确认（revision ' + flow.confirmed.revision + '）：正在重试发送——'
+          + '复用同一发送身份（同 revision、同一把键），不重新确认、不产生新版本。'
+      })
     }
+
+    // 两条路径共用：代次/流校验后进入发送闸门（fail-closed；任何一条不满足都零请求）。
     if (!this.isCurrent(generation)) return
     const live = this._transcript
     if (live === null || live.id !== flow.id || live.cancelled === true) return
-    // 唯一写 `confirmed` 的地方：用户明确确认的服务端回传结果。
-    live.record = confirmed.record
-    live.confirmed = {
-      text: confirmed.record.confirmed_text,
-      revision: confirmed.record.revision,
-      at: confirmed.record.confirmed_at
-    }
-    this.setData({
-      transcriptStage: 'confirmed', transcriptBusy: false,
-      transcriptRevision: confirmed.record.revision,
-      transcriptConfirmedText: confirmed.record.confirmed_text,
-      transcriptConfirmedAt: confirmed.record.confirmed_at,
-      transcriptNote: '已确认（revision ' + confirmed.record.revision + '）：正在发送到问答…'
-    })
-
-    // 第二段：发送闸门（fail-closed；任何一条不满足都零请求）。
     const gate = speechTranscript.evaluateSendGate({
       record: live.record,
       confirmed: live.confirmed,
@@ -1147,12 +1170,18 @@ Page({
     } catch (error) {
       if (!this.isCurrent(generation)) return
       if (isGateLoss(error)) { this.closePrivate(); return }
-      // 会话版本变化/不存在：丢掉本地会话记录，下次发送时重建（**不**用新键自动重发，避免重复外发）。
-      if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') this._conversation = null
+      if (error.code === 'REVISION_CONFLICT' || error.code === 'NOT_FOUND') {
+        // 冲突/缺失可能出在**会话侧**（本地丢会话记录、下次重建即可重试），也可能出在
+        // **转写侧**（记录被他人改动 ⇒ 原发送身份的 revision 已过期，原样重试必然再冲突）。
+        // 重读一次记录来区分，出口见 `resyncAfterSendConflict`。
+        this._conversation = null
+        await this.resyncAfterSendConflict(generation, flow, error)
+        return
+      }
       this.setData({
         transcriptStage: 'ready', transcriptBusy: false,
         transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
-        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未发送成功，可重试（同一尝试复用同一幂等键）。'
+        transcriptNote: speechTranscript.messageFor(error) + '（' + String(error && error.code) + '）：未发送成功，可重试（同一尝试复用同一发送身份：同正文、同 revision、同一把键）。'
       })
     }
   },
@@ -1195,6 +1224,52 @@ Page({
       transcriptNote: '转写版本已变化（' + String(error && error.code) + '）：已按服务端最新记录刷新'
         + '（revision ' + read.record.revision + '）。请重新核对正文并再次点击「核对并发送」——'
         + '未经本机一次明确确认，不会发送。'
+    })
+  },
+
+  /**
+   * 发送撞上版本冲突/记录缺失后的**重读出口**（与确认路径同构，但保留"可重试"）：
+   *
+   * - 记录仍在且 revision 与已确认快照一致 ⇒ 冲突在**会话侧**：转写身份未变，回到 ready
+   *   让用户重试（同一尝试复用同一把发送键；会话已在调用方丢弃，下次自动重建）；
+   * - 记录仍在但 revision 变了 ⇒ 转写版本已变化：按服务端最新记录刷新展示与快照、
+   *   清掉确认尝试键，回到 ready 让用户**重新明确确认**（闸门只认本机一次成功 PATCH，
+   *   「他人已确认」不自动放行）；
+   * - 记录已不存在 ⇒ 如实失败并保持本流关闭（不再外发），引导重新转写。
+   */
+  resyncAfterSendConflict: async function (generation, flow, error) {
+    let read = null
+    try {
+      read = await speechTranscript.getTranscription(flow.id)
+    } catch (readError) {
+      read = null
+    }
+    if (!this.isCurrent(generation)) return
+    const live = this._transcript
+    if (live === null || live.id !== flow.id || live.cancelled === true) return
+    if (read === null) {
+      this.setData({
+        transcriptStage: 'failed', transcriptBusy: false, transcriptErrorCode: 'NOT_FOUND',
+        transcriptNote: '转写记录已不存在（可能已被删除）：本流不再外发任何问答；可取消后重新转写。'
+      })
+      return
+    }
+    const identityUnchanged = live.confirmed !== null && read.record.revision === live.confirmed.revision
+    live.record = read.record
+    this._confirmAttempt = null
+    this.setData({
+      transcriptStage: 'ready', transcriptBusy: false, transcriptErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
+      transcriptRevision: read.record.revision,
+      transcriptRaw: read.record.raw_text,
+      transcriptSpans: read.record.uncertain_spans,
+      transcriptModel: read.record.model_version,
+      transcriptDraft: read.record.confirmed_text === null ? read.record.raw_text : read.record.confirmed_text,
+      transcriptConfirmedText: read.record.confirmed_text === null ? '' : read.record.confirmed_text,
+      transcriptConfirmedAt: read.record.confirmed_at === null ? '' : read.record.confirmed_at,
+      transcriptNote: identityUnchanged
+        ? '会话侧版本变化（' + String(error && error.code) + '）：转写身份未变，可重试——复用同一把发送键，会话将自动重建。'
+        : '转写版本已变化（' + String(error && error.code) + '）：已按服务端最新记录刷新（revision '
+          + read.record.revision + '）。请重新核对正文并再次点击「核对并发送」——未经本机一次明确确认，不会发送。'
     })
   },
 

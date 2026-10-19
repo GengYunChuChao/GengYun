@@ -11,9 +11,11 @@
  *   C. 幂等键：同一尝试（同正文同 revision）的重试复用同一把键，改正文即换键；
  *   D. 页面·未确认不外发：记录就绪前／空草稿 ⇒ 零 PATCH、零轮次请求；
  *   E. 页面·确认后发送全链路：请求形状（If-Match、幂等键、两字段/四字段闭集体）逐项核对；
- *   F. 页面·网络未确认后的重试：同一把键（确认/发送/受理各自按尝试固化）；
+ *   F. 页面·重试身份：发送结果未知 ⇒ 同键重发、**零新增确认**（服务端 revision 不推进）；
+ *      改正文/版本变化 ⇒ 新尝试（新确认键、新 revision、新发送键）；
  *   G. 页面·双击与在途取消：在途确认期间再点 ⇒ 一次请求；受理在途取消 ⇒ 迟到 202 零外发；
- *   H. 页面·版本冲突重读：确认撞 409 ⇒ 按服务端最新记录刷新，"他人已确认"不得自动发送；
+ *   H. 页面·版本冲突重读（确认与发送两条路径）：撞 409 ⇒ 按服务端最新记录刷新，
+ *      "他人已确认"不得自动发送；转写侧已变 ⇒ 新尝试，会话侧冲突 ⇒ 同一把发送键可重试；
  *   I. 页面·取消与迟到回调不得外发：取消先关闸门再 DELETE；迟到响应不改状态、不触发发送；
  *   J. 页面·迟到轮询不冲掉已确认快照（revision 只进不退）；
  *   K. 页面·失败终态不得外发：截止时间内取不到记录 ⇒ 如实失败、零轮次请求；
@@ -242,15 +244,57 @@ function bootTranscriptPage(options) {
   }
   // 默认路由：全部 200/202 成功形状（用例可逐条覆盖）。
   const deadline = new Date(Date.now() + (opts.deadlineInMs === undefined ? 30000 : opts.deadlineInMs)).toISOString()
+  // 存储层状态（与服务端同语义建模）：确认态 + 轮次态。
+  // - PATCH 确认按 `confirmTranscription`：同键同体 ⇒ 回放首次结果（**不**推进 revision）；
+  //   同键异体 ⇒ 409 `IDEMPOTENCY_CONFLICT`；新键 + If-Match 不符 ⇒ 409 `REVISION_CONFLICT`；
+  //   新键 + If-Match 相符 ⇒ revision + 1（并把读面推进到确认态）。
+  // - 读面如实反映存储层：确认后 GET 返回确认后的 revision / confirmed_text。
+  // （早期夹具「PATCH 恒返 revision 2、GET 恒返未确认态」会把「重试时又确认一次」的真实后果
+  //   掩盖掉：那会以新键推进 revision、连带换掉发送键——正是 GY-I11 P2。故此处必须同语义。）
+  const confirmState = { revision: 1, latest: null, byKey: new Map() }
   http.on('POST', paths.create, () => ({ status: 202, data: { data: transcriptionJobFixture(transcriptionId, deadline), meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }))
-  http.on('GET', paths.record, () => ({ status: 200, data: { data: recordFixture(transcriptionId, opts.recordOverrides), meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }))
+  http.on('GET', paths.record, () => {
+    const projection = confirmState.latest === null ? (opts.recordOverrides || {}) : confirmState.latest
+    return {
+      status: 200,
+      data: { data: recordFixture(transcriptionId, projection), meta: metaFixture(opts.mode) },
+      headers: { ETag: '"' + (projection.revision === undefined ? 1 : projection.revision) + '"' }
+    }
+  })
   http.on('PATCH', paths.confirm, (call) => {
-    const text = call.data.confirmed_text
-    return { status: 200, data: { data: recordFixture(transcriptionId, { revision: 2, confirmed_text: text, confirmed_at: new Date().toISOString() }), meta: metaFixture(opts.mode) }, headers: { ETag: '"2"' } }
+    const key = call.header['Idempotency-Key']
+    const seen = confirmState.byKey.get(key)
+    if (seen !== undefined) {
+      if (seen.confirmed_text !== call.data.confirmed_text || seen.ifMatch !== call.header['If-Match']) {
+        return { status: 409, data: { error: { code: 'IDEMPOTENCY_CONFLICT' } }, meta: metaFixture(opts.mode) }
+      }
+      return {
+        status: 200,
+        data: { data: recordFixture(transcriptionId, { revision: seen.revision, confirmed_text: seen.confirmed_text, confirmed_at: seen.confirmed_at }), meta: metaFixture(opts.mode) },
+        headers: { ETag: '"' + seen.revision + '"' }
+      }
+    }
+    if (call.header['If-Match'] !== '"' + confirmState.revision + '"') {
+      return { status: 409, data: { error: { code: 'REVISION_CONFLICT' } }, meta: metaFixture(opts.mode) }
+    }
+    const applied = { revision: confirmState.revision + 1, confirmed_text: call.data.confirmed_text, confirmed_at: new Date().toISOString() }
+    confirmState.revision = applied.revision
+    confirmState.latest = applied
+    confirmState.byKey.set(key, { revision: applied.revision, confirmed_text: applied.confirmed_text, confirmed_at: applied.confirmed_at, ifMatch: call.header['If-Match'] })
+    return { status: 200, data: { data: recordFixture(transcriptionId, applied), meta: metaFixture(opts.mode) }, headers: { ETag: '"' + applied.revision + '"' } }
   })
   http.on('DELETE', paths.record, () => ({ status: 202, data: { data: { accepted: true }, meta: metaFixture(opts.mode) } }))
   http.on('POST', paths.conversations, () => ({ status: 201, data: { data: { id: conversationId, revision: 1, conditions: null, created_at: new Date().toISOString() }, meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }))
-  http.on('POST', paths.turns, () => ({ status: 202, data: { data: answerJobFixture(turnId), meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }))
+  // 发送轮次：同一把键 ⇒ 回放同一任务（不建第二条轮次）；新键 ⇒ 新任务。
+  const turnState = { byKey: new Map() }
+  http.on('POST', paths.turns, (call) => {
+    const key = call.header['Idempotency-Key']
+    const seen = turnState.byKey.get(key)
+    if (seen !== undefined) return { status: 202, data: { data: seen, meta: metaFixture(opts.mode) }, headers: { ETag: '"' + seen.revision + '"' } }
+    const job = answerJobFixture(randomUUID())
+    turnState.byKey.set(key, job)
+    return { status: 202, data: { data: job, meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }
+  })
 
   const transcript = loader.loadReal(bySuffixOf('speech-transcript.js'), loader.resolveDep)
   // 轮询节流：只把 1s 压到 5ms（等待时长），语义（边界/守卫/迟到判定）不变。
@@ -441,7 +485,67 @@ test('页面·核对并发送全链路：请求形状逐项核对（If-Match/幂
   h.page.onUnload()
 })
 
-// ============================================================ F. 页面·网络未确认后的重试同键
+// ============================================================ F. 页面·重试身份：网络未确认同键重发；改正文即新尝试
+
+test('页面·发送结果未知后重试：零新增确认（revision 不推进）、同一把发送键、服务端零新轮次', async () => {
+  const h = bootTranscriptPage()
+  await readyTranscript(h)
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  // 第一次发送走网络失败通道 ⇒ 结果未知（服务端可能已受理、也可能没有）。
+  let failNextTurn = true
+  const realTurn = h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler = function (call) {
+    if (failNextTurn) { failNextTurn = false; return new Promise((_resolve, reject) => reject(new Error('network down'))) }
+    return realTurn(call)
+  }
+  await h.page.onConfirmAndSend()
+  assert.equal(h.page.data.transcriptStage, 'ready', '发送结果未知必须回到 ready（不谎称已发送）')
+  assert.equal(h.http.find('PATCH', h.paths.confirm).length, 1, '首次只应确认一次')
+  const firstSendKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
+
+  // 重试（正文与 revision 均未变）：**不得再确认**——再确认会以新键把服务端 revision 推到 3，
+  // 发送描述符随之变化 ⇒ 换新发送键 ⇒ 服务端把重发当成另一笔（重复轮次）。GY-I11 P2 即此。
+  await h.page.onConfirmAndSend()
+  assert.equal(h.http.find('PATCH', h.paths.confirm).length, 1, '重试不得再次确认（不新增 revision）')
+  const turns = h.http.find('POST', h.paths.turns)
+  assert.equal(turns.length, 2)
+  assert.equal(turns[1].header['Idempotency-Key'], firstSendKey, '重试必须复用同一把发送键')
+  assert.equal(turns[1].data.transcription_revision, 2, '重试必须仍绑定已确认的 revision')
+  assert.equal(h.page.data.transcriptStage, 'sent')
+  // 服务端视角（经客户端读面）：确认态仍停在 revision 2，没有第二次写入。
+  const reread = await h.transcript.getTranscription(h.transcriptionId)
+  assert.equal(reread.record.revision, 2, '服务端记录 revision 必须仍为 2')
+  assert.equal(reread.record.confirmed_text, EDITED_TEXT)
+  h.page.onUnload()
+})
+
+test('页面·发送失败后改正文再重试 ⇒ 新尝试：新确认键、新 revision、新发送键', async () => {
+  const h = bootTranscriptPage()
+  await readyTranscript(h)
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  let failNextTurn = true
+  const realTurn = h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler = function (call) {
+    if (failNextTurn) { failNextTurn = false; return new Promise((_resolve, reject) => reject(new Error('network down'))) }
+    return realTurn(call)
+  }
+  await h.page.onConfirmAndSend()
+  assert.equal(h.page.data.transcriptStage, 'ready')
+  const firstSendKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
+
+  // 正文变化 ⇒ 新尝试：重新确认（新键、If-Match 基于已确认 revision）⇒ 新 revision ⇒ 新发送键。
+  h.page.setData({ transcriptDraft: EDITED_TEXT + '（补充说明）' })
+  await h.page.onConfirmAndSend()
+  const patches = h.http.find('PATCH', h.paths.confirm)
+  assert.equal(patches.length, 2, '改正文必须重新确认')
+  assert.equal(patches[1].header['If-Match'], '"2"', '第二次确认必须基于已确认 revision')
+  const turns = h.http.find('POST', h.paths.turns)
+  assert.equal(turns.length, 2)
+  assert.notEqual(turns[1].header['Idempotency-Key'], firstSendKey, '新尝试必须换新发送键')
+  assert.equal(turns[1].data.transcription_revision, 3, '新尝试必须发送新 revision')
+  assert.equal(h.page.data.transcriptStage, 'sent')
+  h.page.onUnload()
+})
 
 test('页面·网络未能确认结果后重试：同一尝试复用同一把键（确认与发送各自）', async () => {
   const h = bootTranscriptPage()
@@ -578,7 +682,80 @@ test('页面·受理在途时取消：本地作废在途请求，迟到 202 不�
   h.page.onUnload()
 })
 
-// ============================================================ H. 页面·版本冲突重读
+// ============================================================ H. 页面·版本冲突重读（确认与发送两条路径）
+
+test('页面·发送撞版本冲突（转写侧已变）⇒ 重读刷新；须本机重新明确确认，不得自动放行', async () => {
+  const h = bootTranscriptPage()
+  await readyTranscript(h)
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  // PATCH 按时间线建模：首次确认 ⇒ revision 2；此后别的会话把记录推到 revision 3；
+  // 用户重读后重新确认（If-Match "3"）⇒ revision 4。
+  let patchCount = 0
+  h.http.routes.filter((r) => r.method === 'PATCH' && r.path === h.paths.confirm)[0].handler = function (call) {
+    patchCount += 1
+    const revision = patchCount === 1 ? 2 : 4
+    return {
+      status: 200,
+      data: { data: recordFixture(h.transcriptionId, { revision, confirmed_text: call.data.confirmed_text, confirmed_at: new Date().toISOString() }), meta: metaFixture() },
+      headers: { ETag: '"' + revision + '"' }
+    }
+  }
+  // 发送第一次：409 版本冲突；此后放行。
+  let turnCount = 0
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler = function (call) {
+    turnCount += 1
+    if (turnCount === 1) return { status: 409, data: { error: { code: 'REVISION_CONFLICT' } }, meta: metaFixture() }
+    return { status: 202, data: { data: answerJobFixture(randomUUID()), meta: metaFixture() }, headers: { ETag: '"1"' } }
+  }
+  // 冲突后重读：服务端记录已被他人改动（revision 3、他人确认的正文）。
+  h.http.routes.filter((r) => r.method === 'GET' && r.path === h.paths.record)[0].handler = () => ({
+    status: 200,
+    data: { data: recordFixture(h.transcriptionId, { revision: 3, confirmed_text: '他人改后的正文', confirmed_at: '2026-10-18T00:00:00.000Z' }), meta: metaFixture() },
+    headers: { ETag: '"3"' }
+  })
+
+  await h.page.onConfirmAndSend()
+  assert.equal(h.page.data.transcriptStage, 'ready')
+  assert.equal(h.page.data.transcriptRevision, 3, '必须按服务端最新 revision 刷新')
+  assert.match(h.page.data.transcriptNote, /版本已变化/)
+  assert.equal(h.http.find('POST', h.paths.turns).length, 1, '冲突后不得自动重发')
+
+  // 用户重新明确确认后才发送，且发送的是新 revision（新尝试）。
+  await h.page.onConfirmAndSend()
+  const turns = h.http.find('POST', h.paths.turns)
+  assert.equal(turns.length, 2)
+  assert.equal(turns[1].data.transcription_revision, 4, '重新确认后必须发送新 revision')
+  assert.equal(h.page.data.transcriptStage, 'sent')
+  h.page.onUnload()
+})
+
+test('页面·发送撞版本冲突（会话侧）⇒ 重读确认转写身份未变 ⇒ 同一把发送键重试即成功', async () => {
+  const h = bootTranscriptPage()
+  await readyTranscript(h)
+  h.page.setData({ transcriptDraft: EDITED_TEXT })
+  // 发送第一次：409（会话侧版本冲突；转写记录未被改动 ⇒ 读面仍是已确认的 revision 2）。
+  let turnCount = 0
+  const realTurn = h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler
+  h.http.routes.filter((r) => r.method === 'POST' && r.path === h.paths.turns)[0].handler = function (call) {
+    turnCount += 1
+    if (turnCount === 1) return { status: 409, data: { error: { code: 'REVISION_CONFLICT' } }, meta: metaFixture() }
+    return realTurn(call)
+  }
+  await h.page.onConfirmAndSend()
+  assert.equal(h.page.data.transcriptStage, 'ready')
+  assert.match(h.page.data.transcriptNote, /可重试/)
+  assert.equal(h.http.find('PATCH', h.paths.confirm).length, 1, '转写身份未变 ⇒ 不得重新确认')
+  const firstSendKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
+
+  // 重试：同一把发送键（本地会话已丢弃，自动重建）。
+  await h.page.onConfirmAndSend()
+  const turns = h.http.find('POST', h.paths.turns)
+  assert.equal(turns.length, 2)
+  assert.equal(turns[1].header['Idempotency-Key'], firstSendKey, '身份未变必须复用同一把发送键')
+  assert.equal(h.http.find('PATCH', h.paths.confirm).length, 1, '重试不得再次确认')
+  assert.equal(h.page.data.transcriptStage, 'sent')
+  h.page.onUnload()
+})
 
 test('页面·确认撞版本冲突后重读刷新；"他人已确认"不得自动发送，须本机重新明确确认', async () => {
   const h = bootTranscriptPage()
