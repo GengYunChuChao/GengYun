@@ -7,6 +7,10 @@
   并入 `53922eb`（含上面的 `0017_account_suspend_authority.sql`），叠加本片的 `0018_favorites_history.sql`
   ⇒ 迁移数 **18**（`0001..0018`）、`rollback/` **17**（`0002..0018`）、`deploy/` 在册仍 **29**；
   §2 表与 §4 第 8 项的「当前读数」已按本分支实测改写（`60aa9ad` 时代的历史读数按原样保留）。
+- **并流刷新二（2026-10-18，#15 社区域 PG 持久化落地后）**：本片新增 `0022_community_persistence.sql`
+  ＋ `rollback/0022_community_persistence.down.sql` ⇒ 迁移数 **19**（`0001..0018` ＋ `0022`）、
+  `rollback/` **18**；**`0019`–`0021` 是有意缺号**（分属 I17/I18 切片，各自分支带自己的迁移号），
+  因此这里不能写成连续区间。`deploy/` 在册仍 29。§2 表行与 §4 第 8 项读数已同步。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -67,7 +71,7 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **18** 个：`0001..0018`） | ✅ down 脚本覆盖 `0002..0018`（17 个）、无 `0001`（门禁第 8 项） |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **19** 个：`0001..0018` ＋ `0022`；`0019`–`0021` 有意缺号，分属 I17/I18） | ✅ down 脚本覆盖 `0002..0018` 与 `0022`（18 个）、无 `0001`（门禁第 8 项） |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -84,7 +88,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 18 个；`rollback/` 17 个；`migrate.ts` 报错文本 | ✅ 一致 |
+| 8 | down 覆盖 `0002..N`（允许缺号，只要求逐名对应）、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 19 个（`0001..0018`＋`0022`）；`rollback/` 18 个；`migrate.ts` 报错文本 | ✅ 一致（`0019`–`0021` 缺号由 I17/I18 切片各自带入，不影响本项） |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 
