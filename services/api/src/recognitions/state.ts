@@ -7,9 +7,9 @@
  *   Recognition = { candidates maxItems=3, uncertainty_reasons maxItems=10, selected_species_id|null, model_version }
  *
  * 本文件承载「缺项 ≠ 可执行」的硬规则（监工 2026-10-11 对 #82 的 CHANGES_REQUESTED 口径）：
- * 任何必要条件未知（无候选 / 无分数 / 提供者自述不确定 / 提供者无响应 / 超时）**一律不得**
- * 落到 succeeded；必须落 uncertain / failed / timed_out，并如实写出 uncertainty_reasons 或 error_code。
- * 「只记原因、不改状态」在本模块是被禁止的写法。
+ * 任何必要条件未知（无候选 / 无分数 / 提供者自述不确定 / 提供者无响应 / 超时 / Top1 同分并列）
+ * **一律不得**落到 succeeded；必须落 uncertain / failed / timed_out，并如实写出 uncertainty_reasons
+ * 或 error_code。「只记原因、不改状态」在本模块是被禁止的写法。
  */
 import { BRANCH_DESCRIPTORS, isFailureBranch } from './branches.ts';
 
@@ -141,6 +141,8 @@ export function normalizeReasons(raw: unknown): string[] {
 export const REASON_NO_CANDIDATES = '模型未返回任何候选';
 export const REASON_MISSING_SCORE = '部分候选缺少模型分数';
 export const REASON_LOW_SCORE = '最高候选分数低于可信门槛';
+/** Top1 与 Top2 分数相同（同分并列）：无法区分谁是最可能的结果，**不任选其一**。 */
+export const REASON_TIED_TOP_SCORE = 'Top1 与 Top2 候选同分并列，无法区分';
 
 export interface Decision {
   state: 'succeeded' | 'uncertain';
@@ -154,7 +156,9 @@ export interface Decision {
  * 2. 提供者自述任何 uncertainty_reasons → uncertain（fail-closed：模型自己说不确定就不算成功）；
  * 3. 任一候选 model_score 为 null → uncertain（**不得**在该情形下写分数）；
  * 4. Top1 分数低于实现层门槛 → uncertain；
- * 5. 仅当以上都不成立时才是 succeeded，且此时 uncertainty_reasons 必为空。
+ * 5. Top1 与 Top2 分数相同（同分并列）→ uncertain（无法区分谁是最可能的结果，**不任选其一**、
+ *    也不靠 rank 顺序假装确定；同分不合并、不补造新的区分依据）；
+ * 6. 仅当以上都不成立时才是 succeeded，且此时 uncertainty_reasons 必为空。
  *
  * 第 3 个参数（可选，GY-I09 第二片）：提供者上报的**六类失败/边界分支**
  * （见 `branches.ts`）。给定时**一律**判 `uncertain` 并带上该分支的如实原因 ——
@@ -195,9 +199,13 @@ function baseDecision(candidates: Candidate[], providerReasons: string[]): Decis
   if (candidates.some((item) => item.model_score === null)) {
     return { state: 'uncertain', candidates, uncertaintyReasons: [REASON_MISSING_SCORE] };
   }
-  const top = candidates[0];
+  const [top, second] = candidates;
   if (top === undefined || top.model_score === null || top.model_score < MIN_TRUSTED_TOP_SCORE) {
     return { state: 'uncertain', candidates, uncertaintyReasons: [REASON_LOW_SCORE] };
+  }
+  // 同分并列 ⇒ Top1 不唯一：按不确定处理，不拿 rank 顺序当区分依据。
+  if (second !== undefined && second.model_score !== null && second.model_score === top.model_score) {
+    return { state: 'uncertain', candidates, uncertaintyReasons: [REASON_TIED_TOP_SCORE] };
   }
   return { state: 'succeeded', candidates, uncertaintyReasons: [] };
 }

@@ -22,6 +22,7 @@ import {
   createStubRecognitionProvider,
 } from '../../services/api/src/recognitions/provider.ts';
 import { createRecognitionService } from '../../services/api/src/recognitions/service.ts';
+import { REASON_TIED_TOP_SCORE } from '../../services/api/src/recognitions/state.ts';
 import {
   BRANCH_DESCRIPTORS,
   FAILURE_BRANCHES,
@@ -251,6 +252,35 @@ test('GY-I09 候选：至多 Top3、少于 3 不补造、无分数不伪造高�
     assert.equal(job.state, 'uncertain', JSON.stringify(job));
     assert.notEqual(job.state, 'succeeded', '低分不得被写成成功');
     assert.ok(job.result.value.uncertainty_reasons.length >= 1);
+  });
+
+  await t.test('[同分并列] Top1 与 Top2 分数相同 → uncertain，不得拿 rank 顺序假装确定', async () => {
+    // 边界：两条候选分数完全相同（不是缺分数、也不低于门槛）。
+    // 此时「谁是最可能的」不可区分：既不能任选 rank 1 当结果，也不能合并两条。
+    const tied = [
+      { species_id: 'synthetic_weed_a', rank: 1, model_score: 0.66 },
+      { species_id: 'synthetic_weed_b', rank: 2, model_score: 0.66 },
+      { species_id: 'synthetic_weed_c', rank: 3, model_score: 0.17 },
+    ];
+    const { service } = makeService({ provider: scriptedProvider([{ kind: 'completed', candidates: tied }]) });
+    const job = await runJob(service);
+    assert.equal(job.state, 'uncertain', JSON.stringify(job));
+    assert.notEqual(job.state, 'succeeded', '同分并列不得被写成成功');
+    assert.deepEqual([...job.result.value.uncertainty_reasons], [REASON_TIED_TOP_SCORE], '必须如实给出同分原因');
+    // 分数/候选原样保留：不补造区分依据、不去重、不改 rank。
+    assert.deepEqual(
+      job.result.value.candidates.map((c) => [c.species_id, c.rank, c.model_score]),
+      [['synthetic_weed_a', 1, 0.66], ['synthetic_weed_b', 2, 0.66], ['synthetic_weed_c', 3, 0.17]],
+    );
+    assert.equal(job.result.value.selected_species_id, null, '同分并列不得自动选定某个品种');
+  });
+
+  await t.test('[同分不算并列] Top1 与 Top2 分数不同时仍按唯一 Top1 判 succeeded', async () => {
+    // 正控制：证明上面的规则没有把正常执行路径也判成 uncertain。
+    const { service } = makeService({ provider: scriptedProvider([{ kind: 'completed', candidates: THREE_CANDIDATES }]) });
+    const job = await runJob(service);
+    assert.equal(job.state, 'succeeded', JSON.stringify(job));
+    assert.deepEqual([...job.result.value.uncertainty_reasons], []);
   });
 });
 
