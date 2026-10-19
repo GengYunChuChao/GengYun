@@ -74,7 +74,7 @@ import {
   createReadCache,
   createSubstituteContentAuthority,
 } from './visibility.ts';
-import type { ContentAuthorityPort } from './types.ts';
+import type { AuthoritySnapshot, ContentAuthorityPort } from './types.ts';
 import type { ReadCache, ReadVerdict } from './visibility.ts';
 
 /** 审核任务默认截止时间（受理时刻起算）：过期只是"不再等待"——任务仍是 `uncertain`（隔离），绝不放行。 */
@@ -366,6 +366,27 @@ export function createFailClosedModerationService(): ModerationService {
       callback_key_configured: false,
     }),
   };
+}
+
+/**
+ * 发布写路径的**补偿**口：`setVisibility` 成功而 `setPublishedRevision` 抛错时，把可见性回写到
+ * 调用前的快照，保证"对外抛错 ⇒ 权威行不出现半发布状态"。
+ *
+ * 同源社区权威（`origin === 'community_store'`）的 `setPublishedRevision` 是**只读核对**
+ * （写成功后派生"已发布版本"必然等于目标 revision）⇒ 已接线路径不会走到这里；补偿覆盖
+ * 其他权威实现抛错的情形。补偿自身失败时以**原始错误**为准（不掩盖第一现场）。
+ */
+async function restoreWrittenVisibility(
+  authority: ContentAuthorityPort,
+  target: TargetRef,
+  snapshot: AuthoritySnapshot | null,
+): Promise<void> {
+  if (snapshot === null || snapshot.visibility === 'published') return;
+  try {
+    await authority.setVisibility(target, snapshot.visibility);
+  } catch {
+    // 原始错误优先：补偿失败不改变对外抛出的错误。
+  }
 }
 
 export function createModerationService(deps: ModerationServiceDeps): ModerationService {
@@ -672,17 +693,22 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     };
 
     const snapshot = await authority.read(target);
-    if (snapshot !== null && snapshot.visibility === 'hidden' && actor.role !== 'admin') {
+    // **下架是终态**：已下架/已撤回的目标一律按 `OBJECT_UNAVAILABLE` 拒绝（比"版本冲突"更强的
+    // 不可用结论，既有口径）；放在版本核对之前，避免把"永久不可复活"改判成版本问题。
+    if ((snapshot !== null && snapshot.visibility === 'hidden' && actor.role !== 'admin') || ledger.isWithdrawn(target)) {
       reasons.push('TARGET_WITHDRAWN');
       return refuse('OBJECT_UNAVAILABLE');
+    }
+    // **权威 revision 先核对，且先于任何写**：本次要核对的是 `target.revision` 那一版；
+    // 权威当前版本已前进（旧结论/旧链接被新版本取代）或回退时不得发布 ——
+    // 否则会出现"先写可见性、再在写后核对里抛错"的半发布状态。
+    if (snapshot !== null && snapshot.current_revision !== target.revision) {
+      reasons.push(`REVISION_SUPERSEDED:${snapshot.current_revision}:${target.revision}`);
+      return refuse('REVISION_CONFLICT');
     }
     if (snapshot !== null && snapshot.author_state !== 'active') {
       reasons.push(snapshot.author_state === 'inactive' ? 'ACCOUNT_INACTIVE' : 'AUTHOR_ANONYMIZED');
       return refuse('ACCOUNT_INACTIVE');
-    }
-    if (ledger.isWithdrawn(target)) {
-      reasons.push('TARGET_WITHDRAWN');
-      return refuse('OBJECT_UNAVAILABLE');
     }
 
     const mediaCount = content.media.length;
@@ -741,7 +767,15 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     if (reasons.length > 0) return refuse('REVISION_CONFLICT');
 
     await authority.setVisibility(target, 'published');
-    await authority.setPublishedRevision(target, target.revision);
+    try {
+      await authority.setPublishedRevision(target, target.revision);
+    } catch (error) {
+      // 写后核对抛错 ⇒ **补偿**回写写前可见性：对外抛错时权威行不得停在半发布状态。
+      // （同源社区权威的 `setPublishedRevision` 是只读核对，写成功后必然通过；
+      //  该补偿覆盖其他权威实现抛错的情形，补偿自身失败不掩盖第一现场。）
+      await restoreWrittenVisibility(authority, target, snapshot);
+      throw error;
+    }
     cache.set(target, {
       visibility: 'published',
       published_revision: target.revision,
