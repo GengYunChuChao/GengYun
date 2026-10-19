@@ -264,7 +264,7 @@ export async function conversationFixture(t, options = {}) {
   const auth = createMemoryAuthStore();
   const conversationStore = options.injection?.store ?? options.store ?? createMemoryConversationStore();
   const config = {
-    ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+    ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: options.logLevel ?? 'silent' }),
     ...(options.real === true ? { executionMode: 'real', requiresRealCredentials: true } : {}),
   };
   const app = buildApp({
@@ -274,6 +274,8 @@ export async function conversationFixture(t, options = {}) {
     // 会话 store 恒注入：夹具要在 HTTP 之外**直接读同一份持久化状态**（级联用例靠它给双读数）。
     conversationInjection: { store: conversationStore, ...(options.injection ?? {}) },
     ...(options.pool === undefined ? {} : { pool: options.pool }),
+    // 仅测试注入：日志写入目标（用于断言「日志不回声令牌/手机号/openid」）。不传时行为不变。
+    ...(options.logStream === undefined ? {} : { logStream: options.logStream }),
   });
   async function account(subject) {
     const user = await auth.createUser(subject.repeat(64));
