@@ -95,12 +95,14 @@ try {
     //   speech-text：安全检查闸门与播报计划复核（数字/单位/制剂条件/否定词）
     //   voice-api：POST /speech/synthesis 与 GET /jobs/{id} 的消费层
     //   recorder-port：wx.getRecorderManager 的唯一出现处（GY-I11 语音问答真实录音）
+    //   speech-transcript：GY-I11 转写四端点 + 确认/发送消费层（可编辑、确认后发送、取消/失败/迟到不外发）
     'utils/speech-text.js',
     'utils/audio-playback.js',
     'utils/inner-audio-port.js',
     'utils/substitute-player.js',
     'utils/voice-api.js',
     'utils/recorder-port.js',
+    'utils/speech-transcript.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',

@@ -648,7 +648,9 @@ function loadPageHarness(options = {}) {
     if (base === 'audio-playback') return loadReal(bySuffix('audio-playback.js'), resolveDep);
     if (base === 'inner-audio-port') return loadReal(bySuffix('inner-audio-port.js'), resolveDep);
     if (base === 'substitute-player') return loadReal(bySuffix('substitute-player.js'), resolveDep);
-    if (base === 'voice-api') return loadReal(bySuffix('voice-api.js'), resolveDep);
+    if (base === 'voice-api') return loadReal(bySuffix('voice-api.js'), resolveDep)
+    // GY-I11：转写核对消费层是**真代码**（内含真实的 wx.request 调用），与 voice-api 同口径加载。
+    if (base === 'speech-transcript') return loadReal(bySuffix('speech-transcript.js'), resolveDep);
     // GY-I11：录音端口是**真代码**（内含真实的 wx.getRecorderManager 调用），只把平台换成探针。
     if (base === 'recorder-port') return loadReal(bySuffix('recorder-port.js'), resolveDep);
     // 上传链路：`uploadVoiceQuestion` 的真实实现（requests/wxCalls 记录其发出的每一个请求）。
