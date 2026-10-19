@@ -101,6 +101,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/consent-grant-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/conversations-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_conversations_test`（本机隔离集群，仅回环端口）：'
+      + '本片用它取"引用只能取自本次检索集合"的真库读数（真读面视图 → 真检索端口 → 真守卫 → 真 PG store）；'
+      + '未配置 `CONVERSATIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**（未取得，不冒充通过；'
+      + '仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0），'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/egress-ledger-pg.mjs',
     reason: '需真实 PG 且硬钉库名 `gengyun_egress_test`：由 `consent-grant-postgres.yml` 先建库再运行。',
   },
