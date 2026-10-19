@@ -63,8 +63,9 @@ const EXEMPTIONS = Object.freeze([
   Object.freeze({
     path: 'tests/integration/user-chain-e2e.mjs',
     reason:
-      'E2E 需要真实 PostgreSQL 17（initdb 起集群，且硬断言服务端为 17.x）：环境里找不到 17 的 initdb 时脚本只逐字打印 3 行 SKIP 并以 0 退出，' +
-      '接进无 PG 的 test:integration:http 等于把门禁变成静默绿灯，故本单落「未取得」；前置＝CI 里提供 PostgreSQL 17 二进制并单独开一个带 PG 的 workflow。',
+      'E2E 需要真实 PostgreSQL 17（initdb 起集群，且硬断言服务端为 17.x）：环境里找不到 17 的 initdb 时脚本逐字打印 3 行 SKIP 并**以 77 退出**（未取得，' +
+      '只有显式 --allow-skip／GY_ALLOW_SKIP=1 才取 0），所以接进无库的 test:integration:http 会让整链失败——本片按派单落「未取得」而**不改链**；' +
+      '前置＝CI 里提供 PG17 二进制（USER_CHAIN_PG_BIN）与可写数据目录（USER_CHAIN_PG_DATADIR），并单独开一个带 PG 的 workflow。',
   }),
 ]);
 
@@ -82,6 +83,8 @@ function assertAllWired({ pureScripts, scriptTexts, exemptions }) {
       '',
       '两条出路：①把它接进 wires（通常是 package.json 里 `npm run test:integration:http` 的纯回环链）；',
       '②若它需要真实 PG／网络／本机工具，连同「所需前置」登记进上面的 EXEMPTIONS，并同步 FROZEN_EXEMPTION_PATHS 与文档清单。',
+      '',
+      '说明：这条消息若出现在反向控制用例里，除探针之外列出的文件名是当前仓库的真实缺口（仅供定位）；该用例的成败只由探针是否被点名决定。',
     ].join('\n'),
   );
 }
@@ -161,6 +164,29 @@ test('反向控制：塞进一个未接线的纯脚本，同一断言必须红�
   assertAllWired({ pureScripts: [...realPureScripts, probe], scriptTexts: scriptTextsOf(packageJson), exemptions: [...exemptions, probe] });
 });
 
+/** 豁免理由必须写清「为什么接不进去 + 需要什么前置」，且不得停留在旧事实（「以 0 退出 ⇒ 静默绿灯」）。 */
+export function assertExemptionReason(entry) {
+  assert.ok(entry.reason.length >= 60, `豁免项 ${entry.path} 的理由太短，没写清「为什么接不进去 + 需要什么前置」`);
+  assert.match(entry.reason, /PG|PostgreSQL/, `豁免项 ${entry.path} 的理由必须点名前置条件（PG／PostgreSQL）`);
+  // 把「跳过＝未取得」的事实锁进断言：理由里必须写 77，且必须点名 PG17 这个前置。
+  // 否则下一个改脚本的人会把理由留成旧事实（「以 0 退出 ⇒ 静默绿灯」），文档与代码就各说各话。
+  assert.match(
+    entry.reason,
+    /\b77\b/,
+    `豁免项 ${entry.path} 的理由必须写明「缺前置时以 77 退出（未取得）」；写成 0 会让「接进无库链会整链失败」这个真正理由消失`,
+  );
+  assert.match(
+    entry.reason,
+    /PG17|PostgreSQL 17/,
+    `豁免项 ${entry.path} 的理由必须点名前置是 PostgreSQL 17（PG17），否则读者不知道要提供哪一版`,
+  );
+  assert.doesNotMatch(
+    entry.reason,
+    /以\s*0\s*退出|exit\s*0/,
+    `豁免项 ${entry.path} 的理由仍在写「以 0 退出」的旧事实：脚本现在默认 77，只有 --allow-skip 才取 0`,
+  );
+}
+
 test('豁免表锁定：只能是被裁决过的文件，且理由必须写明所需前置', () => {
   const packageJson = readPackageJson();
   const scriptTexts = scriptTextsOf(packageJson);
@@ -185,9 +211,32 @@ test('豁免表锁定：只能是被裁决过的文件，且理由必须写明�
       false,
       `豁免项 ${entry.path} 已经被 npm 脚本引用，豁免失效，请删掉这一行`,
     );
-    assert.ok(entry.reason.length >= 60, `豁免项 ${entry.path} 的理由太短，没写清「为什么接不进去 + 需要什么前置」`);
-    assert.match(entry.reason, /PG|PostgreSQL/, `豁免项 ${entry.path} 的理由必须点名前置条件（PG／PostgreSQL）`);
+    assertExemptionReason(entry);
   }
+
+  // 反向控制（理由事实锁）：把理由换回旧事实「以 0 退出 ⇒ 静默绿灯」，必须红且点名文件；
+  // 换成一版压根不提 77 的理由，同样必须红——否则这三条锁只是摆设。
+  const staleExitZero = {
+    path: 'tests/integration/guard-probe-stale-reason-e2e.mjs',
+    reason:
+      '缺前置时脚本只打印 3 行 SKIP 并以 0 退出，接进无 PostgreSQL 的链就是静默绿灯，故本片不改链；前置＝CI 提供 PostgreSQL 17（PG17）二进制与单独 workflow。',
+  };
+  assert.throws(
+    () => assertExemptionReason(staleExitZero),
+    /guard-probe-stale-reason-e2e\.mjs/,
+    '理由还写着「以 0 退出」时必须红，且消息点名文件',
+  );
+  const noSeventySeven = {
+    path: 'tests/integration/guard-probe-noseven-reason-e2e.mjs',
+    reason:
+      '缺前置时脚本直接跳过、不跑任何断言，接进无 PostgreSQL 17（PG17）的链会让整链失败，故本片不改链；前置＝CI 提供 PG17 二进制与单独 workflow。',
+  };
+  assert.throws(
+    () => assertExemptionReason(noSeventySeven),
+    /guard-probe-noseven-reason-e2e\.mjs/,
+    '理由不提 77 时必须红，且消息点名文件',
+  );
+  assertExemptionReason(EXEMPTIONS[0]);
 });
 
 test('判类口径边界：不扫 PG／夹具／本机工具脚本，但链上的纯回环必须被看见', () => {
