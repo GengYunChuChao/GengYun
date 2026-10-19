@@ -104,7 +104,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 登录会话 | **恒为游客** | `utils/session.js` 的 `SESSION_ENABLED` 为 `false`，`isGuest()` 无条件返回 `true` 且不读存储；置为 `true` 后 `read()` 仍要求对象形态、非 `__devPreview`、含字符串 `token` |
 | 拍草识别 | 未接入 | 入口仅提示，不调用相机 |
 | 标签 OCR | 未接入 | 入口仅提示，不调用相机 |
-| 语音转写与播放 | 未接入 | 按钮只切换本地标记，不录音不播放 |
+| 语音转写与播放 | 录音已接真实端口；转写核对在 stub/preset_demo 接通 | 录音经 `utils/recorder-port.js`（`wx.getRecorderManager` 在原生侧的唯一出现处）真实采集，按用途 voice_question 上传（real 模式）；`utils/speech-transcript.js` 在 stub/preset_demo 下走通「受理→轮询→可编辑→用户明确确认→发送」，未经确认不外发、取消/失败/迟到回调不外发；**真实 ASR 未接线**，替身文本明确标注 |
 | 文字提问 | 未接入 | 入口仅提示 |
 | 社区内容 | 无数据 | 空态，不生成假帖子与假评论 |
 | 消息 | 无数据 | 空态，不生成假通知 |

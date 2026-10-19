@@ -17,6 +17,65 @@
 | 部署／演示 | 容器、VPC和CVM PostgreSQL安装／角色／备份恢复准备物；独立界面Demo可编辑源（#132） | 云上实际部署／迁移／恢复及联网验收；界面Demo不等于原生微信业务验收 |
 | 情景视频 | 已确认模板合成方案 | 接口、素材、时长／保存期限与播放器链待交付；演示不代表真实长期药效 |
 
+## 2026-10-18 快照
+
+核对日期 2026-10-18（UTC+8）。基线 `main` = `8205cfc`（`8205cfc8b8f32b8a7f44a28e53b1234bac5cc6c9`）：本节先从 `53922eb` rebase 到该提交，其后 #256、#272、#288、#289、#290 五个 PR 已并入 main，故计数与在飞清单按 rebase 后重测。本节只写本机实测读数与仓内可指位置；它取代下文「本轮合并与返修状态」里 2026-10-16 `bdd12bd` 那段契约读数，旧段按要求原样保留以便追溯。文首「核对日期 2026-10-14」那段与 `## 2026-10-11 跟进快照` 同属各自日期读数，一并保留，不再作为当前读数引用。
+
+### 计数（`gh` 实测，命令均带 `-R GengYunChuChao/GengYun`）
+
+| 口径 | 读数 | 命令 |
+| --- | --- | --- |
+| 开放 issue | 25 | `gh issue list --state open --limit 200 --json number` |
+| 已关闭 issue | 2（#1、#2） | `gh issue list --state closed --limit 200 --json number,title` |
+| 累计合入 PR | 202 | `gh pr list --state merged --limit 2000 --json number` |
+| 在飞 PR | 5（均非草稿；#248、#282 可合并性为冲突） | `gh pr list --state open --limit 200 --json number,title,isDraft,mergeable` |
+
+Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`；把整条管道塞进 `@()` 只会得到 1。
+
+### 契约门禁（本机重跑 `node tools/verify-contract-status.mjs`，退出码 0）
+
+原样输出：
+
+- 「PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项」
+- 「PASS: 语义可核 59 条区间 + 0 条片段；不可核 134 条区间 + 131 条片段（不可核不计入通过）」
+- 「PASS: 中文表格一致」
+- 「PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。」
+
+与旧读数的差异：旧段记的「已装配 106 条；implemented 13 / partial 93 / planned 6」是 `bdd12bd` 时读数。本轮 planned 只剩 4 条：`listSpecies`、`getPrivacyPolicy`、`listExports`、`verifyRegistration`；旧段列的 `requestAccountDeletion`／`getDeletionReceipt` 现为已装配的 partial（条目行 `docs/architecture/contract-status.json:385`、`:422`，其阻塞说明在同文件 `:419`、`:464`）。`listKnowledge` 仍 partial，条目行 `docs/architecture/contract-status.json:642`，阻塞原因逐字见同文件 `:668`（排序仍不同于冻结的 `created_at DESC`，实际表／投影无该列，排序与历史数据方案未完成）。装配数只说明路由是否挂上，不代表真实能力或整项验收。
+
+### 在飞 PR（5 条）
+
+| PR | 内容 | 迁移 | 可合并性 |
+| --- | --- | --- | --- |
+| #278 | GY-I17 消息域 PG 持久化 | `0019_messages_persistence.sql` | MERGEABLE |
+| #282 | GY-I18 feature_flags 落库 | `0020_feature_flags.sql` | CONFLICTING |
+| #279 | GY-I18 后台账号读面接真实 users 投影（Refs #18、#22） | `0021_admin_accounts_read.sql` | MERGEABLE |
+| #248 | GY-I11 语音转写可编辑、确认后发送（客户端切片） | 无 | CONFLICTING |
+| #284 | GY-I02 开放 issue 关闭材料索引（文档；HEAD 未更新，不作为关闭依据） | 无 | MERGEABLE |
+
+本轮已合入、不在上表：#256（#22 `retryable` 口径收口）、#272（#16 收藏与历史 PG 存储，迁移 `0018_favorites_history.sql`）、#288／#289／#290（#24 备份恢复演练脚本、索引派生计数、覆盖判定收紧）。
+
+`main` 现有 18 个迁移、最大号 `0018_favorites_history.sql`，因此带迁移的三个在飞 PR 须按 `#278 → #282 → #279` 合入，避免迁移号冲突。**`#282` 单解冲突不足以合入**：它另有一处已登记、仍未修的阻塞——`#282` 分支内 `services/api/src/admin/ops/flags-pg.ts:303-312` 把启动探测异常折叠为 `false`，`services/api/src/admin/ops/flag-gate.ts:433-445` 据此置 `probed=true`／`armed=false`，`:462-465` 返回 `open`，于是一次瞬时探测异常就让数据库里真实关闭的全局开关永久 fail-open 直到重启；须先修该 fail-open，且各 PR 适用 CI 转绿，未取得的新成功证据不得记通过。未合入 PR 的结论不当作既成事实。
+
+### 逐 issue 判定（两层口径，与 README「当前进度（2026-10-18）」表一致）
+
+- **按 AC 逐条判定**（关闭材料索引 [PR #284](https://github.com/GengYunChuChao/GengYun/pull/284) 分支内 `docs/verification/gy-issue-closure-index-20261018.md`，索引生成于基线 `5250520`；本快照基线为 `8205cfc`；**#284 HEAD 未更新，其旧结论不作为关闭依据**，只作条款级线索）：可关 **0** 项；待前置／待证据 **7** 项（#4、#7、#8、#16、#17、#22、#27）；待裁定 **1** 项（#3）；不可关 **5** 项（#19、#20、#21、#23、#24）；其余 12 项未纳入该索引（#5、#6、#9、#10、#11、#12、#13、#14、#15、#18、#28、#29），本轮没有 AC 级判定。**口径差异需明说**：索引原文的分布是「2 可关／4 待前置／2 待裁」，其中 **#22 在索引里记为待裁**（`| #22 | 3 | 2 | 1 | 0 | 0 | 待裁 |`）；本快照把 #22 改记待前置，依据是仓外严重性裁定（见下一条）。索引另把 **#7、#8 记为可关**，那只是验收条款层的判真：**#7 的验收前置 #3／#4 仍 OPEN**、真实来源与实际消费者证据未取得；**#8 的前置 #7 仍 OPEN**、登记标签原文剂量未取得。故两项整项状态一并改记「待前置／待证据」，条款级证据（AC 判真、100 组场景用例）原样保留。以上均为对索引口径的覆写，不是索引也这么记。关闭权仍只在监工与用户。
+- **#3 的待裁项**是「20 条 `review_status: unverified`／`achieved: 20` 是否算关闭」：指挥已给出建议「可关，附披露：条目 20／来源 validity=valid 20／逐字段复核 0／licensed=false」，最终由监工／用户裁定，本轮不写「已核实／已达标」。
+- **#22 的两项发现**经裁定不属「严重安全／权限缺陷」：§5.1 后台账号能力脱钩方向更保守（真实账号无法被该接口停用），§5.2 `retryable` 语义不一致不违约且已随 #256 合入收口；故其 AC 判定由待裁转为待前置，读面真实读数仍待 #279 合并后复测（`docs/verification/gy-i22-closure-gap-20261018.md:59-80`、`:92`、`:112`、`:128`）。
+- **关闭动作仍待监工／用户点头**，本轮不关闭任何 issue，整项完成数仍为 0。监工关联核对：#2 已 completed 关闭，本 PR 纯进度文档返修不重开 #2；#7／#8 保持 OPEN；#22 全链验收未完成。
+- **工程侧（与 AC 判定两层，不互替）**：交付中 4 项（#11、#17、#18、#22，各有在飞 PR 未合入）；卡在仓内要补的实现 10 项（#6、#7、#9、#10、#12、#13、#14、#15、#19、#29：真实对象存储适配器、知识列表排序方案、real 提供者接线、真实模型、社区持久化、备份副本清除、第三方删除登记面等）；卡在外部前提 11 项（#3、#4、#5、#8、#16、#20、#21、#23、#24、#27、#28：真机、正式凭据与合法域名、外部资料与独立签核）。同一项可同时出现在 AC 判定与工程侧，例如 #7 的验收条款已可判真而整项仍记待前置／待证据、契约面按 partial 保留；#16 的 PG 存储已随 #272 合入、真机页面证据仍未取得。
+
+### 仍未取得的主干（不分整项口径）
+
+- 真机：#23 的双平台真机与时延容量、#4 的真机微信身份、#5 的授权弹窗与坐标→地区转换、#16 的真机页面证据、#28 的开发者工具／真机渲染与截图（`docs/verification/platform-checklist.md:40`、`:48-49`、`docs/verification/gy-i05-region-profile-20261014.md:23-25`、`docs/verification/gy-i28-demo-parity-20261018.md:177-179`）。
+- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`docs/architecture/contract-status.json:777`、`:861`、`:1061`、`:1041`，问答判据 `services/api/src/conversations/types.ts:52`）。
+- 样本签核：#20 的独立复核与许可（`packages/evaluation/samples/gy-i20-weeds-labels.json:18` 的 `reviewedBy` 为 `null`）、#21 的真实能力评估（`docs/evaluation/README.md:20-21`：`isRealEvaluation=false`、门禁 `not_evaluated`、无任何模型成绩）。
+- 部署：#24 的实际部署与 CVM 侧恢复演练（`docs/verification/gy-i24-release-materials-index-20261017.md:13` 只做离线核验且不关闭整项；`docs/verification/gy-i24-restore-drill-local-20261018.md:6` 逐字「这是本机演练，不是 CVM 验收」）、#27 的合法域名与生产环境变量（`docs/verification/platform-checklist.md:24`、`docs/verification/gy-i27-live-ai-20261018.md:110`）。
+
+### 本节边界
+
+本节不含任何真机、真实供应商、渲染或部署实测，只复用仓内文档与代码行号并重跑了一条门禁命令；未重跑业务测试、PG 集成与微信工具。数值按 2026-10-18 当日读数（基线 `8205cfc`，rebase 后重测），后续合入会变，更新时另起快照、不改本节。
+
 ## 本轮合并与返修状态
 
 | PR | 已确认合并提交 | 当前含义 |

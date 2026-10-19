@@ -38,6 +38,8 @@ import {
   compareFormulation,
   normalizeComparableText,
   OcrProtocolError,
+  CONFLICT_FIELD_SOURCE_VALIDITY,
+  CONFLICT_FIELD_SOURCE_REVIEW,
 } from '../../services/api/src/ocr/state.ts';
 import { SUBSTITUTE_REGISTRY } from '../../services/api/src/ocr/reference.ts';
 
@@ -218,6 +220,47 @@ test('六类之四 conflict：唯一命中但字段与登记记录冲突', () =>
   assert.ok(decision.conflict_fields.length > 0, 'conflict 必须带出冲突字段');
   assert.equal(decision.conflict_fields.includes('dosage_form'), true, '冲突字段应含 dosage_form');
   assertEmptyArray(decision.missing_fields, 'conflict.missing_fields');
+});
+
+test('六类之四补（登记记录自身状态）：已失效/已撤销 → conflict，不得报「核对通过」', () => {
+  // #10 口径：文字识别成功 ≠ 药剂已核实。字段逐项一致但登记记录已失效时，
+  // 结论**不得**是 matched（那等于宣称「这条登记资料已核对通过」）。
+  for (const validity of ['expired', 'withdrawn', 'conflicting', 'unknown']) {
+    const record = { ...R1, source: { ...R1.source, validity } };
+    const decision = decideMatchState(fields(), available([record]));
+    assert.equal(decision.match_state, 'conflict', `validity=${validity} 不得判 matched`);
+    assert.equal(
+      decision.conflict_fields.includes(CONFLICT_FIELD_SOURCE_VALIDITY),
+      true,
+      `validity=${validity} 必须用 ${CONFLICT_FIELD_SOURCE_VALIDITY} 标出是来源状态问题`,
+    );
+    assert.notEqual(decision.registration, null, '仍如实带出该记录供人工复核');
+    assert.equal(decision.registration.source.validity, validity, '来源状态原样带出，不美化');
+    assertEmptyArray(decision.missing_fields, 'conflict.missing_fields');
+  }
+});
+
+test('六类之四补（登记记录自身状态）：review_status=rejected → conflict，带出 source.review_status', () => {
+  const record = { ...R1, source: { ...R1.source, review_status: 'rejected' } };
+  const decision = decideMatchState(fields(), available([record]));
+  assert.equal(decision.match_state, 'conflict');
+  assert.equal(decision.conflict_fields.includes(CONFLICT_FIELD_SOURCE_REVIEW), true);
+  assert.equal(decision.registration.source.review_status, 'rejected');
+});
+
+test('六类之四补（边界）：unverified 来源与字段冲突可叠加，且不误伤替身路径的 matched', () => {
+  // 替身登记来源恒为 review_status='unverified'：它不是「已核对有效」，但也**不是**明示失效，
+  // 用量放行由 gateDoseCards 单独把关；这里不得把替身路径整体判成 conflict。
+  const substitute = { ...R1, source: { ...R1.source, review_status: 'unverified' } };
+  assert.equal(decideMatchState(fields(), available([substitute])).match_state, 'matched');
+
+  // 字段冲突 + 来源失效同时存在时，两类 token 都要给出（不互相掩盖）。
+  const both = { ...R1, source: { ...R1.source, validity: 'withdrawn' } };
+  const decision = decideMatchState(fields({ dosage_form: '乳油' }), available([both]));
+  assert.equal(decision.match_state, 'conflict');
+  assert.equal(decision.conflict_fields.includes('dosage_form'), true);
+  assert.equal(decision.conflict_fields.includes(CONFLICT_FIELD_SOURCE_VALIDITY), true);
+  assert.equal(decision.conflict_fields.length, 2);
 });
 
 test('六类之五 insufficient：必要条件（登记号）未采集', () => {
