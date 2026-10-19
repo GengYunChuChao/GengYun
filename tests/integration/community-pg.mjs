@@ -128,8 +128,8 @@ async function main() {
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022');
     assert.deepEqual(
       versions.filter((v) => ['0020', '0021'].includes(v)),
-      ['0020'],
-      '0020 属 I18 切片 #282，已随 upstream/main（31a746d）合入；0021 属 I18 切片 #279（未合）；'
+      ['0020', '0021'],
+      '0020 属 I18 切片 #282（随 upstream/main `31a746d` 合入）、0021 属 I18 切片 #279（随 `145ebe4` → `607c03c` 合入）；'
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
