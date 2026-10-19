@@ -4,7 +4,8 @@
 //   $env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'      # 必填：含 initdb/pg_ctl 的目录
 //   $env:GY_I19_PG_ROOT = 'E:\GengYunCommander\.pg17\tmp'       # 选填：数据目录根（默认 os.tmpdir()）
 //   node tests/integration/backup-purge-pg.mjs
-// 未设置 `GY_PG_BIN` ⇒ 打印 SKIP 并 exit 0（本机/CI 没有 PG 二进制时如实跳过，不伪造 PASS）。
+// 未设置 `GY_PG_BIN` ⇒ 打印 SKIP 并以 **77** 退出（POSIX「skipped」）：本机/CI 没有 PG 二进制时如实跳过，不伪造 PASS。
+//   本机明知没有 PG 二进制、只想看跳过原因时可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
 //
 // 本脚本自证的**唯一**事情：设计文档里「已定死但没接线」的那三件事在真库上真的接上了——
 //   [1] 迁移 0023：表/约束/索引**真的**能建；`apply → rollback → 再 apply` 三连如实出现—消失—出现；
@@ -49,9 +50,16 @@ import { createPostgresDeletionRequestStore } from '../../services/api/src/priva
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const binDir = process.env.GY_PG_BIN ?? '';
+// 缺 PG 二进制时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 if (binDir === '') {
-  console.log('SKIP: 未设置 GY_PG_BIN（postgres 二进制目录，含 initdb/pg_ctl）⇒ 真库臂跳过，exit 0');
-  process.exit(0);
+  console.log('SKIP: 未设置 GY_PG_BIN（postgres 二进制目录，含 initdb/pg_ctl）⇒ 真库臂跳过，没有验证备份副本域（不是通过）。');
+  if (ALLOW_SKIP) {
+    console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+    process.exit(0);
+  }
+  console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知没有 PG 二进制时可显式加 --allow-skip 取 0）。');
+  process.exit(77);
 }
 
 const DAY_MS = 86_400_000;
