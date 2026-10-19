@@ -1,8 +1,9 @@
-// 收藏：真实回环 HTTP（合成账号/合成目标；无 PG、无真实资料读取实现）。
+// 收藏：真实回环 HTTP（合成账号/合成目标；无真实资料读取实现）。
 //
 // 覆盖 issue #16 的收藏验收：增删、**去重（不产生第二行）**、取消（旧行不复活）、
 // 归属与越权（同形 404）、契约形状（键集恰等、不出现"已使用"类字段）、
-// 头部（no-store / 强 ETag / 列表无 ETag）、校验与幂等、real 模式整域关闭。
+// 头部（no-store / 强 ETag / 列表无 ETag）、校验与幂等、**real 模式的二分语义**
+// （无 `pool` ⇒ 整域 503；有 `pool` ⇒ 接 `0018` 的 PG store 并真的落库）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildApp } from '../../services/api/src/app.ts';
@@ -15,6 +16,7 @@ import {
   USER_A,
   USER_B,
   makeControllableVisibility,
+  pglitePool,
   scriptedClock,
 } from './favorites-history-fixtures.mjs';
 
@@ -26,6 +28,7 @@ async function fixture(t, options = {}) {
   const clock = scriptedClock(START);
   const auth = createMemoryAuthStore();
   const visibility = options.visibility ?? undefined;
+  const pool = options.pool ?? undefined;
   const config = {
     ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     ...(options.real === true ? { executionMode: 'real', requiresRealCredentials: true } : {}),
@@ -34,6 +37,7 @@ async function fixture(t, options = {}) {
     config,
     store: auth,
     now: clock.now,
+    ...(pool === undefined ? {} : { pool }),
     ...(visibility === undefined ? {} : { favoritesInjection: { visibility } }),
   });
   async function account(subject) {
@@ -303,7 +307,7 @@ test('收藏HTTP：分页稳定、游标签名与跨主体拒绝', async (t) => 
   assert.equal(afterChange.body.error.code, 'INVALID_CURSOR');
 });
 
-test('收藏HTTP：real 模式整域关闭（内存存储不冒充持久化）', async (t) => {
+test('收藏HTTP·real 无 pool：整域 503（内存存储不冒充持久化，二分臂之一）', async (t) => {
   const h = await fixture(t, { real: true });
   for (const [method, path, extra] of [
     ['GET', FAVORITES, {}],
@@ -315,6 +319,49 @@ test('收藏HTTP：real 模式整域关闭（内存存储不冒充持久化）',
     assert.equal(result.body.error.code, 'PROVIDER_UNAVAILABLE');
   }
   assert.equal(h.app.favoritesService, null);
+});
+
+test('收藏HTTP·real 有 pool：接 PG store 并真的落库（二分臂之二，不再是恒 503）', async (t) => {
+  const { db, pool } = await pglitePool(t);
+  const h = await fixture(t, { real: true, pool });
+  // 收藏行有 `owner_id → users(id)` 外键：本夹具的会话来自内存 auth store，
+  // 因此把两个主体**如实**写进真表（不关外键、不改 schema 迁就测试）。
+  for (const account of [h.a, h.b]) {
+    await db.query('INSERT INTO users (id) VALUES ($1::uuid)', [account.user.id]);
+  }
+  assert.notEqual(h.app.favoritesService, null, 'real + 真实持久 store ⇒ 服务必须开启（有 pool 的分支）');
+
+  const created = await h.call('POST', FAVORITES, h.a, create('spc-pg-1', 1));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.data.target_ref.id, 'spc-pg-1');
+
+  // 落库证据：真表里恰一行（不是进程内 Map 的假成功）。
+  const stored = await db.query('SELECT owner_id, target_type, target_id, revision FROM favorites');
+  assert.equal(stored.rows.length, 1);
+  assert.equal(stored.rows[0].owner_id, h.a.user.id);
+  assert.equal(stored.rows[0].revision, 1);
+
+  // 同目标二次 POST（**换** Idempotency-Key ⇒ 走到唯一约束那条路径）⇒ 去重命中、行数不增。
+  const again = await h.call('POST', FAVORITES, h.a, create('spc-pg-1', 2));
+  assert.equal(again.status, 201);
+  assert.equal(again.body.data.id, created.body.data.id);
+  const afterSecond = await db.query('SELECT count(*)::int AS n FROM favorites');
+  assert.equal(afterSecond.rows[0].n, 1);
+
+  // 读回同一行（持久化后可列）。
+  const listed = await h.call('GET', FAVORITES, h.a);
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.data.items.map((row) => row.id), [created.body.data.id]);
+
+  // 取消（CAS + 物理删除）⇒ 真表行数归零；他人看不到别人的行。
+  const removed = await h.call('DELETE', `${FAVORITES}/${created.body.data.id}`, h.a, {
+    headers: { 'idempotency-key': 'fav-pg-del-0001', 'if-match': '"1"' },
+  });
+  assert.equal(removed.status, 200);
+  const afterDelete = await db.query('SELECT count(*)::int AS n FROM favorites');
+  assert.equal(afterDelete.rows[0].n, 0);
+  const otherView = await h.call('GET', FAVORITES, h.b);
+  assert.deepEqual(otherView.body.data, { items: [], next_cursor: null });
 });
 
 test('收藏HTTP：无体写请求带微信默认 JSON content-type 时不得被判成 400（且不放宽任何校验）', async (t) => {
