@@ -35,6 +35,11 @@
  *   本层在这种模式下 `armed:false`：**保持既有产出行为**，不拿一个未接线的开关去中断用户面。
  *   这是装配层的显式决定（见 `app.ts`），并作为"未取得项"记入证据页；
  *   一旦后台域接上真实持久存储并解除 fail-closed，开关在 real 模式下即为权威。
+ * - **就绪探测的三态（#282 P1 修复）**：`real` 且开关端口已接线时，`onReady` 先探测
+ *   `public.feature_flags` 是否存在，结果分 `ready` / `missing` / `unknown`：
+ *   只有**确认未安装**（`missing`，迁移子集库）才把门降级为未武装；**探测异常（`unknown`）不得
+ *   退成 `open`** —— 保持武装并 fail-closed，且下一次判前**重探**。已接真实端口的门因此不会
+ *   因为一次连接/权限抖动而永久放行受控面（旧实现把异常折叠成"表不存在"，正是该缺陷）。
  * - **合并增量口径**：`upstream/main` 新装配的受控面按**同一原口径**纳入 ——
  *   判据是"该 operationId 是否已登记在本清单里"（清单＝契约镜像，早已含 `createPost`/`createComment`），
  *   并只把装配基线对齐到"该面真的在产出"；**不新增受控面、不改清单**。
@@ -122,6 +127,94 @@ export function createStoreFlagReader(source: { getFlag(key: FlagKey): unknown }
     return outcome.kind === 'ok' ? outcome.record : null;
   };
   return {
+    read,
+    readWithCause,
+    valueOf(key) {
+      const record = read(key);
+      return record === null ? null : record.enabled;
+    },
+  };
+}
+
+/**
+ * 真实 PG 端口读取口（GY-I18 接线）：**同步快照 + 判定前异步预取**。
+ *
+ * ## 为什么不是异步读取口
+ * `FlagReader` 的读取/判定接口是**同步**的（`assertSurfaceOpen` 在既有单测里被同步直接调用，
+ * 且守卫 `requireUser` 的语义要求"判定是纯内存操作"）。端口只有异步 `list()`，因此不在判定
+ * 路径上等数据库，而是：`prepare()` 在**进入受控路由的守卫时**刷新一次快照，判定读快照。
+ *
+ * ## fail-closed 口径（与内存读取口逐字同源）
+ * - 从未成功预取 ⇒ `unrecognized`（装配 bug，需修）；
+ * - 预取抛错 ⇒ `read_error`（瞬时，可重试），且**丢掉旧快照**：库不可用时不拿过期的「开」放行；
+ * - 行缺失 ⇒ `unrecognized`（缺行不是关，更不是开）；
+ * - 形状非法（key 越界/非布尔/revision 非法）⇒ `unrecognized`；重复 key 同理。
+ */
+export interface PortFlagReader extends FlagReader {
+  /** 重新从端口读一次快照；**不抛**（失败通过 `readWithCause` 的可重试原因体现）。 */
+  refresh(): Promise<void>;
+}
+
+/** 由端口构造读取口（`list()` 每行按 `recognizeOutcome` 同一套形状规则校验）。 */
+export function createPortFlagReader(port: {
+  list(): Promise<readonly FlagRecordLike[]>;
+}): PortFlagReader {
+  let snapshot: ReadonlyMap<string, FlagRecordLike> | null = null;
+  let lastFailure: FlagGateFailCause = 'unrecognized';
+  let refreshed = false;
+
+  async function refresh(): Promise<void> {
+    try {
+      const rows = await port.list();
+      if (!Array.isArray(rows)) {
+        snapshot = null;
+        lastFailure = 'unrecognized';
+        refreshed = true;
+        return;
+      }
+      const next = new Map<string, FlagRecordLike>();
+      let duplicate = false;
+      for (const raw of rows) {
+        const outcome = recognizeOutcome(raw);
+        if (outcome.kind === 'fail') {
+          snapshot = null;
+          lastFailure = 'unrecognized';
+          refreshed = true;
+          return;
+        }
+        if (next.has(outcome.record.key)) duplicate = true;
+        next.set(outcome.record.key, outcome.record);
+      }
+      if (duplicate) {
+        snapshot = null;
+        lastFailure = 'unrecognized';
+        refreshed = true;
+        return;
+      }
+      snapshot = next;
+      lastFailure = 'unrecognized';
+      refreshed = true;
+    } catch {
+      // 读取抛错 = 瞬时故障 ⇒ 可重试；同时**丢弃**旧快照（不拿过期状态放行）。
+      snapshot = null;
+      lastFailure = 'read_error';
+      refreshed = true;
+    }
+  }
+
+  const readWithCause = (key: FlagKey): FlagReadOutcome => {
+    if (!refreshed) return { kind: 'fail', cause: 'unrecognized' };
+    if (snapshot === null) return { kind: 'fail', cause: lastFailure };
+    const record = snapshot.get(key);
+    if (record === undefined) return { kind: 'fail', cause: 'unrecognized' };
+    return { kind: 'ok', record };
+  };
+  const read = (key: FlagKey): FlagRecordLike | null => {
+    const outcome = readWithCause(key);
+    return outcome.kind === 'ok' ? outcome.record : null;
+  };
+  return {
+    refresh,
     read,
     readWithCause,
     valueOf(key) {
@@ -254,8 +347,17 @@ export interface FlagGateVerdict {
 }
 
 export interface FeatureFlagGate {
-  /** `false` ⇒ 本进程不判开关（real 模式后台域未接线，见文件头边界说明）。 */
+  /**
+   * `false` ⇒ 本进程不判开关（real 模式后台域未接线，或开关表被**确认**未安装，见文件头边界说明）。
+   * 注意：仅仅是"探测抛错/读不出来"（`unknown`）**不会**把已接真实端口的门降级成 `false` —— 那种
+   * 情况保持武装并 fail-closed（#282）。
+   */
   readonly armed: boolean;
+  /**
+   * **可选**：判定前的异步预取（真实 PG 读取口用；内存读取口不需要）。
+   * 只有 `createFlagGatedGuards` 在命中受控面且守卫通过后调用它。
+   */
+  readonly prepare?: () => Promise<void>;
   verdictFor(key: FlagKey, surface: string): FlagGateVerdict;
   /** 开关关闭 / 不可识别 ⇒ 抛契约错误；开启 ⇒ 静默返回。 */
   assertOpen(key: FlagKey, surface: string): void;
@@ -296,6 +398,38 @@ function failClosedError(surface: string, key: FlagKey, cause: FlagGateFailCause
   );
 }
 
+/**
+ * 武装探测的三态结论（#282 P1 修复）。
+ *
+ * - `ready`：开关表**确认存在**（`to_regclass(...) IS NOT NULL` 严格为 `true`）⇒ 可武装并按库判定；
+ * - `missing`：开关表**确认未安装**（严格为 `false`/`NULL`，迁移子集库）⇒ 允许永久降级为未武装，
+ *   行为与接线前逐字相同（不判、不预取、不 503）；
+ * - `unknown`：**探不了**（抛错/形状读不懂）⇒ **未知 ≠ 未安装**：必须保持 fail-closed（503），
+ *   且**不得缓存成永久结论**，下一次判前重探。把 `unknown` 折叠成 `missing` 正是本片的缺陷成因
+ *   （一次连接/权限抖动 ⇒ 已接真实端口的开关门永久退回 `open`，库里的 `false` 不再阻断）。
+ */
+export type ArmingProbeState = 'ready' | 'missing' | 'unknown';
+
+/** 探测口返回的三态对象（首选形式）。 */
+export interface ArmingProbeResult {
+  readonly state: ArmingProbeState;
+}
+
+/** 探测口返回值：三态对象（首选）或**布尔兼容形式**（`true` ⇒ `ready`，`false` ⇒ `missing`）。 */
+export type ArmingProbeValue = ArmingProbeResult | boolean;
+
+/**
+ * 把探测口返回值归一成三态。⛔ 任何**读不懂**的形状（`undefined`/`null`/字符串/缺少 `state`）
+ * 都归 `unknown` —— 宁可 503，也绝不由"看不懂"推出"表不存在 ⇒ 放行"。
+ */
+function normalizeProbeValue(value: unknown): ArmingProbeState {
+  if (value === true) return 'ready';
+  if (value === false) return 'missing';
+  const state = (value as { state?: unknown } | null | undefined)?.state;
+  if (state === 'ready' || state === 'missing') return state;
+  return 'unknown';
+}
+
 export interface FeatureFlagGateOptions {
   readonly reader: FlagReader;
   /**
@@ -304,11 +438,68 @@ export interface FeatureFlagGateOptions {
    * 那时开关没有权威来源，**不**以未接线的开关拒绝用户面产出（如实声明，见文件头）。
    */
   readonly armed?: boolean;
+  /**
+   * **可选**：武装前的只读就绪探测（真实 PG 端口用 `probeFeatureFlagsTable`）。
+   *
+   * 语义（T-R12-08R + #282 P1 修复）：`real` 且拿到池**不等于**开关可用 —— 集成测试会只应用
+   * 迁移子集，库里根本没有 `public.feature_flags`。这种库上若照样武装，首个受控面请求的预取会
+   * 失败并 503，把与开关无关的既有面打红。因此探测结果按**三态**裁决：
+   * - `ready` ⇒ 保持/进入武装，并继续预取与判定；
+   * - `missing`（**确认**未安装）⇒ `armed` 永久降级 `false`（行为与接线前逐字相同）；
+   * - `unknown`（抛错/形状读不懂）⇒ **保持武装**、继续预取，并在下一次判前**重探**；
+   *   刷新读成功就按库里真实取值判定（关闭继续阻断），读失败则由判定路径 fail-closed 503。
+   *   ⛔ 绝不因探测异常退回 `open`（#282 的缺陷正是把异常当成"表不存在"）。
+   * 探测错误**绝不**抛给请求路径。布尔兼容形式仍接受：`true`⇒`ready`，`false`⇒`missing`。
+   */
+  readonly armingProbe?: () => Promise<ArmingProbeValue>;
+  /**
+   * **可选**：判定前的异步预取。真实 PG 读取口（`createPortFlagReader`）在这里刷新快照；
+   * 内存读取口不传 ⇒ 判定路径与接线前逐字相同（纯同步）。
+   */
+  readonly prepare?: () => Promise<void>;
 }
 
 export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureFlagGate {
-  const armed = options.armed ?? true;
   const reader = options.reader;
+  // 武装是**运行时**状态（不再是构造期常量）。三态（#282 P1 修复）：只有 `missing`（**确认**未安装）
+  // 才允许把它降级成 `false`；`unknown`（探不了）必须保持武装并 fail-closed，且下次重探。
+  let armed = options.armed ?? true;
+  const armingProbe = options.armingProbe;
+  const refresh = options.prepare;
+  let armingState: 'unprobed' | ArmingProbeState = 'unprobed';
+
+  /**
+   * 就绪探测（三态，只缓存**确定**结论）+ 预取（每次判前都刷新）。
+   *
+   * 缓存口径（#282 的修复点）：
+   * - `ready` / `missing` 是确定结论，缓存后不再重探（表要么由迁移建好、要么不该本进程反复探）；
+   * - `unknown` **不缓存**：探测异常（连接/权限/超时）是瞬时的，下一次判前必须重探，
+   *   ⛔ 不得像旧实现那样把一次异常变成永久的 `armed = false`（那等于永久放行受控面）。
+   * 预取本来就必须逐次重试 —— 存储抖动是瞬时的，缓存一次 `read_error` 会让门永久 503。
+   */
+  async function ensureReady(): Promise<void> {
+    if (armingProbe !== undefined && (armingState === 'unprobed' || armingState === 'unknown')) {
+      try {
+        armingState = normalizeProbeValue(await armingProbe());
+      } catch {
+        // 探测抛错 ⇒ 状态**未知**（≠「表不存在」）：保持武装，让下面的刷新/判定按 fail-closed 处理。
+        armingState = 'unknown';
+      }
+    }
+    if (armingProbe !== undefined && armingState === 'missing') {
+      // 表**确认**不存在 ⇒ 本进程没有权威开关来源 ⇒ 退回未武装（不预取、不判、不 503）。
+      armed = false;
+      return;
+    }
+    // `ready` 与 `unknown` 都走刷新：
+    // - `ready`：按库判定；
+    // - `unknown`：读成功 ⇒ 按库里真实取值判定（`false` 必须继续阻断受控面）；
+    //   读失败 ⇒ 判定路径给出 `fail_closed`/503（fail-closed），**不是** `open`。
+    if (refresh !== undefined) await refresh();
+  }
+
+  const prepare =
+    armingProbe === undefined && refresh === undefined ? undefined : ensureReady;
 
   /** 带原因读取：优先用读取口的 `readWithCause`；没有则退回 `read()`（见下方注释）。 */
   function readOutcomeFor(key: FlagKey): FlagReadOutcome {
@@ -358,7 +549,12 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
   for (const entry of FLAG_GATED_SURFACES) byOperation.set(entry.operationId, entry);
 
   return {
-    armed,
+    // 取值器而非快照：`armingProbe` 可在 `prepare()` 里把武装降级为 false，调用方（含测试与
+    // 证据页）读到的必须是最新状态，否则「已降级」这件事对断言不可见。
+    get armed(): boolean {
+      return armed;
+    },
+    ...(prepare === undefined ? {} : { prepare }),
     verdictFor,
     assertOpen,
     assertSurfaceOpen(method, routePattern) {
@@ -398,7 +594,14 @@ export function createFlagGatedGuards(guards: AuthGuards, gate: FeatureFlagGate)
   const requireUser: preHandlerHookHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     await innerRequireUser(request, reply);
     // Fastify 5：`routeOptions.url` 是已注册的路由模板（含前缀与 `:param`）。
-    gate.assertSurfaceOpen(request.method, request.routeOptions?.url ?? '');
+    const route = request.routeOptions?.url ?? '';
+    const method = request.method.toUpperCase();
+    // 只对**受控面**预取：未命中的路由不多打一次数据库（行为与接线前逐字相同）。
+    if (gate.prepare !== undefined) {
+      const gated = gate.surfaces().some((entry) => entry.method === method && entry.routePattern === route);
+      if (gated) await gate.prepare();
+    }
+    gate.assertSurfaceOpen(request.method, route);
   };
   return {
     requireUser,

@@ -33,7 +33,9 @@ import {
   gateProducer,
 } from '../../services/api/src/admin/ops/flag-gate.ts';
 import { createAdminOpsStore } from '../../services/api/src/admin/ops/store.ts';
-import { makeHarness, CLEAN_BODY, CLEAN_TITLE, USER_A, idem, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
+import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
+import { makeHarness, CLEAN_BODY, CLEAN_TITLE, USER_A, idem, makeGate, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
+import { frozenModerationInjection } from './stall-hygiene-fixtures.mjs';
 
 const operations = JSON.parse(
   readFileSync(new URL('../../packages/contracts/operations.json', import.meta.url), 'utf8'),
@@ -302,16 +304,30 @@ async function loginUser(app) {
 function newApp() {
   const config = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
   const store = createMemoryAuthStore();
+  // 社区 store 显式声明（此前由 `app.ts` 内部默认内存 store 兜底）：E7 要断言"关闭投稿 ⇒ 零落库"，
+  // 审核域的**同源内容权威**必须指向同一份 store，否则"落库"与"审核读到的内容"不是同一行。
+  const community = createMemoryCommunityStore();
   const app = buildApp({
     config,
     store,
     idempotency: createMemoryIdempotencyStore(),
+    communityInjection: { store: community, gate: makeGate() },
     // GY-I14 ⇄ GY-I15 联动接线后：社区**只有审核域明确放行**才允许落内容行（B09）。
     // 本文件 E7 的"投稿面基线可用"前提因此显式注入**明确标注的合成 `pass` 端口**
     // （不联网、无凭据、`provider.synthetic === true`）；**不得**读成真实审核已接通。
-    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+    //
+    // 规则层时钟冻结（stall 臂回归）：`makeGate()` 只冻住社区发布闸门这一支；审核域服务是
+    // 规则层的**第二个装配点**（本基线 `app.ts` 的 `moderationInjection` 没有 `ruleOptions` 缝）。
+    // 不冻它，墙钟预算（`DEFAULT_RULE_BUDGET_MS = 50`）在机器抖动／插桩下会误判 `RULE_TIMEOUT`
+    // ⇒ 隔离 ⇒ E7 的"开关打开时投稿应 201"退化成 422，与开关门要测的东西无关。
+    // 注入的服务与 `app.ts:766-777` 默认装配逐字段同形，唯一差别是规则层 `clock` 常量化。
+    moderationInjection: frozenModerationInjection({
+      executionMode: config.executionMode,
+      ports: { tms: makeSyntheticPassPort('tms') },
+      store: community,
+    }),
   });
-  return { app, store };
+  return { app, store, community };
 }
 
 test('E1. 装配基线：3 个开关与各自输出面的真实状态一致（否则开关等于没生效）', async () => {

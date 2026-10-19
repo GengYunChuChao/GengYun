@@ -38,6 +38,7 @@ import { createSubstituteObjectStore } from '../../services/api/src/media/object
 import { sha256Hex } from '../../packages/media/validate.mjs';
 import { pngPlain } from '../media/_fixtures.mjs';
 import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from './community-fixtures.mjs';
+import { frozenModerationInjection } from './stall-hygiene-fixtures.mjs';
 import { makeControllableVisibility } from './favorites-history-fixtures.mjs';
 
 const API = '/api/v1';
@@ -94,7 +95,17 @@ function makeWorld(t, options = {}) {
     historyInjection: { store: history, visibility: visibility.port },
     messagesInjection: { store: messages },
     communityInjection: { store: community, gate: makeGate() },
-    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+    // 规则层时钟冻结（stall 臂回归）：`makeGate()` 只冻住社区发布闸门这一支；审核域服务是
+    // 规则层的**第二个装配点**（`services/api/src/app.ts` 的 `moderationInjection` 在本基线
+    // 没有 `ruleOptions` 缝）。不冻它，墙钟预算（`DEFAULT_RULE_BUDGET_MS = 50`）在机器抖动／
+    // 插桩下会误判 `RULE_TIMEOUT` ⇒ 隔离 ⇒ 投稿 422，与「越权/同形/零外呼」要测的东西无关。
+    // 注入的服务与 `app.ts:766-777` 默认装配逐字段同形，唯一差别是规则层 `clock` 常量化；
+    // 预算仍是出厂 50ms（冻结后 `now - started === 0`，检查照跑、永不误判）。
+    moderationInjection: frozenModerationInjection({
+      executionMode: config.executionMode,
+      ports: { tms: makeSyntheticPassPort('tms') },
+      store: community,
+    }),
   });
   t.after(() => app.close());
   return { app, auth, clock, favorites, history, messages, community, objectStore, visibility, config };
@@ -952,7 +963,13 @@ test('C6 模拟与真实交叉：stub 产出的 id 在 real 装配下一律 503�
     historyInjection: { store: stubWorld.history, visibility: stubWorld.visibility.port },
     messagesInjection: { store: stubWorld.messages },
     communityInjection: { store: stubWorld.community, gate: makeGate() },
-    moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
+    // 与 `makeWorld` 同口径：`preset_demo` 非 real，审核域仍跑规则层，故同样冻结规则时钟
+    // （同源内容权威 = 这份被注入的社区 store，与 `app.ts` 默认一致）。
+    moderationInjection: frozenModerationInjection({
+      executionMode: 'preset_demo',
+      ports: { tms: makeSyntheticPassPort('tms') },
+      store: stubWorld.community,
+    }),
   });
   t.after(() => presetApp.close());
   const presetMessages = await call(presetApp, 'GET', `${API}/messages`, a);

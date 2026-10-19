@@ -20,11 +20,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { communityEventKey, createMessagesCommunityEventsPort } from '../../services/api/src/community/events.ts';
+import { createLocalPseudonymousAuthorDirectory } from '../../services/api/src/community/authors.ts';
+import { createCommunityContentAuthority } from '../../services/api/src/community/moderation-authority.ts';
+import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
 import { idem } from './community-fixtures.mjs';
 import {
   API,
   CLEAN_BODY,
   CLEAN_TITLE,
+  START,
   USER_A,
   USER_B,
   countingPort,
@@ -207,7 +211,19 @@ test('G6b. 【反例·服务边界】real 下投稿在送审审核域这一步 f
 
 test('G6c. 【对照】stub 下同一条投稿正常通过与留档（real 的拒绝来自 fail-closed，而非一律拒绝）', async () => {
   // 服务层对照：stub + 显式注入的**明确标注合成**端口 ⇒ 通过。
-  const service = makeServiceHarness({ executionMode: 'stub', ports: { tms: passingPort() } });
+  //
+  // 权威端口用**同源社区权威**（与 `app.ts` 装配口径一致）：发布闸门已接进社区写路径
+  // （`createPost` ⇒ 审核域 `publish`），发布必须写回社区那一份 store；脱离社区存储的替身权威
+  // 无法完成发布（那是 G1d/G1j 覆盖的 fail-closed 路径），与本对照「stub 能通过」无关。
+  const store = createMemoryCommunityStore({ now: () => START });
+  const authors = createLocalPseudonymousAuthorDirectory();
+  const service = makeServiceHarness({
+    executionMode: 'stub',
+    ports: { tms: passingPort() },
+    store,
+    authors,
+    authority: createCommunityContentAuthority({ store, authors }),
+  });
   const post = await service.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) });
   assert.equal(post.visibility, 'published');
   assert.equal(post.audit_state, 'approved');

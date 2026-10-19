@@ -17,6 +17,7 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
+import { createModerationRiskScreen } from '../../services/api/src/conversations/screen.ts';
 import { CONVERSATION_KEYS, TURN_KEYS, ANSWER_KEYS, SOURCE_REF_KEYS } from '../../services/api/src/conversations/types.ts';
 
 export const START = Date.UTC(2026, 9, 14, 6);
@@ -72,6 +73,17 @@ export function retrievalItem(overrides = {}) {
 export function retrievalSet(userId, items, note = '合成检索集合（测试替身）') {
   return { user_id: userId, items, note };
 }
+
+/**
+ * 冻结时钟（**只供测试注入**）：每次读数都返回 0。
+ *
+ * 规则层的单次扫描预算是 **50ms 墙钟**（`DEFAULT_RULE_BUDGET_MS`，超时 ⇒ `RULE_TIMEOUT` ⇒
+ * `quarantined`，fail-closed 口径一行未改）。注入冻结时钟后预算检查路径**照跑**，但"已经过去
+ * 多少毫秒"不再由真实机器负载决定——否则一台忙着的 runner 会让正常内容偶发变红。
+ *
+ * 与 `tests/unit/community-fixtures.mjs:59`、`tests/moderation/_fixtures.mjs:32` 同口径。
+ */
+export const FROZEN_CLOCK = () => 0;
 
 /** 可显式推进的时钟（与 `tests/unit/favorites-history-fixtures.mjs` 同口径）。 */
 export function scriptedClock(baseMs) {
@@ -272,7 +284,14 @@ export async function conversationFixture(t, options = {}) {
     store: auth,
     now: clock.now,
     // 会话 store 恒注入：夹具要在 HTTP 之外**直接读同一份持久化状态**（级联用例靠它给双读数）。
-    conversationInjection: { store: conversationStore, ...(options.injection ?? {}) },
+    // 风险筛查端口默认注入**冻结时钟**（`FROZEN_CLOCK`）：不注入时规则层读真实墙钟，50ms 预算
+    // 在高负载机器上会被"扫一遍规则"本身吃掉 ⇒ 正常问题偶发 `quarantined` 假红。预算、超时判定
+    // 口径、fail-closed 全未改动；用例仍可传 `injection.riskScreen` 显式覆盖（负控制用）。
+    conversationInjection: {
+      store: conversationStore,
+      riskScreen: createModerationRiskScreen({ clock: FROZEN_CLOCK }),
+      ...(options.injection ?? {}),
+    },
     ...(options.pool === undefined ? {} : { pool: options.pool }),
     // 仅测试注入：日志写入目标（用于断言「日志不回声令牌/手机号/openid」）。不传时行为不变。
     ...(options.logStream === undefined ? {} : { logStream: options.logStream }),

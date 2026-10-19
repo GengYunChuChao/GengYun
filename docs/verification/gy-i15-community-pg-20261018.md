@@ -6,6 +6,10 @@
 - **工作树**：`E:\GengYunCommander\.pg17\wt-community-pg`（detached @ `0856e49e31bbc5dff3615b146cf9ce12e88a0b49`，`git rev-parse HEAD` 实测一致）。
 - **迁移号裁定**：本片用 **`0022`**。`0019`–`0021` **是有意缺号**（分属 I17/I18 切片，各自分支自带迁移号），
   本片**不造占位迁移**；该缺号的 CI 后果见 §6-F3。
+- **合流复核（2026-10-19，`upstream/main` = `31a746d`）**：上游 I17 的 `0019_messages_persistence.sql` 与
+  I18 的 `0020_feature_flags.sql`（#282）已随上游进入本片树，`0021`（I18 切片 #279）仍未合 ⇒ 树上迁移
+  **21** 个（`0001..0020` ＋ `0022`）、`rollback/` **20** 个；I24 索引页读数同步为 21/20/30（见该页头部「合流复核三」）。
+  §6-F3 的缺号红**仍在**，只是缺号由 `0019`–`0021` 收窄为仅 `0021`；本片仍未改号、未放宽断言。
 - **本机 PG**：仓自带的 `E:\GengYunCommander\.pg17\pgsql\bin`（`psql --version` = `psql (PostgreSQL) 17.11`）；
   本片自起隔离集群 `E:\GengYunCommander\.pg17\pgtmp-community`（`initdb -U postgres -A trust -E UTF8 --locale=C`，
   `pg_ctl -o "-p 55432 -c listen_addresses=127.0.0.1"`，`server_version` = `17.11`）。

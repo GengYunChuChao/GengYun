@@ -117,8 +117,9 @@ async function main() {
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022');
     assert.deepEqual(
       versions.filter((v) => ['0020', '0021'].includes(v)),
-      [],
-      '0020–0021 属 I18 切片 #282／#279（未合）；0019 属 I17 已随 upstream/main 合入，本片不占用、不补占位迁移',
+      ['0020'],
+      '0020 属 I18 切片 #282，已随 upstream/main（31a746d）合入；0021 属 I18 切片 #279（未合）；'
+        + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
     const migrations = all.filter((m) => ['0001', '0022'].includes(m.version));
