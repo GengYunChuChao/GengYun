@@ -204,6 +204,7 @@ import { createKnowledgeService } from './knowledge/service.ts';
 import { createDeterministicDoseAuthority } from './conversations/dose.ts';
 import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
 import { createAnswerJobSource } from './conversations/job.ts';
+import type { ConversationContextPort } from './conversations/context.ts';
 import {
   createConversationDeletion,
   createUnwiredTurnCascadePort,
@@ -472,6 +473,12 @@ export interface BuildAppOptions {
     riskScreen?: RiskScreen;
     transcription?: TranscriptionPort;
     cascade?: TurnCascadePort;
+    /**
+     * 追问上下文端口（缺省由服务层自建：`createStoreConversationContext(store)`，只读本会话 +
+     * 本主体的最近若干轮）。注入口只用于负控制：断言"上下文读失败 ⇒ 轮次显式 failed"，
+     * 以及断言上下文**不**跨会话、**不**扩引用集合。
+     */
+    context?: ConversationContextPort;
   };
 }
 
@@ -1392,6 +1399,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           riskScreen: conversationRiskScreen,
           transcription: conversationTranscription,
           cascade: conversationCascade,
+          // 追问上下文：缺省由服务层按自己的 store 自建（见 `conversations/context.ts`）。
+          ...(conversationInjection?.context === undefined ? {} : { context: conversationInjection.context }),
           ledger: conversationLedger,
           signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
           now: clock,
