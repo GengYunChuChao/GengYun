@@ -23,6 +23,7 @@ import { ApiError } from '../errors.ts';
 import { isJobState } from './types.ts';
 import type { HistoryKind } from './types.ts';
 import type {
+  BackupSnapshotClient,
   DeleteExpectation,
   DeleteResult,
   HistoryRecord,
@@ -263,6 +264,20 @@ export function createPostgresHistoryStore(
     /** 注销清理的**分表计数**（正文行 + 幂等台账）；协调器用它把两张表的行数都写进证据。 */
     async purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts> {
       return purgeOwnerRows(ownerId);
+    },
+
+    /**
+     * 备份副本清单（GY-I19）：**在受理事务内**枚举该主体仍持有的行 id。
+     *
+     * 用传入的 `client`（不是 `pool`）：清单必须与受理函数在同一事务、同一快照里读。
+     * ⛔ 只回 id 与计数，不回对象名/身份信息。
+     */
+    async snapshotOwner(ownerId: string, client: BackupSnapshotClient) {
+      const result = await client.query(
+        'SELECT id FROM history WHERE owner_id = $1::uuid ORDER BY id',
+        [ownerId],
+      );
+      return { objectRefs: result.rows.map((row) => String(row['id'])), records: result.rows.length };
     },
 
     // ---- 幂等台账（真落库） ----

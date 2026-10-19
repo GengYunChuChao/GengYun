@@ -28,6 +28,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ApiError } from '../errors.ts';
 import type {
+  BackupSnapshotClient,
   DeleteExpectation,
   DeleteResult,
   FavoriteRecord,
@@ -261,6 +262,21 @@ export function createPostgresFavoritesStore(
     /** 注销清理的**分表计数**（正文行 + 幂等台账）；协调器用它把两张表的行数都写进证据。 */
     async purgeOwnerData(ownerId: string): Promise<OwnerPurgeCounts> {
       return purgeOwnerRows(ownerId);
+    },
+
+    /**
+     * 备份副本清单（GY-I19）：**在受理事务内**枚举该主体仍持有的行 id。
+     *
+     * 用传入的 `client`（不是 `pool`）：清单必须与受理函数在同一事务、同一快照里读，
+     * 否则处理器物理删除后就读不到「哪些对象曾经存在」（设计 §6.1）。
+     * ⛔ 只回 id 与计数，不回收藏正文/标题。
+     */
+    async snapshotOwner(ownerId: string, client: BackupSnapshotClient) {
+      const result = await client.query(
+        'SELECT id FROM favorites WHERE owner_id = $1::uuid ORDER BY id',
+        [ownerId],
+      );
+      return { objectRefs: result.rows.map((row) => String(row['id'])), records: result.rows.length };
     },
 
     // ---- 幂等台账（真落库） ----

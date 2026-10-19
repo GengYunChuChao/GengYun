@@ -123,10 +123,13 @@ import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './hist
 import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
 import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
+  createUnavailableBackupPurgePort,
   createUserDataDeletion,
   type BackupPurgePort,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
+// GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
+import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
@@ -1296,15 +1299,31 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     injectedDeletionRequests === undefined
       ? (pool === null ? null : createPostgresDeletionRequestStore({ pool }))
       : injectedDeletionRequests;
+  // GY-I19（#19）本片：逐用户备份副本清除端口的装配（设计 §7.4 三态；回执里
+  // 有备份对象就按「到期清除 + 删除后复核」给出 completed/blocked，不再是恒 pending）。
+  //   - 有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 真实 PG 端口：逐请求/逐模块
+  //     读行、到期判定、清除后复核、证据摘要全部落库；
+  //   - 受理**未接线**（`requests: null` 或内存模式）⇒ 保持缺省 unwired：没有受理行就没有清单行，
+  //     「未接线 ⇒ pending」是如实状态（既有 `favorites-history-deletion-registration.test.mjs`
+  //     反向控制就锁这条：`requests: null` 时 `backup_state` 必须仍是 pending）；
+  //   - 受理已接线但**无真库**（只可能来自注入 store）且是 `real` 模式 ⇒ 显式不可用端口
+  //     （模块 blocked + `PROVIDER_UNAVAILABLE`），⛔ 不静默退回内存实现或 unwired；
+  //   - stub/demo 无真库 ⇒ 保持缺省 unwired（进程内没有副本域可清，`pending` 才是如实状态）。
+  const backupPurgeWiring: { backupPurge?: BackupPurgePort } =
+    userDataDeletionInjection?.backupPurge !== undefined
+      ? { backupPurge: userDataDeletionInjection.backupPurge }
+      : durableDeletionRequests !== null && pool !== null
+        ? { backupPurge: createPostgresBackupPurgePort({ pool, now: clock }) }
+        : durableDeletionRequests !== null && config.executionMode === 'real'
+          ? { backupPurge: createUnavailableBackupPurgePort() }
+          : {};
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
-    ...(userDataDeletionInjection?.backupPurge === undefined
-      ? {}
-      : { backupPurge: userDataDeletionInjection.backupPurge }),
+    ...backupPurgeWiring,
     ...(durableDeletionRequests === null
       ? {}
       : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),
