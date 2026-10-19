@@ -36,6 +36,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
@@ -569,7 +570,9 @@ test('M4 静态缝：request 身份字段只有一个写入点，鉴权层对身
   const files = readdirSync(srcRoot, { recursive: true })
     .map((entry) => String(entry).replaceAll('\\', '/'))
     .filter((rel) => rel.endsWith('.ts'))
-    .map((rel) => ({ rel, text: readFileSync(srcRoot + rel.replaceAll('/', '\\'), 'utf8') }));
+    // 跨平台：`readdirSync` 在 Windows 返回 `\` 分隔的相对路径，统一成正斜杠后交给 `path.join`
+    // （不要在 Linux 上把 `/` 拼回 `\`——那会变成文件名里的字面反斜杠，ENOENT）。
+    .map((rel) => ({ rel, text: readFileSync(join(srcRoot, rel), 'utf8') }));
   assert.ok(files.length > 50, `源码扫描面过小（${files.length} 个 .ts），断言将失去意义`);
 
   // 5.1 身份头名在整个 API 源码里零出现（含注释）：行为层「恰好在这些输入下忽略」可能被

@@ -186,6 +186,7 @@ sessionExpiresAt|accountRevision|authScopes` 的赋值语句全部落在 `applyI
 | 空白/冲突标记 | `git diff upstream/main --check` | exit 0，**0 行输出** |
 | 产品代码 0 改动 | `git diff --numstat upstream/main HEAD` | 只有 `tests/unit/gy-i22-identity-headers.test.mjs` 与 `docs/verification/gy-i22-identity-headers-20261019.md` 两行；`services/**`、`packages/**`、契约、迁移 **0 行** |
 | 禁用标记 | `grep -c 'skip\|todo\|\.only(' 新文件` | 0 处 |
+| CI（Linux） | GitHub Actions `unit-tests` | 首跑 `tests 2705 / pass 2701 / fail 1 / skipped 3`，唯一红是本文件 T5 的跨平台路径 bug（见 §7.4）；已用普通提交修复，CI 复跑为准 |
 
 注：首次全量跑出现过 **1 红**（`contract-status-tool.test.mjs` 的 `spawnSync … ETIMEDOUT`），已单独披露与复跑证据，见 §7.3。
 
@@ -214,6 +215,18 @@ sessionExpiresAt|accountRevision|authScopes` 的赋值语句全部落在 `applyI
   `tests 1738 / pass 1737 / fail 0 / skipped 1`（exit 0）。两次读数与基线一致。
 - 结论：这是并行负载下子进程启动超过 spawn 超时的**环境抖动**，与本片改动无关（本片只增一个测试文件与一个
   Markdown 页，不触碰 `tools/` 与契约表）。
+
+### 7.4 CI（Linux）暴露的跨平台路径缺陷：静态缝扫描曾把 `/` 拼成 `\`（已修）
+
+- 现象：GitHub Actions `unit-tests` 报 `ENOENT … services/api/src/admin\audit.ts`
+  （`tests 2705 / pass 2701 / fail 1 / skipped 3`，唯一红即本文件 T5）。本机 Windows 不可见，因为反斜杠在
+  Windows 上恰好是合法分隔符。
+- 根因：T5 曾写 `readFileSync(srcRoot + rel.replaceAll('/', '\\'))`——把已归一化成 `/` 的相对路径又拼回
+  `\`，在 Linux 上变成文件名里的字面反斜杠。
+- 修复：改用 `node:path` 的 `join(srcRoot, rel)`（`import { join } from 'node:path'`），相对路径保持正斜杠；
+  **断言与读数一条未改**（5/5 绿、49 条读数不变）。残留反斜杠仅 3 类：正则转义、注释说明、以及
+  `replaceAll('\\', '/')` 这行**归一化自身**（字符串字面量 `'\\'` 表示一个反斜杠字符，Linux 上无命中即无操作）。
+- 注：本页其余读数均在 Windows 本机采集；跨平台正确性以 CI 复跑为准（见 §6「CI」行）。
 
 ## 8 未取得
 
