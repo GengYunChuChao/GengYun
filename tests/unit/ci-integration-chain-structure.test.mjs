@@ -139,6 +139,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/staging-intake-postgres.yml` 用独立测试集群运行。',
   },
   {
+    path: 'tests/integration/user-chain-e2e.mjs',
+    reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口、独立数据目录，'
+      + '跑完 `pg_ctl stop` 并逐个文件删除数据目录），依赖本机 PG 二进制（`USER_CHAIN_PG_BIN`，缺省走 PATH）；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/workbook-staging-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/workbook-staging.yml` 用独立测试集群运行。',
   },
