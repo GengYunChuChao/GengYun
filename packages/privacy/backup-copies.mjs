@@ -12,7 +12,7 @@
  *   3. 清除证据摘要（排序后拼接各副本的 `payload_digest`，与行数一一对应）。
  *
  * 放在 `packages/privacy` 是因为写路径（`services/api`）与单测都要用同一份口径；
- * 这里**不**读库、不建连接、不碰时钟，DB 形状由迁移 `0023` 的 CHECK 兜住。
+ * 这里**不**读库、不建连接、不碰时钟，DB 形状由迁移 `0024` 的 CHECK 兜住。
  */
 import { createHash } from 'node:crypto';
 
@@ -40,7 +40,7 @@ export const BACKUP_COPY_SCOPES = Object.freeze({
   history: 'history',
 });
 
-/** 与迁移 `0023` 的 CHECK 同形（DB 侧是最终闸门，这里先挡在应用层）。 */
+/** 与迁移 `0024` 的 CHECK 同形（DB 侧是最终闸门，这里先挡在应用层）。 */
 export const BACKUP_COPY_SHAPE = /^[a-z][a-z0-9_]{0,31}$/;
 
 /** `payload_digest` 形状：64 位小写十六进制。 */

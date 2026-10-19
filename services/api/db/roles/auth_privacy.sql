@@ -29,7 +29,7 @@ GRANT UPDATE (current_epoch,state,revision,updated_at) ON privacy_epochs TO geng
 -- Only existence checks for conservative withdrawal refusal. No content access or mutation.
 GRANT SELECT (owner_id) ON jobs,media TO gengyun_auth_privacy;
 GRANT SELECT (user_id) ON exports,author_links TO gengyun_auth_privacy;
--- GY-I19（#19）· 逐用户备份副本清单（迁移 0023，设计 §4/§7.2）。
+-- GY-I19（#19）· 逐用户备份副本清单（迁移 0024，设计 §4/§7.2）。
 -- 受理事务里要写清单行、清除时要重读状态并落证据，所以运行时角色需要这三类权限；
 -- 但一律按**列**授予，⛔ 不给表级 DML（`90-assert-least-privilege.sql` 的
 -- `table_dml_allowlist` 只允许 idempotency_keys 有表级写入；列级授权不影响该断言）。
@@ -37,10 +37,10 @@ GRANT SELECT (user_id) ON exports,author_links TO gengyun_auth_privacy;
 -- 还必须含 `purge_attempts`：失败留痕是 `purge_attempts = purge_attempts + 1`，读右边也要 SELECT 权。
 -- ⛔ 不给 DELETE/TRUNCATE：清单行是「清过」的唯一证据，运行时不得删行（设计 §5.3）。
 --
--- 条件化：本文件同时被若干只建 schema **子集**的单测夹具执行（不含 0023），裸 `GRANT` 会在
+-- 条件化：本文件同时被若干只建 schema **子集**的单测夹具执行（不含 0024），裸 `GRANT` 会在
 -- 那些夹具里 42P01 直接炸掉。表不存在时跳过授权，保持本文件对子集夹具的兼容性。
 -- ⛔ 这不是「缺表也能上线」的让步：部署路径 `deploy/postgres-cvm/sql/20-login-roles.sql` 的
--- `gy-i19-backup-copies-grant` 区域在缺表时 `RAISE EXCEPTION`（迁移 0023 未执行即失败），
+-- `gy-i19-backup-copies-grant` 区域在缺表时 `RAISE EXCEPTION`（迁移 0024 未执行即失败），
 -- 前置校验由那里把关；本文件只负责把权限收敛给运行时组。
 DO $gy_i19_copies$
 BEGIN

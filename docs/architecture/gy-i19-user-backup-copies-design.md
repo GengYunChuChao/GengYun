@@ -3,10 +3,11 @@
 本片状态：**设计稿 + 可单测的判定逻辑**。不落地 DDL、不接线 PG、不改契约状态。
 
 > **增补（2026-10-20 · 接线片 C2）**：DDL、写入路径与清除端口已在分支
-> `feat/gy-i19-backup-domain` 落地——迁移 [`0023_user_backup_copies.sql`](../../services/api/db/migrations/0023_user_backup_copies.sql)、
+> `feat/gy-i19-backup-domain` 落地——迁移 [`0024_user_backup_copies.sql`](../../services/api/db/migrations/0024_user_backup_copies.sql)、
 > 纯逻辑 [`packages/privacy/backup-copies.mjs`](../../packages/privacy/backup-copies.mjs)、
 > PG 适配 [`services/api/src/privacy/backup-copies-pg.ts`](../../services/api/src/privacy/backup-copies-pg.ts)。
-> §4 的「归属 0022」改为实际 **0023**（0019–0022 被在途片占用），R1 已定死为「请求重放驱动」。
+> §4 的「归属 0022」改为实际 **0024**（`0019`–`0023` 被在途片占用；其中 `0023` 已由社区片 PR #296 先占，
+> 本片因此由原 0023 **重编号为 0024**，见交接 §0 重编号记录），R1 已定死为「请求重放驱动」。
 > 落地形状、权限口径、与本文草案的偏差、以及**未取得项**见文末 §13。
 
 ## 0. 一句话结论
@@ -328,7 +329,7 @@ type BackupPurgeOutcome =
 
 四条前置全部具备才允许改（本片一条都不具备，故不改）：
 
-- [ ] 0022 落地，且 `user_backup_copies` 在真 PG17.11 上可建、约束负例可复现。
+- [ ] 0024 落地，且 `user_backup_copies` 在真 PG17.11 上可建、约束负例可复现。
 - [ ] 写入路径接线：受理事务内按模块写快照行，含 0 对象模块。
 - [ ] 端口扩为三态并与清除作业接通，`purged` 必须由复核产生。
 - [ ] 端到端证据：至少一次「受理 → 30 天后到期 → 清除 → 证据 → 回执 `completed`」在真库跑通并留读数。
@@ -405,8 +406,8 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 
 | 文件 | 角色 |
 | --- | --- |
-| `services/api/db/migrations/0023_user_backup_copies.sql` | 建表 + 11 条 CHECK + 唯一键/主体索引/到期部分索引；`request_id … ON DELETE RESTRICT`，`user_id` 无外键（§10） |
-| `services/api/db/migrations/rollback/0023_user_backup_copies.down.sql` | `DROP TABLE IF EXISTS`（纯新增，可整表拆） |
+| `services/api/db/migrations/0024_user_backup_copies.sql` | 建表 + 11 条 CHECK + 唯一键/主体索引/到期部分索引；`request_id … ON DELETE RESTRICT`，`user_id` 无外键（§10） |
+| `services/api/db/migrations/rollback/0024_user_backup_copies.down.sql` | `DROP TABLE IF EXISTS`（纯新增，可整表拆） |
 | `packages/privacy/backup-copies.mjs` | 纯逻辑：scope 闭集、`normalizeObjectRefs`、规范序列化、摘要、§7.2 的证据摘要 |
 | `services/api/src/privacy/backup-copies-pg.ts` | `insertBackupCopySeeds()`（受理事务内写清单）+ `createPostgresBackupPurgePort()`（三态端口） |
 | `services/api/src/privacy/user-data-deletion.ts` | 端口结果加**可选**三态字段；handler 按三态给 `backup_state`/`error_code`；受理时构造每模块一个清单来源 |
@@ -447,7 +448,7 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 
 | 项 | 草案 | 落地 | 原因 |
 | --- | --- | --- | --- |
-| 迁移号 | §4 写「归属 0022」 | **0023** | 0019–0022 被在途片占用；断号有意，⛔ 不造占位迁移（CI 连号臂会红，见 §13.6） |
+| 迁移号 | §4 写「归属 0022」 | **0024**（原 0023；2026-10-20 因社区片 PR #296 先占 `0023` 而重编号） | 0019–0023 被在途片占用；断号有意，⛔ 不造占位迁移（CI 连号臂会红，见 §13.6） |
 | `scope` 取值 | 「语义闭集镜像 `REPLAY_SCOPES`」，举例 `favorite`/`history` | `favorite`（favorites 模块）、`history`（history 模块） | `services/api/src/privacy/backup-replay-manifest.ts` 的 `REPLAY_SCOPES` **没有 `history`**；DDL 只校验 `^[a-z][a-z0-9_]{0,31}$` ⇒ 取设计自己举的例子，字面镜像关系不成立 |
 | `lineage` | 草案未给值 | 常量 `deletion-manifest/v1` | 本片不接真实备份系统，不谎报备份额；该列只表达「谁产出的清单行」 |
 | `covered_through` 与 `created_at` | 两列都要有，CHECK `covered_through <= created_at` | 两列**同值**写入（都用受理时刻） | 避开应用时钟与库 `now()` 的偏差；不放松约束 |
@@ -461,7 +462,7 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 | 「显式维护端点（仅后台能力位）」 | **未实现**。新增对外端点会改契约面（本片纪律禁止），且需要能力位/审计设计 ⇒ 本片只做「请求重放」这一半；重放的驱动者（谁持有 `requestId` 并决定何时重跑）仍在片外 |
 | 进程内「扫描到期请求」的枚举器 | **未实现**。`deletion_requests` 无运行时列权限（既有最小权限口径），运行时无法自行列出到期请求 ⇒ 重放必须由外部 driver 提供 `requestId`（真库集成臂就是这样驱动的）。要补，需先设计窄口径只读函数并过最小权限断言 |
 | `real` 模式整域可用 | **未翻**。`createAccountDeletionRequestService({ available: executionMode !== 'real' })` 保持：7 日在线/30 日备份的完整执行链与第三方完成证据仍未齐，本片不谎称可用（`real` 模式 POST/GET 仍 503 `PROVIDER_UNAVAILABLE`） |
-| `contract-status.json` 的 blocker | **未改**。§8.2 四条前置（0022/0023 真库可建、写入路径含 0 对象模块、端口三态接通且 `purged` 由复核产生、端到端证据）中，本片只做实了前三项与「本机真 PG 端到端」；CI 真库臂因 `0019–0022` 断号仍红 ⇒ blocker 保持 |
+| `contract-status.json` 的 blocker | **未改**。§8.2 四条前置（0023/0024 真库可建、写入路径含 0 对象模块、端口三态接通且 `purged` 由复核产生、端到端证据）中，本片只做实了前三项与「本机真 PG 端到端」；CI 真库臂因 `0019–0023` 断号仍红 ⇒ blocker 保持 |
 | 真实备份介质上的逐用户清除 | **未取得**（仓内无此介质，§11 已登记）；本片只证「清单行落库 + 到期置 `purged` + `payload` 置 null + 证据可复算」 |
 | 30 天真实时间流逝 | **未取得**（集成臂用脚本化时钟推进 31 天，属推算，不代表真实到期执行过） |
 
