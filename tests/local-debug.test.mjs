@@ -214,3 +214,80 @@ test('isolated packaging excludes private files and rejects release overrides/st
   assert.notEqual(unsafe.status, 0);
   assert.match(unsafe.stderr, /Shared runtime changed/);
 });
+// —— 协作者真实登录（没有「小程序项目成员」资格 → 用自己的测试号 AppID）——
+// 可选 `--appid` 只改**被忽略的生成副本**里的 appid：仓库里两份共享 project.config.json
+// 必须逐字节不变（覆盖值绝不能回流），非法值必须在 mkdir 之前被拒、不留半成品目录。
+test('local --appid overrides only the generated copy and rejects illegal ids without leftovers', () => {
+  // 合成值：形状合法（wx + 16 位小写 hex），不对应任何真实小程序（真实 AppSecret 从不入库）
+  const TEST_APP_ID = 'wx0123456789abcdef';
+  const OFFICIAL_APP_ID = 'wx4407a4b908a69a54';
+  function product(name) {
+    const dir = join(fixture, name); mkdirSync(dir);
+    cpSync(join(root, 'tools'), join(dir, 'tools'), { recursive: true });
+    cpSync(join(root, 'miniprogram'), join(dir, 'miniprogram'), { recursive: true });
+    cpSync(join(root, 'project.config.json'), join(dir, 'project.config.json'));
+    return { dir, run: args => spawnSync(process.execPath, [join(dir, 'tools/prepare-wechat.mjs'), ...args], { encoding: 'utf8' }) };
+  }
+  const repoRoot = readFileSync(join(root, 'project.config.json'));
+  const repoSub = readFileSync(join(root, 'miniprogram/project.config.json'));
+
+  // ① 覆盖成功：生成物 appid = 传入值，其余字段与运行时输出不变；共享工程字节不变
+  const ok = product('project-appid');
+  const sharedPaths = ['project.config.json', 'miniprogram/project.config.json', 'miniprogram/config/runtime.js'];
+  const sharedBefore = sharedPaths.map(path => readFileSync(join(ok.dir, path)));
+  const apiBaseUrl = 'http://127.0.0.1:4318/api/v1';
+  const override = ok.run(['local', '--config', config({ apiBaseUrl }), '--appid', TEST_APP_ID]);
+  assert.equal(override.status, 0, override.stderr);
+  const generated = JSON.parse(readFileSync(join(ok.dir, '.local/wechat-local/project.config.json'), 'utf8'));
+  assert.equal(generated.appid, TEST_APP_ID, '生成副本必须改用传入的 AppID');
+  assert.equal(generated.miniprogramRoot, 'miniprogram/');
+  assert.equal(generated.setting.urlCheck, true, '覆盖 appid 不得顺带放松域名校验');
+  assert.deepEqual(JSON.parse(readFileSync(join(ok.dir, '.local/wechat-local/miniprogram/config/runtime.js'), 'utf8').split('= ')[1]), { mode: 'local', apiBaseUrl });
+  sharedPaths.forEach((path, index) => {
+    assert.equal(readFileSync(join(ok.dir, path)).equals(sharedBefore[index]), true, `共享文件被改写：${path}`);
+  });
+  // stdout 必须点名 AppID 来源、服务端同号要求与测试号入口（协作者据此判断下一步）
+  assert.match(override.stdout, new RegExp(TEST_APP_ID), 'stdout 必须打印实际生效的 AppID');
+  assert.match(override.stdout, /--appid 覆盖值/);
+  assert.match(override.stdout, new RegExp(OFFICIAL_APP_ID), '覆盖时仍须显示共享工程的官方 AppID');
+  assert.match(override.stdout, /WECHAT_APP_ID/);
+  assert.match(override.stdout, /WECHAT_APP_SECRET/);
+  assert.match(override.stdout, /同一个号/);
+  assert.match(override.stdout, /https:\/\/mp\.weixin\.qq\.com\/wxamp\/sandbox\?doc=1/);
+  assert.match(override.stdout, /不互通/);
+
+  // ② 非法格式／缺值／等号写法：退出非零、报错点名 --appid，且不生成任何目录
+  const rejected = product('project-appid-rejected');
+  const illegalValues = ['wx123', 'WX0123456789ABCDEF', 'wx0123456789abcdeg', 'wx0123456789abcde'];
+  for (const bad of illegalValues) {
+    const failed = rejected.run(['local', '--config', config(), '--appid', bad]);
+    assert.notEqual(failed.status, 0, `非法 AppID 必须失败：${bad}`);
+    assert.match(failed.stderr, /--appid/);
+    assert.equal(existsSync(join(rejected.dir, '.local')), false, `非法 AppID 不得留下生成目录：${bad}`);
+  }
+  for (const args of [
+    ['local', '--config', config(), '--appid'],
+    ['local', '--config', config(), '--appid=' + TEST_APP_ID],
+  ]) {
+    const failed = rejected.run(args);
+    assert.notEqual(failed.status, 0, `参数残缺必须失败：${args.join(' ')}`);
+    assert.match(failed.stderr, /--appid/);
+    assert.equal(existsSync(join(rejected.dir, '.local')), false);
+  }
+
+  // ③ release 副本固定官方 AppID：传 --appid 直接报错，同样不建目录
+  const releaseRejected = rejected.run(['release', '--appid', TEST_APP_ID]);
+  assert.notEqual(releaseRejected.status, 0);
+  assert.match(releaseRejected.stderr, /release 不接受 --appid/);
+  assert.equal(existsSync(join(rejected.dir, '.local')), false);
+
+  // ④ 不传 --appid：行为与改动前逐字一致（仍是共享工程官方 AppID）
+  const plain = rejected.run(['local', '--config', config()]);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(JSON.parse(readFileSync(join(rejected.dir, '.local/wechat-local/project.config.json'), 'utf8')).appid, OFFICIAL_APP_ID);
+  assert.match(plain.stdout, /共享工程 project\.config\.json 默认值/);
+
+  // 仓库内两份共享配置在整轮用例后仍逐字节等于开始时的快照
+  assert.equal(readFileSync(join(root, 'project.config.json')).equals(repoRoot), true);
+  assert.equal(readFileSync(join(root, 'miniprogram/project.config.json')).equals(repoSub), true);
+});

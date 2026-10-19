@@ -62,6 +62,90 @@ node tools/local-debug-server.mjs --config config/debug.local.json     # 诊断�
 - 手机／真机**不能**使用 `127.0.0.1`：改为同网私网 IPv4 并仅对该端口放行；正式体验／比赛必须真实 HTTPS 且恢复域名校验，本地成功不算真机通过。
 - 该服务只提供 `GET /__local__/status`（`execution_mode=local_stub`、`synthetic=true`、`no-store`），**不模拟**微信登录、数据库、资料、识别、ASR、LLM、审核或 TTS；未知路径、POST 与业务 `/api/v1` 一律 404。完整边界与手机联调见 [局部微信调试说明](docs/local-wechat-debug.md)。
 
+#### 协作者如何自己完成一次真实登录
+
+「真实登录」指：工具里的 `wx.login` 把 code 发到本地 API 的 `POST /api/v1/auth/wechat`，由服务端调微信 `sns/jscode2session` 换身份，再回一张会话令牌；不是 Demo 的模拟登录。按手里的资格选一条：
+
+| 路径 | 需要的资格 | 服务端凭据 | 能否作为正式验收 |
+| --- | --- | --- | --- |
+| A 测试号 | 无，微信扫码即得 | 测试号的 AppID/AppSecret | **不能**，见 A 的限制 |
+| B 官方 AppID | 必须是该小程序的项目成员 | 官方 AppID/AppSecret | 本机联调可以；正式验收另按发布流程 |
+| C `stub` | 无 | 不需要 | **不能**，服务端合成身份 |
+
+三条路径都先把客户端基址指到真实本地 API。**换一份配置，别覆盖诊断用的 `config/debug.local.json`**；`apiBaseUrl` 的端口必须与 `port` 相同（工具会校验），`/api/v1` 不能漏：
+
+```powershell
+Set-Content -Encoding ascii config/api.local.json '{"mode":"local","bindHost":"127.0.0.1","port":3100,"apiBaseUrl":"http://127.0.0.1:3100/api/v1"}'
+```
+
+（`-Encoding ascii` 是必须的：PowerShell 5.1 的 `Set-Content` 默认是 `Default`（系统 ANSI 代码页），本身不写 UTF-8 BOM；5.1 下默认写 UTF-16LE BOM 的是 `Out-File` 与重定向 `>`，写 UTF-8 BOM 的是显式 `-Encoding UTF8`。而 `prepare-wechat.mjs` 对配置做严格 `JSON.parse`，带 BOM 会直接报 `Unexpected token '﻿'`；这份配置内容全是 ASCII，用 ascii 编码两边都不会有 BOM。）
+
+**A．测试号（没有「小程序项目成员」资格时的零门槛路径）**
+
+```powershell
+# A1. 申请测试号：浏览器打开 https://mp.weixin.qq.com/wxamp/sandbox?doc=1 ，微信扫码
+#     该页由微信公众平台前端渲染，登录后即可看到测试号 AppID / AppSecret
+# A2. 生成隔离工程，只把生成副本的 appid 换成你的测试号（共享工程仍是 wx4407a4b908a69a54，不会被改写）
+node tools/prepare-wechat.mjs local --config config/api.local.json --appid wx<你的测试号AppID>
+# A3. 起 API：real 模式共 9 项必填（DATABASE_URL / SESSION_SIGNING_KEY / DELETION_LEDGER_KEY /
+#     WECHAT_APP_ID / WECHAT_APP_SECRET / 对象存储 4 项），缺项会打印字段名并拒绝启动
+#     下面只给 3 个变量；其余 7 项（DATABASE_URL、SESSION_SIGNING_KEY、DELETION_LEDGER_KEY 与
+#     对象存储 4 项）见 .env.example 与 docs/reference/configuration.md，至少先给 DATABASE_URL
+$env:APP_EXECUTION_MODE = 'real'
+$env:WECHAT_APP_ID = 'wx<同一个测试号AppID>'
+$env:WECHAT_APP_SECRET = '<同一个测试号后台的 AppSecret>'
+npm run dev:api
+# A4. 导入隔离工程；--project 必须绝对路径，且只在这个工程里勾「不校验合法域名…」
+& "<微信开发者工具安装目录>\cli.bat" open --project "$PWD\.local\wechat-local"
+```
+
+- 成功判据：工具输出出现 `√ open` 且不再提示「不是该小程序的开发者」；点登录后开发者工具 Network 里有 `POST http://127.0.0.1:3100/api/v1/auth/wechat` 且状态 200，响应 `meta.execution_mode` 为 `real`；页面回到首页，「我的」显示已登录。
+- **A 的限制（必须知道）：** 测试号是**独立的小程序身份**。服务端身份摘要是 `HMAC(SESSION_SIGNING_KEY, appId + "\n" + openid)`（`services/api/src/auth/wechat.ts:52-54`），appId 参与摘要，所以同一个微信号在测试号与正式号下是**两条不同账号**，openid 也不同，**数据不互通**——换回正式号看不到测试号期间的资料与收藏。官方[测试号说明页](https://developers.weixin.qq.com/miniprogram/dev/devtools/sandbox.html)原文是「使用此账号在开发者工具创建项目进行开发测试，以及真机预览体验」，所以**开发测试与真机预览可以做**；但测试号**不能发布**，部分接口权限受限，具体以后台页面为准。团队 2026-10 的内部结论——「测试号无法开通接口权限、无法真机调试、也无法发布」（[资源需求清单](docs/资源需求清单.md)「七、常见问题」第 256 行）——只是内部记录，**不是官方原文**。因此 A 只能证明 `wx.login → code2session → 会话` 这段接通，**不能**当作正式登录验收，也不能当真实设备证据。
+
+**B．官方 AppID + 管理员把你加成项目成员**
+
+```powershell
+# B1. 由该小程序管理员（不是你）在 微信公众平台 → 管理 → 成员管理 → 项目成员 里加入你的微信号
+# B2. 用共享工程的官方 AppID 生成副本（不加 --appid）
+node tools/prepare-wechat.mjs local --config config/api.local.json
+# B3. 起 API：AppID 是官方 wx4407a4b908a69a54，AppSecret 用该小程序后台的密钥
+#     同样只给 3 个变量；其余 7 项必填（DATABASE_URL、SESSION_SIGNING_KEY、DELETION_LEDGER_KEY 与
+#     对象存储 4 项）见 .env.example 与 docs/reference/configuration.md，至少先给 DATABASE_URL
+$env:APP_EXECUTION_MODE = 'real'
+$env:WECHAT_APP_ID = 'wx4407a4b908a69a54'
+$env:WECHAT_APP_SECRET = '<官方小程序后台的 AppSecret>'
+npm run dev:api
+```
+
+- 成功判据：工具不再提示「不是该小程序的开发者」，能编译并扫码登录；Network 里同一个 `POST /api/v1/auth/wechat` 返回 200、`meta.execution_mode` 为 `real`；服务端拿到的 openid 属于官方小程序（与 A 得到的账号不同）。
+- 「项目成员」可添加的人数上限随账号类型和后台策略调整，**以后台「成员管理」页显示为准**（本轮未取得官方正文，不写死数字）。
+
+**C．`APP_EXECUTION_MODE=stub` 合成登录（只验接线）**
+
+```powershell
+$env:APP_EXECUTION_MODE = 'stub'
+$env:API_PORT = '3100'
+npm run dev:api
+# 另开终端：客户端仍按 config/api.local.json 生成（端口 3100、基址含 /api/v1）
+node tools/prepare-wechat.mjs local --config config/api.local.json
+```
+
+- 成功判据：登录返回 200 且 `meta.execution_mode` 为 `stub`；客户端会话缓存里 `executionMode` 是 `stub`（客户端只接受 `real`／`stub`／`preset_demo`）。
+- C 不发真实网络请求：服务端把 code 直接派生成稳定 subject（同一 code 同一用户，`services/api/src/auth/wechat.ts:69-75`）。它证明的是「客户端 → 本地 API → 会话」接线，**不证明**微信凭据。
+
+**报错对照表**
+
+| 看到的现象 | 判定 | 动作 |
+| --- | --- | --- |
+| 响应 `INVALID_REQUEST`「微信登录凭证无效或已使用」（微信 errcode `40029`） | code 已被用过，或不属于当前 AppID（拿测试号的 code 配官方 AppID 必现） | 重新点一次登录（每次 `wx.login` 都是新 code，别并发点两次）；核对副本 `appid` 与服务端 `WECHAT_APP_ID` 是同一个号 |
+| 同上（微信 errcode `40163`） | 仓内与 `40029` 同分支处理（`services/api/src/auth/wechat.ts:123`）：code 已使用或失效 | 同上 |
+| 微信 errcode `40013`（`invalid appid`），最终返回 `PROVIDER_OUTCOME_UNKNOWN`「微信登录未返回身份」 | **AppID 不合法**：抄错 AppID，或生成副本的 appid 与服务端 `WECHAT_APP_ID` 不是同一个号。`40013` 不是密钥问题——密钥不匹配是 `40125` `invalid appsecret`。仓内只把 `45011` 与 `40029`／`40163` 单独处理（`services/api/src/auth/wechat.ts:120`、`:123`），其余 errcode（含 `40013`、`40125` 以及只写在注释里的 `-1`）一律落到 `PROVIDER_OUTCOME_UNKNOWN`（`services/api/src/auth/wechat.ts:126`） | 核对生成副本的 `appid` 与服务端 `WECHAT_APP_ID` 是同一个号；确认同号仍报错，再核对 `WECHAT_APP_SECRET` 是否该号后台生成的密钥；改完重启 API |
+| 工具提示「不是该小程序的开发者」／导入后无法编译 | 当前扫码的微信号不是该 AppID 的项目成员 | 走 A 换成自己的测试号重新生成；或让管理员在成员管理里加你（B） |
+| 请求报域名不合法（网络面板出现 `url not in domain list` 一类错误） | 隔离工程里没勾「不校验合法域名、web-view（业务域名）、TLS 版本以及 HTTPS 证书」，或你改到了共享源码 | 只在 `.local/wechat-local` 的 详情 → 本地设置 勾选；共享源码与 release 副本保持 `urlCheck=true`。从基础库 2.4.0 起网络接口允许与局域网 IP 通信，但**不允许与本机 IP 通信**，真机不能用 `127.0.0.1`（见[网络能力文档](https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html)） |
+| 客户端提示「登录失败，HTTP 404」，服务端日志里路径是 `POST /auth/wechat` | `apiBaseUrl` 漏了 `/api/v1`：客户端按 `apiBaseUrl + '/auth/wechat'` 拼接，业务前缀由 `services/api/src/contract.ts` 的 `API_PREFIX` 与 `services/api/src/routes/auth.ts:43` 决定 | 把 `apiBaseUrl` 改成 `http://127.0.0.1:<端口>/api/v1` 后重新生成 |
+
+客户端只显示服务端返回的 `error.code`（或 `HTTP <状态码>`），定位时以 API 响应体为准。
+
 ## 用户端前端：先按 Demo 落地
 
 2026-10-14 用户直接确认：当前先开发 docs/ui-demo/demo.html 的 Demo 版本样式，适老版本后续开发，恢复时间待用户决定。当前按 Demo 手机预览的色板、字号、间距、卡片、导航和交互形态审查；独立适老模式、正文统一18px、触控统一44px、最大系统字号、老年用户专用布局与多机型字体矩阵属于后续适老阶段，不作为当前 Demo 样式或可复用组件 PR 的阻塞条件。已实现的字号支持和触控保护保留，不要求为迎合 Demo 删除。当前仍需关键文字与操作可见、可点、无遮挡，状态明确且模拟标记清楚；权限、隐私、用药安全及真实业务验收不因此放宽。暂缓不等于适老验收通过，既有编号与历史证据保留。
