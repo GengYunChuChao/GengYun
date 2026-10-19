@@ -91,9 +91,11 @@ async function migrationTriple() {
     .sort();
   const versions = discovered.map((name) => name.slice(0, 4));
   assert.equal(new Set(versions).size, versions.length, `迁移版本号重复：${versions.join(',')}`);
+  for (let index = 1; index < versions.length; index += 1) {
+    assert.ok(versions[index - 1] < versions[index], `迁移目录必须版本号严格递增（现场：${versions.join(',')}）`);
+  }
   assert.ok(discovered.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  assert.equal(versions[versions.length - 1], '0017', `0017 必须是当前最大号（现场：${versions.join(',')}）`);
-  note(`[M] 迁移清单 ${discovered.length} 个，版本号无重复，最大号 0017`);
+  note(`[M] 迁移清单 ${discovered.length} 个，版本号严格递增且无重复；本脚本只应用 ${MIGRATION} 及其之前的版本（目录最大号 ${versions[versions.length - 1]} 与本脚本无关）`);
 
   const objects = async () => ({
     suspend: (await one("SELECT to_regprocedure('public.suspend_account(uuid,uuid,uuid,integer,uuid)') AS v")).v,
@@ -106,13 +108,23 @@ async function migrationTriple() {
     ).v,
   });
 
+  // 只跑目标迁移**之前**的版本：这是单迁移专用脚本，未来迁移（0018+）不得进入它的 setup。
+  const applied = [];
   for (const name of discovered) {
-    if (name === MIGRATION) continue;
+    if (!(name < MIGRATION)) continue;
     await owner.query(readSql(`migrations/${name}`));
+    applied.push(name.slice(0, 4));
   }
 
   // UP
   await owner.query(readSql(`migrations/${MIGRATION}`));
+  applied.push(MIGRATION.slice(0, 4));
+  assert.deepEqual(
+    applied,
+    Array.from({ length: 17 }, (_, index) => String(index + 1).padStart(4, '0')),
+    `本脚本 setup 必须恰好应用 0001–0017（现场：${applied.join(',')}）`,
+  );
+  assert.equal(applied[applied.length - 1], '0017', `0017 必须是本脚本最后应用的版本（现场：${applied.join(',')}）`);
   let state = await objects();
   assert.ok(state.suspend && state.restore && state.audit, 'UP 后三个对象必须都在');
   assert.equal(state.trigger, 1, 'UP 后 append-only 触发器必须在岗');

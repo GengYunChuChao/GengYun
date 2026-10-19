@@ -3,8 +3,9 @@
  * （`Refs #14`, `Refs #15`）。
  *
  * 覆盖（派单 §2 第 5、6 组）：
- *   G5-a 审核结果（投稿/评论）与下架事件**只经消息中心公开创建口**投递；审核域自己的
- *        `moderation.takedown` 事件**不会**另开一条投递（下架消息只可能来自社区观测口）；
+ *   G5-a 审核结果（投稿/评论）与下架事件**只经消息中心公开创建口**投递；审核域自己不产
+ *        任何下架事件（那类零订阅方的 `moderation.takedown` 字段已删除），下架消息只可能
+ *        来自社区观测口，且版本与被下架/被缓存的那一版**一致**（诊断 R6）；
  *   G5-b 同一事件身份重复投递命中去重键 ⇒ 不产生第二条消息（公开端口幂等）；
  *   G5-c **结构性**保证：`services/api/src/community/**` 对 `services/api/src/messages/**` **零 import**
  *        （不修改消息域实现；只调用其结构性端口）；
@@ -79,8 +80,8 @@ test('G5a. 审核结果与下架事件只走消息中心公开端口；审核域
     ['moderation:comment:1'],
   );
 
-  // 下架：审核域联动端口**也**返回了一条 `moderation.takedown` 事件，但事件只可能经**社区**观测口
-  // 送进消息中心 ⇒ 恰好**一条**新消息、版本取社区处置后的 revision（而不是审核域事件里的 revision 1）。
+  // 下架：审核域联动端口**不再**产出任何事件字段（零订阅方，已删除）；下架事件只可能经
+  // **社区**观测口送进消息中心 ⇒ 恰好**一条**新消息，且版本与被下架/被缓存的那一版一致。
   const admin = await h.adminSession();
   const hidden = await h.inject('POST', `${API}/admin/posts/${post.id}/hide`, {
     token: admin.token,
@@ -89,16 +90,24 @@ test('G5a. 审核结果与下架事件只走消息中心公开端口；审核域
   });
   assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
   assert.equal(h.calls.withdraw.length, 1);
-  assert.equal(h.calls.withdraw[0].result.event.kind, 'moderation.takedown', '审核域确实产出了下架事件');
-  assert.equal(h.calls.withdraw[0].result.event.target_ref.revision, 1, '审核域事件指向被处置前的那一版');
+  assert.equal('event' in h.calls.withdraw[0].result, false, '审核域不再产出零订阅方的事件字段');
 
   const afterA = await h.messages.listMessagesByOwner(USER_A.userId);
   assert.equal(afterA.length, 2, '下架只允许新增一条消息（审核域事件不得另开一条投递）');
-  const takedowns = afterA.filter((item) => item.target_ref.revision === 2);
-  assert.equal(takedowns.length, 1, '下架消息恰好一条，且版本取**社区**处置后的 revision');
+  const takedowns = afterA.filter((item) => item.event_key.startsWith('community:takedown:'));
+  assert.equal(takedowns.length, 1, '下架消息恰好一条');
+  // **版本口径同一套**（诊断 R6）：下架消息、审核域下架目标、被失效的缓存键必须指向**同一版**
+  // ——即被公开发布/被缓存的那一版（处置前 revision），任何一处差 1 都会失效到真正没被缓存的那一版。
+  assert.equal(takedowns[0].target_ref.revision, 1, '下架消息版本必须是处置前那一版（＝被缓存的那一版）');
+  assert.equal(takedowns[0].target_ref.revision, h.calls.withdraw[0].input.target_ref.revision);
+  assert.deepEqual(h.calls.withdraw[0].result.invalidated_cache_keys, [`post|${post.id}|1`],
+    '失效键必须打在被缓存的那一版上');
+  assert.equal(takedowns[0].target_ref.id, post.id);
   assert.equal(takedowns[0].type, 'moderation');
   assert.equal(takedowns[0].target_ref.type, 'post');
   assert.equal(takedowns[0].read_at, null);
+  assert.equal(afterA.filter((item) => item.target_ref.revision === 2).length, 0,
+    '处置后的 revision 不是被公开过的那一版，不得出现在任何消息里');
 });
 
 test('G5b. 同一事件身份重复投递命中去重键 ⇒ 不产生第二条消息（公开端口幂等）', async () => {

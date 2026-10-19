@@ -88,10 +88,13 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 - **编辑重审**：新 `revision` 必须重新送审（新 `job_id` + 新输入绑定）；旧版本结论**不得**套新版本；
   权威侧当前 revision 推进后，旧链接读取判 `REVISION_SUPERSEDED`。
 - **下架（管理员动作）**：可见性 → `hidden`、已发布 revision 置空、`(target,revision)` 记 **withdrawn 标记**、
-  返回被失效的缓存键 + `moderation.takedown` 事件（不含正文）。该版本**永久不可再发布**；
-  新版本重审后**由管理员**恢复。撤回/注销 epoch 变化使旧回调失效。
+  返回**被失效的缓存键**（下架对外唯一的信号；失效在同一次 `withdraw()` 内同步完成，不另发事件）。
+  该版本**永久不可再发布**；新版本重审后**由管理员**恢复。撤回/注销 epoch 变化使旧回调失效。
 - **读取时重查**：读缓存**只作提示**。每次读取都问权威端口；与权威不一致即**立即失效整链**并拒绝。
-  隐藏／已删除／账号停用／已去身份／旧 revision／未发布／非所有者／无会话**一律不可见**。
+  隐藏／已删除／账号停用／已去身份／旧 revision／未发布／非所有者／无会话**一律不可见**；
+  **结论过期的已发布内容同样不可见**（`RESCREEN_REQUIRED`：规则集/模型/prompt 版本在结论之后前进 ⇒
+  必须重评，不得按"已审"返回；契约状态不新增，对用户的"待重评"由社区读面既有的
+  `audit_state: 'pending'` 表达）。
 
 ## 6 供应商回调 seam（不在 OpenAPI 内）
 
@@ -178,7 +181,7 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 
    ```js
    const takedown = await moderationService.withdraw({ actor: adminActor, target_ref, reason_code });
-   // takedown.invalidated_cache_keys / takedown.event（不含正文）
+   // takedown.invalidated_cache_keys（下架对外唯一信号：真正被清掉的缓存键，不含正文）
    ```
 
 4. **读取（列表/详情）**：社区既有实现已在**每次读取时重算** `effectiveState`（等价口径）；

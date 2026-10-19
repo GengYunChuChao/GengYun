@@ -510,8 +510,81 @@ WITH checks(label, ok, detail) AS (
                  AND p.proname = 'admin_account_display_name'),
          'admin_account_display_name(text,uuid) 必须是固定 search_path 的纯投影函数（非 SECURITY DEFINER）'
 
+  UNION ALL
+  -- 32. 账号读面（GY-I18 / 迁移 0021）唯一读路径必须恰存在一个（名字 + 精确签名）
+  SELECT 'accounts_read_function_exists',
+         to_regprocedure('public.list_admin_accounts()') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'list_admin_accounts'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '账号读面唯一读路径必须恰为 public.list_admin_accounts()'
+
+  UNION ALL
+  -- 33. 必须真的是 SECURITY DEFINER（否则以调用者身份读 nickname/created_at 必然 42501）
+  SELECT 'accounts_read_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'list_admin_accounts'
+             AND p.pronargs = 0),
+         '账号读面函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 34. search_path 必须固定为 pg_catalog（不做 search_path 劫持的入口）
+  SELECT 'accounts_read_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog']
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'list_admin_accounts'
+             AND p.pronargs = 0),
+         '账号读面函数必须设 SET search_path = pg_catalog'
+
+  UNION ALL
+  -- 35. 属主正确：必须是能读 users 全列的角色，且运行时既不是它、也不能 SET ROLE 成为它
+  SELECT 'accounts_read_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'nickname', 'SELECT')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'created_at', 'SELECT')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'list_admin_accounts'
+             AND p.pronargs = 0),
+         '账号读面函数属主必须能读 users 全列，且运行时角色无法成为它'
+
+  UNION ALL
+  -- 36. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'accounts_read_function_execute',
+         has_function_privilege('gengyun_api_runtime', 'public.list_admin_accounts()', 'EXECUTE')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'list_admin_accounts'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'list_admin_accounts'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '账号读面函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
+  UNION ALL
+  -- 37. 反向控制：读面放行**只**经函数；运行时对 users 的 nickname/created_at 仍无 SELECT
+  --     （这条断言的意义就是防止"为了让读面跑通而偷偷补列权限"）
+  SELECT 'accounts_read_no_column_grant',
+         NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'nickname', 'SELECT')
+         AND NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'created_at', 'SELECT')
+         AND NOT has_column_privilege('gengyun_api_runtime', 'public.users', 'deletion_generation', 'SELECT'),
+         '账号读面不得以补列授权实现：运行时对 users.nickname/created_at/deletion_generation 必须仍无 SELECT'
+
   -- --- GY-I18：功能开关唯一写路径（SECURITY DEFINER 提权函数）的看守 -------------------
-  -- 编号 38–44 顺延（32–37 预留在途的账号读面片，⛔ 不复用）。
+  -- 编号 38–44 顺延（32–37 由 0021 账号读面片实占，⛔ 不复用）。
   -- set_feature_flag 会在函数内写 public.admin_audit_events（运行时对该表零权限），
   -- ⇒ 它是提权面；缺了这组断言，红线就只剩「没人改它」的自觉。
   UNION ALL

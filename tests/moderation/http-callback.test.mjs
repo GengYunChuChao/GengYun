@@ -10,6 +10,9 @@ import { readFileSync } from 'node:fs';
 import { RULES } from '../../packages/moderation/index.mjs';
 import { guardModelPort, humanReviewQueue, scanForbiddenControlFields } from '../../services/api/src/moderation/nonbypass.ts';
 import { publicVotingEnabled } from '../../services/api/src/moderation/visibility.ts';
+import { createCommunityContentAuthority } from '../../services/api/src/community/moderation-authority.ts';
+import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
+import { createLocalPseudonymousAuthorDirectory } from '../../services/api/src/community/authors.ts';
 import { signCallbackPayload } from '../../services/api/src/moderation/callback.ts';
 import {
   ADMIN,
@@ -385,8 +388,23 @@ test('AI 不授权限/不改来源/不标专家，且公众票决不进入首版
   assert.equal(queue.human_review_state, 'under_construction');
   assert.equal(queue.voting, 'disabled');
   assert.equal(publicVotingEnabled(), false);
+  // **两臂必须真的不同**：若把 `voting` 写回两臂同值（旧写法），这条立刻变红——
+  // 否则"票决已禁用"只是一句恒真的假证据（诊断 P2-7 / 派单 P2-3）。
+  assert.equal(humanReviewQueue({ public_vote_enabled: true }).voting, 'enabled',
+    '开关被打开时人审入口必须跟着变；两臂同值 ⇒ 该断言失败');
 
-  // 来源不被审核改动：筛查前后权威侧 source_kind 逐字节一致
+  // 来源不被审核改动：**结构性判据**——内容权威端口根本没有写来源的方法。
+  // （原先的 `assertSourceUnchanged` 零生产调用且恒为 `true`，已删除；不要再用恒真函数冒充判据。）
+  const authority = createCommunityContentAuthority({
+    store: createMemoryCommunityStore({ now: () => Date.UTC(2026, 9, 14, 3, 0, 0) }),
+    authors: createLocalPseudonymousAuthorDirectory(),
+  });
+  assert.deepEqual(Object.keys(authority).sort(), ['origin', 'publishedRevision', 'read', 'setPublishedRevision', 'setVisibility'],
+    '权威端口的可写面必须只有可见性/已发布版本；多出任何写来源的方法都必须让本断言变红');
+  assert.deepEqual(Object.keys(authority).filter((key) => /source/i.test(key)), [],
+    '权威端口不得暴露任何 source_* 写口');
+
+  // 行为面：筛查 + 下架前后权威侧 source_kind 逐字节一致
   const tms = countingPort('tms');
   const h = makeHarness({ ports: { tms: tms.port } });
   const content = textContent();

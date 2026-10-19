@@ -180,8 +180,10 @@ test('下架：仅管理员可下架，驱动整链缓存失效；该版本永�
   assert.equal(takedown.visibility, 'hidden');
   assert.deepEqual(takedown.invalidated_cache_keys, ['post|post-1001|1']);
   assert.equal(h.cache.size(), 0);
-  assert.equal(takedown.event.kind, 'moderation.takedown');
-  assert.equal(JSON.stringify(takedown.event).includes(content.text), false, '下架事件不得携带正文');
+  // 下架**不再产出事件字段**：那类事件零订阅方；对外唯一信号就是这里返回的失效键。
+  assert.equal('event' in takedown, false, '下架返回值不得再带零订阅方的事件字段');
+  // 换成更强的整串断言：整个返回值（不只是某个子对象）都不得夹带正文。
+  assert.equal(JSON.stringify(takedown).includes(content.text), false, '下架返回值不得携带正文');
 
   const after = await h.service.readView({ actor: USER_A, target_ref: TARGET_V1 });
   assert.equal(after.visible, false);
