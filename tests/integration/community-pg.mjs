@@ -116,9 +116,9 @@ async function main() {
     const versions = all.map((m) => m.version);
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022');
     assert.deepEqual(
-      versions.filter((v) => ['0019', '0020', '0021'].includes(v)),
+      versions.filter((v) => ['0020', '0021'].includes(v)),
       [],
-      '0019–0021 属其他切片，本片不占用也不补占位迁移（缺口是有意的）',
+      '0020–0021 属 I18 切片 #282／#279（未合）；0019 属 I17 已随 upstream/main 合入，本片不占用、不补占位迁移',
     );
 
     const migrations = all.filter((m) => ['0001', '0022'].includes(m.version));
