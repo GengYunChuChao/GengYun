@@ -16,6 +16,12 @@
   ></state-view>
 
   <block wx:else>
+    <!-- GY-I26：服务端 mode 为 stub／preset_demo 时**置顶**显眼标注替身数据（页尾小字不足以「明显」）。 -->
+    <view class="notice notice--stub" wx:if="{{stubNote}}">
+      <text class="notice__icon">🧪</text>
+      <text class="notice__text">{{stubNote}}</text>
+    </view>
+
     <view class="section-head">
       <view class="section-head__title">互动通知</view>
       <view class="pill pill--gray">{{unreadNote}}</view>
@@ -45,11 +51,14 @@
     <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
     <!-- 失败与空态必须可分辨：服务端 real 模式未接线真实消息存储时给「服务未接线」，不写「暂无消息」。 -->
+    <!-- 失败态必须给出可点的重试入口（messages.js 的 onRetry：重读列表 + 重读未读数）。 -->
     <state-view
       wx:elif="{{status === 'error'}}"
       status="error"
       title="{{stateTitle}}"
       desc="{{stateDesc}}"
+      action-text="重新读取"
+      bind:action="onRetry"
     ></state-view>
 
     <state-view
@@ -101,7 +110,8 @@
         <view wx:else class="demo-caption">已经到底了。</view>
       </view>
 
-      <view class="demo-caption" wx:if="{{visibleItems.length}}">{{modeNote}}</view>
+      <!-- 替身模式已在顶部置顶标注，页尾不重复同一句；real 模式保留来源说明。 -->
+      <view class="demo-caption" wx:if="{{visibleItems.length && modeNote && !stubNote}}">{{modeNote}}</view>
     </block>
 
     <view class="section">
