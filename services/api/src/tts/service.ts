@@ -36,6 +36,13 @@
  *   **恰好 1 个任务、恰好 1 次提供者调用**，落败者等待占位者落定后**收敛到同一任务**；
  *   同键异体 ⇒ `IDEMPOTENCY_CONFLICT` 且不产生第二个任务；占位者失败 ⇒ **释放占位**；
  * - **越权与不存在同形** `NOT_FOUND`（不泄露存在性）；
+ * - **超时必须在读面显式化**：任务超过 `deadline_at + JOB_EXPIRY_GRACE_MS` 仍未落终态
+ *   （执行器缺失、进程重启、store 写异常……）⇒ 读面用 CAS 落 `timed_out` +
+ *   `PROVIDER_TIMEOUT`，**绝不**让读面永远回报 `queued` / `running`；
+ *   宽限用于把「截止前已完成、只是提交晚了几毫秒」的竞态让给执行器（两者都只写 `timed_out`）；
+ * - **模式交叉不撒谎**：任务行记录**受理时的执行模式**；当前装配与记录的执行模式不一致 ⇒
+ *   503 `PROVIDER_UNAVAILABLE`（`retryable:false`），**绝不**把 `stub` 受理的任务当成
+ *   `real` 装配下的成功作业读出来（那会让替身产物冒充真实合成结果）；
  * - **产出媒体**：`Synthesis.media_id` 指向替身标注产物或未接线存储的结果，
  *   **不接真实对象存储**、**不产生任何音频字节**（见 media.ts / provider.ts）。
  *
@@ -88,6 +95,15 @@ import type { SynthesisJobRow, SynthesisRow, SynthesisStore } from './store.ts';
 export const SYNTHESIS_ACCEPTED_STATUS = 202;
 /** 任务截止时间（毫秒）：超过即 `timed_out`，且迟到结果不复活任务。 */
 export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
+/**
+ * 读面「超时裁定」的宽限（毫秒）。
+ *
+ * 执行器自己的 deadline 竞速在 `deadline_at` 到点时就该落终态；只有当执行器**没能**落终态
+ * （进程重启、store 抛错、任务卡在 `queued`/`running`）时，读面才是唯一的裁定者。
+ * 因此读面留一小段宽限，避免把「截止前已完成、只是提交晚了几毫秒」的成功任务误判成
+ * `timed_out`：成功与超时谁先提交由 store 的 CAS 决定，宽限把这条竞态窗口让给执行器。
+ */
+export const JOB_EXPIRY_GRACE_MS = 5 * 1000;
 /** 幂等键长度口径与认证层一致（8..128）。 */
 export const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
 export const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
@@ -356,6 +372,47 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   }
 
   /**
+   * 模式交叉不撒谎：任务行记录了**受理时的执行模式**，当前装配必须与之一致才解释其状态。
+   *
+   * 为什么不「直接读出」：`media_id` 属于**受理方模式**的产物（`stub` 下是替身标注产物，
+   * 不是音频、不可播放）。若 `real` 装配把 `stub` 受理的任务读成 `succeeded` + `result`，
+   * 客户端就会把替身产物当成真实合成结果 —— 这正是「模式交叉撒谎」的形态。
+   * 因此宁可 503 如实说「当前装配解释不了这个任务」，也不给出一个看似成功的投影。
+   * `retryable:false`：不是瞬时故障，同一装配重试不会变好（需换回对应模式或重新受理）。
+   */
+  function assertJobMode(row: SynthesisJobRow): void {
+    if (row.executionMode === provider.executionMode) return;
+    throw new ApiError(
+      'PROVIDER_UNAVAILABLE',
+      `该任务由 ${String(row.executionMode)} 模式受理，当前装配为 ${provider.executionMode} 模式，无法解释其状态`,
+      { retryable: false },
+    );
+  }
+
+  /**
+   * 读面超时裁定（口径见 `JOB_EXPIRY_GRACE_MS` 的注释）。
+   *
+   * - 只处理非终态；终态任务原样返回（**不会**把 `succeeded` / `failed` 改成 `timed_out`）；
+   * - 用 CAS（期望 revision = 刚读到的 revision）：执行器若已提交终态，CAS 失败 ⇒ 以 store 最新为准；
+   * - 只写任务状态与错误码，**不写合成记录**：超时没有产物，绝不凭空给 `media_id`。
+   */
+  async function adjudicateExpiredJob(row: SynthesisJobRow): Promise<SynthesisJobRow> {
+    if (row.state !== 'queued' && row.state !== 'running') return row;
+    const at = now();
+    if (at.getTime() < row.deadlineAt.getTime() + JOB_EXPIRY_GRACE_MS) return row;
+    const settled = await store.commitTerminal(
+      row.id,
+      row.revision,
+      { state: 'timed_out', errorCode: 'PROVIDER_TIMEOUT' },
+      null,
+      at,
+    );
+    if (settled !== null) return settled;
+    // CAS 失败（并发已落终态）：以 store 里的最新记录为准，不覆盖、不重试。
+    return (await store.getJob(row.id)) ?? row;
+  }
+
+  /**
    * 受理合成任务：202 语义 + Job（state=queued），随后异步执行。
    *
    * 顺序是刻意的（每一步都在受理前完成 fail-closed 判定）：
@@ -412,6 +469,8 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
           revision: 1,
           kind: 'synthesis',
           ownerUserId: input.userId,
+          // 记录受理时的执行模式：读面据此判断「当前装配能否解释这个任务」（模式交叉不得撒谎）。
+          executionMode: provider.executionMode,
           synthesisId,
           checkedContentRef: { ...requested },
           locale: parsed.locale,
@@ -441,8 +500,11 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
         if (typeof reservedJobId === 'string') {
           const existing = await store.getJob(reservedJobId);
           if (existing !== null && existing.ownerUserId === input.userId) {
-            const synthesis = existing.state === 'succeeded' ? await store.getSynthesis(existing.synthesisId) : null;
-            return { status: SYNTHESIS_ACCEPTED_STATUS, job: toJob(existing, synthesis), replayed: true };
+            // 重放同样不得跨模式撒谎，也不得把一个早已过期的任务永远回报成 `queued`。
+            assertJobMode(existing);
+            const settled = await adjudicateExpiredJob(existing);
+            const synthesis = settled.state === 'succeeded' ? await store.getSynthesis(settled.synthesisId) : null;
+            return { status: SYNTHESIS_ACCEPTED_STATUS, job: toJob(settled, synthesis), replayed: true };
           }
         }
       }
@@ -582,13 +644,17 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   }
 
   /**
-   * 服务层诊断读（**不是**契约端点；契约没有 GET /speech/synthesis/{id}，已如实登记为缺口）。
-   * 归属不符 ⇒ `NOT_FOUND`（与不存在同形）。
+   * 服务层诊断读（**不是**契约端点；契约没有 GET /speech/synthesis/{id}，已如实登记为缺口；
+   * 阶段 2 的 `GET /jobs/{id}` 经共享作业源走这里）。
+   * 归属不符 ⇒ `NOT_FOUND`（与不存在同形）；模式不符 ⇒ 503（不跨模式解释状态）；
+   * 已过截止且仍未落终态 ⇒ 就地裁定为 `timed_out`（超时必须在读面显式可见）。
    */
   async function inspectJob(input: { userId: string; jobId: string }): Promise<SynthesisJobProjection> {
     const row = await getOwnedJob(input.userId, input.jobId);
-    const synthesis = row.state === 'succeeded' ? await store.getSynthesis(row.synthesisId) : null;
-    return toJob(row, synthesis);
+    assertJobMode(row);
+    const adjudicated = await adjudicateExpiredJob(row);
+    const synthesis = adjudicated.state === 'succeeded' ? await store.getSynthesis(adjudicated.synthesisId) : null;
+    return toJob(adjudicated, synthesis);
   }
 
   /**
