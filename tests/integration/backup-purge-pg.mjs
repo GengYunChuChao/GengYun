@@ -7,7 +7,7 @@
 // 未设置 `GY_PG_BIN` ⇒ 打印 SKIP 并 exit 0（本机/CI 没有 PG 二进制时如实跳过，不伪造 PASS）。
 //
 // 本脚本自证的**唯一**事情：设计文档里「已定死但没接线」的那三件事在真库上真的接上了——
-//   [1] 迁移 0024：表/约束/索引**真的**能建；`apply → rollback → 再 apply` 三连如实出现—消失—出现；
+//   [1] 迁移 0023：表/约束/索引**真的**能建；`apply → rollback → 再 apply` 三连如实出现—消失—出现；
 //       CHECK 负例（state/purged 证据/摘要形状/水位倒挂）与 `request_id … ON DELETE RESTRICT` 都是
 //       库侧拒绝（`23514`/`23503`），不是应用层口头约定；
 //   [2] 写入路径：注销受理的**同一事务**里写清单行（`executeHandlers()` 之前）。0 对象模块也写一行；
@@ -26,7 +26,7 @@
 // 只允许 `idempotency_keys` 有表级写入。脚本里对这两点都做**实测**（`has_table_privilege` = false、
 // `has_any_column_privilege` = true、DELETE 报 `42501`），而不是引用注释。
 //
-// 时钟：本脚本注入**脚本化时钟**（不是真时钟）。受理函数与 0024 的 CHECK 都不与库侧 `now()` 比较
+// 时钟：本脚本注入**脚本化时钟**（不是真时钟）。受理函数与 0023 的 CHECK 都不与库侧 `now()` 比较
 // （`covered_through <= created_at` 两列同值写入），因此冻结时刻是安全的；所有期限断言写成
 // 「与 `backup_due_at` 相等」或「31 天后」的相对推演，不依赖机器时间。
 
@@ -57,8 +57,8 @@ if (binDir === '') {
 const DAY_MS = 86_400_000;
 const START = '2026-10-20T00:00:00.000Z';
 const DB_NAME = 'gengyun_backup_purge_test';
-const COPIES_MIGRATION = '0024_user_backup_copies.sql';
-const COPIES_DOWN = 'migrations/rollback/0024_user_backup_copies.down.sql';
+const COPIES_MIGRATION = '0023_user_backup_copies.sql';
+const COPIES_DOWN = 'migrations/rollback/0023_user_backup_copies.down.sql';
 const serverLog = process.env.GY_I19_PG_LOG ?? join(tmpdir(), `gy-i19-pg-${randomBytes(3).toString('hex')}.log`);
 
 const migrationsDir = new URL('../../services/api/db/migrations/', import.meta.url);
@@ -265,7 +265,7 @@ try {
   note(`PostgreSQL ${version}`);
 
   // [1] 迁移：先建全部既有迁移（0016 的 SECURITY DEFINER 函数是受理的唯一写路径），
-  //     再对 0024 做 apply → rollback → 再 apply 三连。
+  //     再对 0023 做 apply → rollback → 再 apply 三连。
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
     .sort();
@@ -279,9 +279,9 @@ try {
   const tableExists = async () =>
     (await owner.query("SELECT to_regclass('public.user_backup_copies') AS reg")).rows[0].reg !== null;
 
-  assert.equal(await tableExists(), false, '0024 应用前表必须不存在');
+  assert.equal(await tableExists(), false, '0023 应用前表必须不存在');
   await owner.query(sqlFile(`migrations/${COPIES_MIGRATION}`));
-  assert.equal(await tableExists(), true, '0024 应用后表必须存在');
+  assert.equal(await tableExists(), true, '0023 应用后表必须存在');
   const indexes = await owner.query(
     `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'user_backup_copies' ORDER BY indexname`,
   );
@@ -291,10 +291,10 @@ try {
     '主键 + 三个 designed 索引必须齐全（唯一键 + 主体 + 到期部分索引）',
   );
   await owner.query(sqlFile(COPIES_DOWN));
-  assert.equal(await tableExists(), false, '0024 回滚后表必须消失（down 必须能干净回滚）');
+  assert.equal(await tableExists(), false, '0023 回滚后表必须消失（down 必须能干净回滚）');
   await owner.query(sqlFile(`migrations/${COPIES_MIGRATION}`));
-  assert.equal(await tableExists(), true, '0024 再 apply 后表必须重新出现');
-  say(`迁移 0024：apply（表 + 3 索引出现）→ rollback（表消失）→ 再 apply（表重现）；索引 = ${indexes.rows.map((r) => r.indexname).join(', ')}`);
+  assert.equal(await tableExists(), true, '0023 再 apply 后表必须重新出现');
+  say(`迁移 0023：apply（表 + 3 索引出现）→ rollback（表消失）→ 再 apply（表重现）；索引 = ${indexes.rows.map((r) => r.indexname).join(', ')}`);
 
   // 角色与授权：与出厂 provisioning 同形（先建 5 个 NOLOGIN 组，再建运行时 LOGIN，再跑两个区域）。
   const roleFiles = [
@@ -632,7 +632,7 @@ try {
   say('非 UUID 主体 / 缺受理请求 id：显式 PrivacyError(SESSION_REQUIRED)，不查库、不猜主体（先例 ledger-pg.ts:540-542）');
 
   // -------------------------------------------------------------------------
-  // 臂 H：0024 的 CHECK 与 ON DELETE RESTRICT 都是库侧拒绝
+  // 臂 H：0023 的 CHECK 与 ON DELETE RESTRICT 都是库侧拒绝
   // -------------------------------------------------------------------------
   const digestPlaceholder = copyPayloadDigest(copyPayloadJson({ objectRefs: [], records: 0 }));
   const insertCopySql = `INSERT INTO public.user_backup_copies (

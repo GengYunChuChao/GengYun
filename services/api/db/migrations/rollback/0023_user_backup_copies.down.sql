@@ -1,4 +1,4 @@
--- 回滚：`0024_user_backup_copies.sql`（逐用户备份副本域）。
+-- 回滚：`0023_user_backup_copies.sql`（逐用户备份副本域）。
 --
 -- 纯新增迁移 ⇒ 可安全整表拆除：本迁移**没有**改动任何既有表、既有索引或既有数据，
 -- 也没有跨迁移外键（`request_id` 只指向既有 `deletion_requests`，本迁移不反向改它）。

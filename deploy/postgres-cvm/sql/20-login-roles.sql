@@ -287,11 +287,11 @@ REVOKE ALL ON TABLE public.admin_audit_events FROM PUBLIC;
 -- #endregion gy-i22-suspend-grant
 
 -- ---------------------------------------------------------------------------
--- GY-I19（#19）· 逐用户备份副本清单（迁移 0024）的运行时**列级**授权
+-- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权
 --
 -- 为什么这里也有一份（`services/api/db/roles/auth_privacy.sql` 里已有同一组 GRANT）：
 -- `provision-db.sh` 只在组**不存在**时才执行 `roles/*.sql`（见该脚本的逐组循环），
--- 已存在的部署升级到 0024 时不会重跑它 ⇒ 授权必须在**每次都会执行**的本文件里再收敛一次，
+-- 已存在的部署升级到 0023 时不会重跑它 ⇒ 授权必须在**每次都会执行**的本文件里再收敛一次，
 -- 否则运行时在受理事务里写清单行会 42501，202 变成 500。
 --
 -- 口径（与本文件其它区域一致，**不是**放宽「唯一写路径」）：
@@ -308,7 +308,7 @@ REVOKE ALL ON TABLE public.admin_audit_events FROM PUBLIC;
 DO $$
 BEGIN
   IF to_regclass('public.user_backup_copies') IS NULL THEN
-    RAISE EXCEPTION '缺少 public.user_backup_copies：迁移 0024 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+    RAISE EXCEPTION '缺少 public.user_backup_copies：迁移 0023 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
   END IF;
 END;
 $$;
