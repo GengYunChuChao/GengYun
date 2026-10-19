@@ -137,7 +137,7 @@ export function countingPort(port) {
 // ---------------------------------------------------------------------------
 
 export function observeLink(inner) {
-  const calls = { screen: [], withdraw: [], readView: [], conclusionFor: [] };
+  const calls = { screen: [], publish: [], withdraw: [], readView: [], conclusionFor: [] };
   const link = {
     wired: inner.wired,
     get note() {
@@ -146,6 +146,11 @@ export function observeLink(inner) {
     async screen(input) {
       const result = await inner.screen(input);
       calls.screen.push({ input, result });
+      return result;
+    },
+    async publish(input) {
+      const result = await inner.publish(input);
+      calls.publish.push({ input, result });
       return result;
     },
     async withdraw(input) {
@@ -310,6 +315,7 @@ export function deferringModerationPort(moderation) {
       return moderation.execution_mode;
     },
     submitScreening: (input) => moderation.submitScreening({ ...input, defer_model: true }),
+    publish: (input) => moderation.publish(input),
     withdraw: (input) => moderation.withdraw(input),
     readView: (input) => moderation.readView(input),
     tasks: (targetRef) => moderation.tasks(targetRef),
@@ -331,6 +337,7 @@ export function noTaskConclusionLink(inner) {
       return inner.note;
     },
     screen: (input) => inner.screen(input),
+    publish: (input) => inner.publish(input),
     withdraw: (input) => inner.withdraw(input),
     readView: (input) => inner.readView(input),
     counts: () => inner.counts(),
