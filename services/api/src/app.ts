@@ -162,6 +162,7 @@ import {
 import { registerCommunityRoutes } from './routes/community.ts';
 import { createCommunityService, type CommunityService } from './community/service.ts';
 import { createMemoryCommunityStore, type CommunityStore } from './community/store.ts';
+import { createPostgresCommunityStore } from './community/store-pg.ts';
 import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
 import type { AuthorDirectory } from './community/types.ts';
 import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
@@ -767,7 +768,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 由社区服务、后台 `hidePost` 与审核域的**同源内容权威端口**三方共用同一实例。
   // 说明：这两行原在下方"社区装配"块内；本接线只把**声明**前移到审核域构造之前
   // （审核域构造时需要权威端口），其余装配顺序与内容**逐字未变**。
-  const communityStore = communityInjection?.store ?? createMemoryCommunityStore({ now: () => clock().getTime() });
+  const communityStore: CommunityStore =
+    communityInjection?.store ??
+    // **存储模式选择（GY-I15 切片 C1）**：有连接池 ⇒ PG 实现（迁移 `0022_community_persistence.sql`），
+    // 无池 ⇒ 内存实现。与收藏/历史域同一写法；PG 实现如实声明 `persistent: true`，装配层据此
+    // 在 `real` 下**显式放行**（见下方社区装配块），内存实现仍在 real 下整域 503。
+    (pool !== null
+      ? createPostgresCommunityStore({ pool })
+      : createMemoryCommunityStore({ now: () => clock().getTime() }));
   const communityAuthors: AuthorDirectory = communityInjection?.authors ?? createLocalPseudonymousAuthorDirectory();
   // 同源权威端口：审核域读到的就是社区真实内容行，下架写的也是同一行（不是第二份副本）。
   const communityContentAuthority = createCommunityContentAuthority({
@@ -1003,13 +1011,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 「平台当前没有作业」，那是无法确认的结论）。真实作业端口与社区存储属后续接线；
   // 本文件**不**自建会与其它域割裂的替身实例（那会让「隐藏了帖子」在不同 store 上失真）。
   // ---------------------------------------------------------------------------
-  // GY-I15 社区域（#15）阶段 2 装配。
+  // GY-I15 社区域（#15）装配。
   //
-  // **real 模式 ⇒ 社区整域 fail-closed**（与 GY-I18 后台域、GY-I17 消息域同一口径）：
-  // 社区 store 是**内存**实现（`persistent:false`），真实持久存储未交付。若在 `real` 下把它交给
-  // 服务层，写操作会返回**成功封套**而落点只是易失内存 —— 即在"真实模式"下声称投稿成功、
-  // 重启即丢。因此这里在**运行时**拒绝（503 `PROVIDER_UNAVAILABLE`, retryable），
-  // 而不是靠文档披露。将来接真实持久 store 必须在这里**显式放行**（一次可审查的接线变更）。
+  // **持久化（切片 C1）**：`communityStore` 在**有连接池**时是 PG 实现
+  // （`community/store-pg.ts` + 迁移 `0022_community_persistence.sql`），无池时是内存实现。
+  //
+  // **real 模式 ⇒ 放行判据是"存储自述持久化"，不是"有没有接线"**（与 GY-I18 后台域、
+  // GY-I17 消息域同一口径的反向用法）：内存 store（`persistent:false`）在 `real` 下仍**整域
+  // fail-closed**（503 `PROVIDER_UNAVAILABLE`, retryable）——否则写操作会返回**成功封套**
+  // 而落点只是易失内存，即在"真实模式"下声称投稿成功、重启即丢。PG store 如实声明
+  // `persistent:true`，因此 `real` + 连接池时才放行；无池仍拒绝，**不静默退回内存**。
   //
   // **事件投递**：只把消息域的公开创建口 `appendMessage` 作为**结构性端口**传进来
   // （不 import 消息域、不改其实现）。消息服务在 real 下为 `null` ⇒ 事件端口 `wired:false`。
@@ -1026,10 +1037,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     (messagesService === null
       ? createUnwiredCommunityEventsPort('消息服务未接线（real 模式）：审核结果/下架事件无法投递')
       : createMessagesCommunityEventsPort({ messages: messagesService }));
-  const communityRealUnwired = config.executionMode === 'real';
+  // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
+  // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
+  const communityRealUnwired = config.executionMode === 'real' && !communityStore.persistent;
   let communityService: CommunityService | null;
   if (communityRealUnwired) {
-    const reason = 'real 模式未接真实持久后端：社区业务不可用（拒绝以内存 store 返回成功封套）';
+    const reason = 'real 模式未接真实持久后端（无连接池 ⇒ 内存 store 不持久）：社区业务不可用'
+      + '（拒绝以内存 store 返回成功封套）';
     communityService = null;
     app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 16 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
   } else {
