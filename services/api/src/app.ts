@@ -116,9 +116,12 @@ import { registerFavoriteRoutes } from './routes/favorites.ts';
 import { registerHistoryRoutes } from './routes/history.ts';
 import { createFavoritesService, type FavoritesService } from './favorites/service.ts';
 import { createMemoryFavoritesStore, type FavoritesStore } from './favorites/store.ts';
+// GY-I16 阶段 2：收藏/历史的 PG 实现（迁移 `0018_favorites_history.sql`，`persistent: true`）。
+import { createPostgresFavoritesStore } from './favorites/store-pg.ts';
 import { isFavoriteTargetType } from './favorites/types.ts';
 import { createHistoryService, type HistoryService } from './history/service.ts';
 import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
+import { createPostgresHistoryStore } from './history/store-pg.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
 import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
 import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
@@ -1188,10 +1191,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
   //
-  // **real 模式整体关闭**（与本仓「real 永远 fail-closed、严禁静默回退替身」一致）：
-  // 两域当前只有**内存** store，若在 real 下仍交出服务层，写操作会返回成功封套而落点易失
-  // —— 那是"在真实模式下声称成功、重启即丢"。因此 real ⇒ 服务为 `null` ⇒ 5 条路由 503
-  // PROVIDER_UNAVAILABLE。将来接真实持久 store 时必须**在这里显式放行**（一次可审查的变更）。
+  // **real 模式按「有没有真实持久化落点」二分**（与本仓「real 永远 fail-closed、严禁静默回退
+  // 替身」一致，且与问答域的 `conversationStore` 门禁同一口径）：
+  //   - `real` + 有 `pool` ⇒ 接 PG store（`persistent: true`，迁移 `0018`）⇒ 服务**开启**，
+  //     写操作落到真实库表，进程重启后仍在；
+  //   - `real` + 无 `pool`（没配 `DATABASE_URL`）⇒ 服务仍为 `null` ⇒ 5 条路由**保持 503**
+  //     PROVIDER_UNAVAILABLE（绝不静默回退内存替身去声称成功）；
+  //   - 非 `real`（stub/演示）⇒ 内存 store + 服务开启（既有行为不变）。
+  // 判据是 **`store.persistent`** 而不是只看 `config.executionMode`：注入进来的内存 store
+  // 在 real 下同样必须 503（见下方 `favoritesService` / `historyService` 的门禁表达式，
+  // 与问答域 `conversationStore === null || (real && !conversationStore.persistent)` 逐字同形）。
   //
   // **引用可用性端口接线到公开读面**（本片接线，替代此前的 `createUnwiredVisibilityPort`：
   // 未接线时收藏/历史 `reference_state` 恒为 `unavailable` ⇒ 收藏页「查看资料」永不可跳转）。
@@ -1210,8 +1219,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `ocrService.getJob`（#10）—— 只调用公开方法、不改他人文件。这样历史列表/详情的
   // `job_state` 在读取时能取到**实时**状态（失败/超时/取消原样可见），核不到时才退回入库值。
   // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
-  const favoritesStore = favoritesInjection?.store ?? createMemoryFavoritesStore({ now: () => clock().getTime() });
-  const historyStore = historyInjection?.store ?? createMemoryHistoryStore({ now: () => clock().getTime() });
+  // store 选择：**real 且有 `pool` 才接 PG**（`persistent: true`），否则内存实现。
+  //
+  // 这两个变量是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
+  // store 而不是 service。`real` 且无 `pool` 时仍需一个可调用对象 ⇒ 选内存实现，但下方
+  // 服务层门禁会把它判成"不持久" ⇒ 服务为 `null` ⇒ 该 store **不接收本域任何写入**，
+  // 注销清空只会得到 0 行（不会凭空产生"已清空 N 行"的证据）。
+  const favoritesStore: FavoritesStore =
+    favoritesInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresFavoritesStore(pool, { now: () => clock().getTime() })
+      : createMemoryFavoritesStore({ now: () => clock().getTime() }));
+  const historyStore: HistoryStore =
+    historyInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
+      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   /** 浙江首批投影面（与 `/knowledge` 同源同过滤同开关）；开关关闭时它恒为空集合。 */
   const publicKnowledgeSeedFace = createReferenceQueryService({
     includeUnverifiedSeed:
@@ -1290,8 +1313,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       },
     });
   const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();
+  // 服务层门禁（**唯一**开关）：只有"有真实持久化落点"时才交出服务。
+  //   - 非 `real` ⇒ 开启（内存 store，既有行为）；
+  //   - `real` + `store.persistent === true`（PG store）⇒ 开启；
+  //   - `real` + 不持久（无 `pool` 时的内存实现 / 外部注入的内存替身）⇒ `null` ⇒ 5 条路由 503。
+  // 表达式与问答域 `conversationStore === null || (real && !conversationStore.persistent)` 同形，
+  // 理由也相同：注入的内存 store 在 real 下**不得**绕过 fail-closed。
   const favoritesService =
-    config.executionMode === 'real'
+    config.executionMode === 'real' && !favoritesStore.persistent
       ? null
       : createFavoritesService({
           store: favoritesStore,
@@ -1300,7 +1329,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           now: clock,
         });
   const historyService =
-    config.executionMode === 'real'
+    config.executionMode === 'real' && !historyStore.persistent
       ? null
       : createHistoryService({
           store: historyStore,

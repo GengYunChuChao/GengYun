@@ -45,6 +45,10 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const that = this
+    // GY-I28：「我的耕云」的「我的发布」经 switchTab 进来（Tab 页不能带查询参数），
+    // 消费一次性的进程内意图：命中即预选「我的投稿」（契约 `mine`），读完立刻清除。
+    // 筛选只是**查询条件**，取数仍走 pageGate 门禁与 GET /posts?mine=true，不用本地数据顶替。
+    if (navigation.consumeCommunityMine()) this.setData({ filterMine: true })
     this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
     pageGate.start(this, function (ok) {
       that.setData({ guest: !ok })

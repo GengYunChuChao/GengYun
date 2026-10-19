@@ -108,6 +108,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '反向控制运行器，**故意**不在门禁名单内（需显式运行，自证见同目录正向脚本注释）。',
   },
   {
+    path: 'tests/integration/favorites-history-pg.mjs',
+    reason: '需真实 PG17 且硬钉库名 `gengyun_favorites_history_test`：未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时'
+      + '**显式打印 SKIP 并以 0 退出**（不静默绿）；本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/knowledge-native-consumer.mjs',
     reason: '需外部组合目录／runtime 目录作参数（微信原生侧业务消费者），不在 CI 回环链内。',
   },
