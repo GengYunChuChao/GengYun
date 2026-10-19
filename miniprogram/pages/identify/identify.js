@@ -1277,6 +1277,8 @@ function ocrResultView(ocr, job, mode) {
     matchLabel: detail.verification.matchLabel,
     hasRegistration: detail.verification.hasRegistration,
     conflictFields: detail.verification.conflictFields,
+    // 同一组冲突字段的中文标签（`source.validity` 这类 token 不能直接给用户看）。
+    conflictLabels: detail.verification.conflictLabels,
     missingFields: detail.verification.missingFields,
     // 用药安全：只给"存在 N 条用量卡"的**条数**，正文一律不渲染（该数字不是剂量值）。
     doseCardCount: detail.verification.doseCardCount,
@@ -1291,8 +1293,8 @@ function ocrResultView(ocr, job, mode) {
     doseBlocked: true,
     doseBlockReason: explicit
       ? '登记核对为「' + detail.verification.matchLabel +
-        '」：用量展示已阻断（同名不同制剂/多条可能匹配一律不静默取一条），请先对照包装实物逐项确认字段。' +
-        detail.doseSafetyNote
+        '」：用量展示已阻断（同名不同制剂/多条可能匹配一律不静默取一条；登记记录已失效或被拒绝核对时也不作为核对通过），' +
+        '请先对照包装实物逐项确认字段。' + detail.doseSafetyNote
       : detail.doseSafetyNote,
     // 只读的边界说清楚：raw_fields 不接受编辑，可写面只有 corrected_fields。
     readOnlyNote: '机器原始读数（raw_fields）只读：本页不提供编辑原始读数的动作，它原样保留以便复核；' +

@@ -144,7 +144,7 @@
               <text class="pill pill--gray">{{verification.matchLabel}}</text>
               <text class="pill pill--gray">{{verification.hasRegistration ? '已匹配到登记资料' : '未匹配到登记资料'}}</text>
             </view>
-            <view class="card-text" wx:if="{{verification.conflictFields.length}}">冲突字段：{{verification.conflictFields}}</view>
+            <view class="card-text" wx:if="{{verification.conflictLabels.length}}">冲突字段：{{verification.conflictLabels}}</view>
             <view class="card-text" wx:if="{{verification.missingFields.length}}">缺失字段：{{verification.missingFields}}</view>
             <view class="card-text">登记用量卡：{{verification.doseCardCount}} 条（本页不展示用量内容）</view>
           </view>
