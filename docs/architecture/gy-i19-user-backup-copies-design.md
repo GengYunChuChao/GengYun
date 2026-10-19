@@ -2,11 +2,18 @@
 
 本片状态：**设计稿 + 可单测的判定逻辑**。不落地 DDL、不接线 PG、不改契约状态。
 
+> **增补（2026-10-20 · 接线片 C2）**：DDL、写入路径与清除端口已在分支
+> `feat/gy-i19-backup-domain` 落地——迁移 [`0023_user_backup_copies.sql`](../../services/api/db/migrations/0023_user_backup_copies.sql)、
+> 纯逻辑 [`packages/privacy/backup-copies.mjs`](../../packages/privacy/backup-copies.mjs)、
+> PG 适配 [`services/api/src/privacy/backup-copies-pg.ts`](../../services/api/src/privacy/backup-copies-pg.ts)。
+> §4 的「归属 0022」改为实际 **0023**（0019–0022 被在途片占用），R1 已定死为「请求重放驱动」。
+> 落地形状、权限口径、与本文草案的偏差、以及**未取得项**见文末 §13。
+
 ## 0. 一句话结论
 
 「在线 7 日／备份 30 日」里的**备份副本**，指注销受理那一刻为恢复与审计而留存、**只含不透明对象引用与计数**的最小清单行；`retention_until = 受理时刻 + 30×24 小时`，到点即把 `payload` 硬删、行转 `purged` 并留证据。
 
-本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。
+本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。（以上为**设计片交付时点**的事实；2026-10-20 接线后：有真库且受理已接线时换真实 PG 端口，`real` 模式整域仍 503、契约状态仍未改，见 §13。）
 
 ## 1. 现状与为什么不差这一步
 
@@ -383,9 +390,83 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 
 | 编号 | 风险 | 现状与建议 |
 | --- | --- | --- |
-| R1 | 没有 30 天到期触发者 | 判定函数只回答「该不该清」；谁来定时调用（jobs 注册表定时作业 vs 请求重放驱动）本片不定，接线片必须选一个，否则 `backup_state` 永远等不到 `completed` |
+| R1 | 没有 30 天到期触发者 | **已定死（2026-10-20 接线片）**：触发者 = **请求重放**——用同一 `requestId` 重跑受理链路的 `deletion.executeHandlers()`，端口每次 `purge()` 都重读库、按 `retention_until` 判定 `wait`/`purge`；不在受理时开定时器、不引入常驻作业/调度器。⚠ 「显式维护端点（仅后台能力位）」**本片未实现**（会新增对外契约面与权限位/审计设计，超出「只接线」范围），列为 §13 未取得项 |
 | R2 | 重放把已完成读成 pending | 由 §7.5 的复核规则规避，但依赖 `purged` 行与 `evidence_ref` 仍在；若将来压缩 `purged` 行，须同时保证 `deletion_handlers.evidence_ref` 保留摘要 |
 | R3 | 0019–0021 可能改动删除相关表 | 本片未读这三支的实现；0022 落地前必须重读它们是否动过 `deletion_requests` / `deletion_handlers` |
 | R4 | `user_id` 无外键的完整性代价 | 若 DDL 评审坚持外键，退让为 `REFERENCES users(id) ON DELETE RESTRICT`，并接受「账号行物理删除被 RESTRICT 挡住」的副作用 |
 | R5 | 引用本身可能反推内容 | 只对引用做摘要，且范围名不携带对象细节；若某模块引用含可读标识，须在该模块内先脱敏再落库 |
 | R6 | 状态列与既有 enum 风格不一致 | 见 §10「状态列类型」：可改 `backup_copy_state` enum，语义与判定表不变 |
+
+## 13. 接线落地记录（2026-10-20 · 片 C2）
+
+本节只记录**实际落地的形状**。凡与 §4–§7 草案字面不一致处，以本节与代码为准（差异逐条列在 §13.5）。
+
+### 13.1 文件级清单
+
+| 文件 | 角色 |
+| --- | --- |
+| `services/api/db/migrations/0023_user_backup_copies.sql` | 建表 + 11 条 CHECK + 唯一键/主体索引/到期部分索引；`request_id … ON DELETE RESTRICT`，`user_id` 无外键（§10） |
+| `services/api/db/migrations/rollback/0023_user_backup_copies.down.sql` | `DROP TABLE IF EXISTS`（纯新增，可整表拆） |
+| `packages/privacy/backup-copies.mjs` | 纯逻辑：scope 闭集、`normalizeObjectRefs`、规范序列化、摘要、§7.2 的证据摘要 |
+| `services/api/src/privacy/backup-copies-pg.ts` | `insertBackupCopySeeds()`（受理事务内写清单）+ `createPostgresBackupPurgePort()`（三态端口） |
+| `services/api/src/privacy/user-data-deletion.ts` | 端口结果加**可选**三态字段；handler 按三态给 `backup_state`/`error_code`；受理时构造每模块一个清单来源 |
+| `services/api/src/privacy/deletion-requests-pg.ts` | `createRequest` 在**同一事务**内 CALL 受理函数 + 写清单行 |
+| `services/api/src/favorites/store*.ts`、`history/store*.ts` | 新增 `snapshotOwner(ownerId, client?)`：只回不透明行 id + 计数（内存版与 PG 版同接口） |
+| `services/api/src/app.ts` | 装配：受理已接线且有池 ⇒ 真实 PG 端口；否则保持 unwired（`requests: null` 时仍 pending）；`real` 无池的注入场景 ⇒ 显式不可用端口 |
+| `deploy/postgres-cvm/sql/20-login-roles.sql`、`services/api/db/roles/auth_privacy.sql` | 列级 `SELECT/INSERT/UPDATE` 授权（两处各一份：前者给已部署库，后者给 fresh bootstrap） |
+| `tests/unit/backup-copies-port-contract.test.mjs`、`tests/integration/backup-purge-pg.mjs` | 26 条契约单测；真 PG 17.11 上 13 组集成证据（见交接文件读数） |
+
+### 13.2 写入路径的实际形状
+
+受理仍走唯一写路径 `public.request_account_deletion(...)`（`SECURITY DEFINER`，仓库内既有函数，**未改签名**）；清单行由 Node 侧在**同一事务**里、`COMMIT` 之前紧跟一条 `INSERT … ON CONFLICT DO NOTHING` 写入：
+
+1. `pool.connect()` → `BEGIN` → `SET LOCAL lock_timeout='4s'`；
+2. `SELECT public.request_account_deletion($1..$9)`（账号转 `deletion_pending` + 撤会话 + 注销请求落库）；
+3. 每必需模块一行：`snapshotOwner(ownerId, client)`（同快照读行 id）→ `normalizeObjectRefs` → 规范 JSON + sha256 → `INSERT`（`retention_until` = 入参 `backupDueAt`，`created_at=covered_through=requestedAt`，`state='pending_purge'`）；
+4. `COMMIT`。
+
+失败语义：第 3 步抛错 ⇒ `ROLLBACK` ⇒ 受理行、账号状态、会话撤销、清单行**全部**回滚 ⇒ 路由抛 `PROVIDER_UNAVAILABLE`(503, `retryable:false`) ⇒ **202 不签发**（真 PG 集成臂「清单写入失败」实测：`deletion_requests` 0 行、清单 0 行、`users.state` 仍 `active`）。
+
+0 对象模块也必须写一行：`payload = {"object_refs":[],"records":0}`、摘要照算。**空集不当成功**由此变成「不可能出现 0 行」，而不是靠调用方自觉。
+
+### 13.3 权限口径（为什么是列级、为什么不再加函数）
+
+- `90-assert-least-privilege.sql` 的 `table_dml_allowlist` 只允许 `public.idempotency_keys` 有**表级**写入 ⇒ 新表一律**按列**授予：`SELECT (id,user_id,request_id,module,scope,state,retention_until,payload_digest,evidence_ref,purge_attempts)`、`INSERT (…)`、`UPDATE (payload,state,purged_at,evidence_ref,last_error_code,purge_attempts,updated_at)`；**无表级 DML、无 DELETE/TRUNCATE**（清单行是「清过」的唯一证据）。
+- `purge_attempts` 必须在 SELECT 名单里：失败留痕写的是 `purge_attempts = purge_attempts + 1`，读右侧同样要 SELECT 权（本片实测踩到：漏授时 `UPDATE` 报 `permission denied for table user_backup_copies`，而 `failed` 行留不下来）。
+- 不新增 `SECURITY DEFINER` 函数：DDL 不是状态机表，运行时要自己写、自己读、自己落证据；原子性由事务保证，而「唯一写路径」约束的是 `users`/`deletion_requests` 的**状态**写，不是本表。
+
+### 13.4 清除路径与 R1 的落地
+
+- **触发者（R1 定死）**：请求重放。`executeHandlers()` 对已知 `requestId` 重跑；端口每次 `purge({userId, module, requestId})` 都重读库（不缓存），先用已交付的 `evaluateBackupPurge()` 判定，再按 §7.2 分支返回三态。⛔ 不引入定时器/常驻作业/调度器。
+- **完成判据**：`UPDATE … WHERE state='pending_purge' AND retention_until <= now` → **同事务内重读**复核（`remaining = 0` 且证据行 ≥ 1）→ 通过才 `COMMIT` 并回 `{outcome:'purged', evidenceRef}`；复核不过 `ROLLBACK`。
+- **失败留痕范围**：复核不过或事务抛错时，把该模块所有 `pending_purge` 行置 `failed` + `last_error_code` + `purge_attempts+1`（设计只说「回滚置 failed」，未说范围；按模块整体失败更利于显式重排：否则未到期行会一直留 `pending_purge`、下次重放又走同一条死路）。留痕本身写不进时，`blocked` 的 `reason` 会写明「失败留痕未写入（先修权限/连接）」，不静默。
+- **三态到回执的映射**（`user-data-deletion.ts`）：`purged` ⇒ `backup_state='completed'`（无证据则降为 `blocked/EVIDENCE_REQUIRED`，不谎称完成）；`waiting` ⇒ `pending`；`blocked` ⇒ `blocked` + 白名单内 `error_code`（白名单外折叠 `EVIDENCE_REQUIRED`）。未给 `outcome` 的旧端口按老语义回退，既有断言零改动。
+- **幂等**：已全 `purged` 的模块走 `ALL_PURGED`——只复核持久行、不重写 `purged_at`、不增 `purge_attempts`，`completed` 不降级。
+
+### 13.5 与本文草案的偏差（以代码为准）
+
+| 项 | 草案 | 落地 | 原因 |
+| --- | --- | --- | --- |
+| 迁移号 | §4 写「归属 0022」 | **0023** | 0019–0022 被在途片占用；断号有意，⛔ 不造占位迁移（CI 连号臂会红，见 §13.6） |
+| `scope` 取值 | 「语义闭集镜像 `REPLAY_SCOPES`」，举例 `favorite`/`history` | `favorite`（favorites 模块）、`history`（history 模块） | `services/api/src/privacy/backup-replay-manifest.ts` 的 `REPLAY_SCOPES` **没有 `history`**；DDL 只校验 `^[a-z][a-z0-9_]{0,31}$` ⇒ 取设计自己举的例子，字面镜像关系不成立 |
+| `lineage` | 草案未给值 | 常量 `deletion-manifest/v1` | 本片不接真实备份系统，不谎报备份额；该列只表达「谁产出的清单行」 |
+| `covered_through` 与 `created_at` | 两列都要有，CHECK `covered_through <= created_at` | 两列**同值**写入（都用受理时刻） | 避开应用时钟与库 `now()` 的偏差；不放松约束 |
+| 清除后 `payload_digest` | §5.3 只要求 `payload='null'` | 保留 `payload_digest` | 复核/重放要靠它独立复算证据；摘要本身不是内容 |
+| `failed` 行范围 | 未写 | 该模块该请求下所有 `pending_purge` 行 | 见 §13.4 |
+
+### 13.6 未取得项（如实登记）
+
+| 项 | 状态与原因 |
+| --- | --- |
+| 「显式维护端点（仅后台能力位）」 | **未实现**。新增对外端点会改契约面（本片纪律禁止），且需要能力位/审计设计 ⇒ 本片只做「请求重放」这一半；重放的驱动者（谁持有 `requestId` 并决定何时重跑）仍在片外 |
+| 进程内「扫描到期请求」的枚举器 | **未实现**。`deletion_requests` 无运行时列权限（既有最小权限口径），运行时无法自行列出到期请求 ⇒ 重放必须由外部 driver 提供 `requestId`（真库集成臂就是这样驱动的）。要补，需先设计窄口径只读函数并过最小权限断言 |
+| `real` 模式整域可用 | **未翻**。`createAccountDeletionRequestService({ available: executionMode !== 'real' })` 保持：7 日在线/30 日备份的完整执行链与第三方完成证据仍未齐，本片不谎称可用（`real` 模式 POST/GET 仍 503 `PROVIDER_UNAVAILABLE`） |
+| `contract-status.json` 的 blocker | **未改**。§8.2 四条前置（0022/0023 真库可建、写入路径含 0 对象模块、端口三态接通且 `purged` 由复核产生、端到端证据）中，本片只做实了前三项与「本机真 PG 端到端」；CI 真库臂因 `0019–0022` 断号仍红 ⇒ blocker 保持 |
+| 真实备份介质上的逐用户清除 | **未取得**（仓内无此介质，§11 已登记）；本片只证「清单行落库 + 到期置 `purged` + `payload` 置 null + 证据可复算」 |
+| 30 天真实时间流逝 | **未取得**（集成臂用脚本化时钟推进 31 天，属推算，不代表真实到期执行过） |
+
+### 13.7 读数在哪
+
+本片门禁读数、真 PG 集成臂的 13 组输出、未取得项与残留风险，全部列在交接文件
+`.pg17/handoff/i19-backup-wiring-<HEAD7>.md`（不在仓内）。
+
