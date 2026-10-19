@@ -258,6 +258,27 @@ test('历史详情：实时读取优先；实时未命中时快照只用于定�
   assert.equal(await missing, null);
 });
 
+test('历史详情：实时改为不可用时，不得用快照里的旧 available 顶替（失效不复活）', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+  // 列表页写入的引用快照是"当时可用"——这正是旧链接/旧缓存的形态。
+  f.history.remember([historyItem({ job_state: 'succeeded', reference_state: 'available' })]);
+
+  // 详情页实时读取拿到的是"现在不可用"：必须以实时为准，快照里的旧 available 一律作废。
+  const live = f.history.locateHistory(UUID_B, 50);
+  answer(f, { items: [historyItem({ job_state: 'succeeded', reference_state: 'unavailable' })], next_cursor: null });
+  const located = await live;
+  assert.equal(located.locatedBy, 'live');
+  assert.equal(located.referenceState, 'unavailable', '实时不可用必须压过快照里的旧 available');
+  assert.equal(located.referenceState === 'available', false, '页面不得给出"打开资料"的入口');
+  assert.equal(located.jobState, 'succeeded', '可见性变化不影响任务状态如实呈现');
+
+  // 反向对照：实时可用时才允许 available（不是把页面做成恒不可用）。
+  const back = f.history.locateHistory(UUID_B, 50);
+  answer(f, { items: [historyItem({ job_state: 'succeeded', reference_state: 'available' })], next_cursor: null });
+  assert.equal((await back).referenceState, 'available');
+});
+
 test('历史详情视图：候选与人工选择分开、失败不当作成功、分数不是准确率', () => {
   const f = fixture();
   const succeeded = f.history.recognitionDetailView(recognition(), 'succeeded');
