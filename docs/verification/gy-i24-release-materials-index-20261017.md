@@ -10,10 +10,13 @@
 - **合流复核（2026-10-18，PR #278）**：再合流 `upstream/main` = `0856e49` 后，本片 `2f0946b`（消息域持久化）带入
   `0019_messages_persistence.sql` 及其 down 脚本 ⇒ 迁移数 **19**（`0001..0019`）、`rollback/` **18**（`0002..0019`）、
   `deploy/` 在册 **30**；§2 表与 §4 第 8 项的「当前读数」已按合流后的树实测同步（上面那条的 18/17/29 是 `53922eb` 时点的读数，按原样保留）。
-- **三次并流（2026-10-19，#282）**：`feat/gy-i18-feature-flags-pg` 先于 `0856e49` 上并流、带入 `0020_feature_flags.sql`
-  及其 down 脚本（当时 `0019` 在途 ⇒ 19 个：`0001..0018`＋`0020`）；本次再 `git merge --no-ff upstream/main`
-  = `d131e47`（含 `0019_messages_persistence.sql`）⇒ 迁移数 **20**（`0001..0020`，连续无缺号）、`rollback/` **19**
-  （`0002..0020`）、`deploy/` 在册仍 **30**；§2 表与 §4 第 8 项的「当前读数」已按合并后的树实测改写（上面三代读数按原样保留为历史）。
+- **合流复核（2026-10-19，main `31a746d`）**：`feat/gy-i18-admin-accounts-read` 合流新 `upstream/main` = `31a746d`
+  （新 main 已含 #282 的 `0020_feature_flags.sql`），叠加本片 `0021_admin_accounts_read.sql` ⇒ 按
+  `git ls-tree HEAD -- services/api/db/migrations` 逐条实测：迁移数 **21** 个（`0001..0021`，**连续无缺号**）、
+  `rollback/` **20** 个（`0002..0021`，仍无 `0001`）、`deploy/` 在册 **30** 个；§2 表与 §4 第 8 项的「当前读数」
+  已按合流后的树刷新。**旧值（并列历史，按原样保留）**：本片在 `d131e47` 上、`0020` 尚未入树时读数为 **20/19**
+  （`0001..0019` ＋ `0021`，缺 `0020`）；`feat/gy-i18-feature-flags-pg` 在 `d131e47` 上单独并流时读数同为 **20/19**
+  （`0001..0020` 连续）；更早是 #278 时点的 19/18/30 与 `53922eb` 时点的 18/17/29。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -74,7 +77,7 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **20** 个：`0001..0020`，连续无缺号） | ✅ down 脚本覆盖 `0002..0020`（19 个）、无 `0001`（门禁第 8 项） |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **21** 个：`0001..0021`，连续无缺号） | ✅ down 脚本覆盖 `0002..0021`（20 个）、无 `0001`（门禁第 8 项） |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -82,7 +85,7 @@
 
 门禁：`node tools/verify-release-materials.mjs`（15 项，退出码 0 = 通过）。逐项判据与读数：
 
-| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 8 项按 2026-10-19 合流 `d131e47` 后的树复跑） |
+| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47` 与 main `31a746d` 后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
 | 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 30 个文件全部在索引表行中（30/30 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出本分支新增的 `deploy/postgres-cvm/restore-drill.ps1` |
@@ -91,7 +94,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 20 个；`rollback/` 19 个；`migrate.ts` 报错文本 | ✅ 一致 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 21 个（`0001..0021`，连续无缺号）；`rollback/` 20 个（`0002..0021`）；`migrate.ts` 报错文本 | ✅ 一致 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 
