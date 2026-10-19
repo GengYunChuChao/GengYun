@@ -22,6 +22,12 @@
   ></state-view>
 
   <block wx:else>
+    <!-- GY-I26：服务端 mode 为 stub／preset_demo 时**置顶**显眼标注替身数据（页尾小字不足以「明显」）。 -->
+    <view class="notice notice--stub" wx:if="{{stubNote}}">
+      <text class="notice__icon">🧪</text>
+      <text class="notice__text">{{stubNote}}</text>
+    </view>
+
     <view class="section-head">
       <view class="section-head__title">田间动态</view>
       <gy-ui-button label="分享发现" variant="primary" bind:tap="onCreate"></gy-ui-button>
@@ -43,11 +49,14 @@
 
     <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
+    <!-- 失败态必须给出可点的重试入口（community.js 的 onRetry），不能只留一句错误文案。 -->
     <state-view
       wx:elif="{{status === 'error'}}"
       status="error"
       title="社区内容没有取到"
       desc="{{errorText}}"
+      action-text="重新读取"
+      bind:action="onRetry"
     ></state-view>
 
     <state-view
@@ -89,7 +98,8 @@
         <view wx:else class="demo-caption">已经到底了。</view>
       </view>
 
-      <view class="demo-caption">{{modeNote}}</view>
+      <!-- 替身模式已在顶部置顶标注，页尾不再重复同一句；real 模式保留来源说明。 -->
+      <view class="demo-caption" wx:if="{{modeNote && !stubNote}}">{{modeNote}}</view>
     </block>
   </block>
 

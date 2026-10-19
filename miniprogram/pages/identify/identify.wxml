@@ -266,6 +266,12 @@
 
   <view class="notice notice--danger" wx:if="{{errorText}}">{{errorText}}</view>
 
+  <!-- GY-I26（#28）「已删除」必须可见：删除成功后结果区整块复位，缺这一句就与「点了没反应」无异。 -->
+  <view class="notice" wx:if="{{deleteNote}}">
+    <text class="notice__icon">✅</text>
+    <text class="notice__text">{{deleteNote}}</text>
+  </view>
+
   <!-- 私有历史：必须绑定「当前已核实主体」（historyOwner），不能只凭本机索引长度 -->
   <view class="section" wx:if="{{!guest && historyOwner && history.length}}">
     <view class="section-head">
