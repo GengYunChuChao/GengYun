@@ -462,6 +462,35 @@ export function conflictFields(fields: LabelFields, registration: RegistryHerbic
 }
 
 /**
+ * 冲突字段 token：登记记录**自身状态**不构成「可核对」前提（不是标签字段冲突）。
+ * 取值刻意写成 `source.<字段>` —— 与 `conflictFields()` 的标签字段名区分开，
+ * 调用方/页面据此知道「不是某一格读错，而是这条登记记录本身不能用」。
+ */
+export const CONFLICT_FIELD_SOURCE_VALIDITY = 'source.validity';
+export const CONFLICT_FIELD_SOURCE_REVIEW = 'source.review_status';
+
+/**
+ * 登记记录自身状态是否允许给出「核对通过」（`matched`）结论。
+ *
+ * 契约允许登记资料来源取宽枚举（`validity` ∈ valid/expired/withdrawn/conflicting/unknown，
+ * `review_status` ∈ unverified/verified/rejected），它们表达的是这条记录**还能不能用**：
+ * - `validity !== 'valid'` → `source.validity`（已过期/已撤销/来源冲突/状态未知）；
+ * - `review_status === 'rejected'` → `source.review_status`（记录已被明确拒绝）。
+ *
+ * 为什么不是放行：文字识别成功 ≠ 药剂已核实（#10）。把失效/被拒记录算成 `matched`
+ * 会让「核对通过」这一结论失去意义，故落 `conflict` 并**如实带出该记录**（供人工复核）。
+ *
+ * 边界：`unverified`（未核对来源，生产替身恒为此值）**不**在此拦截 —— 替身来源本就不是
+ * 「已核对有效」来源，其用量放行由 `DoseSource` 的 const 约束在 `gateDoseCards` 单独把关。
+ */
+export function registrationStateConflicts(registration: RegistryHerbicide): string[] {
+  const conflicts: string[] = [];
+  if (registration.source.validity !== 'valid') conflicts.push(CONFLICT_FIELD_SOURCE_VALIDITY);
+  if (registration.source.review_status === 'rejected') conflicts.push(CONFLICT_FIELD_SOURCE_REVIEW);
+  return conflicts.slice(0, MAX_CONFLICT_FIELDS);
+}
+
+/**
  * 把登记库返回物当**不可信载荷**收敛：任何无法逐字段解析的情形一律收敛为 `unavailable`。
  *
  * 为什么不是"丢弃坏候选、保留好候选"：那会让 `ambiguous` **静默退化成 `matched`**
@@ -501,7 +530,10 @@ export function sanitizeRegistryLookup(raw: unknown): RegistryLookup {
  * 3. 候选为 0 → `no_match`；
  * 4. 候选 >1 且无法用登记号收敛到唯一一条 → `ambiguous`；
  * 5. 唯一命中且字段冲突 → `conflict`（conflict_fields 非空，registration 如实带出以便复核）；
- * 6. 仅当以上都不成立 → `matched`（此时 missing_fields 与 conflict_fields 必为空）。
+ * 6. 唯一命中但登记记录**自身已失效/被拒**（`validity !== 'valid'` 或 `review_status === 'rejected'`）
+ *    → `conflict`（conflict_fields 带 `source.validity` / `source.review_status`，registration 照样带出）；
+ *    即「文字识别成功 ≠ 药剂已核实」：失效登记不得给出「核对通过」结论；
+ * 7. 仅当以上都不成立 → `matched`（此时 missing_fields 与 conflict_fields 必为空）。
  *
  * 该函数是纯函数，不读时钟、不做 I/O —— 便于逐条构造 6 类状态。
  *
@@ -552,11 +584,14 @@ export function decideMatchState(fields: LabelFields, lookup: RegistryLookup): M
   }
 
   const conflicts = conflictFields(fields, chosen);
-  if (conflicts.length > 0) {
+  // 字段冲突 + 登记记录自身状态（失效/被拒）合并：任一非空都**不得** matched。
+  // 顺序：先标签字段冲突（用户在页面上可直接对照的那几格），再来源状态。
+  const allConflicts = [...conflicts, ...registrationStateConflicts(chosen)].slice(0, MAX_CONFLICT_FIELDS);
+  if (allConflicts.length > 0) {
     return {
       match_state: 'conflict',
       registration: chosen,
-      conflict_fields: conflicts,
+      conflict_fields: allConflicts,
       missing_fields: [],
     };
   }

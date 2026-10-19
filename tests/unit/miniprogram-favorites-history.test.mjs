@@ -12,6 +12,12 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import vm from 'node:vm';
 
+// 跨端一致性锚点：小程序侧的「冲突字段人话标签」必须认识服务端下发的这两个 token。
+import {
+  CONFLICT_FIELD_SOURCE_VALIDITY,
+  CONFLICT_FIELD_SOURCE_REVIEW,
+} from '../../services/api/src/ocr/state.ts';
+
 const root = resolve(import.meta.dirname, '../..');
 const UUID_A = '00000000-0000-4000-8a00-000000000001';
 const UUID_B = '00000000-0000-4000-8b00-000000000002';
@@ -304,6 +310,8 @@ test('OCR 视图：原始字段/人工更正/核对结果分开，只报用量�
   assert.equal(view.verification.matchState, 'matched');
   assert.match(view.verification.matchLabel, /已匹配/);
   assert.deepEqual([...view.verification.conflictFields], ['dosage_form']);
+  // 原 token 照录不动，另给同序的中文标签（页面只显示中文，机器 token 仍可复核）。
+  assert.deepEqual([...view.verification.conflictLabels], ['剂型']);
   assert.deepEqual([...view.verification.missingFields], ['registration_number']);
   assert.equal(view.verification.doseCardCount, 1);
   assert.equal(JSON.stringify(view).includes('original_text'), false, '不得渲染用量卡正文');
@@ -319,6 +327,22 @@ test('OCR 视图：原始字段/人工更正/核对结果分开，只报用量�
   const bad2 = f.history.getOcr(TARGET);
   answer(f, ocr({ verification: Object.assign(ocr().verification, { match_state: 'weird' }) }));
   await assert.rejects(() => bad2, (e) => e.code === 'INVALID_RESPONSE');
+});
+
+test('冲突字段人话标签：来源失效/被拒有中文说法，未知 token 原样保留（不改写、不猜）', () => {
+  const f = fixture();
+  assert.deepEqual(
+    [...f.history.conflictFieldLabels([
+      CONFLICT_FIELD_SOURCE_VALIDITY,
+      CONFLICT_FIELD_SOURCE_REVIEW,
+      'dosage_form',
+      'ingredients',
+      'mystery_token',
+    ])],
+    ['登记记录已失效或撤销', '登记记录已被拒绝核对', '剂型', '有效成分', 'mystery_token'],
+  );
+  // 空清单照旧为空：不补造任何一条冲突说法。
+  assert.deepEqual([...f.history.conflictFieldLabels([])], []);
 });
 
 test('级联披露（非契约标记）三态文案不同，未接线明确说明只删了记录本身', () => {

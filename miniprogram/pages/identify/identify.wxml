@@ -113,7 +113,7 @@
       <view class="knowledge__meta">来源版本：{{ocr.record.sourceVersion}} · 记录版本：{{ocr.record.revision}} · 执行模式：{{ocr.record.mode}}</view>
       <view class="knowledge__meta">登记核对：{{ocr.record.matchLabel}}（是否命中登记：{{ocr.record.hasRegistration ? '是' : '否'}}）</view>
       <view class="reasons__item" wx:for="{{ocr.record.missingFields}}" wx:key="*this">· 缺项字段：{{item}}</view>
-      <view class="reasons__item" wx:for="{{ocr.record.conflictFields}}" wx:key="*this">· 与登记冲突字段：{{item}}</view>
+      <view class="reasons__item" wx:for="{{ocr.record.conflictLabels}}" wx:key="*this">· 与登记冲突：{{item}}</view>
       <!--
         当前生效字段（corrected_fields）：与上面机器读数**逐项并排**，被人工改过的整行标记并回显机器读数，
         未改过的行注明「与机器读数一致」——不隐藏任何一格，也不把更正后的值冒充机器读数。
