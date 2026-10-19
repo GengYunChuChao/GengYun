@@ -16,6 +16,11 @@
 //      是否需要接线是另一个问题，由文档清单逐条登记，不进本守卫。
 // 反过来，`miniprogram-login-loop.mjs` 是纯回环 HTTP 但名字不含 `-http`，由既有
 // `tests/unit/ci-integration-chain-structure.test.mjs` 的 FROZEN_CHAIN 断言守护，本守卫不重复。
+//
+// 第二条规则（追加）：**整链跳过必须给 77**。集成脚本打印「跳过／未取得」却以 0 退出时，
+// 任何 `&&` 串联、CI、本地一键都会把它读成「通过」——那是假绿。故本文件另断言：脚本自己
+// 打印 SKIP 的分支附近必须出现 77 出口，`*-e2e.mjs` 还必须写明「EXITCODE=77 表示未取得」。
+// 只认整链跳过；node:test 的用例级 `{ skip }`（如 rejections-http.mjs 的两个）不在此列。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -215,4 +220,127 @@ test('判类口径边界：不扫 PG／夹具／本机工具脚本，但链上�
   for (const file of pureInChain) {
     assert.ok(scanned.has(file), `链上的 ${file} 没被守卫扫到——判类或扫描目录坏了`);
   }
+});
+
+// ── 跳过即未取得：整链跳过必须给 77，不允许「一条都没跑」被读成通过 ─────────────────────
+// 只认**脚本自己打印的** SKIP（`console.log/error` 里的 SKIP 字样）。用例级
+// `test('…', { skip })`（如 rejections-http.mjs 的两个 skip）不算整链跳过：那一段仍会跑完其余
+// 用例并以 0 退出，语义与「整链未取得」不同，本守卫刻意不管它们。
+const SKIP_OUTPUT_RE = /console\.(?:log|error)\(\s*[`'"][^`'"]*SKIP/g;
+const SKIP_WINDOW = 1600;
+// 必须是真的**退出码语句**，不是输出里出现「77」字样——只写 `EXITCODE=77` 却 `return 0`
+// 仍然是假绿（这正是本守卫要抓的形状）。
+const EXIT_77_RE = /process\.exit\(\s*77\s*\)|process\.exitCode\s*=\s*77\b|return\s+77\s*;/;
+
+export function skipOutputIndexes(source) {
+  const indexes = [];
+  const re = new RegExp(SKIP_OUTPUT_RE.source, 'g');
+  let match = re.exec(source);
+  while (match !== null) {
+    indexes.push(match.index);
+    match = re.exec(source);
+  }
+  return indexes;
+}
+
+/** 打印了整链 SKIP，却在附近没有任何 77 退出码语句 ⇒ 这是假绿（调用方会把「没跑」读成「通过」）。 */
+export function wholeChainSkipWithout77({ fileName, source }) {
+  if (!fileName.endsWith('.mjs')) return false;
+  const indexes = skipOutputIndexes(source);
+  if (indexes.length === 0) return false;
+  return !indexes.some((index) => EXIT_77_RE.test(source.slice(index, index + SKIP_WINDOW)));
+}
+
+/** `*-e2e.mjs` 还必须在输出里写明「EXITCODE=77 表示未取得」，免得读数的人以为 77 是崩溃。 */
+export function e2eSkipExitCodeTextMissing({ fileName, source }) {
+  if (!fileName.endsWith('-e2e.mjs')) return false;
+  if (skipOutputIndexes(source).length === 0) return false;
+  return !source.includes('EXITCODE=77');
+}
+
+function assertSkipUses77({ entries }) {
+  const violations = entries
+    .filter((entry) => wholeChainSkipWithout77(entry) || e2eSkipExitCodeTextMissing(entry))
+    .map((entry) => entry.fileName)
+    .sort();
+  assert.deepEqual(
+    violations,
+    [],
+    [
+      '有集成脚本打印「整链 SKIP」却没有按约定给退出码 77（POSIX：skipped）——',
+      '这类脚本用 `&&` 串进任何脚本链／CI，都会被读成「通过」，也就是假绿：',
+      ...violations.map((file) => `  · ${file}`),
+      '',
+      '改法：跳过分支 `process.exitCode = 77`（或 `return 77`），输出补一行 `EXITCODE=77 表示未取得，不是通过`；',
+      '真跑通过仍 0、真失败仍非 0。本机开发者可用 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0（⛔ 不得进门禁）。',
+    ].join('\n'),
+  );
+}
+
+test('整链跳过必须给 77：打印 SKIP 却没给 77 出口的脚本一律红（点名文件）', () => {
+  const entries = readdirSync(join(REPO_ROOT, INTEGRATION_DIR))
+    .filter((name) => name.endsWith('.mjs'))
+    .sort()
+    .map((name) => ({
+      fileName: `${INTEGRATION_DIR}/${name}`,
+      source: readFileSync(join(REPO_ROOT, INTEGRATION_DIR, name), 'utf8'),
+    }));
+
+  assertSkipUses77({ entries });
+
+  // 反空转：至少要扫到「有整链 SKIP 分支」的那几个脚本，否则这条守卫等于没扫。
+  const skipCapable = entries.filter((entry) => skipOutputIndexes(entry.source).length > 0);
+  assert.ok(skipCapable.length >= 3, `只扫到 ${skipCapable.length} 个有整链 SKIP 分支的脚本，判据可能已失效`);
+  assert.ok(
+    skipCapable.some((entry) => entry.fileName.endsWith('-e2e.mjs')),
+    '至少要把 E2E 的跳过分支扫进来',
+  );
+});
+
+test('反向控制：零出口的假 SKIP 脚本必须红，写明 77 的才绿，用例级 skip 不误伤', () => {
+  const zeroExitProbe = {
+    fileName: `${INTEGRATION_DIR}/guard-probe-skip-zero-e2e.mjs`,
+    source: "async function main() {\n  if (x) {\n    console.log('SKIP real PG17 guard probe');\n    return 0;\n  }\n}\nprocess.exitCode = await main();\n",
+  };
+  const honestProbe = {
+    fileName: `${INTEGRATION_DIR}/guard-probe-skip-honest-e2e.mjs`,
+    source:
+      "async function main() {\n  if (x) {\n    console.log('SKIP real PG17 guard probe');\n    console.log('EXITCODE=77 表示未取得，不是通过');\n    return 77;\n  }\n}\nprocess.exitCode = await main();\n",
+  };
+
+  // ① 红：打印 SKIP 却 return 0，且消息点名文件。
+  assert.equal(wholeChainSkipWithout77(zeroExitProbe), true, '零出口假脚本必须被判为违规');
+  assert.throws(
+    () => assertSkipUses77({ entries: [zeroExitProbe] }),
+    (error) => /guard-probe-skip-zero-e2e\.mjs/.test(error.message),
+    '零出口假脚本必须让守卫变红，且消息点名文件',
+  );
+
+  // ② 绿：同样打印 SKIP，但给了 77 出口并把语义写进输出。
+  assert.equal(wholeChainSkipWithout77(honestProbe), false);
+  assert.equal(e2eSkipExitCodeTextMissing(honestProbe), false);
+  assertSkipUses77({ entries: [honestProbe] });
+
+  // ③ 红：给了 77 却没写「EXITCODE=77」——读数的人会把 77 当崩溃，仍然红。
+  const silentProbe = {
+    fileName: `${INTEGRATION_DIR}/guard-probe-skip-silent-e2e.mjs`,
+    source: "if (x) {\n  console.log('SKIP real PG17 guard probe');\n  process.exit(77);\n}\n",
+  };
+  assert.equal(e2eSkipExitCodeTextMissing(silentProbe), true);
+  assert.throws(
+    () => assertSkipUses77({ entries: [silentProbe] }),
+    /guard-probe-skip-silent-e2e\.mjs/,
+    '缺「EXITCODE=77」说明文字时必须红，且点名文件',
+  );
+
+  // ④ 不误伤：用例级 skip（node:test 的 `{ skip }`）不算整链跳过，本守卫不得因此变红。
+  const caseLevelProbe = {
+    fileName: `${INTEGRATION_DIR}/guard-probe-case-level-skip-http.mjs`,
+    source: "test('SKIP AC08 真实审核供应商批准路径', { skip: '需要真实凭据' }, () => {});\n",
+  };
+  assert.equal(skipOutputIndexes(caseLevelProbe.source).length, 0, '用例级 skip 不是整链跳过');
+  assertSkipUses77({ entries: [caseLevelProbe] });
+
+  // ⑤ 不误伤：根本没有 skip 分支的脚本。
+  assertSkipUses77({ entries: [{ fileName: `${INTEGRATION_DIR}/guard-probe-no-skip-http.mjs`, source: 'console.log("PASS");\n' }] });
 });

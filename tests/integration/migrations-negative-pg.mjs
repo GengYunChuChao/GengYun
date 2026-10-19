@@ -5,7 +5,7 @@
  *   B 重放：对已迁移的库再跑同一批迁移 ⇒ 台账幂等跳过（`已应用：（无）`），绝不把任何语句再执行一次；
  *   C 回滚：既有 0016 先 up 再跑 `migrations/rollback/0016_*.down.sql` ⇒ up 前不存在的对象在 down 后消失。
  *
- * 真库不可用时**显式 SKIP 并打印原因**（退出码 0，绝不静默绿）：
+ * 真库不可用时**显式 SKIP 并打印原因**（退出码 77＝未取得，绝非静默绿；本机可显式 `--allow-skip` 取 0）：
  *   MIGRATIONS_NEGATIVE_TEST_URL=postgres://postgres@127.0.0.1:55441/postgres
  * 维护连接须能 CREATE/DROP DATABASE；本文件自建并在收尾时删除 `gengyun_migrations_negative_{a,b,c}`。
  * 未在本文件里覆盖的：runner 没有 `down` 命令、既有 down 脚本不回写 `schema_migrations`（见验证页「已知缺口」）。
@@ -20,11 +20,18 @@ import pg from 'pg';
 import { applyMigrations, discoverMigrations } from '../../services/api/src/db/migrate.ts';
 
 const rawUrl = (process.env.MIGRATIONS_NEGATIVE_TEST_URL ?? '').trim();
+// 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 if (rawUrl === '') {
   console.log('SKIP migrations-negative-pg：MIGRATIONS_NEGATIVE_TEST_URL 未设置，三臂 A/B/C 均未执行（不算通过）。');
   console.log('  原因：半截失败／重放／回滚必须对真实 PostgreSQL 17.11 取证，无库时不伪造读数，也不静默绿。');
   console.log('  启用：MIGRATIONS_NEGATIVE_TEST_URL=postgres://<user>@127.0.0.1:<port>/<test_db>（维护连接须可 CREATE/DROP DATABASE）。');
-  process.exit(0);
+  if (ALLOW_SKIP) {
+    console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+    process.exit(0);
+  }
+  console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。');
+  process.exit(77);
 }
 
 const url = new URL(rawUrl);

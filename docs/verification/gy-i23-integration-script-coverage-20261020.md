@@ -299,3 +299,200 @@ git status --porcelain      → 0 行（两文件已提交，工作树干净）
 
 补充：本片**不**主张「所有 45 项都该进 `test:integration:http`」。正确的分层是——纯回环／E2E 必须被 `scripts.*` 真的执行（本片已把它变成会红的断言）；需要 PG/Python/图形模拟器的那些，靠各自的 workflow（已有 7 个 workflow 覆盖 10 个脚本）与本机手工证据页承担。
 
+## 8 追加：跳过即未取得——整链跳过必须给 77
+
+### 8.0 假绿是怎么发生的
+
+§7 第 2 项把 `user-chain-e2e.mjs` 登记为「未取得」，但那个「未取得」在**退出码上是隐形的**：缺 PG17 时脚本打印 3 行 SKIP 后 `exit 0`。任何 `&&` 串联、`npm run` 链、CI 的 `run:` 行都会把这次运行读成**通过**——一条需要真库的链路在缺库时「绿着什么都没跑」。
+
+这不是 `user-chain-e2e.mjs` 一家的毛病。`tests/integration/` 里凡「缺前置 ⇒ 打印 SKIP ⇒ `exit 0`」的脚本都有同一个病；反过来，`node:test` 的**用例级** `{ skip }` 只是少跑一两个用例、同段其余用例照跑、段仍 `exit 0`，语义不同，不算假绿（见 §8.3）。
+
+本片把判据收紧成一条：**跳过即未取得，退出码 77**（POSIX「skipped」惯例）。默认 77，只有显式 `--allow-skip`／`GY_ALLOW_SKIP=1` 才降级为 0（本机开发用，⛔ 不得进门禁）；真跑通过仍 0、真失败仍非 0。
+
+### 8.1 改前读数（逐字）
+
+无 PG17（不设 `USER_CHAIN_PG_BIN`，PATH 里也没有 `initdb`）：
+
+```
+$ node tests/integration/user-chain-e2e.mjs
+SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。
+     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。
+
+$ echo $LASTEXITCODE
+0
+```
+
+第三行是空行（脚本原文如此）。**问题就是最后那个 0。**
+
+同形状的两处（改前，均 `exit 0`）：`favorites-history-pg.mjs` 在 `FAVORITES_HISTORY_PG_TEST_URL` 未设置时打印 `SKIP real PG17: …（不是通过，也不是失败）。` 后 `process.exit(0)`；`migrations-negative-pg.mjs` 在 `MIGRATIONS_NEGATIVE_TEST_URL` 未设置时打印 3 行 SKIP 后 `process.exit(0)`——文件头当时还明写「退出码 0，绝不静默绿」（原文第 8 行），「绝不静默绿」只兑现在**日志**上，退出码上没有兑现。
+
+### 8.2 改后读数（逐字）
+
+```diff
+--- a/tests/integration/user-chain-e2e.mjs
++++ b/tests/integration/user-chain-e2e.mjs
+@@ 缺 PG17 的分支 @@
+     console.log('SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。');
+     console.log('     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。');
+-    return 0;
++    if (ALLOW_SKIP) {
++      console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
++      return 0;
++    }
++    console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。');
++    return 77;
+   }
+```
+
+`ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1'`；文件头补「退出码」段（0／77／非 0 三档＋开关说明）。`favorites-history-pg.mjs`、`migrations-negative-pg.mjs` 同形状改（`process.exit(0)` → `process.exit(77)`，各留 `--allow-skip` 出口），后者第 8 行「退出码 0」改为「退出码 77＝未取得」。
+
+改后逐字（同机、同无 PG 条件）：
+
+```
+$ node tests/integration/user-chain-e2e.mjs
+SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。
+     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。
+EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。
+EXITCODE=77
+```
+
+```
+$ node tests/integration/user-chain-e2e.mjs --allow-skip
+SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。
+     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。
+EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。
+EXITCODE=0
+```
+
+`GY_ALLOW_SKIP=1` 与 `--allow-skip` 同读数（三行、`EXITCODE=0`）。
+
+```
+$ node tests/integration/favorites-history-pg.mjs
+SKIP real PG17: FAVORITES_HISTORY_PG_TEST_URL 未设置 —— 本次运行没有验证真库持久化（不是通过，也不是失败）。
+     运行方式：FAVORITES_HISTORY_PG_TEST_URL=postgres://postgres@127.0.0.1:5432/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs
+EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。
+EXITCODE=77
+```
+
+```
+$ node tests/integration/migrations-negative-pg.mjs
+SKIP migrations-negative-pg：MIGRATIONS_NEGATIVE_TEST_URL 未设置，三臂 A/B/C 均未执行（不算通过）。
+  原因：半截失败／重放／回滚必须对真实 PostgreSQL 17.11 取证，无库时不伪造读数，也不静默绿。
+  启用：MIGRATIONS_NEGATIVE_TEST_URL=postgres://<user>@127.0.0.1:<port>/<test_db>（维护连接须可 CREATE/DROP DATABASE）。
+EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。
+EXITCODE=77
+```
+
+有 PG17 时行为不变（§3.2 那两遍 `PASS … 119 条断言，6 步` 仍 `exit 0`；`catch` 分支仍 `return 1`）。
+
+### 8.3 同类扫描：谁在「整链跳过却 exit 0」
+
+判据：`Select-String -Path tests/integration/*.mjs -Pattern 'SKIP '` ＋ 逐个读跳过分支的退出路径。
+
+| 脚本 | 跳过形态 | 改前退出码 | 本片处置 |
+| --- | --- | --- | --- |
+| `tests/integration/user-chain-e2e.mjs` | 整链：缺 PG17 二进制，一条断言都不跑 | **0（假绿）** | **改**：默认 77，`--allow-skip`／`GY_ALLOW_SKIP=1` 取 0 |
+| `tests/integration/favorites-history-pg.mjs` | 整链：`FAVORITES_HISTORY_PG_TEST_URL` 未设 | **0（假绿）** | **改**：同上 |
+| `tests/integration/migrations-negative-pg.mjs` | 整链：`MIGRATIONS_NEGATIVE_TEST_URL` 未设，三臂 A/B/C 全不跑 | **0（假绿）** | **改**：同上（CI 在 `.github/workflows/auth-privacy-postgres.yml:39-41` 恒设该 env，跳过路径不会在 CI 触发 ⇒ 不改 CI 行为） |
+| `tests/integration/rejections-http.mjs` | **用例级**：`test('SKIP AC08/AC16 …', {skip})`（:628）、`test('SKIP AC29 …', {skip})`（:634） | 0（段内其余用例真跑，`tests 14 / pass 12 / skipped 2`） | **不改**：只少跑两个需要真实供应商的用例，其余断言照跑，不是「整链未取得」；把它也算 77 会让「部分未取得」与「完全没跑」混为一谈 |
+| `tests/integration/speech-http.mjs` | 无 SKIP 分支（缺前置是真失败） | — | 不改（无病） |
+| `tests/integration/transcript-confirm-http.mjs` | 无 SKIP 分支 | — | 不改（无病） |
+| `tests/integration/ocr-http.mjs` | 无 SKIP 分支 | — | 不改（无病） |
+| `tests/integration/tts-http.mjs` | 无 SKIP 分支 | — | 不改（无病） |
+| 其余 `tests/integration/*-pg.mjs`（account-deletion／account-suspend／admin-flags／auth-privacy／catalog／consent-grant／egress-ledger／egress-object-key／messages／source-lifecycle／staging-intake／workbook-staging） | 无 SKIP 分支：缺连接串时直接断言失败 | 非 0 | 不改（本就非 0，不假绿） |
+| `local-dev-*.cjs`、`demo-reference.cjs`、两个夹具、`knowledge-native-pg.ps1` | 无空跑分支（本机工具／夹具，缺参数即报错） | — | 不改 |
+
+结论：**只有 3 个脚本**是「整链跳过却 exit 0」，全部已改；其余要么没有跳过形态，要么是**用例级** skip，刻意不动。
+
+### 8.4 守卫测试新增用例
+
+`tests/unit/integration-script-coverage.test.mjs` 追加两个用例（导出纯函数，输入可注入）：
+
+```js
+const SKIP_OUTPUT_RE = /console\.(?:log|error)\(\s*[`'"][^`'"]*SKIP/g;
+const EXIT_77_RE = /process\.exit\(\s*77\s*\)|process\.exitCode\s*=\s*77\b|return\s+77\s*;/;
+export function wholeChainSkipWithout77({ fileName, source })      // 打印整链 SKIP 但附近没有 77 退出码语句 ⇒ true
+export function e2eSkipExitCodeTextMissing({ fileName, source })   // *-e2e.mjs 缺「EXITCODE=77」说明 ⇒ true
+```
+
+设计要点：
+
+1. **只认脚本自己打印的 SKIP**（`console.log/error` 里的 `SKIP` 字样）。`test('SKIP …', {skip})` 这种用例级 skip 天然不入判据——§8.3 里「不要动 rejections-http」这条人工判断因此被编码成规则，而不是靠人记。
+2. **必须是真的退出码语句**（`process.exit(77)`／`process.exitCode = 77`／`return 77;`），不是输出里出现「77」两个字。这条是返修来的：第一版用 `/\b77\b/` 扫窗口，探针立刻抓到漏洞——把真脚本的 `return 77;` 改成 `return 0;` 后，下一行的 `EXITCODE=77 表示未取得…` 文案仍在，守卫**照样绿**。收紧成 `EXIT_77_RE` 后同一变异立刻变红（见下）。
+3. 扫全部 `tests/integration/*.mjs`（不止 `-e2e.mjs`），因为另两个假绿脚本是 `-pg.mjs`；`-e2e.mjs` 额外要求写明 `EXITCODE=77` 文案。
+4. 反空转：至少扫到 3 个「有整链 SKIP 分支」的脚本，且其中必须有 `-e2e.mjs`。
+
+反向控制读数（`node --test tests/unit/integration-script-coverage.test.mjs`）：
+
+```
+✔ 前向守卫：每个纯回环／E2E 集成脚本都被某个 npm 脚本引用，或已在豁免表登记 (2.2249ms)
+✔ 反向控制：塞进一个未接线的纯脚本，同一断言必须红并点名它 (3.4211ms)
+✔ 豁免表锁定：只能是被裁决过的文件，且理由必须写明所需前置 (0.8808ms)
+✔ 判类口径边界：不扫 PG／夹具／本机工具脚本，但链上的纯回环必须被看见 (0.7789ms)
+✔ 整链跳过必须给 77：打印 SKIP 却没给 77 出口的脚本一律红（点名文件） (14.0897ms)
+✔ 反向控制：零出口的假 SKIP 脚本必须红，写明 77 的才绿，用例级 skip 不误伤 (1.3671ms)
+ℹ tests 6   ℹ pass 6   ℹ fail 0   EXITCODE=0
+```
+
+用例内的红读数（`assert.throws` 通过＝守卫确实红，且消息点名文件）：
+
+- 零出口假脚本 `guard-probe-skip-zero-e2e.mjs` → `wholeChainSkipWithout77=true`，`assertSkipUses77` 抛错且消息含该文件名。
+- 写明 77 的 `guard-probe-skip-honest-e2e.mjs`（`return 77` ＋ `EXITCODE=77`）→ 两条判据均 false，守卫绿。
+- 有 `process.exit(77)` 但缺「EXITCODE=77」文案 → `e2eSkipExitCodeTextMissing=true`，守卫红并点名 `guard-probe-skip-silent-e2e.mjs`。
+- 用例级 `test('SKIP AC08 …', {skip})` → `skipOutputIndexes` 命中 0 个，守卫不红（不误伤）。
+- 完全没有 skip 分支的脚本 → 守卫不红。
+
+对**真文件**做变异探针（不改盘，内存里替换，证明判据对真实源码敏感）：
+
+```
+PROBE REAL_VIOLATION=false                     ← 现状（已修）不违规
+PROBE MUTATED_CHANGED=true                     ← 把 user-chain-e2e.mjs 的 '    return 77;' 换成 '    return 0;'
+PROBE MUTATED_VIOLATION=true                   ← 同一守卫立刻红：这条缺口现在会自己叫
+PROBE NOTEKST_VIOLATION=false TEXTMISSING=true ← 只把「EXITCODE=77 表示未取得」文案改掉，文案判据也红
+```
+
+（探针经 `node --input-type=module -` 从 stdin 运行，不落盘。）
+
+### 8.5 未改项与理由
+
+| 项 | 为什么不动 |
+| --- | --- |
+| `package.json` 的 `test:integration:http` 链 | 派单明令不动。链里没有 `user-chain-e2e.mjs`；加入后在无 PG 环境会以 77 断链——那是**正确**的红，但会让本片「门禁全绿」不成立，也违背「不改 CI 结构」。等有带 PG 的 workflow 时再单独接线 |
+| `.github/workflows/**` | ⛔ 硬约束。3 个 77 化脚本里只有 `migrations-negative-pg.mjs` 被 CI 引用，而它在 `auth-privacy-postgres.yml:41` 恒有 `MIGRATIONS_NEGATIVE_TEST_URL`，跳过路径不会被 CI 走到 ⇒ 改退出码对 CI 无行为变化 |
+| `rejections-http.mjs` 的两个用例级 skip | 用例级、段仍跑完其余用例，语义是「部分未取得」不是「整链未取得」；改成 77 会让两种未取得混为一谈 |
+| 其余 `-pg.mjs` 的缺连接串路径 | 它们不缺前置就跳过，而是直接断言失败（非 0），本就不假绿 |
+| `node:test` 的 `ℹ skipped` 计数 | 由 node 自己管；全量单测里唯一 skip 仍是既有的 native 用例 |
+
+### 8.6 复跑读数（四项）
+
+四项复跑（都是第二个提交后的状态）：
+
+```
+$ node tests/integration/user-chain-e2e.mjs        → EXITCODE=77（见 §8.2）
+
+$ node --test tests/unit/integration-script-coverage.test.mjs
+ℹ tests 6   ℹ pass 6   ℹ fail 0   EXITCODE=0
+
+$ node --test "tests/unit/*.test.mjs"
+ℹ tests 1739
+ℹ suites 0
+ℹ pass 1738
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 1
+ℹ todo 0
+ℹ duration_ms 69794.4077
+EXITCODE=0
+
+$ npm run test:integration:http
+> node tests/integration/knowledge-consumer-http.mjs && … && node tests/integration/transcript-confirm-http.mjs   ← 13 段，逐字同 §6.3
+…
+PASS 6 groups; loopback only, stub substitute ASR, no database, no external network
+EXITCODE=0
+```
+
+集成链没有任何变化是可以预期的：`test:integration:http` 里没有 `user-chain-e2e.mjs`（本片刻意不加），故链上 13 段的 PASS 行与 §6.3 逐字一致；对本次日志跑 `Select-String -Pattern 'user-chain'` → **0 命中**，证明这条 77 化的脚本确实不在门禁链里（它现在的 77 只会打到**显式运行它**的人和将来的 PG workflow 上）。
+
+全量单测的唯一 `skipped 1` 仍是既有的 native 用例；新增的 2 个用例（整链跳过 77 守卫＋其反向控制）计入 1738 个 pass。
+
+**一次需要如实记录的抖动**：本页第一次跑全量单测时出现 1 红——`tests/unit/media-real-mode-fail-closed.test.mjs` 报的是 **runner 层**的 `Error: Unable to deserialize cloned data due to invalid or unsupported version.`（`node:internal/test_runner/runner` 反序列化子进程消息失败，耗时 9901 ms），不是断言失败；当时同一台机上另有一套重活（集成链）正在跑。隔离后：单跑该文件 `tests 20 / pass 20 / fail 0`；单独重跑全量 `tests 1739 / pass 1738 / fail 0 / EXITCODE=0`。判定为并发压力下的 runner IPC 抖动，与本片改动无关——两个读数都留在这里，便于日后复核是不是同一个抖动。

@@ -110,7 +110,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/favorites-history-pg.mjs',
     reason: '需真实 PG17 且硬钉库名 `gengyun_favorites_history_test`：未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时'
-      + '**显式打印 SKIP 并以 0 退出**（不静默绿）；本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+      + '**显式打印 SKIP 并以 77 退出**（未取得，不静默绿；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 可显式取 0）；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/knowledge-native-consumer.mjs',
@@ -129,7 +130,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/migrations-negative-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
-      + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因，'
+      + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因并以 77 退出（未取得），'
       + '故不进无 PG 的回环链。',
   },
   {
@@ -148,6 +149,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     path: 'tests/integration/user-chain-e2e.mjs',
     reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口、独立数据目录，'
       + '跑完 `pg_ctl stop` 并逐个文件删除数据目录），依赖本机 PG 二进制（`USER_CHAIN_PG_BIN`，缺省走 PATH）；'
+      + '缺 PG17 时显式跳过并以 **77** 退出（未取得，⛔ 不是通过）；'
       + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
