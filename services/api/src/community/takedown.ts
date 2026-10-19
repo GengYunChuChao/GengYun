@@ -39,6 +39,15 @@ export interface TakedownObserverOptions {
  * 判定严格：**CAS 成功** 且 **返回记录的当前 `visibility === 'hidden'`** 且
  * **本次提交的补丁显式要求 `hidden`**。三者缺一不发（例如后台的幂等路径
  * `changed:false` 根本不调用 CAS，自然不重复发）。
+ *
+ * ## 事件版本口径（与审核域下架键**同一套**）
+ *
+ * 事件的 `target.revision` 取 **`expected.revision`＝被下架的那一版（处置前）**，
+ * 不取处置后的 `result.record.revision`（隐藏会把 revision +1）。理由：
+ *   - 被公开发布、被读取缓存、被审核域 `cache.invalidateTarget` 键住的都是**处置前那一版**；
+ *   - 事件若带处置后的版本，任何"按事件失效缓存/核对版本"的消费者都会算错键，
+ *     恰好失效不到真正在缓存里的那一版（详见 `.pg17/analysis/i14-moderation-gaps-20261019.md` R6）；
+ *   - CAS 成功本身即证明 `expected.revision` 就是提交前的当前版本，无需再读一次。
  */
 export function withTakedownObserver(
   store: CommunityPostStorePort,
@@ -61,7 +70,7 @@ export function withTakedownObserver(
           await options.events.publish({
             event: 'takedown',
             ownerId: result.record.author_id,
-            target: { type: 'post', id: result.record.id, revision: result.record.revision },
+            target: { type: 'post', id: result.record.id, revision: expected.revision },
             reason,
           });
         } catch {

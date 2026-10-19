@@ -1,26 +1,59 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
+import AccountsView from './views/AccountsView.vue';
+import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
+
+type TabKey = 'accounts' | 'review';
+
+const tabs: Array<{ key: TabKey; label: string; note: string }> = [
+  { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
+  { key: 'review', label: '人工审核（占位）', note: '未实现' },
+];
+
+const active = ref<TabKey>('accounts');
 </script>
 
 <template>
   <main class="shell">
-    <h1>耕云 · 独立后台（工程骨架）</h1>
-    <p class="notice">
-      这是<strong>后台骨架</strong>：后台鉴权接口已实现，但<strong>没有业务页面</strong>。
-      分类、资料来源、药剂规则、账号、AI 状态与功能开关等由后续任务实现
-      （见 F08 / F13 / GY-I18）。
-    </p>
-    <dl>
-      <dt>后台鉴权接口</dt>
-      <dd>{{ ADMIN_AUTH_API_IMPLEMENTED ? '已实现（POST/GET /admin/auth/session、POST /admin/auth/logout）' : '未实现' }}</dd>
-      <dt>控制台页面</dt>
-      <dd>未实现（本骨架不提供可视登录入口，不伪造登录成功）</dd>
-      <dt>API 基地址</dt>
-      <dd>{{ API_BASE_URL }}</dd>
-    </dl>
-    <p class="footnote">
-      后台与小程序端分别鉴权（audience=admin，独立令牌）；本骨架不读取任何生产密钥。
-    </p>
+    <header class="top">
+      <h1>耕云 · 独立后台</h1>
+      <p class="api">API 基地址：<code>{{ API_BASE_URL }}</code></p>
+    </header>
+
+    <nav class="tabs" aria-label="后台页面">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        type="button"
+        class="tab"
+        :class="{ active: active === tab.key }"
+        :aria-pressed="active === tab.key"
+        @click="active = tab.key"
+      >
+        <span>{{ tab.label }}</span>
+        <small>{{ tab.note }}</small>
+      </button>
+    </nav>
+
+    <AccountsView v-if="active === 'accounts'" />
+    <ReviewPlaceholderView v-else />
+
+    <footer class="foot">
+      <dl>
+        <dt>后台鉴权接口</dt>
+        <dd>
+          {{ ADMIN_AUTH_API_IMPLEMENTED ? '已实现（POST/GET /admin/auth/session、POST /admin/auth/logout）' : '未实现' }}
+        </dd>
+        <dt>账号目录</dt>
+        <dd>只读页：GET /admin/accounts（游标分页）；停用/注销等写操作不在本片</dd>
+        <dt>人工审核</dt>
+        <dd>空入口占位，未实现；不伪造队列与审核人</dd>
+      </dl>
+      <p class="notice">
+        后台与小程序端分别鉴权（audience=admin，独立令牌）；本页不读取任何生产密钥，不写日志、不把令牌放进 URL。
+      </p>
+    </footer>
   </main>
 </template>
 
@@ -29,28 +62,91 @@ import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
   color-scheme: light;
   font-family: system-ui, "Microsoft YaHei", sans-serif;
 }
+body {
+  margin: 0;
+  background: #f7fafc;
+}
 .shell {
-  max-width: 720px;
-  margin: 4rem auto;
+  max-width: 960px;
+  margin: 2.5rem auto 4rem;
   padding: 0 1.5rem;
   line-height: 1.7;
   color: #1a202c;
 }
-.notice {
-  border-left: 4px solid #b7791f;
-  background: #fffbeb;
-  padding: 0.75rem 1rem;
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+.api {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #4a5568;
+}
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0 1.1rem;
+}
+.tab {
+  display: grid;
+  gap: 0.1rem;
+  text-align: left;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 10px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+  color: #1a202c;
+}
+.tab small {
+  color: #718096;
+  font-size: 0.76rem;
+}
+.tab.active {
+  border-color: #0f766e;
+  box-shadow: inset 0 0 0 1px #0f766e;
+  background: #f0fdfa;
+}
+.tab.active small {
+  color: #0f766e;
+}
+code {
+  background: #edf2f7;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.86em;
+}
+.foot {
+  margin-top: 1.6rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 1rem;
 }
 dl {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 0.25rem 1rem;
+  font-size: 0.9rem;
 }
 dt {
   font-weight: 600;
 }
-.footnote {
-  color: #4a5568;
-  font-size: 0.9rem;
+dd {
+  margin: 0;
+}
+.notice {
+  margin: 0.8rem 0 0;
+  border-left: 4px solid #b7791f;
+  background: #fffbeb;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.86rem;
+  border-radius: 6px;
 }
 </style>

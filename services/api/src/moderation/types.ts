@@ -314,6 +314,15 @@ export interface ModerationTaskView {
   submitted_by: string;
   deadline_at: string;
   superseded: boolean;
+  /**
+   * 结论是否**已过期**：规则集／模型／prompt 任一版本相对"当前版本"前进（或结论自身不可信）
+   * ⇒ 这份结论不再等于"已审"，必须重评。由服务每次**实时派生**，不落库。
+   *
+   * 非契约字段：作业读面 `job-source.ts` 逐字段重建投影，不扩散本字段。
+   */
+  stale: boolean;
+  /** 过期的可判别理由（复用引擎既有原因码闭集；`stale === false` 时为空数组）。 */
+  stale_reason_codes: string[];
 }
 
 /** 审核内容（送审输入；正文与**显式声明**的媒体引用）。 */

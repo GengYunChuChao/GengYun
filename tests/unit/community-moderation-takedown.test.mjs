@@ -3,7 +3,7 @@
  *
  * 覆盖（派单 §2 第 3、4 组）：
  *   G3-a `hidePost` 生效后**驱动审核域下架**：`invalidated_cache_keys` 口径（整链缓存失效）、
- *        下架事件（不含正文）、台账 withdrawn 计数；
+ *        版本口径与被下架的那一版一致（不留事件字段）、台账 withdrawn 计数；
  *   G3-b 该版本**永久不可复活**：审核域 `publish` 以 `OBJECT_UNAVAILABLE` 拒绝（可重复，幂等）；
  *   G3-c 列表/详情/引用一致：公开面（他人 feed/详情/评论列表）一律消失，作者视角显式 `hidden`，
  *        旧 ETag 不得写回公开；
@@ -90,12 +90,19 @@ test('G3a. 后台 hidePost 生效后驱动审核域下架：缓存整链失效�
   assert.deepEqual(withdrawResult.invalidated_cache_keys, [cacheKey('post', post.id, 1)]);
   assert.equal(h.moderation.counts().cache_entries, 0, '下架必须让审核域读缓存整链失效');
   assert.equal(h.moderation.counts().withdrawn, 1, '台账必须记下 withdrawn 标记');
-  // 下架事件供缓存/列表/详情订阅，**不含任何正文**。
-  assert.equal(withdrawResult.event.kind, 'moderation.takedown');
-  assert.deepEqual(withdrawResult.event.target_ref, { type: 'post', id: post.id, revision: 1 });
-  assert.equal(withdrawResult.event.reason_code, 'admin_hide');
-  assert.equal(typeof withdrawResult.event.at, 'string');
-  assert.equal(JSON.stringify(withdrawResult.event).includes(CLEAN_BODY), false, '下架事件不得夹带正文');
+  // 下架**不再产出事件字段**：那类事件零订阅方（下架对外唯一信号就是被失效的缓存键，
+  // 而缓存失效本来就是同一次 `withdraw()` 内同步完成的，不需要订阅方）。
+  assert.equal('event' in withdrawResult, false, '下架返回值不得再带零订阅方的事件字段');
+  // 换成更强的整串断言：整个下架返回值（不只是某个子对象）都不得夹带正文。
+  assert.equal(JSON.stringify(withdrawResult).includes(CLEAN_BODY), false, '下架返回值不得夹带正文');
+
+  // **版本口径同一套**（诊断 R6）：审核域下架目标、缓存失效键、以及社区下架消息，
+  // 必须全部指向**同一版**——即被公开发布/被缓存的那一版（＝处置前 revision），
+  // 任何一处差 1 都会让失效键打错版本、恰好漏掉真正被缓存的那一版。
+  const invalidatedRevisions = withdrawResult.invalidated_cache_keys.map((key) => key.split('|')[2]);
+  assert.deepEqual(invalidatedRevisions, ['1'], '失效键里的版本必须是被缓存过的那一版');
+  assert.equal(Number(invalidatedRevisions[0]), withdrawInput.target_ref.revision,
+    '失效键版本与审核域下架目标版本必须一致');
 
   // 社区真实内容行确实已被后台隐藏（同源存储）。
   const row = await h.store.getPost(post.id);

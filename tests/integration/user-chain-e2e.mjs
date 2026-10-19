@@ -27,10 +27,19 @@
  *
  * 运行：
  *   node tests/integration/user-chain-e2e.mjs
+ *
+ * 退出码（**跳过 ≠ 通过**）：
+ *   0   真库起得来、6 步断言全绿；
+ *   77  找不到 PostgreSQL 17（本机没装／没设 `USER_CHAIN_PG_BIN`）⇒ **未取得**，按 POSIX「skipped」惯例给 77；
+ *       ⛔ 任何 `&&` 串联、CI、本地一键脚本都会因此变红 —— 这正是本意：一条都没跑的运行不得被读成通过；
+ *   其它非 0（通常 1）真失败。
+ *   本机开发明知无真库、只想看跳过原因时，可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
+ *
  * 可选环境变量：
  *   USER_CHAIN_PG_BIN      PG 17.11 bin 目录（默认 <repo>/.pg17/pgsql/bin，再回落到 PATH 里的 initdb）
  *   USER_CHAIN_PG_DATADIR  一次性数据目录（默认 <tmpdir>/gengyun-user-chain-pg-<runId>）
  *   USER_CHAIN_PG_KEEP=1   保留数据目录与日志（排障用；默认逐个文件删干净）
+ *   GY_ALLOW_SKIP=1        等同 `--allow-skip`：缺真库时把「未取得」降级为 0（仅本机开发）
  */
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -52,6 +61,8 @@ import { computeSubjectLookup, STUB_APP_ID } from '../../services/api/src/auth/w
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const RUN_ID = `${process.pid}-${Date.now().toString(36)}`;
 const STUB_LOGIN_LOOKUP_KEY = 'gengyun-user-chain-e2e-subject-key';
+// 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 
 // ---------------------------------------------------------------------------
 // 读数记账：每一步的 步骤｜请求｜期望｜实测 都记下来，跑完打印成表（可直接贴证据页）。
@@ -254,7 +265,12 @@ async function main() {
   if (pgBin === null) {
     console.log('SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。');
     console.log('     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。');
-    return 0;
+    if (ALLOW_SKIP) {
+      console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+      return 0;
+    }
+    console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。');
+    return 77;
   }
   const dataDir = process.env.USER_CHAIN_PG_DATADIR ?? join(tmpdir(), `gengyun-user-chain-pg-${RUN_ID}`);
   const keep = process.env.USER_CHAIN_PG_KEEP === '1';

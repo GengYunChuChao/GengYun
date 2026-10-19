@@ -135,10 +135,13 @@ export interface LinkWithdrawResult {
   target_ref: LinkTargetRef;
   withdrawn: boolean;
   visibility: string | null;
-  /** 被失效的审核域读缓存键（下架即整链失效；可断言）。 */
+  /**
+   * 被失效的审核域读缓存键（下架即整链失效；可断言）。
+   *
+   * 这是下架唯一的对外信号：失效在审核域 `withdraw()` 内**同步**完成，本端口
+   * 不再转出一层零订阅方的 `event` 字段（见 `.pg17/analysis/i14-moderation-gaps-20261019.md` R5/R6）。
+   */
   invalidated_cache_keys: string[];
-  /** 下架事件（供缓存/列表/详情订阅；**不含任何正文**）。 */
-  event: { kind: string; target_ref: LinkTargetRef; reason_code: string; at: string } | null;
 }
 
 export interface LinkReadResult {
@@ -243,6 +246,10 @@ interface TaskRead {
   decision: LinkAuditState | null;
   hard_rule_passed: boolean;
   reason_codes: string[];
+  /** 该任务的结论是否已过期（规则集/模型/prompt 版本前进 ⇒ 必须重评）。 */
+  stale: boolean;
+  /** 过期的可判别理由（审核域原样给出；不含正文）。 */
+  stale_reason_codes: string[];
   provider_origin: string | null;
   provider_synthetic: boolean;
 }
@@ -258,6 +265,9 @@ function readTasks(tasksValue: unknown): TaskRead[] {
       decision: auditStateOf(task['decision']),
       hard_rule_passed: task['hard_rule_passed'] === true,
       reason_codes: stringArray(task['reason_codes']),
+      // 缺字段一律按**过期**处理（fail-closed：证明不了"结论仍新鲜"就不许当已审）。
+      stale: task['stale'] !== false,
+      stale_reason_codes: stringArray(task['stale_reason_codes']),
       provider_origin: provider !== null && typeof provider['origin'] === 'string' ? provider['origin'] : null,
       provider_synthetic: provider !== null && provider['synthetic'] === true,
     };
@@ -285,6 +295,12 @@ export function judgeTasks(tasksValue: unknown): {
   const modelRejected = tasks.some((task) => task.decision === 'rejected' && task.hard_rule_passed === true);
   const allApproved = tasks.length > 0 && tasks.every((task) => task.decision === 'approved');
   const allRulePassed = tasks.length > 0 && tasks.every((task) => task.hard_rule_passed);
+  /**
+   * "曾经通过、但结论已过期"：规则集/模型/prompt 版本在结论之后前进 ⇒ 这一刻**不算已审**。
+   * 它既不等于驳回（内容没被判定违规），也不能算通过（没按当前版本审过），
+   * 因此归到既有契约状态 `pending`（＝待重评），**不新增**状态值。
+   */
+  const staleApproved = tasks.some((task) => task.stale === true && task.decision === 'approved');
 
   // "模型层没有真实调用点"的判据：没有任何 `injected`/`callback` 端口证据。
   // 替身（`synthetic === true` / `origin === 'substitute'`）与"没有端口证据"都算未接线。
@@ -303,13 +319,19 @@ export function judgeTasks(tasksValue: unknown): {
   const decision: LinkAuditState =
     ruleRejected || modelRejected
       ? 'rejected'
-      : allApproved
+      : allApproved && !staleApproved
         ? 'approved'
-        : tasks.some((task) => task.decision === 'pending')
+        : tasks.some((task) => task.decision === 'pending') || staleApproved
           ? 'pending'
           : 'quarantined';
 
-  const reasonCodes = [...new Set(tasks.flatMap((task) => task.reason_codes))].slice(0, 30);
+  // 过期理由与任务自身理由合并去重（过期理由同样来自引擎闭集，不含正文）。
+  const reasonCodes = [
+    ...new Set([
+      ...tasks.flatMap((task) => task.reason_codes),
+      ...tasks.flatMap((task) => task.stale_reason_codes),
+    ]),
+  ].slice(0, 30);
   // **三态互斥**：只有"任务集非空且全部 approved"才可发布；存在 rejected 任务即驳回；
   // 其余（quarantined / pending / 未接线 / 无结论 / 超时）一律**隔离**（不得发布，也不谎称驳回）。
   const publishable = decision === 'approved';
@@ -419,21 +441,11 @@ export function createCommunityModerationLink(options: {
       throw asApiError(error);
     }
     if (!isPlainObject(raw)) throw shapeUnavailable('下架结论');
-    const event = isPlainObject(raw['event']) ? raw['event'] : null;
     return {
       target_ref: targetOf(raw['target_ref']),
       withdrawn: raw['withdrawn'] === true,
       visibility: typeof raw['visibility'] === 'string' ? raw['visibility'] : null,
       invalidated_cache_keys: stringArray(raw['invalidated_cache_keys']),
-      event:
-        event === null
-          ? null
-          : {
-              kind: typeof event['kind'] === 'string' ? event['kind'] : '',
-              target_ref: targetOf(event['target_ref']),
-              reason_code: typeof event['reason_code'] === 'string' ? event['reason_code'] : '',
-              at: typeof event['at'] === 'string' ? event['at'] : '',
-            },
     };
   }
 
