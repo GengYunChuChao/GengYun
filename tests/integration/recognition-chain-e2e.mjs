@@ -4,7 +4,11 @@
  *
  * 运行：
  *   node tests/integration/recognition-chain-e2e.mjs
- *     ⇒ 只跑「内存臂」；真库臂**显式打印 SKIP 并以 0 退出**（未验证持久化，不是通过）。
+ *     ⇒ 只跑「内存臂」；真库臂**显式打印 SKIP 并以 77 退出**（＝未取得，不是通过；
+ *       POSIX「skipped」惯例：跳过即未取得，⛔ 不得把 77 读成门禁通过）。
+ *   npm run test:integration:recognition-chain-pg
+ *     ⇒ 上面那条 ＋ 必带 env。本脚本**不进**无库的 `test:integration:http` 链：缺库即 77，
+ *       挂进无库链只会让整链显式失败（合流后按 #312「跳过即未取得」的判据处理）。
  *   RECOGNITION_CHAIN_PG_TEST_URL=postgres://postgres@127.0.0.1:PORT/gengyun_recognition_chain_test \
  *   node tests/integration/recognition-chain-e2e.mjs
  *     ⇒ 内存臂 + 真 PG17 臂（身份与历史都落真库，另有独立连接直查表行）。
@@ -20,7 +24,11 @@
  *   - 「同分候选 ⇒ uncertain」：属**未合** PR #299，本基线 `state.ts` 无同分判定规则，
  *     且替身脚本不产出同分候选 ⇒ 无 HTTP 输入可造，脚本内**显式 SKIP 并在交接登记未取得**。
  *
- * 退出码：全部臂通过 ⇒ 0；任一断言失败 ⇒ 1（打印原始断言与实测读数，不吞错）。
+ * 退出码：三档，跳过＝未取得（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅本机开发，⛔ 不得进门禁）：
+ *   0  —— 内存臂（以及设置了 env 时的真库臂）全部通过；
+ *   77 —— 真库臂**未取得**（`RECOGNITION_CHAIN_PG_TEST_URL` 未设置）：
+ *         POSIX「skipped」惯例，本次运行没有验证真库持久化；
+ *   1  —— 任一断言失败（打印原始断言与实测读数，不吞错）。
  */
 import assert from 'node:assert/strict';
 import pg from 'pg';
@@ -58,6 +66,8 @@ const MEDIA_UNCERTAIN = '77777777-7777-4777-8777-777777777777';
 const PG_ENV = 'RECOGNITION_CHAIN_PG_TEST_URL';
 const PG_RESET_ENV = 'RECOGNITION_CHAIN_PG_RESET';
 const PG_TEST_DB = '/gengyun_recognition_chain_test';
+// 「跳过即未取得」：缺库时默认以 77 退出（POSIX skipped 惯例），只有显式授权才降为 0。
+const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -608,6 +618,13 @@ async function main() {
   if (pgUrl === null) {
     console.log(`[GY-RECOG-E2E] arm=pg SKIP real PG17: ${PG_ENV} 未设置 —— 本次运行**没有**验证真库持久化（不是通过，也不是失败）。`);
     console.log(`[GY-RECOG-E2E]      运行方式：${PG_ENV}=postgres://postgres@127.0.0.1:PORT${PG_TEST_DB} node tests/integration/recognition-chain-e2e.mjs`);
+    console.log(`[GY-RECOG-E2E]      或：${PG_ENV}=… npm run test:integration:recognition-chain-pg`);
+    if (ALLOW_SKIP) {
+      console.log('[GY-RECOG-E2E] EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
+    } else {
+      console.log('[GY-RECOG-E2E] EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0，⛔ 不得接进门禁）。');
+      process.exitCode = 77;
+    }
   } else {
     const { owner, pool } = await preparePg(pgUrl);
     try {
@@ -627,7 +644,11 @@ async function main() {
   }
 
   console.log(`[GY-RECOG-E2E] 合计 ${evidence.length} 条证据行；耗时 ${Date.now() - started}ms`);
-  console.log('PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 arm=pg 行)');
+  if (process.exitCode === 77) {
+    console.log('未取得 recognition-chain-e2e 完整链路：内存臂已通过，但真库持久化臂被跳过 —— 整体**不是**通过（见上方 arm=pg 行）。');
+  } else {
+    console.log('PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 arm=pg 行)');
+  }
   // 显式收敛：识别域内存 store / 幂等台账可能残留定时器，断言已定 ⇒ 以既定码退出（不挂死）。
   process.exit(process.exitCode ?? 0);
 }

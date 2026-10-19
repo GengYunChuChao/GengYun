@@ -3,20 +3,26 @@
 **范围口径**：本片主体按真实 AC 收窄为 **`GY-I09`（实时拍草识别）** 与 **`GY-I16`（收藏与识别历史）**；提交信息带 `Refs #6 #8 #9 #10 #16`，但 `#6`/`#8`/`#10` 的 AC **本链路一条也不覆盖**，逐条列在 §1.1（均判「未取得」）。逐 AC 判定见 §1.1，未取得/不成立项见 §6。
 
 本页记录**一条真实 HTTP 链路**的本机实测：上传识别（合成 `media_id` + 替身提供者）→ 拿结果 → 看可信度与理由 → 加入识别历史 → 从历史读回 → 跨用户隔离 → 删除历史 → 再读为空 → 重放语义。
-脚本：[`tests/integration/recognition-chain-e2e.mjs`](../../tests/integration/recognition-chain-e2e.mjs)（本片唯一新增的可执行交付物，已接进 `package.json` 的 `test:integration:http` 链，见 [`package.json`](../../package.json)）。
+脚本：[`tests/integration/recognition-chain-e2e.mjs`](../../tests/integration/recognition-chain-e2e.mjs)（本片唯一新增的可执行交付物）。
+**接线口径（合流 `607c03c` 后按 `#312` 改定）**：它**不**进无库的 `test:integration:http` 链——`RECOGNITION_CHAIN_PG_TEST_URL` 未设置时它以 **77** 退出（＝未取得，不是通过；`--allow-skip`／`GY_ALLOW_SKIP=1` 仅本机开发），挂进无库链只会让整链显式失败；改由 [`package.json`](../../package.json) 的 `test:integration:recognition-chain-pg` 带 env 运行，并在 [`tests/unit/ci-integration-chain-structure.test.mjs`](../../tests/unit/ci-integration-chain-structure.test.mjs) 的豁免表登记（写明所需前置 PG17）；`tests/unit/integration-script-coverage.test.mjs` 的正向守卫对「打印 SKIP 却没给 77 出口」判红。
 
 **合流复核（2026-10-19，main `31a746d`，PR #304）**：本片分支 `test/gy-recog-chain-e2e` 以 `git merge --no-ff upstream/main` 合流
 `31a746d676975cf41e995b0641ff9999f9def705`（含 `#282`／`#305`／`#306`／`#307`／`#308` 五张 squash）后，本页读数按**合并后的树**重测，
-并绑定两行口径：**被审提交 ＝ 本次 merge HEAD**（双亲 `2bcf635` + `31a746d`）、**基线 ＝ `31a746d`**。
+并绑定两行口径（**那次合流时**的读数，后被「合流复核二」刷新）：**被审提交 ＝ 那次 merge HEAD**（双亲 `2bcf635` + `31a746d`）、**基线 ＝ `31a746d`**。
 合流时唯一冲突是 `docs/verification/gy-i24-release-materials-index-20261017.md`（与识别链无关：取上游版本并补「合流复核」条目）；
 `package.json` 的 `test:integration:http` 链取**并集**（本片成员保留，上游新增项一条不少，结构门禁正向断言）。
 
+**合流复核二（2026-10-19，`upstream/main` `607c03c`；本栈第 1 片）**：再以 `git merge --no-ff upstream/main` 合入
+`607c03cd0c54508164822cc36640a0ec3675564e`（含 `#309`–`#312`）得 merge `0f54b2b`（双亲 `0371cdc` + `607c03c`，无冲突）：
+此前那次合流保留的 `test:integration:http` 链成员**被撤出**（`#312` 的新守卫「打印 SKIP 必须给 77 出口」对它判红，而 `ci-integration-chain-structure.test.mjs:188` 又不允许链成员带 flag ⇒ 两者不可兼得），
+裁决见上「接线口径」，随后本页读数按**合流后的树**重测。
+
 ## 1 结论
 
-- 链路**在 API 层跑通**：两条臂（内存存储 / 真实 PG17 存储）跑**同一段**断言，全部通过，退出码 0。
+- 链路**在 API 层跑通**：两条臂（内存存储 / 真实 PG17 存储）跑**同一段**断言，全部通过；设置真库 env 时退出码 0，**未设置 env 时退出码 77**（真库臂未取得，见 §4、§7 ③）。
 - 真库臂实测：`SHOW server_version` = `17.11`；应用迁移 `0001` + `0018`（重复应用 no-op）；`GET /api/v1/history` 读到的行与真库 `history` 表行逐字段对得上（另开一条独立 `pg.Client` 直查）；删除后 `SELECT count(*) FROM history` = 0；`history_idempotency` 台账 2 行。
 - 边界（必须先读）：**本页证明 API 层链路；微信工具／真机证据未取得。** 真实 OCR 供应商**未取得**（仓内无凭据，`real` 模式 fail-closed）；本页所有输入都是**合成**的，逐字列在 §3。
-- 本片**不改**产品代码、契约、迁移、`miniprogram/**`；新增的第二个文件是 `package.json` 里**加一条**链成员（只加不删，见 [`tests/unit/ci-integration-chain-structure.test.mjs`](../../tests/unit/ci-integration-chain-structure.test.mjs) 的「冻结清单只增不减」口径）。
+- 本片**不改**产品代码、契约、迁移、`miniprogram/**`；合流后本片改动共 **4 个文件**：脚本（77 化、撤掉 `--memory-arm` 口径）、`package.json`（无库链里撤出本片成员、新增 `test:integration:recognition-chain-pg`）、`tests/unit/ci-integration-chain-structure.test.mjs`（豁免表登记 1 行，冻结清单未动）、本页。断言一条未放宽。
 
 ## 1.1 逐 AC 覆盖矩阵（本片判定）
 
@@ -79,44 +85,47 @@
 
 ## 4 运行方式与实测读数
 
-内存臂（CI 默认跑这条，无需任何外部依赖）：
+**三种跑法的退出码契约（`#312` 后）**：跳过＝未取得，只有 0 才是通过。
+
+| 跑法 | 命令 | 退出码 |
+| --- | --- | --- |
+| 只内存臂（**本机开发**，不进任何门禁） | `node tests/integration/recognition-chain-e2e.mjs --allow-skip`（或 env `GY_ALLOW_SKIP=1`） | 0 |
+| 无 env | `node tests/integration/recognition-chain-e2e.mjs` | **77**（内存臂 PASS + 真库臂 `SKIP real PG17`，末行 `EXITCODE=77 表示未取得`） |
+| 真库臂（本页取证用这条） | `RECOGNITION_CHAIN_PG_TEST_URL=… node tests/integration/recognition-chain-e2e.mjs` ＝ `npm run test:integration:recognition-chain-pg` | 0 |
+
+真库臂环境（本机隔离 PG17，专用库 `gengyun_recognition_chain_test`，只连 loopback；`RECOGNITION_CHAIN_PG_RESET=1` 先重置 `public` schema）：
 
 ```text
+RECOGNITION_CHAIN_PG_TEST_URL=postgres://postgres@127.0.0.1:55480/gengyun_recognition_chain_test \
 node tests/integration/recognition-chain-e2e.mjs
 ```
 
-真库臂（本机隔离 PG17，专用库 `gengyun_recognition_chain_test`，只连 loopback）：
+起库方式（本机 `.pg17\pgsql\bin`，数据目录 `E:\GengYunCommander\.pg17\pgdata-wave3` 在仓库外；端口 55480 隔离，trust、`-U postgres`；收工按任务书 `pg_ctl stop -m fast` 并删数据目录）：
 
 ```text
-RECOGNITION_CHAIN_PG_TEST_URL=postgres://postgres@127.0.0.1:55471/gengyun_recognition_chain_test \
-node tests/integration/recognition-chain-e2e.mjs
+initdb -D E:\GengYunCommander\.pg17\pgdata-wave3 -U postgres -A trust -E UTF8 --locale=C
+pg_ctl -D E:\GengYunCommander\.pg17\pgdata-wave3 -l E:\GengYunCommander\.pg17\pgdata-wave3\pg_ctl.log -o "-p 55480 -c listen_addresses=127.0.0.1" -w start
+psql -h 127.0.0.1 -p 55480 -U postgres -d postgres -c "CREATE DATABASE gengyun_recognition_chain_test"
 ```
 
-起库方式（本机 `.pg17\pgsql\bin`，数据目录在仓库外，端口隔离；收工已 `pg_ctl stop`）：
-
-```text
-initdb -D <tmp>\data -U postgres -A trust -E UTF8 --locale=C
-pg_ctl -D <tmp>\data -l <tmp>\server.log -o "-p 55471 -c listen_addresses=127.0.0.1" -w start
-psql -h 127.0.0.1 -p 55471 -U postgres -d postgres -c "CREATE DATABASE gengyun_recognition_chain_test"
-```
-
-真库臂原始输出摘录（2026-10-19 在本机的一次实际运行，退出码 0；uuid 与毫秒数每次运行都不同，断言语义不变）：
+真库臂原始输出摘录（2026-10-19 合流 `607c03c` 后在本机的一次实际运行，退出码 0；uuid 与毫秒数每次运行都不同，断言语义不变）：
 
 ```text
 [GY-RECOG-E2E] real PostgreSQL patch: 17.11
+[GY-RECOG-E2E] public schema 已按 opt-in（RECOGNITION_CHAIN_PG_RESET=1）重置
 [GY-RECOG-E2E] 迁移应用：0001_initial_schema.sql + 0018_favorites_history.sql（重复应用 no-op）
-[GY-RECOG-E2E] arm=pg step=i06-upload status=202 job=35692229-3b8c-4568-9ee8-cda26127343c recognition=b952b796-9b22-4e7e-9fe3-54bdcf5e012b state=queued cache=no-store
-[GY-RECOG-E2E] arm=pg step=i08-result job=35692229-3b8c-4568-9ee8-cda26127343c state=succeeded elapsed=2ms model_version=stub-v1 candidates=[{"species_id":"synthetic_weed_a","rank":1,"model_score":0.64},{"species_id":"synthetic_weed_b","rank":2,"model_score":0.28}] reasons=[]
-[GY-RECOG-E2E] arm=pg step=i08-uncertain job=c4e30ee8-0ffb-46ac-ad5a-637ea31cc0ab state=uncertain candidates=[{"species_id":"synthetic_weed_a","rank":1,"model_score":null},{"species_id":"synthetic_weed_b","rank":2,"model_score":null}] reasons=["替身未给出可信分数，需重拍或人工核对"]
-[GY-RECOG-E2E] arm=pg step=i09-history history=f6668f10-edbf-4f96-9954-1f50b2c40332 rev=1 created_at=2026-10-19T05:14:11.119Z target={"type":"recognition","id":"b952b796-9b22-4e7e-9fe3-54bdcf5e012b","revision":1} job_state=succeeded reference_state=unavailable appeared_after_job=5ms
-[GY-RECOG-E2E] arm=pg step=pg-rows 直查 history：job_id=35692229-3b8c-4568-9ee8-cda26127343c owner=99f3d471-d917-4428-a7b3-8cd49c1cd6e3 event_key=recognition:35692229-3b8c-4568-9ee8-cda26127343c job_state=succeeded target=recognition:b952b796-9b22-4e7e-9fe3-54bdcf5e012b@1；users=2 行；他人历史=0；(owner,event_key) 唯一=1 行
+[GY-RECOG-E2E] arm=pg step=i06-upload status=202 job=02060507-3056-4829-b517-19115e741019 recognition=3f44cba4-07fb-4488-a326-6681c0d710e9 state=queued cache=no-store
+[GY-RECOG-E2E] arm=pg step=i08-result job=02060507-3056-4829-b517-19115e741019 state=succeeded elapsed=9ms model_version=stub-v1 candidates=[{"species_id":"synthetic_weed_a","rank":1,"model_score":0.64},{"species_id":"synthetic_weed_b","rank":2,"model_score":0.28}] reasons=[]
+[GY-RECOG-E2E] arm=pg step=i08-uncertain job=6c70509e-3d87-4b7e-aac8-69ff4894d6b3 state=uncertain candidates=[{"species_id":"synthetic_weed_a","rank":1,"model_score":null},{"species_id":"synthetic_weed_b","rank":2,"model_score":null}] reasons=["替身未给出可信分数，需重拍或人工核对"]
+[GY-RECOG-E2E] arm=pg step=i09-history history=7695aeaa-b46f-488b-ac4d-0b4502c59c25 rev=1 created_at=2026-10-19T18:28:34.885Z target={"type":"recognition","id":"3f44cba4-07fb-4488-a326-6681c0d710e9","revision":1} job_state=succeeded reference_state=unavailable appeared_after_job=3ms
+[GY-RECOG-E2E] arm=pg step=pg-rows 直查 history：job_id=02060507-3056-4829-b517-19115e741019 owner=a511c46f-962c-4e8b-8a39-b33f3961af5f event_key=recognition:02060507-3056-4829-b517-19115e741019 job_state=succeeded target=recognition:3f44cba4-07fb-4488-a326-6681c0d710e9@1；users=2 行；他人历史=0；(owner,event_key) 唯一=1 行
 [GY-RECOG-E2E] arm=pg step=i10-delete-again 同键重放=200 accepted=true cascade=unwired；换键再删=404 NOT_FOUND（与不存在同形=true）
 [GY-RECOG-E2E] arm=pg step=pg-after-delete 直查 history 总行数=0（物理删除）；users 仍=2 行；history_idempotency=2 行（同键重放由真库台账裁决）
-[GY-RECOG-E2E] 合计 36 条证据行；耗时 1152ms
+[GY-RECOG-E2E] 合计 36 条证据行；耗时 728ms
 PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 arm=pg 行)
 ```
 
-同一脚本不带 `RECOGNITION_CHAIN_PG_TEST_URL` 时：内存臂 17 条证据行、真库臂打印 `SKIP real PG17: … 未设置 —— 本次运行**没有**验证真库持久化（不是通过，也不是失败）` 并以 0 退出（**不静默绿**）。
+同一脚本不带 `RECOGNITION_CHAIN_PG_TEST_URL` 时（合流 `607c03c` 后实测）：内存臂 17 条证据行判 PASS，真库臂打印 `arm=pg SKIP real PG17: … 未设置 —— 本次运行**没有**验证真库持久化`，末行 `未取得 recognition-chain-e2e 完整链路：内存臂已通过，但真库持久化臂被跳过 —— 整体**不是**通过` 与 `EXITCODE=77 表示未取得，不是通过`，进程以 **77** 退出（POSIX skipped 惯例；**不静默绿**）。显式 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）才降为 0，仅本机开发、⛔ 不得接进门禁。
 
 ## 5 链路逐步骤（请求 → 期望 → 实测）
 
@@ -159,20 +168,22 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 | 识别记录持久化 | 未覆盖（产品现状） | 仓内**不存在** PG 识别存储（`services/api/src/recognitions/` 只有内存 store）⇒ 进程重启后识别记录与「按 id 读回结果」都会消失；历史行仍在（真库臂已证），但其 `target_ref` 指向的记录已不可读，届时读取面的语义需要在含 PG 识别存储的分支上重新验收 |
 | 级联删除真实执行 | 未取得 | `X-GY-Cascade: unwired`（`historyCascadePort` 未接线）⇒ 删除历史不会真的去删收藏/任务；本脚本只断言该披露值在闭集内并原样回放 |
 | 微信开发者工具 / 真机 / 小程序端证据 | 未取得 | **本页证明 API 层链路；微信工具／真机证据未取得**（本机无微信侧调用，`miniprogram/**` 不在本片授权范围） |
-| 真库臂进 CI | 未取得 | 需要 `RECOGNITION_CHAIN_PG_TEST_URL` + fresh 专用库（同 `favorites-history-pg.mjs` 口径，仓库 CI 不 initdb）；CI 只自动跑内存臂 |
+| 真库臂进 CI | 未取得 | 需要 `RECOGNITION_CHAIN_PG_TEST_URL` + fresh 专用库（同 `favorites-history-pg.mjs` 口径，仓库 CI 不 initdb）。合流 `#312` 后它更**不**进无库的 `test:integration:http` 链（缺库即 77，挂进去只会让整链显式失败），改由 `npm run test:integration:recognition-chain-pg` 带 env 运行；CI 侧仍未接线 ⇒ 本页真库读数全部来自本机 |
 | 依赖 shell 的校验 | 未取得 | 本机 `bash` 是 WSL 存根（不可用），本片所有门禁均以 `node`/`python`/`git` 直跑，不含任何 shell 脚本校验 |
 | 真实性能/准确率（`#9 AC4`） | 未取得 | 替身提供者不产生真实识别质量；本页**不**冒充准确率或性能验收 |
 
-## 7 六项门禁读数
+## 7 门禁读数
 
 | 门禁 | 命令 | 实测 | 结论 |
 | --- | --- | --- | --- |
-| ① 工作树 | `git status --porcelain` | **提交后复跑：0 行**（干净） | 合流把 `31a746d` 的 5 张 squash 一并带进合并提交（42 个索引条目，无未解冲突）；本片自有改动仍只有 `package.json` 链 1 条、本页、`tests/integration/recognition-chain-e2e.mjs` 三个文件，无越界改动 |
-| ② 单测全量 | `node --test "tests/unit/*.test.mjs"` | **被审提交＝本次 merge HEAD**（合流后、默认隔离复跑）：`tests 1733 / pass 1732 / fail 0 / skipped 1 / todo 0`，退出码 0（60.82s）；**基线＝`31a746d`**：本分支在 `tests/unit` 下**新增 0 个用例、0 个子用例**（`git diff 31a746d HEAD -- tests/unit` 里 `+test(` 与 `+ t.test(` 均为 0，只有 11 个文件收紧断言），故合流后读数即基线读数；更早旧基线 `8cc9dd8` 上的 `1617/1616/0/1` 只作时点对比 | 与基线**同数**，未放宽、未删测试。⚠ 本机曾因 64 个 node 进程争用出现 10 项超时转红（`contract-status-tool` 的 15s `spawnSync` 超时、PGlite 组 23–48s 文件级超时、`release-materials-index` 119s），逐文件复跑与本次默认并发复跑均全绿 |
-| ③ 链路端到端 | `node tests/integration/recognition-chain-e2e.mjs` | **合流后复跑（两臂都重跑）**：内存臂 `arm=memory PASS`、`合计 17 条证据行；耗时 514ms`；真库臂 `arm=pg PASS`、`real PostgreSQL patch: 17.11`、迁移 `0001`+`0018`（重复应用 no-op）、`合计 36 条证据行；耗时 4326ms`（`RECOGNITION_CHAIN_PG_RESET=1` 重建 `public`）；不带 env 时真库臂显式 SKIP（`arm=pg SKIP`，不计通过）。三种跑法退出码均 0。新增断言 `:283`（候选数恰 2）在两臂都过 | 本页 §5 的 19 组断言（含新增的候选数断言）全部实测通过 |
-| ④ 契约状态 | `node tools/verify-contract-status.mjs` / `--runtime` | 均 `PASS：覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；形状错误 0 项；语义错误 0 项`；`--runtime` 额外 `PASS 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致` | 未改契约，读数与基线一致 |
-| ⑤ 文档校验 | `python -B tools/validate_development_docs.py` | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` | 含新增本页的链接与表格校验 |
-| ⑥ 空白/补丁卫生 | `git diff upstream/main --check` | 无输出，退出码 0 | 无行尾空白/空白错误 |
+| ① 工作树 | `git status --porcelain` | **提交后复跑：0 行**（干净） | 合流 `0f54b2b`（双亲 `0371cdc` + `607c03c`）无冲突；本片在合流之上的改动只有 4 个文件（脚本、`package.json`、结构门禁豁免表 1 行、本页），无越界改动 |
+| ② 单测全量 | `node --test "tests/unit/*.test.mjs"`（默认隔离） | `tests 1807 / pass 1806 / fail 0`，退出码 0 | `#312` 的两条新守卫（`tests/unit/integration-script-coverage.test.mjs`、`tests/unit/ci-integration-chain-structure.test.mjs`）在本片代码下全绿；刚合流时前者 **1 红**并点名本源脚本，按上「接线口径」裁决后转绿。未删测试、未放宽断言 |
+| ③ 链路端到端（真库） | `node --test tests/integration/recognition-chain-e2e.mjs`（设 `RECOGNITION_CHAIN_PG_TEST_URL`） | 内存臂 `arm=memory PASS`、17 条证据行；真库臂 `arm=pg PASS`、`real PostgreSQL patch: 17.11`、迁移 `0001`+`0018`（重复应用 no-op）、`合计 36 条证据行；耗时 728ms`、`ℹ pass 1 / fail 0`，退出码 0 | §5 的 19 组断言两臂全过。**三种跑法不再「均 0」**：无 env ⇒ **77**（未取得）；`--allow-skip` ⇒ 0（仅本机开发）；带 env ⇒ 0 |
+| ④ 契约状态 | `node tools/verify-contract-status.mjs` / `--runtime` | 均 `PASS：覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；形状错误 0 项；语义错误 0 项`；`--runtime` 额外 `PASS 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致` | 未改契约，读数与合流前一致 |
+| ⑤ 文档校验 | `python -B tools/validate_development_docs.py` | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` | 含本页链接与表格校验 |
+| ⑥ 空白/补丁卫生 | `git diff --check` / `git diff upstream/main --check` | 两条均无输出，退出码 0 | 无行尾空白/空白错误 |
+| ⑦ 回环 HTTP 集成链 | `npm run test:integration:http` | 链上 **13 段**（13 条 `node <script>`）逐段退出码 0，整链退出码 0；`#312` 结构门禁的「漏接／白名单腐烂／冻结清单」检查同跑绿 | 本片脚本**不在**链上（缺库即 77，见上「接线口径」）；链本身未被本片改坏 |
+| ⑧ 发布材料 | `node tools/verify-release-materials.mjs` | `15/15 项通过`（迁移 21 个 `0001..0021`、down 20 个 `0002..0021`、无 `0001`） | 迁移/回滚/部署计数与合流后实测一致 |
 
 ## 8 产品事实与未改动项
 
@@ -180,7 +191,7 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 - `GET /api/v1/history` 恒 `Cache-Control: no-store` 且**无 ETag**；历史投影键集恰为 `created_at/id/job_state/kind/reference_state/revision/target_ref`，不含 `owner_id`。
 - `reference_state=unavailable` 是**如实披露**：stub 装配下没有 `/knowledge` 读面，服务端不去假装核验过目标可见性。⚠ 但如实披露 ≠ 实现「读取时重查对象权限及当前可见性」⇒ `#16 AC4` 判**不成立**（见 §1.1、§6）。
 - 删除历史：`If-Match` 必填；**同键重放返回 200 回放**（真库臂由 `history_idempotency` 台账裁决），**换新键再删已删除 id 返回 404**，且与他人 id / 不存在 id 的 404 **同形** —— 这两种「重复删除」语义不同，本脚本分开断言，避免把幂等回放误记成 404。
-- 本片未改：契约、`docs/architecture/contract-status.json`、迁移、`miniprogram/**`、`services/api/**`、既有测试。唯一改动是 `package.json` 的 `test:integration:http` 链**追加一条**成员（结构门禁要求新脚本必须接线或进白名单；选择接线，让 CI 至少跑内存臂）。
+- 本片未改：契约、`docs/architecture/contract-status.json`、迁移、`miniprogram/**`、`services/api/**`、既有测试断言。合流 `607c03c` 后的接线改动：`package.json` 撤出无库链里本片那一条、新增 `test:integration:recognition-chain-pg`；结构门禁豁免表登记 1 行（冻结清单未动）；脚本本身 77 化。没有选「给无库链成员加 flag」这条路——`tests/unit/ci-integration-chain-structure.test.mjs:188` 要求链成员严格形如 `node <path>`，带 flag 即红。
 
 ## 9 与 issue 的关系
 
