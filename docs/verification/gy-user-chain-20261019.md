@@ -2,7 +2,8 @@
 
 Refs #4 #5 #7 #16（GY-I04 / GY-I05 / GY-I07 / GY-I16；功能 F01、F02、F03、F14、F18）。**只交「链路自动化测试 + 本证据页」，不关闭任何整项、不自评验收通过。**
 
-- 实测 HEAD：`8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`（`upstream/main` 同 SHA，`Mon Oct 19 11:43:33 2026 +0800`，提交说明「docs: 修正测试号能力引证与 40013 语义，恢复被吞的 README 章节标题，补 A3/B3 配置缺口」）
+- 被审提交（本页全部读数对应的树）：`463a5c5c347cba89dbe681a6e387c13997d17c38`（短 `463a5c5`，提交说明「test(GY-I04/I05/I07/I16): 第一条用户链路端到端（Refs #4 #5 #7 #16）」）
+- 本次改动基于：`8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`（`upstream/main`，`Mon Oct 19 11:43:33 2026 +0800`，提交说明「docs: 修正测试号能力引证与 40013 语义，恢复被吞的 README 章节标题，补 A3/B3 配置缺口」）
 - 分支：`test/gy-user-chain-e2e`（自建 worktree `.pg17/wt-user-chain`，detach 自 `upstream/main`）
 - 本轮**只加测试与文档**：不 push、不开 PR、不改 `packages/contracts/**`、不改 `contract-status.json`、不改迁移、不改 `miniprogram/**`、不加依赖、不放宽或删除任何既有测试
 - 本页所有读数都来自本机实跑，未测到的按「未取得」如实登记（见 §7），不给虚构成绩
@@ -61,7 +62,7 @@ node tests/integration/user-chain-e2e.mjs
 PASS 用户链路端到端：119 条断言，6 步，耗时 7375 ms（PostgreSQL 17.11 / http://127.0.0.1:57319）
 ```
 
-（另有夹具/环境前置断言 9 条：`server_version` 必须是 17.x、一次性库必须空、18 个迁移首跑全落地且二次 no-op、seed 后 `knowledge_dataset_config` 置 `real`。）
+（另有夹具/环境前置断言 **5 条**，位置 `tests/integration/user-chain-e2e.mjs:287/289/292/294/295`：`server_version` 必须是 17.x、一次性库必须空、迁移数 ≥18、首跑全落地、二次 no-op。这 5 条**已含在上面 119 条之内**，不是额外加数。）
 
 ## 3 真库夹具：为什么这不是「用测试开关凑数据」
 
@@ -78,6 +79,10 @@ PASS 用户链路端到端：119 条断言，6 步，耗时 7375 ms（PostgreSQL
   本脚本用 `executionMode='real'` + 真 pool，命中不了它。
 - 反向控制（证明断言不是恒真）：`crops.active=false` 后目录确实不再出现该作物；不存在的检索词、未覆盖地区确实读空；
   缺 `If-Match` 确实 428；越权删除确实 404 且行未被删。
+- **已知脆弱点（本轮未修，在此登记）**：「停用作物后消失」这条的成立前提是 `db/seeds/seed_reference.sql` 的初始作物目录里有
+  `crop_corn`（脚本拿「停用前清单」与「停用后清单 + `crop_corn`」做差集比对，位置 `tests/integration/user-chain-e2e.mjs:376-383`）。
+  若将来 seed 去掉 `crop_corn`，该条会退化成恒真而**不会报警**。审查建议补一条「初始目录必含 `crop_corn`」的自守卫断言；
+  为让被审提交 `463a5c5` 的代码保持字节不变（审查已对该 SHA 复现并杀了 5 个 mutant），本轮**未采纳**，风险以本行登记。
 
 ## 4 与任务书措辞的一处差异（如实登记，不改产品代码）
 
@@ -104,7 +109,7 @@ PASS 用户链路端到端：119 条断言，6 步，耗时 7375 ms（PostgreSQL
 | # | 命令 | 读数 |
 | --- | --- | --- |
 | 1 | `git status --porcelain` | 见 §6.1（提交前 3 行） |
-| 2 | `node --test "tests/unit/*.test.mjs"` | 见 §6.2（与干净基线同 SHA 对照） |
+| 2 | `node --test "tests/unit/*.test.mjs"` | 见 §6.2（基线树＝`8cc9dd8` 原样；本分支树＝`463a5c5`，两者读数逐项一致） |
 | 3 | `node tests/integration/user-chain-e2e.mjs` | `PASS 用户链路端到端：119 条断言，6 步，耗时 7375 ms（PostgreSQL 17.11 / http://127.0.0.1:57319）`，exit 0 |
 | 4 | `node tools/verify-contract-status.mjs` | `PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项`、`PASS: 语义可核 59 条区间 + 0 条片段；不可核 134 条区间 + 131 条片段（不可核不计入通过）`、`PASS: 中文表格一致`、`PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`，exit 0 |
 | 4b | `node tools/verify-contract-status.mjs --runtime` | 同上 4 行，另加 `PASS: 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致（不监听 / 不请求服务）。`，exit 0 |
@@ -121,14 +126,17 @@ PASS 用户链路端到端：119 条断言，6 步，耗时 7375 ms（PostgreSQL
 
 （提交后同一命令为 0 行。）
 
-### 6.2 单测对照：干净基线 vs 本分支（同 SHA `8cc9dd8`）
+### 6.2 单测对照：干净基线树（`8cc9dd8` 原样） vs 本分支树（`463a5c5`，含 +6 行白名单）
+
+两棵树**不是同一份内容**：基线树是 `8cc9dd8` 原样（既无 `tests/integration/user-chain-e2e.mjs`，也没有白名单条目）；
+本分支树在此基础上多了新脚本与 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `+6` 行白名单，且正是**这一棵（改过白名单的）树**跑出了下面第二行读数。
 
 | 口径 | 命令 | tests | pass | fail | skipped | duration |
 | --- | --- | --- | --- | --- | --- | --- |
-| 干净基线（`upstream/main` 同 SHA，独立 worktree `.pg17/wt-baseline-unit`，`npm ci --offline --ignore-scripts` 后） | `node --test "tests/unit/*.test.mjs"` | 1617 | 1616 | 0 | 1 | 57753 ms |
-| 本分支 | 同上 | 1617 | 1616 | 0 | 1 | 57276 ms |
+| 干净基线树（`upstream/main` = `8cc9dd8` **原样**，独立 worktree `.pg17/wt-baseline-unit`，`npm ci --offline --ignore-scripts` 后） | `node --test "tests/unit/*.test.mjs"` | 1617 | 1616 | 0 | 1 | 57753 ms |
+| 本分支树（`463a5c5`：新脚本 + `+6` 行白名单） | 同上 | 1617 | 1616 | 0 | 1 | 57276 ms |
 
-完全一致（`tests` 数不变、`fail 0` 不变、`skipped 1` 不变）。被修改的 `tests/unit/ci-integration-chain-structure.test.mjs` 在本分支实跑通过：
+读数逐项一致（`tests` 数不变、`fail 0` 不变、`skipped 1` 不变）。原因：白名单条目本身不新增测试，新集成脚本也不进无 PG 的回环链，故两侧用例集合相同。被修改的 `tests/unit/ci-integration-chain-structure.test.mjs` 在本分支树实跑通过：
 
 ```
 ▶ 结构门禁：test:integration:http 链（删条／漏接／重复／坏引用／白名单腐烂都必须红）
