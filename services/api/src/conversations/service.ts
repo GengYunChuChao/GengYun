@@ -35,6 +35,12 @@ import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { createAnswerGuard, type AnswerGuard, type DoseAuthority, type DoseCardCandidate, type RetrievalPort } from './guard.ts';
 import { createUnwiredTurnCascadePort, type CascadeDisclosure, type TurnCascadePort } from './cascade.ts';
 import {
+  CONTEXT_MAX_TURNS,
+  createStoreConversationContext,
+  type ContextTurn,
+  type ConversationContextPort,
+} from './context.ts';
+import {
   UNIMPLEMENTED_VERSION_PREFIX,
   type AnswerRecord,
   type AnswerStatus,
@@ -168,7 +174,17 @@ export interface ComposedCandidate {
 export interface AnswerComposer {
   readonly kind: 'deterministic_guard_only';
   readonly note: string;
-  compose(input: { question: string; conditions: Conditions | null; set: RetrievalSetLike }): ComposedCandidate;
+  compose(input: {
+    question: string;
+    conditions: Conditions | null;
+    set: RetrievalSetLike;
+    /**
+     * 同一会话内的**追问上下文**（时间正序；首轮为 `[]`）。只由 `./context.ts` 的端口提供
+     * （同会话 + 同主体 + 有界 + 不含本轮）。回答器**只能**用它如实标注"这是追问"，
+     * **不得**用它扩大引用集合 —— 引用仍只按本问取自本次检索集合。
+     */
+    history?: readonly ContextTurn[];
+  }): ComposedCandidate;
 }
 
 type RetrievalSetLike = Awaited<ReturnType<RetrievalPort['read']>>;
@@ -210,6 +226,15 @@ export function relevanceScore(questionShingles: ReadonlySet<string>, item: { ti
 /** 一条回答最多引用几条依据（契约 `citations.maxItems = 20`，这里只取最相关的少数条）。 */
 export const COMPOSER_MAX_CITATIONS = 3;
 
+/** 单条依据正文在回答里最多透出多少字符。超出**必须显式标注**为节选（不得静默返回半截文本）。 */
+export const COMPOSER_EXCERPT_MAX = 400;
+
+/** 依据正文摘录：不超上限逐字照搬；超出则截断并显式标注（④「不得静默返回半截文本当完整答案」）。 */
+export function excerptOf(body: string): string {
+  if (body.length <= COMPOSER_EXCERPT_MAX) return body;
+  return `${body.slice(0, COMPOSER_EXCERPT_MAX)}…（正文节选，原文更长）`;
+}
+
 /**
  * 确定性回答器：**没有语言模型**。它只把「本次检索集合」里**确有字面重合**的条目
  * 标题与正文摘录拼成可核对的骨架，并把这些条目自带的来源对象作为候选引用（守卫会逐字段
@@ -219,7 +244,7 @@ export function createDeterministicAnswerComposer(): AnswerComposer {
   return {
     kind: 'deterministic_guard_only',
     note: `确定性回答器（未接真实模型·${RELEVANCE_RULE}）：只罗列本次检索集合内确有字面重合的条目，不做生成/推断，用量一律不给`,
-    compose({ question, set }) {
+    compose({ question, set, history = [] }) {
       if (set === null || set.items.length === 0) return { text: '', citations: [], dose_cards: [] };
       const shingles = relevanceShingles(question);
       const ranked = set.items
@@ -231,10 +256,19 @@ export function createDeterministicAnswerComposer(): AnswerComposer {
         )
         .slice(0, COMPOSER_MAX_CITATIONS);
       if (ranked.length === 0) return { text: '', citations: [], dose_cards: [] };
-      const lines = ranked.map(({ item, score }) => `[${score}] ${item.title}：${item.body.slice(0, 400)}`);
+      const lines = ranked.map(({ item, score }) => `[${score}] ${item.title}：${excerptOf(item.body)}`);
+      // 追问可见性：有上文时**在正文首行**如实标注"这是本会话内的追问、上文有界"，
+      // 同时明说引用范围没有因为上文而扩大 —— 不让人误以为上下文被拿去检索/扩了出处。
+      // 轮次序号**不**由 `history.length` 反推：上下文有上限，超过上限的会话会让序号说谎。
+      const followUp =
+        history.length === 0
+          ? ''
+          : `（本会话追问：上文只取自本会话最近 ${history.length} 轮提问（上限 ${CONTEXT_MAX_TURNS} 轮），` +
+            '不跨会话；引用仍只按本问取自本次检索集合）\n';
       return {
         // 正文自带「未接真实模型」字样：即便客户端只看正文，也不会把它读成模型输出。
         text:
+          followUp +
           `（未接真实模型·确定性检索结果·规则 ${RELEVANCE_RULE}）依据本次资料检索集合中与提问有字面重合的条目：\n` +
           lines.join('\n'),
         citations: ranked.map(({ item }) => item.source),
@@ -320,6 +354,11 @@ export interface ConversationServiceDeps {
   ledger?: ConversationIdempotencyLedger;
   transcription?: TranscriptionPort;
   cascade?: TurnCascadePort;
+  /**
+   * 追问上下文端口（缺省按本会话 store 自建 `createStoreConversationContext(store)`）。
+   * 只影响**回答器的追问标注**，不影响检索集合与引用范围。
+   */
+  context?: ConversationContextPort;
   /** 游标签名密钥（与其它域同口径：`config.sessionSigningKey`）。 */
   signingKey: string;
   now?: () => Date;
@@ -415,6 +454,9 @@ export function createConversationService(deps: ConversationServiceDeps) {
   const ledger = deps.ledger ?? createMemoryConversationIdempotencyLedger();
   const transcription = deps.transcription ?? createUnwiredTranscriptionPort();
   const cascade = deps.cascade ?? createUnwiredTurnCascadePort();
+  // 追问上下文的缺省实现直接挂在本服务自己的 store 上：归属与会话过滤由 store 的 `listTurns`
+  // 保证，服务层不另开一条读路径（少一条路径 = 少一个跨会话泄漏面）。
+  const context = deps.context ?? createStoreConversationContext(store);
   const signingKey = deps.signingKey;
   const now = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => randomUUID());
@@ -987,7 +1029,21 @@ export function createConversationService(deps: ConversationServiceDeps) {
           items: set === null ? [] : set.items,
         });
         const safeSet = set === null ? null : { ...set, items: screenedSources.items };
-        const candidate = composer.compose({ question: claimed.input_text, conditions, set: safeSet });
+        // ---- 追问上下文（只取自本会话、本主体、有界、不含本轮）----
+        // 读失败**不**降级成"没有上文"：那会把一次追问悄悄说成首轮提问（如实性红线），
+        // 因此这里让异常照常上抛 ⇒ 轮次落 `failed` 且可重试（④）。
+        const priorContext = await context.read({
+          conversationId: claimed.conversation_id,
+          ownerId: actor.userId,
+          excludeTurnId: claimed.id,
+        });
+        // 上下文**只**进回答器做追问标注，不进检索、不扩引用集合。
+        const candidate = composer.compose({
+          question: claimed.input_text,
+          conditions,
+          set: safeSet,
+          history: priorContext.turns,
+        });
         const verdict = guard.check({
           candidate,
           set: safeSet,
@@ -1031,6 +1087,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
     riskScreen,
     transcription,
     cascade,
+    context,
     createConversation,
     listConversations,
     getConversation,
