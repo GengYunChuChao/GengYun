@@ -469,4 +469,3 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 
 本片门禁读数、真 PG 集成臂的 13 组输出、未取得项与残留风险，全部列在交接文件
 `.pg17/handoff/i19-backup-wiring-<HEAD7>.md`（不在仓内）。
-
