@@ -284,8 +284,9 @@ test('取消·**域内无取消能力但作业存在 ⇒ 503 PROVIDER_UNAVAILABL
 
 // ---------------------------------------------------------------- 适配层（只读复用各域服务）
 
-test('适配层·域内 NOT_FOUND ⇒ null（同形）；域内其它错误原样抛；无取消能力的域不暴露 cancel', async () => {
+test('适配层·域内 NOT_FOUND ⇒ null（同形）；域内其它错误原样抛；转写域已接线取消 ⇒ 注册表 200（不再是 503）', async () => {
   const job = validJob();
+  const cancelledJob = { ...job, state: 'cancelled', revision: job.revision + 1, error_code: null, result: null };
   const calls = { get: 0, cancel: 0 };
   const fakeSpeech = {
     async getJob({ jobId }) {
@@ -293,13 +294,39 @@ test('适配层·域内 NOT_FOUND ⇒ null（同形）；域内其它错误原�
       if (jobId !== JOB_ID) throw new ApiError('NOT_FOUND', '任务不存在');
       return job;
     },
+    async cancelJob({ jobId, ifMatch }) {
+      calls.cancel += 1;
+      if (jobId !== JOB_ID) throw new ApiError('NOT_FOUND', '任务不存在');
+      // 终态不可取消：域内 OBJECT_UNAVAILABLE 必须**原样透出**（不得被改写成 503 未接线）。
+      if (ifMatch === '"4"') throw new ApiError('OBJECT_UNAVAILABLE', '作业已处于终态 cancelled，不可取消');
+      return cancelledJob;
+    },
   };
   const transcription = createTranscriptionJobSource(fakeSpeech);
   assert.equal(transcription.kind, 'transcription');
-  assert.equal(transcription.cancel, undefined, '转写域本基线无取消能力 ⇒ 不暴露 cancel');
+  // GY-R27：转写域补上取消能力 ⇒ 适配层**必须**暴露 cancel（旧断言「不暴露 cancel」锁定的是 503 形态）。
+  assert.equal(typeof transcription.cancel, 'function', '转写域已接线取消能力 ⇒ 必须暴露 cancel');
   assert.equal(await transcription.get({ userId: 'u', jobId: 'missing' }), null);
   assert.equal((await transcription.get({ userId: 'u', jobId: JOB_ID })).id, JOB_ID);
   assert.equal(calls.get, 2);
+
+  // 取消面的三层语义：不存在 ⇒ null（同形 404）；域内错误原样透出；成功 ⇒ 契约 Job 投影。
+  assert.equal(await transcription.cancel({ userId: 'u', jobId: 'missing', ifMatch: '"3"', idempotencyKey: 'k' }), null);
+  await assert.rejects(
+    () => transcription.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"4"', idempotencyKey: 'k' }),
+    (e) => e instanceof ApiError && e.code === 'OBJECT_UNAVAILABLE',
+    '域内 OBJECT_UNAVAILABLE 必须原样透出（不得改写成 PROVIDER_UNAVAILABLE 503）',
+  );
+  const cancelled = await transcription.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k' });
+  assert.equal(cancelled.state, 'cancelled');
+  assert.equal(cancelled.revision, job.revision + 1);
+  assert.equal(calls.cancel, 3);
+
+  // 注册表口径：转写源有 cancel ⇒ 走 200 分支（此前是 existsWithoutCancel ⇒ 503）。
+  const transcriptionRegistry = createJobRegistry([transcription]);
+  const viaRegistry = await transcriptionRegistry.cancel({ userId: 'u', jobId: JOB_ID, ifMatch: '"3"', idempotencyKey: 'k2' });
+  assert.equal(viaRegistry.state, 'cancelled');
+  assert.equal(viaRegistry.result, null);
 
   const recognitionService = {
     async getJob({ jobId }) {

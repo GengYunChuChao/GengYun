@@ -19,6 +19,11 @@
  * 读面复用已合并的 `ocr/service.ts` 的 `getJob`（域内 `toJob` 产物**已是**契约 `Job` 九键形状）；
  * 取消面复用同文件的 `cancelJob`（`queued`/`running` → `cancelled`，revision 恰好 +1，终态不可
  * 取消）⇒ 与识别源同构地**提供 `cancel`**，版本冲突/终态等语义仍由 OCR 域自己决定。
+ *
+ * GY-R27 追加（**纯追加，不改其它源**）：转写源补上 `cancel` 面（#11/#13 的取消能力）。
+ * 取消面复用已合并的 `speech/service.ts` 的 `cancelJob`（`queued`/`running` → `cancelled`，
+ * revision 恰好 +1；终态再取消 ⇒ 域内 `OBJECT_UNAVAILABLE` 原样透出）；本层**不判状态、
+ * 不改 revision、不另写状态机**——`canTransitionJob` 仍只在 `speech/state.ts` 一处。
  */
 import { ApiError } from '../errors.ts';
 import type { OcrService } from '../ocr/service.ts';
@@ -74,12 +79,13 @@ export function createRecognitionJobSource(
 }
 
 /**
- * 转写域作业源（#11/#102）：`getJob` 读取可用。
+ * 转写域作业源（#11/#102）：`getJob` 读取、`cancelJob` 取消（GY-R27 接线）。
  *
- * **取消能力：本基线没有**——`speech/service.ts` 只提供受理/读取/确认/删除，没有取消入口；
- * 派单明令"不得在作业面上另写一套状态机""不得改动各域服务语义"，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）**（"该作业所属能力尚未提供取消"）
- * 如实拒绝；**不会**假装取消成功，也**不会**为它伪造 `cancelled` 状态。
+ * 取消语义**全部由 `speech/service.ts` 决定**，本层只做两件事：
+ * - 域内 `NOT_FOUND`（不存在**或**越权）⇒ `null`，注册表据此回同形 404；
+ * - 其余错误（`REVISION_CONFLICT` / `OBJECT_UNAVAILABLE` / `IDEMPOTENCY_*` /
+ *   `REQUEST_IN_PROGRESS`）**原样透出** ⇒ 终态不可取消等问题如实回 409，
+ *   **不再**被改写成 `503 PROVIDER_UNAVAILABLE`（本基线之前的形态：无 `cancel` ⇒ 503）。
  */
 export function createTranscriptionJobSource(service: SpeechService): JobSourcePort {
   return {
@@ -87,6 +93,19 @@ export function createTranscriptionJobSource(service: SpeechService): JobSourceP
     async get(input: JobSourceGetInput) {
       try {
         return await service.getJob({ userId: input.userId, jobId: input.jobId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    async cancel(input: JobSourceCancelInput) {
+      try {
+        return await service.cancelJob({
+          userId: input.userId,
+          jobId: input.jobId,
+          ifMatch: input.ifMatch,
+          idempotencyKey: input.idempotencyKey,
+        });
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;

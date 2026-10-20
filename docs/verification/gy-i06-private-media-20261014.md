@@ -87,7 +87,7 @@
 
 | 文件 | 状态 | 为什么这样装配 |
 | --- | --- | --- |
-| [services/api/src/media/object-store.ts](../../services/api/src/media/object-store.ts) | 新增 | 对象存储端口三态：`substitute`（明确标注的替身，句柄域 `substitute.invalid`，零网络）/ `unwired`（每操作 503，fail-closed）/ `s3_compatible`（COS/S3 兼容 SigV4 预签名 + `fetch`，**只写好、从未被调用**）。端口是**异步**的，因为契约的 `UploadCompleteInput` 只有 `{sha256,bytes}` —— 字节必须由服务端从对象存储取回，网络 I/O 无法在同步端口里表达。 |
+| [services/api/src/media/object-store.ts](../../services/api/src/media/object-store.ts) | 新增 | 对象存储端口三态：`substitute`（明确标注的替身，句柄域 `substitute.invalid`，零网络）/ `unwired`（每操作 503，fail-closed）/ `s3_compatible`（COS/S3 兼容 SigV4 预签名 + `fetch`，**R27-S8 已在测试的进程内 `fetch` 替身下跑通 put/get/has/delete/presign 全路径并独立重算 SigV4**；未对接真实桶、未做真实签名往返，**产品装配路径仍从未被实际调用**）。端口是**异步**的，因为契约的 `UploadCompleteInput` 只有 `{sha256,bytes}` —— 字节必须由服务端从对象存储取回，网络 I/O 无法在同步端口里表达。 |
 | [services/api/src/media/service.ts](../../services/api/src/media/service.ts) | 新增 | HTTP 面的唯一业务入口。**复用** `packages/media` 的已合并原语（`validateUploadInput` / `validateCompleteInput` / `assertBytesMatchDeclaration` / `stripImageMetadata` / `createAccessTokenFactory` / 常量与 `MediaError`），**不修改 `packages/media/**`**。`packages/media/service.mjs` 保持为模块内参考实现（由 `tests/media/**` 覆盖）：其存储端口是同步的、且要求调用方在 `completeUpload` 直接交出媒体字节，这两点与冻结契约的「预签名直传 + 服务端取回核验」不一致，故异步边界由本层承担。 |
 | [services/api/src/media/content-source.ts](../../services/api/src/media/content-source.ts) | 新增 | 社区取图的公开内容来源端口。**默认关闭**（一律返回 null ⇒ 统一 404，不误放行）；真实来源属社区/审核线，本任务**不修改** `services/api/src/community/**`、`services/api/src/admin/**` 等已合并文件。 |
 | [services/api/src/media/packages.d.ts](../../services/api/src/media/packages.d.ts) | 新增 | 对 `*packages/media/index.mjs` 的只读类型声明（与 `community/moderation.d.ts`、`privacy/reference.d.ts` 同一做法），让导出漂移在 `npm run lint`（tsc）阶段暴露。 |
@@ -239,7 +239,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 
 | 项 | 状态 |
 | --- | --- |
-| 真实对象存储（腾讯云 COS / S3 兼容桶） | **未验证**。`createS3CompatibleObjectStore` / `presignS3Url` 的代码路径在本仓库内**从未被实际调用**；未对接任何真实桶、未做签名往返核验；测试只覆盖结构断言（https、必需 `X-Amz-*` 查询参数、未发起网络请求）。 |
+| 真实对象存储（腾讯云 COS / S3 兼容桶） | **未验证（对接层面）**。R27-S8 已把 `createS3CompatibleObjectStore` / `presignS3Url` 的 put/get/has/delete/presign 全路径在测试的**进程内 `fetch` 替身**下跑通，并用测试自写的 SigV4（规范化串 + HMAC-SHA256 链）独立复算签名、逐字节相等（`tests/unit/media-object-store-s3-paths.test.mjs`）；但**未对接任何真实桶、未做真实签名往返核验**，测试不发起任何真实网络请求，**产品装配路径仍从未被实际调用**。 |
 | 上传/读取访问网关、CDN、原桶 URL 重定向策略 | **未接线**。冻结契约（85 条路径 / 112 条 operation）内**没有**满足「owner 私有媒体字节读取」语义的那一条 operation：`/media/{id}/content` 不在契约里（复现：`GET /api/v1/media/{id}/content` ⇒ 404「未实现的路径」；契约内唯一返回二进制的 `GET /community/media/{grant_id}/content` 只服务社区公开已审上下文）；`grantMediaAccess` 的句柄 URL 消费端属部署期网关，本仓库不提供该数据面 ⇒ **客户端经契约取不到私有媒体字节**。 |
 | 真实微信登录态 | **未验证**。测试用合成身份（stub 登录替身或直接注入合成会话）；微信开发者工具未运行。 |
 | 真机 / Android / iOS / 小程序端 | **未验证**。本片不含客户端改动，也未在真机或微信开发者工具中验证。 |
@@ -386,7 +386,7 @@ refs after cleanup    → rawRef=null derivativeRef=null
 | 返修 P1：端口持续返回 `false`（未能确认）⇒ 引用与待清理计数保留，恢复后才清空 | `false` 型故障：清扫中如实报 `pendingObjects=1` / `remainingObjects=1` 且**引用仍在**；故障耗尽后重试成功 |
 | 返修 P1：重复删除（已是 deleted）仍会重试回收；completeUpload 失败回收走同一原则 | 同源路径：状态已 `deleted` 时再次 DELETE 真正回收；`completeUpload` 失败回收失败后引用保留、`cleanupOrphans` 可重试 |
 
-**未取得项不变**：真实对象存储、访问网关、持久化媒体记录、真机、微信工具与供应商音频适配仍未验证；
+**未取得项不变**：真实对象存储（**对接层面**：R27-S8 只在合成的进程内 `fetch` 替身下跑通，未对接真实桶，见 §8）、访问网关、持久化媒体记录、真机、微信工具与供应商音频适配仍未验证；
 监工未验收，本片**不关闭 #6**。
 
 ## 12 校订记录：`AccessGrant.url` 的 host 改为配置项（D3 裁定，2026-10-17）
