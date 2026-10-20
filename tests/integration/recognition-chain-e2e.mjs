@@ -20,15 +20,15 @@
  *   - 真实识别供应商：仓内无凭据，`createRealRecognitionProvider` fail-closed（`real` 模式
  *     上传会 503 `PROVIDER_UNAVAILABLE`），本脚本全程 stub 替身 + 合成 media_id；
  *   - 真实图片上传：替身媒体端口只按 media_id 派候选，不解码图像；
- *   - 微信登录 / 微信开发者工具 / 真机证据：合成身份码，无微信侧调用；
- *   - 「同分候选 ⇒ uncertain」：#299 已并入 main（`ab7c31f`），同分并列判定规则已在产品代码内（`state.ts`
- *     头注释＋`REASON_TIED_TOP_SCORE`）；**本脚本仍未覆盖该路径**（替身不产出同分候选、脚本未构造该输入）⇒ 登记未取得（订正 2026-10-20，实测 main `df043a7`）。
+ *   - 微信登录 / 微信开发者工具 / 真机证据：合成身份码，无微信侧调用。
  *
  * 退出码：三档，跳过＝未取得（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅本机开发，⛔ 不得进门禁）：
  *   0  —— 内存臂（以及设置了 env 时的真库臂）全部通过；
  *   77 —— 真库臂**未取得**（`RECOGNITION_CHAIN_PG_TEST_URL` 未设置）：
  *         POSIX「skipped」惯例，本次运行没有验证真库持久化；
  *   1  —— 任一断言失败（打印原始断言与实测读数，不吞错）。
+ *
+ * 「同分候选 ⇒ uncertain」**已覆盖**（2026-10-20 实测）：替身按 `media_id` 构造 Top1=Top2 同分候选 ⇒ 产品 `decideOutcome` 判 `uncertain`＋`REASON_TIED_TOP_SCORE`；同一臂另有「分数不同 ⇒ succeeded」正控制（读数见证据页 §6）。
  */
 import assert from 'node:assert/strict';
 import pg from 'pg';
@@ -40,7 +40,7 @@ import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createMemoryRecognitionStore } from '../../services/api/src/recognitions/store.ts';
 import { createSubstituteMediaPort } from '../../services/api/src/recognitions/media.ts';
-import { createStubRecognitionProvider } from '../../services/api/src/recognitions/provider.ts';
+import { createStubRecognitionProvider, STUB_SPECIES_IDS } from '../../services/api/src/recognitions/provider.ts';
 
 const API = '/api/v1';
 const HISTORY = `${API}/history`;
@@ -212,14 +212,14 @@ function listItems(body) {
   return body.data.items;
 }
 
-/** 计数包装：重放不得再触发第二次提供者调用（也即不得产生第二个任务）。 */
-function countingProvider(counter) {
-  const base = createStubRecognitionProvider();
+/** 计数包装：重放不得再触发第二次提供者调用（也即不得产生第二个任务）。
+ *  `inner`：内层替身（本片传 `tieScriptedProvider()`），包装顺序＝脚本替身 ← 计数 ← 装配。 */
+function countingProvider(counter, inner = createStubRecognitionProvider()) {
   return {
-    ...base,
+    ...inner,
     async recognize(input) {
       counter.calls += 1;
-      return base.recognize(input);
+      return inner.recognize(input);
     },
   };
 }
@@ -229,7 +229,7 @@ function buildArm(name, overrides) {
   const app = buildApp({
     config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     recognitionStore: createMemoryRecognitionStore(),
-    recognitionProvider: countingProvider(counter),
+    recognitionProvider: countingProvider(counter, tieScriptedProvider()),
     recognitionMedia: createSubstituteMediaPort(),
     // 悬挂/超时分支不在本链路断言范围内；给个短截止避免退出时被定时器拖住。
     recognitionJobDeadlineMs: 2500,
@@ -346,12 +346,12 @@ async function runChain(arm) {
     'i08-uncertain',
     `job=${uncertainJob.id} state=uncertain candidates=${JSON.stringify(uncertainValue.candidates)} reasons=${JSON.stringify(uncertainValue.uncertainty_reasons)}`,
   );
-  // #299 已并入 main（ab7c31f），同分规则已在产品代码内；本脚本仍未覆盖该路径 ⇒ 如实登记「未取得」（订正 2026-10-20）。
-  note(
-    armName,
-    'skip-tie',
-    'SKIP 同分候选区分：#299 已并入 main（ab7c31f），同分规则已在产品代码内；本脚本仍未覆盖该路径（替身不产出同分候选、脚本未构造该输入）⇒ 登记「未取得」，不写死期望',
-  );
+  // 步骤 5b（#9 同分并列）：Top1 与 Top2 同分的替身输入在**本链末尾**的 `runTieCoverage()` 里构造 ——
+  // 放末尾是为了不破坏本段既有的「提供者累计调用恰 2 次」「历史恰 2 条」计数断言；
+  // 那里断言 `state=uncertain`、`uncertainty_reasons` **恰为** `[REASON_TIED_TOP_SCORE]`、`selected_species_id=null`、
+  // 三个候选原样保留，并在**同一臂**内用「分数不同」的输入做正控制（必须 `succeeded`）；
+  // 真读数（job/state/reasons/candidates）打印为 `step=i09-tie` / `step=i09-tie-control`。
+  // 本脚本不再为同分路径打印 SKIP：该路径由产品 `decideOutcome` 判定，脚本只断言观测值。
 
   // === 步骤 6（#9）：终态落历史，且历史如实保留终态 ===
   const arrived = await waitHistoryFor(origin, tokenA, first.recognitionId);
@@ -535,8 +535,169 @@ async function runChain(arm) {
     );
   }
 
-  note(armName, 'done', '链路全部断言通过：上传受理→结果→可信度/理由→历史→读回→越权隔离→删除→再读为空→重放语义');
+  // === 步骤 12（#9 同分并列）：Top1 与 Top2 同分 ⇒ uncertain；同臂正控制 ⇒ succeeded ===
+  // 放在链路末尾：同分用例要额外各上传一次（会新产生任务与历史行），插在步骤 6–10 之间会撞上
+  // 「提供者累计调用恰 2 次」「历史恰 2 条」这些既有计数断言。
+  await runTieCoverage(arm, origin, tokenA);
+
+  note(armName, 'done', '链路全部断言通过：上传受理→结果→可信度/理由→历史→读回→越权隔离→删除→再读为空→重放语义→同分并列(uncertain)／正控制(succeeded)');
   return { origin, historyId: historyRow.id, jobId: first.jobId, recognitionId: first.recognitionId };
+}
+
+// ---------------------------------------------------------------------------
+// 步骤 12（#9）：Top1 与 Top2 同分并列 ⇒ uncertain（替身构造输入，产品判定）
+// ---------------------------------------------------------------------------
+
+// `import` 声明会被提升到模块顶部；把它放在这里（而不是文件头）是**刻意**的：文件上半部分的
+// 行号因此保持不变，证据页 §1.1/§5 里既有的 `tests/integration/recognition-chain-e2e.mjs:NN`
+// 指针仍然指着同一条断言（本片没有为了让某个数字对得上而删改既有断言）。
+import { REASON_TIED_TOP_SCORE } from '../../services/api/src/recognitions/state.ts';
+
+/**
+ * 同分脚本专用（合成）media_id：`tieScriptedProvider()` 只按这两个值覆写脚本输出，
+ * 其它 media_id 仍原样交给 stub 分桶 ⇒ 步骤 2–11 的读数与改动前逐字相同。
+ */
+const MEDIA_TIE = '22222222-2222-4222-8222-222222222222';
+const MEDIA_TIE_CONTROL = '33333333-3333-4333-8333-333333333333';
+
+/**
+ * 替身脚本输出的候选（**替身**，不构成任何准确率证据；species_id 取自 `STUB_SPECIES_IDS` 的合成命名空间）：
+ *   - `MEDIA_TIE`：Top1 与 Top2 **同分**（0.83 / 0.83）⇒ 产品必须判 `uncertain`＋`REASON_TIED_TOP_SCORE`；
+ *   - `MEDIA_TIE_CONTROL`：三档分数**互不相同**（0.88 / 0.62 / 0.37）⇒ 产品必须判 `succeeded`。
+ * 两者的 Top1 都 ≥ 实现层可信门槛，因此**不会**先撞上「最高分低于可信门槛」规则而根本没走到同分分支。
+ * 这两份常量同时是**期望值**：提供者每次返回它们的副本，服务端改写不回常量
+ * （否则「候选原样保留」会变成自证）。
+ */
+const TIE_CANDIDATES = [
+  { species_id: STUB_SPECIES_IDS[0], rank: 1, model_score: 0.83 },
+  { species_id: STUB_SPECIES_IDS[1], rank: 2, model_score: 0.83 },
+  { species_id: STUB_SPECIES_IDS[2], rank: 3, model_score: 0.31 },
+];
+const TIE_CONTROL_CANDIDATES = [
+  { species_id: STUB_SPECIES_IDS[0], rank: 1, model_score: 0.88 },
+  { species_id: STUB_SPECIES_IDS[1], rank: 2, model_score: 0.62 },
+  { species_id: STUB_SPECIES_IDS[2], rank: 3, model_score: 0.37 },
+];
+
+/**
+ * 同分替身提供者：`{ ...base, async recognize(input) { … } }` 特化范式
+ * （同本文件的 `countingProvider` 与 `tests/integration/jobs-http.mjs` 的 `orchestratedProvider`）。
+ *
+ * 它**只产出候选与原因**，不判终态 —— `uncertain` 是产品 `services/api/src/recognitions/state.ts`
+ * 的 `decideOutcome()` 按「Top1 与 Top2 同分」判出来的；脚本不自算、不复制那条规则，
+ * 也不把期望写成「只要不是 succeeded 就算过」。
+ */
+function tieScriptedProvider() {
+  const base = createStubRecognitionProvider();
+  const scripted = (candidates) => ({
+    kind: 'completed',
+    // 逐条拷贝：常量只作期望值，不被提供者以引用形式交出去。
+    candidates: candidates.map((candidate) => ({ ...candidate })),
+    uncertainty_reasons: [],
+  });
+  return {
+    ...base,
+    async recognize(input) {
+      if (input.mediaId === MEDIA_TIE) return scripted(TIE_CANDIDATES);
+      if (input.mediaId === MEDIA_TIE_CONTROL) return scripted(TIE_CONTROL_CANDIDATES);
+      return base.recognize(input);
+    },
+  };
+}
+
+/** 契约 Candidate 只有三键：投影成三键后再与替身脚本逐项比较（多字段/少字段都算漂移）。 */
+function candidateProjection(candidates) {
+  return candidates.map(({ species_id: speciesId, rank, model_score: score }) => ({
+    species_id: speciesId,
+    rank,
+    model_score: score,
+  }));
+}
+
+/**
+ * 步骤 12：同分并列（`uncertain`）＋ 同臂正控制（`succeeded`）。
+ *
+ * 断言的全是**观测值**（`GET /jobs/{id}` 与 `GET /recognitions/{id}` 的投影），不自算状态：
+ *   1) 同分输入终态 `uncertain`（⛔ 不得 `succeeded`），且 `error_code=null`；
+ *   2) `uncertainty_reasons` **恰为** `[REASON_TIED_TOP_SCORE]`（逐字引用常量，不手抄中文串）；
+ *   3) `selected_species_id === null`（同分不替用户选）；
+ *   4) `candidates` 原样保留：键集恰等契约三键、`species_id`/`rank`/`model_score` 与替身脚本逐项相等；
+ *   5) **正控制**：同一臂、同一装配，只换「分数互不相同」的输入 ⇒ 必须 `succeeded` 且 `reasons=[]`
+ *      （否则 1) 的 `uncertain` 可能只是「一律 uncertain」造成的假绿）。
+ */
+async function runTieCoverage(arm, origin, tokenA) {
+  const { name: armName } = arm;
+  const callsBefore = arm.counter.calls;
+
+  // ---- 12a：Top1 与 Top2 同分 ⇒ 产品判 uncertain ----
+  const tie = await upload(origin, tokenA, MEDIA_TIE, idem('upload-tie'));
+  const { job: tieJob } = await waitJob(origin, tokenA, tie.jobId);
+  assert.equal(tieJob.state, 'uncertain', `Top1/Top2 同分必须落 uncertain（⛔ 不得 succeeded）：${JSON.stringify(tieJob)}`);
+  assert.equal(tieJob.error_code, null, 'uncertain 不是 failed：不写错误码');
+  assert.deepEqual(tieJob.target_ref, { type: 'recognition', id: tie.recognitionId, revision: 1 });
+  const tieValue = tieJob.result.value;
+  assert.equal(tieValue.id, tie.recognitionId);
+  assert.deepEqual(
+    tieValue.uncertainty_reasons,
+    [REASON_TIED_TOP_SCORE],
+    `同分原因必须**恰为**该常量（不是「包含」、也不是手抄中文串）：${JSON.stringify(tieValue.uncertainty_reasons)}`,
+  );
+  assert.equal(tieValue.selected_species_id, null, '同分并列不得替用户选中任何物种');
+  tieValue.candidates.forEach((candidate) => {
+    assert.deepEqual(
+      Object.keys(candidate).sort(),
+      ['model_score', 'rank', 'species_id'],
+      `候选投影键集必须恰等契约三键：${JSON.stringify(candidate)}`,
+    );
+  });
+  assert.deepEqual(
+    candidateProjection(tieValue.candidates),
+    TIE_CANDIDATES,
+    `同分用例的候选必须原样保留（species_id/rank/model_score 逐项相等，model_score 不得被服务端改写）：${JSON.stringify(tieValue.candidates)}`,
+  );
+  // 结果面与任务面必须是同一份投影（同 `i08-readback` 的口径，对不确定终态同样成立）。
+  const tieReadBack = await http(origin, tokenA, 'GET', `${RECOGNITIONS}/${tie.recognitionId}`);
+  assert.equal(tieReadBack.status, 200, JSON.stringify(tieReadBack.body));
+  assert.equal(tieReadBack.cache, 'no-store');
+  assert.equal(tieReadBack.etag, '"1"', '识别结果以强 ETag 暴露 revision');
+  assert.deepEqual(tieReadBack.body.data, tieValue, '同分结果的任务面与结果面必须是同一份投影');
+  note(
+    armName,
+    'i09-tie',
+    `job=${tieJob.id} state=${tieJob.state} error_code=${tieJob.error_code} reasons=${JSON.stringify(tieValue.uncertainty_reasons)} selected_species_id=${JSON.stringify(tieValue.selected_species_id)} candidates=${JSON.stringify(tieValue.candidates)} model_version=${tieValue.model_version}（替身脚本 Top1=Top2=0.83 ⇒ 产品 decideOutcome 判 uncertain；脚本不自算）`,
+  );
+
+  // ---- 12b：正控制（同一臂、同一装配，只换输入）----
+  const control = await upload(origin, tokenA, MEDIA_TIE_CONTROL, idem('upload-tie-control'));
+  const { job: controlJob } = await waitJob(origin, tokenA, control.jobId);
+  assert.notEqual(control.recognitionId, tie.recognitionId, '两次上传必须是两条独立识别记录');
+  assert.equal(
+    controlJob.state,
+    'succeeded',
+    `同一臂内「分数互不相同」的输入必须 succeeded（否则 12a 的 uncertain 可能是「一律 uncertain」的假绿）：${JSON.stringify(controlJob)}`,
+  );
+  assert.equal(controlJob.error_code, null);
+  assert.notEqual(controlJob.state, tieJob.state, '同分与分数不同必须在终态上可区分');
+  const controlValue = controlJob.result.value;
+  assert.deepEqual(controlValue.uncertainty_reasons, [], 'succeeded 不得携带不确定原因（否则是自相矛盾的投影）');
+  assert.equal(controlValue.selected_species_id, null);
+  assert.deepEqual(
+    candidateProjection(controlValue.candidates),
+    TIE_CONTROL_CANDIDATES,
+    `正控制候选也必须原样保留：${JSON.stringify(controlValue.candidates)}`,
+  );
+  note(
+    armName,
+    'i09-tie-control',
+    `job=${controlJob.id} state=${controlJob.state} reasons=${JSON.stringify(controlValue.uncertainty_reasons)} candidates=${JSON.stringify(controlValue.candidates)}（同臂分数互不相同 ⇒ 产品判 succeeded，证明上一步不是「一律 uncertain」）`,
+  );
+
+  // 两次上传各触发一次提供者调用：同分/正控制的读数确实来自**替身提供者**，不是缓存或回放。
+  assert.equal(
+    arm.counter.calls,
+    callsBefore + 2,
+    `同分与正控制应各触发一次提供者调用（实测新增 ${arm.counter.calls - callsBefore} 次）`,
+  );
 }
 
 // ---------------------------------------------------------------------------
