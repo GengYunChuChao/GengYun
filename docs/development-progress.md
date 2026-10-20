@@ -102,9 +102,9 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 与 10-18 节读数（112／108／implemented 13／partial 95／planned 4）逐项相同：本区间合入的 #295～#296、#320～#322、#323 提供的是 PG 持久化与取消能力，未把任何条目从 partial 升级为 implemented；#325 只订正文案、#326 只改测试。另按 JSON 原文统计复核：`node -e "…JSON.parse(contract-status.json)…"` 得 `operations 112 {"partial":95,"implemented":13,"planned":4}`，与门禁读数一致。装配数与状态只说明路由是否挂上、人工判定为何，不代表真实能力或整项验收。
 
-### 台账滞后（已知滞后）：#325 订正 10 处，其余未随 main 更新
+### 台账滞后（已知滞后）：#325 订正 16 处，其余未随 main 更新
 
-`#325` 于 2026-10-20T12:03:58Z 合入（`f18763e`），已订正取消覆盖面与消息持久化：`:614`／`:639`（取消按 kind 分派、转写与合成已接 cancel）、`:971`／`:991`／`:1011`／`:1031`（转写四端点）、`:1051`（`createSynthesis` 取消已接线）、`:1771`／`:1792`／`:1813`（`listMessages`／`getUnreadCount`／`markMessageRead` 改为「real + 池 ⇒ 迁移 0019 与 `messages/store-pg.ts`，real 无池才 503」），状态全部仍 partial、零升级（共 10 处）。以下记录仅作追溯；仍存滞后的 4 条逐行列出，本快照不采用其结论，也不在本次改台账。
+`#325` 于 2026-10-20T12:03:58Z 合入（`f18763e`），已订正取消覆盖面与消息持久化，`git show f18763e --unified=0 -- docs/architecture/contract-status.json` 实测 **16 个 hunk**：`:614`／`:639`（取消按 kind 分派、转写与合成已接 cancel）、`:871`／`:891`／`:911`／`:931`／`:951`（OCR 五端点，取消证据行号 `services/api/src/jobs/sources.ts:169-186` → `:208`）、`:971`／`:991`／`:1011`／`:1031`（转写四端点）、`:1051`（`createSynthesis` 取消已接线）、`:1771`／`:1792`／`:1813`（`listMessages`／`getUnreadCount`／`markMessageRead` 改为「real + 池 ⇒ 迁移 0019 与 `messages/store-pg.ts`，real 无池才 503」）、`:3086`（共享作业面 blocker 的取消覆盖面：由「识别与 OCR 两域」改为「识别、转写、合成与 OCR 四域」并列 `sources.ts:65`／`:107`／`:153`／`:208`），状态全部仍 partial、零升级（共 16 处；同一提交对 `docs/architecture/contract-implementation-status.md` 的改动为 `git show --numstat` 的 18/18，落 6 个 hunk：`:17`／`:19`／`:40`／`:70`／`:80`／`:118`）。以下记录仅作追溯；仍存滞后的 4 条逐行列出，本快照不采用其结论，也不在本次改台账。
 
 - 【仍滞后】`:419`（`requestAccountDeletion`）只写「本片只交付受理 HTTP 面」与「真实删除执行仍在进程内注册表」，未列 `0023_user_backup_copies.sql` 与 `services/api/src/privacy/backup-copies-pg.ts`（随 #295 合入）的备份副本域与 30 天清除链 ⇒ 台账未反映该域；仍缺 7／30 日到期的真实执行与第三方删除证据。
 - 【已订正】`:971`（`createTranscription`）「取消未接线」已由 #325 订正（转写取消随 #321 接线，`services/api/src/jobs/sources.ts:107`）；`:1051`（`createSynthesis`）同理（随 #322，`services/api/src/jobs/sources.ts:153`）。
