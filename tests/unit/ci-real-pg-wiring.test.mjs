@@ -114,6 +114,9 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/account-deletion-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
+  // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合，排在最后（workflow 里也是最后一步）。
+  'tests/integration/ocr-jobs-pg.mjs',
 ]);
 
 /**
