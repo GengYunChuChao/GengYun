@@ -28,9 +28,13 @@
 -- 任何断言为 NULL 也按未通过处理（NULL 视为“无法证明”）。
 -- 调用方 provision-db.sh 会把非 ok 视为失败并退出非零：它只取**最后一行非空输出**
 -- （provision-db.sh:365 `sed '/^[[:space:]]*$/d' | tail -n1`），所以判决之前允许出现
--- 信息行（本文件只用一处：R28-S24 的 recognition_* 软守卫提示，仅在迁移 0025 已合入时打印）。
+-- 信息行：本文件自己不以 `\echo` 报读数，但 20-login-roles.sql 段尾的授权摘要会打印在
+-- 判决之前，探针段内的 42501 也会被 psql 原样打印（ON_ERROR_STOP=0 是设计的一部分）。
 -- R28-S24 更正：旧版这里写「只打印一行」，实际上补授权后新增的 `\echo` 信息行打破了
 -- 这个字面说法；语义约定本来就是“最后一行是判决”，这里按真实约定改写。
+-- R28-S28 更正：S24 的 recognition_* 软守卫（本文件曾经唯一的一处“信息行”）已随本片
+-- 收敛为硬前置（manifest required=true + 20-login-roles.sql 段 J 的缺表硬守卫），
+-- 本文件不再有软提示，真实约定只有一句：**最后一行是判决**。
 --
 -- 本文件是「只报不改」：发现越权只报告，不自动 REVOKE，
 -- 避免脚本静默改变既有角色语义（services/api/db/roles/*.sql 是唯一权威）。
@@ -89,19 +93,6 @@ SELECT (to_regclass('public.schema_migrations') IS NOT NULL) AS ledger_ok \gset
   \echo '      本文件 15 项断言不依赖它，故继续执行；但“迁移由 migrate.ts 应用”在本库无法证明。'
   \echo '      若这是目标 CVM，属异常：请用 DATABASE_URL=… node services/api/src/db/migrate.ts up 后重跑。'
   \echo '      （等价复跑环境：用 psql -f 应用迁移时不会有该台账，此告警属预期。）'
-\endif
-
--- --- R28-S24 软守卫：recognition_*（迁移 0025，本分支未合入） ------------------
--- 本分支**不**为 recognition_* 授权，也不把它写进授权清单：那三张表的建表迁移
--- 还在未合入的 PR #333 里。若将来合并后有人装了库却忘了补授权，这里会**如实提示**
--- 一次（而不是假装已覆盖）；提示在判决之前，不影响 provision-db.sh 取最后一行。
--- 检测方式就是 to_regclass：对本分支（表不存在）天然安全，不产生任何输出。
-SELECT (to_regclass('public.recognition_jobs') IS NOT NULL
-        OR to_regclass('public.recognition_records') IS NOT NULL
-        OR to_regclass('public.recognition_idempotency') IS NOT NULL) AS r28_recognition_present \gset
-\if :r28_recognition_present
-  \echo '提示：检测到 recognition_*（迁移 0025）表存在，但本分支的 sql/20-login-roles.sql 尚未为其授权，'
-  \echo '      运行时访问这些表会 42501。授权草案与取舍见 docs/verification/gy-r28-least-privilege-grants-20261020.md。'
 \endif
 
 -- --- R28-S24 真执行探针（零行、零改动） ---------------------------------------
@@ -440,6 +431,261 @@ ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S26 探针结束 ----------------------------------------------------------
 
+-- --- R28-S28 真执行探针（识别域四表：迁移 0025；真行、零残留）------------------
+-- 与上面两段同一范式（BEGIN → SET LOCAL ROLE → 每条 SAVEPOINT → 最后 ROLLBACK），
+-- 差异只有一处：**读之外还写真行**。0025 的 CHECK 与外键只有真行才会被求值
+-- （kind='recognition'、candidates/uncertainty_reasons 必须是 jsonb 数组、
+-- selected_species_id/species_id 长度 1..80、provenance ∈ human|manual_override|preset_demo、
+-- linkage 必须是 jsonb 对象、owner_user_id 与 recognition_id 两个外键），而
+-- `ON CONFLICT … DO UPDATE` 也只有在**真冲突**时才走 UPDATE 分支。所以：
+--   * INSERT 插真行，证明 CHECK / 外键 / 冲突分支与运行时权限同时成立；
+--   * UPDATE 打真行（`WHERE id = … AND revision = 1`，与 store 的 CAS 形状一致）；
+--   * `SELECT … FOR UPDATE` 锁真行（jobs 见 store-pg.ts:613 认领、records 见 :708 终态提交）；
+--   * 两条 DELETE 真删探针行（release 删 pending 行、purge 删过期行）；
+--   * 最后整体 ROLLBACK：探针属主与四个探针行都不会留下。
+-- 行 id 用固定的探针 UUID（28a28a28-…，本片专用前缀），不靠 `\gset` 回读：这样即使某条
+-- INSERT 失败，后面的 UPDATE / FOR UPDATE / DELETE 仍是**合法 SQL**，失败只记在各自的
+-- 探针变量上，不会退化成语法错误掩盖真实读数。（实测：失败语句后的 `\gset` 会被跳过、
+-- 脚本继续；零行结果 `\gset` 反而会记一次 psql 错误 ⇒ 这里只在必然返回一行处用 `\gset` 去噪。）
+\set ON_ERROR_STOP off
+BEGIN;
+
+-- 探针属主：以属主身份插（运行时对 users 只有列级 SELECT/INSERT，不在识别域授权面内）。
+-- ON CONFLICT 只为重复执行/上次异常中断后仍能跑；正常路径不会命中。
+INSERT INTO public.users (id)
+VALUES ('28a28a28-0000-4000-8000-000000000000'::uuid)
+ON CONFLICT (id) DO NOTHING;
+
+SET LOCAL ROLE gengyun_api_runtime;
+\set r28_probe_rec_role :ERROR
+
+-- [1] recognition_jobs SELECT 12 列（store-pg.ts:576 getJob / :587 updateJob 读回）
+SAVEPOINT r28_probe_rec;
+SELECT id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+       state, deadline_at, created_at, updated_at, error_code
+  FROM public.recognition_jobs
+ WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_rec_job_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [2] recognition_jobs INSERT 12 列 + RETURNING id（store-pg.ts:184-186）：真行，保留到段末
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_jobs
+       (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+        state, deadline_at, created_at, updated_at, error_code)
+VALUES ('28a28a28-0001-4000-8000-000000000001'::uuid, 1, 'recognition',
+        '28a28a28-0000-4000-8000-000000000000'::uuid,
+        '28a28a28-0002-4000-8000-000000000002'::uuid,
+        '28a28a28-0011-4000-8000-000000000011'::uuid, 1, 'queued',
+        now() + interval '10 minutes', now(), now(), NULL)
+RETURNING id \gset
+\set r28_probe_rec_job_ins :ERROR
+\if :r28_probe_rec_job_ins
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+\else
+RELEASE SAVEPOINT r28_probe_rec;
+\endif
+
+-- [3] recognition_jobs UPDATE 真行（store-pg.ts:592-601：SET 5 列，WHERE id + revision）
+SAVEPOINT r28_probe_rec;
+UPDATE public.recognition_jobs
+   SET revision = revision + 1, state = 'succeeded', deadline_at = deadline_at,
+       updated_at = now(), error_code = NULL
+ WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid
+   AND revision = 1
+RETURNING id \gset
+\set r28_probe_rec_job_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [4] recognition_jobs SELECT … FOR UPDATE 真行（store-pg.ts:613）
+SAVEPOINT r28_probe_rec;
+SELECT id FROM public.recognition_jobs
+ WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid
+   FOR UPDATE \gset
+\set r28_probe_rec_job_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [5] recognition_records SELECT 12 列（store-pg.ts:656-658 getRecognition / :668 读回）
+SAVEPOINT r28_probe_rec;
+SELECT id, revision, owner_user_id, media_id, media_revision, candidates,
+       uncertainty_reasons, selected_species_id, model_version, created_at, updated_at, deleted
+  FROM public.recognition_records
+ WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_rec_rec_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [6] recognition_records INSERT 12 列 + RETURNING id（store-pg.ts:188-190）：真行
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_records
+       (id, revision, owner_user_id, media_id, media_revision, candidates,
+        uncertainty_reasons, selected_species_id, model_version, created_at, updated_at, deleted)
+VALUES ('28a28a28-0002-4000-8000-000000000002'::uuid, 1,
+        '28a28a28-0000-4000-8000-000000000000'::uuid,
+        '28a28a28-0011-4000-8000-000000000011'::uuid, 1,
+        '[]'::jsonb, '[]'::jsonb, NULL, 'r28-s28-probe', now(), now(), false)
+RETURNING id \gset
+\set r28_probe_rec_rec_ins :ERROR
+\if :r28_probe_rec_rec_ins
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+\else
+RELEASE SAVEPOINT r28_probe_rec;
+\endif
+
+-- [7] recognition_records UPDATE 真行（store-pg.ts:676-698：SET 7 列，WHERE id + revision）
+SAVEPOINT r28_probe_rec;
+UPDATE public.recognition_records
+   SET revision = revision + 1, candidates = candidates,
+       uncertainty_reasons = uncertainty_reasons, selected_species_id = NULL,
+       model_version = model_version, updated_at = now(), deleted = false
+ WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid
+   AND revision = 1
+RETURNING id \gset
+\set r28_probe_rec_rec_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [8] recognition_records SELECT … FOR UPDATE 真行（store-pg.ts:708）
+SAVEPOINT r28_probe_rec;
+SELECT id FROM public.recognition_records
+ WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid
+   FOR UPDATE \gset
+\set r28_probe_rec_rec_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [9] recognition_selections SELECT 8 列（store-pg.ts:762-767 listSelections）
+SAVEPOINT r28_probe_rec;
+SELECT id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at, linkage
+  FROM public.recognition_selections
+ WHERE recognition_id = '28a28a28-0002-4000-8000-000000000002'::uuid
+   AND owner_user_id = '28a28a28-0000-4000-8000-000000000000'::uuid
+ ORDER BY decided_at, id;
+\set r28_probe_rec_sel_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [10] recognition_selections INSERT 8 列 + RETURNING 8 列（store-pg.ts:192-194）：真行
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_selections
+       (id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at, linkage)
+VALUES ('28a28a28-0003-4000-8000-000000000003'::uuid, 1,
+        '28a28a28-0002-4000-8000-000000000002'::uuid,
+        '28a28a28-0000-4000-8000-000000000000'::uuid,
+        'probe-species', 'human', now(), '{}'::jsonb)
+RETURNING id \gset
+\set r28_probe_rec_sel_ins :ERROR
+\if :r28_probe_rec_sel_ins
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+\else
+RELEASE SAVEPOINT r28_probe_rec;
+\endif
+
+-- [11] recognition_idempotency SELECT 4 列（store-pg.ts:216-218 SELECT_IDEMPOTENT）
+SAVEPOINT r28_probe_rec;
+SELECT request_hash, payload, pending, expires_at
+  FROM public.recognition_idempotency
+ WHERE scope = 'r28-s28-probe:claim' AND key_hash = 'claim';
+\set r28_probe_rec_idem_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [12] purge：种子过期行 + DELETE … WHERE expires_at <= now() RETURNING（store-pg.ts:829-834）
+--      先跑 purge、后种 claim 的过期行，是为了让这条 DELETE 只命中本探针那一行：
+--      `RETURNING scope` 配 `\gset` 需要恰好一行（多行会记一次 psql 错误，污染读数）。
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s28-probe:purge', 'purge', 'seed', '{}'::jsonb, false,
+        now() - interval '1 hour');
+DELETE FROM public.recognition_idempotency
+ WHERE expires_at <= now()
+RETURNING scope \gset
+\set r28_probe_rec_idem_purge :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [13] claim：先种一行过期占位（保留），再走真冲突的 ON CONFLICT DO UPDATE
+--      （store-pg.ts:206-214；WHERE public.recognition_idempotency.expires_at <= $5 读旧值）
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s28-probe:claim', 'claim', 'seed', '{}'::jsonb, true,
+        now() - interval '2 hours');
+\set r28_probe_rec_idem_seed :ERROR
+\if :r28_probe_rec_idem_seed
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+\else
+RELEASE SAVEPOINT r28_probe_rec;
+\endif
+
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s28-probe:claim', 'claim', 'claim-2', '{"probe":true}'::jsonb, true,
+        now() + interval '1 hour')
+    ON CONFLICT (scope, key_hash) DO UPDATE
+       SET request_hash = EXCLUDED.request_hash,
+           payload = EXCLUDED.payload,
+           pending = EXCLUDED.pending,
+           expires_at = EXCLUDED.expires_at
+     WHERE public.recognition_idempotency.expires_at <= now()
+RETURNING scope \gset
+\set r28_probe_rec_idem_claim :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [14] complete：同键再走一次 DO UPDATE，SET 4 列 + pending=false（store-pg.ts:221-227）
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s28-probe:claim', 'claim', 'claim-3', '{"probe":"done"}'::jsonb, false,
+        now() + interval '1 hour')
+    ON CONFLICT (scope, key_hash) DO UPDATE
+       SET request_hash = EXCLUDED.request_hash,
+           payload = EXCLUDED.payload,
+           pending = EXCLUDED.pending,
+           expires_at = EXCLUDED.expires_at
+     WHERE public.recognition_idempotency.expires_at <= now();
+\set r28_probe_rec_idem_complete :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- [15] release：种子 pending=true + 整行 DELETE（store-pg.ts:819-823）
+SAVEPOINT r28_probe_rec;
+INSERT INTO public.recognition_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s28-probe:release', 'release', 'seed', '{}'::jsonb, true,
+        now() + interval '1 hour');
+DELETE FROM public.recognition_idempotency
+ WHERE scope = 'r28-s28-probe:release' AND key_hash = 'release' AND pending;
+\set r28_probe_rec_idem_release :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- --- 禁止面：这些语句必须**恰好** 42501（R28-S28 不授予）------------------------
+-- selections 不授 UPDATE ⇒ FOR UPDATE（行锁载体）也拿不到；DELETE 四表一个都不授，
+-- 注销清理由 request_account_deletion() 以属主身份级联完成（owner_user_id ON DELETE CASCADE）。
+SAVEPOINT r28_probe_rec;
+SELECT id FROM public.recognition_selections
+ WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid
+   FOR UPDATE;
+\set r28_probe_rec_sel_lock_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_jobs
+ WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_rec_job_del_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_records
+ WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_rec_rec_del_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_selections
+ WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid;
+\set r28_probe_rec_sel_del_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- R28-S28 探针结束 ----------------------------------------------------------
+
 -- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
 -- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
@@ -463,10 +709,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('deletion_requests',              'forbidden',        true),
     ('deletion_handlers',              'forbidden',        true),
     ('third_party_deletions',          'forbidden',        true),
-    -- 迁移 0025（PR #333，未合入）：存在就必须分类为 forbidden，不存在也不算缺（required=false）
-    ('recognition_jobs',               'forbidden',        false),
-    ('recognition_records',            'forbidden',        false),
-    ('recognition_idempotency',        'forbidden',        false),
+    -- 迁移 0025 已随 #333 合入 main（341ad8c）：本片按 S24 证据页 §10 的方案 B 硬前置，
+    -- 四张识别域表由 20-login-roles.sql 段 J 列级授权，故 required=true（缺表即判红）。
+    ('recognition_jobs',               'granted',          true),
+    ('recognition_records',            'granted',          true),
+    ('recognition_idempotency',        'granted',          true),
     -- 迁移 0013 / 0018 的收藏／历史／对话域（R28-S26）：七张表由 20-login-roles.sql 的 I 段
     -- 列级授权给 gengyun_api_runtime；授权清单与下面 expected 的独立复述必须一致。
     ('favorites',                      'granted',          true),
@@ -476,9 +723,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('conversations',                  'granted',          true),
     ('conversation_turns',             'granted',          true),
     ('conversation_answers',           'granted',          true),
-    -- 迁移 0025 的 recognition_selections：与上面三行 recognition_* 同语义的**权宜快照**
-    -- （「当下确实没给」，不是「设计上不给」）；识别域整片的授权缺口留给独立一片修。
-    ('recognition_selections',         'forbidden',        false)
+    -- 迁移 0025 的 recognition_selections：与上面三行同一片授权（R28-S28 段 J），
+    -- 不再标 forbidden —— 它是运行时真实写入的「选中结果」台账（store-pg.ts:192-194）。
+    ('recognition_selections',         'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -598,7 +845,40 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','turn_id','owner_id','revision','status','checked_text','check_state','citations',
            'dose_cards','model_version','prompt_version','rule_version','created_at','updated_at'],
      ARRAY[]::text[],
-     false)
+     false),
+    -- R28-S28（迁移 0025）：识别域四表。列清单与 20-login-roles.sql 段 J 逐列一致，
+    -- 但这里是**独立复述**（同一事实的第二次写法），任一处漂移都会被下面的逐表断言抓住。
+    -- recognition_selections 的 upd 是空数组：store 只 INSERT / SELECT，不 UPDATE；
+    -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见 store:820/:830。
+    ('recognition_jobs',
+     ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['revision','state','deadline_at','updated_at','error_code'],
+     false),
+    ('recognition_records',
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','candidates',
+           'uncertainty_reasons','selected_species_id','model_version','created_at','updated_at',
+           'deleted'],
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','candidates',
+           'uncertainty_reasons','selected_species_id','model_version','created_at','updated_at',
+           'deleted'],
+     ARRAY['revision','candidates','uncertainty_reasons','selected_species_id','model_version',
+           'updated_at','deleted'],
+     false),
+    ('recognition_selections',
+     ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
+           'linkage'],
+     ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
+           'linkage'],
+     ARRAY[]::text[],
+     false),
+    ('recognition_idempotency',
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['request_hash','payload','pending','expires_at'],
+     true)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
   -- 这样以后再加表只需改这一处，不会再出现「清单扩了、提示文本还只列旧表」的谎报
@@ -616,7 +896,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'conversations',          'DELETE'),
     ('public', 'conversation_turns',     'DELETE'),
     ('public', 'favorites_idempotency',  'DELETE'),
-    ('public', 'history_idempotency',    'DELETE')
+    ('public', 'history_idempotency',    'DELETE'),
+    -- R28-S28（迁移 0025）：PG 没有列级 DELETE，而 store 有两条整行删除
+    -- （services/api/src/recognitions/store-pg.ts:820 release、:830 purge），只能表级授予。
+    -- 这是本片唯一新增的表级写授权（白名单 11 → 12 个三元组）。
+    ('public', 'recognition_idempotency', 'DELETE')
   ),
   checks(label, ok, detail) AS (
 
@@ -1302,14 +1586,20 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                    OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'UPDATE')
                    OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'REFERENCES'))
          ),
-         'forbidden 分类（community_media_grants / 注销三表 / recognition_*）运行时不得有任何表级或列级权限'
+         -- detail 由清单生成（R28-S28）：forbidden 集合会随分类变化，手写表名必然漂移。
+         'forbidden 分类（' ||
+         (SELECT string_agg(m.tbl, ' / ' ORDER BY m.tbl)
+            FROM domain_manifest m
+           WHERE m.classification = 'forbidden') ||
+         '）运行时不得有任何表级或列级权限'
 
   UNION ALL
   -- 49-58. R28-S24 逐表范围断言（十张表，数据驱动 expected 清单）：
   --   正向：清单里的列，SELECT/INSERT/UPDATE 必须都在；
   --   反向：清单外的列，任何列级权限（含 REFERENCES）都不许有；
   --   表级：INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER 一律不得有，
-  --         DELETE 必须**恰好**等于 del 列声明（只有 likes / 两张幂等台账为 true）。
+  --         DELETE 必须**恰好**等于 del 列声明（del=true 的表见各行声明；本片起含
+  --         recognition_idempotency，它与 S24/S26 的三张幂等台账同性质）。
   SELECT 'runtime_grants_' || e.tbl,
          to_regclass('public.'||e.tbl) IS NOT NULL
          AND NOT EXISTS (
@@ -1447,6 +1737,70 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
               AND NOT EXISTS (SELECT 1 FROM expected e WHERE e.tbl = m.tbl)
          ),
          'favorites/history/conversation 前缀的新表必须进 domain_manifest（granted/granted_external/forbidden），且 granted 的必须在 expected 里有独立列清单'
+
+  UNION ALL
+  -- 64. R28-S28 真执行（识别域四表）：正向语句必须全部成功（成功 ⇒ 该条的 :ERROR 为 false）。
+  --     与 59/60/61 同构，差别是这里插/改/删的是**真行**：CHECK、外键与 ON CONFLICT 的
+  --     DO UPDATE 分支都被真正求值，零行语句是证明不了这些的。
+  SELECT 'runtime_recognition_dml_exec',
+         :'r28_probe_rec_role' = 'false'
+         AND :'r28_probe_rec_job_sel' = 'false'
+         AND :'r28_probe_rec_job_ins' = 'false'
+         AND :'r28_probe_rec_job_upd' = 'false'
+         AND :'r28_probe_rec_job_lock' = 'false'
+         AND :'r28_probe_rec_rec_sel' = 'false'
+         AND :'r28_probe_rec_rec_ins' = 'false'
+         AND :'r28_probe_rec_rec_upd' = 'false'
+         AND :'r28_probe_rec_rec_lock' = 'false'
+         AND :'r28_probe_rec_sel_sel' = 'false'
+         AND :'r28_probe_rec_sel_ins' = 'false'
+         AND :'r28_probe_rec_idem_sel' = 'false'
+         AND :'r28_probe_rec_idem_seed' = 'false'
+         AND :'r28_probe_rec_idem_claim' = 'false'
+         AND :'r28_probe_rec_idem_complete' = 'false'
+         AND :'r28_probe_rec_idem_release' = 'false'
+         AND :'r28_probe_rec_idem_purge' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，识别域四表的十七种真实语句形状必须全部成功：jobs 与 records 各 SELECT 12 列 / INSERT 12 列 / UPDATE（5 列、7 列）/ SELECT … FOR UPDATE 真行，selections SELECT 8 列 / INSERT 8 列，idempotency SELECT 4 列 / 真冲突 claim 与 complete（ON CONFLICT DO UPDATE）/ release 与 purge 两条整行 DELETE；任一 42501 即失败'
+
+  UNION ALL
+  -- 65. R28-S28 禁止面：这四条语句必须**恰好** 42501（运行时拿不到 UPDATE/DELETE）。
+  --     selections 不授 UPDATE ⇒ FOR UPDATE 也拿不到（与 S26 三表的性质不同，别照抄那句
+  --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授，注销清理走
+  --     request_account_deletion() 的属主级联（owner_user_id ON DELETE CASCADE）。
+  SELECT 'runtime_recognition_forbidden_surface',
+         :'r28_probe_rec_sel_lock_forbidden' = 'true'
+         AND :'r28_probe_rec_job_del_forbidden' = 'true'
+         AND :'r28_probe_rec_rec_del_forbidden' = 'true'
+         AND :'r28_probe_rec_sel_del_forbidden' = 'true',
+         'recognition_selections 的 SELECT … FOR UPDATE 与 jobs / records / selections 的整行 DELETE 必须全部 42501；任一成功即越权'
+
+  UNION ALL
+  -- 66. R28-S28 泛化反向控制（PUBLIC 面）：manifest 里所有 granted / granted_external 的表
+  --     都不许在 relacl 或 attacl 里出现 grantee = 0。62 号是七表硬编码，本片不再加一份
+  --     硬编码，而是遍历清单：S24 十表、S26 七表与本片四表一并覆盖，以后新增域自动纳入。
+  SELECT 'public_no_privilege_domain_granted',
+         NOT EXISTS (
+           SELECT 1
+             FROM domain_manifest m
+            WHERE m.classification IN ('granted', 'granted_external')
+              AND EXISTS (
+                   SELECT 1
+                     FROM pg_class c
+                     CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+                    WHERE c.oid = to_regclass('public.' || m.tbl)
+                      AND a.grantee = 0
+                  )
+               OR EXISTS (
+                   SELECT 1
+                     FROM pg_attribute att
+                     CROSS JOIN LATERAL aclexplode(att.attacl) AS a
+                    WHERE att.attrelid = to_regclass('public.' || m.tbl)
+                      AND att.attnum > 0
+                      AND NOT att.attisdropped
+                      AND a.grantee = 0
+                  )
+         ),
+         'manifest 里 granted / granted_external 的表对 PUBLIC 必须零权限；表级 relacl 与列级 attacl 两处都查（各授权段都 REVOKE ALL … FROM PUBLIC）'
 )
 
 SELECT CASE
