@@ -234,7 +234,7 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 - 仓库零改动：收工时 `git status --porcelain -uall` 只有本页一条新增（`.local/` 已被 `.gitignore` 的 `/.local/` 忽略，不入库）；`git diff --check` 空。
 - **保留**：`.local/local-dev/`（`prepare.mjs` 的产物，gitignored；含本机一次性开发口令与本地 PG 数据目录，**未打印、未入库**）；仓外 `.pg17/tmp/i23-perf/` 下两份**原始 JSON 报告**（明确引用并声明用途的取证文件，页首给哈希）。
 - **删除**：本次探测用的临时脚本与试跑产物（`probe.mjs`／`probe2.mjs`／`dbprobe.mjs`／`cols.mjs`／`extract.mjs`／`dry-*.json`／`*.err`／`*.out.txt`／`commit1.txt`），删除前后均未触碰任何受控文件。
-- 未触动的红线：`package.json`、`tests/integration/**`、`tests/unit/ci-integration-chain-structure.test.mjs`、`docs/verification/gy-i24-release-materials-index-20261017.md`、`docs/evaluation/acceptance-thresholds-summary.md`、`packages/evaluation/schema/run-report.schema.json`、`docs/architecture/contract-status.json` 及其生成区、迁移目录（**0 迁移**，`0023` 仍由在飞 #295 占用）。
+- 未触动的红线：`package.json`、`tests/integration/**`、`tests/unit/ci-integration-chain-structure.test.mjs`、`docs/verification/gy-i24-release-materials-index-20261017.md`、`docs/evaluation/acceptance-thresholds-summary.md`、`packages/evaluation/schema/run-report.schema.json`、`docs/architecture/contract-status.json` 及其生成区、迁移目录（**0 迁移**，`0023_user_backup_copies.sql` **已随 `#295` 合入 main**（`ff1b39d`，合流后实读 `upstream/main`），本片未占号）。
 
 ## 13 边界声明
 
