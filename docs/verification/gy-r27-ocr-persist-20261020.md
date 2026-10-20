@@ -368,3 +368,180 @@ Remove-Item -Recurse -Force $DATA
 
 > 本机复跑注意：`node --test` 跨多文件**必须** `--test-concurrency=1`（内存紧，否则 `VirtualAlloc failed` 假红）；
 > 真库脚本要求**空库**（先断言 `public` 下 0 张表），重复跑请先 `dropdb` + `createdb`。
+
+---
+
+## 12. R27-S10-r1 返修：`42P01`「表未迁移」不得折成「数据库暂不可用」
+
+> 本节记录首轮交付（PR #323 的既有 HEAD）在 CI 上暴露的**真回归**、机制、首轮本机门禁为何没抓到，
+> 以及返修的判据与逐条读数。验证对象：`9c1ce37`（`ocr/store-pg.ts` 分化修复）＋ `56b2e98`（三层单测）；
+> 本节作为整理提交交付，`git log -1 -- docs/verification/gy-r27-ocr-persist-20261020.md` 即其 SHA。
+
+### 12.1 CI 失败现场（原始断言，未改写）
+
+失败 step：
+
+```text
+… CREATE DATABASE gengyun_conversations_test && node tests/integration/conversations-pg.mjs
+```
+
+原始报错：
+
+```text
+AssertionError: {"error":{"code":"PROVIDER_UNAVAILABLE","message":"OCR 数据库暂不可用","retryable":true,…}}
+```
+
+CI 里 `conversations-pg.mjs:57` 只应用**子集迁移** `['0001','0002','0005','0008','0010','0012','0013']`，
+该库因此**没有** `ocr_jobs` / `ocr_records` / `ocr_idempotency` 三张表（`0024` 未应用）。
+脚本随后用 `executionMode:'real'` + 真 `pool` 建 app；接线把 OCR store 接成「real + 池 ⇒ PG」，
+于是 `GET /api/v1/jobs/{id}` 的读路径打到缺表（`42P01`），被折成 `503 PROVIDER_UNAVAILABLE`。
+本该是 `200`（命中会话作业源）或 `404`（真的不存在）。
+
+### 12.2 机制链（逐环，按代码位置）
+
+1. `services/api/src/routes/ocr.ts:193-196`：`real` + 有池 ⇒ `createPostgresOcrStore({ pool })`（不再退回内存）。
+2. `services/api/src/app.ts:1659-1660` 计算 `ocrPersistencePool`，`:1689` 把 OCR 源登记进 `jobs` 注册表（顺序：recognition → transcription → moderation → synthesis → **OCR** → answer）。
+3. `services/api/src/jobs/routes.ts` 的 `GET /jobs/:id` 直接调 `registry.get`；`services/api/src/jobs/registry.ts:275-282` 按登记顺序逐个源取，**只有全部为 `null` 才**抛 `NOT_FOUND`。
+4. `services/api/src/jobs/sources.ts` 的 OCR 源只把 `isNotFound(error)` 折成 `null`，**其它错误原样上抛**。
+5. 旧 `store-pg.ts` 的读类没有「表未迁移」分支：`42P01` 被 `classifyOcrDatabaseError` 折成 `PROVIDER_UNAVAILABLE`（`retryable:true`，"OCR 数据库暂不可用"）。
+6. ⇒ 注册表在第 5 步就抛出 503，后面的 answer 源根本没机会命中；`GET /jobs/{id}` 被 OCR 持久化故障污染。
+
+**本质**：「表不存在」（部署/迁移未完成，**确定结论**）与「数据库故障」（连接/权限/超时，**状态未知**）不是一回事，必须分化。
+
+### 12.3 首轮门禁为何没抓到
+
+首轮本机只跑了这三类：
+
+- `tests/integration/ocr-jobs-pg.mjs`：库是**全集迁移**（含 `0024`），永远走 `ready`，`42P01` 路径不存在；
+- 单元测试：假池按脚本应答，**没有任何一条用例响应就绪探测**，也没模拟「子集迁移库」；
+- `ocr-http.mjs` 等回环脚本：不接真库（或 `stub` 模式），OCR store 根本不落到 PG。
+
+也就是说，首轮本机**从未运行过「`real` + 真池 + 子集迁移库」这个组合**——而这正是 CI 的
+`conversations-pg` / `community-pg` / `messages-pg` / `favorites-history-pg` 四个脚本所处的环境。
+四个脚本当时只在 CI 上跑过（其中 `conversations-pg` 是唯一把 OCR 源与 `GET /jobs/{id}` 串起来的），
+本机没跑 ⇒ 回归漏检不是偶发，是覆盖缺口。
+
+### 12.4 返修判据（12 个方法逐个分化）
+
+| 方法 | 类别 | 表未迁移（探测 `missing`，或语句撞 `42P01`） | 真库故障（非 `42P01`） |
+| --- | --- | --- | --- |
+| `insertJob` / `updateJob` / `commitTerminal` / `insertOcr` / `updateOcr` / `claimIdempotent` / `finalizeIdempotent` / `releaseIdempotent` / `purgeIdempotent` | 写（9） | `requireTables()` 前置 ⇒ **`OcrTablesMissingError`**（`code=PROVIDER_UNAVAILABLE`、`retryable:false`、文案点名 `0024_ocr_persistence.sql`）；**一条业务 SQL 都不发**，不建连接 | 原分类保留（`PROVIDER_UNAVAILABLE`；`57014`/`55P03` ⇒ `PROVIDER_TIMEOUT`） |
+| `getJob` / `getOcr` / `findIdempotent` | 读（3） | **`null`**（＝"没有已持久化的 OCR 作业"；与接线前内存 store 的对外行为一致），不抛、不 503 | 照旧抛（`readOrMissing` 只吞 `OcrTablesMissingError`） |
+| 就绪探测本身失败／应答形状读不懂 | — | `unknown` ⇒ **抛** `PROVIDER_UNAVAILABLE retryable:true`（fail-closed，**不**当 `missing`）；`unknown` **不入缓存** | 原因仍按既有分类（`57014`/`55P03` ⇒ `PROVIDER_TIMEOUT`，不被 `instanceof ApiError` 前移吞掉） |
+
+补充：缓存只存**确定结论**（`ready`/`missing`）；任何业务语句或事务撞 `42P01` 都先 `tables = null` 失效缓存，
+本次按「未迁移」报告，下一次调用重新探测（表被回滚/补迁移都能收敛）。`OcrTablesMissingError extends ApiError`，
+经 `classifyOcrDatabaseError` 时**原样透出**（单元测试断言 `error === original`）。
+
+### 12.5 三层单测（新增文件，全部通过）
+
+`tests/unit/ocr-store-pg-tables-missing.test.mjs`（14 条）：
+
+- **[A] 读类**：探测 `missing` ⇒ `getJob`/`getOcr`/`findIdempotent` 全部 `null`、零业务 SQL、只探测一次（含缓存命中）；
+- **[B] 写类**：9 个方法全部抛 `OcrTablesMissingError`，断言 `instanceof`（含 `ApiError`）、`code`、`retryable === false`、文案匹配 `/0024_ocr_persistence\.sql/` 与 `/未迁移/`、**零业务 SQL**、`connects()===0`；
+- **[C] 探测失败**：`pool.query` 在探测语句上抛 `ECONNREFUSED` ⇒ `unknown` ⇒ 读类 **fail-closed 抛**（不是返回 `null`）；断言 `unknown` 未入缓存（第二次调用重新探测）；`57014`/`55P03` 仍为 `PROVIDER_TIMEOUT`；形状读不懂（无 `ready` 列）同样 fail-closed。
+
+原始读数：
+
+```text
+$ node --test tests/unit/ocr-store-pg.test.mjs tests/unit/ocr-store-pg-tables-missing.test.mjs
+ℹ tests 27
+ℹ pass 27
+ℹ fail 0
+ℹ skipped 0
+
+$ node --test tests/unit/ocr-store-pg-wiring.test.mjs
+ℹ pass 4
+ℹ fail 0
+```
+
+既有 `ocr-store-pg.test.mjs` 的 13 条语句位置/条数断言**逐条未动**；只把假池改成把探测语句分流到独立
+`probes` 流（默认 `ready`），因此老断言不因新增探测而失效。
+
+### 12.6 三条负控制（每条实测变红 + 逐字节还原）
+
+工具在仓外（`.pg17/negctl.mjs`）：突变 → 跑三层单测 → 用原文恢复 → 比对 sha256。store 文件基线
+sha256 = `486BA5A880783070A1133302275C8510DFF67DF93BC446C5F7DC1F828C893041`。
+
+| # | 改了什么 | 哪条断言红（原始） | 还原 |
+| --- | --- | --- | --- |
+| NC-R1 | `requireTables()` 的 `missing` 分支改为 `return;`（写类放行到业务语句） | `AssertionError [ERR_ASSERTION]: Missing expected rejection (assertTablesMissing): insertJob 必须 fail-closed`；`pass=9 fail=4`，另 3 条 [B] 同红 | `RESTORED=true`；sha256 前后一致 |
+| NC-R2 | `tablesReady()` 的 `unknown` 分支整块改为 `return 'missing';`（未知当未迁移） | `AssertionError [ERR_ASSERTION]: getJob 探测失败必须抛 ApiError`；`pass=9 fail=4`，[C] 4 条同红 | `RESTORED=true`；sha256 前后一致 |
+| NC-R3 | 删掉全部 3 处 `tables = null;`（`42P01` 后不失效缓存） | `AssertionError [ERR_ASSERTION]: 42P01 之后必须失效缓存并重新探测（负控制③：去掉失效 ⇒ 本断言红）`；`pass=11 fail=2` | `RESTORED=true`；sha256 前后一致 |
+
+负控制跑完 `git status --porcelain` = 0 行。
+
+### 12.7 端到端复现：把 store 换回 `0fa9250` 版本，真库实测
+
+复现库 `gengyun_conversations_test`（父代理预置，7 条子集迁移，`to_regclass` 三表全 `NULL`，**未改动**）。
+用 `git show 0fa92502…:services/api/src/ocr/store-pg.ts` 临时覆盖工作树文件后实测（随即还原，sha256 一致）：
+
+```text
+STORE getJob(<random>) THREW: name=ApiError code=PROVIDER_UNAVAILABLE retryable=true message=OCR 数据库暂不可用
+STORE findIdempotent THREW: name=ApiError code=PROVIDER_UNAVAILABLE retryable=true message=OCR 数据库暂不可用
+STORE purgeIdempotent THREW: name=ApiError code=PROVIDER_UNAVAILABLE retryable=true message=OCR 数据库暂不可用
+HTTP GET /api/v1/jobs/<uuid> => 503 {"error":{"code":"PROVIDER_UNAVAILABLE","message":"OCR 数据库暂不可用","retryable":true,"details":[]},…}
+```
+
+与 CI 的 `AssertionError` 逐字同型。返修后同一脚本、同一库：
+
+```text
+STORE getJob(<random>) => null
+STORE findIdempotent => null
+STORE purgeIdempotent(write) THREW: name=OcrTablesMissingError code=PROVIDER_UNAVAILABLE retryable=false message=OCR 持久化表未迁移（0024_ocr_persistence.sql）：拒绝写入，避免静默丢数据
+HTTP GET /api/v1/jobs/<uuid> => 404 {"error":{"code":"NOT_FOUND","message":"作业不存在","retryable":false,"details":[]},…}
+```
+
+### 12.8 本机补跑 CI 那 4 个真库脚本（原始读数）
+
+| 脚本 | 库 / 端口 | exit | 原始读数 |
+| --- | --- | --- | --- |
+| `tests/integration/conversations-pg.mjs` | `gengyun_conversations_test` @ 55461 | **0** | `conversations-pg：12 条读数全部通过（真 PostgreSQL 17.11）`；含 `[M]` 子集迁移三连、`[G] store.persistent=true`、`[S]` 的 `GET /jobs/{id}` 200、`[R]` 重启读回、`[F1]/[F2]/[W]/[E]/[N]/[P]` |
+| `tests/integration/community-pg.mjs` | `gengyun_community_test` @ 55460 | **0** | `全部 23 组真库断言通过。` |
+| `tests/integration/messages-pg.mjs` | `gengyun_messages_test` @ 55460 | **0** | `[√] ALL PASS：消息域 PostgreSQL 持久化端到端（迁移/重复/已读/归属/并发/派生计数/分页）` |
+| `tests/integration/favorites-history-pg.mjs` | `gengyun_favorites_history_test` @ 55460 | **0** | `ALL PASS (13 groups) — real PG17 17.11` |
+
+执行环境备注（如实记录，含与派单口径的偏差）：
+
+- 这四个脚本**都不自建库**：库名硬钉、连接串必须指向同名库，且脚本开头断言 `public` 下 0 张表。
+  因此本机先 `CREATE DATABASE` 建了三个空库（`gengyun_community_test`/`gengyun_messages_test`/`gengyun_favorites_history_test`，未删除）。
+- `conversations-pg` 的库名硬钉为 `gengyun_conversations_test`，而 55460 上的同名库是**父代理的复现库**
+  （7 条子集迁移，不可改、不可删）⇒ 另起一次性集群：`initdb -D .pg17\data-r27s10-conv`（`-A trust -E UTF8 --locale=C`）→
+  `postgres.exe -D … -p 55461 -c listen_addresses=127.0.0.1` → 建空库 → 用 `CONVERSATIONS_PG_TEST_URL` 指向 55461 实跑。
+  两个集群都是本机 PG 17.11，脚本自己的 `server_version` 读数一致。
+
+### 12.9 返修后门禁读数（逐条实跑）
+
+| 门禁 | 命令 | exit | 读数 |
+| --- | --- | --- | --- |
+| 静态检查 | `npm run lint` | **0** | `PASS tsc --noEmit services/api/tsconfig.json` / `PASS tsc --noEmit apps/admin/tsconfig.json` / `PASS 仓库卫生扫描` |
+| OCR 真库（全集迁移） | `OCR_PG_TEST_URL=… node tests/integration/ocr-jobs-pg.mjs` | **0** | `共 27 条 PASS，耗时 1578ms`；`ALL PASS：…（迁移 0024 三连 / 12 方法语义 / 关连接重开逐字节仍在 / 4 条负控制）` |
+| 迁移器三臂 | `MIGRATIONS_NEGATIVE_TEST_URL=… node tests/integration/migrations-negative-pg.mjs` | **0** | 11 组全 PASS；`PASS 1: A0 基线：空库 up 依次应用 0001–0024，台账 24 行`；`ALL 11 migration negative groups passed against native PG17.11` |
+| 契约实现状态 | `node tools/verify-contract-status.mjs` | **0** | `覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项` |
+| 交付文档 | `npm run test:docs` | **0** | `研究记录校验：5 通过 / 0 失败 / 4 legacy 已钉住` |
+| 单元全量 | `node --test --test-concurrency=1 "tests/unit/*.test.mjs" "tests/privacy/*.test.mjs" "tests/media/*.test.mjs" "tests/reference/*.test.mjs" "tests/moderation/*.test.mjs"` | **0** | `tests 2923 / pass 2922 / fail 0 / skipped 1`（`skipped 1` 是既有条件跳过 `knowledge-api.test.mjs` 的 `{ skip: !f.native }`）；两次实跑读数见下 |
+
+单元全量的两次实跑（如实记录，不隐去）：
+
+```text
+# 第一次：与 tsc/lint/契约校验**并发**执行，机器负载高
+ℹ tests 2923 / pass 2921 / fail 1 / skipped 1
+✖ tests/unit/miniprogram-transcript-confirm.test.mjs:422
+  TypeError: releaseGet is not a function  (…:437:3)
+
+# 第二次：不再并发其它重任务
+ℹ tests 2923 / pass 2922 / fail 0 / skipped 1
+EXIT=0
+```
+
+第一次唯一的红灯与本片改动无关：`miniprogram-transcript-confirm.test.mjs` 的页面用例依赖 HTTP 替身的
+微任务/定时器时序（在记录响应"在途"时断言零外发），高负载下 `releaseGet` 尚未被赋值即被调用；
+单跑该文件 25/25 全绿，本片也没有改 `miniprogram/` 任何文件。第二次干净负载下全绿。
+
+### 12.10 未取得／边界（不得读成已验收）
+
+- **CI 复跑**：写手不 push、不合并 PR；本节只给本机读数，CI 复跑由监工触发。
+- **真实 OCR 提供者/媒体端口**仍未接线：`POST /ocr` 受理前即 503，本片 HTTP 证据只到读路径与作业注册表。
+- 三个新建空库（§12.8）未删除，留给复核；两个 PG 集群仍在运行（55460 / 55461）。
+- `docs/architecture/contract-status.json`、迁移文件、`.github/workflows/*`、`services/api/src/jobs/sources.ts` 本次**一字未改**；
+  既有断言**未削弱/未删除**，无 `skip`/`only`/`todo`。
