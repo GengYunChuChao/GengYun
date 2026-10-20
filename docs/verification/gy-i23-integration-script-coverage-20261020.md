@@ -81,8 +81,8 @@ line=148: path: 'tests/integration/user-chain-e2e.mjs',
 | `consent-grant-pg.mjs` | 需真实 PG | `CONSENT_GRANT_TEST_URL` | — | `consent-grant-postgres.yml` | 同上 |
 | `egress-ledger-pg.mjs` | 需真实 PG | `EGRESS_LEDGER_TEST_URL`、`EGRESS_LEDGER_KEEP` | — | `consent-grant-postgres.yml` | 同上（与下一项成对） |
 | `egress-object-key-pg.mjs` | 需真实 PG | `EGRESS_LEDGER_TEST_URL`、`W116_PSQL`；须紧跟 `egress-ledger-pg.mjs` 且由其 `EGRESS_LEDGER_KEEP=1` 留下账本 | — | `consent-grant-postgres.yml` | 同上（顺序敏感，不能单独接） |
-| `favorites-history-pg.mjs` | 需真实 PG | `FAVORITES_HISTORY_PG_TEST_URL`；未设则**显式 SKIP + exit 77**（仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 才 0） | — | — | 同上；该脚本原先也是「缺环境就静默绿」的形状，第二个提交已改成 77（§8.3） |
-| `messages-pg.mjs` | 需真实 PG | 一次性集群 + 硬钉库名 `gengyun_messages_test` | — | — | 同上 |
+| `favorites-history-pg.mjs` | 需真实 PG | `FAVORITES_HISTORY_PG_TEST_URL`；未设则**显式 SKIP + exit 77**（仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 才 0） | — | `real-pg-integration.yml` | `*-pg.mjs`：不进无 PG 的回环链（需 PG）；CI 侧由 `real-pg-integration.yml` 用独立测试集群真跑——本行原登记为「已声明、无门禁」，R27-S4 接线后订正（§9）；该脚本原先也是「缺环境就静默绿」的形状，本片第二个提交已改成 77（§8.3） |
+| `messages-pg.mjs` | 需真实 PG | 一次性集群 + 硬钉库名 `gengyun_messages_test`（连接串走 argv，不走 env） | — | `real-pg-integration.yml` | `*-pg.mjs`：不进无 PG 的回环链（需 PG）；CI 侧由 `real-pg-integration.yml` 用独立测试集群真跑——本行原登记为「已声明、无门禁」，R27-S4 接线后订正（§9） |
 | `migrations-negative-pg.mjs` | 需真实 PG | `MIGRATIONS_NEGATIVE_TEST_URL`；自建自删 3 个库 | — | `auth-privacy-postgres.yml` | 同上（CI 有跑） |
 | `source-lifecycle-pg.mjs` | 需真实 PG | `DATABASE_TEST_URL`（argv 里 9 处调用） | — | `source-lifecycle-postgres.yml` | 同上（CI 有跑） |
 | `staging-intake-pg.mjs` | 需真实 PG + Python | `DATABASE_URL`、`STAGING_INTAKE_TEST_URL`、`PYTHONPATH`、`STAGING_PYTHON`（argv 29 处） | — | `staging-intake-postgres.yml` | 同上（CI 有跑；依赖最重） |
@@ -105,7 +105,7 @@ line=148: path: 'tests/integration/user-chain-e2e.mjs',
 | `local-dev-ui-controls.cjs` | 本机工具（微信开发者工具） | 同上 | — | — | 同上 |
 | `local-dev-wechat.cjs` | 本机工具（微信开发者工具） | 同上 | — | — | 同上 |
 
-统计口径自检：45 行；`npm` 有引用 13 行；`CI` 有引用 10 行；两者都无 23 行（= 1 个 E2E + 5 个仅声明的 `-pg` + 4 个夹具/辅助 + 12 个本机工具 + 1 个 `.ps1`）。
+统计口径自检（**`31a746d` 快照**，本片当时实测）：45 行；`npm` 有引用 13 行；`CI` 有引用 10 行；两者都无 23 行（= 1 个 E2E + 5 个仅声明的 `-pg` + 4 个夹具/辅助 + 12 个本机工具 + 1 个 `.ps1`）。⚠ 两处后补（R27-S4，`ba6ea9f`）：`favorites-history-pg.mjs`／`messages-pg.mjs` 的 `CI` 列已改为 `real-pg-integration.yml`，故**按本表这 45 行的范围**，当下的 `CI` 列应是 **12** 行、两者都无 **21** 行、**表内**仅声明的 `-pg` **3** 行；其余数字（含「45 行」这个总数）仍是 `31a746d` 的原始快照，主仓库此后新增的文件（`conversations-pg.mjs`、`community-pg.mjs`、`admin-accounts-read-pg.mjs`、`backup-purge-pg.mjs`）未并入本表。⚠ **本表这 3 行不得读成绝对口径**：仓库在 `ba6ea9f` 实有 **18** 个 `-pg.mjs`，其中**既无 npm 也无 CI 的是 5 个**——`account-deletion-pg`／`account-suspend-pg`／`admin-accounts-read-pg`／`admin-flags-pg`／`backup-purge-pg`；本片接线后仍无门禁的仍是这 5 个。绝对口径的三档读数与取数命令见 §9。
 
 **关于「需要什么＝无」这 13 行**：这是**实测结论**，不是推断——§6.3 的整链在本机（无 PG、无外网、仅回环端口）`exit 0` 跑完，而链里就是这 13 条。
 
@@ -323,7 +323,7 @@ git status --porcelain      → 0 行（三个提交都已落地，工作树干�
 | 项 | 内容 | 现状 | 所需前置 | 为什么本片不解决 |
 | --- | --- | --- | --- | --- |
 | 第 2 项 | 把 `tests/integration/user-chain-e2e.mjs` 接进 `test:integration:http` | **未取得**：本机可跑通（§3.2），但需要真实 PG17；缺 PG 时 3 行 SKIP + **`exit 77`**（改前 `2de2fc3` 是 0）⇒ 接进无库链会整链失败 | ① CI/开发机提供 PostgreSQL 17 的 bin（`USER_CHAIN_PG_BIN`）与可写数据目录（`USER_CHAIN_PG_DATADIR`）；② 单独开带 PG 的 workflow 或带 PG 的 npm 脚本（`test:integration:user-chain`），**不要**塞进无 PG 的 `test:integration:http` | 派单第 2 项明令「若它需要 PG／网络则不改 CI 结构、落未取得并停止本项」；且 `ci-integration-chain-structure.test.mjs` 的冻结链与 `.github/workflows/*.yml` 的 job 结构本片都不许动 |
-| 第 1 项（衍生） | 5 个 `-pg.mjs`（`account-deletion-pg`、`account-suspend-pg`、`admin-flags-pg`、`favorites-history-pg`、`messages-pg`）既无 npm 也无 CI 引用 | 已声明、无门禁 | 与上一条同源：需要 PG 环境 | 同上；且本片只被允许改 `package.json` 脚本与新增测试/文档 |
+| 第 1 项（衍生） | 本片登记的 **5** 个「既无 npm 也无 CI 引用」的 `-pg.mjs`（`account-deletion-pg`、`account-suspend-pg`、`admin-flags-pg`、`favorites-history-pg`、`messages-pg`） | 当时为「已声明、无门禁」；**R27-S4 接线后（`ba6ea9f`）**：`favorites-history-pg`／`messages-pg` 已由 `real-pg-integration.yml` 真跑。⚠ **绝对口径**（仓库全部 `-pg.mjs`，不是「本片登记的 5 个」这个范围）：`-pg.mjs` 共 **18** 个，接线后**仍无门禁的是 5 个**——`account-deletion-pg`、`account-suspend-pg`、`admin-accounts-read-pg`、`admin-flags-pg`、`backup-purge-pg`（本片登记的 5 个里剩下 3 个未接；差额 2 个＝`admin-accounts-read-pg`／`backup-purge-pg`，它们是本片之后才新增的文件）。三档读数与取数命令见 §9 | 与上一条同源：需要 PG 环境 | 接线由后续片（R27-S4）在 `real-pg-integration.yml` 内完成，未改本片的链与判类；本片只被允许改 `package.json` 脚本与新增测试/文档 |
 | 第 1 项（衍生） | 12 个本机工具（10 个 `local-dev-*.cjs` + `knowledge-native-consumer.mjs` + `local-knowledge-smoke.mjs`）不进任何无头门禁 | 设计如此 | 微信开发者工具 + `miniprogram-automator` + 本机 `.local/local-dev` 目录 | 图形化模拟器会话无法在无头 CI 里稳定复现；本片只登记理由不硬接 |
 
 补充：本片**不**主张「所有 45 项都该进 `test:integration:http`」。正确的分层是——纯回环／E2E 必须被 `scripts.*` 真的执行（本片已把它变成会红的断言）；需要 PG/Python/图形模拟器的那些，靠各自的 workflow（已有 7 个 workflow 覆盖 10 个脚本）与本机手工证据页承担。
@@ -524,3 +524,51 @@ EXITCODE=0（330 行日志）
 全量单测的唯一 `skipped 1` 仍是既有的 native 用例；本片新增的 6 个用例全部计入 1738 个 pass。
 
 **一次需要如实记录的抖动**：本页第一次跑全量单测时出现 1 红——`tests/unit/media-real-mode-fail-closed.test.mjs` 报的是 **runner 层**的 `Error: Unable to deserialize cloned data due to invalid or unsupported version.`（`node:internal/test_runner/runner` 反序列化子进程消息失败，耗时 9901 ms），不是断言失败；当时同一台机上另有一套重活（集成链）正在跑。隔离后：单跑该文件 `tests 20 / pass 20 / fail 0`；单独重跑全量 `tests 1739 / pass 1738 / fail 0 / EXITCODE=0`。判定为并发压力下的 runner IPC 抖动，与本片改动无关——两个读数都留在这里，便于日后复核是不是同一个抖动。
+
+## 9 后续片订正（R27-S4，2026-10-20）：两条 `-pg.mjs` 已接线
+
+- 测量 SHA 与时点：`upstream/main` = `ba6ea9fc73600b5b4696083bc38902396f7c0a5d`（短 `ba6ea9f`），2026-10-20 12:32 实测；本页 §0–§8 的基线是 `31a746d`，两轮读数**并存、不改写历史**。
+- 变更：R27-S4 把 `tests/integration/messages-pg.mjs` 与 `tests/integration/favorites-history-pg.mjs` 接进 `.github/workflows/real-pg-integration.yml`（各自 `CREATE DATABASE` 专用空库 + 真跑），并在 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一条。本页的判类口径、冻结豁免表、`test:integration:http` 链**均未改**。
+- 因此本页三处表述按事实收窄（都只涉及上面两条）：§2 表那两行的 `CI` 列、§2 末尾的统计口径自检、§7 第 1 项（衍生）。
+- 现状读数（口径同 §2：`tests/integration/<文件名>` 全路径分别出现在 `package.json` 与 `.github/workflows/*.yml` 里）：
+
+| 读数 | `31a746d`（本页原始快照） | `ba6ea9f` 接线前 | `ba6ea9f` ＋ R27-S4 |
+| --- | --- | --- | --- |
+| `tests/integration/` 条目总数 | 45 | 50 | 50 |
+| 被 npm 脚本引用 | 13 | 15 | 15 |
+| 被 CI workflow 引用 | 10 | 12 | **14** |
+| 两边都有 | 1 | 2 | 2 |
+| 两边都没有 | 23 | 25 | **23** |
+| 引用 `tests/integration/` 的 workflow 数 | 7 | 9 | 9 |
+| **绝对口径**：`-pg.mjs` 总数 | 14 | 18 | 18 |
+| 其中：由 `real-pg-integration.yml` 跑 | 0 | 2 | **4** |
+| 其中：由其它 workflow 或 `package.json` 跑 | 9 | 9 | 9 |
+| 其中：**既无 npm 也无 CI** | 5 | 7 | **5** |
+| 三档之和校验 | 0＋9＋5＝14 ✓ | 2＋9＋7＝18 ✓ | 4＋9＋5＝18 ✓ |
+
+（`ba6ea9f` 这一列的 50／15／12 是在**接线前**实测的；右列只多出本片接的两条 ⇒ `CI 12 → 14`、`两边都没有 25 → 23`。其余数字的漂移来自本页之后的其它片，与本片无关。）
+
+⚠ **`31a746d` 列「既无 npm 也无 CI」＝5，不是 7**：该提交里 `-pg.mjs` 只有 **14** 个（`admin-accounts-read-pg.mjs`、`backup-purge-pg.mjs` 那时还不存在，`conversations-pg.mjs`／`community-pg.mjs` 也还没有），其中无门禁的正好 5 个。到 `ba6ea9f` 文件增至 18 个，新增的 4 个里 2 个进本 workflow（conversations／community）、2 个仍无门禁（admin-accounts-read／backup-purge）⇒ 无门禁从 5 涨到 **7**；本片接线 `messages-pg`／`favorites-history-pg` 后回到 **5**。⛔ 不要把这一列也写成 7。
+
+取数命令（任一检出内可复跑；口径＝`tests/integration/<全路径>` 是否出现在某个 `.github/workflows/*.yml` 或 `package.json` 里）：
+
+```
+# 总数：bash / pwsh 各一行
+git ls-tree --name-only HEAD:tests/integration | grep -E -- '-pg\.mjs$' | wc -l
+git ls-tree --name-only HEAD:tests/integration | Select-String -Pattern '-pg\.mjs$' | Measure-Object | Select-Object -ExpandProperty Count
+# 分档：对每个 tests/integration/<name> 依次查 package.json 与 12 个 .github/workflows/*.yml
+#   命中 real-pg-integration.yml ⇒ A；只命中其它 workflow 或 package.json ⇒ B；一处都不命中 ⇒ C
+```
+
+原始输出（本机 pwsh 实测，`Get-Date` ⇒ 2026-10-20 13:20–13:25；同一脚本对三个 rev 依次跑）：
+
+```
+REV 31a746d  workflows_in_tree=11  -pg_total=14
+  A(real-pg-integration.yml)=0  B(other workflow or npm)=9  C(neither)=5   SUM=14
+REV ba6ea9f  workflows_in_tree=12  -pg_total=18
+  A(real-pg-integration.yml)=2  B(other workflow or npm)=9  C(neither)=7   SUM=18
+  C list: account-deletion, account-suspend, admin-accounts-read, admin-flags, backup-purge, favorites-history, messages
+REV c37070a  workflows_in_tree=12  -pg_total=18
+  A(real-pg-integration.yml)=4  B(other workflow or npm)=9  C(neither)=5   SUM=18
+  C list: account-deletion, account-suspend, admin-accounts-read, admin-flags, backup-purge
+```
