@@ -6,11 +6,13 @@
 
 ## 0. 结论
 
-| 调用形态 | 改前 `ce8e77d…`（531 行 / 28404 B） | 改后 `fea5c274…`（613 行 / 34065 B） |
+| 调用形态 | 改前 `ce8e77d…`（531 行 / 28404 B） | 改后 `fea5c274…`（612 行 / 34065 B） |
 | --- | --- | --- |
 | 给 `argv[3]`（口令与 URL 一致） | exit 1，**`28P01`** | exit 0，`ALL PASS` |
 | 不给 `argv[3]` | exit 2，`PARTIAL`（`[P]`/`[A]`–`[F]` 全未取得） | exit 0，`ALL PASS`（自建角色 + 派生 URL） |
-| 同名角色已存在（跨库依赖） | exit 1，**`42710`** | 复用（ALTER），仍 `ALL PASS` |
+| 同名角色已存在（跨库依赖） | exit 1，**`42710`** | 复用（ALTER），仍 `ALL PASS`；**前提 = owner 是 `SUPERUSER`**（§1.5、§4） |
+
+行数口径：上表两列的「行」= **LF 数**，与 `bytes` / `sha256` 同一次测量得出（改后文件 `bytes=34065`、`LF=612`、`sha256=fea5c2744d3050395bf200010acd757d297bdf8eaf0a3d3a452ce60552279687`；改前 blob `bytes=28404`、`LF=531`、`sha256=ce8e77d5…`）。本页旧稿写过「613 行」，那是 `s.split('\n').length`——文件以换行结尾，该值恒比 LF 多 1；**统一订正为 612**。
 
 **行为变更（审查重点）**：改前「省略 `argv[3]`」= **部分跑**（只有 `[M]`）；改后 = **全跑**。这不是放宽：结论行同时要求 `taken` 台账齐全 ∧ 零 `未取得` ∧ 零失败（§2.3），因此「少跑一段」现在只会更红，不会更绿。
 
@@ -71,6 +73,41 @@ DETAIL:  1 object in database gengyun_hold
 ```
 
 （`pc1-drop-refusal.log`，exit 1。这就是为什么修法必须是「存在即复用」而不是「删掉重建」。）
+
+### 1.5 复用分支的夹具前提：**owner 必须是 `SUPERUSER`**（复审 M1）
+
+§1.4 / §4 里「存在即复用」的那条分支会把出厂语句逐字换成 `ALTER ROLE <name> NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`。**PostgreSQL 有一条硬约束：改别人的 `SUPERUSER` 属性需要调用者本身是超级用户**——即使调用者在该角色上有 ADMIN OPTION 也不行。所以本夹具要求 owner **带 `SUPERUSER`**。
+
+本轮实测（同一跨库钉住夹具，唯一差异是 owner 的属性）：
+
+| owner | `rolsuper` | 结果 |
+| --- | --- | --- |
+| `r28s16_sub_owner`（`LOGIN CREATEROLE CREATEDB`，口令 `sub-owner-pw`） | `f` | **exit 1**，`permission denied to alter role`，`code:'42501'` |
+| `gengyun_ci_owner`（CI 形态） | `t` | exit 0，六条 `[P] 复用已存在的组角色 …` + 一条运行时复用，`ALL PASS` |
+
+非超级 owner 的失败原文（日志 `nonsuper-pinned-42501.log`，exit 1）：
+
+```
+:5  [P] 复用已存在的组角色 gengyun_auth_privacy（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）
+:6  首个失败读数：permission denied to alter role
+:17 error: permission denied to alter role
+:20     at async runRoleRegion (file:///E:/GengYunCommander/wt-r28-s16/tests/integration/account-suspend-pg.mjs:221:3)
+:21     at async provisionRoles (file:///E:/GengYunCommander/wt-r28-s16/tests/integration/account-suspend-pg.mjs:230:5)
+:22     at async file:///E:/GengYunCommander/wt-r28-s16/tests/integration/account-suspend-pg.mjs:573:3 {
+:24   severity: 'ERROR',
+:25   code: '42501',
+:26   detail: 'Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.',
+:38   file: 'user.c',
+:39   line: '767',
+:40   routine: 'AlterRole'
+:41 }
+:44 FAIL：运行时角色 URL 未派生且库侧读数未通过 —— 首个失败：permission denied to alter role
+```
+
+**这是 PG 约束，不是脚本缺陷**：`ALTER ROLE x NOSUPERUSER` 只有超级用户（或 x 的目标属性持有者）能执行。补充两条**本轮未独立重测**的变体（引自复审报告 `E:\GengYunCommander\.pg17\adv-verdict-r28-s16-scram.md`）：即使调用者在目标角色上有 ADMIN OPTION，`ALTER ROLE x NOSUPERUSER` 仍 42501；去掉 `NOSUPERUSER` 又会在 `NOREPLICATION` 上撞同一堵墙，只剩 `ALTER ROLE x NOLOGIN` 能过——但那等于没把出厂属性设回去。本片**不改**这个行为（改代码＝改已审实现），只在页面上把前提写明。
+
+而 CI 形态天然满足这个前提：`real-pg-integration.yml:49-50` 用 `POSTGRES_USER: gengyun_ci_owner` / `POSTGRES_PASSWORD: synthetic-ci-owner-only`，`postgres:17.11` 镜像把 `POSTGRES_USER` 建成**超级用户**（`docs/verification/gy-r28-real-pg-wiring-3-20261020.md:13-15` 与 `:73-74` 都写明「把超级用户改名成 `gengyun_ci_owner`」）。本轮实测两条对照：同一钉住夹具换 `gengyun_ci_owner` ⇒ exit 0（`superuser-same-fixture.log`）；干净集群 + `gengyun_ci_owner` ⇒ exit 0 且清完只剩 `gengyun_ci_owner`（`superuser-clean-run.log`）。
+⇒ **复现 §1.4 / §4 的绿，必须用超级用户 owner；用仅 `CREATEROLE` 的 owner 复现出的是 `42501`（如实记录，不当作脚本回归）。**
 
 ## 2. 修法
 
@@ -152,9 +189,42 @@ exit **0**，`green3-with-argv3.log`（18 行）：`:8` `[A] … display_name=�
 
 两形态的 `[B]` `401 SESSION_EXPIRED`、`[C]` `403 ACCOUNT_INACTIVE`、`[D]` `auth_epoch=3` 且旧 token 仍 401、两条审计、`[P]` 六条 42501 拒绝，均见两份日志全文；`[S]` 仍如实写着「`90-assert-least-privilege.sql` 含 psql 元命令 ⇒ 由 `psql -f` 单独执行」。
 
-## 4. 正控制 PC1：角色残留下也必须全绿
+## 4. 已知前提与派生影响（非阻塞，但审查者必须知道）
 
-前置：`gengyun_hold` 库 + 7 个角色 + 每个角色一张表归其所有（制造跨库依赖）；`DROP ROLE gengyun_auth_privacy` ⇒ exit 1（§1.4 原文）。
+本片的所有绿都建立在「owner 是 `SUPERUSER`」这个前提上（§1.5）。离开这个前提，脚本仍会**诚实失败或诚实残留**——不是假绿，但下面三条派生影响必须写清，否则页上的绿与夹具不自洽。
+
+### 4.1 非超级 owner 跑完会残留 7 个角色，而日志照打「删除 7 个角色」
+
+实测（owner=`r28s16_sub_owner`，`rolsuper=false|rolcreaterole=true|rolcreatedb=true`，库属主同它，空库首跑）：脚本 **exit 0 / `ALL PASS`**，日志 `nonsuper-run2.log` 末段照打
+
+```
+:18 清理：删除本脚本新建的 7 个角色（gengyun_auth_privacy,gengyun_preview_reader,gengyun_evidence_reader,gengyun_consent_granter,gengyun_profile_runtime,gengyun_knowledge_runtime,gengyun_api_runtime）
+:19 ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数
+```
+
+但跑完查 `select string_agg(rolname, ',' order by rolname) from pg_roles where rolname like 'gengyun%';`，实际还有 **8 个**：
+
+```
+gengyun_api_runtime,gengyun_auth_privacy,gengyun_ci_owner,gengyun_consent_granter,gengyun_evidence_reader,gengyun_knowledge_runtime,gengyun_preview_reader,gengyun_profile_runtime
+```
+
+即 7 个角色**没删掉**，台账却照打「删除 7 个」。根因在 `tests/integration/account-suspend-pg.mjs` 的 `cleanup()`：`:558` `await resetRoles().catch(() => {});`、`:559-564` 每个 `mine` 角色的 `DROP OWNED BY`（`:561`，只对 `RUNTIME_ROLE`）与 `DROP ROLE IF EXISTS`（`:563`）全部 `.catch(() => {})`，最后 `:567` **无条件**打印上面那行台账。非超级 owner 删不掉的原因：`DROP OWNED BY <role>` 要求调用者是该角色的成员或超级用户；`DROP ROLE` 又因该角色在测试库里还持有授权而失败——两层都被 `.catch` 吞掉，只留下那句不实的「删除」。
+
+对照（CI 形态）：同一脚本、`gengyun_ci_owner`（`rolsuper=t`）、干净集群 ⇒ exit 0，`:18 清理：删除本脚本新建的 7 个角色（…）`、`:19 ALL PASS`，跑完 `pg_roles` 只剩 `gengyun_ci_owner` ⇒ **残留 0**（`superuser-clean-run.log`）。
+⇒ **结论**：CI（超级用户）形态下本条不成立；仅在拿普通 `CREATEROLE` owner 手跑时会出现「日志说删了、实际没删」。本片不改 `cleanup()`（不动已审代码），如实记录。
+
+### 4.2 接线顺序：本脚本必须排在 `admin-accounts-read-pg` / `account-deletion-pg` **之后**
+
+那两个脚本对角色是**无条件** `CREATE ROLE`（`tests/integration/admin-accounts-read-pg.mjs:192`、`tests/integration/account-deletion-pg.mjs:381`），不容忍任何同名残留；本脚本对残留是「查 `pg_roles` 有则 ALTER/复用」（§2.2），能容忍它们留下的角色。因此接线时把本脚本排在这两条**之后**；若排在前且本脚本留下了角色（非超级 owner 场景、或本脚本中途失败），它们下一次必 `42710`。CI 的超级用户形态下本脚本清完不残留，顺序在功能上不敏感——但**不要依赖这个巧合**。
+
+### 4.3 已知瑕疵：`[P] 复用…` 打在 `ALTER` 之前（失败时日志自相矛盾）
+
+`tests/integration/account-suspend-pg.mjs:219` 的 `note('[P] 复用已存在的组角色 …')` 在循环里、`:221` `await owner.query(sql);` **之前**执行。所以非超级 owner 那一跑会先看到「复用成功」再看到 `permission denied`（§1.5 的 `:5` 与 `:6`）。本片**不改代码**，只记录：这行是进度提示，不构成结论——结论行仍由 `taken`/失败态决定，`exit 1` 如实。
+
+
+## 5. 正控制 PC1：角色残留下也必须全绿（**owner 必须 SUPERUSER**）
+
+前置：`gengyun_hold` 库 + 7 个角色 + 每个角色一张表归其所有（制造跨库依赖）；owner 是 `gengyun_ci_owner`（`rolsuper=t`，`§1.5` 已证非超级 owner 会 `42501`）；`DROP ROLE gengyun_auth_privacy` ⇒ exit 1（§1.4 原文）。
 随后同一集群、`gengyun_suspend_test` 重建为空库，脚本**不给 `argv[3]`** ⇒ exit **0**，`pc1b-leftover-allpass.log`（26 行）：
 
 - `:5`–`:10` 六条 `[P] 复用已存在的组角色 …（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）`
@@ -162,7 +232,7 @@ exit **0**，`green3-with-argv3.log`（18 行）：`:8` `[A] … display_name=�
 - `:25` `清理：删除本脚本新建的 0 个角色（无）`
 - `:26` `ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数`
 
-## 5. 负控制（每条都做 sha256 逐字节还原）
+## 6. 负控制（每条都做 sha256 逐字节还原）
 
 通用流程：`sha256(基线)` → `node ncmut.mjs <脚本> ncN`（临时脚本，单行单处替换；目标不唯一/不存在即 exit 3/4）→ 重建空库 → 跑 → `git checkout HEAD -- tests/integration/account-suspend-pg.mjs` → 复核 sha256 与 `git status --porcelain` 行数。
 基线每次都是 `fea5c2744d3050395bf200010acd757d297bdf8eaf0a3d3a452ce60552279687`（34065 B）。
@@ -204,7 +274,7 @@ exit **0**，`green3-with-argv3.log`（18 行）：`:8` `[A] … display_name=�
 - 实际：**exit 1**，`nc4.log`：`:5` `首个失败读数：role "gengyun_api_runtime" already exists`、`:13` `FAIL：运行时角色 URL 未派生且库侧读数未通过 —— 首个失败：role "gengyun_api_runtime" already exists`、`:18` `error: role "gengyun_api_runtime" already exists`、`:25` `code: '42710'`
 - 还原：sha256 = `fea5c274…`，status **0** 行；随后清掉 hold 库与同名角色
 
-## 6. 门禁原始输出（HEAD `c0e2cc5`）
+## 7. 门禁原始输出（HEAD `c0e2cc5`）
 
 | 命令 | exit | 原始输出要点 | 日志 |
 | --- | --- | --- | --- |
@@ -212,7 +282,7 @@ exit **0**，`green3-with-argv3.log`（18 行）：`:8` `[A] … display_name=�
 | `npm run test:contract` | 0 | `ℹ tests 6` / `ℹ pass 6` / `ℹ fail 0` | `gate2-contract.log` |
 | `node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs tests/unit/ci-integration-chain-structure.test.mjs` | 0 | `ℹ tests 19` / `ℹ pass 19` / `ℹ fail 0` | `gate2-unit.log` |
 
-## 7. 订正与遗留
+## 8. 订正与遗留
 
 1. **派单订正**（§1.3）：「本脚本不给 `argv[3]` 即 28P01」不成立 —— 必红必须**给** `argv[3]`；不给只是「部分跑 + PARTIAL + exit 2」。
 2. **上游证据页订正**（`docs/verification/gy-r28-real-pg-wiring-3-20261020.md`）：§2.1 把首失败行写作 `:199`，实测失败点是 `:200`（`:199` 只是构造 `connectionString` 的那行）；§2.4 的「最小修法」只覆盖 `gengyun_api_runtime`，**不足以**修掉 §2.3 里 `gengyun_auth_privacy` 的 42710 —— 组角色区域同样要 CREATE 换 ALTER（本片 §2.2 已实证）。
@@ -220,8 +290,9 @@ exit **0**，`green3-with-argv3.log`（18 行）：`:8` `[A] … display_name=�
    - `tests/unit/ci-integration-chain-structure.test.mjs:76-84` 的 `UNWIRED_DECLARATIONS` 仍把本脚本的理由写成「脚本缺陷 ⇒ … 必 `28P01` … `42710`」；本片修好后该理由过期，但本片**不得改** `tests/unit/` ⇒ 留给接线切片。
    - `.github/workflows/real-pg-integration.yml` 接线（把本脚本加进 `MANAGED_SCRIPTS`、按 `admin-flags` 范式只传 owner URL）同样属接线切片，本片未动。
 4. 本地一次性集群（`E:\GengYunCommander\.pg17\tmp-r28s16`）与临时变异脚本 `mutate.mjs` / `ncmut.mjs` **未入库**。
+5. **复审 M1 的订正已补**：§1.5 写明「复用分支要求 owner 是 `SUPERUSER`」并贴 `42501` 原文（`user.c:767` / `AlterRole`，本轮真跑复现，非引用）；§4 补三条派生影响（非超级 owner 残留 7 角色但台账照打「删除」、接线顺序须排 `admin-accounts-read-pg`/`account-deletion-pg` 之后、`[P] 复用…` 打在 `ALTER` 之前）；第 9 行行数由 613 订正为 612（LF 口径）。
 
-## 8. 复现（命令清单）
+## 9. 复现（命令清单）
 
 ```pwsh
 # 1) 每次跑之前必须是空库（脚本硬钉库名且要求空）
@@ -237,3 +308,11 @@ node tests/integration/account-suspend-pg.mjs `
 ```
 
 集群前提：`initdb --auth-host=scram-sha-256 --auth-local=trust`，`postgresql.conf` 设 `password_encryption = scram-sha-256`；**trust 集群下绿不算数**。
+owner 前提：`gengyun_ci_owner` 必须是 **`SUPERUSER`**（照 CI 镜像的 `POSTGRES_USER` 建法；只需 `CREATEROLE` 时 §1.4/§4 的复用分支必 `42501`，见 §1.5）。
+
+```pwsh
+# 3) 要复现「非超级 owner」一侧（42501 / 残留），把 owner 换成仅 CREATEROLE 的角色：
+#    CREATE ROLE r28s16_sub_owner LOGIN CREATEROLE CREATEDB PASSWORD 'sub-owner-pw';
+#    再用 postgres://r28s16_sub_owner:sub-owner-pw@127.0.0.1:55801/gengyun_suspend_test 跑，
+#    必须看到 exit 1 + permission denied to alter role（owner 带 SUPERUSER 时同一夹具 exit 0）。
+```
