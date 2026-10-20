@@ -671,6 +671,146 @@ try {
   await stubApp.close();
 }
 
+// ---------------------------------------------------------------- 取消（GY-R27）端到端：503 → 200 cancelled
+// 闸门提供者让作业稳定停在 `running`（合成用例、非真实录音、不下发任何外网调用）；
+// 取消走**共享作业路由** `POST /api/v1/jobs/{id}/cancel`，与客户端实际调用面一致。
+const cancelAuthStore = createMemoryAuthStore();
+let releaseGate = () => {};
+const gate = new Promise((resolve) => {
+  releaseGate = resolve;
+});
+const gatedProvider = {
+  executionMode: 'stub',
+  modelVersion: 'stub-gated-v1',
+  note: '集成脚本注入的闸门提供者（非真实 ASR；仅用于把作业稳定停在 running，不构成任何准确率证据）',
+  available: true,
+  unavailableReason: null,
+  async transcribe() {
+    await gate;
+    return { kind: 'completed', transcript: { text: '合成用例·闸门放行后的迟到结果', uncertain_spans: [{ start: 0, end: 2, reason: '合成用例' }] } };
+  },
+};
+const cancelApp = buildApp({
+  config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+  store: cancelAuthStore,
+  speechStore: createMemorySpeechStore(),
+  speechProvider: gatedProvider,
+  speechMedia: createSubstituteMediaPort(),
+  speechJobDeadlineMs: 30 * 1000,
+});
+const cancelOrigin = await cancelApp.listen({ host: '127.0.0.1', port: 0 });
+const cancelHttp = makeHttp(cancelOrigin);
+try {
+  const { token: cancelToken } = await seedSession(cancelAuthStore, 'speech-http-cancel');
+  const { token: otherToken } = await seedSession(cancelAuthStore, 'speech-http-cancel-other');
+
+  await group('[14] 取消（GY-R27）：running 作业经 `POST /jobs/{id}/cancel` ⇒ 200 `cancelled`（基线 13dd429 为 503 PROVIDER_UNAVAILABLE）；revision 恰好 +1、error_code 清空、迟到结果不复活、不产生转写记录', async () => {
+    const created = await cancelHttp(PATH, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'idempotency-key': newKey('cancel-create') },
+      body: { media_id: MEDIA.normal, media_revision: 1 },
+    });
+    assert.equal(created.status, 202, JSON.stringify(created.body));
+    const jobId = created.body.data.id;
+    // 等它真的进入 running（服务层先置 running 再调提供者；提供者被闸门挂住）
+    let current = null;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      current = await cancelHttp(`${API}/jobs/${jobId}`, { token: cancelToken });
+      assert.equal(current.status, 200, JSON.stringify(current.body));
+      if (current.body.data.state === 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(current.body.data.state, 'running', `作业应稳定停在 running，实际 ${current.body.data?.state}`);
+    assert.equal(current.body.data.revision, 2);
+    assert.equal(current.etag, '"2"');
+
+    // 他人不可取消：与非存在同形 404（不泄露"该作业存在"）
+    const foreign = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: otherToken,
+      headers: { 'if-match': '"2"', 'idempotency-key': newKey('cancel-foreign') },
+    });
+    assert.equal(foreign.status, 404, JSON.stringify(foreign.body));
+    assert.equal(foreign.body.error.code, 'NOT_FOUND');
+
+    // 缺头：400 / 428（由共享请求头前置校验代答；域内 cancelJob 同样保留这两道，单测逐条钉住）
+    const noKey = await cancelHttp(`${API}/jobs/${jobId}/cancel`, { method: 'POST', token: cancelToken, headers: { 'if-match': '"2"' } });
+    assert.equal(noKey.status, 400);
+    assert.equal(noKey.body.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+    const noIfMatch = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'idempotency-key': newKey('cancel-no-if-match') },
+    });
+    assert.equal(noIfMatch.status, 428);
+    assert.equal(noIfMatch.body.error.code, 'REVISION_REQUIRED');
+
+    // 正题：取消
+    const cancelKey = newKey('cancel-ok');
+    const cancelled = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'if-match': '"2"', 'idempotency-key': cancelKey },
+    });
+    assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+    assert.equal(cancelled.etag, '"3"');
+    assert.equal(cancelled.body.data.state, 'cancelled');
+    assert.equal(cancelled.body.data.revision, 3, '取消必须恰好 +1 次 revision');
+    assert.equal(cancelled.body.data.error_code, null, '取消后 error_code 必须清空');
+    assert.equal(cancelled.body.data.result, null);
+    assert.equal(cancelled.body.data.kind, 'transcription');
+    assert.equal(cancelled.body.data.target_ref.id, created.body.data.target_ref.id);
+    console.log(
+      `[取消实测] POST /jobs/{id}/cancel → ${cancelled.status} state=${cancelled.body.data.state} ` +
+        `revision=${cancelled.body.data.revision} etag=${cancelled.etag}`,
+    );
+
+    // 同键重放：回放同一结果（不 +1 次）
+    const replay = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'if-match': '"2"', 'idempotency-key': cancelKey },
+    });
+    assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    assert.equal(replay.body.data.revision, 3, '同键重放不得再 +1');
+
+    // 已 cancelled 属终态：新键 + 旧 If-Match ⇒ 409 REVISION_CONFLICT；新键 + 现 If-Match ⇒ 409 OBJECT_UNAVAILABLE（不得 5xx、不得复活）
+    const stale = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'if-match': '"2"', 'idempotency-key': newKey('cancel-stale') },
+    });
+    assert.equal(stale.status, 409, JSON.stringify(stale.body));
+    assert.equal(stale.body.error.code, 'REVISION_CONFLICT');
+    const again = await cancelHttp(`${API}/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      token: cancelToken,
+      headers: { 'if-match': '"3"', 'idempotency-key': newKey('cancel-again') },
+    });
+    assert.equal(again.status, 409, JSON.stringify(again.body));
+    assert.equal(again.body.error.code, 'OBJECT_UNAVAILABLE');
+
+    // 放行迟到结果：必须不复活、不产记录
+    releaseGate();
+    await cancelApp.speechService.settle();
+    const after = await cancelHttp(`${API}/jobs/${jobId}`, { token: cancelToken });
+    assert.equal(after.status, 200, JSON.stringify(after.body));
+    assert.equal(after.body.data.state, 'cancelled', '迟到的提供者结果不得复活已取消作业');
+    assert.equal(after.body.data.revision, 3, '迟到结果不得再改 revision');
+    assert.equal(after.body.data.error_code, null);
+    assert.equal(after.body.data.result, null);
+    const record = await cancelHttp(`${PATH}/${created.body.data.target_ref.id}`, { token: cancelToken });
+    assert.equal(record.status, 404, '取消不产生转写记录');
+    assert.equal(record.body.error.code, 'NOT_FOUND');
+    observations.push('取消端到端：running→cancelled 200（revision 2→3，error_code 清空）；同键重放不 +1；终态再取消 409；迟到结果不复活、无转写记录');
+  });
+} finally {
+  releaseGate();
+  await cancelApp.speechService.settle();
+  await cancelApp.close();
+}
+
 console.log(
   `PASS ${passed} loopback HTTP groups; real assembly via buildApp (app.ts 仅追加注入项，默认零端口注入); ` +
     'synthetic identity; stub provider (替身) / injected scripted provider / real fail-closed; loopback only, no supplier, no PG, no real ASR sample',

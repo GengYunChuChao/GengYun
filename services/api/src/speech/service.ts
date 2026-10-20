@@ -6,6 +6,8 @@
  *   GET    /speech/transcriptions/{id}                getTranscription    → TranscriptionEnvelope
  *   DELETE /speech/transcriptions/{id}                deleteTranscription → 202 AckEnvelope
  *   PATCH  /speech/transcriptions/{id}/confirmation   confirmTranscription→ 200 TranscriptionEnvelope
+ *   POST   /jobs/{id}/cancel（由 `jobs/routes.ts` 注册的共享作业路由；转写源接线后可用）
+ *                                                     cancelJob           → 200 JobEnvelope
  *
  * 本阶段**不注册任何 HTTP 路由**（组装点 `services/api/src/app.ts` 与路由目录
  * `services/api/src/routes` 被 #9 / #10 占用，禁止触碰）；本文件也不 import 它们的任何内容。
@@ -56,7 +58,9 @@ import {
   type JobState,
   type TranscriptionProjection,
   type UncertainSpan,
+  canTransitionJob,
   isEmptyTranscript,
+  isTerminalJobState,
   normalizeConfirmedText,
   normalizeModelVersion,
   normalizeUncertainSpans,
@@ -639,6 +643,68 @@ export function createSpeechService(options: SpeechServiceOptions) {
   }
 
   /**
+   * 用户取消转写作业（`POST /jobs/{id}/cancel` 的域内实现，#11/#13 的取消能力接线）。
+   *
+   * 语义（派单 §4，逐条都有独立用例钉住）：
+   * - `queued` / `running` ⇒ `cancelled`，`revision` **恰好 +1**（单次 CAS，不 +2）；
+   * - 状态机**只有一处**：迁移合法性只问 `state.ts` 的 `canTransitionJob`，
+   *   作业面不自建第二套状态机；`TERMINAL_JOB_STATES` 任一状态再取消 ⇒
+   *   `OBJECT_UNAVAILABLE`（对象状态不允许），**不是** `PROVIDER_UNAVAILABLE`（能力未接线）；
+   * - **取消不产生转写记录**：本函数只写作业状态，不碰 `transcriptions`；
+   *   随后迟到的提供者结果由 `store.commitTerminal` 的 revision CAS + 迁移校验挡下（旧回调不复活）；
+   * - 越权与不存在同形 `NOT_FOUND`：归属检查**先于**占位，越权请求不消耗 Idempotency-Key；
+   * - `If-Match` 缺失 ⇒ 428 `REVISION_REQUIRED`、格式非法 ⇒ 400 `INVALID_REQUEST`、
+   *   与当前 revision 不符 ⇒ 409 `REVISION_CONFLICT`（与 OCR/识别域同一口径）；
+   * - 同键原样重试 ⇒ 回放首次结果（不重复 +1 revision）；同键异体 ⇒ `IDEMPOTENCY_CONFLICT`。
+   */
+  async function cancelJob(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<JobProjection> {
+    const key = requireIdempotencyKey(input.idempotencyKey);
+    const expectedRevision = requireIfMatch(input.ifMatch);
+    // 归属先于占位：越权/不存在与「任务不存在」同形，且不消耗幂等键。
+    const row = await getOwnedJob(input.userId, input.jobId);
+    const at = now();
+    const scope = scopeFor(input.userId, 'POST', `${API_PREFIX}/jobs/${input.jobId}/cancel`);
+    const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idempotencyHmacKey);
+    return runIdempotentWrite<JobProjection>(
+      scope,
+      key,
+      requestHash,
+      at,
+      async () => {
+        if (row.revision !== expectedRevision) {
+          throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+        }
+        // 终态（含已 cancelled）再取消：对象状态不允许 ⇒ 409 OBJECT_UNAVAILABLE。
+        if (isTerminalJobState(row.state)) {
+          throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${row.state}，不可取消`);
+        }
+        // 唯一的迁移判据来源（不在此另写状态机）。
+        if (!canTransitionJob(row.state, 'cancelled')) {
+          throw new ApiError('OBJECT_UNAVAILABLE', `作业状态 ${row.state} 不可取消`);
+        }
+        const updated = await store.updateJob(row.id, expectedRevision, (current) => ({
+          ...current,
+          state: 'cancelled',
+          // 取消不是失败/不确定：错误码清空（GET 读回 error_code=null）。
+          errorCode: null,
+          revision: current.revision + 1,
+          updatedAt: at,
+        }));
+        // CAS 落空 ⇒ 作业在本次读写之间被别的写入改动，如实 409，不覆盖别人。
+        if (updated === null) throw new ApiError('REVISION_CONFLICT', '作业状态已变化，未能取消');
+        return toJob(updated, null);
+      },
+      // 同键原样重试：回放当前作业投影（此时 state 已是 cancelled，revision 不再递增）。
+      async () => getJob({ userId: input.userId, jobId: input.jobId }),
+    );
+  }
+
+  /**
    * 用户核对：**只写 `confirmed_text` + `confirmed_at`**，`raw_text` 与 `uncertain_spans`
    * 原样保留（存储层不变量兜底），revision 递增。
    *
@@ -734,6 +800,7 @@ export function createSpeechService(options: SpeechServiceOptions) {
     createTranscription,
     getTranscription,
     getJob,
+    cancelJob,
     confirmTranscription,
     deleteTranscription,
     settle,

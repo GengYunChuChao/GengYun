@@ -337,23 +337,19 @@ try {
     assert.equal(after.revision, before.revision, '被拒的取消不得推进 revision');
   });
 
-  await group('[9] 反例·转写域**无取消能力（未接线）**：作业存在（GET 200）但 cancel ⇒ 503 PROVIDER_UNAVAILABLE（retryable），且状态不被改动', async () => {
+  await group('[9] 转写域**已接线取消**（GY-R27）：已终态作业 cancel ⇒ 409 OBJECT_UNAVAILABLE（不再是 503「能力未接线」），状态/revision 不变', async () => {
     const before = (await readJob(transcriptionJobId)).body.data;
     assert.equal(before.state, 'succeeded');
     const rejected = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA, headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': newKey('sp-cancel') } });
-    // 契约 `cancelJob` 的响应闭集含 503（`x-error-status-map["503"] = [PROVIDER_UNAVAILABLE, PROVIDER_OUTCOME_UNKNOWN]`）：
-    // "该域根本没有取消能力"（能力未接线）≠"对象当前不可用"，故用 503 而不是 409，且不谎称对象状态。
-    assert.equal(rejected.status, 503, JSON.stringify(rejected.body));
-    assert.equal(rejected.body.error.code, 'PROVIDER_UNAVAILABLE', '不得假装取消成功，也不得冒充对象不可用');
-    assert.equal(
-      rejected.body.error.retryable,
-      false,
-      '能力未接线属"需运维改配置"，同一请求重试不会成功 ⇒ 不得标为可重试',
-    );
+    // 改前（基线 13dd429）：转写源没有 cancel ⇒ 注册表 503 PROVIDER_UNAVAILABLE「该作业所属能力尚未提供取消（未接线）」。
+    // 改后：转写源有 cancel ⇒ 域内终态判定生效 ⇒ 409 OBJECT_UNAVAILABLE（"对象当前不可用"，可撤销的客户端错误）。
+    assert.equal(rejected.status, 409, JSON.stringify(rejected.body));
+    assert.equal(rejected.body.error.code, 'OBJECT_UNAVAILABLE', '终态不可取消 ⇒ 对象状态不允许，不是能力未接线');
+    assert.notEqual(rejected.body.error.code, 'PROVIDER_UNAVAILABLE', '不得再以「能力未接线」的 503 形态回应');
     const after = (await readJob(transcriptionJobId)).body.data;
-    assert.equal(after.state, before.state, '不得伪造 cancelled');
+    assert.equal(after.state, before.state, '已终态不得被取消（不伪造 cancelled）');
     assert.equal(after.revision, before.revision);
-    observations.push('转写域 cancel ⇒ 503 PROVIDER_UNAVAILABLE（能力未接线，如实拒绝；状态未变）');
+    observations.push('转写域 cancel 已接线：终态再取消 ⇒ 409 OBJECT_UNAVAILABLE（改前 503 PROVIDER_UNAVAILABLE；200 cancelled 的活体路径见 speech-http.mjs）');
   });
 
   await group('[10] cancel 并发：同键并发 ⇒ 恰好一次迁移（两次响应同一 revision）；异键并发 + 同一 If-Match ⇒ 恰好一个 200、一个 409', async () => {
@@ -515,17 +511,21 @@ try {
     observations.push('嵌套 result.value 守卫：坏投影经路由 503（改前 200 透出），契约合法仍 200');
   });
 
-  // -------- [14] 钉子（预审要求）：**无取消能力 kind 的 cancel 错误码映射** --------
+  // -------- [14] 钉子（预审要求）：**cancel 请求头前置校验的错误码映射** --------
   // 显式钉住现口径，防静默漂移：
   //   （a）两个头都缺            ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`
   //   （b）有 Key、缺 `If-Match` ⇒ 428 `REVISION_REQUIRED`
-  //   （c）两个头齐备但该 kind 无取消能力 ⇒ 503 `PROVIDER_UNAVAILABLE`（能力未接线）
+  //   （c）两个头齐备            ⇒ 走到域内判定：**已终态** ⇒ 409 `OBJECT_UNAVAILABLE`
+  //       （GY-R27 改前：转写域无 cancel ⇒ 503 `PROVIDER_UNAVAILABLE`「能力未接线」；改后转写域已接线，
+  //        （c）不再落在"无取消能力"分支，而是落在转写域自己的终态判定上）
   // **隐式依赖如实说明**：(a)/(b) 由"**已注册的、有取消能力的源**"（本片为识别域）在归属判定**之前**
   // 执行的共享请求头前置校验（`requireIdempotencyKey`/`requireIfMatch`）代答 —— 即"先校请求形状、再判归属"；
   // 注册表 cancel **遍历全部源**，故该映射**与注册顺序无关**（单测 `jobs-registry.test.mjs` 的钉子用换序 + 摘源两种构造证明了这一点），
   // 但它**依赖"注册表里存在至少一个有取消能力的源"**：若某天只剩无取消能力的源，同一缺头请求会退化为 503。
-  // 只有 (c) 真正走到"该 kind 无取消能力"的分支。
-  await group('[14] 钉子·无取消能力 kind 的 cancel 错误码：缺 Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；缺 If-Match ⇒ 428 REVISION_REQUIRED；两头齐备 ⇒ 503 PROVIDER_UNAVAILABLE（依赖"存在有取消能力的源"，与顺序无关——详见用例注释与单测钉子）', async () => {
+  // **「无取消能力 kind ⇒ 503」这一支**在转写域接线后不再能由转写作业钉住，现由两处继续钉住（未削弱）：
+  //   · `tests/unit/jobs-registry.test.mjs` 的 fakeSource(`withoutCancel`) 用例（同形 404 + 503 retryable=false）；
+  //   · `tests/moderation/http-jobs.test.mjs`、`tests/unit/tts-jobs-http.test.mjs`（真实装配 + 未接线 kind）。
+  await group('[14] 钉子·cancel 请求头错误码映射：缺 Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；缺 If-Match ⇒ 428 REVISION_REQUIRED；两头齐备 ⇒ 409 OBJECT_UNAVAILABLE（转写域已接线，落在终态判定而非"能力未接线"；顺序依赖详见用例注释）', async () => {
     const before = (await readJob(transcriptionJobId)).body.data;
     const neither = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA });
     assert.equal(neither.status, 400, `两个头都缺应 400，实际 ${neither.status}`);
@@ -538,17 +538,21 @@ try {
       token: tokenA,
       headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': newKey('nail-both') },
     });
-    assert.equal(bothHeaders.status, 503, `两头齐备应 503（该 kind 无取消能力），实际 ${bothHeaders.status}`);
-    assert.equal(bothHeaders.body.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(bothHeaders.body.error.retryable, false, '该 kind 无取消能力（未接线）⇒ 不得标为可重试');
+    assert.equal(bothHeaders.status, 409, `两头齐备应 409（已终态不可取消），实际 ${bothHeaders.status}`);
+    assert.equal(bothHeaders.body.error.code, 'OBJECT_UNAVAILABLE');
+    assert.notEqual(
+      bothHeaders.body.error.code,
+      'PROVIDER_UNAVAILABLE',
+      '转写域已接线 ⇒ 不得再以 503「能力未接线」回应',
+    );
     const after = (await readJob(transcriptionJobId)).body.data;
     assert.equal(after.state, before.state, '三次失败调用都不得改动作业状态');
     assert.equal(after.revision, before.revision);
     console.log(
-      `[无取消能力 kind 的错误码钉子] 缺两头=${neither.status} ${neither.body.error.code} ｜ ` +
+      `[cancel 请求头错误码钉子] 缺两头=${neither.status} ${neither.body.error.code} ｜ ` +
         `有 Key 缺 If-Match=${keyOnly.status} ${keyOnly.body.error.code} ｜ 两头齐备=${bothHeaders.status} ${bothHeaders.body.error.code}`,
     );
-    observations.push('钉子：无取消能力 kind 的 cancel ⇒ 缺 Key 400 / 缺 If-Match 428 / 齐备 503（顺序依赖已在用例注释钉明）');
+    observations.push('钉子：cancel ⇒ 缺 Key 400 / 缺 If-Match 428 / 齐备（已终态）409 OBJECT_UNAVAILABLE（顺序依赖已在用例注释钉明；503 支由单测与审核/合成域用例钉住）');
   });
 } finally {
   await app.close();
