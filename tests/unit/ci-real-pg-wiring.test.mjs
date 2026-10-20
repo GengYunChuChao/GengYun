@@ -18,6 +18,8 @@
 //   ③ **真跑受管脚本的那个 job** 必须真的有 `services.postgres`，且镜像主版本锚定 **17**
 //      （防降级到 16 / 防删 service；作用域锚定到 job，⛔ 不看「文件里第一个 `services:`」——
 //      前置诱饵 job 就能把那种实现骗成绿）；
+//      作用域边界（裁定）：**不跑受管脚本的 job 不在范围内**——它不跑脚本，坏镜像不构成真实风险；
+//      因此把两个脚本拆成两个 job 仍必须绿（判据本来就是 job 作用域的），而诱饵自己的镜像坏了不报。
 //   ④ 该 workflow 的每个 `uses:` 必须固定到 **40 位 SHA**（⛔ 不许写浮标签；口径与仓内其它 workflow 一致）；
 //   ⑤ 该 workflow 不得含「吞红」构造（`continue-on-error` / `if:` / 行尾 `|| true`）——
 //      真库臂的红是唯一验收信号，吞掉它就等于没有闸门。
@@ -350,12 +352,95 @@ function readAllWorkflows() {
 
 // ── 变异辅助（只给反向控制用；全部在**内存**里做，⛔ 不落盘） ────────────────────────────
 
-/** 只替换**最后一次**匹配——「诱饵 + 真 job」里必须只动真 job 的镜像行。 */
-function replaceLast(source, re, replacement) {
-  const matches = [...source.matchAll(re)];
-  assert.ok(matches.length >= 1, `变异找不到目标：${re}`);
-  const last = matches[matches.length - 1];
-  return source.slice(0, last.index) + replacement + source.slice(last.index + last[0].length);
+/**
+ * 某个 job 在源码行里的区间 `[start, end)`。
+ * `end` 在**下一个同缩进的 job 头**（`^ {2}\S`）处收尾——⛔ 不能「一直删到文件末尾」：
+ * 不设上界的话，单 job 假设会把后续每个 job 的 `services:` 一起删掉，于是「两个脚本拆成两个 job」
+ * 这种合规形态反而报 2 条问题（审查实测 `expected: 1, actual: 2`）。
+ */
+function jobLineRange(source, jobId) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => new RegExp(`^ {2}${jobId}:\\s*$`).test(line));
+  assert.ok(start >= 0, `变异找不到 job \`${jobId}\``);
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (/^ {2}\S/.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return { lines, start, end };
+}
+
+/**
+ * 只在指定 job 的行区间内做一次替换。
+ * ⛔ 不用「文件里第一条／最后一条 `image:`」这种位置假设：一旦文件里有第二块 `services:`
+ * （诱饵 job／拆成两个 job），位置假设的变异点就落在判据③**不看**的地方，自测会假红或假绿。
+ */
+function replaceWithinJob(source, jobId, pattern, replacement) {
+  const { lines, start, end } = jobLineRange(source, jobId);
+  let hits = 0;
+  for (let index = start; index < end; index += 1) {
+    const mutated = lines[index].replace(pattern, replacement);
+    if (mutated === lines[index]) continue;
+    lines[index] = mutated;
+    hits += 1;
+  }
+  assert.equal(hits, 1, `变异必须在 job \`${jobId}\` 内正好命中一处（实际 ${hits} 处）：${pattern}`);
+  return lines.join('\n');
+}
+
+/** job 里每个 step 的行区间（`^ {6}- ` 起头，到下一个缩进不深于 6 的非空行为止）。 */
+function stepRanges(lines, start, end) {
+  const ranges = [];
+  for (let index = start; index < end; index += 1) {
+    if (!/^ {6}- \S/.test(lines[index])) continue;
+    let stop = index + 1;
+    while (stop < end) {
+      const line = lines[stop];
+      if (line.trim() === '') {
+        stop += 1;
+        continue;
+      }
+      if (line.length - line.trimStart().length <= 6) break;
+      stop += 1;
+    }
+    ranges.push({ start: index, end: stop });
+    index = stop - 1;
+  }
+  return ranges;
+}
+
+/**
+ * 把单 job 形态拆成**两个 job**（每个 job 各跑一个受管脚本、各自一块合规 `services:`）。
+ * 这是本 workflow 最自然的下一步演进（文件头 docstring 已点名「把两个脚本拆成两个 job」）：
+ * 拆完必须**仍然绿**，⛔ 否则守卫会反过来挡住一次正当的重构。
+ * 两个 job 的 id 由调用方从 `jobsRunningManagedScripts()` 取，⛔ 不硬写字面量。
+ * 返回 `null` 表示**文件本来就是**「两个 job 各跑一个脚本」的形态（拆 job 已经做完）——
+ * 这时调用方直接拿磁盘形态当被测形态，⛔ 不要硬拆第二次。
+ */
+function withSplitJobs(source, primaryId, secondId) {
+  const { lines, start, end } = jobLineRange(source, primaryId);
+  const steps = stepRanges(lines, start, end);
+  const stepOf = (script) => steps.find((range) => lines.slice(range.start, range.end).join('\n').includes(script));
+  const conversations = stepOf(MANAGED_SCRIPTS[0]);
+  const community = stepOf(MANAGED_SCRIPTS[1]);
+  if (conversations === undefined || community === undefined) return null;
+  assert.ok(conversations.end <= community.start, '两个受管脚本的 step 顺序变了，拆 job 的构造需要重写');
+
+  const bodyWithout = (range) => lines
+    .slice(start + 1, end)
+    .filter((line, offset) => {
+      const index = start + 1 + offset;
+      return index < range.start || index >= range.end;
+    });
+
+  const firstJob = [lines[start], ...bodyWithout(community)];
+  const secondJob = [`  ${secondId}:`, ...bodyWithout(conversations)];
+  const mutated = [...lines.slice(0, start), ...firstJob, ...secondJob, ...lines.slice(end)].join('\n');
+  assert.notEqual(mutated, source, '双 job 构造必须真的改到文本');
+  assert.equal(jobsOf(mutated).length, jobsOf(source).length + 1, '拆 job 必须只多出一个 job');
+  return mutated;
 }
 
 /** 在 `jobs:` 之后插一个**自带合规 `postgres:17.11`** 的诱饵 job（模拟「先把诱饵放前面」）。 */
@@ -376,15 +461,18 @@ function withDecoyJob(source) {
 
 /** 删掉指定 job **自己的** `services:` 段（只在该 job 的行范围内动手，⛔ 不碰别的 job 的同名段）。 */
 function withoutJobServices(source, jobId) {
-  const lines = source.split('\n');
-  const start = lines.findIndex((line) => new RegExp(`^ {2}${jobId}:\\s*$`).test(line));
-  assert.ok(start >= 0, `变异找不到 job \`${jobId}\``);
+  const { lines, start, end } = jobLineRange(source, jobId);
   const kept = [];
   let dropping = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (index > start && /^ {0,2}\S/.test(line)) dropping = false;
-    if (index >= start && !dropping && /^ {4}services:\s*$/.test(line)) {
+    // job 区间之外一律原样保留 ⇒ 后续 job 的同名 `services:` 段不会被连带删掉（上界）。
+    if (index < start || index >= end) {
+      dropping = false;
+      kept.push(line);
+      continue;
+    }
+    if (!dropping && /^ {4}services:\s*$/.test(line)) {
       dropping = true;
       continue;
     }
@@ -545,11 +633,20 @@ test('反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，�
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
   assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
 
-  // ① 主版本降级：17.11 → 16.4。
-  const downgraded = source.replace(/image:\s*postgres:17[^\s]*/, 'image: postgres:16.4');
+  // 变异点必须落在「真跑受管脚本的 job」的 body 里，job id 也从实现取——
+  // 文件里出现第二块 `services:`（诱饵 job／把两个脚本拆成两个 job）时，
+  // 「文件里第一条／最后一条 `image:`」就不是判据③看的那个 job，
+  // 变异会落在判据**不看**的地方（审查 §3-2 B0：合规诱饵反而让套件红 `actual: 0`）。
+  const runningJobs = jobsRunningManagedScripts(source);
+  assert.ok(runningJobs.length >= 1, '判据③ 没找到「真跑受管脚本的 job」，下面的变异没有作用域');
+  const realJobId = runningJobs[0].id;
+
+  // ① 主版本降级：17.11 → 16.4（只降**真 job** 的那一行）。
+  const downgraded = replaceWithinJob(source, realJobId, /image:\s*postgres:17[^\s]*/, 'image: postgres:16.4');
   assert.notEqual(downgraded, source, '变异必须真的改到镜像行');
   const downgradeProblems = postgresJobProblems(downgraded);
   assert.equal(downgradeProblems.length, 1, '降级必须且只能报一条问题');
+  assert.ok(downgradeProblems[0].includes(`\`${realJobId}\``), '问题描述必须点名真 job');
   assert.ok(downgradeProblems[0].includes('16'), '问题描述必须写出实际主版本');
   assert.throws(
     () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, downgradeProblems),
@@ -558,14 +655,17 @@ test('反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，�
   );
 
   // ② 删掉**真 job 自己的** `services:` 段（模拟「有人嫌 CI 慢把 service 去掉」）。
-  const withoutServices = withoutJobServices(source, 'real-pg-17-11');
+  const withoutServices = withoutJobServices(source, realJobId);
   assert.notEqual(withoutServices, source, '变异必须真的删到 services 段');
+  const missingServicesProblems = postgresJobProblems(withoutServices);
   assert.ok(
-    postgresJobProblems(withoutServices).length > 0,
+    missingServicesProblems.length > 0,
     '删掉 service 段后必须报问题（否则 `services` 缺失可以被静默忽略）',
   );
+  assert.equal(missingServicesProblems.length, 1, '删 services 必须且只能报一条问题（否则红可能来自别的 job）');
+  assert.ok(missingServicesProblems[0].includes(`\`${realJobId}\``), '删 services 的问题必须点名真 job');
   assert.throws(
-    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(withoutServices)),
+    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, missingServicesProblems),
     (error) => error.message.includes(REAL_PG_WORKFLOW),
     '删掉 service 段后同一断言必须失败，且消息点名文件',
   );
@@ -650,6 +750,9 @@ test('反向控制①b：`run: |` 块体里把调用写成 shell 注释，判据
 test('反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）', () => {
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
   assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
+  const runningJobs = jobsRunningManagedScripts(source);
+  assert.ok(runningJobs.length >= 1, '判据③ 没找到「真跑受管脚本的 job」');
+  const realJobId = runningJobs[0].id;
 
   const withDecoy = withDecoyJob(source);
   const decoy = jobsOf(withDecoy).find((job) => job.id === 'zz-decoy');
@@ -660,11 +763,11 @@ test('反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降�
     [],
     '诱饵 job 自身必须合规，否则这条反向控制没有证明力',
   );
-  // 只插诱饵、真 job 不动 ⇒ 仍绿（不误伤）。
+  // 只插诱饵、真 job 不动 ⇒ 仍绿（不误伤）。**v2 在这里假红过**（`actual: 0`）：变异点落在诱饵身上。
   assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(withDecoy));
 
-  // 只降级**最后一次** `postgres:17.11`（＝真 job 的镜像），诱饵保持 17.11。
-  const decoyPlusDowngrade = replaceLast(withDecoy, /image:\s*postgres:17\.11/g, 'image: postgres:16.4');
+  // 只降级**真 job** 的那一行（⛔ 不用「文件里最后一条 `image:`」——那是位置假设），诱饵保持 17.11。
+  const decoyPlusDowngrade = replaceWithinJob(withDecoy, realJobId, /image:\s*postgres:17\.11/, 'image: postgres:16.4');
   assert.notEqual(decoyPlusDowngrade, withDecoy, '变异必须真的改到真 job 的镜像行');
   assert.ok(decoyPlusDowngrade.includes('image: postgres:17.11'), '诱饵的 17.11 必须保留（否则红可能来自诱饵）');
   assert.deepEqual(
@@ -675,19 +778,36 @@ test('反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降�
 
   const problems = postgresJobProblems(decoyPlusDowngrade);
   assert.equal(problems.length, 1, '降级必须且只能报一条问题（否则红可能来自诱饵）');
-  assert.ok(problems[0].includes('real-pg-17-11'), '失败消息必须点名**真 job**');
+  assert.ok(problems[0].includes(`\`${realJobId}\``), '失败消息必须点名**真 job**');
   assert.ok(problems[0].includes('16'), '失败消息必须写出实际主版本');
   assert.throws(
     () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, problems),
-    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes('real-pg-17-11'),
+    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes(realJobId),
     '诱饵 + 真 job 降级后同一断言必须失败，且消息点名文件与真 job',
+  );
+
+  // 裁定（派单 `real-pg-ci-fix2-20261020.md` §1-②）：**不跑受管脚本的 job 不在门禁范围**。
+  // 诱饵 job 自己把镜像降到 16.4、甚至整段删掉 `services:`，都不构成真实风险——它不跑任何受管脚本，
+  // 坏镜像不影响任何一条断言。⛔ 因此判据③**不**扩成「文件里每个 `services:` 块都要合规」
+  // （那会让以后往这个 workflow 加任何非真库 job 都变红，属机械门禁把人推向更差设计）。
+  // 下面两条把这条裁定的边界钉成机器读数，防止有人把它改回机械全量扫描。
+  const decoyDowngraded = replaceWithinJob(withDecoy, 'zz-decoy', /image:\s*postgres:17\.11/, 'image: postgres:16.4');
+  assert.deepEqual(postgresJobProblems(decoyDowngraded), [], '不跑受管脚本的诱饵 job 不在判据③范围（裁定②）');
+  assert.deepEqual(
+    postgresJobProblems(withoutJobServices(withDecoy, 'zz-decoy')),
+    [],
+    '诱饵 job 连 `services:` 一起删掉也不该红（裁定②：不在范围）',
   );
 });
 
 test('反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `services` ⇒ 判据③必须判红（锚定真 job）', () => {
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  const runningJobs = jobsRunningManagedScripts(source);
+  assert.ok(runningJobs.length >= 1, '判据③ 没找到「真跑受管脚本的 job」');
+  const realJobId = runningJobs[0].id;
+
   const withDecoy = withDecoyJob(source);
-  const decoyMinusRealServices = withoutJobServices(withDecoy, 'real-pg-17-11');
+  const decoyMinusRealServices = withoutJobServices(withDecoy, realJobId);
   assert.notEqual(decoyMinusRealServices, withDecoy, '变异必须真的删到真 job 的 services 段');
 
   // 诱饵的 `services` 必须原样保留且仍合规 ⇒ 这个红只能来自「真 job 没有 services」。
@@ -701,11 +821,72 @@ test('反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `ser
 
   const problems = postgresJobProblems(decoyMinusRealServices);
   assert.equal(problems.length, 1, '删 services 必须且只能报一条问题（否则红可能来自诱饵）');
-  assert.ok(problems[0].includes('real-pg-17-11'), '失败消息必须点名**真 job**');
+  assert.ok(problems[0].includes(`\`${realJobId}\``), '失败消息必须点名**真 job**');
   assert.ok(problems[0].includes('services'), '失败消息必须指出缺的是 services');
   assert.throws(
     () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, problems),
-    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes('real-pg-17-11'),
+    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes(realJobId),
     '诱饵 + 真 job 删 services 后同一断言必须失败，且消息点名文件与真 job',
+  );
+});
+
+test('反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第二个 job** 的镜像必须红并点名它', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
+  const runningJobs = jobsRunningManagedScripts(source);
+  assert.ok(runningJobs.length >= 1, '判据③ 没找到「真跑受管脚本的 job」');
+
+  // 构造双 job 形态；若文件**本来就已经**拆成两个 job（每个各跑一个脚本），直接拿磁盘形态当被测形态。
+  const primaryId = runningJobs[0].id;
+  const split = withSplitJobs(source, primaryId, `${primaryId}-community`);
+  const form = split === null ? source : split;
+  const formJobIds = jobsRunningManagedScripts(form).map((job) => job.id);
+  const firstId = formJobIds[0];
+  const secondId = formJobIds[formJobIds.length - 1];
+  assert.ok(formJobIds.length >= 2, '被测形态必须是「两个 job 各跑一个受管脚本」');
+  assert.notEqual(firstId, secondId, '两个 job 的 id 必须不同（否则「点名第二个 job」没有意义）');
+
+  // ① **合规的双 job 形态必须绿**：v2 在这里假红过两次（保留原 job id ⇒ `pass 9 / fail 1`
+  // `删 services 必须且只能报一条问题 expected: 1, actual: 2`；两个 job 改名 ⇒ `pass 7 / fail 3`）。
+  // 判据③ 本来就是 job 作用域的，假红来自测试文件的单 job 假设。
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(form));
+  for (const job of jobsRunningManagedScripts(form)) {
+    assert.deepEqual(postgresServiceProblems(job.body), [], `job \`${job.id}\` 自身的 \`services:\` 必须合规`);
+  }
+
+  // ② 只降**第二个 job** 的镜像 ⇒ 必须红，且消息点名第二个 job（判据已支持，v2 缺的就是这条用例）。
+  const secondDowngraded = replaceWithinJob(form, secondId, /image:\s*postgres:17[^\s]*/, 'image: postgres:16.4');
+  const problems = postgresJobProblems(secondDowngraded);
+  assert.equal(problems.length, 1, '只降第二个 job 必须且只能报一条问题');
+  assert.ok(problems[0].includes(`\`${secondId}\``), '失败消息必须点名**第二个 job**');
+  assert.ok(!problems[0].includes(`\`${firstId}\``), '失败消息不得误指第一个 job');
+  assert.throws(
+    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, problems),
+    (error) => error.message.includes(secondId) && error.message.includes('16'),
+    '双 job 形态下第二个 job 被降级后同一断言必须失败，且消息点名它',
+  );
+
+  // ③ 只删**第二个 job** 的 `services:` ⇒ 必须且只能报一条，且第一个 job 的 `services:` 原样保留。
+  //    （v2 的 `withoutJobServices` 不设上界，在双 job 形态里会把两个 job 的 `services:` 都删掉。）
+  const secondWithoutServices = withoutJobServices(form, secondId);
+  assert.notEqual(secondWithoutServices, form, '变异必须真的删到第二个 job 的 services 段');
+  const splitProblems = postgresJobProblems(secondWithoutServices);
+  assert.equal(splitProblems.length, 1, '删第二个 job 的 services 必须且只能报一条问题');
+  assert.ok(splitProblems[0].includes(`\`${secondId}\``), '失败消息必须点名第二个 job');
+  assert.deepEqual(
+    postgresServiceProblems(jobsOf(secondWithoutServices).find((job) => job.id === firstId).body),
+    [],
+    '删第二个 job 的 `services:` 不得碰到第一个 job（变异的行区间上界）',
+  );
+
+  // ④ 反过来只删**第一个 job** 的 `services:` ⇒ 同样只报一条、点名第一个 job，第二个 job 不受影响。
+  const firstWithoutServices = withoutJobServices(form, firstId);
+  const firstProblems = postgresJobProblems(firstWithoutServices);
+  assert.equal(firstProblems.length, 1, '删第一个 job 的 services 必须且只能报一条问题');
+  assert.ok(firstProblems[0].includes(`\`${firstId}\``), '失败消息必须点名第一个 job');
+  assert.deepEqual(
+    postgresServiceProblems(jobsOf(firstWithoutServices).find((job) => job.id === secondId).body),
+    [],
+    '删第一个 job 的 `services:` 不得碰到第二个 job',
   );
 });

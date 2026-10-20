@@ -3,18 +3,18 @@
 - 日期：2026-10-20
 - 分片：真库臂 CI 接线（派单 `.pg17/dispatch/real-pg-ci-wiring-20261020.md`）；**返修**（派单 `.pg17/dispatch/real-pg-ci-fix-20261020.md`，对抗性审查 `adv-verdict-real-pg-ci-79fede1.md` 判「需修改」）
 - 分支：`test/gy-real-pg-ci-wiring`，基线 `upstream/main` = `df043a715e691019e14373181249a5cf51ec9da9`（短 `df043a7`，本片首次改动前实测）
-- 版本：**v1 = `79fede1`**（被审对象，6 用例）→ **v2 = 本页当前状态**（10 用例，收口两条假绿通道，见 §9）
+- 版本：**v1 = `79fede1`**（被审对象，6 用例）→ **v2 = `59ee865`**（10 用例，收口两条假绿通道）→ **v3 = 本页当前状态**（11 用例，收口「双 job 形态假红」并按裁定划定诱饵 job 边界，见 §9.1）
 - 环境：Windows（PowerShell 5.1，本机 PATH 无 `pwsh`）、Node v24.16.0、npm 11.13.0、`npm ci --offline --ignore-scripts`（103 packages）
-- **沙箱口径（决定了本页一半的「未取得」）**：v1 与 v2 两轮实测**都是**「带管道 stdio 的子进程一律 `EPERM`」（§4.1 逐字读数；v2 返修派单称沙箱已改 `danger-full-access`，但**实测未变**，见 §4.1 末段）。所以本页凡是「跑不起来」的项一律写**未取得**并给出权威替代读数，⛔ 不写成通过。
+- 沙箱口径（v1／v2 两轮）：**带管道 stdio 的子进程一律 `EPERM`**（§4.1 逐字读数）。**v3 轮实测该限制消失**：`spawnSync` 取得 `status 0 / err undefined`，`node --test` **默认隔离**跑通（§4.1 末段、§4.2）——这是本轮环境事实的变化，⛔ 不改写前两轮的历史读数。
 - 本页所有数字都有可复跑命令；标「未取得」的一律**没有验证过**。
 
 ## 0 结论（先看这五条）
 
 1. **缺口是真的**：`tests/integration/conversations-pg.mjs`（#313）与 `tests/integration/community-pg.mjs`（#296）都在 main 上，但把 11 个 workflow 逐个搜文件名是 **0 命中**——真库臂只存在于本机，CI 上这两个脚本坏成什么样都不会红（§1.1）。
 2. **本片只做一件事**：新增 `.github/workflows/real-pg-integration.yml`（第 12 个 workflow），用官方 `postgres:17.11` 服务容器 + 各自建**专用空库**的方式真跑这两个脚本（§2）。
-3. **把缺口变成会红的断言**：新增 `tests/unit/ci-real-pg-wiring.test.mjs`（**10 个用例**＝4 前向 + 6 反向控制）。反向控制除了在内存里变异，还**在磁盘上真的破坏过 workflow**（v1 三形态 + v2 三形态），每次复原后 sha256 逐字节核对一致（§4.3）。
-4. **v2 返修收口两条假绿通道**（审查实证 B2／F1／F2）：① `run: |` 块标量体里的 `#` 行是 shell 注释，现在一律不计入命令文本；② 判据③从「文件里第一个 `services:`」改成**锚定真跑受管脚本的那个 job**。两条各自补了反向控制，并**把修法回退做反证**：回退 A ⇒ 只有 `反向控制①b` 红；回退 B ⇒ 只有 `反向控制④`／`⑤` 红（§4.3.2）。
-5. **未取得（如实）**：workflow 的**真红/真绿**只能由 PR 自身 CI 的 run 证明——本机无容器运行环境；`node --test` 默认隔离在本机仍 `spawn EPERM`（§4.1）；`npm run test:integration:http` 本机跑到第 8 段时红在 `tests/integration/ocr-http.mjs` 的**子进程探针**上（`spawnSync … EPERM`，非本片缺陷，§4.5）。
+3. **把缺口变成会红的断言**：新增 `tests/unit/ci-real-pg-wiring.test.mjs`（**11 个用例**＝4 前向 + 7 反向控制）。反向控制除了在内存里变异，还**在磁盘上真的破坏过 workflow**（v1 三形态 + v2 三形态 + v3 八形态），每次复原后 sha256 逐字节核对一致（§3.3、§4.3）。
+4. **两轮返修共收口三件事**：v2 收口两条假绿通道（审查实证 B2／F1／F2）——① `run: |` 块标量体里的 `#` 行不再算命令文本；② 判据③从「文件里第一个 `services:`」改成**锚定真跑受管脚本的那个 job**。v3 收口**本片自己引入的假红回归**（审查 §3-3 的 S1／S2）——③ 测试文件的三处单 job 假设（`withoutJobServices` 不设上界、反向控制硬写 job id、用「文件里第一条／最后一条镜像」当变异点）改成「在 `jobsRunningManagedScripts()` 给出的 job body 内变异、id 从该函数取」，并按裁定把诱饵 job 明确划到门禁范围外（§3.2.1）。三件事各有**修法回退反证**（§3.3.2、§3.3.4）。
+5. **未取得（如实）**：workflow 的**真红/真绿**只能由 PR 自身 CI 的 run 证明——本机无容器运行环境；其余本机项读数见 §4、§5。
 
 ## 1 缺口事实（逐条实测，不是推断）
 
@@ -100,7 +100,7 @@ Select-String -Path .github/workflows/*.yml -Pattern 'conversations-pg|community
 2. ⛔ 不把两个脚本塞进 `package.json` 的 `test:integration:http` 链：那条链是**无库**回环链，接进去会让每个本地开发者天天红；真库臂的正确位置就是一个带 PG 的 workflow（与 `.pg17/ruling-skip-exit-code-20261020.md` 第 2 条同口径）。
 3. ⛔ 不改任何既有 workflow、不改 `tests/integration/**`、不改 `package.json`（§8 改动面）。
 
-## 3 守卫测试（`tests/unit/ci-real-pg-wiring.test.mjs`，v2 共 711 行；v1 为 409 行）
+## 3 守卫测试（`tests/unit/ci-real-pg-wiring.test.mjs`，v3 共 892 行；v2 为 711 行；v1 为 409 行）
 
 范式照 `tests/unit/integration-script-coverage.test.mjs`：**纯静态、只读 `.github/workflows/` 的文本、⛔ 不起服务/不连 PG/不联网/不写任何文件/不加依赖**；正向断言与反向控制**调用同一个函数**（所以「反向控制的红」证明的就是「真实缺口会红」）。
 
@@ -110,13 +110,13 @@ Select-String -Path .github/workflows/*.yml -Pattern 'conversations-pg|community
 | --- | --- | --- |
 | ① 受管脚本必须被某个 workflow 的 `run:` **命令文本**执行 | `runCommandTextsOf()` 取 `run:` 的内联值 + 其后缩进更深的块行；**两种注释都跳过**：YAML 级 `#` 行，以及 `run: \|`／`run: >` 块标量体里的 `#` 行（bash 执行块内容，那是 shell 注释）；`missingManagedScripts()` 求差集 | 「脚本在 main、但没人跑」的静默缺口；拦住「只写在注释里」的糊弄——**含**把调用写进 `run: \|` 块再注释掉这一形态（v1 漏了它，§9 A） |
 | ② 任何 workflow 都不得含放宽跳过开关 | `escapeHatchHits()` 扫 `GY_ALLOW_SKIP` 与 `--allow-skip`，报 `文件:行号: 开关` | 为让 job 绿而把「未取得」改写成「通过」（假绿） |
-| ③ **真跑受管脚本的那个 job** 必须有 `services.postgres`，且镜像主版本锚定 17 | `jobsOf()` 解析 `jobs:` 下每个 job → `jobsRunningManagedScripts()` 选出作用域 → 对每个这样的 job 调 `postgresServiceProblems(job.body)`；问题消息带 `job \`<id>\`：` 前缀 | 镜像降级到 16（17 专有行为静默失真）／删掉 service（真库没了）——**且**挡住「前面插一个带 `postgres:17.11` 的诱饵 job」这种绕过（v1 只取第一个 `services:`，§9 B） |
+| ③ **真跑受管脚本的那个 job** 必须有 `services.postgres`，且镜像主版本锚定 17 | `jobsOf()` 解析 `jobs:` 下每个 job → `jobsRunningManagedScripts()` 选出作用域 → 对每个这样的 job 调 `postgresServiceProblems(job.body)`；问题消息带 `job \`<id>\`：` 前缀 | 镜像降级到 16（17 专有行为静默失真）／删掉 service（真库没了）——**且**挡住「前面插一个带 `postgres:17.11` 的诱饵 job」这种绕过（v1 只取第一个 `services:`，§9 B）。**作用域边界（裁定，§3.2.1）**：不跑受管脚本的 job 不在范围内；把两个脚本拆成两个 job 仍必须绿（v3 修假红，§9.1） |
 | ④ workflow 的每个 `uses:` 必须固定到 40 位 SHA | `unpinnedUses()` 逐个 `uses:` 行比对 `@[0-9a-f]{40}$` | 浮标签（`@v4`）会让 CI 语义随上游发版改变 |
 | ⑤ workflow 不得含「吞红」构造 | `swallowedFailureHits()` 在**非注释行**里扫 step 级 `continue-on-error:`／`if:`／行尾 `\|\| true` | 这一步失败却仍判绿——真库臂的红是唯一验收信号，吞掉它就等于没有闸门（v2 新增，非阻塞建议） |
 
 受管脚本清单是**冻结**的（`MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` 双向比对）：增删受管脚本＝改门禁口径，必须同时改两处并更新本页，刻意留 diff。另有三条「反空转」断言：workflow 数 ≥ 11、`run:` 命令块数 ≥ 5、受管清单 ≥ 2——否则「什么都没扫」也会绿。
 
-### 3.2 十个用例（v2）
+### 3.2 十一个用例（v3）
 
 | # | 用例 | 断言的东西 |
 | --- | --- | --- |
@@ -126,12 +126,21 @@ Select-String -Path .github/workflows/*.yml -Pattern 'conversations-pg|community
 | 4 | 反向控制② | 往 workflow 追加 `GY_ALLOW_SKIP`／`--allow-skip` ⇒ 必须红，消息里出现该开关与文件名；反向不误伤（「不得放宽」这种反向措辞不算开关） |
 | 5 | 前向③ | **真 job** 有 `services.postgres` + 镜像主版本 17 + `uses:` 全固定 SHA（另断言真的解析到 job／真的用 `psql` 建库／真的 `npm ci`） |
 | 6 | 前向④ | workflow 不得含「吞红」构造；三种写法各自注入必红、注释里提到不误伤（**v2 新增**，非阻塞建议） |
-| 7 | 反向控制③ | 镜像降 16／删真 job 的 `services:` 段／把固定 SHA 换成 `@v4` ⇒ 三条各自必须红且消息点名 |
+| 7 | 反向控制③ | 镜像降 16／删真 job 的 `services:` 段／把固定 SHA 换成 `@v4` ⇒ 三条各自必须红且消息点名。**变异点已改成「在 `jobsRunningManagedScripts()` 给出的 job body 内替换」**（v2 用的是「文件里第一条 `image:`」，一旦文件里有第二块 `services:` 就变异到判据不看的地方——§9.1 ①） |
 | 8 | 反向控制①b | `run: \|` 块体里只有 `# node <脚本>` + `echo hi` ⇒ 判据①必须判红；对**真文件**做同样改造也必须点名该脚本；取消注释则转绿（**v2 新增，必改 A**） |
-| 9 | 反向控制④ | 真 job **之前**插一个带 `postgres:17.11` 的合规诱饵 job + 真 job 镜像降 16.4 ⇒ 必须红，消息点名 `job \`real-pg-17-11\``（**v2 新增，必改 B**） |
+| 9 | 反向控制④ | 真 job **之前**插一个带 `postgres:17.11` 的合规诱饵 job + 真 job 镜像降 16.4 ⇒ 必须红，消息点名真 job（**v2 新增，必改 B**）。只插诱饵、真 job 不动 ⇒ **必须绿**；诱饵自己被改坏 ⇒ **不红**（裁定②，§3.2.1） |
 | 10 | 反向控制⑤ | 同上的诱饵 + 真 job 删掉 `services` ⇒ 必须红，消息点名真 job 且指出缺 `services`（**v2 新增，必改 B**） |
+| 11 | 反向控制⑥ | **两个脚本拆成两个 job**：① 合规形态**必须绿**（v2 此处假红，§9.1 ①）；② 只降**第二个 job** 的镜像 ⇒ 必须红、只报一条、消息点名第二个 job 且不误指第一个；③ 只删第二个 job 的 `services:` ⇒ 同上，且第一个 job 的 `services:` 原样保留；④ 反过来只删第一个 job 的 `services:` ⇒ 只报一条、点名第一个（**v3 新增**） |
 
-用例 9／10 都先断言**诱饵自身合规**（`postgresServiceProblems(decoy.body) === []`）且**诱饵的 17.11 保留**，所以那个红只能来自真 job——这正是「锚定 job」与「取第一个 `services:`」的区别所在。
+用例 9／10 都先断言**诱饵自身合规**（`postgresServiceProblems(decoy.body) === []`）且**诱饵的 17.11 保留**，所以那个红只能来自真 job——这正是「锚定 job」与「取第一个 `services:`」的区别所在。用例 11 的 job id 全部来自 `jobsRunningManagedScripts()`，⛔ 不硬写 `real-pg-17-11`（v2 硬写，改名／拆 job 就假红）。
+
+### 3.2.1 诱饵 job 的边界（裁定：不在门禁范围，**非阻塞限制**）
+
+指挥裁定（派单 `real-pg-ci-fix2-20261020.md` §1-②）：判据③的语义是「**跑受管脚本的那个 job** 的 `services` 必须合规」。**不跑任何受管脚本的 job 不属于门禁对象**——它不跑脚本，镜像坏了不影响任何一条断言，所以：
+
+- ⛔ **不**把判据③扩成「文件里每个 `services:` 块都要合规」。那样一来，以后往这个 workflow 加任何非真库 job（例如一个只做 lint 的 job 顺带带了 postgres）都会把套件变红，属机械门禁把人推向更差设计。
+- 已用机器读数钉住这条边界（`反向控制④` 末尾两条断言）：诱饵 job 的镜像降 `16.4` ⇒ `postgresJobProblems` 返回 `[]`（不红）；诱饵 job 连 `services:` 整段删掉 ⇒ 仍 `[]`（不红）。
+- **登记为非阻塞限制（⛔ 不写成已覆盖）**：本片**没有**、也不打算按「每个 `services:` 块」做门禁。若将来真的出现「不跑受管脚本、但脚本其实依赖它的 service」的 job，本守卫看不见——这属于**未覆盖**，由 review 与 PR CI 兜底。
 
 ### 3.3 反向控制的**落盘**自证（v1 三形态 ＋ v2 三形态）
 
@@ -201,9 +210,69 @@ PROBE b : EXITCODE=1   ℹ tests 10 | pass 8 | fail 2
 
 即：**回退 A 只有 A 的用例红、回退 B 只有 B 的两条用例红**——两个新用例各自独立咬住对应的那条假绿通道，且互不依赖。两个临时文件跑完即删（`Test-Path` 逐个复核 `False`，事后 `git status --porcelain` 0 行）。
 
+#### 3.3.3 v3 的八个形态（把「假红」与「真红」两侧同时钉住）
+
+v3 要证明的是一对**相反**的东西：合规形态不许红（v2 在这里假红），坏的形态必须红（不许为了修假红把真红也修没了）。八种形态全部**落在磁盘真值**上做，每次跑完逐字节复原（脚本 `.pg17/tmp/real-pg-ci/v3-ondisk-probe.mjs`，⛔ 不进仓库）：
+
+```
+BASELINE_SHA256=d664deed044369eea95d71561120883f37bec2bba7b1e5e24c13c67249298f95
+--- BASELINE : EXITCODE=0 --- ℹ tests 11 | pass 11 | fail 0
+--- M0 只插合规诱饵 job（别的一行不动）        : EXITCODE=0 --- ℹ pass 11 | fail 0   期望=绿 达成=YES
+--- M1 双 job（两个 job 都合规，原 job id）    : EXITCODE=0 --- ℹ pass 11 | fail 0   期望=绿 达成=YES
+--- M2 双 job（两个 job 都改名）               : EXITCODE=0 --- ℹ pass 11 | fail 0   期望=绿 达成=YES
+--- M3 双 job + 只降第二个 job 的镜像          : EXITCODE=1 --- ℹ pass 6 | fail 5    期望=红 达成=YES
+--- M4 双 job + 只删第二个 job 的 services     : EXITCODE=1 --- ℹ pass 6 | fail 5    期望=红 达成=YES
+--- M5 双 job（改名）+ 只降第二个 job 的镜像   : EXITCODE=1 --- ℹ pass 6 | fail 5    期望=红 达成=YES
+--- M6 诱饵 + 只降真 job 的镜像                : EXITCODE=1 --- ℹ pass 7 | fail 4    期望=红 达成=YES
+--- M7 诱饵 + 只删真 job 的 services           : EXITCODE=1 --- ℹ pass 6 | fail 5    期望=红 达成=YES
+    RESTORED_SHA256_MATCH=true   （八次全部 true）
+FINAL_SHA256_MATCH=true
+FINAL_EXITCODE=0 ℹ tests 11 | pass 11 | fail 0
+```
+
+| 形态（对**真文件**做的） | v2 实测 | v3 实测 | 断言原文（逐字摘） |
+| --- | --- | --- | --- |
+| M0 合规诱饵 job（别的一行不动） | **红**（`降级必须且只能报一条问题 expected: 1, actual: 0`） | **绿** 11/11 | — |
+| M1 双 job（原 job id ＋ `real-pg-17-11-community`） | **红**（`pass 9 / fail 1`，`删 services 必须且只能报一条问题 expected: 1, actual: 2`） | **绿** 11/11 | — |
+| M2 双 job（`real-pg-conversations` ＋ `real-pg-community`） | **红**（`pass 7 / fail 3`） | **绿** 11/11 | — |
+| M3 双 job ＋ 只降**第二个** job 的镜像 | 红（连带） | **红** `pass 6 / fail 5` | `` · job `real-pg-17-11-community`：`services.postgres.image` 主版本是 16，要求 17：postgres:16.4 `` |
+| M4 双 job ＋ 只删**第二个** job 的 `services:` | 红（连带） | **红** `pass 6 / fail 5` | `` · job `real-pg-17-11-community`：缺少 `services:` 段：真库服务容器被删掉了… `` |
+| M5 双 job（改名）＋ 只降第二个 job 的镜像 | 红（连带） | **红** `pass 6 / fail 5` | `` · job `real-pg-community`：`services.postgres.image` 主版本是 16，要求 17：postgres:16.4 `` |
+| M6 诱饵 ＋ 只降**真 job** 的镜像 | 红 | **红** `pass 7 / fail 4` | `` · job `real-pg-17-11`：`services.postgres.image` 主版本是 16，要求 17：postgres:16.4 `` |
+| M7 诱饵 ＋ 只删**真 job** 的 `services:` | 红 | **红** `pass 6 / fail 5` | `` · job `real-pg-17-11`：缺少 `services:` 段 … `` |
+
+两条如实记录：
+1. M3–M7 里**反向控制③／④／⑤／⑥** 也跟着红——因为这些用例以「磁盘上已是变异态」的文件为起点再做内存变异，前提不再成立（与 v1 变异 1、v2 的 M1／M2 同款副作用，未挑好看的那几条）。**M0／M1／M2 三项才是本轮的验收项**：它们是合规形态，红／绿是干净的。
+2. 双 job 形态的 **YAML 解析级**复核（仓外临时 `yaml`，未进仓库、未进 `package.json`）：
+
+```
+PROBE yaml_errors=[]
+PROBE jobs=["real-pg-17-11","real-pg-17-11-community"] count=2
+PROBE job[real-pg-17-11]           image="postgres:17.11" scripts=["tests/integration/conversations-pg.mjs"] steps=4
+PROBE job[real-pg-17-11-community] image="postgres:17.11" scripts=["tests/integration/community-pg.mjs"]   steps=4
+```
+
+即：M1／M2 用的形态在**解析器**眼里确实是「两个 job、每个各跑一个受管脚本、各自 `postgres:17.11`」，不是文本拼凑出来的怪东西。
+
+#### 3.3.4 v3 反证：把 v3 的两处修法各自回退，新用例必须立刻红
+
+同一手法（把修法**在内存里回退成 v2 行为**、写成 `tests/unit/` 下的临时测试文件跑、跑完即删；`v3-revert-probe.mjs`）：
+
+```
+PROBE a（回退 withoutJobServices 的上界）           : EXITCODE=1   ℹ tests 11 | pass 9  | fail 2
+  RED ✖ 反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）
+      AssertionError: 诱饵 job 连 `services:` 一起删掉也不该红（裁定②：不在范围）
+      actual: [ 'job `real-pg-17-11`：缺少 `services:` 段…' ]   expected: []
+  RED ✖ 反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第二个 job** 的镜像必须红并点名它
+PROBE b（反向控制⑥ 的变异点退回「文件里第一条 image」）: EXITCODE=1   ℹ tests 11 | pass 10 | fail 1
+  RED ✖ 反向控制⑥：… AssertionError: 失败消息必须点名**第二个 job**   actual: false / expected: true
+```
+
+⇒ 两处修法**各自**是必需的：回退「上界」⇒ 反向控制④／⑥ 咬住（诱饵的 `services` 被连带删到真 job 上）；回退「job 内变异」⇒ 反向控制⑥ 咬住（变异落到第一个 job，红线指错对象）。两个临时文件跑完即删（`exists=false` 逐个复核），`git status --porcelain -uall` 事后 0 行。
+
 ## 4 门禁实跑读数
 
-### 4.1 沙箱前置读数（决定了下面哪些项只能记未取得）
+### 4.1 沙箱前置读数（v1／v2 决定了当时的「未取得」，v3 已解除）
 
 ```
 node -e "const cp=require('node:child_process'); const r=cp.spawnSync(process.execPath,['-e','console.log(42)'],{encoding:'utf8'}); console.log('status',r.status,'out',JSON.stringify(r.stdout),'err',String(r.error&&r.error.code));"
@@ -214,9 +283,9 @@ node --test tests/unit/ci-real-pg-wiring.test.mjs      （＝默认隔离，逐�
     at runTestFile (node:internal/test_runner/runner:536:32)      → EXITCODE=1
 ```
 
-⇒ **默认隔离的跑法在本机不可用**（不是本片缺陷，与错误类 61／`commander-session-20261018-side-wxlogin.md` §4 第 1 条同源）。故单测走**降级跑法**并逐条声明（§4.4）。
+⇒ **v1／v2 两轮**：默认隔离的跑法在本机不可用（不是本片缺陷，与错误类 61／`commander-session-20261018-side-wxlogin.md` §4 第 1 条同源），故当时单测走**降级跑法**并逐条声明。
 
-**v2 复核（返修派单称沙箱已改为 `danger-full-access`，实测未变）**：同一探针在返修轮复跑仍是 `status null … err EPERM`，`node --test tests/unit/ci-real-pg-wiring.test.mjs`（默认隔离）仍 `✖ Error: spawn EPERM`。逐字：
+**v2 复核（返修派单称沙箱已改为 `danger-full-access`，当轮实测未变）**：同一探针在返修轮复跑仍是 `status null … err EPERM`，`node --test tests/unit/ci-real-pg-wiring.test.mjs`（默认隔离）仍 `✖ Error: spawn EPERM`。逐字：
 
 ```
 $ node -e "…spawnSync…"                      → status null out undefined err EPERM
@@ -227,12 +296,19 @@ $ node --test tests/unit/ci-real-pg-wiring.test.mjs
 ℹ tests 1 / pass 0 / fail 1      EXITCODE=1
 ```
 
-⇒ 返修派单 §3 第 1、2 条要求的「默认隔离」读数在本机**取不到**，本轮仍按口径 40 的许可分支用 `--test-isolation=none`，并在 §4.4.1 逐条声明。这是环境事实，⛔ 不写成通过。
-
-### 4.2 聚焦守卫（10/10 绿）
+**v3 复核（本轮实测：限制已消失）**：
 
 ```
-node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
+$ node -e "…spawnSync…"                                    → status 0 err undefined
+$ node --test tests/unit/ci-real-pg-wiring.test.mjs        → EXITCODE=0  ℹ tests 11 / pass 11 / fail 0
+```
+
+⇒ v3 的 §4.2、§4.4 全部是**默认隔离**读数（不再降级）；⛔ 上两轮的 `EPERM` 历史读数原样保留，未改写。
+
+### 4.2 聚焦守卫（11/11 绿，**默认隔离**）
+
+```
+node --test tests/unit/ci-real-pg-wiring.test.mjs        （默认隔离；v1／v2 只能用 --test-isolation=none）
 ✔ 前向①：两个受管真库脚本都被某个 workflow 的 `run:` 真跑
 ✔ 反向控制①：删掉某脚本的 `run:` 行，同一断言必须红并点名它
 ✔ 前向②：任何 workflow 都不得含「放宽跳过」开关
@@ -243,16 +319,27 @@ node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
 ✔ 反向控制①b：`run: |` 块体里把调用写成 shell 注释，判据①必须判红
 ✔ 反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）
 ✔ 反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `services` ⇒ 判据③必须判红（锚定真 job）
-ℹ tests 10   ℹ pass 10   ℹ fail 0   ℹ skipped 0   ℹ duration_ms 106.236   EXITCODE=0
+✔ 反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第二个 job** 的镜像必须红并点名它
+ℹ tests 11   ℹ pass 11   ℹ fail 0   ℹ skipped 0   ℹ duration_ms 117.89   EXITCODE=0
 ```
 
 ### 4.3 反向控制的落盘自证
 
-见 §3.3（v1 三形态：三次 `EXITCODE=1`、每次 `pass 4 / fail 2`、复原 sha256 三次全 MATCH、终检 `FINAL_EXITCODE=0`）与 §3.3.1（v2 三形态：`pass 7/6/8` 与 `fail 3/4/2`、复原 sha256 三次全 MATCH、终检 10/10 绿），以及 §3.3.2 的反证探针（回退 A ⇒ 只红 `反向控制①b`；回退 B ⇒ 只红 `反向控制④`／`⑤`）。
+见 §3.3（v1 三形态：三次 `EXITCODE=1`、每次 `pass 4 / fail 2`、复原 sha256 三次全 MATCH、终检 `FINAL_EXITCODE=0`）、§3.3.1（v2 三形态：`pass 7/6/8` 与 `fail 3/4/2`、复原 sha256 三次全 MATCH、终检 10/10 绿）、§3.3.3（v3 八形态：三个合规形态全绿、五个破坏形态全红、八次复原 sha256 全 MATCH、终检 11/11 绿），以及 §3.3.2／§3.3.4 的两轮反证探针。
 
-### 4.4 全量单测（**跑法降级**，四条声明）
+### 4.4 全量单测
 
-#### 4.4.1 声明①：跑法降级——非默认隔离
+#### 4.4.0 v3 轮（**默认隔离，已取得**）
+
+```
+node --test "tests/unit/*.test.mjs"                （默认隔离，逐文件起子进程）
+ℹ tests 1841   ℹ suites 0   ℹ pass 1840   ℹ fail 0   ℹ cancelled 0   ℹ skipped 1   ℹ todo 0
+ℹ duration_ms 65850.77     EXITCODE=0
+```
+
+⇒ v1／v2 那 69 条 `spawnSync … EPERM` 假红在 v3 轮**全部消失**（本轮 `spawnSync` 可用），套件**零失败**。相对 v2 的 `tests` 1840 ⇒ **+1 tests / +1 pass**，正好是本轮新增的 1 个用例（`反向控制⑥`）；`skipped` 仍为 1（基线既有，非本片）。
+
+#### 4.4.1 声明①（v1／v2 轮·历史读数）：跑法降级——非默认隔离
 
 ```
 node --test --test-isolation=none "tests/unit/*.test.mjs"
@@ -260,11 +347,13 @@ node --test --test-isolation=none "tests/unit/*.test.mjs"
 EXITCODE=1
 ```
 
-（v1 同一跑法为 `tests 1836 / pass 1766 / fail 69 / skipped 1` ⇒ 本轮 **+4 tests / +4 pass**，正好是本轮新增的 4 个用例。）
+（v1 同一跑法为 `tests 1836 / pass 1766 / fail 69 / skipped 1` ⇒ 当时 **+4 tests / +4 pass**。）
 
-用的是 **`--test-isolation=none`**（口径 40 的许可分支；本机在默认隔离下必 `spawn EPERM`，无法取得默认隔离读数）。**本读数不得当作基线，也不得单独当作「是否本片引入」的判据**。
+用的是 **`--test-isolation=none`**（口径 40 的许可分支；v1／v2 两轮本机在默认隔离下必 `spawn EPERM`）。**这段是历史读数，保留不改**；v3 已有默认隔离读数（§4.4.0），故不再需要降级跑法。
 
-#### 4.4.2 声明②③：判据＝「受影响文件与失败集合**同名同数**」，且**与 pristine baseline 逐条比对**
+#### 4.4.2 声明②③（v1／v2 轮·历史读数）：判据＝「受影响文件与失败集合**同名同数**」，且**与 pristine baseline 逐条比对**
+
+> 以下 §4.4.2–§4.4.4 是 v1／v2 轮「降级跑法」的归因证据，**保留为历史**；v3 轮已在默认隔离下取得 `fail 0`（§4.4.0），不再需要这层归因。
 
 v1 轮已建过一棵**基线检出**（`git worktree add --detach … df043a7`，独立 `npm ci`，⛔ 无任何 `node_modules` 联接）并证明其失败集合与 v1 逐条相同；本轮直接拿 v1 的真实日志做同一条判据（v1 集合 ≡ baseline 集合，已实测 `diff_count=0`）：
 
@@ -374,7 +463,22 @@ staging own database profile rejects source DB and any pg URL options before soc
 页面·记录就绪前与空草稿 ⇒ 零 PATCH、零轮次请求（未明确确认不外发）
 ```
 
-### 4.5 `npm run test:integration:http`（**未取得**，权威替代＝PR 自身 CI）
+### 4.5 `npm run test:integration:http`（v3 轮：**取得，13 段全绿**；v1／v2 轮的 `EPERM` 读数保留在下方历史段）
+
+```
+npm run test:integration:http          （13 段 `&&` 串联，全程不重试）
+… 13 个 tests/integration/*.mjs 顺序执行 …
+PASS 9 loopback HTTP groups; actual client; synthetic identity/data/server; no production API or PG claim
+PASS 11 groups; source_kind=synthetic; memory store; not WeChat/device/native PG evidence
+PASS 15 loopback HTTP groups; real assembly (recognition + transcription job sources); …
+PASS 14 loopback HTTP groups; real assembly via buildApp (…); stub provider (替身) / injected scripted provider / real fail-closed
+PASS 6 groups; loopback only, stub substitute ASR, no database, no external network
+EXITCODE=0（330 行日志，PASS 132 行，FAIL／Error 命中 0）
+```
+
+⇒ v1／v2 卡住的第 8 段（`ocr-http.mjs:1846` 的子进程探针）在 v3 轮**通过**：那条探针正是 `spawnSync(..., { encoding: 'utf8' })`，本轮沙箱允许管道 stdio（§4.1），所以 `probe.status === 1` 成立。**本片对 `tests/integration/**` 零改动**（§8），这段转绿是环境变化的结果，不是本片改了测试。
+
+<details><summary>v1／v2 轮的历史读数（`EPERM`，保留不改写）</summary>
 
 ```
 npm run test:integration:http        （1 次尝试，不重试）
@@ -401,9 +505,9 @@ EXITCODE=1（199 行日志）
 const probe = spawnSync(process.execPath, [fileURLToPath(import.meta.url), `--registry-probe=${form.id}`], { encoding: 'utf8' });
 ```
 
-——`encoding: 'utf8'` 即管道 stdio ⇒ 本沙箱 `EPERM` ⇒ `probe.status === null` ⇒ `:1846` 的 `assert.equal(probe.status, 1, …)` 红。该行是**上游既有代码**，本片对 `tests/integration/**` 零改动（§8）⇒ 与本片无关。
+——`encoding: 'utf8'` 即管道 stdio ⇒ 当时的沙箱 `EPERM` ⇒ `probe.status === null` ⇒ `:1846` 的 `assert.equal(probe.status, 1, …)` 红。该行是**上游既有代码**，本片对 `tests/integration/**` 零改动（§8）⇒ 与 v1／v2 的改动无关。
 
-**权威替代读数**：`npm run test:integration:http` 的真红/真绿以本片 PR push 后 GitHub Actions 上 `engineering-shell.yml` 的 `integration-http` job 为准（本机不再重试）。
+</details>
 
 ### 4.6 文档与发布材料校验
 
@@ -411,6 +515,8 @@ const probe = spawnSync(process.execPath, [fileURLToPath(import.meta.url), `--re
 python tools/validate_development_docs.py
 PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables      EXITCODE=0
 ```
+
+（v3 轮在**改完本页之后**复跑同一命令，读数逐字相同：`PASS … EXITCODE=0`，用于确认本轮新增的表格与 `§` 交叉引用没有打坏文档门禁。）
 
 （直跑 `python`：`node tools/run-python.mjs` 在本机经子进程 ⇒ `EPERM`，故不走它。）
 
@@ -488,25 +594,26 @@ git diff --stat HEAD       → 3 files changed（见 §8）
 
 `git diff --check` 必须对 **`HEAD`**（已暂存）跑：只跑未暂存的 `git diff --check` 会**静默放过一个新文件里的行尾空格**。
 
-### 4.9 串行锁（**未取得**）
+### 4.9 串行锁（**未取得**，v3 轮未申请）
 
-`.pg17/tmp/hq/gate.lock`（目录，`owner.txt` 只有一行 `2026-10-20T08:41:08`）在开工前已被**另一执行者**持有；本片按追加指令最多等 6 分钟、每 20 秒重试：
+v1 轮：`.pg17/tmp/hq/gate.lock`（目录，`owner.txt` 只有一行 `2026-10-20T08:41:08`）在开工前已被**另一执行者**持有；本片按追加指令最多等 6 分钟、每 20 秒重试：
 
 ```
 attempts=18 acquired=False at=2026-10-20 08:55:02
 ```
 
-⇒ 记「**未取得（未获串行锁，等锁 6 分钟）**」。⛔ 未删除他人锁。开工前后台 `Get-Process node` 计数为 **0**（确认没有别人在跑端口型门禁）⇒ §4.4 的降级单测与 §4.5 的集成链**都是在「未持锁」状态下跑的**，读数旁已标注。
+v3 轮：开工前实测 `Test-Path .pg17/tmp/hq/gate.lock` = **False**（锁不在，无人持有），本片**未申请也未创建**串行锁；开工时本机存在他人 `node` 进程 **32** 个，故 §4.2／§4.4／§4.5 的读数一律按「**未持锁**」标注。⛔ 未删除或改写任何他人的锁。
 
 ## 5 未取得项（如实登记，不伪造通过）
 
 | 项 | 内容 | 现状 | 所需前置 | 为什么本片不解决 |
 | --- | --- | --- | --- | --- |
-| 真库 workflow 的真红/真绿 | `real-pg-integration.yml` 在 GitHub Actions 上真的起 PG17.11、真的跑通两个脚本 | **未取得**：本机无容器运行环境（无 Docker），且子进程 EPERM | 把本片推到 PR，读该 PR 的 Actions run | 派单已把此项划给「PR 自身 CI 读数」；本机只做静态断言与（已取得的）YAML 解析级校验 |
-| 全量单测的默认隔离跑法 | `node --test "tests/unit/*.test.mjs"`（逐文件子进程） | **未取得（沙箱 spawn EPERM）**——返修派单称沙箱已改 `danger-full-access`，实测**未变**（§4.1 末段逐字） | 非 confined 沙箱 | 沙箱口径所限；已用降级跑法 + 与 pristine baseline／v1 逐条比对归因（§4.4） |
-| `npm run test:integration:http` | 13 段全绿 | **未取得（第 8 段在 `ocr-http.mjs:1846` 的子进程探针上 EPERM）** | 同上 | 同上；权威替代＝PR 的 CI 读数 |
-| 串行门禁锁（v1 轮） | `.pg17/tmp/hq/gate.lock` | **未取得（未获串行锁，等锁 6 分钟，18 次尝试）** | 等持有者释放 | ⛔ 不得删他人锁；已在读数旁标注「未持锁」 |
-| YAML 解析级校验 | 仓内 actionlint / PyYAML / js-yaml 三者皆无 | **已取得（v2）**：在仓外临时目录装 `yaml` 后解析通过（§4.7）；⛔ 未向仓内加依赖 | — | — |
+| 真库 workflow 的真红/真绿 | `real-pg-integration.yml` 在 GitHub Actions 上真的起 PG17.11、真的跑通两个脚本 | **未取得**：本机无容器运行环境（无 Docker／Podman） | 把本片推到 PR，读该 PR 的 Actions run | 派单已把此项划给「PR 自身 CI 读数」；本机只做静态断言与（已取得的）YAML 解析级校验 |
+| 全量单测的默认隔离跑法 | `node --test "tests/unit/*.test.mjs"`（逐文件子进程） | **已取得（v3）**：`tests 1841 / pass 1840 / fail 0 / skipped 1`，`EXITCODE=0`（§4.4.0）。v1／v2 两轮的 `EPERM` 读数保留为历史（§4.4.1–§4.4.4） | — | — |
+| `npm run test:integration:http` | 13 段全绿 | **已取得（v3）**：13 段全绿，`EXITCODE=0`，`PASS` 132 行、`FAIL` 0 行（§4.5） | — | — |
+| 串行门禁锁（v1／v3 轮） | `.pg17/tmp/hq/gate.lock` | **未取得（未持锁）**：v1 轮等锁 6 分钟 18 次未获；v3 轮锁不在，未申请（§4.9） | 与其它执行者协调 | ⛔ 不得删他人锁；读数旁已标注「未持锁」 |
+| 「不跑受管脚本的 job」的 `services` 合规性 | 判据③ 只覆盖「跑受管脚本的 job」 | **未覆盖（非阻塞限制，按裁定）**：诱饵 job 的 `services` 坏掉不判红（§3.2.1） | 若将来出现「不跑脚本但脚本依赖其 service」的 job，需另加判据 | 裁定明令不扩成「每个 `services:` 块都查」——那属机械门禁把人推向更差设计 |
+| YAML 解析级校验 | 仓内 actionlint / PyYAML / js-yaml 三者皆无 | **已取得（v2／v3）**：在仓外临时目录装 `yaml` 后解析通过（§4.7、§3.3.3）；⛔ 未向仓内加依赖 | — | — |
 
 ## 6 与 `#312` 口径的衔接
 
@@ -524,17 +631,19 @@ attempts=18 acquired=False at=2026-10-20 08:55:02
 2. **其它 `-pg.mjs` 的真库臂**：`account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg`／`favorites-history-pg`／`messages-pg` 目前同样「无 npm、无 CI」（见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
 3. **`e2e-*`／`user-chain-e2e.mjs`**：它自建一次性 `initdb` 集群，需要 PG 二进制而不是 service 容器，属于另一种接线形状，不在本片判类内。
 
-## 8 改动面（两轮都只动这 3 个文件，全是新增）
+## 8 改动面（三轮都只动这 3 个文件，全是新增）
 
 ```
-git diff --stat df043a7 HEAD  （提交后实测，逐字）
+git diff --stat df043a7 HEAD  （v3 提交后实测，逐字）
  .github/workflows/real-pg-integration.yml   |  78 +++
- docs/verification/gy-real-pg-ci-20261020.md | 566 ++++++++++++++++++++++
- tests/unit/ci-real-pg-wiring.test.mjs       | 711 ++++++++++++++++++++++++++++
- 3 files changed, 1355 insertions(+)
+ docs/verification/gy-real-pg-ci-20261020.md | 709 ++++++++++++++++++++++
+ tests/unit/ci-real-pg-wiring.test.mjs       | 892 ++++++++++++++++++++++++++++
+ 3 files changed, 1679 insertions(+)
 
 git status --porcelain        → 0 行
 ```
+
+（v2 时这三个数分别是 `78 / 566 / 711`＝1355 行；v3 只增不减：docs **+143**、test **+181**、workflow **0**。）
 
 `services/**`、`packages/**`、`apps/**`、`miniprogram/**`、`tests/integration/**`、`package.json`、`README.md`、既有 `.github/workflows/*.yml`、迁移、契约 —— **全部 0 行改动**。
 
@@ -564,3 +673,37 @@ v2 的如实偏差与边界：
 2. **M1／M2 的「连带红」**：落盘变异时反向控制③／④／⑤ 会因「起点已是变异态」而一并红（§3.3.1 已逐字列全，未挑好看的那几条）。
 3. **`echo "node <脚本>"` 这类喂绿（审查 B3）未修**：任何文本级守卫都难防「把路径写进字符串」，本片接受该残余风险并在文件头注明口径（注释不算、字符串不特殊处理）。
 4. **`postgres:17-alpine` 仍被接受**：判据只锁主版本（与审查 §3.2 的口径一致）；若将来要求与其它 PG workflow 逐字同镜像，需另加断言。
+
+## 9.1 v3 返修记录（v2 `59ee865` → v3）
+
+窄面复审（`adv-verdict-real-pg-ci-59ee865.md`，`reviewed_sha=59ee865`，结论**需修改**）判的是**本片自己引入的假红回归**：判据③（`postgresJobProblems`）本身是 job 作用域的、正确，红的是**测试文件**里的三处单 job 假设。派单 `real-pg-ci-fix2-20261020.md` 给了最小修法，本页逐条落地。
+
+### 9.1.1 ① 双 job 形态的假红（必改）
+
+| 项 | v2 的病（审查实证） | v3 的修法（最小） | v3 的自证 |
+| --- | --- | --- | --- |
+| `withoutJobServices()` **不设上界** | 找到目标 job 后只要再遇到 4 空格缩进的 `services:` 就继续删 ⇒ 在「两个脚本拆成两个 job」的形态里把**后续每个 job** 的 `services:` 都删掉（S1 实测 `删 services 必须且只能报一条问题 expected: 1, actual: 2`） | 新增 `jobLineRange()`：job 的行区间在**下一个同缩进的 job 头**（`^ {2}\S`）处收尾；`withoutJobServices()` 只在该区间内动手，区间外一律原样保留 | 落盘 M1／M2（合规双 job）⇒ **`EXITCODE=0`、11/11 绿**（v2 是红）；`反向控制⑥` ③④ 分别断言「只删第二个／第一个 job 的 `services:` ⇒ 只报一条、另一个 job 的 `services:` 原样保留」（§3.2 用例 11） |
+| 反向控制③／④／⑤ **硬写 job id** `real-pg-17-11` | job 一改名，变异点就不是真 job（S2 两个 job 都改名 ⇒ `pass 7 / fail 3`） | 新增 `runningJobs = jobsRunningManagedScripts(source)`，job id 一律从该函数取；⛔ 不再出现 `'real-pg-17-11'` 字面量（`zz-decoy` 是诱饵 fixture 的 id，保留） | 落盘 M2（`real-pg-conversations` ＋ `real-pg-community`）⇒ **11/11 绿**；M5（同形态 + 只降第二个）⇒ 红且消息点名 `` job `real-pg-community` ``（§3.3.3） |
+| 反向控制③ 用「文件里**第一条** `image:`」、④ 用「**最后一条**」 | 文件里出现第二块 `services:` 后，变异落到判据**不看**的地方 ⇒ **倒挂**：合规诱饵让套件红（`actual: 0`）、诱饵被改坏反而绿 | 新增 `replaceWithinJob()`：只在目标 job 的行区间内替换，且断言「正好命中一处」 | 落盘 M0（合规诱饵）⇒ **11/11 绿**（v2 红）；M6／M7（诱饵 + 真 job 坏）⇒ 仍红并点名真 job（§3.3.3） |
+| **缺一条「双 job + 第二个 job 坏」的用例** | 判据已支持，但用例集里没有 | 新增 **`反向控制⑥`**：合规双 job 必绿 + 只降第二个 job 必红并点名 + 只删第二个 job 的 `services:` 必红且不碰第一个 + 反过来只删第一个同样成立 | 落盘 M3／M4（双 job + 只降／只删第二个）⇒ 红、`problems.length === 1`、消息逐字 `` job `real-pg-17-11-community` ``（§3.3.3） |
+
+**反证**（§3.3.4）：把 `withoutJobServices` 的上界回退成 v2 ⇒ `反向控制④`／`⑥` 立刻红；把 `反向控制⑥` 的变异点退回「文件里第一条 `image:`」⇒ `反向控制⑥` 立刻红（`失败消息必须点名**第二个 job**`，`actual: false`）。⇒ 两处修法各自必要，新用例不是摆设。
+
+### 9.1.2 ② 「诱饵自身被改坏」是否需要红 —— 裁定：**不需要**（已落地）
+
+- **裁定**：判据③的语义是「**跑受管脚本的那个 job** 的 `services` 必须合规」。不跑任何受管脚本的诱饵 job 不属于门禁对象，它的镜像坏掉**不构成真实风险**（它不跑脚本）。⛔ **不**把判据扩成「文件里每个 `services:` 块都要合规」——那会让以后加任何非真库 job 都变红，属机械门禁把人推向更差设计。
+- **用例怎么改的（错在哪）**：v2 的 `反向控制③` 用 `source.replace(/image:\s*postgres:17[^\s]*/, …)` 取「文件里**第一条**镜像行」，`反向控制④` 用 `replaceLast(...)` 取「**最后一条**」。这两处在只有一块 `services:` 时等价于「真 job 的镜像」，一旦文件里有第二块 `services:` 就**不再是判据③看的那个 job**：合规诱饵被放进文件 ⇒ 变异打在诱饵上 ⇒ `postgresJobProblems` 返回 `[]` ⇒ `expect 1 / actual 0`（假红，审查 B0）；反过来诱饵被改坏 ⇒ 变异打在诱饵上、判据不看 ⇒ 绿（审查 B3／B4）。**所以错的是用例的变异点，不是实现。**
+- **为什么这样改是对的**：变异必须落在「判据实际检查的那个对象」上，否则自测的绿/红都不代表判据的行为。改成「job id 从 `jobsRunningManagedScripts()` 取 + 在 job body 内变异」后，同一个断言同时具备两种性质：合规诱饵存在时**恰好报一条针对真 job 的问题**（用例 9 的正向前提），诱饵自身坏掉时**不报**（裁定②，`反向控制④` 末尾两条断言把这条边界钉成机器读数）。实现一行未改，⛔ 未放宽任何既有断言。
+- **边界登记**：见 §3.2.1（明确写「不跑受管脚本的 job 不在门禁范围」，并登记为**非阻塞限制**，⛔ 不写成已覆盖）。
+
+### 9.1.3 只增不减的机器读数（v2 → v3）
+
+```
+assert.* 调用：68 → 94
+  deepEqual 17 → 22    ok 23 → 34    throws 10 → 11
+  equal      7 → 13    match 2 → 2   doesNotThrow 1 → 1    notEqual 8 → 11
+用例标题：10 → 11（无重名、无 .only/.skip/.todo）
+既有测试文件改动：0（本片 3 个文件、全是新增文件；无删断言）
+```
+
+删掉的东西只有**三处单 job 假设的变异辅助**（`replaceLast()`、`withoutJobServices` 的无上界循环、反向控制里硬写的 job id 与位置型正则）；判据函数（`postgresJobProblems`／`jobsRunningManagedScripts`／`postgresServiceProblems`／`runCommandTextsOf`）**一行未动**。
