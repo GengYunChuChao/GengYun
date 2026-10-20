@@ -216,6 +216,229 @@ ROLLBACK TO SAVEPOINT r28_probe;
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- 探针结束 -----------------------------------------------------------------
+-- --- R28-S26 真执行探针（收藏／历史／对话域：迁移 0013 / 0018）--------------------
+-- 与上面 S24 段同形：关掉 ON_ERROR_STOP → BEGIN → SET LOCAL ROLE → 逐条
+-- SAVEPOINT / 语句 / 记 :ERROR / ROLLBACK TO SAVEPOINT → 最后 ROLLBACK。
+-- 每条语句都是零行（WHERE false / LIMIT 0），失败只留 :ERROR = 'true'，不写任何数据。
+-- 为什么不能只靠 has_column_privilege：列级授权下它只回答位，不回答「语句真能跑」；
+-- FOR UPDATE 的行锁权、ON CONFLICT 的冲突判定、RETURNING 的读权都只有真执行才暴露。
+\set ON_ERROR_STOP off
+BEGIN;
+SET LOCAL ROLE gengyun_api_runtime;
+\set r28_probe_fh_role :ERROR
+
+-- favorites（0018）
+SAVEPOINT r28_probe;
+SELECT id, owner_id, target_type, target_id, target_revision, revision, created_at
+  FROM public.favorites LIMIT 0;
+\set r28_probe_fav_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.favorites (id, owner_id, target_type, target_id, target_revision, revision, created_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 'species', 'probe', 1, 1, now() WHERE false
+ON CONFLICT DO NOTHING RETURNING id;
+\set r28_probe_fav_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, owner_id, target_type, target_id, target_revision, revision, created_at
+  FROM public.favorites WHERE false FOR UPDATE;
+\set r28_probe_fav_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.favorites WHERE false RETURNING id;
+\set r28_probe_fav_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- history（0018）
+SAVEPOINT r28_probe;
+SELECT id, owner_id, kind, target_type, target_id, target_revision, revision,
+       job_id, job_state, event_key, created_at
+  FROM public.history LIMIT 0;
+\set r28_probe_hist_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.history (id, owner_id, kind, target_type, target_id, target_revision, revision,
+                            job_id, job_state, event_key, created_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 'recognition', 'species', 'probe', 1, 1,
+       'probe', 'queued', 'probe', now() WHERE false
+ON CONFLICT DO NOTHING RETURNING id;
+\set r28_probe_hist_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, owner_id, kind, target_type, target_id, target_revision, revision,
+       job_id, job_state, event_key, created_at
+  FROM public.history WHERE false FOR UPDATE;
+\set r28_probe_hist_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.history WHERE false RETURNING id;
+\set r28_probe_hist_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- favorites_idempotency（0018）
+SAVEPOINT r28_probe;
+SELECT scope, key_hash, request_hash, response_status, outcome, expires_at
+  FROM public.favorites_idempotency LIMIT 0;
+\set r28_probe_fidem_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.favorites_idempotency (scope, key_hash, request_hash, response_status, outcome, expires_at)
+SELECT 'probe', 'probe', 'probe', 200, NULL, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       response_status = EXCLUDED.response_status,
+       outcome = NULL,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.favorites_idempotency.expires_at <= now()
+RETURNING scope;
+\set r28_probe_fidem_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.favorites_idempotency
+   SET outcome = '{}'::jsonb, response_status = 200
+ WHERE false AND outcome IS NULL
+RETURNING scope;
+\set r28_probe_fidem_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.favorites_idempotency WHERE false AND expires_at <= now() RETURNING scope;
+\set r28_probe_fidem_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- history_idempotency（0018）
+SAVEPOINT r28_probe;
+SELECT scope, key_hash, request_hash, response_status, outcome, expires_at
+  FROM public.history_idempotency LIMIT 0;
+\set r28_probe_hidem_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.history_idempotency (scope, key_hash, request_hash, response_status, outcome, expires_at)
+SELECT 'probe', 'probe', 'probe', 200, NULL, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       response_status = EXCLUDED.response_status,
+       outcome = NULL,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.history_idempotency.expires_at <= now()
+RETURNING scope;
+\set r28_probe_hidem_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.history_idempotency
+   SET outcome = '{}'::jsonb, response_status = 200
+ WHERE false AND outcome IS NULL
+RETURNING scope;
+\set r28_probe_hidem_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.history_idempotency WHERE false AND expires_at <= now() RETURNING scope;
+\set r28_probe_hidem_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- conversations（0013）
+SAVEPOINT r28_probe;
+SELECT id, owner_id, revision, conditions, created_at, updated_at
+  FROM public.conversations LIMIT 0;
+\set r28_probe_conv_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.conversations (id, owner_id, revision, conditions, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 1, NULL, now(), now() WHERE false
+RETURNING id;
+\set r28_probe_conv_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, owner_id, revision, conditions, created_at, updated_at
+  FROM public.conversations WHERE false FOR UPDATE;
+\set r28_probe_conv_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.conversations WHERE false RETURNING id;
+\set r28_probe_conv_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- conversation_turns（0013）
+SAVEPOINT r28_probe;
+SELECT id, conversation_id, owner_id, revision, input_text, transcription_ref,
+       job_id, job_state, job_deadline_at, job_created_at, job_error_code, answer_id,
+       created_at, updated_at
+  FROM public.conversation_turns LIMIT 0;
+\set r28_probe_turn_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.conversation_turns (id, conversation_id, owner_id, revision, input_text,
+                                       transcription_ref, job_id, job_state, job_deadline_at,
+                                       job_created_at, job_error_code, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'probe',
+       NULL, gen_random_uuid(), 'queued', now(), now(), NULL, now(), now() WHERE false
+RETURNING id;
+\set r28_probe_turn_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.conversation_turns
+   SET job_state = 'running', revision = revision + 1, updated_at = now()
+ WHERE false AND job_state = 'queued'
+RETURNING id;
+\set r28_probe_turn_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.conversation_turns
+   SET job_state = 'succeeded', job_error_code = NULL, answer_id = COALESCE(NULL::uuid, answer_id),
+       revision = revision + 1, updated_at = now()
+ WHERE false AND job_state IN ('queued', 'running')
+RETURNING id;
+\set r28_probe_turn_settle :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id FROM public.conversation_turns WHERE false FOR UPDATE;
+\set r28_probe_turn_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.conversation_turns WHERE false RETURNING id;
+\set r28_probe_turn_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- conversation_answers（0013）：只探读与写；不改不删（行只随 turn 级联消失）
+SAVEPOINT r28_probe;
+SELECT id, turn_id, owner_id, revision, status, checked_text, check_state, citations,
+       dose_cards, model_version, prompt_version, rule_version, created_at, updated_at
+  FROM public.conversation_answers LIMIT 0;
+\set r28_probe_ans_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.conversation_answers (id, turn_id, owner_id, revision, status, checked_text,
+                                         check_state, citations, dose_cards, model_version,
+                                         prompt_version, rule_version, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'answered', 'probe',
+       'passed', '[]'::jsonb, '[]'::jsonb, 'probe', 'probe', 'probe', now(), now() WHERE false
+RETURNING id;
+\set r28_probe_ans_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- R28-S26 探针结束 ----------------------------------------------------------
 
 -- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
@@ -243,7 +466,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 迁移 0025（PR #333，未合入）：存在就必须分类为 forbidden，不存在也不算缺（required=false）
     ('recognition_jobs',               'forbidden',        false),
     ('recognition_records',            'forbidden',        false),
-    ('recognition_idempotency',        'forbidden',        false)
+    ('recognition_idempotency',        'forbidden',        false),
+    -- 迁移 0013 / 0018 的收藏／历史／对话域（R28-S26）：七张表由 20-login-roles.sql 的 I 段
+    -- 列级授权给 gengyun_api_runtime；授权清单与下面 expected 的独立复述必须一致。
+    ('favorites',                      'granted',          true),
+    ('favorites_idempotency',          'granted',          true),
+    ('history',                        'granted',          true),
+    ('history_idempotency',            'granted',          true),
+    ('conversations',                  'granted',          true),
+    ('conversation_turns',             'granted',          true),
+    ('conversation_answers',           'granted',          true),
+    -- 迁移 0025 的 recognition_selections：与上面三行 recognition_* 同语义的**权宜快照**
+    -- （「当下确实没给」，不是「设计上不给」）；识别域整片的授权缺口留给独立一片修。
+    ('recognition_selections',         'forbidden',        false)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -317,7 +552,71 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['request_hash','payload','pending','expires_at'],
-     true)
+     true),
+    -- R28-S26 收藏／历史／对话域（迁移 0013 / 0018）：列清单由 store-pg.ts 真实语句反推。
+    -- favorites / history / conversations 三张表的 UPDATE 只有 revision 一列，且**只为**
+    -- SELECT … FOR UPDATE 的行锁权（store 里没有任何 UPDATE 语句）——不是业务写权限。
+    ('favorites',
+     ARRAY['id','owner_id','target_type','target_id','target_revision','revision','created_at'],
+     ARRAY['id','owner_id','target_type','target_id','target_revision','revision','created_at'],
+     ARRAY['revision'],
+     true),
+    ('favorites_idempotency',
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['request_hash','response_status','outcome','expires_at'],
+     true),
+    ('history',
+     ARRAY['id','owner_id','kind','target_type','target_id','target_revision','revision',
+           'job_id','job_state','event_key','created_at'],
+     ARRAY['id','owner_id','kind','target_type','target_id','target_revision','revision',
+           'job_id','job_state','event_key','created_at'],
+     ARRAY['revision'],
+     true),
+    ('history_idempotency',
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['request_hash','response_status','outcome','expires_at'],
+     true),
+    ('conversations',
+     ARRAY['id','owner_id','revision','conditions','created_at','updated_at'],
+     ARRAY['id','owner_id','revision','conditions','created_at','updated_at'],
+     ARRAY['revision'],
+     true),
+    ('conversation_turns',
+     ARRAY['id','conversation_id','owner_id','revision','input_text','transcription_ref',
+           'job_id','job_state','job_deadline_at','job_created_at','job_error_code','answer_id',
+           'created_at','updated_at'],
+     ARRAY['id','conversation_id','owner_id','revision','input_text','transcription_ref',
+           'job_id','job_state','job_deadline_at','job_created_at','job_error_code',
+           'created_at','updated_at'],
+     ARRAY['job_state','job_error_code','answer_id','revision','updated_at'],
+     true),
+    ('conversation_answers',
+     ARRAY['id','turn_id','owner_id','revision','status','checked_text','check_state','citations',
+           'dose_cards','model_version','prompt_version','rule_version','created_at','updated_at'],
+     ARRAY['id','turn_id','owner_id','revision','status','checked_text','check_state','citations',
+           'dose_cards','model_version','prompt_version','rule_version','created_at','updated_at'],
+     ARRAY[]::text[],
+     false)
+  ),
+  -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
+  -- 这样以后再加表只需改这一处，不会再出现「清单扩了、提示文本还只列旧表」的谎报
+  -- （S24 独立复核的遗留点：detail 是手写字符串，容易与判定口径漂移）。
+  allow_table_dml(sch, tbl, priv) AS (VALUES
+    ('public', 'idempotency_keys',       'INSERT'),
+    ('public', 'idempotency_keys',       'DELETE'),
+    ('public', 'community_likes',        'DELETE'),
+    ('public', 'community_idempotency',  'DELETE'),
+    ('public', 'ocr_idempotency',        'DELETE'),
+    -- R28-S26（2026-10-20）：收藏／历史／对话域的物理删除与幂等台账清理。
+    -- PG 没有列级 DELETE，store 里的 DELETE FROM 只能表级授权；逐条代码出处见证据页。
+    ('public', 'favorites',              'DELETE'),
+    ('public', 'history',                'DELETE'),
+    ('public', 'conversations',          'DELETE'),
+    ('public', 'conversation_turns',     'DELETE'),
+    ('public', 'favorites_idempotency',  'DELETE'),
+    ('public', 'history_idempotency',    'DELETE')
   ),
   checks(label, ok, detail) AS (
 
@@ -401,19 +700,17 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
               AND has_table_privilege('gengyun_api_runtime', c.oid, p.priv)
               AND NOT EXISTS (
                     SELECT 1
-                      FROM (VALUES
-                             ('public', 'idempotency_keys',       'INSERT'),
-                             ('public', 'idempotency_keys',       'DELETE'),
-                             ('public', 'community_likes',        'DELETE'),
-                             ('public', 'community_idempotency',  'DELETE'),
-                             ('public', 'ocr_idempotency',        'DELETE')
-                           ) AS allow(sch, tbl, priv)
+                      FROM allow_table_dml allow
                      WHERE allow.sch = n.nspname
                        AND allow.tbl = c.relname
                        AND allow.priv = p.priv
                   )
          ),
-         '表级写权限只允许 idempotency_keys{INSERT,DELETE}、community_likes{DELETE}、community_idempotency{DELETE}、ocr_idempotency{DELETE}；清单外的表或类型一律失败（其余全部按列授予）'
+         '表级写权限只允许 ' ||
+         (SELECT string_agg(format('%s{%s}', a.tbl, a.priv), '、' ORDER BY a.tbl, a.priv)
+            FROM allow_table_dml a
+           WHERE a.sch = 'public') ||
+         '；清单外的表或类型一律失败（其余全部按列授予）'
 
   UNION ALL
   -- 8. 允许的表级写权限也必须是角色文件里明示的两种
@@ -1055,6 +1352,101 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'DELETE') = e.del,
          '列级 SELECT/INSERT/UPDATE 必须与清单逐列一致（清单外一列都不行）；表级只允许 del=true 的表有 DELETE，其它表级写权限一律不得有'
     FROM expected e
+  UNION ALL
+  -- 59-61. R28-S26 真执行探针（收藏／历史／对话域）：读、写、行锁、删都必须真能跑通。
+  --     变量来自上方 R28-S26 探针段（成功 = 'false'、失败 = 'true'）。
+  SELECT 'runtime_favorites_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_fav_sel' = 'false'
+         AND :'r28_probe_fav_ins' = 'false'
+         AND :'r28_probe_fav_lock' = 'false'
+         AND :'r28_probe_fav_del' = 'false'
+         AND :'r28_probe_fidem_sel' = 'false'
+         AND :'r28_probe_fidem_ins' = 'false'
+         AND :'r28_probe_fidem_upd' = 'false'
+         AND :'r28_probe_fidem_del' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，favorites / favorites_idempotency 的 SELECT、INSERT … ON CONFLICT、FOR UPDATE、DELETE 零行语句必须全部成功；任一 42501 即失败'
+
+  UNION ALL
+  SELECT 'runtime_history_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_hist_sel' = 'false'
+         AND :'r28_probe_hist_ins' = 'false'
+         AND :'r28_probe_hist_lock' = 'false'
+         AND :'r28_probe_hist_del' = 'false'
+         AND :'r28_probe_hidem_sel' = 'false'
+         AND :'r28_probe_hidem_ins' = 'false'
+         AND :'r28_probe_hidem_upd' = 'false'
+         AND :'r28_probe_hidem_del' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，history / history_idempotency 的 SELECT、INSERT … ON CONFLICT、FOR UPDATE、DELETE 零行语句必须全部成功；任一 42501 即失败'
+
+  UNION ALL
+  SELECT 'runtime_conversations_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_conv_sel' = 'false'
+         AND :'r28_probe_conv_ins' = 'false'
+         AND :'r28_probe_conv_lock' = 'false'
+         AND :'r28_probe_conv_del' = 'false'
+         AND :'r28_probe_turn_sel' = 'false'
+         AND :'r28_probe_turn_ins' = 'false'
+         AND :'r28_probe_turn_upd' = 'false'
+         AND :'r28_probe_turn_settle' = 'false'
+         AND :'r28_probe_turn_lock' = 'false'
+         AND :'r28_probe_turn_del' = 'false'
+         AND :'r28_probe_ans_sel' = 'false'
+         AND :'r28_probe_ans_ins' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，conversations / conversation_turns / conversation_answers 的十二种真实语句形状（含两次 UPDATE 与 FOR UPDATE）必须全部成功；任一 42501 即失败'
+
+  UNION ALL
+  -- 62. R28-S26 反向控制（PUBLIC 面）：七张表的表级与列级 ACL 里都不许出现 grantee = 0。
+  --     为什么不能只看 has_table_privilege：列级授权在 relacl 里根本看不见（S24 复核的遗留点①）。
+  SELECT 'public_no_privilege_favorites_history',
+         NOT EXISTS (
+           SELECT 1
+             FROM unnest(ARRAY['favorites', 'favorites_idempotency', 'history', 'history_idempotency',
+                               'conversations', 'conversation_turns', 'conversation_answers']) AS t(name)
+            WHERE to_regclass('public.' || t.name) IS NULL
+               OR EXISTS (
+                    SELECT 1
+                      FROM pg_class c
+                      CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+                     WHERE c.oid = to_regclass('public.' || t.name)
+                       AND a.grantee = 0
+                  )
+               OR EXISTS (
+                    SELECT 1
+                      FROM pg_attribute att
+                      CROSS JOIN LATERAL aclexplode(att.attacl) AS a
+                     WHERE att.attrelid = to_regclass('public.' || t.name)
+                       AND att.attnum > 0
+                       AND NOT att.attisdropped
+                       AND a.grantee = 0
+                  )
+         ),
+         'PUBLIC 对收藏／历史／对话七表不得有任何表级或列级权限（20-login-roles.sql 已 REVOKE ALL … FROM PUBLIC）；表级 relacl 与列级 attacl 两处都查'
+
+  UNION ALL
+  -- 63. R28-S26 元断言（补 47 号的正则盲区）：用 favorites/history/conversation 前缀
+  --     新增的关系必须进分类清单；granted 的还必须同时进 expected（否则等于「授权了但
+  --     没有独立复述的列清单可复核」）。47 号的正则没有这三个前缀，故单列一条，不改它。
+  SELECT 'runtime_domain_tables_classified_favorites_history',
+         NOT EXISTS (
+           SELECT 1
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind IN ('r','p','f')
+              AND c.relname ~ '^(favorites|history|conversation)'
+              AND NOT EXISTS (SELECT 1 FROM domain_manifest m WHERE m.tbl = c.relname)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM domain_manifest m
+            WHERE m.classification = 'granted'
+              AND m.tbl ~ '^(favorites|history|conversation)'
+              AND NOT EXISTS (SELECT 1 FROM expected e WHERE e.tbl = m.tbl)
+         ),
+         'favorites/history/conversation 前缀的新表必须进 domain_manifest（granted/granted_external/forbidden），且 granted 的必须在 expected 里有独立列清单'
 )
 
 SELECT CASE
