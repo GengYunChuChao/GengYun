@@ -21,11 +21,11 @@
  * - 本文件不发起任何真实调用：真实适配器的**构造与预签名都是纯本地计算**，只有显式
  *   `putObject`/`getObject`/`deleteObject` 才会 `fetch`。
  *
- * **未验证声明（如实）**：`createS3CompatibleObjectStore` / `presignS3Url` 在本仓库内**从未被实际调用**，
- * 未对接任何真实 COS/S3 桶、未做真实签名往返核验（本次接线亦未发起过任何真实请求）。它们只是可审查的
- * 接线代码；真实对象存储、CDN、访问网关属部署期接线。测试只覆盖结构断言
- * （https、必需查询参数、未发起网络请求）。
- * 见 `docs/verification/gy-i06-private-media-20261014.md`。
+ * **已跑通声明（如实）**：`createS3CompatibleObjectStore` / `presignS3Url` 的 put/get/has/delete/presign 全路径
+ * 已在测试的**进程内 `fetch` 替身**下跑通（`tests/unit/media-object-store-s3-paths.test.mjs`），签名由测试
+ * **独立重算**（自写 SigV4 规范化串 + HMAC-SHA256 链）逐字节校验；**产品装配路径仍从未被实际调用**、
+ * 未对接任何真实 COS/S3 桶、未做真实签名往返，且测试不发起任何真实网络请求；真实对象存储、CDN、访问网关属部署期接线。
+ * 见 `docs/verification/gy-i06-private-media-20261014.md`、`docs/verification/gy-r27-object-store-s3-paths-20261020.md`。
  */
 import { createHash, createHmac } from 'node:crypto';
 import { MediaError } from '../../../../packages/media/index.mjs';
@@ -277,8 +277,8 @@ function amzDateParts(now: Date): { short: string; long: string } {
 /**
  * 生成 SigV4 预签名 URL（GET/PUT/DELETE）。
  *
- * **未验证**：本函数在本仓库内没有对真实 COS/S3 端点发起过签名往返核验；只有结构断言
- * （https、必需查询参数、未发起网络请求）被测试覆盖。
+ * **已独立复算、仍未真实往返**：本函数的产出由 `tests/unit/media-object-store-s3-paths.test.mjs` 用自写的
+ * SigV4 规范化串 + HMAC-SHA256 链逐字节复算校验；仍未对真实 COS/S3 端点发起过任何签名往返核验。
  */
 export function presignS3Url(options: {
   config: ObjectStorageConfig;
@@ -315,7 +315,7 @@ export function presignS3Url(options: {
 /**
  * S3/COS 兼容真实适配器。
  *
- * **本仓库内从未被实际调用**：装配路径只在 `real` 且 `OBJECT_STORAGE_*` 齐备时**构造**它
+ * **产品装配路径从未被实际调用**（全路径只在测试的进程内 `fetch` 替身下跑通）：装配路径只在 `real` 且 `OBJECT_STORAGE_*` 齐备时**构造**它
  * （见 `resolveMediaObjectStore`），而构造不发起任何网络请求；只有 `putObject` / `getObject` /
  * `deleteObject` 等显式调用才会。构造不合法（缺 endpoint/bucket/凭据，或非 https）时**立即抛错**，
  * 绝不退回替身。
@@ -361,7 +361,7 @@ export function createS3CompatibleObjectStore(config: ObjectStorageConfig): Medi
 
   return {
     kind: 's3_compatible',
-    note: `S3/COS 兼容真实适配器（region=${config.region}，虚拟主机样式=${!config.forcePathStyle}）：本仓库内从未被实际调用，未做真实签名往返核验。`,
+    note: `S3/COS 兼容真实适配器（region=${config.region}，虚拟主机样式=${!config.forcePathStyle}）：产品装配路径从未被实际调用；put/get/has/delete/presign 全路径已在测试的进程内 fetch 替身下跑通，签名由测试独立重算校验；未对接任何真实桶、未做真实签名往返。`,
     get externalRequestCount() {
       return externalRequests;
     },

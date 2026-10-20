@@ -13,7 +13,7 @@
 **「备份副本」这个被清对象在仓内不存在**：`services/api/db/migrations/` 0001–0018（18 个文件）里没有任何备份／快照／副本实体，
 也没有软删列（`deleted_at/is_deleted/purged` 唯一命中是 `0018_favorites_history.sql:36` 的一句注释
 「两个域都是**物理删除**（无 `deleted_at` 软删）」，真实软删列仍为 **0**）；应用侧 `backup-replay-manifest.ts`、`deletion-aging.ts`
-都自述**不接真实备份**，`media/object-store.ts` 的 S3 兼容实现**仓内从未被调用**；
+都自述**不接真实备份**，`media/object-store.ts` 的 S3 兼容实现**产品装配路径仓内从未被调用**（R27-S8 只在测试的进程内 `fetch` 替身下跑通全路径，未对接真实桶）；
 唯一备份产物是 `deploy/postgres-cvm/backup-postgres.sh` 产出的**整库** `pg_dump -Fc`，其 30 天是**备份文件保留期**，
 不能删单用户。⇒ **逐用户备份清除不是接线遗漏，而是需要新增备份域**（产品决策）。
 在决策与域落地之前，`backup_state` 只能如实停在 `pending`、完成判定 `blocked`；
@@ -156,8 +156,8 @@ Select-String -Path "services\api\db\migrations\*.sql" -Pattern "create table[^;
 | `services/api/src/privacy/backup-replay-manifest.ts:70-73` | 不接任何真实备份系统、不接任何真实第三方：`real` 未接真实依赖一律 fail-closed…测试里的「备份快照」与「目标存储」都是替身 | 恢复清单是**清单投影**，不是备份存储 |
 | `services/api/src/privacy/deletion-aging.ts:6` | 只计算、不执行：不碰对象存储、不碰备份 | 到期判定是纯函数 |
 | `services/api/src/privacy/deletion-aging.ts:53` | 备份清除端口仍属后续切片 | 本片未接 |
-| `services/api/src/media/object-store.ts:24` | `createS3CompatibleObjectStore`／`presignS3Url` **本仓库内从未被实际调用** | 无真实对象存储 |
-| `services/api/src/media/object-store.ts:318,364` | 同上（未做真实签名往返核验） | 对象存储三态 `substitute`/`s3_compatible`/`unwired` |
+| `services/api/src/media/object-store.ts:24` | `createS3CompatibleObjectStore`／`presignS3Url` **产品装配路径从未被实际调用**（R27-S8 已在测试的进程内 `fetch` 替身下跑通全路径并独立复算签名） | 无真实对象存储 |
+| `services/api/src/media/object-store.ts:318,364` | 同上（未对接任何真实桶、未做真实签名往返核验） | 对象存储三态 `substitute`/`s3_compatible`/`unwired` |
 
 判读：`media` 的对象存储只是**在线媒体**的替身域，没有版本／快照语义；
 `backup-replay-manifest.ts` 的「备份」是**恢复重放清单的输入形状**，不是可删的副本。
