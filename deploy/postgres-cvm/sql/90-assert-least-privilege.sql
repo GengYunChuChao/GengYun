@@ -26,15 +26,20 @@
 --   ok                  —— 全部断言通过
 --   FAIL: <标签> (<说明>); ... —— 未通过项明细（顺序即修复顺序）
 -- 任何断言为 NULL 也按未通过处理（NULL 视为“无法证明”）。
--- 调用方 provision-db.sh 会把非 ok 视为失败并退出非零：它只取**最后一行非空输出**
--- （provision-db.sh:365 `sed '/^[[:space:]]*$/d' | tail -n1`），所以判决之前允许出现
--- 信息行：本文件自己不以 `\echo` 报读数，但 20-login-roles.sql 段尾的授权摘要会打印在
--- 判决之前，探针段内的 42501 也会被 psql 原样打印（ON_ERROR_STOP=0 是设计的一部分）。
+-- R28-S33 起**退出码是主判据**：有断言未通过时，判决行之后（本文件末尾）的 DO 块
+-- RAISE EXCEPTION，psql 因 `-v ON_ERROR_STOP=1` 以非零（3）退出；全绿时 DO 块静默，
+-- 末行 `ok`、退出码 0。调用方 provision-db.sh 现在同时判退出码与末行文本（文本保留为
+-- 可读兜底，也兼容人工 `psql -f`）。R28-S33 之前这里只有文本判决，psql 恒以 0 退出。
+-- 判决之前允许出现信息行：本文件自己不以 `\echo` 报读数，但 20-login-roles.sql 段尾的
+-- 授权摘要会打印在判决之前，探针段内的 42501 也会被 psql 原样打印（ON_ERROR_STOP=0 是设计的一部分）。
 -- R28-S24 更正：旧版这里写「只打印一行」，实际上补授权后新增的 `\echo` 信息行打破了
 -- 这个字面说法；语义约定本来就是“最后一行是判决”，这里按真实约定改写。
 -- R28-S28 更正：S24 的 recognition_* 软守卫（本文件曾经唯一的一处“信息行”）已随本片
 -- 收敛为硬前置（manifest required=true + 20-login-roles.sql 段 J 的缺表硬守卫），
 -- 本文件不再有软提示，真实约定只有一句：**最后一行是判决**。
+-- R28-S33 补充：末行判决保留，但**不再是唯一判据**（退出码见上）。实现上先把 checks 的
+-- 结果存进会话级临时表 `r28_assert_results`（整棵 CTE 只求值一次），判决行与 DO 块都读它；
+-- 临时表随会话销毁，不落库、不改任何权限，仍是「只报不改」。
 --
 -- 本文件是「只报不改」：发现越权只报告，不自动 REVOKE，
 -- 避免脚本静默改变既有角色语义（services/api/db/roles/*.sql 是唯一权威）。
@@ -690,6 +695,18 @@ ROLLBACK;
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
 -- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
 -- runtime_domain_tables_classified 判红，而不是像 2026-10 之前那样一路 ok。
+-- R28-S33：整棵 checks 只求值**一次**，结果落进会话级临时表；判决行与 DO 块都从这张表读，
+-- 不重跑 78 条断言，也不复制 checks 的定义。临时表随会话销毁，不建持久对象、不改任何权限。
+-- 同一会话里重复执行（人工 `\i` 两次）时先清掉上一次的临时表，否则 CREATE 会因重名报错、
+-- 被误读成断言判红；只在它确实存在时 DROP（pg_temp 限定），因此全绿读数不多出任何 NOTICE。
+DO $$
+BEGIN
+  IF to_regclass('pg_temp.r28_assert_results') IS NOT NULL THEN
+    DROP TABLE pg_temp.r28_assert_results;
+  END IF;
+END
+$$;
+CREATE TEMP TABLE r28_assert_results AS
 WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('messages',                       'granted',          true),
     ('community_posts',                'granted',          true),
@@ -1803,9 +1820,34 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'manifest 里 granted / granted_external 的表对 PUBLIC 必须零权限；表级 relacl 与列级 attacl 两处都查（各授权段都 REVOKE ALL … FROM PUBLIC）'
 )
 
+SELECT label, ok, detail
+  FROM checks;
+
 SELECT CASE
          WHEN count(*) FILTER (WHERE ok IS NOT TRUE) = 0 THEN 'ok'
          ELSE 'FAIL: ' || string_agg(label || ' (' || detail || ')', '; ' ORDER BY label)
                              FILTER (WHERE ok IS NOT TRUE)
        END AS verdict
-  FROM checks;
+  FROM r28_assert_results;
+
+-- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
+-- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
+-- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
+-- 上限 4000：78 条断言全红时标签合计约 2.4K 字符（实测 sum(length(label)+2)=2370），
+-- 正常不会截断；若未来断言数暴涨到上限，判决行里仍有**完整**明细可查。
+DO $$
+DECLARE
+  v_failed integer;
+  v_names  text;
+BEGIN
+  SELECT count(*) FILTER (WHERE ok IS NOT TRUE),
+         string_agg(label, ', ' ORDER BY label) FILTER (WHERE ok IS NOT TRUE)
+    INTO v_failed, v_names
+    FROM r28_assert_results;
+
+  IF v_failed > 0 THEN
+    RAISE EXCEPTION '90-assert-least-privilege FAIL: % 条断言未通过：%',
+                    v_failed, left(v_names, 4000);
+  END IF;
+END
+$$;
