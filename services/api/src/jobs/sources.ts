@@ -11,9 +11,15 @@
  * 未接线的 kind 见证据文档的「待接线清单」；本文件**不引用任何未合并代码**。
  *
  * GY-I13 追加（**纯追加，不改既有两个源**）：新增 `createSynthesisJobSource`（#13 合成域）。
- * 读面复用已合并的 `tts/service.ts` 的 `inspectJob`；本基线**没有**取消入口 ⇒ 与
- * `createTranscriptionJobSource` 同形**省略 `cancel`**（注册表对已存在的合成作业如实 503
- * `PROVIDER_UNAVAILABLE`(`retryable`)，**不伪造** `cancelled`、不另写状态机）。
+ * 读面复用已合并的 `tts/service.ts` 的 `inspectJob`；取消面复用同文件的 `cancelJob`
+ * （`queued`/`running` → `cancelled`，revision 恰好 +1，终态不可取消）。
+ *
+ * GY-R27 追加（**只动合成源，不改其它五个源**）：合成源补上 `cancel` 面（#13 的取消能力）。
+ * 取消语义**全部由 `tts/service.ts` 的 `cancelJob` 决定**，本层只做两件事：域内 `NOT_FOUND`
+ * （不存在**或**越权）⇒ `null`（注册表据此回同形 404）；其余错误（`REVISION_CONFLICT` /
+ * `OBJECT_UNAVAILABLE` / `IDEMPOTENCY_*` / `REQUEST_IN_PROGRESS`）**原样透出** ⇒ 终态不可取消
+ * 等问题如实回 409，**不再**被改写成 503 `PROVIDER_UNAVAILABLE`（接线前的形态）。
+ * 本层**不判状态、不改 revision、不另写状态机**——`canTransitionJob` 仍只在 `tts/state.ts` 一处。
  *
  * GY-I10 追加（**纯追加，不改既有五个源**）：新增 `createOcrJobSource`（#10 标签 OCR 域）。
  * 读面复用已合并的 `ocr/service.ts` 的 `getJob`（域内 `toJob` 产物**已是**契约 `Job` 九键形状）；
@@ -115,7 +121,7 @@ export function createTranscriptionJobSource(service: SpeechService): JobSourceP
 }
 
 /**
- * 合成（普通话 TTS）域作业源（#13）。
+ * 合成（普通话 TTS）域作业源（#13）：`getJob` 读取、`cancelJob` 取消（GY-R27 接线）。
  *
  * **只读复用**已合并的 `tts/service.ts`：`inspectJob({userId, jobId})` 是**域内**读面
  * （契约里 TTS 只有 `POST /speech/synthesis`，没有专属读端点 ⇒ `GET /jobs/{id}` 是读 JobState 的唯一契约面）。
@@ -123,10 +129,11 @@ export function createTranscriptionJobSource(service: SpeechService): JobSourceP
  * 归属与不存在**同形**：域内 `getOwnedJob` 对「不存在」与「他人作业」都抛 `ApiError('NOT_FOUND')`，
  * 本适配层把它映射为 `null` ⇒ 注册表无法、也不需要区分二者（与识别/转写源同一口径）。
  *
- * **取消能力：本基线没有**——`tts/service.ts` 只提供受理/读取/校验，没有取消入口；派单明令
- * 「不得在作业面上另写一套状态机」「不得改动各域服务语义」，因此这里**省略 `cancel`**：
- * 注册表会先确认作业确实存在，再以契约 **`503 PROVIDER_UNAVAILABLE`（`retryable: false`）** 如实拒绝。
- * 合成作业不在 `states.json.job_transitions` 之外新增任何迁移语义，本层不判状态、不改 revision。
+ * **取消能力：已接线**（GY-R27 取消片）——`tts/service.ts` 的 `cancelJob` 把 `queued`/`running`
+ * 原子迁到 `cancelled`（单次 CAS ⇒ revision **恰好 +1**、`error_code` 清空），终态（`succeeded`/
+ * `uncertain`/`failed`/`timed_out`/`cancelled`）不可再取消，域内抛 `OBJECT_UNAVAILABLE`，本层原样透出。
+ * 取消后的迟到结果由域内 `commitTerminal` 的 CAS + `tts/state.ts` 状态机拦住 ⇒ **不复活**（不靠删记录）。
+ * 本层不判状态、不改 revision、不另写状态机（与识别/OCR 源同一口径）。
  *
  * 契约形状**不由本层放宽**：出口仍由注册表的 `assertContractJob` 逐项校验，其中
  * `JobResult` 的 `synthesis` 分支镜像在 `./result-shape.ts` 的 `Synthesis`（`id`/`revision`/
@@ -138,6 +145,19 @@ export function createSynthesisJobSource(service: SynthesisService): JobSourcePo
     async get(input: JobSourceGetInput) {
       try {
         return await service.inspectJob({ userId: input.userId, jobId: input.jobId });
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    async cancel(input: JobSourceCancelInput) {
+      try {
+        return await service.cancelJob({
+          userId: input.userId,
+          jobId: input.jobId,
+          ifMatch: input.ifMatch,
+          idempotencyKey: input.idempotencyKey,
+        });
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;

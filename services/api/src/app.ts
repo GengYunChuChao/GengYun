@@ -1659,8 +1659,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     createModerationJobSource(moderationService),
     // GY-I13（#13）合成域作业源（**纯追加，不重排上面三项**）：`GET /jobs/{id}` 现可返回
     // `kind=synthesis` 的契约 `SynthesisResult`（`tts/service.ts` 的 `inspectJob` 只读复用）。
-    // `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 PROVIDER_UNAVAILABLE
-    // (`retryable`) 如实拒绝，**不伪造** `cancelled`。
+    // GY-R27 取消片：`cancel` **已提供**（复用 `tts/service.ts` 的 `cancelJob`：`queued`/`running`
+    // ⇒ `cancelled`，revision 恰好 +1；终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`），
+    // `POST /jobs/{id}/cancel` 对合成作业由 503 `PROVIDER_UNAVAILABLE`（未接线）变为 200 `cancelled`。
     createSynthesisJobSource(synthesisService),
     // GY-I10（#10）标签 OCR 域作业源（**纯追加，不重排上面四项**）：`GET /jobs/{id}` 现可返回
     // `kind=ocr` 的契约 `Job`（九键、七类 `JobState` 与 `error_code` 逐类可读；读面**只读复用** OCR 域
