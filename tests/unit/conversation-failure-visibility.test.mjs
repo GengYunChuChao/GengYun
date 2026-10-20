@@ -214,7 +214,56 @@ test('依据正文超长时显式标注节选（不得静默返回半截文本�
 // ⑤ 数据最小化：响应与日志都不回显令牌 / 内部主键 / openid / 手机号
 // ---------------------------------------------------------------------------
 
-const PHONE_RE = /(?<!\d)1[3-9]\d{9}(?!\d)/u;
+// 手机号判据：**独立 token 边界**，不是「前一位不是数字」。
+//
+// 旧口径 `(?<!\d)…(?!\d)` 只排数字邻居，**没排字母**：服务端 id 是 `crypto.randomUUID()`，末段是
+// 12 位十六进制，`…-16271493087d` / `…-f14298666267`（11 位数字紧邻字母）这类片段会被判成手机号
+// ⇒ 本文件既有 flaky（PR #322 首跑红、同 SHA 重跑绿；「响应」「日志」两条断言是同一缺陷，父提交
+// `47fe028` 在 `:264`/`:286`；本文件的对应行号会随插入漂移，不在此钉死）。R28-S12 探针实测：
+// 20 万个随机 UUID 旧口径误命中 62 个（0.031%）；一次扫描面含 13 个 id（21 处出现），实测 400 次
+// 扫描面重跑有 4 次假红（响应面 1.0%）。
+//
+// 收紧依据：手机号在 JSON / 日志里永远是**独立 token**（`"phone":"138…"`、`contact=138…`、
+// `tel:138…`、中文行文里），字段值两侧必是引号/冒号/等号/空白/中文；而标识符片段两侧必然是
+// `[0-9A-Za-z_]`。因此把边界从「非数字」收紧为「非标识符字符」，前后两侧同时收紧。
+// 取舍：`a13812345678b`、`tel13812345678` 这类紧贴 ASCII 字母的 11 位数字**故意**不命中——它只
+// 可能来自十六进制/UUID/哈希片段，不可能是任何真实响应/日志里的手机号字段值（逐字钉在
+// 「手机号判据的边界」用例里）。
+const PHONE_RE = /(?<![0-9A-Za-z_])1[3-9]\d{9}(?![0-9A-Za-z_])/u;
+/**
+ * 扫描前的一次性归一化（R28-S12 / E7）：把文本里的**转义序列** `\n` `\r` `\t` 还原成空白，再交给
+ * `PHONE_RE`。原因：`JSON.stringify` 之后，「行首手机号」在文本里是「反斜杠 + n/t/r」，紧贴号码前
+ * 的是字母 `n`/`t` ⇒ token 边界会把真实手机号误判成「标识符内部」而漏报（旧口径 `(?<!\d)` 反而
+ * 能抓到，所以这是收紧后必须补上的窄缺口）。
+ *
+ * 只替换**反斜杠转义**，不改 `PHONE_RE` 本身、不放宽边界：换进来的是分隔符（空格），不是字母/数字，
+ * 因此 `a13812345678b` / `_13812345678` / `13812345678_` / 随机 UUID 归一化后仍必须不命中。
+ */
+const normalizeScanText = (text) => text.replace(/\\[nrt]/gu, ' ');
+/** 旧口径（缺陷版本）：**只**用于反向对照——证明语料里确实含会被它误命中的形态。 */
+const WIDE_PHONE_RE = /(?<!\d)1[3-9]\d{9}(?!\d)/u;
+/** 随机标识符形状（uuid，服务端 id 的真实来源）：用于「扫描面确实含标识符」的反向对照。 */
+const UUID_SHAPE_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/u;
+
+/**
+ * 确定性 uuid-v4 形态语料（固定种子）：给「随机标识符不得被判成手机号」一个可复现的量化面。
+ * 形状与 `crypto.randomUUID()` 一致：8-4-4-4-12 小写十六进制，version=4、variant∈8/9/a/b。
+ */
+function deterministicUuids(count) {
+  let state = 0x9e3779b9;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state;
+  };
+  const ids = new Array(count);
+  for (let i = 0; i < count; i += 1) {
+    let compact = '';
+    for (let k = 0; k < 32; k += 1) compact += (next() >>> 28).toString(16);
+    compact = `${compact.slice(0, 12)}4${compact.slice(13, 16)}${'89ab'[next() % 4]}${compact.slice(17)}`;
+    ids[i] = `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+  }
+  return ids;
+}
 
 /** 七个 operation 的响应全文（含头）拼起来，逐类敏感值扫描。 */
 async function sweepResponses(fixture) {
@@ -261,10 +310,12 @@ test('数据最小化（响应）：七个 operation 的响应不回显令牌、
   assert.equal(text.includes(fixture.a.user.id), false, '响应里不得出现内部主体主键（owner id）');
   assert.equal(text.includes('owner_id'), false, '响应里不得出现内部列名 owner_id');
   assert.equal(text.includes('openid'), false, '响应里不得出现 openid');
-  assert.equal(PHONE_RE.test(text), false, '响应里不得出现手机号');
+  assert.equal(PHONE_RE.test(normalizeScanText(text)), false, '响应里不得出现手机号');
   // 反向对照：扫描面确实覆盖到了真实响应（否则上面的"未命中"是空断言）。
   assert.ok(text.includes(QUESTION), '扫描面必须包含真实请求正文（证明扫的是真响应）');
   assert.ok(text.includes('cjk-bigram+word-match'), '扫描面必须包含回答正文（证明扫到了回答）');
+  // 反向对照：扫描面确实含服务端随机标识符（收紧 token 边界后，上面这条"未命中"才有意义）。
+  assert.ok(UUID_SHAPE_RE.test(text), '扫描面必须含随机标识符（否则收紧边界后的未命中是空断言）');
 });
 
 test('数据最小化（日志）：info 级日志不回声令牌/owner_id/openid/手机号；问答域源码无日志调用', async (t) => {
@@ -283,7 +334,9 @@ test('数据最小化（日志）：info 级日志不回声令牌/owner_id/openi
   assert.equal(logs.includes('owner_id'), false, '日志里不得出现内部列名 owner_id');
   assert.equal(logs.includes('openid'), false, '日志里不得出现 openid');
   assert.equal(logs.includes('authorization'), false, '日志里不得出现授权头字段');
-  assert.equal(PHONE_RE.test(logs), false, '日志里不得出现手机号');
+  assert.equal(PHONE_RE.test(normalizeScanText(logs)), false, '日志里不得出现手机号');
+  // 反向对照：日志确实含服务端随机标识符（收紧 token 边界后，上面这条"未命中"才有意义）。
+  assert.ok(UUID_SHAPE_RE.test(logs), '日志扫描面必须含随机标识符（否则未命中是空断言）');
 
   // 静态判据：问答域**根本没有**日志调用 ⇒ 不存在"忘了脱敏"的面（比事后脱敏更强）。
   const root = 'services/api/src/conversations';
@@ -298,4 +351,93 @@ test('数据最小化（日志）：info 级日志不回声令牌/owner_id/openi
     assert.doesNotMatch(source.code, /request\s*\.\s*log\s*\./u, `${source.path} 不得把请求/身份写日志`);
     assert.doesNotMatch(source.code, /app\s*\.\s*log\s*\./u, `${source.path} 不得把请求/身份写日志`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 手机号判据的边界（R28-S12）：真手机号必红、随机标识符必绿
+// ---------------------------------------------------------------------------
+//
+// 本片修的是**判据**，不是产品行为：产品仍然不得回显手机号（父提交 `:264`/`:286` 两条断言一条未减，
+// 「响应」「日志」两侧都扫，只是把 `PHONE_RE` 的 token 边界收紧 + 扫描前归一化 JSON 转义）。
+// 这里把「什么算手机号」双向钉死，防两个方向回退：
+//   1) 收得过头 ⇒ 真手机号漏判（下面 leaked 表必须全部命中）；
+//   2) 收得不够 ⇒ 随机标识符又被判成手机号（下面 identifiers 表 + N=100000 语料必须全部不命中）。
+test('手机号判据的边界：真手机号必命中、随机标识符必不命中（旧口径在同一语料上会误命中）', () => {
+  // 1) 真实泄漏形态：手机号是独立 token（JSON 值 / 查询或表单 / 中文行文里）。
+  const leaked = [
+    '"phone":"13812345678"',
+    '"phone":"19900001111","x"',
+    'contact=13812345678',
+    'tel:13812345678',
+    '手机号13812345678已登记',
+    '{"a":1,"phone":13812345678}',
+  ];
+  for (const text of leaked) {
+    assert.equal(PHONE_RE.test(text), true, `真手机号必须命中（否则收紧过头）：${text}`);
+  }
+
+  // 2) 随机标识符与「紧贴 ASCII 标识符字符」的片段：**故意**不命中。
+  //    `a13812345678b` 的前后都是十六进制字符 ⇒ 它只可能是 UUID/哈希片段，不可能是手机号字段值；
+  //    若把它判成手机号，就会把 `…-16271493087d` 这类真 id 判成泄漏（本文件既有 flaky 的根因）。
+  const identifiers = [
+    '9f1c7a52-3b4d-4e88-9a10-2c5d6e7f8a90',
+    '3902e459-54cd-4036-a8c4-16271493087d',
+    '5dc7bb9-5f56-4095-a3d0-f14298666267',
+    'd41d8cd98f00b204e9800998ecf8427e',
+    '1e19412284915f8b',
+    'a13812345678b',
+    '_13812345678',
+    '13812345678_',
+  ];
+  for (const text of identifiers) {
+    assert.equal(PHONE_RE.test(text), false, `标识符/贴边形态不得判成手机号（否则又回到既有 flaky）：${text}`);
+  }
+
+  // 3) JSON 转义形态（R28-S12 / E7）：`JSON.stringify` 之后，「行首手机号」前一位是转义序列的字母
+  //    `n`/`t`/`r`，直接扫会被 token 边界判成「标识符内部」而漏报；归一化后必须命中。
+  //    同时验证归一化**没有**把贴边形态打回旧口径的假阳。
+  const escapedForms = [
+    '{"note":"x\\n13812345678"}',
+    '{"note":"x\\t13812345678"}',
+    '{"note":"x\\r13812345678"}',
+  ];
+  for (const text of escapedForms) {
+    assert.equal(PHONE_RE.test(text), false, `原始转义文本会被 token 边界挡住（E7 的缺口现场）：${text}`);
+    assert.equal(
+      PHONE_RE.test(normalizeScanText(text)),
+      true,
+      `转义序列归一化后必须命中真手机号（否则行首号码漏报）：${text}`,
+    );
+  }
+  const stillCleanAfterNormalize = [
+    'a13812345678b',
+    '_13812345678',
+    '13812345678_',
+    '9f1c7a52-3b4d-4e88-9a10-2c5d6e7f8a90',
+  ];
+  for (const text of stillCleanAfterNormalize) {
+    assert.equal(
+      PHONE_RE.test(normalizeScanText(text)),
+      false,
+      `归一化不得把标识符/贴边形态判回手机号：${text}`,
+    );
+  }
+
+  // 4) 量化面：N=100000 个同形态（uuid v4、固定种子 ⇒ 可复现）标识符。
+  //    这是**回退探测器**，不是随机采样证据：uuid 形状下任何 11 位数字窗口的两端邻居至少有一个是
+  //    十六进制字符（数字或 a–f，都属 `[0-9A-Za-z_]`），新口径**不可能**命中 ⇒ `tightHits === 0`
+  //    对 uuid 语料结构恒真。它真正能抓的是「有人把 PHONE_RE 退回旧宽口径」：同一语料上 24 命中 ⇒ 立刻红。
+  //    先证语料非空：旧口径必须在这批语料上命中 >0，否则「新口径 0 命中」可能只是语料里根本没有
+  //    该形态的空断言。
+  const corpus = deterministicUuids(100000);
+  const wideHits = corpus.filter((id) => WIDE_PHONE_RE.test(id)).length;
+  const tightHits = corpus.filter((id) => PHONE_RE.test(id)).length;
+  const normalizedTightHits = corpus.filter((id) => PHONE_RE.test(normalizeScanText(id))).length;
+  assert.ok(wideHits > 0, `反向对照：旧口径在 N=100000 同形态标识符上必须有命中（实测 ${wideHits}）`);
+  assert.equal(tightHits, 0, `新口径不得把任何随机标识符判成手机号（N=100000，实测 ${tightHits}）`);
+  assert.equal(
+    normalizedTightHits,
+    0,
+    `归一化后同样不得把随机标识符判成手机号（N=100000，实测 ${normalizedTightHits}）`,
+  );
 });
