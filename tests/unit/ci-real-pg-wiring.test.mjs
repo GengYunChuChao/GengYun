@@ -90,14 +90,16 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
  *   2. `community-pg`：同上，只碰自己库；与会话链互不共享库/角色。
  *   3. `messages-pg`：同上。
  *   4. `favorites-history-pg`：同上。
- *   5. `account-deletion-pg`：**要求集群里没有同名角色**（`provisionRoles` 里是无条件 `CREATE ROLE`），
- *      且收尾按 `pg_roles` 快照差集把本轮新建的角色全部 DROP 并复核为空 ⇒ 必须排在
- *      `admin-accounts-read-pg` / `admin-flags-pg` **之前**（这两条会把 `gengyun_api_runtime`
- *      和 6 个组角色留在集群里）。
+ *   5. `account-deletion-pg`：**要求集群里没有同名角色**（`:378` 无条件执行 5 个角色文件、`:381` 无条件
+ *      `CREATE ROLE`，开头**没有** `resetRoles()`），收尾按 `pg_roles` 快照差集把本轮新建的角色全部
+ *      DROP 并复核为空 ⇒ 必须排在 `admin-accounts-read-pg` **之前**（后者收尾不清理，会把
+ *      `gengyun_api_runtime` + 6 个组角色留在集群里，实测 7 个）。
  *   6. `admin-accounts-read-pg`：开头 `resetRoles()` 只 `DROP OWNED BY` **本库**再加 `DROP ROLE`，
  *      并 `catch(() => {})` 吞掉失败；它**不**在收尾清理自己建的 7 个角色 ⇒ 必须排在注销之后。
  *   7. `admin-flags-pg`：argv[3] 省略时「存在则 ALTER、不存在则 CREATE」复用 `gengyun_api_runtime`
- *      （:249-263），是这批里唯一能容忍前面留下运行时角色的脚本 ⇒ 排最后。
+ *      （:249-263），且**不执行任何角色文件**（不建组角色）、收尾按基线差集清掉自己建的角色
+ *      （实测 `[ALL PASS]` 后只剩 `gengyun_ci_owner`）⇒ 是这批里唯一能容忍前面留下运行时角色的
+ *      脚本，排最后最安全。
  *
  * 与 `MANAGED_SCRIPTS` 的关系：**成员集合必须相同、顺序必须等于这里的顺序**，两条都由下面的断言钉住。
  */
