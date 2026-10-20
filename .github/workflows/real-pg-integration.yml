@@ -1,0 +1,78 @@
+# 真库臂（real PostgreSQL 17.11）· 把两个「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
+#   · tests/integration/conversations-pg.mjs（#313 / I12）
+#   · tests/integration/community-pg.mjs（#296 / I15）
+#
+# 为什么这两个脚本**必须**真库：它们锁的是只有数据库能证明的性质——迁移子集按序 apply 且二连跑
+# 0 条、唯一键真的能裁决并发、外键真的挡孤儿行、枚举/CHECK 真的拒绝闭集外的值、
+# `catalog_read.current_knowledge` 真的带 `created_at`、以及 `buildApp` 在有真库时真的开启对应域。
+# 内存库与替身证明不了这些；而 CI 里没有真库的「跳过」等于这一轮什么都没验证。
+#
+# 为什么缺库必须**红**（而不是「跳过」）：两个脚本在缺连接串时打印 SKIP 并**以 77 退出**
+# （POSIX skipped＝未取得，不是通过；仓内 `tests/unit/integration-script-coverage.test.mjs`
+# 的「整链跳过必须给 77」把它固化成硬约定）。本 workflow 因此**不设**任何放宽开关、也**不传**任何
+# 跳过参数：真库没起来（service 未健康、库没建出来、连接串写错）⇒ 脚本 77 ⇒ 本 job 红。
+# 这个红是**正确的读数**：它说的是「真库臂这一轮没有验证」，不是「验证通过」。
+# 反过来，把放宽开关写进 workflow 就会让「0 条断言」被读成绿 ——
+# `tests/unit/ci-real-pg-wiring.test.mjs` 对任何 workflow 里出现这类开关一律判红。
+#
+# 库的分配：两个脚本各自**硬钉**库名且要求**空库**（脚本开头断言 public 下没有任何表），因此不能
+# 共用一个库；`services.postgres` 只按 `POSTGRES_DB` 建一个库，故每个 step 先用 runner 上已有的
+# `psql` 建**专用空库**，再真跑该脚本（形状照抄 `.github/workflows/consent-grant-postgres.yml`）。
+# `POSTGRES_DB` 那一份只当 psql 的连接靴库用，脚本从不连它。
+#
+# 口令是**明显的合成值**（`synthetic-ci-owner-only`），与其它 PG workflow 同值；不含任何真实凭据。
+
+name: Real PostgreSQL integration gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  real-pg-17-11:
+    name: real-pg-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun_ci_bootstrap
+          POSTGRES_USER: gengyun_ci_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # 会话链（#313）：库名硬钉 `gengyun_conversations_test`，脚本自己断言 public 下无表。
+      # `&&` 串联保证「建库失败」不会滑过去变成「脚本 77 也算跑过」——两步都必须成功。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_conversations_test' && node tests/integration/conversations-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          CONVERSATIONS_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_conversations_test
+      # 社区域（#296）：库名硬钉 `gengyun_community_test`，同样要求空库；顺序在会话链之后，
+      # 两者不共享任何库/角色状态。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_community_test' && node tests/integration/community-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          COMMUNITY_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_community_test
