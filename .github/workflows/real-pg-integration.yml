@@ -8,7 +8,7 @@
 # 内存库与替身证明不了这些；而 CI 里没有真库的「跳过」等于这一轮什么都没验证。
 #
 # 为什么缺库必须**红**（而不是「跳过」）：两个脚本在缺连接串时打印 SKIP 并**以 77 退出**
-# （POSIX skipped＝未取得，不是通过；仓内 `tests/integration/integration-script-coverage.test.mjs`
+# （POSIX skipped＝未取得，不是通过；仓内 `tests/unit/integration-script-coverage.test.mjs`
 # 的「整链跳过必须给 77」把它固化成硬约定）。本 workflow 因此**不设**任何放宽开关、也**不传**任何
 # 跳过参数：真库没起来（service 未健康、库没建出来、连接串写错）⇒ 脚本 77 ⇒ 本 job 红。
 # 这个红是**正确的读数**：它说的是「真库臂这一轮没有验证」，不是「验证通过」。

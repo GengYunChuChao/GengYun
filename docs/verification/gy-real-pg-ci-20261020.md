@@ -1,18 +1,20 @@
 # GY 真库臂接入 CI：把两个「在 main、却没有任何 workflow 跑过」的真库脚本接进 GitHub Actions
 
 - 日期：2026-10-20
-- 分片：真库臂 CI 接线（派单 `.pg17/dispatch/real-pg-ci-wiring-20261020.md`）
+- 分片：真库臂 CI 接线（派单 `.pg17/dispatch/real-pg-ci-wiring-20261020.md`）；**返修**（派单 `.pg17/dispatch/real-pg-ci-fix-20261020.md`，对抗性审查 `adv-verdict-real-pg-ci-79fede1.md` 判「需修改」）
 - 分支：`test/gy-real-pg-ci-wiring`，基线 `upstream/main` = `df043a715e691019e14373181249a5cf51ec9da9`（短 `df043a7`，本片首次改动前实测）
+- 版本：**v1 = `79fede1`**（被审对象，6 用例）→ **v2 = 本页当前状态**（10 用例，收口两条假绿通道，见 §9）
 - 环境：Windows（PowerShell 5.1，本机 PATH 无 `pwsh`）、Node v24.16.0、npm 11.13.0、`npm ci --offline --ignore-scripts`（103 packages）
-- **沙箱口径（决定了本页一半的「未取得」）**：本会话是 confined（workspace-write）⇒ 任何**带管道 stdio 的子进程**都会 `EPERM`（§4.1 逐字读数）。所以本页凡是「跑不起来」的项一律写**未取得**并给出权威替代读数，⛔ 不写成通过。
+- **沙箱口径（决定了本页一半的「未取得」）**：v1 与 v2 两轮实测**都是**「带管道 stdio 的子进程一律 `EPERM`」（§4.1 逐字读数；v2 返修派单称沙箱已改 `danger-full-access`，但**实测未变**，见 §4.1 末段）。所以本页凡是「跑不起来」的项一律写**未取得**并给出权威替代读数，⛔ 不写成通过。
 - 本页所有数字都有可复跑命令；标「未取得」的一律**没有验证过**。
 
-## 0 结论（先看这四条）
+## 0 结论（先看这五条）
 
 1. **缺口是真的**：`tests/integration/conversations-pg.mjs`（#313）与 `tests/integration/community-pg.mjs`（#296）都在 main 上，但把 11 个 workflow 逐个搜文件名是 **0 命中**——真库臂只存在于本机，CI 上这两个脚本坏成什么样都不会红（§1.1）。
 2. **本片只做一件事**：新增 `.github/workflows/real-pg-integration.yml`（第 12 个 workflow），用官方 `postgres:17.11` 服务容器 + 各自建**专用空库**的方式真跑这两个脚本（§2）。
-3. **把缺口变成会红的断言**：新增 `tests/unit/ci-real-pg-wiring.test.mjs`（6 个用例＝3 前向 + 3 反向控制）。三条反向控制除了在内存里变异，还**在磁盘上真的破坏过 workflow**：删 `run:` 行／加 `GY_ALLOW_SKIP`／把镜像降到 `postgres:16.4`，三次都让同一守卫变红，复原后 sha256 逐次核对一致（§4.3）。
-4. **未取得（如实）**：workflow 的**真红/真绿**只能由 PR 自身 CI 的 run 证明——本机无容器运行环境、无 YAML 解析器（actionlint／PyYAML／js-yaml 全无）、且子进程 EPERM；`npm run test:integration:http` 本机跑到第 8 段时红在 `tests/integration/ocr-http.mjs` 的**子进程探针**上（`spawnSync … EPERM`，非本片缺陷，§4.5）。
+3. **把缺口变成会红的断言**：新增 `tests/unit/ci-real-pg-wiring.test.mjs`（**10 个用例**＝4 前向 + 6 反向控制）。反向控制除了在内存里变异，还**在磁盘上真的破坏过 workflow**（v1 三形态 + v2 三形态），每次复原后 sha256 逐字节核对一致（§4.3）。
+4. **v2 返修收口两条假绿通道**（审查实证 B2／F1／F2）：① `run: |` 块标量体里的 `#` 行是 shell 注释，现在一律不计入命令文本；② 判据③从「文件里第一个 `services:`」改成**锚定真跑受管脚本的那个 job**。两条各自补了反向控制，并**把修法回退做反证**：回退 A ⇒ 只有 `反向控制①b` 红；回退 B ⇒ 只有 `反向控制④`／`⑤` 红（§4.3.2）。
+5. **未取得（如实）**：workflow 的**真红/真绿**只能由 PR 自身 CI 的 run 证明——本机无容器运行环境；`node --test` 默认隔离在本机仍 `spawn EPERM`（§4.1）；`npm run test:integration:http` 本机跑到第 8 段时红在 `tests/integration/ocr-http.mjs` 的**子进程探针**上（`spawnSync … EPERM`，非本片缺陷，§4.5）。
 
 ## 1 缺口事实（逐条实测，不是推断）
 
@@ -98,33 +100,42 @@ Select-String -Path .github/workflows/*.yml -Pattern 'conversations-pg|community
 2. ⛔ 不把两个脚本塞进 `package.json` 的 `test:integration:http` 链：那条链是**无库**回环链，接进去会让每个本地开发者天天红；真库臂的正确位置就是一个带 PG 的 workflow（与 `.pg17/ruling-skip-exit-code-20261020.md` 第 2 条同口径）。
 3. ⛔ 不改任何既有 workflow、不改 `tests/integration/**`、不改 `package.json`（§8 改动面）。
 
-## 3 守卫测试（`tests/unit/ci-real-pg-wiring.test.mjs`，409 行）
+## 3 守卫测试（`tests/unit/ci-real-pg-wiring.test.mjs`，v2 共 711 行；v1 为 409 行）
 
 范式照 `tests/unit/integration-script-coverage.test.mjs`：**纯静态、只读 `.github/workflows/` 的文本、⛔ 不起服务/不连 PG/不联网/不写任何文件/不加依赖**；正向断言与反向控制**调用同一个函数**（所以「反向控制的红」证明的就是「真实缺口会红」）。
 
-### 3.1 四条判据
+### 3.1 五条判据
 
 | 判据 | 实现 | 拦的是什么 |
 | --- | --- | --- |
-| ① 受管脚本必须被某个 workflow 的 `run:` **命令文本**执行 | `runCommandTextsOf()` 取 `run:` 的内联值 + 其后缩进更深的块行，**跳过 `#` 注释行**；`missingManagedScripts()` 求差集 | 「脚本在 main、但没人跑」的静默缺口；也拦住「只写在注释里」的糊弄 |
+| ① 受管脚本必须被某个 workflow 的 `run:` **命令文本**执行 | `runCommandTextsOf()` 取 `run:` 的内联值 + 其后缩进更深的块行；**两种注释都跳过**：YAML 级 `#` 行，以及 `run: \|`／`run: >` 块标量体里的 `#` 行（bash 执行块内容，那是 shell 注释）；`missingManagedScripts()` 求差集 | 「脚本在 main、但没人跑」的静默缺口；拦住「只写在注释里」的糊弄——**含**把调用写进 `run: \|` 块再注释掉这一形态（v1 漏了它，§9 A） |
 | ② 任何 workflow 都不得含放宽跳过开关 | `escapeHatchHits()` 扫 `GY_ALLOW_SKIP` 与 `--allow-skip`，报 `文件:行号: 开关` | 为让 job 绿而把「未取得」改写成「通过」（假绿） |
-| ③ `services.postgres` 必须存在且镜像主版本锚定 17 | `postgresServiceProblems()` 逐段查 `services:` → `postgres:` → `image:` → `postgres:(\d+)`，主版本必须 `17` | 镜像降级到 16（17 专有行为静默失真）／删掉 service（真库没了） |
+| ③ **真跑受管脚本的那个 job** 必须有 `services.postgres`，且镜像主版本锚定 17 | `jobsOf()` 解析 `jobs:` 下每个 job → `jobsRunningManagedScripts()` 选出作用域 → 对每个这样的 job 调 `postgresServiceProblems(job.body)`；问题消息带 `job \`<id>\`：` 前缀 | 镜像降级到 16（17 专有行为静默失真）／删掉 service（真库没了）——**且**挡住「前面插一个带 `postgres:17.11` 的诱饵 job」这种绕过（v1 只取第一个 `services:`，§9 B） |
 | ④ workflow 的每个 `uses:` 必须固定到 40 位 SHA | `unpinnedUses()` 逐个 `uses:` 行比对 `@[0-9a-f]{40}$` | 浮标签（`@v4`）会让 CI 语义随上游发版改变 |
+| ⑤ workflow 不得含「吞红」构造 | `swallowedFailureHits()` 在**非注释行**里扫 step 级 `continue-on-error:`／`if:`／行尾 `\|\| true` | 这一步失败却仍判绿——真库臂的红是唯一验收信号，吞掉它就等于没有闸门（v2 新增，非阻塞建议） |
 
 受管脚本清单是**冻结**的（`MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` 双向比对）：增删受管脚本＝改门禁口径，必须同时改两处并更新本页，刻意留 diff。另有三条「反空转」断言：workflow 数 ≥ 11、`run:` 命令块数 ≥ 5、受管清单 ≥ 2——否则「什么都没扫」也会绿。
 
-### 3.2 六个用例
+### 3.2 十个用例（v2）
 
-1. **前向①**：两个受管脚本都被某个 workflow 的 `run:` 真跑（＋冻结清单比对＋受管脚本必须真实存在）。
-2. **反向控制①**：删掉 `conversations-pg.mjs` 的 `run:` 行 ⇒ 必须红并**点名**该脚本；同时证明「只写进注释救不了」「真的写成 `run:` 就转绿」。
-3. **前向②**：任何 workflow 都不得含放宽跳过开关。
-4. **反向控制②**：往 workflow 追加 `GY_ALLOW_SKIP`／`--allow-skip` ⇒ 必须红，消息里出现该开关与文件名；反向不误伤（「不得放宽」这种反向措辞不算开关）。
-5. **前向③**：`services.postgres` + 镜像主版本 17 + `uses:` 全固定 SHA（另断言该 workflow 真的用 `psql` 建库、真的 `npm ci`）。
-6. **反向控制③**：镜像降 16／删 `services:` 段／把固定 SHA 换成 `@v4` ⇒ 三条各自必须红且消息点名。
+| # | 用例 | 断言的东西 |
+| --- | --- | --- |
+| 1 | 前向① | 两个受管脚本都被某个 workflow 的 `run:` 真跑（＋冻结清单比对＋受管脚本必须真实存在＋三条反空转） |
+| 2 | 反向控制① | 删掉 `conversations-pg.mjs` 的 `run:` 行 ⇒ 必须红并**点名**该脚本；同时证明「只写进 YAML 注释救不了」「真的写成 `run:` 就转绿」 |
+| 3 | 前向② | 任何 workflow 都不得含放宽跳过开关 |
+| 4 | 反向控制② | 往 workflow 追加 `GY_ALLOW_SKIP`／`--allow-skip` ⇒ 必须红，消息里出现该开关与文件名；反向不误伤（「不得放宽」这种反向措辞不算开关） |
+| 5 | 前向③ | **真 job** 有 `services.postgres` + 镜像主版本 17 + `uses:` 全固定 SHA（另断言真的解析到 job／真的用 `psql` 建库／真的 `npm ci`） |
+| 6 | 前向④ | workflow 不得含「吞红」构造；三种写法各自注入必红、注释里提到不误伤（**v2 新增**，非阻塞建议） |
+| 7 | 反向控制③ | 镜像降 16／删真 job 的 `services:` 段／把固定 SHA 换成 `@v4` ⇒ 三条各自必须红且消息点名 |
+| 8 | 反向控制①b | `run: \|` 块体里只有 `# node <脚本>` + `echo hi` ⇒ 判据①必须判红；对**真文件**做同样改造也必须点名该脚本；取消注释则转绿（**v2 新增，必改 A**） |
+| 9 | 反向控制④ | 真 job **之前**插一个带 `postgres:17.11` 的合规诱饵 job + 真 job 镜像降 16.4 ⇒ 必须红，消息点名 `job \`real-pg-17-11\``（**v2 新增，必改 B**） |
+| 10 | 反向控制⑤ | 同上的诱饵 + 真 job 删掉 `services` ⇒ 必须红，消息点名真 job 且指出缺 `services`（**v2 新增，必改 B**） |
 
-### 3.3 三条反向控制的**落盘**自证（派单 §1 第三条的硬要求）
+用例 9／10 都先断言**诱饵自身合规**（`postgresServiceProblems(decoy.body) === []`）且**诱饵的 17.11 保留**，所以那个红只能来自真 job——这正是「锚定 job」与「取第一个 `services:`」的区别所在。
 
-内存变异之外，还在一份**备份 + sha256 复核**的保护下真的破坏过磁盘上的 workflow（脚本 `.pg17/tmp/real-pg-ci/reverse-control-ondisk.ps1`，⛔ 不进仓库）：
+### 3.3 反向控制的**落盘**自证（v1 三形态 ＋ v2 三形态）
+
+内存变异之外，还在一份**备份 + sha256 复核**的保护下真的破坏过磁盘上的 workflow（v1 脚本 `.pg17/tmp/real-pg-ci/reverse-control-ondisk.ps1`，v2 脚本 `…/v2-reverse-control-ondisk.ps1`，⛔ 都不进仓库）：
 
 ```
 BASELINE_SHA256=395a9a7a97171626c51ef12f85c5079197e0de6dfa3e29a266e4de04a2bffe71
@@ -148,6 +159,48 @@ FINAL_EXITCODE=0
 
 一条如实记录的副作用：变异 1 里**反向控制①**自己先红在 `变异必须真的改到文本（否则反向控制是空转）`——因为「把 run 行删掉」这个变异在已被删过的文件上不再改变文本。它不是误报（该用例本来就要求变异非空转），但读日志的人会先看到这条消息；真正的定位消息来自**前向①**（同一日志里紧邻的一条）。复原后 6/6 全绿（§4.3）。
 
+#### 3.3.1 v2 的三个新形态（审查实证过的三条假绿通道，现在必须红）
+
+同一套落盘手法，三种形态逐次做（脚本 `.pg17/tmp/real-pg-ci/v2-reverse-control-ondisk.ps1`）：
+
+```
+BASELINE_SHA256=d664deed044369eea95d71561120883f37bec2bba7b1e5e24c13c67249298f95
+DECOY_REMAINS_17_11_M1=1        ← 诱饵仍持 17.11，红只能来自真 job
+--- MUTATION 1-decoy-plus-downgrade : EXITCODE=1 ---           ℹ tests 10 | pass 7 | fail 3
+RESTORED_SHA256=d664deed…298f95 MATCH=True
+DECOY_SERVICES_KEPT_M2=1
+--- MUTATION 2-decoy-plus-real-services-removed : EXITCODE=1 --- ℹ tests 10 | pass 6 | fail 4
+RESTORED_SHA256=d664deed…298f95 MATCH=True
+--- MUTATION 3-run-block-shell-comment : EXITCODE=1 ---          ℹ tests 10 | pass 8 | fail 2
+RESTORED_SHA256=d664deed…298f95 MATCH=True
+FINAL_SHA256=d664deed…298f95 MATCH=True
+FINAL_EXITCODE=0（复跑 10/10 绿）
+```
+
+| v2 变异（对**真文件**做的） | 退出码 | 变红的用例（逐字） | 断言原文（逐字摘） |
+| --- | --- | --- | --- |
+| M1：真 job 前插合规诱饵 job（`postgres:17.11`）＋ **真 job** 镜像改 `postgres:16.4` | 1 | `tests 10 / pass 7 / fail 3`：前向③、反向控制③、**反向控制④** | `` 真库 workflow … 的 services.postgres 不合格：`` → `` · job `real-pg-17-11`：`services.postgres.image` 主版本是 16，要求 17：postgres:16.4 `` |
+| M2：同诱饵 ＋ **真 job** 整段删掉 `services` | 1 | `tests 10 / pass 6 / fail 4`：前向③、反向控制③、**反向控制④**、**反向控制⑤** | 同上首行 → `` · job `real-pg-17-11`：缺少 `services:` 段：真库服务容器被删掉了… `` |
+| M3：把会话链那一行改写成 `run: \|` 块，块体只有 `# node …/conversations-pg.mjs` + `echo hi` | 1 | `tests 10 / pass 8 / fail 2`：**前向①**、**反向控制①b** | `有受管真库脚本既没有被任何 workflow 的 run: 执行…` → `· tests/integration/conversations-pg.mjs` |
+
+两条如实记录：
+1. M1／M2 里**反向控制③／④／⑤** 也跟着红——因为它们是以「磁盘上已是变异态」的文件为起点再做内存变异，前提不再成立（与 v1 变异 1 的同款副作用）。上表「变红」列只按日志逐字列全，未挑好看的那几条。
+2. M3 里**判据⑤（吞红）与前向②**保持绿，说明变异没有污染无关判据。
+
+#### 3.3.2 反证探针：把两处修法**回退**，新用例必须立刻红
+
+「新用例不是因为断言空转才绿」需要一个反证：把 §9 的 A／B 两处修法各自**在内存里回退成 v1 行为**，写成 `tests/unit/` 下的临时测试文件跑一遍，然后删掉（`.pg17/tmp/real-pg-ci/v2-make-variants.mjs`）：
+
+```
+PROBE a : EXITCODE=1   ℹ tests 10 | pass 9 | fail 1
+  RED ✖ 反向控制①b：`run: |` 块体里把调用写成 shell 注释，判据①必须判红
+PROBE b : EXITCODE=1   ℹ tests 10 | pass 8 | fail 2
+  RED ✖ 反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）
+  RED ✖ 反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `services` ⇒ 判据③必须判红（锚定真 job）
+```
+
+即：**回退 A 只有 A 的用例红、回退 B 只有 B 的两条用例红**——两个新用例各自独立咬住对应的那条假绿通道，且互不依赖。两个临时文件跑完即删（`Test-Path` 逐个复核 `False`，事后 `git status --porcelain` 0 行）。
+
 ## 4 门禁实跑读数
 
 ### 4.1 沙箱前置读数（决定了下面哪些项只能记未取得）
@@ -163,7 +216,20 @@ node --test tests/unit/ci-real-pg-wiring.test.mjs      （＝默认隔离，逐�
 
 ⇒ **默认隔离的跑法在本机不可用**（不是本片缺陷，与错误类 61／`commander-session-20261018-side-wxlogin.md` §4 第 1 条同源）。故单测走**降级跑法**并逐条声明（§4.4）。
 
-### 4.2 聚焦守卫（6/6 绿）
+**v2 复核（返修派单称沙箱已改为 `danger-full-access`，实测未变）**：同一探针在返修轮复跑仍是 `status null … err EPERM`，`node --test tests/unit/ci-real-pg-wiring.test.mjs`（默认隔离）仍 `✖ Error: spawn EPERM`。逐字：
+
+```
+$ node -e "…spawnSync…"                      → status null out undefined err EPERM
+$ node --test tests/unit/ci-real-pg-wiring.test.mjs
+✖ tests\unit\ci-real-pg-wiring.test.mjs (2.4486ms)
+  Error: spawn EPERM  at ChildProcess.spawn (node:internal/child_process:441:11)
+      at runTestFile (node:internal/test_runner/runner:536:32)
+ℹ tests 1 / pass 0 / fail 1      EXITCODE=1
+```
+
+⇒ 返修派单 §3 第 1、2 条要求的「默认隔离」读数在本机**取不到**，本轮仍按口径 40 的许可分支用 `--test-isolation=none`，并在 §4.4.1 逐条声明。这是环境事实，⛔ 不写成通过。
+
+### 4.2 聚焦守卫（10/10 绿）
 
 ```
 node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
@@ -171,14 +237,18 @@ node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
 ✔ 反向控制①：删掉某脚本的 `run:` 行，同一断言必须红并点名它
 ✔ 前向②：任何 workflow 都不得含「放宽跳过」开关
 ✔ 反向控制②：往 workflow 里加 `GY_ALLOW_SKIP` 或 `--allow-skip`，同一断言必须红并点名文件
-✔ 前向③：真库 workflow 有 `services.postgres`，镜像主版本锚定 17，且 `uses:` 全部固定 SHA
+✔ 前向③：真 job 有 `services.postgres`，镜像主版本锚定 17，且 `uses:` 全部固定 SHA
+✔ 前向④：真库 workflow 不得含「吞红」构造（`continue-on-error` / `if:` / `|| true`）
 ✔ 反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，同一断言必须红
-ℹ tests 6   ℹ pass 6   ℹ fail 0   ℹ skipped 0   ℹ duration_ms 54.1964   EXITCODE=0
+✔ 反向控制①b：`run: |` 块体里把调用写成 shell 注释，判据①必须判红
+✔ 反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）
+✔ 反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `services` ⇒ 判据③必须判红（锚定真 job）
+ℹ tests 10   ℹ pass 10   ℹ fail 0   ℹ skipped 0   ℹ duration_ms 106.236   EXITCODE=0
 ```
 
-### 4.3 三条反向控制的落盘自证
+### 4.3 反向控制的落盘自证
 
-见 §3.3 的逐字读数（三次 `EXITCODE=1`、每次 `pass 4 / fail 2`、复原 sha256 三次全 MATCH、终检 `FINAL_EXITCODE=0` 且 6/6 绿）。
+见 §3.3（v1 三形态：三次 `EXITCODE=1`、每次 `pass 4 / fail 2`、复原 sha256 三次全 MATCH、终检 `FINAL_EXITCODE=0`）与 §3.3.1（v2 三形态：`pass 7/6/8` 与 `fail 3/4/2`、复原 sha256 三次全 MATCH、终检 10/10 绿），以及 §3.3.2 的反证探针（回退 A ⇒ 只红 `反向控制①b`；回退 B ⇒ 只红 `反向控制④`／`⑤`）。
 
 ### 4.4 全量单测（**跑法降级**，四条声明）
 
@@ -186,32 +256,33 @@ node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
 
 ```
 node --test --test-isolation=none "tests/unit/*.test.mjs"
-ℹ tests 1836   ℹ suites 0   ℹ pass 1766   ℹ fail 69   ℹ cancelled 0   ℹ skipped 1   ℹ todo 0
-ℹ duration_ms 151363.74        EXITCODE=1
+ℹ tests 1840   ℹ suites 0   ℹ pass 1770   ℹ fail 69   ℹ cancelled 0   ℹ skipped 1   ℹ todo 0
+EXITCODE=1
 ```
+
+（v1 同一跑法为 `tests 1836 / pass 1766 / fail 69 / skipped 1` ⇒ 本轮 **+4 tests / +4 pass**，正好是本轮新增的 4 个用例。）
 
 用的是 **`--test-isolation=none`**（口径 40 的许可分支；本机在默认隔离下必 `spawn EPERM`，无法取得默认隔离读数）。**本读数不得当作基线，也不得单独当作「是否本片引入」的判据**。
 
 #### 4.4.2 声明②③：判据＝「受影响文件与失败集合**同名同数**」，且**与 pristine baseline 逐条比对**
 
-为了归因而不是猜测，另建了一棵**基线检出**（`git worktree add --detach … df043a7`，独立 `npm ci`，⛔ 无任何 `node_modules` 联接），在同一台机、同一跑法下复跑同一命令：
+v1 轮已建过一棵**基线检出**（`git worktree add --detach … df043a7`，独立 `npm ci`，⛔ 无任何 `node_modules` 联接）并证明其失败集合与 v1 逐条相同；本轮直接拿 v1 的真实日志做同一条判据（v1 集合 ≡ baseline 集合，已实测 `diff_count=0`）：
 
-| 读数 | 本片工作树（含 3 个新文件） | 基线 `df043a7`（pristine） | 差 |
+| 读数 | v2 本片工作树 | 基线 `df043a7`（v1 轮实测） | 差 |
 | --- | --- | --- | --- |
-| `tests` | 1836 | 1830 | +6（＝本片新增的 6 个用例） |
-| `pass` | 1766 | 1760 | +6 |
+| `tests` | 1840 | 1830 | +10（＝两轮累计新增的 10 个用例） |
+| `pass` | 1770 | 1760 | +10 |
 | `fail` | 69 | 69 | 0 |
 | `skipped` | 1 | 1 | 0 |
 
 失败集合逐条比对（剥掉 `(..ms)` 计时后缀后按名去重）：
 
 ```
-mine_unique=69  baseline_unique=69
-diff_count=0
-IDENTICAL_FAILURE_SET (timing stripped)
+v1_unique=69  v2_unique=69   diff(v1,v2)=0
+v1_unique=69  baseline_unique=69   diff_count=0        ← v1 轮实测
 ```
 
-⇒ **同一批 69 条，名字与条数完全相同**；本片新增的 6 个用例全部计入 pass。没有任何一条是「本片引入的新红」。
+⇒ **两轮都是同一批 69 条，名字与条数完全相同**；两轮累计新增的 10 个用例全部计入 pass。没有任何一条是「本片引入的新红」。
 
 #### 4.4.3 声明②的补充：这 69 条不是口径 40 记的 8 条 `knowledge-*` 假红，而是 `spawnSync … EPERM` 族
 
@@ -334,40 +405,83 @@ const probe = spawnSync(process.execPath, [fileURLToPath(import.meta.url), `--re
 
 **权威替代读数**：`npm run test:integration:http` 的真红/真绿以本片 PR push 后 GitHub Actions 上 `engineering-shell.yml` 的 `integration-http` job 为准（本机不再重试）。
 
-### 4.6 文档校验
+### 4.6 文档与发布材料校验
 
 ```
 python tools/validate_development_docs.py
-PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables
+PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables      EXITCODE=0
 ```
 
 （直跑 `python`：`node tools/run-python.mjs` 在本机经子进程 ⇒ `EPERM`，故不走它。）
 
-### 4.7 YAML 自检（**未取得解析级校验**）
-
-本机**没有** YAML 解析器，逐个确认：
-
 ```
-python -c "import yaml"                    → ModuleNotFoundError: No module named 'yaml'
-Get-Command actionlint / yamllint / ruby    → 全部为空
-node -e "require('yaml') / require('js-yaml')" → MODULE_NOT_FOUND
+node tools/verify-release-materials.mjs
+FAIL 工具自身异常: Error: spawnSync git EPERM      （裸跑，工具在 gitFiles() 里 execFileSync('git',…)）
+EXITCODE=1
 ```
 
-⇒ 记「**未取得（无 YAML 解析器）**」。替代做法两条，**都不声称是解析级校验**：
+⇒ 裸跑**被沙箱挡住**（不是工具缺陷）。按追加指令第 2 档用 spawn 垫片真跑；但垫片（逐字取自 `commander-session-20261018-side-wxlogin.md` §4 第 1 条）只补 `cp.spawnSync`，实测**对 `execFileSync` 无效**（`lib/child_process.js` 的 `execFileSync` 直接调内部 `spawnSync`，不走公开导出）⇒ 同一条错误再次出现：
 
-1. **人工逐行核对**：78 行全文按缩进逐行读过（`name/on/permissions/jobs/services/steps` 层级、`options: >-` 折行块、`ports` 行内数组、`env` 块、注释行不破坏缩进）。
-2. **文本级形状检查**（`.pg17/tmp/real-pg-ci/yaml-shape-check.mjs`，⛔ 不进仓库）：断言 16 个关键键逐字存在（`image: postgres:17.11`、`ports: ['5432:5432']`、`--health-cmd pg_isready`、两个 `actions/*@<40 位 SHA>`、两条 `psql … && node …`）、无 tab、缩进全为 2 的倍数、无行尾空格、单换行结尾、无 `U+FFFD`：
+```
+node --import file:///…/spawn-shim.mjs tools/verify-release-materials.mjs
+FAIL 工具自身异常: Error: spawnSync git EPERM      (at gitFiles …/verify-release-materials.mjs:49)     EXITCODE=1
+```
+
+⇒ 垫片追加一段**按 spawnSync 语义重实现 `execFileSync`**（成功返回 stdout 字符串；非 0 退出仍抛错并带 status/stdout/stderr；只换 stdio 通道，工具逻辑零改动）后真跑：
+
+```
+node --import file:///…/spawn-shim.mjs tools/verify-release-materials.mjs
+（15 项逐条 PASS 打印，含 CVM 脚本 LF、env 模板 17 键 ⊇ 配置面、Dockerfile Node 版本、/health 路由、回滚 down 覆盖 0002..N…）
+FAIL CVM 脚本 bash -n 语法通过（blob 喂 stdin，不传路径） — 5 个脚本均 Command failed: bash -n
+14/15 项通过（离线文档核验；不代表部署、云端或运行期已验收）
+EXITCODE=1
+```
+
+**唯一失败项的归因（与本片无关）**：`bash` 在本机解析到 `C:\Users\MR\AppData\Local\Microsoft\WindowsApps\bash.exe`（WSL 启动器，实际不可用）⇒ 5 个 `deploy/postgres-cvm/*.sh` 的 `bash -n` 全失败。本片对 `deploy/**` 与任何 `*.sh` **零改动**（`git diff --name-only df043a7 HEAD` 三条路径里没有它们）⇒ 属**环境缺 bash**，非本片缺陷。
+
+### 4.7 YAML 校验（**解析级已取得**；仓内仍无解析器）
+
+仓内**仍没有** YAML 解析器（这条 v1 的陈述为真，本片不新增依赖）：
+
+```
+python -c "import yaml"                        → ModuleNotFoundError: No module named 'yaml'
+Get-Command actionlint / yamllint / ruby        → 全部为空
+node -e "require('yaml') / require('js-yaml')"  → MODULE_NOT_FOUND
+```
+
+但 v2 在**仓外**临时目录装了一个真解析器（`npm install yaml --cache <tmp>` 到 `.pg17/tmp/real-pg-ci/yamlcheck`，⛔ 不进仓库、不进 `package.json`）⇒ **解析级校验取得**：
+
+```
+PROBE yaml_errors=[]
+PROBE on=["pull_request","push"] push.branches=["main"]
+PROBE permissions={"contents":"read"}
+PROBE jobs=["real-pg-17-11"]
+PROBE runs_on="ubuntu-24.04" timeout=15
+PROBE services=["postgres"] image="postgres:17.11" ports=["5432:5432"]
+PROBE options="--health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10"
+PROBE steps=5
+PROBE step0 keys=["uses","with"] uses=actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 env=[]
+PROBE step1 keys=["uses","with"] uses=actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 env=[]
+PROBE step2 keys=["run"] run="npm ci --no-audit --no-fund" env=[]
+PROBE step3 keys=["env","run"] run="psql … 'CREATE DATABASE gengyun_conversations_test' && node tests/integration/conversations-pg.mjs" env=[6 个]
+PROBE step4 keys=["env","run"] run="psql … 'CREATE DATABASE gengyun_community_test' && node tests/integration/community-pg.mjs" env=[6 个]
+PROBE any_continue_on_error=false any_if=false any_or_true=false
+PROBE all_workflows=12 broken=0
+```
+
+即：`on`／`permissions`／`jobs`／`services`／`ports`／`options` 折行块／`steps` 的五个 step 键集全部如设计，**没有任何 step 带 `if:` 或 `continue-on-error`**，`run:` 里也没有 `|| true`；顺带把仓内**全部 12 个** workflow 解析一遍，`broken=0`。这一条把 v1 的「未取得解析级」升级为取得（审查者用同法在各自临时目录得过同一结论）。
+
+仍然保留的替代做法（不替代上面的解析级读数，只作形状层补充）：`.pg17/tmp/real-pg-ci/yaml-shape-check.mjs` 的文本级形状检查（无 tab／缩进全为 2 的倍数／无行尾空格／单换行结尾／无 `U+FFFD`／16 个关键键逐字存在）：
 
 ```
 PASS .github/workflows/real-pg-integration.yml: 关键键齐全 / 无 tab / 缩进全为 2 的倍数 / 无行尾空格 / 单换行结尾
-（文本级形状检查，非解析级校验：本机无 actionlint、无 PyYAML、无 js-yaml）
 ```
 
 ### 4.8 `git diff --check` 与 `git status`
 
 ```
 git add -A
-git diff --check HEAD      → 0 行输出，EXITCODE=0（只查本片 3 个新文件；README 的 168 行存量噪声不在其中）
+git diff --check HEAD      → 0 行输出，EXITCODE=0（只查本片 3 个文件；README 的 168 行存量噪声不在其中）
 git status --porcelain     → 0 行（提交后）
 git diff --stat HEAD       → 3 files changed（见 §8）
 ```
@@ -388,11 +502,11 @@ attempts=18 acquired=False at=2026-10-20 08:55:02
 
 | 项 | 内容 | 现状 | 所需前置 | 为什么本片不解决 |
 | --- | --- | --- | --- | --- |
-| 真库 workflow 的真红/真绿 | `real-pg-integration.yml` 在 GitHub Actions 上真的起 PG17.11、真的跑通两个脚本 | **未取得**：本机无容器运行环境（无 Docker），且子进程 EPERM | 把本片推到 PR，读该 PR 的 Actions run | 派单已把此项划给「PR 自身 CI 读数」；本机只做静态断言与 YAML 自检 |
-| YAML 解析级校验 | actionlint / PyYAML / js-yaml 三者皆无 | **未取得（无 YAML 解析器）** | 装任一解析器或 actionlint | 派单 §3.5 明确「如实登记未取得」；已用人工逐行 + 文本级形状检查替代并标注 |
-| 全量单测的默认隔离跑法 | `node --test "tests/unit/*.test.mjs"`（逐文件子进程） | **未取得（沙箱 spawn EPERM）** | danger-full-access 沙箱或非 confined 环境 | 沙箱口径所限；已用降级跑法 + pristine baseline 逐条比对归因（§4.4） |
+| 真库 workflow 的真红/真绿 | `real-pg-integration.yml` 在 GitHub Actions 上真的起 PG17.11、真的跑通两个脚本 | **未取得**：本机无容器运行环境（无 Docker），且子进程 EPERM | 把本片推到 PR，读该 PR 的 Actions run | 派单已把此项划给「PR 自身 CI 读数」；本机只做静态断言与（已取得的）YAML 解析级校验 |
+| 全量单测的默认隔离跑法 | `node --test "tests/unit/*.test.mjs"`（逐文件子进程） | **未取得（沙箱 spawn EPERM）**——返修派单称沙箱已改 `danger-full-access`，实测**未变**（§4.1 末段逐字） | 非 confined 沙箱 | 沙箱口径所限；已用降级跑法 + 与 pristine baseline／v1 逐条比对归因（§4.4） |
 | `npm run test:integration:http` | 13 段全绿 | **未取得（第 8 段在 `ocr-http.mjs:1846` 的子进程探针上 EPERM）** | 同上 | 同上；权威替代＝PR 的 CI 读数 |
-| 串行门禁锁 | `.pg17/tmp/hq/gate.lock` | **未取得（未获串行锁，等锁 6 分钟，18 次尝试）** | 等持有者释放 | ⛔ 不得删他人锁；已在读数旁标注「未持锁」 |
+| 串行门禁锁（v1 轮） | `.pg17/tmp/hq/gate.lock` | **未取得（未获串行锁，等锁 6 分钟，18 次尝试）** | 等持有者释放 | ⛔ 不得删他人锁；已在读数旁标注「未持锁」 |
+| YAML 解析级校验 | 仓内 actionlint / PyYAML / js-yaml 三者皆无 | **已取得（v2）**：在仓外临时目录装 `yaml` 后解析通过（§4.7）；⛔ 未向仓内加依赖 | — | — |
 
 ## 6 与 `#312` 口径的衔接
 
@@ -410,18 +524,43 @@ attempts=18 acquired=False at=2026-10-20 08:55:02
 2. **其它 `-pg.mjs` 的真库臂**：`account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg`／`favorites-history-pg`／`messages-pg` 目前同样「无 npm、无 CI」（见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
 3. **`e2e-*`／`user-chain-e2e.mjs`**：它自建一次性 `initdb` 集群，需要 PG 二进制而不是 service 容器，属于另一种接线形状，不在本片判类内。
 
-## 8 改动面（本片只新增 3 个文件）
+## 8 改动面（两轮都只动这 3 个文件，全是新增）
 
 ```
 git diff --stat df043a7 HEAD  （提交后实测，逐字）
- .github/workflows/real-pg-integration.yml   |  78 +++++
- docs/verification/gy-real-pg-ci-20261020.md | 427 ++++++++++++++++++++++++++++
- tests/unit/ci-real-pg-wiring.test.mjs       | 409 ++++++++++++++++++++++++++
- 3 files changed, 914 insertions(+)
+ .github/workflows/real-pg-integration.yml   |  78 +++
+ docs/verification/gy-real-pg-ci-20261020.md | 566 ++++++++++++++++++++++
+ tests/unit/ci-real-pg-wiring.test.mjs       | 711 ++++++++++++++++++++++++++++
+ 3 files changed, 1355 insertions(+)
 
 git status --porcelain        → 0 行
 ```
 
 `services/**`、`packages/**`、`apps/**`、`miniprogram/**`、`tests/integration/**`、`package.json`、`README.md`、既有 `.github/workflows/*.yml`、迁移、契约 —— **全部 0 行改动**。
 
-**零残留自证**：所有临时物只落在仓外 `.pg17/tmp/real-pg-ci/`（workflow 备份与变异脚本、基线检出、三份日志、YAML 形状检查器），⛔ 一件都没进仓库；本片未在工作树内递归删除任何东西，也未创建任何 `node_modules` 联接（基线检出是独立 `npm ci`）。
+**零残留自证**：所有临时物只落在仓外 `.pg17/tmp/real-pg-ci/`（workflow 备份与变异脚本、反证探针、三份单测日志、集成链日志、YAML 形状检查器与解析器、垫片），⛔ 一件都没进仓库；本片未在工作树内递归删除任何东西，也未创建任何 `node_modules` 联接（基线检出是独立 `npm ci`，已按 junction 硬程序回收）。
+
+## 9 返修记录（v1 `79fede1` → v2）
+
+对抗性审查（`adv-verdict-real-pg-ci-79fede1.md`，`reviewed_sha=79fede1`）判「需修改」，两条必改都是**守卫可被绕过**的假绿通道。逐条修法与自证：
+
+| 项 | v1 的病（审查实证） | v2 的修法（最小） | v2 的自证 |
+| --- | --- | --- | --- |
+| **A** `runCommandTextsOf()` 收集 `run: \|` 块体时**不跳过 `#` 行** | 把 `node tests/integration/conversations-pg.mjs` 写进块标量体再注释掉、块里只留 `echo hi` ⇒ 判据①仍判「已接线」（`EXIT=0 / pass 6 / fail 0`），而文件头与 §3.1 都声称「不认注释」 | 块内循环加一条：`blockLine.trim().startsWith('#')` 时 `index = next; continue;`（**仍推进 index**，不改变换行/缩进语义，也不影响单行 `run:` 形态） | 新用例 **反向控制①b**（合成形态＋真文件形态＋取消注释转绿）；落盘 M3 ⇒ `EXIT=1 / pass 8 / fail 2`，红的是前向①＋反向控制①b（§3.3.1）；回退 A 反证 ⇒ 只红反向控制①b（§3.3.2） |
+| **B** `postgresServiceProblems()` 只看文件里**第一个** `services:` | 真 job 前插一个带 `postgres:17.11` 的诱饵 job 后，真 job 镜像降 `16.4`（F1）甚至整段删 `services`（F2）都 **6/6 绿** | 新增 `jobsOf()` + `jobsRunningManagedScripts()`，判据③作用域改为「**真跑受管脚本的那个 job**」；问题消息带 `job \`<id>\`：` 前缀；`postgresServiceProblems()` 保留为 job 级实现（诱饵合规性检查也用它） | 新用例 **反向控制④／⑤**（各自先断言诱饵合规 + 诱饵保 17.11，所以红只能来自真 job）；落盘 M1 ⇒ `pass 7 / fail 3`、M2 ⇒ `pass 6 / fail 4`，消息逐字点名 `` job `real-pg-17-11` ``（§3.3.1）；回退 B 反证 ⇒ 只红反向控制④／⑤（§3.3.2） |
+
+非阻塞项逐条处置（派单 §2）：
+
+| # | 项 | 处置 |
+| --- | --- | --- |
+| 1 | 守卫补拦「吞红」构造（`continue-on-error`／`\|\| true`／`if:`） | **做了**：判据⑤ `swallowedFailureHits()` + 前向④（三种写法各自注入必红、注释里提到不误伤）。解析级复核 `any_continue_on_error=false any_if=false any_or_true=false`（§4.7） |
+| 2 | workflow 注释里把 `tests/unit/integration-script-coverage.test.mjs` 写成 `tests/integration/…` | **改了**：注释路径改为 `tests/unit/integration-script-coverage.test.mjs`（`git ls-tree -r --name-only HEAD` 只命中 `tests/unit/…`） |
+| 3 | 证据页 §3.1「跳过 `#` 注释行」表述与实现不符 | **改了**：§3.1 判据① 现在明确写「两种注释都跳过（YAML 级 + 块标量体 shell 注释）」，与实现逐字一致 |
+| 4 | ⛔ 不要动 `ci-integration-chain-structure.test.mjs` 里那两条过时 `reason` | **没动**：`git diff --name-only df043a7 HEAD` 里没有该文件（审查者亦判为基线存量，留作下一片） |
+
+v2 的如实偏差与边界：
+
+1. **`tests: 10 → 10` 之外没有别的用例变动**：两轮累计新增 10 个用例，全在同一个新文件里；既有测试文件 0 改动。
+2. **M1／M2 的「连带红」**：落盘变异时反向控制③／④／⑤ 会因「起点已是变异态」而一并红（§3.3.1 已逐字列全，未挑好看的那几条）。
+3. **`echo "node <脚本>"` 这类喂绿（审查 B3）未修**：任何文本级守卫都难防「把路径写进字符串」，本片接受该残余风险并在文件头注明口径（注释不算、字符串不特殊处理）。
+4. **`postgres:17-alpine` 仍被接受**：判据只锁主版本（与审查 §3.2 的口径一致）；若将来要求与其它 PG workflow 逐字同镜像，需另加断言。

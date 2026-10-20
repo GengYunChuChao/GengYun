@@ -10,12 +10,17 @@
 // workflow 或已在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 里
 // 逐条声明（本文件不重复判它们，也不动那张表）。
 //
-// 四条判据（每条都有对应反向控制，且反向控制与正向断言**调用同一个**函数）：
-//   ① 受管脚本必须出现在某个 `.github/workflows/*.yml` 的 `run:` **命令文本**里（不认注释、不认裸文件名）；
+// 五条判据（每条都有对应反向控制，且反向控制与正向断言**调用同一个**函数）：
+//   ① 受管脚本必须出现在某个 `.github/workflows/*.yml` 的 `run:` **命令文本**里
+//      （不认注释、不认裸文件名；`run: |` 块标量体里的 `#` 行是 shell 注释，同样不认）；
 //   ② 任何 workflow 都不得含「放宽跳过」的开关（`GY_ALLOW_SKIP` / `--allow-skip`）——
 //      真库没跑起来必须以 77 红掉，不得被写成绿（口径见 `.pg17/ruling-skip-exit-code-20261020.md`）；
-//   ③ 真库 workflow 必须真的有 `services.postgres`，且镜像主版本锚定 **17**（防降级到 16 / 防删 service）；
-//   ④ 该 workflow 的每个 `uses:` 必须固定到 **40 位 SHA**（⛔ 不许写浮标签；口径与仓内其它 workflow 一致）。
+//   ③ **真跑受管脚本的那个 job** 必须真的有 `services.postgres`，且镜像主版本锚定 **17**
+//      （防降级到 16 / 防删 service；作用域锚定到 job，⛔ 不看「文件里第一个 `services:`」——
+//      前置诱饵 job 就能把那种实现骗成绿）；
+//   ④ 该 workflow 的每个 `uses:` 必须固定到 **40 位 SHA**（⛔ 不许写浮标签；口径与仓内其它 workflow 一致）；
+//   ⑤ 该 workflow 不得含「吞红」构造（`continue-on-error` / `if:` / 行尾 `|| true`）——
+//      真库臂的红是唯一验收信号，吞掉它就等于没有闸门。
 //
 // 纯静态：只读 `.github/workflows/` 下的文本，⛔ 不起服务、不连 PG、不联网、不写任何文件、不新增依赖。
 import test from 'node:test';
@@ -66,7 +71,10 @@ export function selectWorkflowFiles(fileNames) {
 /**
  * 取出一个 workflow 文本里所有 `run:` 的**命令文本**（内联值 ＋ 其后缩进更深的块行）。
  * `run:` 之前的缩进（含 `- ` 列表前缀）就是块的边界：缩进不深于此的下一行（如 `env:`、下一个 `- `）即结束。
- * 纯注释行不算命令——否则「注释里提一句脚本名」就能把守卫糊弄绿。
+ * **两种注释都不算命令**——否则「注释里提一句脚本名」就能把守卫糊弄绿：
+ *   ① YAML 级注释行（`#` 开头的行）；
+ *   ② `run: |`／`run: >` 块标量体里的 `#` 行——GitHub 用 bash 执行块内容，那是 **shell 注释、不会执行**。
+ * （块标量指示符本身如 `|` 会作为内联值进入命令文本，无害：它不含任何脚本路径。）
  */
 export function runCommandTextsOf(source) {
   const lines = source.split('\n');
@@ -85,8 +93,10 @@ export function runCommandTextsOf(source) {
       if (blockLine.trim() === '') continue;
       const indent = blockLine.length - blockLine.trimStart().length;
       if (indent <= blockIndent) break;
-      parts.push(blockLine.trim());
       index = next;
+      // ② 块标量体里的 `#` 行＝shell 注释：跳过内容但**仍推进 index**（否则外层会把它当新行重扫）。
+      if (blockLine.trim().startsWith('#')) continue;
+      parts.push(blockLine.trim());
     }
     if (parts.length > 0) commands.push(parts.join('\n'));
   }
@@ -175,6 +185,80 @@ export function postgresServiceProblems(source, { requiredMajor = REQUIRED_POSTG
   return problems;
 }
 
+/**
+ * 取 `jobs:` 段里每个 job 的 `{ id, body }`（`body` 是该 job 缩进更深的全部行，原样保留缩进）。
+ * 用途：把判据③的作用域锚定到**具体 job**——只看「文件里第一个 `services:`」会被诱饵 job 骗过。
+ */
+export function jobsOf(source) {
+  const jobs = blockAfterKey(source, 'jobs');
+  if (jobs === null) return [];
+  const collected = [];
+  let current = null;
+  for (const line of jobs.body) {
+    if (line.trim() === '') {
+      if (current !== null) current.lines.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    const key = /^(\s+)([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (indent === jobs.indent + 2 && key !== null) {
+      current = { id: key[2], lines: [] };
+      collected.push(current);
+      continue;
+    }
+    if (current !== null) current.lines.push(line);
+  }
+  return collected.map((job) => ({ id: job.id, body: job.lines.join('\n') }));
+}
+
+/** 哪些 job 的 `run:` **命令文本**里真的出现了受管脚本（判据③的作用域就是它们）。 */
+export function jobsRunningManagedScripts(source, { managed = MANAGED_SCRIPTS } = {}) {
+  return jobsOf(source).filter((job) => runCommandTextsOf(job.body).some(
+    (command) => managed.some((script) => command.includes(script)),
+  ));
+}
+
+/**
+ * 真库服务段的判据（作用域＝**真跑受管脚本的那个 job**，不是文件里第一个 `services:`）。
+ * 为什么必须锚定到 job：把两个脚本拆成两个 job 是这个 workflow 最自然的下一步演进；
+ * 而在真 job **之前**插一个带 `postgres:17.11` 的诱饵 job，就能让「只取第一个 `services:`」的实现
+ * 把真 job 的**镜像降级**或**整段删 services** 判成绿（审查实测 F1／F2，均 6/6 绿）。
+ * 判据要能回答两件事：真 job 有 `services.postgres` 吗？真 job 的镜像主版本是 17 吗？
+ */
+export function postgresJobProblems(source, { managed = MANAGED_SCRIPTS, requiredMajor = REQUIRED_POSTGRES_MAJOR } = {}) {
+  const jobs = jobsOf(source);
+  if (jobs.length === 0) return ['`jobs:` 段解析不到任何 job（结构变了，判据③失去作用域）'];
+  const running = jobsRunningManagedScripts(source, { managed });
+  if (running.length === 0) {
+    return [`没有任何 job 的 \`run:\` 真跑受管脚本（${managed.join('、')}），无法确认它的 \`services.postgres\` 是否合规`];
+  }
+  const problems = [];
+  for (const job of running) {
+    for (const problem of postgresServiceProblems(job.body, { requiredMajor })) {
+      problems.push(`job \`${job.id}\`：${problem}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * 「吞红」构造的命中行（`文件:行号: 构造`），空数组＝干净。
+ * 这一步失败却仍判绿的三种写法：step 级 `continue-on-error:`／`if:`（含 `if: false`）／
+ * 命令末尾 `|| true`。真库臂的红是**唯一**的验收信号，任何「吞掉它」的构造都必须拦下。
+ * 注释行不算（与判据①同一口径：注释不是命令）。
+ */
+export function swallowedFailureHits({ file, source }) {
+  const hits = [];
+  source.split('\n').forEach((line, index) => {
+    if (line.trim().startsWith('#')) return;
+    const where = `${file}:${index + 1}`;
+    if (/^\s*continue-on-error\s*:/.test(line)) hits.push(`${where}: continue-on-error`);
+    if (/^\s*(?:-\s+)?if\s*:/.test(line)) hits.push(`${where}: if`);
+    if (/\|\|\s*true\b/.test(line)) hits.push(`${where}: || true`);
+  });
+  return hits;
+}
+
 /** 未固定到 40 位 SHA 的 `uses:`（`文件:行号: 引用`），空数组＝全部固定。 */
 export function unpinnedUses({ file, source }) {
   const hits = [];
@@ -235,6 +319,18 @@ function assertActionsPinned(hits) {
   );
 }
 
+function assertNoSwallowedFailures(hits) {
+  assert.deepEqual(
+    hits,
+    [],
+    [
+      '真库 workflow 里有「吞红」构造：这一步失败却仍会被判绿，真库闸门等于没有。',
+      '真库臂的红是唯一的验收信号，⛔ 不得用这些写法把它吞掉：',
+      ...hits.map((hit) => `  · ${hit}`),
+    ].join('\n'),
+  );
+}
+
 // ── 磁盘真值 ────────────────────────────────────────────────────────────────────────────────
 
 function listWorkflowFilesOnDisk() {
@@ -250,6 +346,55 @@ function readAllWorkflows() {
     const { source } = readWorkflow(file);
     return { file, source, commands: runCommandTextsOf(source) };
   });
+}
+
+// ── 变异辅助（只给反向控制用；全部在**内存**里做，⛔ 不落盘） ────────────────────────────
+
+/** 只替换**最后一次**匹配——「诱饵 + 真 job」里必须只动真 job 的镜像行。 */
+function replaceLast(source, re, replacement) {
+  const matches = [...source.matchAll(re)];
+  assert.ok(matches.length >= 1, `变异找不到目标：${re}`);
+  const last = matches[matches.length - 1];
+  return source.slice(0, last.index) + replacement + source.slice(last.index + last[0].length);
+}
+
+/** 在 `jobs:` 之后插一个**自带合规 `postgres:17.11`** 的诱饵 job（模拟「先把诱饵放前面」）。 */
+function withDecoyJob(source) {
+  const decoy = [
+    '  zz-decoy:',
+    '    runs-on: ubuntu-24.04',
+    '    services:',
+    '      postgres:',
+    '        image: postgres:17.11',
+    '    steps:',
+    '      - run: echo noop',
+  ].join('\n');
+  const mutated = source.replace(/^jobs:\n/m, `jobs:\n${decoy}\n`);
+  assert.notEqual(mutated, source, '诱饵 job 必须真的插进文本');
+  return mutated;
+}
+
+/** 删掉指定 job **自己的** `services:` 段（只在该 job 的行范围内动手，⛔ 不碰别的 job 的同名段）。 */
+function withoutJobServices(source, jobId) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => new RegExp(`^ {2}${jobId}:\\s*$`).test(line));
+  assert.ok(start >= 0, `变异找不到 job \`${jobId}\``);
+  const kept = [];
+  let dropping = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (index > start && /^ {0,2}\S/.test(line)) dropping = false;
+    if (index >= start && !dropping && /^ {4}services:\s*$/.test(line)) {
+      dropping = true;
+      continue;
+    }
+    if (dropping) {
+      if (line.trim() === '' || /^ {5,}\S/.test(line)) continue;
+      dropping = false;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
 }
 
 // ── 用例 ────────────────────────────────────────────────────────────────────────────────────
@@ -349,13 +494,18 @@ test('反向控制②：往 workflow 里加 `GY_ALLOW_SKIP` 或 `--allow-skip`�
   assert.deepEqual(escapeHatchHits({ file: REAL_PG_WORKFLOW, source: '# 缺库必须以 77 红掉，不得放宽\n' }), []);
 });
 
-test('前向③：真库 workflow 有 `services.postgres`，镜像主版本锚定 17，且 `uses:` 全部固定 SHA', () => {
+test('前向③：真 job 有 `services.postgres`，镜像主版本锚定 17，且 `uses:` 全部固定 SHA', () => {
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
 
-  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresServiceProblems(source));
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
   assertActionsPinned(unpinnedUses({ file: REAL_PG_WORKFLOW, source }));
 
-  // 反空转：必须真的解析到镜像行，否则上面的「无问题」只是没解析到东西。
+  // 反空转：必须真的解析到 job / 镜像行 / uses 行，否则上面的「无问题」只是没解析到东西。
+  assert.ok(jobsOf(source).length >= 1, `${REAL_PG_WORKFLOW} 解析不到任何 job，判据③失去作用域`);
+  assert.ok(
+    jobsRunningManagedScripts(source).length >= 1,
+    '没有任何 job 被判定为「真跑受管脚本」，判据③等于没扫到东西',
+  );
   assert.match(source, /^\s+image:\s*postgres:17/m, `${REAL_PG_WORKFLOW} 里找不到 \`image: postgres:17…\``);
   assert.match(source, /(?:^|\s)uses:\s/m, `${REAL_PG_WORKFLOW} 里找不到任何 \`uses:\``);
   // 真库 job 必须在 runner 上有 psql 可用（建专用空库那一步依赖它，与 `consent-grant-postgres.yml` 同构）。
@@ -364,14 +514,41 @@ test('前向③：真库 workflow 有 `services.postgres`，镜像主版本锚�
   assert.ok(commands.some((command) => command.includes('npm ci')), '真库 workflow 必须装依赖');
 });
 
+test('前向④：真库 workflow 不得含「吞红」构造（`continue-on-error` / `if:` / `|| true`）', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertNoSwallowedFailures(swallowedFailureHits({ file: REAL_PG_WORKFLOW, source }));
+
+  // 反向控制（内存变异）：三种吞红写法各自必须被判红，并点名文件与行号。
+  for (const [label, line] of [
+    ['continue-on-error', '        continue-on-error: true'],
+    ['if', '        if: false'],
+    ['or-true', '      - run: node tests/integration/community-pg.mjs || true'],
+  ]) {
+    const mutated = `${source}\n${line}\n`;
+    const hits = swallowedFailureHits({ file: REAL_PG_WORKFLOW, source: mutated });
+    assert.equal(hits.length, 1, `注入 ${label} 后必须正好命中一处`);
+    assert.ok(hits[0].includes(REAL_PG_WORKFLOW), `失败信息必须点名文件（${label}）`);
+    assert.throws(
+      () => assertNoSwallowedFailures(hits),
+      (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes('吞红'),
+      `注入 ${label} 后同一断言必须失败，且消息点名文件`,
+    );
+  }
+  // 不误伤：注释里提到这些写法不算（注释不是命令）。
+  assert.deepEqual(
+    swallowedFailureHits({ file: REAL_PG_WORKFLOW, source: '# 本 job 不得用 continue-on-error / if: / || true\n' }),
+    [],
+  );
+});
+
 test('反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，同一断言必须红', () => {
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
-  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresServiceProblems(source));
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
 
   // ① 主版本降级：17.11 → 16.4。
   const downgraded = source.replace(/image:\s*postgres:17[^\s]*/, 'image: postgres:16.4');
   assert.notEqual(downgraded, source, '变异必须真的改到镜像行');
-  const downgradeProblems = postgresServiceProblems(downgraded);
+  const downgradeProblems = postgresJobProblems(downgraded);
   assert.equal(downgradeProblems.length, 1, '降级必须且只能报一条问题');
   assert.ok(downgradeProblems[0].includes('16'), '问题描述必须写出实际主版本');
   assert.throws(
@@ -380,18 +557,15 @@ test('反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，�
     '降级后同一断言必须失败，且消息点名文件',
   );
 
-  // ② 删掉整个 `services:` 段（模拟「有人嫌 CI 慢把 service 去掉」）。
-  const withoutServices = source
-    .split('\n')
-    .filter((line) => !/^\s{0,4}(services|postgres|image|POSTGRES_DB|POSTGRES_USER|POSTGRES_PASSWORD|ports|options|--health-)/.test(line)
-      && !/^\s{0,10}(POSTGRES_|--health-)/.test(line))
-    .join('\n');
+  // ② 删掉**真 job 自己的** `services:` 段（模拟「有人嫌 CI 慢把 service 去掉」）。
+  const withoutServices = withoutJobServices(source, 'real-pg-17-11');
+  assert.notEqual(withoutServices, source, '变异必须真的删到 services 段');
   assert.ok(
-    postgresServiceProblems(withoutServices).length > 0,
+    postgresJobProblems(withoutServices).length > 0,
     '删掉 service 段后必须报问题（否则 `services` 缺失可以被静默忽略）',
   );
   assert.throws(
-    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresServiceProblems(withoutServices)),
+    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(withoutServices)),
     (error) => error.message.includes(REAL_PG_WORKFLOW),
     '删掉 service 段后同一断言必须失败，且消息点名文件',
   );
@@ -405,5 +579,133 @@ test('反向控制③：镜像降到 16 / 删掉 services / 换成浮标签，�
     () => assertActionsPinned(floatingHits),
     (error) => error.message.includes('actions/checkout@v4'),
     '浮标签必须让同一断言失败，且消息点名那条引用',
+  );
+});
+
+test('反向控制①b：`run: |` 块体里把调用写成 shell 注释，判据①必须判红', () => {
+  const target = 'tests/integration/conversations-pg.mjs';
+  const witness = 'tests/integration/community-pg.mjs';
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertManagedScriptsWired(missingManagedScripts({ workflows: readAllWorkflows() }));
+
+  // ① 合成形态：块标量体里只有 `# node <脚本>` + `echo hi` ⇒ 不得被当成接线。
+  const commentedBlock = [
+    'jobs:',
+    '  real-pg-17-11:',
+    '    runs-on: ubuntu-24.04',
+    '    steps:',
+    '      - run: |',
+    `          # node ${target}`,
+    '          echo hi',
+  ].join('\n');
+  const commentedCommands = runCommandTextsOf(commentedBlock);
+  assert.equal(
+    commentedCommands.some((command) => command.includes(target)),
+    false,
+    '`run: |` 块体里的 `#` 行是 shell 注释，不得进入命令文本',
+  );
+  const missing = missingManagedScripts({
+    workflows: [{ file: REAL_PG_WORKFLOW, commands: commentedCommands }],
+    managed: [target],
+  });
+  assert.deepEqual(missing, [target], '块内注释不得算接线');
+  assert.throws(
+    () => assertManagedScriptsWired(missing),
+    (error) => error.message.includes(target),
+    '块内注释未接线时同一断言必须失败，且消息点名该脚本',
+  );
+
+  // ② 不永红：把块里的调用**取消注释**（真成一行命令）⇒ 判据①转绿。
+  const uncommentedBlock = commentedBlock.replace(`# node ${target}`, `node ${target}`);
+  assert.deepEqual(
+    missingManagedScripts({
+      workflows: [{ file: REAL_PG_WORKFLOW, commands: runCommandTextsOf(uncommentedBlock) }],
+      managed: [target],
+    }),
+    [],
+    '块体里真写成一行命令时必须算接线（证明这条反向控制的绿出口真的存在）',
+  );
+
+  // ③ 对**真文件**做同一改造：把会话链那一行换成「只含 shell 注释的 `run: |` 块」⇒ 必须点名该脚本。
+  const mutatedSource = source
+    .split('\n')
+    .map((line) => (line.includes(`node ${target}`)
+      ? ['      - run: |', `          # node ${target}`, '          echo hi'].join('\n')
+      : line))
+    .join('\n');
+  assert.notEqual(mutatedSource, source, '变异必须真的改到真 workflow 的那一行');
+  assert.ok(mutatedSource.includes(witness), '变异只许打断一个脚本，另一个必须仍是绿的');
+  const mutatedMissing = missingManagedScripts({
+    workflows: [{ file: REAL_PG_WORKFLOW, commands: runCommandTextsOf(mutatedSource) }],
+    managed: [target, witness],
+  });
+  assert.deepEqual(mutatedMissing, [target], '对真文件做同样的「注释化」后必须且只能点名被注释的那个脚本');
+  assert.throws(
+    () => assertManagedScriptsWired(mutatedMissing),
+    (error) => error.message.includes(target),
+    '真文件被注释化后同一断言必须失败，且消息点名该脚本',
+  );
+});
+
+test('反向控制④：真 job 前插**合规诱饵 job**，真 job 镜像降到 16.4 ⇒ 判据③必须判红（锚定真 job）', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(source));
+
+  const withDecoy = withDecoyJob(source);
+  const decoy = jobsOf(withDecoy).find((job) => job.id === 'zz-decoy');
+  assert.ok(decoy !== undefined, '诱饵 job 没被解析到（判据③的作用域解析坏了）');
+  // 诱饵自身合规 ⇒「只看文件里第一个 `services:`」的实现会读到它并判绿——这正是要堵的假绿通道。
+  assert.deepEqual(
+    postgresServiceProblems(decoy.body),
+    [],
+    '诱饵 job 自身必须合规，否则这条反向控制没有证明力',
+  );
+  // 只插诱饵、真 job 不动 ⇒ 仍绿（不误伤）。
+  assertPostgresServiceHealthy(REAL_PG_WORKFLOW, postgresJobProblems(withDecoy));
+
+  // 只降级**最后一次** `postgres:17.11`（＝真 job 的镜像），诱饵保持 17.11。
+  const decoyPlusDowngrade = replaceLast(withDecoy, /image:\s*postgres:17\.11/g, 'image: postgres:16.4');
+  assert.notEqual(decoyPlusDowngrade, withDecoy, '变异必须真的改到真 job 的镜像行');
+  assert.ok(decoyPlusDowngrade.includes('image: postgres:17.11'), '诱饵的 17.11 必须保留（否则红可能来自诱饵）');
+  assert.deepEqual(
+    postgresServiceProblems(jobsOf(decoyPlusDowngrade).find((job) => job.id === 'zz-decoy').body),
+    [],
+    '诱饵仍必须合规：这个红只能来自真 job',
+  );
+
+  const problems = postgresJobProblems(decoyPlusDowngrade);
+  assert.equal(problems.length, 1, '降级必须且只能报一条问题（否则红可能来自诱饵）');
+  assert.ok(problems[0].includes('real-pg-17-11'), '失败消息必须点名**真 job**');
+  assert.ok(problems[0].includes('16'), '失败消息必须写出实际主版本');
+  assert.throws(
+    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, problems),
+    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes('real-pg-17-11'),
+    '诱饵 + 真 job 降级后同一断言必须失败，且消息点名文件与真 job',
+  );
+});
+
+test('反向控制⑤：真 job 前插**合规诱饵 job**，真 job 删掉 `services` ⇒ 判据③必须判红（锚定真 job）', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  const withDecoy = withDecoyJob(source);
+  const decoyMinusRealServices = withoutJobServices(withDecoy, 'real-pg-17-11');
+  assert.notEqual(decoyMinusRealServices, withDecoy, '变异必须真的删到真 job 的 services 段');
+
+  // 诱饵的 `services` 必须原样保留且仍合规 ⇒ 这个红只能来自「真 job 没有 services」。
+  const decoy = jobsOf(decoyMinusRealServices).find((job) => job.id === 'zz-decoy');
+  assert.ok(decoy !== undefined, '诱饵 job 没被解析到');
+  assert.deepEqual(
+    postgresServiceProblems(decoy.body),
+    [],
+    '诱饵必须仍保留合规的 services，否则这条反向控制没有证明力',
+  );
+
+  const problems = postgresJobProblems(decoyMinusRealServices);
+  assert.equal(problems.length, 1, '删 services 必须且只能报一条问题（否则红可能来自诱饵）');
+  assert.ok(problems[0].includes('real-pg-17-11'), '失败消息必须点名**真 job**');
+  assert.ok(problems[0].includes('services'), '失败消息必须指出缺的是 services');
+  assert.throws(
+    () => assertPostgresServiceHealthy(REAL_PG_WORKFLOW, problems),
+    (error) => error.message.includes(REAL_PG_WORKFLOW) && error.message.includes('real-pg-17-11'),
+    '诱饵 + 真 job 删 services 后同一断言必须失败，且消息点名文件与真 job',
   );
 });
