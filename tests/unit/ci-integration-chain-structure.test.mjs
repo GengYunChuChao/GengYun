@@ -187,6 +187,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '由 `npm run test:integration:recognition-chain-pg` 带 env 运行。',
   },
   {
+    path: 'tests/integration/recognitions-pg.mjs',
+    reason: '需真实 PG 17.11（硬钉库名 `gengyun_recognitions_test`；未配置 `RECOGNITIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
+      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：**本片仅落地脚本，CI 接线留后续片**'
+      + '（既未接进 `test:integration:http` 这条无 PG 的回环链，也未新增/修改任何 workflow），故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/source-lifecycle-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
   },
