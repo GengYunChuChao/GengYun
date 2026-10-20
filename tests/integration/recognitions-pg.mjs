@@ -640,6 +640,117 @@ async function allThirteen(store) {
   );
   say('[13] purgeIdempotent：只删 expires_at <= now 的行并返回真实删除条数（未过期回执不动）');
 
+  // ---- [14] updateJob 的**库层** CAS：把真实并发写插在 SELECT 与 UPDATE 之间 ----
+  // 为什么 [3] 不够：`updateJob` 先读快照、在应用侧比 revision，**不等**就不发 UPDATE。
+  // 于是「过期 revision ⇒ null」这条臂把 SQL 里的 `AND revision = $2` 删掉照样绿（预检先挡住了）。
+  // 这里用另一条连接持锁改写同一行：store 的普通 SELECT 仍读到旧 revision（MVCC，不阻塞读）
+  // ⇒ 预检通过、真的发出 UPDATE ⇒ 它排队在我们的行锁上；持锁方提交后 PG 重判 WHERE，
+  // 带谓词者改写 0 行（null），谓词被删者会真的落库并返回一行 ⇒ 这条臂红。
+  const casJob = makeJobRow();
+  await store.insertJob(casJob);
+  const holder = await pool.connect();
+  let casResult;
+  let observedWaiter = 0;
+  try {
+    await holder.query('BEGIN');
+    await holder.query('SELECT 1 FROM public.recognition_jobs WHERE id = $1 FOR UPDATE', [casJob.id]);
+    await holder.query(
+      `UPDATE public.recognition_jobs SET revision = 2, state = 'running', updated_at = $2::timestamptz WHERE id = $1`,
+      [casJob.id, T1],
+    );
+    const pendingCas = store.updateJob(casJob.id, 1, (row) => ({
+      ...row,
+      state: 'succeeded',
+      revision: row.revision + 1,
+      updatedAt: T2,
+    }));
+    for (let attempt = 0; attempt < 200 && observedWaiter === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      observedWaiter = await countOf(
+        `SELECT count(*)::int AS v FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND state = 'active'
+            AND query ~* 'update\\s+public\\.recognition_jobs' AND pid <> pg_backend_pid()`,
+      );
+    }
+    await holder.query('COMMIT');
+    casResult = await pendingCas;
+  } finally {
+    holder.release();
+  }
+  assert.ok(
+    observedWaiter > 0,
+    '[14] 未观察到 store 的 UPDATE 在行锁上排队 ⇒ 本臂未取得（不能用一次"应用层预检就 null"冒充库层裁决）',
+  );
+  assert.equal(
+    casResult,
+    null,
+    '[14] 库层 CAS 必须拒绝：并发方已把 revision 推到 2，带 "AND revision = $2" 的 UPDATE 必须改写 0 行',
+  );
+  const casRow = await one('SELECT revision, state FROM public.recognition_jobs WHERE id = $1', [casJob.id]);
+  assert.equal(casRow.revision, 2, '[14] 被拒绝的 UPDATE 不得改写 revision（必须仍是并发方的 2）');
+  assert.equal(casRow.state, 'running', '[14] 被拒绝的 UPDATE 不得把 state 改成 succeeded（必须仍是并发方的 running）');
+  say('[14] updateJob 的库层 CAS：并发写插在 SELECT 与 UPDATE 之间 ⇒ UPDATE 0 行 ⇒ null，并发方的 revision/state 原样保留');
+
+  // ---- [15] 幂等台账的「过期重占」：未过期不许覆盖；过期可覆盖且必须刷新 expires_at ----
+  // C11 的病灶：把 `WHERE … expires_at <= $5` 或 `expires_at = EXCLUDED.expires_at` 改坏，
+  // 四分支臂（[10]）与 release 臂（[12]）都照样绿。这里专测「过期 ⇒ 重占」这一步。
+  const expiryScope = `expire-${randomUUID()}`;
+  const expiryNow = new Date();
+  const firstExpiry = new Date(expiryNow.getTime() + 60 * 60 * 1000);
+  const secondExpiry = new Date(expiryNow.getTime() + 2 * 60 * 60 * 1000);
+  assert.deepEqual(
+    await store.claimIdempotent(expiryScope, 'key-x', {
+      requestHash: 'h-x1',
+      expiresAt: firstExpiry,
+      now: expiryNow,
+    }),
+    { status: 'claimed' },
+    '[15] 首次占位必须 claimed',
+  );
+  assert.deepEqual(
+    await store.claimIdempotent(expiryScope, 'key-x', {
+      requestHash: 'h-x1',
+      expiresAt: firstExpiry,
+      now: expiryNow,
+    }),
+    { status: 'in_progress' },
+    '[15] 未过期的占位再 claim 必须 in_progress（过期闸门若恒真，这里会变成 claimed）',
+  );
+  await q('UPDATE public.recognition_idempotency SET expires_at = $2::timestamptz WHERE scope = $1', [
+    expiryScope,
+    new Date(expiryNow.getTime() - 60 * 1000),
+  ]);
+  assert.deepEqual(
+    await store.claimIdempotent(expiryScope, 'key-x', {
+      requestHash: 'h-x2',
+      expiresAt: secondExpiry,
+      now: expiryNow,
+    }),
+    { status: 'claimed' },
+    '[15] 已过期台账必须允许重新占位（ON CONFLICT … WHERE expires_at <= now；闸门若恒假，这里会读回旧 request_hash ⇒ conflict）',
+  );
+  const expiryRow = await one(
+    'SELECT request_hash, pending, expires_at FROM public.recognition_idempotency WHERE scope = $1',
+    [expiryScope],
+  );
+  assert.equal(expiryRow.request_hash, 'h-x2', '[15] 重占必须覆盖 request_hash（否则 ON CONFLICT 只是空转）');
+  assert.equal(expiryRow.pending, true, '[15] 重占后必须回到 pending=true');
+  assert.equal(
+    expiryRow.expires_at.getTime(),
+    secondExpiry.getTime(),
+    '[15] 重占必须刷新 expires_at = EXCLUDED.expires_at（否则新占位一出生就是过期态）',
+  );
+  assert.deepEqual(
+    await store.claimIdempotent(expiryScope, 'key-x', {
+      requestHash: 'h-x2',
+      expiresAt: secondExpiry,
+      now: expiryNow,
+    }),
+    { status: 'in_progress' },
+    '[15] 重占之后（新到期时间在未来）再 claim 必须 in_progress',
+  );
+  say('[15] 幂等过期重占：未过期 ⇒ in_progress；手工拨到过去 ⇒ claimed，且 request_hash/pending/expires_at 被 EXCLUDED 刷新');
+
   return { job, record, job2, terminalRecord };
 }
 
@@ -885,7 +996,7 @@ try {
 
 unread(
   'HTTP 面的"重启不丢"',
-  'real 模式真实识别提供者/媒体端口未接线（本机无可调模型），POST /recognitions 在受理前即 fail-closed，无法经 HTTP 建任务；本片证据在 store 层 + 迁移层 + app.recognitionService 读面',
+  '本片未做（**不是做不了**：`tests/integration/egress-ledger-pg.mjs` 已证明可做——`:192` 用 `http(\'/recognitions\', …)` 发 `POST /recognitions`，`:305` 只注入合成识别提供者与 `createSubstituteMediaPort()`、不注入识别 store，即以 real + 真池走 `app.ts:952` 的 PG 分支并断言 202）；本片证据在 store 层 + 迁移层 + app.recognitionService 读面。返修 1 的回归恰好被那个夹具抓到，正是因为它走的「real + 池 + 子集迁移库」这条路本脚本没有走',
 );
 unread('多进程并发写同一任务的压测', '本片只做两路并发 CAS（恰好一次成功），未做 20+ 并发的吞吐/延迟读数');
 unread('真实识别模型输出落库', '模型调用未接线；本片用契约合法的手工候选行验证持久化，不伪造模型准确率');
