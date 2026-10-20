@@ -208,7 +208,7 @@ FAIL: knowledge_runtime_scope (gengyun_knowledge_runtime 只应能读 catalog_re
 stderr（末尾两行）：
 
 ```text
-psql:E:/GengYunCommander/wt-r28-s33/deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1852: ERROR:  90-assert-least-privilege FAIL: 2 条断言未通过：knowledge_runtime_scope, public_no_privilege_domain_granted
+psql:E:/GengYunCommander/wt-r28-s33/deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1853: ERROR:  90-assert-least-privilege FAIL: 2 条断言未通过：knowledge_runtime_scope, public_no_privilege_domain_granted
 CONTEXT:  PL/pgSQL function inline_code_block line 12 at RAISE
 ```
 
