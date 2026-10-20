@@ -21,8 +21,8 @@
  *     上传会 503 `PROVIDER_UNAVAILABLE`），本脚本全程 stub 替身 + 合成 media_id；
  *   - 真实图片上传：替身媒体端口只按 media_id 派候选，不解码图像；
  *   - 微信登录 / 微信开发者工具 / 真机证据：合成身份码，无微信侧调用；
- *   - 「同分候选 ⇒ uncertain」：属**未合** PR #299，本基线 `state.ts` 无同分判定规则，
- *     且替身脚本不产出同分候选 ⇒ 无 HTTP 输入可造，脚本内**显式 SKIP 并在交接登记未取得**。
+ *   - 「同分候选 ⇒ uncertain」：#299 已并入 main（`ab7c31f`），同分并列判定规则已在产品代码内（`state.ts`
+ *     头注释＋`REASON_TIED_TOP_SCORE`）；**本脚本仍未覆盖该路径**（替身不产出同分候选、脚本未构造该输入）⇒ 登记未取得（订正 2026-10-20，实测 main `df043a7`）。
  *
  * 退出码：三档，跳过＝未取得（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅本机开发，⛔ 不得进门禁）：
  *   0  —— 内存臂（以及设置了 env 时的真库臂）全部通过；
@@ -346,11 +346,11 @@ async function runChain(arm) {
     'i08-uncertain',
     `job=${uncertainJob.id} state=uncertain candidates=${JSON.stringify(uncertainValue.candidates)} reasons=${JSON.stringify(uncertainValue.uncertainty_reasons)}`,
   );
-  // 未合 PR #299：本基线无「同分 ⇒ uncertain」判定规则，替身也不产出同分候选 ⇒ 无输入可造。
+  // #299 已并入 main（ab7c31f），同分规则已在产品代码内；本脚本仍未覆盖该路径 ⇒ 如实登记「未取得」（订正 2026-10-20）。
   note(
     armName,
     'skip-tie',
-    'SKIP 同分候选区分：依赖未合 PR #299（本基线 state.ts 无同分规则、替身不产出同分候选）⇒ 登记「未取得」，不写死期望',
+    'SKIP 同分候选区分：#299 已并入 main（ab7c31f），同分规则已在产品代码内；本脚本仍未覆盖该路径（替身不产出同分候选、脚本未构造该输入）⇒ 登记「未取得」，不写死期望',
   );
 
   // === 步骤 6（#9）：终态落历史，且历史如实保留终态 ===

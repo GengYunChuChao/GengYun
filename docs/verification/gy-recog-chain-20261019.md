@@ -160,8 +160,8 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 | `#16 AC2` 后半句「人工选择独立记录」 | 未取得（本片不覆盖） | 脚本**未调用** `PATCH /recognitions/{id}/selection`，故证不了「人工选择独立记录、且不回写 `candidates`/`model_score`/`model_version`」。该写入面由既有单测 `tests/unit/recognitions-candidates-selection.test.mjs` 覆盖（**非本片证据**，本片未复核其全部断言）。已取得的最接近证据：`:298` 只证「识别结果不自带已选中」 |
 | `#16 AC4` 读取时重查对象权限及当前可见性 | **不成立（待实现缺口）** | 基线只把 `reference_state=unavailable` 写进历史投影，**没有**在读取时重查目标权限与当前可见性 ⇒ 这不是核验结论，而是「读面不存在」的如实披露。实现它需要两个组件：① **引用读面** —— 按 `target_ref`（`recognition`/`ocr` 等）回读目标当前状态；现有 `historyVisibility` 只对 `species` / `herbicide` / `scheme` 三种核 `/knowledge`，识别/OCR 目标恒 `unavailable`。② **读时状态复算** —— 列表与删除路径每次读取都重算 `reference_state`（含权限、当前可见性、对象是否已删），而不是写入时定型或读缓存。已取得的最接近证据：`:357` 断言的就是这个 `unavailable` 披露值本身 |
 | 真实 OCR/识别供应商调用（`#9 AC1`） | 未取得 | 仓内无 provider 凭据；`real` 模式构造的提供者 `available:false`、上传 503 `PROVIDER_UNAVAILABLE`，**fail-closed 不回退替身**。已取得：替身链路上的 `meta.execution_mode=stub` 处处如实标注 |
-| 「同分候选 ⇒ uncertain」区分 | 未取得（登记，不写死期望） | 依赖**未合** PR #299：本基线 `services/api/src/recognitions/state.ts` 没有同分判定规则，且替身脚本不产出同分候选 ⇒ **没有任何 HTTP 输入**能造出同分；脚本内 `step=skip-tie` 显式打印 SKIP，不把「想当然的期望」写成断言 |
-| 「无效登记 ⇒ conflict」 | 未取得 | 同属未合 PR #299 的下游语义，本链路不涉及登记面（`#10`），未断言 |
+| 「同分候选 ⇒ uncertain」区分 | 未取得（登记，不写死期望） | **订正（2026-10-20，实测 `upstream/main` = `df043a7`）**：#299 已并入 main（`ab7c31f`），同分并列判定规则已在产品代码内（`services/api/src/recognitions/state.ts` 头注释「Top1 同分并列一律不得落 succeeded」＋ `REASON_TIED_TOP_SCORE`）；**本脚本仍未覆盖该路径，原因是替身不产出同分候选、脚本未构造该输入 ⇒ 登记「未取得」**；脚本内 `step=skip-tie` 显式打印 SKIP，不把「想当然的期望」写成断言 |
+| 「无效登记 ⇒ conflict」 | 未取得 | **订正（2026-10-20，实测 `upstream/main` = `df043a7`）**：#299 已并入 main（`ab7c31f`），登记失效语义已在产品代码内；**本脚本仍未覆盖该路径，原因是脚本未构造无效登记输入 ⇒ 登记「未取得」**（本链路不涉及登记面 `#10`），故未断言 |
 | 真实媒体上传 / EXIF 清除（`#6`） | 未覆盖 | 链路只用替身端口的 `media_id` 引用；`#6` 的 AC 需真实上传通道与对象存储，不在本片范围 |
 | 药剂适用过滤与用量边界（`#8`） | 未覆盖 | 识别链路不读药剂面；该 AC 的验收对象是 `/knowledge` 与用量卡片 |
 | 标签 OCR 与校正（`#10`） | 未覆盖 | 本链路只走识别域；OCR 域的 API 层由 `tests/integration/ocr-http.mjs` 覆盖 |
