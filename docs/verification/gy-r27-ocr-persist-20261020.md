@@ -433,9 +433,14 @@ CI 里 `conversations-pg.mjs:57` 只应用**子集迁移** `['0001','0002','0005
 本次按「未迁移」报告，下一次调用重新探测（表被回滚/补迁移都能收敛）。`OcrTablesMissingError extends ApiError`，
 经 `classifyOcrDatabaseError` 时**原样透出**（单元测试断言 `error === original`）。
 
+HTTP 面差异（有意的）：写类撞「表未迁移」时是 `PROVIDER_UNAVAILABLE` ⇒ `contract.ts:25` 的
+`503: ['PROVIDER_UNAVAILABLE', …]` ⇒ **503 + `retryable:false`**（明确要求补迁移，不伪装成 404、也不诱导客户端重试）；
+读类（`/jobs/{id}`）则照常 200/404。写失败必须让调用方看见，不能被读语义吞掉。
+
 ### 12.5 三层单测（新增文件，全部通过）
 
-`tests/unit/ocr-store-pg-tables-missing.test.mjs`（14 条）：
+`tests/unit/ocr-store-pg-tables-missing.test.mjs`（**新增 13 条**；既有 `tests/unit/ocr-store-pg.test.mjs` 14 条；
+两文件合计 **27 条**，即下方 `ℹ tests 27 / pass 27` 的读数）：
 
 - **[A] 读类**：探测 `missing` ⇒ `getJob`/`getOcr`/`findIdempotent` 全部 `null`、零业务 SQL、只探测一次（含缓存命中）；
 - **[B] 写类**：9 个方法全部抛 `OcrTablesMissingError`，断言 `instanceof`（含 `ApiError`）、`code`、`retryable === false`、文案匹配 `/0024_ocr_persistence\.sql/` 与 `/未迁移/`、**零业务 SQL**、`connects()===0`；
@@ -455,7 +460,7 @@ $ node --test tests/unit/ocr-store-pg-wiring.test.mjs
 ℹ fail 0
 ```
 
-既有 `ocr-store-pg.test.mjs` 的 13 条语句位置/条数断言**逐条未动**；只把假池改成把探测语句分流到独立
+既有 `ocr-store-pg.test.mjs` 的 **14 条用例**（含语句位置/条数断言）**逐条未动**；只把假池改成把探测语句分流到独立
 `probes` 流（默认 `ready`），因此老断言不因新增探测而失效。
 
 ### 12.6 三条负控制（每条实测变红 + 逐字节还原）
