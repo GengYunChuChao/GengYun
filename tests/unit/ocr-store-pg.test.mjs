@@ -83,12 +83,32 @@ function recordRow(overrides = {}) {
 /** 事务控制语句：由假池固定应答，**不消耗**业务语句脚本（否则每条用例都要先铺 BEGIN/SET LOCAL）。 */
 const CONTROL_SQL = /^(BEGIN|COMMIT|ROLLBACK|SET LOCAL .*|RELEASE)$/;
 
-/** 记录型假池：按脚本顺序逐条返回**业务语句**的应答，`Error` 实例表示该条语句抛错。 */
-function makeDb(script = []) {
+/** 就绪探测语句（`to_regclass` 三表合判）：**不消耗**业务脚本，单独走 `probes` 流。 */
+const PROBE_SQL = /to_regclass/;
+
+/**
+ * 记录型假池：按脚本顺序逐条返回**业务语句**的应答，`Error` 实例表示该条语句抛错。
+ *
+ * `probe` 是就绪探测的应答（默认 `'ready'`；`'missing'` 模拟子集迁移库，`'unknown'` 模拟
+ * 读不懂的应答，`Error` 模拟探测本身失败）。探测不进 `log`，因此本文件既有的语句位置/条数
+ * 断言逐条保持原样；读写分化本身的判据在 `ocr-store-pg-tables-missing.test.mjs`。
+ */
+function makeDb(script = [], probe = 'ready') {
   const log = [];
+  const probes = [];
   let index = 0;
+  const answerProbe = () => {
+    if (probe instanceof Error) throw probe;
+    if (probe === 'ready') return { rows: [{ ready: true }] };
+    if (probe === 'missing') return { rows: [{ ready: false }] };
+    return { rows: [] };
+  };
   const next = async (text, values) => {
     const sql = String(text).replace(/\s+/g, ' ').trim();
+    if (PROBE_SQL.test(sql)) {
+      probes.push({ sql, values });
+      return answerProbe();
+    }
     log.push({ sql, values });
     if (CONTROL_SQL.test(sql)) return { rows: [] };
     const response = script[index];
@@ -108,7 +128,7 @@ function makeDb(script = []) {
     },
   };
   const sqls = () => log.map((entry) => entry.sql);
-  return { pool, log, sqls, store: createPostgresOcrStore({ pool }) };
+  return { pool, log, probes, sqls, store: createPostgresOcrStore({ pool }) };
 }
 
 const uniqueViolation = () => Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' });
