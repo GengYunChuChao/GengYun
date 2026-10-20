@@ -13,7 +13,7 @@
 # CAS 删除的三档错误码与「幂等台账真落库、能被另一条独立连接写入唤醒」也只有真库能证明。
 #
 # 为什么缺库必须**红**（而不是「跳过」）：带「缺前置 ⇒ 打印 SKIP」分支的那几个（会话链／社区域／
-# 收藏历史）**以 77 退出**（POSIX skipped＝未取得，不是通过；仓内
+# 收藏历史／标签 OCR 域）**以 77 退出**（POSIX skipped＝未取得，不是通过；仓内
 # `tests/unit/integration-script-coverage.test.mjs` 的「整链跳过必须给 77」把它固化成硬约定）；
 # messages-pg 没有跳过分支——缺 argv 就退回默认端口、连不上即非 0 失败。两条都不是「通过」。
 # 另一条独立约束：本 workflow **不设**任何放宽开关、也**不传**任何跳过参数：
@@ -140,3 +140,16 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+      # 标签 OCR 域（#323 / I10，R28-S17）：库名硬钉 `gengyun_ocr_jobs_test`，脚本同样要求**空库**
+      # （自己断言 `public` 下 0 张表），并用 `discoverMigrations()` 跑**全链迁移**（0001..0024，含本片的
+      # 0024）而不是子集——因此它顺带守住「迁移清单连续无缺号、总数 === 最大版本号、0024 仍在末位」。
+      # 连接串走 **env**（`OCR_PG_TEST_URL`）：未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过）。
+      # 本地取证（PG 17.11 + 空库）：exit=0，`共 27 条 PASS`（含关连接重开逐字节仍在 + 子进程重启臂）。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_ocr_jobs_test' && node tests/integration/ocr-jobs-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          OCR_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_ocr_jobs_test
