@@ -7,9 +7,11 @@
  *   `collectResultValueIssues('synthesis', …)`（**不手抄契约**，复用 `jobs/result-shape.ts` 的镜像）；
  * - **归属与不存在同形**：他人作业 / 不存在的 uuid / 非法 uuid 三者的 404 形状与既有域一致；
  * - **状态流转**：`queued`（受理即读）→ `succeeded`（带 `result`）/ `failed`（带契约 `error_code`，**不伪装成功**）；
- * - **无取消能力 ⇒ 不伪造 `cancelled`**：`cancel` 对已存在的合成作业如实 503 `PROVIDER_UNAVAILABLE`(`retryable`)，
- *   读取后状态与 revision **未被改动**；
+ * - **取消（GY-R27 接线）**：`cancel` 对已存在的合成作业**真的取消**（`queued`/`running` ⇒ 200 `cancelled`，
+ *   revision 恰好 +1、`error_code` 清空、`result` 为 null）；终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`
+ *   （**不是** 503 `PROVIDER_UNAVAILABLE`，也不伪造第二次取消）；取消后迟到的提供者结果**不复活**作业；
  * - **幂等/并发口径与既有域一致**：同 `Idempotency-Key` 重复请求 → 同一 `job_id`、不新建任务；
+ *   取消的同键回放不再自增 revision；
  * - **`real` 未接真实依赖 fail-closed 对照**：受理前 503 `PROVIDER_UNAVAILABLE`（`retryable`），
  *   **不落任务、不产假音频**；`stub` 对照下替身产物**不是** `audio/*`、`substitute` 不进契约投影。
  *
@@ -18,6 +20,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
@@ -25,7 +28,7 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { collectResultValueIssues } from '../../services/api/src/jobs/result-shape.ts';
 import { createMemoryCheckedContentPort } from '../../services/api/src/tts/content.ts';
-import { SUBSTITUTE_ARTIFACT_CONTENT_TYPE } from '../../services/api/src/tts/provider.ts';
+import { SUBSTITUTE_ARTIFACT_CONTENT_TYPE, createStubTtsProvider } from '../../services/api/src/tts/provider.ts';
 import { createMemorySynthesisStore } from '../../services/api/src/tts/store.ts';
 
 const API = '/api/v1';
@@ -122,6 +125,32 @@ async function acceptOne(h, ref = REF) {
   assert.equal(accepted.status, 202, `受理应 202，实际 ${accepted.status}：${JSON.stringify(accepted.data)}`);
   await h.app.synthesisService.settle();
   return accepted.data.data;
+}
+
+/**
+ * 直接往**同一内存 store** 落一条合成作业行（用于精确构造 `queued`/`running` 现场）：
+ * 不经过受理、不调用提供者 ⇒ 取消用例不依赖执行器时序，也就不会因机器快慢而抖动。
+ */
+async function seedJob(store, overrides = {}) {
+  const row = {
+    id: randomUUID(),
+    revision: 1,
+    kind: 'synthesis',
+    ownerUserId: overrides.ownerUserId,
+    // 与 `APP_EXECUTION_MODE=stub` 的装配一致：读面 `assertJobMode` 才不会因模式交叉 503。
+    executionMode: 'stub',
+    synthesisId: randomUUID(),
+    checkedContentRef: { ...REF },
+    locale: 'zh-CN',
+    state: 'queued',
+    deadlineAt: new Date(START + 10 * 60 * 1000),
+    createdAt: new Date(START),
+    updatedAt: new Date(START),
+    errorCode: null,
+    ...overrides,
+  };
+  await store.insertJob(row);
+  return row;
 }
 
 // ---------------------------------------------------------------- 接线与契约形状
@@ -229,42 +258,210 @@ test('状态流转·失败：提供者失败 ⇒ failed + 契约 error_code（�
   assert.equal(out.result, null, 'failed 不得携带 result');
 });
 
-test('状态流转·无取消能力：cancel 如实 503 PROVIDER_UNAVAILABLE(retryable)，**不伪造 cancelled**、状态与 revision 不变', async (t) => {
+test('状态流转·取消已接线：running 作业 cancel ⇒ 200 cancelled（revision 恰好 +1、error_code 清空、result=null），GET 读回一致', async (t) => {
   const h = await buildFixture(t);
-  const job = await acceptOne(h);
+  // 刻意带上残余错误码：取消不是失败，必须清空（GET 读回 error_code=null）。
+  const job = await seedJob(h.store, {
+    ownerUserId: h.a.user.id,
+    state: 'running',
+    revision: 2,
+    errorCode: 'PROVIDER_QUOTA_EXCEEDED',
+  });
+
   const before = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
+  assert.equal(before.state, 'running', '前置：作业处于 running');
+  assert.equal(before.revision, 2, '前置：running 的 revision 为 2（queued=1 → running=2）');
 
   const cancelled = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
     headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': nextKey() },
   });
-  assert.equal(cancelled.status, 503);
-  assert.equal(cancelled.data.error.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(cancelled.data.error.retryable, false, '合成域无取消能力（未接线）⇒ 同一请求重试不会成功，不得标为可重试');
+  assert.equal(cancelled.status, 200, `取消应 200，实际 ${cancelled.status}：${JSON.stringify(cancelled.data)}`);
+  assert.notEqual(
+    cancelled.data.error?.code,
+    'PROVIDER_UNAVAILABLE',
+    '取消已接线 ⇒ 绝不得再回「该作业所属能力尚未提供取消」的 503',
+  );
+  assert.equal(cancelled.data.data.state, 'cancelled');
+  assert.equal(cancelled.data.data.revision, 3, 'revision 必须**恰好 +1**（不得 +2、不得不变）');
+  assert.equal(cancelled.etag, '"3"', '响应 ETag 必须是取消后的 revision 强 ETag');
+  assert.equal(cancelled.cache, 'no-store');
+  assert.equal(cancelled.data.data.error_code, null, '取消不是错误 ⇒ error_code 必须清空');
+  assert.equal(cancelled.data.data.result, null, '取消不产出合成记录 ⇒ result 恒为 null');
+  assert.deepEqual(cancelled.data.data.target_ref, { ...REF }, '取消不得改写 target_ref');
+  assert.deepEqual(
+    Object.keys(cancelled.data.data).sort(),
+    ['id', 'revision', 'kind', 'target_ref', 'state', 'deadline_at', 'created_at', 'error_code', 'result'].sort(),
+    '取消的响应体仍必须是九键契约 Job（additionalProperties:false）',
+  );
 
+  // 判据 7：取消后 GET /jobs/{id} 读到 state=cancelled、error_code 清空。
   const after = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
-  assert.equal(after.state, before.state, '取消能力缺失 ⇒ 状态不得被改动（没有伪造 cancelled）');
-  assert.equal(after.revision, before.revision, 'revision 不得因失败的取消而递增');
-  assert.deepEqual(after.result, before.result);
+  assert.equal(after.state, 'cancelled');
+  assert.equal(after.revision, 3, '读面不得因取消再自增 revision');
+  assert.equal(after.error_code, null);
+  assert.equal(after.result, null);
+  assert.equal(after.kind, 'synthesis');
+
+  // 判据 6：重复取消（换新键、带当前 revision）⇒ 409 OBJECT_UNAVAILABLE，不 5xx、不再 +1 revision。
+  const again = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': '"3"', 'idempotency-key': nextKey() },
+  });
+  assert.equal(again.status, 409, `重复取消必须 409（对象当前不可取消），实际 ${again.status}`);
+  assert.equal(again.data.error.code, 'OBJECT_UNAVAILABLE', '终态再取消是 OBJECT_UNAVAILABLE，不是 PROVIDER_UNAVAILABLE');
+  assert.equal(again.data.error.retryable, false);
+  const finalRead = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
+  assert.equal(finalRead.state, 'cancelled', '重复取消不得改写状态');
+  assert.equal(finalRead.revision, 3, '重复取消不得再自增 revision');
 });
 
-test('状态流转·取消能力缺失时缺请求头仍按既有口径：缺 Idempotency-Key ⇒ 400；缺 If-Match ⇒ 428', async (t) => {
+test('状态流转·终态（succeeded）作业 cancel ⇒ 409 OBJECT_UNAVAILABLE，**不伪造 cancelled**、状态与 revision 不变', async (t) => {
   const h = await buildFixture(t);
   const job = await acceptOne(h);
+  const before = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
+  assert.equal(before.state, 'succeeded', '前置：作业已落终态 succeeded');
+
+  const rejected = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': `"${before.revision}"`, 'idempotency-key': nextKey() },
+  });
+  assert.equal(rejected.status, 409, `终态取消应 409，实际 ${rejected.status}：${JSON.stringify(rejected.data)}`);
+  assert.equal(rejected.data.error.code, 'OBJECT_UNAVAILABLE');
+  assert.notEqual(rejected.data.error.code, 'PROVIDER_UNAVAILABLE', '取消已接线 ⇒ 不得回「能力未接线」的 503');
+
+  const after = (await h.call('GET', `${API}/jobs/${job.id}`, h.a)).data.data;
+  assert.equal(after.state, before.state, '终态取消 ⇒ 状态不得被改动（没有伪造 cancelled）');
+  assert.equal(after.revision, before.revision, 'revision 不得因失败的取消而递增');
+  assert.deepEqual(after.result, before.result, '终态取消不得改动既有结果');
+});
+
+test('状态流转·取消后迟到的提供者结果**不复活**作业（HTTP 端到端：闸门放行后仍是 cancelled）', async (t) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  // 复用产品替身提供者（**非真实音频**），只在外面套一道闸门以制造 running 现场。
+  const stub = createStubTtsProvider();
+  const h = await buildFixture(t, {
+    provider: {
+      ...stub,
+      note: '闸门替身提供者（非真实音频、不触达真实供应商）',
+      async synthesize(input) {
+        await gate;
+        return stub.synthesize(input);
+      },
+    },
+  });
+
+  const accepted = await h.call('POST', SYNTHESIS_URL, h.a, { headers: { 'idempotency-key': nextKey() }, payload: synthesisBody() });
+  assert.equal(accepted.status, 202);
+  const jobId = accepted.data.data.id;
+
+  // 等执行器把作业推进到 running（提供者被闸门挡住）。
+  let running = null;
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const read = (await h.call('GET', `${API}/jobs/${jobId}`, h.a)).data.data;
+    if (read.state === 'running') {
+      running = read;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.notEqual(running, null, '前置：作业应进入 running');
+  assert.equal(running.revision, 2);
+
+  // 闸门**必须**无条件放行（否则变异/断言失败会把在途执行永远挂在事件循环上，表现为挂死而非红）。
+  let cancelled;
+  try {
+    cancelled = await h.call('POST', `${API}/jobs/${jobId}/cancel`, h.a, {
+      headers: { 'if-match': `"${running.revision}"`, 'idempotency-key': nextKey() },
+    });
+  } finally {
+    // 放行迟到结果：终态 CAS 用的是 running.revision(2)，库内已是取消后的 revision ⇒ 写不进去。
+    release();
+  }
+  await h.app.synthesisService.settle();
+
+  assert.equal(cancelled.status, 200, `取消应 200，实际 ${cancelled.status}：${JSON.stringify(cancelled.data)}`);
+  assert.equal(cancelled.data.data.revision, 3, 'revision 必须恰好 +1');
+
+  const after = (await h.call('GET', `${API}/jobs/${jobId}`, h.a)).data.data;
+  assert.equal(after.state, 'cancelled', '迟到结果不得把已取消的作业复活成 succeeded');
+  assert.equal(after.revision, 3, '迟到结果不得再自增 revision');
+  assert.equal(after.result, null, '取消后不得冒出可读的合成结果');
+  assert.equal(after.error_code, null);
+  // 取消不产出合成记录：该作业的 synthesis_id 在 store 里必须查不到。
+  const row = await h.store.getJob(jobId);
+  assert.equal(await h.store.getSynthesis(row.synthesisId), null, '取消后不得写入合成记录');
+});
+
+test('状态流转·取消的同键回放：原样重试 ⇒ 200 且不再 +1 revision；换键重试 ⇒ 409、仍不 +1', async (t) => {
+  const h = await buildFixture(t);
+  const job = await seedJob(h.store, { ownerUserId: h.a.user.id, state: 'queued', revision: 1 });
+  const key = nextKey();
+
+  const first = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': '"1"', 'idempotency-key': key },
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.data.data.state, 'cancelled');
+  assert.equal(first.data.data.revision, 2);
+
+  // 同键同体原样重试：必须回放（不得被已自增的 revision 判成 409、不得再 +1）。
+  const replay = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': '"1"', 'idempotency-key': key },
+  });
+  assert.equal(replay.status, 200, `同键回放应 200，实际 ${replay.status}：${JSON.stringify(replay.data)}`);
+  assert.equal(replay.data.data.state, 'cancelled');
+  assert.equal(replay.data.data.revision, 2, '回放不得再自增 revision');
+
+  // 换键 + 当前 revision ⇒ 终态不可取消（409，不是 5xx），仍不再 +1。
+  const again = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': '"2"', 'idempotency-key': nextKey() },
+  });
+  assert.equal(again.status, 409);
+  assert.equal(again.data.error.code, 'OBJECT_UNAVAILABLE');
+  const persisted = await h.store.getJob(job.id);
+  assert.equal(persisted.state, 'cancelled');
+  assert.equal(persisted.revision, 2, '重复取消不得再自增 revision');
+});
+
+test('状态流转·取消已接线后，缺/非法请求头仍按既有口径：缺 Key ⇒ 400；缺 If-Match ⇒ 428；非法 ⇒ 400；齐备才触达取消语义', async (t) => {
+  const h = await buildFixture(t);
+  const job = await seedJob(h.store, { ownerUserId: h.a.user.id, state: 'queued', revision: 2 });
 
   const noKey = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, { headers: { 'if-match': '"2"' } });
-  assert.equal(noKey.status, 400);
+  assert.equal(noKey.status, 400, `缺 Idempotency-Key 应 400，实际 ${noKey.status}`);
   assert.equal(noKey.data.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
 
   const noVersion = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, { headers: { 'idempotency-key': nextKey() } });
-  assert.equal(noVersion.status, 428);
+  assert.equal(noVersion.status, 428, `缺 If-Match 应 428，实际 ${noVersion.status}`);
   assert.equal(noVersion.data.error.code, 'REVISION_REQUIRED');
 
-  // 两头齐备后才落到「存在但该域无取消能力」的 503（与既有 kind 同一顺序语义）
-  const both = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+  const badVersion = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': 'abc', 'idempotency-key': nextKey() },
+  });
+  assert.equal(badVersion.status, 400, `非法 If-Match 应 400，实际 ${badVersion.status}`);
+  assert.equal(badVersion.data.error.code, 'INVALID_REQUEST');
+
+  // 两头齐备后才落到取消语义：旧 revision ⇒ 409 REVISION_CONFLICT（**不再是 503 未接线**）。
+  const stale = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
+    headers: { 'if-match': '"1"', 'idempotency-key': nextKey() },
+  });
+  assert.equal(stale.status, 409, `旧 revision 应 409，实际 ${stale.status}：${JSON.stringify(stale.data)}`);
+  assert.equal(stale.data.error.code, 'REVISION_CONFLICT');
+  assert.notEqual(stale.data.error.code, 'PROVIDER_UNAVAILABLE');
+
+  // 上面每一次失败都不得改动作业（状态与 revision 双向守护）。
+  const untouched = await h.store.getJob(job.id);
+  assert.equal(untouched.state, 'queued', '请求头不合法的取消不得改状态');
+  assert.equal(untouched.revision, 2, '请求头不合法的取消不得自增 revision');
+
+  // 正确凭据 ⇒ 200 cancelled，revision 恰好 2 → 3。
+  const ok = await h.call('POST', `${API}/jobs/${job.id}/cancel`, h.a, {
     headers: { 'if-match': '"2"', 'idempotency-key': nextKey() },
   });
-  assert.equal(both.status, 503);
-  assert.equal(both.data.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(ok.status, 200, `正确凭据应 200，实际 ${ok.status}：${JSON.stringify(ok.data)}`);
+  assert.equal(ok.data.data.state, 'cancelled');
+  assert.equal(ok.data.data.revision, 3);
 });
 
 // ---------------------------------------------------------------- 幂等与并发

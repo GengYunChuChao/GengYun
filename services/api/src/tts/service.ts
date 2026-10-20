@@ -3,11 +3,12 @@
  *
  * 契约对齐（packages/contracts/openapi.json，未新增字段、未自造端点）：
  *   POST /speech/synthesis   createSynthesis → 202 JobEnvelope
+ *   POST /jobs/{id}/cancel   cancelJob       → 200 JobEnvelope（GY-R27 接线；共享作业面在 `jobs/` 层）
  *
  * 契约里 `POST /speech/synthesis` **只有 POST**：没有 `GET /speech/synthesis/{id}`，
  * 也没有 DELETE。因此本文件**不提供任何 HTTP 读/删端点**，只提供服务层入口
  * （`createSynthesis` 对应 202 受理；`inspectJob` / `verifyUsable` 是**服务层诊断与重算口径**，
- * 不是契约端点——见下方「契约缺口」）。
+ * 不是契约端点——见下方「契约缺口」；`cancelJob` 是共享作业面 `POST /jobs/{id}/cancel` 的域内实现）。
  *
  * 本阶段**不注册任何 HTTP 路由**（组装点 `services/api/src/app.ts` 与路由目录
  * `services/api/src/routes` 被 #9 / #10 / #11 占用，禁止触碰）；本文件也不 import 它们的任何内容。
@@ -36,6 +37,11 @@
  *   **恰好 1 个任务、恰好 1 次提供者调用**，落败者等待占位者落定后**收敛到同一任务**；
  *   同键异体 ⇒ `IDEMPOTENCY_CONFLICT` 且不产生第二个任务；占位者失败 ⇒ **释放占位**；
  * - **越权与不存在同形** `NOT_FOUND`（不泄露存在性）；
+ * - **取消（GY-R27）**：`queued` / `running` ⇒ `cancelled`，`revision` **恰好 +1**（单次 CAS）；
+ *   迁移合法性只问 `state.ts` 的 `canTransitionJob`（**不另写第二套状态机**，不新增迁移边）；
+ *   终态（`succeeded`/`uncertain`/`failed`/`timed_out`/`cancelled`）再取消 ⇒ 409 `OBJECT_UNAVAILABLE`
+ *   （**不是** 503 "能力未接线"）；取消**不产出合成记录**、清空 `error_code`；取消后迟到的提供者
+ *   结果被 `commitTerminal` 的 revision CAS 拦下 ⇒ **不复活**作业（不靠删记录）；
  * - **超时必须在读面显式化**：任务超过 `deadline_at + JOB_EXPIRY_GRACE_MS` 仍未落终态
  *   （执行器缺失、进程重启、store 写异常……）⇒ 读面用 CAS 落 `timed_out` +
  *   `PROVIDER_TIMEOUT`，**绝不**让读面永远回报 `queued` / `running`；
@@ -76,8 +82,10 @@ import type { ProviderFailureCode, TtsProvider } from './provider.ts';
 import {
   SynthesisArtifactError,
   TtsProtocolError,
+  canTransitionJob,
   decideCheckedContent,
   isSynthesisTargetType,
+  isTerminalJobState,
   normalizeSynthesisInput,
   requireSynthesisArtifact,
   stateForProviderFailure,
@@ -119,6 +127,8 @@ export const IDEMPOTENCY_POLL_MS = 2;
 export const CLAIM_ATTEMPTS = 2;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 契约 `If-Match` 口径（强 ETag = `"<正整数 revision>"`，不允许 `*`）：与识别/OCR/转写域逐字一致。 */
+const IF_MATCH_PATTERN = /^"[1-9][0-9]*"$/;
 
 /** 失效判定的原因 = 核对判定原因 + 产物缺失。 */
 export type SynthesisUsabilityReason = CheckedContentRefusalReason | 'MEDIA_MISSING';
@@ -181,6 +191,22 @@ export function requireIdempotencyKey(value: unknown): string {
     );
   }
   return value;
+}
+
+/**
+ * 契约 `If-Match` 口径（**缺失 428 / 格式非法 400**；不匹配由调用方判 409）：
+ * 与识别域、OCR 域、转写域（PR #321）**逐字同一口径**，不在此发明新分支。
+ */
+export function requireIfMatch(value: unknown): number {
+  if (value === undefined || value === null || value === '') {
+    throw new ApiError('REVISION_REQUIRED', '缺少 If-Match 版本头');
+  }
+  if (typeof value !== 'string' || !IF_MATCH_PATTERN.test(value)) {
+    throw new ApiError('INVALID_REQUEST', 'If-Match 版本格式非法（应为 "正整数"）');
+  }
+  const revision = Number(value.slice(1, -1));
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new ApiError('INVALID_REQUEST', 'If-Match 版本非法');
+  return revision;
 }
 
 /** 拒绝判定 → 契约错误封套（错误码取自契约闭集，`details.code` 带上可单独指出的原因）。 */
@@ -658,6 +684,92 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   }
 
   /**
+   * 用户取消合成作业（`POST /jobs/{id}/cancel` 的**域内实现**；GY-R27 取消片，#13 的取消能力接线）。
+   *
+   * 语义（派单 §4，逐条都有独立用例钉住）：
+   * - `queued` / `running` ⇒ `cancelled`，`revision` **恰好 +1**（**单次** `store.updateJob` CAS，不 +2）；
+   * - 状态机**只有一处**：迁移合法性只问 `state.ts` 的 `canTransitionJob`，本函数不另写第二套状态机、
+   *   不新增迁移边；`TERMINAL_JOB_STATES` 任一终态再取消 ⇒ `OBJECT_UNAVAILABLE`（对象状态不允许），
+   *   **不是** `PROVIDER_UNAVAILABLE`（那是"该域根本没有取消能力"的未接线形态）；
+   * - **取消不产生合成记录**：本函数只写作业状态，不碰 `syntheses`；`result` 随之恒为 `null`；
+   *   随后迟到的提供者结果由 `commitTerminal` 的 revision CAS 挡下（旧回调不复活，不靠删记录）；
+   * - 越权与不存在同形 `NOT_FOUND`：归属检查**先于**幂等占位，越权请求不消耗 `Idempotency-Key`；
+   * - `If-Match` 缺失 ⇒ 428 `REVISION_REQUIRED`、格式非法 ⇒ 400 `INVALID_REQUEST`、
+   *   与当前 revision 不符 ⇒ 409 `REVISION_CONFLICT`（与识别/OCR/转写域同一口径）；
+   * - 同键原样重试 ⇒ 回放当前作业投影（**不再 +1 revision**）；同键并发 ⇒ 落败方**有界等待**
+   *   占位者落定后收敛到同一投影（与 `createSynthesis` 同一套占位/收敛骨架，超预算才
+   *   `REQUEST_IN_PROGRESS`）；同键异体 ⇒ `IDEMPOTENCY_CONFLICT`。
+   *
+   * **模式口径（本实现的选择，契约未规定）**：取消**不做** `assertJobMode`。理由：取消只写状态、
+   * 不解释任何产物（`result` 恒为 `null`），因此本操作**不可能**把替身产物冒充成真实合成结果
+   * （"模式交叉不撒谎"约束的是**读面解释产物**，见 `inspectJob`）。反之若在此按模式 503，
+   * 跨模式遗留的 `queued`/`running` 作业将**永远无法取消**（读面 503 也不再替它裁定超时）。
+   */
+  async function cancelJob(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<SynthesisJobProjection> {
+    const key = requireIdempotencyKey(input.idempotencyKey);
+    const expectedRevision = requireIfMatch(input.ifMatch);
+    // 归属先于占位：越权/不存在与「任务不存在」同形，且不消耗幂等键。
+    const row = await getOwnedJob(input.userId, input.jobId);
+    const at = now();
+    const scope = idempotencyScope(input.userId, 'POST', `${API_PREFIX}/jobs/${input.jobId}/cancel`);
+    const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idempotencyHmacKey);
+    // 幂等占位先于版本/终态校验：首次成功取消的**原样重试**必须回放结果，
+    // 而不是被已自增的 revision 判成 409、或被已落地的 cancelled 判成冲突。
+    for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
+      const claim = await claimIdempotentScope(scope, key, requestHash, {}, at);
+      if (claim.kind === 'claimed') {
+        try {
+          if (row.revision !== expectedRevision) {
+            throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+          }
+          // 终态（含已 cancelled）再取消：对象状态不允许 ⇒ 409 OBJECT_UNAVAILABLE。
+          if (isTerminalJobState(row.state)) {
+            throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${row.state}，不可取消`);
+          }
+          // 唯一的迁移判据来源（不在此另写状态机）。
+          if (!canTransitionJob(row.state, 'cancelled')) {
+            throw new ApiError('OBJECT_UNAVAILABLE', `作业状态 ${row.state} 不可取消`);
+          }
+          const updated = await store.updateJob(row.id, expectedRevision, (current) => ({
+            ...current,
+            state: 'cancelled',
+            // 取消不是失败/不确定：错误码清空（GET 读回 error_code=null）。
+            errorCode: null,
+            revision: current.revision + 1,
+            updatedAt: at,
+          }));
+          // CAS 落空 ⇒ 作业在本次读写之间被别的写入改动，如实 409，不覆盖别人。
+          if (updated === null) throw new ApiError('REVISION_CONFLICT', '作业状态已变化，未能取消');
+          await finalizeIdempotentScope(scope, key, { job_id: updated.id });
+          // cancelled 不产出合成记录 ⇒ result 恒为 null（与 failed / timed_out 同形）。
+          return toJob(updated, null);
+        } catch (error) {
+          // 业务失败释放占位，否则同一 Idempotency-Key 的正常重试会被永久判成「处理中」。
+          await releaseIdempotentScope(scope, key);
+          throw error;
+        }
+      }
+
+      // 同键请求：绝不重复执行副作用；等占位者落定后**收敛**到同一投影。
+      const resolution = await awaitPlaceholder(scope, idempotencyKeyHashHex(scope, key), idempotencyWaitMs);
+      if (resolution.kind === 'released') continue;
+      if (resolution.kind === 'settled') {
+        // 回放只回放**当前作业投影**：不做模式解释（见上）、不重复副作用、不再自增 revision。
+        const current = await store.getJob(row.id);
+        if (current === null) throw new ApiError('NOT_FOUND', '任务不存在');
+        return toJob(current, null);
+      }
+      throw inProgress();
+    }
+    throw inProgress();
+  }
+
+  /**
    * **失效（过期）口径**：判断一条合成记录现在是否仍可播放。
    *
    * 重算三件事（与受理/执行同一套判定函数，不另设宽松规则）：
@@ -694,6 +806,7 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   return {
     createSynthesis,
     inspectJob,
+    cancelJob,
     verifyUsable,
     settle,
     /** 供证据文档／诊断：当前提供者与各端口标注（替身如实标注，不含凭据、不含音频）。 */
