@@ -949,7 +949,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null,
     });
   const recognitionService = createRecognitionService({
-    store: recognitionStore ?? createMemoryRecognitionStore(),
+    store: recognitionStore ?? (config.executionMode === 'real' && pool !== null ? createPostgresRecognitionStore({ pool }) : createMemoryRecognitionStore()),
     // GY-I27 第二片：识别域的提供者包装在**装配处**完成（该域的服务由本文件构建）；
     // `real` 才接管派发，替身/演示原样返回（不记账）。
     provider: recognitionEgress === undefined
@@ -1818,3 +1818,4 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   return app;
 }
+import { createPostgresRecognitionStore } from './recognitions/store-pg.ts'; // 追加在文件末尾：app.ts 行号是契约台账锚点，顶部 import 区零插入（ESM 提升，语义等价）

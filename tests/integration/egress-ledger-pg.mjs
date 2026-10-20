@@ -232,6 +232,13 @@ try {
     '0011 回滚不得牵连 0014 新增的对象标识列',
   );
   await owner.query(sqlFile('migrations/0011_export_ledger.sql'));
+  // 0025（GY-R28 S13）：本脚本以 `executionMode:'real'` + 真池驱动 `POST /recognitions`（下面 §5），
+  // 而 #333 起「`real` + 有池 ⇒ PostgreSQL 识别 store」。识别 store **写类**方法在表未迁移时
+  // fail-closed（指名 0025 的 `PROVIDER_UNAVAILABLE`/retryable=false），此前本清单缺 0025 ⇒
+  // `POST /recognitions` 在这里变成 503，而断言期望 202（CI run 39425382301 的真红）。
+  // 放在 0011 回滚演练**之后**单独应用：`0011 down` 的语义与 `:224`–`:233` 三条断言因此逐字不变，
+  // 0025 也从不参与那次回滚演练（它是纯新增四表，与 exports 列无关）。
+  await owner.query(sqlFile('migrations/0025_recognitions_persistence.sql'));
   say('fresh native PG17.11：0001/0003/0008/0009/0011 up，0011 down 后表与列如实消失，再 up 成功');
 
   // ---------------------------------------------------------------- 2. 最小权限角色
@@ -244,6 +251,32 @@ try {
   );
   createdRoles.push(loginName);
   await owner.query(`GRANT ${groups.join(',')} TO ${loginName}`);
+  // 识别域（0025）运行时 DML：**只**授给本脚本的测试 LOGIN，不动仓内任何 NOLOGIN 组定义。
+  // ① 这是**部署侧应有而当前缺失**的授权：`services/api/db/roles/*.sql` 没有识别域角色文件，
+  //    `deploy/postgres-cvm/sql/20-login-roles.sql` 也没有识别域 grant region；而
+  //    `requireTables()` 用 `to_regclass(...)` 探测（**不依赖表级权限**，见
+  //    `services/api/src/recognitions/store-pg.ts`）⇒ 表在、权限缺 ⇒ 真写语句 42501 ⇒
+  //    `503 PROVIDER_UNAVAILABLE`「识别数据库暂不可用」retryable=true（看起来像可重试的基础设施故障）。
+  //    补齐归属另一片（S24：部署授权区缺口，同型还有 messages / community / ocr 三域）。
+  // ② **S24 落地后本行应删除**（改为从角色文件/部署授权区继承），本夹具不再自授。
+  // 本行不改变任何既有断言，只让本脚本的运行时等价于「部署时把识别四表授给 API 运行时角色」。
+  // 条件化**不是**静默放行：0025 若未落库，`GRANT … ON recognition_jobs` 会先以 `42P01` 抢跑，把
+  // 「未迁移」这条 fail-closed 诊断掩盖成一条无关的角色授权错误；真正的诊断点在下面 §5 的
+  // `POST /recognitions` ⇒ 503 断言。故只在四表齐备时补授权，缺表则跳过，让下游断言如实变红
+  // ——「临时删掉应用 0025 那一行」的反证就是靠这一点仍然报「识别持久化表未迁移」。
+  const recognitionTablesReady = (
+    await owner.query(
+      `SELECT to_regclass('public.recognition_jobs') IS NOT NULL
+          AND to_regclass('public.recognition_records') IS NOT NULL
+          AND to_regclass('public.recognition_selections') IS NOT NULL
+          AND to_regclass('public.recognition_idempotency') IS NOT NULL AS ok`,
+    )
+  ).rows[0].ok;
+  if (recognitionTablesReady) {
+    await owner.query(
+      `GRANT SELECT,INSERT,UPDATE,DELETE ON recognition_jobs,recognition_records,recognition_selections,recognition_idempotency TO ${loginName}`,
+    );
+  }
   pool = createPool(runtimeUrl.href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
