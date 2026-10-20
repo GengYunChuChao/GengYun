@@ -221,10 +221,9 @@ gengyun_api_runtime,gengyun_auth_privacy,gengyun_ci_owner,gengyun_consent_grante
 
 `tests/integration/account-suspend-pg.mjs:219` 的 `note('[P] 复用已存在的组角色 …')` 在循环里、`:221` `await owner.query(sql);` **之前**执行。所以非超级 owner 那一跑会先看到「复用成功」再看到 `permission denied`（§1.5 的 `:5` 与 `:6`）。本片**不改代码**，只记录：这行是进度提示，不构成结论——结论行仍由 `taken`/失败态决定，`exit 1` 如实。
 
-
 ## 5. 正控制 PC1：角色残留下也必须全绿（**owner 必须 SUPERUSER**）
 
-前置：`gengyun_hold` 库 + 7 个角色 + 每个角色一张表归其所有（制造跨库依赖）；owner 是 `gengyun_ci_owner`（`rolsuper=t`，`§1.5` 已证非超级 owner 会 `42501`）；`DROP ROLE gengyun_auth_privacy` ⇒ exit 1（§1.4 原文）。
+前置：`gengyun_hold` 库 + 7 个角色 + 每个角色一张表归其所有（制造跨库依赖）；owner 是 `gengyun_ci_owner`（实测 `rolsuper=true`，见 §1.5：非超级 owner 同一夹具会 `42501`）；`DROP ROLE gengyun_auth_privacy` ⇒ exit 1（§1.4 原文）。
 随后同一集群、`gengyun_suspend_test` 重建为空库，脚本**不给 `argv[3]`** ⇒ exit **0**，`pc1b-leftover-allpass.log`（26 行）：
 
 - `:5`–`:10` 六条 `[P] 复用已存在的组角色 …（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）`
