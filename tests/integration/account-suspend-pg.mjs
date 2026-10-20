@@ -3,19 +3,21 @@
 // 运行（本机隔离集群，仅回环；库名硬钉，要求空库）：
 //   createdb -h 127.0.0.1 -p <port> gengyun_suspend_test
 //   node tests/integration/account-suspend-pg.mjs \
-//     postgres://<owner>@127.0.0.1:<port>/gengyun_suspend_test \
-//     postgres://gengyun_api_runtime:<pw>@127.0.0.1:<port>/gengyun_suspend_test
+//     postgres://<owner>@127.0.0.1:<port>/gengyun_suspend_test
 //
-// 第二个参数（运行时角色 URL）可省略：省略时只跑「库侧 + 端口侧」证据，**权限反向控制**
-// 与 HTTP 证据会被标为 `未取得（缺运行时角色 URL）` —— 不允许被读成通过。
+// 第二个参数（运行时角色 URL）**可省略**（推荐跑法）：省略时本脚本自己生成口令、建/改
+// `gengyun_api_runtime` 角色，再由 owner URL **派生**运行时 URL ⇒ [M]/[P]/[A]–[F] 全套真跑。
+// 给了 argv[3] 时则取 URL 里的口令去建/改同一个角色，两种形态在 scram-sha-256 集群上都必须自洽
+// （旧版把 `CREATE ROLE … PASSWORD '<随机>'` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，
+//  见 docs/verification/gy-r28-account-suspend-scram-20261020.md）。
 //
 // 本脚本只讲一件事：**停用/恢复是一个单事务的四步写**，且**唯一写路径是一个窄口径
 // `SECURITY DEFINER` 函数**（迁移 0017）。运行时角色 `gengyun_api_runtime` 对
 // `users.state` / `users.auth_epoch` / `users.revision` / `admin_audit_events`
 // **没有任何直接写权限**，因此「绕过函数改状态、推进纪元、直接写审计」在本脚本里是
 // **权限拒绝（42501）**，不是约定、不是口头承诺。至于 `sessions.revoked_at`：
-// `auth_privacy.sql` 自 0001 起就给了运行时 `UPDATE (token_hash,revoked_at)`（见本文件
-// `:203-204` 的断言），撤会话单独做得到，但那只是把人踢下线——账号仍是 active、
+// `auth_privacy.sql` 自 0001 起就给了运行时 `UPDATE (token_hash,revoked_at)`（见
+// `leastPrivilege()` 里的说明），撤会话单独做得到，但那只是把人踢下线——账号仍是 active、
 // 旧 token 也不会因此失效，所以停用必须走函数。
 //
 // 覆盖的读数（编号与派单 §3 对齐）：
@@ -53,7 +55,16 @@ const ownerUrl = new URL(process.argv[2] ?? `postgres://postgres@127.0.0.1:5432/
 assert.equal(ownerUrl.hostname, '127.0.0.1', '本测试只允许回环地址');
 assert.equal(ownerUrl.pathname, `/${DB}`, `库名必须硬钉为 ${DB}（防误连）`);
 const runtimeArg = process.argv[3];
-const runtimeUrl = runtimeArg === undefined ? null : new URL(runtimeArg);
+/** 调用方显式给出的运行时 URL（只用于「给了就必须自洽」的断言）；省略时为 null。 */
+const providedRuntimeUrl = runtimeArg === undefined ? null : new URL(runtimeArg);
+/**
+ * 运行时角色的连接 URL。**不再**只来自 argv[3]：
+ *   - 给了 argv[3] ⇒ 沿用该 URL，口令取 `decodeURIComponent(url.password)`；
+ *   - 省略 argv[3] ⇒ 由 `provisionRoles()` 生成口令、建角色、再**派生** URL。
+ * 两条路径都保证「建/改角色用的口令」≡「后续 `leastPrivilege()`／`httpEvidence()`／
+ * `concurrencyAndInjection()` 连接用的口令」⇒ scram-sha-256 下自洽。
+ */
+let runtimeUrl = providedRuntimeUrl;
 if (runtimeUrl !== null) {
   assert.equal(runtimeUrl.hostname, '127.0.0.1', '运行时 URL 也只允许回环地址');
   assert.equal(runtimeUrl.pathname, `/${DB}`, '运行时 URL 必须连同一个硬钉库');
@@ -66,6 +77,12 @@ function note(line) {
   console.log(line);
 }
 const unread = (label, why) => note(`未取得 ${label}：${why}`);
+/**
+ * 「读数已取得」台账：**每个手臂只有真跑完并留下读数**时才登记。末行 ALL PASS 要求
+ * `REQUIRED_ARMS` 全部在册，防止「删掉一次调用／提前 return」被静默洗成绿。
+ */
+const taken = new Set();
+const REQUIRED_ARMS = ['M', 'P', 'A-D', 'E-F'];
 
 const readSql = (rel) => readFileSync(new URL(`../../services/api/db/${rel}`, import.meta.url), 'utf8');
 const deploySql = (name) => readFileSync(new URL(`../../deploy/postgres-cvm/sql/${name}`, import.meta.url), 'utf8');
@@ -147,6 +164,7 @@ async function migrationTriple() {
   state = await objects();
   assert.ok(state.suspend && state.restore && state.audit && state.trigger === 1, 'REPLAY 后必须完整恢复');
   note('[M] REPLAY：对象与触发器再次全部出现（迁移可重放）');
+  taken.add('M');
 }
 
 /** 本脚本会创建的角色名（全部是出厂文件里的固定名字；只在这个一次性集群里出现）。 */
@@ -176,7 +194,31 @@ async function provisionRoles() {
   for (const file of ['auth_privacy', 'catalog_readers', 'consent_granter', 'profile_runtime', 'knowledge_runtime']) {
     await owner.query(readSql(`roles/${file}.sql`));
   }
-  await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${randomBytes(24).toString('hex')}'`);
+  // 角色口令：给了 argv[3] 就沿用 URL 里的（本地一次性集群、仅回环），否则本脚本自生成。
+  // 关键是**同一个**变量既写进 `CREATE/ALTER ROLE` 又喂给后面的连接 URL ⇒ scram 下不会对不上
+  // （旧版在这里 `randomBytes(24)` 建角色、却让调用方用 argv[3] 的另一个口令连 ⇒ 必 28P01）。
+  const runtimePassword =
+    providedRuntimeUrl === null ? randomBytes(24).toString('hex') : decodeURIComponent(providedRuntimeUrl.password);
+  assert.ok(runtimePassword.length > 0, '运行时 URL 必须带口令（scram 集群上没有口令必然 28P01）');
+  // SQL 字面量里单引号必须双写（照 admin-accounts-read-pg.mjs 的同款转义）。
+  const runtimePasswordSql = runtimePassword.replace(/'/g, "''");
+  const existing = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [RUNTIME_ROLE]);
+  if (existing.rowCount === 0) {
+    await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePasswordSql}'`);
+  } else {
+    // `resetRoles()` 已经尽力删过：走到这里说明该角色被**别的数据库**的对象依赖 ⇒ 删不掉，也不能删；
+    // 只重置口令复用，保证本脚本连跑幂等（与 admin-flags-pg.mjs 的 provisionRoles 同范式）。
+    await owner.query(`ALTER ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePasswordSql}'`);
+    note(`[P] 复用已存在的运行时角色 ${RUNTIME_ROLE}（跨库依赖使其不可 DROP；非本轮残留）`);
+  }
+  if (providedRuntimeUrl === null) {
+    // 由 owner URL 派生：同 host/port/库名，只换用户名与口令 ⇒ 与「库名硬钉」断言天然一致。
+    const derived = new URL(ownerUrl.href);
+    derived.username = RUNTIME_ROLE;
+    derived.password = runtimePassword;
+    runtimeUrl = derived;
+    note(`[P] 未给 argv[3] ⇒ 本脚本自建角色并派生运行时 URL（用户 ${RUNTIME_ROLE}，口令 ${runtimePassword.length} 位，不打印）`);
+  }
   await owner.query(
     `GRANT gengyun_auth_privacy, gengyun_preview_reader, gengyun_consent_granter,
            gengyun_profile_runtime, gengyun_knowledge_runtime TO ${RUNTIME_ROLE}`,
@@ -219,6 +261,7 @@ async function leastPrivilege() {
   // 不算越权；这里只记录它仍然可用，避免把"授权的幂等重复"误读成"权限收紧"。
   note('[P] 运行时角色 6 条直接写入/读取/DDL 全部 42501（users.state/auth_epoch/revision、审计台账读写、DDL）');
   await client.end();
+  taken.add('P');
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +401,7 @@ async function httpEvidence() {
   assert.equal(auditRows.length, 2, `A–D 应恰好两条审计（suspend + restore），实际 ${auditRows.length}`);
   note(`[A–D] 审计台账：${auditRows.map((r) => `${r.action}/${r.reason_code}/${r.result}`).join(' , ')}`);
   await runtimePool.end();
+  taken.add('A-D');
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +479,7 @@ async function concurrencyAndInjection() {
     `[F] 第 4 步（写审计，23505）失败 ⇒ ${injectCode}；state/auth_epoch/revision 逐字未变 ${JSON.stringify(after)}；已撤会话 ${beforeRevoked.c}→${afterRevoked.c}；审计 0 行`,
   );
   await runtimePool.end();
+  taken.add('E-F');
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +537,7 @@ try {
   await migrationTriple();
   await provisionRoles();
   if (runtimeUrl !== null) await leastPrivilege();
-  else unread('[P] 最小权限反向控制', '未提供运行时角色 URL（argv[3]）');
+  else unread('[P] 最小权限反向控制', '运行时角色 URL 未派生（provisionRoles 未产出角色）');
   await httpEvidence();
   await concurrencyAndInjection();
   await leastPrivilegeVerdict();
@@ -503,28 +548,29 @@ try {
   await cleanup();
 }
 const unreadNotes = notes.filter((line) => line.startsWith('未取得 '));
+const missingArms = REQUIRED_ARMS.filter((arm) => !taken.has(arm));
 
-// 结论行**只**在「运行时 URL 已提供 ＋ 零 `未取得` ＋ 零失败」时才允许是 ALL PASS。
-// 省略 argv[3]（第二个连接串）是本文件头部已声明的支持跑法 ⇒ 此时只有库侧 [M] 为真，[P]/[A]–[F] 一律未取得
-// ⇒ 必须打印 `PARTIAL` 且**非零退出**：⛔ 不得把「跳过／未取得」洗成「通过」（旧版在缺参时
-// 仍无条件打印 ALL PASS 并 exit 0，属假绿结论行）。
+// 结论行**只**在「每个手臂都留下真库读数（`taken` 齐全）＋ 零 `未取得` ＋ 零失败」时才允许是
+// ALL PASS：⛔ 不得把「跳过／未取得／少跑一个调用」洗成「通过」。缺 argv[3] 不再是「少跑」的理由
+// （本版自己建角色并派生 URL）；真有段取不到，仍然逐条 `未取得 …` ＋ 非零退出。
 if (failure !== null) {
   // 读数未全部通过：逐条列出未取得项，并把首个失败写到末行，非零退出（throw ⇒ exit 1）。
   for (const line of unreadNotes) console.error(`未取得项：${line}`);
   note(
     runtimeUrl === null
-      ? `FAIL：未提供运行时角色 URL（argv[3]）且库侧读数未通过 —— 首个失败：${String(failure.message).slice(0, 300)}`
+      ? `FAIL：运行时角色 URL 未派生且库侧读数未通过 —— 首个失败：${String(failure.message).slice(0, 300)}`
       : `FAIL：有运行时 URL 但读数未全部通过 —— 首个失败：${String(failure.message).slice(0, 300)}`,
   );
   throw failure;
 }
-if (runtimeUrl === null || unreadNotes.length > 0) {
-  note(
+if (runtimeUrl === null || unreadNotes.length > 0 || missingArms.length > 0) {
+  const partial =
     runtimeUrl === null
-      ? 'PARTIAL：未取得真库读数 —— 未提供运行时角色 URL（argv[3]），仅库侧 [M] 为真；[P]/[A]–[F] 未取得'
-      : `PARTIAL：未取得全部真库读数 —— 仍有 ${unreadNotes.length} 条未取得`,
-  );
+      ? 'PARTIAL：未取得真库读数 —— 运行时角色 URL 未派生，仅库侧 [M] 为真；[P]/[A]–[F] 未取得'
+      : `PARTIAL：未取得全部真库读数 —— 仍有 ${unreadNotes.length} 条未取得`;
+  note(missingArms.length > 0 ? `${partial}（未登记手臂：${missingArms.join('/')}）` : partial);
   for (const line of unreadNotes) console.error(`未取得项：${line}`);
+  if (missingArms.length > 0) console.error(`未取得手臂：${missingArms.join(',')}`);
   process.exitCode = 2;
 } else {
   note('ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数');
