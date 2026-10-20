@@ -90,6 +90,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run test:contract
+      - run: node tools/verify-contract-status.mjs
 
   evaluation:
     name: evaluation-tests

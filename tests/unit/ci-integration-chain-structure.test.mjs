@@ -170,8 +170,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/ocr-jobs-pg.mjs',
     reason: '需真实 PG 17.11（硬钉库名 `gengyun_ocr_jobs_test`；未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
-      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：**本片仅落地脚本，CI 接线留后续片**'
-      + '（既未接进 `test:integration:http` 这条无 PG 的回环链，也未新增/修改任何 workflow），故在此如实登记为未接线。',
+      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：R28-S17 已把它接进'
+      + ' `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job（`postgres:17.11` service）里'
+      + '一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_ocr_jobs_test` 空库）；它**不进**无 PG 的回环链——'
+      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/profile-ui-fixture.mjs',
@@ -183,6 +185,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '未设置时**显式打印 SKIP 并以 77 退出**（未取得，不静默绿；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 可显式取 0）。'
       + '合流后按 #312「跳过即未取得」的判据，它不进无 PG 的回环链（挂进去只会让整链显式失败），'
       + '由 `npm run test:integration:recognition-chain-pg` 带 env 运行。',
+  },
+  {
+    path: 'tests/integration/recognitions-pg.mjs',
+    reason: '需真实 PG 17.11（硬钉库名 `gengyun_recognitions_test`；未配置 `RECOGNITIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
+      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：**本片仅落地脚本，CI 接线留后续片**'
+      + '（既未接进 `test:integration:http` 这条无 PG 的回环链，也未新增/修改任何 workflow），故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/source-lifecycle-pg.mjs',

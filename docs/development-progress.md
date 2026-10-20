@@ -76,6 +76,76 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 本节不含任何真机、真实供应商、渲染或部署实测，只复用仓内文档与代码行号并重跑了一条门禁命令；未重跑业务测试、PG 集成与微信工具。数值按 2026-10-18 当日读数（基线 `8205cfc`，rebase 后重测），后续合入会变，更新时另起快照、不改本节。
 
+## 2026-10-20 快照
+
+核对日期 2026-10-20（UTC+8）。基线 `main` = `4122976`（`412297636141562653ecbaa6b3fbbfecb05ecdd4`，提交时间 2026-10-20 12:11:28 +0000，即 #327 的 squash 提交）：自 `8205cfc` 起共 42 个提交（`git rev-list --count 8205cfc..4122976`=42）。本节取代「2026-10-18 快照」里按 `8205cfc` 计数的读数；10-18 节原文（含其计数表、在飞 PR 表与逐 issue 判定）按要求原样保留以便追溯，文首「核对日期 2026-10-14」段与 `## 2026-10-11 跟进快照` 同属各自日期读数，一并保留，不再作为当前读数引用。
+
+### 计数（`gh` 实测，命令均带 `-R GengYunChuChao/GengYun`）
+
+| 口径 | 读数 | 命令 |
+| --- | --- | --- |
+| 开放 issue | 24 | `gh issue list --state open --limit 200 --json number` |
+| 已关闭 issue | 3（#1、#2、#3） | `gh issue list --state closed --limit 200 --json number,title` |
+| 累计合入 PR | 242 | `gh api "search/issues?q=repo:GengYunChuChao/GengYun+type:pr+is:merged" --jq .total_count` |
+| 在飞 PR | 2（#324 草稿、#328 非草稿，`mergeable` 均为 `MERGEABLE`；2026-10-20T12:14Z 实测） | `gh pr list --state open --limit 200 --json number,title,isDraft,mergeable` |
+
+#3 于 2026-10-19 以 `COMPLETED` 关闭（`gh issue view 3 --json closedAt,stateReason` 读数 `2026-10-19T02:42:16Z`／`COMPLETED`），即指挥建议的「可关，附披露」口径落地；#1、#2 更早关闭。整项完成数 3／27，其余 24 项 OPEN。#323／#325／#326 的合入未改变整项完成数：OCR 仍缺 real 提供者与真实标签评估（#10），#325 是文档订正、#326 是测试判据、#327 只改 CI 接线与测试、#328 是台账订正（未合入），均不构成整项 AC 达成；不为让数字好看改判。
+
+### 契约门禁（本机重跑 `node tools/verify-contract-status.mjs`，退出码 0）
+
+原样输出：
+
+- 「PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项」
+- 「PASS: 语义可核 59 条区间 + 0 条片段；不可核 134 条区间 + 131 条片段（不可核不计入通过）」
+- 「PASS: 中文表格一致」
+- 「PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。」
+
+与 10-18 节读数（112／108／implemented 13／partial 95／planned 4）逐项相同：本区间合入的 #295～#296、#320～#322、#323 提供的是 PG 持久化与取消能力，未把任何条目从 partial 升级为 implemented；#325 只订正文案、#326 只改测试。另按 JSON 原文统计复核：`node -e "…JSON.parse(contract-status.json)…"` 得 `operations 112 {"partial":95,"implemented":13,"planned":4}`，与门禁读数一致。装配数与状态只说明路由是否挂上、人工判定为何，不代表真实能力或整项验收。
+
+### 台账滞后（已知滞后）：#325 订正 16 处，其余未随 main 更新
+
+`#325` 于 2026-10-20T12:03:58Z 合入（`f18763e`），已订正取消覆盖面与消息持久化，`git show f18763e --unified=0 -- docs/architecture/contract-status.json` 实测 **16 个 hunk**：`:614`／`:639`（取消按 kind 分派、转写与合成已接 cancel）、`:871`／`:891`／`:911`／`:931`／`:951`（OCR 五端点，取消证据行号 `services/api/src/jobs/sources.ts:169-186` → `:208`）、`:971`／`:991`／`:1011`／`:1031`（转写四端点）、`:1051`（`createSynthesis` 取消已接线）、`:1771`／`:1792`／`:1813`（`listMessages`／`getUnreadCount`／`markMessageRead` 改为「real + 池 ⇒ 迁移 0019 与 `messages/store-pg.ts`，real 无池才 503」）、`:3086`（共享作业面 blocker 的取消覆盖面：由「识别与 OCR 两域」改为「识别、转写、合成与 OCR 四域」并列 `sources.ts:65`／`:107`／`:153`／`:208`），状态全部仍 partial、零升级（共 16 处；同一提交对 `docs/architecture/contract-implementation-status.md` 的改动为 `git show --numstat` 的 18/18，落 6 个 hunk：`:17`／`:19`／`:40`／`:70`／`:80`／`:118`）。以下记录仅作追溯；仍存滞后的 4 条逐行列出，本快照不采用其结论，也不在本次改台账。
+
+- 【仍滞后】`:419`（`requestAccountDeletion`）只写「本片只交付受理 HTTP 面」与「真实删除执行仍在进程内注册表」，未列 `0023_user_backup_copies.sql` 与 `services/api/src/privacy/backup-copies-pg.ts`（随 #295 合入）的备份副本域与 30 天清除链 ⇒ 台账未反映该域；仍缺 7／30 日到期的真实执行与第三方删除证据。
+- 【已订正】`:971`（`createTranscription`）「取消未接线」已由 #325 订正（转写取消随 #321 接线，`services/api/src/jobs/sources.ts:107`）；`:1051`（`createSynthesis`）同理（随 #322，`services/api/src/jobs/sources.ts:153`）。
+- 【仍滞后】`:1261`（`listPosts`／`createPost`）仍称「真实持久存储未交付」——社区已接 PG（迁移 `0022_community_persistence.sql` 随 #296 合入，`services/api/src/community/store-pg.ts:346`，装配 `services/api/src/app.ts:780`）；#325 未覆盖社区，此行仍滞后。
+- 【已订正】`:1771`（`listMessages`）「real 未接持久存储」已由 #325 订正为「real + 池 ⇒ 迁移 0019 与 `messages/store-pg.ts`，real 无池才整域 503」；本节保留该更正记录。
+- 【仍滞后】`:1842`（`listAdminSources`）与 `listAdminUsers`（`:2578-2604`）仍写「真实存储……待完成」——后台路由确已装配（`services/api/src/routes/admin.ts:172-174`）；`#282`（0020 feature_flags）与 `#279`（0021 后台账号读面接真实 `users` 投影）已合入，真实读数仍未复测，故本条只记滞后、不改判。
+- 【仍滞后】`:861`（`createOCR`）仍只写「真实标签评估与持久/删除链待验收」——`#323` 已把 OCR 任务与记录接入 PG（迁移 `0024_ocr_persistence.sql`、`services/api/src/ocr/store-pg.ts:359`、装配 `services/api/src/routes/ocr.ts:196`），台账未反映该持久化；`tests/integration/ocr-jobs-pg.mjs` 已在主干但仍无 workflow 运行（`git grep -n ocr-jobs-pg -- .github/workflows` 零命中；#327 只接入了 account-deletion／admin-accounts-read／admin-flags 三条，`real-pg-integration.yml` 现有 7 条真库脚本、`MANAGED_SCRIPTS` 7 条）。
+
+### 在飞 PR（2 条）
+
+本轮核对期间在飞数先由 4 增至 5（#327 于 2026-10-20T11:59:43Z 新建、#324 转草稿），再因 #323／#325／#326 合入降到 2 条；随后 #327 于 12:11:28Z 合入、#328 于 12:13:20Z 新建（仍 2 条）；下表以 2026-10-20T12:14Z 的最后一次实测为准。
+
+| PR | 内容 | 迁移 | 可合并性 |
+| --- | --- | --- | --- |
+| #324 | 原生文字提问页与识别入口（#12／#28 页面，仍为草稿，未合入） | 无 | MERGEABLE（草稿） |
+| #328 | 台账跟随订正：#325 遗留的 13 处过期行号与「未接作业源」失实表述（只动台账，未合入前不记作事实） | 无 | MERGEABLE |
+
+本轮已合入、不在上表：#278（0019 消息 PG）、#282（0020 feature_flags）、#279（0021 后台账号读面）、#296（0022 社区 PG）、#295（0023 备份副本域）、#320（#6 S3 兼容适配器真实代码路径测试）、#321～#322（转写／合成取消接线）、#323（0024 OCR 持久化，2026-10-20T12:05:48Z）、#325（台账订正，12:03:58Z）、#326（手机号判据，12:05:32Z）、#327（真库门禁第三批，12:11:28Z；`real-pg-integration.yml` 扩到 7 条真库脚本、`MANAGED_SCRIPTS` 7 条）。#248（#11 客户端切片）已于 2026-10-19 关闭、**未合入**，其内容不进 main。`main` 现有 24 个迁移、最大号 `0024_ocr_persistence.sql`。
+
+仍未接 CI 的 `-pg` 脚本（`git grep -n <name> -- .github/workflows` 均零命中）：`account-suspend-pg.mjs`（脚本自身缺陷，SCRAM 口令 28P01／角色已存在 42710，待 s16 修）、`backup-purge-pg.mjs`（需服务端 `initdb` 自起第二集群，CI 的 runner 与容器不共享该二进制）、`ocr-jobs-pg.mjs`（#323 新增，尚未接线）。
+
+旧段登记的 `#282` 启动探测 fail-open 已随其合并修掉：现行装配走三态探测 `probeFeatureFlagsTable`（`services/api/src/admin/ops/flags-pg.ts:299-303`），`services/api/src/admin/ops/flag-gate.ts:425-430` 与 `:464-466` 只在 `missing`（确认未安装）时降级未武装，`unknown`（探测异常）保持武装并在下次判前重探；据此不再把该缺陷列为在飞阻塞。未合入 PR 的结论仍不当作既成事实。
+
+### 逐 issue 判定（两层口径，与 README「当前进度（2026-10-20）」表一致）
+
+- **AC 判定层面**：`docs/verification/gy-issue-closure-index-20261018.md` 已随 [PR #284](https://github.com/GengYunChuChao/GengYun/pull/284) 于 2026-10-19 合入 main（索引生成于基线 `5250520`，本快照基线 `4122976`；合并版已按 r2 更正作废 #7／#8 的旧「可关」）。合并版分布：可关 **0**、待前置 **7**（#4、#7、#8、#16、#17、#22、#27）、待裁 **1**（#3，附指挥裁定建议「可关」）、不可关 **5**（#19、#20、#21、#23、#24）；其余 12 项（#5、#6、#9、#10、#11、#12、#13、#14、#15、#18、#28、#29）未纳入索引。索引条目不随 main 前进自动更新，只作条款级线索。
+- **#3 已关闭**：2026-10-19 按「可关，附披露」以 `COMPLETED` 关闭；关闭的是资料清单与适配层可交付，不等于 20 条资料逐字段复核（0 份）、许可（全 `false`）或云库／受控 HTTPS／正式 real／双手机真机已取得，工程缺口如实保留。
+- **#22** 的两个已登记发现经裁定不属「严重安全／权限缺陷」；读面已随 #279 接真实 `users` 投影，真实读数仍未复测（本机无库），故 AC 判定仍记待前置。
+- **关闭动作**：本轮只做文档同步，不关闭任何 issue；工程侧缺口（#6 真实对象存储适配器、#9／#12／#13／#14 服务侧 real 提供者）仍按 partial 保留；#10 的 PG 持久化已随 #323 合入，但真实提供者与真实标签评估仍缺，故 #10 仍 partial。
+
+### 仍未取得的主干（不分整项口径）
+
+- 真机：#23 的双平台真机与时延容量、#4 的真机微信身份、#5 的授权弹窗与坐标→地区转换、#16 的真机页面证据、#28 的开发者工具／真机渲染与截图（`docs/verification/platform-checklist.md:40`、`:48-49`；`docs/verification/gy-i05-region-profile-20261014.md:23-25`；`docs/verification/gy-i28-demo-parity-20261018.md:177-179`）。
+- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:968` 注释「应用装配路径永不注入真实适配器端口」；台账 `docs/architecture/contract-status.json:777`、`:861`、`:1041`、`:1061`）。#10 的 PG 持久化已随 #323 合入，但不改变本类缺口的性质。
+- 样本签核：#20 的独立复核与许可（`packages/evaluation/samples/gy-i20-weeds-labels.json:18` 的 `reviewedBy` 为 `null`）、#21 的真实能力评估（`docs/evaluation/README.md:20-21`）。
+- 部署：#24 的实际部署与 CVM 侧恢复演练、#27 的合法域名与生产环境变量（`docs/verification/platform-checklist.md:24`；`docs/verification/gy-i27-live-ai-20261018.md:110` 记 `verify-env.mjs` 两项 FAIL：生产 API HTTPS URL、数据库连接变量）。
+
+### 本节边界
+
+本节只重跑了 `node tools/verify-contract-status.mjs` 一条门禁并核对了仓内文件与行号，未重跑业务测试、PG 集成、微信工具或真实供应商调用；`gh` 计数为 2026-10-20T12:14Z 读数（当日在飞数 4→5→2→2：新增 #327／#328，合入 #323／#325／#326／#327），后续合入会变，更新时另起快照、不改本节。
+
 ## 本轮合并与返修状态
 
 | PR | 已确认合并提交 | 当前含义 |
