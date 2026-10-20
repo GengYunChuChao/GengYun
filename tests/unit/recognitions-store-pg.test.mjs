@@ -618,6 +618,101 @@ test('completeIdempotent / releaseIdempotent / purgeIdempotent：回执 upsert�
   assert.equal(await makeDb([[]]).store.purgeIdempotent(T0), 0);
 });
 
+test('SQL 层 CAS 与幂等过期谓词锚点：四个写方法逐条点名 + 过期重占两个子句（变异防线）', async () => {
+  // 为什么单独一条：真库臂的「过期 revision ⇒ null」首先被**应用层预检**挡住（快照 revision 与入参不等
+  // ⇒ 根本不发 UPDATE），所以把 SQL 里的 `AND revision = $2` 删掉，那条臂照样绿。这里逐条把
+  // 发出去的 UPDATE 文本钉死，去掉任何一个 CAS 谓词都必须在这里红。
+  const CAS_CLAUSE = 'AND revision = $2';
+  const casHint = (method, table) =>
+    `[${method}] 这条 SQL 的 CAS 谓词被去掉了：UPDATE ${table} 必须带 "${CAS_CLAUSE}"` +
+    '（判定权必须留在数据库；应用层预检遮不住并发写，缺谓词会静默覆盖他人写入）';
+
+  const job = makeDb([[JOB_DB_ROW], [{ ...JOB_DB_ROW, revision: 3, updated_at: T2 }]]);
+  await job.store.updateJob(JOB_ID, 2, (row) => ({ ...row, revision: row.revision + 1, updatedAt: T2 }));
+  const jobUpdate = job.sqls().find((sql) => /^UPDATE public\.recognition_jobs/.test(sql));
+  assert.ok(jobUpdate, '[updateJob] 必须发出一条 UPDATE public.recognition_jobs');
+  assert.ok(jobUpdate.includes(CAS_CLAUSE), casHint('updateJob', 'public.recognition_jobs'));
+
+  const recognition = makeDb([
+    [RECOGNITION_DB_ROW],
+    [{ ...RECOGNITION_DB_ROW, revision: 2, updated_at: T2 }],
+  ]);
+  await recognition.store.updateRecognition(RECOGNITION_ID, 1, (row) => ({
+    ...row,
+    revision: row.revision + 1,
+    updatedAt: T2,
+  }));
+  const recognitionUpdate = recognition
+    .sqls()
+    .find((sql) => /^UPDATE public\.recognition_records/.test(sql));
+  assert.ok(recognitionUpdate, '[updateRecognition] 必须发出一条 UPDATE public.recognition_records');
+  assert.ok(
+    recognitionUpdate.includes(CAS_CLAUSE),
+    casHint('updateRecognition', 'public.recognition_records'),
+  );
+
+  const terminal = makeDb([
+    [JOB_DB_ROW],
+    [],
+    [{ ...JOB_DB_ROW, revision: 3, state: 'succeeded', updated_at: T2 }],
+  ]);
+  await terminal.store.commitTerminal(JOB_ID, 2, { state: 'succeeded', errorCode: null }, null, T2);
+  const terminalUpdate = terminal
+    .sqls()
+    .find((sql) => /^\s*UPDATE public\.recognition_jobs/.test(sql));
+  assert.ok(terminalUpdate, '[commitTerminal] 必须发出一条 UPDATE public.recognition_jobs');
+  assert.ok(terminalUpdate.includes(CAS_CLAUSE), casHint('commitTerminal', 'public.recognition_jobs'));
+
+  const selection = makeDb([
+    [RECOGNITION_DB_ROW],
+    [SELECTION_DB_ROW],
+    [{ ...RECOGNITION_DB_ROW, revision: 2, selected_species_id: 'spp-echinochloa', updated_at: T2 }],
+  ]);
+  await selection.store.commitSelection(
+    RECOGNITION_ID,
+    1,
+    (row) => ({ ...row, revision: row.revision + 1, selectedSpeciesId: 'spp-echinochloa', updatedAt: T2 }),
+    {
+      id: SELECTION_ID,
+      revision: 1,
+      recognitionId: RECOGNITION_ID,
+      ownerUserId: OWNER,
+      speciesId: 'spp-echinochloa',
+      provenance: 'human',
+      decidedAt: T2,
+      linkage: LINKAGE,
+    },
+  );
+  const selectionUpdate = selection
+    .sqls()
+    .find((sql) => /^UPDATE public\.recognition_records/.test(sql));
+  assert.ok(selectionUpdate, '[commitSelection] 必须发出一条 UPDATE public.recognition_records');
+  assert.ok(
+    selectionUpdate.includes(CAS_CLAUSE),
+    casHint('commitSelection', 'public.recognition_records'),
+  );
+
+  // 幂等：过期行的「可被覆盖」判定（WHERE）与「覆盖后刷新到期时间」（SET … = EXCLUDED.…）各一条。
+  const claim = makeDb([[{ scope: 'recognitions.create' }]]);
+  await claim.store.claimIdempotent('recognitions.create', 'key-a', {
+    requestHash: 'hash-a',
+    expiresAt: T1,
+    now: T0,
+  });
+  const claimSql = claim.sqls()[0];
+  assert.ok(
+    claimSql.includes('expires_at = EXCLUDED.expires_at'),
+    '[claimIdempotent] 这条 SQL 的「覆盖后刷新到期时间」被去掉了：DO UPDATE 必须带 ' +
+      '"expires_at = EXCLUDED.expires_at"（否则重占的行会带着旧到期时间，下一轮又立刻"过期"）',
+  );
+  assert.ok(
+    claimSql.includes('public.recognition_idempotency.expires_at <= $5::timestamptz'),
+    '[claimIdempotent] 这条 SQL 的过期闸门被去掉了（或改成恒真/恒假）：ON CONFLICT 必须带 ' +
+      '"WHERE public.recognition_idempotency.expires_at <= $5::timestamptz"，' +
+      '未过期的占位绝不能被第二个请求覆盖',
+  );
+});
+
 test('就绪探测：确定结论只探一次；读类不因缓存缺失重复探测', async () => {
   const db = makeDb([[JOB_DB_ROW], []]);
   await db.store.getJob(JOB_ID);
