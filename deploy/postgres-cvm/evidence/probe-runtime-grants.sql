@@ -439,4 +439,98 @@ RESET ROLE;
 
 \echo '-- [5] 收藏／历史／对话域探针结束（失败行会以 ERROR: 42501 … 出现，成功行无输出）'
 
+-- ---------------------------------------------------------------------------
+-- 6) R28-S28 识别域（迁移 0025）四表的零行探针
+--    改前（c06d232）：运行时对这四表整表零权限，下面每条正向语句都会 42501；
+--    改后（段 J）：正向语句必须逐条通过，末尾「禁止面」四条必须仍然 42501。
+--    ⛔ 正向语句全部零行：SELECT … WHERE false / INSERT … SELECT … WHERE false /
+--       UPDATE … WHERE false / DELETE … WHERE false。
+--       真行探针（CHECK、外键、真冲突的 ON CONFLICT）在 90-assert 的 R28-S28 段里，
+--       这里只回答「运行时身份下这些形状能不能跑」，不往库里写任何一行。
+-- ---------------------------------------------------------------------------
+SET ROLE gengyun_api_runtime;
+
+\echo '-- [6] 识别域的零行探针（R28-S28，迁移 0025）'
+
+\echo '-- [recognition_jobs] SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / FOR UPDATE（无 DELETE：只由注销级联）'
+SELECT id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+       state, deadline_at, created_at, updated_at, error_code
+  FROM public.recognition_jobs WHERE false;
+INSERT INTO public.recognition_jobs (id, revision, kind, owner_user_id, recognition_id,
+                                     media_id, media_revision, state, deadline_at,
+                                     created_at, updated_at, error_code)
+SELECT gen_random_uuid(), 1, 'recognition', gen_random_uuid(), gen_random_uuid(),
+       gen_random_uuid(), 1, 'queued', now(), now(), now(), NULL WHERE false
+RETURNING id;
+UPDATE public.recognition_jobs
+   SET revision = revision + 1, state = 'succeeded', deadline_at = deadline_at,
+       updated_at = now(), error_code = NULL
+ WHERE false AND revision = 1
+RETURNING id;
+SELECT id FROM public.recognition_jobs WHERE false FOR UPDATE;
+
+\echo '-- [recognition_records] SELECT 12 列 / INSERT 12 列 / UPDATE 7 列 / FOR UPDATE（无 DELETE）'
+SELECT id, revision, owner_user_id, media_id, media_revision, candidates,
+       uncertainty_reasons, selected_species_id, model_version, created_at, updated_at, deleted
+  FROM public.recognition_records WHERE false;
+INSERT INTO public.recognition_records (id, revision, owner_user_id, media_id, media_revision,
+                                        candidates, uncertainty_reasons, selected_species_id,
+                                        model_version, created_at, updated_at, deleted)
+SELECT gen_random_uuid(), 1, gen_random_uuid(), gen_random_uuid(), 1,
+       '[]'::jsonb, '[]'::jsonb, NULL, 'probe', now(), now(), false WHERE false
+RETURNING id;
+UPDATE public.recognition_records
+   SET revision = revision + 1, candidates = candidates,
+       uncertainty_reasons = uncertainty_reasons, selected_species_id = NULL,
+       model_version = model_version, updated_at = now(), deleted = false
+ WHERE false AND revision = 1
+RETURNING id;
+SELECT id FROM public.recognition_records WHERE false FOR UPDATE;
+
+\echo '-- [recognition_selections] SELECT 8 列 / INSERT 8 列（追加型、无 UPDATE；故 FOR UPDATE 属于禁止面）'
+SELECT id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at, linkage
+  FROM public.recognition_selections WHERE false;
+INSERT INTO public.recognition_selections (id, revision, recognition_id, owner_user_id,
+                                           species_id, provenance, decided_at, linkage)
+SELECT gen_random_uuid(), 1, gen_random_uuid(), gen_random_uuid(),
+       'probe', 'human', now(), '{}'::jsonb WHERE false
+RETURNING id;
+
+\echo '-- [recognition_idempotency] SELECT 4 列 / claim 与 complete 的 ON CONFLICT DO UPDATE / release 与 purge 两条 DELETE'
+SELECT request_hash, payload, pending, expires_at
+  FROM public.recognition_idempotency WHERE false;
+INSERT INTO public.recognition_idempotency (scope, key_hash, request_hash, payload, pending, expires_at)
+SELECT 'probe', 'probe', 'probe', '{}'::jsonb, true, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       payload = EXCLUDED.payload,
+       pending = EXCLUDED.pending,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.recognition_idempotency.expires_at <= now()
+RETURNING scope;
+INSERT INTO public.recognition_idempotency (scope, key_hash, request_hash, payload, pending, expires_at)
+SELECT 'probe', 'probe', 'probe', '{}'::jsonb, false, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       payload = EXCLUDED.payload,
+       pending = EXCLUDED.pending,
+       expires_at = EXCLUDED.expires_at;
+DELETE FROM public.recognition_idempotency
+ WHERE false AND pending
+RETURNING scope;
+DELETE FROM public.recognition_idempotency
+ WHERE false AND expires_at <= now()
+RETURNING scope;
+
+\echo '-- 以下是禁止面：四表 DELETE 与 selections 的 FOR UPDATE 必须全部 42501'
+\echo '--   （DELETE 只由 request_account_deletion() 以属主身份级联；selections 不授 UPDATE）'
+DELETE FROM public.recognition_jobs WHERE false RETURNING id;
+DELETE FROM public.recognition_records WHERE false RETURNING id;
+DELETE FROM public.recognition_selections WHERE false RETURNING id;
+SELECT id FROM public.recognition_selections WHERE false FOR UPDATE;
+
+RESET ROLE;
+
+\echo '-- [6] 识别域探针结束（正向行成功即无输出；上面四条禁止面各应有一行 ERROR: 42501 …）'
+
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'
