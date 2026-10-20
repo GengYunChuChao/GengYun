@@ -39,13 +39,21 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
 /**
  * 受管脚本清单：这几条**只能**用真库证明（没有替身臂可以替代），故必须被某个 workflow 真跑。
  * 增删任何一条＝放宽或收紧门禁，必须同时改 `FROZEN_MANAGED_SCRIPTS` 并更新证据页——刻意留 diff。
- * 前两条是 #314 接的（会话链／社区域），后两条是 R27-S4 接的（消息域／收藏历史，同一条 workflow）。
+ * 前两条是 #314 接的（会话链／社区域），中间两条是 R27-S4 接的（消息域／收藏历史，同一条 workflow），
+ * 后三条是 R28-S14 接的（账号注销／后台账号读取／全局开关，同一条 workflow）。
+ * R28-S14 的另两条候选（`account-suspend-pg`／`backup-purge-pg`）**没有**进这份清单：
+ * 前者在 scram 认证下必 `28P01`（运行时角色口令是自己 `randomBytes(24)` 生成的，与 argv[3] 无关），
+ * 后者要求在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
+ * `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
+  'tests/integration/account-deletion-pg.mjs',
+  'tests/integration/admin-accounts-read-pg.mjs',
+  'tests/integration/admin-flags-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -53,6 +61,9 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/community-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
+  'tests/integration/account-deletion-pg.mjs',
+  'tests/integration/admin-accounts-read-pg.mjs',
+  'tests/integration/admin-flags-pg.mjs',
 ]);
 
 /**

@@ -67,26 +67,34 @@ const FROZEN_CHAIN = Object.freeze([
 const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/account-deletion-pg.mjs',
-    reason: '需真实 PG 且硬钉库名 `gengyun_deletion_test`（本机原生 PG 隔离集群，仅回环端口）；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_deletion_test`（脚本自己断言 hostname=127.0.0.1、'
+      + 'pathname=/gengyun_deletion_test、public 下无表）：自建 5 组角色 + 运行时 LOGIN，口令在脚本内'
+      + ' `randomBytes(24)` 生成**并写进它自己用的运行时 URL**（scram 下自洽），收尾逐个 DROP 且复核为空；'
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/account-suspend-pg.mjs',
-    reason: '需真实 PG 17.11 隔离集群且必须传两个连接串参数（管理员 URL + 运行时角色 URL）：'
-      + '本片用它取迁移三连／最小权限／A–F／失败注入回滚的真库读数；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '**脚本缺陷 ⇒ R28-S14 判定不接线**：`account-suspend-pg.mjs:179` 用 `randomBytes(24)` 生成'
+      + '运行时角色口令、与 argv[3] 的 URL 口令无关 ⇒ `postgres:17.11`（host 连接默认 scram 认证）下'
+      + '**必 `28P01`**（本机 scram 集群实测：首个失败读数 `password authentication failed for user '
+      + '"gengyun_api_runtime"`、exit=1）；另外 `provisionRoles` 的 `CREATE ROLE` 无条件执行，'
+      + '跨 step 已存在同名角色时 `42710`。修法见 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`；'
+      + '⛔ 不得为让它变绿放宽断言或加跳过，故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/admin-accounts-read-pg.mjs',
-    reason: '需真实 PG 17.11 隔离集群且必须传运行时角色 URL：本片用它取迁移三连／最小权限反向控制／'
-      + '真实模式 HTTP（三态账号、NULL/空白 nickname、游标翻页、两条负控制）的真库读数；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_accounts_read_test`：运行时角色的口令由脚本'
+      + '**从 argv[3] 的 URL 解出来**再 `CREATE ROLE`（`admin-accounts-read-pg.mjs:190-192`）⇒ scram 下自洽；'
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/admin-flags-pg.mjs',
-    reason: '需真实 PG 17.11 隔离集群且硬钉库名 `gengyun_flags_test`（脚本自建运行时角色并重放'
-      + ' `gy-i18-flags-grant` 区域）；本片未新增对应 CI workflow（如实登记为未取得项），'
-      + '故不进无 PG 的回环链。',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自建/ALTER 运行时角色、'
+      + '把随机口令写进它自己的 URL（`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽（这也正是 workflow 里'
+      + '只传一个参数的原因）；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
+      + '（`postgres:17.11` service）运行，不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/auth-privacy-pg.mjs',
@@ -94,9 +102,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/backup-purge-pg.mjs',
-    reason: '需真实 PG 17.11 隔离集群（自行 `initdb`／`pg_ctl` 起临时数据目录，仅回环）；'
-      + '端口由脚本内 `55500 + randomInt(0, 500)` 决定且无环境变量覆盖，无法与 CI 回环端口隔离；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '**环境前提不满足 ⇒ R28-S14 判定不接线**：脚本要求 `GY_PG_BIN` 指向**服务端二进制目录**'
+      + '（自行 `initdb`/`pg_ctl` 起第二个 17.11 集群，仅回环）；CI 的 17.11 只在 `services.postgres`'
+      + ' 容器内，runner 文件系统上取不到 `initdb`/`pg_ctl`（见证据页）；端口 `55500 + randomInt(0, 500)`'
+      + ' 无环境变量可覆盖；缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0）。'
+      + '故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/catalog-pg.mjs',
