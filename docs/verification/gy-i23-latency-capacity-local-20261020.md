@@ -178,7 +178,7 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 | 13 | 与 #23 条款的逐条对照（能/不能主张） | §9 | 已取得 |
 | 14 | 原始 JSON 的路径或哈希 | 页首（两份 JSON 的 sha256 + 仓外路径） | 已取得（**未入库**） |
 
-复核"被测代码未变"：`git diff --stat 3a279db687d0ac37735b573d10a7b1f5fba99934..HEAD -- ':!docs/verification/gy-i23-latency-capacity-local-20261020.md'` 期望**为空**。
+复核"被测代码未变"（端点一律取**固定提交**，⛔ 不得改用会随 `upstream/main` 前进而漂移的 `HEAD`）：① `git diff --stat 3a279db687d0ac37735b573d10a7b1f5fba99934..212e87a -- ':!docs/verification/gy-i23-latency-capacity-local-20261020.md'` 期望**为空**（被测代码 `3a279db` 之后只加了本页那一次提交）；② `git diff --name-only df043a7 3a279db -- ':!tools/perf' ':!tests/unit/gy-i23-perf-report-shape.test.mjs'` 期望**为空**（基线→被测代码只新增本片 5 个文件，产品代码 0 文件）；③ 另核 `git merge-base --is-ancestor 3a279db HEAD` 退出码 **0**（`3a279db` 仍是祖先，未被 rebase 改写）。⚠ 端点若用 `HEAD`（旧写法 `3a279db..HEAD`）在 `#295` 合入 main 后会返回 22 个**他人**产品文件（+3377/−14，与本片无关）⇒ 该写法已失效，勿改回。
 
 ## 8 十条措辞约束（规格书 §5）与本页采用的写法
 
