@@ -15,7 +15,7 @@
 // 换句话说：**放行的是能力，不是权限面**。
 //
 // 覆盖的读数（编号与派单 §3 对齐）：
-//   [M] 迁移三连：全链应用（0001…0017 + 0021）⇒ 函数存在且 `SECURITY DEFINER` / `search_path=pg_catalog` /
+//   [M] 迁移三连：全链应用（目录内全部迁移，按目录序）⇒ 函数存在且 `SECURITY DEFINER` / `search_path=pg_catalog` /
 //       属主非运行时 ⇒ ROLLBACK（函数消失、0017 的 `admin_account_display_name` 仍在）⇒ REPLAY（再出现）；
 //   [P] 最小权限反向控制（运行时角色）：`SELECT nickname/created_at FROM users` 与派单逐字 SQL 一律
 //       `42501`；`SELECT id,revision,state FROM users` 成功（行级可达，缺的只是那两列）；
@@ -37,6 +37,7 @@ import pg from 'pg';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { buildApp } from '../../services/api/src/app.ts';
 import { createPool } from '../../services/api/src/db/pool.ts';
+import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 
@@ -88,7 +89,7 @@ async function migrationTriple() {
   const versions = discovered.map((name) => name.slice(0, 4));
   assert.equal(new Set(versions).size, versions.length, `迁移版本号重复：${versions.join(',')}`);
   assert.ok(discovered.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  note(`[M] 迁移清单 ${discovered.length} 个，版本号无重复，含 ${MIGRATION}（本片分支 0018–0020 缺号属预期）`);
+  note(`[M] 迁移清单 ${discovered.length} 个，版本号无重复，含 ${MIGRATION}（目录最大号 ${versions[versions.length - 1]}，现算）`);
 
   const objects = async () => ({
     read: (await one("SELECT to_regprocedure('public.list_admin_accounts()') AS v")).v,
@@ -107,14 +108,28 @@ async function migrationTriple() {
     return row;
   };
 
-  // UP：全链按目录序应用（0001…0017 建表/函数，0021 依赖 0017 的 display_name）。
+  // UP：全链按目录序应用（每一片都应用；0021 依赖 0017 的 display_name）。
   const applied = [];
   for (const name of discovered) {
     await owner.query(readSql(`migrations/${name}`));
     applied.push(name.slice(0, 4));
   }
   assert.deepEqual(applied, versions, `本脚本必须按目录序把全部迁移应用一遍（现场：${applied.join(',')}）`);
-  assert.equal(applied[applied.length - 1], '0021', `0021 必须是本脚本最后应用的版本（现场：${applied.join(',')}）`);
+  // 结构不变量（在 main 上恒成立、不随 main 前进变假）：实际应用序必须与**迁移器**发现的版本序
+  // 逐项相等。比对对象是产品侧 `discoverMigrations()`（独立于本文件的正则扫描）⇒ 不是自比：
+  // 发现器漏项／多项／错序，或本文件的扫描口径与发现器分叉，这里都会红。
+  const runnerVersions = discoverMigrations().map((migration) => migration.version);
+  assert.deepEqual(
+    applied,
+    runnerVersions,
+    '全链应用序必须与 discoverMigrations() 的发现序逐项相等（发现器漏项／多项／错序都算失败）'
+      + `；应用：${applied.join(',')}；发现器：${runnerVersions.join(',')}`,
+  );
+  // 「0021 是本脚本的对象」用**包含**表达：⛔ 不再钉「末项」（那只是分支时点事实，main 一前进必红）。
+  assert.ok(
+    applied.includes(MIGRATION.slice(0, 4)),
+    `全链必须包含 ${MIGRATION.slice(0, 4)}（本脚本对象在位；现场：${applied.join(',')}）`,
+  );
   let state = await objects();
   assert.ok(state.read && state.display && state.users, 'UP 后读函数、0017 投影函数、users 表必须都在');
   let fn = await shape();
