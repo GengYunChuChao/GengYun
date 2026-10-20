@@ -401,7 +401,7 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "1151-1168"
+          "lines": "1722-1729"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -416,7 +416,7 @@
           "name": "GY-I19：受理即驱动既有级联（在线真删、只删绑定主体），备份未接线如实 pending"
         }
       ],
-      "blocker": "GY-I19 本片只交付**受理 HTTP 面**：202 走既有删除台账（services/api/src/privacy/user-data-deletion.ts 的 favorites/history 处理器 + packages/privacy/deletion-modules.mjs 的模块闭集与受理协议），幂等键必填、24h 台账、同键异体 409 IDEMPOTENCY_CONFLICT、同键同体重新签发回执而不回放旧 bearer。**未取得**：docs/architecture/state-contract.md:105 要求的受理「同一事务」撤全部会话/角色、auth_epoch 递增、冻结外发与在途回写**未实现**（本片不用「先撤会话再受理」伪造该语义）；真实删除执行仍在**进程内**注册表（无注销请求持久表、本片不新建迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE，不新建第二套存储；备份副本清除**未接线，且仓内不存在可清的备份副本域**：services/api/db/migrations/ 的 0001–0018（18 个迁移文件）没有任何备份/快照副本实体（54 处 CREATE TABLE 去重 52 张表内无 backup/snapshot/replica 表；deleted_at/is_deleted/purged 唯一命中是 0018_favorites_history.sql:36 的一句注释、真实软删列 0）⇒ 没有逐用户备份副本可删；运维侧唯一备份产物是 deploy/postgres-cvm/backup-postgres.sh 的**整库** pg_dump -Fc（KEEP_DAYS 30 只是备份文件保留期、无逐用户删除语义，README.md:459／runbook.md:540／verify-checklist.md:211／roles-and-migration.md:256-257 均自认未实现）；因此各模块 backup_state 如实停留 pending，完成判定（completionStatus）为 blocked，不谎称 completed；逐用户备份清除须**新增备份域**（属产品决策，不是接线遗漏），证据见 docs/verification/gy-i19-backup-domain-20261018.md；第三方删除证据、7/30 日到期的真实执行与恢复清单重放未验收"
+      "blocker": "GY-I19 本片只交付**受理 HTTP 面**：202 走既有删除台账（services/api/src/privacy/user-data-deletion.ts 的 favorites/history 处理器 + packages/privacy/deletion-modules.mjs 的模块闭集与受理协议），幂等键必填、24h 台账、同键异体 409 IDEMPOTENCY_CONFLICT、同键同体重新签发回执而不回放旧 bearer。**未取得**：docs/architecture/state-contract.md:105 要求的受理「同一事务」撤全部会话/角色、auth_epoch 递增、冻结外发与在途回写**未实现**（本片不用「先撤会话再受理」伪造该语义）；真实删除执行仍在**进程内**注册表（无注销请求持久表、本片不新建迁移）⇒ real 模式整域 503 PROVIDER_UNAVAILABLE，不新建第二套存储；备份副本清除**未接线，且仓内不存在可清的备份副本域**：services/api/db/migrations/ 的 0001–0018（18 个迁移文件）没有任何备份/快照副本实体（54 处 CREATE TABLE 去重 52 张表内无 backup/snapshot/replica 表；deleted_at/is_deleted/purged 唯一命中是 0018_favorites_history.sql:36 的一句注释、真实软删列 0）⇒ 没有逐用户备份副本可删；运维侧唯一备份产物是 deploy/postgres-cvm/backup-postgres.sh 的**整库** pg_dump -Fc（KEEP_DAYS 30 只是备份文件保留期、无逐用户删除语义，deploy/postgres-cvm/README.md:459／runbook.md:540／verify-checklist.md:211／roles-and-migration.md:256-257 均自认未实现）；因此各模块 backup_state 如实停留 pending，完成判定（completionStatus）为 blocked，不谎称 completed；逐用户备份清除须**新增备份域**（属产品决策，不是接线遗漏），证据见 docs/verification/gy-i19-backup-domain-20261018.md；第三方删除证据、7/30 日到期的真实执行与恢复清单重放未验收"
     },
     {
       "id": "getDeletionReceipt",
@@ -868,7 +868,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:1659` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "getOCR",
@@ -888,7 +888,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:1659` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "deleteOCR",
@@ -908,7 +908,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:1659` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "correctOCR",
@@ -928,7 +928,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:1659` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "verifyOCR",
@@ -948,7 +948,7 @@
           "test": "tests/integration/ocr-http.mjs"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；内存任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实标签评估与持久/删除链待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:1659` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "createTranscription",
@@ -962,7 +962,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "132-136"
+          "lines": "160-194"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -982,7 +982,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
-          "lines": "153-157"
+          "lines": "196-208"
         },
         {
           "test": "tests/integration/speech-http.mjs"
@@ -1042,7 +1042,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/synthesis.ts",
-          "lines": "86-90"
+          "lines": "112-177"
         },
         {
           "test": "tests/integration/tts-http.mjs"
@@ -1062,7 +1062,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "113-117"
+          "lines": "115-119"
         },
         {
           "path": "services/api/src/conversations/service.ts"
@@ -1089,7 +1089,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "124-128"
+          "lines": "126-130"
         },
         {
           "path": "services/api/src/conversations/service.ts"
@@ -1113,7 +1113,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "134-138"
+          "lines": "136-140"
         },
         {
           "path": "services/api/src/conversations/service.ts"
@@ -1137,7 +1137,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "146-150"
+          "lines": "148-152"
         },
         {
           "path": "services/api/db/migrations/0013_conversations.sql"
@@ -1165,7 +1165,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "159-163"
+          "lines": "161-165"
         },
         {
           "path": "services/api/src/conversations/job.ts"
@@ -1196,7 +1196,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "172-176"
+          "lines": "174-178"
         },
         {
           "path": "services/api/src/conversations/service.ts"
@@ -1220,7 +1220,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
-          "lines": "182-186"
+          "lines": "184-188"
         },
         {
           "path": "services/api/src/conversations/cascade.ts"
@@ -1761,7 +1761,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
-          "lines": "42-51"
+          "lines": "43-52"
         },
         {
           "test": "tests/unit/messages-http.test.mjs",
@@ -1782,7 +1782,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
-          "lines": "52-57"
+          "lines": "53-58"
         },
         {
           "test": "tests/unit/messages-http.test.mjs",
@@ -1803,7 +1803,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
-          "lines": "40-51"
+          "lines": "59-70"
         },
         {
           "test": "tests/unit/messages-http.test.mjs",
@@ -2885,7 +2885,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（services/api/src/app.ts:1440-1454）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（services/api/src/app.ts:1801-1815）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
     },
     {
       "key": "pagination",
@@ -3076,14 +3076,14 @@
         },
         {
           "path": "services/api/src/jobs/registry.ts",
-          "lines": "281-307"
+          "lines": "283-308"
         },
         {
           "path": "services/api/src/routes/admin.ts",
           "lines": "316-324"
         }
       ],
-      "blocker": "共享作业面现由 `services/api/src/app.ts:1313` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1314`）、transcription（`:1320`）、moderation（`:1323`）、synthesis（`:1328`）、ocr（`:1336`）、answer（`:1344`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `47fe028` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
+      "blocker": "共享作业面现由 `services/api/src/app.ts:1666` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1667`）、transcription（`:1673`）、moderation（`:1676`）、synthesis（`:1682`）、ocr（`:1690`）、answer（`:1698`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `1794052` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",
@@ -3113,7 +3113,7 @@
         },
         {
           "path": "services/api/src/recognitions/service.ts",
-          "lines": "524-543"
+          "lines": "525-543"
         },
         {
           "path": "services/api/src/ocr/service.ts",
@@ -3125,14 +3125,14 @@
         },
         {
           "path": "services/api/src/tts/service.ts",
-          "lines": "549-565"
+          "lines": "637-660"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:524` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:60`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:740`，位于 `createTurn`，`:683`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:852`，位于 `jobViewOf`，`:844`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:868-876`，位于 `scheduleAnswer`，`:862`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:113` / `:124` / `:134` / `:146` / `:159` / `:172` / `:182`），装配点 `services/api/src/app.ts:1384`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
+      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:1741`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
     }
   ]
 }
