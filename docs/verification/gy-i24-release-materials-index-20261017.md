@@ -187,11 +187,12 @@
 | 材料 | 作用 | 离线核验 |
 | --- | --- | --- |
 | [`../../deploy/postgres-cvm/evidence/local-self-check.md`](../../deploy/postgres-cvm/evidence/local-self-check.md) | 本地自检原始输出（2026-10-13）：环境事实、`bash -n`/`--help`/失败路径自检、真跑记录（`provision-db.sh` exit=0、平台侧连通实测） | ✅ 在册；其「行尾 LF」自检结论已由本片对 **blob** 复验成立（见 §4 第 3 项） |
+| [`../../deploy/postgres-cvm/evidence/probe-runtime-grants.sql`](../../deploy/postgres-cvm/evidence/probe-runtime-grants.sql) | 运行时授权探针（2026-10-20，R28-S24 新增）：`SET ROLE gengyun_api_runtime` 后重放 messages/community/ocr 三域的真实语句形态（全部 `WHERE false`、末尾回滚），加 `user_backup_copies`/`feature_flags`/`idempotency_keys` 三个对照臂与全库表级 DML 清单 | ✅ 在册；**本机** PG 17.11 临时集群实跑（改前 31 条 `42501`，改后 0 条），读数见[证据页](../../docs/verification/gy-r28-least-privilege-grants-20261020.md)；**未在 CVM 上执行**，不得据本行推断为已验收 |
 | [`../../docs/verification/gy-i19-backup-replay-manifest-20261015.md`](../../docs/verification/gy-i19-backup-replay-manifest-20261015.md) | 备份恢复重放清单 +「恢复后不得复活」负例（GY-I19 第 3 步） | ✅ 在册 |
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **24** 个：`0001..0024`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0024`（23 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r27-ocr-persist`（S10，#10）新增 `0024_ocr_persistence.sql` 与其 down 脚本 ⇒ **24／23／30**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`）。此前的读数（并列历史，按原样保留）：2026-10-20 再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **24** 个：`0001..0024`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0024`（23 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r27-ocr-persist`（S10，#10）新增 `0024_ocr_persistence.sql` 与其 down 脚本 ⇒ **24／23／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql` 从 30 增到 31）。此前的读数（并列历史，按原样保留）：2026-10-20 再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -202,7 +203,7 @@
 | # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 2／8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47`／main `31a746d`／`145ebe4`（含 #279 的 `0021`）／`607c03c`（含 #312）／叠在 #296 新 head（`71eda51`）、2026-10-20 合流 main `df043a7`（含 #296 的 `0022` 与 #313）／`ff1b39d`（含 #295 的 `0023`）后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
-| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 30 个文件全部在索引表行中（30/30 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出本分支新增的 `deploy/postgres-cvm/restore-drill.ps1` |
+| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 31 个文件全部在索引表行中（31/31 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20） |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
 | 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`（**blob 内容喂 stdin，不传文件路径**）；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
