@@ -188,8 +188,8 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 | 2 | 不得写"50 并发下容量达标" | §9 的 C3 行（不能主张「生产／部署容量」「外部 AI 容量」）与 §13 边界声明；原始 JSON 的 `claims.not_assertable` 同口径，另见 §3 末段的"读数偏保守" |
 | 3 | 首屏／页面耗时未测就写未测 | §10 第 1 项：首屏 p95 需真机 + 微信渲染，**未取得** |
 | 4 | 不得把 stub 时延当真实识别时延 | §1 第 5 条、§9 的 C2／C7 行：AI 为 `stub` 隔离替身、零外呼；真实识别/语音 **未取得** |
-| 5 | 不得用一次读数当分位数 | §5.3：`/health` 的 `latency_ms` 类单样本**未并入**任何分组 |
-| 6 | 不得用 `app.inject()` 进程内计时当 HTTP 时延 | **全部**读数来自客户端 HTTP 边界 `process.hrtime.bigint()`（§2 脚本口径） |
+| 5 | 不得用一次读数当分位数 | `latency-report.json` 的 `claims.not_assertable` 第 5 条（原文「单条读数（如 /health 的 latency_ms）不是分位数，未并入任何分组。」；`load-report.json` 无此条）；§5.1／§5.2 两张表只证明各组 n=60，不承载此论断 |
+| 6 | 不得用 `app.inject()` 进程内计时当 HTTP 时延 | **全部**读数来自客户端 HTTP 边界 `process.hrtime.bigint()`，口径载体是 `tools/perf/lib/http.mjs`（`timedRequest` 与 `hrtimeMs`）；§2 只给命令原文，不含计时实现 |
 | 7 | 不得挑最快若干次凑 n=30 | §5.1、§5.2：n=60 全量保留，`dropped=0` 也照样登记；预热条数显式记录 |
 | 8 | 不得引 1000 并发目标 | 本页通篇不出现 1000 并发目标（需求已限缩：`docs/implementation-requirements.md` 明写"1000并发与运营规模不是本轮默认首版承诺"） |
 | 9 | 不得把 p95 写成"95% 置信区间" | 两份原始 JSON 的 `claims.not_assertable` 均明写「分位数不是置信区间…未做 bootstrap 区间估计」，本页不做区间估计 |
