@@ -105,7 +105,9 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/community-pg.mjs',
     reason: '需真实 PG17 且硬钉库名 `gengyun_community_test`：未配置 `COMMUNITY_PG_TEST_URL` 时'
-      + '**显式打印 SKIP 并以 0 退出**（不静默绿）；本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+      + '**显式打印 SKIP 并以 77 退出**（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）；'
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/consent-grant-pg.mjs',
@@ -117,7 +119,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '本片用它取"引用只能取自本次检索集合"的真库读数（真读面视图 → 真检索端口 → 真守卫 → 真 PG store）；'
       + '未配置 `CONVERSATIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**（未取得，不冒充通过；'
       + '仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0），'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/egress-ledger-pg.mjs',
