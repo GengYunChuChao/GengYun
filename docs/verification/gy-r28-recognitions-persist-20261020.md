@@ -149,7 +149,7 @@ AssertionError [ERR_ASSERTION]: {"error":{"code":"PROVIDER_UNAVAILABLE",
 **NC2（把 0025 换成 `0024_ocr_persistence.sql`）**——同样在最终字节上：
 
 - 补丁：`:241` 换成 `await owner.query(sqlFile('migrations/0024_ocr_persistence.sql'));`；
-- 运行：**仍红**（`EXIT=1`；断言失败同一条 message「识别持久化表未迁移（0025_recognitions_persistence.sql）…」、`503 !== 202` at `:355:10`；进程随后在 libuv 收尾阶段另报 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94`——这是 Node 在未捕获断言后关闭连接池的收尾崩溃，不影响断言结论）；
+- 运行：**仍红**（断言失败：同一条 message「识别持久化表未迁移（0025_recognitions_persistence.sql）…」、`503 !== 202` at `:355:10`；Node 进程随后在 libuv 收尾阶段崩溃，另报 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94`，PowerShell 记为 `EXIT=-1073740791`——不影响断言结论）；
 - 逐字节还原：`sha256 f0f2206b03d22500958cef6479c8a1088a03df4266c51229631bdbf574f4d263` ⇒ **与改前相等**。
 
 两条反证的含义：变红**依赖**于「真的应用了 0025 这张迁移」，不是任意 `.sql` 都能让脚本变绿。
