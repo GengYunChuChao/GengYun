@@ -11,7 +11,7 @@
 
 1. **缺口是真的**：`tools/verify-contract-status.mjs` 在改前的 12 份 `.github/workflows/*.yml` 里 **0 命中**、在 `package.json` 的 `scripts` 里 **0 命中**（§1.1）——它只能靠人记得在本机跑。
 2. **本片只做一件事**：在既有 `engineering-shell.yml` 的 `contract` job 里、`npm run test:contract` **之后**追加**唯一一步** `- run: node tools/verify-contract-status.mjs`（§2）。⛔ 没有扩校验能力、没有加 flag、没有动其它 job/step/文件。
-3. **把这条接线变成会红的断言**：新增 `tests/unit/ci-contract-status-gate.test.mjs`（**5 个用例**：①该步存在且只一条 ②无 `--write-doc` ③`contract` **job 级**与那一步 **step 级**都不得有 `if:` / `continue-on-error:`（容忍 `if :` 这种冒号前带空格的写法），命令也不得 `|| true` / `set +e` / `exit 0` ④被调用路径真实存在且非空、校验器无 `--force`/`--skip` ⑤位置在 `test:contract` 之后）。**9 个负控制**（NC1–NC4b、BS-1–BS-5）全部在磁盘上真的破坏过 workflow、每次复原后 sha256 逐字节核对一致（§4）。
+3. **把这条接线变成会红的断言**：新增 `tests/unit/ci-contract-status-gate.test.mjs`（**5 个用例**：①该步存在且只一条 ②无 `--write-doc` ③`contract` **job 级**与那一步 **step 级**都不得有 `if:` / `continue-on-error:`（容忍 `if :` 这种冒号前带空格的写法），命令也不得 `|| true` / `set +e` / `exit 0` ④被调用路径真实存在且非空、校验器无 `--force`/`--skip` ⑤位置在 `test:contract` 之后）。**10 个负控制**（NC1–NC4、NC4b、BS-1–BS-5）全部在磁盘上真的破坏过 workflow、每次复原后 sha256 逐字节核对一致（§4）。
 4. **未取得（如实）**：本片**没有**在真 GitHub runner 上跑过，也没有增加「行号是否命中符号」的校验（§6，两条都写清原因）。
 
 ## 1 为什么开这一片（含文件行号）
@@ -161,9 +161,9 @@ node --test --test-isolation=none tests/unit/ci-contract-status-gate.test.mjs
 
 还原后：`4050 bytes, sha256 782706236584dd9265cc1de9e43f714fb33ac1df62553260ce980d566c2861b4`，`git status --porcelain` 0 行，守卫回到 5/5 绿。
 
-## 4 负控制（9 轮：先在磁盘上改坏，再证明它红）
+## 4 负控制（10 轮：先在磁盘上改坏，再证明它红）
 
-九轮都在同一个真实工作树里改文件（不是内存变异），每轮 `finally` 复原并核对 sha256；复原后 `git status --porcelain` 均为 **0 行**。原始备份：`E:\GengYunCommander\.pg17\nc-r28-s19\`（`engineering-shell.yml.orig`、`verify-contract-status.mjs.orig` 及各轮输出日志）。下表的 sha256 与**插入位置**绑定（同一行内容插在 job 键后还是 `runs-on` 后，哈希不同），所以位置也一并写进「改动」列。
+十轮都在同一个真实工作树里改文件（不是内存变异），每轮 `finally` 复原并核对 sha256；复原后 `git status --porcelain` 均为 **0 行**。原始备份：`E:\GengYunCommander\.pg17\nc-r28-s19\`（`engineering-shell.yml.orig`、`verify-contract-status.mjs.orig` 及各轮输出日志）。下表的 sha256 与**插入位置**绑定（同一行内容插在 job 键后还是 `runs-on` 后，哈希不同），所以位置也一并写进「改动」列。
 
 | 控制 | 改动（插在哪） | 变异后 sha256 | 读数 | 红的是哪几条 |
 | --- | --- | --- | --- | --- |
@@ -241,7 +241,7 @@ BS-4 ✖ ③ …
 
 ⚠️ **NC4 原始形态为什么 ④ 是绿的（不掩饰）**：按派单 §4 的写法，路径改成 `.mjs.bak` 的**同时**把真文件改名成 `verify-contract-status.mjs.bak`——于是 `tools/verify-contract-status.mjs.bak` 在磁盘上**确实存在**、非空、是文件，④ 的「存在性」判据如实通过；红的是 ①（命令文本必须逐字等于 `node tools/verify-contract-status.mjs`）与 ⑤（找不到那一行）。为了让「路径指错必红」有独立证据，另跑 NC4b（只改路径、不改名）：④ 立即红，原文如上。两条合起来覆盖了「路径错」与「命令错」两种破坏。
 
-**复原读数**（9 轮 `finally` 实测）：每轮 workflow 复原后都是 `782706236584dd9265cc1de9e43f714fb33ac1df62553260ce980d566c2861b4`（= 改前）、`EQ=True`；NC4 额外核对 tool 复原为 `278c00679856f798eb724c47ed29f6d447f69f15ee6ae69b59b0028b9489b5dd`、`verify-contract-status.mjs.bak` 残留 **False**。跑完 `git status --porcelain` 只剩本片 3 个文件。
+**复原读数**（10 轮 `finally` 实测）：每轮 workflow 复原后都是 `782706236584dd9265cc1de9e43f714fb33ac1df62553260ce980d566c2861b4`（= 改前）、`EQ=True`；NC4 额外核对 tool 复原为 `278c00679856f798eb724c47ed29f6d447f69f15ee6ae69b59b0028b9489b5dd`、`verify-contract-status.mjs.bak` 残留 **False**。跑完 `git status --porcelain` 只剩本片 3 个文件。
 
 ## 5 门禁读数（本片实测）
 
