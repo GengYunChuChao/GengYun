@@ -397,7 +397,7 @@
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
-          "lines": "176-205"
+          "lines": "200-229"
         },
         {
           "path": "services/api/src/app.ts",
@@ -434,11 +434,11 @@
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
-          "lines": "96-141"
+          "lines": "120-165"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
-          "lines": "218-275"
+          "lines": "242-299"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -475,7 +475,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "157-165"
+          "lines": "218-233"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -500,7 +500,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "175-183"
+          "lines": "236-257"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -525,7 +525,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "199-207"
+          "lines": "260-275"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -550,7 +550,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "217-225"
+          "lines": "278-295"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -650,7 +650,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
-          "lines": "25-29"
+          "lines": "188-192"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
@@ -679,7 +679,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
-          "lines": "30-34"
+          "lines": "193-199"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
@@ -704,11 +704,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/knowledge.ts",
-        "lines": "60-65"
+        "lines": "201-207"
        },
        {
         "path": "services/api/src/knowledge/reference-query.ts",
-        "lines": "158-166"
+        "lines": "168-176"
        },
        {
         "path": "packages/reference/zhejiang.mjs",
@@ -737,11 +737,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/knowledge.ts",
-        "lines": "66-72"
+        "lines": "208-216"
        },
        {
         "path": "services/api/src/knowledge/reference-query.ts",
-        "lines": "167-175"
+        "lines": "177-185"
        },
        {
         "test": "tests/unit/knowledge-herbicides-http.test.mjs",
@@ -778,7 +778,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "58-62"
+          "lines": "79-116"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -799,7 +799,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
-          "lines": "75-79"
+          "lines": "118-128"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -1248,11 +1248,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "200-200"
+        "lines": "201-209"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "490-495"
+          "lines": "748-753"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1272,11 +1272,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "210-210"
+        "lines": "211-221"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "556-561"
+          "lines": "820-825"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1300,11 +1300,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "222-222"
+        "lines": "223-230"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "620-625"
+          "lines": "908-913"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1324,11 +1324,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "231-231"
+        "lines": "232-239"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "627-632"
+          "lines": "915-920"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1348,11 +1348,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "240-240"
+        "lines": "241-249"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "700-705"
+          "lines": "1028-1033"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1372,11 +1372,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "250-250"
+        "lines": "251-262"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "735-740"
+          "lines": "1063-1068"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1396,11 +1396,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "263-263"
+        "lines": "264-274"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "788-793"
+          "lines": "1116-1121"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1420,11 +1420,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "275-275"
+        "lines": "276-283"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "849-854"
+          "lines": "1208-1213"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1444,11 +1444,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "284-284"
+        "lines": "285-292"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "856-861"
+          "lines": "1215-1220"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1468,11 +1468,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "293-293"
+        "lines": "294-301"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "910-915"
+          "lines": "1295-1300"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1496,7 +1496,7 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "944-949"
+          "lines": "1329-1334"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1516,11 +1516,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "313-313"
+        "lines": "314-321"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "948-953"
+          "lines": "1333-1338"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1540,11 +1540,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "322-322"
+        "lines": "323-330"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "952-957"
+          "lines": "1337-1342"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1564,11 +1564,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "331-331"
+        "lines": "332-339"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "956-961"
+          "lines": "1341-1346"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1588,11 +1588,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "340-340"
+        "lines": "341-351"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "961-966"
+          "lines": "1346-1351"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1612,11 +1612,11 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
-        "lines": "352-352"
+        "lines": "353-360"
        },
         {
           "path": "services/api/src/community/service.ts",
-          "lines": "1001-1006"
+          "lines": "1386-1391"
         },
         {
           "test": "tests/unit/community-contract.test.mjs"
@@ -1636,7 +1636,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
-          "lines": "60-72"
+          "lines": "89-92"
         },
         {
           "path": "services/api/src/favorites/service.ts",
@@ -1661,7 +1661,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
-          "lines": "74-88"
+          "lines": "94-107"
         },
         {
           "path": "services/api/src/favorites/service.ts",
@@ -1686,7 +1686,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
-          "lines": "90-102"
+          "lines": "109-119"
         },
         {
           "path": "services/api/src/favorites/service.ts",
@@ -1711,7 +1711,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/history.ts",
-          "lines": "55-62"
+          "lines": "80-83"
         },
         {
           "path": "services/api/src/history/service.ts",
@@ -1736,7 +1736,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/history.ts",
-          "lines": "64-80"
+          "lines": "85-98"
         },
         {
           "path": "services/api/src/history/service.ts",
@@ -1832,7 +1832,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "513-518"
+          "lines": "574-579"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -1861,7 +1861,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "514-519"
+          "lines": "575-580"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -1890,7 +1890,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "515-520"
+          "lines": "576-581"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -1919,7 +1919,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "516-521"
+          "lines": "577-582"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -1952,7 +1952,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "517-522"
+          "lines": "578-583"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -1981,7 +1981,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "518-523"
+          "lines": "579-584"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2010,7 +2010,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "520-525"
+          "lines": "581-586"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2039,7 +2039,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "521-526"
+          "lines": "582-587"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2068,7 +2068,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "522-527"
+          "lines": "583-588"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2097,7 +2097,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "523-528"
+          "lines": "584-589"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2126,7 +2126,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "524-529"
+          "lines": "585-590"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2159,7 +2159,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "525-530"
+          "lines": "586-591"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2188,7 +2188,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "527-532"
+          "lines": "588-593"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2217,7 +2217,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "528-533"
+          "lines": "589-594"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2246,7 +2246,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "529-534"
+          "lines": "590-595"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2275,7 +2275,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "530-535"
+          "lines": "591-596"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2304,7 +2304,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "531-536"
+          "lines": "592-597"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2333,7 +2333,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "532-537"
+          "lines": "593-598"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2362,7 +2362,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "534-539"
+          "lines": "595-600"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2391,7 +2391,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "535-540"
+          "lines": "596-601"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2420,7 +2420,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "536-541"
+          "lines": "597-602"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2449,7 +2449,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "537-542"
+          "lines": "598-603"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2478,7 +2478,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "538-543"
+          "lines": "599-604"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2507,7 +2507,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "539-544"
+          "lines": "600-605"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2536,7 +2536,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "269-274"
+          "lines": "314-319"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2565,7 +2565,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "274-279"
+          "lines": "319-324"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2623,7 +2623,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "320-325"
+          "lines": "413-418"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2652,7 +2652,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "394-399"
+          "lines": "508-513"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2681,7 +2681,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "401-406"
+          "lines": "515-520"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2739,7 +2739,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "501-506"
+          "lines": "713-718"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2772,7 +2772,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "566-571"
+          "lines": "785-790"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2801,7 +2801,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "lines": "541-546"
+          "lines": "602-607"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2822,7 +2822,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "257-265"
+          "lines": "318-334"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -2847,7 +2847,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
-          "lines": "276-284"
+          "lines": "337-362"
         },
         {
           "path": "services/api/src/media/service.ts",
@@ -2878,7 +2878,7 @@
         },
         {
           "path": "services/api/src/errors.ts",
-          "lines": "29-63"
+          "lines": "42-76"
         },
         {
           "test": "tests/contract/contract-codes.test.mjs",
@@ -2936,7 +2936,7 @@
         },
         {
           "path": "services/api/src/routes/knowledge.ts",
-          "lines": "30-34"
+          "lines": "193-199"
         },
         {
           "path": "services/api/src/profile/service.ts",
@@ -3101,7 +3101,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "57-60"
+          "lines": "86-89"
         },
         {
           "test": "tests/unit/api-health.test.mjs",
@@ -3109,7 +3109,7 @@
         },
         {
           "path": "services/api/src/recognitions/service.ts",
-          "lines": "410-427"
+          "lines": "525-542"
         },
         {
           "path": "services/api/src/recognitions/service.ts",
@@ -3117,15 +3117,15 @@
         },
         {
           "path": "services/api/src/ocr/service.ts",
-          "lines": "52-58"
+          "lines": "53-59"
         },
         {
           "path": "services/api/src/speech/service.ts",
-          "lines": "590-608"
+          "lines": "598-616"
         },
         {
           "path": "services/api/src/tts/service.ts",
-          "lines": "637-660"
+          "lines": "819-842"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
