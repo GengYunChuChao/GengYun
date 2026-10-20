@@ -30,7 +30,9 @@
 **做了**：三域 10 张表的授权收敛（到列）、`DELETE` 例外的最小化、`90-assert` 的反向/正向断言、
 元断言（新表必须被分类）、recognition 草案与取舍、部署顺序复现、门禁自跑。
 
-**没做**（本片范围外，见 §12）：既有 11 张已授权表的列级正确性复核、`services/**` 任何改动、
+**没做**（本片范围外，见 §12）：`favorites`/`favorites_idempotency`/`history`/`history_idempotency`/
+`conversations`/`conversation_turns`/`conversation_answers` 这七张表**整张零授权**（与三域同一个病，
+`SET ROLE` 实测全 `42501`，本片不修）、既有已授权表的列清单复核、`services/**` 任何改动、
 `services/api/db/roles/*.sql` 任何改动、迁移任何改动、真实 CVM/CI 演练、`#333`（`0025`）合入后的
 recognition 实际授权。
 
@@ -487,8 +489,12 @@ $$;
 2. **GitHub runner：未取得**。`real-pg-integration.yml` 没有触发过；本次门禁只跑 `lint` /
    `test:contract` / `test:docs` / `verify-contract-status.mjs` 四条本地命令。
 3. **`#333`（迁移 `0025`）未合入**：recognition 只有草案与软守卫，**没有**实际授权、**没有**断言。
-4. **既有 11 张已授权表的列级正确性**不在本片范围（只做三域新表 + 元断言）；没有复核
-   `users`/`sessions`/`favorites_*`/`history_*` 等表的列清单是否仍与 `store-pg.ts` 一致。
+4. **域外同类缺口：未修、未验**。`favorites`/`favorites_idempotency`/`history`/`history_idempotency`/
+   `conversations`/`conversation_turns`/`conversation_answers` 七张表迁移建了、`20-login-roles.sql`
+   从没授权过、本片元断言的数据域也没覆盖，`SET ROLE` 实测全部 `42501`
+   （`favorites/store-pg.ts:45-52` 会把它折成可重试的 `PROVIDER_UNAVAILABLE`，监控里像下游抖动，
+   不像权限缺失）。这与 messages/community/ocr 是**同一类缺口**，本片不修。另，既有
+   `users`/`sessions` 等**已授权（列级）**表的列清单也没有复核是否仍与 `store-pg.ts` 一致。
 5. **`psql` 退出码语义未改**（§9）：`FAIL` 时仍 `exit=0`。这是有意保留（避免改动既有调用方行为），
    但如果将来有人用 `psql … && echo ok` 当门禁，会假绿。
 6. **`community_media_grants`** 在 `domain_manifest` 里分类为 `forbidden`（运行时零权限）——
