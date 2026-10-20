@@ -93,6 +93,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/backup-purge-pg.mjs',
+    reason: '需真实 PG 17.11 隔离集群（自行 `initdb`／`pg_ctl` 起临时数据目录，仅回环）；'
+      + '端口由脚本内 `55500 + randomInt(0, 500)` 决定且无环境变量覆盖，无法与 CI 回环端口隔离；'
+      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/catalog-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/catalog-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },

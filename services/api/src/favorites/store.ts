@@ -55,6 +55,11 @@ export type DeleteResult =
   | { ok: true; record: FavoriteRecord }
   | { ok: false; reason: 'NOT_FOUND' | 'OWNER_CHANGED' | 'REVISION_CHANGED' };
 
+/** GY-I19（#19）· 受理事务内枚举用的最小 SQL 客户端（只用到 `query`，不把 pg 类型灌进本域）。 */
+export interface BackupSnapshotClient {
+  query(text: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+}
+
 export interface FavoritesStore {
   readonly persistent: boolean;
   /** 写入新收藏；同 id 或同 `(owner_id, target_type, target_id)` 已存在 ⇒ `duplicate` 且不覆盖。 */
@@ -72,6 +77,17 @@ export interface FavoritesStore {
    * `packages/privacy` 删除注册协议上调用，**不注册任何契约路由**。
    */
   deleteAllByOwner(ownerId: string): Promise<number>;
+  /**
+   * GY-I19（#19）· **备份副本清单**原语：在受理事务内枚举该主体仍持有的对象引用。
+   *
+   * 只返回**不透明引用**（行 id）与计数：payload 里不许出现收藏正文/标题/身份信息
+   * （设计 §5 的最小化清单）。必须用调用方给的 `client`（受理事务那条连接），
+   * 否则清单与受理不在同一快照，「行已删、清单漏记」就会成为合法状态（设计 §6.1）。
+   */
+  snapshotOwner?(
+    ownerId: string,
+    client: BackupSnapshotClient,
+  ): Promise<{ objectRefs: readonly string[]; records: number }>;
   // ---- 幂等台账 ----
   findIdempotency(scope: string, keyHash: string): Promise<IdempotencyRecord | null>;
   claimIdempotency(
@@ -187,6 +203,14 @@ export function createMemoryFavoritesStore(
         targetIndex.delete(targetComposite(record.owner_id, record.target_ref.type, record.target_ref.id));
       }
       return mine.length;
+    },
+    /**
+     * 备份副本清单（GY-I19）：只回行 id 与计数。
+     * 内存实现没有事务，`client` 不参与（清单与受理在同一进程、同一同步临界区里读）。
+     */
+    async snapshotOwner(ownerId) {
+      const mine = [...favorites.values()].filter((record) => record.owner_id === ownerId);
+      return { objectRefs: mine.map((record) => record.id), records: mine.length };
     },
 
     async findIdempotency(scope, keyHash) {
