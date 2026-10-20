@@ -76,20 +76,20 @@ DETAIL:  1 object in database gengyun_hold
 
 ### 1.5 复用分支的夹具前提：**owner 必须是 `SUPERUSER`**（复审 M1）
 
-§1.4 / §4 里「存在即复用」的那条分支会把出厂语句逐字换成 `ALTER ROLE <name> NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`。**PostgreSQL 有一条硬约束：改别人的 `SUPERUSER` 属性需要调用者本身是超级用户**——即使调用者在该角色上有 ADMIN OPTION 也不行。所以本夹具要求 owner **带 `SUPERUSER`**。
+§1.4 的复用修法（实现见 §2.2）会把出厂语句逐字换成 `ALTER ROLE <name> NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`。**PostgreSQL 有一条硬约束：改别人的 `SUPERUSER` 属性需要调用者本身是超级用户**（本轮实测：仅 `CREATEROLE` 的 owner ⇒ `42501`；同一夹具换超级用户 ⇒ 绿）。所以本夹具要求 owner **带 `SUPERUSER`**。
 
 本轮实测（同一跨库钉住夹具，唯一差异是 owner 的属性）：
 
 | owner | `rolsuper` | 结果 |
 | --- | --- | --- |
-| `r28s16_sub_owner`（`LOGIN CREATEROLE CREATEDB`，口令 `sub-owner-pw`） | `f` | **exit 1**，`permission denied to alter role`，`code:'42501'` |
-| `gengyun_ci_owner`（CI 形态） | `t` | exit 0，六条 `[P] 复用已存在的组角色 …` + 一条运行时复用，`ALL PASS` |
+| `r28s16_sub_owner`（`LOGIN CREATEROLE CREATEDB`，口令 `sub-owner-pw`） | `false` | **exit 1**，`permission denied to alter role`，`code:'42501'` |
+| `gengyun_ci_owner`（CI 形态） | `true` | exit 0，六条 `[P] 复用已存在的组角色 …` + 一条运行时复用，`ALL PASS` |
 
-非超级 owner 的失败原文（日志 `nonsuper-pinned-42501.log`，exit 1）：
+非超级 owner 的失败原文（日志 `nonsuper-pinned-42501.log`，exit 1；下面行号与日志逐行一致，PowerShell 给 stderr 行加的 `node.exe : ` 前缀照抄不删）：
 
 ```
 :5  [P] 复用已存在的组角色 gengyun_auth_privacy（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）
-:6  首个失败读数：permission denied to alter role
+:6  node.exe : 首个失败读数：permission denied to alter role
 :17 error: permission denied to alter role
 :20     at async runRoleRegion (file:///E:/GengYunCommander/wt-r28-s16/tests/integration/account-suspend-pg.mjs:221:3)
 :21     at async provisionRoles (file:///E:/GengYunCommander/wt-r28-s16/tests/integration/account-suspend-pg.mjs:230:5)
