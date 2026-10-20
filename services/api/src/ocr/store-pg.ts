@@ -92,16 +92,72 @@ export class OcrStoreConflictError extends Error {
   }
 }
 
+/**
+ * **「OCR 持久化表未迁移（0024）」** —— 与「数据库故障」严格区分的一类明确错误。
+ *
+ * 为什么要单列（R27-S10-r1 返修，CI `real-pg-17.11` 抓到的真回归）：
+ * 真库集成测试会只应用**迁移子集**建库（如 `tests/integration/conversations-pg.mjs:57` 只跑
+ * `0001/0002/0005/0008/0010/0012/0013`；`community-pg.mjs` 只跑 `0001/0022`；
+ * `favorites-history-pg.mjs` 只跑 `0001/0018`）⇒ 那种库里**没有** `ocr_*` 三表。
+ * 首版实现把「表不存在」（`42P01`）与「数据库故障」一起折成 `PROVIDER_UNAVAILABLE`
+ * 「OCR 数据库暂不可用」，于是 OCR 作业源的读路径把**无关域**的 `GET /jobs/{id}` 打成 503
+ * （本该 200/404）——`conversations-pg.mjs:406` 就是这么红的。
+ *
+ * 语义（与 `admin/ops/flags-pg.ts` 的 `featureFlagsTableReady` 同族纪律）：
+ * - **读类**：表不存在 ⇒ 视为「没有已持久化的 OCR 作业」⇒ 返回 `null`（与接线前内存 store 的对外行为一致）；
+ * - **写类**：表不存在 ⇒ **fail-closed** 并抛本错误（点名迁移号），⛔ 绝不静默丢写、⛔ 绝不退化成内存 store；
+ * - `retryable: false`：这是**部署/迁移未执行**，不是瞬时故障 —— 重试不会好，须跑 `0024`。
+ */
+export class OcrTablesMissingError extends ApiError {
+  constructor() {
+    super(
+      'PROVIDER_UNAVAILABLE',
+      'OCR 持久化表未迁移（0024_ocr_persistence.sql）：拒绝写入，避免静默丢数据',
+      { retryable: false },
+    );
+    this.name = 'OcrTablesMissingError';
+  }
+}
+
 /** 数据库异常的契约化折叠（与 `messages/store-pg.ts` 逐条同口径）。 */
 export function classifyOcrDatabaseError(error: unknown): never {
   if (error instanceof OcrStoreConflictError) throw error;
+  if (error instanceof ApiError) throw error;
   const code = (error as { code?: unknown } | null)?.code;
   if (typeof code === 'string' && ['57014', '55P03'].includes(code)) {
     throw new ApiError('PROVIDER_TIMEOUT', 'OCR 数据库响应超时', { retryable: true });
   }
-  if (error instanceof ApiError) throw error;
   throw new ApiError('PROVIDER_UNAVAILABLE', 'OCR 数据库暂不可用', { retryable: true });
 }
+
+/**
+ * `42P01`（`undefined_table`）＝「这条 SQL 指向的表不在」。本文件所有语句都写成
+ * `public.ocr_*` **全限定**形式，因此它只可能表示「0024 未应用（或刚被回滚）」，
+ * 不会被 `search_path` 差异误判 ⇒ 可安全地翻成 {@link OcrTablesMissingError}（R27-S10-r1）。
+ */
+const UNDEFINED_TABLE = '42P01';
+const isUndefinedTable = (error: unknown): boolean =>
+  (error as { code?: unknown } | null)?.code === UNDEFINED_TABLE;
+
+/**
+ * 迁移 `0024` 的**只读就绪探测**：三张表是否真实存在。
+ *
+ * 为什么是一条语句查三张表：三表由**同一个迁移文件**建出（单事务，不可能半建），
+ * 但探测仍逐表 `IS NOT NULL` —— 若真的出现半迁移（人为 DROP、恢复不完整），
+ * 也应判「未就绪」而不是让读路径看到一半的表。
+ *
+ * 为什么用 `to_regclass(...)` 而不是 `SELECT 1 FROM public.ocr_jobs`：
+ * 表不存在时 `to_regclass` 返回 `NULL`（**不报错**），且**不依赖表级 SELECT 权限**，
+ * schema 全限定 ⇒ 运行时角色受限的 `search_path` 也解析得到（与 `flags-pg.ts` 同口径）。
+ */
+const TABLES_READY_SQL =
+  "SELECT (to_regclass('public.ocr_jobs') IS NOT NULL"
+  + " AND to_regclass('public.ocr_records') IS NOT NULL"
+  + " AND to_regclass('public.ocr_idempotency') IS NOT NULL) AS ready";
+
+/** 就绪探测的三态：`unknown`（探不了）**不是** `missing`（确认没有）—— #282 的同族纪律。 */
+export type OcrTablesProbe = 'ready' | 'missing' | 'unknown';
+
 
 const JOB_COLUMNS =
   'id, revision, kind, owner_user_id, ocr_id, media_id, media_revision, state, deadline_at, created_at, updated_at, error_code';
@@ -301,12 +357,107 @@ function recordValues(row: OcrRow): unknown[] {
 }
 
 export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {
+  /**
+   * 就绪状态的**缓存**：只缓存**确定结论**（`ready` / `missing`）。
+   * `null` = 未探过（或探测结果未知、或 42P01 后失效）⇒ 下一次调用重探。
+   * ⛔ `unknown` 绝不写入本缓存 —— 把「探不了」当「没装」正是 #282 的缺陷成因。
+   */
+  let tables: 'ready' | 'missing' | null = null;
+
+  /**
+   * 最近一次探测失败的原因（只用于「未知」时**保持既有错误分类**：`57014`/`55P03` ⇒
+   * `PROVIDER_TIMEOUT`，其余 ⇒ `PROVIDER_UNAVAILABLE`）。它**不**参与缓存判断
+   * （`unknown` 不入缓存），因此不会把偶发故障粘成长期状态。
+   */
+  let probeFailure: unknown = null;
+
+  /** 只读就绪探测（**不抛**：任何失败都以 `unknown` 返回，由调用方决定 fail-closed 策略）。 */
+  async function probeTables(): Promise<OcrTablesProbe> {
+    probeFailure = null;
+    let rows: unknown;
+    try {
+      rows = (await pool.query(TABLES_READY_SQL)).rows;
+    } catch (error) {
+      // 权限/连接/超时：**状态未知**。⛔ 不得返回 `missing`（那会把故障判成"未迁移"而放行读）。
+      // 原因留给 `tablesReady`：真正连不上/超时仍按既有分类折成 PROVIDER_*（不吞掉分类）。
+      probeFailure = error;
+      return 'unknown';
+    }
+    if (!Array.isArray(rows) || rows.length === 0) return 'unknown';
+    const ready = (rows[0] as Record<string, unknown> | null | undefined)?.['ready'];
+    if (ready === true) return 'ready';
+    if (ready === false) return 'missing';
+    // 形状读不懂 ⇒ 不知道表在不在 ⇒ 未知（既不是「未就绪」，更不是「可以放行」）。
+    return 'unknown';
+  }
+
+  /**
+   * 取就绪状态（带缓存）。
+   *
+   * - `ready`：照常执行；
+   * - `missing`：由调用方按「读 ⇒ null / 写 ⇒ {@link OcrTablesMissingError}」分化处理；
+   * - `unknown`（探测抛错/形状读不懂）：**抛**（fail-closed），⛔ 不缓存、⛔ 不当成 `missing`。
+   */
+  async function tablesReady(): Promise<'ready' | 'missing'> {
+    if (tables !== null) return tables;
+    const state = await probeTables();
+    if (state === 'unknown') {
+      // 探测都失败了：先按**既有分类**折叠原因（57014/55P03 ⇒ PROVIDER_TIMEOUT），
+      // 再对"形状读不懂"这种无原因的未知给一条明确文案 —— 两种都是 fail-closed，区别只在可诊断性。
+      if (probeFailure !== null) classifyOcrDatabaseError(probeFailure);
+      throw new ApiError(
+        'PROVIDER_UNAVAILABLE',
+        'OCR 持久化表就绪探测结果未知（连接/权限/超时）：按数据库故障 fail-closed（未知 ≠ 未迁移）',
+        { retryable: true },
+      );
+    }
+    tables = state;
+    return state;
+  }
+
+  /** 写类的前置门：表不存在 ⇒ 明确 fail-closed（绝不静默丢写、绝不退化成内存 store）。 */
+  async function requireTables(): Promise<void> {
+    if ((await tablesReady()) === 'missing') throw new OcrTablesMissingError();
+  }
+
   async function run(text: string, values?: unknown[]): Promise<Array<Record<string, unknown>>> {
     try {
       const result = await pool.query(text, values);
       return result.rows;
     } catch (error) {
+      if (isUndefinedTable(error)) {
+        // 探测之后表被回滚/恢复不完整：失效缓存，下一次调用重探；本语句按「未迁移」处理。
+        tables = null;
+        throw new OcrTablesMissingError();
+      }
       return classifyOcrDatabaseError(error);
+    }
+  }
+
+  /** 写类语句：唯一性冲突只在这里翻成与内存实现同文案的冲突错误。 */
+  async function runWrite(text: string, values: unknown[], conflictMessage: string): Promise<void> {
+    try {
+      await pool.query(text, values);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new OcrStoreConflictError(conflictMessage);
+      if (isUndefinedTable(error)) {
+        tables = null;
+        throw new OcrTablesMissingError();
+      }
+      classifyOcrDatabaseError(error);
+    }
+  }
+
+  /**
+   * 读类：表未迁移 ⇒ `null`（等价于「没有已持久化的 OCR 作业」，与接线前内存 store 的对外行为一致）；
+   * **真数据库故障照旧抛**（不被这一层吞掉）。
+   */
+  async function readOrMissing<T>(work: () => Promise<T | null>): Promise<T | null> {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof OcrTablesMissingError) return null;
+      throw error;
     }
   }
 
@@ -328,6 +479,11 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
           // 回滚失败不覆盖原始异常：原始异常才是可诊断的原因。
         }
       }
+      if (isUndefinedTable(error)) {
+        // 探测之后表被回滚/恢复不完整：失效缓存，按「未迁移」而非「数据库故障」报告。
+        tables = null;
+        throw new OcrTablesMissingError();
+      }
       return classifyOcrDatabaseError(error);
     } finally {
       connection?.release();
@@ -338,21 +494,21 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     persistent: true,
 
     async insertJob(row) {
-      try {
-        await pool.query(INSERT_JOB, jobValues(row));
-      } catch (error) {
-        if (isUniqueViolation(error)) throw new OcrStoreConflictError(JOB_CONFLICT_MESSAGE);
-        classifyOcrDatabaseError(error);
-      }
+      await requireTables();
+      await runWrite(INSERT_JOB, jobValues(row), JOB_CONFLICT_MESSAGE);
     },
 
     async getJob(jobId) {
-      const rows = await run(`SELECT ${JOB_COLUMNS} FROM public.ocr_jobs WHERE id = $1::uuid`, [jobId]);
-      const row = rows[0];
-      return row === undefined ? null : jobRowFromRow(row);
+      if ((await tablesReady()) === 'missing') return null;
+      return readOrMissing(async () => {
+        const rows = await run(`SELECT ${JOB_COLUMNS} FROM public.ocr_jobs WHERE id = $1::uuid`, [jobId]);
+        const row = rows[0];
+        return row === undefined ? null : jobRowFromRow(row);
+      });
     },
-
     async updateJob(jobId, expectedRevision, mutate) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（不静默当成"CAS 失败"，那会让调用方无限重试）。
+      await requireTables();
       // 读一次只为算出 mutate 的结果；**判定权在下面的 UPDATE**（`WHERE revision = $2`），
       // 因此两次读之间即使有并发写，也不会被本方法覆盖（0 行 ⇒ null）。
       const current = await run(`SELECT ${JOB_COLUMNS} FROM public.ocr_jobs WHERE id = $1::uuid`, [jobId]);
@@ -376,6 +532,8 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     },
 
     async commitTerminal(jobId, expectedRevision, terminal, ocr, at) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（事务里根本不发语句）。
+      await requireTables();
       return withTransaction(async (sql) => {
         // 行锁：并发的取消/另一次终态提交在本行上排队，随后各自按 revision 重新求值 ⇒ 只有一个能成功。
         const locked = await sql.query(
@@ -414,21 +572,23 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     },
 
     async insertOcr(row) {
-      try {
-        await pool.query(INSERT_RECORD, recordValues(row));
-      } catch (error) {
-        if (isUniqueViolation(error)) throw new OcrStoreConflictError(RECORD_CONFLICT_MESSAGE);
-        classifyOcrDatabaseError(error);
-      }
+      // 写类：表未迁移 ⇒ 明确 fail-closed（绝不静默丢写、绝不退化成内存 store）。
+      await requireTables();
+      await runWrite(INSERT_RECORD, recordValues(row), RECORD_CONFLICT_MESSAGE);
     },
 
     async getOcr(ocrId) {
-      const rows = await run(`SELECT ${RECORD_COLUMNS} FROM public.ocr_records WHERE id = $1::uuid`, [ocrId]);
-      const row = rows[0];
-      return row === undefined ? null : ocrRowFromRow(row);
+      if ((await tablesReady()) === 'missing') return null;
+      return readOrMissing(async () => {
+        const rows = await run(`SELECT ${RECORD_COLUMNS} FROM public.ocr_records WHERE id = $1::uuid`, [ocrId]);
+        const row = rows[0];
+        return row === undefined ? null : ocrRowFromRow(row);
+      });
     },
 
     async updateOcr(ocrId, expectedRevision, mutate) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（不得当成"CAS 失败"返回 null，那会让调用方误以为并发冲突）。
+      await requireTables();
       const current = await run(`SELECT ${RECORD_COLUMNS} FROM public.ocr_records WHERE id = $1::uuid`, [ocrId]);
       const snapshot = current[0];
       if (snapshot === undefined) return null;
@@ -464,25 +624,31 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     // ---- 幂等台账（本域独立的 ocr_idempotency；`payload` 占位期就有值，`pending` 是显式列） ----
 
     async findIdempotent(scope, keyHashHex) {
-      // 与内存实现逐条一致：**不**按过期过滤（到期行由 claim 覆盖、由 purge 清理）。
-      const rows = await run(
-        `SELECT request_hash, payload, pending, expires_at
-           FROM public.ocr_idempotency
-          WHERE scope = $1 AND key_hash = $2`,
-        [scope, keyHashHex],
-      );
-      const row = rows[0];
-      if (row === undefined) return null;
-      const record: IdempotencyRow = {
-        requestHash: String(row['request_hash']),
-        expiresAt: asDate(row['expires_at']),
-        payload: readPayload(row['payload']),
-        pending: row['pending'] === true,
-      };
-      return record;
+      // 读类：表未迁移 ⇒ null（「没有已持久化的幂等占位」），与接线前内存实现的未命中同形。
+      if ((await tablesReady()) === 'missing') return null;
+      return readOrMissing(async () => {
+        // 与内存实现逐条一致：**不**按过期过滤（到期行由 claim 覆盖、由 purge 清理）。
+        const rows = await run(
+          `SELECT request_hash, payload, pending, expires_at
+             FROM public.ocr_idempotency
+            WHERE scope = $1 AND key_hash = $2`,
+          [scope, keyHashHex],
+        );
+        const row = rows[0];
+        if (row === undefined) return null;
+        const record: IdempotencyRow = {
+          requestHash: String(row['request_hash']),
+          expiresAt: asDate(row['expires_at']),
+          payload: readPayload(row['payload']),
+          pending: row['pending'] === true,
+        };
+        return record;
+      });
     },
 
     async claimIdempotent(scope, keyHashHex, row, at) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（占位必须真落库，否则幂等语义静默失效）。
+      await requireTables();
       // 单条语句 = 「检查 + 写入」同一临界区：`ON CONFLICT … DO UPDATE … WHERE expires_at <= $at`
       // 未到期 ⇒ WHERE 为假 ⇒ 不更新、不返回行 ⇒ 'exists'；否则写入/覆盖 ⇒ 'claimed'。
       const rows = await run(
@@ -501,6 +667,8 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     },
 
     async finalizeIdempotent(scope, keyHashHex, payload) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（终态回填不能静默丢）。
+      await requireTables();
       // 行不存在 ⇒ 0 行更新（空操作），与内存实现的 `if (row === undefined) return;` 同义。
       await run(
         `UPDATE public.ocr_idempotency
@@ -512,11 +680,15 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     },
 
     async releaseIdempotent(scope, keyHashHex) {
+      // 写类：表未迁移 ⇒ 明确 fail-closed（释放失败会让幂等键永久 pending）。
+      await requireTables();
       // 内存实现是 `idempotency.delete(...)`（无条件删）：这里同样不带完成态条件。
       await run('DELETE FROM public.ocr_idempotency WHERE scope = $1 AND key_hash = $2', [scope, keyHashHex]);
     },
 
     async purgeIdempotent(now) {
+      // 写类（DELETE）：表未迁移 ⇒ 明确 fail-closed；调用方（claim 起始）会因此得到可诊断的 503。
+      await requireTables();
       const rows = await run(
         'DELETE FROM public.ocr_idempotency WHERE expires_at <= $1::timestamptz RETURNING scope',
         [now],
