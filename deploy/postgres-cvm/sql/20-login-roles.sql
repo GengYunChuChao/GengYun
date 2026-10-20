@@ -380,11 +380,180 @@ GRANT UPDATE (payload,state,purged_at,evidence_ref,last_error_code,purge_attempt
   ON public.user_backup_copies TO gengyun_auth_privacy;
 -- #endregion gy-i19-backup-copies-grant
 
+-- --- H. 运行时域（消息/社区/OCR）的列级授权（R28-S24 / 迁移 0019·0022·0024）------
+-- ---------------------------------------------------------------------------
+-- 背景：这三域的表**由运行时自己写**（`services/api/src/{messages,community,ocr}/store-pg.ts`），
+-- 但本文件此前从未给过它们任何权限 ⇒ 最小权限运行时在这些表上的每条语句都
+-- `42501 permission denied for table …`。改前取证：`deploy/postgres-cvm/evidence/probe-runtime-grants.sql`。
+--
+-- 为什么写在本文件（而不是 roles/*.sql）：`provision-db.sh` 只在组**不存在**时才执行
+-- `roles/*.sql`，已存在的部署升级到 0019/0022/0024 时不会重跑它 ⇒ 授权必须在**每次都会执行**
+-- 的本文件里再收敛一次（与上面 G 段同理）。
+--
+-- 给谁：**直授 `gengyun_api_runtime`**，不新建 NOLOGIN 组。理由：
+--   * 这三域的唯一消费者就是运行时自身；`roles/*.sql` 是「组」口径的权威，本片不改它们，
+--     直授不会让组文件变成谎话；
+--   * 本文件 F2 段已有直授先例（`public.feature_flags` 的 SELECT）。
+--
+-- 粒度：**写面按列、读面按列、DELETE 只能表级**（逐条依据见下，不按「整表全授」）：
+--   * INSERT/UPDATE 的列 = `store-pg.ts` 里**真实语句**列出的列；多授一列由
+--     `90-assert-least-privilege.sql` 的 `runtime_grants_<表>` 反向断言判红；
+--   * SELECT 的列 = 上述语句**读或返回**的列。PG 要求 DELETE/UPDATE 的 `WHERE` 与
+--     `RETURNING` 引用列也有 SELECT 权（实测：`DELETE … WHERE b=…` 在只有 `SELECT(a)` 时
+--     `42501 permission denied for table`），所以读面列清单不是「可选的」；
+--   * DELETE **无法列级化**（PG 没有列级 DELETE），只给三张表：
+--     `community_likes`（取消点赞，`community/store-pg.ts:587`）、
+--     `community_idempotency`（幂等台账先删后插，`:703/:732/:761`）、
+--     `ocr_idempotency`（`:686/:693`）。允许清单由 `90-assert-least-privilege.sql` 的
+--     `table_dml_allowlist` **结构化**钉住 —— 其它表的任何表级写权限照样判红；
+--   * ⛔ TRUNCATE / REFERENCES / TRIGGER 一律不给；⛔ 消息/帖子/评论/举报/审核决定**没有 DELETE**
+--     （删除是 `visibility='deleted'` 的单向门，store-pg.ts 里没有任何物理 DELETE）。
+--
+-- 前置：10 张表必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本；缺失即显式失败，
+-- 绝不留一个「看似已收敛、实际写不进」的运行态。
+-- #region gy-r28-runtime-domain-grants
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY[
+           'messages',
+           'community_posts','community_comments','community_likes','community_reports',
+           'community_moderation_decisions','community_idempotency',
+           'ocr_jobs','ocr_records','ocr_idempotency'
+         ]) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少运行时域表：%（迁移 0019/0022/0024 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.messages, public.community_posts, public.community_comments,
+                    public.community_likes, public.community_reports,
+                    public.community_moderation_decisions, public.community_idempotency,
+                    public.ocr_jobs, public.ocr_records, public.ocr_idempotency
+  FROM PUBLIC;
+
+-- 消息（迁移 0019）：store-pg.ts:62 的 COLUMNS、:141 的 INSERT、:189 的 UPDATE。
+GRANT SELECT (id,revision,owner_id,type,target_ref,read_at,created_at,event_key)
+  ON public.messages TO gengyun_api_runtime;
+GRANT INSERT (id,owner_id,type,target_ref,read_at,created_at,revision,event_key)
+  ON public.messages TO gengyun_api_runtime;
+-- 已读回执只改 read_at，并按 revision = revision + 1 做 CAS。
+GRANT UPDATE (read_at,revision)
+  ON public.messages TO gengyun_api_runtime;
+
+-- 社区帖子（迁移 0022）：:470 的 INSERT、:400 的 UPDATE、:379 的 SELECT … FOR UPDATE。
+GRANT SELECT (id,author_id,revision,title,body,crop_id,region_code,media_ids,
+              linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
+              visibility,audit_state,created_at,updated_at)
+  ON public.community_posts TO gengyun_api_runtime;
+GRANT INSERT (id,author_id,revision,title,body,crop_id,region_code,media_ids,
+              linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
+              visibility,audit_state,created_at,updated_at)
+  ON public.community_posts TO gengyun_api_runtime;
+-- 删除/重审只改 visibility/audit_state/updated_at；revision 只在补丁显式携带时写。
+GRANT UPDATE (revision,title,body,crop_id,region_code,media_ids,
+              linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
+              visibility,audit_state,updated_at)
+  ON public.community_posts TO gengyun_api_runtime;
+
+-- 社区评论（迁移 0022）：:531 的 INSERT、:454 的 UPDATE、:435 的 SELECT … FOR UPDATE。
+GRANT SELECT (id,post_id,author_id,revision,body,visibility,audit_state,created_at)
+  ON public.community_comments TO gengyun_api_runtime;
+GRANT INSERT (id,post_id,author_id,revision,body,visibility,audit_state,created_at)
+  ON public.community_comments TO gengyun_api_runtime;
+GRANT UPDATE (revision,body,visibility,audit_state)
+  ON public.community_comments TO gengyun_api_runtime;
+
+-- 点赞（迁移 0022）：:575 的 INSERT、:587 的 DELETE（WHERE 读 target_type/target_id/user_id，
+-- RETURNING 读 target_id）、:598 的 count(*)（WHERE 读 target_type/target_id）。
+-- created_at 只由列默认值写，运行时既不写也不读 ⇒ 不授。
+GRANT SELECT (target_type,target_id,user_id)
+  ON public.community_likes TO gengyun_api_runtime;
+GRANT INSERT (target_type,target_id,user_id)
+  ON public.community_likes TO gengyun_api_runtime;
+-- 取消点赞必须物理删除：唯一键 (user_id,target_type,target_id) 是集合语义的载体。
+GRANT DELETE ON public.community_likes TO gengyun_api_runtime;
+
+-- 举报（迁移 0022）：:662 的 INSERT、:666 的 ON CONFLICT (id) DO UPDATE。
+GRANT SELECT (id,revision,reporter_id,target_type,target_id,target_revision,
+              state,reason_code,detail,created_at)
+  ON public.community_reports TO gengyun_api_runtime;
+GRANT INSERT (id,revision,reporter_id,target_type,target_id,target_revision,
+              state,reason_code,detail,created_at)
+  ON public.community_reports TO gengyun_api_runtime;
+-- 唯一键是 id ⇒ ON CONFLICT 的重放会改写除 id 外的全部列。
+GRANT UPDATE (revision,reporter_id,target_type,target_id,target_revision,
+              state,reason_code,detail,created_at)
+  ON public.community_reports TO gengyun_api_runtime;
+
+-- 审核决定（迁移 0022）：:274/:609 的 INSERT、:279 的 ON CONFLICT 三列主键 DO UPDATE。
+GRANT SELECT (target_type,target_id,target_revision,id,decision,reason_codes,
+              hard_rule_passed,rule_version,text_digest,contract_complete,
+              missing_contract_fields,created_at)
+  ON public.community_moderation_decisions TO gengyun_api_runtime;
+GRANT INSERT (target_type,target_id,target_revision,id,decision,reason_codes,
+              hard_rule_passed,rule_version,text_digest,contract_complete,
+              missing_contract_fields,created_at)
+  ON public.community_moderation_decisions TO gengyun_api_runtime;
+-- 主键三列是冲突目标，不参与 DO UPDATE。
+GRANT UPDATE (id,decision,reason_codes,hard_rule_passed,rule_version,text_digest,
+              contract_complete,missing_contract_fields,created_at)
+  ON public.community_moderation_decisions TO gengyun_api_runtime;
+
+-- 社区幂等台账（迁移 0022）：:737 的 INSERT、:703/:732/:761 的 DELETE。
+-- response_status/outcome 是唯一的「回填结果」写面（:749 的 UPDATE）。
+GRANT SELECT (scope,key_hash,request_hash,response_status,outcome,expires_at)
+  ON public.community_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope,key_hash,request_hash,response_status,outcome,expires_at)
+  ON public.community_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (response_status,outcome)
+  ON public.community_idempotency TO gengyun_api_runtime;
+-- 过期占位与「放弃认领」都要物理删除（见 :703/:732/:761）。
+GRANT DELETE ON public.community_idempotency TO gengyun_api_runtime;
+
+-- OCR 任务（迁移 0024）：:167 的 INSERT_JOB、:521/:560 的 UPDATE、:540 的 SELECT … FOR UPDATE。
+GRANT SELECT (id,revision,kind,owner_user_id,ocr_id,media_id,media_revision,
+              state,deadline_at,created_at,updated_at,error_code)
+  ON public.ocr_jobs TO gengyun_api_runtime;
+GRANT INSERT (id,revision,kind,owner_user_id,ocr_id,media_id,media_revision,
+              state,deadline_at,created_at,updated_at,error_code)
+  ON public.ocr_jobs TO gengyun_api_runtime;
+GRANT UPDATE (revision,state,deadline_at,updated_at,error_code)
+  ON public.ocr_jobs TO gengyun_api_runtime;
+
+-- OCR 记录（迁移 0024）：:171 的 INSERT_RECORD、:599 的 UPDATE。
+GRANT SELECT (id,revision,owner_user_id,media_id,media_revision,raw_fields,
+              corrected_fields,verification,model_version,created_at,updated_at,deleted)
+  ON public.ocr_records TO gengyun_api_runtime;
+GRANT INSERT (id,revision,owner_user_id,media_id,media_revision,raw_fields,
+              corrected_fields,verification,model_version,created_at,updated_at,deleted)
+  ON public.ocr_records TO gengyun_api_runtime;
+GRANT UPDATE (revision,raw_fields,corrected_fields,verification,model_version,
+              updated_at,deleted)
+  ON public.ocr_records TO gengyun_api_runtime;
+
+-- OCR 幂等台账（迁移 0024）：:655 的 INSERT … ON CONFLICT DO UPDATE（改 request_hash/
+-- payload/pending/expires_at）、:674 的 UPDATE（payload/pending）、:686/:693 的 DELETE。
+GRANT SELECT (scope,key_hash,request_hash,payload,pending,expires_at)
+  ON public.ocr_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope,key_hash,request_hash,payload,pending,expires_at)
+  ON public.ocr_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (request_hash,payload,pending,expires_at)
+  ON public.ocr_idempotency TO gengyun_api_runtime;
+GRANT DELETE ON public.ocr_idempotency TO gengyun_api_runtime;
+-- #endregion gy-r28-runtime-domain-grants
+
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
 \echo '20-login-roles.sql：已授予 public.request_account_deletion(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.suspend_account(...) / public.restore_account(...) 的 EXECUTE（唯一写路径；未授予任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.list_admin_accounts() 的 EXECUTE（账号读面唯一读路径；未授予 users 的任何列权限）。'
 \echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'
 \echo '20-login-roles.sql：已授予 public.user_backup_copies 的列级 SELECT/INSERT/UPDATE（运行时自写的备份副本清单；无表级 DML、无 DELETE/TRUNCATE）。'
+\echo '20-login-roles.sql：已授予 public.messages、public.community_*（六张）、public.ocr_*（三张）的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency（PG 无列级 DELETE；其余表的 DELETE 一律未授）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'

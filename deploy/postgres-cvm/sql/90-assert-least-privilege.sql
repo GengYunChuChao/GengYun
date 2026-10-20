@@ -145,20 +145,43 @@ WITH checks(label, ok, detail) AS (
          '预定义全库角色会绕过按列授权，本阶段不允许'
 
   UNION ALL
-  -- 7. 表级 DML 只允许既有角色文件里明示的那一处（idempotency_keys）
+  -- 7. 表级写权限只允许「结构化允许清单」里逐表逐权限类型点名的二元组。
+  --
+  -- R28-S24 收紧（原断言只按表名豁免：`NOT (relname = 'idempotency_keys')`，
+  -- 等于对 idempotency_keys 整表放开 INSERT/UPDATE/DELETE/TRUNCATE/... 所有类型）：
+  -- PostgreSQL 没有列级 DELETE，取消点赞（community_likes）与幂等清理
+  -- （community_idempotency / ocr_idempotency）只能表级 DELETE。所以这里把豁免
+  -- 从「一张表、全部类型」改成「(schema, 表, 权限类型) 三元组白名单」：
+  --   表在清单里但类型不在 ⇒ 仍然失败（例：GRANT UPDATE ON community_likes ⇒ 红）。
+  -- 表级 INSERT/UPDATE 仍处处禁止（它们都有列级替代；GREATEST 语义不适用）。
+  -- 注：PG17 的 MAINTAIN 属于维护类而非写入类，且 PG16 无此记号（写死会
+  -- 让旧版本 psql 直接报错），故不纳入本断言。
   SELECT 'table_dml_allowlist',
          NOT EXISTS (
            SELECT 1
              FROM pg_class c
              JOIN pg_namespace n ON n.oid = c.relnamespace
+             CROSS JOIN (VALUES ('INSERT'), ('UPDATE'), ('DELETE'),
+                                ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
             WHERE c.relkind IN ('r','p','f')
               AND n.nspname NOT IN ('pg_catalog','information_schema')
               AND n.nspname NOT LIKE 'pg_%'
-              AND has_table_privilege('gengyun_api_runtime', c.oid,
-                    'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-              AND NOT (n.nspname = 'public' AND c.relname = 'idempotency_keys')
+              AND has_table_privilege('gengyun_api_runtime', c.oid, p.priv)
+              AND NOT EXISTS (
+                    SELECT 1
+                      FROM (VALUES
+                             ('public', 'idempotency_keys',       'INSERT'),
+                             ('public', 'idempotency_keys',       'DELETE'),
+                             ('public', 'community_likes',        'DELETE'),
+                             ('public', 'community_idempotency',  'DELETE'),
+                             ('public', 'ocr_idempotency',        'DELETE')
+                           ) AS allow(sch, tbl, priv)
+                     WHERE allow.sch = n.nspname
+                       AND allow.tbl = c.relname
+                       AND allow.priv = p.priv
+                  )
          ),
-         '除 public.idempotency_keys 外不得有表级写入类权限'
+         '表级写权限只允许 idempotency_keys{INSERT,DELETE}、community_likes{DELETE}、community_idempotency{DELETE}、ocr_idempotency{DELETE}；清单外的表或类型一律失败（其余全部按列授予）'
 
   UNION ALL
   -- 8. 允许的表级写权限也必须是角色文件里明示的两种
