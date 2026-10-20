@@ -126,6 +126,11 @@
   同时 `0023` **首次落在 main**（main 侧号段首次连续到 `0023`），本索引自此不再称其「只在本分支树上」。
   §2 表行与 §4 第 8 项的「当前读数」已按本次合流后的树实测同步。
   （编号沿革：合流后树内既有段最高编号为上游侧的「合流复核七」；本段沿用派单指定名「合流复核九」，未新造「八」。）
+- **本片新增迁移（2026-10-20，GY-R27 S10，#10 OCR 持久化）**：`feat/gy-r27-ocr-persist`（基线 `upstream/main` = `13dd429`）
+  新增 `0024_ocr_persistence.sql` 与其 `rollback/0024_ocr_persistence.down.sql`（迁移号由指挥在
+  `.pg17/ruling-migration-order-20261019.md` 分配并登记，**未改号、未造占位迁移**）⇒ 按本树实测：
+  迁移 **24** 个（`0001..0024`，**连续无缺号**）、`rollback/` **23** 个（`0002..0024`，仍无 `0001`）、
+  `deploy/` 在册 **30** 个 ⇒ 读数由 23／22／30 变为 **24／23／30**。§2 表行与 §4 第 8 项的「当前读数」已按本树同步。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -186,7 +191,7 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **23** 个：`0001..0023`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0023`（22 个）、无 `0001`（门禁第 8 项）；本行按**合流后的树**实测刷新（`git ls-files services/api/db/migrations` ∪ `git ls-files deploy`）：2026-10-20 再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号。旧值（并列历史，按原样保留）：2026-10-20 合流 `df043a7` 后本树 22／21／30（旧值＝21／20／30）；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30（其 `0023` 当时尚未入 main）。 |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **24** 个：`0001..0024`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0024`（23 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r27-ocr-persist`（S10，#10）新增 `0024_ocr_persistence.sql` 与其 down 脚本 ⇒ **24／23／30**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`）。此前的读数（并列历史，按原样保留）：2026-10-20 再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -203,7 +208,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 23 个（`0001..0023`，连续无缺号）；`rollback/` 22 个（`0002..0023`）；`migrate.ts` 报错文本 | ✅ 一致（2026-10-20 再合流 `upstream/main` = `ff1b39d` 后按本树实读：`0001..0023` 连续无缺号，`0002..0023` 的 down 全部在册、无 `0001`；`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；本行由合流后的树实测刷新，合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）、旧值＝23／22／30（#295 侧叠 #296 新 head `71eda51` 时点） |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 24 个（`0001..0024`，连续无缺号）；`rollback/` 23 个（`0002..0024`）；`migrate.ts` 报错文本 | ✅ 一致（本片树实读：`0001..0024` 连续无缺号，`0002..0024` 的 down 全部在册、无 `0001`；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-20 再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 

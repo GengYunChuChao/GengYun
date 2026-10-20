@@ -158,6 +158,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/ocr-jobs-pg.mjs',
+    reason: '需真实 PG 17.11（硬钉库名 `gengyun_ocr_jobs_test`；未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
+      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：**本片仅落地脚本，CI 接线留后续片**'
+      + '（既未接进 `test:integration:http` 这条无 PG 的回环链，也未新增/修改任何 workflow），故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/profile-ui-fixture.mjs',
     reason: '夹具模块：被已接线的 `profile-ui-http.test.mjs` import，不是独立可执行脚本。',
   },
