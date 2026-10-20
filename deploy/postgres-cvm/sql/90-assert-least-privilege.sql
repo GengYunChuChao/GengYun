@@ -22,11 +22,15 @@
 --         `verify-cvm-postgres.sh --runtime-password-env …` 的 `runtime_tcp_login`（真实 TCP + scram 登录）。
 -- 前置  ：20-login-roles.sql 已执行；全部迁移已应用（本文件会读取表与视图）。
 --
--- 输出约定：只打印一行。
+-- 输出约定：**最后一行**是判决，且判决只可能是两种形态之一。
 --   ok                  —— 全部断言通过
 --   FAIL: <标签> (<说明>); ... —— 未通过项明细（顺序即修复顺序）
 -- 任何断言为 NULL 也按未通过处理（NULL 视为“无法证明”）。
--- 调用方 provision-db.sh 会把非 ok 视为失败并退出非零。
+-- 调用方 provision-db.sh 会把非 ok 视为失败并退出非零：它只取**最后一行非空输出**
+-- （provision-db.sh:365 `sed '/^[[:space:]]*$/d' | tail -n1`），所以判决之前允许出现
+-- 信息行（本文件只用一处：R28-S24 的 recognition_* 软守卫提示，仅在迁移 0025 已合入时打印）。
+-- R28-S24 更正：旧版这里写「只打印一行」，实际上补授权后新增的 `\echo` 信息行打破了
+-- 这个字面说法；语义约定本来就是“最后一行是判决”，这里按真实约定改写。
 --
 -- 本文件是「只报不改」：发现越权只报告，不自动 REVOKE，
 -- 避免脚本静默改变既有角色语义（services/api/db/roles/*.sql 是唯一权威）。
@@ -87,7 +91,235 @@ SELECT (to_regclass('public.schema_migrations') IS NOT NULL) AS ledger_ok \gset
   \echo '      （等价复跑环境：用 psql -f 应用迁移时不会有该台账，此告警属预期。）'
 \endif
 
-WITH checks(label, ok, detail) AS (
+-- --- R28-S24 软守卫：recognition_*（迁移 0025，本分支未合入） ------------------
+-- 本分支**不**为 recognition_* 授权，也不把它写进授权清单：那三张表的建表迁移
+-- 还在未合入的 PR #333 里。若将来合并后有人装了库却忘了补授权，这里会**如实提示**
+-- 一次（而不是假装已覆盖）；提示在判决之前，不影响 provision-db.sh 取最后一行。
+-- 检测方式就是 to_regclass：对本分支（表不存在）天然安全，不产生任何输出。
+SELECT (to_regclass('public.recognition_jobs') IS NOT NULL
+        OR to_regclass('public.recognition_records') IS NOT NULL
+        OR to_regclass('public.recognition_idempotency') IS NOT NULL) AS r28_recognition_present \gset
+\if :r28_recognition_present
+  \echo '提示：检测到 recognition_*（迁移 0025）表存在，但本分支的 sql/20-login-roles.sql 尚未为其授权，'
+  \echo '      运行时访问这些表会 42501。授权草案与取舍见 docs/verification/gy-r28-least-privilege-grants-20261020.md。'
+\endif
+
+-- --- R28-S24 真执行探针（零行、零改动） ---------------------------------------
+-- 为什么必须「真跑」而不只是 has_*_privilege：
+--   * PostgreSQL **没有列级 DELETE**，所以四张表的 DELETE 只能表级授予。
+--     has_table_privilege 能回答“有没有这个权限位”，但回答不了“运行时实际的语句
+--     形状能不能跑通”——后者才是部署后真正会发生的事。
+--   * 反过来，列级 SELECT 的“能读”也不等价于 has_table_privilege（后者对列级授权
+--     返回 false）。所以读面用 `SELECT <列> FROM <表> LIMIT 0` 真执行一次。
+--   * 探针语句一律零行（DELETE … WHERE false / SELECT … LIMIT 0）：PG 在**执行器
+--     启动时**做权限检查（缺权照样 42501），但零行不触发 NOT NULL/FK/CHECK，
+--     也不会改动任何数据。
+--   * 每条探针之后立刻用 psql 内建变量 :ERROR 记录“刚才那条是否失败”
+--     （false=成功、true=失败），再 ROLLBACK TO SAVEPOINT：某条失败不会把事务拖成
+--     25P02，后面的探针仍各自独立求值。整段结束 ROLLBACK ⇒ 库内零改动。
+--   * 若这些变量缺失（例如本段被误删），下面引用它们的断言会因 :'var' 未展开而直接
+--     语法错误 ⇒ 大声失败，而不是静默放过。
+\set ON_ERROR_STOP off
+BEGIN;
+SET LOCAL ROLE gengyun_api_runtime;
+\set r28_probe_role :ERROR
+
+-- 表级 DELETE：只允许四张表（idempotency_keys 为既有豁免，另三张见 20-login-roles.sql 段 H）
+SAVEPOINT r28_probe;
+DELETE FROM public.idempotency_keys WHERE false;
+\set r28_probe_del_idempotency_keys :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.community_likes WHERE false;
+\set r28_probe_del_community_likes :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.community_idempotency WHERE false;
+\set r28_probe_del_community_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.ocr_idempotency WHERE false;
+\set r28_probe_del_ocr_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+-- 列级读面：逐表跑一次零行 SELECT（列清单 = 授权清单里的 SELECT 列）
+SAVEPOINT r28_probe;
+SELECT id, revision, owner_id, type, target_ref, read_at, created_at, event_key
+  FROM public.messages LIMIT 0;
+\set r28_probe_sel_messages :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, author_id, revision, title, body, crop_id, region_code, media_ids,
+       linked_knowledge_type, linked_knowledge_id, linked_knowledge_revision,
+       visibility, audit_state, created_at, updated_at
+  FROM public.community_posts LIMIT 0;
+\set r28_probe_sel_community_posts :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, post_id, author_id, revision, body, visibility, audit_state, created_at
+  FROM public.community_comments LIMIT 0;
+\set r28_probe_sel_community_comments :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT target_type, target_id, user_id
+  FROM public.community_likes LIMIT 0;
+\set r28_probe_sel_community_likes :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, revision, reporter_id, target_type, target_id, target_revision,
+       state, reason_code, detail, created_at
+  FROM public.community_reports LIMIT 0;
+\set r28_probe_sel_community_reports :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT target_type, target_id, target_revision, id, decision, reason_codes,
+       hard_rule_passed, rule_version, text_digest, contract_complete,
+       missing_contract_fields, created_at
+  FROM public.community_moderation_decisions LIMIT 0;
+\set r28_probe_sel_community_moderation_decisions :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT scope, key_hash, request_hash, response_status, outcome, expires_at
+  FROM public.community_idempotency LIMIT 0;
+\set r28_probe_sel_community_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, revision, kind, owner_user_id, ocr_id, media_id, media_revision,
+       state, deadline_at, created_at, updated_at, error_code
+  FROM public.ocr_jobs LIMIT 0;
+\set r28_probe_sel_ocr_jobs :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT id, revision, owner_user_id, media_id, media_revision, raw_fields,
+       corrected_fields, verification, model_version, created_at, updated_at, deleted
+  FROM public.ocr_records LIMIT 0;
+\set r28_probe_sel_ocr_records :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+SELECT scope, key_hash, request_hash, payload, pending, expires_at
+  FROM public.ocr_idempotency LIMIT 0;
+\set r28_probe_sel_ocr_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- 探针结束 -----------------------------------------------------------------
+
+-- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
+-- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
+-- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
+-- runtime_domain_tables_classified 判红，而不是像 2026-10 之前那样一路 ok。
+WITH domain_manifest(tbl, classification, required) AS (VALUES
+    ('messages',                       'granted',          true),
+    ('community_posts',                'granted',          true),
+    ('community_comments',             'granted',          true),
+    ('community_likes',                'granted',          true),
+    ('community_reports',              'granted',          true),
+    ('community_moderation_decisions', 'granted',          true),
+    ('community_idempotency',          'granted',          true),
+    ('ocr_jobs',                       'granted',          true),
+    ('ocr_records',                    'granted',          true),
+    ('ocr_idempotency',                'granted',          true),
+    -- 备份副本由 GY-I19 段（另一次交付）授权给 gengyun_auth_privacy 组；
+    -- 本文件只声明“已分类”，列级形状由 tests/integration/backup-purge-pg.mjs 覆盖。
+    ('user_backup_copies',             'granted_external', true),
+    -- 运行时明确**不得**访问的运行时域表（零表级、零列级权限）
+    ('community_media_grants',         'forbidden',        true),
+    ('deletion_requests',              'forbidden',        true),
+    ('deletion_handlers',              'forbidden',        true),
+    ('third_party_deletions',          'forbidden',        true),
+    -- 迁移 0025（PR #333，未合入）：存在就必须分类为 forbidden，不存在也不算缺（required=false）
+    ('recognition_jobs',               'forbidden',        false),
+    ('recognition_records',            'forbidden',        false),
+    ('recognition_idempotency',        'forbidden',        false)
+  ),
+-- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
+-- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
+-- 断言抓住（这是有意的重复，不要把它合并成“从授权结果反推”）。
+  expected(tbl, sel, ins, upd, del) AS (VALUES
+    ('messages',
+     ARRAY['id','revision','owner_id','type','target_ref','read_at','created_at','event_key'],
+     ARRAY['id','owner_id','type','target_ref','read_at','created_at','revision','event_key'],
+     ARRAY['read_at','revision'],
+     false),
+    ('community_posts',
+     ARRAY['id','author_id','revision','title','body','crop_id','region_code','media_ids',
+           'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
+           'visibility','audit_state','created_at','updated_at'],
+     ARRAY['id','author_id','revision','title','body','crop_id','region_code','media_ids',
+           'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
+           'visibility','audit_state','created_at','updated_at'],
+     ARRAY['revision','title','body','crop_id','region_code','media_ids',
+           'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
+           'visibility','audit_state','updated_at'],
+     false),
+    ('community_comments',
+     ARRAY['id','post_id','author_id','revision','body','visibility','audit_state','created_at'],
+     ARRAY['id','post_id','author_id','revision','body','visibility','audit_state','created_at'],
+     ARRAY['revision','body','visibility','audit_state'],
+     false),
+    ('community_likes',
+     ARRAY['target_type','target_id','user_id'],
+     ARRAY['target_type','target_id','user_id'],
+     ARRAY[]::text[],
+     true),
+    ('community_reports',
+     ARRAY['id','revision','reporter_id','target_type','target_id','target_revision',
+           'state','reason_code','detail','created_at'],
+     ARRAY['id','revision','reporter_id','target_type','target_id','target_revision',
+           'state','reason_code','detail','created_at'],
+     ARRAY['revision','reporter_id','target_type','target_id','target_revision',
+           'state','reason_code','detail','created_at'],
+     false),
+    ('community_moderation_decisions',
+     ARRAY['target_type','target_id','target_revision','id','decision','reason_codes',
+           'hard_rule_passed','rule_version','text_digest','contract_complete',
+           'missing_contract_fields','created_at'],
+     ARRAY['target_type','target_id','target_revision','id','decision','reason_codes',
+           'hard_rule_passed','rule_version','text_digest','contract_complete',
+           'missing_contract_fields','created_at'],
+     ARRAY['id','decision','reason_codes','hard_rule_passed','rule_version','text_digest',
+           'contract_complete','missing_contract_fields','created_at'],
+     false),
+    ('community_idempotency',
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['response_status','outcome'],
+     true),
+    ('ocr_jobs',
+     ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['revision','state','deadline_at','updated_at','error_code'],
+     false),
+    ('ocr_records',
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_fields',
+           'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_fields',
+           'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
+     ARRAY['revision','raw_fields','corrected_fields','verification','model_version',
+           'updated_at','deleted'],
+     false),
+    ('ocr_idempotency',
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['request_hash','payload','pending','expires_at'],
+     true)
+  ),
+  checks(label, ok, detail) AS (
 
   -- 1. 运行时 LOGIN 的属性：可登录、可继承、且无任何特权位
   SELECT 'runtime_login_props',
@@ -704,6 +936,125 @@ WITH checks(label, ok, detail) AS (
          AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'TRUNCATE')
          AND NOT has_table_privilege('gengyun_api_runtime', to_regclass('public.admin_audit_events'), 'SELECT'),
          '运行时对 public.admin_audit_events 必须仍无任何直接权限（开关审计只经唯一写路径写入）'
+
+  UNION ALL
+  -- 45. R28-S24 真执行探针（表级 DELETE）：四张白名单表必须在运行时身份下真能删（零行）
+  --     为什么不用 has_table_privilege 就够：它只回答权限位；这里回答“语句真能跑通”。
+  --     变量来自上方探针段（成功=false、失败=true，故断言写成 = 'false'）。
+  SELECT 'runtime_domain_delete_exec',
+         :'r28_probe_role' = 'false'
+         AND :'r28_probe_del_idempotency_keys' = 'false'
+         AND :'r28_probe_del_community_likes' = 'false'
+         AND :'r28_probe_del_community_idempotency' = 'false'
+         AND :'r28_probe_del_ocr_idempotency' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，四张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
+
+  UNION ALL
+  -- 46. R28-S24 真执行探针（列级读面）：十张表按授权列 SELECT … LIMIT 0 必须成功。
+  --     列级授权下 has_table_privilege 恒为 false，所以“能读”只能靠真执行证明。
+  SELECT 'runtime_domain_select_exec',
+         :'r28_probe_sel_messages' = 'false'
+         AND :'r28_probe_sel_community_posts' = 'false'
+         AND :'r28_probe_sel_community_comments' = 'false'
+         AND :'r28_probe_sel_community_likes' = 'false'
+         AND :'r28_probe_sel_community_reports' = 'false'
+         AND :'r28_probe_sel_community_moderation_decisions' = 'false'
+         AND :'r28_probe_sel_community_idempotency' = 'false'
+         AND :'r28_probe_sel_ocr_jobs' = 'false'
+         AND :'r28_probe_sel_ocr_records' = 'false'
+         AND :'r28_probe_sel_ocr_idempotency' = 'false',
+         '十张表按授权列清单 SELECT … LIMIT 0 必须成功（列级授权下 has_table_privilege 恒为 false，不能当判据）'
+
+  UNION ALL
+  -- 47. R28-S24 元断言（本片真正的价值）：运行时域的表必须被**显式分类**。
+  --     (a) required 的行必须存在；(b) 任何匹配运行时域命名的关系都必须在清单里；
+  --     (c) 分类值只能是三种枚举之一（防拼写漂移）。
+  --     新增一个域/一张表却既不授权、也不在清单里声明 forbidden ⇒ 这里判红。
+  SELECT 'runtime_domain_tables_classified',
+         NOT EXISTS (
+           SELECT 1 FROM domain_manifest m
+            WHERE m.required AND to_regclass('public.'||m.tbl) IS NULL
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind IN ('r','p','f')
+              AND c.relname ~ '^(messages$|community_|ocr_|recognition_|user_backup_copies$|deletion_|third_party_deletions$)'
+              AND NOT EXISTS (SELECT 1 FROM domain_manifest m WHERE m.tbl = c.relname)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM domain_manifest m
+            WHERE m.classification NOT IN ('granted','granted_external','forbidden')
+         ),
+         '运行时域的每张表必须进分类清单（granted/granted_external/forbidden）；新增表既不授权也不声明 forbidden ⇒ 失败'
+
+  UNION ALL
+  -- 48. R28-S24 反向控制：forbidden 分类的表，运行时必须零表级、零列级权限。
+  SELECT 'runtime_domain_forbidden_tables_untouched',
+         NOT EXISTS (
+           SELECT 1
+             FROM domain_manifest m
+            WHERE m.classification = 'forbidden'
+              AND to_regclass('public.'||m.tbl) IS NOT NULL
+              AND (has_table_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl),
+                                       'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                   OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'SELECT')
+                   OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'INSERT')
+                   OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'UPDATE')
+                   OR has_any_column_privilege('gengyun_api_runtime', to_regclass('public.'||m.tbl), 'REFERENCES'))
+         ),
+         'forbidden 分类（community_media_grants / 注销三表 / recognition_*）运行时不得有任何表级或列级权限'
+
+  UNION ALL
+  -- 49-58. R28-S24 逐表范围断言（十张表，数据驱动 expected 清单）：
+  --   正向：清单里的列，SELECT/INSERT/UPDATE 必须都在；
+  --   反向：清单外的列，任何列级权限（含 REFERENCES）都不许有；
+  --   表级：INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER 一律不得有，
+  --         DELETE 必须**恰好**等于 del 列声明（只有 likes / 两张幂等台账为 true）。
+  SELECT 'runtime_grants_' || e.tbl,
+         to_regclass('public.'||e.tbl) IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM unnest(e.sel) c
+                WHERE NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c, 'SELECT'))
+         AND NOT EXISTS (
+               SELECT 1 FROM unnest(e.ins) c
+                WHERE NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c, 'INSERT'))
+         AND NOT EXISTS (
+               SELECT 1 FROM unnest(e.upd) c
+                WHERE NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c, 'UPDATE'))
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = to_regclass('public.'||e.tbl)
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND NOT (a.attname::text = ANY (e.sel))
+                  AND has_column_privilege('gengyun_api_runtime', a.attrelid, a.attname, 'SELECT'))
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = to_regclass('public.'||e.tbl)
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND NOT (a.attname::text = ANY (e.ins))
+                  AND has_column_privilege('gengyun_api_runtime', a.attrelid, a.attname, 'INSERT'))
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = to_regclass('public.'||e.tbl)
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND NOT (a.attname::text = ANY (e.upd))
+                  AND has_column_privilege('gengyun_api_runtime', a.attrelid, a.attname, 'UPDATE'))
+         AND NOT EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = to_regclass('public.'||e.tbl)
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND has_column_privilege('gengyun_api_runtime', a.attrelid, a.attname, 'REFERENCES'))
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'TRUNCATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'REFERENCES')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'TRIGGER')
+         AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'DELETE') = e.del,
+         '列级 SELECT/INSERT/UPDATE 必须与清单逐列一致（清单外一列都不行）；表级只允许 del=true 的表有 DELETE，其它表级写权限一律不得有'
+    FROM expected e
 )
 
 SELECT CASE
