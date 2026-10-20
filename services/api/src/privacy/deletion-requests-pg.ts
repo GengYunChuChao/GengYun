@@ -47,6 +47,7 @@
 import type { PoolClient } from 'pg';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError, type PgPool } from '../db/pool.ts';
+import { insertBackupCopySeeds, type BackupCopySeedSource } from './backup-copies-pg.ts';
 
 /** 唯一写路径的精确签名（新增/改动后必须同步 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`）。 */
 export const ACCOUNT_DELETION_FUNCTION = 'public.request_account_deletion';
@@ -74,6 +75,14 @@ export interface CreateDeletionRequestInput {
   backupDueAt: string;
   receiptIssuedAt: string;
   receiptExpiresAt: string;
+  /**
+   * GY-I19（#19）· 备份副本清单来源（每个必需模块一个）。
+   *
+   * 给了就**在同一事务内**、函数调用之后 `COMMIT` 之前逐模块写清单行（设计 §6.1 第 2 步）：
+   * 任何一个模块写失败 ⇒ 整个受理回滚 ⇒ 调用方收到失败、202 不签发，
+   * ⛔ 不会出现「受理成功但 30 天后没有可清对象」。
+   */
+  sources?: readonly BackupCopySeedSource[];
 }
 
 /**
@@ -235,6 +244,21 @@ export function createPostgresDeletionRequestStore({ pool }: { pool: PgPool }): 
           input.receiptExpiresAt,
         ]);
         raw = result.rows[0]?.['result'];
+        // 受理事务的第 2 步（设计 §6.1）：写入逐模块的备份副本清单行。
+        // 位置固定在函数调用之后（FK 需要 `deletion_requests` 行已存在）、`COMMIT` 之前
+        // （失败必须整笔回滚，⛔ 不能「受理成功但清单半写」）。
+        if (input.sources !== undefined) {
+          await insertBackupCopySeeds(client, {
+            requestId: input.id,
+            userId: input.userId,
+            generation: input.generation,
+            // 与受理函数同源的时刻：`covered_through` = 受理时刻（= `created_at`，CHECK 恒成立），
+            // `retention_until` = `backup_due_at`（设计 §4.4 要求逐行相等）。
+            coveredThrough: input.requestedAt,
+            retentionUntil: input.backupDueAt,
+            sources: input.sources,
+          });
+        }
         await client.query('COMMIT');
       } catch (error) {
         if (client !== undefined) await client.query('ROLLBACK').catch(() => {});
