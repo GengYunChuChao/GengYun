@@ -557,3 +557,130 @@ GRANT DELETE ON public.ocr_idempotency TO gengyun_api_runtime;
 \echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency（PG 无列级 DELETE；其余表的 DELETE 一律未授）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'
+
+-- --- I. 运行时域（收藏／历史／对话）的列级授权（R28-S26 / 迁移 0013·0018）----------
+-- 本段为什么写在这个文件里（与上面 G/H 段同一条理由）：`deploy/postgres-cvm/provision-db.sh`
+-- 只在 `pg_roles` 里还没有这些 NOLOGIN 组时才跑 `services/api/db/roles/*.sql`，而
+-- `gengyun_api_runtime` 的授权每次部署都会跑本文件 ⇒ 运行时角色的授权必须落在这里；
+-- 放在 roles/*.sql 里既不会对新库生效（组已存在即跳过），也无法与迁移顺序解耦。
+--
+-- 覆盖七张表（两份迁移）：
+--   0018_favorites_history.sql：favorites / history / favorites_idempotency / history_idempotency
+--   0013_conversations.sql    ：conversations / conversation_turns / conversation_answers
+-- 清单不是猜的：每一列都从 store-pg.ts 的真实 SQL 反推（见证据页的逐条对照），
+--   收藏：services/api/src/favorites/store-pg.ts:150,167,171,187,211,221,233,248,276,286,295,316,344,356,366
+--   历史：services/api/src/history/store-pg.ts:155,159,176,200,207,216,226,237,250,277,287,295,315,342,353,362
+--   对话：services/api/src/conversations/store-pg.ts:222,235,246,260,269,282,309,324,342,351,361,376,403,421,432
+--
+-- 三档粒度，逐条有据：
+--   ① 读面按列：SELECT 只给 store 的列清单。DELETE/UPDATE 的 `WHERE` 与 `RETURNING`
+--      引用列也必须有 SELECT 权（实测：只有 SELECT(a) 时 `DELETE … WHERE b = …` 报 42501），
+--      所以两张幂等台账的 SELECT 是全部 6 列（`ON CONFLICT (scope, key_hash) … RETURNING scope`）。
+--   ② 写面按列：INSERT / UPDATE 只给真实语句里出现过的列。
+--   ③ DELETE 在 PG 里没有列级形式 ⇒ 六张表只能表级授权：
+--      favorites / history / conversations / conversation_turns（物理删除与注销清空）、
+--      favorites_idempotency / history_idempotency（过期清理与 claim 释放）。
+--      `conversation_answers` **不授 DELETE**：它的行只随 conversation_turns 的
+--      `ON DELETE CASCADE` 消失（0013 里 turn_id 的外键；实测见证据页）。
+--   `UPDATE (revision)` 只是**行锁载体**：favorites / history / conversations 的 store 里
+--   没有任何 UPDATE 语句，但都有 `SELECT … FOR UPDATE`，而 PG 的 FOR UPDATE 要求 UPDATE 权
+--   （实测：只有列级 SELECT 时 `SELECT … FOR UPDATE` 报 `42501 permission denied for table
+--   favorites`；追加 `GRANT UPDATE (revision)` 后 FOR UPDATE / FOR SHARE 均通过）。
+--   它不是业务写权限，也不给其它列。
+--   ⛔ 一律不给 TRUNCATE / REFERENCES / TRIGGER，一律不给表级 INSERT/UPDATE。
+\echo '--- I. 运行时域（收藏／历史／对话）列级授权（R28-S26，迁移 0013 / 0018）---'
+
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['favorites', 'favorites_idempotency', 'history', 'history_idempotency',
+                      'conversations', 'conversation_turns', 'conversation_answers']) AS t(name)
+   WHERE to_regclass('public.' || t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少运行时域表：%（迁移 0013 / 0018 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.favorites,
+                     public.favorites_idempotency,
+                     public.history,
+                     public.history_idempotency,
+                     public.conversations,
+                     public.conversation_turns,
+                     public.conversation_answers
+  FROM PUBLIC;
+
+-- favorites（0018）：SELECT 7 列 / INSERT 7 列 / UPDATE(revision) 仅行锁 / 表级 DELETE
+GRANT SELECT (id, owner_id, target_type, target_id, target_revision, revision, created_at)
+  ON public.favorites TO gengyun_api_runtime;
+GRANT INSERT (id, owner_id, target_type, target_id, target_revision, revision, created_at)
+  ON public.favorites TO gengyun_api_runtime;
+GRANT UPDATE (revision) ON public.favorites TO gengyun_api_runtime;
+GRANT DELETE ON public.favorites TO gengyun_api_runtime;
+
+-- history（0018）：SELECT 11 列 / INSERT 11 列 / UPDATE(revision) 仅行锁 / 表级 DELETE
+GRANT SELECT (id, owner_id, kind, target_type, target_id, target_revision, revision,
+              job_id, job_state, event_key, created_at)
+  ON public.history TO gengyun_api_runtime;
+GRANT INSERT (id, owner_id, kind, target_type, target_id, target_revision, revision,
+              job_id, job_state, event_key, created_at)
+  ON public.history TO gengyun_api_runtime;
+GRANT UPDATE (revision) ON public.history TO gengyun_api_runtime;
+GRANT DELETE ON public.history TO gengyun_api_runtime;
+
+-- history_idempotency（0018）：SELECT 6 列（含 WHERE / RETURNING 引用的 scope、key_hash）/
+-- INSERT 6 列 / UPDATE 4 列（claim 的冲突覆盖与 complete 的落结果）/ 表级 DELETE（过期与释放）
+GRANT SELECT (scope, key_hash, request_hash, response_status, outcome, expires_at)
+  ON public.history_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope, key_hash, request_hash, response_status, outcome, expires_at)
+  ON public.history_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (request_hash, response_status, outcome, expires_at)
+  ON public.history_idempotency TO gengyun_api_runtime;
+GRANT DELETE ON public.history_idempotency TO gengyun_api_runtime;
+
+-- favorites_idempotency（0018）：同上
+GRANT SELECT (scope, key_hash, request_hash, response_status, outcome, expires_at)
+  ON public.favorites_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope, key_hash, request_hash, response_status, outcome, expires_at)
+  ON public.favorites_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (request_hash, response_status, outcome, expires_at)
+  ON public.favorites_idempotency TO gengyun_api_runtime;
+GRANT DELETE ON public.favorites_idempotency TO gengyun_api_runtime;
+
+-- conversations（0013）：SELECT 6 列 / INSERT 6 列 / UPDATE(revision) 仅行锁 / 表级 DELETE
+GRANT SELECT (id, owner_id, revision, conditions, created_at, updated_at)
+  ON public.conversations TO gengyun_api_runtime;
+GRANT INSERT (id, owner_id, revision, conditions, created_at, updated_at)
+  ON public.conversations TO gengyun_api_runtime;
+GRANT UPDATE (revision) ON public.conversations TO gengyun_api_runtime;
+GRANT DELETE ON public.conversations TO gengyun_api_runtime;
+
+-- conversation_turns（0013）：SELECT 14 列（answer_id 由 RETURNING 读回）/ INSERT 13 列
+-- （store 的 INSERT 从不写 answer_id）/ UPDATE 5 列（认领 job 与落结果）/ 表级 DELETE
+GRANT SELECT (id, conversation_id, owner_id, revision, input_text, transcription_ref,
+              job_id, job_state, job_deadline_at, job_created_at, job_error_code, answer_id,
+              created_at, updated_at)
+  ON public.conversation_turns TO gengyun_api_runtime;
+GRANT INSERT (id, conversation_id, owner_id, revision, input_text, transcription_ref,
+              job_id, job_state, job_deadline_at, job_created_at, job_error_code,
+              created_at, updated_at)
+  ON public.conversation_turns TO gengyun_api_runtime;
+GRANT UPDATE (job_state, job_error_code, answer_id, revision, updated_at)
+  ON public.conversation_turns TO gengyun_api_runtime;
+GRANT DELETE ON public.conversation_turns TO gengyun_api_runtime;
+
+-- conversation_answers（0013）：SELECT 14 列 / INSERT 14 列；无 UPDATE、无 DELETE
+-- （行只随 turn 的 ON DELETE CASCADE 消失，级联由外键属主执行，不需要运行时的 DELETE 权）
+GRANT SELECT (id, turn_id, owner_id, revision, status, checked_text, check_state, citations,
+              dose_cards, model_version, prompt_version, rule_version, created_at, updated_at)
+  ON public.conversation_answers TO gengyun_api_runtime;
+GRANT INSERT (id, turn_id, owner_id, revision, status, checked_text, check_state, citations,
+              dose_cards, model_version, prompt_version, rule_version, created_at, updated_at)
+  ON public.conversation_answers TO gengyun_api_runtime;
+
+\echo '20-login-roles.sql：已授予 public.favorites / public.history / public.conversations / public.conversation_turns / public.conversation_answers / public.favorites_idempotency / public.history_idempotency 的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.favorites / public.history / public.conversations / public.conversation_turns / public.favorites_idempotency / public.history_idempotency（PG 无列级 DELETE；public.conversation_answers 靠 conversation_turns 的 ON DELETE CASCADE，不授 DELETE）。'
+\echo '20-login-roles.sql：public.favorites / public.history / public.conversations 的 UPDATE (revision) 仅是 SELECT … FOR UPDATE 的**行锁载体**（store 里没有 UPDATE 语句），不是业务写权限。'
