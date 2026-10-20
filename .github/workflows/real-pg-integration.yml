@@ -103,3 +103,40 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           FAVORITES_HISTORY_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_favorites_history_test
+      # 账号注销域（I19，R28-S14）：库名硬钉 `gengyun_deletion_test`，脚本要求空库（自己断言 `public` 下无表）。
+      # 该脚本自建 5 组角色 + 运行时 LOGIN，口令在脚本内 `randomBytes(24)` 生成**并写进它自己用的运行时 URL**
+      # （`account-deletion-pg.mjs:95/198/381`）⇒ scram 认证下自洽；收尾逐个 `DROP ROLE` 并复核为空 ⇒ 跨 step
+      # 不留角色。连接串走 **argv[2]**，上面那组 PG* 只给 `psql` 建库用（脚本从不读它们）。
+      # 本地取证（PG 17.11 + scram 认证 + `gengyun_ci_owner`）：exit=0，PASS 13 组。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_deletion_test' && node tests/integration/account-deletion-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_deletion_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+      # 后台账号读取域（I18，R28-S14）：库名硬钉 `gengyun_admin_accounts_read_test`；argv[2]=owner URL、
+      # argv[3]=运行时角色 URL。运行时角色的口令是脚本**从 argv[3] 解出来再 `CREATE ROLE`** 的
+      # （`admin-accounts-read-pg.mjs:190-192`）⇒ scram 下自洽（argv[3] 的合成口令必须与这里逐字一致）。
+      # 注意：本 step 会把 `gengyun_api_runtime` 与 6 个组角色**留在集群里**（脚本不 DROP），
+      # 故它必须排在同样自建角色的 `account-deletion` 之后（后者要求角色不存在且收尾会清空）。
+      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，迁移三连/最小权限/HTTP 全过。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_accounts_read_test' && node tests/integration/admin-accounts-read-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_accounts_read_test postgres://gengyun_api_runtime:synthetic-ci-runtime-only@127.0.0.1:5432/gengyun_admin_accounts_read_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+      # 全局开关域（I18，R28-S14）：库名硬钉 `gengyun_flags_test`；**只给 argv[2]**（owner URL）。
+      # argv[3] 省略时脚本自己 `CREATE`/`ALTER` 运行时角色、把随机口令写进它自己的 URL
+      # （`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽；若给了 argv[3]，脚本会跳过角色创建、直接拿 URL 连
+      # （角色必须已存在）。所以这一条只传一个参数——这是它唯一自洽的调用形态。
+      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，`[H]` 等锁 4007ms ⇒ 504 PROVIDER_TIMEOUT。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_flags_test' && node tests/integration/admin-flags-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_flags_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
