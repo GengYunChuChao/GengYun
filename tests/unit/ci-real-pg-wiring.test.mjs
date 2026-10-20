@@ -10,7 +10,7 @@
 // workflow 或已在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 里
 // 逐条声明（本文件不重复判它们，也不动那张表）。
 //
-// 五条判据（每条都有对应反向控制，且反向控制与正向断言**调用同一个**函数）：
+// 九条判据（每条都有对应反向控制，且反向控制与正向断言**调用同一个**函数）：
 //   ① 受管脚本必须出现在某个 `.github/workflows/*.yml` 的 `run:` **命令文本**里
 //      （不认注释、不认裸文件名；`run: |` 块标量体里的 `#` 行是 shell 注释，同样不认）；
 //   ② 任何 workflow 都不得含「放宽跳过」的开关（`GY_ALLOW_SKIP` / `--allow-skip`）——
@@ -23,6 +23,21 @@
 //   ④ 该 workflow 的每个 `uses:` 必须固定到 **40 位 SHA**（⛔ 不许写浮标签；口径与仓内其它 workflow 一致）；
 //   ⑤ 该 workflow 不得含「吞红」构造（`continue-on-error` / `if:` / 行尾 `|| true`）——
 //      真库臂的红是唯一验收信号，吞掉它就等于没有闸门。
+//   ⑥ **顺序**：受管脚本在 workflow 里的执行顺序必须与 `REQUIRED_STEP_ORDER` 显式声明一致
+//      （R28-S18 新增。为什么是硬要求：`admin-accounts-read-pg.mjs` 会在**集群级**留下 6 个组角色
+//      ＋ 运行时角色，而 `account-suspend-pg.mjs` 的 `resetRoles()` 只清得掉「没有被跨库 ACL／成员关系
+//      钉住」的角色；`account-deletion-pg.mjs` 又要求角色不存在、收尾按快照差集清空 ⇒ 这类脚本的重排
+//      会让真 CI 红得莫名其妙，而此前守卫对重排**零断言**）；
+//   ⑦ **建库**：每个受管脚本所在 step 的 `run:` 必须同时含 `CREATE DATABASE` 与
+//      `node tests/integration/<脚本>`，且 `CREATE DATABASE` 在其之前
+//      （每条受管脚本都要求**空库**，共用/漏建库会让脚本报错或 77 退出）；
+//   ⑧ **库名一致**：该 step 里 `CREATE DATABASE <name>` 的 `<name>` 必须与该 step 真正传给脚本的库名
+//      一致——脚本入参有三种形态（env `*_PG_TEST_URL` 的 path／`process.argv` 的 URL path／
+//      脚本内部硬钉常量），三种都要各自抽取并互相一致（只覆盖一种会留下「改了 env 但 argv 还是旧库」
+//      这类假绿通道）；
+//   ⑨ **双向相等**：workflow 里被 `node tests/integration/*-pg.mjs` 执行的脚本集合与
+//      `MANAGED_SCRIPTS` 必须**双向相等**（此前只有单向：清单里有、workflow 没有 ⇒ 红；
+//      反过来「双清单同时删掉一项」⇒ 全绿，受管脚本照样没人跑）。
 //
 // 纯静态：只读 `.github/workflows/` 下的文本，⛔ 不起服务、不连 PG、不联网、不写任何文件、不新增依赖。
 import test from 'node:test';
@@ -57,6 +72,36 @@ const MANAGED_SCRIPTS = Object.freeze([
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
+  'tests/integration/conversations-pg.mjs',
+  'tests/integration/community-pg.mjs',
+  'tests/integration/messages-pg.mjs',
+  'tests/integration/favorites-history-pg.mjs',
+  'tests/integration/account-deletion-pg.mjs',
+  'tests/integration/admin-accounts-read-pg.mjs',
+  'tests/integration/admin-flags-pg.mjs',
+]);
+
+/**
+ * 受管脚本在 `real-pg-integration.yml` 里的**必需执行顺序**（显式声明；⛔ 不从 workflow 反推，
+ * 否则「把两步对调」会让期望顺序跟着实际顺序一起变，顺序判据就成了永绿）。
+ *
+ * 每条为什么在这个位置（顺序不是审美，是脚本之间的状态依赖）：
+ *   1. `conversations-pg`：只在自己库内建表/迁移，收尾不 DROP 集群级角色 ⇒ 对前后无前提，排第一。
+ *   2. `community-pg`：同上，只碰自己库；与会话链互不共享库/角色。
+ *   3. `messages-pg`：同上。
+ *   4. `favorites-history-pg`：同上。
+ *   5. `account-deletion-pg`：**要求集群里没有同名角色**（`provisionRoles` 里是无条件 `CREATE ROLE`），
+ *      且收尾按 `pg_roles` 快照差集把本轮新建的角色全部 DROP 并复核为空 ⇒ 必须排在
+ *      `admin-accounts-read-pg` / `admin-flags-pg` **之前**（这两条会把 `gengyun_api_runtime`
+ *      和 6 个组角色留在集群里）。
+ *   6. `admin-accounts-read-pg`：开头 `resetRoles()` 只 `DROP OWNED BY` **本库**再加 `DROP ROLE`，
+ *      并 `catch(() => {})` 吞掉失败；它**不**在收尾清理自己建的 7 个角色 ⇒ 必须排在注销之后。
+ *   7. `admin-flags-pg`：argv[3] 省略时「存在则 ALTER、不存在则 CREATE」复用 `gengyun_api_runtime`
+ *      （:249-263），是这批里唯一能容忍前面留下运行时角色的脚本 ⇒ 排最后。
+ *
+ * 与 `MANAGED_SCRIPTS` 的关系：**成员集合必须相同、顺序必须等于这里的顺序**，两条都由下面的断言钉住。
+ */
+export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
   'tests/integration/messages-pg.mjs',
@@ -289,6 +334,216 @@ export function unpinnedUses({ file, source }) {
   return hits;
 }
 
+/**
+ * 一个 job body 里的 step 文本块：`- ` 项起头，到下一个同缩进的 `- ` 项或 job 末尾为止。
+ * `steps:` 的缩进从文本里取，⛔ 不硬编码 6 空格（拆 job／加缩进层级时判据不该假红）。
+ */
+export function stepsOfJob(jobBody) {
+  const stepsBlock = blockAfterKey(jobBody, 'steps');
+  if (stepsBlock === null) return [];
+  const steps = [];
+  let current = null;
+  for (const line of stepsBlock.body) {
+    if (line.trim() === '') {
+      if (current !== null) current.lines.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent === stepsBlock.indent + 2 && /^\s*-\s+\S/.test(line)) {
+      current = { lines: [line] };
+      steps.push(current);
+      continue;
+    }
+    if (current !== null) current.lines.push(line);
+  }
+  return steps.map((step) => step.lines.join('\n'));
+}
+
+/** 执行某受管脚本的那一个 step：`{ jobId, step, command }`；找不到返回 `null`。 */
+export function stepRunningScript(source, script) {
+  for (const job of jobsOf(source)) {
+    for (const step of stepsOfJob(job.body)) {
+      const command = runCommandTextsOf(step).find((text) => text.includes(`node ${script}`));
+      if (command !== undefined) return { jobId: job.id, step, command };
+    }
+  }
+  return null;
+}
+
+/** `CREATE DATABASE <name>` 里的库名（去掉引号）；没有这条语句时返回 `null`。 */
+export function createdDatabaseName(command) {
+  const match = /CREATE\s+DATABASE\s+(?:IF\s+NOT\s+EXISTS\s+)?("[^"]+"|'[^']+'|[A-Za-z0-9_.-]+)/i.exec(command);
+  if (match === null) return null;
+  return match[1].replace(/^["']|["']$/g, '');
+}
+
+/** 连接串里的库名（pathname 去掉前导 `/`）；不是合法 `postgres://` URL 时返回 `null`。 */
+export function databaseNameOfUrl(urlText) {
+  try {
+    const url = new URL(String(urlText).trim());
+    const name = decodeURIComponent(url.pathname.replace(/^\//, ''));
+    return name === '' ? null : name;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 脚本内部**硬钉**的库名：两个既有的写法都认——
+ *   ① `const DB = 'gengyun_xxx_test'`；
+ *   ② `assert.equal(<url>.pathname, '/gengyun_xxx_test', …)`（模板字面量 `\`/${DB}\`` 由 ① 覆盖）。
+ */
+export function pinnedDatabaseNames(scriptSource) {
+  const names = new Set();
+  for (const match of scriptSource.matchAll(/const\s+DB\s*=\s*'([A-Za-z0-9_]+)'/g)) names.add(match[1]);
+  for (const match of scriptSource.matchAll(/pathname\s*,\s*['"`]\/([A-Za-z0-9_]+)['"`]/g)) names.add(match[1]);
+  return [...names].sort();
+}
+
+/**
+ * 某一步**真正传给脚本**的库名集合（三种入参形态各自抽取）：
+ *   ① env `*_PG_TEST_URL` 的 URL path；
+ *   ② `node <脚本>` 之后命令行参数里的 `postgres://` URL path（argv[2]／argv[3]…）；
+ *   ③ 脚本内部硬钉常量（`pinnedDatabaseNames`）。
+ * 返回值是 `Set`：正常情况下恰好一个元素；多于一个＝入参自相矛盾（必须红）。
+ */
+export function stepDatabaseNames({ script, step, command, scriptSource }) {
+  const names = new Set();
+  const add = (name) => {
+    if (name !== null && name !== undefined) names.add(name);
+  };
+  for (const match of step.matchAll(/^\s+([A-Z0-9_]+_PG_TEST_URL)\s*:\s*(\S+)\s*$/gm)) {
+    add(databaseNameOfUrl(match[2]));
+  }
+  const marker = `node ${script}`;
+  const argumentsText = command.slice(command.indexOf(marker) + marker.length);
+  for (const match of argumentsText.matchAll(/postgres(?:ql)?:\/\/\S+/g)) {
+    add(databaseNameOfUrl(match[0]));
+  }
+  for (const name of pinnedDatabaseNames(scriptSource)) add(name);
+  return names;
+}
+
+/**
+ * 判据⑦＋⑧：每个受管脚本所在 step 必须「先 `CREATE DATABASE` 再 `node`」，且建出来的库名
+ * 与真正传给脚本的库名（三种形态）一致。返回问题清单，空数组＝合规。
+ * `scriptSources` 可注入（只给反向控制用）；缺省读磁盘真值。
+ */
+export function databaseGuardProblems(source, { scripts = MANAGED_SCRIPTS, scriptSources = null } = {}) {
+  const problems = [];
+  for (const script of scripts) {
+    const found = stepRunningScript(source, script);
+    if (found === null) {
+      problems.push(`${script}：workflow 里找不到执行它的 step`);
+      continue;
+    }
+    const { jobId, step, command } = found;
+    const createIndex = command.search(/CREATE\s+DATABASE/i);
+    const nodeIndex = command.indexOf(`node ${script}`);
+    if (createIndex < 0) {
+      problems.push(`job \`${jobId}\` 里执行 \`${script}\` 的 step 没有 \`CREATE DATABASE\`（受管脚本都要求专用空库）`);
+      continue;
+    }
+    if (createIndex > nodeIndex) {
+      problems.push(`job \`${jobId}\` 里 \`CREATE DATABASE\` 写在了 \`node ${script}\` **之后**（库要先建好）`);
+      continue;
+    }
+    const created = createdDatabaseName(command);
+    if (created === null) {
+      problems.push(`job \`${jobId}\` 的 \`CREATE DATABASE\` 里取不到库名：${command}`);
+      continue;
+    }
+    const scriptSource = scriptSources === null
+      ? readFileSync(join(REPO_ROOT, script), 'utf8')
+      : scriptSources[script];
+    if (typeof scriptSource !== 'string') {
+      problems.push(`${script}：取不到脚本源码，无法核对内部硬钉库名`);
+      continue;
+    }
+    const expected = stepDatabaseNames({ script, step, command, scriptSource });
+    if (expected.size === 0) {
+      problems.push(
+        `${script}：该 step 既没有 \`*_PG_TEST_URL\`／argv URL，脚本里也没有硬钉库名 —— 库名无从核对`,
+      );
+      continue;
+    }
+    if (expected.size > 1) {
+      problems.push(`${script}：该 step 传给脚本的库名自相矛盾（${[...expected].sort().join(' / ')}）`);
+      continue;
+    }
+    const [expectedName] = expected;
+    if (expectedName !== created) {
+      problems.push(
+        `job \`${jobId}\`：\`CREATE DATABASE ${created}\` 与传给 \`${script}\` 的库名 \`${expectedName}\` 不一致`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** workflow 里被 `node tests/integration/*-pg.mjs` 真跑的全部脚本（升序）。 */
+export function scriptsRunByWorkflow(source) {
+  const names = new Set();
+  for (const command of runCommandTextsOf(source)) {
+    for (const match of command.matchAll(/node\s+(tests\/integration\/[A-Za-z0-9._-]+-pg\.mjs)/g)) {
+      names.add(match[1]);
+    }
+  }
+  return [...names].sort();
+}
+
+/** 判据⑨：workflow 真跑的脚本集合与 `MANAGED_SCRIPTS` 双向相等；返回问题清单。 */
+export function managedScriptSetProblems({ source, managed = MANAGED_SCRIPTS }) {
+  const executed = scriptsRunByWorkflow(source);
+  const executedSet = new Set(executed);
+  const managedSet = new Set(managed);
+  const problems = [];
+  for (const script of [...managedSet].sort()) {
+    if (!executedSet.has(script)) problems.push(`清单里有、workflow 没跑：${script}`);
+  }
+  for (const script of executed) {
+    if (!managedSet.has(script)) problems.push(`workflow 跑了、清单里没有：${script}`);
+  }
+  return problems;
+}
+
+/**
+ * 判据⑥：受管脚本在 workflow 里的出现顺序必须与 `requiredOrder` 严格递增。
+ * 失败消息必须能读出「实际顺序 / 期望顺序 / 第一处逆序对」——只报一句「顺序不对」等于让人猜。
+ */
+export function stepOrderProblems({ source, requiredOrder = REQUIRED_STEP_ORDER }) {
+  const commands = runCommandTextsOf(source);
+  const positions = requiredOrder.map((script) => ({
+    script,
+    index: commands.findIndex((command) => command.includes(`node ${script}`)),
+  }));
+  const problems = [];
+  const absent = positions.filter((position) => position.index < 0).map((position) => position.script);
+  if (absent.length > 0) {
+    problems.push(`workflow 里找不到这些脚本的 \`node\` 调用（顺序判据失去对象）：${absent.join('、')}`);
+  }
+  const present = positions.filter((position) => position.index >= 0);
+  const actualOrder = [...present].sort((a, b) => a.index - b.index).map((position) => position.script);
+  const expectedOrder = present.map((position) => position.script);
+  const inversions = [];
+  for (let index = 1; index < present.length; index += 1) {
+    if (present[index].index <= present[index - 1].index) {
+      inversions.push({ previous: present[index - 1].script, next: present[index].script });
+    }
+  }
+  if (inversions.length > 0) {
+    const [first] = inversions;
+    problems.push(
+      `第一处逆序对：期望 \`${first.previous}\` 出现在 \`${first.next}\` 之前，实际相反；`
+      + `实际顺序：${actualOrder.join(' → ')}；期望顺序：${expectedOrder.join(' → ')}`,
+    );
+    for (const inversion of inversions.slice(1)) {
+      problems.push(`另有逆序对：期望 \`${inversion.previous}\` 出现在 \`${inversion.next}\` 之前`);
+    }
+  }
+  return problems;
+}
+
 // ── 断言本体：失败消息必须**点名文件**（否则反向控制证明不了「红的时候能定位到谁」） ───────────────
 
 function assertManagedScriptsWired(missing) {
@@ -345,6 +600,52 @@ function assertNoSwallowedFailures(hits) {
       '真库 workflow 里有「吞红」构造：这一步失败却仍会被判绿，真库闸门等于没有。',
       '真库臂的红是唯一的验收信号，⛔ 不得用这些写法把它吞掉：',
       ...hits.map((hit) => `  · ${hit}`),
+    ].join('\n'),
+  );
+}
+
+function assertStepOrder(problems) {
+  assert.deepEqual(
+    problems,
+    [],
+    [
+      `受管脚本在 \`${REAL_PG_WORKFLOW}\` 里的执行顺序与 \`REQUIRED_STEP_ORDER\` 不一致：`,
+      ...problems.map((problem) => `  · ${problem}`),
+      '',
+      `期望顺序：${REQUIRED_STEP_ORDER.join(' → ')}`,
+      '顺序是硬要求（不是审美）：`account-deletion-pg.mjs` 要求集群里没有同名角色并在收尾按快照差集清空；',
+      '`admin-accounts-read-pg.mjs` 会把运行时角色＋6 个组角色**留在集群里**（收尾不 DROP）；',
+      '`admin-flags-pg.mjs` 是唯一「存在即 ALTER、不存在才 CREATE」因而能容忍前面残留运行时角色的脚本 ⇒ 排最后。',
+    ].join('\n'),
+  );
+}
+
+function assertNoDatabaseGuardProblems(problems) {
+  assert.deepEqual(
+    problems,
+    [],
+    [
+      `\`${REAL_PG_WORKFLOW}\` 的「先建库＋库名一致」判据不通过：`,
+      ...problems.map((problem) => `  · ${problem}`),
+      '',
+      '每条受管脚本都要求**专用空库**：step 的 `run:` 必须是 `psql … CREATE DATABASE <库> && node <脚本>`，',
+      '且 `<库>` 必须与该 step 真正传给脚本的库名一致（env `*_PG_TEST_URL` 的 path／argv URL 的 path／',
+      '脚本内部硬钉常量，三种形态都要对上；只对一种会留下「改了 env 但 argv 还是旧库」这类假绿通道）。',
+    ].join('\n'),
+  );
+}
+
+function assertManagedScriptSetMatches(problems) {
+  assert.deepEqual(
+    problems,
+    [],
+    [
+      `\`${REAL_PG_WORKFLOW}\` 真正执行的 \`-pg.mjs\` 集合与 \`MANAGED_SCRIPTS\` 不双向相等：`,
+      ...problems.map((problem) => `  · ${problem}`),
+      '',
+      '单向相等留了一个空档：把 `MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` **同时**删掉一项，',
+      '前向①「清单里的都接线了」与冻结清单同步都会绿，而那条脚本从此没人跑；',
+      '反过来 workflow 里多跑一条不在清单里的脚本，判据③/④也不再覆盖它。反向的一半必须有人守。',
     ].join('\n'),
   );
 }
@@ -425,6 +726,29 @@ function stepRanges(lines, start, end) {
     index = stop - 1;
   }
   return ranges;
+}
+
+/**
+ * 把 `laterScript` 的整段 step（`- run:` ＋ 它的 `env:`）挪到 `earlierScript` 的 step 之前。
+ * 只给顺序判据的反向控制用：模拟「有人为了排错把两步对调」。
+ */
+function withSwappedSteps(source, jobId, earlierScript, laterScript) {
+  const { lines, start, end } = jobLineRange(source, jobId);
+  const steps = stepRanges(lines, start, end);
+  const textOf = (range) => lines.slice(range.start, range.end).join('\n');
+  const earlier = steps.find((range) => textOf(range).includes(`node ${earlierScript}`));
+  const later = steps.find((range) => textOf(range).includes(`node ${laterScript}`));
+  assert.ok(earlier !== undefined, `变异找不到 \`${earlierScript}\` 的 step`);
+  assert.ok(later !== undefined, `变异找不到 \`${laterScript}\` 的 step`);
+  assert.ok(earlier.start < later.start, `变异前提：\`${earlierScript}\` 原本必须在 \`${laterScript}\` 之前`);
+  const mutated = [
+    ...lines.slice(0, earlier.start),
+    ...lines.slice(later.start, later.end),
+    ...lines.slice(earlier.start, later.start),
+    ...lines.slice(later.end),
+  ].join('\n');
+  assert.notEqual(mutated, source, '对调 step 必须真的改到文本');
+  return mutated;
 }
 
 /**
@@ -958,4 +1282,128 @@ test('反向控制⑦：R27-S4 追加的两条受管脚本，删掉各自的 `ru
     [...added].sort(),
     '两条都删掉时必须正好点名这两条',
   );
+});
+
+test('前向⑤（判据⑥）：受管脚本在 workflow 里的执行顺序必须与 REQUIRED_STEP_ORDER 一致', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertStepOrder(stepOrderProblems({ source }));
+
+  // 顺序表不能与受管清单脱钩：集合不同 ⇒ 顺序判据会悄悄漏掉一条（或要求一条根本不存在的脚本）。
+  assert.deepEqual(
+    [...REQUIRED_STEP_ORDER].sort(),
+    [...MANAGED_SCRIPTS].sort(),
+    'REQUIRED_STEP_ORDER 与 MANAGED_SCRIPTS 必须同集合（只允许顺序不同）',
+  );
+
+  // 顺序判据必须**逐个**看到它在 workflow 里的位置：断言对象数与清单数相等（防止 findIndex 全部命中同一步）。
+  const commands = runCommandTextsOf(source);
+  const indices = REQUIRED_STEP_ORDER.map((script) => commands.findIndex((command) => command.includes(`node ${script}`)));
+  assert.equal(new Set(indices).size, REQUIRED_STEP_ORDER.length, '每个受管脚本必须落在**不同**的 step 里，顺序判据才有对象');
+});
+
+test('前向⑥（判据⑦＋⑧）：每个受管脚本所在 step 先 CREATE DATABASE 再 node，且库名与该 step 传入的一致', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertNoDatabaseGuardProblems(databaseGuardProblems(source));
+
+  // 「三种入参形态都覆盖」不能只是措辞：逐条统计真实 workflow 里每种形态各出现几次。
+  const shapes = { envUrl: 0, argvUrl: 0, pinnedConstant: 0 };
+  for (const script of MANAGED_SCRIPTS) {
+    const found = stepRunningScript(source, script);
+    assert.ok(found !== null, `workflow 里找不到 \`${script}\` 的 step`);
+    if (/^\s+[A-Z0-9_]+_PG_TEST_URL\s*:\s*\S+\s*$/m.test(found.step)) shapes.envUrl += 1;
+    const marker = `node ${script}`;
+    const argumentsText = found.command.slice(found.command.indexOf(marker) + marker.length);
+    if (/postgres(?:ql)?:\/\/\S+/.test(argumentsText)) shapes.argvUrl += 1;
+    const pinned = pinnedDatabaseNames(readFileSync(join(REPO_ROOT, script), 'utf8'));
+    if (pinned.length > 0) shapes.pinnedConstant += 1;
+  }
+  assert.ok(shapes.envUrl >= 1, `env URL 形态必须真的被测到（实际 ${shapes.envUrl} 条）`);
+  assert.ok(shapes.argvUrl >= 1, `argv URL 形态必须真的被测到（实际 ${shapes.argvUrl} 条）`);
+  assert.ok(shapes.pinnedConstant >= 1, `脚本硬钉常量形态必须真的被测到（实际 ${shapes.pinnedConstant} 条）`);
+  // 每条受管脚本都必须至少有一种**外部入参**形态可核对（只靠脚本硬钉常量等于没核对 workflow 传了什么）。
+  assert.ok(
+    shapes.envUrl + shapes.argvUrl >= MANAGED_SCRIPTS.length,
+    `每条受管脚本都必须至少命中 env 或 argv 之一（实际 env ${shapes.envUrl} + argv ${shapes.argvUrl} < ${MANAGED_SCRIPTS.length}）`,
+  );
+});
+
+test('前向⑦（判据⑨）：workflow 里执行的 `-pg.mjs` 集合与 MANAGED_SCRIPTS 双向相等', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  assertManagedScriptSetMatches(managedScriptSetProblems({ source }));
+  assert.deepEqual(
+    scriptsRunByWorkflow(source),
+    [...MANAGED_SCRIPTS].sort(),
+    '双向相等：workflow 真跑的 `-pg.mjs` 必须与受管清单逐个对上（多一条、少一条都红）',
+  );
+  // 作用域只锚 real-pg workflow：其它 workflow 各跑自己的 `-pg.mjs`（独立 job／独立库），不属本清单。
+  assert.deepEqual(
+    selectWorkflowFiles(readdirSync(join(REPO_ROOT, WORKFLOW_DIR))).filter((name) => name === REAL_PG_WORKFLOW.split('/').pop()),
+    [REAL_PG_WORKFLOW.split('/').pop()],
+    'REAL_PG_WORKFLOW 必须真的在磁盘的 workflow 名单里（否则前两条断言在空集合上永绿）',
+  );
+});
+
+test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消息能定位到脚本/库名', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  const realJobId = jobsRunningManagedScripts(source)[0].id;
+  const deletion = 'tests/integration/account-deletion-pg.mjs';
+  const accountsRead = 'tests/integration/admin-accounts-read-pg.mjs';
+  const messages = 'tests/integration/messages-pg.mjs';
+  const flags = 'tests/integration/admin-flags-pg.mjs';
+
+  // 0) 先证明磁盘真值三条判据全绿：否则下面的「变异就红」可能只是继承了一个已红的前提。
+  assertStepOrder(stepOrderProblems({ source }));
+  assertNoDatabaseGuardProblems(databaseGuardProblems(source));
+  assertManagedScriptSetMatches(managedScriptSetProblems({ source }));
+
+  // ① 顺序（判据⑥）：把 admin-accounts-read 的 step 挪到 account-deletion 之前 ⇒ 必须报「第一处逆序对」。
+  const swapped = withSwappedSteps(source, realJobId, deletion, accountsRead);
+  const orderProblems = stepOrderProblems({ source: swapped });
+  assert.ok(orderProblems.length >= 1, '对调两步后顺序判据必须报问题');
+  assert.ok(orderProblems[0].includes('第一处逆序对'), '失败消息必须点名「第一处逆序对」');
+  assert.ok(
+    orderProblems[0].includes(deletion) && orderProblems[0].includes(accountsRead),
+    '失败消息必须同时点名被对调的两条脚本（否则证明不了能定位）',
+  );
+  assert.ok(orderProblems[0].includes('实际顺序') && orderProblems[0].includes('期望顺序'), '失败消息必须给出实际顺序与期望顺序');
+  assert.throws(() => assertStepOrder(orderProblems), /第一处逆序对/, '同一断言必须在变异后失败');
+  // 对调 step 不得连带打红建库/库名判据（两条判据互不遮蔽，失败消息才不会张冠李戴）。
+  assert.deepEqual(databaseGuardProblems(swapped), [], '只对调顺序时建库/库名判据必须仍绿');
+
+  // ② 建库（判据⑦）：删掉 messages step 的 `CREATE DATABASE … &&`，只留 `node` ⇒ 必须点名该 step 缺建库。
+  const withoutCreate = replaceWithinJob(
+    source,
+    realJobId,
+    /psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_messages_test' && /,
+    '',
+  );
+  const missingProblems = databaseGuardProblems(withoutCreate);
+  assert.equal(missingProblems.length, 1, '删一处建库必须只报一条问题');
+  assert.ok(missingProblems[0].includes(messages) && missingProblems[0].includes('CREATE DATABASE'), '失败消息必须点名脚本与缺的语句');
+  assert.throws(() => assertNoDatabaseGuardProblems(missingProblems), /CREATE DATABASE/, '同一断言必须失败');
+
+  // ③ 库名一致（判据⑧）：把 flags step 的 CREATE DATABASE 库名改错（脚本仍连 gengyun_flags_test）⇒ 必须点名两边库名。
+  const typo = replaceWithinJob(source, realJobId, /CREATE DATABASE gengyun_flags_test\b/, 'CREATE DATABASE gengyun_flags_test_typo');
+  const nameProblems = databaseGuardProblems(typo);
+  assert.equal(nameProblems.length, 1, '改错一处库名必须只报一条问题');
+  assert.ok(
+    nameProblems[0].includes('gengyun_flags_test_typo') && nameProblems[0].includes('gengyun_flags_test'),
+    '失败消息必须同时点名「建出来的库」与「脚本真正连的库」',
+  );
+  assert.ok(nameProblems[0].includes(flags), '失败消息必须点名脚本');
+  assert.throws(() => assertNoDatabaseGuardProblems(nameProblems), /gengyun_flags_test_typo/, '同一断言必须失败');
+
+  // ④ 双向相等（判据⑨）：MANAGED_SCRIPTS 与 FROZEN 同时删一项 ⇒ 既有三条口径全绿，新判据必须红。
+  const trimmed = MANAGED_SCRIPTS.filter((script) => script !== deletion);
+  const trimmedFrozen = FROZEN_MANAGED_SCRIPTS.filter((script) => script !== deletion);
+  assert.deepEqual([...trimmed].sort(), [...trimmedFrozen].sort(), '双删形态下「冻结清单同步」的既有断言仍是绿的');
+  assertManagedScriptsWired(missingManagedScripts({ workflows: readAllWorkflows(), managed: trimmed }));
+  assert.deepEqual(postgresJobProblems(source, { managed: trimmed }), [], '双删形态下判据③（镜像锚定）仍是绿的');
+  const setProblems = managedScriptSetProblems({ source, managed: trimmed });
+  assert.equal(setProblems.length, 1, '双删一项后新判据必须正好报一条问题');
+  assert.ok(
+    setProblems[0].includes(deletion) && setProblems[0].includes('清单里没有'),
+    '失败消息必须点名「workflow 跑了、清单里没有」的那条脚本',
+  );
+  assert.throws(() => assertManagedScriptSetMatches(setProblems), /清单里没有/, '同一断言必须失败');
 });
