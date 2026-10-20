@@ -1,0 +1,189 @@
+<!-- GY-I12 原生文字提问页（Refs #12）。
+     文档流顺序刻意是「风险信息与发送按钮在前、回答与来源在后」，控件一律走正常文档流
+     （本文件与页面样式内均无 position:fixed/absolute），因此不会遮挡发送按钮或风险信息。
+     回答正文一律用 text 节点呈现（不转 HTML）；来源只列服务端 citations 的真实字段。
+     文案只面向普通用户：输入问题/发送/正在查找/超时后重试/资料不足/来源/当前为演示数据；
+     契约名、接口路径、状态机内部码、幂等键、版本串等实现细节不占主流程（见交付报告）。 -->
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">文字提问</view>
+      <view class="page-heading__sub">写下你的田间问题，我们会查找资料后给出可核对的回答</view>
+    </view>
+    <view class="page-heading__right"><view class="pill pill--amber">问答</view></view>
+  </view>
+
+  <!-- 风险信息（永远在发送按钮与回答之前） -->
+  <view class="notice notice--warn" wx:if="{{guest}}">
+    <text class="notice__icon">🔒</text>
+    <text class="notice__text">你尚未登录：登录后才能提问。提问与回答只与你的账号相关，不会公开。</text>
+  </view>
+
+  <view class="notice notice--danger">
+    <text class="notice__icon">⚠️</text>
+    <text class="notice__text">回答仅供参考，不构成用药建议。实际用药请以标签原文与已核验的登记资料为准；
+      本页不提供剂量换算或处方。</text>
+  </view>
+
+  <view class="notice notice--warn" wx:if="{{networkOff}}">
+    <text class="notice__icon">📴</text>
+    <text class="notice__text">当前未启用联网：本页不会用本地数据顶替服务端回答。</text>
+  </view>
+
+  <!-- 演示数据与未接线说明（必须常驻，不得被主流程文案盖过） -->
+  <view class="notice notice--stub">
+    <text class="notice__icon">🧪</text>
+    <text class="notice__text">{{unwiredNote}}</text>
+  </view>
+
+  <!-- ① 输入问题 -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">① 输入问题</view>
+      <view class="section-head__meta">{{draftLength}} / {{textMax}} 字</view>
+    </view>
+    <view class="panel">
+      <textarea
+        class="input textarea"
+        value="{{draft}}"
+        maxlength="-1"
+        placeholder="请输入你的田间问题，例如：稻田稗草怎么防除？"
+        disabled="{{guest || busy}}"
+        bindinput="onDraftInput"
+      ></textarea>
+      <view class="hint">最多 {{textMax}} 字（微信原生输入框默认只允许 140 字，本页已放开该限制）；
+        超出时会在发送前提示你缩短，不会自动截断。</view>
+
+      <view class="notice notice--danger" wx:if="{{inputNote}}">
+        <text class="notice__text">{{inputNote}}</text>
+      </view>
+
+      <view class="row-actions">
+        <button
+          class="btn btn--primary row-actions__item qa-submit"
+          aria-role="button"
+          aria-label="发送这个问题"
+          disabled="{{guest || busy}}"
+          bindtap="onSend"
+        >{{busy ? '正在发送…' : '发送'}}</button>
+        <button
+          class="btn btn--ghost row-actions__item qa-submit"
+          aria-role="button"
+          aria-label="清空输入框并重新开始提问"
+          disabled="{{guest || busy || draftLength === 0}}"
+          bindtap="onClearDraft"
+        >清空</button>
+      </view>
+      <view class="hint">发送过程中按钮不可点击，重复点击不会重复发送。</view>
+    </view>
+  </view>
+
+  <!-- ② 回答进度：正在查找 / 等待超时 / 需要重试 -->
+  <view class="section" wx:if="{{stage !== 'idle' || job || taskNote}}">
+    <view class="section-head">
+      <view class="section-head__title">② 回答进度</view>
+      <view class="pill pill--blue" wx:if="{{modeLabel}}">{{modeLabel}}</view>
+    </view>
+    <view class="panel">
+      <view class="hint" wx:if="{{job}}">{{job.label}}<text wx:if="{{job.terminal === false}}">…</text></view>
+      <view class="hint" wx:if="{{!job && busy}}">正在发送…</view>
+      <view class="notice notice--warn" wx:if="{{taskNote}}">
+        <text class="notice__text">{{taskNote}}</text>
+      </view>
+      <view class="row-actions" wx:if="{{taskErrorCode}}">
+        <button
+          class="btn btn--secondary row-actions__item qa-submit"
+          aria-role="button"
+          aria-label="重试同一个问题"
+          disabled="{{guest || busy}}"
+          bindtap="onRetry"
+        >重试</button>
+      </view>
+      <view class="hint" wx:if="{{taskErrorCode}}">重试的是同一个问题：不会重复提交，也不会产生新的记录。</view>
+    </view>
+  </view>
+
+  <!-- ③ 回答：只有检查通过才整体展示；否则只给真实原因 -->
+  <view class="section" wx:if="{{answer || answerGateCode}}">
+    <view class="section-head">
+      <view class="section-head__title">③ 回答</view>
+      <view class="pill {{answer ? 'pill--gray' : 'pill--amber'}}">{{answer ? '已检查' : '不可展示'}}</view>
+    </view>
+    <view class="panel">
+      <view class="notice notice--warn" wx:if="{{!answer && answerGateMessage}}">
+        <text class="notice__icon">ℹ️</text>
+        <text class="notice__text">{{answerGateMessage}}</text>
+      </view>
+
+      <block wx:if="{{answer}}">
+        <view class="chat-bubble">
+          <view class="chat-bubble__text">{{answer.checkedText}}</view>
+        </view>
+        <view class="hint">以上内容已通过服务端安全检查，整体展示，不做删改。</view>
+
+        <!-- 来源：仅从服务端 citations 逐字来（不生成链接、不补默认来源） -->
+        <view class="section-head">
+          <view class="section-head__title">来源</view>
+          <view class="section-head__meta">{{citations.length}} 条</view>
+        </view>
+        <view class="knowledge" wx:for="{{citations}}" wx:key="id">
+          <view class="knowledge__name">{{item.title}}</view>
+          <view class="knowledge__meta">{{item.publisher}}</view>
+          <view class="knowledge__meta">更新时间：{{item.updated_at}}</view>
+          <view class="knowledge__url">{{item.url}}</view>
+        </view>
+
+        <!-- 用药安全：只报条数，不渲染任何用量正文 -->
+        <view class="dose-guard" wx:if="{{doseCards}}">
+          <view class="dose-guard__row">
+            <text class="dose-guard__tag">登记用量卡：{{doseCards.count}} 条</text>
+            <text class="dose-guard__reason">{{doseCards.reason}}</text>
+          </view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <!-- ④ 本次会话记录（只展示服务端真实返回；回答同样过闸门） -->
+  <view class="section" wx:if="{{!guest}}">
+    <view class="section-head">
+      <view class="section-head__title">④ 本次会话</view>
+      <view class="section-head__meta">{{turns.length}} 条</view>
+    </view>
+    <view class="panel">
+      <view class="row-actions">
+        <button
+          class="btn btn--secondary row-actions__item qa-submit"
+          aria-role="button"
+          aria-label="查看本次会话的提问与回答"
+          disabled="{{guest || busy}}"
+          bindtap="onRefreshTurns"
+        >查看记录</button>
+      </view>
+      <view class="notice notice--warn" wx:if="{{turnsNote}}">
+        <text class="notice__text">{{turnsNote}}</text>
+      </view>
+      <view class="message-list" wx:if="{{turns.length}}">
+        <view class="message-row" wx:for="{{turns}}" wx:key="id">
+          <view class="message-copy">
+            <text class="message-copy__title">提问：{{item.inputText}}</text>
+            <text class="message-copy__time" wx:if="{{!item.hasAnswer}}">回答：还没有取得</text>
+            <text class="message-copy__time" wx:elif="{{!item.showAnswer}}">回答不可展示：{{item.answerBlockedReason}}</text>
+            <text class="message-copy__title" wx:else>{{item.answerText}}</text>
+            <text class="message-copy__time" wx:if="{{item.showAnswer}}">
+              来源 {{item.citationCount}} 条 · 登记用量卡 {{item.doseCardCount}} 条（只报条数）
+            </text>
+          </view>
+        </view>
+      </view>
+      <view class="demo-caption" wx:if="{{turns.length === 0 && !turnsNote}}">本次会话还没有记录。</view>
+    </view>
+  </view>
+
+  <!-- 离页口径（如实：服务端对回答作业没有取消入口） -->
+  <view class="notice" wx:if="{{exitReason}}">
+    <text class="notice__icon">🚪</text>
+    <text class="notice__text">已离开本页：本机正在进行的请求与等待已停止，旧结果不会回填到页面；
+      本页也不声称服务端任务已被取消（服务端没有该入口）。</text>
+  </view>
+</view>

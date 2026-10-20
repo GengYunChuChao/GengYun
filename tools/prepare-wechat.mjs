@@ -103,6 +103,10 @@ try {
     'utils/voice-api.js',
     'utils/recorder-port.js',
     'utils/speech-transcript.js',
+    // 文字问答域适配层（GY-I12）：文字提问页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
+    //   qa-api：POST /conversations、POST /conversations/{id}/turns（TextTurnInput）、
+    //           GET /jobs/{id}、GET /conversations/{id}/turns 的消费层 + 回答可展示性闸门。
+    'utils/qa-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
@@ -156,6 +160,8 @@ try {
     'pages/historydetail/historydetail',
     // 播报页（GY-I13）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
     'pages/voice/voice',
+    // 文字提问页（GY-I12）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
+    'pages/qa/qa',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {

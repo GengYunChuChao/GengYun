@@ -18,7 +18,8 @@
     "pages/favorites/favorites",
     "pages/history/history",
     "pages/historydetail/historydetail",
-    "pages/voice/voice"
+    "pages/voice/voice",
+    "pages/qa/qa"
   ],
   "window": {
     "navigationBarTitleText": "耕云",
