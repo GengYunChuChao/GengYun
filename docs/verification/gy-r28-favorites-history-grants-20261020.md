@@ -34,6 +34,7 @@
 | 8 | `conversation_answers` 不需要 `DELETE`：`0013:105` 的 `ON DELETE CASCADE` + 实测「运行时删 turn ⇒ answers 归零」 | §4.5 |
 | 9 | `SELECT … FOR UPDATE` / `FOR SHARE` 需要 `UPDATE` 权 ⇒ 三张表各给 `UPDATE (revision)`，**仅作行锁载体** | §4.3 |
 | 10 | `recognition_selections`（迁移 `0025`）是**继承缺口**，本片只加 `forbidden` 行让断言可复跑，不修 | §8 |
+| 11 | 反向控制（事务内阶梯）：撤光授权 ⇒ 4 条语句全 `42501`；逐条加回列级 `SELECT`／`INSERT`／`UPDATE (revision)`／表级 `DELETE` ⇒ 对应语句逐条通，`ROLLBACK` 后 ACL 与改前一致 | §7.5 |
 
 ## 1. 范围
 
@@ -320,7 +321,7 @@ ok
 | # | 断言 | 改前 | 改后 | 为什么必须改 |
 | --- | --- | --- | --- | --- |
 | E1 | 第 7 条 `table_dml_allowlist`（`:391-416`） | 内联 `FROM (VALUES …5 个三元组…) AS allow(sch,tbl,priv)`，`detail` 是一句手写中文 | 三元组提成 CTE `allow_table_dml(sch, tbl, priv) AS (VALUES …11 行…)`，内层 `FROM allow_table_dml allow`，`detail` 改成 `'表级写权限只允许 ' \|\| string_agg(format('%s{%s}', a.tbl, a.priv), '、' ORDER BY a.tbl, a.priv) \|\| '；清单外的表或类型一律失败（其余全部按列授予）'` | 本片新增 6 个表级 `DELETE`；手写 `detail` 会与清单漂移，改成从同一份 `VALUES` 生成 ⇒ 提示永远列全 |
-| E2 | `domain_manifest`（`:224-247`） | 19 行（10 granted + 1 granted_external + 4 forbidden + 3 recognition forbidden） | 27 行（+ 7 张本片表 granted，+ `recognition_selections` forbidden） | 新表必须被分类（第 47 条元断言的语义）；`recognition_selections` 见 §8 |
+| E2 | `domain_manifest`（`:224-247`） | 18 行（10 granted + 1 granted_external + 4 forbidden + 3 recognition forbidden） | 26 行（18 + 7 张本片表 granted + `recognition_selections` forbidden） | 新表必须被分类（第 47 条元断言的语义）；`recognition_selections` 见 §8 |
 
 `git diff --stat` 的 10 个删除行里，真正的语义改动只有 2 处「行尾补逗号」
 （`('recognition_idempotency', …)` 与 `     true)`（`ocr_idempotency` 行）），其余是插入块替换锚点的 diff 噪声。
@@ -336,7 +337,8 @@ ok
 | `runtime_domain_tables_classified_favorites_history` | `^(favorites\|history\|conversation)` 前缀的 `public` 关系必须进 `domain_manifest`，且 `granted` 的必须在 `expected` 里有独立列清单 |
 
 外加数据驱动部分：`expected` 新增 7 行 ⇒ 自动多出 7 条 `runtime_grants_<tbl>`（逐列正/反检查）。
-断言总数从 58 变成 **71**（实测，§5.2），其中 24 条来自 `expected` 的 17 行。
+断言总数从 59 变成 **71**（都是实跑 `SELECT label FROM checks` 数出来的：改前 59 条、改后 71 条；
+新增 12 条 = 5 条固定断言 + 7 条数据驱动；数据驱动部分一共 17 条，来自 `expected` 的 17 行）。
 
 ## 7. 变异 / 负控制（6 条；每条都「变异 → 断言 → 还原 → 复核 `ok`」）
 
@@ -403,6 +405,50 @@ NC6 的还原过程暴露了一个 PG 行为，值得写进运维口径（实验
 **列级授权无法靠 `REVOKE` 还原**（`attacl` 里 `revision` 的 `w` 位已经消失，见同一日志的 ACL 原文）。
 ⇒ 误授之后的正解是**重跑 `20-login-roles.sql`**（本片两次还原都这么做，`mut-m1-regrant.log` / `mut-m6b-regrant.log`）。
 NC6 的中间态因此也是红的（`runtime_favorites_dml_exec` + `runtime_grants_favorites`），重跑授权文件后才回 `ok`。
+
+### 7.5 反向控制：撤一条权限，坏一条语句
+
+派单要求的反向控制是「临时 `GRANT SELECT,INSERT ON favorites` ⇒ 同一批语句成功 ⇒ `REVOKE` 并验证复原」。
+本机做得更细（`probe-reverse-control.sql`，日志 `reverse-control.log`）：在**一个事务**里先把授权
+`REVOKE ALL` 掉、再一条条加回来，末尾 `ROLLBACK` ⇒ 集群的部署状态从头到尾没有被改动。
+日志是 `psql -X -P pager=off`（**不带 `-q`**），所以 `INSERT 0 0` / `DELETE 0` 这些命令标签可见：
+
+| 阶段 | 事务内授权 | 普通 SELECT | `FOR UPDATE` | INSERT | DELETE |
+| --- | --- | --- | --- | --- | --- |
+| A | `REVOKE ALL` | `42501` | `42501` | `42501` | `42501` |
+| B1 | `SELECT`（7 列） | 通过 | `42501`（`:47`） | `42501`（`:52`） | 未试 |
+| B2 | ＋ `INSERT`（7 列） | 通过 | `42501` | 通过（`INSERT 0 0`） | 未试 |
+| B3 | ＋ `UPDATE (revision)` | 通过 | 通过（`FOR SHARE` 同） | 通过 | `42501`（`:81`） |
+| B4 | ＋ 表级 `DELETE` | 通过 | 通过 | 通过 | 通过（`DELETE 0`） |
+
+原文节选：
+
+```
+--- A1 plain SELECT must be 42501 ---
+psql:…probe-reverse-control.sql:19: ERROR:  42501: permission denied for table favorites
+LOCATION:  aclcheck_error, aclchk.c:2845
+...
+--- B1c INSERT must still be 42501 ---
+psql:…probe-reverse-control.sql:52: ERROR:  42501: permission denied for table favorites
+...
+INSERT 0 0                    ← B2：补上列级 INSERT 后，同一条 INSERT 就通了
+...
+--- B3c DELETE must still be 42501 (DELETE has no column form) ---
+psql:…probe-reverse-control.sql:81: ERROR:  42501: permission denied for table favorites
+...
+DELETE 0                      ← B4：补上表级 DELETE 后，同一条 DELETE 就通了
+```
+
+`ROLLBACK` 后的残留检查（日志 §C/§D）与改前完全一致，证明实验没有改动部署状态：
+
+```
+tbl_select f | tbl_insert f | tbl_update f | tbl_delete t
+col_select_revision t | col_update_revision t
+favorites relacl = {gengyun_cvm_owner=arwdDxtm/gengyun_cvm_owner,gengyun_api_runtime=d/gengyun_cvm_owner}
+```
+
+⇒ 每条语句的 `42501` 与「成功」都只由**它真正需要的那一条授权**决定；
+`SELECT … FOR UPDATE/FOR SHARE` 要 `UPDATE (revision)`（§4.3），`DELETE` 只能表级（§4.4），两点都有独立读数。
 
 ## 8. 继承缺口：`recognition_selections`（迁移 `0025`，本片**不修**）
 
@@ -479,9 +525,17 @@ NC6 的中间态因此也是红的（`runtime_favorites_dml_exec` + `runtime_gra
    争锁/超时的实测（`lock_timeout='4s'` 的路径未触发）。
 7. **未取得 CVM 上的 `PUBLIC` 行为差异**：本机库由 `initdb -U gengyun_cvm_owner` 建，属主即超级用户；
    与 CVM 的 bootstrap 身份一致（`install-postgres.sh:461`），但**没有**在 CVM 上复核 `REVOKE ALL … FROM PUBLIC` 的效果。
-8. **未改动**：`services/**`、`apps/**`、`packages/**`、迁移、`services/api/db/roles/*.sql`、
-   `.github/workflows/*`、`tests/**`、S24 证据页、索引页计数（本片没有新增 deploy 文件，
-   `probe-runtime-grants.sql` 已在册，`verify-release-materials` 覆盖计数不变）。
+8. **未跑全量测试**：只跑了派单点名的五道门禁（§5 之外的门禁记录见报告）与两个集成脚本，
+   没有跑 `npm test` 全量、也没有跑 `tests/unit/**`；`tests/` 下只有 `tests/integration/*-pg.mjs`
+   提到这三个 deploy 文件名（已 `grep` 核实），本片没有引入新的单元测试面。
+9. **未在非超管 bootstrap 的 owner 上复跑**：本机按 `install-postgres.sh:461` 的
+   `initdb -U gengyun_cvm_owner` 同构（owner 即集群超级用户）。早期用非超管 owner 搭夹具时，
+   `20-login-roles.sql:199` 的 `ALTER ROLE … NOSUPERUSER` 被 PG 16+ 拒绝
+   （`ERROR: permission denied to alter role`）——那个分支本片**没有**取得读数，也**不**据此声称
+   产品支持非超管 owner（`provision-db.sh:384` 明写 owner 是超级用户、仅运维使用）。
+10. **未改动**：`services/**`、`apps/**`、`packages/**`、迁移、`services/api/db/roles/*.sql`、
+    `.github/workflows/*`、`tests/**`、S24 证据页、索引页计数（本片没有新增 deploy 文件，
+    `probe-runtime-grants.sql` 已在册，`verify-release-materials` 覆盖计数不变）。
 
 ## 13. 与派单 / 裁定的对应
 
