@@ -145,7 +145,7 @@ export interface BackupPurgePort {
 }
 
 export function createUnwiredBackupPurgePort(
-  note = '备份副本清除未接线（本端口＝未接线实现）：GY-I19 期间仓内无逐用户备份副本域（唯一备份产物是整库 pg_dump），GY-R28 起已由 0023_user_backup_copies.sql ＋ backup-copies-pg.ts 落地；此处仍按未接线语义保持 pending，不谎称完成',
+  note = '备份副本清除未接线：仓内无逐用户备份副本域（唯一备份产物是整库 pg_dump），备份状态保持 pending，不谎称完成',
 ): BackupPurgePort {
   void note;
   return {
