@@ -163,6 +163,13 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '夹具模块：被已接线的 `profile-ui-http.test.mjs` import，不是独立可执行脚本。',
   },
   {
+    path: 'tests/integration/recognition-chain-e2e.mjs',
+    reason: '需真实 PG17 且硬钉库名 `gengyun_recognition_chain_test`：设置 `RECOGNITION_CHAIN_PG_TEST_URL` 时才跑真库臂；'
+      + '未设置时**显式打印 SKIP 并以 77 退出**（未取得，不静默绿；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 可显式取 0）。'
+      + '合流后按 #312「跳过即未取得」的判据，它不进无 PG 的回环链（挂进去只会让整链显式失败），'
+      + '由 `npm run test:integration:recognition-chain-pg` 带 env 运行。',
+  },
+  {
     path: 'tests/integration/source-lifecycle-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
   },
