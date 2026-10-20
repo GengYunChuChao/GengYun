@@ -628,7 +628,7 @@ v3 轮：开工前实测 `Test-Path .pg17/tmp/hq/gate.lock` = **False**（锁不
 ## 7 遗留（非阻塞，供下一片取）
 
 1. **两条 `reason` 文本更新**（§6 末段）：`ci-integration-chain-structure.test.mjs` 里那两行 `reason` 改成「由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行」。属于文案，不涉及断言。
-2. **其它 `-pg.mjs` 的真库臂**（本项写于基线 `df043a7`；`ba6ea9f` 之后已按事实收窄，见 §10.3）：**已接进本 workflow 的是 4 条**——`conversations-pg`／`community-pg`（本片）＋ `messages-pg`／`favorites-history-pg`（R27-S4 追加）；**仍无 npm、无 CI** 的是 3 条——`account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg`（见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
+2. **其它 `-pg.mjs` 的真库臂**（本项写于基线 `df043a7`；`ba6ea9f` 之后已按事实收窄，见 §10.3）：**已接进本 workflow 的是 4 条**——`conversations-pg`／`community-pg`（本片）＋ `messages-pg`／`favorites-history-pg`（R27-S4 追加）；**仍无 npm、无 CI** 的是 **5 条**——`account-deletion-pg`／`account-suspend-pg`／`admin-accounts-read-pg`／`admin-flags-pg`／`backup-purge-pg`（三档 4 ＋ 9 ＋ 5 ＝ 18；逐条清单、取数命令与原始输出见 §10.3，另见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
 3. **`e2e-*`／`user-chain-e2e.mjs`**：它自建一次性 `initdb` 集群，需要 PG 二进制而不是 service 容器，属于另一种接线形状，不在本片判类内。
 
 ## 8 改动面（三轮都只动这 3 个文件，全是新增）
@@ -758,13 +758,38 @@ EXITCODE=0
 
 ### 10.3 收窄的事实（本页 §7 第 2 项据此改写）
 
-`tests/integration/*-pg.mjs` 的真库臂现状（`ba6ea9f`，2026-10-20 12:5x 实测）：
+`tests/integration/*-pg.mjs` 的真库臂现状（`ba6ea9f` 的树 ＋ 本片改动，2026-10-20 13:20–13:25 本机实测；取数命令与原始输出见本节末）：
 
-| 状态 | 脚本 |
-| --- | --- |
-| 已由 `real-pg-integration.yml` 真跑（4 条） | `conversations-pg`／`community-pg`／`messages-pg`／`favorites-history-pg` |
-| 仍无 npm、无 CI（3 条） | `account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg` |
-| 各自有别的 workflow | `auth-privacy-pg`／`catalog-pg`／`consent-grant-pg`／`egress-ledger-pg`／`egress-object-key-pg`／`migrations-negative-pg`／`source-lifecycle-pg`／`staging-intake-pg`／`workbook-staging-pg` |
+| 状态（口径＝`tests/integration/<全路径>` 是否出现在某个 `.github/workflows/*.yml` 或 `package.json` 里） | 条数 | 脚本 |
+| --- | --- | --- |
+| 已由 `.github/workflows/real-pg-integration.yml` 真跑（本片接线后） | 4 | `conversations-pg`／`community-pg`／`messages-pg`／`favorites-history-pg` |
+| 由**其它** workflow 或 `package.json` 跑 | 9 | `auth-privacy-pg`／`catalog-pg`／`consent-grant-pg`／`egress-ledger-pg`／`egress-object-key-pg`／`migrations-negative-pg`／`source-lifecycle-pg`／`staging-intake-pg`／`workbook-staging-pg` |
+| **既无 npm 也无 CI** | **5** | `account-deletion-pg`／`account-suspend-pg`／`admin-accounts-read-pg`／`admin-flags-pg`／`backup-purge-pg` |
+
+三档之和：**4 ＋ 9 ＋ 5 ＝ 18 ＝ `tests/integration/*-pg.mjs` 的总数**（接线前 `ba6ea9f` 是 **2 ＋ 9 ＋ 7 ＝ 18**；更早的 `31a746d` 是 **0 ＋ 9 ＋ 5 ＝ 14**，因为那时还没有 `conversations-pg`／`community-pg`／`admin-accounts-read-pg`／`backup-purge-pg` 这四个文件）。
+
+取数命令（任一检出内可复跑）：先列全部 `-pg.mjs`，再对每个脚本在 `package.json` 与 12 个 workflow 里查全路径：
+
+```
+# 总数（PowerShell / bash 各一行）
+git ls-tree --name-only HEAD:tests/integration | Select-String -Pattern '-pg\.mjs$' | Measure-Object | Select-Object -ExpandProperty Count
+git ls-tree --name-only HEAD:tests/integration | grep -E -- '-pg\.mjs$' | wc -l
+# 逐脚本分档：对每个 `tests/integration/<name>` 依次查 package.json 与 .github/workflows/*.yml，
+#   命中 real-pg-integration.yml ⇒ A；只命中其它 workflow 或 package.json ⇒ B；一处都不命中 ⇒ C
+```
+
+原始输出（本机 pwsh 实测，`Get-Date` ⇒ 2026-10-20 13:20–13:25；三个 rev 同一脚本、同一口径）：
+
+```
+REV 31a746d  workflows_in_tree=11  -pg_total=14
+  A(real-pg-integration.yml)=0  B(other workflow or npm)=9  C(neither)=5   SUM=14
+REV ba6ea9f  workflows_in_tree=12  -pg_total=18
+  A(real-pg-integration.yml)=2  B(other workflow or npm)=9  C(neither)=7   SUM=18
+  C list: account-deletion, account-suspend, admin-accounts-read, admin-flags, backup-purge, favorites-history, messages
+REV c37070a  workflows_in_tree=12  -pg_total=18
+  A(real-pg-integration.yml)=4  B(other workflow or npm)=9  C(neither)=5   SUM=18
+  C list: account-deletion, account-suspend, admin-accounts-read, admin-flags, backup-purge
+```
 
 ### 10.4 门禁读数（本机串行）
 
