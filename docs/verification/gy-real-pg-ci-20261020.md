@@ -628,7 +628,7 @@ v3 轮：开工前实测 `Test-Path .pg17/tmp/hq/gate.lock` = **False**（锁不
 ## 7 遗留（非阻塞，供下一片取）
 
 1. **两条 `reason` 文本更新**（§6 末段）：`ci-integration-chain-structure.test.mjs` 里那两行 `reason` 改成「由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行」。属于文案，不涉及断言。
-2. **其它 `-pg.mjs` 的真库臂**：`account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg`／`favorites-history-pg`／`messages-pg` 目前同样「无 npm、无 CI」（见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
+2. **其它 `-pg.mjs` 的真库臂**（本项写于基线 `df043a7`；`ba6ea9f` 之后已按事实收窄，见 §10.3）：**已接进本 workflow 的是 4 条**——`conversations-pg`／`community-pg`（本片）＋ `messages-pg`／`favorites-history-pg`（R27-S4 追加）；**仍无 npm、无 CI** 的是 3 条——`account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg`（见 `docs/verification/gy-i23-integration-script-coverage-20261020.md` §7）。本片的 workflow 是**可复制的范式**：加一条脚本＝在 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各加一行 + 加一个「建专用空库 + 真跑」step。
 3. **`e2e-*`／`user-chain-e2e.mjs`**：它自建一次性 `initdb` 集群，需要 PG 二进制而不是 service 容器，属于另一种接线形状，不在本片判类内。
 
 ## 8 改动面（三轮都只动这 3 个文件，全是新增）
@@ -707,3 +707,109 @@ assert.* 调用：68 → 94
 ```
 
 删掉的东西只有**三处单 job 假设的变异辅助**（`replaceLast()`、`withoutJobServices` 的无上界循环、反向控制里硬写的 job id 与位置型正则）；判据函数（`postgresJobProblems`／`jobsRunningManagedScripts`／`postgresServiceProblems`／`runCommandTextsOf`）**一行未动**。
+
+## 10 后续片（R27-S4，2026-10-20）：同一个 workflow 再收两条真库脚本
+
+- 测量 SHA 与时点：`upstream/main` = `ba6ea9fc73600b5b4696083bc38902396f7c0a5d`（短 `ba6ea9f`），2026-10-20 12:32 实测（`git rev-parse`）。本页 §0–§9 的基线是 `df043a7`，那些读数**原样保留、不改写**；本节只登记这一轮的新读数。
+- 本轮（派单 `.pg17/dispatch/r27-s4-real-pg-wire-2.md`）只做两件事，顺序不可颠倒：**先在现行 main 上证明这两条脚本真跑是绿的**，绿了才接线。
+
+### 10.1 硬前置：先证绿（取得，2026-10-20 12:4x 实测）
+
+环境：本机 PG 17.11 便携二进制（`.pg17/pgsql/bin`，`--version` ⇒ `17.11`）；`initdb` 全新数据目录（`.pg17/tmp/r27-s4-writer/pgdata`，`-A trust`），独立回环端口 **55461**（⛔ 未用 5432／55436／55536／3310；⛔ 未碰他人的 postgres 进程）；`createdb` 两个**专用空库**，跑前实测两个库的 `public` 表数各为 0。
+
+```
+$ node tests/integration/messages-pg.mjs postgres://postgres@127.0.0.1:55461/gengyun_messages_test
+[M] 迁移清单 23 个，版本号无重复且严格递增，末项 0023
+[M] UP：messages 表 / 列表索引 / (owner_id,event_key) 唯一约束 / 4 个 CHECK / 8 列 全部出现
+[C] 并发 20 → 200×1 / 409×19；最终 SELECT revision = 2，read_at 非空
+[P] limit=3 翻 3 页，id 序列与 SQL (created_at DESC, id DESC) 逐项相等，无重复无遗漏
+[√] ALL PASS：消息域 PostgreSQL 持久化端到端（迁移/重复/已读/归属/并发/派生计数/分页）
+EXITCODE=0
+
+$ FAVORITES_HISTORY_PG_TEST_URL=postgres://…/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs
+Real PostgreSQL patch: 17.11
+PASS 5: 同一目标不同主体各一行；列表/去重查询只按 owner_id 过滤
+PASS 12: 注销清空覆盖幂等台账：A 四表残留 0、B 逐表相等、证据可见台账行数
+ALL PASS (13 groups) — real PG17 17.11
+EXITCODE=0
+```
+
+两条都在**接线前**、在 `ba6ea9f` 的干净 worktree 上取得 `exit 0`；⛔ 没有为了让它们变绿去改脚本里的任何断言（`tests/integration/**` 本轮 0 行改动）。
+
+### 10.2 接线（同一 job、每个脚本一个 step）
+
+`.github/workflows/real-pg-integration.yml`：78 → **105 行**（仍是一个 job `real-pg-17-11` ＋ 每脚本一个 step）。`services.postgres` 仍是 `postgres:17.11`，`uses:` 仍全部固定 40 位 SHA，⛔ 未出现任何放宽跳过开关、⛔ 未出现 `continue-on-error`／`if:`／`|| true`。
+
+| 新增 step | 建库 | 跑法 | 连接串入口 |
+| --- | --- | --- | --- |
+| 3 | `CREATE DATABASE gengyun_messages_test` | `node tests/integration/messages-pg.mjs <owner url>` | **argv**（`process.argv[2]`） |
+| 4 | `CREATE DATABASE gengyun_favorites_history_test` | `node tests/integration/favorites-history-pg.mjs` | **env**（`FAVORITES_HISTORY_PG_TEST_URL`） |
+
+两条都沿用既有形态 `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE …' && node …`：建库失败 / 脚本 77 / 非 0 ⇒ step 红，不会被读成通过。
+
+`tests/unit/ci-real-pg-wiring.test.mjs` 的受管清单同步扩到 4 条（`MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` **同改**；前两条保持原序、新两条追加在后——`withSplitJobs()` 依赖 `[0]`／`[1]` 仍是会话链／社区域）：
+
+```
++  'tests/integration/messages-pg.mjs',
++  'tests/integration/favorites-history-pg.mjs',
+```
+
+并补一条**专属反向控制** `反向控制⑦`（用例数 11 → 12）：逐条删掉新脚本的 `run:` 行 ⇒ `missingManagedScripts()` 必须且只能点名它；两条都删 ⇒ 点名集合恰好是这两条。⛔ 既有 11 条判据与用例一行未改（`前向①` 的**标题字面**仍写「两个受管真库脚本」，但它断言的是 `MANAGED_SCRIPTS` 全量，本轮已随清单一并覆盖 4 条；标题按「不改既有用例标题」留原样）。
+
+### 10.3 收窄的事实（本页 §7 第 2 项据此改写）
+
+`tests/integration/*-pg.mjs` 的真库臂现状（`ba6ea9f`，2026-10-20 12:5x 实测）：
+
+| 状态 | 脚本 |
+| --- | --- |
+| 已由 `real-pg-integration.yml` 真跑（4 条） | `conversations-pg`／`community-pg`／`messages-pg`／`favorites-history-pg` |
+| 仍无 npm、无 CI（3 条） | `account-deletion-pg`／`account-suspend-pg`／`admin-flags-pg` |
+| 各自有别的 workflow | `auth-privacy-pg`／`catalog-pg`／`consent-grant-pg`／`egress-ledger-pg`／`egress-object-key-pg`／`migrations-negative-pg`／`source-lifecycle-pg`／`staging-intake-pg`／`workbook-staging-pg` |
+
+### 10.4 门禁读数（本机串行）
+
+```
+node --test --test-isolation=none tests/unit/ci-real-pg-wiring.test.mjs
+  ℹ tests 12 / pass 12 / fail 0 / skipped 0        EXITCODE=0
+
+node --test --test-isolation=none tests/unit/ci-integration-chain-structure.test.mjs
+  ℹ tests 7 / pass 7 / fail 0 / skipped 0          EXITCODE=0
+```
+
+默认隔离在本机仍 `spawn EPERM`（与本页 §4.1 的 v1／v2 同源）：
+
+```
+$ node -e "…spawnSync…"                        → status null out undefined err EPERM
+$ node --test tests/unit/ci-real-pg-wiring.test.mjs
+  ✖ Error: spawn EPERM  at runTestFile (node:internal/test_runner/runner:536:32)      EXITCODE=1
+```
+
+### 10.5 反向控制落到磁盘（三种形态，逐字节复原）
+
+对**真文件**做了三种破坏（先备份，复原后逐字节核对 `sha256`），每次都跑同一个守卫：
+
+```
+BASELINE_SHA256=953a10fbc8852f76863fd8130d3e68962c400c731b2feb642024da2567c66ca7
+--- M1 删掉 messages 的 run 行            : EXITCODE=1 --- ℹ tests 12 | pass 8 | fail 4
+      AssertionError: 有受管真库脚本既没有被任何 workflow 的 `run:` 执行… → · tests/integration/messages-pg.mjs
+      RESTORED_SHA256=953a10fb…c66ca7 MATCH=True
+--- M2 删掉 favorites-history 的 run 行   : EXITCODE=1 --- ℹ tests 12 | pass 8 | fail 4
+      AssertionError: 同上 → · tests/integration/favorites-history-pg.mjs
+      RESTORED_SHA256=953a10fb…c66ca7 MATCH=True
+--- M3 把 favorites-history 的 step 注释掉 : EXITCODE=1 --- ℹ tests 12 | pass 8 | fail 4
+      AssertionError: 同上 → · tests/integration/favorites-history-pg.mjs
+      RESTORED_SHA256=953a10fb…c66ca7 MATCH=True
+FINAL_SHA256=953a10fb…c66ca7 MATCH=True   （复原后复跑 12/12 绿）
+```
+
+每次红的用例集合是 `前向① ＋ 反向控制① ＋ 反向控制①b ＋ 反向控制⑦`——后三条是**连带红**：它们以「磁盘上受管脚本全部已接线」为前提做内存变异，前提不成立时自己也红（与本页 §3.3 记录的同款副作用，未挑好看的那几条）。
+
+### 10.6 本轮改动面（`git diff --numstat`，只列不随本节长度变化的三个代码文件）
+
+```
+34   7   .github/workflows/real-pg-integration.yml
+ 2   6   tests/unit/ci-integration-chain-structure.test.mjs
+60   2   tests/unit/ci-real-pg-wiring.test.mjs
+```
+
+两页证据页只改了本节点名的几处：`gy-real-pg-ci` 的 §7 第 2 项；`gy-i23-integration-script-coverage` 的 §2 表两行、§2 末尾的统计口径自检、§7 第 1 项（衍生），另加该页 §9 的一节订正。`services/**`、`packages/**`、`miniprogram/**`、`tests/integration/**`、`package.json`、迁移、契约 —— **全部 0 行改动**（提交后的全量 `diff --numstat` 见交接文件）。

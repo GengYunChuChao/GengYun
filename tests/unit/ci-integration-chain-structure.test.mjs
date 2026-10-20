@@ -134,9 +134,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/favorites-history-pg.mjs',
-    reason: '需真实 PG17 且硬钉库名 `gengyun_favorites_history_test`：未配置 `FAVORITES_HISTORY_PG_TEST_URL` 时'
-      + '**显式打印 SKIP 并以 77 退出**（未取得，不静默绿；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 可显式取 0）；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/knowledge-native-consumer.mjs',
@@ -148,9 +146,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/messages-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_messages_test`（本机便携集群，仅回环端口）：'
-      + '本片用它取消息域迁移三连／重复判定／已读并发收敛／派生计数／分页的真库读数；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/migrations-negative-pg.mjs',

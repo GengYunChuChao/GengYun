@@ -5,7 +5,7 @@
 //   但逐 workflow 检索文件名 **0 命中**——11 个 workflow 谁都不跑它们。于是「真库臂」只存在于本机，
 //   CI 上无论它们坏成什么样都不会红。本测试把这条缺口变成会红的断言。
 //
-// 判类口径（刻意收窄）：只认下面 `MANAGED_SCRIPTS` 这两条——它们**只有真库臂**，没有可替代的替身/内存臂，
+// 判类口径（刻意收窄）：只认下面 `MANAGED_SCRIPTS` 里登记的那几条——它们**只有真库臂**，没有可替代的替身/内存臂，
 // 因此「某个 workflow 的 `run:` 行里出现它」就是唯一有意义的接线证明。其它 `-pg.mjs` 各有自己的
 // workflow 或已在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 里
 // 逐条声明（本文件不重复判它们，也不动那张表）。
@@ -37,17 +37,22 @@ const WORKFLOW_DIR = '.github/workflows';
 const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
 
 /**
- * 受管脚本清单：这两条**只能**用真库证明（没有替身臂可以替代），故必须被某个 workflow 真跑。
+ * 受管脚本清单：这几条**只能**用真库证明（没有替身臂可以替代），故必须被某个 workflow 真跑。
  * 增删任何一条＝放宽或收紧门禁，必须同时改 `FROZEN_MANAGED_SCRIPTS` 并更新证据页——刻意留 diff。
+ * 前两条是 #314 接的（会话链／社区域），后两条是 R27-S4 接的（消息域／收藏历史，同一条 workflow）。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/messages-pg.mjs',
+  'tests/integration/favorites-history-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/messages-pg.mjs',
+  'tests/integration/favorites-history-pg.mjs',
 ]);
 
 /**
@@ -888,5 +893,58 @@ test('反向控制⑥：两个脚本拆成两个 job 必须仍绿；只降**第�
     postgresServiceProblems(jobsOf(firstWithoutServices).find((job) => job.id === secondId).body),
     [],
     '删第一个 job 的 `services:` 不得碰到第二个 job',
+  );
+});
+
+test('反向控制⑦：R27-S4 追加的两条受管脚本，删掉各自的 `run:` 行后必须逐条点名（且只点名它）', () => {
+  const workflows = readAllWorkflows();
+  const added = [
+    'tests/integration/messages-pg.mjs',
+    'tests/integration/favorites-history-pg.mjs',
+  ];
+  // 先证明磁盘真值是绿的：否则下面的「删了就红」可能只是继承了一个已经红掉的前提。
+  assertManagedScriptsWired(missingManagedScripts({ workflows }));
+
+  const real = workflows.find((workflow) => workflow.file === REAL_PG_WORKFLOW);
+  assert.ok(real !== undefined, `磁盘上找不到 ${REAL_PG_WORKFLOW}`);
+
+  for (const target of added) {
+    const witness = added.find((script) => script !== target);
+    // 只在内存里变异：删掉提到该脚本的那一行（模拟「有人把这一步删了」）。
+    const mutatedSource = real.source
+      .split('\n')
+      .filter((line) => !line.includes(`node ${target}`))
+      .join('\n');
+    assert.notEqual(mutatedSource, real.source, `删 ${target} 的步骤必须真的改到文本（否则反向控制是空转）`);
+    assert.ok(mutatedSource.includes(`node ${witness}`), `变异只许打断 ${target}，${witness} 必须仍是绿的`);
+
+    const mutated = workflows.map((workflow) => (workflow.file === REAL_PG_WORKFLOW
+      ? { ...workflow, source: mutatedSource, commands: runCommandTextsOf(mutatedSource) }
+      : workflow));
+    assert.deepEqual(
+      missingManagedScripts({ workflows: mutated }),
+      [target],
+      `删掉 ${target} 的 \`run:\` 行后必须且只能点名它（其它受管脚本仍必须算已接线）`,
+    );
+    assert.throws(
+      () => assertManagedScriptsWired(missingManagedScripts({ workflows: mutated })),
+      (error) => error.message.includes(target),
+      `删掉 ${target} 的 \`run:\` 行后同一断言必须失败，且失败消息要点名该脚本`,
+    );
+  }
+
+  // 两条都删 ⇒ 点名集合必须恰好是这两条（证明两条各自独立受管，不互相遮蔽）。
+  const bothRemoved = real.source
+    .split('\n')
+    .filter((line) => !added.some((script) => line.includes(`node ${script}`)))
+    .join('\n');
+  assert.notEqual(bothRemoved, real.source, '两条都删的变异必须真的改到文本');
+  const bothMutated = workflows.map((workflow) => (workflow.file === REAL_PG_WORKFLOW
+    ? { ...workflow, source: bothRemoved, commands: runCommandTextsOf(bothRemoved) }
+    : workflow));
+  assert.deepEqual(
+    missingManagedScripts({ workflows: bothMutated }),
+    [...added].sort(),
+    '两条都删掉时必须正好点名这两条',
   );
 });
