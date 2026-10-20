@@ -684,3 +684,116 @@ GRANT INSERT (id, turn_id, owner_id, revision, status, checked_text, check_state
 \echo '20-login-roles.sql：已授予 public.favorites / public.history / public.conversations / public.conversation_turns / public.conversation_answers / public.favorites_idempotency / public.history_idempotency 的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
 \echo '20-login-roles.sql：DELETE 仅**表级**授予 public.favorites / public.history / public.conversations / public.conversation_turns / public.favorites_idempotency / public.history_idempotency（PG 无列级 DELETE；public.conversation_answers 靠 conversation_turns 的 ON DELETE CASCADE，不授 DELETE）。'
 \echo '20-login-roles.sql：public.favorites / public.history / public.conversations 的 UPDATE (revision) 仅是 SELECT … FOR UPDATE 的**行锁载体**（store 里没有 UPDATE 语句），不是业务写权限。'
+
+-- ============================================================================
+-- J. 运行时域（识别）的列级授权（R28-S28 / 迁移 0025） -------------------------
+--
+-- 为什么写在这个文件、而不是 services/api/db/roles/*.sql：
+--   运行时域的授权按**部署顺序**生效，不按建组时生效。roles/*.sql 只在建组那一次跑，
+--   而本文件每次 provision 都跑；H 段（messages/community/ocr）与 I 段（收藏/历史/对话）
+--   都在这里，本段与它们同构：缺表硬守卫 → REVOKE ALL … FROM PUBLIC → 逐列 GRANT → 摘要。
+--
+-- 覆盖迁移 0025_recognitions_persistence.sql 的四张表（该迁移已随 #333 合入 main，341ad8c）：
+--   public.recognition_jobs / public.recognition_records /
+--   public.recognition_selections / public.recognition_idempotency
+--
+-- 列清单不是抄的：逐列从 services/api/src/recognitions/store-pg.ts 的真实语句反推
+-- （行号按该文件 node 行号）：
+--   * 列常量：JOB_COLUMNS :177-178、RECORD_COLUMNS :179-180、SELECTION_COLUMNS :181-182
+--   * 写入：INSERT_JOB :184-186（12 列）、INSERT_RECORD :188-190（12 列）、
+--           INSERT_SELECTION :192-194（8 列）
+--   * 读回：getJob :576、updateJob 的 SELECT :587、commitTerminal 的 SELECT … FOR UPDATE
+--           :612-614、getRecognition :656-658、updateRecognition 的 SELECT :668-670、
+--           commitSelection 的 SELECT … FOR UPDATE :707-709、listSelections :762-767
+--   * 更新：updateJob :592-601（5 列 SET）、updateRecognition :676-698（7 列 SET）、
+--           commitTerminal :632-641（jobs 5 列 SET）、commitSelection :730-751（records 7 列 SET）
+--   * 幂等台账：claim :206-214（INSERT … ON CONFLICT DO UPDATE）、select :216-218、
+--           complete :221-227、release DELETE :819-823、purge DELETE :829-834
+--
+-- 四档粒度，逐条有据：
+--   ① 读面按列：四表 SELECT 全给 store 会读的列。ON CONFLICT 的 (scope, key_hash) 推断、
+--      EXCLUDED / `WHERE expires_at <= $5` / DELETE 的 WHERE 与 RETURNING 都要 SELECT 权，
+--      所以 recognition_idempotency 的 SELECT 是全部 6 列。
+--   ② 写面按列：jobs INSERT 12 列 + UPDATE 5 列；records INSERT 12 列 + UPDATE 7 列；
+--      selections INSERT 8 列、**不授 UPDATE**（选中结果落在 recognition_records.
+--      selected_species_id 上，见 commitSelection :730-751）；idempotency INSERT 6 列 +
+--      UPDATE 4 列（request_hash / payload / pending / expires_at）。
+--   ③ `SELECT … FOR UPDATE` 只在 recognition_jobs :613 与 recognition_records :708 出现，
+--      而这两张表本来就有**真实**的 UPDATE 列（业务写权限）⇒ 行锁由它们满足，
+--      **不**另授 S26 那种 `UPDATE (revision)` 行锁载体（性质不同，别照抄 I 段那句注释）。
+--      recognition_selections 不授 UPDATE，它的 FOR UPDATE 仍然 42501 —— store 从不这么用。
+--   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 recognition_idempotency（release / purge 是两条
+--      整行 DELETE）。jobs / records / selections **不授 DELETE**：账号注销走
+--      public.request_account_deletion()（SECURITY DEFINER，以属主身份级联），四表的
+--      owner_user_id 都是 ON DELETE CASCADE，运行时不需要删这三张表的任何行。
+--   ⛔ 一律不给 TRUNCATE / REFERENCES / TRIGGER；表级 INSERT / UPDATE 一律不给
+--      （idempotency 的 DELETE 是本段唯一的表级写授权）。
+\echo '--- J. 运行时域（识别）列级授权（R28-S28，迁移 0025）---'
+
+-- 缺表硬前置（方案 B，S24 证据页 §10 的裁决）：0025 已合入 main，四张表是硬依赖。
+-- 顺序错（先跑本文件、后跑 migrate.ts）时这里直接失败，不再像 S24 的软守卫那样只提示。
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['recognition_jobs', 'recognition_records',
+                      'recognition_idempotency', 'recognition_selections']) AS t(name)
+   WHERE to_regclass('public.' || t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少识别域表：%（迁移 0025 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.recognition_jobs,
+                     public.recognition_records,
+                     public.recognition_selections,
+                     public.recognition_idempotency
+  FROM PUBLIC;
+
+-- recognition_jobs（0025）：SELECT 12 列 / INSERT 12 列 / UPDATE 5 列；无 DELETE
+GRANT SELECT (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+              state, deadline_at, created_at, updated_at, error_code)
+  ON public.recognition_jobs TO gengyun_api_runtime;
+GRANT INSERT (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+              state, deadline_at, created_at, updated_at, error_code)
+  ON public.recognition_jobs TO gengyun_api_runtime;
+GRANT UPDATE (revision, state, deadline_at, updated_at, error_code)
+  ON public.recognition_jobs TO gengyun_api_runtime;
+
+-- recognition_records（0025）：SELECT 12 列 / INSERT 12 列 / UPDATE 7 列；无 DELETE
+GRANT SELECT (id, revision, owner_user_id, media_id, media_revision, candidates,
+              uncertainty_reasons, selected_species_id, model_version, created_at, updated_at,
+              deleted)
+  ON public.recognition_records TO gengyun_api_runtime;
+GRANT INSERT (id, revision, owner_user_id, media_id, media_revision, candidates,
+              uncertainty_reasons, selected_species_id, model_version, created_at, updated_at,
+              deleted)
+  ON public.recognition_records TO gengyun_api_runtime;
+GRANT UPDATE (revision, candidates, uncertainty_reasons, selected_species_id, model_version,
+              updated_at, deleted)
+  ON public.recognition_records TO gengyun_api_runtime;
+
+-- recognition_selections（0025）：SELECT 8 列 / INSERT 8 列；无 UPDATE、无 DELETE
+-- （关系只追加：选中结果落在 recognition_records.selected_species_id 上，见 commitSelection）
+GRANT SELECT (id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at,
+              linkage)
+  ON public.recognition_selections TO gengyun_api_runtime;
+GRANT INSERT (id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at,
+              linkage)
+  ON public.recognition_selections TO gengyun_api_runtime;
+
+-- recognition_idempotency（0025）：SELECT 6 列 / INSERT 6 列 / UPDATE 4 列 / 表级 DELETE
+-- （PG 无列级 DELETE；release :819-823 与 purge :829-834 都是整行 DELETE，故只能表级授予）
+GRANT SELECT (scope, key_hash, request_hash, payload, pending, expires_at)
+  ON public.recognition_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope, key_hash, request_hash, payload, pending, expires_at)
+  ON public.recognition_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (request_hash, payload, pending, expires_at)
+  ON public.recognition_idempotency TO gengyun_api_runtime;
+GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
+
+\echo '20-login-roles.sql：已授予 public.recognition_jobs / public.recognition_records / public.recognition_selections / public.recognition_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 recognitions/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：recognition_jobs / recognition_records 的 UPDATE 是业务写权限（认领、终态提交、改选），同时满足各自的 SELECT … FOR UPDATE；recognition_selections 不授 UPDATE。'
