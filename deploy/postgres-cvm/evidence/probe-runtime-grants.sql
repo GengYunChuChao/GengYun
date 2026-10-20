@@ -313,4 +313,130 @@ SELECT n.nspname || '.' || c.relname AS relation_with_table_level_dml,
      OR has_table_privilege('gengyun_api_runtime', c.oid, 'UPDATE')
      OR has_table_privilege('gengyun_api_runtime', c.oid, 'DELETE'))
  ORDER BY 1;
+-- ---------------------------------------------------------------------------
+-- 5) R28-S26 收藏／历史／对话域（迁移 0013 / 0018）的零行探针
+--    改前（HEAD 7168096）逐条 42501 permission denied for table …；改后必须逐条通过。
+--    角色能不能连、能不能读已授权表，由上方的控制臂（3 节）证明；
+--    这里只用真实语句形状回答「这些语句在运行时身份下到底能不能跑」。
+--    ⛔ 全部零行：SELECT … WHERE false / INSERT … SELECT … WHERE false /
+--       UPDATE … WHERE false / DELETE … WHERE false（不写、不改、不删任何真实行）。
+-- ---------------------------------------------------------------------------
+SET ROLE gengyun_api_runtime;
+
+\echo '-- [5] 收藏／历史／对话域的零行探针（R28-S26，迁移 0013 / 0018）'
+
+\echo '-- [favorites] SELECT 7 列 / INSERT … ON CONFLICT DO NOTHING / FOR UPDATE / DELETE'
+SELECT id, owner_id, target_type, target_id, target_revision, revision, created_at
+  FROM public.favorites WHERE false;
+INSERT INTO public.favorites (id, owner_id, target_type, target_id, target_revision, revision, created_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 'species', 'probe', 1, 1, now() WHERE false
+ON CONFLICT DO NOTHING RETURNING id;
+SELECT id, owner_id, target_type, target_id, target_revision, revision, created_at
+  FROM public.favorites WHERE false FOR UPDATE;
+DELETE FROM public.favorites WHERE false RETURNING id;
+
+\echo '-- [history] SELECT 11 列 / INSERT … ON CONFLICT DO NOTHING / FOR UPDATE / DELETE'
+SELECT id, owner_id, kind, target_type, target_id, target_revision, revision,
+       job_id, job_state, event_key, created_at
+  FROM public.history WHERE false;
+INSERT INTO public.history (id, owner_id, kind, target_type, target_id, target_revision, revision,
+                            job_id, job_state, event_key, created_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 'recognition', 'species', 'probe', 1, 1,
+       'probe', 'queued', 'probe', now() WHERE false
+ON CONFLICT DO NOTHING RETURNING id;
+SELECT id, owner_id, kind, target_type, target_id, target_revision, revision,
+       job_id, job_state, event_key, created_at
+  FROM public.history WHERE false FOR UPDATE;
+DELETE FROM public.history WHERE false RETURNING id;
+
+\echo '-- [history_idempotency] SELECT 6 列 / 认领（ON CONFLICT DO UPDATE）/ 落结果 / 过期与释放 DELETE'
+SELECT scope, key_hash, request_hash, response_status, outcome, expires_at
+  FROM public.history_idempotency WHERE false;
+INSERT INTO public.history_idempotency (scope, key_hash, request_hash, response_status, outcome, expires_at)
+SELECT 'probe', 'probe', 'probe', 200, NULL, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       response_status = EXCLUDED.response_status,
+       outcome = NULL,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.history_idempotency.expires_at <= now()
+RETURNING scope;
+UPDATE public.history_idempotency
+   SET outcome = '{}'::jsonb, response_status = 200
+ WHERE false AND outcome IS NULL
+RETURNING scope;
+DELETE FROM public.history_idempotency
+ WHERE false AND expires_at <= now()
+RETURNING scope;
+
+\echo '-- [favorites_idempotency] 同上'
+SELECT scope, key_hash, request_hash, response_status, outcome, expires_at
+  FROM public.favorites_idempotency WHERE false;
+INSERT INTO public.favorites_idempotency (scope, key_hash, request_hash, response_status, outcome, expires_at)
+SELECT 'probe', 'probe', 'probe', 200, NULL, now() WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       response_status = EXCLUDED.response_status,
+       outcome = NULL,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.favorites_idempotency.expires_at <= now()
+RETURNING scope;
+UPDATE public.favorites_idempotency
+   SET outcome = '{}'::jsonb, response_status = 200
+ WHERE false AND outcome IS NULL
+RETURNING scope;
+DELETE FROM public.favorites_idempotency
+ WHERE false AND expires_at <= now()
+RETURNING scope;
+
+\echo '-- [conversations] SELECT 6 列 / INSERT 6 列 / FOR UPDATE / DELETE'
+SELECT id, owner_id, revision, conditions, created_at, updated_at
+  FROM public.conversations WHERE false;
+INSERT INTO public.conversations (id, owner_id, revision, conditions, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), 1, NULL, now(), now() WHERE false
+RETURNING id, owner_id, revision, conditions, created_at, updated_at;
+SELECT id, owner_id, revision, conditions, created_at, updated_at
+  FROM public.conversations WHERE false FOR UPDATE;
+DELETE FROM public.conversations WHERE false RETURNING id;
+
+\echo '-- [conversation_turns] SELECT 14 列 / INSERT 13 列 / 认领与落结果 UPDATE / FOR UPDATE / DELETE'
+SELECT id, conversation_id, owner_id, revision, input_text, transcription_ref,
+       job_id, job_state, job_deadline_at, job_created_at, job_error_code, answer_id,
+       created_at, updated_at
+  FROM public.conversation_turns WHERE false;
+INSERT INTO public.conversation_turns (id, conversation_id, owner_id, revision, input_text,
+                                       transcription_ref, job_id, job_state, job_deadline_at,
+                                       job_created_at, job_error_code, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'probe',
+       NULL, gen_random_uuid(), 'queued', now(), now(), NULL, now(), now() WHERE false
+RETURNING id, conversation_id, owner_id, revision, input_text, transcription_ref,
+          job_id, job_state, job_deadline_at, job_created_at, job_error_code, answer_id,
+          created_at, updated_at;
+UPDATE public.conversation_turns
+   SET job_state = 'running', revision = revision + 1, updated_at = now()
+ WHERE false AND job_state = 'queued'
+RETURNING id;
+UPDATE public.conversation_turns
+   SET job_state = 'succeeded', job_error_code = NULL, answer_id = COALESCE(NULL::uuid, answer_id),
+       revision = revision + 1, updated_at = now()
+ WHERE false AND job_state IN ('queued', 'running')
+RETURNING id;
+SELECT id FROM public.conversation_turns WHERE false FOR UPDATE;
+DELETE FROM public.conversation_turns WHERE false RETURNING id;
+
+\echo '-- [conversation_answers] SELECT 14 列 / INSERT 14 列（无 UPDATE、无 DELETE：行只随 turn 级联）'
+SELECT id, turn_id, owner_id, revision, status, checked_text, check_state, citations,
+       dose_cards, model_version, prompt_version, rule_version, created_at, updated_at
+  FROM public.conversation_answers WHERE false;
+INSERT INTO public.conversation_answers (id, turn_id, owner_id, revision, status, checked_text,
+                                         check_state, citations, dose_cards, model_version,
+                                         prompt_version, rule_version, created_at, updated_at)
+SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 1, 'answered', 'probe',
+       'passed', '[]'::jsonb, '[]'::jsonb, 'probe', 'probe', 'probe', now(), now() WHERE false
+RETURNING id;
+
+RESET ROLE;
+
+\echo '-- [5] 收藏／历史／对话域探针结束（失败行会以 ERROR: 42501 … 出现，成功行无输出）'
+
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'
