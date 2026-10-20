@@ -266,14 +266,17 @@ const describeLoadPath = (parentUrl, specifier, url) => {
   return `经 ${prefix}（装载者 ${owner}）装载了 '${specifier}' → ${url}`;
 };
 /**
- * **冻结基线**（r7，逐条实测量于**未改动**的 `app.ts` 引用图）：本仓装配路径今天合法装载的 **9 条** OCR 域装载边。
+ * **冻结基线**（r7，逐条实测量于**未改动**的 `app.ts` 引用图；r7 时点 9 条，2026-10-20 S10 起 11 条）：
+ * 本仓装配路径今天合法装载的 OCR 域装载边。
  *
  * 为什么必须有基线（实测结论，不得读成"放宽"）：派单的字面要求是「登记集合内**无任何** OCR 域条目」，
  *   但**未改动**的仓库运行期就有 9 条 OCR 域边 —— `app.ts → routes/ocr.ts` 是合法装配，而 `routes/ocr.ts`
  *   静态装载 `../ocr/{service,store,provider,media,reference}.ts`，其中 `service.ts`/`store.ts`/`reference.ts`
  *   又各自装载 `./state.ts` ⇒ 按字面断言会把**未改动**的仓库判红（等于把工具本身做成坏的）。
- *   故判据口径定为**边级**：「**没有任何 OCR 域装载边落在基线之外**」——基线内 9 条＝既有合法装配，
+ *   故判据口径定为**边级**：「**没有任何 OCR 域装载边落在基线之外**」——基线内＝既有合法装配，
  *   **任何新边一律判红**（fail-closed，不静默）。
+ *   ⚠ 2026-10-20（GY-R27 S10，#10 OCR 持久化）：存储实现新增 `ocr/store-pg.ts`（装配点仍只在
+ *   `routes/ocr.ts`）⇒ 基线由 **9 → 11** 条（连同下方 r9 的字面量一并显式更新；判据本身未放宽）。
  * 为什么是**边**（loader + specifier + target 三元）而不是"目标 URL 白名单"：`app.ts` 自己用
  *   `(rq as any)('./ocr/state.ts')` 装载的是**同一个** `ocr/state.ts`，差别只在**加载者与 specifier**
  *   ⇒ 只有边级口径才能既放过既有装配、又抓住注入（15 形态实测：全部记为 `app.ts` 出发的**新边**）。
@@ -284,11 +287,21 @@ const OCR_REGISTRY_BASELINE_EDGES = [
   { loader: 'services/api/src/app.ts', specifier: './ocr/service.ts', target: 'services/api/src/ocr/service.ts' },
   { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/service.ts', target: 'services/api/src/ocr/service.ts' },
   { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/store.ts', target: 'services/api/src/ocr/store.ts' },
+  // ⚠ 2026-10-20（GY-R27 S10，#10 OCR 持久化）**合法装配变化 ⇒ 显式更新基线（2 条）**：
+  //   本片把 OCR 域的存储实现接成「`real` + 有池 ⇒ PostgreSQL store」，实现文件是
+  //   `services/api/src/ocr/store-pg.ts`（迁移 `0024_ocr_persistence.sql`）。**实现选择在域内**
+  //   （`routes/ocr.ts` 按传入的池决定用哪个 store），装配点 `app.ts` 不接触任何 OCR 适配器
+  //   （`app.ts` 仍只 import `./ocr/service.ts` 的那一个值符号，见本文件下方 4 条禁项与 AST 判据）。
+  //   ⇒ 新增 2 条边：`routes/ocr.ts → '../ocr/store-pg.ts'` 与 `store-pg.ts → './state.ts'`。
+  //   ⛔ 这不是放宽判据：`collectOcrRegistryFindings` 仍然判「基线之外任何 OCR 域边 ⇒ 红」，
+  //   且 r9 的「基线必须全部命中 + 计数相等」照旧（计数随之由 9 → 11，已在下方字面量显式更新）。
+  { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/store-pg.ts', target: 'services/api/src/ocr/store-pg.ts' },
   { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/provider.ts', target: 'services/api/src/ocr/provider.ts' },
   { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/media.ts', target: 'services/api/src/ocr/media.ts' },
   { loader: 'services/api/src/routes/ocr.ts', specifier: '../ocr/reference.ts', target: 'services/api/src/ocr/reference.ts' },
   { loader: 'services/api/src/ocr/service.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
   { loader: 'services/api/src/ocr/store.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
+  { loader: 'services/api/src/ocr/store-pg.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
   { loader: 'services/api/src/ocr/reference.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
 ];
 const OCR_REGISTRY_BASELINE_KEYS = new Set(
@@ -2071,20 +2084,22 @@ try {
   //   （实测：非 `file:` 解析结果 82 条**全部**是 `node:` 内建 ⇒ 经 `isBuiltin` 白名单后为 0；幂等重解析对只计数不判红）。
   assert.equal(registrySummary.failClosedEdges, 0, `r8 fail-closed 判据在**未改动**仓库上不得命中（否则是把合法解析判红）：实际 ${registrySummary.failClosedEdges} 条`);
   assert.equal(registrySummary.positiveControl, true, '正控制必须成立：登记集合里必须能看到无害模块 `node:os`（否则是"登记器恒空 ⇒ 恒绿"的退化）');
-  // ── r9（复审非阻塞 ③）：**基线 9 条必须全部命中** ──
+  // ── r9（复审非阻塞 ③）：**基线全部命中 + 计数相等** ──
   // 为什么需要第三条断言：上面两条 + 主判据只覆盖"基线之外**多出来**的边"，**不覆盖"基线之内少掉的边"**。
   //   实测（本片探针，改动前）：剔掉 `routes/ocr.ts → '../ocr/provider.ts'` 一条 ⇒ 可达边 9→8、基线之外 0、
   //   failClosed 0、正控制照旧成立 ⇒ **exit 0 全绿**，汇总行只把「冻结基线命中 8 条」当读数打印，无人比对 ⇒ 假绿。
   //   故这里同时钉住**计数**（`baselineEdges === 基线条数`）与**集合相等**（`基线集合 − 命中集合 = ∅`），
   //   判红时点名**丢的是哪一条**（loader / specifier / target ＋ key 原文）。
   //   ⚠ 还有第三种假绿要堵：**只做差集**时，把基线表缩成空集（或删到 1 条）会让"基线集合 − 命中集合"**恒空**
-  //     ⇒ 空表恒绿。故先钉**表本身的条数**（字面量 `9`，即 r7 冻结记录；复审建议
+  //     ⇒ 空表恒绿。故先钉**表本身的条数**（字面量，即冻结记录；复审建议
   //     `assert.equal(registrySummary.baselineEdges, 9, …)` 的同义实现）。表若有**有意**变化，必须连这个字面量
   //     一起改 —— 这点"摩擦"是故意的（与主判据"合法装配变化时要求人复核"同口径）。
+  //   ⚠ 2026-10-20（GY-R27 S10，#10 OCR 持久化）：合法装配变化（新增 `ocr/store-pg.ts` 与其 `./state.ts` 边）
+  //     ⇒ 字面量 9 → **11** 显式更新。判据的鉴别力**不变**：仍要求"基线之外 0 条"＋"基线内全部命中"＋"计数相等"。
   assert.equal(
     OCR_REGISTRY_BASELINE_EDGES.length,
-    9,
-    `r9 基线表本身被改动：r7 冻结记录是 9 条，实际 ${OCR_REGISTRY_BASELINE_EDGES.length} 条（若确为合法装配变化，请连同本断言的 9 一并显式更新）`,
+    11,
+    `r9 基线表本身被改动：冻结记录是 11 条（r7 时点 9 条；S10 起 ＋2 条 OCR 持久化边），实际 ${OCR_REGISTRY_BASELINE_EDGES.length} 条（若确为合法装配变化，请连同本断言的 11 一并显式更新）`,
   );
   const missingBaselineEdges = collectMissingBaselineEdges();
   assert.equal(

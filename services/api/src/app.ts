@@ -1640,7 +1640,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
   registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory });
+  // GY-R27 S10（#10）· OCR 域的**持久化接线**（迁移 `0024_ocr_persistence.sql`）。
+  //
+  // 规则与本文件上方消息域的 `real` 口径**对齐**（`messagesService` 那段：`real` 且 `pool !== null`
+  // 才接真实库），但**降级方式按本域现状**、不照抄消息域的整域 503：
+  //   * `real` 且 `pool !== null` ⇒ 下面这个变量是**那个** `PgPool`，域内据此构造
+  //     `createPostgresOcrStore`（`persistent: true`）；
+  //   * 其余模式（`stub` / `preset_demo`）或 `real` 但无池 ⇒ 变量是 `null` ⇒ 域内用内存 store
+  //     （`persistent: false`）。⛔ 不把内存实现伪装成持久化：`describe().storePersistent` 如实回报
+  //     `false`，且"这个变量是 null"在装配层一眼可读。
+  //     为什么不在 `real + 无池` 时整域 fail-closed：OCR 域在本基线**没有**这条产品行为（接线前
+  //     `real + 无池` 一直可用内存 store），把它改成 503 属于改变既有业务语义，超出本片范围。
+  //
+  // ⛔ 刻意**不**写成 `deps` 的键（`store:` / `pool:`）：`tests/integration/ocr-http.mjs` 把装配行的
+  //    「恰四个键（consent/egress/guards/history）＋ app.ts 不得引用 OCR 存储/提供者适配器模块」
+  //    钉成结构性质，本接线用位置实参传入**同一个**池、由域内决定实现，因此那两条断言逐字保持
+  //    （见证据页「既有断言 前→后」）。
+  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory }, ocrPersistencePool);
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
   // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。

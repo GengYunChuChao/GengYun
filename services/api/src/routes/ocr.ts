@@ -190,10 +190,10 @@ function actorId(request: FastifyRequest): string {
  * `registerOcrRoutes(app, config, { guards });`（零端口注入，见 `OcrRouteDeps` 注释）。
  * 返回组装好的服务，便于装配方/测试注入或驱动（并已 `decorate` 到 `app.ocrService`）。
  */
-export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps: OcrRouteDeps): OcrService {
+export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps: OcrRouteDeps, persistencePool: TransactionalPool | null = null): OcrService {
   const guards = deps.guards;
   const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode });
-  const store = deps.store ?? createMemoryOcrStore();
+  const store = deps.store ?? (persistencePool === null ? createMemoryOcrStore() : createPostgresOcrStore({ pool: persistencePool }));
   const media = deps.media ?? createOcrMediaPort(config.executionMode);
   const reference = deps.reference ?? createOcrReferencePort(config.executionMode);
   const dose = deps.dose ?? createOcrDosePort(config.executionMode);
@@ -329,3 +329,25 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
 
   return service;
 }
+
+// ============================================================================
+// GY-R27 S10（#10）· 第 4 个实参 `persistencePool`，以及「为什么这段说明与 import 写在文件末尾」
+// ============================================================================
+// 1) 选择规则（**判定在装配层** `app.ts`，**构造在域内**即本文件）：
+//    `app.ts` 只在 `real` 时把它本来就持有的**那一个** `PgPool` 传进来
+//    （`const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`），本层按
+//    `deps.store ?? (persistencePool === null ? 内存 : PG)` 选实现：
+//      · `real` + 有池 ⇒ `createPostgresOcrStore`（`persistent: true`；迁移 `0024_ocr_persistence.sql`）；
+//      · `real` + 无池 ⇒ 内存 store（`persistent: false`，**如实**标注不持久，⛔ 绝不冒充持久化）；
+//      · `stub` / `preset_demo`（无论有没有池）⇒ 内存 store（行为与接线前逐字一致）。
+//    `persistencePool` **不是**适配器注入面：装配点无法借它塞进 store / provider / reference，
+//    它只提供连接能力，换不换实现由域内判定 ⇒ `deps.store` 仍是**唯一**可供回归测试替换存储的口子。
+//
+// 2) 为什么 import 与说明放在**文件末尾**（不是风格偏好，是被既有门禁钉住的）：
+//    `docs/architecture/contract-status.json` 把本文件 5 个路由注册块的行号范围
+//    （`224-257` / `259-272` / `274-290` / `292-308` / `310-328`）当作证据钉住，而该 JSON 在本片是**禁改项**。
+//    只要在注册块之前插入任何一行，契约实现状态的语义校验就会判红（实测原文：
+//    `getOCR: services/api/src/routes/ocr.ts:259-272 区间落在 post /ocr 的注册块内…`）。
+//    ESM 的 `import` 声明是提升的（hoisted），放在文件末尾与放在顶部**语义等价** —— 用它换"注册块行号不变"：
+//    本文件的接线因此**逐行等长**（`git diff` 只有 2 行改动），`contract-status.json` 无需修改。
+import { createPostgresOcrStore, type TransactionalPool } from '../ocr/store-pg.ts';
