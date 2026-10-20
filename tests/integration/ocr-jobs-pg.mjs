@@ -253,9 +253,15 @@ async function migrationTriple() {
   assert.equal(discovered.length, max, `迁移总数必须等于最大版本号（count=${discovered.length}，max=${max}）`);
   const names = discovered.map((migration) => migration.filename);
   assert.ok(names.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  assert.equal(names[names.length - 1], MIGRATION, `本片迁移必须是当前末位（现场 ${names[names.length - 1]}）`);
+  // ⛔ 这里**不再**断言「本片迁移必须是当前末位」。后续切片（0025 起的识别域、语音转写…）必然
+  //    追加更大的版本号，而 `recognitions-pg.mjs:280` 原先也断言自己是末位 ⇒ 两条脚本互相锁死，
+  //    任何时刻只有一条能绿：0025 落 main 的那一刻（341ad8c）本脚本就在 CI 上常红
+  //    （run 39431803337：`本片迁移必须是当前末位（现场 0025_recognitions_persistence.sql）`）。
+  //    真正要守的结构不变量是上面两条（1..max 连续无缺号、count === max）——它们对「新增迁移」
+  //    自动放行，对「发现器静默漏项／编号错位」变红，且与「谁是末位」无关。本片迁移是否真的
+  //    被应用、对象是否真的建出来，由下面的 `to_regclass` 与迁移台账断言逐条证明（恒真断言不加）。
   say(`[M0] 结构不变量：迁移 ${discovered.length} 个（0001..${String(max).padStart(4, '0')}），
-       连续无缺号；count === max；末位 = ${MIGRATION}`);
+       连续无缺号；count === max；含 ${MIGRATION}`);
 
   const objects = async () => ({
     jobs: (await one("SELECT to_regclass('public.ocr_jobs') AS v")).v,
