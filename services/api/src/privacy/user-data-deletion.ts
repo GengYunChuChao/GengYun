@@ -44,14 +44,16 @@
  * ## 与「收藏／历史不自动转成已使用事实」的关系
  * 本文件是**删除**方向的接线（用户权利），与"收藏=已使用"毫无关系；它不写任何使用类字段。
  */
-import { createDeletionRegistry } from '../../../../packages/privacy/deletion.mjs';
+import { SAFE_ERROR_CODES, createDeletionRegistry } from '../../../../packages/privacy/deletion.mjs';
 import type { DeletionCoordinator } from '../../../../packages/privacy/deletion-modules.mjs';
+import { scopeForBackupModule } from '../../../../packages/privacy/backup-copies.mjs';
 import { createPrivacyDeletionCoordinator } from './egress.ts';
 import type {
   CreateDeletionRequestInput,
   DeletionRequestRecord,
   DeletionRequestStore,
 } from './deletion-requests-pg.ts';
+import type { BackupCopySeedSource, BackupCopySqlClient } from './backup-copies-pg.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -76,6 +78,19 @@ export interface OwnerPurgeStore {
    * 不提供则退回 `deleteAllByOwner` 的既有语义（只报正文行数）。
    */
   purgeOwnerData?(ownerId: string): Promise<OwnerPurgeCounts>;
+  /**
+   * GY-I19（#19）· 在**受理事务内**枚举本主体仍持有的对象引用（只许不透明引用：行 id / 摘要 / token）。
+   *
+   * 为什么必须接事务客户端：处理器做的是**物理删除**，清单若等处理器跑完再读就只能拿到空引用
+   * （设计 §6.1）。`client` 就是受理事务那条连接，因此清单与函数调用看到同一个快照。
+   *
+   * 不提供该方法的 store ⇒ 不写清单行（旧装配/替身保持逐字兼容）；但清除阶段会因「没有副本行」
+   * 如实返回 `blocked` + `EVIDENCE_REQUIRED`，**不会**因为「没写行」被读成「清完了」。
+   */
+  snapshotOwner?(
+    ownerId: string,
+    client: BackupCopySqlClient,
+  ): Promise<{ objectRefs: readonly string[]; records: number }>;
 }
 
 /**
@@ -88,10 +103,41 @@ export interface OwnerPurgeStore {
  * `{ purged: true }` 的端口」不是接线，而是把空集当成功；未接线时 `available: false`、
  * 回执 `pending` 才是如实状态。
  */
+/**
+ * 端口返回的三态（设计 §7.4）。**全部字段可选、旧形状继续成立**：
+ *   - 不给 `outcome` ⇒ 按旧语义回退（`purged === true` 且有证据 ⇒ `completed`，否则 `pending`）；
+ *   - `outcome: 'purged'` ⇒ 已清除且证据来自**删除后复核**（不是「UPDATE 没报错」）；
+ *   - `outcome: 'waiting'` ⇒ 还没到期，`pending`（不是失败）；
+ *   - `outcome: 'blocked'` ⇒ 该清没清成/不该当成功，回执照实显示 `blocked` + `errorCode`
+ *     （不是 `pending`：`pending` 的语义是「还没轮到」，清不掉不会靠等自愈）。
+ */
+export type BackupPurgeOutcomeKind = 'purged' | 'waiting' | 'blocked';
+
+export interface BackupPurgeResult {
+  purged: boolean;
+  evidenceRef?: string;
+  outcome?: BackupPurgeOutcomeKind;
+  /** `outcome: 'blocked'` 时的原因码（须在 `SAFE_ERROR_CODES` 内，否则折叠为 `EVIDENCE_REQUIRED`）。 */
+  errorCode?: string;
+  /** 人类可读原因（诊断用；不进契约回执）。 */
+  reason?: string;
+}
+
+export interface BackupPurgeInput {
+  userId: string;
+  module: string;
+  onlineRemoved: number;
+  /**
+   * 受理请求 id（本片新增可选字段）。逐用户副本行按 `request_id` 定位；
+   * 不提供它的旧实现保持既有行为（端口自行决定是否可用）。
+   */
+  requestId?: string;
+}
+
 export interface BackupPurgePort {
   readonly kind: 'wired' | 'unwired';
   readonly available: boolean;
-  purge(input: { userId: string; module: string; onlineRemoved: number }): Promise<{ purged: boolean; evidenceRef?: string }>;
+  purge(input: BackupPurgeInput): Promise<BackupPurgeResult>;
 }
 
 export function createUnwiredBackupPurgePort(
@@ -103,6 +149,28 @@ export function createUnwiredBackupPurgePort(
     available: false,
     async purge() {
       return { purged: false };
+    },
+  };
+}
+
+/**
+ * 已接线但**当前不可用**的端口（`real` 模式没有真库连接时用它，设计 §6.2 的失败关闭方向）。
+ *
+ * `available: true` + 抛 `PROVIDER_UNAVAILABLE` ⇒ 该模块必然 `blocked`（不是 `pending`）：
+ * 「没有备份副本库」不等于「副本都清干净了」，也不等于「还没轮到」。
+ * ⛔ 不用静默退回内存实现或 `unwired`（那会把「没接」伪装成「在等」）。
+ */
+export function createUnavailableBackupPurgePort(
+  note = '备份副本清除需要数据库连接：real 模式未提供连接池，如实不可用',
+): BackupPurgePort {
+  return {
+    kind: 'unwired',
+    available: true,
+    async purge() {
+      const error = new Error(note) as Error & { code?: string };
+      // 用契约内既有码（`SAFE_ERROR_CODES` 含它）⇒ 协议把它折叠成 blocked + PROVIDER_UNAVAILABLE。
+      error.code = 'PROVIDER_UNAVAILABLE';
+      throw error;
     },
   };
 }
@@ -190,6 +258,31 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   /** 受理时**已启动**的持久化事务（按请求 id 挂起；由 `executeHandlers()` 先行 await）。 */
   const durableByRequest = new Map<string, Promise<DeletionRequestRecord>>();
 
+  /**
+   * 收集「可枚举的」备份副本清单来源：每个必需模块一个，`scope` 由闭集映射给出。
+   *
+   * 任一 store 没有 `snapshotOwner` ⇒ 返回 `null`（不写清单行，旧装配/替身逐字兼容）；
+   * 此时清除阶段会因「没有副本行」如实 `blocked` + `EVIDENCE_REQUIRED`，
+   * ⛔ 不会因为「没写行」被读成「清完了」。
+   */
+  function backupCopySources(): BackupCopySeedSource[] | null {
+    const pairs: ReadonlyArray<readonly [string, OwnerPurgeStore]> = [
+      [FAVORITES_DELETION_MODULE, input.favoritesStore],
+      [HISTORY_DELETION_MODULE, input.historyStore],
+    ];
+    const sources: BackupCopySeedSource[] = [];
+    for (const [module, store] of pairs) {
+      const snapshotOwner = store.snapshotOwner;
+      if (typeof snapshotOwner !== 'function') return null;
+      sources.push({
+        module,
+        scope: scopeForBackupModule(module),
+        snapshotOwner: (ownerId, client) => snapshotOwner.call(store, ownerId, client),
+      });
+    }
+    return sources;
+  }
+
   function requireDate(value: unknown, field: string): string {
     if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
       throw new Error(`注销删除请求缺少可解析时刻：${field}`);
@@ -208,6 +301,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     requestId: string,
     userId: string,
     request: Record<string, unknown>,
+    sources: readonly BackupCopySeedSource[] | null,
   ): Promise<DeletionRequestRecord> {
     const issuedAt = now().toISOString();
     const durableInput: CreateDeletionRequestInput = {
@@ -221,6 +315,9 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       receiptIssuedAt: issuedAt,
       // 与受理服务的回执期限同源：同一 `clock()`、同一 TTL 常量（由装配处传入 `RECEIPT_TTL_MS`）。
       receiptExpiresAt: new Date(Date.parse(issuedAt) + (receiptTtlMs as number)).toISOString(),
+      // 备份副本清单行与受理**同一事务**写入（设计 §6.1 第 2 步）：
+      // 事务内失败 ⇒ 整个受理回滚 ⇒ 受理路由抛错、202 不签发。
+      ...(sources === null ? {} : { sources }),
     };
     const pending = (requests as DeletionRequestStore).createRequest(durableInput);
     // 启动即挂空 catch：否则一个未处理的拒绝会终止进程。
@@ -251,17 +348,30 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
           : { records: await store.deleteAllByOwner(userId), idempotency: 0 };
       const onlineRemoved = purged.records;
       let backupState = 'pending';
+      /** 备份态为 `blocked` 时如实带出原因码（协议只接受 `SAFE_ERROR_CODES` 内的码）。 */
+      let errorCode: string | null = null;
       let evidenceRef = `${module}:online-purged:${onlineRemoved}`;
       if (typeof purgeOwnerData === 'function') {
         // 台账也清了 ⇒ 两个计数都写进证据（不能只报正文行数就宣告该模块在线清除完成）。
         evidenceRef = `${evidenceRef};${module}:idempotency-purged:${purged.idempotency}`;
       }
       if (backupPurge.available) {
-        const backup = await backupPurge.purge({ userId, module, onlineRemoved });
+        const backup = await backupPurge.purge({ userId, module, onlineRemoved, requestId });
         const backupEvidence = typeof backup.evidenceRef === 'string' ? backup.evidenceRef.trim() : '';
-        if (backup.purged === true && backupEvidence.length > 0) {
+        const outcome = typeof backup.outcome === 'string' ? backup.outcome : null;
+        // 三态（设计 §7.4）：`outcome: 'purged'` 必须有证据才算完成；「说清了但拿不出证据」⇒ blocked，
+        // ⛔ 不谎称 completed。未给 `outcome` 的旧端口**逐字保留旧回退语义**
+        // （`purged === true` 且有证据 ⇒ completed，否则 pending），既有用例与替身因此零改动。
+        const claimsPurged = outcome === 'purged' || (outcome === null && backup.purged === true);
+        if (claimsPurged && backupEvidence.length > 0) {
           backupState = 'completed';
           evidenceRef = `${evidenceRef};${module}:backup-purged:${backupEvidence}`;
+        } else if (outcome === 'blocked' || (outcome === 'purged' && backupEvidence.length === 0)) {
+          const reported = typeof backup.errorCode === 'string' ? backup.errorCode : '';
+          errorCode = (SAFE_ERROR_CODES as readonly string[]).includes(reported) ? reported : 'EVIDENCE_REQUIRED';
+          backupState = 'blocked';
+          // 证据串保留在线部分并附阻断原因：回执不显示证据，但审计能看出「这个模块卡在哪」。
+          evidenceRef = `${evidenceRef};${module}:backup-blocked:${errorCode}`;
         }
       }
       auditLog.push({
@@ -273,7 +383,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         at: now().toISOString(),
       });
       evidenceByRequest.set(requestId, { ...(evidenceByRequest.get(requestId) ?? {}), [module]: evidenceRef });
-      return { onlineState: 'completed', backupState, evidenceRef, errorCode: null };
+      return { onlineState: 'completed', backupState, evidenceRef, errorCode };
     };
   }
 
@@ -291,7 +401,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const id = String(request['id']);
       subjectByRequest.set(id, userId);
       if (requests !== null) {
-        durableByRequest.set(id, startDurableAcceptance(id, userId, request));
+        durableByRequest.set(id, startDurableAcceptance(id, userId, request, backupCopySources()));
       }
       return request;
     },
