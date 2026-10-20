@@ -4,7 +4,7 @@
 - **被测代码 SHA**：`3a279db687d0ac37735b573d10a7b1f5fba99934`（本片工具提交；被测**产品代码**与基线 `df043a715e691019e14373181249a5cf51ec9da9` 逐字节相同，本片 0 行产品代码改动、0 迁移）
 - **基线**：`upstream/main = df043a715e691019e14373181249a5cf51ec9da9`（取证时实测）
 - **测量时点**：2026-10-20 09:34:54–09:34:58 +08:00（时延抽样，UTC 01:34:54–01:34:58）；2026-10-20 09:35:02–09:45:03 +08:00（容量压测，UTC 01:35:02–01:45:03）
-- **本页提交**：只新增本文件（`docs/verification/`），**不改任何代码**；因此"被测代码 SHA"与"本页所在提交"是两个 SHA，复核命令见 §8 末行
+- **本页提交**：只新增本文件（`docs/verification/`），**不改任何代码**；因此"被测代码 SHA"与"本页所在提交"是两个 SHA，复核命令见 §7 末行
 - **原始 JSON**：仓外 `.pg17\tmp\i23-perf\latency-report.json`（sha256 `a7fa921d83aed2e1af1868d237f86a7fb1770ca95fab0154acf4524851195ec6`，10269 字节）与 `.pg17\tmp\i23-perf\load-report.json`（sha256 `7b3efb59309ff9b673a0dbcc161a56dcd92b4bdabc1d03a6c262999a08734583`，13351 字节），均**未入库**；本页 §5／§6 的数字逐字取自这两份 JSON
 
 ## 1 结论摘要
@@ -23,7 +23,7 @@ cd E:\GengYunCommander\.pg17\wt-i23-perf
 Test-Path .local/local-dev   # 期望 False（若已存在，prepare 会拒绝重复准备）
 node tools/local-dev/prepare.mjs --pg-bin E:\GengYunCommander\.pg17\pgsql\bin --api-port 3310 --pg-port 55536
 
-# ② 起服务（见 §12 的本机坑：本机需先摘掉环境里大小写重复的代理变量）
+# ② 起服务（见 §11 的本机坑：本机需先摘掉环境里大小写重复的代理变量）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.local\local-dev\start.ps1
 
 # ③ 时延抽样：每端点 × 冷/热各 60 条，预热每组 5 条
@@ -163,7 +163,7 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 
 | 序号 | 字段 | 本页位置 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 基线 SHA 与被测代码 SHA | 页首 + §8 末行复核命令 | 已取得 |
+| 1 | 基线 SHA 与被测代码 SHA | 页首 + §7 末行复核命令 | 已取得 |
 | 2 | 测量时点（含时区） | 页首（+08:00 与 UTC 并列） | 已取得 |
 | 3 | 命令原文 | §2（五行可直接粘贴） | 已取得 |
 | 4 | `envFingerprint` | §3 | 已取得 |
@@ -172,10 +172,10 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 | 7 | `errorRate`（分母口径） | §6.2 表 + 「分母＝全部请求（含丢弃/超时）」 | 已取得 |
 | 8 | `dataScale`（行数原样） | §4 | 已取得（含"不真实"声明） |
 | 9 | 冷/热与串行/并发分组 | §5（串行×冷热）、§6（并发×热） | 已取得 |
-| 10 | `substitute` 声明 + 真实调用计数 | §1.5、§6.1；`real_provider_calls = 0` | 已取得 |
-| 11 | `withinSameHost` | §3 末行（`true`） | 已取得 |
-| 12 | 未取得项单列 | §11 | 已取得（6 项） |
-| 13 | 与 #23 条款的逐条对照（能/不能主张） | §10 | 已取得 |
+| 10 | `substitute` 声明 + 真实调用计数 | §1 第 5 条、§9 的 C7 行；`substitute.execution_mode=stub`、`real_provider_calls = 0` | 已取得 |
+| 11 | `withinSameHost` | §3 表内「客户端位置」行（`true`） | 已取得 |
+| 12 | 未取得项单列 | §10 | 已取得（8 项） |
+| 13 | 与 #23 条款的逐条对照（能/不能主张） | §9 | 已取得 |
 | 14 | 原始 JSON 的路径或哈希 | 页首（两份 JSON 的 sha256 + 仓外路径） | 已取得（**未入库**） |
 
 复核"被测代码未变"：`git diff --stat 3a279db687d0ac37735b573d10a7b1f5fba99934..HEAD -- ':!docs/verification/gy-i23-latency-capacity-local-20261020.md'` 期望**为空**。
@@ -184,16 +184,16 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 
 | 编号 | 红线（原文摘要） | 本页采用的写法 |
 | --- | --- | --- |
-| 1 | 不得写"查询 p95＝X ms 满足 ≤3 秒" | §1.5 与本表第 1 行：只报"本机回环、数据规模 N、stub 条件下"的分布，并明写**不构成** §6.2 第 5 行判定 |
-| 2 | 不得写"50 并发下容量达标" | §1.3、§6.2：写"同机共享 CPU 与 PG、读数偏保守、不是部署容量结论、不代表外部 AI 容量" |
-| 3 | 首屏／页面耗时未测就写未测 | §11 第 1 项：首屏 p95 需真机 + 微信渲染，**未取得** |
-| 4 | 不得把 stub 时延当真实识别时延 | §1.5、§6.1：AI 为 `stub` 隔离替身、零外呼；真实识别/语音 **未取得** |
+| 1 | 不得写"查询 p95＝X ms 满足 ≤3 秒" | §1 第 5 条：只报"本机回环、数据规模 N、stub 条件下"的分布，并明写**不构成** 需求 §6.2 第 5 行判定 |
+| 2 | 不得写"50 并发下容量达标" | §9 的 C3 行（不能主张「生产／部署容量」「外部 AI 容量」）与 §13 边界声明；原始 JSON 的 `claims.not_assertable` 同口径，另见 §3 末段的"读数偏保守" |
+| 3 | 首屏／页面耗时未测就写未测 | §10 第 1 项：首屏 p95 需真机 + 微信渲染，**未取得** |
+| 4 | 不得把 stub 时延当真实识别时延 | §1 第 5 条、§9 的 C2／C7 行：AI 为 `stub` 隔离替身、零外呼；真实识别/语音 **未取得** |
 | 5 | 不得用一次读数当分位数 | §5.3：`/health` 的 `latency_ms` 类单样本**未并入**任何分组 |
 | 6 | 不得用 `app.inject()` 进程内计时当 HTTP 时延 | **全部**读数来自客户端 HTTP 边界 `process.hrtime.bigint()`（§2 脚本口径） |
 | 7 | 不得挑最快若干次凑 n=30 | §5.1、§5.2：n=60 全量保留，`dropped=0` 也照样登记；预热条数显式记录 |
 | 8 | 不得引 1000 并发目标 | 本页通篇不出现 1000 并发目标（需求已限缩：`docs/implementation-requirements.md` 明写"1000并发与运营规模不是本轮默认首版承诺"） |
-| 9 | 不得把 p95 写成"95% 置信区间" | §5 开头与 §10：明写"分位数 ≠ 置信区间，未做 bootstrap 区间估计" |
-| 10 | 不得把本机读数登记为 #23 的提交证据 | 页首与 §10：登记为"**部分证据（条件受限）**"，#23 **保持 OPEN** |
+| 9 | 不得把 p95 写成"95% 置信区间" | 两份原始 JSON 的 `claims.not_assertable` 均明写「分位数不是置信区间…未做 bootstrap 区间估计」，本页不做区间估计 |
+| 10 | 不得把本机读数登记为 #23 的提交证据 | 页首与 §13：登记为"**部分证据（条件受限）**"，#23 **保持 OPEN** |
 
 ## 9 与 #23 条款的逐条对照（能主张什么／不能主张什么）
 
@@ -232,7 +232,7 @@ CPU 利用率由 `os.cpus()` 时间差算出（含压测生成器自身）；Win
 
 - 服务已停：`stop.ps1` 退出码 **0**（`Local API and owned PostgreSQL stopped; data retained.`）；`pg_ctl ... status` → **`pg_ctl: no server running`**（退出码 3，预期）；`Get-NetTCPConnection -State Listen -LocalPort 3310,55536` → **0 行**；`Get-CimInstance Win32_Process` 里命令含 `wt-i23-perf` 的 node 进程 → **0 个**。
 - 仓库零改动：收工时 `git status --porcelain -uall` 只有本页一条新增（`.local/` 已被 `.gitignore` 的 `/.local/` 忽略，不入库）；`git diff --check` 空。
-- **保留**：`.local/local-dev/`（`prepare.mjs` 的产物，gitignored；含本机一次性开发口令与本地 PG 数据目录，**未打印、未入库**）；仓外 `.pg17/tmp/i23-perf/` 下两份**原始 JSON 报告**（明确引用并声明用途的取证文件，§页首给哈希）。
+- **保留**：`.local/local-dev/`（`prepare.mjs` 的产物，gitignored；含本机一次性开发口令与本地 PG 数据目录，**未打印、未入库**）；仓外 `.pg17/tmp/i23-perf/` 下两份**原始 JSON 报告**（明确引用并声明用途的取证文件，页首给哈希）。
 - **删除**：本次探测用的临时脚本与试跑产物（`probe.mjs`／`probe2.mjs`／`dbprobe.mjs`／`cols.mjs`／`extract.mjs`／`dry-*.json`／`*.err`／`*.out.txt`／`commit1.txt`），删除前后均未触碰任何受控文件。
 - 未触动的红线：`package.json`、`tests/integration/**`、`tests/unit/ci-integration-chain-structure.test.mjs`、`docs/verification/gy-i24-release-materials-index-20261017.md`、`docs/evaluation/acceptance-thresholds-summary.md`、`packages/evaluation/schema/run-report.schema.json`、`docs/architecture/contract-status.json` 及其生成区、迁移目录（**0 迁移**，`0023` 仍由在飞 #295 占用）。
 
