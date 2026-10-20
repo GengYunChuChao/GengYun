@@ -32,8 +32,11 @@
  *       ⇒ 等锁 ≥3000ms 后 504 PROVIDER_TIMEOUT(retryable:true)；删掉 FOR UPDATE 则数毫秒返回成功，
  *       耗时下界断言必红。HTTP 的 PUT 到不了这里（service 层「值未变」在端口之前就返回 200）。
  *
- * 说明：本分支缺 `0018`/`0019`（在途 PR），故不跑 `migrations-negative-pg.mjs` 的「无缺号」断言；
- * 合并顺序 `#272`(0018) → 消息片(0019) → 本片(0020) → 账号读面片(0021)。
+ * 说明：[M] 段**不再断言**「迁移目录的最大号是几」——那是**随 main 前进就会变假的时点事实**
+ * （旧写法写死 `0020`，main 的迁移走到 `0023` 后该断言必红，且没有任何门禁会跑到它）。
+ * 现在锁的是恒成立的结构不变量：目录原始扫描出的 `*.sql` 集合必须与 `discoverMigrations()`
+ * 发现的集合**逐项相等**（发现器不漏项／不多项），再核对 `0020` 确实被迁移器发现
+ * （本脚本随后要原样执行它）。缺号连续性由 `tests/integration/migrations-negative-pg.mjs` 覆盖，本脚本不重复。
  */
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -42,6 +45,7 @@ import pg from 'pg';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createPool } from '../../services/api/src/db/pool.ts';
+import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
 import { createMemoryAuthStore, createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFeatureFlags } from '../../services/api/src/admin/ops/flags-pg.ts';
@@ -102,19 +106,30 @@ const assertContractOrder = (items) =>
 // [M] 迁移三连
 // ---------------------------------------------------------------------------
 async function migrationTriple() {
-  const discovered = readdirSync(migrationsDir)
-    .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
-    .sort();
+  // 目录原始扫描（只按 `.sql` 后缀取，**不**复用发现器的正则）——这是与迁移器相互独立的一路。
+  const rawSqlFiles = readdirSync(migrationsDir).filter((name) => name.endsWith('.sql')).sort();
+  const discovered = rawSqlFiles.filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name));
   const versions = discovered.map((name) => name.slice(0, 4));
   assert.equal(new Set(versions).size, versions.length, `迁移版本号重复：${versions.join(',')}`);
   assert.ok(discovered.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  assert.equal(
-    versions[versions.length - 1],
-    '0020',
-    `0020 必须是本分支最大号（在途 0018/0019 未合入，现场：${versions.join(',')}）`,
+  // 结构不变量（在 main 上恒成立、不随 main 前进变假）：发现器给出的文件名集合必须与目录原始
+  // 扫描逐项相等。少一项＝迁移器会**静默少跑一片**（`migrations-negative-pg.mjs` 防的正是这一类），
+  // 多一项＝发现器给出了目录里并不存在的文件名。
+  const foundByRunner = discoverMigrations().map((migration) => migration.filename).sort();
+  assert.deepEqual(
+    foundByRunner,
+    rawSqlFiles,
+    'discoverMigrations() 的发现集合必须与迁移目录原始扫描逐项相等（不漏项／不多项）'
+      + `；发现器：${foundByRunner.join(',')}；目录：${rawSqlFiles.join(',')}`,
   );
-  const missing = ['0018', '0019'].filter((version) => !versions.includes(version));
-  note(`[M] 迁移清单 ${discovered.length} 个（${versions.join(',')}）；在途缺号：${missing.join(',') || '无'}；最大号 0020`);
+  assert.ok(
+    foundByRunner.includes(MIGRATION),
+    `迁移器必须真实发现 ${MIGRATION}（本脚本随后要原样执行它；只存在于目录扫描里不算）`,
+  );
+  note(
+    `[M] 迁移清单 ${discovered.length} 个，与 discoverMigrations() 逐项一致；最大号 ${versions[versions.length - 1]}`
+      + '（现算，不断言——最大号随 main 前进，锁死它只会制造时炸弹）',
+  );
 
   const objects = async () => ({
     table: (await one("SELECT to_regclass('public.feature_flags') AS v")).v,
