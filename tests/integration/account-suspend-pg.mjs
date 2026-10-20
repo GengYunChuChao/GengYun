@@ -10,6 +10,10 @@
 // 给了 argv[3] 时则取 URL 里的口令去建/改同一个角色，两种形态在 scram-sha-256 集群上都必须自洽
 // （旧版把 `CREATE ROLE … PASSWORD '<随机>'` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，
 //  见 docs/verification/gy-r28-account-suspend-scram-20261020.md）。
+// 角色残留同样自洽：`resetRoles()` 先尽力 DROP；若 7 个角色里有的删不掉（别的库把权限授予了它 ⇒
+// 跨库依赖），`runRoleRegion()` 把对应 `CREATE ROLE` 换成属性逐字相同的 `ALTER ROLE`，运行时角色
+// 则 `ALTER … PASSWORD` 重置口令 ⇒ 不会像旧版那样 `42710 already exists`（同一条 CI 里排在其它
+// `-pg` 脚本之后也能跑）。
 //
 // 本脚本只讲一件事：**停用/恢复是一个单事务的四步写**，且**唯一写路径是一个窄口径
 // `SECURITY DEFINER` 函数**（迁移 0017）。运行时角色 `gengyun_api_runtime` 对
@@ -186,13 +190,44 @@ async function resetRoles() {
   }
 }
 
+/** 组角色出厂属性串：与 `services/api/db/roles/*.sql` 里 `CREATE ROLE` 的尾部**逐字相同**。 */
+const GROUP_ROLE_ATTRS = 'NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
+
+/**
+ * 执行一个出厂角色区域。若某条 `CREATE ROLE <name> NOLOGIN …` 的目标角色**已经存在且删不掉**，
+ * 就把那一条 CREATE 就地换成 `ALTER ROLE <name> NOLOGIN …`（属性逐字相同，断言在上）：
+ * 后面的 `REVOKE`/`GRANT` 仍在本库照跑。
+ * 为什么需要：`resetRoles()` 已经尽力 DROP 过，残留只可能来自**别的数据库**把权限授予了它
+ * （`DROP ROLE` 有跨库依赖 ⇒ 必然失败）。同一条 CI 里排在其它 `-pg` 脚本之后时，旧版会在这里
+ * `42710 role "gengyun_auth_privacy" already exists` 直接炸（见证据页 §2.2 的上游复现）。
+ * ⛔ 不是放宽：只在「角色真的已经存在」时换动词，属性一字不减，区域里其它语句原样执行。
+ */
+async function runRoleRegion(file) {
+  let sql = readSql(`roles/${file}.sql`);
+  const creates = [...sql.matchAll(/^CREATE ROLE (\w+) [^\n]*$/gm)];
+  assert.ok(creates.length > 0, `roles/${file}.sql 必须含 CREATE ROLE（口径变化需同步 runRoleRegion）`);
+  for (const [statement, name] of creates) {
+    const eol = statement.endsWith('\r') ? '\r' : '';
+    assert.equal(
+      statement,
+      `CREATE ROLE ${name} ${GROUP_ROLE_ATTRS};${eol}`,
+      `roles/${file}.sql 的 CREATE ROLE 口径变化（属性串不再是出厂串）⇒ 需同步 runRoleRegion`,
+    );
+    const { rowCount } = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [name]);
+    if (rowCount === 0) continue;
+    sql = sql.replace(statement, `ALTER ROLE ${name} ${GROUP_ROLE_ATTRS};${eol}`);
+    note(`[P] 复用已存在的组角色 ${name}（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）`);
+  }
+  await owner.query(sql);
+}
+
 // ---------------------------------------------------------------------------
 // 角色与授权（执行**出厂文件**里的区域，不复制粘贴 SQL）
 // ---------------------------------------------------------------------------
 async function provisionRoles() {
   await resetRoles();
   for (const file of ['auth_privacy', 'catalog_readers', 'consent_granter', 'profile_runtime', 'knowledge_runtime']) {
-    await owner.query(readSql(`roles/${file}.sql`));
+    await runRoleRegion(file);
   }
   // 角色口令：给了 argv[3] 就沿用 URL 里的（本地一次性集群、仅回环），否则本脚本自生成。
   // 关键是**同一个**变量既写进 `CREATE/ALTER ROLE` 又喂给后面的连接 URL ⇒ scram 下不会对不上
