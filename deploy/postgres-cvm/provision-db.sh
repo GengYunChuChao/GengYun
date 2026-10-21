@@ -12,7 +12,8 @@
 #   2. 校验全部迁移已应用（比对 schema_migrations 与 services/api/db/migrations/*.sql）
 #   3. 用既有 services/api/db/roles/*.sql 创建 NOLOGIN 组（已存在则跳过，不覆盖语义）
 #   4. 执行 sql/20-login-roles.sql 创建/收敛应用运行时 LOGIN
-#   5. 执行 sql/90-assert-least-privilege.sql，非 ok 即失败
+#   5. 执行 sql/90-assert-least-privilege.sql：以 psql 退出码为主判据（断言失败时 SQL 自己
+#      RAISE EXCEPTION ⇒ exit 3），末行文本 `ok` 仅作可读兜底；任一不过即失败
 #
 # 本脚本不做的事：不改迁移、不改角色 SQL 语义、不建表、不 REVOKE 既有授权、
 #   不创建 CVM/云硬盘/安全组、不写死或打印任何口令。
@@ -360,13 +361,21 @@ else
     runuser -u postgres -- "${PG_BIN}/psql" "${PSQL_BASE[@]}" -f "$staged_login_sql"
 
   log "执行最小权限断言 sql/90-assert-least-privilege.sql"
+  # R28-S33：90-assert 自己会失败 —— 判决不是 ok 时它在文件末尾 RAISE EXCEPTION，
+  # psql 因 PSQL_BASE 里的 -v ON_ERROR_STOP=1 以 3 退出；脚本头的 set -o pipefail
+  # 让 qfile 把 psql 的退出码透出来（旧版这里的 `|| true` 会把它吞掉）。
+  # 所以**退出码是主判据**；末行文本只留作可读兜底（人工 psql -f、或将来有人改回
+  # 纯文本判决时仍能被拦住）——两者任一不过就算失败。
   # 保留**完整**输出：90-assert 在缺前置时会打印三步补救指引，不能只留最后一行。
-  assert_out="$(qfile "${SQL_DIR}/90-assert-least-privilege.sql" || true)"
+  assert_rc=0
+  assert_out="$(qfile "${SQL_DIR}/90-assert-least-privilege.sql")" || assert_rc=$?
   verdict="$(printf '%s\n' "$assert_out" | sed '/^[[:space:]]*$/d' | tail -n1)"
-  if [[ "$verdict" != 'ok' ]]; then
-    printf '[%s] 最小权限断言的完整输出：\n' "$SCRIPT_NAME" >&2
+  if [[ "$assert_rc" -ne 0 || "$verdict" != 'ok' ]]; then
+    printf '[%s] 最小权限断言的完整输出（psql exit=%s）：\n' "$SCRIPT_NAME" "$assert_rc" >&2
     printf '%s\n' "$assert_out" | sed 's/^/         /' >&2
-    fail "最小权限断言未通过（最后一行：${verdict}）
+    fail "最小权限断言未通过（psql exit=${assert_rc}，最后一行：${verdict}）
+         90-assert 在判决非 ok 时会 RAISE EXCEPTION，psql 因此非零退出；本脚本以退出码为主判据，
+         末行文本仅作兜底（旧版脚本或人工 psql -f 时仍可读）。
          若输出里是「前置未满足」，请按其中的三步指引先补迁移/角色引导后重跑；
          若输出里是 FAIL 明细，本脚本只报告不自动回收权限，请对照
          services/api/db/roles/*.sql 人工排查。"
