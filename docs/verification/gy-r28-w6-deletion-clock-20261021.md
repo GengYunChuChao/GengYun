@@ -9,10 +9,10 @@
 | 工作目录 | `E:\GengYunCommander\wt-w6-deletion-clock` |
 | 分支 / 基点 | `feat/gy-r28-w6-deletion-clock` / `f5cca8b` |
 | 覆盖 issue | #19 的两处缺口：**7 日在线数据到期执行**（原 G9 同族）与**回执 `backupState` 由真行推导**（B4 勘察页的 G5/G6/G11） |
-| 是否改代码 | 是（新增 6 文件、改 6 文件；见 §2.2） |
-| 是否改迁移 | **否**。`0016` 一字未动，未新增任何迁移号（理由见 §8-D1） |
+| 是否改代码 | 是（新增 6 个代码/测试文件 + 本页；改 8 个文件，见 §2.2） |
+| 是否改迁移 | **否**。`0016` 一字未动，未新增任何迁移号（已知边界与下一片建议见 §8-D1） |
 | 是否改授权面 | **否**。`deploy/postgres-cvm/sql/20-login-roles.sql`、`90-assert-least-privilege.sql`、`allow_table_dml`、`expected(tbl,…,del)` 全部未动（见 §4） |
-| 是否改契约 | **否**。`packages/contracts/**`、`openapi.json`、`docs/architecture/contract-status.json`、`.github/workflows/**`、`deploy/**` 均未修改 |
+| 是否改契约 | **否**（契约本体未动）。`packages/contracts/**`、`openapi.json`、`.github/workflows/**`、`deploy/**` 均未修改；**唯一例外**是按 D2 裁决更新了台账 `docs/architecture/contract-status.json` 里 `app.ts` 的锚点行号（`1775-1783` → `1798-1806`，同一 operation / 同一 symbol / 语义未变），并 `--write-doc` 重生成中文对照表的同一处 |
 | 术语①「7 日在线到期」 | 受理时刻 + 7×24h 的**上限**（不是最短保留期）。库里对应列是 `public.deletion_requests.online_due_at`（`0003_privacy_consent.sql:146-163`，注释「受理 + 7×24 小时」；`0016` 只做 `ALTER`） |
 | 术语②「`scheduled_purge_at`」 | **本仓不存在该列**（`docs,services,packages,tools,tests,apps` 全域 *.ts/*.mjs/*.sql/*.md/*.json 零命中）。派单里的「只处理 `scheduled_purge_at <= now()`」在本仓的等价物就是 `deletion_requests.online_due_at <= cutoff`。本页此后一律用真列名 |
 | 术语③「证据」 | 在线侧每个成功行 = 一条 `sha256:` 摘要，口径 `gengyun/online-purge/v1`，可由 (request_id, module, removed, idempotency) 独立复算 |
@@ -63,9 +63,11 @@
 | `tests/unit/backup-state-derivation.test.mjs` | 351 | 19 条：六种行集合 → 三态映射、证据复算、聚合、端口形状 |
 | `tests/integration/online-purge-pg.mjs` | 666 | 真库臂 10 组（临时集群 PG 17.11） |
 
-修改（6）：`package.json`（+2 脚本）、`services/api/src/app.ts`（+2/−2 行：装配只读推导端口）、
+修改（8）：`package.json`（+3/−1：两个脚本）、`services/api/src/app.ts`（+25/−2：装配只读推导端口 + `userDataDeletionInjection.backupStates` 注入面）、
 `services/api/src/privacy/user-data-deletion.ts`（+222）、`services/api/src/routes/account-deletion.ts`（+5）、
-`tests/unit/ci-integration-chain-structure.test.mjs`（+8，新真库脚本登记为未接线）、`tests/unit/sql-column-coverage.test.mjs`（+25/−2，两处新 SQL 宿主登记）。
+`tests/unit/ci-integration-chain-structure.test.mjs`（+8，新真库脚本登记为未接线）、`tests/unit/sql-column-coverage.test.mjs`（+25/−2，两处新 SQL 宿主登记）、
+`docs/architecture/contract-status.json`（±1 行：`services/api/src/app.ts` 的 `accountDeletionWired` 锚点 `1775-1783` → `1798-1806`）、
+`docs/architecture/contract-implementation-status.md`（±1 行：同一处，由 `node tools/verify-contract-status.mjs --write-doc` 重生成）。
 
 ## §3 不变量 → 实现 → 证据
 
@@ -163,15 +165,26 @@ $ npm run test:unit          # 第 2 轮（下面那条修掉之后，独占跑�
 ```
 
 第 1 轮的 9 条失败**全部**是「契约台账行号锚点」家族（`contract-status-anchors` / `contract-status-tool` /
-`gy-i22-*` 经由同一台账工具）：我在 `app.ts` 里插入的 23 行装配把 `accountDeletionWired` 从 `1775` 推到 `1798`，
-超出台账锚点 `services/api/src/app.ts:1775-1783` 的 ±2 容差 —— **是我的问题，不是 flake**（同一批用例单独跑也红）。
+`gy-i22-*` 经由同一台账工具）：`app.ts` 里的装配把 `accountDeletionWired` 从 `1775` 推到 `1798`，
+超出台账锚点 `services/api/src/app.ts:1775-1783` 的 ±2 容差 —— **是本片改动引起的，不是 flake**
+（同一批用例单独跑也红）。
 
-修法：把 `app.ts` 的改动压到 **+2/−2 行** —— import 合并成一行、装配收成 `createUserDataDeletion({…})` 里的一行
-spread、不再扩展 `userDataDeletionInjection` 的类型；`accountDeletionWired` 回到 `1775`。
-⛔ **没有改** `docs/architecture/contract-status.json`（本片红线）：锚点仍然指向正确符号，台账未失实。
-代价与理由见 §8-D2。
+修法（按 D2 裁决，沿用 `#397` 的判例）：**同一 operation、同一 symbol、同一结论，语义未变** ⇒
+更新台账里的 `app.ts` 锚点行号（`1775-1783` → `1798-1806`，实测行号），再用
+`node tools/verify-contract-status.mjs --write-doc` 重生成中文对照表。
+⛔ 没有为凑行号把代码压成一行 spread，也没有砍掉 `userDataDeletionInjection.backupStates` 注入面。
 
-第 2 轮读数：`3416 tests / 3415 pass / 0 fail / exit 0`（多出的 1 条是既有跳过项，非本片新增）。
+```
+$ node tools/verify-contract-status.mjs
+PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项
+PASS: 语义可核 104 条区间 + 0 条片段；不可核 98 条区间 + 157 条片段（不可核不计入通过）
+PASS: 证据锚点 409 条引用自带锚点（区间内 238 条 + 仅整文件 171 条）；无锚点不可核 0 条（纯行号 0 + 无行号源文件 0 + 无用例名 0），只计数不判红
+PASS: 纯行号区间 238 条（有实质内容 238 条；整段仅空白/收尾行 0 条、区间首行为空行 2 条，只计可疑不判红）
+PASS: 中文表格一致
+PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。
+```
+
+第 2 轮全量读数：`3416 tests / 3415 pass / 0 fail / exit 0`（多出的 1 条是既有跳过项，非本片新增）。
 
 ### 5.5 真库臂（本机临时集群 PG 17.11）
 
@@ -199,6 +212,10 @@ PASS 10: 回执（四域齐备）：refreshBackupStates 后四域 backup=complet
 环境：临时集群 `initdb` 自建、随机 556xx 端口、只监听 `127.0.0.1`、26 个既有迁移逐一应用、按
 `-- #region` 从 `20-login-roles.sql` 原文取出**涉及四域的 21 条 GRANT/REVOKE**（未新增授权）。
 `GY_PG_BIN` 未设置 ⇒ 打印 SKIP 并 `exit 77`（未取得，⛔ 不是通过）。
+
+最终复跑（`--write-doc` 与证据页改完之后）：数据目录 `E:\GengYunCommander\.pg17\tmp\gy-w6-online-purge-1a1a7896`、
+端口 `55747`，**10 组全 PASS / `EXITCODE=0`**；跑完 `pg_ctl -m immediate -w stop` + 删目录，`GY_I19_PG_ROOT`
+下无 `gy-w6-online-purge-*` 残留。全量单测在同一 HEAD 复跑：`3416 tests / 3415 pass / 0 fail / 1 skipped / exit 0`。
 
 **真库臂抓到并修掉的三个真缺陷**（都不是测试夹具问题）：
 
@@ -250,7 +267,7 @@ npm run purge:online-data -- --limit 50
 2. **外部调度真的接上了**：命令有了、退出码有了，但仓内**没有** cron/systemd timer/workflow 接线（workflows 是红线）。
    ⇒ 「7 日到期按时间执行」在**代码与命令层面**成立且在真库上实测过，在**运维层面**仍待接线。
 3. **在线证据落库**：证据只进报告，不落库。要落库需要一张可写的证据表（或给 `deletion_handlers` 开列级 DML），
-   两者都要新迁移 + 新授权面 ⇒ 本片红线，未做（§8-D1）。
+   两者都要新迁移 + 新授权面 ⇒ 本片不做（见 §8-D1「已知边界 + 下一片建议」）。
 4. **`deletion_requests` 的运行时读权限**：运行时角色读不了该表（42501，既有 least-privilege 反向控制要求如此）。
    ⇒ 命令必须用属主角色。若要改成运行时角色可跑，需新增 SECURITY DEFINER 枚举函数 ⇒ 新迁移（§8-D1）。
 5. **HTTP 面的端到端读数**：真库臂直接驱动服务对象（`createUserDataDeletion` + 真实 PG store + 真实推导端口），
@@ -262,28 +279,61 @@ npm run purge:online-data -- --limit 50
 9. **大表性能**：候选 SQL 走 `deletion_requests.online_due_at`（无该列的单列索引；`0003` 只有主键与
    `receipt_hash` 唯一索引，`0016` 加的是 `(user_id, requested_at DESC, id DESC)`）。到期请求量大时是否需要索引，未测。
 
-## §8 待裁决
+## §8 已知边界与下一片建议（D1）+ 已裁决事项（D2/D3/D4）
 
-- **D1（本片主动上报，未硬改）**：要让「到期枚举」和「在线证据」都落在**运行时角色**能碰的面上，
-  必须新增迁移：①`public.list_due_online_deletions()`（`SECURITY DEFINER`，给运行时角色 `EXECUTE`）；②一张在线证据表
-  （或 `deletion_handlers` 的列级 DML 授权）。**按红线本片不新增迁移**，所以命令暂用属主角色、证据暂进报告。
-  若指挥决定要做，需要：新迁移号（`0027` 是当前实测的下一个空闲号）+ `20-login-roles.sql` 的 GRANT +
-  `allow_table_dml` + `expected(tbl,…,del)` 三处同改。请裁决。
-- **D2**：`app.ts` 的改动被压到 +2/−2 行，是为了**不碰** `docs/architecture/contract-status.json` 的行号锚点
-  （`services/api/src/app.ts:1775-1783` 的 `accountDeletionWired`）。代价是装配写成一行 spread、且
-  `userDataDeletionInjection` 不再支持注入 `backupStates`（测试改用 `createUserDataDeletion` 直接注入）。
-  若允许改台账锚点，可还原成可读的多行写法——请裁决谁有权限改那个 JSON。
-- **D3**：`npm run purge:online-data` 该不该进 `test:integration:http` 链？本片按 E2 的先例登记为**未接线**
-  （`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS`），理由是回环链里没有真 PG。
-  真库 job 的接线属 E5 的在途分支（PR #400 那一族），本片未碰。
-- **D4**：`UNAUDITED_SQL_HOSTS` 新增两条（`online-purge-driver.ts`、`backup-state-derivation.ts`），
-  与 E2 的 `backup-purge-driver.ts` 同族：列面由真库臂实测，**静态纳管待 R28-S66 重定 16 文件读数**。
+### D1（**已裁决：本片不新增迁移**）——已知边界 + 下一片建议
+
+本片交付的边界：运维命令用**属主/运维角色**（`DATABASE_URL`，与 `npm run db:migrate` 同源）枚举
+`public.deletion_requests`，在线证据**只进报告**、不落库。这不是偷懒，是两条既有约束的结果：
+
+- 运行时角色 `gengyun_api_runtime` 对 `deletion_requests` **零表级零列级权限**
+  （`deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1068-1070` 分类 `forbidden`，
+  `:2555-2560` 第 48 项反向控制要求如此）⇒ 到期枚举拿不到授权面；
+- 在线证据没有可写的落地表：`deletion_handlers` 对运行时角色 `forbidden`，`admin_audit_events`
+  连 `SELECT` 都没有，当前也没有任何「在线证据」列。
+
+**下一片建议（届时会是一整个新片的体量，本片不动手）**：
+
+1. 新迁移号：`0027`（2026-10-22 实测，`services/api/db/migrations/` 现有最大为
+   `0026_speech_persistence.sql`，`0027` 空闲）。
+2. 内容：①`public.list_due_online_deletions(p_cutoff timestamptz, p_limit integer)`，`SECURITY DEFINER`
+   + `SET search_path = pg_catalog`，只回 `id/user_id/online_due_at`，给运行时角色 `EXECUTE`；
+   ②在线证据落地（新表或 `deletion_handlers` 的列级 DML）。
+3. **授权面必须三处同改**，缺一处 `90-assert-least-privilege` 就红：
+   - `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `GRANT …`（新函数 `EXECUTE` / 新表或列级 DML）；
+   - `allow_table_dml`（该脚本里的允许清单）；
+   - `expected(tbl, …, del)`（同一脚本的反向控制清单）。
+4. 风险提示：这三处同改会同时动到「运行时角色能碰什么」的口径，风险高于普通功能片，
+   建议单独一片 + 真库臂复核 `has_table_privilege` / `has_column_privilege` 形状。
+
+### D2（**已裁决：允许改台账锚点，可读性优先**）
+
+按 `#397`（C1b）的判例：`app.ts` 因功能需要变长 ⇒ 台账锚点跟着改行号 + `--write-doc` 重生成对照表，
+前提是「同一 operation、同一 symbol、同一结论，语义未变」。本片据此：
+
+- 装配保持**可读多行**（`backupStatesWiring` 常量 + 上方 6 行注释，与 `backupPurgeWiring` 同形）；
+- `userDataDeletionInjection` **恢复支持注入 `backupStates`**（测试与故障注入可直接覆盖）；
+- 锚点 `services/api/src/app.ts:1775-1783` → **`1798-1806`**（实测行号）；
+- `node tools/verify-contract-status.mjs` 全 PASS（含「中文表格一致」）。
+
+### D3（**已接受**）——真库臂登记为未接线
+
+`tests/integration/online-purge-pg.mjs` 登记进 `tests/unit/ci-integration-chain-structure.test.mjs` 的
+`UNWIRED_DECLARATIONS`，理由与 E2 一致：回环链里没有真 PG、脚本自建 initdb 临时集群、要跑四域 GRANT、
+缺 `GY_PG_BIN` 时 `exit 77`。⛔ 本片**不**把它写成「已接线」；真库 job 接线属 E5 的在途分支（PR #400 那一族）。
+
+### D4（**已接受**）——SQL 宿主登记，静态纳管待 R28-S66
+
+`tests/unit/sql-column-coverage.test.mjs` 的 `UNAUDITED_SQL_HOSTS` 新增两条
+（`services/api/src/privacy/online-purge-driver.ts`、`services/api/src/privacy/backup-state-derivation.ts`），
+与 E2 的 `backup-purge-driver.ts` 同族：列面由真库臂**实测**（不是静态推断）。
+**静态纳管待 R28-S66 重定「16 文件」整数读数（16 → N）**，本片没有重定，别当成已纳管。
 
 ## §9 文档/行号漂移登记
 
 | 位置 | 现象 | 处理 |
 | --- | --- | --- |
-| `services/api/src/app.ts:1775` | 本片一度把 `accountDeletionWired` 推到 `1798`，越过台账锚点 ±2 容差 | 已把改动压回 +2 行，符号回到 `1775`；**未改** `contract-status.json` |
-| `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §状态更新 | 该页把 `real` 模式注销面的门写在 `app.ts:1775-1783` | 与本片锚点同一处，未漂移 |
-| `services/api/src/privacy/user-data-deletion.ts:24` | 头注释里「7/30 日到期执行」仍登记为缺口 | 本片补的是**7 日在线的到期执行**与**回执备份态推导**；30 日备份执行已由 E2 提供。头注释留待后续片统一订正（本片不顺手改注释以免动到锚点） |
+| `services/api/src/app.ts` 行号 | 本片装配把 `accountDeletionWired` 从 `1775` 推到 `1798`（+23 行） | **改台账锚点**（按 `#397` 判例）：`contract-status.json` 的 `1775-1783` → `1798-1806`，并用 `--write-doc` 重生成 `contract-implementation-status.md` 的同一处；两文件各 ±1 行，语义未变 |
+| `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §状态更新 | 该页把 `real` 模式注销面的门写在 `app.ts:1775-1783`（= 旧行号） | 历史页不回改（它写的是当时的读数）；**当前**行号以 §5.4 与台账为准：`1798-1806` |
+| `services/api/src/privacy/user-data-deletion.ts:24` | 头注释里「7/30 日到期执行」仍登记为缺口 | 本片补的是**7 日在线的到期执行**与**回执备份态推导**；30 日备份执行已由 E2 提供。头注释留待后续片统一订正（本片不动它，避免把行号锚点再推一遍） |
 | `docs/verification/gy-i19-backup-purge-driver-20261021.md` §7/D5 | 明写「回执 `backupState:'completed'` 不属该片，别把副本已清读成回执已 completed」 | 本片正是那一项；口径沿用：只有**四域齐 + 证据可复算**才 `completed` |
