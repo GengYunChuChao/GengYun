@@ -7,6 +7,7 @@
  * - 只读取进程环境，不写入任何文件，不回显敏感值。
  */
 import { EXECUTION_MODES, type ExecutionMode } from './contract.ts';
+import { readObjectStorageConfig, type ObjectStorageConfig } from './media/object-store.ts';
 
 export interface AppConfig {
   /** 执行模式，契约 ExecutionMode。响应 meta.execution_mode 必填。 */
@@ -39,6 +40,15 @@ export interface AppConfig {
    * `createAppMediaService({ accessGrantOrigin })`（媒体域文件**不读** ambient env，见其选项注释）。
    */
   mediaAccessGrantOrigin: string | null;
+  /**
+   * 真实对象存储配置（`OBJECT_STORAGE_*` 四键齐备且合法时非 null；解析校验在
+   * `media/object-store.ts` 的 `readObjectStorageConfig`，此处不重写判据）。
+   *
+   * ⚠️ **拿到本字段 ≠ 真实媒体端口已接线**：媒体域在 `real` 下还要求一个显式批准能力
+   * （`media/service.ts` 的 `approveRealMediaWiring`，唯一铸造点在**生产入口**、且只在显式
+   * 运维动作下调用）。本字段只表示「配置齐备且合法」，不构成任何接线许可。
+   */
+  objectStorage: ObjectStorageConfig | null;
   /**
    * 文字问答（`/conversations` 的回答生成侧）**唯一**的真实模型配置（GY-R28 W7 / #12）。
    *
@@ -436,6 +446,26 @@ export function loadConfig(env: Env = process.env): AppConfig {
     }
   }
 
+  // 真实对象存储配置：四键齐备时折算成结构化字段（缺键已由上面的 REQUIRED_WHEN_REAL 一次性列出）。
+  // 解析与校验**复用媒体域的 `readObjectStorageConfig`**，不在此处重写一份判据（避免两处漂移）；
+  // 四键都非空时才可能产生 INVALID_VALUE（例如明文 http 的 endpoint），字段名与上面同集合。
+  // 注意：解析成功**不构成接线许可**——接线许可只来自生产入口铸造的显式批准能力。
+  let objectStorage: ObjectStorageConfig | null = null;
+  if (executionMode === 'real') {
+    const storageKeys = REQUIRED_WHEN_REAL.filter((field) => field.startsWith('OBJECT_STORAGE_'));
+    const storageComplete = storageKeys.every((field) => trimmed(env, field) !== undefined);
+    if (storageComplete) {
+      const parsed = readObjectStorageConfig(env);
+      if (parsed.config === null) {
+        for (const issue of parsed.issues) {
+          issues.push({ field: issue.field, code: issue.code, reason: issue.reason });
+        }
+      } else {
+        objectStorage = parsed.config;
+      }
+    }
+  }
+
   if (issues.length > 0) {
     throw new ConfigError(issues);
   }
@@ -453,6 +483,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     sessionSigningKey,
     adminBootstrap,
     mediaAccessGrantOrigin,
+    objectStorage,
     aiProviders: { chat: chatProvider },
   };
 }

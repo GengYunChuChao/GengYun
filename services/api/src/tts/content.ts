@@ -31,8 +31,12 @@ export class CheckedContentUnavailableError extends Error {
 }
 
 export interface CheckedContentPort {
-  /** 端口类型：substitute=明确标注的替身核对源、unwired=未接线（fail-closed）。 */
-  readonly kind: 'substitute' | 'unwired';
+  /**
+   * 端口类型：substitute=明确标注的替身核对源、unwired=未接线（fail-closed）、
+   * wired=接真库的只读核对源（R28-W3；实现见 `services/api/src/ai/checked-content-live-adapter.ts`）。
+   * `wired` 只在 `real` + 已配置连接池时出现，其余情形与接线前逐字相同。
+   */
+  readonly kind: 'substitute' | 'unwired' | 'wired';
   /** 供证据文档／诊断引用的如实标注（不含任何资料正文或个人信息）。 */
   readonly note: string;
   /**

@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1798-1806"
+          "lines": "1802-1810"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -3307,7 +3307,7 @@
         {
           "path": "services/api/src/config.ts",
           "symbol": "loadConfig",
-          "lines": "325-457"
+          "lines": "335-489"
         },
         {
           "path": "services/api/src/auth/wechat.ts",

@@ -179,6 +179,13 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/messages-purge-pg.mjs',
+    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
+      + '再经真实 `purgeOwnerData` 取「本主体 messages 行数 → 0／他人行原样」的注销行数读数；未设 `GY_PG_BIN` 时'
+      + '**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），故不进无 PG 的回环链。'
+      + 'R28-W11 只交付脚本与证据，**尚未接进任何 workflow**（`.github/workflows/**` 不在本片范围内，CI 接线另开一单）。',
+  },
+  {
     path: 'tests/integration/migrations-negative-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
       + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因并以 77 退出（未取得），'
