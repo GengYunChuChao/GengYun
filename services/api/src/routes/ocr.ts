@@ -192,7 +192,7 @@ function actorId(request: FastifyRequest): string {
  */
 export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps: OcrRouteDeps, persistencePool: TransactionalPool | null = null): OcrService {
   const guards = deps.guards;
-  const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders.ocr });
+  const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.ocr ?? null });
   const store = deps.store ?? (persistencePool === null ? createMemoryOcrStore() : createPostgresOcrStore({ pool: persistencePool }));
   const media = deps.media ?? createOcrMediaPort(config.executionMode);
   const reference = deps.reference ?? createOcrReferencePort(config.executionMode);

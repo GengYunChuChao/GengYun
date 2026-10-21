@@ -983,7 +983,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 账本/在途守卫未装配（未配置数据库或连接池不可用）⇒ 返回 `undefined` ⇒ 路由与包装逐字不变。
   const synthesisContentResolved =
     synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT);
-  const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders.tts });
+  const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.tts ?? null });
   const synthesisEgress: SynthesisEgress | undefined =
     egressLedger === null || privacyInFlight === null
       ? undefined

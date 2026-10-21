@@ -831,9 +831,9 @@ try {
     //   ②新增「`createTtsProvider(` 全文件恰好出现 1 次」的计数断言（旧断言只有存在性）。
     //   两条合起来比旧断言更严：实参逐字段钉死 + 调用点唯一，且仍不允许装配点直接构造端口。
     assert.equal(
-      /createTtsProvider\(\{ executionMode: config\.executionMode, aiProviders: config\.aiProviders\.tts \}\)/.test(code),
+      /createTtsProvider\(\{ executionMode: config\.executionMode, aiProviders: config\.aiProviders\?\.tts \?\? null \}\)/.test(code),
       true,
-      'app.ts 必须用 createTtsProvider({ executionMode, aiProviders: config.aiProviders.tts }) 装配（配置快照，不是端口）',
+      'app.ts 必须用 createTtsProvider({ executionMode, aiProviders: config.aiProviders?.tts ?? null }) 装配（配置快照，不是端口）',
     );
     assert.equal((code.match(/createTtsProvider\(/g) ?? []).length, 1, 'createTtsProvider 装配点必须恰好一处');
     return 'app.ts 无 createLiveTtsProvider / 无 live-ports；注册恰好一处且装 gatedGuards';

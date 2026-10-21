@@ -54,8 +54,11 @@ export interface AppConfig {
    *
    * **密钥只在内存**：`credentials` 只从 `process.env`（或其显式传入的等价 env 对象）读取，
    * 不落文件、不进日志、不进响应；其 `toJSON()` 被显式改写为脱敏串，避免整份 config 被序列化时泄露。
+   * **可选字段**（`?`）而不是必填：手工构造的 `AppConfig` 字面量（健康检查等既有单测、
+   * 嵌入式调用方）本来就不带它 ⇒ 缺省视为「未配置」，三域一律走接线前的 fail-closed，
+   * 与接线前**逐字节相同**。`loadConfig()` 永远会给出该字段（三域各自可 `null`）。
    */
-  aiProviders: AiProvidersConfig;
+  aiProviders?: AiProvidersConfig;
 }
 
 export interface ConfigIssue {
