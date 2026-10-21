@@ -1097,11 +1097,16 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
 -- 断言抓住（这是有意的重复，不要把它合并成“从授权结果反推”）。
   expected(tbl, sel, ins, upd, del) AS (VALUES
+    -- R28-C1（#16/#17 清理链 P0-1，2026-10-21）：注销清理在 messages 上是**整行硬删**
+    -- （services/api/src/messages/store-pg.ts 的 purgeOwnerRows：
+    -- `DELETE FROM public.messages WHERE owner_id = $1::uuid`）⇒ del 必须是 true。
+    -- 这份清单与 20-login-roles.sql 段 H 是同一事实的两次写法，改动必须成对做：
+    -- 只加 GRANT 不改这里，断言 7（runtime_grants_messages）会立刻判红。
     ('messages',
      ARRAY['id','revision','owner_id','type','target_ref','read_at','created_at','event_key'],
      ARRAY['id','owner_id','type','target_ref','read_at','created_at','revision','event_key'],
      ARRAY['read_at','revision'],
-     false),
+     true),
     ('community_posts',
      ARRAY['id','author_id','revision','title','body','crop_id','region_code','media_ids',
            'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
@@ -1288,13 +1293,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'conversation_turns',     'DELETE'),
     ('public', 'favorites_idempotency',  'DELETE'),
     ('public', 'history_idempotency',    'DELETE'),
+    -- R28-C1（#16/#17 清理链 P0-1，2026-10-21）：消息域注销清理
+    -- （services/api/src/messages/store-pg.ts 的 purgeOwnerRows）有整行删除
+    -- `DELETE FROM public.messages WHERE owner_id = $1::uuid`；PG 没有列级 DELETE，
+    -- 只能表级授予（与收藏/历史/对话域同一条理由）。
+    ('public', 'messages',               'DELETE'),
     -- R28-S28（迁移 0025）：PG 没有列级 DELETE，而 store 有两条整行删除
     -- （services/api/src/recognitions/store-pg.ts:820 release、:830 purge），只能表级授予。
-    -- 这是本片唯一新增的表级写授权（白名单 11 → 12 个三元组）。
+    -- 本片新增后，表级写授权白名单为 13 个三元组。
     ('public', 'recognition_idempotency', 'DELETE'),
     -- R28-S38（迁移 0026）：PG 没有列级 DELETE，而语音域幂等台账有两条整行删除
     -- （services/api/src/speech/store-pg.ts:654 release、:660-662 purge），只能表级授予。
-    -- 这是本片唯一新增的表级写授权（白名单 12 → 13 个三元组）；speech_jobs / transcriptions
+    -- 本片新增后，表级写授权白名单为 14 个三元组；speech_jobs / transcriptions
     -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
     ('public', 'speech_idempotency',    'DELETE')
   ),

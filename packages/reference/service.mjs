@@ -296,6 +296,8 @@ function queryStateOf(result) {
     reasons: result.reasons,
     unmatched_reasons: result.unmatched_reasons,
     simulated_excluded: result.simulated_excluded,
+    // 命中侧可解释字段：本次实际应用且每条命中项都满足的筛选维度（与 unmatched_reasons 对称）。
+    matched_dimensions: result.matched_dimensions ?? [],
   };
 }
 

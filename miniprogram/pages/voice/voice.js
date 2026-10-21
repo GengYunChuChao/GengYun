@@ -11,6 +11,9 @@
 //      （见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）⇒ 取不到可播放来源 ⇒ **自动播放失败**：
 //      页面如实写「本环境无可播放音频（契约无客户端音频出口）」+ 文案 + 主动播放按钮，
 //      **不显示「播放中／已播放」**、**不伪造音频**、**不记「已听取」**。
+//      此外，"要不要**自动出声**"还要过 `utils/speech-autoplay.js` 的策略：用户可关（关闭后文字与
+//      「播放」按钮照常可用）、同一页同一版本只自动播报一次（state-contract.md:64）、
+//      读不到偏好或缺版本化引用时**不自动出声**（fail-closed）。
 //
 // 离页口径（返回 / 切页 / 隐藏三条路径共用同一个出口）：
 //   取消本机在途请求与轮询 + `controller.release()`（退订全部监听、销毁音频句柄）；
@@ -25,6 +28,7 @@ const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const speechText = require('../../utils/speech-text')
+const speechAutoplay = require('../../utils/speech-autoplay')
 const audioPlayback = require('../../utils/audio-playback')
 const innerAudioPort = require('../../utils/inner-audio-port')
 const substitutePlayer = require('../../utils/substitute-player')
@@ -88,11 +92,21 @@ Page({
     this._sendAttempt = null
     this._cancelAttempt = null
     this._conversation = null
+    // ⑤ 自动播报策略（页面作用域：偏好持久化在 wx 存储，键见 utils/speech-autoplay.js）。
+    this._autoSpeak = null
+    /** 本次合成实际发出的目标引用（`job` 上取不到 `target_ref` 时用作版本键来源）。 */
+    this._requestRef = null
   },
 
   onShow: function () {
     fontScale.applyFontScale(this)
-    this.setData({ fontScale: fontScale.currentFontScale() })
+    // 自动播报偏好：先取回本次页面的实际取值（读不到偏好 ⇒ 策略内部已按"不自动播报"处理）。
+    const autoSpeak = this.autoSpeakPolicy()
+    this.setData({
+      fontScale: fontScale.currentFontScale(),
+      autoSpeakEnabled: autoSpeak.isEnabled(),
+      autoSpeakNote: autoSpeak.isPreferenceUnreadable() ? speechAutoplay.reasonTextOf('auto-speak-preference-unreadable') : ''
+    })
     const that = this
     pageGate.start(this, function (ok) {
       const loggedIn = ok === true && auth.isLoggedIn()
@@ -177,6 +191,15 @@ Page({
      * 由本地替身工程**显式**开启（非真实音频、不产生任何声音、不计「已听取」）。
      */
     substituteWalkthrough: false,
+    /**
+     * **自动播报开关**（用户可关；开关的判定与持久化都在 `utils/speech-autoplay.js`）。
+     *
+     * 这里只是渲染用的快照：`onShow` 从策略取回真实值覆盖。关闭后**不自动出声**，
+     * 但文字内容与「播放」按钮**照常可用**（关的是"自动"，不是播报能力）。
+     */
+    autoSpeakEnabled: true,
+    /** 本次"要不要自动出声"的如实说明（含被关闭/已播报过/读不到偏好等原因）。 */
+    autoSpeakNote: '',
     failureProbe: '',
     probing: false,
     // 录音控件（独立）：默认**不录音**，各态逐态可分辨（idle/recording/stopped/uploading/failed）
@@ -443,6 +466,15 @@ Page({
       return
     }
     const generation = this.beginOperation()
+    // 再次提交前：上一份播报若还在响（播放中/暂停），先**显式停止**。
+    // 否则页面会把球重置成 idle 而声音仍在放 —— 那是"看着没在播、其实在播"的假状态，
+    // 播放球的状态必须与真实播报一致（停止是用户可理解的显式动作，不是静默掐断）。
+    if (this._controller !== null && this._controller.isReleased() !== true) {
+      const snapshot = this._controller.snapshot()
+      if (snapshot.state === 'playing' || snapshot.state === 'paused') this._controller.stop()
+    }
+    // 记下本次发出的版本化引用（自动播报去重的版本键来源；只在真的发出请求时记）。
+    this._requestRef = ref
     this.setData({ busy: true, stage: 'synthesis', synthesisNote: '', job: null, failure: null, listened: false, substituteCompleted: false, playbackState: 'idle' })
     try {
       const created = await voiceApi.createSynthesis(ref)
@@ -527,12 +559,61 @@ Page({
     })
     // 无论是否替身走查，都先如实写下**来源**口径（有真实源时才清空）。
     this.applyModeNotice(source)
+    // 「要不要**自动出声**」由策略判定（可关闭 / 同一页同一版本只一次 / 读不到偏好或缺版本引用时不自动）。
+    // 判定结果一律写进 `autoSpeakNote`（可见即可审），被拒绝时**不发声、不记已听取**，
+    // 但文字与「播放」按钮照常可用。
+    const decision = this.autoSpeakPolicy().decide({
+      targetRef: this.playbackTargetRef(job),
+      planSize: segments.length
+    })
+    this.setData({ autoSpeakNote: decision.reason })
     if (segments.length === 0) {
-      // 自动播放失败：**文案 + 主动播放按钮**，并且不记「已听取」。
+      // 没有可播内容 ⇒ 这不是"自动播报"，而是如实走失败出口（文案 + 主动播放按钮，不记「已听取」）。
       this.ensureController().play([], { auto: true })
       return
     }
+    if (decision.auto !== true) return
+    this.autoSpeakPolicy().markAutoPlayed(decision.targetKey)
     this.ensureController().play(segments, { auto: true })
+  },
+
+  /** 自动播报策略（惰性建一次；页面作用域，离页随页面实例销毁）。 */
+  autoSpeakPolicy: function () {
+    if (this._autoSpeak !== null && this._autoSpeak !== undefined) return this._autoSpeak
+    this._autoSpeak = speechAutoplay.createAutoSpeakPolicy({
+      store: speechAutoplay.createStorageStore()
+    })
+    return this._autoSpeak
+  },
+
+  /**
+   * 版本键来源：优先**任务回传的** `target_ref`（服务端权威），退化到本次请求发出的引用。
+   *
+   * 两者都没有 ⇒ 返回 null ⇒ 策略按"无法判定同一版本"处理（不自动出声），不猜、不硬编码。
+   */
+  playbackTargetRef: function (job) {
+    if (job && typeof job === 'object' && job.target_ref && typeof job.target_ref === 'object') return job.target_ref
+    if (this._requestRef && typeof this._requestRef === 'object') return this._requestRef
+    return null
+  },
+
+  /**
+   * 切换自动播报开关。
+   *
+   * 只影响**后续**是否自动出声：正在播放的这一次不会被静默掐断（停止/暂停是用户显式操作）。
+   * 偏好保存失败时如实说明"本次只在当前页面生效"，不谎称已记住。
+   */
+  onToggleAutoSpeak: function () {
+    if (this.data.guest) return
+    const result = this.autoSpeakPolicy().setEnabled(this.data.autoSpeakEnabled !== true)
+    const note = result.persisted === true
+      ? (result.enabled === true
+        ? '自动播报已开启（已记住本机偏好）：之后合成落定会自动播报，同一页同一版本只自动播报一次。'
+        : '自动播报已关闭（已记住本机偏好）：之后不会自动出声；文字照常显示，可用「播放」按钮主动播放。')
+      : (result.enabled === true
+        ? '自动播报已开启，但本机没能保存该偏好（存储不可用）：只在当前页面生效。'
+        : '自动播报已关闭，但本机没能保存该偏好（存储不可用）：只在当前页面生效。')
+    this.setData({ autoSpeakEnabled: result.enabled, autoSpeakNote: note })
   },
 
   /**

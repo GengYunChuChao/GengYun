@@ -58,10 +58,13 @@
         </view>
       </view>
 
-      <view class="notice notice--warn" wx:if="{{errorText}}">
-        <text class="notice__icon">⚠️</text>
-        <text class="notice__text">{{errorText}}</text>
-      </view>
+      <state-view
+        wx:if="{{errorText}}"
+        status="error"
+        errorCode="{{errorCode}}"
+        title="记录详情读取失败"
+        desc="{{errorText}}"
+      ></state-view>
 
       <!-- 识草：模型候选 与 人工选择 **两个独立区块** -->
       <view class="section" wx:if="{{!errorText && manualSelection}}">
