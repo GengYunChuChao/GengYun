@@ -167,9 +167,96 @@ $ node --experimental-strip-types tests/integration/media-persistence-pg.mjs \
 - `docs/verification/gy-r28-w2-media-ports-20261021.md:35`、`:66`、`:98` 仍引用 `service.ts:465`/`:595`/
   `:1306`/`:1329`，其中「既有行号零位移」一句因本片改服务层已不成立。**未修改**该历史证据文档，
   留给文档片处理（本片只机械刷新台账 `docs/architecture/contract-status.json` 的 `lines`）。
-- 本片未跑全量 `npm run test:unit`（并发跑全量会互相制造 OOM），全量交给 CI。
+- 本片在合流后用 `node --test --test-concurrency=1`（串行，不是 `npm run test:unit` 的默认并发）跑过全量，
+  读数见 §8.4。
+- **未取得**「生产最小权限角色下媒体持久化可用」：`deploy/postgres-cvm/sql/20-login-roles.sql` 对
+  `public.media` / `media_derivatives` / `content_media_refs` / `community_media_grants`
+  目前**没有任何一条 GRANT**（`grep "ON public.media"` 零命中）。本片 §5 的全部真库读数都以
+  **库 owner（`gengyun`）** 身份取得；换成最小权限运行角色会 42501。处方：部署片补列级授权，
+  并同步 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1366` 那条 `('media','auth_privacy',…)`
+  清单行的语义（见 §9）。
+- **未取得** ASR/OCR/识别/TTS 四条链的媒体端口证据：本片只接通媒体域自己的仓储（§9），
+  这四个按域端口仍是 `createUnwiredMediaPort()`，`real` 下 `OBJECT_UNAVAILABLE`（ASR 表现为 409）。
+- `MEDIA_OBJECT_REF_KEY` 需在部署模板补真实值（本片只补了
+  `deploy/cloudrun/env.placeholder.json` 的空占位 `""`；`deploy/postgres-cvm/**` 属别人正在改的面，只读未改）。
 
-## 8. 复现命令
+## 8. CI 门禁登记、合流与根因（第二次推送补齐）
+
+首轮 CI 里 17 个 job 全绿、只有 `unit-tests` 红；红的原因全部是**既有门禁账本没登记新文件**，不是实现缺陷。
+按门禁登记的格式补齐（一条判据都没改，也没删任何声明）：
+
+| 门禁文件 | 登记内容 | 单跑读数 |
+| --- | --- | --- |
+| `tests/unit/ci-integration-chain-structure.test.mjs` | `UNWIRED_DECLARATIONS` 加 `media-persistence-pg.mjs`（理由：硬钉库名 `gengyun_media_test`、自举 26 迁移，不能进无 PG 的回环链） | tests 7 / pass 7 |
+| `tests/unit/ci-real-pg-wiring.test.mjs` | `MANAGED_SCRIPTS` + `FROZEN_MANAGED_SCRIPTS` + `REQUIRED_STEP_ORDER` 三处同插（第 12 条），后续条目重编号 | tests 18 / pass 18 |
+| `tests/unit/sql-column-coverage.test.mjs` | `UNAUDITED_SQL_HOSTS` 加 `services/api/src/media/store-pg.ts`（走登记桶，理由见下） | tests 16 / pass 16 |
+| `tests/unit/release-materials-index*.test.mjs` | 索引页登记本文件与集成脚本 | 见 §8.3 |
+| `deploy/cloudrun/env.placeholder.json` | 补 `"MEDIA_OBJECT_REF_KEY": ""`（发布门禁：「PASS 模板 18 键 ⊇ 配置面 18 键」） | — |
+
+**SQL 宿主为什么走「登记」而不是「真审计」**：把 `media/store-pg.ts` 临时加进 `ADDITIONAL_SQL_HOST_FILES`
+（= 走真审计）实测立刻红 5 项，其中两条原文是
+`AssertionError: 审计文件数必须是 16（8 store + 8 新纳管）` 与
+`AssertionError: 除 email 外不许有别的红字：services/api/src/media/store-pg.ts:196 → public.media.id 缺 INSERT（INSERT 列清单）；授权面现状：该表该权限未授任何列`
+（`owner_id`/`purpose`/`mime`/`bytes`/`sha256`/`state`/`failure_code`/`object_ref_cipher`/`revision`/`expires_at`
+同形）。根因：`deploy/postgres-cvm/sql/20-login-roles.sql` 里**对媒体四表本来就没有任何一条 GRANT**
+（`grep "ON public.media"` 零命中），所以列审计必然全红；真审计的前置条件是部署片先补列级授权。
+本片按 W3 先例登记（`services/api/src/ai/checked-content-live-adapter.ts` 同样在 `UNAUDITED_SQL_HOSTS`），
+**没有**使用豁免桶（`COVERAGE_EXEMPT`）——扩账本还是改豁免，留给指挥定。
+
+**`/health` 三条红的根因（不是「本地过了」）**：既有测试用字面量配置 `{ ...baseConfig(), executionMode: 'real' }`
+加注入 `pool`，新字段 `mediaObjectRefKey` 在字面量里是 `undefined`，而装配层判据写的是 `!== null`
+⇒ 走了 `createObjectRefCipher(undefined)` ⇒ **构造期**抛
+`Error [MediaObjectRefKeyError]: MEDIA_OBJECT_REF_KEY 缺失：媒体对象引用加密键未配置`
+（栈顶 `services/api/src/media/object-ref-cipher.ts:86` ← `:109` ← `app.ts:1293`），`buildApp` 直接失败。
+修法：装配层先归一化 `config.mediaObjectRefKey`（非空字符串才算配置，否则按「未配置」），
+`tests/unit/api-health.test.mjs` ⇒ tests 6 / pass 6。
+
+**合流**：`git merge origin/main`（main 当时 `30a4ff7`）只撞 `ci-real-pg-wiring.test.mjs`
+（main 新增 `messages-purge-pg.mjs`、`SELF_CLUSTERED_ENV` 改名 `SELF_CLUSTERED_PG_BIN_ENV`）。
+解决方式：保留 main 的措辞与 `GY_W11_PG_ROOT` 说明，media 条目排第 12、其后重编号并修交叉引用。
+
+### 8.4 合流后本地串行全量读数（`node --test --test-concurrency=1`，5 个 test 目录）
+
+`tests 3447 / pass 3438 / fail 8`，**8 条全部属于 `release-materials-index*` 一组**，且同一个根因：
+`tools/verify-release-materials.mjs` 的 `FAIL CVM 脚本 bash -n 语法通过（blob 喂 stdin，不传路径）` ——
+本机 `bash` 是 `C:\Users\MR\AppData\Local\Microsoft\WindowsApps\bash.exe`（App Execution Alias，
+文件体积 0 字节），执行后打印 `wsl: 检测到 localhost 代理配置，但未镜像到 WSL。NAT 模式下的 WSL …` 并返回 1，
+即**本机没有可用的 bash**。该组其余 20 条判据（索引覆盖 31/31、相对链接 40/40、环境变量模板 18 键、
+Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate 命令闭集…）全部 PASS；
+其余 7 个 test 目录（含 `tests/reference/*`、`tests/media/*`、`tests/privacy/*`）全绿。
+⇒ 这是**本机环境**限制，CI（ubuntu）有真 bash；CI 侧读数见 PR 的 `unit-tests` job。
+（首轮 CI 这同一组也红过，但根因不同：当时 `deploy/cloudrun/env.placeholder.json` 缺 `MEDIA_OBJECT_REF_KEY`，
+`FAIL 环境变量模板覆盖配置面` 打崩了「对照组必须全绿」；补键后已 PASS。）
+
+## 9. 媒体端口盘点：本片接通了哪一个（给 #404 阶段二）
+
+「媒体」在 `services/api/src` 下不是一条链，而是**五个端口**。本片只接通第一个：
+
+| 端口 | 文件:行 | 覆盖面 | `real` 下现状 |
+| --- | --- | --- | --- |
+| 媒体域仓储（本片） | `services/api/src/media/service.ts:1323`（`persistence: mediaStore`） | `/api/v1/media/*` 7 条 + 社区取图 | **已接 PG**（缺键/缺池时 fail-closed） |
+| `SynthesisMediaPort`（TTS） | `services/api/src/tts/media.ts:141` | 合成产物存放 | `createUnwiredMediaPort()` fail-closed |
+| `SpeechMediaPort`（ASR） | `services/api/src/speech/media.ts:79` | 转写前媒体引用校验 | `createUnwiredMediaPort()` ⇒ `OBJECT_UNAVAILABLE` |
+| `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
+| `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
+
+装配点：TTS `app.ts:1016`、ASR `app.ts:1738`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
+（`ocrPersistencePool` 是 **OCR 自己的 PG 持久化**，不是媒体端口）。
+
+⇒ **`#404 + #419` 都合流后，ASR 转写是 503 → 409，不是 503 → 200**。`services/api/src/speech/media.ts:14-19`
+逐字写着理由：域级供应商闸门（`provider.available`）先于 `media.resolve`，real 缺真实 ASR 凭据时先 503；
+只有供应商可用时才轮到该端口 ⇒ 409 `OBJECT_UNAVAILABLE`。
+
+**接线处方（另派，本片不扩权）**：每个域的 `media.ts` 加一个包本片 `MediaStore` 的适配器，例如
+`createRegistryMediaPort(store: MediaStore)` → `store.getMedia(mediaId)` 判归属/版本/`state === 'ready'`
+与目的（ASR 要 `purpose === 'voice_question'`），返回 `NOT_FOUND`/`REVISION_CONFLICT`/`OBJECT_UNAVAILABLE`；
+装配处用**已建好的** `mediaStore`（`app.ts:1299`，同一块，不新增工厂调用），判据
+`config.executionMode === 'real' && mediaStore.persistent`；代价：四个端口的 `kind` 都是闭集
+`'substitute' | 'unwired'`，要加成员并同步各域测试。最小真库臂：在
+`tests/integration/media-persistence-pg.mjs` 增一段——real 装配 + PG 仓储 ⇒ 上传 `purpose='voice_question'`
+到 `ready` ⇒ `POST /api/v1/speech/transcriptions` 期望非 409；换陌生人 `media_id` 期望拒绝且无新增行。
+
+## 10. 复现命令
 
 ```powershell
 # 1) 临时 PG（:55683）
