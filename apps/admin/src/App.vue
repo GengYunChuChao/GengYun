@@ -2,14 +2,16 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import AuditEventsView from './views/AuditEventsView.vue';
 import FlagsView from './views/FlagsView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'flags' | 'review';
+type TabKey = 'accounts' | 'flags' | 'audit' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
   { key: 'flags', label: '功能开关', note: '读写已接入' },
+  { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
 
@@ -40,6 +42,7 @@ const active = ref<TabKey>('accounts');
 
     <AccountsView v-if="active === 'accounts'" />
     <FlagsView v-else-if="active === 'flags'" />
+    <AuditEventsView v-else-if="active === 'audit'" />
     <ReviewPlaceholderView v-else />
 
     <footer class="foot">
@@ -55,6 +58,8 @@ const active = ref<TabKey>('accounts');
           读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与
           Idempotency-Key（flags:write），失败按服务端错误码如实展示
         </dd>
+        <dt>审计事件</dt>
+        <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；只列契约已提供的 8 个字段，不展示主体/actor，不做本片没有的写操作</dd>
         <dt>人工审核</dt>
         <dd>空入口占位，未实现；不伪造队列与审核人</dd>
       </dl>
