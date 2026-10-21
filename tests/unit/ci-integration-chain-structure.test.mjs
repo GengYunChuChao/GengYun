@@ -169,6 +169,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + ' `egress-ledger-pg.mjs`（`EGRESS_LEDGER_KEEP=1` 保留角色/夹具行）之后运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/egress-revoke-race-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_egress_revoke_race_test`（首行断言 `public` 表数 = 0）：由'
+      + ' `consent-grant-postgres.yml` 先建库再运行。它与 `gengyun_egress_test` **刻意不共库**（两套夹具的账号/撤回时序'
+      + '互不兼容），故不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/favorites-history-isolation-http.reverse-control.mjs',
     reason: '反向控制运行器，**故意**不在门禁名单内（需显式运行，自证见同目录正向脚本注释）。',
   },

@@ -45,6 +45,7 @@ import {
   createMemoryWritebackMedium,
   assertWritebackMedium,
   writebackMediumWrite,
+  writebackMediumHas,
   writebackMediumRead,
 } from './writeback.mjs';
 
@@ -501,7 +502,9 @@ export function createExportLedger({
    *   - 接收方停用 / 版本变化 / 训练或删除条款失效
    *   - 外发记录已终态（取消/失败/结果未知）
    * @param {{ exportId: string, userId: string, result?: unknown }} input
-   * @returns {Promise<{ written: true, exportId: string }>} 仅回执「已写入」，不返回可后置消费的授权结论
+   * @returns {Promise<{ written: true, exportId: string } | { written: false, replay: true, exportId: string }>}
+   *   仅回执「本次是否真的写入新行」——`written:false` 表示该外发已有回写（重放不覆盖第一次的载荷），
+   *   不返回可后置消费的授权结论
    */
   async function guardWriteback({ exportId, userId, result } = {}) {
     const record = rows.get(exportId);
@@ -511,11 +514,14 @@ export function createExportLedger({
     await assertAccountIntact(record);
     await assertAllConsentsIntact(record);
     await assertRecipientIntact(record);
+    let wrote = false;
     const commitResult = await gate.commit(commitExpectedOf(record), {
       precondition: () => isInFlight(record),
       // 实际结果写入即提交副作用：在同步临界区内以账本自身的同步代码写入纯数据介质，
       // 保存与校验不可分离；写路径内**无任何调用方代码**。
+      // 幂等：已有回写时**不覆盖**（第一个结果即最终结果），也不声称本次写入了新行。
       apply: () => {
+        if (writebackMediumHas(writebackBinding, record.id)) return;
         writebackMediumWrite(
           writebackBinding,
           Object.freeze({
@@ -526,11 +532,13 @@ export function createExportLedger({
             committedAt: now(),
           }),
         );
+        wrote = true;
       },
     });
     if (!commitResult || commitResult.committed !== true) {
       throw commitError(commitResult?.reason, '回写');
     }
+    if (!wrote) return { written: false, replay: true, exportId: record.id };
     return { written: true, exportId: record.id };
   }
 

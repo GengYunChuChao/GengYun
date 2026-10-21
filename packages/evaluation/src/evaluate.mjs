@@ -13,7 +13,7 @@ import { SCORERS } from './metrics.mjs';
 import { computeGaps } from './gaps.mjs';
 import { wilsonInterval } from './ci.mjs';
 import { dedupeByIndependentObject } from './grouping.mjs';
-import { verifyFrozenManifest, verifyCoverageBinding, validatePredictionCoverage, validatePredictionOutput, computeRecordsSha256 } from './frozen.mjs';
+import { verifyFrozenManifest, verifyCoverageBinding, validatePredictionCoverage, validatePredictionOutput, computeRecordsSha256, verifyAnswerKeyBinding, verifyAnswerKeyAgainstIndex } from './frozen.mjs';
 
 export const REPORT_SCHEMA_VERSION = '1.0.0';
 
@@ -92,7 +92,8 @@ export function buildGates(task, metrics, gateDefs, claimable, notClaimableReaso
       } else {
         status = pass ? 'pass' : 'fail';
       }
-      return { metric: g.metric, observed, target: g.target, direction: g.direction, status, claimable, reason, note: g.note };
+      // basis 原样带出：报告里每条门禁都附"为什么是这个数"，便于把首版验收讲清楚。
+      return { metric: g.metric, observed, target: g.target, direction: g.direction, status, claimable, reason, note: g.note, basis: g.basis ?? null };
     });
 }
 
@@ -109,9 +110,22 @@ export function buildGates(task, metrics, gateDefs, claimable, notClaimableReaso
  *     { classes, basisRef, catalogRef, catalogVersion, catalogSha256, sourceGroups }：
  *     后者由 GY-I03 物种目录（中文组名 → 规范物种 ID）映射得到，并把映射依据记入报告
  *     `coverageBinding.scopeBasis` 供审计。范围校验一律以**规范物种 ID**比较。
+ *   digestLedger: 可选逐条摘要台账（`buildDigestLedger` 产出）。给出时冻结校验**点名**到
+ *     sampleId 与字段路径（`frozenVerification.drift`）；不给出时保持整体口径（向后兼容）。
+ *   labels: 可选标准答案键（`gy-i20-weeds-labels.json` 解析后对象）。给出时按清单 `answerKey`
+ *     单向核对并做索引↔答案键交叉核对；未给出而清单已钉住答案键，一律按未核实计。
  */
 export function evaluateRun(records, predictions, options = {}) {
-  const { gateDefs, frozenManifest = null, coverageManifest = null, knowledgeScope = null, seed = 20261004, generatedAt = new Date().toISOString() } = options;
+  const {
+    gateDefs,
+    frozenManifest = null,
+    coverageManifest = null,
+    knowledgeScope = null,
+    digestLedger = null,
+    labels = null,
+    seed = 20261004,
+    generatedAt = new Date().toISOString(),
+  } = options;
   const warnings = [];
 
   // 1. 按 split 划分：最终验收只用 test；train/validation 另列统计。
@@ -119,9 +133,34 @@ export function evaluateRun(records, predictions, options = {}) {
   const trainCount = records.filter((r) => r.split === 'train').length;
   const validationCount = records.filter((r) => r.split === 'validation').length;
 
-  // 2. 冻结清单校验（针对 test 集）。
-  const frozen = verifyFrozenManifest(frozenManifest, testRecordsAll);
+  // 2. 冻结清单校验（针对 test 集）。给出台账时逐条点名，否则保持整体口径。
+  const frozen = verifyFrozenManifest(frozenManifest, testRecordsAll, { digestLedger });
   const frozenIndexVersion = frozenManifest && typeof frozenManifest.indexVersion === 'string' ? frozenManifest.indexVersion : 'unfrozen';
+
+  // 2a. 标准答案键绑定（清单 → 答案键单向）+ 索引↔答案键交叉核对（按 ordinal 点名）。
+  //     清单未钉住答案键且未提供答案键时不做这项检查（保持旧输入可用），报告 answerKey=null。
+  const answerKeyPinned = Boolean(frozenManifest && typeof frozenManifest === 'object' && frozenManifest.answerKey);
+  const answerKey =
+    answerKeyPinned || labels
+      ? (() => {
+          const bindingCheck = verifyAnswerKeyBinding(frozenManifest, labels);
+          const indexCheck = labels ? verifyAnswerKeyAgainstIndex(testRecordsAll, labels) : { verified: null, mismatches: [], reasons: [] };
+          const reasons = [...bindingCheck.reasons, ...indexCheck.reasons];
+          return {
+            provided: Boolean(labels),
+            pinned: answerKeyPinned,
+            verified: bindingCheck.verified && indexCheck.verified !== false,
+            pinnedSha256: bindingCheck.pinnedSha256,
+            computedSha256: bindingCheck.computedSha256,
+            pinnedVersion: frozenManifest?.answerKey?.version ?? null,
+            pinnedRecordCount: frozenManifest?.answerKey?.recordCount ?? null,
+            mismatches: indexCheck.mismatches,
+            reasons,
+          };
+        })()
+      : null;
+  // 清单未钉答案键 + 未给答案键 ⇒ 不因"缺少答案键"改变结论（旧输入兼容）；一旦给出任一侧就必须核对通过。
+  const answerKeyOk = answerKey === null ? true : answerKey.verified;
 
   // 2b. 承诺覆盖清单与冻结清单的绑定校验（防事后缩减/修改覆盖清单改变达标结论）。
   //     范围口径统一为**规范物种 ID**：knowledgeScope 的展示名称须先由物种目录映射为 ID 再核对。
@@ -151,6 +190,7 @@ export function evaluateRun(records, predictions, options = {}) {
   const isRealEvaluation =
     testRecords.length > 0 &&
     frozen.verified &&
+    answerKeyOk &&
     coverageBinding.verified &&
     dataKind === 'real_frozen' &&
     gapsSatisfied &&
@@ -160,6 +200,13 @@ export function evaluateRun(records, predictions, options = {}) {
   if (testRecordsAll.length === 0) warnings.push('没有 split=test 的样本：缺少冻结独立测试集，评估未完成，不得主张真实评估。');
   if (dataKind === 'synthetic_placeholder' || dataKind === 'mixed') warnings.push('输入含 synthetic_placeholder：仅验证程序可运行，不构成真实评估。');
   if (!frozen.verified) warnings.push(`冻结清单校验未通过：${frozen.reasons.join('；')}`);
+  if (frozen.drift && frozen.drift.changed.length + frozen.drift.added.length + frozen.drift.removed.length > 0) {
+    warnings.push(
+      `冻结集逐条点名：改动 ${frozen.drift.changed.length} 条 / 新增 ${frozen.drift.added.length} 条 / 删除 ${frozen.drift.removed.length} 条`
+        + `（改动样本：${frozen.drift.changed.map((c) => `${c.sampleId}[${c.fields.join('/')}]`).join('、') || '无'}）`,
+    );
+  }
+  if (answerKey && !answerKey.verified) warnings.push(`标准答案键未核实：${answerKey.reasons.join('；')}`);
   if (!gapsSatisfied) warnings.push('真实样本数量未达第6节标准，评估未完成，不得标记达标。');
   if (!coverageManifestPresent) warnings.push('未提供冻结覆盖清单：覆盖内逐类达标不可推断。');
   if (!coverageBinding.verified) warnings.push(`承诺覆盖清单未与冻结清单绑定：${coverageBinding.reasons.join('；')}；覆盖达标按未满足计，变化须作为新冻结版本。`);
@@ -204,7 +251,15 @@ export function evaluateRun(records, predictions, options = {}) {
     predictionSha256,
     frozenIndexVersion,
     frozenVerified: frozen.verified,
-    frozenVerification: { verified: frozen.verified, reasons: frozen.reasons, indexSha256: frozen.computedSha256, manifestSha256: frozen.manifestSha256 },
+    frozenVerification: {
+      verified: frozen.verified,
+      reasons: frozen.reasons,
+      indexSha256: frozen.computedSha256,
+      manifestSha256: frozen.manifestSha256,
+      digestLedgerProvided: frozen.digestLedgerProvided === true,
+      drift: frozen.drift,
+    },
+    answerKey,
     coverageBinding: {
       verified: coverageBinding.verified,
       reasons: coverageBinding.reasons,

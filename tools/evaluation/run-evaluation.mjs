@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // 可重复运行的评估命令。
 // 用法：
-//   node tools/evaluation/run-evaluation.mjs --index <index.json> --predictions <predictions.json> [--manifest <frozen-manifest.json>] [--coverage <coverage-manifest.json>] [--out report.json] [--seed N] [--json]
+//   node tools/evaluation/run-evaluation.mjs --index <index.json> --predictions <predictions.json> [--manifest <frozen-manifest.json>] [--coverage <coverage-manifest.json>] [--digests <digests.json>] [--labels <labels.json>] [--out report.json] [--seed N] [--json]
+// --digests 给出逐条摘要台账：冻结集任何一条被改动都**点名**到 sampleId 与字段路径；
+// --labels 给出标准答案键：按冻结清单 `answerKey` 单向核对并做索引↔答案键交叉核对。
+// 两者都是**显式声明"我要核对完整性"**：一旦给出而核对不通过，本命令以退出码 1 结束（红），
+//   避免"整体不一致但 CI 仍绿"；不给出时保持旧行为（报告内如实记 false，由读数断言把关）。
 // --json 输出机器可读报告；默认输出报告 JSON 到 stdout，并附人类可读摘要到 stderr。
 // 关键：只有**经冻结清单校验的独立 test 集**、真实来源、达第6节目标且预测完整时才可能 isRealEvaluation=true；
 //       合成/占位/未冻结/样本不足/预测缺失的输入恒为 false，全部门禁 not_evaluated。
@@ -27,6 +31,8 @@ export function runEvaluation(argv, { stdout = process.stdout, stderr = process.
   const predictions = toPredictionMap(loadJson(args.predictions));
   const frozenManifest = args.manifest ? loadJson(args.manifest) : null;
   const coverageManifest = args.coverage ? loadJson(args.coverage) : null;
+  const digestLedger = args.digests ? loadJson(args.digests) : null;
+  const labels = args.labels ? loadJson(args.labels) : null;
 
   // GY-I03 承诺范围：中文展示组名 → 规范物种 ID（依据 packages/knowledge/catalog/species.json）。
   let knowledgeScope = null;
@@ -48,9 +54,22 @@ export function runEvaluation(argv, { stdout = process.stdout, stderr = process.
     gateDefs: METRIC_GATES,
     frozenManifest,
     coverageManifest,
+    digestLedger,
+    labels,
     knowledgeScope,
     seed: args.seed ? Number(args.seed) : undefined,
   });
+
+  // 完整性硬闸门：显式给了台账/答案键就必须核对通过，否则本命令以 1 结束（点名原因走 stderr）。
+  let integrityExit = 0;
+  if (args.digests && !report.frozenVerified) {
+    stderr.write(`冻结校验失败（已给逐条台账）：${report.frozenVerification.reasons.join('；')}\n`);
+    integrityExit = 1;
+  }
+  if (args.labels && report.answerKey && !report.answerKey.verified) {
+    stderr.write(`标准答案键校验失败：${report.answerKey.reasons.join('；')}\n`);
+    integrityExit = 1;
+  }
 
   const json = `${JSON.stringify(report, null, 2)}\n`;
   if (args.out) {
@@ -59,7 +78,7 @@ export function runEvaluation(argv, { stdout = process.stdout, stderr = process.
   }
   stdout.write(json);
   stderr.write(`${formatSummary(report)}\n`);
-  return { exitCode: 0, report };
+  return { exitCode: integrityExit, report };
 }
 
 function main() {

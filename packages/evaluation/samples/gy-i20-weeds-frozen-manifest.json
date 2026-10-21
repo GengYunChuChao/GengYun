@@ -1,5 +1,5 @@
 {
-  "manifestVersion": "1.0.0",
+  "manifestVersion": "1.1.0",
   "indexVersion": "gy-i20-weeds-real-2026.10.14",
   "split": "test",
   "recordCount": 172,
@@ -18,5 +18,20 @@
     ],
     "coverageSha256": "325fae943924a6aefd762ddcbe479b095733340283b83cabc89a75578b2787cc",
     "basisRef": "GY-I03#species_groups.required@pkg/knowledge/coverage-report.json"
+  },
+  "answerKey": {
+    "path": "packages/evaluation/samples/gy-i20-weeds-labels.json",
+    "version": "gy-i20-weeds-labels-2026.10.14",
+    "recordCount": 172,
+    "sha256": "528242761a6896a8d3935038db4ce9d39769c43ff9a0f1887c8b7b89f6081cc5",
+    "binding": "清单单向钉住答案键（sha256+版本+条数）；答案键不反向依赖清单"
+  },
+  "digestLedger": {
+    "path": "packages/evaluation/samples/gy-i20-weeds-frozen-digests.json",
+    "schema": "gengyun.evaluation.frozen-digests.v1",
+    "recordCount": 172,
+    "recordsSha256": "36053ceed50abbeb43edbab891fef910763bf0442ac8b2d8e2f26adcd598c78f",
+    "recordsDigest": "5d1637d30c691b6c0faa1b14a0fe5478cd00e4bd823d2ea8e6ebcf61b53385e6",
+    "scope": "逐条记录摘要 + 逐字段摘要（12 位），可点名到 sampleId 与字段路径"
   }
 }

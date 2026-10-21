@@ -638,12 +638,15 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
       }
       if (row['cancelled_at'] !== null) throw new PrivacyError('OBJECT_UNAVAILABLE', '该对象版本已取消，回调不得复活');
       await verifySnapshot(client, record);
-      await client.query(
+      const inserted = await client.query(
         `INSERT INTO public.export_writebacks(export_id,user_id,revision,result)
           VALUES($1::uuid,$2::uuid,$3,$4::jsonb)
           ON CONFLICT (export_id) DO NOTHING`,
         [exportId, userId, record.revision, JSON.stringify(result ?? {})],
       );
+      // 只认真正落库的那一次：ON CONFLICT DO NOTHING 命中已有回写时 rowCount=0，
+      // 此时**没有新行**，不得声称 written:true，也不得覆盖第一次的载荷。
+      if ((inserted?.rowCount ?? 0) === 0) return { written: false, replay: true, exportId };
       return { written: true, exportId };
     });
   }

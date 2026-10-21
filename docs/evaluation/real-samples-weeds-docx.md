@@ -126,6 +126,15 @@ dHash 互异=172/172  两两最小汉明距离=14  近重复对(汉明≤8)=0
 3. 未确认来源文档的原始出处与许可（许可调查按用户要求暂缓）。
 因此本批答案只能算"来源文档自带标签 + 判据留痕"，**不主张已独立核实**。
 
+> **`annotatorRef` 的三处写法与推导规则（不是三种口径）**：答案键文件头 `gy-i20-weeds-labels.json`
+> 的 `annotation.annotatorRef` 是**来源级**标识 `docx_weeds_v1`（"这批答案来自哪份来源文档"）；
+> 索引逐条的 `annotation.annotatorRef` 是**条目级**标识，按固定规则派生为
+> `${答案键来源级 annotatorRef}_source_label`（即 `docx_weeds_v1_source_label`，"这一条取自该来源文档的原文标签"）；
+> 本页写的也是条目级标识。三处因此只有**一个**来源级标识 + **一条**派生规则，
+> 由 `tests/evaluation/gy-i20-frozen-integrity.test.mjs` 逐条断言
+> `index[*].annotation.annotatorRef === labels.annotation.annotatorRef + '_source_label'`——
+> 任何人把其中一处改成第三种写法，测试立即红（不允许"谁改谁知道"）。
+
 ## 5 覆盖口径与映射规则（明确、可复算）
 
 - **覆盖内判定**：文档条目名（含括号内别名）与 `packages/knowledge/catalog/species.json` 的
