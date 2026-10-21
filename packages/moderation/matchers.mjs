@@ -68,6 +68,12 @@ const MAX_MATCHES = 64;
 /** 取消词向后扫描的上限（限制在同一句读段内，且限制单条规则成本）。 */
 const FORWARD_CLAUSE_LIMIT = 64;
 
+/** 分句（句读段）处理上界：防止病态输入把成本放大。 */
+const MAX_SEGMENTS = 512;
+
+/** 单个句读段内最多检查的候选出现次数（上界用尽即按"未判定"处理，不得当成未命中）。 */
+const MAX_OCCURRENCES = 64;
+
 /** 匹配器版本：改动匹配器语义时必须 +1（并会同步改变 rule_version）。 */
 export const MATCHER_REVISIONS = Object.freeze({
   any_pattern: 1,
@@ -75,6 +81,9 @@ export const MATCHER_REVISIONS = Object.freeze({
   address_chain: 1,
   coordinate_pair: 1,
   commerce_link: 1,
+  exempted_pattern: 1,
+  separator_tolerant_pattern: 1,
+  sale_cooccurrence: 1,
 });
 
 function toRegExp(pattern) {
@@ -306,6 +315,197 @@ export function commerceLink(text, rule) {
   return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
 }
 
+/** 把文本切成「句读段」（含偏移），用于同分句判定与整段豁免。 */
+function splitSegments(text) {
+  const result = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i += 1) {
+    const atEnd = i === text.length;
+    if (!atEnd && !BOUNDARY.test(text[i])) continue;
+    if (i > start) result.push({ offset: start, text: text.slice(start, i) });
+    start = i + 1;
+    if (result.length >= MAX_SEGMENTS) break;
+  }
+  return result;
+}
+
+/** 句读段与句子（MR-12 的共现窗口按"同一句"算，允许跨逗号、不允许跨句号）。 */
+const SENTENCE_BOUNDARY = /[。；！？;!\?\n\r]/;
+
+/** 把文本切成「句子」（按句末标点），用于"标的 × 交易信号"的距离窗口。 */
+function splitSentences(text) {
+  const result = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i += 1) {
+    const atEnd = i === text.length;
+    if (!atEnd && !SENTENCE_BOUNDARY.test(text[i])) continue;
+    if (i > start) result.push({ offset: start, text: text.slice(start, i) });
+    start = i + 1;
+    if (result.length >= MAX_SEGMENTS) break;
+  }
+  return result;
+}
+
+/** 命中点所在的句读段（用于整段豁免判定）。 */
+function clauseAt(text, index) {
+  let start = index;
+  while (start > 0 && !BOUNDARY.test(text[start - 1])) start -= 1;
+  let end = index;
+  while (end < text.length && !BOUNDARY.test(text[end])) end += 1;
+  return text.slice(start, end);
+}
+
+/**
+ * 任一模式命中，但**命中所在的句读段**命中 `exemptions` 时不算命中。
+ *
+ * 用途：MR-10 需要"产品／规则陈述不误伤"（`私信通知`、`私聊功能已上线`、`请勿私下交易`）。
+ * 豁免是**整段**口径：同一句读段里只要出现陈述标记，就当作在讲规则而不是在导流。
+ * 代价（如实事先声明）：`平台禁止私聊下单，但我可以私聊你` 这类"陈述+导流"同段混写会被豁免放行。
+ */
+export function exemptedPattern(text, rule) {
+  const exemptions = rule.exemptions ?? [];
+  let suppressed = 0;
+  let matchCount = 0;
+  let truncated = false;
+  for (const pattern of rule.patterns ?? []) {
+    const regex = toGlobalRegExp(pattern);
+    let found = regex.exec(text);
+    while (found !== null) {
+      if (matchCount >= MAX_MATCHES) {
+        truncated = true;
+        break;
+      }
+      matchCount += 1;
+      const clause = clauseAt(text, found.index);
+      if (exemptions.some((item) => toRegExp(item).test(clause))) {
+        suppressed += 1;
+        if (found.index === regex.lastIndex) regex.lastIndex += 1;
+        found = regex.exec(text);
+        continue;
+      }
+      return {
+        matched: true,
+        field: 'text',
+        offset: found.index,
+        length: found[0].length,
+        suppressed,
+        truncated: false,
+      };
+    }
+    if (truncated) break;
+  }
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed, truncated };
+}
+
+/** 拆分关键词时常用的分隔符（空格、全角空格、间隔号、下划线、连字符）。 */
+const SEPARATOR = /[\s\u3000\u00a0·・‧∙∗*_\-—–－]/;
+
+/** 去掉分隔符并保留"压缩后位置 → 原文位置"的映射。 */
+function compactWithMap(text) {
+  let compact = '';
+  const map = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (SEPARATOR.test(text[i])) continue;
+    compact += text[i];
+    map.push(i);
+  }
+  return { compact, map };
+}
+
+/**
+ * 分隔符容忍匹配（先原文、再"去分隔符"文本），用于提示注入这类**故意拆字规避**的输入。
+ *
+ * 背景（改前真红）：`忽 略 你 收 到 的 规 则` 这类在关键词里插空格/间隔号的表述，
+ * 逐字模式全部漏拦（与 #420 在输出侧踩过的「绝 对 安 全」同一手法，这里是输入侧）。
+ * 代价（如实事先声明）：压缩后跨词意外拼出关键词的极少数正常句子可能被误拦。
+ */
+export function separatorTolerantPattern(text, rule) {
+  const direct = firstMatch(text, rule.patterns);
+  if (direct) {
+    return {
+      matched: true,
+      field: 'text',
+      offset: direct.offset,
+      length: direct.length,
+      suppressed: 0,
+      truncated: false,
+    };
+  }
+  const { compact, map } = compactWithMap(text);
+  if (compact.length === 0) {
+    return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  }
+  const tolerant = firstMatch(compact, rule.patterns);
+  if (!tolerant || tolerant.length < 1) {
+    return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  }
+  const start = map[tolerant.offset];
+  const end = map[tolerant.offset + tolerant.length - 1] + 1;
+  return { matched: true, field: 'text', offset: start, length: end - start, suppressed: 0, truncated: false };
+}
+
+/** 列出 words 在 segment 中的出现位置（上界 MAX_OCCURRENCES）。 */
+function collectOccurrences(segment, words) {
+  const hits = [];
+  for (let i = 0; i < segment.length && hits.length < MAX_OCCURRENCES; i += 1) {
+    for (const word of words) {
+      if (word.length > 0 && segment.startsWith(word, i)) {
+        hits.push({ index: i, length: word.length, word });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * 标的 × 交易信号共现（禁售／限用农药的售卖与私下转让）。
+ *
+ * 判定：**同一句**（按句末标点切分，允许跨逗号）内同时出现标的与信号，且两者相距
+ * ≤ `max_distance` 字；该句命中 `exemptions`（规则陈述／普法／急救／举报）则整句豁免。
+ * 只提标的不算（`百草枯毒性很强` 不拦），只提信号也不算（`到货通知` 不拦），
+ * 标的与信号跨句号（`……登记早就到期了。价格我记不清`）不算共现。
+ */
+export function saleCooccurrence(text, rule) {
+  const targets = rule.targets ?? [];
+  const signals = rule.signals ?? [];
+  const maxDistance = rule.max_distance ?? 24;
+  const exemptions = rule.exemptions ?? [];
+  let inspected = 0;
+  for (const segment of splitSentences(text)) {
+    if (segment.text.length === 0) continue;
+    inspected += 1;
+    if (inspected > MAX_SEGMENTS) break;
+    if (exemptions.some((item) => toRegExp(item).test(segment.text))) continue;
+    const targetHits = collectOccurrences(segment.text, targets);
+    if (targetHits.length === 0) continue;
+    const signalHits = collectOccurrences(segment.text, signals);
+    if (signalHits.length === 0) continue;
+    let best = null;
+    for (const target of targetHits) {
+      for (const signal of signalHits) {
+        const distance = Math.abs(signal.index - target.index);
+        if (best === null || distance < best.distance) best = { distance, target, signal };
+      }
+    }
+    if (best === null || best.distance > maxDistance) continue;
+    const start = Math.min(best.target.index, best.signal.index);
+    const end = Math.max(
+      best.target.index + best.target.length,
+      best.signal.index + best.signal.length,
+    );
+    return {
+      matched: true,
+      field: 'text',
+      offset: segment.offset + start,
+      length: end - start,
+      suppressed: 0,
+      truncated: false,
+    };
+  }
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+}
+
 /**
  * 匹配器登记表。**id 与实现源码共同参与 rule_version 派生**，
  * 因此任何语义改动都会使既有审核结果失效（宁多失效，不静默复用）。
@@ -316,4 +516,7 @@ export const MATCHERS = Object.freeze({
   address_chain: addressChain,
   coordinate_pair: coordinatePair,
   commerce_link: commerceLink,
+  exempted_pattern: exemptedPattern,
+  separator_tolerant_pattern: separatorTolerantPattern,
+  sale_cooccurrence: saleCooccurrence,
 });

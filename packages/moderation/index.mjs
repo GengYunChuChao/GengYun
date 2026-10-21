@@ -26,6 +26,7 @@
 export * from './constants.mjs';
 export * from './errors.mjs';
 export * from './matchers.mjs';
+export * from './sale-targets.mjs';
 export * from './rules.mjs';
 export * from './rule-version.mjs';
 export * from './validate-input.mjs';
