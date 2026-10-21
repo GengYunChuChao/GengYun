@@ -2,12 +2,14 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import FlagsView from './views/FlagsView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'review';
+type TabKey = 'accounts' | 'flags' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
+  { key: 'flags', label: '功能开关', note: '读写已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
 
@@ -37,6 +39,7 @@ const active = ref<TabKey>('accounts');
     </nav>
 
     <AccountsView v-if="active === 'accounts'" />
+    <FlagsView v-else-if="active === 'flags'" />
     <ReviewPlaceholderView v-else />
 
     <footer class="foot">
@@ -47,6 +50,11 @@ const active = ref<TabKey>('accounts');
         </dd>
         <dt>账号目录</dt>
         <dd>只读页：GET /admin/accounts（游标分页）；停用/注销等写操作不在本片</dd>
+        <dt>功能开关</dt>
+        <dd>
+          读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与
+          Idempotency-Key（flags:write），失败按服务端错误码如实展示
+        </dd>
         <dt>人工审核</dt>
         <dd>空入口占位，未实现；不伪造队列与审核人</dd>
       </dl>
