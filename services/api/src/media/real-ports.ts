@@ -49,8 +49,13 @@ export const MEDIA_REAL_WIRING_FLAG = '--approve-real-media-wiring';
  * ⚠️ 本修订**只有** `process_memory` 可构造：记录（owner/版本/rawRef/derivativeRef）、授权句柄与
  * 幂等键仍在进程内 Map/Set 里，**重启即丢**。因此「上传 → complete → 读」链路在**进程存活期内**
  * 成立，跨重启不成立（对象仍在桶里，但记录没了 ⇒ 对象变成不可达的孤儿）。
- * PG 化（`media/store.ts` + `media/store-pg.ts` + 迁移 0027）是**生产长期开启的前置条件**，
- * 见证据页「剩余断点」；本字面量在这里的作用是让每个装配点**显式承认**这个限制，而不是默默假设。
+ * PG 化是**生产长期开启的前置条件**，且**不需要新迁移号**：`media` / `media_derivatives` 两张表
+ * 早在 `services/api/db/migrations/0001_initial_schema.sql:171/192` 就已存在（实测：全新库跑满
+ * 26 个迁移后 `information_schema` 里 `media` / `media_derivatives` / `content_media_refs` /
+ * `community_media_grants` 四张表齐备）。真正缺的是 PG 仓储 + `media.object_ref_cipher` 的
+ * 加密键接线 + 幂等表落库 + `app.ts` 装配（受结构断言约束），见证据页
+ * `docs/verification/gy-r28-w2-media-ports-20261021.md` 的「剩余断点」。
+ * 本字面量在这里的作用是让每个装配点**显式承认**这个限制，而不是默默假设已持久化。
  */
 export type MediaPersistenceMode = 'process_memory';
 
