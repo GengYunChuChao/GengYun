@@ -96,6 +96,8 @@ _fail() { FAIL_COUNT=$((FAIL_COUNT+1)); REPORT+=("$(printf '%-4s %-40s 期望=%s
 report_eq() { if [[ "$2" == "$3" ]]; then _pass "$1" "$2" "$3"; else _fail "$1" "$2" "$3"; fi; }
 report_num() { if [[ "$2" =~ ^[0-9]+$ ]]; then _pass "$1" '非负整数' "$2"; else _fail "$1" '非负整数' "${2:-（空）}"; fi; }
 report_ge() { if [[ "$3" =~ ^[0-9]+$ ]] && [[ "$3" -ge "$2" ]]; then _pass "$1" ">=${2}" "$3"; else _fail "$1" ">=${2}" "${3:-（空）}"; fi; }
+# 【S7】新鲜度是**上界**判据（verify-checklist.md:181 期望 `<=1` 天）：原先用 report_ge '0' 判 age_days>=0，对任何真实 dump 恒真 ⇒ 旧备份也 PASS（该红不红）。
+report_le() { if [[ "$3" =~ ^[0-9]+$ ]] && [[ "$3" -le "$2" ]]; then _pass "$1" "<=${2}" "$3"; else _fail "$1" "<=${2}" "${3:-（空）}"; fi; }
 report_denied() { # 期望 SQLSTATE
   if grep -q '42501' <<<"$2"; then _pass "$1" '42501' '42501'; else _fail "$1" '42501' "$(tr '\n' ' ' <<<"$2" | cut -c1-120)"; fi
 }
@@ -374,7 +376,7 @@ if [[ -n "$newest_dump" ]]; then
     act="$(sha256sum -- "$newest_dump" | awk '{print $1}')"
     report_eq 'backup_sha256_matches_manifest' "$exp" "$act"
     age_days="$(( ( $(date +%s) - $(stat -c %Y -- "$newest_dump") ) / 86400 ))"
-    report_ge 'backup_freshness_days_ok' '0' "$age_days"
+    report_le 'backup_freshness_days_ok' '1' "$age_days"
   else
     skip 'backup_manifest' '最新备份没有清单，无法核对行数/迁移版本'
   fi

@@ -194,7 +194,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
       + '再经真实 `purgeOwnerData` 取「本主体 messages 行数 → 0／他人行原样」的注销行数读数；未设 `GY_PG_BIN` 时'
       + '**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），故不进无 PG 的回环链。'
-      + 'R28-W11 只交付脚本与证据，**尚未接进任何 workflow**（`.github/workflows/**` 不在本片范围内，CI 接线另开一单）。',
+      + 'R29-W13 已把它接进 `.github/workflows/real-pg-integration.yml`：复用该 job 里装 `postgresql-17`'
+      + '（PGDG `noble-pgdg`）那条 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`），以**独立 step** 真跑，'
+      + '⛔ 不自己 `CREATE DATABASE`。⚠️ 它的数据根目录键是 `GY_W11_PG_ROOT`（脚本 `:92`），'
+      + '⛔ 不是同族脚本的 `GY_I19_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，给错键即红。'
+      + '但它**仍不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
+      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/migrations-negative-pg.mjs',

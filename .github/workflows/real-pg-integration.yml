@@ -226,7 +226,7 @@ jobs:
       # 2026-10-19 仍在线）+ 包名钉死大版本 `postgresql-17`。⛔ 不写 `postgresql-17=17.11-…`：PGDG 只保留每个
       # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
       # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
-      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies 需要 initdb/pg_ctl）
+      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge 需要 initdb/pg_ctl）
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -263,6 +263,27 @@ jobs:
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
+          PGCLIENTENCODING: UTF8
+      # 消息域注销**行数**（`#17` 消息域注销，`#405`／W11 的脚本 `messages-purge-pg.mjs`，R29-W13 接入）：
+      # 与上两步同属**自起集群**类——自己 `initdb` 出临时 17 集群（端口 55700–55999 且**先探活再起**）、
+      # 只监听 127.0.0.1、自建 `gengyun_messages_purge_test`、跑完 `pg_ctl stop` 并删数据目录，**不**连 service
+      # 里的库、**不**建组角色、**不**碰集群级对象 ⇒ 对前后脚本零耦合；复用上一步装出来的
+      # `/usr/lib/postgresql/17/bin`（装包只做一次），且同样**不** `CREATE DATABASE`。
+      # ⚠️ 它与上两步有一处**必须照脚本写**的差异：数据根目录键是 `GY_W11_PG_ROOT`（脚本 `:92`），
+      # ⛔ 不是 `GY_I19_PG_ROOT`。抄上一步的键只会多一条**装饰性 env**——step 里看着有 root，脚本照样回落
+      # `os.tmpdir()`，数据目录落在共享 tmp（本机实测：那样 initdb 会因 tmp 目录 ACL 直接失败）。守卫自
+      # R29-W13 起按脚本映射键名（`SELF_CLUSTERED_ROOT_KEY`）并与脚本源码真值交叉核对，给错键即红。
+      # 它自证 8 条（授权形状／消息与台账行数／他人零影响／负控制／幂等重放／回执），缺 `GY_PG_BIN` 时打印
+      # SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，也不加任何吞红开关）。
+      # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+      # 且它的 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+      # 本地取证（本机 PG 17.11 二进制 + 独立临时数据目录 `E:\GengYunCommander\.pg17\tmp\w13-w11`）：
+      # exit=0，`PASS 1..8` + 末行 `ALL PASS：8 条真库断言`，端口 55766，无残留下游。
+      - name: 消息域注销行数（#17 / 迁移 0019 messages + 0008 idempotency_keys）
+        run: node tests/integration/messages-purge-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_W11_PG_ROOT: ${{ runner.temp }}/gy-w11-pg
           PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。
