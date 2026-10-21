@@ -186,6 +186,12 @@ export interface LiveTtsCredentials {
   readonly sessionToken: string;
 }
 
+/**
+ * GY-R28-W1：能力中立的**同形别名**（OCR / ASR 也用它）。
+ * 三个域共用同一套 TC3 三元组形状，因此不各写一份接口 —— 形状相同、来源不同（共享对 / ASR 专用对）。
+ */
+export type LiveTc3Credentials = LiveTtsCredentials;
+
 /** 真实 TTS 的全部向外能力。字段**全部必填**（除 fetch/now），缺一即无法构造 ⇒ 默认关闭。 */
 export interface RealTtsPorts {
   /** 预算/台账闸门：没有闸门就不构造真实分支。 */

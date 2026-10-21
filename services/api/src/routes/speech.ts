@@ -124,7 +124,7 @@ export interface SpeechRouteDeps {
  * `stub` / `preset_demo` 走明确标注的替身。
  */
 export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps, persistencePool: TransactionalPool | null = null): SpeechService {
-  const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode });
+  const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders.asr });
   const store = deps.store ?? (config.executionMode === 'real' && persistencePool !== null ? createPostgresSpeechStore({ pool: persistencePool }) : createMemorySpeechStore());
   const media = deps.media ?? createSpeechMediaPort(config.executionMode);
   // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
