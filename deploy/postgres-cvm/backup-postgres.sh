@@ -194,11 +194,16 @@ runuser -u postgres -- "${PG_BIN}/pg_dump" \
 mv -f -- "$TMP_DUMP" "$DUMP"
 chmod 0600 -- "$DUMP"
 
-# 产出可读性校验：pg_restore --list 必须能列出目录
-if ! runuser -u postgres -- "${PG_BIN}/pg_restore" --list "$DUMP" >/dev/null 2>&1; then
-  fail "pg_restore --list 无法读取 ${DUMP}：备份文件不可用，请勿据此声称已备份。"
+# 产出可读性校验 + TOC 条目计数：**一次** --list，退出码与计数都取自同一次调用。
+# R28-S44（B 类返修）：原来第二次 `--list | grep -c ';' || true` 失败会产出 "0"，把「读不出 TOC」
+#   写成 restore_toc_entries=0 落进清单（假数据）；现在读取失败直接 fail，不落任何假计数。
+_toc_rc=0
+_toc_list="$(runuser -u postgres -- "${PG_BIN}/pg_restore" --list "$DUMP" 2>/dev/null)" || _toc_rc=$?
+if [[ "$_toc_rc" -ne 0 ]]; then
+  fail "pg_restore --list 无法读取 ${DUMP}（rc=${_toc_rc}）：备份文件不可用，请勿据此声称已备份。"
 fi
-TOCOBJ="$(runuser -u postgres -- "${PG_BIN}/pg_restore" --list "$DUMP" | grep -c ';' || true)"
+# 用 awk 计数：`grep -c ';'` 在 0 匹配时 rc=1，会与「读失败」混在一起。
+TOCOBJ="$(printf '%s\n' "$_toc_list" | awk '/;/{n++} END{print n+0}')"
 
 # 清单：恢复判定的唯一依据
 {
@@ -234,6 +239,9 @@ log "  清单      : ${MANIFEST}"
 log "  迁移版本  : $(grep '^migration_versions=' -- "$MANIFEST" | cut -d= -f2)"
 
 # 保留期清理
+# 失败方向：枚举失败即空 ⇒ 本轮不删任何文件（安全）；代价是日志会说「没有需要清理的」，
+#   保留期静默未执行需人工核对（见证据页 §6 已知残留）。
+# best-effort: list_old_backups 的失败只影响「删旧备份」这个附加动作，不参与任何 PASS/FAIL 判定。
 old="$(list_old_backups || true)"
 if [[ -n "$old" ]]; then
   log "清理超过 ${KEEP_DAYS} 天的旧备份："
