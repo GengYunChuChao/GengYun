@@ -153,3 +153,17 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           OCR_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_ocr_jobs_test
+      # 识别域持久化（#333 / I10，R28-S36）：库名硬钉 `gengyun_recognitions_test`，脚本同样要求**空库**
+      # （第一步断言 `public` 下 0 张表）。它自己 `discoverMigrations()` 后先跑「除 0025 外全部迁移」再应用 0025，
+      # 并断言迁移清单连续无缺号、总数 === 最大编号 ⇒ 顺带守住迁移清单不变量（与 ocr-jobs step 同构）。
+      # 连接串只走 **env**（`RECOGNITIONS_PG_TEST_URL`，脚本按属主身份连库、自己从不建角色）：
+      # 未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过，也不加任何吞红开关）。
+      # 本地取证（PG 17.11 + 空库 + `gengyun_ci_owner` 属主）：exit=0，`共 30 条 PASS，耗时 1777ms`。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_recognitions_test' && node tests/integration/recognitions-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          RECOGNITIONS_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognitions_test
