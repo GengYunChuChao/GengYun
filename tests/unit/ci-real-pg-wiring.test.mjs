@@ -121,6 +121,12 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合，排在最后（workflow 里也是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
+  // 9. `recognitions-pg`（`#349` 接入）：自建专用空库 `gengyun_recognitions_test`、自己 apply
+  //    0001..0025 全链（含 0025_recognitions_persistence.sql）、全程只用库 owner 连接，
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本无耦合，排在最后。
+  //    ⛔ 不要把它挪到 `ocr-jobs-pg` 之前：两者都以「空库 + 全链迁移」为前提，重排会同时违反
+  //    判据⑥（顺序）与判据⑦⑧（建库/库名一致性）的语义。
+  'tests/integration/recognitions-pg.mjs',
 ]);
 
 /**
