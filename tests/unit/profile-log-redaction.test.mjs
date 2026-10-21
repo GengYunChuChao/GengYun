@@ -140,7 +140,14 @@ test('GY-I05 端到端：坐标经任何一个日志出口或响应封套都不�
 test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得引用', () => {
   const server = readFileSync(resolve(root, 'services/api/src/server.ts'), 'utf8');
   assert.equal(server.includes('logStream'), false, '生产入口不得注入 logStream（日志仍写 stdout）');
-  assert.match(server, /buildApp\(\{ config, pool \}\)/);
+  // W2（GY-R28）收紧了这条钉子：媒体域真实端口的装配是本仓**唯一**允许出现在 `buildApp` 调用里的
+  // 额外实参（`[媒体域接线]` 断点），因此这里从「必须逐字等于 `{ config, pool }`」改成
+  // 「必须是 `{ config, pool }` + 恰好这一处 `mediaAssembly` spread」，并追加两条更强的不变量：
+  // 该 spread 的取值只允许来自 `mediaRealPortsAssemblyOptions`（唯一来源）、且 `server.ts` 里
+  // `buildApp(` 只能出现一次 —— `logStream` 仍然注入不进来（本测试的主旨不变）。
+  assert.match(server, /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\) \}\)/);
+  assert.equal(server.match(/mediaRealPortsAssemblyOptions\(/g)?.length, 1, '媒体装配选项只允许一个来源');
+  assert.equal(server.match(/buildApp\(/g)?.length, 1, '生产入口只允许调用一次 buildApp');
   const config = readFileSync(resolve(root, 'services/api/src/config.ts'), 'utf8');
   assert.equal(config.includes('logStream'), false, '配置层不得暴露日志捕获开关');
   // 默认（不传 logStream）时 logger 选项只有 level + serializers，不新增文件/级别/格式开关。

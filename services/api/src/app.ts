@@ -61,7 +61,8 @@ import { createRecognitionProvider, type RecognitionProvider } from './recogniti
 import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
-import { createCheckedContentPort, type CheckedContentPort, type SubstituteCheckedContentEntry } from './tts/content.ts';
+import { createCheckedContentPortFromConfig } from './ai/checked-content-live-adapter.ts';
+import type { CheckedContentPort, SubstituteCheckedContentEntry } from './tts/content.ts';
 import { createSynthesisMediaPort, type SynthesisMediaPort } from './tts/media.ts';
 import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
@@ -977,14 +978,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
 
   // GY-I13 合成域：real 走 fail-closed 提供者（缺凭据受理前 503，绝不回退替身）；产物存储与
-  // 「已核对内容」读取端口同样按执行模式解析（real 未接线 ⇒ 受理前拒绝）。
-  // **应用装配路径永不注入真实适配器端口**：真实发送只能经 `createLiveTtsProvider(ports)` 触达，
-  // 而本文件不 import 它（零端口注入）。
+  // 「已核对内容」读取端口同样按执行模式解析。**R28-W3 起**核对端口的 real 分支已接真实现：
+  // `createCheckedContentPortFromConfig({executionMode, entries, pool})` —— 非 real 走替身（不变）、
+  // real 且无连接池（未配 `DATABASE_URL`）走**未接线**端口（与接线前逐字一致、仍 fail-closed）、
+  // real 且有池才走 PostgreSQL 只读核对源（实现 `services/api/src/ai/checked-content-live-adapter.ts`）。
+  // **应用装配路径永不注入真实发送端口**：真实发送只能经 `createLiveTtsProvider(ports)` 触达，
+  // 而本文件不 import 它（零端口注入）。本文件新增的 import 是**只读核对源**，不对外发包。
   //
   // 缩片（GY-I13 「合成 → 播放」·受理链路打通）：替身模式带上**明确标注的替身核对条目**
   // （`SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，见其定义处的边界说明），使客户端替身样本能走完
-  // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 由 `createCheckedContentPort` 自行忽略该实参
-  // （仍返回未接线端口）⇒ real 语义逐字未变；服务层判定与拒绝码亦未改。
+  // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 分支**忽略**该实参（替身条目永不进 real）；
+  // 服务层判定与拒绝码未改。
   // GY-I27（#29）·合成域外发账本接线（与识别/转写/OCR 三域同形）：
   // real 模式且账本可用时，用**出站包装器**接管 `synthesize` 的派发顺序
   // （无预留 ⇒ `OBJECT_UNAVAILABLE`；`markSent` 是唯一权威授权边界）。
@@ -992,7 +996,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 存进 0014 新增的 `exports.object_key` 列 ⇒ 不需要把非 uuid 标识硬塞进 uuid 列。
   // 账本/在途守卫未装配（未配置数据库或连接池不可用）⇒ 返回 `undefined` ⇒ 路由与包装逐字不变。
   const synthesisContentResolved =
-    synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT);
+    synthesisContent ?? createCheckedContentPortFromConfig({ executionMode: config.executionMode, entries: SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT, pool });
   const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode });
   const synthesisEgress: SynthesisEgress | undefined =
     egressLedger === null || privacyInFlight === null
@@ -1490,6 +1494,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         ? { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }
         : {};
   // #12 会话域存储（**提前声明**）：注销清理把会话域并进同一本账，而备份清单是「全有或全无」
+  // —— `backupCopySources()` 需要在**装配期**就知道该 store 有没有 `snapshotOwner`，因此这份
+  // store 必须先于注销装配就位；后面的问答子域装配**复用**同一实例（不再重复创建）。
   // 语义与既有口径逐字一致：`real` + 无池 ⇒ null（域不可用），非 real ⇒ 内存实现。
   const conversationStore: ConversationStore | null =
     conversationInjection?.store ??
@@ -1809,7 +1815,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
   // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
   // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
-  registerCommunityRoutes(app, config, gatedGuards, communityService);
+  // GY-R28 W10：把与识别/媒体**同源的那一个** `consentGate` 交给社区域，社区域只在投稿面
+  // （`POST /posts`、`PATCH /posts/:id`、`POST /posts/:id/comments`、`PATCH /comments/:id`）
+  // 用它问 `public_posting`；读/赞/举报/删除不挂。缺数据库且未注入 ⇒ `undefined` ⇒ 直通。
+  registerCommunityRoutes(app, config, gatedGuards, communityService, { consent: consentGate });
   // GY-I12（#12）文字问答域 7 条路由的**唯一注册点**（契约 `operations.json` 里本域的
   // 全部 operation，逐条一一对应；未实现的相邻路径不注册 ⇒ 由 404 处理器如实兜底）。
   // 这一段刻意**排在 `registerJobRoutes` 之后**：作业源在注册表构造时就捕获了
