@@ -16,6 +16,7 @@
 | 引导链尾 | `20-login-roles.sql` **两遍 rc=0**；`90-assert-least-privilege.sql` **rc=0、末行 `ok`**，断言计数 **83 / 83 / 0**（派单写 104，差异见 §2.2） |
 | 漂移收敛 | 手工把 `gengyun_egress_ledger` 改成 `LOGIN CREATEDB CREATEROLE` → 重跑该文件 → 回读 `rolcanlogin / rolcreatedb / rolcreaterole = f / f / f` |
 | 静态守卫单测 | 4/4 通过（`pass 4 / fail 0`），含 2 条内存负控制（换回裸 `CREATE ROLE`；守卫 `rolname` 改错一个字符） |
+| 消费者同步 | `tests/integration/account-suspend-pg.mjs` 的 `runRoleRegion` 改为兼容两种形态：新文件跑 **rc=0 / `ALL PASS`**（角色已存在 ⇒ 守卫跳过 CREATE），旧文件跑 **rc=0 / `ALL PASS`**（兜底换动词 6 次），删掉一条收敛 `ALTER ROLE` 的负控制 **rc=1** 且点名文件（§2.4） |
 | `GRANT` / `REVOKE` | **零改动**：`git diff` 的全部 104 行增量里没有一行 GRANT/REVOKE（§5.6 机检） |
 | 门禁 7 道 | 全绿（§9） |
 
@@ -27,13 +28,14 @@
 2. 新增 `tests/unit/roles-bootstrap-idempotent.test.mjs`（206 行）：静态审计 8 个文件，断言「8 文件 / 11 条建角色 / 全部有守卫 / 守卫名与 `CREATE ROLE` 名逐条同名 / 每条 `CREATE ROLE` 后紧邻同属性 `ALTER ROLE`」，并带 2 条内存负控制证伪。
 3. 真库（PG 17.11，一次性集群）取证：26 迁移 → 8 个角色文件跑三遍 → `20-login-roles.sql` 跑两遍 → `90-assert-least-privilege.sql` 判定为绿；外加改前旧文件负控制与漂移收敛。
 4. 本页 ＋ `.pg17/handoff/r28-s48-report.md`。
+5. 消费者同步（指挥裁定后补）：`tests/integration/account-suspend-pg.mjs` 的 `runRoleRegion` 改为兼容「旧裸写 / 新守卫」两种形态，断言不放宽（§2.4）。
 
 ### 1.2 没做什么（边界）
 
 - **没有动任何 `GRANT` / `REVOKE`**，也没有动 `deploy/postgres-cvm/sql/20-login-roles.sql`、`90-assert-least-privilege.sql`、`provision-db.sh`、`migrate.ts`。本片只改「建角色」这 11 句的形态。
 - **没有 push、没有建 PR、没有打 tag**；只提交一个 commit。
 - **没有**在真实 CVM / GitHub Actions runner 上执行（§10 第 1 条）。
-- **没有**改 `tests/integration/account-suspend-pg.mjs`（它有一条「角色文件里 `CREATE ROLE` 必须裸写」的正则，会被本片改变形态打到——见 §10 第 2 条，需指挥拍板，故**不动**）。
+- **没有**改 `tests/integration/**` 里除 `account-suspend-pg.mjs` 的 `runRoleRegion` 之外的任何一行（这一处是指挥裁定后放行的最小改动，见 §2.4；它原来是唯一会因本片形态变化而判红的地方）。
 - **没有**扩大断言面：`90-assert-least-privilege.sql` 一行未改，因此它的断言数仍是基线的 83（§2.2）。
 
 ## 2. 口径更正与两处读数差异（如实登记）
@@ -82,6 +84,31 @@ ok
 ```
 
 这是文件自己 `\set ON_ERROR_STOP off`（L710–L921 窗口）里执行的「整表 DELETE 必须恰好 42501」探针——psql 原样打印 ERROR、再用 `:SQLSTATE` 判定，文件头 L34 写明「探针段内的 42501 也会被 psql 原样打印（ON_ERROR_STOP=0 是设计的一部分）」。判定只看判决行与退出码：末行 `ok`、退出码 0。
+
+### 2.4 消费者同步：`runRoleRegion` 兼容两种形态（指挥裁定后补的一处最小改动）
+
+改形态会把 `tests/integration/account-suspend-pg.mjs` 打红：它用 `/^CREATE ROLE (\w+) [^\n]*$/gm` 从出厂文件里抽角色名，并 `assert.ok(creates.length > 0, …)`——守卫形态的行首是 `EXECUTE 'CREATE ROLE`，该正则命中 0。这个脚本已经接进真库 CI（受管清单第 9 条），不修就把 main 打红。
+
+指挥裁定：**只改这一个文件、只限让 `runRoleRegion` 兼容新形态**，断言一条不许放宽。实际 diff **1 file changed, 77 insertions(+), 15 deletions(-)**（4 个 hunk，全在 `GROUP_ROLE_ATTRS` 之后）：
+
+| 约束（裁定原文） | 落点 |
+|---|---|
+| 同时认旧形态与新形态 | 新函数 `collectRoleCreates(file, sql)`（L208–L259）双通道：`guarded` = `/^([ \t]*)EXECUTE 'CREATE ROLE (\w+) ([^']*)';$/gm`；`bare` = `/^CREATE ROLE (\w+) ([^\n]*)$/gm` |
+| 属性口径不许放宽 | 两种形态都断言语句**逐字等于** `EXECUTE 'CREATE ROLE <name> <GROUP_ROLE_ATTRS>';` / `CREATE ROLE <name> <GROUP_ROLE_ATTRS>;`，`GROUP_ROLE_ATTRS`（L194）一字未改 |
+| 取不到必须红 | `assert.ok(creations.length > 0, …)` 保留（L257）；`guarded` 另有三道：必须落在 `DO $role_guard$ … $role_guard$;` 块内（L228）、块里必须含 `rolname = '<name>'`（L229）、块后第一行非空内容必须等于 `ALTER ROLE <name> WITH <GROUP_ROLE_ATTRS>;`（L239–L243） |
+| 新形态无需换动词 | `runRoleRegion()` 对 `form === 'guarded'` 直接 `continue`（L276），文件自身已幂等；旧形态的「`CREATE` 就地换 `ALTER`」兜底与 `[P] 复用已存在的组角色 …` 提示原样保留（L277–L282） |
+| 失败要说清口径变化 | 所有断言消息统一走 `fail()`（L209），后缀「（`roles/<file>.sql`；口径变化需同步 runRoleRegion）」 |
+
+自检读数（日志 `integration-run.log` / `integration-redcontrol.log`，输出 `integ-*.out.txt`）：
+
+| 场景 | 结果 |
+|---|---|
+| 新文件（本片守卫形态）+ 真库 | **rc=0**，末行 `ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库读数`；`未取得` 行数 **0**；兜底换动词 **0** 次（角色已存在时由守卫跳过 CREATE，正是改前会 `42710` 的那个场景） |
+| 旧文件（`git show c0217a4:…` 裸写：11 条 `^CREATE ROLE`、0 个守卫块）+ 真库 | **rc=0**，末行同上；兜底换动词 **6** 次，每次打 `[P] 复用已存在的组角色 <name>（跨库依赖使其不可 DROP ⇒ CREATE 换 ALTER，属性逐字相同）` ⇒ 旧形态没退化 |
+| 旧文件用完复原 | `git checkout -- services/api/db/roles`，`sha256sum` 与替换前**逐字相同**（`roles-sha256-new.txt` vs `roles-sha256-restored.txt`），守卫块回到 11 |
+| 负控制：删掉 `auth_privacy.sql` 的收敛 `ALTER ROLE` | **rc=1**，`AssertionError [ERR_ASSERTION]: 守卫块后必须紧随同属性 ALTER ROLE gengyun_auth_privacy WITH …（roles/auth_privacy.sql；口径变化需同步 runRoleRegion）`；`git checkout` 复原后 sha256 一致 |
+
+没有放宽的逐条对照（裁定明令）：① 没有把断言改成「有就校验、没有就跳过」——`creations.length > 0` 与 8 个文件全部逐条校验都在；② 没有跳过属性串比对——两种形态都比到 `GROUP_ROLE_ATTRS` 逐字；③ 没有把 `guarded` 的 CREATE 改写成别的东西（没必要，守卫已幂等）；④ 旧形态兜底逻辑一字未动。
 
 ## 3. 改造形态
 
@@ -316,11 +343,12 @@ gengyun_egress_ledger|login=f|createdb=f|createrole=f|super=f
 | 6 | `node --test tests/unit/roles-bootstrap-idempotent.test.mjs` | **0** | `pass 4 / fail 0` |
 | 7 | `git diff --check` | **0** | 无空白/冲突标记问题（无输出） |
 
-门禁原文：`.pg17/handoff/r28-s48-logs/gates.log` 与 `gate-*.out.txt`。
+门禁原文：`.pg17/handoff/r28-s48-logs/gates.log` 与 `gate-*.out.txt`。上表是 **§2.4 消费者改动合入之后整组重跑**的结果（`gates.log` 已被最后一次覆盖，7 条全 `rc=0`）。
 
 ## 10. 未取证 / 需裁定
 
 1. **真实 CVM 与 GitHub Actions runner 上未跑**：本页是 Windows 本机一次性集群的等价重放；`provision-db.sh` 本体未执行（要 root / `runuser -u postgres`）。
-2. **`tests/integration/account-suspend-pg.mjs:207` 的正则与本片形态冲突**：该文件用 `/^CREATE ROLE (\w+) [^\n]*$/gm` 从 `services/api/db/roles/auth_privacy.sql` 抽角色名，并断言 `creates.length > 0`；本片把裸 `CREATE ROLE` 换成 `EXECUTE 'CREATE ROLE …'`（行首是 `EXECUTE`），该正则**抽不到任何一条**，该集成测试会在下次真库跑时失败。本片按派单「只改 roles/*.sql + 新增单测」的边界**没有动它**，需指挥决定是「改正则以适配新形态」还是「连同该测试一起改」，以及是否另开切片。
+2. ~~`tests/integration/account-suspend-pg.mjs:207` 的正则与本片形态冲突~~ → **已裁定并修复**（指挥授权最小改动，见 §2.4）：`runRoleRegion` 现在兼容两种形态、断言未放宽；新/旧文件在真库上都是 `rc=0 / ALL PASS`，负控制 `rc=1` 且点名文件。剩余风险只是「没有在 GitHub Actions runner 上实测」（第 1 条）。
 3. **`90-assert` 断言数 `104` vs 实测 `83`**（§2.2）：若 104 是验收硬指标，需要另开切片把后续断言合入本分支；本片只保证「exit 0 + 末行 `ok` + 自身全绿」。
 4. **`20-login-roles.sql` 自身的幂等性未单独取证**：本片只证明它连跑两遍 rc=0；它内部对 LOGIN 角色的收敛逻辑（口令轮换等）不在本片范围。
+5. **`tests/integration/account-suspend-pg.mjs` 的改动只在**本机一次性集群**上跑过**（新/旧两种形态 + 一条负控制，见 §2.4），未在 GitHub Actions runner 上跑（同第 1 条）；该脚本本来就只有真库跑、没有单测，本片也没有为它新增单测。

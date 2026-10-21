@@ -193,26 +193,88 @@ async function resetRoles() {
 /** 组角色出厂属性串：与 `services/api/db/roles/*.sql` 里 `CREATE ROLE` 的尾部**逐字相同**。 */
 const GROUP_ROLE_ATTRS = 'NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
 
+/** 守卫块的定界符（R28-S48 起出厂文件的形态；本脚本只用来**定位**，不改写它）。 */
+const ROLE_GUARD_DO = 'DO $role_guard$';
+const ROLE_GUARD_END = '$role_guard$;';
+
 /**
- * 执行一个出厂角色区域。若某条 `CREATE ROLE <name> NOLOGIN …` 的目标角色**已经存在且删不掉**，
- * 就把那一条 CREATE 就地换成 `ALTER ROLE <name> NOLOGIN …`（属性逐字相同，断言在上）：
- * 后面的 `REVOKE`/`GRANT` 仍在本库照跑。
- * 为什么需要：`resetRoles()` 已经尽力 DROP 过，残留只可能来自**别的数据库**把权限授予了它
- * （`DROP ROLE` 有跨库依赖 ⇒ 必然失败）。同一条 CI 里排在其它 `-pg` 脚本之后时，旧版会在这里
- * `42710 role "gengyun_auth_privacy" already exists` 直接炸（见证据页 §2.2 的上游复现）。
- * ⛔ 不是放宽：只在「角色真的已经存在」时换动词，属性一字不减，区域里其它语句原样执行。
+ * 抠出出厂角色文件里的全部「建角色语句」，两种形态都必须被认出来并**逐字**校验：
+ *   - `bare`（旧形态）：`CREATE ROLE <name> <attrs>;`
+ *   - `guarded`（R28-S48 新形态）：`DO $role_guard$` 块里 `EXECUTE 'CREATE ROLE <name> <attrs>';`，
+ *     且块后第一行非空内容必须是同属性的 `ALTER ROLE <name> WITH <attrs>;`。
+ * 属性串一律与 `GROUP_ROLE_ATTRS` 逐字相等：取不到 / 少一项 / 顺序不同 ⇒ 直接红（⛔ 不放宽、不跳过）。
+ * ⛔ 本函数只读不改；改写只由 `runRoleRegion()` 对旧形态做（新形态文件自身已幂等）。
+ */
+function collectRoleCreates(file, sql) {
+  const fail = (why) => `${why}（roles/${file}.sql；口径变化需同步 runRoleRegion）`;
+
+  // 先把每个 DO $role_guard$ … $role_guard$; 的位置圈出来，再判断 EXECUTE 是否落在里面。
+  const blocks = [];
+  let from = 0;
+  while (true) {
+    const start = sql.indexOf(ROLE_GUARD_DO, from);
+    if (start === -1) break;
+    const close = sql.indexOf(ROLE_GUARD_END, start + ROLE_GUARD_DO.length);
+    assert.notEqual(close, -1, fail('DO $role_guard$ 块没有闭合'));
+    const end = close + ROLE_GUARD_END.length;
+    blocks.push({ start, end, text: sql.slice(start, end) });
+    from = end;
+  }
+
+  const creations = [];
+  for (const match of sql.matchAll(/^([ \t]*)EXECUTE 'CREATE ROLE (\w+) ([^']*)';$/gm)) {
+    const [statement, , name, attrs] = match;
+    const block = blocks.find((candidate) => match.index >= candidate.start && match.index < candidate.end);
+    assert.ok(block, fail(`EXECUTE 'CREATE ROLE ${name} …' 必须落在 DO $role_guard$ 块里`));
+    assert.ok(block.text.includes(`rolname = '${name}'`), fail(`守卫的 rolname 与 CREATE ROLE ${name} 不同名`));
+    assert.equal(
+      statement.trim(),
+      `EXECUTE 'CREATE ROLE ${name} ${GROUP_ROLE_ATTRS}';`,
+      fail(`EXECUTE 'CREATE ROLE ${name} …' 的属性串不再是出厂串（${attrs}）`),
+    );
+    const following = sql
+      .slice(block.end)
+      .split(/\r?\n/)
+      .find((line) => line.trim() !== '');
+    assert.equal(
+      following?.trim(),
+      `ALTER ROLE ${name} WITH ${GROUP_ROLE_ATTRS};`,
+      fail(`守卫块后必须紧随同属性 ALTER ROLE ${name} WITH …`),
+    );
+    creations.push({ name, form: 'guarded', statement });
+  }
+
+  for (const match of sql.matchAll(/^CREATE ROLE (\w+) ([^\n]*)$/gm)) {
+    const [statement, name, attrs] = match;
+    assert.equal(
+      statement.replace(/\r$/, ''),
+      `CREATE ROLE ${name} ${GROUP_ROLE_ATTRS};`,
+      fail(`裸 CREATE ROLE ${name} 的属性串不再是出厂串（${attrs}）`),
+    );
+    creations.push({ name, form: 'bare', statement });
+  }
+
+  assert.ok(creations.length > 0, fail('必须含 CREATE ROLE'));
+  return creations;
+}
+
+/**
+ * 执行一个出厂角色区域。两种形态都支持（R28-S48 起出厂文件改成守卫形态）：
+ *   - 旧形态 `CREATE ROLE <name> NOLOGIN …`：目标角色**已经存在且删不掉**时，把这一条 CREATE 就地
+ *     换成 `ALTER ROLE <name> NOLOGIN …`（属性逐字相同，断言在上），后面的 `REVOKE`/`GRANT` 照跑。
+ *     为什么需要：`resetRoles()` 已经尽力 DROP 过，残留只可能来自**别的数据库**把权限授予了它
+ *     （`DROP ROLE` 有跨库依赖 ⇒ 必然失败）。同一条 CI 里排在其它 `-pg` 脚本之后时，旧版会在这里
+ *     `42710 role "gengyun_auth_privacy" already exists` 直接炸（见证据页 §2.2 的上游复现）。
+ *   - 新形态 `DO $role_guard$ … EXECUTE 'CREATE ROLE …' … $role_guard$;` + 紧随同属性 `ALTER ROLE`：
+ *     文件自身已经幂等（守卫跳过已存在者、ALTER 收敛属性），**不需要**再换动词，原样执行即可；
+ *     但「守卫 + 同属性 ALTER」的存在性与属性串仍由 `collectRoleCreates()` 逐字校验。
+ * ⛔ 不是放宽：属性一字不减、语句一条不少，两种形态都必须取到属性串并对齐出厂串。
  */
 async function runRoleRegion(file) {
   let sql = readSql(`roles/${file}.sql`);
-  const creates = [...sql.matchAll(/^CREATE ROLE (\w+) [^\n]*$/gm)];
-  assert.ok(creates.length > 0, `roles/${file}.sql 必须含 CREATE ROLE（口径变化需同步 runRoleRegion）`);
-  for (const [statement, name] of creates) {
+  for (const { name, form, statement } of collectRoleCreates(file, sql)) {
+    if (form === 'guarded') continue;
     const eol = statement.endsWith('\r') ? '\r' : '';
-    assert.equal(
-      statement,
-      `CREATE ROLE ${name} ${GROUP_ROLE_ATTRS};${eol}`,
-      `roles/${file}.sql 的 CREATE ROLE 口径变化（属性串不再是出厂串）⇒ 需同步 runRoleRegion`,
-    );
     const { rowCount } = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [name]);
     if (rowCount === 0) continue;
     sql = sql.replace(statement, `ALTER ROLE ${name} ${GROUP_ROLE_ATTRS};${eol}`);
