@@ -691,12 +691,242 @@ ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S28 探针结束 ----------------------------------------------------------
 
+-- --- R28-S38 真执行探针（语音域三表：迁移 0026；真行、零残留）------------------
+-- 与 S28 段同一范式（BEGIN → SET LOCAL ROLE → 每条 SAVEPOINT → 最后 ROLLBACK），
+-- 差异只在表：0026 的 speech_jobs / transcriptions / speech_idempotency。
+-- 为什么必须真行：0026 的 CHECK 与外键只有真行才会被求值（kind='transcription'、
+-- raw_text ≤ 8000 码点、uncertain_spans 必须是 jsonb 数组、payload 必须是 jsonb 对象、
+-- state 是 0001 的 job_state 枚举、owner_user_id 外键），而
+-- `ON CONFLICT (scope, key_hash) DO NOTHING` 也只有在**真冲突**时才走冲突分支——
+-- claim 的 `RETURNING scope` 还会在冲突分支上要求 SELECT 权，这是 4 列 vs 6 列的要害。
+--   * INSERT 插真行，证明 CHECK / 外键 / 冲突分支与运行时权限同时成立；
+--   * UPDATE 打真行（`WHERE id = … AND revision = 1`，与 store 的 CAS 形状一致）；
+--   * `SELECT … FOR UPDATE` 锁真行（speech_jobs 的终态提交）；
+--   * DELETE 真删探针行（release 按 (scope, key_hash)、purge 按过期）；
+--   * 最后整体 ROLLBACK：探针属主与全部探针行都不会留下。
+-- 行 id 用固定的探针 UUID（38a38a38-…，S38 专用前缀），不靠 `\gset` 回读；`\gset` 只用在
+-- 必然返回一行处（失败语句后的 `\gset` 会被跳过；**零行**结果反而会记一次 psql 错误，
+-- 所以真冲突的 claim 与所有 SELECT 一律不用 `\gset`）。
+\set ON_ERROR_STOP off
+BEGIN;
+
+-- 探针属主：以属主身份插（运行时对 users 只有列级 SELECT/INSERT，不在语音域授权面内）。
+INSERT INTO public.users (id)
+VALUES ('38a38a38-0000-4000-8000-000000000000'::uuid)
+ON CONFLICT (id) DO NOTHING;
+
+SET LOCAL ROLE gengyun_api_runtime;
+\set r28_probe_sp_role :ERROR
+
+-- [1] speech_jobs SELECT 12 列（store-pg.ts:460 getJob / :471 updateJob 读回）
+SAVEPOINT r28_probe_sp;
+SELECT id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+       state, deadline_at, created_at, updated_at, error_code
+  FROM public.speech_jobs
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_sp_job_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [2] speech_jobs INSERT 12 列 + RETURNING id（store-pg.ts:154-156）：真行，保留到段末
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.speech_jobs
+       (id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+        state, deadline_at, created_at, updated_at, error_code)
+VALUES ('38a38a38-0001-4000-8000-000000000001'::uuid, 1, 'transcription',
+        '38a38a38-0000-4000-8000-000000000000'::uuid,
+        '38a38a38-0002-4000-8000-000000000002'::uuid,
+        '38a38a38-0011-4000-8000-000000000011'::uuid, 1, 'queued',
+        now() + interval '10 minutes', now(), now(), NULL)
+RETURNING id \gset
+\set r28_probe_sp_job_ins :ERROR
+\if :r28_probe_sp_job_ins
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+\else
+RELEASE SAVEPOINT r28_probe_sp;
+\endif
+
+-- [3] speech_jobs UPDATE 真行（store-pg.ts:477-484：SET 5 列，WHERE id + revision）
+SAVEPOINT r28_probe_sp;
+UPDATE public.speech_jobs
+   SET revision = revision + 1, state = 'running', deadline_at = now() + interval '10 minutes',
+       updated_at = now(), error_code = NULL
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid
+   AND revision = 1
+RETURNING id \gset
+\set r28_probe_sp_job_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [4] speech_jobs SELECT … FOR UPDATE 真行（store-pg.ts:496-499 commitTerminal）
+SAVEPOINT r28_probe_sp;
+SELECT id FROM public.speech_jobs
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid
+   FOR UPDATE \gset
+\set r28_probe_sp_job_lock :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [5] speech_jobs 终态提交 UPDATE（store-pg.ts:517-523：SET 4 列 + revision+1，WHERE id + revision）
+SAVEPOINT r28_probe_sp;
+UPDATE public.speech_jobs
+   SET state = 'succeeded', error_code = NULL, revision = revision + 1, updated_at = now()
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid
+   AND revision = 1
+RETURNING id \gset
+\set r28_probe_sp_job_commit :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [6] transcriptions SELECT 13 列（store-pg.ts:541 getTranscription / :553 读回）
+SAVEPOINT r28_probe_sp;
+SELECT id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+       confirmed_text, confirmed_at, model_version, created_at, updated_at, deleted
+  FROM public.transcriptions
+ WHERE id = '38a38a38-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_sp_rc_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [7] transcriptions INSERT 13 列 + RETURNING id（store-pg.ts:158-160）：真行
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.transcriptions
+       (id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+        confirmed_text, confirmed_at, model_version, created_at, updated_at, deleted)
+VALUES ('38a38a38-0002-4000-8000-000000000002'::uuid, 1,
+        '38a38a38-0000-4000-8000-000000000000'::uuid,
+        '38a38a38-0011-4000-8000-000000000011'::uuid, 1,
+        'r28-s38-probe', '[]'::jsonb, NULL, NULL, 'r28-s38-probe', now(), now(), false)
+RETURNING id \gset
+\set r28_probe_sp_rc_ins :ERROR
+\if :r28_probe_sp_rc_ins
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+\else
+RELEASE SAVEPOINT r28_probe_sp;
+\endif
+
+-- [8] transcriptions UPDATE 真行（store-pg.ts:566-576：SET 8 列，WHERE id + revision）
+SAVEPOINT r28_probe_sp;
+UPDATE public.transcriptions
+   SET revision = revision + 1, raw_text = raw_text,
+       uncertain_spans = uncertain_spans, confirmed_text = 'r28-s38-probe-confirmed',
+       confirmed_at = now(), model_version = model_version, updated_at = now(), deleted = false
+ WHERE id = '38a38a38-0002-4000-8000-000000000002'::uuid
+   AND revision = 1
+RETURNING id \gset
+\set r28_probe_sp_rc_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [9] speech_idempotency SELECT 6 列（store-pg.ts:601-604 findIdempotent）
+SAVEPOINT r28_probe_sp;
+SELECT request_hash, payload, pending, expires_at
+  FROM public.speech_idempotency
+ WHERE scope = 'r28-s38-probe:POST:/speech/jobs'
+   AND key_hash = 'r28-s38-probe-key';
+\set r28_probe_sp_idem_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [10] speech_idempotency 占位 INSERT 6 列（store-pg.ts:627-631）：真行，保留到段末
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.speech_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s38-probe:POST:/speech/jobs', 'r28-s38-probe-key', 'r28-s38-probe-request',
+        '{"job_id":"38a38a38-0001-4000-8000-000000000001"}'::jsonb, true,
+        now() + interval '1 hour')
+ON CONFLICT (scope, key_hash) DO NOTHING
+RETURNING scope \gset
+\set r28_probe_sp_idem_seed :ERROR
+\if :r28_probe_sp_idem_seed
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+\else
+RELEASE SAVEPOINT r28_probe_sp;
+\endif
+
+-- [11] speech_idempotency 真冲突 claim（store-pg.ts:627-631：同键再插一次 ⇒ 真冲突分支）
+--      `RETURNING scope` 在冲突分支上仍要 SELECT 权；本语句零行返回，故**不加** `\gset`。
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.speech_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s38-probe:POST:/speech/jobs', 'r28-s38-probe-key', 'r28-s38-probe-request-2',
+        '{"job_id":"38a38a38-0001-4000-8000-000000000001"}'::jsonb, true,
+        now() + interval '1 hour')
+ON CONFLICT (scope, key_hash) DO NOTHING
+RETURNING scope;
+\set r28_probe_sp_idem_claim :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [12] speech_idempotency finalize（store-pg.ts:641-645：SET payload, pending）
+SAVEPOINT r28_probe_sp;
+UPDATE public.speech_idempotency
+   SET payload = '{"job_id":"38a38a38-0001-4000-8000-000000000001","state":"succeeded"}'::jsonb,
+       pending = false
+ WHERE scope = 'r28-s38-probe:POST:/speech/jobs'
+   AND key_hash = 'r28-s38-probe-key';
+\set r28_probe_sp_idem_final :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [13] speech_idempotency release（store-pg.ts:654：按 (scope, key_hash) 整行 DELETE）
+--      先种一条独立键的行，再真删它（不碰 [10] 的行，那是 [12] 的对象）。
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.speech_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s38-probe:POST:/speech/jobs', 'r28-s38-probe-release', 'r28-s38-probe-request-3',
+        '{}'::jsonb, true, now() + interval '1 hour')
+ON CONFLICT (scope, key_hash) DO NOTHING;
+\set r28_probe_sp_idem_seed_release :ERROR
+\if :r28_probe_sp_idem_seed_release
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+\else
+RELEASE SAVEPOINT r28_probe_sp;
+\endif
+
+SAVEPOINT r28_probe_sp;
+DELETE FROM public.speech_idempotency
+ WHERE scope = 'r28-s38-probe:POST:/speech/jobs'
+   AND key_hash = 'r28-s38-probe-release';
+\set r28_probe_sp_idem_release :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [14] speech_idempotency purge（store-pg.ts:660-662：按过期批量删 + RETURNING scope）
+--      种一条已过期的行 ⇒ 本事务里恰好删到一行，`\gset` 去噪。
+SAVEPOINT r28_probe_sp;
+INSERT INTO public.speech_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+VALUES ('r28-s38-probe:POST:/speech/jobs', 'r28-s38-probe-expired', 'r28-s38-probe-request-4',
+        '{}'::jsonb, false, now() - interval '1 hour')
+ON CONFLICT (scope, key_hash) DO NOTHING;
+\set r28_probe_sp_idem_seed_expired :ERROR
+\if :r28_probe_sp_idem_seed_expired
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+\else
+RELEASE SAVEPOINT r28_probe_sp;
+\endif
+
+SAVEPOINT r28_probe_sp;
+DELETE FROM public.speech_idempotency
+ WHERE expires_at <= now()
+RETURNING scope \gset
+\set r28_probe_sp_idem_purge :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+-- [15] 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须 42501（真行、真 WHERE）。
+SAVEPOINT r28_probe_sp;
+DELETE FROM public.speech_jobs
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_sp_job_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+SAVEPOINT r28_probe_sp;
+DELETE FROM public.transcriptions
+ WHERE id = '38a38a38-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_sp_rc_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_sp;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- R28-S38 探针结束 ----------------------------------------------------------
+
 -- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
 -- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
 -- runtime_domain_tables_classified 判红，而不是像 2026-10 之前那样一路 ok。
 -- R28-S33：整棵 checks 只求值**一次**，结果落进会话级临时表；判决行与 DO 块都从这张表读，
--- 不重跑 78 条断言，也不复制 checks 的定义。临时表随会话销毁，不建持久对象、不改任何权限。
+-- 不重跑全量断言，也不复制 checks 的定义。临时表随会话销毁，不建持久对象、不改任何权限。
 -- 同一会话里重复执行（人工 `\i` 两次）时先清掉上一次的临时表，否则 CREATE 会因重名报错、
 -- 被误读成断言判红；只在它确实存在时 DROP（pg_temp 限定），因此全绿读数不多出任何 NOTICE。
 DO $$
@@ -742,7 +972,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('conversation_answers',           'granted',          true),
     -- 迁移 0025 的 recognition_selections：与上面三行同一片授权（R28-S28 段 J），
     -- 不再标 forbidden —— 它是运行时真实写入的「选中结果」台账（store-pg.ts:192-194）。
-    ('recognition_selections',         'granted',          true)
+    ('recognition_selections',         'granted',          true),
+    -- 迁移 0026 的语音域三表（R28-S38 段 K）：0026 只建表、原先没有任何授段 ⇒ 运行时零权限、
+    -- 而 90-assert 也看不见（清单里没有它们）。这一片把授权与分类同时补上：三行一起进清单，
+    -- 第 47 条元断言才可能要求“每个 public 关系都必须被分类”。
+    -- transcriptions 不带 speech_ 前缀，所以第 47 条的正则要同时加 speech_ 与 transcriptions$。
+    ('speech_jobs',                    'granted',          true),
+    ('transcriptions',                 'granted',          true),
+    ('speech_idempotency',             'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -895,6 +1132,31 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['request_hash','payload','pending','expires_at'],
+     true),
+    -- R28-S38（迁移 0026）：语音域三表，列清单与 20-login-roles.sql 段 K 的 GRANT 是同一事实的
+    -- 两次写法（任一处漂移都会被下面的逐表断言抓住）。
+    -- speech_idempotency 的 SELECT 是**6 列**而不是 4 列：`WHERE scope/key_hash`、
+    -- claim 与 purge 的 `RETURNING scope` 都要 SELECT 权——实测只授 4 列时，
+    -- findIdempotent :601 与 claim :627 都 42501（S38 证据页的矩阵实验 A/B）。
+    ('speech_jobs',
+     ARRAY['id','revision','kind','owner_user_id','transcription_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['id','revision','kind','owner_user_id','transcription_id','media_id','media_revision',
+           'state','deadline_at','created_at','updated_at','error_code'],
+     ARRAY['revision','state','deadline_at','updated_at','error_code'],
+     false),
+    ('transcriptions',
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_text','uncertain_spans',
+           'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
+     ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_text','uncertain_spans',
+           'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
+     ARRAY['revision','raw_text','uncertain_spans','confirmed_text','confirmed_at','model_version',
+           'updated_at','deleted'],
+     false),
+    ('speech_idempotency',
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['payload','pending'],
      true)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -917,7 +1179,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- R28-S28（迁移 0025）：PG 没有列级 DELETE，而 store 有两条整行删除
     -- （services/api/src/recognitions/store-pg.ts:820 release、:830 purge），只能表级授予。
     -- 这是本片唯一新增的表级写授权（白名单 11 → 12 个三元组）。
-    ('public', 'recognition_idempotency', 'DELETE')
+    ('public', 'recognition_idempotency', 'DELETE'),
+    -- R28-S38（迁移 0026）：PG 没有列级 DELETE，而语音域幂等台账有两条整行删除
+    -- （services/api/src/speech/store-pg.ts:654 release、:660-662 purge），只能表级授予。
+    -- 这是本片唯一新增的表级写授权（白名单 12 → 13 个三元组）；speech_jobs / transcriptions
+    -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
+    ('public', 'speech_idempotency',    'DELETE')
   ),
   checks(label, ok, detail) AS (
 
@@ -1568,6 +1835,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   --     (a) required 的行必须存在；(b) 任何匹配运行时域命名的关系都必须在清单里；
   --     (c) 分类值只能是三种枚举之一（防拼写漂移）。
   --     新增一个域/一张表却既不授权、也不在清单里声明 forbidden ⇒ 这里判红。
+  --     R28-S38：正则补 `speech_` 与 `transcriptions$`——0026 的三张表必须被点名分类，
+  --     否则「建表不授权、断言也看不见」的旧坑会原样复发（transcriptions 不带 speech_ 前缀）。
   SELECT 'runtime_domain_tables_classified',
          NOT EXISTS (
            SELECT 1 FROM domain_manifest m
@@ -1579,7 +1848,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
              JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'public'
               AND c.relkind IN ('r','p','f')
-              AND c.relname ~ '^(messages$|community_|ocr_|recognition_|user_backup_copies$|deletion_|third_party_deletions$)'
+              AND c.relname ~ '^(messages$|community_|ocr_|recognition_|speech_|transcriptions$|user_backup_copies$|deletion_|third_party_deletions$)'
               AND NOT EXISTS (SELECT 1 FROM domain_manifest m WHERE m.tbl = c.relname)
          )
          AND NOT EXISTS (
@@ -1611,7 +1880,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '）运行时不得有任何表级或列级权限'
 
   UNION ALL
-  -- 49-58. R28-S24 逐表范围断言（十张表，数据驱动 expected 清单）：
+  -- 49-58. R28-S24 逐表范围断言（十张表起，数据驱动 expected 清单全量）：
   --   正向：清单里的列，SELECT/INSERT/UPDATE 必须都在；
   --   反向：清单外的列，任何列级权限（含 REFERENCES）都不许有；
   --   表级：INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER 一律不得有，
@@ -1794,7 +2063,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   UNION ALL
   -- 66. R28-S28 泛化反向控制（PUBLIC 面）：manifest 里所有 granted / granted_external 的表
   --     都不许在 relacl 或 attacl 里出现 grantee = 0。62 号是七表硬编码，本片不再加一份
-  --     硬编码，而是遍历清单：S24 十表、S26 七表与本片四表一并覆盖，以后新增域自动纳入。
+  --     硬编码，而是遍历清单：S24 十表、S26 七表、S28 四表与 S38 三表一并覆盖，
+  --     以后新增域自动纳入（新表只要进了清单，这条就替它查 PUBLIC 面）。
   SELECT 'public_no_privilege_domain_granted',
          NOT EXISTS (
            SELECT 1
@@ -1818,6 +2088,42 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                   )
          ),
          'manifest 里 granted / granted_external 的表对 PUBLIC 必须零权限；表级 relacl 与列级 attacl 两处都查（各授权段都 REVOKE ALL … FROM PUBLIC）'
+
+  UNION ALL
+  -- 67. R28-S38 真执行探针（写面）：语音域三表的十七种真实语句形状必须全部成功。
+  --     与 64 号同形（S28 识别域），差异只在列清单来自 speech/store-pg.ts。
+  --     要害在 speech_idempotency 的 SELECT 是**6 列**：`WHERE scope/key_hash` 与
+  --     claim / purge 的 `RETURNING scope` 都要 SELECT 权；只授 4 列时
+  --     findIdempotent :601 与 claim :627 会 42501。
+  SELECT 'runtime_speech_dml_exec',
+         :'r28_probe_sp_role' = 'false'
+         AND :'r28_probe_sp_job_sel' = 'false'
+         AND :'r28_probe_sp_job_ins' = 'false'
+         AND :'r28_probe_sp_job_upd' = 'false'
+         AND :'r28_probe_sp_job_lock' = 'false'
+         AND :'r28_probe_sp_job_commit' = 'false'
+         AND :'r28_probe_sp_rc_sel' = 'false'
+         AND :'r28_probe_sp_rc_ins' = 'false'
+         AND :'r28_probe_sp_rc_upd' = 'false'
+         AND :'r28_probe_sp_idem_sel' = 'false'
+         AND :'r28_probe_sp_idem_seed' = 'false'
+         AND :'r28_probe_sp_idem_claim' = 'false'
+         AND :'r28_probe_sp_idem_final' = 'false'
+         AND :'r28_probe_sp_idem_seed_release' = 'false'
+         AND :'r28_probe_sp_idem_release' = 'false'
+         AND :'r28_probe_sp_idem_seed_expired' = 'false'
+         AND :'r28_probe_sp_idem_purge' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，语音域三表的十七种真实语句形状必须全部成功：speech_jobs SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / SELECT … FOR UPDATE 真行 / 终态提交 UPDATE，transcriptions SELECT 13 列 / INSERT 13 列 / UPDATE 8 列，speech_idempotency SELECT 6 列 / 占位 INSERT / 真冲突 claim（ON CONFLICT DO NOTHING RETURNING scope）/ finalize 2 列 / release 与 purge 两条整行 DELETE；任一 42501 即失败'
+
+  UNION ALL
+  -- 68. R28-S38 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须恰好 42501。
+  --     这两表不授 DELETE（注销清理走 request_account_deletion() 的属主级联，
+  --     owner_user_id 都是 ON DELETE CASCADE）；表级 INSERT/UPDATE 不授这件事由
+  --     49-58 的 runtime_grants_* 逐表断言兜住（has_table_privilege 逐个 priv 比对）。
+  SELECT 'runtime_speech_forbidden_surface',
+         :'r28_probe_sp_job_del' = 'true'
+         AND :'r28_probe_sp_rc_del' = 'true',
+         'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 )
 
 SELECT label, ok, detail
@@ -1833,8 +2139,9 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：78 条断言全红时标签合计约 2.4K 字符（实测 sum(length(label)+2)=2370），
--- 正常不会截断；若未来断言数暴涨到上限，判决行里仍有**完整**明细可查。
+-- 上限 4000：83 条断言全红时标签合计约 2.5K 字符（2026-10-21 实测：总 83 条、
+-- sum(length(label)+2)=2523、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 判决行里仍有**完整**明细可查。
 DO $$
 DECLARE
   v_failed integer;

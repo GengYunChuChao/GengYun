@@ -1,14 +1,14 @@
-# R28-S39：把 `account-suspend-pg.mjs` 接进真库 CI（第 9 个受管脚本）
+# R28-S39：把 `account-suspend-pg.mjs` 接进真库 CI（第 10 个受管脚本）
 
 日期 2026-10-21。被测脚本 `tests/integration/account-suspend-pg.mjs`（612 LF / 34065 B / `sha256=fea5c274…`，即 R28-S15 修完 scram 自洽化后的形态，本片**未改它一个字**）。
-工作树 `E:\GengYunCommander\wt-r28-s39`，分支 `test/gy-r28-account-suspend-ci-wire`，基点 `32ce461`（main；上一片 S20 语音持久化已合入）。本片 **standalone**，不依赖任何在途 PR：初版曾按 `#349` head（`7b39a0b`）堆叠交付，因 `#349` 迟迟未合、main 已前进到 `32ce461`，指挥于 2026-10-21 在 main 上重建（`git reset --hard upstream/main` 后重做四处改动；原堆叠提交保留在本地引用 `s39-old-head`，未强推）。
+工作树 `E:\GengYunCommander\wt-r28-s39`，分支 `test/gy-r28-account-suspend-ci-wire`。本片 **standalone**，不依赖任何在途 PR：初版曾按 `#349` head（`7b39a0b`）堆叠交付，因 `#349` 迟迟未合、main 已前进到 `32ce461`，指挥于 2026-10-21 在 main 上重建（`git reset --hard upstream/main` 后重做四处改动；原堆叠提交保留在本地引用 `s39-old-head`，未强推）。**随后 `#349`（识别域接 CI）与 `#352`（语音域授权）相继合入 main（`e01dd67` / `4e93d7b`），本片合流 `upstream/main` 后把本步重排为第 10 条**（识别域占第 9 条），工作流与两个单测的读数均按合流后重取。
 集群：本轮自建一次性 PG 17.11 **scram** 集群（`127.0.0.1:55649`，`--auth=scram-sha-256`）。**本页每个读数都是本轮真跑**；日志在 `E:\GengYunCommander\.pg17\handoff\r28-s39-logs\`（一次性本地目录，未入库）。
 
 ## 0. 结论
 
 | 读数 | 接线前（`32ce461`） | 本片之后 |
 | --- | --- | --- |
-| `MANAGED_SCRIPTS` 条数 | 8 | **9**（`FROZEN_MANAGED_SCRIPTS` 同步 9，两份逐字一致；`REQUIRED_STEP_ORDER` 同步 9 项） |
+| `MANAGED_SCRIPTS` 条数 | 9（合流前基线 8） | **10**（`FROZEN_MANAGED_SCRIPTS` 同步 10，两份逐字一致；`REQUIRED_STEP_ORDER` 同步 10 项） |
 | `tests/unit/ci-real-pg-wiring.test.mjs` 前向① | 不适用（脚本不在受管清单里） | **绿**（脚本被 workflow 的 `run:` 真跑） |
 | 把新 step 临时删掉后同一条断言 | — | **红**，且只点名 `tests/integration/account-suspend-pg.mjs`（§5.1） |
 | 本机真跑（PG 17.11 + scram + 超级用户 owner，省略 `argv[3]`） | 从未在 CI 里跑过 | **exit 0，末行 `ALL PASS`，四臂 `[M]`/`[P]`/`[A–D]`/`[E–F]` 齐全**（§3.3） |
@@ -35,7 +35,7 @@ R28-S14 判定「不接线」的理由写在两处（本片都改掉了）：
 ```yaml
       # 账号停用/恢复域（I22 / R28-S39）：库名硬钉 `gengyun_suspend_test`，脚本按「**空库**」前提跑
       # （它自己 apply 0001–0017、再把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；非空库会在首个 `CREATE` 撞车 ⇒ 必红），
-      # 故与既有 8 步同形：`psql -c 'CREATE DATABASE …' && node <脚本>`。
+      # 故与既有 9 步同形：`psql -c 'CREATE DATABASE …' && node <脚本>`。
       # argv 只给 owner URL——省略 argv[3] 时脚本自建/改 `gengyun_api_runtime` 并用随机口令派生运行时 URL，
       # scram-sha-256 下自洽；旧版「口令割裂 ⇒ 28P01」的缺陷已由 R28-S15 修掉
       # （`docs/verification/gy-r28-account-suspend-scram-20261020.md`）。
@@ -54,13 +54,13 @@ R28-S14 判定「不接线」的理由写在两处（本片都改掉了）：
 三条设计点：
 
 1. **只给 `argv[2]`（owner URL），不给 `argv[3]`**——这正是 S15 修出来的自洽形态；给了 `argv[3]` 反而要求角色口令与 URL 逐字一致，是更脆的调用形态。
-2. **建库与跑脚本用 `&&` 串联**：建库失败不能滑过去变成「脚本 77 也算跑过」（与既有 8 步同形）。
+2. **建库与跑脚本用 `&&` 串联**：建库失败不能滑过去变成「脚本 77 也算跑过」（与既有 9 步同形）。
 3. **放最后一步**：脚本收尾会 `DROP` 它自建的角色，放末尾能把「角色残留」的影响面压到零（§4 另行证明即使不空也不炸）。
 
-### 2.2 `tests/unit/ci-real-pg-wiring.test.mjs`：登记进受管清单（+13/−4）
+### 2.2 `tests/unit/ci-real-pg-wiring.test.mjs`：登记进受管清单（合流后 vs main：+14/−5）
 
-- `MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` **各追加** `'tests/integration/account-suspend-pg.mjs'`（8 → 9，两份逐字一致）；`REQUIRED_STEP_ORDER` 同时追加第 9 项（另加 4 行注释说明「为什么必须排最后」）。
-- 头注释：删掉「R28-S14 的另两条候选……前者在 scram 认证下必 `28P01`」那段，改成「第 9 条是 R28-S39 接的（账号停用/恢复域 I22…）；`account-suspend-pg` 已由 R28-S39 接上（scram 缺陷由 R28-S15 修掉）；只剩 `backup-purge-pg` 不接，因为它要求在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群」。
+- `MANAGED_SCRIPTS` 与 `FROZEN_MANAGED_SCRIPTS` **各追加** `'tests/integration/account-suspend-pg.mjs'`（9 → 10，两份逐字一致）；`REQUIRED_STEP_ORDER` 同时追加第 10 项（另加 4 行注释说明「为什么必须排最后」，紧跟在第 9 项 `recognitions-pg` 之后）。
+- 头注释：合流后保留 `#349` 写的「第 9 条是 R28-S36 接的（识别域持久化／迁移 0025）」，把本片写成「第 10 条是 R28-S39 接的（账号停用/恢复域 I22…；scram 缺陷由 R28-S15 修掉）」，并把「R28-S14 的另一条候选」收成只剩 `backup-purge-pg` 不接（它要求在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群）。
 - **判据一条没动**：判据 ③ 的 job 作用域、判据 ④ 的 SHA 钉、判据 ⑤ 的吞红禁止全部原样；也没有放宽任何断言。
 
 ### 2.3 `tests/unit/ci-integration-chain-structure.test.mjs`：改 `account-suspend-pg` 的声明原因（+7/−12）
@@ -169,7 +169,7 @@ ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库
 
 ### 5.1 去掉新 step ⇒ 同一断言必红并点名它
 
-做法：`Copy-Item` 备份当前 workflow → `git checkout -- .github/workflows/real-pg-integration.yml`（回到 `32ce461`（main）的版本，`account-suspend-pg` 出现次数 **0**）→ 跑单文件。日志 `02-negative-control-workflow-step-removed.log`，**exit 1**，`tests 23 / pass 15 / fail 8`：
+做法：`Copy-Item` 备份当前 workflow → 用脚本删掉本步的**注释块 + `- run:` 行 + `env:` 块**（合流后位于 `line 170..185`；删后 `account-suspend-pg` 出现次数 **0**）→ 跑两个单测文件 → 从备份恢复。**exit 1**，`tests 23 / pass 15 / fail 8`，红的 8 条与合流前**完全同一组**：
 
 ```
 ✖ 前向①：两个受管真库脚本都被某个 workflow 的 `run:` 真跑
@@ -194,9 +194,8 @@ ALL PASS：迁移三连 / 最小权限 / A–E / 失败注入 全部取得真库
 ### 5.2 恢复后必绿（sha256 逐字节还原）
 
 ```
-sha256-before = 5B194C8E186F6C8676FF50A9B8B33327AD1908325216880DAF5BB20E53DC2430
-sha256-after  = 5B194C8E186F6C8676FF50A9B8B33327AD1908325216880DAF5BB20E53DC2430   (equal=True)
-git diff --stat -- .github/workflows/real-pg-integration.yml → 1 file changed, 16 insertions(+)
+sha256-after-restore = BAE195F1A8D47A65071D05174BA981183FE6F1D6F4A2C3A55478C971359621AF   (与备份逐字节相等)
+git diff --numstat upstream/main -- .github/workflows/real-pg-integration.yml → 16  0（只新增，不删既有行）
 ```
 
 日志 `03-restored-green.log`：`tests 23 / pass 23 / fail 0 / cancelled 0`，**exit 0**（重建后实测：`ci-real-pg-wiring.test.mjs` 16 条 + `ci-integration-chain-structure.test.mjs` 7 条）。
@@ -205,17 +204,17 @@ git diff --stat -- .github/workflows/real-pg-integration.yml → 1 file changed,
 
 | 项 | 读数 |
 | --- | --- |
-| 真 job 步数（`run`/`uses`） | 12（2 个 `uses` + 10 个 `run`） |
-| 新步位置 | 最后一步，`line 165`；倒数第二步是 OCR 域（`line 148`） |
+| 真 job 步数（`run`/`uses`） | 13（2 个 `uses` + 11 个 `run`） |
+| 新步位置 | 最后一步，`line 179`；上一步是识别域（`line 162`），再上一步是 OCR 域（`line 148`） |
 | 新步 `run` 行 | 与派单 §2.1 **逐字一致**（`true`） |
-| 新步 `env` | `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`，与既有 8 步逐字同形 |
+| 新步 `env` | `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`，与既有 9 步逐字同形 |
 | `continue-on-error` | 无 |
 | step 级 `if:` | 无 |
 | `\|\| true` | 无 |
 | `GY_ALLOW_SKIP` / `--allow-skip` | 无 / 无 |
 | `uses:` | 2 条，均 40 位小写 hex（`actions/checkout@11bd7190…`、`actions/setup-node@49933ea5…`） |
 | `services` 镜像 | `line 46: image: postgres:17.11`（未动） |
-| 全库搜索 `account-suspend-pg` | 只出现在本 workflow 的 `line 165`（即 `run:` 行，不是注释） |
+| 全库搜索 `account-suspend-pg` | 只出现在本 workflow 的 `line 179`（即 `run:` 行，不是注释） |
 
 ## 7. 门禁（全绿，逐条 exit code）
 
@@ -234,8 +233,8 @@ git diff --stat -- .github/workflows/real-pg-integration.yml → 1 file changed,
 ## 8. 未取得项（诚实清单）
 
 1. **没有在 GitHub runner 上跑过**：本片写手不持有 GitHub 凭据，`pushed=no`、无 run ID。CI 侧的真实读数要等 PR 起来之后由监工看。
-2. **没有验证 runner 自带的 `psql` 版本**：本步用到的只有 `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE …'`，与既有 8 步**完全同形**（那 8 步在 `ubuntu-24.04` 上已长期绿），所以风险被既有事实覆盖；但本片没有单独取证。
-3. **没有验证与 `#349` 的合并顺序**：两片改同一条 workflow 与同两个单测文件（`#349` 加识别域 step 与清单第 9 条，本片加停用域 step 与第 9 条）⇒ 先合的那片会占住「第 9 条」，后合的一片必须 rebase 并把两侧清单合并成 **10 条**。两片都是 standalone、互不依赖，冲突是**文本同区域**而非语义依赖；合并顺序本身不影响任何一方的判据（判据⑥按 `REQUIRED_STEP_ORDER` 比对，与「谁是第 9 条」无关）。
+2. **没有验证 runner 自带的 `psql` 版本**：本步用到的只有 `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE …'`，与既有 9 步**完全同形**（那 9 步在 `ubuntu-24.04` 上已长期绿），所以风险被既有事实覆盖；但本片没有单独取证。
+3. **与 `#349` 的合并顺序已实测**：`#349` 先合（`e01dd67`）后本片 PR 变 `DIRTY`，指挥在 `wt-r28-s39` 合流 `upstream/main` 时解了两处冲突（workflow 尾部、`ci-real-pg-wiring.test.mjs` 的四段），把本片重排为**第 10 条**、把「第 8 条注释里已失实的『workflow 里也是最后一步』」订正，并重取了本页全部读数（含 §5 负控制）。结论：冲突是**文本同区域**而非语义依赖，判据⑥按 `REQUIRED_STEP_ORDER` 逐项比对，与「谁是第 9 条」无关。若后续 `#354`（语音域接 CI）合流，它应排为第 11 条。
 4. **没有跑真实的「前序 step 序列」**：§4 用的是跨库依赖夹具（等效形状），不是把 `admin-accounts-read-pg` 真跑一遍再接着跑本脚本。差别在于真实前序会留下 `gengyun_admin_accounts_read_test` 库与其中的对象；夹具用 `gengyun_hold` 库等效占位。**结论（两种分支都 exit 0）不受影响**，但严格意义上不是端到端复现。
 5. **`[S]` 那一臂未重跑**：`90-assert-least-privilege.sql` 含 psql 元命令，只能 `psql -f` 单独跑；本片沿用 R28-S15 证据页 §7 的读数（脚本的 `[S]` 行如实打印其存在，不代跑、不计失败）。
 6. **未在 Linux 上跑过**：脚本是纯 ESM + `pg` 驱动，无平台分支；但本页所有读数都来自 Windows 本机。

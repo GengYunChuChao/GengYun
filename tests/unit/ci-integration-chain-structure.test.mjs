@@ -190,8 +190,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/recognitions-pg.mjs',
     reason: '需真实 PG 17.11（硬钉库名 `gengyun_recognitions_test`；未配置 `RECOGNITIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
-      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：**本片仅落地脚本，CI 接线留后续片**'
-      + '（既未接进 `test:integration:http` 这条无 PG 的回环链，也未新增/修改任何 workflow），故在此如实登记为未接线。',
+      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：R28-S36 已把它接进'
+      + ' `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job（`postgres:17.11` service）里'
+      + '一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_recognitions_test` 空库，脚本自己 apply「除 0025 外全部 → 0025」）；'
+      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/source-lifecycle-pg.mjs',

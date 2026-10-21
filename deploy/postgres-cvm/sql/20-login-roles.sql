@@ -797,3 +797,101 @@ GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
 \echo '20-login-roles.sql：已授予 public.recognition_jobs / public.recognition_records / public.recognition_selections / public.recognition_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 recognitions/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
 \echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
 \echo '20-login-roles.sql：recognition_jobs / recognition_records 的 UPDATE 是业务写权限（认领、终态提交、改选），同时满足各自的 SELECT … FOR UPDATE；recognition_selections 不授 UPDATE。'
+
+-- ----------------------------------------------------------------------------
+-- K. 语音域（迁移 0026）的列级授权（R28-S38）
+--
+-- 为什么写在这个文件、而不是 services/api/db/roles/*.sql：
+--   与 H / I / J 段同理——roles/*.sql 只在建组那一次跑，本文件每次 provision 都跑；
+--   语音域的授权必须按**部署顺序**生效，所以和运行时域一起写在这里：
+--   缺表硬守卫 → REVOKE ALL … FROM PUBLIC → 逐列 GRANT → 摘要。
+--
+-- 覆盖迁移 0026_speech_persistence.sql 的三张表（该迁移由 R28-S20 语音持久化切片引入；本片基线 fcb42e9 已含）：
+--   public.speech_jobs / public.transcriptions / public.speech_idempotency
+--
+-- 本段是补洞：0026 只建了表，没有任何授段 ⇒ 运行时对这三表**整表零权限**，
+-- store 一跑就是 42501（改前读数见 docs/verification/gy-r28-speech-grants-20261021.md）。
+-- 列清单不是抄的：逐列从 services/api/src/speech/store-pg.ts 的真实语句反推：
+--   * 列常量：JOB_COLUMNS :149-150（12 列）、RECORD_COLUMNS :151-152（13 列）
+--   * 写入：INSERT_JOB :154-156、INSERT_RECORD :158-160
+--   * 读回：getJob :460、updateJob 的 SELECT :471、commitTerminal 的 SELECT … FOR UPDATE :496-499、
+--           getTranscription :541、updateTranscription 的 SELECT :553
+--   * 更新：updateJob :477-484（SET revision, state, deadline_at, updated_at, error_code）、
+--           commitTerminal :517-523（SET state, error_code, revision, updated_at）、
+--           updateTranscription :566-576（SET revision, raw_text, uncertain_spans, confirmed_text,
+--           confirmed_at, model_version, updated_at, deleted）
+--   * 幂等台账：findIdempotent :601-604、claim :627-631（INSERT … ON CONFLICT (scope, key_hash)
+--           DO NOTHING RETURNING scope）、finalize :641-645（SET payload, pending）、
+--           release DELETE :654、purge DELETE :660-662（… RETURNING scope）
+--
+-- 四档粒度，逐条有据：
+--   ① 读面按列：三表都没有「多读一列能省一次往返」的场合，SELECT 只给真实语句引用到的列。
+--      speech_idempotency 的 SELECT 是**全部 6 列**（不是 4 列）：`WHERE scope = $1 AND key_hash = $2`
+--      的过滤列、两条 DELETE 的 WHERE、claim 的 `RETURNING scope`、purge 的 `RETURNING scope`
+--      都要 SELECT 权——实测只授 request_hash/payload/pending/expires_at 时，findIdempotent :601
+--      与 claim :627 直接 42501（S38 证据页的矩阵实验 A/B），所以按 6 列给。
+--   ② 写面按列：INSERT 给满（列常量即 INSERT 的列清单）；UPDATE 只给 SET 子句真实赋值的列。
+--   ③ `SELECT … FOR UPDATE` 只在 speech_jobs :497（commitTerminal）出现，而 speech_jobs 本来就有
+--      **真实**的 UPDATE 列 ⇒ 行锁由它们满足，**不**另授 I 段那种 `UPDATE (revision)` 行锁载体
+--      （性质不同，别照抄 I 段那句注释）。transcriptions 没有 FOR UPDATE。
+--   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 speech_idempotency（release / purge 是两条整行 DELETE）。
+--      speech_jobs / transcriptions **不授 DELETE**：账号注销走 public.request_account_deletion()
+--      （SECURITY DEFINER，以属主身份级联），两表的 owner_user_id 都是 ON DELETE CASCADE。
+--   ⛔ 一律不给 TRUNCATE / REFERENCES / TRIGGER；表级 INSERT / UPDATE 一律不给
+--      （speech_idempotency 的 DELETE 是本段唯一的表级写授权）。
+\echo '--- K. 语音域（迁移 0026）列级授权（R28-S38）---'
+
+-- 缺表硬前置（同 J 段）：0026 由 S20 引入、本片基线 fcb42e9 已含，三张表是硬依赖。顺序错（先跑本文件、后跑 migrate.ts）
+-- 时这里直接失败，不静默放过——否则又回到「表建了、运行时零授权」那个坑。
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['speech_idempotency', 'speech_jobs', 'transcriptions']) AS t(name)
+   WHERE to_regclass('public.' || t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少语音域表：%（迁移 0026 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.speech_jobs,
+                     public.transcriptions,
+                     public.speech_idempotency
+  FROM PUBLIC;
+
+-- speech_jobs（0026）：SELECT 12 列 / INSERT 12 列 / UPDATE 5 列；无 DELETE
+GRANT SELECT (id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+              state, deadline_at, created_at, updated_at, error_code)
+  ON public.speech_jobs TO gengyun_api_runtime;
+GRANT INSERT (id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+              state, deadline_at, created_at, updated_at, error_code)
+  ON public.speech_jobs TO gengyun_api_runtime;
+GRANT UPDATE (revision, state, deadline_at, updated_at, error_code)
+  ON public.speech_jobs TO gengyun_api_runtime;
+
+-- transcriptions（0026）：SELECT 13 列 / INSERT 13 列 / UPDATE 8 列；无 DELETE、无 FOR UPDATE
+GRANT SELECT (id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+              confirmed_text, confirmed_at, model_version, created_at, updated_at, deleted)
+  ON public.transcriptions TO gengyun_api_runtime;
+GRANT INSERT (id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+              confirmed_text, confirmed_at, model_version, created_at, updated_at, deleted)
+  ON public.transcriptions TO gengyun_api_runtime;
+GRANT UPDATE (revision, raw_text, uncertain_spans, confirmed_text, confirmed_at, model_version,
+              updated_at, deleted)
+  ON public.transcriptions TO gengyun_api_runtime;
+
+-- speech_idempotency（0026）：SELECT 6 列 / INSERT 6 列 / UPDATE 2 列 / 表级 DELETE
+-- （PG 无列级 DELETE；release :654 与 purge :660-662 都是整行 DELETE，故只能表级授予）
+GRANT SELECT (scope, key_hash, request_hash, payload, pending, expires_at)
+  ON public.speech_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope, key_hash, request_hash, payload, pending, expires_at)
+  ON public.speech_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (payload, pending)
+  ON public.speech_idempotency TO gengyun_api_runtime;
+GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
+
+\echo '20-login-roles.sql：已授予 public.speech_jobs / public.transcriptions / public.speech_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 speech/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：speech_jobs 的 UPDATE 是业务写权限（认领、终态提交），同时满足 commitTerminal 的 SELECT … FOR UPDATE；transcriptions 不授 FOR UPDATE，speech_idempotency 的 SELECT 是全部 6 列（WHERE 与 RETURNING 需要）。'
