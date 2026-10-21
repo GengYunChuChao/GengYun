@@ -84,6 +84,10 @@ function load(respond, file = 'miniprogram/utils/community-api.js', options = {}
     // 归因用**真实**实现（不在替身里另写一份码表）；只有「清会话」换成本用例的计数器，
     // 这样 401 清会话 / 403 不清会话的差异仍然被真实判定驱动、被本文件的计数器观测。
     attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+    // 页面收口用的两个**委托**判定同样取真实实现（`community-api` 的 `sessionFailure` / `forbidden`
+    // 只转发到这里，不在适配层另立码表）：闭集来自 `states.CODE_KIND`，不是本文件写的字面量。
+    isSessionLossCode: (code) => realAuth.isSessionLossCode(code),
+    isForbiddenCode: (code) => realAuth.isForbiddenCode(code),
     failureFor: (makeFailure, statusCode, payload) => {
       const a = realAuth.attribution(statusCode, payload);
       if (a.clearsSession) cleared.count += 1;
