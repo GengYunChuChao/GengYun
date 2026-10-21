@@ -282,7 +282,7 @@ fi
 #   而不是在逐条循环里报出 `…/roles/0` 这种怪文件名。
 if [[ ! -d "$ROLES_DIR" ]]; then
   fail "既有角色目录不存在：${ROLES_DIR}
-         本脚本按路径**复用**仓库里的 7 个角色 SQL（不复制、不重写）。请确认：
+         本脚本按路径**复用**仓库里的角色 SQL（默认 5 个；WITH_CLI_GROUPS=1 时 7 个；egress_ledger.sql 当前不被本脚本执行），不复制、不重写。请确认：
            ① 工作区完整（git 检出）；② 从仓库根执行；③ services/api/db/roles 未被移动。
          提示：${ROLES_DIR} 由脚本位置推导（deploy/postgres-cvm → 仓库根），若不是从仓库内运行会找不到。"
 fi
