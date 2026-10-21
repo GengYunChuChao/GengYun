@@ -153,3 +153,17 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           OCR_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_ocr_jobs_test
+      # 语音转写域（#351 / R28-S40）：库名硬钉 `gengyun_speech_test`，脚本同样要求**空库**
+      # （自己断言 `public` 下 0 张表），并用 `discoverMigrations()` 跑**全链迁移**（0001..0026，含本片的
+      # 0026_speech_persistence.sql）；随后做 0026 的 UP／ROLLBACK／REPLAY ⇒ 顺带守住迁移清单不变量。
+      # 连接串走 **env**（`SPEECH_PG_TEST_URL`）：未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过）。
+      # 位置排最后：它自建专用空库、自己 apply 迁移，不建组角色、也不复用别人的运行时角色 ⇒ 对前后无耦合。
+      # 本地取证（PG 17.11 + scram + 空库）：exit=0，`共 30 条 PASS`（含关连接重开逐字节仍在 + 子进程重启臂）。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_speech_test' && node tests/integration/speech-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          SPEECH_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_speech_test
