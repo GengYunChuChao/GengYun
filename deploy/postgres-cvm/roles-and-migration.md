@@ -268,7 +268,7 @@ API 会以 `gengyun_api_runtime` 连接成功（认证通过）但**每个查询
 | 指挥执行的内容 | 结果 |
 | --- | --- |
 | 仓库 `services/api/db/migrations/*.sql`（10 个，按序 `psql -f`） | ✅ **10/10 成功**（含 `0007` 自建 `pgcrypto` —— 印证"不要预装扩展"的判断） |
-| 仓库 `services/api/db/roles/*.sql`（7 个） | ✅ **7/7 成功** |
+| 仓库 `services/api/db/roles/*.sql`（7 个） | ✅ **7/7 成功**（R28-S57 注：当时为 7 个；现为 8 个角色文件 11 个 NOLOGIN 角色，见 §3.1） |
 | `sql/20-login-roles.sql`（**返修前**版本） | ❌ `exit=3`：`ERROR: role "gengyun_api_runtime" does not exist`（旧版第 74 行） |
 | `sql/90-assert-least-privilege.sql`（**返修前**版本） | ❌ 连带失败：`ERROR: role "gengyun_api_runtime" does not exist`（只跑了 3 行就中止） |
 
@@ -340,6 +340,10 @@ PASS 条件收紧为 **`exit=0` 且无 `ERROR:` 行**。
 **问题**：旧版把 `public.schema_migrations` 列为**硬前置**。但**15 项断言没有任何一项读取该台账**
 ——它们真正依赖的是 7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组。
 把台账列为硬前置属**过度约束**，会挡住"CVM 之外等价环境（用 `psql -f` 应用迁移、无 `migrate.ts`）"的复核。
+
+> **R28-S57 注（口径澄清，不改上面的数字）**：本句的「7 个」指**业务关系**（下表已逐项列全），不是角色文件数；
+> 「5 个既有 NOLOGIN 组」指运行时继承的那 5 个组。仓库 `services/api/db/roles/` 现为 **8 个角色文件、11 个 NOLOGIN 角色**（见 §3.1），
+> 本行的依赖分级口径不变。
 
 **处理**：
 

@@ -1,4 +1,4 @@
-// 静态守卫：角色文件的「处置清单」双向一致 + 计数一致 + 20-login 引用闭合 + 文档计数一致。
+// 静态守卫：角色文件的「处置清单」双向一致 + 计数一致 + 20-login 引用闭合 + 文档/活文档计数口径。
 //
 // 为什么需要它：`services/api/db/roles/` 下有 8 个 `.sql`、11 条建角色语句，但
 // `deploy/postgres-cvm/provision-db.sh` 的 `ROLE_GROUP_FILES` 只列 5 个基础文件
@@ -326,7 +326,7 @@ function auditDocCounts(docSources, expected) {
 }
 
 // ---------------------------------------------------------------------------
-// 真实读数（只读；下面的 10 条测试全部基于这些读数或其内存变异）
+// 真实读数（只读；下面的 11 条测试全部基于这些读数或其内存变异）
 // ---------------------------------------------------------------------------
 const roleSources = loadRoleSources();
 const actualFiles = roleSources.map((source) => source.file);
@@ -342,7 +342,7 @@ const runtimeGrants = parseGroupGrants(loginRolesText).filter((grant) => grant.g
 const docSources = COUNT_DOCS.map((doc) => ({ doc, text: readFileSync(resolve(root, doc), 'utf8') }));
 
 // ---------------------------------------------------------------------------
-// 五类断言
+// 六类断言（第 6 类：活文档注释的计数口径）
 // ---------------------------------------------------------------------------
 test('disposition ①②: roles/ 每个 .sql 恰好落在三类之一，三类里的文件名都真实存在', () => {
   const result = auditDispositionCoverage(DISPOSITION, actualFiles);
@@ -394,6 +394,21 @@ test('引用闭合: 20-login-roles.sql 授给运行时的组都在 roles/ 里有
 test('文档计数一致: README 与 roles-and-migration 的「N 个文件」「N 个 NOLOGIN 组/角色」等于实测', () => {
   const result = auditDocCounts(docSources, { files: EXPECTED_FILE_COUNT, roles: EXPECTED_ROLE_COUNT });
   assert.deepEqual(result.problems, [], `文档计数未通过：\n${result.problems.join('\n')}`);
+});
+
+test('活文档口径: provision-db.sh 与 20-login-roles.sql 不再出现「7 个角色/NOLOGIN」写法', () => {
+  // 词边界：前面不能是数字，避免误伤「17 个角色」这类真数字。
+  const STALE = /(?<![0-9])7\s*个\s*(?:角色|NOLOGIN)/;
+  assert.match('建 7 个 NOLOGIN 组', STALE, '口径守卫必须能抓到旧写法');
+  assert.match('沿用 7 个角色 SQL', STALE, '口径守卫必须能抓到旧写法');
+  assert.doesNotMatch('共 17 个角色', STALE, '口径守卫不得误伤 17 个角色');
+  for (const [relative, text] of [
+    [PROVISION_SCRIPT, provisionText],
+    [LOGIN_ROLES_SQL, loginRolesText],
+  ]) {
+    const hit = text.match(STALE);
+    assert.equal(hit, null, `${relative} 仍出现「7 个角色/NOLOGIN」口径：${hit?.[0] ?? ''}`);
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # R28-S57 证据页：角色文件的处置清单守卫与三处过期计数订正
 
-> **交付物**：`tests/unit/roles-file-disposition.test.mjs`（10 条测试 = 5 类断言 + 5 条内存负控制）＋
-> 两个部署文档的三处计数订正 ＋ 本页。
+> **交付物**：`tests/unit/roles-file-disposition.test.mjs`（11 条测试 = 6 类断言 + 5 条内存负控制）＋
+> 两个部署文档的三处计数订正 ＋ 两个活文档注释的计数口径订正 ＋ 两页历史证据的勘误节 ＋ 本页。
 >
 > **一句话问题**：`services/api/db/roles/` 有 **8 个文件、11 条 `CREATE ROLE`**，但
 > `deploy/postgres-cvm/provision-db.sh` 的 `ROLE_GROUP_FILES` 只会执行其中 **7 个**（默认 5 个 + `--with-cli-groups` 2 个），
@@ -146,7 +146,7 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 再往 `roles/` 扔一个文件，脚本不跑、文档不提、测试不红——仍是本片要修的那种漂移。
 三类的语义是**穷尽且互斥**：执行（默认）／执行（可选）／不执行（必须写理由）。
 
-## 3 守卫测试：五类断言 + 五条负控制
+## 3 守卫测试：六类断言 + 五条负控制
 
 `tests/unit/roles-file-disposition.test.mjs`（只读文件系统，对工作区零写入；不连库、不执行 SQL）。
 
@@ -161,7 +161,7 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 | `parseGroupGrants(loginSqlText)` | SQL 文本 | `[{line, role, grantee}]`（只认整行 `GRANT <组> TO <角色>;`） |
 | `parseDocCountClaims(docText)` | 文档文本 | `{fileClaims, roleClaims}`（带行号与原文；只收含 `db/roles` 或「角色文件」的行） |
 
-### 3.2 五类断言（含派单 §2.1 的 ①②③ 与 §2.2 的 ④）
+### 3.2 六类断言（含派单 §2.1 的 ①②③、§2.2 的 ④，以及第二提交追加的第 6 类：活文档口径）
 
 | # | 断言 | 判据 | 红点 |
 | --- | --- | --- | --- |
@@ -171,6 +171,7 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 | 2 | 两个具名常量 | 文件数 == 8、`CREATE ROLE` 条数 == 11、角色名不重复 | `文件数 N ≠ 8…`／`条数 M ≠ 11`／`角色名重复：…` |
 | 3 | 引用闭合 | `GRANT gengyun_<x> TO gengyun_api_runtime;` 的组 ⊆ 11 个 `CREATE ROLE` 角色 | `20-login-roles.sql:N 授权引用 X，但 … 里没有它（悬空引用）` |
 | 4 | 文档计数 | 两个文档里「N 个文件」== 8、「N 个 NOLOGIN 组/角色」== 11；**解析不到计数句同样判红** | `README.md:440 写「7 个文件」，实测 8 个：…`／`解析不到…（删掉句子不能当通过）` |
+| 5 | 活文档口径（第二提交） | `provision-db.sh` 与 `20-login-roles.sql` 的注释里不得再出现「7 个角色」／「7 个 NOLOGIN」；正则带数字边界 `(?<![0-9])7\s*个\s*(?:角色\|NOLOGIN)`，不误伤「17 个角色」 | `… 仍出现「7 个角色/NOLOGIN」口径：7 个 NOLOGIN` |
 
 **断言 1③ 为什么比"组名集合相等"更强**：比对的是 `组:文件` **配对**。只比组名的话，
 「`gengyun_preview_reader` 配错成 `profile_runtime.sql`」这种错法照样绿——脚本会把错的文件当该组执行。
@@ -183,6 +184,10 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 **断言 4 为什么限定在角色文件相关的行**：README 里还有别的「N 个文件」读数（例如工具清单），
 全文抓会把无关数字误判成角色计数。限定 `db/roles` / 「角色文件」后，一旦有人删掉计数句，
 "解析不到"分支会红——删句子绕不过去。
+
+**断言 5（第二提交追加）为什么用数字边界**：`(?<![0-9])` 保证「17 个角色」不会被误当成「7 个角色」；
+守卫同时覆盖「7 个角色」与「7 个 NOLOGIN」两种旧写法（`20-login-roles.sql` 的旧句是「建 7 个 NOLOGIN 组」，
+只查「7 个角色」会漏）。测试内先用两个假串自检「能抓旧写法、不误伤 17 个」，再扫两个真实文件。
 
 ### 3.3 五条负控制（内存夹具，⛔ 不改仓库文件）
 
@@ -215,9 +220,13 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
   ℹ pass 8 / fail 2        （另一条红是负控制 ⑤ 的前置：README 里已无「8 个文件」可改）
 ```
 
-**改后**：`tests 10 / pass 10 / fail 0`（§5.1 门禁 ① 的原始读数）。
+**改后**：`tests 10 / pass 10 / fail 0`（**第一提交时**的门禁 ① 读数；第二提交后为 `11/11`，见 §5.1）。
 这组读数说明断言 4 不只是"夹具里能红"：它在**改前的真实仓库**上就是红的，
 在**改后**的真实仓库上是绿的。
+
+**第二提交（新增第 6 类断言）后**：`tests 11 / pass 11 / fail 0`；与 `roles-bootstrap-idempotent`
+同跑 `15/15`。第 6 类断言在原两个文件上的取值：改前命中 `provision-db.sh:285` 的「7 个角色 SQL」
+与 `20-login-roles.sql:35` 的「7 个 NOLOGIN 组」，改后两个文件都是 **0 命中**。
 
 ### 3.5 三条"防恒真"设计（为什么它不会永远绿）
 
@@ -314,8 +323,8 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 
 | # | 命令 | 退出码 | 读数 |
 | --- | --- | --- | --- |
-| ① | `node --test --test-concurrency=1 tests/unit/roles-file-disposition.test.mjs` | 0 | `tests 10 / pass 10 / fail 0`（5 类断言 + 5 条负控制） |
-| ② | ① 与 `tests/unit/roles-bootstrap-idempotent.test.mjs` 同跑 | 0 | 见 §5.3 |
+| ① | `node --test --test-concurrency=1 tests/unit/roles-file-disposition.test.mjs` | 0 | `tests 11 / pass 11 / fail 0`（6 类断言 + 5 条负控制；第二提交后复跑） |
+| ② | ① 与 `tests/unit/roles-bootstrap-idempotent.test.mjs` 同跑 | 0 | `tests 15 / pass 15 / fail 0`（见 §5.3） |
 | ③ | `npm run lint` | 0 | `tsc --noEmit` ×2 + 卫生扫描通过 |
 | ④ | `npm run test:docs` | 0 | `validate_development_docs.py` + `verify-research-records.mjs` 通过 |
 | ⑤ | `node tools/verify-release-materials.mjs` | 0 | 见 §5.3 |
@@ -342,10 +351,10 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 
 ```text
 $ node --test --test-concurrency=1 tests/unit/roles-file-disposition.test.mjs tests/unit/roles-bootstrap-idempotent.test.mjs
-✔ … disposition ①② / ③ / 计数一致 / 引用闭合 / 文档计数一致
+✔ … disposition ①② / ③ / 计数一致 / 引用闭合 / 文档计数一致 / 活文档口径
 ✔ … 负控制 ① ② ③ ④ ⑤
 ✔ …（roles-bootstrap-idempotent 的 4 条）
-ℹ tests 14 / pass 14 / fail 0
+ℹ tests 15 / pass 15 / fail 0
 ```
 
 **③ lint**：
@@ -417,20 +426,25 @@ ERROR: gy-r28-roles-file-disposition-20261021.md:393: inconsistent table
 | 部署形态下 `OBJECT_UNAVAILABLE` 的**运行期**观测 | **未取得** | 同上（推演见 §4.3，判据全部来自源码常量与静态读数，不是运行时观测） |
 | `egress_ledger` 授权决策（要不要接进部署链） | **未裁定** | 属产品/安全裁定（§4.4） |
 
-### 6.2 残留的过期计数（**本片无权限改，如实登记**）
+### 6.2 第一提交时登记的残留（第二提交已按 §9 处置）
 
-| 位置 | 残留原文 | 为什么本片不动 |
+下表是**第一提交时**的状态与不动理由；第二提交经指挥授权，按 §9 逐条处置：两处活文档注释
+直接订正（只动注释，脚本逻辑/SQL 语句 0 行），历史证据页只在末尾加勘误节、原文一字不动，
+`roles-and-migration.md:271` 属历史跑数，只加注不改数字。
+
+| 位置 | 残留原文 | 第一提交时为什么不动 |
 | --- | --- | --- |
-| `deploy/postgres-cvm/provision-db.sh:285` | `本脚本按路径**复用**仓库里的 7 个角色 SQL…` | 派单 ⛔ 只读脚本 |
-| `deploy/postgres-cvm/sql/20-login-roles.sql:35` | ``…`services/api/db/roles/*.sql` 建 7 个 NOLOGIN 组 ⇒ 需 **CREATEROLE**…`` | 派单 ⛔ 只读 SQL |
-| `deploy/postgres-cvm/evidence/local-self-check.md:873` | ``\| `provision-db.sh`（角色循环，7 个文件） \| …`` | 派单 ⛔ 除三处外不动其它文档 |
-| `deploy/postgres-cvm/roles-and-migration.md:271` | ``\| 仓库 `services/api/db/roles/*.sql`（7 个） \| ✅ **7/7 成功** \|`` | **历史跑数记录**（§6.1 指挥返修前的真跑），改它等于改历史；且不在派单三处之内 |
-| `deploy/postgres-cvm/evidence/local-self-check.md:363` | ``\| 仓库 `services/api/db/roles/*.sql`（7 个） \| ✅ **7/7 全部成功** \|`` | 同上（历史记录） |
-| `docs/verification/gy-r28-deploy-sql-gate-20261021.md:62` | ``--with-cli-groups` 才追加的 **3 组**（`provision-db.sh:272-275`：`egress_ledger`／`source_operator`／`staging_importer`）**不在 deploy 链里**`` | 另一片（R28 deploy-sql-gate）的证据页；不在本片三处之内，且"3 组"是该片当时的读数 |
+| `deploy/postgres-cvm/provision-db.sh:285` | `本脚本按路径**复用**仓库里的 7 个角色 SQL…` | 派单 ⛔ 只读脚本（第二提交授权只改注释，见 §9 第 1 条） |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:35` | ``…`services/api/db/roles/*.sql` 建 7 个 NOLOGIN 组 ⇒ 需 **CREATEROLE**…`` | 派单 ⛔ 只读 SQL（第二提交授权只改注释，见 §9 第 2 条） |
+| `deploy/postgres-cvm/evidence/local-self-check.md:873` | ``\| `provision-db.sh`（角色循环，7 个文件） \| …`` | 历史证据页（第二提交加勘误，见 §9 第 5 条） |
+| `deploy/postgres-cvm/roles-and-migration.md:271` | ``\| 仓库 `services/api/db/roles/*.sql`（7 个） \| ✅ **7/7 成功** \|`` | **历史跑数记录**（指挥返修前的真跑），改它等于改历史（第二提交只加注，见 §9 第 3 条） |
+| `deploy/postgres-cvm/evidence/local-self-check.md:363` | ``\| 仓库 `services/api/db/roles/*.sql`（7 个） \| ✅ **7/7 全部成功** \|`` | 同上（第二提交加勘误，见 §9 第 5 条） |
+| `docs/verification/gy-r28-deploy-sql-gate-20261021.md:62` | ``--with-cli-groups` 才追加的 **3 组**（`provision-db.sh:272-275`：`egress_ledger`／`source_operator`／`staging_importer`）**不在 deploy 链里**`` | 另一片（R28 deploy-sql-gate）的证据页（第二提交加勘误，见 §9 第 6 条） |
 
-前三条是**当前事实的过期表述**（"7 个角色 SQL"／"建 7 个 NOLOGIN 组"／"7 个文件"），
-后三条是**历史跑数记录**或**别片的读数**。本片只订正派单指定的三处；上面这些需要在
-后续切片（或由有权限的写手）一并处理——本页把它们钉在这里，避免"看起来已经全干净了"。
+第一提交时：前三条是**当前事实的过期表述**（"7 个角色 SQL"／"建 7 个 NOLOGIN 组"／"7 个文件"），
+后三条是**历史跑数记录**或**别片的读数**；本片当时只订正派单指定的三处，其余钉在这里。
+第二提交（指挥授权）已按 §9 处置：两条活文档注释直接订正，历史跑数只加注、历史证据页只加勘误节，
+原文读数全部保留。
 
 ### 6.3 偏差
 
@@ -447,11 +461,33 @@ ERROR: gy-r28-roles-file-disposition-20261021.md:393: inconsistent table
 
 | 红线 | 本片实际改动 | 是否触碰 |
 | --- | --- | --- |
-| ⛔ 不改 `provision-db.sh`／`20-login-roles.sql`／`services/api/db/roles/**` | 只**读**（`git grep` / `node` 解析） | 未触碰 |
+| ⛔ 不改 `provision-db.sh`／`20-login-roles.sql`／`services/api/db/roles/**` | 第一提交只**读**；**第二提交经指挥授权**只改两处**注释文本**（`provision-db.sh:285`、`20-login-roles.sql:35`），脚本逻辑/`GRANT` 语句 0 行改动 | 触碰（授权范围内，仅注释，见 §9 第 1/2 条） |
 | ⛔ 不改 `services/**`、`apps/**`、`packages/**`、`tests/integration/**`、`.github/**` | 未改 | 未触碰 |
-| ⛔ 除三处外不动其它文档 | 只改 `README.md:440`、`roles-and-migration.md:14`、`:103`（+ 本页新增） | 未超范围 |
-| ⛔ 不放宽既有断言 | `roles-bootstrap-idempotent.test.mjs` 一字未动；新测试只新增 | 未放宽 |
-| ⛔ 不 push／不建 PR／不改 `git config` | 单次提交用 `git -c user.name=… -c user.email=…` | 未触碰 |
-| 提交消息用 **node** 写 UTF-8 无 BOM | `.pg17/commit-msg-s57.txt` 由 `node` 写 | 见 §5.1⑦ 提交后复核 |
+| ⛔ 除三处外不动其它文档 | 第一提交只改 `README.md:440`、`roles-and-migration.md:14`、`:103`（+ 本页新增）；第二提交（授权）改 `roles-and-migration.md:271`／`:341`（加注）与两页历史证据（**只在末尾加勘误节，原文不动**） | 未超授权范围 |
+| ⛔ 不放宽既有断言 | `roles-bootstrap-idempotent.test.mjs` 一字未动；新测试只**新增**第 6 类断言（收紧） | 未放宽 |
+| ⛔ 不 push／不建 PR／不改 `git config` | 两次提交都用 `git -c user.name=… -c user.email=…` 单次覆盖；PR #368 与 push 均由指挥完成 | 未触碰 |
+| 提交消息用 **node** 写 UTF-8 无 BOM | `.pg17/commit-msg-s57.txt`（第一提交）与第二提交的消息文件均由 `node` 写 | 见 §5.1⑦ 提交后复核 |
+
+## 8 第二提交（指挥授权）：只改口径，不改历史
+
+第二提交由指挥在 PR #368 复核后授权，目标是处置 §6.2 登记的残留。口径：
+
+- **活文档/代码注释**：直接订正为今天的事实；
+- **历史跑数与历史证据页**：只加勘误/加注，**原文一字不动**（含引用旧日志的行）；
+- **语义需先读清的**（`roles-and-migration.md:341` 的「7 个」）：先判定所指，再决定是否改数。
+
+## 9 残留计数处置（第二提交）
+
+第 1–2 条是活文档/代码注释（直接订正）；第 3–6 条是历史跑数与历史证据页（只加勘误/加注，原文不动）；第 7 条是断言收紧。
+
+1. **`provision-db.sh:285`（活文档，只改文本）**：改为「本脚本按路径**复用**仓库里的角色 SQL（默认 5 个；WITH_CLI_GROUPS=1 时 7 个；egress_ledger.sql 当前不被本脚本执行），不复制、不重写。请确认：」。只动这一行双引号字符串；脚本逻辑与 `--plan` 分支未改（`bash -n` 通过）。
+2. **`20-login-roles.sql:35`（活文档，只改注释）**：改为两行注释——「`services/api/db/roles/*.sql` 建 8 个角色文件、11 个 NOLOGIN 角色（组）⇒ 需 **CREATEROLE**（非超级用户亦可）；**本文件只授其中 5 个组**（C 段）；`egress_ledger.sql` 当前不被任何部署脚本执行，故 `gengyun_egress_ledger` 不在本文件的授权面内。」`GRANT`/`REVOKE` 0 行改动。
+3. **`roles-and-migration.md:271`（历史跑数）**：先判定语义——该行在 §6.1「指挥**返修前**跑出的结果」表内 ⇒ 历史读数，**数字不动**；行末加「（R28-S57 注：当时为 7 个；现为 8 个角色文件 11 个 NOLOGIN 角色，见 §3.1）」。
+4. **`roles-and-migration.md:341` 与 `local-self-check.md:451`（语义澄清）**：读清后「7 个」指**业务关系**（`users`／`sessions`／`admin_accounts`／`admin_scopes`／`idempotency_keys`／`catalog_read.home_species`／`catalog_read.current_knowledge`），不是角色文件数；「5 个既有 NOLOGIN 组」是运行时继承的 5 个组，今天仍是 5 个。故两处数字不动，各加一条「口径澄清」注（含今天读数「8 个角色文件、11 个 NOLOGIN 角色」）。
+5. **`local-self-check.md`（历史证据）**：`:363`（7/7 跑数）、`:873`（角色循环 7 个文件）、`:901`（当时 `--plan` 原文）三处**原文一字不动**；文件末尾加「## 勘误（R28-S57，2026-10-21）」，4 行表格逐条写「原文位置/今天的事实/影响」，并回链本节断言名。
+6. **`gy-r28-deploy-sql-gate-20261021.md`（别片历史证据）**：`:62` 原文「才追加的 **3 组**（`egress_ledger`／`source_operator`／`staging_importer`）」——事实是 **2 组**（`source_operator`、`staging_importer`），`egress_ledger.sql` 不在 `ROLE_GROUP_FILES`、部署路径从不执行；`--with-cli-groups` 两组仍不在本 job 的 apply 列表，该结论不变。只在文件末尾加勘误节（另澄清 `:58`／`:119` 的「5 组」仍成立）。
+7. **测试收紧（`tests/unit/roles-file-disposition.test.mjs`）**：新增第 6 类断言「活文档口径」——两个活文档里不得再出现「7 个角色」／「7 个 NOLOGIN」，正则 `(?<![0-9])7\s*个\s*(?:角色|NOLOGIN)`（数字边界，避免误伤「17 个」）；测试数 10 → 11，负控制仍 5 条。
+
+第二提交的读数：`tests 11 / pass 11 / fail 0`；与 `roles-bootstrap-idempotent` 同跑 `15/15`；七门禁全 exit 0（命令与 §5.1 相同，提交后复跑）。
 
 **本页不是验收**：它是静态守卫 + 文档订正的证据；部署、云端、运行期均未参与。
