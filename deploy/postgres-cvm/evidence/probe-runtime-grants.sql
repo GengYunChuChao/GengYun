@@ -533,4 +533,79 @@ RESET ROLE;
 
 \echo '-- [6] 识别域探针结束（正向行成功即无输出；上面四条禁止面各应有一行 ERROR: 42501 …）'
 
+-- ---------------------------------------------------------------------------
+-- 7) R28-S38 语音域（迁移 0026）三表的零行探针
+--    改前（fcb42e9）：0026 只建了表、没有任何授段，运行时对这三表整表零权限，
+--    下面每条正向语句都会 42501；改后（段 K）：正向语句必须逐条通过，末尾「禁止面」两条必须仍然 42501。
+--    ⛔ 正向语句全部零行：SELECT … WHERE false / INSERT … SELECT … WHERE false /
+--       UPDATE … WHERE false / DELETE … WHERE false。
+--       真行探针（0026 的 CHECK、owner_user_id 外键、真冲突的 ON CONFLICT DO NOTHING）在
+--       90-assert 的 R28-S38 段里，这里只回答「运行时身份下这些形状能不能跑」，不往库里写任何一行。
+--    注：speech_idempotency 的 SELECT 是全部 6 列——`WHERE scope/key_hash` 与 `RETURNING scope`
+--       都要 SELECT 权，实测只授 4 列会在 findIdempotent 与 claim 上 42501。
+-- ---------------------------------------------------------------------------
+SET ROLE gengyun_api_runtime;
+
+\echo '-- [7] 语音域的零行探针（R28-S38，迁移 0026）'
+
+\echo '-- [speech_jobs] SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / FOR UPDATE（无 DELETE：只由注销级联）'
+SELECT id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+       state, deadline_at, created_at, updated_at, error_code
+  FROM public.speech_jobs WHERE false;
+INSERT INTO public.speech_jobs (id, revision, kind, owner_user_id, transcription_id,
+                                media_id, media_revision, state, deadline_at,
+                                created_at, updated_at, error_code)
+SELECT gen_random_uuid(), 1, 'transcription', gen_random_uuid(), gen_random_uuid(),
+       gen_random_uuid(), 1, 'queued', now(), now(), now(), NULL WHERE false
+RETURNING id;
+UPDATE public.speech_jobs
+   SET revision = revision + 1, state = 'succeeded', deadline_at = deadline_at,
+       updated_at = now(), error_code = NULL
+ WHERE false AND revision = 1
+RETURNING id;
+SELECT id FROM public.speech_jobs WHERE false FOR UPDATE;
+
+\echo '-- [transcriptions] SELECT 13 列 / INSERT 13 列 / UPDATE 8 列（无 DELETE、无 FOR UPDATE）'
+SELECT id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+       confirmed_text, confirmed_at, model_version, created_at, updated_at, deleted
+  FROM public.transcriptions WHERE false;
+INSERT INTO public.transcriptions (id, revision, owner_user_id, media_id, media_revision,
+                                   raw_text, uncertain_spans, confirmed_text, confirmed_at,
+                                   model_version, created_at, updated_at, deleted)
+SELECT gen_random_uuid(), 1, gen_random_uuid(), gen_random_uuid(), 1,
+       'probe', '[]'::jsonb, NULL, NULL, 'probe', now(), now(), false WHERE false
+RETURNING id;
+UPDATE public.transcriptions
+   SET revision = revision + 1, raw_text = raw_text, uncertain_spans = uncertain_spans,
+       confirmed_text = NULL, confirmed_at = NULL, model_version = model_version,
+       updated_at = now(), deleted = false
+ WHERE false AND revision = 1
+RETURNING id;
+
+\echo '-- [speech_idempotency] SELECT 6 列 / 占位 INSERT 6 列 / ON CONFLICT DO NOTHING / finalize UPDATE 2 列 / release 与 purge 两条 DELETE'
+SELECT scope, key_hash, request_hash, payload, pending, expires_at
+  FROM public.speech_idempotency WHERE false;
+INSERT INTO public.speech_idempotency (scope, key_hash, request_hash, payload, pending, expires_at)
+SELECT 'probe', 'probe', 'probe', '{}'::jsonb, true, now() WHERE false
+ON CONFLICT (scope, key_hash) DO NOTHING
+RETURNING scope;
+UPDATE public.speech_idempotency
+   SET payload = payload, pending = false
+ WHERE false AND pending
+RETURNING scope;
+DELETE FROM public.speech_idempotency
+ WHERE false AND scope = 'probe' AND key_hash = 'probe';
+DELETE FROM public.speech_idempotency
+ WHERE false AND expires_at <= now()
+RETURNING scope;
+
+\echo '-- 以下是禁止面：speech_jobs 与 transcriptions 的 DELETE 必须 42501'
+\echo '--   （DELETE 只授 speech_idempotency；这两表只由 request_account_deletion() 以属主身份级联）'
+DELETE FROM public.speech_jobs WHERE false RETURNING id;
+DELETE FROM public.transcriptions WHERE false RETURNING id;
+
+RESET ROLE;
+
+\echo '-- [7] 语音域探针结束（正向行成功即无输出；上面两条禁止面各应有一行 ERROR: 42501 …）'
+
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'
