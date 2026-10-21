@@ -11,7 +11,7 @@
 
 | 依据 | 位置 | 本交付的处理 |
 | --- | --- | --- |
-| 10 个 NOLOGIN 组的权威定义 | `services/api/db/roles/*.sql` | **原样执行**，不复制、不重写。角色已存在则跳过 |
+| 11 个 NOLOGIN 组的权威定义 | `services/api/db/roles/*.sql` | **原样复用**（`provision-db.sh` 按 `ROLE_GROUP_FILES` 执行其中 5 个、`WITH_CLI_GROUPS=1` 时 7 个；`egress_ledger.sql` 未被任何部署脚本执行），不复制、不重写。角色已存在则跳过 |
 | 迁移运行器与幂等语义 | `services/api/src/db/migrate.ts` | **原样调用**，不修改 |
 | 角色引导是"迁移后一次性管理员操作" | `docs/verification/database-run-handoff.md`（第 53 行） | 作为本页顺序的依据 |
 | 运行时刻的最小权限 LOGIN 组合方式 | `tools/local-dev/database.mjs`、`tools/local-dev/profile-bootstrap.mjs` | 按同一属性集与同一成员链约束复刻到 CVM（换环境前缀） |
@@ -100,7 +100,7 @@
 | `install-postgres.sh`：装包、`initdb -U gengyun_cvm_owner`、写 `pg_hba`/`conf.d`、systemd 单元 | **系统层 root**（不是数据库权限） | 否（是 OS 权限问题） |
 | 建业务库 `createdb -O gengyun_cvm_owner gengyun` | **`CREATEDB`**（脚本由 OS 用户 `postgres` 经 peer/`pg_ident` 执行） | 否（也可由具备 `CREATEDB` 的角色执行） |
 | 迁移 `0001–0010`：`CREATE SCHEMA`（`knowledge_staging`/`catalog_read`/`catalog_ops`/`staging_intake`）、在自有 schema 内建表/视图/策略、`CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake` | `CREATE SCHEMA` 需**该库的 `CREATE`**；建表/视图需 **schema 属主**；**trusted** 扩展需**该库的 `CREATE`** | **否 —— 数据库属主（非超级用户）即可完成全部 10 个迁移** |
-| `services/api/db/roles/*.sql`：建 7 个 NOLOGIN 组 | **`CREATEROLE`** | 否（非超级用户亦可；PG 16+ 起创建者自动获得新角色的 `ADMIN OPTION`） |
+| `services/api/db/roles/*.sql`：建 8 个角色文件、11 个 NOLOGIN 角色（其中 5 个默认执行，`WITH_CLI_GROUPS=1` 时 7 个） | **`CREATEROLE`** | 否（非超级用户亦可；PG 16+ 起创建者自动获得新角色的 `ADMIN OPTION`） |
 | `sql/20-login-roles.sql` A/B 段：`CREATE ROLE` / `ALTER ROLE` 运行时 LOGIN | **`CREATEROLE`** | 否 |
 | `sql/20-login-roles.sql` C 段：`GRANT <组> TO <运行时角色>` | 对所授组有 **`ADMIN OPTION`**（PG 16+ 起；`pg_auth_members.admin_option`） | 否（建组者即自动具备） |
 | `sql/90-assert-least-privilege.sql`（读 **`pg_authid.rolpassword`**）、`verify-cvm-postgres.sh` 的 `runtime_password_scram` | **`pg_authid` 仅超级用户可读** | ✅ **是 —— 这才是本交付保留超级用户的真实理由** |
