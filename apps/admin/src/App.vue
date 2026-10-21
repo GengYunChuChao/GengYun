@@ -2,14 +2,16 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import AuditEventsView from './views/AuditEventsView.vue';
 import ContentAdminView from './views/ContentAdminView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'content' | 'review';
+type TabKey = 'accounts' | 'content' | 'audit' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
   { key: 'content', label: '资料管理', note: '来源 / 科普 / 分类' },
+  { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
 
@@ -40,6 +42,7 @@ const active = ref<TabKey>('accounts');
 
     <AccountsView v-if="active === 'accounts'" />
     <ContentAdminView v-else-if="active === 'content'" />
+    <AuditEventsView v-else-if="active === 'audit'" />
     <ReviewPlaceholderView v-else />
 
     <footer class="foot">
@@ -55,6 +58,8 @@ const active = ref<TabKey>('accounts');
           资料来源 / 科普内容 / 分类：读 <code>sources:read</code>，写 <code>sources:write</code>；写操作带
           <code>Idempotency-Key</code>，编辑/发布/下架另带 <code>If-Match</code>；审计由服务端留痕
         </dd>
+        <dt>审计事件</dt>
+        <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；只列契约已提供的 8 个字段，不展示主体/actor，不做本片没有的写操作</dd>
         <dt>人工审核</dt>
         <dd>空入口占位，未实现；不伪造队列与审核人</dd>
       </dl>
