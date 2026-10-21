@@ -29,6 +29,12 @@ function message(code) {
 function readFailure(code) {
   if (code === 'PROVIDER_UNAVAILABLE') return '档案暂时读取失败（服务端未启用该接口）。档案与作物、市县目录都没有读到，本页不会用本地数据顶替，可重试读取。'
   if (code === 'NETWORK_UNCERTAIN') return '档案暂时读取失败（网络中断，读取结果未确认）。请确认网络后重试，本页不会用本地数据顶替。'
+  // 403 系列（GY-I04 登录链路盘点）：权限不足 / 缺用途授权 / 账号不可用 —— 与「暂时读取失败」分开说，
+  // 重试不会变好（`utils/states.js` 把这三码都归 `denied`）。改前它们被 `profile-api` 折叠成
+  // SESSION_REQUIRED，本页只会说「登录失效」，用户反复重登也解决不了。
+  if (code === 'SCOPE_DENIED') return '没有权限查看档案（403 SCOPE_DENIED）：当前会话的权限范围不包含档案，重试无效；本页不会用本地数据顶替。'
+  if (code === 'CONSENT_REQUIRED') return '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会读取或保存档案，重试无效。'
+  if (code === 'ACCOUNT_INACTIVE') return '账号当前不可用（403 ACCOUNT_INACTIVE）：会话已终止，请重新登录；本页不会用本地数据顶替。'
   return '档案暂时读取失败（' + (code || '未返回可读原因') + '）。请重试读取，本页不会用本地数据顶替。'
 }
 // 入口在「档案还没读成功 / 需要重读」时的统一解释：入口保持可点，点击必须给出可见原因，不静默 return。

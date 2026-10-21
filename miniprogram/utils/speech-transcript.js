@@ -225,22 +225,18 @@ function cancelAll() {
   return { epoch: inFlight.epoch, serverSideCancel: false }
 }
 
-/** 会话失效类错误码闭集（与 `utils/identify-api.js` 同口径；403 的非会话码原样带出）。 */
-const SESSION_LOSS_CODES = ['SESSION_REQUIRED', 'SESSION_EXPIRED', 'SESSION_CHANGED', 'ACCOUNT_INACTIVE']
-
 /**
  * 401/403 的**如实**归因：401 一律按会话失效；403 先看契约封套的 `error.code`——
  * `CONSENT_REQUIRED`（缺用途授权）与 `SCOPE_DENIED`（会话无权）**必须**原样带出，
  * 不得折叠成"登录失效"（那会把用户引向错误动作，还会误清会话）。
+ *
+ * 归因口径**收敛**到 `utils/auth.js`（单一事实源）：改前本文件与 `utils/identify-api.js`
+ * 各持一份 `SESSION_LOSS_CODES`，且对 `ACCOUNT_INACTIVE` 的处理**相反**（此处按登录失效折叠、
+ * 彼处原样带出）。现在两处都委托 `auth.failureFor`：403 码原样带出，仅 `ACCOUNT_INACTIVE`
+ * 清会话（令牌已永久失效，但码不谎称"登录过期"）。
  */
 function forbiddenOrSessionLoss(statusCode, payload) {
-  const code = object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
-  const surface = statusCode === 403 && code !== null && SESSION_LOSS_CODES.indexOf(code) === -1 ? code : 'SESSION_REQUIRED'
-  if (surface === 'SESSION_REQUIRED') auth.clearSession()
-  const error = failure(surface)
-  error.status = statusCode
-  error.retryable = object(payload) && object(payload.error) && payload.error.retryable === true
-  return error
+  return auth.failureFor(failure, statusCode, payload)
 }
 
 function request(method, path, options) {

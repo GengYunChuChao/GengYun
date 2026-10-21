@@ -161,7 +161,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(auth.failureFor(failure, r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200) {
@@ -424,6 +424,8 @@ function messageFor(e) {
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
     SCOPE_DENIED: '当前会话无权读取该记录。',
+    CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会读取识别历史。',
+    ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再试。',
     PROVIDER_UNAVAILABLE: '历史服务当前不可用（真实持久存储未接入），不会用本地数据顶替。',
     INVALID_CURSOR: '翻页位置已失效，请重新读取第一页。',
     UNAVAILABLE: '历史服务暂不可用，已停止显示，请重试。'

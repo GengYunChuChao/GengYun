@@ -37,9 +37,6 @@ const MAX_CANDIDATES = 3
 const MEDIA_STATES = ['initiated', 'uploaded', 'processing', 'ready', 'rejected', 'deleting', 'deleted']
 const MEDIA_PURPOSE = 'weed_recognition'
 
-/** 会话失效类错误码（401/403 归因与页面门禁关闭共用同一闭集）。 */
-const SESSION_LOSS_CODES = ['SESSION_REQUIRED', 'SESSION_CHANGED', 'SESSION_EXPIRED']
-
 /** 本客户端允许经私有媒体链路上传的**图片**用途（契约 `MediaPurpose` 的图片成员）。 */
 const IMAGE_MEDIA_PURPOSES = ['weed_recognition', 'label_ocr']
 
@@ -264,13 +261,10 @@ function errorCodeOf(payload) {
 }
 
 function forbiddenOrSessionLoss(statusCode, payload) {
-  const code = errorCodeOf(payload)
-  const surface = statusCode === 403 && code !== null && SESSION_LOSS_CODES.indexOf(code) === -1 ? code : 'SESSION_REQUIRED'
-  if (surface === 'SESSION_REQUIRED') auth.clearSession()
-  const e = failure(surface)
-  e.status = statusCode
-  e.retryable = object(payload) && object(payload.error) && payload.error.retryable === true
-  return e
+  // 归因口径**收敛**到 `utils/auth.js`（单一事实源）：401 → 会话失效并清会话；403 → 契约码
+  // 原样带出，只有 `ACCOUNT_INACTIVE`（令牌永久失效）才清会话。本文件不再自留第二份码表
+  // （改前此处与 speech-transcript 各一份、且对 ACCOUNT_INACTIVE 的处理相反）。
+  return auth.failureFor(failure, statusCode, payload)
 }
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
 function current(b) { const now = binding(); return !!b && !!now && b.token === now.token && b.epoch === now.epoch }

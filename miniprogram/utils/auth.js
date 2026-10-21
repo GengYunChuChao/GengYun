@@ -12,6 +12,7 @@
 
 const runtime = require('../config/runtime')
 const navigation = require('./navigation')
+const states = require('./states')
 
 const SESSION_KEY = 'gengyun.session'
 // 小程序只接受用户受众；后台受众（admin）令牌不得出现在小程序会话缓存里。
@@ -42,6 +43,80 @@ function isFutureIso(value) {
   if (typeof value !== 'string' || value === '') return false
   const ms = Date.parse(value)
   return Number.isFinite(ms) && ms > Date.now()
+}
+
+/**
+ * 401/403 归因：会话层与各适配层共用的**单一事实源**（GY-I04 登录链路盘点）。
+ *
+ * 为什么需要：401 与 403 是两件不同的事——401 是「还没登录 / 登录过期」，403 是
+ * 「登录了，但这件事不给你」（`SCOPE_DENIED` 权限范围不足 / `CONSENT_REQUIRED` 缺用途授权 /
+ * `ACCOUNT_INACTIVE` 账号不可用）。把 403 也一并当成「登录状态已失效」并清会话，会让用户被
+ * 踢回登录页反复重登却始终不明白为什么不行，也让 B7 统一状态层（`utils/states.js` 的
+ * `CODE_KIND`）永远收不到真实的 403 码——它一直是「登录失效」。
+ *
+ * 分类依据**直接取自 `states.CODE_KIND`**（kind === 'session' 即会话失效），不另立一份码表；
+ * 唯一补充是 `ACCOUNT_INACTIVE`：令牌永久不可再用（账号停用/注销、或 auth_epoch 前进），
+ * 本地会话必须清掉，但错误码**如实保留**（页面按「账号不可用」呈现，不谎称登录过期）。
+ */
+const SESSION_LOSS_CODES = Object.freeze(
+  Object.keys(states.CODE_KIND).filter(function (code) { return states.CODE_KIND[code] === 'session' })
+)
+// 令牌永久失效但语义不是「登录过期」的码：清会话，码原样上抛。
+const RETIRED_SESSION_CODES = Object.freeze(['ACCOUNT_INACTIVE'])
+
+/** 从契约错误封套里取错误码；读不到形状即 null（不猜）。 */
+function errorCodeOf(payload) {
+  if (!payload || typeof payload !== 'object') return null
+  const error = payload.error
+  if (!error || typeof error !== 'object') return null
+  if (typeof error.code !== 'string' || error.code === '' || error.code.length > 80) return null
+  return error.code
+}
+
+function isSessionLossCode(code) {
+  return typeof code === 'string' && SESSION_LOSS_CODES.indexOf(code) !== -1
+}
+
+/**
+ * 把一次 401/403 响应归因为「可展示的契约错误码 + 语义标记」（**纯函数**，不读写存储、不发请求）。
+ * - 401：只可能是会话类；封套给别的码或读不到 ⇒ 保守按 `SESSION_REQUIRED`（不放宽守卫）。
+ * - 403：契约闭集为 `SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`，**原样带出**；
+ *   封套读不到 ⇒ `SCOPE_DENIED`（服务端确实拒绝了，但没说原因——不假装是登录问题）。
+ * - 403 里若出现会话类码（越界实现）：仍按会话失效处理并清会话。
+ */
+function attribution(statusCode, payload) {
+  const code = errorCodeOf(payload)
+  const retryable = !!(payload && payload.error && payload.error.retryable === true)
+  if (statusCode === 401) {
+    return {
+      code: isSessionLossCode(code) ? code : 'SESSION_REQUIRED',
+      status: 401, retryable, sessionLost: true, clearsSession: true
+    }
+  }
+  const surface = code === null ? 'SCOPE_DENIED' : code
+  const sessionLost = isSessionLossCode(surface)
+  return {
+    code: surface,
+    status: 403,
+    retryable,
+    sessionLost,
+    clearsSession: sessionLost || RETIRED_SESSION_CODES.indexOf(surface) !== -1
+  }
+}
+
+/**
+ * 适配层落地用：按归因结果**仅在需要时**清会话，并用调用方自己的 `failure` 构造器生成错误对象
+ * （各模块的错误形状不同，这里不替它们发明形状，只补 `status` / `retryable`）。
+ */
+function failureFor(makeFailure, statusCode, payload) {
+  const a = attribution(statusCode, payload)
+  if (a.clearsSession) clearSession()
+  const e = makeFailure(a.code)
+  if (e && typeof e === 'object') {
+    e.status = a.status
+    e.retryable = a.retryable
+  }
+  return e
 }
 
 /** 读取缓存中当前的访问令牌（不触发预检/清理），用于在途回调的绑定校验。 */
@@ -131,7 +206,10 @@ function statusText(response) {
 /**
  * 用服务端 GET /auth/session 核实当前缓存会话。
  * - 200 且契约 SessionInfo 且受众为 user：标记已核实，并按服务端返回值刷新时效。
- * - 其他响应（401/403/5xx 等）：服务端已明确作答且未确认有效 → 清理本地会话，回调 false。
+ * - 401/403：服务端**明确**判定该会话不可用 ⇒ 清理本地会话，回调 false。
+ * - 200 但契约形状/受众/时效不符：服务端自相矛盾 ⇒ 同样作废，回调 false。
+ * - 其它状态（408/429/5xx/未知）：核实**没做成**，不判定会话失效 ⇒ **不清理会话**，
+ *   只保持「未核实」（门禁关闭、绝不谎称已登录）；回调 false。一次 503 不该毁掉有效登录。
  * - 网络失败：无法核实 → **不置已核实**（门禁保持关闭）并回调 false；不谎称已登录。
  * callback(verified)
  */
@@ -180,8 +258,24 @@ function verifySession(callback) {
         done(true)
         return
       }
-      // 服务端明确拒绝或返回异常：本地会话作废。
-      clearSession()
+      // 非 200：先看服务端是否**明确**判定该会话不可用。
+      const status = response ? response.statusCode : 0
+      if (status === 401 || status === 403) {
+        // 401（未登录/过期）与 403（账号不可用/受众不符）都说明这份令牌不能再用了 ⇒ 作废。
+        clearSession()
+        done(false)
+        return
+      }
+      if (status === 200) {
+        // 200 但契约形状/受众/时效不符：服务端自相矛盾，不能当作已核实 ⇒ 按作废处理。
+        clearSession()
+        done(false)
+        return
+      }
+      // 其它（408 / 429 / 5xx / 未知状态）：服务端**没有**判定会话失效，只是这次核实没做成
+      // （例如能力未装配的 503 PROVIDER_UNAVAILABLE）。清掉本地会话会让一次瞬时故障毁掉仍然
+      // 有效的登录，用户被迫重登；这里只保持「未核实」（门禁仍关闭，绝不谎称已登录）。
+      serverVerified = false
       done(false)
     },
     fail: function () {
@@ -383,6 +477,12 @@ function resumeAfterLogin(id, callback) {
 module.exports = {
   // Read-only binding for protected client requests, including an in-flight logout.
   sessionEpoch: function () { return generation + ":" + intentEpoch },
+  // 401/403 归因的单一事实源（各适配层共用；见文件头 attribution 注释）。
+  SESSION_LOSS_CODES: SESSION_LOSS_CODES,
+  RETIRED_SESSION_CODES: RETIRED_SESSION_CODES,
+  isSessionLossCode: isSessionLossCode,
+  attribution: attribution,
+  failureFor: failureFor,
   getSession: getSession,
   setSession: setSession,
   clearSession: clearSession,

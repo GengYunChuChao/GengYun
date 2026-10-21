@@ -70,7 +70,11 @@ function request(path) {
       header: { authorization: 'Bearer ' + b.token, 'Cache-Control': 'no-cache' },
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); selection = null; reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) {
+          // 只有真的会话失效（401 / ACCOUNT_INACTIVE）才丢弃翻页游标；403 权限/授权类拒绝仍保留游标。
+          if (auth.attribution(r.statusCode, r.data).clearsSession) selection = null
+          reject(auth.failureFor(failure, r.statusCode, r.data)); return
+        }
         if (r.statusCode === 400 && object(r.data) && object(r.data.error) && r.data.error.code === 'INVALID_CURSOR') {
           try {
             keys(r.data, ['error', 'meta']); responseMeta(r.data.meta)
@@ -207,7 +211,7 @@ function labels(x) {
     review: { verified: '已核对', unverified: '未核对', rejected: '已拒绝' }[s.review_status] }
 }
 function modeNote(mode) { return mode === 'real' ? '服务端资料读取；来源核对与适用条件仍需分别确认。' : mode === 'preset_demo' ? '预设演示资料，不代表实际查询结果。' : mode === 'stub' ? '替身服务资料，仅供联调，不代表真实资料查询。' : '服务端资料查询；资料需重新核对，失败时不会改用本地资料。' }
-function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_CURSOR: '查询已过期或资料已更新，请点击查询重新开始。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
+function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_CURSOR: '查询已过期或资料已更新，请点击查询重新开始。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。', SCOPE_DENIED: '当前会话无权查看资料（403 SCOPE_DENIED）：权限范围不足，重试无效。', CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会读取资料。', ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再查。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
 module.exports = { binding, current, filters, list, detail, listHerbicides, detailHerbicide, herbicideRow, herbicideModeNote,
   HERBICIDE_SOURCES, remember, expected, fingerprint, labels, modeNote, message,
   validId: id => typeof id === 'string' && UUID.test(id), clearSelection: () => { selection = null } }

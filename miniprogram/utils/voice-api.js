@@ -196,7 +196,7 @@ function request(method, path, options) {
       success: function (response) {
         if (!current(bound)) { reject(failure('SESSION_CHANGED')); return }
         if (epoch !== inFlight.epoch) { reject(failure('CLIENT_CANCELLED')); return }
-        if (response.statusCode === 401 || response.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (response.statusCode === 401 || response.statusCode === 403) { reject(auth.failureFor(failure, response.statusCode, response.data)); return }
         try {
           const payload = response.data
           if (response.statusCode === 200 || response.statusCode === 202) {

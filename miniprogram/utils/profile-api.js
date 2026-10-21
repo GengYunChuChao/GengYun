@@ -20,7 +20,7 @@ function request(path, method, data, headers) {
       success: function (response) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (response.statusCode === 401 || response.statusCode === 403) {
-          auth.clearSession(); reject(failure('SESSION_REQUIRED')); return
+          reject(auth.failureFor(failure, response.statusCode, response.data)); return
         }
         if (response.statusCode !== 200 || !response.data || !response.data.data) {
           reject(failure(response.data && response.data.error && response.data.error.code || 'UNAVAILABLE')); return
