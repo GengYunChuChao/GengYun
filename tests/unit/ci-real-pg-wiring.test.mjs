@@ -62,7 +62,11 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 第 10 条是 R28-S39 接的（账号停用/恢复域 I22，同一条 workflow；它要求**空库**、自己 apply 0001–0017
  * 并把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；argv 只给 owner URL，运行时角色它自建并派生 URL；
  * scram 缺陷由 R28-S15 修掉，见 `docs/verification/gy-r28-account-suspend-scram-20261020.md`）。
- * 第 11 条是 R28-S49 接的（备份副本域 GY-I19／迁移 0023 的 apply→rollback→replay 三连 + 注销受理在**同一事务**
+ * 第 11 条是 R28-S40 接的（语音转写域／迁移 0026，同一条 workflow；它同样跑**全链迁移**并做 0026 的
+ * UP／ROLLBACK／REPLAY，故也顺带守住迁移清单不变量）。
+ * 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
+ * `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
+ * 第 12 条是 R28-S49 接的（备份副本域 GY-I19／迁移 0023 的 apply→rollback→replay 三连 + 注销受理在**同一事务**
  * 里写清单 + 30 天保留窗口到期清除）：它是清单里**唯一**的「自起集群」脚本——只连自己 `initdb` 出来的临时
  * 17 集群（脚本 `:89` 端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录），**不**连
  * `services.postgres` 的那个库，因此它的 step **没有** `CREATE DATABASE`。判据⑦⑧ 对这类脚本换成
@@ -82,6 +86,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
+  'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
 ]);
 
@@ -96,6 +101,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
+  'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
 ]);
 
@@ -130,7 +136,7 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
-  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36／S39 之后它不再是最后一步）。
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36 之后它不再是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
   // 9. `recognitions-pg`（`#349` 接入）：自建专用空库 `gengyun_recognitions_test`、自己 apply
   //    0001..0025 全链（含 0025_recognitions_persistence.sql）、全程只用库 owner 连接，
@@ -141,10 +147,13 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 10. `account-suspend-pg`（R28-S39 接入）：要求空库、自己 apply 0001–0017；开头 `resetRoles()` 先尽力
   //    DROP 7 个角色，删不掉（别处把权限授予了它）时改用属性逐字相同的 `ALTER ROLE` 复用 ⇒ 能容忍
   //    `admin-accounts-read-pg` 留在集群里的同名角色；收尾 `cleanup()` 按快照差集 DROP 自己建的角色。
-  //    排在倒数第二（R28-S49 之后 workflow 里最后一步是 `backup-purge-pg`）：它清理角色，放前面会改变
-  //    后面脚本的前置条件。
+  //    排在语音域之前（workflow 里也是第 10 步）：它清理自建角色，放前面会改变后面脚本的前置条件。
   'tests/integration/account-suspend-pg.mjs',
-  // 11. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
+  // 11. `speech-pg`（`#351` 接入，R28-S40）：自建专用空库（硬钉 `gengyun_speech_test`），自己
+  //    `discoverMigrations()` 跑全链迁移 0001..0026、再做 0026 的 UP／ROLLBACK／REPLAY，全程只用库 owner
+  //    连接 ⇒ 不建组角色、也不复用 `admin-accounts-read` 留在集群里的运行时角色，对前后脚本无耦合，排最后。
+  'tests/integration/speech-pg.mjs',
+  // 12. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
   //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。必须排**最后**：装包 step 只服务本步、本步也不依赖 service 口令。

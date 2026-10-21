@@ -1186,6 +1186,192 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
     ('public', 'speech_idempotency',    'DELETE')
   ),
+  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（18 张表，不在 domain_manifest 里）。
+  -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
+  -- 授给 gengyun_auth_privacy / gengyun_consent_granter / gengyun_profile_runtime 等组、
+  -- 再由 20-login-roles.sql 的 GRANT … TO gengyun_api_runtime 带进来的。旧清单只覆盖 20-login-roles
+  -- 的域段落，这 18 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
+  --
+  -- 快照来源（2026-10-21，PG 17.11，HEAD=4e93d7b 的 26 个迁移 + 8 个角色文件 + 20-login-roles.sql
+  -- 全量应用后的干净集群实测，不是抄文档）：表级 has_table_privilege 逐 priv 读；列级取
+  -- **pg_attribute.attacl 里的直接条目**（grantee 是 runtime 本体或它所属的组），不是
+  -- has_column_privilege 的投影 —— 表级 SELECT/INSERT/DELETE 会让 has_column_privilege 对
+  -- 每一列都返回 true，若用投影填数组，「哪些列是单独授的」这条信息就丢了，反向判据也查不出
+  -- 「又给某列单独 GRANT 了一条」。所以有表级 SELECT 的 6 张表（consent_policies / consent_records /
+  -- feature_flags / idempotency_keys / privacy_epochs / recipients）的 sel 必须为空数组，
+  -- 「表级 SELECT 覆盖全部列」这件事由 t_sel = true 表达。
+  -- source_group 用五个组的 has_table_privilege / has_any_column_privilege 逐个定位
+  -- （两源混授记 `A+B`，全不命中记 direct）。
+  -- 本批表级：idempotency_keys 有 SELECT+INSERT+DELETE，另外 5 张（consent_policies / consent_records /
+  -- feature_flags / privacy_epochs / recipients）只有 SELECT；其余 12 张表级全无。
+  external_manifest(tbl, source_group, t_sel, t_ins, t_upd, t_del, sel, ins, upd) AS (VALUES
+    ('admin_accounts',   'auth_privacy', false, false, false, false,
+     ARRAY['id','login_name','credential_hash','state','auth_epoch','revision']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('admin_scopes',     'auth_privacy', false, false, false, false,
+     ARRAY['admin_id','scope','revoked_at']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('admin_sessions',   'auth_privacy', false, false, false, false,
+     ARRAY['id','admin_id','token_hash','audience','auth_epoch','expires_at','revoked_at']::text[],
+     ARRAY['admin_id','token_hash','audience','auth_epoch','expires_at']::text[],
+     ARRAY['token_hash','revoked_at']::text[]),
+    ('author_links',     'auth_privacy', false, false, false, false,
+     ARRAY['user_id']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('consent_policies', 'consent_granter', true, false, false, false,
+     ARRAY[]::text[],
+     ARRAY[]::text[], ARRAY['updated_at']::text[]),
+    ('consent_records',  'auth_privacy+consent_granter', true, false, false, false,
+     ARRAY[]::text[],
+     ARRAY['user_id','purpose','policy_version','recipient_ids','state','epoch','revision']::text[],
+     ARRAY['state','withdrawn_at','revision']::text[]),
+    ('crops',            'profile_runtime', false, false, false, false,
+     ARRAY['id','name','active']::text[],
+     ARRAY[]::text[], ARRAY['name']::text[]),
+    ('exports',          'auth_privacy', false, false, false, false,
+     ARRAY['user_id']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('feature_flags',    'direct', true, false, false, false,
+     ARRAY[]::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('idempotency_keys', 'auth_privacy', true, true, false, true,
+     ARRAY[]::text[],
+     ARRAY[]::text[],
+     ARRAY['response_status','outcome']::text[]),
+    ('jobs',             'auth_privacy', false, false, false, false,
+     ARRAY['owner_id']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('media',            'auth_privacy', false, false, false, false,
+     ARRAY['owner_id']::text[],
+     ARRAY[]::text[], ARRAY[]::text[]),
+    ('privacy_epochs',   'auth_privacy+consent_granter', true, false, false, false,
+     ARRAY[]::text[],
+     ARRAY['user_id','purpose','current_epoch','state','revision']::text[],
+     ARRAY['current_epoch','state','revision','updated_at']::text[]),
+    ('recipients',       'consent_granter', true, false, false, false,
+     ARRAY[]::text[],
+     ARRAY[]::text[], ARRAY['updated_at']::text[]),
+    ('regions',          'profile_runtime', false, false, false, false,
+     ARRAY['code','parent_code','name','catalog_version','supported']::text[],
+     ARRAY[]::text[], ARRAY['name']::text[]),
+    ('sessions',         'auth_privacy', false, false, false, false,
+     ARRAY['id','user_id','token_hash','audience','auth_epoch','expires_at','revoked_at']::text[],
+     ARRAY['user_id','token_hash','audience','auth_epoch','expires_at']::text[],
+     ARRAY['token_hash','revoked_at']::text[]),
+    ('single_profiles',  'profile_runtime', false, false, false, false,
+     ARRAY['user_id','crop_id','region_code','region_catalog_version','revision']::text[],
+     ARRAY['user_id','crop_id','region_code','region_catalog_version','revision']::text[],
+     ARRAY['crop_id','region_code','region_catalog_version','revision','updated_at']::text[]),
+    ('users',            'auth_privacy', false, false, false, false,
+     ARRAY['id','wechat_subject_lookup','state','auth_epoch','revision']::text[],
+     ARRAY['wechat_subject_cipher','wechat_subject_lookup']::text[],
+     ARRAY['updated_at']::text[])
+  ),
+  -- R28-S43：external_manifest 的逐条违规明细。断言 69-86 的 ok 与 detail 共用这一份定义：
+  -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列。
+  -- 语义分界（本片最容易被后人误解的地方）：正向用 has_column_privilege（**有效权限**，含
+  -- 表级投影）；反向必须读 pg_attribute.attacl（**直接列级 ACL**）—— 表级 SELECT 会让
+  -- has_column_privilege 对每一列都返回 true，拿它做反向判据，「又给某列单独 GRANT 了一条」
+  -- 永远查不出来。
+  external_violations(tbl, what) AS (
+    -- (a) 正向：快照声明过的列必须真有对应列级权（有效权限口径）
+    SELECT e.tbl, '缺列级 SELECT：' || c.col
+      FROM external_manifest e, LATERAL unnest(e.sel) AS c(col)
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c.col, 'SELECT')
+    UNION ALL
+    SELECT e.tbl, '缺列级 INSERT：' || c.col
+      FROM external_manifest e, LATERAL unnest(e.ins) AS c(col)
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c.col, 'INSERT')
+    UNION ALL
+    SELECT e.tbl, '缺列级 UPDATE：' || c.col
+      FROM external_manifest e, LATERAL unnest(e.upd) AS c(col)
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND NOT has_column_privilege('gengyun_api_runtime', 'public.'||e.tbl, c.col, 'UPDATE')
+    UNION ALL
+    -- (b) 反向：快照没声明的列不许有直接列级 ACL（S/I/U 逐权限对数组；REFERENCES 一律不许）。
+    --     只统计「能落到 runtime 身上」的 grantee：runtime 本体、它所属的组、PUBLIC。
+    --     其他角色（例如 gengyun_egress_ledger 在这些表上的列级 SELECT）不属于 runtime 的
+    --     授权面，不能算越界，否则这条断言会把无关角色的授权也判红。
+    SELECT e.tbl, '越界列级 ' || x.privilege_type || '：' || a.attname
+      FROM external_manifest e
+      JOIN pg_attribute a
+        ON a.attrelid = to_regclass('public.'||e.tbl)
+       AND a.attnum > 0
+       AND NOT a.attisdropped
+      CROSS JOIN LATERAL aclexplode(a.attacl) AS x
+     WHERE (x.grantee = 0 OR pg_has_role('gengyun_api_runtime', x.grantee, 'MEMBER'))
+       AND x.privilege_type IN ('SELECT','INSERT','UPDATE','REFERENCES')
+       AND (x.privilege_type = 'REFERENCES'
+            OR (x.privilege_type = 'SELECT' AND NOT (a.attname::text = ANY (e.sel)))
+            OR (x.privilege_type = 'INSERT' AND NOT (a.attname::text = ANY (e.ins)))
+            OR (x.privilege_type = 'UPDATE' AND NOT (a.attname::text = ANY (e.upd))))
+    UNION ALL
+    -- (c) 反向：runtime 本体的**直授**只允许出现在 source_group = 'direct' 的行（feature_flags）。
+    --     其余 17 张表的权限必须来自组；给 runtime 加一条直授（哪怕授的是已声明的列）就是漂移。
+    SELECT e.tbl, '直授 runtime（表级 ' || x.privilege_type || '）'
+      FROM external_manifest e
+      JOIN pg_class c ON c.oid = to_regclass('public.'||e.tbl)
+      CROSS JOIN LATERAL aclexplode(c.relacl) AS x
+     WHERE e.source_group <> 'direct'
+       AND x.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'gengyun_api_runtime')
+    UNION ALL
+    SELECT e.tbl, '直授 runtime（列级 ' || x.privilege_type || '）：' || a.attname
+      FROM external_manifest e
+      JOIN pg_attribute a
+        ON a.attrelid = to_regclass('public.'||e.tbl)
+       AND a.attnum > 0
+       AND NOT a.attisdropped
+      CROSS JOIN LATERAL aclexplode(a.attacl) AS x
+     WHERE e.source_group <> 'direct'
+       AND x.grantee = (SELECT oid FROM pg_roles WHERE rolname = 'gengyun_api_runtime')
+    UNION ALL
+    -- (d) 表级位必须与快照逐位相等（有效权限口径）
+    SELECT e.tbl,
+           '表级 SELECT 位不符：快照 ' || e.t_sel || '，实际 ' ||
+           has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'SELECT')
+      FROM external_manifest e
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'SELECT')
+           IS DISTINCT FROM e.t_sel
+    UNION ALL
+    SELECT e.tbl,
+           '表级 INSERT 位不符：快照 ' || e.t_ins || '，实际 ' ||
+           has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'INSERT')
+      FROM external_manifest e
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'INSERT')
+           IS DISTINCT FROM e.t_ins
+    UNION ALL
+    SELECT e.tbl,
+           '表级 UPDATE 位不符：快照 ' || e.t_upd || '，实际 ' ||
+           has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'UPDATE')
+      FROM external_manifest e
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'UPDATE')
+           IS DISTINCT FROM e.t_upd
+    UNION ALL
+    SELECT e.tbl,
+           '表级 DELETE 位不符：快照 ' || e.t_del || '，实际 ' ||
+           has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'DELETE')
+      FROM external_manifest e
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, 'DELETE')
+           IS DISTINCT FROM e.t_del
+    UNION ALL
+    -- (e) TRUNCATE / REFERENCES / TRIGGER 一律不得有（表级）
+    SELECT e.tbl, '越界表级 ' || p.priv
+      FROM external_manifest e
+      CROSS JOIN (VALUES ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
+     WHERE to_regclass('public.'||e.tbl) IS NOT NULL
+       AND has_table_privilege('gengyun_api_runtime', 'public.'||e.tbl, p.priv)
+    UNION ALL
+    -- (f) 快照行必须真实存在（表被改名/删掉时前面的检查会因 to_regclass 为 NULL 而静默跳过）
+    SELECT e.tbl, '库中不存在（to_regclass 为 NULL）'
+      FROM external_manifest e
+     WHERE to_regclass('public.'||e.tbl) IS NULL
+  ),
   checks(label, ok, detail) AS (
 
   -- 1. 运行时 LOGIN 的属性：可登录、可继承、且无任何特权位
@@ -2124,6 +2310,120 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          :'r28_probe_sp_job_del' = 'true'
          AND :'r28_probe_sp_rc_del' = 'true',
          'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
+
+  UNION ALL
+  -- 69-86. R28-S43 逐表范围断言（18 张经 NOLOGIN 组继承来的 public 表）：
+  --     与 49-58 同形，差异只在快照来源 —— 这些权限来自 services/api/db/roles/*.sql 的五个组，
+  --     不是 20-login-roles.sql 的域段落，所以不在 expected 清单里，49-58 对它们是完全盲的。
+  --     判据全部收在 external_violations（一条违规一行明细）：ok 只问「这张表有没有违规」，
+  --     detail 把明细拼出来 —— 两者共用同一份定义，不会出现「判红但说不出哪一列」。
+  SELECT 'runtime_grants_external_' || e.tbl,
+         to_regclass('public.'||e.tbl) IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM external_violations v WHERE v.tbl = e.tbl),
+         '来自 services/api/db/roles/*.sql 的组 ' || e.source_group
+         || ' 继承的授权面必须与快照逐列一致（正向按有效权限查、反向按直接列级 ACL 查，清单外一列都不行）；'
+         || '表级只允许 t_sel/t_ins/t_upd/t_del 声明的位，TRUNCATE/REFERENCES/TRIGGER 一律不得有；'
+         || 'runtime 本体的直授只允许出现在 source_group = direct 的行；'
+         || '这张表属于 roles 授权面，不是 domain_manifest 域。违规明细：'
+         || COALESCE((SELECT string_agg(v.what, '；' ORDER BY v.what)
+                       FROM external_violations v WHERE v.tbl = e.tbl), '（无）')
+    FROM external_manifest e
+
+  UNION ALL
+  -- 87. R28-S43 元断言（本片的泛化兜底）：public 下凡运行时**可见**（表级或列级
+  --     SELECT/INSERT/UPDATE/DELETE/REFERENCES）的关系，必须在 domain_manifest 或
+  --     external_manifest 里被显式分类；反过来 external_manifest 的每一行也必须真存在。
+  --     47 号只认「运行时域前缀」的正则，对 roles/*.sql 新授的任意表名是盲的；这条不再
+  --     依赖命名约定：只要有人给 runtime 加了新授权（哪怕表名完全陌生），没进清单就判红。
+  SELECT 'runtime_surface_parity',
+         NOT EXISTS (
+               SELECT 1
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relkind IN ('r','p','f')
+                  AND (has_table_privilege('gengyun_api_runtime', c.oid,
+                                           'SELECT,INSERT,UPDATE,DELETE,REFERENCES')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'SELECT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'INSERT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'UPDATE')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES'))
+                  AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+         )
+         AND NOT EXISTS (
+               SELECT 1 FROM external_manifest e
+                WHERE to_regclass('public.'||e.tbl) IS NULL
+         ),
+         'public 下的每个运行时可见关系都必须被分类（domain_manifest 或 external_manifest）；未分类、或清单里有而库里没有的：' ||
+         COALESCE((
+           SELECT string_agg(x.tbl, ' / ' ORDER BY x.tbl)
+             FROM (
+               SELECT c.relname AS tbl
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relkind IN ('r','p','f')
+                  AND (has_table_privilege('gengyun_api_runtime', c.oid,
+                                           'SELECT,INSERT,UPDATE,DELETE,REFERENCES')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'SELECT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'INSERT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'UPDATE')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES'))
+                  AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+               UNION
+               SELECT e.tbl FROM external_manifest e
+                WHERE to_regclass('public.'||e.tbl) IS NULL
+             ) x
+         ), '（无）')
+
+  UNION ALL
+  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 18 张表在表级 relacl 与列级
+  --     attacl 里都不许出现 grantee = 0。66 号只遍历 domain_manifest 的 granted /
+  --     granted_external，这 18 张表不在清单里，旧断言覆盖不到它们。
+  SELECT 'runtime_surface_no_public_leak',
+         NOT EXISTS (
+           SELECT 1
+             FROM external_manifest e
+            WHERE EXISTS (
+                    SELECT 1
+                      FROM pg_class c
+                      CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+                     WHERE c.oid = to_regclass('public.'||e.tbl)
+                       AND a.grantee = 0
+                  )
+               OR EXISTS (
+                    SELECT 1
+                      FROM pg_attribute att
+                      CROSS JOIN LATERAL aclexplode(att.attacl) AS a
+                     WHERE att.attrelid = to_regclass('public.'||e.tbl)
+                       AND att.attnum > 0
+                       AND NOT att.attisdropped
+                       AND a.grantee = 0
+                  )
+         ),
+         'external_manifest 的 18 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
+         COALESCE((
+           SELECT string_agg(e.tbl, ' / ' ORDER BY e.tbl)
+             FROM external_manifest e
+            WHERE EXISTS (
+                    SELECT 1
+                      FROM pg_class c
+                      CROSS JOIN LATERAL aclexplode(c.relacl) AS a
+                     WHERE c.oid = to_regclass('public.'||e.tbl)
+                       AND a.grantee = 0
+                  )
+               OR EXISTS (
+                    SELECT 1
+                      FROM pg_attribute att
+                      CROSS JOIN LATERAL aclexplode(att.attacl) AS a
+                     WHERE att.attrelid = to_regclass('public.'||e.tbl)
+                       AND att.attnum > 0
+                       AND NOT att.attisdropped
+                       AND a.grantee = 0
+                  )
+         ), '（无）')
 )
 
 SELECT label, ok, detail
@@ -2139,8 +2439,8 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：83 条断言全红时标签合计约 2.5K 字符（2026-10-21 实测：总 83 条、
--- sum(length(label)+2)=2523、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：103 条断言全红时标签合计约 3.2K 字符（2026-10-21 实测：总 103 条、
+-- sum(length(label)+2)=3239、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 DO $$
 DECLARE

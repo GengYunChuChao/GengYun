@@ -1,4 +1,4 @@
-# R28-S49：备份副本域接真库 CI —— 先装 PG 17 服务端、再自起集群真跑（第 11 个受管脚本）
+# R28-S49：备份副本域接真库 CI —— 先装 PG 17 服务端、再自起集群真跑（第 12 个受管脚本）
 
 - 日期：2026-10-21
 - 工作树：`E:\GengYunCommander\wt-r28-s49`，分支 `test/gy-r28-backup-purge-ci`，base `c0217a4`（本片 standalone，不依赖任何在途 PR）
@@ -77,13 +77,13 @@ runner 上原本取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只活在 service
 
 硬要求逐条核对（`40-wf-static.log`）：无 `continue-on-error`、无 `|| true`、无 step 级 `if:`、无 `GY_ALLOW_SKIP`／`--allow-skip`（四类 banned 全部 `none`/`0`）；`set -euo pipefail` 在 `line 195`；`uses:` 仍 2 条且都是 40 位 hex；`services` 仍 `line 46 image: postgres:17.11`；`backup-purge-pg.mjs` 的**字面量只出现在 `line 204`**（注释里提它不算执行，`:191` 提到的是 `GY_PG_BIN`）。
 
-### 2.2 `tests/unit/ci-real-pg-wiring.test.mjs`：10→11 条 + 一组等价判据（+133/−8）
+### 2.2 `tests/unit/ci-real-pg-wiring.test.mjs`：11→12 条 + 一组等价判据（合流 `#354` 后重排；净 +141/−8）
 
 四处同步：
 
 - `MANAGED_SCRIPTS`（`line 74-86`）与 `FROZEN_MANAGED_SCRIPTS`（`line 88-100`）各追加 `'tests/integration/backup-purge-pg.mjs'`，两条清单**逐字一致**（`line 951` 的 `deepEqual` 钉住「改一条必须改另一条」）；
-- `REQUIRED_STEP_ORDER`（`line 124-153`）第 11 项，附 4 行注释（自起集群、零耦合、`GY_PG_BIN` 形状、必须排最后）；第 10 项注释里「它在最后」改成「R28-S49 之后 workflow 里最后一步是 `backup-purge-pg`」；
-- 头注释（`line 65-72`）：第 11 条是 R28-S49 接的，说明 R28-S14 当年判它接不了的原因与本片的解法，并指向本页。
+- `REQUIRED_STEP_ORDER` 第 **12** 项（合流 `#354` 后行号下移），附 4 行注释（自起集群、零耦合、`GY_PG_BIN` 形状、必须排最后）；第 10 项注释里「它在最后」改成「排在语音域之前」——它清理自建角色，放前面会改变后面脚本的前置条件；
+- 头注释：第 **12** 条是 R28-S49 接的，说明 R28-S14 当年判它接不了的原因与本片的解法，并指向本页；`#354` 合入后语音域占第 11 条，本片由第 11 条顺延为第 12 条。
 
 **判据⑦⑧ 必须换掉，不能照抄**：原判据要求每个受管脚本的 step「先 `CREATE DATABASE <库>` 再 `node <脚本>`」，且把 CI 建的库名与脚本真正连的库名对齐。这条脚本三条都不满足：它**不连** service 的库、**不该**在 CI 建库（库在它自己 `initdb` 出来的临时集群里）、库名还是 `const DB_NAME = …` 这种抽不到的写法（§1）。照抄只会得到一条永久假红，或者更糟——为了让它绿，往 step 里塞一条 `CREATE DATABASE`，于是判据核对的是一个脚本根本不连的库。
 
@@ -200,8 +200,8 @@ EXITCODE=77
 
 ## 6. 合并顺序
 
-- 本片与 #354（语音域接 CI）**同改** `real-pg-integration.yml` 的 job 末尾：若 #354 先合，本片的两步会排到第 12/13 条，`MANAGED_SCRIPTS` 仍是 11（语音域那条另加），但**顺序表要重排**（`backup-purge-pg` 必须仍是最后一步，因为它装包 + 自起进程）。由指挥合流时按实际顺序重排 `REQUIRED_STEP_ORDER` 并同步数值；若本片先合，#354 追加即可。
-- 本片与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`（R28-S14 那页）不冲突，但**该页 §3 的结论被本片推翻**：它把 `backup-purge-pg` 判成「不接（环境前提在 CI 上不成立）」，理由是 runner 上取不到 `initdb`/`pg_ctl`；本片的全部工作就是把这个前提消掉（先装 PGDG `postgresql-17`）。两份证据页并存，以本页为准。读史口径：wiring-3 的「3 接 / 2 不接」两条今已全接 —— `account-suspend-pg` 由 R28-S39 修好 scram 缺陷后接（第 10 条），`backup-purge-pg` 由本片消除环境前提后接（第 11 条）。
+- **合流结果（已发生）**：`#354`（语音域接 CI）于 `b6c4945` 先合入 main，语音域成为第 11 条；本片合流 `e1c0479` 后已按**实际顺序**重排：`backup-purge-pg` 为第 **12** 条、且仍是 workflow 最后一步（它先装 PGDG `postgresql-17` 再自起进程）。`MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三处**同步为 12 条**，两守卫 23/23 绿。⛔ 没有放宽任何判据。
+- 本片与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`（R28-S14 那页）不冲突，但**该页 §3 的结论被本片推翻**：它把 `backup-purge-pg` 判成「不接（环境前提在 CI 上不成立）」，理由是 runner 上取不到 `initdb`/`pg_ctl`；本片的全部工作就是把这个前提消掉（先装 PGDG `postgresql-17`）。两份证据页并存，以本页为准。读史口径：wiring-3 的「3 接 / 2 不接」两条今已全接 —— `account-suspend-pg` 由 R28-S39 修好 scram 缺陷后接（第 10 条），`backup-purge-pg` 由本片消除环境前提后接（合流后为第 12 条）。
 
 ## 7. 门禁（逐条 exit 0）
 
