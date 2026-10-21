@@ -3,13 +3,13 @@
 - 日期：2026-10-21
 - 工作树：`E:\GengYunCommander\wt-r28-s49`，分支 `test/gy-r28-backup-purge-ci`，base `c0217a4`（本片 standalone，不依赖任何在途 PR）
 - 本机：Windows 10 + PowerShell 5.1.26100.8875 + Node v24.16.0；本地 PG 17.11 二进制 `E:\GengYunCommander\.pg17\pgsql\bin`
-- 日志（一次性本地目录，未入库）：`E:\GengYunCommander\.pg17\handoff\r28-s49-logs\`（`10`–`40` 七个文件）
+- 日志（一次性本地目录，未入库）：`E:\GengYunCommander\.pg17\handoff\r28-s49-logs\`（`10`–`40` 是 Round 1 的七个文件；`50`–`58` 是门禁与 commit 后复跑；`60`–`63` 是 Round 2「CI 首跑红」的复验，见 §10）
 
 本片把 `tests/integration/backup-purge-pg.mjs`（GY-I19／#19：迁移 `0023` 的 apply→rollback→replay、注销受理在**同一事务**里写清单、30 天保留窗口到期清除）接进
 `.github/workflows/real-pg-integration.yml` 的 job `real-pg-17-11`。它是**最后一条**此前没有任何 workflow 跑过的真库脚本，也是清单里**唯一**的「自起集群」脚本：
 runner 上原本取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只活在 service 容器内），所以本片的核心不是给它写 step，而是**先给 runner 装一套 17 的服务端二进制**。
 
-**本片未改脚本本体一个字节**（`git diff --numstat` 对它为空；`658` 行 / `39497` B / `sha256=58C5FD52…A2C98D`，改前改后同值）。
+**Round 1 未改脚本本体一个字节**；**Round 2**（PR #360 的 CI 首跑真红，§10）只动它的**启动管道**：新增 `serverOptions()`（POSIX 上给 `pg_ctl -o` 加 `-k <dataDir>`）、`tailOfFile()`（`pg_ctl start` 失败时把 `server.log` 尾部贴进断言）、`-t 60`。断言内容与个数、迁移清单、库内行为、跳过面（77）一字未动 —— 指纹从 `704` 行 / `39497` B / `sha256=58C5FD52…A2C98D` 变为 `741` 行 / `41064` B / `sha256=31441DAF…5CA2A477`（`git diff --numstat` = `39 2`）。
 
 ## 0. 结论（一屏）
 
@@ -22,11 +22,13 @@ runner 上原本取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只活在 service
 | 未设 `GY_PG_BIN` | — | **exit 77** + `SKIP:` 行（跳过不是通过） |
 | 把真跑 step 临时删掉 | — | 单测 **8 红**（`tests 16 / pass 8 / fail 8`），8 条全部逐字点名该脚本 |
 | 同一文件的库建库判据（⑦⑧） | 该 step 没有 `CREATE DATABASE`，原判据会**假红** | 换等价且更强的 `SELF_CLUSTERED_SCRIPTS` 判据（§2.2） |
+| **CI 首跑**（PR #360，run `39537029221`） | — | 装包 step **success**（PGDG 与 `/usr/lib/postgresql/17/bin` 落位没问题）、真跑 step **failure**：PGDG 打包的 unix socket 默认 `/var/run/postgresql` 在 runner 上不可写 ⇒ Round 2 修启动参数 + 失败信息（§10） |
+| 修后本机复跑（Windows） | — | **exit 0**（同 13 组）、无 `GY_PG_BIN` 仍 **77**、失败路径实测把 `server.log` 尾部贴进断言（§10.4） |
 | 门禁 | — | 7/7 exit 0（§7） |
 
-一句话：**这条臂现在既被 workflow 真跑、又被受管清单守住；把「装包 + 真跑」两步删掉，CI 会红并点名脚本，不会退化成静默缺口。**
+一句话：**这条臂现在既被 workflow 真跑、又被受管清单守住；把「装包 + 真跑」两步删掉，CI 会红并点名脚本，不会退化成静默缺口。** CI 首跑暴露的平台差异（unix socket 目录）已修，但 Linux 侧最终只能由 CI 复跑证实（§10.4／§5）。
 
-## 1. 被测脚本的契约（已核实，本片未改脚本）
+## 1. 被测脚本的契约（已核实；Round 2 只改启动管道，判据与库内行为未动）
 
 - **必填** `GY_PG_BIN`：含 `initdb`/`pg_ctl` 的**服务端** bin 目录（`:52 const binDir = process.env.GY_PG_BIN ?? ''`；`:111` 断言 `initdb` 真的存在）；
 - **选填** `GY_I19_PG_ROOT`：数据目录根，默认 `os.tmpdir()`（`:87`）；
@@ -35,7 +37,7 @@ runner 上原本取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只活在 service
 - **库名硬钉在脚本内**：`:67 const DB_NAME = 'gengyun_backup_purge_test'`（注意不是 `const DB = …`，判据⑦⑧ 的 `pinnedDatabaseNames()` 正则抽不到它）；
 - **权限口径**：运行时对 `user_backup_copies` 只有**列级** SELECT/INSERT/UPDATE（`has_table_privilege=false`、`has_any_column_privilege=true`、`DELETE` 报 `42501`）。
 
-## 2. 改动（两处源码 + 本页）
+## 2. 改动（三处源码 + 本页）
 
 ### 2.1 `.github/workflows/real-pg-integration.yml`：job 末尾追加两步（+23/−0，其它零改动）
 
@@ -100,7 +102,17 @@ runner 上原本取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只活在 service
 
 该脚本仍登记在 `UNWIRED_DECLARATIONS` 里（它进不了无 PG 回环链：回环链没有真 PG、也没有 `initdb`/`pg_ctl`），但「未接线」的理由不能再写成「环境前提不满足 ⇒ 接不了」。新 reason 记的是三件事：需要服务端二进制目录、脚本自起集群（端口无覆盖）、以及 **R28-S49 已把它接进真库 job（先装 PGDG `postgresql-17`、再以 `GY_PG_BIN=/usr/lib/postgresql/17/bin` 真跑）**，末尾明确「**已接真库 job**，但**仍不进无 PG 的回环链**」。
 
-### 2.4 本页
+### 2.4 `tests/integration/backup-purge-pg.mjs`：只改启动管道（+39/−2，Round 2）
+
+Round 1 对它是零改动；Round 2 因 CI 首跑真红（§10）动三处，全部在「怎么把临时集群拉起来」这一层：
+
+1. `serverOptions()`：POSIX 上给 `pg_ctl -o` 追加 `-k ${dataDir}`（把 unix socket 指进本集群自己的数据目录；`win32` 不加，`-o` 字符串与改动前逐字相同）；
+2. `-t 60`：显式等待上限（runner 冷启动更慢）；
+3. `tailOfFile()` + 断言消息：`pg_ctl start` 失败时把 `join(dataDir,'server.log')` 尾部 15 行贴进 `AssertionError`，读不到则写明 ENOENT —— 赶在 `stopCluster()` 删目录之前取。
+
+**断言内容与个数、迁移清单、库内行为、跳过面（77）、`--allow-skip` 出口全部未动**；`python`/两守卫判据、workflow 的 step/env 结构也未动。详见 §10。
+
+### 2.5 本页
 
 ## 3. 本机真跑（exit 0，13 组）
 
@@ -184,6 +196,7 @@ EXITCODE=77
 - **runner 上的实测**：`ubuntu-24.04` + PGDG `noble-pgdg` 装 `postgresql-17` 的真实耗时、apt 源可达性、`/usr/lib/postgresql/17/bin/{initdb,pg_ctl}` 是否落在预期路径 —— 全部只能由本 PR 的 CI 首次证明。本机用 17.11 二进制 + 临时数据目录替代，证明的是**脚本与 step 的形状**，不是 runner 的装包成功。
 - **`initdb --version` 作为「装上了」的证明是否够**：本机无法验证 apt 的部分成功形态（例如 `postgresql-17` 装了但 `postgresql-common` 缺 `initdb` 的罕见路径）。装包步末尾的两条 `--version` 是最小可用的哨兵，值得在 CI 首次跑时人工看一眼日志。
 - **chain 测试的跨界断言**（§4.3）：本片未加，属口径变更，需指挥拍板。
+- **Linux 侧 `-k <dataDir>` 是否真的修好 socket**（§10）：本机没有 Linux 集群，也没有 `/var/run/postgresql` 这一层，只能由 CI 复跑证实。这是 Round 2 唯一的未闭合项；若仍红，新断言会把 `server.log` 尾部直接打进日志，按第一行 `FATAL:` 判读即可，不会再是「看不到真因」。
 
 ## 6. 合并顺序
 
@@ -224,3 +237,88 @@ node --test tests/unit/ci-real-pg-wiring.test.mjs tests/unit/ci-integration-chai
 - 上一页：`docs/verification/gy-r28-real-pg-wiring-3-20261020.md`（R28-S14 的接线判据、以及 §3 为什么当时判它「不接」——本片推翻的正是那一条）；
 - 相邻片：`docs/verification/gy-r28-account-suspend-ci-wire-20261021.md`（R28-S39 接第 10 条，同一 job、同一套「先建库再 node」判据）；
 - 域侧证据：`docs/verification/gy-i19-backup-domain-20261018.md`（迁移 `0023`／列级授权口径／`20-login-roles.sql` 的 `gy-i19-deletion-grant`、`gy-i19-backup-copies-grant` 两个区域）。
+
+## 10. 补记（Round 2）：CI 首跑真红与修法 —— unix socket 目录
+
+### 10.1 失败现场
+
+PR **#360**，run `39537029221`，job `real-pg-17.11`（id `119015935359`）：
+
+- step 16「安装 PG 17 服务端二进制（backup-purge 需要 initdb/pg_ctl）」**success** —— PGDG 源可达、`postgresql-17` 装上、`/usr/lib/postgresql/17/bin/{initdb,pg_ctl}` 落在预期路径（那两条 `--version` 哨兵都过了）；
+- step 17「备份副本域（迁移 0023 / 受理同事务 / 30 天清除）」**failure**，原文：
+
+```
+waiting for server to start.... stopped waiting
+pg_ctl: could not start server
+Examine the log output.
+CLEANUP=done（临时集群已停、数据目录已删；未触碰工作树与既有库）
+AssertionError [ERR_ASSERTION]: pg_ctl start 失败（status=1，日志见 /tmp/gy-i19-pg-4ad9c3.log）
+1 !== 0
+    at startCluster (…/tests/integration/backup-purge-pg.mjs:125:10)
+    at …/backup-purge-pg.mjs:265:3
+```
+
+两个信息缺口同时暴露：断言只说「起不来」，**真因在 `server.log` 里，而 `stopCluster()` 已经把数据目录连日志一起删了**；断言里那句「日志见 …」指向的又是另一份只记 `pg_ctl` stdout/stderr 的工具日志，不是 postgres 自己的日志。
+
+### 10.2 根因（平台差异，不是回归）
+
+Debian/Ubuntu 打包的 PostgreSQL 把 `unix_socket_directories` 的**编译默认值**钉成 `/var/run/postgresql`；`postgres` 启动时要在那里建 `.s.PGSQL.<port>`（socket）与 `.s.PGSQL.<port>.lock`（lock file）。GitHub 的 `ubuntu-24.04` runner 上：
+
+- `postgresql-17` 装完**只落二进制、不启服务**（`--no-install-recommends`，runner 不会跑 `pg_ctlcluster`）⇒ `/var/run/postgresql` 可能压根不存在；
+- 即便存在，它属 `postgres` 用户（`0755`），runner 的普通用户建不了里面的 lock file。
+
+Windows 上没有 unix socket 这一段，所以 Round 1 在本机跑绿**覆盖不到它** —— 同一份脚本、同一套断言，换平台才暴露。本仓已有同一个坑的运维侧先例：`deploy/postgres-cvm/conf/10-gengyun-postgres.conf:36` 显式写 `unix_socket_directories = '/var/run/postgresql'`，并在注释里说明它是编译默认值、必须由部署侧覆盖。
+
+### 10.3 修法（`tests/integration/backup-purge-pg.mjs`，+39/−2）
+
+```js
+function serverOptions() {
+  const options = [`-p ${port}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'];
+  if (process.platform !== 'win32') options.push(`-k ${dataDir}`);   // ← 唯一的行为改动
+  return options.join(' ');
+}
+
+function tailOfFile(file, maxLines = 15) {
+  try {
+    const lines = readFileSync(file, 'utf8').replace(/\s+$/, '').split('\n');
+    return lines.slice(-maxLines).join('\n');
+  } catch (error) {
+    return `（读不到 ${file}：${error.message}）`;
+  }
+}
+
+const start = runTool('pg_ctl', ['-D', dataDir, '-l', join(dataDir, 'server.log'), '-o', serverOptions(), '-t', '60', '-w', 'start']);
+assert.equal(
+  start.status,
+  0,
+  `pg_ctl start 失败（status=${start.status}，工具日志见 ${serverLog}；`
+    + `server.log 尾部：\n${tailOfFile(join(dataDir, 'server.log'))}）`,
+);
+```
+
+- `-k <dataDir>`：把 unix socket 指进**本集群自己的数据目录**（跑完随数据目录一起删，天然隔离，多臂并行也不撞名）。**仅 POSIX**；`win32` 分支的 `-o` 字符串与改动前逐字相同 ⇒ Windows 行为不变；
+- `-t 60`：runner 冷启动比本机慢，给足等待上限（原来是默认 60s 之外没有显式值，这里把它写实）；
+- `tailOfFile()` + 断言：失败时把 `server.log` 尾部 15 行贴进 `AssertionError`（读不到就写「（读不到 …：ENOENT…）」），**赶在 `stopCluster()` 删目录之前**取。
+
+⛔ 未动：断言内容与个数、迁移清单、库内行为、跳过面（77）、`--allow-skip` 出口、workflow 的 step/env 结构、两个单测的判据。
+
+### 10.4 本机复验（只证明「Windows 没退化」+「失败路径真的会贴日志」）
+
+| 场景 | 环境 | 读数 | 日志 |
+| --- | --- | --- | --- |
+| 正常真跑 | 三个 env 齐（同 §3） | **exit 0**，`RESULT=PASS 13 组`、`server started` 后 `CLEANUP=done` | `60-local-realpg-after-socketfix.log`（3857 B） |
+| 无 `GY_PG_BIN` | 不设 | **exit 77** + `SKIP:` 两行 | `61-local-skip-77-after.log`（286 B） |
+| 失败路径 | `GY_PG_BIN` 指向临时「假 bin」（`pg_ctl` 换成非 PG 可执行文件，其余二进制仍是 17.11） | **exit 1**，断言原文带尾部字段 | `63-local-startfail-tail.log`（1531 B） |
+
+失败路径原文（证明「起不来」不再是黑盒）：
+
+```
+AssertionError [ERR_ASSERTION]: pg_ctl start 失败（status=9，工具日志见 E:\GengYunCommander\.pg17\tmp\s49\failpath5-tool.log；server.log 尾部：
+（读不到 E:\GengYunCommander\.pg17\tmp\s49\gy-i19-pg-b51652fe\server.log：ENOENT: no such file or directory, open 'E:\GengYunCommander\.pg17\tmp\s49\gy-i19-pg-b51652fe\server.log'））
+```
+
+（Linux 上真 pg_ctl 会先把 `server.log` 建出来再写 postgres 的 stderr，所以 CI 里这一栏会是尾部若干行 `FATAL:`/`LOG:`，而不是「读不到」。）
+
+### 10.5 复跑判据
+
+CI 第 17 步转绿 ⇒ `-k <dataDir>` 有效、socket 不再碰 `/var/run/postgresql`。若仍红，断言会把 `server.log` 尾部直接打进 job 日志，按其中第一行 `FATAL:` 判读即可 —— 那是**另一种**根因，不会再是「看不到真因」这一种。

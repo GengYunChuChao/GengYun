@@ -107,6 +107,36 @@ function runTool(name, args) {
   }
 }
 
+/**
+ * `pg_ctl -o` 的 postgres 参数。
+ *
+ * POSIX 上**必须**显式把 unix socket 指到本集群自己的数据目录：Debian/Ubuntu（含 PGDG 的
+ * `postgresql-17`）把编译默认 `unix_socket_directories` 钉成 `/var/run/postgresql`
+ * （本仓 `deploy/postgres-cvm/conf/10-gengyun-postgres.conf:36` 显式写这个值、并在注释里说明
+ * 它是编译默认值，故运维侧必须覆盖）。GitHub runner 的普通用户既写不了那个目录，只装包没启
+ * 服务时该目录甚至不存在 ⇒ `pg_ctl start` 直接失败（`could not create lock file`／permission
+ * denied），而 `server.log` 随后会被 `stopCluster()` 一起删掉，CI 里只看得到「起不来」。
+ * Windows 没有 unix socket，`-o` 字符串与改动前逐字相同（行为不变）。
+ */
+function serverOptions() {
+  const options = [`-p ${port}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'];
+  if (process.platform !== 'win32') options.push(`-k ${dataDir}`);
+  return options.join(' ');
+}
+
+/**
+ * 失败时把 `server.log` 尾部带回断言消息：`stopCluster()` 会删数据目录，
+ * 不在这里贴出来，CI 里就永远看不到真因（只剩 `pg_ctl: could not start server`）。
+ */
+function tailOfFile(file, maxLines = 15) {
+  try {
+    const lines = readFileSync(file, 'utf8').replace(/\s+$/, '').split('\n');
+    return lines.slice(-maxLines).join('\n');
+  } catch (error) {
+    return `（读不到 ${file}：${error.message}）`;
+  }
+}
+
 function startCluster() {
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下没有 initdb：${tool('initdb')}`);
   mkdirSync(dataDir, { recursive: true });
@@ -118,11 +148,18 @@ function startCluster() {
     '-l',
     join(dataDir, 'server.log'),
     '-o',
-    `-p ${port} -c listen_addresses=127.0.0.1 -c max_connections=32`,
+    serverOptions(),
+    '-t',
+    '60',
     '-w',
     'start',
   ]);
-  assert.equal(start.status, 0, `pg_ctl start 失败（status=${start.status}，日志见 ${serverLog}）`);
+  assert.equal(
+    start.status,
+    0,
+    `pg_ctl start 失败（status=${start.status}，工具日志见 ${serverLog}；`
+      + `server.log 尾部：\n${tailOfFile(join(dataDir, 'server.log'))}）`,
+  );
   note(`临时集群：数据目录 ${dataDir}，端口 ${port}（只监听 127.0.0.1）`);
 }
 
