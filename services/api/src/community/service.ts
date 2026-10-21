@@ -590,6 +590,26 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     }
   }
 
+  /**
+   * 投递一次「他人互动」事件（他人评论 / 他人点赞），接收者 = **被评论/被赞内容的作者**。
+   *
+   * 四条硬边界（issue #17 验收第 2、3、4 条）：
+   *   1. **自评自赞不投递**：自己给自己发通知是典型脏数据，也没有信息量；
+   *   2. 接收者由服务端从**内容行**取 `author_id`，**绝不**来自客户端入参；
+   *   3. 目标在写入前已过 `isPubliclyVisible` / `publiclyVisibleTarget` 闸门（评论另加
+   *      「评论本身已 `published`」），**被下架/删除/无权**的对象在落库前就 404，
+   *      根本走不到这里 ⇒ 不给不可见对象新增消息；
+   *   4. 与 `publishModerationResult` 同口径：事件端口按契约不抛错，这里仍兜底 try/catch，
+   *      通知失败**不**改变内容写入的权威结果，也不入响应。
+   */
+  async function publishInteraction(event: CommunityEvent): Promise<void> {
+    try {
+      await events.publish(event);
+    } catch {
+      // 通知不是权威结果：内容/计数已落库，失败由事件端口如实标注 delivered:false。
+    }
+  }
+
   async function projectAuthor(userId: string) {
     const author = await authors.resolve(userId);
     if (author === null) {
@@ -1195,6 +1215,19 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             outcome.decision,
             outcome.reason_codes,
           );
+          // GY-I17 第 7 片：**他人评论**通知被评论帖子的作者（自评不通知）。
+          // 只在评论**已经公开发布**后发：待审/私有的评论对外不可见，投一条通知等于
+          // 泄露"存在一条受限评论"。跳转目标取**帖子**（评论行对他人未必可读）；
+          // 去重键带 `commentId` ⇒ 同一评论只通知一次，重复调度不新建第二行。
+          if (committedRecord.visibility === 'published' && parent.author_id !== user.userId) {
+            await publishInteraction({
+              event: 'comment_created',
+              ownerId: parent.author_id,
+              target: { type: 'post', id: parentId, revision: parent.revision },
+              commentId: id,
+              actorId: user.userId,
+            });
+          }
           return {
             outcome: { kind: 'comment' as const, id, revision: 1 },
             result: await projectComment(committedRecord),
@@ -1558,8 +1591,22 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         if (target.revision !== ifMatch.revision) {
           throw new ApiError('REVISION_CONFLICT', '目标版本已变化，请刷新后重试');
         }
-        if (method === 'PUT') await store.addLike(kind, targetId, user.userId);
-        else await store.removeLike(kind, targetId, user.userId);
+        if (method === 'PUT') {
+          const added = await store.addLike(kind, targetId, user.userId);
+          // GY-I17 第 7 片：**他人点赞**通知被赞内容的作者（自赞不通知）。
+          // `addLike` 返回「是否真的新增」：已赞再 PUT（换幂等键重放）为 `false` ⇒ 不重复
+          // 调度；即使重复调度，事件键 `...:u<likerId>` 也会命中去重索引，不产生第二行。
+          if (added && target.author_id !== user.userId) {
+            await publishInteraction({
+              event: 'like_created',
+              ownerId: target.author_id,
+              target: { type: kind, id: targetId, revision: target.revision },
+              actorId: user.userId,
+            });
+          }
+        } else {
+          await store.removeLike(kind, targetId, user.userId);
+        }
         return {
           outcome: { kind: 'ack' as const, id: targetId, revision: target.revision },
           result: { accepted: true },
