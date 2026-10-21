@@ -26,7 +26,7 @@
         },
         {
           "path": "services/api/src/db/catalog.ts",
-          "lines": "14-27"
+          "lines": "14-32"
         },
         {
           "test": "tests/unit/public-home.test.mjs",
@@ -51,7 +51,7 @@
         },
         {
           "path": "services/api/src/auth/wechat.ts",
-          "lines": "66-131"
+          "lines": "66-132"
         },
         {
           "test": "tests/unit/auth-routes.test.mjs",
@@ -338,7 +338,7 @@
         },
         {
           "path": "services/api/src/privacy/grant-pg.ts",
-          "lines": "26-97"
+          "lines": "32-113"
         },
         {
           "test": "tests/integration/consent-grant-pg.mjs",
@@ -479,7 +479,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "807-874"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -504,7 +504,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "876-953"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -529,7 +529,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "975-978"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -554,7 +554,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "980-1009"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -579,7 +579,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "1021-1052"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -654,11 +654,11 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "14-56"
+          "lines": "56-123"
         },
         {
           "path": "services/api/src/knowledge/pagination.ts",
-          "lines": "24-65"
+          "lines": "30-72"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
@@ -683,7 +683,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "43-56"
+          "lines": "57-121"
         },
         {
           "test": "tests/unit/knowledge-api.test.mjs",
@@ -1640,7 +1640,7 @@
         },
         {
           "path": "services/api/src/favorites/service.ts",
-          "lines": "214-258"
+          "lines": "305-347"
         },
         {
           "test": "tests/unit/favorites-http.test.mjs",
@@ -1665,7 +1665,7 @@
         },
         {
           "path": "services/api/src/favorites/service.ts",
-          "lines": "262-330"
+          "lines": "359-415"
         },
         {
           "test": "tests/unit/favorites-http.test.mjs",
@@ -1690,7 +1690,7 @@
         },
         {
           "path": "services/api/src/favorites/service.ts",
-          "lines": "332-380"
+          "lines": "426-466"
         },
         {
           "test": "tests/unit/favorites-http.test.mjs",
@@ -1715,7 +1715,7 @@
         },
         {
           "path": "services/api/src/history/service.ts",
-          "lines": "238-292"
+          "lines": "318-358"
         },
         {
           "test": "tests/unit/history-http.test.mjs",
@@ -1740,7 +1740,7 @@
         },
         {
           "path": "services/api/src/history/service.ts",
-          "lines": "294-340"
+          "lines": "369-404"
         },
         {
           "test": "tests/unit/history-http.test.mjs",
@@ -2594,7 +2594,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "315-320"
+          "lines": "400-411"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2710,7 +2710,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "lines": "496-501"
+          "lines": "707-711"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -2826,7 +2826,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "1056-1174"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -2851,7 +2851,7 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "lines": "1-40"
+          "lines": "1176-1222"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -2895,7 +2895,7 @@
       "evidence": [
         {
           "path": "services/api/src/knowledge/pagination.ts",
-          "lines": "24-65"
+          "lines": "30-72"
         },
         {
           "path": "services/api/src/profile/service.ts",
@@ -2961,7 +2961,7 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "lines": "349-358"
+          "lines": "828-834"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -3007,7 +3007,7 @@
         },
         {
           "path": "services/api/src/knowledge/service.ts",
-          "lines": "43-47"
+          "lines": "102-104"
         },
         {
           "path": "packages/reference/constants.mjs",
@@ -3043,7 +3043,7 @@
         },
         {
           "path": "services/api/src/config.ts",
-          "lines": "126-238"
+          "lines": "155-283"
         },
         {
           "path": "services/api/src/auth/wechat.ts",
@@ -3064,7 +3064,7 @@
       "evidence": [
         {
           "path": "services/api/src/recognitions/service.ts",
-          "lines": "756-796"
+          "lines": "757-797"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",
@@ -3076,7 +3076,7 @@
         },
         {
           "path": "services/api/src/jobs/registry.ts",
-          "lines": "283-308"
+          "lines": "283-309"
         },
         {
           "path": "services/api/src/routes/admin.ts",
@@ -3113,7 +3113,7 @@
         },
         {
           "path": "services/api/src/recognitions/service.ts",
-          "lines": "525-543"
+          "lines": "525-544"
         },
         {
           "path": "services/api/src/ocr/service.ts",
