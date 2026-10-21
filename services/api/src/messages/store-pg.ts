@@ -27,6 +27,7 @@
  * `PROVIDER_UNAVAILABLE`，与 `conversations/store-pg.ts` / `knowledge/service.ts` 同口径。
  */
 import { ApiError } from '../errors.ts';
+import { isTransientDatabaseError } from '../db/pool.ts';
 import { MESSAGE_TYPES, type MessageType, type TargetRef } from './types.ts';
 import type {
   IdempotencyOutcome,
@@ -56,7 +57,11 @@ export function classifyMessagesDatabaseError(error: unknown): never {
     throw new ApiError('PROVIDER_TIMEOUT', '消息数据库响应超时', { retryable: true });
   }
   if (error instanceof ApiError) throw error;
-  throw new ApiError('PROVIDER_UNAVAILABLE', '消息数据库暂不可用', { retryable: true });
+  // `retryable` 分档（口径原文见 `../errors.ts` 的 `ApiError` 注释）：连接层故障（08xxx）、管理员干预
+  // （53xxx / 57P0x）、串行化冲突（40001）、死锁（40P01）⇒ 同一请求稍后重试**确实**可能成功 ⇒ true；
+  // 权限不足（42501）、库/表/凭据缺失（3D000 / 28P01 / 42P01）、函数缺失（42883）与无法归类的其余
+  // 驱动错误 ⇒ 需运维改配置或修缺陷，重试永远不会好 ⇒ false（⛔ 恒 true 会把权限缺失伪装成下游抖动）。
+  throw new ApiError('PROVIDER_UNAVAILABLE', '消息数据库暂不可用', { retryable: isTransientDatabaseError(error) });
 }
 
 const COLUMNS = 'id, revision, owner_id, type, target_ref, read_at, created_at, event_key';
