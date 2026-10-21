@@ -1,0 +1,40 @@
+{
+  "schema": "gy-i07-ledger-lag-registry/v1",
+  "reviewed_at": "2026-10-22",
+  "base_commit": "a2ab0d9aff391a199142699038b01eda2f74d497",
+  "note": "台账滞后登记（代码已更新、台账文字未更新）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r29-i07-closure-20261022.md",
+  "frozen_sort": {
+    "pointer": "docs/architecture/state-contract.md:32",
+    "clause": "created_at DESC, id DESC"
+  },
+  "code_of_record": {
+    "path": "services/api/src/knowledge/service.ts",
+    "line": 76,
+    "needle": "ORDER BY created_at DESC, id DESC",
+    "merged_by": "b56ba9d（PR #209，2026-10-16 合入 main）"
+  },
+  "lags": [
+    {
+      "ledger_file": "docs/architecture/contract-status.json",
+      "pointer": "operations.listKnowledge.blocker",
+      "ledger_line": 716,
+      "status_field_line": 694,
+      "status_value": "partial",
+      "kind": "台账滞后（代码已更新）",
+      "claimed_sort_absent_from_code": "id_asc",
+      "code_sort": "created_at DESC, id DESC",
+      "ledger_blocker_verbatim": "需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留"
+    },
+    {
+      "ledger_file": "docs/architecture/contract-status.json",
+      "pointer": "dimensions.pagination.blocker",
+      "ledger_line": 3164,
+      "status_field_line": 3133,
+      "status_value": "partial",
+      "kind": "台账滞后（代码已更新）",
+      "claimed_sort_absent_from_code": "id_asc",
+      "code_sort": "created_at DESC, id DESC",
+      "ledger_blocker_verbatim": "授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成"
+    }
+  ]
+}
