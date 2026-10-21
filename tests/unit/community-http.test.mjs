@@ -27,6 +27,7 @@ import { createMessagesCommunityEventsPort, communityEventKey } from '../../serv
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { CLEAN_BODY, CLEAN_TITLE, DANGEROUS_BODY, makeGate, makeSyntheticPassPort } from './community-fixtures.mjs';
 import { frozenModerationInjection } from './stall-hygiene-fixtures.mjs';
+import { createPublicPostingConsent } from './community-posting-consent-fixtures.mjs';
 
 const API = '/api/v1';
 const START = Date.UTC(2026, 9, 20, 4, 0, 0);
@@ -54,10 +55,15 @@ async function fixture(t, options = {}) {
     ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
     ...(options.real === true ? { executionMode: 'real', requiresRealCredentials: true } : {}),
   };
+  // GY-R28 W10：投稿面的 `public_posting` 用途闸（合成授权账本，见夹具文件头）。
+  // 本文件的既有断言口径**不变**（201/200、幂等、先审后发……）：授权在 `user()` 里先补齐，
+  // 于是请求走的是「有授权 ⇒ 放行」这一条真实链路，而不是把断言改成「403 也算过」。
+  const publicPosting = options.publicPosting ?? createPublicPostingConsent();
   const app = buildApp({
     config,
     store: auth,
     now: () => new Date(time),
+    privacyInjection: { consent: publicPosting.gate },
     communityInjection: {
       store: community,
       gate: options.gate ?? makeGate(),
@@ -94,6 +100,8 @@ async function fixture(t, options = {}) {
       expiresAt: new Date(START + 48 * 3600_000),
       audience: 'user',
     });
+    // 投稿面授权：`grant` 走真实实现（写授权记录 + 置 granted epoch）。
+    await publicPosting.grant(created.id);
     return { user: created, token, session };
   }
   const a = await user('a');
@@ -141,7 +149,7 @@ async function fixture(t, options = {}) {
     assert.equal(result.status, 201, JSON.stringify(result.body));
     return result.body.data;
   }
-  return { app, auth, community, messages, a, b, admin, call, publish, url, advance: (ms) => { time += ms; } };
+  return { app, auth, community, messages, a, b, admin, call, publish, url, publicPosting, advance: (ms) => { time += ms; } };
 }
 
 /** 断言契约错误封套（状态码 + 错误码 + `Cache-Control: no-store`，且**无成功封套**）。 */

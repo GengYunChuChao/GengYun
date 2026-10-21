@@ -32,7 +32,13 @@ Page({
     regionCodes: [REGION_NONE.code].concat(REGIONS.map(function (r) { return r.code })),
     regionIndex: 0,
     submitting: false,
-    errorText: ''
+    errorText: '',
+    // B7：失败时把契约错误码透传给 `state-view` 的 `error-code`。改前本页只有一个红色
+    // 提示条（`errorText`），403 三码会被当成普通「请求不符合契约要求」——同一件事在列表页
+    // 显示成「没有权限」、在投稿页显示成「失败」，两套语气。现在 403 系与列表/详情同口径：
+    // 整页 denied（表单收起，因为当前会话本来就不能发布），其余仍留在表单上如实说明。
+    errorCode: '',
+    denied: false
   },
 
   onLoad: function () {
@@ -102,8 +108,20 @@ Page({
       })
       navigation.openTarget('/pages/communitydetail/communitydetail?id=' + encodeURIComponent(result.post.id), true, function () {})
     }).catch(function (error) {
-      if (error && error.code === 'SESSION_REQUIRED') { that.setData({ submitting: false, guest: true }); return }
-      that.setData({ submitting: false, errorText: api.message(error) })
+      // 会话类（含 `SESSION_CHANGED`）⇒ 回登录门禁；403 三码 ⇒ 整页 denied（`errorCode` 驱动）。
+      if (api.sessionFailure(error)) {
+        that.setData({ submitting: false, guest: true, errorText: '', errorCode: '', denied: false })
+        return
+      }
+      that.setData({
+        submitting: false,
+        errorText: api.message(error),
+        errorCode: (error && error.code) || '',
+        denied: api.forbidden(error)
+      })
     })
-  }
+  },
+
+  /** denied 态的「重新填写」入口：权限问题解除后不必重进页面（表单会重新出现，不放宽任何校验）。 */
+  onDismissDenied: function () { this.setData({ errorCode: '', errorText: '', denied: false }) }
 })

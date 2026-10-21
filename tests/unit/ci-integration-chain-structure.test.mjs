@@ -119,9 +119,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '因为同机可能已有别人的临时集群）；缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
       + '（⛔ 不得用 --allow-skip 读成 0）。它验证的是备份副本 30 日到期**驱动**'
       + '（到期枚举 / 逐组清除 / 失败不阻塞 / failed 重排 / 幂等重跑 / CLI 退出码），没有真库就没有读数。'
-      + 'R28-E2 的片红线禁止改 `.github/workflows/**` ⇒ 本片**没有**把它接进任何 workflow'
-      + '（`real-pg-integration.yml` 的接线待指挥排期），也**不进**无 PG 的回环链'
-      + '（回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`），故在此如实登记为未接线。',
+      + 'R28-E5 已把它接进 `.github/workflows/real-pg-integration.yml`：复用该 job 里那条装 `postgresql-17`'
+      + '（PGDG `noble-pgdg`）的 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`）＋'
+      + ' `GY_I19_PG_ROOT=${{ runner.temp }}/gy-i19-pg` 真跑，⛔ 不自己 `CREATE DATABASE`（受管脚本第 13 条）'
+      + ' ⇒ **已接真库 job**。但它**仍不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
+      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/catalog-pg.mjs',
@@ -175,6 +177,13 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/messages-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+  },
+  {
+    path: 'tests/integration/messages-purge-pg.mjs',
+    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
+      + '再经真实 `purgeOwnerData` 取「本主体 messages 行数 → 0／他人行原样」的注销行数读数；未设 `GY_PG_BIN` 时'
+      + '**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），故不进无 PG 的回环链。'
+      + 'R28-W11 只交付脚本与证据，**尚未接进任何 workflow**（`.github/workflows/**` 不在本片范围内，CI 接线另开一单）。',
   },
   {
     path: 'tests/integration/migrations-negative-pg.mjs',

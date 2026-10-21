@@ -146,6 +146,76 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 本节只重跑了 `node tools/verify-contract-status.mjs` 一条门禁并核对了仓内文件与行号，未重跑业务测试、PG 集成、微信工具或真实供应商调用；`gh` 计数为 2026-10-20T12:14Z 读数（当日在飞数 4→5→2→2：新增 #327／#328，合入 #323／#325／#326／#327），后续合入会变，更新时另起快照、不改本节。
 
+> **后续订正指引（2026-10-21 加，仅指路，不改本节读数）**：本节第 114 行（`:861` 只写「持久/删除链待验收」）、
+> 第 125 行（`main` 现有 24 个迁移、最大号 `0024`）、第 127 行（`ocr-jobs-pg.mjs`／`account-suspend-pg.mjs`／`backup-purge-pg.mjs` 三句「未接 CI」）
+> 均已被后续合入推翻，现行读数见下节「2026-10-21 快照」。
+
+## 2026-10-21 快照
+
+核对日期 2026-10-21（UTC+8）。基线 `main` = `ee46eb1`（`ee46eb1dc2b8a5a57acd9b8905b72863d45cfa4e`，即 #398 的 squash 提交）：自 `4122976` 起共 70 个提交（`git rev-list --count 4122976..HEAD`=70）。本节取代「2026-10-20 快照」里按 `4122976` 计数的读数；10-20、10-18 两节原文（含计数表、在飞 PR 表与逐 issue 判定）按要求原样保留以便追溯。
+
+### 计数（`gh`／`git` 实测，同一次运行于 2026-10-21T14:56:42Z）
+
+| 口径 | 读数 | 命令 |
+| --- | --- | --- |
+| 开放 issue | 24 | `gh issue list --state open --limit 300 --json number` |
+| 已关闭 issue | 3（#1、#2、#3） | `gh issue list --state closed --limit 300 --json number` |
+| 累计合入 PR | 312 | `gh api 'search/issues?q=repo:GengYunChuChao/GengYun+type:pr+is:merged' --jq .total_count` |
+| 在飞 PR | 3（#400、#399 非草稿，#324 草稿；`mergeable` 均 `MERGEABLE`） | `gh pr list --state open --limit 300 --json number,isDraft,mergeable` |
+| 提交总数／自 10-20 基线新增 | 366／70 | `git rev-list --count HEAD`；`git rev-list --count 4122976..HEAD` |
+| 迁移文件数／最大号 | 26／`0026_speech_persistence.sql`（含 `0025_recognitions_persistence.sql`） | `(Get-ChildItem services/api/db/migrations/*.sql).Count` |
+
+整项完成数仍 3／27（#1、#2、#3），其余 24 项 OPEN。10-20 之后合入的 #389～#399 未改变任何整项 AC：`#391`／`#392`／`#393`／`#394`／`#395`／`#396`／`#397`／`#398` 都是局部实现或证据页，`#399` 尚未合入。
+
+### 契约门禁（本机重跑 `node tools/verify-contract-status.mjs`，退出码 0）
+
+原样输出：
+
+- 「PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；形状错误 0 项；语义错误 0 项」
+- 「PASS: 语义可核 104 条区间 + 0 条片段；不可核 98 条区间 + 157 条片段（不可核不计入通过）」
+- 「PASS: 证据锚点 409 条引用自带锚点（区间内 238 条 + 仅整文件 171 条）；无锚点不可核 0 条（纯行号 0 + 无行号源文件 0 + 无用例名 0），只计数不判红」
+- 「PASS: 纯行号区间 238 条（有实质内容 238 条；整段仅空白/收尾行 0 条、区间首行为空行 2 条，只计可疑不判红）」
+- 「PASS: 中文表格一致」
+- 「PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。」
+
+与 10-20 节读数相比：`112／108／implemented 13／partial 95／planned 4` 逐项相同，**状态零升级**；差异只在证据锚点面——`#362`／`#369`／`#344`／`#356`／`#371` 等把纯行号证据补成符号锚点，故「语义可核」由 59 条区间升到 104 条区间；「证据锚点」这一行 10-20 节的输出里**还没有**（脚本后来才加三档校核），今日读出 409 条。那是台账可核性，不是能力升级。
+
+### 本节订正的三类过期表述（只订正事实，不动验收结论）
+
+1. **真库 CI 接线（10-20 节第 127 行那句已过期）**：`real-pg-integration.yml` 现有 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：`ocr-jobs-pg.mjs` ← #331（第 8 条）、`recognitions-pg.mjs` ← #349、`account-suspend-pg.mjs` ← #353（脚本自身的 SCRAM 28P01／42710 缺陷已修）、`speech-pg.mjs` ← #354、`backup-purge-pg.mjs` ← #360（用 PGDG apt 装 PG 17 服务端二进制取 `initdb`/`pg_ctl`，故「runner 与容器不共享该二进制 ⇒ 不可接」的判断已过期）、`recognition-chain-e2e.mjs` ← #375（第 13 条）。另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，PR #400）把 `backup-copies-purge-pg.mjs` 接进去（将成第 14 条，**未合入前不记作事实**）。仍未接的脚本见本节末。
+2. **注销清理链（10-20 节第 109 行「仍缺 7／30 日到期的真实执行」）**：备份 30 日的**执行者已补**——#398 新增运维命令 `tools/purge-expired-backup-copies.mjs` ＋ 驱动 `services/api/src/privacy/backup-purge-driver.ts`（绕过受理函数、只读写 `user_backup_copies`，真库 14 臂 ALL PASS）；#397 把注销清理闭集扩到**四域**（favorites／history／messages／conversations，`services/api/src/privacy/user-data-deletion.ts:93-98`）并给会话域补 `snapshotOwner`，真库臂判「四域清单行齐 ⇒ 整体 `completed`」。**仍未取得**：真实 cron／CVM 调度读数（刻意不做常驻定时器）、7 日在线的真实时钟执行、第三方删除证据、恢复清单重放。
+3. **「受理同一事务撤会话」不再算缺口**：`services/api/db/migrations/0016_account_deletion_persistence.sql:132-134` 本就在同一事务内撤销该用户全部活跃会话；10-20 节若沿用旧口径，以本行为准。
+
+### 台账滞后（截至本节时点仍存在，生成区不改）
+
+- 【仍滞后】`docs/architecture/contract-status.json` 的 `requestAccountDeletion`（`:410`，blocker `:447`）：仍写「到期清除的唯一触发者是『请求重放』，无到期枚举器、无维护端点」——已被 #397／#398 在代码层推翻；也仍未列备份副本域四域清单。
+- 【仍滞后】同文件 `listMessages`（`:1915`）／`getUnreadCount`／`markMessageRead`：仍写「PG/注销及页面/Android仍待验收」，其中「注销」一截已被 #397 补上（真 PG17 行数读数仍缺）。
+- 【仍滞后】同文件 `createOCR`（`:913`）仍只写「真实标签评估与持久/删除链待验收」，未反映 `0024` 的 PG 持久化与 #331 的 CI 接线。
+- 【仍滞后】同文件 `listPosts`（`:1344`）仍称「真实持久存储未交付」（社区已接 PG）；`listAdminUsers`（`:2795`）仍写「真实存储……待完成」。
+- 【已订正】`createTranscription`／`createSynthesis` 的取消接线表述随 #325 订正；`listMessages` 的「real 无池才 503」口径随 #325 订正（内容正确，行号已漂移）。
+- 这些行号按本节时点实测（`grep -n '"id": "<operationId>"' docs/architecture/contract-status.json`）；README 表内其余旧锚点同样漂移，见 `docs/verification/gy-r28-e4-stale-claims-20261021.md` §2 R5。
+
+### 仍未接 CI 的 `-pg` 脚本
+
+截至本节时点：`tests/integration/backup-copies-purge-pg.mjs`（#398 新增，接线由在飞 PR #400 承担，未合入）。其余 `-pg` 脚本都已在 `real-pg-integration.yml` 里。
+
+### 仍未取得的主干（不分整项口径）
+
+- 真机：#23 的双平台真机与时延容量、#4 的真机微信身份、#5 的授权弹窗与坐标→地区转换、#16 的真机页面证据、#28 的开发者工具／真机渲染与截图（`docs/verification/platform-checklist.md:40`、`:48-49`；`docs/verification/gy-i05-region-profile-20261014.md:23-25`；`docs/verification/gy-i28-demo-parity-20261018.md:177-179`）。
+- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:968` 注释「应用装配路径永不注入真实适配器端口」；台账 `createRecognition` / `createOCR` / `createSynthesis` / `createConversation` 条目）。#10 的 PG 持久化与 CI 接线已具备，但不改变本条缺口的性质。
+- 样本签核：#20 的独立复核与许可（`packages/evaluation/samples/gy-i20-weeds-labels.json:18` 的 `reviewedBy` 为 `null`）、#21 的真实能力评估（`docs/evaluation/README.md:20-21`）。
+- 部署：#24 的实际部署与 CVM 侧恢复演练、#27 的合法域名与生产环境变量（`docs/verification/platform-checklist.md:24`；`docs/verification/gy-i27-live-ai-20261018.md:110` 记 `verify-env.mjs` 两项 FAIL：生产 API HTTPS URL、数据库连接变量）。
+
+### 逐 issue 判定（两层口径，与 README「当前进度（2026-10-21）」表一致）
+
+- **AC 判定层面**：合并版索引（`docs/verification/gy-issue-closure-index-20261018.md`，生成于基线 `5250520`）的分布不变——可关 **0**、待前置 **7**（#4、#7、#8、#16、#17、#22、#27）、待裁 **1**（#3，已按「可关，附披露」关闭）、不可关 **5**（#19、#20、#21、#23、#24）；其余 12 项未纳入索引。本轮**未改任何 AC 判定**，也**不关闭**任何 issue。
+- **工程侧**：`#16`／`#17` 的注销清理缺口已被 #390／#397 推进（`#16` 的「真删」与四域闭集、`#17` 的消息域原语与闭集），`#19` 的 30 日执行者已被 #398 补上；但三者的整项结论不变——真机证据、真实时钟执行、真实调度读数与第三方删除证据都还没有。
+
+### 本节边界
+
+本节只重跑了 `node tools/verify-contract-status.mjs` 一条门禁并核对了仓内文件与行号，未重跑业务测试、PG 集成、微信工具或真实供应商调用；`gh`／`git` 计数与在飞清单为 2026-10-21T14:47:52Z 同一次读数，后续合入会变，更新时另起快照、不改本节。
+
+
 ## 本轮合并与返修状态
 
 | PR | 已确认合并提交 | 当前含义 |

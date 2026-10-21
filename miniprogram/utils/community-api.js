@@ -5,6 +5,10 @@
 // 2. 只消费契约已声明的路径/字段；封套、实体形状、闭集、头部逐项核对，不符即 INVALID_RESPONSE；
 // 3. 身份只来自服务端签发的会话令牌；客户端**不**声明 userId/作者/审核状态；
 // 4. 写路径按契约带 `Idempotency-Key`，改/删/点赞带 `If-Match`（= 详情拿到的强 ETag 版本号）。
+// 5. **401/403 归因不在本文件**：一律委托 `utils/auth.js` 的 `attribution()` / `failureFor()`
+//    （单一事实源，码表由 `utils/states.js` 的 `CODE_KIND` 反推）。本文件只保留**本域措辞**
+//    （`MESSAGES` 里的 403 三码文案）和两个委托判定 `sessionFailure()` / `forbidden()`；
+//    403 不折叠成"登录失效"，也不清会话（`ACCOUNT_INACTIVE` 例外：码保留 + 清会话）。
 //
 // 未取得（如实标注）：正式微信身份/真机联调未做；`real` 模式服务端整域 503，
 // 页面按"服务暂不可用"如实展示，绝不显示本地伪造帖子。
@@ -317,6 +321,28 @@ function reasonCodes(error) {
   return error && Array.isArray(error.details) ? error.details.slice(0, 6) : []
 }
 
+/**
+ * 页面收口用的两个**委托**判定（本文件不自持码表）：
+ *
+ * - `sessionFailure(error)`：这是不是「会话没建立/已失效」类错误 ⇒ 页面应回到登录门禁（`guest`）。
+ *   闭集来自 `utils/auth.js` 的 `SESSION_LOSS_CODES`（由 B7 的 `states.CODE_KIND` 反推），
+ *   所以除契约 401 的 `SESSION_REQUIRED` 外，客户端自造码 `SESSION_CHANGED`（在途响应晚于
+ *   会话变化／切账号）同样归此类 —— 改前页面只比 `=== 'SESSION_REQUIRED'`，`SESSION_CHANGED`
+ *   会被当成普通失败停在错误页，用户既没被告知要重登、也拿不到正确的门禁态。
+ * - `forbidden(error)`：这是不是契约 403 闭集（`SCOPE_DENIED` / `CONSENT_REQUIRED` /
+ *   `ACCOUNT_INACTIVE`）⇒ 页面把**整页**收到 denied 语气，而不是一句「失败了，请重试」。
+ *   `ACCOUNT_INACTIVE` 的统一层口径是「码保留 + 清会话」（令牌永久不可用），页面据此仍按
+ *   denied 呈现，不谎称「登录过期」。
+ *
+ * 两个函数都只读 `error.code`，不解析封套、不改会话；归因本身只有一个实现（`auth.attribution`）。
+ */
+function sessionFailure(error) {
+  return !!error && auth.isSessionLossCode(error.code)
+}
+function forbidden(error) {
+  return !!error && auth.isForbiddenCode(error.code)
+}
+
 function modeNote(mode) {
   if (mode === 'real') return '服务端真实模式；本机未接真实审核供应商时不会返回成功。'
   if (mode === 'preset_demo') return '预设演示数据，不代表真实审核结果。'
@@ -375,6 +401,8 @@ module.exports = {
   getOwnReport: getOwnReport,
   reportReasons: REPORT_REASONS,
   reasonCodes: reasonCodes,
+  sessionFailure: sessionFailure,
+  forbidden: forbidden,
   modeNote: modeNote,
   message: message
 }

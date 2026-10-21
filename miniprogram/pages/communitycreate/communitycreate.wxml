@@ -15,6 +15,22 @@
   ></state-view>
 
   <block wx:else>
+    <!-- 403 系（SCOPE_DENIED／CONSENT_REQUIRED／ACCOUNT_INACTIVE）⇒ **整页** denied：
+         当前会话本来就不能发布，继续留着表单只会让人反复提交同一个必然被拒的请求。
+         其余失败（400 规则驳回、422 未结论、409 目标不可用、503 未接线）**留在表单上**，
+         因为用户改内容后重试是有意义的。错误码统一交给 `state-view` 分类。 -->
+    <state-view
+      wx:if="{{denied}}"
+      status="error"
+      error-code="{{errorCode}}"
+      title="这次发布没有通过权限检查"
+      desc="{{errorText}}"
+      action-text="重新填写"
+      allow-denied-action="{{true}}"
+      bind:action="onDismissDenied"
+    ></state-view>
+
+    <block wx:else>
     <view class="card">
       <view class="label">标题（必填，最多 120 字）</view>
       <input class="input" value="{{title}}" maxlength="120" placeholder="例如：稗草防除的一次记录" bindinput="onTitle" />
@@ -54,5 +70,6 @@
       </view>
       <view class="demo-caption form-gap">发布结果只以服务端返回为准；页面不显示未经服务端确认的"已通过"。</view>
     </view>
+    </block>
   </block>
 </view>

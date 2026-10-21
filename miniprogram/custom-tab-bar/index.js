@@ -36,12 +36,22 @@ Component({
     attached: function () { this.refreshUnread() }
   },
   methods: {
+    /**
+     * 未读角标刷新（派生量，每次现读）。
+     *
+     * 世代号：`attached`／`pageLifetimes.show`／消息页标记已读后的刷新会同时在飞，
+     * 响应次序不由请求次序决定。不设世代号时，先发后到的**旧**读数会覆盖新读数
+     * （角标停在 3，而实际已经全部已读）。只采纳**最后一次发出**的请求结果。
+     */
     refreshUnread: function () {
       const self = this
+      const epoch = (this._unreadEpoch = (this._unreadEpoch || 0) + 1)
       if (!auth.isLoggedIn()) { this.setData({ unreadText: '' }); return }
       messagesApi.getUnreadCount().then(function (result) {
+        if (epoch !== self._unreadEpoch) return
         self.setData({ unreadText: messagesApi.unreadText(result.count) })
       }).catch(function () {
+        if (epoch !== self._unreadEpoch) return
         self.setData({ unreadText: '' })
       })
     },
