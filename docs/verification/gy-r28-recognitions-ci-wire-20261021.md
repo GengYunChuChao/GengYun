@@ -168,7 +168,7 @@ EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；…）。
 rebase 口径：**保留 `#332` 的重写结构 + 追加本片这三条**，不把文件退回基线版。
 
 **另一处必然冲突**：`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 里
-`recognitions-pg.mjs` 那条 `reason`（本片改在 `:190`–`:194`）——`#332` 也改了**同一条目的同一段文案**。
+`recognitions-pg.mjs` 那条 `reason`（本片改在 `:190`–`:195`）——`#332` 也改了**同一条目的同一段文案**。
 本片**保留**自己的文案改动（它是接线后的事实），因此：
 
 - 若本片先合：`#332` rebase 时在这一段按「已接 `real-pg-integration.yml`、仍不进无 PG 回环链」合并即可；
