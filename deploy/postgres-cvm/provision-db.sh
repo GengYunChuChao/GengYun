@@ -114,6 +114,7 @@ read_secret_from_file() {
 
 RUNTIME_PASSWORD="${GENGYUN_API_RUNTIME_PASSWORD:-}"
 if [[ -z "$RUNTIME_PASSWORD" ]]; then
+  # best-effort: 读不到就留空；下一行 [[ -n ]] || fail 会拒绝继续（缺口令不可能跑到建库那一步）。
   RUNTIME_PASSWORD="$(read_secret_from_file 'GENGYUN_API_RUNTIME_PASSWORD' || true)"
 fi
 [[ -n "$RUNTIME_PASSWORD" ]] || fail "缺少应用运行时口令。任选其一：
