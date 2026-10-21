@@ -1,4 +1,4 @@
-﻿// 静态守卫：运行时 SQL 的**列面** ⊆ 授权面的**列权限**（角色 `gengyun_api_runtime`）。
+// 静态守卫：运行时 SQL 的**列面** ⊆ 授权面的**列权限**（角色 `gengyun_api_runtime`）。
 //
 // 为什么需要这一层：本仓 2026-10-20/21 连续四次踩同一个坑（S26 七张表整张零授权、S28 四张
 // `recognition_*` 零命中、S38 三张 `speech_*` 零授权且 90-assert 假绿、S45 `users` 列级 INSERT
@@ -292,9 +292,9 @@ const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 16,
-  sqlLiterals: 213,
-  statements: { INSERT: 36, UPDATE: 32, SELECT: 117, DELETE: 28 },
-  returningClauses: 66,
+  sqlLiterals: 215,
+  statements: { INSERT: 36, UPDATE: 32, SELECT: 117, DELETE: 30 },
+  returningClauses: 68,
   onConflictClauses: 21,
   selectStar: 15,
   qualifiedStar: 4,
@@ -302,8 +302,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 1,
   noTargetTable: 10,
   referencedTables: 39,
-  columnRequirements: 1375,
-  coveredRequirements: 1321,
+  columnRequirements: 1377,
+  coveredRequirements: 1323,
   ledgerExemptions: 33,
   rowLockRequirements: 19,
   rowLockExemptions: 1,
@@ -319,7 +319,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
-  'messages': 12,
+  'messages': 14,
   'ocr': 16,
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,
