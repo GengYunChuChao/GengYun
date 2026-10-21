@@ -1,13 +1,18 @@
-<view class="state state--{{status}}" wx:if="{{status !== 'ready'}}">
+<view class="state state--{{effectiveStatus}}" wx:if="{{effectiveStatus !== 'ready'}}">
   <view class="state__icon">{{preset.icon}}</view>
   <view class="state__title">{{resolvedTitle}}</view>
   <view class="state__desc">{{resolvedDesc}}</view>
 
-  <!-- 替身数据额外加文字标识，不只靠颜色区分 -->
-  <view class="state__tag" wx:if="{{status === 'stub'}}">替身数据 · 仅开发模式可见</view>
+  <!-- 失败分类标签：只在传了错误码时出现，说明「这是哪类问题」，不替代页面给出的领域文案 -->
+  <view class="state__kind" wx:if="{{kindTag}}">{{kindTag}}{{retryable ? ' · 可以重试' : ' · 重试无效'}}</view>
 
+  <!-- 替身数据额外加文字标识，不只靠颜色区分 -->
+  <view class="state__tag" wx:if="{{effectiveStatus === 'stub'}}">替身数据 · 仅开发模式可见</view>
+
+  <!-- 无权限时默认不给「重试／重新读取」按钮：403 不是重试能解决的问题，给了只会让人白点。
+       页面若给了针对性动作（如「去授权」），需显式传 allow-denied-action。 -->
   <button
-    wx:if="{{resolvedAction}}"
+    wx:if="{{resolvedAction && !actionSuppressed}}"
     class="btn btn--secondary state__btn"
     bindtap="onAction"
     disabled="{{busy}}"

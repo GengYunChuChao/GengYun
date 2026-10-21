@@ -55,6 +55,7 @@
     <state-view
       wx:elif="{{status === 'error'}}"
       status="error"
+      error-code="{{errorCode}}"
       title="{{stateTitle}}"
       desc="{{stateDesc}}"
       action-text="重新读取"

@@ -10,7 +10,7 @@
  *      出现在 `<state-view>` 标签内（现状复核：全仓仅 community/communitydetail/
  *      messages 三页有该比较，且都在 state-view 上）。
  *   3) 状态闭集：`state-view.js` 的 `PRESETS` 键集合必须与
- *      `docs/ui-state-inventory.md` §2 八态表的 key 列**集合相等**（不是包含），
+ *      `docs/ui-state-inventory.md` §2 九态表的 key 列**集合相等**（不是包含），
  *      且所有页面实际使用的字面量取值必须是该闭集的真子集。
  *      —— 为什么对照物是这份文档而不是 `packages/contracts/states.json`：
  *         `states.json`（contract_version 1.0.0）只有 13 个**领域**闭集，没有页面级
@@ -37,8 +37,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const PAGES_DIR = join(ROOT, 'miniprogram', 'pages')
 const EVIDENCE_DOC = 'docs/verification/gy-i26-demo-align-20261014.md'
 
-/** 任务书与 `state-view.js` 头注释共同固定的八态（顺序取文档表）。 */
-const EIGHT_STATES = ['guest', 'empty', 'loading', 'error', 'cancelled', 'invalid', 'stub', 'ready']
+/** 任务书与 `state-view.js` 头注释共同固定的九态（顺序取文档表）。
+ *  B7（Refs #28，2026-10-21）增补 `denied`：与 `guest`（401「还没登录」）分开，
+ *  `denied` 是「登录了但这件东西不给你」（403 `SCOPE_DENIED`／`CONSENT_REQUIRED`／
+ *  `ACCOUNT_INACTIVE`）。折叠成同一句会让用户反复登录仍不明白原因。 */
+const STATE_KEYS = ['guest', 'empty', 'loading', 'error', 'cancelled', 'invalid', 'stub', 'denied', 'ready']
 
 /** 五 Tab 的期望顺序：与 `docs/ui-demo` 移动端底部导航一致。 */
 const EXPECTED_TAB_PATHS = [
@@ -198,12 +201,12 @@ test('custom-tab-bar 与 app.json 同序同集，且只对已登记路径 switch
   )
 })
 
-test('状态闭集三方一致：PRESETS ＝ 文档八态表 ＝ 任务书八态（集合相等）', () => {
+test('状态闭集三方一致：PRESETS ＝ 文档九态表 ＝ 任务书九态（集合相等）', () => {
   const presets = presetKeys(readText('miniprogram/components/state-view/state-view.js'))
   const documented = documentedStateKeys(readText('docs/ui-state-inventory.md'))
 
-  assert.deepEqual([...presets].sort(), [...EIGHT_STATES].sort(), 'state-view 的 PRESETS 键与八态不一致')
-  assert.deepEqual([...documented].sort(), [...EIGHT_STATES].sort(), '文档 §2 八态表的 key 列与八态不一致')
+  assert.deepEqual([...presets].sort(), [...STATE_KEYS].sort(), 'state-view 的 PRESETS 键与九态不一致')
+  assert.deepEqual([...documented].sort(), [...STATE_KEYS].sort(), '文档 §2 九态表的 key 列与九态不一致')
   assert.equal(new Set(presets).size, presets.length, 'PRESETS 存在重复键')
 
   // ready 的语义是「正常内容、不渲染本组件」，四字段必须为空，否则会抢走真实内容位。
@@ -288,13 +291,13 @@ test('五 Tab 页的失败态入口必须走 state-view，不得自写状态块'
 
     // 覆盖面声明（本文件只做静态结构校验，勿读成运行期验证）：
     //   · 全文件只断言仓库里的**静态文本与文件结构**：五 Tab 四件套（js/json/wxml/wxss）
-    //     的存在性与 `pagePath` 一致性、`state-view` 八态闭集三方相等（§2 文档表＝
+    //     的存在性与 `pagePath` 一致性、`state-view` 九态闭集三方相等（§2 文档表＝
     //     `PRESETS` 键＝本文件常量）、以及真机台账的措辞。不编译 WXML/WXSS、不启动
     //     微信开发者工具、不触真机 ⇒ 不证明真机渲染、不证明 TabBar 图标视觉、
     //     不证明开发者工具内编译通过（真机五项仍为「未取得」，见证据文档 §12）。
     //   · 下面这段只把页面 JS 的 `status: '…'` 字面量与 WXML 的 state-view 渲染令牌
     //     对表，且**仅对 loading/error/empty 三类失败态**要求「WXML 有对应令牌」：
-    //     不判该字面量是否属于八态闭集，也不推断运行期实际取值 ⇒ 闭集外的
+    //     不判该字面量是否属于九态闭集，也不推断运行期实际取值 ⇒ 闭集外的
     //     `status: 'idle'`（messages.js 既有）不会被报出。闭集归属只对
     //     「渲染令牌」那一侧生效（见上一个断言块）。
     //   · `{{…}}` 内没有字面量的计算态不产生任何令牌（如 identify.wxml 的
@@ -337,7 +340,7 @@ test('注入负控制：闭集外的 status 必须被判红（合成片段，不
 
   // 5) 闭集漏掉 ready —— 与文档集合相等必须失败
   const missingReady = closedSet.filter((key) => key !== 'ready')
-  assert.notDeepEqual([...missingReady].sort(), [...EIGHT_STATES].sort(), '闭集少一个键也必须判红')
+  assert.notDeepEqual([...missingReady].sort(), [...STATE_KEYS].sort(), '闭集少一个键也必须判红')
 })
 
 test('真机台账：五条只登记「未取得」，不写成通过，且写明不构成条款 2 通过', () => {

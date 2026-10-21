@@ -108,6 +108,9 @@ try {
     'assets/knowledge/back.png',
     'utils/font-scale.js',
     'utils/system-font.js',
+    // 统一状态层（B7 / #28）：components/state-view 与各页状态判定共用；
+    // 漏加会让 state-view 在本工程里 MODULE_NOT_FOUND，所有页面的状态块一起失效。
+    'utils/states.js',
     'components/state-view/state-view.js',
     'components/state-view/state-view.json',
     'components/state-view/state-view.wxml',

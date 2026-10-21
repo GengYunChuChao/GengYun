@@ -15,7 +15,7 @@ const historyApi = require('../../utils/history-api')
 // 口径取「第一页已加载条数」（服务端封套没有总数），读不到就显示 —，绝不用本地数据凑数。
 const navigation = require('../../utils/navigation')
 const communityApi = require('../../utils/community-api')
-function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', loadError: '', needsReload: false, retryPending: false } }
+function empty() { return { profile: null, crops: [], regions: [], cities: [], counties: [], cropIndex: -1, cityIndex: -1, countyIndex: -1, cropName: '待读取', regionName: '待读取', editing: false, busy: false, locating: false, loaded: false, message: '', loadError: '', needsReload: false, retryPending: false, loadErrorCode: '' } }
 function message(code) {
   const messages = { REVISION_CONFLICT: '档案版本已变化，请重新读取并确认。', IDEMPOTENCY_CONFLICT: '保存请求已冲突，请重新读取并确认。', INVALID_CURSOR: '目录版本已变化，请重新读取。', INVALID_REQUEST: '所选目录已不可用，请重新读取后选择。', NETWORK_UNCERTAIN: '网络中断，保存结果未确认。', REQUEST_IN_PROGRESS: '这次保存仍在处理，请稍后重试同一次保存。', PROVIDER_UNAVAILABLE: '档案服务暂不可用。', PROVIDER_TIMEOUT: '档案服务超时。' }
   return messages[code] || '档案暂时无法读取或保存，请重试。'
@@ -105,12 +105,12 @@ Page({
       if (!this.live(op, b)) { this.identityFailure(op); return }
       const roots = result[2].filter(function (r) { return r.parent_code === null })
       const cities = result[2].filter(function (r) { return roots.some(function (p) { return p.code === r.parent_code }) })
-      this.setData({ crops: result[1], regions: result[2], cities: cities, loaded: true, busy: false, loadError: '', message: !result[1].length || !cities.length ? '支持目录为空，暂时不能选择档案。' : '' })
+      this.setData({ crops: result[1], regions: result[2], cities: cities, loaded: true, busy: false, loadError: '', loadErrorCode: '', message: !result[1].length || !cities.length ? '支持目录为空，暂时不能选择档案。' : '' })
       this.display(result[0])
     } catch (e) {
       if (!this.live(op, b)) { this.identityFailure(op); return }
       // 不静默：失败原因如实进 message，并由 loadError 驱动可见失败态 + 重试入口。
-      this.setData({ busy: false, message: message(e.code), loadError: readFailure(e.code), needsReload: true })
+      this.setData({ busy: false, message: message(e.code), loadError: readFailure(e.code), loadErrorCode: (e && e.code) || '', needsReload: true })
     }
   },
   subjectCurrent: function () {
