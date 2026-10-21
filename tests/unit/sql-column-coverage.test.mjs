@@ -16,7 +16,9 @@
 //   NC1 内存夹具：假 store 用了未授权列 ⇒ 必须红；
 //   NC2 内存夹具：表级 GRANT 吞掉同类型列级条目 ⇒ 必须标记为「整表」，不许当成「无列」或「全列」；
 //   NC3 从**真实**授权文本里删掉一条真实授权列 ⇒ 必须红并精确点名该 table.column；复原回绿；
-//   NC4 `OPAQUE_ALLOWLIST` 加一条源码里不存在的 file:line ⇒ 必须红（防躺平）。
+//   NC4 `OPAQUE_ALLOWLIST` 加一条源码里不存在的 file:line ⇒ 必须红（防躺平）；
+//   NC5 从**真实**授权文本里注释掉 `GRANT DELETE ON public.messages` ⇒ 必须红并点名整表缺 DELETE；
+//       另证明「列级 DELETE 授权不能满足整表需求」（PG 里根本不存在 `GRANT DELETE (col)`）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -80,7 +82,11 @@ const OPAQUE_ALLOWLIST = [
   },
 ];
 
-/** 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测）。 */
+/**
+ * 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测，
+ * 并随「DELETE 语句也产出整表权限需求」把 columnRequirements 由 1157 抬到 1184 —— 抬高的差额
+ * 正好等于 DELETE 语句条数 27，见覆盖读数的正向控制）。
+ */
 const EXPECTED_READINGS = {
   storeFiles: 8,
   sqlLiterals: 141,
@@ -89,7 +95,7 @@ const EXPECTED_READINGS = {
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1157,
+  columnRequirements: 1184,
   opaqueExpressions: 2,
 };
 
@@ -136,6 +142,15 @@ const EXPECTED_TABLES = [
 
 /** 表级（整表）授权是「全列」，不是「无列」—— 判定时按全列处理，报告里单列。 */
 const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
+
+/**
+ * 表级权限需求的**哨兵列**：`DELETE` 在 PostgreSQL 里**没有列级形态**（不存在
+ * `GRANT DELETE (col)`），整行删除只能靠表级授权。因此 `DELETE` 语句产出的需求用
+ * `column: '*'`（整表）表示，并且**只有** `kind: 'table'` 的授权才算覆盖 ——
+ * 列级授权再多也不能满足它（这正是 2026-10-21 #17 那次的坑：`public.messages` 只授了
+ * 列级 SELECT/INSERT/UPDATE，`DELETE FROM public.messages` 在真库上必然 42501）。
+ */
+const TABLE_WIDE_COLUMN = '*';
 
 /* ============================================================================
  * 一、文本工具（全部保持长度不变，便于把偏移映射回 file:line）
@@ -922,7 +937,12 @@ function parseSqlText(sql, origin) {
 /**
  * 每条语句 → 需要的 {table, column, privilege}。
  * SET 的左侧 = UPDATE；INSERT 列清单 = INSERT；SELECT 列与 RETURNING 列 = SELECT；
- * ON CONFLICT 的冲突目标 = SELECT（本仓口径，见 20-login-roles.sql 「ON CONFLICT 的推断 … 要 SELECT 权」）。
+ * ON CONFLICT 的冲突目标 = SELECT（本仓口径，见 20-login-roles.sql 「ON CONFLICT 的推断 … 要 SELECT 权」）；
+ * **DELETE 语句 = 表级 DELETE**（PG 无列级 DELETE，用哨兵列 `*` 表达整表需求）。
+ *
+ * 为什么必须收 DELETE：2026-10-21 #17 注销清理新增了 `DELETE FROM public.messages`，而当次
+ * 授权面只给了列级 SELECT/INSERT/UPDATE —— 这条守卫当时**结构上不可能发现**它（它从不产出
+ * DELETE 需求），最后靠人读 20-login-roles.sql 才撞见。现在补上这一面。
  * @param {object[]} statements
  * @returns {object[]}
  */
@@ -943,6 +963,7 @@ function collectRequirements(statements) {
     for (const column of statement.selectColumns) add(statement, column, 'SELECT', 'SELECT 列清单');
     for (const column of statement.updateColumns) add(statement, column, 'UPDATE', 'UPDATE SET');
     for (const column of statement.returningColumns) add(statement, column, 'SELECT', 'RETURNING');
+    if (statement.verb === 'DELETE') add(statement, TABLE_WIDE_COLUMN, 'DELETE', 'DELETE 整表（PG 无列级 DELETE）');
     if (statement.conflict !== null) {
       for (const column of statement.conflict.target ?? []) add(statement, column, 'SELECT', 'ON CONFLICT 冲突目标');
       for (const column of statement.conflict.updateColumns) add(statement, column, 'UPDATE', 'ON CONFLICT DO UPDATE SET');
@@ -988,8 +1009,12 @@ function evaluateCoverage(requirements, model, exemptions) {
     const key = `${requirement.table}.${requirement.column}|${requirement.privilege}`;
     seen.add(key);
     const granted = lookupPrivilege(model, requirement.table, requirement.privilege);
-    const ok = granted.kind === 'table'
-      || (granted.kind === 'columns' && granted.columns.has(requirement.column));
+    // 整表需求（`column: '*'`，目前只有 DELETE）：**只认表级授权**。
+    // 列级授权无论给了多少列都不满足「能删整行」—— PG 里没有 `GRANT DELETE (col)` 这种东西。
+    const tableWide = requirement.column === TABLE_WIDE_COLUMN;
+    const ok = tableWide
+      ? granted.kind === 'table'
+      : (granted.kind === 'table' || (granted.kind === 'columns' && granted.columns.has(requirement.column)));
     if (ok) {
       covered += 1;
       if (granted.kind === 'table') viaTableLevel += 1;
@@ -999,8 +1024,9 @@ function evaluateCoverage(requirements, model, exemptions) {
     genuinelyMissing.add(key);
     if (exempt.has(key)) continue;
     missing.push(requirement);
+    const target = tableWide ? `${requirement.table}（整表）` : `${requirement.table}.${requirement.column}`;
     problems.push(
-      `${requirement.ref} → ${requirement.table}.${requirement.column} 缺 ${requirement.privilege}（${requirement.clause}）；`
+      `${requirement.ref} → ${target} 缺 ${requirement.privilege}（${requirement.clause}）；`
       + `授权面现状：${granted.kind === 'none' ? '该表该权限未授任何列' : `只授了 [${[...granted.columns].join(', ')}]`}`,
     );
   }
@@ -1166,6 +1192,22 @@ test('sql-column-coverage/覆盖读数：解析器确实在看东西（8 文件 
     baseline.requirements.length,
     EXPECTED_READINGS.columnRequirements,
     `列权限要求条数变了（实际 ${baseline.requirements.length}）：要么 store 真的改了，要么解析器没看见某些列清单`,
+  );
+
+  // 正向控制：DELETE 语句必须**每条**都产出一条「整表 DELETE」需求。
+  // 没有这两行断言，「collectRequirements 开始产 DELETE 需求」这件事就只是注释里的说法，
+  // 守卫哪怕哪天把这一面又丢了也一样是绿的。
+  const deleteRequirements = baseline.requirements.filter((item) => item.privilege === 'DELETE');
+  assert.equal(
+    deleteRequirements.length,
+    baseline.sql.stats.statements.DELETE,
+    `DELETE 语句条数（${baseline.sql.stats.statements.DELETE}）与整表 DELETE 需求条数（${deleteRequirements.length}）必须相等：`
+    + '不等说明有 DELETE 语句没被收进需求（解析器漏面），或者有人给 DELETE 造了列级需求（PG 里不存在这种授权形态）',
+  );
+  assert.equal(
+    deleteRequirements.every((item) => item.column === TABLE_WIDE_COLUMN),
+    true,
+    'DELETE 需求必须一律是整表哨兵列 `*`（PG 没有 `GRANT DELETE (col)`，列级 DELETE 需求是假需求）',
   );
   assert.equal(
     baseline.coverage.covered,
@@ -1376,4 +1418,69 @@ test('sql-column-coverage/parser_negative_controls NC4：登记源码里不存�
   assert.ok(unregistered.opaque.problems[0].includes('nc4-fake-store-pg.ts:2'));
   console.log(`[sql-column-coverage] NC4 红字（未登记插值）：${unregistered.opaque.problems[0]}`);
   console.log(`[sql-column-coverage] NC4 红字（陈旧登记）：${audited.opaque.problems[0]}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC5：注释掉真实的 GRANT DELETE ⇒ 必须红并点名整表缺 DELETE', () => {
+  // 为什么这条负控制非做不可：DELETE 需求这一面是 2026-10-21 才补进 collectRequirements 的，
+  // 而它补进来的直接动机就是「`GRANT DELETE ON public.messages` 忘了给，守卫却一直是绿的」。
+  // 因此必须从**真实**授权文本里把这一行注释掉，看正向断言是否真的变红 —— 否则「补了 DELETE 面」
+  // 就只是一句注释里的说法。
+  const target = 'GRANT DELETE ON public.messages TO gengyun_api_runtime;';
+  const source = loadGrantSources().find((item) => item.file === GRANT_MAIN_FILE);
+  assert.ok(source !== undefined, `缺少 ${GRANT_MAIN_FILE}`);
+  assert.ok(source.text.includes(target), `负控制前置：${GRANT_MAIN_FILE} 里没有 \`${target}\`（形态已变，先同步本文件；`
+    + '若这行是被删掉的，那不是“形态变了”，而是又退回了 #17 那个 P0 缺口）');
+
+  // 正向自证①：注释掉 ⇒ 必须红，且恰好点名「public.messages（整表）缺 DELETE」。
+  const commented = source.text.replace(target, `-- ${target}`);
+  assert.notEqual(commented, source.text, '负控制前置：变异没有真正生效');
+  const brokenSources = loadGrantSources().map((item) => (item.file === GRANT_MAIN_FILE ? { file: item.file, text: commented } : item));
+  const broken = auditAll({ grantSources: brokenSources });
+  const hit = broken.coverage.problems.filter((message) => message.includes('public.messages（整表）') && message.includes('缺 DELETE'));
+  assert.equal(
+    hit.length,
+    1,
+    '注释掉 `GRANT DELETE ON public.messages` 后必须恰好红 1 条并点名 public.messages（整表）缺 DELETE，实际：\n'
+    + `${broken.coverage.problems.join('\n') || '（没有变红 —— DELETE 这一面又没人看了！）'}`,
+  );
+  assert.ok(hit[0].includes('services/api/src/messages/store-pg.ts:'), `红字必须点名运行时 SQL 的出处：${hit[0]}`);
+
+  // 复原 ⇒ 必须回绿（证明红字来自这一条授权，不是别的东西在冒烟）。
+  const restored = auditAll();
+  assert.deepEqual(restored.coverage.problems, [], '复原真实授权文本后必须回绿');
+
+  // 正向自证②：**列级 DELETE 授权不能满足整表需求**。
+  // 这一条是把「PG 没有 `GRANT DELETE (col)`」变成断言：哪怕列级 DELETE 列清单覆盖了整张表的每一列，
+  // 也不能满足 `DELETE FROM …`（真实 PG 会直接语法/权限报错）。用内存夹具证明判定逻辑没有偷偷放宽。
+  const fakeStore = {
+    file: 'tests/unit/fixtures/sql-column-coverage/nc5-fake-store-pg.ts',
+    text: [
+      'export function fake(pool, ownerId) {',
+      "  return pool.query('DELETE FROM public.favorites WHERE owner_id = $1', [ownerId]);",
+      '}',
+    ].join('\n'),
+  };
+  const fakeGrants = {
+    file: 'services/api/db/roles/nc5-fake.sql',
+    text: [
+      'BEGIN;',
+      'GRANT DELETE (id, revision, owner_id) ON public.favorites TO gengyun_api_runtime;',
+      'COMMIT;',
+    ].join('\n'),
+  };
+  const columnOnly = auditAll({ storeSources: [fakeStore], grantSources: [fakeGrants] });
+  const columnHit = columnOnly.coverage.problems.filter((message) => message.includes('public.favorites（整表）') && message.includes('缺 DELETE'));
+  assert.equal(
+    columnHit.length,
+    1,
+    '列级 DELETE 授权不得满足整表 DELETE 需求（PG 无 `GRANT DELETE (col)` 这种形态），实际：\n'
+    + `${columnOnly.coverage.problems.join('\n') || '（判定被偷偷放宽成“有列就算有表权限”了！）'}`,
+  );
+  assert.equal(
+    columnOnly.coverage.missing.length,
+    1,
+    `列级 DELETE 不满足整表需求时，缺口条数必须恰为 1（实际 ${columnOnly.coverage.missing.length}）`,
+  );
+  console.log(`[sql-column-coverage] NC5 红字（注释掉真实 GRANT DELETE）：${hit[0]}`);
+  console.log(`[sql-column-coverage] NC5 红字（只给了列级 DELETE）：${columnHit[0]}`);
 });
