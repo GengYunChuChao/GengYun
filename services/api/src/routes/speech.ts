@@ -22,6 +22,19 @@
  * 产品装配路径**不做任何端口注入**：服务由本模块按 `config.executionMode` 自建
  * （`real` 走 fail-closed，`stub`/`preset_demo` 走明确标注的替身）。
  *
+ * **存储选型（GY-R28 S20，#20 持久化接线）**：与 OCR 域（`routes/ocr.ts` + 迁移 `0024`）
+ * **同一范式**——装配层只决定"是否把池交出来"，实现在本模块按**三态**选定：
+ *   1. 注入的 `deps.store` **优先**（测试/回环用内存 store 时行为与接线前逐字相同）；
+ *   2. `real` 且装配方传入真池 ⇒ `createPostgresSpeechStore({ pool })`（`persistent: true`）；
+ *   3. 其余（`stub` / `preset_demo`，或 `real` 但无池）⇒ `createMemorySpeechStore()`
+ *      （`persistent: false`，⛔ 不冒充持久化：`describe().storePersistent` 如实回报）。
+ * 为什么选型在域内而不是 `app.ts`：`tests/integration/speech-http.mjs:530-540` 把
+ * 「`app.ts` 对 `speech/{store,provider,media}` 只能有 `import type` 引用」钉成结构性质
+ * （默认零端口注入的证据），值导入会打红这条既有断言；OCR 片 2026-10-20 的持久化接线
+ * 遇到同一约束，采用的正是"装配层传位置实参池 + 域内选型"（见 `ocr-http.mjs` 的
+ * 「合法装配变化」注记）。本片照抄该范式 ⇒ **既没改那条断言，也没削弱它**。
+ * 池是**位置实参**（第 4 个），不是 `deps` 的键：注册行的键集判据因此逐字保持。
+ *
  * **契约里与本域相邻、但不由本模块注册的操作**（不得越界注册，否则与既有路由重复）：
  * - `getJob` `GET /jobs/{id}` / `cancelJob` `POST /jobs/{id}/cancel`（`x-task: GY-I01`）：
  *   已由 GY-I09（PR #87）在 `routes/recognitions.ts` 注册，**只服务于识别任务**；
@@ -39,6 +52,7 @@ import { STUB_IDEMPOTENCY_HMAC_KEY } from '../auth/service.ts';
 import { API_PREFIX } from '../contract.ts';
 import { createSpeechService, type SpeechService } from '../speech/service.ts';
 import { createMemorySpeechStore, type SpeechStore } from '../speech/store.ts';
+import { createPostgresSpeechStore, type TransactionalPool } from '../speech/store-pg.ts';
 import { createSpeechProvider, type SpeechProvider } from '../speech/provider.ts';
 import { createSpeechMediaPort, type SpeechMediaPort } from '../speech/media.ts';
 import type { ConsentGate } from '../privacy/egress.ts';
@@ -122,10 +136,23 @@ export interface SpeechRouteDeps {
  * 缺省组装：`provider` 与 `media` 均按 `config.executionMode` 选择 ⇒ `real` 模式走
  * fail-closed 实现（缺凭据 ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`，**不回退替身**），
  * `stub` / `preset_demo` 走明确标注的替身。
+ *
+ * `persistencePool`（第 4 个**位置实参**，GY-R28 S20）：`real` 模式下装配方交出的真实连接池；
+ * `null` = 没有池（或非 real）。它只在**本模块内部**参与存储选型（见文件头「存储选型」），
+ * 不做 `deps` 的键 ⇒ 注册行键集与 `speech-http.mjs` 的结构断言逐字不变。
  */
-export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps): SpeechService {
+export function registerSpeechRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  deps: SpeechRouteDeps,
+  persistencePool: TransactionalPool | null = null,
+): SpeechService {
   const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode });
-  const store = deps.store ?? createMemorySpeechStore();
+  // 三态（注入优先 → real＋池 ⇒ PG → 否则内存）；内存分支 `persistent: false`，如实标注不持久。
+  const store = deps.store
+    ?? (config.executionMode === 'real' && persistencePool !== null
+      ? createPostgresSpeechStore({ pool: persistencePool })
+      : createMemorySpeechStore());
   const media = deps.media ?? createSpeechMediaPort(config.executionMode);
   // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
   // 其余模式（替身/演示）**不记账**：替身不发生真实外发，账本里不得出现 sent。
