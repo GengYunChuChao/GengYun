@@ -515,3 +515,29 @@ test('消息页：标记已读 409 REVISION_CONFLICT ⇒ 重新读取列表，�
   assert.equal(h.requests.at(-1).header['If-Match'], '"5"', '下一次标记必须带当前 revision，而不是旧的 1');
 });
 
+test('消息页：写路径遇 403 ACCOUNT_INACTIVE ⇒ 整页落 denied（不是一句 toast 掩过去）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 1 }) });
+  await flush();
+  assert.equal(page.data.status, 'ready');
+  page.onMarkRead({ currentTarget: { dataset: { id: MESSAGE, revision: 1 } } });
+  h.requests.at(-1).success({ statusCode: 403, data: messageError('ACCOUNT_INACTIVE') });
+  await flush();
+  // 统一层口径：ACCOUNT_INACTIVE 码保留 + 清会话（`auth.RETIRED_SESSION_CODES`）；
+  // 页面据此**整页**收口到 denied，而不是留在 ready 上只弹一句 toast。
+  assert.equal(page.data.status, 'error', '写路径 403 必须落到失败态');
+  assert.equal(page.data.errorCode, 'ACCOUNT_INACTIVE', '码必须是真实 403 码，不得折叠成 SESSION_REQUIRED');
+  assert.equal(page.data.guest, false, '403 不走游客态');
+  assert.equal(h.auth.isLoggedIn(), false, 'ACCOUNT_INACTIVE 按统一层口径清会话');
+  const view = h.component('components/state-view/state-view.js');
+  view.setData({ status: page.data.status, title: page.data.stateTitle, desc: page.data.stateDesc, errorCode: page.data.errorCode });
+  view.refresh();
+  assert.equal(view.data.effectiveStatus, 'denied', '403 码必须呈现 denied 语气');
+  assert.equal(view.data.actionSuppressed, true);
+});
+
+
