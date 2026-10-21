@@ -29,6 +29,43 @@ const signingKey = randomBytes(32).toString('hex');
 let pool, app, rolesCreated = false, passed = 0;
 const say = text => { passed++; console.log(`PASS ${passed}: ${text}`); };
 const sqlFile = path => readFileSync(new URL(`../../services/api/db/${path}`, import.meta.url), 'utf8');
+
+/** 负控制专用诱饵：另一个库 + 一个诱饵角色，只在 D0 里造/删，收尾必须归零。 */
+const DECOY_DATABASE = 'gengyun_auth_privacy_decoy_db';
+const DECOY_ROLE = 'gengyun_auth_privacy_decoy';
+const ROLE_NAMES = [loginName, group];
+
+/** `DROP OWNED BY` 只作用于**当前库**，PostgreSQL 17.11 也没有 `DROP OWNED BY … IN DATABASE` 这个子句
+ *  （实测 `DROP OWNED BY r IN DATABASE d` ⇒ `syntax error at or near "IN"`）。角色若在别的库里还拥有
+ *  对象，`DROP ROLE` 会报 `role "…" cannot be dropped because some objects depend on it` /
+ *  `DETAIL: 1 object in database <other>`。故清理要对**集群里每个可连的非模板库**各跑一次
+ *  `DROP OWNED BY`，最后才 `DROP ROLE`；否则本臂对运行顺序/同集群其它臂敏感（实测原文见
+ *  docs/verification/gy-r29-arms-isolation-20261022.md 的 R2 读数）。 */
+async function roleDatabaseClients() {
+  const rows = (await owner.query('SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn ORDER BY 1')).rows;
+  const clients = [];
+  for (const { datname } of rows) {
+    const scoped = new URL(url.href);
+    scoped.pathname = `/${datname}`;
+    const client = new pg.Client({ connectionString: scoped.href });
+    await client.connect();
+    clients.push(client);
+  }
+  return clients;
+}
+async function dropRolesEverywhere(names) {
+  const existing = (await owner.query('SELECT rolname FROM pg_roles WHERE rolname = ANY($1)', [names])).rows.map(row => row.rolname);
+  if (existing.length === 0) return;
+  const list = existing.join(',');
+  for (const client of await roleDatabaseClients()) {
+    try { await client.query(`DROP OWNED BY ${list}`); }
+    finally { await client.end(); }
+  }
+  await owner.query(`DROP ROLE IF EXISTS ${list}`);
+}
+async function dropDatabase(name) { await owner.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
+async function createDatabase(name) { await dropDatabase(name); await owner.query(`CREATE DATABASE ${name}`); }
+const databaseUrlFor = name => { const scoped = new URL(url.href); scoped.pathname = `/${name}`; return scoped.href; };
 const subject = code => createHmac('sha256', signingKey).update(`synthetic\n${code}`).digest('hex');
 async function request(path, token, options = {}) {
   const r = await fetch(`${app.listeningOrigin}/api/v1${path}`, {
@@ -87,10 +124,15 @@ async function lockedRace(user, action, mutate) {
     return await pending;
   } finally { await lock.query('ROLLBACK').catch(() => {}); await lock.end(); await pending?.catch(() => {}); }
 }
+let bodyFailure = null;
 try {
   const version = (await owner.query('SHOW server_version')).rows[0].server_version;
   assert.match(version, /^17\.11(?:\D|$)/);
   console.log(`Native PostgreSQL: ${version}`);
+  // 上次崩溃/并行留下的同名角色会让下面「必须为 0」的断言直接红（实测：两个实例并行时第二个在
+  // `pg_type_typname_nsp_index` 唯一约束上红，另一轮在角色数断言上红）。先按「每库 DROP OWNED」
+  // 清干净，再断言干净——顺序/并发不再决定红绿。
+  await dropRolesEverywhere(ROLE_NAMES);
   assert.equal((await owner.query("SELECT count(*)::int n FROM pg_tables WHERE schemaname='public'")).rows[0].n, 0);
   assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=ANY($1)', [[group, loginName]])).rows[0].n, 0);
   for (const file of ['0001_initial_schema.sql', '0003_privacy_consent.sql', '0008_auth_session.sql']) await owner.query(sqlFile(`migrations/${file}`));
@@ -99,6 +141,29 @@ try {
   rolesCreated = true;
   await owner.query(`CREATE ROLE ${loginName} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}'`);
   await owner.query(`GRANT ${group} TO ${loginName}`);
+  // ---- D0 负控制（CI 每次跑）：在**另一个库**里造一个属于诱饵角色的对象，证明
+  //  「只在本库 DROP OWNED 再 DROP ROLE」必然报 dependent objects，而「每库 DROP OWNED」能清干净。
+  //  没有这条，收尾「角色/诱饵库归零」的断言在跨库残留场景下就是空转。
+  await createDatabase(DECOY_DATABASE);
+  await owner.query(`CREATE ROLE ${DECOY_ROLE} NOLOGIN`);
+  const decoy = new pg.Client({ connectionString: databaseUrlFor(DECOY_DATABASE) });
+  await decoy.connect();
+  await decoy.query('CREATE TABLE public.decoy_cross_db_object(i int)');
+  await decoy.query(`ALTER TABLE public.decoy_cross_db_object OWNER TO ${DECOY_ROLE}`);
+  await decoy.end();
+  await assert.rejects(
+    (async () => {
+      await owner.query(`DROP OWNED BY ${DECOY_ROLE}`);
+      await owner.query(`DROP ROLE ${DECOY_ROLE}`);
+    })(),
+    /cannot be dropped because some objects depend on it/,
+    '跨库残留对象下 DROP ROLE 必须报 dependent objects（否则本负控制无牙）',
+  );
+  await dropRolesEverywhere([DECOY_ROLE]);
+  assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=$1', [DECOY_ROLE])).rows[0].n, 0);
+  await dropDatabase(DECOY_DATABASE);
+  assert.equal((await owner.query('SELECT count(*)::int n FROM pg_database WHERE datname=$1', [DECOY_DATABASE])).rows[0].n, 0);
+  say('跨库负控制：只在本库 DROP OWNED 时 DROP ROLE 报 dependent objects；每库清理后诱饵角色/诱饵库归零');
   const runtimeUrl = new URL(url); runtimeUrl.username = loginName; runtimeUrl.password = password;
   pool = createPool(runtimeUrl.href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
@@ -335,11 +400,30 @@ try {
   assert.equal((await owner.query('SELECT count(*)::int n FROM admin_sessions WHERE admin_id=$1', [admin.id])).rows[0].n, sessionCount);
   say('24h PG receipt does not prolong an 8h admin session or silently establish a replacement');
   console.log(`ALL ${passed} native PG17.11 integration groups passed; grant API is tested separately; business write/export consumers remain unimplemented.`);
+} catch (error) {
+  bodyFailure = error;
+  throw error;
 } finally {
   await app?.close();
   await pool?.end();
-  if (rolesCreated) {
-    await owner.query(`DROP OWNED BY ${loginName},${group}; DROP ROLE IF EXISTS ${loginName}; DROP ROLE ${group}`);
-  }
+  // ⚠ 不吞错：清理失败必须让本步红（旧实现是 `DROP OWNED BY …; DROP ROLE …` 一条语句且只清当前库，
+  //   跨库残留时 DROP ROLE 报 dependent objects；见文件顶部注释与 R2 读数）。
+  const faults = [];
+  try {
+    if (rolesCreated) await dropRolesEverywhere(ROLE_NAMES);
+    else await dropRolesEverywhere([DECOY_ROLE]);
+  } catch (error) { faults.push(`roles: ${error.message}`); }
+  try { await dropDatabase(DECOY_DATABASE); } catch (error) { faults.push(`decoy db: ${error.message}`); }
+  const leftoverRoles = (await owner.query('SELECT rolname FROM pg_roles WHERE rolname = ANY($1) ORDER BY 1', [ROLE_NAMES.concat(DECOY_ROLE)])).rows.map(row => row.rolname);
+  const leftoverDatabases = (await owner.query("SELECT datname FROM pg_database WHERE datname LIKE 'gengyun_auth_privacy%' AND datname <> 'gengyun_auth_privacy_test' ORDER BY 1")).rows.map(row => row.datname);
   await owner.end();
+  if (bodyFailure) {
+    if (faults.length > 0 || leftoverRoles.length > 0 || leftoverDatabases.length > 0) {
+      console.error(`[teardown] 另有清理故障：${faults.join('; ')}；残留角色：${leftoverRoles.join(',') || '(无)'}；残留库：${leftoverDatabases.join(',') || '(无)'}`);
+    }
+  } else {
+    assert.deepEqual(faults, [], `收尾清理失败（不得吞错）：${faults.join('; ')}`);
+    assert.deepEqual(leftoverRoles, [], `收尾必须不留本臂角色，实测残留：${leftoverRoles.join(',') || '(无)'}`);
+    assert.deepEqual(leftoverDatabases, [], `收尾必须不留本臂诱饵库，实测残留：${leftoverDatabases.join(',') || '(无)'}`);
+  }
 }

@@ -7,7 +7,10 @@
  *
  * 真库不可用时**显式 SKIP 并打印原因**（退出码 77＝未取得，绝非静默绿；本机可显式 `--allow-skip` 取 0）：
  *   MIGRATIONS_NEGATIVE_TEST_URL=postgres://postgres@127.0.0.1:55441/postgres
- * 维护连接须能 CREATE/DROP DATABASE；本文件自建并在收尾时删除 `gengyun_migrations_negative_{a,b,c}`。
+ * 维护连接须能 CREATE/DROP DATABASE；本文件自建并在收尾时删除 `gengyun_migrations_negative_{a,b,c}`，
+ * 以及**本臂专用的维护库** `gengyun_migrations_negative_maint`（a/b/c 的建/删都走它，不借用任何别的臂
+ * 正在用的库；收尾断言 `pg_database` 里以 `gengyun_migrations_negative_` 开头的库为 0）。
+ * 收尾**不吞错**：删库失败必须让本步红（同形状的 `.catch(() => {})` 实测会静默留下库并照绿）。
  * 未在本文件里覆盖的：runner 没有 `down` 命令、既有 down 脚本不回写 `schema_migrations`（见验证页「已知缺口」）。
  */
 import assert from 'node:assert/strict';
@@ -114,6 +117,14 @@ const SQL_0016_DOWN = 'migrations/rollback/0016_account_deletion_persistence.dow
 const FUNCTION_0016 =
   'public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz)';
 const DATABASES = ['a', 'b', 'c'].map((suffix) => `gengyun_migrations_negative_${suffix}`);
+/** 本臂**专用维护库**：a/b/c 的建/删都走它，绝不借用别的臂正在用的库（与 `auth-privacy` 共用一库时，
+ *  一端残留会掩另一端）。收尾必须删掉并断言 `pg_database` 不残留（见 D1/D2 与 finally）。
+ *  名字刻意落在 `gengyun_migrations_negative_` 前缀里：收尾的「残留 = 0」断言自动覆盖它。 */
+const MAINT_DATABASE = 'gengyun_migrations_negative_maint';
+/** 负控制用的诱饵库：只在 D1 里造/删，用来证明「遗留探测器」不是恒真空转。 */
+const DECOY_DATABASE = 'gengyun_migrations_negative_decoy';
+/** 本臂拥有的一切库名都以它开头；收尾断言「以它开头的库 = 0」。 */
+const DATABASE_PREFIX = 'gengyun_migrations_negative_';
 /** 0016 的全部可观测对象都不存在时（`up` 之前 / `down` 之后）的快照。 */
 const ABSENT_0016 = { columns: [], index_definition: null, constraint_present: false, function_present: false };
 
@@ -138,8 +149,29 @@ async function connect(name) {
   opened.push(client);
   return client;
 }
-async function resetDatabase(name) {
+/** 删库/建库只走 `admin`（连在 env 指定的基准库上，CI 里是内建 `postgres` 库）。 */
+async function dropDatabase(name) {
   await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+}
+async function createDatabase(name) {
+  await dropDatabase(name);
+  await admin.query(`CREATE DATABASE ${name}`);
+}
+/** 以 `pg_database` 为准的「本臂遗留库」清单；收尾断言与 D1 负控制共用同一个探测器。 */
+async function leftoverDatabases() {
+  const result = await admin.query('SELECT datname FROM pg_database WHERE datname LIKE $1 ORDER BY 1', [
+    `${DATABASE_PREFIX}%`,
+  ]);
+  return result.rows.map((row) => row.datname);
+}
+/** 维护连接：连到本臂专用维护库（既不是被测库，也不是任何别的臂的库）。 */
+let maint;
+async function openMaint() {
+  maint = new pg.Client({ connectionString: databaseUrl(MAINT_DATABASE) });
+  await maint.connect();
+}
+async function resetDatabase(name) {
+  await maint.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
   await admin.query(`CREATE DATABASE ${name}`);
 }
 /** 用与 CI / 本机完全相同的一条命令跑迁移器，取真实退出码与 stdout/stderr。 */
@@ -194,9 +226,35 @@ function syntheticDir(files) {
   return dir;
 }
 
+let bodyFailure = null;
+let baseObjectsBefore = 0;
 try {
   const version = String((await admin.query('SHOW server_version')).rows[0].server_version);
   assert.ok(version.startsWith('17.11'), `native PG17.11 required, got ${version}`);
+
+  // 开跑前先清掉上次崩溃/并行留下的本臂库：否则 A/B/C 的现场不是「空库」，读数不可比。
+  for (const stale of await leftoverDatabases()) await dropDatabase(stale);
+  assert.deepEqual(await leftoverDatabases(), [], '开跑前本臂库必须为零（上次残留已清）');
+  baseObjectsBefore = await publicObjects(admin);
+
+  // ---- D1 负控制（CI 每次跑）：诱饵库必须被「遗留探测器」抓到 → 清掉 → 探测器归零。
+  // 若探测器恒返回空（空转），第一条断言就红；这是收尾断言「不残留」不是真空转的证据。
+  await createDatabase(MAINT_DATABASE);
+  await openMaint();
+  assert.deepEqual(await leftoverDatabases(), [MAINT_DATABASE], '维护库是开跑前唯一允许存在的本臂库');
+  await createDatabase(DECOY_DATABASE);
+  assert.deepEqual(
+    (await leftoverDatabases()).filter((name) => name !== MAINT_DATABASE),
+    [DECOY_DATABASE],
+    '遗留探测器必须抓到诱饵库（否则收尾「残留 = 0」断言是空转）',
+  );
+  await dropDatabase(DECOY_DATABASE);
+  assert.deepEqual(
+    (await leftoverDatabases()).filter((name) => name !== MAINT_DATABASE),
+    [],
+    '诱饵库清掉后遗留探测器必须归零',
+  );
+  say('D1 遗留库负控制：诱饵库被抓到 → 清掉 → 探测器归零（收尾断言非空转）');
 
   const [DB_A, DB_B, DB_C] = DATABASES;
 
@@ -397,9 +455,39 @@ try {
     `ALL ${passed} migration negative groups passed against native PG${version}; ` +
       "only 0016's up/down pair is exercised, the runner has no down command, and down scripts do not update the ledger.",
   );
+} catch (error) {
+  bodyFailure = error;
+  throw error;
 } finally {
   for (const client of opened) await client.end().catch(() => {});
-  for (const name of DATABASES) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).catch(() => {});
+  await maint?.end().catch(() => {});
+  // ⚠ 这里**不再** `.catch(() => {})` 吞错：删库失败必须让本步红。
+  //   实测（本片 R3）：同一形状 `DROP DATABASE … .catch(() => {})` 在无权限/有依赖时会静默留下库，
+  //   进程照绿退出 0；去掉 catch 后同一现场报 `must be owner of database …`。
+  const faults = [];
+  for (const name of [...DATABASES, MAINT_DATABASE]) {
+    try {
+      await dropDatabase(name);
+    } catch (error) {
+      faults.push(`${name}: ${error.message}`);
+    }
+  }
   for (const dir of tmpRoots) rmSync(dir, { recursive: true, force: true });
+  const leftover = await leftoverDatabases();
+  const baseObjectsAfter = await publicObjects(admin);
   await admin.end();
+  if (bodyFailure) {
+    // 正向臂已经红了：不要用收尾断言盖掉原始失败，但把清理故障打出来。
+    if (faults.length > 0 || leftover.length > 0) {
+      console.error(`[teardown] 另有清理故障：${faults.join('; ')}；残留库：${leftover.join(',') || '(无)'}`);
+    }
+  } else {
+    assert.deepEqual(faults, [], `收尾删库失败（不得吞错）：${faults.join('; ')}`);
+    assert.deepEqual(
+      leftover,
+      [],
+      `收尾必须删净以 ${DATABASE_PREFIX} 开头的库，实测残留：${leftover.join(',') || '(无)'}`,
+    );
+    assert.equal(baseObjectsAfter, baseObjectsBefore, '基准库 public 对象数不得变化（本臂不在基准库建对象）');
+  }
 }
