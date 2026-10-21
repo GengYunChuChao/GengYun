@@ -608,4 +608,83 @@ RESET ROLE;
 
 \echo '-- [7] 语音域探针结束（正向行成功即无输出；上面两条禁止面各应有一行 ERROR: 42501 …）'
 
+-- ---------------------------------------------------------------------------
+-- 8) R28-S51 函数面（函数级 EXECUTE 的零假设探针）
+--    为什么单列一节：表级授权有 [1]-[7] 的矩阵，函数级 EXECUTE 是另一套 ACL。PostgreSQL
+--    给**新建函数**默认 `GRANT EXECUTE … TO PUBLIC`（表现为 proacl IS NULL），所以
+--    「表 REVOKE 干净」不等于「函数面干净」：运行时只要能 EXECUTE 一个 SECURITY DEFINER
+--    函数，就能以属主身份绕过前面所有表级限制。本节回答三件事：
+--      a) 三个 schema 下函数的 EXECUTE 面（属主是谁、proacl 是否为空、PUBLIC 是否可执行、
+--         除属主外被 GRANT 的组），以及清单里 11 条的分类；
+--      b) 清单里的 6 条 runtime 函数，运行时身份真跑是否成功；
+--      c) 清单里的 3 条 internal + 2 条 trigger 函数，运行时真跑是否 42501。
+--    判定以 90-assert 的 runtime_function_* 四条为准；本节只打印原始读数，判定留给读者。
+--    注：本节只读——函数调用要么零行、要么纯计算，不写任何表。
+-- ---------------------------------------------------------------------------
+\echo ''
+\echo '### 8) R28-S51 函数面：每个函数的 EXECUTE 面（proacl IS NULL ⇒ PG 默认 PUBLIC 可执行）'
+SELECT n.nspname || '.' || p.proname                                  AS function,
+       p.prosecdef                                                    AS secdef,
+       pg_get_userbyid(p.proowner)                                    AS owner,
+       p.proacl IS NULL                                               AS acl_is_null,
+       has_function_privilege('public', p.oid, 'EXECUTE')             AS public_exec,
+       COALESCE((
+         SELECT string_agg(DISTINCT COALESCE(r.rolname, 'PUBLIC'), ', '
+                           ORDER BY COALESCE(r.rolname, 'PUBLIC'))
+           FROM aclexplode(p.proacl) a
+           LEFT JOIN pg_roles r ON r.oid = a.grantee
+          WHERE a.privilege_type = 'EXECUTE'
+            AND a.grantee <> p.proowner
+       ), '(none)')                                                   AS non_owner_grantees
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+   AND p.prokind = 'f'
+   AND (p.prosecdef
+        OR (n.nspname = 'public'
+            AND p.proname IN ('admin_account_display_name',
+                              'consent_policy_immutable',
+                              'admin_audit_events_reject_mutation')))
+ ORDER BY 1;
+
+\echo '-- 每个 schema 的函数总数 / 其中 PUBLIC 可执行的条数（改后期望：public_executable = 0）'
+SELECT n.nspname AS schema,
+       count(*)                                                    AS functions,
+       count(*) FILTER (WHERE has_function_privilege('public', p.oid, 'EXECUTE'))
+                                                                   AS public_executable
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+   AND p.prokind = 'f'
+ GROUP BY 1
+ ORDER BY 1;
+
+\echo ''
+\echo '### 8a) 清单 runtime 函数：运行时身份真跑，两条都必须成功'
+SET ROLE gengyun_api_runtime;
+
+\echo '-- [8a-1] public.list_admin_accounts()：期望 1 行计数、值为 0（空表），不是 42501'
+SELECT count(*) AS admin_accounts_rows FROM public.list_admin_accounts();
+
+\echo '-- [8a-2] public.admin_account_display_name(text, uuid)：纯计算，期望返回一行昵称'
+SELECT public.admin_account_display_name('探测', gen_random_uuid()) AS display_name;
+
+\echo '-- [8b] 清单 internal 函数：运行时不得可执行，三条都必须恰好 42501'
+\echo '--    （函数级拒权发生在函数体之前，全 NULL 实参不会被求值，安全）'
+SELECT catalog_ops.apply_source_operation(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+SELECT staging_intake.apply_import(NULL,NULL,NULL);
+SELECT staging_intake.rollback_import(NULL,NULL,NULL,NULL);
+
+\echo '-- [8c] trigger 函数：运行时不得可执行'
+\echo '--    改前 consent_policy_immutable() 是 proacl IS NULL ⇒ PUBLIC 可执行，直接调用会走到'
+\echo '--    0A000「trigger functions can only be called as triggers」；改后（段 L REVOKE）'
+\echo '--    必须先是 42501。admin_audit_events_reject_mutation() 在 0017:335 已收回，同期望 42501。'
+SELECT public.consent_policy_immutable();
+SELECT public.admin_audit_events_reject_mutation();
+
+RESET ROLE;
+
+\echo '-- [8] 函数面探针结束（[8a] 两行是正常结果；[8b]/[8c] 五条各应有一行 ERROR: 42501 …）'
+\echo '--     零行/拒权都在预期内：本探针不写任何表，也不要求运行时能调用运维函数。'
+
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'

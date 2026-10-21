@@ -921,6 +921,45 @@ ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S38 探针结束 ----------------------------------------------------------
 
+-- --- R28-S51 函数面执行探针 -----------------------------------------------------
+-- 目的：函数面不只看 ACL，还真以运行时身份执行一次。正向 2 条必须成功（00000），
+-- 反向 3 条必须恰好 42501。反向函数在权限检查阶段就被拒、函数体不执行，所以全 NULL
+-- 实参安全（与 S45 的探针写法一致）。
+-- 用 :SQLSTATE 而不是 :ERROR：后者只给文本，前者能精确区分 00000 与 42501。
+-- 每条都套 SAVEPOINT：单条失败不污染后续探针；事务末尾统一 ROLLBACK，不留任何写入。
+\set ON_ERROR_STOP off
+BEGIN;
+SET LOCAL ROLE gengyun_api_runtime;
+
+SAVEPOINT r28s51_fn_list_admin_accounts;
+SELECT count(*) FROM public.list_admin_accounts();
+\set r28s51_fn_list_admin_accounts_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28s51_fn_list_admin_accounts;
+
+SAVEPOINT r28s51_fn_display_name;
+SELECT public.admin_account_display_name('探测', gen_random_uuid());
+\set r28s51_fn_display_name_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28s51_fn_display_name;
+
+SAVEPOINT r28s51_fn_apply_source_operation;
+SELECT catalog_ops.apply_source_operation(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+\set r28s51_fn_apply_source_operation_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28s51_fn_apply_source_operation;
+
+SAVEPOINT r28s51_fn_apply_import;
+SELECT staging_intake.apply_import(NULL,NULL,NULL);
+\set r28s51_fn_apply_import_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28s51_fn_apply_import;
+
+SAVEPOINT r28s51_fn_rollback_import;
+SELECT staging_intake.rollback_import(NULL,NULL,NULL,NULL);
+\set r28s51_fn_rollback_import_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28s51_fn_rollback_import;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- R28-S51 函数面执行探针结束 -------------------------------------------------
+
 -- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
 -- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
@@ -1371,6 +1410,115 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     SELECT e.tbl, '库中不存在（to_regclass 为 NULL）'
       FROM external_manifest e
      WHERE to_regclass('public.'||e.tbl) IS NULL
+  ),
+  -- R28-S51：函数面兜底清单（与 S43 的 external_manifest 同构：把"点过名的函数"升级为
+  -- "必须分类的函数面"）。为什么需要：PostgreSQL 新建函数默认把 EXECUTE 授给 PUBLIC
+  -- （proacl IS NULL），而旧版只有 5 组**点名式**逐函数断言——新增 SECURITY DEFINER 函数
+  -- 只要没人记得补断言，就永远不会让任何断言变红（见 §0 的缺口描述）。
+  -- kind 语义：
+  --   runtime  —— 运行时（gengyun_api_runtime）可执行；allowed_grantees 是除属主外**唯一**
+  --               允许的 ACL 项（多一个组、少一个组都判红）。
+  --   internal —— 只给运维/导入组用；运行时不可执行（断言 4 的反向探针会证明 42501）。
+  --   trigger  —— 触发器函数；除属主外谁都不许有 EXECUTE（PUBLIC 也不行）。
+  -- allowed_grantees 写的是**实测非属主 ACL**，不是"函数归属组"：
+  --   apply_source_operation 的属主是 gengyun_source_executor、apply_import/rollback_import
+  --   的属主是 gengyun_staging_executor（services/api/db/roles/source_operator.sql:16、
+  --   staging_importer.sql:17-18 已 ALTER FUNCTION … OWNER TO）。属主权限是隐式的、不会
+  --   出现在 proacl 里，所以这里只列真正被 GRANT 的 gengyun_source_operator /
+  --   gengyun_staging_importer。把属主组也写进 allowed_grantees 会让断言 3 在基线就判红
+  --   （"少授 executor"），那是把 ACL 语义写错了，不是把权限收紧。
+  function_surface_manifest(schema_name, func_name, kind, allowed_grantees) AS (VALUES
+    ('catalog_ops',    'apply_source_operation',             'internal',
+     ARRAY['gengyun_source_operator']::text[]),
+    ('public',         'list_admin_accounts',                'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'request_account_deletion',           'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'restore_account',                    'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'set_feature_flag',                   'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'suspend_account',                    'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'admin_account_display_name',         'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('staging_intake', 'apply_import',                       'internal',
+     ARRAY['gengyun_staging_importer']::text[]),
+    ('staging_intake', 'rollback_import',                    'internal',
+     ARRAY['gengyun_staging_importer']::text[]),
+    ('public',         'consent_policy_immutable',           'trigger',
+     ARRAY[]::text[]),
+    ('public',         'admin_audit_events_reject_mutation', 'trigger',
+     ARRAY[]::text[])
+  ),
+  -- 断言 1 的差集：未登记的 SECURITY DEFINER + 清单里的幽灵条目（各一行）。
+  function_manifest_gaps(fn, what) AS (
+    SELECT n.nspname || '.' || p.proname,
+           'pg_proc 中是 SECURITY DEFINER，但清单未登记'
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+       AND p.prokind = 'f'
+       AND p.prosecdef
+       AND NOT EXISTS (
+             SELECT 1
+               FROM function_surface_manifest m
+              WHERE m.schema_name = n.nspname
+                AND m.func_name = p.proname)
+    UNION ALL
+    SELECT m.schema_name || '.' || m.func_name,
+           '清单登记了，但 pg_proc 中不存在同名函数'
+      FROM function_surface_manifest m
+     WHERE NOT EXISTS (
+             SELECT 1
+               FROM pg_proc p
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = m.schema_name
+                AND p.proname = m.func_name
+                AND p.prokind = 'f')
+  ),
+  -- 断言 3 的读数：每条清单函数的「非属主 EXECUTE grantee 集合」。
+  -- proacl IS NULL 时 aclexplode 无行 ⇒ 空集合（这正是 PG 默认 PUBLIC 可执行的状态；
+  -- 它由断言 2 判红，断言 3 只回答"有没有人绕过清单多授/少授"）。
+  function_manifest_grantee_sets(schema_name, func_name,
+                                 actual_grantees, allowed_grantees) AS (
+    SELECT m.schema_name,
+           m.func_name,
+           COALESCE(
+             ARRAY(SELECT DISTINCT COALESCE(r.rolname, 'PUBLIC')
+                     FROM pg_proc p
+                     JOIN pg_namespace n ON n.oid = p.pronamespace
+                     CROSS JOIN LATERAL aclexplode(p.proacl) a
+                     LEFT JOIN pg_roles r ON r.oid = a.grantee
+                    WHERE n.nspname = m.schema_name
+                      AND p.proname = m.func_name
+                      AND p.prokind = 'f'
+                      AND a.privilege_type = 'EXECUTE'
+                      AND a.grantee <> p.proowner
+                    ORDER BY 1),
+             ARRAY[]::text[]),
+           m.allowed_grantees
+      FROM function_surface_manifest m
+  ),
+  -- 多授/少授各算一次；数组比较前先按名字排序，避免 ACL 顺序造成假红。
+  function_manifest_grantee_violations(fn, detail) AS (
+    SELECT g.schema_name || '.' || g.func_name,
+           concat_ws('；',
+             CASE WHEN cardinality(d.extra) > 0
+                  THEN '多授 ' || array_to_string(d.extra, ', ') END,
+             CASE WHEN cardinality(d.missing) > 0
+                  THEN '少授 ' || array_to_string(d.missing, ', ') END)
+      FROM function_manifest_grantee_sets g
+      CROSS JOIN LATERAL (
+        SELECT ARRAY(SELECT x FROM unnest(g.actual_grantees) x
+                      WHERE NOT (x = ANY (g.allowed_grantees))
+                      ORDER BY 1) AS extra,
+               ARRAY(SELECT x FROM unnest(g.allowed_grantees) x
+                      WHERE NOT (x = ANY (g.actual_grantees))
+                      ORDER BY 1) AS missing
+      ) d
+     WHERE cardinality(d.extra) > 0
+        OR cardinality(d.missing) > 0
   ),
   checks(label, ok, detail) AS (
 
@@ -2424,6 +2572,63 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        AND a.grantee = 0
                   )
          ), '（无）')
+  UNION ALL
+  -- 89. R28-S51 函数面清单完整性（双向）：三个 schema 下每个 SECURITY DEFINER 都必须在
+  --     function_surface_manifest 里；清单里的每条也都必须真实存在（防幽灵条目）。
+  --     这是"下一个 SECURITY DEFINER 函数不会再悄悄漏网"的机制本体。
+  SELECT 'runtime_function_manifest_complete',
+         NOT EXISTS (SELECT 1 FROM function_manifest_gaps),
+         COALESCE((SELECT string_agg(fn || '：' || what, ' / ' ORDER BY fn)
+                     FROM function_manifest_gaps), '（无差异）')
+
+  UNION ALL
+  -- 90. R28-S51 PUBLIC 面：三个 schema 下任何函数都不得对 PUBLIC 可执行。
+  --     PG 默认给新建函数授 PUBLIC EXECUTE（proacl IS NULL），所以这条同时覆盖
+  --     "新增函数忘了 REVOKE" 与 "显式 GRANT 给 PUBLIC" 两种漂移。
+  SELECT 'runtime_function_no_public_execute',
+         NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+              AND p.prokind = 'f'
+              AND has_function_privilege('public', p.oid, 'EXECUTE')
+         ),
+         COALESCE((
+           SELECT 'PUBLIC 可执行：' ||
+                  string_agg(n.nspname || '.' || p.proname, ' / '
+                             ORDER BY n.nspname, p.proname)
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+              AND p.prokind = 'f'
+              AND has_function_privilege('public', p.oid, 'EXECUTE')
+         ), '（无）')
+
+  UNION ALL
+  -- 91. R28-S51 grantee 集合精确匹配：每条清单函数除属主外的 EXECUTE grantee 必须
+  --     恰好等于 allowed_grantees（多授、少授都红）。属主权限是隐式的，不在 proacl 里。
+  SELECT 'runtime_function_grantee_sets',
+         NOT EXISTS (SELECT 1 FROM function_manifest_grantee_violations),
+         COALESCE((SELECT string_agg(fn || '（' || detail || '）', ' / ' ORDER BY fn)
+                     FROM function_manifest_grantee_violations), '（无差异）')
+
+  UNION ALL
+  -- 92. R28-S51 真执行探针：ACL 正确不等于运行时真能用/真不能用，所以在
+  --     SET LOCAL ROLE gengyun_api_runtime 下真跑五条（见上方 R28-S51 探针段）。
+  --     正向 list_admin_accounts / admin_account_display_name 必须 00000；
+  --     反向 apply_source_operation / apply_import / rollback_import 必须恰好 42501。
+  SELECT 'runtime_function_exec_probe',
+         :'r28s51_fn_list_admin_accounts_state' = '00000'
+         AND :'r28s51_fn_display_name_state' = '00000'
+         AND :'r28s51_fn_apply_source_operation_state' = '42501'
+         AND :'r28s51_fn_apply_import_state' = '42501'
+         AND :'r28s51_fn_rollback_import_state' = '42501',
+         'list_admin_accounts=' || :'r28s51_fn_list_admin_accounts_state' ||
+         '；admin_account_display_name=' || :'r28s51_fn_display_name_state' ||
+         '；apply_source_operation=' || :'r28s51_fn_apply_source_operation_state' ||
+         '；apply_import=' || :'r28s51_fn_apply_import_state' ||
+         '；rollback_import=' || :'r28s51_fn_rollback_import_state'
 )
 
 SELECT label, ok, detail
@@ -2439,8 +2644,8 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：103 条断言全红时标签合计约 3.2K 字符（2026-10-21 实测：总 103 条、
--- sum(length(label)+2)=3239、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：107 条断言全红时标签合计约 3.4K 字符（2026-10-21 实测：总 107 条、
+-- sum(length(label)+2)=3371、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 DO $$
 DECLARE
