@@ -205,3 +205,21 @@ psql … -f .pg17/handoff/r28-s43-logs/mut/m1-revert.sql
 ```
 
 门禁命令见 §6；`count.sql`、`pre-change-90.sql`、`mut/*` 与全部门禁输出都在 `.pg17/handoff/r28-s43-logs/`。
+
+## 9. 返修：探针 [9b-3] 改为零行形态（监工 P2，2026-10-21）
+
+监工批复指出：deploy/postgres-cvm/evidence/probe-runtime-grants.sql 的 [9b-3] 原用真实 INSERT ... VALUES，而全文件没有 BEGIN/ROLLBACK；若被测的错误授权**真的存在**，psql 默认 autocommit 会留下一行 s52-probe 批次，与本文件头「只读探针、零行写入、可对同一库复跑」的承诺直接冲突（不能靠「正确权限下必然 42501」来保证安全）。
+
+返修改为本文件第 2 条纪律的既有形态 INSERT ... SELECT ... WHERE false：权限检查仍在执行器启动阶段发生（缺权必 42501），但零行 ⇒ 即使意外放行也不留数据。
+
+真跑读数（127.0.0.1:55663、库 gengyun、26 迁移 + 5 组角色 + 20-login-roles.sql）：
+
+`
+-- [9b-3] INSERT INTO staging_intake.batches …：写面只授 staging_executor/staging_importer
+psql:…/probe-runtime-grants.sql:779: ERROR:  42501: permission denied for schema staging_intake
+--   → [9b-3] staging_intake.batches INSERT state = 42501
+`
+
+- 前后计数：SELECT count(*) FROM staging_intake.batches 探针前 **0**、探针后 **0**；
+- 全文件 psql -v ON_ERROR_STOP=0 -f … exit 0，其余各节读数与 §7 一致；
+- 边界：本机真库读数，未在 CVM/生产执行。

@@ -768,12 +768,15 @@ SELECT * FROM catalog_ops.operations LIMIT 0;
 \echo '--   → [9b-2] catalog_ops.operations state =' :r28s52_probe_catalog_ops_state
 
 \echo '-- [9b-3] INSERT INTO staging_intake.batches …：写面只授 staging_executor/staging_importer'
-\echo '--    列值全部显式给出，但拒权发生在权限检查阶段 —— 不会真的写入任何行'
+\echo '--    用 SELECT … WHERE false 的零行形态（本文件第 2 条纪律）：权限检查照旧发生在'
+\echo '--    执行器启动阶段（缺权必 42501），但即便被测的错授权真的存在，也不会写入任何行'
+\echo '--    ⇒ 探针可对同一库反复跑，不依赖「正确权限下必然 42501」来保证安全。'
 INSERT INTO staging_intake.batches
   (batch_id, actor, file_sha256, mapping_version, payload_hash,
    generation, import_id, state, row_count)
-VALUES (gen_random_uuid(), 's52-probe', repeat('a', 64), 'herbicide-summary-v1',
-        repeat('b', 64), 1, gen_random_uuid(), 'imported', 1);
+SELECT gen_random_uuid(), 's52-probe', repeat('a', 64), 'herbicide-summary-v1',
+       repeat('b', 64), 1, gen_random_uuid(), 'imported', 1
+WHERE false;
 \set r28s52_probe_staging_insert_state :SQLSTATE
 \echo '--   → [9b-3] staging_intake.batches INSERT state =' :r28s52_probe_staging_insert_state
 
