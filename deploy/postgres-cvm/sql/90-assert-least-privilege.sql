@@ -1423,9 +1423,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- allowed_grantees 写的是**实测非属主 ACL**，不是"函数归属组"：
   --   apply_source_operation 的属主是 gengyun_source_executor、apply_import/rollback_import
   --   的属主是 gengyun_staging_executor（services/api/db/roles/source_operator.sql:16、
-  --   staging_importer.sql:17-18 已 ALTER FUNCTION … OWNER TO）。属主权限是隐式的、不会
-  --   出现在 proacl 里，所以这里只列真正被 GRANT 的 gengyun_source_operator /
-  --   gengyun_staging_importer。把属主组也写进 allowed_grantees 会让断言 3 在基线就判红
+  --   staging_importer.sql:17-18 已 ALTER FUNCTION … OWNER TO）。注意 proacl 非 NULL 时
+  --   **属主自身会以自授条目出现**（实库实测 `gengyun_source_executor=X/gengyun_source_executor`），
+  --   所以断言 3 用 `a.grantee <> p.proowner` 把属主过滤掉；allowed_grantees 只列真正
+  --   GRANT 给非属主的组。把属主组也写进 allowed_grantees 会让断言 3 在基线就判红
   --   （"少授 executor"），那是把 ACL 语义写错了，不是把权限收紧。
   function_surface_manifest(schema_name, func_name, kind, allowed_grantees) AS (VALUES
     ('catalog_ops',    'apply_source_operation',             'internal',
@@ -2607,7 +2608,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
 
   UNION ALL
   -- 91. R28-S51 grantee 集合精确匹配：每条清单函数除属主外的 EXECUTE grantee 必须
-  --     恰好等于 allowed_grantees（多授、少授都红）。属主权限是隐式的，不在 proacl 里。
+  --     恰好等于 allowed_grantees（多授、少授都红）。属主条目在 proacl 非 NULL 时会出现，
+  --     由 `a.grantee <> p.proowner` 过滤，不计入集合。
   SELECT 'runtime_function_grantee_sets',
          NOT EXISTS (SELECT 1 FROM function_manifest_grantee_violations),
          COALESCE((SELECT string_agg(fn || '（' || detail || '）', ' / ' ORDER BY fn)
