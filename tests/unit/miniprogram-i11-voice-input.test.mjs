@@ -198,7 +198,9 @@ function loadVoicePage(options = {}) {
     if (base === 'runtime') return runtime
     if (base === 'identify-api') return identifyApi
     if (base === 'recorder-port') return recorderPort
-    if (['speech-text', 'audio-playback', 'inner-audio-port', 'substitute-player', 'voice-api', 'speech-transcript'].includes(base)) {
+    // `speech-autoplay`（#394 / R28-C6 引入的自动播报策略）同样是真实模块；
+    // 它在本片基点还不存在，合流 main 后语音页会 require 它，故一并按真实实现加载。
+    if (['speech-text', 'audio-playback', 'inner-audio-port', 'substitute-player', 'voice-api', 'speech-transcript', 'speech-autoplay'].includes(base)) {
       return loadModule(join(UTILS, base + '.js'), resolveDep, cache)
     }
     throw new Error('unexpected require: ' + id)
