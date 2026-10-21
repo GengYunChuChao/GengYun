@@ -5,7 +5,31 @@ import { createRequire } from 'node:module';
 import vm from 'node:vm';
 const require = createRequire(import.meta.url), { createFixture, ID, item } = require('./knowledge-http-fixture.cjs');
 const f = createFixture(); await new Promise(r => f.server.listen(0, '127.0.0.1', r)); const base = 'http://127.0.0.1:' + f.server.address().port + '/api/v1';
-let token = f.token, epoch = 1; const auth = { getSession: () => token ? { accessToken: token } : null, isLoggedIn: () => !!token, networkEnabled: () => true, sessionEpoch: () => epoch, clearSession: () => { token = null; epoch++ } };
+let token = f.token, epoch = 1;
+// 401/403 归因的**真实**实现在 `miniprogram/utils/auth.js`（GY-I04 单一事实源）。
+// 本夹具只替换「会话存储」这一个外部边界（token/epoch 探针），归因逻辑仍走真实模块：
+//   `attribution(statusCode, payload)` 是纯函数（只读 `utils/states.js` 的码表）；
+//   `failureFor` 用真实归因判定「是否该清会话」，再把清会话落回本文件的探针。
+// 夹具**不自带码表**：若这里缺 `attribution`/`failureFor`，401/403 分支会在 `wx` 垫片里抛
+// TypeError 并被 `.catch` 吞成 NETWORK_UNCERTAIN —— 那是夹具缺项，不是产品行为。
+const realAuth = createRequire(import.meta.url)('../../miniprogram/utils/auth.js');
+const clearProbe = () => { token = null; epoch++; };
+const auth = {
+  getSession: () => token ? { accessToken: token } : null,
+  isLoggedIn: () => !!token,
+  networkEnabled: () => true,
+  sessionEpoch: () => epoch,
+  clearSession: clearProbe,
+  attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+  failureFor: (makeFailure, statusCode, payload) => {
+    const verdict = realAuth.attribution(statusCode, payload);
+    if (verdict.clearsSession) clearProbe();
+    const error = makeFailure(verdict.code);
+    error.status = verdict.status;
+    error.retryable = verdict.retryable;
+    return error;
+  }
+};
 const box = { exports: {} }; const wx = { request: o => { fetch(o.url, { method: o.method, headers: o.header }).then(async r => o.success({ statusCode: r.status, data: await r.json() })).catch(() => o.fail({})) } };
 // 依赖按**完整说明符**登记，不做 else 兜底：未登记（新增 require）⇒ 显式失败并带依赖名，而不是静默喂 `{ apiBaseUrl }` 空壳。
 const knowledgeApiDependencies = new Map([['./auth', auth], ['../config/runtime', { apiBaseUrl: base }]]);
