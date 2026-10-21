@@ -32,12 +32,18 @@ export const BACKUP_COPY_LINEAGE = 'deletion-manifest/v1';
  * （见 `services/api/src/privacy/backup-replay-manifest.ts` 的闭集），而设计同段又举了
  * `favorite`、`history` 两个例子。本片按设计的**例子**取词，并把这条字面不一致记进交接：
  *   - `favorites` → `favorite`（与 `REPLAY_SCOPES` 同名）；
- *   - `history`   → `history`（`REPLAY_SCOPES` 无此项，但设计文档明确以此为例）。
+ *   - `history`   → `history`（`REPLAY_SCOPES` 无此项，但设计文档明确以此为例）；
+ *   - `messages`  → `message`（#17 注销清理链 P0-2：消息域必须进备份副本清单，否则
+ *     「注销后备份里还有消息」是对用户的假话；词形沿用 `favorite` 的单数风格）；
+ *   - `conversations` → `conversation`（#12 注销清理链 G6/G8：会话域已进清理闭集却没有清单行，
+ *     真实备份端口会如实回 `blocked/EVIDENCE_REQUIRED`，整个注销请求就永远到不了 completed）。
  * 未登记的模块**直接抛错**：闭集之外的范围名不许悄悄落库。
  */
 export const BACKUP_COPY_SCOPES = Object.freeze({
   favorites: 'favorite',
   history: 'history',
+  messages: 'message',
+  conversations: 'conversation',
 });
 
 /** 与迁移 `0023` 的 CHECK 同形（DB 侧是最终闸门，这里先挡在应用层）。 */

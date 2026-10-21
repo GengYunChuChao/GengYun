@@ -87,6 +87,16 @@ export interface ListOptions {
   after?: ListPosition | null;
 }
 
+/**
+ * GY-I19（#19）· 受理事务内枚举用的最小 SQL 客户端（R28-C1b G6/G8 追加）。
+ *
+ * 与 `favorites/store.ts`、`history/store.ts`、`messages/store.ts` 的**同形状**定义
+ * （各域自持一份，不跨域 import 别域的存储类型）：只用到 `query`。
+ */
+export interface BackupSnapshotClient {
+  query(text: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+}
+
 export interface ConversationStore {
   /** 存储是否为持久实现（real 模式必须持久，否则装配层不交服务层）。 */
   readonly persistent: boolean;
@@ -118,6 +128,25 @@ export interface ConversationStore {
   findTurnByJobId(jobId: string, ownerId: string): Promise<TurnWithAnswer | null>;
   /** 按主体清空（F13 注销清理协议用；返回**真实删除**的会话行数）。 */
   deleteAllByOwner(ownerId: string): Promise<number>;
+  /**
+   * GY-I19（#19）· **备份副本清单**原语（R28-C1b G6/G8 追加）：在受理事务内枚举该主体
+   * 仍持有的**会话行 id**。
+   *
+   * 只回**不透明引用（行 id）**与计数：
+   *   - ⛔ 不回问题正文、回答正文、引用片段、用量卡等任何内容字段（`conversation_answers`
+   *     里存的是**模型生成的回答**，正文绝不能进清单/证据/日志）；
+   *   - 只枚举 `conversations` 一张表：`conversation_turns.conversation_id` 与
+   *     `conversation_answers.turn_id` 都是 `ON DELETE CASCADE`（`0013_conversations.sql:64,105`），
+   *     所以「删掉这些会话」就等于「其下轮次与回答一并消失」——清单记会话 id 即覆盖三张表。
+   *     漏记风险：若存在**没有会话行的孤儿轮次/回答**（外键 NOT NULL 已从结构上排除），它们不会
+   *     出现在清单里；本域不产生这种行。
+   * 必须用调用方给的 `client`（受理事务那条连接），否则清单与受理不在同一快照
+   * （「行已删、清单漏记」会成为合法状态，设计 §6.1）。
+   */
+  snapshotOwner?(
+    ownerId: string,
+    client: BackupSnapshotClient,
+  ): Promise<{ objectRefs: readonly string[]; records: number }>;
   /** 进程内测试/替身用：把当前所有行整形成快照（仅内存实现提供）。 */
   snapshot?(): {
     conversations: ConversationRecord[];
@@ -306,6 +335,15 @@ export function createMemoryConversationStore(): ConversationStore {
         }
       }
       return removed;
+    },
+    /**
+     * 备份副本清单（GY-I19 G6/G8）：只回**会话行 id** 与计数，不回任何正文。
+     * 内存实现没有事务，`client` 不参与（清单与受理在同一进程、同一同步临界区里读）。
+     * 轮次/回答不出现在清单里：它们是会话的从属行，随会话一并删除（见接口注释的漏记风险说明）。
+     */
+    async snapshotOwner(ownerId) {
+      const mine = [...conversations.values()].filter((record) => record.owner_id === ownerId);
+      return { objectRefs: mine.map((record) => record.id), records: mine.length };
     },
     snapshot() {
       return {

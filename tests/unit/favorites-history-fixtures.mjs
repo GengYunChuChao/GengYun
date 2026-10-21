@@ -54,6 +54,20 @@ export const TEST_SIGNING_KEY = 'gy-i16-favorites-history-test-signing-key';
 /** 收藏/历史落库所需的最小迁移集：`0001`（`users` 外键目标）+ `0018`（本片新表）。 */
 export const PG_MIGRATIONS = ['0001_initial_schema', '0018_favorites_history'];
 
+/**
+ * C1b（#17 P0-2 / #12 P0-3）追加：注销闭集扩到消息域与会话域后，用例需要
+ * `public.messages`（`0019`）、共享幂等台账 `public.idempotency_keys`（`0008`）与
+ * 会话三张表（`0013`）—— 否则对应域的清理语句会撞 `42P01`（不是"清完了"，而是"表都没有"）。
+ *
+ * 单独一个常量而不是改 `PG_MIGRATIONS`：既有收藏/历史用例的迁移集**逐字不动**。
+ */
+export const PG_MIGRATIONS_WITH_MESSAGES = [
+  ...PG_MIGRATIONS,
+  '0008_auth_session',
+  '0013_conversations',
+  '0019_messages_persistence',
+];
+
 export function migrationSql(name) {
   return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');
 }
@@ -62,9 +76,9 @@ export function migrationSql(name) {
  * 迁移后的 PGlite 池（结构上与 `db/pool.ts` 的 `PgPool` 兼容：`query` + `connect().release()`）。
  * 返回 `{ db, pool }`；`db` 供用例直接核对**真表**行（不是看内存 Map 自证）。
  */
-export async function pglitePool(t) {
+export async function pglitePool(t, migrations = PG_MIGRATIONS) {
   const db = new PGlite();
-  for (const name of PG_MIGRATIONS) await db.exec(migrationSql(name));
+  for (const name of migrations) await db.exec(migrationSql(name));
   t.after(() => db.close());
   const run = (...args) => db.query(...args);
   return { db, pool: { query: run, connect: async () => ({ query: run, release: () => {} }) } };
