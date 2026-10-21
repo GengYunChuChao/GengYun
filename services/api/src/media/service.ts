@@ -1299,3 +1299,55 @@ export const MEDIA_LIMITS = Object.freeze({
 export function isMediaIdLike(value: string): boolean {
   return isUuidLike(value);
 }
+
+// ------------------------------------------------------- owner 私有字节读（无外部出口）
+
+/** {@link readOwnerMediaContent} 的成功口径（与社区取图面同形：只给字节 + 元信息）。 */
+export interface OwnerContentOutcome {
+  status: 200;
+  bytes: Uint8Array;
+  contentType: string;
+  /** 派生来源：`derivative` = 已去元数据的衍生物（图片）；`raw` = 非图片用途的原始对象。 */
+  source: 'derivative' | 'raw';
+  revision: number;
+}
+
+/**
+ * **owner 私有字节读（服务层内部函数，⛔ 无外部出口）**。
+ *
+ * 为什么不是一个 operation：85 条冻结路径里**没有**「owner 读自己媒体字节」这一面
+ * （`GET /media/{id}` 只回元数据；`POST /media/{id}/access` 只回句柄，而承接该句柄的
+ * `GET /media/{id}/content` 也不在冻结路径内）。按红线**不自造契约、不注册路由**，
+ * 因此本能力只以**导出函数**的形式留在服务层：`services/api/src/routes/media.ts`
+ * 一次都不引用它 ⇒ 外部 HTTP 面对它只会 404；调用方必须先过 `guards.requireUser`，
+ * 再以 `MediaActor` 传入（本函数自身仍通过 `getMedia` 复核 owner 归属，不信任调用方）。
+ *
+ * 取用口径与社区取图面一致：**有衍生物就只取衍生物**（图片的原始对象永不出网），
+ * 无衍生物（录音等非图片用途）才取原始对象。对象缺失/端口异常一律
+ * `OBJECT_UNAVAILABLE`（`retryable: false`）——沿用媒体域既有契约码，不新造错误码。
+ */
+export async function readOwnerMediaContent(
+  media: AppMediaService,
+  input: { actor: MediaActor; mediaId: string },
+): Promise<OwnerContentOutcome> {
+  // 归属复核走既有 `getMedia`（内部 `ownedRecord` 判 owner + authEpoch，跨主体一律 NOT_FOUND）。
+  const { media: projection } = await media.getMedia({ actor: input.actor, mediaId: input.mediaId });
+  if (projection.state !== 'ready') {
+    throw new ApiError('OBJECT_UNAVAILABLE', '媒体尚未就绪', { retryable: false });
+  }
+  const keys = media.serverObjectKeys(input.mediaId);
+  const source: OwnerContentOutcome['source'] = keys?.derivativeRef == null ? 'raw' : 'derivative';
+  const objectRef = source === 'derivative' ? keys?.derivativeRef : keys?.rawRef;
+  const object =
+    objectRef == null ? null : await attemptAsync(() => media.objectStore.getObject(objectRef));
+  if (object === null) {
+    throw new ApiError('OBJECT_UNAVAILABLE', '对象不存在或已被回收', { retryable: false });
+  }
+  return {
+    status: 200,
+    bytes: object.bytes,
+    contentType: projection.mime,
+    source,
+    revision: projection.revision,
+  };
+}
