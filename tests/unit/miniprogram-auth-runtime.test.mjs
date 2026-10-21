@@ -24,6 +24,9 @@ mkdirSync(join(workDir, 'utils'), { recursive: true });
 writeFileSync(join(workDir, 'config/runtime.js'), "module.exports = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3000' }\n");
 writeFileSync(join(workDir, 'utils/auth.js'), AUTH_SOURCE);
 cpSync(resolve(root, 'miniprogram/utils/navigation.js'), join(workDir, 'utils/navigation.js'));
+// GY-I04 登录链路盘点：`utils/auth.js` 新增 `require('./states')`（401/403 归因单一事实源），
+// 临时目录必须一并复制，否则载入即报 MODULE_NOT_FOUND。
+cpSync(resolve(root, 'miniprogram/utils/states.js'), join(workDir, 'utils/states.js'));
 const requireHere = createRequire(join(workDir, 'utils', 'auth.js'));
 const AUTH_PATH = join(workDir, 'utils', 'auth.js');
 

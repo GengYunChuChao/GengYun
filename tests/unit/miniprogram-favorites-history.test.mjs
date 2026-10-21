@@ -677,7 +677,7 @@ async function passGate(f, call) {
   await flush();
 }
 
-test('收藏/历史消费层：403 契约码原样带出且**不清会话**，401 仍清会话（denied 与 guest 分开）', async () => {
+test('收藏/历史消费层：403 契约码原样带出；SCOPE_DENIED/CONSENT_REQUIRED 不清会话，ACCOUNT_INACTIVE 清会话；401 仍清会话', async () => {
   const f = fixture();
   assert.equal(await login(f), true);
 
@@ -690,13 +690,8 @@ test('收藏/历史消费层：403 契约码原样带出且**不清会话**，40
   });
   f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('SCOPE_DENIED') });
   await denied;
-  assert.equal(f.auth.isLoggedIn(), true, '403 不清会话：会话本身有效，只是没有权限');
+  assert.equal(f.auth.isLoggedIn(), true, '403 SCOPE_DENIED 不清会话：会话本身有效，只是没有权限');
 
-  // 账号停用/注销（同一 403 集合）：同样不得清会话。
-  const inactive = assert.rejects(f.favorites.createFavorite('species', TARGET, 3), (e) => e.code === 'ACCOUNT_INACTIVE');
-  f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('ACCOUNT_INACTIVE') });
-  await inactive;
-  assert.equal(f.auth.isLoggedIn(), true);
   assert.match(f.favorites.messageFor({ code: 'ACCOUNT_INACTIVE' }), /账号当前不可用/);
   assert.match(f.favorites.messageFor({ code: 'CONSENT_REQUIRED' }), /授权同意/);
 
@@ -704,30 +699,42 @@ test('收藏/历史消费层：403 契约码原样带出且**不清会话**，40
   const consent = assert.rejects(f.history.listHistory(''), (e) => e.code === 'CONSENT_REQUIRED');
   f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('CONSENT_REQUIRED') });
   await consent;
-  assert.equal(f.auth.isLoggedIn(), true);
+  assert.equal(f.auth.isLoggedIn(), true, '403 CONSENT_REQUIRED 不清会话（用户只是没授权）');
   assert.match(f.history.messageFor({ code: 'ACCOUNT_INACTIVE' }), /账号当前不可用/);
 
-  // 反例：401 仍然是"会话失效" ⇒ 清会话 + SESSION_REQUIRED（既有语义不变）。
-  const expired = assert.rejects(f.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED' && e.status === 401);
-  f.requests.at(-1).success({ statusCode: 401, data: forbiddenPayload('SESSION_EXPIRED') });
+  // 账号停用/注销（同一 403 集合，但令牌**永久**不可再用）：码如实保留，会话清掉。
+  // 口径见 docs/verification/gy-i04-login-chain-20261021.md「口径决定」第 3 条。
+  const retired = fixture();
+  assert.equal(await login(retired), true);
+  const inactive = assert.rejects(retired.favorites.listFavorites(''), (e) => e.code === 'ACCOUNT_INACTIVE' && e.status === 403);
+  retired.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('ACCOUNT_INACTIVE') });
+  await inactive;
+  assert.equal(retired.auth.isLoggedIn(), false, 'ACCOUNT_INACTIVE ⇒ 令牌永久失效，必须清会话（下一次进页面走重新登录）');
+
+  // 反例：401 仍然是"会话失效" ⇒ 清会话 + 契约会话码（既有语义不变）。
+  const g = fixture();
+  assert.equal(await login(g), true);
+  const expired = assert.rejects(g.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED' && e.status === 401);
+  g.requests.at(-1).success({ statusCode: 401, data: forbiddenPayload('SESSION_EXPIRED') });
   await expired;
-  assert.equal(f.auth.isLoggedIn(), false, '401 仍按会话失效处理');
+  assert.equal(g.auth.isLoggedIn(), false, '401 仍按会话失效处理');
 });
 
-test('收藏/历史消费层：403 无错误体、或码不在契约 403 集合内时仍按会话失效处理（保守，不臆测）', async () => {
+test('收藏/历史消费层：403 无错误体、或码不在契约 403 闭集内 ⇒ 归 SCOPE_DENIED 且**不清**会话（不假装登录问题）', async () => {
   const f = fixture();
   assert.equal(await login(f), true);
-  const bodyless = assert.rejects(f.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED');
+  const bodyless = assert.rejects(f.favorites.listFavorites(''), (e) => e.code === 'SCOPE_DENIED' && e.status === 403);
   f.requests.at(-1).success({ statusCode: 403, data: 'forbidden' });
   await bodyless;
-  assert.equal(f.auth.isLoggedIn(), false, '没有可核对的错误码时按会话失效收口');
+  assert.equal(f.auth.isLoggedIn(), true, '没有可核对的错误码时，状态码 403 已说清"这是拒绝"，不得销毁有效会话');
 
   const g = fixture();
   assert.equal(await login(g), true);
-  const unknown = assert.rejects(g.history.listHistory(''), (e) => e.code === 'SESSION_REQUIRED');
+  const unknown = assert.rejects(g.history.listHistory(''), (e) => e.code === 'SCOPE_DENIED' && e.status === 403);
   g.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('NOT_A_CONTRACT_403_CODE') });
   await unknown;
-  assert.equal(g.auth.isLoggedIn(), false, '契约 403 集合之外的码不当作"无权限"');
+  assert.equal(g.auth.isLoggedIn(), true, '契约 403 闭集之外的码归"无权"，不归"未登录"');
+  assert.match(g.history.messageFor({ code: 'SCOPE_DENIED' }), /无权/);
 });
 
 test('收藏页：服务端 403 时交给统一状态组件呈现 denied，不折叠成空列表，也不清会话', async () => {
@@ -759,7 +766,7 @@ test('收藏页：服务端 403 时交给统一状态组件呈现 denied，不�
   assert.match(wxml, /<state-view[\s\S]{0,200}errorCode="\{\{errorCode\}\}"[\s\S]{0,200}title="收藏读取失败"/);
 });
 
-test('历史页：服务端 403 ACCOUNT_INACTIVE 时呈现 denied，不折叠成空列表，也不清会话', async () => {
+test('历史页：服务端 403 ACCOUNT_INACTIVE 时仍呈现 denied 文案，但会话已清（令牌永久失效）', async () => {
   const f = fixture({ route: 'pages/history/history' });
   f.load(HISTORY_PAGE);
   const states = f.load(root + '/miniprogram/utils/states.js');
@@ -771,12 +778,14 @@ test('历史页：服务端 403 ACCOUNT_INACTIVE 时呈现 denied，不折叠成
   list.success({ statusCode: 403, data: forbiddenPayload('ACCOUNT_INACTIVE') });
   await flush();
 
-  assert.equal(f.page.data.errorCode, 'ACCOUNT_INACTIVE');
+  assert.equal(f.page.data.errorCode, 'ACCOUNT_INACTIVE', '错误码必须如实带给状态组件');
   assert.equal(f.page.data.errorText, f.history.messageFor({ code: 'ACCOUNT_INACTIVE' }));
   assert.equal(f.page.data.items.length, 0);
   assert.equal(f.page.data.failedCount, 0);
   assert.equal(f.page.data.message, '', '失败不得被说成"还没有识别记录。"');
-  assert.equal(f.auth.isLoggedIn(), true);
+  // ACCOUNT_INACTIVE 的口径（docs/verification/gy-i04-login-chain-20261021.md「口径决定」第 3 条）：
+  // 码如实保留并按 denied 呈现，但令牌**永久**不可用 ⇒ 清会话，下一次进页面走重新登录。
+  assert.equal(f.auth.isLoggedIn(), false, '账号已停用/注销 ⇒ 会话必须清掉，不留死令牌');
   assert.equal(states.statusForCode('ACCOUNT_INACTIVE'), states.STATUS.DENIED);
 
   const wxml = readFileSync(root + '/miniprogram/pages/history/history.wxml', 'utf8');

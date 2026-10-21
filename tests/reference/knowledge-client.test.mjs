@@ -207,9 +207,15 @@ test('in-flight logout and a different or re-established token reject old client
     f.answer(r, { items: [record()], next_cursor: null }); await assert.rejects(p, e => e.code === 'SESSION_CHANGED');
   }
 });
-test('old 401 cannot clear a newer identity; current 403 invalidates session and page', async () => {
+test('old 401 cannot clear a newer identity; current 403 is reported without destroying the session', async () => {
   const f = fixture(); f.login(); const p = f.api.list({}); const old = f.last('/knowledge'); f.login('other-token'); f.answer(old, {}, 401); await assert.rejects(p, e => e.code === 'SESSION_CHANGED'); assert.equal(f.auth.getSession().accessToken, 'other-token');
-  f.show(); await flush(); f.answer(f.last('/knowledge'), {}, 403); await flush(); assert.equal(f.auth.getSession(), null); assert.equal(f.page.data.items.length, 0); assert.equal(f.page.data.gatePassed, false); assert.match(f.page.data.status, /登录/);
+  f.show(); await flush(); f.answer(f.last('/knowledge'), {}, 403); await flush();
+  // GY-I04 登录链路盘点（2026-10-21）：403 是「登录了，但这件事不给你」——不再折叠成登录失效，
+  // 也不得清掉**仍然有效**的会话（改前 knowledge-api 在这里 `clearSession()` 并把页面踢回登录门禁）。
+  assert.equal(f.auth.getSession().accessToken, 'other-token', '403 不得销毁仍然有效的会话');
+  assert.equal(f.page.data.items.length, 0);
+  assert.equal(f.page.data.gatePassed, true, '会话仍有效 ⇒ 门禁不关闭');
+  assert.match(f.page.data.status, /无权|没有权限/, '403 如实说「没有权限」，不再说成登录问题');
 });
 for (const status of [404, 503, 500]) test('list HTTP ' + status + ' clears previously shown results without static fallback', async () => { const f = fixture(); f.login(); f.show(); await flush(); f.answer(f.last('/knowledge'), { items: [record()], next_cursor: null }); await flush(); f.page.search(); assert.equal(f.page.data.items.length, 0); f.answer(f.last('/knowledge'), {}, status); await flush(); assert.equal(f.page.data.items.length, 0); assert.equal(f.page.data.busy, false); });
 test('network failure clears detail and retry performs a new GET', async () => {

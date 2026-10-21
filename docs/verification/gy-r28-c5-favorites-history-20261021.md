@@ -89,6 +89,16 @@
 - `miniprogram/utils/history-api.js:157` / `:161` / `:184`：同构实现（两处不各造一套语义）。
 - 补文案：`favorites-api.js` `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`、`history-api.js` 同两个码 —— 都是契约 `x-error-status-map` 里**既有**的错误码，**没有新增 ErrorCode**。
 
+> **superseded 边界（2026-10-21 裁决）**：本页 5.1 的**实现形态**（在本文件里自持 `FORBIDDEN_CODES` +
+> `forbiddenOrSessionLoss`）已被收敛——该归因现在是 `miniprogram/utils/auth.js` 的**唯一**实现
+> （`attribution` / `failureFor`，`SESSION_LOSS_CODES`/`FORBIDDEN_CODES` 由 `utils/states.js` 的 `CODE_KIND` 反推），
+> `favorites-api.js` / `history-api.js` 改为委托它。两处**口径**按下述裁决统一（见
+> [GY-I04 登录链路](gy-i04-login-chain-20261021.md) 的「口径决定」）：
+> - 403 但无错误体、或码不在契约 403 闭集内 ⇒ 归 **`SCOPE_DENIED`** 且**不清会话**（原「保守折叠成会话失效」作废：
+>   为一个网关/代理 403 销毁仍然有效的令牌，正是那轮盘点要修的害处）；
+> - `ACCOUNT_INACTIVE` ⇒ 码如实保留（B7 仍为 `denied`），但**清会话**（令牌永久不可用，不留死令牌）。
+> 本页其余测量与结论（页面把 `errorCode` 交给 `state-view`、401 与 403 分档）不变。
+
 ### 5.2 修：页面把错误码交给统一状态组件（新增状态不新写状态块）
 
 - `miniprogram/pages/favorites/favorites.js:36` data 增 `errorCode`，`:88` 失败时原样带出 `(error && error.code) || ''`；`favorites.wxml` 的「收藏读取失败」`<state-view>` 增 `errorCode="{{errorCode}}"`。

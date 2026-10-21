@@ -121,8 +121,7 @@ function send(method, path, options) {
       success: function (response) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (response.statusCode === 401 || response.statusCode === 403) {
-          auth.clearSession()
-          reject(failure('SESSION_REQUIRED'))
+          reject(auth.failureFor(failure, response.statusCode, response.data))
           return
         }
         let body = response.data
@@ -229,6 +228,8 @@ const MESSAGES = {
   INVALID_CURSOR: '列表已过期，请重新进入消息页。',
   PROVIDER_UNAVAILABLE: '消息服务暂不可用（服务端未接线真实消息存储），本页不会用本地数据顶替。',
   SCOPE_DENIED: '当前会话无权访问消息。',
+  CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会执行该消息操作。',
+  ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再试。',
   INVALID_RESPONSE: '服务端响应无法核对，已清空，请重试。',
   UNEXPECTED_STATUS: '服务端返回了未预期的状态，已清空，请重试。'
 }

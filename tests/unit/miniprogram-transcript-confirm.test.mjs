@@ -39,6 +39,9 @@ import vm from 'node:vm';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const requireHere = createRequire(import.meta.url);
+// GY-I04 登录链路盘点：转写链路把 401/403 归因委托给 `utils/auth.js`（单一事实源）。
+// 这里注入**真实**归因实现（纯码表判定），不在测试里另写一份 403 码表。
+const realAuth = requireHere(join(ROOT, 'miniprogram/utils/auth.js'));
 
 /** 合成转写正文（夹具；与真实 ASR 无关）。 */
 const RAW_TEXT = '替身示例·合成转写（非真实录音）：稻田稗草三到五叶期，请问题应该用什么药。'
@@ -158,7 +161,11 @@ function createLoader(wxApi, options) {
     sessionEpoch: () => 'epoch-1',
     networkEnabled: () => true,
     requireLogin: (callback) => callback(true),
-    clearSession: () => {}
+    clearSession: () => {},
+    // 401/403 归因用**真实**实现（`utils/auth.js` 的单一事实源），本文件不另写码表；
+    // 清会话在 vm 内是空操作，本文件的用例不断言清会话次数。
+    attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+    failureFor: (makeFailure, statusCode, payload) => realAuth.failureFor(makeFailure, statusCode, payload)
   }
   const runtime = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3100/api/v1' }
   const debug = { localEnabled: (wxApi2) => runtime.mode === 'local' && !!wxApi2 && typeof wxApi2.getAccountInfoSync === 'function' }

@@ -8,7 +8,9 @@ import vm from 'node:vm';
 const root = resolve(import.meta.dirname, '../..');
 const directory = mkdtempSync(join(tmpdir(), 'gy-login-return-'));
 mkdirSync(join(directory, 'utils')); mkdirSync(join(directory, 'config'));
-for (const file of ['auth.js', 'navigation.js']) cpSync(join(root, 'miniprogram/utils', file), join(directory, 'utils', file));
+// GY-I04 登录链路盘点：`utils/auth.js` 新增 `require('./states')`（401/403 归因单一事实源），
+// 临时目录必须一并复制依赖，否则载入即报 MODULE_NOT_FOUND。
+for (const file of ['auth.js', 'navigation.js', 'states.js']) cpSync(join(root, 'miniprogram/utils', file), join(directory, 'utils', file));
 writeFileSync(join(directory, 'config/runtime.js'), "module.exports={mode:'local',apiBaseUrl:'http://127.0.0.1:3000'}");
 const requireHere = createRequire(join(directory, 'utils/auth.js'));
 after(() => rmSync(directory, { recursive: true, force: true }));

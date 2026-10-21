@@ -12,9 +12,13 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
+import { createRequire } from 'node:module'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const UTILS = join(ROOT, 'miniprogram', 'utils')
+// GY-I04 登录链路盘点：401/403 归因的**真实**实现在 `miniprogram/utils/auth.js`（单一事实源）。
+// 这里只做纯函数用法（`attribution` 只读 `utils/states.js` 的码表），不在测试里另写一份 403 码表。
+const realAuth = createRequire(import.meta.url)(join(UTILS, 'auth.js'))
 const VOICE_PAGE = join(ROOT, 'miniprogram', 'pages', 'voice', 'voice.js')
 const JOB_ID = '00000000-0000-4000-8000-000000000000'
 const MEDIA_ID = '00000000-0000-4000-8000-0000000000vv'
@@ -43,7 +47,18 @@ function makeAuth(cleared) {
     sessionEpoch: () => 'epoch-1',
     networkEnabled: () => true,
     requireLogin: (callback) => callback(true),
-    clearSession: () => { cleared.push(true) }
+    clearSession: () => { cleared.push(true) },
+    // 401/403 归因用**真实**实现（`utils/auth.js` 的单一事实源）；只有「清会话」换成本用例的探针，
+    // 这样「401 才允许清会话 / 403 不清会话」仍由真实判定驱动、由本文件的 `cleared()` 观测。
+    attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+    failureFor: (makeFailure, statusCode, payload) => {
+      const verdict = realAuth.attribution(statusCode, payload)
+      if (verdict.clearsSession) cleared.push(true)
+      const error = makeFailure(verdict.code)
+      error.status = verdict.status
+      error.retryable = verdict.retryable
+      return error
+    }
   }
 }
 
