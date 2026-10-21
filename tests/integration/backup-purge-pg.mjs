@@ -44,6 +44,7 @@ import pg from 'pg';
 import { copyPayloadDigest, copyPayloadJson, purgeEvidenceRef } from '../../packages/privacy/backup-copies.mjs';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { RECEIPT_TTL_MS } from '../../services/api/src/privacy/account-deletion.ts';
 import { createPostgresBackupPurgePort } from '../../services/api/src/privacy/backup-copies-pg.ts';
 import { createPostgresDeletionRequestStore } from '../../services/api/src/privacy/deletion-requests-pg.ts';
@@ -404,6 +405,7 @@ try {
   const deletionA = createUserDataDeletion({
     favoritesStore: favoritesA,
     historyStore: historyA,
+    messagesStore: createMemoryMessagesStore({ now: () => clockA.now().getTime() }),
     backupPurge: portA,
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -413,7 +415,7 @@ try {
   await deletionA.executeHandlers(requestA.id);
 
   const rowsA = await copiesOf(owner, requestA.id);
-  assert.equal(rowsA.length, 2, '两个必需模块都必须写清单行（0 对象也要写）');
+  assert.equal(rowsA.length, 3, '三个必需模块都必须写清单行（0 对象也要写）');
   const favoritesRowA = rowsA.find((row) => row.module === 'favorites');
   const historyRowA = rowsA.find((row) => row.module === 'history');
   assert.ok(favoritesRowA !== undefined && historyRowA !== undefined, '模块名必须如实落库');
@@ -451,7 +453,7 @@ try {
   assert.equal(handlerOf(receiptA3, 'history').backup_state, 'completed', '0 对象模块同样必须 completed（有证据行）');
   assert.equal(receiptA3.state, 'completed', '两个模块都完成 ⇒ 整体 completed');
   const rowsA3 = await copiesOf(owner, requestA.id);
-  assert.equal(rowsA3.length, 2, '清除后**行必须保留**（唯一的「清过」证据）');
+  assert.equal(rowsA3.length, 3, '清除后**行必须保留**（唯一的「清过」证据）');
   for (const row of rowsA3) {
     assert.equal(row.state, 'purged');
     assert.equal(row.payload, null, 'payload 必须置 jsonb null（正文/引用都不留）');
@@ -492,6 +494,7 @@ try {
   const deletionB = createUserDataDeletion({
     favoritesStore: favoritesB,
     historyStore: historyBExploding,
+    messagesStore: createMemoryMessagesStore({ now: () => clockB.now().getTime() }),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockB.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -525,6 +528,7 @@ try {
   const deletionC = createUserDataDeletion({
     favoritesStore: favoritesC,
     historyStore: historyC,
+    messagesStore: createMemoryMessagesStore({ now: () => clockC.now().getTime() }),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockC.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -574,6 +578,7 @@ try {
   const deletionD = createUserDataDeletion({
     favoritesStore: favoritesD,
     historyStore: historyD,
+    messagesStore: createMemoryMessagesStore({ now: () => clockD.now().getTime() }),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockD.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -621,6 +626,7 @@ try {
   const deletionE = createUserDataDeletion({
     favoritesStore: favoritesE,
     historyStore: historyE,
+    messagesStore: createMemoryMessagesStore({ now: () => clockE.now().getTime() }),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockE.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,

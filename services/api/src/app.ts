@@ -132,6 +132,7 @@ import {
   createUnavailableBackupPurgePort,
   createUserDataDeletion,
   type BackupPurgePort,
+  type OwnerPurgeStore,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
 // GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
@@ -752,16 +753,25 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I17（#17）阶段 2：`real` 且真实连接池已接入 ⇒ 消息域走 PostgreSQL 持久化；
   // `real` 但 `pool === null` ⇒ 维持整域 fail-closed（服务为 null，路由 503），
   // 注入的内存 store 在 `real` 下**不**能冒充持久化（`tests/unit/messages-http.test.mjs` 钉住这条）。
+  //
+  // 存储实例先单独取出（C1b / §7 P0-2）：注销清理必须清的就是**线上这一份**，
+  // 若在服务构造处内联新建、注销侧再建一个，内存模式下会清掉另一个空 store 而假称完成。
+  const messagesStore: MessagesStore =
+    config.executionMode === 'real'
+      ? (pool === null
+          ? createMemoryMessagesStore({ now: () => clock().getTime() })
+          : createPostgresMessagesStore({ pool }))
+      : (messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }));
   const messagesService = config.executionMode === 'real'
     ? (pool === null ? null : createMessagesService({
-        store: createPostgresMessagesStore({ pool }),
+        store: messagesStore,
         reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
         signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
         now: clock,
         idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
       }))
     : createMessagesService({
-        store: messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }),
+        store: messagesStore,
         reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
         signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
         now: clock,
@@ -1462,9 +1472,35 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         : durableDeletionRequests !== null && config.executionMode === 'real'
           ? { backupPurge: createUnavailableBackupPurgePort() }
           : {};
+  // #17 消息域（C1b / §7 P0-2）：把**线上那一份**消息存储收窄成注销协议要的 `OwnerPurgeStore`。
+  // 注入的替身可能只实现读路径 ⇒ 缺 `deleteAllByOwner` 时**调用即抛错**（由协议折叠为 `blocked` +
+  // `HANDLER_FAILED`），⛔ 不在装配期假装"能清"，也不在这里静默跳过消息域（那正是 #17 的原缺口）。
+  const messagesPurgeDelete = messagesStore.deleteAllByOwner?.bind(messagesStore);
+  const messagesPurgeCounts = messagesStore.purgeOwnerData?.bind(messagesStore);
+  const messagesPurgeSnapshot = messagesStore.snapshotOwner?.bind(messagesStore);
+  const messagesDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      if (messagesPurgeDelete === undefined) {
+        throw new Error('消息域存储未实现按主体清空（deleteAllByOwner）：拒绝假装清空');
+      }
+      return messagesPurgeDelete(ownerId);
+    },
+    ...(messagesPurgeCounts === undefined
+      ? {}
+      : { purgeOwnerData: (ownerId: string) => messagesPurgeCounts(ownerId) }),
+    ...(messagesPurgeSnapshot === undefined
+      ? {}
+      : {
+          snapshotOwner: (
+            ownerId: string,
+            client: Parameters<NonNullable<OwnerPurgeStore['snapshotOwner']>>[1],
+          ) => messagesPurgeSnapshot(ownerId, client),
+        }),
+  };
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
+    messagesStore: messagesDeletionStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,

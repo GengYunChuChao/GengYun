@@ -35,6 +35,7 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const ENV = 'FAVORITES_HISTORY_PG_TEST_URL';
@@ -451,7 +452,17 @@ try {
   assert.equal(beforeA.favorites_idempotency.length, 2);
   assert.equal(beforeA.history_idempotency.length, 1);
 
-  const deletion = createUserDataDeletion({ favoritesStore: favorites2, historyStore: history2 });
+  // #17 消息域（C1b 起进闭集）：**本 arm 只应用 0001+0018 两个迁移**（见上方 `applyMigrations`
+  // 的断言），没有 `public.messages` 表；因此这里给内存实现，只用来证明「闭集里的第三项也被
+  // 驱动且如实报 online_state」。消息域的**真库**清理证据在
+  // `tests/unit/favorites-history-deletion-registration.test.mjs`（PGlite 真表）与
+  // `tests/integration/messages-pg.mjs`。
+  const messages2 = createMemoryMessagesStore({ now: () => Date.now() });
+  const deletion = createUserDataDeletion({
+    favoritesStore: favorites2,
+    historyStore: history2,
+    messagesStore: messages2,
+  });
   const purgeRequestId = String(deletion.requestDeletionFor(purgeA).id);
   await deletion.executeHandlers(purgeRequestId);
 
@@ -482,6 +493,9 @@ try {
     '收藏域证据须同时含正文行数与台账行数',
   );
   assert.equal(evidence.history, 'history:online-purged:1;history:idempotency-purged:1');
+  // 闭集第三项（#17 消息域）也被驱动，且如实报 0 行（本 arm 没有消息行，缺项 ≠ 0）。
+  assert.equal(handlers.get('messages').online_state, 'completed', '闭集里的消息域必须被驱动');
+  assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
   say('注销清空覆盖幂等台账：A 四表残留 0、B 逐表相等、证据可见台账行数');
 
   // ---- 1（续）. 回滚脚本 -------------------------------------------------

@@ -270,8 +270,8 @@ async function main() {
   assert.equal(acceptedData.deletion.state, 'blocked', `备用证据未齐时必须是 blocked：${acceptedData.deletion.state}`);
   assert.deepEqual(
     acceptedData.deletion.handlers.map((row) => row.module).sort(),
-    ['favorites', 'history'],
-    '回执必须逐模块摊开（未报告的必需模块也要出现）',
+    ['favorites', 'history', 'messages'],
+    '回执必须逐模块摊开（未报告的必需模块也要出现；C1b 起含消息域，原有两域一条不少）',
   );
   for (const row of acceptedData.deletion.handlers) {
     assert.equal(row.online_state, 'completed', `${row.module} 在线清理真的跑过`);

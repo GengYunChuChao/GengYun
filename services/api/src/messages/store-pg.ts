@@ -33,6 +33,7 @@ import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import { MESSAGE_TYPES, type MessageType, type TargetRef } from './types.ts';
 import type {
+  BackupSnapshotClient,
   IdempotencyOutcome,
   IdempotencyRecord,
   InsertResult,
@@ -328,6 +329,21 @@ export function createPostgresMessagesStore(options: PostgresMessagesStoreOption
       );
       const row = rows[0];
       return row === undefined ? 0 : Number(row.count);
+    },
+
+    /**
+     * 备份副本清单（GY-I19）：**在受理事务内**枚举该主体仍持有的行 id。
+     *
+     * 用传入的 `client`（不是 `pool`）：清单必须与受理函数在同一事务、同一快照里读，
+     * 否则处理器物理删除后就读不到「哪些对象曾经存在」（设计 §6.1）。
+     * ⛔ 只回 id 与计数，不回消息正文/目标引用。
+     */
+    async snapshotOwner(ownerId: string, client: BackupSnapshotClient) {
+      const result = await client.query(
+        'SELECT id FROM public.messages WHERE owner_id = $1::uuid ORDER BY id',
+        [ownerId],
+      );
+      return { objectRefs: result.rows.map((row) => String(row['id'])), records: result.rows.length };
     },
 
     // ---- 幂等台账（0008 的 public.idempotency_keys；scope 已编码主体） ----
