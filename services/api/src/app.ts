@@ -113,7 +113,8 @@ import { registerMessageRoutes } from './routes/messages.ts';
 import { createMessagesService, type MessagesService } from './messages/service.ts';
 import { createMemoryMessagesStore, type MessagesStore } from './messages/store.ts';
 import { createPostgresMessagesStore } from './messages/store-pg.ts';
-import { createUnwiredReferencePort, type MessageReferencePort } from './messages/reference.ts';
+import { type MessageReferencePort } from './messages/reference.ts';
+import { createCommunityReferencePort, type CommunityPublicVisibility } from './messages/reference-community.ts';
 // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域 + 注销删除接线（F13 协议复用）。
 import { registerFavoriteRoutes } from './routes/favorites.ts';
 import { registerHistoryRoutes } from './routes/history.ts';
@@ -756,17 +757,21 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           ? createMemoryMessagesStore({ now: () => clock().getTime() })
           : createPostgresMessagesStore({ pool }))
       : (messagesInjection?.store ?? createMemoryMessagesStore({ now: () => clock().getTime() }));
+  // GY-I17 G4：装配顺序「先消息域后社区域」⇒ 后绑定读取器；漏赋值 ⇒ 恒 unavailable（fail-closed）。
+  let communityVisibility: CommunityPublicVisibility | null = null;
+  const messageReference: MessageReferencePort =
+    messagesInjection?.reference ?? createCommunityReferencePort({ community: () => communityVisibility });
   const messagesService = config.executionMode === 'real'
     ? (pool === null ? null : createMessagesService({
         store: messagesStore,
-        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        reference: messageReference,
         signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
         now: clock,
         idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
       }))
     : createMessagesService({
         store: messagesStore,
-        reference: messagesInjection?.reference ?? createUnwiredReferencePort(),
+        reference: messageReference,
         signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
         now: clock,
         idempotencyTtlMs: IDEMPOTENCY_TTL_SECONDS * 1000,
@@ -1070,6 +1075,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       now: clock,
     });
   }
+  communityVisibility = communityService?.visibility ?? null;
   // 后台 `hidePost` 的社区帖子端口：注入优先；否则用**同一个**社区 store（绝不自建第二份，
   // 否则"后台隐藏了帖子"在社区读取侧不生效）。上面套下架观察器只为发通知。
   const communityPostPortForAdmin =

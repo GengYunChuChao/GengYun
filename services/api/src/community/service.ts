@@ -1531,6 +1531,27 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     async countLikes(kind: 'post' | 'comment', id: string): Promise<number> {
       return store.countLikes(kind, id);
     },
+
+    /**
+     * GY-I17（#17）· G4：**只读**判据 —— "该目标此刻是否公开可读"。
+     *
+     * 复用与写入/读取**同一道**闸门 `publiclyVisibleTarget`（帖子看可见性+审核结论，
+     * 评论另校验父帖），所以这里不会比真实读取面更宽：任何"读不到"（不存在、未发布、
+     * 已下架、已删除、无权、审核退回）都被**折叠成同一个 `false`** —— 不区分原因、
+     * 不带目标细节，存在性无从泄露。
+     *
+     * **仅供消息域跳转端口内部接线**：不注册路由、不进 OpenAPI、不进任何响应投影。
+     */
+    visibility: Object.freeze({
+      async isPubliclyVisible(kind: 'post' | 'comment', id: string): Promise<boolean> {
+        try {
+          await publiclyVisibleTarget(kind, id);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    }),
   };
 
   async function like(
