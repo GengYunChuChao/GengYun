@@ -691,6 +691,100 @@ RESET ROLE;
 \echo '-- [8] 函数面探针结束（[8a] 两行是正常结果；[8b]/[8c] 五条各应有一行 ERROR: 42501 …）'
 \echo '--     零行/拒权都在预期内：本探针不写任何表，也不要求运行时能调用运维函数。'
 
+-- ---------------------------------------------------------------------------
+-- 9) R28-S52 跨 schema 关系面（非 public 的 9 个关系上的表级授权）
+--    为什么单列一节：90-assert 的三张清单——domain_manifest（public 表）、external_manifest
+--    （S43 的 18 张 public 表）、function_surface_manifest（S51 的 11 个函数）——覆盖的都只有
+--    public。非 public 的 4 个 schema（catalog_ops / catalog_read / knowledge_staging /
+--    staging_intake）里另有 9 个关系带组授权，而本切片之前只有 preview_reader_scope 与
+--    knowledge_runtime_scope 两条**点名**管了其中 2 个，其余 7 个任何断言都不看。
+--    本节回答三件事：
+--      a) 9 个关系的「非属主 ACL」与运行时**有效**表级权限（后者只能靠 has_table_privilege：
+--         运行时靠 20-login-roles.sql:220-224 继承 5 个组，relacl 里看不到它的名字）；
+--      b) 白名单内两条读路径真跑必须成功（00000、零行）；
+--      c) 白名单外三条真跑必须恰好 42501（一条视图读、一条表读、一条写）。
+--    判定以 90-assert 的 runtime_cross_schema_* 四条为准；本节只打印原始读数与 SQLSTATE。
+--    ⚠️ 与派单 §3 的差异（同偏差 1）：派单写 `catalog_read.home_species` 期望 42501，但真库里
+--    运行时是 gengyun_preview_reader 的成员（20-login-roles.sql:221，注释即「公共科普投影
+--    catalog_read.home_species」；services/api/db/roles/catalog_readers.sql:31 把 SELECT 授给
+--    该组），所以它属于**白名单内**、期望 00000。本节的 [9a]/[9b] 按实测分组。
+--    注：本节只读——五条语句要么 LIMIT 0 / WHERE false，要么因拒权在权限检查阶段就失败。
+-- ---------------------------------------------------------------------------
+\echo ''
+\echo '### 9) 非 public 的 9 个关系：非属主 ACL + 运行时有效表级权限'
+SELECT n.nspname || '.' || c.relname                                  AS relation,
+       c.relkind                                                      AS kind,
+       COALESCE((
+         SELECT string_agg(fmt, ' ' ORDER BY fmt)
+           FROM (SELECT COALESCE(r2.rolname, 'PUBLIC') || '=' ||
+                        string_agg(CASE a2.privilege_type
+                                     WHEN 'SELECT' THEN 'r' WHEN 'INSERT' THEN 'a'
+                                     WHEN 'UPDATE' THEN 'w' WHEN 'DELETE' THEN 'd'
+                                     WHEN 'TRUNCATE' THEN 'D' WHEN 'REFERENCES' THEN 'x'
+                                     WHEN 'TRIGGER' THEN 't' WHEN 'MAINTAIN' THEN 'm'
+                                   END, '') AS fmt
+                   FROM aclexplode(c.relacl) a2
+                   LEFT JOIN pg_roles r2 ON r2.oid = a2.grantee
+                  WHERE a2.grantee <> c.relowner
+                  GROUP BY COALESCE(r2.rolname, 'PUBLIC')) s
+       ), '(none)')                                                   AS non_owner_acl,
+       COALESCE((
+         SELECT string_agg(p.priv, ',' ORDER BY p.priv)
+           FROM (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+                        ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) p(priv)
+          WHERE has_table_privilege('gengyun_api_runtime', c.oid, p.priv)
+       ), '(none)')                                                   AS runtime_effective
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+   AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+   AND n.nspname !~ '^pg_'
+ ORDER BY 1;
+
+\echo ''
+\echo '### 9a) 白名单内：运行时对两个只读投影必须可读 —— 期望 00000、0 行、无 ERROR'
+SET ROLE gengyun_api_runtime;
+
+\echo '-- [9a-1] SELECT * FROM catalog_read.current_knowledge LIMIT 0：经 gengyun_knowledge_runtime'
+SELECT * FROM catalog_read.current_knowledge LIMIT 0;
+\set r28s52_probe_current_knowledge_state :SQLSTATE
+\echo '--   → [9a-1] catalog_read.current_knowledge state =' :r28s52_probe_current_knowledge_state
+
+\echo '-- [9a-2] SELECT * FROM catalog_read.home_species LIMIT 0：经 gengyun_preview_reader'
+SELECT * FROM catalog_read.home_species LIMIT 0;
+\set r28s52_probe_home_species_state :SQLSTATE
+\echo '--   → [9a-2] catalog_read.home_species state =' :r28s52_probe_home_species_state
+
+\echo ''
+\echo '### 9b) 白名单外：视图读 / 表读 / 写面 —— 三条都必须恰好 42501'
+\echo '-- [9b-1] SELECT * FROM catalog_read.registration_evidence LIMIT 0：只授 evidence_reader'
+SELECT * FROM catalog_read.registration_evidence LIMIT 0;
+\set r28s52_probe_registration_evidence_state :SQLSTATE
+\echo '--   → [9b-1] catalog_read.registration_evidence state =' :r28s52_probe_registration_evidence_state
+
+\echo '-- [9b-2] SELECT * FROM catalog_ops.operations LIMIT 0：只授 source_executor/source_operator'
+SELECT * FROM catalog_ops.operations LIMIT 0;
+\set r28s52_probe_catalog_ops_state :SQLSTATE
+\echo '--   → [9b-2] catalog_ops.operations state =' :r28s52_probe_catalog_ops_state
+
+\echo '-- [9b-3] INSERT INTO staging_intake.batches …：写面只授 staging_executor/staging_importer'
+\echo '--    用 SELECT … WHERE false 的零行形态（本文件第 2 条纪律）：权限检查照旧发生在'
+\echo '--    执行器启动阶段（缺权必 42501），但即便被测的错授权真的存在，也不会写入任何行'
+\echo '--    ⇒ 探针可对同一库反复跑，不依赖「正确权限下必然 42501」来保证安全。'
+INSERT INTO staging_intake.batches
+  (batch_id, actor, file_sha256, mapping_version, payload_hash,
+   generation, import_id, state, row_count)
+SELECT gen_random_uuid(), 's52-probe', repeat('a', 64), 'herbicide-summary-v1',
+       repeat('b', 64), 1, gen_random_uuid(), 'imported', 1
+WHERE false;
+\set r28s52_probe_staging_insert_state :SQLSTATE
+\echo '--   → [9b-3] staging_intake.batches INSERT state =' :r28s52_probe_staging_insert_state
+
+RESET ROLE;
+
+\echo '-- [9] 跨 schema 面探针结束（[9a] 两行必须无 ERROR；[9b] 三条各应有一行 ERROR: 42501 …）'
+\echo '--     若 [9a] 出现 42501 ⇒ 白名单读路径丢了授权；若 [9b] 出现 00000 ⇒ 运行时摸到了'
+\echo '--     白名单外的关系，都是 90-assert 断言 94-97 该判红的情形。'
 -- [10] R28-S58 外发账本：未就绪形态下 exports 的写位与这两列连读都不许通
 --   ledger-pg.ts:228-233 的就绪探测要 export_writebacks 存在、且 exports.revision /
 --   exports.cancelled_at 两列都拿到 UPDATE；任一不成立就 fail-closed 抛
