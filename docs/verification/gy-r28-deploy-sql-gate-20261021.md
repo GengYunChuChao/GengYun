@@ -218,3 +218,15 @@ psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privile
 ```
 
 破坏-复原：`REVOKE SELECT (id) ON public.messages FROM gengyun_api_runtime;` ⇒ 末行变 `FAIL: …`（退出码仍 0）；`GRANT SELECT (id) ON public.messages TO gengyun_api_runtime;` ⇒ 回到 `ok`。
+
+## 勘误（R28-S57，2026-10-21）
+
+本节只做勘误，不改动上文任何读数与结论。
+
+- **`:62`**：原文「``--with-cli-groups`` 才追加的 **3 组**（`provision-db.sh:272-275`：`egress_ledger`／`source_operator`／`staging_importer`）」。
+  - 今天的事实：`provision-db.sh:274-279` 只追加 **2 组** —— `source_operator`、`staging_importer`；`egress_ledger.sql` **不在** `ROLE_GROUP_FILES`，部署路径从不执行它（`services/api/db/roles/` 共 8 文件、11 条 `CREATE ROLE`）。
+  - 影响：该句的**组数与成员写错**；「这些 CLI 组不在本 job 的 apply 列表里」的结论不变（本 job 只 apply 默认 5 个）。
+  - 依据：`tests/unit/roles-file-disposition.test.mjs` 的「disposition ③」「计数一致」「引用闭合」断言。
+- **`:58`／`:119` 的「5 组」**：仍成立（`20-login-roles.sql:220-224` 只授 5 个组）；`services/api/db/roles/` 的 8 文件 11 角色不改变本 job 的 5 文件 apply 面。
+
+复核：`node --test --test-concurrency=1 tests/unit/roles-file-disposition.test.mjs`（11/11 通过）。

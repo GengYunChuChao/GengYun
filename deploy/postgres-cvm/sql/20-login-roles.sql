@@ -32,7 +32,8 @@
 --     这一**理由是错的**，已删除。
 --   * 迁移 `0001–0010` 实际需要的权限（据真实 DDL：`CREATE SCHEMA`、在自有 schema 内建表/视图/策略、
 --     `CREATE EXTENSION pgcrypto WITH SCHEMA staging_intake`）⇒ **数据库属主（非超级用户）即可**。
---   * `services/api/db/roles/*.sql` 建 7 个 NOLOGIN 组 ⇒ 需 **CREATEROLE**（非超级用户亦可）。
+--   * `services/api/db/roles/*.sql` 建 8 个角色文件、11 个 NOLOGIN 角色（组）⇒ 需 **CREATEROLE**（非超级用户亦可）；
+--     **本文件只授其中 5 个组**（C 段）；`egress_ledger.sql` 当前不被任何部署脚本执行，故 `gengyun_egress_ledger` 不在本文件的授权面内。
 --   * **本文件**：A/B 段的 `CREATE ROLE` / `ALTER ROLE` ⇒ 需 **CREATEROLE**（或超级用户）；
 --     C 段的 `GRANT <组> TO <运行时角色>` ⇒ 需对所授组有 **ADMIN OPTION**（PG 16+）**或**超级用户。
 --     下面把这些写成**前置能力断言**（不再是"必须超级用户"）。
