@@ -76,6 +76,7 @@ LINE 1: DROP OWNED BY gengyun_ci_owner IN DATABASE postgres
 | 收尾残留（外部核对） | `psql -Atc "SELECT string_agg(datname,',') FROM pg_database"`、`… FROM pg_roles WHERE rolname LIKE '%decoy%'` | 库：`postgres,gengyun_auth_privacy_test,template1,template0`；诱饵角色：`(none)` |
 | 新判据单测 | `node --test tests/unit/auth-privacy-arm-isolation.test.mjs` | **8/8 pass**（120 ms），含 5 条反向控制 |
 | 既有接线/顺序守门 | `node --test tests/unit/ci-real-pg-wiring.test.mjs tests/unit/ci-integration-chain-structure.test.mjs` | **25/25 pass**（未放宽、未改步数） |
+| **CI（Actions，PG 17.11 service）** | PR #426 | **18/18 pass**；`auth-privacy-postgres-17.11` `pass 36s`：`PASS 2: 跨库负控制：只在本库 DROP OWNED 时 DROP ROLE 报 dependent objects；每库清理后诱饵角色/诱饵库归零` + `ALL 27 native PG17.11 integration groups passed`；`PASS 1: D1 遗留库负控制：诱饵库被抓到 → 清掉 → 探测器归零（收尾断言非空转）` + `ALL 12 migration negative groups passed against native PG17.11 (Debian 17.11-1.pgdg13+2)`；step env 实测 `MIGRATIONS_NEGATIVE_TEST_URL: ***127.0.0.1:5432/postgres`（**分库在 CI 生效，且 service 里 `postgres` 库确实可用**） |
 
 ## 5. 未改动与边界
 
@@ -86,6 +87,6 @@ LINE 1: DROP OWNED BY gengyun_ci_owner IN DATABASE postgres
 
 ## 6. 未取得（单列）
 
-- **未取得 GitHub Actions 读数**：本片只在本地 17.11 + 静态单测上验证；`auth-privacy-postgres-17.11` job 的真红/真绿待 PR 跑出。
-- **未取得 CI 服务里 `postgres` 库的直连证据**：本地是 `initdb` 自建实例（`postgres` 库必在）；CI 由 `postgres:17.11` service 提供，`POSTGRES_USER` 在该镜像里是超级用户、`postgres` 库默认存在——这条属**推断**，未在 Actions 实测。
+- **GitHub Actions 读数——已取得**：PR #426 的 18 项检查全 pass（含 `unit-tests`、`real-pg-17.11` 15 臂、`auth-privacy-postgres-17.11`）。仍未取得的是"把 workflow 故意改回同库后 `auth-privacy` 必红"的**远端**红对照（本地已用 §2 R1 的 `29 !== 0` 覆盖，静态判据亦含变异必红）。
+- **CI service 里 `postgres` 库可直连——已取得（不再是推断）**：Actions 日志显示 `MIGRATIONS_NEGATIVE_TEST_URL: ***127.0.0.1:5432/postgres` 且该 step 绿（`postgres:17.11` 镜像里 `POSTGRES_USER` 为超级用户，可 `CREATE DATABASE`）。仍未取得的是"CI 上故意共用一库必红"的对照实验（本地已用 §2 R1/R2/R3 覆盖）。
 - **未取得并发改名后的耗时基线**：`:136` 的全新库契约意味着同一个库连跑两次仍会红（§2 R1），本片未把它改成"每次换库名"（那会改动臂的对外环境变量契约，超出 F6 范围）。
