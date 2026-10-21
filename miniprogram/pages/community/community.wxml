@@ -49,10 +49,12 @@
 
     <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
-    <!-- 失败态必须给出可点的重试入口（community.js 的 onRetry），不能只留一句错误文案。 -->
+    <!-- 失败态必须给出可点的重试入口（community.js 的 onRetry），不能只留一句错误文案。
+         error-code 交给统一状态层判定：403 系列会改成「没有权限」语气并收起重试按钮。 -->
     <state-view
       wx:elif="{{status === 'error'}}"
       status="error"
+      error-code="{{errorCode}}"
       title="社区内容没有取到"
       desc="{{errorText}}"
       action-text="重新读取"

@@ -24,6 +24,9 @@ Page({
     guest: true,
     status: 'loading',
     errorText: '',
+    // B7：把契约错误码透传给 state-view，由 utils/states.js 统一判定「哪类问题 + 能否重试」；
+    // 403 系列会自动升级成 denied 语气（不是「请先登录」）。页面文案仍取 api.message(error)。
+    errorCode: '',
     modeNote: '',
     // GY-I26：服务端 `mode` 为 stub／preset_demo 时的**置顶**替身标注（页尾小字不足以「明显」）。
     // 逐字取 `api.modeNote(mode)`，不新造第二套替身文案；real 模式保持为空，只留页尾说明。
@@ -71,7 +74,7 @@ Page({
   reload: function (done) {
     const epoch = ++this._epoch
     const that = this
-    this.setData({ status: 'loading', errorText: '', posts: [], nextCursor: null })
+    this.setData({ status: 'loading', errorText: '', errorCode: '', posts: [], nextCursor: null })
     api.listPosts(this._query(null)).then(function (page) {
       if (epoch !== that._epoch) return
       const mode = page.mode
@@ -86,7 +89,13 @@ Page({
     }).catch(function (error) {
       if (epoch !== that._epoch) return
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true }); if (done) done(); return }
-      that.setData({ status: 'error', errorText: api.message(error), modeNote: '', stubNote: '' })
+      that.setData({
+        status: 'error',
+        errorText: api.message(error),
+        errorCode: (error && error.code) || '',
+        modeNote: '',
+        stubNote: ''
+      })
       if (done) done()
     })
   },

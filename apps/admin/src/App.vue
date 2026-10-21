@@ -4,13 +4,15 @@ import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
 import AuditEventsView from './views/AuditEventsView.vue';
 import ContentAdminView from './views/ContentAdminView.vue';
+import FlagsView from './views/FlagsView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'content' | 'audit' | 'review';
+type TabKey = 'accounts' | 'content' | 'flags' | 'audit' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
   { key: 'content', label: '资料管理', note: '来源 / 科普 / 分类' },
+  { key: 'flags', label: '功能开关', note: '读写已接入' },
   { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
@@ -42,6 +44,7 @@ const active = ref<TabKey>('accounts');
 
     <AccountsView v-if="active === 'accounts'" />
     <ContentAdminView v-else-if="active === 'content'" />
+    <FlagsView v-else-if="active === 'flags'" />
     <AuditEventsView v-else-if="active === 'audit'" />
     <ReviewPlaceholderView v-else />
 
@@ -57,6 +60,11 @@ const active = ref<TabKey>('accounts');
         <dd>
           资料来源 / 科普内容 / 分类：读 <code>sources:read</code>，写 <code>sources:write</code>；写操作带
           <code>Idempotency-Key</code>，编辑/发布/下架另带 <code>If-Match</code>；审计由服务端留痕
+        </dd>
+        <dt>功能开关</dt>
+        <dd>
+          读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与
+          Idempotency-Key（flags:write），失败按服务端错误码如实展示
         </dd>
         <dt>审计事件</dt>
         <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；只列契约已提供的 8 个字段，不展示主体/actor，不做本片没有的写操作</dd>

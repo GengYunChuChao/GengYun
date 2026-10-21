@@ -78,6 +78,10 @@ page {
   --color-error: #C53030;     /* 警告红 */
   --color-invalid: #8A6D1F;   /* 提醒黄（失效／待确认） */
   --color-stub: #5B4B8A;      /* 替身数据紫，仅开发模式可见 */
+  /* B7 增补：403 无权限（SCOPE_DENIED／CONSENT_REQUIRED／ACCOUNT_INACTIVE）。
+     取石板蓝灰，与 error 红、invalid 黄、stub 紫、loading 蓝都拉开；
+     语义是「锁住了、不是坏了」，所以不使用警告红。 */
+  --color-denied: #4A4E69;
 
   /* ---- demo 未定义但样式层需要的状态底色（取自 demo 的风险 pill 与 danger 按钮） ---- */
   --tone-warn-bg: #f7f1e3;      /* .pill.amber */
@@ -91,6 +95,7 @@ page {
   --tone-high-bg: #fbe5e2;      /* .risk-high */
   --tone-high-ink: #aa463d;
   --tone-stub-bg: #efeaf7;
+  --tone-denied-bg: #eceef3;    /* B7：无权限态底色，与 --color-denied 同族 */
 
   /* ---- 既有页面的 --color-* 别名：指向上面的 demo 值，不另立一套色板 ---- */
   --color-primary: #176b50;        /* = demo --green（冲突披露见文件头） */

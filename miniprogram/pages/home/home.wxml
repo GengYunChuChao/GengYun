@@ -106,7 +106,21 @@
         disabled="{{busy}}"
       >检查本地替身连接</button>
       <button class="btn btn--ghost btn--block" bindtap="goSpecimen">样式走查（demo 对齐核对）</button>
-      <view class="dev-status">{{status}}</view>
+      <!-- 处理中与失败都收口到统一 state-view（B7）：诊断失败不再和成功说明混成同一行灰字。
+           失败原因由 utils/debug.js 如实回传，本页不改写、不吞。 -->
+      <state-view
+        wx:if="{{busy}}"
+        status="loading"
+        title="正在检查本地替身连接"
+        desc="正在读取本地诊断服务状态，请稍候。"
+      ></state-view>
+      <state-view
+        wx:elif="{{diagPassed === false}}"
+        status="error"
+        title="本地诊断没有通过"
+        desc="{{status}}"
+      ></state-view>
+      <view class="dev-status" wx:else>{{status}}</view>
     </view>
   </view>
 </view>

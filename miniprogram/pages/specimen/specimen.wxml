@@ -210,7 +210,7 @@
       </view>
     </view>
 
-    <!-- 6 统一状态视图：八态全量核对 -->
+    <!-- 6 统一状态视图：九态全量核对（B7 增补 denied 与 error-code 分类标签） -->
     <view class="section">
       <view class="section-head">
         <view class="section-head__title">6 统一状态视图</view>
@@ -223,6 +223,11 @@
       <state-view class="gy-state" status="cancelled" title="已取消" desc="取消状态：中性语气。"></state-view>
       <state-view class="gy-state" status="invalid" title="内容已失效" desc="失效状态：黄语气。"></state-view>
       <state-view class="gy-state" status="stub" title="示例数据" desc="替身状态：紫语气，并附「替身数据」文字标签。"></state-view>
+      <!-- B7 增补：无权限语气（403）与失败分类标签。denied 默认收起重试按钮，
+           传 allow-denied-action 才保留「去授权」这类针对性动作。 -->
+      <state-view class="gy-state" status="denied" title="没有权限查看" desc="无权限状态：石板蓝灰语气，与「请先登录」分开；默认不给重试按钮。"></state-view>
+      <state-view class="gy-state" status="error" error-code="SCOPE_DENIED" title="这项内容不在你的可见范围" desc="传 error-code 后多一行分类标签，并自动按无权限语气渲染。"></state-view>
+      <state-view class="gy-state" status="error" error-code="PROVIDER_UNAVAILABLE" title="服务暂时没有响应" desc="临时故障：分类标签会标明「可以重试」，重试按钮保留。" action-text="重试（样张）" bind:action="onStub"></state-view>
     </view>
 
     <!-- 可注册组件组合：仅 local 样张，不查询资料或调用业务 API。 -->
