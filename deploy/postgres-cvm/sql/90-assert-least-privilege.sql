@@ -1814,6 +1814,62 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      AND :'r28_probe_users_update_extra_state' = '42501',
      'SQLSTATE ' || :'r28_probe_users_update_extra_state')
   ),
+  -- R28-S58 身份面：SECURITY DEFINER 函数的 search_path 审计。92 号的 ok 与 detail 共用这一份
+  -- 判定，避免「判红却列不出是哪个函数」。判据：proconfig 里必须有一条以 `search_path=` 开头
+  -- 的设置项，且它的每个元素（去空格、去双引号后）都落在 {pg_catalog, pg_temp} 之内。
+  -- 可写 schema（public / 任何业务 schema / "$user"）一旦出现在 search_path 里，SECURITY
+  -- DEFINER 函数就会按调用者可影响的名字解析对象 —— 这是提权最常见的一条路。
+  -- 范围：schema 属于 public / catalog_ops / staging_intake 的 prosecdef 函数（本库全部 SECDEF
+  -- 落在这三处，由 2011-... 的迁移建立）；一个都查不到也算红（92 号另行判定）。
+  secdef_audit(func, proconfig, pinned) AS (
+    SELECT p.oid::regprocedure::text,
+           COALESCE(array_to_string(p.proconfig, '; '), '(未设置 proconfig)'),
+           EXISTS (
+                 SELECT 1
+                   FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) AS cfg
+                  WHERE left(cfg, 12) = 'search_path='
+                    AND btrim(substr(cfg, 13)) <> ''
+                    AND NOT EXISTS (
+                          SELECT 1
+                            FROM unnest(string_to_array(
+                                   replace(substr(cfg, 13), ' ', ''), ',')) AS e
+                           WHERE btrim(replace(e, '"', '')) NOT IN ('pg_catalog', 'pg_temp')
+                        )
+           )
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+       AND p.prosecdef
+  ),
+  -- R28-S58 外发账本：就绪态双条件的六项实测。服务端自己怎么判断「账本可用」写在
+  -- services/api/src/privacy/ledger-pg.ts:228-233，三个条件同时成立才算就绪：
+  --   to_regclass('public.export_writebacks') 非空
+  --   AND has_column_privilege(current_user,'public.exports','revision','UPDATE')
+  --   AND has_column_privilege(current_user,'public.exports','cancelled_at','UPDATE')
+  -- 任一不成立就 PrivacyError('OBJECT_UNAVAILABLE') ⇒ 409 fail-closed。注意这里查的是
+  -- **当前连接用户**的权限，而运行时是靠组继承拿到的；所以断言里统一按
+  -- 'gengyun_api_runtime' 这个角色名问 has_column_privilege，不依赖本会话是谁。
+  -- 追加两项：egress 角色本身在不在、它有没有被授予运行时；以及 export_writebacks
+  -- 有没有进过本文件的可见面清单（domain_manifest / external_manifest）。
+  -- 部署形态（provision-db.sh 默认只跑 7 个组文件里的 5 个，从不执行
+  -- roles/egress_ledger.sql）决定了 gengyun_egress_ledger 不会存在，于是账本在本片
+  -- 恒为「未就绪」—— 那是冻结，不是缺陷，93 号对此判绿。
+  ledger_readiness_state(revision_upd, cancelled_upd, egress_role, egress_grant,
+                          writebacks_present, writebacks_listed) AS (
+    SELECT has_column_privilege('gengyun_api_runtime', 'public.exports', 'revision', 'UPDATE'),
+           has_column_privilege('gengyun_api_runtime', 'public.exports', 'cancelled_at', 'UPDATE'),
+           EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_egress_ledger'),
+           EXISTS (SELECT 1
+                     FROM pg_auth_members m
+                     JOIN pg_roles r ON r.oid = m.roleid
+                     JOIN pg_roles g ON g.oid = m.member
+                    WHERE g.rolname = 'gengyun_api_runtime'
+                      AND r.rolname = 'gengyun_egress_ledger'),
+           to_regclass('public.export_writebacks') IS NOT NULL,
+           EXISTS (SELECT 1 FROM domain_manifest WHERE tbl = 'export_writebacks'
+                   UNION ALL
+                   SELECT 1 FROM external_manifest WHERE tbl = 'export_writebacks')
+  ),
   checks(label, ok, detail) AS (
 
   -- 1. 运行时 LOGIN 的属性：可登录、可继承、且无任何特权位
@@ -3081,6 +3137,162 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          has_schema_privilege('public', 'public'::name, 'USAGE')::text ||
          '、CREATE=' || has_schema_privilege('public', 'public'::name, 'CREATE')::text ||
          '（USAGE 为 =U/pg_database_owner 默认投影，已登记例外）'
+
+  UNION ALL
+  -- 98. R28-S58 身份面收敛（成员资格精确）：运行时在 pg_auth_members 里的成员资格必须
+  --     **恰好**是 20-login-roles.sql C 段（L220-224）写死的那 5 条 —— 一条不多、一条不少，
+  --     每条 admin_option = false，且被授予的组本身都是 NOLOGIN。
+  --     3 号 required_memberships 是单向的「这 5 条都在」，多授一条新组、或给某条补上
+  --     ADMIN OPTION，它照样判绿；而「GRANT 一个新组 TO gengyun_api_runtime」正是后来者
+  --     给运行时扩权最省事的一条路（组里挂的表/列授权会被立刻继承）。同理，组角色一旦
+  --     能 LOGIN，就等于多了一把能直接登进业务库的钥匙。这两面都必须在事后拦住。
+  --     ⚠ 唯一的例外是 gengyun_egress_ledger：97 号的就绪臂要求它被授予运行时（外发账本
+  --     的写位经这个组继承）。若这里把集合钉死成 5 条，97 号的就绪臂就永远不可能为真 ——
+  --     两条断言会互相矛盾。所以白名单 = 5 条基组 + 这个待接通的组，条数 5 或 6；
+  --     除它以外多授任何一条都判红。
+  SELECT 'runtime_membership_exact',
+         (SELECT count(*)
+            FROM pg_auth_members m
+            JOIN pg_roles g ON g.oid = m.member
+           WHERE g.rolname = 'gengyun_api_runtime') BETWEEN 5 AND 6
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_auth_members m
+                 JOIN pg_roles r ON r.oid = m.roleid
+                 JOIN pg_roles g ON g.oid = m.member
+                WHERE g.rolname = 'gengyun_api_runtime'
+                  AND (m.admin_option
+                       OR r.rolcanlogin
+                       OR r.rolname NOT IN ('gengyun_auth_privacy',
+                                            'gengyun_preview_reader',
+                                            'gengyun_consent_granter',
+                                            'gengyun_profile_runtime',
+                                            'gengyun_knowledge_runtime',
+                                            'gengyun_egress_ledger'))
+         ),
+         'pg_auth_members 必须为 5 条基组（可多一条待接通的 gengyun_egress_ledger）、全部 NOLOGIN、无 ADMIN OPTION；实测（组→admin_option/可登录）：' ||
+         COALESCE((
+           SELECT string_agg(r.rolname || '→' || m.admin_option::text
+                             || '/login=' || r.rolcanlogin::text,
+                             ', ' ORDER BY r.rolname)
+             FROM pg_auth_members m
+             JOIN pg_roles r ON r.oid = m.roleid
+             JOIN pg_roles g ON g.oid = m.member
+            WHERE g.rolname = 'gengyun_api_runtime'
+         ), '（无）')
+
+  UNION ALL
+  -- 99. R28-S58 身份面收敛（默认权限面）：pg_default_acl 必须零行。
+  --     ALTER DEFAULT PRIVILEGES 是一条「不碰任何既有表/列、却让**将来**建出来的对象
+  --     自动带权限」的旁路：本文件所有逐表/逐列断言（含 87 号 runtime_surface_parity
+  --     的清单比对）看的都是「现在有什么」，而这一条改的是「以后有什么」，拦不住。
+  --     部署形态（provision-db.sh + 20-login-roles.sql + roles/*.sql）全程不用它，
+  --     因此零行就是正确形态；非零行既是越权，也是「有人绕过本文件改权限」的信号。
+  SELECT 'no_default_acl_entries',
+         (SELECT count(*) FROM pg_default_acl) = 0,
+         'pg_default_acl 必须零行；实测前 5 行（角色 @ schema objtype = acl）：' ||
+         COALESCE((
+           SELECT string_agg(d, ' / ')
+             FROM (
+               SELECT d.defaclrole::regrole::text
+                      || ' @ ' || CASE WHEN d.defaclnamespace = 0 THEN '(全局)'
+                                       ELSE d.defaclnamespace::regnamespace::text END
+                      || ' ' || d.defaclobjtype::text
+                      || ' = ' || d.defaclacl::text AS d
+                 FROM pg_default_acl d
+                ORDER BY 1
+                LIMIT 5
+             ) x
+         ), '（无）')
+
+  UNION ALL
+  -- 100. R28-S58 身份面收敛（角色属性矩阵）：每个 gengyun_* 角色都必须收敛在最小属性面。
+  --     gengyun_cvm_owner 是迁移管理员（initdb 的引导超级用户），超级用户位天然蕴含
+  --     CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS，故它是唯一整族例外（真实集群实测如此）；
+  --     其余角色一个特权位都不许有，全部 INHERIT、连接数不限，且只有运行时可 LOGIN。
+  --     1 号只盯 gengyun_api_runtime 一个角色的属性，5 号只查成员链 —— 「顺手 ALTER ROLE
+  --     别的 gengyun_* 角色提权」这两条都看不见，这里补齐整个命名空间的横切面。
+  SELECT 'role_attribute_matrix',
+         (SELECT count(*) FROM pg_roles WHERE rolname LIKE 'gengyun\_%') > 0
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_roles r
+                WHERE r.rolname LIKE 'gengyun\_%'
+                  AND (   (r.rolsuper AND r.rolname <> 'gengyun_cvm_owner')
+                       OR (r.rolname <> 'gengyun_cvm_owner'
+                           AND (r.rolcreatedb OR r.rolcreaterole
+                                OR r.rolreplication OR r.rolbypassrls))
+                       OR NOT r.rolinherit
+                       OR r.rolconnlimit <> -1
+                       OR (r.rolcanlogin
+                           AND r.rolname NOT IN ('gengyun_api_runtime',
+                                                 'gengyun_cvm_owner')))
+         ),
+         'gengyun_* 必须收敛（唯一超管 owner、唯一可登录的 runtime 与 owner、其余 NOLOGIN/INHERIT/connlimit=-1）；越界角色：' ||
+         COALESCE((
+           SELECT string_agg(r.rolname || '(super=' || r.rolsuper::text
+                             || ',login=' || r.rolcanlogin::text
+                             || ',db=' || r.rolcreatedb::text
+                             || ',role=' || r.rolcreaterole::text
+                             || ',repl=' || r.rolreplication::text
+                             || ',bypass=' || r.rolbypassrls::text
+                             || ',inherit=' || r.rolinherit::text
+                             || ',conn=' || r.rolconnlimit::text || ')',
+                             ', ' ORDER BY r.rolname)
+             FROM pg_roles r
+            WHERE r.rolname LIKE 'gengyun\_%'
+              AND (   (r.rolsuper AND r.rolname <> 'gengyun_cvm_owner')
+                   OR (r.rolname <> 'gengyun_cvm_owner'
+                       AND (r.rolcreatedb OR r.rolcreaterole
+                            OR r.rolreplication OR r.rolbypassrls))
+                   OR NOT r.rolinherit
+                   OR r.rolconnlimit <> -1
+                   OR (r.rolcanlogin
+                       AND r.rolname NOT IN ('gengyun_api_runtime',
+                                             'gengyun_cvm_owner')))
+         ), '（无）')
+
+  UNION ALL
+  -- 101. R28-S58 身份面收敛（SECURITY DEFINER 的 search_path）：三 schema 下每个 prosecdef
+  --     函数都必须把 search_path 固定掉。SECURITY DEFINER 函数以属主身份执行，search_path
+  --     里只要有一个可写 schema，调用者就能提前建同名对象把内部解析劫走 —— 这是拿「只读
+  --     运行时」换「函数属主权限」的经典一步。基线是 8 个函数全部 `search_path=pg_catalog`
+  --     （部分另带 TimeZone=UTC）。查不到任何 secdef 函数也算红：那说明审计面本身失效了。
+  SELECT 'secdef_search_path_pinned',
+         (SELECT count(*) FROM secdef_audit) > 0
+         AND NOT EXISTS (SELECT 1 FROM secdef_audit a WHERE NOT a.pinned),
+         '每个 SECURITY DEFINER 函数都必须 SET search_path 到 pg_catalog（或 pg_catalog, pg_temp）；实测 '
+         || (SELECT count(*)::text FROM secdef_audit)
+         || ' 个 secdef 函数（0 个也判红）；未固定的：' ||
+         COALESCE((
+           SELECT string_agg(a.func || ' → ' || a.proconfig, ' / ' ORDER BY a.func)
+             FROM secdef_audit a
+            WHERE NOT a.pinned
+         ), '（无）')
+
+  UNION ALL
+  -- 102. R28-S58 外发账本（就绪态双条件 / 三形态穷尽）：账本必须「整块未就绪」或「整块就绪」。
+  --     形态 A（未就绪，本片部署形态）：revision / cancelled_at 两列的 UPDATE 都没授，
+  --     egress 角色不存在、也没有被授予运行时。此时服务端 fail-closed 409，是预期行为；
+  --        writebacks_present 允许为 true（0011 迁移建了表，但运行时碰不到它）。
+  --     形态 B（就绪）：两列 UPDATE 都有 + egress 角色存在且已授予运行时 + export_writebacks
+  --     存在且已进本文件可见面清单（否则「就绪」只是权限到位、账本表却没人审）。
+  --     其余一切 ⇒ 红。半接通是这条断言的靶心：只授一列、只建角色不授组、全接通但表没进
+  --     清单 —— 这三种状态服务端都会继续 fail-closed，而运维看到的却是「已经接了一半」。
+  --     之所以不用「两列 AND」直接做未就绪判据：那样 GRANT UPDATE (revision) 单列会落进
+  --     未就绪臂判绿，半接通就从判决里消失了。
+  SELECT 'runtime_ledger_readiness_biconditional',
+         (SELECT (    NOT s.revision_upd AND NOT s.cancelled_upd
+                  AND NOT s.egress_role   AND NOT s.egress_grant)
+                 OR (    s.revision_upd AND s.cancelled_upd
+                     AND s.egress_role   AND s.egress_grant
+                     AND s.writebacks_present AND s.writebacks_listed)
+            FROM ledger_readiness_state s),
+         '外发账本必须整块未就绪或整块就绪（半接通判红）；实测 revision_upd/cancelled_upd/egress_role/egress_grant/writebacks_present/writebacks_listed = ' ||
+         (SELECT s.revision_upd::text || '/' || s.cancelled_upd::text || '/'
+                 || s.egress_role::text || '/' || s.egress_grant::text || '/'
+                 || s.writebacks_present::text || '/' || s.writebacks_listed::text
+            FROM ledger_readiness_state s)
 )
 
 SELECT label, ok, detail
@@ -3096,12 +3308,13 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：112 条断言全红时标签合计约 3.6K 字符（2026-10-21 合流后实测：总 112 条、
--- sum(length(label)+2)=3553、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：117 条断言全红时标签合计约 3.6K 字符（2026-10-21 合流后实测：总 117 条、
+-- sum(length(label)+2)=3693、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
 -- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
--- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测。
+-- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测；
+-- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693。
 DO $$
 DECLARE
   v_failed integer;

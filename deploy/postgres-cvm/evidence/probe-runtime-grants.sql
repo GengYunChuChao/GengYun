@@ -785,5 +785,71 @@ RESET ROLE;
 \echo '-- [9] 跨 schema 面探针结束（[9a] 两行必须无 ERROR；[9b] 三条各应有一行 ERROR: 42501 …）'
 \echo '--     若 [9a] 出现 42501 ⇒ 白名单读路径丢了授权；若 [9b] 出现 00000 ⇒ 运行时摸到了'
 \echo '--     白名单外的关系，都是 90-assert 断言 94-97 该判红的情形。'
+-- [10] R28-S58 外发账本：未就绪形态下 exports 的写位与这两列连读都不许通
+--   ledger-pg.ts:228-233 的就绪探测要 export_writebacks 存在、且 exports.revision /
+--   exports.cancelled_at 两列都拿到 UPDATE；任一不成立就 fail-closed 抛
+--   OBJECT_UNAVAILABLE（409）。当前部署形态（5 组）两者都没有 —— 这里把「没有」坐实到
+--   动作层：列级 SELECT 与列级 UPDATE 都必须当场 42501。ON_ERROR_STOP=0 下 psql 继续跑，
+--   :SQLSTATE 原样打印，判定留给读者（探针纪律：不假设、只复述）。
+-- ---------------------------------------------------------------------------
+\echo '-- [10] 外发账本未就绪形态：exports 的 revision/cancelled_at 列级 SELECT 与 UPDATE 必须 42501'
+SET ROLE gengyun_api_runtime;
+
+SELECT revision, cancelled_at FROM public.exports WHERE false;
+\set r28_s58_ledger_sel_sqlstate :SQLSTATE
+\set r28_s58_ledger_sel_failed :ERROR
+\echo '--   [10a] SELECT revision, cancelled_at FROM public.exports ⇒ SQLSTATE=' :r28_s58_ledger_sel_sqlstate '（期望 42501；ERROR=' :r28_s58_ledger_sel_failed '）'
+
+UPDATE public.exports SET revision = revision WHERE false;
+\set r28_s58_ledger_upd_sqlstate :SQLSTATE
+\set r28_s58_ledger_upd_failed :ERROR
+\echo '--   [10b] UPDATE public.exports SET revision = revision ⇒ SQLSTATE=' :r28_s58_ledger_upd_sqlstate '（期望 42501；ERROR=' :r28_s58_ledger_upd_failed '）'
+
+RESET ROLE;
+
+\echo '--   [10c] 账本就绪探测的三项现状（应 revision_upd=f / cancelled_upd=f / writebacks_present=t）'
+SELECT has_column_privilege('gengyun_api_runtime', 'public.exports', 'revision', 'UPDATE') AS revision_upd,
+       has_column_privilege('gengyun_api_runtime', 'public.exports', 'cancelled_at', 'UPDATE') AS cancelled_upd,
+       to_regclass('public.export_writebacks') IS NOT NULL AS export_writebacks_present,
+       EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_egress_ledger') AS egress_ledger_role_present;
+
+\echo '-- [10] 外发账本探针结束（两条禁止面各应有一行 ERROR: 42501 …）'
+
+-- ---------------------------------------------------------------------------
+-- [11] R28-S58 身份管线：运行时不能自己扩权（组授予 / 在业务 schema 建表）
+--   两件都是「拿只读运行时换更高权限」的入口：
+--     (a) GRANT <组> TO gengyun_api_runtime —— 把某个组的表/列授权整包继承进来；
+--     (b) CREATE TABLE public.<自有表>    —— 在业务 schema 里落一张自己能写的表。
+--   90-assert 的 89 号看的是事后 pg_auth_members 快照、11/12 号看的是 schema 上的 ACL 位；
+--   这里补的是「动作本身当场被拒」的直接证据。ON_ERROR_STOP=0 下 psql 会继续跑，
+--   逐条读 :SQLSTATE 打印出来，判定留给读者（探针纪律：不假设、只复述）。
+-- ---------------------------------------------------------------------------
+\echo '-- [11] 身份管线：GRANT 组 / CREATE TABLE 都必须 42501（下面两条各应有一行 ERROR: 42501 …）'
+SET ROLE gengyun_api_runtime;
+
+GRANT gengyun_preview_reader TO gengyun_api_runtime;
+\set r28_s58_grant_sqlstate :SQLSTATE
+\set r28_s58_grant_failed :ERROR
+\echo '--   [11a] GRANT gengyun_preview_reader TO gengyun_api_runtime ⇒ SQLSTATE=' :r28_s58_grant_sqlstate '（期望 42501；ERROR=' :r28_s58_grant_failed '）'
+
+CREATE TABLE public.r28_s58_probe (id integer);
+\set r28_s58_create_sqlstate :SQLSTATE
+\set r28_s58_create_failed :ERROR
+\echo '--   [11b] CREATE TABLE public.r28_s58_probe(id integer) ⇒ SQLSTATE=' :r28_s58_create_sqlstate '（期望 42501；ERROR=' :r28_s58_create_failed '）'
+
+RESET ROLE;
+
+\echo '--   [11c] 残留检查：建表必须没落地（第一条 SELECT 应 0 行），成员资格必须仍为 5（第二条应打印 5）'
+SELECT c.relname AS r28_s58_probe_table_left
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public'
+   AND c.relname = 'r28_s58_probe';
+SELECT count(*) AS r28_s58_runtime_memberships
+  FROM pg_auth_members m
+  JOIN pg_roles g ON g.oid = m.member
+ WHERE g.rolname = 'gengyun_api_runtime';
+
+\echo '-- [11] 身份管线探针结束（两条禁止面各应有一行 ERROR: 42501 …；[11c] 计数应仍为 5）'
 
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'
