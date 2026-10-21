@@ -4,9 +4,18 @@
   <!-- 替身边界说明 + **可判定数据来源标记**：服务端 /herbicides 读数与随包离线副本必须能区分。 -->
   <view class="banner">{{modeNote}}</view>
   <view class="catalog-version source-line" wx:if="{{dataSourceLabel}}">{{dataSourceLabel}}</view>
-  <view class="reasons" wx:if="{{queryError}}">
-    <view class="reason">{{queryError}}</view>
-  </view>
+  <!-- 失败态统一走 state-view（不把失败写成一行灰字，也不与下面的空态混在一起）：
+       503／超时等可重试失败给「重试查询」，401 会话失效给「核实登录后重试」；
+       错误码原样交给组件补分类标签与可重试性，页面自己的领域文案仍然优先。 -->
+  <state-view
+    wx:if="{{queryError}}"
+    status="{{querySession ? 'guest' : 'error'}}"
+    error-code="{{queryErrorCode}}"
+    title="{{querySession ? '登录状态已变化，本次查询没有执行' : '这次查询没有完成'}}"
+    desc="{{queryError}}"
+    action-text="{{querySession ? '核实登录后重试' : '重试查询'}}"
+    bind:action="onRetry"
+  ></state-view>
   <view class="catalog-version">目录版本：{{catalogVersion}}</view>
 
   <!-- 导航：作物 → 杂草 → 地区（除草方式由关键词/结构化条件表达） -->
@@ -46,6 +55,16 @@
     </view>
   </view>
 
+  <!-- 加载态：首屏／换条件后的请求在途时渲染「正在查询」。
+       **不得**落到下面的空态文案「没有可展示的资料」——加载中被说成没有资料，
+       用户会以为条件筛空了而去改条件，实际只是还没返回。 -->
+  <state-view
+    wx:if="{{busy && !items.length}}"
+    status="loading"
+    title="正在向服务端查询登记资料"
+    desc="查询返回前不展示任何记录，也不把「查询中」写成「没有资料」。"
+  ></state-view>
+
   <!-- 结果状态（无结果/条件不足均如实展示，不用空白填充） -->
   <view class="state-bar state-{{matchState}}">{{matchLabel}}</view>
   <view class="reasons" wx:if="{{reasons.length}}">
@@ -81,7 +100,9 @@
     <view class="item-src">来源版本：{{item.source_version || '接口未提供'}}</view>
   </view>
 
-  <view class="empty" wx:if="{{!items.length && matchState !== 'invalid'}}">
+  <!-- 空内容态（无命中，且**不是**加载中、也不是失败）：给出「下一步做什么」，
+       失败不落到这里，避免把「请求没完成」渲染成「没有资料」。 -->
+  <view class="empty" wx:if="{{!items.length && !busy && !queryError && matchState !== 'invalid'}}">
     没有可展示的资料。可调整作物／杂草／地区或更换关键词继续查询。
   </view>
 
