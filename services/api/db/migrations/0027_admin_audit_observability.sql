@@ -52,6 +52,13 @@ ALTER TABLE public.admin_audit_events
   );
 
 -- ② 同签名替换写入函数：审计插入多两列，其余逐字保持 0020 的语义。
+--    为什么要在 DDL 期间关掉函数体校验：本迁移的函数体引用 `public.feature_flags`（0020 建的表），
+--    而 `tests/integration/admin-flags-pg.mjs` 的夹具会**故意把 0020 放到最后重放**（「迁移可重放」判据），
+--    那一路上 0027 先于 0020 执行 ⇒ 默认的 check_function_bodies=on 会在建函数时就报 42P01。
+--    真实部署顺序是数字序（0020 先、0027 后），两条路径下函数都可用；关校验只影响**建函数这一瞬**，
+--    不改任何运行时语义；函数体本身的正确性由真库臂 `tests/integration/admin-jobs-pg.mjs` 实跑证明。
+SET check_function_bodies = off;
+
 CREATE OR REPLACE FUNCTION public.set_feature_flag(
   p_key               text,
   p_expected_revision integer,
@@ -149,6 +156,8 @@ BEGIN
   );
 END;
 $$;
+
+RESET check_function_bodies;
 
 -- ③ 只读审计面：只暴露 `set_flag` 一类行，键集分页（(created_at,id) 严格递减）。
 --    排序与既有索引 `admin_audit_events_created_idx (created_at DESC, id DESC)` 完全一致
