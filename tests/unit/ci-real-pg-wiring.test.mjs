@@ -62,9 +62,14 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 第 10 条是 R28-S39 接的（账号停用/恢复域 I22，同一条 workflow；它要求**空库**、自己 apply 0001–0017
  * 并把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；argv 只给 owner URL，运行时角色它自建并派生 URL；
  * scram 缺陷由 R28-S15 修掉，见 `docs/verification/gy-r28-account-suspend-scram-20261020.md`）。
- * R28-S14 的另一条候选 `backup-purge-pg` **没有**进这份清单：它要求在 runner 上用 `initdb`/`pg_ctl`
- * 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
- * `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
+ * 第 11 条是 R28-S49 接的（备份副本域 GY-I19／迁移 0023 的 apply→rollback→replay 三连 + 注销受理在**同一事务**
+ * 里写清单 + 30 天保留窗口到期清除）：它是清单里**唯一**的「自起集群」脚本——只连自己 `initdb` 出来的临时
+ * 17 集群（脚本 `:89` 端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录），**不**连
+ * `services.postgres` 的那个库，因此它的 step **没有** `CREATE DATABASE`。判据⑦⑧ 对这类脚本换成
+ * `SELF_CLUSTERED_SCRIPTS` 那组等价判据（必须给 `GY_PG_BIN`／`GY_I19_PG_ROOT`，且⛔ 不得出现 `CREATE DATABASE`）。
+ * 早先 R28-S14 判它接不了，是因为 runner 上取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只在容器内）；
+ * R28-S49 改成先一步用 PGDG apt 装 `postgresql-17` 再跑，见
+ * `docs/verification/gy-r28-backup-purge-ci-20261021.md` 与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -77,6 +82,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
+  'tests/integration/backup-purge-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -90,6 +96,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
+  'tests/integration/backup-purge-pg.mjs',
 ]);
 
 /**
@@ -134,8 +141,14 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 10. `account-suspend-pg`（R28-S39 接入）：要求空库、自己 apply 0001–0017；开头 `resetRoles()` 先尽力
   //    DROP 7 个角色，删不掉（别处把权限授予了它）时改用属性逐字相同的 `ALTER ROLE` 复用 ⇒ 能容忍
   //    `admin-accounts-read-pg` 留在集群里的同名角色；收尾 `cleanup()` 按快照差集 DROP 自己建的角色。
-  //    排在最后（workflow 里也是最后一步）：它清理角色，放前面会改变后面脚本的前置条件。
+  //    排在倒数第二（R28-S49 之后 workflow 里最后一步是 `backup-purge-pg`）：它清理角色，放前面会改变
+  //    后面脚本的前置条件。
   'tests/integration/account-suspend-pg.mjs',
+  // 11. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
+  //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
+  //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
+  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。必须排**最后**：装包 step 只服务本步、本步也不依赖 service 口令。
+  'tests/integration/backup-purge-pg.mjs',
 ]);
 
 /**
@@ -146,6 +159,37 @@ const FORBIDDEN_ESCAPE_HATCHES = Object.freeze(['GY_ALLOW_SKIP', '--allow-skip']
 
 /** 真库镜像的主版本：`postgres:17.11` 的 `17`。降级成 16 会让 17 专有行为（视图/迁移）静默失真。 */
 const REQUIRED_POSTGRES_MAJOR = '17';
+
+/**
+ * 「自起集群」脚本：**自己** `initdb` 起临时集群、自己建库，CI 里既没有可用的 `CREATE DATABASE`，
+ * 也没有可核对的「CI 建出来的库名」。判据⑦⑧ 对这类脚本换成等价（且更强）的判据：
+ *   ① step 必须显式给出 `GY_PG_BIN`，指到**含 `initdb`/`pg_ctl` 的服务端 bin 目录**；
+ *   ② 必须显式给出 `GY_I19_PG_ROOT`，落在 runner 的临时目录里（⛔ 不落仓库/系统目录）；
+ *   ③ ⛔ step 里**不得**出现 `CREATE DATABASE`——那会造出「CI 建了库、库名判据覆盖到它」的假象，
+ *      而脚本连的是自己临时集群里的 `DB_NAME`（脚本 `:67`），跟 CI 建的库毫无关系。
+ * 加一条进这里＝把这组判据换成豁免，必须同时更新证据页（刻意留 diff）；它也必须同时在 `MANAGED_SCRIPTS` 里。
+ */
+const SELF_CLUSTERED_SCRIPTS = Object.freeze([
+  'tests/integration/backup-purge-pg.mjs',
+]);
+
+/**
+ * 自起集群脚本在 step 里必须给出的 env：键 → 值的形状判据 + 缺失/走形时的话术。
+ * 判据不是「有这个键就行」：`GY_PG_BIN` 末尾不是 `/bin` 时脚本 `:52-62` 会直接 SKIP 并 exit 77，
+ * 「真跑」就变成了「静默跳过」——那正是这份清单要防的假绿。
+ */
+const SELF_CLUSTERED_ENV = Object.freeze([
+  {
+    key: 'GY_PG_BIN',
+    pattern: /\/bin\/?$/,
+    hint: '含 `initdb`/`pg_ctl` 的服务端 bin 目录（CI 里是 `/usr/lib/postgresql/17/bin`）',
+  },
+  {
+    key: 'GY_I19_PG_ROOT',
+    pattern: /\$\{\{\s*runner\.temp\s*\}\}/,
+    hint: 'runner 的临时目录（CI 里是 `${{ runner.temp }}/gy-i19-pg`，⛔ 不落地到仓库）',
+  },
+]);
 
 // ── 纯函数：正向断言与反向控制共用同一份逻辑，避免「红的逻辑」与「绿的条件」各写一套 ──────────────
 
@@ -452,6 +496,35 @@ export function stepDatabaseNames({ script, step, command, scriptSource }) {
 }
 
 /**
+ * 自起集群脚本的 step 判据（判据⑦⑧ 的等价替换）：返回问题清单，空数组＝合规。
+ * 只在 `SELF_CLUSTERED_SCRIPTS` 里的脚本上生效；其余受管脚本仍走「先 `CREATE DATABASE` 再 `node`」。
+ */
+export function selfClusteredProblems({ jobId, script, step, command }) {
+  const problems = [];
+  if (/CREATE\s+DATABASE/i.test(command)) {
+    problems.push(
+      `job \`${jobId}\` 里 \`${script}\` 是自起集群脚本，step 里不该出现 \`CREATE DATABASE\``
+      + '（它连的库在它自己 initdb 出来的临时集群里，与 CI 建的这个库不是一回事）',
+    );
+  }
+  for (const { key, pattern, hint } of SELF_CLUSTERED_ENV) {
+    const match = new RegExp(`^\\s+${key}\\s*:\\s*(\\S.*)$`, 'm').exec(step);
+    if (match === null) {
+      problems.push(
+        `job \`${jobId}\` 里执行自起集群脚本 \`${script}\` 的 step 没有 \`${key}\`（必须给：${hint}）；`
+        + '缺它时脚本只打印 SKIP 并 exit 77，「真跑」等于没跑',
+      );
+      continue;
+    }
+    const value = match[1].trim().replace(/^['"]|['"]$/g, '');
+    if (!pattern.test(value)) {
+      problems.push(`job \`${jobId}\` 的 \`${key}\` 取值 \`${value}\` 不是期望形状：${hint}`);
+    }
+  }
+  return problems;
+}
+
+/**
  * 判据⑦＋⑧：每个受管脚本所在 step 必须「先 `CREATE DATABASE` 再 `node`」，且建出来的库名
  * 与真正传给脚本的库名（三种形态）一致。返回问题清单，空数组＝合规。
  * `scriptSources` 可注入（只给反向控制用）；缺省读磁盘真值。
@@ -465,6 +538,11 @@ export function databaseGuardProblems(source, { scripts = MANAGED_SCRIPTS, scrip
       continue;
     }
     const { jobId, step, command } = found;
+    if (SELF_CLUSTERED_SCRIPTS.includes(script)) {
+      // 自起集群脚本：没有 CI 建的库可核对，换成「必须给 GY_PG_BIN／GY_I19_PG_ROOT 且不得自己建库」。
+      problems.push(...selfClusteredProblems({ jobId, script, step, command }));
+      continue;
+    }
     const createIndex = command.search(/CREATE\s+DATABASE/i);
     const nodeIndex = command.indexOf(`node ${script}`);
     if (createIndex < 0) {
@@ -658,6 +736,8 @@ function assertNoDatabaseGuardProblems(problems) {
       '每条受管脚本都要求**专用空库**：step 的 `run:` 必须是 `psql … CREATE DATABASE <库> && node <脚本>`，',
       '且 `<库>` 必须与该 step 真正传给脚本的库名一致（env `*_PG_TEST_URL` 的 path／argv URL 的 path／',
       '脚本内部硬钉常量，三种形态都要对上；只对一种会留下「改了 env 但 argv 还是旧库」这类假绿通道）。',
+      '`SELF_CLUSTERED_SCRIPTS` 里的脚本例外：它自己 `initdb` 出临时集群，故改判「必须给 `GY_PG_BIN`／',
+      '`GY_I19_PG_ROOT`（后者落在 runner 临时目录）、且 step 里不得出现 `CREATE DATABASE`」。',
     ].join('\n'),
   );
 }
@@ -1333,7 +1413,7 @@ test('前向⑥（判据⑦＋⑧）：每个受管脚本所在 step 先 CREATE 
   assertNoDatabaseGuardProblems(databaseGuardProblems(source));
 
   // 「三种入参形态都覆盖」不能只是措辞：逐条统计真实 workflow 里每种形态各出现几次。
-  const shapes = { envUrl: 0, argvUrl: 0, pinnedConstant: 0 };
+  const shapes = { envUrl: 0, argvUrl: 0, pinnedConstant: 0, selfCluster: 0 };
   for (const script of MANAGED_SCRIPTS) {
     const found = stepRunningScript(source, script);
     assert.ok(found !== null, `workflow 里找不到 \`${script}\` 的 step`);
@@ -1343,14 +1423,28 @@ test('前向⑥（判据⑦＋⑧）：每个受管脚本所在 step 先 CREATE 
     if (/postgres(?:ql)?:\/\/\S+/.test(argumentsText)) shapes.argvUrl += 1;
     const pinned = pinnedDatabaseNames(readFileSync(join(REPO_ROOT, script), 'utf8'));
     if (pinned.length > 0) shapes.pinnedConstant += 1;
+    if (SELF_CLUSTERED_SCRIPTS.includes(script)) shapes.selfCluster += 1;
   }
   assert.ok(shapes.envUrl >= 1, `env URL 形态必须真的被测到（实际 ${shapes.envUrl} 条）`);
   assert.ok(shapes.argvUrl >= 1, `argv URL 形态必须真的被测到（实际 ${shapes.argvUrl} 条）`);
   assert.ok(shapes.pinnedConstant >= 1, `脚本硬钉常量形态必须真的被测到（实际 ${shapes.pinnedConstant} 条）`);
-  // 每条受管脚本都必须至少有一种**外部入参**形态可核对（只靠脚本硬钉常量等于没核对 workflow 传了什么）。
+  // 自起集群豁免表不能自己长大：每条都必须在受管清单里，且统计数与表长逐一对上。
+  assert.deepEqual(
+    SELF_CLUSTERED_SCRIPTS.filter((script) => !MANAGED_SCRIPTS.includes(script)),
+    [],
+    'SELF_CLUSTERED_SCRIPTS 里出现了不在 MANAGED_SCRIPTS 的脚本（豁免只能给受管脚本用）',
+  );
+  assert.equal(
+    shapes.selfCluster,
+    SELF_CLUSTERED_SCRIPTS.length,
+    `SELF_CLUSTERED_SCRIPTS 的每条都必须真的在 workflow 里被数到（实际 ${shapes.selfCluster} / 表长 ${SELF_CLUSTERED_SCRIPTS.length}）`,
+  );
+  // 每条受管脚本都必须至少有一种**外部入参**形态可核对（env／argv／自起集群专用 env 三选一；
+  // 只靠脚本硬钉常量等于没核对 workflow 传了什么）。
   assert.ok(
-    shapes.envUrl + shapes.argvUrl >= MANAGED_SCRIPTS.length,
-    `每条受管脚本都必须至少命中 env 或 argv 之一（实际 env ${shapes.envUrl} + argv ${shapes.argvUrl} < ${MANAGED_SCRIPTS.length}）`,
+    shapes.envUrl + shapes.argvUrl + shapes.selfCluster >= MANAGED_SCRIPTS.length,
+    `每条受管脚本都必须至少命中 env／argv／自起集群 env 之一（实际 env ${shapes.envUrl} + argv ${shapes.argvUrl}`
+    + ` + self ${shapes.selfCluster} < ${MANAGED_SCRIPTS.length}）`,
   );
 });
 
@@ -1377,6 +1471,7 @@ test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消�
   const accountsRead = 'tests/integration/admin-accounts-read-pg.mjs';
   const messages = 'tests/integration/messages-pg.mjs';
   const flags = 'tests/integration/admin-flags-pg.mjs';
+  const backupPurge = 'tests/integration/backup-purge-pg.mjs';
 
   // 0) 先证明磁盘真值三条判据全绿：否则下面的「变异就红」可能只是继承了一个已红的前提。
   assertStepOrder(stepOrderProblems({ source }));
@@ -1433,4 +1528,34 @@ test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消�
     '失败消息必须点名「workflow 跑了、清单里没有」的那条脚本',
   );
   assert.throws(() => assertManagedScriptSetMatches(setProblems), /清单里没有/, '同一断言必须失败');
+
+  // ⑤ 自起集群（判据⑦⑧ 的等价替换）：把 backup-purge step 的 `GY_PG_BIN` 注释掉 ⇒ 必须点名该脚本缺 env。
+  const withoutBin = replaceWithinJob(
+    source,
+    realJobId,
+    /GY_PG_BIN: \/usr\/lib\/postgresql\/17\/bin/,
+    '# GY_PG_BIN: /usr/lib/postgresql/17/bin',
+  );
+  const binProblems = databaseGuardProblems(withoutBin);
+  assert.equal(binProblems.length, 1, '缺一处自起集群 env 必须只报一条问题');
+  assert.ok(
+    binProblems[0].includes(backupPurge) && binProblems[0].includes('GY_PG_BIN') && binProblems[0].includes('SKIP'),
+    '失败消息必须点名脚本、缺的 env 与「缺了只会 SKIP/77」的后果',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(binProblems), /GY_PG_BIN/, '同一断言必须失败');
+
+  // ⑥ 自起集群不得自己建库：给它补一条 `CREATE DATABASE` ⇒ 必须点名「不是一回事」，不能因为多了建库就判绿。
+  const selfCreated = replaceWithinJob(
+    source,
+    realJobId,
+    /run: node tests\/integration\/backup-purge-pg\.mjs/,
+    "run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_backup_purge_test' && node tests/integration/backup-purge-pg.mjs",
+  );
+  const selfCreatedProblems = databaseGuardProblems(selfCreated);
+  assert.equal(selfCreatedProblems.length, 1, '自起集群脚本的 step 出现建库必须正好报一条问题');
+  assert.ok(
+    selfCreatedProblems[0].includes(backupPurge) && selfCreatedProblems[0].includes('CREATE DATABASE'),
+    '失败消息必须点名脚本与不该出现的语句',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(selfCreatedProblems), /CREATE DATABASE/, '同一断言必须失败');
 });

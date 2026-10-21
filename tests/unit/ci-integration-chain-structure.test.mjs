@@ -103,11 +103,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/backup-purge-pg.mjs',
-    reason: '**环境前提不满足 ⇒ R28-S14 判定不接线**：脚本要求 `GY_PG_BIN` 指向**服务端二进制目录**'
-      + '（自行 `initdb`/`pg_ctl` 起第二个 17.11 集群，仅回环）；CI 的 17.11 只在 `services.postgres`'
-      + ' 容器内，runner 文件系统上取不到 `initdb`/`pg_ctl`（见证据页）；端口 `55500 + randomInt(0, 500)`'
-      + ' 无环境变量可覆盖；缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0）。'
-      + '故不进无 PG 的回环链。',
+    reason: '需真实 PG 17.11 且是**自起集群**脚本：要求 `GY_PG_BIN` 指向**服务端二进制目录**'
+      + '（自行 `initdb`/`pg_ctl` 起第二个 17.11 集群，仅回环；端口 `55500 + randomInt(0, 500)`'
+      + ' 无环境变量可覆盖）；缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0）。'
+      + 'R28-S49 已把它接进 `.github/workflows/real-pg-integration.yml`：先用 PGDG apt 装 `postgresql-17`'
+      + '取 `initdb`/`pg_ctl`，再以 `GY_PG_BIN=/usr/lib/postgresql/17/bin`、'
+      + '`GY_I19_PG_ROOT=${{ runner.temp }}/gy-i19-pg` 真跑 ⇒ **已接真库 job**。'
+      + '但它**仍不进无 PG 的回环链**：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
+      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/catalog-pg.mjs',
