@@ -137,6 +137,7 @@ import {
 } from './privacy/user-data-deletion.ts';
 // GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
 import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
+import { createPostgresBackupStateReader } from './privacy/backup-state-derivation.ts';
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
@@ -1466,8 +1467,6 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           ? { backupPurge: createUnavailableBackupPurgePort() }
           : {};
   // #12 会话域存储（**提前声明**）：注销清理把会话域并进同一本账，而备份清单是「全有或全无」
-  // —— `backupCopySources()` 需要在**装配期**就知道该 store 有没有 `snapshotOwner`，因此这份
-  // store 必须先于注销装配就位；后面的问答子域装配**复用**同一实例（不再重复创建）。
   // 语义与既有口径逐字一致：`real` + 无池 ⇒ null（域不可用），非 real ⇒ 内存实现。
   const conversationStore: ConversationStore | null =
     conversationInjection?.store ??
@@ -1529,6 +1528,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
     ...backupPurgeWiring,
+    ...(durableDeletionRequests === null || pool === null ? {} : { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }),
     ...(durableDeletionRequests === null
       ? {}
       : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),

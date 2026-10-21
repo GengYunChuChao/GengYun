@@ -241,6 +241,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/online-purge-pg.mjs',
+    reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口 556xx、独立数据目录，'
+      + '跑完 `pg_ctl stop` 并递归删除数据目录），依赖本机 PG 二进制（`GY_PG_BIN`）；缺 `GY_PG_BIN` 时'
+      + '显式跳过并以 **77** 退出（未取得，⛔ 不是通过）。还要真跑 `20-login-roles.sql` 主体里的'
+      + '四域 GRANT（运行时角色四域 DELETE 的既有授权面），回环链里既没有真 PG 也没有可建角色的超管连接，'
+      + '故如实登记为未接线（本片不新增 workflow：`.github/workflows/**` 不在本片授权范围）。',
+  },
+  {
     path: 'tests/integration/workbook-staging-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/workbook-staging.yml` 用独立测试集群运行。',
   },
