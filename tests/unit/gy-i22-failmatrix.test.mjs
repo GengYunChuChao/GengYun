@@ -19,16 +19,17 @@ import { fileURLToPath } from 'node:url';
 
 import { BATCHES, CASES, FAMILIES } from '../failmatrix/cases.mjs';
 import { MUTATIONS } from '../failmatrix/mutations.mjs';
+import { SEAM_CASES, SEAM_FAMILIES } from '../failmatrix/seams.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
 
 /** 本片交付的用例条数下限：只准加、不准在没人注意时被删。 */
-const MIN_CASES = 142;
-/** 每族条数（本片基线 a2ab0d9 的实跑快照）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16 };
-/** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入）。 */
-const BATCH_COUNTS = { B1: 106, B2: 36 };
+const MIN_CASES = 168;
+/** 每族条数（本片实跑快照：C/E 族走 HTTP，D 族走受信 seam）。 */
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3 };
+/** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据）。 */
+const BATCH_COUNTS = { B1: 106, B2: 36, B3: 17, B4: 9 };
 
 function runMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-unit-'));
@@ -47,11 +48,11 @@ function runMatrix() {
   }
 }
 
-test('GY-I22 失败矩阵：全量真跑 142 条全绿，且每条都有真实读数', () => {
+test('GY-I22 失败矩阵：全量真跑 159 条全绿，且每条都有真实读数', () => {
   const payload = runMatrix();
 
   assert.equal(payload.execution_mode, 'stub');
-  assert.equal(payload.transport, 'app.inject');
+  assert.equal(payload.transport, 'app.inject+trusted-seam');
 
   const failing = payload.rows.filter((row) => row.verdict !== 'PASS');
   assert.deepEqual(
@@ -68,6 +69,12 @@ test('GY-I22 失败矩阵：全量真跑 142 条全绿，且每条都有真实�
   assert.equal(payload.totals.pass, payload.totals.total);
 
   for (const row of payload.rows) {
+    // seam 用例没有 HTTP 状态码：它的读数是**回调 / 筛查结论码**，同样必须非空。
+    if (row.method === 'SEAM') {
+      assert.equal(typeof row.actual?.code, 'string', `${row.id} 缺 actual.code 真实读数`);
+      assert.ok(row.actual.code.length > 0, `${row.id} 的结论码是空串`);
+      continue;
+    }
     const single = !Array.isArray(row.actual);
     const readings = single ? [row.actual] : row.actual;
     for (const reading of readings) {
@@ -92,7 +99,7 @@ test('GY-I22 失败矩阵：全量真跑 142 条全绿，且每条都有真实�
 test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、expect 齐备）', () => {
   const ids = new Set();
   for (const one of CASES) {
-    assert.match(one.id, /^C[1-7]-\d{2}$/, `用例 id 形状不对：${one.id}`);
+    assert.match(one.id, /^C[1-7]-\d{2}$|^E[12]-\d{2}$/, `用例 id 形状不对：${one.id}`);
     assert.ok(!ids.has(one.id), `用例 id 重复：${one.id}`);
     ids.add(one.id);
     assert.ok(FAMILIES[one.family] !== undefined, `${one.id} 的族 ${one.family} 没有说明`);
@@ -105,11 +112,27 @@ test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、exp
     assert.equal(typeof one.expect?.status, 'number', `${one.id} 缺 expect.status`);
     if (one.check !== undefined) assert.equal(typeof one.check, 'function');
   }
-  assert.equal(CASES.length, MIN_CASES);
+
+  for (const one of SEAM_CASES) {
+    assert.match(one.id, /^D[1-4]-\d{2}$/, `seam 用例 id 形状不对：${one.id}`);
+    assert.ok(!ids.has(one.id), `用例 id 重复：${one.id}`);
+    ids.add(one.id);
+    assert.ok(SEAM_FAMILIES[one.family] !== undefined, `${one.id} 的族 ${one.family} 没有说明`);
+    assert.ok(
+      BATCHES.some((batch) => batch.families.includes(one.family)),
+      `${one.id} 的族 ${one.family} 没归到任何批次`,
+    );
+    assert.equal(typeof one.invoke, 'function', `${one.id} 缺 invoke`);
+    assert.equal(typeof one.expect?.code, 'string', `${one.id} 缺 expect.code`);
+    if (one.check !== undefined) assert.equal(typeof one.check, 'function');
+  }
+
+  // seam 用例族不进 HTTP 表：总条数按两侧相加核对。
+  assert.equal(CASES.length + SEAM_CASES.length, MIN_CASES);
 });
 
 test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命中一次）', () => {
-  assert.ok(MUTATIONS.length >= 14, `负控制只剩 ${MUTATIONS.length} 条（基线 14 条）`);
+  assert.ok(MUTATIONS.length >= 20, `负控制只剩 ${MUTATIONS.length} 条（基线 20 条）`);
   const seen = new Set();
   for (const mutation of MUTATIONS) {
     assert.ok(!seen.has(mutation.id), `负控制 id 重复：${mutation.id}`);
@@ -132,6 +155,6 @@ test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命�
   }
 
   function ids() {
-    return new Set(CASES.map((one) => one.id));
+    return new Set([...CASES.map((one) => one.id), ...SEAM_CASES.map((one) => one.id)]);
   }
 });

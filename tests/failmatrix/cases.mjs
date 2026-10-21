@@ -31,6 +31,8 @@ const COMMUNITY_MEDIA_BODY = {
 export const BATCHES = [
   { id: 'B1', title: '批次 1：身份与权限面（游客 / 越权 / 后台 / 会话与注销）', families: ['C1', 'C2', 'C3', 'C4'] },
   { id: 'B2', title: '批次 2：媒体归属、重复请求与无效输入', families: ['C5', 'C6', 'C7'] },
+  { id: 'B3', title: '批次 3：审核回调 / AI 失败 / 下架缓存（受信 seam）', families: ['D1', 'D2', 'D3'] },
+  { id: 'B4', title: '批次 4：版本回写、提示注入与媒体访问凭据', families: ['D4', 'E1', 'E2'] },
 ];
 
 export const FAMILIES = {
@@ -41,6 +43,8 @@ export const FAMILIES = {
   C5: '媒体归属与媒体访问凭据：跨主体 404、缺 / 错 token、内容-媒体不匹配',
   C6: '重复请求（Idempotency-Key）：同键同体重放同一结果、同键异体 409、缺键 400、并发只产生一行',
   C7: '无效输入：坏 uuid / 坏游标 / 越界分页 / 多余字段一律 400（含 INVALID_CURSOR）',
+  E1: '提示注入：内容里的指令只作数据，命中 PROMPT_INJECTION 就拒绝，绝不改写审核结论或角色',
+  E2: '媒体访问凭据：篡改/越权的 token 一律 404（与「不存在」同形，不泄露对象存在性）',
 };
 
 export const CASES = [
@@ -254,4 +258,33 @@ export const CASES = [
   { id: 'C7-14', family: 'C7', title: '收藏目标 revision 为 0', actor: 'a', method: 'POST', path: `${API}/favorites`, body: { target_ref: { type: 'species', id: SPECIES_ID, revision: 0 } }, headers: key('i22-c7-14'), expect: { status: 400, code: 'INVALID_REQUEST' } },
   { id: 'C7-15', family: 'C7', title: '空评论正文', actor: 'a', method: 'POST', path: (ctx) => `${API}/posts/${ctx.seeded.postId}/comments`, body: { body: '' }, headers: wkey('i22-c7-15', '"1"'), expect: { status: 400, code: 'INVALID_REQUEST' } },
   { id: 'C7-16', family: 'C7', title: '注销申请缺确认词', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: {}, headers: key('i22-c7-16'), expect: { status: 400, code: 'INVALID_REQUEST' } },
+
+  // ------------------------------------------------- E1 提示注入（内容只是数据）
+  { id: 'E1-01', family: 'E1', title: '标题里塞「忽略以上指令」⇒ 硬规则命中 PROMPT_INJECTION 并拒绝（不是照做）', actor: 'a', method: 'POST', path: `${API}/posts`, body: (ctx) => ({ title: ctx.injection.slice(0, 60), body: '稻瘟病在水稻分蘖期怎么防？', media_ids: [] }), headers: key('i22-e1-01'), expect: { status: 400, code: 'INVALID_REQUEST', etag: false }, check: (result) => {
+    const details = result.body?.error?.details ?? [];
+    const codes = details.map((one) => one.code);
+    const problems = [];
+    if (!codes.includes('PROMPT_INJECTION')) problems.push(`details 里应有 PROMPT_INJECTION，实际 ${JSON.stringify(codes)}`);
+    if (!codes.includes('NOT_PUBLISHABLE')) problems.push(`details 里应有 NOT_PUBLISHABLE，实际 ${JSON.stringify(codes)}`);
+    return problems;
+  } },
+  { id: 'E1-02', family: 'E1', title: '评论里塞「忽略以上指令」⇒ 同样按规则拒绝（评论不是旁路）', actor: 'a', method: 'POST', path: (ctx) => `${API}/posts/${ctx.seeded.postId}/comments`, body: (ctx) => ({ body: ctx.injection }), headers: wkey('i22-e1-02', '"1"'), expect: { status: 400, code: 'INVALID_REQUEST', etag: false }, check: (result) => {
+    const codes = (result.body?.error?.details ?? []).map((one) => one.code);
+    return codes.includes('PROMPT_INJECTION') ? [] : [`details 里应有 PROMPT_INJECTION，实际 ${JSON.stringify(codes)}`];
+  } },
+  { id: 'E1-03', family: 'E1', title: '干净对照：同样形状的标题/正文能发出去（拒绝必须是内容驱动）', actor: 'a', method: 'POST', path: `${API}/posts`, body: { title: '稻瘟病在水稻分蘖期怎么防？', body: '分蘖期见病斑，问用药时机。', media_ids: [] }, headers: key('i22-e1-03'), expect: { status: 201, etag: true } },
+
+  // ------------------------------------------------- E2 媒体访问凭据（签名/归属）
+  { id: 'E2-01', family: 'E2', title: '拿篡改过的访问凭据读 B 自己的媒体内容 ⇒ 404（不泄露对象存在性）', actor: 'b', method: 'GET', path: (ctx) => `${API}/community/media/${ctx.seeded.media.mediaId}/content`, headers: { 'x-media-access-token': 'tampered-token' }, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'E2-02' },
+  { id: 'E2-02', family: 'E2', title: '同一凭据去读一个不存在的媒体 id ⇒ 404，与上一条完全同形', actor: 'b', method: 'GET', path: `${API}/community/media/${ABSENT}/content`, headers: { 'x-media-access-token': 'tampered-token' }, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'E2-03', family: 'E2', title: '属主申请自己媒体的访问凭据 ⇒ 200，且 url 落在替身域、expires_at 在未来（凭据只发给属主）', actor: 'b', method: 'POST', path: (ctx) => `${API}/media/${ctx.seeded.media.mediaId}/access`, body: {}, headers: (ctx) => wkey('i22-e2-03', `"${ctx.seeded.media.revision}"`), expect: { status: 200, etag: true }, check: (result, ctx) => {
+    const data = result.body?.data ?? {};
+    const problems = [];
+    if (typeof data.access_token !== 'string' || data.access_token === '') problems.push('data.access_token 缺失');
+    if (typeof data.url !== 'string' || !data.url.includes('media.placeholder.invalid')) problems.push(`data.url 未落在替身域：${data.url}`);
+    const expires = Date.parse(String(data.expires_at));
+    if (!Number.isFinite(expires)) problems.push(`data.expires_at 不是时间：${data.expires_at}`);
+    else if (expires <= ctx.world.clock.ms) problems.push(`data.expires_at 必须在未来：${data.expires_at}`);
+    return problems;
+  } },
 ];
