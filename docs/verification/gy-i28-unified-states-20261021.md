@@ -238,3 +238,11 @@
 五 Tab 的失败/空态/模拟标记已收口到一套组件与一套判据，403 不再被折叠成「请先登录」或通用失败，
 模拟/替身标记逐字保留且受反向守卫保护。非 Tab 页的 `reference` 族与 `voice`、`login` 本轮明确不做（原因见第 5 节）。
 真机渲染与开发者工具编译**仍未验证**，本片不据此声称 #28 整项通过。
+
+> **边界注记（2026-10-21，GY-I04 登录链路盘点补）**：上一段「403 不再被折叠成『请先登录』」在本片**只成立于
+> 页面呈现层**——页面把 `error.code` 交给 `state-view` 时，403 会被正确升级为 `denied`；但**传输层**当时仍有
+> 7 个适配层（favorites／history／knowledge／voice／profile／messages／community）在拿到 403 时先
+> `auth.clearSession()` 并把错误码改写成 `SESSION_REQUIRED`，于是统一状态层**根本收不到** 403 码。
+> 该传输层缺口已由 `docs/verification/gy-i04-login-chain-20261021.md`
+> （`auth.attribution` / `auth.failureFor` 作为单一事实源，`SESSION_LOSS_CODES` 与 `FORBIDDEN_CODES`
+> 均由本文件的 `CODE_KIND` 反推）补齐并加测试。本页历史结论保留，不改写当时读数。

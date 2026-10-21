@@ -29,6 +29,13 @@
         <view class="picker-value">{{regionIndex >= 0 ? regions[regionIndex].name : '全部地区'}}</view>
       </picker>
     </view>
+    <!-- 剂型：只按登记剂型收窄，**不提供含量换算、不提供用量**（本页不生成用药方案）。 -->
+    <view class="nav-row">
+      <text class="nav-label">剂型</text>
+      <picker bindchange="onDosageForm" value="{{formIndex}}" range="{{dosageForms}}">
+        <view class="picker-value">{{formIndex >= 0 ? dosageForms[formIndex] : '全部剂型'}}</view>
+      </picker>
+    </view>
     <view class="nav-row">
       <text class="nav-label">关键词</text>
       <input class="keyword-input" value="{{keyword}}" placeholder="药名／登记证号／成分" bindinput="onKeyword" bindconfirm="onSearch" />
@@ -48,6 +55,8 @@
     <view class="reason">· 已排除 {{simulatedExcluded}} 条模拟演示记录（非真实资料，不计入查询结果）</view>
   </view>
   <view class="result-count" wx:if="{{countNote}}">{{countNote}}</view>
+  <!-- 命中条件（可解释字段）：命中的每条记录都满足这些条件，条件未被放宽。 -->
+  <view class="catalog-version" wx:if="{{matchedNote}}">{{matchedNote}}</view>
 
   <!-- 列表：每条展示同一 source_version 与同一数据来源标记；不合并不同含量的剂型 -->
   <view class="card item" wx:for="{{items}}" wx:key="record_id" bindtap="goDetail" data-id="{{item.record_id}}" data-source="{{item.data_source}}">
@@ -65,7 +74,11 @@
       <text class="tag tag-warn">{{item.labels.record_status}}</text>
       <text class="tag tag-source" wx:if="{{item.source_marker}}">{{item.source_marker}}</text>
     </view>
-    <view class="item-src">来源版本：{{item.source_version}}</view>
+    <!-- 来源可追溯：名称（发布机构 · 来源标题）／登记标识／版本。缺项显示可解释占位，
+         不用空白或由页面补写的名称填充（服务端行取 SourceRef，随包行取登记表）。 -->
+    <view class="item-src">来源：{{item.source_name || '接口未提供'}}</view>
+    <view class="item-src">来源标识：{{item.source_id || '接口未提供'}}</view>
+    <view class="item-src">来源版本：{{item.source_version || '接口未提供'}}</view>
   </view>
 
   <view class="empty" wx:if="{{!items.length && matchState !== 'invalid'}}">

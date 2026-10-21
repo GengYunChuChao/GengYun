@@ -7,8 +7,11 @@
 // 3. 身份只来自服务端签发的会话令牌；客户端**不**声明 owner_id／读状态／版本；
 // 4. 写路径按契约带 `Idempotency-Key`，并带 `If-Match: "<revision>"`（消息当前强 ETag）；
 //    同一 `(id, revision)` 的**重试**复用同一个键（见 `retryKeyFor`），成功后释放；
-// 5. **401 与 403 分开**（B7）：401 ⇒ 清会话 + `SESSION_REQUIRED`；403 ⇒ 不清会话，
-//    透出 `SCOPE_DENIED`／`CONSENT_REQUIRED`／`ACCOUNT_INACTIVE`，由 `utils/states.js` 归到 denied。
+// 5. **401/403 归因委托统一层**（`utils/auth.js` 的 `attribution`/`failureFor`，D1 #396）：
+//    本模块**不自建 401/403 码表**。统一口径：401 ⇒ `SESSION_REQUIRED` + 清会话（guest）；
+//    403 ⇒ `SCOPE_DENIED`／`CONSENT_REQUIRED`／`ACCOUNT_INACTIVE` 原样带出（denied），
+//    其中 `ACCOUNT_INACTIVE` 按统一层口径**清会话**、码保留；403 无封套 ⇒ `SCOPE_DENIED`。
+//    本模块只负责这三码的**文案**（措辞属本域，归因不属本域）。
 //
 // 契约事实（逐字段核对 `packages/contracts/openapi.json`，与 `services/api/src/messages/types.ts` 同口径）：
 //   - `Message` 的键**恰为 7 项**：`id`/`revision`/`type`/`target_ref`/`reference_state`/`read_at`/`created_at`；
@@ -123,15 +126,13 @@ function send(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (response) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        // 401 与 403 **不得**折叠成同一个结果（B7 口径：`utils/states.js`「denied 与 guest 必须分开」）：
-        //   - 401 ⇒ 会话本身没了 ⇒ 清本地会话 + `SESSION_REQUIRED`（页面走 guest「请先登录」）；
-        //   - 403 ⇒ 会话还在，只是这件事不给 ⇒ **不清会话**，按错误封套透出真实码
-        //     （`SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`）⇒ 页面走 denied「没有权限」。
-        // 折叠成 `SESSION_REQUIRED` 的后果有三条，都是真实缺陷：①用户被反复踢去登录却始终过不去；
-        // ②本模块 `MESSAGES.SCOPE_DENIED` 成为**永不执行**的死字符串；③B7 的 denied 分支永远不可达。
-        if (response.statusCode === 401) {
-          auth.clearSession()
-          reject(failure('SESSION_REQUIRED'))
+        // 401/403 归因**只有一处事实源**：`auth.attribution`（D1 #396 统一层，码表由
+        // `utils/states.js` 的 `CODE_KIND` 反推）。本模块不再自建 401/403 码表：
+        //   401 ⇒ 归一 `SESSION_REQUIRED` + 清会话（走 guest）；
+        //   403 ⇒ 契约三码原样带出（denied），`ACCOUNT_INACTIVE` 另按统一层口径清会话；
+        //   403 但封套不可解析 ⇒ `SCOPE_DENIED`（不谎称「未登录」）。
+        if (response.statusCode === 401 || response.statusCode === 403) {
+          reject(auth.failureFor(failure, response.statusCode, response.data))
           return
         }
         let body = response.data
@@ -142,8 +143,7 @@ function send(method, path, options) {
             resolve({ data: body.data, mode: meta.execution_mode, status: response.statusCode })
             return
           }
-          // 403 带成功封套（形状异常）：仍按 403 语义取保守值，不退化成「未登录」。
-          if (response.statusCode === 403) { reject(failure('SCOPE_DENIED')); return }
+          // 403 已在上面由 `auth.failureFor` 收口（此处不可能到达），不重复判定。
           reject(failure('UNEXPECTED_STATUS'))
         } catch (parseError) {
           // 错误封套：{ error: { code, message, retryable, details }, meta }
@@ -160,9 +160,7 @@ function send(method, path, options) {
               .map(function (d) { return d.code })
             reject(failure(body.error.code, codes))
           } catch (ignored) {
-            // 403 但错误封套不可解析：仍按 403 语义兜底（`SCOPE_DENIED`），
-            // **不得**退回 `SESSION_REQUIRED` —— 那是在对用户谎称「你没登录」。
-            if (response.statusCode === 403) { reject(failure('SCOPE_DENIED')); return }
+            // 403 已在上面由 `auth.failureFor` 收口（此处不可能到达），不重复判定。
             reject(parseError && parseError.code ? parseError : failure('INVALID_RESPONSE'))
           }
         }
@@ -286,10 +284,11 @@ const MESSAGES = {
   REQUEST_IN_PROGRESS: '同一次标记仍在处理，请稍后重试。',
   INVALID_CURSOR: '列表已过期，请重新进入消息页。',
   PROVIDER_UNAVAILABLE: '消息服务暂不可用（服务端未接线真实消息存储），本页不会用本地数据顶替。',
-  // 403 三码（契约 `ERROR_STATUS_MAP[403]`）：登录了但这件事不给 ⇒ denied 语气，不催人重新登录。
-  SCOPE_DENIED: '当前账号无权访问消息。',
-  CONSENT_REQUIRED: '当前账号还没有开通这项用途的授权，无法读取消息。',
-  ACCOUNT_INACTIVE: '账号当前不可用（可能已申请注销或已被停用），无法读取消息。',
+  // 403 三码文案（契约 `ERROR_STATUS_MAP[403]`；归因来自 `auth.attribution`，各域只提供措辞）：
+  // 登录了但这件事不给 ⇒ denied 语气，不催人重新登录。
+  SCOPE_DENIED: '当前会话无权访问消息。',
+  CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会执行该消息操作。',
+  ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再试。',
   INVALID_RESPONSE: '服务端响应无法核对，已清空，请重试。',
   UNEXPECTED_STATUS: '服务端返回了未预期的状态，已清空，请重试。'
 }

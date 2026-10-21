@@ -7,8 +7,10 @@
  *   - 请求方法/路径/查询串/头部（`Idempotency-Key`、`If-Match: "<revision>"`）；
  *   - 成功封套只认 200/201，实体形状/闭集不符即 `INVALID_RESPONSE`（不"尽力解析"）；
  *   - 错误封套按契约错误码抛出，并保留规则层原因码（供页面如实展示"未通过审核"）；
- *   - 401/403 清本地会话并报 `SESSION_REQUIRED`（**社区**适配层口径）；**消息**适配层只对 401 如此，
- *     403 保留会话并按契约码走 denied（见本文件「消息：…401 清会话、403 不折叠成未登录」那条）；
+ *   - 401 清本地会话并报 `SESSION_REQUIRED`；403 按契约码原样带出且**不**清会话
+ *     （GY-I04 登录链路盘点后口径：403 是「登录了但不给你」，不是登录失效）；
+ *     例外：`ACCOUNT_INACTIVE` 按统一层口径**清会话、码保留**（`auth.RETIRED_SESSION_CODES`，
+ *     见 `tests/unit/miniprogram-auth-failure-attribution.test.mjs`）；
  *     非本会话世代的迟到响应被丢弃。
  *
  * 末节追加**页面口径**回归（切片 B2-1，Refs #15／#14）：把**真实**投稿页接到同一个真实适配层
@@ -22,9 +24,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import vm from 'node:vm';
 
 const root = resolve(import.meta.dirname, '../..');
+// GY-I04 登录链路盘点：401/403 归因的**真实**实现在 `miniprogram/utils/auth.js`（单一事实源）。
+// 载入它是**纯函数**用法：`attribution()` 只读 `utils/states.js` 的码表，不碰存储、不发请求。
+const realAuth = createRequire(import.meta.url)('../../miniprogram/utils/auth.js');
 
 const POST_ID = '11111111-1111-4111-8111-111111111111';
 const COMMENT_ID = '22222222-2222-4222-8222-222222222222';
@@ -77,6 +83,17 @@ function load(respond, file = 'miniprogram/utils/community-api.js', options = {}
     sessionEpoch: () => '7:3',
     networkEnabled: () => true,
     clearSession: () => { cleared.count += 1 },
+    // 归因用**真实**实现（不在替身里另写一份码表）；只有「清会话」换成本用例的计数器，
+    // 这样 401 清会话 / 403 不清会话的差异仍然被真实判定驱动、被本文件的计数器观测。
+    attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+    failureFor: (makeFailure, statusCode, payload) => {
+      const a = realAuth.attribution(statusCode, payload);
+      if (a.clearsSession) cleared.count += 1;
+      const error = makeFailure(a.code);
+      error.status = a.status;
+      error.retryable = a.retryable;
+      return error;
+    },
   };
   const wx = {
     request(options) {
@@ -277,15 +294,22 @@ test('文案：422 INPUT_UNCERTAIN（审核隔离/未结论）与 503 PROVIDER_U
   assert.notEqual(isolatedText, down.api.message(downError), '422 与 503 不得共用同一句文案');
 });
 
-test('会话：401/403 清本地会话并报 SESSION_REQUIRED；网络失败按 SESSION_CHANGED 折叠', async () => {
+test('会话：401 清本地会话并报 SESSION_REQUIRED；403 原样带出且不清会话；网络失败按 SESSION_CHANGED 折叠', async () => {
   const unauthorized = load(() => ({ statusCode: 401, data: errorEnvelope('SESSION_REQUIRED') }));
   const error = await rejects(unauthorized.api.listPosts({}));
   assert.equal(error.code, 'SESSION_REQUIRED');
   assert.equal(unauthorized.cleared.count, 1, '401 必须清理本地会话，避免缓存被当成登录态');
 
+  // GY-I04 登录链路盘点：403 SCOPE_DENIED 是「登录了，但这件事不给你」，不是登录失效。
+  // 折叠成 SESSION_REQUIRED 并清会话会让用户被踢回登录页反复重登（B7 文档 :26-28 已判定的语义缺口）。
   const forbidden = load(() => ({ statusCode: 403, data: errorEnvelope('SCOPE_DENIED') }));
-  assert.equal((await rejects(forbidden.api.getPost(POST_ID))).code, 'SESSION_REQUIRED');
-  assert.equal(forbidden.cleared.count, 1);
+  assert.equal((await rejects(forbidden.api.getPost(POST_ID))).code, 'SCOPE_DENIED');
+  assert.equal(forbidden.cleared.count, 0, '403 权限拒绝不得销毁仍然有效的会话');
+
+  // 403 且封套读不到原因：仍按「服务端拒绝了，但没说原因」处理，不假装是登录问题。
+  const bare = load(() => ({ statusCode: 403, data: {} }));
+  assert.equal((await rejects(bare.api.getPost(POST_ID))).code, 'SCOPE_DENIED');
+  assert.equal(bare.cleared.count, 0);
 
   const offline = load(() => ({ fail: true }));
   assert.equal((await rejects(offline.api.getPost(POST_ID))).code, 'NETWORK_UNCERTAIN');
@@ -408,7 +432,7 @@ test('消息：未读数是派生量 ⇒ 只转发服务端值（本地不递减
   assert.equal(h.api.unreadText(150), '99+');
 });
 
-test('消息：real 未接线 503 如实上报（绝不折叠成空列表）；401 清会话、403 不折叠成「未登录」；网络失败按 NETWORK_UNCERTAIN', async () => {
+test('消息：real 未接线 503 如实上报（绝不折叠成空列表）；401 清会话、403 不折叠成「未登录」（ACCOUNT_INACTIVE 例外清会话）；网络失败按 NETWORK_UNCERTAIN', async () => {
   const down = loadMessages(() => ({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }));
   const listError = await rejects(down.api.listMessages({}));
   assert.equal(listError.code, 'PROVIDER_UNAVAILABLE');
@@ -427,7 +451,12 @@ test('消息：real 未接线 503 如实上报（绝不折叠成空列表）；4
   const forbidden = loadMessages(() => ({ statusCode: 403, data: errorEnvelope('SCOPE_DENIED') }));
   assert.equal((await rejects(forbidden.api.getUnreadCount())).code, 'SCOPE_DENIED',
     '403 必须原样透出契约码，不得折叠成 SESSION_REQUIRED');
-  assert.equal(forbidden.cleared.count, 0, '403 不得清理本地会话（「登录了但不给」不是「没登录」）');
+  assert.equal(forbidden.cleared.count, 0, '403 权限拒绝不得销毁仍然有效的会话（「登录了但不给」不是「没登录」）');
+  // 统一层唯一例外（D1 口径）：`ACCOUNT_INACTIVE` 是「令牌永久失效」，码保留、会话清。
+  const retired = loadMessages(() => ({ statusCode: 403, data: errorEnvelope('ACCOUNT_INACTIVE') }));
+  assert.equal((await rejects(retired.api.getUnreadCount())).code, 'ACCOUNT_INACTIVE',
+    'ACCOUNT_INACTIVE 必须保留码（不归一成 SESSION_REQUIRED）');
+  assert.equal(retired.cleared.count, 1, 'ACCOUNT_INACTIVE 必须清会话（令牌不可再用）');
   assert.match(forbidden.api.message({ code: 'SCOPE_DENIED' }), /无权/, 'SCOPE_DENIED 文案沿用既有口径');
   assert.doesNotMatch(forbidden.api.message({ code: 'SCOPE_DENIED' }), /登录状态已失效/,
     '403 不得被说成「登录已失效」');

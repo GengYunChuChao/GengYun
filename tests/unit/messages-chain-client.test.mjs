@@ -64,7 +64,9 @@ function harness() {
 const pathOf = (request) => request.url.replace('https://synthetic.invalid/api/v1', '');
 
 // ---------------------------------------------------------------------------------
-// (e) 401 / 403 折叠：#15 与 B7 的交叉缺陷。401 必须清会话；403 **必须不清会话**，
+// (e) 401 / 403 折叠：#15 与 B7 的交叉缺陷。归因（码 + 是否清会话）由统一层
+// `auth.attribution`（D1 #396）给，本域只消费；本文件核对**消息适配层确实按统一层口径落地**：
+//   401 ⇒ SESSION_REQUIRED + 清会话；403 三码原样带出；其中 ACCOUNT_INACTIVE 另按统一层清会话；
 // 并且真实码要经 `utils/states.js` 归到 denied（否则 denied 分支永远不可达）。
 // ---------------------------------------------------------------------------------
 test('消息域 401 ⇒ 清会话并报 SESSION_REQUIRED（走 guest，不伪装成 denied）', async () => {
@@ -77,14 +79,23 @@ test('消息域 401 ⇒ 清会话并报 SESSION_REQUIRED（走 guest，不伪装
   assert.equal(h.storage.has('gengyun.session'), false);
 });
 
-test('消息域 403 ⇒ 不清会话，透出真实 403 码（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE）', async () => {
-  for (const code of ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']) {
+test('消息域 403 ⇒ 码原样带出；SCOPE_DENIED/CONSENT_REQUIRED 不清会话，ACCOUNT_INACTIVE 按统一层清会话', async () => {
+  // 判定表直接取自统一层（不在本测试里另写一份口径）：清不清会话由 `auth.attribution` 说。
+  const cases = [
+    ['SCOPE_DENIED', false],
+    ['CONSENT_REQUIRED', false],
+    ['ACCOUNT_INACTIVE', true]
+  ];
+  for (const [code, clears] of cases) {
     const h = harness();
+    const unified = h.auth.attribution(403, errorEnvelope(code));
+    assert.equal(unified.code, code, `统一层必须原样带出 ${code}`);
+    assert.equal(unified.clearsSession, clears, `统一层对 ${code} 的清会话口径变了：${clears}`);
     h.login();
     const pending = h.api.listMessages({});
     h.requests.at(-1).success({ statusCode: 403, data: errorEnvelope(code) });
     await assert.rejects(pending, (error) => error.code === code, `403 ${code} 必须原样透出，不得折叠成 SESSION_REQUIRED`);
-    assert.equal(h.auth.isLoggedIn(), true, `403 ${code} 是「登录了但不给」，不得清会话`);
+    assert.equal(h.auth.isLoggedIn(), !clears, `${code} 的清会话行为必须与统一层一致`);
     // B7 归类：403 三码必须落在 denied（不可重试、不催重新登录）。
     const resolved = h.states.resolve(code);
     assert.equal(resolved.status, h.states.STATUS.DENIED, `${code} 必须归到 denied`);

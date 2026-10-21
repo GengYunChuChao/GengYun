@@ -34,8 +34,13 @@ function load(path, requires) {
     return requires[id];
   } }); return module.exports;
 }
+// GY-I04 登录链路盘点后：`utils/auth.js` 新增 `require('./states')`（401/403 归因的单一事实源依赖
+// B7 的 `CODE_KIND` 码表）。按**真实实现**登记：`./states` 是纯码表（无 require、不碰 wx），
+// 直接从仓库真实文件载入，不做桩。未登记会显式报 `Unexpected dependency ./states`。
+const realStates = requireData('../../miniprogram/utils/states.js');
 const navigation = load('utils/navigation.js', {});
-const auth = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
+const authRequires = { './navigation': navigation, './states': realStates, '../config/runtime': { mode: 'local', apiBaseUrl: base } };
+const auth = load('utils/auth.js', authRequires);
 async function request(path, opts = {}) { const response = await fetch(base + path, opts); return { status: response.status, body: await response.json() }; }
 async function error(path, expectedStatus, expectedCode, opts = {}) {
   const response = await request(path, opts);
@@ -87,7 +92,7 @@ try {
     // 一条 `GET /api/v1/herbicides`；另外两个用例的期望序列因此逐字不变。
     ['reference', null, 'items', false, [HERBICIDES_LIST]], ['referenceseed', null, 'list', false],
   ]) {
-    const cold = load('utils/auth.js', { './navigation': navigation, '../config/runtime': { mode: 'local', apiBaseUrl: base } });
+    const cold = load('utils/auth.js', authRequires);
     assert.equal(cold.isLoggedIn(), false);
     const gate = load('utils/page-gate.js', { './auth': cold });
     const profileApi = load('utils/profile-api.js', { './auth': cold, '../config/runtime': { mode: 'local', apiBaseUrl: base } });

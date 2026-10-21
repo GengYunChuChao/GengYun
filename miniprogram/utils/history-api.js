@@ -148,6 +148,13 @@ function validateOcr(value) {
 
 // ---- 通用请求 ---------------------------------------------------------------
 
+// 401/403 分流：口径统一由 `miniprogram/utils/auth.js` 的归因层决定（`attribution` / `failureFor`），
+// 本文件**不再自持码表**。合并前这里与 `favorites-api.js` / `identify-api.js` /
+// `speech-transcript.js` 各有一份同形实现（#393 引入的第三份），且对「403 无错误封套」与
+// `ACCOUNT_INACTIVE` 的处理互相漂移；现全站只留 `auth.js` 一份：
+//   401 ⇒ 会话失效并清会话；403 ⇒ 契约码原样带出，仅 `ACCOUNT_INACTIVE` 清会话；
+//   403 无错误封套 ⇒ `SCOPE_DENIED` 且**不**清会话（见 `docs/verification/gy-i04-login-chain-20261021.md`）。
+
 function request(method, path, options) {
   const opts = options || {}
   const b = binding()
@@ -161,7 +168,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(auth.failureFor(failure, r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200) {
@@ -424,6 +431,8 @@ function messageFor(e) {
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
     SCOPE_DENIED: '当前会话无权读取该记录。',
+    CONSENT_REQUIRED: '缺少必要的授权同意，无法读取或删除识别历史。',
+    ACCOUNT_INACTIVE: '账号当前不可用（已停用或已注销），无法读取或删除识别历史。',
     PROVIDER_UNAVAILABLE: '历史服务当前不可用（真实持久存储未接入），不会用本地数据顶替。',
     INVALID_CURSOR: '翻页位置已失效，请重新读取第一页。',
     UNAVAILABLE: '历史服务暂不可用，已停止显示，请重试。'

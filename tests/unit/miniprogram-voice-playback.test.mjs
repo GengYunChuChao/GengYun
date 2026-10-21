@@ -31,6 +31,9 @@ import { SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT } from '../../services/api/src/app
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const requireHere = createRequire(import.meta.url);
+// GY-I04 登录链路盘点：语音链路把 401/403 归因委托给 `utils/auth.js`（单一事实源）。
+// 这里注入**真实**归因实现（纯码表判定），不在测试里另写一份 403 码表。
+const realAuth = requireHere(join(ROOT, 'miniprogram/utils/auth.js'));
 
 const speechText = requireHere('../../miniprogram/utils/speech-text.js');
 const audioPlayback = requireHere('../../miniprogram/utils/audio-playback.js');
@@ -549,7 +552,11 @@ function loadPageHarness(options = {}) {
     sessionEpoch: () => 'epoch-1',
     networkEnabled: () => true,
     requireLogin: (callback) => callback(true),
-    clearSession: () => {}
+    clearSession: () => {},
+    // 401/403 归因用**真实**实现（`utils/auth.js` 的单一事实源），本文件不另写码表；
+    // 清会话在 vm 内是空操作，本文件的用例不断言清会话次数。
+    attribution: (statusCode, payload) => realAuth.attribution(statusCode, payload),
+    failureFor: (makeFailure, statusCode, payload) => realAuth.failureFor(makeFailure, statusCode, payload)
   };
   const runtime = { mode: 'local', apiBaseUrl: 'http://127.0.0.1:3000' };
   const debug = { localEnabled: (wxApi) => runtime.mode === 'local' && !!wxApi && typeof wxApi.getAccountInfoSync === 'function' };
@@ -645,6 +652,8 @@ function loadPageHarness(options = {}) {
     if (base === 'auth') return auth;
     if (base === 'debug') return debug;
     if (base === 'speech-text') return loadReal(bySuffix('speech-text.js'), resolveDep);
+    // GY-I13：自动播报策略（纯判定 + 注入存储）也是**真代码**，不在此重写语义。
+    if (base === 'speech-autoplay') return loadReal(bySuffix('speech-autoplay.js'), resolveDep);
     if (base === 'audio-playback') return loadReal(bySuffix('audio-playback.js'), resolveDep);
     if (base === 'inner-audio-port') return loadReal(bySuffix('inner-audio-port.js'), resolveDep);
     if (base === 'substitute-player') return loadReal(bySuffix('substitute-player.js'), resolveDep);
@@ -1683,6 +1692,7 @@ test('文案·新增文件不含绝对化风险表述', () => {
     'miniprogram/components/gy-voice-ball/gy-voice-ball.wxml',
     'miniprogram/components/gy-voice-ball/gy-voice-ball.js',
     'miniprogram/utils/speech-text.js',
+    'miniprogram/utils/speech-autoplay.js',
     'miniprogram/utils/audio-playback.js',
     'miniprogram/utils/voice-api.js'
   ]) {
@@ -1725,4 +1735,88 @@ test('页面可被标准包加载：页面与组件的四个文件齐备且 json
   const js = read('miniprogram/pages/voice/voice.js');
   assert.equal(/^\s*(import|export)\s/m.test(js), false, '页面必须是 CJS（标准包用 require 加载）');
   assert.equal(/createInnerAudioContext/.test(js), false, '页面不得直接引用平台音频能力（只能经注入端口）');
+});
+
+// ============================================================ 5c. 自动播报开关与「同一页同一版本一次」
+//
+// 判定口径：`docs/architecture/state-contract.md:64`「同一页同一版本自动播报一次，离页/隐藏停止」。
+// 判定实现：`miniprogram/utils/speech-autoplay.js`（纯判定 + 注入存储，纯函数用例见
+// `tests/unit/miniprogram-speech-autoplay.test.mjs`）；本节只钉**页面接线**的三件事：
+// ① 关掉开关 ⇒ 不自动出声，但内容与主动播放**照常可用**（不是把播报能力一起关掉）；
+// ② 同一页同一 revision 只自动播报一次，换 revision 仍自动；③ 没有可播来源时不声称「自动播报中」。
+
+test('自动播报·用户关闭开关 ⇒ 合成落定后不自动出声（不伪装在播），但内容与主动播放照常可用', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  // 显式开启替身走查：让「有可播计划」成立（替身计划非真实音频，不产生声音、不计已听取）。
+  h.page.setData({ substituteWalkthrough: true });
+  assert.equal(h.page.data.autoSpeakEnabled, true, '默认开启（F12/AC06 要求核对完成后自动播报）');
+
+  h.page.onToggleAutoSpeak();
+  assert.equal(h.page.data.autoSpeakEnabled, false);
+  assert.ok(h.page.data.autoSpeakNote.includes('已关闭'), h.page.data.autoSpeakNote);
+
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '8' }));
+  await pending;
+
+  assert.equal(h.page.data.playbackState, 'idle', '关闭后绝不出现「正在播报」');
+  assert.equal(h.page.data.listened, false, '没出声就不得记「已听取」');
+  assert.ok(h.page.data.autoSpeakNote.includes('已关闭'), h.page.data.autoSpeakNote);
+  assert.ok(h.page._plan.length > 0, '内容没有被丢掉：计划仍在，可用按钮主动播放');
+
+  // 主动播放仍然可用（关的是「自动」，不是播报能力）。
+  h.page.onPlay();
+  assert.equal(h.page.data.playbackState, 'playing', '主动播放必须真的能播');
+  assert.equal(h.page.data.listened, false, '替身播放仍不计「已听取」');
+  h.page.onUnload();
+});
+
+test('自动播报·同一页同一版本只自动播报一次：同 revision 第二次不出声，换 revision 仍自动', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  h.page.setData({ substituteWalkthrough: true });
+
+  const first = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: 'b' }));
+  await first;
+  assert.equal(h.page.data.playbackState, 'playing', '首次合成落定应自动播报');
+  assert.deepEqual(h.page.autoSpeakPolicy().playedKeys(), ['answer:sample-i13-passed:1']);
+
+  // 同一页、同一 revision 再提交一次 ⇒ 不再自动出声（state-contract.md:64）。
+  const second = h.page.onBroadcast();
+  assert.equal(
+    h.page._controller === null ? 'none' : h.page._controller.snapshot().state,
+    'stopped',
+    '再次提交时必须停掉上一份仍在响的播报（球的状态不得与真实播报脱节）'
+  );
+  acceptJob(h.requests[1], jobFixture({ suffix: 'c' }));
+  await second;
+  assert.equal(h.page.data.playbackState, 'idle', '同一页同一版本不得二次自动出声');
+  assert.ok(h.page.data.autoSpeakNote.includes('已自动播报过一次'), h.page.data.autoSpeakNote);
+  assert.equal(h.page.data.listened, false);
+
+  // 换 revision（服务端权威值）＝ 新版本 ⇒ 仍自动播报。
+  const third = h.page.onBroadcast();
+  acceptJob(h.requests[2], jobFixture({ suffix: 'd', target: { type: 'answer', id: 'sample-i13-passed', revision: 2 } }));
+  await third;
+  assert.equal(h.page.data.playbackState, 'playing', '新 revision 应重新自动播报');
+  assert.deepEqual(
+    h.page.autoSpeakPolicy().playedKeys(),
+    ['answer:sample-i13-passed:1', 'answer:sample-i13-passed:2']
+  );
+  h.page.onUnload();
+});
+
+test('自动播报·没有可播报来源时不声称「自动播报中」：仍如实走失败出口并说明不伪造音频', async () => {
+  const h = bootPage();
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: 'e' }));
+  await pending;
+
+  assert.equal(h.page.data.playbackState, 'failed', '取不到来源仍是失败态（不是 idle、更不是 playing）');
+  assert.ok(h.page.data.autoSpeakNote.includes('不伪造音频'), h.page.data.autoSpeakNote);
+  assert.deepEqual(h.page.autoSpeakPolicy().playedKeys(), [], '没出声就不许记账');
+  h.page.onUnload();
 });
