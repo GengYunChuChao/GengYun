@@ -1288,33 +1288,41 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // **持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
   // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
   // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
+  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
+  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
+  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
+  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
+  const mediaObjectRefKeyMaterial: string | null =
+    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
+      ? config.mediaObjectRefKey
+      : null;
   const mediaStore: MediaStore = mediaStoreOption
-    ?? (config.executionMode === 'real' && pool !== null && config.mediaObjectRefKey !== null
-      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(config.mediaObjectRefKey) })
+    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
+      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
       : createMemoryMediaStore({ now: () => clock().getTime() }));
   // `real` + 有数据库池 + **缺** `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域整域 fail-closed（503），
   // **不是**降级：拿不到键就无法如实写 `object_ref_cipher`，用进程内 `Map` 顶替等于向客户端
   // 谎报「已持久化」——这正是 W12 要消灭的那种假持久化。
   const mediaPersistenceRefusal: string | null =
-    config.executionMode === 'real' && pool !== null && config.mediaObjectRefKey === null
+    config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial === null
       ? 'real 模式的媒体持久化缺少 MEDIA_OBJECT_REF_KEY：object_ref_cipher 无法加密，拒绝以进程内状态承载媒体事实'
       : null;
   const mediaService: AppMediaService = mediaPersistenceRefusal === null
     ? createAppMediaService({
-    executionMode: config.executionMode,
-    objectStore: mediaObjectStore,
-    tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-    contentSource: mediaContentSource ?? createClosedContentSource(),
-    ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
-    // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
-    ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
-    // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
-    ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
-    // 持久化端口：**唯一**的事实源（登记册/授权/台账），缺省时服务内部会退到内存实现，
-    // 装配层在这里显式给出按模式二分的实现，避免「进程内 Map 仍是事实源」的假持久化。
-    persistence: mediaStore,
-    now: clock,
-  })
+        executionMode: config.executionMode,
+        objectStore: mediaObjectStore,
+        tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        contentSource: mediaContentSource ?? createClosedContentSource(),
+        ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
+        // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
+        ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
+        // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
+        ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
+        // 持久化端口：**唯一**的事实源（登记册/授权/台账），缺省时服务内部会退到内存实现，
+        // 装配层在这里显式给出按模式二分的实现，避免「进程内 Map 仍是事实源」的假持久化。
+        persistence: mediaStore,
+        now: clock,
+      })
     : createFailClosedMediaService(mediaPersistenceRefusal);
 
   // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。

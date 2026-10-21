@@ -175,6 +175,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
   },
   {
+    path: 'tests/integration/media-persistence-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_media_test`（脚本只允许回环地址）：脚本要求**空库**，'
+      + '自己 `applyMigrations(discoverMigrations())` 套用 26 个迁移（与 `npm run db:migrate` 同一条代码路径），'
+      + '随后跑三段式上传／owner 逐字节读／非 owner NOT_FOUND／同键重复 complete 行数不变／**子进程真重启**后'
+      + '同 uploadId 仍可读／缺 `MEDIA_OBJECT_REF_KEY` 时整域 503／空仓储负控制。'
+      + 'R28-W12 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
+      + '（`postgres:17.11` service，一个**独立 step** 自带 `CREATE DATABASE gengyun_media_test`），'
+      + '但它**不进**无 PG 的回环链：回环链里既没有真 PG、也没有对象存储替代物以外的任何准备，'
+      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/messages-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
