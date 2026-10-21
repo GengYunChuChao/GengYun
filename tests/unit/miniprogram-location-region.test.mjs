@@ -267,6 +267,135 @@ test('message(status) 是 MESSAGES 闭集加 failed 兜底：六档文案都指�
   assert.match(locationRegion.EXPLAIN, /确认/);
 });
 
+// —— GY-I05 补漏（Refs #5）：AC21 的「超时」必须是**可达的显式状态**，不能指望平台一定回调 ——
+//
+// 缺口（改前实读实现）：timeout 这一档**只能**由 wx.getLocation 的 fail 回调带
+// `errMsg: 'getLocation:fail timeout'` 进入。若平台**永不回调** success／fail（系统授权弹窗被挂起、
+// 部分 Android 机型吞掉回调），Promise 永不结算 ⇒ 页面停在「正在获取位置…」且 locating 恒为 true，
+// 定位入口被 `if (... || this.data.locating) return` 长期挡住，也没有任何可见状态。
+// 修法（本片）：locate 增加墙钟兜底，到点结算 { status: 'timeout' }，页面按既有 timeout 文案回落手选。
+// 兜底不改端点、不新增错误码、不重试、不写存储、不上报，坐标仍只在内存里。
+//
+// 计时器替身自造：**不使用真实时钟**（真等 15s 会让单测变慢且不稳），也不依赖会被 mock 的全局 setTimeout。
+
+function fakeClock() {
+  let next = 1;
+  const pending = new Map();
+  return {
+    setTimeout(fn, ms) { const id = next; next += 1; pending.set(id, { fn, ms }); return id; },
+    clearTimeout(id) { pending.delete(id); },
+    // 只触发「到期」的计时器；未到期的保留，用来证明「没提前结算」。
+    tick(ms) {
+      const due = [...pending].filter(([, item]) => item.ms <= ms);
+      for (const [id] of due) pending.delete(id);
+      for (const [, item] of due) item.fn();
+      return due.length;
+    },
+    get size() { return pending.size; },
+    get delays() { return [...pending.values()].map((item) => item.ms); },
+  };
+}
+const settleProbe = async (promise) => {
+  let value = null;
+  promise.then((result) => { value = result; });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  return value;
+};
+
+// —— 超时兜底 1：平台永不回调 ⇒ 到点结算 timeout，不挂死、不重试 ——
+test('超时兜底 平台永不回调：到点结算显式 timeout 状态，页面手选文案可达且只请求一次定位', async () => {
+  const clock = fakeClock();
+  const h = harness(() => {}, () => '330102'); // 既不 success 也不 fail
+  const pending = locationRegion.locate(h.wx, () => '330102', { timer: clock });
+  assert.equal(clock.size, 1, '必须装且只装一个兜底计时器');
+  assert.deepEqual(clock.delays, [locationRegion.LOCATE_TIMEOUT_MS], '缺省兜底时长必须取模块常量');
+  // 未到点绝不提前结算（否则就成了「动辄报超时」的假状态）。
+  assert.equal(clock.tick(locationRegion.LOCATE_TIMEOUT_MS - 1), 0);
+  assert.equal(await settleProbe(pending), null, '未到点前不得结算');
+  // 到点：显式 timeout，任务真的是 timeout 这一档文案（带「手选浙江市县」）。
+  assert.equal(clock.tick(locationRegion.LOCATE_TIMEOUT_MS), 1);
+  assert.equal(clock.size, 0, '结算后不得留下悬挂计时器');
+  const result = plain(await pending);
+  assert.deepEqual(result, { status: 'timeout' });
+  assert.equal(locationRegion.message(result.status), locationRegion.MESSAGES.timeout);
+  assert.match(locationRegion.message(result.status), MANUAL);
+  // 超时不是「重试」：仍只请求过一次定位，也没碰跟踪/存储/请求接口。
+  assert.equal(h.seen.getLocationOptions.length, 1);
+  assert.deepEqual(h.seen.forbidden, []);
+  for (const text of SENTINEL_TEXT) assert.equal(JSON.stringify(result).includes(text), false);
+});
+
+// —— 超时兜底 2：超时后迟到的平台回调不得改写结果 ——
+test('超时兜底 超时后迟到的 success/fail 一律不改写结果（不偷偷改成功、不改成取消）', async () => {
+  const clock = fakeClock();
+  let late = null;
+  const h = harness((o) => { late = o; }, () => '330102');
+  const pending = locationRegion.locate(h.wx, () => '330102', { timer: clock });
+  clock.tick(locationRegion.LOCATE_TIMEOUT_MS);
+  assert.deepEqual(plain(await pending), { status: 'timeout' });
+  // 平台随后才回调（真实场景：用户很晚才在系统弹窗点允许）。
+  late.success(SENTINEL);
+  late.fail({ errMsg: 'getLocation:fail cancel' });
+  assert.deepEqual(plain(await pending), { status: 'timeout' }, '超时结果不得被迟到回调改写');
+  assert.deepEqual(h.seen.forbidden, [], '迟到回调也不得触发存储/请求');
+});
+
+// —— 超时兜底 3：正常结算即清计时器，且不改变既有六档口径 ——
+test('超时兜底 先到先结算：平台成功/失败都立刻清掉兜底计时器，其后到点不产生第二次结算', async () => {
+  const branches = [
+    ['成功', (o) => o.success(SENTINEL), () => '330102', { status: 'ok', region_code: '330102' }],
+    ['省外', (o) => o.success(SENTINEL), () => null, { status: 'out_of_coverage' }],
+    ['拒绝授权', (o) => o.fail({ errMsg: 'getLocation:fail auth deny' }), () => '330102', { status: 'denied' }],
+    ['取消', (o) => o.fail({ errMsg: 'getLocation:fail cancel' }), () => '330102', { status: 'cancelled' }],
+    ['平台超时原文', (o) => o.fail({ errMsg: 'getLocation:fail timeout' }), () => '330102', { status: 'timeout' }],
+  ];
+  for (const [label, reply, convert, expected] of branches) {
+    const clock = fakeClock();
+    const h = harness(reply, convert);
+    const result = plain(await locationRegion.locate(h.wx, convert, { timer: clock }));
+    assert.deepEqual(result, expected, label);
+    assert.equal(clock.size, 0, label + '：结算后必须清掉兜底计时器');
+    // 计时器已清 ⇒ 即使再「拨表」也不会产生第二次结算，结果不变。
+    assert.equal(clock.tick(10 * locationRegion.LOCATE_TIMEOUT_MS), 0);
+    assert.deepEqual(plain(result), expected, label + '：结果不得被改写');
+  }
+});
+
+// —— 超时兜底 4：时长可配、非法值退回缺省、可显式关掉 ——
+test('超时兜底 时长可注入：非法值退回模块常量，timer:null 表示不设兜底（旧行为）', async () => {
+  assert.equal(locationRegion.LOCATE_TIMEOUT_MS, 15000, '兜底时长是对外可见的常量，改动须显式更新本行');
+  assert.equal(Number.isFinite(locationRegion.LOCATE_TIMEOUT_MS), true);
+  assert.ok(locationRegion.LOCATE_TIMEOUT_MS > 0);
+  for (const timeoutMs of [undefined, null, 0, -1, -15000, NaN, Infinity, '5000', {}, []]) {
+    const clock = fakeClock();
+    const h = harness(() => {}, () => '330102');
+    locationRegion.locate(h.wx, () => '330102', { timeoutMs, timer: clock });
+    assert.deepEqual(clock.delays, [locationRegion.LOCATE_TIMEOUT_MS], '非法时长必须退回缺省：' + String(timeoutMs));
+    clock.tick(locationRegion.LOCATE_TIMEOUT_MS);
+  }
+  const clock = fakeClock();
+  const h = harness(() => {}, () => '330102');
+  const pending = locationRegion.locate(h.wx, () => '330102', { timeoutMs: 1234, timer: clock });
+  assert.deepEqual(clock.delays, [1234], '合法时长必须被采用');
+  clock.tick(1234);
+  assert.deepEqual(plain(await pending), { status: 'timeout' });
+  // timer:null ⇒ 不设兜底：平台不回调就保持 pending（与改前逐字相同，留给现场排查用）。
+  const none = locationRegion.locate(harness(() => {}, () => '330102').wx, () => '330102', { timer: null });
+  assert.equal(await settleProbe(none), null, 'timer:null 时不得凭空结算');
+});
+
+// —— 超时兜底 5：兜底只补状态来源，不改既有分支口径（回归哨兵）——
+test('超时兜底 不影响既有分支：wxApi 缺失仍立刻 failed，且不会留下计时器', async () => {
+  const clock = fakeClock();
+  assert.deepEqual(plain(await locationRegion.locate(null, () => '330102', { timer: clock })), { status: 'failed' });
+  assert.equal(clock.size, 0, '同步结算同样要清掉兜底计时器');
+  const throwClock = fakeClock();
+  const syncThrow = { getLocation() { throw new Error('synthetic synchronous getLocation failure'); } };
+  assert.deepEqual(plain(await locationRegion.locate(syncThrow, () => '330102', { timer: throwClock })), { status: 'failed' });
+  assert.equal(throwClock.size, 0);
+});
+
 // —— GY-I05 D2：地区转换资源**装配**（miniprogram/utils/region-converter.js）——
 //
 // 本片把 pages/profile/profile.js 的 `regionConverter: null` 硬编码换成装配模块的 build()。这里钉三件事：
