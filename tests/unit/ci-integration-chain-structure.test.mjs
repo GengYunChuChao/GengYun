@@ -130,6 +130,15 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/catalog-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/qa-citations-pg.mjs',
+    reason: '需真实 PG 17.11 且要求**空库** `gengyun_qa_citations_test`（脚本自己 apply 迁移子集'
+      + ' 0001/0002/0005/0008/0010/0012/0013）；连接串只走 env `QA_CITATIONS_PG_TEST_URL`，'
+      + '未设时打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0、⛔ 不得接进无 PG 的回环链）。'
+      + 'R29-S14 这一片只交付"引用可溯源"的**证据臂**，未同时改 `.github/workflows/real-pg-integration.yml`'
+      + '（那要连带改受管清单 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 与证据页，'
+      + '属另一条独立切片），故在此如实登记为未接线；接进 `real-pg-17.11` job 后必须删除本条。',
+  },
+  {
     path: 'tests/integration/community-pg.mjs',
     reason: '需真实 PG17 且硬钉库名 `gengyun_community_test`：未配置 `COMMUNITY_PG_TEST_URL` 时'
       + '**显式打印 SKIP 并以 77 退出**（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）；'
