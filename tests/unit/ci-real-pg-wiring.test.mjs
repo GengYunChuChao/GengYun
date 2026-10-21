@@ -57,6 +57,8 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 前两条是 #314 接的（会话链／社区域），中间两条是 R27-S4 接的（消息域／收藏历史，同一条 workflow），
  * 后三条是 R28-S14 接的（账号注销／后台账号读取／全局开关，同一条 workflow），
  * 第 8 条是 R28-S17 接的（标签 OCR 域／迁移 0024，同一条 workflow；它跑**全链迁移**，故顺带守住迁移清单不变量）。
+ * 第 9 条是 R28-S36 接的（识别域持久化／迁移 0025，同一条 workflow；它要求**空库**并自己 apply「除 0025 外全部 → 0025」，
+ * 顺带断言迁移清单连续无缺号、总数 === 最大编号）。
  * R28-S14 的另两条候选（`account-suspend-pg`／`backup-purge-pg`）**没有**进这份清单：
  * 前者在 scram 认证下必 `28P01`（运行时角色口令是自己 `randomBytes(24)` 生成的，与 argv[3] 无关），
  * 后者要求在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
@@ -71,6 +73,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/recognitions-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -82,6 +85,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/recognitions-pg.mjs',
 ]);
 
 /**
@@ -117,6 +121,12 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合，排在最后（workflow 里也是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
+  // 9. `recognitions-pg`（`#349` 接入）：自建专用空库 `gengyun_recognitions_test`、自己 apply
+  //    0001..0025 全链（含 0025_recognitions_persistence.sql）、全程只用库 owner 连接，
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本无耦合，排在最后。
+  //    ⛔ 不要把它挪到 `ocr-jobs-pg` 之前：两者都以「空库 + 全链迁移」为前提，重排会同时违反
+  //    判据⑥（顺序）与判据⑦⑧（建库/库名一致性）的语义。
+  'tests/integration/recognitions-pg.mjs',
 ]);
 
 /**
