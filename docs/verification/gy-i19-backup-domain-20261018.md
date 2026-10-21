@@ -7,6 +7,16 @@
 > 因此本片**不接线、不新增备份域、不占迁移号**，只把「无落点」做成可复核证据，
 > 并把「未接线」的含义在契约状态、边界文档与代码注释里写准。
 > 下面每条判读都附命令与原始输出；**没跑过的一个字都不写通过**。
+>
+> **时点限定（GY-R28 补记，2026-10-20）**：以上「仓里既没有逐用户备份副本的持久域」「没有可被真实清除的对象」
+> 是**本记录落笔时（2026-10-18，普查范围 `0001`–`0018`）的结论**，作为历史事实原样保留。
+> 其后 `services/api/db/migrations/0023_user_backup_copies.sql`（建 `public.user_backup_copies`）与
+> `services/api/src/privacy/backup-copies-pg.ts`（`createPostgresBackupPurgePort()`，`kind: 'wired'`／`available: true`）
+> 已落地，并由 `services/api/src/app.ts:1457-1464` 在「受理端口已接线 ＋ 有真库连接池」时装配
+> ⇒ **GY-R28 起本仓已有逐用户备份副本域**（口径与落地形状见
+> [设计稿 §13](../architecture/gy-i19-user-backup-copies-design.md)）。但这**不是**「#19 已完成」：
+> 7 日在线／30 日备份的**到期执行与调度**、恢复清单重放、第三方删除证据仍未取得，`real` 模式整域仍 503
+> `PROVIDER_UNAVAILABLE`，`docs/architecture/contract-status.json` 的 GY-I19 `blocker` 未改。
 
 ## 0 结论（一句话）
 
@@ -37,29 +47,50 @@
 ### 2.1 迁移里没有备份副本实体
 
 ```powershell
-# 工作树根目录
-Select-String -Path "services\api\db\migrations\*.sql" -Pattern "CREATE TABLE (IF NOT EXISTS )?(public\.)?(\w+)" |
-  % { $_.Matches[0].Groups[3].Value } | Sort-Object -Unique
+# 工作树根目录（R28 订正口径：schema 前缀不写死成 public，只普查 0001–0018）
+Get-ChildItem "services\api\db\migrations\*.sql" |
+  Where-Object { $_.Name -match '^00(0[1-9]|1[0-8])_' } |
+  Select-String -Pattern "CREATE TABLE (IF NOT EXISTS )?(([a-z_]+)\.)?(\w+)" |
+  ForEach-Object {
+    $g = $_.Matches[0].Groups
+    if ($g[3].Success) { "$($g[3].Value).$($g[4].Value)" } else { "public.$($g[4].Value)" }
+  } | Sort-Object -Unique
 ```
 
-输出（**54 处 `CREATE TABLE`、去重 52 张表**；`knowledge_staging`、`staging_intake` 各因文件内重复建表出现 2 处。
-相对初版基线 `53922eb` 的 50 处/48 张，上游 #272 的 `0018_favorites_history.sql` 新增
-`favorites`、`favorites_idempotency`、`history`、`history_idempotency` 4 处/4 张）：
+输出（**18 个迁移文件、54 处 `CREATE TABLE`、按 `schema.table` 限定名去重 54 张表**；`public.` 前缀原样保留）：
 
 ```
-admin_accounts, admin_audit_events, admin_scopes, admin_sessions, applicability, author_links,
-catalog_import_conflicts, catalog_import_runs, catalog_ops, catalog_source_update_events,
-community_media_grants, consent_policies, consent_records, content_media_refs,
-conversation_answers, conversation_turns, conversations, crops, deletion_handlers,
-deletion_requests, export_writebacks, exports, favorites, favorites_idempotency, formulations,
-history, history_idempotency, idempotency_keys, jobs, knowledge_dataset_config,
-knowledge_dataset_modes, knowledge_staging, knowledge_versions, media, media_derivatives,
-post_versions, posts, privacy_epochs, public_authors, recipients, regions, registrations,
-restriction_rules, sessions, single_profiles, source_versions, sources, species, staging_intake,
-third_party_deletions, user_training_consents, users
+catalog_ops.operations, knowledge_staging.workbook_batches, knowledge_staging.workbook_rows,
+public.admin_accounts, public.admin_audit_events, public.admin_scopes, public.admin_sessions,
+public.applicability, public.author_links, public.catalog_import_conflicts, public.catalog_import_runs,
+public.catalog_source_update_events, public.community_media_grants, public.consent_policies,
+public.consent_records, public.content_media_refs, public.conversation_answers,
+public.conversation_turns, public.conversations, public.crops, public.deletion_handlers,
+public.deletion_requests, public.export_writebacks, public.exports, public.favorites,
+public.favorites_idempotency, public.formulations, public.history, public.history_idempotency,
+public.idempotency_keys, public.jobs, public.knowledge_dataset_config, public.knowledge_dataset_modes,
+public.knowledge_versions, public.media, public.media_derivatives, public.post_versions, public.posts,
+public.privacy_epochs, public.public_authors, public.recipients, public.regions, public.registrations,
+public.restriction_rules, public.sessions, public.single_profiles, public.source_versions,
+public.sources, public.species, public.third_party_deletions, public.user_training_consents,
+public.users, staging_intake.batches, staging_intake.operations
 ```
 
-判读：**52 张表里没有任何 `backup*` / `snapshot*` / `replica*` / `wal*` / `dump*` 表**。
+**口径订正（R28，2026-10-20）**：本页初版记的是「54 处 / 去重 **52** 张」——那是**口径错**，不是事实变了：
+初版正则是 `CREATE TABLE (IF NOT EXISTS )?(public\.)?(\w+)`，只认 `public.` 一个前缀，于是
+`knowledge_staging.`、`staging_intake.`、`catalog_ops.` 的 **schema 名**被当成**表名**捕获
+（`knowledge_staging`、`staging_intake` 因此各重复出现 2 次而被去重抹平 2 张）；若不带 schema 只按裸表名去重，
+`catalog_ops.operations` 与 `staging_intake.operations` 又会并成 1 张（53 张）——所以「52」在任何正确口径下都不成立。
+按 `schema.table` 限定名去重后**没有一处重复建表**，处数与张数相等 ⇒ 正确读数是 **54 / 54**。
+分 schema：`public` 49、`knowledge_staging` 2、`staging_intake` 2、`catalog_ops` 1。
+按文件：`0001`:20、`0002`:10、`0003`:8、`0004`:2、`0005`:0、`0006`:1、`0007`:2、`0008`:1、`0009`:1、`0010`:0、
+`0011`:1、`0012`:0、`0013`:3、`0014`:0、`0015`:0、`0016`:0、`0017`:1、`0018`:4。
+相对初版基线 `53922eb`（那时只有 `0001`–`0017`：**50 处 / 50 张**，旧口径误记为 48 张），
+上游 #272 的 `0018_favorites_history.sql` 新增
+`favorites`、`favorites_idempotency`、`history`、`history_idempotency` 4 处/4 张。
+
+判读：**54 张表里没有任何 `backup*` / `snapshot*` / `replica*` / `wal*` / `dump*` 表**（这个否命题与口径无关：
+处数在两种口径下都是 54，备份/快照/副本/转储实体都是 **0** 张）。
 新增的 `favorites`／`history`／`favorites_idempotency`／`history_idempotency` 是收藏与历史正文和本域幂等台账，
 `0018_favorites_history.sql:36` 自述「删除语义：两个域都是**物理删除**（无 `deleted_at` 软删）」——仍不是备份副本。
 `knowledge_staging`、`staging_intake` 是知识导入暂存域，与备份无关。
@@ -458,7 +489,7 @@ node tools/verify-contract-status.mjs
 | --- | --- | --- | --- |
 | 迁移范围 | 0001–0017（17 个文件） | **0001–0018（18 个文件）** | 上游 #272 新增 `0018_favorites_history.sql` |
 | `CREATE TABLE` 处数 | 50 | **54** | 同上，新增 4 处 |
-| 去重表数 | 48 | **52** | 新增 `favorites`、`favorites_idempotency`、`history`、`history_idempotency` |
+| 去重表数（按 `schema.table` 限定名） | 50 | **54** | 新增 `favorites`、`favorites_idempotency`、`history`、`history_idempotency` 4 张；本行原记 48／52 是「schema 名被当表名」的口径错（R28 订正，见 §2.1） |
 | 其中 `backup*`／`snapshot*`／`replica*`／`wal*`／`dump*` 表 | 0 | **0** | 新增 4 表是收藏/历史正文与幂等台账，无备份语义 |
 | `backup_` 命中 | 14 行（全状态列） | **14 行（全状态列）** | 0003 8 行 + 0016 6 行，`0018` 无 `backup` 字样 |
 | 软删 grep（`deleted_at/is_deleted/purged/deleted_by/soft_delete`） | 0 行 | **1 行（注释，不是列）** | `0018_favorites_history.sql:36` 自述「物理删除、无 `deleted_at` 软删」 |
