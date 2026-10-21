@@ -23,6 +23,18 @@
 
   <view class="result-count">共 {{total}} 条</view>
 
+  <!-- 空内容态（#28）：检索 0 命中或该栏无条目时，不只留一句「共 0 条」——
+       要说明**为什么空**（检索只在除草剂名录里匹配药名／别称、不合并不同记录）
+       与**下一步做什么**（清空检索词看全部／回除草剂名录），且不补写任何条目。 -->
+  <state-view
+    wx:if="{{gatePassed && !list.length}}"
+    status="empty"
+    title="{{emptyTitle}}"
+    desc="{{emptyDesc}}"
+    action-text="{{keyword ? '清空检索词看全部' : '回除草剂名录'}}"
+    bind:action="emptyAction"
+  ></state-view>
+
   <!-- 除草剂 -->
   <block wx:if="{{tab === 'herbicides'}}">
     <view class="card item" wx:for="{{list}}" wx:key="seed_id" bindtap="goSeedDetail" data-id="{{item.seed_id}}">
