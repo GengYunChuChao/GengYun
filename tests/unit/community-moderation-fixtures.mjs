@@ -25,6 +25,7 @@ import { createCommunityService } from '../../services/api/src/community/service
 import { createModerationService } from '../../services/api/src/moderation/service.ts';
 import { CLEAN_BODY, CLEAN_TITLE, FROZEN_CLOCK, USER_A, USER_B, idem, makeGate, makeIdFactory } from './community-fixtures.mjs';
 import { RULE_BUDGET_MS, blockVerdict, makePort, passVerdict } from '../moderation/_model-fixtures.mjs';
+import { createPublicPostingConsent } from './community-posting-consent-fixtures.mjs';
 
 export { CLEAN_BODY, CLEAN_TITLE, USER_A, USER_B, idem, makeGate };
 
@@ -222,10 +223,14 @@ export function makeHarness(options = {}) {
     typeof options.wireModeration === 'function' ? options.wireModeration({ store, authors, executionMode }) : null;
   const injectedService = wired?.service ?? options.service;
   const communityModeration = wired?.communityModeration ?? options.communityModeration;
+  // GY-R28 W10：投稿面的 `public_posting` 用途闸（合成授权账本，见夹具文件头）。
+  // 本夹具的既有断言口径不变：`session()` 里先补齐授权，请求走「有授权 ⇒ 放行」的真实链路。
+  const publicPosting = options.publicPosting ?? createPublicPostingConsent();
   const app = buildApp({
     config,
     store: auth,
     now: () => new Date(time),
+    privacyInjection: { consent: publicPosting.gate },
     communityInjection: {
       store,
       authors,
@@ -246,6 +251,7 @@ export function makeHarness(options = {}) {
     auth,
     store,
     messages,
+    publicPosting,
     service: app.communityService,
     moderation: app.moderationService,
     link: app.communityModerationLink,
@@ -267,6 +273,8 @@ export function makeHarness(options = {}) {
         expiresAt: new Date(START + 48 * 3600_000),
         audience: 'user',
       });
+      // 投稿面授权：`grant` 走真实实现（写授权记录 + 置 granted epoch）。
+      await publicPosting.grant(created.id);
       return { userId: created.id, token, actor: { userId: created.id, role: 'user', authEpoch: created.authEpoch } };
     },
     async adminSession(scopes = ['sources:write', 'audit:read']) {
