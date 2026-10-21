@@ -399,3 +399,119 @@ test('未读角标：>99 显示 99+；取不到时不显示数字（不显示 0�
   await flush();
   assert.equal(bar.data.unreadText, '', '取不到未读数时不显示任何数字');
 });
+
+// ---------------------------------------------------------------------------
+// GY-I15（#15）消息域链路补口：403 不与 guest 折叠、失效游标重载、
+// 未读数并发只采信最后一次、版本冲突后重新同步。全部复用真实页面 / 真实适配层 / 真实状态层。
+// ---------------------------------------------------------------------------
+test('未读角标（Tab 自读）：并发刷新只采纳最后一次发出的结果，旧读数不得覆盖新读数', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const bar = h.component('custom-tab-bar/index.js');
+  bar.pageLifetimes.show.call(bar);
+  const first = h.requests.at(-1);
+  bar.pageLifetimes.show.call(bar);
+  const second = h.requests.at(-1);
+  assert.notEqual(first, second, '两次刷新必须是两个独立请求');
+  second.success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  first.success({ statusCode: 200, data: messageEnvelope({ count: 4 }) });
+  await flush();
+  assert.equal(bar.data.unreadText, '', '晚到的旧读数不得把角标改回 4');
+});
+
+test('消息页：列表 403 SCOPE_DENIED ⇒ 不清会话、落 denied 态（不与 guest 折叠）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  assert.equal(page.data.guest, false);
+  h.requests[1].success({ statusCode: 403, data: messageError('SCOPE_DENIED') });
+  h.requests[2].success({ statusCode: 403, data: messageError('SCOPE_DENIED') });
+  await flush();
+  assert.equal(h.auth.isLoggedIn(), true, '403 是「登录了但不给」，不得清会话');
+  assert.deepEqual(h.launches, [], '403 不得把用户踢去登录页（否则反复登录也过不去）');
+  assert.equal(page.data.guest, false, '403 不是游客态');
+  assert.equal(page.data.status, 'error');
+  assert.equal(page.data.errorCode, 'SCOPE_DENIED', '真实 403 码必须透传到 state-view');
+  assert.match(page.data.stateDesc, /无权/);
+  assert.doesNotMatch(page.data.stateDesc, /登录状态已失效/, '不得把 403 说成登录失效');
+  assert.equal(bar.data.unreadText, '', '403 下未读数不显示任何数字');
+  // B7 端到端：把页面真实交给 state-view 组件（真实组件、真实 states 分类）。
+  const view = h.component('components/state-view/state-view.js');
+  view.setData({
+    status: page.data.status, title: page.data.stateTitle, desc: page.data.stateDesc,
+    actionText: '重新读取', errorCode: page.data.errorCode,
+  });
+  view.refresh();
+  assert.equal(view.data.effectiveStatus, 'denied', '页面按 error 传入、码是 403 时必须呈现 denied');
+  assert.equal(view.data.actionSuppressed, true, 'denied 不提供重试（重试对 403 无效）');
+  assert.equal(view.data.retryable, false);
+  assert.equal(view.data.kindTag, '没有权限');
+});
+
+test('消息页：加载更多遇 INVALID_CURSOR ⇒ 清掉死游标并从第一页重载', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: 'cursor-1' }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 1 }) });
+  await flush();
+  assert.equal(page.data.nextCursor, 'cursor-1');
+  page.onLoadMore();
+  const more = h.requests.at(-1);
+  assert.equal(pathOf(more), '/messages?cursor=cursor-1');
+  more.success({ statusCode: 400, data: messageError('INVALID_CURSOR') });
+  await flush();
+  assert.equal(page.data.nextCursor, null, '失效游标必须被清掉，不能留着让人反复点');
+  assert.equal(pathOf(h.requests.at(-1)), '/messages', '失效后必须重新从第一页载入');
+  h.requests.at(-1).success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  await flush();
+  assert.equal(page.data.status, 'ready');
+  assert.equal(page.data.loadingMore, false);
+  assert.ok(h.toasts.some((title) => /已重新载入/.test(title)), '如实告知列表已重新载入');
+});
+
+test('消息页：并发读取未读数只采纳最后一次发出的结果（旧读数不得覆盖新读数）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  const firstUnread = h.requests[2];
+  page.refreshUnread();
+  const secondUnread = h.requests.at(-1);
+  assert.notEqual(firstUnread, secondUnread, '两次刷新必须是两个独立请求');
+  // 后发的先到：0 条（已读），先发的后到：7 条（过期读数）。
+  secondUnread.success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  firstUnread.success({ statusCode: 200, data: messageEnvelope({ count: 7 }) });
+  await flush();
+  assert.equal(bar.data.unreadText, '', '晚到的旧读数不得把角标改回 7');
+  assert.equal(page.data.unreadNote, '暂无未读');
+});
+
+test('消息页：标记已读 409 REVISION_CONFLICT ⇒ 重新读取列表，拿当前 revision 再试', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 1 }) });
+  await flush();
+  page.onMarkRead({ currentTarget: { dataset: { id: MESSAGE, revision: 1 } } });
+  const mark = h.requests.at(-1);
+  assert.equal(mark.header['If-Match'], '"1"');
+  mark.success({ statusCode: 409, data: messageError('REVISION_CONFLICT') });
+  await flush();
+  assert.deepEqual(h.requests.slice(-2).map(pathOf), ['/messages', '/messages/unread-count'],
+    '版本冲突后必须重新读取列表与派生未读数，不能停在旧版本号上');
+  h.requests.slice(-2)[0].success({ statusCode: 200, data: messageEnvelope({ items: [message({ revision: 5 })], next_cursor: null }) });
+  h.requests.slice(-1)[0].success({ statusCode: 200, data: messageEnvelope({ count: 1 }) });
+  await flush();
+  assert.equal(page.data.items[0].revision, 5, '重新读取后本地拿到当前 revision');
+  page.onMarkRead({ currentTarget: { dataset: { id: MESSAGE, revision: page.data.items[0].revision } } });
+  assert.equal(h.requests.at(-1).header['If-Match'], '"5"', '下一次标记必须带当前 revision，而不是旧的 1');
+});
+

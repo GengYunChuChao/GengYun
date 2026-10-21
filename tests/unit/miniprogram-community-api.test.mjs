@@ -7,7 +7,9 @@
  *   - 请求方法/路径/查询串/头部（`Idempotency-Key`、`If-Match: "<revision>"`）；
  *   - 成功封套只认 200/201，实体形状/闭集不符即 `INVALID_RESPONSE`（不"尽力解析"）；
  *   - 错误封套按契约错误码抛出，并保留规则层原因码（供页面如实展示"未通过审核"）；
- *   - 401/403 清本地会话并报 `SESSION_REQUIRED`；非本会话世代的迟到响应被丢弃。
+ *   - 401/403 清本地会话并报 `SESSION_REQUIRED`（**社区**适配层口径）；**消息**适配层只对 401 如此，
+ *     403 保留会话并按契约码走 denied（见本文件「消息：…401 清会话、403 不折叠成未登录」那条）；
+ *     非本会话世代的迟到响应被丢弃。
  *
  * 末节追加**页面口径**回归（切片 B2-1，Refs #15／#14）：把**真实**投稿页接到同一个真实适配层
  * 与合成 `wx` 上，核对 201 之后的提示只按服务端返回的 `visibility`/`audit_state` 如实给出，
@@ -406,7 +408,7 @@ test('消息：未读数是派生量 ⇒ 只转发服务端值（本地不递减
   assert.equal(h.api.unreadText(150), '99+');
 });
 
-test('消息：real 未接线 503 如实上报（绝不折叠成空列表），401/403 清会话，网络失败按 NETWORK_UNCERTAIN', async () => {
+test('消息：real 未接线 503 如实上报（绝不折叠成空列表）；401 清会话、403 不折叠成「未登录」；网络失败按 NETWORK_UNCERTAIN', async () => {
   const down = loadMessages(() => ({ statusCode: 503, data: errorEnvelope('PROVIDER_UNAVAILABLE') }));
   const listError = await rejects(down.api.listMessages({}));
   assert.equal(listError.code, 'PROVIDER_UNAVAILABLE');
@@ -419,10 +421,16 @@ test('消息：real 未接线 503 如实上报（绝不折叠成空列表），4
   const unauthorized = loadMessages(() => ({ statusCode: 401, data: errorEnvelope('SESSION_REQUIRED') }));
   assert.equal((await rejects(unauthorized.api.listMessages({}))).code, 'SESSION_REQUIRED');
   assert.equal(unauthorized.cleared.count, 1, '401 必须清理本地会话，避免缓存被当成登录态');
+  // 403 **不得**折叠成「请重新登录」（B7 口径：`utils/states.js` 明确要求 denied 与 guest 分开）。
+  // 会话还在、只是这件事不给 ⇒ 不清会话 + 透出契约真实码；折叠会让用户反复登录仍过不去，
+  // 也会让 `MESSAGES.SCOPE_DENIED` 成为永不执行的死字符串。
   const forbidden = loadMessages(() => ({ statusCode: 403, data: errorEnvelope('SCOPE_DENIED') }));
-  assert.equal((await rejects(forbidden.api.getUnreadCount())).code, 'SESSION_REQUIRED');
-  assert.equal(forbidden.cleared.count, 1);
+  assert.equal((await rejects(forbidden.api.getUnreadCount())).code, 'SCOPE_DENIED',
+    '403 必须原样透出契约码，不得折叠成 SESSION_REQUIRED');
+  assert.equal(forbidden.cleared.count, 0, '403 不得清理本地会话（「登录了但不给」不是「没登录」）');
   assert.match(forbidden.api.message({ code: 'SCOPE_DENIED' }), /无权/, 'SCOPE_DENIED 文案沿用既有口径');
+  assert.doesNotMatch(forbidden.api.message({ code: 'SCOPE_DENIED' }), /登录状态已失效/,
+    '403 不得被说成「登录已失效」');
 
   const offline = loadMessages(() => ({ fail: true }));
   assert.equal((await rejects(offline.api.listMessages({}))).code, 'NETWORK_UNCERTAIN');

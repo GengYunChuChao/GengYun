@@ -5,7 +5,10 @@
 // 2. 只消费契约已声明的 **3 条 operation**（`listMessages` / `getUnreadCount` / `markMessageRead`），
 //    封套、实体形状、闭集、头部逐项核对，不符即 INVALID_RESPONSE（不"尽力解析"）；
 // 3. 身份只来自服务端签发的会话令牌；客户端**不**声明 owner_id／读状态／版本；
-// 4. 写路径按契约带 `Idempotency-Key`，并带 `If-Match: "<revision>"`（消息当前强 ETag）。
+// 4. 写路径按契约带 `Idempotency-Key`，并带 `If-Match: "<revision>"`（消息当前强 ETag）；
+//    同一 `(id, revision)` 的**重试**复用同一个键（见 `retryKeyFor`），成功后释放；
+// 5. **401 与 403 分开**（B7）：401 ⇒ 清会话 + `SESSION_REQUIRED`；403 ⇒ 不清会话，
+//    透出 `SCOPE_DENIED`／`CONSENT_REQUIRED`／`ACCOUNT_INACTIVE`，由 `utils/states.js` 归到 denied。
 //
 // 契约事实（逐字段核对 `packages/contracts/openapi.json`，与 `services/api/src/messages/types.ts` 同口径）：
 //   - `Message` 的键**恰为 7 项**：`id`/`revision`/`type`/`target_ref`/`reference_state`/`read_at`/`created_at`；
@@ -120,7 +123,13 @@ function send(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (response) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (response.statusCode === 401 || response.statusCode === 403) {
+        // 401 与 403 **不得**折叠成同一个结果（B7 口径：`utils/states.js`「denied 与 guest 必须分开」）：
+        //   - 401 ⇒ 会话本身没了 ⇒ 清本地会话 + `SESSION_REQUIRED`（页面走 guest「请先登录」）；
+        //   - 403 ⇒ 会话还在，只是这件事不给 ⇒ **不清会话**，按错误封套透出真实码
+        //     （`SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`）⇒ 页面走 denied「没有权限」。
+        // 折叠成 `SESSION_REQUIRED` 的后果有三条，都是真实缺陷：①用户被反复踢去登录却始终过不去；
+        // ②本模块 `MESSAGES.SCOPE_DENIED` 成为**永不执行**的死字符串；③B7 的 denied 分支永远不可达。
+        if (response.statusCode === 401) {
           auth.clearSession()
           reject(failure('SESSION_REQUIRED'))
           return
@@ -133,6 +142,8 @@ function send(method, path, options) {
             resolve({ data: body.data, mode: meta.execution_mode, status: response.statusCode })
             return
           }
+          // 403 带成功封套（形状异常）：仍按 403 语义取保守值，不退化成「未登录」。
+          if (response.statusCode === 403) { reject(failure('SCOPE_DENIED')); return }
           reject(failure('UNEXPECTED_STATUS'))
         } catch (parseError) {
           // 错误封套：{ error: { code, message, retryable, details }, meta }
@@ -149,6 +160,9 @@ function send(method, path, options) {
               .map(function (d) { return d.code })
             reject(failure(body.error.code, codes))
           } catch (ignored) {
+            // 403 但错误封套不可解析：仍按 403 语义兜底（`SCOPE_DENIED`），
+            // **不得**退回 `SESSION_REQUIRED` —— 那是在对用户谎称「你没登录」。
+            if (response.statusCode === 403) { reject(failure('SCOPE_DENIED')); return }
             reject(parseError && parseError.code ? parseError : failure('INVALID_RESPONSE'))
           }
         }
@@ -163,6 +177,45 @@ function send(method, path, options) {
 /** 幂等键（契约要求 8..128 字符）。 */
 function newIdempotencyKey() {
   return 'gyc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+}
+
+/**
+ * 同一 `(id, revision)` 的**重试**必须复用同一个幂等键。
+ *
+ * 为什么：`PUT /messages/{id}/read` 的幂等语义由 `Idempotency-Key` + 请求摘要（摘要含 `If-Match`）
+ * 共同决定（`services/api/src/messages/service.ts` 的 `withIdempotency`）。若每次调用都换新键：
+ * 首发其实已落库、只是响应丢了（`NETWORK_UNCERTAIN`），重试带着**旧的** `If-Match` 再打一次
+ * ⇒ 服务端 `revision` 已 +1 ⇒ 409 `REVISION_CONFLICT`。用户看到「消息状态已更新」，
+ * 而事实是**这条已经标记成功**了。复用同键则走重放分支，重新读当前记录并重新鉴权，不产生第二次写入。
+ *
+ * 边界：只在**同一次成功之前**复用；成功即释放（下次仍是新键）；窗口 5 分钟
+ * （与 `service.ts` 的 `IDEMPOTENCY_TTL_MS` 同量级），表容量上界 32 条，超界丢最旧。
+ */
+const RETRY_KEY_LIMIT = 32
+const RETRY_KEY_TTL_MS = 5 * 60 * 1000
+const retryKeys = []
+
+function pruneRetryKeys(now) {
+  while (retryKeys.length &&
+    (retryKeys.length >= RETRY_KEY_LIMIT || now - retryKeys[0].at > RETRY_KEY_TTL_MS)) {
+    retryKeys.shift()
+  }
+}
+
+function retryKeyFor(id, revision) {
+  const now = Date.now()
+  pruneRetryKeys(now)
+  const match = retryKeys.filter(function (entry) { return entry.id === id && entry.revision === revision })[0]
+  if (match) return match.key
+  const entry = { id: id, revision: revision, at: now, key: newIdempotencyKey() }
+  retryKeys.push(entry)
+  return entry.key
+}
+
+function forgetRetryKey(id, revision) {
+  for (let i = retryKeys.length - 1; i >= 0; i -= 1) {
+    if (retryKeys[i].id === id && retryKeys[i].revision === revision) retryKeys.splice(i, 1)
+  }
 }
 
 /** `GET /messages`（契约只有 `cursor`/`limit` 两个查询参数，没有筛选）。 */
@@ -187,9 +240,14 @@ function getUnreadCount() {
 /** `PUT /messages/{id}/read`：幂等且单调；`If-Match` 必须是**当前** revision。 */
 function markMessageRead(id, revision) {
   if (!uuid(id) || !Number.isSafeInteger(revision) || revision < 1) return Promise.reject(failure('INVALID_INPUT'))
+  const key = retryKeyFor(id, revision)
   return send('PUT', '/messages/' + encodeURIComponent(id) + '/read', {
-    idempotencyKey: newIdempotencyKey(), ifMatch: revision
-  }).then(function (r) { return { message: validMessage(r.data), mode: r.mode } })
+    idempotencyKey: key, ifMatch: revision
+  }).then(function (r) {
+    // 成功即释放：资源版本已推进，下一次标记是**另一件事**（另一个 revision），必须是新键。
+    forgetRetryKey(id, revision)
+    return { message: validMessage(r.data), mode: r.mode }
+  })
 }
 
 /** 角标文案：0 不显示；>99 显示 `99+`（避免角标撑破底部导航）。 */
@@ -228,7 +286,10 @@ const MESSAGES = {
   REQUEST_IN_PROGRESS: '同一次标记仍在处理，请稍后重试。',
   INVALID_CURSOR: '列表已过期，请重新进入消息页。',
   PROVIDER_UNAVAILABLE: '消息服务暂不可用（服务端未接线真实消息存储），本页不会用本地数据顶替。',
-  SCOPE_DENIED: '当前会话无权访问消息。',
+  // 403 三码（契约 `ERROR_STATUS_MAP[403]`）：登录了但这件事不给 ⇒ denied 语气，不催人重新登录。
+  SCOPE_DENIED: '当前账号无权访问消息。',
+  CONSENT_REQUIRED: '当前账号还没有开通这项用途的授权，无法读取消息。',
+  ACCOUNT_INACTIVE: '账号当前不可用（可能已申请注销或已被停用），无法读取消息。',
   INVALID_RESPONSE: '服务端响应无法核对，已清空，请重试。',
   UNEXPECTED_STATUS: '服务端返回了未预期的状态，已清空，请重试。'
 }
