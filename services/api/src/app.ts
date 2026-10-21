@@ -61,7 +61,8 @@ import { createRecognitionProvider, type RecognitionProvider } from './recogniti
 import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
-import { createCheckedContentPort, type CheckedContentPort, type SubstituteCheckedContentEntry } from './tts/content.ts';
+import { createCheckedContentPortFromConfig } from './ai/checked-content-live-adapter.ts';
+import type { CheckedContentPort, SubstituteCheckedContentEntry } from './tts/content.ts';
 import { createSynthesisMediaPort, type SynthesisMediaPort } from './tts/media.ts';
 import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
@@ -967,14 +968,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   });
 
   // GY-I13 合成域：real 走 fail-closed 提供者（缺凭据受理前 503，绝不回退替身）；产物存储与
-  // 「已核对内容」读取端口同样按执行模式解析（real 未接线 ⇒ 受理前拒绝）。
-  // **应用装配路径永不注入真实适配器端口**：真实发送只能经 `createLiveTtsProvider(ports)` 触达，
-  // 而本文件不 import 它（零端口注入）。
+  // 「已核对内容」读取端口同样按执行模式解析。**R28-W3 起**核对端口的 real 分支已接真实现：
+  // `createCheckedContentPortFromConfig({executionMode, entries, pool})` —— 非 real 走替身（不变）、
+  // real 且无连接池（未配 `DATABASE_URL`）走**未接线**端口（与接线前逐字一致、仍 fail-closed）、
+  // real 且有池才走 PostgreSQL 只读核对源（实现 `services/api/src/ai/checked-content-live-adapter.ts`）。
+  // **应用装配路径永不注入真实发送端口**：真实发送只能经 `createLiveTtsProvider(ports)` 触达，
+  // 而本文件不 import 它（零端口注入）。本文件新增的 import 是**只读核对源**，不对外发包。
   //
   // 缩片（GY-I13 「合成 → 播放」·受理链路打通）：替身模式带上**明确标注的替身核对条目**
   // （`SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，见其定义处的边界说明），使客户端替身样本能走完
-  // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 由 `createCheckedContentPort` 自行忽略该实参
-  // （仍返回未接线端口）⇒ real 语义逐字未变；服务层判定与拒绝码亦未改。
+  // 「受理 202 → `GET /jobs/{id}` 读面」。`real` 分支**忽略**该实参（替身条目永不进 real）；
+  // 服务层判定与拒绝码未改。
   // GY-I27（#29）·合成域外发账本接线（与识别/转写/OCR 三域同形）：
   // real 模式且账本可用时，用**出站包装器**接管 `synthesize` 的派发顺序
   // （无预留 ⇒ `OBJECT_UNAVAILABLE`；`markSent` 是唯一权威授权边界）。
@@ -982,7 +986,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 存进 0014 新增的 `exports.object_key` 列 ⇒ 不需要把非 uuid 标识硬塞进 uuid 列。
   // 账本/在途守卫未装配（未配置数据库或连接池不可用）⇒ 返回 `undefined` ⇒ 路由与包装逐字不变。
   const synthesisContentResolved =
-    synthesisContent ?? createCheckedContentPort(config.executionMode, SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT);
+    synthesisContent ?? createCheckedContentPortFromConfig({ executionMode: config.executionMode, entries: SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT, pool });
   const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode });
   const synthesisEgress: SynthesisEgress | undefined =
     egressLedger === null || privacyInFlight === null
