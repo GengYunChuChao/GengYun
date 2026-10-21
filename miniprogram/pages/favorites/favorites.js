@@ -32,6 +32,8 @@ Page({
     mode: '',
     message: '',
     errorText: '',
+    /** 最近一次读取失败的契约错误码（交给 `components/state-view` 的 errorCode 决定 401/403/404 语气）。 */
+    errorCode: '',
     loading: false,
     items: [],
     total: 0,
@@ -51,7 +53,7 @@ Page({
     // 门禁未通过前清空一切结果，避免残留上一个会话的收藏。
     self.setData({
       gatePassed: false, checking: true, items: [], total: 0, nextCursor: null,
-      targets: [], targetNote: '', targetError: '', errorText: '', message: ''
+      targets: [], targetNote: '', targetError: '', errorText: '', errorCode: '', message: ''
     })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
@@ -69,7 +71,7 @@ Page({
 
   loadFavorites: function (cursor) {
     const self = this
-    self.setData({ busy: true, errorText: '' })
+    self.setData({ busy: true, errorText: '', errorCode: '' })
     favoritesApi.listFavorites(cursor || '', PAGE_SIZE).then(function (result) {
       const items = cursor ? self.data.items.concat(result.items.map(self.presentFavorite, self)) : result.items.map(self.presentFavorite, self)
       self.setData({
@@ -79,8 +81,12 @@ Page({
       })
       self.reconcileTargets()
     }).catch(function (error) {
-      // 失败时不保留旧列表（避免"看起来还在"）。
-      self.setData({ busy: false, loading: false, items: [], total: 0, nextCursor: null, errorText: favoritesApi.messageFor(error) })
+      // 失败时不保留旧列表（避免"看起来还在"）。错误码原样带出，401/403/404 由状态组件分别呈现，
+      // 不把"没有权限"或"服务不可用"折叠成空列表或"请重新登录"。
+      self.setData({
+        busy: false, loading: false, items: [], total: 0, nextCursor: null,
+        errorText: favoritesApi.messageFor(error), errorCode: (error && error.code) || ''
+      })
     })
   },
 
@@ -173,7 +179,10 @@ Page({
       // 取消后重新读取（不走本地删除，确保列表与服务端一致）。
       self.loadFavorites()
     }).catch(function (error) {
+      // 已被别人删掉 / 版本已变时不猜结果：如实报错，并回到服务端重读（不本地删除，也不假装成功）。
       self.setData({ busy: false, message: favoritesApi.messageFor(error) })
+      const code = error && error.code
+      if (code === 'NOT_FOUND' || code === 'REVISION_CONFLICT') self.loadFavorites()
     })
   },
 

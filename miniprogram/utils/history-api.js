@@ -148,6 +148,26 @@ function validateOcr(value) {
 
 // ---- 通用请求 ---------------------------------------------------------------
 
+// 401/403 分流：口径照抄 `miniprogram/utils/identify-api.js#forbiddenOrSessionLoss`，
+// 全站不造第二套错误语义（与 `miniprogram/utils/favorites-api.js` 的同名函数逐句对齐）。
+//   401 ⇒ 会话本身失效：清会话，报 SESSION_REQUIRED；
+//   403 + 契约 403 码（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE）⇒ 会话有效但无权：
+//     原样带出该码，**不**清会话（`states.js` 的 denied 与 guest 必须分开渲染）。
+//   403 但无错误体、或码不在契约 403 集合内 ⇒ 仍按会话失效处理（保守）。
+const FORBIDDEN_CODES = ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']
+function errorCodeOf(payload) {
+  return object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
+}
+function forbiddenOrSessionLoss(statusCode, payload) {
+  const code = errorCodeOf(payload)
+  const surface = statusCode === 403 && code !== null && FORBIDDEN_CODES.indexOf(code) !== -1 ? code : 'SESSION_REQUIRED'
+  if (surface === 'SESSION_REQUIRED') auth.clearSession()
+  const e = failure(surface)
+  e.status = statusCode
+  e.retryable = false
+  return e
+}
+
 function request(method, path, options) {
   const opts = options || {}
   const b = binding()
@@ -161,7 +181,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200) {
@@ -424,6 +444,8 @@ function messageFor(e) {
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
     SCOPE_DENIED: '当前会话无权读取该记录。',
+    CONSENT_REQUIRED: '缺少必要的授权同意，无法读取或删除识别历史。',
+    ACCOUNT_INACTIVE: '账号当前不可用（已停用或已注销），无法读取或删除识别历史。',
     PROVIDER_UNAVAILABLE: '历史服务当前不可用（真实持久存储未接入），不会用本地数据顶替。',
     INVALID_CURSOR: '翻页位置已失效，请重新读取第一页。',
     UNAVAILABLE: '历史服务暂不可用，已停止显示，请重试。'

@@ -77,6 +77,28 @@ function validateFavorite(value) {
   }
 }
 
+// 401/403 分流：口径照抄 `miniprogram/utils/identify-api.js#forbiddenOrSessionLoss`，
+// 全站不造第二套错误语义。
+//   401（SESSION_REQUIRED / SESSION_EXPIRED）⇒ 会话本身失效：清会话，报 SESSION_REQUIRED；
+//   403 + 契约 403 码（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE）⇒ 会话有效但无权：
+//     原样带出该码，**不**清会话。折叠成"请重新登录"会让用户反复登录仍不明白为什么不行
+//     （`miniprogram/utils/states.js`：denied 与 guest 必须分开）。页面把错误码交给
+//     `components/state-view` 的 `errorCode` 即可渲染成"没有权限"并压掉重试/去登录。
+//   403 但无错误体、或码不在契约 403 集合内 ⇒ 仍按会话失效处理（保守，不臆测语义）。
+const FORBIDDEN_CODES = ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']
+function errorCodeOf(payload) {
+  return object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
+}
+function forbiddenOrSessionLoss(statusCode, payload) {
+  const code = errorCodeOf(payload)
+  const surface = statusCode === 403 && code !== null && one(code, FORBIDDEN_CODES) ? code : 'SESSION_REQUIRED'
+  if (surface === 'SESSION_REQUIRED') auth.clearSession()
+  const e = failure(surface)
+  e.status = statusCode
+  e.retryable = false
+  return e
+}
+
 function request(method, path, options) {
   const opts = options || {}
   const b = binding()
@@ -90,7 +112,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200 || r.statusCode === 201) {
@@ -179,7 +201,9 @@ function messageFor(e) {
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
-    SCOPE_DENIED: '当前会话无权读取用户收藏。',
+    SCOPE_DENIED: '当前会话无权读写用户收藏（收藏只对用户会话开放）。',
+    CONSENT_REQUIRED: '缺少必要的授权同意，无法读取或修改收藏。',
+    ACCOUNT_INACTIVE: '账号当前不可用（已停用或已注销），无法读取或修改收藏。',
     PROVIDER_UNAVAILABLE: '收藏服务当前不可用（真实持久存储未接入），不会用本地数据顶替。',
     INVALID_CURSOR: '翻页位置已失效，请重新读取第一页。',
     UNAVAILABLE: '收藏服务暂不可用，已停止显示，请重试。'
