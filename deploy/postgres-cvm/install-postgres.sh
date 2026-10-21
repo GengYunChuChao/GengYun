@@ -231,6 +231,7 @@ read_secret_from_file() {
 OWNER_PASSWORD="${GENGYUN_DB_OWNER_PASSWORD:-}"
 if [[ -z "$OWNER_PASSWORD" ]]; then
   if [[ -r "$CRED_FILE" ]]; then
+    # best-effort: 读不到就留空；空口令由下面的 [[ -z ]] 分支处理（集群已存在则 warn 跳过 initdb，否则 fail），不会变成「用空口令初始化」。
     OWNER_PASSWORD="$(read_secret_from_file 'GENGYUN_DB_OWNER_PASSWORD' || true)"
   fi
 fi
@@ -286,6 +287,7 @@ fi
 if [[ "$PLAN_ONLY" -eq 0 && -d "$PGDATA_DIR" && ! -f "${PGDATA_DIR}/PG_VERSION" ]]; then
   _pgdata_entries="$(find "$PGDATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l || echo 0)"
   if [[ "${_pgdata_entries:-0}" -gt 0 ]]; then
+    # best-effort: 只用于打印「数据目录非空」预览；find 失败即空，不参与任何判定。
     _pgdata_preview="$(find "$PGDATA_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 5 || true)"
     _pgdata_ismount="$(df -P -- "$PGDATA_DIR" 2>/dev/null | tail -1 | awk '{print $6}')"
     if [[ "${GENGYUN_RESET_PGDATA:-0}" == '1' ]]; then
@@ -328,6 +330,7 @@ fi
 
 EXPECTED_LIST="deb [signed-by=${PGDG_KEY}] ${PGDG_REPO} ${VERSION_CODENAME:-$(. /etc/os-release; echo "$VERSION_CODENAME")}-pgdg main"
 readonly EXPECTED_LIST
+# best-effort: 读失败 ⇒ 视为「内容与期望不符」⇒ 重写 EXPECTED_LIST（本就该是的内容，幂等收敛），方向安全。
 if [[ ! -f "$PGDG_LIST" ]] || [[ "$(cat -- "$PGDG_LIST" 2>/dev/null || true)" != "$EXPECTED_LIST" ]]; then
   act "写入 ${PGDG_LIST}（源：${PGDG_REPO}，suite：${VERSION_CODENAME:-?}-pgdg）" \
     bash -c "printf '%s\n' \"\$1\" > \"\$2\"" _ "$EXPECTED_LIST" "$PGDG_LIST"
@@ -354,7 +357,7 @@ PKG_VERSION=''
 if command -v apt-cache >/dev/null 2>&1; then
   PKG_VERSION="$(apt-cache madison "postgresql-${PG_MAJOR}" 2>/dev/null \
     | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}' \
-    | grep -E "^${PG_MAJOR}\.${PG_MINOR}([.-]|$)" | head -1 || true)"
+    | grep -E "^${PG_MAJOR}\.${PG_MINOR}([.-]|$)" | head -1 || true)"  # best-effort: apt 探测失败即空 ⇒ 下面按「找不到 17.11 包」硬失败（绝不改装别的 minor）。
 fi
 if [[ -z "$PKG_VERSION" ]]; then
   if [[ "$PLAN_ONLY" -eq 1 ]]; then
@@ -422,6 +425,7 @@ fi
 # 6. 发行版自带集群与端口冲突：默认不破坏，冲突时明确失败
 # ---------------------------------------------------------------------------
 if command -v pg_lsclusters >/dev/null 2>&1; then
+  # best-effort: 探测失败即空 ⇒ 当作「没有发行版集群」；若它真占用 PGPORT，启动阶段仍会 bind 失败并硬失败（数据零破坏）。
   _default_cluster_line="$(pg_lsclusters -h 2>/dev/null | awk -v v="$PG_MAJOR" '$1==v && $2=="main"{print}' || true)"
   if [[ -n "$_default_cluster_line" ]]; then
     _default_data="$(printf '%s\n' "$_default_cluster_line" | awk '{print $6}')"
@@ -446,7 +450,7 @@ if command -v pg_lsclusters >/dev/null 2>&1; then
   fi
   # 该单元可能不存在（极简镜像/容器）：停用失败不应中断安装，故显式容忍。
   act "停用发行版集群启动单元 postgresql.service（若存在）" \
-    bash -c 'systemctl disable --now postgresql.service >/dev/null 2>&1 || true'
+    bash -c 'systemctl disable --now postgresql.service >/dev/null 2>&1 || true'  # best-effort: 单元可能不存在；停用失败不中断安装。
 fi
 
 # ---------------------------------------------------------------------------
@@ -477,9 +481,11 @@ else
     #   否则 initdb 只会报一句 `could not open file … Permission denied`（真机实测，evidence §8.1）。
     if ! runuser -u postgres -- test -r "$pwfile"; then
       _pwdir="$(dirname -- "$pwfile")"
+      # best-effort: namei 只是把逐级权限打进失败信息；取不到就写「namei 不可用」，不影响判定（本就是 fail 路径）。
+      _pwdir_namei="$(namei -l "$_pwdir" 2>/dev/null | sed 's/^/           /' || true)"
       fail "临时口令文件对 postgres 不可读：${pwfile}
          逐级权限（要求**每一级**都让 postgres 有 x 穿越位，文件本身 0600 postgres）：
-$(namei -l "$_pwdir" 2>/dev/null | sed 's/^/           /' || true)
+${_pwdir_namei:-（namei 不可用，见下方 stat 结果）}
          当前文件：$(stat -c '%a %U:%G' -- "$pwfile" 2>/dev/null || echo '（stat 失败）')
          当前目录：$(stat -c '%a %U:%G' -- "$_pwdir" 2>/dev/null || echo '（stat 失败）')"
     fi
@@ -601,6 +607,7 @@ fi
 # 11. 网络姿态自检：监听地址不得出现 0.0.0.0 / :: / *
 # ---------------------------------------------------------------------------
 if [[ "$PLAN_ONLY" -eq 0 ]]; then
+  # best-effort: ss 失败即空 ⇒ 下一行按「未看到监听记录」硬失败（不把空当通过）。
   listen_dump="$(ss -ltnH "sport = :${PGPORT}" 2>/dev/null || true)"
   if [[ -z "$listen_dump" ]]; then
     fail "未看到端口 ${PGPORT} 的监听记录（ss 输出为空），服务可能未真正启动。"
@@ -634,6 +641,7 @@ fi
 #   这同时保护"把输出接进管道"的调用者（管道里的 $? 是末位命令的，见 runbook §3 的取码说明）。
 # ---------------------------------------------------------------------------
 if [[ "$PLAN_ONLY" -eq 0 ]]; then
+  # best-effort: 读失败即空 ⇒ 下一行 [[ == 17 ]] 判失败（收尾硬校验，空档不可能通过）。
   _final_ver="$(cat -- "${PGDATA_DIR}/PG_VERSION" 2>/dev/null || true)"
   [[ "$_final_ver" == "$PG_MAJOR" ]] || fail \
     "收尾校验失败：${PGDATA_DIR}/PG_VERSION = '${_final_ver:-（缺失）}'，期望 '${PG_MAJOR}'。安装未完成。"
@@ -642,7 +650,7 @@ if [[ "$PLAN_ONLY" -eq 0 ]]; then
   runuser -u postgres -- "${PG_BIN}/pg_isready" -h /var/run/postgresql -q || fail \
     "收尾校验失败：pg_isready 不通（集群未就绪）。安装未完成。"
   _final_ping="$(runuser -u postgres -- "${PG_BIN}/psql" -h /var/run/postgresql -U "$DB_OWNER" \
-    -d "$DB_NAME" -tAc 'SELECT 1' 2>/dev/null || true)"
+    -d "$DB_NAME" -tAc 'SELECT 1' 2>/dev/null || true)"  # best-effort: 探活失败即空 ⇒ 下一行 [[ == 1 ]] 判失败。
   [[ "$_final_ping" == '1' ]] || fail \
     "收尾校验失败：业务库 ${DB_NAME} 不可查询（SELECT 1 未返回 1）。安装未完成。"
   log "收尾校验通过：PG_VERSION=${_final_ver}、${UNIT_NAME} active、pg_isready 通、业务库 ${DB_NAME} 可查询。"

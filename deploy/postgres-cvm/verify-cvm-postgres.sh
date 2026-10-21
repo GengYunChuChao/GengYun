@@ -113,7 +113,7 @@ as_runtime() { # 以运行时身份执行 SQL（SET ROLE，不需要口令）；
   #   ⇒ report_num 必然 FAIL。真机实测这两条就是这样 FAIL 的（evidence §10.1）。
   runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
     -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" -tA \
-    -c "SET ROLE ${RUNTIME_ROLE}; $1" 2>&1 || true
+    -c "SET ROLE ${RUNTIME_ROLE}; $1" 2>&1 || true  # best-effort: 保留 psql 的 stderr 供调用方判定——report_denied 只有见 42501 才 PASS、report_num_runtime 只有末行非负整数才 PASS，失败文本一律 FAIL。
 }
 
 # 【返修 11 · 缺陷 7】布尔值 → 't'/'f'。psql 的 -tA 对**布尔列**输出 t/f，
@@ -183,7 +183,7 @@ if tcp_open '127.0.0.1' "$PGPORT"; then lo_ok='yes'; else lo_ok='no'; fi
 report_eq 'loopback_tcp_open' 'yes' "$lo_ok"
 
 VPC_IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
-  | grep -E "^${VPC_PREFIX//./\\.}\." | sort -u | head -1 || true)"
+  | grep -E "^${VPC_PREFIX//./\\.}\." | sort -u | head -1 || true)"  # best-effort: 探测失败即空 ⇒ 下面 skip（exit 2），且 listen_addresses 的期望值变 127.0.0.1,? ⇒ 不可能 PASS。
 if [[ -n "$VPC_IP" ]]; then
   if tcp_open "$VPC_IP" "$PGPORT"; then vpc_ok='yes'; else vpc_ok='no'; fi
   report_eq "vpc_tcp_open(${VPC_IP})" 'yes' "$vpc_ok"
@@ -205,7 +205,17 @@ report_eq 'server_version' "${PG_MAJOR}.${PG_MINOR}" \
   "$(qs "SELECT substring(current_setting('server_version') from '^[0-9]+\.[0-9]+')")"
 report_eq 'listen_addresses' "127.0.0.1,${VPC_IP:-?}" "$(qs 'SHOW listen_addresses')"
 report_eq 'port' "$PGPORT" "$(qs 'SHOW port')"
-wild_count="$(ss -ltnH "sport = :${PGPORT}" 2>/dev/null | awk '{print $4}' | grep -cE '^(0\.0\.0\.0|\*|\[::\]):' || true)"
+# R28-S44（B 类返修）：原来 `ss … | grep -cE … || true` 在 ss/grep 失败时照样输出 "0"
+#   ⇒ no_wildcard_listener 会把「没测成」判成 PASS（假绿）。改为先取 ss 退出码：
+#   失败显式写成 ss-failed(rc=N)，report_eq 因此判 FAIL —— 绝不把失败降级成 0。
+wild_count=''
+_listen_rc=0
+_listen_raw="$(ss -ltnH "sport = :${PGPORT}" 2>/dev/null)" || _listen_rc=$?
+if [[ "$_listen_rc" -eq 0 ]]; then
+  wild_count="$(printf '%s\n' "$_listen_raw" | awk '$4 ~ /^(0\.0\.0\.0|\*|\[::\]):/ {n++} END {print n+0}')"
+else
+  wild_count="ss-failed(rc=${_listen_rc})"
+fi
 report_eq 'no_wildcard_listener' '0' "$wild_count"
 
 # ---------------------------------------------------------------------------
@@ -305,7 +315,7 @@ if [[ -n "$RUNTIME_PW_ENV" ]]; then
   else
     login_out="$(PGPASSWORD="$pw" timeout 8 "${PG_BIN}/psql" -X -q -tA \
       -h "$VPC_IP" -p "$PGPORT" -U "$RUNTIME_ROLE" -d "$DB_NAME" \
-      -c 'SELECT current_user' 2>&1 | tr -d '\r' | tail -n1 || true)"
+      -c 'SELECT current_user' 2>&1 | tr -d '\r' | tail -n1 || true)"  # best-effort: 登录失败即错误文本/空 ⇒ 与角色名精确比较不等 ⇒ FAIL。
     report_eq 'runtime_tcp_login' "$RUNTIME_ROLE" "$login_out"
   fi
 else
@@ -323,8 +333,14 @@ disk_joined="$(printf '%s\n' "${file_versions[@]}" | paste -sd, -)"
 # 存在性安全：目标 CVM 上台账是本项判据的权威载体；台账缺失时给出可读的“实际值”，
 # 而不是把 psql 的 relation does not exist 原文当成判据结果。
 if [[ "$(qs "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" == 't' ]]; then
-  applied_joined="$(qs "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations" || true)"
-  checksum_nulls="$(qs 'SELECT count(*) FROM schema_migrations WHERE checksum IS NULL' || true)"
+  # R28-S44（B 类返修）：查询失败不能落成空串 —— 空串与「0 个已应用迁移 / 0 个 checksum IS NULL」
+  #   在报告里不可分。失败显式写 query-failed(rc=N)：report_eq 判 FAIL，实际值也直接说明是查询失败而非空集。
+  _applied_rc=0
+  applied_joined="$(qs "SELECT COALESCE(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations")" || _applied_rc=$?
+  [[ "$_applied_rc" -eq 0 ]] || applied_joined="query-failed(rc=${_applied_rc})"
+  _nulls_rc=0
+  checksum_nulls="$(qs 'SELECT count(*) FROM schema_migrations WHERE checksum IS NULL')" || _nulls_rc=$?
+  [[ "$_nulls_rc" -eq 0 ]] || checksum_nulls="query-failed(rc=${_nulls_rc})"
 else
   applied_joined='schema_migrations-missing'
   checksum_nulls='schema_migrations-missing'
@@ -349,7 +365,7 @@ report_num 'readonly_read(catalog_read.home_species)' "$(qs 'SELECT count(*) FRO
 newest_dump=''
 if [[ -d "$BACKUP_DIR" ]]; then
   newest_dump="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'gengyun-*.dump' -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr | awk 'NR==1{print $2}')" || true
+    | sort -nr | awk 'NR==1{print $2}')" || true  # best-effort: 枚举失败即空 ⇒ backup_artifact 记 skip（退出码 2），不当「有备份」也不当 PASS。
 fi
 if [[ -n "$newest_dump" ]]; then
   report_eq 'backup_artifact' 'exists' 'exists'
@@ -375,6 +391,7 @@ fi
 DATA_SRC=''; DATA_MNT=''
 _pgdata_parent="$(dirname -- "$PGDATA_DIR")"
 if [[ -d "$_pgdata_parent" ]]; then
+  # best-effort: df 失败即空 ⇒ 下面 _fail pgdata_separate_filesystem（把「父级不存在/df 不可用」判失败，不当通过）。
   read -r DATA_SRC DATA_MNT <<<"$(df -P -- "$_pgdata_parent" 2>/dev/null | tail -1 | awk '{print $1, $6}')" || true
 fi
 if [[ -f "${PGDATA_DIR}/PG_VERSION" ]]; then pv='yes'; else pv='no'; fi
