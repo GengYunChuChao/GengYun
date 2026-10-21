@@ -245,4 +245,4 @@
 > `auth.clearSession()` 并把错误码改写成 `SESSION_REQUIRED`，于是统一状态层**根本收不到** 403 码。
 > 该传输层缺口已由 `docs/verification/gy-i04-login-chain-20261021.md`
 > （`auth.attribution` / `auth.failureFor` 作为单一事实源，`SESSION_LOSS_CODES` 与 `FORBIDDEN_CODES`
-> 均由本文件的 `CODE_KIND` 反推）补齐并加测试。本页历史结论保留，不改写当时读数。
+> 均由 `miniprogram/utils/states.js` 的 `CODE_KIND` 反推，见 `miniprogram/utils/auth.js:61-67`）补齐并加测试。本页历史结论保留，不改写当时读数。
