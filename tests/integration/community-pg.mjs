@@ -27,6 +27,10 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
+// GY-R28 W10：投稿面 `public_posting` 闸的合成授权账本（与单元夹具同一份，避免两套口径）。
+// 说明：本脚本验证的是**社区内容真落库**，不是 PG 授权读取口（那条由 `consent-pg` 的既有脚本覆盖）；
+// 因此这里注入内存授权闸并先 `grant`，让「有授权 ⇒ 放行」这条链路照旧真落库。
+import { createPublicPostingConsent } from '../unit/community-posting-consent-fixtures.mjs';
 
 const ENV = 'COMMUNITY_PG_TEST_URL';
 const rawUrl = process.env[ENV];
@@ -478,6 +482,9 @@ async function main() {
       return { user, token };
     };
     const a = await account('p');
+    // 投稿面授权（真实 `grant`：写授权记录 + 置 granted epoch）。
+    const publicPosting = createPublicPostingConsent();
+    await publicPosting.grant(a.user.id);
     const baseConfig = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' });
     // stub 配置 + **真 pool**：`buildApp` 不给 `communityInjection.store`，
     // 因此装配层选中的就是 `createPostgresCommunityStore`。写作路径的放行门是
@@ -487,6 +494,7 @@ async function main() {
       store: auth,
       pool,
       now: () => new Date(),
+      privacyInjection: { consent: publicPosting.gate },
       communityInjection: { gate: makeGate() },
       moderationInjection: { ports: { tms: makeSyntheticPassPort('tms') } },
     });
@@ -558,7 +566,7 @@ async function main() {
       executionMode: 'real',
       requiresRealCredentials: true,
     };
-    const realApp = buildApp({ config: realConfig, store: auth, pool, now: () => new Date() });
+    const realApp = buildApp({ config: realConfig, store: auth, pool, now: () => new Date(), privacyInjection: { consent: publicPosting.gate } });
     assert.notEqual(realApp.communityService, null, 'real + 真 pool ⇒ 存储门禁必须开（不再是"内存 store 不持久"）');
     await realApp.listen({ host: '127.0.0.1', port: 0 });
     const realBase = `http://127.0.0.1:${realApp.server.address().port}`;

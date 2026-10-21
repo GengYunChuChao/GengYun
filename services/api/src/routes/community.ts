@@ -186,7 +186,7 @@ export function registerCommunityRoutes(
   app: FastifyInstance,
   config: AppConfig,
   guards: AuthGuards,
-  service: CommunityService | null,
+  service: CommunityService | null, deps: { consent?: CommunityConsentPort } = {},
 ): void {
   /** 未接线（`real` 模式无真实持久存储）⇒ 契约闭集内 503，绝不返回空页/假成功。 */
   function ready(): CommunityService {
@@ -210,7 +210,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/posts`,
-    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { body: postBody } },
+    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { body: postBody } },
     async (request, reply) => {
       const data = await ready().createPost(actorOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -231,7 +231,7 @@ export function registerCommunityRoutes(
 
   app.patch(
     `${API_PREFIX}/posts/:id`,
-    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: postBody } },
+    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { params: ID_PARAMS, body: postBody } },
     async (request, reply) => {
       const data = await ready().editPost(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -263,7 +263,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/posts/:id/comments`,
-    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
+    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { params: ID_PARAMS, body: commentBody } },
     async (request, reply) => {
       const data = await ready().createComment(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -284,7 +284,7 @@ export function registerCommunityRoutes(
 
   app.patch(
     `${API_PREFIX}/comments/:id`,
-    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS, body: commentBody } },
+    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { params: ID_PARAMS, body: commentBody } },
     async (request, reply) => {
       const data = await ready().editComment(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -358,4 +358,50 @@ export function registerCommunityRoutes(
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// GY-R28 W10 · 投稿面 `public_posting` 用途授权闸
+//
+// **为什么追加在文件末尾**：`docs` 侧的契约台账（`contract-status.json` 的
+// `services/api/src/routes/community.ts:<行段>` 锚点）把上面 16 条路由的**行号**当成证据，
+// 而该文件是本片不可改的红线文件 ⇒ 实现必须**逐行不改行号**：新增的端口类型、闸清单与
+// 组装函数一律放在末尾（函数声明会提升，路由注册处可直接调用）。
+//
+// 口径（`docs/verification/gy-i14-community-chain-20261021.md` §2.10 ④）：`public_posting`
+// 只挂**向公众发布**的 4 个写入口（发帖 / 编辑帖 / 评论 / 编辑评论），且挂在
+// `guards.requireUser` **之后**（鉴权先于授权：游客仍是 401 `SESSION_REQUIRED`，不是 403）。
+// 读列表／读详情／点赞／取消点赞／举报／读举报／删除自己的内容**不挂**——它们不发布新内容，
+// 挂上去只会让既有用例凭空 403，而且与用途语义不符。
+//
+// 拒绝复用既有 403 `CONSENT_REQUIRED`（`packages/privacy` 已实现），**不新增错误码或契约字段**；
+// `deps.consent === undefined`（无数据库且未注入，如本地 stub／既有集成脚本）⇒ 直通，
+// 行为与接线前逐字相同（与 `routes/media.ts` 同一装配纪律）。
+// ---------------------------------------------------------------------------
+
+/** 用途授权端口（与 `privacy/egress.ts` 的 `ConsentGate` **同形**；此处用结构类型以免在文件头部新增 import 行）。 */
+type CommunityConsentPort = (requirement: { purpose: string; dataType?: string }) => (request: FastifyRequest) => Promise<void>;
+
+/** 挂了 `public_posting` 用途闸的**投稿面**入口（只这 4 条；清单本身也被单测断言，防止悄悄增减）。 */
+export const PUBLIC_POSTING_GATED_ROUTES: ReadonlyArray<string> = Object.freeze([
+  'POST /posts',
+  'PATCH /posts/{id}',
+  'POST /posts/{id}/comments',
+  'PATCH /comments/{id}',
+]);
+
+/**
+ * 投稿面的 `preHandler`：有授权端口 ⇒ `[requireUser, public_posting 闸]`；无端口 ⇒ 原样 `requireUser`。
+ *
+ * 不传 `dataType`：带任何一个已知资料类型码都会把「社区图片」那套附加码
+ * （`media_processing` / `external_inference`，见 `packages/privacy/constants.mjs` 的
+ * `MEDIA_PURPOSE_REQUIRED_CONSENTS`）搬到纯文字帖上，凭空多出一次授权拒绝；而社区图片的
+ * `public_posting` 已由 `POST /media/uploads` 那条入口按资料类型问过。
+ */
+function postingPreHandlers(
+  guards: AuthGuards,
+  deps: { consent?: CommunityConsentPort },
+) {
+  if (deps.consent === undefined) return guards.requireUser;
+  return [guards.requireUser, deps.consent({ purpose: 'public_posting' })];
 }

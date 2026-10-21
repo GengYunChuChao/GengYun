@@ -1786,7 +1786,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
   // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
   // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
-  registerCommunityRoutes(app, config, gatedGuards, communityService);
+  // GY-R28 W10：把与识别/媒体**同源的那一个** `consentGate` 交给社区域，社区域只在投稿面
+  // （`POST /posts`、`PATCH /posts/:id`、`POST /posts/:id/comments`、`PATCH /comments/:id`）
+  // 用它问 `public_posting`；读/赞/举报/删除不挂。缺数据库且未注入 ⇒ `undefined` ⇒ 直通。
+  registerCommunityRoutes(app, config, gatedGuards, communityService, { consent: consentGate });
   // GY-I12（#12）文字问答域 7 条路由的**唯一注册点**（契约 `operations.json` 里本域的
   // 全部 operation，逐条一一对应；未实现的相邻路径不注册 ⇒ 由 404 处理器如实兜底）。
   // 这一段刻意**排在 `registerJobRoutes` 之后**：作业源在注册表构造时就捕获了
