@@ -1554,7 +1554,8 @@
           "lines": "1208-1213"
         },
         {
-          "test": "tests/unit/community-contract.test.mjs"
+          "test": "tests/unit/community-contract.test.mjs",
+          "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1580,7 +1581,8 @@
           "lines": "1215-1220"
         },
         {
-          "test": "tests/unit/community-contract.test.mjs"
+          "test": "tests/unit/community-contract.test.mjs",
+          "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1606,7 +1608,8 @@
           "lines": "1295-1300"
         },
         {
-          "test": "tests/unit/community-contract.test.mjs"
+          "test": "tests/unit/community-contract.test.mjs",
+          "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1686,7 +1689,8 @@
           "lines": "1337-1342"
         },
         {
-          "test": "tests/unit/community-contract.test.mjs"
+          "test": "tests/unit/community-contract.test.mjs",
+          "name": "likeComments / unlikeComments 的响应形状与契约一致（Ack），重复 PUT 幂等、未点赞取消不回退"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
@@ -1712,7 +1716,8 @@
           "lines": "1341-1346"
         },
         {
-          "test": "tests/unit/community-contract.test.mjs"
+          "test": "tests/unit/community-contract.test.mjs",
+          "name": "likeComments / unlikeComments 的响应形状与契约一致（Ack），重复 PUT 幂等、未点赞取消不回退"
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"

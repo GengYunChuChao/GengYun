@@ -458,7 +458,7 @@ test('[12] purgeIdempotent：DELETE … RETURNING 并以**行数**作返回值',
   assert.equal(await none.store.purgeIdempotent(T0), 0);
 });
 
-test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；其它数据库异常 ⇒ PROVIDER_UNAVAILABLE', () => {
+test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；配置/权限类 ⇒ PROVIDER_UNAVAILABLE(不可重试)；瞬态类 ⇒ 可重试', () => {
   const timeoutError = Object.assign(new Error('statement timeout'), { code: '57014' });
   assert.throws(
     () => classifyOcrDatabaseError(timeoutError),
@@ -470,6 +470,13 @@ test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；其它数据库异常 �
   );
   assert.throws(
     () => classifyOcrDatabaseError(Object.assign(new Error('boom'), { code: '42P01' })),
+    // 改前断言 `retryable === true`（旧口径）；42P01 表缺失、42501 权限不足都属「重试恒定失败」
+    // ⇒ R28-S62 订正为 false（状态码仍是 503，只改分档）。
+    (error) => error instanceof ApiError && error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === false,
+  );
+  // 瞬态类仍必须可重试（本片只收紧配置/权限类，没有砍掉可重试面）。
+  assert.throws(
+    () => classifyOcrDatabaseError(Object.assign(new Error('socket'), { code: '08006' })),
     (error) => error instanceof ApiError && error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
   );
   // 存储层自身的冲突错误必须原样穿过折叠（不得被改写成数据库不可用）。
