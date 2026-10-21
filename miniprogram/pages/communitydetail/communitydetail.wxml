@@ -17,12 +17,19 @@
   <block wx:else>
     <state-view wx:if="{{status === 'loading'}}" status="loading"></state-view>
 
+    <!-- 失败态：`error-code` 交给统一状态层判定。403 三码（SCOPE_DENIED／CONSENT_REQUIRED／
+         ACCOUNT_INACTIVE）会被升级成 denied 语气并用本页的「没有权限查看这条内容」标题，
+         404 仍走 invalid（内容确实可能已下架/未过审），其余走 error。
+         `allow-denied-action` 保留「返回社区」：denied 默认会收起重试类按钮，但**返回导航**
+         不是重试，收掉会让用户停在一个回不去的页面里。 -->
     <state-view
       wx:elif="{{status === 'error'}}"
-      status="invalid"
-      title="这条内容当前不可见"
+      status="{{stateStatus}}"
+      error-code="{{errorCode}}"
+      title="{{stateTitle}}"
       desc="{{errorText}}"
       action-text="返回社区"
+      allow-denied-action="{{true}}"
       bind:action="onBack"
     ></state-view>
 
@@ -78,7 +85,20 @@
       <view class="card">
         <view class="card-title">交流与讨论</view>
 
-        <state-view wx:if="{{comments.length === 0}}" status="empty" title="还没有评论" desc="欢迎留下第一条观察。"></state-view>
+        <!-- 评论段自己的三态：加载中／取数失败（可重试）／真的没有评论。
+             取数失败**不得**折叠成「还没有评论」空态（那是在为服务端没回话编一个结论）。 -->
+        <state-view wx:if="{{commentsStatus === 'loading'}}" status="loading"></state-view>
+
+        <state-view
+          wx:elif="{{commentsStatus === 'error'}}"
+          status="error"
+          title="评论没有取到"
+          desc="{{commentsError}}"
+          action-text="重新读取评论"
+          bind:action="onRetryComments"
+        ></state-view>
+
+        <state-view wx:elif="{{commentsStatus === 'empty'}}" status="empty" title="还没有评论" desc="欢迎留下第一条观察。"></state-view>
 
         <view wx:for="{{comments}}" wx:key="id" class="comment-row">
           <view class="comment-row__title">{{item.author}} · {{item.time}}</view>

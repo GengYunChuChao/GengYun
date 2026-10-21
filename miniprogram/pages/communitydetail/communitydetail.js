@@ -23,9 +23,21 @@ Page({
     guest: true,
     status: 'loading',
     errorText: '',
+    // B7：契约错误码透传给 `state-view` 的 `error-code`，由 `utils/states.js` 统一判定
+    // 「哪类问题 + 能否重试」；403 系列（SCOPE_DENIED／CONSENT_REQUIRED／ACCOUNT_INACTIVE）
+    // 会被升级成 denied 语气，而不是继续显示「这条内容当前不可见」。
+    // 改前本页**没有** `errorCode`，wxml 又把错误态写死成 `status="invalid"` 且不传 `error-code`
+    // ⇒ 详情页的 403 只能显示成「内容不可见」，B7 的 denied 分支在本页**不可达**。
+    errorCode: '',
+    stateStatus: 'invalid',
+    stateTitle: '',
     modeNote: '',
     post: null,
     comments: [],
+    // 评论区自己的取数状态（`idle` / `loading` / `ready` / `empty` / `error`）：
+    // 评论失败只影响评论区，不把整页说成「内容不可见」，也**不**折叠成「还没有评论」空态。
+    commentsStatus: 'idle',
+    commentsError: '',
     nextCursor: null,
     commentText: '',
     submitting: false,
@@ -57,35 +69,89 @@ Page({
 
   load: function () {
     if (!api.validId(this._id)) {
-      this.setData({ status: 'error', errorText: '链接里的内容标识不正确，请返回社区重新进入。' })
+      this.setData({
+        status: 'error',
+        errorCode: '',
+        stateStatus: 'invalid',
+        stateTitle: '这条内容当前不可见',
+        errorText: '链接里的内容标识不正确，请返回社区重新进入。'
+      })
       return
     }
     const epoch = ++this._epoch
     const that = this
-    this.setData({ status: 'loading', errorText: '' })
+    this.setData({
+      status: 'loading', errorText: '', errorCode: '', stateStatus: 'invalid', stateTitle: '',
+      commentsStatus: 'idle', commentsError: ''
+    })
     api.getPost(this._id).then(function (result) {
       if (epoch !== that._epoch) return
+      // 帖子读到了就**先渲染**：评论是同一页里的第二段取数，它失败不该把已读到的内容一起抹掉。
       that.setData({
+        status: 'ready',
         post: that._decoratePost(result.post),
         modeNote: api.modeNote(result.mode)
       })
-      return api.listComments(that._id, { limit: 20 })
-    }).then(function (page) {
-      if (!page || epoch !== that._epoch) return
-      that.setData({
-        status: 'ready',
-        comments: that._decorateComments(page.items),
-        nextCursor: page.nextCursor
-      })
+      that.loadComments(epoch)
     }).catch(function (error) {
       if (epoch !== that._epoch) return
-      if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true }); return }
-      if (error && error.code === 'NOT_FOUND') {
-        that.setData({ status: 'error', errorText: '内容不存在、已下架或当前不可见（可能未通过审核）。' })
-        return
-      }
-      that.setData({ status: 'error', errorText: api.message(error) })
+      that._fail(error)
     })
+  },
+
+  /** 评论段单独取数：失败落在评论区（可重试），不折叠成空态、也不影响已读到的帖子。 */
+  loadComments: function (epoch) {
+    const that = this
+    const seq = epoch === undefined ? this._epoch : epoch
+    this.setData({ commentsStatus: 'loading', commentsError: '', nextCursor: null })
+    api.listComments(this._id, { limit: 20 }).then(function (page) {
+      if (seq !== that._epoch) return
+      that.setData({
+        comments: that._decorateComments(page.items),
+        nextCursor: page.nextCursor,
+        commentsStatus: page.items.length ? 'ready' : 'empty'
+      })
+    }).catch(function (error) {
+      if (seq !== that._epoch) return
+      // 会话失效 / 403：取数前提没了 ⇒ 整页收口（与本页读路径同一口径）。
+      if (api.sessionFailure(error) || api.forbidden(error)) { that._fail(error); return }
+      that.setData({ comments: [], commentsStatus: 'error', commentsError: api.message(error) })
+    })
+  },
+
+  /**
+   * 读路径失败收口（单一实现）：
+   *   - 会话类（`SESSION_REQUIRED` / `SESSION_CHANGED`）⇒ 回登录门禁；
+   *   - 403 三码 ⇒ `stateStatus='error'` + `errorCode`（`state-view` 升级成 denied），
+   *     标题如实说「没有权限」，不再说「内容不存在或不给你看」；
+   *   - 404 ⇒ 既有的 `invalid` 语气（内容确实可能已下架/未过审）；
+   *   - 其余 ⇒ `error` 语气。
+   */
+  _fail: function (error) {
+    if (api.sessionFailure(error)) { this.setData({ guest: true, status: 'idle' }); return }
+    const notFound = !!error && error.code === 'NOT_FOUND'
+    this.setData({
+      status: 'error',
+      errorCode: (error && error.code) || '',
+      stateStatus: notFound ? 'invalid' : 'error',
+      stateTitle: api.forbidden(error)
+        ? '没有权限查看这条内容'
+        : (notFound ? '这条内容当前不可见' : '这条内容没有取到'),
+      errorText: notFound ? '内容不存在、已下架或当前不可见（可能未通过审核）。' : api.message(error),
+      commentsStatus: 'idle',
+      commentsError: ''
+    })
+  },
+
+  /**
+   * 写路径（点赞／评论／反馈／编辑／删除）失败收口：
+   * 403 系不是「这一次操作没成功」而是一句 toast 就过去了 —— 这条内容对当前账号已不可操作，
+   * 因此与读路径同样**整页**落 denied；其余错误仍按既有的如实提示（各调用点自己的特殊码优先）。
+   */
+  _writeFail: function (error) {
+    if (api.sessionFailure(error)) { this.setData({ guest: true, status: 'idle' }); return }
+    if (api.forbidden(error)) { this._fail(error); return }
+    wx.showToast({ title: api.message(error), icon: 'none' })
   },
 
   _decoratePost: function (post) {
@@ -154,9 +220,7 @@ Page({
     run.then(function () {
       wx.showToast({ title: on ? '已点赞（重复点赞不会重复计数）' : '已取消点赞', icon: 'none' })
       that.load()
-    }).catch(function (error) {
-      wx.showToast({ title: api.message(error), icon: 'none' })
-    })
+    }).catch(function (error) { that._writeFail(error) })
   },
 
   // ---------------------------------------------------------------- 评论
@@ -175,7 +239,7 @@ Page({
       that.load()
     }).catch(function (error) {
       that.setData({ submitting: false })
-      wx.showToast({ title: api.message(error), icon: 'none' })
+      that._writeFail(error)
     })
   },
   onLoadMoreComments: function () {
@@ -186,7 +250,17 @@ Page({
         comments: that.data.comments.concat(that._decorateComments(page.items)),
         nextCursor: page.nextCursor
       })
-    }).catch(function (error) { wx.showToast({ title: api.message(error), icon: 'none' }) })
+    }).catch(function (error) {
+      if (api.sessionFailure(error) || api.forbidden(error)) { that._fail(error); return }
+      // 失效游标：服务端已声明它永不成功 ⇒ 先清游标再重取第一页，否则「加载更多」永远报同一句错。
+      if (error && error.code === 'INVALID_CURSOR') {
+        that.setData({ nextCursor: null })
+        wx.showToast({ title: '评论列表已过期，已重新载入', icon: 'none' })
+        that.loadComments()
+        return
+      }
+      wx.showToast({ title: api.message(error), icon: 'none' })
+    })
   },
 
   // -------------------------------------------- 反馈（举报）与处理状态
@@ -208,7 +282,7 @@ Page({
             that.load()
             return
           }
-          wx.showToast({ title: api.message(error), icon: 'none' })
+          that._writeFail(error)
         })
       },
       fail: function () {}
@@ -246,7 +320,7 @@ Page({
           that.load()
           return
         }
-        wx.showToast({ title: api.message(error), icon: 'none' })
+        that._writeFail(error)
       })
   },
   onDeletePost: function () {
@@ -266,7 +340,11 @@ Page({
             that.load()
             return
           }
-          wx.showToast({ title: error && error.code === 'NOT_FOUND' ? '该内容不属于当前账号或已不存在' : api.message(error), icon: 'none' })
+          if (error && error.code === 'NOT_FOUND') {
+            wx.showToast({ title: '该内容不属于当前账号或已不存在', icon: 'none' })
+            return
+          }
+          that._writeFail(error)
         })
       }
     })
@@ -291,7 +369,7 @@ Page({
       wx.showToast({ title: '评论已保存并重新审核', icon: 'success' })
       that.setData({ editingCommentId: '' })
       that.load()
-    }).catch(function (error) { wx.showToast({ title: api.message(error), icon: 'none' }) })
+    }).catch(function (error) { that._writeFail(error) })
   },
   onDeleteComment: function (event) {
     const row = this._comment(event.currentTarget.dataset.id)
@@ -301,9 +379,14 @@ Page({
       wx.showToast({ title: '评论已删除', icon: 'success' })
       that.load()
     }).catch(function (error) {
-      wx.showToast({ title: error && error.code === 'NOT_FOUND' ? '该评论不属于当前账号或已不存在' : api.message(error), icon: 'none' })
+      if (error && error.code === 'NOT_FOUND') {
+        wx.showToast({ title: '该评论不属于当前账号或已不存在', icon: 'none' })
+        return
+      }
+      that._writeFail(error)
     })
   },
 
-  onRetry: function () { this.load() }
+  onRetry: function () { this.load() },
+  onRetryComments: function () { this.loadComments() }
 })

@@ -88,15 +88,24 @@ Page({
       if (done) done()
     }).catch(function (error) {
       if (epoch !== that._epoch) return
-      if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true }); if (done) done(); return }
-      that.setData({
-        status: 'error',
-        errorText: api.message(error),
-        errorCode: (error && error.code) || '',
-        modeNote: '',
-        stubNote: ''
-      })
+      that._fail(error)
       if (done) done()
+    })
+  },
+
+  /**
+   * 失败收口（单一实现，读路径与「加载更多」共用）：
+   *   - 会话类（`SESSION_REQUIRED` / `SESSION_CHANGED`）⇒ 回登录门禁，**不**留在错误页；
+   *   - 其余如实进 error 态并把契约错误码透传给 `state-view`（403 由统一状态层升级成 denied）。
+   */
+  _fail: function (error) {
+    if (api.sessionFailure(error)) { this.setData({ guest: true, status: 'idle' }); return }
+    this.setData({
+      status: 'error',
+      errorText: api.message(error),
+      errorCode: (error && error.code) || '',
+      modeNote: '',
+      stubNote: ''
     })
   },
 
@@ -115,6 +124,16 @@ Page({
     }).catch(function (error) {
       if (epoch !== that._epoch) return
       that.setData({ loadingMore: false })
+      // 会话失效 / 403：不是「这一次翻页没成功」，而是整页的取数前提没了 ⇒ 走统一失败收口。
+      if (api.sessionFailure(error) || api.forbidden(error)) { that._fail(error); return }
+      // 失效游标：服务端已声明这条游标永不成功（15 分钟 TTL、期间有新内容、主体/世代变化）。
+      // 改前只弹一句 toast，`nextCursor` 原样留着 ⇒ 用户每点一次「加载更多」都会看到同一句报错。
+      if (error && error.code === 'INVALID_CURSOR') {
+        that.setData({ nextCursor: null })
+        wx.showToast({ title: '列表已过期，已重新载入', icon: 'none' })
+        that.reload()
+        return
+      }
       wx.showToast({ title: api.message(error), icon: 'none' })
     })
   },
