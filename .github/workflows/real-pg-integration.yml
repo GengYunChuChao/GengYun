@@ -153,6 +153,36 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           OCR_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_ocr_jobs_test
+      # 识别域持久化（#333 / I10，R28-S36）：库名硬钉 `gengyun_recognitions_test`，脚本同样要求**空库**
+      # （第一步断言 `public` 下 0 张表）。它自己 `discoverMigrations()` 后先跑「除 0025 外全部迁移」再应用 0025，
+      # 并断言迁移清单连续无缺号、总数 === 最大编号 ⇒ 顺带守住迁移清单不变量（与 ocr-jobs step 同构）。
+      # 连接串只走 **env**（`RECOGNITIONS_PG_TEST_URL`，脚本按属主身份连库、自己从不建角色）：
+      # 未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过，也不加任何吞红开关）。
+      # 本地取证（PG 17.11 + 空库 + `gengyun_ci_owner` 属主）：exit=0，`共 30 条 PASS，耗时 1777ms`。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_recognitions_test' && node tests/integration/recognitions-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          RECOGNITIONS_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognitions_test
+      # 账号停用/恢复域（I22 / R28-S39）：库名硬钉 `gengyun_suspend_test`，脚本按「**空库**」前提跑
+      # （它自己 apply 0001–0017、再把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；非空库会在首个 `CREATE` 撞车 ⇒ 必红），
+      # 故与既有 9 步同形：`psql -c 'CREATE DATABASE …' && node <脚本>`。
+      # argv 只给 owner URL——省略 argv[3] 时脚本自建/改 `gengyun_api_runtime` 并用随机口令派生运行时 URL，
+      # scram-sha-256 下自洽；旧版「口令割裂 ⇒ 28P01」的缺陷已由 R28-S15 修掉
+      # （`docs/verification/gy-r28-account-suspend-scram-20261020.md`）。
+      # 它自己 apply 迁移，故不需要额外准备；收尾会 DROP 它自建的角色（`cleanup()`）；排在 `admin-accounts-read` 之后时，
+      # 前面留下的同名角色它用 `ALTER ROLE` 复用，不会再 42710。
+      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner` 超级用户）：exit=0，四臂 [M]/[P]/[A-D]/[E-F] 齐全，末行 `ALL PASS`。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_suspend_test' && node tests/integration/account-suspend-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_suspend_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 语音转写域（#351 / R28-S40）：库名硬钉 `gengyun_speech_test`，脚本同样要求**空库**
       # （自己断言 `public` 下 0 张表），并用 `discoverMigrations()` 跑**全链迁移**（0001..0026，含本片的
       # 0026_speech_persistence.sql）；随后做 0026 的 UP／ROLLBACK／REPLAY ⇒ 顺带守住迁移清单不变量。

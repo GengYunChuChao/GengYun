@@ -1,8 +1,9 @@
-# GY-R28-S40 语音转写域接进真库门禁（第 9 个 `-pg` 脚本，跑全链迁移 0001..0026）
+# GY-R28-S40 语音转写域接进真库门禁（第 11 个 `-pg` 脚本，跑全链迁移 0001..0026）
 
 - 切片：S40（把已在 main、却没有任何 workflow 跑过的 `tests/integration/speech-pg.mjs` 接进真库 job）
-- 分支：`test/gy-r28-speech-ci-wire`（based on `upstream/main = 32ce461`，即 `#351` 合入后的 HEAD；
-  收尾复核 `git fetch upstream` 后 base 未前进）
+- 分支：`test/gy-r28-speech-ci-wire`（初版 based on `upstream/main = 32ce461`，即 `#351` 合入后的 HEAD；
+  提交前 `#353`（账号停用接 CI）合入 main ⇒ 已合流 `upstream/main = c0217a4` 并把本步重排为**第 11 个**受管脚本，
+  三处数组同步、既有 10 步的相对顺序未动）
 - 日期：2026-10-21（本机实测时间）
 - 环境：Windows / PowerShell **5.1.26100.8875** / Node **v24.16.0**（`package.json` engines `>=24.16.0 <25`）/
   npm 11.13.0 / PostgreSQL **17.11** 本机二进制（`E:\GengYunCommander\.pg17\pgsql\bin`）
@@ -23,17 +24,17 @@
 
 一条：`tests/integration/speech-pg.mjs`（S20／`#351` 交付）此前**只在本机跑过**——`.github/workflows/`
 里逐文件检索 `speech-pg.mjs` 是 **0 命中**，也就是说它在 CI 上坏成什么样都不会红。本片把它接成
-`real-pg-integration.yml` 的**第 9 个真库脚本 step**（该 job 里 `- run:` 共 10 个：`L65 npm ci` ＋
-9 个真库脚本；本步是文件里最后一个 step，`L156-169`）。
+`real-pg-integration.yml` 的**第 11 个真库脚本 step**（该 job 里 `- run:` 共 12 个：`L65 npm ci` ＋
+11 个真库脚本；本步是文件里最后一个 step，`L186-200`）。
 
 | 项 | 事实 |
 | --- | --- |
 | 连接串来源 | **只认环境变量 `SPEECH_PG_TEST_URL`**（脚本 `:48 const ENV = 'SPEECH_PG_TEST_URL'`／`:54`），无 argv 入口 ⇒ step 必须用 `env:` |
 | 库名 | 硬钉 `gengyun_speech_test`（`:49 const DB`／`:74 assert.equal(url.pathname, '/gengyun_speech_test')`）⇒ step 先 `CREATE DATABASE gengyun_speech_test` |
-| 库前提 | **空库**（脚本 `:57` 之后先数 `public` 下的表；本机跑前实测 `0`）⇒ 与既有 8 步同形：`psql -c 'CREATE DATABASE …' && node …` |
+| 库前提 | **空库**（脚本 `:57` 之后先数 `public` 下的表；本机跑前实测 `0`）⇒ 与既有 10 步同形：`psql -c 'CREATE DATABASE …' && node …` |
 | 缺前置语义 | 未设 `SPEECH_PG_TEST_URL` ⇒ 打印 `SKIP` 并 **exit 77**（`:57-65`）⇒ **缺库必红**，不是通过 |
 | 迁移面 | 跑**全链** `discoverMigrations()`（0001..0026，含本片 `0026_speech_persistence.sql`），并做 0026 的 UP／ROLLBACK／REPLAY ⇒ 顺带守住迁移清单不变量 |
-| 守卫 | `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` **8 → 9**，两处逐字同步；`REQUIRED_STEP_ORDER` **8 → 9**（本步排第 9） |
+| 守卫 | `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` **10 → 11**，两处逐字同步；`REQUIRED_STEP_ORDER` **10 → 11**（本步排第 11：8=ocr、9=recognitions、10=account-suspend、11=speech） |
 | 回环链 | **仍不在** `test:integration:http`：`UNWIRED_DECLARATIONS` 条目**保留**，只把 reason 改成真相（由真库 job 的独立 step 运行，不进无 PG 的回环链） |
 
 接线前后对照：
@@ -41,13 +42,14 @@
 | | 接线前（base `32ce461`） | 接线后（本片） |
 | --- | --- | --- |
 | 谁真跑 `speech-pg.mjs` | 没有任何 workflow | `real-pg-integration.yml` 的 `real-pg-17-11` job 最后一步 |
-| 受管清单 | 8 条（末位 `ocr-jobs-pg`） | 9 条（末位 `speech-pg`） |
+| 受管清单 | 10 条（末位 `account-suspend-pg`） | 11 条（末位 `speech-pg`） |
 | 它坏了 CI 会红吗 | **不会**（0 命中） | 会（step 失败 ⇒ job 失败；守卫另有判据①⑥⑦⑧⑨） |
 | 无 PG 回环链 | 不在 | **仍不在**（白名单条目保留、reason 更新） |
 
 **注意本步与既有 `admin-accounts-read`／`admin-flags` 步的差别**：那两步依赖 R28-S14 在同一 job 里先建好的
 运行时角色 `gengyun_api_runtime`；本步**不依赖任何角色**，只用库 owner 连接串、自己建专用空库、自己
-apply 迁移，所以排在最后不影响任何前序 step 的假设（既有 8 步的顺序与文本一字未动）。
+apply 迁移，所以排在最后不影响任何前序 step 的假设（既有 10 步的相对顺序未动；合流时订正了账号停用 step
+注释里两处失实措辞，见 §3）。
 
 ---
 
@@ -154,8 +156,8 @@ EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知
 
 | 文件 | 改动 |
 | --- | --- |
-| `.github/workflows/real-pg-integration.yml` | 末尾追加 1 个 step（`L156-169`：6 行注释 + `run:` + `env:` 6 个 `KEY: value`），既有 8 步一字未动（`+14/−0`） |
-| `tests/unit/ci-real-pg-wiring.test.mjs` | `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各 **+1**（8 → 9，逐字同步）；`REQUIRED_STEP_ORDER` **+第 9 项＋4 行注释**；头注释补第 9 条来源；第 8 条注释里「排在最后（workflow 里也是最后一步）」订正为「R28-S40 之后它不再是最末一步」 |
+| `.github/workflows/real-pg-integration.yml` | 末尾追加 1 个 step（`L186-200`：6 行注释 + `run:` + `env:` 6 个 `KEY: value`）；既有 10 步的相对顺序未动（净 `+17/−3`：3 行删除＝账号停用 step 注释两处失实措辞订正 ＋ 一处合并空行） |
+| `tests/unit/ci-real-pg-wiring.test.mjs` | `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各 **+1**（10 → 11，逐字同步）；`REQUIRED_STEP_ORDER` **+第 11 项＋4 行注释**；头注释补第 11 条来源；第 8 条注释里「排在最后（workflow 里也是最后一步）」订正为「R28-S40 之后它不再是最末一步」 |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | `speech-pg` 的 `UNWIRED_DECLARATIONS` **条目保留**，reason 改成真相（已接真库 job 的独立 step；仍不进无 PG 回环链），口径照 `ocr-jobs-pg` |
 | `docs/verification/gy-r28-speech-ci-wire-20261021.md` | 本证据页 |
 
@@ -183,9 +185,9 @@ workflow 新增段原文：
 1. **连接串走 `env:` 而不是 argv。** `speech-pg.mjs` 的契约**只读环境变量**（`:48/:54`），写 argv 它不认；
    这与 `ocr-jobs-pg` 同构，也与 `conversations/community/favorites-history` 三步的「`psql … && node <脚本>`
    不带 URL」同形，只是多一行 `SPEECH_PG_TEST_URL`。
-2. **`run:` 用单行 `cmd && cmd` 而不是 `run: |` 多行。** 既有 8 步全是单行（`&&` 保证 `CREATE DATABASE`
+2. **`run:` 用单行 `cmd && cmd` 而不是 `run: |` 多行。** 既有 10 步全是单行（`&&` 保证 `CREATE DATABASE`
    失败时不再跑 node）；`runCommandTextsOf()` 对 `run: |` 块体另有口径（块内 `#` 行按 shell 注释剔除），
-   单行形态与其余 8 步一致，守卫口径无需任何放宽。
+   单行形态与其余 10 步一致，守卫口径无需任何放宽。
 
 ---
 
@@ -195,7 +197,7 @@ workflow 新增段原文：
 
 | 文件 | sha256（变异前 = 还原后） |
 | --- | --- |
-| `.github/workflows/real-pg-integration.yml` | `00EFB16BE3922089A490ABFF5AD35E2FC7DDB867B8193483520EB2B9FABDDA8C` |
+| `.github/workflows/real-pg-integration.yml` | `1C662CF099E17115A6193D18DAD1D04D29ADEE25BD06C1E7BD4C2FDB3B2DED1B`（合流 `c0217a4` 后的 workflow；初版单提交时是 `00EFB16B…`，负控制按合并后基线重跑） |
 
 恢复手段：变异前 `Copy-Item` 备份到 `E:\GengYunCommander\.pg17\handoff\r28s40-real-pg-integration.yml.bak`，
 恢复时 `Copy-Item` 覆盖回来，再用 `Get-FileHash -Algorithm SHA256` 与基线逐字节比对，并用
@@ -236,7 +238,7 @@ workflow 新增段原文：
 还原校验：
 
 ```
-restored sha256: 00EFB16BE3922089A490ABFF5AD35E2FC7DDB867B8193483520EB2B9FABDDA8C
+restored sha256: 1C662CF099E17115A6193D18DAD1D04D29ADEE25BD06C1E7BD4C2FDB3B2DED1B
 RERUN_EXITCODE=0
 ℹ tests 23 / ℹ pass 23 / ℹ fail 0
 status lines: 3（= 本片应改的 3 个文件，见 §3）
@@ -257,7 +259,7 @@ status lines: 3（= 本片应改的 3 个文件，见 §3）
 
 （另一条红是 `反向控制⑧`——它开头先断言磁盘真值三条判据全绿，属级联。）
 还原后 sha256 回到
-`00EFB16BE3922089A490ABFF5AD35E2FC7DDB867B8193483520EB2B9FABDDA8C`，复跑 `23/23` 全绿。
+`1C662CF099E17115A6193D18DAD1D04D29ADEE25BD06C1E7BD4C2FDB3B2DED1B`，复跑 `23/23` 全绿（该 sha 是合流 `c0217a4` 后的基线）。
 
 ---
 
@@ -281,17 +283,20 @@ status lines: 3（= 本片应改的 3 个文件，见 §3）
   真红/真绿」要等 PR 运行。本页给的是**本机 scram 等价集群**上的等价读数（用户/口令/库名/库前提/连接串
   形态与 workflow 逐字一致），以及缺 env 时 77 的实测出口。
 - **没有**独立验证 `postgres:17.11` 镜像的权限面（例如 `POSTGRES_USER` 在镜像里是超级用户、`pgcrypto` 是
-  可信扩展因而非超级用户属主也能 `CREATE EXTENSION`）：这两点沿用既有 8 步已验的前提，本步**不引入任何
+  可信扩展因而非超级用户属主也能 `CREATE EXTENSION`）：这两点沿用既有 10 步已验的前提，本步**不引入任何
   新角色/新迁移**，因此没有新增该类风险。
 - **没有**跑 `npm run test:integration:http` 这条无 PG 回环链（本步不进那条链，`UNWIRED_DECLARATIONS` 的
   reason 已如实写明），改动不触及那里的任何断言。
-- **没有**量 10 个 `- run:` 串行后的总墙钟时间：本步本身实测 1881ms，job 的 `timeout-minutes: 15` 未见紧张，
+- **没有**量 12 个 `- run:` 串行后的总墙钟时间：本步本身实测 1881ms，job 的 `timeout-minutes: 15` 未见紧张，
   但整 job 的总耗时本片未测。
-- **派单事实偏差（如实记录）**：派单 §1 说 base 的头注释已有「第 9 条讲 R28-S39（账号停用）」——实测 base
-  `32ce461` 的 `ci-real-pg-wiring.test.mjs` 只到第 8 条（OCR），`MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`
-  各 8 条、`REQUIRED_STEP_ORDER` 8 项，**没有**第 9 条（`#353` 仍 OPEN）。故本片把 speech 追加为第 9 条，
-  并顺带订正第 8 条注释里「排在最后（workflow 里也是最后一步）」这句已随本片失实的话（只改注释措辞，
-  不动任何断言）。
+- **口径变更（如实记录）**：派单 §1 说 base 的头注释已有「第 9 条讲 R28-S39（账号停用）」——初版 base
+  `32ce461` 实测只到第 8 条（OCR），`MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS` 各 8 条、`REQUIRED_STEP_ORDER`
+  8 项，**没有**第 9 条（`#353` 当时仍 OPEN）⇒ 初版把 speech 追加为第 9 条。
+  提交前 `#353` 合入（main `c0217a4`，它自带 9=recognitions、10=account-suspend），故本片合流后**重排为第 11 条**：
+  三处数组 11 条、`REQUIRED_STEP_ORDER` 追加第 11 项，且不动任何既有断言。
+  合流时另订正 main 上账号停用 step 注释里两处随 `#353` 失实的话（「既有 8 步」→ 9 步、
+  「排在最后一步时」→「排在 `admin-accounts-read` 之后时」），并补回解冲突时丢失的该 step `env:` 块（6 行）。
+  负控制 ① 已按合并后基线重跑：仍是 `ℹ tests 23 / pass 15 / fail 8`，还原后 sha256 与基线逐字节相等。
 
 ---
 

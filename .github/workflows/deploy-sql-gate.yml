@@ -1,6 +1,7 @@
 # 部署 SQL 链门禁（R28-S34）· 把 `deploy/postgres-cvm/sql/` 的两条脚本接进 CI：
 #   · `20-login-roles.sql`（运行时 LOGIN + 列级最小权限）
-#   · `90-assert-least-privilege.sql`（78 条最小权限断言；基线 `56042f7`＝#342 合入后）
+#   · `90-assert-least-privilege.sql`（最小权限断言；**条数不写死**——它随切片增长，以脚本自身判决为准；
+#     基线 `56042f7`＝#342 合入后）
 #
 # 缺口（本片立项时的实测）：这两条脚本在仓内**只被** `deploy/postgres-cvm/provision-db.sh` 引用，
 # 也就是「CVM 首次装库时人工/脚本执行一次」；逐 workflow 检索文件名 0 命中 ⇒ 它们写坏了（漏授一列、
@@ -132,6 +133,10 @@ jobs:
       #   末行挡「跑完了但结论不是 ok」。两者覆盖的失败模式不同，报错信息也不同。
       # 注意：探针段会故意触发若干 `permission denied`（那是被验的读数，写 stderr 是正常的），
       #   所以只对「末行」与「退出码」取值，不按日志里有没有 `ERROR` 判红。
+      # ⛔ 本步成功提示里**不要写死断言条数**（旧版把条数写进了成功提示，例如把某个数字钉在
+      #   「N 条断言判绿」上）：断言数随切片增长（S28 到 S38 已经涨过一轮），写死的数字必然过期，
+      #   还会把「条数对不对」误当成判据。
+      #   条数与对错都以 90-assert 自身输出为准（末行 ok ＋ 退出码 0）。
       - name: 90-assert-least-privilege.sql（末行 ok 且退出码 0）
         run: |
           set -euo pipefail
@@ -154,10 +159,122 @@ jobs:
             echo "::error::90-assert 末行不是 ok（实际：'${verdict}'）：断言没跑完／被改松／结论不是 ok。"
             exit 1
           fi
-          echo "90-assert：退出码 0 且末行 ok —— 双保险齐了（78 条断言判绿）。"
+          echo "90-assert：退出码 0 且末行 ok —— 双保险齐了。"
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
           PGUSER: gengyun_cvm_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun
+      # ⑤ 误授恢复演练（R28-S42）：证明「重跑 20-login-roles.sql 能把被误撤的列级授权恢复回来」。
+      #
+      # 为什么需要这一步（实证出处见 `docs/verification/gy-r28-deploy-sql-recovery-replay-20261021.md`）：
+      #   · PG 的列级 ACL 落在 `pg_attribute.attacl`，而表级 `REVOKE <priv> ON <table>` 会**连带
+      #     撤销同类型的列级授权**（S38 证据页写死过这条本仓踩过的坑）。所以「误授之后复原」不能
+      #     只补一条表级/列级 GRANT，唯一正解是**重跑 `20-login-roles.sql`**（它每次部署都会执行，
+      #     逐列 GRANT 就在该文件的 I 段）。
+      #   · 但本 workflow 此前**只跑一次** 20-login-roles.sql（第 ③ 步），这条救命恢复路径从没被
+      #     证明过：一旦有人把 I 段改成「角色不存在才 GRANT」、或把 GRANT 加上条件，CI 仍全绿。
+      #   本步把恢复路径变成可判红的读数，五段顺序固定（改顺序会让「恢复」与「制造误授」互相抵消）：
+      #     ① 前置自检：`public.favorites.id` 的列级 SELECT 必须已是 `t`；不是就直接红 ——
+      #        这说明前置授权本身变了，演练前提不成立，⛔ 不许换成别的列硬凑。
+      #     ② 幂等重跑：连跑 2 次 20-login-roles.sql，两次都必须 exit 0（脚本可重复执行）。
+      #     ③ 制造误授：`REVOKE SELECT (id) ON TABLE public.favorites`，随后读数必须变 `f`；
+      #        不变 f 就红 —— 否则「恢复」这一步是假的（撤都没撤掉，谈何恢复）。
+      #     ④ 恢复：再跑一次 20-login-roles.sql（exit 0），读数必须回到 `t`。
+      #     ⑤ 复验断言：重跑 90-assert，**双保险**照第 ④ 步（退出码 0 **且** 末行正好 `ok`）。
+      #
+      # 判据口径与第 ④ 步逐字一致：只认退出码与末行，⛔ 不按日志里有没有 `ERROR` 判红
+      #   （90-assert 的探针段会故意打出 42501，那是被验的读数）。⛔ 无 `continue-on-error`、
+      #   无 `|| true`、无 `if:` —— 任一构造都会让本演练退化成装饰品。
+      - name: 恢复演练：撤销一列授权 → 重跑 20-login-roles.sql → 90-assert 仍 ok
+        run: |
+          set -euo pipefail
+
+          # 读 `public.favorites.id` 的列级 SELECT 真值（`-tA` ⇒ 只打印 t / f）。
+          col_priv() {
+            psql -X -q -tA -v ON_ERROR_STOP=1 \
+              -c "SELECT has_column_privilege('gengyun_api_runtime', 'public.favorites', 'id', 'SELECT')"
+          }
+
+          # ① 前置自检：演练的前提是「该列已授」。为 f 说明 20-login-roles.sql 的 I 段授权变了，
+          #    此时继续演练只会得出「撤销一个本来就没有的权限」的假读数。
+          before="$(col_priv)"
+          echo "前置：has_column_privilege(gengyun_api_runtime, public.favorites, id, SELECT)=${before}"
+          if [ "${before}" != "t" ]; then
+            echo "::error::恢复演练前置不成立：public.favorites.id 的列级 SELECT 当前是 '${before}'（要求 t）。这说明前置授权本身变了（20-login-roles.sql 的 I 段），演练前提不存在；⛔ 不要换成别的列硬凑。"
+            exit 1
+          fi
+
+          # ② 幂等重跑两次：两次都必须 exit 0。这一半证明「脚本可重复执行」——
+          #    若它变成「角色不存在才建/才授」，第二次会静默少做事，这里就会与第 ④ 段一起露馅。
+          for attempt in 1 2; do
+            rc=0
+            psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql || rc=$?
+            echo "20-login-roles.sql 第 ${attempt} 次重跑：exit=${rc}"
+            if [ "${rc}" -ne 0 ]; then
+              echo "::error::20-login-roles.sql 第 ${attempt} 次重跑 exit=${rc}（要求 0）：脚本已不可重复执行（幂等被破坏）。"
+              exit 1
+            fi
+          done
+
+          # ③ 制造误授：只撤这一列的 SELECT。撤不掉（读数不是 f）就红 —— 否则恢复演练是假的。
+          rc=0
+          psql -X -q -v ON_ERROR_STOP=1 \
+            -c "REVOKE SELECT (id) ON TABLE public.favorites FROM gengyun_api_runtime" || rc=$?
+          echo "撤销 public.favorites.id 的列级 SELECT：exit=${rc}"
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::REVOKE public.favorites.id 失败（exit=${rc}）：无法制造误授态，恢复演练无效。"
+            exit 1
+          fi
+          revoked="$(col_priv)"
+          echo "撤销后：has_column_privilege=${revoked}"
+          if [ "${revoked}" != "f" ]; then
+            echo "::error::撤销后 has_column_privilege 仍是 '${revoked}'（要求 f）：撤销没有生效，恢复演练是假的。"
+            exit 1
+          fi
+
+          # ④ 恢复：重跑 20-login-roles.sql 必须把该列授权带回来（这是本步要证明的那条路径）。
+          rc=0
+          psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql || rc=$?
+          echo "重跑 20-login-roles.sql 恢复授权：exit=${rc}"
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::恢复用的 20-login-roles.sql exit=${rc}（要求 0）：恢复路径本身执行失败。"
+            exit 1
+          fi
+          recovered="$(col_priv)"
+          echo "恢复后：has_column_privilege=${recovered}"
+          if [ "${recovered}" != "t" ]; then
+            echo "::error::重跑 20-login-roles.sql 后 has_column_privilege 是 '${recovered}'（要求 t）：**恢复路径失效**，误撤的列级授权补不回来。"
+            exit 1
+          fi
+
+          # ⑤ 复验断言：双保险照第 ④ 步 —— 退出码 0 **且** 末行正好 ok，缺一条即红。
+          out="$(mktemp)"
+          rc=0
+          if psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql >"${out}" 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
+          echo "---- 恢复演练后的 90-assert 输出（尾部 20 行；完整输出见上面的 psql 读数）----"
+          tail -n 20 "${out}"
+          verdict="$(awk 'NF { last = $0 } END { print last }' "${out}")"
+          echo "退出码=${rc} 末行='${verdict}'"
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::恢复后的 90-assert 的 psql 退出码是 ${rc}（要求 0）：恢复后断言脚本内部报错或被 ON_ERROR_STOP 截断。"
+            exit 1
+          fi
+          if [ "${verdict}" != "ok" ]; then
+            echo "::error::恢复后的 90-assert 末行不是 ok（实际：'${verdict}'）：重跑 20-login-roles.sql 未能把最小权限恢复到合规态。"
+            exit 1
+          fi
+          echo "恢复演练通过：撤销后 has_column_privilege=f → 重跑 20-login-roles.sql → t；90-assert 末行 ok 且退出码 0"
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_cvm_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun
+          # 重跑 20-login-roles.sql 需要它（\getenv 校验 48 位小写十六进制；与第 ③ 步同一合成值）。
+          GENGYUN_API_RUNTIME_PASSWORD: 4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d
