@@ -40,6 +40,8 @@ jobs:
             --predictions packages/evaluation/samples/gy-i20-weeds-predictions-none.json \
             --manifest packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json \
             --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+            --digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
+            --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
             --out "$out/run-evaluation-report.json" \
             > "$out/run-evaluation.log" 2>&1 || a=$?
           b=0
@@ -47,6 +49,8 @@ jobs:
             --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
             --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
             --index-version gy-i20-weeds-real-2026.10.14 \
+            --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+            --verify-digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
             --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json \
             > "$out/freeze-real-samples.log" 2>&1 || b=$?
           c=0

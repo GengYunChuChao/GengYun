@@ -1,8 +1,13 @@
 // 工具层公共 IO：加载索引与预测、构造预测 Map、生成可读摘要。
 import { readFileSync } from 'node:fs';
 
+/**
+ * 读 JSON 文件。必须先剥离 UTF-8 BOM 再 `JSON.parse`：Node 的 JSON.parse 不接受 BOM，
+ * 而 Windows 编辑器/Excel 导出常带 BOM。剥离后"同一内容不同换行符/缩进/BOM"解析出的对象一致，
+ * 逐条摘要（`JSON.stringify(parsed)`）才真正与文件字节形态无关。
+ */
 export function loadJson(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
+  return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 }
 
 /** 预测文件支持两种形状：数组 [{sampleId, output}] 或对象 { "<sampleId>": {..output..} }。 */
@@ -36,6 +41,19 @@ export function formatSummary(report) {
   lines.push(`indexSha256=${report.indexSha256.slice(0, 16)}…  testIndexSha256=${(report.testIndexSha256 ?? '').slice(0, 16)}…  predictionSha256=${report.predictionSha256.slice(0, 16)}…`);
   if (report.splits) lines.push(`划分：train=${report.splits.train}  validation=${report.splits.validation}  test=${report.splits.test}（最终验收仅用 test）`);
   lines.push(`独立对象去重排除=${report.duplicatesExcluded ?? 0}  覆盖清单=${report.coverageManifestPresent ? '有' : '缺'}  覆盖绑定=${report.coverageBinding?.verified ? '通过' : '未通过'}`);
+  if (report.answerKey) {
+    lines.push(
+      `标准答案键：${report.answerKey.verified ? '已核对通过' : '未核实'}`
+        + `（版本=${report.answerKey.pinnedVersion ?? '—'} 条目=${report.answerKey.pinnedRecordCount ?? '—'} sha256=${(report.answerKey.computedSha256 ?? '').slice(0, 16)}…）`,
+    );
+    if (report.answerKey.mismatches.length > 0) {
+      lines.push(`    索引↔答案键不符=${report.answerKey.mismatches.map((m) => `#${m.ordinal}(${m.sampleId})[${m.fields.join('/')}]`).join('、')}`);
+    }
+  }
+  if (report.frozenVerification?.drift) {
+    const d = report.frozenVerification.drift;
+    lines.push(`逐条摘要台账：${report.frozenVerification.digestLedgerProvided ? '已提供' : '未提供'}  改动=${d.changed.length} 新增=${d.added.length} 删除=${d.removed.length}`);
+  }
   if (report.coverageBinding && !report.coverageBinding.verified) {
     lines.push(`    覆盖绑定依据=${report.coverageBinding.basisRef ?? '—'}  承诺类=${JSON.stringify(report.coverageBinding.boundClasses ?? [])}`);
   }
