@@ -616,6 +616,7 @@ const PROCESS_ROOTS = new Set([
 const MEDIA_CHAIN_FILES = Object.freeze([
   'services/api/src/media/object-store.ts',
   'services/api/src/media/service.ts',
+  'services/api/src/media/real-ports.ts',
   'services/api/src/routes/media.ts',
 ]);
 
@@ -1034,17 +1035,67 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
     'createAppMediaService 只允许 objectStore 一个存储形状入参',
   );
 
-  // 生产调用点：真实工厂**唯一**的样点在 resolver 内部；resolver **唯一**的样点是那次只带执行模式的回退。
+  // 生产调用点（片 W2 / GY-R28 修订：**二处闭集**，逐处钉死文件与外层函数）：
+  //   1. `app.ts#buildApp` —— 零注入回退，只带执行模式（⛔ 不传 env）；
+  //   2. `media/real-ports.ts#resolveMediaRealPorts` —— 仅由 `--approve-real-media-wiring` 驱动，
+  //      传入的是由**已解析配置**逐字段还原的显式记录（见下方「加强」断言）。
+  // 为什么必须多出第二处：`buildApp` 的端口初值被判据逐字钉成
+  // `mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode })`
+  // 且实参只允许 `executionMode` 一个键，所以「真实端口」只可能由**显式注入**进入装配；
+  // 而注入方必须是生产入口，入口构造端口又只能经 resolver —— 闭集由 1 处变 2 处，是接线的**必要条件**。
+  // 该修订不放宽任何其他维度：工厂仍只允许被 resolver 调一次；resolver 的两处之外多一处即红。
   const counts = productionStoreFactoryCallSites('services/api/src', [MEDIA_RESOLVER, REAL_STORE_FACTORY]);
   assert.ok(counts.scannedFiles > 100, `必须真扫到生产源码（实测 ${counts.scannedFiles} 个文件）`);
   const resolverSites = counts.sites.filter((site) => site.name === MEDIA_RESOLVER);
   const factorySites = counts.sites.filter((site) => site.name === REAL_STORE_FACTORY);
-  assert.deepEqual(resolverSites.map((site) => [site.file, site.enclosing]), [['services/api/src/app.ts', 'buildApp']], 'resolver 在生产源码里只允许被 buildApp 调用一次');
+  assert.deepEqual(
+    resolverSites.map((site) => [site.file, site.enclosing]),
+    [
+      ['services/api/src/app.ts', 'buildApp'],
+      ['services/api/src/media/real-ports.ts', 'resolveMediaRealPorts'],
+    ],
+    'resolver 在生产源码里只允许这两处：buildApp 的零注入回退、real-ports 的批准驱动装配（多一处即红）',
+  );
   assert.deepEqual(
     factorySites.map((site) => [site.file, site.enclosing]),
     [['services/api/src/media/object-store.ts', MEDIA_RESOLVER]],
     '真实适配器工厂在生产源码里只允许被 resolver 调用一次（其余一律不得构造真实端口）',
   );
+
+  // 加强（片 W2 新增）：第二处 resolver 调用的**实参形状**同样钉死——只允许 `{ executionMode, env }`，
+  // 且 `env` 必须是 `objectStorageEnv(...)` 的产物（由已解析配置还原），⛔ 不得是 ambient `process.env`。
+  const realPorts = parseRepoFile('services/api/src/media/real-ports.ts');
+  const realPortsResolverArgs = [];
+  const visitRealPorts = (node) => {
+    if (ts.isCallExpression(node) && compactNodeText(node.expression, realPorts.source) === MEDIA_RESOLVER) {
+      const [argument] = node.arguments;
+      const properties = argument !== undefined && ts.isObjectLiteralExpression(argument) ? argument.properties : [];
+      realPortsResolverArgs.push(
+        properties.map((property) => ({
+          key: property.name === undefined ? '(无名)' : property.name.getText(realPorts.source),
+          value: property.initializer === undefined ? '' : compactNodeText(property.initializer, realPorts.source),
+        })),
+      );
+    }
+    ts.forEachChild(node, visitRealPorts);
+  };
+  visitRealPorts(realPorts.source);
+  assert.equal(realPortsResolverArgs.length, 1, 'real-ports.ts 必须恰好一处 resolver 调用');
+  assert.deepEqual(
+    realPortsResolverArgs[0].map((entry) => entry.key),
+    ['executionMode', 'env'],
+    'real-ports 的 resolver 调用只允许 executionMode + env 两个键',
+  );
+  assert.match(
+    realPortsResolverArgs[0][1].value,
+    /^objectStorageEnv\(/u,
+    'real-ports 传给 resolver 的 env 必须由 objectStorageEnv(...) 从已解析配置还原（不是 ambient env）',
+  );
+  // ambient env 用**同一套 AST 审计**再验一遍（比正则更严：连 `globalThis['pro'+'cess'].env` 也抓，
+  // 且不会被本文件注释里的 `process.env` 字样误伤）。
+  const realPortsAmbient = auditAmbientEnv(realPorts, []);
+  assert.deepEqual(realPortsAmbient.violations, [], 'real-ports.ts 不得读 ambient env');
+  assert.deepEqual(realPortsAmbient.findings, [], 'real-ports.ts 的 ambient env 读取点实测必须为 0');
 });
 
 test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许 3 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
@@ -1663,8 +1714,8 @@ test('GY-I06 r3 启发式覆盖清单：静态判据已降级为回归护栏（�
   assert.ok(ownedMediaChain.every((entry) => entry.findings.length === 0), '启发式：媒体链路文件不得读 ambient env');
   assert.deepEqual(
     callSites.sites.filter((site) => site.name === MEDIA_RESOLVER).map((site) => `${site.file}#${site.enclosing}`),
-    ['services/api/src/app.ts#buildApp'],
-    '启发式：resolver 生产调用点必须恰好一处（app.ts 的 buildApp）',
+    ['services/api/src/app.ts#buildApp', 'services/api/src/media/real-ports.ts#resolveMediaRealPorts'],
+    '启发式：resolver 生产调用点必须恰好两处（app.ts 的零注入回退、media/real-ports.ts 的批准驱动装配）',
   );
   assert.deepEqual(
     callSites.sites.filter((site) => site.name === REAL_STORE_FACTORY).map((site) => `${site.file}#${site.enclosing}`),
@@ -1677,12 +1728,12 @@ test('GY-I06 r3 启发式覆盖清单：静态判据已降级为回归护栏（�
     `1. app.ts 端口溯源：声明/初值/服务实参/角色枚举 → ${provenance.violations.length} 违规`,
     `2. app.ts ambient env 读取：整表/动态/未白名单键 → ${ambient.violations.length} 违规（白名单恰 ${ambient.findings.length} 个非媒体键）`,
     `3. 媒体链路文件（${MEDIA_CHAIN_FILES.length} 个）ambient env 读取 → ${ownedMediaChain.reduce((sum, entry) => sum + entry.findings.length, 0)} 违规`,
-    `4. 生产调用点：${MEDIA_RESOLVER} → 1 处（app.ts#buildApp）、${REAL_STORE_FACTORY} → 1 处（object-store.ts#resolveMediaObjectStore）`,
+    `4. 生产调用点：${MEDIA_RESOLVER} → 2 处（app.ts#buildApp 的零注入回退、media/real-ports.ts#resolveMediaRealPorts 的批准驱动装配）、${REAL_STORE_FACTORY} → 1 处（object-store.ts#resolveMediaObjectStore）`,
     `5. 扫描面：services/api/src 下 ${callSites.scannedFiles} 个 .ts/.mts/.mjs，其中 ${callSites.candidateFiles} 个提到过工厂名`,
     '6. 运行时来源/身份：装配期与请求期的 env 探针（上一条用例）+ 服务层构造期身份（本文件 3 条 r3 用例）',
     '',
     '【未覆盖 / 已知盲区（静态判据一律抓不到，只能由运行期闸门兜底）】',
-    'a. 被测文件之外的入口层：services/api/src/server.ts、tools/**、scripts/** 或任何调用方自行铸造批准的包装 —— 静态扫描不覆盖这些路径（本次实测 server.ts 未接线）。',
+    'a. 被测文件之外的入口层：services/api/src/server.ts、tools/**、scripts/** 或任何调用方自行铸造批准的包装 —— 静态扫描只认文件内的调用点名字（片 W2 起 server.ts 由 real-ports 的启动参数驱动，其「是否该接」由运行期拒绝原因兜底，不由本判据判定）。',
     'b. 自造等价构造：改名/包装工厂、自建 makeObjectStore() 返回真实适配器、monkey-patch 已审工厂 —— 只认对象身份与调用点名字的文本判据无感。',
     'c. 动态取用：import { env } from \'node:process\'、globalThis[\'pro\'+\'cess\'].env、eval/Function 构造 —— AST 规则只识别已枚举的 process 根与字面键。',
     'd. 模拟/伪造测试环境：把 approveRealMediaWiring 换成同名伪造导出、篡改 WeakSet、在测试进程里预置批准 —— 单测无法自证「测试环境本身没被替换」。',

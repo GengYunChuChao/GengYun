@@ -5,6 +5,7 @@
 import { buildApp } from './app.ts';
 import { ConfigError, loadConfig } from './config.ts';
 import { createPool } from './db/pool.ts';
+import { MediaRealWiringError, mediaRealPortsAssemblyOptions, resolveMediaRealPorts } from './media/real-ports.ts';
 
 async function main(): Promise<void> {
   let config;
@@ -24,7 +25,30 @@ async function main(): Promise<void> {
   }
 
   const pool = createPool(config.databaseUrl);
-  const app = buildApp({ config, pool });
+
+  // 媒体域真实端口接线（GY-R28 · W2）：本题**唯一**的接线决定点。
+  //
+  // - 没有 `--approve-real-media-wiring` ⇒ `resolveMediaRealPorts` 返回 `null` ⇒ **不传**任何媒体
+  //   选项 ⇒ `buildApp` 走既有 fail-closed（整域 503 `PROVIDER_UNAVAILABLE`），与 main 逐字节一致；
+  // - 有该参数 ⇒ 前置校验（real 模式 / 四键配置齐备 / 访问网关原点可部署）后，**在此铸造**批准能力
+  //   并构造 S3 兼容端口。铸造点只此一处（`approveRealMediaWiring` 的唯一调用点在
+  //   `media/real-ports.ts` 的 `resolveMediaRealPorts` 内，且由本参数驱动）。
+  // - 任何拒绝都是**启动失败**：不接受「半接线」上线。
+  let mediaAssembly: ReturnType<typeof mediaRealPortsAssemblyOptions> | null = null;
+  try {
+    const mediaRealPorts = resolveMediaRealPorts({ config, argv: process.argv.slice(2) });
+    if (mediaRealPorts !== null) mediaAssembly = mediaRealPortsAssemblyOptions(mediaRealPorts);
+  } catch (error) {
+    if (error instanceof MediaRealWiringError) {
+      console.error('启动失败：媒体域真实接线被拒绝（拒绝原因闭集见 media/real-ports.ts）。');
+      console.error(`  - [${error.refusal} → ${error.errorCode}, retryable=${String(error.retryable)}] ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
+
+  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}) });
 
   // 管理员初始化：仅在后台账号表为空且配置了 bootstrap 凭据时创建；失败不静默。
   try {
