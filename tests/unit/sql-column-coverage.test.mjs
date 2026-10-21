@@ -80,16 +80,16 @@ const OPAQUE_ALLOWLIST = [
   },
 ];
 
-/** 8 个 store-pg 的解析读数钉死值（2026-10-21 实测）。解析器「静默看不见」时靠这几条立刻红。 */
+/** 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测）。 */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 139,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 66, DELETE: 25 },
-  returningClauses: 54,
+  sqlLiterals: 141,
+  statements: { INSERT: 27, UPDATE: 21, SELECT: 66, DELETE: 27 },
+  returningClauses: 56,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1155,
+  columnRequirements: 1157,
   opaqueExpressions: 2,
 };
 
@@ -99,7 +99,7 @@ const EXPECTED_PER_FILE = {
   conversations: 16,
   favorites: 15,
   history: 16,
-  messages: 12,
+  messages: 14,
   ocr: 16,
   recognitions: 20,
   speech: 16,

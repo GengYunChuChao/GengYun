@@ -1288,6 +1288,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'conversation_turns',     'DELETE'),
     ('public', 'favorites_idempotency',  'DELETE'),
     ('public', 'history_idempotency',    'DELETE'),
+    -- R28-C1（#16/#17 清理链 P0-1，2026-10-21）：消息域注销清理
+    -- （services/api/src/messages/store-pg.ts 的 purgeOwnerRows）有整行删除
+    -- `DELETE FROM public.messages WHERE owner_id = $1::uuid`；PG 没有列级 DELETE，
+    -- 只能表级授予（与收藏/历史/对话域同一条理由）。
+    ('public', 'messages',               'DELETE'),
     -- R28-S28（迁移 0025）：PG 没有列级 DELETE，而 store 有两条整行删除
     -- （services/api/src/recognitions/store-pg.ts:820 release、:830 purge），只能表级授予。
     -- 这是本片唯一新增的表级写授权（白名单 11 → 12 个三元组）。

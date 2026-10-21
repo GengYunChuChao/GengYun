@@ -78,6 +78,33 @@ export type MarkReadResult =
   | { ok: true; record: MessageRecord; transitioned: boolean }
   | { ok: false; reason: 'NOT_FOUND' | 'OWNER_CHANGED' | 'REVISION_CHANGED' };
 
+/**
+ * 注销清空的**分表**真实行数。
+ *
+ * 字段名与 `privacy/user-data-deletion.ts` 的 `OwnerPurgeCounts` 逐字一致，接线
+ * （§7 P0-2）时可直接交给注销协调器，不必再套一层适配器：
+ *   - `records`：本域正文表（`public.messages`）**真的被物理删除**的行数；
+ *   - `idempotency`：本主体落在幂等台账里的行数（`public.idempotency_keys` / 内存槽位）。
+ *
+ * 两项都必须来自 `DELETE ... RETURNING` 的实际返回行数：拿不到行数就如实失败，
+ * 绝不用「调用没报错」冒充「删了 N 行」。
+ */
+export interface MessagesOwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+}
+
+/**
+ * 实现了注销清理原语的存储（本片的内存实现与 PG 实现都满足）。
+ *
+ * 单独一个类型而不是把接口方法改成必填：`MessagesStore` 还要容纳既有替身，
+ * 而这里表达的是「这份实现**确实**能按主体清空」——接线处（§7 P0-2）据此收窄即可。
+ */
+export interface PurgeableMessagesStore extends MessagesStore {
+  deleteAllByOwner(ownerId: string): Promise<number>;
+  purgeOwnerData(ownerId: string): Promise<MessagesOwnerPurgeCounts>;
+}
+
 export interface MessagesStore {
   readonly persistent: boolean;
   /** 写入新消息；同 id 或同 `(owner_id, event_key)` 已存在 ⇒ `duplicate` 且不覆盖。 */
@@ -90,6 +117,21 @@ export interface MessagesStore {
   markReadIfUnread(id: string, expected: MarkReadExpectation, readAt: string): Promise<MarkReadResult>;
   /** **派生**未读数：`read_at === null` 的本人行数（不是计数器）。 */
   countUnread(ownerId: string): Promise<number>;
+  // ---- 注销清理（#17 P0-1；尚未进注销模块闭集，故保持可选） ----
+  /**
+   * **注销清理**原语：按主体**物理删除**本域全部消息行，返回被删的正文行数。
+   *
+   * 为什么是可选方法：只有注册进 `services/api/src/privacy/user-data-deletion.ts` 的模块
+   * 才必须提供它；#17 目前**没有**注册（见 `docs/verification/gy-i16-i17-deletion-cascade-20261021.md`
+   * §7 P0-2），把可选改成必填会让每个既有替身立刻违反接口，属"为了好看而改契约"。
+   *
+   * 幂等台账**没有 owner 列**（共享表 `public.idempotency_keys`，`0008_auth_session.sql:46-58`），
+   * 只能按 `scope` 前缀删——`scope` 的第一段就是主体 uuid
+   * （`auth/idempotency.ts:111-113` 的 `idempotencyScope`）。
+   */
+  deleteAllByOwner?(ownerId: string): Promise<number>;
+  /** 同一次清理的**分表计数**（正文 + 台账）；协调器用它把两个真实行数都写进证据串。 */
+  purgeOwnerData?(ownerId: string): Promise<MessagesOwnerPurgeCounts>;
   // ---- 幂等台账 ----
   findIdempotency(scope: string, keyHash: string): Promise<IdempotencyRecord | null>;
   claimIdempotency(
@@ -131,7 +173,7 @@ export function compareMessagesDescending(
 /** 内存实现（测试/替身；不是持久化，不代表端到端可用）。 */
 export function createMemoryMessagesStore(
   options: { now?: () => number } = {},
-): MessagesStore & { snapshotCounts(): { messages: number; read_transitions: number } } {
+): PurgeableMessagesStore & { snapshotCounts(): { messages: number; read_transitions: number } } {
   const messages = new Map<string, MessageRecord>();
   const eventIndex = new Map<string, string>();
   const idempotency = new Map<string, IdempotencySlot>();
@@ -174,6 +216,39 @@ export function createMemoryMessagesStore(
     return { ok: true, record: cloneDeep(next), transitioned: true };
   }
 
+  /**
+   * 注销清空的**同步**临界区（函数内没有任何 `await`，与 `markRead` 同口径）。
+   *
+   * 三件事必须一起做，否则留下两种"半删"：
+   *   - 只删正文不删 `eventIndex` ⇒ 同一 `event_key` 再投递被判 `duplicate`，而消息已不存在；
+   *   - 只删正文不删幂等槽位 ⇒ 同键重放仍能取回 `outcome` 里的消息引用（`{"kind":"message","id"}`）；
+   *   - 幂等槽位的键是 `<scope>\u0000<keyHash>`，`scope` 自身不含 `\u0000`
+   *     ⇒ 用第一个分隔符切出 scope 做**前缀**比较，不会误伤其他主体（uuid 定长且互不相同）。
+   *
+   * 仍在 `awaitIdempotencySettled` 上等的等待者不在此处唤醒：它们的槽位已经不存在，
+   * 有界轮询会读到 `undefined ⇒ settled` 或走完自己的超时（`REQUEST_IN_PROGRESS` 可重试），
+   * 两种结果都不成立「删除已成功」这种假话。
+   */
+  function purgeOwnerRows(ownerId: string): MessagesOwnerPurgeCounts {
+    const scopePrefix = `${ownerId}\n`;
+    let records = 0;
+    for (const [id, record] of [...messages]) {
+      if (record.owner_id !== ownerId) continue;
+      messages.delete(id);
+      eventIndex.delete(eventComposite(record.owner_id, record.event_key));
+      records += 1;
+    }
+    let idempotencyCount = 0;
+    for (const key of [...idempotency.keys()]) {
+      const boundary = key.indexOf(KEY_DELIMITER);
+      if (boundary < 0) continue;
+      if (!key.slice(0, boundary).startsWith(scopePrefix)) continue;
+      idempotency.delete(key);
+      idempotencyCount += 1;
+    }
+    return { records, idempotency: idempotencyCount };
+  }
+
   return {
     persistent: false,
 
@@ -208,6 +283,17 @@ export function createMemoryMessagesStore(
         if (record.owner_id === ownerId && record.read_at === null) count += 1;
       }
       return count;
+    },
+
+    // ---- 注销清理（#17 P0-1） ----
+
+    async deleteAllByOwner(ownerId) {
+      // 正文行数是本方法的既有契约；台账在同一临界区里一并清掉，行数经 `purgeOwnerData` 给出。
+      return purgeOwnerRows(ownerId).records;
+    },
+
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
     },
 
     async findIdempotency(scope, keyHash) {
