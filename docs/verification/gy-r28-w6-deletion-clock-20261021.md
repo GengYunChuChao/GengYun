@@ -322,6 +322,11 @@ npm run purge:online-data -- --limit 50
 `UNWIRED_DECLARATIONS`，理由与 E2 一致：回环链里没有真 PG、脚本自建 initdb 临时集群、要跑四域 GRANT、
 缺 `GY_PG_BIN` 时 `exit 77`。⛔ 本片**不**把它写成「已接线」；真库 job 接线属 E5 的在途分支（PR #400 那一族）。
 
+**本分支同时携带 `tests/integration/online-purge-pg.mjs`，`#407` 合入后可由 CI 接线片取用**：脚本自带
+`GY_I19_PG_ROOT` / `GY_PG_BIN` 两个逃生口、自建 initdb 临时集群并在退出时 `pg_ctl -m immediate stop` + 删目录，
+在 CI 里只要给 `GY_PG_BIN`（PG 17.x 二进制目录）即可直接当 job 用；数据目录根默认 `os.tmpdir()`，
+在 Windows/受限权限环境需显式指到可写目录（本机实测 `os.tmpdir()` 会 `initdb: could not change permissions of directory`）。
+
 ### D4（**已接受**）——SQL 宿主登记，静态纳管待 R28-S66
 
 `tests/unit/sql-column-coverage.test.mjs` 的 `UNAUDITED_SQL_HOSTS` 新增两条
