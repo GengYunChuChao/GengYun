@@ -43,6 +43,7 @@ import { ApiError } from '../../errors.ts';
 import type { PgPool } from '../../db/pool.ts';
 import { CONTRACT_FLAG_KEYS } from './flags.ts';
 import type { FlagKey } from './flags.ts';
+import type { AuditResult, TargetRefValue } from '../types.ts';
 import type { FlagView } from './types.ts';
 
 /** 读面：三列，顺序固定（调用方再按契约顺序重排）。 */
@@ -56,6 +57,17 @@ export const SET_FEATURE_FLAG_FUNCTION = 'public.set_feature_flag';
 const CALL_SET_FLAG_SQL = `SELECT public.set_feature_flag(
   $1::text, $2::integer, $3::boolean, $4::uuid, $5::uuid, $6::uuid, $7::text, $8::text
 ) AS result`;
+
+/**
+ * 审计读面（迁移 0027 的 `public.list_admin_flag_audit`）：只回 `action = 'set_flag'` 一类行，
+ * 键集分页与 `admin_audit_events_created_idx (created_at DESC, id DESC)` 同序。
+ *
+ * 为什么走函数而不是直接 SELECT 表：`admin_audit_events` 对运行时角色是「不可读」的最小权限
+ * （0017 的裁定，本片不动它）；函数以属主身份执行，只把开关一类行暴露出来。
+ * 三个参数全显式转型，避免默认值把实参推断成别的类型。
+ */
+export const LIST_FLAG_AUDIT_FUNCTION = 'public.list_admin_flag_audit';
+const SELECT_FLAG_AUDIT_SQL = `SELECT id, actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result::text AS result, before_value, after_value, created_at FROM public.list_admin_flag_audit($1::integer, $2::timestamptz, $3::uuid)`;
 
 /** 写事务的锁等待上限（与 `account-authority-pg.ts` 的 4s 同口径；常量不拼接用户输入）。 */
 const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '4s'";
@@ -86,6 +98,51 @@ export interface FeatureFlagsPort {
      */
     meta: { changedBy: string | null; reason: string | null; requestId?: string | null },
   ): Promise<FeatureFlagsCommitResult>;
+  /**
+   * 开关变更留痕（迁移 0027）。**可选方法**：未迁移/未授权的端口不提供，服务层据此如实 503，
+   * 绝不用「空页」冒充「没有变更史」。
+   */
+  listAudit?(input: { limit: number; before: FlagAuditCursor | null }): Promise<FlagAuditPage>;
+}
+
+/** 审计读面的键集游标：`(created_at, id)` 严格递减（与 `admin_audit_events_created_idx` 同序）。 */
+export interface FlagAuditCursor {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+/** 审计行里的开关读数（迁移 0027 由 `set_feature_flag` 在函数内字面量构造）。 */
+export interface FlagReading {
+  readonly enabled: boolean;
+  readonly revision: number;
+}
+
+/**
+ * 审计行 → 契约 `AuditEvent` 的超集：多一处 `actor`（= `0017` 的 `actor_admin_id`），
+ * `before_value` / `after_value` 是「从 A 改成 B」的两个读数（历史行可为 NULL）。
+ */
+export interface FlagAuditRow {
+  readonly id: string;
+  readonly actor: string | null;
+  readonly action: string;
+  readonly scope: string;
+  readonly target_ref: TargetRefValue | null;
+  /**
+   * 被变更的开关 key（`0017` 的 `target_hint` 列；0020 的写入函数把裸 key 放在这里，
+   * 而 `target_ref` 对开关行恒为 NULL —— 不暴露它就无法说明「改的是哪个开关」）。
+   */
+  readonly target_hint: string | null;
+  readonly reason_code: string;
+  readonly request_id: string;
+  readonly result: AuditResult;
+  readonly before_value: FlagReading | null;
+  readonly after_value: FlagReading | null;
+  readonly created_at: string;
+}
+
+export interface FlagAuditPage {
+  readonly items: readonly FlagAuditRow[];
+  readonly hasMore: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -135,6 +192,114 @@ function toFlagView(raw: unknown, expectedKey?: FlagKey): FlagView {
     throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关返回的 revision 不是正整数', { retryable: false });
   }
   return { key, enabled, revision };
+}
+
+/** 契约 `AuditEvent.result` 闭集（逐值抄自 `packages/contracts/openapi.json`）。 */
+const AUDIT_RESULTS = ['accepted', 'denied', 'failed'] as const;
+
+function pickAuditResult(raw: unknown): AuditResult {
+  if (typeof raw === 'string' && (AUDIT_RESULTS as readonly string[]).includes(raw)) {
+    return raw as AuditResult;
+  }
+  throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕返回的 result 不在契约闭集内', {
+    retryable: false,
+  });
+}
+
+/** jsonb 读数 → `{enabled, revision}`；历史行（0027 之前）为 NULL，如实保留 null。 */
+function toFlagReading(raw: unknown): FlagReading | null {
+  if (raw === null || raw === undefined) return null;
+  if (!isRecord(raw)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的读数不是对象', { retryable: false });
+  }
+  const enabled = raw['enabled'];
+  const revision = raw['revision'];
+  if (
+    typeof enabled !== 'boolean' ||
+    typeof revision !== 'number' ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1
+  ) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的读数形状不符', { retryable: false });
+  }
+  return { enabled, revision };
+}
+
+/** jsonb `target_ref` → 契约 `TargetRef`（开关行恒为 NULL；非空时按契约形状校验）。 */
+function toTargetRefValue(raw: unknown): TargetRefValue | null {
+  if (raw === null || raw === undefined) return null;
+  if (!isRecord(raw)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 target_ref 不是对象', { retryable: false });
+  }
+  const type = raw['type'];
+  const id = raw['id'];
+  const revision = raw['revision'];
+  if (
+    typeof type !== 'string' ||
+    typeof id !== 'string' ||
+    !UUID_RE.test(id) ||
+    typeof revision !== 'number' ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1
+  ) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 target_ref 形状不符', { retryable: false });
+  }
+  return { type, id, revision } as TargetRefValue;
+}
+
+/** 审计行 → 契约 `AuditEvent`（含本片新增的 `actor` / `before_value` / `after_value` / `target_hint`）。 */
+function toFlagAuditRow(raw: unknown): FlagAuditRow {
+  if (!isRecord(raw)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕返回不是对象', { retryable: false });
+  }
+  const id = raw['id'];
+  const actor = raw['actor_id'];
+  const action = raw['action'];
+  const scope = raw['scope'];
+  const reasonCode = raw['reason_code'];
+  const requestId = raw['request_id'];
+  const targetHint = raw['target_hint'];
+  if (typeof id !== 'string' || !UUID_RE.test(id)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 id 不是 uuid', { retryable: false });
+  }
+  if (actor !== null && actor !== undefined && (typeof actor !== 'string' || !UUID_RE.test(actor))) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 actor 不是 uuid', { retryable: false });
+  }
+  if (typeof action !== 'string' || typeof scope !== 'string' || typeof reasonCode !== 'string') {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的文本字段形状不符', { retryable: false });
+  }
+  if (typeof requestId !== 'string' || !UUID_RE.test(requestId)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 request_id 不是 uuid', { retryable: false });
+  }
+  if (targetHint !== null && targetHint !== undefined && typeof targetHint !== 'string') {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 target_hint 不是字符串', { retryable: false });
+  }
+  const createdAtRaw = raw['created_at'];
+  const createdAt =
+    createdAtRaw instanceof Date
+      ? createdAtRaw
+      : typeof createdAtRaw === 'string'
+        ? new Date(createdAtRaw)
+        : null;
+  if (createdAt === null || Number.isNaN(createdAt.getTime())) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕的 created_at 不是合法时间戳', {
+      retryable: false,
+    });
+  }
+  return {
+    id,
+    actor: typeof actor === 'string' ? actor : null,
+    action,
+    scope,
+    target_ref: toTargetRefValue(raw['target_ref']),
+    target_hint: typeof targetHint === 'string' ? targetHint : null,
+    reason_code: reasonCode,
+    request_id: requestId,
+    result: pickAuditResult(raw['result']),
+    before_value: toFlagReading(raw['before_value']),
+    after_value: toFlagReading(raw['after_value']),
+    created_at: createdAt.toISOString(),
+  };
 }
 
 /** 读面错误映射：权限/缺表/缺函数如实「不可用」，超时如实「可重试」。 */
@@ -279,7 +444,50 @@ export function createPostgresFeatureFlags({ pool }: { pool: PgPool }): FeatureF
     return { ok: true, record: toFlagView(raw, key) };
   }
 
-  return { persistent: true, list, get, commitIfCurrent };
+  /**
+   * 开关变更留痕的读面（迁移 0027 的 `list_admin_flag_audit`）。
+   *
+   * - 多取一行判「还有下一页」，不再额外 `COUNT(*)`（键集分页不引入快照统计）；
+   * - 游标非法 ⇒ `INVALID_CURSOR`（不往后端传一个会撞 cast 错误的字符串）；
+   * - 任何形状不符 ⇒ 503（宁可整页失败，也不把陌生行当审计事实展示）。
+   */
+  async function listAudit(input: {
+    limit: number;
+    before: FlagAuditCursor | null;
+  }): Promise<FlagAuditPage> {
+    if (!pool || typeof pool.query !== 'function') {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕读取暂不可用', { retryable: false });
+    }
+    const limit = input.limit;
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      throw new ApiError('INVALID_REQUEST', '开关变更留痕的分页大小非法');
+    }
+    const before = input.before;
+    if (before !== null) {
+      const at = new Date(before.createdAt);
+      if (Number.isNaN(at.getTime()) || !UUID_RE.test(before.id)) {
+        throw new ApiError('INVALID_CURSOR', '游标不可解析');
+      }
+    }
+    let rows: unknown;
+    try {
+      const result = await pool.query(SELECT_FLAG_AUDIT_SQL, [
+        limit + 1,
+        before?.createdAt ?? null,
+        before?.id ?? null,
+      ]);
+      rows = result.rows;
+    } catch (error) {
+      return mapFlagReadError(error);
+    }
+    if (!Array.isArray(rows)) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕返回不是数组', { retryable: false });
+    }
+    const hasMore = rows.length > limit;
+    return { items: rows.slice(0, limit).map((row) => toFlagAuditRow(row)), hasMore };
+  }
+
+  return { persistent: true, list, get, commitIfCurrent, listAudit };
 }
 
 /**

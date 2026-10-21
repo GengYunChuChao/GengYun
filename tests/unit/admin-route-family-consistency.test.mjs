@@ -33,9 +33,9 @@ const SIX = [
 ];
 
 test('钉子：FAMILIES 的 path 必须与 routes/admin.ts 的字面注册路径一致（防只改 families.ts:path ⇒ 静默换掉幂等键域而不改路由）', () => {
-  // (a) 结构：注册点总数恰好 34，且字面模板覆盖四个家族前缀的六种形态。
+  // (a) 结构：注册点总数恰好 35（34 条 + R29-S5 的 GET /admin/flag-audit-events），且字面模板覆盖四个家族前缀的六种形态。
   const registrations = ROUTE_SOURCE.match(/^\s*app\.(get|post|put|patch|delete)\(/gm) ?? [];
-  assert.equal(registrations.length, 34, 'routes/admin.ts 的注册点必须恰好 34 处');
+  assert.equal(registrations.length, 35, 'routes/admin.ts 的注册点必须恰好 35 处');
 
   for (const descriptor of FAMILIES) {
     for (const { suffix } of SIX) {

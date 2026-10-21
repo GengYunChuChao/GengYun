@@ -10235,7 +10235,95 @@
         }
       }
     },
-    "/admin/feature-flags": {
+    "/admin/flag-audit-events": {
+      "get": {
+        "operationId": "listFlagAuditEvents",
+        "summary": "listFlagAuditEvents",
+        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventPageEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "audit:read",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
+  "/admin/feature-flags": {
       "get": {
         "operationId": "listFlags",
         "summary": "listFlags",
@@ -14471,6 +14559,23 @@
           "revision"
         ]
       },
+      "FlagReading": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "revision"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
       "AuditEvent": {
         "type": "object",
         "additionalProperties": false,
@@ -14519,6 +14624,49 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlagReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlagReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [

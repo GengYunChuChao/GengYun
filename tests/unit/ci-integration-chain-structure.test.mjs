@@ -91,6 +91,16 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-jobs-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_jobs_test`：本脚本自带迁移全量应用（0001→0027）、'
+      + '运行时角色最小权限探针（只跑开关/审计两条出厂授权区域，作业表的列级读授权归 0024/0025/0026 各自的区域，'
+      + '本脚本只断言「未授列读不到」而**不代发授权**）、以及开关关/开/再关与作业读/取消的 HTTP 真读数；'
+      + '缺 argv[2] 时回落到回环默认 URL（与 `admin-flags-pg.mjs` 同形：连不上就硬失败，不打印 SKIP），'
+      + '故不进无 PG 的回环链。'
+      + 'R29-S5 只交付脚本与本地真读数（PG 17.11 / 127.0.0.1:55432），**尚未接进任何 workflow**'
+      + '（`.github/workflows/real-pg-integration.yml` 的接线处方已交指挥另派）。',
+  },
+  {
     path: 'tests/integration/admin-flags-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自建/ALTER 运行时角色、'
       + '把随机口令写进它自己的 URL（`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽（这也正是 workflow 里'

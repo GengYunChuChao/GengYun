@@ -14,11 +14,11 @@
  * - `packages/contracts/openapi.json:11165-11205`：`TargetRef` = `{type, id, revision}`，
  *   `type` 为 16 项闭集，`revision` 为 integer >= 1。
  *
- * ## 契约缺口（如实记录，不用假字段填）
- * `AuditEvent` **没有主体/actor 字段**。服务端内部记录 `AuditRecord` 有 `actor_id`，
- * 但契约出口 `projectAuditEvent()` 严格只投影 8 个字段
- * （`services/api/src/admin/audit.ts:67-78`），因此本模块**不提供** actor，
- * 也不从 `request_id` 反推/猜测责任人。页面上如实标注"读面未提供主体"。
+ * ## R29-S5 起：主体与前后值不再是缺口
+ * `AuditEvent` 原有 8 个必填字段（`AUDIT_EVENT_FIELDS`），本片追加 4 个**可选且可空**字段
+ * （`AUDIT_TRAIL_FIELDS`：`actor` / `target_hint` / `before_value` / `after_value`）。
+ * 于是页面能直接显示「谁在什么时候把开关从 A 改成 B」；历史行没有 actor 时如实显示
+ * 「未提供（历史行/服务端未记主体）」，**不**从 `request_id` 反推责任人。
  *
  * ## 与 `admin-api.mjs` 的关系
  * 失败分类与 `fetchAccountsPage` 同形（同一套 `ErrorCode` 与 HTTP 状态口径），
@@ -49,6 +49,20 @@ export const AUDIT_EVENT_FIELDS = Object.freeze([
   'result',
   'created_at',
 ]);
+
+/** `before_value` / `after_value` 的共同形状（契约 `FlagReading`）。 */
+const FLAG_READING_FIELDS = Object.freeze(['before_value', 'after_value']);
+
+/**
+ * R29-S5 给 `AuditEvent` 追加的 4 个**可选且可空**字段（`openapi.json` 里都不在 `required`）：
+ * - `actor`：谁做的（uuid；历史行的内部 actor 曾被 `projectAuditEvent()` 剥掉，故可能为 null）
+ * - `target_hint`：目标的人读标识（开关行是 `flag:<key>`；`TargetRef.type` 没有 flag 成员）
+ * - `before_value` / `after_value`：变更前后值（`FlagReading` = `{enabled, revision}`；非开关行为 null）
+ *
+ * 为什么单列一个常量而不是并进 `AUDIT_EVENT_FIELDS`：后者是**必填**字段的钉子
+ * （`admin-ui-audit-contract.test.mjs` 逐项比对 `required`），混进来会让"可选"看起来像"必有"。
+ */
+export const AUDIT_TRAIL_FIELDS = Object.freeze(['actor', 'target_hint', 'before_value', 'after_value']);
 
 /** 契约 `AuditEvent.result` 闭集。 */
 export const AUDIT_RESULTS = Object.freeze(['accepted', 'denied', 'failed']);
@@ -178,7 +192,35 @@ export function validateAuditEvent(value) {
     warnings.push({ path: '$.created_at', problem: '不是可解析的 date-time（原样展示，不重排）' });
   }
 
-  const known = new Set(AUDIT_EVENT_FIELDS);
+  if (value.actor !== undefined && value.actor !== null) {
+    if (!isPlainString(value.actor)) errors.push({ path: '$.actor', problem: 'actor 必须是字符串或 null' });
+    else if (!UUID_RE.test(value.actor)) warnings.push({ path: '$.actor', problem: '不符合契约 uuid 格式' });
+  }
+
+  if (value.target_hint !== undefined && value.target_hint !== null) {
+    if (!isNonEmptyString(value.target_hint)) {
+      errors.push({ path: '$.target_hint', problem: 'target_hint 必须是非空字符串或 null' });
+    } else if (value.target_hint.length > 200) {
+      warnings.push({ path: '$.target_hint', problem: '超过契约 maxLength 200（原样展示）' });
+    }
+  }
+
+  for (const field of FLAG_READING_FIELDS) {
+    const reading = value[field];
+    if (reading === undefined || reading === null) continue;
+    if (!isPlainObject(reading)) {
+      errors.push({ path: `$.${field}`, problem: `${field} 必须是对象或 null` });
+      continue;
+    }
+    if (typeof reading.enabled !== 'boolean') {
+      errors.push({ path: `$.${field}.enabled`, problem: '缺少布尔 enabled' });
+    }
+    if (!Number.isInteger(reading.revision) || reading.revision < 1) {
+      errors.push({ path: `$.${field}.revision`, problem: '缺少整数 revision（>= 1）' });
+    }
+  }
+
+  const known = new Set([...AUDIT_EVENT_FIELDS, ...AUDIT_TRAIL_FIELDS]);
   for (const key of Object.keys(value)) {
     if (!known.has(key)) warnings.push({ path: `$.${key}`, problem: '契约外字段（不展示、不推断含义）' });
   }
@@ -608,7 +650,32 @@ export function auditRowView(event) {
     target,
     targetLabel:
       target === null ? '无目标（target_ref = null）' : `${target.type}:${target.id} · r${target.revision}`,
+    actor: event.actor ?? null,
+    actorLabel: event.actor == null ? '未提供（历史行/服务端未记主体）' : event.actor,
+    shortActor: typeof event.actor === 'string' ? event.actor.slice(0, 8) : null,
+    shortActor: typeof event.actor === 'string' ? event.actor.slice(0, 8) : null,
+    targetHint: event.target_hint ?? null,
+    changeLabel: describeFlagChange(event),
+    changeTone: describeFlagChangeTone(event),
   };
+}
+
+/** 开关前后值 → 「true → false」这类一次性人读文本；非开关行返回 null（不编造）。 */
+export function describeFlagChange(event) {
+  const before = event.before_value ?? null;
+  const after = event.after_value ?? null;
+  if (before === null && after === null) return null;
+  const render = (reading) => (reading === null ? '∅（无行）' : reading.enabled ? '开' : '关');
+  const revision = after?.revision ?? before?.revision;
+  const tail = Number.isInteger(revision) ? `（r${revision}）` : '';
+  return `${render(before)} → ${render(after)}${tail}`;
+}
+
+/** 变更的语气：开启危险操作=warn、关闭=danger? 反过来——关掉业务开关是"更安全"，开是"放宽"。 */
+export function describeFlagChangeTone(event) {
+  const after = event.after_value ?? null;
+  if (after === null) return 'muted';
+  return after.enabled ? 'warn' : 'ok';
 }
 
 /** 已加载行的结果分布（只统计已加载的，不做"全量"暗示）。 */
