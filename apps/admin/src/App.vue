@@ -2,12 +2,14 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import ContentAdminView from './views/ContentAdminView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'review';
+type TabKey = 'accounts' | 'content' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
+  { key: 'content', label: '资料管理', note: '来源 / 科普 / 分类' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
 
@@ -37,6 +39,7 @@ const active = ref<TabKey>('accounts');
     </nav>
 
     <AccountsView v-if="active === 'accounts'" />
+    <ContentAdminView v-else-if="active === 'content'" />
     <ReviewPlaceholderView v-else />
 
     <footer class="foot">
@@ -47,6 +50,11 @@ const active = ref<TabKey>('accounts');
         </dd>
         <dt>账号目录</dt>
         <dd>只读页：GET /admin/accounts（游标分页）；停用/注销等写操作不在本片</dd>
+        <dt>资料管理</dt>
+        <dd>
+          资料来源 / 科普内容 / 分类：读 <code>sources:read</code>，写 <code>sources:write</code>；写操作带
+          <code>Idempotency-Key</code>，编辑/发布/下架另带 <code>If-Match</code>；审计由服务端留痕
+        </dd>
         <dt>人工审核</dt>
         <dd>空入口占位，未实现；不伪造队列与审核人</dd>
       </dl>
