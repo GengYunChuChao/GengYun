@@ -220,3 +220,38 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
           PGCLIENTENCODING: UTF8
+      # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
+      # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。
+      # 它跑的是仓内**唯一**的完整业务链路：上传识别 → 拿到结果 → 看可信度与理由 → 加入识别历史 →
+      # 从历史读回 → 删除历史 → 再读为空；全程 loopback 真 HTTP（脚本内 `app.listen({host:'127.0.0.1', port:0})`）。
+      # 与前面那些「全链迁移」step 不同：真库臂只 apply 它需要的两段（0001 身份 + 0018 历史），
+      # 并断言「恰好应用一次、重复应用 no-op」——⛔ 不要照抄成 `discoverMigrations()` 全链。
+      # 连接串只走 **env**（`RECOGNITION_CHAIN_PG_TEST_URL`）：全程库 owner 身份，脚本自己从不建角色、
+      # 也不复用别人的运行时角色 ⇒ 对前后 step 零耦合，故排**最后**。
+      # 缺 env 时脚本会打印 SKIP 并 exit 77。本 workflow 里这个 env 是我们自己传的，77 因此只可能意味着
+      # 「env 传丢了」或「脚本把跳过判据改过」⇒ 下面把 77 显式升级成硬失败（`::error::` + `exit 1`），
+      # 让「本步悄悄被跳过」在这条 workflow 里不可能发生。77 是「未取得」，⛔ 不是通过。
+      # 非 0 且非 77 ⇒ 原样以该码退出（真跑挂了就是红）。⛔ 不加任何吞红开关／`|| true`／`set +e`。
+      # 本地取证（PG 17.11 + 空库 + `gengyun_ci_owner` 属主）：exit=0，内存臂 + 真库臂双 PASS。
+      - name: 识别端到端链路（上传→结果→历史→删除→读空）
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_recognition_chain_test'
+          rc=0
+          node tests/integration/recognition-chain-e2e.mjs || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::识别端到端链路的真库臂被跳过（exit 77）：连接串 env 传丢了，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::识别端到端链路失败（exit $rc）。"
+            exit "$rc"
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          RECOGNITION_CHAIN_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognition_chain_test
+          PGCLIENTENCODING: UTF8

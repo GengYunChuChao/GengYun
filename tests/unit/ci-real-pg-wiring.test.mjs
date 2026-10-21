@@ -35,8 +35,8 @@
 //      一致——脚本入参有三种形态（env `*_PG_TEST_URL` 的 path／`process.argv` 的 URL path／
 //      脚本内部硬钉常量），三种都要各自抽取并互相一致（只覆盖一种会留下「改了 env 但 argv 还是旧库」
 //      这类假绿通道）；
-//   ⑨ **双向相等**：workflow 里被 `node tests/integration/*-pg.mjs` 执行的脚本集合与
-//      `MANAGED_SCRIPTS` 必须**双向相等**（此前只有单向：清单里有、workflow 没有 ⇒ 红；
+//   ⑨ **双向相等**：workflow 里被 `node tests/integration/*-pg.mjs`（含 R28-S65 起的 `*-e2e.mjs`）
+//      执行的脚本集合与 `MANAGED_SCRIPTS` 必须**双向相等**（此前只有单向：清单里有、workflow 没有 ⇒ 红；
 //      反过来「双清单同时删掉一项」⇒ 全绿，受管脚本照样没人跑）。
 //
 // 纯静态：只读 `.github/workflows/` 下的文本，⛔ 不起服务、不连 PG、不联网、不写任何文件、不新增依赖。
@@ -74,6 +74,13 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 早先 R28-S14 判它接不了，是因为 runner 上取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只在容器内）；
  * R28-S49 改成先一步用 PGDG apt 装 `postgresql-17` 再跑，见
  * `docs/verification/gy-r28-backup-purge-ci-20261021.md` 与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`。
+ * 第 13 条是 R28-S65 接的（识别**端到端链路** `recognition-chain-e2e.mjs`／迁移 0001+0018 的**子集**）：
+ * 它是清单里**唯一**文件名不叫 `-pg.mjs` 的脚本（`-e2e.mjs`），因此 `scriptsRunByWorkflow()` 的识别口径
+ * 从「只认 `-pg.mjs`」放宽到「`-pg.mjs` 或 `-e2e.mjs`」——这不是放宽**断言**，而是放宽**被识别的脚本口径**，
+ * 判据⑨的双向相等一个字没动（少了它这条脚本永远进不了判据⑨，加进清单只会变成永久假红）。
+ * 它要求**空库**、只走 env `RECOGNITION_CHAIN_PG_TEST_URL`（库 owner），内部起 loopback 真 HTTP，
+ * 且缺 env 时 exit 77 ⇒ step 里必须把 77 显式升级成硬失败（见 workflow 该 step 与
+ * `docs/verification/gy-r28-recognition-chain-ci-20261021.md`）。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -88,6 +95,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
+  'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -103,6 +111,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
+  'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
 /**
@@ -158,6 +167,15 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
   //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。必须排**最后**：装包 step 只服务本步、本步也不依赖 service 口令。
   'tests/integration/backup-purge-pg.mjs',
+  // 13. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
+  //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
+  //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
+  //    `public` 下的表，非 0 直接断言失败）；② 只 apply 它需要的两段迁移（0001 身份 + 0018 历史）并断言
+  //    「恰好一次 + 重复 no-op」——⛔ 与上面的 ocr-jobs／recognitions／speech **不同**，它不跑全链；
+  //    ③ 全程**库 owner** 连接（env `RECOGNITION_CHAIN_PG_TEST_URL`），不建组角色、不用运行时角色 ⇒ 零耦合。
+  //    排**最后**的两个理由：它对前后无前提（⑦⑧⑨ 都不依赖前面的库/角色），而它自己会起 loopback 监听
+  //    并反复轮询「历史行异步落库」（有界等待，最慢的一步）⇒ 放最后不会把别人的失败混进它的读秒。
+  'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
 /**
@@ -595,11 +613,18 @@ export function databaseGuardProblems(source, { scripts = MANAGED_SCRIPTS, scrip
   return problems;
 }
 
-/** workflow 里被 `node tests/integration/*-pg.mjs` 真跑的全部脚本（升序）。 */
+/**
+ * workflow 里被 `node tests/integration/*-pg.mjs`（或 `*-e2e.mjs`）真跑的全部脚本（升序）。
+ *
+ * 为什么认两种后缀：受管清单里从 R28-S65 起有一条不叫 `-pg.mjs` 的脚本
+ * （`tests/integration/recognition-chain-e2e.mjs`——它跑的是完整业务链路，不是 store 层 SQL 面）。
+ * ⛔ 这**不是**放宽判据⑨：双向相等的口径一个字没改，改的只是「哪些文件名算被执行的受管脚本」。
+ * 不给它这条，它就永远进不了判据⑨两侧，而一旦登记进 `MANAGED_SCRIPTS` 就变成永久假红。
+ */
 export function scriptsRunByWorkflow(source) {
   const names = new Set();
   for (const command of runCommandTextsOf(source)) {
-    for (const match of command.matchAll(/node\s+(tests\/integration\/[A-Za-z0-9._-]+-pg\.mjs)/g)) {
+    for (const match of command.matchAll(/node\s+(tests\/integration\/[A-Za-z0-9._-]+(?:-pg|-e2e)\.mjs)/g)) {
       names.add(match[1]);
     }
   }
@@ -1457,13 +1482,13 @@ test('前向⑥（判据⑦＋⑧）：每个受管脚本所在 step 先 CREATE 
   );
 });
 
-test('前向⑦（判据⑨）：workflow 里执行的 `-pg.mjs` 集合与 MANAGED_SCRIPTS 双向相等', () => {
+test('前向⑦（判据⑨）：workflow 里执行的 `-pg.mjs`／`-e2e.mjs` 集合与 MANAGED_SCRIPTS 双向相等', () => {
   const { source } = readWorkflow(REAL_PG_WORKFLOW);
   assertManagedScriptSetMatches(managedScriptSetProblems({ source }));
   assert.deepEqual(
     scriptsRunByWorkflow(source),
     [...MANAGED_SCRIPTS].sort(),
-    '双向相等：workflow 真跑的 `-pg.mjs` 必须与受管清单逐个对上（多一条、少一条都红）',
+    '双向相等：workflow 真跑的 `-pg.mjs`／`-e2e.mjs` 必须与受管清单逐个对上（多一条、少一条都红）',
   );
   // 作用域只锚 real-pg workflow：其它 workflow 各跑自己的 `-pg.mjs`（独立 job／独立库），不属本清单。
   assert.deepEqual(
