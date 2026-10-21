@@ -608,4 +608,41 @@ RESET ROLE;
 
 \echo '-- [7] 语音域探针结束（正向行成功即无输出；上面两条禁止面各应有一行 ERROR: 42501 …）'
 
+-- ---------------------------------------------------------------------------
+-- [11] R28-S58 身份管线：运行时不能自己扩权（组授予 / 在业务 schema 建表）
+--   两件都是「拿只读运行时换更高权限」的入口：
+--     (a) GRANT <组> TO gengyun_api_runtime —— 把某个组的表/列授权整包继承进来；
+--     (b) CREATE TABLE public.<自有表>    —— 在业务 schema 里落一张自己能写的表。
+--   90-assert 的 89 号看的是事后 pg_auth_members 快照、11/12 号看的是 schema 上的 ACL 位；
+--   这里补的是「动作本身当场被拒」的直接证据。ON_ERROR_STOP=0 下 psql 会继续跑，
+--   逐条读 :SQLSTATE 打印出来，判定留给读者（探针纪律：不假设、只复述）。
+-- ---------------------------------------------------------------------------
+\echo '-- [11] 身份管线：GRANT 组 / CREATE TABLE 都必须 42501（下面两条各应有一行 ERROR: 42501 …）'
+SET ROLE gengyun_api_runtime;
+
+GRANT gengyun_preview_reader TO gengyun_api_runtime;
+\set r28_s58_grant_sqlstate :SQLSTATE
+\set r28_s58_grant_failed :ERROR
+\echo '--   [11a] GRANT gengyun_preview_reader TO gengyun_api_runtime ⇒ SQLSTATE=' :r28_s58_grant_sqlstate '（期望 42501；ERROR=' :r28_s58_grant_failed '）'
+
+CREATE TABLE public.r28_s58_probe (id integer);
+\set r28_s58_create_sqlstate :SQLSTATE
+\set r28_s58_create_failed :ERROR
+\echo '--   [11b] CREATE TABLE public.r28_s58_probe(id integer) ⇒ SQLSTATE=' :r28_s58_create_sqlstate '（期望 42501；ERROR=' :r28_s58_create_failed '）'
+
+RESET ROLE;
+
+\echo '--   [11c] 残留检查：建表必须没落地（第一条 SELECT 应 0 行），成员资格必须仍为 5（第二条应打印 5）'
+SELECT c.relname AS r28_s58_probe_table_left
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname = 'public'
+   AND c.relname = 'r28_s58_probe';
+SELECT count(*) AS r28_s58_runtime_memberships
+  FROM pg_auth_members m
+  JOIN pg_roles g ON g.oid = m.member
+ WHERE g.rolname = 'gengyun_api_runtime';
+
+\echo '-- [11] 身份管线探针结束（两条禁止面各应有一行 ERROR: 42501 …；[11c] 计数应仍为 5）'
+
 \echo '### 探针结束（exit 码无意义：ON_ERROR_STOP=0 是设计的一部分）'

@@ -1372,6 +1372,33 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
       FROM external_manifest e
      WHERE to_regclass('public.'||e.tbl) IS NULL
   ),
+  -- R28-S58 身份面：SECURITY DEFINER 函数的 search_path 审计。92 号的 ok 与 detail 共用这一份
+  -- 判定，避免「判红却列不出是哪个函数」。判据：proconfig 里必须有一条以 `search_path=` 开头
+  -- 的设置项，且它的每个元素（去空格、去双引号后）都落在 {pg_catalog, pg_temp} 之内。
+  -- 可写 schema（public / 任何业务 schema / "$user"）一旦出现在 search_path 里，SECURITY
+  -- DEFINER 函数就会按调用者可影响的名字解析对象 —— 这是提权最常见的一条路。
+  -- 范围：schema 属于 public / catalog_ops / staging_intake 的 prosecdef 函数（本库全部 SECDEF
+  -- 落在这三处，由 2011-... 的迁移建立）；一个都查不到也算红（92 号另行判定）。
+  secdef_audit(func, proconfig, pinned) AS (
+    SELECT p.oid::regprocedure::text,
+           COALESCE(array_to_string(p.proconfig, '; '), '(未设置 proconfig)'),
+           EXISTS (
+                 SELECT 1
+                   FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) AS cfg
+                  WHERE left(cfg, 12) = 'search_path='
+                    AND btrim(substr(cfg, 13)) <> ''
+                    AND NOT EXISTS (
+                          SELECT 1
+                            FROM unnest(string_to_array(
+                                   replace(substr(cfg, 13), ' ', ''), ',')) AS e
+                           WHERE btrim(replace(e, '"', '')) NOT IN ('pg_catalog', 'pg_temp')
+                        )
+           )
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
+       AND p.prosecdef
+  ),
   checks(label, ok, detail) AS (
 
   -- 1. 运行时 LOGIN 的属性：可登录、可继承、且无任何特权位
@@ -2423,6 +2450,133 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        AND NOT att.attisdropped
                        AND a.grantee = 0
                   )
+         ), '（无）')
+
+  UNION ALL
+  -- 89. R28-S58 身份面收敛（成员资格精确）：运行时在 pg_auth_members 里的成员资格必须
+  --     **恰好**是 20-login-roles.sql C 段（L220-224）写死的那 5 条 —— 一条不多、一条不少，
+  --     每条 admin_option = false，且被授予的组本身都是 NOLOGIN。
+  --     3 号 required_memberships 是单向的「这 5 条都在」，多授一条新组、或给某条补上
+  --     ADMIN OPTION，它照样判绿；而「GRANT 一个新组 TO gengyun_api_runtime」正是后来者
+  --     给运行时扩权最省事的一条路（组里挂的表/列授权会被立刻继承）。同理，组角色一旦
+  --     能 LOGIN，就等于多了一把能直接登进业务库的钥匙。这两面都必须在事后拦住。
+  SELECT 'runtime_membership_exact',
+         (SELECT count(*)
+            FROM pg_auth_members m
+            JOIN pg_roles g ON g.oid = m.member
+           WHERE g.rolname = 'gengyun_api_runtime') = 5
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_auth_members m
+                 JOIN pg_roles r ON r.oid = m.roleid
+                 JOIN pg_roles g ON g.oid = m.member
+                WHERE g.rolname = 'gengyun_api_runtime'
+                  AND (m.admin_option
+                       OR r.rolcanlogin
+                       OR r.rolname NOT IN ('gengyun_auth_privacy',
+                                            'gengyun_preview_reader',
+                                            'gengyun_consent_granter',
+                                            'gengyun_profile_runtime',
+                                            'gengyun_knowledge_runtime'))
+         ),
+         'pg_auth_members 必须恰为 5 条 NOLOGIN 组、无 ADMIN OPTION；实测（组→admin_option/可登录）：' ||
+         COALESCE((
+           SELECT string_agg(r.rolname || '→' || m.admin_option::text
+                             || '/login=' || r.rolcanlogin::text,
+                             ', ' ORDER BY r.rolname)
+             FROM pg_auth_members m
+             JOIN pg_roles r ON r.oid = m.roleid
+             JOIN pg_roles g ON g.oid = m.member
+            WHERE g.rolname = 'gengyun_api_runtime'
+         ), '（无）')
+
+  UNION ALL
+  -- 90. R28-S58 身份面收敛（默认权限面）：pg_default_acl 必须零行。
+  --     ALTER DEFAULT PRIVILEGES 是一条「不碰任何既有表/列、却让**将来**建出来的对象
+  --     自动带权限」的旁路：本文件所有逐表/逐列断言（含 87 号 runtime_surface_parity
+  --     的清单比对）看的都是「现在有什么」，而这一条改的是「以后有什么」，拦不住。
+  --     部署形态（provision-db.sh + 20-login-roles.sql + roles/*.sql）全程不用它，
+  --     因此零行就是正确形态；非零行既是越权，也是「有人绕过本文件改权限」的信号。
+  SELECT 'no_default_acl_entries',
+         (SELECT count(*) FROM pg_default_acl) = 0,
+         'pg_default_acl 必须零行；实测前 5 行（角色 @ schema objtype = acl）：' ||
+         COALESCE((
+           SELECT string_agg(d, ' / ')
+             FROM (
+               SELECT d.defaclrole::regrole::text
+                      || ' @ ' || CASE WHEN d.defaclnamespace = 0 THEN '(全局)'
+                                       ELSE d.defaclnamespace::regnamespace::text END
+                      || ' ' || d.defaclobjtype::text
+                      || ' = ' || d.defaclacl::text AS d
+                 FROM pg_default_acl d
+                ORDER BY 1
+                LIMIT 5
+             ) x
+         ), '（无）')
+
+  UNION ALL
+  -- 91. R28-S58 身份面收敛（角色属性矩阵）：每个 gengyun_* 角色都必须收敛在最小属性面。
+  --     gengyun_cvm_owner 是迁移管理员（initdb 的引导超级用户），超级用户位天然蕴含
+  --     CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS，故它是唯一整族例外（真实集群实测如此）；
+  --     其余角色一个特权位都不许有，全部 INHERIT、连接数不限，且只有运行时可 LOGIN。
+  --     1 号只盯 gengyun_api_runtime 一个角色的属性，5 号只查成员链 —— 「顺手 ALTER ROLE
+  --     别的 gengyun_* 角色提权」这两条都看不见，这里补齐整个命名空间的横切面。
+  SELECT 'role_attribute_matrix',
+         (SELECT count(*) FROM pg_roles WHERE rolname LIKE 'gengyun\_%') > 0
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_roles r
+                WHERE r.rolname LIKE 'gengyun\_%'
+                  AND (   (r.rolsuper AND r.rolname <> 'gengyun_cvm_owner')
+                       OR (r.rolname <> 'gengyun_cvm_owner'
+                           AND (r.rolcreatedb OR r.rolcreaterole
+                                OR r.rolreplication OR r.rolbypassrls))
+                       OR NOT r.rolinherit
+                       OR r.rolconnlimit <> -1
+                       OR (r.rolcanlogin
+                           AND r.rolname NOT IN ('gengyun_api_runtime',
+                                                 'gengyun_cvm_owner')))
+         ),
+         'gengyun_* 必须收敛（唯一超管 owner、唯一可登录的 runtime 与 owner、其余 NOLOGIN/INHERIT/connlimit=-1）；越界角色：' ||
+         COALESCE((
+           SELECT string_agg(r.rolname || '(super=' || r.rolsuper::text
+                             || ',login=' || r.rolcanlogin::text
+                             || ',db=' || r.rolcreatedb::text
+                             || ',role=' || r.rolcreaterole::text
+                             || ',repl=' || r.rolreplication::text
+                             || ',bypass=' || r.rolbypassrls::text
+                             || ',inherit=' || r.rolinherit::text
+                             || ',conn=' || r.rolconnlimit::text || ')',
+                             ', ' ORDER BY r.rolname)
+             FROM pg_roles r
+            WHERE r.rolname LIKE 'gengyun\_%'
+              AND (   (r.rolsuper AND r.rolname <> 'gengyun_cvm_owner')
+                   OR (r.rolname <> 'gengyun_cvm_owner'
+                       AND (r.rolcreatedb OR r.rolcreaterole
+                            OR r.rolreplication OR r.rolbypassrls))
+                   OR NOT r.rolinherit
+                   OR r.rolconnlimit <> -1
+                   OR (r.rolcanlogin
+                       AND r.rolname NOT IN ('gengyun_api_runtime',
+                                             'gengyun_cvm_owner')))
+         ), '（无）')
+
+  UNION ALL
+  -- 92. R28-S58 身份面收敛（SECURITY DEFINER 的 search_path）：三 schema 下每个 prosecdef
+  --     函数都必须把 search_path 固定掉。SECURITY DEFINER 函数以属主身份执行，search_path
+  --     里只要有一个可写 schema，调用者就能提前建同名对象把内部解析劫走 —— 这是拿「只读
+  --     运行时」换「函数属主权限」的经典一步。基线是 8 个函数全部 `search_path=pg_catalog`
+  --     （部分另带 TimeZone=UTC）。查不到任何 secdef 函数也算红：那说明审计面本身失效了。
+  SELECT 'secdef_search_path_pinned',
+         (SELECT count(*) FROM secdef_audit) > 0
+         AND NOT EXISTS (SELECT 1 FROM secdef_audit a WHERE NOT a.pinned),
+         '每个 SECURITY DEFINER 函数都必须 SET search_path 到 pg_catalog（或 pg_catalog, pg_temp）；实测 '
+         || (SELECT count(*)::text FROM secdef_audit)
+         || ' 个 secdef 函数（0 个也判红）；未固定的：' ||
+         COALESCE((
+           SELECT string_agg(a.func || ' → ' || a.proconfig, ' / ' ORDER BY a.func)
+             FROM secdef_audit a
+            WHERE NOT a.pinned
          ), '（无）')
 )
 
