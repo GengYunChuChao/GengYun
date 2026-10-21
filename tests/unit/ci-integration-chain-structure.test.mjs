@@ -185,10 +185,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/recognition-chain-e2e.mjs',
-    reason: '需真实 PG17 且硬钉库名 `gengyun_recognition_chain_test`：设置 `RECOGNITION_CHAIN_PG_TEST_URL` 时才跑真库臂；'
-      + '未设置时**显式打印 SKIP 并以 77 退出**（未取得，不静默绿；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 可显式取 0）。'
-      + '合流后按 #312「跳过即未取得」的判据，它不进无 PG 的回环链（挂进去只会让整链显式失败），'
-      + '由 `npm run test:integration:recognition-chain-pg` 带 env 运行。',
+    reason: '需真实 PG 17.11（**专用空库** `gengyun_recognition_chain_test`——脚本 `preparePg()` 先数 `public` 下'
+      + '的表，非 0 直接断言失败；真库臂只 apply 它需要的两段迁移 0001 身份 + 0018 历史并断言「恰好一次、'
+      + '重复 no-op」，⛔ 不跑全链；连接串只走 env `RECOGNITION_CHAIN_PG_TEST_URL`，全程**库 owner** 身份，'
+      + '脚本自己从不建角色、也不用运行时角色；链路本身走 loopback 真 HTTP）。'
+      + 'R28-S65 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立 step（受管脚本第 13 条，'
+      + '自带 `CREATE DATABASE gengyun_recognition_chain_test`，并把缺 env 的 exit 77 显式升级成硬失败）；'
+      + '它**仍不进**无 PG 的回环链 `test:integration:http`——缺库即 77，挂进去只会让整链显式失败，'
+      + '故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/recognitions-pg.mjs',
