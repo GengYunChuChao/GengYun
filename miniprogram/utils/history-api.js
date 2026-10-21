@@ -148,25 +148,12 @@ function validateOcr(value) {
 
 // ---- 通用请求 ---------------------------------------------------------------
 
-// 401/403 分流：口径照抄 `miniprogram/utils/identify-api.js#forbiddenOrSessionLoss`，
-// 全站不造第二套错误语义（与 `miniprogram/utils/favorites-api.js` 的同名函数逐句对齐）。
-//   401 ⇒ 会话本身失效：清会话，报 SESSION_REQUIRED；
-//   403 + 契约 403 码（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE）⇒ 会话有效但无权：
-//     原样带出该码，**不**清会话（`states.js` 的 denied 与 guest 必须分开渲染）。
-//   403 但无错误体、或码不在契约 403 集合内 ⇒ 仍按会话失效处理（保守）。
-const FORBIDDEN_CODES = ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']
-function errorCodeOf(payload) {
-  return object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
-}
-function forbiddenOrSessionLoss(statusCode, payload) {
-  const code = errorCodeOf(payload)
-  const surface = statusCode === 403 && code !== null && FORBIDDEN_CODES.indexOf(code) !== -1 ? code : 'SESSION_REQUIRED'
-  if (surface === 'SESSION_REQUIRED') auth.clearSession()
-  const e = failure(surface)
-  e.status = statusCode
-  e.retryable = false
-  return e
-}
+// 401/403 分流：口径统一由 `miniprogram/utils/auth.js` 的归因层决定（`attribution` / `failureFor`），
+// 本文件**不再自持码表**。合并前这里与 `favorites-api.js` / `identify-api.js` /
+// `speech-transcript.js` 各有一份同形实现（#393 引入的第三份），且对「403 无错误封套」与
+// `ACCOUNT_INACTIVE` 的处理互相漂移；现全站只留 `auth.js` 一份：
+//   401 ⇒ 会话失效并清会话；403 ⇒ 契约码原样带出，仅 `ACCOUNT_INACTIVE` 清会话；
+//   403 无错误封套 ⇒ `SCOPE_DENIED` 且**不**清会话（见 `docs/verification/gy-i04-login-chain-20261021.md`）。
 
 function request(method, path, options) {
   const opts = options || {}
@@ -181,7 +168,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(auth.failureFor(failure, r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200) {

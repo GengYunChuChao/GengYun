@@ -1,8 +1,12 @@
 // GY-I16（#16）第 4 项：注销删除接 F13 —— **复用已合并的** packages/privacy 删除注册协议。
 //
+// C1b（#17 P0-2）起闭集从 `[favorites, history]` **扩大**为 `[favorites, history, messages]`：
+// 消息域与收藏/历史走**同一条路**（同一协调器、同一 requestId、同一回执行）。
+// 闭集只许扩大：原有两域的断言一条未删，新增的是「消息域必须在闭集内且必须真的被清」。
+//
 // 本文件直接驱动**已合并**的 `packages/privacy/deletion.mjs`（模块注册协议）与
 // `packages/privacy/deletion-modules.mjs`（全模块完成判定），断言：
-//   1. 收藏／历史两个模块注册到的是**同一份**协议（不是平行实现）；
+//   1. 收藏／历史／消息三个模块注册到的是**同一份**协议（不是平行实现）；
 //   2. 处理器只清理**绑定主体**的数据，其它主体不受影响；
 //   3. 备份副本清除未接线时 `backup_state` 如实为 `pending`（**不谎称 completed**），
 //      因此整体未完成 —— 缺口对用户与监工可见；
@@ -12,9 +16,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import {
+  CONVERSATIONS_DELETION_MODULE,
   FAVORITES_DELETION_MODULE,
   HISTORY_DELETION_MODULE,
+  MESSAGES_DELETION_MODULE,
   USER_DATA_DELETION_MODULES,
   createUserDataDeletion,
 } from '../../services/api/src/privacy/user-data-deletion.ts';
@@ -24,6 +32,8 @@ async function seed() {
   const clock = scriptedClock();
   const favoritesStore = createMemoryFavoritesStore({ now: () => clock.ms });
   const historyStore = createMemoryHistoryStore({ now: () => clock.ms });
+  const messagesStore = createMemoryMessagesStore({ now: () => clock.ms });
+  const conversationsStore = createMemoryConversationStore();
   for (const [ownerId, tag] of [
     [USER_A.userId, 'a'],
     [USER_B.userId, 'b'],
@@ -46,25 +56,51 @@ async function seed() {
       created_at: clock.now().toISOString(),
       event_key: `evt-${tag}`,
     });
+    // #17 消息域：每个主体一条「事件 + 对象引用」消息（本域**不存正文字段**）。
+    await messagesStore.insertMessage({
+      id: `00000000-0000-4000-8${tag === 'a' ? '5' : '6'}00-000000000001`,
+      revision: 1,
+      owner_id: ownerId,
+      type: 'system',
+      target_ref: null,
+      read_at: null,
+      created_at: clock.now().toISOString(),
+      event_key: `msg-${tag}`,
+    });
+    // #12 会话域（C1b-3 起进闭集，路径①）：每个主体一条会话行。
+    await conversationsStore.insertConversation({
+      id: `00000000-0000-4000-8${tag === 'a' ? '7' : '8'}00-000000000001`,
+      owner_id: ownerId,
+      conditions: null,
+      created_at: clock.now(),
+    });
   }
-  return { clock, favoritesStore, historyStore };
+  return { clock, favoritesStore, historyStore, messagesStore, conversationsStore };
 }
 
-test('F13：必需模块闭集只含本片两个模块，且非闭集模块注册即拒（复用同一协议）', async () => {
-  const { favoritesStore, historyStore } = await seed();
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore });
+test('F13：必需模块闭集含四域（扩大而非替换），且非闭集模块注册即拒（复用同一协议）', async () => {
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed();
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore });
   assert.deepEqual(deletion.requiredModules(), [...USER_DATA_DELETION_MODULES]);
-  assert.deepEqual(deletion.requiredModules(), ['favorites', 'history']);
+  assert.deepEqual(deletion.requiredModules(), ['favorites', 'history', 'messages', 'conversations']);
   assert.equal(FAVORITES_DELETION_MODULE, 'favorites');
   assert.equal(HISTORY_DELETION_MODULE, 'history');
+  assert.equal(MESSAGES_DELETION_MODULE, 'messages');
+  assert.equal(CONVERSATIONS_DELETION_MODULE, 'conversations');
+  // **加强**（C1b / C1b-3）：闭集只许扩大 —— 原有两域一条不少，消息域与会话域必须在。
+  for (const legacy of ['favorites', 'history']) {
+    assert.ok(deletion.requiredModules().includes(legacy), `闭集不得丢掉既有模块 ${legacy}`);
+  }
+  assert.ok(deletion.requiredModules().includes(MESSAGES_DELETION_MODULE), '消息域必须进必需模块闭集');
+  assert.ok(deletion.requiredModules().includes(CONVERSATIONS_DELETION_MODULE), '会话域必须进必需模块闭集');
   // 闭集外的模块不可注册（协议自带约束；本片不绕过它）。
   assert.throws(() => deletion.coordinator.registerModule('other-module', async () => ({})), /不在必需模块闭集内/);
   assert.deepEqual(deletion.coordinator.missingRegistrations(), []);
 });
 
 test('F13：按主体清理，其它主体不受影响；在线证据非空，备份如实 pending（不谎称完成）', async () => {
-  const { favoritesStore, historyStore } = await seed();
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore });
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed();
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore });
   const request = deletion.requestDeletionFor(USER_A.userId);
   const requestId = String(request.id);
   assert.ok(requestId.length > 0);
@@ -74,30 +110,44 @@ test('F13：按主体清理，其它主体不受影响；在线证据非空，�
   // A 的数据被清空；B 的完好（归属正确，绝不清理到别人）。
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_A.userId)).length, 0);
   assert.equal((await historyStore.listHistoryByOwner(USER_A.userId)).length, 0);
+  assert.equal((await messagesStore.listMessagesByOwner(USER_A.userId)).length, 0, '#17：消息行必须真的被删');
+  assert.equal(
+    conversationsStore.snapshot().conversations.filter((row) => row.owner_id === USER_A.userId).length,
+    0,
+    '#12：会话行必须真的被删',
+  );
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_B.userId)).length, 1);
   assert.equal((await historyStore.listHistoryByOwner(USER_B.userId)).length, 1);
+  assert.equal((await messagesStore.listMessagesByOwner(USER_B.userId)).length, 1, '他人消息不受影响');
+  assert.equal(
+    conversationsStore.snapshot().conversations.filter((row) => row.owner_id === USER_B.userId).length,
+    1,
+    '他人会话不受影响',
+  );
 
   // 回执是**契约形状**（DeletionReceipt），且模块行状态如实。
   const receipt = deletion.receipt(requestId);
   assert.ok(Array.isArray(receipt.handlers));
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
-  for (const module of ['favorites', 'history']) {
+  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
     const row = byModule.get(module);
     assert.ok(row !== undefined, `回执必须含模块 ${module}`);
     assert.equal(row.online_state, 'completed', '在线行确实已删除 ⇒ completed');
     assert.equal(row.backup_state, 'pending', '备份副本清除未接线 ⇒ 如实 pending，不得谎称 completed');
     assert.equal(row.error_code, null);
   }
+  assert.equal(receipt.handlers.length, 4, '回执必须有四个模块行（不多不少）');
 
   // 审计只含模块名/行数/状态，不含任何私有正文或凭据。
   const audit = deletion.audit();
-  assert.equal(audit.length, 2);
+  assert.equal(audit.length, 4);
   for (const entry of audit) {
     assert.equal(entry.userId, USER_A.userId);
     assert.equal(entry.onlineRemoved, 1);
     assert.equal(entry.backupState, 'pending');
     assert.deepEqual(Object.keys(entry).sort(), ['at', 'backupState', 'module', 'onlineRemoved', 'requestId', 'userId'].sort());
   }
+  assert.deepEqual(audit.map((entry) => entry.module), ['favorites', 'history', 'messages', 'conversations']);
 
   // 备份未接线 ⇒ 全模块**未完成**（缺口可见，而不是"看不见即完成"）。
   const status = deletion.completionStatus(requestId);
@@ -106,7 +156,7 @@ test('F13：按主体清理，其它主体不受影响；在线证据非空，�
 });
 
 test('F13：接线备份清除端口后，同一套协议即可判完成（缺口补上即通过）', async () => {
-  const { favoritesStore, historyStore } = await seed();
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed();
   const purged = [];
   const backupPurge = {
     kind: 'wired',
@@ -117,7 +167,13 @@ test('F13：接线备份清除端口后，同一套协议即可判完成（缺�
       return { purged: true, evidenceRef: 'backup-replica-purged:2026-10-14' };
     },
   };
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore, backupPurge });
+  const deletion = createUserDataDeletion({
+    favoritesStore,
+    historyStore,
+    messagesStore,
+    conversationsStore,
+    backupPurge,
+  });
   const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
   await deletion.executeHandlers(requestId);
 
@@ -125,7 +181,8 @@ test('F13：接线备份清除端口后，同一套协议即可判完成（缺�
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
   assert.equal(byModule.get('favorites').backup_state, 'completed', '有证据的备份清除 ⇒ completed');
   assert.equal(byModule.get('history').backup_state, 'pending', '未清除的备份 ⇒ 仍 pending（不谎称）');
-  assert.equal(purged.length, 2, '两个模块各调用一次备份清除端口');
+  assert.equal(purged.length, 4, '四个模块各调用一次备份清除端口');
+  assert.deepEqual(purged.map((entry) => entry.module), ['favorites', 'history', 'messages', 'conversations']);
 
   const status = deletion.completionStatus(requestId);
   assert.equal(status.completed, false, '仍有一个模块备份未完成 ⇒ 整体未完成');
@@ -137,14 +194,15 @@ test('F13：接线备份清除端口后，同一套协议即可判完成（缺�
 });
 
 test('F13：未绑定主体的请求 ⇒ 处理器抛错折叠为 blocked，且不清理任何人的数据', async () => {
-  const { favoritesStore, historyStore } = await seed();
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore });
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed();
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore });
   // 绕过 `requestDeletionFor`（不经主体绑定）直接建请求：模拟接线错误。
   const orphan = deletion.coordinator.createDeletionRequest();
   const orphanId = String(orphan.id);
   await deletion.executeHandlers(orphanId);
 
   const receipt = deletion.receipt(orphanId);
+  assert.equal(receipt.handlers.length, 4);
   for (const row of receipt.handlers) {
     assert.equal(row.online_state, 'blocked');
     assert.equal(row.backup_state, 'blocked');
@@ -153,35 +211,50 @@ test('F13：未绑定主体的请求 ⇒ 处理器抛错折叠为 blocked，且�
   // 谁的数据都没被删。
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_A.userId)).length, 1);
   assert.equal((await historyStore.listHistoryByOwner(USER_A.userId)).length, 1);
+  assert.equal((await messagesStore.listMessagesByOwner(USER_A.userId)).length, 1, '未绑定主体时消息行必须原封不动');
+  assert.equal(
+    conversationsStore.snapshot().conversations.filter((row) => row.owner_id === USER_A.userId).length,
+    1,
+    '未绑定主体时会话行必须原封不动',
+  );
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_B.userId)).length, 1);
   assert.equal((await historyStore.listHistoryByOwner(USER_B.userId)).length, 1);
+  assert.equal((await messagesStore.listMessagesByOwner(USER_B.userId)).length, 1);
   assert.equal(deletion.audit().length, 0, '未绑定主体的处理器不得产生清理审计');
   assert.equal(deletion.completionStatus(orphanId).completed, false);
 });
 
 test('F13：清理可重跑 —— 未完成行按协议重试（数据仍幂等），已完成行不重跑', async () => {
-  const { favoritesStore, historyStore } = await seed();
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore });
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed();
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore });
   const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
   await deletion.executeHandlers(requestId);
-  assert.equal(deletion.audit().length, 2);
+  assert.equal(deletion.audit().length, 4);
   assert.equal(deletion.audit().every((entry) => entry.onlineRemoved === 1), true);
 
   // 备份未接线 ⇒ 行仍是 running（未完成）⇒ 协议按设计**重试**；数据层面幂等：这次没有可删的行。
   await deletion.executeHandlers(requestId);
-  assert.equal(deletion.audit().length, 4, '未完成的行按协议重试');
+  assert.equal(deletion.audit().length, 8, '未完成的行按协议重试');
   assert.deepEqual(
-    deletion.audit().slice(2).map((entry) => entry.onlineRemoved),
-    [0, 0],
+    deletion.audit().slice(4).map((entry) => entry.onlineRemoved),
+    [0, 0, 0, 0],
     '重跑不得再删到数据（幂等）',
   );
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_A.userId)).length, 0);
   assert.equal((await historyStore.listHistoryByOwner(USER_B.userId)).length, 1, '其它主体始终不受影响');
+  assert.equal((await messagesStore.listMessagesByOwner(USER_A.userId)).length, 0, '重跑后消息仍为空');
   // 备份已接线且有证据 ⇒ 行进入 completed ⇒ 协议**跳过**重跑（审计不再增长）。
-  const { favoritesStore: fav2, historyStore: his2 } = await seed();
+  const {
+    favoritesStore: fav2,
+    historyStore: his2,
+    messagesStore: msg2,
+    conversationsStore: conv2,
+  } = await seed();
   const wired = createUserDataDeletion({
     favoritesStore: fav2,
     historyStore: his2,
+    messagesStore: msg2,
+    conversationsStore: conv2,
     backupPurge: {
       kind: 'wired',
       available: true,

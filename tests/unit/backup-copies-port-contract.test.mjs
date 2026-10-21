@@ -30,13 +30,17 @@ import {
 import { PrivacyError } from '../../packages/privacy/errors.mjs';
 import { createPostgresBackupPurgePort, insertBackupCopySeeds } from '../../services/api/src/privacy/backup-copies-pg.ts';
 import {
+  CONVERSATIONS_DELETION_MODULE,
   FAVORITES_DELETION_MODULE,
   HISTORY_DELETION_MODULE,
+  MESSAGES_DELETION_MODULE,
   createUnavailableBackupPurgePort,
   createUserDataDeletion,
 } from '../../services/api/src/privacy/user-data-deletion.ts';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 
 /** 固定受理请求 / 主体 / 模块（全部是合法 uuid，便于断言「按 request+user+module 定位」）。 */
 const REQUEST = '11111111-1111-4111-8111-111111111111';
@@ -174,9 +178,17 @@ function portAt(rows, nowIso) {
 // ---------------------------------------------------------------------------
 
 test('scope 映射是闭集：有名者取词，无名者直接抛错（不猜、不截断）', () => {
-  assert.deepEqual({ ...BACKUP_COPY_SCOPES }, { favorites: 'favorite', history: 'history' });
+  // C1b（#17 P0-2）起消息域进备份副本闭集：`messages → message`（沿用单数词形）。
+  // C1b G6/G8 起会话域也进：`conversations → conversation`（否则会话域没有清单行 ⇒ 整体永远 blocked）。
+  // 这条断言**扩大**而不是替换：既有两域逐字仍在，新增的第三/第四项必须存在。
+  assert.deepEqual(
+    { ...BACKUP_COPY_SCOPES },
+    { favorites: 'favorite', history: 'history', messages: 'message', conversations: 'conversation' },
+  );
   assert.equal(scopeForBackupModule('favorites'), 'favorite');
   assert.equal(scopeForBackupModule('history'), 'history');
+  assert.equal(scopeForBackupModule('messages'), 'message', '消息域必须有 scope，否则备份链看不见它');
+  assert.equal(scopeForBackupModule('conversations'), 'conversation', '会话域必须有 scope，否则整体到不了 completed');
   assert.throws(() => scopeForBackupModule('exports'), RangeError);
   assert.throws(() => scopeForBackupModule(''), RangeError);
   assert.throws(() => scopeForBackupModule(undefined), RangeError);
@@ -474,6 +486,11 @@ function scriptedClock(startIso = ACCEPTED_AT) {
 async function seedMemoryStores(clock) {
   const favoritesStore = createMemoryFavoritesStore({ now: () => clock.now().getTime() });
   const historyStore = createMemoryHistoryStore({ now: () => clock.now().getTime() });
+  // #17 消息域（C1b 起进闭集）：三态接线用例必须给消息域同样一份真 store，
+  // 否则该模块会因「装配漏给 store」被折叠成 blocked，把三态断言的读数搅浑。
+  const messagesStore = createMemoryMessagesStore({ now: () => clock.now().getTime() });
+  // #12 会话域（C1b-3 起进闭集）：同样给一份真 store，否则该模块会被折叠成 blocked。
+  const conversationsStore = createMemoryConversationStore();
   await favoritesStore.insertFavorite({
     id: '00000000-0000-4000-8100-000000000001',
     revision: 1,
@@ -481,7 +498,17 @@ async function seedMemoryStores(clock) {
     target_ref: { type: 'species', id: 'spc-1', revision: 1 },
     created_at: clock.now().toISOString(),
   });
-  return { favoritesStore, historyStore };
+  await messagesStore.insertMessage({
+    id: '00000000-0000-4000-8100-000000000002',
+    revision: 1,
+    owner_id: USER,
+    type: 'system',
+    target_ref: null,
+    read_at: null,
+    created_at: clock.now().toISOString(),
+    event_key: 'msg-port-contract',
+  });
+  return { favoritesStore, historyStore, messagesStore, conversationsStore };
 }
 
 async function driveWith(port) {
@@ -490,6 +517,8 @@ async function driveWith(port) {
   const deletion = createUserDataDeletion({
     favoritesStore: stores.favoritesStore,
     historyStore: stores.historyStore,
+    messagesStore: stores.messagesStore,
+    conversationsStore: stores.conversationsStore,
     backupPurge: port,
     now: clock.now,
   });
@@ -508,7 +537,12 @@ test('接线三态：端口说 blocked ⇒ 该模块 backup_state=blocked 且带
       return { purged: false, outcome: 'blocked', errorCode: 'EVIDENCE_REQUIRED', reason: '无副本行' };
     },
   });
-  for (const module of [FAVORITES_DELETION_MODULE, HISTORY_DELETION_MODULE]) {
+  for (const module of [
+    FAVORITES_DELETION_MODULE,
+    HISTORY_DELETION_MODULE,
+    MESSAGES_DELETION_MODULE,
+    CONVERSATIONS_DELETION_MODULE,
+  ]) {
     assert.equal(byModule.get(module).backup_state, 'blocked');
     assert.equal(byModule.get(module).error_code, 'EVIDENCE_REQUIRED');
   }

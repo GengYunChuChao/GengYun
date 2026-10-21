@@ -77,27 +77,12 @@ function validateFavorite(value) {
   }
 }
 
-// 401/403 分流：口径照抄 `miniprogram/utils/identify-api.js#forbiddenOrSessionLoss`，
-// 全站不造第二套错误语义。
-//   401（SESSION_REQUIRED / SESSION_EXPIRED）⇒ 会话本身失效：清会话，报 SESSION_REQUIRED；
-//   403 + 契约 403 码（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE）⇒ 会话有效但无权：
-//     原样带出该码，**不**清会话。折叠成"请重新登录"会让用户反复登录仍不明白为什么不行
-//     （`miniprogram/utils/states.js`：denied 与 guest 必须分开）。页面把错误码交给
-//     `components/state-view` 的 `errorCode` 即可渲染成"没有权限"并压掉重试/去登录。
-//   403 但无错误体、或码不在契约 403 集合内 ⇒ 仍按会话失效处理（保守，不臆测语义）。
-const FORBIDDEN_CODES = ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']
-function errorCodeOf(payload) {
-  return object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
-}
-function forbiddenOrSessionLoss(statusCode, payload) {
-  const code = errorCodeOf(payload)
-  const surface = statusCode === 403 && code !== null && one(code, FORBIDDEN_CODES) ? code : 'SESSION_REQUIRED'
-  if (surface === 'SESSION_REQUIRED') auth.clearSession()
-  const e = failure(surface)
-  e.status = statusCode
-  e.retryable = false
-  return e
-}
+// 401/403 分流：口径统一由 `miniprogram/utils/auth.js` 的归因层决定（`attribution` / `failureFor`），
+// 本文件**不再自持码表**。合并前这里曾有一份 `FORBIDDEN_CODES + forbiddenOrSessionLoss`
+// （#393 引入的第三份同形实现），与 `identify-api` / `speech-transcript` 各自那份漂移过；
+// 现全站只留 `auth.js` 一份：401 ⇒ 会话失效并清会话；403 ⇒ 契约码原样带出，仅
+// `ACCOUNT_INACTIVE` 清会话（令牌已永久失效）；403 无错误封套 ⇒ `SCOPE_DENIED` 且**不**清会话
+// （见 `docs/verification/gy-i04-login-chain-20261021.md` 的「口径决定」）。
 
 function request(method, path, options) {
   const opts = options || {}
@@ -112,7 +97,7 @@ function request(method, path, options) {
       url: runtime.apiBaseUrl + path, method: method, timeout: 15000, header: header,
       success: function (r) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
-        if (r.statusCode === 401 || r.statusCode === 403) { reject(forbiddenOrSessionLoss(r.statusCode, r.data)); return }
+        if (r.statusCode === 401 || r.statusCode === 403) { reject(auth.failureFor(failure, r.statusCode, r.data)); return }
         try {
           const payload = r.data
           if (r.statusCode === 200 || r.statusCode === 201) {

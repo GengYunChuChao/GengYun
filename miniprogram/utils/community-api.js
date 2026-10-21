@@ -161,8 +161,7 @@ function send(method, path, options) {
       success: function (response) {
         if (!current(b)) { reject(failure('SESSION_CHANGED')); return }
         if (response.statusCode === 401 || response.statusCode === 403) {
-          auth.clearSession()
-          reject(failure('SESSION_REQUIRED'))
+          reject(auth.failureFor(failure, response.statusCode, response.data))
           return
         }
         let body = response.data
@@ -338,6 +337,8 @@ const MESSAGES = {
   INVALID_CURSOR: '列表已过期，请重新进入社区。',
   PROVIDER_UNAVAILABLE: '社区服务暂不可用（服务端未接线真实存储），请稍后再试。',
   SCOPE_DENIED: '当前会话无权访问社区。',
+  CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：社区公开发布需要「公开发布」用途授权，未授权时不会发布。',
+  ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再试。',
   INVALID_RESPONSE: '服务端响应无法核对，已清空，请重试。',
   UNEXPECTED_STATUS: '服务端返回了未预期的状态，已清空，请重试。'
 }

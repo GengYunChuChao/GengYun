@@ -786,7 +786,11 @@ test('C4 会话与注销：退出立即失效、重复退出不复活、注销�
   const d = await account(world, 'c4-deletion');
   const first = await requestDeletion(world, d, 'i22-c4-del-0001');
   assert.equal(first.deletion.state, 'blocked', `备份未接线 ⇒ 必须如实 blocked：${first.deletion.state}`);
-  assert.deepEqual(first.deletion.handlers.map((row) => row.module).sort(), ['favorites', 'history']);
+  // C1b / C1b-3 起闭集含消息域与会话域（扩大而非替换）：原有两域必须仍在，新两域必须也在。
+  assert.deepEqual(
+    first.deletion.handlers.map((row) => row.module).sort(),
+    ['conversations', 'favorites', 'history', 'messages'],
+  );
   const firstRead = await call(world.app, 'GET', `${API}/account/deletions/${first.id}`, { token: first.receiptToken });
   assert.equal(firstRead.status, 200, firstRead.text);
   assert.equal(firstRead.body.data.id, first.id);

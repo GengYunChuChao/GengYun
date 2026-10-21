@@ -34,6 +34,7 @@ import type {
 } from './types.ts';
 import type {
   AnswerInsert,
+  BackupSnapshotClient,
   CasResult,
   ConversationStore,
   ListOptions,
@@ -431,6 +432,22 @@ export function createPostgresConversationStore(
     async deleteAllByOwner(ownerId) {
       const { rows } = await pool.query('DELETE FROM conversations WHERE owner_id = $1::uuid RETURNING id', [ownerId]);
       return rows.length;
+    },
+
+    /**
+     * 备份副本清单（GY-I19 G6/G8）：**在受理事务内**枚举该主体仍持有的会话行 id。
+     *
+     * 用传入的 `client`（不是 `pool`）：清单必须与受理函数在同一事务、同一快照里读，
+     * 否则处理器物理删除后就读不到「哪些会话曾经存在」（设计 §6.1）。
+     * 只查 `conversations`：轮次/回答靠 0013 的两级 `ON DELETE CASCADE` 随会话消失，
+     * 因此清单记会话 id 已覆盖三张表；⛔ 只回 id 与计数，绝不回问题/回答正文。
+     */
+    async snapshotOwner(ownerId: string, client: BackupSnapshotClient) {
+      const result = await client.query(
+        'SELECT id FROM conversations WHERE owner_id = $1::uuid ORDER BY id',
+        [ownerId],
+      );
+      return { objectRefs: result.rows.map((row) => String(row['id'])), records: result.rows.length };
     },
   };
 }

@@ -62,9 +62,40 @@ import type { BackupCopySeedSource, BackupCopySqlClient } from './backup-copies-
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
 export const HISTORY_DELETION_MODULE = 'history';
+/**
+ * #17 消息域（C1b / §7 P0-2）：收藏、历史之外**第三个**进闭集的域。
+ *
+ * 为什么必须进闭集而不只是"实现里顺手清一下"：闭集就是"注销时承诺一定清理的域"，
+ * 不在闭集里的域即使有清理原语也不会被协调器驱动（#17 的原始缺口）。
+ */
+export const MESSAGES_DELETION_MODULE = 'messages';
+/**
+ * #12 会话域（C1b-3 / §7 P0-3 路径①）：第四个进闭集的域。
+ *
+ * 名字必须与 `conversations/cascade.ts` 的 `CONVERSATIONS_DELETION_MODULE` **同值**
+ * （两处各自声明是历史原因；`tests/unit/conversation-deletion.test.mjs` 断言两者相等，
+ * 免得哪天一边改了另一边不知道）。
+ *
+ * 为什么并入本闭集而不是各建一套：路径②（会话域单开一个 requestId，再把两份回执合并）
+ * 会让「一次注销」变成两本账、两个 requestId，回执与证据链对不上；并入后是一次请求、
+ * 一个账本、回执里多一行模块。代价是必须改写"闭集不含 conversations"的旧断言——
+ * 那是**扩大**闭集（加强承诺），不是放宽判据。
+ */
+export const CONVERSATIONS_DELETION_MODULE = 'conversations';
 
-/** 必需模块闭集（本轮只声明本片的两个模块；其它域各自注册自己的模块）。 */
-export const USER_DATA_DELETION_MODULES = [FAVORITES_DELETION_MODULE, HISTORY_DELETION_MODULE] as const;
+/**
+ * 必需模块闭集。
+ *
+ * 从 `[favorites, history]` **扩大**到含 `messages` 与 `conversations`：扩大闭集是**加强**
+ * 承诺（注销时必须清理的域变多），不是放宽既有判据。既有断言里"收藏/历史必须在闭集内"
+ * 一条不少，新增的是"消息域与会话域也必须在"。
+ */
+export const USER_DATA_DELETION_MODULES = [
+  FAVORITES_DELETION_MODULE,
+  HISTORY_DELETION_MODULE,
+  MESSAGES_DELETION_MODULE,
+  CONVERSATIONS_DELETION_MODULE,
+] as const;
 
 /** 按主体清理的**分表**真实行数：正文表与幂等台账各计各的（两项都进在线清除证据）。 */
 export interface OwnerPurgeCounts {
@@ -182,6 +213,17 @@ export function createUnavailableBackupPurgePort(
 export interface UserDataDeletionDeps {
   favoritesStore: OwnerPurgeStore;
   historyStore: OwnerPurgeStore;
+  /**
+   * #17 消息域（C1b / §7 P0-2）。**必填**：消息域已进必需模块闭集，装配处必须显式给出
+   * 清理原语——留成可选就等于允许「闭集里有一项但没人接线」，正是 #17 的原始缺口
+   * （处理器会拿到 `undefined` 而在运行期失败，而不是装配期就被 tsc 拦住）。
+   */
+  messagesStore: OwnerPurgeStore;
+  /**
+   * #12 会话域（C1b-3 / §7 P0-3 路径①）。**必填**，理由同上：并入闭集后它必须被接线，
+   * 否则「闭集里有一项但没人清」仍是原缺口（G5「有刀没有手」）。
+   */
+  conversationsStore: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -263,16 +305,24 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   const durableByRequest = new Map<string, Promise<DeletionRequestRecord>>();
 
   /**
-   * 收集「可枚举的」备份副本清单来源：每个必需模块一个，`scope` 由闭集映射给出。
+   * 收集「可枚举的」备份副本清单来源：每个**有快照原语**的必需模块一个，`scope` 由闭集映射给出。
    *
    * 任一 store 没有 `snapshotOwner` ⇒ 返回 `null`（不写清单行，旧装配/替身逐字兼容）；
    * 此时清除阶段会因「没有副本行」如实 `blocked` + `EVIDENCE_REQUIRED`，
    * ⛔ 不会因为「没写行」被读成「清完了」。
+   *
+   * 四域齐备（C1b G6/G8 收口）：`favorites` / `history` / `messages` / `conversations` 各自提供
+   * `snapshotOwner`。会话域的快照只列**会话行 id**，轮次/回答靠 `0013` 的两级 `ON DELETE CASCADE`
+   * 随会话消失 —— 因此「清单里有这些会话」等价于「注销时这三张表的本人行都会没」。
+   * ⚠️ 这段仍是**全有或全无**：任一 store 缺 `snapshotOwner` ⇒ 整份清单为 null（旧装配仍按
+   * 「没有副本行」如实 blocked）。这正是反向控制用例（注入缺快照原语的替身）走的路径。
    */
   function backupCopySources(): BackupCopySeedSource[] | null {
     const pairs: ReadonlyArray<readonly [string, OwnerPurgeStore]> = [
       [FAVORITES_DELETION_MODULE, input.favoritesStore],
       [HISTORY_DELETION_MODULE, input.historyStore],
+      [MESSAGES_DELETION_MODULE, input.messagesStore],
+      [CONVERSATIONS_DELETION_MODULE, input.conversationsStore],
     ];
     const sources: BackupCopySeedSource[] = [];
     for (const [module, store] of pairs) {
@@ -393,6 +443,18 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
 
   coordinator.registerModule(FAVORITES_DELETION_MODULE, makeHandler(FAVORITES_DELETION_MODULE, input.favoritesStore));
   coordinator.registerModule(HISTORY_DELETION_MODULE, makeHandler(HISTORY_DELETION_MODULE, input.historyStore));
+  // #17 消息域：与收藏/历史**同一条路**（同一协调器、同一 requestId、同一回执行），
+  // 走 `purgeOwnerData` ⇒ 证据串同时带 `messages:online-purged:<n>` 与
+  // `messages:idempotency-purged:<n>`（共享台账里本主体的行）。
+  coordinator.registerModule(MESSAGES_DELETION_MODULE, makeHandler(MESSAGES_DELETION_MODULE, input.messagesStore));
+  // #12 会话域（C1b-3 / §7 P0-3 路径①）：**并入同一账本** —— 同一 requestId、同一回执行。
+  // 会话域没有独立幂等台账可清（`ConversationStore.deleteAllByOwner` 只删会话行，
+  // 轮次/回答靠 0013 的 `ON DELETE CASCADE`），因此证据只有 `conversations:online-purged:<n>`
+  // 一段；备份态属 G6/G8（P1，未做），在未接线端口下如实 `pending`。
+  coordinator.registerModule(
+    CONVERSATIONS_DELETION_MODULE,
+    makeHandler(CONVERSATIONS_DELETION_MODULE, input.conversationsStore),
+  );
 
   return {
     coordinator,

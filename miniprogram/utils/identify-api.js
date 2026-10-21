@@ -37,9 +37,6 @@ const MAX_CANDIDATES = 3
 const MEDIA_STATES = ['initiated', 'uploaded', 'processing', 'ready', 'rejected', 'deleting', 'deleted']
 const MEDIA_PURPOSE = 'weed_recognition'
 
-/** 会话失效类错误码（401/403 归因与页面门禁关闭共用同一闭集）。 */
-const SESSION_LOSS_CODES = ['SESSION_REQUIRED', 'SESSION_CHANGED', 'SESSION_EXPIRED']
-
 /** 本客户端允许经私有媒体链路上传的**图片**用途（契约 `MediaPurpose` 的图片成员）。 */
 const IMAGE_MEDIA_PURPOSES = ['weed_recognition', 'label_ocr']
 
@@ -199,11 +196,18 @@ const COVERAGE_REASON_OUT_OF_SCOPE = '拍摄对象不在当前覆盖范围内'
 const COVERAGE_REASON_LOW_QUALITY = '照片模糊/遮挡/光照不足，无法可靠判定'
 const COVERAGE_REASON_RESHOOT = '拍摄条件不合格，建议重新拍摄'
 
-/** 重试动作 → 页面按钮文案（页面只按动作渲染，不自己拼语义）。 */
+/**
+ * 重试动作 → 页面按钮文案（页面只按动作渲染，不自己拼语义）。
+ *
+ * `grant_consent` 的按钮**不得**写成「去授权」：应用内授权入口尚未接入（POST `/me/consents` 需要
+ * `policy_version` + `recipient_ids`，契约没有读取面；见 `docs/verification/gy-i04-login-chain-20261021.md`
+ * 「口径决定 / 待裁决」）。按钮实际做的事是**重试本次操作**，所以文案如实写「重试」，
+ * 由 `CONSENT_REQUIRED` 的说明句交代「授权入口未接入、未授权不外发」。
+ */
 const RETRY_ACTION_LABELS = {
   reshoot: '重新拍摄',
   new_task: '重新识别',
-  grant_consent: '去授权',
+  grant_consent: '重试',
   reauthenticate: '重新登录'
 }
 
@@ -264,13 +268,10 @@ function errorCodeOf(payload) {
 }
 
 function forbiddenOrSessionLoss(statusCode, payload) {
-  const code = errorCodeOf(payload)
-  const surface = statusCode === 403 && code !== null && SESSION_LOSS_CODES.indexOf(code) === -1 ? code : 'SESSION_REQUIRED'
-  if (surface === 'SESSION_REQUIRED') auth.clearSession()
-  const e = failure(surface)
-  e.status = statusCode
-  e.retryable = object(payload) && object(payload.error) && payload.error.retryable === true
-  return e
+  // 归因口径**收敛**到 `utils/auth.js`（单一事实源）：401 → 会话失效并清会话；403 → 契约码
+  // 原样带出，只有 `ACCOUNT_INACTIVE`（令牌永久失效）才清会话。本文件不再自留第二份码表
+  // （改前此处与 speech-transcript 各一份、且对 ACCOUNT_INACTIVE 的处理相反）。
+  return auth.failureFor(failure, statusCode, payload)
 }
 function binding() { const s = auth.getSession(); return s && auth.isLoggedIn() ? { token: s.accessToken, epoch: auth.sessionEpoch() } : null }
 function current(b) { const now = binding(); return !!b && !!now && b.token === now.token && b.epoch === now.epoch }
@@ -956,7 +957,9 @@ function messageFor(e) {
     INVALID_REQUEST: MEDIA_USE_LIMIT_TEXT,
     OBJECT_UNAVAILABLE: '该照片当前不可用于识别（未就绪或不可用），请重新拍照上传。',
     // 权限拒绝分支（受理前拦截）：不得用任何替身或缓存结果顶替。
-    CONSENT_REQUIRED: '尚未获得照片处理与外部识别的用途授权。请先在「我的」中完成授权，未授权时不会外发照片、也不会用替身结果顶替。',
+    // 措辞红线：应用内**没有**授权入口（契约缺用途政策读取面），所以不能写「请先在『我的』中完成授权」——
+    // 那是把用户指向不存在的功能。只如实说明当前状态与「未授权不外发」。
+    CONSENT_REQUIRED: '尚未获得照片处理与外部识别的用途授权（403 CONSENT_REQUIRED）。应用内授权入口尚未接入，暂时只能由服务端预置授权；未获得授权时不会外发照片、也不会用替身结果顶替。',
     MEDIA_CHANNEL_UNAVAILABLE: '照片上传未完成（私有媒体上传通道不可用），real 模式下不会用替身结果顶替，请稍后重试。',
     REVISION_CONFLICT: '记录已被更新，请刷新后重试。',
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
