@@ -11,7 +11,16 @@
 --   consent_records FROM gengyun_egress_ledger; DROP OWNED BY gengyun_egress_ledger;
 --   DROP ROLE gengyun_egress_ledger;
 BEGIN;
-CREATE ROLE gengyun_egress_ledger NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+-- R28-S48：裸 CREATE ROLE 不可重跑（第二次 42710 会把整文件事务打回），改为「pg_roles 存在性守卫
+-- + EXECUTE」；紧随的 ALTER ROLE … WITH <同属性> 再把「已存在但属性漂移」的角色收敛回出厂属性。
+DO $role_guard$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_egress_ledger') THEN
+    EXECUTE 'CREATE ROLE gengyun_egress_ledger NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
+  END IF;
+END;
+$role_guard$;
+ALTER ROLE gengyun_egress_ledger WITH NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public TO gengyun_egress_ledger;
 
 -- 接收方资格核验：只读、只给核验所需列（无 display_name 等展示字段，无写入）。
