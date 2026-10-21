@@ -160,7 +160,16 @@ if [[ -r "$MANIFEST" ]]; then
   else
     report FAIL 'dump_sha256' "${expected_sha:-（清单缺失）}" "${actual_sha:0:16}…"
   fi
-  report PASS 'restore_toc_entries' "$(manifest_get 'restore_toc_entries')" "$(runuser -u postgres -- "${PG_BIN}/pg_restore" --list "$DUMP" | grep -c ';' || true)"
+  # R28-S44（B 类返修）：原来把这个 `|| true` 直接写在 report PASS 的参数里 —— pg_restore --list
+  #   失败会产出 "0" 却**仍然记 PASS**（假绿）。改为先取退出码：读不出目录就判 FAIL，不吞。
+  _toc_rc=0
+  _toc_count="$(runuser -u postgres -- "${PG_BIN}/pg_restore" --list "$DUMP" | grep -c ';')" || _toc_rc=$?
+  if [[ "$_toc_rc" -eq 0 ]]; then
+    report PASS 'restore_toc_entries' "$(manifest_get 'restore_toc_entries')" "$_toc_count"
+  else
+    report FAIL 'restore_toc_entries' "$(manifest_get 'restore_toc_entries')" \
+      "pg_restore --list 失败或列不出条目（rc=${_toc_rc}，dump ${DUMP}）"
+  fi
 else
   warn "无清单：跳过 sha256/行数/迁移版本判据，本次演练按“证据不完整”处理。"
   INCOMPLETE=1
@@ -209,28 +218,41 @@ runuser -u postgres -- "${PG_BIN}/pg_restore" \
   -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$TARGET_DB" \
   --exit-on-error --no-password "$DUMP" >"$RESTORE_LOG" 2>&1 || restore_rc=$?
 
+# R28-S44（B 类返修）：grep 失败不能被读成「0 条 ERROR」。
+#   notices 只进 PASS 文案（展示），保留吞失败；errors / error_count 参与判定与失败说明，
+#   读取失败必须让判定走向 FAIL。注意 `grep -c` 在「0 匹配」时退出码是 1（属正常），所以只有 rc>1 才算读取失败。
+# best-effort: notices 只用于 PASS 文案里的「非致命 WARNING/NOTICE 行数」；grep 失败即空，显示为 0 行，不改判定。
 notices="$(grep -cE '^(pg_restore: )?(WARNING|NOTICE):' "$RESTORE_LOG" 2>/dev/null || true)"
-errors="$(grep -nE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null | head -5 || true)"
-error_count="$(grep -cE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null || true)"
+# 用 `awk 'NR<=5'` 取代 `head -5`：head 提前退出会让 grep 收到 SIGPIPE(141)，pipefail 下会被误判成读取失败。
+_grep_errors_rc=0
+errors="$(grep -nE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null | awk 'NR<=5')" || _grep_errors_rc=$?
+_grep_count_rc=0
+error_count="$(grep -cE '^(pg_restore: error:|ERROR:)' "$RESTORE_LOG" 2>/dev/null)" || _grep_count_rc=$?
+[[ "$_grep_count_rc" -le 1 ]] || error_count="grep-failed(rc=${_grep_count_rc})"
 
-if [[ "$restore_rc" -eq 0 && -z "$errors" ]]; then
+if [[ "$restore_rc" -eq 0 && "$_grep_errors_rc" -le 1 && -z "$errors" ]]; then
   report PASS 'pg_restore --exit-on-error' '0' \
     "0（非致命 WARNING/NOTICE ${notices:-0} 行；完整输出 ${RESTORE_LOG}）"
 else
   report FAIL 'pg_restore --exit-on-error' '0' \
-    "exit=${restore_rc}，致命 error 行=${error_count:-0}（完整输出 ${RESTORE_LOG}）"
-  printf '[%s] pg_restore 失败，前几条致命错误：\n' "$SCRIPT_NAME" >&2
-  printf '%s\n' "${errors:-（未匹配到 ERROR: 行，请直接查看日志）}" | sed 's/^/         /' >&2
-  case "$errors" in
-    *already\ exists*)
-      printf '[%s] 判读：目标库不是空的（对象已存在）。脚本会先 DROP 再建（--recreate）；\n' "$SCRIPT_NAME" >&2
-      printf '         手工复现时请务必在恢复前 dropdb/createdb。**这不是 dump 的问题。**\n' >&2 ;;
-    *does\ not\ exist*)
-      printf '[%s] 判读：缺角色或缺对象（如 role "…" does not exist）⇒ 目标集群尚未完成角色引导。\n' "$SCRIPT_NAME" >&2
-      printf '         本 dump 不含角色定义，必须先跑 provision-db.sh 建角色。\n' >&2 ;;
-    *)
-      printf '[%s] 判读：既非"对象已存在"也非"对象不存在"，属真实失败，请人工看日志定位。\n' "$SCRIPT_NAME" >&2 ;;
-  esac
+    "exit=${restore_rc}，致命 error 行=${error_count:-（未知）}（完整输出 ${RESTORE_LOG}）"
+  if [[ "$_grep_errors_rc" -gt 1 ]]; then
+    printf '[%s] 无法读取恢复日志（grep rc=%s）⇒ 不能断言「没有 ERROR 行」，按失败处理：%s\n' \
+      "$SCRIPT_NAME" "$_grep_errors_rc" "$RESTORE_LOG" >&2
+  else
+    printf '[%s] pg_restore 失败，前几条致命错误：\n' "$SCRIPT_NAME" >&2
+    printf '%s\n' "${errors:-（未匹配到 ERROR: 行，请直接查看日志）}" | sed 's/^/         /' >&2
+    case "$errors" in
+      *already\ exists*)
+        printf '[%s] 判读：目标库不是空的（对象已存在）。脚本会先 DROP 再建（--recreate）；\n' "$SCRIPT_NAME" >&2
+        printf '         手工复现时请务必在恢复前 dropdb/createdb。**这不是 dump 的问题。**\n' >&2 ;;
+      *does\ not\ exist*)
+        printf '[%s] 判读：缺角色或缺对象（如 role "…" does not exist）⇒ 目标集群尚未完成角色引导。\n' "$SCRIPT_NAME" >&2
+        printf '         本 dump 不含角色定义，必须先跑 provision-db.sh 建角色。\n' >&2 ;;
+      *)
+        printf '[%s] 判读：既非"对象已存在"也非"对象不存在"，属真实失败，请人工看日志定位。\n' "$SCRIPT_NAME" >&2 ;;
+    esac
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -264,7 +286,17 @@ if [[ -r "$MANIFEST" && "$restore_rc" -eq 0 ]]; then
     fi
   done
 
+  # R28-S44（B 类返修）：原来 `done < <(grep '^rows:' … || true)` 在 grep 失败时得到**空循环**
+  #   ⇒ 逐表行数判据一条都不判，整体仍可能 PASS（假绿）。改为先取退出码显式记账：
+  #   rc≠0（读失败，或清单里根本没有 rows: 行）⇒ 直接追加一条 FAIL，绝不让判据静默消失。
+  _rows_rc=0
+  _rows_lines="$(grep '^rows:' -- "$MANIFEST")" || _rows_rc=$?
+  if [[ "$_rows_rc" -ne 0 ]]; then
+    report FAIL 'manifest_rows_readable' '至少一行 rows:<表>=<行数>' \
+      "grep '^rows:' 失败或未匹配（rc=${_rows_rc}，清单 ${MANIFEST}）"
+  fi
   while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
     tbl="${line#rows:}"; tbl="${tbl%%=*}"
     expected="${line##*=}"
     if [[ "$(qs "$TARGET_DB" "SELECT to_regclass('${tbl}') IS NOT NULL")" == 't' ]]; then
@@ -277,7 +309,7 @@ if [[ -r "$MANIFEST" && "$restore_rc" -eq 0 ]]; then
     else
       report FAIL "rows:${tbl}" "$expected" "$actual"
     fi
-  done < <(grep '^rows:' -- "$MANIFEST" || true)
+  done <<<"$_rows_lines"
 fi
 
 # ---------------------------------------------------------------------------
