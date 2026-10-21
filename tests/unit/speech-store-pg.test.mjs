@@ -471,7 +471,7 @@ test('[12] purgeIdempotent：单条 DELETE … expires_at <= $1 RETURNING scope�
   assert.equal(await makeDb([[]]).store.purgeIdempotent(T0), 0);
 });
 
-test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；其余驱动错误 ⇒ PROVIDER_UNAVAILABLE；非驱动错误原样抛出', async () => {
+test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；瞬态类 ⇒ PROVIDER_UNAVAILABLE(可重试)；内部错误/非驱动错误不标可重试', async () => {
   for (const code of ['57014', '55P03']) {
     const db = makeDb([Object.assign(new Error('timeout'), { code })]);
     await assert.rejects(
@@ -482,6 +482,14 @@ test('错误折叠：57014/55P03 ⇒ PROVIDER_TIMEOUT；其余驱动错误 ⇒ P
   const broken = makeDb([Object.assign(new Error('boom'), { code: 'XX000' })]);
   await assert.rejects(
     () => broken.store.getJob(randomUUID()),
+    // 改前断言 `retryable === true`（旧口径）；XX000 是内部错误，同一请求原样重试大概率复现
+    // ⇒ R28-S62 订正为 false（状态码仍是 503，只改分档）。
+    (error) => error instanceof ApiError && error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === false,
+  );
+  // 瞬态类仍必须可重试（本片只收紧「不是时间能解决的」那一类，没有砍掉可重试面）。
+  const transientDb = makeDb([Object.assign(new Error('socket'), { code: '08006' })]);
+  await assert.rejects(
+    () => transientDb.store.getJob(randomUUID()),
     (error) => error instanceof ApiError && error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
   );
   // 非驱动错误（mutate 抛的普通 Error / 实现缺陷）不得被折成 provider 故障

@@ -586,7 +586,7 @@ test('snapshotCounts：一条语句取四个真库计数', async () => {
 // 7. 错误折叠与行映射
 // ---------------------------------------------------------------------------
 
-test('错误折叠：57014 / 55P03 ⇒ PROVIDER_TIMEOUT(retryable)，其余 ⇒ PROVIDER_UNAVAILABLE(retryable)', () => {
+test('错误折叠：57014 / 55P03 ⇒ PROVIDER_TIMEOUT(retryable)；配置/权限/数据类 ⇒ PROVIDER_UNAVAILABLE(不可重试)；瞬态类 ⇒ 可重试', () => {
   for (const code of ['57014', '55P03']) {
     const error = Object.assign(new Error('x'), { code });
     const mapped = (() => {
@@ -609,7 +609,21 @@ test('错误折叠：57014 / 55P03 ⇒ PROVIDER_TIMEOUT(retryable)，其余 ⇒ 
     return null;
   })();
   assert.equal(other?.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(other?.retryable, true, '数据库暂不可用是可重试的瞬时故障');
+  // 改前断言 `retryable === true`（旧口径「数据库暂不可用一律可重试」）；22P02 是数据表示错误，
+  // 同一请求原样重试恒定失败 ⇒ R28-S62 订正为 false（状态码仍是 503，只改分档）。
+  assert.equal(other?.retryable, false, '数据表示错误重试不会成功，不得标可重试');
+
+  // 瞬态类仍必须可重试：本片只收紧「不是时间能解决的」那一类，没有砍掉可重试面。
+  const transient = (() => {
+    try {
+      classifyCommunityDatabaseError(Object.assign(new Error('x'), { code: '08006' }));
+    } catch (thrown) {
+      return thrown;
+    }
+    return null;
+  })();
+  assert.equal(transient?.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(transient?.retryable, true, '连接层失败是瞬态：同一请求稍后重试可能成功');
 
   const passthrough = new ApiError('CONFLICT', '业务冲突');
   assert.throws(() => classifyCommunityDatabaseError(passthrough), (thrown) => thrown === passthrough);
