@@ -437,7 +437,7 @@ ls -d /data/gengyun/pgdata/base          # 数据目录结构仍在
 
 | 既有物 | 本交付如何使用 | 是否改动 |
 | --- | --- | --- |
-| `services/api/db/roles/*.sql`（7 个文件，10 个 NOLOGIN 角色） | **原样执行**（存在即跳过），授权口径完全沿用；不复制、不重写、不删除 | **未改动** |
+| `services/api/db/roles/*.sql`（8 个文件，11 个 NOLOGIN 角色） | `provision-db.sh` 按 `ROLE_GROUP_FILES` 执行其中 5 个（`WITH_CLI_GROUPS=1` 时 7 个），存在即跳过；`egress_ledger.sql` 当前**未被任何部署脚本执行**（原样复用、不复制、不重写、不删除仍成立；是否需要授权属产品/安全待裁定） | **未改动** |
 | `services/api/src/db/migrate.ts` | **原样调用**（`up` / `status` / `list`），幂等语义与 advisory lock 行为不变 | **未改动** |
 | `services/api/db/migrations/*.sql`（0001–0010） | 只读比对版本集合，判断"角色引导前迁移是否已完成" | **未改动** |
 | `.github/workflows/*postgres*.yml` | 只读，作为 PG 主版本的权威口径 | **未改动** |

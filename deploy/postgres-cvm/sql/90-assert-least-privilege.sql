@@ -921,6 +921,80 @@ ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S38 探针结束 ----------------------------------------------------------
 
+-- --- R28-S45 真执行探针（users 登录建号路径的列级 INSERT 面；迁移 0001；零残留）------------
+-- 为什么这五条必须真跑：S43 把 users 的列级 INSERT 面冻成快照（lookup + cipher 两列，来自
+-- services/api/db/roles/auth_privacy.sql:11-12），S43 证据页 §7 却把「运行时能写这两列」
+-- 标成待裁定。快照只能证明「清单与库里的列 ACL 一致」，证明不了「运行时真能按登录建号语句的
+-- 形状写进去、越界真会被拒」。本段补前向执行面，与 checks 里的 runtime_users_login_insert_path
+-- 一一对应：
+--   [1] services/api/src/auth/store.ts:249-251 的建号 INSERT（只写 lookup + cipher）必须成功；
+--   [2] 同形 INSERT 多写一列 nickname 必须**恰好** 42501；
+--   [3] store.ts:235 的建号前查找（`WHERE wechat_subject_lookup = decode($1,'hex')`，列清单 4 列
+--       = id/state/auth_epoch/revision；探针按派单 §2.1 第 3 条再带上 lookup 本身＝授权面 5 列）；
+--   [4] 读未授权列 nickname 必须**恰好** 42501；
+--   [5] 改未授权列 nickname 必须**恰好** 42501（运行时对 users 只有 updated_at 的列级 UPDATE）。
+-- 读数记两个变量：:ERROR（失败与否）与 :SQLSTATE（**哪个**错）。:ERROR 分不出 42501 与
+-- 42703，而后者说明 schema 漂移、不是权限收敛，两者不能混为一谈，所以断言逐个比对 SQLSTATE。
+-- 零残留：每条 SAVEPOINT → 语句 → 记读数 → ROLLBACK TO SAVEPOINT；段末整段 ROLLBACK，
+-- [1] 插的行（含 users_subject_lookup_key 唯一索引上的那条）不会留下任何痕迹。
+-- 形状说明：[1] 的句形照派单 §2.1 第 1 条（两列都 decode），另加 store.ts:251 的 RETURNING id
+-- ——生产语句要回读 id（会话绑定），且 RETURNING 还要这些列的 SELECT 权，所以不算加严以外的改动。
+-- cipher 在 store.ts:250 的实参是 NULL；[1] 写一个真 32 字节值，比生产形状更严（text 列收
+-- bytea 要走 I/O 转换），不弱于它：NULL 能过而真值不能过的权限缺口不会被漏判。
+\set ON_ERROR_STOP off
+BEGIN;
+SET LOCAL ROLE gengyun_api_runtime;
+\set r28_probe_users_role :ERROR
+
+-- [1] 建号 INSERT（store.ts:249-251）：运行时只可能写 lookup + cipher 两列。
+SAVEPOINT r28_probe_users;
+INSERT INTO public.users (wechat_subject_lookup, wechat_subject_cipher)
+VALUES (decode('9f2c4d6e8a0b1c3d5e7f9012a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6', 'hex'),
+        decode('0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9', 'hex'))
+RETURNING id \gset
+\set r28_probe_users_login_insert_ok :ERROR
+\set r28_probe_users_login_insert_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28_probe_users;
+
+-- [2] 禁止面：同形 INSERT 多写一列（nickname 未授权）必须恰好 42501。
+SAVEPOINT r28_probe_users;
+INSERT INTO public.users (wechat_subject_lookup, wechat_subject_cipher, nickname)
+VALUES (decode('9f2c4d6e8a0b1c3d5e7f9012a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6', 'hex'),
+        decode('0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9', 'hex'),
+        'r28-s45-probe');
+\set r28_probe_users_insert_extra_ok :ERROR
+\set r28_probe_users_insert_extra_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28_probe_users;
+
+-- [3] 建号前查找（store.ts:235）：按 lookup 取 id/state/auth_epoch/revision（store 读 4 列），
+--     探针再带上 lookup 本身 ⇒ 覆盖 auth_privacy.sql:11 授的 5 列 SELECT 面。
+--     LIMIT 0 不求值任何行，只验列级 SELECT 面（运行时此刻本来就还没有这一行）。
+SAVEPOINT r28_probe_users;
+SELECT id, state, auth_epoch, revision, wechat_subject_lookup
+  FROM public.users
+ LIMIT 0;
+\set r28_probe_users_select_ok :ERROR
+\set r28_probe_users_select_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28_probe_users;
+
+-- [4] 禁止面：读未授权列 nickname 必须恰好 42501。
+SAVEPOINT r28_probe_users;
+SELECT nickname FROM public.users LIMIT 0;
+\set r28_probe_users_select_extra_ok :ERROR
+\set r28_probe_users_select_extra_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28_probe_users;
+
+-- [5] 禁止面：改未授权列 nickname 必须恰好 42501（WHERE false 让权限判定先于任何行求值）。
+SAVEPOINT r28_probe_users;
+UPDATE public.users SET nickname = nickname WHERE false;
+\set r28_probe_users_update_extra_ok :ERROR
+\set r28_probe_users_update_extra_state :SQLSTATE
+ROLLBACK TO SAVEPOINT r28_probe_users;
+
+ROLLBACK;
+\set ON_ERROR_STOP on
+-- --- R28-S45 探针结束 ----------------------------------------------------------------------
+
 -- --- R28-S24 元清单：运行时域的表必须被**显式分类**（granted / granted_external / forbidden）
 -- 这是本片真正防「下一个域又被漏」的机制：迁移新增一张运行时域的表，却没有在
 -- 20-login-roles.sql 里授权、也没有在这里声明为 forbidden ⇒ 下面的
@@ -1371,6 +1445,32 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     SELECT e.tbl, '库中不存在（to_regclass 为 NULL）'
       FROM external_manifest e
      WHERE to_regclass('public.'||e.tbl) IS NULL
+  ),
+  -- R28-S45：users 登录建号路径五条真执行探针的读数（一行一条；ok 与 detail 共用这一份定义）。
+  -- 与 external_violations 同一思路：断言只问「有没有失败行」，detail 把失败行拼成人话，所以判红
+  -- 时一定逐条点得出是哪一条、期望什么、实际读到什么 SQLSTATE。reading 记 `SQLSTATE <码>`：
+  -- 成功是 00000、越界应恰是 42501；写成 42703/42601 之类说明的是 schema 漂移，不算通过。
+  users_login_probe(name, want, ok, reading) AS (VALUES
+    ('users_login_insert_ok',            '成功',
+     :'r28_probe_users_login_insert_ok' = 'false'
+     AND :'r28_probe_users_login_insert_state' = '00000',
+     'SQLSTATE ' || :'r28_probe_users_login_insert_state'),
+    ('users_insert_extra_column_denied', '恰好 42501',
+     :'r28_probe_users_insert_extra_ok' = 'true'
+     AND :'r28_probe_users_insert_extra_state' = '42501',
+     'SQLSTATE ' || :'r28_probe_users_insert_extra_state'),
+    ('users_select_granted_ok',          '成功',
+     :'r28_probe_users_select_ok' = 'false'
+     AND :'r28_probe_users_select_state' = '00000',
+     'SQLSTATE ' || :'r28_probe_users_select_state'),
+    ('users_select_extra_column_denied', '恰好 42501',
+     :'r28_probe_users_select_extra_ok' = 'true'
+     AND :'r28_probe_users_select_extra_state' = '42501',
+     'SQLSTATE ' || :'r28_probe_users_select_extra_state'),
+    ('users_update_extra_column_denied', '恰好 42501',
+     :'r28_probe_users_update_extra_ok' = 'true'
+     AND :'r28_probe_users_update_extra_state' = '42501',
+     'SQLSTATE ' || :'r28_probe_users_update_extra_state')
   ),
   -- R28-S58 身份面：SECURITY DEFINER 函数的 search_path 审计。92 号的 ok 与 detail 共用这一份
   -- 判定，避免「判红却列不出是哪个函数」。判据：proconfig 里必须有一条以 `search_path=` 开头
@@ -2482,7 +2582,28 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 89. R28-S58 身份面收敛（成员资格精确）：运行时在 pg_auth_members 里的成员资格必须
+  -- 89. R28-S45 真执行（users 登录建号路径）：五条探针必须逐条命中期望。
+  --     S43 的 runtime_grants_external_users 只证明「快照清单与库里列 ACL 一致」，证明不了
+  --     「运行时真能按建号语句写进去、越界真被拒」。这条补的是前向执行面：建号 INSERT 与
+  --     建号前查找必须成功；多写一列 / 读未授权列 / 改未授权列必须**恰好** 42501
+  --     （42703 之类说明的是 schema 漂移，不是权限收敛，不算通过）。
+  SELECT 'runtime_users_login_insert_path',
+         :'r28_probe_users_role' = 'false'
+         AND NOT EXISTS (SELECT 1 FROM users_login_probe p WHERE p.ok IS NOT TRUE),
+         'SET LOCAL ROLE gengyun_api_runtime 后，登录建号路径必须真能跑'
+         || '（services/api/src/auth/store.ts:249-251 的 INSERT 两列、:235 的按 lookup 查找），'
+         || '越界必须恰好 42501（读、改 nickname 两个方向都查）；'
+         || '前置 SET LOCAL ROLE 实测 error=' || :'r28_probe_users_role'
+         || '；逐条实测：'
+         || COALESCE((SELECT string_agg(p.name || '=' || p.reading, '；' ORDER BY p.name)
+                        FROM users_login_probe p), '（无）')
+         || '；不满足：'
+         || COALESCE((SELECT string_agg(p.name || ' 期望 ' || p.want
+                                       || '、实际 ' || p.reading, '；' ORDER BY p.name)
+                        FROM users_login_probe p
+                       WHERE p.ok IS NOT TRUE), '（无）')
+  UNION ALL
+  -- 90. R28-S58 身份面收敛（成员资格精确）：运行时在 pg_auth_members 里的成员资格必须
   --     **恰好**是 20-login-roles.sql C 段（L220-224）写死的那 5 条 —— 一条不多、一条不少，
   --     每条 admin_option = false，且被授予的组本身都是 NOLOGIN。
   --     3 号 required_memberships 是单向的「这 5 条都在」，多授一条新组、或给某条补上
@@ -2525,7 +2646,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 90. R28-S58 身份面收敛（默认权限面）：pg_default_acl 必须零行。
+  -- 91. R28-S58 身份面收敛（默认权限面）：pg_default_acl 必须零行。
   --     ALTER DEFAULT PRIVILEGES 是一条「不碰任何既有表/列、却让**将来**建出来的对象
   --     自动带权限」的旁路：本文件所有逐表/逐列断言（含 87 号 runtime_surface_parity
   --     的清单比对）看的都是「现在有什么」，而这一条改的是「以后有什么」，拦不住。
@@ -2549,7 +2670,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 91. R28-S58 身份面收敛（角色属性矩阵）：每个 gengyun_* 角色都必须收敛在最小属性面。
+  -- 92. R28-S58 身份面收敛（角色属性矩阵）：每个 gengyun_* 角色都必须收敛在最小属性面。
   --     gengyun_cvm_owner 是迁移管理员（initdb 的引导超级用户），超级用户位天然蕴含
   --     CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS，故它是唯一整族例外（真实集群实测如此）；
   --     其余角色一个特权位都不许有，全部 INHERIT、连接数不限，且只有运行时可 LOGIN。
@@ -2596,7 +2717,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 92. R28-S58 身份面收敛（SECURITY DEFINER 的 search_path）：三 schema 下每个 prosecdef
+  -- 93. R28-S58 身份面收敛（SECURITY DEFINER 的 search_path）：三 schema 下每个 prosecdef
   --     函数都必须把 search_path 固定掉。SECURITY DEFINER 函数以属主身份执行，search_path
   --     里只要有一个可写 schema，调用者就能提前建同名对象把内部解析劫走 —— 这是拿「只读
   --     运行时」换「函数属主权限」的经典一步。基线是 8 个函数全部 `search_path=pg_catalog`
@@ -2614,7 +2735,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 93. R28-S58 外发账本（就绪态双条件 / 三形态穷尽）：账本必须「整块未就绪」或「整块就绪」。
+  -- 94. R28-S58 外发账本（就绪态双条件 / 三形态穷尽）：账本必须「整块未就绪」或「整块就绪」。
   --     形态 A（未就绪，本片部署形态）：revision / cancelled_at 两列的 UPDATE 都没授，
   --     egress 角色不存在、也没有被授予运行时。此时服务端 fail-closed 409，是预期行为；
   --        writebacks_present 允许为 true（0011 迁移建了表，但运行时碰不到它）。
@@ -2651,9 +2772,12 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：108 条断言全红时标签合计约 3.4K 字符（2026-10-21 R28-S58 实测：总 108 条、
--- sum(length(label)+2)=3379、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：109 条断言全红时标签合计约 3.4K 字符（2026-10-21 R28-S58 实测：总 109 条、
+-- sum(length(label)+2)=3412、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
+-- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 104 条），上面这组读数是 S45 后的
+-- 实测值（S43 时为 103 条 / 3239）。
+-- R28-S58 更新：本片新增 5 条（成员资格精确／默认权限面／角色属性矩阵／secdef search_path／账本双条件，合计第 105–109 条），合流 #359（S45）后共 109 条 / 3412。
 DO $$
 DECLARE
   v_failed integer;

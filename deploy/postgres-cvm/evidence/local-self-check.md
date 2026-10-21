@@ -1189,3 +1189,19 @@ PASS dump 已产出   PASS 清单已产出   PASS 打印了成功日志
 - **本节不构成"已验收"**：本 PR 仍 `Refs #27` 且**不关闭整项**；
 - 两侧输出**都不是本单写手取得的**（我无凭据、无该机访问权）；
 - **其余未取得项保持未取得**：云控制台入站规则的最终核对、公网 5432 的独立复核、PITR／异地灾备等（见 §13.2 与 README 第 6 节）。
+
+## 勘误（R28-S57，2026-10-21）
+
+本节**只做勘误**：上文任何原始读数、结论、运行日志一律不动（历史证据不得改成新事实）。依据是
+`services/api/db/roles/` **8 个文件、11 条 `CREATE ROLE`** 与 `deploy/postgres-cvm/provision-db.sh:267-279`
+（`ROLE_GROUP_FILES`：默认 5 个组-文件对，`WITH_CLI_GROUPS=1` 时 7 个；`egress_ledger.sql` 不在其中），
+可由 `tests/unit/roles-file-disposition.test.mjs` 的「disposition ①②」「disposition ③」「计数一致」三条断言复核。
+
+| # | 原文位置（节选） | 今天的事实 | 影响 |
+| --- | --- | --- | --- |
+| 1 | §4.1（`:363`）：`仓库 services/api/db/roles/*.sql（7 个）` 行，结果列 `✅ 7/7 全部成功` | 写入时（`068dd57`，GY-I25/#124）仓库确为 **7 个**角色文件、脚本执行全部 7 个；今天为 **8 个文件、11 个角色**（5 个文件各 1 条，`catalog_readers.sql`／`source_operator.sql`／`staging_importer.sql` 各 2 条；`egress_ledger.sql` 是新增文件） | 仅计数口径；当时 `7/7` 是真实跑数，保留 |
+| 2 | `:451`：`它们真正依赖的是 7 个业务关系 + 运行时角色 + 5 个既有 NOLOGIN 组` | 「7 个」是**业务关系**数（`users`／`sessions`／`admin_accounts`／`admin_scopes`／`idempotency_keys`／`catalog_read.home_species`／`catalog_read.current_knowledge`），不是角色文件数；「5 个组」是运行时继承的 5 个组，今天仍是 5 个 | 无计数错；补注防误读 |
+| 3 | `:873`：`provision-db.sh（角色循环，7 个文件）` | 该行写入时（`068dd57`）确为 7 个角色文件且脚本循环 7 个；今天脚本按 `ROLE_GROUP_FILES` 循环 **5 个（默认）／7 个（CLI）**，8 个文件中 `egress_ledger.sql` 不执行 | 仅计数口径；脚本行为见 `deploy/postgres-cvm/README.md:440` |
+| 4 | `:901`：`本脚本按路径**复用**仓库里的 7 个角色 SQL（不复制、不重写）` | 这是当时 `--plan` 报错文案的**原始抓取**，保留不动；同一文案今天已改为「默认 5 个；`WITH_CLI_GROUPS=1` 时 7 个；`egress_ledger.sql` 当前不被本脚本执行」 | 无：历史日志不改 |
+
+复核：`node --test --test-concurrency=1 tests/unit/roles-file-disposition.test.mjs`（11/11 通过）。

@@ -80,7 +80,7 @@
 | 表 | 派单原文 | 本集群实测 | 处理 |
 | --- | --- | --- | --- |
 | `idempotency_keys` | 表级 SELECT + DELETE | SELECT + **INSERT** + DELETE | 快照记 `t_ins = true`；与既有 `allow_table_dml` 的 `('public','idempotency_keys','INSERT')` 白名单一致，判定为派单笔误 |
-| `users` | 列 INSERT 只有 `wechat_subject_cipher` | `wechat_subject_cipher` **+ `wechat_subject_lookup`** | 快照**如实**记两列；⛔ 不改授权（本片只加断言）。`wechat_subject_lookup` 的 INSERT 属「隐私面向运行时可写」，**登记为待裁定项**，见 §7 |
+| `users` | 列 INSERT 只有 `wechat_subject_cipher` | `wechat_subject_cipher` **+ `wechat_subject_lookup`** | 快照**如实**记两列；⛔ 不改授权（本片只加断言）。`wechat_subject_lookup` 的 INSERT 属「登录建号必须写该列」，**已由 R28-S45 裁定为设计所需**，见 §7 第 2 条 |
 | `single_profiles` | 列 INSERT 只有 `user_id, crop_id` | `user_id, crop_id, region_code, region_catalog_version, revision`（5 列） | 快照记 5 列 |
 | `privacy_epochs` | 列 SELECT 5 列（不含 `updated_at`） | `has_column_privilege` 对 6 列全真 | 这是**表级 SELECT 投影**，不是漂移：按 §3.4 语义 `sel = []`、`t_sel = true`，`updated_at` 不单列 |
 
@@ -179,12 +179,12 @@ m5 的三条红里，`knowledge_runtime_scope` 是既有断言：PUBLIC 授权�
 ## 7. 未取得 / 待裁定
 
 1. **真实 CVM 与 GitHub Actions runner 未跑**：本页全部读数来自本机一次性集群（55652），`provision-db.sh` 本体未执行。
-2. **`users.wechat_subject_lookup` 的列级 INSERT 待裁定**：实测运行时可写该列（`auth_privacy` 组授的），快照已如实记录。业务上是否需要「运行时写 subject 查找值」由指挥/隐私面决定；本片只加断言，⛔ 未改授权。
+2. **`users.wechat_subject_lookup` 的列级 INSERT：已裁定为设计所需（R28-S45，2026-10-21）**：结论是**不改授权**。代码出处：登录建号语句 `services/api/src/auth/store.ts:249-251`（`INSERT INTO users (wechat_subject_lookup, wechat_subject_cipher) VALUES (decode($1, 'hex'), NULL) RETURNING id, state, auth_epoch, revision`）必须写 lookup 列，cipher 列与它同处一句 INSERT 的列清单、实参传 `NULL`；建号前的查找 `services/api/src/auth/store.ts:235` 按 lookup 定位既有行。授权出处：`services/api/db/roles/auth_privacy.sql:11-12`（SELECT 5 列、INSERT 两列），列定义见 `services/api/db/migrations/0001_initial_schema.sql`（`wechat_subject_lookup bytea`、`wechat_subject_cipher text`、唯一索引 `users_subject_lookup_key`）。本机真库探针（本片 90-assert 新增第 104 条 `runtime_users_login_insert_path`，以 `gengyun_api_runtime` 身份真跑、每条 SAVEPOINT 内、整段 ROLLBACK 零残留）：① 建号 INSERT 两列 **成功**（SQLSTATE 00000）② 同形 INSERT 多写 `nickname` ⇒ **42501** ③ 按 lookup 读 5 列 **成功**（00000）④ 读 `nickname` ⇒ **42501** ⑤ 改 `nickname` ⇒ **42501**。边界：**本判定基于代码取证 + 本机真库探针，未在 CVM/生产验证**。详见 `docs/verification/gy-r28-users-insert-probe-20261021.md`。
 3. **18 张表的业务语义未被验证**：本片只证明「当前授权面与快照逐列一致、无未分类表、无 PUBLIC 泄漏」，不证明这些权限在业务上仍然必要（例如 `idempotency_keys` 的表级 INSERT/DELETE、`sessions`/`admin_sessions` 的 5 列 INSERT 是否过宽）。
 4. **PUBLIC 授权的跨角色影响只有一次实测**：m5 显示 `knowledge_runtime_scope` 会连带判红，说明 PUBLIC 泄漏会影响其他角色断言；本片未穷举「PUBLIC 授权对每个角色断言的影响矩阵」。
 5. **`gengyun_egress_ledger` 的列级授权未被本片覆盖**：它不是运行时成员，不在 `external_manifest` 里；反向判据已按 membership 排除它，但它的授权面是否合规不在本片范围。
 6. **`m3a` 的 no-op 是派单设计问题，不是断言能力问题**：已在 §5 记录，并用 m3b 补证；建议后续派单修正「少授」类变异的写法。
-7. **组文件与 20-login-roles 未改**：本片是纯断言片；若后续要收紧任何一条授权（例如 `wechat_subject_lookup`），必须另开切片并同步本页快照。
+7. **组文件与 20-login-roles 未改**：本片是纯断言片；若后续要收紧任何一条授权，必须另开切片并同步本页快照（`users.wechat_subject_lookup` 的列级 INSERT 已被 R28-S45 裁定为登录建号设计所需，不再算收紧候选，见 §7 第 2 条）。
 8. **集群状态**：一次性集群已在交付后 `pg_ctl -D E:\GengYunCommander\.pg17\data-r28s43 -m fast stop`（报告里记「已停」）。
 
 ## 8. 复现命令
