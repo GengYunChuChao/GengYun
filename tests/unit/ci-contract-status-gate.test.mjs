@@ -132,6 +132,55 @@ function contractJob() {
   return job;
 }
 
+/**
+ * 扫 `contract` job 的软失败构造（三类，缺一类就是一条静默变绿通道）：
+ *
+ * 1. **job 级**：与 `steps:` 同缩进、且行首无 `- ` 的 `if:` / `continue-on-error:`。
+ *    `if: false` 让整个 job 被跳过、`continue-on-error: true` 让 job 失败也判绿 ⇒ 门禁等于没跑。
+ * 2. **step 级**：只扫引用校验器的那一步（别的 step 自己软失败，不影响本门禁的结论）。
+ * 3. **命令文本**：`|| true`、`set +e`、`exit 0` 三种把非零退出吞掉的写法。
+ *
+ * 冒号一律允许前置空白：`if :` / `continue-on-error :` 是合法 YAML、语义不变，
+ * 只认「冒号紧贴键名」会把它们放过去（仓内同类守卫 `tests/unit/ci-real-pg-wiring.test.mjs`
+ * 的 `swallowedFailureHits()` 也是宽容空格的）。
+ */
+function softFailureHits(job, gateSteps) {
+  const hits = [];
+  const { lines, start, end } = job;
+  const stepsAt = lines.findIndex((line, index) => index > start && index < end && /^\s*steps\s*:\s*$/.test(line));
+  const jobIndent = stepsAt === -1 ? null : /^ */.exec(lines[stepsAt])[0].length;
+  if (jobIndent !== null) {
+    for (let index = start + 1; index < end; index += 1) {
+      if (index === stepsAt) continue;
+      const line = lines[index];
+      if (/^ */.exec(line)[0].length !== jobIndent) continue;
+      if (/^\s*-\s/.test(line)) continue;
+      if (/^\s*if\s*:/.test(line)) hits.push(`第 ${index + 1} 行（job 级）有 \`if:\`：${line.trim()}`);
+      if (/^\s*continue-on-error\s*:/.test(line)) {
+        hits.push(`第 ${index + 1} 行（job 级）有 \`continue-on-error:\`：${line.trim()}`);
+      }
+    }
+  }
+  for (const step of gateSteps) {
+    step.lines.forEach((line, offset) => {
+      if (/^\s*(?:-\s+)?if\s*:/.test(line)) hits.push(`第 ${step.line + offset} 行（step 级）有 \`if:\`：${line.trim()}`);
+      if (/^\s*(?:-\s+)?continue-on-error\s*:/.test(line)) {
+        hits.push(`第 ${step.line + offset} 行（step 级）有 \`continue-on-error:\`：${line.trim()}`);
+      }
+    });
+    for (const command of step.commands) {
+      if (/\|\|\s*true\b/.test(command)) hits.push(`第 ${step.line} 行的命令有行尾 \`|| true\`：${command}`);
+      if (/(?:^|[\s;&|])set\s+\+e\b/.test(command)) {
+        hits.push(`第 ${step.line} 行的命令里有 \`set +e\`（关掉「失败即停」）：${command}`);
+      }
+      if (/(?:^|[\s;&|])exit\s+0\b/.test(command)) {
+        hits.push(`第 ${step.line} 行的命令里有 \`exit 0\`（把非零退出改写成成功）：${command}`);
+      }
+    }
+  }
+  return hits;
+}
+
 test('① contract job 里有 `node tools/verify-contract-status.mjs` 这一步', () => {
   const job = contractJob();
   const steps = stepsOf(job);
@@ -169,33 +218,25 @@ test('② contract job 里那一步不带 `--write-doc`（CI 不得自动改写�
   }
 });
 
-test('③ contract job 里那一步不带 `if:` / `continue-on-error` / `|| true`（不得软失败）', () => {
-  const steps = stepsOf(contractJob());
-  const gate = gateStepsOf(steps);
+test('③ contract job（job 级）与那一步（step 级）都不带软失败构造', () => {
+  const job = contractJob();
+  const gate = gateStepsOf(stepsOf(job));
   assert.ok(gate.length > 0, `找不到引用 \`tools/verify-contract-status\` 的 step，${WORKFLOW_FILE} 的 ${JOB_ID} job 可能被删空`);
-  const hits = [];
-  for (const step of gate) {
-    step.lines.forEach((line, offset) => {
-      if (/^\s*(?:- )?if:/.test(line)) hits.push(`第 ${step.line + offset} 行有 \`if:\`：${line.trim()}`);
-      if (/^\s*(?:- )?continue-on-error:/.test(line)) {
-        hits.push(`第 ${step.line + offset} 行有 \`continue-on-error:\`：${line.trim()}`);
-      }
-    });
-    for (const command of step.commands) {
-      if (/\|\|\s*true\b/.test(command)) hits.push(`第 ${step.line} 行的命令有行尾 \`|| true\`：${command}`);
-    }
-  }
+  const hits = softFailureHits(job, gate);
   assert.deepEqual(hits, [], [
-    `契约校验步被改成了软失败（${hits.length} 处）：`,
+    `契约校验被改成了软失败（${hits.length} 处）：`,
     ...hits.map(hit => `  · ${hit}`),
     '以上任一构造都会让「校验失败」仍被判绿——门禁等于没有。',
-    `改法：那一步只留 \`- run: ${GATE_COMMAND}\`，不加 \`if:\` / \`continue-on-error:\` / 行尾 \`|| true\`。`,
+    'job 级 `if:` 会整块跳过该 job，job 级 `continue-on-error:` 会让整个 job 失败也判绿；step 级同名字段等价于没跑。',
+    `改法：那一步只留 \`- run: ${GATE_COMMAND}\`；job 与 step 都别加 \`if:\` / \`continue-on-error:\`，`
+      + '命令里别写行尾 `|| true`、`set +e` 或 `exit 0`。',
   ].join('\n'));
 });
 
 test('④ 被调用路径真实存在且非空；校验器不含 `--force` / `--skip` 这类无条件通过开关', () => {
   const job = contractJob();
-  const referenced = [...new Set(job.lines.flatMap(line => (
+  const jobLines = job.lines.slice(job.start + 1, job.end);
+  const referenced = [...new Set(jobLines.flatMap(line => (
     [...line.matchAll(/node\s+(tools\/verify-contract-status[^\s;&|`'"]*)/g)].map(match => match[1])
   )))];
   assert.ok(referenced.length > 0, `\`${JOB_ID}\` job 里没有任何 \`node tools/verify-contract-status…\` 调用；`
