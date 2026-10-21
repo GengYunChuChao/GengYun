@@ -36,6 +36,7 @@ import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const ENV = 'FAVORITES_HISTORY_PG_TEST_URL';
@@ -462,6 +463,8 @@ try {
     favoritesStore: favorites2,
     historyStore: history2,
     messagesStore: messages2,
+    // 会话域（C1b-3 起进闭集）：同一理由，本 arm 没有 0013 的会话表 ⇒ 用内存实现。
+    conversationsStore: createMemoryConversationStore(),
   });
   const purgeRequestId = String(deletion.requestDeletionFor(purgeA).id);
   await deletion.executeHandlers(purgeRequestId);
@@ -496,6 +499,9 @@ try {
   // 闭集第三项（#17 消息域）也被驱动，且如实报 0 行（本 arm 没有消息行，缺项 ≠ 0）。
   assert.equal(handlers.get('messages').online_state, 'completed', '闭集里的消息域必须被驱动');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
+  // 闭集第四项（#12 会话域）同样被驱动。
+  assert.equal(handlers.get('conversations').online_state, 'completed', '闭集里的会话域必须被驱动');
+  assert.equal(evidence.conversations, 'conversations:online-purged:0');
   say('注销清空覆盖幂等台账：A 四表残留 0、B 逐表相等、证据可见台账行数');
 
   // ---- 1（续）. 回滚脚本 -------------------------------------------------

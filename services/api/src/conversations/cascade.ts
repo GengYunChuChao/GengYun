@@ -121,10 +121,11 @@ export interface ConversationDeletionRegistration {
 /**
  * 把**会话/轮次/回答**注册进已合并的 F13 删除注册协议（`packages/privacy`，**不另起一套**）。
  *
- * 为什么单独建一个协调器而不是改 `privacy/user-data-deletion.ts`：那个文件（#16）的必需模块闭集
- * 被既有断言逐字锁住（`tests/unit/user-data-deletion.test.mjs`：`['favorites','history']`），
- * 本片**不得放宽或删除任何既有断言**，因此本域自带一个只含本模块的闭集，
- * 由装配层同时持有（注销清理由 GY-I19 统一编排）。
+ * ⚠️ C1b-3（§7 P0-3 路径①）之后：**生产装配不再走本函数**。会话域已并入
+ * `services/api/src/privacy/user-data-deletion.ts` 的 `USER_DATA_DELETION_MODULES`
+ * （`CONVERSATIONS_DELETION_MODULE`），一次注销＝一个 requestId、一份回执、一条证据链。
+ * 本函数保留为**独立的单域装配口**（离线验证/单模块驱动用），不再由 `app.ts` 创建；
+ * 那段「闭集被既有断言锁住所以本域自带闭集」的理由已成历史（闭集当时无法改成扩集）。
  *
  * 处理器语义（逐条与已合并协议对齐）：
  *   - `onlineState`：本模块**真的**删掉了该主体的会话行 ⇒ `completed`，
@@ -181,13 +182,12 @@ export interface CascadeTargetRef {
 }
 
 /**
- * 建**只含本模块**的 F13 删除协调器并注册处理器（装配层一行接线）。
+ * 建**只含本模块**的 F13 删除协调器并注册处理器（独立单域装配口）。
  *
- * 为什么必需模块闭集只有 `conversations` 一项：`privacy/user-data-deletion.ts`（#16）的
- * `USER_DATA_DELETION_MODULES` 被既有断言逐字锁住（`tests/unit/user-data-deletion.test.mjs`），
- * 本片**不得放宽或删除任何既有断言**；而 `packages/privacy/deletion-modules.mjs` 的闭集注释
- * 明确写着"其它域各自注册自己的模块"。因此本域自带一个闭集，由装配层同时持有两者，
- * 由 GY-I19 统一编排（本片只保证：本域模块**在启动时已注册**、可被驱动、回执如实）。
+ * ⚠️ C1b-3（§7 P0-3 路径①）后 `app.ts` **不再**调用本函数：会话域已并入
+ * `privacy/user-data-deletion.ts` 的统一闭集（同一 requestId 账本）。保留它只用于
+ * 「只想单独驱动会话域」的离线/单元场景（`tests/unit/conversation-deletion.test.mjs`），
+ * 生产装配必须走统一账本 —— 两个账本 = 两次请求 = 回执对不上。
  */
 export function createConversationDeletion(
   store: ConversationPurgeStore,

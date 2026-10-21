@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 import {
@@ -30,6 +31,7 @@ async function seed(clock) {
   const favoritesStore = createMemoryFavoritesStore({ now: () => clock.ms });
   const historyStore = createMemoryHistoryStore({ now: () => clock.ms });
   const messagesStore = createMemoryMessagesStore({ now: () => clock.ms });
+  const conversationsStore = createMemoryConversationStore();
   for (const [ownerId, tag] of [
     [USER_A.userId, 'a'],
     [USER_B.userId, 'b'],
@@ -63,8 +65,15 @@ async function seed(clock) {
       created_at: clock.now().toISOString(),
       event_key: `msg-${tag}`,
     });
+    // #12 会话域（C1b-3 起进闭集）：每个主体一条会话行。
+    await conversationsStore.insertConversation({
+      id: `00000000-0000-4000-8${tag === 'a' ? '7' : '8'}00-000000000001`,
+      owner_id: ownerId,
+      conditions: null,
+      created_at: clock.now(),
+    });
   }
-  return { favoritesStore, historyStore, messagesStore };
+  return { favoritesStore, historyStore, messagesStore, conversationsStore };
 }
 
 test('GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换发即作废旧摘要', () => {
@@ -110,14 +119,14 @@ test('GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换
 
 test('GY-I19：受理即驱动既有级联（在线真删、只删绑定主体），备份未接线如实 pending', async () => {
   const clock = scriptedClock();
-  const { favoritesStore, historyStore, messagesStore } = await seed(clock);
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, now: clock.now });
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed(clock);
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore, now: clock.now });
   const receipts = createDeletionReceiptRegistry({ now: clock.now });
   const service = createAccountDeletionRequestService({ deletion, receipts });
 
   assert.equal(service.available, true);
   assert.equal(service.unavailableMessage, null);
-  assert.deepEqual(service.declaredModules(), ['favorites', 'history', 'messages']);
+  assert.deepEqual(service.declaredModules(), ['favorites', 'history', 'messages', 'conversations']);
 
   const accepted = await service.request({ userId: USER_A.userId, receiptInput: 'receipt-input-a' });
   assert.deepEqual(Object.keys(accepted).sort(), ['deletion', 'receipt_expires_at', 'receipt_token']);
@@ -131,13 +140,23 @@ test('GY-I19：受理即驱动既有级联（在线真删、只删绑定主体�
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_A.userId)).length, 0);
   assert.equal((await historyStore.listHistoryByOwner(USER_A.userId)).length, 0);
   assert.equal((await messagesStore.listMessagesByOwner(USER_A.userId)).length, 0, '#17：消息行必须真删');
+  assert.equal(
+    conversationsStore.snapshot().conversations.filter((row) => row.owner_id === USER_A.userId).length,
+    0,
+    '#12：会话行必须真删',
+  );
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_B.userId)).length, 1);
   assert.equal((await historyStore.listHistoryByOwner(USER_B.userId)).length, 1);
   assert.equal((await messagesStore.listMessagesByOwner(USER_B.userId)).length, 1, '他人消息不动');
+  assert.equal(
+    conversationsStore.snapshot().conversations.filter((row) => row.owner_id === USER_B.userId).length,
+    1,
+    '他人会话不动',
+  );
 
   // 回执逐模块摊开：在线 completed、备份 pending（未接线不谎称完成）、无自由文本错误码。
   const byModule = new Map(accepted.deletion.handlers.map((row) => [row.module, row]));
-  assert.deepEqual([...byModule.keys()].sort(), ['favorites', 'history', 'messages']);
+  assert.deepEqual([...byModule.keys()].sort(), ['conversations', 'favorites', 'history', 'messages']);
   for (const [module, row] of byModule) {
     assert.equal(row.online_state, 'completed', `${module} 在线清理确实成功`);
     assert.equal(row.backup_state, 'pending', `${module} 备份副本清除未接线 ⇒ 如实 pending`);
@@ -154,8 +173,8 @@ test('GY-I19：受理即驱动既有级联（在线真删、只删绑定主体�
 
 test('GY-I19：空主体/空回执明文一律拒绝且不留任何状态；未接线模式给契约不可用文案', async () => {
   const clock = scriptedClock();
-  const { favoritesStore, historyStore, messagesStore } = await seed(clock);
-  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, now: clock.now });
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed(clock);
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore, now: clock.now });
   const receipts = createDeletionReceiptRegistry({ now: clock.now });
   const service = createAccountDeletionRequestService({ deletion, receipts });
 
@@ -178,11 +197,12 @@ test('GY-I19：备份报称 purged 但缺证据 ⇒ 仍 pending；证据齐备�
 
   // (1) 缺证据：`purged:true` 但没有 `evidenceRef` ⇒ 备份阶段如实保持 pending，整体不完成。
   const noEvidence = await (async () => {
-    const { favoritesStore, historyStore, messagesStore } = await seed(clock);
+    const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed(clock);
     const deletion = createUserDataDeletion({
       favoritesStore,
       historyStore,
       messagesStore,
+      conversationsStore,
       now: clock.now,
       backupPurge: {
         kind: 'wired',
@@ -202,11 +222,12 @@ test('GY-I19：备份报称 purged 但缺证据 ⇒ 仍 pending；证据齐备�
   // (2) 证据齐备：同一套协议即可判定 completed —— 说明本片没有把状态永久钉死，
   //     而是**由证据**决定（反向控制 RC-3 注入的伪造 completed 正是在这里被咬住）。
   const withEvidence = await (async () => {
-    const { favoritesStore, historyStore, messagesStore } = await seed(clock);
+    const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed(clock);
     const deletion = createUserDataDeletion({
       favoritesStore,
       historyStore,
       messagesStore,
+      conversationsStore,
       now: clock.now,
       backupPurge: {
         kind: 'wired',

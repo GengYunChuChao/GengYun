@@ -45,6 +45,7 @@ import { copyPayloadDigest, copyPayloadJson, purgeEvidenceRef } from '../../pack
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { RECEIPT_TTL_MS } from '../../services/api/src/privacy/account-deletion.ts';
 import { createPostgresBackupPurgePort } from '../../services/api/src/privacy/backup-copies-pg.ts';
 import { createPostgresDeletionRequestStore } from '../../services/api/src/privacy/deletion-requests-pg.ts';
@@ -406,6 +407,7 @@ try {
     favoritesStore: favoritesA,
     historyStore: historyA,
     messagesStore: createMemoryMessagesStore({ now: () => clockA.now().getTime() }),
+    conversationsStore: createMemoryConversationStore(),
     backupPurge: portA,
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -495,6 +497,7 @@ try {
     favoritesStore: favoritesB,
     historyStore: historyBExploding,
     messagesStore: createMemoryMessagesStore({ now: () => clockB.now().getTime() }),
+    conversationsStore: createMemoryConversationStore(),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockB.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -529,6 +532,7 @@ try {
     favoritesStore: favoritesC,
     historyStore: historyC,
     messagesStore: createMemoryMessagesStore({ now: () => clockC.now().getTime() }),
+    conversationsStore: createMemoryConversationStore(),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockC.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -579,6 +583,7 @@ try {
     favoritesStore: favoritesD,
     historyStore: historyD,
     messagesStore: createMemoryMessagesStore({ now: () => clockD.now().getTime() }),
+    conversationsStore: createMemoryConversationStore(),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockD.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -627,6 +632,7 @@ try {
     favoritesStore: favoritesE,
     historyStore: historyE,
     messagesStore: createMemoryMessagesStore({ now: () => clockE.now().getTime() }),
+    conversationsStore: createMemoryConversationStore(),
     backupPurge: createPostgresBackupPurgePort({ pool, now: () => clockE.now() }),
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,

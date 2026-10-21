@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1722-1729"
+          "lines": "1758-1766"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",

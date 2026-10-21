@@ -55,13 +55,18 @@ export const TEST_SIGNING_KEY = 'gy-i16-favorites-history-test-signing-key';
 export const PG_MIGRATIONS = ['0001_initial_schema', '0018_favorites_history'];
 
 /**
- * C1b（#17 P0-2）追加：注销闭集扩到消息域后，用例需要 `public.messages`（`0019`）与
- * 共享幂等台账 `public.idempotency_keys`（`0008`）两张真表 —— 否则消息域的清理语句会
- * 撞 `42P01`（不是"清完了"，而是"表都没有"）。
+ * C1b（#17 P0-2 / #12 P0-3）追加：注销闭集扩到消息域与会话域后，用例需要
+ * `public.messages`（`0019`）、共享幂等台账 `public.idempotency_keys`（`0008`）与
+ * 会话三张表（`0013`）—— 否则对应域的清理语句会撞 `42P01`（不是"清完了"，而是"表都没有"）。
  *
  * 单独一个常量而不是改 `PG_MIGRATIONS`：既有收藏/历史用例的迁移集**逐字不动**。
  */
-export const PG_MIGRATIONS_WITH_MESSAGES = [...PG_MIGRATIONS, '0008_auth_session', '0019_messages_persistence'];
+export const PG_MIGRATIONS_WITH_MESSAGES = [
+  ...PG_MIGRATIONS,
+  '0008_auth_session',
+  '0013_conversations',
+  '0019_messages_persistence',
+];
 
 export function migrationSql(name) {
   return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');

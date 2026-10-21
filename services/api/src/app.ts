@@ -217,9 +217,7 @@ import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
 import { createAnswerJobSource } from './conversations/job.ts';
 import type { ConversationContextPort } from './conversations/context.ts';
 import {
-  createConversationDeletion,
   createUnwiredTurnCascadePort,
-  type ConversationDeletionRegistration,
   type TurnCascadePort,
 } from './conversations/cascade.ts';
 
@@ -293,11 +291,6 @@ declare module 'fastify' {
    * ⇒ 七条问答路由一律 503 `PROVIDER_UNAVAILABLE`（retryable），不返回空页、不假成功。
    */
   conversationService: ConversationService | null;
-  /**
-   * GY-I12（#12）· 会话/轮次/回答接入 **F13 注销删除注册协议**的注册结果。
-   * 存储未就绪（`real` 且无 `DATABASE_URL`）时为 `null`（无数据可清 ⇒ 也不注册处理器）。
-   */
-  conversationDeletion: ConversationDeletionRegistration | null;
   }
 }
 
@@ -1501,6 +1494,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     favoritesStore,
     historyStore,
     messagesStore: messagesDeletionStore,
+    // #12 会话域（C1b-3 / §7 P0-3 路径①）：并入**同一本账**。`conversationStore` 在本文件
+    // 稍后才装配（`real` 无池时为 null），因此这里用闭包惰性取值：域不可用时**调用即抛**
+    // （协议折叠 blocked + HANDLER_FAILED），⛔ 不在装配期假装"能清"，也不静默跳过该域。
+    conversationsStore: {
+      async deleteAllByOwner(ownerId) {
+        const store = conversationStore;
+        if (store === null) throw new Error('会话域不可用（real 模式无连接池）：拒绝假装清空');
+        return store.deleteAllByOwner(ownerId);
+      },
+    },
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
@@ -1598,12 +1601,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
           now: clock,
         });
-  // 7) 注销删除：把本域三个模块注册进**已合并的** `packages/privacy` F13 协议
-  //    （`createConversationDeletion`：只含 `conversations` 一个必需模块，理由见该函数注释）。
-  //    在线部分**真的**按主体清理并留证据（`conversations:online-purged:<n>`）；备份副本清除
-  //    属 GY-I19 ⇒ 回执如实 `backupState: 'pending'`（不谎称完成）。
-  const conversationDeletion =
-    conversationStore === null ? null : createConversationDeletion(conversationStore, { now: clock });
+  // 7) 注销删除（C1b-3 / §7 P0-3 路径①）：会话域**并入 `userDataDeletion` 那一本账**
+  //    （见上方 `conversationsStore` 依赖）。本片**不再**另建只含 `conversations` 的第二个
+  //    协调器与第二个 requestId —— 一次注销 = 一个请求、一份回执、一条证据链。
+  //    备份副本清除属 GY-I19 G6/G8（P1）⇒ 该模块回执如实 `pending`（不谎称完成）。
 
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
@@ -1631,9 +1632,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('accountDeletion', accountDeletion);
   app.decorate('deletionReceipts', deletionReceipts);
   app.decorate('communityService', communityService);
-  // GY-I12（#12）：问答服务与注销删除注册（供回归测试与 GY-I19 统一编排驱动）。
+  // GY-I12（#12）：问答服务。注销删除注册已并入 `userDataDeletion`（C1b-3 / P0-3 路径①），
+  // 不再单独 decorate 第二个协调器（那是"两本账"的形状）。
   app.decorate('conversationService', conversationService);
-  app.decorate('conversationDeletion', conversationDeletion);
   // GY-I14 ⇄ GY-I15 联动接线：把装配好的联动端口挂出来（只读用途；业务判定仍在服务层内部）。
   app.decorate('communityModerationLink', communityModerationLink);
 

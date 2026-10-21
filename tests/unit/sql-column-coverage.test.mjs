@@ -85,17 +85,18 @@ const OPAQUE_ALLOWLIST = [
 /**
  * 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测，
  * 并随「DELETE 语句也产出整表权限需求」把 columnRequirements 由 1157 抬到 1184 —— 抬高的差额
- * 正好等于 DELETE 语句条数 27，见覆盖读数的正向控制）。
+ * 正好等于 DELETE 语句条数 27，见覆盖读数的正向控制；C1b-2 又给消息域补了一条 snapshotOwner
+ * 的 `SELECT id FROM public.messages`，故 SELECT 66→67、字面量 141→142、要求 1184→1185）。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 141,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 66, DELETE: 27 },
+  sqlLiterals: 142,
+  statements: { INSERT: 27, UPDATE: 21, SELECT: 67, DELETE: 27 },
   returningClauses: 56,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1184,
+  columnRequirements: 1185,
   opaqueExpressions: 2,
 };
 
@@ -105,7 +106,7 @@ const EXPECTED_PER_FILE = {
   conversations: 16,
   favorites: 15,
   history: 16,
-  messages: 14,
+  messages: 15,
   ocr: 16,
   recognitions: 20,
   speech: 16,

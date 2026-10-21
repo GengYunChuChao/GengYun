@@ -167,10 +167,10 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await sharedLedgerRows(mine.id), 1);
   assert.equal(await sharedLedgerRows(others.id), 1);
 
-  // 模块闭集（C1b 起**扩大**到含 messages）：既没有把 favorites/history 从闭集里摘掉，
-  // 也不是"随便加了个名字"——消息域必须真的在闭集内（与另外两域同一条路）。
+  // 模块闭集（C1b / C1b-3 起**扩大**到含 messages 与 conversations）：既没有把 favorites/history
+  // 从闭集里摘掉，也不是"随便加了个名字"——消息域与会话域必须真的在闭集内（同一条路）。
   assert.deepEqual(app.userDataDeletion.requiredModules(), [...USER_DATA_DELETION_MODULES]);
-  assert.deepEqual(app.userDataDeletion.requiredModules(), ['favorites', 'history', 'messages']);
+  assert.deepEqual(app.userDataDeletion.requiredModules(), ['favorites', 'history', 'messages', 'conversations']);
   for (const legacy of ['favorites', 'history']) {
     assert.ok(app.userDataDeletion.requiredModules().includes(legacy), `闭集不得丢掉既有模块 ${legacy}`);
   }
@@ -196,20 +196,21 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await sharedLedgerRows(mine.id), 0, '注销清空后本主体共享幂等台账残留 0 行');
   assert.equal(await sharedLedgerRows(others.id), 1, '他人共享幂等台账不动');
 
-  // 行数进证据：favorites 1 行、history 2 行、messages 1 行（与真表删除行数逐一对上）。
+  // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行
+  // （本用例没造会话行，但**必须**照实出现 0 —— 缺项说明会话域没被驱动）。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
-  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1 });
+  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0 });
   assert.deepEqual(
     audit.map((entry) => entry.userId),
-    [mine.id, mine.id, mine.id],
+    [mine.id, mine.id, mine.id, mine.id],
     '审计只记目标主体',
   );
 
-  // 回执：三个模块的在线行都如实 `completed`，备份仍如实 `pending`（未接线不谎称完成）。
+  // 回执：四个模块的在线行都如实 `completed`，备份仍如实 `pending`（未接线不谎称完成）。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
-  for (const module of ['favorites', 'history', 'messages']) {
+  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
     assert.equal(byModule.get(module).online_state, 'completed');
     assert.equal(byModule.get(module).backup_state, 'pending');
     assert.equal(byModule.get(module).error_code, null);
@@ -222,6 +223,7 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(evidence.favorites, 'favorites:online-purged:1;favorites:idempotency-purged:2');
   assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
   assert.equal(evidence.messages, 'messages:online-purged:1;messages:idempotency-purged:1');
+  assert.equal(evidence.conversations, 'conversations:online-purged:0');
 });
 
 test('注销清空·再次清空：0 行也如实回 0（不省略、不当作失败）', async (t) => {
@@ -245,7 +247,11 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
 
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
-  assert.deepEqual(removed, { favorites: 0, history: 0, messages: 0 }, '无行时三个模块都记 0（不是缺项）');
+  assert.deepEqual(
+    removed,
+    { favorites: 0, history: 0, messages: 0, conversations: 0 },
+    '无行时四个模块都记 0（不是缺项）',
+  );
   const receipt = app.userDataDeletion.receipt(requestId);
   for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
   // 台账计数同样如实给 0（不省略计数、也不因为在跑就假装清过台账）。
@@ -253,4 +259,5 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.favorites, 'favorites:online-purged:0;favorites:idempotency-purged:0');
   assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
+  assert.equal(evidence.conversations, 'conversations:online-purged:0');
 });
