@@ -50,7 +50,12 @@ assert.ok(
  *    ① 版本序列在 1..max 上连续无缺号（缺号点名到具体版本）；
  *    ② 总数 === 最大版本号（编号自 0001 起、无错位）。
  *  二者对「新增迁移」自动放行，对「发现器静默漏项」变红（实测变异：发现器跳过 0015 ⇒ 两条各自都会红）。
- *  纯派生（只把 `discoverMigrations().length` 与自身比）曾实测无牙：同一次漏片下本测试仍 11/11 绿。 */
+ *  纯派生（只把 `discoverMigrations().length` 与自身比）曾实测无牙：同一次漏片下本测试仍 11/11 绿。
+ *
+ *  **①② 的真空洞（2026-10-21 补）**：两条都只约束「已发现集合的内部一致性」，对「发现器把**尾部整段**
+ *  漏掉」恒真——只剩 0001..0019 时序列照样连续、count 照样等于 max，脚本照绿。故在 ①② 之后另加两条
+ *  **下限钉**（`MIN_EXPECTED_LAST_VERSION`，见常量处的注释）：它挡的是「尾部整段丢失」这一类漏项，
+ *  ⛔ 不是「必须等于某个数」，具体理由与实测见 docs/verification/gy-r28-migrations-negative-floor-20261021.md。 */
 const MIGRATIONS = discoverMigrations();
 const MIGRATION_COUNT = MIGRATIONS.length;
 const VERSION_NUMBER_SET = new Set(MIGRATIONS.map((migration) => Number(migration.version)));
@@ -69,6 +74,37 @@ assert.equal(
   LAST_VERSION_NUMBER,
   `迁移总数必须等于最大版本号（编号自 0001 起、无错位；实测 count=${MIGRATION_COUNT}，max=${LAST_VERSION_NUMBER}）`,
 );
+
+/** 最大号下限钉：**有意的人工步骤** —— 新增迁移时**须**把这里抬到新的最大版本号（与 0001 起的编号同号）。
+ *
+ *  为什么是「≥」而不是「必须等于某个数」：
+ *    · 下限只挡**尾部整段丢失**这类漏项（2026-10-21 实测：工作树副本删掉末 3 个迁移后，①② 仍绿、本条红）；
+ *    · 别人先合入一条新迁移、本文件后合入时，数字**落后**只会让钉子变松（25 ≤ 26 照样绿），
+ *      不会把「新增迁移先合入」变成时炸弹——这正是 ①② 当初拒绝写死总数的原因，下限钉不退回那个坑；
+ *    · 漏抬钉子不会制造新故障，只损失一点灵敏度：尾部丢失若仍留在 ≥ 本数之上，本钉看不见（如实登记为缺口）。
+ *  与 ①② 的分工：①② 管「中间缺号／编号错位」，本钉管「末尾整段不见」——后者是前两条的结构盲区。
+ *  同一条人工步骤也要同步 `MIGRATION_COUNT` 的下限断言（下面两条断言共用本常量）。 */
+const MIN_EXPECTED_LAST_VERSION = 25;
+
+/** 结构不变量读数：负控制里这一行必须出现（证明旧两条仍绿），紧随其后才是下限钉的判决。 */
+console.log(
+  `STRUCT 旧的两条结构不变量已通过：${MIGRATION_COUNT} 个迁移，版本 0001..` +
+    `${String(LAST_VERSION_NUMBER).padStart(4, '0')} 连续无缺号，count === max（不写死总数）。`,
+);
+assert.ok(
+  LAST_VERSION_NUMBER >= MIN_EXPECTED_LAST_VERSION,
+  `最大迁移版本号不得低于下限钉 ${MIN_EXPECTED_LAST_VERSION}（实测 max=${LAST_VERSION_NUMBER}）：` +
+    '这条挡的是「迁移发现器把尾部整段漏掉」——例如只剩 0001..0019 时，① 连续无缺号与 ② count===max ' +
+    '会同时成立，旧两条结构不变量对此恒真、只有本条会红。它不是「必须等于某个数」：新增迁移只须把下限钉' +
+    '同步抬到新号（有意的人工步骤），不相等不报错，只有整段尾巴消失才红。',
+);
+assert.ok(
+  MIGRATION_COUNT >= MIN_EXPECTED_LAST_VERSION,
+  `迁移总数不得低于下限钉 ${MIN_EXPECTED_LAST_VERSION}（实测 count=${MIGRATION_COUNT}）：` +
+    '与上一条同源（② 保证 count===max），但仍单列一条——将来若有人松动 ②，总数这一列的下限仍在，' +
+    '尾部整段丢失依旧会红；同样只比「≥」，不要求等于任何数。',
+);
+
 const LAST_VERSION = MIGRATIONS[MIGRATION_COUNT - 1].version;
 /** 「0016 待应用」现场：全部迁移已应用，只把最后一片的台账行删掉。 */
 const PENDING_LEDGER = MIGRATION_COUNT - 1;
