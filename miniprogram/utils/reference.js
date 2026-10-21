@@ -40,6 +40,25 @@ for (const s of species.species) speciesById[s.id] = s
 const sourceById = {}
 for (const s of sources.sources) sourceById[s.id] = s
 
+// 来源登记字段（同源：`data/sources.js` 是 `packages/knowledge/catalog/sources.json` 的构建产物）。
+// 只读登记表，不做任何推断：登记表里没有的字段一律返回空串，由页面显示「接口未提供」占位。
+function sourceField(source, key) {
+  const s = source || {}
+  const sid = typeof s.source_id === 'string' ? s.source_id : ''
+  const reg = sid && sourceById[sid] ? sourceById[sid] : null
+  if (key === 'id') return sid
+  if (key === 'title') return reg && typeof reg.title === 'string' ? reg.title : ''
+  if (key === 'publisher') return typeof s.publisher === 'string' ? s.publisher : (reg && typeof reg.publisher === 'string' ? reg.publisher : '')
+  return ''
+}
+
+// 来源展示串：只用登记数据里的 publisher／title 拼接；任一缺失就只用有的那一半，
+// 两半都缺则为空串（页面显示占位），**不补写、不推断来源名称**。
+function sourceName(source) {
+  const parts = [sourceField(source, 'publisher'), sourceField(source, 'title')].filter(function (v) { return v !== '' })
+  return parts.join(' · ')
+}
+
 // 记录规范化（与域库口径一致的可见性/有效期判定）。
 // F5：source_version 派生算法与域库 packages/reference/records.mjs deriveSourceVersion **逐字一致**：
 //     `<source_id>@<version|issue|retrieved_at|unknown>#<attachment_sha256|content_hash 前 12 位>`
@@ -350,6 +369,11 @@ function listItem(item) {
     use_scene: item.use_scene,
     crop_ids: item.crop_ids,
     source_version: item.source_version,
+    // 来源可追溯：登记 id／发布机构／来源标题（缺项留空 ⇒ 页面显示「接口未提供」）。
+    source_id: sourceField(item.source, 'id'),
+    source_publisher: sourceField(item.source, 'publisher'),
+    source_title: sourceField(item.source, 'title'),
+    source_name: sourceName(item.source),
     record_status: item.record_status,
     simulated: item.simulated,
     labels: labels(item)
@@ -380,7 +404,12 @@ function detail(recordId) {
     note: item.verification.note || '',
     labels: labels(item),
     source: {
-      publisher: item.source.publisher || '',
+      // 详情页「来源标识」用登记 id；`title` 取自登记表（页面据此展示来源名称），
+      // `issue` 仍是本条记录所在的期号／文件 —— 两者语义不同，不互相顶替。
+      id: sourceField(item.source, 'id'),
+      publisher: sourceField(item.source, 'publisher'),
+      title: sourceField(item.source, 'title'),
+      name: sourceName(item.source),
       issue: item.source.issue || '',
       original_url: item.source.original_url || '',
       retrieved_at: item.source.retrieved_at || ''
@@ -1048,6 +1077,9 @@ module.exports = {
   doseCardDescriptor: doseCardDescriptor,
   ingredientContentMatch: ingredientContentMatch,
   parseIngredients: parseIngredientsLocal,
+  // 来源名称/标识取值：列表行与详情共用同一纯函数，缺项一律返回空串（由页面显示占位）。
+  sourceField: sourceField,
+  sourceName: sourceName,
   species: species.species,
   sources: sources.sources,
   regions: require('../data/regions.js').regions,
