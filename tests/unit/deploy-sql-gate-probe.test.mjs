@@ -26,8 +26,8 @@
  *  4) 标记清单非空，且**每条都能在探针源码里找到出处**：`###`/`-- [` 段落行逐字出现；
  *     `permission denied for <表|schema|函数> X` 的 X 必须在探针源码里被点到 ⇒ 改坏一个字就红；
  *  5) 禁止面对象集合恰好是那 9 个（5 表 + 2 schema + 2 函数），一条都不能少；
- *  6) `expected_42501` 必须等于**从探针源码数出来的**禁止面条数（5 表 DELETE ＋ 1 条 FOR UPDATE
- *     ＋ 3 条 internal 函数 ＋ 2 条 trigger 函数 = 11）⇒ 探针增删禁止面而 workflow 没跟，红。
+ *  6) `expected_42501` 必须等于**从探针源码数出来的**禁止面条数（段 6/7 的 6 条 ＋ 段 8b/8c 的 5 条
+ *     ＋ 段 9b 的 3 条 ＋ 段 10 的 2 条 ＋ 段 11 的 2 条 = 18）⇒ 探针增删禁止面而 workflow 没跟，红。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -75,6 +75,20 @@ const DENY_FIXED_STATEMENTS = Object.freeze([
   /SELECT staging_intake\.rollback_import\(/,
   /SELECT public\.consent_policy_immutable\(\);/,
   /SELECT public\.admin_audit_events_reject_mutation\(\);/,
+]);
+/**
+ * 段 9b/10/11 的 7 条固定语句（视图/跨 schema/导出表写/GRANT/CREATE），逐字来自探针源码。
+ * 全部按**整行锚定**（`^…$` + 多行）：探针的 `\echo` 说明文字里也常提到同一条语句，
+ * 只按子串数会多数出来（`INSERT INTO staging_intake.batches` 就同时出现在 :774 与 :770 的 \echo 里）。
+ */
+const DENY_LATE_STATEMENTS = Object.freeze([
+  /^SELECT \* FROM catalog_read\.registration_evidence LIMIT 0;$/,
+  /^SELECT \* FROM catalog_ops\.operations LIMIT 0;$/,
+  /^INSERT INTO staging_intake\.batches$/,
+  /^SELECT revision, cancelled_at FROM public\.exports WHERE false;$/,
+  /^UPDATE public\.exports SET revision = revision WHERE false;$/,
+  /^GRANT gengyun_preview_reader TO gengyun_api_runtime;$/,
+  /^CREATE TABLE public\.r28_s58_probe \(id integer\);$/,
 ]);
 /** 会吞掉非零退出的写法（step 级与命令级都要挡）。 */
 const SOFT_FAILURE_PATTERNS = Object.freeze([
@@ -216,20 +230,32 @@ function indexOfAll(haystack, needle) {
   return hits;
 }
 
-/** 从探针源码数出「应当被拒权（42501）」的语句条数：5 表 DELETE ＋ 1 条 FOR UPDATE ＋ 5 条函数。 */
+/**
+ * 从探针源码数出「应当被拒权（42501）」的语句条数：
+ * 段 6/7 的 6 条（5 表 DELETE + selections 的 FOR UPDATE）＋ 段 8b/8c 的 5 条函数
+ * ＋ 段 9b 的 3 条（视图/schema 跨域）＋ 段 10 的 2 条（exports 读与写）＋ 段 11 的 2 条（GRANT/CREATE）。
+ * 合计 18：这是真 CI 上一次一步红时的读数，也是 workflow 里 `expected_42501` 的唯一来源。
+ */
 function countDenyStatements(source) {
+  const text = source.replace(/\r\n/g, '\n');
   let total = 0;
   for (const table of DENY_DELETE_TABLES) {
     const pattern = new RegExp(`DELETE FROM public\\.${table} WHERE false RETURNING id;`, 'g');
-    const hits = source.match(pattern) ?? [];
+    const hits = text.match(pattern) ?? [];
     assert.equal(hits.length, 1, `探针源码里 \`DELETE FROM public.${table} … RETURNING id;\` 出现 ${hits.length} 次`
       + '（要求恰好 1 次：段 6/7 的禁止面各一条，多写或漏写都会让「错误条数」判据算错）。');
     total += hits.length;
   }
   for (const pattern of DENY_FIXED_STATEMENTS) {
-    const hits = source.match(new RegExp(pattern.source, 'g')) ?? [];
+    const hits = text.match(new RegExp(pattern.source, 'g')) ?? [];
     assert.equal(hits.length, 1, `探针源码里 \`${pattern.source}\` 出现 ${hits.length} 次`
       + '（要求恰好 1 次：禁止面语句既是「必须 42501」的证据，也是错误条数算式的加数）。');
+    total += hits.length;
+  }
+  for (const pattern of DENY_LATE_STATEMENTS) {
+    const hits = text.match(new RegExp(pattern.source, 'gm')) ?? [];
+    assert.equal(hits.length, 1, `探针源码里 \`${pattern.source}\` 出现 ${hits.length} 次`
+      + '（要求恰好 1 次：段 9b/10/11 的禁止面同样各产出一行 42501，漏算会让期望值偏小、判据恒红）。');
     total += hits.length;
   }
   return total;
@@ -411,7 +437,7 @@ test('⑥ expected_42501 必须等于从探针源码数出来的禁止面条数'
 test('⑦ 证据页存在，且 workflow 指向它（读数不能只活在 commit message 里）', () => {
   const absolute = join(REPO_ROOT, EVIDENCE_PAGE);
   assert.ok(existsSync(absolute), `找不到证据页 ${EVIDENCE_PAGE}：本步的真跑读数（绿 / 撤一条授权后红 / 复原后绿）`
-    + '必须落在仓内文档里，否则「为什么这 17 条标记、为什么恰好 11 条 42501」无从复核。');
+    + '必须落在仓内文档里，否则「为什么这 17 条标记、为什么恰好 18 条 42501」无从复核。');
   const workflow = readRepoText(WORKFLOW_FILE);
   assert.ok(workflow.includes(EVIDENCE_PAGE), `\`${WORKFLOW_FILE}\` 里没有引用 ${EVIDENCE_PAGE}：`
     + '探针步的注释必须指向口径出处（改证据页路径时同步改 workflow 的两处引用）。');

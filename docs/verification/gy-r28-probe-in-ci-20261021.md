@@ -2,7 +2,12 @@
 
 > 切片：R28-S71；分支 `test/gy-r28-probe-in-ci`；基线 `upstream/main = 6d7f2af`（S34 建 `deploy-sql-gate.yml`、S64 扩双 job、S42 加误授恢复演练之后）。
 > 交付物：`.github/workflows/deploy-sql-gate.yml`（加第 ⑥ 步，`90-assert` 之后、恢复演练之前）、`tests/unit/deploy-sql-gate-probe.test.mjs`（新增静态守卫）、本页。
-> 一句话问题：`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 是本仓「运行期角色到底能碰哪些表 / 列 / 函数」的主证据件（694 行、8 段），但 R28-S71 之前**没有任何 workflow 或测试执行它** —— `git grep -ln "probe-runtime-grants" -- .github/workflows tests` 零命中。它自带 `\set ON_ERROR_STOP 0`（设计如此），**psql 退出码恒为 0**，所以「跑过」不等于「验过」：必须对输出做结构化判据，否则加一步只等于加噪音。本片把「真跑 + 17 条标记逐条 grep + 42501 条数恰好 11」做成每次 PR 必跑的判红门，并用 7 条静态守卫钉死在 workflow 文本里。
+> 一句话问题：`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 是本仓「运行期角色到底能碰哪些表 / 列 / 函数」的主证据件（694 行、8 段），但 R28-S71 之前**没有任何 workflow 或测试执行它** —— `git grep -ln "probe-runtime-grants" -- .github/workflows tests` 零命中。它自带 `\set ON_ERROR_STOP 0`（设计如此），**psql 退出码恒为 0**，所以「跑过」不等于「验过」：必须对输出做结构化判据，否则加一步只等于加噪音。本片把「真跑 + 17 条标记逐条 grep + 42501 条数恰好 18」做成每次 PR 必跑的判红门，并用 7 条静态守卫钉死在 workflow 文本里。
+
+> **⚠ 勘误（2026-10-21，本页首版之后）**：本页首版把「42501 条数恰好 11」当作期望值。接进真 CI 后第一次实跑（run `39604200609` 之后的 `39604126195`，job `deploy-sql-17-11`）读数是 **`ERROR 行=18（其中 42501=18），期望=11`** ⇒ 该步判红、main 常红。
+> 逐行核对真 CI 输出的 18 条，**全部落在探针源码的禁止面里**（段 6 四条、段 7 两条、段 8b 三条、段 8c 两条、段 9b 三条、段 10 两条、段 11 两条），一条不多一条不少 ⇒ **18 才是探针源码的设计值，11 漏算了段 9b/10/11 共七条**。
+> 为什么本机测出 11：本机一次性集群只按 `provision-db.sh` 的默认 5 组角色 + `20-login-roles.sql` 搭了运行时角色，段 9b/10/11 那七条在本机**没有报错**（本机运行时角色在 `catalog_read` / `catalog_ops` / `staging_intake` / `public.exports` 上的实际权限与 CI 不同），所以「本机读数」不能当常量来源。
+> 处置：`expected_42501` 改为 **18**，并且**不再靠人工数**——`tests/unit/deploy-sql-gate-probe.test.mjs` 的 ⑥ 现在把段 9b/10/11 的七条语句按整行锚定纳入 `countDenyStatements()`（`DENY_LATE_STATEMENTS`），期望值由探针源码静态推出，本机/CI 读数只作旁证。判据方向不变（仍是「恰好等于」），且已做负控制：把常量改回 11 ⇒ ⑥ 立刻红并打印 `workflow 写的 expected_42501=11，而 … 数出来是 18`。
 
 **取证范围声明**：本页读数来自**本机一次性 PostgreSQL 17.11 集群**（`127.0.0.1:55664`，datadir `E:\GengYunCommander\.pg17\data-r28s71`），**没有**在 GitHub Actions runner 上执行过；`provision-db.sh` 本体没有运行（它要 root / `runuser -u postgres` / 真实 CVM），而是把它调用的同一串 SQL 在同机上按同一顺序执行（26 个迁移 → 5 组 `services/api/db/roles/*.sql` → `20-login-roles.sql`）。workflow 新增那一步的 `run:` 正文是**逐字抽出来用 Git Bash（`bash -e`）跑的**（抽取器只做「去 YAML 缩进」，不改任何字节），所以 shell 语义、`grep` / `mktemp` / `awk` 行为与 ubuntu runner 一致；差异只可能在 psql 客户端版本与数据库身份，逐条列在 §9。
 
@@ -14,9 +19,9 @@
 | 组角色：5 个 `services/api/db/roles/*.sql`（默认 5 组形态） | exit **`0`**；`gengyun_*` 角色 8 个，**没有** `gengyun_source_operator` / `gengyun_staging_importer`（证明是 5 组形态，不是 `--with-cli-groups` 的 7 组） |
 | `20-login-roles.sql`（运行时 LOGIN + 列级最小权限） | exit **`0`** |
 | `90-assert-least-privilege.sql` | exit **`0`**，末行逐字 **`ok`** |
-| **新增那一步**（从 workflow 抽出的 `run:` 正文，`bash -e`） | exit **`0`**；标记 **17/17 全中**；ERROR 行 **11** 条且全部是 `42501`；末行 `探针通过：退出码 0；标记 17 条全中；ERROR 行 11 条且全部是禁止面 42501（期望 11）。` |
+| **新增那一步**（从 workflow 抽出的 `run:` 正文，`bash -e`） | exit **`0`**；标记 **17/17 全中**；ERROR 行 **11** 条且全部是 `42501`；末行 `探针通过：退出码 0；标记 17 条全中；ERROR 行 11 条且全部是禁止面 42501（期望 11）。`（⚠ 本机集群与 CI 授权面不同，真 CI 读数 18，见页首勘误与 §4） |
 | **NC1**：`REVOKE SELECT (id) ON public.favorites FROM gengyun_api_runtime` | 读数 `t → f`；该步 exit **`1`**；ERROR 行 **15**（其中 42501 **15**）⇒ 两条判据同时判红（缺标记 0、条数超出 4） |
-| **NC1b**（反向）：`GRANT DELETE ON public.recognition_jobs` | 读数 `f → t`；该步 exit **`1`**；标记 **16/17**（缺 `permission denied for table recognition_jobs`）、ERROR 行 **10**（要求 11）⇒ ②③ 各自独立判红 |
+| **NC1b**（反向）：`GRANT DELETE ON public.recognition_jobs` | 读数 `f → t`；该步 exit **`1`**；标记 **16/17**（缺 `permission denied for table recognition_jobs`）、ERROR 行 **10**（本机期望 11；真 CI 期望 18）⇒ ②③ 各自独立判红 |
 | **NC2**（静态）：把 workflow 里一个标记改成探针源码中不存在的串 | 静态守卫 **⑤ 红**、整体 exit **`1`**；`git checkout` 复原后 `sha256` 与改前**逐位相等**、7/7 绿 |
 | 门禁 8 项 | 全绿（命令与退出码见 §8） |
 
@@ -31,7 +36,7 @@
    ```
 
    位置是 `90-assert-least-privilege.sql（末行 ok 且退出码 0）` **之后**、`恢复演练：撤销一列授权 → 重跑 20-login-roles.sql → 90-assert 仍 ok` **之前**。为什么不是 job 末尾：`tests/unit/deploy-sql-gate-recovery.test.mjs` 的测试② 钉住「恢复演练必须是 job 的最后一步」，而该文件不在本片允许改动范围内 —— 把探针放末尾会让那边的守卫红（且演练之后跑读数会描述「刚被 REVOKE 又恢复过」的库，含义变味）。该步的 `env` 与其它步相同（`PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE`，全为合成值），**无** `if:`、**无** `continue-on-error`、**无** `|| true`、**无** `set +e`。
-2. **新增 `tests/unit/deploy-sql-gate-probe.test.mjs`**（418 行；纯 Node、零新依赖、按缩进自解析 workflow 文本；不 import 兄弟测试，免得把别人的 `test(...)` 注册进本进程）。7 条：① 步骤存在且真的 `psql … -f "${probe}"`；② 排在 90-assert 之后、恢复演练之前（且演练仍是最后一步）；③ 该步无任何吞红构造、全 workflow 无 `continue-on-error: true`；④ 三条判据齐全（退出码捕获 / 标记逐条 + 汇总 / 42501 条数「恰好」）且判红时 `cat` 全文、`exit 1`；⑤ 标记清单非空、无重复、**每条都能在探针源码里找到出处**、禁止面对象集合恰好 9 个、结构行（`### 0)` / `### 探针结束` / `-- [5]…[8] 探针结束`）一条不少；⑥ `expected_42501` 必须等于**从探针源码重新数出来的**禁止面条数（现在两边都是 11）；⑦ 证据页存在且 workflow 指向它。
+2. **新增 `tests/unit/deploy-sql-gate-probe.test.mjs`**（418 行；纯 Node、零新依赖、按缩进自解析 workflow 文本；不 import 兄弟测试，免得把别人的 `test(...)` 注册进本进程）。7 条：① 步骤存在且真的 `psql … -f "${probe}"`；② 排在 90-assert 之后、恢复演练之前（且演练仍是最后一步）；③ 该步无任何吞红构造、全 workflow 无 `continue-on-error: true`；④ 三条判据齐全（退出码捕获 / 标记逐条 + 汇总 / 42501 条数「恰好」）且判红时 `cat` 全文、`exit 1`；⑤ 标记清单非空、无重复、**每条都能在探针源码里找到出处**、禁止面对象集合恰好 9 个、结构行（`### 0)` / `### 探针结束` / `-- [5]…[8] 探针结束`）一条不少；⑥ `expected_42501` 必须等于**从探针源码重新数出来的**禁止面条数（现在两边都是 18：段 6/7 六条 ＋ 段 8b/8c 五条 ＋ 段 9b/10/11 七条）；⑦ 证据页存在且 workflow 指向它。
 3. 本页 ＋ 真跑读数 ＋ 三条负控制（NC0 / NC1 / NC1b / NC2）＋ 八道门禁。
 
 ### 1.2 没做什么（边界）
@@ -48,7 +53,7 @@
 |---|---|---|---|
 | ① | `psql` 退出码必须 `0`（`rc=0; if psql …; then rc=0; else rc=$?; fi`） | 连不上库、脚本被截断、psql 自身报错 | 探针文件 :34 把 `ON_ERROR_STOP` 设成 0，**被验的 42501 不会改退出码**；反过来，`psql` 非 0 一定意味着「没跑成」，与授权面无关 |
 | ② | 17 条标记逐条 `grep -F -q`，缺一条即红（逐条 `::error::` + 汇总 `::error::`） | 某一段没跑到、脚本被截断、授权面被改动到「读数消失」 | `ON_ERROR_STOP=0` ⇒ 中止不体现在退出码上；只有段落行与具体报错文案能证明「真的走到了那一段」 |
-| ③ | ERROR 行数**恰好** `expected_42501=11`；其中 `42501` 也必须恰好 11 | 少报（禁止面被授了权限 / 整段没跑到）与多报（正向语句被误拒权、冒出 `0A000` 之类别的错误类） | 只 grep 标记挡不住「多授权」：禁止面被授了 DELETE 时，段落行照打，少的只是那一条 `permission denied`；只数 42501 又挡不住「错误类变了」 |
+| ③ | ERROR 行数**恰好** `expected_42501=18`；其中 `42501` 也必须恰好 18 | 少报（禁止面被授了权限 / 整段没跑到）与多报（正向语句被误拒权、冒出 `0A000` 之类别的错误类） | 只 grep 标记挡不住「多授权」：禁止面被授了 DELETE 时，段落行照打，少的只是那一条 `permission denied`；只数 42501 又挡不住「错误类变了」 |
 
 三条判据都**没有** `continue-on-error` / `|| true` / `if: always()` 之类出口；判红时先把探针的完整 stdout/stderr `cat` 出来再 `exit 1`（探针输出先用 `mktemp` 落文件，不在管道里丢）。
 
@@ -78,7 +83,7 @@
 
 > 第 14/15 条的文案是 **schema 级**而不是函数级，这是本机与 CI 的真实读数（运行时没有那两个 schema 的 `USAGE`），不是笔误。探针步的注释里已写明：哪天有人补了 schema `USAGE` 而仍拒 `EXECUTE`，报错文本会变成 `permission denied for function …`，该步会因此判红 —— 那正是一次「授权面被改动，请复核」的信号。
 
-## 4. 为什么 ERROR 行恰好是 11 条
+## 4. 为什么 ERROR 行恰好是 18 条
 
 探针**故意**让禁止面报错：每条语句各产生一行 `ERROR:  42501: …`。算式（探针源码逐条相加）：
 
@@ -95,9 +100,19 @@
 | 8b | `:680` | `SELECT staging_intake.rollback_import(NULL×4);` | 1 |
 | 8c | `:686` | `SELECT public.consent_policy_immutable();` | 1 |
 | 8c | `:687` | `SELECT public.admin_audit_events_reject_mutation();` | 1 |
-| | | **合计** | **11** |
+| 9b | `:761` | `SELECT * FROM catalog_read.registration_evidence LIMIT 0;`（视图注册面） | 1 |
+| 9b | `:766` | `SELECT * FROM catalog_ops.operations LIMIT 0;`（跨 schema 未授权） | 1 |
+| 9b | `:774` | `INSERT INTO staging_intake.batches …`（写面只授 staging_executor/importer） | 1 |
+| 10 | `:798` | `SELECT revision, cancelled_at FROM public.exports WHERE false;` | 1 |
+| 10 | `:803` | `UPDATE public.exports SET revision = revision WHERE false;` | 1 |
+| 11 | `:830` | `GRANT gengyun_preview_reader TO gengyun_api_runtime;`（角色授予权） | 1 |
+| 11 | `:835` | `CREATE TABLE public.r28_s58_probe (id integer);`（schema CREATE 权） | 1 |
+| | | **合计** | **18** |
 
-正向面（段 2 的 `SET ROLE` 零行探针、段 3 对照臂、段 5 收藏/历史/对话、段 6/7 正向、段 8a 两条 runtime 函数）**必须一条 ERROR 都没有** —— 它们中的任何一条被误拒权，条数就会 > 11，判据 ③ 判红。这就是「不多不少」的含义。
+> 段 9b/10/11 这七条在探针里各自写着「三条/两条/两条各应有一行 `ERROR: 42501`」，本来就是禁止面的一部分；首版只把段 6/7/8 相加得 11，是漏算（真 CI 的 18 条读数逐行核对过，见页首勘误）。
+> 段 9b 第 1 条的报错文案是 **`permission denied for view registration_evidence`**（视图级），不是表级——不要因为「不在 17 条标记里」就以为它不是禁止面：标记只覆盖段落与授权面读数，条数判据覆盖全部禁止面语句。
+
+正向面（段 2 的 `SET ROLE` 零行探针、段 3 对照臂、段 5 收藏/历史/对话、段 6/7 正向、段 8a 两条 runtime 函数、段 9a 两条 `catalog_read` 正向读）**必须一条 ERROR 都没有** —— 它们中的任何一条被误拒权，条数就会 > 18，判据 ③ 判红。这就是「不多不少」的含义。
 
 ## 5. 本机真跑
 
@@ -148,6 +163,8 @@
 ERROR 行=11（其中 42501=11），期望=11
 探针通过：退出码 0；标记 17 条全中；ERROR 行 11 条且全部是禁止面 42501（期望 11）。
 ```
+
+> **这段是本机集群的原始输出，保留不改**（它是当时真跑的证据）。它与真 CI 的 18 条差 7 条，差额正是段 9b/10/11：本机运行时角色在那几处**没有被拒权**，说明本机集群的授权面**比 CI 松**（少跑了 `provision-db.sh` 的部分授权收敛）。因此 §5 与 §6 里所有「期望 11 / ERROR 行 11」的读数都只能当**同机相对比较**用（NC1 撤权后 15 > 11、NC1b 授权后 10 < 11 这两组相对关系仍然成立），**不能当门禁的最终期望值**；门禁期望值以探针源码静态推导的 18 为准。
 
 ## 6. 负控制
 
@@ -204,7 +221,7 @@ psql:…:336: ERROR:  42501: permission denied for table favorites
   1. 三个静态守卫测试都按**缩进**自解析同一份文件（既有 `deploy-sql-gate-recovery.test.mjs` 8 条、`deploy-sql-gate-forms.test.mjs` 10 条、本片 7 条），全部绿 ⇒ job 块、step 边界、`run:` 块体缩进都能被独立解析出来；
   2. 本片用的抽取器把同 job 的 7 个 step 全部切出来（`0/1` 缩进对得上、无「未命名 step」告警），并逐字节写出 `.sh`；
   3. 新增那步与既有 `90-assert` 步**逐行同构**：`      - name:`（6 空格）、`        run: |`（8 空格）、正文 10 空格、`env:` 五键同形。
-- 本页与守卫都**不写死**「断言条数」「标记条数以外的数字」：唯一写死的数字是 `expected_42501=11`，而它由 ⑥ 每次从探针源码重新数出来比对。
+- 本页与守卫都**不写死**「断言条数」「标记条数以外的数字」：唯一写死的数字是 `expected_42501`（现为 **18**），而它由 ⑥ 每次从探针源码重新数出来比对；本机读数与 CI 读数不一致这件事（11 vs 18）本身就是「常量必须由源码推、不能靠单次读数」的证据。
 
 ## 8. 门禁（命令 + 退出码）
 
@@ -226,6 +243,7 @@ psql:…:336: ERROR:  42501: permission denied for table favorites
 1. **没有在 GitHub Actions runner 上真跑**。本页所有读数来自本机一次性 PG 17.11；runner 上是 `postgres:17.11` service 容器 + `POSTGRES_USER=gengyun_cvm_owner`（superuser），首次真实执行要等 PR 的 CI。
 2. **`provision-db.sh` 本体没有运行**（要 root / `runuser -u postgres` / 真实 CVM）。本机执行的是它调用的同一串 SQL（26 迁移 + 5 组 roles + `20-login-roles.sql`）与同一顺序；它与脚本的差异（例如 `verify-cvm-postgres.sh` 才有的一致性检查）不在本片范围。
 3. **本机 `pg_ctl -o` 用不了**：PowerShell 5.1 会把 `-o` 后面的参数拆开导致挂死，所以集群是「改 `postgresql.conf` + `Invoke-CimMethod Win32_Process Create`」拉起的；这一差异不影响 SQL 读数，但意味着本页的启动方式不能照抄进 Linux 脚本。
-4. **7 组形态（`deploy-sql-17-11-cli-groups`）没有接这一步**：本片判据按 5 组默认形态定；7 组形态下 `gengyun_source_operator` / `gengyun_staging_importer` 存在，探针段 8 的 `non_owner_grantees` 会多出行，但 11 条禁止面与 17 条标记的口径是否完全一致**没有实测**。
-5. **没有做「探针源码里新增一段」的正向实验**：⑥ 的交叉校验是用「从源码数条数」实现的，本片只验证了它与 workflow 常量一致（11 = 11），没有真的给探针加一段禁止面来看守卫是否按预期先红（那要改 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`，本片不允许）。
+4. **7 组形态（`deploy-sql-17-11-cli-groups`）没有接这一步**：本片判据按 5 组默认形态定；7 组形态下 `gengyun_source_operator` / `gengyun_staging_importer` 存在，探针段 8 的 `non_owner_grantees` 会多出行，但 18 条禁止面与 17 条标记的口径是否完全一致**没有实测**。
+5. **没有做「探针源码里新增一段」的正向实验**：⑥ 的交叉校验是用「从源码数条数」实现的，本片只验证了它与 workflow 常量一致（当时 11 = 11）；**该一致性本身后来被真 CI 推翻（18 ≠ 11），见页首勘误** —— 这正是「常量必须由源码静态推出、不能靠本机读数拍」的证据。没有真的给探针加一段禁止面来看守卫是否按预期先红（那要改 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`，本片不允许）。
+6. **本机集群的授权面比 CI 松**（段 9b/10/11 七条在本机没有报错）。要完全复刻本机=CI 的读数，需要在本机也按 CVM 的完整授权收敛流程跑一遍；本片没有做，改为不在证据页声称「本机=CI」。
 6. **YAML 合法性没有解析器级证明**（见 §7）：若将来引入 `yaml` 依赖，应把「解析后断言 step 顺序」加进守卫。
