@@ -169,16 +169,19 @@ $ node --experimental-strip-types tests/integration/media-persistence-pg.mjs \
   留给文档片处理（本片只机械刷新台账 `docs/architecture/contract-status.json` 的 `lines`）。
 - 本片在合流后用 `node --test --test-concurrency=1`（串行，不是 `npm run test:unit` 的默认并发）跑过全量，
   读数见 §8.4。
-- **未取得**「生产最小权限角色下媒体持久化可用」：`deploy/postgres-cvm/sql/20-login-roles.sql` 对
-  `public.media` / `media_derivatives` / `content_media_refs` / `community_media_grants`
-  目前**没有任何一条 GRANT**（`grep "ON public.media"` 零命中）。本片 §5 的全部真库读数都以
-  **库 owner（`gengyun`）** 身份取得；换成最小权限运行角色会 42501。处方：部署片补列级授权，
-  并同步 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1366` 那条 `('media','auth_privacy',…)`
-  清单行的语义（见 §9）。
+- 「生产最小权限角色下媒体持久化可用」**已取得**（第三次推送补的，见 §11）：`20-login-roles.sql` 新增段 M
+  （`media` 列级 14/14/12、`media_derivatives` 6/5/2 + 表级 DELETE），`90-assert-least-privilege.sql` 三处同步，
+  运行时角色 `gengyun_api_runtime` 下 9 条正向语句全过、6 条越界探针全 42501。
+  §5 的集成臂仍以**库 owner** 连接（脚本自带 `DATABASE_URL`），两者互补：集成臂证明业务语义，
+  §11 证明最小权限面。唯一剩下的 FAIL 是既有 `runtime_ledger_readiness_biconditional`（egress ledger 从未部署，与本片无关）。
 - **未取得** ASR/OCR/识别/TTS 四条链的媒体端口证据：本片只接通媒体域自己的仓储（§9），
   这四个按域端口仍是 `createUnwiredMediaPort()`，`real` 下 `OBJECT_UNAVAILABLE`（ASR 表现为 409）。
-- `MEDIA_OBJECT_REF_KEY` 需在部署模板补真实值（本片只补了
-  `deploy/cloudrun/env.placeholder.json` 的空占位 `""`；`deploy/postgres-cvm/**` 属别人正在改的面，只读未改）。
+- `MEDIA_OBJECT_REF_KEY` 需在部署模板补**真实值**：本片只补了 `deploy/cloudrun/env.placeholder.json` 的空占位 `""`
+  （门禁「环境变量模板覆盖配置面」要求模板键 ⊇ 配置面键，现为 18 ⊇ 18）。真值属密钥管理，**未取得**。
+  处方一行：在部署模板/密钥管理里给 `gengyun-api` 注入 32 字节随机值（64 位 hex 或 32 字节 base64/原串，经
+  `createObjectRefCipher` 校验）；缺键时 real + 有库池的媒体域会整体 503 fail-closed（§5 `[6]` 实测）。
+- `deploy/postgres-cvm/**` 本片**按指挥第二轮指令动过**（段 M 授权 + `90-assert` 三处同步，见 §11），
+  其余面（`provision-db.sh` / 密码模板 / 备份脚本）只读未改。
 
 ## 8. CI 门禁登记、合流与根因（第二次推送补齐）
 
@@ -256,6 +259,120 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 `tests/integration/media-persistence-pg.mjs` 增一段——real 装配 + PG 仓储 ⇒ 上传 `purpose='voice_question'`
 到 `ready` ⇒ `POST /api/v1/speech/transcriptions` 期望非 409；换陌生人 `media_id` 期望拒绝且无新增行。
 
+## 11. 部署授权面补齐与静态审计转正（第三次推送）
+
+### 11.1 事实起点（改之前）
+
+`deploy/postgres-cvm/sql/**` 里对媒体四表**一条授权都没有**（`grep -n 'ON public.media'` 只命中 OCR/识别/语音三域的 `media_id` 单列），
+`services/api/db/roles/auth_privacy.sql:39` 给的也只是 `GRANT SELECT (owner_id) ON jobs, media TO gengyun_auth_privacy`（注销/隐私域读属主用）。
+所以本片最初的 `services/api/src/media/store-pg.ts` 只能登记进 `tests/unit/sql-column-coverage.test.mjs` 的 `UNAUDITED_SQL_HOSTS`，
+真库臂也只有**库 owner** 一条连接 —— 生产运行时角色下第一次 `INSERT INTO public.media` 就会 42501。
+
+### 11.2 补的授权（`services/api/src/media/store-pg.ts` 逐语句反推，不是抄列名）
+
+| 表 | 权限 | 列 | 依据 |
+| --- | --- | --- | --- |
+| `public.media` | `SELECT` | `id, owner_id, purpose, mime, bytes, duration_ms, sha256, state, failure_code, object_ref_cipher, revision, expires_at, created_at, updated_at`（14） | 读投影（`store-pg.ts` 的 `getMedia` / `listMediaByState` 两份 14 列字面量）＋ `count(*)` 的 `WHERE owner_id / purpose / state` |
+| `public.media` | `INSERT` | 同上 14 列 | `createMedia` 的 14 个占位符 |
+| `public.media` | `UPDATE` | 除 `id` / `created_at` 外 12 列 | `saveMedia` 的 `SET` 12 项 + `WHERE id` 需 SELECT |
+| `public.media` | —（**不给** `DELETE`） | — | 删除是状态机（`deleting → deleted` 走 `UPDATE state`）；媒体行是审计与计费事实，不物理删 |
+| `public.media_derivatives` | `SELECT` | `id, media_id, derivative_kind, object_ref_cipher, hash, state`（6） | `SELECT`（:154）＋ `ON CONFLICT … DO UPDATE` **实测**要读 `hash` / `state`（见 11.4） |
+| `public.media_derivatives` | `INSERT` | `media_id, derivative_kind, object_ref_cipher, hash, state` | `INSERT … ON CONFLICT` |
+| `public.media_derivatives` | `UPDATE` | `object_ref_cipher, state` | `DO UPDATE SET` 两项 |
+| `public.media_derivatives` | `DELETE`（**表级**） | — | `DELETE FROM public.media_derivatives WHERE media_id = $1`；PG 无列级 DELETE |
+| `public.idempotency_keys` | 复用既有表级 `SELECT/INSERT/DELETE` | — | `services/api/db/roles/auth_privacy.sql:33` 已授（0008 通用台账，W2/W7 各域共用） |
+| `public.content_media_refs` / `public.community_media_grants` | **零授权** | — | 本片对这两张表没有任何 SQL（社区授权在 `store-pg.ts` 里显式拒绝），`community_media_grants` 还被 `90-assert-least-privilege.sql` 的 `domain_manifest` 判 `forbidden` |
+
+落点：`deploy/postgres-cvm/sql/20-login-roles.sql` 新增 **段 M（第 931-989 行）**，每段配 `\echo` 说明；
+`deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 同步三处 —— `domain_manifest` 加 `('media','granted',true)` / `('media_derivatives','granted',true)`，
+`expected(...)` 加两行（列清单与 20 逐字一致），`allow_table_dml` 加 `('public','media_derivatives','DELETE')`；
+并把 `external_manifest` 里那行 `('media','auth_privacy',…)` **移除**（原因见 11.3）。
+
+### 11.3 为什么必须移除 `external_manifest` 的 media 行
+
+该表的语义是「经 5 个 NOLOGIN 组继承的权限」，判定 `external_violations` 第 (c) 条规定：
+**直授 runtime 只允许 `source_group = 'direct'` 的行**，其余组继承行一旦出现直接授权就是漂移。
+`media` 的组级授权是 `auth_privacy.sql:39` 的单列 `owner_id`，而本片要求列级读写 ⇒ 只有两条路：
+(a) 把 `source_group` 改成 `'direct'`（等于宣称「不经组、直授」，与事实不符，且会把 `jobs` 一行也拖下水）；
+(b) 把 media 移出「组继承清单」。选 (b)：`media` 现在是**直授 runtime** 的表，它的权限事实由 `expected(...)` 与 `domain_manifest` 两处表达，
+比塞进组继承清单更如实。A/B 读数证明这样改没有放水（11.5）。
+
+### 11.4 `ON CONFLICT DO UPDATE` 的列面实测（这次唯一的返工）
+
+只授 `SELECT (id, media_id, derivative_kind, object_ref_cipher)` 时，以 `SET LOCAL ROLE gengyun_api_runtime` 跑
+`INSERT INTO public.media_derivatives (…) VALUES (…) ON CONFLICT (media_id, derivative_kind, hash) DO UPDATE SET object_ref_cipher = EXCLUDED.object_ref_cipher, state = EXCLUDED.state`
+⇒ `ERROR: 42501: permission denied for table media_derivatives`。
+把 `SELECT` 面扩到 6 列（**+ `hash`, `state`**）后同一语句通过 —— PG 的冲突判定要读 `hash`，`DO UPDATE` 的 `SET` 右侧要读旧 `state`。
+两个 deploy 文件（授权 + `expected`）都按实测改齐，并在注释里写明「实测补充，不是静态推断」。
+
+### 11.5 A/B 读数（同一 `gengyun` 库，`origin/main` 版 vs 本片版）
+
+| 阶段 | 结果 |
+| --- | --- |
+| 库准备 | `DROP/CREATE DATABASE gengyun` → `npm run db:migrate`（26 个迁移）→ `services/api/db/roles/*.sql` 8 个（应用到 `gengyun` 本体） |
+| 基线（`origin/main` 的 20 + 90） | `20` exit 0；`90` exit 3，**1 条 FAIL**：`runtime_ledger_readiness_biconditional`（`revision_upd/cancelled_upd/egress_role/egress_grant/writebacks_present/writebacks_listed = false/false/true/false/true/false`） |
+| 本片（工作树的 20 + 90） | `20` exit 0；`90` exit 3，**同样是那 1 条**、读数逐字相同 ⇒ **零新增违规**；`runtime_grants_external_*` / `runtime_domain_delete_exec` 全系列 PASS |
+
+> 该条 FAIL 与媒体无关：`services/api/db/roles/egress_ledger.sql` 从未被任何部署脚本执行（`deploy/postgres-cvm/provision-db.sh:285`、`20-login-roles.sql:54` 都记着），
+> 属既有缺口，本片不碰。另外两个环境前置（都是真报错逼出来的）：`20-login-roles.sql:83` 要求角色 `gengyun_cvm_owner` 存在；
+> `:~90` 要求 `GENGYUN_API_RUNTIME_PASSWORD` 是 48 位小写十六进制；脚本还硬判 `current_database() = 'gengyun'`。
+
+### 11.6 运行时角色正向实测（`SET ROLE gengyun_api_runtime`，9 条语句全过）
+
+```
+INSERT INTO public.media (14 列)                        ⇒ RETURNING id ✅
+SELECT 14 列投影（purpose::text / state::text / 毫秒时间列）⇒ 1 行 ✅
+UPDATE public.media SET state='uploaded', revision=2     ⇒ revision=2 / uploaded ✅
+SELECT count(*) … WHERE owner_id AND purpose AND state   ⇒ ✅
+INSERT INTO media_derivatives … ON CONFLICT DO UPDATE    ⇒ id ✅
+SELECT id, media_id, derivative_kind, object_ref_cipher  ⇒ 1 行 ✅
+DELETE FROM media_derivatives WHERE media_id = $1        ⇒ ✅（表级 DELETE）
+INSERT INTO idempotency_keys … ON CONFLICT DO NOTHING    ⇒ id ✅（占位 503）
+CTE(DELETE claimed) → INSERT … 202 + {"media_id":…}      ⇒ ✅（settle 走 CTE，24h 有效）
+```
+
+### 11.7 运行时角色负控制（全部 SQLSTATE **42501**）
+
+| 探针 | 结果 |
+| --- | --- |
+| `DELETE FROM public.media WHERE id = …` | 42501（media 故意不授 DELETE） |
+| `SELECT consent_epoch FROM public.media` | 42501（逐列授权，未列的列读不到） |
+| `SELECT * FROM public.media` | 42501（表级 SELECT 未授，星号展开即越界） |
+| `SELECT count(*) FROM public.community_media_grants` | 42501（`domain_manifest` 判 forbidden） |
+| `SELECT count(*) FROM public.content_media_refs` | 42501（零授权） |
+| `TRUNCATE public.media_derivatives` | 42501 |
+
+### 11.8 静态审计转正（`tests/unit/sql-column-coverage.test.mjs`）
+
+`services/api/src/media/store-pg.ts` 从 `UNAUDITED_SQL_HOSTS` **移到 `ADDITIONAL_SQL_HOST_FILES`**（真审计），
+并把该文件的 SQL 全部改成**字面量**（去掉 `MS_PARAM(i)` / 投影数组拼接）——否则两份 14 列投影会退化成「不可判插值」，那 14 列就脱离了列权限判定。
+五处读数改前 → 改后：
+
+| 读数 | 改前（16 文件） | 改后（17 文件） | 差 |
+| --- | --- | --- | --- |
+| `auditedFiles` | 16 | 17 | +1（media/store-pg.ts） |
+| `sqlLiterals` | 217 | 230 | +13 |
+| `statements` | INSERT 36 / UPDATE 32 / SELECT 119 / DELETE 30 | INSERT 39 / UPDATE 33 / SELECT 125 / DELETE 33 | +3 / +1 / +6 / +3 |
+| `returningClauses` / `onConflictClauses` | 68 / 21 | 70 / 23 | +2 / +2 |
+| `referencedTables` | 39 | 41 | +2（`public.media`、`public.media_derivatives`） |
+| `columnRequirements` / `coveredRequirements` | 1409 / 1355 | 1489 / 1435 | +80 / +80（**缺 0 条**） |
+| `opaqueExpressions` | 5 | 5 | 0（改造后无新增插值） |
+| 未纳管登记 | 8 条 | 7 条 | −1（media 转正） |
+| 宿主文件总数 | 24 | 24 | 0（16+8 → 17+7） |
+
+`NC7`（新宿主未登记必红）与 `NC5/NC6`（列面缺/多必红）全部仍绿，`tests 16 / pass 16 / fail 0`。
+
+### 11.9 顺序判据：三链到真 200 需要什么（本片能测的 vs 必须另接的）
+
+| 条件组合 | 现象 | 本片能否测 |
+| --- | --- | --- |
+| real + 无供应商凭据 | 域级闸门先 503（`PROVIDER_UNAVAILABLE`），**不是** 409 | 未取得（需真实供应商不可用臂；本片未跑，不给读数） |
+| real + 凭据可用 + 域媒体端口仍是 `createUnwiredMediaPort()` | 409 `OBJECT_UNAVAILABLE`（`speech/media.ts:14-19` 逐字记着这条顺序） | 未取得（需 stub 供应商把 `provider.available` 置 true） |
+| real + 凭据可用 + 域媒体端口包本片 `MediaStore`（处方见 §9） | 走通；替身供应商须显式标注 | 未取得（属另一片：端口 kind 是闭集（`substitute` 或 `unwired`），要加 `registry` 成员） |
+| 陌生人 `media_id` / 版本不符 | 拒绝且 `transcriptions` 无新增行 | 未取得（同上，需先有接线端口） |
+
+**本片能测的**：媒体域自身七条路由（`/api/v1/media/*` + 社区取图）在真库 + 真 PG 仓储下 201/202/200/NOT_FOUND/503 全部有读数（§5、§6）；
+**必须靠另一片接的**：`tts/synthesisMedia`、`speech/speechMedia`、`ocr/ocrMedia`、`recognitions/recognitionMedia` 四个端口（处方见 §9）。
 ## 10. 复现命令
 
 ```powershell

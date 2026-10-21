@@ -59,29 +59,15 @@ export interface PostgresMediaStoreOptions {
 /** 衍生物种类：`stripImageMetadata` 的产物（服务层只有一个衍生物槽位，见文件头）。 */
 export const MEDIA_DERIVATIVE_KIND_METADATA_STRIPPED = 'metadata_stripped';
 
-/** 毫秒 → `timestamptz` 参数表达式（时间口径统一在 SQL 侧换算，不序列化 JS Date）。 */
-const MS_PARAM = (index: number): string => `to_timestamp($${index}::bigint / 1000.0)`;
-/** `timestamptz` → 毫秒（`bigint` 回到 JS 是字符串，`asNumber` 归一）。 */
-const MS_SELECT = (column: string): string =>
-  `(extract(epoch FROM ${column}) * 1000)::bigint AS ${column}`;
-
-/** 读取投影：枚举列转文本（避免驱动给出 PG 侧枚举对象），时间列转毫秒。 */
-const MEDIA_PROJECTION = [
-  'id',
-  'owner_id',
-  'purpose::text AS purpose',
-  'mime',
-  'bytes',
-  'duration_ms',
-  'sha256',
-  'state::text AS state',
-  'failure_code',
-  'object_ref_cipher',
-  'revision',
-  MS_SELECT('expires_at'),
-  MS_SELECT('created_at'),
-  MS_SELECT('updated_at'),
-].join(', ');
+/**
+ * 时间口径统一在 SQL 侧换算（不序列化 JS Date）：写用 `to_timestamp($n::bigint / 1000.0)`，
+ * 读用 `(extract(epoch FROM col) * 1000)::bigint`。
+ *
+ * 为什么这些表达式**逐条写全**、不做成 `MS_PARAM(i)` / 投影数组之类的拼接：
+ * `tests/unit/sql-column-coverage.test.mjs` 的列权限审计只看 SQL 字面量里的列名，
+ * 拼接出来的投影会让 `media` 那 14 列脱离逐列判定（审计里会退化成「不可判插值」）。
+ * 本文件因此刻意重复两份 14 列投影：多几行，但每一列都被静态审计看见。
+ */
 
 /** 数据库异常的契约化折叠（与 `messages/store-pg.ts:80-91` 逐条同口径）。 */
 export function classifyMediaDatabaseError(error: unknown): never {
@@ -197,7 +183,8 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
              id, owner_id, purpose, mime, bytes, duration_ms, sha256, state, failure_code,
              object_ref_cipher, revision, expires_at, created_at, updated_at)
            VALUES ($1, $2, $3::media_purpose, $4, $5, $6, $7, $8::media_state, $9, $10, $11,
-             ${MS_PARAM(12)}, ${MS_PARAM(13)}, ${MS_PARAM(14)})`,
+             to_timestamp($12::bigint / 1000.0), to_timestamp($13::bigint / 1000.0),
+             to_timestamp($14::bigint / 1000.0))`,
           [
             record.id,
             record.ownerId,
@@ -228,7 +215,8 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
           `UPDATE public.media SET
              owner_id = $2, purpose = $3::media_purpose, mime = $4, bytes = $5, duration_ms = $6,
              sha256 = $7, state = $8::media_state, failure_code = $9, object_ref_cipher = $10,
-             revision = $11, expires_at = ${MS_PARAM(12)}, updated_at = ${MS_PARAM(13)}
+             revision = $11, expires_at = to_timestamp($12::bigint / 1000.0),
+             updated_at = to_timestamp($13::bigint / 1000.0)
            WHERE id = $1 RETURNING id`,
           [
             record.id,
@@ -258,7 +246,12 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
     async getMedia(id) {
       try {
         const result = await pool.query(
-          `SELECT ${MEDIA_PROJECTION} FROM public.media WHERE id = $1`,
+          `SELECT id, owner_id, purpose::text AS purpose, mime, bytes, duration_ms, sha256,
+                  state::text AS state, failure_code, object_ref_cipher, revision,
+                  (extract(epoch FROM expires_at) * 1000)::bigint AS expires_at,
+                  (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                  (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
+             FROM public.media WHERE id = $1`,
           [id],
         );
         if (result.rows.length === 0) return null;
@@ -286,7 +279,12 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
       if (states.length === 0) return [];
       try {
         const result = await pool.query(
-          `SELECT ${MEDIA_PROJECTION} FROM public.media
+          `SELECT id, owner_id, purpose::text AS purpose, mime, bytes, duration_ms, sha256,
+                  state::text AS state, failure_code, object_ref_cipher, revision,
+                  (extract(epoch FROM expires_at) * 1000)::bigint AS expires_at,
+                  (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                  (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
+             FROM public.media
             WHERE state = ANY($1::media_state[]) ORDER BY created_at, id`,
           [states],
         );
@@ -363,7 +361,7 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
         );
         const inserted = await pool.query(
           `INSERT INTO public.idempotency_keys (scope, key_hash, request_hash, response_status, outcome, expires_at)
-           VALUES ($1, decode($2, 'hex'), $3, $4, NULL, ${MS_PARAM(5)})
+           VALUES ($1, decode($2, 'hex'), $3, $4, NULL, to_timestamp($5::bigint / 1000.0))
            ON CONFLICT (scope, key_hash) DO NOTHING
            RETURNING id`,
           [scope, keyHashHex, claim.requestHash, 503, claim.expiresAt],
@@ -376,12 +374,23 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
 
     async settleIdempotency(scope, keyHashHex, done) {
       try {
+        // 为什么不是 `UPDATE … SET response_status, outcome, expires_at`：
+        // 0008 台账对运行时的授权来自 auth_privacy 组（services/api/db/roles/auth_privacy.sql），
+        // 列级/表级面里**没有** `expires_at` 的 UPDATE（见 deploy/postgres-cvm/sql/90-assert-least-privilege.sql
+        // 的 idempotency_keys 行：upd = response_status, outcome）。又因为认领期必须短（崩溃可回收）、
+        // 结果期必须长（同一幂等键 24h 内重试要能回放），所以这里用一条语句「删掉占位行 + 插入结果行」：
+        // 只用已授权的表级 INSERT/DELETE，不新增任何列权限，且在单语句内原子完成。
         const updated = await pool.query(
-          `UPDATE public.idempotency_keys
-              SET response_status = $3, outcome = $4::jsonb, expires_at = ${MS_PARAM(5)}
-            WHERE scope = $1 AND key_hash = decode($2, 'hex') AND outcome IS NULL
-          RETURNING id`,
-          [scope, keyHashHex, 202, JSON.stringify({ media_id: done.mediaId }), done.expiresAt],
+          `WITH claimed AS (
+             DELETE FROM public.idempotency_keys
+              WHERE scope = $1 AND key_hash = decode($2, 'hex') AND outcome IS NULL
+            RETURNING scope, key_hash)
+           INSERT INTO public.idempotency_keys
+             (scope, key_hash, request_hash, response_status, outcome, expires_at)
+           SELECT claimed.scope, claimed.key_hash, $3, $4, $5::jsonb, to_timestamp($6::bigint / 1000.0)
+             FROM claimed
+           RETURNING id`,
+          [scope, keyHashHex, done.requestHash, 202, JSON.stringify({ media_id: done.mediaId }), done.expiresAt],
         );
         return updated.rows.length > 0;
       } catch (error) {

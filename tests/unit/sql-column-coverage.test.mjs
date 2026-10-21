@@ -19,7 +19,7 @@
 //   NC4 `OPAQUE_ALLOWLIST` 加一条源码里不存在的 file:line ⇒ 必须红（防躺平）。
 //
 // ── R28-S66 扩展（2026-10-21）────────────────────────────────────────────────
-// 覆盖面从 8 个 store-pg 扩到 16 个 SQL 宿主文件（另 8 个见 ADDITIONAL_SQL_HOST_FILES），
+// 覆盖面从 8 个 store-pg 扩到 17 个 SQL 宿主文件（另 9 个见 ADDITIONAL_SQL_HOST_FILES），
 // 并新增三条独立断言：①文件集不变量（新增 SQL 宿主却忘了登记 ⇒ 红）；②函数调用不是表访问
 // （`FROM public.list_admin_accounts()` 只要求 EXECUTE，不产生列要求）；③行锁规则
 // （`FOR UPDATE` / `FOR NO KEY UPDATE` 除 SELECT 外还要 UPDATE 权限；`FOR SHARE` / `FOR KEY SHARE` 不要）。
@@ -55,7 +55,7 @@ const EXPECTED_STORE_FILES = [
 ];
 
 /**
- * R28-S66：本片纳管的另外 8 个 SQL 宿主文件（相对 STORE_ROOT）。
+ * R28-S66：本片纳管的另外 8 个 SQL 宿主文件（相对 STORE_ROOT）；R28-W12 追加 media/store-pg.ts 成第 9 个。
  * 派单 §0 的 `git grep -l -E "INSERT INTO public\.|UPDATE public\.|FROM public\.|DELETE FROM public\."`
  * 实测 12 个文件 = 4 个带 `public.` 前缀的 store-pg（messages/ocr/recognitions/speech）
  * ＋ 本表 8 个（另 4 个 store-pg 的表名不带 schema 前缀，故不在这条 grep 的命中里）。
@@ -65,6 +65,7 @@ const ADDITIONAL_SQL_HOST_FILES = [
   'admin/ops/accounts-pg.ts',
   'admin/ops/flags-pg.ts',
   'knowledge/service.ts',
+  'media/store-pg.ts',
   'privacy/backup-copies-pg.ts',
   'privacy/consent-pg.ts',
   'privacy/grant-pg.ts',
@@ -229,22 +230,6 @@ const UNAUDITED_SQL_HOSTS = [
       + '纳入本管线需 R28-S66 重定 16 文件读数，留给该片统一改。',
     owner: 'W3 / R28-W3 tts checked_content 端口；静态纳管待 R28-S66 重定读数',
   },
-  {
-    file: 'services/api/src/media/store-pg.ts',
-    reason: 'R28-W12 新增的媒体持久化仓储（迁移 0001 的 media／media_derivatives、0001 的 '
-      + 'content_media_refs／community_media_grants 四表 + 复用 0008 的 public.idempotency_keys 台账）。'
-      + '语句形态：media 的单行 INSERT/UPDATE/SELECT 与 `count(*)`（列面固定 15 列，含 '
-      + '`object_ref_cipher` 的密文读写、`purpose::media_purpose`／`state::media_state` 枚举转换）、'
-      + '派生件的 `INSERT … ON CONFLICT (media_id, derivative_kind, hash) DO UPDATE`、授权的 INSERT/UPDATE/'
-      + '`DELETE … WHERE expires_at <= now()`，以及台账的 find／claim（`ON CONFLICT (scope, key_hash) DO NOTHING`）'
-      + '／settle（`outcome = $::jsonb`）／release。**列面零新增授权**：这四个表在 deploy 的授权面里'
-      + '**本来就没有任何一条 GRANT**（`deploy/postgres-cvm/sql/*.sql` 里搜不到 `ON public.media*`／'
-      + '`content_media_refs`／`community_media_grants` 的授权，只有 ocr/recognition/speech 的 media_id 列），'
-      + '故本文件不改变授权面读数；真库臂也全程用**库 owner** 连接（`tests/integration/media-persistence-pg.mjs`），'
-      + '运行时角色的列级授权是另一片的事（本片已在验证文档「未取得项」里点名）。'
-      + '纳入本管线需 R28-S66 重定 16 文件读数（auditedFiles 16→17 等），留给该片统一改。',
-    owner: 'W12 / R28-W12 media store-pg；静态纳管待 R28-S66 重定读数',
-  },
 ];
 
 /**
@@ -341,23 +326,23 @@ const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 const TABLE_WIDE_COLUMN = '*';
 
 /**
- * R28-S66 扩展读数钉死值（2026-10-21 实测，16 文件 = 8 store ＋ 8 新纳管）。
+ * R28-S66 扩展读数钉死值（2026-10-22 重测，17 文件 = 8 store ＋ 9 新纳管；R28-W12 把 media/store-pg.ts\n * 从 UNAUDITED_SQL_HOSTS 移入真审计，加了 media／media_derivatives 两张表与 13 条字面量）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 16,
-  sqlLiterals: 217,
-  statements: { INSERT: 36, UPDATE: 32, SELECT: 119, DELETE: 30 },
-  returningClauses: 68,
-  onConflictClauses: 21,
+  auditedFiles: 17,
+  sqlLiterals: 230,
+  statements: { INSERT: 39, UPDATE: 33, SELECT: 125, DELETE: 33 },
+  returningClauses: 70,
+  onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 19, SHARE: 16 },
   functionCalls: 1,
   noTargetTable: 10,
-  referencedTables: 39,
-  columnRequirements: 1409,
-  coveredRequirements: 1355,
+  referencedTables: 41,
+  columnRequirements: 1489,
+  coveredRequirements: 1435,
   ledgerExemptions: 33,
   rowLockRequirements: 19,
   rowLockExemptions: 1,
@@ -373,6 +358,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
+  'media': 13,
   'messages': 15,
   'ocr': 16,
   'privacy/backup-copies-pg.ts': 4,
@@ -407,6 +393,8 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.history',
   'public.history_idempotency',
   'public.idempotency_keys',
+  'public.media',
+  'public.media_derivatives',
   'public.messages',
   'public.ocr_idempotency',
   'public.ocr_jobs',
@@ -1954,7 +1942,7 @@ function findHostSetProblems(hosts) {
     observed.add(host.file);
     if (!audited.has(host.file) && !registered.has(host.file)) {
       problems.push(
-        `${host.file} 是新的 SQL 宿主，但既不在本片审计的 16 个文件里，也没登记进 UNAUDITED_SQL_HOSTS：` +
+        `${host.file} 是新的 SQL 宿主，但既不在本片审计的 17 个文件里，也没登记进 UNAUDITED_SQL_HOSTS：` +
           '要么把它纳入同一套管线，要么登记 file + reason + owner（否则守卫会对新文件视而不见）',
       );
     }
@@ -1978,7 +1966,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () => {
+test('sql-column-coverage/扩展 17 文件读数与列覆盖（R28-S66 / R28-W12）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);
@@ -1991,7 +1979,7 @@ test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () =
   console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
 
   assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
-  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 16（8 store + 8 新纳管）');
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 17（8 store + 9 新纳管）');
   assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
   assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
   assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
@@ -2066,7 +2054,7 @@ test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () =
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 16 已审计 + 8 登记（R28-S66 / R28-E2 / R28-W3 / R28-W12）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 17 已审计 + 7 登记（R28-S66 / R28-E2 / R28-W3 / R28-W12）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 

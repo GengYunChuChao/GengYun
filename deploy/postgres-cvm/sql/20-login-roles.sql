@@ -926,3 +926,65 @@ GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 -- 变异与未取得见 docs/verification/gy-r28-function-surface-parity-20261021.md。
 -- ----------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.consent_policy_immutable() FROM PUBLIC;
+
+-- ----------------------------------------------------------------------------
+-- M. 媒体域（R28-W12）：public.media / public.media_derivatives 的列级授权
+--
+-- 为什么这两张表此前**一条运行时授权都没有**：媒体域的事实源一直是进程内登记册
+-- （services/api/src/media/service.ts 的 records / grants 两个 Map，W2 的
+-- docs/verification/gy-r28-w2-media-ports-20261021.md 把它记为「剩余断点：重启即丢」），
+-- 从来没有 SQL 语句去过这两张表，所以 deploy 侧也就没有列级授权面。
+-- services/api/db/roles/auth_privacy.sql:39 只给组 gengyun_auth_privacy 授过
+-- `GRANT SELECT (owner_id) ON jobs,media` —— 那是注销/隐私域读「谁是属主」用的单列，
+-- 不是媒体域的读写面。
+--
+-- R28-W12 把登记册换成了 PG 仓储（services/api/src/media/store-pg.ts），列清单不是抄的：
+-- 逐列从该文件的真实语句反推（行号按该文件）：
+--   * 读投影：MEDIA_PROJECTION :69-84 = id, owner_id, purpose::text, mime, bytes,
+--             duration_ms, sha256, state::text, failure_code, object_ref_cipher, revision,
+--             expires_at / created_at / updated_at（MS_SELECT 的 epoch 投影）
+--   * 写入：createMedia INSERT :196-200（14 列，含 id 与 created_at/updated_at —— 属性名
+--           `idempotency_keys` 之外的媒体表都不用 DEFAULT now()，时间戳由应用侧给）
+--   * 更新：saveMedia UPDATE :228-232（12 列 SET；WHERE id 需要 SELECT）
+--   * 计数：liveCommunityImageCount :274、countMedia :303（WHERE owner_id / purpose / state）
+--   * 衍生物：SELECT :154（id, media_id, derivative_kind, object_ref_cipher）、
+--           INSERT :175-178（5 列，ON CONFLICT DO UPDATE）、
+--           DELETE :171 `DELETE FROM public.media_derivatives WHERE media_id = $1`
+--           **实测补充**：这条 INSERT … ON CONFLICT (media_id, derivative_kind, hash) DO UPDATE
+--           在 SET LOCAL ROLE gengyun_api_runtime 下最初报 `permission denied for table
+--           media_derivatives` —— PostgreSQL 对 ON CONFLICT DO UPDATE 要求「被读到的列」
+--           也有 SELECT（EXCLUDED 之外还要读 arbiter/hash 与 SET 的旧值）。故 SELECT 面
+--           从 4 列扩到 6 列（+ hash, state）。这不是宽授：`hash` 只在冲突判定里用，
+--           `state` 只在 DO UPDATE 的 SET/返回里用，两者都在 store 的写入语义内。
+--   * 幂等台账：复用 0008 的 public.idempotency_keys（授权面在 auth_privacy 组，不在本段）；
+--           R28-W12 的 settle 走「DELETE 占位行 + INSERT 结果行」，只用该表**已授**的
+--           表级 INSERT/DELETE 与列级 (response_status, outcome) UPDATE，没有新增列需求。
+--
+-- 为什么 media **不授 DELETE**（而 media_derivatives 授表级 DELETE）：媒体行是审计与
+-- 计费的事实，删除语义是状态机（deleting → deleted，见 media/service.ts 的 deleteMedia），
+-- 由 UPDATE state 表达；对象回收是对象存储侧的事。衍生物则是媒体的从属物，重建/撤销时
+-- 整行替换（ON CONFLICT DO UPDATE + 按 media_id 清空重建），因此需要表级 DELETE ——
+-- PostgreSQL 没有列级 DELETE，这是唯一能表达「按 media_id 删整行」的授法。
+-- ----------------------------------------------------------------------------
+GRANT SELECT (id, owner_id, purpose, mime, bytes, duration_ms, sha256, state,
+              failure_code, object_ref_cipher, revision, expires_at, created_at, updated_at)
+  ON public.media TO gengyun_api_runtime;
+GRANT INSERT (id, owner_id, purpose, mime, bytes, duration_ms, sha256, state,
+              failure_code, object_ref_cipher, revision, expires_at, created_at, updated_at)
+  ON public.media TO gengyun_api_runtime;
+GRANT UPDATE (owner_id, purpose, mime, bytes, duration_ms, sha256, state,
+              failure_code, object_ref_cipher, revision, expires_at, updated_at)
+  ON public.media TO gengyun_api_runtime;
+
+GRANT SELECT (id, media_id, derivative_kind, object_ref_cipher, hash, state)
+  ON public.media_derivatives TO gengyun_api_runtime;
+GRANT INSERT (media_id, derivative_kind, object_ref_cipher, hash, state)
+  ON public.media_derivatives TO gengyun_api_runtime;
+GRANT UPDATE (object_ref_cipher, state)
+  ON public.media_derivatives TO gengyun_api_runtime;
+GRANT DELETE ON public.media_derivatives TO gengyun_api_runtime;
+
+\echo '20-login-roles.sql：已授予 public.media 的列级 SELECT/INSERT/UPDATE（14/14/12 列，逐列反推自 media/store-pg.ts；无表级 INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER）。'
+\echo '20-login-roles.sql：media 故意不授 DELETE —— 删除是状态机（deleting→deleted，UPDATE state），媒体行是审计与计费事实，不物理删。'
+\echo '20-login-roles.sql：已授予 public.media_derivatives 的列级 SELECT/INSERT/UPDATE 与**表级** DELETE（PG 无列级 DELETE；衍生物按 media_id 整行重建，见 store-pg.ts 的 ON CONFLICT 与 delete 语句）。'
+\echo '20-login-roles.sql：public.idempotency_keys 的媒体幂等台账授权沿用 auth_privacy 组既有面（表级 SELECT/INSERT/DELETE + 列级 response_status/outcome UPDATE），本段未新增。'

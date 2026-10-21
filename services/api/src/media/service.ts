@@ -814,6 +814,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         async settle(mediaId) {
           settled = true;
           await store.settleIdempotency(scope, keyHashHex, {
+            requestHash,
             mediaId,
             expiresAt: at() + MEDIA_IDEMPOTENCY_TTL_MS,
           });

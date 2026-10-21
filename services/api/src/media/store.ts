@@ -122,7 +122,7 @@ export interface MediaStore {
   settleIdempotency(
     scope: string,
     keyHashHex: string,
-    done: { mediaId: string; expiresAt: number },
+    done: { requestHash: string; mediaId: string; expiresAt: number },
   ): Promise<boolean>;
   /** 放弃占位（produce 失败）；只删占位中的条目。 */
   releaseIdempotency(scope: string, keyHashHex: string): Promise<void>;

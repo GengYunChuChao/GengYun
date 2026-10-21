@@ -1091,7 +1091,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- transcriptions 不带 speech_ 前缀，所以第 47 条的正则要同时加 speech_ 与 transcriptions$。
     ('speech_jobs',                    'granted',          true),
     ('transcriptions',                 'granted',          true),
-    ('speech_idempotency',             'granted',          true)
+    ('speech_idempotency',             'granted',          true),
+    -- 迁移 0001 的媒体域两表（R28-W12）：迁移早就建了表，但媒体域的事实源此前是进程内
+    -- 登记册（media/service.ts 的 records / grants 两个 Map），所以运行时对这两张表
+    -- **从来没有过任何写权限**。R28-W12 换成 PG 仓储（media/store-pg.ts）后由
+    -- 20-login-roles.sql 段 M 列级授权，因此在这里同时补分类与下面的 expected 复述。
+    -- 注意 community_media_grants / content_media_refs 不在此列：前者被本文件判
+    -- forbidden（运行时零权限），后者媒体仓储当前不写（社区取图授权显式未接线）。
+    ('media',                          'granted',          true),
+    ('media_derivatives',              'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1274,6 +1282,30 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['payload','pending'],
+     true),
+    -- R28-W12 媒体域（迁移 0001）：列清单逐列反推自 services/api/src/media/store-pg.ts
+    -- 的真实语句（MEDIA_PROJECTION :69-84、createMedia INSERT :196-200、
+    -- saveMedia UPDATE :228-232、liveCommunityImageCount :274、countMedia :303）。
+    -- media **不授 DELETE**：删除是状态机（deleting→deleted，UPDATE state），
+    -- 媒体行是审计与计费事实；对象回收由对象存储侧负责（media/service.ts 的 dropObjects）。
+    ('media',
+     ARRAY['id','owner_id','purpose','mime','bytes','duration_ms','sha256','state',
+           'failure_code','object_ref_cipher','revision','expires_at','created_at','updated_at'],
+     ARRAY['id','owner_id','purpose','mime','bytes','duration_ms','sha256','state',
+           'failure_code','object_ref_cipher','revision','expires_at','created_at','updated_at'],
+     ARRAY['owner_id','purpose','mime','bytes','duration_ms','sha256','state',
+           'failure_code','object_ref_cipher','revision','expires_at','updated_at'],
+     false),
+    -- 衍生物（store-pg.ts:154 SELECT / :171 按 media_id 的整行 DELETE / :175-178 INSERT
+    -- … ON CONFLICT DO UPDATE (object_ref_cipher, state)）：PG 没有列级 DELETE，
+    -- 这条表级 DELETE 登记在下面的 allow_table_dml 里。
+    -- sel 里的 hash / state 是**实测**加的：ON CONFLICT DO UPDATE 需要读到冲突判定列
+    -- （hash）与 SET 的旧值（state），只授 4 列时以 SET LOCAL ROLE gengyun_api_runtime
+    -- 实跑会 42501 `permission denied for table media_derivatives`。
+    ('media_derivatives',
+     ARRAY['id','media_id','derivative_kind','object_ref_cipher','hash','state'],
+     ARRAY['media_id','derivative_kind','object_ref_cipher','hash','state'],
+     ARRAY['object_ref_cipher','state'],
      true)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -1306,13 +1338,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- （services/api/src/speech/store-pg.ts:654 release、:660-662 purge），只能表级授予。
     -- 本片新增后，表级写授权白名单为 14 个三元组；speech_jobs / transcriptions
     -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
-    ('public', 'speech_idempotency',    'DELETE')
+    ('public', 'speech_idempotency',    'DELETE'),
+    -- R28-W12（迁移 0001）：PG 没有列级 DELETE，而 media/store-pg.ts:171 有
+    -- `DELETE FROM public.media_derivatives WHERE media_id = $1`（衍生物按媒体整行重建），
+    -- 只能表级授予。media 本体仍然完全不授 DELETE（状态机删除），
+    -- 若这里判红先查是不是有人给 media 加了表级写权。
+    -- 本片新增后，表级写授权白名单为 15 个三元组。
+    ('public', 'media_derivatives',     'DELETE')
   ),
-  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（18 张表，不在 domain_manifest 里）。
+  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
   -- 授给 gengyun_auth_privacy / gengyun_consent_granter / gengyun_profile_runtime 等组、
   -- 再由 20-login-roles.sql 的 GRANT … TO gengyun_api_runtime 带进来的。旧清单只覆盖 20-login-roles
-  -- 的域段落，这 18 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
+  -- 的域段落，这 17 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
   --
   -- 快照来源（2026-10-21，PG 17.11，HEAD=4e93d7b 的 26 个迁移 + 8 个角色文件 + 20-login-roles.sql
   -- 全量应用后的干净集群实测，不是抄文档）：表级 has_table_privilege 逐 priv 读；列级取
@@ -1363,9 +1401,16 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('jobs',             'auth_privacy', false, false, false, false,
      ARRAY['owner_id']::text[],
      ARRAY[]::text[], ARRAY[]::text[]),
-    ('media',            'auth_privacy', false, false, false, false,
-     ARRAY['owner_id']::text[],
-     ARRAY[]::text[], ARRAY[]::text[]),
+    -- R28-W12（2026-10-22）：'media' 从这里**移出**，改由 domain_manifest + expected 的
+    -- 内部授权面覆盖。原因：媒体域换成 PG 仓储后，运行时对 media 的权限来自
+    -- 20-login-roles.sql 段 M 的**直授**（14/14/12 列），而本清单的判定 (c) 规定
+    -- 「非 direct 行不得有直授 runtime 的权限」；同时 (a) 又要求 source_group 必须是
+    -- 真实存在的组（services/api/db/roles/auth_privacy.sql:39 只给过
+    -- `GRANT SELECT (owner_id) ON jobs,media`，所以这一行不能改写成 'direct'）。
+    -- 两条判据无法同时满足，唯一自洽的做法是：media 不再属于「经组继承」的那类表。
+    -- 代价（如实记）：本清单不再断言「组对 media 的可见面恰好只有 owner_id」——
+    -- 该断言现在由内部授权面的 expected 行（owner_id 在允许列内）与
+    -- 20-login-roles.sql 段 M 的显式列清单共同表达。
     ('privacy_epochs',   'auth_privacy+consent_granter', true, false, false, false,
      ARRAY[]::text[],
      ARRAY['user_id','purpose','current_epoch','state','revision']::text[],
@@ -1538,7 +1583,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- R28-S52：跨 schema 关系面兜底清单（与 S43 的 external_manifest、S51 的
   -- function_surface_manifest 同构：把"点过名的关系"升级为"必须分类的关系面"）。
   -- 为什么需要：domain_manifest（public 表 21 granted + 1 granted_external + 4 forbidden）、
-  --   external_manifest（S43 的 18 张 public 表）、function_surface_manifest（S51 的 11 个函数）
+  --   external_manifest（S43 的 17 张 public 表）、function_surface_manifest（S51 的 11 个函数）
   --   三张清单覆盖的**全都只有 public**。非 public 的 4 个 schema（catalog_ops / catalog_read /
   --   knowledge_staging / staging_intake）里还有 9 个关系带组授权，而本切片之前只有
   --   preview_reader_scope（管 catalog_read.home_species）与 knowledge_runtime_scope
@@ -2820,7 +2865,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 
   UNION ALL
-  -- 69-86. R28-S43 逐表范围断言（18 张经 NOLOGIN 组继承来的 public 表）：
+  -- 69-86. R28-S43 逐表范围断言（17 张经 NOLOGIN 组继承来的 public 表）：
   --     与 49-58 同形，差异只在快照来源 —— 这些权限来自 services/api/db/roles/*.sql 的五个组，
   --     不是 20-login-roles.sql 的域段落，所以不在 expected 清单里，49-58 对它们是完全盲的。
   --     判据全部收在 external_violations（一条违规一行明细）：ok 只问「这张表有没有违规」，
@@ -2887,9 +2932,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 18 张表在表级 relacl 与列级
+  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 17 张表在表级 relacl 与列级
   --     attacl 里都不许出现 grantee = 0。66 号只遍历 domain_manifest 的 granted /
-  --     granted_external，这 18 张表不在清单里，旧断言覆盖不到它们。
+  --     granted_external，这 17 张表不在清单里，旧断言覆盖不到它们。
   SELECT 'runtime_surface_no_public_leak',
          NOT EXISTS (
            SELECT 1
@@ -2911,7 +2956,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        AND a.grantee = 0
                   )
          ),
-         'external_manifest 的 18 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
+         'external_manifest 的 17 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
          COALESCE((
            SELECT string_agg(e.tbl, ' / ' ORDER BY e.tbl)
              FROM external_manifest e
