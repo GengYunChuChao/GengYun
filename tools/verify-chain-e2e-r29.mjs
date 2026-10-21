@@ -252,11 +252,26 @@ export function installOutboundCounter() {
  *   - 数到上限就 `throw`，不重试、不刷调用；
  *   - 同一 `attemptKey` 重复预留 ⇒ 拒绝（防同一请求被计费两次）。
  */
-export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
+export function createCallLedger({ limits, approveRealChain, say = () => {}, readOutboundSends = () => 0 }) {
   const entries = [];
   const perKind = new Map(CHAINS.map((chain) => [chain, 0]));
   const attemptKeys = new Set();
   const state = { reservedCny: 0 };
+
+  /**
+   * 逐次外呼前后快照（指挥 m00277-A / m00305-1 要求）。
+   *
+   * 为什么必须在台账里而不在 main 里做：`reserve` 是**唯一**的计费入口，
+   * 只有在这里取「前」，才能保证「后 − 前」覆盖到真正发生的那一次发送；
+   * 在 main 里取只能得到整轮的总量，无法定位到具体某一次越限。
+   */
+  function takeSnapshot() {
+    return {
+      calls: entries.length,
+      outboundSends: readOutboundSends(),
+      reservedCny: Number(state.reservedCny.toFixed(4)),
+    };
+  }
 
   function canReserve(capability) {
     if (!approveRealChain) {
@@ -278,6 +293,8 @@ export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
     entries,
     get calls() { return entries.length; },
     get reservedCny() { return Number(state.reservedCny.toFixed(4)); },
+    /** 供调用方在整轮外呼前后各取一次，用于「整轮增量」记账。 */
+    snapshot() { return takeSnapshot(); },
 
     async reserve({ capability, authorization, attemptKey }) {
       canReserve(capability);
@@ -289,6 +306,7 @@ export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
       }
       attemptKeys.add(attemptKey);
       const ordinal = entries.length + 1;
+      const snapshotBefore = takeSnapshot();
       say(`CALL ${ordinal} ${capability}`);
       perKind.set(capability, perKind.get(capability) + 1);
       state.reservedCny += PER_CALL_RESERVE_CNY;
@@ -306,6 +324,8 @@ export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
         requestId: null,
         actualChargeCny: null,
         resultMayHaveBeenProcessed: null,
+        snapshotBefore,
+        snapshotAfter: null,
       });
       return ticket;
     },
@@ -318,6 +338,7 @@ export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
       entry.actualChargeCny = outcome?.actualChargeCny ?? null;
       entry.providerErrorCode = outcome?.providerErrorCode ?? null;
       entry.resultMayHaveBeenProcessed = outcome?.resultMayHaveBeenProcessed ?? null;
+      entry.snapshotAfter = takeSnapshot();
     },
 
     /** 适配器观测（唯一真源）回填：http / requestId / 耗时。 */
@@ -329,6 +350,51 @@ export function createCallLedger({ limits, approveRealChain, say = () => {} }) {
       entry.durationMs = typeof observation.elapsedMs === 'number' ? observation.elapsedMs : null;
       if (typeof observation.audioBytes === 'number') entry.bytes = observation.audioBytes;
       if (observation.errorCode !== null && observation.errorCode !== undefined) entry.code = observation.errorCode;
+    },
+  };
+}
+
+// ---------------------------------------------------------------- 记账对账
+
+/**
+ * 逐次 + 整轮记账：把「预留了几次」和「实际发了几次包」分开对账。
+ *
+ * 为什么需要它（指挥 m00277-A：任一次之外的外呼算超出，必须写进「超限」不得隐瞒）：
+ * 台账只知道 `reserve` 被调了几次；真正有没有出网由 `installOutboundCounter` 的计数器说话。
+ * 两者一旦不等，就是「有代码绕过台账直接发包」——这种差异必须变成可读读数，
+ * 而不是寄望于「大家都守规矩」。
+ */
+export function summarizeAccounting({ snapshotBefore, snapshotAfter, entries = [] }) {
+  const before = snapshotBefore ?? { calls: 0, outboundSends: 0, reservedCny: 0 };
+  const after = snapshotAfter ?? before;
+  const total = {
+    calls: after.calls - before.calls,
+    outboundSends: after.outboundSends - before.outboundSends,
+    reservedCny: Number((after.reservedCny - before.reservedCny).toFixed(4)),
+  };
+  const perCall = entries.map((entry) => {
+    const start = entry.snapshotBefore ?? before;
+    const end = entry.snapshotAfter ?? start;
+    return {
+      ordinal: entry.ordinal,
+      kind: entry.kind,
+      state: entry.state,
+      callsDelta: end.calls - start.calls,
+      outboundDelta: end.outboundSends - start.outboundSends,
+      reservedDeltaCny: Number((end.reservedCny - start.reservedCny).toFixed(4)),
+    };
+  });
+  const outboundBeyondLedger = Math.max(0, total.outboundSends - total.calls);
+  const excessPerCall = perCall.filter((item) => item.outboundDelta > item.callsDelta).map((item) => item.ordinal);
+  return {
+    snapshotBefore: before,
+    snapshotAfter: after,
+    total,
+    perCall,
+    overage: {
+      outboundBeyondLedger,
+      excessPerCall,
+      exceeds: outboundBeyondLedger > 0 || excessPerCall.length > 0,
     },
   };
 }
@@ -558,7 +624,8 @@ export async function main(argv = process.argv.slice(2)) {
   say(`LIMITS tts=${limits.tts} ocr=${limits.ocr} asr=${limits.asr} total=${limits.total} ceiling_cny=${QUOTED_CEILING_CNY.toFixed(2)}`);
 
   const outbound = installOutboundCounter();
-  const ledger = createCallLedger({ limits, approveRealChain: args.approveRealChain, say });
+  const ledger = createCallLedger({ limits, approveRealChain: args.approveRealChain, say, readOutboundSends: () => outbound.outboundSends });
+  const snapshotBefore = ledger.snapshot();
 
   let evidence;
   try {
@@ -573,16 +640,25 @@ export async function main(argv = process.argv.slice(2)) {
   evidence.repoHead = readHead();
   evidence.hardLimits = HARD_LIMITS;
   evidence.value_hits = 0; // 阶段一不读凭据文件，值命中必然为 0
+  evidence.accounting = summarizeAccounting({ snapshotBefore, snapshotAfter: ledger.snapshot(), entries: ledger.entries });
 
   if (!existsSync(args.outDir)) mkdirSync(args.outDir, { recursive: true });
   const outFile = join(args.outDir, `chain-e2e-r29-${evidence.phase}.json`);
   writeFileSync(outFile, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
 
   say(`calls=${evidence.calls} outboundSends=${evidence.outboundSends} reserved_cny=${evidence.reservedCny.toFixed(4)} value_hits=${evidence.value_hits}`);
+  say(`accounting calls=${evidence.accounting.total.calls} outbound_delta=${evidence.accounting.total.outboundSends} reserved_delta_cny=${evidence.accounting.total.reservedCny.toFixed(4)} overage=${evidence.accounting.overage.exceeds ? 'YES' : 'none'}`);
   say(`evidence=${outFile}`);
 
   if (evidence.outboundSends !== 0 && !args.approveRealChain) {
     throw new ChainGateRefusedError('NEGATIVE_CONTROL_BROKEN', '未授权运行却发生了外呼：负控制被打破');
+  }
+  // 证据先落盘再抛：超限这件事必须留下可读的现场，不能只留一句报错。
+  if (evidence.accounting.overage.exceeds) {
+    throw new ChainGateRefusedError(
+      'OUTBOUND_BEYOND_LEDGER',
+      `实际外呼超出台账记账：beyond=${evidence.accounting.overage.outboundBeyondLedger} excessPerCall=${JSON.stringify(evidence.accounting.overage.excessPerCall)}`,
+    );
   }
   return 0;
 }

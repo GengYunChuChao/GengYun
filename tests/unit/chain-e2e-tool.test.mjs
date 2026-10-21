@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   CHAINS, HARD_LIMITS, PER_CALL_RESERVE_CNY, QUOTED_CEILING_CNY,
-  assertCapsOpen, countCredentialLeaks, createCallLedger, installOutboundCounter, resolveLimits,
+  assertCapsOpen, countCredentialLeaks, createCallLedger, installOutboundCounter, resolveLimits, summarizeAccounting,
 } from '../../tools/verify-chain-e2e-r29.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -226,5 +226,61 @@ test('正控制：合成配置 + 合成凭据下 TTS 构造路径真的走到 wi
   for (const value of Object.values(credentials)) {
     if (value === credentials.appid) continue; // appid 是公开的微信 AppID，不是密钥
     assert.equal(raw.includes(value), false, '证据文件泄漏了凭据值');
+  }
+});
+
+// —— 逐次记账（指挥 m00277-A「任一次之外的外呼算超出，不得隐瞒」）——
+test('summarizeAccounting 把「预留几次」和「实际发几次包」分开对账', async () => {
+  let outbound = 0;
+  const ledger = createCallLedger({
+    limits: resolveLimits({}),
+    approveRealChain: true,
+    readOutboundSends: () => outbound,
+  });
+  const before = ledger.snapshot();
+  const ticket = await ledger.reserve({ capability: 'tts', authorization: 'gy-r29-chain-e2e', attemptKey: 'k1' });
+  outbound += 1; // 模拟真实适配器发了一次包
+  await ledger.settle(ticket, { state: 'succeeded', actualChargeCny: null, resultMayHaveBeenProcessed: true });
+  const accounting = summarizeAccounting({ snapshotBefore: before, snapshotAfter: ledger.snapshot(), entries: ledger.entries });
+
+  assert.equal(accounting.total.calls, 1);
+  assert.equal(accounting.total.outboundSends, 1);
+  assert.equal(accounting.total.reservedCny, PER_CALL_RESERVE_CNY);
+  assert.equal(accounting.perCall.length, 1);
+  assert.equal(accounting.perCall[0].ordinal, 1);
+  assert.equal(accounting.perCall[0].outboundDelta, 1, '这一次的外呼必须归到这一次账上');
+  assert.equal(accounting.overage.exceeds, false);
+});
+
+test('summarizeAccounting 抓得住「绕过台账的第二包」并标成超限', () => {
+  // 台账只记 1 次，计数器却走了 2 次 —— 正是必须暴露的那类越限。
+  const accounting = summarizeAccounting({
+    snapshotBefore: { calls: 0, outboundSends: 0, reservedCny: 0 },
+    snapshotAfter: { calls: 1, outboundSends: 2, reservedCny: PER_CALL_RESERVE_CNY },
+    entries: [{
+      ordinal: 1, kind: 'tts', state: 'succeeded',
+      snapshotBefore: { calls: 0, outboundSends: 0, reservedCny: 0 },
+      snapshotAfter: { calls: 1, outboundSends: 2, reservedCny: PER_CALL_RESERVE_CNY },
+    }],
+  });
+  assert.equal(accounting.overage.outboundBeyondLedger, 1);
+  assert.deepEqual(accounting.overage.excessPerCall, [1]);
+  assert.equal(accounting.overage.exceeds, true, '越限必须被判成 exceeds=true，不许静默');
+});
+
+test('CLI 证据里带逐次记账读数，且离线两跑都是 calls=0 / overage=none', t => {
+  const dir = outDir(t);
+  for (const [flags, phase] of [[[], 'phase1-plan'], [['--approve-real-chain'], 'phase2-live']]) {
+    const result = spawnSync(process.execPath, [TOOL, ...flags, `--out-dir=${dir}`], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /accounting calls=0 outbound_delta=0 reserved_delta_cny=0\.0000 overage=none/);
+
+    const evidence = JSON.parse(readFileSync(join(dir, `chain-e2e-r29-${phase}.json`), 'utf8'));
+    assert.equal(evidence.accounting.total.calls, 0);
+    assert.equal(evidence.accounting.total.outboundSends, 0);
+    assert.equal(evidence.accounting.total.reservedCny, 0);
+    assert.deepEqual(evidence.accounting.perCall, [], '没外呼就不该有逐次条目');
+    assert.equal(evidence.accounting.overage.exceeds, false);
+    assert.deepEqual(evidence.accounting.snapshotBefore, { calls: 0, outboundSends: 0, reservedCny: 0 });
   }
 });
