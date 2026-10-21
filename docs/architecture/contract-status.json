@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1775-1783"
+          "lines": "1798-1806"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -1178,7 +1178,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "681-699",
+          "lines": "715-733",
           "symbol": "async function listConversations("
         },
         {
@@ -1205,7 +1205,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "701-706",
+          "lines": "735-740",
           "symbol": "async function getConversation(actor: ConversationActor"
         },
         {
@@ -1299,7 +1299,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "822-841",
+          "lines": "856-875",
           "symbol": "async function listTurns("
         },
         {
@@ -3307,7 +3307,7 @@
         {
           "path": "services/api/src/config.ts",
           "symbol": "loadConfig",
-          "lines": "155-283"
+          "lines": "325-457"
         },
         {
           "path": "services/api/src/auth/wechat.ts",
