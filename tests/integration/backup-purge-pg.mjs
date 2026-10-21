@@ -402,12 +402,25 @@ try {
   const favoritesA = createMemoryFavoritesStore({ now: () => clockA.now().getTime() });
   const historyA = createMemoryHistoryStore({ now: () => clockA.now().getTime() });
   const favoriteIdsA = await seedFavorites(favoritesA, userA, 2);
+  // #12 会话域（G6/G8 收口）：两个会话行 —— 清单里必须出现它们的**行 id**（不是正文）。
+  const conversationsA = createMemoryConversationStore();
+  const conversationIdsA = [];
+  for (let index = 0; index < 2; index += 1) {
+    const conversationId = randomUUID();
+    conversationIdsA.push(conversationId);
+    await conversationsA.insertConversation({
+      id: conversationId,
+      owner_id: userA,
+      conditions: null,
+      created_at: clockA.now(),
+    });
+  }
   const portA = createPostgresBackupPurgePort({ pool, now: () => clockA.now() });
   const deletionA = createUserDataDeletion({
     favoritesStore: favoritesA,
     historyStore: historyA,
     messagesStore: createMemoryMessagesStore({ now: () => clockA.now().getTime() }),
-    conversationsStore: createMemoryConversationStore(),
+    conversationsStore: conversationsA,
     backupPurge: portA,
     requests: requestStore,
     receiptTtlMs: RECEIPT_TTL_MS,
@@ -417,17 +430,29 @@ try {
   await deletionA.executeHandlers(requestA.id);
 
   const rowsA = await copiesOf(owner, requestA.id);
-  assert.equal(rowsA.length, 3, '三个必需模块都必须写清单行（0 对象也要写）');
+  assert.equal(rowsA.length, 4, '四个必需模块都必须写清单行（0 对象也要写）');
   const favoritesRowA = rowsA.find((row) => row.module === 'favorites');
   const historyRowA = rowsA.find((row) => row.module === 'history');
-  assert.ok(favoritesRowA !== undefined && historyRowA !== undefined, '模块名必须如实落库');
+  const conversationsRowA = rowsA.find((row) => row.module === 'conversations');
+  assert.ok(
+    favoritesRowA !== undefined && historyRowA !== undefined && conversationsRowA !== undefined,
+    '模块名必须如实落库',
+  );
   assert.equal(favoritesRowA.scope, 'favorite');
   assert.equal(historyRowA.scope, 'history');
+  assert.equal(conversationsRowA?.scope, 'conversation', '会话域的 scope 必须是 conversation');
   assert.equal(Number(favoritesRowA.payload.records), 2, '收藏清单必须记 2 个对象');
   assert.equal(favoritesRowA.payload.object_refs.length, 2);
   assert.deepEqual(new Set(favoritesRowA.payload.object_refs), new Set(favoriteIdsA), '清单只能是不透明行 id');
   assert.equal(Number(historyRowA.payload.records), 0, '0 对象模块也必须写一行且 records=0');
   assert.deepEqual(historyRowA.payload.object_refs, []);
+  // 会话域清单：只记**会话行 id** 与计数（轮次/回答随 0013 的级联消失，不进清单）。
+  assert.equal(Number(conversationsRowA.payload.records), 2, '会话清单必须记 2 个会话');
+  assert.deepEqual(
+    new Set(conversationsRowA.payload.object_refs),
+    new Set(conversationIdsA),
+    '会话清单只能是不透明会话行 id',
+  );
   assert.deepEqual(Object.keys(favoritesRowA.payload).sort(), ['object_refs', 'records'], 'payload 只许这两个键（最小化）');
   assert.equal(favoritesRowA.payload_digest, copyPayloadDigest(copyPayloadJson({ objectRefs: favoritesRowA.payload.object_refs, records: 2 })));
   assert.equal(favoritesRowA.state, 'pending_purge');
@@ -437,8 +462,9 @@ try {
   assert.equal(await reconciliationRows(owner), 0, '§4.4 对账：retention_until 必须逐行等于 backup_due_at');
   const receiptA1 = receiptRow(deletionA, requestA.id);
   assert.equal(handlerOf(receiptA1, 'favorites').backup_state, 'pending', '未到期 ⇒ 只可能是 pending');
+  assert.equal(handlerOf(receiptA1, 'conversations').backup_state, 'pending', '会话域有清单行后同样先是 pending');
   assert.equal(handlerOf(receiptA1, 'favorites').error_code, null);
-  say('写入路径：受理同一事务内写 2 行（收藏 2 个不透明 ref + 历史 0 对象 ref）、state=pending_purge、purge_attempts=0、lineage/水位/摘要自洽；§4.4 对账 0 行不等');
+  say('写入路径：受理同一事务内写 4 行（收藏 2 个 ref / 历史 0 / 消息 0 / 会话 2 个会话 id）、state=pending_purge、purge_attempts=0、lineage/水位/摘要自洽；§4.4 对账 0 行不等');
 
   // 11 天后仍在保留窗口内 ⇒ 重放不能提前清（waiting 不是 completed，也不是 blocked）。
   clockA.advanceDays(11);
@@ -454,23 +480,16 @@ try {
   assert.equal(handlerOf(receiptA3, 'favorites').backup_state, 'completed', '到期后清成功必须 completed');
   assert.equal(handlerOf(receiptA3, 'history').backup_state, 'completed', '0 对象模块同样必须 completed（有证据行）');
   assert.equal(handlerOf(receiptA3, 'messages').backup_state, 'completed', '消息域同样必须有清单行并在到期后 completed');
-  // ⚠️ 已知缺口（G6/G8，**本片不做**、由指挥登记待办）：会话域没有 `snapshotOwner`，
-  // 因此 `backupCopySources()` 不为它写清单行；真实备份端口按「没有副本行」如实回
-  // `blocked + EVIDENCE_REQUIRED`，于是**整个请求**在真库臂里到不了 `completed`。
-  // 这不是把断言改绿：三条有清单行的模块仍逐条断言 completed，会话域则断言它确实 blocked。
-  assert.equal(
-    handlerOf(receiptA3, 'conversations').backup_state,
-    'blocked',
-    '会话域无清单行 ⇒ 如实 blocked（G6/G8 缺口；补上 snapshotOwner 后这里应变 completed）',
-  );
-  assert.equal(handlerOf(receiptA3, 'conversations').error_code, 'EVIDENCE_REQUIRED');
+  // G6/G8 收口后：会话域也有清单行 ⇒ 到期清完 ⇒ completed，四域齐 ⇒ 整体 completed。
+  assert.equal(handlerOf(receiptA3, 'conversations').backup_state, 'completed', '会话域有清单行 ⇒ 到期后必须 completed');
+  assert.equal(handlerOf(receiptA3, 'conversations').error_code, null);
   assert.equal(
     receiptA3.state,
-    'blocked',
-    '三个模块完成但会话域 blocked ⇒ 整体只能如实 blocked（协议不把部分覆盖说成全部完成）',
+    'completed',
+    '四域全部 completed ⇒ 整体 completed（这正是 G6/G8 缺口收口前到不了的状态）',
   );
   const rowsA3 = await copiesOf(owner, requestA.id);
-  assert.equal(rowsA3.length, 3, '清除后**行必须保留**（唯一的「清过」证据）');
+  assert.equal(rowsA3.length, 4, '清除后**行必须保留**（唯一的「清过」证据）');
   for (const row of rowsA3) {
     assert.equal(row.state, 'purged');
     assert.equal(row.payload, null, 'payload 必须置 jsonb null（正文/引用都不留）');
@@ -480,7 +499,7 @@ try {
     assert.equal(row.evidence_ref, expected, `${row.module} 的证据必须能由 payload_digest 独立复算`);
   }
   assert.ok(deletionA.evidenceOf(requestA.id).favorites.includes('backup-purged:sha256:'), '诊断证据串必须带清除摘要');
-  say('到期清除（+31 天重放）：三行 purged、payload=null、purged_at=清除时刻、证据摘要由 payload_digest 独立复算逐字相等、行保留；会话域无清单行 ⇒ 整体如实 blocked（G6/G8 缺口）');
+  say('到期清除（+31 天重放）：四行 purged、payload=null、purged_at=清除时刻、证据摘要由 payload_digest 独立复算逐字相等、行保留 ⇒ 四域齐 ⇒ 整体 completed');
 
   const purgedAtA = rowsA3.map((row) => row.purged_at.toISOString());
   clockA.advanceDays(1);
@@ -491,6 +510,53 @@ try {
   assert.deepEqual(rowsA4.map((row) => row.purged_at.toISOString()), purgedAtA, '重放不得改写 purged_at');
   assert.equal(rowsA4.every((row) => Number(row.purge_attempts) === 0), true, '重放不得累加尝试次数');
   say('重放幂等：再跑一次仍 completed，purged_at 不变、purge_attempts 仍 0（ALL_PURGED 只复核，不重复清）');
+
+  // -------------------------------------------------------------------------
+  // 臂 A′（反向控制）：任一域缺快照原语 ⇒ 清单整体不写 ⇒ 四域全部 blocked/EVIDENCE_REQUIRED
+  //
+  // 这是「四域都 completed」的镜像：`backupCopySources()` 是**全有或全无**（任一 store 缺
+  // `snapshotOwner` 就返回 null），此时受理事务不写任何清单行，清除阶段只能如实 blocked。
+  // 用**注入替身**做（不给会话 store 提供 snapshotOwner），不改源码、不改部署。
+  // -------------------------------------------------------------------------
+  const userA2 = randomUUID();
+  await owner.query('INSERT INTO users (id) VALUES ($1::uuid)', [userA2]);
+  const clockA2 = scriptedClock(START);
+  const favoritesA2 = createMemoryFavoritesStore({ now: () => clockA2.now().getTime() });
+  const historyA2 = createMemoryHistoryStore({ now: () => clockA2.now().getTime() });
+  await seedFavorites(favoritesA2, userA2, 1);
+  const messagesA2 = createMemoryMessagesStore({ now: () => clockA2.now().getTime() });
+  const conversationsA2 = createMemoryConversationStore();
+  // 替身：只实现 `deleteAllByOwner`，**故意不给** `snapshotOwner`。
+  const conversationsWithoutSnapshot = {
+    async deleteAllByOwner(ownerId) {
+      return conversationsA2.deleteAllByOwner(ownerId);
+    },
+  };
+  const portA2 = createPostgresBackupPurgePort({ pool, now: () => clockA2.now() });
+  const deletionA2 = createUserDataDeletion({
+    favoritesStore: favoritesA2,
+    historyStore: historyA2,
+    messagesStore: messagesA2,
+    conversationsStore: conversationsWithoutSnapshot,
+    backupPurge: portA2,
+    requests: requestStore,
+    receiptTtlMs: RECEIPT_TTL_MS,
+    now: clockA2.now,
+  });
+  const requestA2 = deletionA2.requestDeletionFor(userA2);
+  await deletionA2.executeHandlers(requestA2.id);
+  assert.equal(
+    (await copiesOf(owner, requestA2.id)).length,
+    0,
+    '任一域缺 snapshotOwner ⇒ 整份清单为 null ⇒ 受理事务里一行清单都不写（全有或全无）',
+  );
+  const receiptReverse = receiptRow(deletionA2, requestA2.id);
+  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
+    assert.equal(handlerOf(receiptReverse, module).backup_state, 'blocked', `${module} 无清单行 ⇒ 必须如实 blocked`);
+    assert.equal(handlerOf(receiptReverse, module).error_code, 'EVIDENCE_REQUIRED', `${module} 必须带 EVIDENCE_REQUIRED`);
+  }
+  assert.equal(receiptReverse.state, 'blocked', '四域全 blocked ⇒ 整体 blocked（不把"没写清单"读成"清完了"）');
+  say('反向控制：会话 store 缺 snapshotOwner ⇒ 清单 0 行 ⇒ 四域 blocked + EVIDENCE_REQUIRED ⇒ 整体 blocked');
 
   // -------------------------------------------------------------------------
   // 臂 B：清单写入在事务内失败 ⇒ 整笔回滚、202 不签发

@@ -179,11 +179,16 @@ function portAt(rows, nowIso) {
 
 test('scope 映射是闭集：有名者取词，无名者直接抛错（不猜、不截断）', () => {
   // C1b（#17 P0-2）起消息域进备份副本闭集：`messages → message`（沿用单数词形）。
-  // 这条断言**扩大**而不是替换：既有两域逐字仍在，新增的第三项必须存在。
-  assert.deepEqual({ ...BACKUP_COPY_SCOPES }, { favorites: 'favorite', history: 'history', messages: 'message' });
+  // C1b G6/G8 起会话域也进：`conversations → conversation`（否则会话域没有清单行 ⇒ 整体永远 blocked）。
+  // 这条断言**扩大**而不是替换：既有两域逐字仍在，新增的第三/第四项必须存在。
+  assert.deepEqual(
+    { ...BACKUP_COPY_SCOPES },
+    { favorites: 'favorite', history: 'history', messages: 'message', conversations: 'conversation' },
+  );
   assert.equal(scopeForBackupModule('favorites'), 'favorite');
   assert.equal(scopeForBackupModule('history'), 'history');
   assert.equal(scopeForBackupModule('messages'), 'message', '消息域必须有 scope，否则备份链看不见它');
+  assert.equal(scopeForBackupModule('conversations'), 'conversation', '会话域必须有 scope，否则整体到不了 completed');
   assert.throws(() => scopeForBackupModule('exports'), RangeError);
   assert.throws(() => scopeForBackupModule(''), RangeError);
   assert.throws(() => scopeForBackupModule(undefined), RangeError);

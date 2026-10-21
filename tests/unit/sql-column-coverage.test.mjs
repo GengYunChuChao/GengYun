@@ -220,12 +220,12 @@ const UNAUDITED_SQL_HOSTS = [
  */
 const OPAQUE_ALLOWLIST = [
   {
-    ref: 'services/api/src/conversations/store-pg.ts:247',
+    ref: 'services/api/src/conversations/store-pg.ts:248',
     reason: '`${where}` = listWhere(\'conversations\', …) 拼出的 keyset 分页谓词（` AND (conversations.created_at < $n …)`）；'
       + '它引用的 created_at / id 已在 CONVERSATION_COLUMNS 里被 SELECT 授权，故不影响判定，但仍按不可静态求值登记。',
   },
   {
-    ref: 'services/api/src/conversations/store-pg.ts:325',
+    ref: 'services/api/src/conversations/store-pg.ts:326',
     reason: '同上，`${where}` 用于 conversation_turns 的列表分页；引用的 created_at / id 已在 TURN_COLUMNS 里。',
   },
 ];
@@ -233,25 +233,26 @@ const OPAQUE_ALLOWLIST = [
 /**
  * 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测）。
  * C1b-1 合流后重算：DELETE 语句也产出「整表 DELETE」需求（+27），消息域补了 snapshotOwner 的
- * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67），故
- * 字面量 141→142、SELECT 66→67、columnRequirements 1157→1185。
+ * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67）；
+ * C1b G6/G8 再给会话域补一条 `SELECT id FROM conversations`（+1 字面量、SELECT 67→68），故
+ * 字面量 141→143、SELECT 66→68、columnRequirements 1157→1186。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 142,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 67, DELETE: 27 },
+  sqlLiterals: 143,
+  statements: { INSERT: 27, UPDATE: 21, SELECT: 68, DELETE: 27 },
   returningClauses: 56,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1185,
+  columnRequirements: 1186,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
   community: 28,
-  conversations: 16,
+  conversations: 17,
   favorites: 15,
   history: 16,
   messages: 15,
@@ -307,8 +308,8 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 16,
-  sqlLiterals: 216,
-  statements: { INSERT: 36, UPDATE: 32, SELECT: 118, DELETE: 30 },
+  sqlLiterals: 217,
+  statements: { INSERT: 36, UPDATE: 32, SELECT: 119, DELETE: 30 },
   returningClauses: 68,
   onConflictClauses: 21,
   selectStar: 15,
@@ -317,8 +318,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 1,
   noTargetTable: 10,
   referencedTables: 39,
-  columnRequirements: 1408,
-  coveredRequirements: 1354,
+  columnRequirements: 1409,
+  coveredRequirements: 1355,
   ledgerExemptions: 33,
   rowLockRequirements: 19,
   rowLockExemptions: 1,
@@ -330,7 +331,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 4,
   'community': 28,
-  'conversations': 16,
+  'conversations': 17,
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,

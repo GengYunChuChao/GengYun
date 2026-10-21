@@ -311,7 +311,11 @@ test('F13：统一账本（路径①）一次请求同时清四域 —— 会话
   );
   const conversationsRow = receipt.handlers.find((row) => row.module === 'conversations');
   assert.equal(conversationsRow.online_state, 'completed', '会话行确实被删 ⇒ completed');
-  assert.equal(conversationsRow.backup_state, 'pending', '会话域备份清单属 G6/G8（P1）⇒ 如实 pending');
+  assert.equal(
+    conversationsRow.backup_state,
+    'pending',
+    '本用例没接备份端口 ⇒ 如实 pending（G6/G8 收口后它不再是"硬编码 pending"：接线后应 completed，见下一条用例）',
+  );
   assert.equal(conversationsRow.error_code, null);
 
   // 真删了：A 的会话与轮次归零，B 原样。
@@ -321,4 +325,119 @@ test('F13：统一账本（路径①）一次请求同时清四域 —— 会话
   assert.equal(after.turns.length, 1, '轮次随会话级联消失');
   // 证据串里能看见会话域的清空行数。
   assert.equal(deletion.evidenceOf(requestId).conversations, 'conversations:online-purged:2');
+});
+
+test('G6/G8：会话域快照只回会话行 id 与计数 —— 回答正文绝不进清单', async () => {
+  const ownerA = '00000000-0000-4000-8a00-00000000000a';
+  const ownerB = '00000000-0000-4000-8b00-00000000000b';
+  const store = createMemoryConversationStore();
+  const ANSWER_BODY = '合成回答正文：稻田杂草防除要点（这段文字绝不能出现在任何清单/证据里）';
+  const QUESTION_BODY = '合成问题正文：这块田用什么药';
+  for (const [owner, suffix] of [[ownerA, 'a'], [ownerB, 'b']]) {
+    const conversationId = `00000000-0000-4000-8${suffix}00-000000000101`;
+    await store.insertConversation({
+      id: conversationId,
+      owner_id: owner,
+      conditions: null,
+      created_at: new Date(Date.UTC(2026, 9, 14, 6)),
+    });
+    await store.insertTurn({
+      id: `00000000-0000-4000-8${suffix}00-000000000102`,
+      conversation_id: conversationId,
+      owner_id: owner,
+      input_text: QUESTION_BODY,
+      transcription_ref: null,
+      job_id: `00000000-0000-4000-8${suffix}00-000000000103`,
+      job_state: 'succeeded',
+      job_deadline_at: new Date(Date.UTC(2026, 9, 14, 7)),
+      job_created_at: new Date(Date.UTC(2026, 9, 14, 6)),
+      job_error_code: null,
+      created_at: new Date(Date.UTC(2026, 9, 14, 6)),
+    });
+  }
+  // 给 A 的一个轮次写回答（`checked_text` 就是模型生成的回答正文）。
+  const turnA = store.snapshot().turns.find((turn) => turn.owner_id === ownerA);
+  assert.ok(turnA !== undefined);
+  await store.settleTurnJob({
+    turnId: turnA.id,
+    ownerId: ownerA,
+    state: 'succeeded',
+    errorCode: null,
+    at: new Date(Date.UTC(2026, 9, 14, 7)),
+    answer: {
+      id: '00000000-0000-4000-8a00-000000000104',
+      turn_id: turnA.id,
+      owner_id: ownerA,
+      status: 'ok',
+      checked_text: ANSWER_BODY,
+      check_state: 'checked',
+      citations: [],
+      dose_cards: [],
+      model_version: 'test-model',
+      prompt_version: 'test-prompt',
+      rule_version: 'test-rules',
+      created_at: new Date(Date.UTC(2026, 9, 14, 7)),
+    },
+  });
+
+  const snapshot = await store.snapshotOwner(ownerA, { query: async () => ({ rows: [] }) });
+  // 形状：只有会话行 id 与计数（2 个主体各一个会话，这里只回 A 的那一个）。
+  assert.deepEqual([...snapshot.objectRefs], ['00000000-0000-4000-8a00-000000000101']);
+  assert.equal(snapshot.records, 1, 'records 必须等于 objectRefs 数（一对象一引用）');
+  // 最小化：序列化后不得出现问题正文、回答正文、模型/规则版本、轮次/回答 id。
+  const serialized = JSON.stringify({ objectRefs: snapshot.objectRefs, records: snapshot.records });
+  for (const forbidden of [
+    ANSWER_BODY,
+    QUESTION_BODY,
+    'test-model',
+    'test-prompt',
+    'test-rules',
+    '00000000-0000-4000-8a00-000000000102', // 轮次 id：从属行，不进清单
+    '00000000-0000-4000-8a00-000000000104', // 回答 id：从属行，不进清单
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, `清单不得包含 ${forbidden.slice(0, 24)}…`);
+  }
+  // 他人不受影响：B 的会话仍在，且不在 A 的清单里。
+  assert.equal(store.snapshot().conversations.filter((row) => row.owner_id === ownerB).length, 1);
+});
+
+test('G6/G8：接线备份清除端口后会话域 backup_state 可变 completed（不再是硬编码 pending）', async () => {
+  const ownerA = '00000000-0000-4000-8a00-00000000000a';
+  const clock = { now: () => new Date(Date.UTC(2026, 9, 14, 8)) };
+  const conversationStore = createMemoryConversationStore();
+  await conversationStore.insertConversation({
+    id: '00000000-0000-4000-8a00-000000000101',
+    owner_id: ownerA,
+    conditions: null,
+    created_at: new Date(Date.UTC(2026, 9, 14, 6)),
+  });
+  const favoritesStore = createMemoryFavoritesStore({ now: () => clock.now().getTime() });
+  const historyStore = createMemoryHistoryStore({ now: () => clock.now().getTime() });
+  const messagesStore = createMemoryMessagesStore({ now: () => clock.now().getTime() });
+  const purged = [];
+  const deletion = createUserDataDeletion({
+    favoritesStore,
+    historyStore,
+    messagesStore,
+    conversationsStore: conversationStore,
+    now: clock.now,
+    backupPurge: {
+      kind: 'wired',
+      available: true,
+      async purge(input) {
+        purged.push(input.module);
+        return { purged: true, evidenceRef: `backup-replica-purged:${input.module}:2026-10-14` };
+      },
+    },
+  });
+  const requestId = String(deletion.requestDeletionFor(ownerA).id);
+  await deletion.executeHandlers(requestId);
+
+  const receipt = deletion.receipt(requestId);
+  const conversationsRow = receipt.handlers.find((row) => row.module === 'conversations');
+  assert.equal(conversationsRow.backup_state, 'completed', '有证据的备份清除 ⇒ completed（不再恒 pending）');
+  assert.equal(conversationsRow.error_code, null);
+  assert.deepEqual(purged, ['favorites', 'history', 'messages', 'conversations'], '四域各调用一次备份清除端口');
+  assert.equal(deletion.completionStatus(requestId).completed, true, '在线+备份四域齐 ⇒ 整体 completed');
+  assert.match(deletion.evidenceOf(requestId).conversations, /conversations:backup-purged:/);
 });

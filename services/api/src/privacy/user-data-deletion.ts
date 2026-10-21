@@ -311,16 +311,18 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
    * 此时清除阶段会因「没有副本行」如实 `blocked` + `EVIDENCE_REQUIRED`，
    * ⛔ 不会因为「没写行」被读成「清完了」。
    *
-   * ⚠️ 会话域（`conversations`）**故意不在这个 pairs 里**：它的 store 只有
-   * `deleteAllByOwner`、没有 `snapshotOwner`（`conversations/cascade.ts` 的 `ConversationPurgeStore`），
-   * 一旦加进来，`snapshotOwner` 缺失会让**整份**清单返回 `null`（连收藏/历史/消息的清单行一起没有）。
-   * 会话域的备份副本清单属 G6/G8（P1，未做）；它的回执备份态保持 `pending`/`blocked`，不谎称完成。
+   * 四域齐备（C1b G6/G8 收口）：`favorites` / `history` / `messages` / `conversations` 各自提供
+   * `snapshotOwner`。会话域的快照只列**会话行 id**，轮次/回答靠 `0013` 的两级 `ON DELETE CASCADE`
+   * 随会话消失 —— 因此「清单里有这些会话」等价于「注销时这三张表的本人行都会没」。
+   * ⚠️ 这段仍是**全有或全无**：任一 store 缺 `snapshotOwner` ⇒ 整份清单为 null（旧装配仍按
+   * 「没有副本行」如实 blocked）。这正是反向控制用例（注入缺快照原语的替身）走的路径。
    */
   function backupCopySources(): BackupCopySeedSource[] | null {
     const pairs: ReadonlyArray<readonly [string, OwnerPurgeStore]> = [
       [FAVORITES_DELETION_MODULE, input.favoritesStore],
       [HISTORY_DELETION_MODULE, input.historyStore],
       [MESSAGES_DELETION_MODULE, input.messagesStore],
+      [CONVERSATIONS_DELETION_MODULE, input.conversationsStore],
     ];
     const sources: BackupCopySeedSource[] = [];
     for (const [module, store] of pairs) {

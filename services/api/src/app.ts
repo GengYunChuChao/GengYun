@@ -1465,6 +1465,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         : durableDeletionRequests !== null && config.executionMode === 'real'
           ? { backupPurge: createUnavailableBackupPurgePort() }
           : {};
+  // #12 会话域存储（**提前声明**）：注销清理把会话域并进同一本账，而备份清单是「全有或全无」
+  // —— `backupCopySources()` 需要在**装配期**就知道该 store 有没有 `snapshotOwner`，因此这份
+  // store 必须先于注销装配就位；后面的问答子域装配**复用**同一实例（不再重复创建）。
+  // 语义与既有口径逐字一致：`real` + 无池 ⇒ null（域不可用），非 real ⇒ 内存实现。
+  const conversationStore: ConversationStore | null =
+    conversationInjection?.store ??
+    (config.executionMode === 'real'
+      ? (pool === null ? null : createPostgresConversationStore(pool))
+      : createMemoryConversationStore());
   // #17 消息域（C1b / §7 P0-2）：把**线上那一份**消息存储收窄成注销协议要的 `OwnerPurgeStore`。
   // 注入的替身可能只实现读路径 ⇒ 缺 `deleteAllByOwner` 时**调用即抛错**（由协议折叠为 `blocked` +
   // `HANDLER_FAILED`），⛔ 不在装配期假装"能清"，也不在这里静默跳过消息域（那正是 #17 的原缺口）。
@@ -1503,6 +1512,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         if (store === null) throw new Error('会话域不可用（real 模式无连接池）：拒绝假装清空');
         return store.deleteAllByOwner(ownerId);
       },
+      // G6/G8 收口：会话域现在也提供 `snapshotOwner`（只回会话行 id 与计数），因此四域齐全、
+      // 备份清单能写四行。注入的替身若没有该原语，这里**不转发** ⇒ `backupCopySources()` 返回
+      // null ⇒ 各模块因「没有副本行」如实 blocked（反向控制用例正是走这条路径）。
+      ...(typeof conversationStore?.snapshotOwner === 'function'
+        ? {
+            snapshotOwner: (
+              ownerId: string,
+              client: Parameters<NonNullable<OwnerPurgeStore['snapshotOwner']>>[1],
+            ) => (conversationStore as NonNullable<typeof conversationStore>)
+              .snapshotOwner!(ownerId, client),
+          }
+        : {}),
     },
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
@@ -1543,11 +1564,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    `services/api/db/migrations/0013_conversations.sql` 的三张表 + `ON DELETE CASCADE`）。
   //    为什么 `real` + `pool === null` 时整域置 `null`：把内存 store 交给 real 模式的服务层
   //    = 在真实模式下声称成功、进程重启即丢（与 `app.ts` 既有的收藏/历史口径逐字一致）。
-  const conversationStore: ConversationStore | null =
-    conversationInjection?.store ??
-    (config.executionMode === 'real'
-      ? (pool === null ? null : createPostgresConversationStore(pool))
-      : createMemoryConversationStore());
+  //    注：`conversationStore` 已在**上方注销装配之前**声明（备份清单需要它在装配期就位），此处不再新建。
   // 2) 幂等台账：**本域自带**（`ConversationOutcome` 只存 `conversation_id`/`turn_id` 引用，
   //    不含正文与凭据）。为什么不复用 `auth/idempotency.ts` 的台账：它的
   //    `IdempotencyOutcome` 是 `{sessionId,audience} | {accepted:true}` 闭联合，
