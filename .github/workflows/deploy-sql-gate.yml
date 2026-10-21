@@ -270,11 +270,14 @@ jobs:
 
           # ---- ③ 错误条数：只允许禁止面那 expected_42501 条，且一条不少 ----
           # 算式（探针源码逐条相加，见证据页 §2）：段 6 禁止面 4 ＋ 段 7 禁止面 2
-          #   ＋ 段 8b internal 函数 3 ＋ 段 8c trigger 函数 2 = 11。
+          #   ＋ 段 8b internal 函数 3 ＋ 段 8c trigger 函数 2
+          #   ＋ 段 9b 视图/schema 3 ＋ 段 10 exports 2 ＋ 段 11 GRANT/CREATE 2 = 18。
+          # 原值 11 漏算了段 9b、10、11 共七条（#378 合入时的常量与探针源码不一致，
+          # 已在真实 CI 上按 18 条逐行取证后改正；判据方向不变，仍是「恰好等于」）。
           # 行形状：psql 读文件且 VERBOSITY=verbose 时是
           #   `psql:<file>:<line>: ERROR:  42501: permission denied for …`
           # ⇒ 不能锚 `^ERROR:`（那会恒为 0 条，等于把判据废掉）；这里锚 `ERROR:  <SQLSTATE>:`。
-          expected_42501=11
+          expected_42501=18
           total_errors=0
           if grep -qE 'ERROR:[[:space:]]+[0-9A-Z]{5}:' "${out}"; then
             total_errors="$(grep -cE 'ERROR:[[:space:]]+[0-9A-Z]{5}:' "${out}")"
