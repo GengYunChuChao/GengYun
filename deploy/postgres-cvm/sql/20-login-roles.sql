@@ -896,3 +896,26 @@ GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 \echo '20-login-roles.sql：已授予 public.speech_jobs / public.transcriptions / public.speech_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 speech/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
 \echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
 \echo '20-login-roles.sql：speech_jobs 的 UPDATE 是业务写权限（认领、终态提交），同时满足 commitTerminal 的 SELECT … FOR UPDATE；transcriptions 不授 FOR UPDATE，speech_idempotency 的 SELECT 是全部 6 列（WHERE 与 RETURNING 需要）。'
+
+-- ----------------------------------------------------------------------------
+-- L. 触发器函数的 PUBLIC EXECUTE 兜底收回（R28-S51）
+--
+-- 本段只收一个函数：public.consent_policy_immutable()。它是
+-- services/api/db/migrations/0009_consent_policy.sql:39 建在 consent_policies 上的
+-- BEFORE UPDATE OR DELETE 触发器函数（prosecdef=false）。
+--
+-- 为什么必须显式写：PostgreSQL 新建函数时默认把 EXECUTE 授给 PUBLIC，pg_proc.proacl
+-- IS NULL 就是"出厂默认"的物化形态；触发器函数不因"只被触发器调用"而自动豁免。
+-- 本片接线前实测，它是三个 schema 里唯一仍然 proacl IS NULL（⇒ PUBLIC 可执行）的函数；
+-- 对照 public.admin_audit_events_reject_mutation() 在 0017_account_suspend_authority.sql:335
+-- 已显式 REVOKE … FROM PUBLIC，本文件此前却从未提及 consent_policy_immutable。
+--
+-- 为什么收回安全：触发器由 PostgreSQL 在执行 UPDATE/DELETE 时以触发器函数的属主语境
+-- 调用，不检查**调用者**对该函数的 EXECUTE 权限；REVOKE 只挡住
+-- `SELECT public.consent_policy_immutable()` 这类显式调用，不影响触发器本体。
+--
+-- 来源：R28-S51 的兜底断言（deploy/postgres-cvm/sql/90-assert-least-privilege.sql 的
+-- runtime_function_no_public_execute）在真库上先判红，再由此处修复；改前/改后读数、
+-- 变异与未取得见 docs/verification/gy-r28-function-surface-parity-20261021.md。
+-- ----------------------------------------------------------------------------
+REVOKE ALL ON FUNCTION public.consent_policy_immutable() FROM PUBLIC;
