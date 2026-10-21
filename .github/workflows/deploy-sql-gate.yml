@@ -1,0 +1,163 @@
+# 部署 SQL 链门禁（R28-S34）· 把 `deploy/postgres-cvm/sql/` 的两条脚本接进 CI：
+#   · `20-login-roles.sql`（运行时 LOGIN + 列级最小权限）
+#   · `90-assert-least-privilege.sql`（78 条最小权限断言；基线 `56042f7`＝#342 合入后）
+#
+# 缺口（本片立项时的实测）：这两条脚本在仓内**只被** `deploy/postgres-cvm/provision-db.sh` 引用，
+# 也就是「CVM 首次装库时人工/脚本执行一次」；逐 workflow 检索文件名 0 命中 ⇒ 它们写坏了（漏授一列、
+# 断言被改松、迁移表名对不上）CI 一律全绿，只有上线那一刻才发现。90-assert 尤其只有真库能证明：
+# 它读的是 `information_schema`／`has_*_privilege()` 的**真值**，内存库与替身都给不出这个读数。
+#
+# 判据（与 `tests/unit/ci-real-pg-wiring.test.mjs` 同一套口径，不另立门户）：
+#   ① 真 PG **17.11**（与生产 CVM 同主版本；17 专有视图/迁移行为在 16 上会静默失真）；
+#   ② 迁移必须跑**全链**（`migrate.ts up`，0001..0025 一个都不能漏）——90-assert 断言的表/列来自迁移，
+#      漏跑一个迁移会让断言「因为表不存在」而白白变红，读数就不是权限结论；
+#   ③ 角色组按 `provision-db.sh` 的**同序**建（`services/api/db/roles/*.sql`，glob 序与该脚本的 5 个生产组
+#      同序；另 3 个 `egress_ledger`／`source_operator`／`staging_importer` 在生产按需单独开通，这里一并建：
+#      它们零外部副作用，顺带证明这 3 份也能在干净库上落地），再跑 `20-login-roles.sql` 建运行时 LOGIN
+#      （它自身断言 `current_database() = 'gengyun'`、`gengyun_cvm_owner` 存在、口令 48 位小写十六进制，
+#      故本 job 的库名必须是 `gengyun`，运行时口令必须是 48 位 hex）；
+#   ④ 90-assert 判绿要**双保险**，因为它的两种失败各自只被其中一道抓住（实测依据在脚本头部）：
+#      · **末行**（最后一条非空行）必须正好是 `ok`：90-assert 是「只报不改」的 soft verdict——
+#        断言判 FAIL 时它**只打印** `FAIL: <标签> (<说明>); …` 并以 **0** 退出（见脚本尾部
+#        `CASE … THEN 'ok' ELSE 'FAIL: ' || …`），所以退出码这一半对「结论是 FAIL」**完全无效**，
+#        只有末行能把它判红。提取口径与生产调用方 `provision-db.sh:365`
+#        （`sed '/^[[:space:]]*$/d' | tail -n1`）**逐字等价**，CI 与生产判的是同一个量。
+#      · **`psql` 退出码**必须 0：另一类失败是「脚本没跑到判决」——缺文件、连接断、元命令/SQL 语法错、
+#        或断言段（`\set ON_ERROR_STOP on`）里的 SQL 报错提前中止；此时末行会退化，而退出码是
+#        最直接、最先到达的信号。生产调用方这里恰恰是缺口：`provision-db.sh:364-366` 的取值命令
+#        后面跟了一个「失败也当成功」的忽略后缀，把 psql 退出码**吞掉了**，只看末行；本 job 把这一半补回来。
+#      注意探针段（`\set ON_ERROR_STOP off` + `SET LOCAL ROLE` + 零行语句）**故意**会打出 42501，
+#      那是被验的读数、属预期——所以本步只对「末行 + 退出码」取值，⛔ 不按日志里有没有 `ERROR` 判红。
+#      本步用 `set -o pipefail` ＋ 显式捕获 `$?` 兜住，两条 `::error::` 分别写清是哪一半不满足。
+#   ⑤ 与 hard-fail 切片的关系（**互补，不能互相替代**）：hard-fail 切片验的是「**人为破坏后必须判红**」
+#      ——把某一列授权撤销、把某条断言改松，读数必须从 `ok` 变成非 `ok`／非 0，也就是负控制；
+#      本 workflow 验的是「**合规授权下必须判绿**」——正控制。少了本片，hard-fail 的红说明不了
+#      「合规态是绿的」（可能一直是红的）；少了 hard-fail 片，本片的绿说明不了「断言真的会拦人」
+#      （可能整段没执行）。所以本 job 只做正控制，破坏/复原的取证在 hard-fail 片与本片报告里各自留痕。
+#
+# ⛔ 本 job 不设任何「放宽跳过」开关、不传跳过参数、不用 step 级条件与容错开关（口径见
+#   `tests/unit/ci-real-pg-wiring.test.mjs` 判据②④⑤）：缺库／缺角色／断言红都必须以**非 0** 结束，
+#   那一轮就是「没有通过」，不是「跳过」。
+#
+# 口令是**明显的合成值**（`synthetic-ci-owner-only` / 48 位 hex 的固定串），与仓内其它 PG workflow 同风格，
+# 不含任何真实凭据；service 容器与 job 同生共死，不对外暴露端口以外的东西。
+#
+# 本地取证（见本片报告）：Windows 本机 PG 17.11 临时集群（`initdb -E UTF8`，端口 55645）＋ Node 24.16.0，
+# 同一套命令逐条真跑：全绿（末行 `ok`／退出码 0）→ 人为破坏后判失败（末行非 `ok`／退出码非 0）→ 复原后恢复绿。
+
+name: Deploy SQL chain gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  deploy-sql-17-11:
+    name: deploy-sql-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        # 库名必须是 `gengyun`：`20-login-roles.sql:93` 断言 `current_database() = 'gengyun'`，
+        # 换个库名会在那一条直接 `SELECT 1/0` 红掉（不是本 job 想验的东西）。
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun
+          POSTGRES_USER: gengyun_cvm_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # ① 全链迁移：库名与 owner 与生产同形（`gengyun` / `gengyun_cvm_owner`）。
+      # `migrate.ts up` 只认 `DATABASE_URL`；连不上库即以非 0 退出（不是「跳过」）。
+      - name: 迁移全链（0001..0025）
+        run: node services/api/src/db/migrate.ts up
+        env:
+          DATABASE_URL: postgres://gengyun_cvm_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun
+      # ② 组角色：顺序**逐条抄** `provision-db.sh:265-271` 的 `ROLE_GROUP_FILES`（5 组，同一顺序）。
+      # 这里显式列文件名而不写 `roles/*.sql` 的原因：glob 的字典序会把 knowledge_runtime 排到
+      # profile_runtime 之前，与生产的 apply 顺序不一致；本 job 要验的是**生产那条链**。
+      # `--with-cli-groups` 才追加的 3 组（egress_ledger／source_operator／staging_importer，
+      # 见 provision-db.sh:272-275）不在 deploy 链里，本 job 不 apply；它们各有自己的 workflow 取证。
+      - name: 组角色（services/api/db/roles/*.sql，按 provision-db.sh:265-271 的 5 组顺序）
+        run: |
+          set -euo pipefail
+          for f in \
+            auth_privacy.sql \
+            catalog_readers.sql \
+            consent_granter.sql \
+            profile_runtime.sql \
+            knowledge_runtime.sql ; do
+            echo "== services/api/db/roles/${f}"
+            psql -X -q -v ON_ERROR_STOP=1 -f "services/api/db/roles/${f}"
+          done
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_cvm_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun
+      # ③ 运行时 LOGIN：`20-login-roles.sql` 自己校验库名／owner／口令形状，任一不符即红。
+      # 口令是 48 位小写十六进制的合成值（`openssl rand -hex 24` 的形状），⛔ 不是任何真实口令。
+      - name: 20-login-roles.sql（运行时 LOGIN + 列级最小权限）
+        run: |
+          set -euo pipefail
+          psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_cvm_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun
+          GENGYUN_API_RUNTIME_PASSWORD: 4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d
+      # ④ 断言：**双保险**（判据④）——psql 退出码 0 **且** 末行正好 `ok`，缺一条即红。
+      # 为什么必须自己校验末行：90-assert 用 `SELECT ... AS verdict` 打印结论，断言判 FAIL 时它只是
+      #   打印一行 `FAIL: ...` 然后正常结束，**psql 退出码恒为 0**（另一个并行切片正在给它加 hard-fail）。
+      #   只信退出码就会把「断言全红」当成绿。
+      # 等 hard-fail 那个切片合入后，末行校验可以简化（退出码不再恒 0），但**两道都要保留**：
+      #   退出码挡「断言脚本没跑到判决」（被 ON_ERROR_STOP 截断、SQL 报错），
+      #   末行挡「跑完了但结论不是 ok」。两者覆盖的失败模式不同，报错信息也不同。
+      # 注意：探针段会故意触发若干 `permission denied`（那是被验的读数，写 stderr 是正常的），
+      #   所以只对「末行」与「退出码」取值，不按日志里有没有 `ERROR` 判红。
+      - name: 90-assert-least-privilege.sql（末行 ok 且退出码 0）
+        run: |
+          set -euo pipefail
+          out="$(mktemp)"
+          rc=0
+          if psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql >"${out}" 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
+          echo "---- 90-assert 输出（尾部 20 行；完整输出见上面的 psql 读数）----"
+          tail -n 20 "${out}"
+          verdict="$(awk 'NF { last = $0 } END { print last }' "${out}")"
+          echo "退出码=${rc} 末行='${verdict}'"
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::90-assert 的 psql 退出码是 ${rc}（要求 0）：断言脚本内部报错或被 ON_ERROR_STOP 截断。"
+            exit 1
+          fi
+          if [ "${verdict}" != "ok" ]; then
+            echo "::error::90-assert 末行不是 ok（实际：'${verdict}'）：断言没跑完／被改松／结论不是 ok。"
+            exit 1
+          fi
+          echo "90-assert：退出码 0 且末行 ok —— 双保险齐了（78 条断言判绿）。"
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_cvm_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun
