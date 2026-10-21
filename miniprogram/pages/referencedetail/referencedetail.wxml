@@ -3,7 +3,30 @@
   <!-- GY-I07 D1：逐条可判定的来源标记（服务端 /herbicides/{id} / 随包离线副本），不互相冒充。 -->
   <view class="source-marker" wx:if="{{sourceMarker}}">来源标记：{{sourceMarker}}</view>
 
-  <view wx:if="{{!found}}" class="card">
+  <!-- 加载态：服务端详情在途时渲染「正在读取」。
+       此前这一段是直接落到下面的「未找到该记录」——把查询中当成了记录不存在，
+       而两者的下一步动作完全相反（等待／重试 vs. 返回继续查询）。 -->
+  <state-view
+    wx:if="{{busy}}"
+    status="loading"
+    title="正在读取这条登记资料"
+    desc="返回前不展示任何字段，也不把「读取中」写成「未找到该记录」。"
+  ></state-view>
+
+  <!-- 失败态（可重试）：5xx／超时／限流／响应不合契约都属于「这次没读成功」，
+       给错误码分类与重试入口；错误码原样带出，页面文案仍然优先。 -->
+  <state-view
+    wx:elif="{{detailFailed}}"
+    status="error"
+    error-code="{{notFoundCode}}"
+    title="{{notFoundCode === 'SESSION_REQUIRED' || notFoundCode === 'SESSION_CHANGED' ? '登录状态已变化，请重新核实' : '这条资料没有读取成功'}}"
+    desc="{{notFoundText}}"
+    action-text="重试读取"
+    bind:action="retryDetail"
+  ></state-view>
+
+  <!-- 未找到（404 NOT_FOUND／随包未命中）：这是**合法结论**，不是失败；文案与返回入口保持不变。 -->
+  <view wx:elif="{{!found}}" class="card">
     <view class="title">未找到该记录</view>
     <view>{{notFoundText || '该记录不存在，或已被下架、失效而不在有效资料中。'}}</view>
     <button class="btn btn-primary" bindtap="backToList">返回继续查询</button>
