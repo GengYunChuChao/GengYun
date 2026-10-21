@@ -52,6 +52,7 @@
  */
 import type { ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import { isTransientDatabaseError } from '../db/pool.ts';
 import { canTransitionJob, isJobState, type JobState, type UncertainSpan } from './state.ts';
 import { sameSpans, type IdempotencyRow, type SpeechJobRow, type SpeechStore, type TranscriptionRow } from './store.ts';
 
@@ -114,7 +115,11 @@ export function classifySpeechDatabaseError(error: unknown): never {
   if (code === '57014' || code === '55P03') {
     throw new ApiError('PROVIDER_TIMEOUT', '转写数据库响应超时', { retryable: true });
   }
-  throw new ApiError('PROVIDER_UNAVAILABLE', '转写数据库暂不可用', { retryable: true });
+  // `retryable` 分档（口径原文见 `../errors.ts` 的 `ApiError` 注释）：连接层故障（08xxx）、管理员干预
+  // （53xxx / 57P0x）、串行化冲突（40001）、死锁（40P01）⇒ 同一请求稍后重试**确实**可能成功 ⇒ true；
+  // 权限不足（42501）、库/表/凭据缺失（3D000 / 28P01 / 42P01）、函数缺失（42883）与无法归类的其余
+  // 驱动错误 ⇒ 需运维改配置或修缺陷，重试永远不会好 ⇒ false（⛔ 恒 true 会把权限缺失伪装成下游抖动）。
+  throw new ApiError('PROVIDER_UNAVAILABLE', '转写数据库暂不可用', { retryable: isTransientDatabaseError(error) });
 }
 
 /**
