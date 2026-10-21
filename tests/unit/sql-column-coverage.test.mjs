@@ -176,9 +176,11 @@ const LEDGER_OPAQUE_ALLOWLIST = [
  * 要么在这张表里（file + reason + owner）；两边都没有 ⇒ 判红（NC7 走一遍）。
  * 反过来，这张表的每一条都必须仍然被扫到（文件删了/不再含 SQL ⇒ 红，防躺平）。
  *
- * 为什么这 5 个不在本片范围：派单 §0 的清单是「含 public. 限定 SQL 的 8 个新文件」，
+ * 为什么前 5 个不在本片范围：派单 §0 的清单是「含 public. 限定 SQL 的 8 个新文件」，
  * 这 5 个是 S61 之前就存在的宿主，纳入审计会引入 ledger 范畴之外的新缺口（需要指挥裁定），
  * 故本片只保证「新宿主一律判红」，把它们列进来等后续片接线。
+ * 第 6 条（privacy/backup-purge-driver.ts）是 R28-E2 片新增的到期驱动：列面由真库臂实测、
+ * 静态纳管需本片重定 16 文件读数，故同样登记在此等 R28-S66 统一收口。
  */
 const UNAUDITED_SQL_HOSTS = [
   {
@@ -205,6 +207,15 @@ const UNAUDITED_SQL_HOSTS = [
     file: 'services/api/src/db/migrate.ts',
     reason: 'public.schema_migrations（迁移执行器，部署期使用而非请求期）。',
     owner: 'S61 口径 / R28-S66 未纳管',
+  },
+  {
+    file: 'services/api/src/privacy/backup-purge-driver.ts',
+    reason: 'R28-E2 新增的「备份副本 30 日到期」运维驱动的 SQL（`user_backup_copies` 上的 CTE + 窗口函数 + '
+      + 'FILTER + HAVING，另加一条 `state` 列 UPDATE 重排）。列面已由真库臂**实测**而非静态推断：'
+      + 'tests/integration/backup-copies-purge-pg.mjs 第一臂用运行时角色跑通了枚举/重排/清除，'
+      + '并断言表级 SELECT/INSERT/UPDATE=false、payload 列不可读、DELETE=42501 ⇒ 零新增授权。'
+      + '纳入本管线需 R28-S66 重定 16 文件读数（auditedFiles 16→17 等），留给该片统一改。',
+    owner: 'E2 / R28-E2 backup-purge-driver；静态纳管待 R28-S66 重定读数',
   },
 ];
 
@@ -1848,7 +1859,7 @@ test('sql-column-coverage/parser_negative_controls NC4：登记源码里不存�
  *
  * 三条新断言的分工（派单 §1.1–§1.3）：
  *   6. 扩展 16 文件的读数与列覆盖（缺口只允许落在 ledger 范畴，且必须逐条登记）；
- *   7. 文件集不变量（`services/api/src` 里的 SQL 宿主恰好是 16 个已审计 + 5 个登记）；
+ *   7. 文件集不变量（`services/api/src` 里的 SQL 宿主恰好是 16 个已审计 + 6 个登记）；
  *   8–12. NC5–NC9（新文件的列、真实授权文本、文件集、豁免陈旧、行锁规则各反着走一遍）。
  * 基线（`baseline`，8 个 store-pg）一条都没动：它继续在零豁免下全绿，是本片「不放宽」的证据。
  * ========================================================================== */
@@ -1978,11 +1989,11 @@ test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () =
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 16 已审计 + 5 登记（R28-S66）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 16 已审计 + 6 登记（R28-S66 / R28-E2）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 21, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 22, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -1993,6 +2004,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/messages/store-pg.ts',
       'services/api/src/ocr/store-pg.ts',
       'services/api/src/privacy/backup-copies-pg.ts',
+      'services/api/src/privacy/backup-purge-driver.ts',
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',
