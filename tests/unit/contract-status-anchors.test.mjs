@@ -96,7 +96,15 @@ test('① 正控制：仓内台账 exit 0，锚点统计与台账条目数自洽
   assert.equal(referenced + gapTotal, total, '锚点 + 不可核必须覆盖全部证据项');
   assert.equal(inRange + fileOnly, referenced, '区间内 + 仅整文件必须等于自带锚点的条数');
   assert.equal(lineOnly + noLines + testNoName, gapTotal, '不可核三分类必须等于不可核总数');
-  assert.match(result.stdout, /WARN: 无锚点可疑引用前 \d+\/\d+ 条：/);
+  // WARN 行只在**还有**无锚点引用时出现（工具口径：gapTotal === 0 不打印）。
+  // 因此两个方向都要判：有缺口 ⇒ 必须打印且带 `前 N/M 条：`；零缺口 ⇒ 必须不打印。
+  // 本片（R28-S60）把最后 5 条「无用例名」补齐后仓内第一次到 0，旧的「无条件 match WARN」
+  // 会在这条正控制上误红；改成双向后，任一侧退化（该打印却不打印 / 不该打印却打印）都会红。
+  if (gapTotal > 0) {
+    assert.match(result.stdout, /WARN: 无锚点可疑引用前 \d+\/\d+ 条：/);
+  } else {
+    assert.doesNotMatch(result.stdout, /WARN: 无锚点可疑引用/, '零缺口时不应再打印 WARN 行');
+  }
 });
 
 test('② 路径不存在 ⇒ 形状错误判红', t => {

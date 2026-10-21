@@ -18,6 +18,7 @@ import {
   CLEAN_TITLE,
   USER_A,
   USER_B,
+  assertApiError,
   idem,
   makeHarness,
   publishPost,
@@ -260,4 +261,97 @@ test('反例：审核台账**不得**冒充契约 Moderation（缺 model_version
   assert.equal(typeof record.rule_version, 'string');
   assert.equal(typeof record.hard_rule_passed, 'boolean');
   assert.ok(record.reason_codes.length <= 30);
+});
+
+test('getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）', async () => {
+  const h = makeHarness();
+  const post = await publishPost(h.service, USER_A, {}, idem(11));
+  const comment = await h.service.createComment(USER_B, post.id, { body: '评论区的第一版正文' }, {
+    idempotencyKey: idem(12),
+    ifMatch: `"${post.revision}"`,
+  });
+  assert.deepEqual(check('Comment', comment), [], 'createComment 返回必须满足契约 Comment');
+  assert.equal(comment.revision, 1, '新评论从 revision 1 起（下面"旧 revision"反例要用字面量 "1"）');
+
+  const read = await h.service.getComment(USER_B, comment.id);
+  assert.deepEqual(check('Comment', read), [], 'getComment 返回必须满足契约 Comment');
+  assert.equal(read.id, comment.id);
+  assert.equal(read.post_id, post.id);
+  assert.equal(read.revision, comment.revision);
+
+  const edited = await h.service.editComment(USER_B, comment.id, { body: '改后的正文' }, {
+    idempotencyKey: idem(13),
+    ifMatch: `"${comment.revision}"`,
+  });
+  assert.deepEqual(check('Comment', edited), [], 'editComment 返回必须满足契约 Comment');
+  assert.equal(edited.revision, comment.revision + 1);
+  assert.equal(edited.body, '改后的正文');
+
+  // 反例一：非作者编辑 ⇒ 与他人不可见同形的 404（不泄露存在性），且不落新版本。
+  await assert.rejects(
+    h.service.editComment(USER_A, comment.id, { body: '越权的改写' }, {
+      idempotencyKey: idem(14),
+      ifMatch: `"${edited.revision}"`,
+    }),
+    assertApiError('NOT_FOUND', 404),
+  );
+
+  // 反例二：拿旧 revision 编辑（当前已是 2，If-Match 仍给 "1"）⇒ 409 REVISION_CONFLICT。
+  await assert.rejects(
+    h.service.editComment(USER_B, comment.id, { body: '拿着旧版本再改' }, {
+      idempotencyKey: idem(15),
+      ifMatch: '"1"',
+    }),
+    assertApiError('REVISION_CONFLICT', 409),
+  );
+
+  const deleted = await h.service.deleteComment(USER_B, comment.id, {
+    idempotencyKey: idem(16),
+    ifMatch: `"${edited.revision}"`,
+  });
+  assert.deepEqual(check('Ack', deleted), [], 'deleteComment 返回必须满足契约 Ack');
+
+  // 反例三：软删后读不到（不是返回一条 visibility=deleted 的 Comment）。
+  await assert.rejects(h.service.getComment(USER_B, comment.id), assertApiError('NOT_FOUND', 404));
+});
+
+test('likeComments / unlikeComments 的响应形状与契约一致（Ack），重复 PUT 幂等、未点赞取消不回退', async () => {
+  const h = makeHarness();
+  const post = await publishPost(h.service, USER_A, {}, idem(17));
+  const comment = await h.service.createComment(USER_B, post.id, { body: '被点赞的那条评论' }, {
+    idempotencyKey: idem(18),
+    ifMatch: `"${post.revision}"`,
+  });
+  const ifMatch = `"${comment.revision}"`;
+
+  const liked = await h.service.likeComments(USER_A, comment.id, { idempotencyKey: idem(19), ifMatch });
+  assert.deepEqual(check('Ack', liked), [], 'likeComments 返回必须满足契约 Ack');
+  assert.equal(liked.accepted, true);
+
+  // 同一把幂等键重复 PUT：走幂等重放，同样是 Ack，不得抛错、不得重复计数。
+  const replayed = await h.service.likeComments(USER_A, comment.id, { idempotencyKey: idem(19), ifMatch });
+  assert.deepEqual(check('Ack', replayed), [], '重复 PUT 的幂等重放也必须满足契约 Ack');
+  assert.equal(replayed.accepted, true);
+
+  const afterLike = await h.service.getComment(USER_B, comment.id);
+  assert.deepEqual(check('Comment', afterLike), []);
+  // 契约 Comment **没有** like_count（且 additionalProperties:false 不许带额外字段），
+  // 所以计数不能从契约读面取——本文件用这条断言把"契约缺该字段"钉住，计数改由服务诊断口 countLikes 读。
+  assert.ok(
+    check('Comment', { ...afterLike, like_count: 1 }).some((item) => item.includes('additionalProperties')),
+    '契约 Comment 不含 like_count，计数只能取服务诊断口 countLikes',
+  );
+  assert.equal(await h.service.countLikes('comment', comment.id), 1, '重复 PUT 不得重复计数（不得为 2）');
+
+  const unliked = await h.service.unlikeComments(USER_A, comment.id, { idempotencyKey: idem(20), ifMatch });
+  assert.deepEqual(check('Ack', unliked), [], 'unlikeComments 返回必须满足契约 Ack');
+  assert.equal(await h.service.countLikes('comment', comment.id), 0);
+
+  // 未点赞状态再取消一次：仍 Ack、不抛错，计数不回退成 -1。
+  const unlikedAgain = await h.service.unlikeComments(USER_A, comment.id, { idempotencyKey: idem(21), ifMatch });
+  assert.deepEqual(check('Ack', unlikedAgain), []);
+  assert.equal(unlikedAgain.accepted, true);
+  assert.equal(await h.service.countLikes('comment', comment.id), 0, '不得回退成 -1');
+  // 点赞/取消都不是内容编辑：不得抬高 revision/ETag。
+  assert.equal((await h.service.getComment(USER_B, comment.id)).revision, comment.revision);
 });
