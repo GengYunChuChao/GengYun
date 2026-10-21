@@ -232,7 +232,13 @@ export function createInFlightGuard({ ledger, account, consentStore, now = () =>
     await assertSavable({ exportId, userId, objectVersion });
     const written = await ledger.guardWriteback({ exportId, userId, result });
     recordAudit({ action: 'save_result', exportId, userId, objectVersion, reason: null });
-    return Object.freeze({ written: written.written === true, exportId, objectVersion });
+    // `replay` 仅在为真时出现：保持既有 `{written,exportId,objectVersion}` 返回形状不变。
+    return Object.freeze({
+      written: written.written === true,
+      exportId,
+      objectVersion,
+      ...(written.replay === true ? { replay: true } : {}),
+    });
   }
 
   return Object.freeze({

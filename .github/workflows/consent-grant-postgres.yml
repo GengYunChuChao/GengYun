@@ -56,3 +56,17 @@ jobs:
       - run: W116_PSQL="$(command -v psql)" node tests/integration/egress-object-key-pg.mjs
         env:
           EGRESS_LEDGER_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_egress_test
+      # GY-I27（#29）第六片：**撤回/注销 × 在途回写**的竞态臂，自带 `PASS 1..6` 与真实锁等待读数。
+      # 它同样硬钉库名（`url.pathname === '/gengyun_egress_revoke_race_test'`）且首行断言 public 表数 = 0，
+      # 故与上面两个脚本**不共库**；这里再建一个专用空库，仍只回环 PG、无任何外发。
+      # 不新增 job/check：本 step 挂进既有 `consent-grant-postgres-17.11`，CI 项数不变。
+      # 该臂以 `postgres` 之外的**单一属主登录**跑迁移与夹具（不建 `gengyun_api_runtime` 角色、不起 HTTP），
+      # 因此不需要请求第三片的运行时角色夹具。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_egress_revoke_race_test' && node tests/integration/egress-revoke-race-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_consent_grant_test
+          EGRESS_RACE_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_egress_revoke_race_test
