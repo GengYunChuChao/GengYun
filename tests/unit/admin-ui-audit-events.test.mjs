@@ -487,6 +487,18 @@ test('audit events: 行视图只映射契约真有的字段（actor／前后值�
   assert.equal(flagged.changeLabel, '开 → 关（r4）')
   assert.equal(flagged.changeTone, 'ok')
   assert.equal(flagged.targetHint, 'flag:ai_enabled')
+  // 反向（关 → 开）是「放宽」，语气必须是 warn——两个方向都钉，否则只钉住了收紧那半边。
+  const opened = auditRowView(
+    event({
+      action: 'set_flag',
+      actor: UUID,
+      target_hint: 'flag:submissions_enabled',
+      before_value: { enabled: false, revision: 4 },
+      after_value: { enabled: true, revision: 5 },
+    }),
+  )
+  assert.equal(opened.changeLabel, '关 → 开（r5）')
+  assert.equal(opened.changeTone, 'warn')
   assert.equal(auditRowView(event()).targetLabel, '无目标（target_ref = null）')
 })
 
