@@ -35,6 +35,30 @@ import { ReferenceError, FieldError } from './errors.mjs';
 import { deriveSourceVersion, parseIngredients } from './records.mjs';
 
 /**
+ * 解析「纯文本筛选条件」（制剂剂型／有效成分含量）。
+ *
+ * 该条件是**收窄条件**，只决定哪些记录进入适用集合；它**不参与任何剂量换算**，
+ * 也不改写记录里的原文用量（用量恒不展示，见 labels.mjs）。
+ *
+ * 语义：未提供（undefined/null/空串）→ null；提供了但类型不符或超长 → 显式失败，
+ * 不静默丢弃条件（否则会退化成「条件被无视的全部返回」）。
+ */
+function resolveTextFilter(value, field, details) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    details.push(new FieldError(field, `${field} 必须为字符串`));
+    return null;
+  }
+  const text = value.trim();
+  if (text === '') return null;
+  if (text.length > MAX_QUERY_LENGTH) {
+    details.push(new FieldError(field, `${field} 长度不得超过 ${MAX_QUERY_LENGTH}`));
+    return null;
+  }
+  return text;
+}
+
+/**
  * 规范化查询输入。
  * @param {object} input 原始查询参数（来自 HTTP query 或页面 data）
  * @param {object} catalog loadCatalog() 结果
@@ -77,6 +101,11 @@ export function normalizeQuery(input = {}, catalog) {
     else details.push(new FieldError('region_code', '地区须为浙江 33 开头的 6 位地区码'));
   }
 
+  // 制剂（剂型）与有效成分含量：**筛选收窄条件**，判据与 evaluateApplicability 第 6/7 维完全同一套
+  // （normalizeText 精确相等 / ingredientContentMatch 精确语义），保证「筛选」与「适用判定」不会给出两套结论。
+  const dosageForm = resolveTextFilter(input.dosage_form, 'dosage_form', details);
+  const ingredientContent = resolveTextFilter(input.ingredient_content, 'ingredient_content', details);
+
   if (details.length > 0) {
     throw new ReferenceError('INVALID_REQUEST', '查询参数不合法', { details });
   }
@@ -90,6 +119,8 @@ export function normalizeQuery(input = {}, catalog) {
     use_scene: typeof input.use_scene === 'string' && input.use_scene.trim() !== '' ? input.use_scene.trim() : null,
     growth_stage: typeof input.growth_stage === 'string' && input.growth_stage.trim() !== '' ? input.growth_stage.trim() : null,
     planting_method: typeof input.planting_method === 'string' && input.planting_method.trim() !== '' ? input.planting_method.trim() : null,
+    dosage_form: dosageForm,
+    ingredient_content: ingredientContent,
     registration_number: typeof input.registration_number === 'string' && input.registration_number.trim() !== '' ? input.registration_number.trim() : null,
     limit,
     cursor: typeof input.cursor === 'string' ? input.cursor : null,
@@ -185,6 +216,18 @@ export function matchConditions(item, query) {
   }
   if (query.growth_stage || query.planting_method) {
     reasons.push('记录未采集生育期／种植方式条件');
+  }
+  // 制剂（剂型）：与 evaluateApplicability 第 6 维同一判据（normalizeText 精确相等）。
+  // 未采集剂型 → 如实标注，**不按「未提供即视为符合」放行**。
+  if (query.dosage_form) {
+    const form = normalizeText(item.dosage_form ?? '');
+    if (form === '') reasons.push('记录未采集制剂（剂型），无法按所选剂型确认');
+    else if (form !== normalizeText(query.dosage_form)) reasons.push('制剂（剂型）不符');
+  }
+  // 有效成分/含量：与 evaluateApplicability 第 7 维同一精确语义（不做模糊包含，避免「磺草酮」命中「硝磺草酮」）。
+  if (query.ingredient_content) {
+    const parsed = item.verification?.parsed_ingredients ?? parseIngredients(item.ingredients_text);
+    if (!ingredientContentMatch(parsed, query.ingredient_content)) reasons.push('有效成分/含量与所选不符');
   }
 
   if (query.registration_number) {
@@ -428,6 +471,27 @@ function firstNonEmptyString(...values) {
  *   }
  * 关键：`match_state` 区分 no_match（有条件但无命中）与 insufficient（条件缺项导致无法确认）。
  */
+/**
+ * 本次查询**实际应用**的筛选维度清单（命中侧可解释字段，与 `unmatched_reasons` 对称）。
+ *
+ * 命中记录必然同时满足清单里的全部维度 —— 因此该清单对每条命中项都成立，
+ * 页面据它显示「命中条件：作物／制剂（剂型）…」，避免用户误以为结果是放宽条件得来的。
+ */
+export function appliedDimensions(query) {
+  const dims = [];
+  if (query.crop_id) dims.push('crop_id');
+  if (query.species_id) dims.push('species_id');
+  if (query.region_code) dims.push('region_code');
+  if (query.use_scene) dims.push('use_scene');
+  if (query.growth_stage) dims.push('growth_stage');
+  if (query.planting_method) dims.push('planting_method');
+  if (query.dosage_form) dims.push('dosage_form');
+  if (query.ingredient_content) dims.push('ingredient_content');
+  if (query.registration_number) dims.push('registration_number');
+  if (query.q) dims.push('q');
+  return Object.freeze(dims);
+}
+
 export function runQuery(items, query, catalog) {
   const eligible = [];
   let simulatedExcluded = 0;
@@ -450,7 +514,7 @@ export function runQuery(items, query, catalog) {
 
   // 判定 match_state
   const hasAnyCondition = Boolean(
-    query.crop_id || query.species_id || query.region_code || query.use_scene || query.normQ || query.registration_number || query.growth_stage || query.planting_method,
+    query.crop_id || query.species_id || query.region_code || query.use_scene || query.normQ || query.registration_number || query.growth_stage || query.planting_method || query.dosage_form || query.ingredient_content,
   );
   let matchState;
   const reasons = [];
@@ -483,12 +547,15 @@ export function runQuery(items, query, catalog) {
     reasons,
     unmatched_reasons: perItemReasons.slice(0, 10),
     simulated_excluded: simulatedExcluded,
+    matched_dimensions: appliedDimensions(query),
     query: Object.freeze({
       q: query.q,
       crop_id: query.crop_id,
       species_id: query.species_id,
       region_code: query.region_code,
       use_scene: query.use_scene,
+      dosage_form: query.dosage_form ?? null,
+      ingredient_content: query.ingredient_content ?? null,
       registration_number: query.registration_number,
       limit: query.limit,
     }),

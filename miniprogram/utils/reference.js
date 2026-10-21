@@ -217,6 +217,10 @@ function query(params) {
   const useScene = norm(params.use_scene)
   const growthStage = norm(params.growth_stage)
   const plantingMethod = norm(params.planting_method)
+  // #8：制剂（剂型）与有效成分含量——**收窄条件**，判据与 evaluateApplicability 第 6/7 维同一套。
+  // 只决定哪条记录进入适用集合，**不参与任何剂量换算**（用量恒不展示）。
+  const dosageForm = norm(params.dosage_form)
+  const ingredientContent = typeof params.ingredient_content === 'string' ? params.ingredient_content.trim() : ''
   const limit = clampLimit(params.limit)
   const offset = decodeCursor(params.cursor)
 
@@ -244,6 +248,16 @@ function query(params) {
     // G3：growth_stage / planting_method —— 首批资料**未采集**这两个条件，
     //     与域库一致：保留「记录未采集」的真实不匹配状态（不得静默放宽为全量匹配）。
     if (growthStage || plantingMethod) reasons.push('记录未采集生育期／种植方式条件')
+    // #8：剂型未采集 → 如实标注，不按「未提供即视为符合」放行；不符 → 明确原因。
+    if (dosageForm) {
+      const form = norm(item.dosage_form || '')
+      if (form === '') reasons.push('记录未采集制剂（剂型），无法按所选剂型确认')
+      else if (form !== dosageForm) reasons.push('制剂（剂型）不符')
+    }
+    // #8：有效成分/含量用精确语义（不下推到子串包含），与域库 ingredientContentMatch 同判。
+    if (ingredientContent) {
+      if (!ingredientContentMatch(parseIngredientsLocal(item.ingredients_text || ''), ingredientContent)) reasons.push('有效成分/含量与所选不符')
+    }
     if (q) {
       const hay = [item.norm.name, item.norm.producer, item.norm.registration, item.norm.ingredients, item.norm.use_scene, item.norm.target].join(' ')
       if (hay.indexOf(q) === -1) reasons.push('关键词不匹配')
@@ -254,7 +268,7 @@ function query(params) {
 
   matched.sort(function (a, b) { return a.registration_number < b.registration_number ? -1 : a.registration_number > b.registration_number ? 1 : 0 })
 
-  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg || params.use_scene || params.growth_stage || params.planting_method)
+  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg || params.use_scene || params.growth_stage || params.planting_method || dosageForm || ingredientContent)
   let matchState
   const reasonsOut = []
   if (matched.length > 0) {
@@ -281,8 +295,37 @@ function query(params) {
     next_cursor: nextCursor,
     reasons: reasonsOut,
     unmatched_reasons: unmatched.slice(0, 10),
-    simulated_excluded: simulatedExcluded
+    simulated_excluded: simulatedExcluded,
+    // #8：命中侧可解释字段（与域库 appliedDimensions 同口径同顺序）——每条命中项都满足这些维度。
+    matched_dimensions: appliedDimensions({
+      crop_id: cropId,
+      species_id: speciesId,
+      region_code: regionCode,
+      use_scene: useScene,
+      growth_stage: growthStage,
+      planting_method: plantingMethod,
+      dosage_form: dosageForm,
+      ingredient_content: ingredientContent,
+      registration_number: reg,
+      q: q
+    })
   }
+}
+
+// #8：本次查询**实际应用**的筛选维度清单（与域库 query.mjs appliedDimensions 同序同判）。
+function appliedDimensions(query) {
+  const dims = []
+  if (query.crop_id) dims.push('crop_id')
+  if (query.species_id) dims.push('species_id')
+  if (query.region_code) dims.push('region_code')
+  if (query.use_scene) dims.push('use_scene')
+  if (query.growth_stage) dims.push('growth_stage')
+  if (query.planting_method) dims.push('planting_method')
+  if (query.dosage_form) dims.push('dosage_form')
+  if (query.ingredient_content) dims.push('ingredient_content')
+  if (query.registration_number) dims.push('registration_number')
+  if (query.q) dims.push('q')
+  return dims
 }
 
 function clampLimit(value) {
@@ -326,7 +369,8 @@ function validateQueryInput(params) {
     }
   }
   // G3：结构化条件类型校验（与域库一致——非字符串即非法，不静默丢弃）。
-  for (const key of ['use_scene', 'growth_stage', 'planting_method']) {
+  // #8：dosage_form（制剂剂型）/ ingredient_content（有效成分含量）同属收窄条件，同口径校验。
+  for (const key of ['use_scene', 'growth_stage', 'planting_method', 'dosage_form', 'ingredient_content']) {
     const v = params[key]
     if (v !== undefined && v !== null && v !== '' && typeof v !== 'string') {
       throw invalidRequest(key + ' 必须为字符串')
@@ -1061,8 +1105,19 @@ function evaluateDoseBoundary(item, context, opts) {
   };
 }
 
+// #8：剂型筛选项——由随包记录**确定性派生**（去空、去重、按码位排序），
+// 不在页面硬编码枚举，避免与其他剂型口径漂移；也不新增任何判定分支。
+const dosageForms = Array.from(
+  new Set(
+    normalized
+      .map(function (item) { return item.dosage_form })
+      .filter(function (form) { return typeof form === 'string' && form !== '' })
+  )
+).sort()
+
 module.exports = {
   crops: crops.crops,
+  dosageForms: dosageForms,
   APPLICABILITY_RULE_VERSION: APPLICABILITY_RULE_VERSION,
   RESTRICTION_STATUSES: RESTRICTION_STATUSES,
   APPLICABILITY_DIMENSIONS: APPLICABILITY_DIMENSIONS,
