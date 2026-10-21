@@ -139,6 +139,13 @@
   §2 表行与 §4 第 8 项的「当前读数」已按本树同步。该迁移与 `0024` 的两处刻意差异写在其头注释：
   `state` 直接引用 `0001` 的 `job_state` 枚举（`0013_conversations.sql` 有先例，故不重建同义类型），
   `recognition_jobs.recognition_id` 不设外键（终态记录由 `commitTerminal` 落库，先建后写会产生「合法写入即违反」的约束）。
+- **本片新增迁移（2026-10-21，GY-R28 S20，#20 语音持久化）**：`feat/gy-r28-speech-persist`
+  （基线 `upstream/main` = `693af5d`，已含 `0025_recognitions_persistence.sql`）新增
+  `0026_speech_persistence.sql` 与其 `rollback/0026_speech_persistence.down.sql`（迁移号按派单分配，
+  **未改号、未造占位迁移**）⇒ 按本树实测：迁移 **26** 个（`0001..0026`，**连续无缺号**）、
+  `rollback/` 25 个（`0002..0026`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 25／24／31 变为 **26／25／31**。
+  §2 表行与 §4 第 8 项的「当前读数」已按本树同步。该迁移头部如实登记了本片**未**给三张语音表加
+  `GRANT`（`deploy/postgres-cvm/**` 一字未改）⇒ 运行时角色直连会 `42501`，授权属后续授权片。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -200,7 +207,7 @@
 | [`../../docs/verification/gy-i19-backup-replay-p1-20261015.md`](../../docs/verification/gy-i19-backup-replay-p1-20261015.md) | P1 返修：必重放条目只认本轮证据 | ✅ 在册 |
 | [`../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md`](../../docs/verification/gy-i19-deletion-deadline-p1-20261015.md) | 删除截止 P1 返修 | ✅ 在册 |
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **25** 个：`0001..0025`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0025`（24 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **26** 个：`0001..0026`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0026`（25 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。2026-10-21 `feat/gy-r28-speech-persist`（S20，#20 语音持久化）新增 `0026_speech_persistence.sql` 与其 down 脚本 ⇒ **26／25／31**。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -217,7 +224,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 25 个（`0001..0025`，连续无缺号）；`rollback/` 24 个（`0002..0025`）；`migrate.ts` 报错文本 | ✅ 一致（本片树实读：`0001..0025` 连续无缺号，`0002..0025` 的 down 全部在册、无 `0001`；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 26 个（`0001..0026`，连续无缺号）；`rollback/` 25 个（`0002..0026`）；`migrate.ts` 报错文本 | ✅ 一致（本片树实读：`0001..0026` 连续无缺号，`0002..0026` 的 down 全部在册、无 `0001`；`0026_speech_persistence.sql` 与其 down 由 S20（#20 语音持久化，2026-10-21）新增；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 
