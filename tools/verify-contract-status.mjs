@@ -25,6 +25,25 @@ const semanticErrors = [];
 const driftErrors = [];
 const semanticCounts = { intervals: 0, snippets: 0 };
 const uncertifiable = { intervals: 0, snippets: 0 };
+// 证据锚点（符号）校验：引用若自带锚点文本，锚点必须真的出现在它引用的那几行里，否则引用与符号对不上。
+// 容差 ±2 行的实测依据（基线 56042f7 的 229 条带行号引用，向上找最近的 function/const/class 声明行）：
+// 区间起点正好落在声明行 41 条、落在声明后 1 行 25 条、后 2 行 9 条、后 3 行 12 条、更远 121 条，另有 21 条上方无声明。
+// 取 0 会把「引用裁掉了声明行后的空行/注释」那 34 条（14.85%）正确锚点误判成错位；取 3 只多覆盖 12 条（5.24%），
+// 却开始把「隔一条语句」也算命中，判别力反而下降。故取 2，并在证据页写清依据。
+const ANCHOR_TOLERANCE = 2;
+const anchorCounts = { referenced: 0, inRange: 0, fileOnly: 0 };
+const anchorGaps = { lineOnly: 0, noLines: 0, testNoName: 0 };
+const anchorSuspicions = [];
+// 区间内容口径：纯行号引用也要能「咬」到东西——整段只剩空白/收尾行说明引用没指到实现。
+// 基线 56042f7 实测 229 条区间里 15 条整段无实质内容（多为社区域 `:200-200` 这类指向 `});` 的引用），
+// 命中率不为 0，所以只计可疑、不判红；区间首行为空行 24 条同样只计数。
+const CLOSING_LINE = /^(?:[}\]\)]+;?|end;?|--|\/\*.*\*\/)$/i;
+const isSubstantiveLine = line => {
+  const trimmed = line.trim();
+  return trimmed !== '' && !CLOSING_LINE.test(trimmed);
+};
+const contentCounts = { lineRefs: 0, contentless: 0, blankStart: 0 };
+const contentlessSuspicions = [];
 let synchronized = false;
 const evidenceTexts = new Map();
 const readEvidence = absolute => {
@@ -35,6 +54,26 @@ const readEvidence = absolute => {
 // statSync 会跟随符号链接，仓库边界仍由 evidenceWithinRepository 单独判定。
 const isRegularFile = path => {
   try { return statSync(path).isFile(); } catch { return false; }
+};
+// 锚点字段：`symbol` 与 `anchor` 同义、二选一（同给且不同值即形状错误）；test 引用的 `name` 本身就是用例名锚点。
+// 锚点语义是「这段引用里属于本操作的那一行/那几行」，不是「所属函数名」——后者落在区间外，本工具会判语义错误。
+const anchorSpec = item => {
+  const present = ['symbol', 'anchor'].filter(key => item[key] !== undefined);
+  if (present.length === 2 && item.symbol !== item.anchor) return { kind: 'conflict' };
+  if (present.length >= 1) {
+    const [key] = present;
+    if (typeof item[key] !== 'string' || item[key].trim() === '') return { kind: 'invalid', key };
+    return { kind: 'value', key, value: item[key] };
+  }
+  if (typeof item.test === 'string' && typeof item.name === 'string' && item.name !== '') return { kind: 'value', key: 'name', value: item.name };
+  return { kind: 'none' };
+};
+const anchorLineNumbers = (text, value) => {
+  const hits = [];
+  for (let index = text.indexOf(value); index !== -1; index = text.indexOf(value, index + 1)) {
+    hits.push(text.slice(0, index).split('\n').length);
+  }
+  return hits;
 };
 const status = JSON.parse(readFileSync(STATUS_FILE, 'utf8'));
 const operations = JSON.parse(readFileSync(OPERATIONS_FILE, 'utf8'));
@@ -100,6 +139,13 @@ function checkEntry(entry, owner) {
     if (!isRegularFile(absolute)) continue;
     const text = readFileSync(absolute, 'utf8');
     if (typeof item.name === 'string' && item.name !== '') check(text.includes(item.name), `${owner}: ${path} 中找不到用例名「${item.name}」`);
+    const anchor = anchorSpec(item);
+    if (anchor.kind === 'conflict') errors.push(`${owner}: ${path} 的 symbol 与 anchor 同给且取值不同，锚点必须唯一`);
+    if (anchor.kind === 'invalid') errors.push(`${owner}: ${path} 的锚点 ${anchor.key} 必须是非空字符串`);
+    // 「锚点指不到任何东西」与「找不到用例名」同级：都是引用形式错误，不是语义判断。
+    if (anchor.kind === 'value' && anchor.key !== 'name' && !text.includes(anchor.value)) {
+      errors.push(`${owner}: ${path} 中找不到锚点「${anchor.value}」`);
+    }
     if (item.lines !== undefined) {
       const match = /^(\d+)-(\d+)$/.exec(item.lines);
       check(match !== null, `${owner}: ${path} lines 必须是起-止`);
@@ -174,6 +220,59 @@ function checkSnippetSemantics(entry, owner, path, text, item) {
 }
 for (const entry of status.operations ?? []) checkSemantics(entry, entry.id ?? operationKey(entry.method, entry.path));
 
+// 锚点校验：同时覆盖 operations 与 dimensions（dimensions 的带行号证据此前从没被区间检查覆盖过）。
+// 三档互不冒充：找不到锚点 = 形状错误；锚点在文件里但落区间外 = 语义错误（可核计数）；
+// 压根没有锚点 = 只计「不可核」并列可疑，不判红（基线实测 0/409 条锚点，缺锚点是台账现状，不是本片子要的错）。
+// 区间内容可疑档与锚点无关：任何带行号的引用（含 229 条纯行号）都量「这段里有没有实质内容行」。
+function checkAnchors(entry, owner) {
+  for (const item of entry.evidence ?? []) {
+    const anchor = anchorSpec(item);
+    const path = [item.path, item.test].find(value => typeof value === 'string');
+    if (path === undefined) continue;
+    const reference = item.lines === undefined ? path : `${path}:${item.lines}`;
+    if (anchor.kind !== 'value') {
+      if (typeof item.test === 'string') anchorGaps.testNoName += 1;
+      else if (item.lines === undefined) anchorGaps.noLines += 1;
+      else anchorGaps.lineOnly += 1;
+      anchorSuspicions.push(`${owner} ${reference}`);
+    }
+    if (!evidenceWithinRepository(ROOT, path)) continue;
+    const absolute = resolve(ROOT, path);
+    if (!isRegularFile(absolute)) continue;
+    const text = readEvidence(absolute);
+    const match = /^(\d+)-(\d+)$/.exec(item.lines ?? '');
+    let lines = null;
+    let from = 0;
+    let to = 0;
+    if (match !== null) {
+      lines = text.split('\n');
+      from = Number(match[1]);
+      to = Number(match[2]);
+      // 越界已作为形状错误报告；这里只量合法区间的内容。
+      if (from >= 1 && to >= from && to <= lines.length) {
+        contentCounts.lineRefs += 1;
+        const slice = lines.slice(from - 1, to);
+        if (!slice.some(isSubstantiveLine)) {
+          contentCounts.contentless += 1;
+          contentlessSuspicions.push(`${owner} ${reference}`);
+        }
+        if (slice[0].trim() === '') contentCounts.blankStart += 1;
+      }
+    }
+    if (anchor.kind !== 'value') continue;
+    if (!text.includes(anchor.value)) continue; // 「找不到锚点」已作为形状错误报告
+    anchorCounts.referenced += 1;
+    if (match === null) { anchorCounts.fileOnly += 1; continue; } // 无行号：只能证「文件里出现过」，不冒充区间可核
+    if (from < 1 || to < from || to > lines.length) continue; // 越界已作为形状错误报告
+    const hits = anchorLineNumbers(text, anchor.value);
+    if (hits.some(line => from - ANCHOR_TOLERANCE <= line && line <= to + ANCHOR_TOLERANCE)) { anchorCounts.inRange += 1; continue; }
+    // 锚点在文件里但不在引用行范围内：引用指到了别处，这是可证伪的错位，不是「不可核」。
+    semanticErrors.push(`${owner}: ${reference} 的锚点「${anchor.value}」不在引用行范围内（容差 ±${ANCHOR_TOLERANCE} 行；实际出现在第 ${hits.slice(0, 5).join('、')}${hits.length > 5 ? ' 等' : ''} 行）`);
+  }
+}
+for (const entry of status.operations ?? []) checkAnchors(entry, entry.id ?? operationKey(entry.method, entry.path));
+for (const dimension of status.dimensions ?? []) checkAnchors(dimension, `dimension ${dimension.key}`);
+
 // Only regenerate tables after coverage, evidence and assembly have passed.
 if (errors.length === 0) {
   try {
@@ -208,6 +307,13 @@ if (failures.length > 0) {
 const count = (list, value) => list.filter(entry => entry.status === value).length;
 console.log(`PASS: 覆盖 ${status.operations.length} 条契约操作；已装配 ${mounted.size} 条；implemented ${count(status.operations, 'implemented')} / partial ${count(status.operations, 'partial')} / planned ${count(status.operations, 'planned')}；横切维度 ${status.dimensions.length} 条；形状错误 0 项；语义错误 0 项`);
 console.log(`PASS: 语义可核 ${semanticCounts.intervals} 条区间 + ${semanticCounts.snippets} 条片段；不可核 ${uncertifiable.intervals} 条区间 + ${uncertifiable.snippets} 条片段（不可核不计入通过）`);
+const anchorGapTotal = anchorGaps.lineOnly + anchorGaps.noLines + anchorGaps.testNoName;
+console.log(`PASS: 证据锚点 ${anchorCounts.referenced} 条引用自带锚点（区间内 ${anchorCounts.inRange} 条 + 仅整文件 ${anchorCounts.fileOnly} 条）；无锚点不可核 ${anchorGapTotal} 条（纯行号 ${anchorGaps.lineOnly} + 无行号源文件 ${anchorGaps.noLines} + 无用例名 ${anchorGaps.testNoName}），只计数不判红`);
+const suspects = anchorSuspicions.slice(0, 5);
+if (suspects.length > 0) console.log(`WARN: 无锚点可疑引用前 ${suspects.length}/${anchorSuspicions.length} 条：${suspects.join('、')}`);
+console.log(`PASS: 纯行号区间 ${contentCounts.lineRefs} 条（有实质内容 ${contentCounts.lineRefs - contentCounts.contentless} 条；整段仅空白/收尾行 ${contentCounts.contentless} 条、区间首行为空行 ${contentCounts.blankStart} 条，只计可疑不判红）`);
+const contentless = contentlessSuspicions.slice(0, 5);
+if (contentless.length > 0) console.log(`WARN: 整段无实质内容的前 ${contentless.length}/${contentlessSuspicions.length} 条：${contentless.join('、')}`);
 if (synchronized) console.log('SYNC: 中文表格此前不是「中文表格一致」状态，已按 JSON 重写；本次重写不计入通过。');
 else console.log('PASS: 中文表格一致');
 if (flags.has('--runtime')) console.log('PASS: 无凭据 stub 子进程中的实际 Fastify 产品装配与静态扫描、对照表一致（不监听 / 不请求服务）。');
