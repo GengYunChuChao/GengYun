@@ -185,7 +185,13 @@ PostgreSQL 上按 `README`「提交一致性契约」的部署义务实现为**�
     `medium.rows` **不影响**账本持有的绑定（**选择「不影响」而非「拒绝」**：捕获引用后替换本就不生效）。
   - 账本以 `Map.prototype.set.call` 内建方法写入，**不可能**在写路径内启动异步任务。
     于是不存在「被调用时启动异步保存链、事后再判错」的窗口；也不依赖 `constructor.name` 猜测同步性。
-  `guardWriteback` 自身**不返回任何可后置消费的授权结论**（只回 `{ written:true, exportId }`）。
+  `guardWriteback` 自身**不返回任何可后置消费的授权结论**：首次写入回 `{ written:true, exportId }`；
+  命中已有回写（`ON CONFLICT (export_id) DO NOTHING` 落 0 行）时回
+  `{ written:false, replay:true, exportId }` —— **0 行就是 0 行**，既不谎称写过，也不覆盖第一次的载荷
+  （第一个结果即最终结果，重放不得改写已提交内容）。`in-flight.saveResult` 只在为真时附带 `replay`，
+  因此首次回执仍是逐字 `{ written, exportId, objectVersion }`。回归：
+  `tests/privacy/writeback-idempotency.test.mjs`（内存账本 5 例：诚实性 / 不覆盖 / 不削弱撤回与取消守卫）与
+  `tests/integration/egress-revoke-race-pg.mjs` 的 PASS 2（真库 `rowCount` 读数）。
   回归见 `tests/privacy/ledger.test.mjs`：R5-1 正向、R5-2 校验前撤回/注销零写入、R5-3 门禁异步返回暂停
   期间撤回/注销仍只在临界区内写一次、R5-4 注入含函数／缺 own rows 的介质 → 构造即拒绝；
   **R7-1..R7-5** 以「函数返回延迟 Promise」注入（含 `{ write: entry => pending.then(() => save(entry)) }`

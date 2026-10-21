@@ -109,6 +109,16 @@ export function writebackMediumWrite(binding, entry) {
 }
 
 /**
+ * 账本自身的同步存在性判断：**先判后写**用的同一步内检查，同样只用已捕获的绑定引用。
+ * @param {{ rows: Map<string, object> }} binding 由 assertWritebackMedium 返回的冻结绑定
+ * @param {string} exportId
+ * @returns {boolean}
+ */
+export function writebackMediumHas(binding, exportId) {
+  return Map.prototype.has.call(binding.rows, exportId);
+}
+
+/**
  * 账本自身的同步读取（供审计/测试）：只使用**已捕获的绑定引用**，返回浅拷贝。
  * @param {{ rows: Map<string, object> }} binding 由 assertWritebackMedium 返回的冻结绑定
  * @param {string} exportId
