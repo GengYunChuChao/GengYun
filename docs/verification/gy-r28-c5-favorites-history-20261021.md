@@ -12,7 +12,7 @@
 | 服务端（历史） | **已通** | 识别/OCR 终态由 `recordHistoryTerminal` 写入（确定性 `event_key` 幂等），列表游标分页、删除走 CAS |
 | 契约 `packages/contracts/**`（只读） | **半通** | 五个 operation 与实现一一对应；**没有** `GET /favorites/{id}`、也没有 `GET /history/{id}`，详情只能靠列表 + `GET /recognitions/{id}` / `GET /ocr/{id}` 组合（契约面如实登记，本次不动） |
 | 小程序（收藏页 / 历史页 / 历史详情） | **已通（本次修 403）** | 页面齐全、状态组件齐全；但 401 与 403 在消费层被折叠成同一件事，denied 状态永远渲染不出来 —— 本次修好 |
-| 小程序（识别结果页「收藏」） | **未通（缺口，本次不实施）** | `identify.wxml` / `identify.js` 对 `收藏|favorit` **零命中**：识别结果页没有收藏入口，只能经「识别 → 资料详情 → 收藏」两跳 |
+| 小程序（识别结果页「收藏」） | **未通（缺口，本次不实施）** | `identify.wxml` / `identify.js` 里「收藏」与 `favorit` 两处关键词**零命中**：识别结果页没有收藏入口，只能经「识别 → 资料详情 → 收藏」两跳 |
 | 小程序（识别结果页「写历史」） | **已通** | 写入点在服务端终态端口（不在页面）；页面侧提供 `onOpenServerHistory` 跳 `/pages/history/history` |
 
 ## 2. 服务端面（证据）
