@@ -169,7 +169,7 @@ jobs:
           RECOGNITIONS_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognitions_test
       # 账号停用/恢复域（I22 / R28-S39）：库名硬钉 `gengyun_suspend_test`，脚本按「**空库**」前提跑
       # （它自己 apply 0001–0017、再把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；非空库会在首个 `CREATE` 撞车 ⇒ 必红），
-      # 故与既有 9 步同形：`psql -c 'CREATE DATABASE …' && node <脚本>`。
+      # 故与既有 11 步同形：`psql -c 'CREATE DATABASE …' && node <脚本>`。
       # argv 只给 owner URL——省略 argv[3] 时脚本自建/改 `gengyun_api_runtime` 并用随机口令派生运行时 URL，
       # scram-sha-256 下自洽；旧版「口令割裂 ⇒ 28P01」的缺陷已由 R28-S15 修掉
       # （`docs/verification/gy-r28-account-suspend-scram-20261020.md`）。
@@ -197,3 +197,26 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           SPEECH_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_speech_test
+      # 备份副本域（GY-I19 / #19，R28-S49）：**最后一条**此前没有任何 workflow 跑过的真库脚本。
+      # 它是唯一的**自起集群**脚本：runner 上原来没有 17 的服务端二进制（`postgres:17.11` 只活在 service
+      # 容器内），故先一步用 PGDG apt 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再一步真跑。
+      # 它**不**连 service 里那个库、CI 里也**不** `CREATE DATABASE`：库名硬钉在脚本自己的临时集群里
+      # （`DB_NAME = gengyun_backup_purge_test`，端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录）。
+      # 未设 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包/路径没弄好必红（77 不是通过，也不加任何吞红开关）。
+      # 本地取证（本机 PG 17.11 二进制 + 临时数据目录）：exit=0，`RESULT=PASS 13 组`，末行 `CLEANUP=done`。
+      - name: 安装 PG 17 服务端二进制（backup-purge 需要 initdb/pg_ctl）
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          /usr/lib/postgresql/17/bin/initdb --version
+          /usr/lib/postgresql/17/bin/pg_ctl --version
+      - name: 备份副本域（迁移 0023 / 受理同事务 / 30 天清除）
+        run: node tests/integration/backup-purge-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
+          PGCLIENTENCODING: UTF8
