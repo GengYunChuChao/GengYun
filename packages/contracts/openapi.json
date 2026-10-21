@@ -10318,7 +10318,7 @@
             "$ref": "#/components/responses/Error504"
           }
         },
-        "x-scope": "audit:read",
+        "x-scope": "flags:read",
         "x-version-required": false,
         "x-task": "GY-I01"
       }
