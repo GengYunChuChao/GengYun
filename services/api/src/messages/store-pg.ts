@@ -18,6 +18,9 @@
  *     也不存在两次 produce（占位由唯一索引原子取得）。
  *     未把 `produce` 包进一条数据库事务：`MessagesStore` 接口没有事务句柄（改签名属派单停手条件），
  *     而台账的原子性已由上述三条单语句各自保证。
+ *   - `purgeOwnerData` / `deleteAllByOwner`（#17 P0-1 新增）：注销清理原语。**同一事务**内
+ *     ① 按 `owner_id` 删 `public.messages` ② 按 `scope` 前缀删共享台账 `public.idempotency_keys`
+ *     的本人行；两个行数都取自 `RETURNING` 的实际返回行数（注销证据用，幂等可重跑）。
  *
  * 归属域：所有语句都带 `owner_id = $userId` 谓词；唯一的例外是 `getMessage(id)`——
  * 接口方法签名**没有** owner 形参（改签名属停手条件），故它按 id 单条读取，
@@ -36,12 +39,34 @@ import type {
   MarkReadExpectation,
   MarkReadResult,
   MessageRecord,
-  MessagesStore,
+  MessagesOwnerPurgeCounts,
+  PurgeableMessagesStore,
 } from './store.ts';
 
 /** `pg` 连接池的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
 export interface SqlRunner {
   query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+}
+
+/** 事务连接（`pg.Pool#connect` 的返回值形状；本文件只用到 `query` 与 `release`）。 */
+export interface MessagesPurgeConnection extends SqlRunner {
+  release(): void;
+}
+
+/**
+ * 具备事务能力的池（`db/pool.ts` 的 `PgPool` 在结构上满足它）。
+ *
+ * 本工厂的入参仍只声明 `SqlRunner`：既有方法都只需要 `query`，把入参改宽会让既有替身
+ * 与注入点一起改签名。注销清理需要事务，因此**调用时**按 `connect` 是否存在判定——
+ * 拿不到事务连接就如实 `PROVIDER_UNAVAILABLE`，绝不用两条独立 `DELETE` 冒充"同一事务"。
+ */
+export interface TransactionalMessagesPool extends SqlRunner {
+  connect(): Promise<MessagesPurgeConnection>;
+}
+
+function asTransactionalPool(pool: SqlRunner): TransactionalMessagesPool | null {
+  const candidate = pool as { connect?: unknown };
+  return typeof candidate.connect === 'function' ? (pool as TransactionalMessagesPool) : null;
 }
 
 export interface PostgresMessagesStoreOptions {
@@ -65,6 +90,37 @@ export function classifyMessagesDatabaseError(error: unknown): never {
 }
 
 const COLUMNS = 'id, revision, owner_id, type, target_ref, read_at, created_at, event_key';
+
+/**
+ * 事务包裹：`BEGIN` → `SET LOCAL lock_timeout = '4s'` → 业务 → `COMMIT`；异常 `ROLLBACK` 后折叠为契约错误。
+ * 与 `favorites/store-pg.ts` 的事务写法逐条同口径（同一锁超时、同一 `release` 保证、同一错误折叠），
+ * 这样两个域在注销链上的失败分档不会各说一套。
+ */
+async function withTransaction<T>(
+  pool: TransactionalMessagesPool,
+  run: (sql: SqlRunner) => Promise<T>,
+): Promise<T> {
+  let connection: MessagesPurgeConnection | null = null;
+  try {
+    connection = await pool.connect();
+    await connection.query('BEGIN');
+    await connection.query("SET LOCAL lock_timeout = '4s'");
+    const result = await run(connection);
+    await connection.query('COMMIT');
+    return result;
+  } catch (error) {
+    if (connection !== null) {
+      try {
+        await connection.query('ROLLBACK');
+      } catch {
+        // 回滚失败不覆盖原始异常：原始异常才是可诊断的原因。
+      }
+    }
+    return classifyMessagesDatabaseError(error);
+  } finally {
+    connection?.release();
+  }
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
@@ -118,7 +174,7 @@ function outcomeFromRow(value: unknown): IdempotencyOutcome {
   return { kind: 'message', id: candidate.id, revision: candidate.revision };
 }
 
-export function createPostgresMessagesStore(options: PostgresMessagesStoreOptions): MessagesStore {
+export function createPostgresMessagesStore(options: PostgresMessagesStoreOptions): PurgeableMessagesStore {
   const { pool } = options;
   const settlePollMs = options.settlePollMs ?? 25;
 
@@ -136,6 +192,51 @@ export function createPostgresMessagesStore(options: PostgresMessagesStoreOption
     const rows = await run(`SELECT ${COLUMNS} FROM public.messages WHERE id = $1::uuid`, [id]);
     const row = rows[0];
     return row === undefined ? null : messageRecordFromRow(row);
+  }
+
+  /**
+   * GY-I17（#17）· 注销清空的**同一事务**实现（范本 `favorites/store-pg.ts` 的 `purgeOwnerRows`）：
+   *   ① `DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id`；
+   *   ② `DELETE FROM public.idempotency_keys WHERE left(scope, char_length($1::text) + 1)
+   *        = $1::text || chr(10) RETURNING scope`。
+   *
+   * 两个行数都取自 `RETURNING` 的**实际返回行数**（`SqlRunner` 没有 `rowCount`），因此证据里的
+   * `messages:online-purged:<n>` 是"真删了 n 行"，不是"调用没报错"。
+   *
+   * 为什么 ② 是**前缀精确比较**而不是 `LIKE '%…%'`：`public.idempotency_keys` 是**共享**台账
+   * （`0008_auth_session.sql:46-58`；auth 的 `/auth/wechat`、`/auth/logout` 与消息域写同一张表），
+   * 而 `scope` 由 `auth/idempotency.ts` 的 `idempotencyScope` 拼成 `<主体 uuid>\n<METHOD>\n<路径>`。
+   * `left(...) = $1::text || chr(10)` 不解释通配符（`_`/`%` 不会走样），主体是定长 uuid
+   * ⇒ 其他主体的行一行不动；同一主体的行全部命中。
+   *
+   * ⚠️ 需要接线的决策者知情的一处**跨域**效果：因为是共享表，这条前缀删会连带删掉本主体在
+   * **其它域**（如 auth 登录/登出）写入的幂等行。它们本属被注销主体、`outcome` 里也可能引用
+   * 该主体的资源，删除与注销语义一致；但它**不是**本域独占的表，属副作用而非本域自清。
+   *
+   * 幂等可重跑：第二次调用对同一主体必然返回 `{ records: 0, idempotency: 0 }`（没有行可删），
+   * 已完成的主体不会被重复计入证据。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<MessagesOwnerPurgeCounts> {
+    const transactional = asTransactionalPool(pool);
+    if (transactional === null) {
+      // 两表删除必须同生共死：拿不到事务连接就如实不可用，不退回"两条独立语句"。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '消息域注销清理需要事务连接，当前数据库池不提供', {
+        retryable: false,
+      });
+    }
+    return withTransaction(transactional, async (sql) => {
+      const records = await sql.query(
+        'DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id',
+        [ownerId],
+      );
+      const idempotency = await sql.query(
+        `DELETE FROM public.idempotency_keys
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+          RETURNING scope`,
+        [ownerId],
+      );
+      return { records: records.rows.length, idempotency: idempotency.rows.length };
+    });
   }
 
   return {
@@ -306,6 +407,19 @@ export function createPostgresMessagesStore(options: PostgresMessagesStoreOption
         if (remaining <= 0) return 'timeout';
         await sleep(Math.min(settlePollMs, remaining));
       }
+    },
+
+    // ---- 注销清理（#17 P0-1） ----
+
+    async deleteAllByOwner(ownerId) {
+      // 正文行数是本方法的既有契约（与 `favorites` 的 `deleteAllByOwner` 同义）；
+      // 台账在同一事务里一并清掉，行数经 `purgeOwnerData` 给出。
+      return (await purgeOwnerRows(ownerId)).records;
+    },
+
+    /** 注销清理的**分表计数**（正文行 + 幂等台账）；协调器用它把两个真实行数都写进证据。 */
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
     },
   };
 }
