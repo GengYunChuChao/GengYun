@@ -3210,7 +3210,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "828-834"
+          "lines": "834-840"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
