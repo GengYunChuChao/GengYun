@@ -61,6 +61,7 @@
         <state-view
           wx:elif="{{loadError}}"
           status="error"
+          error-code="{{loadErrorCode}}"
           title="档案暂时读取失败"
           desc="{{loadError}}"
           action-text="重试读取档案"

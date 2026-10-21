@@ -57,6 +57,8 @@ Page({
     errorText: '',
     stateTitle: '',
     stateDesc: '',
+    // B7：契约错误码透传给 state-view（统一层判定分类与可重试性，403 升级为 denied 语气）。
+    errorCode: '',
     modeNote: '',
     // GY-I26：服务端 `mode` 为 stub／preset_demo 时的**置顶**替身标注（页尾小字不足以「明显」）。
     // 逐字取 `api.modeNote(mode)`，不新造第二套替身文案；real 模式保持为空。
@@ -101,7 +103,7 @@ Page({
   reload: function (done) {
     const epoch = (this._epoch = (this._epoch || 0) + 1)
     const that = this
-    this.setData({ status: 'loading', errorText: '', stateTitle: '', stateDesc: '' })
+    this.setData({ status: 'loading', errorText: '', errorCode: '', stateTitle: '', stateDesc: '' })
     api.listMessages({}).then(function (page) {
       if (epoch !== that._epoch) return
       const items = that._decorate(page.items)
@@ -122,6 +124,7 @@ Page({
       that.setData({
         status: 'error',
         errorText: api.message(error),
+        errorCode: (error && error.code) || '',
         stateTitle: api.stateTitle(error),
         stateDesc: api.message(error),
         modeNote: '',

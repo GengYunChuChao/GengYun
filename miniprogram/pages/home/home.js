@@ -11,7 +11,7 @@ Page({
       { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
       { key: 'ocr', iconClass: 'gy-icon--tag', title: '农药标签识别', desc: '拍包装，读出药名与成分' },
       { key: 'voice', iconClass: 'gy-icon--mic', title: '语音提问', desc: '合成播报已接服务端；录音转写（ASR）尚未接线' }
-    ], local: false, busy: false, loggedIn: false, status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
+    ], local: false, busy: false, loggedIn: false, diagPassed: null, status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
   onShow: function () {
     this._active = true
     const action = this._action = (this._action || 0) + 1
@@ -85,7 +85,11 @@ Page({
   },
   diagnose: function () {
     if (this.data.busy) return
-    this.setData({ busy: true, status: '正在连接本地诊断服务…' })
-    debug.diagnose(wx, (status) => { this.setData({ busy: false, status: status }) })
+    this.setData({ busy: true, diagPassed: null, status: '正在连接本地诊断服务…' })
+    // B7：debug.diagnose 追加回传 passed（true=通过/false=未通过），页面据此把「失败」
+    // 交给统一 state-view 的 error 态，而不是和成功说明混成同一行灰字。
+    debug.diagnose(wx, (status, passed) => {
+      this.setData({ busy: false, status: status, diagPassed: passed === true })
+    })
   }
 })

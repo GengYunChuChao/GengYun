@@ -2,7 +2,8 @@
  * ---------------------------------------------------------------------------
  * 形态取自 docs/ui-demo/dist/styles.css 的 .empty{padding:50px 20px;text-align:center;
  * border:1px dashed #d4dfc7;border-radius:14px;background:#fbfcf8}，并按状态语气扩展：
- * 空态=中性虚线框，失败态=红语气，失效态=黄语气，处理中=绿语气，替身=紫语气。
+ * 空态=中性虚线框，失败态=红语气，失效态=黄语气，处理中=绿语气，替身=紫语气，
+ * 无权限态=石板蓝灰（B7，语气是「锁住了」而非「坏了」）。
  *
  * 全站统一的失败/空/失效/替身/处理中/未登录表达都走本组件：
  * 各页面不得再自写一行灰字当失败提示（见 docs/ui-state-inventory.md 第 2 节）。
@@ -52,6 +53,18 @@
   background: var(--tone-stub-bg, #efeaf7);
 }
 
+/* 失败分类标签（B7）：页面传 error-code 时说明「哪类问题 + 能否重试」，
+   用次级文字色而非状态色，避免与标题抢注意力。 */
+.state__kind {
+  margin-top: 14px;
+  padding: 4rpx 18rpx;
+  border-radius: 6px;
+  font-size: calc(14px * var(--font-scale, 1));
+  line-height: 1.8;
+  color: var(--ink-notice, #7e8a60);
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .state__btn {
   margin-top: 22px;
   min-width: 240rpx;
@@ -94,6 +107,17 @@
 
 .state--invalid .state__title {
   color: var(--color-invalid);
+}
+
+/* 无权限（B7）：已登录但 403。与 guest 的绿色区分开——这不是「请去登录」。
+   语气中立偏冷，不使用警告红，避免用户以为是自己操作出错。 */
+.state--denied {
+  border-color: #cfd3e0;
+  background: var(--tone-denied-bg, #eceef3);
+}
+
+.state--denied .state__title {
+  color: var(--color-denied);
 }
 
 .state--stub {

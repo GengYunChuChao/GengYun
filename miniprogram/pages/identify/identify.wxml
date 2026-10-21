@@ -313,13 +313,18 @@
     </view>
   </view>
 
-  <!-- 失败 / 空态 / 处理中一律收口到统一 state-view 组件（本页不自己拼一套状态样式） -->
+  <!-- 失败 / 空态 / 处理中一律收口到统一 state-view 组件（本页不自己拼一套状态样式）。
+       error-code：六类分支里的 permission_denied 即契约 CONSENT_REQUIRED（403），
+       由统一状态层判定为「没有权限」语气（不是通用失败）；该分支的重试动作是「去授权」，
+       属于针对性动作，故 allow-denied-action 打开，其余 403 场景仍收起重试按钮。 -->
   <state-view
     wx:if="{{stateView && !guest && stateView.component !== 'ready'}}"
     status="{{stateView.component}}"
+    error-code="{{branch === 'permission_denied' ? 'CONSENT_REQUIRED' : ''}}"
     title="{{branchInfo ? branchInfo.label : stateView.title}}"
     desc="{{stateView.desc}}"
     actionText="{{branchInfo && branchInfo.retryable ? branchInfo.retryLabel : ''}}"
+    allow-denied-action="{{branch === 'permission_denied'}}"
     busy="{{busy}}"
     bind:action="onRetry"
   ></state-view>
