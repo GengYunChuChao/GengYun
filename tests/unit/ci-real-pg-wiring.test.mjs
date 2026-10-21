@@ -81,6 +81,12 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 它要求**空库**、只走 env `RECOGNITION_CHAIN_PG_TEST_URL`（库 owner），内部起 loopback 真 HTTP，
  * 且缺 env 时 exit 77 ⇒ step 里必须把 77 显式升级成硬失败（见 workflow 该 step 与
  * `docs/verification/gy-r28-recognition-chain-ci-20261021.md`）。
+ * 第 14 条是 R28-E5 接的（备份副本 30 日到期**清除驱动** `backup-copies-purge-pg.mjs`，`#398` 合入的脚本）：
+ * 它与第 12 条**同类**（自起集群、只连自己 `initdb` 出来的临时 17 集群、跑完 `pg_ctl stop` 并删数据目录），
+ * 因此判据⑦⑧ 走同一套 `SELF_CLUSTERED_SCRIPTS` 等价判据（必须给 `GY_PG_BIN`／`GY_I19_PG_ROOT`、
+ * ⛔ 不得出现 `CREATE DATABASE`）；**装包 step 不重复**——它复用第 12 条那一步装的
+ * `/usr/lib/postgresql/17/bin`。缺 `GY_PG_BIN` 时脚本 exit 77 ⇒ 装包/路径没弄好必红，⛔ 不是通过。
+ * 见 `docs/verification/gy-r28-e5-backup-driver-ci-20261021.md`。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -95,6 +101,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
+  'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -111,6 +118,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
+  'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -165,9 +173,18 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 12. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
-  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。必须排**最后**：装包 step 只服务本步、本步也不依赖 service 口令。
+  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。它紧跟那条装包 step（装包只做一次，见第 13 条），
+  //    本步也不依赖 service 口令 ⇒ 位置只受「装包在它之前」约束。
   'tests/integration/backup-purge-pg.mjs',
-  // 13. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
+  // 13. `backup-copies-purge-pg`（R28-E5 接入，`#398`／GY-I19 的 P0-4 执行者）：与第 12 条**同类**的自起集群
+  //    脚本（自己 `initdb` 出临时 17 集群、端口 55600+randomInt(0,300) 且先探活、自建
+  //    `gengyun_backup_purge_driver_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
+  //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合；`GY_PG_BIN` 同样必须指到 `/usr/lib/postgresql/17/bin`。
+  //    ⛔ 不要把它挪到那条装包 step 之前：装包是它唯一的 runner 侧前提，挪上去会让它 SKIP+77（77 不是通过）。
+  //    它排在 `backup-purge` 之后而不是之前，是因为它复用同一次装包的结果、且与本步一样只在临时目录里活动；
+  //    两步共用 `GY_I19_PG_ROOT` 也安全（数据目录名各带随机后缀、前一步收尾已删干净）。
+  'tests/integration/backup-copies-purge-pg.mjs',
+  // 14. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
   //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
   //    `public` 下的表，非 0 直接断言失败）；② 只 apply 它需要的两段迁移（0001 身份 + 0018 历史）并断言
@@ -198,6 +215,9 @@ const REQUIRED_POSTGRES_MAJOR = '17';
  */
 const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   'tests/integration/backup-purge-pg.mjs',
+  // R28-E5：`backup-copies-purge-pg.mjs`（`#398`）与上一条同形——自己 `initdb` 出临时 17 集群、自建库、
+  // 跑完 `pg_ctl stop` 并删数据目录，故同样没有「CI 建的库」可核对，判据⑦⑧ 换成同一组等价判据。
+  'tests/integration/backup-copies-purge-pg.mjs',
 ]);
 
 /**
@@ -867,6 +887,40 @@ function stepRanges(lines, start, end) {
     index = stop - 1;
   }
   return ranges;
+}
+
+/**
+ * `jobId` 里执行 `script` 的那一个 step 的行区间 `{ start, end }`。
+ * 为什么需要它：`replaceWithinJob` 只认「整个 job 里正好命中一处」——自 R28-E5 起 job 里有**两条**自起集群
+ * 脚本、两段 `GY_PG_BIN` 逐字相同，job 级变异会命中两处而假红（`expected: 1, actual: 2`）。
+ * 变异必须落在**被测脚本自己的 step** 里，判据的作用域才对得上。
+ */
+function stepRangeOfScript(source, jobId, script) {
+  const { lines, start, end } = jobLineRange(source, jobId);
+  const steps = stepRanges(lines, start, end);
+  const found = steps.find((range) => lines.slice(range.start, range.end).join('\n').includes(`node ${script}`));
+  assert.ok(found !== undefined, `变异找不到 \`${script}\` 的 step`);
+  return { lines, range: found };
+}
+
+/** 只在 `script` 自己的 step 区间内做一次替换（命中数必须正好 1）。 */
+function replaceWithinStep(source, jobId, script, pattern, replacement) {
+  const { lines, range } = stepRangeOfScript(source, jobId, script);
+  let hits = 0;
+  for (let index = range.start; index < range.end; index += 1) {
+    const mutated = lines[index].replace(pattern, replacement);
+    if (mutated === lines[index]) continue;
+    lines[index] = mutated;
+    hits += 1;
+  }
+  assert.equal(hits, 1, `变异必须在 \`${script}\` 的 step 内正好命中一处（实际 ${hits} 处）：${pattern}`);
+  return lines.join('\n');
+}
+
+/** 整段删掉 `script` 自己的 step（模拟「有人把这一条从 workflow 里拿掉」）。 */
+function withoutScriptStep(source, jobId, script) {
+  const { lines, range } = stepRangeOfScript(source, jobId, script);
+  return [...lines.slice(0, range.start), ...lines.slice(range.end)].join('\n');
 }
 
 /**
@@ -1563,20 +1617,26 @@ test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消�
   );
   assert.throws(() => assertManagedScriptSetMatches(setProblems), /清单里没有/, '同一断言必须失败');
 
-  // ⑤ 自起集群（判据⑦⑧ 的等价替换）：把 backup-purge step 的 `GY_PG_BIN` 注释掉 ⇒ 必须点名该脚本缺 env。
-  const withoutBin = replaceWithinJob(
-    source,
-    realJobId,
-    /GY_PG_BIN: \/usr\/lib\/postgresql\/17\/bin/,
-    '# GY_PG_BIN: /usr/lib/postgresql/17/bin',
-  );
-  const binProblems = databaseGuardProblems(withoutBin);
-  assert.equal(binProblems.length, 1, '缺一处自起集群 env 必须只报一条问题');
-  assert.ok(
-    binProblems[0].includes(backupPurge) && binProblems[0].includes('GY_PG_BIN') && binProblems[0].includes('SKIP'),
-    '失败消息必须点名脚本、缺的 env 与「缺了只会 SKIP/77」的后果',
-  );
-  assert.throws(() => assertNoDatabaseGuardProblems(binProblems), /GY_PG_BIN/, '同一断言必须失败');
+  // ⑤ 自起集群（判据⑦⑧ 的等价替换）：**逐个**把该脚本自己 step 里的 `GY_PG_BIN` 注释掉 ⇒ 必须正好报一条、
+  //    且点名那条脚本。⛔ 变异不能用 `replaceWithinJob`：自 R28-E5 起同一个 job 里有**两条**自起集群脚本、
+  //    两段 `GY_PG_BIN` 逐字相同（`/usr/lib/postgresql/17/bin`），job 级变异会命中两处而假红。
+  for (const selfClustered of SELF_CLUSTERED_SCRIPTS) {
+    const withoutBin = replaceWithinStep(
+      source,
+      realJobId,
+      selfClustered,
+      /GY_PG_BIN: \/usr\/lib\/postgresql\/17\/bin/,
+      '# GY_PG_BIN: /usr/lib/postgresql/17/bin',
+    );
+    const binProblems = databaseGuardProblems(withoutBin);
+    assert.equal(binProblems.length, 1, `删 \`${selfClustered}\` 的 GY_PG_BIN 必须只报一条问题`);
+    assert.ok(
+      binProblems[0].includes(selfClustered) && binProblems[0].includes('GY_PG_BIN') && binProblems[0].includes('SKIP'),
+      '失败消息必须点名脚本、缺的 env 与「缺了只会 SKIP/77」的后果',
+    );
+    assert.throws(() => assertNoDatabaseGuardProblems(binProblems), /GY_PG_BIN/, '同一断言必须失败');
+  }
+  assert.ok(SELF_CLUSTERED_SCRIPTS.includes(backupPurge), '`backup-purge-pg` 必须仍在自起集群清单里');
 
   // ⑥ 自起集群不得自己建库：给它补一条 `CREATE DATABASE` ⇒ 必须点名「不是一回事」，不能因为多了建库就判绿。
   const selfCreated = replaceWithinJob(
@@ -1592,4 +1652,81 @@ test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消�
     '失败消息必须点名脚本与不该出现的语句',
   );
   assert.throws(() => assertNoDatabaseGuardProblems(selfCreatedProblems), /CREATE DATABASE/, '同一断言必须失败');
+});
+
+/**
+ * R28-E5 的负控制：把**新接的那一条**（`backup-copies-purge-pg`）整段 step 删掉。
+ *
+ * 为什么单独一条用例：它是清单里第二条自起集群脚本，判据⑦⑧ 走的是 `SELF_CLUSTERED_SCRIPTS` 豁免路径——
+ * 这条路径此前只有一条被测对象，删掉它时哪条断言会红、红的时候点到谁，没被任何用例钉住。
+ * 这里要求**四条判据各自**都红、且**每条都逐字点到该脚本**：判据①（接线）、⑥（顺序）、⑦⑧（自起集群等价判据）、
+ * ⑨（双向相等）。少任何一条，都意味着「把这一步拿掉」在某个角度上是静默的。
+ */
+test('反向控制⑨：删掉 `backup-copies-purge-pg` 的整段 step ⇒ 四条判据必须逐条点名它', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  const copies = 'tests/integration/backup-copies-purge-pg.mjs';
+  const witness = 'tests/integration/backup-purge-pg.mjs';
+  assert.ok(MANAGED_SCRIPTS.includes(copies), '用例前提：它必须在受管清单里');
+  assert.ok(SELF_CLUSTERED_SCRIPTS.includes(copies), '用例前提：它必须走自起集群的那组判据');
+
+  // 0) 先证明磁盘真值是绿的，否则下面的「删了就红」可能只是继承了一个已经红掉的前提。
+  const workflows = readAllWorkflows();
+  assertManagedScriptsWired(missingManagedScripts({ workflows }));
+  assertStepOrder(stepOrderProblems({ source }));
+  assertNoDatabaseGuardProblems(databaseGuardProblems(source));
+  assertManagedScriptSetMatches(managedScriptSetProblems({ source }));
+
+  const realJobId = jobsRunningManagedScripts(source)[0].id;
+  const mutated = withoutScriptStep(source, realJobId, copies);
+  assert.notEqual(mutated, source, '删 step 必须真的改到文本');
+  assert.equal(
+    runCommandTextsOf(mutated).some((command) => command.includes(copies)),
+    false,
+    '整段 step 删掉后不得再有任何 `run:` 命令文本含这个脚本',
+  );
+  assert.ok(mutated.includes(`node ${witness}`), '变异只许打断这一条，相邻的自起集群脚本必须仍是绿的');
+
+  // ① 判据①（接线）：必须且只能点名它。
+  const allMutated = workflows.map((workflow) => (workflow.file === REAL_PG_WORKFLOW
+    ? { ...workflow, source: mutated, commands: runCommandTextsOf(mutated) }
+    : workflow));
+  const missing = missingManagedScripts({ workflows: allMutated });
+  assert.deepEqual(missing, [copies], '删掉整段 step 后必须且只点名它');
+  assert.throws(
+    () => assertManagedScriptsWired(missing),
+    (error) => error.message.includes(copies),
+    '判据①必须失败并点名它',
+  );
+
+  // ② 判据⑥（顺序）：顺序判据失去对象时必须点名它。
+  const orderProblems = stepOrderProblems({ source: mutated });
+  assert.ok(orderProblems.length >= 1, '删掉一条后顺序判据必须报问题');
+  assert.ok(orderProblems.some((problem) => problem.includes(copies)), '顺序问题必须点名它');
+  assert.throws(() => assertStepOrder(orderProblems), (error) => error.message.includes(copies), '同一断言必须失败');
+
+  // ③ 判据⑦⑧（自起集群等价判据）：找不到执行它的 step ⇒ 必须点名它。
+  const guardProblems = databaseGuardProblems(mutated);
+  assert.equal(guardProblems.length, 1, '删掉这一条必须只报一条建库/自起集群判据问题');
+  assert.ok(
+    guardProblems[0].includes(copies) && guardProblems[0].includes('找不到执行它的 step'),
+    '失败消息必须点名脚本与「找不到执行它的 step」',
+  );
+  assert.throws(
+    () => assertNoDatabaseGuardProblems(guardProblems),
+    (error) => error.message.includes(copies),
+    '同一断言必须失败',
+  );
+
+  // ④ 判据⑨（双向相等）：workflow 少跑一条 ⇒ 必须点名「清单里有、workflow 没跑」。
+  const setProblems = managedScriptSetProblems({ source: mutated });
+  assert.equal(setProblems.length, 1, '删掉这一条后双向相等必须只报一条问题');
+  assert.ok(
+    setProblems[0].includes(copies) && setProblems[0].includes('workflow 没跑'),
+    '失败消息必须点名脚本与「清单里有、workflow 没跑」',
+  );
+  assert.throws(
+    () => assertManagedScriptSetMatches(setProblems),
+    (error) => error.message.includes(copies),
+    '同一断言必须失败',
+  );
 });

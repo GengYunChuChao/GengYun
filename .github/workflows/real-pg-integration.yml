@@ -3,6 +3,7 @@
 #   · tests/integration/community-pg.mjs（#296 / I15）
 #   · tests/integration/messages-pg.mjs（#17 / I17）；R27-S4 追加
 #   · tests/integration/favorites-history-pg.mjs（#16 / I16）；R27-S4 追加
+#   · tests/integration/backup-copies-purge-pg.mjs（#19 / GY-I19 的 P0-4 执行者）；R28-E5 追加
 #
 # 为什么这些脚本**必须**真库：它们锁的是只有数据库能证明的性质——迁移子集按序 apply 且二连跑
 # 0 条、唯一键真的能裁决并发、外键真的挡孤儿行、枚举/CHECK 真的拒绝闭集外的值、
@@ -197,14 +198,20 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           SPEECH_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_speech_test
-      # 备份副本域（GY-I19 / #19，R28-S49）：**最后一条**此前没有任何 workflow 跑过的真库脚本。
-      # 它是唯一的**自起集群**脚本：runner 上原来没有 17 的服务端二进制（`postgres:17.11` 只活在 service
-      # 容器内），故先一步用 PGDG apt 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再一步真跑。
+      # 备份副本域（GY-I19 / #19，R28-S49）：**自起集群**脚本之一。
+      # runner 上原本没有 17 的服务端二进制（`postgres:17.11` 只活在 service 容器内），故先一步用 PGDG apt
+      # 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再真跑。**装包只有这一步**：R28-E5 接的 `backup-copies-purge-pg`
+      # 复用同一份 bin（同一类脚本、同一套 env），⛔ 不装第二遍（两个包管理器状态互相覆盖是新的失败源）。
       # 它**不**连 service 里那个库、CI 里也**不** `CREATE DATABASE`：库名硬钉在脚本自己的临时集群里
       # （`DB_NAME = gengyun_backup_purge_test`，端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录）。
       # 未设 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包/路径没弄好必红（77 不是通过，也不加任何吞红开关）。
       # 本地取证（本机 PG 17.11 二进制 + 临时数据目录）：exit=0，`RESULT=PASS 13 组`，末行 `CLEANUP=done`。
-      - name: 安装 PG 17 服务端二进制（backup-purge 需要 initdb/pg_ctl）
+      #
+      # 钉的是**来源**，不是某个小版本：`apt.postgresql.org` 的 `noble-pgdg`（ubuntu-24.04 的官方 PGDG suite，
+      # 2026-10-19 仍在线）+ 包名钉死大版本 `postgresql-17`。⛔ 不写 `postgresql-17=17.11-…`：PGDG 只保留每个
+      # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
+      # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
+      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies 需要 initdb/pg_ctl）
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -212,10 +219,32 @@ jobs:
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-17
-          /usr/lib/postgresql/17/bin/initdb --version
+          initdb_version=$(/usr/lib/postgresql/17/bin/initdb --version)
+          echo "$initdb_version"
           /usr/lib/postgresql/17/bin/pg_ctl --version
+          server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 两个自起集群脚本会拿到错的大版本，真库臂等于没验证。"
+            exit 1
+          fi
       - name: 备份副本域（迁移 0023 / 受理同事务 / 30 天清除）
         run: node tests/integration/backup-purge-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
+          PGCLIENTENCODING: UTF8
+      # 备份副本**到期清除驱动**（GY-I19 / #19 的 P0-4 执行者，R28-E5 / #398 的脚本）：与上一步同属
+      # **自起集群**类，因此复用上一步装出来的 `/usr/lib/postgresql/17/bin`、且同样**不** `CREATE DATABASE`。
+      # 差异只在脚本内部：它 `initdb` 出**另一个**临时集群（端口 55600+randomInt(0,300)，且**先探活再起**——
+      # 本机实测 556xx 里已经有 8 个别人的临时集群在监听，随机端口不能假设空闲）、自建
+      # `DB_NAME = gengyun_backup_purge_driver_test`、只监听 127.0.0.1、跑完 `pg_ctl stop` 并删数据目录。
+      # 它自证 14 条（权限形状／到期边界／批量上限／失败留痕与重排／幂等重跑／CLI 退出码），缺 `GY_PG_BIN`
+      # 时打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，也不加任何吞红开关）。
+      # 排在 `backup-purge` 之后、`recognition-chain` 之前的理由：它只依赖那条装包 step，对 service 里的库、
+      # 口令与角色零依赖（自己不建组角色、不碰 service 集群），故对前后脚本都无前提。
+      # 本地取证（本机 PG 17.11 二进制 + 独立临时数据目录）：exit=0，`PASS 1..14` + 末行 `ALL PASS：14 条真库断言`。
+      - name: 备份副本到期清除驱动（迁移 0023 / 到期枚举 / 逐组清除 / 失败重排 / CLI 幂等）
+        run: node tests/integration/backup-copies-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg

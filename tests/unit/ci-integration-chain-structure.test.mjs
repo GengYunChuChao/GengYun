@@ -119,9 +119,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '因为同机可能已有别人的临时集群）；缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
       + '（⛔ 不得用 --allow-skip 读成 0）。它验证的是备份副本 30 日到期**驱动**'
       + '（到期枚举 / 逐组清除 / 失败不阻塞 / failed 重排 / 幂等重跑 / CLI 退出码），没有真库就没有读数。'
-      + 'R28-E2 的片红线禁止改 `.github/workflows/**` ⇒ 本片**没有**把它接进任何 workflow'
-      + '（`real-pg-integration.yml` 的接线待指挥排期），也**不进**无 PG 的回环链'
-      + '（回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`），故在此如实登记为未接线。',
+      + 'R28-E5 已把它接进 `.github/workflows/real-pg-integration.yml`：复用该 job 里那条装 `postgresql-17`'
+      + '（PGDG `noble-pgdg`）的 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`）＋'
+      + ' `GY_I19_PG_ROOT=${{ runner.temp }}/gy-i19-pg` 真跑，⛔ 不自己 `CREATE DATABASE`（受管脚本第 13 条）'
+      + ' ⇒ **已接真库 job**。但它**仍不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
+      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/catalog-pg.mjs',
