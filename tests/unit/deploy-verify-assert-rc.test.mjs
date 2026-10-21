@@ -65,4 +65,3 @@ test('verify-cvm-postgres.sh 的报告键 least_privilege_assert 与「失败仍
     '失败路径未打印 $assert_out 全文（三步补救指引会丢）',
   );
 });
-
