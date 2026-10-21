@@ -13,11 +13,14 @@ const flush=()=>new Promise(r=>setImmediate(r));
 // overrides：可选的「模块 id(绝对路径) -> 模块导出对象」替身表（GY-I05 D2 用）。默认 undefined ⇒
 // 行为与改前逐字相同：全部走真实文件。仅用于在**不落地任何真实几何资源文件**的前提下，
 // 证明「资源存在且校验通过 ⇒ 页面注入点自动接线」这条路径真的可达。
-function fixture(overrides) {
+// globals：可选的「模块 id(绝对路径) -> 额外沙箱全局」表。沙箱原本只给 wx/Page/getCurrentPages，
+// 没有 setTimeout；需要验证计时器兜底的用例在这里给对应模块注入可控计时器，其余模块不受影响。
+function fixture(overrides, globals) {
+ const extras=globals?Object.fromEntries(Object.entries(globals).map(([id,value])=>[resolve(id),value])):null;
  const storage=new Map(),requests=[],routes=[],cache=new Map();let page;
  const wx={getStorageSync:k=>storage.get(k),setStorageSync:(k,v)=>storage.set(k,v),removeStorageSync:k=>storage.delete(k),request:o=>requests.push(o),showModal:o=>o.success({confirm:true}),reLaunch:o=>routes.push(o.url),navigateTo:o=>routes.push(o.url),showToast:()=>{}};
  function load(path) { path=resolve(path);if(overrides&&Object.prototype.hasOwnProperty.call(overrides,path))return overrides[path];if(path.endsWith('runtime.js'))return {mode:'local',apiBaseUrl:'http://127.0.0.1:1234/api/v1'};if(cache.has(path))return cache.get(path).exports;
- const m={exports:{}};cache.set(path,m);vm.runInNewContext('(function(require,module){'+readFileSync(path,'utf8')+'\n})',{wx,Page:d=>{page={...d,data:structuredClone(d.data),route:'pages/profile/profile',options:{},setData(p){Object.assign(this.data,p)}}},getCurrentPages:()=>[page]})((id)=>load(resolve(dirname(path),/\.js$/.test(id)?id:id+'.js')),m);return m.exports; }
+ const m={exports:{}};cache.set(path,m);vm.runInNewContext('(function(require,module){'+readFileSync(path,'utf8')+'\n})',Object.assign({wx,Page:d=>{page={...d,data:structuredClone(d.data),route:'pages/profile/profile',options:{},setData(p){Object.assign(this.data,p)}}},getCurrentPages:()=>[page]},(extras&&extras[path])||{}))((id)=>load(resolve(dirname(path),/\.js$/.test(id)?id:id+'.js')),m);return m.exports; }
  const auth=load(root+'/miniprogram/utils/auth.js');load(root+'/miniprogram/pages/profile/profile.js');
  function seed(token='synthetic-a'){auth.setSession({accessToken:token,audience:'user',expiresAt:new Date(Date.now()+3600000).toISOString(),executionMode:'stub'});}
  function answer(req,data,statusCode=200){req.success({statusCode,data:statusCode===200?{data}:{error:{code:data}}});}
@@ -129,6 +132,53 @@ test('location helper exposes no tracking API and returns only status/region cod
  assert.deepEqual(JSON.parse(JSON.stringify(await locationRegion.locate({},()=>'330102'))),{status:'failed'});
  for(const name of ['startLocationUpdate','onLocationChange','startLocationUpdateBackground','chooseLocation'])assert.equal(typeof locationRegion[name],'undefined',name);
  assert.equal(JSON.stringify(locationRegion.MESSAGES).includes('预警'),false);
+});
+
+// —— GY-I05 补漏（Refs #5）：定位入口的「超时」不再只能靠平台回调 ——
+// 缺口：改前 timeout 只能由 wx.getLocation 的 fail 回调带 errMsg 进入。平台永不回调时，页面停在
+// 「正在获取位置…」、locating 恒为 true，而 onLocate 开头的 `if (... || this.data.locating) return`
+// 会把定位入口长期挡住——那是一个没有任何可见状态、也没有出口的挂死态。
+// 这里注入可控计时器（真实时钟会让用例等 15s），证明页面会在到点后回到「可手选」的显式状态。
+const fakeClock=()=>{let next=1;const pending=new Map();return {setTimeout(fn,ms){const id=next;next+=1;pending.set(id,{fn,ms});return id},clearTimeout(id){pending.delete(id)},tick(ms){const due=[...pending].filter(([,item])=>item.ms<=ms);for(const [id] of due)pending.delete(id);for(const [,item] of due)item.fn();return due.length},get size(){return pending.size}}};
+test('location hung platform recovers to an explicit timeout state and manual selection still saves',async()=>{
+ const clock=fakeClock();
+ const f=fixture(undefined,{[root+'/miniprogram/utils/location-region.js']:{setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout}});
+ await f.ready();
+ let located=0;f.wx.getLocation=()=>{located++};  // 永不回调：既不 success 也不 fail
+ f.page.onEdit();f.page.onLocate();await flush();
+ assert.equal(located,1);assert.equal(f.page.data.locating,true);assert.ok(f.page.data.message.includes('正在获取位置'),f.page.data.message);
+ assert.equal(clock.size,1,'页面侧必须装且只装一个兜底计时器');
+ clock.tick(14999);await flush();
+ assert.equal(f.page.data.locating,true,'未到点不得提前报超时');assert.ok(f.page.data.message.includes('正在获取位置'),f.page.data.message);
+ assert.equal(f.page.data.editing,true);
+ clock.tick(15000);await flush();
+ assert.ok(f.page.data.message.includes('定位超时'),f.page.data.message);
+ assert.equal(f.page.data.locating,false);assert.equal(f.page.data.editing,true);
+ assert.equal(clock.size,0,'结算后不得留下悬挂计时器');
+ assert.equal(located,1,'超时不是重试：仍只请求过一次定位');
+ // 超时后手选照旧可存，且请求体只有三个既有字段，不含坐标。
+ f.page.onCrop({detail:{value:'0'}});f.page.onCity({detail:{value:'0'}});f.page.onCounty({detail:{value:'0'}});f.page.onSave();
+ const put=f.last('/me/profile');assert.equal(put.method,'PUT');
+ assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});
+ assert.equal(JSON.stringify(f.requests).includes('latitude'),false);
+ assert.equal(JSON.stringify(f.page.data).includes('latitude'),false);
+});
+test('location hung platform then late permission grant never rewrites the settled timeout state',async()=>{
+ const clock=fakeClock();
+ const f=fixture(undefined,{[root+'/miniprogram/utils/location-region.js']:{setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout}});
+ await f.ready();
+ let options;f.wx.getLocation=o=>{options=o};  // 只记住回调，模拟系统弹窗挂起
+ f.page.onEdit();f.page.onLocate();await flush();
+ clock.tick(15000);await flush();
+ assert.ok(f.page.data.message.includes('定位超时'),f.page.data.message);
+ // 用户很晚才在系统弹窗点「允许」：迟到的成功不得把文案改成「已按定位预选」或擅自预选地区。
+ options.success(sentinel);await flush();
+ assert.ok(f.page.data.message.includes('定位超时'),f.page.data.message);
+ assert.equal(f.page.data.locating,false);
+ assert.equal(f.page.data.cityIndex,-1);assert.equal(f.page.data.countyIndex,-1);
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0);
+ assert.equal(JSON.stringify(f.page.data).includes('123.4567'),false);
+ assert.equal(JSON.stringify(f.requests).includes('123.4567'),false);
 });
 
 test('reference handoff preserves only existing crop/region conditions and refuses identity params',()=>{const f=fixture(); const navPath=root+'/miniprogram/utils/navigation.js';const m={exports:{}};vm.runInNewContext(readFileSync(navPath,'utf8'),{module:m});assert.equal(m.exports.normalizeTarget('/pages/reference/reference?crop_id=crop_rice&region_code=330102'),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');for(const q of ['crop_id=crop_rice&region_code=330102&user_id=x','crop_id=crop_rice&region_code=440000','owner=x','redirect=http://evil'])assert.equal(m.exports.normalizeTarget('/pages/reference/reference?'+q),null)});
