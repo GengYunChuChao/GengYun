@@ -619,6 +619,10 @@ RESET ROLE;
 --      b) 清单里的 6 条 runtime 函数，运行时身份真跑是否成功；
 --      c) 清单里的 3 条 internal + 2 条 trigger 函数，运行时真跑是否 42501。
 --    判定以 90-assert 的 runtime_function_* 四条为准；本节只打印原始读数，判定留给读者。
+--    注（返修 1）：清单里 internal 3 条的组 gengyun_source_operator / gengyun_staging_importer
+--    只在 provision-db.sh --with-cli-groups 时创建（provision-db.sh:274-279）；默认 5 组部署下
+--    它们不存在，这三行 non_owner_grantees 显示 (none) 属正常——90-assert 断言 3 的「少授」
+--    只对 pg_roles 里真实存在的角色追究（见证据页 §9）。
 --    注：本节只读——函数调用要么零行、要么纯计算，不写任何表。
 -- ---------------------------------------------------------------------------
 \echo ''

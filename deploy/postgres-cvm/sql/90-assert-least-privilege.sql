@@ -1502,6 +1502,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
       FROM function_surface_manifest m
   ),
   -- 多授/少授各算一次；数组比较前先按名字排序，避免 ACL 顺序造成假红。
+  -- 【R28-S51 返修 1】「少授」只对**真实存在的角色**追究。理由：默认部署根本不建
+  --   gengyun_source_operator / gengyun_staging_importer —— deploy/postgres-cvm/provision-db.sh:267-279
+  --   的 ROLE_GROUP_FILES 基础只有 5 个组，这两个只在 --with-cli-groups（WITH_CLI_GROUPS=1，
+  --   见 provision-db.sh:54/86/274-279）时才追加。因此 internal 3 条函数的 allowed_grantees
+  --   在这些组缺席时不可能出现在 proacl 里；角色不存在 ⇒ 该能力本来就没被 provision，
+  --   不算「少授」。否则默认部署和 CI 的 5 组链条必红，而那不是缺陷。
+  --   三者边界要分清楚：① 多授（actual 有、allowed 没有）**永远**红——这是安全面；
+  --   ② 少授只在 allowed 里的角色**真实存在**（pg_roles 查到）时红——组存在却被撤权仍红；
+  --   ③ 'PUBLIC' 是伪角色，始终视为存在（清单当前不含 PUBLIC，留作防御）。
   function_manifest_grantee_violations(fn, detail) AS (
     SELECT g.schema_name || '.' || g.func_name,
            concat_ws('；',
@@ -1516,6 +1525,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                       ORDER BY 1) AS extra,
                ARRAY(SELECT x FROM unnest(g.allowed_grantees) x
                       WHERE NOT (x = ANY (g.actual_grantees))
+                        -- 只把「角色确实存在」的缺席算少授（PUBLIC 恒存在）
+                        AND (x = 'PUBLIC'
+                             OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = x))
                       ORDER BY 1) AS missing
       ) d
      WHERE cardinality(d.extra) > 0

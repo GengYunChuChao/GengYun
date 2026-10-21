@@ -1,20 +1,24 @@
 # R28-S51 · 函数面兜底清单 + 四条断言（并修掉 `consent_policy_immutable()` 的 PUBLIC EXECUTE 漏网）
 
-> 切片：R28-S51；分支 `test/gy-r28-function-surface-parity`；基线 `e1c0479`（PR #357 合入后的 main 快照；本基线 90-assert 为 103 条断言）。
+> 切片：R28-S51；分支 `test/gy-r28-function-surface-parity`；基线 `e1c0479`（PR #357 合入后的 main 快照；本基线 90-assert 为 103 条断言）。**返修 1**：`upstream/main` `76b0e86` 合流后的 HEAD `eaf4c4a`（另含注释订正 `038e909`），修 CI 默认 5 组部署下断言 3 假红，见 §9。
 > 交付物：
-> - `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`：R28-S51 真执行探针段（L924-961）、`function_surface_manifest` 与三个派生 CTE（L1414-1522）、四条 `runtime_function_*` 断言（L2576-2631）；
+> - `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`：R28-S51 真执行探针段（L924-961）、`function_surface_manifest` 与三个派生 CTE（L1431-1535）、四条 `runtime_function_*` 断言（L2592-2645）；
 > - `deploy/postgres-cvm/sql/20-login-roles.sql`：段 L（标题 L900，`REVOKE` 在 L920）收回 `public.consent_policy_immutable()` 的 PUBLIC EXECUTE；
 > - `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`：段 [8]（L611-690）函数面逐函数读数 + 真执行探针；
 > - 本页；报告 `.pg17/handoff/r28-s51-report.md`。
 > 一句话问题：PostgreSQL 给**新建函数**默认 `GRANT EXECUTE … TO PUBLIC`（物化形态是 `pg_proc.proacl IS NULL`），而旧版 90-assert 只有 5 组**点名式**逐函数断言。于是「新增一个 SECURITY DEFINER 函数」或「某个函数忘了 REVOKE PUBLIC」都不会让任何断言变红——实测 `public.consent_policy_immutable()` 仍是 `proacl IS NULL`；本片把函数面从「点过名」升级为「必须分类」，并修掉这一处真实漏网。
 
-**取证范围声明**：本页全部读数来自**本机一次性 PG 17.11 集群**（`127.0.0.1:55656`，datadir `E:\GengYunCommander\.pg17\data-r28s51`），没有在真实 CVM、没有在 GitHub Actions runner 上执行；`provision-db.sh` 本体未运行，按它的顺序手工复现（26 个迁移 → 8 个角色文件 → `20-login-roles.sql` → `90-assert-least-privilege.sql`）。未取得项逐条列在 §7。本集群的属主 `gengyun_cvm_owner` 是 `initdb` 创建的**超级用户**（`rolsuper = t`），这是 §7 第 2 条的限制来源。
+**取证范围声明**：本页读数来自**本机两个一次性 PG 17.11 集群**，都没有在真实 CVM、没有在 GitHub Actions runner 上执行；`provision-db.sh` 本体未运行，按它的顺序手工复现：
+
+- 集群 A（8 组形态，用于首版交付与返修的负控制）：`127.0.0.1:55656`，datadir `E:\GengYunCommander\.pg17\data-r28s51`，26 个迁移 → **8** 个角色文件 → `20-login-roles.sql` → `90-assert-least-privilege.sql`；
+- 集群 B（5 组形态 = CI/默认部署口径，返修 1 主目标）：`127.0.0.1:55657`，datadir `E:\GengYunCommander\.pg17\data-r28s51-5g`，26 个迁移 → **5** 个默认角色文件（`auth_privacy` / `catalog_readers` / `consent_granter` / `profile_runtime` / `knowledge_runtime`，即 `provision-db.sh:267-273` 的基础清单）→ `20-login-roles.sql` → 90-assert。未取得项逐条列在 §7。两个集群的属主 `gengyun_cvm_owner` 都是 `initdb` 创建的**超级用户**（`rolsuper = t`），这是 §7 第 2 条的限制来源。
 
 ## 0. 结论摘要
 
 | 项 | 改前（`e1c0479`） | 改后 |
 | --- | --- | --- |
 | 90-assert 断言计数 `TOTAL/OK/BAD` | **`103/103/0`**（verdict `ok`、exit 0） | **`107/107/0`**（verdict `ok`、exit 0） |
+| 部署形态 | 首版只验 8 组（`--with-cli-groups`）；CI 默认 5 组判红（断言 3「少授」假红，§9） | **5 组（CI/默认口径）`107/107/0`** + **8 组 `107/107/0`**（§9） |
 | 函数面兜底清单 | **不存在** | `function_surface_manifest` 11 行：runtime 6 / internal 3 / trigger 2 |
 | 「新增 SECURITY DEFINER 未登记」检测 | #？无（5 组断言只认点名的函数） | `runtime_function_manifest_complete`：三个 schema 的 `prosecdef` 双向差集 |
 | 「新函数默认 PUBLIC 可执行」检测 | 只有点名的 `admin_audit_events_reject_mutation` 在 0017:335 收回，无通用检测 | `runtime_function_no_public_execute`：三个 schema 全函数 `has_function_privilege('public', oid, 'EXECUTE')` |
@@ -75,6 +79,8 @@
 >
 > `staging_intake.python_json(jsonb)` 不在清单里：它是 0007 建的普通（非 `SECURITY DEFINER`）辅助函数，只授 `gengyun_staging_executor`、0007:45 已 REVOKE PUBLIC，不属于派单 §1 的 runtime/internal/trigger 三类。断言 2 对它的 PUBLIC 面仍有兜底；断言 3 不覆盖它（见 §7 第 3 条）。
 
+**`allowed_grantees` 的读法（返修 1 订正）**：它表达「**如果**该组存在，这条函数的非属主 EXECUTE 集合应当恰好是这些」，不表示「该组一定存在」。默认部署（`provision-db.sh` 不带 `--with-cli-groups`，见 `provision-db.sh:267-279`）只建 5 个基础组，`gengyun_source_operator` / `gengyun_staging_importer` 根本不创建，`source_operator.sql` / `staging_importer.sql` 也不执行。实测 5 组形态（集群 B）：三条 internal 函数的属主是 `gengyun_cvm_owner`（`ALTER FUNCTION … OWNER TO` 未执行），`proacl` 只有 `{gengyun_cvm_owner=X/gengyun_cvm_owner}` ⇒ 非属主集合为空，`public_exec = false`。断言 3 因此必须把「角色不存在」与「少授」区分开：**多授永远红；少授只在 `allowed_grantees` 里的角色真实存在（`pg_roles` 查得到）时红**；组存在却被撤权仍是红（§9）。
+
 ## 3. 四条断言
 
 四条断言都在 `checks` CTE 末尾新增，label 前缀统一 `runtime_function_`：
@@ -83,7 +89,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | `runtime_function_manifest_complete` | 三个 schema 下每个 `SECURITY DEFINER` 函数都必须在清单里；清单每条也必须真实存在 | `function_manifest_gaps` 双向差集：正向按 `prosecdef` + `schema/名称` 反查清单，反向按清单查 `pg_proc`（`prokind='f'`）；detail 用 `string_agg` 把「函数名：差异说明」用 ` / ` 拼接 | 无此断言 → `107` 里通过 |
 | 2 | `runtime_function_no_public_execute` | 三个 schema 下**任何**函数都不得对 PUBLIC 可执行 | 全量遍历 `pg_proc`（不限于清单），`has_function_privilege('public', p.oid, 'EXECUTE')` 必须全 false；detail 列 `schema.name` | 无此断言；改前在未修库上跑本片新版**实测判红**（§4） |
-| 3 | `runtime_function_grantee_sets` | 每条清单函数除属主外的 EXECUTE grantee 集合**恰好等于** `allowed_grantees`（多授/少授都红） | `function_manifest_grantee_sets` 用 `aclexplode(p.proacl)` 取 `privilege_type='EXECUTE'` 且 `a.grantee <> p.proowner`，`COALESCE(r.rolname,'PUBLIC')`；`proacl IS NULL` ⇒ `aclexplode` 无行 ⇒ 空数组；`function_manifest_grantee_violations` 用 `CROSS JOIN LATERAL` 算 `extra`/`missing`，排序后再比较，detail `多授 …`/`少授 …` | 无此断言 → 通过 |
+| 3 | `runtime_function_grantee_sets` | 每条清单函数除属主外的 EXECUTE grantee 集合**恰好等于** `allowed_grantees`：**多授永远红；少授只在 `allowed_grantees` 里的角色真实存在时红**（角色不存在=该能力未 provision，不算少授） | `function_manifest_grantee_sets` 用 `aclexplode(p.proacl)` 取 `privilege_type='EXECUTE'` 且 `a.grantee <> p.proowner`，`COALESCE(r.rolname,'PUBLIC')`；`proacl IS NULL` ⇒ `aclexplode` 无行 ⇒ 空数组；`function_manifest_grantee_violations` 用 `CROSS JOIN LATERAL` 算 `extra`/`missing`，`missing` 侧再按 `x = 'PUBLIC' OR EXISTS (SELECT 1 FROM pg_roles …)` 过滤，排序后再比较，detail `多授 …`/`少授 …` | 无此断言 → 通过；返修 1 前在 5 组形态假红（§9） |
 | 4 | `runtime_function_exec_probe` | ACL 正确不等于运行时真能用/真不能用 | 上方探针段（L924-961）以 `SET LOCAL ROLE gengyun_api_runtime` 真跑 5 条，每条套 `SAVEPOINT`，读 `:SQLSTATE`（不是 `:ERROR`）；断言比对 5 个 psql 变量：`00000/00000/42501/42501/42501` | 无此断言 → 通过 |
 
 `has_function_privilege('public', oid, 'EXECUTE')` 在 PG 17.11 实测可用（`'public'` 映射到 ACL 的 grantee 0），与「`aclexplode` 里查 `grantee = 0`」等价；`proacl IS NULL` 时它返回 true，正是默认 PUBLIC 授权的物化形态。
@@ -110,6 +116,10 @@ SELECT staging_intake.rollback_import(NULL,NULL,NULL,NULL);                 -- �
 | 改后合规态 | `08-after-fix-assert.log`（`psql -v ON_ERROR_STOP=1`，含 90-assert 全量输出） | exit 0，verdict 行 `ok` |
 | 新增断言的红证据（改前库、新版脚本） | `06-prefix-red-on-unfixed-db.log` | `FAIL: runtime_function_no_public_execute (PUBLIC 可执行：public.consent_policy_immutable)` |
 | 修完 20-login 后同库复跑 | `07-login-roles-rerun.log` → `08` | `107/107/0` |
+| **5 组形态**（CI/默认口径，返修 1 主目标，集群 B `55657`） | `19-5g-shape-assert.log` | **`107/107/0`**，exit 0，verdict `ok` |
+| **8 组形态**（返修 1 复跑，集群 A `55656`） | `17-8g-shape-after-fix.log` | **`107/107/0`**，exit 0，verdict `ok` |
+| 负控制 1：8 组上撤 `list_admin_accounts` 的 runtime EXECUTE | `18-nc1-8g-revoke.log` | `107/104/3`：`runtime_function_grantee_sets（public.list_admin_accounts（少授 gengyun_api_runtime））` + `runtime_function_exec_probe` + 既有 `accounts_read_function_execute`；`GRANT` 复原 → `107/107/0`，`proacl` 文本相等 |
+| 负控制 2：5 组上给 `consent_granter` 授 `apply_source_operation` | `20-nc2-5g-overgrant.log` | `107/106/1`：唯一红 `runtime_function_grantee_sets（catalog_ops.apply_source_operation（多授 gengyun_consent_granter））`；`REVOKE` 复原 → `107/107/0`，`proacl`/属主文本相等 |
 
 `count-asserts.sql` 的计数方式：`\pset tuples_only on` + `\pset format unaligned` → `\i 90-assert…` → `SELECT 'COUNT ' || count(*) || '|' || count(*) FILTER (WHERE ok) || '|' || count(*) FILTER (WHERE NOT ok) FROM r28_assert_results;`，`TOTAL/OK/BAD` 全部取自脚本自己建的会话级临时表，不数终端里的 PASS/FAIL 文案。`103 + 4 = 107`，与读数一致。
 
@@ -147,6 +157,8 @@ m4 的完整过程（派单原文「注释掉 → 重跑 → 红」在已有库�
 - **m1 用持久函数而不是临时对象**：派单写「temp/测试事务内」，但 (a) 90-assert 自己用 `BEGIN … ROLLBACK` 包住探针段，`CREATE TEMP` 在它自己的会话里根本活不到 checks 求值；(b) 清单只遍历 `public/catalog_ops/staging_intake` 三个 schema，`pg_temp` 不在其中，临时函数不会进断言 1。所以只能持久建、跑、删，库内复原。
 - **m5 必须先授 schema USAGE**：`gengyun_api_runtime` 对 `staging_intake` 没有 USAGE，单授函数 EXECUTE 时探针仍停在 schema 层（42501），断言 4 不会红。加上 `GRANT USAGE ON SCHEMA` 后探针走到函数级、拿到 `00000`，断言 4 才判红。这说明断言 4 的「反向」在本集群上实际测的是「运行时拿不到这条函数」，而不是严格的「函数级 EXECUTE 被收回」。
 
+**返修 1 对 m2/m3 的复跑**（集群 A，`21-m2m3-recheck.log`）：m2 = `107/104/3`（`runtime_function_no_public_execute` + `runtime_function_grantee_sets（public.list_admin_accounts（多授 PUBLIC））` + 既有 `accounts_read_function_execute`），m3 = `107/105/2`（`runtime_function_grantee_sets（public.suspend_account（多授 gengyun_consent_granter））` + 既有 `suspend_function_execute`）；两条 `REVOKE` 复原后均 `107/107/0`，`proacl` 文本逐字节相等。多授判据未被「少授只对存在角色追究」改动影响。
+
 ## 6. 门禁（7 项，全部 exit 0）
 
 | # | 命令 | exit | 读数 |
@@ -172,7 +184,8 @@ m4 的完整过程（派单原文「注释掉 → 重跑 → 红」在已有库�
 7. **只锁三个 schema**：若未来出现第四个 schema 的 `SECURITY DEFINER` 函数，断言 1/2 都不会看见它；本片按派单范围只锁 `public/catalog_ops/staging_intake`。
 8. **m1/m4/m5 的偏差**：见 §5 末两条与 §5 的 m4 过程——m1 用持久函数、m4 必须重建库、m5 必须先授 schema USAGE，均与派单字面写法不同，已在报告里逐条记录。
 9. **`roles/*.sql` 的 `CREATE ROLE` 非幂等**：m4 重建库时第一次重放报 `role "gengyun_auth_privacy" already exists`（角色是 cluster 级对象），最终用「注释掉 `CREATE ROLE` 行」的**字节保留临时副本**重放（`roles-nocreate/`，仓库文件未改）。这是复现路径的限制，不是交付文件的问题；生产重放需要用可重复执行的 provisioning 路径。
-10. **集群状态**：一次性集群在交付后以 `pg_ctl -D E:\GengYunCommander\.pg17\data-r28s51 -m fast -w stop` 停止，`pg_isready` 不再接受连接；数据目录保留、不删除。
+10. **集群状态**：两个一次性集群在交付后都以 `pg_ctl -D <datadir> -m fast -w stop` 停止（`data-r28s51` 与 `data-r28s51-5g`），`pg_isready` 对 55656/55657 都不再接受连接；数据目录保留、不删除。
+11. **5 组形态是手工复现的 CI 口径**：没有真跑 `provision-db.sh`（它需要 root、会改系统），role 文件清单与顺序照抄 `provision-db.sh:267-279` 的基础 5 组；`deploy-sql-gate.yml` 本体也没有在本机执行，CI 现场只引用 run 39547572436 的日志文本（§9.1）。
 
 ## 8. 与 S43/S45 的分工、复现命令
 
@@ -204,3 +217,63 @@ m4 的完整过程（派单原文「注释掉 → 重跑 → 红」在已有库�
 ```
 
 门禁命令见 §6；`count-asserts.sql`、`roles-nocreate/`、`run-mutations.ps1`、`run-m4b.ps1` 与全部门禁/变异输出都在 `E:\GengYunCommander\.pg17\handoff\r28-s51-logs\`（日志）与 `.pg17\tmp\r28-s51\`（一次性脚本，不提交）。
+
+## 9. 返修 1：CI 默认 5 组部署下的「少授」假红（2026-10-21）
+
+### 9.1 CI 现场原文
+
+PR #363 的 `deploy-sql-gate.yml` / job `deploy-sql-17.11`（run 39547572436，head `eaf4c4a`）：
+
+```text
+FAIL: runtime_function_grantee_sets (catalog_ops.apply_source_operation（少授 gengyun_source_operator） /
+      staging_intake.apply_import（少授 gengyun_staging_importer） /
+      staging_intake.rollback_import（少授 gengyun_staging_importer）)
+psql:…/deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2667: ERROR:  90-assert-least-privilege FAIL:
+      1 条断言未通过：runtime_function_grantee_sets
+退出码=3 末行='CONTEXT: ...'
+```
+
+只有断言 3（`runtime_function_grantee_sets`）红，断言 1/2/4 都绿——说明函数确实存在、PUBLIC 面干净、运行时真执行也符合预期，问题只在「grantee 集合应该是什么」的口径。
+
+### 9.2 根因（不是权限缺陷，是断言口径把可选组当必有组）
+
+- `deploy-sql-gate.yml` 的链条只执行 **5 个** roles 文件（`auth_privacy` / `catalog_readers` / `consent_granter` / `profile_runtime` / `knowledge_runtime`），不建 `gengyun_source_operator` / `gengyun_staging_importer`；
+- `deploy/postgres-cvm/provision-db.sh:267-279`：`ROLE_GROUP_FILES` 基础就是这 5 个；`source_operator.sql` / `staging_importer.sql` 只在 `if [[ "$WITH_CLI_GROUPS" -eq 1 ]]` 时追加（开关在 `provision-db.sh:54`、`86`、`274-279`）；
+- 所以**默认部署根本没有这两个组**，`source_operator.sql` / `staging_importer.sql` 里的 `ALTER FUNCTION … OWNER TO` 也不执行：5 组形态下三条 internal 函数属主是 `gengyun_cvm_owner`，`proacl` 只有属主自授条目（实测见 9.4）；
+- 首版断言 3 的 `missing` 分支把「`allowed_grantees` 里列了、`proacl` 里没有」一律判少授 ⇒ 在 5 组形态必红；8 组形态（`--with-cli-groups`）之所以绿，是因为我首版只用 8 组复核，口径没覆盖默认部署。
+
+### 9.3 语义订正（改的是判据，不是为了让 CI 变绿）
+
+`function_manifest_grantee_violations` 的 `missing` 侧新增过滤：`x = 'PUBLIC' OR EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = x)`。三条边界：
+
+1. **多授永远红**：`actual_grantees` 里出现 `allowed_grantees` 之外的 grantee（含 `PUBLIC`）一律判红，不受本次改动影响；
+2. **少授只对真实存在的角色追究**：`allowed_grantees` 里的组在 `pg_roles` 查不到 ⇒ 该能力本来就没被 provision，不算少授；**组存在但被撤权仍然红**（负控制 1 用 `gengyun_api_runtime` 验证）；
+3. **`PUBLIC` 恒存在**：伪角色，永远参与少授判定（清单当前不含 `PUBLIC`，这条是防御性写法）。
+
+为什么不在 `provision-db.sh` / `20-login-roles.sql` 里补建这两个组：默认不建是设计（`--with-cli-groups` 显式 opt-in），补建会改变默认部署的角色面；而且本返修的边界明确禁止动 `provision-db.sh`、`20-login-roles.sql`、`deploy-sql-gate.yml`。断言要适配两种合法形态，而不是让部署去迁就断言。
+
+### 9.4 两种形态读数（都真跑）
+
+| 形态 | 构造（集群） | 读数 | 关键证据 |
+| --- | --- | --- | --- |
+| **5 组（CI/默认）** | 26 迁移 + 5 个基础 role 文件 + 20-login（集群 B `55657`，datadir `data-r28s51-5g`） | **`107/107/0`**，exit 0，verdict `ok` | `19-5g-shape-assert.log`；`pg_roles` 里只有 8 个 `gengyun*` 角色，无 `gengyun_source_operator` / `gengyun_staging_importer`；internal 3 条属主 `gengyun_cvm_owner`、`proacl={gengyun_cvm_owner=X/gengyun_cvm_owner}`、`public_exec=false` |
+| **8 组（`--with-cli-groups`）** | 26 迁移 + 8 个 role 文件 + 20-login（集群 A `55656`，datadir `data-r28s51`） | **`107/107/0`**，exit 0，verdict `ok` | `17-8g-shape-after-fix.log`；internal 3 条属主 `gengyun_source_executor`/`gengyun_staging_executor`、grantee 恰为 operator/importer，与 §2 表一致 |
+
+5 组形态的「少授假红」在返修前的复现：把首版 `missing` 判据放回同一 5 组库，断言 3 唯一红、detail 正是 CI 那三条 `少授 …`（CI 现场文本即证据，本机未再重放旧代码，避免与当前文件混淆）。
+
+### 9.5 负控制（证明「少授」没被改聋）
+
+| 控制 | 操作 | 期望/实测 | 复原 |
+| --- | --- | --- | --- |
+| NC1（8 组） | `REVOKE EXECUTE ON FUNCTION public.list_admin_accounts() FROM gengyun_api_runtime;` | `107/104/3`：`runtime_function_grantee_sets（public.list_admin_accounts（少授 gengyun_api_runtime））` 必红，另连带 `runtime_function_exec_probe`（`list_admin_accounts=42501`）与既有 `accounts_read_function_execute` | `GRANT` 复原 → `107/107/0`，`proacl` 文本相等（`18-nc1-8g-revoke.log`） |
+| NC2（5 组） | `GRANT EXECUTE ON FUNCTION catalog_ops.apply_source_operation(uuid,text,uuid,uuid,integer,text,text,uuid) TO gengyun_consent_granter;` | `107/106/1`：唯一红 `runtime_function_grantee_sets（catalog_ops.apply_source_operation（多授 gengyun_consent_granter））`，多授判据不受本次改动影响 | `REVOKE` 复原 → `107/107/0`，`proacl`/属主文本相等（`20-nc2-5g-overgrant.log`） |
+| m2 复跑（8 组） | `GRANT … list_admin_accounts() … TO PUBLIC;` | `107/104/3`：`no_public_execute` + `grantee_sets（多授 PUBLIC）` + 既有 `accounts_read_function_execute` | `REVOKE … FROM PUBLIC` → `107/107/0` |
+| m3 复跑（8 组） | `GRANT … suspend_account(uuid,uuid,uuid,integer,uuid) … TO gengyun_consent_granter;` | `107/105/2`：`grantee_sets（多授 gengyun_consent_granter）` + 既有 `suspend_function_execute` | `REVOKE … FROM gengyun_consent_granter` → `107/107/0` |
+
+`ON_ERROR_STOP=1` 时红态 psql 退出码为 3（DO 块 `RAISE EXCEPTION`）；上表的 `TOTAL/OK/BAD` 是把计数包装以 `ON_ERROR_STOP=0` 跑出来的，两者取自同一份 `r28_assert_results`。
+
+### 9.6 与首版读数的关系
+
+- 断言总数不变：`103 → 107`（新增四条），5 组与 8 组都是 `107/107/0`；
+- 首版 §4/§5 的读数是在 8 组形态上取得的，仍然有效；返修只改了断言 3 的 `missing` 判据与文档，没有动断言 1/2/4、探针段、清单 11 行、`20-login-roles.sql`；
+- CI 默认形态从「判红」变成「判绿」，且两条负控制证明「组存在却被撤权」仍红、「多授」仍红。
