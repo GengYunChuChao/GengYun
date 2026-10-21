@@ -256,13 +256,30 @@ report_eq 'nologin_groups_present' '5' \
 # ---------------------------------------------------------------------------
 staged_assert_sql="$(stage_sql_file "${SQL_DIR}/90-assert-least-privilege.sql")" \
   || fail "无法暂存 ${SQL_DIR}/90-assert-least-privilege.sql（见上一行错误）。"
+# R28-S37：psql 退出码与末行**双判**（形状照 provision-db.sh 的第 5 步）。
+# 90-assert 判红时会在文件末尾 RAISE EXCEPTION（psql 以 3 退出），其 stderr 的
+# `ERROR:` / `CONTEXT:` 行经 `2>&1` 会排在 `FAIL:` 判决文本之后 ⇒ 末行不再是判决文本。
+# 「只看末行 + `|| true` 吞退出码」于是有两个盲区：① 末行成了 CONTEXT 行，报告里的
+# 「实际值」不可读；② 末行恰好是 `ok` 而 psql 非零退出（DO 块因与断言无关的原因失败、
+# 或 stdout 缓冲让判决行最后才刷出）时，非零退出被彻底吞掉 ⇒ 判成 PASS。
+# 退出码是主判据，末行文本只作可读兜底（人工 `psql -f`、或将来改回纯文本判决时仍能拦住）。
+assert_rc=0
 assert_out="$(runuser -u postgres -- "${PG_BIN}/psql" -X -q -v ON_ERROR_STOP=1 \
   -h "$PGHOST_SOCKET" -U "$DB_OWNER" -d "$DB_NAME" -tA \
-  -f "$staged_assert_sql" 2>&1 | tr -d '\r' || true)"
+  -f "$staged_assert_sql" 2>&1 | tr -d '\r')" || assert_rc=$?
 verdict="$(printf '%s\n' "$assert_out" | sed '/^[[:space:]]*$/d' | tail -n1)"
-if [[ "$verdict" != 'ok' ]]; then
+if [[ "$assert_rc" -ne 0 || "$verdict" != 'ok' ]]; then
   # 保留完整输出：缺前置时 90-assert 会打印三步补救指引，不能只留最后一行。
+  printf '[%s] 最小权限断言的完整输出（psql exit=%s）：\n' "$SCRIPT_NAME" "$assert_rc" >&2
   printf '%s\n' "$assert_out" | sed 's/^/         /' >&2
+  if [[ "$assert_rc" -ne 0 ]]; then
+    printf '[%s] 判红原因①：psql 退出码 %s ≠ 0（90-assert 判决非 ok 时 RAISE EXCEPTION；stderr 的 ERROR:/CONTEXT: 排在 FAIL 文本之后）。\n' \
+      "$SCRIPT_NAME" "$assert_rc" >&2
+  else
+    printf '[%s] 判红原因②：末行不是 ok（实际：%s）。\n' "$SCRIPT_NAME" "${verdict:-（空）}" >&2
+  fi
+  # 退出码非 0 时改写报告里的「实际值」：否则末行恰好是 ok 会让 report_eq 判成 PASS。
+  [[ "$assert_rc" -eq 0 ]] || verdict="psql-exit=${assert_rc}（末行=${verdict:-空}）"
 fi
 report_eq 'least_privilege_assert' 'ok' "$verdict"
 

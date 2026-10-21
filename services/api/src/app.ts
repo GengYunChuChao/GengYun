@@ -1638,7 +1638,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     service: knowledgeQueryFace,
   });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
-  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress });
+  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress }, config.executionMode === 'real' ? pool : null);
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
   // GY-R27 S10（#10）· OCR 域的**持久化接线**（迁移 `0024_ocr_persistence.sql`）。
   //

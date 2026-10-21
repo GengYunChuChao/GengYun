@@ -34,12 +34,16 @@
  *      阶段 2 的 PG store 还能在同一事务里清掉**本域幂等台账**（`favorites_idempotency` /
  *      `history_idempotency`）并给出分表行数 ⇒ 证据追加
  *      `";<module>:idempotency-purged:<台账行数>"`，两张表都清干净才判 `completed`；
- *    - `backupState`：备份副本的清除**未实现**（属 GY-I19）⇒ 默认 `pending`（**不谎称 completed**）。
- *      接线的 `backupPurge` 端口返回已清除且有证据时才置 `completed`。**未接线的真实原因**是
- *      仓内不存在逐用户备份副本域：迁移里没有备份/快照副本表（也没有软删列），运维侧唯一备份产物是
- *      `deploy/postgres-cvm/backup-postgres.sh` 的整库 `pg_dump -Fc`，不能逐用户删除（普查见
- *      `docs/verification/gy-i19-backup-domain-20261018.md`）。因此在备份域与端口接线之前，回执会
- *      如实显示该模块**未完成**（这是缺口，不是通过）；不许把「没有副本可删」的空集当成清除成功。
+ *    - `backupState`：默认 `pending`（**不谎称 completed**）——接线的 `backupPurge` 端口返回已清除且有
+ *      证据时才置 `completed`。**GY-I19 当时的真实原因**是仓内不存在逐用户备份副本域：0001–0018 迁移里
+ *      没有备份/快照副本表（也没有软删列），运维侧唯一备份产物是 `deploy/postgres-cvm/backup-postgres.sh`
+ *      的整库 `pg_dump -Fc`，不能逐用户删除（普查见
+ *      `docs/verification/gy-i19-backup-domain-20261018.md`）。**GY-R28 起该域已落地**：
+ *      `services/api/db/migrations/0023_user_backup_copies.sql` 的 `public.user_backup_copies`（清单行）、
+ *      本文件已接的 `scopeForBackupModule()`／`BackupCopySeedSource`（写入路径在
+ *      `services/api/src/privacy/backup-copies-pg.ts`）、以及其 `createPostgresBackupPurgePort()` 端口
+ *      （`kind: 'wired'`／`available: true`）。未接真库或未接受理端口时，回执仍如实显示该模块**未完成**
+ *      （这是缺口，不是通过）；不许把「没有副本可删」的空集当成清除成功。
  *
  * ## 与「收藏／历史不自动转成已使用事实」的关系
  * 本文件是**删除**方向的接线（用户权利），与"收藏=已使用"毫无关系；它不写任何使用类字段。
