@@ -10,8 +10,8 @@
  *       原样写回 ⇒ 复绿。
  *
  * 运行（专用测试库必须是**空库**）：
- *   createdb -h 127.0.0.1 -p <port> gengyun_ocr_jobs_test
- *   OCR_PG_TEST_URL=postgres://postgres@127.0.0.1:<port>/gengyun_ocr_jobs_test \
+ *   createdb -h 127.0.0.1 -p <port> gengyun_ocr_corrections_test
+ *   OCR_PG_TEST_URL=postgres://postgres@127.0.0.1:<port>/gengyun_ocr_corrections_test \
  *     node tests/integration/ocr-corrections-pg.mjs
  *
  * 未设置环境变量 ⇒ 打印 SKIP 并以 77 退出（未取得，不是通过）。
@@ -34,7 +34,7 @@ import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
 import { assertRawPreserved } from '../../services/api/src/ocr/state.ts';
 
 const ENV = 'OCR_PG_TEST_URL';
-const DB = 'gengyun_ocr_jobs_test';
+const DB = 'gengyun_ocr_corrections_test';
 const rawUrl = process.env[ENV];
 if (rawUrl === undefined || rawUrl.trim() === '') {
   console.log(`SKIP real PG17: ${ENV} 未设置 —— 本次运行没有验证真库（不是通过，也不是失败）。`);
