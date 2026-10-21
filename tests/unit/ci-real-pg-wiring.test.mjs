@@ -57,10 +57,12 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 前两条是 #314 接的（会话链／社区域），中间两条是 R27-S4 接的（消息域／收藏历史，同一条 workflow），
  * 后三条是 R28-S14 接的（账号注销／后台账号读取／全局开关，同一条 workflow），
  * 第 8 条是 R28-S17 接的（标签 OCR 域／迁移 0024，同一条 workflow；它跑**全链迁移**，故顺带守住迁移清单不变量）。
- * R28-S14 的另两条候选（`account-suspend-pg`／`backup-purge-pg`）**没有**进这份清单：
- * 前者在 scram 认证下必 `28P01`（运行时角色口令是自己 `randomBytes(24)` 生成的，与 argv[3] 无关），
- * 后者要求在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
- * `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
+ * 第 9 条是 R28-S39 接的（账号停用/恢复域 I22，同一条 workflow；它要求**空库**、自己 apply 0001–0017
+ * 并把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；argv 只给 owner URL，运行时角色它自建并派生 URL）。
+ * R28-S14 的另两条候选：`account-suspend-pg` 已由 R28-S39 接上（scram 缺陷由 R28-S15 修掉，见证据页
+ * `docs/verification/gy-r28-account-suspend-scram-20261020.md`）；只剩 `backup-purge-pg` 不接，因为它要求
+ * 在 runner 上用 `initdb`/`pg_ctl` 另起 17.11 集群（CI 里只有 `services.postgres` 容器内的 17.11），
+ * 见证据页 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -71,6 +73,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/account-suspend-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -82,6 +85,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/account-suspend-pg.mjs',
 ]);
 
 /**
@@ -117,6 +121,11 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合，排在最后（workflow 里也是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
+  // 9. `account-suspend-pg`（R28-S39 接入）：要求空库、自己 apply 0001–0017；开头 `resetRoles()` 先尽力
+  //    DROP 7 个角色，删不掉（别处把权限授予了它）时改用属性逐字相同的 `ALTER ROLE` 复用 ⇒ 能容忍
+  //    `admin-accounts-read-pg` 留在集群里的同名角色；收尾 `cleanup()` 按快照差集 DROP 自己建的角色。
+  //    排在最后（workflow 里也是最后一步）：它清理角色，放前面会改变后面脚本的前置条件。
+  'tests/integration/account-suspend-pg.mjs',
 ]);
 
 /**
