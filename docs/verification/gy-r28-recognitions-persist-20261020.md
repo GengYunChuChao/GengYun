@@ -196,7 +196,7 @@ AssertionError [ERR_ASSERTION]: {"error":{"code":"PROVIDER_UNAVAILABLE",
 | 6 | `community-pg.mjs` | `EXIT=0`（23 组） |
 | 7 | `messages-pg.mjs` | `EXIT=0`（`ALL PASS`） |
 | 8 | `favorites-history-pg.mjs` | `EXIT=0`（`ALL PASS (13 groups)`） |
-| 9 | `recognitions-pg.mjs` | `EXIT=0`（30 条 PASS，2334ms） |
+| 9 | `recognitions-pg.mjs` | `EXIT=0`（返修 1 时 30 条 PASS／2334ms；返修 2 补两臂后 **32 条 PASS**／2201ms，见 §12.3） |
 | 10 | `migrations-negative-pg.mjs` | `EXIT=0`（11 组；A0 基线 `0001–0025` 25 行台账） |
 | 11 | `egress-ledger-pg.mjs`（本片修改的脚本） | `EXIT=0`（`RESULT=PASS 12 组`，`CLEANUP=done`） |
 | 12 | `recognition-chain-e2e.mjs` | `EXIT=0`（两臂 PASS，38 条证据行，936ms） |
@@ -221,3 +221,98 @@ AssertionError [ERR_ASSERTION]: {"error":{"code":"PROVIDER_UNAVAILABLE",
 - **未在受限运行时角色下跑识别 store 的全套方法**：只验证了 `POST /recognitions` 这一条链（外加脚本原有的 12 组账本断言），没有逐一验证 `recognition_*` 四表的 UPDATE/SELECT 权限边界。
 - **未逐个真跑 16 个脚本**：本片跑了派单列的 6 个真库脚本 + 修改脚本 + `recognition-chain-e2e.mjs`；其余 9 个只做了静态扫描判定（`recogPOST=0` 且不满足 real+池+本域写路径），没有为「不受影响」另跑一遍。
 - **`recognition-chain-e2e.mjs` 未改**：派单 §2.2 与实测冲突，已按实测执行并在此如实记录；其头注释 `:16`–`:17` 的过期表述未订正。
+
+---
+
+## 12. 返修 2：对抗性审查的 3 条失实陈述与 2 个测试盲区
+
+对象是审查者对 `f71f501` 的结论（M1 已由返修 1 修掉）。本片只动迁移注释、一处文档句、两个测试文件（`tests/unit/recognitions-store-pg.test.mjs`、`tests/integration/recognitions-pg.mjs`）与本节/报告；**`services/api/src/**` 产品代码未改**（层 2 证明产品代码的 CAS 与过期闸门都是对的，错的是没有测试盯着它们）。
+
+### 12.1 失实陈述逐条订正（旧文 → 新文）
+
+**M2（引用行号错）** `services/api/db/migrations/0025_recognitions_persistence.sql:33`
+
+- 旧文：`与 services/api/src/recognitions/state.ts:14 的 JOB_STATES 逐字相同（顺序也相同）。`
+- 新文：`与 services/api/src/recognitions/state.ts:17 的 JOB_STATES 逐字相同（顺序也相同）。`
+- 依据：`export const JOB_STATES = [` 在 `services/api/src/recognitions/state.ts:17`；`:14` 是 `import { BRANCH_DESCRIPTORS, isFailureBranch } from './branches.ts';`。
+
+**M3（先例失实）** 同文件 `:34`–`:38`
+
+- 旧文：`先例如实登记：0013_conversations.sql:70（job_state job_state NOT NULL）已确立引用先例；…`
+- 新文（逐字，5 行）：
+
+```
+-- 先例如实登记：0001..0024 里**唯一**真正引用该枚举的列是 `0001_initial_schema.sql:211` 的 `jobs.state`；
+-- `0013_conversations.sql:70-71`（`varchar(20) + CHECK`）、`0018_favorites_history.sql:87`（`varchar(16) + CHECK`）、
+-- `0024_ocr_persistence.sql:93`（`text + CHECK`）都走 CHECK 而非枚举——那是「不为记录形状另绑枚举」的
+-- 另一种取向，**不是**本迁移的引用先例。故本片是该枚举第一次被 `jobs` 以外的域复用（只是复用既有类型，
+-- 不重建同义类型；同库也没有第二个 `job_state` 类型可建）。
+```
+
+- 依据（逐条实测）：`0001_initial_schema.sql:24` = `CREATE TYPE job_state AS ENUM ('queued', …)`；`:211` = `state job_state NOT NULL DEFAULT 'queued'`（`0001..0024` 里唯一引用该枚举的列）；`0013_conversations.sql:70-71` = `job_state varchar(20) NOT NULL DEFAULT 'queued'` + `CHECK (job_state IN (…))`；`0018_favorites_history.sql:87` = `varchar(16) + CHECK`；`0024_ocr_persistence.sql:93` = `text + CHECK`。
+
+**M4（同一失实说法抄进发布材料索引）** `docs/verification/gy-i24-release-materials-index-20261017.md:140`
+
+- 旧文：`state` 直接引用 `0001` 的 `job_state` 枚举（`0013_conversations.sql` 有先例，故不重建同义类型）
+- 新文：`state` 直接引用 `0001:211` 的 `job_state` 枚举（同库**首次跨域复用**：`0013:70-71`／`0018:87`／`0024:93` 都是 `varchar`/`text + CHECK`，取「不为记录形状另绑枚举」；本片只是复用既有类型，不重建同义类型）
+
+### 12.2 层 1（进 CI 单测）：SQL 文本锚点
+
+`tests/unit/recognitions-store-pg.test.mjs` 新增 1 个 test（15 → 16）：用同一套捕获 query 文本的假池，逐条点名断言——
+
+- `[updateJob]`／`[commitTerminal]`：`UPDATE public.recognition_jobs …` 必须含 `AND revision = $2`；
+- `[updateRecognition]`／`[commitSelection]`：`UPDATE public.recognition_records …` 必须含 `AND revision = $2`；
+- `[claimIdempotent]`：必须含 `expires_at = EXCLUDED.expires_at` 与 `WHERE public.recognition_idempotency.expires_at <= $5::timestamptz`。
+
+可鉴别的失败消息（NC 实测原文，非设计稿）：
+
+| 变异 | 失败消息（原文） |
+| --- | --- |
+| `:599` 去掉 CAS | `[updateJob] 这条 SQL 的 CAS 谓词被去掉了：UPDATE public.recognition_jobs 必须带 "AND revision = $2"（判定权必须留在数据库；应用层预检遮不住并发写，缺谓词会静默覆盖他人写入）` |
+| `:638` | `[commitTerminal] 这条 SQL 的 CAS 谓词被去掉了：UPDATE public.recognition_jobs 必须带 "AND revision = $2"（…同上…）` |
+| `:685` | `[updateRecognition] 这条 SQL 的 CAS 谓词被去掉了：UPDATE public.recognition_records 必须带 "AND revision = $2"（…同上…）` |
+| `:739` | `[commitSelection] 这条 SQL 的 CAS 谓词被去掉了：UPDATE public.recognition_records 必须带 "AND revision = $2"（…同上…）` |
+| `:213` 过期闸门改 `now()` | `[claimIdempotent] 这条 SQL 的过期闸门被去掉了（或改成恒真/恒假）：ON CONFLICT 必须带 "WHERE public.recognition_idempotency.expires_at <= $5::timestamptz"，未过期的占位绝不能被第二个请求覆盖` |
+
+### 12.3 层 2（真库）：CAS 与过期重占两臂
+
+`tests/integration/recognitions-pg.mjs` 在 `[13]` 之后新增两臂（`[14]`/`[15]`），`EXITCODE`/`ALL PASS` 汇总行不变：
+
+- `[14]` **库层 CAS 真的在库层裁决**：holder 连接 `BEGIN` + `SELECT … FOR UPDATE` + 抢先把 `revision=2/state=running`，轮询 `pg_stat_activity` 直到看见 store 的 `UPDATE` 在行锁上排队（`wait_event_type='Lock'`），再 `COMMIT`；断言 store 收到 `null`，直查库仍是 `revision=2/state=running`。⇒ 区分「应用层预检就 null」与「库层改写 0 行」，审查者的 C4 变异在这条臂下必红。
+- `[15]` **幂等过期重占**：占位两次仍 `in_progress`；手工把该行 `expires_at` 拨到过去，再 `claimIdempotent` ⇒ `claimed`，且 `request_hash`/`pending`/`expires_at` 被 `EXCLUDED` 刷新；未过期的再 claim ⇒ `in_progress`。⇒ 审查者的 C11 变异在这条臂下必红。
+
+读数：`PASS 23`／`PASS 24`，合计 **32 条 PASS**（返修 1 为 30 条），`EXITCODE=0`。
+
+### 12.4 负控制（每条都逐字节还原并核 `sha256`）
+
+`store-pg.ts` 基线 `47db671b4730388f5a6ad6e334cc6d242247d9fa1069a71a30f5fe5dda820892`；`recognitions-pg.mjs` 基线 `73d6f52c5999ba611d2e5a22145bfb2e0f9716a76ee88813e996dbb98f6ff95e`。
+
+| 编号 | 变异 | 结果 | 还原核验 |
+| --- | --- | --- | --- |
+| NC-A ×4 | `:599`／`:638`／`:685`／`:739` 逐条删 `AND revision = $2` | 层 1 `EXIT=1`，四条消息见 §12.2 | 每轮恢复后 `47db671b…0892` 相同 |
+| NC-B | `:213` 过期闸门改 `expires_at <= now()` | 层 1 `EXIT=1`（旧 claim 测试与新锚点测试**双红**，锚点消息见 §12.2） | `47db671b…0892` 相同 |
+| NC-A′ | `:599` 改 `AND (revision = $2 OR true)`（保留占位符，避免 PG 先因 `$2` 缺失报错） | 层 2 `[14]` 红：`AssertionError [ERR_ASSERTION]: [14] 库层 CAS 必须拒绝：并发方已把 revision 推到 2，带 "AND revision = $2" 的 UPDATE 必须改写 0 行`，`EXIT=1` | `47db671b…0892` 相同 |
+| NC-C | 层 2 `:721` 过期时间改成未来（`expiryNow.getTime() + 5 * 60 * 1000`） | 层 2 `[15]` 红：`AssertionError [ERR_ASSERTION]: [15] 已过期台账必须允许重新占位（ON CONFLICT … WHERE expires_at <= now；闸门若恒假，这里会读回旧 request_hash ⇒ conflict）`，`EXIT=1` | `73d6f52c…f95e` 相同 |
+
+> 如实记两次：NC-A′ 第一次用的是「直接删掉 ` AND revision = $2`」，脚本在更早的 `allThirteen` 段就以 `ApiError: 识别数据库暂不可用` 崩了——占位符 `$2` 消失使 PG 先报类型推断错误，掩盖了 CAS 语义；改成恒真谓词后才是干净反证。
+
+### 12.5 措辞订正：「HTTP 面不可做」不成立
+
+`tests/integration/recognitions-pg.mjs:997-1000` 的 `unread('HTTP 面的"重启不丢"')` 原写「real 模式真实识别提供者/媒体端口未接线…无法经 HTTP 建任务」。审查者指出不成立，已改为：`本片未做（**不是做不了**：tests/integration/egress-ledger-pg.mjs:192 用 http('/recognitions', …) 发 POST /recognitions，:305 只注入合成识别提供者与 createSubstituteMediaPort()、不注入识别 store，即以 real + 真池走 app.ts:952 的 PG 分支并断言 202）；…返修 1 的回归恰好被那个夹具抓到，正是因为它走的「real + 池 + 子集迁移库」这条路本脚本没有走`。报告 §4.5 的引文就地订正并保留原文注。
+
+### 12.6 门禁（返修 2 提交 `ac7787e` 后）
+
+| 门禁 | 读数 |
+| --- | --- |
+| `npm run lint` | `EXIT=0`（`tsc --noEmit` ×2 PASS + 仓库卫生 PASS） |
+| `npm run test:contract` | `EXIT=0`，tests 6 / pass 6 / fail 0，144.9ms |
+| `node --test --test-isolation=none tests/unit/recognitions-store-pg.test.mjs` | `EXIT=0`，tests 16 / pass 16 / fail 0，80.6ms |
+| 真库 `recognitions-pg.mjs`（55613／`gengyun_recognitions_test` 复位空库） | `EXIT=0`，32 条 PASS，2201ms |
+| `node tools/verify-contract-status.mjs` | `EXIT=0`（覆盖 112 条；implemented 13 / partial 95 / planned 4；形状错误 0／语义错误 0） |
+
+### 12.7 未取得（返修 2）
+
+- **CI 未重跑**：本条不改变 run `39425382301` 的红；本节读数全是本机。
+- **`[14]` 的排队观测是轮询采样**（50ms／最多 5s）：本机观测到；采样不到时断言会红（不会静默通过），但极快完成时可能误红。
+- **`[14]`/`[15]` 用 owner 池**（与脚本其余臂一致）：未在受限运行时角色下验证 CAS 与幂等过期重占。
+- **未跑全量串行单测**：返修 2 只跑了 `recognitions-store-pg.test.mjs` 一个文件（16 条）与上述四项门禁；全量 2974 条的读数是返修 1 的。

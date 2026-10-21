@@ -26,12 +26,16 @@
 --   * `jobs` 另带 `attempt` / `lease_expires_at` / `dedupe_key` 等派发字段，本域不持有。
 -- 因此本域自建任务表；0001 的 `jobs` 原样留给共享作业面，本迁移不读、不写、不删。
 --
--- ## `state` 列**直接引用** 0001 的 `job_state` 枚举（与 0024 的 `text + CHECK` 相反，理由如下）
+-- ## `state` 列**直接引用** 0001 的 `job_state` 枚举（同库**首次跨域复用**；与 0024 的 `text + CHECK` 相反）
 -- 派单口径：`job_state` 已在 `0001_initial_schema.sql:24` 建过，含 `cancelled`，本片**直接引用**、
 -- ⛔ 不重建类型。核对结果：该枚举的 7 个取值
 --     `'queued', 'running', 'succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'`
--- 与 `services/api/src/recognitions/state.ts:14` 的 `JOB_STATES` **逐字相同**（顺序也相同），
--- 且 `0013_conversations.sql:70`（`job_state job_state NOT NULL`）已确立引用先例。
+-- 与 `services/api/src/recognitions/state.ts:17` 的 `JOB_STATES` **逐字相同**（顺序也相同）。
+-- 先例如实登记：`0001..0024` 里**唯一**真正引用该枚举的列是 `0001_initial_schema.sql:211` 的 `jobs.state`；
+-- `0013_conversations.sql:70-71`（`varchar(20) + CHECK`）、`0018_favorites_history.sql:87`（`varchar(16) + CHECK`）、
+-- `0024_ocr_persistence.sql:93`（`text + CHECK`）都走 CHECK 而非枚举——那是「不为记录形状另绑枚举」的
+-- 另一种取向，**不是**本迁移的引用先例。故本片是该枚举第一次被 `jobs` 以外的域复用（只是复用既有类型，
+-- 不重建同义类型；同库也没有第二个 `job_state` 类型可建）。
 -- 与 0024 的差异如实登记：0024 自建 `text + CHECK`，理由是「不用为记录形状绑另一套枚举」；
 -- 本片按派单选枚举，代价是将来扩值要走 `ALTER TYPE`（**不会**让库侧闭集与 `state.ts` 分叉：
 -- 枚举是本片唯一的库侧闭集，比一份手抄的 `CHECK (state IN …)` 更不容易抄漏）。
