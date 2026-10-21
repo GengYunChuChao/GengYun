@@ -26,6 +26,7 @@ import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
 import { failureCodeOf, summarizeEgressOutcome } from './ledger-pg.ts';
 import type { ExportRecord, PostgresExportLedger } from './ledger-pg.ts';
 import type { InFlightGuard } from '../../../../packages/privacy/in-flight.mjs';
+import { isErrorCode } from '../contract.ts';
 
 export interface MediaJobEgress {
   /** `real` 才接管派发；`stub`/`preset_demo` 恒为 false（替身不记账）。 */
@@ -161,4 +162,162 @@ export function createMediaJobEgress(deps: {
       return ledger.cancelVersion(input);
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// 文字问答（`/conversations` 的回答生成侧）的外发守卫 —— GY-R28 W7（#12）
+// ---------------------------------------------------------------------------
+
+/**
+ * 问答外发的**对象类型**（`exports.object_type`，≤40）：一次「回答一个轮次」= 一个外发对象。
+ *
+ * 为什么不用 `media`：媒体维要求 `object_id` 是 uuid 且 `dataType ∈ MEDIA_PURPOSES`，
+ * 问答的资料类型是**非媒体维**的 `checked_content`（唯一闭集成员，其必需用途恰为
+ * `external_inference`），对象标识必须走 `object_key`。因此对象维度按 `conversation_turn`
+ * + `object_key = turn:<turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ */
+export const CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn';
+
+/** 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..128 小写字母/数字/`_-.`/`:`）。 */
+const CHAT_OBJECT_KEY = /^[a-z0-9][a-z0-9_\-.:]{0,126}[a-z0-9]$/;
+
+/**
+ * 从抛出来的错误里取「账本可接受的安全错误码」。
+ *
+ * 只认契约闭集形状（`^[A-Z_]{1,64}$`）且必须确实是 `ERROR_STATUS_MAP` 的成员 —— 账本只收短 token，
+ * 收错值会被它的校验拒掉，那反而会把"失败"变成"记账也失败"的二连错。
+ */
+function errorCodeOf(value: unknown): string | null {
+  const code = (value as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && isErrorCode(code) ? code : null;
+}
+
+/**
+ * 问答外发的守卫端口。
+ *
+ * 与 `MediaJobEgress` **同一套账本口径与同一套派发顺序**（预留 → 执行前重查 → `markSent`
+ * → 真正外发 → 保存前重查/写回），差异只在接缝形状：
+ * 媒体域包装的是「域提供者对象的方法」（`provider(inner, method)`）；
+ * 问答域包装的是「一次外发调用」（`send({ call })`），因为回答生成没有可包装的长生命周期
+ * 提供者实例，且对象维度不是 `media`。
+ */
+/** `ChatEgress.send` 的入参形状（泛型化以便实现方写出带类型的 `send<T>`）。 */
+export interface ChatEgressSend<T> {
+  userId: string;
+  authEpoch: number;
+  /** 会话轮次 id（uuid；用于 `object_key`，不落正文）。 */
+  objectId: string;
+  /** 轮次 revision（外发预留时冻结的版本号）。 */
+  objectRevision: number;
+  call: () => Promise<T>;
+  outcomeOf: (result: T) => Record<string, unknown>;
+  /** 失败 → 安全错误码（闭集外的值会被账本拒；缺省按 `PROVIDER_UNAVAILABLE`）。 */
+  failureCodeOf?: (error: unknown) => string | null;
+}
+
+export interface ChatEgress {
+  /** `real` 才接管外发；其余模式恒 false（此时 `send` 直接拒绝，绝不无账外发）。 */
+  readonly engaged: boolean;
+  readonly note: string;
+  readonly dataType: string;
+  /**
+   * **reserve-then-send**：一次问答外发的唯一入口。
+   *
+   * 顺序（与账本口径逐条对齐，任何一步失败都不外发）：
+   *   1. 解析用户当前授权绑定里 `capability` 的唯一接收方；
+   *   2. `ledger.reserve` 冻结快照（账号版本 / 必需用途 epoch / 接收方版本）；
+   *   3. `inFlight.assertExecutable`（执行前重查：账号状态 + auth_epoch + 用途 epoch）；
+   *   4. `ledger.markSent`（唯一权威授权边界）；
+   *   5. `call()` —— 真正的模型外发；
+   *   6. 成功 ⇒ `inFlight.saveResult`（保存前重查 + 写回结构分类）；失败 ⇒ `markFailed`（**不**写回）。
+   *
+   * `outcomeOf` 只能返回结构分类 token（账本 `export_writebacks.result` 只收短 token，
+   * 不收正文/用量明细 —— 用量进结构化日志，见 `ai/chat-live-adapter.ts`）。
+   */
+  send<T>(input: ChatEgressSend<T>): Promise<T>;
+}
+
+/**
+ * 问答外发守卫。
+ *
+ * @param deps.executionMode 执行模式；只有 `real` 才接管（其余模式 `send` 一律拒绝）
+ * @param deps.capability    接收方能力（`recipients.capability`；问答用 `llm`，闭集已含）
+ * @param deps.dataType      资料类型（`checked_content`，其必需用途恰为 `external_inference`）
+ */
+export function createChatEgress(deps: {
+  ledger: PostgresExportLedger;
+  inFlight: Pick<InFlightGuard, 'assertExecutable' | 'saveResult'>;
+  executionMode: 'real' | 'stub' | 'preset_demo';
+  dataType?: string;
+  purpose?: string;
+  capability?: string;
+}): ChatEgress {
+  const { ledger, inFlight, executionMode } = deps;
+  const dataType = deps.dataType ?? 'checked_content';
+  const purpose = deps.purpose ?? 'external_inference';
+  const capability = deps.capability ?? 'llm';
+  const engaged = executionMode === 'real';
+
+  const note = engaged
+    ? '问答真实模型外发已接管：reserve → assertExecutable → markSent → 外发 → saveResult'
+    : `替身/演示模式（${executionMode}）：问答不发生真实外发，外发账本不记账`;
+
+  const egress: ChatEgress = {
+    engaged,
+    note,
+    dataType,
+
+    async send<T>(input: ChatEgressSend<T>): Promise<T> {
+      // 未接账本/非 real ⇒ **在产生任何外发之前**拒绝（fail-closed，且不留 reserved 行）。
+      if (!engaged) {
+        throw new PrivacyError('PROVIDER_UNAVAILABLE', '问答真实外发未接管（非 real 模式）：拒绝无账外发', {
+          retryable: false,
+        });
+      }
+      const objectKey = `turn:${String(input.objectId).toLowerCase()}`;
+      if (!CHAT_OBJECT_KEY.test(objectKey)) {
+        throw new PrivacyError('INVALID_REQUEST', '外发对象键非法（只允许小写字母/数字/_-. :）');
+      }
+      const recipientId = await ledger.resolveRecipient({ userId: input.userId, purpose, capability });
+      const record = await ledger.reserve({
+        userId: input.userId,
+        authEpoch: input.authEpoch,
+        objectType: CHAT_EGRESS_OBJECT_TYPE,
+        objectKey,
+        objectRevision: input.objectRevision,
+        dataType,
+        purpose,
+        recipientId,
+        sourceVersion: null,
+      });
+      // 执行前重查：撤回/注销后不得再起新外发。
+      await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
+      const sent = await ledger.markSent(record.id);
+      let outcome: T;
+      try {
+        outcome = await input.call();
+      } catch (error) {
+        // `failureCodeOf` 认的是账本摘要形状（`{kind:'failed', code}`），**不认** Error；
+        // 所以抛出来的 Error 先按它的 `code`（契约闭集里的错误码）取，取不到再落默认值。
+        const code = input.failureCodeOf?.(error) ?? errorCodeOf(error) ?? failureCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
+        // 失败**不**记账为成功：只把预留置终态（不写回写表）。
+        await ledger.markFailed(record.id, { errorCode: code }).catch(() => {});
+        throw error;
+      }
+      const failure = failureCodeOf(outcome);
+      if (failure !== null) {
+        await ledger.markFailed(record.id, { errorCode: failure });
+        return outcome;
+      }
+      // 保存前重查 + 写回结构分类（与校验同事务）；被拒 ⇒ 抛错 ⇒ 调用方不保存结果（零写入）。
+      await inFlight.saveResult({
+        exportId: record.id,
+        userId: sent.userId,
+        objectVersion: sent.objectRevision,
+        result: input.outcomeOf(outcome),
+      });
+      return outcome;
+    },
+  };
+  return egress;
 }
