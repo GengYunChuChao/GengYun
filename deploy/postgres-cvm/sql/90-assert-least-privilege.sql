@@ -1399,6 +1399,35 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      WHERE n.nspname IN ('public', 'catalog_ops', 'staging_intake')
        AND p.prosecdef
   ),
+  -- R28-S58 外发账本：就绪态双条件的六项实测。服务端自己怎么判断「账本可用」写在
+  -- services/api/src/privacy/ledger-pg.ts:228-233，三个条件同时成立才算就绪：
+  --   to_regclass('public.export_writebacks') 非空
+  --   AND has_column_privilege(current_user,'public.exports','revision','UPDATE')
+  --   AND has_column_privilege(current_user,'public.exports','cancelled_at','UPDATE')
+  -- 任一不成立就 PrivacyError('OBJECT_UNAVAILABLE') ⇒ 409 fail-closed。注意这里查的是
+  -- **当前连接用户**的权限，而运行时是靠组继承拿到的；所以断言里统一按
+  -- 'gengyun_api_runtime' 这个角色名问 has_column_privilege，不依赖本会话是谁。
+  -- 追加两项：egress 角色本身在不在、它有没有被授予运行时；以及 export_writebacks
+  -- 有没有进过本文件的可见面清单（domain_manifest / external_manifest）。
+  -- 部署形态（provision-db.sh 默认只跑 7 个组文件里的 5 个，从不执行
+  -- roles/egress_ledger.sql）决定了 gengyun_egress_ledger 不会存在，于是账本在本片
+  -- 恒为「未就绪」—— 那是冻结，不是缺陷，93 号对此判绿。
+  ledger_readiness_state(revision_upd, cancelled_upd, egress_role, egress_grant,
+                          writebacks_present, writebacks_listed) AS (
+    SELECT has_column_privilege('gengyun_api_runtime', 'public.exports', 'revision', 'UPDATE'),
+           has_column_privilege('gengyun_api_runtime', 'public.exports', 'cancelled_at', 'UPDATE'),
+           EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_egress_ledger'),
+           EXISTS (SELECT 1
+                     FROM pg_auth_members m
+                     JOIN pg_roles r ON r.oid = m.roleid
+                     JOIN pg_roles g ON g.oid = m.member
+                    WHERE g.rolname = 'gengyun_api_runtime'
+                      AND r.rolname = 'gengyun_egress_ledger'),
+           to_regclass('public.export_writebacks') IS NOT NULL,
+           EXISTS (SELECT 1 FROM domain_manifest WHERE tbl = 'export_writebacks'
+                   UNION ALL
+                   SELECT 1 FROM external_manifest WHERE tbl = 'export_writebacks')
+  ),
   checks(label, ok, detail) AS (
 
   -- 1. 运行时 LOGIN 的属性：可登录、可继承、且无任何特权位
@@ -2460,11 +2489,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   --     ADMIN OPTION，它照样判绿；而「GRANT 一个新组 TO gengyun_api_runtime」正是后来者
   --     给运行时扩权最省事的一条路（组里挂的表/列授权会被立刻继承）。同理，组角色一旦
   --     能 LOGIN，就等于多了一把能直接登进业务库的钥匙。这两面都必须在事后拦住。
+  --     ⚠ 唯一的例外是 gengyun_egress_ledger：93 号的就绪臂要求它被授予运行时（外发账本
+  --     的写位经这个组继承）。若这里把集合钉死成 5 条，93 号的就绪臂就永远不可能为真 ——
+  --     两条断言会互相矛盾。所以白名单 = 5 条基组 + 这个待接通的组，条数 5 或 6；
+  --     除它以外多授任何一条都判红。
   SELECT 'runtime_membership_exact',
          (SELECT count(*)
             FROM pg_auth_members m
             JOIN pg_roles g ON g.oid = m.member
-           WHERE g.rolname = 'gengyun_api_runtime') = 5
+           WHERE g.rolname = 'gengyun_api_runtime') BETWEEN 5 AND 6
          AND NOT EXISTS (
                SELECT 1
                  FROM pg_auth_members m
@@ -2477,9 +2510,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                                             'gengyun_preview_reader',
                                             'gengyun_consent_granter',
                                             'gengyun_profile_runtime',
-                                            'gengyun_knowledge_runtime'))
+                                            'gengyun_knowledge_runtime',
+                                            'gengyun_egress_ledger'))
          ),
-         'pg_auth_members 必须恰为 5 条 NOLOGIN 组、无 ADMIN OPTION；实测（组→admin_option/可登录）：' ||
+         'pg_auth_members 必须为 5 条基组（可多一条待接通的 gengyun_egress_ledger）、全部 NOLOGIN、无 ADMIN OPTION；实测（组→admin_option/可登录）：' ||
          COALESCE((
            SELECT string_agg(r.rolname || '→' || m.admin_option::text
                              || '/login=' || r.rolcanlogin::text,
@@ -2578,6 +2612,30 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
              FROM secdef_audit a
             WHERE NOT a.pinned
          ), '（无）')
+
+  UNION ALL
+  -- 93. R28-S58 外发账本（就绪态双条件 / 三形态穷尽）：账本必须「整块未就绪」或「整块就绪」。
+  --     形态 A（未就绪，本片部署形态）：revision / cancelled_at 两列的 UPDATE 都没授，
+  --     egress 角色不存在、也没有被授予运行时。此时服务端 fail-closed 409，是预期行为；
+  --        writebacks_present 允许为 true（0011 迁移建了表，但运行时碰不到它）。
+  --     形态 B（就绪）：两列 UPDATE 都有 + egress 角色存在且已授予运行时 + export_writebacks
+  --     存在且已进本文件可见面清单（否则「就绪」只是权限到位、账本表却没人审）。
+  --     其余一切 ⇒ 红。半接通是这条断言的靶心：只授一列、只建角色不授组、全接通但表没进
+  --     清单 —— 这三种状态服务端都会继续 fail-closed，而运维看到的却是「已经接了一半」。
+  --     之所以不用「两列 AND」直接做未就绪判据：那样 GRANT UPDATE (revision) 单列会落进
+  --     未就绪臂判绿，半接通就从判决里消失了。
+  SELECT 'runtime_ledger_readiness_biconditional',
+         (SELECT (    NOT s.revision_upd AND NOT s.cancelled_upd
+                  AND NOT s.egress_role   AND NOT s.egress_grant)
+                 OR (    s.revision_upd AND s.cancelled_upd
+                     AND s.egress_role   AND s.egress_grant
+                     AND s.writebacks_present AND s.writebacks_listed)
+            FROM ledger_readiness_state s),
+         '外发账本必须整块未就绪或整块就绪（半接通判红）；实测 revision_upd/cancelled_upd/egress_role/egress_grant/writebacks_present/writebacks_listed = ' ||
+         (SELECT s.revision_upd::text || '/' || s.cancelled_upd::text || '/'
+                 || s.egress_role::text || '/' || s.egress_grant::text || '/'
+                 || s.writebacks_present::text || '/' || s.writebacks_listed::text
+            FROM ledger_readiness_state s)
 )
 
 SELECT label, ok, detail
@@ -2593,8 +2651,8 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：103 条断言全红时标签合计约 3.2K 字符（2026-10-21 实测：总 103 条、
--- sum(length(label)+2)=3239、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：108 条断言全红时标签合计约 3.4K 字符（2026-10-21 R28-S58 实测：总 108 条、
+-- sum(length(label)+2)=3379、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 DO $$
 DECLARE
