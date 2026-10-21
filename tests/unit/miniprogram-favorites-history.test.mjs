@@ -650,3 +650,201 @@ test('详情页收藏（切片A，F1）：在途 401（会话失效：favorites-
   assert.equal(g.page.data.favNote, g.favorites.messageFor({ code: 'SESSION_REQUIRED' }));
   assert.equal(/正在收藏…/.test(g.page.data.favNote), false, '不得留"正在收藏…"（此时无在途请求）');
 });
+
+// ================= C5（#16 端到端接线）：401 与 403 必须分开 =========================
+//
+// 服务端可达的 403 有两个真实来源：
+//   * `services/api/src/favorites/validate.ts:65` / `services/api/src/history/validate.ts:68`
+//     （后台会话不得代替用户读写收藏/历史 ⇒ SCOPE_DENIED）；
+//   * `services/api/src/auth/middleware.ts:89`/`:93`（账号停用、auth_epoch 不符 ⇒ ACCOUNT_INACTIVE）。
+// 修复前两个消费层把 401 与 403 一起折叠成 `SESSION_REQUIRED` 并 `auth.clearSession()`：
+// 用户被静默登出、页面把"没有权限"说成"请重新登录"，且 `utils/states.js` 的 denied 永远不出现
+// （`messageFor` 里已写好的 SCOPE_DENIED 文案因此不可达）。
+
+const FAVORITES_PAGE = root + '/miniprogram/pages/favorites/favorites.js';
+const HISTORY_PAGE = root + '/miniprogram/pages/history/history.js';
+const HISTORY_DETAIL_PAGE = root + '/miniprogram/pages/historydetail/historydetail.js';
+
+function forbiddenPayload(code) {
+  return { error: { code, message: 'synthetic', retryable: false } };
+}
+
+/** 页面 onShow 内的门禁核实（`GET /auth/session`）在函数内作答。 */
+async function passGate(f, call) {
+  call();
+  f.requests.filter((r) => r.url.endsWith('/auth/session')).at(-1)
+    .success({ statusCode: 200, data: { data: { audience: 'user', expires_at: future() } } });
+  await flush();
+}
+
+test('收藏/历史消费层：403 契约码原样带出且**不清会话**，401 仍清会话（denied 与 guest 分开）', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+
+  const denied = assert.rejects(f.favorites.listFavorites(''), (e) => {
+    assert.equal(e.code, 'SCOPE_DENIED');
+    assert.equal(e.status, 403);
+    assert.equal(e.retryable, false);
+    assert.match(f.favorites.messageFor(e), /无权/, '403 有自己的人话，不落到"请重新登录"');
+    return true;
+  });
+  f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('SCOPE_DENIED') });
+  await denied;
+  assert.equal(f.auth.isLoggedIn(), true, '403 不清会话：会话本身有效，只是没有权限');
+
+  // 账号停用/注销（同一 403 集合）：同样不得清会话。
+  const inactive = assert.rejects(f.favorites.createFavorite('species', TARGET, 3), (e) => e.code === 'ACCOUNT_INACTIVE');
+  f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('ACCOUNT_INACTIVE') });
+  await inactive;
+  assert.equal(f.auth.isLoggedIn(), true);
+  assert.match(f.favorites.messageFor({ code: 'ACCOUNT_INACTIVE' }), /账号当前不可用/);
+  assert.match(f.favorites.messageFor({ code: 'CONSENT_REQUIRED' }), /授权同意/);
+
+  // 历史层同一口径（两个消费层不各造一套语义）。
+  const consent = assert.rejects(f.history.listHistory(''), (e) => e.code === 'CONSENT_REQUIRED');
+  f.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('CONSENT_REQUIRED') });
+  await consent;
+  assert.equal(f.auth.isLoggedIn(), true);
+  assert.match(f.history.messageFor({ code: 'ACCOUNT_INACTIVE' }), /账号当前不可用/);
+
+  // 反例：401 仍然是"会话失效" ⇒ 清会话 + SESSION_REQUIRED（既有语义不变）。
+  const expired = assert.rejects(f.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED' && e.status === 401);
+  f.requests.at(-1).success({ statusCode: 401, data: forbiddenPayload('SESSION_EXPIRED') });
+  await expired;
+  assert.equal(f.auth.isLoggedIn(), false, '401 仍按会话失效处理');
+});
+
+test('收藏/历史消费层：403 无错误体、或码不在契约 403 集合内时仍按会话失效处理（保守，不臆测）', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+  const bodyless = assert.rejects(f.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED');
+  f.requests.at(-1).success({ statusCode: 403, data: 'forbidden' });
+  await bodyless;
+  assert.equal(f.auth.isLoggedIn(), false, '没有可核对的错误码时按会话失效收口');
+
+  const g = fixture();
+  assert.equal(await login(g), true);
+  const unknown = assert.rejects(g.history.listHistory(''), (e) => e.code === 'SESSION_REQUIRED');
+  g.requests.at(-1).success({ statusCode: 403, data: forbiddenPayload('NOT_A_CONTRACT_403_CODE') });
+  await unknown;
+  assert.equal(g.auth.isLoggedIn(), false, '契约 403 集合之外的码不当作"无权限"');
+});
+
+test('收藏页：服务端 403 时交给统一状态组件呈现 denied，不折叠成空列表，也不清会话', async () => {
+  const f = fixture({ route: 'pages/favorites/favorites' });
+  f.load(FAVORITES_PAGE);
+  const states = f.load(root + '/miniprogram/utils/states.js');
+  assert.equal(await login(f), true);
+
+  await passGate(f, () => f.page.onShow());
+
+  const list = f.requests.filter((r) => r.url.includes('/favorites')).at(-1);
+  list.success({ statusCode: 403, data: forbiddenPayload('SCOPE_DENIED') });
+  await flush();
+
+  assert.equal(f.page.data.errorCode, 'SCOPE_DENIED', '错误码必须带给状态组件');
+  assert.equal(f.page.data.errorText, f.favorites.messageFor({ code: 'SCOPE_DENIED' }));
+  assert.equal(f.page.data.items.length, 0);
+  assert.equal(f.page.data.busy, false);
+  assert.equal(f.page.data.loading, false);
+  assert.equal(f.page.data.message, '', '失败不得被说成"尚无收藏。"（失败不折叠成空列表成功）');
+  assert.equal(f.auth.isLoggedIn(), true, '403 不清会话');
+
+  // 401 与 403 在状态层是两档：guest vs denied（折叠就分不出来了）。
+  assert.equal(states.statusForCode('SCOPE_DENIED'), states.STATUS.DENIED);
+  assert.equal(states.statusForCode('SESSION_REQUIRED'), states.STATUS.GUEST);
+
+  // WXML 必须把错误码真的交给状态组件，否则 denied 永远不会渲染。
+  const wxml = readFileSync(root + '/miniprogram/pages/favorites/favorites.wxml', 'utf8');
+  assert.match(wxml, /<state-view[\s\S]{0,200}errorCode="\{\{errorCode\}\}"[\s\S]{0,200}title="收藏读取失败"/);
+});
+
+test('历史页：服务端 403 ACCOUNT_INACTIVE 时呈现 denied，不折叠成空列表，也不清会话', async () => {
+  const f = fixture({ route: 'pages/history/history' });
+  f.load(HISTORY_PAGE);
+  const states = f.load(root + '/miniprogram/utils/states.js');
+  assert.equal(await login(f), true);
+
+  await passGate(f, () => f.page.onShow());
+
+  const list = f.requests.filter((r) => r.url.includes('/history')).at(-1);
+  list.success({ statusCode: 403, data: forbiddenPayload('ACCOUNT_INACTIVE') });
+  await flush();
+
+  assert.equal(f.page.data.errorCode, 'ACCOUNT_INACTIVE');
+  assert.equal(f.page.data.errorText, f.history.messageFor({ code: 'ACCOUNT_INACTIVE' }));
+  assert.equal(f.page.data.items.length, 0);
+  assert.equal(f.page.data.failedCount, 0);
+  assert.equal(f.page.data.message, '', '失败不得被说成"还没有识别记录。"');
+  assert.equal(f.auth.isLoggedIn(), true);
+  assert.equal(states.statusForCode('ACCOUNT_INACTIVE'), states.STATUS.DENIED);
+
+  const wxml = readFileSync(root + '/miniprogram/pages/history/history.wxml', 'utf8');
+  assert.match(wxml, /<state-view[\s\S]{0,200}errorCode="\{\{errorCode\}\}"[\s\S]{0,200}title="历史读取失败"/);
+});
+
+/** 打开历史详情页到"实时定位请求已发出"这一步（详情内容读取留给用例作答或留在在途）。 */
+async function openHistoryDetail(f, id) {
+  f.page.onLoad({ id });
+  await passGate(f, () => f.page.onShow());
+  return f.requests.filter((r) => r.url.includes('/history?')).at(-1);
+}
+
+test('历史详情：记录已删除/不存在（实时列表未命中）呈现 invalid，不用链接或快照顶替内容', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(f), true);
+  await openHistoryDetail(f, UUID_B);
+  answer(f, { items: [], next_cursor: null });
+  await flush();
+
+  assert.equal(f.page.data.invalid, true);
+  assert.match(f.page.data.invalidReason, /不存在|已删除|不属于当前账号/);
+  assert.equal(f.page.data.canDelete, false, '定位不到就不给删除入口（不猜 revision）');
+  assert.equal(f.page.data.errorText, '', '这是"记录不可用"，不是"读取失败"');
+});
+
+test('历史详情：读取被 403 拒绝时呈现 denied（不是 invalid），不清会话，也不再自写状态块', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  const states = f.load(root + '/miniprogram/utils/states.js');
+  assert.equal(await login(f), true);
+  const list = await openHistoryDetail(f, UUID_B);
+  list.success({ statusCode: 403, data: forbiddenPayload('SCOPE_DENIED') });
+  await flush();
+
+  assert.equal(f.page.data.errorCode, 'SCOPE_DENIED');
+  assert.equal(f.page.data.errorText, f.history.messageFor({ code: 'SCOPE_DENIED' }));
+  assert.equal(f.page.data.invalid, false, '403 不等于"记录不存在"');
+  assert.equal(f.auth.isLoggedIn(), true, '403 不清会话');
+  assert.equal(states.statusForCode('SCOPE_DENIED'), states.STATUS.DENIED);
+
+  const wxml = readFileSync(root + '/miniprogram/pages/historydetail/historydetail.wxml', 'utf8');
+  assert.match(wxml, /errorCode="\{\{errorCode\}\}"/);
+  assert.equal(/notice notice--warn" wx:if="\{\{errorText\}\}"/.test(wxml), false, '读失败改由统一状态组件呈现');
+});
+
+test('历史详情：删除时服务端 404（已删除/他人记录同形）⇒ 按"记录不可用"收口，不猜结果', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(f), true);
+  await openHistoryDetail(f, UUID_B);
+  answer(f, { items: [historyItem({ kind: 'ocr', target_ref: { type: 'ocr', id: TARGET, revision: 2 } })], next_cursor: null });
+  await flush();
+  answer(f, ocr());
+  await flush();
+  assert.equal(f.page.data.locatedBy, 'live');
+  assert.equal(f.page.data.historyRevision, 1, '删除用的是实时读到的 revision');
+  assert.equal(f.page.data.canDelete, true);
+
+  f.page.onDelete();
+  const del = f.requests.filter((r) => r.method === 'DELETE').at(-1);
+  assert.equal(del.url.endsWith('/history/' + UUID_B), true);
+  assert.equal(del.header['If-Match'], '"1"');
+  del.success({ statusCode: 404, data: forbiddenPayload('NOT_FOUND') });
+  await flush();
+
+  assert.equal(f.page.data.invalid, true, '服务端说没有 ⇒ 页面按"记录不可用"收口');
+  assert.match(f.page.data.invalidReason, /不存在|已删除|不属于当前账号/);
+  assert.equal(f.page.data.canDelete, false);
+});
