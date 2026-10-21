@@ -99,6 +99,19 @@ Page({
   onHide: function () { pageGate.cancel(this) },
   onUnload: function () { pageGate.cancel(this) },
 
+  /** 失败态的统一收口：标题/说明/错误码一处生成，避免各分支各写一套（B7 由 state-view 判 denied）。 */
+  _fail: function (error) {
+    this.setData({
+      status: 'error',
+      errorText: api.message(error),
+      errorCode: (error && error.code) || '',
+      stateTitle: api.stateTitle(error),
+      stateDesc: api.message(error),
+      modeNote: '',
+      stubNote: ''
+    })
+  },
+
   /** 每次进入/重试都从第一页重新查询（服务端游标绑定主体，不能复用旧游标）。 */
   reload: function (done) {
     const epoch = (this._epoch = (this._epoch || 0) + 1)
@@ -121,15 +134,7 @@ Page({
     }).catch(function (error) {
       if (epoch !== that._epoch) return
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true, status: 'idle' }); if (done) done(); return }
-      that.setData({
-        status: 'error',
-        errorText: api.message(error),
-        errorCode: (error && error.code) || '',
-        stateTitle: api.stateTitle(error),
-        stateDesc: api.message(error),
-        modeNote: '',
-        stubNote: ''
-      })
+      that._fail(error)
       if (done) done()
     })
   },
@@ -155,6 +160,14 @@ Page({
     }).catch(function (error) {
       if (epoch !== that._epoch) return
       that.setData({ loadingMore: false })
+      // 游标失效（15 分钟 TTL 到期、水位变化、主体/auth_epoch 变化）⇒ 这条游标**永远不会**再成功：
+      // 清掉它并从第一页重载，而不是留着死游标让用户反复点「加载更多」看同一句报错。
+      if (error && error.code === 'INVALID_CURSOR') {
+        that.setData({ nextCursor: null })
+        that.reload()
+        wx.showToast({ title: '列表已过期，已重新载入', icon: 'none' })
+        return
+      }
       wx.showToast({ title: api.message(error), icon: 'none' })
     })
   },
@@ -162,14 +175,22 @@ Page({
   /**
    * 未读数是**派生量**：每次都向服务端重新读取，本地不维护计数器。
    * 取不到时**不显示任何数字**（既不显示 0，也不保留过期值），并如实说明未取得。
+   *
+   * 并发保护（世代号）：进入页面时的读取、标记单条后的读取、全部已读结束后的读取会同时在飞，
+   * 响应次序**不由请求次序决定**。若不设世代号，先发后到的**旧**读数会覆盖刚拿到的新读数
+   * （典型：标记已读后 count 3→2，但更早那次读到 3 的响应晚到 ⇒ 角标弹回 3）。
+   * 只采纳**最后一次发出**的请求结果，过期响应直接丢弃。
    */
   refreshUnread: function () {
     const that = this
+    const epoch = (this._unreadEpoch = (this._unreadEpoch || 0) + 1)
     if (!auth.isLoggedIn()) { this._applyUnread(''); this.setData({ unreadNote: '未读数尚未读取' }); return }
     api.getUnreadCount().then(function (result) {
+      if (epoch !== that._unreadEpoch) return
       that._applyUnread(api.unreadText(result.count))
       that.setData({ unreadNote: result.count > 0 ? '未读 ' + result.count + ' 条' : '暂无未读' })
     }).catch(function (error) {
+      if (epoch !== that._unreadEpoch) return
       that._applyUnread('')
       that.setData({ unreadNote: api.unwired(error) ? '未读数未取得：服务端未接线' : '未读数未取得：' + api.message(error) })
     })
@@ -284,6 +305,21 @@ Page({
       that.refreshUnread()
     }).catch(function (error) {
       if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true, status: 'idle' }); return }
+      // 403 系（deny）不是「请先登录」：整页收口到 denied 态（state-view 按错误码判定），
+      // 不用一句 toast 掩饰 —— 否则用户会反复点、也看不见「没有权限」这件事。
+      if (error && (error.code === 'SCOPE_DENIED' || error.code === 'CONSENT_REQUIRED' ||
+        error.code === 'ACCOUNT_INACTIVE')) {
+        that._fail(error)
+        return
+      }
+      // 本地 revision 已过期（另一处先写成功）⇒ 必须重新读取拿当前 If-Match；
+      // 否则后续每一次点击都带着旧版本号再打 409，用户会看到「一直失败」而无法自愈。
+      if (error && error.code === 'REVISION_CONFLICT') {
+        wx.showToast({ title: api.message(error), icon: 'none' })
+        that.reload()
+        that.refreshUnread()
+        return
+      }
       wx.showToast({ title: api.message(error), icon: 'none' })
     })
   },
@@ -318,11 +354,16 @@ Page({
         that.setData({ markingAll: false })
         that.refreshUnread()
         if (error && error.code === 'SESSION_REQUIRED') { that.setData({ guest: true, status: 'idle' }); return }
+        if (error && (error.code === 'SCOPE_DENIED' || error.code === 'CONSENT_REQUIRED' ||
+          error.code === 'ACCOUNT_INACTIVE')) { that._fail(error); return }
+        const stale = !!error && error.code === 'REVISION_CONFLICT'
         wx.showModal({
           title: '全部已读未完成',
           content: '已按顺序标记 ' + marked + ' 条，下一条失败即停：' + api.message(error),
           showCancel: false
         })
+        // 版本冲突时整批剩余条目都拿的是旧版本号 ⇒ 重新读取，避免用户重试仍然逐条 409。
+        if (stale) that.reload()
       })
     }
     step()
