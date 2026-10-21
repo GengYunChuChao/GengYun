@@ -179,6 +179,20 @@ function cancelAll() {
 const EXIT_CANCELLATION_NOTE = '合成任务没有服务端取消能力（契约只提供受理与读取），'
   + '因此离开本页只会取消本机在途请求、停止轮询并释放播放器与监听；不会谎称服务端任务已取消。'
 
+/**
+ * 401/403 归因：**不得把 403 折叠成 401**（本文件既有的措辞红线，此前传输层违反）。
+ *
+ * 为什么不能折叠：`CONSENT_REQUIRED` 指向「缺授权」、`SCOPE_DENIED` 指向「换账号/换能力」、
+ * `ACCOUNT_INACTIVE` 指向「账号不可用」，而 `SESSION_REQUIRED` 指向「重新登录」——折叠成后者
+ * 会把用户推进「反复登录却仍然失败」的死循环；更糟的是折叠时还会 `auth.clearSession()`，
+ * 把仍然有效的会话一起清掉（403 并不代表会话失效）。
+ *
+ * 归因实现**不在本文件**：统一由 `miniprogram/utils/auth.js` 的 `attribution` / `failureFor` 决定
+ * （`SESSION_LOSS_CODES` / `FORBIDDEN_CODES` 由 `utils/states.js` 的 `CODE_KIND` 反推）。
+ * 合流前本文件、`identify-api`、`speech-transcript`、`favorites-api`/`history-api` 各有一份同形实现，
+ * 口径互相漂移过，已全部删除。裁决口径见 `docs/verification/gy-i04-login-chain-20261021.md` §1.3。
+ */
+
 function request(method, path, options) {
   const config = options || {}
   const bound = binding()

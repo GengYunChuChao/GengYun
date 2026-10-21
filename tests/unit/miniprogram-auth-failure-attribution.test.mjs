@@ -56,7 +56,7 @@ test('归因表：401 恒为会话失效；403 按契约码原样带出，只有
   const rows = [
     // 状态, 封套码, 期望 surface, 期望 sessionLost, 期望 clearsSession
     [401, 'SESSION_REQUIRED', 'SESSION_REQUIRED', true, true],
-    [401, 'SESSION_EXPIRED', 'SESSION_EXPIRED', true, true],
+    [401, 'SESSION_EXPIRED', 'SESSION_REQUIRED', true, true], // 401 统一归一到 SESSION_REQUIRED
     [401, 'SOMETHING_ELSE', 'SESSION_REQUIRED', true, true], // 401 只可能是会话类：保守回落，不放宽
     [401, null, 'SESSION_REQUIRED', true, true],
     [403, 'SCOPE_DENIED', 'SCOPE_DENIED', false, false],
@@ -216,13 +216,13 @@ for (const [name, call] of CALLS) {
     assert.equal(inactive.auth.isLoggedIn(), false, 'ACCOUNT_INACTIVE 之后不得再声称已登录');
     assert.equal(inactive.storage.has(SESSION_KEY), false, '令牌已永久失效，本地会话必须清掉');
 
-    // ③ 401 仍按会话失效处理（守卫不放宽）：清会话 + SESSION_* 码
+    // ③ 401 仍按会话失效处理（守卫不放宽）：清会话 + 归一到 SESSION_REQUIRED
     const expired = fixture();
     login(expired);
     const expiredPromise = call(expired.modules);
     expired.requests.at(-1).success({ statusCode: 401, data: envelope('SESSION_EXPIRED') });
     const expiredError = await rejects(expiredPromise);
-    assert.equal(expiredError.code, 'SESSION_EXPIRED', '401 的封套码原样保留');
+    assert.equal(expiredError.code, 'SESSION_REQUIRED', '401 统一归一到 SESSION_REQUIRED（SESSION_EXPIRED 与之等价）');
     assert.equal(expired.auth.isLoggedIn(), false);
     assert.equal(expired.storage.has(SESSION_KEY), false, '401 必须清会话');
 

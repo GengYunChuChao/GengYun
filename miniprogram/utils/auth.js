@@ -87,7 +87,7 @@ function isForbiddenCode(code) {
 
 /**
  * 把一次 401/403 响应归因为「可展示的契约错误码 + 语义标记」（**纯函数**，不读写存储、不发请求）。
- * - 401：只可能是会话类；封套给别的码或读不到 ⇒ 保守按 `SESSION_REQUIRED`（不放宽守卫）。
+ * - 401：一律归一为 `SESSION_REQUIRED`（会话失效 + 清会话；契约 401 里的 `SESSION_EXPIRED` 与之等价）。
  * - 403：契约闭集为 `SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`，**原样带出**；
  *   封套读不到、或码不在该闭集 ⇒ `SCOPE_DENIED`（服务端确实拒绝了，只是没说清原因——不假装是登录问题）。
  * - 403 里若出现会话类码（越界实现）：仍按会话失效处理并清会话（不放宽守卫）。
@@ -96,8 +96,11 @@ function attribution(statusCode, payload) {
   const code = errorCodeOf(payload)
   const retryable = !!(payload && payload.error && payload.error.retryable === true)
   if (statusCode === 401) {
+    // 401 一律归一到 `SESSION_REQUIRED`：契约 401 只承载 `SESSION_REQUIRED` / `SESSION_EXPIRED`，
+    // 两者对用户动作与 B7 状态层（`CODE_KIND` 都是 session → `guest`）完全等价；保留 `SESSION_EXPIRED`
+    // 只会让各模块的 `messageFor` 出现没有文案的码（改造前 identify / speech 也是折叠的）。
     return {
-      code: isSessionLossCode(code) ? code : 'SESSION_REQUIRED',
+      code: 'SESSION_REQUIRED',
       status: 401, retryable, sessionLost: true, clearsSession: true
     }
   }

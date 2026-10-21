@@ -714,7 +714,7 @@ test('收藏/历史消费层：403 契约码原样带出；SCOPE_DENIED/CONSENT_
   // 反例：401 仍然是"会话失效" ⇒ 清会话 + 契约会话码（既有语义不变）。
   const g = fixture();
   assert.equal(await login(g), true);
-  const expired = assert.rejects(g.favorites.listFavorites(''), (e) => e.code === 'SESSION_EXPIRED' && e.status === 401);
+  const expired = assert.rejects(g.favorites.listFavorites(''), (e) => e.code === 'SESSION_REQUIRED' && e.status === 401);
   g.requests.at(-1).success({ statusCode: 401, data: forbiddenPayload('SESSION_EXPIRED') });
   await expired;
   assert.equal(g.auth.isLoggedIn(), false, '401 仍按会话失效处理');

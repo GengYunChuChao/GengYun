@@ -27,7 +27,7 @@
 
 | 场景 | 改前 | 改后 |
 |---|---|---|
-| 401 `SESSION_REQUIRED` / `SESSION_EXPIRED` | 码 `SESSION_REQUIRED` + 清会话 | 码**原样保留**（`SESSION_EXPIRED` 不再被改写）+ 清会话 |
+| 401 `SESSION_REQUIRED` / `SESSION_EXPIRED` | 码 `SESSION_REQUIRED` + 清会话 | 码**统一归一到** `SESSION_REQUIRED` + 清会话（契约 401 只承载这两个码，二者对用户动作与 B7 状态层等价；保留 `SESSION_EXPIRED` 只会让各模块 `messageFor` 出现没有文案的码） |
 | 403 `CONSENT_REQUIRED`（缺用途授权） | 码 `SESSION_REQUIRED` + **清会话** | 码 `CONSENT_REQUIRED` + **不清会话** |
 | 403 `SCOPE_DENIED`（权限范围不足） | 码 `SESSION_REQUIRED` + **清会话** | 码 `SCOPE_DENIED` + **不清会话** |
 | 403 `ACCOUNT_INACTIVE`（账号停用/注销、`auth_epoch` 前进） | 码 `SESSION_REQUIRED` + 清会话 | 码 `ACCOUNT_INACTIVE` + 清会话（令牌确已永久失效，但码不谎称「登录过期」） |
@@ -64,10 +64,11 @@
 
 | # | 争议点 | 决定 | 理由 |
 |---|---|---|---|
-| 1 | 归因实现放在哪 | 以 `miniprogram/utils/auth.js` 的 `attribution` / `failureFor` 为**唯一**实现，各适配层**委托**它；删掉 `favorites-api` / `history-api`（#393）、`identify-api`、`speech-transcript` 里各自那份同形实现 | 收敛重复实现，不是放宽判据：`SESSION_LOSS_CODES` 与 `FORBIDDEN_CODES` 都由 B7 的 `states.CODE_KIND` 反推，改动只会来自契约码表本身 |
+| 1 | 归因实现放在哪 | 以 `miniprogram/utils/auth.js` 的 `attribution` / `failureFor` 为**唯一**实现，各适配层**委托**它；删掉 `favorites-api` / `history-api`（#393）、`identify-api`、`speech-transcript`、`voice-api`（#395）里各自那份同形实现——合计**四份** | 收敛重复实现，不是放宽判据：`SESSION_LOSS_CODES` 与 `FORBIDDEN_CODES` 都由 B7 的 `states.CODE_KIND` 反推，改动只会来自契约码表本身 |
 | 2 | 403 且**无错误封套**（网关/代理） | 归 `SCOPE_DENIED`，**不清会话** | 为一个网关 403 销毁仍然有效的令牌，正是本轮盘点要修的害处；状态码本身已说清「这是拒绝」，不该说成登录问题 |
 | 2b | 403 且封套码**不在契约 403 闭集内** | 同上（归 `SCOPE_DENIED`，不清会话） | 同一理由；且不把未知码透给用户 |
 | 2c | 403 里出现**会话类码**（越界实现） | 仍按会话失效处理并清会话 | 守卫不放宽 |
+| 2d | 401 的封套码是 `SESSION_EXPIRED` | **归一到** `SESSION_REQUIRED`（清会话） | 契约 401 只承载 `SESSION_REQUIRED` / `SESSION_EXPIRED`，两者对用户动作与 B7（都是 `session` → `guest`）完全等价；保留原码会让各模块 `messageFor` 出现**没有文案**的码（`voice-api` 等表里只有 `SESSION_REQUIRED`/`SESSION_CHANGED`），改造前 `identify-api`/`speech-transcript` 也是折叠的 |
 | 3 | 403 `ACCOUNT_INACTIVE` | 码**如实保留**（B7 = `denied`）+ **清会话** | 令牌已永久不可用（账号停用/注销、`auth_epoch` 前进），留死令牌只会让用户每次都被 403；清掉后下次进页面走重新登录，服务端会以同一码如实拒绝登录 |
 | 4 | `miniprogram/utils/session.js` 占位层 | 本片**不动**，登记待办 | 要改两条既有守卫断言，收益低 |
 | 5 | 社区 `public_posting` 用途闸 | 本片**不挂**，登记为独立片 | 挂了会让 GY-I15 全部社区 HTTP 用例先 403，需先备授权夹具 |
@@ -167,62 +168,56 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。
 ℹ tests 13   ℹ pass 13   ℹ fail 0   ℹ duration_ms 1953.97
 ```
 
-### 3.3 相邻回归：`tests/unit/` 里 auth／session／login／consent／profile 命名的 22 个套件（逐个单跑）
+### 3.3 相邻回归：auth／session／login／consent／profile／voice／speech／transcript／knowledge／favorites／history／messages／community 命名的套件（逐个单跑）
 
-| 套件 | pass | fail |
+**合流后（最终读数）**：`75` 个套件、**`926 / 926` 通过、0 失败**（含合流进来的
+`miniprogram-i11-voice-input` 10、`miniprogram-favorites-history` 24、`miniprogram-speech-autoplay` 12、
+`messages-deletion-purge` 10、`profile-region-catalog-source` 4 等）。逐套件读数见下表（合流前的一轮 22 个套件 315/315 一并保留作对照）：
+
+| 套件组 | 合流前 | 合流后 |
 |---|---|---|
-| account-authority-pg | 8 | 0 |
-| admin-account-authority-fail-closed | 5 | 0 |
-| admin-accounts-authority-shell | 5 | 0 |
-| admin-session-client | 26 | 0 |
-| auth-guards | 7 | 0 |
-| auth-routes | 30 | 0 |
-| auth-store-pg | 7 | 0 |
-| consent-pagination | 7 | 0 |
-| consent-pagination-http | 1 | 0 |
-| gy-i22-consent-withdrawal-inflight-http | 8 | 0 |
-| gy-i22-session-inflight-cross-module | 9 | 0 |
-| local-profile-bootstrap | 3 | 0 |
-| media-consent-wiring | 8 | 0 |
-| miniprogram-auth-failure-attribution（新） | 13 | 0 |
-| miniprogram-auth-runtime | 22 | 0 |
-| miniprogram-login-return-to | 66 | 0 |
-| miniprogram-profile | 28 | 0 |
-| miniprogram-ui-auth-integration | 26 | 0 |
-| privacy-consent-wiring | 10 | 0 |
-| profile-api | 15 | 0 |
-| profile-log-redaction | 4 | 0 |
-| profile-pagination | 7 | 0 |
-| **合计** | **315** | **0** |
+| auth / session / login（auth-guards、auth-routes、auth-store-pg、miniprogram-auth-runtime、miniprogram-login-return-to、miniprogram-ui-auth-integration、admin-session-client、gy-i22-session-inflight-cross-module、account-authority-pg 等） | 22 套件 315/0 | 全部通过 |
+| consent / privacy（consent-pagination、consent-pagination-http、media-consent-wiring、privacy-consent-wiring、gy-i22-consent-withdrawal-inflight-http） | 34/0 | 全部通过 |
+| profile（profile-api、profile-log-redaction、profile-pagination、miniprogram-profile、local-profile-bootstrap、profile-region-catalog-source） | 77/0 | 全部通过 |
+| 小程序适配层（community/favorites/history/knowledge/messages/voice/speech/transcript 各 `*-api`、`*-http`、`*-contract`） | 见 §3.3 旧表 | 全部通过 |
+| **合计** | 315/0 | **926/0** |
 
-另有（不匹配上述命名但直接相关、单独跑过）：`miniprogram-guest-gate` 6/6、`miniprogram-community-api` 24/24、`miniprogram-favorites-history` 17/17、`miniprogram-identify` 31/31、`miniprogram-transcript-confirm` 25/25、`miniprogram-voice-playback` 58/58、`miniprogram-herbicides-client` 13/13、`miniprogram-ocr-correction` 7/7、`tests/reference/knowledge-client` 51/51。
+另有（不匹配上述命名但直接相关）：`miniprogram-guest-gate` 6/6、`miniprogram-herbicides-client` 13/13、`miniprogram-ocr-correction` 7/7、`tests/reference/knowledge-client` 51/51、`tests/ui-unified-states` 9/9、`tests/ui-adaptive` 26/26。
 
-### 3.4 `npm run test:unit`（全量，跑了三次，读数逐次如实列出）
+### 3.4 `npm run test:unit`（全量；合流前后共五次，读数逐次如实列出）
 
-**第一次**（改码后、未改知识页用例）：
+**合流前 · 第一次**（改码后、未改知识页用例）：
 ```
 ℹ tests 3245   ℹ pass 3243   ℹ fail 1   ℹ skipped 1   ℹ duration_ms 82111.56   exit=1
 ✖ old 401 cannot clear a newer identity; current 403 invalidates session and page
    at tests/reference/knowledge-client.test.mjs:210  →  断言「403 之后 getSession() 必须为 null」
 ```
-这**不是**并行抖动，而是既有用例把旧折叠口径写成了断言（403 ⇒ 清会话）。按 §0.1 的新口径更新为「403 保留会话 + 门禁不关闭 + 文案说『没有权限』」，并同步给 `knowledge-api.js:214` 补 403 三码文案（原先 403 会落到「资料服务暂不可用…请重试」，既错因又诱导无效重试）。
+这**不是**并行抖动，而是既有用例把旧折叠口径写成了断言（403 ⇒ 清会话）。按 §0.1 的新口径更新为「403 保留会话 + 门禁不关闭 + 文案说『没有权限』」，并同步给 `knowledge-api.js` 补 403 三码文案（原先 403 会落到「资料服务暂不可用…请重试」，既错因又诱导无效重试）。
 
-**第二次**（改完该用例后）：
+**合流前 · 第二次**：
 ```
 ℹ tests 3245   ℹ suites 0   ℹ pass 3244   ℹ fail 0   ℹ cancelled 0   ℹ skipped 1   ℹ duration_ms 86038.02   exit=0
 ```
 
-**第三次**（加完本证据页后复跑）：
+**合流前 · 第三次**（加完本证据页后复跑）：
 ```
 ℹ tests 3244   ℹ pass 3242   ℹ fail 1   ℹ skipped 1   ℹ duration_ms 76567.06   exit=1
 ✖ tests\unit\local-profile-bootstrap.test.mjs (8249.85ms)
   # Fatal process out of memory: Zone   ← 子进程 V8 OOM，非断言失败
 ```
 单跑证伪：`node --test tests/unit/local-profile-bootstrap.test.mjs` → `tests 3 / pass 3 / fail 0 / duration_ms 3624.05`。
-即第三次的 1 fail 是**并行负载抖动**（该套件起真实 PostgreSQL 引导，两例各约 1.3–2.2s，并行时子进程 OOM），与本期改动无关；
-本页结论以 3244/3245 那次的 0 fail 为基线，并如实保留这次抖动读数。
-（`skipped 1` 为既有跳过项，非本期新增。）
+即这次的 1 fail 是**并行负载抖动**（该套件起真实 PostgreSQL 引导，两例各约 1.3–2.2s，并行时子进程 OOM），与本片改动无关。
 
+**合流 #394/#393 后 · 第四次**：
+```
+ℹ tests 3308   ℹ suites 0   ℹ pass 3307   ℹ fail 0   ℹ cancelled 0   ℹ skipped 1   ℹ duration_ms 69603.84   exit=0
+```
+
+**合流 #395 后 · 第五次（最终）**：
+```
+ℹ tests 3318   ℹ suites 0   ℹ pass 3317   ℹ fail 0   ℹ cancelled 0   ℹ skipped 1   ℹ duration_ms 111075.99   exit=0
+```
+（`skipped 1` 为既有跳过项，非本期新增。本轮**没有**再出现抖动。）
 ### 3.5 `npm run test:mini`（小程序侧改动必跑）
 
 ```
@@ -246,32 +241,42 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 | `node --test tests/ui-adaptive.test.mjs`（含 `session.js` 占位层守卫、冻结契约未改判定） | `tests 26 / pass 26 / fail 0` |
 | `npm run test:docs`（新增证据页后的文档/研究记录校验） | `exit=0`；`PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables`；`研究记录校验：5 通过 / 0 失败 / 4 legacy 已钉住` |
 
-### 3.7 改动面（代码与测试 18 文件，+458/−45；另有本页为新增文档）
+### 3.7 改动面（相对合流后的 `origin/main`：代码与测试 24 文件 **+586 / −136**；另有本页为新增文档 407 行，合计 25 文件 +993/−136）
 
-本页自身的 +/− 会随本页修订浮动，故下表**只列代码与测试**（`git show --numstat HEAD` 中除本页外的全部行）：
+本页自身的 +/− 会随本页修订浮动，故下表用 **`git diff --numstat origin/main..HEAD`**（合流后与本片的净差）：
 
 ```
+407   0  docs/verification/gy-i04-login-chain-20261021.md   ← 本页（新增）
+  8   0  docs/verification/gy-i28-unified-states-20261021.md
+ 10   0  docs/verification/gy-r28-c5-favorites-history-20261021.md
+  5   2  miniprogram/pages/identify/identify.wxml
   6   0  miniprogram/pages/profile/profile.js
-103   3  miniprogram/utils/auth.js
+  8   1  miniprogram/pages/profile/profile.wxml
+118   3  miniprogram/utils/auth.js
   3   2  miniprogram/utils/community-api.js
-  3   1  miniprogram/utils/favorites-api.js
-  3   1  miniprogram/utils/history-api.js
-  4  10  miniprogram/utils/identify-api.js
+  7  22  miniprogram/utils/favorites-api.js
+  7  20  miniprogram/utils/history-api.js
+ 16  13  miniprogram/utils/identify-api.js
   6   2  miniprogram/utils/knowledge-api.js
   3   2  miniprogram/utils/messages-api.js
   1   1  miniprogram/utils/profile-api.js
   6  10  miniprogram/utils/speech-transcript.js
-  1   1  miniprogram/utils/voice-api.js
+  9  25  miniprogram/utils/voice-api.js
   8   2  tests/reference/knowledge-client.test.mjs
-258   0  tests/unit/miniprogram-auth-failure-attribution.test.mjs
+267   0  tests/unit/miniprogram-auth-failure-attribution.test.mjs
   3   0  tests/unit/miniprogram-auth-runtime.test.mjs
  31   7  tests/unit/miniprogram-community-api.test.mjs
+ 29  20  tests/unit/miniprogram-favorites-history.test.mjs
+ 16   1  tests/unit/miniprogram-i11-voice-input.test.mjs
   3   1  tests/unit/miniprogram-login-return-to.test.mjs
   8   1  tests/unit/miniprogram-transcript-confirm.test.mjs
   8   1  tests/unit/miniprogram-voice-playback.test.mjs
 ```
+> 说明：`favorites-api` / `history-api` / `voice-api` / `identify-api` 的删除行多于新增行，是**删掉各自那份重复归因实现**的结果；
+> `~/…/pages/voice/voice.js` 与 `docs/verification/gy-i11-voice-input-20261021.md` 属 #394／#395，本片净差为 0，故不在上表。
+
 `git status --porcelain` 对 `contracts/`、`.github/`、`migrations/`、`deploy/`、`openapi` **无命中**。
-本期只做本地提交：**未 push、未开 PR**。
+本期只做本地提交：**未 push、未开 PR**（本分支相对 `origin/main` ahead 3：切片提交 + 两次合并提交）。
 
 ### 3.8 合流 `origin/main`（`93f336b`）的冲突与取舍
 
@@ -290,7 +295,20 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 - `miniprogram/utils/location-region.js`、`reference.js`、`packages/reference/**`、`services/api/src/messages/**`、`deploy/**`（#390／#392／#393 侧）均 auto-merge 到位，本片未改其内容。
 - 合流后**必须按新口径改写**的既有断言（都来自 #393）：`tests/unit/miniprogram-favorites-history.test.mjs` 三条（见 §4.4）。
 
-合流后**没有**再做 rebase / squash；本片两次本地提交（切片提交 + 合并提交，见 §3.9）。
+合流后**没有**再做 rebase / squash；本片三次本地提交（切片提交 + 两次合并提交，见 `git log --oneline -3`）。
+
+### 3.9 第二次合流：`3935c55` / PR #395（语音输入）——同一模式再出现一次
+
+第一次合并完成后 `origin/main` 又前进到 `3935c55`（PR #395「语音输入四段盘点与必要接线（临时文件回收 / 403 不折叠 / 上传号成对复位）」），
+它给 `voice-api.js` 加了**第四份** `SESSION_LOSS_CODES` + `errorCodeOf` + `forbiddenOrSessionLoss`。再次 `git merge origin/main`：
+
+| 冲突文件 | 取舍 | 理由 |
+|---|---|---|
+| `miniprogram/utils/voice-api.js` | 调用点取本片 `auth.failureFor(...)`；删除 #395 那份 `SESSION_LOSS_CODES` / `errorCodeOf` / `forbiddenOrSessionLoss`（保留其注释里「403 不得折叠」的红线说明，但指向统一实现） | 裁决 1 |
+| `tests/unit/miniprogram-i11-voice-input.test.mjs`（#395 新增） | 其注入的 `auth` 替身补 `attribution` / `failureFor`，**委托真实实现**，只把「清会话」换成本文件的探针计数 | 该文件真实断言的「403 不清会话 / 401 才清会话」由真实判定驱动，不在测试里重写码表 |
+| 同上，`401 SESSION_EXPIRED` 的期望 | 期望码 `SESSION_REQUIRED` 保持**不变**（本片为此把 401 归一，见 §1.3 第 2d 条） | #395 的期望与「归一」口径一致；本片反而据此修正了自己先前「原样保留 `SESSION_EXPIRED`」的选择 |
+
+其余（`miniprogram/pages/voice/voice.js` 的临时文件回收、`docs/verification/gy-i11-voice-input-20261021.md`）auto-merge，本片未改其内容。
 
 ## 4. 改法（逐文件）
 
@@ -312,7 +330,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 | `favorites-api.js` | 调用点 `reject(auth.failureFor(failure, r.statusCode, r.data))`；合流时删除 #393 那份 `FORBIDDEN_CODES`/`errorCodeOf`/`forbiddenOrSessionLoss`（第三份），文案沿用 #393 的措辞 |
 | `history-api.js` | 同上（合流时同样删掉自持码表） |
 | `knowledge-api.js` | 同上；游标只在 `attribution().clearsSession` 时丢弃 |
-| `voice-api.js` | 同上 |
+| `voice-api.js` | 同上；合流 #395 时删除它那份 `SESSION_LOSS_CODES`/`errorCodeOf`/`forbiddenOrSessionLoss`（第四份），保留其「403 不得折叠」红线注释并改指向统一实现 |
 | `profile-api.js` | 同上 |
 | `messages-api.js` | 同上 |
 | `community-api.js` | 同上 |
@@ -329,7 +347,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 - `tests/unit/miniprogram-community-api.test.mjs`：两处 403 期望由 `SESSION_REQUIRED`+`cleared.count===1` 改为 `SCOPE_DENIED`+`cleared.count===0`，并新增「403 无封套 ⇒ `SCOPE_DENIED` 且不清会话」一例；文件头注释与两条用例标题同步。
 - `tests/reference/knowledge-client.test.mjs`（原 `:210-219`）：见 §3.4。
 - `tests/unit/miniprogram-favorites-history.test.mjs`（#393 合流进来的 8 个用例）：按 §1.3 改了 3 条断言——「403 无封套/闭集外码」由「会话失效」改为「`SCOPE_DENIED` 且不清会话」；「ACCOUNT_INACTIVE 不清会话」改为「清会话但码保留」；历史页那条 `isLoggedIn()` 期望同步（页面的 `errorCode`/文案仍如实带出）。
-- 三处 vm 载入器的 `auth` 替身（`miniprogram-community-api`、`miniprogram-transcript-confirm`、`miniprogram-voice-playback`）补 `attribution`/`failureFor`，**委托真实实现**（`createRequire` 载入 `miniprogram/utils/auth.js`），只有「清会话计数」用替身计数器——不在测试里重写码表。
+- 四处 vm 载入器的 `auth` 替身（`miniprogram-community-api`、`miniprogram-transcript-confirm`、`miniprogram-voice-playback`、`miniprogram-i11-voice-input`）补 `attribution`/`failureFor`，**委托真实实现**（`createRequire` 载入 `miniprogram/utils/auth.js`），只有「清会话计数」用替身计数器——不在测试里重写码表。
 - `miniprogram-auth-runtime.test.mjs` / `miniprogram-login-return-to.test.mjs`：临时目录复制清单各加 `utils/states.js`。
 - 合流后确认：`miniprogram-transcript-confirm` / `miniprogram-voice-playback` 两个 vm 载入器的**闭集 require 白名单**已由 main 按真实实现登记 `speech-autoplay`（`transcript-confirm:211`、`voice-playback:656`），本片没有把它写回桩。
 
@@ -350,6 +368,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 | 原编号 | 议题 | 结论 → 本片动作 |
 |---|---|---|
 | 7 | 与 #393 重叠、三份 `forbiddenOrSessionLoss` | 采纳「统一归因层」：`favorites-api` / `history-api`（#393 那份）与 `identify-api` / `speech-transcript` 的自持码表**全部删除**，改委托 `auth.failureFor`；合流后 #393 的页面侧（`errorCode` → `state-view`）**保留**，只把两条与统一口径冲突的断言改写 |
+| 7 续 | 同一模式第二次出现（#395，`3935c55`） | `voice-api.js` 的**第四份**同形实现同样删除、改委托；#395 新增的 `miniprogram-i11-voice-input.test.mjs` 只改注入替身（委托真实实现），其断言口径保留 |
 | 7 附 | 403 无封套 / 闭集外码 | 归 `SCOPE_DENIED`、**不清会话**（原 #393 的「保守折叠成会话失效」作废）；已在 `gy-r28-c5-favorites-history-20261021.md` 加 superseded 边界 |
 | 4 | `ACCOUNT_INACTIVE` | 码如实保留（B7 = `denied`）+ **清会话**；#393 那条「ACCOUNT_INACTIVE 不清会话」的断言按此改写 |
 | 3 | `miniprogram/utils/session.js` 占位层 | 本片**不动**，登记为待办（见 §6.2 第 1 项） |
