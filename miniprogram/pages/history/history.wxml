@@ -37,6 +37,7 @@
       <state-view
         wx:elif="{{errorText}}"
         status="error"
+        errorCode="{{errorCode}}"
         title="历史读取失败"
         desc="{{errorText}}"
       ></state-view>

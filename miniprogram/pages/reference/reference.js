@@ -19,6 +19,28 @@ const knowledgeApi = require('../../utils/knowledge-api')
 
 const PAGE_SIZE = 20
 
+// #8：命中侧可解释字段（域库 `matched_dimensions`）→ 中文标签。
+// 维度名与 packages/reference/query.mjs `appliedDimensions` 一一对应；未知维度原样显示（不吞字段）。
+const DIMENSION_LABELS = {
+  crop_id: '作物',
+  species_id: '杂草',
+  region_code: '地区',
+  use_scene: '使用场景',
+  growth_stage: '生育期',
+  planting_method: '种植方式',
+  dosage_form: '制剂（剂型）',
+  ingredient_content: '有效成分/含量',
+  registration_number: '登记证号',
+  q: '关键词'
+}
+
+// 把「本次实际应用的筛选维度」翻成一句可核对的话：命中项都满足这些条件，条件未被放宽。
+function matchedNoteOf(dimensions) {
+  const list = (dimensions || []).map(function (dim) { return DIMENSION_LABELS[dim] || dim })
+  if (list.length === 0) return ''
+  return '命中条件：' + list.join('、') + '（筛选条件未被放宽）'
+}
+
 Page({
   data: {
     fontScale: 1,
@@ -26,9 +48,13 @@ Page({
     crops: [],
     species: [],
     regions: [],
+    // #8：制剂（剂型）筛选项——由 utils/reference 依据随包记录确定性派生，不在页面硬编码。
+    dosageForms: [],
     cropIndex: -1,
     speciesIndex: -1,
     regionIndex: -1,
+    formIndex: -1,
+    dosageForm: '',
     keyword: '',
     // 结果
     matchState: '',
@@ -47,6 +73,8 @@ Page({
     dataSource: '',
     dataSourceLabel: '',
     countNote: '',
+    // #8：命中条件说明（来自域库 matched_dimensions），空串即无结构化条件。
+    matchedNote: '',
     queryError: '',
     busy: false,
     detailId: '',
@@ -74,6 +102,7 @@ Page({
         crops: reference.crops,
         species: reference.species,
         regions: reference.regions,
+        dosageForms: reference.dosageForms || [],
         dataSource: decision.source,
         dataSourceLabel: decision.label,
         // 服务端读数未返回前只给「来源待定」口径：不宣称已取得接口数据。
@@ -132,12 +161,21 @@ Page({
     this.runQuery()
   },
 
+  // #8：剂型筛选。只按记录的登记剂型收窄，**不提供含量换算、不提供用量**；
+  // 未选即空串（等价「全部剂型」，不参与判定也不冒充已筛选）。
+  onDosageForm: function (event) {
+    const index = Number(event.detail.value)
+    const form = index >= 0 ? this.data.dosageForms[index] : ''
+    this.setData({ formIndex: index, dosageForm: form || '' })
+    this.runQuery()
+  },
+
   onSearch: function () {
     this.runQuery()
   },
 
   onReset: function () {
-    this.setData({ keyword: '', cropIndex: -1, speciesIndex: -1, regionIndex: -1, cropId: '', speciesId: '', regionCode: '' })
+    this.setData({ keyword: '', cropIndex: -1, speciesIndex: -1, regionIndex: -1, formIndex: -1, cropId: '', speciesId: '', regionCode: '', dosageForm: '' })
     this.runQuery()
   },
 
@@ -147,12 +185,20 @@ Page({
   },
 
   // 来源判定（可判定标记 + 原因，不是纯文案）：服务端 `/herbicides` 的 querystring 只接受
-  // q／registration_number／cursor／limit ⇒ 作物／杂草／地区条件在该接口**不可表达**；
+  // q／registration_number／cursor／limit ⇒ 作物／杂草／地区／剂型条件在该接口**不可表达**；
   // 未启用联网（runtime.mode 非 local 或 apiBaseUrl 为空）时也无法发起请求。
   querySource: function () {
     if (!auth.networkEnabled()) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
       label: '数据来源：随包离线副本（bundled-offline）——当前运行未启用联网（runtime.mode 非 local），不冒充服务端读数。'
+    }
+    // #8：剂型条件单独如实说明（不笼统并入作物／杂草／地区，也不改既有文案口径）。
+    if (this.data.dosageForm) {
+      const others = Boolean(this.data.cropId || this.data.speciesId || this.data.regionCode)
+      return {
+        source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
+        label: '数据来源：随包离线副本（bundled-offline）——服务端 /herbicides 不支持' + (others ? '作物／杂草／地区／剂型' : '剂型') + '条件，筛选条件未被丢弃。'
+      }
     }
     if (this.data.cropId || this.data.speciesId || this.data.regionCode) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
@@ -167,7 +213,7 @@ Page({
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功（跳转可能被拦截/失败）。
     if (!self.data.gatePassed || !auth.isLoggedIn()) {
       self._queryActive = false
-      self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '', countNote: '', queryError: '', dataSource: '', dataSourceLabel: '' })
+      self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '', countNote: '', matchedNote: '', queryError: '', dataSource: '', dataSourceLabel: '' })
       return
     }
     const decision = self.querySource()
@@ -205,6 +251,8 @@ Page({
         simulatedExcluded: 0,
         sourceVersionNote: rows.length ? rows[0].source_version : '',
         countNote: rows.length ? '本页 ' + rows.length + ' 条（该接口不返回总数）' : '',
+        // 服务端路径不携带结构化条件 ⇒ 无「命中条件」可说，恒空（不冒充已筛选）。
+        matchedNote: '',
         queryError: ''
       })
     }).catch(function (error) {
@@ -219,6 +267,7 @@ Page({
         matchState: session ? '' : 'unavailable',
         matchLabel: session ? '' : reference.matchStateLabel('unavailable'),
         countNote: '',
+        matchedNote: '',
         queryError: knowledgeApi.message(error)
       })
     })
@@ -235,12 +284,13 @@ Page({
         crop_id: self.data.cropId,
         species_id: self.data.speciesId,
         region_code: self.data.regionCode,
+        dosage_form: self.data.dosageForm,
         limit: PAGE_SIZE,
         cursor: cursor || ''
       })
     } catch (error) {
       // 非法请求才抛错；无结果/条件不足以 200 + match_state 表达，不走这里。
-      self.setData({ matchState: 'invalid', matchLabel: reference.matchStateLabel('invalid'), items: [], total: 0, nextCursor: null, countNote: '', queryError: '' })
+      self.setData({ matchState: 'invalid', matchLabel: reference.matchStateLabel('invalid'), items: [], total: 0, nextCursor: null, countNote: '', matchedNote: '', queryError: '' })
       return
     }
     const rows = result.items.map(function (row) {
@@ -262,6 +312,7 @@ Page({
       // 列表来源版本：逐条展示（同一 source_version）。
       sourceVersionNote: rows.length ? rows[0].source_version : '',
       countNote: result.total ? '共 ' + result.total + ' 条符合条件' : '',
+      matchedNote: matchedNoteOf(result.matched_dimensions),
       queryError: ''
     })
   },

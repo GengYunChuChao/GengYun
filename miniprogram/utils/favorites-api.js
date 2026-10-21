@@ -77,6 +77,13 @@ function validateFavorite(value) {
   }
 }
 
+// 401/403 分流：口径统一由 `miniprogram/utils/auth.js` 的归因层决定（`attribution` / `failureFor`），
+// 本文件**不再自持码表**。合并前这里曾有一份 `FORBIDDEN_CODES + forbiddenOrSessionLoss`
+// （#393 引入的第三份同形实现），与 `identify-api` / `speech-transcript` 各自那份漂移过；
+// 现全站只留 `auth.js` 一份：401 ⇒ 会话失效并清会话；403 ⇒ 契约码原样带出，仅
+// `ACCOUNT_INACTIVE` 清会话（令牌已永久失效）；403 无错误封套 ⇒ `SCOPE_DENIED` 且**不**清会话
+// （见 `docs/verification/gy-i04-login-chain-20261021.md` 的「口径决定」）。
+
 function request(method, path, options) {
   const opts = options || {}
   const b = binding()
@@ -179,9 +186,9 @@ function messageFor(e) {
     REVISION_REQUIRED: '缺少版本信息，请刷新后重试。',
     IDEMPOTENCY_KEY_REQUIRED: '请求缺少幂等键，请重试。',
     IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求，请重试。',
-    SCOPE_DENIED: '当前会话无权读取用户收藏。',
-    CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会读取收藏。',
-    ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再试。',
+    SCOPE_DENIED: '当前会话无权读写用户收藏（收藏只对用户会话开放）。',
+    CONSENT_REQUIRED: '缺少必要的授权同意，无法读取或修改收藏。',
+    ACCOUNT_INACTIVE: '账号当前不可用（已停用或已注销），无法读取或修改收藏。',
     PROVIDER_UNAVAILABLE: '收藏服务当前不可用（真实持久存储未接入），不会用本地数据顶替。',
     INVALID_CURSOR: '翻页位置已失效，请重新读取第一页。',
     UNAVAILABLE: '收藏服务暂不可用，已停止显示，请重试。'

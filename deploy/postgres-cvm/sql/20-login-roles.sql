@@ -446,6 +446,13 @@ GRANT INSERT (id,owner_id,type,target_ref,read_at,created_at,revision,event_key)
 GRANT UPDATE (read_at,revision)
   ON public.messages TO gengyun_api_runtime;
 
+-- 注销清理（#16/#17 清理链 P0-1）：`services/api/src/messages/store-pg.ts` 的
+-- `purgeOwnerRows` 有整行删除 `DELETE FROM public.messages WHERE owner_id = $1::uuid`
+-- （返回注销证据用的真实行数）。PostgreSQL 没有列级 DELETE，这条语句只能表级授权；
+-- 与收藏/历史/对话/识别/语音域的注销清理同一条理由（见 90-assert-least-privilege.sql 的
+-- allow_table_dml 白名单）。运行时仍然只能按 owner 谓词删本域自己的行，写面列授权不变。
+GRANT DELETE ON public.messages TO gengyun_api_runtime;
+
 -- 社区帖子（迁移 0022）：:470 的 INSERT、:400 的 UPDATE、:379 的 SELECT … FOR UPDATE。
 GRANT SELECT (id,author_id,revision,title,body,crop_id,region_code,media_ids,
               linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,

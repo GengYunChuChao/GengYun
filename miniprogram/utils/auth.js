@@ -54,12 +54,16 @@ function isFutureIso(value) {
  * 踢回登录页反复重登却始终不明白为什么不行，也让 B7 统一状态层（`utils/states.js` 的
  * `CODE_KIND`）永远收不到真实的 403 码——它一直是「登录失效」。
  *
- * 分类依据**直接取自 `states.CODE_KIND`**（kind === 'session' 即会话失效），不另立一份码表；
- * 唯一补充是 `ACCOUNT_INACTIVE`：令牌永久不可再用（账号停用/注销、或 auth_epoch 前进），
+ * 分类依据**直接取自 `states.CODE_KIND`**（kind === 'session' 即会话失效，kind === 'denied' 即契约 403 闭集），
+ * 不另立一份码表；唯一补充是 `ACCOUNT_INACTIVE`：令牌永久不可再用（账号停用/注销、或 auth_epoch 前进），
  * 本地会话必须清掉，但错误码**如实保留**（页面按「账号不可用」呈现，不谎称登录过期）。
  */
 const SESSION_LOSS_CODES = Object.freeze(
   Object.keys(states.CODE_KIND).filter(function (code) { return states.CODE_KIND[code] === 'session' })
+)
+// 契约 403 闭集（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE），同样由 B7 的 kind 反推。
+const FORBIDDEN_CODES = Object.freeze(
+  Object.keys(states.CODE_KIND).filter(function (code) { return states.CODE_KIND[code] === 'denied' })
 )
 // 令牌永久失效但语义不是「登录过期」的码：清会话，码原样上抛。
 const RETIRED_SESSION_CODES = Object.freeze(['ACCOUNT_INACTIVE'])
@@ -77,12 +81,16 @@ function isSessionLossCode(code) {
   return typeof code === 'string' && SESSION_LOSS_CODES.indexOf(code) !== -1
 }
 
+function isForbiddenCode(code) {
+  return typeof code === 'string' && FORBIDDEN_CODES.indexOf(code) !== -1
+}
+
 /**
  * 把一次 401/403 响应归因为「可展示的契约错误码 + 语义标记」（**纯函数**，不读写存储、不发请求）。
  * - 401：只可能是会话类；封套给别的码或读不到 ⇒ 保守按 `SESSION_REQUIRED`（不放宽守卫）。
  * - 403：契约闭集为 `SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`，**原样带出**；
- *   封套读不到 ⇒ `SCOPE_DENIED`（服务端确实拒绝了，但没说原因——不假装是登录问题）。
- * - 403 里若出现会话类码（越界实现）：仍按会话失效处理并清会话。
+ *   封套读不到、或码不在该闭集 ⇒ `SCOPE_DENIED`（服务端确实拒绝了，只是没说清原因——不假装是登录问题）。
+ * - 403 里若出现会话类码（越界实现）：仍按会话失效处理并清会话（不放宽守卫）。
  */
 function attribution(statusCode, payload) {
   const code = errorCodeOf(payload)
@@ -93,7 +101,9 @@ function attribution(statusCode, payload) {
       status: 401, retryable, sessionLost: true, clearsSession: true
     }
   }
-  const surface = code === null ? 'SCOPE_DENIED' : code
+  // 403：会话类码（越界实现）优先按会话失效；契约 403 闭集原样带出；其余（无封套 / 未知码）
+  // 一律归 `SCOPE_DENIED` —— 状态码本身已经说清「这是拒绝」，不该再把它说成登录问题。
+  const surface = isSessionLossCode(code) || isForbiddenCode(code) ? code : 'SCOPE_DENIED'
   const sessionLost = isSessionLossCode(surface)
   return {
     code: surface,
@@ -479,8 +489,10 @@ module.exports = {
   sessionEpoch: function () { return generation + ":" + intentEpoch },
   // 401/403 归因的单一事实源（各适配层共用；见文件头 attribution 注释）。
   SESSION_LOSS_CODES: SESSION_LOSS_CODES,
+  FORBIDDEN_CODES: FORBIDDEN_CODES,
   RETIRED_SESSION_CODES: RETIRED_SESSION_CODES,
   isSessionLossCode: isSessionLossCode,
+  isForbiddenCode: isForbiddenCode,
   attribution: attribution,
   failureFor: failureFor,
   getSession: getSession,

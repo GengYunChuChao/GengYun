@@ -63,6 +63,7 @@ test('归因表：401 恒为会话失效；403 按契约码原样带出，只有
     [403, 'CONSENT_REQUIRED', 'CONSENT_REQUIRED', false, false],
     [403, 'ACCOUNT_INACTIVE', 'ACCOUNT_INACTIVE', false, true], // 码如实保留，但令牌永久不可用
     [403, null, 'SCOPE_DENIED', false, false], // 读不到原因也不假装是登录问题
+    [403, 'NOT_A_CONTRACT_403_CODE', 'SCOPE_DENIED', false, false], // 闭集外的码：状态码已说清是拒绝
     [403, 'SESSION_EXPIRED', 'SESSION_EXPIRED', true, true], // 越界实现：仍按会话失效，不放宽
   ];
   for (const [status, code, surface, sessionLost, clearsSession] of rows) {
@@ -86,6 +87,14 @@ test('同源：会话失效闭集直接取自 B7 统一状态层（states.CODE_K
     .sort();
   assert.deepEqual(auth.SESSION_LOSS_CODES.slice().sort(), fromStates,
     'auth.SESSION_LOSS_CODES 必须与 states.CODE_KIND 的 session 类逐项一致');
+  // 契约 403 闭集同样取自 B7（kind === 'denied'），且与 kind === 'session' 不相交
+  const deniedInStates = Object.keys(states.CODE_KIND)
+    .filter((code) => states.CODE_KIND[code] === 'denied')
+    .sort();
+  assert.deepEqual(auth.FORBIDDEN_CODES.slice().sort(), deniedInStates,
+    'auth.FORBIDDEN_CODES 必须与 states.CODE_KIND 的 denied 类逐项一致');
+  assert.equal(auth.FORBIDDEN_CODES.filter((code) => auth.isSessionLossCode(code)).length, 0,
+    '会话失效码与 403 授权码不得重叠');
 
   // 三个 403 码都属 B7 的 denied（「登录了但不给你」），与 guest（没登录）分开
   for (const code of ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']) {

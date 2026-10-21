@@ -25,6 +25,8 @@ Page({
     busy: false,
     message: '',
     errorText: '',
+    /** 最近一次读取失败的契约错误码（交给 `components/state-view` 的 errorCode 决定 401/403/404 语气）。 */
+    errorCode: '',
     invalid: false,
     invalidReason: '',
     ignoredParams: [],
@@ -60,7 +62,7 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
-    self.setData({ gatePassed: false, checking: true, message: '', errorText: '', invalid: false, invalidReason: '' })
+    self.setData({ gatePassed: false, checking: true, message: '', errorText: '', errorCode: '', invalid: false, invalidReason: '' })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
       if (!ok) { self.setData({ gatePassed: false }); return }
@@ -79,7 +81,7 @@ Page({
   load: function () {
     const self = this
     const id = self._query.id
-    self.setData({ busy: true, errorText: '', invalid: false })
+    self.setData({ busy: true, errorText: '', errorCode: '', invalid: false })
     historyApi.locateHistory(id, historyApi.PAGE_LIMIT_MAX).then(function (located) {
       if (!located) {
         self.setData({ busy: false, invalid: true, invalidReason: '该记录不存在、已删除、或不属于当前账号（服务端与"不存在"同形返回）。' })
@@ -128,9 +130,11 @@ Page({
       })
     }).catch(function (error) {
       // 目标详情读取失败（含已删除/不可用）如实说明；**不**用链接里的旧状态顶替。
+      // 错误码原样带出：401 仍是"登录失效"，403 是"没有权限"，404 是"记录不可用"。
       self.setData({
         busy: false,
         errorText: historyApi.messageFor(error),
+        errorCode: (error && error.code) || '',
         recognized: false,
         modelCandidates: [],
         manualSelection: null,
@@ -157,10 +161,17 @@ Page({
         self.setData({ busy: true, message: '正在删除…' })
         historyApi.deleteHistory(self._query.id, self.data.historyRevision).then(function (result) {
           self.setData({ busy: false, message: '已删除记录。' + historyApi.cascadeNote(result.cascade) })
-          // 删除后不再展示任何记录内容。
-          self.setData({ invalid: true, invalidReason: '该记录已删除。', recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null })
+          // 删除后不再展示任何记录内容（也不再给删除入口）。
+          self.setData({ invalid: true, invalidReason: '该记录已删除。', canDelete: false, recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null })
         }).catch(function (error) {
+          // 如实报错；服务端说记录已不存在（含他人记录，二者同形）时按"记录不可用"收口，不再展示内容。
           self.setData({ busy: false, message: historyApi.messageFor(error) })
+          if ((error && error.code) === 'NOT_FOUND') {
+            self.setData({
+              invalid: true, invalidReason: '该记录不存在、已删除、或不属于当前账号。', canDelete: false,
+              recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null
+            })
+          }
         })
       }
     })

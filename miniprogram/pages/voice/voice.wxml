@@ -112,6 +112,18 @@
           只走控件与事件生命周期；替身播放不计入「已听取」，也不代表已取得可播放来源。</text>
       </view>
 
+      <!-- 自动播报开关（用户可关）：关闭后**不自动出声**，文字与「播放」按钮照常可用；
+           「同一页同一版本只自动播报一次」「读不到偏好则不自动」的原因都写在下面的说明里。 -->
+      <view class="row-actions">
+        <button
+          class="btn btn--secondary row-actions__item"
+          aria-role="button"
+          aria-label="切换自动播报"
+          bindtap="onToggleAutoSpeak"
+        >{{autoSpeakEnabled ? '关闭自动播报' : '开启自动播报'}}</button>
+      </view>
+      <view class="hint" wx:if="{{autoSpeakNote}}">{{autoSpeakNote}}</view>
+
       <gy-voice-ball
         state="{{playbackState}}"
         listened="{{listened}}"

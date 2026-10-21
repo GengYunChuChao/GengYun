@@ -1,6 +1,7 @@
 # GY-I04 · 用户登录链路现状盘点与 401/403 归因接线
 
-> 切片：GY-I04 登录链路盘点（D1）；分支 `feat/gy-r28-d1-login-chain`；基线 `origin/main = 7d1a429`。
+> 切片：GY-I04 登录链路盘点（D1）；分支 `feat/gy-r28-d1-login-chain`；基线 `origin/main = 7d1a429`，
+> 已**合流** `origin/main = 93f336b`（合并提交见 §3.8）。
 > 交付物：`miniprogram/utils/auth.js`（401/403 归因单一事实源 + `GET /auth/session` 非 401/403 不清会话）；
 > 9 个适配层改为委托该归因；`tests/unit/miniprogram-auth-failure-attribution.test.mjs`；本页。
 > 问题一句话：登录四段里 (a)(b) 已通、(c) 会话落地有一处「服务端 5xx 也当会话作废」、(d) 同意段客户端无授权入口；
@@ -10,8 +11,8 @@
 **取证范围声明**：本页读数全部来自**本机** `E:\GengYunCommander\wt-d1-login`（Windows、Node v24.16.0、无 `node_modules` → 一次性
 `npm install` 装 103 个包）。**没有**在微信开发者工具、真机、正式 AppID 或真实服务端上运行；`wx.*` 全部是合成替身。
 真实微信登录能力（正式 AppID 实测）仍属 GY-I25／#27 的未取得项，本期不补偿、不冒充。
-基点说明：本期按派发要求以 `7d1a429` 为基点，**未 rebase**；工作期间 `origin/main` 已前进到 `93f336b`（+6 提交，含与本页
-重叠的 #393／C5 切片），重叠与分歧见 §6 第 7 项。
+合流说明：本片先以 `7d1a429` 为基点提交，后按裁决 `git merge origin/main`（`93f336b`，+6 提交，含 #390／#392／#393／#394），
+冲突与取舍见 §3.8；口径按 §1.3 的统一裁决执行。
 
 ## 0. 结论摘要
 
@@ -31,6 +32,7 @@
 | 403 `SCOPE_DENIED`（权限范围不足） | 码 `SESSION_REQUIRED` + **清会话** | 码 `SCOPE_DENIED` + **不清会话** |
 | 403 `ACCOUNT_INACTIVE`（账号停用/注销、`auth_epoch` 前进） | 码 `SESSION_REQUIRED` + 清会话 | 码 `ACCOUNT_INACTIVE` + 清会话（令牌确已永久失效，但码不谎称「登录过期」） |
 | 403 但响应无错误封套 | 码 `SESSION_REQUIRED` + 清会话 | 码 `SCOPE_DENIED` + 不清会话（服务端确实拒绝了，但没说原因——不假装是登录问题） |
+| 403 但封套码不在契约 403 闭集内 | 码 `SESSION_REQUIRED` + 清会话 | 码 `SCOPE_DENIED` + 不清会话（状态码已说清「这是拒绝」） |
 | `GET /auth/session` 返回 503 `PROVIDER_UNAVAILABLE` | **清会话**（一次瞬时故障毁掉有效登录） | 保留会话、门禁仍关闭（`serverVerified=false`） |
 | `GET /auth/session` 返回 200 但契约形状/受众/时效不符 | 清会话 | 清会话（不变：服务端自相矛盾，不能当作已核实） |
 
@@ -38,24 +40,40 @@
 
 ### 1.1 做了什么
 
-1. **401/403 归因收敛为单一事实源**：`miniprogram/utils/auth.js` 新增 `SESSION_LOSS_CODES`（**由 `utils/states.js` 的 `CODE_KIND` 反推**，不另立码表）、`RETIRED_SESSION_CODES`、`errorCodeOf()`、`isSessionLossCode()`、`attribution()`（纯函数）、`failureFor()`（按归因清会话并构造错误对象）。见 `auth.js:48-118`。
-2. **9 个适配层改为委托该归因**：`favorites-api.js:93`、`history-api.js:164`、`knowledge-api.js:75-76`、`voice-api.js:199`、`profile-api.js:23`、`messages-api.js:124`、`community-api.js:164`、`identify-api.js:267`、`speech-transcript.js:239`（后两处原先各有一份 `forbiddenOrSessionLoss`，且**对 `ACCOUNT_INACTIVE` 处理相反**，现两份都删除自持码表）。
-3. **补齐 403 码的可见文案**（改前这些文案永远走不到，因为被折叠提前 return）：`favorites-api.js:183-184`、`history-api.js:427-428`、`messages-api.js:231-232`、`community-api.js:340-341`、`knowledge-api.js:214`、`pages/profile/profile.js:35-37`。
-4. **`GET /auth/session` 区分「会话被判定失效」与「这次核实没做成」**：仅 401/403（以及 200-但-契约不符）清会话；408/429/5xx/未知状态只保持「未核实」。见 `auth.js:261-279`。
-5. **知识页 403 不再把门禁踢回登录**：`knowledge-api.js:75` 只在 `attribution().clearsSession` 为真时才丢弃翻页游标，会话本身由 `auth` 决定。
-6. 新增 `tests/unit/miniprogram-auth-failure-attribution.test.mjs`（13 例）：归因表 9 行 × 4 个字段、与 `states.CODE_KIND` 的同源断言、9 个真实适配层的 403/401 三态、`GET /auth/session` 的 503/401/403 三态。
-7. 更新三条**把旧折叠口径写进断言**的既有用例（见 §3.4 的逐条理由）：`tests/unit/miniprogram-community-api.test.mjs`（403 期望）、`tests/reference/knowledge-client.test.mjs:210-219`（403 清会话期望）、三处 vm 载入器的 `auth` 替身补 `attribution`/`failureFor`（委托**真实**实现，不在测试里另写码表）。
+1. **401/403 归因收敛为单一事实源**：`miniprogram/utils/auth.js` 新增 `SESSION_LOSS_CODES` / `FORBIDDEN_CODES`（**均由 `utils/states.js` 的 `CODE_KIND` 反推**，不另立码表）、`RETIRED_SESSION_CODES`、`errorCodeOf()`、`isSessionLossCode()`、`isForbiddenCode()`、`attribution()`（纯函数）、`failureFor()`（按归因清会话并构造错误对象，见 §1.3 口径决定）。
+2. **9 个适配层改为委托该归因**：`favorites-api.js`、`history-api.js`、`knowledge-api.js`、`voice-api.js`、`profile-api.js`、`messages-api.js`、`community-api.js`、`identify-api.js`、`speech-transcript.js`。其中 `identify-api` / `speech-transcript` 原先各持一份 `forbiddenOrSessionLoss`（对 `ACCOUNT_INACTIVE` 处理**相反**），合流进来的 #393 又在 `favorites-api` / `history-api` 写了**第三份**——三份自持码表全部删除，改为委托。
+3. **补齐 403 码的可见文案**（改前这些文案永远走不到，因为被折叠提前 return）：`favorites-api.js`、`history-api.js`（合流后沿用 #393 的更完整措辞「无权读写用户收藏」「缺少必要的授权同意」「账号当前不可用（已停用或已注销）」）、`messages-api.js:231-232`、`community-api.js:340-341`、`knowledge-api.js:214`、`pages/profile/profile.js:35-37`。
+4. **`GET /auth/session` 区分「会话被判定失效」与「这次核实没做成」**：仅 401/403（以及 200-但-契约不符）清会话；408/429/5xx/未知状态只保持「未核实」。
+5. **知识页 403 不再把门禁踢回登录**：`knowledge-api.js` 只在 `attribution().clearsSession` 为真时才丢弃翻页游标，会话本身由 `auth` 决定。
+6. **如实措辞（裁决 6/7）**：`identify-api.js` 的 `RETRY_ACTION_LABELS.grant_consent` 由「去授权」改为「重试」（按钮实际只重试本次操作），`CONSENT_REQUIRED` 文案不再写「请先在『我的』中完成授权」；`pages/profile/profile.wxml` 隐私说明删掉「且可以随时撤回」，改为如实写明「授权入口尚未接入、不会默认替您授权」。
+7. 新增 `tests/unit/miniprogram-auth-failure-attribution.test.mjs`（13 例）：归因表 10 行 × 4 个字段、与 `states.CODE_KIND` 的双闭集同源断言、9 个真实适配层的 403/401 四态、`GET /auth/session` 的 503/401/403 三态。
+8. 更新**把旧折叠口径写进断言**的既有用例（逐条理由见 §3.4）：`tests/unit/miniprogram-community-api.test.mjs`（403 期望）、`tests/reference/knowledge-client.test.mjs:210-219`（403 清会话期望）、`tests/unit/miniprogram-favorites-history.test.mjs`（#393 的「403 无封套 ⇒ 会话失效」「ACCOUNT_INACTIVE 不清会话」两条按 §1.3 口径改写）、三处 vm 载入器的 `auth` 替身补 `attribution`/`failureFor`（委托**真实**实现，不在测试里另写码表）。
 
 ### 1.2 没做什么（边界）
 
 - **没有改任何服务端代码**：`services/api/**` 一行未动（本期所有缺陷都在客户端可闭环）。
-- **没有改冻结契约**：`packages/contracts/**`（含 `openapi.json`）、`.github/workflows/**`、`services/api/src/db/migrations/**`、`deploy/**` 均未触碰（`git status` 无命中，见 §5.1）。
-- **没有动 `miniprogram/utils/session.js`**（GY-I26 遗留占位层，`isGuest()` 恒 true）：它无任何生产消费者，删它要同时改 `tests/ui-adaptive.test.mjs:274,285` 两条**既有守卫断言**；属「移除历史占位 + 换守卫」的决策，列 §6 待裁决，不自行处置。
-- **没有给客户端加「去授权」入口**：POST `/me/consents` 需要 `policy_version` + `recipient_ids`，而契约**没有**任何「读用途政策／候选接收方」的 operation（只有 `listConsents` / `grantConsent` / `withdrawConsent`），客户端无法合法组出请求体。要闭环必须加契约面 → §6。
-- **没有把 `public_posting` 用途闸挂到社区投稿**：需要改 `registerCommunityRoutes` 签名 + `app.ts:1735` 装配，且会让 GY-I15 全部社区 HTTP 用例先 403（blast radius 跨域），超出本切片 → §6。
-- **没有修正 `pages/profile/profile.wxml:162-172` 的隐私说明文案**（静态宣称「拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回」，但入口不存在）：文案与 Demo 走查口径、隐私承诺一并裁决，避免单方面改承诺 → §6。
+- **没有改冻结契约**：`packages/contracts/**`（含 `openapi.json`）、`.github/workflows/**`、`services/api/src/db/migrations/**`、`deploy/**` 均未触碰（`git status` 无命中，见 §3.7）。
+- **没有动 `miniprogram/utils/session.js`**（GY-I26 遗留占位层，`isGuest()` 恒 true）：按裁决 4 本片不动，登记为待办（§6.2）。
+- **没有给客户端加授权入口/授权页**：POST `/me/consents` 需要 `policy_version` + `recipient_ids`，而契约**没有**任何「读用途政策／候选接收方」的 operation（只有 `listConsents` / `grantConsent` / `withdrawConsent`），客户端无法合法组出请求体。要闭环必须加契约面 → §6.2。
+- **没有把 `public_posting` 用途闸挂到社区投稿**：按裁决 5 本片不挂（挂了会让 GY-I15 全部社区 HTTP 用例先 403，需先备授权夹具），登记为独立片（§6.2）。
+- **没有改识别页的跳转流程**：「重试」按钮仍然走既有 `onRetry()`；把 denied 动作改成跳「我的」页属行为变更，留作 §6.2 的可选后续。
 - 没有 mock 任何真实调用：新增用例全部驱动**仓库里的真代码**（真实 `auth.js` + 真实适配层 + 合成 `wx` 替身），没有为让页面看起来通而替换业务逻辑。
 - 没有 push、没有建 PR（指挥统一收口）。
+
+### 1.3 口径决定（监工 2026-10-21 裁决，本片据此执行）
+
+| # | 争议点 | 决定 | 理由 |
+|---|---|---|---|
+| 1 | 归因实现放在哪 | 以 `miniprogram/utils/auth.js` 的 `attribution` / `failureFor` 为**唯一**实现，各适配层**委托**它；删掉 `favorites-api` / `history-api`（#393）、`identify-api`、`speech-transcript` 里各自那份同形实现 | 收敛重复实现，不是放宽判据：`SESSION_LOSS_CODES` 与 `FORBIDDEN_CODES` 都由 B7 的 `states.CODE_KIND` 反推，改动只会来自契约码表本身 |
+| 2 | 403 且**无错误封套**（网关/代理） | 归 `SCOPE_DENIED`，**不清会话** | 为一个网关 403 销毁仍然有效的令牌，正是本轮盘点要修的害处；状态码本身已说清「这是拒绝」，不该说成登录问题 |
+| 2b | 403 且封套码**不在契约 403 闭集内** | 同上（归 `SCOPE_DENIED`，不清会话） | 同一理由；且不把未知码透给用户 |
+| 2c | 403 里出现**会话类码**（越界实现） | 仍按会话失效处理并清会话 | 守卫不放宽 |
+| 3 | 403 `ACCOUNT_INACTIVE` | 码**如实保留**（B7 = `denied`）+ **清会话** | 令牌已永久不可用（账号停用/注销、`auth_epoch` 前进），留死令牌只会让用户每次都被 403；清掉后下次进页面走重新登录，服务端会以同一码如实拒绝登录 |
+| 4 | `miniprogram/utils/session.js` 占位层 | 本片**不动**，登记待办 | 要改两条既有守卫断言，收益低 |
+| 5 | 社区 `public_posting` 用途闸 | 本片**不挂**，登记为独立片 | 挂了会让 GY-I15 全部社区 HTTP 用例先 403，需先备授权夹具 |
+| 6 | 识别页「去授权」 | **只改文案**：按钮 →「重试」；`CONSENT_REQUIRED` 说明改成「授权入口尚未接入、未授权不外发」 | 不承诺不存在的能力；不改页面跳转流程 |
+| 7 | `profile.wxml` 隐私说明 | **改文案**：删「且可以随时撤回」，改为「未授权时不会上传或外发」「授权与撤回入口尚未接入，本页暂不提供开关」 | 承诺必须与实现一致 |
+| 8 | `gy-i28-unified-states-20261021.md:238` 结论 | 在该页加**边界注记**（403 不折叠当时只在呈现层成立，传输层缺口由本页补齐） | 历史读数不改写，补边界 |
 
 ## 2. 四段盘点（逐段，带行号）
 
@@ -97,7 +115,7 @@
 
 401 vs 403 的契约语义（本期据此归因）：`services/api/src/contract.ts:14-18` 的 `ERROR_STATUS_MAP` —— **401 = `SESSION_REQUIRED`/`SESSION_EXPIRED`**；**403 = `SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE`**；服务端实现见 `services/api/src/auth/middleware.ts:75-107`（无 Bearer → 401 `SESSION_REQUIRED`；会话缺失/撤销/过期 → 401 `SESSION_EXPIRED`；账号非 active 或 `auth_epoch` 不一致 → 403 `ACCOUNT_INACTIVE`；用户会话访后台 → 403 `SCOPE_DENIED`，`middleware.ts:110-120`）。
 
-遗留（非本期）：`miniprogram/utils/session.js` 这套占位会话层（`SESSION_ENABLED=false`、`isGuest()` 恒 true，`session.js:22,38-42`）与真实的 `auth.js` 并存；它已无生产消费者（20 个消费点全走 `utils/auth.js`），见 §6 第 3 项。
+遗留（非本期）：`miniprogram/utils/session.js` 这套占位会话层（`SESSION_ENABLED=false`、`isGuest()` 恒 true，`session.js:22,38-42`）与真实的 `auth.js` 并存；它已无生产消费者（20 个消费点全走 `utils/auth.js`），见 §6.2 第 1 项。
 
 ### 2.4 (d) 同意（consent）与隐私闸，相对登录的先后 —— 半通
 
@@ -107,11 +125,11 @@
 - 用途闭集：`recording` / `media_processing` / `external_inference` / `public_posting`（`services/api/src/privacy/consent-pg.ts` 的 `CONSENT_PURPOSES`）。
 - 拒绝语义：缺授权 403 `CONSENT_REQUIRED`、错用途 403 `SCOPE_DENIED`（`services/api/src/privacy/egress.ts:80-105`）。
 
-未通的部分（都需裁决，见 §6）：
-1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'` → 按钮文案「去授权」（`identify-api.js:162`、`:203`），但 `pages/identify/identify.wxml:320-330` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:881`）——一个指向空处的按钮。
+未通的四点（1/2/3/4 的处置见 §1.3 裁决与 §6.2）：
+1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'`，改前按钮文案是「去授权」，但 `pages/identify/identify.wxml` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:881`）——一个指向空处的按钮。本片按裁决 6 只改文案：按钮 →「重试」，说明句改为「应用内授权入口尚未接入，暂时只能由服务端预置授权」。
 2. **契约缺「读用途政策」面**：`POST /me/consents` 的请求体要求 `purpose` + `policy_version` + `recipient_ids`（`routes/consents.ts:28-32`），而 `openapi.json` 只有 `listConsents` / `grantConsent` / `withdrawConsent`，没有任何「当前生效政策版本 / 已核验接收方」的读取面 ⇒ 客户端**无法**合法组出请求体。
 3. **社区投稿的 `public_posting` 闸未挂**：`services/api/src/privacy/egress.ts:11-19` 的挂载表明确要求「社区投稿入口」挂 `createConsentPreHandler`，但 `routes/community.ts` 的 16 处 `preHandler`（`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`）**全部只有 `guards.requireUser`**，`app.ts:1735` 也未注入 `consentGate`。
-4. **隐私说明说了做不到的事**：`pages/profile/profile.wxml:162-172` 静态宣称「拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回」，但授权与撤回都没有入口。
+4. **隐私说明曾说了做不到的事**：`pages/profile/profile.wxml` 原写「拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回」，但授权与撤回都没有入口 → 本片按裁决 7 改为如实措辞（删「随时撤回」，明写「入口尚未接入、不会默认替您授权」）。
 
 ## 3. 验证命令与真实读数
 
@@ -253,67 +271,99 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
   8   1  tests/unit/miniprogram-voice-playback.test.mjs
 ```
 `git status --porcelain` 对 `contracts/`、`.github/`、`migrations/`、`deploy/`、`openapi` **无命中**。
-本期只做本地提交：`feat/gy-r28-d1-login-chain` 领先 `origin/main`（`7d1a429`）1 个提交，**未 push、未开 PR**。
+本期只做本地提交：**未 push、未开 PR**。
+
+### 3.8 合流 `origin/main`（`93f336b`）的冲突与取舍
+
+`git fetch origin main` 后 `git merge origin/main --no-edit`，**只有两个文件冲突**（其余 main 侧改动 auto-merge）：
+
+| 冲突文件 | 处 | 取舍 | 理由 |
+|---|---|---|---|
+| `miniprogram/utils/favorites-api.js` | 调用点 | 取本片 `reject(auth.failureFor(failure, r.statusCode, r.data))` | 裁决 1：归因收敛到 `auth.js`，不再保留 #393 那份 `forbiddenOrSessionLoss` |
+| 同上 | 403 文案 3 行 | 取 main（#393）措辞：「无权读写用户收藏（收藏只对用户会话开放）」「缺少必要的授权同意…」「账号当前不可用（已停用或已注销）…」 | main 的措辞信息量更大且覆盖读/写两侧，语义与本片一致 |
+| 同上 | 非冲突但重复 | 删除 main 带进来的 `FORBIDDEN_CODES` / `errorCodeOf` / `forbiddenOrSessionLoss`（**第三份**同形实现） | 裁决 1（收敛重复实现） |
+| `miniprogram/utils/history-api.js` | 调用点 + 文案 2 行 | 同上（调用点取本片；文案取 main 的「读取或删除识别历史」措辞） | 同上 |
+| 同上 | 非冲突但重复 | 删除 main 带进来的同名三件套 | 同上 |
+
+自动合并、逐项核对过的：
+- `miniprogram/pages/voice/voice.js`（#394 C6 自动播报）新增 `require('../../utils/speech-autoplay')`；两个 vm 载入器（`miniprogram-transcript-confirm`、`miniprogram-voice-playback`）的**闭集 require 白名单**已由 main 按真实实现登记 `speech-autoplay`，本片没有把它写回桩。
+- `miniprogram/utils/location-region.js`、`reference.js`、`packages/reference/**`、`services/api/src/messages/**`、`deploy/**`（#390／#392／#393 侧）均 auto-merge 到位，本片未改其内容。
+- 合流后**必须按新口径改写**的既有断言（都来自 #393）：`tests/unit/miniprogram-favorites-history.test.mjs` 三条（见 §4.4）。
+
+合流后**没有**再做 rebase / squash；本片两次本地提交（切片提交 + 合并提交，见 §3.9）。
 
 ## 4. 改法（逐文件）
 
-### 4.1 `miniprogram/utils/auth.js`（+103/−3）
+### 4.1 `miniprogram/utils/auth.js`
 
-- `:15` 新增 `const states = require('./states')`（`states.js` 无任何 `require`，纯码表）。
-- `:45-118` 新增归因层：
-  - `SESSION_LOSS_CODES`（`:61`）= `Object.keys(states.CODE_KIND).filter(kind === 'session')` ⇒ 当前为 `SESSION_REQUIRED`/`SESSION_EXPIRED`/`SESSION_CHANGED`。**不写死第二份码表**。
-  - `RETIRED_SESSION_CODES = ['ACCOUNT_INACTIVE']`（`:65`）：令牌永久失效、必须清会话，但码不折叠。
-  - `attribution(statusCode, payload)`（`:87-105`）：401 → 会话类码或保守 `SESSION_REQUIRED`；403 → 封套码原样，读不到则 `SCOPE_DENIED`；返回 `{code,status,retryable,sessionLost,clearsSession}`。
-  - `failureFor(makeFailure, statusCode, payload)`（`:111-118`）：仅当 `clearsSession` 才 `clearSession()`，再用调用方自己的 `failure()` 构造错误（不替各模块发明错误形状），只补 `status`/`retryable`。
-- `:206-292` `verifySession` 的三分（`:261-279`，见 §2.3）。
-- `:480-485` 导出 `SESSION_LOSS_CODES` / `RETIRED_SESSION_CODES` / `isSessionLossCode` / `attribution` / `failureFor`。
+- 新增 `const states = require('./states')`（`states.js` 无任何 `require`，纯码表）。
+- 新增归因层：
+  - `RETIRED_SESSION_CODES = ['ACCOUNT_INACTIVE']`：令牌永久失效、必须清会话，但码不折叠。
+  - `FORBIDDEN_CODES`：契约 403 闭集，同样由 `states.CODE_KIND`（kind === 'denied'）反推。
+  - `attribution(statusCode, payload)`（纯函数）：401 → 会话类码或保守 `SESSION_REQUIRED`；403 → 会话类码/403 闭集码原样，其余（无封套、闭集外码）→ `SCOPE_DENIED`；返回 `{code,status,retryable,sessionLost,clearsSession}`（口径见 §1.3）。
+  - `failureFor(makeFailure, statusCode, payload)`：仅当 `clearsSession` 才 `clearSession()`，再用调用方自己的 `failure()` 构造错误（不替各模块发明错误形状），只补 `status`/`retryable`。
+- `verifySession` 的三分（见 §2.3）。
+- 导出 `SESSION_LOSS_CODES` / `FORBIDDEN_CODES` / `RETIRED_SESSION_CODES` / `isSessionLossCode` / `isForbiddenCode` / `attribution` / `failureFor`。（合流会移动行号，故本小节按符号定位；精确行号见 `grep -n` 或 §7 的锚点行。）
 
 ### 4.2 9 个适配层
 
-| 文件 | 位置 | 改法 |
-|---|---|---|
-| `favorites-api.js` | `:93` | `reject(auth.failureFor(failure, r.statusCode, r.data))`（删除 `clearSession` + `failure('SESSION_REQUIRED')`） |
-| `history-api.js` | `:164` | 同上 |
-| `knowledge-api.js` | `:75-76` | 同上；游标只在 `attribution().clearsSession` 时丢弃 |
-| `voice-api.js` | `:199` | 同上 |
-| `profile-api.js` | `:23` | 同上 |
-| `messages-api.js` | `:124` | 同上 |
-| `community-api.js` | `:164` | 同上 |
-| `identify-api.js` | `:267` | 原 `forbiddenOrSessionLoss` 改为 `return auth.failureFor(failure, statusCode, payload)`；删除自持的 `SESSION_LOSS_CODES`（原 `:41`） |
-| `speech-transcript.js` | `:239` | 同上；删除自持的 `SESSION_LOSS_CODES`（原 `:229`，**与 identify 那份口径相反**） |
+| 文件 | 改法 |
+|---|---|
+| `favorites-api.js` | 调用点 `reject(auth.failureFor(failure, r.statusCode, r.data))`；合流时删除 #393 那份 `FORBIDDEN_CODES`/`errorCodeOf`/`forbiddenOrSessionLoss`（第三份），文案沿用 #393 的措辞 |
+| `history-api.js` | 同上（合流时同样删掉自持码表） |
+| `knowledge-api.js` | 同上；游标只在 `attribution().clearsSession` 时丢弃 |
+| `voice-api.js` | 同上 |
+| `profile-api.js` | 同上 |
+| `messages-api.js` | 同上 |
+| `community-api.js` | 同上 |
+| `identify-api.js` | 原 `forbiddenOrSessionLoss` 改为 `return auth.failureFor(failure, statusCode, payload)`；删除自持的 `SESSION_LOSS_CODES`（**与 speech 那份口径相反**） |
+| `speech-transcript.js` | 同上；删除自持的 `SESSION_LOSS_CODES`（那份曾把 `ACCOUNT_INACTIVE` 折叠成登录失效） |
 
 ### 4.3 403 文案（原先走不到的码）
 
-`favorites-api.js:183-184`、`history-api.js:427-428`、`messages-api.js:231-232`、`community-api.js:340-341`、`knowledge-api.js:214`、`pages/profile/profile.js:35-37`（`readFailure` 增加 `SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE` 三分支，且不再说「请重试」——403 重试不会变好）。
+`favorites-api.js`、`history-api.js`（合流后沿用 #393 措辞）、`messages-api.js`、`community-api.js`、`knowledge-api.js` 的 `message`/`messageFor`，以及 `pages/profile/profile.js` 的 `readFailure`（增加 `SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE` 三分支，且不再说「请重试」——403 重试不会变好）。
 
 ### 4.4 测试
 
 - 新增 `tests/unit/miniprogram-auth-failure-attribution.test.mjs`：真实 `auth.js` + 真实 9 个适配层，合成 `wx`，只喂 401/403/503 响应。
 - `tests/unit/miniprogram-community-api.test.mjs`：两处 403 期望由 `SESSION_REQUIRED`+`cleared.count===1` 改为 `SCOPE_DENIED`+`cleared.count===0`，并新增「403 无封套 ⇒ `SCOPE_DENIED` 且不清会话」一例；文件头注释与两条用例标题同步。
-- `tests/reference/knowledge-client.test.mjs:210-219`：见 §3.4。
-- 三处 vm 载入器的 `auth` 替身（`miniprogram-community-api:81-89`、`miniprogram-transcript-confirm:158-168`、`miniprogram-voice-playback:546-556`）补 `attribution`/`failureFor`，**委托真实实现**（`createRequire` 载入 `miniprogram/utils/auth.js`），只有「清会话计数」用替身计数器——不在测试里重写码表。
+- `tests/reference/knowledge-client.test.mjs`（原 `:210-219`）：见 §3.4。
+- `tests/unit/miniprogram-favorites-history.test.mjs`（#393 合流进来的 8 个用例）：按 §1.3 改了 3 条断言——「403 无封套/闭集外码」由「会话失效」改为「`SCOPE_DENIED` 且不清会话」；「ACCOUNT_INACTIVE 不清会话」改为「清会话但码保留」；历史页那条 `isLoggedIn()` 期望同步（页面的 `errorCode`/文案仍如实带出）。
+- 三处 vm 载入器的 `auth` 替身（`miniprogram-community-api`、`miniprogram-transcript-confirm`、`miniprogram-voice-playback`）补 `attribution`/`failureFor`，**委托真实实现**（`createRequire` 载入 `miniprogram/utils/auth.js`），只有「清会话计数」用替身计数器——不在测试里重写码表。
 - `miniprogram-auth-runtime.test.mjs` / `miniprogram-login-return-to.test.mjs`：临时目录复制清单各加 `utils/states.js`。
+- 合流后确认：`miniprogram-transcript-confirm` / `miniprogram-voice-playback` 两个 vm 载入器的**闭集 require 白名单**已由 main 按真实实现登记 `speech-autoplay`（`transcript-confirm:211`、`voice-playback:656`），本片没有把它写回桩。
 
 ## 5. 外部前提缺口（未取得，不冒充）
 
 | 项 | 状态 | 影响 |
 |---|---|---|
 | 正式 AppID 真机 `wx.login` + code 换会话 | **未取得**（属 GY-I25／#27） | (a)(b) 只有合成 `wx` 与本地临时 runtime 证据；不能声称「微信登录真机可用」 |
-| 微信开发者工具编译 | **未取得**（`test:mini` 只做原生 JSON/路由/语法与打包隔离检查，自述「Not a WeChat compiler or device test」） | 页面级 WXML/WXSS 改动（本期仅 `profile.js` 的 JS 文案函数，未动 WXML）没有工具侧证据 |
+| 微信开发者工具编译 | **未取得**（`test:mini` 只做原生 JSON/路由/语法与打包隔离检查，自述「Not a WeChat compiler or device test」） | 本片动了 `pages/profile/profile.wxml`（隐私说明文案）与 `pages/identify/identify.wxml`（注释），**没有**工具侧编译/渲染证据 |
 | 真实服务端联调（`POST /auth/wechat` 真实响应） | **未取得** | 本期只在 Node 里以合成封套驱动真实客户端代码 |
-| 真实用途政策 / 接收方清单（`policy_version`、`recipient_ids`） | **契约无读取面** | 客户端无法完成授权（§6 第 1 项） |
+| 真实用途政策 / 接收方清单（`policy_version`、`recipient_ids`） | **契约无读取面** | 客户端无法完成授权（§6.2 第 3 项） |
 | 真实对象存储 / 审核 / ASR / TTS 提供者 | **未取得**（既有证据页已列） | 403 `CONSENT_REQUIRED` 的真实触发路径无法端到端复现 |
 
-## 6. 待裁决（编号）
+## 6. 裁决状态
 
-1. **同意授权入口 + 契约读取面**：客户端零 `me/consents` 调用，「去授权」（`identify-api.js:162,203` → `identify.wxml:320-330` → `identify.js:881`）是死按钮。要么 (a) 服务端增补「当前生效用途政策 + 已核验接收方」读取 operation（属契约变更，需监工裁决），要么 (b) 先把「去授权」按钮改成如实文案（"授权入口尚未接入，未授权时不会外发"）。本期未动，因为 (a) 越界、(b) 涉及页面承诺与既有 `ui-unified-states.test.mjs:206-209`、`recognitions-candidates-selection.test.mjs:389` 的断言口径。
-2. **社区投稿 `public_posting` 用途闸未挂**（`routes/community.ts` 16 处 preHandler 只有 `requireUser`；`app.ts:1735` 未注入 `consentGate`，而 `privacy/egress.ts:11-19` 的挂载表要求挂）。是否本期就挂？挂了会让 GY-I15 全部社区 HTTP 用例先 403（需一并准备授权夹具），跨域 blast radius 大。
-3. **`miniprogram/utils/session.js` 生死**：GY-I26 占位层（`SESSION_ENABLED=false`、`isGuest()` 恒 true）在 GY-I04 真实会话层（`auth.js`）落地后已无生产消费者，但 `tests/ui-adaptive.test.mjs:274,285` 仍以源码字面量守着它。删文件 / 改成委托 `auth.js` / 保留现状，三种都要动那条守卫——请裁决口径（本期保留现状，并在本页记录它是死代码）。
-4. **`ACCOUNT_INACTIVE` 的呈现口径**：本期按「码如实保留（B7 = `denied`）+ 清会话」。改前两份实现相反（`identify-api` 原样带出不清会话、`speech-transcript` 折叠成登录失效并清会话）。若产品口径是「账号不可用应显示为登录页提示」，则需回到折叠——请确认。
-5. **`pages/profile/profile.wxml:162-172` 隐私说明文案**：「可以随时撤回」目前无入口，属承诺与实现不一致；是否本期改文案（会与 `gy-i28-demo-parity-20261018.md` 的逐条对照口径牵连）。
-6. **`docs/verification/gy-i28-unified-states-20261021.md` 的结论需要补一句边界**：`:238` 写「403 不再被折叠成「请先登录」」，但在本期之前该结论只在**页面呈现层**成立，传输层 7 个模块仍在折叠。本期已把传输层补齐；历史页未改（保留其当时结论），是否加 superseded 注记请裁决。
-7. **与已合并的 #393（`8e8584e`，Refs #16）重叠，须监工定处置**：该提交在 `favorites-api.js`/`history-api.js` 里**又写了一份** `forbiddenOrSessionLoss`（第三份），并改了收藏/历史三个页面把 `errorCode` 交给 `state-view`。本期把同一处改成委托 `auth.failureFor`，并覆盖其余 7 个适配层。两者在 `miniprogram/utils/favorites-api.js`、`miniprogram/utils/history-api.js`、`tests/unit/miniprogram-favorites-history.test.mjs` 上**会冲突**。仓库纪律要求不在本 worktree 内 rebase，故未合并；请裁决：(a) 本期作为「统一层」先行、#393 的页面侧改动叠加其上，或 (b) 先把 #393 的适配层实现回退成委托 `auth.attribution`。
-   附一处**语义分歧**：403 响应**没有**错误封套时——#393 保守折叠为 `SESSION_REQUIRED` 并清会话；本期归为 `SCOPE_DENIED` 且**不清**会话（理由：无封套通常来自网关而非本 API，为一个网关 403 销毁有效令牌正是本期要修的害处；且「登录了但不给」比「请重新登录」更接近事实）。两种都自洽，需统一口径。
+### 6.1 已裁决并由本片执行（2026-10-21 监工；口径见 §1.3）
+
+| 原编号 | 议题 | 结论 → 本片动作 |
+|---|---|---|
+| 7 | 与 #393 重叠、三份 `forbiddenOrSessionLoss` | 采纳「统一归因层」：`favorites-api` / `history-api`（#393 那份）与 `identify-api` / `speech-transcript` 的自持码表**全部删除**，改委托 `auth.failureFor`；合流后 #393 的页面侧（`errorCode` → `state-view`）**保留**，只把两条与统一口径冲突的断言改写 |
+| 7 附 | 403 无封套 / 闭集外码 | 归 `SCOPE_DENIED`、**不清会话**（原 #393 的「保守折叠成会话失效」作废）；已在 `gy-r28-c5-favorites-history-20261021.md` 加 superseded 边界 |
+| 4 | `ACCOUNT_INACTIVE` | 码如实保留（B7 = `denied`）+ **清会话**；#393 那条「ACCOUNT_INACTIVE 不清会话」的断言按此改写 |
+| 3 | `miniprogram/utils/session.js` 占位层 | 本片**不动**，登记为待办（见 §6.2 第 1 项） |
+| 2 | 社区 `public_posting` 用途闸 | 本片**不挂**，登记为独立片（见 §6.2 第 2 项） |
+| 1（部分） | 「去授权」死按钮 | **只改文案**：按钮「去授权」→「重试」；`CONSENT_REQUIRED` 说明改成「应用内授权入口尚未接入」 |
+| 5 | `profile.wxml` 隐私说明 | **改文案**：删「且可以随时撤回」，明写「未授权时不会上传或外发」「入口尚未接入、不会默认替您授权」 |
+| 6 | `gy-i28-unified-states-20261021.md:238` | 已在该页加**边界注记**（历史结论保留不改写） |
+
+### 6.2 仍未决（需后续切片）
+
+1. **`miniprogram/utils/session.js` 生死**：GY-I26 占位层（`SESSION_ENABLED=false`、`isGuest()` 恒 true）在 `auth.js` 落地后已无生产消费者，但 `tests/ui-adaptive.test.mjs:274,285` 仍以源码字面量守着它。删文件 / 改成委托 `auth.js` / 保留现状，三者都要动那条守卫。
+2. **社区投稿 `public_posting` 用途闸**（`routes/community.ts` 16 处 `preHandler` 只有 `requireUser`；`app.ts:1735` 未注入 `consentGate`，而 `privacy/egress.ts:11-19` 的挂载表要求挂）。挂之前要先准备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403。
+3. **同意授权入口 + 契约读取面**（裁决 1 只解决了措辞）：服务端需增补「当前生效用途政策 + 已核验接收方」读取 operation（属契约变更），客户端才能合法组出 `POST /me/consents`。
+4. **denied 动作是否改为跳「我的」页**：本片把按钮改成「重试」且不改跳转；若产品希望 denied 动作真正可用，可改为 `switchTab('/pages/profile/profile')` 并在 `ui-unified-states.test.mjs:206-209` 上按**加强**方式改写（仍禁止「能授权/能撤回」这类失实承诺）。
 8. **「去授权」死按钮**的另一条低成本出口：若短期不加契约读取面，可把识别页 `permission_denied` 分支的动作从「去授权」改为「查看隐私说明」（`pages/profile/profile.wxml:162-172`），并同步把该段文案改成「授权入口尚未接入」。这会动 `ui-unified-states.test.mjs:206-209` 的断言，故列为裁决项而非本期实施。
 
 ## 7. 复核出的文档行号漂移
@@ -322,17 +372,17 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 |---|---|---|
 | 任务书：`AGENT.md`（仓库根，169 行） | 根目录**没有** `AGENT.md`，只有 `AGENTS.md`（**39 行**，5026 字节） | 文件名与行数都不符 |
 | 任务书：`docs/verification/gy-i05-locate-timeout-20261021.md` | **在本期基点 `7d1a429` 上不存在**；它由**更新后的** `origin/main`（`93f336b`，PR #392）引入 | 不是文件写错，而是派发时基点较旧；本期未 rebase（纪律要求），故按同族体例另择参照 |
-| 任务书：`docs/verification/gy-r28-c5-favorites-history-20261021.md` | **在本期基点 `7d1a429` 上不存在**；它由 `origin/main` 的 `8e8584e`（PR #393，C5 切片）引入，同一提交也改了 `favorites-api.js`/`history-api.js` | 与本期重叠，见 §6 第 7 项 |
+| 任务书：`docs/verification/gy-r28-c5-favorites-history-20261021.md` | **在本期基点 `7d1a429` 上不存在**；它由 `origin/main` 的 `8e8584e`（PR #393，C5 切片）引入，同一提交也改了 `favorites-api.js`/`history-api.js` | 已按裁决收敛，见 §6.1 第 7 行 |
 | 任务书：`POST /auth/wechat` 的 operationId | 真实 operationId 是 **`loginWechat`**（`openapi.json`）；`/auth/wechat` 是路径 | 已按契约纠正 |
 | `miniprogram/utils/session.js:5` 注释「真实会话由 GY-I04 服务端签发后替换本文件」 | 替换实际发生在 `utils/auth.js`，本文件未替换也未删除 | 死代码 + 注释过期 |
-| `docs/verification/gy-i28-unified-states-20261021.md:26-28,238`「403 不再被折叠」 | 改前只在呈现层成立；传输层 7 个 `*-api.js` 仍在折叠 | 本期补齐；历史页不改，见 §6 第 6 项 |
+| `docs/verification/gy-i28-unified-states-20261021.md:26-28,238`「403 不再被折叠」 | 改前只在呈现层成立；传输层 7 个 `*-api.js` 仍在折叠 | 本期补齐并已在该页加边界注记（见 §6.1 第 6 行） |
 | `miniprogram/utils/identify-api.js:41` 与 `speech-transcript.js:229` 注释「同口径」 | 两份码表实际**不同**（前者不含 `ACCOUNT_INACTIVE`，后者含），对同一响应给出相反结论 | 已收敛到 `auth.attribution`，两处自持码表删除 |
-| `services/api/src/privacy/egress.ts:11-19` 挂载表含「社区投稿入口」 | `routes/community.ts` 16 处 preHandler 均未挂用途闸 | 见 §6 第 2 项 |
+| `services/api/src/privacy/egress.ts:11-19` 挂载表含「社区投稿入口」 | `routes/community.ts` 16 处 preHandler 均未挂用途闸 | 见 §6.2 第 2 项 |
 | `services/api/src/auth/middleware.ts:7` 注释「供 GY-I27 的 requireConsent 直接消费」 | 核对为**准确**（`app.ts:850` 起已消费） | 非漂移，记录以证明已核 |
 
 ## 8. 不证明什么
 
 - 不证明真机／开发者工具下的登录可用；不证明正式 AppID 的 code 交换；不证明任何 403 的真实触发链路端到端可达（真实提供者未接线）。
-- 不证明「同意段」已通：授权入口与契约读取面都缺（§6 第 1 项）。
+- 不证明「同意段」已通：授权入口与契约读取面都缺（§6.2 第 3 项）。
 - 不把 `stub` / `preset_demo` 的执行模式当作真实能力；本期没有新增任何替身成功路径，也没有把 403 说成成功。
 - 本页所有「通」都限定为：**在同一份真代码 + 合成 `wx` 响应下，判定与文案符合契约语义**。

@@ -29,6 +29,8 @@ Page({
     mode: '',
     message: '',
     errorText: '',
+    /** 最近一次读取失败的契约错误码（交给 `components/state-view` 的 errorCode 决定 401/403/404 语气）。 */
+    errorCode: '',
     items: [],
     nextCursor: null,
     failedCount: 0
@@ -43,7 +45,7 @@ Page({
     const self = this
     self.setData({
       gatePassed: false, checking: true, items: [], nextCursor: null,
-      errorText: '', message: '', failedCount: 0
+      errorText: '', errorCode: '', message: '', failedCount: 0
     })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
@@ -58,7 +60,7 @@ Page({
 
   load: function (cursor) {
     const self = this
-    self.setData({ busy: true, loading: true, errorText: '' })
+    self.setData({ busy: true, loading: true, errorText: '', errorCode: '' })
     historyApi.listHistory(cursor || '', PAGE_SIZE).then(function (result) {
       const items = result.items.map(function (item) {
         const view = historyApi.historyItemView(item)
@@ -73,7 +75,11 @@ Page({
         message: merged.length ? '' : '还没有识别记录。'
       })
     }).catch(function (error) {
-      self.setData({ busy: false, loading: false, items: [], nextCursor: null, failedCount: 0, errorText: historyApi.messageFor(error) })
+      // 失败时不保留旧记录；错误码原样带出，401/403/404 分别由状态组件呈现，不折叠成空列表成功。
+      self.setData({
+        busy: false, loading: false, items: [], nextCursor: null, failedCount: 0,
+        errorText: historyApi.messageFor(error), errorCode: (error && error.code) || ''
+      })
     })
   },
 

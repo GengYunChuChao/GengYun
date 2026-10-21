@@ -159,6 +159,10 @@
     </view>
   </view>
 
+  <!-- 隐私说明：**只写实现得到的事**。改前这里写「拍摄照片、录音和位置信息都需要您单独授权，
+       且可以随时撤回」，但应用内既没有授权入口也没有撤回入口（`POST/DELETE /me/consents` 需要
+       `policy_version`/`recipient_ids`，契约没有读取面）——那是把不存在的功能写成承诺。
+       见 docs/verification/gy-i04-login-chain-20261021.md 的「口径决定」第 6 条。 -->
   <view class="section">
     <view class="section-head">
       <view class="section-head__title">隐私说明</view>
@@ -166,7 +170,10 @@
     <view class="panel">
       <view class="card-text">
         平台不会默认保存原始照片的拍摄位置，也不会把您的资料用于模型训练。
-        拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回。
+        拍摄照片、录音和位置信息都需要您单独授权；未获得授权时不会上传或外发，也不会用替身结果顶替。
+      </view>
+      <view class="card-text">
+        应用内的授权与撤回入口尚未接入，因此本页暂不提供授权开关；在入口接入前不会默认替您授权。
       </view>
     </view>
   </view>

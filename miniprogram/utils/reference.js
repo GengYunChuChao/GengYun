@@ -40,6 +40,25 @@ for (const s of species.species) speciesById[s.id] = s
 const sourceById = {}
 for (const s of sources.sources) sourceById[s.id] = s
 
+// 来源登记字段（同源：`data/sources.js` 是 `packages/knowledge/catalog/sources.json` 的构建产物）。
+// 只读登记表，不做任何推断：登记表里没有的字段一律返回空串，由页面显示「接口未提供」占位。
+function sourceField(source, key) {
+  const s = source || {}
+  const sid = typeof s.source_id === 'string' ? s.source_id : ''
+  const reg = sid && sourceById[sid] ? sourceById[sid] : null
+  if (key === 'id') return sid
+  if (key === 'title') return reg && typeof reg.title === 'string' ? reg.title : ''
+  if (key === 'publisher') return typeof s.publisher === 'string' ? s.publisher : (reg && typeof reg.publisher === 'string' ? reg.publisher : '')
+  return ''
+}
+
+// 来源展示串：只用登记数据里的 publisher／title 拼接；任一缺失就只用有的那一半，
+// 两半都缺则为空串（页面显示占位），**不补写、不推断来源名称**。
+function sourceName(source) {
+  const parts = [sourceField(source, 'publisher'), sourceField(source, 'title')].filter(function (v) { return v !== '' })
+  return parts.join(' · ')
+}
+
 // 记录规范化（与域库口径一致的可见性/有效期判定）。
 // F5：source_version 派生算法与域库 packages/reference/records.mjs deriveSourceVersion **逐字一致**：
 //     `<source_id>@<version|issue|retrieved_at|unknown>#<attachment_sha256|content_hash 前 12 位>`
@@ -198,6 +217,10 @@ function query(params) {
   const useScene = norm(params.use_scene)
   const growthStage = norm(params.growth_stage)
   const plantingMethod = norm(params.planting_method)
+  // #8：制剂（剂型）与有效成分含量——**收窄条件**，判据与 evaluateApplicability 第 6/7 维同一套。
+  // 只决定哪条记录进入适用集合，**不参与任何剂量换算**（用量恒不展示）。
+  const dosageForm = norm(params.dosage_form)
+  const ingredientContent = typeof params.ingredient_content === 'string' ? params.ingredient_content.trim() : ''
   const limit = clampLimit(params.limit)
   const offset = decodeCursor(params.cursor)
 
@@ -225,6 +248,16 @@ function query(params) {
     // G3：growth_stage / planting_method —— 首批资料**未采集**这两个条件，
     //     与域库一致：保留「记录未采集」的真实不匹配状态（不得静默放宽为全量匹配）。
     if (growthStage || plantingMethod) reasons.push('记录未采集生育期／种植方式条件')
+    // #8：剂型未采集 → 如实标注，不按「未提供即视为符合」放行；不符 → 明确原因。
+    if (dosageForm) {
+      const form = norm(item.dosage_form || '')
+      if (form === '') reasons.push('记录未采集制剂（剂型），无法按所选剂型确认')
+      else if (form !== dosageForm) reasons.push('制剂（剂型）不符')
+    }
+    // #8：有效成分/含量用精确语义（不下推到子串包含），与域库 ingredientContentMatch 同判。
+    if (ingredientContent) {
+      if (!ingredientContentMatch(parseIngredientsLocal(item.ingredients_text || ''), ingredientContent)) reasons.push('有效成分/含量与所选不符')
+    }
     if (q) {
       const hay = [item.norm.name, item.norm.producer, item.norm.registration, item.norm.ingredients, item.norm.use_scene, item.norm.target].join(' ')
       if (hay.indexOf(q) === -1) reasons.push('关键词不匹配')
@@ -235,7 +268,7 @@ function query(params) {
 
   matched.sort(function (a, b) { return a.registration_number < b.registration_number ? -1 : a.registration_number > b.registration_number ? 1 : 0 })
 
-  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg || params.use_scene || params.growth_stage || params.planting_method)
+  const hasCondition = Boolean(cropId || params.species_id || params.species || regionCode || q || reg || params.use_scene || params.growth_stage || params.planting_method || dosageForm || ingredientContent)
   let matchState
   const reasonsOut = []
   if (matched.length > 0) {
@@ -262,8 +295,37 @@ function query(params) {
     next_cursor: nextCursor,
     reasons: reasonsOut,
     unmatched_reasons: unmatched.slice(0, 10),
-    simulated_excluded: simulatedExcluded
+    simulated_excluded: simulatedExcluded,
+    // #8：命中侧可解释字段（与域库 appliedDimensions 同口径同顺序）——每条命中项都满足这些维度。
+    matched_dimensions: appliedDimensions({
+      crop_id: cropId,
+      species_id: speciesId,
+      region_code: regionCode,
+      use_scene: useScene,
+      growth_stage: growthStage,
+      planting_method: plantingMethod,
+      dosage_form: dosageForm,
+      ingredient_content: ingredientContent,
+      registration_number: reg,
+      q: q
+    })
   }
+}
+
+// #8：本次查询**实际应用**的筛选维度清单（与域库 query.mjs appliedDimensions 同序同判）。
+function appliedDimensions(query) {
+  const dims = []
+  if (query.crop_id) dims.push('crop_id')
+  if (query.species_id) dims.push('species_id')
+  if (query.region_code) dims.push('region_code')
+  if (query.use_scene) dims.push('use_scene')
+  if (query.growth_stage) dims.push('growth_stage')
+  if (query.planting_method) dims.push('planting_method')
+  if (query.dosage_form) dims.push('dosage_form')
+  if (query.ingredient_content) dims.push('ingredient_content')
+  if (query.registration_number) dims.push('registration_number')
+  if (query.q) dims.push('q')
+  return dims
 }
 
 function clampLimit(value) {
@@ -307,7 +369,8 @@ function validateQueryInput(params) {
     }
   }
   // G3：结构化条件类型校验（与域库一致——非字符串即非法，不静默丢弃）。
-  for (const key of ['use_scene', 'growth_stage', 'planting_method']) {
+  // #8：dosage_form（制剂剂型）/ ingredient_content（有效成分含量）同属收窄条件，同口径校验。
+  for (const key of ['use_scene', 'growth_stage', 'planting_method', 'dosage_form', 'ingredient_content']) {
     const v = params[key]
     if (v !== undefined && v !== null && v !== '' && typeof v !== 'string') {
       throw invalidRequest(key + ' 必须为字符串')
@@ -350,6 +413,11 @@ function listItem(item) {
     use_scene: item.use_scene,
     crop_ids: item.crop_ids,
     source_version: item.source_version,
+    // 来源可追溯：登记 id／发布机构／来源标题（缺项留空 ⇒ 页面显示「接口未提供」）。
+    source_id: sourceField(item.source, 'id'),
+    source_publisher: sourceField(item.source, 'publisher'),
+    source_title: sourceField(item.source, 'title'),
+    source_name: sourceName(item.source),
     record_status: item.record_status,
     simulated: item.simulated,
     labels: labels(item)
@@ -380,7 +448,12 @@ function detail(recordId) {
     note: item.verification.note || '',
     labels: labels(item),
     source: {
-      publisher: item.source.publisher || '',
+      // 详情页「来源标识」用登记 id；`title` 取自登记表（页面据此展示来源名称），
+      // `issue` 仍是本条记录所在的期号／文件 —— 两者语义不同，不互相顶替。
+      id: sourceField(item.source, 'id'),
+      publisher: sourceField(item.source, 'publisher'),
+      title: sourceField(item.source, 'title'),
+      name: sourceName(item.source),
       issue: item.source.issue || '',
       original_url: item.source.original_url || '',
       retrieved_at: item.source.retrieved_at || ''
@@ -1032,8 +1105,19 @@ function evaluateDoseBoundary(item, context, opts) {
   };
 }
 
+// #8：剂型筛选项——由随包记录**确定性派生**（去空、去重、按码位排序），
+// 不在页面硬编码枚举，避免与其他剂型口径漂移；也不新增任何判定分支。
+const dosageForms = Array.from(
+  new Set(
+    normalized
+      .map(function (item) { return item.dosage_form })
+      .filter(function (form) { return typeof form === 'string' && form !== '' })
+  )
+).sort()
+
 module.exports = {
   crops: crops.crops,
+  dosageForms: dosageForms,
   APPLICABILITY_RULE_VERSION: APPLICABILITY_RULE_VERSION,
   RESTRICTION_STATUSES: RESTRICTION_STATUSES,
   APPLICABILITY_DIMENSIONS: APPLICABILITY_DIMENSIONS,
@@ -1048,6 +1132,9 @@ module.exports = {
   doseCardDescriptor: doseCardDescriptor,
   ingredientContentMatch: ingredientContentMatch,
   parseIngredients: parseIngredientsLocal,
+  // 来源名称/标识取值：列表行与详情共用同一纯函数，缺项一律返回空串（由页面显示占位）。
+  sourceField: sourceField,
+  sourceName: sourceName,
   species: species.species,
   sources: sources.sources,
   regions: require('../data/regions.js').regions,
