@@ -65,7 +65,11 @@
       <text class="tag tag-warn">{{item.labels.record_status}}</text>
       <text class="tag tag-source" wx:if="{{item.source_marker}}">{{item.source_marker}}</text>
     </view>
-    <view class="item-src">来源版本：{{item.source_version}}</view>
+    <!-- 来源可追溯：名称（发布机构 · 来源标题）／登记标识／版本。缺项显示可解释占位，
+         不用空白或由页面补写的名称填充（服务端行取 SourceRef，随包行取登记表）。 -->
+    <view class="item-src">来源：{{item.source_name || '接口未提供'}}</view>
+    <view class="item-src">来源标识：{{item.source_id || '接口未提供'}}</view>
+    <view class="item-src">来源版本：{{item.source_version || '接口未提供'}}</view>
   </view>
 
   <view class="empty" wx:if="{{!items.length && matchState !== 'invalid'}}">

@@ -268,7 +268,17 @@ Page({
           // validity/review_status/updated_at）→ 页面既有槽位，语义逐项对得上：
           // title ⇒ 「期号／文件」；url ⇒ 原始链接；updated_at 的标签由 sourceDateLabel
           // 如实切换为「来源更新时间」，**不冒称采集日期**。
-          source: { publisher: src.publisher, issue: src.title, original_url: src.url, retrieved_at: src.updated_at }
+          // `id`（来源登记标识）原样透传，供「来源标识」与列表行对照追溯；`name` 是
+          // publisher · title 的展示串（两段都来自契约，缺一段就只显示有的那段）。
+          source: {
+            id: src.id,
+            publisher: src.publisher,
+            title: src.title,
+            name: [src.publisher, src.title].filter(function (v) { return typeof v === 'string' && v !== '' }).join(' · '),
+            issue: src.title,
+            original_url: src.url,
+            retrieved_at: src.updated_at
+          }
         },
         labels: row.labels,
         verifiedScope: [],

@@ -34,7 +34,7 @@
     <view class="card"><view class="card-title">适用条件</view><view>{{conditionsText}}</view><view class="notice">条件仍需逐项核对。本页不提供用量卡或安全可用建议。</view></view>
     <view class="card"><view class="card-title">原文来源</view>
       <view>{{item.source.publisher}} · {{item.source.title}}</view><view class="stat-grid"><view class="source-stat"><view class="stat-label">来源版本</view><view class="stat-value">{{item.source.version}}</view></view><view class="source-stat"><view class="stat-label">审核状态</view><view class="stat-value">{{labels.review}}</view></view></view>
-      <view>资料修订：{{item.revision}}</view><view>来源取得时间：{{item.source.updated_at}}</view><view>来源有效性：{{item.source.validity === 'valid' ? '有效' : '待确认'}}</view>
+      <view>资料修订：{{item.revision}}</view><view>来源标识：{{item.source.id || '契约未提供'}}</view><view>来源取得时间：{{item.source.updated_at}}</view><view>来源有效性：{{item.source.validity === 'valid' ? '有效' : '待确认'}}</view>
       <view class="source-url">{{item.source.url}}</view><button class="btn btn--secondary btn--block" bindtap="copySource">复制原文来源链接</button>
     </view>
     <!-- GY-I16 切片A：收藏／取消收藏（独立卡片 + 独立状态字段；不参与上面的读取状态机） -->
