@@ -123,9 +123,9 @@ export interface SpeechRouteDeps {
  * fail-closed 实现（缺凭据 ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`，**不回退替身**），
  * `stub` / `preset_demo` 走明确标注的替身。
  */
-export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps): SpeechService {
+export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps, persistencePool: TransactionalPool | null = null): SpeechService {
   const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode });
-  const store = deps.store ?? createMemorySpeechStore();
+  const store = deps.store ?? (config.executionMode === 'real' && persistencePool !== null ? createPostgresSpeechStore({ pool: persistencePool }) : createMemorySpeechStore());
   const media = deps.media ?? createSpeechMediaPort(config.executionMode);
   // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
   // 其余模式（替身/演示）**不记账**：替身不发生真实外发，账本里不得出现 sent。
@@ -249,3 +249,21 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
 
   return service;
 }
+import { createPostgresSpeechStore, type TransactionalPool } from '../speech/store-pg.ts'; // 追加在文件末尾：本模块的存储选型要用它的值（顶部 import 区零插入，ESM 提升语义等价）
+
+/**
+ * 存储选型（GY-R28 S20，语音持久化接线）——为什么在域内选、为什么池走位置实参：
+ *
+ * 1. `tests/integration/speech-http.mjs:530-540` 把「app.ts 对 speech/{store,provider,media}
+ *    只能有 import type 引用」钉成结构性质（默认零端口注入的证据）。值导入会打红这条**既有**
+ *    断言 ⇒ 选型下沉到本模块，app.ts 只多传一个位置实参。
+ * 2. OCR 域 2026-10-20 的持久化接线（迁移 0024）遇到同一约束，采用的正是「装配层传位置实参池
+ *    ＋ 域内三态选型」；本片照同一范式 ⇒ 既没改那条断言，也没削弱它。
+ * 3. 三态：注入 `deps.store` **优先** → `real` 且有池 ⇒ `createPostgresSpeechStore({ pool })`
+ *    （`persistent: true`）→ 其余（stub/preset_demo，或 real 但无池）⇒ `createMemorySpeechStore()`
+ *    （`persistent: false`，⛔ 不冒充持久化，`describe().storePersistent` 如实回报）。
+ * 4. 池是第 4 个**位置实参**、不是 `deps` 的键 ⇒ `speech-http.mjs` 对注册行的键集判据
+ *    （guards/store/provider/media/jobDeadlineMs/consent/egress）逐字不变。
+ * 5. 本文件既有行号是 `docs/architecture/contract-status.json` 的锚点，因此改动保持**零净行数**：
+ *    签名与选型各替换一行（行数不变），解释与导入全部追加在文件末尾（锚点 160-248 之后）。
+ */
