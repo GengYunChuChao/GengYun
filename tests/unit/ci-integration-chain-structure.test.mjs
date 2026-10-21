@@ -78,9 +78,15 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '**脚本缺陷 ⇒ R28-S14 判定不接线**：`account-suspend-pg.mjs:179` 用 `randomBytes(24)` 生成'
       + '运行时角色口令、与 argv[3] 的 URL 口令无关 ⇒ `postgres:17.11`（host 连接默认 scram 认证）下'
       + '**必 `28P01`**（本机 scram 集群实测：首个失败读数 `password authentication failed for user '
-      + '"gengyun_api_runtime"`、exit=1）；另外 `provisionRoles` 的 `CREATE ROLE` 无条件执行，'
-      + '跨 step 已存在同名角色时 `42710`。修法见 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`；'
-      + '⛔ 不得为让它变绿放宽断言或加跳过，故不进无 PG 的回环链。',
+      + '"gengyun_api_runtime"`、exit=1）。另一条缺陷只在特定前置状态下暴露：`provisionRoles`（`:174`）'
+      + '开头 `resetRoles()`（`:164-168`）对每个同名角色做 `DROP OWNED BY` + `DROP ROLE IF EXISTS`，两条都'
+      + '`.catch(() => {})` **吞掉失败**；紧接着 `:177` 执行出厂角色文件 '
+      + '`services/api/db/roles/auth_privacy.sql:5` 的**无条件** `CREATE ROLE`。所以只有当同名角色**被另一个'
+      + '数据库里的对象/ACL 钉住**（`DROP OWNED BY` 只作用于当前库、清不到跨库依赖 ⇒ `DROP ROLE` 失败被吞）'
+      + '时，首个失败读数才是 `role "gengyun_auth_privacy" already exists`、`42710`；**裸的同名角色不构成'
+      + '钉子**（本库 `resetRoles()` 就删得掉，实测仍是 `28P01`），成员关系也不钉。修法见 '
+      + '`docs/verification/gy-r28-real-pg-wiring-3-20261020.md`；⛔ 不得为让它变绿放宽断言或加跳过，'
+      + '故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/admin-accounts-read-pg.mjs',

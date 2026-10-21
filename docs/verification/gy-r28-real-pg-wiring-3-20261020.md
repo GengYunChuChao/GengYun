@@ -17,6 +17,9 @@
 - 铁律（本片执行口径）：**先在本机真跑出 exit=0（且必须是 scram 等价集群）才接线**；
   判「不接」的两条也是真跑出来的红，**没有**放宽任何脚本内断言、**没有**加 `--allow-skip`／`GY_ALLOW_SKIP`、
   **没有**改被测脚本（五个脚本一字节未动）。
+- 订正：**R28-S18**（2026-10-20）修订 §2.3／§2.4 两处失实结论（首个 `42710` 的出处、触发条件、
+  修法范围），段内以 🔁 标注并用本机真集群（`:55601`，scram ＋ `gengyun_ci_owner`）复测；
+  本页其余段落保持 S14 原样。
 
 ---
 
@@ -79,18 +82,62 @@ EXITCODE=1
 `首个失败读数：role "gengyun_auth_privacy" already exists`，`code: '42710'`，`routine: 'CreateRole'`，
 调用点 `account-suspend-pg.mjs:177`（`provisionRoles`）／`:493`（顶层），exit=1
 （日志 `.pg17/handoff/r28-s14-logs/account-suspend-pg.ciparity-rolesexist.log`）。
-⇒ 在同一条 workflow 里，只要前面任何一步留下同名角色（本片接线的
-`admin-accounts-read` 与 `admin-flags` 都会留下 `gengyun_api_runtime` + 6 个组角色），
-这一条就**必红**；想靠调顺序绕开，只能把它排在第一个。
+
+🔁 **R28-S18 订正（本机真集群实测，2026-10-20，集群 `:55601`）**：上一段结论有两处不准确。
+
+**（a）首个 `42710` 不是 `:179` 抛的，是 `:177` 抛的。** `provisionRoles`（`:174`）先把
+`roles/auth_privacy.sql`、`catalog_readers.sql`、`consent_granter.sql`、`profile_runtime.sql`、
+`knowledge_runtime.sql` 依次执行（`:176-178`），再在 `:179` 建运行时角色。首个 `42710` 的失败角色名是
+`gengyun_auth_privacy`——它只出现在出厂文件 `services/api/db/roles/auth_privacy.sql:5`
+（`CREATE ROLE gengyun_auth_privacy NOLOGIN …`，**无条件、无 `IF NOT EXISTS`**），而 `:179` 建的是
+`gengyun_api_runtime`。直接对照读数：
+`psql -f services/api/db/roles/auth_privacy.sql` ⇒
+`psql:services/api/db/roles/auth_privacy.sql:5: ERROR:  role "gengyun_auth_privacy" already exists`。
+
+**（b）触发条件是「同名角色的 `DROP ROLE` 失败」，不是「集群里有同名角色」。**
+`provisionRoles` 开头先 `resetRoles()`（`:164-168`），对每个同名角色做 `DROP OWNED BY` +
+`DROP ROLE IF EXISTS`，**两条都 `.catch(() => {})` 吞掉失败**。于是两种情况分岔：
+
+- 同名角色**裸存在**（无任何依赖）⇒ `resetRoles()` 删得掉 ⇒ suspend 依旧只红在 `28P01`
+  （实测：预建裸 `gengyun_auth_privacy` 后复跑，首个失败仍是
+  `password authentication failed for user "gengyun_api_runtime"`，日志无 `42710`）；
+  成员关系也不构成钉子（`GRANT` 后被授角色/组角色 `DROP ROLE` 均成功，实测 exit=0）。
+- 同名角色**在另一个数据库里拥有对象或持有那里的 ACL** ⇒ `DROP OWNED BY` 只作用于当前库、
+  清不到跨库依赖 ⇒ `DROP ROLE` 失败被吞 ⇒ `:177` 再建同名角色 ⇒ `42710`
+  （实测：让 `gengyun_auth_privacy` 在另一个库拥有表后复跑，首个失败读数
+  `role "gengyun_auth_privacy" already exists`、`code: '42710'`）。
+
+⇒ 在同一条 workflow 里，能触发它的是「前面留下**带跨库依赖**的角色」，不是「留下同名角色」：
+
+- `admin-accounts-read` 收尾不清理，会留下 1 个运行时 + 6 个组角色（实测 7 个），这些角色在
+  `gengyun_admin_accounts_read_test` 里的 ACL/对象所有权就是钉子 ⇒ suspend 排在它后面**必红**
+  （实测：前者 exit=0 后紧接跑 suspend，首个失败 `role "gengyun_auth_privacy" already exists`、`42710`）。
+- `admin-flags` **不执行任何 `roles/*.sql`**（不建组角色），只建/复用 1 个运行时角色，并在收尾按
+  `pg_roles` 基线差集把它自己建的角色 `DROP OWNED BY` + `DROP ROLE` 清掉（实测 `[ALL PASS]` 后
+  `pg_roles` 里 `gengyun%` 只剩 `gengyun_ci_owner`）⇒ 它排在 suspend 前面**无害**。
+
+所以「只能把它排在第一个」不成立；真正的要求是**排在 `admin-accounts-read` 之前**——
+这条顺序已由 R28-S18 钉进守卫（`tests/unit/ci-real-pg-wiring.test.mjs` 的判据⑥ `REQUIRED_STEP_ORDER`）。
+复跑日志：`.pg17/s18-work/expA.log`（裸角色 ⇒ 28P01）、`expB.log`（跨库对象钉住 ⇒ 42710）、
+`expM1.log`（admin-flags 全清）、`expM2.log` / `expM2b.log`（accounts-read 留 7 个角色 ⇒ suspend 42710）。
 
 ### 2.4 最小修法（本片不改脚本，供后续切片）
 
-- `:179` 改成：运行时角色口令**从 argv[3] 的 URL 解出**再 `CREATE ROLE`（与
-  `admin-accounts-read-pg.mjs:190-192` 同手法）；或先 `CREATE ROLE` 再
-  `ALTER ROLE … PASSWORD '<argv[3] 的口令>'` 把两边对齐。
-- `provisionRoles` 里把 `CREATE ROLE` 改成 `CREATE ROLE …` 失败即 `ALTER ROLE`（或先查
-  `pg_roles`），与 `admin-flags-pg.mjs:249-263` 的「存在则 ALTER」同口径。
-- ⛔ 不允许的修法：放宽 `[A]`–`[F]` 断言、加 `--allow-skip`、在 workflow 里塞 `|| true`。
+🔁 **R28-S18 订正**：只改 `:179`（或只给 `:179` 加 ALTER 回退）**修不好**——首个 `42710` 在 `:177`
+就抛了，`:179` 根本没执行到（见 §2.3）。最小修法必须同时覆盖三层：
+
+1. `:177` 执行的 5 个出厂角色文件（`roles/auth_privacy.sql`、`catalog_readers.sql`、
+   `consent_granter.sql`、`profile_runtime.sql`、`knowledge_runtime.sql`，共 6 个角色名）都是
+   **无条件** `CREATE ROLE`（例如 `auth_privacy.sql:5`）⇒ 改成「存在即复用」：`CREATE ROLE` 失败即
+   `ALTER ROLE`，或先查 `pg_roles`，与 `admin-flags-pg.mjs:249-263` 的「存在则 ALTER」同口径。
+2. 让角色真的「可删」：`DROP OWNED BY` 只作用于**当前库**，跨库对象所有权/ACL 清不到 ⇒ 要么到对应库
+   去清，要么给每个 step 独立集群（与现有共享 `services.postgres` 的形状冲突）；否则 `resetRoles()`
+   永远删不掉，只能靠第 1 层兜住。
+3. `:179` 改成：运行时角色口令**从 argv[3] 的 URL 解出**再 `CREATE ROLE`（与
+   `admin-accounts-read-pg.mjs:190-192` 同手法）；或先 `CREATE ROLE` 再
+   `ALTER ROLE … PASSWORD '<argv[3] 的口令>'` 把两边对齐。
+
+⛔ **不允许的修法**：放宽 `[A]`–`[F]` 断言、加 `--allow-skip`、在 workflow 里塞 `|| true`。
 
 ---
 
