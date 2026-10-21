@@ -64,7 +64,7 @@ async function call(app, method, url, token, { payload, headers } = {}) {
 
 /** 模拟「客户端凭上传句柄直传对象存储」（契约把上传句柄 URL 限定为 https，本地 loopback 不充当该数据面）。 */
 async function clientUpload(app, mediaId, bytes) {
-  const keys = app.mediaService.serverObjectKeys(mediaId);
+  const keys = await app.mediaService.serverObjectKeys(mediaId);
   assert.ok(keys !== null && typeof keys.rawRef === 'string', '尚未签发上传对象键');
   await app.mediaObjectStore.putObject(keys.rawRef, bytes, 'application/octet-stream');
   return keys;
@@ -273,7 +273,7 @@ test('GY-I06 HTTP 上传面：契约形状、真实类型核验、限额、EXIF 
     assert.equal(completed.body.data.revision, 2);
     assert.equal(completed.body.data.failure_code, null);
 
-    const keys = app.mediaService.serverObjectKeys(mediaId);
+    const keys = await app.mediaService.serverObjectKeys(mediaId);
     assert.equal(typeof keys.derivativeRef, 'string', '图片必须生成去元数据衍生件');
     const derivative = await app.mediaObjectStore.getObject(keys.derivativeRef);
     assert.ok(derivative !== null);

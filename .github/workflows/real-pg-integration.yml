@@ -198,6 +198,21 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           SPEECH_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_speech_test
+      # 媒体持久化（#6 / #16，R28-W12）：库名硬钉 `gengyun_media_test`，脚本按**空库**前提跑——
+      # 库里没有 `public.media` 时它自己 `applyMigrations(discoverMigrations())`（与 `npm run db:migrate`
+      # 同一条代码路径，写 `schema_migrations` 台账与校验和），非空库则原样复用，因此不需要额外准备步骤。
+      # 覆盖：四表 + 0008 台账形状 → 三段式上传（`object_ref_cipher` 是密文信封）→ owner 逐字节读 →
+      # 非 owner NOT_FOUND → 同一幂等键重复 complete **行数不变** → **子进程真重启**后同 uploadId 仍可读 →
+      # real 装配缺 `MEDIA_OBJECT_REF_KEY` 时整域 503（fail-closed）→ 空仓储负控制。
+      # 连接串走 argv[2]，与 suspend step 同形；省略时脚本回落到本机 `:55683`，且**只允许回环地址**。
+      # 本地取证（PG 17.11 + 空库 + 属主等价 `gengyun_ci_owner`）：exit=0，`17 条读数，全部断言通过`。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_media_test' && node tests/integration/media-persistence-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_media_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 备份副本域（GY-I19 / #19，R28-S49）：**自起集群**脚本之一。
       # runner 上原本没有 17 的服务端二进制（`postgres:17.11` 只活在 service 容器内），故先一步用 PGDG apt
       # 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再真跑。**装包只有这一步**：R28-E5 接的 `backup-copies-purge-pg`

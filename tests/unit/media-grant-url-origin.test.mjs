@@ -68,7 +68,7 @@ async function createReadyMedia({ service, objectStore }, purpose, bytes, mime, 
     idempotencyKey: `grant-url-${name}-create`,
   });
   const mediaId = created.media.id;
-  const keys = service.serverObjectKeys(mediaId);
+  const keys = await service.serverObjectKeys(mediaId);
   assert.ok(keys !== null, 'serverObjectKeys 必须返回记录持有的对象键');
   assert.ok(typeof keys.rawRef === 'string' && keys.rawRef.length > 0);
   // 模拟客户端直传：替身对象存储里放一份与声明逐字节一致的原始对象。

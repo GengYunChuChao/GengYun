@@ -99,7 +99,12 @@ import {
 import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
-import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
+import { createAppMediaService, createFailClosedMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
+// GY-I06/W12 媒体持久化（#6）：登记册/授权/幂等台账的事实源从进程内 `Map` 换成端口；
+// `object_ref_cipher` 的键由配置注入（`MEDIA_OBJECT_REF_KEY`），缺键则**不接 PG**。
+import { createMemoryMediaStore, type MediaStore } from './media/store.ts';
+import { createPostgresMediaStore } from './media/store-pg.ts';
+import { createObjectRefCipher } from './media/object-ref-cipher.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
 import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
@@ -383,6 +388,13 @@ export interface BuildAppOptions {
   mediaContentSource?: PublishedContentSource;
   /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
   mediaAttachmentCounter?: CommunityAttachmentCounter;
+  /**
+   * 测试注入：替换媒体的**持久化端口**（登记册 / 短效授权 / 幂等台账三者的事实源）。
+   *
+   * 不传时按 `executionMode` 二分：`real` + 连接池 + `MEDIA_OBJECT_REF_KEY` ⇒ PG 实现
+   * （重启后上传链路不断），其余 ⇒ 内存实现（stub/演示/无库夹具，语义与 W12 之前等价）。
+   */
+  mediaStore?: MediaStore;
   // GY-I27 接线单（用途授权接线）：隐私域端口。
   // **全部可选**：不传时——
   //   * 授权中间件仍会在**配置了数据库**时按 PG 读取口挂到 4 个 AI 执行入口
@@ -648,7 +660,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -1273,7 +1285,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
   // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
-  const mediaService = createAppMediaService({
+  // **持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
+  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
+  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
+  const mediaStore: MediaStore = mediaStoreOption
+    ?? (config.executionMode === 'real' && pool !== null && config.mediaObjectRefKey !== null
+      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(config.mediaObjectRefKey) })
+      : createMemoryMediaStore({ now: () => clock().getTime() }));
+  // `real` + 有数据库池 + **缺** `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域整域 fail-closed（503），
+  // **不是**降级：拿不到键就无法如实写 `object_ref_cipher`，用进程内 `Map` 顶替等于向客户端
+  // 谎报「已持久化」——这正是 W12 要消灭的那种假持久化。
+  const mediaPersistenceRefusal: string | null =
+    config.executionMode === 'real' && pool !== null && config.mediaObjectRefKey === null
+      ? 'real 模式的媒体持久化缺少 MEDIA_OBJECT_REF_KEY：object_ref_cipher 无法加密，拒绝以进程内状态承载媒体事实'
+      : null;
+  const mediaService: AppMediaService = mediaPersistenceRefusal === null
+    ? createAppMediaService({
     executionMode: config.executionMode,
     objectStore: mediaObjectStore,
     tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
@@ -1283,8 +1310,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
     // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
     ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
+    // 持久化端口：**唯一**的事实源（登记册/授权/台账），缺省时服务内部会退到内存实现，
+    // 装配层在这里显式给出按模式二分的实现，避免「进程内 Map 仍是事实源」的假持久化。
+    persistence: mediaStore,
     now: clock,
-  });
+  })
+    : createFailClosedMediaService(mediaPersistenceRefusal);
 
   // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
   //

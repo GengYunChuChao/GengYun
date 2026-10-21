@@ -24,6 +24,7 @@
     "test:integration:http": "node tests/integration/knowledge-consumer-http.mjs && node tests/integration/miniprogram-login-loop.mjs && node tests/integration/admin-http.mjs && node tests/integration/profile-ui-http.test.mjs && node tests/integration/recognitions-http.mjs && node tests/integration/jobs-http.mjs && node tests/integration/favorites-history-isolation-http.mjs && node tests/integration/ocr-http.mjs && node tests/integration/account-deletion-http.mjs && node tests/integration/speech-http.mjs && node tests/integration/tts-http.mjs && node tests/integration/tts-content-wiring.mjs && node tests/integration/rejections-http.mjs && node tests/integration/transcript-confirm-http.mjs",
     "test:integration:recognition-chain-pg": "node tests/integration/recognition-chain-e2e.mjs",
     "test:integration:conversations-pg": "node tests/integration/conversations-pg.mjs",
+    "test:integration:media-persistence-pg": "node --experimental-strip-types tests/integration/media-persistence-pg.mjs",
     "test:mini": "node tools/check-wechat-project.mjs && node --test tests/local-debug.test.mjs",
     "test:docs": "node tools/run-python.mjs tools/validate_development_docs.py && node tools/verify-research-records.mjs",
     "db:migrate": "npm run db:migrate --workspace @gengyun/api",

@@ -8,6 +8,7 @@
  */
 import { EXECUTION_MODES, type ExecutionMode } from './contract.ts';
 import { readObjectStorageConfig, type ObjectStorageConfig } from './media/object-store.ts';
+import { createObjectRefCipher } from './media/object-ref-cipher.ts';
 
 export interface AppConfig {
   /** 执行模式，契约 ExecutionMode。响应 meta.execution_mode 必填。 */
@@ -49,6 +50,16 @@ export interface AppConfig {
    * 运维动作下调用）。本字段只表示「配置齐备且合法」，不构成任何接线许可。
    */
   objectStorage: ObjectStorageConfig | null;
+  /**
+   * `object_ref_cipher` 的加密键材料（`MEDIA_OBJECT_REF_KEY`）：64 位 hex / 32 字节 base64 / 32 字节原串。
+   *
+   * 媒体四表把对象键存成 `object_ref_cipher text NOT NULL`（`0001_initial_schema.sql:171-200`），
+   * 因此**落库必须有键**；本字段为 `null` 时装配层不接 PG 持久化（`real` + 有库 ⇒ 媒体域 503），
+   * 绝不退回进程内 `Map` 去声称持久化成功，也绝不把对象键明文写进库。
+   *
+   * 非法键材料在这里就报 `INVALID_VALUE`（判据在 `media/object-ref-cipher.ts`，此处不重写）。
+   */
+  mediaObjectRefKey: string | null;
 }
 
 export interface ConfigIssue {
@@ -292,6 +303,24 @@ export function loadConfig(env: Env = process.env): AppConfig {
     }
   }
 
+  // 媒体对象键的加密键（可选）：缺失不算配置错误（stub/演示无需落库），但 `real` + 有数据库时
+  // 装配层会因缺键把媒体域整域 fail-closed —— 详见 `AppConfig.mediaObjectRefKey` 的说明。
+  // 给了就必须能用：键材料非法 ⇒ INVALID_VALUE（判据复用媒体域，不在此处重写一份）。
+  let mediaObjectRefKey: string | null = null;
+  const mediaObjectRefKeyRaw = trimmed(env, 'MEDIA_OBJECT_REF_KEY');
+  if (mediaObjectRefKeyRaw !== undefined) {
+    try {
+      createObjectRefCipher(mediaObjectRefKeyRaw);
+      mediaObjectRefKey = mediaObjectRefKeyRaw;
+    } catch (error) {
+      issues.push({
+        field: 'MEDIA_OBJECT_REF_KEY',
+        code: 'INVALID_VALUE',
+        reason: error instanceof Error ? error.message : '键材料非法',
+      });
+    }
+  }
+
   if (issues.length > 0) {
     throw new ConfigError(issues);
   }
@@ -310,5 +339,6 @@ export function loadConfig(env: Env = process.env): AppConfig {
     adminBootstrap,
     mediaAccessGrantOrigin,
     objectStorage,
+    mediaObjectRefKey,
   };
 }

@@ -147,7 +147,7 @@ async function uploadReadyMedia(world, actor, key, bytes) {
   });
   assert.equal(created.status, 201, `建上传失败：${created.text}`);
   const mediaId = created.body.data.media.id;
-  const keys = world.app.mediaService.serverObjectKeys(mediaId);
+  const keys = await world.app.mediaService.serverObjectKeys(mediaId);
   assert.ok(keys !== null && typeof keys.rawRef === 'string');
   await world.objectStore.putObject(keys.rawRef, bytes, 'application/octet-stream');
   const completed = await call(world.app, 'POST', `${API}/media/uploads/${mediaId}/complete`, actor, {

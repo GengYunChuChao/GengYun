@@ -1,0 +1,347 @@
+// GY-R28 W12 媒体持久化 · 登记册/授权/幂等台账端口（单测）。
+//
+// 断言口径（本片的存在理由，逐条对应验收）：
+//   1. 服务**不再持有**任何进程内事实：同一份 `MediaStore` 换一个服务实例（模拟重启）后，
+//      上传句柄、状态、revision、对象键都还在；非 owner 仍然 NOT_FOUND。
+//   2. 幂等：同一 `Idempotency-Key` 重复 `complete` **不产生第二行、不重复派生**（用计数桶证明
+//      `putObject` 没被再调一次），换键重复也不重复派生。
+//   3. 台账三段（claim/settle/release）语义与 0008 同口径：占位中读到 `mediaId === null`、
+//      占位可过期、结算后不可再结算。
+//
+// 这里刻意**不**断言「real + 内存端口 ⇒ 503」：那条门禁在装配层（`app.ts` 的
+// `mediaPersistenceRefusal`，需要真实数据库池才会触发），由真库集成测试覆盖；
+// 在服务层加同名门禁会与既有 r3 用例（real + 注入真实端口 + 无池 ⇒ 201）冲突。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildApp } from '../../services/api/src/app.ts';
+import { loadConfig } from '../../services/api/src/config.ts';
+import { createSubstituteObjectStore } from '../../services/api/src/media/object-store.ts';
+import {
+  MEDIA_IDEMPOTENCY_CLAIM_TTL_MS,
+  MEDIA_IDEMPOTENCY_PATHS,
+  MEDIA_IDEMPOTENCY_TTL_MS,
+  createMemoryMediaStore,
+  mediaIdempotencyKeyHash,
+  mediaIdempotencyScope,
+} from '../../services/api/src/media/store.ts';
+import { sha256Hex } from '../../packages/media/validate.mjs';
+import { jpegWithExif } from '../media/_fixtures.mjs';
+
+const NOW_MS = 1_700_000_000_000;
+const KEY = (name) => `media-persist-${name}-0000`;
+
+function makeApp({ mediaStore, objectStore } = {}) {
+  return buildApp({
+    config: { ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }), executionMode: 'stub' },
+    mediaObjectStore: objectStore,
+    ...(mediaStore === undefined ? {} : { mediaStore }),
+    now: () => new Date(NOW_MS),
+  });
+}
+
+/** 在替身桶外面套一层计数：用来证明「没有第二次派生」。 */
+function countingObjectStore() {
+  const inner = createSubstituteObjectStore();
+  const calls = { puts: [], deletes: [] };
+  return {
+    calls,
+    store: {
+      ...inner,
+      async putObject(key, bytes, contentType) {
+        calls.puts.push(key);
+        return inner.putObject(key, bytes, contentType);
+      },
+      async deleteObject(key) {
+        calls.deletes.push(key);
+        return inner.deleteObject(key);
+      },
+    },
+  };
+}
+
+async function login(app, code) {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/wechat',
+    headers: { 'content-type': 'application/json', 'idempotency-key': `login-key-${code}` },
+    payload: { code },
+  });
+  assert.equal(response.statusCode, 200, response.body);
+  return response.json().data.access_token;
+}
+
+async function call(app, method, url, token, { payload, headers } = {}) {
+  const response = await app.inject({
+    method,
+    url,
+    ...(payload === undefined ? {} : { payload }),
+    headers: {
+      ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+      ...(headers ?? {}),
+    },
+  });
+  let body = null;
+  try { body = response.json(); } catch { body = null; }
+  return { status: response.statusCode, body, etag: response.headers.etag };
+}
+
+test('GY-R28 W12 持久化端口：换实例（模拟重启）后登记册/对象键/幂等回执仍在，非 owner 仍 404', async (t) => {
+  const mediaStore = createMemoryMediaStore({ now: () => NOW_MS });
+  const { store: objectStore, calls } = countingObjectStore();
+  const jpeg = jpegWithExif();
+  const declare = { purpose: 'weed_recognition', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
+
+  const first = makeApp({ mediaStore, objectStore });
+  t.after(async () => { await first.close(); });
+  const ownerToken = await login(first, 'persist-owner');
+  const strangerToken = await login(first, 'persist-stranger');
+
+  let mediaId;
+  let recreateKeys;
+  let createKeyUsed;
+
+  await t.test('三段式：POST /media/uploads 201 → 客户端 PUT → complete 202（state=ready, revision=2）', async () => {
+    const created = await call(first, 'POST', '/api/v1/media/uploads', ownerToken, {
+      payload: declare,
+      headers: { 'idempotency-key': KEY('create') },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    mediaId = created.body.data.media.id;
+    assert.equal(created.body.data.media.state, 'initiated');
+    createKeyUsed = KEY('create');
+
+    const keys = await first.mediaService.serverObjectKeys(mediaId);
+    assert.ok(keys !== null && typeof keys.rawRef === 'string');
+    await objectStore.putObject(keys.rawRef, jpeg, 'image/jpeg');
+    assert.equal(calls.puts.length, 1, '客户端直传算一次 put');
+
+    const completed = await call(first, 'POST', `/api/v1/media/uploads/${mediaId}/complete`, ownerToken, {
+      payload: { sha256: declare.sha256, bytes: declare.bytes },
+      headers: { 'idempotency-key': KEY('complete'), 'if-match': '"1"' },
+    });
+    assert.equal(completed.status, 202, JSON.stringify(completed.body));
+    assert.equal(completed.body.data.state, 'ready');
+    assert.equal(completed.body.data.revision, 2);
+    assert.equal(completed.etag, '"2"');
+    assert.equal(calls.puts.length, 2, 'complete 派生一个剥离元数据的对象');
+    assert.equal(await mediaStore.countMedia(), 1);
+  });
+
+  await t.test('owner 读 200；非 owner 读 404 NOT_FOUND（归属来自持久化登记册，不是进程内缓存）', async () => {
+    const mine = await call(first, 'GET', `/api/v1/media/${mediaId}`, ownerToken);
+    assert.equal(mine.status, 200, JSON.stringify(mine.body));
+    assert.equal(mine.body.data.id, mediaId);
+    assert.equal(mine.body.data.revision, 2);
+
+    const other = await call(first, 'GET', `/api/v1/media/${mediaId}`, strangerToken);
+    assert.equal(other.status, 404, JSON.stringify(other.body));
+    assert.equal(other.body.error.code, 'NOT_FOUND');
+  });
+
+  await t.test('同一幂等键重复 complete ⇒ 202 回放，不产第二行、不再派生（put 计数不变）', async () => {
+    const replay = await call(first, 'POST', `/api/v1/media/uploads/${mediaId}/complete`, ownerToken, {
+      payload: { sha256: declare.sha256, bytes: declare.bytes },
+      headers: { 'idempotency-key': KEY('complete'), 'if-match': '"1"' },
+    });
+    assert.equal(replay.status, 202, JSON.stringify(replay.body));
+    assert.equal(replay.body.data.revision, 2);
+    assert.equal(calls.puts.length, 2, '回放不得再派生');
+    assert.equal(await mediaStore.countMedia(), 1, '回放不得产生第二行媒体记录');
+  });
+
+  await t.test('同一幂等键但请求体不同 ⇒ 409 IDEMPOTENCY_CONFLICT（不静默回放）', async () => {
+    const conflict = await call(first, 'POST', `/api/v1/media/uploads/${mediaId}/complete`, ownerToken, {
+      payload: { sha256: 'f'.repeat(64), bytes: declare.bytes },
+      headers: { 'idempotency-key': KEY('complete'), 'if-match': '"1"' },
+    });
+    assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
+    assert.equal(conflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  await t.test('同一幂等键重复 initiate ⇒ 回放同一媒体 id（不新增行）', async () => {
+    const replay = await call(first, 'POST', '/api/v1/media/uploads', ownerToken, {
+      payload: declare,
+      headers: { 'idempotency-key': createKeyUsed },
+    });
+    assert.equal(replay.status, 201, JSON.stringify(replay.body));
+    assert.equal(replay.body.data.media.id, mediaId);
+    assert.equal(await mediaStore.countMedia(), 1);
+  });
+
+  recreateKeys = await first.mediaService.serverObjectKeys(mediaId);
+  assert.ok(recreateKeys !== null);
+
+  await t.test('模拟重启：新服务实例 + 同一端口 ⇒ 同一 uploadId 仍可读，键逐字相同（来自台账而非内存）', async () => {
+    // 「重启」在这里是**新服务实例**：`makeApp` 每调一次都是全新的 AppMediaService。
+    // 认证侧的内存用户表也随实例消失，所以这一段直接走服务端口（HTTP 面已在上面验过），
+    // 断言点仍是「同一个 uploadId 能不能读、读到的键与字节是否一致」。
+    const record = await mediaStore.getMedia(mediaId);
+    const actor = { ownerId: record.ownerId, authEpoch: 1, sessionRef: '99999999-9999-4999-8999-999999999999' };
+    const second = makeApp({ mediaStore, objectStore });
+    try {
+      const afterRestart = await second.mediaService.getMedia({ actor, mediaId });
+      assert.equal(afterRestart.status, 200);
+      assert.equal(afterRestart.media.state, 'ready');
+      assert.equal(afterRestart.media.revision, 2);
+
+      const keysAfterRestart = await second.mediaService.serverObjectKeys(mediaId);
+      assert.deepEqual(keysAfterRestart, recreateKeys, '重启前后对象键必须一致');
+      assert.notEqual(keysAfterRestart.rawRef, keysAfterRestart.derivativeRef, 'raw 与衍生物是两个对象键');
+
+      await assert.rejects(
+        () => second.mediaService.getMedia({ actor: { ...actor, ownerId: '00000000-0000-4000-8000-000000000000' }, mediaId }),
+        (error) => {
+          assert.equal(error.code, 'NOT_FOUND');
+          return true;
+        },
+        '非 owner 在重启后仍必须 NOT_FOUND',
+      );
+
+      // 重启后仍能读到真实字节（服务端记录的键确实指向桶里的对象）。
+      const raw = await objectStore.getObject(keysAfterRestart.rawRef);
+      const derivative = await objectStore.getObject(keysAfterRestart.derivativeRef);
+      assert.ok(raw !== null && derivative !== null);
+      assert.equal(raw.bytes.length, jpeg.length);
+      assert.ok(derivative.bytes.length < raw.bytes.length, '衍生物应小于原图（已剥离元数据）');
+
+      // 重启后换新键重复 complete：state 已 ready ⇒ 202，且不再派生。
+      const replayNewKey = await second.mediaService.completeUpload({
+        actor,
+        mediaId,
+        ifMatch: '"2"',
+        input: { sha256: declare.sha256, bytes: declare.bytes },
+        idempotencyKey: KEY('complete-after-restart'),
+      });
+      assert.equal(replayNewKey.status, 202);
+      assert.equal(replayNewKey.media.revision, 2);
+      assert.equal(calls.puts.length, 2, '换键回放也不得重复派生');
+      assert.equal(await mediaStore.countMedia(), 1);
+    } finally {
+      await second.close();
+    }
+  });
+
+  await t.test('删除：对象回收后键位清空（rawRef/derivativeRef ⇒ null），登记册仍留 deleted 行', async () => {
+    const deleted = await call(first, 'DELETE', `/api/v1/media/${mediaId}`, ownerToken, {
+      headers: { 'idempotency-key': KEY('delete'), 'if-match': '"2"' },
+    });
+    assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
+    const keys = await first.mediaService.serverObjectKeys(mediaId);
+    assert.deepEqual(keys, { rawRef: null, derivativeRef: null });
+    const record = await mediaStore.getMedia(mediaId);
+    assert.equal(record.state, 'deleted');
+    assert.equal(record.rawRef, null);
+    assert.equal(record.derivativeRef, null);
+    assert.equal(await objectStore.getObject(recreateKeys.rawRef), null, '桶里的原图应已删除');
+  });
+});
+
+test('GY-R28 W12 端口语义：台账三段、快照隔离、按状态枚举与授权计数', async (t) => {
+  let nowMs = NOW_MS;
+  const store = createMemoryMediaStore({ now: () => nowMs });
+  const scope = mediaIdempotencyScope('11111111-1111-4111-8111-111111111111', 'POST', MEDIA_IDEMPOTENCY_PATHS.initiate);
+  const keyHash = mediaIdempotencyKeyHash(scope, KEY('claim'));
+
+  await t.test('键域：scope 含主体与路由模板，摘要随键变化；模板里的 {id} 不进键域', () => {
+    assert.equal(scope, `11111111-1111-4111-8111-111111111111\nPOST\n${MEDIA_IDEMPOTENCY_PATHS.initiate}`);
+    assert.match(keyHash, /^[0-9a-f]{64}$/);
+    assert.notEqual(keyHash, mediaIdempotencyKeyHash(scope, KEY('other')));
+    assert.equal(MEDIA_IDEMPOTENCY_PATHS.complete, '/api/v1/media/uploads/{id}/complete');
+    assert.equal(MEDIA_IDEMPOTENCY_PATHS.remove, '/api/v1/media/{id}');
+  });
+
+  await t.test('claim 只能成功一次；占位中读到 mediaId=null；settle 后可读回结果；重复 settle 返回 false', async () => {
+    assert.equal(await store.findIdempotency(scope, keyHash), null);
+    assert.equal(await store.claimIdempotency(scope, keyHash, { requestHash: 'a'.repeat(64), expiresAt: nowMs + MEDIA_IDEMPOTENCY_TTL_MS }), true);
+    assert.equal(await store.claimIdempotency(scope, keyHash, { requestHash: 'a'.repeat(64), expiresAt: nowMs + MEDIA_IDEMPOTENCY_TTL_MS }), false);
+    assert.deepEqual(await store.findIdempotency(scope, keyHash), { requestHash: 'a'.repeat(64), mediaId: null });
+
+    const mediaId = '33333333-3333-4333-8333-333333333333';
+    assert.equal(await store.settleIdempotency(scope, keyHash, { mediaId, expiresAt: nowMs + MEDIA_IDEMPOTENCY_TTL_MS }), true);
+    assert.deepEqual(await store.findIdempotency(scope, keyHash), { requestHash: 'a'.repeat(64), mediaId });
+    assert.equal(await store.settleIdempotency(scope, keyHash, { mediaId, expiresAt: nowMs + MEDIA_IDEMPOTENCY_TTL_MS }), false);
+    // release 只删「占位中」，已结算的不动。
+    await store.releaseIdempotency(scope, keyHash);
+    assert.deepEqual(await store.findIdempotency(scope, keyHash), { requestHash: 'a'.repeat(64), mediaId });
+  });
+
+  await t.test('占位会过期（崩溃不会把键钉死）：claim TTL 过后可重新占位，release 生效', async () => {
+    const otherHash = mediaIdempotencyKeyHash(scope, KEY('expiring'));
+    assert.equal(await store.claimIdempotency(scope, otherHash, { requestHash: 'b'.repeat(64), expiresAt: nowMs + MEDIA_IDEMPOTENCY_CLAIM_TTL_MS }), true);
+    assert.equal(await store.claimIdempotency(scope, otherHash, { requestHash: 'b'.repeat(64), expiresAt: nowMs + MEDIA_IDEMPOTENCY_CLAIM_TTL_MS }), false);
+    nowMs += MEDIA_IDEMPOTENCY_CLAIM_TTL_MS + 1;
+    assert.equal(await store.findIdempotency(scope, otherHash), null);
+    assert.equal(await store.claimIdempotency(scope, otherHash, { requestHash: 'b'.repeat(64), expiresAt: nowMs + MEDIA_IDEMPOTENCY_TTL_MS }), true);
+    await store.releaseIdempotency(scope, otherHash);
+    assert.equal(await store.findIdempotency(scope, otherHash), null);
+  });
+
+  await t.test('记录是快照：改返回值不影响库；saveMedia 未知 id 抛错', async () => {
+    const record = {
+      id: '44444444-4444-4444-8444-444444444444',
+      ownerId: '11111111-1111-4111-8111-111111111111',
+      revision: 1,
+      purpose: 'community_image',
+      mime: 'image/png',
+      bytes: 12,
+      duration_ms: null,
+      sha256: 'c'.repeat(64),
+      state: 'initiated',
+      failure_code: null,
+      rawRef: 'obj_raw_snapshot',
+      derivativeRef: null,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+      expiresAt: nowMs + 60_000,
+    };
+    await store.createMedia(record);
+    await assert.rejects(() => store.createMedia(record), /已存在该 id/);
+    const read = await store.getMedia(record.id);
+    read.state = 'ready';
+    read.rawRef = 'tampered';
+    assert.equal((await store.getMedia(record.id)).state, 'initiated', '读出的必须是快照');
+    assert.equal((await store.getMedia(record.id)).rawRef, 'obj_raw_snapshot');
+
+    await store.saveMedia({ ...record, state: 'ready' });
+    assert.equal((await store.getMedia(record.id)).state, 'ready');
+    await assert.rejects(() => store.saveMedia({ ...record, id: '55555555-5555-4555-8555-555555555555' }), /不存在该 id/);
+
+    assert.deepEqual((await store.listMediaByState(['ready'])).map((row) => row.id), [record.id]);
+    assert.equal(await store.countMedia(), 1);
+    assert.equal(await store.liveCommunityImageCount(record.ownerId), 1);
+    await store.saveMedia({ ...record, state: 'deleted' });
+    assert.equal(await store.liveCommunityImageCount(record.ownerId), 0, '删除态不再占社区图位');
+  });
+
+  await t.test('授权行：写入/取回/撤销计数/陈旧枚举/删除', async () => {
+    const grant = {
+      grantId: '66666666-6666-4666-8666-666666666666',
+      tokenHash: 'd'.repeat(64),
+      requesterId: '11111111-1111-4111-8111-111111111111',
+      sessionRef: '77777777-7777-4777-8777-777777777777',
+      requesterAuthEpoch: 1,
+      mediaId: '44444444-4444-4444-8444-444444444444',
+      mediaRevision: 1,
+      contentRef: { type: 'post', id: '88888888-8888-4888-8888-888888888888', revision: 1 },
+      slot: 'attachment',
+      authorRevision: null,
+      expiresAt: nowMs + 300_000,
+      revokedAt: null,
+    };
+    await store.createGrant(grant);
+    await assert.rejects(() => store.createGrant(grant), /已存在该 id/);
+    const read = await store.getGrant(grant.grantId);
+    assert.deepEqual(read, grant);
+    read.contentRef.revision = 9;
+    assert.equal((await store.getGrant(grant.grantId)).contentRef.revision, 1, 'contentRef 也必须是快照');
+    assert.equal(await store.countGrants(), 1);
+    assert.deepEqual(await store.listStaleGrants(nowMs), []);
+    assert.equal(await store.revokeGrantsForMedia(grant.mediaId, nowMs), 1);
+    assert.equal(await store.revokeGrantsForMedia(grant.mediaId, nowMs), 0, '已撤销的不重复计数');
+    assert.equal((await store.getGrant(grant.grantId)).revokedAt, nowMs);
+    assert.equal((await store.listStaleGrants(nowMs)).length, 1);
+    await store.deleteGrant(grant.grantId);
+    assert.equal(await store.getGrant(grant.grantId), null);
+    assert.equal(await store.countGrants(), 0);
+  });
+});
