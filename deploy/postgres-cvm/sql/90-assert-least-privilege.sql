@@ -1525,6 +1525,188 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public',         'admin_audit_events_reject_mutation', 'trigger',
      ARRAY[]::text[])
   ),
+  -- R28-S52：跨 schema 关系面兜底清单（与 S43 的 external_manifest、S51 的
+  -- function_surface_manifest 同构：把"点过名的关系"升级为"必须分类的关系面"）。
+  -- 为什么需要：domain_manifest（public 表 21 granted + 1 granted_external + 4 forbidden）、
+  --   external_manifest（S43 的 18 张 public 表）、function_surface_manifest（S51 的 11 个函数）
+  --   三张清单覆盖的**全都只有 public**。非 public 的 4 个 schema（catalog_ops / catalog_read /
+  --   knowledge_staging / staging_intake）里还有 9 个关系带组授权，而本切片之前只有
+  --   preview_reader_scope（管 catalog_read.home_species）与 knowledge_runtime_scope
+  --   （管 catalog_read.current_knowledge）**点名**管了 2 个，其余 7 个任何断言都不看：
+  --   往 catalog_ops.operations 多授一个组、或把 catalog_read.registration_evidence 授给
+  --   运行时，都不会让任何断言变红。清单把「这 9 个关系必须被分类」变成机制本身。
+  -- 行语义（每个关系一行，9 行都不许省）：
+  --   grantee/privs —— 该关系**除属主外**唯一允许的 ACL 项（多一个组、少一个权限都判红）；
+  --                    写的是实测 relacl，不是"归属组"。
+  --   NULL/NULL     —— 除属主外谁都不许有权限。当前只有 catalog_read.current_verified_sources
+  --                    一个（0010 的检证投影过滤器视图，属主自读，不对任何组开放）。
+  -- 字母表（CASE 映射见 cross_schema_acl，出自 aclexplode.privilege_type）：
+  --   a=INSERT r=SELECT w=UPDATE d=DELETE D=TRUNCATE x=REFERENCES t=TRIGGER m=MAINTAIN。
+  --   视图被 GRANT 后 relacl 里会出现属主的 arwdDxtm 默认投影，那是 ACL 物化不是授权面，
+  --   断言 2 用 `a.grantee <> c.relowner` 过滤掉。
+  -- 与「少授」的关系：gengyun_source_executor / gengyun_staging_executor 只在
+  --   provision-db.sh 的 --with-cli-groups 形态（WITH_CLI_GROUPS=1）才创建，默认 5 组部署下
+  --   这 4 行表的实测 ACL 是空集。所以断言 2 的"少授"必须沿用断言 91 的口径（S51 返修 1）：
+  --   只对 pg_roles 里真实存在的角色追究。
+  -- 已知盲点（证据页 §7 记录）：列级授权不进 relacl（staging_importer.sql:27/28/30 的
+  --   GRANT UPDATE(col) 落在 pg_attribute.attacl），本清单与断言 2 只覆盖**表级** relacl。
+  cross_schema_manifest(schema_name, rel_name, relkind, grantee, privs) AS (VALUES
+    ('catalog_ops',       'operations',               'r', 'gengyun_source_executor',  'ar'),
+    ('catalog_read',      'current_knowledge',        'v', 'gengyun_knowledge_runtime', 'r'),
+    ('catalog_read',      'current_verified_sources', 'v', NULL::text,                 NULL::text),
+    ('catalog_read',      'home_species',             'v', 'gengyun_preview_reader',   'r'),
+    ('catalog_read',      'registration_evidence',    'v', 'gengyun_evidence_reader',  'r'),
+    ('knowledge_staging', 'workbook_batches',         'r', 'gengyun_staging_executor', 'ard'),
+    ('knowledge_staging', 'workbook_rows',            'r', 'gengyun_staging_executor', 'ar'),
+    ('staging_intake',    'batches',                  'r', 'gengyun_staging_executor', 'ar'),
+    ('staging_intake',    'operations',               'r', 'gengyun_staging_executor', 'ar')
+  ),
+  -- 断言 1/2/3 的读数源：非 public 的非系统 schema 下当前真实存在的关系
+  -- （基线 = 9 行 = 清单 9 行）。relkind 收 r/p/v/m/f（表/分区表/视图/物化视图/外部表），
+  -- 不含索引与序列。schema 过滤写成 `!~ '^pg_'` 而不是 `NOT LIKE 'pg_%'`：LIKE 里 `_` 是
+  -- 单字符通配符，`'pg_%'` 会连 `pgx_fake` 这类 schema 一起放过。
+  cross_schema_relations(schema_name, rel_name, relkind, rel_oid) AS (
+    SELECT n.nspname, c.relname, c.relkind, c.oid
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+       AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+       AND n.nspname !~ '^pg_'
+  ),
+  -- 断言 1 的差集（双向 + relkind 漂移）：
+  --   ① 库里有、清单没有 —— 新关系必须显式分类，否则从"没人看"变成"有断言看"；
+  --   ② 清单有、库里没有 —— 防幽灵条目（关系被改名/删掉后清单还在骗人）；
+  --   ③ relkind 与清单不符 —— 视图被换成表（或反之）时授权语义会变，必须显式改清单。
+  cross_schema_manifest_gaps(rel, what) AS (
+    SELECT r.schema_name || '.' || r.rel_name,
+           '库中存在，但清单未登记（新关系必须显式分类）'
+      FROM cross_schema_relations r
+     WHERE NOT EXISTS (SELECT 1
+                         FROM cross_schema_manifest m
+                        WHERE m.schema_name = r.schema_name
+                          AND m.rel_name = r.rel_name)
+    UNION ALL
+    SELECT m.schema_name || '.' || m.rel_name,
+           '清单登记了，但库中不存在该关系'
+      FROM cross_schema_manifest m
+     WHERE NOT EXISTS (SELECT 1
+                         FROM cross_schema_relations r
+                        WHERE r.schema_name = m.schema_name
+                          AND r.rel_name = m.rel_name)
+    UNION ALL
+    SELECT m.schema_name || '.' || m.rel_name,
+           concat('清单记的 relkind=', m.relkind, '，库里实际是 ', r.relkind)
+      FROM cross_schema_manifest m
+      JOIN cross_schema_relations r
+        ON r.schema_name = m.schema_name
+       AND r.rel_name = m.rel_name
+     WHERE m.relkind <> r.relkind
+  ),
+  -- 断言 2 的读数：每个关系的「非属主、非 PUBLIC 的 grantee → 权限字母集合」。
+  --   * 属主行（GRANT 之后 relacl 被物化时会带 owner=arwdDxtm 的默认投影）由
+  --     `a.grantee <> c.relowner` 过滤；
+  --   * PUBLIC（a.grantee = 0）由 `a.grantee <> 0` 过滤——那是断言 4 的面，不在这里重复判；
+  --   * 同一 grantee 的多条 GRANT 会拆成多行，先按 grantee 聚合成字母集合再与清单逐格比；
+  --   * 未知 privilege_type 映射成 '?'（fail-closed）：未来 PG 新增权限位时集合必然对不上，
+  --     判红而不是被 string_agg 静默丢掉。
+  cross_schema_acl(schema_name, rel_name, grantee, privs) AS (
+    SELECT n.nspname,
+           c.relname,
+           r2.rolname,
+           string_agg(l.letter, '' ORDER BY position(l.letter IN 'arwdDxtm'))
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(c.relacl) a
+      JOIN pg_roles r2 ON r2.oid = a.grantee
+      CROSS JOIN LATERAL (SELECT COALESCE(CASE a.privilege_type
+                                            WHEN 'INSERT'     THEN 'a'
+                                            WHEN 'SELECT'     THEN 'r'
+                                            WHEN 'UPDATE'     THEN 'w'
+                                            WHEN 'DELETE'     THEN 'd'
+                                            WHEN 'TRUNCATE'   THEN 'D'
+                                            WHEN 'REFERENCES' THEN 'x'
+                                            WHEN 'TRIGGER'    THEN 't'
+                                            WHEN 'MAINTAIN'   THEN 'm'
+                                          END, '?') AS letter) l
+     WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+       AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+       AND n.nspname !~ '^pg_'
+       AND a.grantee <> 0
+       AND a.grantee <> c.relowner
+     GROUP BY 1, 2, 3
+  ),
+  -- 断言 2 的差集：多授/少授各算一次，边界与 function_manifest_grantee_violations 一致：
+  --   ① 多授（actual 有、清单没有）**永远**红——安全面；
+  --   ② 少授只在清单里的角色**真实存在**（pg_roles 查到）时红；'PUBLIC' 是伪角色、恒视为存在；
+  --   ③ 关系本身没登记时它的**任何**非属主授权都算多授（断言 1 已先判红，这里是第二道）；
+  --   ④ 同一 grantee 的权限串不同也判红，但只点名差的那几个**字母**（不整串重报）：
+  --      预期 ard 实测 ad ⇒ 少授 r；预期 r 实测 ar ⇒ 多授 a。比只比角色名更严。
+  cross_schema_grantee_violations(rel, detail) AS (
+    SELECT r.schema_name || '.' || r.rel_name,
+           concat_ws('；',
+             CASE WHEN cardinality(d.extra) > 0
+                  THEN '多授 ' || array_to_string(d.extra, ' / ') END,
+             CASE WHEN cardinality(d.missing) > 0
+                  THEN '少授 ' || array_to_string(d.missing, ' / ') END)
+      FROM cross_schema_relations r
+      CROSS JOIN LATERAL (
+        -- (a) 多授：按**权限字母**算差。清单里没这个 grantee ⇒ 它的整串权限都是多授；
+        --     有 ⇒ 只把清单没写的字母算多授（同一组被多加一个权限也点名，而不是整串重报）。
+        SELECT ARRAY(
+                 SELECT a.grantee || '：' || diff.surplus
+                   FROM cross_schema_acl a
+                   LEFT JOIN cross_schema_manifest m
+                     ON m.schema_name = a.schema_name
+                    AND m.rel_name = a.rel_name
+                    AND m.grantee = a.grantee
+                   CROSS JOIN LATERAL (
+                     SELECT string_agg(ch, '' ORDER BY position(ch IN 'arwdDxtm')) AS surplus
+                       FROM regexp_split_to_table(a.privs, '') ch
+                      WHERE position(ch IN COALESCE(m.privs, '')) = 0
+                   ) diff
+                  WHERE a.schema_name = r.schema_name
+                    AND a.rel_name = r.rel_name
+                    AND diff.surplus IS NOT NULL
+                  ORDER BY 1) AS extra,
+        -- (b) 少授：清单里有、库里缺的字母。角色不存在时整条跳过（见上方注释 ②）；
+        --     组还在但被撤掉一个权限时只报缺的那个字母（预期 ard 实测 ad ⇒ 少授 r）。
+               ARRAY(
+                 SELECT m.grantee || '：应有 ' || diff.deficit || ' 实无'
+                   FROM cross_schema_manifest m
+                   LEFT JOIN cross_schema_acl a
+                     ON a.schema_name = m.schema_name
+                    AND a.rel_name = m.rel_name
+                    AND a.grantee = m.grantee
+                   CROSS JOIN LATERAL (
+                     SELECT string_agg(ch, '' ORDER BY position(ch IN 'arwdDxtm')) AS deficit
+                       FROM regexp_split_to_table(m.privs, '') ch
+                      WHERE position(ch IN COALESCE(a.privs, '')) = 0
+                   ) diff
+                  WHERE m.schema_name = r.schema_name
+                    AND m.rel_name = r.rel_name
+                    AND m.grantee IS NOT NULL
+                    AND (m.grantee = 'PUBLIC'
+                         OR EXISTS (SELECT 1
+                                      FROM pg_roles rr
+                                     WHERE rr.rolname = m.grantee))
+                    AND diff.deficit IS NOT NULL
+                  ORDER BY 1) AS missing
+      ) d
+     WHERE cardinality(d.extra) > 0
+        OR cardinality(d.missing) > 0
+  ),
+  -- 断言 3 的读数：运行时（gengyun_api_runtime）在这 9 个关系上的**有效**表级权限。
+  -- 为什么不用 relacl：运行时的权限全部来自组继承（20-login-roles.sql:220-224 把 5 个组
+  -- 授给运行时），relacl 里永远看不到 runtime 的名字；只有 has_table_privilege 会沿
+  -- 成员关系求值。列级授权不抬升为表级，所以这里只问 7 个表级权限（SELECT/INSERT/UPDATE/
+  -- DELETE/TRUNCATE/REFERENCES/TRIGGER；MAINTAIN 是 PG 17 的维护位，无表级 GRANT 路径）。
+  cross_schema_effective(rel, priv) AS (
+    SELECT r.schema_name || '.' || r.rel_name, p.priv
+      FROM cross_schema_relations r
+      CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'),
+                         ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
+     WHERE has_table_privilege('gengyun_api_runtime', r.rel_oid, p.priv)
+  ),
   -- 断言 1 的差集：未登记的 SECURITY DEFINER + 清单里的幽灵条目（各一行）。
   function_manifest_gaps(fn, what) AS (
     SELECT n.nspname || '.' || p.proname,
@@ -2764,6 +2946,141 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '；apply_source_operation=' || :'r28s51_fn_apply_source_operation_state' ||
          '；apply_import=' || :'r28s51_fn_apply_import_state' ||
          '；rollback_import=' || :'r28s51_fn_rollback_import_state'
+
+  UNION ALL
+  -- 94. R28-S52 跨 schema 关系面清单完整性（双向 + relkind 漂移）：非 public 的非系统 schema
+  --     下每个 r/p/v/m/f 关系都必须在 cross_schema_manifest 里；清单里的每条也必须真实存在
+  --     且 relkind 与清单一致（防幽灵条目、防视图被悄悄换成表）。这是"第 10 个关系不会再
+  --     悄悄漏网"的机制本体——在它之前，非 public 的 9 个关系里有 7 个任何断言都不看。
+  SELECT 'runtime_cross_schema_relations_complete',
+         NOT EXISTS (SELECT 1 FROM cross_schema_manifest_gaps),
+         COALESCE((SELECT string_agg(rel || '：' || what, ' / ' ORDER BY rel)
+                     FROM cross_schema_manifest_gaps), '（无差异）')
+
+  UNION ALL
+  -- 95. R28-S52 grantee 集合逐格精确：9 个关系的「非属主、非 PUBLIC」ACL 必须恰好等于
+  --     cross_schema_manifest 里的 (grantee, privs) 集合。边界与断言 92（S51 返修 1）一致：
+  --       * 多授（库里有、清单没有）**永远**红——这是安全面；
+  --       * 少授只在清单里的角色**真实存在**（pg_roles 查到）时红——gengyun_source_executor /
+  --         gengyun_staging_executor 只在 provision-db.sh 的 --with-cli-groups 形态才创建，
+  --         默认 5 组部署下这 4 行表本来就是空 ACL，撤权无从谈起，判红即误报；
+  --       * 组还在但被撤掉一个权限（privs 集合不同）同样判红，比只比角色名更严。
+  SELECT 'runtime_cross_schema_grantees_exact',
+         NOT EXISTS (SELECT 1 FROM cross_schema_grantee_violations),
+         COALESCE((SELECT string_agg(rel || '（' || detail || '）', ' / ' ORDER BY rel)
+                     FROM cross_schema_grantee_violations), '（无差异）')
+
+  UNION ALL
+  -- 96. R28-S52 运行时**有效**权限面：用 has_table_privilege 沿组成员关系求值（relacl 里永远
+  --     看不到 runtime 的名字，它靠 20-login-roles.sql:220-224 继承 5 个组）。9 个关系上允许
+  --     为真的集合必须**恰好**是封闭白名单两项：
+  --       catalog_read.current_knowledge = SELECT（经 gengyun_knowledge_runtime，20-login:224）
+  --       catalog_read.home_species      = SELECT（经 gengyun_preview_reader，20-login:221）
+  --     多一项 ⇒ 红（运行时摸到了白名单外的关系或权限）；两项任一读不到 ⇒ 也红（白名单项丢失）。
+  --     【偏差 1，已登记】派单 §2③ 原写"恰好 current_knowledge 一项"，但真库实测 home_species
+  --     也对 runtime 有效可读：20-login-roles.sql:221 明写「公共科普投影 catalog_read.home_species」，
+  --     services/api/db/roles/catalog_readers.sql:31 把 SELECT 授给 gengyun_preview_reader。
+  --     照字面只允许一项会在基线就判红，故按实测把白名单钉成两项（语义不变：封闭集合、双向判红）。
+  SELECT 'runtime_cross_schema_effective_access',
+         NOT EXISTS (
+           SELECT 1
+             FROM cross_schema_effective e
+            WHERE (e.rel, e.priv) NOT IN (VALUES ('catalog_read.current_knowledge', 'SELECT'),
+                                                 ('catalog_read.home_species', 'SELECT'))
+         )
+         AND has_table_privilege('gengyun_api_runtime',
+                                 'catalog_read.current_knowledge', 'SELECT')
+         AND has_table_privilege('gengyun_api_runtime',
+                                 'catalog_read.home_species', 'SELECT'),
+         '实际 = ' ||
+         COALESCE((SELECT string_agg(e.rel || '=' || e.priv, ' / ' ORDER BY e.rel, e.priv)
+                     FROM cross_schema_effective e), '（无）') ||
+         COALESCE((SELECT '；越界 ' || string_agg(e.rel || '=' || e.priv, ' / '
+                                                   ORDER BY e.rel, e.priv)
+                     FROM cross_schema_effective e
+                    WHERE (e.rel, e.priv) NOT IN (VALUES ('catalog_read.current_knowledge', 'SELECT'),
+                                                         ('catalog_read.home_species', 'SELECT'))), '') ||
+         CASE WHEN has_table_privilege('gengyun_api_runtime',
+                                       'catalog_read.current_knowledge', 'SELECT')
+              THEN '' ELSE '；缺 catalog_read.current_knowledge 的 SELECT' END ||
+         CASE WHEN has_table_privilege('gengyun_api_runtime',
+                                       'catalog_read.home_species', 'SELECT')
+              THEN '' ELSE '；缺 catalog_read.home_species 的 SELECT' END
+
+  UNION ALL
+  -- 97. R28-S52 PUBLIC 面三段：
+  --     ① 9 个关系上 PUBLIC 零权限——relacl 与 attacl 都查（列级 PUBLIC 授权同样不可接受，
+  --        虽然本片断言 94 只覆盖表级 relacl，PUBLIC 面这里不设盲点）；
+  --     ② 非 public 的非系统 schema 上 PUBLIC 既无 USAGE 也无 CREATE（迁移里
+  --        `REVOKE ALL ON SCHEMA … FROM PUBLIC` 是既定做法，这条把它变成断言）；
+  --     ③ public schema 上 PUBLIC **有 USAGE、无 CREATE**——`=U/pg_database_owner` 是 PG 15+
+  --        对 public schema 的默认投影，属**已登记例外**：⛔ 不要改写成"零 USAGE"，那会把
+  --        正常库判红，也会诱导后来人去收紧它。
+  SELECT 'runtime_cross_schema_no_public',
+         NOT EXISTS (
+           SELECT 1
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             CROSS JOIN LATERAL aclexplode(c.relacl) a
+            WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+              AND n.nspname !~ '^pg_'
+              AND a.grantee = 0
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_attribute att
+             JOIN pg_class c ON c.oid = att.attrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             CROSS JOIN LATERAL aclexplode(att.attacl) a
+            WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+              AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+              AND n.nspname !~ '^pg_'
+              AND att.attnum > 0
+              AND NOT att.attisdropped
+              AND a.grantee = 0
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_namespace n
+            WHERE n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+              AND n.nspname !~ '^pg_'
+              AND (has_schema_privilege('public', n.oid, 'USAGE')
+                   OR has_schema_privilege('public', n.oid, 'CREATE'))
+         )
+         AND has_schema_privilege('public', 'public'::name, 'USAGE')
+         AND NOT has_schema_privilege('public', 'public'::name, 'CREATE'),
+         '非 public 关系上 PUBLIC 权限行 relacl/attacl=' ||
+         (SELECT count(*)
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN LATERAL aclexplode(c.relacl) a
+           WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+             AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+             AND n.nspname !~ '^pg_'
+             AND a.grantee = 0) || '/' ||
+         (SELECT count(*)
+            FROM pg_attribute att
+            JOIN pg_class c ON c.oid = att.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN LATERAL aclexplode(att.attacl) a
+           WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+             AND n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+             AND n.nspname !~ '^pg_'
+             AND att.attnum > 0
+             AND NOT att.attisdropped
+             AND a.grantee = 0) ||
+         '；非 public schema 上 PUBLIC 有 USAGE/CREATE 的：' ||
+         COALESCE((SELECT string_agg(n.nspname, ' / ' ORDER BY n.nspname)
+                     FROM pg_namespace n
+                    WHERE n.nspname NOT IN ('public', 'pg_catalog', 'information_schema')
+                      AND n.nspname !~ '^pg_'
+                      AND (has_schema_privilege('public', n.oid, 'USAGE')
+                           OR has_schema_privilege('public', n.oid, 'CREATE'))), '（无）') ||
+         '；public schema 上 PUBLIC USAGE=' ||
+         has_schema_privilege('public', 'public'::name, 'USAGE')::text ||
+         '、CREATE=' || has_schema_privilege('public', 'public'::name, 'CREATE')::text ||
+         '（USAGE 为 =U/pg_database_owner 默认投影，已登记例外）'
 )
 
 SELECT label, ok, detail
@@ -2779,11 +3096,12 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：108 条断言全红时标签合计约 3.4K 字符（2026-10-21 合流后实测：总 108 条、
--- sum(length(label)+2)=3404、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：112 条断言全红时标签合计约 3.6K 字符（2026-10-21 合流后实测：总 112 条、
+-- sum(length(label)+2)=3553、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
--- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）。
+-- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
+-- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测。
 DO $$
 DECLARE
   v_failed integer;
