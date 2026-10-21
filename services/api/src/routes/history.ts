@@ -90,7 +90,11 @@ export function registerHistoryRoutes(
         idempotencyKey: request.headers['idempotency-key'],
         ifMatch: request.headers['if-match'],
       });
+      // 契约 `/history/{id}` 的 DELETE **只声明 202**（`description`：「受理异步任务，尚未完成」，
+      // `packages/contracts/openapi.json:6955-6979`，响应表里没有 200）⇒ 回 202：受理已发生，而契约
+      // 描述的异步级联本轮仍未接线，200 会把「已受理」说成「已完成」。级联真实处置由 `X-GY-Cascade` 披露。
       return reply
+        .code(202)
         .headers(noStore)
         .header('X-GY-Cascade', result.cascade)
         .send({ data: result.data, meta: buildMeta(request, config) });

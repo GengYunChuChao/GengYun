@@ -857,3 +857,30 @@ test('历史详情：删除时服务端 404（已删除/他人记录同形）⇒
   assert.match(f.page.data.invalidReason, /不存在|已删除|不属于当前账号/);
   assert.equal(f.page.data.canDelete, false);
 });
+
+test('历史删除客户端：契约 202 才算成功（200|202 白名单），201 仍然失败、404 仍走错误分支', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+
+  // ① 契约路径：`DELETE /history/{id}` 只声明 202 ⇒ 必须判成功，并如实回传 `X-GY-Cascade` 披露。
+  const accepted = f.history.deleteHistory(UUID_B, 1);
+  const del = answer(f, { accepted: true }, 202, { 'X-GY-Cascade': 'unwired' });
+  assert.equal(del.method, 'DELETE');
+  assert.equal(del.header['If-Match'], '"1"');
+  assert.deepEqual(JSON.parse(JSON.stringify(await accepted)), { accepted: true, mode: 'stub', cascade: 'unwired' });
+
+  // ② 200 仍接受：服务端尚未升级时，客户端不得把成功当失败（口径是逐操作白名单 200|202）。
+  const legacy = f.history.deleteHistory(UUID_B, 1);
+  answer(f, { accepted: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(await legacy)), { accepted: true, mode: 'stub', cascade: null });
+
+  // ③ 201 **仍然失败**：白名单若被换成「只要不是 200 也算」，这一条会静默通过。
+  const wrong = f.history.deleteHistory(UUID_B, 1);
+  answer(f, { accepted: true }, 201);
+  await assert.rejects(() => wrong, (e) => e.code === 'UNAVAILABLE');
+
+  // ④ 404 仍走错误分支，不被白名单吞成成功。
+  const missing = f.history.deleteHistory(UUID_B, 1);
+  answer(f, forbiddenPayload('NOT_FOUND'), 404);
+  await assert.rejects(() => missing, (e) => e.code === 'NOT_FOUND');
+});
