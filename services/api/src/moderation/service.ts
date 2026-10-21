@@ -403,6 +403,23 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
   const executionMode = deps.executionMode;
   const ledger = deps.store ?? createModerationLedger();
+  /**
+   * 写入面 fail-closed 的唯一出口：把台账写入落到持久层并等待落定。
+   *
+   * - 内存台账没有 `flush` 成员 ⇒ 空操作（既有装配行为逐字不变）；
+   * - 持久台账 `flush` 拒绝 ⇒ **统一**折算成 `PROVIDER_UNAVAILABLE`（台账实现自己抛的
+   *   `ApiError` 原样透传），语义是"结论未落库"：调用方不得把本次操作当成成功，
+   *   公开可见性也不许前进（`publish` 在 `setVisibility(..., 'published')` 之前调用它）。
+   */
+  async function flushLedger(): Promise<void> {
+    if (ledger.flush === undefined) return;
+    try {
+      await ledger.flush();
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('PROVIDER_UNAVAILABLE', '审核台账落库失败：结论未落定，按未落库处理');
+    }
+  }
   const cache = deps.cache ?? createReadCache();
   const authority = deps.authority ?? createSubstituteContentAuthority();
   const clock = deps.now ?? (() => new Date());
@@ -708,6 +725,9 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
     const stored: ModerationTaskRecord[] = [];
     for (const record of records) stored.push(ledger.create(record));
+    // 写入面 fail-closed：结论必须先落库，再往调用方返回"已受理"。
+    // 持久台账的 flush 拒绝 ⇒ 本次投递直接抛错（不落库的结论不许被当成已登记）。
+    await flushLedger();
 
     const overallDecision: AuditState = stored.every((record) => record.decision === 'approved')
       ? 'approved'
@@ -819,6 +839,10 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     }
     if (reasons.length > 0) return refuse('REVISION_CONFLICT');
 
+    // 写入面 fail-closed（本片核心）：翻 `published` **之前**必须确认结论已经落库。
+    // 落库失败 ⇒ 本次发布抛错，公开可见性保持写前状态（绝不出现"库里有内容、账本里没结论"）。
+    await flushLedger();
+
     await authority.setVisibility(target, 'published');
     try {
       await authority.setPublishedRevision(target, target.revision);
@@ -857,6 +881,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     await authority.setVisibility(target, 'hidden');
     await authority.setPublishedRevision(target, null);
     ledger.markWithdrawn(target);
+    // 下架标记同样要落定：标记丢了，旧回调就能把内容复活（`isWithdrawn` 是那道闸门）。
+    await flushLedger();
     // 失效在**同一次调用内同步完成**：返回的键就是这次真正清掉的键（不另发事件）。
     const invalidated = cache.invalidateTarget(target);
     return {
@@ -1162,6 +1188,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       },
     };
     ledger.update(updated);
+    // 回调结算先落库再应答 `accepted`：落不了库就不许把这条回调标记成已结算。
+    await flushLedger();
     replayGuard.markSettled(envelope.job_id, envelope.event_id);
     return {
       accepted: true,
