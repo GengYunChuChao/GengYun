@@ -210,7 +210,7 @@
       </view>
     </view>
 
-    <!-- 6 统一状态视图：八态全量核对 -->
+    <!-- 6 统一状态视图：九态全量核对（B7 增补 denied 与 error-code 分类标签） -->
     <view class="section">
       <view class="section-head">
         <view class="section-head__title">6 统一状态视图</view>

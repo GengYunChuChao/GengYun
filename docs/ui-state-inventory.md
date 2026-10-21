@@ -36,7 +36,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 失败 | `error` | 网络或服务失败 | 警告 | 红 | 可由页面指定 | 五 Tab 与知识、收藏、历史、详情页；**2026-10-21 起可传 `error-code` 补分类标签与可重试性** |
 | 已取消 | `cancelled` | 用户主动取消 | 禁止 | 中性 | 无 | 识别（`JobState=cancelled`）、specimen |
 | 已删除／失效 | `invalid` | 来源下架或过期 | 禁止 | 暗黄 | 无 | 社区详情、历史详情、specimen |
-| 替身数据 | `stub`（另接受别名 `mock`） | 开发模式下的示例数据 | 试管 | 紫 | 无，固定标注 | 首页、识别、我的、specimen；社区与消息用置顶 `notice--stub` 标注 |
+| 替身数据 | `stub` | 开发模式下的示例数据（另接受别名 `mock`） | 试管 | 紫 | 无，固定标注 | 首页、识别、我的、specimen；社区与消息用置顶 `notice--stub` 标注 |
 | 无权限 | `denied` | 已登录但无权限（403 `SCOPE_DENIED`／`CONSENT_REQUIRED`／`ACCOUNT_INACTIVE`） | 锁＋章 | 石板蓝灰 | 默认不给重试；`allow-denied-action` 可保留「去授权」 | 社区、消息、我的、识别（`permission_denied` 分支）、specimen |
 | 正常 | `ready` | 有可展示数据 | — | — | 不渲染状态视图 | 识别成功态等 |
 

@@ -55,7 +55,7 @@ Page({
    * <state-view> 自定义组件的宿主节点与内部节点（实测 page.$/$$ 的 `.gy-state`、
    * `state-view` 标签名，以及 page.selectComponent('/#id/class/标签名') 全部为空），
    * 而本片要核对的两件事只存在于组件内部：
-   *   1. demo .empty 的八态形态是否真的落在组件内（.state 的虚线框与语气底色）；
+   *   1. demo .empty 的九态形态是否真的落在组件内（.state 的虚线框与语气底色）；
    *   2. `options.styleIsolation:'apply-shared'` 是否让 app.wxss 的 `.btn`
    *      （含 page{} 上的 --tap-min 变量）作用到组件内部的 .state__btn。
    * 因此改在**页面自身的 JS 上下文**里取组件实例，再用组件级 selectorQuery 量计算样式。
