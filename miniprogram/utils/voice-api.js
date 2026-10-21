@@ -179,6 +179,36 @@ function cancelAll() {
 const EXIT_CANCELLATION_NOTE = '合成任务没有服务端取消能力（契约只提供受理与读取），'
   + '因此离开本页只会取消本机在途请求、停止轮询并释放播放器与监听；不会谎称服务端任务已取消。'
 
+/**
+ * 会话失效类错误码：**只有**这三个属「登录／会话」问题（与 `utils/identify-api.js`、
+ * `utils/speech-transcript.js` 同一口径）。
+ */
+const SESSION_LOSS_CODES = ['SESSION_REQUIRED', 'SESSION_EXPIRED', 'SESSION_CHANGED']
+
+/** 契约错误封套里的 `error.code`（取不到就是 null，不猜）。 */
+function errorCodeOf(payload) {
+  return object(payload) && object(payload.error) && typeof payload.error.code === 'string' ? payload.error.code : null
+}
+
+/**
+ * 401/403 归因：**不得把 403 折叠成 401**（本文件 `:378-382` 既有的红线，此前传输层违反）。
+ *
+ * 为什么不能折叠：`CONSENT_REQUIRED` 指向「去授权」、`SCOPE_DENIED` 指向「换账号/换能力」、
+ * `ACCOUNT_INACTIVE` 指向「账号不可用」，而 `SESSION_REQUIRED` 指向「重新登录」——折叠成后者
+ * 会把用户推进「反复登录却仍然失败」的死循环；更糟的是折叠时还会 `auth.clearSession()`，
+ * 连「去授权」所需的会话都一起清掉（403 并不代表会话失效）。
+ * 只有会话失效类码（`SESSION_LOSS_CODES`）才清本地会话。
+ */
+function forbiddenOrSessionLoss(statusCode, payload) {
+  const code = errorCodeOf(payload)
+  const surface = statusCode === 403 && code !== null && SESSION_LOSS_CODES.indexOf(code) === -1 ? code : 'SESSION_REQUIRED'
+  if (surface === 'SESSION_REQUIRED') auth.clearSession()
+  const error = failure(surface)
+  error.status = statusCode
+  error.retryable = object(payload) && object(payload.error) && payload.error.retryable === true
+  return error
+}
+
 function request(method, path, options) {
   const config = options || {}
   const bound = binding()
@@ -196,7 +226,7 @@ function request(method, path, options) {
       success: function (response) {
         if (!current(bound)) { reject(failure('SESSION_CHANGED')); return }
         if (epoch !== inFlight.epoch) { reject(failure('CLIENT_CANCELLED')); return }
-        if (response.statusCode === 401 || response.statusCode === 403) { auth.clearSession(); reject(failure('SESSION_REQUIRED')); return }
+        if (response.statusCode === 401 || response.statusCode === 403) { reject(forbiddenOrSessionLoss(response.statusCode, response.data)); return }
         try {
           const payload = response.data
           if (response.statusCode === 200 || response.statusCode === 202) {

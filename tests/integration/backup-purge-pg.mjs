@@ -453,7 +453,22 @@ try {
   const receiptA3 = receiptRow(deletionA, requestA.id);
   assert.equal(handlerOf(receiptA3, 'favorites').backup_state, 'completed', '到期后清成功必须 completed');
   assert.equal(handlerOf(receiptA3, 'history').backup_state, 'completed', '0 对象模块同样必须 completed（有证据行）');
-  assert.equal(receiptA3.state, 'completed', '两个模块都完成 ⇒ 整体 completed');
+  assert.equal(handlerOf(receiptA3, 'messages').backup_state, 'completed', '消息域同样必须有清单行并在到期后 completed');
+  // ⚠️ 已知缺口（G6/G8，**本片不做**、由指挥登记待办）：会话域没有 `snapshotOwner`，
+  // 因此 `backupCopySources()` 不为它写清单行；真实备份端口按「没有副本行」如实回
+  // `blocked + EVIDENCE_REQUIRED`，于是**整个请求**在真库臂里到不了 `completed`。
+  // 这不是把断言改绿：三条有清单行的模块仍逐条断言 completed，会话域则断言它确实 blocked。
+  assert.equal(
+    handlerOf(receiptA3, 'conversations').backup_state,
+    'blocked',
+    '会话域无清单行 ⇒ 如实 blocked（G6/G8 缺口；补上 snapshotOwner 后这里应变 completed）',
+  );
+  assert.equal(handlerOf(receiptA3, 'conversations').error_code, 'EVIDENCE_REQUIRED');
+  assert.equal(
+    receiptA3.state,
+    'blocked',
+    '三个模块完成但会话域 blocked ⇒ 整体只能如实 blocked（协议不把部分覆盖说成全部完成）',
+  );
   const rowsA3 = await copiesOf(owner, requestA.id);
   assert.equal(rowsA3.length, 3, '清除后**行必须保留**（唯一的「清过」证据）');
   for (const row of rowsA3) {
@@ -465,7 +480,7 @@ try {
     assert.equal(row.evidence_ref, expected, `${row.module} 的证据必须能由 payload_digest 独立复算`);
   }
   assert.ok(deletionA.evidenceOf(requestA.id).favorites.includes('backup-purged:sha256:'), '诊断证据串必须带清除摘要');
-  say('到期清除（+31 天重放）：两行 purged、payload=null、purged_at=清除时刻、证据摘要由 payload_digest 独立复算逐字相等、行保留 ⇒ 整体 completed');
+  say('到期清除（+31 天重放）：三行 purged、payload=null、purged_at=清除时刻、证据摘要由 payload_digest 独立复算逐字相等、行保留；会话域无清单行 ⇒ 整体如实 blocked（G6/G8 缺口）');
 
   const purgedAtA = rowsA3.map((row) => row.purged_at.toISOString());
   clockA.advanceDays(1);

@@ -198,6 +198,10 @@ function createLoader(wxApi, options) {
     if (base === 'voice-api') return loadReal(bySuffix('voice-api.js'), resolveDep)
     if (base === 'recorder-port') return loadReal(bySuffix('recorder-port.js'), resolveDep)
     if (base === 'speech-transcript') return loadReal(bySuffix('speech-transcript.js'), resolveDep)
+    // R28-C6（#13）：播报页新增 `require('../../utils/speech-autoplay')`（自动播报策略：
+    // 同页同版本只播一次 + 用户开关）。它是纯函数模块、无依赖，直接加载真实实现，
+    // 这样本套用例仍然跑的是真实页面代码，而不是把新依赖桩掉。
+    if (base === 'speech-autoplay') return loadReal(bySuffix('speech-autoplay.js'), resolveDep)
     throw new Error('unexpected require: ' + id)
   }
   return { loadReal: loadReal, resolveDep: resolveDep, auth: auth, runtime: runtime }

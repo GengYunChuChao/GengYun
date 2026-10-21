@@ -16,12 +16,20 @@
 //   NC1 内存夹具：假 store 用了未授权列 ⇒ 必须红；
 //   NC2 内存夹具：表级 GRANT 吞掉同类型列级条目 ⇒ 必须标记为「整表」，不许当成「无列」或「全列」；
 //   NC3 从**真实**授权文本里删掉一条真实授权列 ⇒ 必须红并精确点名该 table.column；复原回绿；
-//   NC4 `OPAQUE_ALLOWLIST` 加一条源码里不存在的 file:line ⇒ 必须红（防躺平）；
-//   NC5 从**真实**授权文本里注释掉 `GRANT DELETE ON public.messages` ⇒ 必须红并点名整表缺 DELETE；
-//       另证明「列级 DELETE 授权不能满足整表需求」（PG 里根本不存在 `GRANT DELETE (col)`）。
+//   NC4 `OPAQUE_ALLOWLIST` 加一条源码里不存在的 file:line ⇒ 必须红（防躺平）。
+//
+// ── R28-S66 扩展（2026-10-21）────────────────────────────────────────────────
+// 覆盖面从 8 个 store-pg 扩到 16 个 SQL 宿主文件（另 8 个见 ADDITIONAL_SQL_HOST_FILES），
+// 并新增三条独立断言：①文件集不变量（新增 SQL 宿主却忘了登记 ⇒ 红）；②函数调用不是表访问
+// （`FROM public.list_admin_accounts()` 只要求 EXECUTE，不产生列要求）；③行锁规则
+// （`FOR UPDATE` / `FOR NO KEY UPDATE` 除 SELECT 外还要 UPDATE 权限；`FOR SHARE` / `FOR KEY SHARE` 不要）。
+// `privacy/ledger-pg.ts` 在默认部署下不可达（egress_ledger.sql 从未被执行）⇒ 其缺口进
+// LEDGER_COVERAGE_EXEMPT（条数钉死 + staleExemptions 反查），不静默跳过。
+// 新增负控制 NC5–NC9（见文件末尾）；C1b-1 合流时补 NC10：注释掉真实的
+// `GRANT DELETE ON public.messages` 必须判红（DELETE 面在 2026-10-21 之前一直是盲区）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,6 +55,24 @@ const EXPECTED_STORE_FILES = [
 ];
 
 /**
+ * R28-S66：本片纳管的另外 8 个 SQL 宿主文件（相对 STORE_ROOT）。
+ * 派单 §0 的 `git grep -l -E "INSERT INTO public\.|UPDATE public\.|FROM public\.|DELETE FROM public\."`
+ * 实测 12 个文件 = 4 个带 `public.` 前缀的 store-pg（messages/ocr/recognitions/speech）
+ * ＋ 本表 8 个（另 4 个 store-pg 的表名不带 schema 前缀，故不在这条 grep 的命中里）。
+ * 访问它们的 SQL 与 store-pg 走**同一套** parseSqlText/collectRequirements/evaluateCoverage 管线。
+ */
+const ADDITIONAL_SQL_HOST_FILES = [
+  'admin/ops/accounts-pg.ts',
+  'admin/ops/flags-pg.ts',
+  'knowledge/service.ts',
+  'privacy/backup-copies-pg.ts',
+  'privacy/consent-pg.ts',
+  'privacy/grant-pg.ts',
+  'privacy/ledger-pg.ts',
+  'profile/service.ts',
+];
+
+/**
  * 正向核对的**全部例外登记**。元素形状（缺字段一律判红）：
  *   { ref: 'table.column', privilege: 'SELECT' | 'INSERT' | 'UPDATE',
  *     reason: '为什么这里确实缺', owner: '留给哪一片修' }
@@ -60,6 +86,128 @@ const EXPECTED_STORE_FILES = [
  * 免得有人塞一条 `''` 进来把守卫变成恒绿。
  */
 const COVERAGE_EXEMPT = [];
+
+/**
+ * R28-S66：ledger 已知缺口的**显式豁免表**（派单 §1.3）。元素形状与 COVERAGE_EXEMPT 相同：
+ *   { ref: 'table.column', privilege, reason, owner }
+ * 为什么与 COVERAGE_EXEMPT 分开存：8 个 store-pg 的基线必须继续在**零豁免**下全绿，
+ * 否则基线会把 33 条 ledger 条目一并判成「陈旧例外」。扩展审计显式传入本表。
+ *
+ * 为什么算「已知」而不是本片引入：services/api/db/roles/egress_ledger.sql 从未被任何部署脚本
+ * 执行 —— deploy/postgres-cvm/provision-db.sh:285 与 deploy/postgres-cvm/README.md:440 写明
+ * （S57 已核实），deploy/postgres-cvm/sql/20-login-roles.sql:54 的注释也记着这一点。于是
+ * gengyun_egress_ledger 拿不到 public.exports / public.export_writebacks 的列面；是否接线属
+ * 产品/安全裁定，不在本片（纯测试资产）的改动范围内。
+ *
+ * 条数钉死 = 33 个 table.column.privilege 唯一键（来自 54 条语句级缺口），多一条少一条都判红；
+ * 反向核对由 evaluateCoverage 的 staleExemptions 负责（NC8 走一遍）。
+ */
+const LEDGER_COVERAGE_EXEMPT = [
+  { ref: 'public.export_writebacks.committed_at', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:655', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.export_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 INSERT 面；SQL: privacy/ledger-pg.ts:642', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.export_id', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:642/655', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.result', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 INSERT 面；SQL: privacy/ledger-pg.ts:642', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.result', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:655', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.revision', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 INSERT 面；SQL: privacy/ledger-pg.ts:642', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.revision', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:655', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.user_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 INSERT 面；SQL: privacy/ledger-pg.ts:642', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.export_writebacks.user_id', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:655', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.auth_epoch', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.cancellation_reason', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:684/707', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.cancelled_at', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:684/707', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.consent_epoch', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.consent_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.error_code', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:612/684/707/729', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.id', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 SELECT 面；SQL: privacy/ledger-pg.ts:396/707/729', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.job_id', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:570', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.object_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.object_key', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.object_revision', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.object_type', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.purpose', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.recipient_config_version', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.recipient_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.required_consents', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.revision', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.revision', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:591/612/684/707/729', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.sent_at', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:591', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.source_version', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.state', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.state', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:591/612/684/707/729', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.updated_at', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:570/591/612/684/707/729', owner: 'R28-S66/接线待裁定' },
+  { ref: 'public.exports.user_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+];
+
+/**
+ * R28-S66：行锁的显式豁免表（派单 §2.5 + §1.3）。元素形状比列级豁免多一个 ref：
+ *   { table, privilege, ref: 'file:line', reason, owner }
+ * 行锁要求没有列名，只按表豁免会把同表上的**新**语句一起放行（躺平），所以必须精确到语句站点。
+ * 反向核对：evaluateRowLocks 的 staleExemptions（登记了却对不上任何行锁要求 ⇒ 红）。
+ *
+ * 当前唯一一条：privacy/ledger-pg.ts:244 的 SELECT * FROM public.exports … FOR UPDATE，
+ * 与同文件 33 条列级缺口同属「egress_ledger 未接线」这一个已知范畴。
+ */
+const ROW_LOCK_EXEMPT = [
+  { table: 'public.exports', privilege: 'UPDATE', ref: 'services/api/src/privacy/ledger-pg.ts:244', reason: '同 33 条列级缺口的同一范畴：exports 对运行时角色无任何 UPDATE 授权', owner: 'R28-S66/接线待裁定' },
+];
+
+/**
+ * R28-S66：ledger 的三处不可静态求值插值（派单 §2.6：与 OPAQUE_ALLOWLIST 同机制、file:line 逐条登记）。
+ * 与 OPAQUE_ALLOWLIST 分开列，是为了让 8 store 基线的「opaque 条数 == 2」这条钉死读数原样不动。
+ */
+const LEDGER_OPAQUE_ALLOWLIST = [
+  {
+    ref: 'services/api/src/privacy/ledger-pg.ts:399',
+    reason: '三元选择 object_key=$3 / object_id=$3::uuid —— 两列都只出现在 exports 的列面里（已按 ledger 范畴登记），不引入新表新列。',
+  },
+  {
+    ref: 'services/api/src/privacy/ledger-pg.ts:549',
+    reason: '同上：byKey 决定锁 object_key 还是 object_id。',
+  },
+  {
+    ref: 'services/api/src/privacy/ledger-pg.ts:550',
+    reason: 'scoped 时追加 AND user_id=$4::uuid；user_id 已在 exports 的列面里（同范畴登记）。',
+  },
+];
+
+/**
+ * R28-S66：**未被本片纳管**的 SQL 宿主（派单 §1.2 的文件集不变量）。
+ *
+ * 不变量的最强诚实形式：discoverSqlHosts() 扫出来的每个文件，要么在 16 个已审计文件里，
+ * 要么在这张表里（file + reason + owner）；两边都没有 ⇒ 判红（NC7 走一遍）。
+ * 反过来，这张表的每一条都必须仍然被扫到（文件删了/不再含 SQL ⇒ 红，防躺平）。
+ *
+ * 为什么这 5 个不在本片范围：派单 §0 的清单是「含 public. 限定 SQL 的 8 个新文件」，
+ * 这 5 个是 S61 之前就存在的宿主，纳入审计会引入 ledger 范畴之外的新缺口（需要指挥裁定），
+ * 故本片只保证「新宿主一律判红」，把它们列进来等后续片接线。
+ */
+const UNAUDITED_SQL_HOSTS = [
+  {
+    file: 'services/api/src/app.ts',
+    reason: '目录视图读取（SELECT * FROM catalog_read.current_knowledge）；catalog_read 的 SELECT 已授，列面属 catalog 片。',
+    owner: 'S61 口径 / R28-S66 未纳管',
+  },
+  {
+    file: 'services/api/src/auth/idempotency.ts',
+    reason: 'public.idempotency_keys 的幂等回执读写；该表已被 8 store 的基线引用并核对，本文件的语句未纳入。',
+    owner: 'S61 口径 / R28-S66 未纳管',
+  },
+  {
+    file: 'services/api/src/auth/store.ts',
+    reason: 'public.users / public.sessions / public.admin_* 的登录态读写；含表名位插值（解析会退化成 public.where / public.set 之类的噪声），纳入审计前需先修解析。',
+    owner: 'S61 口径 / R28-S66 未纳管',
+  },
+  {
+    file: 'services/api/src/db/catalog.ts',
+    reason: 'catalog_read.* 目录视图读取；属 catalog 域，非本片 8 文件清单。',
+    owner: 'S61 口径 / R28-S66 未纳管',
+  },
+  {
+    file: 'services/api/src/db/migrate.ts',
+    reason: 'public.schema_migrations（迁移执行器，部署期使用而非请求期）。',
+    owner: 'S61 口径 / R28-S66 未纳管',
+  },
+];
 
 /**
  * 无法静态求值的插值登记表。元素：{ ref: 'file:line', reason: '…' }。
@@ -83,10 +231,10 @@ const OPAQUE_ALLOWLIST = [
 ];
 
 /**
- * 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测，
- * 并随「DELETE 语句也产出整表权限需求」把 columnRequirements 由 1157 抬到 1184 —— 抬高的差额
- * 正好等于 DELETE 语句条数 27，见覆盖读数的正向控制；C1b-2 又给消息域补了一条 snapshotOwner
- * 的 `SELECT id FROM public.messages`，故 SELECT 66→67、字面量 141→142、要求 1184→1185）。
+ * 8 个 store-pg 的解析读数钉死值（2026-10-21 实测；同日 #17 注销清理新增 2 条 DELETE 后重测）。
+ * C1b-1 合流后重算：DELETE 语句也产出「整表 DELETE」需求（+27），消息域补了 snapshotOwner 的
+ * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67），故
+ * 字面量 141→142、SELECT 66→67、columnRequirements 1157→1185。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
@@ -145,13 +293,100 @@ const EXPECTED_TABLES = [
 const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 
 /**
- * 表级权限需求的**哨兵列**：`DELETE` 在 PostgreSQL 里**没有列级形态**（不存在
- * `GRANT DELETE (col)`），整行删除只能靠表级授权。因此 `DELETE` 语句产出的需求用
- * `column: '*'`（整表）表示，并且**只有** `kind: 'table'` 的授权才算覆盖 ——
- * 列级授权再多也不能满足它（这正是 2026-10-21 #17 那次的坑：`public.messages` 只授了
- * 列级 SELECT/INSERT/UPDATE，`DELETE FROM public.messages` 在真库上必然 42501）。
+ * 表级权限需求的**哨兵列**（C1b-1，合流后保留）：`DELETE` 在 PostgreSQL 里**没有列级形态**
+ * （不存在 `GRANT DELETE (col)`），整行删除只能靠表级授权。因此 `DELETE` 语句产出的需求用
+ * `column: '*'`（整表）表示，并且**只有** `kind: 'table'` 的授权才算覆盖 —— 列级授权再多
+ * 也不能满足它（这正是 #17 那次的坑：`public.messages` 只授了列级 SELECT/INSERT/UPDATE，
+ * `DELETE FROM public.messages` 在真库上必然 42501，而守卫当时看不见 DELETE 面）。
  */
 const TABLE_WIDE_COLUMN = '*';
+
+/**
+ * R28-S66 扩展读数钉死值（2026-10-21 实测，16 文件 = 8 store ＋ 8 新纳管）。
+ * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
+ */
+const EXPECTED_EXTENDED_READINGS = {
+  auditedFiles: 16,
+  sqlLiterals: 216,
+  statements: { INSERT: 36, UPDATE: 32, SELECT: 118, DELETE: 30 },
+  returningClauses: 68,
+  onConflictClauses: 21,
+  selectStar: 15,
+  qualifiedStar: 4,
+  rowLocks: { UPDATE: 19, SHARE: 16 },
+  functionCalls: 1,
+  noTargetTable: 10,
+  referencedTables: 39,
+  columnRequirements: 1408,
+  coveredRequirements: 1354,
+  ledgerExemptions: 33,
+  rowLockRequirements: 19,
+  rowLockExemptions: 1,
+  opaqueExpressions: 5,
+};
+
+/** 逐文件读数（扩展 16 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
+const EXPECTED_EXTENDED_PER_FILE = {
+  'admin/ops/accounts-pg.ts': 1,
+  'admin/ops/flags-pg.ts': 4,
+  'community': 28,
+  'conversations': 16,
+  'favorites': 15,
+  'history': 16,
+  'knowledge/service.ts': 4,
+  'messages': 15,
+  'ocr': 16,
+  'privacy/backup-copies-pg.ts': 4,
+  'privacy/consent-pg.ts': 14,
+  'privacy/grant-pg.ts': 12,
+  'privacy/ledger-pg.ts': 24,
+  'profile/service.ts': 11,
+  'recognitions': 20,
+  'speech': 16,
+};
+
+/** 扩展审计引用到的表（39 张；含 catalog_read 视图，迁移期不判权限）。 */
+const EXPECTED_EXTENDED_TABLES = [
+  'catalog_read.current_knowledge',
+  'public.community_comments',
+  'public.community_idempotency',
+  'public.community_likes',
+  'public.community_moderation_decisions',
+  'public.community_posts',
+  'public.community_reports',
+  'public.consent_policies',
+  'public.consent_records',
+  'public.conversation_answers',
+  'public.conversation_turns',
+  'public.conversations',
+  'public.crops',
+  'public.export_writebacks',
+  'public.exports',
+  'public.favorites',
+  'public.favorites_idempotency',
+  'public.feature_flags',
+  'public.history',
+  'public.history_idempotency',
+  'public.idempotency_keys',
+  'public.messages',
+  'public.ocr_idempotency',
+  'public.ocr_jobs',
+  'public.ocr_records',
+  'public.privacy_epochs',
+  'public.recipients',
+  'public.recognition_idempotency',
+  'public.recognition_jobs',
+  'public.recognition_records',
+  'public.recognition_selections',
+  'public.regions',
+  'public.sessions',
+  'public.single_profiles',
+  'public.speech_idempotency',
+  'public.speech_jobs',
+  'public.transcriptions',
+  'public.user_backup_copies',
+  'public.users',
+];
 
 /* ============================================================================
  * 一、文本工具（全部保持长度不变，便于把偏移映射回 file:line）
@@ -665,7 +900,16 @@ function scanTsLiterals(text) {
   return literals;
 }
 
-/** 文件内的 `const NAME = 'a' + 'b';` 常量表（只收「纯字符串拼接」形态）。 */
+/**
+ * 文件内的 `const NAME = 'a' + 'b';` / `` const NAME = `…`; `` 常量表（只收「纯字符串」形态）。
+ *
+ * 反引号形态为什么必须收：`services/api/src/privacy/consent-pg.ts:46-48` 的
+ * `` const currentRecords = `SELECT c.*,… FROM public.privacy_epochs p LEFT JOIN …` `` 是
+ * **无插值**的模板串，S61 的常量表只认单/双引号拼接，于是 `:126`/`:140`/`:165` 三处
+ * `` `${currentRecords} WHERE …` `` 的插值无从代入 —— 语句被静默丢弃（含 `:165` 的
+ * `FOR UPDATE OF p`）。收进常量表后三条语句都能落到同一条管线上。
+ * 带 `${` 的模板串仍然不入表（不是静态可判的），会走 opaque 登记。
+ */
 function buildConstMap(text) {
   const map = new Map();
   const stripped = text
@@ -678,10 +922,57 @@ function buildConstMap(text) {
     map.set(match[1], value);
     match = pattern.exec(stripped);
   }
+  const templatePattern = /(?:^|\n)\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*`([^`]*)`;/g;
+  let templateMatch = templatePattern.exec(stripped);
+  while (templateMatch !== null) {
+    if (!templateMatch[2].includes('${') && !map.has(templateMatch[1])) map.set(templateMatch[1], templateMatch[2]);
+    templateMatch = templatePattern.exec(stripped);
+  }
   return map;
 }
 
-const SQL_START = /^\s*(SELECT|INSERT|UPDATE|DELETE)\b/i;
+/**
+ * SQL 字面量的起点判据。必须是「动词 + 至少一个非空白字符」，不能只判 `\b`：
+ * `services/api/src/privacy/consent-pg.ts:149` 的 `idempotencyScope(userId, 'DELETE', …)`
+ * 是一个 HTTP 动词串，`\b` 版本会把它计成 1 条 DELETE 语句（R28-S66 阶段二实测），
+ * 凭空污染 sqlLiterals/statements 读数并对 `DELETE` 去抢 `public.*` 表。
+ */
+const SQL_START = /^\s*(SELECT|INSERT|UPDATE|DELETE)\s+\S/i;
+
+/**
+ * `stats.byFile` 的键：store-pg 沿用域目录名（community/…，与 S61 钉死读数一致），
+ * 其余宿主用 `services/api/src/` 之后的相对路径。
+ *
+ * 为什么必须这么修：S61 用的是 `file.split('/').slice(-2)[0]`（取倒数第二段），对
+ * `admin/ops/accounts-pg.ts` 与 `admin/ops/flags-pg.ts` 都会得到 `ops`、对 5 个 privacy 文件
+ * 都会得到 `privacy` —— 后写覆盖前写，8 个新文件只剩 4 个键（阶段一实测），逐文件读数会失真。
+ */
+function hostKey(file) {
+  const parts = file.split('/');
+  if (parts.length >= 2 && parts[parts.length - 1] === 'store-pg.ts') return parts[parts.length - 2];
+  const prefix = `${STORE_ROOT}/`;
+  return file.startsWith(prefix) ? file.slice(prefix.length) : file;
+}
+
+/**
+ * 行锁口径（派单 §2.5）：`FOR UPDATE` / `FOR NO KEY UPDATE` 除 SELECT 外**还要** UPDATE 权限；
+ * `FOR SHARE` / `FOR KEY SHARE` 不要求额外权限（PG 文档 SELECT 的 locking clause 段落）。
+ * 注意这是**静态模型**：本仓已在 S26 用「列级 `UPDATE (revision)` 作行锁载体」实测过
+ * 42501（见证据页），所以这里按「表级或任一列 UPDATE 即可」判定（PG 允许列级 UPDATE 满足行锁）。
+ * @param {{word: string, index: number}[]} tokens
+ * @returns {'UPDATE' | 'SHARE' | null}
+ */
+function readRowLock(tokens) {
+  const index = tokens.findIndex((token, i) => token.word === 'FOR'
+    && ['UPDATE', 'SHARE', 'NO', 'KEY'].includes(tokens[i + 1]?.word ?? ''));
+  if (index === -1) return null;
+  const words = tokens.slice(index + 1, index + 5).map((token) => token.word);
+  if (words[0] === 'NO' && words[1] === 'KEY' && words[2] === 'UPDATE') return 'UPDATE';
+  if (words[0] === 'KEY' && words[1] === 'SHARE') return 'SHARE';
+  if (words[0] === 'UPDATE') return 'UPDATE';
+  if (words[0] === 'SHARE') return 'SHARE';
+  return null;
+}
 
 /**
  * 抽出 8 个 store-pg 里的 SQL 字面量，并把列清单常量代入。
@@ -697,22 +988,21 @@ function extractRuntimeSql(sources) {
     returningClauses: 0,
     onConflictClauses: 0,
     selectStar: 0,
+    qualifiedStar: 0,
+    rowLocks: { UPDATE: 0, SHARE: 0 },
+    functionCalls: 0,
     noTargetTable: 0,
     byFile: {},
   };
 
   for (const { file, text } of sources) {
     const constants = buildConstMap(text);
-    const domain = file.split('/').slice(-2)[0];
-    const perFile = { file, sqlLiterals: 0, statements: { INSERT: 0, UPDATE: 0, SELECT: 0, DELETE: 0 } };
-    stats.byFile[domain] = perFile;
+    const key = hostKey(file);
+    const perFile = { file, key, sqlLiterals: 0, statements: { INSERT: 0, UPDATE: 0, SELECT: 0, DELETE: 0 } };
+    stats.byFile[key] = perFile;
     for (const literal of scanTsLiterals(text)) {
-      const firstText = literal.chunks.find((chunk) => chunk.type === 'text');
-      if (firstText === undefined || !SQL_START.test(firstText.value)) continue;
-      stats.sqlLiterals += 1;
-      perFile.sqlLiterals += 1;
       const startLine = lineOf(text, literal.start);
-
+      const pending = [];
       let sql = '';
       for (const chunk of literal.chunks) {
         if (chunk.type === 'text') {
@@ -724,7 +1014,7 @@ function extractRuntimeSql(sources) {
           sql += constants.get(expr);
           continue;
         }
-        opaque.push({
+        pending.push({
           ref: `${file}:${lineOf(text, chunk.offset)}`,
           file,
           line: lineOf(text, chunk.offset),
@@ -734,6 +1024,16 @@ function extractRuntimeSql(sources) {
         sql += ' ';
       }
 
+      // 判据必须落在**代入常量之后**的 sql 上，不能看第一个 text chunk：S61 用的是
+      // `literal.chunks.find(text)`，于是 `` `${currentRecords} WHERE …` ``（常量在插值位）
+      // 的首个 text chunk 是 ` WHERE …` ⇒ 整条语句被静默跳过（既不成语句也不进 opaque）。
+      // R28-S66 实测：`services/api/src/privacy/consent-pg.ts` 的 :126/:140/:165 三条
+      // 就是这样丢的，其中 :165 还带 `FOR UPDATE OF p`（行锁要求也一起丢了）。
+      if (!SQL_START.test(sql)) continue;
+      stats.sqlLiterals += 1;
+      perFile.sqlLiterals += 1;
+      opaque.push(...pending);
+
       const parsedStatements = parseSqlText(sql, { file, line: startLine });
       for (const statement of parsedStatements) {
         stats.statements[statement.verb] = (stats.statements[statement.verb] ?? 0) + 1;
@@ -741,6 +1041,9 @@ function extractRuntimeSql(sources) {
         if (statement.returningColumns.length > 0 || statement.hasReturning) stats.returningClauses += 1;
         if (statement.conflict !== null) stats.onConflictClauses += 1;
         if (statement.selectStar) stats.selectStar += 1;
+        if (statement.qualifiedStar) stats.qualifiedStar += 1;
+        if (statement.rowLock !== null) stats.rowLocks[statement.rowLock] += 1;
+        if (statement.functionCall !== null) stats.functionCalls += 1;
         if (statement.table === null) stats.noTargetTable += 1;
         statements.push(statement);
       }
@@ -800,7 +1103,15 @@ const EXPR_KEYWORDS = new Set([
  */
 function extractExpressionColumns(expression) {
   let text = expression;
-  text = text.replace(/\s+AS\s+[A-Za-z_][A-Za-z0-9_]*\s*$/i, '');
+  // 逐项剥 `AS 别名`：S61 只剥**末尾**一项，`SELECT c.*, p.state AS epoch_state, p.current_epoch`
+  // 会把中段别名 `epoch_state` 漏成假列（R28-S66 阶段一在 privacy_epochs 上实测到 `c` / `epoch_state`
+  // 两个假列）。别名不是列，必须逐项剥掉。
+  text = splitTopLevel(text)
+    .map((item) => item.replace(/\s+AS\s+[A-Za-z_][A-Za-z0-9_]*\s*$/i, '').trim())
+    .join(', ');
+  // `t.*` 是「该表的全列」——列面不可静态判定，由 parseSqlText 标记成 selectStar，
+  // 这里只把残留的限定星号抹掉，免得 `t` 本身被当成列。
+  text = text.replace(/[A-Za-z_][A-Za-z0-9_]*\s*\.\s*\*/g, ' ');
   text = text.replace(/::\s*[A-Za-z_][A-Za-z0-9_]*(\s*\[\s*\])?/g, ' ');
   // `extract(<field> FROM <expr>)`：字段名不是列，括号里的 expr 才是。
   text = text.replace(/\bextract\s*\(\s*[A-Za-z_]+\s+FROM\s+/gi, '(');
@@ -853,6 +1164,10 @@ function parseSqlText(sql, origin) {
     hasReturning: false,
     conflict: null,
     selectStar: false,
+    qualifiedStar: false,
+    starItems: [],
+    rowLock: readRowLock(tokens),
+    functionCall: null,
   };
 
   const returningToken = locate('RETURNING');
@@ -918,13 +1233,29 @@ function parseSqlText(sql, origin) {
   if (verb === 'SELECT') {
     const from = locate('FROM');
     if (from === null) return [base]; // 纯标量子查询（count(*)），没有目标表
-    base.table = readQualifiedName(text.slice(from.end));
-    const selectList = text.slice(tokens[0].end, from.index).trim();
-    if (selectList === '*') {
-      base.selectStar = true;
+    const afterFrom = text.slice(from.end);
+    base.table = readQualifiedName(afterFrom);
+    // 「函数调用不是表访问」（派单 §2.4）：`FROM public.list_admin_accounts()` 是
+    // SECURITY DEFINER 函数，列面由函数签名钉死，调用方只需要 EXECUTE，不产生任何列要求。
+    // 判据只看 `FROM <限定名>` 之后紧跟的是不是 `(`（`FROM (SELECT …)` 走 nameMatch===null 分支，
+    // 本来就 table=null；`INSERT INTO t(cols)` / `UPDATE t SET` 不在这个分支）。
+    const nameMatch = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.\s*([A-Za-z_][A-Za-z0-9_]*))?/.exec(afterFrom);
+    if (nameMatch !== null && /^\s*\(/.test(afterFrom.slice(nameMatch[0].length))) {
+      base.functionCall = base.table;
+      base.table = null;
       return [base];
     }
-    base.selectColumns = extractExpressionColumns(selectList);
+    const selectList = text.slice(tokens[0].end, from.index).trim();
+    const items = splitTopLevel(selectList);
+    // `*` 与 `t.*` 都是「列面不可静态判定」：记 selectStar（不产生列要求），但单独记录形态，
+    // 以免把「整表投影」当成「没有列要求」而悄悄放过。
+    base.starItems = items.filter((item) => /^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*\.\s*)?\*\s*$/.test(item)).map((item) => item.trim());
+    if (base.starItems.length > 0) {
+      base.selectStar = true;
+      base.qualifiedStar = base.starItems.some((item) => item.includes('.'));
+    }
+    const expressionItems = items.filter((item) => !base.starItems.includes(item.trim()));
+    base.selectColumns = extractExpressionColumns(expressionItems.join(', '));
     return [base];
   }
 
@@ -939,11 +1270,7 @@ function parseSqlText(sql, origin) {
  * 每条语句 → 需要的 {table, column, privilege}。
  * SET 的左侧 = UPDATE；INSERT 列清单 = INSERT；SELECT 列与 RETURNING 列 = SELECT；
  * ON CONFLICT 的冲突目标 = SELECT（本仓口径，见 20-login-roles.sql 「ON CONFLICT 的推断 … 要 SELECT 权」）；
- * **DELETE 语句 = 表级 DELETE**（PG 无列级 DELETE，用哨兵列 `*` 表达整表需求）。
- *
- * 为什么必须收 DELETE：2026-10-21 #17 注销清理新增了 `DELETE FROM public.messages`，而当次
- * 授权面只给了列级 SELECT/INSERT/UPDATE —— 这条守卫当时**结构上不可能发现**它（它从不产出
- * DELETE 需求），最后靠人读 20-login-roles.sql 才撞见。现在补上这一面。
+ * **DELETE 语句 = 表级 DELETE**（C1b-1）：PG 没有列级 DELETE，用哨兵列 `*` 表达整表需求。
  * @param {object[]} statements
  * @returns {object[]}
  */
@@ -971,6 +1298,74 @@ function collectRequirements(statements) {
     }
   }
   return requirements;
+}
+
+/**
+ * 行锁要求（派单 §2.5）：每条 `SELECT … FOR UPDATE` / `FOR NO KEY UPDATE` 额外要一条
+ * **表级** UPDATE 要求（列面不可知 —— PG 允许「任一列 UPDATE」满足行锁，故按「表级或任列」判定，
+ * 见 evaluateRowLocks）。`FOR SHARE` / `FOR KEY SHARE` **不产生**要求，但会单独计数钉死（防止漏解析）。
+ * @param {object[]} statements
+ * @returns {object[]}
+ */
+function collectRowLockRequirements(statements) {
+  const requirements = [];
+  for (const statement of statements) {
+    if (statement.rowLock !== 'UPDATE' || statement.table === null) continue;
+    requirements.push({
+      table: statement.table,
+      privilege: 'UPDATE',
+      clause: '行锁 FOR UPDATE',
+      ref: `${statement.file}:${statement.line}`,
+    });
+  }
+  return requirements;
+}
+
+/**
+ * 行锁判红的措辞与列级判红保持同一形态（能 grep 到 `缺 UPDATE` + `授权面现状`）。
+ *
+ * 豁免与列级豁免同构（`{table, privilege, ref, reason, owner}`），但额外要求 `ref` 精确到
+ * `file:line` —— 行锁要求没有列名，只按表豁免会把同表上的新语句一起放行（躺平）。
+ * 反向核对 `staleRowLockExemptions`：登记了却对不上任何行锁要求即红。
+ * @param {object[]} requirements
+ * @param {object} model
+ * @param {object[]} [exemptions]
+ * @returns {{problems: string[], staleExemptions: string[], exempted: object[]}}
+ */
+function evaluateRowLocks(requirements, model, exemptions = []) {
+  const problems = [];
+  const staleExemptions = [];
+  const exempted = [];
+  const matched = new Set();
+  for (const requirement of requirements) {
+    const granted = lookupPrivilege(model, requirement.table, requirement.privilege);
+    // 本仓口径（证据页 §3 写明）：表级 UPDATE，或该表**任一列**有 UPDATE，即可满足行锁
+    // （PG 文档 SELECT 页：FOR UPDATE 除 SELECT 外还要 UPDATE，「for at least one column of
+    // each table so selected」）。
+    const ok = granted.kind === 'table' || (granted.kind === 'columns' && granted.columns.size > 0);
+    if (ok) continue;
+    const hit = exemptions.findIndex((item) => item.table === requirement.table
+      && item.privilege === requirement.privilege
+      && item.ref === requirement.ref);
+    if (hit !== -1) {
+      matched.add(hit);
+      exempted.push({ requirement, exemption: exemptions[hit] });
+      continue;
+    }
+    problems.push(
+      `${requirement.ref} → ${requirement.table} 缺 ${requirement.privilege}（${requirement.clause}，`
+      + 'PG 对 FOR UPDATE/FOR NO KEY UPDATE 除 SELECT 外还要求 UPDATE 权限）；'
+      + `授权面现状：${granted.kind === 'none' ? '该表该权限未授任何列' : '（不可达分支）'}`,
+    );
+  }
+  exemptions.forEach((item, index) => {
+    if (matched.has(index)) return;
+    staleExemptions.push(
+      `ROW_LOCK_EXEMPT 登记的 ${item.ref} → ${item.table} 缺 ${item.privilege} 在源码里已不成立`
+      + '（陈旧登记，删掉它以免守卫躺平）',
+    );
+  });
+  return { problems, staleExemptions, exempted };
 }
 
 /**
@@ -1010,8 +1405,8 @@ function evaluateCoverage(requirements, model, exemptions) {
     const key = `${requirement.table}.${requirement.column}|${requirement.privilege}`;
     seen.add(key);
     const granted = lookupPrivilege(model, requirement.table, requirement.privilege);
-    // 整表需求（`column: '*'`，目前只有 DELETE）：**只认表级授权**。
-    // 列级授权无论给了多少列都不满足「能删整行」—— PG 里没有 `GRANT DELETE (col)` 这种东西。
+    // 整表需求（`column: '*'`，目前只有 DELETE）：**只认表级授权**（C1b-1）。
+    // 列级授权无论给了多少列都不满足「能删整行」—— PG 里没有 `GRANT DELETE (col)`。
     const tableWide = requirement.column === TABLE_WIDE_COLUMN;
     const ok = tableWide
       ? granted.kind === 'table'
@@ -1124,20 +1519,76 @@ function loadStoreSources() {
   });
 }
 
+/** R28-S66 的另外 8 个 SQL 宿主文件（相对 STORE_ROOT 的路径在 ADDITIONAL_SQL_HOST_FILES 里登记）。 */
+function loadAdditionalSources() {
+  return ADDITIONAL_SQL_HOST_FILES.map((relativePath) => {
+    const file = `${STORE_ROOT}/${relativePath}`;
+    const absolute = resolve(root, file);
+    assert.ok(existsSync(absolute), `缺少 ${file}（R28-S66 登记的 SQL 宿主文件之一）`);
+    return { file, text: readFileSync(absolute, 'utf8') };
+  });
+}
+
+/** 本片审计的 16 个源文件：8 个 store-pg + 8 个新纳管文件（同一套管线，不另造判据）。 */
+function loadAuditedSources() {
+  return [...loadStoreSources(), ...loadAdditionalSources()];
+}
+
+/** 递归列出 `services/api/src` 下所有 `.ts`（相对仓库根的 posix 路径，已排序）。 */
+function listTypeScriptFiles(directory) {
+  const absolute = resolve(root, directory);
+  const files = [];
+  for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+    const relativePath = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...listTypeScriptFiles(relativePath));
+    else if (entry.name.endsWith('.ts')) files.push(relativePath);
+  }
+  return files.sort();
+}
+
+/** 派单 §0 的 grep 谓词（`public.` 限定的 SQL），**按语句判**而非按文件原文判：注释里的 SQL 不算。 */
+const PUBLIC_QUALIFIED_SQL = /(?:INSERT\s+INTO|DELETE\s+FROM|UPDATE|FROM|JOIN)\s+public\.[a-z_]/i;
+
+/**
+ * 文件集不变量的扫描器：扫 `services/api/src/**\/*.ts`，返回「解析出至少一条带目标表（或
+ * SECURITY DEFINER 函数调用）的 SQL」的文件。
+ * 谓词必须含 `functionCall`：`admin/ops/accounts-pg.ts` 的语句是
+ * `SELECT id, revision, state, display_name FROM public.list_admin_accounts()`，解析时
+ * `functionCall` 非空而 `table` 为 null（函数不是表），只判 `table` 会让这个文件从宿主集里
+ * 凭空消失（R28-S66 阶段二实测 hosts 20/21 的来源）。
+ * `publicQualified` 标记该文件的语句里有没有 `public.` 限定的表引用（派单 §1.2 的原谓词）。
+ * @returns {{file: string, tables: string[], functions: string[], publicQualified: boolean}[]}
+ */
+function discoverSqlHosts() {
+  const hosts = [];
+  for (const file of listTypeScriptFiles(STORE_ROOT)) {
+    const text = readFileSync(resolve(root, file), 'utf8');
+    const { statements } = extractRuntimeSql([{ file, text }]);
+    const tables = [...new Set(statements.filter((item) => item.table !== null).map((item) => item.table))].sort();
+    const functions = [...new Set(statements.filter((item) => item.functionCall !== null).map((item) => item.functionCall))].sort();
+    if (tables.length === 0 && functions.length === 0) continue;
+    hosts.push({ file, tables, functions, publicQualified: statements.some((item) => PUBLIC_QUALIFIED_SQL.test(item.sql)) });
+  }
+  return hosts;
+}
+
 /**
  * 总装：同一套流水线既跑真实输入，也跑负控制的内存夹具（这是「不恒绿」的结构前提）。
- * @param {{grantSources?: object[], storeSources?: object[], exemptions?: object[], opaqueAllowlist?: object[]}} [input]
+ * @param {{grantSources?: object[], storeSources?: object[], exemptions?: object[], opaqueAllowlist?: object[], rowLockExemptions?: object[]}} [input]
  */
 function auditAll(input = {}) {
   const grantSources = input.grantSources ?? loadGrantSources();
   const storeSources = input.storeSources ?? loadStoreSources();
   const exemptions = input.exemptions ?? COVERAGE_EXEMPT;
   const opaqueAllowlist = input.opaqueAllowlist ?? OPAQUE_ALLOWLIST;
+  const rowLockExemptions = input.rowLockExemptions ?? [];
 
   const model = buildGrantModel(grantSources);
   const sql = extractRuntimeSql(storeSources);
   const requirements = collectRequirements(sql.statements);
+  const rowLockRequirements = collectRowLockRequirements(sql.statements);
   const coverage = evaluateCoverage(requirements, model, exemptions);
+  const rowLocks = evaluateRowLocks(rowLockRequirements, model, rowLockExemptions);
   const opaque = evaluateOpaque(sql.opaque, opaqueAllowlist);
   const superset = buildSupersetReport(requirements, model);
   const referencedTables = [...new Set(sql.statements.filter((item) => item.table !== null).map((item) => item.table))].sort();
@@ -1146,11 +1597,20 @@ function auditAll(input = {}) {
     model,
     sql,
     requirements,
+    rowLockRequirements,
     coverage,
+    rowLocks,
     opaque,
     superset,
     referencedTables,
-    problems: [...model.problems, ...coverage.problems, ...coverage.staleExemptions, ...opaque.problems],
+    problems: [
+      ...model.problems,
+      ...coverage.problems,
+      ...coverage.staleExemptions,
+      ...rowLocks.problems,
+      ...rowLocks.staleExemptions,
+      ...opaque.problems,
+    ],
   };
 }
 
@@ -1194,22 +1654,6 @@ test('sql-column-coverage/覆盖读数：解析器确实在看东西（8 文件 
     EXPECTED_READINGS.columnRequirements,
     `列权限要求条数变了（实际 ${baseline.requirements.length}）：要么 store 真的改了，要么解析器没看见某些列清单`,
   );
-
-  // 正向控制：DELETE 语句必须**每条**都产出一条「整表 DELETE」需求。
-  // 没有这两行断言，「collectRequirements 开始产 DELETE 需求」这件事就只是注释里的说法，
-  // 守卫哪怕哪天把这一面又丢了也一样是绿的。
-  const deleteRequirements = baseline.requirements.filter((item) => item.privilege === 'DELETE');
-  assert.equal(
-    deleteRequirements.length,
-    baseline.sql.stats.statements.DELETE,
-    `DELETE 语句条数（${baseline.sql.stats.statements.DELETE}）与整表 DELETE 需求条数（${deleteRequirements.length}）必须相等：`
-    + '不等说明有 DELETE 语句没被收进需求（解析器漏面），或者有人给 DELETE 造了列级需求（PG 里不存在这种授权形态）',
-  );
-  assert.equal(
-    deleteRequirements.every((item) => item.column === TABLE_WIDE_COLUMN),
-    true,
-    'DELETE 需求必须一律是整表哨兵列 `*`（PG 没有 `GRANT DELETE (col)`，列级 DELETE 需求是假需求）',
-  );
   assert.equal(
     baseline.coverage.covered,
     baseline.requirements.length,
@@ -1224,6 +1668,21 @@ test('sql-column-coverage/覆盖读数：解析器确实在看东西（8 文件 
     Object.fromEntries(Object.entries(baseline.sql.stats.byFile).map(([key, value]) => [key, value.sqlLiterals])),
     EXPECTED_PER_FILE,
     '逐文件字面量条数变了：先确认是 store 真改了还是解析器瞎了',
+  );
+
+  // 正向控制（C1b-1）：DELETE 语句必须**每条**都产出一条「整表 DELETE」需求。
+  // 没有这两行断言，「守卫补了 DELETE 面」就只是注释里的说法（NC10 再从真实授权文本反着证一次）。
+  const deleteRequirements = baseline.requirements.filter((item) => item.privilege === 'DELETE');
+  assert.equal(
+    deleteRequirements.length,
+    baseline.sql.stats.statements.DELETE,
+    `DELETE 语句条数（${baseline.sql.stats.statements.DELETE}）与整表 DELETE 需求条数（${deleteRequirements.length}）必须相等：`
+    + '不等说明有 DELETE 语句没被收进需求（解析器漏面），或者有人给 DELETE 造了列级需求（PG 里不存在这种授权形态）',
+  );
+  assert.equal(
+    deleteRequirements.every((item) => item.column === TABLE_WIDE_COLUMN),
+    true,
+    'DELETE 需求必须一律是整表哨兵列 `*`（PG 没有 `GRANT DELETE (col)`，列级 DELETE 需求是假需求）',
   );
 });
 
@@ -1421,18 +1880,348 @@ test('sql-column-coverage/parser_negative_controls NC4：登记源码里不存�
   console.log(`[sql-column-coverage] NC4 红字（陈旧登记）：${audited.opaque.problems[0]}`);
 });
 
-test('sql-column-coverage/parser_negative_controls NC5：注释掉真实的 GRANT DELETE ⇒ 必须红并点名整表缺 DELETE', () => {
-  // 为什么这条负控制非做不可：DELETE 需求这一面是 2026-10-21 才补进 collectRequirements 的，
-  // 而它补进来的直接动机就是「`GRANT DELETE ON public.messages` 忘了给，守卫却一直是绿的」。
-  // 因此必须从**真实**授权文本里把这一行注释掉，看正向断言是否真的变红 —— 否则「补了 DELETE 面」
-  // 就只是一句注释里的说法。
+/* ============================================================================
+ * 八、R28-S66 扩展：8 个新纳管文件走同一套管线 + 文件集不变量 + NC5–NC9
+ *
+ * 三条新断言的分工（派单 §1.1–§1.3）：
+ *   6. 扩展 16 文件的读数与列覆盖（缺口只允许落在 ledger 范畴，且必须逐条登记）；
+ *   7. 文件集不变量（`services/api/src` 里的 SQL 宿主恰好是 16 个已审计 + 5 个登记）；
+ *   8–12. NC5–NC9（新文件的列、真实授权文本、文件集、豁免陈旧、行锁规则各反着走一遍）。
+ * 基线（`baseline`，8 个 store-pg）一条都没动：它继续在零豁免下全绿，是本片「不放宽」的证据。
+ * ========================================================================== */
+
+const EXTENDED_OPAQUE_ALLOWLIST = [...OPAQUE_ALLOWLIST, ...LEDGER_OPAQUE_ALLOWLIST];
+const auditedSources = loadAuditedSources();
+const extended = auditAll({
+  storeSources: auditedSources,
+  exemptions: LEDGER_COVERAGE_EXEMPT,
+  opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+  rowLockExemptions: ROW_LOCK_EXEMPT,
+});
+const sqlHosts = discoverSqlHosts();
+
+/**
+ * 文件集不变量的判据（派单 §1.2）：扫到的每个 SQL 宿主，要么在已审计的 16 个文件里，
+ * 要么在 `UNAUDITED_SQL_HOSTS` 里；两边都没有 ⇒ 红。反过来每条登记都必须仍被扫到（防躺平）。
+ * @param {{file: string}[]} hosts `discoverSqlHosts()` 的结果
+ * @returns {string[]} 红字
+ */
+function findHostSetProblems(hosts) {
+  const problems = [];
+  const audited = new Set(auditedSources.map((source) => source.file));
+  const registered = new Map(UNAUDITED_SQL_HOSTS.map((entry) => [entry.file, entry]));
+  const observed = new Set();
+  for (const host of hosts) {
+    observed.add(host.file);
+    if (!audited.has(host.file) && !registered.has(host.file)) {
+      problems.push(
+        `${host.file} 是新的 SQL 宿主，但既不在本片审计的 16 个文件里，也没登记进 UNAUDITED_SQL_HOSTS：` +
+          '要么把它纳入同一套管线，要么登记 file + reason + owner（否则守卫会对新文件视而不见）',
+      );
+    }
+  }
+  for (const file of audited) {
+    if (!observed.has(file)) {
+      problems.push(`已审计的 ${file} 这次没被扫成 SQL 宿主（文件被删或语句被删光？这条守卫会躺平）`);
+    }
+  }
+  for (const entry of UNAUDITED_SQL_HOSTS) {
+    if (typeof entry.reason !== 'string' || entry.reason.trim() === '') {
+      problems.push(`UNAUDITED_SQL_HOSTS 的 ${entry.file} 缺 reason`);
+    }
+    if (typeof entry.owner !== 'string' || entry.owner.trim() === '') {
+      problems.push(`UNAUDITED_SQL_HOSTS 的 ${entry.file} 缺 owner`);
+    }
+    if (!observed.has(entry.file)) {
+      problems.push(`UNAUDITED_SQL_HOSTS 登记的 ${entry.file} 已不存在或不再含 SQL（陈旧登记，删掉它以免守卫躺平）`);
+    }
+  }
+  return problems;
+}
+
+test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () => {
+  const stats = extended.sql.stats;
+  const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
+  const starStatements = extended.sql.statements.filter((item) => item.selectStar);
+
+  console.log(`[sql-column-coverage] 扩展审计：${stats.storeFiles} 个文件、SQL 字面量 ${stats.sqlLiterals} 条、语句 INSERT ${stats.statements.INSERT} / UPDATE ${stats.statements.UPDATE} / SELECT ${stats.statements.SELECT} / DELETE ${stats.statements.DELETE}`);
+  console.log(`[sql-column-coverage] 扩展审计：RETURNING ${stats.returningClauses} 处 / ON CONFLICT ${stats.onConflictClauses} 处 / SELECT * ${stats.selectStar} 处（其中 t.* ${stats.qualifiedStar} 处）/ 函数调用 ${stats.functionCalls} 处 / 无顶层 FROM ${stats.noTargetTable} 处`);
+  console.log(`[sql-column-coverage] 扩展审计：行锁 FOR UPDATE ${stats.rowLocks.UPDATE} 处 / FOR SHARE ${stats.rowLocks.SHARE} 处；行锁要求 ${extended.rowLockRequirements.length} 条，豁免 ${extended.rowLocks.exempted.length} 条`);
+  console.log(`[sql-column-coverage] 扩展审计：引用到的表 ${extended.referencedTables.length} 张，列权限要求 ${extended.requirements.length} 条，已覆盖 ${extended.coverage.covered} 条，缺 ${extended.coverage.missing.length} 条（唯一键 ${new Set(extended.coverage.missing.map((item) => `${item.table}.${item.column}|${item.privilege}`)).size} 个），豁免 ${LEDGER_COVERAGE_EXEMPT.length} 条`);
+  console.log(`[sql-column-coverage] 扩展审计：覆盖来源 列级 ${extended.coverage.viaColumnLevel} 条 / 表级 ${extended.coverage.viaTableLevel} 条；不可判插值 ${extended.sql.opaque.length} 条`);
+  console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
+
+  assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 16（8 store + 8 新纳管）');
+  assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
+  assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
+  assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
+  assert.equal(stats.onConflictClauses, EXPECTED_EXTENDED_READINGS.onConflictClauses);
+  assert.equal(stats.selectStar, EXPECTED_EXTENDED_READINGS.selectStar, 'SELECT * 的条数变了：列面不可判的语句数必须钉死，别让它悄悄变多');
+  assert.equal(stats.qualifiedStar, EXPECTED_EXTENDED_READINGS.qualifiedStar, 't.* 的条数变了：这类投影的列面同样不可判');
+  assert.deepEqual(stats.rowLocks, EXPECTED_EXTENDED_READINGS.rowLocks, `行锁条数变了（实际 ${JSON.stringify(stats.rowLocks)}）`);
+  assert.equal(stats.functionCalls, EXPECTED_EXTENDED_READINGS.functionCalls, 'FROM public.fn() 的条数变了：函数不是表，必须单独计数');
+  assert.equal(stats.noTargetTable, EXPECTED_EXTENDED_READINGS.noTargetTable, '无顶层 FROM 的条数变了');
+  assert.deepEqual(perFile, EXPECTED_EXTENDED_PER_FILE, '逐文件字面量条数变了：先确认是源文件真改了还是解析器瞎了');
+  assert.deepEqual(extended.referencedTables, [...EXPECTED_EXTENDED_TABLES].sort(), '扩展审计引用到的表清单变了：逐张核对');
+  assert.equal(extended.requirements.length, EXPECTED_EXTENDED_READINGS.columnRequirements, `列权限要求条数变了（实际 ${extended.requirements.length}）`);
+  assert.equal(extended.coverage.covered, EXPECTED_EXTENDED_READINGS.coveredRequirements, `已覆盖条数变了（实际 ${extended.coverage.covered}）`);
+  // 扩展面同样要有正向控制（C1b-1）：16 个文件里的每条 DELETE 都产出一条整表需求。
+  const extendedDeleteRequirements = extended.requirements.filter((item) => item.privilege === 'DELETE');
+  assert.equal(
+    extendedDeleteRequirements.length,
+    stats.statements.DELETE,
+    `扩展面 DELETE 语句条数（${stats.statements.DELETE}）与整表 DELETE 需求条数（${extendedDeleteRequirements.length}）必须相等`,
+  );
+  assert.equal(
+    extendedDeleteRequirements.every((item) => item.column === TABLE_WIDE_COLUMN),
+    true,
+    '扩展面的 DELETE 需求同样必须是整表哨兵列 `*`',
+  );
+  assert.equal(extended.coverage.viaColumnLevel + extended.coverage.viaTableLevel, extended.coverage.covered, '覆盖来源拆分必须自洽');
+  assert.equal(extended.sql.opaque.length, EXPECTED_EXTENDED_READINGS.opaqueExpressions, '不可判插值条数变了：多出来的必须逐条登记进 allowlist');
+  assert.equal(extended.rowLockRequirements.length, EXPECTED_EXTENDED_READINGS.rowLockRequirements);
+  assert.equal(extended.rowLocks.exempted.length, EXPECTED_EXTENDED_READINGS.rowLockExemptions);
+
+  // 缺口只允许落在 ledger 范畴：任一条落到服务的其他文件 ⇒ 判红，交指挥裁定（派单 §5）。
+  // `extended.coverage.missing` 已扣掉豁免，所以这里另跑一次**零豁免**审计取原始缺口。
+  const raw = auditAll({ storeSources: auditedSources, exemptions: [], opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST, rowLockExemptions: [] });
+  assert.equal(raw.coverage.missing.length, 54, `零豁免时扩展审计的语句级缺口条数变了（实际 ${raw.coverage.missing.length}）`);
+  const rawGapKeys = [...new Set(raw.coverage.missing.map((item) => `${item.table}.${item.column}|${item.privilege}`))].sort();
+  assert.equal(rawGapKeys.length, 33, `零豁免时的唯一缺口键必须是 33（实际 ${rawGapKeys.length}）`);
+  assert.deepEqual(
+    rawGapKeys,
+    LEDGER_COVERAGE_EXEMPT.map((entry) => `${entry.ref}|${entry.privilege}`).sort(),
+    '豁免表必须与零豁免审计出的真实缺口逐条相等：多一条是放水，少一条是缺口没人认得',
+  );
+  assert.deepEqual(
+    raw.coverage.missing.filter((item) => !item.ref.startsWith('services/api/src/privacy/ledger-pg.ts:')).map((item) => `${item.ref} → ${item.table}.${item.column} 缺 ${item.privilege}`),
+    [],
+    'ledger 之外出现了真实缺口：本片不许自定豁免，必须停下来交指挥裁定',
+  );
+  assert.equal(raw.rowLocks.problems.length, 1, `零豁免时行锁缺口必须恰 1 条（ledger:244），实际：\n${raw.rowLocks.problems.join('\n')}`);
+  assert.ok(raw.rowLocks.problems[0].startsWith('services/api/src/privacy/ledger-pg.ts:244 → public.exports'), `行锁缺口必须点名 ledger:244：${raw.rowLocks.problems[0]}`);
+  assert.equal(extended.coverage.missing.length, 0, `扩展审计的缺口必须全被 33 条豁免压住（实际还剩 ${extended.coverage.missing.length} 条）`);
+  assert.deepEqual(extended.coverage.problems, [], `扩展审计仍有多余缺口：\n${extended.coverage.problems.join('\n')}`);
+  assert.deepEqual(extended.rowLocks.problems, [], `扩展审计仍有多余行锁缺口：\n${extended.rowLocks.problems.join('\n')}`);
+  assert.deepEqual(extended.opaque.problems, [], `扩展审计的不可判插值未登记：\n${extended.opaque.problems.join('\n')}`);
+
+  // 豁免表本身的形状与条数钉死（派单 §1.3：条数固定 + 逐条 reason/owner）。
+  assert.equal(LEDGER_COVERAGE_EXEMPT.length, EXPECTED_EXTENDED_READINGS.ledgerExemptions, 'ledger 豁免条数必须钉死在 33');
+  assert.equal(ROW_LOCK_EXEMPT.length, EXPECTED_EXTENDED_READINGS.rowLockExemptions, '行锁豁免条数必须钉死在 1');
+  for (const entry of [...LEDGER_COVERAGE_EXEMPT, ...ROW_LOCK_EXEMPT]) {
+    assert.match(entry.reason, /\S/, `豁免条目缺 reason：${JSON.stringify(entry)}`);
+    assert.match(entry.owner, /\S/, `豁免条目缺 owner：${JSON.stringify(entry)}`);
+  }
+  for (const entry of LEDGER_COVERAGE_EXEMPT) {
+    assert.match(entry.ref, /^[a-z_]+\.[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*$/, `豁免 ref 必须形如 schema.table.column：${entry.ref}`);
+    assert.ok(entry.ref.startsWith('public.'), `ledger 豁免只覆盖 public.* 表：${entry.ref}`);
+  }
+  for (const entry of LEDGER_OPAQUE_ALLOWLIST) {
+    assert.match(entry.ref, /^services\/api\/src\/privacy\/ledger-pg\.ts:\d+$/, `ledger 的不可判插值必须登记成 file:line：${entry.ref}`);
+    assert.match(entry.reason, /\S/, `不可判插值缺 reason：${entry.ref}`);
+  }
+
+  const uniqueMissing = new Set(raw.coverage.missing.map((item) => `${item.ref}|${item.table}.${item.column}|${item.privilege}`));
+  console.log(`[sql-column-coverage] 零豁免时缺口站点 ${uniqueMissing.size} 条，全部在 privacy/ledger-pg.ts，且已全部命中 33 条豁免（扩展审计 staleExemptions ${extended.coverage.staleExemptions.length} 条）`);
+  assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
+});
+
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 16 已审计 + 5 登记（R28-S66）', () => {
+  const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
+  console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
+
+  assert.equal(sqlHosts.length, 21, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
+  assert.deepEqual(
+    publicQualified.sort(),
+    [
+      'services/api/src/admin/ops/accounts-pg.ts',
+      'services/api/src/admin/ops/flags-pg.ts',
+      'services/api/src/knowledge/service.ts',
+      'services/api/src/messages/store-pg.ts',
+      'services/api/src/ocr/store-pg.ts',
+      'services/api/src/privacy/backup-copies-pg.ts',
+      'services/api/src/privacy/consent-pg.ts',
+      'services/api/src/privacy/grant-pg.ts',
+      'services/api/src/privacy/ledger-pg.ts',
+      'services/api/src/profile/service.ts',
+      'services/api/src/recognitions/store-pg.ts',
+      'services/api/src/speech/store-pg.ts',
+    ].sort(),
+    '含 public. 限定的宿主清单变了：派单 §0 的 grep 结果必须能被这张表解释（8 个新文件 + 4 个带 public. 的 store-pg）',
+  );
+
+  // 16 个已审计文件必须全部在扫描结果里，且每个都真的贡献了语句（不是空壳登记）。
+  const byFile = extended.sql.stats.byFile;
+  for (const source of auditedSources) {
+    assert.ok(sqlHosts.some((host) => host.file === source.file), `已审计的 ${source.file} 没被扫成宿主`);
+    assert.ok(byFile[hostKey(source.file)].sqlLiterals > 0, `已审计的 ${source.file} 一条 SQL 都没解析出来`);
+  }
+  console.log(`[sql-column-coverage] 未纳管登记 ${UNAUDITED_SQL_HOSTS.length} 条：${UNAUDITED_SQL_HOSTS.map((entry) => entry.file).join('、')}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC5：新纳管文件里改名出一列未授权列 ⇒ 必须红（R28-S66）', () => {
+  const marker = 'SELECT state,auth_epoch,email FROM public.users WHERE id=$1::uuid FOR UPDATE';
+  const mutated = auditedSources.map((source) =>
+    source.file.endsWith('/profile/service.ts')
+      ? { ...source, text: source.text.replace('SELECT state,auth_epoch FROM public.users WHERE id=$1::uuid FOR UPDATE', marker) }
+      : source,
+  );
+  const target = mutated.find((source) => source.file.endsWith('/profile/service.ts'));
+  assert.ok(target.text.includes('state,auth_epoch,email'), 'NC5 变异没生效：profile/service.ts 的目标语句没被替换（源文件改了？）');
+
+  const broken = auditAll({
+    storeSources: mutated,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: ROW_LOCK_EXEMPT,
+  });
+  const hit = broken.coverage.problems.filter((problem) => problem.includes('public.users.email'));
+  assert.equal(hit.length, 1, `新文件的一列改名成未授权列后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 守卫对新文件恒绿！）'}`);
+  assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
+  assert.ok(hit[0].includes('profile/service.ts:35'), `红字必须点名语句站点：${hit[0]}`);
+  assert.equal(broken.coverage.problems.length, 1, `除 email 外不许有别的红字：\n${broken.coverage.problems.join('\n')}`);
+  console.log(`[sql-column-coverage] NC5 红字（新文件里多一列）：${hit[0]}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少授一列 ⇒ 必须红（R28-S66）', () => {
+  const original = 'GRANT SELECT (code,name,parent_code,catalog_version,supported) ON public.regions';
+  const mutatedGrants = loadGrantSources().map((source) =>
+    source.file.endsWith('/profile_runtime.sql')
+      ? { ...source, text: source.text.replace(original, 'GRANT SELECT (code,parent_code,catalog_version,supported) ON public.regions') }
+      : source,
+  );
+  const target = mutatedGrants.find((source) => source.file.endsWith('/profile_runtime.sql'));
+  assert.ok(!target.text.includes(original), 'NC6 变异没生效：profile_runtime.sql 的 regions 授权没被改（源文件改了？）');
+
+  const broken = auditAll({
+    grantSources: mutatedGrants,
+    storeSources: auditedSources,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: ROW_LOCK_EXEMPT,
+  });
+  assert.deepEqual(broken.model.problems, [], `变异后的授权文本必须仍然可解析：\n${broken.model.problems.join('\n')}`);
+  const hit = broken.coverage.problems.filter((problem) => problem.includes('public.regions.name'));
+  assert.equal(hit.length, 1, `少授 regions.name 的 SELECT 后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 列级核对没在看新文件！）'}`);
+  assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
+  assert.ok(hit[0].includes('profile/service.ts:61'), `红字必须点名 profile/service.ts:61：${hit[0]}`);
+
+  const restored = auditAll({
+    storeSources: auditedSources,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: ROW_LOCK_EXEMPT,
+  });
+  assert.deepEqual(restored.coverage.problems, [], '复原真实授权文本后必须回绿');
+  console.log(`[sql-column-coverage] NC6 红字（真实授权少一列）：${hit[0]}`);
+  console.log(`[sql-column-coverage] NC6 复原后红字条数 ${restored.coverage.problems.length}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC7：services/api/src 下多一个 SQL 宿主 ⇒ 文件集必须红（R28-S66）', () => {
+  const tempFile = 'services/api/src/nc7-temp-sql-host.ts';
+  const absolute = resolve(root, tempFile);
+  try {
+    writeFileSync(absolute, "export const NC7_SQL = 'SELECT count(*) FROM public.favorites';\n", 'utf8');
+    const dirty = findHostSetProblems(discoverSqlHosts());
+    assert.equal(dirty.length, 1, `临时新增一个 SQL 宿主后必须恰红 1 条，实际：\n${dirty.join('\n') || '（没有变红 —— 文件集不变量没在看新文件！）'}`);
+    assert.ok(dirty[0].includes(tempFile), `红字必须点名该临时文件：${dirty[0]}`);
+    console.log(`[sql-column-coverage] NC7 红字（新宿主未登记）：${dirty[0]}`);
+  } finally {
+    rmSync(absolute, { force: true });
+  }
+  assert.deepEqual(findHostSetProblems(discoverSqlHosts()), [], '删掉临时宿主后必须回绿');
+});
+
+test('sql-column-coverage/parser_negative_controls NC8：豁免表登记源码里不存在的缺口 ⇒ 必须判陈旧（R28-S66）', () => {
+  const staleColumn = auditAll({
+    storeSources: auditedSources,
+    exemptions: [
+      ...LEDGER_COVERAGE_EXEMPT,
+      { ref: 'public.exports.no_such_column', privilege: 'SELECT', reason: '负控制：源码里根本没有这一列', owner: 'NC8' },
+    ],
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: ROW_LOCK_EXEMPT,
+  });
+  assert.equal(staleColumn.coverage.staleExemptions.length, 1, `陈旧列级豁免必须恰红 1 条，实际：\n${staleColumn.coverage.staleExemptions.join('\n')}`);
+  assert.ok(staleColumn.coverage.staleExemptions[0].includes('public.exports.no_such_column'));
+  assert.deepEqual(staleColumn.coverage.problems, [], '加一条陈旧豁免不应制造新缺口（真实 33 条仍被压住）');
+  assert.equal(staleColumn.problems.length, 1, '陈旧豁免必须进 total problems（否则 CI 看不见）');
+
+  const staleLock = auditAll({
+    storeSources: auditedSources,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: [
+      ...ROW_LOCK_EXEMPT,
+      { table: 'public.exports', privilege: 'UPDATE', ref: 'services/api/src/privacy/ledger-pg.ts:99999', reason: '负控制：源码里没有这一行', owner: 'NC8' },
+    ],
+  });
+  assert.equal(staleLock.rowLocks.staleExemptions.length, 1, `陈旧行锁豁免必须恰红 1 条，实际：\n${staleLock.rowLocks.staleExemptions.join('\n')}`);
+  assert.ok(staleLock.rowLocks.staleExemptions[0].includes('ledger-pg.ts:99999'));
+  console.log(`[sql-column-coverage] NC8 红字（陈旧列级豁免）：${staleColumn.coverage.staleExemptions[0]}`);
+  console.log(`[sql-column-coverage] NC8 红字（陈旧行锁豁免）：${staleLock.rowLocks.staleExemptions[0]}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉 UPDATE 授权 ⇒ 行锁规则必须点名（R28-S66）', () => {
+  const original = 'GRANT UPDATE (updated_at) ON users TO gengyun_auth_privacy;';
+  const mutatedGrants = loadGrantSources().map((source) =>
+    source.file.endsWith('/auth_privacy.sql') ? { ...source, text: source.text.replace(original, '') } : source,
+  );
+  const target = mutatedGrants.find((source) => source.file.endsWith('/auth_privacy.sql'));
+  assert.ok(!target.text.includes(original), 'NC9 变异没生效：auth_privacy.sql 的 users UPDATE 授权没被删（源文件改了？）');
+
+  const broken = auditAll({
+    grantSources: mutatedGrants,
+    storeSources: auditedSources,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: ROW_LOCK_EXEMPT,
+  });
+  assert.deepEqual(broken.coverage.problems, [], '行锁不占用列面：删掉 users 的 UPDATE(updated_at) 不应产生列级缺口');
+  assert.equal(broken.rowLocks.problems.length, 2, `users 上有两处 FOR UPDATE（profile/service.ts:35、privacy/consent-pg.ts:75），必须恰红 2 条，实际：\n${broken.rowLocks.problems.join('\n') || '（没有变红 —— 行锁规则没生效！）'}`);
+  assert.deepEqual(
+    broken.rowLocks.problems.map((problem) => problem.split(' → ')[0]).sort(),
+    ['services/api/src/privacy/consent-pg.ts:75', 'services/api/src/profile/service.ts:35'],
+    '红字必须点名这两处行锁站点',
+  );
+  for (const problem of broken.rowLocks.problems) {
+    assert.ok(problem.includes('public.users 缺 UPDATE'), `红字必须点名表与权限：${problem}`);
+    assert.ok(problem.includes('行锁 FOR UPDATE'), `红字必须说明是行锁要求：${problem}`);
+  }
+
+  const healed = auditAll({
+    grantSources: mutatedGrants,
+    storeSources: auditedSources,
+    exemptions: LEDGER_COVERAGE_EXEMPT,
+    opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
+    rowLockExemptions: [
+      ...ROW_LOCK_EXEMPT,
+      { table: 'public.users', privilege: 'UPDATE', ref: 'services/api/src/profile/service.ts:35', reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
+      { table: 'public.users', privilege: 'UPDATE', ref: 'services/api/src/privacy/consent-pg.ts:75', reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
+    ],
+  });
+  assert.deepEqual(healed.rowLocks.problems, [], `登记两条行锁豁免后必须回绿：\n${healed.rowLocks.problems.join('\n')}`);
+  assert.deepEqual(healed.rowLocks.staleExemptions, [], '两条豁免都应命中真实站点');
+  console.log(`[sql-column-coverage] NC9 红字（撤掉 FOR UPDATE 需要的 UPDATE 授权）：${broken.rowLocks.problems.join(' | ')}`);
+  console.log(`[sql-column-coverage] NC9 登记两条行锁豁免后 problems ${healed.rowLocks.problems.length} / staleExemptions ${healed.rowLocks.staleExemptions.length}`);
+});
+
+test('sql-column-coverage/parser_negative_controls NC10：注释掉真实的 GRANT DELETE ⇒ 必须红并点名整表缺 DELETE（C1b-1）', () => {
+  // 为什么非做不可：DELETE 需求这一面是 C1b-1 才补进 collectRequirements 的，而它补进来的直接动机
+  // 就是「`GRANT DELETE ON public.messages` 忘了给，守卫却一直绿」。因此必须从**真实**授权文本里
+  // 把这一行注释掉，看正向断言是否真的变红 —— 否则「补了 DELETE 面」只是一句注释。
   const target = 'GRANT DELETE ON public.messages TO gengyun_api_runtime;';
   const source = loadGrantSources().find((item) => item.file === GRANT_MAIN_FILE);
   assert.ok(source !== undefined, `缺少 ${GRANT_MAIN_FILE}`);
-  assert.ok(source.text.includes(target), `负控制前置：${GRANT_MAIN_FILE} 里没有 \`${target}\`（形态已变，先同步本文件；`
-    + '若这行是被删掉的，那不是“形态变了”，而是又退回了 #17 那个 P0 缺口）');
+  assert.ok(
+    source.text.includes(target),
+    `负控制前置：${GRANT_MAIN_FILE} 里没有 \`${target}\`（形态已变，先同步本文件；若这行是被删掉的，`
+    + '那不是"形态变了"，而是又退回了 #17 那个 P0 缺口）',
+  );
 
-  // 正向自证①：注释掉 ⇒ 必须红，且恰好点名「public.messages（整表）缺 DELETE」。
+  // ① 注释掉 ⇒ 必须恰红 1 条，点名 public.messages（整表）缺 DELETE + 运行时 SQL 出处。
   const commented = source.text.replace(target, `-- ${target}`);
   assert.notEqual(commented, source.text, '负控制前置：变异没有真正生效');
   const brokenSources = loadGrantSources().map((item) => (item.file === GRANT_MAIN_FILE ? { file: item.file, text: commented } : item));
@@ -1450,11 +2239,9 @@ test('sql-column-coverage/parser_negative_controls NC5：注释掉真实的 GRAN
   const restored = auditAll();
   assert.deepEqual(restored.coverage.problems, [], '复原真实授权文本后必须回绿');
 
-  // 正向自证②：**列级 DELETE 授权不能满足整表需求**。
-  // 这一条是把「PG 没有 `GRANT DELETE (col)`」变成断言：哪怕列级 DELETE 列清单覆盖了整张表的每一列，
-  // 也不能满足 `DELETE FROM …`（真实 PG 会直接语法/权限报错）。用内存夹具证明判定逻辑没有偷偷放宽。
+  // ② 列级 DELETE 授权**不能**满足整表需求（PG 里不存在 `GRANT DELETE (col)`）。
   const fakeStore = {
-    file: 'tests/unit/fixtures/sql-column-coverage/nc5-fake-store-pg.ts',
+    file: 'tests/unit/fixtures/sql-column-coverage/nc10-fake-store-pg.ts',
     text: [
       'export function fake(pool, ownerId) {',
       "  return pool.query('DELETE FROM public.favorites WHERE owner_id = $1', [ownerId]);",
@@ -1462,7 +2249,7 @@ test('sql-column-coverage/parser_negative_controls NC5：注释掉真实的 GRAN
     ].join('\n'),
   };
   const fakeGrants = {
-    file: 'services/api/db/roles/nc5-fake.sql',
+    file: 'services/api/db/roles/nc10-fake.sql',
     text: [
       'BEGIN;',
       'GRANT DELETE (id, revision, owner_id) ON public.favorites TO gengyun_api_runtime;',
@@ -1474,14 +2261,11 @@ test('sql-column-coverage/parser_negative_controls NC5：注释掉真实的 GRAN
   assert.equal(
     columnHit.length,
     1,
-    '列级 DELETE 授权不得满足整表 DELETE 需求（PG 无 `GRANT DELETE (col)` 这种形态），实际：\n'
-    + `${columnOnly.coverage.problems.join('\n') || '（判定被偷偷放宽成“有列就算有表权限”了！）'}`,
+    '列级 DELETE 授权不得满足整表 DELETE 需求，实际：\n'
+    + `${columnOnly.coverage.problems.join('\n') || '（判定被偷偷放宽成"有列就算有表权限"了！）'}`,
   );
-  assert.equal(
-    columnOnly.coverage.missing.length,
-    1,
-    `列级 DELETE 不满足整表需求时，缺口条数必须恰为 1（实际 ${columnOnly.coverage.missing.length}）`,
-  );
-  console.log(`[sql-column-coverage] NC5 红字（注释掉真实 GRANT DELETE）：${hit[0]}`);
-  console.log(`[sql-column-coverage] NC5 红字（只给了列级 DELETE）：${columnHit[0]}`);
+  assert.equal(columnOnly.coverage.missing.length, 1, `列级 DELETE 不满足整表需求时缺口条数必须恰为 1（实际 ${columnOnly.coverage.missing.length}）`);
+
+  console.log(`[sql-column-coverage] NC10 红字（注释掉真实 GRANT DELETE）：${hit[0]}`);
+  console.log(`[sql-column-coverage] NC10 红字（只给了列级 DELETE）：${columnHit[0]}`);
 });

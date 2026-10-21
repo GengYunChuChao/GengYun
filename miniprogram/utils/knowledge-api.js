@@ -185,6 +185,13 @@ function herbicideRow(x) {
     registered_name: '', toxicity: '', use_scene: '',
     ingredients_text: item.formulation.ingredients.map(i => i.name + ' ' + i.content_text).join('、'),
     risk_text: item.risk_text,
+    // 来源可追溯三元组：`SourceRef` 的 id／publisher／title 原样透传（闭集校验已保证非空串），
+    // 页面据此展示「来源名称」「来源标识」，缺项不补写、不推断。
+    source_id: item.source.id,
+    source_publisher: item.source.publisher,
+    source_title: item.source.title,
+    // 展示串：只用契约里的 publisher／title 拼接，不加入任何推断或模型生成内容。
+    source_name: item.source.publisher + ' · ' + item.source.title,
     source_version: item.source.version,
     reference_state: item.reference_state,
     source_marker: '服务端接口 /herbicides',

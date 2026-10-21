@@ -11,6 +11,9 @@
 //      （见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）⇒ 取不到可播放来源 ⇒ **自动播放失败**：
 //      页面如实写「本环境无可播放音频（契约无客户端音频出口）」+ 文案 + 主动播放按钮，
 //      **不显示「播放中／已播放」**、**不伪造音频**、**不记「已听取」**。
+//      此外，"要不要**自动出声**"还要过 `utils/speech-autoplay.js` 的策略：用户可关（关闭后文字与
+//      「播放」按钮照常可用）、同一页同一版本只自动播报一次（state-contract.md:64）、
+//      读不到偏好或缺版本化引用时**不自动出声**（fail-closed）。
 //
 // 离页口径（返回 / 切页 / 隐藏三条路径共用同一个出口）：
 //   取消本机在途请求与轮询 + `controller.release()`（退订全部监听、销毁音频句柄）；
@@ -25,6 +28,7 @@ const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const speechText = require('../../utils/speech-text')
+const speechAutoplay = require('../../utils/speech-autoplay')
 const audioPlayback = require('../../utils/audio-playback')
 const innerAudioPort = require('../../utils/inner-audio-port')
 const substitutePlayer = require('../../utils/substitute-player')
@@ -75,6 +79,8 @@ Page({
     this._recStartedAt = 0
     this._recTimer = null
     this._recTick = 0
+    /** 平台交回的**本机录音临时文件**路径（只有它需要被 `discardRecordFile` 回收）。 */
+    this._recTempFilePath = ''
     this._uploadEpoch = 0
     /** 页面已卸载：此后**任何**入口都不得再重新打开麦克风。 */
     this._gone = false
@@ -86,11 +92,21 @@ Page({
     this._sendAttempt = null
     this._cancelAttempt = null
     this._conversation = null
+    // ⑤ 自动播报策略（页面作用域：偏好持久化在 wx 存储，键见 utils/speech-autoplay.js）。
+    this._autoSpeak = null
+    /** 本次合成实际发出的目标引用（`job` 上取不到 `target_ref` 时用作版本键来源）。 */
+    this._requestRef = null
   },
 
   onShow: function () {
     fontScale.applyFontScale(this)
-    this.setData({ fontScale: fontScale.currentFontScale() })
+    // 自动播报偏好：先取回本次页面的实际取值（读不到偏好 ⇒ 策略内部已按"不自动播报"处理）。
+    const autoSpeak = this.autoSpeakPolicy()
+    this.setData({
+      fontScale: fontScale.currentFontScale(),
+      autoSpeakEnabled: autoSpeak.isEnabled(),
+      autoSpeakNote: autoSpeak.isPreferenceUnreadable() ? speechAutoplay.reasonTextOf('auto-speak-preference-unreadable') : ''
+    })
     const that = this
     pageGate.start(this, function (ok) {
       const loggedIn = ok === true && auth.isLoggedIn()
@@ -175,6 +191,15 @@ Page({
      * 由本地替身工程**显式**开启（非真实音频、不产生任何声音、不计「已听取」）。
      */
     substituteWalkthrough: false,
+    /**
+     * **自动播报开关**（用户可关；开关的判定与持久化都在 `utils/speech-autoplay.js`）。
+     *
+     * 这里只是渲染用的快照：`onShow` 从策略取回真实值覆盖。关闭后**不自动出声**，
+     * 但文字内容与「播放」按钮**照常可用**（关的是"自动"，不是播报能力）。
+     */
+    autoSpeakEnabled: true,
+    /** 本次"要不要自动出声"的如实说明（含被关闭/已播报过/读不到偏好等原因）。 */
+    autoSpeakNote: '',
     failureProbe: '',
     probing: false,
     // 录音控件（独立）：默认**不录音**，各态逐态可分辨（idle/recording/stopped/uploading/failed）
@@ -189,6 +214,8 @@ Page({
     recordMaxMs: voiceApi.RECORD_MAX_DURATION_MS,
     recordedMime: '',
     uploadedMediaId: null,
+    /** 与 `uploadedMediaId` **成对**存在：只复位其中之一会拼出伪引用（见 `transcriptMediaRef`）。 */
+    uploadedMediaRevision: 0,
     uploadedPurpose: '',
     uploadErrorCode: '',
     recordSupported: false,
@@ -292,6 +319,8 @@ Page({
     // 作废在途上传：迟到的响应不再落 UI（服务端任务本就没有客户端取消能力，不谎称已取消）。
     this._uploadEpoch = (this._uploadEpoch || 0) + 1
     this._recPending = false
+    // 离页/门禁失效/切后台：本机临时录音一并丢弃（契约「取消录音丢弃临时文件并解绑监听」）。
+    this.discardRecordFile()
     if (this._recorder !== null) {
       this._recorder.release()
       this._recorder = null
@@ -302,7 +331,7 @@ Page({
     const patch = {
       recording: false, recordState: 'idle', recordLabel: '开始录音',
       recordElapsedMs: 0, recordDurationMs: 0, recordedMime: '', hasRecording: false,
-      uploadedMediaId: null, uploadedPurpose: '', uploadErrorCode: ''
+      uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '', uploadErrorCode: ''
     }
     if (wasUploading) {
       // 上传中被作废：如实说明"没有上传成功、也没有 media_id"，并明确"可以重新录音"（不得留挂起态）。
@@ -312,6 +341,44 @@ Page({
       patch.recordStageNote = '已离开本页：录音已停止并释放麦克风。'
     }
     this.setData(patch)
+  },
+
+  /**
+   * 丢弃本机的**录音临时文件**。
+   *
+   * 为什么必须由页面自己做：`wx.getRecorderManager()` 的 `onStop` 交回的是**本机临时文件**，
+   * 其生命周期不受页面控制，平台也不会因为「上传已完成」「页面已离开」替你回收。
+   * `docs/architecture/state-contract.md` 对客户端的要求是「取消录音丢弃临时文件并解绑监听」，
+   * 因此以下四种结局都必须丢弃：**上传成功**（正文已在服务端，唯一的后续引用是 `media_id`）、
+   * **上传失败**（本条不会再被重试上传，页面文案已要求重新录制）、**取消/被作废**、
+   * **离页（返回/切页/切后台/门禁失效）**。
+   *
+   * 只做**尽力而为**的删除：能力不存在（老基础库）或平台报错时静默跳过，
+   * **不**改任何 UI、**不**抛异常，也**不**在任何文案里宣称"已清理"（删不掉不是业务失败，
+   * 但也不能把没做到的事写成做到）。
+   *
+   * @returns {boolean} 是否真的把删除请求交给了平台（供测试与自查复核，不用于 UI）。
+   */
+  discardRecordFile: function () {
+    const filePath = this._recTempFilePath
+    this._recTempFilePath = ''
+    if (typeof filePath !== 'string' || filePath === '') return false
+    const api = typeof wx === 'undefined' ? null : wx
+    if (api === null) return false
+    try {
+      const fs = typeof api.getFileSystemManager === 'function' ? api.getFileSystemManager() : null
+      if (fs !== null && typeof fs.unlink === 'function') {
+        fs.unlink({ filePath: filePath, fail: function () { /* 已不存在：目的已达成 */ } })
+        return true
+      }
+      if (typeof api.removeSavedFile === 'function') {
+        api.removeSavedFile({ filePath: filePath, fail: function () { /* 同上 */ } })
+        return true
+      }
+    } catch (error) {
+      // 平台异常（老基础库/无权限）：不改变任何状态，也不谎称已删除。
+    }
+    return false
   },
 
   /** 惰性建端口（与 `ensureController` 同一写法；端口不可用时如实返回 null）。 */
@@ -399,6 +466,15 @@ Page({
       return
     }
     const generation = this.beginOperation()
+    // 再次提交前：上一份播报若还在响（播放中/暂停），先**显式停止**。
+    // 否则页面会把球重置成 idle 而声音仍在放 —— 那是"看着没在播、其实在播"的假状态，
+    // 播放球的状态必须与真实播报一致（停止是用户可理解的显式动作，不是静默掐断）。
+    if (this._controller !== null && this._controller.isReleased() !== true) {
+      const snapshot = this._controller.snapshot()
+      if (snapshot.state === 'playing' || snapshot.state === 'paused') this._controller.stop()
+    }
+    // 记下本次发出的版本化引用（自动播报去重的版本键来源；只在真的发出请求时记）。
+    this._requestRef = ref
     this.setData({ busy: true, stage: 'synthesis', synthesisNote: '', job: null, failure: null, listened: false, substituteCompleted: false, playbackState: 'idle' })
     try {
       const created = await voiceApi.createSynthesis(ref)
@@ -483,12 +559,61 @@ Page({
     })
     // 无论是否替身走查，都先如实写下**来源**口径（有真实源时才清空）。
     this.applyModeNotice(source)
+    // 「要不要**自动出声**」由策略判定（可关闭 / 同一页同一版本只一次 / 读不到偏好或缺版本引用时不自动）。
+    // 判定结果一律写进 `autoSpeakNote`（可见即可审），被拒绝时**不发声、不记已听取**，
+    // 但文字与「播放」按钮照常可用。
+    const decision = this.autoSpeakPolicy().decide({
+      targetRef: this.playbackTargetRef(job),
+      planSize: segments.length
+    })
+    this.setData({ autoSpeakNote: decision.reason })
     if (segments.length === 0) {
-      // 自动播放失败：**文案 + 主动播放按钮**，并且不记「已听取」。
+      // 没有可播内容 ⇒ 这不是"自动播报"，而是如实走失败出口（文案 + 主动播放按钮，不记「已听取」）。
       this.ensureController().play([], { auto: true })
       return
     }
+    if (decision.auto !== true) return
+    this.autoSpeakPolicy().markAutoPlayed(decision.targetKey)
     this.ensureController().play(segments, { auto: true })
+  },
+
+  /** 自动播报策略（惰性建一次；页面作用域，离页随页面实例销毁）。 */
+  autoSpeakPolicy: function () {
+    if (this._autoSpeak !== null && this._autoSpeak !== undefined) return this._autoSpeak
+    this._autoSpeak = speechAutoplay.createAutoSpeakPolicy({
+      store: speechAutoplay.createStorageStore()
+    })
+    return this._autoSpeak
+  },
+
+  /**
+   * 版本键来源：优先**任务回传的** `target_ref`（服务端权威），退化到本次请求发出的引用。
+   *
+   * 两者都没有 ⇒ 返回 null ⇒ 策略按"无法判定同一版本"处理（不自动出声），不猜、不硬编码。
+   */
+  playbackTargetRef: function (job) {
+    if (job && typeof job === 'object' && job.target_ref && typeof job.target_ref === 'object') return job.target_ref
+    if (this._requestRef && typeof this._requestRef === 'object') return this._requestRef
+    return null
+  },
+
+  /**
+   * 切换自动播报开关。
+   *
+   * 只影响**后续**是否自动出声：正在播放的这一次不会被静默掐断（停止/暂停是用户显式操作）。
+   * 偏好保存失败时如实说明"本次只在当前页面生效"，不谎称已记住。
+   */
+  onToggleAutoSpeak: function () {
+    if (this.data.guest) return
+    const result = this.autoSpeakPolicy().setEnabled(this.data.autoSpeakEnabled !== true)
+    const note = result.persisted === true
+      ? (result.enabled === true
+        ? '自动播报已开启（已记住本机偏好）：之后合成落定会自动播报，同一页同一版本只自动播报一次。'
+        : '自动播报已关闭（已记住本机偏好）：之后不会自动出声；文字照常显示，可用「播放」按钮主动播放。')
+      : (result.enabled === true
+        ? '自动播报已开启，但本机没能保存该偏好（存储不可用）：只在当前页面生效。'
+        : '自动播报已关闭，但本机没能保存该偏好（存储不可用）：只在当前页面生效。')
+    this.setData({ autoSpeakEnabled: result.enabled, autoSpeakNote: note })
   },
 
   /**
@@ -627,7 +752,7 @@ Page({
       this.setData({
         recording: false, recordState: 'failed', recordLabel: '开始录音',
         recordStageNote: voiceApi.recordUploadMessageFor({ code: 'RECORDER_UNAVAILABLE' }),
-        uploadErrorCode: 'RECORDER_UNAVAILABLE', uploadedMediaId: null, uploadedPurpose: ''
+        uploadErrorCode: 'RECORDER_UNAVAILABLE', uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
@@ -636,7 +761,7 @@ Page({
       recordState: 'recording', recordLabel: '正在录音…', recording: true,
       recordStageNote: '正在录音（麦克风已打开）。再次点击即停止并上传。',
       recordElapsedMs: 0, recordDurationMs: 0, recordedMime: '',
-      uploadedMediaId: null, uploadedPurpose: '', uploadErrorCode: ''
+      uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '', uploadErrorCode: ''
     })
 
     let started
@@ -653,7 +778,7 @@ Page({
         recordElapsedMs: 0,
         recordStageNote: voiceApi.recordUploadMessageFor({ code: started.code }),
         uploadErrorCode: typeof started.code === 'string' ? started.code : 'RECORD_FAILED',
-        uploadedMediaId: null, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
@@ -704,15 +829,17 @@ Page({
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', recordStageNote: voiceApi.recordUploadMessageFor({ code: result.code }),
         uploadErrorCode: typeof result.code === 'string' ? result.code : 'RECORD_FAILED',
-        uploadedMediaId: null, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
 
+    // 平台交回的**本机临时文件**从此刻起由本页负责回收（成功/失败/作废/离页四种结局都丢）。
+    this._recTempFilePath = result.tempFilePath
     // 拿到产物 ⇒ **立刻**锁定本次上传的世代（此后所有异步落点都用这一对值复查）。
     const epoch = this._uploadEpoch || 0
     const generation = this.beginOperation()
-    if (this.uploadStillValid(generation, epoch) !== true) return
+    if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
 
     this.setData({
       recordDurationMs: result.durationMs,
@@ -724,12 +851,14 @@ Page({
 
     // 上传前的**契约限额预检**：超限直接给可操作提示，**不发出** POST /media/uploads（服务端必拒）。
     if (result.durationMs > voiceApi.RECORD_MAX_DURATION_MS) {
+      // 这条永远不会上传：本机临时录音没有保留理由，就地丢弃。
+      this.discardRecordFile()
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'INVALID_INPUT',
         recordStageNote: '录音时长 ' + (result.durationMs / 1000).toFixed(1) + ' 秒，超过契约上限 '
           + (voiceApi.RECORD_MAX_DURATION_MS / 1000) + ' 秒：本条未上传任何音频，请重新录制。',
-        uploadedMediaId: null, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
@@ -739,24 +868,27 @@ Page({
       info = await readFileInfo(result.tempFilePath)
     } catch (error) {
       // 窗口内页面可能已被作废：作废就**不改 UI**（保留已写好的如实作废说明），也不谎称失败原因。
-      if (this.uploadStillValid(generation, epoch) !== true) return
+      if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
+      // 摘要读不出来 ⇒ 不会上传，本机临时录音一并丢弃。
+      this.discardRecordFile()
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_CHANNEL_UNAVAILABLE',
         recordStageNote: '无法读取录音文件摘要：本条未上传任何音频（不伪造上传结果）。',
-        uploadedMediaId: null, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
     // **F1-R2 关键复查**：`readFileInfo` 是异步的 —— 离页/门禁失效/代次变化都必须在此收手。
-    if (this.uploadStillValid(generation, epoch) !== true) return
+    if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
     if (info.size > voiceApi.VOICE_MAX_BYTES) {
+      this.discardRecordFile()
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_TOO_LARGE',
         recordStageNote: '录音文件 ' + (info.size / 1048576).toFixed(1) + ' MiB，超过用途上限 '
           + (voiceApi.VOICE_MAX_BYTES / 1048576) + ' MiB：本条未上传任何音频，请缩短录制后重试。',
-        uploadedMediaId: null, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
@@ -782,7 +914,7 @@ Page({
    * 否则离页复位之后又会被重新写成「上传中」，而该续跑随后静默 return ⇒ 无人再复位（F1-R2）。
    */
   uploadRecording: async function (port, result, info, generation, epoch) {
-    if (this.uploadStillValid(generation, epoch) !== true) return
+    if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
     this.setData({
       recordState: 'uploading', recordLabel: '正在上传…',
       recordStageNote: '按用途 voice_question 上传（' + (result.durationMs / 1000).toFixed(1) + ' 秒 · '
@@ -796,15 +928,17 @@ Page({
     } catch (error) {
       mode = null
     }
-    if (this.uploadStillValid(generation, epoch) !== true) return
+    if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
 
     // 非 real 模式：不上传，明确标注为「待接线」（本页不伪造 media_id）。
     if (mode !== null && mode !== 'real') {
+      // 没有真实对象存储：本条不上传，本机临时录音不留。
+      this.discardRecordFile()
       this._recPending = false
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音',
         recordStageNote: '执行模式 ' + mode + '（真实对象存储未接线）：录音已在本机完成，但本条没有上传，也没有 media_id。',
-        uploadErrorCode: '', uploadedMediaId: null, uploadedPurpose: ''
+        uploadErrorCode: '', uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
     }
@@ -813,7 +947,7 @@ Page({
       const media = await identifyApi.uploadVoiceQuestion(result.tempFilePath, {
         mime: result.mime, bytes: info.size, sha256: info.digest, durationMs: result.durationMs
       })
-      if (this.uploadStillValid(generation, epoch) !== true) return
+      if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
       this._recPending = false
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音', uploadErrorCode: '',
@@ -824,15 +958,19 @@ Page({
           + '，时长 ' + result.durationMs + ' ms）。本页只做到「已上传」：转写与问答结果不在本页，'
           + '也不显示任何「已回答」一类结论。'
       })
+      // 正文已在服务端：后续转写只用 media_id + revision 引用，**本机副本不再需要**。
+      this.discardRecordFile()
     } catch (error) {
       // 守卫先于任何状态写入：已作废的在途上传**不得**再改 UI（也不得谎称失败原因）。
-      if (this.uploadStillValid(generation, epoch) !== true) return
+      if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
+      // 本条不会再被重试上传：本机临时录音就地丢弃（文案已要求重新录制）。
+      this.discardRecordFile()
       this._recPending = false
       if (isGateLoss(error)) { this.closePrivate(); return }
       this.setData({
         recordState: 'failed', recordLabel: '重新录音',
         uploadErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
-        uploadedMediaId: null, uploadedPurpose: '',
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '',
         recordStageNote: voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）'
       })
     }
@@ -877,7 +1015,11 @@ Page({
    * 两者都取不到 ⇒ null：页面**不发明**媒体引用、不发起转写。
    */
   transcriptMediaRef: function () {
-    if (this.data.uploadedMediaId !== '' && this.data.uploadedMediaRevision >= 1) {
+    // 类型严格：`uploadedMediaId !== ''` 对 `null` 也成立（`null !== ''`），旧写法在「上传成功后
+    // 离页/门禁失效把 `uploadedMediaId` 复位成 null」时会拼出 `media_id: null` 的伪引用，
+    // 于是转写请求在本地校验处以 `INVALID_INPUT` 失败 —— 与「本来就没有录音」的如实提示相反。
+    if (typeof this.data.uploadedMediaId === 'string' && this.data.uploadedMediaId !== '' &&
+      this.data.uploadedMediaRevision >= 1) {
       return { media_id: this.data.uploadedMediaId, media_revision: this.data.uploadedMediaRevision }
     }
     const sampleId = this.data.selectedTranscriptSampleId

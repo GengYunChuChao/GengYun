@@ -179,6 +179,141 @@ jobs:
           PGUSER: gengyun_cvm_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun
+      # ⑥ 授权面探针（R28-S71）：把「运行时到底被授了什么」接进本 job 的判红读数。
+      #
+      # 为什么需要这一步（实证出处 `docs/verification/gy-r28-probe-in-ci-20261021.md`）：
+      #   · `deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 是 S26/S28/S38/S51 四轮授权面
+      #     的实测脚本（现状矩阵 → 三域零行探针 → 对照臂 → 表级 DML 清单 → 函数面），但 R28-S71
+      #     之前**没有任何 workflow 执行过它**：它只是「文档里的读数」。有人把 20-login-roles.sql
+      #     的授段改窄、把迁移里 REVOKE … FROM PUBLIC 删掉，CI 仍然全绿 —— 这正是本步要补的缺口。
+      #   · 它与上一步的分工：90-assert 只看「末行 ok」，判据是全有/全无；探针按**语句形状**逐条
+      #     回答「这个角色能不能跑这条 SQL」，并且**故意让禁止面报错**（文件 :34 自己把
+      #     `ON_ERROR_STOP` 设成 0 是设计的一部分），所以它不能用「退出码 0」单独判。
+      #
+      # 判据三重（任一不成立即 `::error::` + 非 0 退出；⛔ 无 `continue-on-error`、无 `|| true`、无 `if:`）：
+      #   ① 退出码 0：挡「连不上库 / 脚本被截断 / psql 自身报错」。被验的 42501 不改退出码。
+      #   ② 关键标记逐条命中（下面的 `markers` 数组，逐个 `grep -F`），三类：
+      #      · 遍历标记：脚本期真的跑到了那一段（`### 0)`、`-- [5]…[8] 探针结束`、`### 探针结束`）；
+      #      · 授权面读数：`admin_accounts_rows`（段 8a-1 的列头 —— EXECUTE 被拒权时 psql
+      #        只打 ERROR 不打列头，授段一改这条就没了）；`public.idempotency_keys`（段 4 /
+      #        对照臂里 90-assert 唯一豁免的那张表，仍必须出现在运行时的表级 DML 面里）；
+      #      · 禁止面读数：3 张表的 DELETE ＋ selections 的 FOR UPDATE ＋ 2 张表的 DELETE
+      #        ＋ 3 个 internal 函数 ＋ 2 个 trigger 函数，各一条 `permission denied …`。
+      #        注意 8b 的三条**现在**是 `permission denied for schema …`：运行时连
+      #        catalog_ops / staging_intake 的 USAGE 都没有，拒权发生在取名阶段、比函数级
+      #        EXECUTE 更早。这是真实读数（本步只钉住它，不替它选口径）；哪天有人补了
+      #        schema USAGE 而仍拒 EXECUTE，报错文本会变成 `permission denied for function …`，
+      #        本步会因此判红——那正是一次「授权面被改动，请复核」的信号。
+      #   ③ 错误行条数**恰好**等于禁止面条数（`expected_42501`）：既挡「少报」（禁止面被授了
+      #      权限、或整段没跑到），也挡「多报」（正向语句被误拒权，或冒出 0A000 之类的别的错误类）。
+      #      ⚠ 这不是「写在成功提示里的死数字」：`tests/unit/deploy-sql-gate-probe.test.mjs` 每次都
+      #      从 `probe-runtime-grants.sql` 源码按四处禁止面**重新数一遍**并与本常量比对 ——
+      #      探针加了禁止面语句而这里没跟，静态守卫先红。
+      - name: 授权面探针 probe-runtime-grants.sql（退出码 0 + 标记 + 错误条数）
+        run: |
+          set -euo pipefail
+
+          probe="deploy/postgres-cvm/evidence/probe-runtime-grants.sql"
+          out="$(mktemp)"
+          errs="$(mktemp)"
+
+          rc=0
+          if psql -X -q -v ON_ERROR_STOP=0 -f "${probe}" >"${out}" 2>&1; then
+            rc=0
+          else
+            rc=$?
+          fi
+          echo "---- 探针输出（尾部 40 行；完整输出见上面的 psql 读数）----"
+          tail -n 40 "${out}"
+          echo "退出码=${rc}"
+
+          failed=0
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::探针的 psql 退出码是 ${rc}（要求 0）：连不上库、脚本被截断，或 psql 自身报错。被验的 42501 不会改退出码（文件自己把 ON_ERROR_STOP 设成 0 是设计的一部分）。"
+            failed=1
+          fi
+
+          # ---- ② 关键标记：缺一条就红 ----
+          markers=(
+            '### 0) 环境'
+            '### 探针结束'
+            '-- [5] 收藏／历史／对话域探针结束'
+            '-- [6] 识别域探针结束'
+            '-- [7] 语音域探针结束'
+            '-- [8] 函数面探针结束'
+            'public.idempotency_keys'
+            'admin_accounts_rows'
+            'permission denied for table recognition_jobs'
+            'permission denied for table recognition_records'
+            'permission denied for table recognition_selections'
+            'permission denied for table speech_jobs'
+            'permission denied for table transcriptions'
+            'permission denied for schema catalog_ops'
+            'permission denied for schema staging_intake'
+            'permission denied for function consent_policy_immutable'
+            'permission denied for function admin_audit_events_reject_mutation'
+          )
+
+          missing=0
+          for marker in "${markers[@]}"; do
+            if grep -F -q -- "${marker}" "${out}"; then
+              echo "标记命中：${marker}"
+            else
+              echo "::error::探针输出里缺少标记：${marker}（清单见本步 markers，口径见 docs/verification/gy-r28-probe-in-ci-20261021.md 的 §2）"
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "::error::共缺 ${missing} 条标记（清单见上）：授权面或探针遍历断了，本步读数不可信。"
+            failed=1
+          fi
+
+          # ---- ③ 错误条数：只允许禁止面那 expected_42501 条，且一条不少 ----
+          # 算式（探针源码逐条相加，见证据页 §2）：段 6 禁止面 4 ＋ 段 7 禁止面 2
+          #   ＋ 段 8b internal 函数 3 ＋ 段 8c trigger 函数 2
+          #   ＋ 段 9b 视图/schema 3 ＋ 段 10 exports 2 ＋ 段 11 GRANT/CREATE 2 = 18。
+          # 原值 11 漏算了段 9b、10、11 共七条（#378 合入时的常量与探针源码不一致，
+          # 已在真实 CI 上按 18 条逐行取证后改正；判据方向不变，仍是「恰好等于」）。
+          # 行形状：psql 读文件且 VERBOSITY=verbose 时是
+          #   `psql:<file>:<line>: ERROR:  42501: permission denied for …`
+          # ⇒ 不能锚 `^ERROR:`（那会恒为 0 条，等于把判据废掉）；这里锚 `ERROR:  <SQLSTATE>:`。
+          expected_42501=18
+          total_errors=0
+          if grep -qE 'ERROR:[[:space:]]+[0-9A-Z]{5}:' "${out}"; then
+            total_errors="$(grep -cE 'ERROR:[[:space:]]+[0-9A-Z]{5}:' "${out}")"
+          fi
+          forbidden_errors=0
+          if grep -qE 'ERROR:[[:space:]]+42501:' "${out}"; then
+            forbidden_errors="$(grep -cE 'ERROR:[[:space:]]+42501:' "${out}")"
+          fi
+          echo "ERROR 行=${total_errors}（其中 42501=${forbidden_errors}），期望=${expected_42501}"
+          if [ "${total_errors}" -ne "${expected_42501}" ]; then
+            echo "::error::探针输出的 ERROR 行数是 ${total_errors}（要求恰好 ${expected_42501}）：少报说明禁止面被授了权限（或整段没跑到），多报说明正向语句被误拒权、或出现了别的错误类。全部 ERROR 行如下："
+            grep -E 'ERROR:[[:space:]]+[0-9A-Z]{5}:' "${out}" >"${errs}" || dump_rc=$?
+            while IFS= read -r line; do
+              echo "  ${line}"
+            done <"${errs}"
+            failed=1
+          fi
+          if [ "${forbidden_errors}" -ne "${expected_42501}" ]; then
+            echo "::error::其中 42501（permission denied）是 ${forbidden_errors} 条（要求恰好 ${expected_42501}）：说明有错误不是「禁止面被拒」，禁止面/正向面的授权口径变了。"
+            failed=1
+          fi
+
+          if [ "${failed}" -ne 0 ]; then
+            echo "---- 完整探针输出（只在判红时打，便于定位）----"
+            cat "${out}"
+            echo "::error::授权面探针判红：逐条见上。⛔ 不许给这步加条件执行或兜底写法来消红（注解不改变结论）。"
+            exit 1
+          fi
+
+          echo "探针通过：退出码 0；标记 ${#markers[@]} 条全中；ERROR 行 ${total_errors} 条且全部是禁止面 42501（期望 ${expected_42501}）。"
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_cvm_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun
       # ⑤ 误授恢复演练（R28-S42）：证明「重跑 20-login-roles.sql 能把被误撤的列级授权恢复回来」。
       #
       # 为什么需要这一步（实证出处见 `docs/verification/gy-r28-deploy-sql-recovery-replay-20261021.md`）：

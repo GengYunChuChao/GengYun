@@ -97,6 +97,9 @@ try {
     //   recorder-port：wx.getRecorderManager 的唯一出现处（GY-I11 语音问答真实录音）
     //   speech-transcript：GY-I11 转写四端点 + 确认/发送消费层（可编辑、确认后发送、取消/失败/迟到不外发）
     'utils/speech-text.js',
+    // 自动播报策略（GY-I13）：可关闭的自动播报开关 + 「同一页同一版本只自动播报一次」+ 读不到偏好时不自动，
+    // 漏加会导致标准包 MODULE_NOT_FOUND。
+    'utils/speech-autoplay.js',
     'utils/audio-playback.js',
     'utils/inner-audio-port.js',
     'utils/substitute-player.js',
