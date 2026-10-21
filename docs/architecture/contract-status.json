@@ -22,10 +22,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/public-home.ts",
+          "symbol": "app.get('/api/v1/public/home'",
           "lines": "9-16"
         },
         {
           "path": "services/api/src/db/catalog.ts",
+          "symbol": "readHomePreviews",
           "lines": "14-32"
         },
         {
@@ -47,10 +49,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/auth.ts",
+          "symbol": "service.loginWechat(",
           "lines": "42-83"
         },
         {
           "path": "services/api/src/auth/wechat.ts",
+          "symbol": "createWechatIdentityProvider",
           "lines": "66-132"
         },
         {
@@ -72,10 +76,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin-auth.ts",
+          "symbol": "service.loginAdmin(",
           "lines": "46-86"
         },
         {
           "path": "services/api/src/auth/password.ts",
+          "symbol": "hashPassword",
           "lines": "1-40"
         },
         {
@@ -97,6 +103,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin-auth.ts",
+          "symbol": "`${API_PREFIX}/admin/auth/session`",
           "lines": "88-101"
         },
         {
@@ -118,6 +125,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/auth.ts",
+          "symbol": "app.get(`${API_PREFIX}/auth/session`",
           "lines": "85-99"
         },
         {
@@ -139,6 +147,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/auth.ts",
+          "symbol": "service.logoutUser(",
           "lines": "101-122"
         },
         {
@@ -160,6 +169,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin-auth.ts",
+          "symbol": "service.logoutAdmin(",
           "lines": "103-127"
         },
         {
@@ -181,10 +191,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/profile.ts",
+          "symbol": "app.get(`${API_PREFIX}/me/profile`",
           "lines": "25-28"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "async get(input: Identity) {",
           "lines": "66-71"
         },
         {
@@ -206,10 +218,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/profile.ts",
+          "symbol": "app.put(`${API_PREFIX}/me/profile`",
           "lines": "29-42"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "async put(input: Identity, body: ProfileInput, ifMatch: string, idempotencyKey: string) {",
           "lines": "72-104"
         },
         {
@@ -231,10 +245,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/profile.ts",
+          "symbol": "app.get(`${API_PREFIX}/catalog/${kind}`",
           "lines": "43-53"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "async function directory(client: PoolClient, kind: 'crops' | 'regions'): Promise<CatalogItem[]> {",
           "lines": "57-64"
         },
         {
@@ -256,10 +272,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/profile.ts",
+          "symbol": "app.get(`${API_PREFIX}/catalog/${kind}`",
           "lines": "43-53"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "async function directory(client: PoolClient, kind: 'crops' | 'regions'): Promise<CatalogItem[]> {",
           "lines": "57-64"
         },
         {
@@ -305,14 +323,17 @@
       "evidence": [
         {
           "path": "services/api/src/routes/consents.ts",
+          "symbol": "app.get(`${API_PREFIX}/me/consents`",
           "lines": "40-49"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
+          "symbol": "consentStore",
           "lines": "109-120"
         },
         {
           "path": "services/api/src/privacy/consent-pagination.ts",
+          "symbol": "paginateConsentRecords",
           "lines": "24-65"
         },
         {
@@ -334,10 +355,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/consents.ts",
+          "symbol": "app.post(`${API_PREFIX}/me/consents`",
           "lines": "24-39"
         },
         {
           "path": "services/api/src/privacy/grant-pg.ts",
+          "symbol": "persistConsentGrant",
           "lines": "32-113"
         },
         {
@@ -360,10 +383,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/consents.ts",
+          "symbol": "app.delete(`${API_PREFIX}/me/consents/:purpose`",
           "lines": "50-64"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
+          "symbol": "requireConsent",
           "lines": "135-179"
         }
       ],
@@ -393,14 +418,17 @@
       "evidence": [
         {
           "path": "services/api/src/routes/account-deletion.ts",
+          "symbol": "`${API_PREFIX}/me/account/deletion`",
           "lines": "128-181"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
+          "symbol": "createAccountDeletionRequestService",
           "lines": "200-229"
         },
         {
           "path": "services/api/src/app.ts",
+          "symbol": "accountDeletionWired",
           "lines": "1722-1729"
         },
         {
@@ -430,14 +458,17 @@
       "evidence": [
         {
           "path": "services/api/src/routes/account-deletion.ts",
+          "symbol": "`${API_PREFIX}/account/deletions/:id`",
           "lines": "183-205"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
+          "symbol": "createDeletionReceiptRegistry",
           "lines": "120-165"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
+          "symbol": "projectReceipt",
           "lines": "242-299"
         },
         {
@@ -475,10 +506,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "`${API_PREFIX}/media/uploads`",
           "lines": "218-233"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "initiateUploadUnclaimed",
           "lines": "807-874"
         },
         {
@@ -500,10 +533,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.completeUpload(",
           "lines": "236-257"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "completeUploadUnclaimed",
           "lines": "876-953"
         },
         {
@@ -525,10 +560,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.getMedia(",
           "lines": "260-275"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "getMedia",
           "lines": "975-978"
         },
         {
@@ -550,10 +587,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.deleteMedia(",
           "lines": "278-295"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "deleteMediaUnclaimed",
           "lines": "980-1009"
         },
         {
@@ -575,10 +614,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.grantMediaAccess(",
           "lines": "298-315"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "grantMediaAccess",
           "lines": "1021-1052"
         },
         {
@@ -600,6 +641,7 @@
       "evidence": [
         {
           "path": "services/api/src/jobs/routes.ts",
+          "symbol": "`${API_PREFIX}/jobs/:id`",
           "lines": "51-62"
         },
         {
@@ -608,6 +650,7 @@
         },
         {
           "path": "services/api/src/moderation/job-source.ts",
+          "symbol": "createModerationJobSource",
           "lines": "1-33"
         }
       ],
@@ -625,6 +668,7 @@
       "evidence": [
         {
           "path": "services/api/src/jobs/routes.ts",
+          "symbol": "`${API_PREFIX}/jobs/:id/cancel`",
           "lines": "64-80"
         },
         {
@@ -633,6 +677,7 @@
         },
         {
           "path": "services/api/src/moderation/job-source.ts",
+          "symbol": "createModerationJobSource",
           "lines": "1-33"
         }
       ],
@@ -650,14 +695,17 @@
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "app.get(`${API_PREFIX}/knowledge`",
           "lines": "188-192"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
+          "symbol": "createKnowledgeService",
           "lines": "56-123"
         },
         {
           "path": "services/api/src/knowledge/pagination.ts",
+          "symbol": "paginateKnowledge",
           "lines": "30-72"
         },
         {
@@ -679,10 +727,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
           "lines": "193-199"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
+          "symbol": "async function read(input: Identity, query: KnowledgeQuery, id?: string) {",
           "lines": "57-121"
         },
         {
@@ -704,14 +754,17 @@
       "evidence": [
        {
         "path": "services/api/src/routes/knowledge.ts",
+        "symbol": "reference.listHerbicides(",
         "lines": "201-207"
        },
        {
         "path": "services/api/src/knowledge/reference-query.ts",
+        "symbol": "listHerbicides",
         "lines": "168-176"
        },
        {
         "path": "packages/reference/zhejiang.mjs",
+        "symbol": "assertZhejiangDiscipline",
         "lines": "97-160"
        },
        {
@@ -737,10 +790,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/knowledge.ts",
+        "symbol": "reference.getHerbicide(",
         "lines": "208-216"
        },
        {
         "path": "services/api/src/knowledge/reference-query.ts",
+        "symbol": "getHerbicide",
         "lines": "177-185"
        },
        {
@@ -778,6 +833,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
+          "symbol": "service.createRecognition(",
           "lines": "79-116"
         },
         {
@@ -799,6 +855,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
+          "symbol": "service.getRecognition(",
           "lines": "118-128"
         },
         {
@@ -820,6 +877,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
+          "symbol": "service.deleteRecognition(",
           "lines": "148-160"
         },
         {
@@ -841,6 +899,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/recognitions.ts",
+          "symbol": "service.selectSpecies(",
           "lines": "130-146"
         },
         {
@@ -862,6 +921,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
+          "symbol": "service.createOcr(",
           "lines": "224-257"
         },
         {
@@ -882,6 +942,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
+          "symbol": "`${API_PREFIX}/ocr/:id`",
           "lines": "259-272"
         },
         {
@@ -902,6 +963,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
+          "symbol": "service.deleteOcrWithRevision(",
           "lines": "310-328"
         },
         {
@@ -922,6 +984,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
+          "symbol": "service.correctOcr(",
           "lines": "274-290"
         },
         {
@@ -942,6 +1005,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/ocr.ts",
+          "symbol": "service.verifyOcrWithRevision(",
           "lines": "292-308"
         },
         {
@@ -962,6 +1026,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
+          "symbol": "service.createTranscription(",
           "lines": "160-194"
         },
         {
@@ -982,6 +1047,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
+          "symbol": "service.getTranscription(",
           "lines": "196-208"
         },
         {
@@ -1002,6 +1068,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
+          "symbol": "service.deleteTranscription(",
           "lines": "210-228"
         },
         {
@@ -1022,6 +1089,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/speech.ts",
+          "symbol": "service.confirmTranscription(",
           "lines": "230-248"
         },
         {
@@ -1042,6 +1110,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/synthesis.ts",
+          "symbol": "service.createSynthesis(",
           "lines": "112-177"
         },
         {
@@ -1062,6 +1131,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().createConversation(",
           "lines": "115-119"
         },
         {
@@ -1089,6 +1159,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().listConversations(",
           "lines": "126-130"
         },
         {
@@ -1113,6 +1184,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().getConversation(",
           "lines": "136-140"
         },
         {
@@ -1137,6 +1209,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().deleteConversation(",
           "lines": "148-152"
         },
         {
@@ -1165,6 +1238,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().createTurn(",
           "lines": "161-165"
         },
         {
@@ -1196,6 +1270,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().listTurns(",
           "lines": "174-178"
         },
         {
@@ -1220,6 +1295,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/conversations.ts",
+          "symbol": "ready().deleteTurn(",
           "lines": "184-188"
         },
         {
@@ -1248,10 +1324,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().listPosts(",
         "lines": "201-209"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "listPosts",
           "lines": "748-753"
         },
         {
@@ -1272,10 +1350,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().createPost(",
         "lines": "211-221"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "createPost",
           "lines": "820-825"
         },
         {
@@ -1300,10 +1380,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "`${API_PREFIX}/posts/:id`",
         "lines": "223-230"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
           "lines": "908-913"
         },
         {
@@ -1324,10 +1406,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().editPost(",
         "lines": "232-239"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "editPost",
           "lines": "915-920"
         },
         {
@@ -1348,10 +1432,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().deletePost(",
         "lines": "241-249"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "deletePost",
           "lines": "1028-1033"
         },
         {
@@ -1372,10 +1458,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().listComments(",
         "lines": "251-262"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "listComments",
           "lines": "1063-1068"
         },
         {
@@ -1396,10 +1484,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().createComment(",
         "lines": "264-274"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "createComment",
           "lines": "1116-1121"
         },
         {
@@ -1420,10 +1510,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().getComment(",
         "lines": "276-283"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "getComment",
           "lines": "1208-1213"
         },
         {
@@ -1444,10 +1536,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().editComment(",
         "lines": "285-292"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "editComment",
           "lines": "1215-1220"
         },
         {
@@ -1468,10 +1562,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().deleteComment(",
         "lines": "294-301"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "deleteComment",
           "lines": "1295-1300"
         },
         {
@@ -1492,10 +1588,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().likePosts(",
         "lines": "305-312"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "likePosts",
           "lines": "1329-1334"
         },
         {
@@ -1516,10 +1614,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().unlikePosts(",
         "lines": "314-321"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "unlikePosts",
           "lines": "1333-1338"
         },
         {
@@ -1540,10 +1640,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().likeComments(",
         "lines": "323-330"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "likeComments",
           "lines": "1337-1342"
         },
         {
@@ -1564,10 +1666,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().unlikeComments(",
         "lines": "332-339"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "unlikeComments",
           "lines": "1341-1346"
         },
         {
@@ -1588,10 +1692,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().createReport(",
         "lines": "341-351"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "createReport",
           "lines": "1346-1351"
         },
         {
@@ -1612,10 +1718,12 @@
       "evidence": [
        {
         "path": "services/api/src/routes/community.ts",
+        "symbol": "ready().getOwnReport(",
         "lines": "353-360"
        },
         {
           "path": "services/api/src/community/service.ts",
+          "symbol": "getOwnReport",
           "lines": "1386-1391"
         },
         {
@@ -1636,10 +1744,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
+          "symbol": "app.get(`${API_PREFIX}/favorites`",
           "lines": "89-92"
         },
         {
           "path": "services/api/src/favorites/service.ts",
+          "symbol": "listFavorites",
           "lines": "305-347"
         },
         {
@@ -1661,10 +1771,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
+          "symbol": "`${API_PREFIX}/favorites`",
           "lines": "94-107"
         },
         {
           "path": "services/api/src/favorites/service.ts",
+          "symbol": "createFavorite",
           "lines": "359-415"
         },
         {
@@ -1686,10 +1798,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/favorites.ts",
+          "symbol": "`${API_PREFIX}/favorites/:id`",
           "lines": "109-119"
         },
         {
           "path": "services/api/src/favorites/service.ts",
+          "symbol": "deleteFavorite",
           "lines": "426-466"
         },
         {
@@ -1711,10 +1825,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/history.ts",
+          "symbol": "app.get(`${API_PREFIX}/history`",
           "lines": "80-83"
         },
         {
           "path": "services/api/src/history/service.ts",
+          "symbol": "listHistory",
           "lines": "318-358"
         },
         {
@@ -1736,10 +1852,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/history.ts",
+          "symbol": "`${API_PREFIX}/history/:id`",
           "lines": "85-98"
         },
         {
           "path": "services/api/src/history/service.ts",
+          "symbol": "deleteHistory",
           "lines": "369-404"
         },
         {
@@ -1761,6 +1879,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
+          "symbol": "app.get(`${API_PREFIX}/messages`",
           "lines": "43-52"
         },
         {
@@ -1782,6 +1901,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
+          "symbol": "app.get(`${API_PREFIX}/messages/unread-count`",
           "lines": "53-58"
         },
         {
@@ -1803,6 +1923,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/messages.ts",
+          "symbol": "app.put(`${API_PREFIX}/messages/:id/read`",
           "lines": "59-70"
         },
         {
@@ -1824,6 +1945,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/sources`",
           "lines": "172-174"
         },
         {
@@ -1832,6 +1954,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "listAdminSources",
           "lines": "574-579"
         },
         {
@@ -1853,6 +1976,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/sources`",
           "lines": "175-177"
         },
         {
@@ -1861,6 +1985,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "createSourceDraft",
           "lines": "575-580"
         },
         {
@@ -1882,6 +2007,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/sources/:id`",
           "lines": "178-180"
         },
         {
@@ -1890,6 +2016,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "getAdminSource",
           "lines": "576-581"
         },
         {
@@ -1911,6 +2038,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.patch(`${API_PREFIX}/admin/sources/:id`",
           "lines": "181-183"
         },
         {
@@ -1919,6 +2047,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "editSourceDraft",
           "lines": "577-582"
         },
         {
@@ -1944,6 +2073,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/publish`",
           "lines": "184-186"
         },
         {
@@ -1952,6 +2082,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "publishSource",
           "lines": "578-583"
         },
         {
@@ -1973,6 +2104,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/withdraw`",
           "lines": "187-189"
         },
         {
@@ -1981,6 +2113,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "withdrawSource",
           "lines": "579-584"
         },
         {
@@ -2002,6 +2135,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/knowledge`",
           "lines": "192-194"
         },
         {
@@ -2010,6 +2144,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "listAdminKnowledge",
           "lines": "581-586"
         },
         {
@@ -2031,6 +2166,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/knowledge`",
           "lines": "195-197"
         },
         {
@@ -2039,6 +2175,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "createKnowledgeDraft",
           "lines": "582-587"
         },
         {
@@ -2060,6 +2197,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/knowledge/:id`",
           "lines": "198-200"
         },
         {
@@ -2068,6 +2206,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "getAdminKnowledge",
           "lines": "583-588"
         },
         {
@@ -2089,6 +2228,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.patch(`${API_PREFIX}/admin/knowledge/:id`",
           "lines": "201-203"
         },
         {
@@ -2097,6 +2237,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "editKnowledgeDraft",
           "lines": "584-589"
         },
         {
@@ -2118,6 +2259,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/publish`",
           "lines": "204-206"
         },
         {
@@ -2126,6 +2268,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "publishKnowledge",
           "lines": "585-590"
         },
         {
@@ -2151,6 +2294,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`",
           "lines": "207-209"
         },
         {
@@ -2159,6 +2303,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "withdrawKnowledge",
           "lines": "586-591"
         },
         {
@@ -2180,6 +2325,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/registrations`",
           "lines": "212-214"
         },
         {
@@ -2188,6 +2334,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "listAdminRegistration",
           "lines": "588-593"
         },
         {
@@ -2209,6 +2356,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/registrations`",
           "lines": "215-217"
         },
         {
@@ -2217,6 +2365,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "createRegistrationDraft",
           "lines": "589-594"
         },
         {
@@ -2238,6 +2387,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/registrations/:id`",
           "lines": "218-220"
         },
         {
@@ -2246,6 +2396,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "getAdminRegistration",
           "lines": "590-595"
         },
         {
@@ -2267,6 +2418,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.patch(`${API_PREFIX}/admin/registrations/:id`",
           "lines": "221-223"
         },
         {
@@ -2275,6 +2427,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "editRegistrationDraft",
           "lines": "591-596"
         },
         {
@@ -2296,6 +2449,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/publish`",
           "lines": "224-226"
         },
         {
@@ -2304,6 +2458,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "publishRegistration",
           "lines": "592-597"
         },
         {
@@ -2325,6 +2480,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`",
           "lines": "227-229"
         },
         {
@@ -2333,6 +2489,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "withdrawRegistration",
           "lines": "593-598"
         },
         {
@@ -2354,6 +2511,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/restrictions`",
           "lines": "232-234"
         },
         {
@@ -2362,6 +2520,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "listAdminRestriction",
           "lines": "595-600"
         },
         {
@@ -2383,6 +2542,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/restrictions`",
           "lines": "235-237"
         },
         {
@@ -2391,6 +2551,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "createRestrictionDraft",
           "lines": "596-601"
         },
         {
@@ -2412,6 +2573,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.get(`${API_PREFIX}/admin/restrictions/:id`",
           "lines": "238-240"
         },
         {
@@ -2420,6 +2582,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "getAdminRestriction",
           "lines": "597-602"
         },
         {
@@ -2441,6 +2604,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.patch(`${API_PREFIX}/admin/restrictions/:id`",
           "lines": "241-243"
         },
         {
@@ -2449,6 +2613,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "editRestrictionDraft",
           "lines": "598-603"
         },
         {
@@ -2470,6 +2635,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/publish`",
           "lines": "244-246"
         },
         {
@@ -2478,6 +2644,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "publishRestriction",
           "lines": "599-604"
         },
         {
@@ -2499,6 +2666,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`",
           "lines": "247-249"
         },
         {
@@ -2507,6 +2675,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "withdrawRestriction",
           "lines": "600-605"
         },
         {
@@ -2528,6 +2697,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/categories`",
           "lines": "267-271"
         },
         {
@@ -2536,6 +2706,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "listAdminCategories",
           "lines": "314-319"
         },
         {
@@ -2557,6 +2728,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/categories/:id`",
           "lines": "272-281"
         },
         {
@@ -2565,6 +2737,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "editCategory",
           "lines": "319-324"
         },
         {
@@ -2586,6 +2759,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/accounts`",
           "lines": "288-292"
         },
         {
@@ -2594,6 +2768,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "listAdminUsers",
           "lines": "400-411"
         },
         {
@@ -2615,6 +2790,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/accounts/:id/suspend`",
           "lines": "293-301"
         },
         {
@@ -2623,6 +2799,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "suspendUser",
           "lines": "413-418"
         },
         {
@@ -2644,6 +2821,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/jobs`",
           "lines": "311-315"
         },
         {
@@ -2652,6 +2830,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "listAdminJobs",
           "lines": "508-513"
         },
         {
@@ -2673,6 +2852,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
           "lines": "316-324"
         },
         {
@@ -2681,6 +2861,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "cancelAdminJob",
           "lines": "515-520"
         },
         {
@@ -2702,6 +2883,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "listFlags",
           "lines": "332-336"
         },
         {
@@ -2710,6 +2892,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "listFlags",
           "lines": "707-711"
         },
         {
@@ -2731,6 +2914,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/feature-flags/:key`",
           "lines": "337-345"
         },
         {
@@ -2739,6 +2923,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
           "lines": "713-718"
         },
         {
@@ -2764,6 +2949,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "hidePost",
           "lines": "353-361"
         },
         {
@@ -2772,6 +2958,7 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "hidePost",
           "lines": "785-790"
         },
         {
@@ -2793,6 +2980,7 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/audit-events`",
           "lines": "255-259"
         },
         {
@@ -2801,6 +2989,7 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
+          "symbol": "listAuditEvents",
           "lines": "602-607"
         },
         {
@@ -2822,10 +3011,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.grantCommunityMediaAccess(",
           "lines": "318-334"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "grantCommunityMediaAccess",
           "lines": "1056-1174"
         },
         {
@@ -2847,10 +3038,12 @@
       "evidence": [
         {
           "path": "services/api/src/routes/media.ts",
+          "symbol": "service.readCommunityMediaContent(",
           "lines": "337-362"
         },
         {
           "path": "services/api/src/media/service.ts",
+          "symbol": "readCommunityMediaContent",
           "lines": "1176-1222"
         },
         {
@@ -2874,10 +3067,12 @@
       "evidence": [
         {
           "path": "services/api/src/contract.ts",
+          "symbol": "ERROR_STATUS_MAP",
           "lines": "14-58"
         },
         {
           "path": "services/api/src/errors.ts",
+          "symbol": "ApiError",
           "lines": "42-76"
         },
         {
@@ -2895,14 +3090,17 @@
       "evidence": [
         {
           "path": "services/api/src/knowledge/pagination.ts",
+          "symbol": "paginateKnowledge",
           "lines": "30-72"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "async list(input: Identity, kind: 'crops' | 'regions', options: {cursor?: string; limit: number; parent_code?: string}) {",
           "lines": "104-113"
         },
         {
           "path": "services/api/src/privacy/consent-pagination.ts",
+          "symbol": "paginateConsentRecords",
           "lines": "24-65"
         },
         {
@@ -2915,6 +3113,7 @@
         },
         {
           "path": "services/api/src/profile/pagination.ts",
+          "symbol": "paginateCatalog",
           "lines": "24-65"
         }
       ],
@@ -2928,18 +3127,22 @@
       "evidence": [
         {
           "path": "services/api/src/routes/profile.ts",
+          "symbol": "REVISION_REQUIRED",
           "lines": "37-41"
         },
         {
           "path": "services/api/src/routes/consents.ts",
+          "symbol": "REVISION_REQUIRED",
           "lines": "59-63"
         },
         {
           "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
           "lines": "193-199"
         },
         {
           "path": "services/api/src/profile/service.ts",
+          "symbol": "cropItems",
           "lines": "86-87"
         },
         {
@@ -2957,26 +3160,32 @@
       "evidence": [
         {
           "path": "services/api/src/routes/support.ts",
+          "symbol": "runIdempotent",
           "lines": "80-148"
         },
         {
           "path": "services/api/src/app.ts",
+          "symbol": "idempotencyStore",
           "lines": "828-834"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
+          "symbol": "IDEMPOTENCY_TTL_SECONDS",
           "lines": "31-33"
         },
         {
           "path": "services/api/src/auth/service.ts",
+          "symbol": "USER_SESSION_TTL_SECONDS",
           "lines": "104-107"
         },
         {
           "path": "services/api/src/admin/identity.ts",
+          "symbol": "IDEMPOTENCY_KEY_MIN",
           "lines": "23-26"
         },
         {
           "path": "services/api/src/admin/idempotent-write.ts",
+          "symbol": "issuedAt",
           "lines": "55-72"
         },
         {
@@ -3003,14 +3212,17 @@
       "evidence": [
         {
           "path": "services/api/src/db/catalog.ts",
+          "symbol": "HomePreview",
           "lines": "5-22"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
+          "symbol": "toISOString",
           "lines": "102-104"
         },
         {
           "path": "packages/reference/constants.mjs",
+          "symbol": "CONTRACT_VERSION",
           "lines": "1-60"
         },
         {
@@ -3019,10 +3231,12 @@
         },
         {
           "path": "services/api/src/ocr/reference.ts",
+          "symbol": "SUBSTITUTE_MARK",
           "lines": "35-49"
         },
         {
           "path": "services/api/src/ocr/reference.ts",
+          "symbol": "createUnwiredDosePort",
           "lines": "223-245"
         },
         {
@@ -3039,14 +3253,17 @@
       "evidence": [
         {
           "path": "services/api/src/contract.ts",
+          "symbol": "EXECUTION_MODES",
           "lines": "9-11"
         },
         {
           "path": "services/api/src/config.ts",
+          "symbol": "loadConfig",
           "lines": "155-283"
         },
         {
           "path": "services/api/src/auth/wechat.ts",
+          "symbol": "createWechatIdentityProvider",
           "lines": "66-76"
         },
         {
@@ -3064,6 +3281,7 @@
       "evidence": [
         {
           "path": "services/api/src/recognitions/service.ts",
+          "symbol": "cancelJob",
           "lines": "757-797"
         },
         {
@@ -3072,14 +3290,17 @@
         },
         {
           "path": "services/api/src/jobs/routes.ts",
+          "symbol": "`${API_PREFIX}/jobs/:id/cancel`",
           "lines": "64-80"
         },
         {
           "path": "services/api/src/jobs/registry.ts",
+          "symbol": "async cancel(input) {",
           "lines": "283-309"
         },
         {
           "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
           "lines": "316-324"
         }
       ],
@@ -3093,14 +3314,17 @@
       "evidence": [
         {
           "path": "services/api/src/db/pool.ts",
+          "symbol": "createPool",
           "lines": "27-53"
         },
         {
           "path": "services/api/src/auth/wechat.ts",
+          "symbol": "WECHAT_CODE2SESSION_URL",
           "lines": "32-33"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
+          "symbol": "q.toLocaleLowerCase(",
           "lines": "86-89"
         },
         {
@@ -3109,22 +3333,27 @@
         },
         {
           "path": "services/api/src/recognitions/service.ts",
+          "symbol": "runProviderWithDeadline",
           "lines": "525-542"
         },
         {
           "path": "services/api/src/recognitions/service.ts",
+          "symbol": "runProviderWithDeadline",
           "lines": "525-544"
         },
         {
           "path": "services/api/src/ocr/service.ts",
+          "symbol": "DEFAULT_JOB_DEADLINE_MS",
           "lines": "53-59"
         },
         {
           "path": "services/api/src/speech/service.ts",
+          "symbol": "runProviderWithDeadline",
           "lines": "598-616"
         },
         {
           "path": "services/api/src/tts/service.ts",
+          "symbol": "SynthesisService",
           "lines": "819-842"
         },
         {
