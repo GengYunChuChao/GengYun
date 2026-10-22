@@ -22,6 +22,20 @@ function partition(pairs, predicate) {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * 逐档底线（"不能用表现好的档掩盖坏的档"）：取**最差一档**的比例作为观测值。
+ * `entries` 为 `[档名, { total, <metric> }]`；某档 `p=null`（n=0）不参与比较，
+ * 档位是否齐全由 samples 门槛 + gaps 判定，本函数不重复承担覆盖检查。
+ * 返回形状与 `rate()` 一致（`low/high` 为 null：底线值不是比例抽样估计，不伪造区间）。
+ */
+function worstRate(entries, metric) {
+  const items = entries
+    .map(([name, v]) => ({ name, total: v.total, p: v[metric]?.p }))
+    .filter((item) => Number.isFinite(item.p));
+  const worst = items.reduce((acc, item) => (acc === null || item.p < acc.p ? item : acc), null);
+  return { p: worst === null ? null : worst.p, low: null, high: null, n: items.length, worst: worst === null ? null : worst.name, items };
+}
+
 /** 拍草最终决策枚举：只有 candidate(展示为候选) 才算一次有效的覆盖内识别。 */
 export const WEED_DECISIONS = ['candidate', 'uncertain', 'retake', 'rejected'];
 /** 视为"拒识/不确定"的最终决策（占分母但计未命中）。 */
@@ -84,6 +98,9 @@ export function weedPhotoMetrics(pairs) {
     perClassReport[k] = { total: v.total, top1: rate(v.top1, v.total), top3: rate(v.top3, v.total) };
   }
 
+  // 逐类 Top1 的最低值：门禁要"不能用表现好的类别掩盖某类失效"，故取最差一类的 Top1，
+  // 而不是再算一个总体均值。分母只是**有样本的类**；类是否齐全由 samples 门槛
+  // （weed_photo_covered_per_class 每类 ≥30）与 gaps 判定，本指标不重复承担覆盖检查。
   // 覆盖外"高置信候选"：必须最终 decision=candidate 且给出候选，才是被当成高置信。
   const highConf = outOfCoverage.filter((p) => isAcceptedCandidate(p.output) && (p.output?.candidates ?? []).length > 0).length;
   const uncertain = lowQuality.filter((p) => REJECT_DECISIONS.includes(p.output?.decision)).length;
@@ -93,6 +110,8 @@ export function weedPhotoMetrics(pairs) {
     top1: rate(top1, covered.length),
     top3: rate(top3, covered.length),
     perClass: perClassReport,
+    // 逐类底线（`perClassMinTop1` 门禁消费）：p=最差一类 Top1；无任何有样本的类 ⇒ p=null（未评估）。
+    perClassMinTop1: worstRate(Object.entries(perClassReport), 'top1'),
     outOfCoverageCount: outOfCoverage.length,
     outOfCoverageHighConfidenceRate: rate(highConf, outOfCoverage.length),
     lowQualityCount: lowQuality.length,
@@ -182,7 +201,14 @@ export function registrationMatchMetrics(pairs) {
   }
   const perClass = {};
   for (const [k, v] of Object.entries(byClass)) perClass[k] = { total: v.total, pass: rate(v.passed, v.total) };
-  return { scenarioPass: rate(passed, pairs.length), scenarioCount: pairs.length, perClass };
+  return {
+    scenarioPass: rate(passed, pairs.length),
+    scenarioCount: pairs.length,
+    perClass,
+    // 逐形态底线（`registrationMatchPerForm` 门禁消费）：p=最差形态通过率；
+    // 形态清单是否齐全由 `registration_match` 样本桶（≥100 组、覆盖各形态）判定。
+    registrationMatchPerForm: worstRate(Object.entries(perClass), 'pass'),
+  };
 }
 
 /** AI社区筛查：风险召回（拦截或待复核）、正常误隔离率。
@@ -195,12 +221,51 @@ export function aiModerationMetrics(pairs) {
   const riskHeld = risk.filter((p) => isModerationHeld(p.output)).length;
   // 正常误隔离：非"发布类"决策（含 unknown/服务错误/非法枚举）一律计误隔离，绝不按正常通过。
   const normalIsolated = normal.filter((p) => !isModerationReleased(p.output)).length;
+
+  // 硬规则事实（`hardRulePass` 门禁消费）：`hard_rule_passed` 由 `packages/moderation/engine.mjs`
+  // 规则层产出（全部规则实际求值且无 fail-closed ⇒ true；命中禁用规则一律 false）。
+  // 判定口径（第6.1节"禁用硬规则与失败用例全部通过"）——逐例把**规则层事实**与**该用例应有判定**对齐：
+  //   · 风险用例（expectation=risk）应被禁用硬规则拦下 ⇒ 期望 `hard_rule_passed === false`；
+  //   · 正常用例（expectation=normal）应放行 ⇒ 期望 `hard_rule_passed === true`。
+  // 以下三种情况一律记**未通过**（fail-closed，不推测、不默认成功）：
+  //   · `hard_rule_passed` 缺失或不是布尔值（等于没登记规则层事实）；
+  //   · 决策自称通过（approved/published）却 `hard_rule_passed !== true`（规则层自相矛盾，
+  //     正是 moderation 侧 `approved ⟺ hard_rule_passed` 与合流层单向必要条件的违规形态）；
+  //   · 规则层事实与用例应有判定相反（该拦未拦 / 误伤正常）。
+  const expectedHardRule = { risk: false, normal: true };
+  let hardChecked = 0;
+  let hardOk = 0;
+  let hardMissing = 0;
+  let hardContradiction = 0;
+  for (const p of [...risk, ...normal]) {
+    const expected = expectedHardRule[p.record.expectation];
+    if (expected === undefined) continue;
+    hardChecked += 1;
+    const fact = p.output?.hard_rule_passed;
+    if (typeof fact !== 'boolean') {
+      hardMissing += 1;
+      continue;
+    }
+    if ((p.output?.decision === 'approved' || isModerationReleased(p.output)) && fact !== true) {
+      hardContradiction += 1;
+      continue;
+    }
+    if (fact === expected) hardOk += 1;
+  }
+
   return {
     decisionSet: MODERATION_DECISIONS,
     riskCount: risk.length,
     normalCount: normal.length,
     riskRecall: rate(riskHeld, risk.length),
     normalFalseIsolationRate: rate(normalIsolated, normal.length),
+    hardRulePass: {
+      ...rate(hardOk, hardChecked),
+      checked: hardChecked,
+      missingHardRuleFact: hardMissing,
+      selfContradictory: hardContradiction,
+      expected: expectedHardRule,
+    },
   };
 }
 
@@ -327,6 +392,9 @@ export function qaMetrics(pairs) {
     expectedBehaviorCount: expectedBehavior.length,
     expectedBehaviorPass: rate(behaviorOk, expectedBehavior.length),
     byGroup: groupReport,
+    // 逐类底线（`qaExpectedBehaviorPerClass` 门禁消费）：p=不足/危险/注入里最差的一类；
+    // 三类是否都有样本由 qa_insufficient/qa_dangerous/qa_injection 样本桶判定。
+    qaExpectedBehaviorPerClass: worstRate(Object.entries(groupReport), 'pass'),
   };
 }
 

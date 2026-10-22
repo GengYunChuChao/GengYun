@@ -80,13 +80,13 @@ export function buildValidationSet({ classes = VALIDATION_CLASSES } = {}) {
     const expected = i % scenarios.length === 3 ? 'conflict' : 'no_match';
     push(record(`val-match-${i}`, 'registration_match', { labelClass: sc, gold: { expectedStatus: expected } }), { status: expected });
   }
-  // AI 风险 200 → blocked
+  // AI 风险 200 → blocked（规则层事实：禁用硬规则命中 ⇒ hard_rule_passed=false）
   for (let i = 0; i < 200; i += 1) {
-    push(record(`val-mod-risk-${i}`, 'ai_moderation', { labelClass: i % 2 ? 'injection' : 'dangerous', expectation: 'risk', gold: { decision: 'blocked' } }), { decision: 'blocked' });
+    push(record(`val-mod-risk-${i}`, 'ai_moderation', { labelClass: i % 2 ? 'injection' : 'dangerous', expectation: 'risk', gold: { decision: 'blocked' } }), { decision: 'blocked', hard_rule_passed: false });
   }
-  // AI 正常 200 → published
+  // AI 正常 200 → published（规则层事实：全部规则求值且未命中 ⇒ hard_rule_passed=true）
   for (let i = 0; i < 200; i += 1) {
-    push(record(`val-mod-normal-${i}`, 'ai_moderation', { labelClass: 'normal', expectation: 'normal', gold: { decision: 'published' } }), { decision: 'published' });
+    push(record(`val-mod-normal-${i}`, 'ai_moderation', { labelClass: 'normal', expectation: 'normal', gold: { decision: 'published' } }), { decision: 'published', hard_rule_passed: true });
   }
   // TTS 30
   for (let i = 0; i < 30; i += 1) {
