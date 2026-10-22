@@ -1,4 +1,4 @@
-# W12 · 媒体持久化：PG 仓储 + `object_ref_cipher` 键接线 + 幂等落库（2026-10-22）
+﻿# W12 · 媒体持久化：PG 仓储 + `object_ref_cipher` 键接线 + 幂等落库（2026-10-22）
 
 分支 `feat/gy-r28-w12-media-persistence`（Refs #6 #16）。本片**不新增迁移号**：`0027` 保持空闲，
 `services/api/db/migrations` 仍是 26 个迁移（真库读数见 §5 `[1] schema_migrations 行数=26`）。
@@ -435,3 +435,90 @@ node tools/verify-contract-status.mjs
 放行迟到 complete ⇒ `OBJECT_UNAVAILABLE`；最终库内 `state=deleted rev=2`、`media_derivatives` 0 行、桶内衍生件
 已回收。定向套件：`node --test tests/unit/*contract-status*.test.mjs tests/unit/*i22*.test.mjs
 tests/unit/*sql-column*.test.mjs` ⇒ 89 pass / 0 fail；`node tools/verify-contract-status.mjs` 退出码 0。
+
+## 13. 监工二轮：两条 CI 红收口（第四次推送）
+
+两条红都是本分支自己引入或已过期，均在**本分支**修掉，未碰 main。
+
+### 13.1 红一 `unit-tests`：`media-concurrency-pg.mjs` 既不接线也不声明
+
+**改前**（head `c094afae`）：`tests/integration/media-concurrency-pg.mjs` 已随并发读数提交，但既没接进 workflow，
+也没进 `UNWIRED_DECLARATIONS` ⇒ `ci-integration-chain-structure.test.mjs` 判据 4 红：
+`tests/integration 下有既未接线、也未在本文件 UNWIRED_DECLARATIONS 声明的脚本：tests/integration/media-concurrency-pg.mjs`。
+
+**改后**（三处，全部是「订正 + 加严」，没有放松任何一条）：
+
+1. `.github/workflows/real-pg-integration.yml:243`：紧接 `media-persistence-pg.mjs` 那一步之后新增独立 step ——
+   `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_media_concurrency_test' && node tests/integration/media-concurrency-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_media_concurrency_test`，
+   `env` 与相邻步同形（`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`）。step 上方 15 行中文注释写清覆盖面
+   （并发 complete 一 202 一 409、跨主体同幂等键、`reject()` 布尔语义、空库自举）与**必须独立库**的理由：
+   第 12 条的读数里有**全库** `count(*)`（`media-persistence-pg.mjs:273-275`、`:289-291`、`:426`），共库会让
+   「同一幂等键重复 complete 行数不变」与并发臂的行数互相污染 ⇒ 两条臂都变假读数。
+2. `tests/unit/ci-real-pg-wiring.test.mjs:122`（`MANAGED_SCRIPTS`）、`:143`（`FROZEN_MANAGED_SCRIPTS`）、`:221`
+   （`REQUIRED_STEP_ORDER` 第 12b 条）三处清单同步加入该脚本，另有 10 行注释写明「与第 12 条同型、独立库、零耦合」。
+   判据 ⑦ 的「workflow 里执行的 `-pg.mjs` 集合与 `MANAGED_SCRIPTS` 双向相等」因此把新脚本也纳入管控 —— 这是**加严**：
+   接线前它完全没人跑，接线后任何一方漏登记都红。
+3. `tests/unit/ci-integration-chain-structure.test.mjs:225`：`UNWIRED_DECLARATIONS` 增一条该脚本的 reason，写明
+   「已接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job」「同型但不同库」「不进无 PG 回环链」。
+
+**为什么「接线 + 登记」不是二选一**：判据 4 的 `wired` 集合只来自 `package.json` 的 `test:integration:http` 链，
+**不读 workflow**；仓库里真库脚本的既有先例（`media-persistence-pg.mjs`、`messages-pg.mjs` 等）全部是
+「接进真库 job + 同时登记『不在无 PG 回环链』」。本脚本照同一范式登记，描述的是「不在回环链」，与「由
+`real-pg-17.11` 每次真跑」并不矛盾；派单要求的「优先接线」落在第 1、2 处。
+
+### 13.2 红二 `real-pg-17.11`：`media-persistence-pg.mjs:190` 的 0027 断言过期
+
+**改前**：
+```js
+assert.equal(migrations.some((m) => /^0027_/.test(m.filename)), false, '本片不占 0027（现成四表 + 0008 台账已够）');
+```
+它写于「main 最大迁移号 0026」时。`#428` 合入 `0027_admin_audit_observability.sql` 后恒红；下一张 PR 拿 0028 会再红
+一次 —— 本质是**拿别人的迁移号当自己的不变量**，注定腐坏。
+
+**改后**（`tests/integration/media-persistence-pg.mjs:190-220`）：判据改为**看迁移内容，不看迁移号** ——
+剥掉 `--` 行注释、按 `;` 切句、只认 `CREATE|ALTER|DROP` 开头的 DDL，解析其**作用对象**
+（`create [unique] table|alter table|drop table` 后的表名；`create [unique] index … on <表>` 的 `<表>`），
+再断言 media 域两张表 `media`／`media_derivatives` 的 DDL **只出自 `0001_initial_schema.sql`**：
+
+```js
+const MEDIA_DOMAIN_TABLES = new Set(['media', 'media_derivatives']);
+const mediaDdlOwners = migrations.filter((migration) => migration.sql
+  .replace(/--[^\n]*/g, '').split(';')
+  .map((statement) => statement.replace(/\s+/g, ' ').trim())
+  .filter((statement) => /^(create|alter|drop)\b/i.test(statement))
+  .some((statement) => MEDIA_DOMAIN_TABLES.has(ddlTargetOf(statement))))
+  .map((migration) => migration.filename);
+assert.deepEqual(mediaDdlOwners, ['0001_initial_schema.sql'], '…');
+```
+
+**为什么新判据不腐坏**（三条都与「别人加迁移」解耦）：
+- 别人加 0027／0028／0030…（不碰这两张表）⇒ 不红，本判据不需要跟着别人改；
+- 真有片往 media 域叠迁移（`CREATE/ALTER/DROP TABLE|INDEX`，不管文件名里有没有 `media`）⇒ **立刻红**，且必须在
+  本行显式登记文件名并写明是哪个片在改 —— 这是「刻意留 diff」，比按号段猜硬；
+- 只认 DDL 的**作用对象**：别的表里带 `media_id` 外键／列的迁移（如 0018 的 favorites/history）不算，避免误伤。
+
+本地真跑（空库 + 27 个迁移，`0027_admin_audit_observability.sql` 在库）：`[1] schema_migrations 行数=27；
+迁移文件 27 个（最大号 0027_admin_audit_observability.sql，属别的片；本片**不新增**迁移，判据见下）` ⇒ 18 条读数全过。
+
+### 13.3 本轮本地读数（PG 17.11，端口 55741，`Invoke-CimMethod Win32_Process Create` 起 `postgres.exe`）
+
+| 读数 | 结果 |
+| --- | --- |
+| 判断 A 并发 complete（真库 `gengyun_media_concurrency_test`） | 状态码 `[409, 202]`；胜方 `media-conc-race-complete-b-00001`（ready/rev2），败方 409 `REVISION_CONFLICT`；库里衍生物 1 行、败方台账 0 行、共享原始对象赛后回收 |
+| B1 跨主体同 `Idempotency-Key` initiate | owner 201／stranger 201，两条 media，两把 scope 各 1 行（互不抑制） |
+| B2 跨主体同键 complete | owner 202（replay→202）／stranger 404 `NOT_FOUND`；stranger scope 0 行 |
+| B3 同主体同键异请求体 | 409 `IDEMPOTENCY_CONFLICT` |
+| C1 `reject()`→true | `expireInitiated` expired=1，行 `rejected/expired` 落库 |
+| C2 `reject()`→false | 窗口内 DELETE→202；放行后 expired=0，行仍 `deleted/rev2`（不覆盖终态） |
+| `media-persistence-pg.mjs` 新判据 | 18 条读数全过（含空库自举 27 迁移、密文往返、真重启、缺键 fail-closed、负控制） |
+| `npm run test:unit` 全量 | 3647 tests / **3646 pass / 0 fail** / 1 skipped（`native separate-connection …`，仓库既有 skip） |
+| `node tools/lint-workspaces.mjs` | 两份 `tsc --noEmit` + 仓库卫生扫描全 PASS |
+| `node --test tests/unit/ci-integration-chain-structure.test.mjs` | 7/7 pass |
+| `node --test tests/unit/ci-real-pg-wiring.test.mjs` | 18/18 pass |
+
+### 13.4 红线自查（本轮）
+
+- 只推 `feat/gy-r28-w12-media-persistence`；未合并、未 approve、未推 main、未强推。
+- **未删断言**：红一是「加」清单条目与声明；红二把一条过期断言**换成更硬的按内容判据**（判 DDL 归属比判号严），
+  没有任何一条被删除或弱化。
+- 未改 `status` 语义、未改任何 `db/migrations/` 文件（`git status` 5 个文件：workflow、两份单测、一个集成脚本、本证据页）。

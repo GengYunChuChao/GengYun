@@ -184,13 +184,39 @@ try {
   ).catch(() => [{ v: -1 }]))[0].v;
   note(
     `[1] schema_migrations 行数=${migrationCount}；迁移文件 ${migrations.length} 个`
-      + `（最大号 ${migrations.at(-1)?.filename}；本片**不新增**迁移号）`,
+      + `（最大号 ${migrations.at(-1)?.filename}，属别的片；本片**不新增**迁移，判据见下）`,
   );
   assert.equal(migrationCount, migrations.length, 'schema_migrations 行数应等于迁移文件数');
-  assert.equal(
-    migrations.some((migration) => /^0027_/.test(migration.filename)),
-    false,
-    '本片不占 0027（现成四表 + 0008 台账已够）',
+  // 本片不新增迁移。⛔ 旧判据钉的是「不存在 `/^0027_/` 的文件」——它其实想说「本片没占新迁移号」，但写法
+  // 把**别人的迁移号**当成了自己的不变量：main 上 #428 合入 `0027_admin_audit_observability.sql` 后它恒红，
+  // 且下一张 PR 拿 0028 会再红一次（同一个坑，只能靠反复改断言过活）。
+  // 新判据看**迁移内容**，不看迁移号：media 域两张表（media／media_derivatives）的 DDL **只能出自 0001**。
+  //   · 别人加 0027／0028／0030…（不碰这两张表）⇒ 不红，本判据不需要跟着别人改；
+  //   · 真有片往 media 域叠迁移（`CREATE/ALTER/DROP TABLE|INDEX`，不管文件名里有没有 `media`）⇒ 立刻红，
+  //     那时必须在本行显式登记文件名并写明是哪个片在改——这是「刻意留 diff」，不是靠号段猜。
+  //   · 只认 DDL 的**作用对象**：别的表里带 `media_id` 外键／列的迁移（如 0018 的 favorites/history）不算。
+  const ddlTargetOf = (statement) => {
+    if (/^create\s+(?:unique\s+)?index\b/i.test(statement)) {
+      const on = /\bon\s+(?:only\s+)?(?:public\.)?([a-z_]+)/i.exec(statement);
+      return on === null ? null : on[1].toLowerCase();
+    }
+    const head = /^(?:create\s+(?:unique\s+)?table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?|alter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?(?:public\.)?|drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?)([a-z_]+)/i.exec(statement);
+    return head === null ? null : head[1].toLowerCase();
+  };
+  const MEDIA_DOMAIN_TABLES = new Set(['media', 'media_derivatives']);
+  const mediaDdlOwners = migrations
+    .filter((migration) => migration.sql
+      .replace(/--[^\n]*/g, '')
+      .split(';')
+      .map((statement) => statement.replace(/\s+/g, ' ').trim())
+      .filter((statement) => /^(create|alter|drop)\b/i.test(statement))
+      .some((statement) => MEDIA_DOMAIN_TABLES.has(ddlTargetOf(statement))))
+    .map((migration) => migration.filename);
+  assert.deepEqual(
+    mediaDdlOwners,
+    ['0001_initial_schema.sql'],
+    '本片不新增迁移：media／media_derivatives 的 DDL 必须只出自 0001（0027 起属别的片，如 #428 的后台审计观测）。'
+      + '这里多出文件名 ⇒ 有片在改 media 域：请在本断言显式登记该文件名并写明理由，⛔ 不要改回按迁移号判断。',
   );
 
   // -------------------------------------------------------------------------

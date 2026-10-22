@@ -119,6 +119,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/media-persistence-pg.mjs',
+  'tests/integration/media-concurrency-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -139,6 +140,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/media-persistence-pg.mjs',
+  'tests/integration/media-concurrency-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -207,6 +209,16 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    它排在语音域之后、自起集群那两条之前：本步只碰自己库内的表，唯一的新增前提是「库还不存在」，
   //    而 `CREATE DATABASE` 就在它自己的 step 里（判据⑦⑧）。
   'tests/integration/media-persistence-pg.mjs',
+  // 12b. `media-concurrency-pg`（R28-W12 的**并发面**读数，`#6`／`#16`）：与第 12 条**同型**——自建专用空库
+  //    （硬钉 `gengyun_media_concurrency_test`）、自己 `applyMigrations(discoverMigrations())` 空库自举
+  //    （因此判据⑦⑧ 的「空库 + 先建库」对它同样成立）、全程**库 owner** 连接、不建组角色、不复用别人的
+  //    运行时角色 ⇒ 对前后脚本零耦合。跑的是同一媒体对象的两次**并发** `complete`（恰好一个 202、一个 409）、
+  //    同一 `Idempotency-Key` **跨主体**的 scope 判定（不回放他人回执）、`reject()` 的条件写布尔语义。
+  //    ⛔ 必须**独立库**、⛔ 不要并进第 12 条那一步：第 12 条的读数里有**全库** `count(*)`
+  //    （`media-persistence-pg.mjs:273-275`、`:289-291`、`:426`，证「同一幂等键重复 complete 行数不变」），
+  //    共库会让两边的行数互相污染 ⇒ 两条臂都变成假读数。
+  //    它紧跟第 12 条：同一脚本族并排读，且它的唯一前提也是「库还不存在」（`CREATE DATABASE` 在它自己的 step 里）。
+  'tests/integration/media-concurrency-pg.mjs',
   // 13. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
