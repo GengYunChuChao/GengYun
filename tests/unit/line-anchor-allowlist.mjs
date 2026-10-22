@@ -51,6 +51,20 @@ export const ANCHOR_ALLOWLIST = [
       + '不存在能直接算出来的单一符号。',
     owner: 'R31',
   },
+  {
+    path: 'tests/unit/doc-anchors-guard.test.mjs',
+    anchor: 'services/api/src/app.ts:17-30',
+    reason: '这是**夹具输入**而不是期望坐标：该用例要把一份「文档里写成 17-30 行」的假锚点喂给闸门，'
+      + '断言闸门能认出它覆盖的是 `registerRoutes` 的归属块。真实 app.ts 有上千行，按源码实时算会算出完全不同的区间。',
+    owner: 'R31',
+  },
+  {
+    path: 'tests/unit/doc-anchors-guard.test.mjs',
+    anchor: 'miniprogram/utils/session.js:9',
+    reason: '同上：夹具要把一个**单行**引用喂进去，验证「单行锚点必须落在同一个归属块内」这条判据；'
+      + 'session.js 第 9 行是手挑的探针位置，不是任何真实文档锚点。',
+    owner: 'R31',
+  },
 ];
 
 /** allowlist 条目的规范化键：`测试文件::源文件:起[-止]`。 */

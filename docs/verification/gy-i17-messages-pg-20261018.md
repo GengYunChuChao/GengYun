@@ -31,7 +31,7 @@
 | 重复判定只由数据库唯一约束 | `services/api/src/messages/store-pg.ts:139` | 单条 `INSERT … ON CONFLICT DO NOTHING RETURNING id`，看有无返回行判 `inserted` / `duplicate`；没有 `SELECT` 前置 |
 | 标记已读是单条原子 UPDATE | `services/api/src/messages/store-pg.ts:186` | 一条 `UPDATE … SET read_at = $3, revision = revision + 1 WHERE id = $1 AND (…) AND read_at IS NULL RETURNING …`；成功路径总共只发这一条语句 |
 | 未读数是派生量 | `services/api/src/messages/store-pg.ts:215` | `SELECT count(*) … WHERE owner_id = $1 AND read_at IS NULL`；没有计数器列，也没有任何写回 |
-| real 且 pool 非空才接线 | `services/api/src/app.ts:693` | `real` + `pool !== null` ⇒ `createPostgresMessagesStore({ pool })`；`real` + `pool === null` ⇒ 维持 `null`（整域 503，语义未变） |
+| real 且 pool 非空才接线 | `services/api/src/app.ts:781` | `real` + `pool !== null` ⇒ `createPostgresMessagesStore({ pool })`；`real` + `pool === null` ⇒ 维持 `null`（整域 503，语义未变） |
 
 补充两条如实登记：
 

@@ -28,6 +28,7 @@
     "test:integration:media-persistence-pg": "node --experimental-strip-types tests/integration/media-persistence-pg.mjs",
     "test:mini": "node tools/check-wechat-project.mjs && node --test tests/local-debug.test.mjs",
     "test:docs": "node tools/run-python.mjs tools/validate_development_docs.py && node tools/verify-research-records.mjs",
+    "verify:anchors": "node tools/verify-contract-status.mjs && node tools/verify-doc-anchors.mjs --strict",
     "db:migrate": "npm run db:migrate --workspace @gengyun/api",
     "purge:backup-copies": "node tools/purge-expired-backup-copies.mjs",
     "purge:online-data": "node tools/purge-expired-online-data.mjs",

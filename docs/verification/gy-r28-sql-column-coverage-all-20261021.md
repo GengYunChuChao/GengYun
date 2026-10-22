@@ -209,8 +209,8 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 
 | # | 站点 | 表 | 锁 | 授权载体（现状） |
 | --- | --- | --- | --- | --- |
-| 1 | `services/api/src/community/store-pg.ts:384` | `public.community_posts` | `FOR UPDATE` | 列级 `UPDATE (audit_state, body, crop_id, linked_knowledge_id, linked_knowledge_revision, linked_knowledge_type, media_ids, region_code, revision, title, updated_at, visibility)` |
-| 2 | `services/api/src/community/store-pg.ts:440` | `public.community_comments` | `FOR UPDATE` | 列级 `UPDATE (audit_state, body, revision, visibility)` |
+| 1 | `services/api/src/community/store-pg.ts:414` | `public.community_posts` | `FOR UPDATE` | 列级 `UPDATE (audit_state, body, crop_id, linked_knowledge_id, linked_knowledge_revision, linked_knowledge_type, media_ids, region_code, revision, title, updated_at, visibility)` |
+| 2 | `services/api/src/community/store-pg.ts:470` | `public.community_comments` | `FOR UPDATE` | 列级 `UPDATE (audit_state, body, revision, visibility)` |
 | 3 | `services/api/src/conversations/store-pg.ts:260` | `public.conversations` | `FOR UPDATE` | 列级 `UPDATE (revision)` |
 | 4 | `services/api/src/conversations/store-pg.ts:342` | `public.conversation_turns` | `FOR UPDATE` | 列级 `UPDATE (answer_id, job_error_code, job_state, revision, updated_at)` |
 | 5 | `services/api/src/favorites/store-pg.ts:238` | `public.favorites` | `FOR UPDATE` | 列级 `UPDATE (revision)` |
