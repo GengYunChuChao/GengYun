@@ -80,7 +80,7 @@ test('中文表格变旧会被发现，同步保留手写正文，不改变人�
 
 test('CLI 正例及反例：陈旧路由/文档失败，错误时不写表格，显式同步后通过', t => {
   const { root, put } = fixture(t);
-  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs']) {
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs', 'lib/anchor-resolve.mjs']) {
     put('tools/' + name, '');
     copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
   }
@@ -130,7 +130,7 @@ test('CLI 正例及反例：陈旧路由/文档失败，错误时不写表格，
 
 test('证据项指向真实存在的目录时必须受控失败（不得崩溃），改为常规文件后通过', t => {
   const { root, put } = fixture(t);
-  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs']) {
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs', 'lib/anchor-resolve.mjs']) {
     put('tools/' + name, '');
     copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
   }
@@ -246,7 +246,7 @@ const OCR_ASSERTION_SOURCE = "test('OCR 主流程', async () => {\n  assert.equa
 
 function semanticFixture(t) {
   const { root, put } = fixture(t);
-  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs']) {
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'contract-status-runtime.mjs', 'lib/anchor-resolve.mjs']) {
     put('tools/' + name, '');
     copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
   }
