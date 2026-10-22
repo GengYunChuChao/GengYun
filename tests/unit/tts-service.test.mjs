@@ -1236,3 +1236,54 @@ test('重试·失败任务同键重放不复活、不再调提供者；换新键
   assert.equal(old.error_code, 'PROVIDER_QUOTA_EXCEEDED');
   assert.equal(old.result, null);
 });
+
+// ---------------------------------------------------------------- 可重试口径（GY-R31 / #7）
+
+/** **负臂**（独立成例，改动前后都必须绿）：提供者未装配 ⇒ 503 `PROVIDER_UNAVAILABLE` 仍 `retryable:false`。 */
+test('可重试口径·负臂：提供者未装配 ⇒ 503 PROVIDER_UNAVAILABLE 仍 retryable:false（两种状态下都必须绿）', async () => {
+  const unavailable = scriptedProvider(() => ({ kind: 'completed' }), { available: false });
+  const { service } = boot({ provider: unavailable.provider });
+  const error = await captureApiError(
+    () => service.createSynthesis({ userId: USER, body: body(), idempotencyKey: nextKey() }),
+    'PROVIDER_UNAVAILABLE',
+    '提供者未装配的受理',
+  );
+  assert.equal(error.status, 503, '状态码口径不变：仍为 503');
+  assert.equal(error.retryable, false, '未装配需运维改配置，不是时间能解决的（errors.ts:32）');
+});
+
+/**
+ * 「同一 Idempotency-Key 的请求仍在处理中」是**时间能解决的瞬时态**：稍后重试同一请求会收敛到已完成的结果，
+ * 且不会重复执行副作用。HTTP 出口已为该码发 `Retry-After: 1`（`services/api/src/app.ts:1836-1837`，注释写明
+ * "等待后可重试原请求"）⇒ 必须 `retryable: true`，否则"给了等待时长却告诉客户端别重试"自相矛盾。
+ * 状态码仍是 409（**不变**）。
+ *
+ * 确定性构造：占位者已落定（`pending:false`）但其结果引用的 `job_id` 从未落库 ⇒ 收敛路径拿不到任务 ⇒
+ * 走到 `inProgress()`。不依赖墙钟或并发，故 `code`/`status`/`retryable` 三个读数都可钉。
+ */
+test('可重试口径·同键占位未落定 ⇒ 409 REQUEST_IN_PROGRESS 且 retryable:true（状态码不变）', async () => {
+  const base = createMemorySynthesisStore();
+  let claimed = null;
+  const occupied = {
+    ...base,
+    async claimIdempotent(scope, keyHashHex, row) {
+      claimed = { scope, keyHashHex, row };
+      return 'exists';
+    },
+    async findIdempotent(scope, keyHashHex) {
+      if (claimed === null || claimed.scope !== scope || claimed.keyHashHex !== keyHashHex) return null;
+      return { ...claimed.row, pending: false };
+    },
+  };
+  const { service } = boot({ store: occupied });
+  await assert.rejects(
+    () => service.createSynthesis({ userId: USER, body: body(), idempotencyKey: nextKey() }),
+    error => {
+      assert.equal(error.name, 'ApiError');
+      assert.equal(error.code, 'REQUEST_IN_PROGRESS');
+      assert.equal(error.status, 409, '状态码口径不变：仍为 409');
+      assert.equal(error.retryable, true, 'REQUEST_IN_PROGRESS 必须可重试（与 Retry-After: 1 一致）');
+      return true;
+    },
+  );
+});

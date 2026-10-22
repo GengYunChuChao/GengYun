@@ -2134,7 +2134,16 @@ test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少�
   const hit = broken.coverage.problems.filter((problem) => problem.includes('public.regions.name'));
   assert.equal(hit.length, 1, `少授 regions.name 的 SELECT 后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 列级核对没在看新文件！）'}`);
   assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
-  assert.ok(hit[0].includes('profile/service.ts:61'), `红字必须点名 profile/service.ts:61：${hit[0]}`);
+  // 语句站点行号**按源码实时定位**，不写死：`put()` 里加两行就会让写死的 61 变成 65，
+  // 而这种漂移是「测试在报警」还是「测试自己过期」说不清（R31 的 CI 红就是后者）。
+  const regionsStatementLine = readFileSync(resolve(root, 'services/api/src/profile/service.ts'), 'utf8')
+    .split('\n')
+    .findIndex((line) => line.includes('FROM public.regions') && line.includes('catalog_version')) + 1;
+  assert.ok(regionsStatementLine > 0, '找不到 profile/service.ts 的 regions 语句站点（源文件结构变了？）');
+  assert.ok(
+    hit[0].includes(`profile/service.ts:${regionsStatementLine}`),
+    `红字必须点名 profile/service.ts:${regionsStatementLine}（语句站点按源码实时定位）：${hit[0]}`,
+  );
 
   const restored = auditAll({
     storeSources: auditedSources,
