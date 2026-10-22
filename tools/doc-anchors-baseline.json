@@ -88,6 +88,12 @@
       "reference": "experiment-locking.sql:67"
     },
     {
+      "path": "nc1-fake-store-pg.ts",
+      "reason": "BROKEN",
+      "owner": "repo",
+      "reference": "nc1-fake-store-pg.ts:3"
+    },
+    {
       "path": "online-purge-pg.mjs",
       "reason": "BROKEN",
       "owner": "repo",
@@ -154,10 +160,22 @@
       "reference": "services/api/src/db/roles/auth_privacy.sql:59-66"
     },
     {
+      "path": "services/api/src/jobs/store.ts",
+      "reason": "BROKEN",
+      "owner": "api-server",
+      "reference": "services/api/src/jobs/store.ts:5-5"
+    },
+    {
       "path": "services/api/src/media/media.ts",
       "reason": "BROKEN",
       "owner": "api-server",
       "reference": "services/api/src/media/media.ts:467"
+    },
+    {
+      "path": "services/api/src/ocr/retryable-proof-scratch.ts",
+      "reason": "BROKEN",
+      "owner": "api-server",
+      "reference": "services/api/src/ocr/retryable-proof-scratch.ts:6"
     },
     {
       "path": "tests/unit/fixtures/sql-column-coverage/nc1-fake-store-pg.ts",
@@ -172,6 +190,12 @@
       "reference": "tests/unit/fixtures/sql-column-coverage/nc4-fake-store-pg.ts:2"
     },
     {
+      "path": "tests/unit/zz-probe-hardcoded-anchor.test.mjs",
+      "reason": "BROKEN",
+      "owner": "repo",
+      "reference": "tests/unit/zz-probe-hardcoded-anchor.test.mjs:4"
+    },
+    {
       "path": "WAServiceMainContext.js",
       "reason": "BROKEN",
       "owner": "repo",
@@ -182,6 +206,12 @@
       "reason": "BROKEN",
       "owner": "repo",
       "reference": "WASubContext.js:1"
+    },
+    {
+      "path": "zz-probe-hardcoded-anchor.test.mjs",
+      "reason": "BROKEN",
+      "owner": "repo",
+      "reference": "zz-probe-hardcoded-anchor.test.mjs:4"
     },
     {
       "path": "deploy/postgres-cvm/backup-postgres.sh",
@@ -248,6 +278,12 @@
       "reason": "SUSPECT",
       "owner": "deploy",
       "reference": "verify-cvm-postgres.sh:352"
+    },
+    {
+      "path": "docs/architecture/contract-status.json",
+      "reason": "SUSPECT",
+      "owner": "docs",
+      "reference": "contract-status.json:370"
     },
     {
       "path": "docs/architecture/contract-status.json",
@@ -391,25 +427,43 @@
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "app.ts:1641"
+      "reference": "app.ts:1554"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1244"
+      "reference": "app.ts:425"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1412"
+      "reference": "services/api/src/app.ts:1554"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:834"
+      "reference": "services/api/src/app.ts:1659"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:425"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:873"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:873"
     },
     {
       "path": "services/api/src/community/events.ts",
@@ -418,34 +472,34 @@
       "reference": "services/api/src/community/events.ts:121"
     },
     {
-      "path": "services/api/src/community/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/community/service.ts:1530"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:587"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:703"
-    },
-    {
       "path": "services/api/src/community/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "community/store-pg.ts:786"
     },
     {
+      "path": "services/api/src/config.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "config.ts:190"
+    },
+    {
+      "path": "services/api/src/conversations/screen.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "screen.ts:152"
+    },
+    {
+      "path": "services/api/src/conversations/screen.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/screen.ts:152"
+    },
+    {
       "path": "services/api/src/conversations/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/conversations/service.ts:990"
+      "reference": "services/api/src/conversations/service.ts:1107"
     },
     {
       "path": "services/api/src/conversations/store-pg.ts",
@@ -490,16 +544,10 @@
       "reference": "services/api/src/ocr/service.ts:295"
     },
     {
-      "path": "services/api/src/ocr/store-pg.ts",
+      "path": "services/api/src/profile/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "ocr/store-pg.ts:686"
-    },
-    {
-      "path": "services/api/src/recognitions/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/recognitions/store-pg.ts:820"
+      "reference": "services/api/src/profile/service.ts:64"
     },
     {
       "path": "services/api/src/routes/community.ts",
@@ -644,6 +692,12 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/recognitions-candidates-selection.test.mjs:529"
+    },
+    {
+      "path": "tests/unit/release-materials-index.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/release-materials-index.test.mjs:145"
     },
     {
       "path": "tests/unit/tts-jobs-http.test.mjs",
