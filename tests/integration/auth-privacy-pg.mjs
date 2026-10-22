@@ -26,7 +26,7 @@ const group = 'gengyun_auth_privacy';
 const loginName = 'gengyun_auth_privacy_test';
 const password = randomBytes(24).toString('hex');
 const signingKey = randomBytes(32).toString('hex');
-let pool, app, rolesCreated = false, passed = 0;
+let pool, app, passed = 0;
 const say = text => { passed++; console.log(`PASS ${passed}: ${text}`); };
 const sqlFile = path => readFileSync(new URL(`../../services/api/db/${path}`, import.meta.url), 'utf8');
 
@@ -34,34 +34,54 @@ const sqlFile = path => readFileSync(new URL(`../../services/api/db/${path}`, im
 const DECOY_DATABASE = 'gengyun_auth_privacy_decoy_db';
 const DECOY_ROLE = 'gengyun_auth_privacy_decoy';
 const ROLE_NAMES = [loginName, group];
+/** 本次运行**自己创建**的角色（收尾只删这些）；别处已有/别人创建的角色一律不动。 */
+const createdRoles = new Set();
+/** 清理路径实际连过的库（`dropRolesScoped` 唯一入口）。收尾断言只有一个：
+ *  任何「顺手把别的库也清一下」的改动都会在这里红，负控制不必靠"演示破坏"来证明。 */
+const cleanupDatabases = new Set();
 
-/** `DROP OWNED BY` 只作用于**当前库**，PostgreSQL 17.11 也没有 `DROP OWNED BY … IN DATABASE` 这个子句
- *  （实测 `DROP OWNED BY r IN DATABASE d` ⇒ `syntax error at or near "IN"`）。角色若在别的库里还拥有
- *  对象，`DROP ROLE` 会报 `role "…" cannot be dropped because some objects depend on it` /
- *  `DETAIL: 1 object in database <other>`。故清理要对**集群里每个可连的非模板库**各跑一次
- *  `DROP OWNED BY`，最后才 `DROP ROLE`；否则本臂对运行顺序/同集群其它臂敏感（实测原文见
- *  docs/verification/gy-r29-arms-isolation-20261022.md 的 R2 读数）。 */
-async function roleDatabaseClients() {
-  const rows = (await owner.query('SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn ORDER BY 1')).rows;
-  const clients = [];
-  for (const { datname } of rows) {
-    const scoped = new URL(url.href);
-    scoped.pathname = `/${datname}`;
-    const client = new pg.Client({ connectionString: scoped.href });
-    await client.connect();
-    clients.push(client);
-  }
-  return clients;
+/** 清理边界（监工 1927 轮 [P1]）：本臂只碰**自己那一个库**。
+ *
+ *  被否掉的做法是「枚举 `pg_database` 里所有可连的非模板库，逐库 `DROP OWNED BY gengyun_auth_privacy_test,gengyun_auth_privacy`」
+ *  —— 那等于对同集群里别人的库执行 `DROP OWNED`：`gengyun_auth_privacy` 是项目真实隐私组名，别人库里凡是
+ *  授权给它/归它所有的对象都会被一起摘掉。现在的三条边界：
+ *    ① 清理**只连本库**（`:22` 已断言 `url` 就是 `gengyun_auth_privacy_test`），不枚举、不连别的库；
+ *    ② 动手前用共享目录 `pg_shdepend` 只读查「本臂角色在别的库里还有没有依赖对象」，有就**拒绝**并点名库名，
+ *       绝不越界（`DROP ROLE` 的 2BP01 依据正是这些行：`DETAIL: 1 object in database …`）；
+ *    ③ 只删**本次运行自己创建**的角色（`createdRoles`），别处已有的同名角色一律不动。
+ *  `DROP OWNED BY` 只作用于当前库，PostgreSQL 17.11 也没有 `IN DATABASE` 子句（实测 `syntax error at or near "IN"`），
+ *  所以「只清本库」不是靠子句限定，而是靠**只连本库**这个结构性约束 + `cleanupDatabases` 断言钉住。 */
+
+/** 本臂角色在**其它库**里的依赖对象（只读 `pg_shdepend`，不连别的库、不在别的库执行任何 DDL）。
+ *  实测：`ALTER TABLE … OWNER TO <role>` 在别的库留下 `deptype='o'` 行，授予权限留下 `deptype='a'` 行；
+ *  角色成员关系（`GRANT group TO login`）不进 `pg_shdepend`，所以不会误报本臂自己的成员关系。
+ *  `dbid=0` 是共享对象（库/表空间等），同样算越界依赖，一律拒绝。 */
+async function foreignDependents(names) {
+  return (await owner.query(
+    `SELECT r.rolname, COALESCE(d.datname, '(shared)') AS datname, count(*)::int AS n
+       FROM pg_shdepend s
+       JOIN pg_roles r ON r.oid = s.refobjid
+       LEFT JOIN pg_database d ON d.oid = s.dbid
+      WHERE s.refclassid = 'pg_authid'::regclass
+        AND r.rolname = ANY($1)
+        AND s.dbid <> (SELECT oid FROM pg_database WHERE datname = current_database())
+      GROUP BY 1, 2 ORDER BY 1, 2`, [names])).rows;
 }
-async function dropRolesEverywhere(names) {
+/** 只在本臂专用库里 `DROP OWNED BY`，然后 `DROP ROLE`；跨库依赖一律拒绝（别人的库不归本臂）。 */
+async function dropRolesScoped(names) {
   const existing = (await owner.query('SELECT rolname FROM pg_roles WHERE rolname = ANY($1)', [names])).rows.map(row => row.rolname);
   if (existing.length === 0) return;
-  const list = existing.join(',');
-  for (const client of await roleDatabaseClients()) {
-    try { await client.query(`DROP OWNED BY ${list}`); }
-    finally { await client.end(); }
+  const foreign = await foreignDependents(existing);
+  if (foreign.length > 0) {
+    throw new Error(`拒绝清理角色 ${existing.join(',')}：`
+      + `${foreign.map(row => `${row.rolname} 在库 ${row.datname} 还有 ${row.n} 个依赖对象`).join('；')}。`
+      + `本臂只清理 ${url.pathname.slice(1)}，不对其它库执行 DROP OWNED（同集群其它库不属于本臂）。`);
   }
-  await owner.query(`DROP ROLE IF EXISTS ${list}`);
+  cleanupDatabases.add(url.pathname);
+  const client = new pg.Client({ connectionString: url.href });
+  await client.connect();
+  try { await client.query(`DROP OWNED BY ${existing.join(',')}`); } finally { await client.end(); }
+  await owner.query(`DROP ROLE IF EXISTS ${existing.join(',')}`);
 }
 async function dropDatabase(name) { await owner.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); }
 async function createDatabase(name) { await dropDatabase(name); await owner.query(`CREATE DATABASE ${name}`); }
@@ -130,27 +150,32 @@ try {
   assert.match(version, /^17\.11(?:\D|$)/);
   console.log(`Native PostgreSQL: ${version}`);
   // 上次崩溃/并行留下的同名角色会让下面「必须为 0」的断言直接红（实测：两个实例并行时第二个在
-  // `pg_type_typname_nsp_index` 唯一约束上红，另一轮在角色数断言上红）。先按「每库 DROP OWNED」
-  // 清干净，再断言干净——顺序/并发不再决定红绿。
-  await dropRolesEverywhere(ROLE_NAMES);
+  // `pg_type_typname_nsp_index` 唯一约束上红，另一轮在角色数断言上红）。先按**本臂边界**清干净
+  // （只连本库、只删无跨库依赖的同名残留；有跨库依赖就显式报错，绝不越界去清别人的库），再断言干净。
+  await dropRolesScoped(ROLE_NAMES);
   assert.equal((await owner.query("SELECT count(*)::int n FROM pg_tables WHERE schemaname='public'")).rows[0].n, 0);
   assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=ANY($1)', [[group, loginName]])).rows[0].n, 0);
   for (const file of ['0001_initial_schema.sql', '0003_privacy_consent.sql', '0008_auth_session.sql']) await owner.query(sqlFile(`migrations/${file}`));
   say('0001/0003/0008 executed on fresh native PG17.11 (not migration-runner atomicity evidence)');
   await owner.query(sqlFile('roles/auth_privacy.sql'));
-  rolesCreated = true;
+  createdRoles.add(group);
   await owner.query(`CREATE ROLE ${loginName} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}'`);
+  createdRoles.add(loginName);
   await owner.query(`GRANT ${group} TO ${loginName}`);
-  // ---- D0 负控制（CI 每次跑）：在**另一个库**里造一个属于诱饵角色的对象，证明
-  //  「只在本库 DROP OWNED 再 DROP ROLE」必然报 dependent objects，而「每库 DROP OWNED」能清干净。
-  //  没有这条，收尾「角色/诱饵库归零」的断言在跨库残留场景下就是空转。
+  // ---- D0 负控制（CI 每次跑）：清理**只**碰本臂库，越界一律拒绝。
+  //  造一个「别人的库」（诱饵库）+ 一个在**那个库**里拥有对象的诱饵角色，然后：
+  //   ① 只在本库 DROP OWNED 再 DROP ROLE ⇒ 必报 dependent objects（跨库依赖确实拦得住，这条是硬的）；
+  //   ② 本臂清理必须**拒绝**并在错误里点名诱饵库，且不连任何库（拒绝是提前的，不是失败后的兜底）；
+  //   ③ 诱饵库里的对象/行/属主完好无损（旧的「逐库 DROP OWNED」正是在这里把别人的东西删掉）；
+  //   ④ 删掉诱饵库（本臂自己建的）后同一清理才成功；清理路径连过的库只有本臂专用库一个。
   await createDatabase(DECOY_DATABASE);
   await owner.query(`CREATE ROLE ${DECOY_ROLE} NOLOGIN`);
+  createdRoles.add(DECOY_ROLE);
   const decoy = new pg.Client({ connectionString: databaseUrlFor(DECOY_DATABASE) });
   await decoy.connect();
   await decoy.query('CREATE TABLE public.decoy_cross_db_object(i int)');
+  await decoy.query('INSERT INTO public.decoy_cross_db_object VALUES (1), (2)');
   await decoy.query(`ALTER TABLE public.decoy_cross_db_object OWNER TO ${DECOY_ROLE}`);
-  await decoy.end();
   await assert.rejects(
     (async () => {
       await owner.query(`DROP OWNED BY ${DECOY_ROLE}`);
@@ -159,11 +184,27 @@ try {
     /cannot be dropped because some objects depend on it/,
     '跨库残留对象下 DROP ROLE 必须报 dependent objects（否则本负控制无牙）',
   );
-  await dropRolesEverywhere([DECOY_ROLE]);
-  assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=$1', [DECOY_ROLE])).rows[0].n, 0);
+  await assert.rejects(
+    dropRolesScoped([DECOY_ROLE]),
+    error => error instanceof Error && /拒绝清理角色/.test(error.message) && error.message.includes(DECOY_DATABASE),
+    '有跨库依赖时本臂清理必须显式拒绝并点名那个库（而不是去清它）',
+  );
+  assert.deepEqual([...cleanupDatabases], [], '拒绝清理必须在连任何库之前发生');
+  assert.equal((await decoy.query('SELECT count(*)::int n FROM public.decoy_cross_db_object')).rows[0].n, 2, '别的库里的行不得被本臂清理碰到');
+  assert.equal(
+    (await decoy.query("SELECT relowner::regrole::text AS owner FROM pg_class WHERE oid='public.decoy_cross_db_object'::regclass")).rows[0].owner,
+    DECOY_ROLE,
+    '别的库里的属主不得被本臂清理改动',
+  );
+  await decoy.end();
+  assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=$1', [DECOY_ROLE])).rows[0].n, 1, '拒绝后诱饵角色仍在（证明拒绝不是失败兜底）');
   await dropDatabase(DECOY_DATABASE);
+  await dropRolesScoped([DECOY_ROLE]);
+  createdRoles.delete(DECOY_ROLE);
+  assert.equal((await owner.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=$1', [DECOY_ROLE])).rows[0].n, 0);
   assert.equal((await owner.query('SELECT count(*)::int n FROM pg_database WHERE datname=$1', [DECOY_DATABASE])).rows[0].n, 0);
-  say('跨库负控制：只在本库 DROP OWNED 时 DROP ROLE 报 dependent objects；每库清理后诱饵角色/诱饵库归零');
+  assert.deepEqual([...cleanupDatabases], [url.pathname], '清理路径只允许连本臂专用库，实测连过：' + JSON.stringify([...cleanupDatabases]));
+  say('清理边界负控制：本臂只清专用库——跨库依赖角色被拒绝清理且别的库对象/行/属主完好，删掉本地诱饵库后才成功，清理路径未连过第二个库');
   const runtimeUrl = new URL(url); runtimeUrl.username = loginName; runtimeUrl.password = password;
   pool = createPool(runtimeUrl.href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
@@ -408,14 +449,13 @@ try {
   await pool?.end();
   // ⚠ 不吞错：清理失败必须让本步红（旧实现是 `DROP OWNED BY …; DROP ROLE …` 一条语句且只清当前库，
   //   跨库残留时 DROP ROLE 报 dependent objects；见文件顶部注释与 R2 读数）。
+  //   顺序：先删本臂自己建的诱饵库（它的对象是诱饵角色唯一可能的"跨库依赖"），再按本臂边界清角色；
+  //   顺序反了会让 `dropRolesScoped` 因为诱饵库还在而显式拒绝——那正是它该做的事，但会掩盖真实故障。
   const faults = [];
-  try {
-    if (rolesCreated) await dropRolesEverywhere(ROLE_NAMES);
-    else await dropRolesEverywhere([DECOY_ROLE]);
-  } catch (error) { faults.push(`roles: ${error.message}`); }
   try { await dropDatabase(DECOY_DATABASE); } catch (error) { faults.push(`decoy db: ${error.message}`); }
+  try { await dropRolesScoped([...createdRoles]); } catch (error) { faults.push(`roles: ${error.message}`); }
   const leftoverRoles = (await owner.query('SELECT rolname FROM pg_roles WHERE rolname = ANY($1) ORDER BY 1', [ROLE_NAMES.concat(DECOY_ROLE)])).rows.map(row => row.rolname);
-  const leftoverDatabases = (await owner.query("SELECT datname FROM pg_database WHERE datname LIKE 'gengyun_auth_privacy%' AND datname <> 'gengyun_auth_privacy_test' ORDER BY 1")).rows.map(row => row.datname);
+  const leftoverDatabases = (await owner.query('SELECT datname FROM pg_database WHERE datname = $1 ORDER BY 1', [DECOY_DATABASE])).rows.map(row => row.datname);
   await owner.end();
   if (bodyFailure) {
     if (faults.length > 0 || leftoverRoles.length > 0 || leftoverDatabases.length > 0) {
@@ -425,5 +465,6 @@ try {
     assert.deepEqual(faults, [], `收尾清理失败（不得吞错）：${faults.join('; ')}`);
     assert.deepEqual(leftoverRoles, [], `收尾必须不留本臂角色，实测残留：${leftoverRoles.join(',') || '(无)'}`);
     assert.deepEqual(leftoverDatabases, [], `收尾必须不留本臂诱饵库，实测残留：${leftoverDatabases.join(',') || '(无)'}`);
+    assert.deepEqual([...cleanupDatabases], [url.pathname], `清理路径只允许连本臂专用库 ${url.pathname}，实测：${JSON.stringify([...cleanupDatabases])}`);
   }
 }
