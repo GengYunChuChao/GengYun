@@ -419,7 +419,7 @@ async function testDeleteIsFinal(h, ctx) {
 
   // 历史：A 删除该条 ⇒ A/B 再取同 id 皆非成功；A 的识别记录本身不受影响（两域各自管辖）。
   const removeHistory = await h.deleteHistory(sessionA.token, history.id, history.revision, 'hist-a-del');
-  assert.equal(removeHistory.status, 200, JSON.stringify(removeHistory.body));
+  assert.equal(removeHistory.status, 202, JSON.stringify(removeHistory.body));
   assert.deepEqual(removeHistory.body.data, { accepted: true });
   assert.equal(removeHistory.body.meta.execution_mode, 'stub');
   assert.ok(
