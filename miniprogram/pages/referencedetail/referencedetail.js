@@ -66,6 +66,11 @@ Page({
     dataSource: '',
     sourceMarker: '',
     notFoundText: '',
+    // #28 失败态（可判定，不靠文案）：notFoundCode 原样带出服务端错误码给 state-view 补分类与可重试性；
+    // detailFailed 区分「这次没读成功（可重试）」与「这条记录确实不存在（404／随包未命中，重试无意义）」。
+    // 失败绝不渲染成下面的「未找到该记录」——那会把 503 说成记录不存在。
+    notFoundCode: '',
+    detailFailed: false,
     // 服务端 SourceRef 的 updated_at 不是采集日期：标签如实切换，不冒称。
     sourceDateLabel: '采集日期',
     // 服务端除草剂接口不提供用量卡/适用性字段时的如实说明。
@@ -102,7 +107,7 @@ Page({
       if (!loggedIn) {
         self._detailActive = false
         self._detailOperation = (self._detailOperation || 0) + 1
-        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '', dataSource: '', sourceMarker: '', notFoundText: '', doseCardNote: '', busy: false })
+        self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '', dataSource: '', sourceMarker: '', notFoundText: '', notFoundCode: '', detailFailed: false, doseCardNote: '', busy: false })
         return
       }
       // 路由判定（可判定，不靠文案）：UUID ⇒ 服务端 `GET /herbicides/{id}`；
@@ -115,7 +120,9 @@ Page({
         sourceMarker: server ? '服务端接口 /herbicides/{id}' : '随包离线副本',
         // 服务端读数未返回前只给「来源待定」口径：不宣称已取得接口数据。
         modeNote: server ? knowledgeApi.modeNote('') : reference.modeNote(),
-        notFoundText: ''
+        notFoundText: '',
+        notFoundCode: '',
+        detailFailed: false
       })
       if (server) { self.loadServerDetail(recordId); return }
       // 阻塞 C：先读取**已确认档案**，再装载详情；档案未确认时不放行用量资格。
@@ -236,7 +243,7 @@ Page({
     const self = this
     const operation = (self._detailOperation = (self._detailOperation || 0) + 1)
     self._detailActive = true
-    self.setData({ busy: true, notFoundText: '', profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
+    self.setData({ busy: true, notFoundText: '', notFoundCode: '', detailFailed: false, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '' })
     const alive = function () {
       return self._detailActive === true && self._detailOperation === operation && self.data.gatePassed === true && auth.isLoggedIn()
     }
@@ -249,6 +256,8 @@ Page({
         queryable: true,
         unavailableReason: '',
         notFoundText: '',
+        detailFailed: false,
+        notFoundCode: '',
         dataSource: knowledgeApi.HERBICIDE_SOURCES.SERVER,
         sourceMarker: '服务端接口 /herbicides/{id}',
         modeNote: knowledgeApi.herbicideModeNote(result.mode),
@@ -292,7 +301,11 @@ Page({
       })
     }).catch(function (error) {
       if (!alive()) return
-      const session = error && (error.code === 'SESSION_REQUIRED' || error.code === 'SESSION_CHANGED')
+      const code = (error && error.code) || ''
+      const session = error && (code === 'SESSION_REQUIRED' || code === 'SESSION_CHANGED')
+      // 只有 404／不可用才属于「这条记录确实没有」；其余（5xx、超时、限流、响应不合契约）是
+      // **这次没读成功**，必须走可重试的失败态，不能渲染成「未找到该记录」。
+      const absent = code === 'NOT_FOUND' || code === 'OBJECT_UNAVAILABLE'
       self.setData({
         busy: false,
         gatePassed: session ? false : self.data.gatePassed,
@@ -308,11 +321,21 @@ Page({
         advice: null,
         // 冻结闭集文案（含 404 ⇒ NOT_FOUND）：不在此另写未核对文本。
         notFoundText: knowledgeApi.message(error),
+        notFoundCode: code,
+        detailFailed: !absent,
         dataSource: knowledgeApi.HERBICIDE_SOURCES.SERVER,
         sourceMarker: '服务端接口 /herbicides/{id}',
         doseCardNote: ''
       })
     })
+  },
+
+  // 失败态的「重试」入口（state-view 的 action）：会话失效先重新核实门禁，其余按原 id 重读。
+  // 重读仍走服务端路径，**不落回**随包离线副本（否则会把随包数据冒充成服务端读数）。
+  retryDetail: function () {
+    if (this.data.busy) return
+    if (!this.data.gatePassed || !this._detailId) { this.checkGate(); return }
+    this.loadServerDetail(this._detailId)
   },
 
   /**
@@ -327,7 +350,7 @@ Page({
   load: function (recordId, profileNote) {
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功。
     if (!this.data.gatePassed || !auth.isLoggedIn()) {
-      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, dataSource: '', sourceMarker: '', notFoundText: '', busy: false })
+      this.setData({ gatePassed: false, found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, dataSource: '', sourceMarker: '', notFoundText: '', notFoundCode: '', detailFailed: false, busy: false })
       return
     }
     const detail = typeof recordId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(recordId) ? reference.detail(recordId) : null
@@ -335,6 +358,8 @@ Page({
       this.setData({ found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: false, doseCard: null, applicability: null, advice: null,
         // 随包未命中：固定文案（与服务端 404 的闭集文案分列，不互相顶替）。
         dataSource: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE, sourceMarker: '随包离线副本',
+        // 这是**合法的未找到**（同步随包查询，无请求可重试），不是失败态。
+        notFoundCode: '', detailFailed: false,
         notFoundText: '该记录不存在，或已被下架、失效而不在有效资料中。' })
       return
     }
@@ -352,6 +377,8 @@ Page({
       sourceDateLabel: '采集日期',
       doseCardNote: '',
       notFoundText: '',
+      detailFailed: false,
+      notFoundCode: '',
       busy: false
     };
     // 阻塞 C：适用上下文必须来自已确认档案；未确认时**不**给用量资格（也不给适用结论）。

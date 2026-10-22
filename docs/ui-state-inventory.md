@@ -30,10 +30,10 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 状态 | key | 触发条件 | 图标 | 主色 | 默认操作 | 当前页面使用 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 未登录 | `guest` | 未接入真实会话 | 锁 | 主题绿 | 去登录 | 社区、消息、我的、收藏、历史、知识、识别、specimen |
-| 空结果 | `empty` | 查询无数据 | 空箱 | 中性 | 可由页面指定 | 社区、消息（列表空／筛选空）、知识、收藏、历史、社区详情、历史详情、specimen |
-| 处理中 | `loading` | 请求进行中 | 沙漏 | 蓝 | 无 | 五 Tab（社区/识别/消息/我的/首页诊断）与知识、收藏、历史、详情页 |
-| 失败 | `error` | 网络或服务失败 | 警告 | 红 | 可由页面指定 | 五 Tab 与知识、收藏、历史、详情页；**2026-10-21 起可传 `error-code` 补分类标签与可重试性** |
+| 未登录 | `guest` | 未接入真实会话 | 锁 | 主题绿 | 去登录 | 社区、消息、我的、收藏、历史、知识、识别、specimen、科普资料查询（`reference`，会话失效时） |
+| 空结果 | `empty` | 查询无数据 | 空箱 | 中性 | 可由页面指定 | 社区、消息（列表空／筛选空）、知识、收藏、历史、社区详情、历史详情、specimen、科普资料浏览（`referenceseed`） |
+| 处理中 | `loading` | 请求进行中 | 沙漏 | 蓝 | 无 | 五 Tab（社区/识别/消息/我的/首页诊断）与知识、收藏、历史、详情页、科普资料查询与详情（`reference`／`referencedetail`） |
+| 失败 | `error` | 网络或服务失败 | 警告 | 红 | 可由页面指定 | 五 Tab 与知识、收藏、历史、详情页、科普资料查询与详情（`reference`「重试查询」／`referencedetail`「重试读取」）；**2026-10-21 起可传 `error-code` 补分类标签与可重试性** |
 | 已取消 | `cancelled` | 用户主动取消 | 禁止 | 中性 | 无 | 识别（`JobState=cancelled`）、specimen |
 | 已删除／失效 | `invalid` | 来源下架或过期 | 禁止 | 暗黄 | 无 | 社区详情、历史详情、specimen |
 | 替身数据 | `stub` | 开发模式下的示例数据（另接受别名 `mock`） | 试管 | 紫 | 无，固定标注 | 首页、识别、我的、specimen；社区与消息用置顶 `notice--stub` 标注 |
@@ -52,6 +52,12 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 - `mock` 是既有 `stub` 的**别名**：同一形态、同一文案、同一标签，不新造第二套。
 - 错误码 → 分类 → 状态 → 可否重试的全表，以及逐页面接入前后对照，见
   [B7 统一状态验证](verification/gy-i28-unified-states-20261021.md)。
+
+**2026-10-22 增补（#28 前端一片）**：`reference`／`referencedetail`／`referenceseed` 三页补齐状态层。缺口性质是**两件相反结论被渲染成同一句话**：
+
+- `pages/reference`：请求在途（`busy && !items.length`）走 `loading`；失败走 `error` 并透传 `error-code`（会话失效 `SESSION_REQUIRED`／`SESSION_CHANGED` 走 `guest` 语气「核实登录后重试」，其余「重试查询」）。空态加 `!busy && !queryError` 守卫，不再把「查询中／没查成」写成「没有可展示的资料」。
+- `pages/referencedetail`：`busy` 走 `loading`；只有 `NOT_FOUND`／`OBJECT_UNAVAILABLE` 才落「未找到该记录」（合法结论，按钮仍是「返回继续查询」），其余错误落 `error` 并「重试读取」；重读只走服务端路径，**不落回**随包副本。
+- `pages/referenceseed`：检索 0 命中或该栏无条目时走 `empty`，文案说明「只在除草剂名录里按药名／别称匹配、不合并不同记录」并给「清空检索词看全部／回除草剂名录」。该页是纯本地同步数据，没有请求态，因此不接 `loading`／`error`。
 
 替身数据额外显示「替身数据 · 仅开发模式可见」文字标签，避免与真实数据混淆。
 

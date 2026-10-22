@@ -10,11 +10,18 @@
 | `gy-i20-weeds-real-index.json` | 拍草（`weed_photo`）真实样本索引：172 条，`split=test`，含内容 SHA-256、dHash、尺寸与标准答案引用 |
 | `gy-i20-weeds-labels.json` | **独立标准答案键**：逐条目的物种标签、覆盖内/外分组、判据要点（形态特征原文）与来源绑定 |
 | `gy-i20-weeds-coverage-manifest.json` | 承诺覆盖类清单（8 个规范物种 ID，取自 GY-I03 承诺范围映射） |
-| `gy-i20-weeds-frozen-manifest.json` | **冻结清单**：`indexVersion`／`recordCount`／`indexSha256`／`frozenAt` + 内嵌覆盖绑定块 |
+| `gy-i20-weeds-frozen-manifest.json` | **冻结清单**：`indexVersion`／`recordCount`／`indexSha256`／`frozenAt` + 内嵌覆盖绑定块 + `answerKey`（单向钉住答案键 sha256/版本/条数）+ `digestLedger`（逐条摘要台账指针） |
+| `gy-i20-weeds-frozen-digests.json` | **逐条摘要台账**：172 条 × 记录摘要 + 20 个字段路径的 sha256（前 12 位），一条一行便于 `git diff`；任何一条被改动都点名到 `sampleId` 与字段 |
 | `gy-i20-weeds-predictions-none.json` | 空预测占位（`{}`）：真实模型实测未授权，评估命令因此**不得**产出任何成绩 |
 
 对应实现与命令：`tools/evaluation/extract-docx-weed-samples.mjs`（抽取/登记）、
-`tools/evaluation/freeze-real-samples.mjs`（冻结与复算）；回归：`tests/evaluation/gy-i20-real-samples.test.mjs`。
+`tools/evaluation/freeze-real-samples.mjs`（冻结、逐条台账与答案键绑定）；
+回归：`tests/evaluation/gy-i20-real-samples.test.mjs`、`tests/evaluation/gy-i20-frozen-integrity.test.mjs`。
+
+> **台账由脚本生成，不许手写**：`freeze-real-samples.mjs --digests <out>` 生成，
+> `--verify-digests <file>` 重算并与既有台账**逐字节**比对（不一致即退出码 1）。
+> 摘要口径：`sha256(JSON.stringify(record))` / `sha256(JSON.stringify(record[字段路径]))`，
+> 均在 `JSON.parse` 之后计算，与换行符/缩进/BOM 无关（读取侧先剥离 BOM）。
 
 ## 2 样本规模（2026-10-14 实测）
 
@@ -46,12 +53,23 @@ node tools/evaluation/extract-docx-weed-samples.mjs \
   --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
   --report <仓外>/extracted/extraction-report.json --emit-perceptual-hash
 
-# 2) 复算并核对冻结清单（失败即退出码 1）
+# 2) 复算并核对冻结清单 + 逐条摘要台账 + 标准答案键（任一不符即退出码 1）
 node tools/evaluation/freeze-real-samples.mjs \
   --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
   --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
   --index-version gy-i20-weeds-real-2026.10.14 \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --verify-digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
   --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json
+
+# 2b) 重新生成逐条摘要台账与冻结清单（改了样本/答案键之后；两处必须同时更新）
+node tools/evaluation/freeze-real-samples.mjs \
+  --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
+  --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+  --index-version gy-i20-weeds-real-2026.10.14 --frozen-at <ISO 时间> \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
+  --out packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json
 
 # 3) schema/硬红线/隔离校验
 node tools/evaluation/validate-evaluation-samples.mjs --index packages/evaluation/samples/gy-i20-weeds-real-index.json

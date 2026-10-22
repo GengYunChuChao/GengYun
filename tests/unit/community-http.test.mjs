@@ -497,13 +497,15 @@ test('HTTP 消息事件：投稿/评论/下架投递到消息域公开端口，�
 
   const inbox = await h.call('GET', `${API}/messages`, h.a);
   assert.equal(inbox.status, 200);
+  // GY-I17 第 7 片：投稿人（a）除自己内容的审核结果外，还收到**他人评论**的通知
+  // （`comment:post:1`）；两条同毫秒落库 ⇒ 顺序按 uuid 决序，不比顺序，比多重集。
   assert.deepEqual(
-    inbox.body.data.items.map((item) => `${item.type}:${item.target_ref.type}:${item.target_ref.revision}`),
-    ['moderation:post:1'],
-    '投稿人（a）只收到自己内容的审核结果事件',
+    inbox.body.data.items.map((item) => `${item.type}:${item.target_ref.type}:${item.target_ref.revision}`).sort(),
+    ['comment:post:1', 'moderation:post:1'],
+    '投稿人（a）只收到「自己内容的审核结果」与「他人对我内容的评论」两类事件',
   );
   assert.equal(inbox.body.data.items.every((item) => item.read_at === null), true);
-  assert.equal((await h.call('GET', `${API}/messages/unread-count`, h.a)).body.data.count, 1);
+  assert.equal((await h.call('GET', `${API}/messages/unread-count`, h.a)).body.data.count, 2);
   // 事件不投递给无关用户（接收者由服务端决定，绝不来自客户端）。
   const other = await h.call('GET', `${API}/messages`, h.b);
   assert.deepEqual(

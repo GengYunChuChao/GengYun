@@ -1,1 +1,6 @@
-{ "navigationBarTitleText": "科普种子资料" }
+{
+  "navigationBarTitleText": "科普种子资料",
+  "usingComponents": {
+    "state-view": "/components/state-view/state-view"
+  }
+}

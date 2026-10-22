@@ -76,6 +76,10 @@ Page({
     // #8：命中条件说明（来自域库 matched_dimensions），空串即无结构化条件。
     matchedNote: '',
     queryError: '',
+    // 失败态的可判定字段（#28）：错误码原样带出给 state-view 补分类与可重试性；
+    // querySession 区分「会话失效」与「服务端失败」——两者的下一步动作不同（重新核实登录／原条件重查）。
+    queryErrorCode: '',
+    querySession: false,
     busy: false,
     detailId: '',
     // G2：会话门禁状态。**未通过服务端核实前恒为 false**，
@@ -213,7 +217,7 @@ Page({
     // G2：门禁未通过则**拒绝加载**——不依赖跳转是否成功（跳转可能被拦截/失败）。
     if (!self.data.gatePassed || !auth.isLoggedIn()) {
       self._queryActive = false
-      self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '', countNote: '', matchedNote: '', queryError: '', dataSource: '', dataSourceLabel: '' })
+      self.setData({ gatePassed: false, items: [], total: 0, nextCursor: null, matchState: '', matchLabel: '', reasons: [], unmatchedReasons: [], sourceVersionNote: '', countNote: '', matchedNote: '', queryError: '', queryErrorCode: '', querySession: false, dataSource: '', dataSourceLabel: '' })
       return
     }
     const decision = self.querySource()
@@ -230,7 +234,7 @@ Page({
     const input = { limit: PAGE_SIZE }
     if (self.data.keyword) input.q = self.data.keyword
     if (cursor) input.cursor = cursor
-    self.setData({ busy: true, dataSource: decision.source, dataSourceLabel: decision.label, queryError: '' })
+    self.setData({ busy: true, dataSource: decision.source, dataSourceLabel: decision.label, queryError: '', queryErrorCode: '', querySession: false })
     const alive = function () {
       return self._queryActive === true && self._queryOperation === operation && self.data.gatePassed === true && auth.isLoggedIn()
     }
@@ -253,7 +257,9 @@ Page({
         countNote: rows.length ? '本页 ' + rows.length + ' 条（该接口不返回总数）' : '',
         // 服务端路径不携带结构化条件 ⇒ 无「命中条件」可说，恒空（不冒充已筛选）。
         matchedNote: '',
-        queryError: ''
+        queryError: '',
+        queryErrorCode: '',
+        querySession: false
       })
     }).catch(function (error) {
       if (!alive()) return
@@ -268,7 +274,11 @@ Page({
         matchLabel: session ? '' : reference.matchStateLabel('unavailable'),
         countNote: '',
         matchedNote: '',
-        queryError: knowledgeApi.message(error)
+        // 失败态：冻结闭集文案 + 原样错误码（不猜、不折叠成「没有资料」）；
+        // session 单独标记，页面据此把下一步动作换成「重新核实登录」而不是「重试查询」。
+        queryError: knowledgeApi.message(error),
+        queryErrorCode: (error && error.code) || '',
+        querySession: session
       })
     })
   },
@@ -290,7 +300,7 @@ Page({
       })
     } catch (error) {
       // 非法请求才抛错；无结果/条件不足以 200 + match_state 表达，不走这里。
-      self.setData({ matchState: 'invalid', matchLabel: reference.matchStateLabel('invalid'), items: [], total: 0, nextCursor: null, countNote: '', matchedNote: '', queryError: '' })
+      self.setData({ matchState: 'invalid', matchLabel: reference.matchStateLabel('invalid'), items: [], total: 0, nextCursor: null, countNote: '', matchedNote: '', queryError: '', queryErrorCode: '', querySession: false })
       return
     }
     const rows = result.items.map(function (row) {
@@ -313,12 +323,26 @@ Page({
       sourceVersionNote: rows.length ? rows[0].source_version : '',
       countNote: result.total ? '共 ' + result.total + ' 条符合条件' : '',
       matchedNote: matchedNoteOf(result.matched_dimensions),
-      queryError: ''
+      queryError: '',
+      queryErrorCode: '',
+      querySession: false
     })
+  },
+
+  // 失败态的「重试」入口（state-view 的 action，见 reference.wxml 失败块）。
+  // 会话失效 ⇒ 重新核实门禁（不放行数据，也不假装已登录）；其余失败 ⇒ 用**当前条件**原样重查，
+  // 不改条件、不改数据来源、不落回离线副本。
+  onRetry: function () {
+    if (this.data.querySession || !this.data.gatePassed) { this.checkGate(); return }
+    this.runQuery()
   },
 
   goDetail: function (event) {
     const id = event.currentTarget.dataset.id
-    wx.navigateTo({ url: '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(id) })
+    // 跳转失败必须可见（页面栈满／路由被拦截时，点了卡片毫无反应会被当成「记录不存在」）。
+    wx.navigateTo({
+      url: '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(id),
+      fail: function () { wx.showToast({ title: '没能打开这条资料，请重试', icon: 'none' }) }
+    })
   }
 })
