@@ -354,22 +354,47 @@ const OPAQUE_ALLOWLIST = [
  * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67）；
  * C1b G6/G8 再给会话域补一条 `SELECT id FROM conversations`（+1 字面量、SELECT 67→68），故
  * 字面量 141→143、SELECT 66→68、columnRequirements 1157→1186。
+ *
+ * R31-S6/S1（社区域，`18005243`）重算：社区域此前**只有**读写正文的语句，注销清理与举报状态推进
+ * 各新增了语句。逐条核对（文件::函数 —— 语句）后得到的增量，7 条一条不多一条不少：
+ *   1. `community/store-pg.ts::commitReport` —— `SELECT ${REPORT_COLUMNS} … FOR UPDATE`（+SELECT 1、+行锁 1）
+ *   2. `community/store-pg.ts::commitReport` —— `UPDATE community_reports SET revision, state`（+UPDATE 1）
+ *   3. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_posts SET visibility='deleted'`（+UPDATE 1）
+ *   4. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_comments SET visibility='deleted'`
+ *   5. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_reports SET detail=NULL`（上两条同为 +UPDATE）
+ *   6. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_likes`（+DELETE 1）
+ *   7. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_idempotency WHERE scope LIKE`
+ * 合计：字面量 143→150、UPDATE 21→25、SELECT 68→69、DELETE 27→29、RETURNING 56→61（3/4/5/6/7 五条
+ * 都带 RETURNING 计行数）、columnRequirements 1186→1212（这 7 条引用到的列，逐列已覆盖 0 缺）。
+ * 引用到的表数与 SELECT * 处数**不变**（新语句只碰已登记的表、没有新增 `*` 面）。
+ *
+ * R32-P2（F13 保留规则返修，`supervisor-1022-0932-pr474`）再重算：注销清理从"两条无条件软删"
+ * 改为"**保留** + 逐行脱敏/媒体移除"，语句形态随之变化（**没有新增表/授权缺口**）：
+ *   - 原 3/4（posts/comments 的软删 UPDATE，各带 RETURNING）删除；
+ *   - 新增 `SELECT … FROM community_posts … FOR UPDATE` 与 `SELECT … FROM community_comments … FOR UPDATE`
+ *     （+SELECT 2、+行锁 2）；
+ *   - 新增 `UPDATE community_posts SET title,body,media_ids,revision,updated_at`（脱敏）与
+ *     `UPDATE community_posts SET media_ids,updated_at`（仅移除媒体）：净 +UPDATE 1；
+ *   - 新增 `UPDATE community_comments SET body,revision`（脱敏）：净 +0（抵掉原软删那条里的 UPDATE 计数）；
+ *   - reports 的 `UPDATE … detail=NULL`、likes/idempotency 的 DELETE 原样保留（RETURNING 3 条不变）。
+ * 合计：字面量 150→153、UPDATE 25→26、SELECT 69→71、DELETE 29（不变）、
+ * RETURNING 61→59（-2，两条软删 UPDATE 的 RETURNING 消失）、columnRequirements 1212→1222。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 143,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 68, DELETE: 27 },
-  returningClauses: 56,
+  sqlLiterals: 153,
+  statements: { INSERT: 27, UPDATE: 26, SELECT: 71, DELETE: 29 },
+  returningClauses: 59,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1186,
+  columnRequirements: 1222,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 28,
+  community: 38,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -434,31 +459,37 @@ const TABLE_WIDE_COLUMN = '*';
  * ④ R29（`#434`，`origin/main`）把 `moderation/ledger-pg.ts` 纳入真审计（5 条字面量，含建行后读回确认的
  *   `SELECT superseded … WHERE job_id = $1`），带来 moderation_decisions／moderation_withdrawals 两表（段 M3）。
  * 合流树实测（`node --test tests/unit/sql-column-coverage.test.mjs` 的 console.log 原文，2026-10-22）：
- * 19 文件 **252** 条字面量；语句 INSERT 42 / UPDATE 39 / SELECT 137 / DELETE 34；RETURNING **76**；
- * ON CONFLICT 26；引用表 **44** 张；列权限要求 **1665**、已覆盖 **1611**（缺 0：media 两表、清理台账与
- * 审核台账都是逐列授权；覆盖来源列级 1493 / 表级 118）。
+ * **19 文件 / 262 条字面量 / 引用表 44 张**（合流后实测总账，见 ⑥）。
  * ⑤ 2026-10-22 再合流 `origin/main`（`7a6b7436`／`f75e1a1b`，#475／#407／#482）：`moderation/ledger-pg.ts` 的更新语句补
  *   `RETURNING job_id`（#482「命中 0 行不得标记为已持久化」）⇒ RETURNING 75 → 76、列要求 1664 → 1665、已覆盖 1610 → 1611
  *   （`public.moderation_decisions.job_id` 的 SELECT 面，已在段 M3 的列级授权清单内：未改任何 GRANT、未新增字面量）；
  *   另有 R28-W6 新登记的一个 SQL 宿主 ⇒ SQL 宿主 26 → **28**（19 已审计 + 9 登记）。
+ * ⑥ 2026-10-22 三合流 `origin/main` = `1fbe7572`（#474 社区注销并入，GY-I15 社区域语句）：
+ *   字面量 252 → **262**（INSERT 42 不变／UPDATE 39 → 44／SELECT 137 → 140／DELETE 34 → 36）、
+ *   RETURNING 76 → **79**、行锁 FOR UPDATE 22 → **25**、rowLockRequirements 22 → **25**、
+ *   列要求 1665 → **1701**、已覆盖 1611 → **1647**（缺口仍 0）、引用表 **44 张不变**（社区域没有新增表、也没有新增授权面）；
+ *   与 #474 自述的增量（UPDATE +5／SELECT +3／DELETE +2／RETURNING +3／列要求 +36）逐项对齐。
+ *   合流树实测：19 文件 / **262** 条字面量 / 44 张表；列要求 **1701**、已覆盖 **1647**、缺 0。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
+ * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
+ * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 252,
-  statements: { INSERT: 42, UPDATE: 39, SELECT: 137, DELETE: 34 },
-  returningClauses: 76,
+  sqlLiterals: 262,
+  statements: { INSERT: 42, UPDATE: 44, SELECT: 140, DELETE: 36 },
+  returningClauses: 79,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 22, SHARE: 16 },
+  rowLocks: { UPDATE: 25, SHARE: 16 },
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 44,
-  columnRequirements: 1665,
-  coveredRequirements: 1611,
+  columnRequirements: 1701,
+  coveredRequirements: 1647,
   ledgerExemptions: 33,
-  rowLockRequirements: 22,
+  rowLockRequirements: 25,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -468,7 +499,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 28,
+  'community': 38,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

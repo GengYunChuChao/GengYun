@@ -190,4 +190,12 @@ export interface CommunityActor {
 /** 作者投影来源。阶段 2 接 `public_authors`；本片只做可注入的假名投影（见 authors.ts）。 */
 export interface AuthorDirectory {
   resolve(userId: string): Promise<Author | null>;
+  /**
+   * 注销去身份（F13 第 279 行）：把该主体此后的一切作者投影换成**不可反查原账户的注销引用**
+   * （`display_name: '已注销用户'`、`state: 'anonymized'`、随机 `display_id`、默认头像）。
+   *
+   * **可选能力**：注入的替身可能只实现读路径。缺它时注销装配处必须如实把「作者引用未替换」
+   * 计入 `blocked`，⛔ 不得静默跳过（那正是"未完成却报完成"）。
+   */
+  anonymize?(userId: string): Promise<Author>;
 }

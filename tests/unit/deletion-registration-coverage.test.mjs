@@ -28,11 +28,23 @@ const USER_DATA_DELETION_SRC = new URL('../../services/api/src/privacy/user-data
 const SUBJECT_COLUMNS = ['user_id', 'owner_id', 'author_user_id', 'subject_user_id', 'grantee_user_id'];
 
 /**
- * 已注册模块 → 该模块处理器**真正清空**的表（读 `*​/store-pg.ts` 的 `DELETE FROM` 得出）。
+ * 已注册模块 → 该模块处理器**按主体处理**的表（读 `*​/store-pg.ts` 的 SQL 得出）。
  * `conversation_turns`/`conversation_answers` 由 `conversations` 的 `ON DELETE CASCADE` 连带清空
  * （`0013_conversations.sql:64`/`:105`）。幂等台账与正文行同一事务清空（`purgeOwnerData`）。
+ *
+ * `community` 是**装配处条件追加**的第五域（`user-data-deletion.ts` 的
+ * `COMMUNITY_DELETION_MODULE`）：F13 要求**保留**帖子/评论正文（不是删光），所以这里的"覆盖"
+ * 指"该模块按主体处理这些表"——安全正文保留、个人信息清除、媒体引用移除、点赞物理删、
+ * 举报清自由文本。⛔ 不要把它读成"这些表会被清空"。
  */
 const MODULE_TABLE_COVERAGE = Object.freeze({
+  community: [
+    'community_posts',
+    'community_comments',
+    'community_likes',
+    'community_reports',
+    'community_idempotency',
+  ],
   conversations: ['conversations', 'conversation_turns', 'conversation_answers'],
   favorites: ['favorites', 'favorites_idempotency'],
   history: ['history', 'history_idempotency'],
@@ -48,6 +60,7 @@ const SATELLITE_TABLES = Object.freeze({
   favorites_idempotency: 'scope = `<主体>\\n<METHOD>\\n<路径>`（0018:105），由 favorites 模块按 scope 前缀清空',
   history_idempotency: 'scope 同形（0018:120），由 history 模块按 scope 前缀清空',
   idempotency_keys: 'scope 同形（auth/idempotency.ts 口径），由 messages 模块按主体清空',
+  community_idempotency: 'scope 同形（community/store.ts 用「主体 id + 换行」前缀匹配），由 community 模块按主体清空',
 });
 
 /**
@@ -66,10 +79,6 @@ const DECLARED_UNREGISTERED = Object.freeze({
   exports: '外发账本按契约保留（撤销只置 failed/CONSENT_WITHDRAWN，不删行）；保留期归 #19',
   export_writebacks: '回写台账同上，作为「回写 0 行」的证据保留；保留期归 #19',
   user_training_consents: '训练授权证据须保留，且首版不开启用户训练；归 #19',
-  community_posts: '社区域无清理原语（先审后发与留存策略未定）；阻塞 #19',
-  community_comments: '社区域无清理原语；阻塞 #19',
-  community_likes: '社区域无清理原语；阻塞 #19',
-  community_reports: '社区域无清理原语（举报记录涉他人证据，需专门口径）；阻塞 #19',
   user_backup_copies: '备份副本由 `backup-copies-pg.ts` 的清除端口驱动，不属于模块闭集；7/30 日集成归 #19',
   ocr_jobs: 'OCR 域无按主体清理原语；归 #19',
   ocr_records: 'OCR 域无按主体清理原语；归 #19',
@@ -133,6 +142,21 @@ function declaredClosure() {
   return names;
 }
 
+/**
+ * 装配处**条件追加**的模块（社区域）：从源码读出，不在这里复制常量。
+ *
+ * `createUserDataDeletion` 在注入 `communityStore` 时把 `COMMUNITY_DELETION_MODULE` 追加进
+ * 生效闭集（`app.ts` 无条件注入 ⇒ 真实注销路径是 5 项）；既有替身不注入 ⇒ 常量闭集仍是 4 项。
+ * 本断言因此同时检查"常量闭集"与"装配处追加"，避免"加了处理器但覆盖映射没跟上"。
+ */
+function declaredConditionalModules() {
+  const source = readFileSync(USER_DATA_DELETION_SRC, 'utf8');
+  const constant = source.match(/export const COMMUNITY_DELETION_MODULE\s*=\s*'([a-z_]+)'/);
+  assert.ok(constant, '必须能从源码读到 COMMUNITY_DELETION_MODULE 的字符串声明');
+  const appended = /input\.communityStore === undefined[\s\S]{0,400}?COMMUNITY_DELETION_MODULE/.test(source);
+  return appended ? [constant[1]] : [];
+}
+
 const TABLES = migrationTables();
 const USER_TABLES = userDataTables(TABLES);
 const COVERED = new Set(Object.values(MODULE_TABLE_COVERAGE).flat());
@@ -140,8 +164,10 @@ const COVERED = new Set(Object.values(MODULE_TABLE_COVERAGE).flat());
 test('闭集（USER_DATA_DELETION_MODULES）与覆盖映射逐项对齐，不多不少', () => {
   const closure = declaredClosure();
   assert.deepEqual(closure, ['favorites', 'history', 'messages', 'conversations'], '闭集内容与顺序：扩大闭集须同步本断言');
-  assert.deepEqual(Object.keys(MODULE_TABLE_COVERAGE).sort(), [...closure].sort(),
-    '每个已注册模块都必须在这里声明「它清了哪些表」，否则覆盖断言会漏掉整个域');
+  const effective = [...closure, ...declaredConditionalModules()];
+  assert.ok(effective.includes('community'), '装配处条件追加的社区域必须被覆盖映射声明');
+  assert.deepEqual(Object.keys(MODULE_TABLE_COVERAGE).sort(), [...effective].sort(),
+    '每个已注册模块都必须在这里声明「它按主体处理哪些表」，否则覆盖断言会漏掉整个域');
 });
 
 test('每张用户数据表都必须：被已注册模块覆盖，或显式声明未注册（棘轮）', () => {

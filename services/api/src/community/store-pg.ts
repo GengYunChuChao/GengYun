@@ -52,6 +52,7 @@ import type {
   CommentCommitPatch,
   CommentRecord,
   CommitResult,
+  CommunityOwnerPurgeCounts,
   CommunityStore,
   IdempotencyOutcome,
   IdempotencyRecord,
@@ -60,9 +61,12 @@ import type {
   PostCommitExpectation,
   PostCommitPatch,
   PostRecord,
+  ReportCommitExpectation,
+  ReportCommitPatch,
   ReportRecord,
 } from './store.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
+import { redactPersonalInfo } from './personal-info.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
 export interface SqlRunner {
@@ -466,6 +470,44 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
     });
   }
 
+  /**
+   * 举报状态推进（CAS）。
+   *
+   * 只写 `revision`/`state` 两列：`20-login-roles.sql:521-523` 对 `community_reports` 的
+   * UPDATE 是列级的，这里用到的两列都在授权清单里，不需要新增 GRANT。
+   */
+  async function commitReport(
+    id: string,
+    expected: ReportCommitExpectation,
+    patch: ReportCommitPatch,
+  ): Promise<CommitResult<ReportRecord>> {
+    return withTransaction<CommitResult<ReportRecord>>(pool, async (sql) => {
+      const current = (await sql.query(
+        `SELECT ${REPORT_COLUMNS} FROM community_reports WHERE id = $1::uuid FOR UPDATE`,
+        [id],
+      )).rows[0];
+      if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
+      const before = reportRecordFromRow(current);
+      // 判定顺序与内存实现逐条一致：先版本、再状态（版本是"重读再试"，状态是"路线分叉"）。
+      if (before.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
+      if (expected.state !== undefined && before.state !== expected.state) {
+        return { ok: false, reason: 'STATE_CHANGED' };
+      }
+      const next: ReportRecord = {
+        ...before,
+        revision: patch.revision ?? before.revision,
+        state: patch.state ?? before.state,
+      };
+      await sql.query(
+        `UPDATE community_reports
+            SET revision = $2, state = $3::text
+          WHERE id = $1::uuid`,
+        [id, next.revision, next.state],
+      );
+      return { ok: true, record: next };
+    });
+  }
+
   return {
     persistent: true,
 
@@ -736,6 +778,125 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       const rows = await run(`SELECT ${REPORT_COLUMNS} FROM community_reports WHERE id = $1::uuid`, [id]);
       const row = rows[0];
       return row === undefined ? null : reportRecordFromRow(row);
+    },
+
+    async commitReportIfCurrent(id, expected, patch) {
+      return commitReport(id, expected, patch);
+    },
+
+    /**
+     * 注销清理（GY-I15 · R31-S6 / **F13 保留规则**，P2 返修）。
+     *
+     * 口径逐条对齐 `docs/implementation-requirements.md` F13（第 279–280 行）与内存实现：
+     *
+     * 1. **帖子/评论保留**（⛔ 不再无条件 `visibility='deleted'`）。已审核、无个人信息的安全正文
+     *    不因注销改变可见性；作者投影由 `AuthorDirectory.anonymize` 换成注销引用。
+     *    **不推进 revision**：审核结论按 `(type,id,revision)` + 正文摘要绑定（`service.ts`
+     *    的 `effectiveState`），为"标记"升版本会让安全正文因查不到结论而整条消失，
+     *    与 F13「保留正文」相悖。
+     * 2. **个人信息清除**：正文命中联系方式/精确门牌（`redactPersonalInfo`）⇒ 改写正文并
+     *    `revision+1`。旧摘要不再匹配 ⇒ 读取时自动降级为"待重审"（退出公开面、行仍在库），
+     *    与"先审后发"一致。**不**复制旧审核结论去放行新文本（那等于绕过重审）。
+     * 3. **不能可靠脱敏的媒体 ⇒ 移除引用**（`media_ids='{}'`）。社区存储没有媒体去标识的证据面
+     *    （媒体投影未接线），按 F13"不能可靠脱敏的媒体隐藏／移除"处理；正文照旧保留。
+     *    仅移除媒体时**不推进 revision**（正文摘要未变 ⇒ 旧审核结论仍有效、内容继续可见）。
+     * 4. **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销不复活、不改写作者自己的
+     *    删除语义（旧路径语义一行未动）。
+     * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 只清 `detail`**（行与 state 保留，
+     *    处置轨迹是审核域留痕）；**本域幂等台账**按 `scope` 前缀清空。
+     *
+     * 计数（见 `CommunityOwnerPurgeCounts`）：`records` 是**真实改动/删除**的行数，
+     * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，⛔ 不用一个合计数字冒充"保留也完成了"。
+     */
+    async purgeOwnerData(ownerId) {
+      return withTransaction<CommunityOwnerPurgeCounts>(pool, async (sql) => {
+        const stamp = new Date().toISOString();
+        let records = 0;
+        let retained = 0;
+        let redacted = 0;
+        let hiddenMedia = 0;
+        // 先锁住本主体的内容行再逐行判定：清除规则在 JS 里（纯函数），
+        // 同一事务内完成"读 → 判 → 写"，不产生检查-写入窗口。
+        const posts = (await sql.query(
+          `SELECT id, revision, title, body, media_ids
+             FROM community_posts
+            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            FOR UPDATE`,
+          [ownerId],
+        )).rows;
+        for (const row of posts) {
+          const id = String(row.id);
+          const title = redactPersonalInfo(String(row.title));
+          const body = redactPersonalInfo(String(row.body));
+          const media = asTextArray(row.media_ids);
+          if (title.removed + body.removed > 0) {
+            await sql.query(
+              `UPDATE community_posts
+                  SET title = $2, body = $3, media_ids = '{}'::text[], revision = revision + 1,
+                      updated_at = $4::timestamptz
+                WHERE id = $1::uuid`,
+              [id, title.text, body.text, stamp],
+            );
+            records += 1;
+            redacted += 1;
+            hiddenMedia += media.length;
+          } else if (media.length > 0) {
+            await sql.query(
+              `UPDATE community_posts
+                  SET media_ids = '{}'::text[], updated_at = $2::timestamptz
+                WHERE id = $1::uuid`,
+              [id, stamp],
+            );
+            records += 1;
+            retained += 1;
+            hiddenMedia += media.length;
+          } else {
+            retained += 1;
+          }
+        }
+        const comments = (await sql.query(
+          `SELECT id, revision, body
+             FROM community_comments
+            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            FOR UPDATE`,
+          [ownerId],
+        )).rows;
+        for (const row of comments) {
+          const body = redactPersonalInfo(String(row.body));
+          if (body.removed > 0) {
+            await sql.query(
+              `UPDATE community_comments
+                  SET body = $2, revision = revision + 1
+                WHERE id = $1::uuid`,
+              [String(row.id), body.text],
+            );
+            records += 1;
+            redacted += 1;
+          } else {
+            retained += 1;
+          }
+        }
+        const reports = (await sql.query(
+          `UPDATE community_reports
+              SET detail = NULL, revision = revision + 1
+            WHERE reporter_id = $1::uuid AND detail IS NOT NULL
+            RETURNING id`,
+          [ownerId],
+        )).rows;
+        records += reports.length;
+        const likes = (await sql.query(
+          `DELETE FROM community_likes WHERE user_id = $1::uuid RETURNING target_id`,
+          [ownerId],
+        )).rows;
+        records += likes.length;
+        // `scope` 形如 `<subject>\n<METHOD>\n<path>`（`auth/idempotency.ts:111-113`），
+        // 主体是首段 ⇒ 前缀匹配 `ownerId + '\n'`。用 LIKE 而不是 =，因为一条请求不会有多个 scope。
+        const idempotency = (await sql.query(
+          `DELETE FROM community_idempotency WHERE scope LIKE $1::text RETURNING scope`,
+          [`${ownerId}\n%`],
+        )).rows;
+        return { records, idempotency: idempotency.length, retained, redacted, hiddenMedia };
+      });
     },
 
     // ---- 幂等台账（`community_idempotency`；`scope` 已编码主体） ----

@@ -180,6 +180,8 @@ import { createCommunityService, type CommunityService } from './community/servi
 import { createMemoryCommunityStore, type CommunityStore } from './community/store.ts';
 import { createPostgresCommunityStore } from './community/store-pg.ts';
 import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
+// #15 社区域注销保留/去身份端口：清社区行（F13 保留/脱敏/媒体）＋ 作者换随机注销引用。
+import { createCommunityOwnerPurgePort } from './community/purge.ts';
 import type { AuthorDirectory } from './community/types.ts';
 import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
 import {
@@ -1589,6 +1591,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           ) => messagesPurgeSnapshot(ownerId, client),
         }),
   };
+  // #15 社区域（R31-S6 / F13 保留规则）：**同一份**社区 store ＋ **同一个**作者目录 ⇒ 一个端口。
+  // 端口内做两件事并如实分账：清社区行（`purgeOwnerData`：保留/脱敏/媒体）＋ 把作者投影换成
+  // 随机注销引用（`AuthorDirectory.anonymize`）。未完成项（行级 author_id 受 FK/列级授权约束、
+  // 注销引用未持久化）由端口计入 `blocked`，⛔ 不用保留行数冒充 completed。
+  const communityPurgePort = createCommunityOwnerPurgePort({
+    store: communityStore,
+    authors: communityAuthors,
+  });
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1615,6 +1625,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           }
         : {}),
     },
+    // #15 社区域（R31-S6 / F13）：**无条件注入** —— 只要社区 store 在装配期存在，注销就会按
+    // F13 保留/脱敏该主体的帖子与评论、移除不可脱敏媒体、清点赞与举报自由文本，并把作者
+    // 投影换成注销引用；未完成项如实 blocked（见 `community/purge.ts`）。
+    // 端口同时提供 `deleteAllByOwner`（= `records`）与分表计数的 `purgeOwnerData`；
+    // `makeHandler` 优先走后者，因此保留/脱敏/媒体/台账读数都不会丢。
+    communityStore: communityPurgePort,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,

@@ -12,12 +12,16 @@
  *     可选 `detail` 1..1000。
  *   - 参数：`Idempotency-Key` 8..128（required）；`If-Match` 匹配 `^"[1-9][0-9]*"$`（required，
  *     不允许 `*`；缺失 428）；`limit` 整数 1..50 默认 20；`cursor` ≤2048。
+ *   - 举报**处置**入参（R31-S1，**内部操作、契约里没有对应 op**）：`action` ∈
+ *     {triage,resolve,reject}、`expected_revision` ≥1 整数，未知字段拒绝。见文件末尾
+ *     `validateReportDispositionInput`。
  *
  * 校验纪律：一律**先判 `typeof` 再判值**（`undefined` 不会被 `includes` 悄悄放过），
  * 未知字段一律拒绝（`additionalProperties:false`），不"顺手丢弃"多余字段。
  */
 import { ApiError } from '../errors.ts';
 import { isPositiveInteger } from '../auth/tokens.ts';
+import { REPORT_ACTIONS, type ReportAction } from './report-state.ts';
 import type {
   CommunityActor,
   CommentInput,
@@ -275,4 +279,43 @@ export function validateReportInput(value: unknown): ReportInput {
   const input: ReportInput = { target_ref: target, reason_code: reasonCode as ReportReasonCode };
   if (detail !== undefined) input.detail = detail as string;
   return input;
+}
+
+/**
+ * 举报**处置**入参（GY-I15 · R31-S1）。
+ *
+ * ⚠️ 这不是契约 schema：`packages/contracts/openapi.json` 里没有任何举报处置 op，
+ * 所以这里**照抄不了** `additionalProperties:false` 的既有先例，只能沿用同一纪律
+ * （未知字段一律拒绝、先判 `typeof` 再判值），字段名用下划线以与本服务其他内部结构一致。
+ *
+ * `expected_revision` 是 `If-Match` 的服务端等价物：调用方必须声明"我看到的举报是第几版"，
+ * 与当前版本不符就整单拒绝（CAS），从而让"重复处置"变成可判定的失败而不是静默覆盖。
+ */
+export interface ReportDispositionInput {
+  action: ReportAction;
+  expected_revision: number;
+}
+
+/** 校验处置入参。`action` 的闭集来自状态机（`report-state.ts`），不在这里复制一份。 */
+export function validateReportDispositionInput(value: unknown): ReportDispositionInput {
+  if (!isPlainObject(value)) throw invalid('处置入参必须是对象', [{ field: '(input)', code: 'NOT_OBJECT' }]);
+  const details: ValidationDetail[] = [];
+  requireKnownKeys(value, ['action', 'expected_revision'], details);
+
+  const action = value['action'];
+  if (typeof action !== 'string' || !(REPORT_ACTIONS as readonly string[]).includes(action)) {
+    details.push({ field: 'action', code: 'INVALID_ENUM' });
+  }
+
+  const expectedRevision = value['expected_revision'];
+  if (
+    typeof expectedRevision !== 'number'
+    || !Number.isSafeInteger(expectedRevision)
+    || expectedRevision < 1
+  ) {
+    details.push({ field: 'expected_revision', code: 'INVALID_INTEGER' });
+  }
+
+  if (details.length > 0) throw invalid('处置入参不符合状态机口径', details);
+  return { action: action as ReportAction, expected_revision: expectedRevision as number };
 }

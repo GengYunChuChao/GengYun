@@ -68,6 +68,17 @@ export const PG_MIGRATIONS_WITH_MESSAGES = [
   '0019_messages_persistence',
 ];
 
+/**
+ * #15 社区域（R31-S6）追加：注销闭集无条件注入 `community` 之后，用例还必须带上社区五张表
+ * （`0022` 的 `community_posts` / `community_comments` / `community_likes` / `community_reports`
+ * + 本域幂等台账 `community_idempotency`）—— 否则注销清理的 SELECT/UPDATE/DELETE 会撞
+ * `42P01`（`undefined_table`），协调器把该模块折叠成 `blocked`：那不是"注销已完成"，而是
+ * "表都没有"。真库（PG17）覆盖在 `tests/integration/community-pg.mjs`。
+ *
+ * 同样单独一个常量而不是改上面两个迁移集：既有收藏/历史/消息/会话用例的迁移集**逐字不动**。
+ */
+export const PG_MIGRATIONS_WITH_COMMUNITY = [...PG_MIGRATIONS_WITH_MESSAGES, '0022_community_persistence'];
+
 export function migrationSql(name) {
   return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');
 }
