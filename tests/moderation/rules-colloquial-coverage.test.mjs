@@ -14,6 +14,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { RULES } from '../../packages/moderation/rules.mjs';
+import { isReportContext } from '../../packages/moderation/matchers.mjs';
 import { ALL_REASON_CODES, RULE_REASON_CODES } from '../../packages/moderation/constants.mjs';
 import { makeInput, runRules } from './_fixtures.mjs';
 
@@ -251,6 +252,73 @@ test('MR-10 不命中：产品公告「私聊功能已上线」', () => {
 
 test('MR-10 不命中：规则陈述「请勿私下交易」', () => {
   assertMiss('MR-10', 'COMMERCE_SOLICITATION', '请勿私下交易，谨防被骗');
+});
+
+// ---------------------------------------------------------------------------
+// 监工 1927 轮 [P1]：举报／被骗豁免收敛到「主语 + 邻域」判定
+//
+// 背景：MR-10 曾把 `/举报|投诉|诈骗|被骗|上当/` 放在 `exemptions`（句读段任意位置命中即放行），
+// MR-12 的 `exemptions` 也带 `/举报|投诉|…/`、按整句直接豁免。结果「我要举报你们卖假药＋加微信」
+// 这类句子把**独立、明确的售卖与联系方式动作**一起抹掉。
+//
+// 现行口径（`packages/moderation/matchers.mjs` 的 `isReportContext`）：报告词只进 `report_exemptions`，
+// 且必须同时满足（a）句内有报告框（`我+举报`／`我+被骗`／`被举报`）、（b）不是"请求别人别举报"、
+// （c）句内没有**独立**售卖/联系方式/下单动作（该动作所在句读段有第三方转述时除外）。
+// 取舍**宁可误拦报告、不放行售卖**：句内出现独立售卖动作即按命中处理（下方"已知代价"用例登记）。
+// ---------------------------------------------------------------------------
+
+test('[P1] MR-10 命中：「不要举报我…」与独立联系方式同句（举报词不得抹掉加微信）', () => {
+  assertHit('MR-10', 'COMMERCE_SOLICITATION', '不要举报我百草枯现货加微信下单');
+});
+
+test('[P1] MR-10 命中：「我要举报你们卖假药＋加微信」（监工点名句）', () => {
+  assertHit('MR-10', 'COMMERCE_SOLICITATION', '我要举报你们卖假药＋加微信');
+});
+
+test('[P1] MR-10 命中：「别举报我，…加我微信」（请求别人别举报不构成自述）', () => {
+  assertHit('MR-10', 'COMMERCE_SOLICITATION', '别举报我，百草枯现货加我微信');
+});
+
+test('[P1] MR-12 命中：「举报也没用，甲胺磷现货便宜出」', () => {
+  assertHit('MR-12', 'PROHIBITED_SALE', '举报也没用，甲胺磷现货便宜出');
+});
+
+test('[P1] MR-12 命中：「我这有百草枯现货，被骗过的人互相提醒」（报警词顺带 ≠ 整句放行）', () => {
+  assertHit('MR-12', 'PROHIBITED_SALE', '我这有百草枯现货，被骗过的人互相提醒');
+});
+
+test('[P1] MR-12 命中：「我被骗了，但我这还有敌敌畏现货」', () => {
+  assertHit('MR-12', 'PROHIBITED_SALE', '我被骗了，但我这还有敌敌畏现货');
+});
+
+test('[P1] MR-12 命中（已知代价）：「被人举报」陈述与独立售卖同句时按命中处理', () => {
+  // 代价登记：该句可能确为"被诬告"的自述，但句内出现"现货/倒卖"这类独立售卖动作，
+  // 按"宁可误拦报告、不放行售卖"处理。真需要放行时应改写为不含售卖动作的陈述。
+  assertHit('MR-12', 'PROHIBITED_SALE', '我被人举报了，说我百草枯现货倒卖');
+});
+
+test('[P1] MR-12 不命中：真·举报（自述去向平台举报）', () => {
+  assertMiss('MR-12', 'PROHIBITED_SALE', '我在网上买百草枯被骗了，已经向平台举报');
+});
+
+test('[P1] MR-12 不命中：真·举报（举报有人在卖）', () => {
+  assertMiss('MR-12', 'PROHIBITED_SALE', '我要举报有人在卖百草枯');
+});
+
+test('[P1] MR-12 不命中：真·被举报自述（无独立售卖动作）', () => {
+  assertMiss('MR-12', 'PROHIBITED_SALE', '我被人举报了，百草枯不是我卖的');
+});
+
+test('[P1] MR-10 不命中：真·举报（第三方私我卖货，我要举报他）', () => {
+  // 「有人…私我」是第三方转述的经过，不是发帖人在导流。
+  assertMiss('MR-10', 'COMMERCE_SOLICITATION', '有人在群里私我卖百草枯，我要举报他');
+});
+
+test('[P1] isReportContext：主语／邻域判定的四条边界读数', () => {
+  assert.equal(isReportContext('我要举报有人在群里私我卖百草枯'), true, '第三方转述的私我 ⇒ 举报语境成立');
+  assert.equal(isReportContext('我被骗了，但他让我加微信买药'), true, '「他让我加微信」是经过，不是本人在导流');
+  assert.equal(isReportContext('不要举报我百草枯现货加微信下单'), false, '请求别人别举报 ⇒ 不成立');
+  assert.equal(isReportContext('我这有百草枯现货，被骗过的人互相提醒'), false, '句内独立售卖动作 ⇒ 不成立');
 });
 
 // ---------------------------------------------------------------------------

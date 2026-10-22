@@ -18,7 +18,7 @@
  *
  * 隐私说明：规则的 reason_code 与证据**只含偏移**，不含命中原文（见 matchers.mjs）。
  */
-import { DANGEROUS_NEGATION_CANCELLERS, MATCHERS, MATCHER_REVISIONS } from './matchers.mjs';
+import { DANGEROUS_NEGATION_CANCELLERS, MATCHERS, MATCHER_REVISIONS, REPORT_CONTEXT_PATTERNS } from './matchers.mjs';
 import {
   PROHIBITED_PESTICIDES,
   PROHIBITED_SALE_SIGNALS,
@@ -226,8 +226,10 @@ export const RULES = Object.freeze([
       '命中加微信、私聊下单、扫码购买、微店／拼团／代购、厂家直销／批发价、' +
       '口语导流（私我／v我／要的留言／面交／自提／转手／便宜出）等私下交易动作；' +
       'F05／AC16：广告、购买链接、私下交易导流不发布。' +
-      '匹配器为 exempted_pattern：整句读段命中 exemptions（产品陈述／规则陈述／举报）时不误伤' +
-      '（`私信通知`、`私聊功能已上线`、`请勿私下交易`、`农药包装废弃物不得转手`）。',
+      '匹配器为 exempted_pattern：命中所在句读段命中 exemptions（产品陈述／规则陈述）时豁免' +
+      '（`私信通知`、`私聊功能已上线`、`请勿私下交易`、`农药包装废弃物不得转手`）；' +
+      '举报／被骗语境走 report_exemptions，须同时通过主语／邻域判定（`我要举报有人在群里私我卖百草枯` 豁免，' +
+      '`不要举报我百草枯现货加微信下单`、`我这有百草枯现货，举报也没用` 照常命中）。',
     severity: 'block',
     matcher: 'exempted_pattern',
     patterns: [
@@ -247,8 +249,8 @@ export const RULES = Object.freeze([
     exemptions: [
       /私信通知|私聊功能|私信功能|私聊已(?:上线|开通)|私信已(?:上线|开通)/,
       /(?:请勿|不要|禁止|严禁|不得|不能|勿|莫)[^，。；]{0,8}(?:私下?交易|私下?买卖|私下?转账|转手|倒卖|面交|加好友)/,
-      /举报|投诉|诈骗|被骗|上当/,
     ],
+    report_exemptions: REPORT_CONTEXT_PATTERNS,
   },
   {
     id: 'MR-11',
@@ -271,9 +273,11 @@ export const RULES = Object.freeze([
       '同一句内同时出现禁用／限用农药标的名与交易信号（有货／现货／私聊／私我／转手／便宜出等），' +
       '且两者相距 ≤24 字才命中（允许跨逗号，不跨句号：`甲胺磷，私我` 命中，' +
       '`……登记早就到期了。价格我记不清` 不命中）。' +
-      '规则陈述、普法、急救与举报句式整句豁免' +
+      '规则陈述、普法与急救句式整句豁免（exemptions）' +
       '（`百草枯已被禁用，误服请立即就医`、`敌敌畏中毒急救措施`、`关于甲胺磷限用的法规解读`、' +
-      '`我要举报有人在卖百草枯`、`平台禁止售卖禁用农药`）。' +
+      '`平台禁止售卖禁用农药`）；举报／被骗句式走 report_exemptions，须同时通过主语／邻域判定' +
+      '（`我要举报有人在卖百草枯`、`我被人举报了，百草枯不是我卖的` 豁免；' +
+      '`我这有百草枯现货，被骗过的人互相提醒`、`不要举报我，甲胺磷现货私我` 照常命中）。' +
       'F05／AC16：禁售农药的售卖与私下交易不发布。只覆盖文本层；图片与真实供应商仍属未取得。',
     severity: 'block',
     matcher: 'sale_cooccurrence',
@@ -281,10 +285,14 @@ export const RULES = Object.freeze([
     signals: PROHIBITED_SALE_SIGNALS,
     max_distance: 24,
     exemptions: PROHIBITED_SALE_STATEMENT_EXEMPTIONS,
+    report_exemptions: REPORT_CONTEXT_PATTERNS,
   },
 ]);
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,40}$/;
+
+/** 支持 `report_exemptions`（举报／被骗语境豁免）的匹配器。 */
+export const REPORT_CONTEXT_MATCHERS = Object.freeze(['exempted_pattern', 'sale_cooccurrence']);
 
 /**
  * 校验规则集结构是否合法（供引擎自检与测试使用）。
@@ -343,8 +351,38 @@ export function validateRuleCatalog(rules = RULES, matchers = MATCHERS) {
         }
       }
     }
-    // 否定取消词：只对否定护栏有效；写在不生效的匹配器上属于"看起来配了其实没用"，直接判非法。
+    // 豁免表：`exemptions`（整段口径）与 `report_exemptions`（举报语境口径）都必须是无状态模式表。
+    for (const [field, value] of [
+      ['exemptions', rule.exemptions],
+      ['report_exemptions', rule.report_exemptions],
+    ]) {
+      if (value === undefined) continue;
+      if (!Array.isArray(value) || value.length === 0) {
+        errors.push(`${where}: ${field} 必须是非空数组`);
+        continue;
+      }
+      value.forEach((pattern, index) => {
+        if (typeof pattern === 'string') {
+          if (pattern.length === 0) errors.push(`${where}: ${field}[${index}] 不得为空字符串`);
+          return;
+        }
+        if (!(pattern instanceof RegExp)) {
+          errors.push(`${where}: ${field}[${index}] 必须是 RegExp`);
+          return;
+        }
+        if (pattern.flags.includes('g') || pattern.flags.includes('y')) {
+          errors.push(`${where}: ${field}[${index}] 不得带 g/y 标志（有状态，破坏确定性）`);
+        }
+      });
+    }
+    // 举报语境豁免只对支持"报告框＋主语/邻域判定"的匹配器生效，写错位置属于假配置。
+    if (rule.report_exemptions !== undefined && !REPORT_CONTEXT_MATCHERS.includes(rule.matcher)) {
+      errors.push(
+        `${where}: report_exemptions 只对 ${REPORT_CONTEXT_MATCHERS.join('／')} 生效，当前匹配器为 ${rule.matcher}`,
+      );
+    }
     if (rule.negation_cancellers !== undefined) {
+      // 否定取消词：只对否定护栏有效；写在不生效的匹配器上属于"看起来配了其实没用"，直接判非法。
       if (rule.matcher !== 'negation_guarded_pattern') {
         errors.push(`${where}: negation_cancellers 只对 negation_guarded_pattern 生效，当前匹配器为 ${rule.matcher}`);
       }
