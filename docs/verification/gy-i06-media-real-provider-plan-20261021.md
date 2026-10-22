@@ -13,8 +13,8 @@
 
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
-| 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1268` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:595` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:465`）铸造的 `WeakSet` 品牌（`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1276`）；生产入口 `services/api/src/server.ts:27` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:485` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1380`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1409`（批准能力不可伪造/不可派生/不可默认化） |
+| 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1308` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1397`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -49,7 +49,7 @@
 | --- | --- |
 | `services/api/src/config.ts` 里**没有**任何 `OCR_*` / `ASR_*` / `TTS_*` / `MODERATION_*` 键 | `grep OBJECT_STORAGE_`/`OCR_` 在 `services/api/src/config.ts` 零命中（媒体域是唯一在 `REQUIRED_WHEN_REAL` 里登记存储键的域） |
 | 模型的端点白名单不放在 `config.ts`，放在 `tools/ai-config.mjs` 的 `AI_ENDPOINTS`；发送前再断言 host + 全串相等 | 规范 §2.4 |
-| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:948-949`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1331`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:179`） | 逐处 `grep` 实测 |
+| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:969-970`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1331`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:277`） | 逐处 `grep` 实测 |
 
 **媒体域与四域的结构差异（这决定了方案形状）**：
 
@@ -69,11 +69,11 @@
 | --- | --- | --- |
 | 1 | `services/api/src/config.ts:158-173` | 解析 `APP_EXECUTION_MODE`（`stub` \| `preset_demo` \| `real`），非法值进 `ConfigError` |
 | 2 | `services/api/src/config.ts:251-260` | real 模式逐项检查 `REQUIRED_WHEN_REAL`，缺项只登记字段名（不回显值） |
-| 3 | `services/api/src/app.ts:1268` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
+| 3 | `services/api/src/app.ts:1308` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
 | 4 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore`：real → `readObjectStorageConfig(NO_STORAGE_ENV)`（null 原型空表）⇒ 必然 `unwired`；非 real → `substitute` |
 | 5 | `services/api/src/app.ts:1269-1280` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
-| 6 | `services/api/src/app.ts:1588` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
-| 7 | `services/api/src/app.ts:1711` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点 |
+| 6 | `services/api/src/app.ts:1715` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
+| 7 | `services/api/src/app.ts:1817` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点 |
 | 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
 
 ### 3.2 stub 下一次上传的完整走向
@@ -111,8 +111,8 @@
 | 修改 | `services/api/src/config.ts:20-42`（`AppConfig`） | 新增一等字段 `objectStorage: ObjectStorageConfig \| null`（类型从 `services/api/src/media/object-store.ts:179` 复用）。**不得**加「裸字符串四件套」，避免密钥散落 |
 | 修改 | `services/api/src/config.ts:251-260` | real 模式下把 `REQUIRED_WHEN_REAL` 的存在性检查升级为「产出结构化 config 或抛 `ConfigError`」：直接调用 `readObjectStorageConfig(env)`（`services/api/src/media/object-store.ts:197`）并把 `issues` 折进 `ConfigError`（复用既有 `ConfigIssue { field, code, reason }` 形状，`services/api/src/config.ts:44-51`） |
 | 修改 | `services/api/src/config.ts:69-79` | 保留 `OBJECT_STORAGE_*` 在 `REQUIRED_WHEN_REAL` 里（防止有人误删），但**判定权**移到上一行的结构化解析 |
-| 修改 | `services/api/src/app.ts:1268` | real 分支改为 `resolveMediaObjectStore({ executionMode, env: config.objectStorageEnv })`，其中 `objectStorageEnv` 是**从 `AppConfig` 派生的已解析配置**，**绝不能**是 ambient `process.env` |
-| ⛔ 禁止 | `services/api/src/app.ts:1268` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:329-337` 有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
+| 修改 | `services/api/src/app.ts:1308` | real 分支改为 `resolveMediaObjectStore({ executionMode, env: config.objectStorageEnv })`，其中 `objectStorageEnv` 是**从 `AppConfig` 派生的已解析配置**，**绝不能**是 ambient `process.env` |
+| ⛔ 禁止 | `services/api/src/app.ts:1308` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:329-337` 有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
 | ⛔ 约束 | `services/api/src/app.ts` 全文件 | ambient env 只允许 3 个非媒体键（`tests/unit/media-real-mode-fail-closed.test.mjs:1050` 的全文件审计 + `:1227` 运行期来源检查）；新增的「从 `AppConfig` 派生」取值**不是** ambient 读取，不受此限，但也不得借此新增第四个 `process.env[...]` |
 | ⛔ 禁止 | `services/api/src/media/**` | **不得**在媒体域内读 `process.env` / `import.meta.env`（`services/api/src/media/service.ts:281-283` 已把该约束写进注释，同上测试做 AST 级判违规） |
 | 保留 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore` 的「缺任一键 ⇒ `unwired`」语义**不改**：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 1-A 用例逐键验证 |
@@ -242,7 +242,7 @@
 | # | 决策 | 选项 | 建议 |
 | --- | --- | --- | --- |
 | D1 | **配置从哪进装配层** | (a) `app.ts` 传 `process.env`（**禁止**，命中 PR #193 P1）；(b) `config.ts` 产出结构化 `objectStorage` 字段，`app.ts` 显式传派生 env；(c) 让 `resolveMediaObjectStore` 自己读 env（**禁止**，同上测试有 AST 断言） | **(b)**：唯一同时满足「配置即门控」禁令与「媒体域不读 env」约束的形状 |
-| D2 | **`realMediaApproval` 由谁铸造** | (a) 保持现状 ⇒ 永不放行，方案等于无效；(b) 由 `config.ts` 凭一个 env（如 `MEDIA_REAL_WIRING_APPROVED=true`）在装配层铸造 ⇒ 与「配置即门控」冲突；(c) 由**生产入口**（`services/api/src/server.ts`）在显式运维动作下铸造（启动参数或一次性令牌与代码内常量比对），并保留 `s3_compatible` 第二道校验 | **(c)**：门由「显式运维动作」打开，而不是「环境里恰好有值」；铸造点唯一、可审计（reason + approvedAt 已由 `approveRealMediaWiring` 记录，`services/api/src/media/service.ts:465`） |
+| D2 | **`realMediaApproval` 由谁铸造** | (a) 保持现状 ⇒ 永不放行，方案等于无效；(b) 由 `config.ts` 凭一个 env（如 `MEDIA_REAL_WIRING_APPROVED=true`）在装配层铸造 ⇒ 与「配置即门控」冲突；(c) 由**生产入口**（`services/api/src/server.ts`）在显式运维动作下铸造（启动参数或一次性令牌与代码内常量比对），并保留 `s3_compatible` 第二道校验 | **(c)**：门由「显式运维动作」打开，而不是「环境里恰好有值」；铸造点唯一、可审计（reason + approvedAt 已由 `approveRealMediaWiring` 记录，`services/api/src/media/service.ts:473`） |
 | D3 | **句柄消费网关归属** | (a) 仓内最小参考实现（`deploy/media-gateway/`）；(b) 纯部署件，仓内只留契约文档；(c) 推迟到有真实网关域名后再做 | 建议 **(b) + 立即写契约**：本仓没有该 operation，仓内实现会制造「契约外接口」；但契约（token 头、归属校验、只回 derivative、no-store）必须现在定死，否则实现方各写一套 |
 | D4 | **供应商与临时密钥** | (a) 长期 AK/SK，不改签名代码；(b) 临时密钥，先扩 `presignS3Url`（`services/api/src/media/object-store.ts:283`） | 建议先 **(a)** 打通端到端（改动最小、可快速验证「桶策略 + 预签名 + 去 EXIF + 删除链」），再按需演进到 (b) |
 

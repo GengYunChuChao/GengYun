@@ -140,5 +140,12 @@ export interface AdminJobPort {
  * 为什么这样取：`hidePost` 必须复用社区自己的 CAS 与"已删除不可复活"语义，
  * 而不是在 admin 里复制一份可见性判定；用 `Pick<CommunityStore, ...>` 保证
  * 端口形状**就是**社区存储的形状，不引入会漂移的第二套签名。
+ *
+ * **GY-I18 · 能力位 `persistent`（#18）**：与 `getPost`/`commitPostIfCurrent` 一起取来，
+ * 用作 real 模式放行 `hidePost` 的**唯一**判据（`app.ts` 传
+ * `hidePostWired: communityPostPortForAdmin.persistent === true`）。
+ * 它不是"自述布尔"：内存实现恒 `false`（`community/store.ts`），PG 实现恒 `true`
+ * （`community/store-pg.ts`），观察器 `community/takedown.ts` 原样转发底层值。
+ * ⇒ 没有真实持久落点时，real 下的下架照旧 fail-closed 503。
  */
-export type CommunityPostPort = Pick<CommunityStore, 'getPost' | 'commitPostIfCurrent'>;
+export type CommunityPostPort = Pick<CommunityStore, 'persistent' | 'getPost' | 'commitPostIfCurrent'>;

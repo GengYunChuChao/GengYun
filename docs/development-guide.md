@@ -111,6 +111,7 @@ npm run db:status --workspace @gengyun/api
 | 命令 | 作用 |
 | --- | --- |
 | `npm run test:docs` | 文档链接、表格、27 项依赖和 F／AC／Q 映射 |
+| `npm run verify:anchors` | 契约台账锚点＋文档手写行号；改 `services/api/src/**` 或写完证据页先跑这一条 |
 | `npm run lint` | 类型与仓库卫生检查 |
 | `npm run test:unit` | 单元、隐私、媒体和参考组件回归 |
 | `npm run test:contract` | 代码与契约一致性 |
@@ -118,6 +119,9 @@ npm run db:status --workspace @gengyun/api
 | `npm run test:evaluation` | 评估程序；不等于真实模型指标 |
 | `npm run test:mini` | Node 静态和诊断检查；不代替微信编译 |
 | `npm run build` | API→services/api/dist；后台→apps/admin/dist |
+
+手写行号会随代码漂：文档里的 `路径:起-止` 由 `node tools/verify-doc-anchors.mjs` 校三类（路径不存在／超出文件行数／区间全空行或全右括号），`--strict` 只报基线之外的新增，历史遗留登记在 `tools/doc-anchors-baseline.json`。
+台账锚点（`source_anchor`）的 `--reanchor` 流程、`MISSING`／`AMBIGUOUS`／`UNSAFE` 如何处置，见 [AGENTS.md](../AGENTS.md) 的「契约台账锚点维护」小节；本页只给入口，不重复流程。
 
 纯文档通常只做文档／链接检查；接口改动加契约检查；代码做受影响测试与必要构建。
 页面改动检查对应编译／渲染；完整链路在集成节点做 Android 真机、供应商和恢复验收。

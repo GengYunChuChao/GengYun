@@ -109,8 +109,11 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 - 只过滤**已加载**的消息（服务端游标分页，本地不重排、不补数据）；未命中时沿用 `state-view` 的 `empty`
   （`messages.wxml:66-70`），标题/说明带当前档位名（`filterLabel`），并说明这不是「服务端没有消息」。
 - 「加载更多」只在「全部」档出现；其余档给一行说明（`messages.wxml:100`）。
-- 已知**未取得**：`互动`／`系统` 两档在当前服务端没有生产路径（`services/api/src/community/events.ts:121`
-  只发 `type: 'moderation'`），因此这两档今天只会命中审核结果或为空——**筛选本身是真实的**，但没有可演示的互动类消息。
+- 已知**未取得**：`互动`／`系统` 两档在写该页时（2026-10-18）服务端没有生产路径（映射点 `services/api/src/community/events.ts:136-140`
+  的 `communityEventMessageType` 当时只发 `type: 'moderation'`），因此这两档当时只会命中审核结果或为空——**筛选本身是真实的**。
+  **校准补记（2026-10-23）**：该映射点现已含 `comment`（第 137 行）与 `like`（第 138 行），`system` 仍**永不**由社区域产出
+  （第 121 行的 `CommunityMessageType` 闭集只到 `moderation`）；`互动` 档是否真能收到消息取决于消息域接线
+  （`services/api/src/app.ts` 里 `createMessagesCommunityEventsPort` 的那个分支），本页未验证。
 
 ---
 
@@ -177,8 +180,8 @@ c664435 fix(GY-I28): demo 对齐门禁补盲 —— video/chat 改为显式的�
 2. **真机渲染与截图**：无设备、无开发者工具 ⇒ 未取得。`npm run test:mini` 自身也只声明
    `PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. Not a WeChat compiler or device test.`
    `node tools/demo-align.mjs` 末行同样写 `未覆盖：微信开发者工具／模拟器／真机渲染与截图（本片未取得）。`
-3. **`互动`／`系统` 两档的演示数据**：服务端只发 `type: 'moderation'`（`services/api/src/community/events.ts:121`），
-   这两档今天只会筛到审核结果或为空；未伪造消息填充。
+3. **`互动`／`系统` 两档的演示数据**：写该页时服务端只发 `type: 'moderation'`（映射点 `services/api/src/community/events.ts:136-140`），
+   这两档当时只会筛到审核结果或为空；未伪造消息填充（映射点现况补记见 §3 同条）。
 4. **「重置演示数据」**：小程序无演示模式、无本地演示数据可清（`demoMode|DEMO_MODE|isDemo|demo 模式` 在 `miniprogram` 零命中），按「不存在则不加」未实现。
 5. **「问答自动朗读」开关**：无「回答就绪即自动朗读」的既有触发点，按「只有既有能力才接」未实现。
 6. **视觉走查**（间距/字号/断点观感）：只在 CSS 令牌与类名层面被门禁核对，未做截图比对。

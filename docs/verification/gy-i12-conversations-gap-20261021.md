@@ -60,7 +60,7 @@
 | --- | --- | --- |
 | 存储 | **已通（real 走 PG）** | `services/api/src/app.ts:1507-1511`：`real` + 有 `pool` ⇒ `createPostgresConversationStore(pool)`；非 `real` ⇒ 内存 store。`app.ts:1545-1550` 的 `conversationStore === null \|\| (config.executionMode === 'real' && !conversationStore.persistent) ? null : createConversationService({...})` 明确：**即使测试注入内存 store，real 下也不能绕过 fail-closed** |
 | 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1346-1350` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:1522-1528` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
-| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:152` `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1538` 缺省启用（fail-closed） |
+| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:152` `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1666` 缺省启用（fail-closed） |
 | 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1107` `createConversationGuard`（`app.ts:1534` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
 
 ### 3.2 唯一断点：生成侧「没有模型」
@@ -244,7 +244,7 @@ if (!answerProvider.available) {
 | --- | --- | --- | --- |
 | `APP_EXECUTION_MODE` | 已存在，**必填**（`config.ts:158-168`，取值 `real`/`stub`/`preset_demo`） | 决定是否走真实提供者 | 缺省报配置错误，不静默取 `stub` |
 | `DATABASE_URL` | 已存在（`config.ts:70`、`:220-228`，带 `isPostgresUrl` 校验） | real 下 PG store + 知识读面；缺则整域 `null` | 问答域要「真链路可用」**必须**有它 |
-| `ANSWER_PROVIDER_URL` | **不存在**（新） | 真实回答提供者 endpoint | 命名照 `RECOGNITION_PROVIDER_URL`（`app.ts:948`）；**是否允许任意 URL 需 §6 R-1 裁决** |
+| `ANSWER_PROVIDER_URL` | **不存在**（新） | 真实回答提供者 endpoint | 命名照 `RECOGNITION_PROVIDER_URL`（`app.ts:969`）；**是否允许任意 URL 需 §6 R-1 裁决** |
 | `ANSWER_PROVIDER_KEY` | **不存在**（新） | 真实回答提供者凭据 | 照 `app.ts:949`；凭据只在内存、不落日志 |
 | `DEEPSEEK_API_KEY` | 存在于 `tools/ai-config.mjs` 的 `ENV_FIELDS`，**应用侧不读** | 若允许复用 allowlist 端点，则用它 | 关键裁决点：应用消费者能否读它（§6 R-1） |
 | `APP_KNOWLEDGE_UNVERIFIED_SEED` | 已存在（`app.ts:1331`，real 下**强制关闭**） | 浙江首批未核验投影开关 | 与本片无关但会被检索集合影响：real 下它恒关 ⇒ 集合只含 `review_status=verified` 条目 |
@@ -325,7 +325,7 @@ services/api/src/app.ts:1522-1528                  conversationRetrieval 解析�
 services/api/src/app.ts:1531                       conversationDose
 services/api/src/app.ts:1534                       conversationGuard
 services/api/src/app.ts:1535                       conversationComposer（接线改动点）
-services/api/src/app.ts:1538                       conversationRiskScreen
+services/api/src/app.ts:1666                       conversationRiskScreen
 services/api/src/app.ts:1545-1550                  real 下非持久 store ⇒ 整域 null（fail-closed）
 services/api/src/config.ts:158-168                 APP_EXECUTION_MODE 必填
 services/api/src/config.ts:220-228                 DATABASE_URL

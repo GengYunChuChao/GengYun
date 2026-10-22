@@ -360,7 +360,7 @@ a4caf607fc7d6595706c2a801c5a6c597ee132a0b725a203144263a55e4693b1  services/api/s
    规则目录自校验抛 `RULE_CATALOG_INVALID`（`packages/moderation/constants.mjs:127` 的 `RULE_SEVERITIES` 只允许
    `['block']`），矩阵在播种阶段就崩（`exit 2`，无机读结果）。NC-19 因此改锚**判定引擎那一行**
    （`packages/moderation/engine.mjs:421`），这也是一条真实性质：**规则目录是冻结的，改严重级不是「一行」**。
-4. **`REVISION_SUPERSEDED` 有两处兜底**：删掉 `moderation/service.ts:758`（NC-21）后发布**没有真的发生**，
+4. **`REVISION_SUPERSEDED` 有两处兜底**：删掉 `moderation/service.ts:797-799`（NC-21）后发布**没有真的发生**，
    只是拒绝理由从 `REVISION_SUPERSEDED:2:1` 退化成 `REVISION_CONFLICT`（第二层在 `moderation/visibility.ts:280-281`
    的 `deny(snapshot.visibility, 'REVISION_SUPERSEDED')`）。所以 NC-21 证明的是「可解释的拒绝理由由这一行给出」，
    不是「删了就能发布」——如实记账，不许升级成更强的结论。

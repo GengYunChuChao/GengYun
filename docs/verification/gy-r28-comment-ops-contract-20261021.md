@@ -58,7 +58,7 @@ packages/contracts/openapi.json#/components/schemas/Comment
   required:   id, revision, post_id, author, body, visibility, audit_state, created_at
 ```
 
-**`like_count` 不在其中**，且 `additionalProperties: false` 使任何额外字段都判违规；服务实现自己也这样记（`services/api/src/community/service.ts:1530` 注释：「契约 `Post`/`Comment` **没有**点赞计数字段，故无对外读取口」）。
+**`like_count` 不在其中**，且 `additionalProperties: false` 使任何额外字段都判违规；服务实现自己也这样记（`services/api/src/community/service.ts:1720` 注释：「契约 `Post`/`Comment` **没有**点赞计数字段，故无对外读取口」）。
 
 处理方式（不放宽断言、不改服务代码）：
 
