@@ -148,8 +148,8 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 
 | env | 脚本契约（行号取自各自 PR 分支的脚本本体） | 是否必填 |
 | --- | --- | --- |
-| `GY_PG_BIN` | `online-purge-pg.mjs:58` `binDir`；`messages-purge-pg.mjs:63` `binDir`。两脚本都 `assert.ok(existsSync(tool('initdb')))`（`:148` / `:166`），缺它打印 SKIP 并 `process.exit(77)`（`:61` / `:66-70`） | **必填** |
-| `GY_I19_PG_ROOT` | `online-purge-pg.mjs:89` `const rootDir = process.env.GY_I19_PG_ROOT ?? tmpdir();` | 选填（缺省 `os.tmpdir()`，故 CI 里必须显式给） |
+| `GY_PG_BIN` | `online-purge-pg.mjs:63` `binDir`；`messages-purge-pg.mjs:63` `binDir`。两脚本都 `assert.ok(existsSync(tool('initdb')))`（`:148` / `:166`），缺它打印 SKIP 并 `process.exit(77)`（`:61` / `:66-70`） | **必填** |
+| `GY_I19_PG_ROOT` | `online-purge-pg.mjs:94` `const rootDir = process.env.GY_I19_PG_ROOT ?? tmpdir();` | 选填（缺省 `os.tmpdir()`，故 CI 里必须显式给） |
 | `GY_W11_PG_ROOT` | `messages-purge-pg.mjs:92` `const rootDir = process.env.GY_W11_PG_ROOT ?? tmpdir();` | 选填（同上） |
 | `GY_W11_PG_LOG` | `messages-purge-pg.mjs:75` 服务端日志路径 | 选填 |
 | `PGCLIENTENCODING: UTF8` | 与既有 `backup-purge`／`backup-copies` 两步同款 | — |
@@ -209,7 +209,7 @@ const SELF_CLUSTERED_PG_BIN_ENV = Object.freeze({
 
 /**
  * 每条自起集群脚本**自己读的**数据根目录键（键名不是共用契约，是脚本各自的契约）：
- *   - `backup-purge-pg.mjs` / `backup-copies-purge-pg.mjs` / `online-purge-pg.mjs:89` 读 `GY_I19_PG_ROOT`；
+ *   - `backup-purge-pg.mjs` / `backup-copies-purge-pg.mjs` / `online-purge-pg.mjs:94` 读 `GY_I19_PG_ROOT`；
  *   - `messages-purge-pg.mjs:92` 读 `GY_W11_PG_ROOT`（它的日志键是 `GY_W11_PG_LOG`，见 `:75`）。
  * 为什么必须按键名核对：给 `messages-purge-pg` 传 `GY_I19_PG_ROOT` 时，step 里只多一条**装饰性 env**——
  * 守卫照样绿、脚本照样回落 `os.tmpdir()` ⇒ 数据目录落在共享 tmp，与「落在 runner 临时目录、⛔ 不落仓库/

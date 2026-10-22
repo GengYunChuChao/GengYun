@@ -196,7 +196,7 @@ AssertionError [ERR_ASSERTION]: 红字必须点名 profile/service.ts:61：servi
 1. **`docs/architecture/contract-status.json` 的证据锚点** —— 归另一片的 `verify-contract-status.mjs --reanchor`，本片不碰。
 2. **散文里的行号**（`reason:` 里 33+ 条 `privacy/ledger-pg.ts:642/655`、`error-retryable-static-guard.test.mjs:50` 的 `errors.ts:28-40`）：
    不判红，但确实会过期。建议下一步给「`reason:` 里引用源码行号」定一个和本片同形的实时定位约定（`SQL: …:line` → 现算）。
-3. **歧义锚点 3 处**（`community-filter-pg.mjs:470`、`tts-content-wiring.mjs:207`、`messages-store-pg-contract.test.mjs:195` 的裸 `service.ts:`/`store.ts:`）：
+3. **歧义锚点 3 处**（`community-filter-pg.mjs:523`、`tts-content-wiring.mjs:207`、`messages-store-pg-contract.test.mjs:220` 的裸 `service.ts:`/`store.ts:`）：
    现在只清点不判红；下一步应改成全路径（顺带消灭 16 个同名候选带来的歧义）。
 4. **`.md` / `.json` 里的行号引用**（文档引用源码行、契约 JSON 的 `evidence[].lines`）：本片范围外（JSON 由生成器整段重排，文档行号是引用出处而非语句站点）；
    若要收口，需要一个独立的「文档锚点」守卫，别和本片的断言口径混在一张表里。

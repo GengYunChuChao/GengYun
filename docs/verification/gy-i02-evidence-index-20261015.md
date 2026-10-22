@@ -163,7 +163,7 @@ CI 读数**不在仓库内** ✗；下表登记本会话可见的**逐 PR head**
 
 - **真机**：`platform=android`／model `RMX3706`／Android 15／微信 `8.0.78`／基础库 `3.17.4`（`project.config.json` 的目标值是 `3.17.3`，**两者不同值，属"目标 vs 实际"，本索引不做判定** ✗）。
 - **本机服务**：API 于 `0.0.0.0:3100`、本地库 `127.0.0.1:55436`（自带 PostgreSQL 17.11，`E:\GengYunCommander\.pg17\pgsql\bin`）。
-- **收藏／历史是进程内内存 store** ⇒ **换进程即清空** ✓：默认装配点 `services/api/src/app.ts:819`（`favoritesInjection?.store ?? createMemoryFavoritesStore(...)`；历史见 `:820`）；**PG 无 favorites 表** ✓（`git grep -I "favorite" upstream/main -- services/api/src/db` **0 命中**；`services/api/db/migrations/**` 无相关 DDL）。
+- **收藏／历史是进程内内存 store** ⇒ **换进程即清空** ✓：默认装配点 `services/api/src/app.ts:1361-1364`（`favoritesInjection?.store ?? createPostgresFavoritesStore(...)`：`real` + 池走 PG，否则内存；历史见 `:1366`）；**PG 无 favorites 表** ✓（`git grep -I "favorite" upstream/main -- services/api/src/db` **0 命中**；`services/api/db/migrations/**` 无相关 DDL）。
 - **非 real 模式下 `/api/v1/public/home` 按设计 503** ✓：`services/api/src/db/catalog.ts:14-16`（`if (mode !== 'real' || pool === null) throw new ApiError('PROVIDER_UNAVAILABLE', …)`）。
 - **空体写请求的 400 及其修法**（#175）：`services/api/src/app.ts:464-477`（成因注释：微信 `wx.request` 默认注入 `content-type: application/json`，Fastify 对 DELETE/POST/PUT/PATCH/OPTIONS 只凭该头就进 JSON 解析器 ⇒ 空体 `FST_ERR_CTP_EMPTY_JSON_BODY` ⇒ 被映射为 400）；**该 400 发生在路由、鉴权与 schema 校验之前** ⇒ 真机上取消收藏 100% 失败。
 
@@ -172,7 +172,7 @@ CI 读数**不在仓库内** ✗；下表登记本会话可见的**逐 PR head**
 ## 5 引用与核实纪律
 
 - **本文件每条 `file:line` 都在基线 `cf9c3c8` 上实读取得** ✓（读取面 = 该提交的工作区；逐条行号未经实读的不写入 ✗）。
-- **不照抄未核实的行号** ✗：派单里给出的示例行号（如"`services/api/src/app.ts:815`"）已按本条重核并**更正为 `:819`**（`:815` 处是任务状态端口接线的注释，不是 store 装配）。
+- **不照抄未核实的行号** ✗：派单里给出的示例行号（如「`services/api/src/app.ts` 第 815 行」）已按本条重核并**更正为第 819 行**（第 815 行处是任务状态端口接线的注释，不是 store 装配）。
 - **本表不复制证据原文** ✗：日志、截图、令牌、`.pg17/**` 的正文一律不入库；只登记**指针**（评论 ID／仓外路径／库内 `file:line`）。
 - **主题行按规则截断、不冒充"逐字全文"** ✗：§3 第 4 列是**顺序截断 + `…`**（规则见 §3 表前说明），**不是**中间删节、**也不是**全文；**弯引号一律照原文** ✓（曾把 `“去登录”` 写成直引号，已按原文改回 ✓）。
 - **窗口标记与日期的一致性靠人工复核** ✗：`窗口内` / `窗口外·补充` 由本文件人工标注，`test:docs` **不校验**它（见 §6 的第 3 个自证实验）。

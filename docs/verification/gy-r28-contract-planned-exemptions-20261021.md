@@ -6,7 +6,7 @@
 
 ## 1. 为什么计划证据不能写进 contract-status.json
 
-台账的校验工具对 planned 有一条**反向**不变量，`tools/verify-contract-status.mjs:127`：
+台账的校验工具对 planned 有一条**反向**不变量，`tools/verify-contract-status.mjs:303`：
 
 ```js
 check(entry.status === 'planned' ? entry.evidence.length === 0 : entry.evidence.length > 0, `${owner}: 状态与证据数量不符`);
@@ -59,7 +59,7 @@ check(entry.status === 'planned' ? entry.evidence.length === 0 : entry.evidence.
 
 ## 5. 未取得项
 
-- 未给 4 条 planned 操作补任何实现证据（`tools/verify-contract-status.mjs:127` 禁止，且 3 条确实无 HTTP 实现）。
+- 未给 4 条 planned 操作补任何实现证据（`tools/verify-contract-status.mjs:303` 禁止，且 3 条确实无 HTTP 实现）。
 - 未改 `docs/architecture/contract-status.json` 与 `docs/architecture/contract-implementation-status.md`（本片零改动，`git status` 可证）。
 - 未改 `tools/verify-contract-status.mjs`、`services/**`、`tests/integration/**`。
 - 未对 4 条操作做状态重分类（见第 4 节，需另开授权）。

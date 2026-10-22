@@ -42,7 +42,7 @@ module.exports = Object.freeze({
 
 ### 改后
 
-新增 `services/api/src/schema-validator.ts`；`buildApp` 在**任何路由注册之前**把编译器装到实例上（`services/api/src/app.ts:645`，函数 `buildApp`，本片新增行）：
+新增 `services/api/src/schema-validator.ts`；`buildApp` 在**任何路由注册之前**把编译器装到实例上（`services/api/src/app.ts:714`，函数 `buildApp`，本片新增行；本片测量时在 `:698`，合流当前 main 后按符号重取）：
 
 ```ts
   app.setValidatorCompiler(createJsonSchema2020ValidatorCompiler());
@@ -60,7 +60,7 @@ export function createJsonSchema2020ValidatorCompiler(): FastifySchemaCompiler<u
 
 - `Ajv2020` 来自 `ajv/dist/2020.js`（`services/api/src/schema-validator.ts:29`）。
 - `BASE_AJV_OPTIONS` = `{ coerceTypes:'array', useDefaults:true, addUsedSchema:false, allErrors:false }`，逐项对齐上面的默认值。
-- `RUNTIME_AJV_CUSTOM_OPTIONS` = `{ removeAdditional:false }`（`services/api/src/schema-validator.ts:55`），**同一个常量**也喂给 `Fastify({ ajv: { customOptions } })`（`services/api/src/app.ts:636`）⇒ 两处引用同源，不可能分叉。
+- `RUNTIME_AJV_CUSTOM_OPTIONS` = `{ removeAdditional:false }`（`services/api/src/schema-validator.ts:55`），**同一个常量**也喂给 `Fastify({ ajv: { customOptions } })`（`services/api/src/app.ts:689`）⇒ 两处引用同源，不可能分叉。
 - `ajv-formats` 与默认编译器一样无参数加载（`format:'uuid'` 等由它提供；缺了它在 strict 下会 `unknown format` 直接编译失败）。
 - **未**复制 `uriResolver: fast-uri`：实际 schema 对象里没有 `$id`/`$ref`（实测见 §5 末行），求解器不参与任何编译。
 
