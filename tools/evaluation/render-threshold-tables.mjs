@@ -20,10 +20,12 @@ const KIND_TEXT = { requirement: '需求原文', provisional: '暂定' };
 
 const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
-/** 渲染两张表（样本数量目标 + 指标门禁），纯函数便于测试。 */
+/** 渲染两张表（样本数量目标 + 指标门禁），纯函数便于测试。
+ *  条数一律从数组长度取数：标题里写死「17 桶 / 14 条」会在新增门槛后撒谎
+ *  （生成文档与代码脱节），本函数因此不接受任何数量入参。 */
 export function renderThresholdTables() {
   const lines = [];
-  lines.push('### 1. 样本数量目标（17 桶）');
+  lines.push(`### 1. 样本数量目标（${SAMPLE_TARGETS.length} 桶）`);
   lines.push('');
   lines.push('| bucket | task | required | 依据类别 | 依据位置 | 为什么是这个数 |');
   lines.push('| --- | --- | --- | --- | --- | --- |');
@@ -31,7 +33,7 @@ export function renderThresholdTables() {
     lines.push(`| \`${t.bucket}\` | \`${t.task}\` | ${t.required} | ${KIND_TEXT[t.basis.kind]} | \`${t.basis.ref}\` | ${cell(t.basis.text)} |`);
   }
   lines.push('');
-  lines.push('### 2. 指标门槛（14 条）');
+  lines.push(`### 2. 指标门槛（${METRIC_GATES.length} 条）`);
   lines.push('');
   lines.push('| metric | task | target | 方向 | 依据类别 | 依据位置 | 为什么是这个数 |');
   lines.push('| --- | --- | --- | --- | --- | --- | --- |');

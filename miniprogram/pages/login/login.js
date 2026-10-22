@@ -15,8 +15,12 @@ Page({
     this._operation = (this._operation || 0) + 1
     if (!this._resuming) {
       const wasBusy = this.data.busy
-      auth.cancelLogin()
-      this.setData({ busy: false, loggedIn: false,
+      // 只有本页确实有一次登录在途时才取消它。普通离页／切后台不是「取消登录」，
+      // 更不是退出登录：已核实且仍有效的会话不得被页面生命周期清掉，否则用户
+      // 从登录页返回或切后台就会被静默登出；退出登录只走 logout() 的显式撤销。
+      // 已登录后再点一次「微信登录」时离页：只作废那次在途重登，保留原有效会话。
+      if (wasBusy) auth.cancelLogin(auth.isLoggedIn())
+      this.setData({ busy: false, loggedIn: auth.isLoggedIn(),
         status: wasBusy ? '登录已取消，可以重新尝试。' : this.data.status })
     }
     this._resuming = false
