@@ -2211,6 +2211,16 @@ test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少�
   // `SITE.profileRegions`（与下面的负控制变异共用同一处 needle）。两种做法都拒绝写死行号，取注册表
   // 这一种：它与变异替换同源，业务 SQL 一改就一起失效、一起报红，不会出现「定位还在、变异悄悄没生效」。
   assert.ok(hit[0].includes(SITE.profileRegions), `红字必须点名语句站点 ${SITE.profileRegions}：${hit[0]}`);
+  // 两侧意图都留（`#462` × `#451` 的真实冲突）：`#451` 要求行号由源码实时定位算出，本片要求红字点名注
+  // 册表里的站点名。两条断言各测一件事：前者防「定位漂移没人发现」，后者防「变异悄悄没生效」。行号
+  // 不写死在测试里 —— 写死就恰好犯了本片要禁的那件事。
+  const regionsSource = readFileSync(resolve(root, 'services/api/src/profile/service.ts'), 'utf8').split('\n');
+  const locatedLine = regionsSource.findIndex((line) => line.includes('FROM public.regions')) + 1;
+  assert.ok(locatedLine > 0, '动态定位没在 profile/service.ts 里找到 regions 语句：源文件结构变了？');
+  assert.ok(
+    hit[0].includes(`services/api/src/profile/service.ts:${locatedLine}`),
+    `红字必须给出实时定位出来的源坐标 services/api/src/profile/service.ts:${locatedLine}：${hit[0]}`,
+  );
 
   const restored = auditAll({
     storeSources: auditedSources,
