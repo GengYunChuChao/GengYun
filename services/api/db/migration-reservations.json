@@ -28,7 +28,7 @@
   "reservations": [
     {
       "version": 31,
-      "filename": "0031_i19_online_purge_evidence.sql",
+      "filename": "0031_online_purge_evidence.sql",
       "owner": "#19（GY-I19）在线证据落地 + 注销回执可见片",
       "reason": "0031 由裁定 ruling-r32-migration-0031-allocation.md 预留给 #19；本片（#15 去身份残留）按同一条裁定只许用 0032，因此树上缺 31。文件名以 #19 实际落地时为准，本条只声明号段归属。",
       "remove_when": "#19 的 0031 迁移真实落盘（合入 main 或本分支）那一刻：留条目会让 count+保留数 > max，判据会立刻判红。"

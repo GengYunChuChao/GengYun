@@ -127,10 +127,15 @@ test('迁移编号/当前仓库：0031 由裁定预留给 #19 ⇒ 台账登记 3
     files.includes('0032_community_report_reporter_ref.sql'),
     'R32（#15 去身份残留）必须落在 0032（31 由裁定锁给 #19），⛔ 不许占用 0030/0031',
   );
+  // ⚠️ 这里的文件名必须是 **#494 真实落盘的那一支**（`0031_online_purge_evidence.sql`）。
+  // 本断言曾把文件名多写一段 `i19_` 前缀 ⇒ 0031 真落盘后名字对不上、断言恒为 false 而「通过」，
+  // 防线形同虚设（假通过）。改名后它与 `gaps` / `reservedButPresent` 两条一起咬：0031 一落盘，
+  // 本行立刻变红。
   assert.equal(
-    files.includes('0031_i19_online_purge_evidence.sql'),
+    files.includes('0031_online_purge_evidence.sql'),
     false,
-    '#19 的 0031 尚未落盘；一旦落盘，台账里的 31 条目必须删（reservedButPresent 会判红）',
+    '#19 的 0031 尚未落盘（本轮期望仍为 false）；0031 真落盘后本行必须改成 true，'
+      + '并同步删掉台账里的 31 条目（届时 reservedButPresent 会先判红）',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
