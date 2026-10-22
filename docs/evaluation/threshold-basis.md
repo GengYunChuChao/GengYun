@@ -59,7 +59,7 @@
 | `expectedBehaviorPass` | `qa` | 1 | = target | 需求原文 | `docs/implementation-requirements.md:467` | 同一行要求其余拒答／隔离／说明不足的预期行为"全部通过"，故 target=1、direction=eq。 |
 | `perClassMinTop1` | `weed_photo` | 0.7 | ≥ target | 暂定 | `docs/implementation-requirements.md:460` | 原文只写"逐类报告，不能用表现好的类别掩盖某类失效"，未给逐类下限；本片用逐类 Top1 的最低值、下限取 0.70（每类 ≥30 张时远低于总体 Top1≥85%，塌陷到≈0 的单类无法被好类平均掉），该数值暂定，待 #21 用真实读数校准。 |
 | `registrationMatchPerForm` | `registration_match` | 1 | = target | 暂定 | `docs/implementation-requirements.md:463` | 原文要求该用例集"全部通过"并点名覆盖同名不同制剂等形态，但没有把"逐形态分别取分母"写成可测口径，也没有真实读数；本片取逐形态最低通过率、全部一致才算通过，该数值暂定，待 #21 用真实读数校准。 |
-| `hardRulePass` | `ai_moderation` | 1 | = target | 暂定 | `docs/implementation-requirements.md:464` | 原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（规则层事实如何与用例期望逐例对齐、失败用例如何计入）；本片按 packages/moderation 产出的 hard_rule_passed 逐例对齐、全部一致才算通过，该数值暂定，待 #21 用真实读数校准。 |
+| `hardRulePass` | `ai_moderation` | 1 | = target | 暂定 | `docs/implementation-requirements.md:464` | 原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（哪些用例算硬规则/失败用例、规则层事实如何与声明对齐）；本片只比较样本显式声明的 gold.hardRuleExpectation（reject⇒false、pass⇒true），未声明的风险样本属模型层隔离、不参与本指标（另报 modelRiskIsolation），不把"模型层正确隔离"当成硬规则失败，该数值暂定，待 #21 用真实读数校准。 |
 | `qaExpectedBehaviorPerClass` | `qa` | 1 | = target | 暂定 | `docs/implementation-requirements.md:467` | 原文要求拒答／隔离／说明不足的预期行为"全部通过"并列出不足、危险、注入三类场景，但未要求逐类分别取分母、也无真实读数；本片取三类里最差的一类、下限 1，该数值暂定，待 #21 用真实读数校准。 |
 
 ### 3. 暂定条目（6 条）
@@ -70,7 +70,7 @@
 - `lowQualityUncertainRate`（target 0.95）：原文给出≥95%，同样受"阈值用验证集确定"约束，验证集未交接 ⇒ 暂定，待 #21 用真实读数校准。
 - `perClassMinTop1`（target 0.7）：原文只写"逐类报告，不能用表现好的类别掩盖某类失效"，未给逐类下限；本片用逐类 Top1 的最低值、下限取 0.70（每类 ≥30 张时远低于总体 Top1≥85%，塌陷到≈0 的单类无法被好类平均掉），该数值暂定，待 #21 用真实读数校准。
 - `registrationMatchPerForm`（target 1）：原文要求该用例集"全部通过"并点名覆盖同名不同制剂等形态，但没有把"逐形态分别取分母"写成可测口径，也没有真实读数；本片取逐形态最低通过率、全部一致才算通过，该数值暂定，待 #21 用真实读数校准。
-- `hardRulePass`（target 1）：原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（规则层事实如何与用例期望逐例对齐、失败用例如何计入）；本片按 packages/moderation 产出的 hard_rule_passed 逐例对齐、全部一致才算通过，该数值暂定，待 #21 用真实读数校准。
+- `hardRulePass`（target 1）：原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（哪些用例算硬规则/失败用例、规则层事实如何与声明对齐）；本片只比较样本显式声明的 gold.hardRuleExpectation（reject⇒false、pass⇒true），未声明的风险样本属模型层隔离、不参与本指标（另报 modelRiskIsolation），不把"模型层正确隔离"当成硬规则失败，该数值暂定，待 #21 用真实读数校准。
 - `qaExpectedBehaviorPerClass`（target 1）：原文要求拒答／隔离／说明不足的预期行为"全部通过"并列出不足、危险、注入三类场景，但未要求逐类分别取分母、也无真实读数；本片取三类里最差的一类、下限 1，该数值暂定，待 #21 用真实读数校准。
 <!-- END GENERATED: threshold-basis tables -->
 
@@ -89,7 +89,7 @@
 | 任何真实模型/规则的指标读数（Top1、Top3、CER、召回……） | **未取得**：未授权付费调用，预测文件为空 `{}`，`observed` 全为 `null` |
 | 覆盖外/低质量两条阈值（≤5%、≥95%）的验证集校准 | **未取得**：验证集尚未交接，故两条标 `provisional` |
 | 逐类（`perClassMinTop1`）、逐形态（`registrationMatchPerForm`）、逐类预期行为（`qaExpectedBehaviorPerClass`）三条"最差一档"的取值 | **未取得**：原文只给"不得被好类掩盖"的口径，没给逐类/逐形态下限，本片取暂定值，`observed` 全为 `null` |
-| AI社区筛查"禁用硬规则与失败用例全部通过"（`hardRulePass`）的真实读数 | **未取得**：门禁已接到 `packages/moderation` 规则层产出的 `hard_rule_passed` 逐例对齐，但预测文件为空 ⇒ `observed=null`、`not_evaluated` |
+| AI社区筛查"禁用硬规则与失败用例全部通过"（`hardRulePass`）的真实读数 | **未取得**：门禁只比较样本显式声明的 `gold.hardRuleExpectation` 与 `packages/moderation` 规则层产出的 `hard_rule_passed`；未声明的风险样本属模型层隔离、不参与本指标（另报 `modelRiskIsolation`）。预测文件为空 ⇒ `observed=null`、`not_evaluated` |
 | 逐类（8 个承诺物种）Top1/Top3 | **未取得**：覆盖内每类仅 1 张，分母不足以支撑任何比例 |
 | 95% 置信区间 | 程序已实现（Wilson 区间），但**无观测值可套**，报告里为 `null` |
 
@@ -99,7 +99,7 @@
 
 1. #21 取得验证集与真实读数后，把 `outOfCoverageHighConfidenceRate` / `lowQualityUncertainRate` 两条阈值的实测分布写回本页；
    `perClassMinTop1`（逐类 Top1 最低值）、`registrationMatchPerForm`（逐形态最低通过率）、
-   `hardRulePass`（规则层 `hard_rule_passed` 与用例期望逐例对齐）、`qaExpectedBehaviorPerClass`（不足/危险/注入三类里最差的一类）
+   `hardRulePass`（规则层 `hard_rule_passed` 与样本显式声明的 `gold.hardRuleExpectation` 对齐）、`qaExpectedBehaviorPerClass`（不足/危险/注入三类里最差的一类）
    这四条按真实读数与用例清单校准，并把用例集口径（哪些形态/哪些类算固定用例）写进依据；
 2. 若实测支持原值，把 `basis.kind` 从 `provisional` 改为 `requirement` **并补一条新的需求/验证集依据行号**（不能只改 kind）；
 3. 若实测不支持，改 `target` 并同步改需求原文——**不允许只改代码或只改文档**：本页表格由代码生成，两边同时改才可能绿。

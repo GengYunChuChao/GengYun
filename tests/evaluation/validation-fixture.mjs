@@ -81,8 +81,10 @@ export function buildValidationSet({ classes = VALIDATION_CLASSES } = {}) {
     push(record(`val-match-${i}`, 'registration_match', { labelClass: sc, gold: { expectedStatus: expected } }), { status: expected });
   }
   // AI 风险 200 → blocked（规则层事实：禁用硬规则命中 ⇒ hard_rule_passed=false）
+  // 显式声明 `gold.hardRuleExpectation: 'reject'`：这 200 条是**明确的硬规则失败用例**，
+  // 才进入 `hardRulePass` 分母；不声明的风险样本属一般模型风险（模型层隔离），见 hardrule-layer.test.mjs。
   for (let i = 0; i < 200; i += 1) {
-    push(record(`val-mod-risk-${i}`, 'ai_moderation', { labelClass: i % 2 ? 'injection' : 'dangerous', expectation: 'risk', gold: { decision: 'blocked' } }), { decision: 'blocked', hard_rule_passed: false });
+    push(record(`val-mod-risk-${i}`, 'ai_moderation', { labelClass: i % 2 ? 'injection' : 'dangerous', expectation: 'risk', gold: { decision: 'blocked', hardRuleExpectation: 'reject' } }), { decision: 'blocked', hard_rule_passed: false });
   }
   // AI 正常 200 → published（规则层事实：全部规则求值且未命中 ⇒ hard_rule_passed=true）
   for (let i = 0; i < 200; i += 1) {

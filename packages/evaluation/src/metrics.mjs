@@ -211,6 +211,44 @@ export function registrationMatchMetrics(pairs) {
   };
 }
 
+/**
+ * 硬规则层期望的**唯一**枚举（`hardRulePass` 门禁消费）：只描述**规则层**事实，
+ * 不描述模型层结论。
+ *   · `reject` ⇒ 期望 `hard_rule_passed === false`（明确的硬规则命中/失败用例）；
+ *   · `pass`   ⇒ 期望 `hard_rule_passed === true`（明确的规则层放行用例）。
+ */
+export const HARD_RULE_EXPECTATIONS = { reject: false, pass: true };
+
+/** 样本里声明硬规则层期望的显式字段路径（`gold.hardRuleExpectation`）。 */
+export const HARD_RULE_EXPECTATION_FIELD = 'gold.hardRuleExpectation';
+
+/**
+ * 取**样本自身显式字段**里的硬规则层期望（不靠标签名猜）。
+ *
+ * 判据（监工 PR #440 最后一条批复 `supervisor-1022-0541-pr440`，P2）：
+ *   · `gold.hardRuleExpectation` 显式声明 `'reject'` / `'pass'` ⇒ 按声明比较；
+ *     声明了但取值非法 ⇒ `invalid`（fail-closed，不按"没声明"混过去）；
+ *   · 未声明 + `expectation === 'normal'` ⇒ 默认期望规则层放行（`true`）：
+ *     硬规则不得误伤正常内容，这是规则层的无条件主张；
+ *   · 未声明 + `expectation === 'risk'` ⇒ **不参与**本指标。风险样本可以合法地由**模型层**拦下、
+ *     而规则层通过（`tests/unit/community-moderation-fixtures.mjs` 的 `blockingPort()`：
+ *     模型层 `block` + `hard_rule_passed === true`；图片风险尤其不可能被文本硬规则全部命中），
+ *     把这批样本强制映射成"硬规则必须拒绝"会把模型层正确隔离误判成硬规则失败。
+ *
+ * 返回 `{ expected, declared, invalid }`，`null` 表示不参与本指标。
+ */
+export function hardRuleExpectationOf(record) {
+  const declared = record?.gold?.hardRuleExpectation;
+  if (declared !== undefined && declared !== null) {
+    if (declared === 'reject' || declared === 'pass') {
+      return { expected: HARD_RULE_EXPECTATIONS[declared], declared: true };
+    }
+    return { expected: null, declared: true, invalid: true };
+  }
+  if (record?.expectation === 'normal') return { expected: true, declared: false };
+  return null;
+}
+
 /** AI社区筛查：风险召回（拦截或待复核）、正常误隔离率。
  * 口径（修复轮 2）：正常样本只有最终 decision 为**发布类**才算正常通过；
  * unknown/服务错误/非法枚举一律**不算正常通过**（按误隔离计），闭集见 MODERATION_DECISIONS。 */
@@ -224,23 +262,37 @@ export function aiModerationMetrics(pairs) {
 
   // 硬规则事实（`hardRulePass` 门禁消费）：`hard_rule_passed` 由 `packages/moderation/engine.mjs`
   // 规则层产出（全部规则实际求值且无 fail-closed ⇒ true；命中禁用规则一律 false）。
-  // 判定口径（第6.1节"禁用硬规则与失败用例全部通过"）——逐例把**规则层事实**与**该用例应有判定**对齐：
-  //   · 风险用例（expectation=risk）应被禁用硬规则拦下 ⇒ 期望 `hard_rule_passed === false`；
-  //   · 正常用例（expectation=normal）应放行 ⇒ 期望 `hard_rule_passed === true`。
-  // 以下三种情况一律记**未通过**（fail-closed，不推测、不默认成功）：
+  // 判定口径（第6.1节"禁用硬规则与失败用例全部通过"）——**只对显式声明硬规则层期望的子集**
+  // 把规则层事实与声明对齐（见 `hardRuleExpectationOf`）；一般模型风险样本不参与，
+  // 另报独立指标 `modelRiskIsolation`（两层判定事实都对，只是不属硬规则口径）。
+  // 以下情况一律记**未通过**（fail-closed，不推测、不默认成功）：
+  //   · 显式声明取值非法（等于没有可用的判定依据）；
   //   · `hard_rule_passed` 缺失或不是布尔值（等于没登记规则层事实）；
   //   · 决策自称通过（approved/published）却 `hard_rule_passed !== true`（规则层自相矛盾，
   //     正是 moderation 侧 `approved ⟺ hard_rule_passed` 与合流层单向必要条件的违规形态）；
-  //   · 规则层事实与用例应有判定相反（该拦未拦 / 误伤正常）。
-  const expectedHardRule = { risk: false, normal: true };
+  //   · 规则层事实与声明相反（该拦未拦 / 误伤正常）。
+  const expectedHardRule = HARD_RULE_EXPECTATIONS;
   let hardChecked = 0;
   let hardOk = 0;
   let hardMissing = 0;
   let hardContradiction = 0;
+  let hardDeclared = 0;
+  let hardNormalDefault = 0;
+  let hardInvalidDeclaration = 0;
+  const modelRiskPairs = [];
   for (const p of [...risk, ...normal]) {
-    const expected = expectedHardRule[p.record.expectation];
-    if (expected === undefined) continue;
+    const declaration = hardRuleExpectationOf(p.record);
+    if (declaration === null) {
+      modelRiskPairs.push(p);
+      continue;
+    }
     hardChecked += 1;
+    if (declaration.invalid) {
+      hardInvalidDeclaration += 1;
+      continue;
+    }
+    if (declaration.declared) hardDeclared += 1;
+    else hardNormalDefault += 1;
     const fact = p.output?.hard_rule_passed;
     if (typeof fact !== 'boolean') {
       hardMissing += 1;
@@ -250,8 +302,10 @@ export function aiModerationMetrics(pairs) {
       hardContradiction += 1;
       continue;
     }
-    if (fact === expected) hardOk += 1;
+    if (fact === declaration.expected) hardOk += 1;
   }
+  // 模型层隔离读数（不进门禁）：这批风险样本规则层可以合法通过，只看模型层是否拦下。
+  const modelRiskHeld = modelRiskPairs.filter((p) => isModerationHeld(p.output)).length;
 
   return {
     decisionSet: MODERATION_DECISIONS,
@@ -262,9 +316,21 @@ export function aiModerationMetrics(pairs) {
     hardRulePass: {
       ...rate(hardOk, hardChecked),
       checked: hardChecked,
+      declared: hardDeclared,
+      normalDefault: hardNormalDefault,
       missingHardRuleFact: hardMissing,
       selfContradictory: hardContradiction,
+      invalidDeclaration: hardInvalidDeclaration,
+      modelRiskExcluded: modelRiskPairs.length,
       expected: expectedHardRule,
+      expectationField: HARD_RULE_EXPECTATION_FIELD,
+    },
+    // 独立指标（**不设门禁**）：未声明硬规则期望的一般模型风险样本的模型层隔离读数。
+    // 用来证明"模型层合法隔离"没有被新口径悄悄丢掉，也避免把两层判定混成一个分数。
+    modelRiskIsolation: {
+      count: modelRiskPairs.length,
+      rate: rate(modelRiskHeld, modelRiskPairs.length),
+      note: '一般模型风险样本（未声明 gold.hardRuleExpectation）：不参与 hardRulePass；规则层事实可以为 true，按模型层隔离单独报告。',
     },
   };
 }

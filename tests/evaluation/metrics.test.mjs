@@ -188,15 +188,25 @@ test('AI 筛查：风险召回与正常误隔离率；unknown/非法枚举不算
   near(tampered.riskRecall.p, 0);
 });
 
-test('AI 筛查：hardRulePass 与规则层 hard_rule_passed 逐例对齐（缺失/自相矛盾记未通过）', () => {
-  // 口径来源：packages/moderation 规则层产出 hard_rule_passed（engine.mjs 计算、merge.mjs 回填）：
-  // 风险例应被硬规则拦下 ⇒ false；正常例应放行 ⇒ true。下面每条都按该期望造。
+test('AI 筛查：hardRulePass 只比较显式声明硬规则期望的样本（缺失/自相矛盾记未通过）', () => {
+  // 口径来源：packages/moderation 规则层产出 hard_rule_passed（engine.mjs 计算、merge.mjs 回填）。
+  // 但**不能**把 risk 一律要求成 false：模型层可以合法拦下而规则层通过
+  // （tests/unit/community-moderation-fixtures.mjs 的 blockingPort），所以只有样本显式声明
+  // gold.hardRuleExpectation='reject' 时才要求 hard_rule_passed=false（见 hardrule-layer.test.mjs）。
   const aligned = [
-    { record: { expectation: 'risk' }, output: { decision: 'blocked', hard_rule_passed: false } },
-    { record: { expectation: 'risk' }, output: { decision: 'pending_review', hard_rule_passed: false } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'blocked', hard_rule_passed: false } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'pending_review', hard_rule_passed: false } },
     { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: true } },
   ];
   near(aiModerationMetrics(aligned).hardRulePass.p, 1);
+
+  // 未显式声明的风险样本（一般模型风险：规则通过 + 模型层拦下）不参与本指标，
+  // 旧口径会把这条合法样本判成 hardRulePass=0；现在只计"不参与"并另报 modelRiskIsolation。
+  const modelLayer = aiModerationMetrics([{ record: { expectation: 'risk', gold: {} }, output: { decision: 'blocked', hard_rule_passed: true } }]);
+  assert.equal(modelLayer.hardRulePass.p, null);
+  assert.equal(modelLayer.hardRulePass.checked, 0);
+  assert.equal(modelLayer.hardRulePass.modelRiskExcluded, 1);
+  near(modelLayer.modelRiskIsolation.rate.p, 1);
 
   // 字段缺失：不得默认"规则层通过"，一律记未通过（fail-closed）。
   const missing = aiModerationMetrics([
@@ -214,9 +224,9 @@ test('AI 筛查：hardRulePass 与规则层 hard_rule_passed 逐例对齐（缺�
   near(contradictory.hardRulePass.p, 0);
   assert.equal(contradictory.hardRulePass.selfContradictory, 2);
 
-  // 期望相反（风险例被放行且声称规则层通过）：同样记未通过，不因字段存在就放过。
+  // 期望相反（显式声明硬规则拒绝的样本被放行且声称规则层通过）：同样记未通过，不因字段存在就放过。
   const opposite = aiModerationMetrics([
-    { record: { expectation: 'risk' }, output: { decision: 'published', hard_rule_passed: true } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'published', hard_rule_passed: true } },
   ]);
   near(opposite.hardRulePass.p, 0);
 });

@@ -286,11 +286,11 @@ export const METRIC_GATES = [
     task: 'ai_moderation',
     target: 1,
     direction: 'eq',
-    note: '禁用硬规则与失败用例全部通过：逐例核对规则层事实 hard_rule_passed 与用例应有判定是否一致（风险例应被硬规则拦下⇒false、正常例应放行⇒true；该字段缺失/非布尔、或 approved 但 hard_rule_passed≠true 一律记未通过）',
+    note: '禁用硬规则与失败用例全部通过：只对**显式声明**规则层期望的样本比较 hard_rule_passed（gold.hardRuleExpectation=reject⇒false、pass⇒true；未声明的 normal 默认期望 true）；未声明的风险样本属模型层隔离、不参与本指标；该字段缺失/非布尔、声明非法、或 approved 但 hard_rule_passed≠true 一律记未通过',
     basis: {
       kind: 'provisional',
       ref: 'docs/implementation-requirements.md:464',
-      text: `原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（规则层事实如何与用例期望逐例对齐、失败用例如何计入）；本片按 packages/moderation 产出的 hard_rule_passed 逐例对齐、全部一致才算通过，该数值${PROVISIONAL_MARKER}。`,
+      text: `原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（哪些用例算硬规则/失败用例、规则层事实如何与声明对齐）；本片只比较样本显式声明的 gold.hardRuleExpectation（reject⇒false、pass⇒true），未声明的风险样本属模型层隔离、不参与本指标（另报 modelRiskIsolation），不把"模型层正确隔离"当成硬规则失败，该数值${PROVISIONAL_MARKER}。`,
     },
   },
   {
