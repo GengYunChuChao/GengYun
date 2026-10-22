@@ -35,6 +35,45 @@ const INDEX = 'docs/verification/gy-i24-release-materials-index-20261017.md';
 const results = [];
 let failed = 0;
 
+/**
+ * 发版 runbook（第 9 项判据的核验对象）。**为什么只核这一份**：仓库里此前只有
+ * `deploy/postgres-cvm/runbook.md`（首次装库/建库）与 `restore-drill.sh`（单点判据），
+ * 「一次发版从备份到回滚」的端到端清单没有落成可执行文档（盘点见证据页
+ * `docs/verification/gy-r31-i24-release-20261022.md`）。本判据把「文件在册」升级为
+ * 「照着能发版」：必备小节齐全 + 命令块够多且非空 + 无占位符。
+ */
+const RUNBOOK = 'docs/release/runbook-20261022.md';
+
+/** 必备小节：标题**逐字**匹配（含序号）。少一节就意味着有一个处置步骤没人写。 */
+const RUNBOOK_REQUIRED_SECTIONS = [
+  '## 0 适用范围与前置',
+  '## 1 发版前检查',
+  '## 2 发版备份',
+  '## 3 迁移执行',
+  '## 4 服务启动与探活',
+  '## 5 发布后验证',
+  '## 6 灰度与放量判据',
+  '## 7 回滚',
+  '## 8 值班处置',
+  '## 9 演练记录',
+];
+
+/**
+ * 命令块下限。10 个必做步骤里绝大多数需要「可复制命令」，取 14 是让「把命令都改成散文」
+ * 这种退化写法也红：散文变多时命令块只会变少，不会变多。
+ */
+const RUNBOOK_MIN_COMMAND_BLOCKS = 14;
+
+/** 命令块的语言标记（围栏 info 串）。`text` 之类是期望输出，不计入命令块。 */
+const RUNBOOK_COMMAND_LANGS = new Set(['bash', 'sh', 'shell', 'powershell', 'ps1', 'pwsh']);
+
+/**
+ * 占位符：出现即判红。`<...>` 只认「`<` 后紧跟字母/汉字」的形状（`<私密口令>`、`<db>`），
+ * 这样 `p95 < 800 ms` 这类真正的判据阈值不会被误伤（`<` 后是空格）。
+ */
+const RUNBOOK_PLACEHOLDER = /(?:TODO|FIXME|TBD|待补|待填|\bxxx\b)/i;
+const RUNBOOK_ANGLE_PLACEHOLDER = /<\/?[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff.-]{0,24}>/;
+
 function check(name, ok, detail) {
   results.push({ name, ok, detail });
   if (ok !== true) failed += 1;
@@ -81,6 +120,65 @@ function blobCrBytes(path) {
   let count = 0;
   for (const byte of buf) if (byte === 0x0d) count += 1;
   return count;
+}
+
+/**
+ * 发版 runbook 的静态判据：返回**问题清单**（空数组＝通过）。纯文本函数，只吃内容不吃文件，
+ * 便于 `tests/unit/release-runbook-guard.test.mjs` 在仓外镜像里改坏后复跑（负控制）。
+ *
+ * 四条判据，对应「照做就能发版」的四个失败模式：
+ *   ① 少小节 ⇒ 有处置步骤没人写；② 少命令块 ⇒ 退化成散文；③ 命令块里只有注释 ⇒ 复制了也不能跑；
+ *   ④ 占位符 ⇒ 真正执行的人会卡在「这里该填什么」。
+ */
+function runbookProblems(text) {
+  const problems = [];
+  const lines = text.split('\n');
+
+  const missing = RUNBOOK_REQUIRED_SECTIONS.filter((heading) =>
+    !lines.some((line) => line.trim() === heading));
+  if (missing.length > 0) problems.push(`缺必备小节：${missing.join('、')}`);
+
+  // 围栏切块：info 串取语言标记，块体取围栏之间的行。
+  const blocks = [];
+  let current = null;
+  for (const line of lines) {
+    const fence = /^\s*(?:```|~~~)\s*([A-Za-z0-9_-]*)/.exec(line);
+    if (fence !== null) {
+      if (current === null) {
+        current = { lang: fence[1].toLowerCase(), body: [] };
+      } else {
+        blocks.push(current);
+        current = null;
+      }
+      continue;
+    }
+    if (current !== null) current.body.push(line);
+  }
+  if (current !== null) problems.push('代码围栏未闭合（文件在某个 ``` 之后就没再关上）');
+
+  const commandBlocks = blocks.filter((block) => RUNBOOK_COMMAND_LANGS.has(block.lang));
+  if (commandBlocks.length < RUNBOOK_MIN_COMMAND_BLOCKS) {
+    problems.push(`可复制命令块不足：${commandBlocks.length} 个 < 下限 ${RUNBOOK_MIN_COMMAND_BLOCKS} 个`);
+  }
+
+  // 只有注释/空行的命令块 = 看着有块，实际没有一条能跑。
+  const emptyCommands = commandBlocks
+    .map((block, index) => ({ index, runnable: block.body.filter((line) => line.trim() !== '' && !/^\s*#/.test(line)) }))
+    .filter((entry) => entry.runnable.length === 0)
+    .map((entry) => `第 ${entry.index + 1} 个`);
+  if (emptyCommands.length > 0) problems.push(`命令块里没有可执行行（只有注释/空行）：${emptyCommands.join('、')}`);
+
+  const placeholders = [];
+  lines.forEach((line, index) => {
+    if (RUNBOOK_PLACEHOLDER.test(line) || RUNBOOK_ANGLE_PLACEHOLDER.test(line)) {
+      placeholders.push(`${RUNBOOK}:${index + 1}`);
+    }
+  });
+  if (placeholders.length > 0) {
+    problems.push(`含占位符：${placeholders.slice(0, 5).join('、')}${placeholders.length > 5 ? ` 等 ${placeholders.length} 处` : ''}`);
+  }
+
+  return problems;
 }
 
 /**
@@ -268,6 +366,18 @@ try {
   check('migrate.ts 命令闭集为 up|status|list',
     /未知命令：\$\{command\}\（支持 up \| status \| list\）/.test(read('services/api/src/db/migrate.ts')),
     'migrate.ts 含封闭命令集报错');
+
+  // ---------------------------------------------------------------- 9. 发版 runbook 可执行性
+  // 与第 1 项分工：第 1 项问「材料有没有被索引页收录」，本项问「发版清单本身能不能照着做」。
+  if (!exists(RUNBOOK)) {
+    check('发版 runbook 可按步骤执行（必备小节＋命令块＋无占位符）', false, `${RUNBOOK} 不在册`);
+  } else {
+    const problems = runbookProblems(read(RUNBOOK));
+    check('发版 runbook 可按步骤执行（必备小节＋命令块＋无占位符）', problems.length === 0,
+      problems.length === 0
+        ? `${RUNBOOK_REQUIRED_SECTIONS.length} 个必备小节齐全；命令块 ≥ ${RUNBOOK_MIN_COMMAND_BLOCKS} 且无空块；无占位符`
+        : problems.join('；'));
+  }
 
   // ---------------------------------------------------------------- 汇总
   console.log(`\n${results.length - failed}/${results.length} 项通过（离线文档核验；不代表部署、云端或运行期已验收）`);

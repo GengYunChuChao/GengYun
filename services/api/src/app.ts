@@ -25,7 +25,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { CONTRACT_VERSION } from './contract.ts';
 import type { AppConfig } from './config.ts';
-import { ApiError, buildErrorEnvelope } from './errors.ts';
+import { ApiError, buildErrorEnvelope, retryAfterSecondsFor } from './errors.ts';
 import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
 import type { PgPool } from './db/pool.ts';
 import { registerHealthRoutes } from './routes/health.ts';
@@ -190,6 +190,7 @@ import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
 import { createModerationService } from './moderation/service.ts';
+import { createPostgresModerationLedger } from './moderation/ledger-pg.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
 import type { ContentAuthorityPort } from './moderation/types.ts';
@@ -822,6 +823,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       ...(moderationInjection?.ruleOptions === undefined
         ? {}
         : { ruleOptions: moderationInjection.ruleOptions }),
+      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), // GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。
@@ -1867,8 +1869,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       buildErrorEnvelope(apiError, { request_id: request.id, execution_mode: config.executionMode });
 
     if (error instanceof ApiError) {
-      // 状态协议：同键请求仍在处理时，409 带 Retry-After（秒），等待后可重试原请求。
-      if (error.code === 'REQUEST_IN_PROGRESS') reply.header('Retry-After', '1');
+      // 等待头（`Retry-After`，整数秒）的**唯一出口**：取值规则与契约依据见
+      // `services/api/src/errors.ts` 的 `retryAfterSecondsFor`——429（限流）与 409
+      // `REQUEST_IN_PROGRESS`（同一 Key 的请求仍在处理）必须带该头（state-contract.md:27 / :34），
+      // 其余错误码（含 503/504）不写。调用点不得各自写头，这里也不写 HTTP-date 形式。
+      const retryAfterSeconds = retryAfterSecondsFor(error);
+      if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));
       reply.status(error.status).send(envelope(error));
       return;
     }

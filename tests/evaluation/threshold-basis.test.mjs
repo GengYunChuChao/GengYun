@@ -1,5 +1,5 @@
 // GY-I20（issue #20）门槛可解释性回归：
-//   ① 17 个样本量目标 + 14 条指标门槛，每条都必须有依据（`requirement` 给到需求原文行号 / `provisional` 明标暂定）；
+//   ① 17 个样本量目标 + 18 条指标门槛，每条都必须有依据（`requirement` 给到需求原文行号 / `provisional` 明标暂定）；
 //   ② 「为什么是这个数」的说明文档由代码生成，逐字节绑定——改阈值不改说明即测试红；
 //   ③ 改阈值 ⇒ 门禁判定翻转（真红），证明门槛不是摆设。
 import test from 'node:test';
@@ -29,12 +29,12 @@ const lineOf = (ref) => {
   return requirementsLines[lineNo - 1];
 };
 
-test('样本数量目标与指标门槛的条数固定（17 桶 / 14 条），改动需同步本测试与文档', () => {
+test('样本数量目标与指标门槛的条数固定（17 桶 / 18 条），改动需同步本测试与文档', () => {
   assert.equal(SAMPLE_TARGETS.length, 17);
-  assert.equal(METRIC_GATES.length, 14);
+  assert.equal(METRIC_GATES.length, 18);
   // 桶与 metric 不重复。
   assert.equal(new Set(SAMPLE_TARGETS.map((t) => t.bucket)).size, 17);
-  assert.equal(new Set(METRIC_GATES.map((g) => g.metric)).size, 14);
+  assert.equal(new Set(METRIC_GATES.map((g) => g.metric)).size, 18);
 });
 
 test('每条目标/门槛都带依据：kind 二值、text 非空、ref 可定位', () => {
@@ -69,20 +69,35 @@ test('requirement 依据：需求原文该行确实给定这个数值（不是"�
   }
 });
 
-test('provisional 依据：必须字面含「暂定，待 #21 用真实读数校准」，且只用于需求原文交给验证集的两条', () => {
+// 每条暂定条目都必须在**它自己引用的那一行**需求原文上找到"为什么只能给暂定"的锚点。
+// 逐条枚举而不是只查一句通用话术：否则把任一条标成 provisional 都能蒙过测试。
+const PROVISIONAL_ANCHORS = {
+  outOfCoverageHighConfidenceRate: '阈值用验证集确定',
+  lowQualityUncertainRate: '阈值用验证集确定',
+  perClassMinTop1: '不能用表现好的类别掩盖某类失效',
+  registrationMatchPerForm: '同名不同制剂',
+  hardRulePass: '禁用硬规则与失败用例全部通过',
+  qaExpectedBehaviorPerClass: '预期行为在固定用例全部通过',
+};
+
+test('provisional 依据：必须字面含「暂定，待 #21 用真实读数校准」，且每条都能在自己引用的需求行上找到锚点', () => {
   const provisional = [...SAMPLE_TARGETS, ...METRIC_GATES].filter((e) => e.basis.kind === 'provisional');
   assert.deepEqual(
     provisional.map((e) => e.bucket ?? e.metric).sort(),
-    ['lowQualityUncertainRate', 'outOfCoverageHighConfidenceRate'],
-    '暂定条目应恰为第6.1节"覆盖外与低质量"行交给验证集确定的两条阈值',
+    Object.keys(PROVISIONAL_ANCHORS).sort(),
+    '暂定条目名单须与 PROVISIONAL_ANCHORS 逐条一致：新增/移除暂定项必须同时交出需求原文锚点',
   );
   for (const entry of provisional) {
     assert.ok(
       entry.basis.text.includes(PROVISIONAL_MARKER),
-      `${entry.metric} 的 basis.text 必须字面包含「${PROVISIONAL_MARKER}」`,
+      `${entry.metric ?? entry.bucket} 的 basis.text 必须字面包含「${PROVISIONAL_MARKER}」`,
     );
-    // 原文确实把取值交给验证集（否则不该标暂定）。
-    assert.ok(lineOf(entry.basis.ref).includes('阈值用验证集确定'));
+    // 原文确实支撑"这里只能给暂定"（否则不该标暂定）。
+    const anchor = PROVISIONAL_ANCHORS[entry.metric ?? entry.bucket];
+    assert.ok(
+      lineOf(entry.basis.ref).includes(anchor),
+      `${entry.metric ?? entry.bucket} 的依据行 ${entry.basis.ref} 找不到原文锚点「${anchor}」`,
+    );
   }
   // 其余 12 条不得被标成暂定（否则"暂定"会退化成免责话术）。
   assert.equal(METRIC_GATES.filter((g) => g.basis.kind === 'requirement').length, 12);

@@ -27,10 +27,12 @@
 //   - 微信侧的**真实频率限制**：45011 由上游判定，单进程内无法产生。本文件用**可注入的
 //     `fetchImpl`** 在「上游响应」这一层模拟 `errcode: 45011`，所以「连打至限流」这一环是
 //     模拟的，不是真实限流；能实测到的是**我方收到 45011 之后的对外行为**（429 + 封套 + 重试语义）。
-//   - **`Retry-After`**：实现**不**为 429 写该头（统一出口只对 `409 REQUEST_IN_PROGRESS` 写，
-//     见 `services/api/src/app.ts:1829` 注释与 `tests/unit/idempotency-retry-after-http.test.mjs`），
-//     而 `docs/architecture/state-contract.md:27` 对 429 要求带 `Retry-After`。本文件**如实断言
-//     「当前无该头」**并注记为口径缺口 —— 不凭空断言不存在的头，也不在本片（只补断言）改实现。
+//   - **`Retry-After` 的「剩余窗口」精确值**：2026-10-22 依 `docs/architecture/state-contract.md:27`
+//     补齐了 429 的该头（此前实现不写，本文件当时如实断言「无该头」并登记为口径缺口）。取值规则见
+//     `services/api/src/errors.ts` 的 `retryAfterSecondsFor`：本仓当前**没有本地限流器**（全仓唯一
+//     429 产出点是 `auth/wechat.ts` 把上游 `errcode 45011` 映射成 `RATE_LIMITED`，上游只给错误码、
+//     不给剩余窗口）⇒ 统一给**确定性 1 秒**（openapi 里该头 `minimum: 1`）。本文件能实测的是「头存在、
+//     是合法整数秒、且不是 HTTP-date」；**不能**实测真实退避窗口是否够用（那取决于微信的判定策略）。
 //   - 504 的 `retryable` 取值：`services/api/src/knowledge/service.ts:119` 用 `ApiError` 缺省值
 //     （`false`），与 `services/api/src/errors.ts:31-33` 「瞬时故障应 true」的口径不一致。本文件
 //     只断它是布尔（契约类型），把取值差异留给报告，不把可能的缺陷钉成「期望行为」。
@@ -44,6 +46,7 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { createWechatIdentityProvider } from '../../services/api/src/auth/wechat.ts';
 import { statusForErrorCode } from '../../services/api/src/contract.ts';
+import { createSubstituteObjectStore } from '../../services/api/src/media/object-store.ts';
 
 const LOGIN_URL = '/api/v1/auth/wechat';
 const IDEM = 'idem-key-gy-i22-0001';
@@ -71,7 +74,7 @@ function login(app, { code = 'synthetic-i22-code', key = IDEM } = {}) {
 // ---------------------------------------------------------------------------------------------
 // 429 · 微信登录被上游限流
 // ---------------------------------------------------------------------------------------------
-test('429：上游 45011 ⇒ HTTP 429 RATE_LIMITED（封套完整 / 无 Retry-After / 失败不落幂等台账）', async (t) => {
+test('429：上游 45011 ⇒ HTTP 429 RATE_LIMITED（封套完整 / 带 Retry-After 整数秒 / 失败不落幂等台账）', async (t) => {
   // 断的是行为：
   //   (a) 限流必须以 429 回给客户端，且 `error.code` 是契约里的 RATE_LIMITED；
   //   (b) 封套形状 = 契约（多一个键、少一个键都会破坏客户端分派）；
@@ -129,11 +132,15 @@ test('429：上游 45011 ⇒ HTTP 429 RATE_LIMITED（封套完整 / 无 Retry-Af
   // (d) 上游 errmsg 不得透出
   assert.equal(JSON.stringify(body).includes(UPSTREAM_ERRMSG), false, '不得回显上游 errmsg');
 
-  // 口径缺口（如实断言现状，不在本片改实现）：
-  //   `docs/architecture/state-contract.md:27` 要求 429 带 `Retry-After`，但统一错误出口只为
-  //   `409 REQUEST_IN_PROGRESS` 写该头。一旦实现补齐，本行应改为断言秒数 —— 这里不预支未来行为。
-  assert.equal(first.headers['retry-after'], undefined,
-    '口径缺口：429 当前不带 Retry-After（state-contract.md:27 有要求，实现未接）');
+  // 2026-10-22 依 `docs/architecture/state-contract.md:27`（「429 | RATE_LIMITED / PROVIDER_QUOTA_EXCEEDED |
+  // Retry-After」）补齐：429 **必须**带该头。原断言（「无该头」）记录的是补齐前的实现现状，随行为修正
+  // 一并改为断「存在且是合法整数秒」——不是删断言，是把口径缺口的断言换成契约要求的断言。
+  // 只断可观测契约：头存在、十进制整数、≥1（openapi `minimum: 1`）、不是 HTTP-date。
+  const retryAfter = first.headers['retry-after'];
+  assert.equal(typeof retryAfter, 'string', '429 必须带 Retry-After（state-contract.md:27）');
+  assert.match(retryAfter, /^[1-9][0-9]*$/, `Retry-After 必须是正整数秒（不是 HTTP-date）：${retryAfter}`);
+  assert.equal(Number.isInteger(Number(retryAfter)), true);
+  assert.equal(Number(retryAfter) >= 1, true, 'openapi 要求 minimum: 1');
 
   // (c) 瞬时失败不落台账：同键重试必须重新交换，且不得被判成「处理中/冲突」
   const sameKeyRetry = await login(app);
@@ -265,3 +272,75 @@ for (const { sqlState, failOn, where } of TIMEOUT_FAMILY) {
     assert.equal(scripted.state.releases, 1, '连接必须释放一次（finally 分支）');
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// 409 · REQUEST_IN_PROGRESS（真实域：媒体同键并发）是否真的带 Retry-After
+// ---------------------------------------------------------------------------------------------
+// 为什么要单独钉这一条：`services/api/src/media/service.ts:778` 的注释声称「仍在处理中 ⇒ 409
+// `REQUEST_IN_PROGRESS`（`app.ts` 会附带 `Retry-After: 1`）」。注释与实现之间最常见的偏差就是
+// 「注释说有、实现没写」，而缺头比注释撒谎轻——所以这里用**真实 HTTP 409** 把注释钉住：不注入
+// 任何错误桩路由，走媒体受理面自己的同键保护（`withKeyClaim` 在第一个 await 之前同步登记占位）。
+test('409：媒体域同键并发 ⇒ REQUEST_IN_PROGRESS 带 Retry-After: 1（钉住 media/service.ts:778 注释）', async (t) => {
+  // 断的是行为：契约 `docs/architecture/state-contract.md:34`「处理中 409 `REQUEST_IN_PROGRESS`
+  // 带 Retry-After」。客户端据此知道「等几秒再用同一个 Idempotency-Key 重试」，所以它是协议面。
+  const baseStore = createSubstituteObjectStore();
+  const originalPresign = baseStore.presignUpload.bind(baseStore);
+  // 让**首个**请求停在对象存储预签（`initiateUploadUnclaimed` 的第一个 await），从而确定性地让
+  // 第二个同键请求撞上占位；不靠定时器竞猜，也不依赖「先完成再回放」的时序巧合。
+  let enteredPresign;
+  const entered = new Promise((resolve) => { enteredPresign = resolve; });
+  let releasePresign;
+  const holding = new Promise((resolve) => { releasePresign = resolve; });
+  const gatedStore = {
+    ...baseStore,
+    presignUpload: (input) => {
+      enteredPresign();
+      return holding.then(() => originalPresign(input));
+    },
+  };
+
+  const app = buildApp({ config: stubConfig(), mediaObjectStore: gatedStore });
+  t.after(() => app.close());
+
+  const session = await login(app, { code: 'synthetic-i22-409', key: 'idem-key-gy-i22-409-login' });
+  assert.equal(session.statusCode, 200, '合成登录必须先成功，否则下面的 409 不是媒体受理面产生的');
+  const token = session.json().data.access_token;
+
+  const payload = { purpose: 'label_ocr', mime: 'image/png', bytes: 10, sha256: 'a'.repeat(64) };
+  const headers = {
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+    'idempotency-key': 'idem-key-gy-i22-409-media',
+  };
+
+  const firstPromise = app.inject({ method: 'POST', url: '/api/v1/media/uploads', headers, payload });
+  const guard = new Promise((_, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('首个请求未进入对象存储预签（媒体受理面结构可能已变，本用例需重新校准）')),
+      5000,
+    );
+    timer.unref?.();
+  });
+  await Promise.race([entered, guard]);
+
+  const second = await app.inject({ method: 'POST', url: '/api/v1/media/uploads', headers, payload });
+  assert.equal(second.statusCode, 409, `同键并发必须回 409：${second.body}`);
+  const conflict = second.json();
+  assert.equal(conflict.error.code, 'REQUEST_IN_PROGRESS');
+  assert.equal(conflict.error.retryable, true, '等待后重试同一请求可成功 ⇒ retryable 必须 true');
+
+  // 注释声称的 `Retry-After: 1`：存在、整数秒、且不是 HTTP-date
+  assert.equal(second.headers['retry-after'], '1', 'media/service.ts:778 注释声称 409 带 Retry-After: 1');
+  assert.match(String(second.headers['retry-after']), /^[1-9][0-9]*$/);
+  assert.equal(conflict.meta.contract_version, '1.0.0');
+
+  // 放行首个请求：占位释放后同键重试必须能正常受理（不是永久 409）
+  releasePresign();
+  const first = await firstPromise;
+  assert.equal(first.statusCode, 201, first.body);
+  assert.equal(first.headers['retry-after'], undefined, '201 不是「稍后再试」，不得带等待头');
+
+  const replay = await app.inject({ method: 'POST', url: '/api/v1/media/uploads', headers, payload });
+  assert.equal(replay.statusCode, 201, '占位释放后同键请求应按幂等回放受理');
+  assert.equal(replay.headers['retry-after'], undefined, '回放不是「稍后再试」，不得带等待头');
+});
