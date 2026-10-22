@@ -3,7 +3,8 @@
  * 页面形态走 styles/components.wxss 的 demo 组件层（info-row／info-list／panel／pill／
  * demo-caption）。demo 的 .message-list／.message-row／.message-icon／.message-copy／
  * .unread-dot 已落入样式层，本页按 GY-I17（#17）接入真实消息数据后直接复用，
- * 不新增第二套列表样式；本文件只补两处与样式层默认值不同的声明。
+ * 不新增第二套列表样式；本文件只补与样式层默认值不同的少数声明（列表两处 +
+ * G3 未读数重试 pill 的可点形态）。
  */
 
 /* 消息行图标：沿用样式层 .message-icon 的 36px 底框，图标取 21px 基准
@@ -16,4 +17,20 @@
 .message-row .row-actions {
   justify-content: flex-start;
   margin-top: 10px;
+}
+
+/* G3（#17）：未读数失败时 pill 自身就是出口 —— 触控区按样式层既有的 `--tap-min`（44px）
+ * 门槛，形态对齐 .chip（同样是「可点的胶囊」），不新造按钮组件。
+ * flex-wrap：失败文案较长时让「重试」换到下一行，避免两段文字被挤成竖排。 */
+.pill--action {
+  flex-wrap: wrap;
+  min-height: var(--tap-min, 44px);
+  padding: 7px 12px;
+}
+
+/* pill 内的文字出口：加粗 + 下划线，不靠颜色单一通道传达「可点」。 */
+.pill__action {
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
 }

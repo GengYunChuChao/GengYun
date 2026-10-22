@@ -24,7 +24,16 @@
 
     <view class="section-head">
       <view class="section-head__title">互动通知</view>
-      <view class="pill pill--gray">{{unreadNote}}</view>
+      <!-- G3（#17）：未读数读不到时 pill 自身就是出口 —— 失败态挂 bindtap 只重读未读数
+           （不整页重载、不清已读状态）；重试在飞时文案换成「正在重试…」且不再发请求。
+           成功态走 wx:else 的纯展示 pill：**没有**绑定，所以「成功态不出现重试」是结构性的，
+           而不是靠 CSS 隐藏。两个分支互斥，失败态绝不把数字写成 0。 -->
+      <view
+        wx:if="{{unreadFailed}}"
+        class="pill pill--amber pill--action"
+        bindtap="onRetryUnread"
+      ><text>{{unreadNote}}</text><text class="pill__action">{{retryingUnread ? '正在重试…' : '重试'}}</text></view>
+      <view wx:else class="pill pill--gray">{{unreadNote}}</view>
     </view>
 
     <!-- demo messages 页的 .section-head：左侧筛选 chips（demo `.chips > .chip`／`.chip.active`

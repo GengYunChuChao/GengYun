@@ -76,7 +76,11 @@ Page({
     markingId: '',
     markingAll: false,
     unreadText: '',
-    unreadNote: '未读数尚未读取'
+    unreadNote: '未读数尚未读取',
+    // G3（#17）：未读数失败后必须有**可点**的出口 —— 失败标记决定 pill 是否渲染重试，
+    // retryingUnread 只用于「在飞期间不重复发」与按钮文案，两者都不参与数字展示。
+    unreadFailed: false,
+    retryingUnread: false
   },
 
   onShow: function () {
@@ -175,25 +179,62 @@ Page({
   /**
    * 未读数是**派生量**：每次都向服务端重新读取，本地不维护计数器。
    * 取不到时**不显示任何数字**（既不显示 0，也不保留过期值），并如实说明未取得。
+   * G3（#17）：失败不是终点 —— 置 `unreadFailed` 让 pill 变成可点的「重试」，
+   * 出口 `onRetryUnread` 只重读未读数，不整页重载、不清已读状态。
    *
    * 并发保护（世代号）：进入页面时的读取、标记单条后的读取、全部已读结束后的读取会同时在飞，
    * 响应次序**不由请求次序决定**。若不设世代号，先发后到的**旧**读数会覆盖刚拿到的新读数
    * （典型：标记已读后 count 3→2，但更早那次读到 3 的响应晚到 ⇒ 角标弹回 3）。
    * 只采纳**最后一次发出**的请求结果，过期响应直接丢弃。
    */
-  refreshUnread: function () {
+  refreshUnread: function (options) {
     const that = this
     const epoch = (this._unreadEpoch = (this._unreadEpoch || 0) + 1)
-    if (!auth.isLoggedIn()) { this._applyUnread(''); this.setData({ unreadNote: '未读数尚未读取' }); return }
+    // 手动重试：在飞期间 pill 显示「正在重试…」并挡住连点；自动刷新不改变这个标记。
+    if (options && options.retry) this.setData({ retryingUnread: true })
+    if (!auth.isLoggedIn()) {
+      this._applyUnread('')
+      this.setData({ unreadFailed: false, retryingUnread: false, unreadNote: '未读数尚未读取' })
+      return
+    }
     api.getUnreadCount().then(function (result) {
       if (epoch !== that._unreadEpoch) return
       that._applyUnread(api.unreadText(result.count))
-      that.setData({ unreadNote: result.count > 0 ? '未读 ' + result.count + ' 条' : '暂无未读' })
+      // 成功即回到成功态：重试入口随 unreadFailed 一起消失（不是只把文案改回去）。
+      that.setData({
+        unreadFailed: false,
+        retryingUnread: false,
+        unreadNote: result.count > 0 ? '未读 ' + result.count + ' 条' : '暂无未读'
+      })
     }).catch(function (error) {
       if (epoch !== that._unreadEpoch) return
       that._applyUnread('')
-      that.setData({ unreadNote: api.unwired(error) ? '未读数未取得：服务端未接线' : '未读数未取得：' + api.message(error) })
+      // 失败态如实说明「未取得」并**保留**可重试入口；再次失败仍可再点（不是一次性开关）。
+      that.setData({
+        unreadFailed: true,
+        retryingUnread: false,
+        unreadNote: api.unwired(error) ? '未读数未取得：服务端未接线' : '未读数未取得：' + api.message(error)
+      })
+      that._warnUnread(error)
     })
+  },
+
+  /**
+   * G3（#17）：未读数失败态的可点出口。**只重读未读数** —— 不调 `reload()`（那会让列表回到
+   * loading 并重发 `/messages`），也不碰 `items`（已读状态、已加载页面原样保留）。
+   * 连点保护：重试在飞期间 `retryingUnread` 为真，请求返回前不再发第二条。
+   */
+  onRetryUnread: function () {
+    if (!this.data.unreadFailed || this.data.retryingUnread) return
+    this.refreshUnread({ retry: true })
+  },
+
+  /**
+   * 失败不吞错：留一条**结构化**告警（事件名 + 契约/网络错误码）供小程序后台检索。
+   * 只打这两项 —— 不打 token、手机号、消息正文（未读数与消息内容都属个人信息面）。
+   */
+  _warnUnread: function (error) {
+    console.warn({ event: 'messages.unread_count.fetch_failed', code: (error && error.code) || 'UNKNOWN' })
   },
 
   /** 角标只读展示在既有 custom-tab-bar 上；不改变 tabBar 配置语义。 */

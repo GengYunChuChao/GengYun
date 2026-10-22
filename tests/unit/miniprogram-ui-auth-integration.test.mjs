@@ -11,6 +11,10 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8');
 function harness() {
   const storage = new Map();
   const requests = [], launches = [], tabs = [], navigates = [], toasts = [];
+  // G3（#17）：沙箱里换成记录型 console，用来断言「失败不吞错」那条结构化告警
+  // （事件名 + 错误码），而不是让页面把告警打穿到测试输出里。
+  const warns = [];
+  const consoleSink = { warn: (entry) => warns.push(entry), log: () => {}, info: () => {}, error: () => {} };
   const cache = new Map();
   const expires = () => new Date(Date.now() + 3600_000).toISOString();
   const wx = {
@@ -29,7 +33,7 @@ function harness() {
   };
   let systemPx = 20;
   let app = { globalData: { fontScale: 1.25 } };
-  const context = { wx, getApp: () => app, App: (value) => { app = value; } };
+  const context = { wx, getApp: () => app, App: (value) => { app = value; }, console: consoleSink };
   function load(path) {
     path = resolve(path);
     if (path.endsWith('config\\runtime.js') || path.endsWith('config/runtime.js')) {
@@ -78,7 +82,7 @@ function harness() {
     assert.equal(auth.isLoggedIn(), true);
   }
   // 并集：合并两侧对同一 helper 的改动 —— #191 的 `component` 与 upstream(#188/#190) 的 `navigates` 都在，字段一个不丢。
-  return { auth, page, component, seedCache, acceptVerification, login, requests, launches, tabs, navigates, toasts, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
+  return { auth, page, component, seedCache, acceptVerification, login, requests, launches, tabs, navigates, toasts, warns, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
 }
 
 for (const name of ['identify', 'community', 'messages', 'profile']) {
@@ -276,6 +280,16 @@ const messageError = (code) => ({
 });
 const flush = async (times = 8) => { for (let i = 0; i < times; i += 1) await Promise.resolve(); };
 const pathOf = (request) => request.url.replace('https://synthetic.invalid/api/v1', '');
+/**
+ * G3（#17）：取 messages.wxml 里那条**承载未读数重试**的标签（含标签自身的属性文本）。
+ * 用于核两件事：绑定的是 `onRetryUnread`，以及它被 `wx:if="{{unreadFailed}}"` 独占
+ * —— 成功态在模板上根本渲染不出重试入口，而不是靠 CSS 隐藏。
+ */
+function unreadRetryTag(wxml) {
+  const at = wxml.indexOf('bindtap="onRetryUnread"');
+  if (at === -1) return null;
+  return wxml.slice(wxml.lastIndexOf('<', at), wxml.indexOf('>', at) + 1);
+}
 /** 门禁核实通过、页面已发出「列表」与「未读数」两条真实读取请求。 */
 async function openedMessagesPage(h) {
   const bar = h.component('custom-tab-bar/index.js');
@@ -361,12 +375,119 @@ test('消息页：real 未接线 503 ⇒ 提示「服务未接线」，绝不显
   assert.doesNotMatch(JSON.stringify(page.data), /暂无消息/, '不可用不得被渲染成「暂无消息」');
   assert.match(page.data.unreadNote, /未读数未取得/);
   assert.equal(bar.data.unreadText, '', '未读数取不到 ⇒ 不显示数字（不显示 0）');
-  // 结构护栏：「暂无消息」只允许出现在 empty 分支；error 分支不得复用空态文案。
+  // G3（#17）**断言订正**：本条原先只锁定「未取得 ＋ 不显示数字」，等于把「失败即终点」
+  // 固化成预期 —— 页面此后走到哪儿都不再有出口。现把同一条用例改成断言「重试真的接线了」：
+  // 失败标记点亮、出口是函数、模板里唯一的重试绑定由失败态独占（不是删断言，是换掉断言的对象）。
+  assert.equal(page.data.unreadFailed, true, '未读数失败必须点亮失败标记（它决定是否渲染重试）');
+  assert.equal(typeof page.onRetryUnread, 'function', '失败态必须暴露可点入口 onRetryUnread');
   const wxml = readFileSync(resolve(root, 'miniprogram/pages/messages/messages.wxml'), 'utf8');
+  const retryTag = unreadRetryTag(wxml);
+  assert.ok(retryTag, '失败态 pill 必须绑定 onRetryUnread（否则失败后无路可走）');
+  assert.match(retryTag, /wx:if="\{\{unreadFailed\}\}"/, '重试入口必须由失败态独占渲染（成功态不得出现）');
+  assert.equal(wxml.split('bindtap="onRetryUnread"').length - 1, 1, '本页只应有一个未读数重试入口');
+  // 失败不吞错：留一条结构化告警，只带 event/code，且不得夹带令牌或手机号。
+  assert.equal(h.warns.length, 1, '未读数失败只留一条结构化告警');
+  assert.deepEqual(Object.keys(h.warns[0]).sort(), ['code', 'event'], '告警字段只允许 event/code');
+  assert.equal(h.warns[0].event, 'messages.unread_count.fetch_failed');
+  assert.equal(h.warns[0].code, 'PROVIDER_UNAVAILABLE');
+  assert.doesNotMatch(JSON.stringify(h.warns), /synthetic-token|synthetic-code|\+?\d{11}/, '告警不得携带会话令牌或手机号');
+  // 结构护栏：「暂无消息」只允许出现在 empty 分支；error 分支不得复用空态文案。
   const errorBranch = wxml.indexOf('status === \'error\'');
   const emptyBranch = wxml.indexOf('status === \'empty\'');
   assert.ok(errorBranch !== -1 && emptyBranch !== -1 && errorBranch < emptyBranch, '错误分支必须先于空态分支判定');
   assert.ok(wxml.slice(errorBranch, emptyBranch).includes('暂无消息') === false, '错误分支不得出现「暂无消息」');
+});
+
+test('消息页：未读数读取成功 ⇒ 成功态没有重试入口，也不把「0 条」写成 0', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  assert.equal(page.data.unreadFailed, false, '成功态不得残留失败标记');
+  assert.equal(page.data.retryingUnread, false);
+  assert.equal(page.data.unreadNote, '暂无未读');
+  assert.equal(page.data.unreadText, '', '0 条不显示数字（未读数是派生量，0 与失败都必须无数字）');
+  assert.equal(bar.data.unreadText, '');
+  assert.equal(h.warns.length, 0, '成功路径不得打告警');
+  // 模板结构：重试只挂在失败分支；成功分支仍是纯展示 pill，一个点击绑定都没有。
+  const wxml = readFileSync(resolve(root, 'miniprogram/pages/messages/messages.wxml'), 'utf8');
+  const successPill = wxml.split('\n').find((line) => line.includes('pill--gray'));
+  assert.ok(successPill, '成功态 pill 必须仍在模板里（失败态不是唯一的 pill）');
+  assert.doesNotMatch(successPill, /bindtap|catchtap/, '成功态 pill 不得绑定任何点击（重试只在失败态出现）');
+  // 成功态即使被误触也不发请求：出口自己挡在失败标记之外。
+  const before = h.requests.length;
+  page.onRetryUnread();
+  assert.equal(h.requests.length, before, '成功态调用重试入口不得发请求');
+});
+
+test('消息页：列表成功＋未读数失败 ⇒ pill 可点重试，且只重读未读数（不整页重载、不清已读状态）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  // G3 的原始场景：列表**成功**（页面停在 ready，state-view 的 onRetry 根本不可达），未读数失败。
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({
+    items: [message({ id: READ_MESSAGE, revision: 2, read_at: '2026-10-16T05:00:00.000Z' })], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 503, data: messageError('PROVIDER_UNAVAILABLE') });
+  await flush();
+  assert.equal(page.data.status, 'ready', '列表成功 ⇒ 页面常态为 ready（重试入口不在 state-view 里）');
+  assert.equal(page.data.unreadFailed, true);
+  assert.equal(page.data.unreadText, '', '失败不得兜成 0，也不得保留过期读数');
+  assert.equal(bar.data.unreadText, '');
+  const itemsBefore = JSON.stringify(page.data.items);
+  const before = h.requests.length;
+
+  page.onRetryUnread();
+  assert.equal(h.requests.length, before + 1, '一次点击只发一条请求');
+  const retry = h.requests.at(-1);
+  assert.equal(retry.method + ' ' + pathOf(retry), 'GET /messages/unread-count', '重试只重读未读数，不重发 /messages');
+  assert.equal(page.data.status, 'ready', '重试不得整页重载（不清列表、不回到 loading）');
+  assert.equal(page.data.retryingUnread, true, '重试在飞期间置标记（用于连点保护与「正在重试…」）');
+
+  retry.success({ statusCode: 200, data: messageEnvelope({ count: 2 }) });
+  await flush();
+  assert.equal(page.data.retryingUnread, false);
+  assert.equal(page.data.unreadFailed, false, '成功后回到成功态');
+  assert.equal(page.data.unreadNote, '未读 2 条');
+  assert.equal(bar.data.unreadText, '2', '成功后角标恢复数字');
+  assert.equal(JSON.stringify(page.data.items), itemsBefore, '重试不得改动已加载列表与已读状态');
+});
+
+test('消息页：未读数重试连点只发一次；成功后再失败仍可再次重试', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 503, data: messageError('PROVIDER_UNAVAILABLE') });
+  await flush();
+  assert.equal(page.data.unreadFailed, true);
+
+  const before = h.requests.length;
+  page.onRetryUnread();
+  page.onRetryUnread();
+  page.onRetryUnread();
+  assert.equal(h.requests.length, before + 1, '连点三次只允许一条重读请求（在飞期间不重复发）');
+  h.requests.at(-1).success({ statusCode: 200, data: messageEnvelope({ count: 3 }) });
+  await flush();
+  assert.equal(page.data.unreadNote, '未读 3 条');
+  assert.equal(bar.data.unreadText, '3');
+  assert.equal(page.data.unreadFailed, false, '成功后回到成功态（重试入口消失）');
+
+  // 成功后再失败（例如标记已读后重新读取时服务端故障）⇒ 仍要能再点，不是一次性开关。
+  page.refreshUnread();
+  h.requests.at(-1).success({ statusCode: 503, data: messageError('PROVIDER_UNAVAILABLE') });
+  await flush();
+  assert.equal(page.data.unreadFailed, true);
+  assert.equal(bar.data.unreadText, '', '再次失败 ⇒ 角标回到「不显示数字」');
+  const again = h.requests.length;
+  page.onRetryUnread();
+  assert.equal(h.requests.length, again + 1, '再次失败后仍可重试');
+  assert.equal(pathOf(h.requests.at(-1)), '/messages/unread-count');
+  assert.equal(h.warns.length, 2, '两次失败各留一条结构化告警（不吞错、不刷屏）');
 });
 
 test('消息页：服务端返回 0 条 ⇒ 空态（与「服务未接线」可分辨）', async () => {
