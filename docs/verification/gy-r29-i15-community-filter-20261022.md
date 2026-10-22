@@ -170,6 +170,23 @@ node --test tests/unit/community-*.test.mjs                    → tests 173 / p
 node tools/verify-contract-status.mjs                          → exit 0（112 op / 108 装配 / implemented 13 / partial 95 / planned 4）
 ```
 
+## 5½. CI 读数（PR #433 的 `real-pg-17.11` job，GitHub Actions）
+
+- run：`actions/runs/39696822787`（job `real-pg-17.11`），step 名 `psql … CREATE DATABASE gengyun_community_filter_test && node tests/integration/community-filter-pg.mjs`；
+- 服务端：`PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2)`（CI 的 `postgres:17.11` 容器）；
+- 结果：`全部 11 组真库断言通过。`，**与本文第 1 节的 11 组逐条一致**；
+- 规划器读数在 CI 上**与本地逐字相同**（同一个 PG 17.11、同样的 1205 行与 `ANALYZE`）：
+
+```
+实际语句计划：Sort (cost=100.71..103.73 rows=1205 width=179) Sort Key: created_at DESC, id DESC
+  -> Seq Scan on community_posts (cost=0.00..39.05 rows=1205 width=179)
+下推等价式计划：Limit (cost=0.28..8.30 rows=1 width=179) -> Index Scan using community_posts_feed_idx on community_posts
+  Index Cond: (((crop_id)::text = 'crop-wheat'::text) AND ((region_code)::text = '330100'::text))
+  Filter: (visibility = 'published'::visibility)
+```
+
+- 该 PR 的 18 项检查全绿（含 `real-pg-17.11` / `unit-tests` / `integration-http` / `static-check` / `contract-tests` / `development-docs`）。
+
 ## 6. 合流面（在飞 PR 冲突预判）
 
 - `#419`（`feat/gy-r28-w12-media-persistence`）同时改 `real-pg-integration.yml` + `ci-real-pg-wiring.test.mjs`
