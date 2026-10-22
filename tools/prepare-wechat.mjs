@@ -1,5 +1,5 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { resolve, join, dirname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocalConfig, configArgument } from './local-debug-config.mjs';
 
@@ -8,6 +8,91 @@ const APP_ID_PATTERN = /^wx[0-9a-f]{16}$/;
 // 测试号申请入口（微信公众平台 → 开发 → 开发管理 → 开发设置 → 开发者工具 → 测试号）。
 // 2026-10-19 实测该 URL 可打开，但正文由微信公众平台前端渲染，需在浏览器登录后查看。
 const TEST_ACCOUNT_URL = 'https://mp.weixin.qq.com/wxamp/sandbox?doc=1';
+/** 组件必需文件：微信原生自定义组件缺任一都会在编译期报「未找到组件」；`.wxss` 可选。 */
+const COMPONENT_REQUIRED_EXTS = ['.js', '.json', '.wxml'];
+
+function compareReferences(left, right) {
+  const a = left.from + '|' + left.name;
+  const b = right.from + '|' + right.name;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function displayPath(root, path) {
+  return relative(root, path).replaceAll('\\', '/');
+}
+
+/**
+ * 扫描 `miniprogram/**\/*.json` 的 `usingComponents`，返回每一条组件引用。
+ *
+ * 组件集合**从引用派生**，不再维护第二份硬编码清单：2026-10 实测的缺陷正是清单漏了
+ * `components/fav-entry`，生成的 local 工程在开发者工具里项目级报
+ * 「在 … 路径下未找到组件」——错误指向组件缺失，几乎不会让人联想到是打包脚本漏拷。
+ * 派生后新增组件/新页面引用组件都自动纳入，同类缺口不会再出现。
+ *
+ * `base` 是**不带扩展名**的组件基址：`/` 开头相对小程序根，其余相对声明它的 JSON 所在目录（与微信同义）。
+ */
+function collectComponentReferences(miniprogramRoot) {
+  const references = [];
+  const visit = directory => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+        continue;
+      }
+      if (!entry.name.endsWith('.json')) continue;
+      const json = JSON.parse(readFileSync(path, 'utf8'));
+      for (const [name, reference] of Object.entries(json.usingComponents ?? {})) {
+        if (typeof reference !== 'string' || reference.length === 0) {
+          throw new Error('usingComponents 引用非法：' + displayPath(miniprogramRoot, path) + ' -> ' + name + '；未生成任何目录。');
+        }
+        const base = reference.startsWith('/') ? resolve(miniprogramRoot, reference.slice(1)) : resolve(dirname(path), reference);
+        const inside = relative(miniprogramRoot, base);
+        if (isAbsolute(inside) || inside === '..' || inside.startsWith('..' + sep)) {
+          throw new Error('usingComponents 引用越出 miniprogram 根：' + displayPath(miniprogramRoot, path) + ' -> ' + name + '（' + reference + '）；未生成任何目录。');
+        }
+        references.push({ from: displayPath(miniprogramRoot, path), name, reference, base });
+      }
+    }
+  };
+  visit(miniprogramRoot);
+  return references.sort(compareReferences);
+}
+
+/**
+ * 引用 → 组件目录清单，并在**创建任何目录之前**校验组件必需文件齐全。
+ * 返回 `{ source, path }`：source 是源码组件目录，path 是副本内相对小程序根的目录。
+ */
+function componentDirectories(miniprogramRoot) {
+  const directories = new Map();
+  for (const reference of collectComponentReferences(miniprogramRoot)) {
+    const missing = COMPONENT_REQUIRED_EXTS.filter(ext => !existsSync(reference.base + ext));
+    if (missing.length !== 0) {
+      throw new Error('usingComponents 引用的组件不完整：' + reference.from + ' -> ' + reference.name + '（' + reference.reference + '）缺 ' + missing.join(' ') + '；未生成任何目录。');
+    }
+    const source = dirname(reference.base);
+    if (!directories.has(source)) directories.set(source, displayPath(miniprogramRoot, source));
+  }
+  return [...directories].map(([source, path]) => ({ source, path }));
+}
+
+/**
+ * 复制后自检：副本里每一条 `usingComponents` 都必须解析到组件文件，否则拒绝交付。
+ * 这是「清单/派生漏项」的结构性防线——失败信息点名页面与组件，而不是把
+ * `compilePageJSON` 的「未找到组件」留给微信开发者工具。
+ */
+function assertComponentsCopied(components, copyRoot) {
+  const unresolved = collectComponentReferences(copyRoot).filter(reference =>
+    COMPONENT_REQUIRED_EXTS.some(ext => !existsSync(reference.base + ext)));
+  const absent = components.filter(component => !existsSync(join(copyRoot, component.path)));
+  if (unresolved.length === 0 && absent.length === 0) return;
+  const lines = [
+    ...unresolved.map(reference => '  ' + reference.from + ' -> ' + reference.name + '（' + reference.reference + '）'),
+    ...absent.map(component => '  ' + component.path + '（组件目录未复制）'),
+  ];
+  throw new Error('生成副本仍缺 usingComponents 引用的组件：\n' + lines.join('\n') + '\n请先删除 ' + dirname(copyRoot) + ' 再修本脚本。');
+}
 
 /**
  * 从 local 的参数里摘出可选的 `--appid <wx…>`，其余参数原样交给 --config 校验。
@@ -49,6 +134,8 @@ try {
   const sharedAppId = config.appid;
   const sharedRuntime = readFileSync(join(root, 'miniprogram/config/runtime.js'), 'utf8').replace(/\r\n/g, '\n');
   if (sharedRuntime !== "// Shared source always has networking disabled. Local preparation writes only an ignored copy.\nmodule.exports = { mode: 'disabled', apiBaseUrl: '' }\n") throw new Error('Shared runtime changed. Refuse to package a possible local/stub configuration.');
+  // 组件目录从 usingComponents 派生（在任何目录被创建之前完成校验）：新增组件无需再改本脚本。
+  const components = componentDirectories(join(root, 'miniprogram'));
   const out = join(root, '.local', 'wechat-' + mode);
   // Refuse reuse so personal overrides or stale generated files cannot survive preparation.
   if (existsSync(out)) throw new Error('Output already exists: ' + out + '. Keep it for inspection or remove that exact generated directory before preparing again.');
@@ -114,6 +201,9 @@ try {
     // 统一状态层（B7 / #28）：components/state-view 与各页状态判定共用；
     // 漏加会让 state-view 在本工程里 MODULE_NOT_FOUND，所有页面的状态块一起失效。
     'utils/states.js',
+    // 下面这条逐项清单保留给既有静态断言（tests/unit/miniprogram-voice-playback.test.mjs 等按文本核对它）；
+    // 它**不再是完整性的依据**：上方 componentDirectories(...) 已按 usingComponents 派生组件目录并整目录复制，
+    // 清单没列到的新组件（如本次缺陷里的 fav-entry）同样会进副本，复制后 assertComponentsCopied(...) 兜底。
     'components/state-view/state-view.js',
     'components/state-view/state-view.json',
     'components/state-view/state-view.wxml',
@@ -175,6 +265,13 @@ try {
     mkdirSync(dirname(target), { recursive: true });
     copyFileSync(join(root, 'miniprogram', file), target);
   }
+  // 组件整目录复制：usingComponents 派生出的目录连同 .wxss 与将来新增的附属文件一起进副本。
+  for (const component of components) {
+    const target = join(out, 'miniprogram', component.path);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(component.source, target, { recursive: true });
+  }
+  assertComponentsCopied(components, join(out, 'miniprogram'));
   // 只有**生成副本**的 appid 允许覆盖；共享工程两份 project.config.json 全程只读
   // （tests/local-debug.test.mjs 按字节比对原文，覆盖值不可能回流到仓库）。
   if (appIdOverride !== null) config.appid = appIdOverride;
