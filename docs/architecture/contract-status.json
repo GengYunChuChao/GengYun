@@ -1358,7 +1358,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listPosts",
-          "lines": "748-753"
+          "lines": "768-773"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1385,7 +1385,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createPost",
-          "lines": "820-825"
+          "lines": "840-845"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1416,7 +1416,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "908-913"
+          "lines": "928-933"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1443,7 +1443,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editPost",
-          "lines": "915-920"
+          "lines": "935-940"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1470,7 +1470,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deletePost",
-          "lines": "1028-1033"
+          "lines": "1048-1053"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1497,7 +1497,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listComments",
-          "lines": "1063-1068"
+          "lines": "1083-1088"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1524,7 +1524,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createComment",
-          "lines": "1116-1121"
+          "lines": "1136-1141"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1551,7 +1551,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "getComment",
-          "lines": "1208-1213"
+          "lines": "1241-1246"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1578,7 +1578,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editComment",
-          "lines": "1215-1220"
+          "lines": "1248-1253"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1605,7 +1605,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deleteComment",
-          "lines": "1295-1300"
+          "lines": "1328-1333"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1632,7 +1632,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "likePosts",
-          "lines": "1329-1334"
+          "lines": "1362-1367"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1659,7 +1659,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "unlikePosts",
-          "lines": "1333-1338"
+          "lines": "1366-1371"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1686,7 +1686,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "likeComments",
-          "lines": "1337-1342"
+          "lines": "1370-1375"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1713,7 +1713,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "unlikeComments",
-          "lines": "1341-1346"
+          "lines": "1374-1379"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1740,7 +1740,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createReport",
-          "lines": "1346-1351"
+          "lines": "1379-1384"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1767,7 +1767,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "getOwnReport",
-          "lines": "1386-1391"
+          "lines": "1419-1424"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -3210,7 +3210,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "828-834"
+          "lines": "834-840"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",

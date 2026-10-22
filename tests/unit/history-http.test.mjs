@@ -414,7 +414,7 @@ test('历史HTTP：删除历史行 + 级联披露（未接线如实说明，接�
   const removed = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
     headers: { 'idempotency-key': 'his-a-0003', 'if-match': '"1"' },
   });
-  assert.equal(removed.status, 200);
+  assert.equal(removed.status, 202, '契约 /history/{id} 的 DELETE 只声明 202（受理异步任务）');
   assert.deepEqual(removed.body.data, { accepted: true });
   assert.equal(removed.cache, 'no-store');
   assert.equal(removed.cascade, 'initiated', 'X-GY-Cascade 为非契约披露标记：只表示"已启动"');
@@ -428,7 +428,7 @@ test('历史HTTP：删除历史行 + 级联披露（未接线如实说明，接�
   const replayed = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
     headers: { 'idempotency-key': 'his-a-0003', 'if-match': '"1"' },
   });
-  assert.equal(replayed.status, 200);
+  assert.equal(replayed.status, 202);
   assert.equal(replayed.cascade, 'initiated');
   assert.equal(pushed.length, 1, '重放不得再次触发级联');
 
@@ -439,7 +439,7 @@ test('历史HTTP：删除历史行 + 级联披露（未接线如实说明，接�
   const removed2 = await h2.call('DELETE', `${HISTORY}/${item2.id}`, h2.a, {
     headers: { 'idempotency-key': 'his-a-0004', 'if-match': '"1"' },
   });
-  assert.equal(removed2.status, 200);
+  assert.equal(removed2.status, 202);
   assert.equal(removed2.cascade, 'unwired');
   assert.equal((await h2.call('GET', HISTORY)).body.data.items.length, 0, '级联未接线也必须能删除自己的记录');
 });
@@ -477,12 +477,12 @@ test('历史HTTP：无体 DELETE 带微信默认 JSON content-type 时不得被�
   assert.equal(anonymous.status, 401);
   assert.ok(['SESSION_REQUIRED', 'SESSION_EXPIRED'].includes(anonymous.body.error.code));
 
-  // 正例：无体 + JSON 头 ⇒ 200 Ack（级联披露照常）。
+  // 正例：无体 + JSON 头 ⇒ 202 Ack（级联披露照常）。
   const removed = await h.call('DELETE', `${HISTORY}/${item.id}`, h.a, {
     ...withDefaultHeader,
     headers: { 'idempotency-key': 'his-nobody-0004', 'if-match': '"1"' },
   });
-  assert.equal(removed.status, 200);
+  assert.equal(removed.status, 202);
   assert.deepEqual(removed.body.data, { accepted: true });
   assert.equal(removed.cache, 'no-store');
   assert.equal((await h.call('GET', HISTORY)).body.data.items.length, 0);

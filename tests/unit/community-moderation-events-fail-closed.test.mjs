@@ -68,11 +68,12 @@ test('G5a. 审核结果与下架事件只走消息中心公开端口；审核域
 
   const aFeed = await h.service.listPosts(USER_A);
   assert.equal(aFeed.items.length, 1);
-  // 投稿人只收到自己内容的审核结果事件（接收者由服务端决定）。
+  // 投稿人只收到自己内容的事件：审核结果 + **他人对我帖子的评论通知**（GY-I17 第 7 片新增，
+  // 接收者仍是内容作者本人；两条同毫秒落库 ⇒ 比多重集不比顺序）。
   const inboxA = await h.messages.listMessagesByOwner(USER_A.userId);
   assert.deepEqual(
-    inboxA.map((item) => `${item.type}:${item.target_ref.type}:${item.target_ref.revision}`),
-    ['moderation:post:1'],
+    inboxA.map((item) => `${item.type}:${item.target_ref.type}:${item.target_ref.revision}`).sort(),
+    ['comment:post:1', 'moderation:post:1'],
   );
   const inboxB = await h.messages.listMessagesByOwner(USER_B.userId);
   assert.deepEqual(
@@ -93,7 +94,8 @@ test('G5a. 审核结果与下架事件只走消息中心公开端口；审核域
   assert.equal('event' in h.calls.withdraw[0].result, false, '审核域不再产出零订阅方的事件字段');
 
   const afterA = await h.messages.listMessagesByOwner(USER_A.userId);
-  assert.equal(afterA.length, 2, '下架只允许新增一条消息（审核域事件不得另开一条投递）');
+  // 3 条 = 投稿审核结果 + 他人评论通知（GY-I17 第 7 片） + 下架。
+  assert.equal(afterA.length, 3, '下架只允许新增一条消息（审核域事件不得另开一条投递）');
   const takedowns = afterA.filter((item) => item.event_key.startsWith('community:takedown:'));
   assert.equal(takedowns.length, 1, '下架消息恰好一条');
   // **版本口径同一套**（诊断 R6）：下架消息、审核域下架目标、被失效的缓存键必须指向**同一版**

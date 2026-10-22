@@ -130,6 +130,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/catalog-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/community-filter-pg.mjs',
+    reason: '需真实 PG17 且硬钉库名 `gengyun_community_filter_test`（脚本自己断言 hostname 回环、'
+      + 'pathname=/gengyun_community_filter_test、public 下无表）：取 `GET /posts` 的 `crop_id`/`region_code`/'
+      + '`mine` 三类筛选的**真库读数**（逐条与同条件 SELECT 对照）、游标绑定筛选集、参数闭集 400、'
+      + '以及「筛选未下推 SQL」的语句读数 + `community_posts_feed_idx` 的 EXPLAIN 读数；'
+      + '未配置 `COMMUNITY_FILTER_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**'
+      + '（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0，⛔ 不得用于门禁）；'
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/community-pg.mjs',
     reason: '需真实 PG17 且硬钉库名 `gengyun_community_test`：未配置 `COMMUNITY_PG_TEST_URL` 时'
       + '**显式打印 SKIP 并以 77 退出**（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）；'
@@ -157,6 +168,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     path: 'tests/integration/egress-object-key-pg.mjs',
     reason: '需真实 PG 且硬钉前置：由 `consent-grant-postgres.yml` 在同一 `gengyun_egress_test` 上紧跟'
       + ' `egress-ledger-pg.mjs`（`EGRESS_LEDGER_KEEP=1` 保留角色/夹具行）之后运行，不进无 PG 的回环链。',
+  },
+  {
+    path: 'tests/integration/egress-revoke-race-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_egress_revoke_race_test`（首行断言 `public` 表数 = 0）：由'
+      + ' `consent-grant-postgres.yml` 先建库再运行。它与 `gengyun_egress_test` **刻意不共库**（两套夹具的账号/撤回时序'
+      + '互不兼容），故不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/favorites-history-isolation-http.reverse-control.mjs',

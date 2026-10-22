@@ -44,7 +44,61 @@
         "verified": { "type": "boolean" },
         "reasons": { "type": "array", "items": { "type": "string" } },
         "indexSha256": { "type": ["string", "null"] },
-        "manifestSha256": { "type": ["string", "null"] }
+        "manifestSha256": { "type": ["string", "null"] },
+        "digestLedgerProvided": {
+          "type": "boolean",
+          "description": "是否提供了逐条摘要台账（--digests）。false 时只能给整体结论，无法点名到样本。"
+        },
+        "drift": {
+          "type": ["object", "null"],
+          "description": "逐条台账比对结果；未提供台账时为 null。任何一条样本被改动都必须在此报出 sampleId 与字段路径，不接受笼统失败。",
+          "required": ["changed", "added", "removed"],
+          "properties": {
+            "changed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["sampleId", "fields"],
+                "properties": {
+                  "sampleId": { "type": "string" },
+                  "fields": { "type": "array", "items": { "type": "string" }, "description": "发生变化的字段路径（只列真正变化的字段）。" },
+                  "recordSha256": { "type": ["string", "null"] },
+                  "frozenRecordSha256": { "type": ["string", "null"] }
+                }
+              }
+            },
+            "added": { "type": "array", "items": { "type": "string" }, "description": "台账中不存在、实际 test 集里多出来的 sampleId。" },
+            "removed": { "type": "array", "items": { "type": "string" }, "description": "台账中存在、实际 test 集里已消失的 sampleId。" }
+          }
+        }
+      }
+    },
+    "answerKey": {
+      "type": ["object", "null"],
+      "description": "标准答案键绑定与索引↔答案键交叉核对；冻结清单未钉住答案键且未提供答案键时为 null。verified=false 时 isRealEvaluation 恒为 false。",
+      "required": ["provided", "pinned", "verified", "reasons"],
+      "properties": {
+        "provided": { "type": "boolean", "description": "本次运行是否提供了答案键文件（--labels）。" },
+        "pinned": { "type": "boolean", "description": "冻结清单是否登记了 answerKey（sha256+版本+条数）。" },
+        "verified": { "type": "boolean" },
+        "pinnedSha256": { "type": ["string", "null"] },
+        "computedSha256": { "type": ["string", "null"] },
+        "pinnedVersion": { "type": ["string", "null"] },
+        "pinnedRecordCount": { "type": ["integer", "null"] },
+        "mismatches": {
+          "type": "array",
+          "description": "索引与答案键逐条不符项（ordinal 与 sampleId 同时给出，便于按序号或按 ID 定位）。",
+          "items": {
+            "type": "object",
+            "required": ["ordinal", "sampleId", "fields"],
+            "properties": {
+              "ordinal": { "type": "integer" },
+              "sampleId": { "type": "string" },
+              "fields": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "reasons": { "type": "array", "items": { "type": "string" } }
       }
     },
     "coverageBinding": {
@@ -121,7 +175,17 @@
                 "direction": { "enum": ["gte", "lte", "eq"] },
                 "status": { "enum": ["pass", "fail", "not_evaluated"] },
                 "claimable": { "type": "boolean" },
-                "reason": { "type": "string" }
+                "reason": { "type": "string" },
+                "basis": {
+                  "type": ["object", "null"],
+                  "description": "该阈值的依据（为什么是这个数）：requirement=需求原文（ref 带行号）；provisional=原文交给验证集，text 必含「暂定，待 #21 用真实读数校准」。",
+                  "required": ["kind", "ref", "text"],
+                  "properties": {
+                    "kind": { "enum": ["requirement", "provisional"] },
+                    "ref": { "type": "string" },
+                    "text": { "type": "string" }
+                  }
+                }
               }
             }
           },

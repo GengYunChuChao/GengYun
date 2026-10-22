@@ -99,10 +99,16 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * `docs/verification/gy-r28-recognition-chain-ci-20261021.md`）。
  * `/usr/lib/postgresql/17/bin`。缺 `GY_PG_BIN` 时脚本 exit 77 ⇒ 装包/路径没弄好必红，⛔ 不是通过。
  * 见 `docs/verification/gy-r28-e5-backup-driver-ci-20261021.md`。
+ * 第 15 条是 R29-S13 接的（`community-filter-pg.mjs`／#15 的**筛选**真库读数：`GET /posts` 的
+ * `crop_id`/`region_code`/`mine` 三类筛选逐条与同条件 SELECT 对照、游标绑定筛选集、参数闭集 400、
+ * 「筛选未下推 SQL」的语句读数与 `community_posts_feed_idx` 的 EXPLAIN 读数；另有举报 `state`
+ * 恒 `received` 的**缺口登记**）。它要求空库、只走 env `COMMUNITY_FILTER_PG_TEST_URL`（库 owner），
+ * 缺 env 时 exit 77 ⇒ 与第 2 条同一形态；见 `docs/verification/gy-r29-i15-community-filter-20261022.md`。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
@@ -122,6 +128,7 @@ const MANAGED_SCRIPTS = Object.freeze([
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
@@ -163,6 +170,11 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
 export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  // 2b. `community-filter-pg`（R29-S13 接入，#15 的筛选真库读数 + 举报状态缺口登记）：自建专用空库
+  //    （硬钉 `gengyun_community_filter_test`）、只 apply 0001+0022、全程只用库 owner 连接，
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本零耦合；紧跟 `community-pg` 便于两条社区臂
+  //    并排读（两者**不共享库/角色**，重排也不会互相污染，但顺序判据要求与 workflow 逐条一致）。
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
