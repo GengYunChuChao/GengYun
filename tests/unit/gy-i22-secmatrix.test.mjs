@@ -786,10 +786,11 @@ test('C4 会话与注销：退出立即失效、重复退出不复活、注销�
   const d = await account(world, 'c4-deletion');
   const first = await requestDeletion(world, d, 'i22-c4-del-0001');
   assert.equal(first.deletion.state, 'blocked', `备份未接线 ⇒ 必须如实 blocked：${first.deletion.state}`);
-  // C1b / C1b-3 起闭集含消息域与会话域（扩大而非替换）：原有两域必须仍在，新两域必须也在。
+  // C1b / C1b-3 起闭集含消息域与会话域；GY-I15（#15 · R31-S6）起社区域也进闭集（扩大而非替换）：
+  // `app.ts` 无条件注入社区清理原语 ⇒ 真实装配的必需模块闭集恒为 5 项，社区行一定会被清理。
   assert.deepEqual(
     first.deletion.handlers.map((row) => row.module).sort(),
-    ['conversations', 'favorites', 'history', 'messages'],
+    ['community', 'conversations', 'favorites', 'history', 'messages'],
   );
   const firstRead = await call(world.app, 'GET', `${API}/account/deletions/${first.id}`, { token: first.receiptToken });
   assert.equal(firstRead.status, 200, firstRead.text);
@@ -951,6 +952,16 @@ test('C6 模拟与真实交叉：stub 产出的 id 在 real 装配下一律 503�
   const adminStub = await adminAccount(stubWorld, ['sources:read', 'sources:write', 'audit:read']);
   const seeded = await seedB(stubWorld, a);
   const deletion = await requestDeletion(stubWorld, a, 'i22-c6-del-0001');
+  // GY-I15（#15 · R31-S6）起**社区域进了注销闭集**：受理注销即软删该主体的帖子/评论（`revision+1`）。
+  // 因此「注入 store 的行可跨装配读取」这条探针若继续拿 `a` 的帖子当载体，验到的就不再是存储实例
+  // 边界而是注销清理（后者在下面单独断言）。这里另起一位用户放一条，保持探针原意不变。
+  const keeper = await account(stubWorld, 'c6-keeper');
+  const keeperPost = await call(stubWorld.app, 'POST', `${API}/posts`, keeper, {
+    payload: { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] },
+    headers: { 'idempotency-key': 'i22-c6-keeper-post' },
+  });
+  assert.equal(keeperPost.status, 201, keeperPost.text);
+  const keeperPostId = keeperPost.body.data.id;
   const wkey = (key, version) => ({ 'idempotency-key': key, ...(version === undefined ? {} : { 'if-match': version }) });
   note(`C6 stub 产出 id：media=${seeded.media.mediaId} post=${seeded.postId} fav=${seeded.favoriteId} hist=${seeded.historyId} msg=${seeded.messageId} deletion=${deletion.id}`);
 
@@ -981,11 +992,15 @@ test('C6 模拟与真实交叉：stub 产出的 id 在 real 装配下一律 503�
   assert.equal(presetMessages.body.meta.execution_mode, 'preset_demo');
   const presetFavorites = await call(presetApp, 'GET', `${API}/favorites`, a);
   assert.equal(presetFavorites.status, 200, presetFavorites.text);
-  const presetPost = await call(presetApp, 'GET', `${API}/posts/${seeded.postId}`, a);
-  assert.equal(presetPost.status, 200, `注入 store 的 id 在 preset_demo 必须可读：${presetPost.text}`);
+  const presetPost = await call(presetApp, 'GET', `${API}/posts/${keeperPostId}`, a);
+  assert.equal(presetPost.status, 200, `注入 store 的行（他人帖子）在 preset_demo 必须可读：${presetPost.text}`);
+  // 反向：已受理注销主体的帖子在同一个注入 store 里已是软删态 ⇒ 读不到（社区域清理真的落到了行上，
+  // 而不是只在回执里写一个 «cleaned» 字符串）。
+  const presetPurgedPost = await call(presetApp, 'GET', `${API}/posts/${seeded.postId}`, a);
+  assert.equal(presetPurgedPost.status, 404, `注销受理后该主体的帖子必须读不到：${presetPurgedPost.text}`);
   const presetMedia = await call(presetApp, 'GET', `${API}/media/${seeded.media.mediaId}`, a);
   assert.equal(presetMedia.status, 404, `媒体记录属服务实例内部，跨装配应 404：${presetMedia.text}`);
-  note(`C6 preset_demo：注入 store 的 messages/favorites/posts → ${presetMessages.status}/${presetFavorites.status}/${presetPost.status}；媒体 → ${presetMedia.status}（实例内记录，非模式差异）`);
+  note(`C6 preset_demo：注入 store 的 messages/favorites/posts(他人) → ${presetMessages.status}/${presetFavorites.status}/${presetPost.status}；已注销主体的帖子 → ${presetPurgedPost.status}（社区域清理已落到行）；媒体 → ${presetMedia.status}（实例内记录，非模式差异）`);
 
   // ---- real 装配：同一批 id 一律 503（可解释的拒绝，不是「假装 404 不存在」） ----
   const realEnv = {
