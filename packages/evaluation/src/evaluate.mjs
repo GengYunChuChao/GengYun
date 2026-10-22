@@ -67,6 +67,12 @@ const GATE_VALUE = {
   keyFieldExact: (m) => m.keyFieldExact?.p,
   answerableCorrectWithSource: (m) => m.answerableCorrectWithSource?.p,
   expectedBehaviorPass: (m) => m.expectedBehaviorPass?.p,
+  // 逐类／逐形态／逐分组底线（第6.1节"不得被好类掩盖"）：观测值=最差一档的比例，
+  // 取值计算在 metrics.mjs 的 worstRate；无任何有样本的档 ⇒ null ⇒ not_evaluated（不写通过）。
+  perClassMinTop1: (m) => m.perClassMinTop1?.p,
+  registrationMatchPerForm: (m) => m.registrationMatchPerForm?.p,
+  hardRulePass: (m) => m.hardRulePass?.p,
+  qaExpectedBehaviorPerClass: (m) => m.qaExpectedBehaviorPerClass?.p,
 };
 
 /** 由目标定义构造某 task 的门禁列表。claimable=false 时一律 not_evaluated，不写通过。 */

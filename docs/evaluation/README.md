@@ -16,7 +16,7 @@
 | **冻结清单 + 承诺覆盖绑定**（可复算，复算命令退出码 0） | Android/iOS 真机与联网耗时证据（第6.2节） |
 | **逐条摘要台账**（172 条 × 逐字段 sha256，改动即点名到 `sampleId` 与字段） | — |
 | **标准答案键绑定**（冻结清单单向钉住 labels 的 sha256+版本+条数） | — |
-| [threshold-basis.md](threshold-basis.md)：17 桶 + 14 条门槛的逐条依据 | — |
+| [threshold-basis.md](threshold-basis.md)：17 桶 + 18 条门槛的逐条依据 | — |
 | 样本缺口逐项清单（对照第6节标准，已用真实计数替换 0 值） | — |
 
 > 评估程序框架与评分规约先交 PR；**实际样本不足列为阻塞，不用生成或重复媒体充数**。
@@ -34,7 +34,7 @@
 | [near-duplicate-policy.md](near-duplicate-policy.md) | 同源裁剪／连拍／近重复排除规则与每类／拒识样本记录 |
 | [real-samples-weeds-docx.md](real-samples-weeds-docx.md) | **真实拍草样本**：来源、抽取与去重计数、标准答案与判据、覆盖口径、冻结与复算、离线评估输出、未取得/未验证项与剩余风险 |
 | [sample-gap-register.md](sample-gap-register.md) | 样本缺口逐项清单（对照第6节标准，含真实计数） |
-| [threshold-basis.md](threshold-basis.md) | **17 桶 + 14 条门槛的逐条依据**（`requirement` 给需求行号 / `provisional` 明标「暂定，待 #21 用真实读数校准」）；表格由代码生成，改阈值不改说明即测试红 |
+| [threshold-basis.md](threshold-basis.md) | **17 桶 + 18 条门槛的逐条依据**（`requirement` 给需求行号 / `provisional` 明标「暂定，待 #21 用真实读数校准」）；表格由代码生成，改阈值不改说明即测试红 |
 | [evaluation-report-template.md](evaluation-report-template.md) | 评估报告模板与预期输出结构 |
 
 代码实现位于 `packages/evaluation/`，命令位于 `tools/evaluation/`，真实样本登记物位于 `packages/evaluation/samples/`，测试位于 `tests/evaluation/`。
@@ -76,6 +76,11 @@ node tools/evaluation/freeze-real-samples.mjs \
 
 # 3b) 门槛依据文档的表格块（代码 → 文档，改完 targets.mjs 后重跑）
 node tools/evaluation/render-threshold-tables.mjs --write
+
+# 3c) live 适配器输出 → predictions 文件（本机采集骨架）：默认 dry-run，不联网、不写盘；
+#     不带 --confirm-paid-calls 时对任何供应商调用开关直接拒绝（exit 2），已授权但未实现（exit 3）；
+#     离线路径只做格式校验 + 落盘（复用评分侧 validatePredictionOutput，任一条不可评分即整批拒收）。
+node tools/evaluation/collect-predictions.mjs --from-file <raw.json> --task ai_moderation --out <predictions.json>
 
 # 4) 单元测试（亦接入工程 CI 的 evaluation-tests 层）
 node --test tests/evaluation/*.test.mjs

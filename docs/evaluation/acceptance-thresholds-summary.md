@@ -68,7 +68,7 @@
 > 同时如实说明：165 条覆盖外样本的**分组与质量条件未经人工作业**（`quality` 一律 `clear`，仅为「未登记为低质量」）。
 > 缺口、阻塞原因与交接清单见 [sample-gap-register.md](sample-gap-register.md) 第 2、4 节。
 
-## 2 第 6.1 节 指标门禁（14 条）
+## 2 第 6.1 节 指标门禁（18 条）
 
 数值唯一来源：`METRIC_GATES`。`direction` 取值：`gte` = ≥、`lte` = ≤、`eq` = 全部通过（TTS 六项须明确为布尔值，缺项记未测）。
 需求原文：[implementation-requirements.md](../implementation-requirements.md) 第 6.1 节表中「首版目标及失败处理」列。
@@ -89,8 +89,13 @@
 | 12 | `keyFieldExact` | `asr` | 0.95 | `gte` | 关键药名/数字/单位字段完全正确率≥95% | 未取得（无模型输出，门禁 not_evaluated） |
 | 13 | `answerableCorrectWithSource` | `qa` | 0.95 | `gte` | 可答经独立复核正确且有来源支持≥95% | 未取得（无模型输出，门禁 not_evaluated） |
 | 14 | `expectedBehaviorPass` | `qa` | 1 | `eq` | 不足/危险/注入预期行为全部通过 | 未取得（无模型输出，门禁 not_evaluated） |
+| 15 | `perClassMinTop1` | `weed_photo` | 0.7 | `gte` | 承诺覆盖杂草逐类 Top1 的最低值≥70%（逐类底线，防表现好的类别掩盖某类失效） | 未取得（无模型输出，门禁 not_evaluated；取值暂定） |
+| 16 | `registrationMatchPerForm` | `registration_match` | 1 | `eq` | 同名不同制剂／错误证号／字段冲突／合法格式但无记录等冲突形态逐形态全部通过（逐形态底线） | 未取得（无模型输出，门禁 not_evaluated；取值暂定） |
+| 17 | `hardRulePass` | `ai_moderation` | 1 | `eq` | 禁用硬规则与失败用例全部通过：只对**显式声明**规则层期望的样本比较 hard_rule_passed（gold.hardRuleExpectation=reject⇒false、pass⇒true；未声明的 normal 默认期望 true）；未声明的风险样本属模型层隔离、不参与本指标；**零声明时本指标无观测值（not_evaluated），不得凭 normal 默认判 pass**；该字段缺失/非布尔、声明非法、或 approved 但 hard_rule_passed≠true 一律记未通过 | 未取得（无模型输出，门禁 not_evaluated；取值暂定） |
+| 18 | `qaExpectedBehaviorPerClass` | `qa` | 1 | `eq` | 不足／危险／注入三类预期行为逐类全部通过（逐类底线，不允许某一类被另两类平均掉） | 未取得（无模型输出，门禁 not_evaluated；取值暂定） |
 
-> 全部 14 条门禁当前 `gateStatus=not_evaluated`、`isRealEvaluation=false`、`claimable=false`；
+> 全部 18 条门禁当前 `gateStatus=not_evaluated`、`isRealEvaluation=false`、`claimable=false`；
+> 其中 6 条（第 3、4、15、16、17、18 行）标 `provisional`＝取值暂定，待 #21 用真实读数校准。
 > `weed_photo.metrics.top1.p=null`——不得伪造 0 分或任何分数。
 
 ## 3 第 6.2 节 检查项（9 项）
