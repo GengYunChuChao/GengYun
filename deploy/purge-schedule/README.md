@@ -68,7 +68,9 @@ cron 的 `flock` 由该用户自己创建/打开锁文件，放到 `/run`（root
 ### 2) 凭据：每条命令一个环境文件
 
 ```bash
-sudo install -d -m 0750 -o root -g root /etc/gengyun
+# 目录必须**可被运行用户穿过**（traverse）：0755 root:root。只暴露文件名，内容由文件权限挡着；
+# 若建成 0750 root:root，cron 路线即使把文件设成 0640 也打不开（目录缺 others 的 x 位）。
+sudo install -d -m 0755 -o root -g root /etc/gengyun
 
 # systemd 路线（PID 1 以 root 读入后再降权执行）⇒ root:root 0600 即可：
 sudo install -m 0600 -o root -g root /dev/null /etc/gengyun/purge-online-data.env
@@ -199,7 +201,9 @@ npm run verify:purge-schedule                 # 等价入口
 - ⛔ **不证明外部调度真的在跑**。单元文件在仓里，只说明「装上去之后应该按这个周期跑」；
   `systemctl list-timers` 有读数、`/etc/cron.d/gengyun-purge` 存在、日志在长，才算运行侧取得。
   这三项都是**运维动作**，仓库里没有它们的证据，本片也不声称有。
-- ⛔ 不证明目标宿主机上 `/opt/gengyun/app` 的路径与本文一致、`node` 在 `/usr/bin/node`。
+- ⛔ 不证明目标宿主机上 `/opt/gengyun/app` 的路径与本文一致、`node` 在 `/usr/bin/node`；也不证明该目录
+  对两个运行用户**可读/可穿过**（两条命令都以非 root 运行，`tools/**` 与 `services/api/src/**` 要能被它们
+  读到 —— 属主与权限属部署面，本目录不代管）。
 - ⛔ 不证明 README 里的 `useradd` / `install -d` 在目标宿主上真的执行过（本片在 Windows 上开发，只做了
   静态核对）。`Group=` 依赖 `useradd --user-group` 建同名组；cron 路线还依赖状态目录/日志目录的属主与
   权限、以及环境文件的 `0640 root:<同名组>` —— 装完请用 `id`、`ls -ld`、`sudo -u <user> cat <env>` 复核。

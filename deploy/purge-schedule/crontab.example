@@ -22,10 +22,12 @@
 #        sudo install -d -m 0750 -o gengyun-ops -g gengyun-ops /var/log/gengyun-ops
 #        sudo install -d -m 0750 -o gengyun-app -g gengyun-app /var/log/gengyun-app
 #   ④ 环境文件权限：cron 由**该用户自己的 shell** `. <文件>` 读入（systemd 是 PID 1 以 root 读入后
-#      再降权），所以 cron 路线必须是 root:<同名组> 0640，否则 `.` 直接 EACCES：
+#      再降权），所以 cron 路线必须是 root:<同名组> 0640，否则 `.` 直接 EACCES；而且 `/etc/gengyun`
+#      目录本身要被该用户**穿过**（0755 root:root；0750 root:root 时 0640 的文件也打不开）：
+#        sudo install -d -m 0755 -o root -g root /etc/gengyun
 #        sudo install -m 0640 -o root -g gengyun-ops /dev/null /etc/gengyun/purge-online-data.env
 #        sudo install -m 0640 -o root -g gengyun-app /dev/null /etc/gengyun/purge-backup-copies.env
-#      （systemd 路线可以更严：root:root 0600。两条路线的完整安装步骤见 README §安装。）
+#      （systemd 路线可以更严：root:root 0600，目录 0750 也行。两条路线的完整安装步骤见 README §安装。）
 #
 # 与 .timer 的逐项对应（缺一条就不再等价）：
 #   ① 入口文件：与 package.json 的 purge:online-data / purge:backup-copies 同一个文件；
