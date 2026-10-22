@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
+import { sep as pathSep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import * as idempotency from '../../services/api/src/auth/idempotency.ts';
@@ -51,8 +52,8 @@ function allApiSources() {
   const out = new Map();
   for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
-    const absolute = `${entry.parentPath ?? entry.path}\\${entry.name}`;
-    const relative = absolute.slice(root.length).replace(/\\/g, '/');
+    const absolute = `${entry.parentPath ?? entry.path}${pathSep}${entry.name}`;
+    const relative = absolute.slice(root.length).replace(/^[/\\]+/u, '').split(pathSep).join('/');
     out.set(relative, readFileSync(absolute, 'utf8'));
   }
   return out;
