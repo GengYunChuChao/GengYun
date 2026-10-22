@@ -582,6 +582,75 @@ export function describeFailure(result) {
   }
 }
 
+/**
+ * 未登录表单上的登录失败提示（PR #439 监工 [P2]）。
+ *
+ * 登录失败时 `signedIn` 仍是 false，页面停在**未登录表单**里 —— 那是用户此刻唯一能看到的
+ * 界面，所以失败结果必须渲染在表单内。文案是**白名单**：只按 `kind` 取固定中文，
+ * ⛔ 绝不透传异常 `message` 或服务端 `error.code`（后端细节，且可能夹带内部信息）。
+ */
+export function describeSignInFailure(failure) {
+  if (!failure || failure.ok !== false) return null;
+  switch (failure.kind) {
+    case 'signin_rejected':
+      return {
+        title: '登录未通过',
+        detail: '服务端拒绝了这次登录（登录名或密码不正确，或该账号没有后台权限）。口令没有保留，修正后可直接再次提交。',
+      };
+    case 'signin_throttled':
+      return {
+        title: '登录尝试过于频繁',
+        detail: '服务端要求稍后再试；本页不会缓存你的口令。稍等片刻后可直接再次提交。',
+      };
+    case 'signin_unavailable':
+      return {
+        title: '登录请求未完成',
+        detail: '没有取得可用的登录结果（网络中断或后台服务暂不可用）。检查网络与 API 基地址后可直接再次提交。',
+      };
+    case 'signin_session_unreadable':
+      return {
+        title: '登录已提交，但读不到会话详情',
+        detail: '服务端已接受这次登录，但随后的会话查询没有返回可用会话，因此本页仍按未登录处理（不伪造登录态）。请重新输入口令后再提交。',
+      };
+    default:
+      return {
+        title: '登录未成功',
+        detail: '本页仍按未登录处理（不伪造登录态）。检查登录名与口令后可直接再次提交。',
+      };
+  }
+}
+
+/**
+ * 把 `signInAdmin()` 抛出的错误归到未登录表单的安全状态。
+ *
+ * 依据只有 `src/auth/session.ts` 的既定文案 `后台登录失败：<契约错误码|HTTP 状态>`；
+ * 不带该前缀的错误（网络中断、被更新的登录请求取代）一律按「请求未完成」呈现。
+ * 返回的 failure **不携带**原始 message，避免后端细节进入页面状态被渲染或记录。
+ */
+export function signInFailureOf(error) {
+  const message = error instanceof Error ? error.message : '';
+  const match = /^后台登录失败：(.*)$/.exec(message);
+  if (match === null) return { ok: false, kind: 'signin_unavailable', status: null, retriable: true };
+  const code = match[1].trim();
+  const httpStatus = /^HTTP (\d{3})$/.exec(code);
+  const status = httpStatus === null ? null : Number(httpStatus[1]);
+  if (status === 429 || code === 'RATE_LIMITED') {
+    return { ok: false, kind: 'signin_throttled', status: status ?? 429, retriable: true };
+  }
+  if (
+    status === 400 ||
+    status === 401 ||
+    status === 403 ||
+    code === 'SESSION_REQUIRED' ||
+    code === 'SCOPE_DENIED' ||
+    code === 'ACCOUNT_INACTIVE' ||
+    code === 'INVALID_REQUEST'
+  ) {
+    return { ok: false, kind: 'signin_rejected', status, retriable: false };
+  }
+  return { ok: false, kind: 'signin_unavailable', status, retriable: true };
+}
+
 /** 页面状态初值（登出态；`phase` 取值 signed_out／loading／ready／error）。 */
 export function initialJobsState() {
   return {

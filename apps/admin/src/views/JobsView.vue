@@ -8,6 +8,9 @@
  *   必带 `If-Match` 强 ETag（取**已加载那一行**的 revision）与 `Idempotency-Key`，body 为 `{ reason }`）
  *
  * 鉴权复用 `src/auth/session.ts` 的既有实现（Bearer + sessionStorage），本页不新造登录。
+ * 登录失败时 `signedIn` 仍是 false、页面停在未登录表单，因此失败结果渲染在**表单内**
+ * （`describeSignInFailure()` 的白名单文案；凭据被拒／会话详情读不到两类可区分），
+ * 输入与提交按钮保留，可直接再次提交；原始异常 message 与服务端 error.code 一律不上屏。
  * 纯逻辑都在 `src/lib/jobs-api.mjs`（接口封装 + 页面状态机），本组件只负责把状态机接到 DOM。
  *
  * 状态语义（契约 `JobState`）：终态 = succeeded／uncertain／failed／timed_out／cancelled，
@@ -21,6 +24,7 @@ import {
   cancelJob,
   describeFailure,
   describeJobs,
+  describeSignInFailure,
   initialJobsState,
   jobDetailOf,
   jobRowViews,
@@ -28,6 +32,7 @@ import {
   newIdempotencyKey,
   reasonProblem,
   reduceJobs,
+  signInFailureOf,
 } from '../lib/jobs-api.mjs';
 
 const state = ref(initialJobsState());
@@ -49,6 +54,8 @@ const receipt = computed(() => state.value.receipt);
 const reasonErr = computed(() => reasonProblem(state.value.reason));
 const cancelable = computed(() => canCancelNow(state.value));
 const signedIn = computed(() => state.value.signedIn);
+// 登录失败时 signedIn 仍为 false、页面停在未登录表单：失败结果必须渲染在**表单内**（白名单文案）。
+const signInNotice = computed(() => describeSignInFailure(state.value.failure));
 const moreAvailable = computed(() => canLoadMoreJobs(state.value));
 const retryRead = computed(() => view.value.canRetry === true);
 const reloadNeeded = computed(() => view.value.action === 'reload');
@@ -94,20 +101,16 @@ async function submitSignIn() {
     const refreshed = await loadAdminSession();
     if (refreshed === null) {
       busy.value = false;
-      dispatch({
-        type: 'SIGN_IN_FAILED',
-        failure: { ok: false, kind: 'signed_out', status: null, retriable: false, message: '登录后未能读到会话详情' },
-      });
+      // 会话详情读失败：登录态不成立（不伪造），失败结果渲染回未登录表单。
+      dispatch({ type: 'SIGN_IN_FAILED', failure: { ok: false, kind: 'signin_session_unreadable', status: null, retriable: true } });
       return;
     }
     busy.value = false;
     await startSession(refreshed);
   } catch (error) {
     busy.value = false;
-    dispatch({
-      type: 'SIGN_IN_FAILED',
-      failure: { ok: false, kind: 'http_error', status: null, retriable: true, message: error instanceof Error ? error.message : '登录失败' },
-    });
+    // 归类成安全状态后再入状态机：只保留 kind（不透传异常 message／服务端 error.code）。
+    dispatch({ type: 'SIGN_IN_FAILED', failure: signInFailureOf(error) });
   }
 }
 
@@ -233,6 +236,10 @@ onBeforeUnmount(() => {
         未登录。登录走既有 <code>POST /admin/auth/session</code>（<code>src/auth/session.ts</code>），
         令牌只存 sessionStorage，不写入 URL。
       </p>
+      <div v-if="signInNotice" class="banner error" role="alert">
+        <strong>{{ signInNotice.title }}</strong>
+        <span>{{ signInNotice.detail }}</span>
+      </div>
       <label>
         <span>登录名</span>
         <input v-model="loginName" name="login_name" autocomplete="username" :disabled="busy" />
