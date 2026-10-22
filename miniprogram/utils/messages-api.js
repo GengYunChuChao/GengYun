@@ -256,6 +256,28 @@ function unreadText(count) {
   return count > 99 ? '99+' : String(count)
 }
 
+/**
+ * 未读数刷新失败的结构化告警事件名（客户端诊断口径，非契约字段）。
+ * 与 `#17` G6 配套：失败**不得**被渲染成「没有未读」，所以失败必须留下可检索的痕迹。
+ */
+const UNREAD_FAILURE_EVENT = 'messages.unread_count.fetch_failed'
+
+/**
+ * 记一条未读数失败告警（`#17` G6）。
+ *
+ * 只允许 `event` 与 `code` 两个键：告警会出现在用户日志里，
+ * **不得**带会话令牌、手机号、消息正文或目标 id。`code` 取本模块统一错误码
+ * （`PROVIDER_UNAVAILABLE` / `SESSION_REQUIRED` / `INVALID_RESPONSE` …），拿不到就 `UNKNOWN`。
+ *
+ * 去重由调用方负责（页面与 Tab 各自只在自己的刷新里报一次），本函数不维护状态。
+ */
+function warnUnreadFailure(error) {
+  const entry = { event: UNREAD_FAILURE_EVENT, code: (error && error.code) || 'UNKNOWN' }
+  if (typeof console !== 'undefined' && console && typeof console.warn === 'function') {
+    console.warn(entry)
+  }
+}
+
 function modeNote(mode) {
   if (mode === 'real') return '服务端真实模式；消息持久存储未接线时不会返回成功。'
   if (mode === 'preset_demo') return '预设演示数据，不代表真实消息。'
@@ -310,6 +332,8 @@ module.exports = {
   getUnreadCount: getUnreadCount,
   markMessageRead: markMessageRead,
   unreadText: unreadText,
+  unreadFailureEvent: UNREAD_FAILURE_EVENT,
+  warnUnreadFailure: warnUnreadFailure,
   unwired: unwired,
   stateTitle: stateTitle,
   modeNote: modeNote,
