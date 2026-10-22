@@ -137,14 +137,15 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0022', '0028'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0022', '0028', '0030'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0022', '0028'],
-      '0001（users/枚举底座）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）',
+      ['0001', '0022', '0028', '0030'],
+      '0001（users/枚举底座）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）'
+        + ' + 0030（F13 行级作者注销引用：author_id 可空 + anonymized_author_ref）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0022`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0022 + 0028 + 0030`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
@@ -178,6 +179,85 @@ async function main() {
       assert.ok(indexes.includes(name), `缺索引/唯一约束 ${name}`);
     }
     say('三条读路径（作物地区筛选 / 按对象查可见性 / 未读事件）的索引与幂等唯一键全部就位');
+
+    // ---- 1b. 迁移 0030（F13 行级作者注销引用）的真库结构契约 ----------------
+    // 这是**只有真库能证明**的部分：两条 CHECK 的判定权在数据库，不在 JS。
+    for (const table of ['community_posts', 'community_comments']) {
+      const columns = (await owner.query(
+        `SELECT column_name, is_nullable, data_type, character_maximum_length
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = $1
+            AND column_name IN ('author_id', 'anonymized_author_ref')
+          ORDER BY column_name`,
+        [table],
+      )).rows;
+      assert.deepEqual(
+        columns.map((column) => column.column_name),
+        ['anonymized_author_ref', 'author_id'],
+        `${table} 必须同时有 0030 的两列`,
+      );
+      const [ref, author] = columns;
+      assert.equal(author.is_nullable, 'YES', `${table}.author_id 必须可空（0030 的 DROP NOT NULL）`);
+      assert.equal(author.data_type, 'uuid', `${table}.author_id 类型不变（⛔ 不改成 text 塞引用）`);
+      assert.equal(ref.data_type, 'character varying');
+      assert.equal(Number(ref.character_maximum_length), 40, `${table}.anonymized_author_ref 必须是 varchar(40)`);
+    }
+
+    const anonUser = (await owner.query('INSERT INTO users (id) VALUES (gen_random_uuid()) RETURNING id')).rows[0].id;
+    const anonPost = randomUUID();
+    const insertAnon = (ref) => owner.query(
+      `INSERT INTO community_posts
+         (id, author_id, anonymized_author_ref, revision, title, body, visibility, audit_state, created_at, updated_at)
+       VALUES ($1, NULL, $2, 1, '标题', '正文', 'published', 'approved', now(), now())`,
+      [anonPost, ref],
+    );
+    await assert.rejects(
+      () => owner.query(
+        `INSERT INTO community_posts (id, revision, title, body, visibility, audit_state, created_at, updated_at)
+         VALUES ($1, 1, '标题', '正文', 'published', 'approved', now(), now())`,
+        [randomUUID()],
+      ),
+      /community_posts_author_exactly_one|check constraint/i,
+      '两列同空（无主行）必须被 exactly_one 拒绝（真库）',
+    );
+    await assert.rejects(
+      () => owner.query(
+        `INSERT INTO community_posts
+           (id, author_id, anonymized_author_ref, revision, title, body, visibility, audit_state, created_at, updated_at)
+         VALUES ($1, $2, $3, 1, '标题', '正文', 'published', 'approved', now(), now())`,
+        [randomUUID(), anonUser, 'gy-anon-0123456789abcdef'],
+      ),
+      /community_posts_author_exactly_one|check constraint/i,
+      '两列同非空（双重作者）必须被 exactly_one 拒绝（真库）',
+    );
+    await assert.rejects(
+      () => insertAnon('gy-anon-0123456789ABCDEF'),
+      /anon_ref_shape|check constraint/i,
+      '大写 hex 必须被形状 CHECK 拒绝（真库）',
+    );
+    await assert.rejects(
+      () => insertAnon('gy-anon-0123'),
+      /anon_ref_shape|check constraint/i,
+      '位数不足必须被形状 CHECK 拒绝（真库）',
+    );
+    await insertAnon('gy-anon-0123456789abcdef');
+    assert.equal(
+      (await owner.query(
+        'SELECT author_id FROM community_posts WHERE id = $1::uuid',
+        [anonPost],
+      )).rows[0].author_id,
+      null,
+      '合法引用必须可插入（否则上面的负例可能只是"所有插入都失败"的假红）',
+    );
+    // 级联豁免：匿名行 author_id=NULL ⇒ DELETE FROM users 不再级联删掉应保留的内容。
+    await owner.query('DELETE FROM users WHERE id = $1::uuid', [anonUser]);
+    assert.equal(
+      (await owner.query('SELECT count(*)::int AS n FROM community_posts WHERE id = $1::uuid', [anonPost])).rows[0].n,
+      1,
+      '已匿名行必须在 DELETE FROM users 之后仍然存活（F13「删除账号映射」的结构后果）',
+    );
+    await owner.query('DELETE FROM community_posts WHERE id = $1::uuid', [anonPost]);
+    say('迁移 0030 真库契约：author_id 可空 + 引用 varchar(40)；同空/同非空与形状非法全被 CHECK 拒绝；匿名行不被 users 级联删除');
 
     // ---- 2. 两个真实用户（作者 / 他人） ----------------------------------
     const userIds = [];
@@ -507,9 +587,34 @@ async function main() {
     const purged = await store.purgeOwnerData(authorId);
     assert.deepEqual(
       purged,
-      { records: 3, idempotency: 1, retained: 1, redacted: 1, hiddenMedia: 3 },
+      { records: 3, idempotency: 1, retained: 1, redacted: 1, hiddenMedia: 3, authorRefsReplaced: 2 },
       'F13：安全帖保留（仅媒体移除）+ PII 帖脱敏 + 点赞物理删；'
-        + '媒体引用：安全帖 2 + PII 帖 1；评论与举报本主体此时没有',
+        + '媒体引用：安全帖 2 + PII 帖 1；评论与举报本主体此时没有；'
+        + '**作者指针替换 2 行**（post2 + piiPost，同一事务内 author_id 置 NULL + 写行内匿名引用）',
+    );
+    // 迁移 0030：行级作者指针必须真的换掉（真库行值，不是投影层的假象）。
+    const anonRows = (await owner.query(
+      `SELECT id, author_id, anonymized_author_ref FROM community_posts
+        WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [[post2, piiPost]],
+    )).rows;
+    assert.equal(anonRows.length, 2);
+    for (const row of anonRows) {
+      assert.equal(row.author_id, null, 'F13：行级 account 指针必须置空（删除账号映射）');
+      assert.match(String(row.anonymized_author_ref), /^gy-anon-[0-9a-f]{16}$/, '行内必须留下形状合法的注销引用');
+    }
+    assert.equal(
+      anonRows[0].anonymized_author_ref,
+      anonRows[1].anonymized_author_ref,
+      '同一注销主体的帖与评/帖必须共用**同一个**引用（逐主体独立，不逐行随机）',
+    );
+    assert.equal(
+      (await owner.query(
+        'SELECT count(*)::int AS n FROM community_posts WHERE author_id = $1::uuid',
+        [authorId],
+      )).rows[0].n,
+      0,
+      '该主体名下不得再有任何 author_id 命中的行（含 deleted 行为空）',
     );
     const purgedPost = await store.getPost(post2);
     assert.equal(purgedPost.visibility, 'published', 'F13：安全帖子保留公开，不得软删');
@@ -545,10 +650,11 @@ async function main() {
 
     assert.deepEqual(
       await store.purgeOwnerData(authorId),
-      { records: 0, idempotency: 0, retained: 2, redacted: 0, hiddenMedia: 0 },
-      '重跑：没有新的改动/删除（records 0），保留读数反映当前状态（不虚报为 0）',
+      { records: 0, idempotency: 0, retained: 0, redacted: 0, hiddenMedia: 0, authorRefsReplaced: 0 },
+      '重跑：改动/删除为 0，作者指针也不再替换（author_id 已置空 ⇒ 该主体名下已无行）；'
+        + 'retained 因此如实为 0 —— 保留结果记录在首轮的 retained:1 与 author-refs-replaced:2 上',
     );
-    say('注销清理可重跑：第二次逐项 0 改动，保留读数稳定，不重复抹也不报错');
+    say('注销清理可重跑：第二次改动/替换全 0；主体名下已无行（author_id 已置空）⇒ retained 如实为 0，不重复抹也不报错');
 
     // ---- 11. rollback → 再 apply ----------------------------------------
     const OUR_TABLES = [
@@ -576,6 +682,9 @@ async function main() {
     say('rollback 幂等：撤掉六表 + 索引/约束，不触碰 0001 的既有对象（含同前缀的 community_media_grants）');
 
     await owner.query(sqlFile('migrations/0022_community_persistence.sql'));
+    // 0030 的列/约束挂在 0022 的两张表上：0022 的 down 把表一起撤了，所以再 apply 必须把 0030 也补回来，
+    // 否则后续走 store 的语句会因 `anonymized_author_ref` 不存在而 42703（这正是真库臂抓到的形态）。
+    await owner.query(sqlFile('migrations/0030_community_author_ref.sql'));
     const afterReapply = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     )).rows.map((row) => row.tablename);
@@ -584,7 +693,7 @@ async function main() {
       6,
       'rollback 之后必须能原地再 apply',
     );
-    say('apply → rollback → 再 apply 三步在同一个库上收敛（六表恢复，且空表状态正确）');
+    say('apply → rollback → 再 apply 三步在同一个库上收敛（六表 + 0030 的两列/两条 CHECK 全部恢复）');
 
     // ---- 12. HTTP 面：路由 → 服务 → Postgres 真落库 ----------------------
     const auth = createMemoryAuthStore();
