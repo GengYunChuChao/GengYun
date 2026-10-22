@@ -1,0 +1,25 @@
+# 行尾铁律：文本文件一律 LF（2026-10-22，收口 #469 的副作用）。
+#
+# 背景：`#469` 合入 main 时把 `docs/architecture/contract-implementation-status.md` 整份从 LF
+# 翻成 CRLF（main 侧 0 个 CR、`#469` 侧 200 CR / 200 行），仓库又没有 `.gitattributes`、
+# `core.autocrlf=false` ⇒ 不会自愈。后果是每一张动该台账的 PR 都跟它产生「全文 1 块」的假冲突，
+# 而 `node tools/verify-contract-status.mjs --write-doc` 按 LF 重写 ⇒ 谁跑一次门禁谁又翻回去，
+# 再产生一次 200 行全红 diff。这里用**声明式**规则把「检出 = 提交 = LF」钉死，不再靠人肉自觉。
+#
+# 只写 `eol=lf`，**不写** `text=auto`：
+#   `text=auto` 让 git 自己猜二进制，猜错一次就把资源文件写坏（本仓 `docs/verification/assets/`
+#   下有 148 个 png/jpg、以及 .log/.cjs/.mjs 证据快照）。显式列举扩展名比自动探测安全。
+#   未列出的路径（图片、`.log`、`.cjs` 等）保持 git 默认行为：原样存取，不做任何行尾转换。
+
+# 文档与台账
+*.md     text eol=lf
+
+# 脚本 / 工具
+*.mjs    text eol=lf
+
+# 源码
+*.ts     text eol=lf
+
+# 配置与清单
+*.json   text eol=lf
+*.yml    text eol=lf
