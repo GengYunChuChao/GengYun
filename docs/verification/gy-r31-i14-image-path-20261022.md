@@ -1,9 +1,9 @@
 # GY-R31 片：图片审核产品路径 + 人工复核入口裁定（GY-I14 缺口 G3／G4）
 
-- 被测基线：`origin/main` = **`bf2f76f9`**（本片全部命令、读数都绑定该 SHA；工作树 `wt-r31-moderation-img`，分支 `feat/gy-r31-moderation-img`）。
+- 被测基线：开工时 `origin/main` = **`bf2f76f9`**（§1–§6 的读数绑定该 SHA）；**2026-10-22 已 `git merge origin/main` 并入 `489804e4`**（含 #469 OCR 媒体注入口、#470 幂等、#471 真库臂、#472 语音守卫），§4.1／§7 的复测读数绑定 `489804e4`（合并提交 `f7f60452`）。工作树 `wt-r31-moderation-img`，分支 `feat/gy-r31-moderation-img`。
 - 复盘依据：`docs/verification/gy-r31-i14-recon-20261022.md`（分支 `origin/feat/gy-r31-i14-recon`，写作基线 `d4d48088`）的「图片审核无产品路径」（G3）与「人工复核入口未接线」（G4）两节。
 - 口径：本文把「读码推断」与「实测」分开写；凡未跑过的进 §7「未取得」，不冒充实测。
-- 边界：**未改 `packages/contracts/openapi.json`**、**未加迁移**、**未删任何既有断言**、未推 main、未开 PR。
+- 边界：**未改 `packages/contracts/openapi.json`**、**未加迁移**、**未删任何既有断言**、未推 main；PR 由指挥开（#475），本片只推自己的分支。
 
 ## 0 结论摘要
 
@@ -129,14 +129,16 @@ if (!outcome.publishable && !mediaAccepted) {
 
 ### 4.1 探针（同一脚本、同一请求）
 
-| 读数 | 改前（`bf2f76f9`） | 改后（本片） |
-| --- | --- | --- |
-| HTTP 状态 | 422 | **201** |
-| 审核域被调用 | `screen_calls: 0` | `screen_calls: 1` |
-| 版本级任务 | `moderation_tasks: 0` | `moderation_tasks: 2`（`['text','image']`） |
-| 端口调用 | `tms 0 / ims 0` | `tms 1 / ims 0`（**见 §7-1**） |
-| 内容行 | `posts_rows: 0` | `posts_rows: 1` |
-| 发布闸门 | `publish_gate_calls: 0` | `publish_gate_calls: 0` |
+| 读数 | 改前（`bf2f76f9`） | 改后（本片） | 并入 `489804e4` 后复测（同一脚本） |
+| --- | --- | --- | --- |
+| HTTP 状态 | 422 | **201** | **201** |
+| 审核域被调用 | `screen_calls: 0` | `screen_calls: 1` | `screen_calls: 1` |
+| 版本级任务 | `moderation_tasks: 0` | `moderation_tasks: 2`（`['text','image']`） | `moderation_tasks: 2`（`['text','image']`） |
+| 端口调用 | `tms 0 / ims 0` | `tms 1 / ims 0`（**见 §7-1**） | `tms 1 / **ims 0**`（**见 §7-1**） |
+| 内容行 | `posts_rows: 0` | `posts_rows: 1` | `posts_rows: 1` |
+| 发布闸门 | `publish_gate_calls: 0` | `publish_gate_calls: 0` | `publish_gate_calls: 0` |
+
+复测注意：并入 `489804e4` 后 `POST /posts` 需要 `Idempotency-Key`（#470 的幂等收紧），探针首次复现时先吃到 `400 IDEMPOTENCY_KEY_REQUIRED`，补上该头后读数如上——这不是本片语义变化。
 
 改后同一探针的能力位／落库读数：
 
@@ -248,17 +250,31 @@ if (!outcome.publishable && !mediaAccepted) {
 - 处理：按**该工具自己的口径**（声明行 → 花括号配平的块尾）重算并写回这 16 条 `lines`（例：`listPosts` `768-773 → 834-900`、`createPost` `840-845 → 909-1020`、`editPost` `935-940 → 1030-1157`、`createComment` `1136-1141 → 1248-1350`），再用 `--write-doc` 同步 `docs/architecture/contract-implementation-status.md`，最后门禁 `PASS`。
 - ⛔ **没有**把区间改小到「凑过 ±2 容差」：区间都是真实归属块（首行是方法声明，末行是它的收尾 `}`）。
 - 顺手修了一处**陈述性失真**：`createPost`／`editPost` 的 `blocker` 原本写「模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）」——本片补了图片路径，这句会误导，已按新事实改写（并保留全部未取得项）。
+- **并入 `489804e4` 时的冲突处理**（2026-10-22）：唯一冲突在 `docs/architecture/contract-implementation-status.md`（生成的中文表格）。处理顺序是「以 JSON 为真 → `--reanchor` dry-run → `--write-doc` 再生表格 → 复跑 verify」，实测 `REANCHOR: 无可重定位项（240 条引用都在 ±2 行容差内）`、`语义错误 0`，表格重写后 `PASS`；`docs/architecture/contract-status.json` 自动合并只带回主线 2 处 `lines` 变更（`accountDeletionWired` `1814-1822 → 1825-1833`、`idempotencyStore` `834-840 → 845-851`），本片 16 条区间未被改动。
+
+### 6.1 能力位形状：**固化为内部契约**（指挥 2026-10-22 答复）
+
+`ModerationService.capabilities()` 与 `LinkImageReadiness` / `readImageModerationReadiness()` 自本片起**固化为仓内内部契约**：
+
+- **不进 `packages/contracts/openapi.json`**（不新增 operation、不新增 schema），因此对客户端不可见、不改对外契约。
+- 形状固定为：`ModerationPortCapability { content_kind: 'text'|'image'; port_kind: 'tms'|'ims'; state: 'wired'|'substitute'|'none'; ready: boolean; origin }`、`ModerationCapabilities { execution_mode; text; image }`、`LinkImageReadiness { ready; state: 'wired'|'substitute'|'none'|'unknown'; origin; source }`。
+- **后续片复用必须对齐这套形状**（含 `state` 的闭集与 `ready` 的双条件判据 `state === 'wired' && ready === true`）；要改形状等于改内部契约，需在证据页写明并同步所有读法，不得在调用侧另造平行判定。
+- 语义边界不变：`ready: true` 只表示「这一类内容此刻有可求值的端口」，**不**表示审核通过、**不**表示供应商可用。
 
 ## 7 未取得项
 
-1. **图片端口没有被真正求值**（`ims_port_calls: 0`）。原因已定位：社区侧 `mediaInputs()` 只传 `{ media_id }`，而 `packages/moderation/model-ports.mjs:273` 的 `normalizeMediaRef(item)` 要 `mime`（`image/` 前缀）或 `kind === 'image'` 才算 image-like ⇒ 任务落 `MODEL_MEDIA_UNSUPPORTED`，`packages/moderation/merge.mjs` 的载荷校验再落 `MODEL_PAYLOAD_INVALID`。⇒ **图片审核链路已可达、但输入不完整**；补齐要媒体域投影（mime/revision），而 `services/api/src/community/service.ts` 文件头明确本阶段「不做 `/community/media*`（依赖媒体接线）」。本片**没有伪造** `mime`/`kind` 去凑一个"端口被调用"的假读数。
+1. **图片端口没有被真正求值**（`ims_port_calls: 0`）。原因已定位：社区侧 `mediaInputs()` 只传 `{ media_id }`（`services/api/src/community/service.ts:198-200`），而 `packages/moderation/model-ports.mjs:273` 的 `normalizeMediaRef(item)` 要 `mime`（`image/` 前缀）或 `kind === 'image'` 才算 image-like ⇒ 任务落 `MODEL_MEDIA_UNSUPPORTED`，`packages/moderation/merge.mjs` 的载荷校验再落 `MODEL_PAYLOAD_INVALID`。⇒ **图片审核链路已可达、但输入不完整**；`services/api/src/community/service.ts` 文件头明确本阶段「不做 `/community/media*`（依赖媒体接线）」。本片**没有伪造** `mime`/`kind` 去凑一个"端口被调用"的假读数。
+   - **并入 `489804e4`（#469）后复测（2026-10-22）**：同一条真实 HTTP 读数仍是 `ims_port_calls: 0`，任务 `['text','image']` 的 `reason_codes` 仍是 `MODEL_MEDIA_UNSUPPORTED`（image 任务另加 `MODEL_PAYLOAD_INVALID`）。#469 补的是**装配层注入口**（`BuildAppOptions.ocrMedia` → `registerOcrRoutes`），其端口形状是「媒体归属／版本校验」（`resolve({ ownerUserId, mediaId, mediaRevision }) → { ok, revision }`，`services/api/src/ocr/media.ts:26-36`），**不含 mime**，所以它不能直接当图片审核的元数据来源。
+   - **「现在可接」但本片未接**：mime 其实已在媒体域可得——`services/api/src/media/object-store.ts:35-37` 的 `StoredObject { …, contentType: string }`（对象存储写入时就带 `contentType`）。缺的不是能力而是**接线**：社区域全域没有任何媒体域依赖（`grep MediaObjectStore|contentType services/api/src/community/` 零命中）。按指挥裁定，**媒体元数据投影另开单片**（从 `main` 起，范围含「社区侧取 mime/revision 并投影进 `mediaInputs()`」），本片不接。
 2. 无真实图片审核供应商：real 模式整域 fail-closed（`services/api/src/moderation/service.ts` 的 `createFailClosedModerationService`），注入的合成端口也只证明链路，不证明能力。
 3. 带媒体内容在审核域恒为隔离/待审（规则层不评估图片）⇒ 本片之后**也不会**出现「图片帖子被发布」；这是既有口令，不是本片遗留。
 4. 审核结论台账仍是内存 Map（复盘 G2），进程重启即丢；非本片范围。
 5. 没有真实端到端（小程序/真机/浏览器）验证；只有进程内探针与 HTTP 单测。
 
-## 8 待指挥裁定（3 条）
+## 8 指挥裁定（2026-10-22 已答复，本片据此定稿）
 
-1. **媒体元数据要不要在本片顺手接？** 现在「图片端口可达但载荷不完整」（§7-1）。补齐需要接媒体域投影（mime/revision），会扩大改动面；不补则「图片审核真的跑过」这件事仍无实测证据。
-2. **能力位是否固定为跨片内部契约？** `ModerationService.capabilities()` / `LinkImageReadiness` 目前是内部接口（未进 openapi）。若后续片（人审、媒体）要复用，建议这次就固化形状；否则每次都得重新对齐。
-3. **片二裁定要不要回写到 #14？** 本文的「不接」结论 + 依据是否以 COMMENT 形式贴到 issue #14，避免下一片重复讨论同一件事。
+1. **媒体元数据投影：本片不接，另开单片。** 理由（指挥原文）：「本片范围已闭合 G-真因，混入媒体域投影会同时改两个域、审查面翻倍。」下一片从 `main` 起即可（#469 已在 `main` 上）。⇒ §7-1 的三条如实保留为「现在可接、本片未接」。
+2. **能力位形状：固化为内部契约**（已写进 §6.1：不进 openapi；后续片复用须对齐 `state` 闭集与 `ready` 双条件判据）。
+3. **片二裁定：已由指挥贴到 issue `#14`**（comment `6334742082`），本片不再重复粘贴；§5 的正文即该裁定的仓内落档。
+
+⇒ 本片无剩余待裁定项。
