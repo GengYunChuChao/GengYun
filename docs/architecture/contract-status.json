@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1853-1861"
+          "lines": "1864-1872"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -3237,7 +3237,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "834-840"
+          "lines": "845-851"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",

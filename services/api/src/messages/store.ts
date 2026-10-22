@@ -23,6 +23,7 @@
  * 因此不存在"计数漂移"路径，也不可能被并发标记减两次。
  */
 
+import { idempotencySubjectPrefix } from '../auth/idempotency.ts';
 import type { MessageType, TargetRef } from './types.ts';
 import { cloneDeep, freezeDeep, takeOwnershipDeep } from './immutable.ts';
 
@@ -150,7 +151,7 @@ export interface MessagesStore {
    *
    * 幂等台账**没有 owner 列**（共享表 `public.idempotency_keys`，`0008_auth_session.sql:46-58`），
    * 只能按 `scope` 前缀删——`scope` 的第一段就是主体 uuid
-   * （`auth/idempotency.ts:111-113` 的 `idempotencyScope`）。
+   * （`auth/idempotency.ts:129-131` 的 `idempotencyScope`，前缀经 `idempotencySubjectPrefix` 产出）。
    */
   deleteAllByOwner?(ownerId: string): Promise<number>;
   /** 同一次清理的**分表计数**（正文 + 台账）；协调器用它把两个真实行数都写进证据串。 */
@@ -253,7 +254,10 @@ export function createMemoryMessagesStore(
    * 两种结果都不成立「删除已成功」这种假话。
    */
   function purgeOwnerRows(ownerId: string): MessagesOwnerPurgeCounts {
-    const scopePrefix = `${ownerId}\n`;
+    // 前缀取自 `auth/idempotency.ts` 的**唯一**来源（`<主体><分隔符>`），不在这里自拼字面量：
+    // 分隔符一旦分叉，内存实现与 PG 的 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)`
+    // 就会在「哪些行算本主体」上给出不同答案。守卫见 `tests/unit/idempotency-scope-grammar.test.mjs`。
+    const scopePrefix = idempotencySubjectPrefix(ownerId);
     let records = 0;
     for (const [id, record] of [...messages]) {
       if (record.owner_id !== ownerId) continue;
