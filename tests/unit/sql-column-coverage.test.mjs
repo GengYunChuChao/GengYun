@@ -352,22 +352,47 @@ const OPAQUE_ALLOWLIST = [
  * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67）；
  * C1b G6/G8 再给会话域补一条 `SELECT id FROM conversations`（+1 字面量、SELECT 67→68），故
  * 字面量 141→143、SELECT 66→68、columnRequirements 1157→1186。
+ *
+ * R31-S6/S1（社区域，`18005243`）重算：社区域此前**只有**读写正文的语句，注销清理与举报状态推进
+ * 各新增了语句。逐条核对（文件::函数 —— 语句）后得到的增量，7 条一条不多一条不少：
+ *   1. `community/store-pg.ts::commitReport` —— `SELECT ${REPORT_COLUMNS} … FOR UPDATE`（+SELECT 1、+行锁 1）
+ *   2. `community/store-pg.ts::commitReport` —— `UPDATE community_reports SET revision, state`（+UPDATE 1）
+ *   3. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_posts SET visibility='deleted'`（+UPDATE 1）
+ *   4. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_comments SET visibility='deleted'`
+ *   5. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_reports SET detail=NULL`（上两条同为 +UPDATE）
+ *   6. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_likes`（+DELETE 1）
+ *   7. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_idempotency WHERE scope LIKE`
+ * 合计：字面量 143→150、UPDATE 21→25、SELECT 68→69、DELETE 27→29、RETURNING 56→61（3/4/5/6/7 五条
+ * 都带 RETURNING 计行数）、columnRequirements 1186→1212（这 7 条引用到的列，逐列已覆盖 0 缺）。
+ * 引用到的表数与 SELECT * 处数**不变**（新语句只碰已登记的表、没有新增 `*` 面）。
+ *
+ * R32-P2（F13 保留规则返修，`supervisor-1022-0932-pr474`）再重算：注销清理从"两条无条件软删"
+ * 改为"**保留** + 逐行脱敏/媒体移除"，语句形态随之变化（**没有新增表/授权缺口**）：
+ *   - 原 3/4（posts/comments 的软删 UPDATE，各带 RETURNING）删除；
+ *   - 新增 `SELECT … FROM community_posts … FOR UPDATE` 与 `SELECT … FROM community_comments … FOR UPDATE`
+ *     （+SELECT 2、+行锁 2）；
+ *   - 新增 `UPDATE community_posts SET title,body,media_ids,revision,updated_at`（脱敏）与
+ *     `UPDATE community_posts SET media_ids,updated_at`（仅移除媒体）：净 +UPDATE 1；
+ *   - 新增 `UPDATE community_comments SET body,revision`（脱敏）：净 +0（抵掉原软删那条里的 UPDATE 计数）；
+ *   - reports 的 `UPDATE … detail=NULL`、likes/idempotency 的 DELETE 原样保留（RETURNING 3 条不变）。
+ * 合计：字面量 150→153、UPDATE 25→26、SELECT 69→71、DELETE 29（不变）、
+ * RETURNING 61→59（-2，两条软删 UPDATE 的 RETURNING 消失）、columnRequirements 1212→1222。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 143,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 68, DELETE: 27 },
-  returningClauses: 56,
+  sqlLiterals: 153,
+  statements: { INSERT: 27, UPDATE: 26, SELECT: 71, DELETE: 29 },
+  returningClauses: 59,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1186,
+  columnRequirements: 1222,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 28,
+  community: 38,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -419,46 +444,55 @@ const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 const TABLE_WIDE_COLUMN = '*';
 
 /**
- * R28-S66 扩展读数钉死值（2026-10-22 按合流树实测重钉，18 文件 = 8 store ＋ 10 新纳管）。
- * 合流 `origin/main` = `d4d48088` 时两侧各追加一个 SQL 宿主（上游 #428/#419 侧 `admin/ops/jobs-pg.ts`、
- * 本片 `moderation/ledger-pg.ts`），故读数由本片侧的 17 文件／221 条字面量、`origin/main` 侧的
- * 17 文件／230 条变为 **18 文件／234 条**；增量逐项可归因：INSERT +2、UPDATE +3、ON CONFLICT +2、
- * 函数调用 +1（`jobs-pg` 的 `FROM public.*(…)`）、无顶层 FROM +1，DELETE 仍 30（审核台账零 DELETE）。
+ * R28-S66 扩展读数钉死值（2026-10-22 合流 `origin/main` = `bfbe12cd` 后按**合流树**实测重钉：
+ * 18 文件 = 8 store ＋ 10 新纳管，SQL 字面量 245 条）。
+ *
+ * 合流账（上游 R28-W6 ＋ 本片 GY-I15）**两个方向各自可核**，不是「把数改大」：
+ *   · 相对**本片合流前** 17 文件／240 条：上游新增 SQL 宿主 `moderation/ledger-pg.ts`
+ *     （5 条字面量，实测 INSERT 2／UPDATE 2／SELECT 1；其中 1 条是 R28-W6 的建行后读回确认
+ *     `SELECT superseded … WHERE job_id = $1`）⇒ 文件 +1、字面量 +5、INSERT +2、UPDATE +2、
+ *     SELECT +1、DELETE 不变；ON CONFLICT +2、列要求 +51（covered 同步 +51，缺口仍 0）、
+ *     引用表 +2（`public.moderation_decisions`、`public.moderation_withdrawals`，两者均已有授权）。
+ *   · 相对**上游** 18 文件／235 条：本片 GY-I15 的社区域语句（R31-S6 +7 条、R32-P2 +3 条）⇒
+ *     UPDATE +5、SELECT +3、DELETE +2、INSERT 不变；RETURNING 相对上游 +3（R31-S6 +5、R32-P2 −2）、
+ *     列要求 +36（covered 同步 +36，缺口仍 0）、引用表不变（社区域没有新增表，也没有新增授权面）。
+ *   · 两侧增量落在**不同文件**（`community` 38 条只由本片贡献；`moderation/ledger-pg.ts` 5 条只由
+ *     上游贡献）⇒ 并集恰好 245 = 235 ＋ 10 = 240 ＋ 5；行锁 FOR UPDATE／rowLockRequirements 仍 25
+ *     （`ledger-pg.ts` 5 条语句零行锁、零 RETURNING，实测如此）。
+ *   · 第二次合流（上游 `f75e1a1b`，#482／#434 复审 §6）：`ledger-pg.ts` 的**更新语句**补
+ *     `RETURNING job_id`（真库匹配 0 行不报错，故读回命中行数）⇒ **不新增 SQL 字面量**、不改语句条数，
+ *     只把 RETURNING 74→**75**、列要求 1589→**1590**（`public.moderation_decisions.job_id` 的 SELECT
+ *     面，已在 `20-login-roles.sql` 列级授权清单内）、covered 1535→**1536**，缺口仍 0。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
+ * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
+ * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 18,
-  // 2026-10-22（#434 监工 P2）：`moderation/ledger-pg.ts` 建行后新增**读回确认**
-  // （`SELECT superseded … WHERE job_id = $1`）⇒ 字面量 234 → 235、SELECT 129 → 130、
-  // 列要求 1552 → 1553（public.moderation_decisions.superseded 的 SELECT 面，已在列级授权清单内）。
-  sqlLiterals: 235,
-  statements: { INSERT: 38, UPDATE: 37, SELECT: 130, DELETE: 30 },
-  // 2026-10-22（#434 复审 §6）：同文件的**更新语句**补 `RETURNING job_id` 以确认"命中了几行"
-  // （真库匹配 0 行不报错）⇒ RETURNING 处 71 → 72、列要求 1553 → 1554、已覆盖 1499 → 1500
-  // （public.moderation_decisions.job_id 的 SELECT 面，已在 `20-login-roles.sql:994` 的列级授权清单内，
-  // 未改任何 GRANT、未新增 SQL 字面量）。
-  returningClauses: 72,
+  sqlLiterals: 245,
+  statements: { INSERT: 38, UPDATE: 42, SELECT: 133, DELETE: 32 },
+  returningClauses: 75,
   onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 22, SHARE: 16 },
+  rowLocks: { UPDATE: 25, SHARE: 16 },
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 41,
-  columnRequirements: 1554,
-  coveredRequirements: 1500,
+  columnRequirements: 1590,
+  coveredRequirements: 1536,
   ledgerExemptions: 33,
-  rowLockRequirements: 22,
+  rowLockRequirements: 25,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
 
-/** 逐文件读数（扩展 17 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
+/** 逐文件读数（扩展 18 文件 = 8 store ＋ 10 新纳管；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
 const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 28,
+  'community': 38,
   'conversations': 17,
   'favorites': 15,
   'history': 16,
@@ -2071,7 +2105,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () => {
+test('sql-column-coverage/扩展 18 文件读数与列覆盖（R28-S66／R28-W6／GY-I15）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);

@@ -430,6 +430,126 @@ async function main() {
     });
     say('snapshotCounts 与真库计数逐项一致');
 
+    // ---- 10b. 举报状态推进（R31-S1 的 PG 臂） ----------------------------
+    // 语义对齐 `commitPostIfCurrent`：先版本、再状态；三种失败都不许改行。
+    assert.deepEqual(
+      await store.commitReportIfCurrent(reportId, { revision: 9 }, { revision: 2 }),
+      { ok: false, reason: 'REVISION_CHANGED' },
+      '版本不符必须是 REVISION_CHANGED（不能静默成功）',
+    );
+    assert.deepEqual(
+      await store.commitReportIfCurrent(
+        reportId,
+        { revision: 1, state: 'isolated' },
+        { revision: 2, state: 'closed' },
+      ),
+      { ok: false, reason: 'STATE_CHANGED' },
+      '状态与预期不符必须是 STATE_CHANGED（路线分叉，重读也没用）',
+    );
+    assert.deepEqual(
+      await store.commitReportIfCurrent(randomUUID(), { revision: 1 }, { revision: 2 }),
+      { ok: false, reason: 'NOT_FOUND' },
+    );
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT state, revision FROM community_reports WHERE id = $1::uuid',
+        [reportId],
+      )).rows[0],
+      { state: 'received', revision: 1 },
+      '失败路径不得改状态、不得升版本',
+    );
+    const advanced = await store.commitReportIfCurrent(
+      reportId,
+      { revision: 1, state: 'received' },
+      { revision: 2, state: 'isolated' },
+    );
+    assert.equal(advanced.ok, true);
+    assert.equal(advanced.record.state, 'isolated');
+    assert.equal(advanced.record.revision, 2);
+    assert.equal(advanced.record.detail, '改过说明', '推进状态不得顺手清掉举报人自述');
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT state, revision FROM community_reports WHERE id = $1::uuid',
+        [reportId],
+      )).rows[0],
+      { state: 'isolated', revision: 2 },
+      '状态与版本必须真落库（不是只改了返回值）',
+    );
+    say('举报状态推进：版本/状态/存在性三种失败逐条报因且不改行；成功后 state+revision 真落库');
+
+    // ---- 10c. 注销清理（R31-S6 / F13 保留规则的 PG 臂） ---------------------
+    // 先给 authorId 造一条自己的幂等台账行，再把他人名下的既有台账行数记成对比组。
+    const authorScope = `${authorId}\nPOST\n/api/v1/reports`;
+    const authorKeyHash = digest('community-pg-purge-key-1');
+    assert.equal(await store.claimIdempotency(authorScope, authorKeyHash, {
+      request_hash: digest('purge-request-1'),
+      response_status: 201,
+      expires_at: Date.now() + 60_000,
+    }), true);
+    const otherIdempotencyBefore = (await owner.query(
+      'SELECT count(*)::int AS n FROM community_idempotency WHERE scope LIKE $1::text',
+      [`${otherId}\n%`],
+    )).rows[0].n;
+    assert.ok(otherIdempotencyBefore >= 1, '对比组：他人名下必须有既有台账行');
+
+    // 存量 PII 行（规则层现在会拦手机号，这里模拟"审核当时未拦住/规则外形态"的旧行）：
+    // 注销必须清个人信息、不能把整条帖子删掉。
+    const piiPost = randomUUID();
+    const PII_BODY = '联系 13800138000，邮箱 nongyou@example.com，住址 阳光小区3栋2单元501室。';
+    assert.equal(
+      await store.insertPost(
+        postRecord(piiPost, authorId, { body: PII_BODY, media_ids: [randomUUID()] }),
+        verdict('post', piiPost, 1),
+      ),
+      true,
+    );
+
+    const purged = await store.purgeOwnerData(authorId);
+    assert.deepEqual(
+      purged,
+      { records: 3, idempotency: 1, retained: 1, redacted: 1, hiddenMedia: 3 },
+      'F13：安全帖保留（仅媒体移除）+ PII 帖脱敏 + 点赞物理删；'
+        + '媒体引用：安全帖 2 + PII 帖 1；评论与举报本主体此时没有',
+    );
+    const purgedPost = await store.getPost(post2);
+    assert.equal(purgedPost.visibility, 'published', 'F13：安全帖子保留公开，不得软删');
+    assert.equal(purgedPost.revision, 1, '仅移除媒体不改正文摘要 ⇒ 不推进 revision（否则旧审核结论查不到、安全正文消失）');
+    assert.deepEqual(purgedPost.media_ids, [], '不能可靠脱敏的媒体引用被移除');
+    assert.equal(purgedPost.body, '拔节期，看麦娘为主，人工拔除后补喷。', '正文原样保留');
+    const purgedPii = await store.getPost(piiPost);
+    assert.equal(purgedPii.body.includes('13800138000'), false, '个人信息必须清除（手机号）');
+    assert.equal(purgedPii.body.includes('nongyou@example.com'), false, '个人信息必须清除（邮箱）');
+    assert.equal(purgedPii.body.includes('阳光小区3栋2单元501室'), false, '个人信息必须清除（精确门牌）');
+    assert.ok(purgedPii.body.includes('个人信息已清除'), '清除必须可见（占位符）');
+    assert.equal(purgedPii.revision, 2, '正文改了 ⇒ revision+1（旧 ETag/旧审核摘要失效）');
+    assert.deepEqual(purgedPii.media_ids, [], 'PII 行的媒体引用同样移除');
+    assert.equal(await store.countLikes('post', post2), 0, '点赞是物理删（行为痕迹不留）');
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT detail FROM community_reports WHERE reporter_id = $1::uuid',
+        [otherId],
+      )).rows.map((row) => row.detail).sort(),
+      ['改过说明', '剂量写错了'].sort(),
+      '他人的举报行与其自述一字不动（注销只清本主体）',
+    );
+    assert.equal(await store.findIdempotency(authorScope, authorKeyHash), null, '本主体台账行被清');
+    assert.equal(
+      (await owner.query(
+        'SELECT count(*)::int AS n FROM community_idempotency WHERE scope LIKE $1::text',
+        [`${otherId}\n%`],
+      )).rows[0].n,
+      otherIdempotencyBefore,
+      '他人台账行一行不少（LIKE 前缀没串到别人）',
+    );
+    say('注销清理（F13）：安全帖保留可见、PII 清除并升版本、媒体引用移除；点赞物理删；他人举报与台账一字不动');
+
+    assert.deepEqual(
+      await store.purgeOwnerData(authorId),
+      { records: 0, idempotency: 0, retained: 2, redacted: 0, hiddenMedia: 0 },
+      '重跑：没有新的改动/删除（records 0），保留读数反映当前状态（不虚报为 0）',
+    );
+    say('注销清理可重跑：第二次逐项 0 改动，保留读数稳定，不重复抹也不报错');
+
     // ---- 11. rollback → 再 apply ----------------------------------------
     const OUR_TABLES = [
       'community_comments',
