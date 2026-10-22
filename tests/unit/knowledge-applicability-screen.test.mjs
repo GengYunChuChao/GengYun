@@ -213,7 +213,7 @@ test('GY-I08 装配：真实资料零放行（20 条公告 + 159 条浙江资料
   console.log(`[GY-I08 装配] 真实资料 ${rows.length} 条（公告 ${announcement.length} + 浙江 ${zhejiang.length}）全部 blocked、用量卡 0、错误码全 4xx`);
 });
 
-test('GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 才返回记录', () => {
+test('GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判', () => {
   const problems = [];
   const states = new Map();
   for (const testCase of MATCH_CASES) {
@@ -222,7 +222,22 @@ test('GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 才返回�
     if (outcome.state !== testCase.state) problems.push(`${testCase.id} state 期望 ${testCase.state} 实际 ${outcome.state}`);
     if (outcome.state === 'matched') {
       if (outcome.matched === null) problems.push(`${testCase.id} matched 却无记录`);
-      if (outcome.error !== null) problems.push(`${testCase.id} matched 却带错误`);
+      // 匹配结论保留，但可执行资格必须与域库同判（不是「matched ⇒ executable」）。
+      const screening = screenApplicability(outcome.matched, {}, {});
+      if (outcome.status !== screening.status) problems.push(`${testCase.id} matched 后 status=${outcome.status}，域库资格判 ${screening.status}`);
+      if (outcome.executable !== screening.executable) problems.push(`${testCase.id} matched 后 executable=${outcome.executable}，域库资格判 ${screening.executable}`);
+      if (JSON.stringify(outcome.block_codes) !== JSON.stringify(screening.block_codes)) {
+        problems.push(`${testCase.id} matched 后 block_codes=${JSON.stringify(outcome.block_codes)}，域库 ${JSON.stringify(screening.block_codes)}`);
+      }
+      if ((outcome.error === null ? null : outcome.error.code) !== (screening.error === null ? null : screening.error.code)) {
+        problems.push(`${testCase.id} matched 后 error=${outcome.error?.code ?? null}，域库 ${screening.error?.code ?? null}`);
+      }
+      if (outcome.status === SCREEN_STATUS.EXECUTABLE) {
+        if (outcome.error !== null) problems.push(`${testCase.id} 资格放行却带错误`);
+      } else if (outcome.error === null) problems.push(`${testCase.id} 资格阻断却无错误码`);
+      if (outcome.dose_card !== null && outcome.status !== SCREEN_STATUS.EXECUTABLE) {
+        problems.push(`${testCase.id} 资格阻断却给用量卡`);
+      }
       continue;
     }
     if (outcome.matched !== null) problems.push(`${testCase.id} 非 matched 却返回记录`);
@@ -232,6 +247,79 @@ test('GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 才返回�
   }
   assert.deepEqual(problems, [], `匹配装配问题：\n${problems.slice(0, 20).join('\n')}`);
   console.log(`[GY-I08 装配] 匹配用例 ${MATCH_CASES.length} 条：${[...states].map(([s, n]) => `${s}=${n}`).join('、')}`);
+});
+
+test('GY-I08 装配：matched 不提升为可执行（监工 1021-1927 探针，真实函数 + doseItem 夹具）', () => {
+  const query = { registration_number: 'PD20210001' };
+
+  // 1) 探针原形：同一条目——匹配命中，但记录未核对 ⇒ 可执行资格必须被拦。
+  const unverified = doseItem({ verification: { review_status: 'unverified' } });
+  const matchedUnreviewed = screenRegistrationMatch([unverified], query);
+  assert.equal(matchedUnreviewed.state, 'matched', '匹配结论必须保留');
+  assert.equal(matchedUnreviewed.matched?.record_id, 't-base', '命中记录原样返回，供展示「命中了哪条」');
+  assert.equal(matchedUnreviewed.status, SCREEN_STATUS.BLOCKED);
+  assert.equal(matchedUnreviewed.executable, false);
+  assert.equal(matchedUnreviewed.dose_card, null);
+  assert.equal(matchedUnreviewed.dose_count, 0);
+  assert.deepEqual(matchedUnreviewed.block_codes, [BLOCK_CODES.UNREVIEWED]);
+  assert.equal(matchedUnreviewed.error?.code, 'OBJECT_UNAVAILABLE');
+  assert.equal(statusOf(matchedUnreviewed.error.code), 409);
+  // 对照：同一条目走域库资格门，结论必须一致（不是我们另写了一套判定）。
+  const direct = screenApplicability(unverified, {});
+  assert.equal(direct.status, SCREEN_STATUS.BLOCKED);
+  assert.deepEqual(direct.block_codes, [BLOCK_CODES.UNREVIEWED]);
+  assert.equal(matchedUnreviewed.error.code, direct.error.code);
+
+  // 2) 禁用／不适用／开关关闭：三种门都要在 matched 之后生效。
+  const banned = screenRegistrationMatch([doseItem({ verification: { restriction_status: 'banned' } })], query);
+  assert.equal(banned.state, 'matched');
+  assert.equal(banned.executable, false);
+  assert.deepEqual(banned.block_codes, [BLOCK_CODES.BANNED]);
+  assert.equal(banned.error?.code, 'OBJECT_UNAVAILABLE');
+
+  const offCrop = screenRegistrationMatch([doseItem()], query, {}, { crop_id: 'crop_wheat' });
+  assert.equal(offCrop.state, 'matched');
+  assert.equal(offCrop.executable, false);
+  assert.deepEqual(offCrop.block_codes, [BLOCK_CODES.NOT_APPLICABLE]);
+  assert.equal(offCrop.error?.code, 'INPUT_UNCERTAIN');
+  assert.equal(statusOf(offCrop.error.code), 422);
+
+  const closed = screenRegistrationMatch([doseItem()], query, { executableEnabled: false });
+  assert.equal(closed.state, 'matched');
+  assert.equal(closed.executable, false);
+  assert.ok(closed.block_codes.includes(BLOCK_CODES.FEATURE_CLOSED));
+  assert.equal(closed.error?.code, 'SCOPE_DENIED');
+  assert.equal(statusOf(closed.error.code), 403);
+
+  // 3) 正例（合成夹具）：命中 + 全部门通过 ⇒ 可执行，且原文用量三元组逐字带出。
+  const positive = screenRegistrationMatch([doseItem()], query);
+  assert.equal(positive.state, 'matched');
+  assert.equal(positive.status, SCREEN_STATUS.EXECUTABLE);
+  assert.equal(positive.executable, true);
+  assert.equal(positive.error, null);
+  assert.equal(positive.dose_count, 1);
+  assert.deepEqual(positive.dose_card.dose, { number: '40', unit: '克/公顷', condition: '苗后茎叶喷雾' });
+  assert.equal(positive.dose_error, null);
+
+  // 4) 命中但无原文用量：可执行、无卡片、带不可渲染的 4xx（与「资格被拦」区分开）。
+  const noDose = screenRegistrationMatch([doseItem({ verification: { usable_as_dose: false, dose: undefined } })], query);
+  assert.equal(noDose.state, 'matched');
+  assert.equal(noDose.status, SCREEN_STATUS.EXECUTABLE);
+  assert.equal(noDose.dose_card, null);
+  assert.ok(noDose.dose_error, '没有原文用量必须给出不可渲染的 4xx');
+  assert.equal(isClientError(statusOf(noDose.dose_error.code)), true);
+
+  // 5) 匹配未命中时不受影响（仍是匹配层的 4xx，不返回任何记录）。
+  const noMatch = screenRegistrationMatch([doseItem()], { registration_number: 'PD20999999' });
+  assert.equal(noMatch.state, 'no_match');
+  assert.equal(noMatch.matched, null);
+  assert.equal(noMatch.error?.code, 'NOT_FOUND');
+
+  console.log(
+    `[GY-I08 装配] matched 不提升为可执行：未核对→${matchedUnreviewed.error.code}(${statusOf(matchedUnreviewed.error.code)})、` +
+      `禁用→${banned.error.code}、不适用→${offCrop.error.code}(${statusOf(offCrop.error.code)})、开关关闭→${closed.error.code}；` +
+      `正例 executable+dose=${positive.dose_count}；无原文用量 executable+dose_error(${noDose.dose_error.code})`,
+  );
 });
 
 test('GY-I08 装配：requireExecutableAdvice 抛 ApiError（4xx）而不是 5xx 或静默返回', () => {

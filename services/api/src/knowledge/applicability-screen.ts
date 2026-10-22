@@ -223,13 +223,34 @@ export function screenApplicability(
   };
 }
 
+/**
+ * 匹配装配的结果：`state`／`matched` 是**匹配结论**，`status`／`executable`／`error` 是
+ * **可执行资格结论**。两者刻意分开保留 —— 「唯一命中一条登记记录」不等于「可以给可执行建议」。
+ */
 export type MatchScreeningOutcome = ScreeningOutcome & { state: string; matched: ScreeningItem | null };
 
-/** 装配「登记匹配」。非 `matched` 一律带 4xx 错误码，绝不返回「匹配不上但可用」的记录。 */
+/**
+ * 装配「登记匹配 + 可执行资格」。
+ *
+ * 两步，且第二步**不可省**（issue #8 验收第 2 条：未核对／不适用／禁用不得进入可执行建议）：
+ *   1. 匹配：`evaluateRegistrationMatch(...)` 判登记身份（无来源／模拟／失效／冲突／多匹配一律阻断）；
+ *   2. 资格：对**唯一命中的那条记录**再走 `screenApplicability(matched, context, options)` ——
+ *      与 `requireExecutableAdvice`／`requireDoseCard` **同一套门**（适用维度、未核对、禁限用、
+ *      功能开关、原文用量）。命中本身**不**产生执行资格。
+ *
+ * 因此 `state === 'matched'` 时仍可能出现 `status === 'blocked'`（例如命中记录未核对 ⇒
+ * `unreviewed` → 409 `OBJECT_UNAVAILABLE`）；此时 `matched` 记录照原样返回，供调用方
+ * 展示「命中了哪条登记 + 为什么不能执行」，但 `dose_card` 恒为 `null`。
+ *
+ * @param context 适用上下文（作物／生育期／地区／剂型／有效成分／使用场景／`allow_restricted`）。
+ *   与匹配查询分开传：登记号是**身份**，作物与生育期是**场景条件**，混在一个对象里会让
+ *   「查的是哪个登记」和「按什么条件适用」互相污染。
+ */
 export function screenRegistrationMatch(
   candidates: readonly ScreeningItem[],
   query: ScreeningItem,
   options: ScreeningOptions = {},
+  context: ScreeningContext = {},
 ): MatchScreeningOutcome {
   const verdict = evaluateRegistrationMatch(candidates, query, options ?? {});
   const state = String(verdict.state ?? '');
@@ -251,17 +272,41 @@ export function screenRegistrationMatch(
     return { ...outcome, error, dose_error: error, state, matched: null };
   }
 
+  // 命中只说明登记身份唯一。可执行资格必须另过同一套门（监工 1021-1927：此前这里直接返回
+  // executable=true，把「精确匹配」提升成了「可执行建议」）。
+  const screening = screenApplicability(matched, context ?? {}, options ?? {});
+  const mergedCodes = [...new Set([...blockCodes, ...screening.block_codes])];
+  const mergedReasons = [...new Set([...reasons, ...screening.reasons])];
+  const ruleVersion2 = screening.rule_version !== '' ? screening.rule_version : ruleVersion;
+
+  if (screening.status !== SCREEN_STATUS.EXECUTABLE || screening.error !== null) {
+    // 资格门拦下：保留 matched 记录与匹配态，但不得输出 executable／用量卡。
+    const error: ScreeningError = {
+      ...(screening.error ?? errorForBlockCodes(mergedCodes, mergedReasons)),
+      block_codes: mergedCodes,
+    };
+    return {
+      ...screening,
+      status: SCREEN_STATUS.BLOCKED,
+      executable: false,
+      renderable: false,
+      dose_count: 0,
+      block_codes: mergedCodes,
+      reasons: mergedReasons,
+      rule_version: ruleVersion2,
+      dose_card: null,
+      error,
+      dose_error: error,
+      state,
+      matched,
+    };
+  }
+
   return {
-    status: SCREEN_STATUS.EXECUTABLE,
-    executable: true,
-    renderable: false,
-    dose_count: 0,
-    block_codes: blockCodes,
-    reasons,
-    rule_version: ruleVersion,
-    dose_card: null,
-    error: null,
-    dose_error: null,
+    ...screening,
+    block_codes: mergedCodes,
+    reasons: mergedReasons,
+    rule_version: ruleVersion2,
     state,
     matched,
   };
