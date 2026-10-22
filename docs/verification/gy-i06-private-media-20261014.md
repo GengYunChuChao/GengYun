@@ -274,7 +274,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
    `services/api/src/app.ts:1041-1042`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
    `services/api/src/app.ts:834`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
-   合成域在 `services/api/src/app.ts:873`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
+   合成域在 `services/api/src/app.ts:1019`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
    两处都只**按执行模式新建**，不接收也不引用媒体域的服务或对象存储。
    `services/api/src/recognitions/media.ts:16` 文件头逐字自述：「本文件这套**按域**媒体引用端口并未改接媒体域：
    `real` 下仍由 `createUnwiredMediaPort` 承担」；同文件 `:17-21` 说明该端口只在受理函数的媒体校验步骤被触达，

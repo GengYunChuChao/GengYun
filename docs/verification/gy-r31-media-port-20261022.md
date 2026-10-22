@@ -75,11 +75,11 @@ export interface MediaObjectStore {
 
 1. `services/api/src/app.ts:46`：`import { registerOcrRoutes, type OcrRouteDeps } from './routes/ocr.ts';`
    —— 只取**类型** `OcrRouteDeps['media']`，**不** import `./ocr/media.ts`（`app.ts` 的 OCR 适配器 import 禁项因此逐字保持）。
-2. `services/api/src/app.ts:344-351`：`BuildAppOptions` 增可选字段
+2. `services/api/src/app.ts:353`：`BuildAppOptions` 增可选字段
    `ocrMedia?: OcrRouteDeps['media'];`（命名对齐既有 `recognitionMedia` / `speechMedia`），并写明「缺省 undefined ⇒ 域内
    按 `executionMode` 自建；默认装配不注入、`real` 仍 fail-closed」。
-3. `services/api/src/app.ts:660`：解构新增 `ocrMedia`。
-4. `services/api/src/app.ts:1741`：装配行改为
+3. `services/api/src/app.ts:662`：解构新增 `ocrMedia`。
+4. `services/api/src/app.ts:1764`：装配行改为
    `registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool);`
    —— 行尾仍是 `}, ocrPersistencePool);`，`ocrPersistencePool` 仍是第 4 个位置实参。
 5. `tests/unit/ocr-store-pg-wiring.test.mjs:86-107`：结构判据的**允许键集**由四键扩为五键（新增 `media`），

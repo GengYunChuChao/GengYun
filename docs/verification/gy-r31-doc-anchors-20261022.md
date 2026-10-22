@@ -6,7 +6,7 @@
 
 ## 2 扫描范围
 
-- 默认两面：`docs/architecture/**/*.md`（9 份）+ `docs/verification/**/*.md`（209 份），合计 218 份（本页落盘前的读数；本页加入后 219 份，计数不变——本页按第 10 节的约定不写 `路径:行号` 形态）。
+- 默认两面：`docs/architecture/**/*.md`（9 份）+ `docs/verification/**/*.md`（209 份），合计 218 份（**本页落盘时**的读数；本页加入后 219 份，计数不变——本页按第 10 节的约定不写 `路径:行号` 形态。合流当前 `main` 后该面已扩到 239 份，见 §12）。
 - `--scan <目录或 glob>` 可扩面；`--root <目录>` 指向夹具树（单测用，不写仓库）；`--baseline <路径>` 换基线文件。
 - 跳过依赖与产物目录（`node_modules`／`.git`／`dist`／`coverage`／`.pg17`／`.venv` 等）：`.pg17` 下的本地笔记不是仓内证据，引用它的行号会如实判 BROKEN，而不是被「跳过」洗绿。
 
@@ -45,7 +45,9 @@ MODE: dry-run（只打印，不判退出码）
 
 `node tools/verify-doc-anchors.mjs --strict` 实测 exit 0，末行 `PASS: --strict 下没有基线之外的新增（基线内条目只计数、不判红；陈旧条目见 STALE）`。`--strict` 不打印全量清单（上百条历史遗留会把台账工具的 PASS 行淹掉），失败清单走 stderr。
 
-## 7 基线：108 条已知遗留
+> 上列 218 份／108 条是**本页落盘时**的读数，不是当前读数：合流 `main` 后文档面扩到 239 份、基线已按现状重生。同一棵树在合流后又漂出 10 条新增与 7 条陈旧条目，逐条校准与两侧读数见 §12。
+
+## 7 基线：落盘时 108 条已知遗留（当前 112 条，见 §12）
 
 `tools/doc-anchors-baseline.json`（受版本控制，`schema_version` 1）逐条含 `path`／`reason`／`owner`／`reference`。`--strict` 只报「基线之外新增」，修好的条目会变「陈旧」并由单测点名要求删除。
 
@@ -55,6 +57,8 @@ MODE: dry-run（只打印，不判退出码）
 | SUSPECT | 70 | api-server 30、repo 18、docs 9、miniprogram 8、deploy 3、contracts 2 | 行号指到空行或纯收尾括号，例如 `app.ts` 第 1641 行是空行、`contract-status.json` 第 370 行是 `}` |
 
 合计 108 条，按 owner：repo 51、api-server 34、docs 9、miniprogram 8、deploy 4、contracts 2。
+
+> 本表是**本页落盘时**的分布。合流 `main` 后基线先按现状重生到 119 条（BROKEN 35／OUT_OF_RANGE 8／SUSPECT 76），本轮再校准掉全部新增引用、删掉 7 条已失效登记，最终 112 条（BROKEN 35／OUT_OF_RANGE 8／SUSPECT 69）。逐条处置见 §12。
 
 基线的两条反查由单测咬住：每条既有条目**必须仍然命中**（修好一条就要求删一行，防止基线慢慢变成免罚名单）；且当前扫描必须仍覆盖 ≥100 份文档、≥1000 条解析成功（防止有人把扫描面改小来「变绿」）。
 
@@ -95,3 +99,85 @@ MODE: dry-run（只打印，不判退出码）
 3. `docs/verification/gy-r28-favorites-history-grants-20261020.md` 第 187 行引用 `experiment-locking.sql` 第 67 行，全仓没有这个文件 → BROKEN（旧名或未提交的 SQL）。
 
 另有一页级问题：`docs/verification/gy-i02-evidence-index-20261015.md` 有 8 条引用指向 `.pg17/` 下的本地笔记，不可提交、别人复现不到，证据索引应改指仓内文件或删掉这些行。
+
+## 12 合流当前 main 后的锚点校准（2026-10-22，第二轮）
+
+§6／§7 是**本页落盘时**（218 份文档）的读数。此前那次「合流 main 后重生基线 110→119」只重写了基线 JSON，本页读数没跟着改，页内数与仓内基线一度不一致；本节把两侧对齐到同一次实测。
+
+校准面：把当时的 `upstream/main`（`489804e4`）合入本分支（无冲突），得到与「main ＋ 本 HEAD」等价的实际合成树；**下列读数全部在该树上跑出**。本分支不改产品代码，故 `app.ts` 等目标文件与 `489804e4` 逐字节相同。
+
+### 12.1 校准前：合成树上只读严格检查失败
+
+```
+SCAN: 文档 239 份；抽出「路径:行号」引用 4055 条（解析成功 3825 条、同名多文件无法唯一解析 183 条不计红、同文档重复 29 条已去重）
+COUNT: BROKEN 35 / OUT_OF_RANGE 8 / SUSPECT 79（合计 122 条；另只计数不判红：区间首行为空行 69 条、区间全是注释行 471 条）
+BASELINE: tools/doc-anchors-baseline.json 登记 119 条；本次命中 112 条、基线外新增 10 条、陈旧 7 条
+MODE: --strict（只在新增加非零时 exit 1）
+```
+
+exit 1，末行 `FAIL: 文档行号闸门未通过（基线之外新增 10 条）`。
+
+### 12.2 10 条新增：逐条改到真实归属块
+
+先按文档里的**引文/符号**在现行代码里定位，再改行号——不是按「原行号 +delta」平移，也不是改小到凑「有内容」：
+
+| # | 文档（行） | 原引用想指的代码 | 校准后 | 判据（现行树实测） |
+| --- | --- | --- | --- | --- |
+| 1 | `gy-r30-public-posting-gate-20261022.md` 第 17 行 | `registerCommunityRoutes(...)`，全仓唯一调用点，已传 `{ consent: consentGate }` | app.ts 第 1842 行 | 全仓仅此一处调用；该注册块随媒体/会话装配整体前移 |
+| 2 | 同页第 39 行 | 带 `public_posting` 的**注释**（「登记/注释类命中，不构成校验」） | app.ts 第 1841 行 | 全文件 `public_posting` 现只剩这一处注释 |
+| 3 | 同页第 101 行 | 探针「走的那一条真实装配路径」 | app.ts 第 1842 行 | 与第 1 行同一条路径 |
+| 4 | 同页第 282 行 | 「现收 `{ consent: consentGate }`」 | app.ts 第 1842 行 | 同上；该处与第 101 行同串，按去重规则只点在前三条上 |
+| 5 | `gy-stall-hygiene-20261019.md` 第 107 行 | 社区 store 由 `app.ts` 内部默认创建 | app.ts 第 793 行 | `const communityStore: CommunityStore =`，默认分支在紧随的 794–800 行 |
+| 6 | `gy-r28-w2-media-ports-20261021.md` 第 23 行 | `setErrorHandler`（按契约映射成 503） | app.ts 第 1862 行 | 全文件唯一一处 `app.setErrorHandler(` |
+| 7 | `gy-r31-media-port-20261022.md` 第 81 行 | `buildApp` 解构里新增的 `ocrMedia` | app.ts 第 662 行 | 该行是 `buildApp` 的解构参数表，逐字含 `ocrMedia` 与 `speechMedia` |
+| 8 | `gy-i16-i17-deletion-cascade-20261021.md` 第 97 行 | `MessagesStore` 接口（无 purge/deleteAll 原语） | messages/store.ts 第 119 行 | `export interface MessagesStore {`，方法清单与该行原文逐字相符；第 154 行同串一并改 |
+| 9 | `gy-recog-chain-20261019.md` 第 17 行 | 链成员必须严格 `node <路径>`，带 flag 即红 | ci-integration-chain-structure.test.mjs 第 332 行 | 断言失败信息「必须严格是 `node <路径>`（不得带 flag／重定向／子 shell）」就在该行 |
+| 10 | 同页第 194 行 | 同上（引用同一判据） | ci-integration-chain-structure.test.mjs 第 332 行 | 同上 |
+| 11 | `contract-implementation-status.md` 第 40 行（**生成区**） | `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 与六源分派 | app.ts 第 1770 行 | 六源依次在第 1771／1777／1780／1786／1794／1802 行，整块前移 104 行；见 §12.5 |
+
+顺带校准（非门禁点名，但同一列表里按文档自带引文可机械核对）：`gy-r31-media-port-20261022.md` 第 78 行的 `app.ts` 行号（`BuildAppOptions` 的 `ocrMedia?:` 字段，改到第 353 行）与第 82 行的装配行（改到第 1764 行）。同一列表里第 76 行的 import 行仍在原位，第 85／87 行的两个测试区间经复核仍覆盖所引结构，未动。
+
+### 12.3 7 条陈旧：先校准引用、再删登记
+
+陈旧**不等于**已修好：漂移把这些引用推到了「有内容」的行上，闸门因此不再报，但指的已不是原代码。故本轮先按内容找到真实归属块、改准引用，再删掉已失效的登记：
+
+| # | 基线登记（path／reference） | 引用它的文档（行） | 校准后 | 判据（现行树实测） |
+| --- | --- | --- | --- | --- |
+| 1 | app.ts／`app.ts` 第 1554 行（裸写法） | `gy-r28-e6-closure-materials-20261021.md` 第 131、284 行 | app.ts 第 1579 行 | `available: config.executionMode !== 'real'`（注销 HTTP 面整域 503） |
+| 2 | app.ts／`services/api/src/app.ts` 第 1554 行 | 同页第 66、82、145 行 | app.ts 第 1579 行 | 同上（同一断言的三处复述） |
+| 3 | app.ts／`app.ts` 第 425 行（裸写法） | `gy-i19-user-backup-copies-design.md` 第 27 行 | app.ts 第 451 行 | `userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore \| null };` |
+| 4 | app.ts／`services/api/src/app.ts` 第 425 行 | `gy-i19-backup-domain-20261018.md` 第 202 行 | app.ts 第 451 行 | 同上——该行原文逐字引用了这条声明 |
+| 5 | app.ts／`services/api/src/app.ts` 第 1659 行 | `contract-status.json` 的 5 条 `blocker` 散文（生成到对照表第 80–84 行）＋ `gy-r27-ocr-persist-20261020.md` 第 403 行 | app.ts 第 1764 行 | 装配行把 `ocrPersistencePool` 作为第 4 个实参传给 `registerOcrRoutes`；变量本身定义在第 1763 行（故「计算」那一处指向第 1763 行） |
+| 6 | app.ts／`services/api/src/app.ts` 第 873 行 | `gy-i06-private-media-20261014.md` 第 277 行 | app.ts 第 1019 行 | `media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode),`（合成域装配） |
+| 7 | app.ts／`services/api/src/app.ts` 第 873 行（同串第二条） | `gy-r31-i29-withdraw-deps-20261014.md` 第 86 行 | app.ts 第 882 行 | `const egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null;` |
+
+第 6／7 条是同一条基线串被两份文档引用（故旧基线里有两行相同条目），两份文档指的**不是同一段代码**，因此分别校准到不同行——这也是「按内容定位」而不是「按串平移」的直接理由。
+
+### 12.4 校准后读数（同一棵合成树）
+
+```
+SCAN: 文档 239 份；抽出「路径:行号」引用 4055 条（解析成功 3825 条、同名多文件无法唯一解析 183 条不计红、同文档重复 26 条已去重）
+COUNT: BROKEN 35 / OUT_OF_RANGE 8 / SUSPECT 69（合计 112 条；另只计数不判红：区间首行为空行 65 条、区间全是注释行 464 条）
+BASELINE: tools/doc-anchors-baseline.json 登记 112 条；本次命中 112 条、基线外新增 0 条、陈旧 0 条
+MODE: --strict（只在新增加非零时 exit 1）
+PASS: --strict 下没有基线之外的新增（基线内条目只计数、不判红；陈旧条目见 STALE）
+```
+
+exit 0。SUSPECT 79→69 正好是修掉的 10 条新增；BROKEN 35 与 OUT_OF_RANGE 8 一条未动（本片不碰历史遗留，也不把容差改小）；基线 119→112，减掉的 7 条全部是上面逐条校准掉的失效登记。
+
+基线重生走工具自身的合法流程（`--write-baseline`），**先改引用、后重生**，并对产物逐行核对：`git diff` 为 **42 行删除、0 行新增、无重排**，即只删掉那 7 条（每条约 6 行），没有把任何新问题塞进基线。
+
+### 12.5 台账生成区的联动（`contract-status.json`）
+
+`contract-implementation-status.md` 的对照表是**生成区**，手改会被 `--write-doc` 的整体重写覆盖，也会让「生成表与 JSON 字节一致」这条断言失效。故第 11 条的修法分两步：
+
+1. 改 `docs/architecture/contract-status.json` 里两条 `blocker` 散文中的行号（六源块 `app.ts` 行号与 `ocrPersistencePool` 装配行），并把该句的「本基线」标记从旧的 `1794052` 改成 `489804e4`（这些行号就是在新基线上实测的）；
+2. 跑 `node tools/verify-contract-status.mjs --write-doc` 重生，末行 `PASS: 中文表格一致`；再跑不带参数的 `node tools/verify-contract-status.mjs`，exit 0。
+
+⛔ 未改任何 `status`／`route_mounted`／`evidence` 语义字段；`--reanchor` 未参与——它只重写 `evidence[].lines` 的数值，管不到散文里的行号。另：`--write-doc` 会把该文件写成 LF，而仓内 blob 是 CRLF（`core.autocrlf=false`），故写回后还原为 CRLF，使 diff 只落在真正改动的 6 行上，而不是整文件 200 行。
+
+### 12.6 未取得与不在本片
+
+1. **结构闸门看不到「指到有内容的错块」**：本轮只校准门禁点名的 17 条（10 新增 + 7 陈旧），加同一列表里能按文档自带引文机械核对的 2 条；其余散文行号未逐条复核（工具第 10 节已声明这条边界）。
+2. **未跑 PG 真库臂与全量单测**：本片只改文档、基线与台账散文行号，未触业务代码；定向单测见 PR 上的读数。
+3. 本页按第 10 节的约定仍不写 `路径:行号` 形态（本节所有行号都以「文件名 + 第 N 行」叙述），故本节加入前后 `SCAN` 的 239 份／4055 条不变。
