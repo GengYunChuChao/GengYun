@@ -21,6 +21,7 @@
 27 项初版编号保持，GY-I25／26／27 实际 issue 为 #27／#28／#29；二月只规划。
 原生 miniprogram/、独立后台、Node API；文字问答不等 ASR，页面不等 TTS；独立样本调参前冻结、能力随实现评估。
 视频为明确标识的情景演示，不验长期效果真实性，不能据此放宽真实识别、问答或资料要求。
+本机 `bash` 可能是 WSL 存根：跑 `npm run test:unit` 前按[开发指南](docs/development-guide.md)第 6 节给 `GY_BASH` 指路；无真 bash 时相关用例带原因 skip。
 
 ## 契约台账锚点维护
 

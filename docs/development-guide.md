@@ -127,6 +127,12 @@ npm run db:status --workspace @gengyun/api
 页面改动检查对应编译／渲染；完整链路在集成节点做 Android 真机、供应商和恢复验收。
 复用同版本有效实测，新增付费请求需用户单独授权；原需求第 6 节的真实能力门槛仍有效。
 
+Windows 上 `bash` 可能落到 WSL 存根（`C:\Windows\System32\bash.exe`）：它只打印「wsl: 检测到 localhost 代理配置，但未镜像到 WSL…」并返回非 0，
+`npm run test:unit` 里 `deploy/postgres-cvm/*.sh` 的 `bash -n` 语法校验于是会假红。测试按 `GY_BASH` → `D:\Git\bin\bash.exe` →
+`C:\Program Files\Git\bin\bash.exe` → PATH 的顺序解析真 bash（每个候选实测 `bash -c "echo ok"`，WSL 存根按输出判为不可用）；
+一个真 bash 都没有时相关用例**带原因 skip**（不是静默通过，也不是恒红）。指路：`$env:GY_BASH='D:\Git\bin\bash.exe'; npm run test:unit`
+（cmd：`set GY_BASH=D:\Git\bin\bash.exe && npm run test:unit`）。
+
 构建与独立契约参考检查：
 
 ```powershell

@@ -207,6 +207,67 @@ test('守卫单元：集合外引用 / 字段被改写 / 重复 / 契约表达�
   assert.deepEqual(none.citations, []);
 });
 
+test('守卫单元：正文层面的越界（生成侧自报 / 未检索链接）⇒ 整条阻断，不得挂合法引用洗白', () => {
+  const guard = createAnswerGuard({ dose: createUnwiredDoseAuthority() });
+  const set = retrievalSet('user-1', [ITEM]);
+  const base = { question: QUESTION, conditions: null };
+
+  // ① 生成侧自报正文越界（适配器扫到 [99] 后回空正文 + 违规项）⇒ 阻断；连"看起来合法"的
+  //    引用也一并撤回 —— 否则等于用一份合法 citation 给被拒正文背书。
+  const declared = guard.check({
+    candidate: {
+      text: '疑似越界正文',
+      citations: [ITEM.source],
+      dose_cards: [],
+      text_violations: ['citation_marker_out_of_range:[99]'],
+    },
+    set,
+    ...base,
+  });
+  assert.equal(declared.status, 'blocked');
+  assert.equal(declared.check_state, 'blocked');
+  assert.deepEqual(declared.rejected_text, ['citation_marker_out_of_range:[99]']);
+  assert.deepEqual(declared.citations, [], '正文被拒时不得再挂合法引用');
+  assert.equal(declared.checked_text.includes('疑似越界正文'), false, '阻断话术不得含被拒正文片段');
+
+  // ② 上游没自报，但正文里有集合外链接 ⇒ 守卫**独立复核**同样拦（不依赖生成侧自检）。
+  const ungrounded = guard.check({
+    candidate: {
+      text: '来源 https://fabricated.invalid/not-in-retrieval 。',
+      citations: [ITEM.source],
+      dose_cards: [],
+    },
+    set,
+    ...base,
+  });
+  assert.equal(ungrounded.status, 'blocked', '未检索链接必须被守卫拦下');
+  assert.deepEqual(ungrounded.rejected_text, ['unattributed_url:https://fabricated.invalid/not-in-retrieval']);
+  assert.deepEqual(ungrounded.citations, []);
+
+  // ③ 正控制：来源自带的 url ⇒ 放行（有出处，不是虚构链接）。
+  const okSource = guard.check({
+    candidate: { text: `识别要点见 ${ITEM.source.url} 。`, citations: [ITEM.source], dose_cards: [] },
+    set,
+    ...base,
+  });
+  assert.equal(okSource.status, 'answered');
+  assert.deepEqual(okSource.rejected_text, []);
+  assert.match(okSource.checked_text, /example\.invalid/u);
+
+  // ④ 正控制：链接逐字出现在来源正文里 ⇒ 同样算有出处（确定性回答器会原样搬资料原文）。
+  const withUrl = retrievalItem({
+    id: '1a2b3c4d-5e6f-4a70-8b1c-2d3e4f5a6b7c',
+    title: '合成条目乙：带链接的正文（测试替身）',
+    body: '合成正文见 https://docs.invalid/synthetic-note 。',
+  });
+  const okBody = guard.check({
+    candidate: { text: '识别要点见 https://docs.invalid/synthetic-note 。', citations: [withUrl.source], dose_cards: [] },
+    set: retrievalSet('user-1', [withUrl]),
+    ...base,
+  });
+  assert.equal(okBody.status, 'answered');
+});
+
 test('守卫单元：用量卡只能取自确定性权威路径 —— 集合外/未获权威放行的一律拒绝', () => {
   const unwired = createAnswerGuard({ dose: createUnwiredDoseAuthority() });
   const authoritative = createAnswerGuard({ dose: createDeterministicDoseAuthority() });

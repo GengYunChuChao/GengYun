@@ -107,7 +107,9 @@ import { createClosedContentSource, type PublishedContentSource } from './media/
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
 import { createPostgresExportLedger, createPostgresPrivacyPorts } from './privacy/ledger-pg.ts';
-import { createMediaJobEgress, type MediaJobEgress } from './privacy/task-egress.ts';
+import { createChatEgress, createMediaJobEgress, type ChatEgress, type MediaJobEgress } from './privacy/task-egress.ts';
+// GY-R28 W7（#12）：文字问答的真实模型适配器与装配决策（供应商细节只在这两个文件里）。
+import { planConversationChat } from './ai/chat-wiring.ts';
 import { createSynthesisEgress, type SynthesisEgress } from './privacy/synthesis-egress.ts';
 import { createEgressRevoker, createInFlightGuard } from '../../../packages/privacy/in-flight.mjs';
 import { registerMessageRoutes } from './routes/messages.ts';
@@ -1601,10 +1603,30 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 4) 用量权威：只接 GY-I08 的**确定性**描述子（`doseCardDescriptor`）；本片**没有**语言模型，
   //    因此未取得确定性判定通过前**不产出**任何用量卡（域库本基线恒 `renderable:false`）。
   const conversationDose: DoseAuthority = conversationInjection?.dose ?? createDeterministicDoseAuthority();
-  // 5) 输出守卫（引用只能取自本次检索集合 + 用量卡只能取自确定性权威路径）与**确定性**回答器
-  //    （候选正文由检索条目逐字组成，不经任何模型）。
+  // 5) 输出守卫（引用只能取自本次检索集合 + 用量卡只能取自确定性权威路径）。
   const conversationGuard: AnswerGuard = conversationInjection?.guard ?? createConversationGuard({ dose: conversationDose });
-  const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();
+  // 5a) 回答生成器（GY-R28 W7 / #12）：**只有**四件事同时成立才接真实模型 ——
+  //     ① 配置里给了 `chatProvider`（https 端点 + 模型名 + 密钥齐备）；
+  //     ② 外发账本可用（`DATABASE_URL` + 带 `connect()` 的池 ⇒ `egressLedger`/`privacyInFlight` 非 null）；
+  //     ③ 执行模式为 `real`（`ChatEgress.engaged`）；④ 未被测试/装配注入覆盖。
+  //     任一不成立 ⇒ 沿用基线确定性回答器（版本串仍带 `unimplemented:no-real-`），
+  //     **行为与 main 逐字节一致**。决策本身是纯函数（`ai/chat-wiring.ts`），四条与门逐条有单测。
+  const conversationChatPlan = planConversationChat({
+    ...(conversationInjection?.composer === undefined ? {} : { injectedComposer: conversationInjection.composer }),
+    // 少数既有测试直接构造精简 config（未走 `loadConfig`）；缺 `chatProvider` 时一律按「未配置」处理
+    // （fail-closed：不做任何真实外发，版本串仍是带 `unimplemented:no-real-` 的那条路径）。
+    chat: config.chatProvider ?? null,
+    executionMode: config.executionMode,
+    egressLedger,
+    privacyInFlight,
+    // 只记结构读数（状态码/耗时/token/出口记录），不记正文与密钥。
+    log: app.log,
+  });
+  for (const warning of conversationChatPlan.warnings) app.log.warn(warning);
+  const conversationComposer: AnswerComposer = conversationChatPlan.composer;
+  // 5a-2) 版本串**由装配层**给（回答器无权决定，NC2）：只有 `mode === 'live'` 才有覆盖值，
+  //      其余一切情况都不传 ⇒ 三个串照旧全部带 `unimplemented:no-real-`。
+  const conversationAnswerVersions = conversationChatPlan.answerVersions;
   // 5b) 风险/注入筛查（问题 + 资料原文）：**复用** `packages/moderation` 现成的
   //     `dangerous_usage` + `prompt_injection` 规则层，不新写第二套规则；缺省启用（fail-closed）。
   const conversationRiskScreen: RiskScreen = conversationInjection?.riskScreen ?? createModerationRiskScreen();
@@ -1631,6 +1653,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // 追问上下文：缺省由服务层按自己的 store 自建（见 `conversations/context.ts`）。
           ...(conversationInjection?.context === undefined ? {} : { context: conversationInjection.context }),
           ledger: conversationLedger,
+          ...(conversationAnswerVersions === undefined ? {} : { answerVersions: conversationAnswerVersions }),
           signingKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
           now: clock,
         });
