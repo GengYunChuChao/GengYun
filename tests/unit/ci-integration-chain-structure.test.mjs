@@ -223,6 +223,13 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/ocr-corrections-pg.mjs',
+    reason: '需真实 PG 17.11（硬钉空库名 `gengyun_ocr_corrections_test`，开头断言 `public` 下 0 张表并 `applyMigrations()` 跑全链；'
+      + '未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：未取得，不是通过）：本片按派单在本机 PG 17.11 上真跑取证'
+      + '（6 项 PASS），暂未接进 `.github/workflows/real-pg-integration.yml`——该文件正被在飞的接臂 PR 改动，'
+      + '同文件并行接线会与它冲突，故如实登记为未接线；它**不进**无 PG 的回环链。',
+  },
+  {
     path: 'tests/integration/ocr-jobs-pg.mjs',
     reason: '需真实 PG 17.11（硬钉库名 `gengyun_ocr_jobs_test`；未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
       + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：R28-S17 已把它接进'
