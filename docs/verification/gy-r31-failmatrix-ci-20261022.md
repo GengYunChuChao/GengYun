@@ -13,6 +13,9 @@
 | 2 | `.github/workflows/failmatrix.yml:1-64` | 新增独立 workflow（`failmatrix` job），失败即红、上传机读产物 |
 | 3 | `docs/verification/gy-r31-failmatrix-ci-20261022.md` | 本页 |
 
+- 分支已推：`git ls-remote origin refs/heads/test/gy-r31-failmatrix-ci` → `fcb744a4046bb39c855dab13feac8db530c4d0fd  refs/heads/test/gy-r31-failmatrix-ci`。
+- PR：[#467](https://github.com/GengYunChuChao/GengYun/pull/467)（`Refs #22`，不关闭整项）。首跑 `failmatrix` 检查名 **pass / 17 s**，产物 `failmatrix-8afe42f623b7…`（7240 bytes）可下载，见 §3.4。
+
 ⛔ 没有动：既有 13 个 workflow、`tests/failmatrix/run.mjs` 的任何断言、`docs/architecture/contract-status.json`、任何既有用例的 `expect`。
 
 ## 1 现状（改之前）
@@ -158,10 +161,26 @@ RESTORED_EXIT=0  ELAPSED_SEC=5.79
 | **单条用例**（中位 1.045s ÷ 168 条） | **≈ 6.2 ms** |
 | `npm run test:failmatrix` 端到端（含 npm 启动，3 次） | 5.31 / 5.72 / 5.78 s |
 | 单测包装（`node --test tests/unit/gy-i22-failmatrix.test.mjs`） | 1.86 s（其中矩阵 1.00 s） |
+| **真 CI**：GitHub Actions 的 `failmatrix` job（PR #467） | **17 s**（整 job：checkout+setup 8 s、`npm ci` 1 s、矩阵 1 s、二次判定+上传 1 s） |
 | CI 预算 | **≤ 240 s** |
 
-- 结论：**未超预算**，按端到端 5.8 s 计约占用 2.4%；按「CI 还要加 `npm ci`（本地冷缓存 12 s）」估 20～40 s 量级。
-- 诚实边界：CI 侧墙钟**本页没有实测**（本地无 runner 权限）；上表是本地读数 + `npm ci` 本地读数的合成估算。
+- 结论：**未超预算**。真 CI 整 job **17 s**，占 240 s 预算的 **7.1%**；矩阵本身的步骤只占 1 s。
+- 这一点在提交后已被真 CI 证实（不是本地估算）：
+
+```
+# PR #467 · workflow run 39731131047 · job failmatrix ⇒ pass / 17s
+Run npm ci --no-audit --no-fund
+  added 103 packages in 1s
+Run npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"
+  矩阵合计 168 条：PASS 168 / FAIL 0
+  机读结果：/home/runner/work/_temp/failmatrix/matrix.json
+机读结果必须 PASS == 总数、FAIL == 0
+  矩阵 168 条：PASS 168 / FAIL 0 · 基线 8afe42f623b7 · app.inject+trusted-seam
+
+# 产物：failmatrix-8afe42f623b77f81364de7d61a38351c88bb35c6（7240 bytes，未过期）
+```
+
+> 上面的「基线 `8afe42f623b7`」是 GitHub 给 PR 造的合成 merge 提交（我的分支 merge 进 main 后的树），说明矩阵在「合过 main 之后」也是绿的。产物名里的 SHA 同为此合成提交——这是 `${{ github.sha }}` 的固有语义，不是写错。
 - 因此**不需要** `--only=` 分批。若将来用例涨到现在的 20 倍（约 3400 条）才可能逼近预算，届时可按族拆成 `--only=C*` / `--only=D*,E*` 两个 job —— 但**任何拆法都必须整族跑全**，且总条数仍由单测里的 `MIN_CASES` 兜底，⛔ 不靠删用例换时间。
 
 ### 3.5 两处既有门禁复查
