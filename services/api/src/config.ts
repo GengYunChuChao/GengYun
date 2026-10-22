@@ -80,6 +80,43 @@ export interface AppConfig {
    * 非法键材料在这里就报 `INVALID_VALUE`（判据在 `media/object-ref-cipher.ts`，此处不重写）。
    */
   mediaObjectRefKey: string | null;
+  /**
+   * 文字问答（`/conversations` 的回答生成侧）**唯一**的真实模型配置（GY-R28 W7 / #12）。
+   *
+   * `null` = 未配置 ⇒ 装配层**不构造**真实适配器，问答沿用基线的确定性回答器（版本串仍带
+   * `unimplemented:no-real-` 前缀），行为与 main 逐字节一致。
+   *
+   * 密钥**只从进程环境读取、只存内存**：不写文件、不进日志、不进任何响应；本模块只保证
+   * 「要么整套齐备、要么 `null`」，不做任何网络探测（探测发生在真正外发的那一刻）。
+   *
+   * 问答聊天模型。四要素（endpoint / model / apiKey / 上限）**要么全配、要么全空**。
+   * 半配置一律作为配置错误（`INVALID_VALUE`/`MISSING`）在启动时报出，绝不静默退回确定性回答器
+   * ——否则「配错了」会被误读成「没有接模型」。
+   *
+   * ⚠️ 为什么是**独立字段**而不是塞进上面的 `aiProviders`（合流 main 后记录）：`aiProviders`
+   * 是 GY-R28 W1 的三域（TTS/OCR/ASR）配置，带腾讯云 TC3 专用字段与六键凭据结构；问答模型是
+   * 独立的 OpenAI 兼容端点（扁平 `apiKey`、自己的超时/重试口径）。两片在各自分支上都取名
+   * `aiProviders`，合并时同名不同义。按「保留 main 侧 W1 口径逐字不动」处理：W1 的字段与
+   * `asAiProviders` 不变，W7 的问答配置扁平成这个独立字段。
+   *
+   * 可选字段（`?`）：手工构造的精简 `AppConfig`（如健康检查等既有单测）不带它 ⇒ 视为「未配置」，
+   * 行为与接线前逐字节一致；`loadConfig()` 永远会给出该字段（可为 `null`）。
+   */
+  chatProvider?: ChatProviderConfig | null;
+}
+
+/** 问答聊天模型的已校验配置（不含任何需要回显的凭据）。 */
+export interface ChatProviderConfig {
+  /** 供应商聊天补全端点（`https://<host>/<path>`；不接受明文 http、URL 内凭据、查询串、片段）。 */
+  endpoint: string;
+  /** 模型名（1..80，无空白/控制字符；只用于请求体与版本串，不含供应商私密信息）。 */
+  model: string;
+  /** 单次外发超时（毫秒，1000..30000）。 */
+  timeoutMs: number;
+  /** 传输层重试次数（0..2；只在**未派发**的失败上重试，见适配器注释）。 */
+  maxRetries: number;
+  /** API 密钥：只存内存，绝不回显/记日志；`ChatProviderConfig` 自身不导出它到任何响应。 */
+  apiKey: string;
 }
 
 export interface ConfigIssue {
@@ -191,6 +228,145 @@ function asHttpsOrigin(value: string): string | null {
 }
 
 /**
+ * 校验聊天模型端点：只接受 `https://<host>[:port][/path]`（不带查询串/片段/URL 内凭据）。
+ *
+ * 与 `asHttpsOrigin` 的判据同源（同一套「配置读入错」防线），额外允许**非空路径**——聊天补全
+ * 端点通常带 `/chat/completions` 之类的路径；但仍拒绝查询串与片段：那两类是「调用参数混进
+ * 配置」的典型形状，会把密钥或用户数据写进配置文件。
+ */
+function asHttpsChatEndpoint(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:') return null;
+  if (parsed.username !== '' || parsed.password !== '') return null;
+  if (parsed.search !== '' || parsed.hash !== '') return null;
+  if (parsed.hostname === '') return null;
+  // 规范化：去掉默认端口与尾斜杠，避免同一端点出现两种字符串形态（幂等比较/证据可复现）。
+  const path = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.origin}${path}`;
+}
+
+/** 问答聊天模型的环境变量名（字段名即 ConfigIssue.field；密钥只在内存）。 */
+export const CHAT_PROVIDER_ENV = {
+  endpoint: 'CHAT_LLM_ENDPOINT',
+  model: 'CHAT_LLM_MODEL',
+  apiKey: 'CHAT_LLM_API_KEY',
+  /** 兼容既有取证口径：`DEEPSEEK_API_KEY` 作为 `CHAT_LLM_API_KEY` 的**同名替代**（二选一）。 */
+  apiKeyFallback: 'DEEPSEEK_API_KEY',
+  timeoutMs: 'CHAT_LLM_TIMEOUT_MS',
+  maxRetries: 'CHAT_LLM_MAX_RETRIES',
+} as const;
+
+export const CHAT_TIMEOUT_MS_RANGE = [1000, 30000] as const;
+export const CHAT_MAX_RETRIES_RANGE = [0, 2] as const;
+
+/**
+ * 解析问答聊天模型配置。
+ *
+ * 语义（fail-closed）：
+ *   - 三个必填项（endpoint / model / 密钥）**全空** ⇒ `null`（未配置，装配层不构造真实适配器）；
+ *   - 任一必填项缺失、或任一项非法 ⇒ 各记一条 issue（启动即报错，**不**静默降级）；
+ *   - 可选项（超时/重试）只在提供了值的时候校验。
+ */
+function asChatProvider(env: Env, issues: ConfigIssue[]): ChatProviderConfig | null {
+  const endpointRaw = trimmed(env, CHAT_PROVIDER_ENV.endpoint);
+  const modelRaw = trimmed(env, CHAT_PROVIDER_ENV.model);
+  const apiKeyRaw = trimmed(env, CHAT_PROVIDER_ENV.apiKey) ?? trimmed(env, CHAT_PROVIDER_ENV.apiKeyFallback);
+
+  if (endpointRaw === undefined && modelRaw === undefined && apiKeyRaw === undefined) return null;
+
+  let endpoint: string | null = null;
+  if (endpointRaw === undefined) {
+    issues.push({
+      field: CHAT_PROVIDER_ENV.endpoint,
+      code: 'MISSING',
+      reason: '配置问答聊天模型时必须同时提供端点（https://<host>[/path]）',
+    });
+  } else {
+    endpoint = asHttpsChatEndpoint(endpointRaw);
+    if (endpoint === null) {
+      issues.push({
+        field: CHAT_PROVIDER_ENV.endpoint,
+        code: 'INVALID_VALUE',
+        reason: '必须是 https://<host>[:port][/path]（不带查询串/片段/URL 内凭据）',
+      });
+    }
+  }
+
+  let model: string | null = null;
+  if (modelRaw === undefined) {
+    issues.push({
+      field: CHAT_PROVIDER_ENV.model,
+      code: 'MISSING',
+      reason: '配置问答聊天模型时必须同时提供模型名',
+    });
+  } else if (modelRaw.length > 80 || /[\s\u0000-\u001f\u007f]/.test(modelRaw)) {
+    issues.push({
+      field: CHAT_PROVIDER_ENV.model,
+      code: 'INVALID_VALUE',
+      reason: '模型名 1..80 字符，且不含空白/控制字符',
+    });
+  } else {
+    model = modelRaw;
+  }
+
+  let apiKey: string | null = null;
+  if (apiKeyRaw === undefined) {
+    issues.push({
+      field: CHAT_PROVIDER_ENV.apiKey,
+      code: 'MISSING',
+      reason: `配置问答聊天模型时必须同时提供密钥（${CHAT_PROVIDER_ENV.apiKey} 或 ${CHAT_PROVIDER_ENV.apiKeyFallback}）`,
+    });
+  } else if (apiKeyRaw.length < 8 || apiKeyRaw.length > 200 || /[\s\u0000-\u001f\u007f]/.test(apiKeyRaw)) {
+    issues.push({
+      field: CHAT_PROVIDER_ENV.apiKey,
+      // 说明里**不含**任何密钥片段（连长度以外的形态也不描述具体值）。
+      code: 'INVALID_VALUE',
+      reason: '密钥 8..200 字符，且不含空白/控制字符',
+    });
+  } else {
+    apiKey = apiKeyRaw;
+  }
+
+  let timeoutMs = 20000;
+  const timeoutRaw = trimmed(env, CHAT_PROVIDER_ENV.timeoutMs);
+  if (timeoutRaw !== undefined) {
+    const parsed = Number(timeoutRaw);
+    if (!Number.isInteger(parsed) || parsed < CHAT_TIMEOUT_MS_RANGE[0] || parsed > CHAT_TIMEOUT_MS_RANGE[1]) {
+      issues.push({
+        field: CHAT_PROVIDER_ENV.timeoutMs,
+        code: 'INVALID_VALUE',
+        reason: `必须是 ${CHAT_TIMEOUT_MS_RANGE[0]}..${CHAT_TIMEOUT_MS_RANGE[1]} 的整数（毫秒）`,
+      });
+    } else {
+      timeoutMs = parsed;
+    }
+  }
+
+  let maxRetries = 1;
+  const retriesRaw = trimmed(env, CHAT_PROVIDER_ENV.maxRetries);
+  if (retriesRaw !== undefined) {
+    const parsed = Number(retriesRaw);
+    if (!Number.isInteger(parsed) || parsed < CHAT_MAX_RETRIES_RANGE[0] || parsed > CHAT_MAX_RETRIES_RANGE[1]) {
+      issues.push({
+        field: CHAT_PROVIDER_ENV.maxRetries,
+        code: 'INVALID_VALUE',
+        reason: `必须是 ${CHAT_MAX_RETRIES_RANGE[0]}..${CHAT_MAX_RETRIES_RANGE[1]} 的整数`,
+      });
+    } else {
+      maxRetries = parsed;
+    }
+  }
+
+  if (endpoint === null || model === null || apiKey === null) return null;
+  return { endpoint, model, timeoutMs, maxRetries, apiKey };
+}
+
+/**
  * 从环境变量加载配置；不合法则抛出 ConfigError，issues 列出全部问题字段。
  */
 export function loadConfig(env: Env = process.env): AppConfig {
@@ -291,6 +467,10 @@ export function loadConfig(env: Env = process.env): AppConfig {
   // AI 真实提供者（TTS/OCR/ASR）：**只在 real 且凭据齐备**时非 null；缺省与接线前逐字节一致。
   const aiProviders = asAiProviders(env, executionMode);
 
+  // 问答真实模型（#12）：未配置 ⇒ null（装配层不构造适配器，行为与 main 逐字节一致）；
+  // 半配置/非法 ⇒ 记 issue，由下方统一抛 ConfigError（不静默降级）。
+  const chatProvider = asChatProvider(env, issues);
+
   if (executionMode === 'real') {
     for (const field of REQUIRED_WHEN_REAL) {
       const value = trimmed(env, field);
@@ -364,6 +544,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     aiProviders,
     objectStorage,
     mediaObjectRefKey,
+    chatProvider,
   };
 }
 

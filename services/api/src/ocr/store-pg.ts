@@ -101,7 +101,8 @@ export class OcrStoreConflictError extends Error {
  * 为什么要单列（R27-S10-r1 返修，CI `real-pg-17.11` 抓到的真回归）：
  * 真库集成测试会只应用**迁移子集**建库（如 `tests/integration/conversations-pg.mjs:57` 只跑
  * `0001/0002/0005/0008/0010/0012/0013`；`community-pg.mjs` 只跑 `0001/0022`；
- * `favorites-history-pg.mjs` 只跑 `0001/0018`）⇒ 那种库里**没有** `ocr_*` 三表。
+ * `favorites-history-pg.mjs` 跑 `0001/0018`，`0008`（只建 `idempotency_keys`）加不加都不含 `0024`）
+ * ⇒ 那种库里**没有** `ocr_*` 三表。
  * 首版实现把「表不存在」（`42P01`）与「数据库故障」一起折成 `PROVIDER_UNAVAILABLE`
  * 「OCR 数据库暂不可用」，于是 OCR 作业源的读路径把**无关域**的 `GET /jobs/{id}` 打成 503
  * （本该 200/404）——`conversations-pg.mjs:406` 就是这么红的。
@@ -418,13 +419,16 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     if (tables !== null) return tables;
     const state = await probeTables();
     if (state === 'unknown') {
-      // 探测都失败了：先按**既有分类**折叠原因（57014/55P03 ⇒ PROVIDER_TIMEOUT），
-      // 再对"形状读不懂"这种无原因的未知给一条明确文案 —— 两种都是 fail-closed，区别只在可诊断性。
+      // 探测抛错：先按**既有分类**折叠原因（57014/55P03 ⇒ PROVIDER_TIMEOUT，08xxx/40001 等瞬时 ⇒
+      // PROVIDER_UNAVAILABLE + `retryable:true`，42501/28P01/42883 等运维动作 ⇒ `retryable:false`）。
       if (probeFailure !== null) classifyOcrDatabaseError(probeFailure);
+      // 走到这里只剩「**应答形状读不懂**」（空行/非数组/`ready` 不是布尔）：这是确定性缺陷
+      // （驱动或查询形状不对），同一请求重试永远不会变好 ⇒ `retryable:false`（R31-S-retryable 口径），
+      // 原因分类入 `details` 供排障，⛔ 不再借「可能是抖动」把确定性失败标成可重试。
       throw new ApiError(
         'PROVIDER_UNAVAILABLE',
-        'OCR 持久化表就绪探测结果未知（连接/权限/超时）：按数据库故障 fail-closed（未知 ≠ 未迁移）',
-        { retryable: true },
+        'OCR 持久化表就绪探测结果未知（应答形状无法识别）：按数据库故障 fail-closed（未知 ≠ 未迁移）',
+        { retryable: false, details: [{ field: 'ocr_tables', code: 'PROBE_SHAPE_UNKNOWN' }] },
       );
     }
     tables = state;

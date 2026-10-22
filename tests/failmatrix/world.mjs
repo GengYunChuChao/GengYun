@@ -32,6 +32,16 @@ export const START = Date.UTC(2026, 9, 25, 4, 0, 0);
 /** 契约格式但**不存在**的 uuid：所有「同形」对照都以它为准。 */
 export const ABSENT = '00000000-0000-4000-8000-000000000000';
 export const SPECIES_ID = '00000000-0000-4000-8c00-000000000001';
+/**
+ * 转写种子专用媒体引用（固定 uuid，替身 ASR 的**可复现分桶**输入）。
+ *
+ * 为什么不是 `uploadReadyMedia` 的媒体：替身 ASR 按 `bucketOf(mediaId, 6)` 选脚本
+ * （`services/api/src/speech/provider.ts:67`：sha256(mediaId) 首字节 % 6），只有 bucket 0/1
+ * 产出可用文本、才落转写记录；上传得到的 mediaId 是随机 uuid，桶位不可控。
+ * 这个 uuid 的桶位实测 = 0（正常转写 + 2 个不确定区间）。替身媒体端口不校验归属
+ * （`services/api/src/speech/media.ts:48-59`，仅 stub/preset_demo 接线），所以播种只需合法 uuid。
+ */
+export const SPEECH_MEDIA_ID = '00000000-0000-4000-8a00-000000000001';
 export { CLEAN_BODY, CLEAN_TITLE };
 
 export function scriptedClock(startMs = START) {
@@ -254,6 +264,65 @@ export async function seedOwnerRows(world, owner) {
   });
   if (report.status !== 201) throw new Error(`播种举报失败 ${report.status}：${report.text}`);
 
+  // ── 异步 AI 域的属主行（C11 归属面要证明「他人资源确实存在」，不能拿不存在的东西当越权证据）──
+  // 识别 / OCR 用属主自己的就绪媒体；转写用 SPEECH_MEDIA_ID（替身 ASR 的可复现桶位，见常量注释）。
+  const recognitionJob = await inject(world.app, {
+    method: 'POST',
+    path: `${API}/recognitions`,
+    actor: owner,
+    body: { media_id: media.mediaId, media_revision: media.revision },
+    headers: { 'idempotency-key': 'i22-seed-recognition' },
+  });
+  if (recognitionJob.status !== 202) throw new Error(`播种识别作业失败 ${recognitionJob.status}：${recognitionJob.text}`);
+
+  const ocrJob = await inject(world.app, {
+    method: 'POST',
+    path: `${API}/ocr`,
+    actor: owner,
+    body: { media_id: media.mediaId, media_revision: media.revision },
+    headers: { 'idempotency-key': 'i22-seed-ocr' },
+  });
+  if (ocrJob.status !== 202) throw new Error(`播种 OCR 作业失败 ${ocrJob.status}：${ocrJob.text}`);
+
+  const transcriptionJob = await inject(world.app, {
+    method: 'POST',
+    path: `${API}/speech/transcriptions`,
+    actor: owner,
+    body: { media_id: SPEECH_MEDIA_ID, media_revision: 1 },
+    headers: { 'idempotency-key': 'i22-seed-transcription' },
+  });
+  if (transcriptionJob.status !== 202) throw new Error(`播种转写作业失败 ${transcriptionJob.status}：${transcriptionJob.text}`);
+
+  // 替身提供者是异步的：不 settle 就只有作业行、没有识别 / OCR / 转写记录可读。
+  for (const service of [world.app.recognitionService, world.app.ocrService, world.app.speechService]) {
+    if (typeof service?.settle === 'function') await service.settle();
+  }
+
+  const jobId = recognitionJob.body.data.id;
+  const recognitionId = recognitionJob.body.data.target_ref.id;
+  const ocrId = ocrJob.body.data.target_ref.id;
+  const transcriptionId = transcriptionJob.body.data.target_ref.id;
+
+  const conversation = await inject(world.app, {
+    method: 'POST',
+    path: `${API}/conversations`,
+    actor: owner,
+    body: {},
+    headers: { 'idempotency-key': 'i22-seed-conversation' },
+  });
+  if (conversation.status !== 201) throw new Error(`播种会话失败 ${conversation.status}：${conversation.text}`);
+  const conversationId = conversation.body.data.id;
+  const conversationRead = await inject(world.app, { method: 'GET', path: `${API}/conversations/${conversationId}`, actor: owner });
+  const conversationEtag = conversationRead.etag ?? `"${conversation.body.data.revision}"`;
+  const turn = await inject(world.app, {
+    method: 'POST',
+    path: `${API}/conversations/${conversationId}/turns`,
+    actor: owner,
+    body: { input_type: 'text', text: '属主 B 的合成提问：稻田稗草三到五叶期该用什么药？' },
+    headers: { 'idempotency-key': 'i22-seed-turn', 'if-match': conversationEtag },
+  });
+  if (turn.status !== 202) throw new Error(`播种会话轮次失败 ${turn.status}：${turn.text}`);
+
   return {
     media,
     favoriteId: favorite.body.data.id,
@@ -262,5 +331,12 @@ export async function seedOwnerRows(world, owner) {
     postId,
     commentId: comment.body.data.id,
     reportId: report.body.data.id,
+    jobId,
+    recognitionId,
+    ocrId,
+    transcriptionId,
+    conversationId,
+    conversationEtag,
+    turnId: turn.body.data.id,
   };
 }

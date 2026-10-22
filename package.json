@@ -21,6 +21,7 @@
     "test:contract": "node --test \"tests/contract/*.test.mjs\"",
     "test:reference": "node --test \"tests/reference/*.test.mjs\"",
     "test:evaluation": "node --test \"tests/evaluation/*.test.mjs\"",
+    "test:failmatrix": "node tests/failmatrix/run.mjs",
     "test:integration:http": "node tests/integration/knowledge-consumer-http.mjs && node tests/integration/miniprogram-login-loop.mjs && node tests/integration/admin-http.mjs && node tests/integration/profile-ui-http.test.mjs && node tests/integration/recognitions-http.mjs && node tests/integration/jobs-http.mjs && node tests/integration/favorites-history-isolation-http.mjs && node tests/integration/ocr-http.mjs && node tests/integration/account-deletion-http.mjs && node tests/integration/speech-http.mjs && node tests/integration/tts-http.mjs && node tests/integration/tts-content-wiring.mjs && node tests/integration/rejections-http.mjs && node tests/integration/transcript-confirm-http.mjs",
     "test:integration:recognition-chain-pg": "node tests/integration/recognition-chain-e2e.mjs",
     "test:integration:conversations-pg": "node tests/integration/conversations-pg.mjs",
