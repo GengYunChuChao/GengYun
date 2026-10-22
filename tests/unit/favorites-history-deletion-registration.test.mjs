@@ -23,8 +23,11 @@ import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
-import { USER_DATA_DELETION_MODULES } from '../../services/api/src/privacy/user-data-deletion.ts';
-import { PG_MIGRATIONS_WITH_MESSAGES, pglitePool } from './favorites-history-fixtures.mjs';
+import {
+  COMMUNITY_DELETION_MODULE,
+  USER_DATA_DELETION_MODULES,
+} from '../../services/api/src/privacy/user-data-deletion.ts';
+import { PG_MIGRATIONS_WITH_COMMUNITY, pglitePool } from './favorites-history-fixtures.mjs';
 
 const realConfig = () => ({
   ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
@@ -33,7 +36,7 @@ const realConfig = () => ({
 });
 
 test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，清空后真表为 0 且行数进证据', async (t) => {
-  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_MESSAGES);
+  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_COMMUNITY);
   const auth = createMemoryAuthStore();
   // `requests: null` 是 `app.ts` 支持的**显式关闭**口：本用例只锁"清空接线"，不锁
   // GY-I19 的持久化受理（那条链路由 `account-deletion-*.test.mjs` 覆盖）。
@@ -167,10 +170,97 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await sharedLedgerRows(mine.id), 1);
   assert.equal(await sharedLedgerRows(others.id), 1);
 
-  // 模块闭集（C1b / C1b-3 起**扩大**到含 messages 与 conversations）：既没有把 favorites/history
-  // 从闭集里摘掉，也不是"随便加了个名字"——消息域与会话域必须真的在闭集内（同一条路）。
-  assert.deepEqual(app.userDataDeletion.requiredModules(), [...USER_DATA_DELETION_MODULES]);
-  assert.deepEqual(app.userDataDeletion.requiredModules(), ['favorites', 'history', 'messages', 'conversations']);
+  // #15 社区域（R31-S6）：注销必须真清社区五张表上的**该主体**行。这里用真表 INSERT 造行
+  // （不经过内存替身），清空后按真表**行数**与**形态**核对，而不是"调用过就算"：
+  //   帖子/评论 ⇒ 软删（`visibility='deleted'` + `revision+1`，行还在：别人的回复不悬挂）；
+  //   点赞 ⇒ 物理删；举报 ⇒ 行与 `state` 保留、只清自由文本 `detail`。
+  // 每张表都给他人留 1 行：清空**不得越界**。
+  const communityIds = {
+    minePost: randomUUID(),
+    mineComment: randomUUID(),
+    mineReport: randomUUID(),
+    othersPost: randomUUID(),
+    othersComment: randomUUID(),
+    othersReport: randomUUID(),
+  };
+  const communityAt = new Date(Date.now() + 1_000).toISOString();
+  const insertCommunityPost = (id, authorId) =>
+    db.query(
+      `INSERT INTO community_posts
+         (id, author_id, revision, title, body, visibility, audit_state, created_at, updated_at)
+       VALUES ($1::uuid, $2::uuid, 1, '合成标题（不是真实内容）', '合成正文（不是真实内容）',
+               'published'::visibility, 'approved'::audit_state, $3::timestamptz, $3::timestamptz)`,
+      [id, authorId, communityAt],
+    );
+  const insertCommunityComment = (id, postId, authorId) =>
+    db.query(
+      `INSERT INTO community_comments
+         (id, post_id, author_id, revision, body, visibility, audit_state, created_at)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 1, '合成评论（不是真实内容）',
+               'published'::visibility, 'approved'::audit_state, $4::timestamptz)`,
+      [id, postId, authorId, communityAt],
+    );
+  const insertCommunityReport = (id, reporterId, targetId, detail) =>
+    db.query(
+      `INSERT INTO community_reports
+         (id, revision, reporter_id, target_type, target_id, target_revision, state, reason_code, detail, created_at)
+       VALUES ($1::uuid, 1, $2::uuid, 'post', $3::uuid, 1, 'received', 'dangerous', $4::text, $5::timestamptz)`,
+      [id, reporterId, targetId, detail, communityAt],
+    );
+  const insertCommunityLike = (userId, targetId) =>
+    db.query(
+      `INSERT INTO community_likes (user_id, target_type, target_id, created_at)
+       VALUES ($1::uuid, 'post', $2::uuid, $3::timestamptz)`,
+      [userId, targetId, communityAt],
+    );
+  await insertCommunityPost(communityIds.minePost, mine.id);
+  await insertCommunityComment(communityIds.mineComment, communityIds.minePost, mine.id);
+  await insertCommunityReport(communityIds.mineReport, mine.id, communityIds.minePost, '合成举报叙述（自由文本）');
+  await insertCommunityLike(mine.id, communityIds.othersPost);
+  await insertCommunityPost(communityIds.othersPost, others.id);
+  await insertCommunityComment(communityIds.othersComment, communityIds.othersPost, others.id);
+  await insertCommunityReport(communityIds.othersReport, others.id, communityIds.othersPost, '他人举报叙述');
+  await insertCommunityLike(others.id, communityIds.minePost);
+
+  // 社区**本域**幂等台账（`community_idempotency`，与收藏/历史同形）：本主体 2 行（1 已完成 +
+  // 1 只认领未完成）、他人 1 行；`scope` 首段是主体 uuid + 方法 + 路径。
+  const communityLedgerRows = async (subject) =>
+    (
+      await db.query(
+        `SELECT count(*)::int n FROM community_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)`,
+        [subject],
+      )
+    ).rows[0].n;
+  for (const [subject, scopePath, digit] of [
+    [mine.id, '/api/v1/community/posts', '3'],
+    [mine.id, `/api/v1/community/posts/${communityIds.minePost}/comments`, '4'],
+    [others.id, '/api/v1/community/posts', '5'],
+  ]) {
+    await db.query(
+      `INSERT INTO community_idempotency (scope, key_hash, request_hash, response_status, expires_at)
+       VALUES ($1, decode($2, 'hex'), $3, 201, now() + interval '1 hour')`,
+      [`${subject}\nPOST\n${scopePath}`, digit.repeat(64), 'e'.repeat(128)],
+    );
+  }
+  assert.equal(await communityLedgerRows(mine.id), 2);
+  assert.equal(await communityLedgerRows(others.id), 1);
+
+  // 模块闭集（C1b / C1b-3 起扩到含 messages 与 conversations；R31-S6 起再扩到 community）：
+  // 既没有把 favorites/history 从闭集里摘掉，也不是"随便加了个名字"——消息域、会话域与社区域
+  // 必须真的在闭集内（同一条路、同一 requestId、同一回执行）。社区是**装配期无条件注入**的
+  // （`app.ts:1556-1567`），所以真实注销路径的闭集就是 5 项。
+  assert.deepEqual(app.userDataDeletion.requiredModules(), [
+    ...USER_DATA_DELETION_MODULES,
+    COMMUNITY_DELETION_MODULE,
+  ]);
+  assert.deepEqual(app.userDataDeletion.requiredModules(), [
+    'favorites',
+    'history',
+    'messages',
+    'conversations',
+    'community',
+  ]);
   for (const legacy of ['favorites', 'history']) {
     assert.ok(app.userDataDeletion.requiredModules().includes(legacy), `闭集不得丢掉既有模块 ${legacy}`);
   }
@@ -196,38 +286,86 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await sharedLedgerRows(mine.id), 0, '注销清空后本主体共享幂等台账残留 0 行');
   assert.equal(await sharedLedgerRows(others.id), 1, '他人共享幂等台账不动');
 
-  // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行
-  // （本用例没造会话行，但**必须**照实出现 0 —— 缺项说明会话域没被驱动）。
+  // 社区域（R31-S6）：**本主体清零、他人行保留** —— 形态与行数一起核（不是只看"调用过"）。
+  const communityRowCount = async (table, column, ownerId) =>
+    (await db.query(`SELECT count(*)::int n FROM ${table} WHERE ${column} = $1::uuid`, [ownerId])).rows[0].n;
+  // 帖子/评论：软删（行还在、`visibility='deleted'`、`revision+1`）——硬删会把别人在下面的评论带走。
+  const minePostRow = (
+    await db.query('SELECT visibility::text v, revision FROM community_posts WHERE id = $1::uuid', [
+      communityIds.minePost,
+    ])
+  ).rows[0];
+  assert.equal(minePostRow?.v, 'deleted', '本主体帖子必须软删（visibility=deleted）');
+  assert.equal(minePostRow?.revision, 2, '软删必须推进 revision（否则读取侧 CAS 拦不住旧副本）');
+  const mineCommentRow = (
+    await db.query('SELECT visibility::text v, revision FROM community_comments WHERE id = $1::uuid', [
+      communityIds.mineComment,
+    ])
+  ).rows[0];
+  assert.equal(mineCommentRow?.v, 'deleted', '本主体评论必须软删');
+  assert.equal(mineCommentRow?.revision, 2);
+  // 点赞：物理删（集合语义、没有历史价值，留着等于保留"点过哪些帖"的痕迹）。
+  assert.equal(await communityRowCount('community_likes', 'user_id', mine.id), 0, '本主体点赞必须物理删');
+  // 举报：行与 `state` 保留（处置依据/轨迹要留痕），只清自由文本 `detail`。
+  const mineReportRow = (
+    await db.query('SELECT state, detail FROM community_reports WHERE id = $1::uuid', [communityIds.mineReport])
+  ).rows[0];
+  assert.equal(mineReportRow?.state, 'received', '举报行不得物理删：state 轨迹要留');
+  assert.equal(mineReportRow?.detail, null, '举报自由文本 detail 必须清空（该行唯一的 PII 面）');
+  // 他人：一行不动、形态不变（清空不得越界）。
+  assert.equal(await communityRowCount('community_posts', 'author_id', others.id), 1, '他人帖子不动');
+  assert.equal(
+    (await db.query('SELECT visibility::text v FROM community_posts WHERE id = $1::uuid', [communityIds.othersPost]))
+      .rows[0]?.v,
+    'published',
+    '他人帖子可见性不被注销波及',
+  );
+  assert.equal(await communityRowCount('community_comments', 'author_id', others.id), 1, '他人评论不动');
+  assert.equal(await communityRowCount('community_likes', 'user_id', others.id), 1, '他人点赞不动');
+  assert.equal(
+    (await db.query('SELECT detail FROM community_reports WHERE id = $1::uuid', [communityIds.othersReport])).rows[0]
+      ?.detail,
+    '他人举报叙述',
+    '他人举报文本不动',
+  );
+  // 社区**本域**台账：本主体 0 行、他人 1 行（前缀删不越界，且不等 `expires_at` 过期）。
+  assert.equal(await communityLedgerRows(mine.id), 0, '注销清空后本主体社区台账残留 0 行');
+  assert.equal(await communityLedgerRows(others.id), 1, '他人社区台账不动');
+
+  // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行、
+  // community 4 行（1 帖 + 1 评论 + 1 举报 + 1 点赞，软删只数真正从非 deleted 变 deleted 的行）。
+  // 会话域本用例没造行，但**必须**照实出现 0 —— 缺项说明该域没被驱动。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
-  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0 });
+  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0, community: 4 });
   assert.deepEqual(
     audit.map((entry) => entry.userId),
-    [mine.id, mine.id, mine.id, mine.id],
+    [mine.id, mine.id, mine.id, mine.id, mine.id],
     '审计只记目标主体',
   );
 
-  // 回执：四个模块的在线行都如实 `completed`，备份仍如实 `pending`（未接线不谎称完成）。
+  // 回执：五个模块的在线行都如实 `completed`，备份仍如实 `pending`（未接线不谎称完成）。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
-  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
+  for (const module of ['favorites', 'history', 'messages', 'conversations', 'community']) {
     assert.equal(byModule.get(module).online_state, 'completed');
     assert.equal(byModule.get(module).backup_state, 'pending');
     assert.equal(byModule.get(module).error_code, null);
   }
   assert.equal(app.userDataDeletion.completionStatus(requestId).completed, false);
 
-  // 证据里**看得见**两张台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
-  // 契约回执形状按 openapi 固定（不含 evidence），证据走同源的诊断视图。
+  // 证据里**看得见**台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
+  // 契约回执形状按 openapi 固定（不含 evidence），证据走同源的诊断视图；社区有独立台账表。
   const evidence = app.userDataDeletion.evidenceOf(requestId);
   assert.equal(evidence.favorites, 'favorites:online-purged:1;favorites:idempotency-purged:2');
   assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
   assert.equal(evidence.messages, 'messages:online-purged:1;messages:idempotency-purged:1');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
+  assert.equal(evidence.community, 'community:online-purged:4;community:idempotency-purged:2');
 });
 
 test('注销清空·再次清空：0 行也如实回 0（不省略、不当作失败）', async (t) => {
-  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_MESSAGES);
+  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_COMMUNITY);
   const auth = createMemoryAuthStore();
   const app = buildApp({
     config: realConfig(),
@@ -249,8 +387,8 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
   assert.deepEqual(
     removed,
-    { favorites: 0, history: 0, messages: 0, conversations: 0 },
-    '无行时四个模块都记 0（不是缺项）',
+    { favorites: 0, history: 0, messages: 0, conversations: 0, community: 0 },
+    '无行时五个模块都记 0（不是缺项）',
   );
   const receipt = app.userDataDeletion.receipt(requestId);
   for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
@@ -260,4 +398,6 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
+  // 社区：0 行也照实回 0，且台账段同样在（不是"表都没有"折叠成 blocked）。
+  assert.equal(evidence.community, 'community:online-purged:0;community:idempotency-purged:0');
 });

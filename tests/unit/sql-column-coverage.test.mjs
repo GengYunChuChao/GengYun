@@ -332,22 +332,35 @@ const OPAQUE_ALLOWLIST = [
  * 一条 `SELECT id FROM public.messages`（+1 字面量、SELECT 66→67）；
  * C1b G6/G8 再给会话域补一条 `SELECT id FROM conversations`（+1 字面量、SELECT 67→68），故
  * 字面量 141→143、SELECT 66→68、columnRequirements 1157→1186。
+ *
+ * R31-S6/S1（社区域，`18005243`）重算：社区域此前**只有**读写正文的语句，注销清理与举报状态推进
+ * 各新增了语句。逐条核对（文件::函数 —— 语句）后得到的增量，7 条一条不多一条不少：
+ *   1. `community/store-pg.ts::commitReport` —— `SELECT ${REPORT_COLUMNS} … FOR UPDATE`（+SELECT 1、+行锁 1）
+ *   2. `community/store-pg.ts::commitReport` —— `UPDATE community_reports SET revision, state`（+UPDATE 1）
+ *   3. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_posts SET visibility='deleted'`（+UPDATE 1）
+ *   4. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_comments SET visibility='deleted'`
+ *   5. `community/store-pg.ts::purgeOwnerData` —— `UPDATE community_reports SET detail=NULL`（上两条同为 +UPDATE）
+ *   6. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_likes`（+DELETE 1）
+ *   7. `community/store-pg.ts::purgeOwnerData` —— `DELETE FROM community_idempotency WHERE scope LIKE`
+ * 合计：字面量 143→150、UPDATE 21→25、SELECT 68→69、DELETE 27→29、RETURNING 56→61（3/4/5/6/7 五条
+ * 都带 RETURNING 计行数）、columnRequirements 1186→1212（这 7 条引用到的列，逐列已覆盖 0 缺）。
+ * 引用到的表数与 SELECT * 处数**不变**（新语句只碰已登记的表、没有新增 `*` 面）。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 143,
-  statements: { INSERT: 27, UPDATE: 21, SELECT: 68, DELETE: 27 },
-  returningClauses: 56,
+  sqlLiterals: 150,
+  statements: { INSERT: 27, UPDATE: 25, SELECT: 69, DELETE: 29 },
+  returningClauses: 61,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1186,
+  columnRequirements: 1212,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 28,
+  community: 35,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -401,23 +414,26 @@ const TABLE_WIDE_COLUMN = '*';
 /**
  * R28-S66 扩展读数钉死值（2026-10-21 实测，16 文件 = 8 store ＋ 8 新纳管）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
+ * R31-S6/S1：社区域 +7 条语句（逐条清单见上面 `EXPECTED_READINGS` 的注释）⇒ 字面量 230→237、
+ * UPDATE 35→39、SELECT 129→130、DELETE 30→32、RETURNING 71→76、行锁 FOR UPDATE 22→23、
+ * rowLockRequirements 22→23、columnRequirements 1502→1528（covered 1448→1474，缺口仍 0）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 17,
-  sqlLiterals: 230,
-  statements: { INSERT: 36, UPDATE: 35, SELECT: 129, DELETE: 30 },
-  returningClauses: 71,
+  sqlLiterals: 237,
+  statements: { INSERT: 36, UPDATE: 39, SELECT: 130, DELETE: 32 },
+  returningClauses: 76,
   onConflictClauses: 21,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 22, SHARE: 16 },
+  rowLocks: { UPDATE: 23, SHARE: 16 },
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 39,
-  columnRequirements: 1502,
-  coveredRequirements: 1448,
+  columnRequirements: 1528,
+  coveredRequirements: 1474,
   ledgerExemptions: 33,
-  rowLockRequirements: 22,
+  rowLockRequirements: 23,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -427,7 +443,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 28,
+  'community': 35,
   'conversations': 17,
   'favorites': 15,
   'history': 16,
