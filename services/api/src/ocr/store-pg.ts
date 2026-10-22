@@ -101,7 +101,8 @@ export class OcrStoreConflictError extends Error {
  * 为什么要单列（R27-S10-r1 返修，CI `real-pg-17.11` 抓到的真回归）：
  * 真库集成测试会只应用**迁移子集**建库（如 `tests/integration/conversations-pg.mjs:57` 只跑
  * `0001/0002/0005/0008/0010/0012/0013`；`community-pg.mjs` 只跑 `0001/0022`；
- * `favorites-history-pg.mjs` 跑 `0001/0008/0018`、仍不含 `0024`）⇒ 那种库里**没有** `ocr_*` 三表。
+ * `favorites-history-pg.mjs` 跑 `0001/0018`，`0008`（只建 `idempotency_keys`）加不加都不含 `0024`）
+ * ⇒ 那种库里**没有** `ocr_*` 三表。
  * 首版实现把「表不存在」（`42P01`）与「数据库故障」一起折成 `PROVIDER_UNAVAILABLE`
  * 「OCR 数据库暂不可用」，于是 OCR 作业源的读路径把**无关域**的 `GET /jobs/{id}` 打成 503
  * （本该 200/404）——`conversations-pg.mjs:406` 就是这么红的。

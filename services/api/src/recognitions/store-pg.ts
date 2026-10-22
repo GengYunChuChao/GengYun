@@ -113,7 +113,8 @@ export class RecognitionStoreConflictError extends Error {
  * 为什么要单列（与 `ocr/store-pg.ts` 的 `OcrTablesMissingError` 同一教训，R27-S10-r1 的 CI 真回归）：
  * 真库集成测试会只应用**迁移子集**建库（如 `tests/integration/conversations-pg.mjs` 只跑
  * `0001/0002/0005/0008/0010/0012/0013`；`community-pg.mjs` 只跑 `0001/0022`；
- * `favorites-history-pg.mjs` 跑 `0001/0008/0018`、仍不含 `0025`）⇒ 那种库里**没有** `recognition_*` 四表。
+ * `favorites-history-pg.mjs` 跑 `0001/0018`，`0008`（只建 `idempotency_keys`）加不加都不含 `0025`）
+ * ⇒ 那种库里**没有** `recognition_*` 四表。
  * 若把「表不存在」（`42P01`）与「数据库故障」一起折成 `PROVIDER_UNAVAILABLE`「识别数据库暂不可用」，
  * 识别作业源的读路径会把**无关域**的 `GET /jobs/{id}` 打成 503（本该 200/404）——
  * `conversations-pg.mjs` 就是这么红的（`#323` 的 OCR 版本）。
