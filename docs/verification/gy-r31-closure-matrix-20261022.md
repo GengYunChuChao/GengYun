@@ -14,7 +14,7 @@
 | 差一片能关 | **5 张**：#7、#12、#18、#22、#29 |
 | 差外部条件 | **15 张**：#4、#5、#6、#8、#9、#10、#11、#13、#16、#20、#21、#23、#24、#27、#28 |
 | 未就绪 | **4 张**：#14、#15、#17、#19 |
-| 过期台账文案 | **33 条已实证过期**（分 7 组）＋ **34 条 GY-I18 模板待逐条复核** |
+| 过期台账文案 | **33 条已实证过期**（分 8 组 A–H，16+5+4+4+1+1+1+1）＋ **34 条 GY-I18 模板待逐条复核** |
 | 台账读数 | 113 条：implemented 13 / partial 96 / planned 4；已装配 109；形状错误 0；语义错误 0（`node tools/verify-contract-status.mjs` exit 0） |
 | 开放 PR | 26 张（`#324 #407 #409 #419 #434(draft) #435–#448 #449–#455`）；其中 6 张是 r31 recon 页、7 张是 i22 retryable/parity 系列 |
 
@@ -46,7 +46,7 @@
 | 1 | **#4** 微信登录、游客限制与服务端归属权限 | ①微信登录可用、拒绝资料仍可用基础功能；②越权 id／直连 API／分享／会话撤销受控；③不用客户端角色或 UID 做权限；④一次性 code 服务端换身份、正式 AppID 实测 | 已实现（服务端）：`loginWechat` 为 13 条 implemented 之一；会话与 `auth_epoch` 在 `services/api/db/migrations/0016_account_deletion_persistence.sql:68` | 有（PR #303 全链、#396）；无正式 AppID 读数 | 真机读数（微信登录/拒绝资料）；用户决定（正式 AppID 开通）；代码无缺 | 差外部条件 | 已合 #303、#396 |
 | 2 | **#5** 单作物地区档案与定位/手选 | ①定位授权与拒绝路径可用、手选不依赖定位；②改档案不改写已存快照；③游客不可改他人档案；④服务端不收原始坐标 | 已实现（服务端）：`listCrops`、`listRegions` 均 implemented；档案读写 `services/api/src/profile/service.ts`（`cropItems` 见 :91/:93） | 有（PR #303、#392）；无真机定位读数 | 真机读数（授权/拒绝/手选三条路径）；代码无缺 | 差外部条件 | 已合 #303、#392 |
 | 3 | **#6** 私有媒体上传、访问权限与 EXIF 清除 | ①伪扩展名/超限/越权 URL/重复/取消按契约；②私人媒体不进公共列表与普通日志；③音频编码与服务商适配真实核实；④帖图≤3 张 5MB、录音 60s/10MB、识别按 2MB 真实性能集 | 部分：媒体域无 PG store（`services/api/src` 下无 `media/store-pg.ts`），`getMedia` 仍是「内存记录 store」；上传/完成/授权四路路由在 `services/api/src/routes/media.ts` | 过期：`docs/verification/gy-i06-media-real-provider-plan-20261021.md` 是计划页；实读支持见 `tests/media/*` | 代码（#419 媒体持久化）；真实供应商（对象存储/音频编码适配）；真机读数（≤3 张 5MB 与 2MB 性能集） | 差外部条件 | 已合 #259、#320、#382、#408；在飞 #419 |
-| 4 | **#7** 科普/除草剂查询、详情与来源版本展示 | ①任一展示记录可追溯来源、缺项不靠模型补写；②下架/失效退出有效查询且列表与详情一致；③不授 AI/用户经验专家标签、模拟记录不显示真实用量 | 已实现（服务端）：`getKnowledge`、`listHerbicides`、`getHerbicide` 三条 implemented；列表排序在 `packages/reference/query.mjs:512-513`（登记号升序） | 部分：`docs/verification/gy-r29-i07-closure-20261022.md`（314 行）四点未收口 | 契约裁定（`/herbicides` 排序口径：现为登记号升序，冻结口径是 `(created_at DESC,id DESC)`）；真 PG 读数（真实 `DATABASE_URL` 下排序，本机可跑）；数据采集（20 条 `review_status=unverified`） | 差一片能关 | 已合 #380、#388、#403、#413 |
+| 4 | **#7** 科普/除草剂查询、详情与来源版本展示 | ①任一展示记录可追溯来源、缺项不靠模型补写；②下架/失效退出有效查询且列表与详情一致；③不授 AI/用户经验专家标签、模拟记录不显示真实用量 | 已实现（服务端）：`getKnowledge`、`listHerbicides`、`getHerbicide` 三条 implemented；列表排序在 `packages/reference/query.mjs:512-513`（登记号升序） | 部分：`docs/verification/gy-r29-i07-closure-20261022.md`（314 行）四点未收口 | 契约裁定（`/herbicides` 排序现为登记号升序；契约 `state-contract.md:32` 冻结 `(created_at DESC,id DESC)`；台账 `contract-status.json:716` 又自述「当前 `id_asc`」⇒ **三口径互不一致，openapi 未钉该端点排序，须一次裁定**）；真 PG 读数（真实 `DATABASE_URL` 下排序，本机可跑）；数据采集（20 条 `review_status=unverified`） | 差一片能关 | 已合 #380、#388、#403、#413 |
 | 5 | **#8** 药剂适用过滤与标签原文用量安全边界 | ①≥100 组登记/匹配/限制场景通过；②未核对/不适用/禁用不进可执行建议或问答用量卡；③风险文字无绝对安全承诺且有开关；④需求第 6 节 100 组全过、所有消费端同一规则版本 | 已实现（规则面）：`tests/reference/_i08-scenarios.mjs` 已有 **159** 个场景 id（首 `LIM-001`、末 `MRG-040`），用例 `tests/reference/i08-scenarios-100.test.mjs`（337 行） | 有（PR #264、#391、#420） | 真实样本/数据（真实登记与标签原文，本仓只有合成夹具）；真机读数（用量卡展示） | 差外部条件 | 已合 #264、#391、#420 |
 | 6 | **#9** 实时拍草识别、Top3 核对与不确定处理 | ①实际服务调用有证据、预设仅明显标注兜底；②无可信分数不伪造高置信、候选<3 不补造；③任务归属与重试安全、不能跳过 #8；④实现时即跑第 6 节评估 | 部分：路由与 PG store 齐（`services/api/src/routes/recognitions.ts`、`services/api/src/app.ts:962`、迁移 `0025_recognitions_persistence.sql`）；real 模式媒体端口未注入 | 有（`tests/integration/recognitions-pg.mjs`、`real-pg-integration.yml:163`）；过期：识别域台账仍写「内存任务」 | 真实供应商（拍草识别真调 + 真实图片样本）；真机读数（拍照链路）；代码（媒体端口注入） | 差外部条件 | 已合 #299、#304、#333、#404、#412 |
 | 7 | **#10** 实时标签 OCR、用户校正与登记精确核对 | ①模糊字段有核对入口、同名不同制剂不静默匹配；②校正前保留原始结果、手改不计 OCR 准确率；③冲突阻断用量卡、失败/超时不伪造成功 | 部分：路由齐（`services/api/src/routes/ocr.ts`，store 三态选型在 `:196`），PG store `services/api/src/ocr/store-pg.ts` + 迁移 `0024_ocr_persistence.sql`；`BuildAppOptions`（`services/api/src/app.ts:321-342`）无任何 `ocr*` 字段 ⇒ 媒体端口无法注入 | 有（`tests/integration/ocr-jobs-pg.mjs`、`ocr-corrections-pg.mjs`、`real-pg-integration.yml:149`） | 代码（OCR 媒体端口注入一行）；真实供应商（标签 OCR 真调）；真实样本（真实农药标签图）；真机读数 | 差外部条件 | 已合 #269、#270、#323、#331、#404、#424 |
@@ -80,7 +80,7 @@
 
 ## 4 过期台账文案清单（只列不改）
 
-**范围**：`docs/architecture/contract-status.json` 的 `blocker` 字段。判据是「实读 `services/api/src/**` 与迁移文件后与事实不符」。本机实测 113 条 operation 中，`partial` 96 条里有 **33 条已实证过期**，另有 **34 条 GY-I18 模板**待逐条复核（其中至少 `listFlags`/`setFlag`/`listAuditEvents`/`listFlagAuditEvents`/`listAdminUsers` 五条的「真实存储未交付」已被 0020/0021/0027 与三个后台视图证伪）。
+**范围**：`docs/architecture/contract-status.json` 的 `blocker` 字段。判据是「实读 `services/api/src/**` 与迁移文件后与事实不符」。本机实测 113 条 operation 中 **33 条已实证过期**（其中 **32 条属 `partial`、1 条属 `planned`**——`listExports`；不是「partial 96 条里的 33 条」），另有 **34 条 GY-I18 模板**待逐条复核（其中至少 `listFlags`/`setFlag`/`listAuditEvents`/`listFlagAuditEvents`/`listAdminUsers` 五条的「真实存储未交付」已被 0020/0021/0027 与三个后台视图证伪）。
 
 **组 A：社区 16 条（最严重）** —— `listPosts` `createPost` `getPost` `editPost` `deletePost` `listComments` `createComment` `getComment` `editComment` `deleteComment` `likePosts` `unlikePosts` `likeComments` `unlikeComments` `createReport` `getOwnReport`
 - 原文摘要：「**未取得**：真实持久存储未交付（real 模式整域 503 `PROVIDER_UNAVAILABLE`）…」
@@ -124,9 +124,9 @@
 
 | 外部条件 | 覆盖 issue | 说明 |
 | --- | --- | --- |
-| Android/iOS 真机读数 | #4 #5 #6 #9 #10 #11 #13 #16 #23 #28 #29 | `docs/verification` 下**零个**真机页；卡在设备与微信账号 |
+| Android/iOS 真机读数 | #4 #5 #6 #9 #10 #11 #13 #16 #22 #23 #28 #29 | `docs/verification` 下**零个**真机页；卡在设备与微信账号 |
 | 正式 AppID / 真机域名 / 备案 | #4 #27 #24 #28 | #27 的页面自述「本页不构成 #27 关闭」 |
-| 真实供应商产品级接线 | #9 #10 #11 #13 #14 #21 | 现只有一次 ¥0.7146 的最小真调样例；tms/ims 仍是零外呼 |
+| 真实供应商产品级接线 | #6 #9 #10 #11 #13 #14 #21 #24 | 现只有一次 ¥0.7146 的最小真调样例；tms/ims 仍是零外呼 |
 | 真实样本（6 域） | #8 #9 #10 #20 #21 | 只有拍草域 172 条真实样本冻结 |
 | 真实时间流逝（30 日）与第三方书面确认 | #19 | 备份 30 日清除已落地，但没有 30 天真实流逝与第三方删除确认 |
 | 用户/监工裁定 | #7（排序口径）、#20（冻结清单）、#21（门槛定稿）、#27（是否继续付费） | 纯决定，无工程量 |
