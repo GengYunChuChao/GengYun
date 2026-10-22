@@ -163,12 +163,22 @@
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `createRecognition` POST /recognitions | ● `recognitions-api.test.mjs:114` | ● `miniprogram-identify.test.mjs:1400,1401`（`CONSENT_REQUIRED` 403，客户端侧断言） | ○ | ● `recognitions-api.test.mjs:156`、`:394`（`[202,409]` 并发）、`recognitions-http.mjs:188` | ● `recognitions-api.test.mjs:686`；`recognitions-candidates-selection.test.mjs:693` | ● `recognitions-api.test.mjs:298-305`（`state=timed_out` + `PROVIDER_TIMEOUT`） | ● `recognitions-api.test.mjs:124,130,133,146` | ○ |
-| `getRecognition` GET /recognitions/:id | ● `recognitions-api.test.mjs:115` | ○ | ● `recognitions-api.test.mjs:293`；`recognitions-http.mjs:120`（他人）、`:143`（已删）；`recognition-chain-e2e.mjs:452` | — | ○ | ●（同域 `GET /jobs/{id}`：`recognitions-api.test.mjs:116` 401 有断言） | ○ | ● `recognitions-api.test.mjs:592,597,650` |
+| `getRecognition` GET /recognitions/:id | ● `recognitions-api.test.mjs:115` | ○ | ● `recognitions-api.test.mjs:293`；`recognitions-http.mjs:120`（他人）、`:143`（已删）；`recognition-chain-e2e.mjs:452` | — | ○ | ○ 未取得（原引 `recognitions-api.test.mjs:116` 实为 `GET /jobs/{id}` 的 401，非本 operation、非超时；见下注） | ○ | ○ 未取得（原引 `:592,597,650` 实为 PATCH selection 的 400 ×2 与非 UUID 的 400\|404 二择，均不证明 GET 识别 429；见下注） |
 | `deleteRecognition` DELETE /recognitions/:id | ○ | ○ | ● `recognition-chain-e2e.mjs:459`（他人历史不可删） | ● `recognitions-http.mjs:224`（取消终态 409） | ○ | ○ | ○ | ○ |
 | `selectSpecies` PATCH /recognitions/:id/selection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 注：**该域 4 行全部不在 failmatrix 表内**（`cases.mjs` / `seams.mjs` 无 `recognitions` 字样）；证据全在 `tests/unit/recognitions-api.test.mjs` 与 `tests/integration/recognitions-http.mjs`（后者在 `test:integration:http` 名单内）。
 `selectSpecies` 是**整行 8 列零断言**的两个 operation 之一（另一个是 `verifyRegistration`，其因由是未装配）。
+
+**P2 订正（2026-10-22，监工批复 `supervisor-1022-0541-pr438`）：第 166 行 429 / 超时两格原引文实读**
+
+1. `recognitions-api.test.mjs:592`：`PATCH /api/v1/recognitions/{id}/selection` 带 `if-match: 1`（缺引号）⇒ **400** `INVALID_REQUEST`（`:589-593`）——属 `selectSpecies` 行的 400 列，不是 `getRecognition` 的 429。
+2. `:597`：同 `PATCH` 路由，body 多带 `rank` ⇒ **400** `INVALID_REQUEST`（`:594-598`）——同上。
+3. `:650`：`GET /api/v1/recognitions/not-a-uuid` ⇒ `assert.ok([400,404].includes(...))`，即 **400 或 404 二择**（`:648-650`）——既非确定 400，更不是 429。
+4. `:116`：未带 token 的 `GET /api/v1/jobs/{id}` ⇒ **401**（`:113-117`；`:114`＝POST /recognitions 401、`:115`＝GET /recognitions 401）——属 `/jobs` 域的 401，与本行「超时」无关。
+5. 本域两文件（`tests/unit/recognitions-api.test.mjs`、`tests/integration/recognitions-http.mjs`）grep `429` 与 `RATE_LIMIT` **均零命中** ⇒ 429 在本格无断言。
+
+⇒ 两格均改记 **○ 未取得**；未补测试、未改其他行。`:592` / `:597` **未**搬入 `selectSpecies` 行（该行 400 列仍为 ○），事实如实登记在此。
 
 ### 2.7 ocr（5 个 operation）
 
@@ -441,3 +451,7 @@ Node.js v24.16.0
 
 复现方式（需要装依赖的环境，由主检出或 CI 执行，本任务不装）：
 `pnpm install` 后 `node --test tests/unit/gy-i22-failmatrix.test.mjs`（该文件本身会 `spawnSync` 真跑 `tests/failmatrix/run.mjs`，见 `tests/unit/gy-i22-failmatrix.test.mjs:34-49`）。
+
+---
+
+**2026-10-22 订正记录**：按监工 P2 批复（`supervisor-1022-0541-pr438`），本次只订正了第 166 行（`getRecognition`）的 **429** 与**超时**两格（两格 ● → ○ 未取得，原引文实读见 §2.6 订正注）；未补齐全矩阵测试、未新增未证事实、未改动其他行。
