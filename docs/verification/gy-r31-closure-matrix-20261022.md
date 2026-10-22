@@ -1,10 +1,11 @@
 # R31 关单就绪度矩阵（全部 24 张开放 issue）
 
 - 采样时间：2026-10-22（UTC+8）
-- 分支：`docs/gy-r31-closure-matrix`｜基线：`origin/main = d4d48088`
+- 分支：`docs/gy-r31-closure-matrix`｜基线：`origin/main = d4d48088`｜**2026-10-22 监工 P2 订正时的复核基线：`origin/main = e3c3af05`**（本页已 `git merge --no-ff` 该提交；#16 行锚点与第 0 节计数按该基线核对）
 - 数据来源（全部实读，未凭记忆）：`gh issue list --state open --limit 100`（24 张）、`gh pr list --state all --limit 200`（26 张 OPEN / 174 张已合或已关）、`docs/architecture/contract-status.json`（113 条 operation / 8 条维度）、`packages/contracts/openapi.json`（86 paths / 113 operation）、`docs/verification/**`（212 个文件）、`E:\GengYunCommander\.pg17\STATE-current.md` 的 R31 段、`services/api/src/**` 实读。
 - **本页只做侦察，不关单、不改台账、不动 issue 状态**。本页任何「可关」字样都是就绪度判断，不是关闭依据。
 - **修订记录（2026-10-22）**：按监工批复 `supervisor-1022-0541-pr458-fbfda76b`（P2）统一档位 —— `#12`、`#18` 从 `差一片能关` 移入 `差外部条件`（逐条缺项见 §3.1），四档与代码缺口计数按逐行表重算（§0、§6.1），并删除旧汇总里「缺代码只有 4 项」的表述。本片未补跑付费/真机，未提任何关单或派单建议。
+- **2026-10-22 监工 P2 订正（`supervisor-1022-0932-pr458`）**：#16 行原把「识别/OCR → 历史写入」写成已发生并记「代码无缺」，与装配不符 —— `services/api/src/app.ts` 的 `recognitionTerminalHistory`／`ocrTerminalHistory` 在 `executionMode === 'real'` 取 `createUnwiredRecognitionTerminalHistoryPort`／`createUnwiredOcrTerminalHistoryPort`（端口 `kind:'unwired'`、`recordTerminal()` 空实现），**生产终态不 `appendHistory`**；真库臂直调 `app.historyService.appendHistory` 不覆盖该链路（判据同 #480 关闭材料 §1.2/F10；该 PR 目前仍 **OPEN**、文件不在 main，本页按 `origin/docs/gy-r31-i16-closeout@9e482547` 实读）。⇒ `#16` 由「代码无缺」移入「缺代码」，代码缺口清单 **14/10 → 15/9**，四档 **0 + 3 + 17 + 4 = 24** 不变；同一事实在 §4 组 B 的一处括注里被写成「已被推翻」⇒ 仅把该括注收紧为「非 `real` 分支」并校准该句两个 `app.ts` 锚点。本片未重做 24 项矩阵、未补付费/真机证据、未改其它行。
 
 ## 0 结论速览
 
@@ -16,13 +17,13 @@
 | 差外部条件 | **17 张**：#4、#5、#6、#8、#9、#10、#11、#12、#13、#16、#18、#20、#21、#23、#24、#27、#28 |
 | 未就绪 | **4 张**：#14、#15、#17、#19 |
 | **四档合计** | **0 + 3 + 17 + 4 = 24**（与第 2 节逐行表的 24 行逐张一致） |
-| 缺代码的 issue | **14 张**：#6、#9、#10、#11、#12、#13、#14、#15、#17、#18、#19、#22、#28、#29（含「一片在飞 PR 的代码」） |
-| 代码无缺的 issue | **10 张**：#4、#5、#7、#8、#16、#20、#21、#23、#24、#27（14 + 10 = 24） |
+| 缺代码的 issue | **15 张**：#6、#9、#10、#11、#12、#13、#14、#15、#16、#17、#18、#19、#22、#28、#29（含「一片在飞 PR 的代码」；其中 #16 为 2026-10-22 监工 P2 订正后移入，缺项＝real 模式识别/OCR 终态历史端口接线） |
+| 代码无缺的 issue | **9 张**：#4、#5、#7、#8、#20、#21、#23、#24、#27（15 + 9 = 24） |
 | 过期台账文案 | **33 条已实证过期**（分 8 组 A–H，16+5+4+4+1+1+1+1）＋ **34 条 GY-I18 模板待逐条复核** |
 | 台账读数 | 113 条：implemented 13 / partial 96 / planned 4；已装配 109；形状错误 0；语义错误 0（`node tools/verify-contract-status.mjs` exit 0） |
 | 开放 PR | 26 张（`#324 #407 #409 #419 #434(draft) #435–#448 #449–#455`）；其中 6 张是 r31 recon 页、7 张是 i22 retryable/parity 系列 |
 
-**一句话盘面**：24 张卡没有一张是「文档没写」或「证据没留」；卡住它们的只有三类东西 —— ①真机/微信端读数（全仓无一张 Android/iOS 真机证据页）；②真实供应商（腾讯云 tms/ims/ASR/TTS/OCR 与 DeepSeek 的产品级接线，只有一次 ¥0.7146 的最小真调样例）；③用户/监工的一次裁定或预算/凭据。**代码缺口不是只有 4 张**：按逐行表实算，缺代码的有 14 张、代码无缺的 10 张（见上表两行）；而且**代码齐了也不等于能关单** —— #12 的「实时模型调用有证据」「固定 120 题按需求验收」、#18 的「全局开关真实生效」都要仓库外读数，所以这两张即使 #409／#439 合入也仍在 `差外部条件`。
+**一句话盘面**：24 张卡没有一张是「文档没写」或「证据没留」；卡住它们的只有三类东西 —— ①真机/微信端读数（全仓无一张 Android/iOS 真机证据页）；②真实供应商（腾讯云 tms/ims/ASR/TTS/OCR 与 DeepSeek 的产品级接线，只有一次 ¥0.7146 的最小真调样例）；③用户/监工的一次裁定或预算/凭据。**代码缺口不是只有 4 张**：按逐行表实算，缺代码的有 15 张、代码无缺的 9 张（见上表两行）；而且**代码齐了也不等于能关单** —— #12 的「实时模型调用有证据」「固定 120 题按需求验收」、#18 的「全局开关真实生效」都要仓库外读数，所以这两张即使 #409／#439 合入也仍在 `差外部条件`。
 
 ## 1 读表方法
 
@@ -61,7 +62,7 @@
 | 10 | **#13** 普通话 TTS、播放球与安全文本自动播报 | ①≥30 段实际普通话风险/数字单位播报准确；②静音/蓝牙/拒权/自动播放受阻有主动按钮与文字、不假记已听；③控制不遮挡提交或风险信息 | 部分：合成域路由齐；产物存储 real 模式 **未接线** —— `services/api/src/tts/media.ts:141-142` real ⇒ `createUnwiredMediaPort()`，`:124-129` put 一律 `OBJECT_UNAVAILABLE`；替身端口也拒真实产物（`:82-84`） | 有（`gy-r28-w3-tts-content-20261021.md`、`tests/integration/speech-pg.mjs`） | 代码（真实产物存储接线）；真实供应商（TTS 真调 30 段）；真机读数（静音/蓝牙/拒权） | 差外部条件 | 已合 #301、#322、#394、#404、#410 |
 | 11 | **#14** 文字/图片 AI 筛查、版本重审与失败隔离 | ①旧版本审核不套新版本、超时/结构错误不发布；②AI 不授权限/改来源/标专家已审；③筛查与发布分开、下架事件驱动缓存失效 | 部分：四层全 fail-closed（`services/api/src/moderation/provider.ts:109-113`、`community/service.ts:642-681`／`:751-824`／`:864-877`）；**图片审核无产品路径**（带 media 帖被 `community/service.ts:874-877` 拒）；**审核台账仍是内存 `Map`**（`services/api/src/moderation/decisions.ts:350-354`）；**人工复核入口未接线**（`services/api/src/admin/human-review.ts:39-88` `wired:false` ＋零路由） | 有（`docs/verification/gy-r31-i14-recon-20261022.md`，在飞 #443）；台账 0028 在飞 #434(draft) | 代码（图片审核产品路径、台账落库、人工复核入口）；真实供应商（tms/ims 真调，现零外呼）；真实样本 | 未就绪 | 已合 #305、#310、#401、#429；在飞 #434、#443 |
 | 12 | **#15** 真实社区发帖、评论、点赞、筛选与举报 | ①普通用户可投稿评论且经真实审核（非空态假帖）；②编辑重审/下架后列表详情一致、广告导流不发布；③游客/越权/重复点赞与评论引用隐藏版本检查通过；④读取时重查对象权限 | 部分（**已不是内存仓储**）：`services/api/src/app.ts:790` 按 pool 选 PG store，`services/api/src/community/store-pg.ts:469` `persistent:true`，迁移 `0022_community_persistence.sql` | 有（`gy-r29-i15-community-filter-20261022.md` 197 行、`gy-r31-i15-recon` 在飞 #444、`tests/integration/community-pg.mjs`） | 代码 8 条：S1 举报状态机缺 / S2 真实审核未接 / S3 带媒体帖 fail-closed 不可发布 / S4 资料关联未接线 / S5 筛选未下推 SQL（`store-pg.ts:515-521` 无 WHERE ⇒ Seq Scan）/ S6 注销不清社区行 / S7 点赞无读取面 / S8 越权负控制缺 2 处 | 未就绪 | 已合 #296、#401、#406、#433；在飞 #435、#444 |
-| 13 | **#16** 收藏与可浏览的识别历史 | ①他人不能读私有历史、旧收藏不恢复失效资格；②候选与人工选择分开、失败任务真实可见；③识别/收藏不转成已使用事实；④读取时重查权限 | 已实现（服务端）：迁移 `0018_favorites_history.sql`；`services/api/src/app.ts:1340` `createPostgresFavoritesStore`、`:1345` `createPostgresHistoryStore`；终态写入 `recordHistoryTerminal`→`appendHistory`（`event_key` = `kind:job_id`） | 有（`tests/unit/history-http.test.mjs` 四条、`tests/integration/favorites-history-pg.mjs` 13 组、`real-pg-integration.yml:99`）；台账仍写「内存存储」（过期） | 真机读数（收藏/历史三页走查）；台账订正（5 条 blocker）；代码无缺（`deleteHistory` 级联端口未接线属 #19） | 差外部条件 | 已合 #272、#298、#319、#390、#393、#405、#430、#431 |
+| 13 | **#16** 收藏与可浏览的识别历史 | ①他人不能读私有历史、旧收藏不恢复失效资格；②候选与人工选择分开、失败任务真实可见；③识别/收藏不转成已使用事实；④读取时重查权限 | 部分：收藏/读面已实现 —— 迁移 `0018_favorites_history.sql`，`services/api/src/app.ts:1349` `createPostgresFavoritesStore`、`:1354` `createPostgresHistoryStore`；**但「识别/OCR → 历史写入」在 `executionMode === 'real'` 取 `createUnwiredRecognitionTerminalHistoryPort`／`createUnwiredOcrTerminalHistoryPort`**（`:947`／`:949`、`:955`／`:957`；端口 `kind:'unwired'`、`recordTerminal()` 空实现）⇒ 生产终态**不** `appendHistory`，只有非 real 分支才走 `recordHistoryTerminal`→`:945` `appendHistory`（`event_key` = `kind:job_id`） | 有（`tests/unit/history-http.test.mjs` 四条、`tests/integration/favorites-history-pg.mjs` 13 组、`real-pg-integration.yml:153`）；**该真库臂里 `appendHistory` 那条是直调 `app.historyService.appendHistory`（脚本 `:562`），不覆盖 `recordTerminal`→`appendHistory` 这条生产链路**；台账仍写「内存存储」（存储口径过期） | 真机读数（收藏/历史三页走查）；台账订正（5 条 blocker：存储口径已过期，但「识别/OCR→历史写入属跨线」半句在 real 下仍真）；**代码（real 模式识别/OCR 终态历史端口接线，一片）**；`deleteHistory` 级联端口属 #19，不在本行计 | 差外部条件 | 已合 #272、#298、#319、#390、#393、#405、#430、#431 |
 | 14 | **#17** 应用内消息、未读状态与权限跳转 | ①重复调度不重复创建、未读计数可复核；②发送或创建不当事已读、游客与他人不可读；③不接微信外部推送、不虚构真人互动；④读取时重查权限 | 部分：服务端 4/4 齐（列表 `services/api/src/routes/messages.ts:43`、未读 `count(*)` 派生、标读 CAS `services/api/src/messages/store-pg.ts:300`、事件 4 源真投递）；**跳转客户端整体未落地**（`miniprogram/pages/messages/messages.wxml:83-99` 纯 `<view>`、`messages.js:28-31` 自陈无入口） | 有（`docs/verification/gy-r31-i17-recon-20261022.md` 241 行，16 文件/174 例/0 失败）；在飞 #448、#452 | 代码（跳转只做 post/comment 两型 → 其余 14 型降级实现）；代码（未读数失败无重试：`messages.js:195`＋`wxml:27` pill 无 `bindtap`） | 未就绪 | 已合 #278、#399、#405、#422、#425；在飞 #445、#448、#452 |
 | 15 | **#18** 独立后台资料、账号、AI 任务与功能开关 | ①普通账号不能管理或绕过硬规则、变更来源会重校验并失效引用；②全局开关真实生效、下架缓存与详情同步；③不把基础账号管理说成人审已完成 | 部分：admin 路由 34 条已装配（`services/api/src/routes/admin.ts`），开关 PG `0020_feature_flags.sql`、账号读面 `0021_admin_accounts_read.sql`、审计 `0027_admin_audit_observability.sql`，UI 已有 `FlagsView.vue`／`AuditEventsView.vue`；**作业台页面缺** | 有（`tests/integration/admin-*.mjs` 四臂、`gy-r31-i18-recon` 在飞 #446） | 代码（#439 作业台页面，一片 UI）；真 PG 读数（后台四域联调 —— 验收①「变更来源会重新校验和失效相关引用」、②「全局开关真实生效，下架缓存和详情同步」）；真机读数（浏览器/真机后台走查 —— 提交证据节「独立后台权限、配置开关和审计记录」；本表「证据现状」列无此读数） | 差外部条件 | 已合 #279、#282、#311、#383、#384、#387、#428；在飞 #439、#446 |
 | 16 | **#19** 注销去身份、在线 7 日备份 30 日删除与恢复验收 | ①任务覆盖账号/音频转写问答/识别/媒体/收藏消息/缓存导出等实际对象；②未获第三方确认不标完成；③不同注销作者不混同主键、无身份反查 | 部分：受理已落库（`services/api/src/app.ts:1462-1465` `createPostgresDeletionRequestStore`）；**real 模式整域不接线是刻意门**（`services/api/src/app.ts:1558-1565` 注释、`:1567-1571` `available: executionMode !== 'real'`） | 有（`gy-r29-i19-closure-20261022.md` 172 行）；过期/未取得 10 条 | 代码（在线 7 日执行器 #407、撤角色、`withdrawConsent` 409 依赖臂）；外部（真实备份介质、30 天真实时间流逝、第三方删除书面确认、恢复演练） | 未就绪 | 已合 #291、#295、#338、#397、#398、#400、#414、#416、#421；在飞 #407 |
@@ -101,7 +102,7 @@
 
 **组 B：收藏/历史 5 条**
 - `listFavorites`、`createFavorite`、`deleteFavorite`、`listHistory`、`deleteHistory` —— 原文摘要：「GY-I16 本片只交付**内存存储**（进程重启即丢，无数据库迁移）⇒ real 模式整域 503」
-- 现况：`0018_favorites_history.sql` 建四表，`services/api/src/app.ts:1340`/`:1345` 接 PG store；`listHistory` 那句「识别/OCR → 历史的写入接线属跨线…待指挥另行派单」也已被 `recordHistoryTerminal`→`appendHistory` 推翻（`tests/unit/history-http.test.mjs` 四条）。**这 5 条在 `docs/verification/gy-r29-i16-ledger-closeout.md` 里已有现成处方，只是从未执行**。
+- 现况：`0018_favorites_history.sql` 建四表，`services/api/src/app.ts:1349`/`:1354` 接 PG store；`listHistory` 那句「识别/OCR → 历史的写入接线属跨线…待指挥另行派单」只在**非 `real`** 分支被推翻（`recordHistoryTerminal`→`appendHistory`，`tests/unit/history-http.test.mjs` 四条）；**`real` 下该半句仍真**（端口取 `createUnwired*TerminalHistoryPort`，见第 0 节订正记录与第 2 节 #16 行），过期的只是「内存存储 / real 整域 503」这半句。**这 5 条在 `docs/verification/gy-r29-i16-ledger-closeout.md` 里已有现成处方，只是从未执行**。
 
 **组 C：识别 4 条** —— `createRecognition` `getRecognition` `deleteRecognition` `selectSpecies`
 - 原文摘要：「HTTP 与**内存任务**/结果/选种/删除闭环已装配…」
@@ -174,7 +175,7 @@ python tools/validate_development_docs.py      # 单独跑一次（＝ CI develo
   EXIT=0
 ```
 
-### 6.1 第 2 节逐行表复算（四档相加 = 24，缺代码 / 代码无缺 = 14 / 10）
+### 6.1 第 2 节逐行表复算（四档相加 = 24，缺代码 / 代码无缺 = 15 / 9）
 
 第 0 节的四档与两张代码缺口清单都从第 2 节 24 行实算得出，复核命令如下（bash/awk；`$7`=缺什么、`$8`=可关性）：
 
@@ -190,7 +191,7 @@ grep -cE '真正还缺代码的只[有]|真正缺代码只[有]' "$F"          #
 未就绪=4
 差外部条件=17
 差一片能关=3
-四档相加=24 缺代码=14 代码无缺=10 缺+无缺=24
+四档相加=24 缺代码=15 代码无缺=9 缺+无缺=24
 0
 ```
 
