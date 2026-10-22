@@ -25,8 +25,11 @@
  *   §1 CLI 用法与退出码约定（0 / 1 / 2）；
  *   §2 真仓库正臂（并核对两条 timer 的**实算**间隔）；
  *   §3 夹具对照组（一字不改 ⇒ 绿）；
- *   §4 负控制（8 条：缺 OnCalendar / 间隔 > 60 / 相对游标 / 内联 DSN / ExecStart 不存在 /
- *      注入 setInterval( / npm script 不存在 / 删掉整条备份单元）；
+ *   §4 负控制（**10 个用例 / 14 条控制臂** —— 用例数与基线相同，臂数 +4：缺 OnCalendar / 间隔 > 60 /
+ *      `--cursor-file` 相对路径 / `--cursor-file` 用 `..` 穿越出状态目录 / 内联 DSN / 非常见键名的
+ *      内联口令键（`Environment=DB_PASS=…`）/ ExecStart 不存在 / 注入 `setInterval(` /
+ *      `globalThis.setInterval(` / 带空白的 `setInterval (` / npm script 不存在 / 删掉整条备份单元 /
+ *      `User=root` / 调度目录整块消失）；
  *   §5 纯函数：日历展开、时长解析、入口解析、游标参数、部署根后缀映射。
  */
 import { test, after } from 'node:test';
@@ -271,26 +274,54 @@ test('负控制②：OnCalendar 每天一次（间隔 > 60 分钟）⇒ FAIL[cal
   assert.match(stdout, /最大间隔 1440 分钟 > 60 分钟/);
 });
 
-test('负控制③：--cursor-file 改成相对路径 ⇒ FAIL[cursor] 点名 service', () => {
-  const dir = makeFixture();
-  mutate(dir, ONLINE_SERVICE, (text) => text.replace(
+test('负控制③：--cursor-file 相对路径 / `..` 穿越 ⇒ FAIL[cursor] 点名 service（控制臂 2）', () => {
+  // 臂 1：相对路径（缺省游标会随 cwd 漂移）。
+  const relativeDir = makeFixture();
+  mutate(relativeDir, ONLINE_SERVICE, (text) => text.replace(
     /--cursor-file=\/var\/lib\/[^\s]+/,
     '--cursor-file=./online-purge-cursor.json',
   ));
-  const { status, stdout } = runCli(['--root', dir]);
-  assert.equal(status, 1, stdout);
-  assert.ok(failureIds(stdout).includes('cursor'), `应点名 cursor，实际：${failureIds(stdout)}\n${stdout}`);
-  assert.match(stdout, /gengyun-purge-online-data\.service/);
-  assert.match(stdout, /不是绝对路径/);
+  const relativeRun = runCli(['--root', relativeDir]);
+  assert.equal(relativeRun.status, 1, relativeRun.stdout);
+  assert.ok(failureIds(relativeRun.stdout).includes('cursor'),
+    `应点名 cursor，实际：${failureIds(relativeRun.stdout)}\n${relativeRun.stdout}`);
+  assert.match(relativeRun.stdout, /gengyun-purge-online-data\.service/);
+  assert.match(relativeRun.stdout, /不是绝对路径/);
+
+  // 臂 2：绝对路径但用 `..` 逃出 StateDirectory（字符串前缀比对会放过，归一化后才判红）。
+  const traversalDir = makeFixture();
+  mutate(traversalDir, ONLINE_SERVICE, (text) => text.replace(
+    /--cursor-file=\/var\/lib\/[^\s]+/,
+    '--cursor-file=/var/lib/gengyun-purge-online-data/../../etc/passwd',
+  ));
+  const traversalRun = runCli(['--root', traversalDir]);
+  assert.equal(traversalRun.status, 1, traversalRun.stdout);
+  assert.ok(failureIds(traversalRun.stdout).includes('cursor'),
+    `穿越写法必须点名 cursor，实际：${failureIds(traversalRun.stdout)}\n${traversalRun.stdout}`);
+  assert.match(traversalRun.stdout, /归一化后不在/);
+  assert.match(traversalRun.stdout, /· 归一化：\/var\/etc\/passwd/);
 });
 
-test('负控制④：单元里内联 DSN ⇒ FAIL[secrets] 点名 service', () => {
-  const dir = makeFixture();
-  mutate(dir, ONLINE_SERVICE, (text) => `${text}\nEnvironment=DATABASE_URL=postgres://ci:synthetic@127.0.0.1:5432/gengyun\n`);
-  const { status, stdout } = runCli(['--root', dir]);
-  assert.equal(status, 1, stdout);
-  assert.ok(failureIds(stdout).includes('secrets'), `应点名 secrets，实际：${failureIds(stdout)}\n${stdout}`);
-  assert.match(stdout, /gengyun-purge-online-data\.service/);
+test('负控制④：内联 DSN / 非常见键名口令 ⇒ FAIL[secrets] 点名 service（控制臂 2）', () => {
+  // 臂 1：常见键名 + 连接串（基线已有的形状）。
+  const dsnDir = makeFixture();
+  mutate(dsnDir, ONLINE_SERVICE, (text) => `${text}\nEnvironment=DATABASE_URL=postgres://ci:synthetic@127.0.0.1:5432/gengyun\n`);
+  const dsnRun = runCli(['--root', dsnDir]);
+  assert.equal(dsnRun.status, 1, dsnRun.stdout);
+  assert.ok(failureIds(dsnRun.stdout).includes('secrets'),
+    `应点名 secrets，实际：${failureIds(dsnRun.stdout)}\n${dsnRun.stdout}`);
+  assert.match(dsnRun.stdout, /gengyun-purge-online-data\.service/);
+
+  // 臂 2：**非** DATABASE_URL 命名的内联口令（`Environment=DB_PASS=…`）。
+  const passDir = makeFixture();
+  // 值里刻意**不含**口令类词根：这样命中只能来自键名 `DB_PASS`（否则「值里恰好有个 secret」也能让断言变绿）。
+  mutate(passDir, ONLINE_SERVICE, (text) => `${text}\nEnvironment=DB_PASS=synthetic-for-test\n`);
+  const passRun = runCli(['--root', passDir]);
+  assert.equal(passRun.status, 1, passRun.stdout);
+  assert.ok(failureIds(passRun.stdout).includes('secrets'),
+    `非常见键名也必须点名 secrets，实际：${failureIds(passRun.stdout)}\n${passRun.stdout}`);
+  assert.match(passRun.stdout, /DB_PASS/);
+  assert.match(passRun.stdout, /内联凭据键/);
 });
 
 test('负控制⑤：ExecStart 指向不存在的脚本 ⇒ FAIL[execstart] 点名 service', () => {
@@ -306,15 +337,48 @@ test('负控制⑤：ExecStart 指向不存在的脚本 ⇒ FAIL[execstart] 点�
   assert.match(stdout, /purge-expired-online-data-v2\.mjs/);
 });
 
-test('负控制⑥：往 services/api/src 注入 setInterval( ⇒ FAIL[setinterval] 点名注入文件', () => {
-  const dir = makeFixture();
-  const injected = join(dir, 'services', 'api', 'src', 'privacy', 'injected-timer.ts');
-  writeFileSync(injected, 'export function boot(): void {\n  setInterval(() => {}, 1000);\n}\n', 'utf8');
-  const { status, stdout } = runCli(['--root', dir]);
-  assert.equal(status, 1, stdout);
-  assert.ok(failureIds(stdout).includes('setinterval'), `应点名 setinterval，实际：${failureIds(stdout)}\n${stdout}`);
-  assert.match(stdout, /services\/api\/src\/privacy\/injected-timer\.ts/);
-  assert.match(stdout, /第 2 行出现 `setInterval\(`/);
+test('负控制⑥：注入 setInterval( / globalThis.setInterval( / setInterval ( ⇒ FAIL[setinterval] 点名文件（控制臂 3）', () => {
+  // 臂 1：基线形状。
+  const plainDir = makeFixture();
+  writeFileSync(
+    join(plainDir, 'services', 'api', 'src', 'privacy', 'injected-timer.ts'),
+    'export function boot(): void {\n  setInterval(() => {}, 1000);\n}\n',
+    'utf8',
+  );
+  const plainRun = runCli(['--root', plainDir]);
+  assert.equal(plainRun.status, 1, plainRun.stdout);
+  assert.ok(failureIds(plainRun.stdout).includes('setinterval'),
+    `应点名 setinterval，实际：${failureIds(plainRun.stdout)}\n${plainRun.stdout}`);
+  assert.match(plainRun.stdout, /services\/api\/src\/privacy\/injected-timer\.ts/);
+  assert.match(plainRun.stdout, /第 2 行出现 `setInterval\(`/);
+
+  // 臂 2：`globalThis.` 前缀（字面子串 `setInterval(` 仍能命中，但口径必须明说它算命中）。
+  const globalDir = makeFixture();
+  writeFileSync(
+    join(globalDir, 'services', 'api', 'src', 'privacy', 'global-timer.ts'),
+    'export function boot(): void {\n  globalThis.setInterval(() => {}, 1000);\n}\n',
+    'utf8',
+  );
+  const globalRun = runCli(['--root', globalDir]);
+  assert.equal(globalRun.status, 1, globalRun.stdout);
+  assert.ok(failureIds(globalRun.stdout).includes('setinterval'),
+    `globalThis.setInterval 必须点名 setinterval，实际：${failureIds(globalRun.stdout)}\n${globalRun.stdout}`);
+  assert.match(globalRun.stdout, /services\/api\/src\/privacy\/global-timer\.ts/);
+  assert.match(globalRun.stdout, /globalThis\.setInterval\(/);
+
+  // 臂 3：标识符与 `(` 之间带空白（`setInterval (`）。
+  const spacedDir = makeFixture();
+  writeFileSync(
+    join(spacedDir, 'services', 'api', 'src', 'privacy', 'spaced-timer.ts'),
+    'export function boot(): void {\n  setInterval (() => {}, 1000);\n}\n',
+    'utf8',
+  );
+  const spacedRun = runCli(['--root', spacedDir]);
+  assert.equal(spacedRun.status, 1, spacedRun.stdout);
+  assert.ok(failureIds(spacedRun.stdout).includes('setinterval'),
+    `带空白的 setInterval ( 必须点名 setinterval，实际：${failureIds(spacedRun.stdout)}\n${spacedRun.stdout}`);
+  assert.match(spacedRun.stdout, /services\/api\/src\/privacy\/spaced-timer\.ts/);
+  assert.match(spacedRun.stdout, /setInterval \(/);
 });
 
 test('负控制⑦：unit 引用的 npm script 不存在 ⇒ FAIL[npm-script] 点名 service', () => {

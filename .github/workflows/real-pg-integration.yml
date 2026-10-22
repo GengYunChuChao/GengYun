@@ -1,4 +1,4 @@
-﻿# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
+# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
 #   · tests/integration/conversations-pg.mjs（#313 / I12）
 #   · tests/integration/community-pg.mjs（#296 / I15）
 #   · tests/integration/messages-pg.mjs（#17 / I17）；R27-S4 追加
@@ -386,7 +386,8 @@ jobs:
       # 备份副本域（GY-I19 / #19，R28-S49）：**自起集群**脚本之一。
       # runner 上原本没有 17 的服务端二进制（`postgres:17.11` 只活在 service 容器内），故先一步用 PGDG apt
       # 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再真跑。**装包只有这一步**：R28-E5 接的 `backup-copies-purge-pg`
-      # 复用同一份 bin（同一类脚本、同一套 env），⛔ 不装第二遍（两个包管理器状态互相覆盖是新的失败源）。
+      # 与 R32 接的 `online-purge-pg`（下方 `#19` 在线清理 step）都复用同一份 bin（同一类脚本、同一套 env），
+      # ⛔ 不装第二遍（两个包管理器状态互相覆盖是新的失败源）。
       # 它**不**连 service 里那个库、CI 里也**不** `CREATE DATABASE`：库名硬钉在脚本自己的临时集群里
       # （`DB_NAME = gengyun_backup_purge_test`，端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录）。
       # 未设 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包/路径没弄好必红（77 不是通过，也不加任何吞红开关）。
@@ -396,7 +397,7 @@ jobs:
       # 2026-10-19 仍在线）+ 包名钉死大版本 `postgresql-17`。⛔ 不写 `postgresql-17=17.11-…`：PGDG 只保留每个
       # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
       # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
-      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge 需要 initdb/pg_ctl）
+      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge / online-purge 需要 initdb/pg_ctl）
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -409,7 +410,7 @@ jobs:
           /usr/lib/postgresql/17/bin/pg_ctl --version
           server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
           if [ "$server_major" != "17" ]; then
-            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 两个自起集群脚本会拿到错的大版本，真库臂等于没验证。"
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 自起集群脚本（backup-purge / backup-copies / messages-purge / online-purge）会拿到错的大版本，真库臂等于没验证。"
             exit 1
           fi
       - name: 备份副本域（迁移 0023 / 受理同事务 / 30 天清除）

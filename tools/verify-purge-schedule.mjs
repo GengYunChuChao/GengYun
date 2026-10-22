@@ -41,11 +41,20 @@
  *                  ⇒ 在 systemd/cron 下相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失。
  *                  另：若同时给了 `StateDirectory=`，游标必须落在 `/var/lib/<StateDirectory>/` 里 ——
  *                  否则 systemd 不会创建/chown 那个目录，写游标会 EACCES（每轮退出码 2）。
+ *                  **比对前先做 POSIX 归一化**（折叠 `.`/`..`）：`/var/lib/<state>/../../etc/passwd`
+ *                  归一化后是 `/var/etc/passwd`（`<state>` 的两级 `..` 回到 `/var`）⇒ 逃出状态目录、判红。
+ *                  只做字符串前缀比对会把这种「逃出状态目录」的写法放过去（门禁假绿、部署 EACCES），
+ *                  所以这里必须归一化后**再**比前缀。
  *   [secrets]      单元里⛔ 不得出现内联连接串或口令键（`…://`、`DATABASE_URL=`、`PGPASSWORD=`、
- *                  `Environment=` 里的 PASS／SECRET／TOKEN 等），且每个 `.service` **必须**有
- *                  `EnvironmentFile=`。凭据只能经该文件进入（root:root 0600，systemd 以 root 读入后
- *                  降权执行）。扫描面含注释行：注释里的真连接串一样会被 `git log`/工单带出去。
- *   [setinterval]  `services/api/src/**` 里字面子串 `setInterval(` 的计数必须为 **0**。
+ *                  以及任何 `*PASS*` / `*PWD*` / `*SECRET*` / `*TOKEN*` / `*APIKEY*` / `*DSN*` /
+ *                  `*URL*` 命名的内联键 —— 含 `Environment=DB_PASS=…` 这种非常见键名），且每个
+ *                  `.service` **必须**有 `EnvironmentFile=`。凭据只能经该文件进入（systemd 路线
+ *                  root:root 0600；cron 路线 root:<同名组> 0640，见 deploy/purge-schedule/README.md）。
+ *                  扫描面含注释行：注释里的真连接串一样会被 `git log`/工单带出去。
+ *   [setinterval]  `services/api/src/**` 里的 `setInterval(` **调用**计数必须为 **0**。识别口径不是
+ *                  字面子串，而是：① `setInterval(`；② 任意前缀（含 `globalThis.`）后的
+ *                  `setInterval(`；③ 标识符与 `(` 之间带空白的 `setInterval (`；④ 计算成员写法
+ *                  `['setInterval'](`。
  *                  这是把「无进程内调度器」从**注释里的声明**变成**机器可判的判据**：
  *                  驱动模块的文件头写着「⛔ 不用 setInterval 常驻定时器」，但此前没有任何门禁
  *                  阻止后人在 API 进程里加一个 —— 那会让多副本重复执行、重启丢语义、并与 CI/真库臂
@@ -81,7 +90,7 @@
  * 退出码：0 = 全部判据满足；1 = 有硬错；2 = 用法错误（⛔ 不是「通过」）。
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** 仓库根：由本脚本自身位置推出（`tools/` 的上一级），⛔ 不用 `process.cwd()`。 */
@@ -126,6 +135,30 @@ export const CRITERIA = Object.freeze([
 /** 单元里必须出现的注释指令：`# GY-SCHEDULE: npm-script=<name>`。 */
 export const NPM_SCRIPT_DIRECTIVE = /GY-SCHEDULE:\s*npm-script=([A-Za-z0-9:_-]+)/;
 
+/**
+ * 内联凭据键名的保守子集（见文件头 [secrets]）。
+ * 刻意**不**收 `KEY`／`AUTH`／`USER`／`HOST` 这类常见但不必然保密的词：判据宁可窄一点，
+ * 也不要因为误报让运维把整条 `Environment=` 关掉；`PASSWORD`/`PGPASSWORD`/`POSTGRES_PASSWORD`
+ * 都被 `PASS` 覆盖，`DATABASE_URL`/`REDIS_URL` 被 `URL` 覆盖。
+ */
+const CREDENTIAL_NAME = '(?:PASS|PWD|SECRET|TOKEN|APIKEY|API_KEY|CREDENTIAL|DSN|CONNSTR|CONNECTION|URL)';
+
+/**
+ * 任意位置的「凭据键 = 值」：`DB_PASS=`、`PGPASSWORD=`、`MY_SECRET=`、`REDIS_URL=`、`DSN=` …
+ * 前置 `(?<![A-Za-z0-9_])` 只排除「长标识符的中间」这一种情况（`XDB_PASS=` 仍会命中，
+ * 因为键名本身就含 `PASS`）—— 口径是有 `=` 收尾的**赋值**，不要求出现在 `Environment=` 里。
+ */
+const INLINE_CREDENTIAL_ASSIGNMENT = new RegExp(
+  `(?<![A-Za-z0-9_])[A-Za-z0-9_]*${CREDENTIAL_NAME}[A-Za-z0-9_]*\\s*=`,
+  'i',
+);
+
+/** `Environment=KEY=VALUE` 形态里，只要键名落在上面的保守子集里就判红（非常见键名也拦）。 */
+const ENVIRONMENT_CREDENTIAL_ASSIGNMENT = new RegExp(
+  `\\bEnvironment\\s*=.*${CREDENTIAL_NAME}`,
+  'i',
+);
+
 /** 内联凭据的硬判据（扫描面含注释行，见文件头 [secrets]）。 */
 const INLINE_SECRET_PATTERNS = Object.freeze([
   { pattern: /[a-z][a-z0-9+.-]*:\/\//i, label: '内联连接串（形如 scheme://…）' },
@@ -133,9 +166,23 @@ const INLINE_SECRET_PATTERNS = Object.freeze([
   { pattern: /\bPGPASSWORD\s*=/, label: '内联 PGPASSWORD=' },
   { pattern: /\bPOSTGRES_PASSWORD\s*=/, label: '内联 POSTGRES_PASSWORD=' },
   {
-    pattern: /\bEnvironment\s*=.*(?:PASSWORD|PASSWD|SECRET|TOKEN|APIKEY|API_KEY)\b/i,
-    label: 'Environment= 里内联口令/令牌',
+    pattern: INLINE_CREDENTIAL_ASSIGNMENT,
+    label: '内联凭据键（*PASS* / *PWD* / *SECRET* / *TOKEN* / *APIKEY* / *DSN* / *URL* 等）',
   },
+  {
+    pattern: ENVIRONMENT_CREDENTIAL_ASSIGNMENT,
+    label: 'Environment= 里内联口令/令牌/连接串键',
+  },
+]);
+
+/**
+ * `setInterval` 调用的识别口径（见文件头 [setinterval]）。
+ * 刻意不用字面子串：`globalThis.setInterval(`（任意前缀）与 `setInterval (`（空白）都要算命中，
+ * 否则「无进程内调度器」这条判据只要换个写法就绕过去了。下标写法 `['setInterval'](` 一并收。
+ */
+export const SETINTERVAL_PATTERNS = Object.freeze([
+  { pattern: /\bsetInterval\s*\(/, label: 'setInterval(' },
+  { pattern: /\[\s*['"]setInterval['"]\s*\]\s*\(/, label: "['setInterval'](" },
 ]);
 
 /** systemd 时长单位（`OnUnitActiveSec=` 与 `TimeoutStartSec=` 共用）。 */
@@ -157,7 +204,7 @@ const USAGE = [
   '  node tools/verify-purge-schedule.mjs --help',
   '',
   `判据：${CRITERIA.join(' / ')} —— 详见文件头注释。`,
-  `每条 .timer 的间隔必须 ≤ ${MAX_INTERVAL_MINUTES} 分钟；${SETINTERVAL_SCAN_DIR}/** 的 setInterval( 计数必须为 0。`,
+  `每条 .timer 的间隔必须 ≤ ${MAX_INTERVAL_MINUTES} 分钟；${SETINTERVAL_SCAN_DIR}/** 的 setInterval 调用计数必须为 0。`,
   '退出码：0 = 全部满足；1 = 有硬错；2 = 用法错误。',
 ].join('\n');
 
@@ -373,8 +420,9 @@ function collectCodeFiles(dir, found = []) {
 }
 
 /**
- * `services/api/src/**` 里 `setInterval(` 的字面计数（含注释，口径见文件头 [setinterval]）。
- * 返回 `{ hits: [{file,line}], files }`。
+ * `services/api/src/**` 里的 `setInterval(` 调用计数（含注释，口径见文件头 [setinterval]）。
+ * 返回 `{ hits: [{file,line,form,text}], files }`；`form` 是命中的写法、`text` 是原行
+ * （报告里点名用 —— 只报「有命中」而不给人看那一行，定位不到人）。
  */
 export function findSetIntervalCalls(root, scanDir = SETINTERVAL_SCAN_DIR) {
   const base = join(root, scanDir);
@@ -385,7 +433,10 @@ export function findSetIntervalCalls(root, scanDir = SETINTERVAL_SCAN_DIR) {
     if (text === null) continue;
     const relative = normalizeRepoPath(resolve(file).slice(resolve(root).length + 1));
     text.split(/\r?\n/).forEach((line, index) => {
-      if (line.includes('setInterval(')) hits.push({ file: relative, line: index + 1 });
+      const matched = SETINTERVAL_PATTERNS.find(({ pattern }) => pattern.test(line));
+      if (matched !== undefined) {
+        hits.push({ file: relative, line: index + 1, form: matched.label, text: line.trim() });
+      }
     });
   }
   return { hits, files: files.length };
@@ -582,10 +633,15 @@ export function verifyPurgeSchedule(options = {}) {
             if (stateDirectory !== null) {
               const first = (stateDirectory.value.split(/\s+/)[0] ?? '').replace(/^\//, '');
               const expectedPrefix = `/var/lib/${first}/`;
-              if (first !== '' && !cursorPath.startsWith(expectedPrefix)) {
-                fail('cursor', fileRel, '`--cursor-file` 不在 `StateDirectory=` 建出来的目录里：\n'
-                  + `  · 游标：${cursorPath}\n  · 期望前缀：${expectedPrefix}\n`
-                  + '  ⇒ systemd 只会创建并 chown StateDirectory 那一个目录；写别的路径会 EACCES（每轮退出码 2）。');
+              // 先归一化（折叠 `.` / `..`）再比前缀：`/var/lib/<state>/../../etc/passwd` 归一化后
+              // 是 `/var/etc/passwd`，只做字符串前缀比对的实现会把它当 PASS —— 那是门禁假绿。
+              const normalizedCursor = posix.normalize(cursorPath);
+              if (first !== '' && !normalizedCursor.startsWith(expectedPrefix)) {
+                fail('cursor', fileRel, '`--cursor-file` 归一化后不在 `StateDirectory=` 建出来的目录里：\n'
+                  + `  · 游标：${cursorPath}\n  · 归一化：${normalizedCursor}\n  · 期望前缀：${expectedPrefix}\n`
+                  + '  ⇒ 前缀比对必须在 POSIX 归一化（折叠 `.`/`..`）之后做；只比字符串会让'
+                  + ' `/var/lib/<state>/../../etc/passwd` 这类写法逃出状态目录并判 PASS（运行时 EACCES）。'
+                  + 'systemd 只会创建并 chown StateDirectory 那一个目录，写别的路径每轮都是退出码 2。');
               }
             }
           }
@@ -729,12 +785,12 @@ export function verifyPurgeSchedule(options = {}) {
       + '  ⇒ 「setInterval( 计数为 0」在空扫描面下恒真，这是假绿，按红处理（口径失效先修扫描器）。');
   }
   for (const hit of setIntervalScan.hits) {
-    fail('setinterval', hit.file, `第 ${hit.line} 行出现 \`setInterval(\`：\n`
+    fail('setinterval', hit.file, `第 ${hit.line} 行出现 \`setInterval(\` 调用（形态：${hit.form}）：${hit.text}\n`
       + '  ⇒ 本仓**故意**没有进程内定时器：多副本会重复执行、重启丢语义、并与 CI/真库臂抢同一批行。'
       + '到期是日历事实，应由外部调度（deploy/purge-schedule/）反复调用运维命令。');
   }
   readings.push(`[setinterval] 扫 ${setIntervalScan.files} 个文件，\`setInterval(\` 命中 ${setIntervalScan.hits.length} 处`
-    + '（口径：字面子串，含注释）');
+    + '（口径：标识符调用，含 `globalThis.setInterval(`／`setInterval (`／`[\'setInterval\'](`，含注释）');
 
   readings.push(`[surface]  ${scheduleDirRel}：.service ${counts.services} 个 / .timer ${counts.timers} 个`);
   readings.push(`[npm-script] package.json scripts ${counts.npmScripts} 条；必需覆盖 ${counts.coveredNpmScripts}/${REQUIRED_NPM_SCRIPTS.length}`
