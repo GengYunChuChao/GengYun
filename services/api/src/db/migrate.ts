@@ -79,6 +79,104 @@ export function discoverMigrations(dir: string = DEFAULT_MIGRATIONS_DIR): Migrat
   return migrations.sort((a, b) => a.version.localeCompare(b.version));
 }
 
+/**
+ * 迁移号保留台账的一项：**有意缺号**——该版本号的迁移在另一条在飞分支上，本分支不该也带上它
+ * （会撞号），于是 `1..max` 上出现一个真实存在的「洞」。
+ *
+ * 为什么必须在产品代码里有一个可判定的定义，而不是只在文档里写一句：缺号在「已发现集合」上与
+ * 「发现器静默漏项」**完全同形**，靠序号序列本身判不出来。真库臂与 `migrations-negative-pg.mjs`
+ * 各有一条「1..max 连续无缺号」的不变量，它们唯一的价值就是抓漏项；台账把「有意缺号」变成
+ * 机器事实，让那两条不变量在「本片 0028 先合、0027 在 #428」时仍然可判：
+ *   · 只放行**登记过**的缺号，未登记缺号照旧判红；
+ *   · `count + reserved === max` 让「登记」不能拿来掩盖漏片；
+ *   · 登记过的号一旦在目录里出现（上游合入）⇒ `reservedButPresent` 非空 ⇒ 判红，强制删条目。
+ */
+export interface MigrationReservation {
+  version: number;
+  filename: string;
+  owner: string;
+  reason: string;
+  remove_when: string;
+}
+
+/** 保留台账文件的默认位置：`services/api/db/migration-reservations.json`（与 migrations 同目录）。 */
+export const DEFAULT_RESERVATIONS_FILE = fileURLToPath(
+  new URL('../../db/migration-reservations.json', import.meta.url),
+);
+
+/** 迁移编号体检结果（① 缺号、② 总数、③ 保留项不许躺平，三件事一次算清）。 */
+export interface MigrationNumbering {
+  /** 实际发现的迁移数。 */
+  count: number;
+  /** 发现到的最大版本号。 */
+  maxVersion: number;
+  /** `1..maxVersion` 里不存在的号（升序）。 */
+  gaps: number[];
+  /** 台账声明的保留号（升序）。 */
+  reserved: number[];
+  /** 缺号里**没有**在台账声明的（必须为空：非空 ⇒ 发现器静默漏项）。 */
+  undeclaredGaps: number[];
+  /** 台账声明过、但文件已经存在（必须为空：非空 ⇒ 条目该删了）。 */
+  reservedButPresent: number[];
+  /** `count + 已声明保留数 === maxVersion`。 */
+  countMatchesMax: boolean;
+}
+
+/** 读保留台账并校验形状（缺字段/重复/非法版本号一律抛错，⛔ 不静默当成空表）。 */
+export function loadMigrationReservations(file: string = DEFAULT_RESERVATIONS_FILE): MigrationReservation[] {
+  const raw = JSON.parse(readFileSync(file, 'utf8')) as { reservations?: unknown };
+  if (!Array.isArray(raw.reservations)) {
+    throw new Error(`保留台账缺少 reservations 数组：${file}`);
+  }
+  const seen = new Set<number>();
+  return raw.reservations.map((entry) => {
+    const item = entry as Partial<MigrationReservation>;
+    if (!Number.isInteger(item.version) || (item.version as number) <= 0) {
+      throw new Error(`保留台账 version 必须是正整数：${JSON.stringify(entry)}`);
+    }
+    for (const field of ['filename', 'owner', 'reason', 'remove_when'] as const) {
+      const value = item[field];
+      if (typeof value !== 'string' || value.length === 0) {
+        throw new Error(`保留台账 ${String(item.version)} 缺 ${field}`);
+      }
+    }
+    if (seen.has(item.version as number)) {
+      throw new Error(`保留台账重复登记版本号：${String(item.version)}`);
+    }
+    seen.add(item.version as number);
+    return item as MigrationReservation;
+  });
+}
+
+/** 体检迁移编号：把「有意缺号」与「发现器漏项」分开判（判据见 {@link MigrationReservation} 注释）。 */
+export function inspectMigrationNumbering(
+  migrations: MigrationFile[] = discoverMigrations(),
+  reservations: MigrationReservation[] = loadMigrationReservations(),
+): MigrationNumbering {
+  const present = new Set(migrations.map((migration) => Number(migration.version)));
+  const reserved = new Set(reservations.map((reservation) => reservation.version));
+  const maxVersion = present.size === 0 ? 0 : Math.max(...present);
+  const gaps: number[] = [];
+  for (let version = 1; version <= maxVersion; version += 1) {
+    if (!present.has(version)) gaps.push(version);
+  }
+  const reservedButPresent = [...reserved].filter((version) => present.has(version)).sort((a, b) => a - b);
+  return {
+    count: migrations.length,
+    maxVersion,
+    gaps,
+    reserved: [...reserved].sort((a, b) => a - b),
+    undeclaredGaps: gaps.filter((version) => !reserved.has(version)),
+    reservedButPresent,
+    countMatchesMax: migrations.length + reserved.size === maxVersion,
+  };
+}
+
+/** 版本号按 `NNNN` 补齐（`[M0]` 一类读数用）。 */
+export function formatMigrationVersion(version: number): string {
+  return String(version).padStart(4, '0');
+}
+
 /** 比对台账与磁盘文件，得出待应用列表与 drift。 */
 export function planMigrations(applied: AppliedMigration[], migrations: MigrationFile[]): MigrationPlan {
   const appliedByVersion = new Map(applied.map((item) => [item.version, item]));

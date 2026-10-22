@@ -43,7 +43,7 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { createMemorySpeechStore } from '../../services/api/src/speech/store.ts';
 import { createPostgresSpeechStore, SpeechTablesMissingError } from '../../services/api/src/speech/store-pg.ts';
-import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
+import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
 
 const ENV = 'SPEECH_PG_TEST_URL';
 const DB = 'gengyun_speech_test';
@@ -233,20 +233,30 @@ let FOREIGN_ID;
 // [M] 迁移三连 + 结构不变量
 // ---------------------------------------------------------------------------
 async function migrationTriple() {
-  // 与 `tests/integration/migrations-negative-pg.mjs` 共同的**两条结构不变量**（本片新增 0026 后
-  // 必须仍成立：连续无缺号、总数 === 最大版本号）。这里独立复算一次并打印读数。
+  // 与 `tests/integration/migrations-negative-pg.mjs` 共同的**两条结构不变量**（连续无缺号、总数 === 最大版本号）。
+  // 缺号的两类（发现器漏项 / 有意保留号）由 `inspectMigrationNumbering()` 分开判：本分支只带 0028，
+  // 0027 在 #428 上 ⇒ `services/api/db/migration-reservations.json` 显式声明为「有意缺号」。
   const discovered = discoverMigrations();
-  const numbers = discovered.map((migration) => Number(migration.version));
-  const max = Math.max(...numbers);
-  const missing = [];
-  for (let expected = 1; expected <= max; expected += 1) {
-    if (!numbers.includes(expected)) missing.push(String(expected).padStart(4, '0'));
-  }
-  assert.deepEqual(missing, [], `迁移版本号必须在 1..${max} 上连续无缺号`);
-  assert.equal(discovered.length, max, `迁移总数必须等于最大版本号（count=${discovered.length}，max=${max}）`);
+  const numbering = inspectMigrationNumbering(discovered);
+  const max = numbering.maxVersion;
+  assert.deepEqual(
+    numbering.undeclaredGaps.map(formatMigrationVersion),
+    [],
+    `迁移版本号必须在 1..${max} 上连续无缺号，且每个缺号都必须在保留台账里声明（未声明＝发现器静默漏项）`,
+  );
+  assert.deepEqual(
+    numbering.reservedButPresent.map(formatMigrationVersion),
+    [],
+    '保留台账里的号必须仍然缺位：文件已出现 ⇒ 删掉那条登记（保留项不许躺平）',
+  );
+  assert.equal(
+    numbering.countMatchesMax,
+    true,
+    `迁移总数 + 已声明保留数必须等于最大版本号（count=${numbering.count}，reserved=${numbering.reserved.length}，max=${max}）`,
+  );
   const names = discovered.map((migration) => migration.filename);
   assert.ok(names.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  say(`[M0] 结构不变量：迁移 ${discovered.length} 个（0001..${String(max).padStart(4, '0')}），连续无缺号；count === max；含 ${MIGRATION}`);
+  say(`[M0] 结构不变量：迁移 ${numbering.count} 个（0001..${formatMigrationVersion(max)}），无未声明缺号（保留号 [${numbering.reserved.map(formatMigrationVersion).join(',') || '无'}]）；count＋保留 === max；含 ${MIGRATION}`);
 
   const objects = async () => ({
     jobs: (await one("SELECT to_regclass('public.speech_jobs') AS v")).v,
