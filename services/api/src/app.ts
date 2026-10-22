@@ -74,6 +74,8 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+// GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
+import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
@@ -1236,9 +1238,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 放行条件只有"拿到真实库池 / 显式注入权威/端口"，**不看**任何自述持久化标志；
     // 其余后台路由（含账号读面 `listAdminUsers`、分类、作业、下架）仍逐条 503
     // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
-    const realAccountAuthority =
+    // **GY-I17（#17）系统事件接线**（裁定 `.pg17/ruling-r31-i17-system-events-20261022.md`）：
+    // 账号停用/恢复在**事务已提交**之后追加一条 `system` 消息（`target_ref=null`，契约
+    // `TargetRef` 闭集无 account 型，⛔ 不臆造）。装饰器只**追加**通知：不改写入参/返回、
+    // 不改错误映射；消息写入失败**不回滚**已提交的停用/恢复（fail-open，口径同
+    // `community/events.ts`），但留 `delivered:false` + 计数 + `warn` 日志，绝不谎报成功。
+    // 幂等分支（`outcome.changed === false`）**不投递**：重放不产生第二条消息、不重置读状态。
+    // 消息服务在 real 下仅拿到库池时才非 null ⇒ 否则端口如实 `wired:false`（不伪造投递）。
+    const accountEvents: AccountEventsPort =
+      messagesService === null
+        ? createUnwiredAccountEventsPort('消息服务未接线（real 模式）：账号停用/恢复的系统事件无法投递')
+        : createMessagesAccountEventsPort({ messages: messagesService });
+    const accountAuthorityBase =
       adminInjection?.accountAuthority ??
       (pool === null ? null : createPostgresAccountAuthority({ pool }));
+    const realAccountAuthority =
+      accountAuthorityBase === null
+        ? null
+        : withAccountSystemEvents(accountAuthorityBase, { events: accountEvents, log: app.log });
     // **GY-I18/T-R12-03 第三个显式放行（读面）**：真实账号目录只在**确实拿到库池**时构造；
     // `pool === null` ⇒ 目录为 null ⇒ 读面保持 503（⛔ 不拿内存种子冒充真实账号，也⛔ 不返回空页）。
     // 读的是迁移 0021 的窄口径函数 `public.list_admin_accounts()`（运行时角色只有 EXECUTE）。
