@@ -15,6 +15,14 @@
  *
  * 负控制（每一条都是「把判据反过来，必须红」）：缺声明必须红、躺平登记必须红、台账形状坏必须抛、
  * 白名单不能被 `discoverMigrations()` 当成迁移文件。
+ *
+ * **合流后状态（2026-10-22，#434 合流 `origin/main` = `d4d48088`）**：`0027_admin_audit_observability.sql`
+ * 已随上游（#428）真实落进 `services/api/db/migrations/`，与 `0028_moderation_persistence.sql` 共存。
+ * 按第 ③ 条不变量与 `remove_when`，台账里的 27 号条目**已删除**（`reservations: []`），
+ * 故「当前仓库」那条用例的**快照读数**由「gaps=[27] / reserved=[27]」改为「gaps=[] / reserved=[]」，
+ * 判据与负控制**一条未删**：三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）
+ * 与「躺平判据回归」全部保留；其中原「0027 合流预演」只是把台账来源换成夹具（真实台账已按要求清空），
+ * 断言逐字不动。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -58,7 +66,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0027 是**已登记**的有意缺号，三条不变量全部成立', () => {
+test('迁移编号/当前仓库：0027 已随 origin/main 落盘 ⇒ 无缺号且台账已清空，三条不变量全部成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -67,10 +75,11 @@ test('迁移编号/当前仓库：0027 是**已登记**的有意缺号，三条�
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [27],
-    `当前树上只允许 0027 这一个缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [],
+    `#434 合流 origin/main @ d4d48088 后树上不应再有缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [27], '台账必须恰好声明 0027（#428 持有）');
+  assert.deepEqual(numbering.reserved, [], '0027 已随上游落盘 ⇒ 台账必须按 remove_when 清空（保留项不许躺平）');
+  assert.deepEqual(reservations, [], '保留台账必须真的是空表：0027 落盘后不许留下任何「已补齐」的登记');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -85,7 +94,11 @@ test('迁移编号/当前仓库：0027 是**已登记**的有意缺号，三条�
   );
 
   const files = migrations.map((item) => item.filename);
-  assert.equal(files.includes('0027_admin_audit_observability.sql'), false, '本分支树上不得出现 0027（那是 #428 的文件）');
+  assert.equal(
+    files.includes('0027_admin_audit_observability.sql'),
+    true,
+    '0027 已随 origin/main（#428）落盘：本分支不再缺号，保留条目也已按 remove_when 删除',
+  );
   assert.ok(files.includes('0028_moderation_persistence.sql'), '本片的 0028 必须在清单里（迁移号固定，⛔ 不许换号）');
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
@@ -202,11 +215,14 @@ test('迁移编号/负控制④：台账形状坏了必须抛错（⛔ 不静默
   }
 });
 
-test('迁移编号/0027 合流预演：真实目录 + 0027 落盘 ⇒ 立即判红并点名 0027', () => {
+test('迁移编号/躺平判据回归：0027 已在真实目录里 + 台账仍登记 27 ⇒ 立即判红并点名 0027', () => {
   const realNames = readdirSync(DEFAULT_MIGRATIONS_DIR).filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name));
   const dir = makeMigrationsDir([...realNames, '0027_admin_audit_observability.sql']);
+  // 真实台账在 #434 合流后已按要求清空（`reservations: []`），故这里的「仍登记 27」用夹具喂进去：
+  // 断言逐字保留（判的是**机制还咬不咬人**，不是当前台账内容；台账内容由上面「当前仓库」那条守护）。
+  const ledger = makeReservationsFile([reservation()]);
   try {
-    const numbering = inspectMigrationNumbering(discoverMigrations(dir), loadMigrationReservations());
+    const numbering = inspectMigrationNumbering(discoverMigrations(dir), loadMigrationReservations(ledger));
     assert.deepEqual(numbering.gaps, [], '0027 补齐后不应再有缺号');
     assert.deepEqual(numbering.reservedButPresent, [27], '0027 补齐后保留登记必须被判「躺平」并点名');
     assert.equal(numbering.countMatchesMax, false, `${numbering.count} + 1 ≠ ${numbering.maxVersion} ⇒ 必须红`);
@@ -217,6 +233,7 @@ test('迁移编号/0027 合流预演：真实目录 + 0027 落盘 ⇒ 立即判�
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(join(ledger, '..'), { recursive: true, force: true });
   }
 });
 

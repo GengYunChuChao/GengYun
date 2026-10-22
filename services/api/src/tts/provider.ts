@@ -30,7 +30,6 @@ import {
   TtsLocalInputError,
   TtsWiringError,
   type LiveCallTicket,
-  type LiveGateErrorCode,
   type LiveTtsCredentials,
   type LiveTtsObservation,
   type LiveTtsProfile,
@@ -39,6 +38,9 @@ import {
 } from './live-ports.ts';
 import { hasMpegAudioHeader } from './media.ts';
 import { sha256Hex, signTc3Request } from './tc3.ts';
+import { providerErrorCodeToErrorCode } from '../ai/error-map.ts';
+import { createProcessLiveGate, LIVE_UNIT_PRICES_CNY, PRODUCT_GATE_AUTHORIZATION } from '../ai/live-gate.ts';
+import type { TtsProviderConfig } from '../config.ts';
 
 /**
  * 真实分支的错误类型随提供者一起导出：调用方（service / 手工装置）需要按类型区分
@@ -138,7 +140,11 @@ export function createStubTtsProvider(options: { executionMode?: 'stub' | 'prese
  *   `PROVIDER_UNAVAILABLE`，任务落 `failed`；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身（回退会让证据口径被污染）。
  */
-export function createRealTtsProvider(credentials: { endpoint?: string | null; apiKey?: string | null } = {}): TtsProvider {
+export function createRealTtsProvider(
+  credentials: { endpoint?: string | null; apiKey?: string | null } = {},
+  /** 装配层用来如实播报「为什么没有装上真实适配器」；缺省用既有文案（行为不变）。 */
+  unavailableReason?: string,
+): TtsProvider {
   const endpoint =
     typeof credentials.endpoint === 'string' && credentials.endpoint.trim() !== '' ? credentials.endpoint.trim() : null;
   const apiKey = typeof credentials.apiKey === 'string' && credentials.apiKey.trim() !== '' ? credentials.apiKey.trim() : null;
@@ -148,7 +154,7 @@ export function createRealTtsProvider(credentials: { endpoint?: string | null; a
     providerVersion: 'real-unconfigured',
     note: '真实 TTS 适配器尚未接入（无已审供应商适配器；缺凭据即受理前 fail-closed，不回退替身）',
     available: !missing,
-    unavailableReason: missing ? '缺少真实 TTS 供应商凭据（fail-closed，不回退替身）' : null,
+    unavailableReason: missing ? (unavailableReason ?? '缺少真实 TTS 供应商凭据（fail-closed，不回退替身）') : null,
     async synthesize() {
       // 无已审真实适配器：不伪造音频，也不回退替身。
       return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
@@ -156,16 +162,76 @@ export function createRealTtsProvider(credentials: { endpoint?: string | null; a
   };
 }
 
-/** 按执行模式选择提供者；`real` 永远走 fail-closed 实现。 */
+/**
+ * 按执行模式选择提供者。
+ *
+ * `aiProviders`（GY-R28-W1）：`loadConfig()` 搬来的**被校验快照**（`config.aiProviders.tts`）。
+ * - 不传 / `null` ⇒ 与接线前**逐字节相同**（`real` 走 fail-closed 实现）；
+ * - 传了 ⇒ `real` 装上真实适配器（端口在这一处一次性装配，见 `createLiveTtsProviderFromConfig`）；
+ *   端口装配失败则回落成接线前的 fail-closed（**绝不**回退替身、绝不带坏配置发包）。
+ * - `stub`/`preset_demo` 即使传了也**无视**（替身/演示不得携带真实凭据）。
+ */
 export function createTtsProvider(input: {
   executionMode: ExecutionMode;
   endpoint?: string | null;
   apiKey?: string | null;
+  aiProviders?: TtsProviderConfig | null;
 }): TtsProvider {
   if (input.executionMode === 'real') {
+    const live = input.aiProviders ?? null;
+    if (live !== null) {
+      try {
+        return createLiveTtsProviderFromConfig(live, { authorization: PRODUCT_GATE_AUTHORIZATION });
+      } catch {
+        // 构造期 fail-closed：不带着坏配置发包，也不降级成替身。
+        return createRealTtsProvider({}, '真实 TTS 端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');
+      }
+    }
     return createRealTtsProvider({ endpoint: input.endpoint ?? null, apiKey: input.apiKey ?? null });
   }
   return createStubTtsProvider({ executionMode: input.executionMode });
+}
+
+/**
+ * 由 `config.aiProviders.tts`（`loadConfig` 的产物）构造真实 TTS 提供者：
+ * 端口在这一处一次性装配（被校验剖面 + 内存凭据 + 进程内预算闸门 + 授权串）。
+ *
+ * 剖面逐字段取自被校验快照，因此「端点/地域/音色/超时」的唯一事实源仍是
+ * `tools/ai-config.mjs`（经 `config.ts` 搬运），本函数**不自创**任何取值。
+ * ⛔ 不读环境变量、不读文件、不打印凭据。
+ */
+export function createLiveTtsProviderFromConfig(
+  config: TtsProviderConfig,
+  options: {
+    authorization: string;
+    liveGate?: RealTtsPorts['liveGate'];
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    onObservation?: (observation: LiveTtsObservation) => void;
+  },
+): TtsProvider {
+  return createLiveTtsProvider({
+    liveGate:
+      options.liveGate ??
+      createProcessLiveGate({ authorization: options.authorization, prices: { tts: LIVE_UNIT_PRICES_CNY.tts } }),
+    authorization: options.authorization,
+    profile: {
+      endpoint: config.endpoint,
+      action: config.action,
+      apiVersion: config.apiVersion,
+      region: config.region,
+      timeoutMs: config.timeoutMs,
+      maxRetries: config.maxRetries,
+      voiceType: config.voiceType,
+      codec: config.codec,
+      sampleRate: config.sampleRate,
+      maxTextCharacters: config.maxTextCharacters,
+    },
+    credentials: config.credentials,
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.onObservation === undefined ? {} : { onObservation: options.onObservation }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -242,22 +308,11 @@ export function deriveLiveSessionId(jobId: string, targetRef: { type: string; id
 /**
  * 供应商业务错误码 → 契约 `ErrorCode`（规范 §2.6 表，逐项对应；**未发包不占预算的本地拒绝不走此表**）。
  * 供应商原始错误码由调用方**原样**写入台账，本函数只做契约映射。
+ *
+ * GY-R28-W1：实现搬到 `../ai/error-map.ts`（TTS/OCR/ASR 三域共用同一张表，避免各自复制后漂移）；
+ * 本文件继续导出同名符号，既有调用方与测试不需要改。
  */
-export function providerErrorCodeToErrorCode(code: string): LiveGateErrorCode {
-  // 配额/限流类。
-  if (/^(ResourceUnavailable\.ResourcePackageRunOut|UnsupportedOperation\.PkgExhausted)/.test(code)) return 'PROVIDER_QUOTA_EXCEEDED';
-  if (/^(RequestLimitExceeded|LimitExceeded)/.test(code)) return 'PROVIDER_QUOTA_EXCEEDED';
-  // 账号/服务/凭据不可用（对外不区分是哪一种，避免泄露账号状态）。
-  if (/^(AuthFailure|UnauthorizedOperation)($|\.)/.test(code)) return 'PROVIDER_UNAVAILABLE';
-  if (['InvalidCredential', 'FailedOperation.UnOpenError', 'FailedOperation.UserNotRegistered'].includes(code)) {
-    return 'PROVIDER_UNAVAILABLE';
-  }
-  // `InvalidParameter*` / `MissingParameter`：请求体由服务端从已核对正文构造，
-  // 参数错说明是**我们自己的适配器缺陷**，映射成 400 会把责任错误推给客户端 ⇒ 按「结果不可判定」处理。
-  if (/^(InvalidParameter|MissingParameter)/.test(code)) return 'PROVIDER_OUTCOME_UNKNOWN';
-  // `InternalError*` / `FailedOperation.ServiceIsolate` / 未知码：不声称可用，也不声称是干净失败。
-  return 'PROVIDER_OUTCOME_UNKNOWN';
-}
+export { providerErrorCodeToErrorCode };
 
 /**
  * 真实适配器（`live`）。**唯一**能触达真实发送的构造器：没有端口对象就构造不出来

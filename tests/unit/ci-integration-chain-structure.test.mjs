@@ -91,6 +91,16 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-jobs-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_jobs_test`：本脚本自带迁移全量应用（0001→0027）、'
+      + '运行时角色最小权限探针（只跑开关/审计两条出厂授权区域，作业表的列级读授权归 0024/0025/0026 各自的区域，'
+      + '本脚本只断言「未授列读不到」而**不代发授权**）、以及开关关/开/再关与作业读/取消的 HTTP 真读数；'
+      + '缺 argv[2] 时回落到回环默认 URL（与 `admin-flags-pg.mjs` 同形：连不上就硬失败，不打印 SKIP），'
+      + '故不进无 PG 的回环链。'
+      + 'R29-S5 只交付脚本与本地真读数（PG 17.11 / 127.0.0.1:55432），**尚未接进任何 workflow**'
+      + '（`.github/workflows/real-pg-integration.yml` 的接线处方已交指挥另派）。',
+  },
+  {
     path: 'tests/integration/admin-flags-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自建/ALTER 运行时角色、'
       + '把随机口令写进它自己的 URL（`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽（这也正是 workflow 里'
@@ -128,6 +138,26 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/catalog-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/catalog-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+  },
+  {
+    path: 'tests/integration/community-filter-pg.mjs',
+    reason: '需真实 PG17 且硬钉库名 `gengyun_community_filter_test`（脚本自己断言 hostname 回环、'
+      + 'pathname=/gengyun_community_filter_test、public 下无表）：取 `GET /posts` 的 `crop_id`/`region_code`/'
+      + '`mine` 三类筛选的**真库读数**（逐条与同条件 SELECT 对照）、游标绑定筛选集、参数闭集 400、'
+      + '以及「筛选未下推 SQL」的语句读数 + `community_posts_feed_idx` 的 EXPLAIN 读数；'
+      + '未配置 `COMMUNITY_FILTER_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**'
+      + '（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0，⛔ 不得用于门禁）；'
+      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
+      + '不进无 PG 的回环链。',
+  },
+  {
+    path: 'tests/integration/qa-citations-pg.mjs',
+    reason: '需真实 PG 17.11 且要求**空库** `gengyun_qa_citations_test`（脚本自己 apply 迁移子集'
+      + ' 0001/0002/0005/0008/0010/0012/0013）；连接串只走 env `QA_CITATIONS_PG_TEST_URL`，'
+      + '未设时打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0、⛔ 不得接进无 PG 的回环链）。'
+      + 'R29-S14 这一片只交付"引用可溯源"的**证据臂**，未同时改 `.github/workflows/real-pg-integration.yml`'
+      + '（那要连带改受管清单 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 与证据页，'
+      + '属另一条独立切片），故在此如实登记为未接线；接进 `real-pg-17.11` job 后必须删除本条。',
   },
   {
     path: 'tests/integration/community-pg.mjs',
@@ -211,6 +241,13 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + 'R29 已把它接进 `.github/workflows/real-pg-integration.yml`：由该 workflow 的独立真库 job（`postgres:17.11` service）'
       + '里一个**独立 step**（先 `CREATE DATABASE gengyun_moderation_test` 再 `node …`）真跑，'
       + '接进真库 job 不等于进回环链，故在此如实登记为未接线。',
+  },
+  {
+    path: 'tests/integration/ocr-corrections-pg.mjs',
+    reason: '需真实 PG 17.11（硬钉空库名 `gengyun_ocr_corrections_test`，开头断言 `public` 下 0 张表并 `applyMigrations()` 跑全链；'
+      + '未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：未取得，不是通过）：本片按派单在本机 PG 17.11 上真跑取证'
+      + '（6 项 PASS），暂未接进 `.github/workflows/real-pg-integration.yml`——该文件正被在飞的接臂 PR 改动，'
+      + '同文件并行接线会与它冲突，故如实登记为未接线；它**不进**无 PG 的回环链。',
   },
   {
     path: 'tests/integration/ocr-jobs-pg.mjs',

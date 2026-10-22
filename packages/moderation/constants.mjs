@@ -155,6 +155,7 @@ export const RULE_REASON_CODES = Object.freeze([
   'ABSOLUTE_SAFETY_CLAIM',
   'COMMERCE_SOLICITATION',
   'COMMERCE_LINK',
+  'PROHIBITED_SALE',
 ]);
 
 /**

@@ -1,0 +1,33 @@
+<!-- GY-I16 识别结果页「收藏」入口（自包含组件）。
+     只接收 job-id：候选、目标资料版本、已收藏状态全部由组件自己取，页面不参与。
+     fail-closed：没有候选或取不到可用版本时，visible=false，整块不出现。 -->
+<view class="fav" wx:if="{{visible}}">
+  <view class="fav__head">
+    <text class="fav__title">收藏识别候选</text>
+    <text class="fav__hint">收藏的是资料实体，不代表本次识别已被采纳为结论。</text>
+  </view>
+
+  <view class="fav__list">
+    <view class="fav__row" wx:for="{{items}}" wx:key="speciesId">
+      <view class="fav__meta">
+        <text class="fav__name">候选 {{item.rank}} · {{item.label}}</text>
+        <text class="fav__badge" wx:if="{{item.favorited}}">已收藏</text>
+        <text class="fav__warn" wx:if="{{item.unavailableReason}}">目标当前不可用</text>
+      </view>
+      <button class="fav__btn {{item.favorited ? 'fav__btn--on' : ''}}"
+              size="mini"
+              loading="{{busy}}"
+              disabled="{{busy}}"
+              data-index="{{index}}"
+              bindtap="onToggle">{{item.favorited ? '取消收藏' : '收藏'}}</button>
+    </view>
+  </view>
+
+  <text class="fav__note" wx:if="{{note}}">{{note}}</text>
+  <text class="fav__error" wx:if="{{errorText}}">{{errorText}}</text>
+</view>
+
+<!-- 装配失败（作业详情取不到 / 越权 / 网络失败）时的如实提示：不渲染任何收藏按钮。 -->
+<view class="fav fav--error" wx:elif="{{errorText}}">
+  <text class="fav__error">{{errorText}}</text>
+</view>

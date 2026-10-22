@@ -60,12 +60,14 @@ import {
   canTransitionJob,
   isJobState,
   isMatchState,
+  parseCorrectionLedger,
   type DoseCard,
   type JobState,
   type LabelFields,
+  type OcrVerificationDocument,
   type RegistryHerbicide,
 } from './state.ts';
-import type { IdempotencyRow, OcrJobRow, OcrRow, OcrStore, OcrVerification } from './store.ts';
+import type { IdempotencyRow, OcrJobRow, OcrRow, OcrStore } from './store.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容）。 */
 export interface SqlRunner {
@@ -253,7 +255,14 @@ function readLabelFields(value: unknown, column: string): LabelFields {
 }
 
 /** 数据库行 → 契约 `Verification` 投影（五字段全必填；`match_state` 必须在闭集内）。 */
-function readVerification(value: unknown): OcrVerification {
+/**
+ * `verification` 列的 jsonb → 存储形状（契约五字段 + 可选的用户校正台账）。
+ *
+ * ⚠ 台账键必须在这里**读回来**：`updateOcr` 的 `verification = $6::jsonb` 是整个文档整体写入，
+ * 但只要读路径把它剥掉，下一次 `updateOcr`（CAS 的 mutate 基于读到的行）就会把台账写没。
+ * 台账解析严格 fail-closed（`parseCorrectionLedger` 形状不合法即抛错，不"尽力解析"半个台账）。
+ */
+function readVerification(value: unknown): OcrVerificationDocument {
   const record = asRecord(parseJson(value));
   if (record === null) throw invariant('verification');
   const matchState = record['match_state'];
@@ -269,6 +278,7 @@ function readVerification(value: unknown): OcrVerification {
     throw invariant('verification');
   }
   if (doseCards.some((card) => asRecord(card) === null)) throw invariant('verification');
+  const ledger = parseCorrectionLedger(record['correction_log']);
   return {
     match_state: matchState,
     registration: registration === null || registration === undefined
@@ -277,6 +287,7 @@ function readVerification(value: unknown): OcrVerification {
     conflict_fields: conflictFields,
     missing_fields: missingFields,
     dose_cards: structuredClone(doseCards) as DoseCard[],
+    ...(ledger === undefined ? {} : { correction_log: ledger }),
   };
 }
 

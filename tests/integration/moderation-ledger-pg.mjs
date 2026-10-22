@@ -12,11 +12,11 @@
 //
 // 覆盖的读数：
 //   [M] 迁移三连：编号体检（未声明缺号 / 保留号躺平 / count＋保留 === max）⇒ 0001..0026 ⇒
-//       **0027（#428 的 DDL 夹具，按序先于 0028）** ⇒ UP（两表/四条索引/部分唯一索引出现，
+//       **0027（origin/main 的真实文件，按序先于 0028）** ⇒ UP（两表/四条索引/部分唯一索引出现，
 //       列数 26 与 5，且 0027 的函数仍在岗）⇒ ROLLBACK（本片对象消失，`users` 与社区/消息表
 //       逐字仍在，0027 的对象不被连带拆掉）⇒ REPLAY（再出现）。
-//   [F] 保留号前向合流（无数据库）：临时目录里放入 0027 ⇒ 台账条目被判"必须删除"、
-//       `count＋保留 !== max` 同时判红、计划顺序为 0027 → 0028。
+//   [F] 保留号躺平判据回归（无数据库）：临时目录（已含真实 0027）+ **夹具台账**（登记 27）⇒
+//       条目被判"必须删除"、`count＋保留 !== max` 同时判红、计划顺序为 0027 → 0028。
 //   [W] 写穿透：`create` + `flush` ⇒ 台账行真的在库里（列值与内存台账逐字段相等）；
 //       同 `job_id` 再 `create` ⇒ 同步抛错且库里仍是 1 行。
 //   [S] supersede：同目标版本再建任务 ⇒ 旧行 `superseded=true`、新行 `false`，当前行恒 1 条。
@@ -102,15 +102,15 @@ function record(overrides = {}) {
 // ---------------------------------------------------------------------------
 // [M] 迁移三连（含 0027 → 0028 的**前向合流**自证）
 // ---------------------------------------------------------------------------
-// 为什么这条臂里要塞 0027：#428（feat/gy-r28-admin-audit-observability）会带来迁移 0027，
-// 本分支只带 0028。缺号被 `services/api/db/migration-reservations.json` 显式登记为「有意缺号」，
-// 而"登记"只是记账 —— 真正要证明的是**两条迁移按序落到同一个库上不打架**。因此这里把 #428 的
-// 0027 DDL 面冻结成夹具（`tests/integration/fixtures/0027_admin_audit_observability.sql`，
-// 逐字取自 PR #428 的 ref），在真库上按 `0027 → 0028` 的顺序应用一遍：#428 合入后若两片互相
-// 冲突（重名对象 / 依赖倒挂 / 列冲突），这条臂先红，而不是等 main 上的部署 job 红。
-// ⚠ 夹具只用于**顺序自证**，不进 `services/api/db/migrations/`（进那里就等于抢了 #428 的号）。
+// 为什么这条臂里要塞 0027：#428（feat/gy-r28-admin-audit-observability）带来了迁移 0027，
+// 本分支只带 0028。合流前 `services/api/db/migration-reservations.json` 把 0027 登记为「有意缺号」，
+// 而"登记"只是记账 —— 真正要证明的是**两条迁移按序落到同一个库上不打架**。
+// **#434 合流 origin/main @ d4d48088 后（2026-10-22）**：0027 已是 `services/api/db/migrations/`
+// 里的真实文件（不再是 `tests/integration/fixtures/` 的冻结夹具），台账里 27 号条目也已按 remove_when
+// 删除 ⇒ 本臂改读**真实 0027**，顺序自证（0027 之前 before_value 不存在、之后在岗）逐条不动。
+// ⚠ 本臂只证明"0027 → 0028 顺序不打架"，不主张 0027 本身被验收（那是 #428 的事）。
 const RESERVED_FILENAME = '0027_admin_audit_observability.sql';
-const FIXTURE_0027 = new URL('./fixtures/0027_admin_audit_observability.sql', import.meta.url);
+const RESERVED_MIGRATION_PATH = `migrations/${RESERVED_FILENAME}`;
 
 async function migrationTriple() {
   // 编号体检交给产品代码 `inspectMigrationNumbering()`（与 4 条真库臂同一口径）：
@@ -174,9 +174,10 @@ async function migrationTriple() {
     ),
   });
 
-  // ① 0001..0026（即"本片之前的一切"），⛔ 不含 0028。
+  // ① 0001..0026（即"本片之前的一切"）：0027 与 0028 都留到后面按序单独应用，
+  //    这样"0027 应用前 before_value 不存在"的顺序自证才有个可观测的 before。
   for (const migration of discovered) {
-    if (migration.filename === MIGRATION) continue;
+    if (migration.filename === MIGRATION || migration.filename === RESERVED_FILENAME) continue;
     await owner.query(readSql(`migrations/${migration.filename}`));
   }
   let state = await objects();
@@ -191,8 +192,8 @@ async function migrationTriple() {
   );
   assert.equal(state.writerWritesBeforeValue, false, '0020 版 set_feature_flag 不写 before_value（0027 才改写它）');
 
-  // ② 0027（#428 的 DDL 面，按数字序先于 0028）⇒ ③ 0028。这就是"前向合流"的真库读数。
-  await owner.query(readFileSync(FIXTURE_0027, 'utf8'));
+  // ② 0027（origin/main 的真实 DDL，按数字序先于 0028）⇒ ③ 0028。这就是"前向合流"的真库读数。
+  await owner.query(readSql(RESERVED_MIGRATION_PATH));
   state = await objects();
   assert.equal(state.auditBefore, 1, '0027 给 admin_audit_events 补的 before_value 列必须在岗');
   assert.equal(
@@ -205,7 +206,7 @@ async function migrationTriple() {
     true,
     '0027 必须真的改写了 set_feature_flag（函数体出现 before_value）；否则这条臂就只是跑了个寂寞',
   );
-  note('[M] 0027（#428 DDL 夹具）已按序应用：before_value 列 / list_admin_flag_audit / 改写后的 set_feature_flag 全部在岗');
+  note('[M] 0027（origin/main 真实文件）已按序应用：before_value 列 / list_admin_flag_audit / 改写后的 set_feature_flag 全部在岗');
 
   // ④ UP（0028 落在 0027 之后，与 #428 合入后的真实数字序一致）
   await owner.query(readSql(`migrations/${MIGRATION}`));
@@ -245,19 +246,30 @@ async function migrationTriple() {
 // ---------------------------------------------------------------------------
 // [F] 保留号台账的前向合流读数（不动真目录：在临时目录里把 0027 放进去）
 // ---------------------------------------------------------------------------
-// 这条臂回答的是"#428 合入那天会发生什么"，不需要数据库：
+// 这条臂回答的是"台账条目在上游合入后还咬不咬人"，不需要数据库：
 //   1. 0027 一出现，`reservedButPresent` 立刻非空 ⇒ 保留条目必须删（防躺平）；
 //   2. `count + 保留数 === max` 随之变假 ⇒ 第二条不变量同时变红（双保险，不靠单一判据）；
-//   3. 计划顺序里 0027 紧邻 0028 之前 ⇒ 与 #428 合入后的真实数字序一致。
+//   3. 计划顺序里 0027 紧邻 0028 之前 ⇒ 与合流后的真实数字序一致。
+// **#434 合流后**：0027 已是真实文件、真实台账已按要求清空 ⇒ 本臂改用下面这份**夹具台账**
+// （登记 27）来验证判据本身；断言逐字不动，判的是机制，不是当前台账内容。
+const FIXTURE_RESERVATION = Object.freeze([{
+  version: 27,
+  filename: RESERVED_FILENAME,
+  owner: 'PR #428（feat/gy-r28-admin-audit-observability）',
+  reason: 'fixture：仅用于证明「上游合入后台账条目必须删除」这条判据仍然咬得动',
+  remove_when: 'fixture：0027 落盘即删',
+}]);
+
 function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
+    // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) copyFileSync(new URL(name, migrationsDir), join(tmp, name));
     }
-    copyFileSync(FIXTURE_0027, join(tmp, RESERVED_FILENAME));
+    assert.equal(readdirSync(tmp).includes(RESERVED_FILENAME), true, `临时目录必须含真实 ${RESERVED_FILENAME}（否则本臂是空的）`);
     const merged = discoverMigrations(tmp);
-    const numbering = inspectMigrationNumbering(merged);
+    const numbering = inspectMigrationNumbering(merged, FIXTURE_RESERVATION);
     assert.deepEqual(
       numbering.reservedButPresent.map(formatMigrationVersion),
       ['0027'],
@@ -274,7 +286,7 @@ function forwardMergeNumbering() {
     const at27 = order.indexOf(RESERVED_FILENAME);
     const at28 = order.indexOf(MIGRATION);
     assert.ok(at27 >= 0 && at28 === at27 + 1, `0027 必须紧邻 0028 之前（现场 at27=${at27} at28=${at28}）`);
-    note('[F] 保留号前向合流：#428 的 0027 一旦落库，台账条目即被判定为必须删除（reservedButPresent=[0027]，count＋保留≠max），且计划顺序为 0027 → 0028');
+    note('[F] 保留号躺平判据回归：真实目录已含 0027 + 夹具台账登记 27 ⇒ 条目被判必须删除（reservedButPresent=[0027]，count＋保留≠max），且数字序为 0027 → 0028');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

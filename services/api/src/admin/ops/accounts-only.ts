@@ -71,6 +71,9 @@ export function restrictAdminOpsToAccountsAuthority(
   const flagsWired = options.flagsWired === true;
   // 判据是能力对象存在（由调用方在构造出真实目录后显式置位），不是自述标志。
   const accountsReadWired = options.accountsReadWired === true;
+  // 作业面同理：外壳拿到的是**端口对象本身**，未接线的默认端口自述 `wired: false`。
+  // 只有真端口（`createPostgresAdminJobPort`）才会自述 `wired: true`，此时才放行读写。
+  const jobsWired = inner.jobPort.wired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -85,11 +88,13 @@ export function restrictAdminOpsToAccountsAuthority(
     listAdminUsers: accountsReadWired ? inner.listAdminUsers : reject,
     // **放行 1**：真实单事务停用权威（迁移 0017 的 `suspend_account()`）。
     suspendUser: inner.suspendUser,
-    listAdminJobs: reject,
-    cancelAdminJob: reject,
+    listAdminJobs: jobsWired ? inner.listAdminJobs : reject,
+    cancelAdminJob: jobsWired ? inner.cancelAdminJob : reject,
     // **放行 2**（需 `flagsWired: true`）：真实开关读写（迁移 0020 的 `feature_flags`）。
     listFlags: flagsWired ? inner.listFlags : reject,
     setFlag: flagsWired ? inner.setFlag : reject,
+    // 留痕读面与开关读写同一门：没有真端口就没有库内审计，503 而非空页。
+    listFlagAuditEvents: flagsWired ? inner.listFlagAuditEvents : reject,
     hidePost: reject,
   };
 }
