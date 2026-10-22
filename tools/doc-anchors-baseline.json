@@ -232,12 +232,6 @@
       "reference": "tests/integration/recognitions-pg.mjs:1010"
     },
     {
-      "path": "AGENTS.md",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "AGENTS.md:34"
-    },
-    {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
@@ -310,6 +304,18 @@
       "reference": "gy-i09-identify-loop-20261011.md:334"
     },
     {
+      "path": "miniprogram/pages/messages/messages.js",
+      "reason": "SUSPECT",
+      "owner": "miniprogram",
+      "reference": "messages.js:195"
+    },
+    {
+      "path": "miniprogram/pages/messages/messages.js",
+      "reason": "SUSPECT",
+      "owner": "miniprogram",
+      "reference": "messages.js:195"
+    },
+    {
       "path": "miniprogram/pages/voice/voice.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
@@ -334,6 +340,12 @@
       "reference": "utils/auth.js:205"
     },
     {
+      "path": "miniprogram/utils/community-api.js",
+      "reason": "SUSPECT",
+      "owner": "miniprogram",
+      "reference": "miniprogram/utils/community-api.js:366"
+    },
+    {
       "path": "miniprogram/utils/history-api.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
@@ -350,6 +362,12 @@
       "reason": "SUSPECT",
       "owner": "miniprogram",
       "reference": "miniprogram/utils/history-api.js:274"
+    },
+    {
+      "path": "miniprogram/utils/messages-api.js",
+      "reason": "SUSPECT",
+      "owner": "miniprogram",
+      "reference": "miniprogram/utils/messages-api.js:36"
     },
     {
       "path": "miniprogram/utils/reference.js",
@@ -475,7 +493,13 @@
       "path": "services/api/src/ocr/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:545"
+      "reference": "ocr/store-pg.ts:686"
+    },
+    {
+      "path": "services/api/src/recognitions/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/recognitions/store-pg.ts:820"
     },
     {
       "path": "services/api/src/routes/community.ts",
@@ -535,19 +559,7 @@
       "path": "services/api/src/tts/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:383"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:399"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:535"
+      "reference": "services/api/src/tts/service.ts:652"
     },
     {
       "path": "tests/integration/account-suspend-pg.mjs",
@@ -631,7 +643,7 @@
       "path": "tests/unit/recognitions-candidates-selection.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
-      "reference": "recognitions-candidates-selection.test.mjs:391"
+      "reference": "tests/unit/recognitions-candidates-selection.test.mjs:529"
     },
     {
       "path": "tests/unit/tts-jobs-http.test.mjs",
