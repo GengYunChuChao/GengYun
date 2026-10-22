@@ -542,6 +542,59 @@ test('页面·failed / timed_out / uncertain 三类终态逐类呈现，均不�
   }
 })
 
+test('页面·queued/running → failed：进行中提示随终态结束，成功路径不受影响', async () => {
+  // 回归（本地渲染证据 gy-i12-qa-render-20261021 第 4 节）：任务已终态 failed 时，
+  // ② 区仍残留「问题已发送，正在查找答案…」，与「没有生成回答」并列，语义自相矛盾。
+  // 本用例锁定：进行中提示只在 queued/running 期间存在，终态一律撤掉。
+  const h = bootQaPage()
+  let failNow = false
+  h.http.routeOf('GET', h.paths.job).handler = () => {
+    const state = failNow ? 'failed' : 'running'
+    const view = answerJobFixture(h.job.target_ref.id, {
+      id: h.job.id, state: state, deadline_at: h.job.deadline_at,
+      error_code: state === 'failed' ? 'PROVIDER_UNAVAILABLE' : null
+    })
+    return { status: 200, data: { data: view, meta: metaFixture() }, headers: { ETag: '"1"' } }
+  }
+  h.page.setData({ draft: QUESTION })
+  await h.page.onSend()
+  // 202 受理为 queued：此刻进行中提示**应该**在场（修复不是把提示整个删掉）。
+  assert.equal(h.page.data.taskNote, '问题已发送，正在查找答案…', 'queued 受理后必须显示进行中提示')
+
+  await settle(20)
+  assert.equal(h.page.data.job.state, 'running', '前提：中途读到 running')
+  assert.equal(h.page.data.stage, 'pending', 'running 仍是进行中')
+  assert.equal(h.page.data.taskNote, '问题已发送，正在查找答案…', 'running 期间进行中提示必须保留')
+
+  // 任务转入 failed 终态。
+  failNow = true
+  await settle(40)
+  assert.equal(h.page.data.job.state, 'failed', '前提：任务已进入 failed 终态')
+  assert.equal(h.page.data.stage, 'settled', 'failed 必须落到终态')
+  assert.equal(h.page.data.busy, false, '终态必须解除发送中状态')
+  assert.equal(h.page.data.taskNote, '', 'failed 终态不得残留「正在查找答案…」进行中提示')
+  assert.equal(JSON.stringify(h.page.data).includes('正在查找答案'), false, '终态页面数据里不得出现进行中提示')
+  // 失败门禁与文案保持原样：回答不展示，原因仍是「没有生成回答」，且不凭空给可重试错误码。
+  assert.equal(h.page.data.answer, null, 'failed 不得展示任何回答')
+  assert.equal(h.page.data.citations.length, 0, 'failed 不得展示来源')
+  assert.equal(h.page.data.answerGateCode, 'ANSWER_NOT_PRODUCED', '失败门禁码不得改变')
+  assert.match(h.page.data.answerGateMessage, /这次没有生成回答/)
+  assert.equal(h.page.data.taskErrorCode, '', '终态失败不是发送异常：不得凭空给出可重试错误码')
+  h.page.onUnload()
+
+  // 对照：既有成功路径不受影响——同样经过 queued/running，最终 succeeded 展示回答且无进行中提示。
+  const ok = bootQaPage()
+  ok.page.setData({ draft: QUESTION })
+  await ok.page.onSend()
+  await settle(80)
+  assert.equal(ok.page.data.job.state, 'succeeded', '前提：成功路径仍落到 succeeded')
+  assert.equal(ok.page.data.taskNote, '', '成功终态同样不得残留进行中提示')
+  assert.equal(ok.page.data.answer !== null, true, '成功路径仍整体展示回答')
+  assert.equal(ok.page.data.answer.checkedText, ok.jobState.answer.checked_text, '成功路径的回答正文不得改变')
+  assert.equal(ok.page.data.answerGateCode, '', '成功路径闸门仍放行')
+  ok.page.onUnload()
+})
+
 test('页面·succeeded 但 check_state=blocked ⇒ 不展示正文，只给真实原因', async () => {
   const h = bootQaPage({ jobAnswer: answerFixture({ check_state: 'blocked' }) })
   h.page.setData({ draft: QUESTION })

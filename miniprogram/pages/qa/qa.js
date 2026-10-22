@@ -35,6 +35,14 @@ const fontScale = require('../../utils/font-scale')
 const qaApi = require('../../utils/qa-api')
 
 /**
+ * ② 区「进行中」提示的唯一文案：只在任务仍 `queued`/`running` 时出现。
+ *
+ * 任务一旦进入终态（`succeeded`/`uncertain`/`failed`/`timed_out`/`cancelled`），
+ * 必须由 `settle` 撤掉它——否则终态会与「正在查找答案…」并列，让用户以为任务还在跑。
+ */
+const PENDING_TASK_NOTE = '问题已发送，正在查找答案…'
+
+/**
  * 执行模式 → 用户能读懂的一句话（原始 `stub`/`preset_demo` 串不进主界面）。
  * 服务端当前基线均为演示数据；`real` 只在真正接上真实服务时才会出现。
  */
@@ -311,7 +319,7 @@ Page({
         mode: sent.mode,
         modeLabel: modeLabelOf(sent.mode),
         job: qaApi.describeJob(sent.job),
-        taskNote: sent.job.state === 'queued' || sent.job.state === 'running' ? '问题已发送，正在查找答案…' : '',
+        taskNote: sent.job.state === 'queued' || sent.job.state === 'running' ? PENDING_TASK_NOTE : '',
         stage: qaApi.isTerminal(sent.job.state) ? 'settled' : 'pending'
       })
       if (qaApi.isTerminal(sent.job.state)) { this.settle(sent.job, generation); return }
@@ -409,7 +417,13 @@ Page({
     if (!this.isCurrent(generation)) return
     this.stopPoll()
     this._poll = null
-    this.setData({ busy: false, stage: 'settled' })
+    this.setData({
+      busy: false,
+      stage: 'settled',
+      // 终态落定即撤掉「正在查找答案…」：进度提示只能存在于 queued/running 期间。
+      // 只清进行中那一句，不动发送失败/轮询异常留下的可重试说明（那些不是进行中提示）。
+      taskNote: this.data.taskNote === PENDING_TASK_NOTE ? '' : this.data.taskNote
+    })
     if (job.state !== 'succeeded') {
       const note = job.state === 'uncertain'
         ? '这次没有拿到确定的结果，暂不展示回答。'
