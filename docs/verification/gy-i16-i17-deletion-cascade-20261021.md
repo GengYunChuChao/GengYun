@@ -90,11 +90,11 @@
 
 | 域 | 表 | 注销时**真删**？ | 原语（`文件:行`） | 注册进注销链？ | 备份副本 scope | 持久审计 | 判定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 收藏 #16 | `favorites` | **✅ 硬删** | `services/api/src/favorites/store-pg.ts:169-183`（`DELETE FROM favorites WHERE owner_id=$1::uuid RETURNING id`，与台账同事务） | ✅ `user-data-deletion.ts:394` | ✅ `favorite`（`packages/privacy/backup-copies.mjs:38-41`） | ❌ 仅进程内 | **真删 + 计数证据**；备份态恒 `pending`（G9） |
+| 收藏 #16 | `favorites` | **✅ 硬删** | `services/api/src/favorites/store-pg.ts:169-183`（`DELETE FROM favorites WHERE owner_id=$1::uuid RETURNING id`，与台账同事务） | ✅ `user-data-deletion.ts:435` | ✅ `favorite`（`packages/privacy/backup-copies.mjs:38-41`） | ❌ 仅进程内 | **真删 + 计数证据**；备份态恒 `pending`（G9） |
 | 收藏幂等 | `favorites_idempotency` | **✅ 硬删** | 同上 `:175-180`（前缀 `left(scope, len+1) = $1::text\|\|chr(10)`，**不是** LIKE 模糊匹配） | ✅（随收藏域同事务） | — | ❌ | **真删** |
-| 历史 #16 | `history` | **✅ 硬删** | `services/api/src/history/store-pg.ts:157-168`（同形） | ✅ `user-data-deletion.ts:395` | ✅ `history` | ❌ | **真删** |
+| 历史 #16 | `history` | **✅ 硬删** | `services/api/src/history/store-pg.ts:157-168`（同形） | ✅ `user-data-deletion.ts:436` | ✅ `history` | ❌ | **真删** |
 | 历史幂等 | `history_idempotency` | **✅ 硬删** | 同上 `:164-168` | ✅ | — | ❌ | **真删** |
-| 消息 #17 | `messages` | **❌ 一行不删** | **无**（`services/api/src/messages/store.ts:81` `MessagesStore` 只有 `insertMessage/getMessage/listMessagesByOwner/findByEventKey/markReadIfUnread/countUnread` + 幂等方法；`messages/store-pg.ts` 全文件无 `DELETE FROM messages`） | ❌ 不在闭集 | ❌ 无 scope | ❌ | **G1+G2**；HTTP 面无任何 `DELETE` 方法（`services/api/src/routes/messages.ts:43,53,59` 只有 GET×2 + PUT） |
+| 消息 #17 | `messages` | **❌ 一行不删** | **无**（`services/api/src/messages/store.ts:119` `MessagesStore` 只有 `insertMessage/getMessage/listMessagesByOwner/findByEventKey/markReadIfUnread/countUnread` + 幂等方法；`messages/store-pg.ts` 全文件无 `DELETE FROM messages`） | ❌ 不在闭集 | ❌ 无 scope | ❌ | **G1+G2**；HTTP 面无任何 `DELETE` 方法（`services/api/src/routes/messages.ts:43,53,59` 只有 GET×2 + PUT） |
 | 消息幂等 | `public.idempotency_keys`（共享表） | **❌ 只按 key 过期清** | `messages/store-pg.ts:260-263`、`:288-291` 只按 `(scope,key_hash)`；**无 owner 清理** | ❌ | — | ❌ | **G3**；表无 owner 列（`0008_auth_session.sql:46-58`），只能按 `scope` 前缀删（`scope` 由 `messages/service.ts:370` `idempotencyScope(user.userId, …)` 拼，口径同 0008:40） |
 | 会话 #12 | `conversations` / `conversation_turns` / `conversation_answers` | **❌ 有原语但无人调用** | `services/api/src/conversations/store-pg.ts:431-434`（`DELETE FROM conversations WHERE owner_id=$1::uuid RETURNING id`，子表靠 `0013_conversations.sql:64`（`conversation_turns.conversation_id`）与 `:105`（`conversation_answers.turn_id`）的 `ON DELETE CASCADE`） | ❌ 自建协调器**悬空**：`conversations/cascade.ts:192-203` 建好，`app.ts:1569-1570` 建出来、`:1600` 只 `decorate`；**全仓无调用点** | ❌ | ❌ | **G5**（`:1598-1599` 注释自陈「供回归测试与 GY-I19 统一编排驱动」，编排未实现） |
 | 会话备份态 | — | — | — | — | ❌ | — | **G6**：`backupState` 硬编码 `'pending'`（`conversations/cascade.ts:149`） |
@@ -151,7 +151,7 @@
 
 | 编号 | 优先级 | 缺口 | 位置（`文件:行`） | 影响（用词严格） |
 | --- | --- | --- | --- | --- |
-| **G1** | P0 | 消息域**没有按主体清理原语** | `services/api/src/messages/store.ts:81`（接口无 purge/deleteAll）；`services/api/src/messages/store-pg.ts` 全文无 `DELETE FROM messages` | 注销后 `messages` 行**原地保留**；无任何计数可作证据 |
+| **G1** | P0 | 消息域**没有按主体清理原语** | `services/api/src/messages/store.ts:119`（接口无 purge/deleteAll）；`services/api/src/messages/store-pg.ts` 全文无 `DELETE FROM messages` | 注销后 `messages` 行**原地保留**；无任何计数可作证据 |
 | **G2** | P0 | 消息域**未进注销模块闭集** | `services/api/src/privacy/user-data-deletion.ts:63-67`（`USER_DATA_DELETION_MODULES`）、`:394-395`（只注册两个 handler） | 即使有原语也不会被 `executeHandlers()` 驱动 |
 | **G3** | P0 | 消息幂等台账**无按主体清理**（共享 `public.idempotency_keys`，该表**没有 owner 列**） | `messages/store-pg.ts:232-292`；表结构 `0008_auth_session.sql:46-58`；scope 拼法 `messages/service.ts:370` | 注销后同主体消息请求的幂等记录仍在（含 `outcome={"kind":"message","id",…}` 引用），保留 5 分钟 TTL 内的可重放引用；**必须**按 `scope` 前缀删（范式见 `favorites/store-pg.ts:163-167` 注释） |
 | **G4** | P2 | 迁移注释**宣称**的重删机制永不触发 | `0019_messages_persistence.sql:24-25`（「注销删除主体时消息随之级联删除」）；全仓 migration 无 `DELETE FROM public.users` | 读注释会以为消息域已覆盖注销 ⇒ **文档与事实不符**（见 §8） |

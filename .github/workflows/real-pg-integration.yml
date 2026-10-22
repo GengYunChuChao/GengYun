@@ -7,6 +7,9 @@
 #   · tests/integration/qa-citations-pg.mjs（#12 / 问答引用可溯源）；R31 追加
 #   · tests/integration/admin-jobs-pg.mjs（#9 / 作业台：开关生效·作业可见·变更留痕·最小权限）；R31 追加
 #   · tests/integration/ocr-corrections-pg.mjs（#10 / OCR 校正台账）；R31 追加
+#   · tests/integration/online-purge-pg.mjs（#19 / 在线数据 7 日到期**执行者**：到期闭区间·跨进程游标·
+#     失败不阻塞·回执 backupState）；R32 追加 —— 它的驱动与运维命令早已在 main，但此前**不在任何 workflow**，
+#     等于「7 日到期」这条保证在 CI 上从未被真库验证过。
 #
 # 为什么这些脚本**必须**真库：它们锁的是只有数据库能证明的性质——迁移子集按序 apply 且二连跑
 # 0 条、唯一键真的能裁决并发、外键真的挡孤儿行、枚举/CHECK 真的拒绝闭集外的值、
@@ -383,7 +386,8 @@ jobs:
       # 备份副本域（GY-I19 / #19，R28-S49）：**自起集群**脚本之一。
       # runner 上原本没有 17 的服务端二进制（`postgres:17.11` 只活在 service 容器内），故先一步用 PGDG apt
       # 装 `postgresql-17` 取 `initdb`/`pg_ctl`，再真跑。**装包只有这一步**：R28-E5 接的 `backup-copies-purge-pg`
-      # 复用同一份 bin（同一类脚本、同一套 env），⛔ 不装第二遍（两个包管理器状态互相覆盖是新的失败源）。
+      # 与 R32 接的 `online-purge-pg`（下方 `#19` 在线清理 step）都复用同一份 bin（同一类脚本、同一套 env），
+      # ⛔ 不装第二遍（两个包管理器状态互相覆盖是新的失败源）。
       # 它**不**连 service 里那个库、CI 里也**不** `CREATE DATABASE`：库名硬钉在脚本自己的临时集群里
       # （`DB_NAME = gengyun_backup_purge_test`，端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录）。
       # 未设 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包/路径没弄好必红（77 不是通过，也不加任何吞红开关）。
@@ -393,7 +397,7 @@ jobs:
       # 2026-10-19 仍在线）+ 包名钉死大版本 `postgresql-17`。⛔ 不写 `postgresql-17=17.11-…`：PGDG 只保留每个
       # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
       # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
-      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge 需要 initdb/pg_ctl）
+      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge / online-purge 需要 initdb/pg_ctl）
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -406,7 +410,7 @@ jobs:
           /usr/lib/postgresql/17/bin/pg_ctl --version
           server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
           if [ "$server_major" != "17" ]; then
-            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 两个自起集群脚本会拿到错的大版本，真库臂等于没验证。"
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 自起集群脚本（backup-purge / backup-copies / messages-purge / online-purge）会拿到错的大版本，真库臂等于没验证。"
             exit 1
           fi
       - name: 备份副本域（迁移 0023 / 受理同事务 / 30 天清除）
@@ -451,6 +455,30 @@ jobs:
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_W11_PG_ROOT: ${{ runner.temp }}/gy-w11-pg
+          PGCLIENTENCODING: UTF8
+      # 在线数据「7 日到期」清除驱动（`#19` / GY-R28-W6 的脚本 `online-purge-pg.mjs`，R32 接入）：
+      # 与上三步同属**自起集群**类——自己 `initdb` 出临时 17 集群（端口 55600+randomInt(0,300)
+      # 且**先探活再起**）、只监听 127.0.0.1、自建 `gy_w6_online_purge`、跑完 `pg_ctl stop` 并删数据目录，
+      # **不**连 service 里的库、**不**建组角色、**不**碰集群级对象 ⇒ 对前后脚本零耦合；复用那条装包
+      # step 装出来的 `/usr/lib/postgresql/17/bin`（装包只做一次），且同样**不** `CREATE DATABASE`。
+      # 数据根目录键是 `GY_I19_PG_ROOT`（脚本取值点是 `process.env.GY_I19_PG_ROOT ?? tmpdir()`），
+      # 与 `backup-purge` / `backup-copies-purge` 两条同键；守卫按脚本源码交叉核对（`SELF_CLUSTERED_ROOT_KEY`）。
+      # 它自证脚本头注释列的十项（`[1]`～`[8]`，含 `[4b]`／`[4c]` 两条批次推进臂）：①运行时角色读
+      # `deletion_requests` 必须 42501（故命令必须走 owner 角色）；
+      # ②到期闭区间边界（晚 1 秒的行一个字都不动）；③幂等重跑 0 行；④`--limit` 严格生效；
+      # ⑤超过 `--limit` 的到期集合**跨三轮**推进到清空（饿死反证 + 生产入口的磁盘游标）；
+      # ⑥失败不阻塞；⑦`--dry-run` 只列不删；⑧`sha256:` 证据可独立复算；⑨回执 `backupState` 由真行推导。
+      # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
+      # 也不加任何吞红开关）。排在这里而不是更后：`recognition-chain-e2e` 是唯一起 loopback 监听并反复
+      # 轮询异步落库的最慢一步，其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后。
+      # ⚠️ 本地取证**未取得**（R32 接线时实测）：本机沙箱里 `initdb` 成功，但 `pg_ctl start` 报
+      # `pg_ctl: could not create restricted token: error code 87`（Windows 受限令牌被沙箱拒绝）⇒
+      # 这条臂的读数只能由 CI 给出。⛔ 不把「没跑过」写成「本地 exit=0」；本 step 的首次真库读数就是本 PR 的 CI。
+      - name: 在线数据 7 日到期清除驱动（#19 / 到期闭区间 / 跨进程游标 / 失败不阻塞 / 回执 backupState）
+        run: node tests/integration/online-purge-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
           PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。

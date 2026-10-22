@@ -63,7 +63,7 @@
 | 编号 | 缺什么 | 原因与前置 |
 | --- | --- | --- |
 | B1 | 真机页面证据 | `docs/verification/platform-checklist.md:40`「真机设备」行状态列逐字「未验证」；`:48`（Android 真机联网）、`:49`（iOS 真机联网）同为「未验证」。前置：可用真机＋已登录小程序 |
-| B2 | `real` 装配下「注销」这条链路可达 | `services/api/src/app.ts:1554` `available: config.executionMode !== 'real'` ⇒ 真实环境连发起注销都 503。前置：P0 各域补齐后再放开（B4 页 §7 P0-5 的顺序要求） |
+| B2 | `real` 装配下「注销」这条链路可达 | `services/api/src/app.ts:1579` `available: config.executionMode !== 'real'` ⇒ 真实环境连发起注销都 503。前置：P0 各域补齐后再放开（B4 页 §7 P0-5 的顺序要求） |
 | B3 | 30 日备份副本的真实时间读数 | 现有幂等/到期读数全部来自注入时钟（`tests/integration/backup-purge-pg.mjs` 的 `advanceDays`）；真实 31 天等待未做。前置：#19 侧驱动者的运维形态裁定（`tools/purge-expired-backup-copies.mjs` 已存在，本片未跑） |
 | B4 | 识别结果页的「收藏」入口 | C5 页 §1 表判「未通（缺口，本次不实施）」、§7.1 列待裁决；`identify.wxml`／`identify.js` 对「收藏」零命中（C5 页 §4 实测）。前置：口径裁定（收藏对象是候选 `species_id` 还是识别结论） |
 | B5 | 微信开发者工具编译／真实登录链路 | [知识小程序接线盘点](gy-i07-knowledge-miniprogram-wiring-20261021.md) §7 记录 `cli.bat` 返回 `EPERM`／未安装；本片同环境未复核。前置：可写的开发者工具用户目录＋IDE 服务端口 |
@@ -79,7 +79,7 @@
 | (b) | store 有按主体的 `DELETE … RETURNING` 原语（不是软删、不靠外键级联） | 满足 | `favorites/store-pg.ts:172`、`history/store-pg.ts:160` |
 | (c) | 证据串含 `<module>:online-purged:<n>`，n 取自 `RETURNING` 实际行数 | 满足 | `favorites/store-pg.ts:21-23` 自陈计数口径；断言 `tests/integration/favorites-history-pg.mjs:493-498` |
 | (d) | 至少一条执行读数证明「本主体 n 行消失、他人行不动」 | 满足 | `tests/integration/favorites-history-pg.mjs:482-487`（真 PG 17 arm：残留 0、他人逐表相等） |
-| (e) | `real` 装配下该链路可达（注销 HTTP 面不 503） | 未满足 | `services/api/src/app.ts:1554` |
+| (e) | `real` 装配下该链路可达（注销 HTTP 面不 503） | 未满足 | `services/api/src/app.ts:1579` |
 
 **结论（只写事实，不写结论词）**：#16 的 C5 在「实现＋真库行为」层面 5 项中满足 4 项；缺的只有 (e) 端到端可达。B4 页 §3 矩阵的收藏/历史两行与本表 (a)(b)(c) 一致，可直接复核。
 
@@ -117,7 +117,7 @@
 | A5 | 归属：非本人与不存在同形 404 | `messages/service.ts:382`／`:402`（`record.owner_id !== user.userId` ⇒ `notFound()`）；存储层 `messages/store-pg.ts:312`（`OWNER_CHANGED`） |
 | A6 | 401 与 403 分档 | `miniprogram/utils/auth.js:95-109`；消息侧 `miniprogram/utils/messages-api.js:123-124`；契约 403 闭集 `packages/contracts/openapi.json:16831-16835` |
 | A7 | 注销时点硬删消息域（正文＋共享幂等台账，同一事务） | `messages/store-pg.ts:220-241`（`DELETE FROM public.messages … RETURNING id` ＋ `DELETE FROM public.idempotency_keys … RETURNING scope`）；闭集 `privacy/user-data-deletion.ts:71`、`:93-98`、注册 `:449` |
-| A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:186`（消息行必须真删）、`:188`（他人行不动）、`:225`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:252-261`（0 行同形） |
+| A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:277`（消息行必须真删）、`:279`（他人行不动）、`:373`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:419-427`（0 行同形） |
 | A9 | 不接外部推送、不虚构真人消息 | `services/api/src/messages/**` 与 `routes/messages.ts` 对 `subscribeMessage`／`webhook`／模板消息／`openid` **0 命中**（本片 grep 实跑）；`push` 命中均为数组 `push`（`messages/service.ts:345`、`:390`）；台账 blocker 逐字「…不虚构真人消息」（`docs/architecture/contract-status.json:1934`） |
 | A10 | 备份副本 scope 已登记 `message`，注销后 30 日链有对象可清 | `packages/privacy/backup-copies.mjs:38-43`（`messages: 'message'`）；清单源 `privacy/user-data-deletion.ts:321-325` |
 
@@ -128,7 +128,7 @@
 | 编号 | 缺什么 | 原因与前置 |
 | --- | --- | --- |
 | B1 | 真机页面／Android 读数 | `docs/verification/platform-checklist.md:40`／`:48` 均「未验证」；`gy-i17-messages-pg-20261018.md` §5 自陈「未取得 真机（微信端）读数」 |
-| B2 | `real` 装配下注销链路可达 | 同 §1.3 B2：`app.ts:1554` ⇒ 真实环境注销 HTTP 面整域 503 |
+| B2 | `real` 装配下注销链路可达 | 同 §1.3 B2：`app.ts:1579` ⇒ 真实环境注销 HTTP 面整域 503 |
 | B3 | 消息域在**真 PG 服务器**上的注销行数读数 | `tests/unit/messages-deletion-purge.test.mjs` 文件头自陈为记录型假池（非真 PG／非 PGlite）；真库 arm `tests/integration/favorites-history-pg.mjs:456-460` 逐字「本 arm 只应用 0001+0018…没有 `public.messages` 表」，消息域在该 arm 走内存 store 且证据恒 0 行；真表级证据只在 PGlite（`tests/unit/favorites-history-fixtures.mjs` 的 `PG_MIGRATIONS_WITH_MESSAGES`）。⇒「PGlite 真表有、真 PG 服务器无」。前置：把 0019＋0023 纳入同一条真库注销 arm |
 | B4 | 共享幂等台账前缀删的跨域副作用裁定 | `messages/store-pg.ts:206-215` 自陈：`public.idempotency_keys` 是共享表，前缀删会连带删本主体在 auth 等其它域写入的幂等行，「属副作用而非本域自清」。前置：监工/合规对该副作用的裁定 |
 | B5 | 台账与代码不同步 | `docs/architecture/contract-status.json:1934`（`:1956`／`:1978` 同文重复）仍把「PG/注销」记为待验收，而 HEAD 已有原语＋闭集＋注册＋备份 scope。本片红线不改该 JSON，只登记 |
@@ -140,9 +140,9 @@
 | --- | --- | --- |
 | (a) 闭集内并被驱动 | 满足 | `privacy/user-data-deletion.ts:71`、`:93-98`、`:449` |
 | (b) 按主体 `DELETE … RETURNING` 原语 | 满足 | `messages/store-pg.ts:228-238` |
-| (c) 证据串含 `<module>:online-purged:<n>`，n 取 `RETURNING` 行数 | 满足 | `privacy/user-data-deletion.ts:100-103`；断言 `tests/unit/favorites-history-deletion-registration.test.mjs:225` |
+| (c) 证据串含 `<module>:online-purged:<n>`，n 取 `RETURNING` 行数 | 满足 | `privacy/user-data-deletion.ts:100-103`；断言 `tests/unit/favorites-history-deletion-registration.test.mjs:373` |
 | (d) 执行读数证明「n 行消失、他人行不动」 | **部分** | PGlite 真表满足（`…deletion-registration.test.mjs:186-188`）；真 PG 服务器 arm 缺（§2.3 B3） |
-| (e) `real` 装配下链路可达 | 未满足 | `services/api/src/app.ts:1554` |
+| (e) `real` 装配下链路可达 | 未满足 | `services/api/src/app.ts:1579` |
 
 **结论（只写事实）**：#17 的 C5 三项满足、一项部分、一项未满足；与 B4 页 §3 矩阵「消息域 ❌ 一行不删（G1+G2）」相比，HEAD 已把 G1／G2／G3 落地（PR `7f115e8` 补原语、`c62bb38` 扩闭集到四域），但 B4 页**尚未更新**——两页并存时以本页 HEAD 读数为准。
 
@@ -281,7 +281,7 @@
 | 共同项 | 读数 | 影响 |
 | --- | --- | --- |
 | 真机／开发者工具 | `platform-checklist.md:40`／`:48`／`:49` 全「未验证」；B6 页 §7 的 `cli.bat` `EPERM` | 四张都缺「页面级」证据 |
-| `real` 模式注销 503 | `app.ts:1554` | #16／#17 的 C5 到不了端到端 |
+| `real` 模式注销 503 | `app.ts:1579` | #16／#17 的 C5 到不了端到端 |
 | issue 前置 | #4 OPEN；#9／#10／#14／#15／#28／#29 OPEN；#3 CLOSED | 四张的 issue 正文都写了「缺前置不关闭整项」 |
 
 **本片对「哪一张的材料最齐」的判断（这是判断，不是结论，关闭权仍在监工）**：**#7 最齐**。理由是它的三条验收在代码与测试两层都有锚点（§3.2 A1–A7），唯一像「缺陷」的排序问题在代码侧已于 PR `b56ba9d` 对齐冻结契约（`service.ts:76`），剩下的只是台账仍记 `partial`（`contract-status.json:716`）——属口径/文档收口，不是行为缺口。还差的两项是：

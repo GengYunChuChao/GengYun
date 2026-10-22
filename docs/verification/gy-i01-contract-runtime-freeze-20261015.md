@@ -35,7 +35,7 @@
 | 5 | 冻结生效条件的政策条文 | `docs/architecture/acceptance-map.md:40`、`:55` | `:40`「契约经监工确认后下游才按已冻结版本验收」；`:55`「监工独立验证后决定是否冻结」 |
 | 6 | #1 的权威验收条文（改契约须同步文档与依赖） | `docs/initial-issues.json:37` | GY-I01 `acceptance[2]` 原文；台账 `status` 为 `待审PR` |
 | 7 | 契约实现状态对照（人工判定 + 机器副本） | `docs/architecture/contract-implementation-status.md`、`docs/architecture/contract-status.json:6` | `:6` 明写该 JSON「**不是冻结契约事实源**」，只记实现进度 |
-| 8 | 可复核校验工具（独立命令，未接 CI） | `tools/verify-contract-status.mjs`；接入状态见 `docs/architecture/contract-implementation-status.md:183` | `:183` 原文「脚本是独立命令，**未追加 CI 工作流或修改 package.json**」 |
+| 8 | 可复核校验工具（独立命令，未接 CI） | `tools/verify-contract-status.mjs`；接入状态见 `docs/architecture/contract-implementation-status.md` 第 6 节「可回归校验」 | 第 6 节原文「脚本是独立命令，**未追加 CI 工作流或修改 package.json**」 |
 | 9 | 契约一致性门禁 | `package.json:21`（`test:contract`）、`.github/workflows/engineering-shell.yml:57-69`、`.github/workflows/development-docs.yml:38-39` | CI 跑 `npm run test:contract` 与 `python3 tools/validate_contracts.py`／`test_contracts.py`（离线、无外部调用） |
 | 10 | **契约文件不可改**的机器断言 | `tests/ui-adaptive.test.mjs:303-324`（判据在 `:320`） | `assert.ok(!changed.some((f) => f.startsWith('packages/contracts/')), '不得修改冻结契约')`；与 `docs/ui-contract-binding.md:24` 的人工口径一致 |
 | 11 | 既有契约验证记录 | `docs/architecture/validation.md`、`docs/verification/gy-i01-contract-status-20261011.md`、`docs/verification/gy-i01-contract-status-refresh-20261013.md`、`docs/verification/gy-i01-status-sync-20261013.md` | 分别记：契约本身检查与限制；可复现启动 + 本机门禁；对照刷新（逐项比较 112 条操作元数据未改）；新 main 同步 |

@@ -132,7 +132,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | `judgement: none`（catch 里裸 `retryable: true`） | **1** |
 | `miniprogram/utils` 侧站点 | 0（26 个文件全是封套透传 `payload.error.retryable === true` 与展示状态表，没有 catch 兜底形状） |
 
-`has` 的典型：`admin/ops/flags-pg.ts:341/359`（按 SQLSTATE 分档）、`community/store-pg.ts:90/97`（分支 true + `isTransientDatabaseError(error)`）、`db/source-lifecycle.ts:69/78`（分支 + `unknown || isTransientDatabaseError(error)`）、`media/service.ts:361`（`error.retryable`）、`privacy/egress.ts:75`（`candidate?.retryable === true`）、`privacy/ledger-pg.ts:86/90`、`db/catalog.ts:29/52`、`favorites|history|messages|ocr|speech|recognitions|conversations/store-pg.ts` 各有「分支 + 分类器」一对、`admin/ops/accounts-pg.ts:105`、`admin/ops/account-authority-pg.ts:168`、`auth/wechat.ts:106`。
+`has` 的典型：`admin/ops/flags-pg.ts:341/359`（按 SQLSTATE 分档）、`community/store-pg.ts:95/102`（`retryable: true` 分支 + `retryable: isTransientDatabaseError(error)`）、`db/source-lifecycle.ts:69/78`（分支 + `unknown || isTransientDatabaseError(error)`）、`media/service.ts:361`（`error.retryable`）、`privacy/egress.ts:75`（`candidate?.retryable === true`）、`privacy/ledger-pg.ts:86/90`、`db/catalog.ts:29/52`、`favorites|history|messages|ocr|speech|recognitions|conversations/store-pg.ts` 各有「分支 + 分类器」一对、`admin/ops/accounts-pg.ts:105`、`admin/ops/account-authority-pg.ts:168`、`auth/wechat.ts:106`。
 
 注意一处**判据边界**：三个 `tablesReady` 站点**不在**清单里 —— 它们既不在 catch 内，其函数也不是被 catch 调用的 mapper。它们由第 1 条判据（`new ApiError` + `PROVIDER_UNAVAILABLE`）覆盖（`#455` 之后它们已不是非 false 站点，两条判据都不再报它们）。两条判据在此互补，不是漏。
 

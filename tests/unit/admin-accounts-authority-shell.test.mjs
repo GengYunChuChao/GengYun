@@ -165,3 +165,67 @@ test('第三参默认/显式 false ⇒ listAdminUsers 与首版逐字相同（�
     assert.equal(shell.accountsWired, false, 'accountsWired 不随 accountsReadWired 变成 true');
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GY-I18（#18）新增（⛔ 未改动上面五条既有断言）：下架面 `hidePost` 的能力门。
+// 判据是 `hidePostWired`（`app.ts` 只在社区端口 `persistent === true` 时传 true）；
+// 默认 `false` ⇒ 仍是 503，与 GY-I22 首版逐字相同。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('第三参 hidePostWired: true ⇒ 只多放行 hidePost（suspendUser 照旧，其余 8 条仍逐条 503）', async () => {
+  const { inner, calls } = recordingService();
+  const shell = restrictAdminOpsToAccountsAuthority(inner, REASON, { hidePostWired: true });
+
+  const context = { identity: { userId: 'u1' }, ifMatch: '"1"' };
+  assert.equal(typeof shell.hidePost, 'function');
+
+  // 下架面：原样转发 inner（参数不变、返回值不变、恰好被调一次）。
+  const out = await shell.hidePost(context, 'post-1', { reason: 'r' });
+  assert.deepEqual(out, { status: 200 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'hidePost');
+  assert.deepEqual(calls[0].args, [context, 'post-1', { reason: 'r' }]);
+
+  // 停用面：本壳本来就没挡（既有行为），确认它没有被下架放行顺手改写。
+  const suspended = await shell.suspendUser(context, 'acc-1', { reason_code: 'account_suspended' });
+  assert.deepEqual(suspended, { status: 200, headers: {}, body: { state: 'suspended' } });
+  assert.equal(calls.length, 2);
+
+  // 其余 8 条：仍逐条 503，措辞同源，且一个都没真的被调。
+  for (const name of REJECTED.filter((item) => item !== 'hidePost')) {
+    await assert.rejects(
+      () => shell[name](context, 'acc-1', {}),
+      (error) => {
+        assert.equal(error.code, 'PROVIDER_UNAVAILABLE', `${name} 必须仍 503`);
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, false);
+        assert.equal(error.message, REASON);
+        return true;
+      },
+    );
+  }
+  assert.deepEqual(calls.map((call) => call.name), ['hidePost', 'suspendUser'], '放行集合恰为两项');
+});
+
+test('第三参 hidePostWired 默认/显式 false ⇒ hidePost 与首版逐字相同（仍 503，零副作用）', async () => {
+  for (const options of [undefined, {}, { hidePostWired: false }]) {
+    const { inner, calls } = recordingService();
+    const shell = options === undefined
+      ? restrictAdminOpsToAccountsAuthority(inner, REASON)
+      : restrictAdminOpsToAccountsAuthority(inner, REASON, options);
+
+    await assert.rejects(
+      () => shell.hidePost({ identity: { userId: 'u1' }, ifMatch: '"1"' }, 'post-1', { reason: 'r' }),
+      (error) => {
+        assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, false);
+        assert.equal(error.message, REASON);
+        return true;
+      },
+    );
+    assert.deepEqual(calls, [], '未接线时下架面不得触达内层服务');
+    // 单开下架门不得连带放开其它能力位（读数如实）。
+    assert.equal(shell.accountsWired, false, 'accountsWired 不因下架门而变化');
+  }
+});

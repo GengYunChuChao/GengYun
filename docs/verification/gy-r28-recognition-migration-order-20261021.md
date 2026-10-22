@@ -63,10 +63,10 @@ assert.equal(names[names.length - 1], MIGRATION, `${MIGRATION} 必须是当前�
 | --- | --- | --- |
 | 每个编号 1..max 连续出现 | `tests/integration/recognitions-pg.mjs:276`（`assert.deepEqual(missing, [])`） | 无缺号 |
 | `count === max` | `tests/integration/recognitions-pg.mjs:277` | 发现数 = 最大编号（无跳号/漏项） |
-| `names.includes(MIGRATION)` | `tests/integration/recognitions-pg.mjs:279` | 本片迁移确实在发现结果里 |
+| `names.includes(MIGRATION)` | `tests/integration/recognitions-pg.mjs:291` | 本片迁移确实在发现结果里 |
 | 本片迁移真被应用、对象真建出 | `tests/integration/recognitions-pg.mjs:358`（UP）、`:376`（ROLLBACK）、`:287-291`（`to_regclass`） | 与「末位」无关的语义断言 |
 
-改前位置断言在 `:280`，其余三条结构 assert 的语义与行号（276/277/279）在改前改后一致。
+改前位置断言在 `:280`；本节三处结构 assert 的行号是 GY-R28 当时的读数，经 #434 的迁移保留台账重构后现为 `:275-279`／`:285-289`／`:291`。
 
 ## 3. 手动取证
 
