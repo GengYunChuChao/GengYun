@@ -411,6 +411,62 @@ test('listPosts / listComments 把排序下推到 SQL（与内存实现的比较
   assert.equal(business[1].includes('ORDER BY created_at ASC, id ASC'), true);
 });
 
+test('listPosts 把筛选（可见性/归属/作物/地区/keyset）下推成 WHERE + 绑定参数，且 LIMIT 落在过滤之后', async () => {
+  const pool = fakePool([[postRow()], [postRow()], [postRow()], []]);
+  const store = storeWith(pool);
+
+  // 公开面：候选可见性 + 作物 + 地区 + keyset + LIMIT。
+  await store.listPosts({
+    scope: 'public',
+    cropId: 'crop-wheat',
+    regionCode: '330100',
+    after: { createdAt: CREATED_AT, id: POST_ID },
+    limit: 21,
+  });
+  const publicCall = pool.businessCalls()[0];
+  const publicSql = flat(publicCall.text);
+  assert.equal(
+    publicSql.slice(publicSql.indexOf('FROM community_posts')),
+    "FROM community_posts WHERE visibility = 'published' AND crop_id = $1 AND region_code = $2 "
+      + 'AND (created_at, id) < ($3::timestamptz, $4::uuid) ORDER BY created_at DESC, id DESC LIMIT $5::int',
+    '筛选必须写到 WHERE 里（不是取一页再在内存筛）',
+  );
+  // 参数顺序逐位断言：作物 → 地区 → 游标时间 → 游标 id → limit（占位符编号即顺序）。
+  assert.deepEqual(publicCall.values, ['crop-wheat', '330100', CREATED_AT, POST_ID, 21], '参数顺序必须与占位符编号一致');
+  assert.equal(publicSql.includes('crop-wheat'), false, '筛选值只能走绑定参数，不得拼进 SQL 文本');
+  assert.equal(publicSql.indexOf('WHERE') < publicSql.indexOf('ORDER BY'), true, 'WHERE 必须在排序之前');
+  assert.equal(publicSql.indexOf('ORDER BY') < publicSql.indexOf('LIMIT'), true, 'LIMIT 必须在过滤与排序之后');
+
+  // 本人面：非删除 + 归属谓词（作者维度的越权边界由 SQL 自己守）。
+  await store.listPosts({ scope: 'mine', authorId: AUTHOR, limit: 2 });
+  const mineSql = flat(pool.businessCalls()[1].text);
+  assert.equal(
+    mineSql.slice(mineSql.indexOf('FROM community_posts')),
+    "FROM community_posts WHERE visibility <> 'deleted' AND author_id = $1::uuid "
+      + 'ORDER BY created_at DESC, id DESC LIMIT $2::int',
+  );
+  assert.deepEqual(pool.businessCalls()[1].values, [AUTHOR, 2]);
+
+  // 公开面、无其他筛选、不封顶：只有可见性谓词，没有 LIMIT。
+  await store.listPosts({ scope: 'public' });
+  const unfilteredCall = pool.businessCalls()[2];
+  const unfilteredSql = flat(unfilteredCall.text);
+  assert.equal(
+    unfilteredSql.slice(unfilteredSql.indexOf('FROM community_posts')),
+    "FROM community_posts WHERE visibility = 'published' ORDER BY created_at DESC, id DESC",
+  );
+  assert.deepEqual(unfilteredCall.values, []);
+
+  // 夹具/诊断口径 `all`：与旧实现逐行等价 —— 不发 WHERE、不封顶。
+  await store.listPosts({ scope: 'all' });
+  const allSql = flat(pool.businessCalls()[3].text);
+  assert.equal(allSql.includes('WHERE'), false, 'scope=all 不过滤任何行');
+  assert.equal(allSql.endsWith('ORDER BY created_at DESC, id DESC'), true);
+
+  // `mine` 必须显式给主体：存储层不接受"隐式当前用户"。
+  await assert.rejects(store.listPosts({ scope: 'mine' }), /authorId/);
+});
+
 // ---------------------------------------------------------------------------
 // 4. 幂等点赞（集合语义，计数派生）
 // ---------------------------------------------------------------------------
