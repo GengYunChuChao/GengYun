@@ -16,6 +16,11 @@
  *   [2] 到期边界（闭区间）：等于/早于 cutoff 的请求被清，晚 1 秒的行**一个字都不动**
  *   [3] 幂等：同一 cutoff 再跑 ⇒ 0 行删除、逐请求 `already_purged`
  *   [4] 批量上限：`--limit` 严格生效，剩余量如实报出
+ *   [4b] 批次推进（[P1] 监工 1021/1806）：**超过 `--limit` 的到期集合连续运行后全部处理**——
+ *       limit=2、5 个到期请求、每轮只推进一页 ⇒ 三轮处理 2/2/1 全部清空；同一条 SQL 不传游标时
+ *       仍只返回队首 A/B（饿死反证）；且全程**不写** `deletion_requests.state`（不伪造整体 completed）
+ *   [4c] 同一闭环走生产入口：三条**独立进程** + 磁盘游标（`--cursor-file`）⇒ 跨进程也推进，
+ *       走到队尾时游标文件被删掉；`--no-cursor` 退回"只跑一页"
  *   [5] 失败不阻塞：一个模块抛错只让该请求落 failed，同请求已成功模块的证据保留、其它请求照跑
  *   [6] `--dry-run`：只列不删
  *   [7] 证据：每个成功 (request, module) 一行 `sha256:` 摘要，可**独立复算**；报告不含 `user_id`
@@ -31,6 +36,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
 
@@ -43,12 +49,11 @@ import {
 } from '../../services/api/src/privacy/user-data-deletion.ts';
 import { RECEIPT_TTL_MS } from '../../services/api/src/privacy/account-deletion.ts';
 import {
+  drainDueOnlineDeletions,
   formatOnlinePurgeReport,
   listDueOnlineDeletions,
   onlinePurgeEvidenceRef,
   onlinePurgeExitCode,
-  normalizeOnlinePurgeLimit,
-  runOnlinePurgeBatch,
 } from '../../services/api/src/privacy/online-purge-driver.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
@@ -291,6 +296,16 @@ async function retire(owner, requestIds) {
   );
 }
 
+/** 这些主体里四域行**全部**被清空的那几个（按入参顺序返回 `requestId`）——批次推进的直接读数。 */
+async function emptiedRequests(targets) {
+  const done = [];
+  for (const target of targets) {
+    const counts = await domainRowCounts(owner, target.userId);
+    if (Object.values(counts).every((count) => count === 0)) done.push(target.requestId);
+  }
+  return done;
+}
+
 /** 四域 PG store 组成的在线清除端口（CLI 里的 `createFourDomainPurgePort` 同一实现）。 */
 function fourDomainPort(pool) {
   const stores = new Map([
@@ -317,19 +332,33 @@ function fourDomainPort(pool) {
   };
 }
 
-/** 以库属主枚举候选（运行时角色读不了 `deletion_requests`），执行走注入口。 */
-async function driveOnce({ cutoff, limit, dryRun = false, purge }) {
-  const { requests, totalDue } = await listDueOnlineDeletions(ownerClient, { cutoff, limit });
-  const report = await runOnlinePurgeBatch({
+/**
+ * 跑一轮（与 CLI 同一条路径：`listDueOnlineDeletions` 取页 → `drainDueOnlineDeletions` 推进）。
+ * 缺省 `maxBatches: 1` ⇒ 一页一轮，读数与旧口径的"单批"一致（[2]–[8] 各臂沿用）。
+ * `after` 是上一轮落下的游标；`maxBatches: 1` + 游标 = CLI 每次 cron 调用的行为。
+ */
+async function driveOnce({ cutoff, limit, dryRun = false, purge, after = null, maxBatches = 1 }) {
+  return drainDueOnlineDeletions({
     cutoff,
     limit,
-    requests,
-    totalDue,
+    maxBatches,
     dryRun,
     modules: USER_DATA_DELETION_MODULES,
     purge,
+    after,
+    fetchPage: (pageInput) => listDueOnlineDeletions(ownerClient, pageInput),
   });
-  return report;
+}
+
+/** 以独立进程跑生产入口 `tools/purge-expired-online-data.mjs`（跨进程游标必须真的落盘才生效）。 */
+function runCli(args, extraEnv = {}) {
+  return spawnSync(process.execPath, [fileURLToPath(new URL('../../tools/purge-expired-online-data.mjs', import.meta.url)), ...args], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    encoding: 'utf8',
+    env: { ...process.env, DATABASE_URL: targetUrl, ...extraEnv },
+    timeout: 120_000,
+    windowsHide: true,
+  });
 }
 
 async function expectSqlState(client, label, sql, params, expectedCode) {
@@ -434,7 +463,6 @@ try {
   for (const target of [exact, early, late]) await seedDomainRows(owner, target.userId);
 
   const boundary = await driveOnce({ cutoff: CUTOFF, limit: 10, purge: fourDomainPort(runtimePool) });
-  console.log('DEBUG boundary=' + JSON.stringify(boundary));
   const boundaryIds = boundary.evidence.map((row) => row.requestId);
   assert.ok(boundaryIds.includes(exact.request.requestId), '等于 cutoff 的请求必须进候选');
   assert.ok(boundaryIds.includes(early.request.requestId), '早 1 秒的请求必须进候选');
@@ -492,6 +520,163 @@ try {
   // [5] 失败不阻塞
   // =========================================================================
   await retire(owner, batchTargets.map((target) => target.requestId));
+
+  // =========================================================================
+  // [4b] 批次推进（[P1] 监工 1021/1806）：超过 --limit 的到期集合连续运行后全部处理
+  // =========================================================================
+  // 旧口径（固定 `ORDER BY online_due_at, id LIMIT n`，且清理不回写请求状态）在这里必然饿死：
+  // 每轮都只取到最早的那两个请求，它们早已被清空 ⇒ 每轮记 already_purged，第三个永远进不了候选。
+  // 本臂用真 SQL + 真四域清空证明：带上游标连续跑，**超出 limit 的剩余到期请求会被逐个处理掉**。
+  const drainLimit = 2;
+  const drainTargets = [];
+  for (let index = 0; index < 5; index += 1) {
+    const onlineDueAt = shift(CUTOFF, -DAY_MS * (5 - index));
+    const userId = await insertUser(owner);
+    const request = await insertDeletionRequest(owner, { userId, onlineDueAt });
+    await seedDomainRows(owner, userId);
+    drainTargets.push({ userId, requestId: request.requestId, onlineDueAt });
+  }
+  const drainIds = drainTargets.map((target) => target.requestId);
+  const pageIds = (report) => [...new Set(report.evidence.map((row) => row.requestId))];
+
+  const headFirst = await listDueOnlineDeletions(owner, { cutoff: CUTOFF, limit: drainLimit, after: null });
+  assert.deepEqual(
+    headFirst.requests.map((row) => row.requestId),
+    [drainIds[0], drainIds[1]],
+    '队首页必须是最早到期的两个请求',
+  );
+
+  const rush1 = await driveOnce({ cutoff: CUTOFF, limit: drainLimit, purge: fourDomainPort(runtimePool) });
+  assert.equal(rush1.batches, 1, '每轮只推进一页（--max-batches 1）');
+  assert.equal(rush1.processed, 2, `第一轮只处理 limit 条（实际 ${rush1.processed}）`);
+  assert.equal(rush1.succeeded, 2);
+  assert.equal(rush1.remaining, 3, '剩余量必须如实报出 3');
+  assert.equal(rush1.drained, false, '5 个到期请求只处理 2 个 ⇒ 本轮没到队尾');
+  assert.notEqual(rush1.nextCursor, null, '没到队尾 ⇒ 必须给出下一轮从哪一行之后继续');
+  assert.deepEqual(pageIds(rush1), [drainIds[0], drainIds[1]]);
+  assert.deepEqual(await emptiedRequests(drainTargets), [drainIds[0], drainIds[1]], '第一轮清空的正是最早的两个主体');
+
+  // 饿死反证：**不传游标**再查队首，拿到的仍是同一批（已被清空）的 A/B ——
+  // 旧口径下一轮就会原地打转，第三个请求永远进不了候选。
+  const headAfterRush1 = await listDueOnlineDeletions(owner, { cutoff: CUTOFF, limit: drainLimit, after: null });
+  assert.deepEqual(
+    headAfterRush1.requests.map((row) => row.requestId),
+    [drainIds[0], drainIds[1]],
+    '不传游标时必须仍返回同一批已清空的请求（这就是饿死：它们占满了 limit）',
+  );
+
+  const rush2 = await driveOnce({
+    cutoff: CUTOFF,
+    limit: drainLimit,
+    purge: fourDomainPort(runtimePool),
+    after: rush1.nextCursor,
+  });
+  assert.equal(rush2.processed, 2);
+  assert.equal(rush2.succeeded, 2);
+  assert.equal(rush2.drained, false, '还剩 1 个 ⇒ 仍没到队尾');
+  assert.deepEqual(pageIds(rush2), [drainIds[2], drainIds[3]], '第二轮必须轮到 C/D，⛔ 不是再撞 A/B');
+  assert.deepEqual(await emptiedRequests(drainTargets), [drainIds[0], drainIds[1], drainIds[2], drainIds[3]]);
+
+  const rush3 = await driveOnce({
+    cutoff: CUTOFF,
+    limit: drainLimit,
+    purge: fourDomainPort(runtimePool),
+    after: rush2.nextCursor,
+  });
+  assert.equal(rush3.processed, 1, '第三轮只剩最后 1 个');
+  assert.equal(rush3.succeeded, 1);
+  assert.equal(rush3.drained, true, '页内不足 limit 条 ⇒ 已到队尾');
+  assert.equal(rush3.nextCursor, null, '走到队尾 ⇒ 下一轮从队首重扫');
+  assert.deepEqual(pageIds(rush3), [drainIds[4]]);
+  assert.deepEqual(await emptiedRequests(drainTargets), drainIds, '连续三轮之后：5 个到期请求的四域行**全部**清空');
+
+  // 走到队尾之后从头整轮重扫（游标为空、页数给足）：全是 already_purged、一行都不再删、退出码 0。
+  const rushWrap = await driveOnce({ cutoff: CUTOFF, limit: drainLimit, maxBatches: 5, purge: fourDomainPort(runtimePool) });
+  assert.equal(rushWrap.batches, 3, '整轮重扫要翻 2+2+1 三页才到队尾');
+  assert.equal(rushWrap.drained, true);
+  assert.equal(rushWrap.rowsPurged, 0, '重扫不得再删任何行');
+  assert.equal(rushWrap.evidence.length, 0);
+  assert.equal(
+    rushWrap.skipReasons.already_purged,
+    5,
+    `5 个请求都该如实落 already_purged（实际 ${rushWrap.skipReasons.already_purged}）`,
+  );
+  assert.equal(rushWrap.failed, 0);
+  assert.equal(onlinePurgeExitCode(rushWrap), 0);
+
+  // 不伪造整体完成：只清了在线四域，请求状态仍然不是 completed（完成判定归协调器）。
+  const drainStates = (
+    await owner.query('SELECT id, state, completed_at FROM public.deletion_requests WHERE id = ANY($1::uuid[])', [drainIds])
+  ).rows;
+  assert.equal(drainStates.length, 5);
+  assert.equal(drainStates.every((row) => row.state !== 'completed'), true, '清完在线四域不得把请求标 completed');
+  assert.equal(drainStates.every((row) => row.completed_at === null), true, 'completed_at 也不得被写');
+  note(`批次推进：[4b] 三元组读数 processed=${rush1.processed}/${rush2.processed}/${rush3.processed}、drained=${rush1.drained}/${rush2.drained}/${rush3.drained}`);
+  say(
+    `批次推进（[P1] 闭环，in-process）：limit=${drainLimit}、5 个到期请求、每轮一页 ⇒ 三轮处理 2/2/1 全部清空；` +
+      '同一 SQL 不传游标仍返回队首 A/B（饿死反证）；请求 state 全程未被写（不伪造 completed）',
+  );
+
+  await retire(owner, drainIds);
+
+  // =========================================================================
+  // [4c] 同一闭环走**生产入口**：三条独立进程 + 磁盘游标
+  // =========================================================================
+  // cron 每次都是新进程：进度只可能来自磁盘上的游标文件。[4b] 证明驱动会推进，这里证明
+  // "跨进程也会推进"，而且走到队尾时游标文件被删掉（下一轮回到队首 = 一整轮）。
+  const cliLimit = 2;
+  const cliCursorFile = join(rootDir, `gy-w6-cli-cursor-${randomBytes(4).toString('hex')}.json`);
+  const cliNowMs = Date.now();
+  const cliTargets = [];
+  for (let index = 0; index < 5; index += 1) {
+    const onlineDueAt = new Date(cliNowMs - DAY_MS * (5 - index)).toISOString();
+    const userId = await insertUser(owner);
+    const request = await insertDeletionRequest(owner, { userId, onlineDueAt });
+    await seedDomainRows(owner, userId);
+    cliTargets.push({ userId, requestId: request.requestId, onlineDueAt });
+  }
+  const cliIds = cliTargets.map((target) => target.requestId);
+  const cliArgs = ['--limit', String(cliLimit), '--max-batches', '1', '--cursor-file', cliCursorFile];
+
+  const cli1 = runCli(cliArgs);
+  assert.equal(cli1.status, 0, `CLI 第一次运行必须退出 0（status=${cli1.status}｜stdout=${cli1.stdout}｜stderr=${cli1.stderr}）`);
+  assert.match(cli1.stdout, /批次 1（逐页处理 2）/, 'CLI 必须打印批次读数');
+  assert.match(cli1.stdout, /游标已更新：下一轮从 request=/);
+  assert.equal(existsSync(cliCursorFile), true, '没到队尾 ⇒ 游标文件必须落盘');
+  assert.deepEqual(await emptiedRequests(cliTargets), [cliIds[0], cliIds[1]]);
+
+  const cli2 = runCli(cliArgs);
+  assert.equal(cli2.status, 0, `CLI 第二次运行必须退出 0（status=${cli2.status}｜stderr=${cli2.stderr}）`);
+  assert.match(cli2.stdout, /从 request=[0-9a-f-]{36}（online_due_at=/);
+  assert.deepEqual(
+    await emptiedRequests(cliTargets),
+    [cliIds[0], cliIds[1], cliIds[2], cliIds[3]],
+    '第二次进程必须接着上次的游标处理 C/D',
+  );
+
+  const cli3 = runCli(cliArgs);
+  assert.equal(cli3.status, 0, `CLI 第三次运行必须退出 0（status=${cli3.status}｜stderr=${cli3.stderr}）`);
+  assert.match(cli3.stdout, /游标已清：本轮走到队尾/);
+  assert.equal(existsSync(cliCursorFile), false, '走到队尾 ⇒ 游标文件必须被删掉（下一轮回队首）');
+  assert.deepEqual(await emptiedRequests(cliTargets), cliIds, '三个独立进程跑完：5 个到期请求全部清空');
+
+  // `--no-cursor` 退回"只跑一页"：两个都已是 already_purged，一行都不再删。
+  const cliNoCursor = runCli(['--limit', String(cliLimit), '--no-cursor']);
+  assert.equal(cliNoCursor.status, 0, '--no-cursor 也必须退出 0');
+  assert.match(cliNoCursor.stdout, /--no-cursor：只跑一页/);
+  assert.match(cliNoCursor.stdout, /already_purged=2/);
+
+  const cliStates = (
+    await owner.query('SELECT id, state FROM public.deletion_requests WHERE id = ANY($1::uuid[])', [cliIds])
+  ).rows;
+  assert.equal(cliStates.length, 5);
+  assert.equal(cliStates.every((row) => row.state !== 'completed'), true, 'CLI 也不得把只清了在线四域的请求标 completed');
+  say(
+    `批次推进（[P1] 闭环，CLI 跨进程）：3 个独立 node 进程 + 磁盘游标 ⇒ 5 个到期请求 2/2/1 全部清空，` +
+      '走到队尾时游标文件被删、--no-cursor 只跑一页；请求 state 仍非 completed',
+  );
+
+  await retire(owner, cliIds);
   const failing = { userId: await insertUser(owner) };
   failing.request = await insertDeletionRequest(owner, { userId: failing.userId, onlineDueAt: shift(CUTOFF, -2 * DAY_MS) });
   const healthy = { userId: await insertUser(owner) };

@@ -8,7 +8,8 @@
 //   [5] `--dry-run` 一次都不碰库；
 //   [6] 每个成功行写证据（`sha256:` 摘要，稳定 / 不撞 / 不含主体标识）；
 //   [7] 读数口径：成功 + 跳过 + 失败 ≡ 处理请求数；报告文本不含 `user_id`；
-//   [8] 参数与 SQL 口径（`--limit` 非法即抛、候选 SQL 按 `online_due_at <= cutoff` 且不排除 `blocked`）。
+//   [8] 参数与 SQL 口径（`--limit` 非法即抛、候选 SQL 按 `online_due_at <= cutoff` 且不排除 `blocked`）；
+//   [9] **批次推进**（[P1] 监工 1021/1806）：超过 `limit` 的到期集合连跑即可全部处理，且不伪造 completed。
 //
 // 真库臂在 `tests/integration/online-purge-pg.mjs`（未取得 PG 二进制 ⇒ 77 跳过）。
 
@@ -17,15 +18,21 @@ import { test } from 'node:test';
 
 import {
   DEFAULT_ONLINE_PURGE_BATCH_LIMIT,
+  DEFAULT_ONLINE_PURGE_MAX_BATCHES,
   MAX_ONLINE_PURGE_BATCH_LIMIT,
+  MAX_ONLINE_PURGE_MAX_BATCHES,
   ONLINE_PURGE_DRIVER_ERROR_CODES,
   ONLINE_PURGE_DUE_COUNT_SQL,
   ONLINE_PURGE_DUE_SQL,
   ONLINE_PURGE_EVIDENCE_VERSION,
   ONLINE_PURGE_SKIP_REASONS,
+  cursorAfterCandidate,
+  drainDueOnlineDeletions,
   formatOnlinePurgeReport,
   listDueOnlineDeletions,
+  normalizeOnlinePurgeCursor,
   normalizeOnlinePurgeLimit,
+  normalizeOnlinePurgeMaxBatches,
   onlinePurgeEvidenceRef,
   onlinePurgeExitCode,
   runOnlinePurgeBatch,
@@ -423,12 +430,18 @@ test('[7b] 报告文本不含 user_id、正文或连接串', async () => {
 
 // ---------------------------------------------------------------- [8] SQL 与候选列举
 
-test('[8] 候选 SQL：按 online_due_at 闭区间取，只排除 completed（不排除 blocked）', () => {
+test('[8] 候选 SQL：按 online_due_at 闭区间取，只排除 completed（不排除 blocked），并带 keyset 游标', () => {
   assert.match(ONLINE_PURGE_DUE_SQL, /online_due_at\s*<=\s*\$1::timestamptz/);
   assert.match(ONLINE_PURGE_DUE_SQL, /state\s*<>\s*'completed'/);
   assert.ok(!/state\s*=\s*'blocked'/.test(ONLINE_PURGE_DUE_SQL), '不排除 blocked 行');
-  assert.match(ONLINE_PURGE_DUE_SQL, /ORDER BY online_due_at, id/);
+  assert.match(ONLINE_PURGE_DUE_SQL, /ORDER BY date_trunc\('milliseconds', online_due_at\), id/);
   assert.match(ONLINE_PURGE_DUE_SQL, /LIMIT \$2::integer/);
+  // [P1] 监工 1021/1806：队首固定 LIMIT 会饿死后批 ⇒ 游标谓词必须进 SQL（`$3` 空 = 从队首）。
+  assert.match(ONLINE_PURGE_DUE_SQL, /\$3::timestamptz IS NULL/);
+  assert.match(
+    ONLINE_PURGE_DUE_SQL,
+    /\(date_trunc\('milliseconds', online_due_at\), id\) > \(\$3::timestamptz, \$4::uuid\)/,
+  );
   assert.match(ONLINE_PURGE_DUE_COUNT_SQL, /count\(\*\)::integer/);
   assert.ok(!/LIMIT/.test(ONLINE_PURGE_DUE_COUNT_SQL), '总数不能被 limit 截断');
 });
@@ -460,6 +473,35 @@ test('[8b] listDueOnlineDeletions：一条 cutoff 同时喂候选与总数，行
   assert.equal(seen.length, 2);
   for (const call of seen) assert.equal(call.values[0], CUTOFF, '两条 SQL 必须用同一个 cutoff');
   assert.equal(seen[0].values[1] ?? seen[1].values[1], 50);
+  // 没有游标时两个游标参数都必须是**绑定成 NULL**（不是省略参数：省略会让 `$3` 未定义而报错）。
+  assert.equal(seen[0].values[2], null);
+  assert.equal(seen[0].values[3], null);
+});
+
+test('[8f] listDueOnlineDeletions 把游标作为 $3/$4 绑定（毫秒 ISO + 小写 UUID），不改 cutoff/limit 位置', async () => {
+  const seen = [];
+  const client = {
+    async query(text, values) {
+      seen.push({ text, values });
+      if (text === ONLINE_PURGE_DUE_COUNT_SQL) return { rows: [{ total: 3 }] };
+      return { rows: [] };
+    },
+  };
+  const after = {
+    afterDueAt: '2026-10-20T00:00:00.500Z',
+    afterRequestId: '00000000-0000-4000-8000-00000000000A',
+  };
+  await listDueOnlineDeletions(client, { cutoff: CUTOFF, limit: 25, after });
+
+  assert.equal(seen[0].values[0], CUTOFF);
+  assert.equal(seen[0].values[1], 25);
+  assert.equal(seen[0].values[2], '2026-10-20T00:00:00.500Z');
+  assert.equal(seen[0].values[3], '00000000-0000-4000-8000-00000000000a', 'UUID 归一成小写');
+  // 非法游标不许静默退化成"从队首重来"。
+  await assert.rejects(
+    listDueOnlineDeletions(client, { cutoff: CUTOFF, limit: 25, after: { afterDueAt: 'now', afterRequestId: 'x' } }),
+    /afterDueAt/,
+  );
 });
 
 test('[8c] listDueOnlineDeletions 也拒绝裸本地时间 cutoff', async () => {
@@ -518,4 +560,398 @@ test('[8e] 候选行是 Date（pg 对 timestamptz 的返回形状）也能正确
   assert.equal(report.succeeded, 1);
   assert.ok(report.rowsPurged > 0, 'Date 形状的候选必须真的走到清理并产出已删行数');
   assert.equal(report.evidence.length, MODULES.length, '每个成功模块一条证据');
+});
+
+// ------------------------------------------------- [9] 批次推进（[P1] 监工 1021/1806）
+
+/**
+ * 假"到期表"：按 `(online_due_at, id)` 排序，实现与 `ONLINE_PURGE_DUE_SQL` **同语义**的 keyset 分页。
+ *
+ * 关键点：这些行**永远不会从候选集里消失**（真实库里本驱动不写 `state`，清了也不变 `completed`），
+ * 所以它就是饿死场景的忠实模型 —— 只有游标能让下一页取到后面的行。
+ */
+function fakeDueSource(requests) {
+  const rows = [...requests].sort((a, b) => compareKeys(a, b));
+  const fetches = [];
+  return {
+    fetches,
+    async fetchPage({ cutoff, limit, after }) {
+      fetches.push({ cutoff, limit, after });
+      const cutoffMs = Date.parse(cutoff);
+      const due = rows.filter((row) => Date.parse(row.onlineDueAt) <= cutoffMs);
+      const afterKey =
+        after === null ? null : { onlineDueAt: after.afterDueAt, requestId: after.afterRequestId };
+      const rest = afterKey === null ? due : due.filter((row) => compareKeys(row, afterKey) > 0);
+      return { requests: rest.slice(0, limit), totalDue: due.length };
+    },
+  };
+}
+
+function compareKeys(a, b) {
+  const delta = Date.parse(a.onlineDueAt) - Date.parse(b.onlineDueAt);
+  if (delta !== 0) return delta;
+  const left = a.requestId;
+  const right = b.requestId;
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/** 第 `index` 个到期请求：**index 越大越晚到期**（排序与 index 同序，`index 0` 最早）。 */
+function dueRequest(index) {
+  return candidate(index, -(100 - index) * ONE_SECOND);
+}
+
+test('[9] 上限归一：默认 5、硬顶 200；非法/超顶一律抛 RangeError（不夹取、不默认）', () => {
+  assert.equal(DEFAULT_ONLINE_PURGE_MAX_BATCHES, 5);
+  assert.equal(MAX_ONLINE_PURGE_MAX_BATCHES, 200);
+  for (const ok of [1, 2, 5, '3', ' 7 ']) {
+    assert.equal(normalizeOnlinePurgeMaxBatches(ok), Number(String(ok).trim()));
+  }
+  for (const bad of [0, -1, 1.5, '', ' ', 'abc', '2e3', Number.NaN, Infinity, MAX_ONLINE_PURGE_MAX_BATCHES + 1]) {
+    assert.throws(() => normalizeOnlinePurgeMaxBatches(bad), RangeError, `应拒绝 ${String(bad)}`);
+  }
+});
+
+test('[9a] 游标归一：null 合法；时刻一律归一成毫秒 ISO、UUID 归一成小写；坏形状抛 TypeError', () => {
+  assert.equal(normalizeOnlinePurgeCursor(null), null);
+  assert.equal(normalizeOnlinePurgeCursor(undefined), null);
+  assert.deepEqual(
+    normalizeOnlinePurgeCursor({
+      afterDueAt: '2026-10-20T00:00:00.123456Z',
+      afterRequestId: '00000000-0000-4000-8000-00000000000A',
+    }),
+    { afterDueAt: '2026-10-20T00:00:00.123Z', afterRequestId: '00000000-0000-4000-8000-00000000000a' },
+    '微秒被截到毫秒（与 SQL 里的 date_trunc 同值）',
+  );
+  assert.deepEqual(
+    normalizeOnlinePurgeCursor({
+      afterDueAt: new Date('2026-10-20T00:00:00.000Z'),
+      afterRequestId: '00000000-0000-4000-8000-00000000000b',
+    }),
+    { afterDueAt: '2026-10-20T00:00:00.000Z', afterRequestId: '00000000-0000-4000-8000-00000000000b' },
+  );
+  for (const bad of [42, 'x', [], { afterRequestId: '00000000-0000-4000-8000-00000000000a' }]) {
+    assert.throws(() => normalizeOnlinePurgeCursor(bad), TypeError);
+  }
+  assert.throws(
+    () => normalizeOnlinePurgeCursor({ afterDueAt: '2026-10-20 00:00:00', afterRequestId: '00000000-0000-4000-8000-00000000000a' }),
+    /带时区的 ISO-8601/,
+    '裸本地时间不接受（与 cutoff 同口径）',
+  );
+  assert.throws(
+    () => normalizeOnlinePurgeCursor({ afterDueAt: CUTOFF, afterRequestId: 'not-a-uuid' }),
+    /UUID/,
+  );
+  // 候选 → 游标：就是该行的 (online_due_at, id)。
+  assert.deepEqual(cursorAfterCandidate(dueRequest(3)), {
+    afterDueAt: dueRequest(3).onlineDueAt,
+    afterRequestId: dueRequest(3).requestId,
+  });
+});
+
+test('[9b] 【饿死闭环】limit=2、5 个到期请求：连跑三轮全部处理完（旧口径只会永远撞队首 A/B）', async () => {
+  const all = [dueRequest(0), dueRequest(1), dueRequest(2), dueRequest(3), dueRequest(4)];
+  const source = fakeDueSource(all);
+  const port = fakePort();
+  const runOnce = async (after) =>
+    drainDueOnlineDeletions({
+      cutoff: CUTOFF,
+      limit: 2,
+      maxBatches: 1,
+      dryRun: false,
+      modules: MODULES,
+      purge: port,
+      after,
+      fetchPage: source.fetchPage,
+    });
+
+  const round1 = await runOnce(null);
+  assert.equal(round1.batches, 1);
+  assert.equal(round1.processed, 2);
+  assert.equal(round1.succeeded, 2);
+  assert.equal(round1.drained, false, '一页用满且没到队尾 ⇒ 没走完一整轮');
+  assert.deepEqual(round1.nextCursor, cursorAfterCandidate(all[1]), '游标停在处理到的最后一行（B）');
+
+  const round2 = await runOnce(round1.nextCursor);
+  assert.equal(round2.processed, 2);
+  assert.deepEqual(round2.nextCursor, cursorAfterCandidate(all[3]), '从 B 之后继续 ⇒ 取到 C/D');
+
+  const round3 = await runOnce(round2.nextCursor);
+  assert.equal(round3.processed, 1, '只剩 E：本轮处理 1 条');
+  assert.equal(round3.drained, true, '本页不足 limit ⇒ 已到队尾');
+  assert.equal(round3.nextCursor, null, '走到队尾 ⇒ 清游标，下一轮从队首重扫');
+
+  // 五条到期请求全部被真的清过（每个请求四域都问过库），没有一条被饿死。
+  const touched = new Set(port.calls.map((call) => call.requestId));
+  assert.deepEqual(
+    [...touched].sort(),
+    all.map((row) => row.requestId).sort(),
+    '超过 limit 的到期集合连跑后必须全部处理',
+  );
+  assert.equal(port.calls.length, all.length * MODULES.length);
+
+  // ---- 反证：没有游标时，"每轮都取队首 LIMIT 条"就是饿死本身。----
+  const starved = fakePort();
+  for (let i = 0; i < 3; i += 1) {
+    const page = await source.fetchPage({ cutoff: CUTOFF, limit: 2, after: null });
+    await runOnlinePurgeBatch({
+      cutoff: CUTOFF,
+      limit: 2,
+      requests: page.requests,
+      totalDue: page.totalDue,
+      dryRun: false,
+      modules: MODULES,
+      purge: starved,
+    });
+  }
+  const starvedIds = new Set(starved.calls.map((call) => call.requestId));
+  assert.deepEqual(
+    [...starvedIds].sort(),
+    [all[0].requestId, all[1].requestId].sort(),
+    '反证：不带游标连跑三轮仍只碰到 A/B（C/D/E 永远进不了候选）',
+  );
+});
+
+test('[9c] 走到队尾后从队首重扫：第二轮全是 already_purged、rowsPurged=0，且不写任何 completed', async () => {
+  const all = [dueRequest(0), dueRequest(1), dueRequest(2)];
+  const source = fakeDueSource(all);
+  // 第一轮 port 真删（2 行 + 1 台账）；其后四域都 0 行（模拟"在线数据已经没了"）。
+  let purged = false;
+  const port = fakePort(() => {
+    if (!purged) return { removed: 2, idempotency: 1 };
+    return { removed: 0, idempotency: 0 };
+  });
+
+  const round1 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 5,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+  });
+  // limit=2、3 条到期：第一页 A/B（满页），第二页 C（不足一页）⇒ 已到队尾。
+  assert.equal(round1.batches, 2);
+  assert.equal(round1.processed, 3);
+  assert.equal(round1.succeeded, 3);
+  assert.equal(round1.drained, true);
+  assert.equal(round1.nextCursor, null);
+  assert.ok(round1.rowsPurged > 0);
+  purged = true;
+
+  const round2 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 5,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+    after: round1.nextCursor,
+  });
+  assert.equal(round2.processed, 3, '下一轮从队首重扫，还是那 3 条');
+  assert.equal(round2.skipped, 3);
+  assert.equal(round2.skipReasons[ONLINE_PURGE_SKIP_REASONS.ALREADY_PURGED], 3);
+  assert.equal(round2.succeeded, 0);
+  assert.equal(round2.rowsPurged, 0, '幂等：第二轮一行都不该"清掉"');
+  assert.equal(round2.evidence.length, 0, '0 行不留证据（⛔ 不谎称本次干了活）');
+  assert.equal(onlinePurgeExitCode(round2), 0);
+  // 驱动只删在线行：报告里没有任何"completed/已完成"字样被当作结论输出。
+  const text = formatOnlinePurgeReport(round2).join('\n');
+  assert.ok(!/completed/.test(text), '不把"只清在线四域"说成整笔完成');
+});
+
+test('[9d] 失败行不阻塞推进：A 一直失败，游标照样越过它，本轮就能取到 C/D', async () => {
+  const all = [dueRequest(0), dueRequest(1), dueRequest(2), dueRequest(3)];
+  const source = fakeDueSource(all);
+  const port = fakePort((input) => {
+    if (input.requestId === all[0].requestId) {
+      const error = new Error('boom');
+      error.code = 'STORE_UNREACHABLE';
+      throw error;
+    }
+    return { removed: 1, idempotency: 0 };
+  });
+
+  const round1 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 1,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+  });
+  assert.equal(round1.processed, 2);
+  assert.equal(round1.failed, 1, 'A 失败只记 A 自己');
+  assert.equal(round1.succeeded, 1);
+  assert.equal(onlinePurgeExitCode(round1), 1, '有失败行 ⇒ 退出码 1（人会被叫来）');
+  assert.deepEqual(round1.nextCursor, cursorAfterCandidate(all[1]), '失败行照样越过游标');
+
+  const round2 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 1,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+    after: round1.nextCursor,
+  });
+  assert.deepEqual(
+    round2.pages[0].after,
+    cursorAfterCandidate(all[1]),
+    '第二轮从 B 之后开始，不再原地撞 A',
+  );
+  const round2Ids = new Set(port.calls.slice(round1.processed * MODULES.length).map((call) => call.requestId));
+  assert.deepEqual(
+    [...round2Ids].sort(),
+    [all[2].requestId, all[3].requestId].sort(),
+    '失败行不阻塞：下一轮取到 C/D',
+  );
+});
+
+test('[9e] 用满 --max-batches 仍未到队尾：drained=false、游标停在本轮最后一行，下一轮接着推', async () => {
+  const all = [0, 1, 2, 3, 4, 5].map(dueRequest);
+  const source = fakeDueSource(all);
+  const port = fakePort();
+  const round1 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 2,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+  });
+  assert.equal(round1.batches, 2);
+  assert.equal(round1.processed, 4);
+  assert.equal(round1.drained, false);
+  assert.deepEqual(round1.nextCursor, cursorAfterCandidate(all[3]));
+  assert.deepEqual(
+    round1.pages.map((page) => page.processed),
+    [2, 2],
+  );
+
+  const round2 = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 2,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+    after: round1.nextCursor,
+  });
+  assert.equal(round2.processed, 2, '剩 E/F');
+  assert.equal(round2.drained, true, '再翻一页就是空的 ⇒ 走到队尾');
+  assert.equal(round2.nextCursor, null);
+  const touched = new Set(port.calls.map((call) => call.requestId));
+  assert.equal(touched.size, all.length, '六条全部处理过（两轮预算合起来够）');
+});
+
+test('[9f] 合并读数：跨页累计 processed/succeeded/skipped/failed/证据，remaining 如实递减', async () => {
+  const all = [dueRequest(0), dueRequest(1), dueRequest(2)];
+  const source = fakeDueSource(all);
+  // A/B 真删、C 已经清过（0 行）⇒ 跨页出现两种结论。
+  const port = fakePort((input) => {
+    if (input.requestId === all[2].requestId) return { removed: 0, idempotency: 0 };
+    return { removed: 3, idempotency: 1 };
+  });
+  const report = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 5,
+    dryRun: false,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+  });
+
+  assert.equal(report.processed, report.succeeded + report.skipped + report.failed);
+  assert.equal(report.processed, 3);
+  assert.equal(report.succeeded, 2);
+  assert.equal(report.skipped, 1);
+  assert.equal(report.skipReasons[ONLINE_PURGE_SKIP_REASONS.ALREADY_PURGED], 1);
+  assert.equal(report.rowsPurged, 24, 'A/B 各 4 域 × 3 行');
+  assert.equal(report.idempotencyPurged, 8, 'A/B 各 4 域 × 1 台账行');
+  assert.equal(report.evidence.length, 2 * MODULES.length, '证据按成功请求计，跳过请求不留证据');
+  assert.equal(report.remaining, 0, 'totalDue(3) - processed(3)');
+  assert.equal(report.totalDue, 3);
+
+  const lines = formatOnlinePurgeReport(report);
+  const text = lines.join('\n');
+  assert.match(text, /批次 2/);
+  assert.match(text, /已到队尾/);
+  assert.ok(!text.includes('11111111-1111-4111-8111'), '报告不得出现 user_id');
+  assert.ok(!/postgres(ql)?:\/\//.test(text), '报告不得出现连接串');
+  // 普通（非 drain）报告不应多打批次行。
+  const plain = await runOnlinePurgeBatch({
+    cutoff: CUTOFF,
+    limit: 2,
+    requests: all,
+    totalDue: 3,
+    dryRun: false,
+    modules: MODULES,
+    purge: fakePort(),
+  });
+  assert.ok(!/批次/.test(formatOnlinePurgeReport(plain).join('\n')));
+});
+
+test('[9g] 无法推进就不推进：到期时刻不可解析时本轮停下（不原地打转、不跳着走）', async () => {
+  const broken = { requestId: dueRequest(0).requestId, userId: 'u', onlineDueAt: 'not-a-time' };
+  // 用假页直接喂一行坏行（真实的 SQL 会用 `online_due_at <= cutoff` 把它筛掉，这里要单测"驱动自己判"）。
+  const report = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 1,
+    maxBatches: 5,
+    dryRun: false,
+    modules: MODULES,
+    purge: fakePort(),
+    fetchPage: async () => ({ requests: [broken], totalDue: 1 }),
+  });
+  assert.equal(report.batches, 1, '只跑一页就停');
+  assert.equal(report.failed, 1);
+  assert.equal(report.drained, false, '没走到队尾');
+  assert.equal(report.nextCursor, null, '做不出可信游标 ⇒ 不假装推进');
+  assert.equal(report.pages[0].nextAfter, null);
+});
+
+test('[9h] 单轮内所有页共用同一个 cutoff（不逐页重新读钟）', async () => {
+  const all = [0, 1, 2].map(dueRequest);
+  const source = fakeDueSource(all);
+  await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 1,
+    maxBatches: 5,
+    dryRun: false,
+    modules: MODULES,
+    purge: fakePort(),
+    fetchPage: source.fetchPage,
+  });
+  const cutoffs = new Set(source.fetches.map((fetch) => fetch.cutoff));
+  assert.equal(cutoffs.size, 1, '一轮只有一个 cutoff');
+  assert.equal([...cutoffs][0], CUTOFF);
+  assert.equal(source.fetches.length, 4, '3 页 + 1 次空页探测（第 3 页不满 limit 时不多查）');
+});
+
+test('[9i] --dry-run 的 drain：逐页只列不删，游标语义与真跑一致（CLI 不落盘）', async () => {
+  const all = [0, 1, 2].map(dueRequest);
+  const source = fakeDueSource(all);
+  const port = fakePort();
+  const report = await drainDueOnlineDeletions({
+    cutoff: CUTOFF,
+    limit: 2,
+    maxBatches: 5,
+    dryRun: true,
+    modules: MODULES,
+    purge: port,
+    fetchPage: source.fetchPage,
+  });
+  assert.equal(port.calls.length, 0, 'dry-run 一次都不碰库');
+  assert.equal(report.processed, 3);
+  assert.equal(report.skipped, 3);
+  assert.equal(report.skipReasons[ONLINE_PURGE_SKIP_REASONS.DRY_RUN], 3);
+  assert.equal(report.rowsPurged, 0);
+  assert.equal(report.drained, true);
 });
