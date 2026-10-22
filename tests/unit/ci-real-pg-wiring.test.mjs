@@ -110,6 +110,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
+  'tests/integration/moderation-ledger-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -132,6 +133,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
+  'tests/integration/moderation-ledger-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -208,6 +210,12 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    `discoverMigrations()` 跑全链迁移 0001..0026、再做 0026 的 UP／ROLLBACK／REPLAY，全程只用库 owner
   //    连接 ⇒ 不建组角色、也不复用 `admin-accounts-read` 留在集群里的运行时角色，对前后脚本无耦合，排最后。
   'tests/integration/speech-pg.mjs',
+  // 11b. `moderation-ledger-pg`（R29 接入，PR #434）：自建专用空库 `gengyun_moderation_test`，脚本自己跑
+  //    整条迁移链（0001..0026 ⇒ #428 的 0027 DDL 夹具 ⇒ 0028 的 UP／ROLLBACK／REPLAY），全程只用库 owner
+  //    连接、不建组角色 ⇒ 与 `speech-pg` 一样对前后脚本零耦合，故紧跟其后。
+  //    ⛔ 不要把它挪到那条装包 step 之后：它不需要 `initdb`/`pg_ctl`，混进自起集群那批会让两类失败读数纠缠。
+  //    它的顺序同时是「0027 缺号」的机器化自证：缺号时本步红，⛔ 不靠等 #428 把红的说成绿。
+  'tests/integration/moderation-ledger-pg.mjs',
   // 12. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，

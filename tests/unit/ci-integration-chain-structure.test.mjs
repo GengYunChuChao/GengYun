@@ -236,6 +236,16 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '故不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/moderation-ledger-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_moderation_test`（脚本自己断言 hostname=127.0.0.1、pathname='
+      + '`/gengyun_moderation_test`，连接串只认 argv[2]）：它要跑**整条迁移链**（0001..0026 ⇒ #428 的 0027 DDL 夹具 ⇒ '
+      + '0028 的 UP/ROLLBACK/REPLAY 三连），再用真库判审核台账的四条写语句（INSERT/UPDATE/supersede/下架）与并发唯一性，'
+      + '无 PG 的回环链里既没有服务端也没有迁移链，故不进 `test:integration:http`。'
+      + 'R29 已把它接进 `.github/workflows/real-pg-integration.yml`：由该 workflow 的独立真库 job（`postgres:17.11` service）'
+      + '里一个**独立 step**（先 `CREATE DATABASE gengyun_moderation_test` 再 `node …`）真跑，'
+      + '接进真库 job 不等于进回环链，故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/ocr-corrections-pg.mjs',
     reason: '需真实 PG 17.11（硬钉空库名 `gengyun_ocr_corrections_test`，开头断言 `public` 下 0 张表并 `applyMigrations()` 跑全链；'
       + '未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：未取得，不是通过）：R31 已把它接进'

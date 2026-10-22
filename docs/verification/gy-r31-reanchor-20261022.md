@@ -19,7 +19,7 @@
 - `AMBIGUOUS`：出现多次且落在**不同**归属块，列出全部候选行号与各归属块；
 - `UNSAFE`：算出的区间恰好等于整个文件（校验器会自己判红），或写盘前的字节保真往返自检不通过。
 
-归属块定义（实现见 `tools/contract-status-core.mjs` 的 `isDeclarationLine` / `enclosingBlock`，注释同处）：
+归属块定义（实现见 `tools/lib/anchor-resolve.mjs` 的 `isDeclarationLine` / `enclosingBlock`，注释同处；R31 前这两个函数在 `tools/contract-status-core.mjs`，之后抽成单一来源，本页其余口径不变）：
 
 1. 从命中行**向上**找最近的声明行：`function`、`const X =`、`class`、`interface`、`type`、`export` 声明、`app.<verb>(` 路由注册、`async name(` / `name(...) {` 这类对象方法/类方法；
 2. 从声明行的第一个 `{` 起按花括号深度配对（跳过字符串/模板串/注释/正则字面量内部的花括号）求结束行，输出 `start-end`；

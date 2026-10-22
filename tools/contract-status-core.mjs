@@ -2,6 +2,9 @@ import {readFileSync,readdirSync,existsSync,realpathSync} from 'node:fs';
 import {resolve,join,dirname,relative} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+// 锚点归属块的提取器只有一份，在 tools/lib/anchor-resolve.mjs（`--reanchor` 与符号形态共用同一口径）。
+// 本文件只负责台账扫描与对照表渲染，不再自带一套声明行/花括号判定。
+import {locatorSpec} from './lib/anchor-resolve.mjs';
 
 export const operationKey=(method,path)=>`${method.toLowerCase()} ${path}`;
 
@@ -171,130 +174,16 @@ export function replaceStatusTables(document,status){
  return document.slice(0,from)+renderStatusTables(status)+document.slice(to+TABLE_END.length);
 }
 
-// ── 锚点自动重定位（--reanchor）的纯文本层 ───────────────────────────────────────
-// 给定「锚点文本在文件里的命中行」，求出可复现的归属块 `start-end`，用来改写台账里的 lines。
-// 口径（可复现；改口径必须同步 docs/verification/gy-r31-reanchor-*.md）：
-//  1) 从命中行向上（含命中行自身）找最近的「声明行」：function / class / interface / type /
-//     `const|let|var X =` / `xxx.<verb>(` 路由注册 / 对象与类方法 `async name(`。
-//  2) 声明行必须带块体：声明行之后、遇到「括号深度 0 的 `;`」之前出现 `{`；否则不算块声明
-//     （`const x = 1;`、`foo(a);` 这类没有块体，继续向上找）。
-//  3) 从该 `{` 起按花括号深度配到结束行；字符串、模板（含 ${...} 插值）与注释都跳过。
-//  4) 块必须覆盖命中行；覆盖不了就继续向上找。
-//  5) 一路找不到就退化为「命中行 ±0 的单行」并标 fallback，报告里必须可见（不许假装定位到了）。
-// 不认正则字面量里的花括号：`/^\d{2}$/` 这类配平量词无影响；真出现不配平的花括号 → 配对失败 → FALLBACK，宁可不猜。
-const DECLARATION_KEYWORDS=new Set(['if','for','while','switch','catch','return','typeof','await','new','delete','void','throw','yield','else','do','try','with']);
-const DECLARATION_PATTERNS=[
- /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\b/,
- /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+[A-Za-z_$]/,
- /^(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+[A-Za-z_$]/,
- /^(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::|=)/,
- /^[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/,
-];
-const METHOD_DECLARATION=/^(?:(?:public|private|protected|static|readonly|async|get|set|declare)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(/;
-
-export function isDeclarationLine(line){
- const trimmed=String(line).trim();
- if(DECLARATION_PATTERNS.some(pattern=>pattern.test(trimmed)))return true;
- const match=METHOD_DECLARATION.exec(trimmed);
- return match!==null&&!DECLARATION_KEYWORDS.has(match[1]);
-}
-
-const skipLineComment=(text,start)=>{const end=text.indexOf('\n',start);return end<0?text.length:end;};
-const skipBlockComment=(text,start)=>{const end=text.indexOf('*/',start+2);return end<0?text.length:end+2;};
-function skipQuoted(text,start,quote){
- let index=start+1;
- while(index<text.length){
-  const char=text[index];
-  if(char==='\\'){index+=2;continue;}
-  if(char===quote)return index+1;
-  if(char==='\n')return index; // 未闭合的单行字符串：就地止损，不吞掉后面的代码
-  index+=1;
- }
- return index;
-}
-function skipInterpolation(text,start){
- let index=start,depth=1;
- while(index<text.length){
-  const char=text[index];
-  if(char==='"'||char==="'"){index=skipQuoted(text,index,char);continue;}
-  if(char==='`'){index=skipTemplate(text,index);continue;}
-  if(char==='/'&&text[index+1]==='/'){index=skipLineComment(text,index);continue;}
-  if(char==='/'&&text[index+1]==='*'){index=skipBlockComment(text,index);continue;}
-  if(char==='{')depth+=1;
-  else if(char==='}'){depth-=1;if(depth===0)return index+1;}
-  index+=1;
- }
- return index;
-}
-function skipTemplate(text,start){
- let index=start+1;
- while(index<text.length){
-  const char=text[index];
-  if(char==='\\'){index+=2;continue;}
-  if(char==='`')return index+1;
-  if(char==='$'&&text[index+1]==='{'){index=skipInterpolation(text,index+2);continue;}
-  index+=1;
- }
- return index;
-}
-
-/** End index of the brace block opening at openIndex, or -1 when it never closes. */
-export function braceBlockEnd(text,openIndex){
- let index=openIndex,depth=0;
- while(index<text.length){
-  const char=text[index];
-  if(char==='"'||char==="'"){index=skipQuoted(text,index,char);continue;}
-  if(char==='`'){index=skipTemplate(text,index);continue;}
-  if(char==='/'&&text[index+1]==='/'){index=skipLineComment(text,index);continue;}
-  if(char==='/'&&text[index+1]==='*'){index=skipBlockComment(text,index);continue;}
-  if(char==='{'){depth+=1;index+=1;continue;}
-  if(char==='}'){depth-=1;index+=1;if(depth===0)return index-1;continue;}
-  index+=1;
- }
- return -1;
-}
-
-/** Index of the block body `{` that belongs to a declaration line, or -1 for a body-less line. */
-function blockBodyIndex(text,lineStart){
- let index=lineStart,paren=0,lineBreaks=0;
- while(index<text.length&&lineBreaks<=20){
-  const char=text[index];
-  if(char==='\n'){lineBreaks+=1;index+=1;continue;}
-  if(char==='"'||char==="'"){index=skipQuoted(text,index,char);continue;}
-  if(char==='`'){index=skipTemplate(text,index);continue;}
-  if(char==='/'&&text[index+1]==='/'){index=skipLineComment(text,index);continue;}
-  if(char==='/'&&text[index+1]==='*'){index=skipBlockComment(text,index);continue;}
-  if(char==='('||char==='['){paren+=1;index+=1;continue;}
-  if(char===')'||char===']'){if(paren>0)paren-=1;index+=1;continue;}
-  if(char===';'&&paren<=0)return -1; // 先遇到语句结束：这条声明没有块体
-  if(char==='{')return index;
-  index+=1;
- }
- return -1;
-}
-
-/** Enclosing declaration block `{start,end,fallback}` of a 1-based hit line. */
-export function enclosingBlock(text,hitLine){
- const lines=text.split('\n'),starts=[];
- let offset=0;
- for(const line of lines){starts.push(offset);offset+=line.length+1;}
- const lineAt=number=>String(lines[number-1]??'').replace(/\r$/,'');
- for(let current=Math.min(hitLine,lines.length);current>=1;current-=1){
-  if(!isDeclarationLine(lineAt(current)))continue;
-  const open=blockBodyIndex(text,starts[current-1]);
-  if(open<0)continue;
-  const close=braceBlockEnd(text,open);
-  if(close<0)continue;
-  const endLine=text.slice(0,close).split('\n').length;
-  if(endLine<hitLine)continue; // 块在命中行之前就结束了，不是归属块
-  return {start:current,end:endLine,fallback:false};
- }
- return {start:hitLine,end:hitLine,fallback:true};
-}
+// 符号形态的定位器（形状校验在 verify-contract-status 里做；这里只取名字渲染，非法就当作没有）。
+const locatorSymbol=item=>{const spec=locatorSpec(item);return spec.kind==='value'?spec.symbol:null;};
 
 export function renderStatusTables(status){
  const cell=value=>String(value).replaceAll('|','\\|').replace(/\r?\n/g,' ');
- const evidence=list=>list.map(item=>item.test?`${item.test}${item.name?'::'+item.name:''}`:`${item.path}${item.lines?':'+item.lines:''}`).join('；');
+ // 证据单元：用例名 `test::name`；文件引用带行号时 `path:起-止`；符号形态渲染成 `path#符号`。
+ // 符号形态**不渲染解析出的行号**：那张表是逐字比对的门禁，写进去等于把行号漂移从台账搬进文档
+ // （app.ts 每上移 10 行，中文对照表就假红一次，与本片要治的病相反）。当前行号在每次运行的
+ // SYMBOL 输出行里给，证据页另记快照；渲染口径见 docs/verification/gy-r31-anchor-symbol-20261022.md。
+ const evidence=list=>list.map(item=>item.test?`${item.test}${item.name?'::'+item.name:''}`:`${item.path}${item.lines?':'+item.lines:locatorSymbol(item)?'#'+locatorSymbol(item):''}`).join('；');
  const rows=list=>list.map(e=>`| \`${e.id}\` | ${e.method.toUpperCase()} ${e.path} | \`${e.status}\` | ${cell(evidence(e.evidence))||'—'} | ${cell(e.blocker)} |`).join('\n');
  const header='| 操作 id | 方法与路径 | 状态 | 证据 | 缺口 / 条件 |\n| --- | --- | --- | --- | --- |';
  const mounted=status.operations.filter(e=>e.route_mounted),unmounted=status.operations.filter(e=>!e.route_mounted);

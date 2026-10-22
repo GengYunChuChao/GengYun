@@ -36,7 +36,7 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { createMemoryRecognitionStore } from '../../services/api/src/recognitions/store.ts';
 import { createPostgresRecognitionStore } from '../../services/api/src/recognitions/store-pg.ts';
-import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
+import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
 
 const ENV = 'RECOGNITIONS_PG_TEST_URL';
 const DB = 'gengyun_recognitions_test';
@@ -268,21 +268,33 @@ function makeSelectionRow(recognition, overrides = {}) {
 /** 迁移三连 + 结构断言 + 未迁移三态（真库）。 */
 async function migrationTriple() {
   const discovered = discoverMigrations();
-  const numbers = discovered.map((migration) => Number(migration.version));
-  const max = Math.max(...numbers);
-  const seen = new Set(numbers);
-  const missing = [];
-  for (let version = 1; version <= max; version += 1) if (!seen.has(version)) missing.push(version);
-  assert.deepEqual(missing, [], `迁移版本必须连续无缺号（缺：${missing.join(',')}）`);
-  assert.equal(discovered.length, max, `迁移总数必须等于最大版本号（count=${discovered.length}，max=${max}）`);
+  // 编号体检（缺号 / 总数 / 保留号躺平）集中在 `inspectMigrationNumbering()`：本分支只带 0028，
+  // 0027 在 #428 上 ⇒ 由 `services/api/db/migration-reservations.json` 显式声明为「有意缺号」。
+  const numbering = inspectMigrationNumbering(discovered);
+  const max = numbering.maxVersion;
+  assert.deepEqual(
+    numbering.undeclaredGaps.map(formatMigrationVersion),
+    [],
+    `迁移版本必须连续无缺号，且缺号必须在保留台账里声明（未声明：${numbering.undeclaredGaps.join(',')}）`,
+  );
+  assert.deepEqual(
+    numbering.reservedButPresent.map(formatMigrationVersion),
+    [],
+    '保留台账里的号必须仍然缺位：文件已出现 ⇒ 删掉那条登记（保留项不许躺平）',
+  );
+  assert.equal(
+    numbering.countMatchesMax,
+    true,
+    `迁移总数 + 已声明保留数必须等于最大版本号（count=${numbering.count}，reserved=${numbering.reserved.length}，max=${max}）`,
+  );
   const names = discovered.map((migration) => migration.filename);
   assert.equal(names.includes(MIGRATION), true, `${MIGRATION} 必须是顶层迁移的一部分`);
   // ⛔ 这里**不再**断言「本片迁移必须是当前末位」。0001..0025 是本片现状，后续切片（语音转写、社区等）必然
   //    追加更大版本号；一旦两条脚本都钉自己末位，谁先落 main 就把另一条锁红（#341 已在 `ocr-jobs-pg.mjs`
-  //    按同一口径解除）。真正要守的结构不变量是上面三条（1..max 连续无缺号、count === max、含本片迁移）——
+  //    按同一口径解除）。真正要守的结构不变量是上面三条（1..max 无未声明缺号、count＋保留 === max、含本片迁移）——
   //    它们对「新增迁移」自动放行，对「发现器静默漏项／编号错位」变红，且与「谁是末位」无关。本片迁移是否
   //    真被应用、对象是否真建出，由下面的 UP/ROLLBACK/REPLAY 三连与 `to_regclass` 结构断言逐条证明（不靠位置）。
-  say(`[M0] 结构不变量：迁移 ${discovered.length} 个（0001..${String(max).padStart(4, '0')}）连续无缺号；count === max；含 ${MIGRATION}`);
+  say(`[M0] 结构不变量：迁移 ${numbering.count} 个（0001..${formatMigrationVersion(max)}）无未声明缺号（保留号 [${numbering.reserved.map(formatMigrationVersion).join(',') || '无'}]）；count＋保留 === max；含 ${MIGRATION}`);
 
   const objects = async () => ({
     jobs: (await one("SELECT to_regclass('public.recognition_jobs') AS v")).v,

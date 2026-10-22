@@ -81,7 +81,8 @@ const fixture = (t, options = {}) => {
     writeFileSync(absolute, content);
   };
   mkdirSync(join(root, 'tools'), { recursive: true });
-  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs']) {
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'lib/anchor-resolve.mjs']) {
+    mkdirSync(dirname(join(root, 'tools', name)), { recursive: true });
     copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
   }
   put('services/api/src/app.ts', '');
@@ -157,7 +158,7 @@ test('② --reanchor --write-doc：lines 落到归属块上、其余字节不变
   // 幂等：再跑一次既没有候选，也不再写盘。
   const second = instance.run(['--reanchor']);
   assert.equal(second.status, 0, second.stdout + second.stderr);
-  assert.match(second.stdout, /REANCHOR: 无可重定位项（带锚点且带行号的引用 1 条，锚点都在 ±2 行容差内）/);
+  assert.match(second.stdout, /REANCHOR: 无可重定位项（带锚点且带行号的引用 1 条，锚点都在 ±2 行容差内；符号形态 0 条按运行时解析，不写盘）/);
   assert.equal(instance.ledgerText(), after);
 });
 
@@ -169,7 +170,7 @@ test('③ AMBIGUOUS：同一符号落在两个归属块 ⇒ 拒绝、exit 1、�
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stderr, /AMBIGUOUS/);
   assert.match(result.stderr, /落在 2 个不同归属块（候选行号第 3、4、12、13 行；归属块 2-5、11-14）/);
-  assert.match(result.stderr, /FAIL: 锚点重定位被拒绝（MISSING 0 \/ AMBIGUOUS 1 \/ UNSAFE 0），未写盘/);
+  assert.match(result.stderr, /FAIL: 锚点重定位被拒绝（MISSING 0 \/ AMBIGUOUS 1 \/ UNSAFE 0 \/ SYMBOL 0），未写盘/);
   assert.equal(instance.ledgerText(), before);
   assert.equal(instance.sha(instance.ledgerText()), instance.sha(before));
   assert.equal(operationEvidence(instance).lines, '8-8');
@@ -182,7 +183,7 @@ test('④ MISSING：符号在文件里不存在 ⇒ 拒绝、exit 1、报 MISSIN
   const result = instance.run(['--reanchor', '--write-doc']);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stderr, /锚点「cropItemsAbsent」在文件里出现 0 次（MISSING）/);
-  assert.match(result.stderr, /FAIL: 锚点重定位被拒绝（MISSING 1 \/ AMBIGUOUS 0 \/ UNSAFE 0），未写盘/);
+  assert.match(result.stderr, /FAIL: 锚点重定位被拒绝（MISSING 1 \/ AMBIGUOUS 0 \/ UNSAFE 0 \/ SYMBOL 0），未写盘/);
   assert.equal(instance.ledgerText(), before);
   assert.equal(instance.sha(instance.ledgerText()), instance.sha(before));
 });

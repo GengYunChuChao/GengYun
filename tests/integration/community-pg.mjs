@@ -137,11 +137,11 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0022'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0022', '0028'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0022'],
-      '0001（users/枚举底座）+ 0022（本片六表）',
+      ['0001', '0022', '0028'],
+      '0001（users/枚举底座）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
     say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0022`);
