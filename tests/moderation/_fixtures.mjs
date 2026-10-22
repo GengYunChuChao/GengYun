@@ -261,7 +261,9 @@ export function buildScanLimitText(suppressedRepeats) {
 /** 一条结构完全合法、但类别/原因码可自定义的追加规则（用于版本重审与隔离用例）。 */
 export function makeExtraRule(overrides = {}) {
   return {
-    id: 'MR-12',
+    // R29-S2：出厂规则集已占用 MR-12（PROHIBITED_SALE），夹具改用测试专用 id，
+    // 否则 `[...RULES, makeExtraRule()]` 会因 id 重复被 validateRuleCatalog 判非法。
+    id: 'MR-T1',
     category: 'commerce',
     reason_code: 'COMMERCE_SOLICITATION',
     title: '测试用追加规则',

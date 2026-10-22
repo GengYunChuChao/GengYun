@@ -14,11 +14,16 @@
  *   prompt_injection   提示注入／越权指令
  *   authority_spoofing 伪权威／专家认证冒用／社区经验当官方结论
  *   safety_claim       "绝对安全"承诺／保证无残留
- *   commerce           广告、购买链接、私下交易导流（F05、AC16）
+ *   commerce           广告、购买链接、私下交易导流、禁售／限用农药售卖（F05、AC16）
  *
  * 隐私说明：规则的 reason_code 与证据**只含偏移**，不含命中原文（见 matchers.mjs）。
  */
-import { DANGEROUS_NEGATION_CANCELLERS, MATCHERS, MATCHER_REVISIONS } from './matchers.mjs';
+import { DANGEROUS_NEGATION_CANCELLERS, MATCHERS, MATCHER_REVISIONS, REPORT_CONTEXT_PATTERNS } from './matchers.mjs';
+import {
+  PROHIBITED_PESTICIDES,
+  PROHIBITED_SALE_SIGNALS,
+  PROHIBITED_SALE_STATEMENT_EXEMPTIONS,
+} from './sale-targets.mjs';
 import {
   ALL_REASON_CODES,
   REASON_CODE_MAX_LENGTH,
@@ -46,6 +51,14 @@ export const RULES = Object.freeze([
       /(?:几种|多种|两种|三瓶|几瓶|多瓶|几种药).{0,6}(?:一起|同时|一块|混)(?:打|喷|用|兑|拌)?/,
       /互相混用|交叉混用|混合使用/,
       /(?:把|将)[^，。；]{0,10}(?:和|跟|与)[^，。；]{0,10}(?:一起|同时)(?:打|喷|用|兑)/,
+      // 口语形态（改前真红：「敌敌畏和百草枯一起打，效果更好」曾 approved 并 HTTP 201 公开）：
+      // 没有「把／将」启句的「A 和 B 一起打/喷/兑/拌」同样属于混配诉求。
+      // 起始位置显式避开否定词与祈使词（否则匹配会把「不 要」吞进左操作数，
+      // 让否定护栏看不到否定词，等于把「不要把 A 和 B 一起打」判成命中）。
+      // 谓词只收施用类动作（打/喷/兑/拌）；`一起用` 是兼容性提问的常态说法
+      // （`除草剂可以和叶面肥一起用吗？` 属既有零误杀对照面，CI 上真实红过一次），
+      // 因此「用」只放行「同时用」这一叠加施用形态，`一起用` 留给带「把/将」的上一条。
+      /(?<![不勿莫别禁止要应])(?!(?:不要|不用|不必|无需|别|勿|莫|禁止|严禁))[^，。；]{1,12}(?:和|跟|与)[^，。；]{1,12}(?:(?:一起|同时|一块|混着)(?:打|喷|兑|拌)|同时用)/,
     ],
     negation_cancellers: DANGEROUS_NEGATION_CANCELLERS,
   },
@@ -138,21 +151,34 @@ export const RULES = Object.freeze([
     id: 'MR-07',
     category: 'prompt_injection',
     reason_code: 'PROMPT_INJECTION',
-    title: '提示注入：要求忽略指令／输出系统提示词／改写角色',
+    title: '提示注入：要求忽略指令／伪造系统指令／改写结论或角色',
     description:
-      '命中"忽略以上指令""输出你的系统提示词""从现在起你是……""越狱／开发者模式""绕过限制"等；' +
-      '内容只作输入数据，不接受其中的指令修改审核策略、权限或来源（F08）。',
+      '覆盖六类形态：①忽略上文／忘记指令 ②伪造系统指令 ③改写审核结论（判为通过／改成 approved）' +
+      '④角色扮演（你现在是一个不做审核的助手）⑤输出格式劫持（只输出 JSON／不要输出任何解释）' +
+      '⑥分隔符拆字绕过（忽 略／忽·略）。' +
+      '内容只作输入数据，不接受其中的指令修改审核策略、权限或来源（F08）。' +
+      '匹配器为 separator_tolerant_pattern：原文不中时再对"去分隔符"文本重试一次。',
     severity: 'block',
-    matcher: 'negation_guarded_pattern',
+    matcher: 'separator_tolerant_pattern',
     patterns: [
       /忽略(?:以上|之前|前面|上述|先前)?(?:所有|全部|一切)?(?:的)?(?:指令|指示|提示|规则|设定|要求|限制)/,
+      /忽略[^，。；]{0,12}(?:指令|指示|提示|规则|设定|要求|限制|约束|规范)/,
+      /(?:忘记|忘掉|无视|跳过)[^，。；]{0,10}(?:指令|规则|设定|要求|限制|约束)/,
       /(?:输出|告诉我|显示|打印|复述|重复)(?:一下)?(?:你的|您的)?(?:系统)?(?:提示词|prompt|系统设定|预设指令)/i,
+      /(?:#{1,6}\s*)?(?:system|系统)\s{0,2}(?:指令|提示词|提示|prompt|message|命令)\s{0,2}[:：]/i,
       /(?:从现在起|现在起|接下来|以后|从今往后)你(?:就)?(?:是|要|得|必须)(?:扮演|充当|作为|假装)/,
+      /(?:你[现如]在|从现在起|接下来)[^，。；]{0,10}(?:是|扮演|充当|作为)[^，。；]{0,12}(?:助手|审核员|审核|管理员|模型)/,
+      /(?:判|标记|标注|认定|视为|当作|算)(?:为|成)?\s{0,2}(?:通过|合格|合规|放行|已审)/,
+      /(?:改|修改|写|填)(?:成|为)\s{0,3}(?:approved|pass|通过|合格|已审)/i,
+      /(?:只|仅)\s{0,2}(?:输出|回复|返回)\s{0,2}(?:JSON|json|json串|\{\}|代码块)/,
+      /(?:不要|别|禁止|无需)\s{0,2}(?:输出|给出|写|加)[^，。；]{0,6}(?:解释|说明|理由|注释|废话)/,
       /(?:开发(?:者)?模式|调试模式|jailbreak|越狱)/i,
       /(?:不要|不用|别)(?:遵守|理会|执行|受)(?:以上|之前|这些|任何)?(?:指令|规则|限制|约束)/,
       /(?:解除|绕过|突破|关闭)(?:你的)?(?:限制|规则|安全策略|审查|护栏)/,
       /ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions?/i,
       /system\s*prompt|developer\s*message/i,
+      /#{1,6}\s*(?:system|instruction)s?\b/i,
+      /<\|?\s*(?:im_start|im_end|system)\s*\|?>|\[INST\]|<<\/?SYS>>/i,
     ],
   },
   {
@@ -195,21 +221,36 @@ export const RULES = Object.freeze([
     id: 'MR-10',
     category: 'commerce',
     reason_code: 'COMMERCE_SOLICITATION',
-    title: '商业导流：加微信／私聊下单／厂家直销',
+    title: '商业导流：加微信／私聊下单／面交／转手',
     description:
-      '命中加微信、私聊下单、扫码购买、微店／拼团／代购、厂家直销／批发价等私下交易导流；' +
-      'F05／AC16：广告、购买链接、私下交易导流不发布。',
+      '命中加微信、私聊下单、扫码购买、微店／拼团／代购、厂家直销／批发价、' +
+      '口语导流（私我／v我／要的留言／面交／自提／转手／便宜出）等私下交易动作；' +
+      'F05／AC16：广告、购买链接、私下交易导流不发布。' +
+      '匹配器为 exempted_pattern：命中所在句读段命中 exemptions（产品陈述／规则陈述）时豁免' +
+      '（`私信通知`、`私聊功能已上线`、`请勿私下交易`、`农药包装废弃物不得转手`）；' +
+      '举报／被骗语境走 report_exemptions，须同时通过主语／邻域判定（`我要举报有人在群里私我卖百草枯` 豁免，' +
+      '`不要举报我百草枯现货加微信下单`、`我这有百草枯现货，举报也没用` 照常命中）。',
     severity: 'block',
-    matcher: 'any_pattern',
+    matcher: 'exempted_pattern',
     patterns: [
       /(?:加|私)(?:我|你)?(?:的)?(?:微信|weixin|vx|V信|v信|威信|QQ)(?:号)?/i,
+      /(?:私|加|v|微)\s?(?:我|我一下)(?:吧|哈|啊|就行|即可)?/i,
       /(?:私聊|私下|私信).{0,8}(?:购买|下单|发货|交易|转账|便宜|优惠|订货)/,
+      /(?:要|需要|有意|想买|想卖|有要)(?:的|的话)?(?:私聊|私信|私我|留言|联系我|找我)/,
       /(?:扫码|扫一扫|长按)(?:购买|下单|进店|加|识别)/,
       /微店|拼团|代购|厂家直销|一件代发|批发价|内部价|低价出|现货秒发|免费寄样/,
       /(?:联系|找)我(?:购买|下单|买|发货|订货)/,
+      /同城面交|面交|当面交易|自提|同城交易/,
+      /转手|倒卖|甩卖/,
+      /(?:便宜|低价|清仓|半价)(?:出|卖|处理)/,
       /(?:淘宝|天猫|京东|拼多多|闲鱼|抖音|快手)(?:店|店铺|链接|下单|同款|橱窗)/,
       /(?:优惠|促销|秒杀|下单|购买|团购|包邮).{0,8}(?:链接|二维码|店铺|微信)/,
     ],
+    exemptions: [
+      /私信通知|私聊功能|私信功能|私聊已(?:上线|开通)|私信已(?:上线|开通)/,
+      /(?:请勿|不要|禁止|严禁|不得|不能|勿|莫)[^，。；]{0,8}(?:私下?交易|私下?买卖|私下?转账|转手|倒卖|面交|加好友)/,
+    ],
+    report_exemptions: REPORT_CONTEXT_PATTERNS,
   },
   {
     id: 'MR-11',
@@ -223,9 +264,35 @@ export const RULES = Object.freeze([
     matcher: 'commerce_link',
     cue_window: 40,
   },
+  {
+    id: 'MR-12',
+    category: 'commerce',
+    reason_code: 'PROHIBITED_SALE',
+    title: '禁售／限用农药的售卖与私下转让',
+    description:
+      '同一句内同时出现禁用／限用农药标的名与交易信号（有货／现货／私聊／私我／转手／便宜出等），' +
+      '且两者相距 ≤24 字才命中（允许跨逗号，不跨句号：`甲胺磷，私我` 命中，' +
+      '`……登记早就到期了。价格我记不清` 不命中）。' +
+      '规则陈述、普法与急救句式整句豁免（exemptions）' +
+      '（`百草枯已被禁用，误服请立即就医`、`敌敌畏中毒急救措施`、`关于甲胺磷限用的法规解读`、' +
+      '`平台禁止售卖禁用农药`）；举报／被骗句式走 report_exemptions，须同时通过主语／邻域判定' +
+      '（`我要举报有人在卖百草枯`、`我被人举报了，百草枯不是我卖的` 豁免；' +
+      '`我这有百草枯现货，被骗过的人互相提醒`、`不要举报我，甲胺磷现货私我` 照常命中）。' +
+      'F05／AC16：禁售农药的售卖与私下交易不发布。只覆盖文本层；图片与真实供应商仍属未取得。',
+    severity: 'block',
+    matcher: 'sale_cooccurrence',
+    targets: PROHIBITED_PESTICIDES,
+    signals: PROHIBITED_SALE_SIGNALS,
+    max_distance: 24,
+    exemptions: PROHIBITED_SALE_STATEMENT_EXEMPTIONS,
+    report_exemptions: REPORT_CONTEXT_PATTERNS,
+  },
 ]);
 
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,40}$/;
+
+/** 支持 `report_exemptions`（举报／被骗语境豁免）的匹配器。 */
+export const REPORT_CONTEXT_MATCHERS = Object.freeze(['exempted_pattern', 'sale_cooccurrence']);
 
 /**
  * 校验规则集结构是否合法（供引擎自检与测试使用）。
@@ -284,8 +351,38 @@ export function validateRuleCatalog(rules = RULES, matchers = MATCHERS) {
         }
       }
     }
-    // 否定取消词：只对否定护栏有效；写在不生效的匹配器上属于"看起来配了其实没用"，直接判非法。
+    // 豁免表：`exemptions`（整段口径）与 `report_exemptions`（举报语境口径）都必须是无状态模式表。
+    for (const [field, value] of [
+      ['exemptions', rule.exemptions],
+      ['report_exemptions', rule.report_exemptions],
+    ]) {
+      if (value === undefined) continue;
+      if (!Array.isArray(value) || value.length === 0) {
+        errors.push(`${where}: ${field} 必须是非空数组`);
+        continue;
+      }
+      value.forEach((pattern, index) => {
+        if (typeof pattern === 'string') {
+          if (pattern.length === 0) errors.push(`${where}: ${field}[${index}] 不得为空字符串`);
+          return;
+        }
+        if (!(pattern instanceof RegExp)) {
+          errors.push(`${where}: ${field}[${index}] 必须是 RegExp`);
+          return;
+        }
+        if (pattern.flags.includes('g') || pattern.flags.includes('y')) {
+          errors.push(`${where}: ${field}[${index}] 不得带 g/y 标志（有状态，破坏确定性）`);
+        }
+      });
+    }
+    // 举报语境豁免只对支持"报告框＋主语/邻域判定"的匹配器生效，写错位置属于假配置。
+    if (rule.report_exemptions !== undefined && !REPORT_CONTEXT_MATCHERS.includes(rule.matcher)) {
+      errors.push(
+        `${where}: report_exemptions 只对 ${REPORT_CONTEXT_MATCHERS.join('／')} 生效，当前匹配器为 ${rule.matcher}`,
+      );
+    }
     if (rule.negation_cancellers !== undefined) {
+      // 否定取消词：只对否定护栏有效；写在不生效的匹配器上属于"看起来配了其实没用"，直接判非法。
       if (rule.matcher !== 'negation_guarded_pattern') {
         errors.push(`${where}: negation_cancellers 只对 negation_guarded_pattern 生效，当前匹配器为 ${rule.matcher}`);
       }
