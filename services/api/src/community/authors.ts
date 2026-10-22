@@ -25,10 +25,18 @@
  *   - 同一作者在同一进程内**稳定**（多次解析得到同一引用，不能每次刷新换一个）；
  *   - 不包含 userId、不由 userId 派生。
  *
- * **边界（如实登记，进 PR 的未取得项）**：本目录仍是阶段 1 的**进程内**投影，
- * 注销引用没有持久化落点（`public_authors`/`author_links` 未接线，本片不新增迁移）。
- * 进程重启后该映射丢失 —— 这是"注销引用未持久化"的已知缺口，注销装配处据此**如实 blocked**，
- * 不谎称完成。
+ * ## 持久化落点（R31-F13 后续切片，迁移 0030）
+ *
+ * 上一版（PR #474）的边界是：注销引用只存在进程内 `Map`，重启即丢 ⇒ 注销装配处如实
+ * `blocked`（`author-reference-not-durable`）。迁移 0030 把引用**落到内容行上**
+ * （`community_posts/comments.anonymized_author_ref`），于是：
+ *   - 写路径：注销事务把 `author_id` 置 NULL、把本模块生成的引用写进那些行
+ *     （`store-pg.ts` / `store.ts` 的 `purgeOwnerData`）；
+ *   - 读路径：`resolve()` 收到**行内引用**（形状 `^gy-anon-[0-9a-f]{16}$`）时**直接**投影成
+ *     已注销作者，**不查任何进程内状态** ⇒ 重启、多副本、跨进程读同一行得同一串。
+ *
+ * 进程内 `Map` 仍然保留（`anonymize` 会写它、`resolve` 会先查它）：它现在是**兼容用的快路径**，
+ * 不是权威落点。权威落点是行内的 `anonymized_author_ref` —— 这也意味着"Map 丢了下一次读仍旧匿名"。
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { Author, AuthorDirectory } from './types.ts';
@@ -44,6 +52,32 @@ const DISPLAY_DOMAIN = 'gengyun.community.pseudonymous-author.v1';
 
 /** 注销引用前缀（与活跃假名 `gy-` 区分；不含任何原文片段）。 */
 const ANON_DISPLAY_PREFIX = 'gy-anon-';
+
+/**
+ * 注销引用的**形状**（与迁移 0030 的两条 CHECK 逐字同源）：
+ * `community_posts_anon_ref_shape` / `community_comments_anon_ref_shape`。
+ *
+ * 两侧必须一起改：库里放宽了而这里没放宽 ⇒ 行内引用会被投影层当成"未知主体"；
+ * 这里放宽了而库里没放宽 ⇒ 写入直接撞 CHECK（事务回滚，注销如实失败）。
+ */
+export const ANONYMIZED_AUTHOR_REF_PATTERN = /^gy-anon-[0-9a-f]{16}$/;
+
+/**
+ * 生成一个注销引用（**纯函数**，不读进程内状态）。
+ *
+ * 供两处共用，保证"写进行里的引用"与"投影层认得的引用"永远是同一个形状：
+ *   1. `anonymize()`（注销写路径的权威值）；
+ *   2. `store-pg.ts` / `store.ts` 的 `purgeOwnerData` 兜底（调用方没给引用时的自保，
+ *      避免写出 `author_id = NULL` 而 `anonymized_author_ref = NULL` 的行 —— 那会撞
+ *      迁移 0030 的 `num_nonnulls(...) = 1`）。
+ *
+ * `randomHex` 只为测试可注入；默认 8 字节 crypto 随机（64 bit）。
+ */
+export function createAnonymizedAuthorRef(randomHex?: (bytes: number) => string): string {
+  const hex = (randomHex ?? ((bytes: number) => randomBytes(bytes).toString('hex')))(8);
+  return `${ANON_DISPLAY_PREFIX}${hex}`;
+}
+
 
 function digestOf(userId: string): string {
   return createHash('sha256').update(`${DISPLAY_DOMAIN}\u0000${userId}`, 'utf8').digest('hex');
@@ -63,7 +97,7 @@ export function createLocalPseudonymousAuthorDirectory(
     // 8 字节随机 = 64 bit；在"同一进程里注销的主体数"这个量级上碰撞可忽略。
     // 万一撞上（可注入随机源时才会发生），重试而不是复用别人的引用。
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const ref = `${ANON_DISPLAY_PREFIX}${randomHex(8)}`;
+      const ref = createAnonymizedAuthorRef(randomHex);
       if (!takenRefs.has(ref)) {
         takenRefs.add(ref);
         return ref;
@@ -72,12 +106,8 @@ export function createLocalPseudonymousAuthorDirectory(
     throw new Error('无法生成不重复的注销引用（随机源异常）');
   }
 
-  function anonymizedAuthor(userId: string): Author {
-    let ref = anonymizedRefs.get(userId);
-    if (ref === undefined) {
-      ref = freshDeletionRef();
-      anonymizedRefs.set(userId, ref);
-    }
+  /** 仅按**引用本身**构造投影（不读 Map、不查库）：重启/多副本下的唯一依据。 */
+  function anonymizedAuthorFromRef(ref: string): Author {
     return {
       display_name: '已注销用户',
       display_id: ref,
@@ -88,13 +118,27 @@ export function createLocalPseudonymousAuthorDirectory(
     };
   }
 
+  function anonymizedAuthor(userId: string): Author {
+    let ref = anonymizedRefs.get(userId);
+    if (ref === undefined) {
+      ref = freshDeletionRef();
+      anonymizedRefs.set(userId, ref);
+    }
+    return anonymizedAuthorFromRef(ref);
+  }
+
   for (const userId of options.anonymizedUserIds ?? []) {
     if (typeof userId === 'string' && userId.length > 0) anonymizedAuthor(userId);
   }
 
   async function resolve(userId: string): Promise<Author | null> {
     if (typeof userId !== 'string' || userId.length === 0) return null;
+    // 入参本身就是**行内注销引用**（读路径 `author_id ?? anonymized_author_ref` 的后者）：
+    // 直接按引用投影 ⇒ 不依赖任何进程内 Map，重启/多副本后同一行仍显示同一引用。
+    // ⛔ 不要在这里"再哈希一次"或加后缀：那会让同一行在不同进程里显示不同 id。
+    if (ANONYMIZED_AUTHOR_REF_PATTERN.test(userId)) return anonymizedAuthorFromRef(userId);
     if (anonymizedRefs.has(userId)) return { ...anonymizedAuthor(userId) };
+
     const cached = cache.get(userId);
     if (cached !== undefined) return { ...cached };
     const digest = digestOf(userId);

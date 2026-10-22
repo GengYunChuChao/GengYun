@@ -83,8 +83,16 @@ export function createCommunityContentAuthority(options: {
     return record.visibility === 'published' && record.audit_state === 'approved' ? record.revision : null;
   }
 
-  async function authorStateOf(ownerId: string): Promise<AuthoritySnapshot['author_state']> {
-    const author = await authors.resolve(ownerId);
+  /**
+   * 作者状态（审核域用来判断"这条内容还挂不挂在一个活跃账户上"）。
+   *
+   * 入参是**作者引用**（迁移 0030 之后有两态：活跃行 = `author_id`，已注销行 =
+   * `anonymized_author_ref`）。注销行必须报 `anonymized` —— 报 `active` 会让审核域以为还能
+   * 找到作者去处置/通知；报 `inactive` 又会把"已按 F13 去身份"说成"作者状态未知"。
+   */
+  async function authorStateOf(authorRef: string | null): Promise<AuthoritySnapshot['author_state']> {
+    if (typeof authorRef !== 'string' || authorRef.length === 0) return 'inactive'; // 两列都空 ⇒ 行坏了，fail-closed
+    const author = await authors.resolve(authorRef);
     if (author === null) return 'inactive'; // 无法核对 ⇒ fail-closed
     return author.state === 'anonymized' ? 'anonymized' : 'active';
   }
@@ -138,9 +146,12 @@ export function createCommunityContentAuthority(options: {
       return {
         exists: true,
         visibility: record.visibility,
-        author_state: await authorStateOf(record.author_id),
+        // 作者引用：活跃行取 `author_id`，已注销行取行内引用（迁移 0030）⇒ 状态如实为 `anonymized`。
+        author_state: await authorStateOf(record.author_id ?? record.anonymized_author_ref),
         // 社区行来自服务端存储（不是替身/不是合成种子）；这里如实标 `database`。
         source_kind: 'database',
+        // `owner_id` 是"账户主体"：已注销行 `author_id = NULL` ⇒ 如实为 null
+        // （已按 F13 去身份，没有可反查的账户；⛔ 不要塞行内匿名引用冒充 owner）。
         owner_id: record.author_id,
         current_revision: record.revision,
       };

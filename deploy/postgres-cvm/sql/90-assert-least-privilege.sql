@@ -1176,8 +1176,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','owner_id','type','target_ref','read_at','created_at','revision','event_key'],
      ARRAY['read_at','revision'],
      true),
+    -- R31-F13（迁移 0030，2026-10-22）：两表新增行内匿名列 `anonymized_author_ref`，注销清理
+    -- 还要把 `author_id` 置 NULL ⇒ sel 补匿名列、upd 补 `author_id` + 匿名列（insert 列清单不变：
+    -- 新列创建时恒为 NULL）。与 20-login-roles.sql 的 GRANT 是同一事实的两次写法：**必须成对改**，
+    -- 只改一边会让下面的断言 7/8（runtime_grants_community_*）立刻判红。
     ('community_posts',
-     ARRAY['id','author_id','revision','title','body','crop_id','region_code','media_ids',
+     ARRAY['id','author_id','anonymized_author_ref','revision','title','body','crop_id','region_code','media_ids',
            'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
            'visibility','audit_state','created_at','updated_at'],
      ARRAY['id','author_id','revision','title','body','crop_id','region_code','media_ids',
@@ -1185,12 +1189,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'visibility','audit_state','created_at','updated_at'],
      ARRAY['revision','title','body','crop_id','region_code','media_ids',
            'linked_knowledge_type','linked_knowledge_id','linked_knowledge_revision',
-           'visibility','audit_state','updated_at'],
+           'visibility','audit_state','updated_at','author_id','anonymized_author_ref'],
      false),
     ('community_comments',
+     ARRAY['id','post_id','author_id','anonymized_author_ref','revision','body','visibility','audit_state','created_at'],
      ARRAY['id','post_id','author_id','revision','body','visibility','audit_state','created_at'],
-     ARRAY['id','post_id','author_id','revision','body','visibility','audit_state','created_at'],
-     ARRAY['revision','body','visibility','audit_state'],
+     ARRAY['revision','body','visibility','audit_state','author_id','anonymized_author_ref'],
      false),
     ('community_likes',
      ARRAY['target_type','target_id','user_id'],

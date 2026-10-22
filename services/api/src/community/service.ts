@@ -679,8 +679,22 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     }
   }
 
-  async function projectAuthor(userId: string) {
-    const author = await authors.resolve(userId);
+  /**
+   * 作者投影。入参是**作者引用**，不是"用户 id"：
+   *   - 未注销行 = `author_id`（内部 uuid，`AuthorDirectory` 派生活跃假名）；
+   *   - 已注销行 = `anonymized_author_ref`（`gy-anon-<16 hex>`，迁移 0030 的**行内**注销引用，
+   *     `AuthorDirectory.resolve` 直接按引用投影，不依赖任何进程内映射）。
+   *
+   * 调用方一律用 `record.author_id ?? record.anonymized_author_ref` 传进来（⛔ 不要 `String(null)`，
+   * 那会得到字符串 `'null'` 并被当成一个"用户 id"）。
+   */
+  async function projectAuthor(authorRef: string | null) {
+    if (typeof authorRef !== 'string' || authorRef.length === 0) {
+      // 不该发生：迁移 0030 的 `num_nonnulls(author_id, anonymized_author_ref) = 1` 保证恰好一个非空。
+      // 真发生就是行形状坏了 ⇒ 明确失败，⛔ 不编一个 display_name。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '作者投影不可用（内容行没有作者引用）');
+    }
+    const author = await authors.resolve(authorRef);
     if (author === null) {
       // 不伪造作者：无法投影就明确失败，而不是编一个 display_name。
       throw new ApiError('PROVIDER_UNAVAILABLE', '作者投影不可用');
@@ -688,12 +702,17 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     return author;
   }
 
+  /** 内容行的作者引用：`author_id` 优先，注销后落到行内引用（两列恰好一个非空）。 */
+  function authorRefOf(record: { author_id: string | null; anonymized_author_ref: string | null }): string | null {
+    return record.author_id ?? record.anonymized_author_ref;
+  }
+
   async function projectPost(record: PostRecord): Promise<Post> {
     const state = await effectiveState('post', record);
     return {
       id: record.id,
       revision: record.revision,
-      author: await projectAuthor(record.author_id),
+      author: await projectAuthor(authorRefOf(record)),
       title: record.title,
       body: record.body,
       crop_id: record.crop_id,
@@ -718,7 +737,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       id: record.id,
       revision: record.revision,
       post_id: record.post_id,
-      author: await projectAuthor(record.author_id),
+      author: await projectAuthor(authorRefOf(record)),
       body: record.body,
       visibility: state.visibility,
       audit_state: state.audit_state,
@@ -977,6 +996,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             id,
             revision: 1,
             author_id: user.userId,
+            // 新行的作者指针是活跃账户 ⇒ 匿名引用必为 NULL（迁移 0030 的"恰好一个"约束）。
+            anonymized_author_ref: null,
             title: body.title,
             body: body.body,
             crop_id: body.crop_id ?? null,
@@ -1296,6 +1317,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             revision: 1,
             post_id: parentId,
             author_id: user.userId,
+            // 同 `createPost`：活跃作者行的匿名引用恒为 NULL（迁移 0030 的"恰好一个"约束）。
+            anonymized_author_ref: null,
             body: body.body,
             visibility: awaitingPublish ? 'private' : 'published',
             audit_state: awaitingPublish ? 'pending' : 'approved',
@@ -1334,7 +1357,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           // 只在评论**已经公开发布**后发：待审/私有的评论对外不可见，投一条通知等于
           // 泄露"存在一条受限评论"。跳转目标取**帖子**（评论行对他人未必可读）；
           // 去重键带 `commentId` ⇒ 同一评论只通知一次，重复调度不新建第二行。
-          if (committedRecord.visibility === 'published' && parent.author_id !== user.userId) {
+          // 迁移 0030：父帖作者已注销（`author_id = NULL`）⇒ **没有接收者**，不投递
+          // （⛔ 不要把 `ownerId: null` 塞进事件：那会造出一条无人可收的孤儿通知）。
+          if (committedRecord.visibility === 'published' && parent.author_id !== null && parent.author_id !== user.userId) {
             await publishInteraction({
               event: 'comment_created',
               ownerId: parent.author_id,
@@ -1774,7 +1799,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           // GY-I17 第 7 片：**他人点赞**通知被赞内容的作者（自赞不通知）。
           // `addLike` 返回「是否真的新增」：已赞再 PUT（换幂等键重放）为 `false` ⇒ 不重复
           // 调度；即使重复调度，事件键 `...:u<likerId>` 也会命中去重索引，不产生第二行。
-          if (added && target.author_id !== user.userId) {
+          // 迁移 0030：被赞内容已注销（`author_id = NULL`）⇒ 没有接收者，不投递。
+          if (added && target.author_id !== null && target.author_id !== user.userId) {
             await publishInteraction({
               event: 'like_created',
               ownerId: target.author_id,

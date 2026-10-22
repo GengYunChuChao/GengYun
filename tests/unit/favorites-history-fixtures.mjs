@@ -75,9 +75,18 @@ export const PG_MIGRATIONS_WITH_MESSAGES = [
  * `42P01`（`undefined_table`），协调器把该模块折叠成 `blocked`：那不是"注销已完成"，而是
  * "表都没有"。真库（PG17）覆盖在 `tests/integration/community-pg.mjs`。
  *
+ * R31-F13（迁移 `0030`）再追加：运行时 SQL 现在**读写** `anonymized_author_ref`（行内注销引用）
+ * 并在注销事务里 `SET author_id = NULL`。缺 0030 ⇒ `42703`（`undefined_column`），同理会把
+ * 该模块折叠成 blocked 并让"点赞物理删/保留读数"全部失真。**这一条是运行时依赖，不是可选项**：
+ * 加/删列清单时必须同步这里（与 `20-login-roles.sql` 的列级授权是同一批列）。
+ *
  * 同样单独一个常量而不是改上面两个迁移集：既有收藏/历史/消息/会话用例的迁移集**逐字不动**。
  */
-export const PG_MIGRATIONS_WITH_COMMUNITY = [...PG_MIGRATIONS_WITH_MESSAGES, '0022_community_persistence'];
+export const PG_MIGRATIONS_WITH_COMMUNITY = [
+  ...PG_MIGRATIONS_WITH_MESSAGES,
+  '0022_community_persistence',
+  '0030_community_author_ref',
+];
 
 export function migrationSql(name) {
   return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');

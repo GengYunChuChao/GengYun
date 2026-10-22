@@ -149,6 +149,26 @@ test('a. 保留：已审核、无个人信息的纯文字帖子/评论，注销�
   assert.equal(stored.body, CLEAN_BODY);
   assert.deepEqual(stored.media_ids, []);
 
+  // 迁移 0030（F13 行级作者引用）：行级 `author_id` 必须被置空、行内引用必须落上。
+  assert.equal(stored.author_id, null, 'F13：注销后行级 account 指针必须为 NULL（删除账号映射）');
+  assert.match(
+    String(stored.anonymized_author_ref),
+    /^gy-anon-[0-9a-f]{16}$/,
+    'F13：行内必须留下不可反查的注销引用（形状与迁移 0030 的 CHECK 同源）',
+  );
+  assert.equal(
+    stored.author_id ?? stored.anonymized_author_ref,
+    stored.anonymized_author_ref,
+    '两列"恰好一个非空"：author_id 为 NULL 时投影只能用行内引用',
+  );
+  const storedComment = await h.store.getComment(commentA.id);
+  assert.equal(storedComment.author_id, null, '评论行同样置空 author_id');
+  assert.equal(
+    storedComment.anonymized_author_ref,
+    stored.anonymized_author_ref,
+    '同一注销主体的帖与评必须共用**同一个**引用（逐主体独立，不逐行随机）',
+  );
+
   // 公开读取：仍可见，作者为注销引用，正文原样。
   const after = await h.service.getPost(USER_B, postA.id);
   assert.equal(after.title, CLEAN_TITLE);
@@ -174,7 +194,8 @@ test('a. 保留：已审核、无个人信息的纯文字帖子/评论，注销�
   assert.equal(audit.hiddenMedia, 0);
 
   const row = communityRow(deletion, request.id);
-  assert.equal(row.online_state, 'blocked', '见 c：行级作者映射未替换 ⇒ 不得冒充 completed');
+  assert.equal(row.online_state, 'completed', 'F13 本片：行级作者引用已替换、引用已持久化 ⇒ blocked 归零、如实 completed');
+  assert.equal(audit.blocked, undefined, '没有未完成项时不得留下 blocked 读数');
 });
 
 // ---------------------------------------------------------------------------
@@ -235,43 +256,121 @@ test('b. 个人信息：正文个人信息清除、不可可靠脱敏媒体移�
   assert.equal(audit.retained, 1, '仅媒体行仍算正文保留');
 
   const row = communityRow(deletion, request.id);
-  assert.equal(row.online_state, 'blocked');
+  assert.equal(row.online_state, 'completed', 'F13 本片：作者引用已替换 ⇒ 脱敏/隐藏不构成未完成项');
 });
 
 // ---------------------------------------------------------------------------
 // c. blocked 计数与"不得冒充 completed"
+//
+// R31-F13 本片之前：行级 `author_id` 是 `uuid NOT NULL REFERENCES users ON DELETE CASCADE`，
+// 且运行时没有 `UPDATE (author_id)` 列授权、注销引用也没有持久化落点 ⇒ 有保留内容的主体
+// **必然** blocked=1（两项原因码）。迁移 0030 之后两条都落地了，**正常路径必须归零**；
+// 下面同时保留「能力缺失/调用失败仍如实 blocked」的反向控制 —— 归零不等于把判据删了。
 // ---------------------------------------------------------------------------
-test('c. blocked：未完成的处理项单列计数，回执 online_state=blocked，且不得把保留计数当完成证据', async () => {
+test('c. blocked 归零：正常路径（有内容主体）online_state=completed，且证据串写明作者指针替换行数', async () => {
   const h = makeHarness();
   await publishPost(h.service, USER_A, {}, idem(320));
   const { deletion, request, communityStore } = await purgeOwner(h, USER_A.userId);
 
   const audit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
-  assert.equal(audit.blocked, 1, '行级内部作者引用无法替换（FK users + 无 UPDATE(author_id) 列授权）⇒ blocked=1');
-  assert.ok(
-    String(audit.blockedReasons ?? '').includes('author-row-reference-not-replaced'),
-    `blocked 必须带可核对的理由，实际 ${JSON.stringify(audit.blockedReasons)}`,
+  assert.equal(
+    audit.blocked,
+    undefined,
+    `迁移 0030 落地后正常路径不得再有未完成项（现场 ${JSON.stringify(audit.blockedReasons ?? null)}）`,
   );
+  assert.equal(audit.authorRefsReplaced, 1, '1 条帖子行的作者指针被替换 ⇒ 读数如实为 1');
 
   const row = communityRow(deletion, request.id);
-  assert.equal(row.online_state, 'blocked', '有未完成项 ⇒ online_state 必须是 blocked');
-  assert.equal(row.error_code, 'POLICY_BLOCKED', '失败码必须在协议安全码闭集内');
-  assert.equal(deletion.completionStatus(String(request.id)).completed, false, '不得判完成');
+  assert.equal(row.online_state, 'completed', '没有未完成项 ⇒ completed（不再是 blocked）');
+  assert.equal(row.error_code, null, 'completed 时不得带阻断码');
+  // 整份请求仍**不是** completed：本夹具没有注入备份副本端口 ⇒ 备份阶段如实 `pending`
+  // （"时钟到期不等于完成"）。这里只断言"在线阶段已完成"，⛔ 不把 backup pending 说成绿。
+  assert.equal(row.backup_state, 'pending', '备份阶段未接线 ⇒ pending（不是 completed）');
+  assert.equal(deletion.completionStatus(String(request.id)).completed, false, '两阶段都完成才判整份完成');
 
   const evidence = deletion.evidenceOf(String(request.id))[COMMUNITY_DELETION_MODULE];
   assert.ok(evidence.includes('community:online-purged:'), `证据串必须保留真实处理读数：${evidence}`);
   assert.ok(evidence.includes('community:retained:1'), `证据串必须单列保留读数：${evidence}`);
-  assert.ok(evidence.includes('community:blocked:1'), `证据串必须单列 blocked：${evidence}`);
+  assert.ok(
+    evidence.includes('community:author-refs-replaced:1'),
+    `证据串必须单列「作者指针替换了几行」（否则审计看不出账号映射到底换了没有）：${evidence}`,
+  );
+  assert.equal(evidence.includes('community:blocked'), false, `归零后不得再写 blocked 段：${evidence}`);
 
-  // 直接读取：端口返回的三类计数（不依赖回执形状）。
+  // 直接读取端口：保留/替换两类计数分开，不互相冒充。
   const counts = await communityStore.purgeOwnerData(USER_A.userId);
-  assert.equal(counts.retained, 1);
-  assert.equal(counts.redacted, 0);
-  assert.equal(counts.hiddenMedia, 0);
-  assert.equal(counts.blocked, 1);
+  assert.equal(counts.retained, 0, '重放时该主体已无内容行（author_id 已置空）⇒ retained 如实为 0');
+  assert.equal(counts.authorRefsReplaced, 0, '已匿名行不再被"替换"第二次（幂等）');
+  assert.equal(counts.blocked, 0);
 });
 
-test('c2. 处理失败：存储清理抛错 ⇒ 该模块 blocked + HANDLER_FAILED，不出现 completed 证据', async () => {
+test('c2. 反向控制 · 能力缺失：作者目录没有 anonymize ⇒ 不替换行级作者、blocked 带 unavailable', async () => {
+  const h = makeHarness();
+  await publishPost(h.service, USER_A, {}, idem(321));
+  // 只实现 resolve 的"旧目录"（等价于注销能力未接线）：⛔ 不许在这里假装能匿名。
+  const { resolve } = h.authors;
+  const communityStore = createCommunityOwnerPurgePort({
+    store: h.store,
+    authors: { resolve },
+  });
+  const deletion = createUserDataDeletion({ ...otherStores(), communityStore });
+  const request = deletion.requestDeletionFor(USER_A.userId);
+  await deletion.executeHandlers(String(request.id));
+
+  const row = communityRow(deletion, request.id);
+  assert.equal(row.online_state, 'blocked', '能力缺失必须如实 blocked，不得 completed');
+  assert.equal(row.error_code, 'POLICY_BLOCKED');
+  const audit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
+  assert.equal(audit.blocked, 1);
+  assert.deepEqual(
+    [...audit.blockedReasons].sort(),
+    ['author-reference-unavailable', 'author-row-reference-not-replaced'],
+    '必须点名"生成不出引用"与"行级指针未替换"两件事实',
+  );
+  const evidence = deletion.evidenceOf(String(request.id))[COMMUNITY_DELETION_MODULE];
+  assert.ok(evidence.includes('community:blocked:1'), `证据串必须单列 blocked：${evidence}`);
+  assert.ok(
+    evidence.includes('community:author-refs-replaced:0'),
+    `证据串必须写出"替换了 0 行"（可与"没做"区分）：${evidence}`,
+  );
+
+  // 行级事实：author_id 原样保留（没有引用就绝不能置空 —— 否则撞 0030 的"恰好一个"约束）。
+  const mine = await h.service.listPosts(USER_A, { mine: true, limit: 10 });
+  const stored = await h.store.getPost(mine.items[0].id);
+  assert.equal(stored.author_id, USER_A.userId, '拿不到引用 ⇒ 绝不置空 author_id');
+  assert.equal(stored.anonymized_author_ref, null);
+  // 同一缺失也意味着**投影没能去身份**（anonymize 是唯一的去身份入口）—— 所以这条路径必须 blocked，
+  // ⛔ 不能说"内容保留了、作者也匿名了"。
+  const projected = await h.service.getPost(USER_B, stored.id);
+  assert.equal(projected.author.state, 'active', '没有 anonymize 能力 ⇒ 投影仍是活跃假名（如实反映 blocked）');
+});
+
+test('c3. 反向控制 · 调用失败：anonymize 抛错 ⇒ blocked 带 failed，行级指针同样不替换', async () => {
+  const h = makeHarness();
+  await publishPost(h.service, USER_A, {}, idem(322));
+  const communityStore = createCommunityOwnerPurgePort({
+    store: h.store,
+    authors: {
+      resolve: h.authors.resolve,
+      async anonymize() {
+        throw new Error('模拟引用生成失败');
+      },
+    },
+  });
+  const deletion = createUserDataDeletion({ ...otherStores(), communityStore });
+  const request = deletion.requestDeletionFor(USER_A.userId);
+  await deletion.executeHandlers(String(request.id));
+
+  const row = communityRow(deletion, request.id);
+  assert.equal(row.online_state, 'blocked');
+  const audit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
+  assert.deepEqual(
+    [...audit.blockedReasons].sort(),
+    ['author-reference-failed', 'author-row-reference-not-replaced'],
+  );
+});
+
+test('c4. 处理失败：存储清理抛错 ⇒ 该模块 blocked + HANDLER_FAILED，不出现 completed 证据', async () => {
   const deletion = createUserDataDeletion({
     ...otherStores(),
     communityStore: {
@@ -337,39 +436,57 @@ test('d. 注销引用：随机（不是原 ID 的摘要）、逐作者独立、�
 // ---------------------------------------------------------------------------
 // 边界：作者主动删除的旧路径不得被改写/复活
 // ---------------------------------------------------------------------------
-test('边界：作者主动删除（visibility=deleted）的内容，注销后仍是 deleted，不复活、不重复计数', async () => {
+test('边界：作者主动删除（visibility=deleted）的内容，注销后仍是 deleted；不复活、作者关联照样清除', async () => {
   const h = makeHarness();
   const post = await publishPost(h.service, USER_A, {}, idem(340));
   await h.service.deletePost(USER_A, post.id, { idempotencyKey: idem(341), ifMatch: `"${post.revision}"` });
   const deleted = await h.store.getPost(post.id);
   assert.equal(deleted.visibility, 'deleted');
 
-  const { deletion } = await purgeOwner(h, USER_A.userId);
+  const { deletion, request } = await purgeOwner(h, USER_A.userId);
 
   const after = await h.store.getPost(post.id);
   assert.equal(after.visibility, 'deleted', '注销不得复活作者已删除的内容');
   assert.equal(after.revision, deleted.revision, '注销不得改写作者删除路径的版本');
+  // P2 返修（监工 PR #483）：可见性与正文原样保留，但**作者关联必须清掉** ——
+  // 「作者主动删除」只豁免"内容/可见性"，不豁免「删除账号映射」。旧实现整行跳过 ⇒
+  // 该行仍以原 author_id 直接关联账户，回执却已 completed。
+  assert.equal(after.author_id, null, '已删除行同样不得再以原 author_id 关联账户');
+  assert.match(
+    String(after.anonymized_author_ref),
+    /^gy-anon-[0-9a-f]{16}$/,
+    '已删除行同样要落行内注销引用（迁移 0030 的「恰好一个非空」）',
+  );
+  assert.equal(after.body, deleted.body, '正文一字不动');
   const audit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.equal(audit.retained, 0, '已删除行不计入保留');
   assert.equal(audit.redacted, 0);
+  assert.equal(audit.authorRefsReplaced, 1, '已删除行参与作者指针替换（1 行）');
+  assert.equal(audit.blocked, undefined, '已清干净 ⇒ 不留未完成项');
+  assert.equal(communityRow(deletion, request.id).online_state, 'completed', '去身份已覆盖软删行 ⇒ completed 诚实');
 });
 
 // ---------------------------------------------------------------------------
 // 幂等 + 无内容路径
 // ---------------------------------------------------------------------------
-test('幂等：重跑不重复脱敏/不重复移除媒体；保留读数稳定；无内容主体如实 completed', async () => {
+test('幂等：重跑不重复脱敏/不重复替换作者/不重复移除媒体；无内容主体如实 completed', async () => {
   const h = makeHarness();
   await publishPost(h.service, USER_A, {}, idem(350));
   const { deletion, communityStore } = await purgeOwner(h, USER_A.userId);
   const first = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.equal(first.retained, 1);
   assert.equal(first.onlineRemoved, 0, '保留行没有"被删/被改"，online-purged（真实改动行数）如实为 0');
+  assert.equal(first.authorRefsReplaced, 1, '首轮替换了 1 行作者指针');
 
+  // 重放：该主体已无内容行（`author_id` 已置空）⇒ 所有计数如实归零。
+  // ⚠️ 这里**没有**"保留读数仍是 1"：保留结果记录在首轮回执的证据串里
+  //    （`community:retained:1`），重放时该主体名下确实没有行了 —— 这正是"删除账号映射"的结果。
   const secondCounts = await communityStore.purgeOwnerData(USER_A.userId);
   assert.equal(secondCounts.records, 0);
   assert.equal(secondCounts.redacted, 0);
   assert.equal(secondCounts.hiddenMedia, 0);
-  assert.equal(secondCounts.retained, 1, '保留读数反映当前状态，不虚报为 0');
+  assert.equal(secondCounts.retained, 0, '重放时主体名下无行（作者指针已替换）⇒ retained 如实为 0');
+  assert.equal(secondCounts.authorRefsReplaced, 0, '已匿名行不得被第二次"替换"（引用不分裂、不换串）');
   assert.equal(secondCounts.idempotency, 0);
 
   // 无社区内容的主体：没有需要保留/去身份的行 ⇒ blocked=0，模块如实 completed。

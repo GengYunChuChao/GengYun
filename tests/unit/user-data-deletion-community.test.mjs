@@ -10,7 +10,9 @@
  *   2. 处理器按 F13 处理**绑定主体**的行：安全正文保留（可见性不变）、个人信息清除、
  *      媒体引用移除、点赞物理删、举报自述抹除（处置轨迹 `state` 保留）；
  *   3. 他人不受影响；
- *   4. 行级作者引用/引用持久化未完成 ⇒ 如实 `blocked`（⛔ 不拿保留行数冒充 completed）；
+ *   4. 行级作者指针在同一事务里换成**行内注销引用**（迁移 0030）⇒ 正常路径 `blocked = 0`、
+ *      回执 `online_state = completed`；能力缺失/生成失败仍如实 `blocked`
+ *      （反向控制见 `community-account-deletion-retention.test.mjs` 的 c2/c3）；
  *   5. 不注入 ⇒ 闭集与逐字行为回到四域（既有测试替身因此一条都不用改）。
  *
  * 细则（a–d 四类判定）见 `community-account-deletion-retention.test.mjs`。
@@ -122,9 +124,12 @@ test('正控制：安全帖子/评论保留、A 的点赞与举报自述清理�
   const storedPostA = await h.store.getPost(postA.id);
   assert.equal(storedPostA.visibility, 'published', 'F13：安全帖子保留公开，不得软删');
   assert.equal(storedPostA.revision, postA.revision, '保留行不得为"标记"推进 revision');
-  assert.equal(storedPostA.author_id, USER_A.userId, '保留行仍在库（作者去身份在投影层）');
+  // 迁移 0030：作者指针已在**行级**替换（不再是"只靠投影层去身份"）。
+  assert.equal(storedPostA.author_id, null, 'F13：行级 account 指针必须置空（删除账号映射）');
+  assert.match(String(storedPostA.anonymized_author_ref), /^gy-anon-[0-9a-f]{16}$/, '行内必须留下注销引用');
   const storedPostB = await h.store.getPost(postB.id);
   assert.equal(storedPostB.visibility, 'published', 'B 的帖子不受影响');
+  assert.equal(storedPostB.author_id, USER_B.userId, 'B 的作者指针不得被 A 的注销带走');
 
   // 2) 评论：A 的保留，B 的也在（他人回复不得被注销带走）。
   const storedCommentByA = await h.store.getComment(commentByA.id);
@@ -152,27 +157,32 @@ test('正控制：安全帖子/评论保留、A 的点赞与举报自述清理�
   assert.equal(anon.display_name, '已注销用户');
   assert.equal((await h.authors.resolve(USER_B.userId)).state, 'active');
 
-  // 6) 回执：社区模块**因未完成项 blocked**（不是 completed，也不是失败）。
+  // 6) 回执：作者指针已替换、引用已持久化 ⇒ 社区模块**如实 completed**（不再是 blocked）。
   const receipt = deletion.receipt(String(request.id));
   const row = receipt.handlers.find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.ok(row !== undefined, '回执必须含 community 行');
-  assert.equal(row.online_state, 'blocked', '行级作者引用未替换 ⇒ 如实 blocked');
-  assert.equal(row.error_code, 'POLICY_BLOCKED');
+  assert.equal(row.online_state, 'completed', '迁移 0030 后正常路径不得再 blocked');
+  assert.equal(row.error_code, null, 'completed 时不得带阻断码');
   assert.equal(row.backup_state, 'pending', '备份副本清除未接线 ⇒ 如实 pending，不谎称完成');
 
-  // 7) 证据串：真实改动行数（点赞 + 举报）+ 保留读数 + blocked 分列。
+  // 7) 证据串：真实改动行数（点赞 + 举报）+ 保留读数 + 作者指针替换行数，各自分列。
   const evidence = deletion.evidenceOf(String(request.id))[COMMUNITY_DELETION_MODULE];
   assert.ok(evidence.includes('community:retained:2'), `保留 1 帖 + 1 评论：${evidence}`);
   assert.ok(evidence.includes('community:online-purged:2'), `点赞 1 + 举报自述 1：${evidence}`);
-  assert.ok(evidence.includes('community:blocked:1'), `未完成项单列：${evidence}`);
+  assert.ok(
+    evidence.includes('community:author-refs-replaced:2'),
+    `A 的 1 帖 + 1 评论 = 2 行作者指针被替换：${evidence}`,
+  );
+  assert.equal(evidence.includes('community:blocked'), false, `归零后不得再写 blocked 段：${evidence}`);
   const communityAudit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.equal(communityAudit.retained, 2);
   assert.equal(communityAudit.redacted, 0);
   assert.equal(communityAudit.hiddenMedia, 0);
-  assert.equal(communityAudit.blocked, 1);
+  assert.equal(communityAudit.authorRefsReplaced, 2);
+  assert.equal(communityAudit.blocked, undefined, '没有未完成项 ⇒ 审计行不带 blocked');
 });
 
-test('幂等：同一主体再注销一次，真实改动归零；保留读数稳定、blocked 不消失', async () => {
+test('幂等：同一主体再注销一次，真实改动归零；作者指针已替换 ⇒ 重跑不重复替换、不再 blocked', async () => {
   const { h } = await seedCommunity();
   const deletion = createUserDataDeletion({
     ...otherStores(),
@@ -182,6 +192,7 @@ test('幂等：同一主体再注销一次，真实改动归零；保留读数�
   await deletion.executeHandlers(String(first.id));
   const firstAudit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.ok(firstAudit.retained >= 2);
+  assert.equal(firstAudit.authorRefsReplaced, 2, '首轮把 A 的 1 帖 + 1 评论的作者指针替换掉');
 
   const second = deletion.requestDeletionFor(USER_A.userId);
   await deletion.executeHandlers(String(second.id));
@@ -190,9 +201,12 @@ test('幂等：同一主体再注销一次，真实改动归零；保留读数�
     .filter((entry) => entry.module === COMMUNITY_DELETION_MODULE)
     .at(-1);
   assert.equal(secondAudit.onlineRemoved, 0, '已清过的点赞/自述不重复计数');
-  assert.equal(secondAudit.retained, firstAudit.retained, '保留读数反映当前状态，不虚报为 0');
+  // 迁移 0030 的后果：A 名下已没有行（author_id 已置空）⇒ 重跑的 retained **如实为 0**。
+  // 保留结果记录在首轮回执的证据串（`community:retained:*`），不是"每跑一次都要重报一遍保留"。
+  assert.equal(secondAudit.retained, 0, '重跑时主体名下无行 ⇒ retained 如实为 0（不是虚报，也不是丢账）');
   assert.equal(secondAudit.redacted, 0, '没有新的个人信息可清');
-  assert.equal(secondAudit.blocked, 1, '未完成项不会因为重跑而变成完成');
+  assert.equal(secondAudit.authorRefsReplaced, 0, '已匿名行不得被第二次替换（引用不分裂）');
+  assert.equal(secondAudit.blocked, undefined, '正常路径重跑同样不产生未完成项');
 });
 
 test('主体必须绑定：空主体在受理时就被拒（拿不到"清理范围未知"的请求，社区行一行不动）', async () => {

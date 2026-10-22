@@ -14,11 +14,19 @@
  */
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
 import { redactPersonalInfo } from './personal-info.ts';
+import { ANONYMIZED_AUTHOR_REF_PATTERN, createAnonymizedAuthorRef } from './authors.ts';
 
 export interface PostRecord {
   id: string;
   revision: number;
-  author_id: string;
+  /**
+   * 内部作者指针。**可空**（迁移 0030）：注销后置 NULL、由 {@link PostRecord.anonymized_author_ref}
+   * 承接作者身份。读路径必须写成 `author_id ?? anonymized_author_ref`，
+   * ⛔ 不要用 `String(author_id)` —— 那会把 NULL 变成字符串 `'null'` 并当成一个"用户 id"去投影。
+   */
+  author_id: string | null;
+  /** 行内注销引用（`gy-anon-<16 hex>`）；未注销行为 NULL。两列**恰好一个**非空（0030 CHECK）。 */
+  anonymized_author_ref: string | null;
   title: string;
   body: string;
   crop_id: string | null;
@@ -35,7 +43,10 @@ export interface CommentRecord {
   id: string;
   revision: number;
   post_id: string;
-  author_id: string;
+  /** 同 {@link PostRecord.author_id}：可空，可空性由迁移 0030 的 CHECK 保证"恰好一个作者字段"。 */
+  author_id: string | null;
+  /** 同 {@link PostRecord.anonymized_author_ref}。 */
+  anonymized_author_ref: string | null;
   body: string;
   visibility: Visibility;
   audit_state: AuditState;
@@ -176,6 +187,21 @@ export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>
  *     自动失效 ⇒ 该行退出公开面、等重审；这是保留 + 去 PII，不是删除。
  *   - `hiddenMedia`：被移除的媒体引用条数。社区存储没有"媒体已可靠脱敏"的证据面
  *     （媒体投影未接线），因此按 F13 的"不能可靠脱敏 ⇒ 移除"处理；正文照旧保留。
+ *   - `authorRefsReplaced`：**行级作者指针被换成注销引用的行数**（迁移 0030：`author_id` 置 NULL +
+ *     写 `anonymized_author_ref`）。⚠️ 不并入 `records`（那不是"删除/改写正文"），也不并入
+ *     `retained`（保留读数说的是正文是否原样）—— 三者是不同的账，混算会让证据串把
+ *     "替换了几行作者"读成"保留了几行"。
+ *   - `authorRefsRemaining`：**写入完成后重新测量**的「仍以原 `author_id` 关联本主体」行数
+ *     （帖子 + 评论，**含** `visibility='deleted'` 行）。0 = 账号映射已从本主体的全部内容行上
+ *     删除；>0 = 仍有行指向该账户，注销端口必须据此如实 `blocked`（⛔ 不得用
+ *     `authorRefsReplaced > 0` 冒充完成）。这是 P2 返修新增的**结果**读数：不是"做了几步"，
+ *     而是"还剩多少没做"。
+ *
+ *     **实现义务（fail-closed）**：两个真实实现（`store.ts` 内存 / `store-pg.ts`）必须如实报告
+ *     这个读数；**测量不可读**时返回 {@link AUTHOR_REFS_REMAINING_UNKNOWN}，⛔ 不得用 0 顶替
+ *     "没读到"（那等于替存储撒谎"已清干净"）。端口按 {@link readAuthorRefsRemaining} 校验：
+ *     缺失 / 非数 / 非整数 / 负数 / 非有限值 ⇒ 一律 `blocked` +
+ *     `author-refs-remaining-unknown`，⛔ 不回落任何旧判据（监工 PR #483 的残留 fail-open）。
  */
 export interface CommunityOwnerPurgeCounts {
   records: number;
@@ -183,6 +209,60 @@ export interface CommunityOwnerPurgeCounts {
   retained: number;
   redacted: number;
   hiddenMedia: number;
+  /** 行级作者指针替换行数（迁移 0030；0 = 没有需要替换的行或已是匿名行）。 */
+  authorRefsReplaced: number;
+  /** 写入后仍以原 `author_id` 关联本主体的行数（帖 + 评，含软删行）；0 = 账号映射已清干净。 */
+  authorRefsRemaining: number;
+}
+
+/**
+ * `authorRefsRemaining` 的**未知**哨兵（`NaN`）。
+ *
+ * 为什么需要显式的"未知"值：`purgeOwnerData` 的返回值是**证据**，不是"尽力而为的统计"。
+ * 「没读到计数」与「读到了 0」在隐私语义上完全不同 —— 后者能证明账号映射已从全部内容行上删除，
+ * 前者什么也证明不了。P2 返修（监工 PR #483）之前的端口把两者混为一谈：读数缺失（或
+ * `"3"`/`-1`/`1.5`/`NaN`/`Infinity` 这类不可信值）时回落到旧判据 `authorRefsReplaced === 0`
+ * ⇒ 审查探针 P6/P6b 实测仍会静默 `completed`，而「已软删除帖评仍保留原作者关联」正好落在
+ * 这种形态里。现在口径是 fail-closed：读数不可信 ⇒ 端口一律 `blocked` +
+ * `author-refs-remaining-unknown`，⛔ 不得回落、⛔ 不得判完成。
+ */
+export const AUTHOR_REFS_REMAINING_UNKNOWN = Number.NaN;
+
+/**
+ * 把存储报告的 `authorRefsRemaining` 规范成**可信读数**：非负安全整数 ⇒ 原值；其余 ⇒ `null`。
+ *
+ * 调用方拿到 `null` 必须按「未知」处理（端口 ⇒ `blocked`），⛔ 不得当成 0、⛔ 不得回落到别的
+ * 判据。两侧实现与端口**共用这一个判据**（内存 `store.ts`、PG `store-pg.ts`、端口 `purge.ts`），
+ * 避免某一边悄悄放宽：缺失、`null`、字符串（`"3"`）、负数、非整数（`1.5`）、非有限值
+ * （`NaN`/`±Infinity`）、超出安全整数范围（含 `2^53`）一律不可信。
+ */
+export function readAuthorRefsRemaining(value: unknown): number | null {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && Number.isSafeInteger(value)
+    && value >= 0
+    ? value
+    : null;
+}
+
+/**
+ * `purgeOwnerData` 的调用选项。
+ *
+ * `anonymizedAuthorRef`：由注销装配层（`community/purge.ts` 的 `authors.anonymize`）生成的注销引用，
+ * **全行共用同一个**（逐主体独立，不是逐行随机）。
+ *
+ * 三态（⚠️ `undefined` 与 `null` 语义**不同**，不要用 `??` 把它们合并）：
+ *   - `undefined`：调用方没表态（例如测试直接调 store）⇒ 存储实现用
+ *     `authors.ts::createAnonymizedAuthorRef()` **兜底生成**。这不是"第二个真源"，而是自保：
+ *     只要要写 `author_id = NULL`，就**必须**同时写入形状合法的引用，否则撞迁移 0030 的
+ *     `num_nonnulls(author_id, anonymized_author_ref) = 1`。
+ *   - `null`：调用方**明确**表示"我拿不到引用"（注销端口在 `anonymize` 缺失/失败时这样传）
+ *     ⇒ 存储**完全不替换**行级作者（保留原 `author_id`），由端口如实 blocked。
+ *     ⛔ 不要退化成"那就兜底生成一个"：那会把"能力缺失"悄悄变成"看起来完成了"。
+ *   - `string`：必须合 `^gy-anon-[0-9a-f]{16}$`，否则抛错（不静默改写）。
+ */
+export interface CommunityOwnerPurgeOptions {
+  anonymizedAuthorRef?: string | null;
 }
 
 /**
@@ -193,6 +273,10 @@ export interface CommunityOwnerPurgeCounts {
  *     复核仍由服务层 `isPubliclyVisible()` 逐行确认——那部分取决于规则层与审核域台账，不是 SQL
  *     能判定的谓词，所以只把「结构上不可能公开」的行（`private`/`hidden`/`deleted`）挡在库外。
  *   - `scope: 'mine'` ⇒ 「我的发布」：`visibility <> 'deleted'` + `author_id = authorId`（含未公开版本）。
+ *     `author_id` 可空（迁移 0030）⇒ **已匿名行永远不属于任何主体**（`NULL = <uuid>` 得 NULL，
+ *     不是 TRUE）—— 这正是"注销后不再出现在原用户的『我的发布』里"想要的语义。
+ *     ⛔ 不要把它补成 `coalesce(author_id, anonymized_author_ref)`（那会把匿名行算回某个用户），
+ *     也不要用 `IS NOT DISTINCT FROM`（两列都为 NULL 时会误命中）。
  *   - `scope: 'all'` ⇒ **不做任何可见性过滤**，只为测试夹具/诊断保留；生产调用方不得使用。
  *
  * 分页是 keyset：`after` 是上一页最后一行（`created_at` + `id`），排序用确定性的
@@ -311,14 +395,25 @@ export interface CommunityStore {
    *   - **不能可靠脱敏的媒体移除**：`media_ids` 清空（正文保留）；
    *   - 举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**、
    *     本域幂等台账按主体清空；
-   *   - **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销路径不复活、不改写
-   *     作者自己的删除语义。
+   *   - **作者主动删除（`visibility='deleted'`）的行：内容与可见性原样保留**（注销路径不复活、
+   *     不脱敏、不推进版本、不更新 `updated_at`），但**作者关联照样清除**——「保留作者自己的
+   *     删除语义」与「删除账号映射」不冲突（P2 返修，见 `store-pg.ts` 同名实现）；
+   *   - **行级作者指针替换**（迁移 0030）：`author_id` 置 NULL、写入随机注销引用
+   *     `anonymized_author_ref`（全行共用同一串；计数进 `authorRefsReplaced`）。
+   *     命中集 = 该主体名下的**全部**行，**含** `visibility='deleted'` 行：只替换作者指针会让
+   *     「普通行 + 已软删行」的主体在 `authorRefsReplaced > 0` 时看起来完成，而软删行仍直接
+   *     关联账户（监工 PR #483 [P2]）。
+   *   - **剩余读数**：`authorRefsRemaining` 在写入完成后**重新测量**「仍以原 `author_id` 关联
+   *     本主体的行数」（帖 + 评，**含**软删行）。端口只认这个数判 blocked，⛔ 不以
+   *     `authorRefsReplaced` 冒充完成。读数必须是可信的非负安全整数；测量不可读时返回
+   *     {@link AUTHOR_REFS_REMAINING_UNKNOWN}（端口据此 fail-closed 判 `blocked`），
+   *     ⛔ 不得用 0 顶替"没读到"。
    *
    * **可选方法**：与 `snapshotCounts` 同一条纪律——不把已有的测试替身一次性改红。装配处
    * （`app.ts`）在缺失时按「该域没有清理能力」处理并**如实降级**（调用即抛 ⇒ blocked），
    * 不做静默假装。
    */
-  purgeOwnerData?(ownerId: string): Promise<CommunityOwnerPurgeCounts>;
+  purgeOwnerData?(ownerId: string, options?: CommunityOwnerPurgeOptions): Promise<CommunityOwnerPurgeCounts>;
   // ---- 幂等台账 ----
   findIdempotency(scope: string, keyHash: string): Promise<IdempotencyRecord | null>;
   claimIdempotency(
@@ -609,28 +704,69 @@ export function createMemoryCommunityStore(
       reports.set(id, cloneReport(next));
       return { ok: true, record: cloneReport(next) };
     },
-    async purgeOwnerData(ownerId) {
+    async purgeOwnerData(ownerId, options = {}) {
       // 口径与 `store-pg.ts` 同名实现逐条对齐（F13 保留规则，**不是**无条件软删）：
       //   1. 帖子/评论保留可见性；正文命中个人信息才改写（改写 ⇒ 旧审核摘要失效 ⇒ 待重审）；
       //   2. 媒体引用一律移除（社区没有"媒体已可靠脱敏"的证据面）；
-      //   3. 作者主动删除（visibility='deleted'）的行原样跳过；
-      //   4. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空。
+      //   3. 作者主动删除（visibility='deleted'）的行：内容与可见性原样不动（不复活、不脱敏），
+      //      但**作者关联照清**（P2 返修：删除账号映射不受"作者的删除语义"豁免）；
+      //   4. 行级作者指针替换（迁移 0030）：author_id=null + 行内注销引用（不计入 records）；
+      //   5. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空；
+      //   6. 写入后重新测量 `authorRefsRemaining`（仍指向本主体的行数，含软删行）。
       let records = 0;
       let retained = 0;
       let redacted = 0;
       let hiddenMedia = 0;
+      let authorRefsReplaced = 0;
+      /**
+       * 注销引用（全行共用）。**惰性求值**：没有要替换的行就不生成，
+       * 避免"无内容的注销"也消耗一个随机引用。
+       *
+       * 三态（与 `CommunityOwnerPurgeOptions` 的说明逐字对应）：
+       *   · `undefined`（调用方没表态，例如直接调 store）⇒ 兜底生成（自保：绝不许写出
+       *     `author_id = NULL` 而引用为空的行）；
+       *   · `null`（调用方**明确**说"我拿不到引用"）⇒ **完全不替换**行级作者，
+       *     由端口如实 blocked（`author-reference-unavailable`/`-failed`）；
+       *   · 字符串 ⇒ 必须形状合法，否则**抛错**（与迁移 0030 的 CHECK 同口径），
+       *     ⛔ 不静默换成新串（那会让同一主体分裂出两个引用）。
+       */
+      const providedRef = options.anonymizedAuthorRef;
+      const replaceAuthorRefs = providedRef !== null;
+      if (typeof providedRef === 'string' && !ANONYMIZED_AUTHOR_REF_PATTERN.test(providedRef)) {
+        throw new Error('注销引用形状不合约定（拒绝写入：迁移 0030 的 CHECK 会拒绝它）');
+      }
+      let anonymizedRef: string | null = typeof providedRef === 'string' ? providedRef : null;
+      const refForRows = (): string => {
+        anonymizedRef ??= createAnonymizedAuthorRef();
+        return anonymizedRef;
+      };
       const stamp = new Date(clockMs()).toISOString();
       for (const [id, post] of [...posts]) {
-        if (post.author_id !== ownerId || post.visibility === 'deleted') continue;
+        if (post.author_id !== ownerId) continue;
+        // 作者主动删除的行：**内容/可见性/版本/updated_at 一律不动**（不复活、不脱敏、
+        // 不计 retained/records），但作者指针必须清 —— 两者不冲突（P2 返修）。
+        if (post.visibility === 'deleted') {
+          if (replaceAuthorRefs) {
+            posts.set(id, clonePost({ ...post, author_id: null, anonymized_author_ref: refForRows() }));
+            authorRefsReplaced += 1;
+          }
+          continue;
+        }
         const title = redactPersonalInfo(post.title);
         const body = redactPersonalInfo(post.body);
         const media = [...post.media_ids];
+        // 作者指针替换：与正文改写**同一次写入**（内存实现天然原子；PG 侧同事务）。
+        const replacedAuthor = replaceAuthorRefs && post.author_id !== null;
+        const authorFields = replacedAuthor
+          ? { author_id: null, anonymized_author_ref: refForRows() }
+          : { author_id: post.author_id, anonymized_author_ref: post.anonymized_author_ref };
         if (title.removed + body.removed > 0) {
           // 正文改了 ⇒ revision+1（旧 ETag 与旧审核摘要都失效，读取时自动降级为待重审）。
           posts.set(
             id,
             clonePost({
               ...post,
+              ...authorFields,
               title: title.text,
               body: body.text,
               media_ids: [],
@@ -643,24 +779,45 @@ export function createMemoryCommunityStore(
           hiddenMedia += media.length;
         } else if (media.length > 0) {
           // 正文安全、只隐藏媒体：**不推进 revision**（正文摘要未变，审核结论仍成立 ⇒ 内容继续可见）。
-          posts.set(id, clonePost({ ...post, media_ids: [], updated_at: stamp }));
+          posts.set(id, clonePost({ ...post, ...authorFields, media_ids: [], updated_at: stamp }));
           records += 1;
           retained += 1;
           hiddenMedia += media.length;
         } else {
+          // 正文与媒体都没动：**保留读数照旧 +1**；作者指针若被替换，只记 authorRefsReplaced
+          // （不记 records —— 替换作者指针不是"改动/删除正文"，混算会把证据读成"改了一行内容"）。
+          if (replacedAuthor) posts.set(id, clonePost({ ...post, ...authorFields }));
           retained += 1;
         }
+        if (replacedAuthor) authorRefsReplaced += 1;
       }
       for (const [id, comment] of [...comments]) {
-        if (comment.author_id !== ownerId || comment.visibility === 'deleted') continue;
+        if (comment.author_id !== ownerId) continue;
+        // 同帖子口径：软删评论的内容/可见性不动，作者指针照清（P2 返修）。
+        if (comment.visibility === 'deleted') {
+          if (replaceAuthorRefs) {
+            comments.set(id, cloneComment({ ...comment, author_id: null, anonymized_author_ref: refForRows() }));
+            authorRefsReplaced += 1;
+          }
+          continue;
+        }
         const body = redactPersonalInfo(comment.body);
+        const replacedAuthor = replaceAuthorRefs && comment.author_id !== null;
+        const authorFields = replacedAuthor
+          ? { author_id: null, anonymized_author_ref: refForRows() }
+          : { author_id: comment.author_id, anonymized_author_ref: comment.anonymized_author_ref };
         if (body.removed > 0) {
-          comments.set(id, cloneComment({ ...comment, body: body.text, revision: comment.revision + 1 }));
+          comments.set(
+            id,
+            cloneComment({ ...comment, ...authorFields, body: body.text, revision: comment.revision + 1 }),
+          );
           records += 1;
           redacted += 1;
         } else {
+          if (replacedAuthor) comments.set(id, cloneComment({ ...comment, ...authorFields }));
           retained += 1;
         }
+        if (replacedAuthor) authorRefsReplaced += 1;
       }
       for (const [id, report] of [...reports]) {
         if (report.reporter_id !== ownerId || report.detail === null) continue;
@@ -682,7 +839,29 @@ export function createMemoryCommunityStore(
         idempotency.delete(key);
         idempotencyRows += 1;
       }
-      return { records, idempotency: idempotencyRows, retained, redacted, hiddenMedia };
+      // 写入完成后**重新测量**「还剩多少行仍指向本主体」（帖 + 评、**含**软删行）。
+      // 这是结果读数，不是从 `authorRefsReplaced` 倒推出来的：端口只认它判 blocked，
+      // 所以它必须反映此刻表里真实剩下的东西（P2 返修，见 `CommunityOwnerPurgeCounts`）。
+      let remainingCount = 0;
+      for (const post of posts.values()) {
+        if (post.author_id === ownerId) remainingCount += 1;
+      }
+      for (const comment of comments.values()) {
+        if (comment.author_id === ownerId) remainingCount += 1;
+      }
+      // 与 PG 实现、端口共用**同一个**校验函数（`readAuthorRefsRemaining`）：内存实现按构造
+      // 恒为非负安全整数，仍走校验是为了让"两侧同口径"落在代码上，且未来改计数时不会静默
+      // 回落到"看起来清干净了"。
+      const authorRefsRemaining = readAuthorRefsRemaining(remainingCount) ?? AUTHOR_REFS_REMAINING_UNKNOWN;
+      return {
+        records,
+        idempotency: idempotencyRows,
+        retained,
+        redacted,
+        hiddenMedia,
+        authorRefsReplaced,
+        authorRefsRemaining,
+      };
     },
 
     async findIdempotency(scope, keyHash) {
