@@ -62,10 +62,24 @@ export interface BranchDescriptor {
   jobState: JobState | null;
   /** 契约内错误码；`null` = 只靠 `state` + `uncertainty_reasons` 表达。 */
   errorCode: ErrorCode | null;
-  /** 是否可重试（不得对不可重试分支给出重试入口）。 */
+  /**
+   * 是否给出客户端恢复入口（为 `true` 时必须同时给出 {@link retryAction}）。
+   *
+   * ⚠️ 本字段**不是**错误封套 `Error.retryable` 的口径（口径原文见 `services/api/src/errors.ts` 的
+   * `ApiError` 注释：仅当**同一请求在无人工介入下**稍后重试可能成功才为 `true`）。这里的 `true`
+   * 只表示「页面上有一个恢复入口」；`requiresHumanAction` 为 `true` 的分支（`permission_denied`）
+   * 需要**人先改前置条件**（补授权／重新登录），因此：
+   *   · 客户端**不得**据此自动重试，必须等人点那一颗按钮；
+   *   · 调度器/服务端**不得**把本字段写进错误封套（`CONSENT_REQUIRED` 等缺口一律 `retryable:false`）。
+   */
   retryable: boolean;
   /** 可重试时的唯一重试动作；不可重试时为 `null`。 */
   retryAction: RetryAction | null;
+  /**
+   * 该恢复入口是否**先需人工介入**（`grant_consent`／`reauthenticate` ⇒ `true`）。
+   * 与 `retryable` 分开建模，避免「有恢复入口」被误读成「自动重试可能成功」。
+   */
+  requiresHumanAction: boolean;
   /**
    * 服务端写出的**如实**原因（进 `uncertainty_reasons`）。
    * `null` 表示该分支不通过 `uncertainty_reasons` 表达（超时/权限拒绝）。
@@ -103,6 +117,7 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     errorCode: null,
     retryable: true,
     retryAction: 'new_task',
+    requiresHumanAction: false,
     reason: null,
   }),
   out_of_coverage_or_low_quality: Object.freeze({
@@ -112,6 +127,7 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: COVERAGE_REASON_OUT_OF_SCOPE,
   }),
   permission_denied: Object.freeze({
@@ -119,8 +135,12 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     label: '尚未获得该用途的授权，或会话已失效',
     jobState: null,
     errorCode: 'CONSENT_REQUIRED',
+    // 恢复入口保留（页面靠它渲染「去授权」那颗按钮：`miniprogram/pages/identify/identify.wxml:76`
+    // 与 `:334` 都按 `branchInfo.retryable` 出按钮/文案），但**必须先由人补授权或重新登录** ⇒
+    // `requiresHumanAction: true`，任何自动重试都不得据此触发（R31-S-retryable 口径裁决）。
     retryable: true,
     retryAction: 'grant_consent',
+    requiresHumanAction: true,
     reason: null,
   }),
   no_result: Object.freeze({
@@ -130,6 +150,7 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: null,
   }),
   timeout: Object.freeze({
@@ -139,6 +160,7 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     errorCode: 'PROVIDER_TIMEOUT',
     retryable: true,
     retryAction: 'new_task',
+    requiresHumanAction: false,
     reason: null,
   }),
   reshoot_required: Object.freeze({
@@ -148,6 +170,7 @@ export const BRANCH_DESCRIPTORS: Readonly<Record<FailureBranch, BranchDescriptor
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: COVERAGE_REASON_RESHOOT,
   }),
 });
@@ -181,9 +204,18 @@ export function branchCreatesJob(branch: FailureBranch): boolean {
 
 /**
  * 分支的可重试语义（供路由/客户端声明 `Retry-After` 语义与页面重试入口）。
- * 返回 `retryable:false` 时调用方**不得**给出重试入口。
+ * 返回 `retryable:false` 时调用方**不得**给出重试入口；返回 `requiresHumanAction:true` 时
+ * 调用方**只能**把恢复交给用户（补授权/重新登录），⛔ 不得自动重试、不得写进错误封套的 `retryable`。
  */
-export function retrySemanticsFor(branch: FailureBranch): { retryable: boolean; retryAction: RetryAction | null } {
+export function retrySemanticsFor(branch: FailureBranch): {
+  retryable: boolean;
+  retryAction: RetryAction | null;
+  requiresHumanAction: boolean;
+} {
   const descriptor = BRANCH_DESCRIPTORS[branch];
-  return { retryable: descriptor.retryable, retryAction: descriptor.retryAction };
+  return {
+    retryable: descriptor.retryable,
+    retryAction: descriptor.retryAction,
+    requiresHumanAction: descriptor.requiresHumanAction,
+  };
 }
