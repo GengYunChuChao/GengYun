@@ -50,7 +50,14 @@ import {
 } from './events.ts';
 // GY-I14 ⇄ GY-I15 联动接线（#14 + #15）：版本级审核任务与"明确驳回"否决来自已合并审核域。
 // 社区**不 import** `services/api/src/moderation/**`；这里只消费结构性端口（由装配层传入）。
-import { linkActorOf, type CommunityModerationLink, type LinkConclusion, type LinkScreenResult } from './moderation-link.ts';
+import {
+  linkActorOf,
+  readImageModerationReadiness,
+  type CommunityModerationLink,
+  type LinkConclusion,
+  type LinkImageReadiness,
+  type LinkScreenResult,
+} from './moderation-link.ts';
 import type {
   CommentCommitPatch,
   CommentRecord,
@@ -348,6 +355,64 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   }
 
   /**
+   * **图片审核能力位缺失**的理由码（GY-R31 · #14 缺口 G3）。
+   *
+   * 与其它拒绝理由码同形（`details[].field === 'reason_codes'`），但**专属**于"这一类内容此刻
+   * 没有可求值的图片审核端口"：它在契约错误码闭集内（422 `INPUT_UNCERTAIN`），并且**只在带媒体
+   * 投稿**时才会出现 —— 调用方据此可以把"图片审核未就绪"与"内容违规/规则未通过/未送审"区分开
+   * （两次读数见 `docs/verification/gy-r31-i14-image-path-20261022.md`）。
+   */
+  const IMAGE_MODERATION_UNAVAILABLE = 'IMAGE_MODERATION_UNAVAILABLE';
+
+  /** 规则层"不评估媒体"的跨片声明码（`packages/moderation` 的既有口径，不自造同义词）。 */
+  const MEDIA_ONLY_CODE = 'MEDIA_NOT_EVALUATED_BY_RULE_LAYER';
+
+  /**
+   * 规则层**只是不评估媒体**（不是判定违规）——与审核域 `modelLayerReachable` 同一口径。
+   *
+   * 只有这种"未结论"才允许把带媒体内容**送进**审核链路；其余任何 `!publishable`（驳回、输入
+   * 非法、引擎异常、扫描截断、媒体之外的原因）仍按原口径拒绝，一处也不放宽。
+   */
+  function ruleLayerDeferredMedia(outcome: GateOutcome): boolean {
+    if (outcome.decision === 'rejected') return false;
+    return outcome.reason_codes.length > 0 && outcome.reason_codes.every((code) => code === MEDIA_ONLY_CODE);
+  }
+
+  /**
+   * 带媒体内容"**已提交审核**"的那一态：审核域有任务、但没有（也**不可能**有）明确放行结论，
+   * 同时也没有明确驳回。
+   *
+   * 这不是"放行发布"，而是"受理并留在审核链路里"：社区随后落**私有 + 待审**内容行，**不**调用
+   * 发布闸门、不对外可见。规则层不评估图片 ⇒ 带媒体内容在审核域里恒为隔离/待审，因此
+   * `publishable === true` 的带媒体内容不存在（真出现就仍按 `service.ts` 的既有不变式拒绝）。
+   */
+  function isMediaReviewPending(screen: LinkScreenResult | null): boolean {
+    return screen !== null && screen.publishable !== true && screen.vetoed !== true;
+  }
+
+  /**
+   * 把审核域那一条结论装配成本域的结论记录（**不落库**；调用方决定补录还是随内容行写入）。
+   *
+   * 复用 `buildVerdict`（`rule_version`/`text_digest`/`missing_contract_fields` 仍来自本服务实际
+   * 使用的那份规则集，**不伪造**），只把结论替换为审核域给出的那一条；隔离时 `decision` 如实记
+   * `quarantined`/`pending`（**不**写成 `rejected`）。模型层未接线时 `contract_complete` 保持 `false`。
+   */
+  function domainVerdict(
+    target: { type: 'post' | 'comment'; id: string; revision: number },
+    outcome: GateOutcome,
+    screen: LinkScreenResult,
+    text: string,
+  ): ModerationRecord {
+    return {
+      ...buildVerdict(target, outcome, text),
+      id: newId(),
+      decision: screen.decision,
+      reason_codes: [...screen.reason_codes].slice(0, 30),
+      hard_rule_passed: screen.rule_layer === 'passed',
+    };
+  }
+
+  /**
    * 审核域**未获放行**（驳回或隔离）时未提交内容的结论补录。
    *
    * 复用 `buildVerdict`（`rule_version`/`text_digest`/`missing_contract_fields` 仍来自
@@ -361,13 +426,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     screen: LinkScreenResult,
     text: string,
   ): Promise<boolean> {
-    return store.putRefusalVerdict({
-      ...buildVerdict(target, outcome, text),
-      id: newId(),
-      decision: screen.decision,
-      reason_codes: [...screen.reason_codes].slice(0, 30),
-      hard_rule_passed: screen.rule_layer === 'passed',
-    });
+    return store.putRefusalVerdict(domainVerdict(target, outcome, screen, text));
   }
 
   /** 审核域明确驳回 ⇒ 契约闭集内的拒绝错误（与本地 `refusal` 的 rejected 分支同形）。 */
@@ -500,9 +559,16 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     return state.visibility === 'published' && state.audit_state === 'approved';
   }
 
-  /** 被拒绝的发布请求 → 契约错误码 + reason_codes（逐条作为 details 回传）。 */
-  function refusal(outcome: GateOutcome): ApiError {
-    const details = outcome.refusal_reason_codes.map((code) => ({ field: 'reason_codes', code }));
+  /**
+   * 被拒绝的发布请求 → 契约错误码 + reason_codes（逐条作为 details 回传）。
+   *
+   * `mediaReadiness`：**只在带媒体投稿被拒时**传入。能力位未就绪 ⇒ 追加
+   * `IMAGE_MODERATION_UNAVAILABLE`（与"内容违规/规则未通过"可区分，见该常量注释）。
+   */
+  function refusal(outcome: GateOutcome, mediaReadiness: LinkImageReadiness | null = null): ApiError {
+    const codes = [...outcome.refusal_reason_codes];
+    if (mediaReadiness !== null && mediaReadiness.ready !== true) codes.push(IMAGE_MODERATION_UNAVAILABLE);
+    const details = [...new Set(codes)].map((code) => ({ field: 'reason_codes', code }));
     if (outcome.decision === 'rejected') {
       return new ApiError(
         'INVALID_REQUEST',
@@ -864,26 +930,45 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           const text = postModerationText({ title: body.title, body: body.body });
           // 先审后发：审核发生在**任何内容行落库之前**。
           const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
-          if (!outcome.publishable) {
+          // 图片审核与门（GY-R31 · #14 缺口 G3）：带媒体内容必须**同时**满足
+          //   ① 规则层只是"不评估媒体"（不是判定违规）—— 与审核域 `modelLayerReachable` 同口径；
+          //   ② 图片审核端口真的有（能力位 `ready === true`）—— 只在文本端口上打补丁不算就绪。
+          // 缺任一 ⇒ 仍然拒绝（fail-closed）：缺② 时理由码追加 `IMAGE_MODERATION_UNAVAILABLE`，
+          // 缺① 时与接线前逐字同口径（400/422 由 `refusal` 决定）。
+          const mediaCount = body.media_ids.length;
+          const imageReadiness: LinkImageReadiness | null =
+            mediaCount > 0 ? readImageModerationReadiness(moderationLink) : null;
+          const mediaAccepted =
+            mediaCount > 0 &&
+            ruleLayerDeferredMedia(outcome) &&
+            imageReadiness !== null &&
+            imageReadiness.ready === true;
+          if (!outcome.publishable && !mediaAccepted) {
             // 未提交内容：结论只做**补录**（不覆盖任何已提交内容的结论），然后拒绝发布。
             await recordRefusalVerdict(target, outcome, text);
-            throw refusal(outcome);
+            throw refusal(outcome, imageReadiness);
           }
           // GY-I14 联动接线：规则先挡放行后、**落内容行之前**送审审核域 —— 建立该 revision 的
           // 版本级审核任务（`GET /jobs/{id}` 可读）；**未获明确放行**（明确驳回 / 隔离 / 未结论）
           // 一律不落内容行、不公开（B09：服务失败或无法判断不公开）。
           const screen = await screenWithModeration(user, target, text, body.media_ids);
-          await requireDomainClearance(screen, target, outcome, text);
-          if (body.media_ids.length > 0) {
-            // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
-            // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
-            throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+          // **带媒体内容的"已提交审核"态**（GY-R31 · #14 缺口 G3）：审核域对该版本有任务、
+          // 但没有（也**不可能**有）明确放行结论、也没有明确驳回 —— 这就是图片帖子能到达的
+          // 那一态：落「私有 / 待审」内容行并留在审核链路里，**不**走发布闸门、不对外可见。
+          const mediaReview = mediaAccepted && isMediaReviewPending(screen);
+          if (!mediaReview) {
+            await requireDomainClearance(screen, target, outcome, text);
+            if (mediaCount > 0) {
+              // 双保险：图片审核属模型层，规则层遇到媒体必隔离；万一有人把 gate 换成会放行媒体的实现，
+              // 这里也必须拒绝，而不是把"没有图片审核"的内容当通过发出去。
+              throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+            }
           }
           const link = moderationLink;
           // **发布闸门不在本域**（GY-I14 P1-1）：联动已接线时，内容先以「待审 / 私有」落库，
           // 只有审核域的发布闸门写成功后才会变成 `published` + `approved`。
           // ⛔ 本域**不再**写死 `visibility:'published'` + `audit_state:'approved'`。
-          const awaitingPublish = screen !== null && link !== null;
+          const awaitingPublish = !mediaReview && screen !== null && link !== null;
           const timestamp = nowIso();
           const record: PostRecord = {
             id,
@@ -895,13 +980,17 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
             linked_knowledge_ref: linkTarget,
-            visibility: awaitingPublish ? 'private' : 'published',
-            audit_state: awaitingPublish ? 'pending' : 'approved',
+            visibility: awaitingPublish || mediaReview ? 'private' : 'published',
+            audit_state: awaitingPublish || mediaReview ? 'pending' : 'approved',
             created_at: timestamp,
             updated_at: timestamp,
           };
           // 内容与审核结论**同一次原子提交**写入（不存在"内容已可见但其结论还没落"的窗口）。
-          const inserted = await store.insertPost(record, buildVerdict(target, outcome, text));
+          // 带媒体时结论**如实**取审核域那一条（`quarantined`/`pending`），不伪造成"待审 = 未判"。
+          const inserted = await store.insertPost(
+            record,
+            mediaReview && screen !== null ? domainVerdict(target, outcome, screen, text) : buildVerdict(target, outcome, text),
+          );
           if (!inserted) {
             throw new ApiError('PROVIDER_UNAVAILABLE', '内容 id 冲突（内部不变式违反）');
           }
@@ -920,7 +1009,10 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             committedRecord = published;
           }
           // 审核结果事件（已提交的 revision）投递到消息中心公开端口；失败不回滚内容。
-          await publishModerationResult(user.userId, { type: 'post', id, revision: 1 }, outcome.decision, outcome.reason_codes);
+          // 带媒体内容此刻**还没有**审核结果（隔离 / 待审），因此不投递"审核结果"事件。
+          if (!mediaReview) {
+            await publishModerationResult(user.userId, { type: 'post', id, revision: 1 }, outcome.decision, outcome.reason_codes);
+          }
           return { outcome: { kind: 'post' as const, id, revision: 1 }, result: await projectPost(committedRecord) };
         },
         async (ref) => projectPost(await readablePost(user, ref.id)),
@@ -981,22 +1073,36 @@ export function createCommunityService(deps: CommunityServiceDeps) {
           }
           const text = postModerationText({ title: body.title, body: body.body });
           const outcome = gate.evaluate(target, text, mediaInputs(body.media_ids));
-          if (!outcome.publishable) {
+          // 图片审核与门：与 `createPost` 逐字同口径（见那里的注释）。
+          const mediaCount = body.media_ids.length;
+          const imageReadiness: LinkImageReadiness | null =
+            mediaCount > 0 ? readImageModerationReadiness(moderationLink) : null;
+          const mediaAccepted =
+            mediaCount > 0 &&
+            ruleLayerDeferredMedia(outcome) &&
+            imageReadiness !== null &&
+            imageReadiness.ready === true;
+          if (!outcome.publishable && !mediaAccepted) {
             await recordRefusalVerdict(target, outcome, text);
-            throw refusal(outcome);
+            throw refusal(outcome, imageReadiness);
           }
           // GY-I14 联动接线：**新 revision 必须重新送审**（新版本级任务 + 新输入绑定），
           // 旧版本的审核域结论**不得**套到新版本上（版本级绑定由审核域自己保证）；
           // 新版本未获明确放行（驳回 / 隔离）同样不得落库、不得公开。
           const screen = await screenWithModeration(user, target, text, body.media_ids);
-          await requireDomainClearance(screen, target, outcome, text);
-          if (body.media_ids.length > 0) {
-            throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+          // 带媒体 ⇒ "已提交审核"态（与 `createPost` 同口径）：新 revision 落「私有 / 待审」，
+          // 留在审核链路里，不走发布闸门。
+          const mediaReview = mediaAccepted && isMediaReviewPending(screen);
+          if (!mediaReview) {
+            await requireDomainClearance(screen, target, outcome, text);
+            if (mediaCount > 0) {
+              throw new ApiError('PROVIDER_UNAVAILABLE', '带媒体内容不得由规则层放行（内部不变式违反）');
+            }
           }
           const link = moderationLink;
           // 与 `createPost` 同一口径：联动已接线时先落「待审 / 私有」，再由审核域发布闸门
           // 把该**新 revision** 写成 `published` + `approved`（⛔ 本域不写死 approved）。
-          const awaitingPublish = screen !== null && link !== null;
+          const awaitingPublish = !mediaReview && screen !== null && link !== null;
           const patch: PostCommitPatch = {
             revision,
             title: body.title,
@@ -1005,8 +1111,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             region_code: body.region_code ?? null,
             media_ids: [...body.media_ids],
             linked_knowledge_ref: nextLink,
-            visibility: awaitingPublish ? 'private' : 'published',
-            audit_state: awaitingPublish ? 'pending' : 'approved',
+            visibility: awaitingPublish || mediaReview ? 'private' : 'published',
+            audit_state: awaitingPublish || mediaReview ? 'pending' : 'approved',
             updated_at: nowIso(),
           };
           // 检查（revision/归属/未删除）与写入在**同一原子提交**内完成；
@@ -1015,7 +1121,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             postId,
             { revision: record.revision, author_id: user.userId },
             patch,
-            buildVerdict(target, outcome, text),
+            mediaReview && screen !== null ? domainVerdict(target, outcome, screen, text) : buildVerdict(target, outcome, text),
           );
           if (!committed.ok) throw commitRefusal(committed.reason);
           let committedRecord: PostRecord = committed.record;
@@ -1032,12 +1138,15 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             }
             committedRecord = published;
           }
-          await publishModerationResult(
-            user.userId,
-            { type: 'post', id: postId, revision },
-            outcome.decision,
-            outcome.reason_codes,
-          );
+          // 带媒体内容此刻还没有审核结果（隔离 / 待审）⇒ 不投递"审核结果"事件（与 `createPost` 同口径）。
+          if (!mediaReview) {
+            await publishModerationResult(
+              user.userId,
+              { type: 'post', id: postId, revision },
+              outcome.decision,
+              outcome.reason_codes,
+            );
+          }
           return {
             outcome: { kind: 'post' as const, id: postId, revision },
             result: await projectPost(committedRecord),

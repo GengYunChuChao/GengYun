@@ -50,7 +50,7 @@ import {
 import type { CallbackOutcome, CallbackReplayGuard } from './callback.ts';
 import { humanReviewQueue } from './nonbypass.ts';
 import { declaredModelVersion, declaredProvider, resolveModerationPorts } from './provider.ts';
-import type { ResolvedModerationPorts } from './provider.ts';
+import type { ResolvedModerationPorts, PortKind } from './provider.ts';
 import {
   PORT_KIND_BY_CONTENT_KIND,
   PROMPT_ID_BY_CONTENT_KIND,
@@ -192,10 +192,39 @@ export interface ReReviewReport {
   reason_codes: string[];
 }
 
+/**
+ * **端口能力位**（GY-R31 · #14 图片审核产品路径）。
+ *
+ * 这是"这一类内容现在能不能真的被审"的**唯一**只读口径，与 `counts().substitutes` 同源
+ * （都来自 `resolveModerationPorts` 的解析结果），不新增第二套判定：
+ *   - `wired`：有实际端口可求值（注入或回调）⇒ `ready: true`；
+ *   - `substitute`：本片替身（恒 `unsure`，`provider.synthetic === true`）⇒ **不可当真**，
+ *     `ready: false`（"有个端口存在"不等于"审核能力就绪"）；
+ *   - `none`：没有端口（`real` 未接线 / 显式不注入）。
+ *
+ * 调用方（例如社区发布前）**必须**按 `ready === false ⇒ 不得放行** 使用；本结构只如实声明事实，
+ * 不表达"因此可以发布"。
+ */
+export interface ModerationPortCapability {
+  readonly content_kind: ContentKind;
+  readonly port_kind: PortKind;
+  readonly state: 'wired' | 'substitute' | 'none';
+  readonly ready: boolean;
+  readonly origin: 'injected' | 'substitute' | 'none';
+}
+
+export interface ModerationCapabilities {
+  readonly execution_mode: ModerationExecutionMode;
+  readonly text: ModerationPortCapability;
+  readonly image: ModerationPortCapability;
+}
+
 export interface ModerationService {
   readonly execution_mode: ModerationExecutionMode;
   /** 当前规则集派生版本（无法派生 ⇒ `null` ⇒ 任何内容都不得发布）。 */
   currentRuleVersion(): string | null;
+  /** 文本/图片两类内容的端口能力位（只读；`ready === false` ⇒ 该类内容不得放行）。 */
+  capabilities(): ModerationCapabilities;
   /** 送审（规则先挡；模型层同步求值，或按 `defer_model` 留在待回调）。 */
   submitScreening(input: { actor: ModerationActor; content: ModerationContent; defer_model?: boolean }): Promise<ScreeningOutcome>;
   /** 对已建任务补跑模型层（同步路径；等价于 `submitScreening(defer_model=false)` 的模型阶段）。 */
@@ -341,6 +370,17 @@ export function createFailClosedModerationService(): ModerationService {
   const deny = (): never => {
     throw noPortsForReal();
   };
+  /**
+   * `real` 的整域 fail-closed：**两类内容都没有端口**（`state:'none'` / `ready:false`）。
+   * 这不是"暂时没查到"，而是"本部署没有任何真实审核端口"的事实声明。
+   */
+  const unwiredCapability = (contentKind: ContentKind, portKind: PortKind): ModerationPortCapability => ({
+    content_kind: contentKind,
+    port_kind: portKind,
+    state: 'none',
+    ready: false,
+    origin: 'none',
+  });
   return {
     execution_mode: 'real',
     currentRuleVersion: () => {
@@ -350,6 +390,11 @@ export function createFailClosedModerationService(): ModerationService {
         return null;
       }
     },
+    capabilities: () => ({
+      execution_mode: 'real',
+      text: unwiredCapability('text', 'tms'),
+      image: unwiredCapability('image', 'ims'),
+    }),
     submitScreening: async () => deny(),
     runModelScreening: async () => deny(),
     publish: async () => deny(),
@@ -456,6 +501,27 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     const port = resolved.ports[portKind];
     if (port === undefined || port === null) return 'none';
     return resolved.substitutes.includes(portKind) ? 'substitute' : 'injected';
+  }
+
+  /**
+   * 端口能力位（与 `portOrigin` 同源，**不另立判定**）：只有注入/回调来的**真实端口**才算
+   * `wired`；替身（`resolved.substitutes`）如实标 `substitute` 且 `ready:false`。
+   */
+  function capabilityOf(kind: ContentKind): ModerationPortCapability {
+    const origin = portOrigin(kind);
+    const state = origin === 'injected' ? 'wired' : origin === 'substitute' ? 'substitute' : 'none';
+    return {
+      content_kind: kind,
+      port_kind: PORT_KIND_BY_CONTENT_KIND[kind],
+      state,
+      ready: state === 'wired',
+      origin,
+    };
+  }
+
+  /** 文本/图片两类内容的端口能力位（只读事实；**不**表达"因此可以发布"）。 */
+  function capabilities(): ModerationCapabilities {
+    return { execution_mode: executionMode, text: capabilityOf('text'), image: capabilityOf('image') };
   }
 
   function mediaRefsOf(content: ModerationContent): string[] {
@@ -1175,6 +1241,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
   return {
     execution_mode: executionMode,
     currentRuleVersion,
+    capabilities,
     submitScreening: async (input) => screen({ actor: input.actor, content: input.content, deferModel: input.defer_model === true }),
     runModelScreening: async (input) => screen({ actor: input.actor, content: input.content, deferModel: false }),
     publish,
