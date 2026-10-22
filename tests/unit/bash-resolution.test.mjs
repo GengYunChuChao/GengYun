@@ -9,17 +9,20 @@
  *      即使它退出码 0、即使 stdout 里也有个 `ok`，也不能被当成真 bash（否则校验等于被关掉）；
  *   2. `GY_BASH` 永远排第一：显式指路的优先级高于任何默认猜测，而且命中后不再往下试。
  *
- * 夹具是临时目录里的 `.cmd` 桩（真的启动、真的读输出），**不调真 WSL**（调它等于把「本机装没装
- * WSL」这种环境差异重新引入测试）。没有 `GY_BASH`/默认候选的用例都显式给 `candidates`，不读本机 PATH。
+ * 夹具是临时目录里的桩（Windows 写 `.cmd`、POSIX 写带 shebang 的可执行脚本，真的启动、真的读输出），
+ * **不调真 WSL**（调它等于把「本机装没装 WSL」这种环境差异重新引入测试）。没有 `GY_BASH`/默认候选的
+ * 用例都显式给 `candidates`，不读本机 PATH；也不赌本机装了 Git bash（`D:\Git\bin\bash.exe` 只作为
+ * 字符串形态的输入出现在 `bashNameOf`/`bashFirstEnv` 判据里，不参与「文件是否存在」的判断）。
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, join, resolve, sep } from 'node:path';
 import { after, before, test } from 'node:test';
 
 import {
   bashFirstEnv,
+  bashNameOf,
   classifyBashProbe,
   normalizeProbeOutput,
   resolveBash,
@@ -29,12 +32,34 @@ import {
 
 let dir = '';
 
-/** 造 `.cmd` 桩：Node 24 起 `.cmd` 只能经 shell 启动，解析器内部已按扩展名分流（真 bash 不走 shell）。 */
-function makeStub(name, lines) {
+/**
+ * 造一个**真的会跑起来**的存根，两种平台各用各的形态：
+ *   - Windows：`.cmd`（Node 24 起 `.cmd` 只能经 shell 启动，解析器已按扩展名分流）；
+ *   - POSIX：带 shebang 的可执行脚本（无扩展名 ⇒ 解析器走直连，靠 shebang 执行）。
+ * 这样同一组用例在 Windows／Linux CI 上验的是同一条判据，而不是「本机装了什么」。
+ */
+function makeStub(name, { stdout = '', stderr = '', code = 0 } = {}) {
+  if (process.platform === 'win32') {
+    const file = join(dir, `${name}.cmd`);
+    const lines = ['@echo off'];
+    if (stdout !== '') lines.push(`echo ${stdout}`);
+    if (stderr !== '') lines.push(`echo ${stderr} 1>&2`);
+    lines.push(`exit /b ${code}`, '');
+    writeFileSync(file, lines.join('\r\n'));
+    return file;
+  }
   const file = join(dir, name);
-  writeFileSync(file, ['@echo off', ...lines, ''].join('\r\n'));
+  const lines = ['#!/bin/sh'];
+  if (stdout !== '') lines.push(`printf '%s\\n' '${stdout}'`);
+  if (stderr !== '') lines.push(`printf '%s\\n' '${stderr}' 1>&2`);
+  lines.push(`exit ${code}`, '');
+  writeFileSync(file, lines.join('\n'));
+  chmodSync(file, 0o755);                    // 可执行位：不带它，直连 spawn 会 EACCES
   return file;
 }
+
+/** WSL 存根的语义形状（不依赖具体平台写法）。 */
+const WSL_STUB = { stderr: 'wsl: localhost proxy settings detected but not mirrored into WSL', code: 1 };
 
 before(() => {
   dir = mkdtempSync(join(tmpdir(), 'gy-bash-resolver-'));
@@ -88,10 +113,7 @@ test('判据·wslStubEvidence 只在有证据时返回，普通路径/正常输�
 
 // --------------------------------------------------------------------------- 真启动 .cmd 桩
 test('解析·WSL 存根桩被判不可用，且提示里带 GY_BASH 用法（不静默回落成 pass）', (t) => {
-  const stub = makeStub('wsl-stub.cmd', [
-    'echo wsl: localhost proxy settings detected but not mirrored into WSL 1>&2',
-    'exit /b 1',
-  ]);
+  const stub = makeStub('wsl-stub', WSL_STUB);
   const result = resolveBash({ env: {}, candidates: [stub] });
   t.diagnostic(`attempts: ${JSON.stringify(result.attempts)}`);
   assert.equal(result.available, false, 'WSL 存根必须是不可用');
@@ -104,11 +126,8 @@ test('解析·WSL 存根桩被判不可用，且提示里带 GY_BASH 用法（�
 });
 
 test('解析·GY_BASH 优先：指对了就直接用，不再试后面的候选', (t) => {
-  const good = makeStub('real-bash.cmd', ['echo ok']);
-  const stub = makeStub('wsl-stub.cmd', [
-    'echo wsl: localhost proxy settings detected but not mirrored into WSL 1>&2',
-    'exit /b 1',
-  ]);
+  const good = makeStub('real-bash', { stdout: 'ok' });
+  const stub = makeStub('wsl-stub', WSL_STUB);
   // 故意把存根放在 candidates 里、且排在前面：解析器仍必须先用 GY_BASH。
   const result = resolveBash({ env: { GY_BASH: good }, candidates: [stub] });
   t.diagnostic(`attempts: ${JSON.stringify(result.attempts)}`);
@@ -118,11 +137,8 @@ test('解析·GY_BASH 优先：指对了就直接用，不再试后面的候选'
 });
 
 test('解析·GY_BASH 指错时退到下一候选（配错不该让本机恒红），但保留失败原因', (t) => {
-  const good = makeStub('real-bash.cmd', ['echo ok']);
-  const stub = makeStub('wsl-stub.cmd', [
-    'echo wsl: localhost proxy settings detected but not mirrored into WSL 1>&2',
-    'exit /b 1',
-  ]);
+  const good = makeStub('real-bash', { stdout: 'ok' });
+  const stub = makeStub('wsl-stub', WSL_STUB);
   const result = resolveBash({ env: { GY_BASH: stub }, candidates: [good] });
   t.diagnostic(`attempts: ${JSON.stringify(result.attempts)}`);
   assert.equal(result.available, true, 'GY_BASH 不可用时应继续按顺序试');
@@ -132,25 +148,43 @@ test('解析·GY_BASH 指错时退到下一候选（配错不该让本机恒红�
 });
 
 test('解析·全都不可用 ⇒ available=false、hint 含已尝试清单（调用方据此 skip）', () => {
-  const stub = makeStub('wsl-stub.cmd', ['echo wsl: not mirrored into WSL 1>&2', 'exit /b 1']);
+  const stub = makeStub('wsl-stub', WSL_STUB);
   const result = resolveGateBash({ env: { GY_BASH: stub }, candidates: [] });
   assert.equal(result.available, false);
   assert.equal(result.bashPath, null);
   assert.equal(result.env, null, '不可用时不得交出子进程环境（否则调用方会拿着默认 PATH 跑出恒红）');
   assert.match(result.hint, /GY_BASH/);
-  assert.match(result.hint, new RegExp(stub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(-12)), '已尝试清单必须点名那个候选');
+  assert.ok(result.hint.includes(stub), `已尝试清单必须点名那个候选：${result.hint}`);
 });
 
 // --------------------------------------------------------------------------- 子进程环境
-test('环境·把真 bash 目录前置进子进程 PATH（门禁按名字 bash 找它），且不留重复的 Path 键', () => {
-  const fake = 'D:\\Git\\bin\\bash.exe';
-  const wrapped = bashFirstEnv(fake, { Path: 'C:\\Windows;C:\\other', GY_BASH: fake });
-  assert.equal(wrapped.ok, true, `bash.exe 名字合法，必须可注入：${wrapped.reason ?? ''}`);
+test('环境·把 bash 的目录前置进子进程 PATH，且不留重复的 Path 键（用临时目录里的真桩，不赌本机装没装 Git bash）', () => {
+  // 夹具自造：目录 + 名为 bash(.exe) 的可执行文件。CI 是 Linux，本机是 Windows，两边都得能构造出来。
+  const binDir = join(dir, 'bin');
+  mkdirSync(binDir, { recursive: true });
+  const exe = join(binDir, process.platform === 'win32' ? 'bash.exe' : 'bash');
+  writeFileSync(exe, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n');
+  chmodSync(exe, 0o755);
+  const basePath = [join(dir, 'one'), join(dir, 'two')].join(delimiter);
+
+  const wrapped = bashFirstEnv(exe, { Path: basePath, GY_BASH: exe });
+  assert.equal(wrapped.ok, true, `名字是 bash(.exe) 且是绝对路径，必须可注入：${wrapped.reason ?? ''}`);
   const pathKeys = Object.keys(wrapped.env).filter((key) => /^path$/i.test(key));
   assert.deepEqual(pathKeys, ['PATH'], 'PATH 键必须唯一且统一写成 PATH（Windows 上原键名可能是 Path）');
-  assert.equal(wrapped.env.PATH.split(';')[0], 'D:\\Git\\bin', '真 bash 的目录必须排在 PATH 最前');
-  assert.ok(wrapped.env.PATH.includes('C:\\Windows;C:\\other'), '原 PATH 必须完整保留在后面');
-  assert.equal(wrapped.env.GY_BASH, fake, '其余环境变量必须原样带过去');
+  assert.ok(wrapped.env.PATH.startsWith(binDir + delimiter), `bash 的目录必须排在 PATH 最前：${wrapped.env.PATH}`);
+  assert.ok(wrapped.env.PATH.endsWith(basePath), `原 PATH 必须完整保留在后面：${wrapped.env.PATH}`);
+  assert.equal(wrapped.env.GY_BASH, exe, '其余环境变量必须原样带过去');
+});
+
+test('环境·Windows 风格绝对路径在 Linux CI 上也要按反斜杠切（红过的形态：POSIX basename 会把整串当文件名）', () => {
+  assert.equal(bashNameOf('D:\\Git\\bin\\bash.exe'), 'bash.exe', 'POSIX 上 basename 不认反斜杠，必须两种分隔符都切');
+  assert.equal(bashNameOf('/usr/bin/bash'), 'bash', 'POSIX 路径照常');
+  assert.equal(bashNameOf('bash'), 'bash', 'PATH 兜底的名字不含分隔符');
+
+  const wrapped = bashFirstEnv('D:\\Git\\bin\\bash.exe', { PATH: 'C:\\Windows' });
+  assert.equal(wrapped.ok, true, `名字是 bash.exe，必须可注入（Linux 上判死过）：${wrapped.reason ?? ''}`);
+  assert.ok(wrapped.env.PATH.startsWith('D:\\Git\\bin'), `PATH 首位必须是该 bash 的目录：${wrapped.env.PATH}`);
+  assert.ok(wrapped.env.PATH.includes('C:\\Windows'), '原 PATH 必须保留');
 });
 
 test('环境·名字不是 bash(.exe) 的候选不注入（门禁按名字找 bash，宁可不跑也别赌）', () => {

@@ -22,7 +22,7 @@
  * `release-materials-index.test.mjs` 里钉住「`bash -n` 只吃 stdin 不吃路径」的断言会失效）。
  */
 import { spawnSync } from 'node:child_process';
-import { basename, delimiter, dirname, isAbsolute } from 'node:path';
+import { delimiter, posix as posixPath, win32 as win32Path } from 'node:path';
 
 /** Git for Windows 的 bash（本机实测可用；`where bash` 命中的是 WSL 存根）。 */
 export const GIT_BASH_CANDIDATE = 'D:\\Git\\bin\\bash.exe';
@@ -120,6 +120,22 @@ export function resolveBash({ env = process.env, candidates = bashCandidates(env
 }
 
 /**
+ * 按**路径自身的长相**选 path API，而不是按当前平台。原因：CI 是 Linux，而候选/`GY_BASH` 里可能是
+ * `D:\Git\bin\bash.exe`；POSIX 的 `basename()`／`dirname()` 不把反斜杠当分隔符
+ * （`basename('D:\\Git\\bin\\bash.exe')` 在 Linux 上原样返回整串），于是「名字必须是 bash」这条
+ * 判据在 Windows 上通过、在 Linux 上判死——整条注入被拒，用例在 CI 红。这里两种分隔符都认。
+ */
+function pathApiFor(value) {
+  const text = String(value ?? '');
+  return /^[A-Za-z]:[\\/]/.test(text) || text.startsWith('\\\\') || text.includes('\\') ? win32Path : posixPath;
+}
+
+/** 只取文件名：`D:\Git\bin\bash.exe` → `bash.exe`，`/usr/bin/bash` → `bash`；跨平台一致。 */
+export function bashNameOf(value) {
+  return pathApiFor(value).basename(String(value ?? ''));
+}
+
+/**
  * 让**子进程**里的 `bash` 命中解析到的真 bash：把它的目录前置进子进程 PATH。
  *
  * 为什么不是「直接调用解析到的路径」：门禁工具源码里写的就是 `execFileSync('bash', ['-n'], …)`
@@ -129,7 +145,8 @@ export function resolveBash({ env = process.env, candidates = bashCandidates(env
  * ⚠️ 目标可执行文件必须叫 `bash(.exe)`：门禁按名字 `bash` 找它，名字不对就找不到（此时宁可不跑）。
  */
 export function bashFirstEnv(bashPath, baseEnv = process.env) {
-  const name = basename(bashPath);
+  const api = pathApiFor(bashPath);
+  const name = api.basename(bashPath);
   if (!/^bash(?:\.exe)?$/i.test(name)) {
     return {
       ok: false,
@@ -137,7 +154,7 @@ export function bashFirstEnv(bashPath, baseEnv = process.env) {
     };
   }
   // 经 PATH 兜底命中（候选就是 `bash`）时不需要注入：它本来就能被找到。
-  if (!isAbsolute(bashPath)) return { ok: true, env: { ...baseEnv } };
+  if (!api.isAbsolute(bashPath)) return { ok: true, env: { ...baseEnv } };
   const env = {};
   let currentPath = '';
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -147,7 +164,7 @@ export function bashFirstEnv(bashPath, baseEnv = process.env) {
     }
     env[key] = value;
   }
-  env.PATH = [dirname(bashPath), currentPath].filter((part) => part !== '').join(delimiter);
+  env.PATH = [api.dirname(bashPath), currentPath].filter((part) => part !== '').join(delimiter);
   return { ok: true, env };
 }
 
