@@ -67,7 +67,7 @@ const active = ref<TabKey>('accounts');
           Idempotency-Key（flags:write），失败按服务端错误码如实展示
         </dd>
         <dt>审计事件</dt>
-        <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；只列契约已提供的 8 个字段，不展示主体/actor，不做本片没有的写操作</dd>
+        <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；除契约 8 个必填字段外，另展示 R29-S5 新增的可选留痕字段（actor / target_hint / 前后值），不做本片没有的写操作</dd>
         <dt>人工审核</dt>
         <dd>空入口占位，未实现；不伪造队列与审核人</dd>
       </dl>

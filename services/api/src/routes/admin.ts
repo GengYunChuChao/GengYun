@@ -345,6 +345,17 @@ export function registerAdminRoutes(
   );
 
   // -------------------------------------------------------------------------
+  // GY-I18 第一批：开关变更留痕（1 个 operationId，`flags:read`）
+  // 读的是迁移 0027 的库内审计（A→B 同事务写入）；未接线 ⇒ 服务层 503，本层不改写。
+  // -------------------------------------------------------------------------
+  const listFlagAudit = methodOf(services.ops, 'listFlagAuditEvents');
+  app.get(
+    `${API_PREFIX}/admin/flag-audit-events`,
+    { preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.listFlagAuditEvents)] },
+    async (request, reply) => send(reply, await listFlagAudit(callerOf(request), request.query)),
+  );
+
+  // -------------------------------------------------------------------------
   // 阶段 1b：隐藏帖子（1 个 operationId）
   // 可见性语义（社区 CAS 置 `hidden`、已删除不可复活）全在服务层；
   // 未接线时服务层 503，本层不伪造成功。
@@ -376,5 +387,6 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'cancelAdminJob',
   'listFlags',
   'setFlag',
+  'listFlagAuditEvents',
   'hidePost',
 ]);

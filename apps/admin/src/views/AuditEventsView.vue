@@ -8,7 +8,7 @@
  * 纯逻辑都在 `src/lib/audit-events.mjs`（契约校验／失败分类／状态机），本组件只负责接到 DOM。
  *
  * 不做的事：不写审计记录、不给"人审通过"之类动作、不把空台账读成结论、
- * 不从 `request_id` 反推责任人（契约出口没有主体字段）。
+ * 不从 `request_id` 反推责任人（契约只给可选 actor，缺失时如实显示「未提供」）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
@@ -247,6 +247,8 @@ onBeforeUnmount(() => {
             <th>scope</th>
             <th>结果</th>
             <th>目标（target_ref）</th>
+            <th>操作者（actor）</th>
+            <th>变更（before → after）</th>
             <th>request_id</th>
             <th></th>
           </tr>
@@ -259,13 +261,17 @@ onBeforeUnmount(() => {
               <td class="mono">{{ row.scope }}</td>
               <td><span class="pill" :class="row.resultTone">{{ row.resultLabel }}</span></td>
               <td class="mono" :title="row.targetLabel">{{ row.targetLabel }}</td>
+              <td class="mono" :title="row.actorLabel">
+                {{ row.actor === null ? '—' : row.shortActor }}…
+              </td>
+              <td class="mono">{{ row.changeLabel === null ? '—' : row.changeLabel }}</td>
               <td class="mono" :title="row.requestId">{{ row.shortRequestId }}…</td>
               <td class="right">
                 <button class="link" type="button">{{ row.id === state.expandedId ? '收起' : '展开原文' }}</button>
               </td>
             </tr>
             <tr v-if="row.id === state.expandedId" :key="`${row.id}-detail`" class="detail">
-              <td colspan="7">
+              <td colspan="9">
                 <dl>
                   <dt>id</dt>
                   <dd class="mono">{{ row.id }}</dd>
@@ -283,10 +289,18 @@ onBeforeUnmount(() => {
                   <dd class="mono">{{ row.targetLabel }}</dd>
                   <dt>created_at</dt>
                   <dd class="mono">{{ row.createdAt }}</dd>
+                  <dt>actor</dt>
+                  <dd class="mono">{{ row.actorLabel }}</dd>
+                  <dt>target_hint</dt>
+                  <dd class="mono">{{ row.targetHint === null ? '—' : row.targetHint }}</dd>
+                  <dt>before_value → after_value</dt>
+                  <dd>{{ row.changeLabel === null ? '—（非开关变更行）' : row.changeLabel }}</dd>
                 </dl>
                 <p class="missing">
-                  读面未提供：<strong>主体／actor（谁做的）</strong>。契约 <code>AuditEvent</code> 只有上述 8 个字段，
-                  服务端出口 <code>projectAuditEvent()</code> 也把内部 actor 剥离了；本页不据
+                  <strong>操作者与前后值：</strong>契约 <code>AuditEvent</code> 自 R29-S5 起为这四项
+                  （<code>actor</code> / <code>target_hint</code> / <code>before_value</code> / <code>after_value</code>）
+                  留了<strong>可选且可空</strong>的位置；开关变更行会带上它们，历史行可能为
+                  <code>null</code>——此处如实显示「未提供」，仍<strong>不</strong>据
                   <code>request_id</code> 反推责任人。
                 </p>
               </td>

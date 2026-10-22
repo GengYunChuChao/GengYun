@@ -1522,6 +1522,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'set_feature_flag',                   'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'list_admin_flag_audit',              'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'suspend_account',                    'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'admin_account_display_name',         'runtime',

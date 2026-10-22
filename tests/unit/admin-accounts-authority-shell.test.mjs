@@ -43,6 +43,7 @@ function recordingService() {
     cancelAdminJob: method('cancelAdminJob', { status: 200 }),
     listFlags: method('listFlags', { status: 200 }),
     setFlag: method('setFlag', { status: 200 }),
+    listFlagAuditEvents: method('listFlagAuditEvents', { status: 200 }),
     hidePost: method('hidePost', { status: 200 }),
   };
   return { inner, calls, store, jobPort, operationIds };
@@ -56,6 +57,7 @@ const REJECTED = [
   'cancelAdminJob',
   'listFlags',
   'setFlag',
+  'listFlagAuditEvents',
   'hidePost',
 ];
 
@@ -98,7 +100,7 @@ test('接线状态如实暴露：accountsWired 固定 false，store/jobPort/oper
   assert.equal(shell.store, store);
   assert.equal(shell.jobPort, jobPort);
   assert.equal(shell.operationIds, operationIds);
-  for (const name of ['listAdminCategories', 'editCategory', 'listAdminUsers', 'suspendUser', 'listAdminJobs', 'cancelAdminJob', 'listFlags', 'setFlag', 'hidePost']) {
+  for (const name of ['listAdminCategories', 'editCategory', 'listAdminUsers', 'suspendUser', 'listAdminJobs', 'cancelAdminJob', 'listFlags', 'setFlag', 'listFlagAuditEvents', 'hidePost']) {
     assert.equal(typeof shell[name], 'function', `${name} 必须存在（契约闭集不得因外壳缺项）`);
   }
 });

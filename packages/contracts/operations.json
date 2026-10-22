@@ -758,6 +758,13 @@
       "version_required": true
     },
     {
+      "id": "listFlagAuditEvents",
+      "path": "/admin/flag-audit-events",
+      "method": "get",
+      "scope": "flags:read",
+      "version_required": false
+    },
+    {
       "id": "hidePost",
       "path": "/admin/posts/{id}/hide",
       "method": "post",
