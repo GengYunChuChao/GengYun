@@ -21,6 +21,9 @@
  */
 import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
+import { createLiveSpeechProviderFromConfig, createUnwiredAudioSource } from '../ai/asr-live-adapter.ts';
+import { PRODUCT_GATE_AUTHORIZATION } from '../ai/live-gate.ts';
+import type { AsrProviderConfig } from '../config.ts';
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
 export const PROVIDER_FAILURE_CODES = [
@@ -186,7 +189,11 @@ export function createStubSpeechProvider(options: { executionMode?: 'stub' | 'pr
  *   `PROVIDER_UNAVAILABLE`，任务落 `failed`；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身（回退会让证据口径被污染）。
  */
-export function createRealSpeechProvider(credentials: { endpoint?: string | null; apiKey?: string | null } = {}): SpeechProvider {
+export function createRealSpeechProvider(
+  credentials: { endpoint?: string | null; apiKey?: string | null } = {},
+  /** 装配层用来如实播报「为什么没有装上真实适配器」；缺省用既有文案（行为不变）。 */
+  unavailableReason?: string,
+): SpeechProvider {
   const endpoint =
     typeof credentials.endpoint === 'string' && credentials.endpoint.trim() !== '' ? credentials.endpoint.trim() : null;
   const apiKey = typeof credentials.apiKey === 'string' && credentials.apiKey.trim() !== '' ? credentials.apiKey.trim() : null;
@@ -196,7 +203,7 @@ export function createRealSpeechProvider(credentials: { endpoint?: string | null
     modelVersion: 'real-unconfigured',
     note: '真实 ASR 适配器尚未接入（无已审供应商适配器；缺凭据即受理前 fail-closed，不回退替身）',
     available: !missing,
-    unavailableReason: missing ? '缺少真实 ASR 供应商凭据（fail-closed，不回退替身）' : null,
+    unavailableReason: missing ? (unavailableReason ?? '缺少真实 ASR 供应商凭据（fail-closed，不回退替身）') : null,
     async transcribe() {
       // 无已审真实适配器：不伪造结果，也不回退替身。
       return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
@@ -204,13 +211,33 @@ export function createRealSpeechProvider(credentials: { endpoint?: string | null
   };
 }
 
-/** 按执行模式选择提供者；`real` 永远走 fail-closed 实现。 */
+/**
+ * 按执行模式选择提供者。
+ *
+ * `aiProviders`（GY-R28-W1）：`loadConfig()` 搬来的**被校验快照**（`config.aiProviders.asr`）。
+ * - 不传 / `null` ⇒ 与接线前**逐字节相同**（`real` 走 fail-closed 实现）；
+ * - 传了 ⇒ `real` 装上真实适配器（`createLiveSpeechProviderFromConfig`）；端口装配失败则回落成
+ *   接线前的 fail-closed（**绝不**回退替身）。录音字节由端口提供，产品装配注入的是**未接线**来源
+ *   （对象存储属媒体域），因此真实发送是否可达仍由媒体端口把关。
+ */
 export function createSpeechProvider(input: {
   executionMode: ExecutionMode;
   endpoint?: string | null;
   apiKey?: string | null;
+  aiProviders?: AsrProviderConfig | null;
 }): SpeechProvider {
   if (input.executionMode === 'real') {
+    const live = input.aiProviders ?? null;
+    if (live !== null) {
+      try {
+        return createLiveSpeechProviderFromConfig(live, {
+          authorization: PRODUCT_GATE_AUTHORIZATION,
+          audioSource: createUnwiredAudioSource('真实对象存储未接线：取不到待转写的私有录音字节'),
+        });
+      } catch {
+        return createRealSpeechProvider({}, '真实 ASR 端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');
+      }
+    }
     return createRealSpeechProvider({ endpoint: input.endpoint ?? null, apiKey: input.apiKey ?? null });
   }
   return createStubSpeechProvider({ executionMode: input.executionMode });

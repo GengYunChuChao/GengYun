@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1810-1818"
+          "lines": "1816-1824"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -2751,11 +2751,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "lines": "314-319"
+          "lines": "350-355"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2782,11 +2782,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "lines": "319-324"
+          "lines": "355-360"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2813,11 +2813,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "lines": "400-411"
+          "lines": "436-447"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2844,11 +2844,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "lines": "413-418"
+          "lines": "449-454"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2875,11 +2875,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "lines": "508-513"
+          "lines": "544-549"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2906,11 +2906,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "cancelAdminJob",
-          "lines": "515-520"
+          "lines": "551-556"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2937,11 +2937,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlags",
-          "lines": "707-711"
+          "lines": "743-747"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -2968,11 +2968,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "713-718"
+          "lines": "749-754"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         },
         {
           "test": "tests/unit/admin-flag-gate.test.mjs",
@@ -2980,6 +2980,33 @@
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+    },
+    {
+      "id": "listFlagAuditEvents",
+      "method": "get",
+      "path": "/admin/flag-audit-events",
+      "route": "/api/v1/admin/flag-audit-events",
+      "scope": "flags:read",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/flag-audit-events`",
+          "lines": "352-356"
+        },
+        {
+          "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "listFlagAuditEvents",
+          "lines": "833-838"
+        },
+        {
+          "test": "tests/unit/admin-ops-contract.test.mjs",
+          "name": "恰好实现 10 个 operationId"
+        }
+      ],
+      "blocker": "开关变更审计的只读查询已装配（读 public.admin_audit_events 的 set_flag 行，键集游标 (created_at,id) 降序）；后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）"
     },
     {
       "id": "hidePost",
@@ -2994,7 +3021,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "hidePost",
-          "lines": "353-361"
+          "lines": "364-372"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3003,11 +3030,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "hidePost",
-          "lines": "785-790"
+          "lines": "893-898"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 9 个 operationId"
+          "name": "恰好实现 10 个 operationId"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"

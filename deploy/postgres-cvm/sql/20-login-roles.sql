@@ -340,6 +340,30 @@ REVOKE ALL ON FUNCTION public.set_feature_flag(text, integer, boolean, uuid, uui
 GRANT EXECUTE ON FUNCTION public.set_feature_flag(text, integer, boolean, uuid, uuid, uuid, text, text) TO gengyun_api_runtime;
 -- #endregion gy-i18-flags-grant
 
+-- --- 开关审计只读面（R29-S5 / 迁移 0027：`list_admin_flag_audit`）-----------
+-- 为什么需要（AC 原话「谁在什么时候把开关从 A 改成 B（审计行），可查」）：
+-- 迁移 0020 的 `set_feature_flag` 已把 `action='set_flag'` 的审计行写进
+-- `admin_audit_events`，但运行时角色对审计表**连 SELECT 都没有**（见本文件
+-- 上面 `audit_ledger_append_only` 的零权限断言），所以「可查」在 API 面上原本做不到。
+-- 这里**不**给表级 SELECT（会破坏审计表零权限、且会把别人的审计行一起打开），
+-- 只给一个 SECURITY DEFINER 函数的 EXECUTE：函数体内 `SET search_path = pg_catalog`，
+-- 只返回 `action='set_flag'` 一类行，键集分页（(created_at,id) 严格递减）。
+-- 函数级 EXECUTE 的唯一性与表级仍为零权限，由 `tests/integration/admin-jobs-pg.mjs`
+-- 以运行时角色实测钉住（表级读被拒、函数读被放行）。
+-- 前置：迁移 0027 必须先执行（缺失即显式失败，绝不留「看似收敛、点开 500」的运行态）。
+-- #region gy-i18-flag-audit-grant
+DO $$
+BEGIN
+  IF to_regprocedure('public.list_admin_flag_audit(integer,timestamp with time zone,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.list_admin_flag_audit(...)：迁移 0027 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.list_admin_flag_audit(integer, timestamptz, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.list_admin_flag_audit(integer, timestamptz, uuid) TO gengyun_api_runtime;
+-- #endregion gy-i18-flag-audit-grant
+
 -- --- G. 逐用户备份副本清单：运行时**列级** DML（GY-I19 / 迁移 0023）-----------
 -- ---------------------------------------------------------------------------
 -- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权

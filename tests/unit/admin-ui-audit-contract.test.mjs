@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { AUDIT_EVENTS_PATH, AUDIT_EVENT_FIELDS, AUDIT_RESULTS, AUDIT_SCOPE, AUDIT_LIMIT_OPTIONS } from '../../apps/admin/src/lib/audit-events.mjs'
+import { AUDIT_EVENTS_PATH, AUDIT_EVENT_FIELDS, AUDIT_RESULTS, AUDIT_SCOPE, AUDIT_LIMIT_OPTIONS, AUDIT_TRAIL_FIELDS, auditRowView } from '../../apps/admin/src/lib/audit-events.mjs'
 
 // B5：审计事件页的契约守卫。前端一旦"顺手"加上后端没有的过滤参数、
 // 或按不存在的字段（如主体 actor）渲染，这些断言会先红。
@@ -12,6 +12,18 @@ const spec = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.j
 const operation = spec.paths[AUDIT_EVENTS_PATH]?.get
 const auditEvent = spec.components.schemas.AuditEvent
 const auditEventPage = spec.components.schemas.AuditEventPage
+
+/** 一条最小合法 AuditEvent（8 个必填字段全部就位），用于行视图装配断言。 */
+const auditEventSample = {
+  id: '11111111-1111-4111-8111-111111111111',
+  action: 'set_flag',
+  scope: 'flags:write',
+  target_ref: null,
+  reason_code: 'flag_set',
+  request_id: '22222222-2222-4222-8222-222222222222',
+  result: 'accepted',
+  created_at: '2026-10-22T00:00:00.000Z',
+}
 
 test('audit contract: 路径与 operationId 与前端常量一致', () => {
   assert.ok(operation, `契约里没有又 GET ${AUDIT_EVENTS_PATH}`)
@@ -31,15 +43,28 @@ test('audit contract: 查询参数只有 cursor 与 limit（没有 event_type／
   assert.equal(spec.components.parameters.Cursor.schema.maxLength, 2048)
 })
 
-test('audit contract: AuditEvent 恰好 8 个字段，且没有主体／actor', () => {
+test('audit contract: AuditEvent 8 个必填字段 + R29-S5 追加的 4 个可选留痕字段', () => {
+  // 必填集合不许动：老页面按这 8 个字段渲染，能继续读。
   assert.deepEqual([...AUDIT_EVENT_FIELDS], auditEvent.required)
-  assert.deepEqual(Object.keys(auditEvent.properties), [...AUDIT_EVENT_FIELDS])
+  // 属性顺序：先 8 个必填，再 4 个可选（追加式演进，不重排既有字段）。
+  assert.deepEqual(Object.keys(auditEvent.properties), [...AUDIT_EVENT_FIELDS, ...AUDIT_TRAIL_FIELDS])
   assert.equal(auditEvent.additionalProperties, false)
-  assert.equal(
-    AUDIT_EVENT_FIELDS.some((field) => /actor|user|operator|reviewer/i.test(field)),
-    false,
-    '契约若新增主体字段，页面必须同步展示而不是继续声称"读面未提供主体"',
-  )
+
+  // 4 个新字段必须"可选且可空"：历史行/非开关行不会因为缺它们而畸形。
+  for (const field of AUDIT_TRAIL_FIELDS) {
+    assert.equal(auditEvent.required.includes(field), false, `${field} 不得进 required`);
+    const variants = auditEvent.properties[field].anyOf
+    assert.ok(Array.isArray(variants), `${field} 必须是 anyOf([...,{type:null}]) 形态`);
+    assert.equal(
+      variants.some((variant) => variant.type === 'null'),
+      true,
+      `${field} 必须允许 null`,
+    )
+  }
+
+  // 主体字段存在之后，页面它必须被真的用上（否则等于换个说法继续隐瞒）。
+  assert.equal(AUDIT_TRAIL_FIELDS.includes('actor'), true)
+  assert.ok('actor' in auditRowView({ ...auditEventSample, actor: auditEventSample.request_id }))
 })
 
 test('audit contract: 信封是 data + meta，页面是 items + next_cursor', () => {

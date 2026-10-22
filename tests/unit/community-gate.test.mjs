@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GY-I15（#15）阶段 1 · 发布前审核 gate 的 fail-closed 与版本绑定用例。
  *
  * 断言纪律：**先判 `typeof` 再判值**（`undefined` 不会被 `===` 的偶然相等蒙混过关）。
@@ -42,12 +42,12 @@ function assertVerdictShape(outcome) {
   assert.equal(outcome.wired_to_http, false, '本片不得声称已接 HTTP');
 }
 
-test('出厂规则集为 11 条，发布 gate 不缩小规则集（不得用空/小规则集换"通过"）', () => {
+test('出厂规则集为 12 条，发布 gate 不缩小规则集（不得用空/小规则集换"通过"）', () => {
   assert.equal(typeof FACTORY_RULE_COUNT, 'number');
-  assert.equal(FACTORY_RULE_COUNT, 11);
-  assert.equal(RULES.length, 11);
+  assert.equal(FACTORY_RULE_COUNT, 12);
+  assert.equal(RULES.length, 12);
   const gate = makeGate();
-  assert.equal(gate.ruleCount(), 11);
+  assert.equal(gate.ruleCount(), 12);
   assert.equal(typeof gate.currentRuleVersion(), 'string');
   assert.ok(gate.currentRuleVersion().startsWith('mr1+sha256:'), 'rule_version 必须由规则集内容派生，不是手填串');
   assert.equal(typeof gate.currentRuleVersion(), typeof RULES[0].reason_code);
@@ -158,7 +158,7 @@ test('反例 7a：匹配器抛错被引擎捕获 ⇒ RULE_ENGINE_ERROR + quarant
   assert.equal(outcome.publishable, false);
   assert.equal(outcome.fail_closed, true);
   assert.ok(outcome.reason_codes.includes('RULE_ENGINE_ERROR'), `实际 ${outcome.reason_codes}`);
-  assert.equal(outcome.counts.errors, 11);
+  assert.equal(outcome.counts.errors, RULES.length);
 });
 
 test('反例 7b：规则层整体抛错（匹配器查表即炸）⇒ gate 自身 fail-closed，干净文本也不得发布', () => {
@@ -179,7 +179,7 @@ test('反例 7b：规则层整体抛错（匹配器查表即炸）⇒ gate 自�
   assert.equal(outcome.hard_rule_passed, false);
   assert.equal(outcome.engine_error, 'Error', 'gate 必须走"规则层抛错"的兜底路径，而不是当作未命中');
   assert.equal(outcome.counts.evaluated, 0, '抛错时没有任何规则被求值');
-  assert.equal(outcome.counts.not_evaluated, 11);
+  assert.equal(outcome.counts.not_evaluated, RULES.length);
   assert.equal(outcome.fail_closed, true);
   assert.ok(outcome.reason_codes.includes('RULE_ENGINE_ERROR'), `实际 ${outcome.reason_codes}`);
 });
@@ -258,8 +258,8 @@ test('评定不变式：approved ⟺ hard_rule_passed=true，且 approved 时 co
   const outcome = gate.evaluate(TARGET, CLEAN, []);
   assert.equal(outcome.invariant.ok, true, `不变式违反：${outcome.invariant.violations.join('；')}`);
   assert.equal(outcome.decision === 'approved', outcome.hard_rule_passed === true);
-  assert.equal(outcome.counts.total, 11);
-  assert.equal(outcome.counts.evaluated, 11);
+  assert.equal(outcome.counts.total, RULES.length);
+  assert.equal(outcome.counts.evaluated, RULES.length);
   assert.equal(outcome.counts.hits, 0);
   assert.equal(outcome.counts.errors, 0);
   assert.equal(outcome.counts.timeouts, 0);
@@ -304,6 +304,6 @@ test('确定性：慢匹配器在真实时钟下必然超预算不得发布，�
   assertVerdictShape(frozenOutcome);
   assert.equal(frozenOutcome.decision, 'approved');
   assert.equal(frozenOutcome.publishable, true);
-  assert.equal(frozenOutcome.counts.evaluated, 11, '规则仍然逐条求值（预算检查路径照跑）');
+  assert.equal(frozenOutcome.counts.evaluated, RULES.length, '规则仍然逐条求值（预算检查路径照跑）');
   assert.equal(frozenOutcome.counts.timeouts, 0);
 });

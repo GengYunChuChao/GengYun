@@ -68,6 +68,12 @@ const MAX_MATCHES = 64;
 /** 取消词向后扫描的上限（限制在同一句读段内，且限制单条规则成本）。 */
 const FORWARD_CLAUSE_LIMIT = 64;
 
+/** 分句（句读段）处理上界：防止病态输入把成本放大。 */
+const MAX_SEGMENTS = 512;
+
+/** 单个句读段内最多检查的候选出现次数（上界用尽即按"未判定"处理，不得当成未命中）。 */
+const MAX_OCCURRENCES = 64;
+
 /** 匹配器版本：改动匹配器语义时必须 +1（并会同步改变 rule_version）。 */
 export const MATCHER_REVISIONS = Object.freeze({
   any_pattern: 1,
@@ -75,6 +81,9 @@ export const MATCHER_REVISIONS = Object.freeze({
   address_chain: 1,
   coordinate_pair: 1,
   commerce_link: 1,
+  exempted_pattern: 2,
+  separator_tolerant_pattern: 1,
+  sale_cooccurrence: 2,
 });
 
 function toRegExp(pattern) {
@@ -306,6 +315,304 @@ export function commerceLink(text, rule) {
   return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
 }
 
+/** 把文本切成「句读段」（含偏移），用于同分句判定与整段豁免。 */
+function splitSegments(text) {
+  const result = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i += 1) {
+    const atEnd = i === text.length;
+    if (!atEnd && !BOUNDARY.test(text[i])) continue;
+    if (i > start) result.push({ offset: start, text: text.slice(start, i) });
+    start = i + 1;
+    if (result.length >= MAX_SEGMENTS) break;
+  }
+  return result;
+}
+
+/** 句读段与句子（MR-12 的共现窗口按"同一句"算，允许跨逗号、不允许跨句号）。 */
+const SENTENCE_BOUNDARY = /[。；！？;!\?\n\r]/;
+
+/** 把文本切成「句子」（按句末标点），用于"标的 × 交易信号"的距离窗口。 */
+function splitSentences(text) {
+  const result = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i += 1) {
+    const atEnd = i === text.length;
+    if (!atEnd && !SENTENCE_BOUNDARY.test(text[i])) continue;
+    if (i > start) result.push({ offset: start, text: text.slice(start, i) });
+    start = i + 1;
+    if (result.length >= MAX_SEGMENTS) break;
+  }
+  return result;
+}
+
+/** 命中点所在的句读段（用于整段豁免判定）。 */
+function clauseAt(text, index) {
+  let start = index;
+  while (start > 0 && !BOUNDARY.test(text[start - 1])) start -= 1;
+  let end = index;
+  while (end < text.length && !BOUNDARY.test(text[end])) end += 1;
+  return text.slice(start, end);
+}
+
+/** 命中点所在的「句子」（按句末标点切分；举报/被骗类豁免的邻域判定以句为单位）。 */
+function sentenceAt(text, index) {
+  let start = index;
+  while (start > 0 && !SENTENCE_BOUNDARY.test(text[start - 1])) start -= 1;
+  let end = index;
+  while (end < text.length && !SENTENCE_BOUNDARY.test(text[end])) end += 1;
+  return text.slice(start, end);
+}
+
+/**
+ * 举报/被骗**报告框**：第一人称作报告者（`我要举报`）或第一人称／对象作受事（`我被骗`、`被人举报`）。
+ * 只被这个框命中的豁免不足以说明"在描述自己被举报/被骗"，还要过下面的独立售卖动作闸门。
+ */
+const REPORT_FRAME =
+  /(?:我|我们|本人|咱|俺)[^，。；！？]{0,6}(?:举报|投诉|报案)|(?:我|我们|本人|咱|俺)[^，。；！？]{0,6}(?:被骗|上当|受骗|被诈骗|挨骗|被坑)|(?:被|遭)(?:人)?(?:举报|投诉|诈骗|骗)/;
+
+/** `不要举报`、`别投诉` 是**请求别人别举报**，不是在自述被举报 ⇒ 不构成报告框。 */
+const REPORT_PLEA = /(?:不要|别|请勿|切勿|勿|不许|不准|不能|不用|甭|莫)[^，。；！？]{0,4}(?:举报|投诉)/;
+
+/**
+ * 独立、明确的商业售卖／联系方式／下单动作。
+ *
+ * 存在理由（监工 1927 轮 [P1]）：只要整句出现「举报/被骗」就跳过意图匹配，
+ * 会让 `不要举报我百草枯现货加微信下单` 这类句子连**独立的售卖与联系方式动作**一起被放行。
+ * 这些动作不属于"举报/被骗"所描述的内容，必须照常命中。
+ */
+const INDEPENDENT_COMMERCE_ACTION =
+  /(?:加|私)(?:我|你)?(?:的)?(?:微信|weixin|vx|V信|v信|威信|QQ)|(?:私|加|v)\s?(?:我|我一下)|(?:私聊|私下|私信)[^，。；！？]{0,8}(?:购买|下单|发货|交易|转账|便宜|优惠|订货)|扫码|扫[^，。；！？]{0,3}码|扫一扫|要的留言|联系我|加好友|面交|自提|转手|倒卖|便宜出|低价出|清仓|甩卖|包邮|一件代发|厂家直销|批发价|内部价|现货秒发|有货|现货|库存|出售|转让|(?:加微信|私聊|私信|微信|扫码|联系我)[^，。；！？]{0,6}(?:下单|购买|拍下)|(?:拍下|付款|转账)(?:就|即|马上|立刻)?(?:发|给|走)/;
+
+/** 第三方转述框：`他让我加微信`、`有人私我` —— 独立动作是被举报/被骗的经过，不是发帖人自己在导流。 */
+const THIRD_PARTY_ATTRIBUTION =
+  /(?:他|她|对方|商家|卖家|微商|骗子|有人|那个人|别人)[^，。；！？]{0,4}(?:说|让|叫|要|喊|发|加|拉|私|卖|骗)/;
+
+/**
+ * 「报告／被骗」词表（规则侧 `report_exemptions` 的唯一定义，避免检测器与规则目录漂移）。
+ *
+ * 这些词本身**不再是充分豁免条件**：命中后还要过 `isReportContext()` 的主语／邻域判定。
+ * 迁移自 MR-10 的 `exemptions`（原 `/举报|投诉|诈骗|被骗|上当/`）与 MR-12 的
+ * `PROHIBITED_SALE_STATEMENT_EXEMPTIONS` 中的 `/举报|投诉|…/`。
+ */
+export const REPORT_CONTEXT_PATTERNS = Object.freeze([
+  /举报|投诉|报案|受骗|被骗|上当|被诈骗|诈骗/,
+]);
+
+/** 把一段文本切成句读段原文（用于"独立动作是否被第三方转述"的逐段判定）。 */
+function clauseTexts(text) {
+  const clauses = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i += 1) {
+    const atEnd = i === text.length;
+    if (!atEnd && !BOUNDARY.test(text[i])) continue;
+    if (i > start) clauses.push(text.slice(start, i));
+    start = i + 1;
+    if (clauses.length >= MAX_SEGMENTS) break;
+  }
+  return clauses;
+}
+
+/**
+ * 举报/被骗语境是否成立（**主语／邻域判定**，替代"整句见到豁免词就放行"）。
+ *
+ * 三个条件同时成立才算"确实在描述自己被举报/被骗"：
+ *   1) 句内存在报告框（`我要举报`／`我被骗`／`被人举报`）；
+ *   2) 句内不是"请求别人别举报"（`不要举报我…`）；
+ *   3) 句内没有**独立**的售卖/联系方式/下单动作——除该动作所在句读段有第三方转述（`他让我加微信`）。
+ *
+ * @returns {boolean} true ⇒ 举报类豁免成立（抑制命中）；false ⇒ 豁免不成立（照常命中）。
+ */
+export function isReportContext(text) {
+  if (!REPORT_FRAME.test(text)) return false;
+  if (REPORT_PLEA.test(text)) return false;
+  for (const clause of clauseTexts(text)) {
+    if (!INDEPENDENT_COMMERCE_ACTION.test(clause)) continue;
+    if (THIRD_PARTY_ATTRIBUTION.test(clause)) continue;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 任一模式命中，但豁免成立时不算命中。豁免分两档：
+ *
+ * - `rule.exemptions`：**整句读段**口径，命中所在句读段出现陈述标记即豁免（产品／规则陈述：
+ *   `私信通知`、`私聊功能已上线`、`请勿私下交易`）。
+ * - `rule.report_exemptions`：**举报／被骗语境**口径，命中所在**句子**命中报告词、且
+ *   `isReportContext()` 的主语／邻域判定通过才豁免（见上方 `isReportContext`）。
+ *
+ * 为什么报告词不能再走整段口径（监工 1927 轮 [P1]）：`/举报|投诉|诈骗|被骗|上当/` 只要在句读段
+ * 任意位置命中就跳过意图匹配，于是 `不要举报我百草枯现货加微信下单`、`我这有百草枯现货，举报也没用`
+ * 这类句子把**独立的售卖与联系方式动作**一起抹掉了。
+ *
+ * 代价（如实事先声明）：`exemptions` 仍是整段口径，`平台禁止私聊下单，但我可以私聊你`
+ * 这类"陈述+导流"同段混写依旧被豁免放行；`report_exemptions` 的取舍是**宁可误拦报告、
+ * 不放行售卖**——句内出现独立售卖动作时按命中处理。
+ */
+export function exemptedPattern(text, rule) {
+  const exemptions = rule.exemptions ?? [];
+  const reportExemptions = rule.report_exemptions ?? [];
+  let suppressed = 0;
+  let matchCount = 0;
+  let truncated = false;
+  for (const pattern of rule.patterns ?? []) {
+    const regex = toGlobalRegExp(pattern);
+    let found = regex.exec(text);
+    while (found !== null) {
+      if (matchCount >= MAX_MATCHES) {
+        truncated = true;
+        break;
+      }
+      matchCount += 1;
+      const clause = clauseAt(text, found.index);
+      const sentence = sentenceAt(text, found.index);
+      const statementExempt = exemptions.some((item) => toRegExp(item).test(clause));
+      const reportExempt =
+        reportExemptions.length > 0 &&
+        reportExemptions.some((item) => toRegExp(item).test(sentence)) &&
+        isReportContext(sentence);
+      if (statementExempt || reportExempt) {
+        suppressed += 1;
+        if (found.index === regex.lastIndex) regex.lastIndex += 1;
+        found = regex.exec(text);
+        continue;
+      }
+      return {
+        matched: true,
+        field: 'text',
+        offset: found.index,
+        length: found[0].length,
+        suppressed,
+        truncated: false,
+      };
+    }
+    if (truncated) break;
+  }
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed, truncated };
+}
+
+/** 拆分关键词时常用的分隔符（空格、全角空格、间隔号、下划线、连字符）。 */
+const SEPARATOR = /[\s\u3000\u00a0·・‧∙∗*_\-—–－]/;
+
+/** 去掉分隔符并保留"压缩后位置 → 原文位置"的映射。 */
+function compactWithMap(text) {
+  let compact = '';
+  const map = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (SEPARATOR.test(text[i])) continue;
+    compact += text[i];
+    map.push(i);
+  }
+  return { compact, map };
+}
+
+/**
+ * 分隔符容忍匹配（先原文、再"去分隔符"文本），用于提示注入这类**故意拆字规避**的输入。
+ *
+ * 背景（改前真红）：`忽 略 你 收 到 的 规 则` 这类在关键词里插空格/间隔号的表述，
+ * 逐字模式全部漏拦（与 #420 在输出侧踩过的「绝 对 安 全」同一手法，这里是输入侧）。
+ * 代价（如实事先声明）：压缩后跨词意外拼出关键词的极少数正常句子可能被误拦。
+ */
+export function separatorTolerantPattern(text, rule) {
+  const direct = firstMatch(text, rule.patterns);
+  if (direct) {
+    return {
+      matched: true,
+      field: 'text',
+      offset: direct.offset,
+      length: direct.length,
+      suppressed: 0,
+      truncated: false,
+    };
+  }
+  const { compact, map } = compactWithMap(text);
+  if (compact.length === 0) {
+    return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  }
+  const tolerant = firstMatch(compact, rule.patterns);
+  if (!tolerant || tolerant.length < 1) {
+    return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+  }
+  const start = map[tolerant.offset];
+  const end = map[tolerant.offset + tolerant.length - 1] + 1;
+  return { matched: true, field: 'text', offset: start, length: end - start, suppressed: 0, truncated: false };
+}
+
+/** 列出 words 在 segment 中的出现位置（上界 MAX_OCCURRENCES）。 */
+function collectOccurrences(segment, words) {
+  const hits = [];
+  for (let i = 0; i < segment.length && hits.length < MAX_OCCURRENCES; i += 1) {
+    for (const word of words) {
+      if (word.length > 0 && segment.startsWith(word, i)) {
+        hits.push({ index: i, length: word.length, word });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * 标的 × 交易信号共现（禁售／限用农药的售卖与私下转让）。
+ *
+ * 判定：**同一句**（按句末标点切分，允许跨逗号）内同时出现标的与信号，且两者相距
+ * ≤ `max_distance` 字。豁免分两档，与 `exemptedPattern` 一致：
+ * - `rule.exemptions`：规则陈述／普法／急救，整句口径直接豁免；
+ * - `rule.report_exemptions`：举报／被骗，必须过 `isReportContext()` 的主语／邻域判定
+ *   （句内出现独立售卖动作时**不**豁免，见监工 1927 轮 [P1]：
+ *   `我这有百草枯现货，被骗过的人互相提醒` 这类句子不能因为顺带一个报警词就整句放行）。
+ * 只提标的不算（`百草枯毒性很强` 不拦），只提信号也不算（`到货通知` 不拦），
+ * 标的与信号跨句号（`……登记早就到期了。价格我记不清`）不算共现。
+ */
+export function saleCooccurrence(text, rule) {
+  const targets = rule.targets ?? [];
+  const signals = rule.signals ?? [];
+  const maxDistance = rule.max_distance ?? 24;
+  const exemptions = rule.exemptions ?? [];
+  const reportExemptions = rule.report_exemptions ?? [];
+  let inspected = 0;
+  for (const segment of splitSentences(text)) {
+    if (segment.text.length === 0) continue;
+    inspected += 1;
+    if (inspected > MAX_SEGMENTS) break;
+    if (exemptions.some((item) => toRegExp(item).test(segment.text))) continue;
+    if (
+      reportExemptions.length > 0 &&
+      reportExemptions.some((item) => toRegExp(item).test(segment.text)) &&
+      isReportContext(segment.text)
+    ) {
+      continue;
+    }
+    const targetHits = collectOccurrences(segment.text, targets);
+    if (targetHits.length === 0) continue;
+    const signalHits = collectOccurrences(segment.text, signals);
+    if (signalHits.length === 0) continue;
+    let best = null;
+    for (const target of targetHits) {
+      for (const signal of signalHits) {
+        const distance = Math.abs(signal.index - target.index);
+        if (best === null || distance < best.distance) best = { distance, target, signal };
+      }
+    }
+    if (best === null || best.distance > maxDistance) continue;
+    const start = Math.min(best.target.index, best.signal.index);
+    const end = Math.max(
+      best.target.index + best.target.length,
+      best.signal.index + best.signal.length,
+    );
+    return {
+      matched: true,
+      field: 'text',
+      offset: segment.offset + start,
+      length: end - start,
+      suppressed: 0,
+      truncated: false,
+    };
+  }
+  return { matched: false, field: 'text', offset: null, length: 0, suppressed: 0, truncated: false };
+}
+
 /**
  * 匹配器登记表。**id 与实现源码共同参与 rule_version 派生**，
  * 因此任何语义改动都会使既有审核结果失效（宁多失效，不静默复用）。
@@ -316,4 +623,7 @@ export const MATCHERS = Object.freeze({
   address_chain: addressChain,
   coordinate_pair: coordinatePair,
   commerce_link: commerceLink,
+  exempted_pattern: exemptedPattern,
+  separator_tolerant_pattern: separatorTolerantPattern,
+  sale_cooccurrence: saleCooccurrence,
 });

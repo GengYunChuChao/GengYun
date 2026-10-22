@@ -821,7 +821,21 @@ try {
     //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
     assert.match(code, /\bconst gatedGuards = createFlagGatedGuards\(guards, featureFlagGate\);/, 'app.ts 必须有 gatedGuards 绑定（createFlagGatedGuards(guards, featureFlagGate)）');
     assert.equal(/registerSynthesisRoutes\(app, config, guards,/.test(code), false, '装配不得退回裸 guards 槽位');
-    assert.equal(/createTtsProvider\(\{ executionMode: config\.executionMode \}\)/.test(code), true);
+    // ⚠ 2026-10-21（GY-R28-W1 真实提供者接线片）**同类第三次**变更，且判据**加强**（不是放宽）：
+    //   本片把 TTS 真实适配器的**装配点**接到 `config.aiProviders.tts`（`loadConfig` 搬运来的被校验快照），
+    //   因此旧精确串 `createTtsProvider({ executionMode: config.executionMode })` 命中数变 0。
+    //   本断言的原意是「产品装配只按模式选提供者、装配点不塞端口」——本片没有改变这一点：
+    //   app.ts 仍然只传**配置快照**，不构造任何端口，也没有出现 `createLiveTtsProvider` / `live-ports`
+    //   / `RealTtsPorts`（上面三条断言照旧生效）。
+    //   改为：①精确钉住**完整调用实参**（含新增的 `aiProviders: config.aiProviders.tts`）；
+    //   ②新增「`createTtsProvider(` 全文件恰好出现 1 次」的计数断言（旧断言只有存在性）。
+    //   两条合起来比旧断言更严：实参逐字段钉死 + 调用点唯一，且仍不允许装配点直接构造端口。
+    assert.equal(
+      /createTtsProvider\(\{ executionMode: config\.executionMode, aiProviders: config\.aiProviders\?\.tts \?\? null \}\)/.test(code),
+      true,
+      'app.ts 必须用 createTtsProvider({ executionMode, aiProviders: config.aiProviders?.tts ?? null }) 装配（配置快照，不是端口）',
+    );
+    assert.equal((code.match(/createTtsProvider\(/g) ?? []).length, 1, 'createTtsProvider 装配点必须恰好一处');
     return 'app.ts 无 createLiveTtsProvider / 无 live-ports；注册恰好一处且装 gatedGuards';
   });
 

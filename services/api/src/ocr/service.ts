@@ -36,18 +36,25 @@ import type { OcrProvider, ProviderFailureCode } from './provider.ts';
 import type { OcrDosePort, OcrReferencePort } from './reference.ts';
 import {
   OcrProtocolError,
+  appendCorrection,
+  assertDoseNotProduced,
+  assertRawPreserved,
   decideMatchState,
+  deriveOcrVerdict,
+  diffLabelFields,
   gateDoseCards,
   isTerminalJobState,
   normalizeConditions,
   normalizeLabelFields,
   sanitizeRegistryLookup,
+  toVerificationProjection,
   type Conditions,
   type JobState,
   type LabelFields,
+  type OcrVerification,
   type RegistryLookup,
 } from './state.ts';
-import type { OcrJobRow, OcrRow, OcrStore, OcrVerification } from './store.ts';
+import type { OcrJobRow, OcrRow, OcrStore } from './store.ts';
 
 /** 任务截止时间（毫秒）：超过即 timed_out，且迟到结果不复活任务。 */
 export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
@@ -261,13 +268,7 @@ function toOcr(row: OcrRow): OcrProjection {
       ingredients: row.correctedFields.ingredients.map((item) => ({ ...item })),
       dosage_form: row.correctedFields.dosage_form,
     },
-    verification: {
-      match_state: row.verification.match_state,
-      registration: row.verification.registration,
-      conflict_fields: [...row.verification.conflict_fields],
-      missing_fields: [...row.verification.missing_fields],
-      dose_cards: row.verification.dose_cards.map((card) => structuredClone(card)),
-    },
+    verification: toVerificationProjection(row.verification),
     model_version: row.modelVersion,
   };
 }
@@ -436,12 +437,24 @@ export function createOcrService(options: OcrServiceOptions) {
       doseCards = [];
     }
 
+    // 稳定状态码（四类明确状态：冲突 / 无匹配 / 多结果 / 已失效）+ 用量阻断守卫。
+    // 为什么还要这道带：上面「只有 matched 才取候选」是**取数**门，这里是**下发**门。
+    // 两门独立 —— 任一处被改坏，另一处仍拦住；两门同时被改坏时
+    // `tests/unit/ocr-match-gate.test.mjs` 的负控制臂必红（真删除那行 dosage_form 比对即复现）。
+    const verdict = deriveOcrVerdict({
+      match_state: decision.match_state,
+      conflict_fields: decision.conflict_fields,
+    });
+    // 已阻断却仍带出用量卡 ⇒ 抛错（fail-closed，不静默吞掉上游门的丢失）。
+    assertDoseNotProduced(verdict, doseCards);
+    const gatedDoseCards: OcrVerification['dose_cards'] = verdict.dose_blocked ? [] : doseCards;
+
     return {
       match_state: decision.match_state,
       registration: decision.registration,
       conflict_fields: decision.conflict_fields,
       missing_fields: decision.missing_fields,
-      dose_cards: doseCards,
+      dose_cards: gatedDoseCards,
     };
   }
 
@@ -766,14 +779,32 @@ export function createOcrService(options: OcrServiceOptions) {
 
       // 重算核对：条件未采集 → dose_cards 必为 []，且旧结论被替换而非并存。
       const verification = await verifyFields(correction.corrected_fields, null);
-      const updated = await store.updateOcr(row.id, expectedRevision, (current) => ({
-        ...current,
-        // rawFields 原样不动 —— 模型原始输出始终可复核；校正不计入模型准确率。
-        correctedFields: correction.corrected_fields,
-        verification,
-        revision: current.revision + 1,
-        updatedAt: at,
-      }));
+      const updated = await store.updateOcr(row.id, expectedRevision, (current) => {
+        // 台账只**追加**：`raw_fields` 是模型原始输出的快照（不可覆盖），`corrected_fields`
+        // 是校正后另存的这一版字段，`actor_user_id` / `changes` 回答「谁改的、改了什么」。
+        // 同字段原样重提（diff 为空）不产生新版本 —— 保留旧行为（仍递增 revision），
+        // 但不把「什么都没改」记成一次改写。
+        const unchanged = diffLabelFields(current.correctedFields, correction.corrected_fields).length === 0;
+        const correctionLog = unchanged
+          ? current.verification.correction_log
+          : appendCorrection(current.verification.correction_log, {
+              actorUserId: input.userId,
+              at,
+              revision: current.revision + 1,
+              before: current.correctedFields,
+              after: correction.corrected_fields,
+              raw: current.rawFields,
+            });
+        if (correctionLog !== undefined) assertRawPreserved(correctionLog, current.rawFields);
+        return {
+          ...current,
+          // rawFields 原样不动 —— 模型原始输出始终可复核；校正不计入模型准确率。
+          correctedFields: correction.corrected_fields,
+          verification: correctionLog === undefined ? verification : { ...verification, correction_log: correctionLog },
+          revision: current.revision + 1,
+          updatedAt: at,
+        };
+      });
       if (updated === null) throw new ApiError('REVISION_CONFLICT', 'OCR 记录已被并发修改');
       await finalizeIdempotentScope(scope, key, { accepted: true });
       return toOcr(updated);
@@ -830,7 +861,7 @@ export function createOcrService(options: OcrServiceOptions) {
       if (claim.pending) throw inProgress();
       const current = await store.getOcr(row.id);
       if (current === null) throw new ApiError('NOT_FOUND', 'OCR 记录不存在');
-      return { verification: current.verification, revision: current.revision };
+      return { verification: toVerificationProjection(current.verification), revision: current.revision };
     }
     try {
       if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', 'OCR 记录版本与 If-Match 不一致');
@@ -838,13 +869,17 @@ export function createOcrService(options: OcrServiceOptions) {
       const verification = await verifyFields(verifyInput.fields, verifyInput.conditions);
       const updated = await store.updateOcr(row.id, expectedRevision, (current) => ({
         ...current,
-        verification,
+        // 核对只替换契约五字段，**不得**擦掉用户校正台账（台账只由 correctOCR 追加）。
+        verification:
+          current.verification.correction_log === undefined
+            ? verification
+            : { ...verification, correction_log: current.verification.correction_log },
         revision: current.revision + 1,
         updatedAt: at,
       }));
       if (updated === null) throw new ApiError('REVISION_CONFLICT', 'OCR 记录已被并发修改');
       await finalizeIdempotentScope(scope, key, { accepted: true });
-      return { verification: updated.verification, revision: updated.revision };
+      return { verification: toVerificationProjection(updated.verification), revision: updated.revision };
     } catch (error) {
       await releaseIdempotentScope(scope, key);
       throw error;
