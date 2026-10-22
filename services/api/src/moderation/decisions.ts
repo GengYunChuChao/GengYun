@@ -328,7 +328,13 @@ export function gateHolderFrom(args: {
   };
 }
 
-/** 台账（内存实现；PG 迁移不属本片）。 */
+/**
+ * 台账（内存实现见 `createModerationLedger`；持久实现在 `moderation/ledger-pg.ts`）。
+ *
+ * **读面一律同步**：社区读面（`community/service.ts` 的 `effectiveState`）是同步的，
+ * `tasks()/current()` 一旦变异步就会把整条读链撕成异步，因此持久实现只能"内存承接读、
+ * 写穿透落库"——写入的落定由可选的 `flush()` 显式等待。
+ */
 export interface ModerationLedger {
   /** 建立新任务；同 `(target,revision,content_kind)` 已有当前任务时把它标记为 superseded。 */
   create(record: ModerationTaskRecord): ModerationTaskRecord;
@@ -345,6 +351,24 @@ export interface ModerationLedger {
   markWithdrawn(target: TargetRef): void;
   isWithdrawn(target: TargetRef): boolean;
   snapshotCounts(): { tasks: number; current: number; superseded: number; withdrawn: number };
+  /**
+   * 把此前入账的写入落到持久层并等待落定（**只有持久实现在场**）。
+   *
+   * 内存实现没有该成员（`undefined`），调用方一律写 `await ledger.flush?.()`。
+   * 持久实现的 `flush` 一旦拒绝，调用方必须按"没落库 ⇒ 不得发布"处理：审核结论不落库时，
+   * 公开可见性不许翻成 `published`（写入面 fail-closed）。
+   *
+   * 语义要点：**未落定的写入不会被"队列已空"洗白**——持久实现保留失败项并在下一次 `flush`
+   * 重放，只有真的落库才放行（否则持续拒绝）。详见 `moderation/ledger-pg.ts`。
+   */
+  flush?(): Promise<void>;
+  /**
+   * 该记录是否**已确认落库**（只有持久实现知道；内存台账没有该成员）。
+   *
+   * 发布路径必须用它：内存里"看起来 approved"不等于账本里 approved。返回 `false` 的记录
+   * 不得被当成"已持久化／已批准"用于翻公开可见性（写面 fail-closed 的第二道闸）。
+   */
+  isDurable?(record: ModerationTaskRecord): boolean;
 }
 
 export function createModerationLedger(): ModerationLedger {

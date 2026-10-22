@@ -1,0 +1,390 @@
+/**
+ * 审核判定台账的 **PostgreSQL 持久实现**（迁移 `0028_moderation_persistence.sql`）。
+ *
+ * 在此之前 `services/api/src/moderation/decisions.ts` 只有内存实现（`createModerationLedger()`）：
+ * 进程重启后审核结论全丢，而社区读面遇到"查不到结论"走的是**宽松**分支
+ * （`community/service.ts:419` 的 `present !== true ⇒ null`）——于是已公开内容在重启后继续公开，
+ * 且再也答不出它当初是哪一版规则/哪个模型判的。本模块把它接到真库上。
+ *
+ * ## 为什么是"内存承接读 + 写穿透落库"，而不是把接口改成异步
+ * 台账接口（`ModerationLedger`）**全同步**：社区读链 `effectiveState`
+ * （`community/service.ts:462-495`）与 `isPubliclyVisible`（:498-501）都是同步函数，
+ * `publish` 里的 `ledger.isWithdrawn` / `ledger.current` 也是同步调用。把 `tasks()/current()`
+ * 改成 `Promise` 会把整条读链撕成异步（并顺带改掉社区契约的调用形状）。
+ * 因此持久实现只在**写入**侧穿透：先走内层内存台账（保留"重复 job_id 抛错 / 未知 job_id 抛错"
+ * 这些同步语义），再入队落库动作（建行 = 退位 + 插入两条语句，真池上包在一个事务里）；写入的
+ * 落定由 `flush()` 显式等待，调用方在 `moderation/service.ts` 的四个写入点 `await ledger.flush?.()`。
+ *
+ * ## 写面 fail-closed（本模块的唯一正确用法）
+ * `flush()` 拒绝 ⇒ 审核服务**不得**把公开可见性翻成 `published`（`service.ts` 把 flush 放在
+ * `authority.setVisibility(target, 'published')` 之前）。real 模式下审核域整体 fail-closed
+ * （`service.ts:398-402` → `createFailClosedModerationService()`），因此**即便本表在场**，
+ * real 模式也不会因为"有地方落库了"就伪造成功封套——本模块不改变那条边界。
+ *
+ * ## 失败**不得**被"空队列"洗白（#434 监工 P1）
+ * 写入意图进一条**顺序日志**：成功落定才从前缀摘掉，失败项留在日志里。`flush()` 只有在
+ * 日志清空时才算落定；日志非空 ⇒ **先重放**（四条语句幂等），重放仍失败 ⇒ 继续抛错。
+ * 于是"第一次 INSERT 失败 → 内存 approved 残留 → 第二次 flush 空队列成功 → 目标被发布"
+ * 这条路径不再存在：失败过的建行不会被当成已落库，`isDurable()` 也不会承认它。
+ * 重放成功（存储恢复）后日志自然清空 ⇒ 调用方可以正常继续（不永久毒化台账）。
+ *
+ * ## 重放必须按"谁是现任任务"收敛（#434 监工 P2）
+ * 同一目标同内容类别的 A、B 两条建行（B 在内存里接任 A）在 A 落库失败后重放时，**不得**：
+ *   ① 把已 confirmed 的后项 B 也重放一遍（它跑一次退位就会把 B 自己退位）；
+ *   ② 重放旧任务 A 时照旧跑退位语句（会把现任的 B 退位）。
+ * 因此：重放只针对**未 confirmed** 的日志项；每笔建行在**执行时**判自己是否仍是现任任务，
+ * 旧任务按历史行（`superseded = TRUE`）插入且**不**退位任何人；退位语句自身也排除本 `job_id`
+ * （`job_id <> $6`）。建行走 `ON CONFLICT (job_id) DO NOTHING`（命中已有行时什么也没写），
+ * 所以写完**必须读回** `superseded` 确认状态与意图一致，不一致就抛错（flush 继续拒绝）。
+ *
+ * ## 不做 hydrate
+ * 存量行"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
+ * 不改社区契约）。本模块因此**只写不读**：进程启动时不回填内存台账，`byJobId/current/...`
+ * 仍答内存里的本次进程结论。跨进程追溯走审计查询（直接查表）。
+ */
+import { ApiError } from '../errors.ts';
+import { createModerationLedger, type ModerationLedger } from './decisions.ts';
+import type { ModerationTaskRecord } from './types.ts';
+
+/** `pg` 连接池的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
+export interface SqlRunner {
+  query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+}
+
+/** 能开事务的池（`pg.Pool` 有 `connect`；测试假池可以只实现 `query`）。 */
+export interface SqlTransactor {
+  connect(): Promise<{
+    query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+    release(): void;
+  }>;
+}
+
+function isTransactor(pool: SqlRunner): pool is SqlRunner & SqlTransactor {
+  return typeof (pool as Partial<SqlTransactor>).connect === 'function';
+}
+
+/** 持久台账：在同步台账之上多出 `flush()` 与不可伪装的 `persistent` 标记。 */
+export interface PostgresModerationLedger extends ModerationLedger {
+  /** 等待已入队写入落定；只要还有**未确认落库**的写入（含上一次失败留下的）就抛出。 */
+  flush(): Promise<void>;
+  /**
+   * 该记录是否**已确认落库**：建行成功过、且名下没有未确认的写入。
+   *
+   * 发布路径必须用它：内存里"看起来 approved"不等于账本里 approved。返回 `false` 的记录
+   * 不得被当成"已持久化／已批准"用于翻公开可见性（#434 监工 P1）。
+   */
+  isDurable(record: ModerationTaskRecord): boolean;
+  readonly persistent: true;
+}
+
+/**
+ * 一个"待落定写入"的登记项：`run` 是**幂等**的落库动作（建行 `ON CONFLICT (job_id) DO NOTHING`、
+ * 退位/更新按主键覆盖、下架 `ON CONFLICT (...) DO NOTHING`），因此失败后**重放安全**。
+ */
+interface WriteIntent {
+  /** 归属任务（下架标记没有 `job_id`）。 */
+  job_id: string | null;
+  /** 是否是建行：只有建行落定过，该 `job_id` 才算"库里有行"。 */
+  creates: boolean;
+  run: () => Promise<void>;
+  confirmed: boolean;
+  /** 是否已经被某次 `flush()` 报给调用方。用于区分"本次调用刚失败"与"上一次调用失败留下的"。 */
+  reported: boolean;
+}
+
+/**
+ * 建行前的"退位"语句：把同一目标版本上仍现任的行置 `superseded`。
+ *
+ * **必须是独立语句**：数据修改型 CTE 里的 `UPDATE` 对同一条语句的 `INSERT` **不可见**
+ * （两者共享同一快照），部分唯一索引 `moderation_decisions_current_key`
+ * （`WHERE superseded = FALSE`）仍会看到旧行 ⇒ 真库上报
+ * `duplicate key value violates unique constraint "moderation_decisions_current_key"`。
+ * 因此退位与插入拆成两条语句，并在真池上用显式事务保证原子（见 `create`）。
+ */
+const SUPERSEDE_SQL = `UPDATE public.moderation_decisions
+   SET superseded = TRUE, updated_at = $5::timestamptz
+ WHERE target_type = $1 AND target_id = $2 AND target_revision = $3
+   AND content_kind = $4 AND superseded = FALSE AND job_id <> $6`;
+
+/**
+ * 建行语句：幂等由数据库给（`ON CONFLICT (job_id) DO NOTHING`），不靠"先查后写"。
+ */
+const INSERT_SQL = `INSERT INTO public.moderation_decisions (
+  job_id, target_type, target_id, target_revision, content_kind, port_kind, prompt_id,
+  job_revision, state, lease_token, authorization_epoch, submitted_by, deadline_at,
+  decision, reason_codes, hard_rule_passed, rule_version, model_version, prompt_version,
+  contract_value, gate_holder, error_code, evidence, superseded, created_at, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+  $14, $15::jsonb, $16, $17, $18, $19, $20::jsonb, $21::jsonb, $22, $23::jsonb, $24, $25::timestamptz, $26::timestamptz
+)
+ON CONFLICT (job_id) DO NOTHING`;
+
+/**
+ * 更新语句：只动**可变列**（状态推进/回调落定）。目标身份列（`target_*`、`content_kind`、
+ * `job_revision`、`created_at`）一律不可变——审核任务的"审的是哪一版"不许被后续写入改写。
+ */
+const UPDATE_SQL = `UPDATE public.moderation_decisions SET
+  state = $2, lease_token = $3, decision = $4, reason_codes = $5::jsonb, hard_rule_passed = $6,
+  rule_version = $7, model_version = $8, prompt_version = $9, contract_value = $10::jsonb,
+  gate_holder = $11::jsonb, error_code = $12, evidence = $13::jsonb, superseded = $14,
+  updated_at = $15::timestamptz
+WHERE job_id = $1`;
+
+/**
+ * 建行之后的**读回**：`ON CONFLICT (job_id) DO NOTHING` 命中已有行时什么也没写，
+ * 因此"语句没报错"**不等于**"这行的状态就是我们要的"。只能读回来判（监工 P2）。
+ *
+ * 只读 `superseded` 一列（已在 `20-login-roles.sql` 的列级 SELECT 授权清单内）。
+ */
+const READ_SUPERSEDED_SQL = `SELECT superseded FROM public.moderation_decisions WHERE job_id = $1`;
+
+/** 下架标记：同一 `(target_type,target_id,target_revision)` 只留一行（下架是终态、可重放）。 */
+const WITHDRAW_SQL = `INSERT INTO public.moderation_withdrawals (
+  target_type, target_id, target_revision, withdrawn_at
+) VALUES ($1, $2, $3, $4::timestamptz)
+ON CONFLICT (target_type, target_id, target_revision) DO NOTHING`;
+
+/** 数据库异常 ⇒ 领域错误（与 `messages/store-pg.ts` 同口径：超时/锁不可得 ⇒ `PROVIDER_TIMEOUT`）。 */
+function ledgerFailure(error: unknown, action: string): ApiError {
+  if (error instanceof ApiError) return error;
+  const record = (typeof error === 'object' && error !== null ? error : {}) as { code?: unknown; message?: unknown };
+  const code = record.code;
+  const detail = typeof record.message === 'string'
+    ? (record.message.split('\n')[0] ?? '').slice(0, 200)
+    : '未知数据库错误';
+  if (code === '57014' || code === '55P03') {
+    return new ApiError('PROVIDER_TIMEOUT', `审核台账${action}超时：结论未落定，按未落库处理（${detail}）`);
+  }
+  return new ApiError('PROVIDER_UNAVAILABLE', `审核台账${action}失败：结论未落定，按未落库处理（${detail}）`);
+}
+
+function jsonOrNull(value: unknown): string | null {
+  return value === null || value === undefined ? null : JSON.stringify(value);
+}
+
+export function createPostgresModerationLedger(options: { pool: SqlRunner; now?: () => Date }): PostgresModerationLedger {
+  const inner = createModerationLedger();
+  const now = options.now ?? (() => new Date());
+
+  /** 写入严格按登记顺序落库的串行链。 */
+  let chain: Promise<void> = Promise.resolve();
+
+  /**
+   * 写入意图**顺序日志**：成功落定才从**前缀**摘掉，失败项一律留在日志里。
+   *
+   * 关键不变式：**日志非空 ⇔ 还有未确认落库的写入**。`flush()` 只有把日志清空才放行，
+   * 因此"失败被消费掉 + 空队列"不再等于"已落定"（`#434` 监工 P1 的洗白入口）。
+   */
+  const journal: WriteIntent[] = [];
+  /** 已确认落库的 `job_id`（建行成功过）；`isDurable` 的第一条判据。 */
+  const confirmedCreates = new Set<string>();
+  /** 最近一次失败（只用于 `flush()` 的错误文案；不承担"是否有未落定写入"的判据）。 */
+  let lastFailure: unknown = null;
+
+  /** 只有**前缀全部确认**才前移：中间失败不会让后面的成功把失败"顶掉"。 */
+  function pruneConfirmed(): void {
+    for (let head = journal[0]; head !== undefined && head.confirmed; head = journal[0]) journal.shift();
+  }
+
+  /** 一次成功的收尾（首次执行与重放**共用**同一段，保证两条路径的可信度一致）。 */
+  function settle(intent: WriteIntent): void {
+    intent.confirmed = true;
+    if (intent.creates && intent.job_id !== null) confirmedCreates.add(intent.job_id);
+    pruneConfirmed();
+  }
+
+  /** 把一条意图挂到串行链上（写入严格按登记顺序落库）。 */
+  function schedule(intent: WriteIntent): void {
+    chain = chain
+      .then(async () => {
+        await intent.run();
+        settle(intent);
+      })
+      .catch((error: unknown) => {
+        // 失败即**留在日志里**（不摘除、不清空）：`flush()` 会重放它；
+        // 在它真的落定之前，日志非空 ⇒ 任何 `flush()` 都拒绝。
+        lastFailure = error;
+      });
+  }
+
+  function enqueue(meta: { job_id: string | null; creates: boolean }, run: () => Promise<void>): void {
+    const intent: WriteIntent = { job_id: meta.job_id, creates: meta.creates, run, confirmed: false, reported: false };
+    journal.push(intent);
+    schedule(intent);
+  }
+
+  function stamp(value: string): string {
+    return typeof value === 'string' && value.length > 0 ? value : now().toISOString();
+  }
+
+  return {
+    persistent: true,
+    create(record) {
+      // 先走内层：重复 job_id 在这里**同步**抛错，绝不会先写库再报错。
+      const stored = inner.create(record);
+      enqueue({ job_id: stored.job_id, creates: true }, async () => {
+        // **执行时**再判这一笔还是不是"现任任务"：登记之后，同目标同内容类别可能又建了更新的
+        // 任务（内存台账已由它接任）。这时这一笔必须按**历史行**落库（监工 P2）：
+        //   · 不跑退位语句 —— 否则重放旧任务会把现存任的任务 B 退位，库里 0 条 current；
+        //   · 插入时 `superseded = TRUE` —— 它本来就是被接任的旧结论。
+        // 现任任务则相反：退位同目标版本上的**别的**行（`job_id <> $6` 排除自己），再插入。
+        const isCurrent = inner.current(stored.target_ref, stored.content_kind)?.job_id === stored.job_id;
+        const supersededRow = !isCurrent;
+        const insertValues = [
+          stored.job_id,
+          stored.target_ref.type,
+          stored.target_ref.id,
+          stored.target_ref.revision,
+          stored.content_kind,
+          stored.port_kind,
+          stored.prompt_id,
+          stored.job_revision,
+          stored.state,
+          stored.lease_token,
+          stored.authorization_epoch,
+          stored.submitted_by,
+          stored.deadline_at,
+          stored.decision,
+          JSON.stringify(stored.reason_codes),
+          stored.hard_rule_passed,
+          stored.rule_version,
+          stored.model_version,
+          stored.prompt_version,
+          jsonOrNull(stored.contract_value),
+          jsonOrNull(stored.gate_holder),
+          stored.error_code,
+          JSON.stringify(stored.evidence),
+          supersededRow,
+          stamp(stored.created_at),
+          stamp(stored.updated_at),
+        ];
+        const supersedeValues = [
+          stored.target_ref.type,
+          stored.target_ref.id,
+          stored.target_ref.revision,
+          stored.content_kind,
+          stamp(stored.updated_at),
+          stored.job_id,
+        ];
+        const write = async (
+          query: (text: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>,
+        ) => {
+          if (isCurrent) await query(SUPERSEDE_SQL, supersedeValues);
+          await query(INSERT_SQL, insertValues);
+          // `ON CONFLICT (job_id) DO NOTHING` 命中已有行时不写任何东西：**必须读回**确认状态，
+          // 不得假设"没报错 ⇒ 状态正确"（否则旧行会带着错误的 superseded 留在库里）。
+          const read = await query(READ_SUPERSEDED_SQL, [stored.job_id]);
+          const row = read.rows[0];
+          const actual = row !== undefined && row.superseded === true;
+          if (row === undefined || actual !== supersededRow) {
+            throw new Error(
+              `读回不一致：job ${stored.job_id} 期望 superseded=${supersededRow}，实际 ${row === undefined ? '缺行' : String(actual)}`,
+            );
+          }
+        };
+        if (isTransactor(options.pool)) {
+          const client = await options.pool.connect();
+          try {
+            await client.query('BEGIN');
+            await write((text, values) => client.query(text, values));
+            await client.query('COMMIT');
+          } catch (error) {
+            try {
+              await client.query('ROLLBACK');
+            } catch {
+              // 回滚自身失败不能盖掉原始错误：原始错误才是"没落库"的判据。
+            }
+            throw error;
+          } finally {
+            client.release();
+          }
+          return;
+        }
+        // 只有假池（无 connect）走这里：顺序语句，原子性仅在真池成立。
+        await write((text, values) => options.pool.query(text, values));
+      });
+      return stored;
+    },
+    update(record) {
+      // 内层先判"任务是否存在"，保持与内存实现逐字一致的同步抛错。
+      const stored = inner.update(record);
+      enqueue({ job_id: stored.job_id, creates: false }, async () => {
+        await options.pool.query(UPDATE_SQL, [
+          stored.job_id,
+          stored.state,
+          stored.lease_token,
+          stored.decision,
+          JSON.stringify(stored.reason_codes),
+          stored.hard_rule_passed,
+          stored.rule_version,
+          stored.model_version,
+          stored.prompt_version,
+          jsonOrNull(stored.contract_value),
+          jsonOrNull(stored.gate_holder),
+          stored.error_code,
+          JSON.stringify(stored.evidence),
+          stored.superseded,
+          stamp(stored.updated_at),
+        ]);
+      });
+      return stored;
+    },
+    byJobId: (jobId) => inner.byJobId(jobId),
+    current: (target, kind) => inner.current(target, kind),
+    forRevision: (target) => inner.forRevision(target),
+    history: (target) => inner.history(target),
+    markWithdrawn(target) {
+      inner.markWithdrawn(target);
+      enqueue({ job_id: null, creates: false }, async () => {
+        await options.pool.query(WITHDRAW_SQL, [
+          target.type,
+          target.id,
+          target.revision,
+          now().toISOString(),
+        ]);
+      });
+    },
+    isWithdrawn: (target) => inner.isWithdrawn(target),
+    snapshotCounts: () => inner.snapshotCounts(),
+    isDurable(record) {
+      // 建行必须真的落定过；且该任务名下不得有**未确认**的写入（含刚失败的那次）。
+      if (!confirmedCreates.has(record.job_id)) return false;
+      return !journal.some((intent) => intent.job_id === record.job_id);
+    },
+    async flush() {
+      await chain;
+      if (journal.length === 0) return;
+      if (journal.some((intent) => !intent.reported)) {
+        // 这些写入是**本次调用自己**刚尝试过的：不再原地重试，先如实拒绝；
+        // 重试发生在下一次业务调用（`flush` 一次调用只打一次库，失败就停）。
+        for (const intent of journal) intent.reported = true;
+        throw ledgerFailure(lastFailure ?? new Error('审核台账写入未落定'), '落库');
+      }
+      // 到这里说明日志里的失败是**上一次调用**留下的：重放它们。
+      // 只重放**未确认**的项（监工 P2）：日志允许在"前缀未确认"时保留后面的已落定项，
+      // 把已 confirmed 的后项一起重放，会让它再跑一次退位、把现任行退位掉。
+      // 四条语句都是幂等的（建行/下架 `ON CONFLICT ... DO NOTHING`，退位与更新按主键覆盖），
+      // 所以"失败一次再来一次"不会写坏账本；真实落定后日志自然清空 ⇒ 本次放行。
+      for (const intent of journal.filter((item) => !item.confirmed)) schedule(intent);
+      await chain;
+      if (journal.length === 0) return;
+      // 仍然没落定 ⇒ 继续**拒绝**（沿用既有安全错误码）。失败项留在日志里：
+      // 既不会被"空队列"洗白，也不会永久毒化台账（存储恢复后下一次 flush 重放成功即放行）。
+      throw ledgerFailure(lastFailure ?? new Error('审核台账写入未落定'), '落库');
+    },
+  };
+}
+
+/**
+ * 判定台账的持久实现是否可用：`pool` 缺席时**不**退化成本地内存成功路径
+ * （真实运行环境里"落不了库"必须是可见的失败，而不是静默降级）。
+ */
+export function moderationLedgerStoreOf(pool: SqlRunner | null | undefined, now?: () => Date): PostgresModerationLedger | null {
+  if (pool === null || pool === undefined) return null;
+  return createPostgresModerationLedger({ pool, now });
+}
+
+/* 导出面说明：本模块只对外提供两件东西——建台账的 `createPostgresModerationLedger`，
+ * 以及"有池才建、无池不降级"的 `moderationLedgerStoreOf`。装配点（`app.ts`）用前者，
+ * 因为装配处已经判过 `pool === null`；后者留给需要"缺失即不可用"语义的调用方。 */

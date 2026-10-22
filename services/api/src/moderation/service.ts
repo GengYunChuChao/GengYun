@@ -448,6 +448,42 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
   const executionMode = deps.executionMode;
   const ledger = deps.store ?? createModerationLedger();
+  /**
+   * 写入面 fail-closed 的唯一出口：把台账写入落到持久层并等待落定。
+   *
+   * - 内存台账没有 `flush` 成员 ⇒ 空操作（既有装配行为逐字不变）；
+   * - 持久台账 `flush` 拒绝 ⇒ **统一**折算成 `PROVIDER_UNAVAILABLE`（台账实现自己抛的
+   *   `ApiError` 原样透传），语义是"结论未落库"：调用方不得把本次操作当成成功，
+   *   公开可见性也不许前进（`publish` 在 `setVisibility(..., 'published')` 之前调用它）。
+   */
+  async function flushLedger(): Promise<void> {
+    if (ledger.flush === undefined) return;
+    try {
+      await ledger.flush();
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('PROVIDER_UNAVAILABLE', '审核台账落库失败：结论未落定，按未落库处理');
+    }
+  }
+  /**
+   * 发布路径的**第二道闸**（`#434` 监工 P1）：本次发布所依据的每一条台账结论都必须
+   * **已确认落库**。
+   *
+   * 为什么在 `flushLedger()` 之后还要再查一次：`flush` 只证明"台账自己认为写完了"。
+   * 历史上这里出过洞——首次建行失败被流式消费掉之后，空队列的 `flush` 返回成功，
+   * 于是"内存里 approved、账本里 0 行"的结论仍被拿去翻公开可见性。现在两条判据并存：
+   * ① `flush` 只有真正落库才放行；② `isDurable` 直接问"这条记录确认落库了吗"。
+   * 内存台账没有 `isDurable`（无持久层，既有装配行为逐字不变）。
+   */
+  function assertDecisionsDurable(tasks: readonly ModerationTaskRecord[]): void {
+    const isDurable = ledger.isDurable;
+    if (isDurable === undefined) return;
+    for (const task of tasks) {
+      if (isDurable.call(ledger, task) !== true) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '审核结论尚未确认落库：本次发布按未落库拒绝');
+      }
+    }
+  }
   const cache = deps.cache ?? createReadCache();
   const authority = deps.authority ?? createSubstituteContentAuthority();
   const clock = deps.now ?? (() => new Date());
@@ -774,6 +810,9 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
     const stored: ModerationTaskRecord[] = [];
     for (const record of records) stored.push(ledger.create(record));
+    // 写入面 fail-closed：结论必须先落库，再往调用方返回"已受理"。
+    // 持久台账的 flush 拒绝 ⇒ 本次投递直接抛错（不落库的结论不许被当成已登记）。
+    await flushLedger();
 
     const overallDecision: AuditState = stored.every((record) => record.decision === 'approved')
       ? 'approved'
@@ -842,6 +881,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       return refuse('INPUT_UNCERTAIN');
     }
 
+    // 本次发布**所依据**的任务：闸门全过的那些（发布前要逐条确认它们真的落库了）。
+    const gateTasks: ModerationTaskRecord[] = [];
     for (const kind of contentKindsFor(mediaCount)) {
       const task = ledger.current(target, kind);
       if (task === null) {
@@ -877,13 +918,22 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       });
       if (recheck.stale === true || recheck.action !== 'reuse' || recheck.publishable !== true) {
         reasons.push(...recheck.reason_codes.map((code) => `${kind}:${code}`));
+        continue;
       }
+      gateTasks.push(task);
     }
 
     if (reasons.some((reason) => reason.includes('DECISION_NOT_APPROVED') || reason.startsWith('NOT_SCREENED'))) {
       return refuse('INPUT_UNCERTAIN');
     }
     if (reasons.length > 0) return refuse('REVISION_CONFLICT');
+
+    // 写入面 fail-closed（本片核心）：翻 `published` **之前**必须确认结论已经落库。
+    // 落库失败 ⇒ 本次发布抛错，公开可见性保持写前状态（绝不出现"库里有内容、账本里没结论"）。
+    // `flush` 会重放上一次失败的写入（存储恢复即可落定）；重放仍失败则继续抛既有 503。
+    await flushLedger();
+    // 第二道闸：`flush` 放行**不等于**这条结论真的在账本里（空队列曾经能"洗白"失败）。
+    assertDecisionsDurable(gateTasks);
 
     await authority.setVisibility(target, 'published');
     try {
@@ -923,6 +973,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
     await authority.setVisibility(target, 'hidden');
     await authority.setPublishedRevision(target, null);
     ledger.markWithdrawn(target);
+    // 下架标记同样要落定：标记丢了，旧回调就能把内容复活（`isWithdrawn` 是那道闸门）。
+    await flushLedger();
     // 失效在**同一次调用内同步完成**：返回的键就是这次真正清掉的键（不另发事件）。
     const invalidated = cache.invalidateTarget(target);
     return {
@@ -1228,6 +1280,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       },
     };
     ledger.update(updated);
+    // 回调结算先落库再应答 `accepted`：落不了库就不许把这条回调标记成已结算。
+    await flushLedger();
     replayGuard.markSettled(envelope.job_id, envelope.event_id);
     return {
       accepted: true,

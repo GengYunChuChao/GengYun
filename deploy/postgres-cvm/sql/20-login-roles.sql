@@ -950,3 +950,66 @@ GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 -- 变异与未取得见 docs/verification/gy-r28-function-surface-parity-20261021.md。
 -- ----------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.consent_policy_immutable() FROM PUBLIC;
+
+-- ----------------------------------------------------------------------------
+-- M. 审核判定台账的列级授权（R29 / 迁移 0028_moderation_persistence.sql）
+--
+-- 为什么这段必须真存在（监工 2026-10-22-0119 指出的「运行时授权披露缺口」的**代码**答复）：
+-- `services/api/src/moderation/ledger-pg.ts` 在真实库上写两张台账表；迁移 0028 本身**只建表、
+-- 零 GRANT**，运行时角色 gengyun_api_runtime 对这两张表一列都碰不了。缺本段 ⇒ 部署后写面
+-- 全量 42501（fail-closed 的名字有了、库里的路没通），而内存台账/单测完全看不出来。
+--
+-- 列清单不是抄文档，而是**从 ledger-pg.ts 的四条语句逐列反推**，并由
+-- `tests/unit/sql-column-coverage.test.mjs` 的 parseSqlText/collectRequirements 管线交叉
+-- 验证（少一列立刻判红）：`:66` SUPERSEDE_SQL 的 UPDATE 2 列 + 4 列 WHERE、`:74` INSERT_SQL
+-- 的 26 列 + `ON CONFLICT (job_id)`、`:89` UPDATE_SQL 的 14 列 + `WHERE job_id`、`:97`
+-- WITHDRAW_SQL 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
+--
+-- SELECT 面**只给被 WHERE / 冲突目标读到的列**（PG 的 UPDATE/DELETE 要求对 WHERE 里出现的列有
+-- SELECT 权）：decisions 是 `job_id` + SUPERSEDE 的 `target_type/target_id/target_revision/
+-- content_kind/superseded`，withdrawals 是三列主键。台账**只写不读**（`byJobId`/`current`/
+-- `forRevision`/`history` 全部读内存 Map，模块里没有一条 SELECT 语句），所以"读台账"的列权限
+-- 一列都不给；将来真加读路径，必须同时改本段与 90-assert 的 `expected`。
+--
+-- ⛔ DELETE / TRUNCATE / REFERENCES / TRIGGER 一律不授：台账是不可变审计面，ledger-pg.ts 里
+-- 没有任何物理删除语句（下架/撤销都是 `superseded = TRUE` 的单向门）。
+-- 前置：两张表必须已存在 ⇒ 顺序是 迁移（migrate.ts up）⇒ 本脚本；缺表即显式失败。
+-- #region gy-r29-moderation-ledger-grant
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['moderation_decisions','moderation_withdrawals']) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少审核判定台账表：%（迁移 0028_moderation_persistence.sql 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.moderation_decisions, public.moderation_withdrawals FROM PUBLIC;
+
+-- 审核判定台账（迁移 0028）：ledger-pg.ts:74 的 INSERT 26 列；SELECT 只给 WHERE/冲突目标用到的 6 列。
+GRANT SELECT (job_id,target_type,target_id,target_revision,content_kind,superseded)
+  ON public.moderation_decisions TO gengyun_api_runtime;
+GRANT INSERT (job_id,target_type,target_id,target_revision,content_kind,port_kind,prompt_id,
+              prompt_version,job_revision,state,lease_token,authorization_epoch,submitted_by,
+              deadline_at,error_code,decision,reason_codes,hard_rule_passed,rule_version,
+              model_version,contract_value,gate_holder,evidence,superseded,created_at,updated_at)
+  ON public.moderation_decisions TO gengyun_api_runtime;
+-- 写面状态机：ledger-pg.ts:89 的 UPDATE 14 列；:66 的 supersede 是其中 2 列（superseded/updated_at）。
+GRANT UPDATE (state,lease_token,decision,reason_codes,hard_rule_passed,rule_version,
+              model_version,prompt_version,contract_value,gate_holder,error_code,evidence,
+              superseded,updated_at)
+  ON public.moderation_decisions TO gengyun_api_runtime;
+
+-- 下架台账（迁移 0028）：ledger-pg.ts:97 的 INSERT 4 列；三列主键是 ON CONFLICT 冲突目标。
+GRANT SELECT (target_type,target_id,target_revision)
+  ON public.moderation_withdrawals TO gengyun_api_runtime;
+GRANT INSERT (target_type,target_id,target_revision,withdrawn_at)
+  ON public.moderation_withdrawals TO gengyun_api_runtime;
+-- #endregion gy-r29-moderation-ledger-grant
+
+\echo '20-login-roles.sql：已授予 public.moderation_decisions / public.moderation_withdrawals 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 moderation/ledger-pg.ts；SELECT 只给 WHERE 与 ON CONFLICT 冲突目标读到的列；无表级写权限）。'
+\echo '20-login-roles.sql：审核判定台账不授 DELETE（不可变审计面；ledger-pg.ts 无任何物理删除语句）。'

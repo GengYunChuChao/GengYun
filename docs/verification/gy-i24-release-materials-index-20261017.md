@@ -147,6 +147,24 @@
   `rollback/` 25 个（`0002..0026`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 25／24／31 变为 **26／25／31**。
   §2 表行与 §4 第 8 项的「当前读数」已按本树同步。该迁移头部如实登记了本片**未**给三张语音表加
   `GRANT`（`deploy/postgres-cvm/**` 一字未改）⇒ 运行时角色直连会 `42501`，授权属后续授权片。
+- **本片新增迁移（2026-10-22，GY-R29，#29 审核判定台账持久化 / PR #434）**：`feat/gy-r29-moderation-ledger`
+  （基线 `origin/main` = `9f26f003`）新增 `0028_moderation_persistence.sql` 与其
+  `rollback/0028_moderation_persistence.down.sql`（迁移号按派单分配，**未改号、未造占位迁移**）⇒ 按本树实测：
+  迁移 **27** 个（`0001..0026` ＋ `0028`；`0027` 由 PR #428 持有，见下条）、`rollback/` 26 个
+  （`0002..0026` ＋ `0028`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 26／25／31 变为 **27／26／31**。
+  ⚠️ 与历次「连续无缺号」不同，本次是**有意缺号且已机器化登记**：`services/api/db/migration-reservations.json`
+  声明 `0027` 归 #428（`feat/gy-r28-admin-audit-observability`），`services/api/src/db/migrate.ts` 的
+  `inspectMigrationNumbering()` 把「1..max 上每个号要么有文件、要么已在台账声明」变成真库臂的硬断言
+  （`undeclaredGaps` 空、`reservedButPresent` 空、`count + 保留数 === max`）⇒ 未声明的缺号照样红，
+  登记后又被真实文件补齐也照样红（防躺平）。
+  该迁移头部如实登记两件**未**做的事：零 `GRANT`（授权由 `deploy/postgres-cvm/sql/20-login-roles.sql` 的
+  `#region gy-r29-moderation-ledger-grant` 段给，列级 SELECT/INSERT/UPDATE，⛔ 无 DELETE），零函数
+  （不新增函数面，故 `function_surface_manifest` 不动）。
+- **合流复核十一（2026-10-22，#434 合流 `origin/main` = `d4d48088` 后按合流树实测）**：`0027_admin_audit_observability.sql`
+  （#428）与本片 `0028_moderation_persistence.sql`（#434）**共存**在同一棵树上 ⇒ 迁移 **28** 个（`0001..0028`，
+  连续无缺号）、`rollback/` **27** 个（`0002..0028`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 27／26／31
+  变为 **28／27／31**；`services/api/db/migration-reservations.json` 的 `0027` 预留随之被真实文件补齐（属于预期状态，
+  真库臂的 `inspectMigrationNumbering()` 判据见 `services/api/src/db/migrate.ts`）。
 - **合流复核十（2026-10-22，R29-S5／GY-I18 第一批，`feat/gy-r29-i18-admin-switch`）**：本片新增
   `0027_admin_audit_observability.sql` 与其 `rollback/0027_admin_audit_observability.down.sql`（迁移号按派单分配：
   合流前 `origin/main` 最大号为 `0026`，且不与在途 #419 的 media 授权片撞号；**未改号、未造占位迁移**）⇒
@@ -217,7 +235,7 @@
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
 | [`../../docs/release/runbook-20261022.md`](../../docs/release/runbook-20261022.md) | **一次发版**的端到端操作清单（GY-R31 · #24）：门禁 → 备份 → 恢复演练 → 迁移 → 启动 → 发布后验证 → 灰度放量判据 → 回滚（含 7 条量化触发条件）→ 值班分诊 → 演练记录 | ✅ 在册（门禁第 16 项按「10 个必备小节＋命令块下限＋无占位符」判据：`16/16 项通过`）；§9 的备份/删库/恢复读数为 2026-10-22 本机 PG 17.11 实跑，**CVM 与云托管侧未取得**，不代表已验收 |
 | [`../../docs/verification/gy-r31-i24-release-20261022.md`](../../docs/verification/gy-r31-i24-release-20261022.md) | **#24 交付证据页**（GY-R31）：材料盘点含 8 项空缺、runbook 内容摘要、备份→删库→恢复演练读数（PG 17.11 / 端口 55728）、门禁第 16 项改前红改后绿、5 条负控制、6 项未取得 | ✅ 在册；演练读数为 2026-10-22 本机实跑，**真实 CVM 发版未取得** |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **26** 个：`0001..0026`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0026`（25 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。2026-10-21 `feat/gy-r28-speech-persist`（S20，#20 语音持久化）新增 `0026_speech_persistence.sql` 与其 down 脚本 ⇒ **26／25／31**。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **28** 个：`0001..0028`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0028`（27 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。2026-10-21 `feat/gy-r28-speech-persist`（S20，#20 语音持久化）新增 `0026_speech_persistence.sql` 与其 down 脚本 ⇒ **26／25／31**。2026-10-22 合流 `origin/main` = `d4d48088` 后 `0027_admin_audit_observability.sql`（PR #428）与本片 `0028_moderation_persistence.sql`（PR #434）**并存**于同一棵树 ⇒ **28／27／31**。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 
@@ -225,7 +243,7 @@
 
 门禁：`node tools/verify-release-materials.mjs`（16 项，退出码 0 = 通过）。逐项判据与读数：
 
-| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 2／8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47`／main `31a746d`／`145ebe4`（含 #279 的 `0021`）／`607c03c`（含 #312）／叠在 #296 新 head（`71eda51`）、2026-10-20 合流 main `df043a7`（含 #296 的 `0022` 与 #313）／`ff1b39d`（含 #295 的 `0023`）后的树复跑） |
+| # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 2／8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47`／main `31a746d`／`145ebe4`（含 #279 的 `0021`）／`607c03c`（含 #312）／叠在 #296 新 head（`71eda51`）、2026-10-20 合流 main `df043a7`（含 #296 的 `0022` 与 #313）／`ff1b39d`（含 #295 的 `0023`）／`d4d48088`（含 #428 的 `0027`）后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
 | 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 31 个文件全部在索引表行中（31/31 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20） |
@@ -234,7 +252,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 26 个（`0001..0026`，连续无缺号）；`rollback/` 25 个（`0002..0026`）；`migrate.ts` 报错文本 | ✅ 一致（本片树实读：`0001..0026` 连续无缺号，`0002..0026` 的 down 全部在册、无 `0001`；`0026_speech_persistence.sql` 与其 down 由 S20（#20 语音持久化，2026-10-21）新增；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 28 个（`0001..0028`，连续无缺号）；`rollback/` 27 个（`0002..0028`）；`migrate.ts` 报错文本 | ✅ 一致（本片树实读：`0001..0028` 连续无缺号，`0002..0028` 的 down 全部在册、无 `0001`；`0028_moderation_persistence.sql` 与其 down 由 GY-R29（#29 审核判定台账持久化，PR #434，2026-10-22）新增、`0027_admin_audit_observability.sql` 与其 down 由 R29-S5／GY-I18（PR #428，2026-10-22）合流带入；`0026_speech_persistence.sql` 与其 down 由 S20（#20 语音持久化，2026-10-21）新增；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 | 11 | **发版 runbook 可按步骤执行**（GY-R31 · #24 新增）：10 个必备小节齐全、可复制命令块不少于 14 个且无「只有注释」的空块、全文无占位符（`TODO` 类字样与尖括号占位） | `read('docs/release/runbook-20261022.md')` → `runbookProblems()` | ✅ 通过（`PASS 发版 runbook 可按步骤执行（必备小节＋命令块＋无占位符）`）；**改前读数**：runbook 未落盘时 `FAIL … docs/release/runbook-20261022.md 不在册`、`15/16`、退出码 1；写作中曾因正文残留 `rows:public.<表>` 被本条判红一次（`含占位符：…:179`），改写后转绿 —— 探针确实咬到了自己 |
