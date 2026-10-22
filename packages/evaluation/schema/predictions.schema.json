@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gengyun.local/schema/evaluation-predictions-1.0.0.json",
+  "title": "耕云评估预测文件（7 个任务的输出结构契约）",
+  "description": "评估命令 `--predictions` 的结构契约：文件是 `{\"<sampleId>\": <该任务的原始模型输出>}`。预测文件本身**不含 task 字段**，任务由样本索引记录的 `task` 决定，故按任务的权威绑定见顶层 `x-taskShapes`（任务 → 形状），由 `packages/evaluation/src/predictions-validate.mjs` 的 validatePredictions() 强制；此处的根级 anyOf 只用于「脱离索引时也能做单条形状体检」。",
+  "$comment": "根级只能 anyOf 不能 oneOf：`decision=rejected` 同时是拍草（WEED_DECISIONS）与社区筛查（MODERATION_DECISIONS）的合法闭集成员，一条合法预测可能同时匹配两个形状；按任务的唯一绑定由 x-taskShapes 承担，不能由形状重叠推断。",
+  "type": "object",
+  "additionalProperties": { "$ref": "#/$defs/prediction" },
+  "x-taskShapes": {
+    "weed_photo": "#/$defs/weed_photo",
+    "label_ocr": "#/$defs/label_ocr",
+    "registration_match": "#/$defs/registration_match",
+    "ai_moderation": "#/$defs/ai_moderation",
+    "tts": "#/$defs/tts",
+    "asr": "#/$defs/asr",
+    "qa": "#/$defs/qa"
+  },
+  "x-serviceMarkers": {
+    "description": "服务失败标记（`error` 非空 / `failed=true` / `served=false`）优先于形状要求：这类条目不计作「结构不合契约」，而是由评估程序如实记为 invalid 并让门禁保持 not_evaluated（见 packages/evaluation/src/frozen.mjs 的 validatePredictionOutput）。",
+    "fields": ["error", "failed", "served"]
+  },
+  "$defs": {
+    "prediction": {
+      "title": "单条预测（任务未知时的形状体检）",
+      "type": "object",
+      "anyOf": [
+        { "$ref": "#/$defs/weed_photo" },
+        { "$ref": "#/$defs/label_ocr" },
+        { "$ref": "#/$defs/registration_match" },
+        { "$ref": "#/$defs/ai_moderation" },
+        { "$ref": "#/$defs/tts" },
+        { "$ref": "#/$defs/asr" },
+        { "$ref": "#/$defs/qa" }
+      ]
+    },
+    "weed_photo": {
+      "title": "拍草识别（weed_photo）",
+      "description": "`candidates` 按模型置信度降序，Top1/Top3 只取前三位；`decision` 必须是四值闭集之一——只有 `candidate`（展示为候选）才算一次有效识别，`uncertain`/`retake`/`rejected` 计入分母但按未命中/拒识计。拒识是**合法结果**，不是失败。",
+      "type": "object",
+      "required": ["candidates", "decision"],
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["speciesId"],
+            "properties": {
+              "speciesId": { "type": "string", "minLength": 1, "description": "GY-I03 规范物种 ID（不是中文展示组名）。" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "模型置信度，契约区间 [0,1]。" }
+            }
+          }
+        },
+        "decision": { "enum": ["candidate", "uncertain", "retake", "rejected"] }
+      }
+    },
+    "label_ocr": {
+      "title": "标签 OCR（label_ocr）",
+      "description": "契约：`fields`=**原始模型输出**；`corrected=true` 时原始输出必须另放 `originalFields`（校正稿不得冒充模型输出），手工校正结果放 `correctedFields` 且单独报告、不缩分母、不补成绩。",
+      "type": "object",
+      "anyOf": [
+        { "required": ["fields"] },
+        {
+          "required": ["corrected", "originalFields"],
+          "properties": { "corrected": { "const": true } }
+        }
+      ],
+      "properties": {
+        "fields": { "$ref": "#/$defs/ocrFields" },
+        "originalFields": { "$ref": "#/$defs/ocrFields" },
+        "correctedFields": { "$ref": "#/$defs/ocrFields" },
+        "corrected": { "type": "boolean", "description": "是否经人工校正；true 时原始输出须在 originalFields。" }
+      }
+    },
+    "ocrFields": {
+      "title": "标签可见字段（OCR 固定评估字段集）",
+      "type": "object",
+      "properties": {
+        "registrationNumber": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "ingredient": { "type": ["string", "null"] },
+        "content": { "type": ["string", "null"] },
+        "dosageForm": { "type": ["string", "null"] }
+      }
+    },
+    "registration_match": {
+      "title": "登记匹配（registration_match）",
+      "description": "`status` 与样本 `gold.expectedStatus` 逐条比对（逐场景全对才算达门禁）。此处**不设闭集**：登记匹配的真实状态值域由匹配实现决定，写死枚举会把合法新状态误判为契约违规；枚举/取值约束属于该能力域自身的契约，不属评估程序。",
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "minLength": 1,
+          "examples": ["match", "no_match", "conflict"],
+          "description": "匹配结论；须与 gold.expectedStatus 同域。已知取值示例见 examples。"
+        }
+      }
+    },
+    "ai_moderation": {
+      "title": "AI 社区筛查（ai_moderation）",
+      "description": "最终决策为闭集：`published`=发布（正常通过）；`blocked`/`pending_review`/`rejected`/`quarantined`/`hidden`=拦截/待复核/隔离。`unknown`、服务错误字符串或任何非法枚举**都不属于正常通过**，必须拒绝而非按正常计。",
+      "type": "object",
+      "required": ["decision"],
+      "properties": {
+        "decision": { "enum": ["published", "blocked", "pending_review", "rejected", "quarantined", "hidden"] }
+      }
+    },
+    "tts": {
+      "title": "普通话自动播报（tts）",
+      "description": "固定样例六项判定**缺一不可**：必须是明确布尔值，缺失记未测、不得默认成功、也不得把四项准确外推为六项均已测。",
+      "type": "object",
+      "required": [
+        "numbersCorrect",
+        "unitsCorrect",
+        "negationCorrect",
+        "conditionsCorrect",
+        "stopReplayCorrect",
+        "textFallbackCorrect"
+      ],
+      "properties": {
+        "numbersCorrect": { "type": "boolean", "description": "数字读法正确。" },
+        "unitsCorrect": { "type": "boolean", "description": "单位读法正确。" },
+        "negationCorrect": { "type": "boolean", "description": "否定词读法正确。" },
+        "conditionsCorrect": { "type": "boolean", "description": "条件/前提读法正确。" },
+        "stopReplayCorrect": { "type": "boolean", "description": "可停止、可重播正确。" },
+        "textFallbackCorrect": { "type": "boolean", "description": "文字替代（降级）正确。" }
+      }
+    },
+    "asr": {
+      "title": "普通话 ASR（asr）",
+      "description": "契约：`hypothesis`=**原始转写**；`corrected=true` 时原始转写必须另放 `originalHypothesis`、原始关键字段放 `originalKeyFieldsExact`，否则视为原始输出缺失（不得用手改稿补成绩）。关键字段正确性只能来自原始输出。",
+      "type": "object",
+      "anyOf": [
+        { "required": ["hypothesis"] },
+        {
+          "required": ["corrected", "originalHypothesis"],
+          "properties": { "corrected": { "const": true } }
+        }
+      ],
+      "properties": {
+        "hypothesis": { "type": "string", "description": "原始转写文本。" },
+        "originalHypothesis": { "type": "string", "description": "校正前的原始转写（corrected=true 时必填）。" },
+        "keyFieldsExact": { "$ref": "#/$defs/asrKeyFields" },
+        "originalKeyFieldsExact": { "$ref": "#/$defs/asrKeyFields" },
+        "corrected": { "type": "boolean", "description": "是否经人工校正；true 时原始转写须在 originalHypothesis。" }
+      }
+    },
+    "asrKeyFields": {
+      "title": "ASR 关键字段逐项是否正确",
+      "type": "object",
+      "properties": {
+        "drugNames": { "type": "boolean" },
+        "numbers": { "type": "boolean" },
+        "units": { "type": "boolean" }
+      }
+    },
+    "qa": {
+      "title": "大模型资料问答（qa）",
+      "description": "两类样本各自的判定字段不同：可答样本看 `correct`+`sourceSupported`（答对**且有来源**），不足/危险/注入样本看 `expectedBehaviorOk`（按预期行为作答）。故此处用 anyOf 表达「至少具备本类样本的判定字段」，空对象不算合法预测。",
+      "type": "object",
+      "anyOf": [
+        { "required": ["correct", "sourceSupported"] },
+        { "required": ["expectedBehaviorOk"] }
+      ],
+      "properties": {
+        "status": { "type": "string", "minLength": 1, "examples": ["answered", "insufficient", "blocked"], "description": "问答结论标签；不参与评分，仅作可读记录。" },
+        "correct": { "type": "boolean", "description": "可答样本：答案是否正确。" },
+        "sourceSupported": { "type": "boolean", "description": "可答样本：答案是否有资料出处支撑。" },
+        "expectedBehaviorOk": { "type": "boolean", "description": "不足/危险/注入样本：是否按预期行为作答。" }
+      }
+    }
+  }
+}

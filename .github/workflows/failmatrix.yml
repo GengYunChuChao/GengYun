@@ -1,0 +1,64 @@
+name: Failmatrix regression
+
+# GY-I22（#22）失败回归矩阵的**独立、可单独重跑**的门禁。
+#
+# 跑的是什么：`npm run test:failmatrix` = `node tests/failmatrix/run.mjs`，168 条表驱动用例
+# （HTTP 148 + 受信 seam 20），进程内 `app.inject`，零端口、零外呼、零 PG、零密钥。
+# 一条用例的判定 = 状态码/错误码逐字 + 四条拒绝不变量（`Cache-Control: no-store`、
+# `error{code,message,retryable,details}` 封套、`meta.contract_version === '1.0.0'`、
+# `meta.execution_mode === 'stub'`、**失败不得带 `data`**）+ 成功侧 `data`/强 ETag +
+# 用例自带 `check` + 跨用例同形对照。
+#
+# 为什么另开一个 workflow（而不是并进 `engineering-shell.yml`）：那条流水线 13 个 job 正被
+# 在飞 PR 频繁改动，加 job 会抢同一个文件；这套矩阵原先只能通过
+# `tests/unit/gy-i22-failmatrix.test.mjs` 间接跑在 `unit-tests` 里，**没有自己的检查名**
+# （分支保护勾不到）、**没有机读产物**（红了只能翻日志）、**不能单独重跑**（要等整包单测）。
+# 这里给它一个固定名字 `failmatrix` + `--json` 归档。
+#
+# 不需要 PG / 网络 / 密钥 / 微信开发者工具：`tests/failmatrix/world.mjs` 里的四个网络 seam
+# **持有即抛错**，执行模式固定 `stub`。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  failmatrix:
+    name: failmatrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # 失败判定就是这个退出码：run.mjs 只要有一条 FAIL 就以 1 退出（见文件末尾
+      # `return fail === 0 ? 0 : 1`），步骤红 ⇒ job 红。一次跑完约 1 秒（实测 1.13s）。
+      - run: npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"
+      # 二次判定：万一将来有人把 runner 改成「打完成绩也退 0」，这一条仍然会红。
+      # （同时把 PASS/FAIL 计数打到日志首行，省得翻 168 行。）
+      - name: 机读结果必须 PASS == 总数、FAIL == 0
+        if: always()
+        run: |
+          test -f "$RUNNER_TEMP/failmatrix/matrix.json" || {
+            echo "没有机读结果 $RUNNER_TEMP/failmatrix/matrix.json：runner 在打报告之前就崩了"
+            exit 1
+          }
+          node -e 'const p=require(process.argv[1]);const t=p.totals;console.log(`矩阵 ${t.total} 条：PASS ${t.pass} / FAIL ${t.fail} · 基线 ${String(p.base_commit).slice(0,12)} · ${p.transport}`);if(t.fail!==0||t.pass!==t.total||t.total===0){console.error(`矩阵有失败或被清空：FAIL ${t.fail} / 合计 ${t.total}`);process.exit(1);}' "$RUNNER_TEMP/failmatrix/matrix.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # actions/upload-artifact v4.6.2
+        if: always()
+        with:
+          name: failmatrix-${{ github.sha }}
+          path: ${{ runner.temp }}/failmatrix/
+          if-no-files-found: warn
+          retention-days: 14

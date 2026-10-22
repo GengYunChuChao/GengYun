@@ -21,14 +21,35 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveGateBash } from './bash-resolver.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const INDEX = 'docs/verification/gy-i24-release-materials-index-20261017.md';
 const TOOL = 'tools/verify-release-materials.mjs';
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 
-test('门禁·离线核验工具实跑通过（退出码 0、无 FAIL）', () => {
-  const run = spawnSync(process.execPath, [TOOL], { cwd: ROOT, encoding: 'utf8' });
+/**
+ * 门禁里的 `bash -n` 由**子进程的 PATH** 解析 `bash`。本机 `bash` 是 WSL 存根（只打印
+ * 「wsl: 检测到 localhost 代理配置…」并返回 1），于是下面两条跑门禁的用例在干净 PATH 下恒红——
+ * 红的不是代码，是「bash 是哪一个」。这里显式解析真 bash（`GY_BASH` 优先），把它的目录前置进
+ * 子进程 PATH；一个真 bash 都没有时**显式 skip 并打印指路**，⛔ 不静默 pass、⛔ 不改判据。
+ */
+const BASH = resolveGateBash();
+
+/** 没有可用 bash ⇒ skip（带可操作提示）。返回 false 时调用方必须 return，不能继续断言。 */
+function requireBash(t) {
+  if (BASH.available) {
+    t.diagnostic(`门禁用 bash = ${BASH.path}`);
+    return true;
+  }
+  t.diagnostic(BASH.hint);
+  t.skip(`无可用 bash，跳过门禁实跑：${BASH.attempts.map((a) => `${a.candidate}（${a.reason}）`).join('；')}`);
+  return false;
+}
+
+test('门禁·离线核验工具实跑通过（退出码 0、无 FAIL）', (t) => {
+  if (!requireBash(t)) return;
+  const run = spawnSync(process.execPath, [TOOL], { cwd: ROOT, encoding: 'utf8', env: BASH.env });
   assert.equal(run.status, 0, `工具退出码必须为 0\n${run.stdout}\n${run.stderr}`);
   assert.equal(/^FAIL/m.test(run.stdout), false, '不得有 FAIL 行');
   const passCount = (run.stdout.match(/^PASS/gm) || []).length;
@@ -118,6 +139,7 @@ function indexLinkTargets(text) {
 }
 
 test('反向回归·索引页少一行在册记录 ⇒ 门禁转红并点名未索引（同一镜像不改则全绿）', (t) => {
+  if (!requireBash(t)) return;
   const dir = makeTempRoot(t);
   const deployFiles = git(ROOT, ['ls-files', 'deploy']).split('\n').map((s) => s.trim()).filter((s) => s !== '');
 
@@ -180,7 +202,9 @@ test('反向回归·索引页少一行在册记录 ⇒ 门禁转红并点名未�
   // ---- 断言一（对照组）：镜像**一字不改**时门禁必须全绿。
   // 没有这一步，「改错后转红」可能红在镜像没铺全（少铺一个文件就是一项 FAIL），而不是红在改动上。
   const runGate = () => {
-    const run = spawnSync(process.execPath, [TOOL], { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 120000 });
+    const run = spawnSync(process.execPath, [TOOL], {
+      cwd: dir, encoding: 'utf8', windowsHide: true, timeout: 120000, env: BASH.env,
+    });
     assert.equal(run.error, undefined, `镜像内门禁未能启动：${run.error?.message ?? ''}`);
     return { status: run.status, stdout: run.stdout ?? '', stderr: run.stderr ?? '' };
   };
