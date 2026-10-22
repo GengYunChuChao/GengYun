@@ -419,13 +419,16 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     if (tables !== null) return tables;
     const state = await probeTables();
     if (state === 'unknown') {
-      // 探测都失败了：先按**既有分类**折叠原因（57014/55P03 ⇒ PROVIDER_TIMEOUT），
-      // 再对"形状读不懂"这种无原因的未知给一条明确文案 —— 两种都是 fail-closed，区别只在可诊断性。
+      // 探测抛错：先按**既有分类**折叠原因（57014/55P03 ⇒ PROVIDER_TIMEOUT，08xxx/40001 等瞬时 ⇒
+      // PROVIDER_UNAVAILABLE + `retryable:true`，42501/28P01/42883 等运维动作 ⇒ `retryable:false`）。
       if (probeFailure !== null) classifyOcrDatabaseError(probeFailure);
+      // 走到这里只剩「**应答形状读不懂**」（空行/非数组/`ready` 不是布尔）：这是确定性缺陷
+      // （驱动或查询形状不对），同一请求重试永远不会变好 ⇒ `retryable:false`（R31-S-retryable 口径），
+      // 原因分类入 `details` 供排障，⛔ 不再借「可能是抖动」把确定性失败标成可重试。
       throw new ApiError(
         'PROVIDER_UNAVAILABLE',
-        'OCR 持久化表就绪探测结果未知（连接/权限/超时）：按数据库故障 fail-closed（未知 ≠ 未迁移）',
-        { retryable: true },
+        'OCR 持久化表就绪探测结果未知（应答形状无法识别）：按数据库故障 fail-closed（未知 ≠ 未迁移）',
+        { retryable: false, details: [{ field: 'ocr_tables', code: 'PROBE_SHAPE_UNKNOWN' }] },
       );
     }
     tables = state;

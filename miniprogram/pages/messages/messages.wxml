@@ -24,7 +24,14 @@
 
     <view class="section-head">
       <view class="section-head__title">互动通知</view>
-      <view class="pill pill--gray">{{unreadNote}}</view>
+      <!-- 未读数取不到时，pill 自身就是可点重试入口（#17 G3）：`onRetry` 只挂在 status==='error' 的
+           state-view 上，「列表成功 + 未读数失败」时无法触达，这里补一个只重读未读数的入口。 -->
+      <view
+        wx:if="{{unreadRetryable}}"
+        class="pill pill--gray pill--retry"
+        bindtap="onRetryUnread"
+      >{{unreadNote}}</view>
+      <view wx:else class="pill pill--gray">{{unreadNote}}</view>
     </view>
 
     <!-- demo messages 页的 .section-head：左侧筛选 chips（demo `.chips > .chip`／`.chip.active`
@@ -80,18 +87,32 @@
       ></state-view>
 
       <view class="message-list" wx:else>
-        <view class="message-row" wx:for="{{visibleItems}}" wx:key="id">
+        <!-- 跳转入口（#17 G1）：行上的 bindtap 把行 id 交给 messages.js 的 onOpenTarget，
+             只有 `canOpen`（服务端 available 且目标为 post/comment）的行才真的跳转，
+             其余行不跳转、并保留行内「不可查看／不提供跳转入口」的如实说明。 -->
+        <view
+          class="message-row"
+          wx:for="{{visibleItems}}"
+          wx:key="id"
+          data-id="{{item.id}}"
+          data-type="{{item.type}}"
+          data-target-type="{{item.targetType}}"
+          hover-class="{{item.canOpen ? 'message-row--pressed' : 'none'}}"
+          bindtap="onOpenTarget"
+        >
           <view class="message-icon"><view class="gy-icon gy-icon--{{item.icon}}"></view></view>
           <view class="message-copy">
             <view class="message-copy__title">{{item.label}}<view wx:if="{{item.unread}}" class="unread-dot"></view></view>
             <view class="message-copy__text">{{item.referenceNote}}</view>
             <view class="message-copy__time">{{item.time}}{{item.unread ? ' · 未读' : ' · 已读'}}</view>
+            <view wx:if="{{item.canOpen}}" class="message-copy__action">查看详情 ›</view>
             <view wx:if="{{item.unread}}" class="row-actions">
+              <!-- catchtap：按钮点了只做「标记已读」，不再冒泡到行上的 onOpenTarget。 -->
               <button
                 class="btn btn--secondary"
                 data-id="{{item.id}}"
                 data-revision="{{item.revision}}"
-                bindtap="onMarkRead"
+                catchtap="onMarkRead"
                 disabled="{{markingId === item.id}}"
               >{{markingId === item.id ? '正在标记…' : '标记已读'}}</button>
             </view>
@@ -118,7 +139,11 @@
     <view class="section">
       <view class="section-head">
         <view class="section-head__title">首版消息类型</view>
-        <view class="section-head__meta">当前仅「内容审核结果」有生产路径</view>
+        <!-- #17 文案订正：`#422` 起社区事件真落库、`#425` 起目标可用性端口接线，
+             评论区/点赞/审核结果三类都有生产路径（`services/api/src/community/events.ts`
+             `communityEventMessageType`：comment_created→comment、like_created→like、其余→moderation），
+             只有「系统通知」仍无生产点。 -->
+        <view class="section-head__meta">评论、点赞、内容审核结果已有生产路径；系统通知暂无</view>
       </view>
       <view class="panel">
         <view class="info-list">
@@ -145,7 +170,8 @@
           </view>
         </view>
       </view>
-      <view class="demo-caption">上面的列表只呈现服务端已产生的消息：当前服务端只为「内容审核结果」写入了消息，「评论与点赞」「系统通知」尚无可产生消息的服务端路径（属另一片，本页不假装齐全），本页不展示任何模拟通知。</view>
+      <!-- #17 文案订正：原文「只为内容审核结果写入消息／评论与点赞暂无生产路径」在 `#422`／`#425` 后不成立。 -->
+      <view class="demo-caption">上面的列表只呈现服务端已产生的消息：服务端现已为「评论与点赞」「内容审核结果」写入真实消息（社区事件经消息域端口落库，不是本页伪造），只有「系统通知」尚无可产生消息的服务端路径（属另一片，本页不假装齐全），也不展示任何模拟通知。</view>
     </view>
   </block>
 </view>
