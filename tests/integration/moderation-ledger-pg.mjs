@@ -15,8 +15,8 @@
 //       **0027（origin/main 的真实文件，按序先于 0028）** ⇒ UP（两表/四条索引/部分唯一索引出现，
 //       列数 26 与 5，且 0027 的函数仍在岗）⇒ ROLLBACK（本片对象消失，`users` 与社区/消息表
 //       逐字仍在，0027 的对象不被连带拆掉）⇒ REPLAY（再出现）。
-//   [F] 保留号躺平判据回归（无数据库）：临时目录（已含真实 0027）+ **夹具台账**（登记 27）⇒
-//       条目被判"必须删除"、`count＋保留 !== max` 同时判红、计划顺序为 0027 → 0028。
+//   [F] 保留号躺平判据回归（无数据库）：临时目录（已含真实 0027）+ **夹具台账**（登记 27；另并入
+//       真实台账里 31 号的声明缺位）⇒ 条目被判"必须删除"、`count＋保留 !== max` 同时判红、计划顺序为 0027 → 0028。
 //   [W] 写穿透：`create` + `flush` ⇒ 台账行真的在库里（列值与内存台账逐字段相等）；
 //       同 `job_id` 再 `create` ⇒ 同步抛错且库里仍是 1 行。
 //   [S] supersede：同目标版本再建任务 ⇒ 旧行 `superseded=true`、新行 `false`，当前行恒 1 条。
@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 
-import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
+import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering, loadMigrationReservations } from '../../services/api/src/db/migrate.ts';
 
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
@@ -264,8 +264,8 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：`origin/main = 056cf424` 之后 0029（#419 media_object_cleanup）与
-    // 0030（本片 F13 行级作者注销引用）都已在树上 ⇒ 目录 `0001..0030` 连续、无缺号。
+    // 末项取树上的真实最大号：0032（#15 举报者行级注销引用）已在树上，0031 是按台账**声明缺位**的
+    // 保留号（`migration-reservations.json` 登记给 #19）⇒ 目录 `0001..0032`，唯一缺口是 0031。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
@@ -274,7 +274,9 @@ function forwardMergeNumbering() {
     }
     assert.equal(readdirSync(tmp).includes(RESERVED_FILENAME), true, `临时目录必须含真实 ${RESERVED_FILENAME}（否则本臂是空的）`);
     const merged = discoverMigrations(tmp);
-    const numbering = inspectMigrationNumbering(merged, FIXTURE_RESERVATION);
+    // 台账取「真实台账 + 夹具」：真实台账已声明 31 号缺位（#19 的 0031），本臂若只喂夹具台账，
+    // 就会把 0031 误判成「未声明缺号」（发现器漏项的形态），与"判机制不判当前台账内容"的本意相悖。
+    const numbering = inspectMigrationNumbering(merged, [...loadMigrationReservations(), ...FIXTURE_RESERVATION]);
     assert.deepEqual(
       numbering.reservedButPresent.map(formatMigrationVersion),
       ['0027'],
@@ -283,7 +285,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何缺号（0029/#419 与 0030/本片都已在树上）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419 与 0032/本片都已在树上；0031 已由台账声明缺位）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -292,13 +294,13 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0030',
-      '合流树末项是 0030（F13 行级作者注销引用）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0032',
+      '合流树末项是 0032（#15 举报者行级注销引用）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,
       false,
-      `count(${numbering.count}) + 保留(1) = ${numbering.count + 1} ≠ max(${numbering.maxVersion}) ⇒ 第二条不变量必须同时判红`,
+      `count(${numbering.count}) + 保留(${numbering.reserved.length}) = ${numbering.count + numbering.reserved.length} ≠ max(${numbering.maxVersion}) ⇒ 第二条不变量必须同时判红`,
     );
     const order = merged.map((migration) => migration.filename);
     const at27 = order.indexOf(RESERVED_FILENAME);
