@@ -20,8 +20,12 @@
 //
 // 受控范围：`services/api/src/{db,privacy,conversations}/**`（#22 原范围）
 //   + `services/api/src/{admin/ops,ocr,speech,recognitions,media}/**`（R31 扩域）。
-//   扩域理由：#455 落地后暴露的缺口之一 —— 这几处 store/gate 写回「兜底恒 true」不会判红。扩域后实测出
-//   **9 处**既有站点，全部登记在白名单里（其中 4 处是本片新发现的真缺陷，登记不修：本片只动守卫与清单）。
+//   扩域理由：#455 落地后暴露的缺口之一 —— 这几处 store/gate 写回「兜底恒 true」不会判红。在基线
+//   `d4d48088` 上扩域，实测出 **9 处**既有站点，全部登记进白名单（其中 5 处当时判为真缺陷：2 处 admin/ops
+//   兜底恒 true + 3 处 `tablesReady`）。**时点**：本片基线随后并入了 `#455`（head `0eaf1bde`），那 5 处
+//   已由 #455 修掉（2 处改为委托共享判据 `flagReadFailure(error)`，3 处改为 `retryable: false` +
+//   `details: PROBE_SHAPE_UNKNOWN`），对应的 3 条 `tablesReady` 白名单条目按「不腐烂」规则删除 ⇒ 现存白名单
+//   12 条、受控范围内 `judgement: none` 归零。本片自身仍未改业务行为：那 5 处是 #455 的改动，不是本片的。
 //   派单建议里还提到 `synthesis/`，但 @54ce029 下**没有**该目录（外发合成实现在
 //   `services/api/src/privacy/synthesis-egress.ts`，已被范围内覆盖）。
 //

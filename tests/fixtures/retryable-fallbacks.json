@@ -12,9 +12,9 @@
     }
   ],
   "counts": {
-    "total": 34,
+    "total": 32,
     "has": 31,
-    "none": 3
+    "none": 1
   },
   "entries": [
     {
@@ -33,31 +33,17 @@
     },
     {
       "file": "services/api/src/admin/ops/flags-pg.ts",
-      "line": 311,
+      "line": 341,
       "function": "mapFlagReadError",
       "judgement": "has",
-      "owner": "GY-I22"
-    },
-    {
-      "file": "services/api/src/admin/ops/flags-pg.ts",
-      "line": 317,
-      "function": "mapFlagReadError",
-      "judgement": "none",
       "owner": "R31"
     },
     {
       "file": "services/api/src/admin/ops/flags-pg.ts",
-      "line": 329,
+      "line": 359,
       "function": "mapFlagWriteError",
       "judgement": "has",
       "owner": "GY-I22"
-    },
-    {
-      "file": "services/api/src/admin/ops/service.ts",
-      "line": 650,
-      "function": "flagReadFailure",
-      "judgement": "none",
-      "owner": "R31"
     },
     {
       "file": "services/api/src/auth/wechat.ts",

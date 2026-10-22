@@ -20,8 +20,15 @@
 //
 // 本文件由 R31（#455 后两个已知缺口）从守卫内联搬出并扩域：#455 落地后受控域只有
 // `{db, privacy, conversations}`，`admin/ops`、`ocr`、`speech`、`recognitions`、`media` 的
-// store/gate 写回「兜底恒 true」不会被判红 —— 扩域后实测出 9 处既有站点（见下），其中 4 处是本片新发现的
-// 「确定性失败却声称可重试」，登记不修（本片只动守卫与清单，⛔ 不动业务行为）。
+// store/gate 写回「兜底恒 true」不会被判红 —— 扩域后实测出 9 处既有站点（见下）。
+//
+// **时点**：本片基线已并入 `#455`（head `0eaf1bde`）。扩域当时判为「确定性失败却声称可重试」的 5 处
+// （`flags-pg.ts` 兜底恒 true、`service.ts` 兜底恒 true、`ocr|speech|recognitions` 的 `tablesReady`）
+// 已被 `#455` 修掉：前两处改为委托共享判据 `flagReadFailure()`（`isTransientDatabaseError` 分档），
+// 后三处改为 `retryable: false` + `details: PROBE_SHAPE_UNKNOWN` ⇒ 对应白名单条目已删。
+// 现存 12 条 = 原 6 条（`GY-I22`）+ 扩域新增的 6 条（`R31`），全部是「有判据」的合法放宽；
+// 受控范围内 `judgement: none` 的兜底站点已归零，且由 `tests/unit/retryable-fallback-inventory.test.mjs`
+// 的全仓清单持续把守（清单里仍有 `none` 条目＝本片登记不修的其它域站点）。
 
 /** 允许「非 false 的 retryable」的全部站点。 */
 export const ALLOWED_RETRYABLE = [
@@ -82,7 +89,9 @@ export const ALLOWED_RETRYABLE = [
       + '本片不改它，登记在此以免守卫误报——它的分档正是本片其它站点的先例。',
   },
 
-  // —— R31 扩域后新增的 9 条（owner：R31） ——
+  // —— R31 扩域后新增的 6 条（owner：R31） ——
+  // 扩域当时实测 9 处，其中 3 条 `tablesReady`（ocr/speech/recognitions）已被 #455 改成
+  // `retryable: false` + `details: PROBE_SHAPE_UNKNOWN` ⇒ 站点不再非 false，条目按「不腐烂」规则删除。
   {
     file: 'services/api/src/admin/ops/flag-gate.ts',
     function: 'failClosedError',
@@ -97,29 +106,27 @@ export const ALLOWED_RETRYABLE = [
   {
     file: 'services/api/src/admin/ops/flags-pg.ts',
     function: 'mapFlagReadError',
-    retryable: 'true',
+    retryable: 'flagReadFailure(error)',
     message: '全局开关读取暂不可用',
-    kinds: ['providerUnavailable', 'fallback'],
     owner: 'R31',
     reason:
-      '**兜底恒 true（已知缺口，登记不修）**：`mapFlagReadError` 末尾（316-317）对「无法归类的驱动错误」也返回'
-      + '`retryable: true`，理由是注释里的一句「连接被掐/网络抖动等 ⇒ 可重试」。这与同族分类器'
-      + '（`conversations/store-pg.ts:63-69`、`ocr|speech|recognitions/*-pg` 的 `isTransientDatabaseError`）'
-      + '「无法归类 ⇒ false」的口径**冲突**：无法归类的错误完全可能就是确定性缺陷（如列名拼错、类型不匹配）。'
-      + '按 errors.ts:28-40 应改为 false，属本片新发现的真缺陷，待修。',
+      '**有判据**（合法放宽）：`#455`（`0eaf1bde`）把这一处原本的兜底恒 `true` 改为委托同一文件导出的'
+      + '`flagReadFailure(error)` —— 该判据直接走 `db/pool.ts` 的 `isTransientDatabaseError`'
+      + '（08xxx/53xxx/57P0x/40001/40P01 ⇒ true；无 `code` 的无法归类错误、其余 SQLSTATE ⇒ false），'
+      + '原始 `code` 落 `details` 供排障。扩域当日本条被判「兜底恒 true（真缺陷）」，现已修复，故判定改写为'
+      + '「有判据」。守卫只钉表达式文本，改判据实现必须同步改这里。',
   },
   {
     file: 'services/api/src/admin/ops/service.ts',
-    function: 'flagReadFailure',
-    retryable: 'true',
+    function: 'throwFlagReadFailure',
+    retryable: 'flagReadFailure(error)',
     message: '全局开关读取暂不可用',
-    kinds: ['providerUnavailable', 'fallback'],
     owner: 'R31',
     reason:
-      '**兜底恒 true（已知缺口，登记不修）**：`flagReadFailure(error)` 只放行已分类的 `ApiError`，其余一律'
-      + '503 + `retryable: true`；注释（647）声称「传输/超时类按可重试」，但代码不区分传输/超时与代码缺陷。'
-      + '与同一功能面的 `flag-gate.ts` 分档（`read_error` vs `unrecognized`）**互相矛盾**：同一种「开关读不出来」'
-      + '在两处给出相反的可重试结论。按 errors.ts:28-40 应改为 false 或接入 `FlagGateFailCause`，属真缺陷，待修。',
+      '**有判据**（合法放宽）：`#455` 把原来的本地兜底（一律 `retryable: true`）改为委托 `flags-pg.ts` 的'
+      + '`flagReadFailure(error)`，函数同时改名 `flagReadFailure` → `throwFlagReadFailure`（避免与共享判据重名）。'
+      + '于是同一功能面的「开关读不出来」只有一套口径，与 `flag-gate.ts` 的 `read_error`/`unrecognized` 分档'
+      + '不再互相矛盾。扩域当日本条被判「兜底恒 true（真缺陷）」，现已修复。',
   },
   {
     file: 'services/api/src/ocr/store-pg.ts',
@@ -134,18 +141,6 @@ export const ALLOWED_RETRYABLE = [
       + '（注释原文见 ocr/store-pg.ts:133-136）。',
   },
   {
-    file: 'services/api/src/ocr/store-pg.ts',
-    function: 'tablesReady',
-    retryable: 'true',
-    message: '持久化表就绪探测结果未知',
-    owner: 'R31',
-    reason:
-      '**确定性失败却声称可重试（已知缺口，登记不修）**：该分支只在 `probeFailure === null` 时可达 —— 即探测'
-      + 'SQL **真的执行成功**但形状读不懂（无行 / `ready` 非布尔，见 400-407），这是确定性状态，不是瞬时抖动；'
-      + '消息文案自称「未知 ≠ 未迁移」＝fail-closed，却给了 `retryable: true`。按 errors.ts:28-40 应为 false。'
-      + '同一形状在 `speech/store-pg.ts:369`、`recognitions/store-pg.ts:478` 各有一处（三处同构）。',
-  },
-  {
     file: 'services/api/src/recognitions/store-pg.ts',
     function: 'classifyRecognitionDatabaseError',
     retryable: 'isTransientDatabaseError(error)',
@@ -156,16 +151,6 @@ export const ALLOWED_RETRYABLE = [
       + '（db/pool.ts `isTransientDatabaseError`）与同一条分档注释：瞬时类 true，权限/缺表/缺函数/无法归类 false。',
   },
   {
-    file: 'services/api/src/recognitions/store-pg.ts',
-    function: 'tablesReady',
-    retryable: 'true',
-    message: '持久化表就绪探测结果未知',
-    owner: 'R31',
-    reason:
-      '**确定性失败却声称可重试（已知缺口，登记不修）**：与 `ocr/store-pg.ts:424` 逐字同构（只有分类器名字不同）：'
-      + '可达条件是「探测成功但形状读不懂」，属确定性状态 ⇒ 按 errors.ts:28-40 应为 false。待修。',
-  },
-  {
     file: 'services/api/src/speech/store-pg.ts',
     function: 'classifySpeechDatabaseError',
     retryable: 'isTransientDatabaseError(error)',
@@ -174,16 +159,6 @@ export const ALLOWED_RETRYABLE = [
     reason:
       '**有判据**（合法放宽）：与 ocr/recognitions/messages/favorites/history/community/conversations 同一分类器'
       + '（db/pool.ts `isTransientDatabaseError`）与同一条分档注释：瞬时类 true，权限/缺表/缺函数/无法归类 false。',
-  },
-  {
-    file: 'services/api/src/speech/store-pg.ts',
-    function: 'tablesReady',
-    retryable: 'true',
-    message: '持久化表就绪探测结果未知',
-    owner: 'R31',
-    reason:
-      '**确定性失败却声称可重试（已知缺口，登记不修）**：与 `ocr/store-pg.ts:424` 逐字同构（只有分类器名字不同）：'
-      + '可达条件是「探测成功但形状读不懂」，属确定性状态 ⇒ 按 errors.ts:28-40 应为 false。待修。',
   },
 ];
 
