@@ -192,6 +192,7 @@ import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
 import { createModerationService } from './moderation/service.ts';
+import { createPostgresModerationLedger } from './moderation/ledger-pg.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
 import type { ContentAuthorityPort } from './moderation/types.ts';
@@ -832,6 +833,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       ...(moderationInjection?.ruleOptions === undefined
         ? {}
         : { ruleOptions: moderationInjection.ruleOptions }),
+      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), // GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。

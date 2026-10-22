@@ -38,7 +38,7 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { createMemoryOcrStore } from '../../services/api/src/ocr/store.ts';
 import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
-import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
+import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
 
 const ENV = 'OCR_PG_TEST_URL';
 const DB = 'gengyun_ocr_jobs_test';
@@ -239,29 +239,49 @@ let FOREIGN_ID;
 // ---------------------------------------------------------------------------
 // [M] 迁移三连 + 结构不变量
 // ---------------------------------------------------------------------------
+/**
+ * 迁移编号体检模块化到产品代码 `inspectMigrationNumbering()`（`services/api/src/db/migrate.ts`）。
+ *
+ * 为什么不再是「本文件自己算一遍」：缺号分两类，而它们在「已发现集合」上完全同形 ——
+ *   ① 发现器静默漏项（`discoverMigrations()` 跳过某个合法文件）：**必须红**；
+ *   ② 该迁移在另一条在飞分支上（本分支带 0028，0027 属 #428）：不是漏项，但结构判不出来。
+ * ②用机器可读的保留台账 `services/api/db/migration-reservations.json` 声明，判据三条：
+ * 未声明缺号红、`count + 保留数 === max`、保留号一旦出现即红（条目不许躺平）。三条都在
+ * `inspectMigrationNumbering()` 里一次算清，并有独立单测（`tests/unit/migration-numbering.test.mjs`）
+ * 与负控制；本文件只负责把读数打印出来并断言它绿（⛔ 不再各写一份口径、各自漂移）。
+ */
 async function migrationTriple() {
-  // 与 `tests/integration/migrations-negative-pg.mjs` 共同的**两条结构不变量**（本片新增 0024 后
-  // 必须仍成立：连续无缺号、总数 === 最大版本号）。这里独立复算一次并打印读数。
+  // 与 `tests/integration/migrations-negative-pg.mjs` 共同的**两条结构不变量**（连续无缺号、总数 === 最大版本号）。
   const discovered = discoverMigrations();
-  const numbers = discovered.map((migration) => Number(migration.version));
-  const max = Math.max(...numbers);
-  const missing = [];
-  for (let expected = 1; expected <= max; expected += 1) {
-    if (!numbers.includes(expected)) missing.push(String(expected).padStart(4, '0'));
-  }
-  assert.deepEqual(missing, [], `迁移版本号必须在 1..${max} 上连续无缺号`);
-  assert.equal(discovered.length, max, `迁移总数必须等于最大版本号（count=${discovered.length}，max=${max}）`);
+  const numbering = inspectMigrationNumbering(discovered);
+  const max = numbering.maxVersion;
+  assert.deepEqual(
+    numbering.undeclaredGaps.map(formatMigrationVersion),
+    [],
+    `迁移版本号必须在 1..${max} 上连续无缺号，且每个缺号都必须在保留台账里声明（未声明＝发现器静默漏项）`,
+  );
+  assert.deepEqual(
+    numbering.reservedButPresent.map(formatMigrationVersion),
+    [],
+    '保留台账里的号必须仍然缺位：文件已出现 ⇒ 删掉那条登记（保留项不许躺平）',
+  );
+  assert.equal(
+    numbering.countMatchesMax,
+    true,
+    `迁移总数 + 已声明保留数必须等于最大版本号（count=${numbering.count}，reserved=${numbering.reserved.length}，max=${max}）`,
+  );
   const names = discovered.map((migration) => migration.filename);
   assert.ok(names.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
   // ⛔ 这里**不再**断言「本片迁移必须是当前末位」。后续切片（0025 起的识别域、语音转写…）必然
   //    追加更大的版本号，而 `recognitions-pg.mjs:280` 原先也断言自己是末位 ⇒ 两条脚本互相锁死，
   //    任何时刻只有一条能绿：0025 落 main 的那一刻（341ad8c）本脚本就在 CI 上常红
   //    （run 39431803337：`本片迁移必须是当前末位（现场 0025_recognitions_persistence.sql）`）。
-  //    真正要守的结构不变量是上面两条（1..max 连续无缺号、count === max）——它们对「新增迁移」
+  //    真正要守的结构不变量是上面两条（1..max 无未声明缺号、count＋保留 === max）——它们对「新增迁移」
   //    自动放行，对「发现器静默漏项／编号错位」变红，且与「谁是末位」无关。本片迁移是否真的
   //    被应用、对象是否真的建出来，由下面的 `to_regclass` 与迁移台账断言逐条证明（恒真断言不加）。
-  say(`[M0] 结构不变量：迁移 ${discovered.length} 个（0001..${String(max).padStart(4, '0')}），
-       连续无缺号；count === max；含 ${MIGRATION}`);
+  say(`[M0] 结构不变量：迁移 ${numbering.count} 个（0001..${formatMigrationVersion(max)}），
+       无未声明缺号（保留号 [${numbering.reserved.map(formatMigrationVersion).join(',') || '无'}]）；
+       count + 保留数 === max；含 ${MIGRATION}`);
 
   const objects = async () => ({
     jobs: (await one("SELECT to_regclass('public.ocr_jobs') AS v")).v,

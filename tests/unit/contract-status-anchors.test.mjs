@@ -46,7 +46,8 @@ const fixture = t => {
     writeFileSync(absolute, content);
   };
   mkdirSync(join(root, 'tools'), { recursive: true });
-  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs']) {
+  for (const name of ['verify-contract-status.mjs', 'contract-status-core.mjs', 'lib/anchor-resolve.mjs']) {
+    mkdirSync(dirname(join(root, 'tools', name)), { recursive: true });
     copyFileSync(join(ROOT, 'tools', name), join(root, 'tools', name));
   }
   put('services/api/src/app.ts', '');
@@ -136,7 +137,7 @@ test('④ 无锚点（纯行号）⇒ 只计不可核、不判红，并列出可
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /证据锚点 0 条引用自带锚点（区间内 0 条 \+ 仅整文件 0 条）；无锚点不可核 9 条（纯行号 9 \+ 无行号源文件 0 \+ 无用例名 0）/);
   assert.match(result.stdout, new RegExp(`WARN: 无锚点可疑引用前 5/9 条：getJob ${STORE.replaceAll('/', '\\/')}:3-5、`));
-  assert.match(result.stdout, /纯行号区间 9 条（有实质内容 9 条；整段仅空白\/收尾行 0 条、区间首行为空行 0 条，只计可疑不判红）/);
+  assert.match(result.stdout, /行号区间 9 条（台账直写 9 条 \+ 符号解析 0 条；有实质内容 9 条；整段仅空白\/收尾行 0 条、区间首行为空行 0 条，只计可疑不判红）/);
   assert.equal(result.stderr, '');
 });
 
@@ -145,7 +146,7 @@ test('纯行号区间整段仅空白/收尾行 ⇒ 只计可疑、不判红', t 
   box.apply([{ path: STORE, lines: '5-5' }]); // 夹具第 5 行只有一个 `}`
   const result = box.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /纯行号区间 9 条（有实质内容 8 条；整段仅空白\/收尾行 1 条、区间首行为空行 0 条，只计可疑不判红）/);
+  assert.match(result.stdout, /行号区间 9 条（台账直写 9 条 \+ 符号解析 0 条；有实质内容 8 条；整段仅空白\/收尾行 1 条、区间首行为空行 0 条，只计可疑不判红）/);
   assert.match(result.stdout, /WARN: 整段无实质内容的前 1\/1 条：getJob services\/api\/src\/jobs\/store\.ts:5-5/);
 });
 
@@ -154,7 +155,7 @@ test('纯行号区间首行为空行 ⇒ 只计可疑计数、不判红', t => {
   box.apply([{ path: STORE, lines: '2-5' }]); // 第 2 行是空行，第 3-5 行有实现
   const result = box.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /纯行号区间 9 条（有实质内容 9 条；整段仅空白\/收尾行 0 条、区间首行为空行 1 条，只计可疑不判红）/);
+  assert.match(result.stdout, /行号区间 9 条（台账直写 9 条 \+ 符号解析 0 条；有实质内容 9 条；整段仅空白\/收尾行 0 条、区间首行为空行 1 条，只计可疑不判红）/);
   assert.doesNotMatch(result.stdout, /WARN: 整段无实质内容/);
 });
 
