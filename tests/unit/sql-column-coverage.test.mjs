@@ -398,22 +398,35 @@ const OPAQUE_ALLOWLIST = [
  * 实测合计：字面量 155→**156**、SELECT 71→**72**、columnRequirements 1234→**1236**（已覆盖同增，
  * 缺口仍 0）、逐文件 `community` 40→**41**；UPDATE/DELETE/INSERT/RETURNING/引用表数/`SELECT *`/
  * 无顶层 FROM 处数**不变**。
+ *
+ * R32（#15 在 #483 之后的去身份残留，迁移 0032，2026-10-23）：`purgeOwnerData` 多了"把举报者指针
+ * 换成行内匿名引用"这一步，剩余读数多一个分支：
+ *   1. 新增 `UPDATE community_reports SET reporter_id = NULL, anonymized_author_ref = $2 …`
+ *      `WHERE reporter_id = $1::uuid RETURNING id`（+字面量 1、+UPDATE 1、+RETURNING 1）；
+ *   2. 剩余读数那条 `SELECT count(*) … UNION ALL …` 多一个 `community_reports` 分支
+ *      （同一条字面量内 ⇒ 字面量/语句数不变，`community_reports.reporter_id` +1 列要求）；
+ *   3. `REPORT_COLUMNS` 常量多一列 `anonymized_author_ref`（读路径投影注销引用）。
+ * 实测合计：字面量 156→**157**、UPDATE 28→**29**、RETURNING 61→**62**、
+ * columnRequirements 1236→**1241**（新语句引用 `id`/`reporter_id`/`anonymized_author_ref` 3 条
+ * + 剩余读数第三分支的 `reporter_id` 1 条 + `REPORT_COLUMNS` 多一列被读路径展开 1 条）、
+ * 逐文件 `community` 41→**42**；SELECT/DELETE/INSERT、引用表数（举报表早已在清单里）、
+ * `SELECT *`/无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 156,
-  statements: { INSERT: 27, UPDATE: 28, SELECT: 72, DELETE: 29 },
-  returningClauses: 61,
+  sqlLiterals: 157,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 72, DELETE: 29 },
+  returningClauses: 62,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1236,
+  columnRequirements: 1241,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 41,
+  community: 42,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -508,15 +521,24 @@ const TABLE_WIDE_COLUMN = '*';
  *   `author_id` 的 SELECT 面早已授权）、逐文件 `community` 40 → **41**；UPDATE/DELETE/INSERT/RETURNING/
  *   引用表 44 张/行锁/onConflict/无顶层 FROM 全部不变。
  *   合流树实测：19 文件 / **265** 条字面量 / 44 张表；列要求 **1715**、已覆盖 **1661**、缺 0。
+ * ⑨ 2026-10-23 R32（#15 在 #483 之后的去身份残留，迁移 0032）：
+ *   本片在 `community/store-pg.ts::purgeOwnerData` 新增一条
+ *   `UPDATE community_reports SET reporter_id = NULL, anonymized_author_ref = $2 … RETURNING id`、
+ *   剩余读数 UNION 多一个 `community_reports` 分支，`REPORT_COLUMNS` 多一列 `anonymized_author_ref`。
+ *   ⇒ 字面量 265 → **266**、UPDATE 46 → **47**、RETURNING 81 → **82**、列要求 1715 → **1720**
+ *   （= +3 条新语句引用 + 1 条剩余读数分支 + 1 条 `REPORT_COLUMNS` 展开）、已覆盖 1661 → **1666**
+ *   （缺口仍 0：`reporter_id` 与新增的 `anonymized_author_ref` 都已在 `20-login-roles.sql` 与
+ *   `90-assert-least-privilege.sql` **成对**授权）、逐文件 `community` 41 → **42**；
+ *   INSERT/SELECT/DELETE、引用表 44 张、行锁、onConflict、无顶层 FROM 全部不变。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 265,
-  statements: { INSERT: 42, UPDATE: 46, SELECT: 141, DELETE: 36 },
-  returningClauses: 81,
+  sqlLiterals: 266,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 141, DELETE: 36 },
+  returningClauses: 82,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
@@ -524,8 +546,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 44,
-  columnRequirements: 1715,
-  coveredRequirements: 1661,
+  columnRequirements: 1720,
+  coveredRequirements: 1666,
   ledgerExemptions: 33,
   rowLockRequirements: 25,
   rowLockExemptions: 1,
@@ -537,7 +559,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 41,
+  'community': 42,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

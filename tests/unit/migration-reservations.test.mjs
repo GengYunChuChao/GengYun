@@ -30,6 +30,13 @@
  * 快照读数恢复为 `gaps=[] / reserved=[]`。判据与负控制**一条未删**：
  * 三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）与「躺平判据回归」全部保留
  * （后者仍用夹具台账把 27 号喂进去，断言逐字不动）。
+ *
+ * **R32（2026-10-23，#15 在 #483 之后的去身份残留 / 迁移 `0032_community_report_reporter_ref.sql`）**：
+ * 裁定 `.pg17/ruling-r32-migration-0031-allocation.md` 把 **31 锁给 #19**，本片只许用 32
+ * ⇒ 树上第一次出现「有依据的缺号」：`gaps=[31] / reserved=[31]`、`maxVersion=32`、
+ * 31 个文件 + 1 保留 === 32（三条不变量照旧全部成立）。这也是本台账存在的原始用途
+ * （跨 PR 缺号），⛔ 不是为了让判据放行而新加的白名单：缺 31 但**没登记**，`undeclaredGaps`
+ * 仍然会判红 —— 负控制①逐字不动地证明了这一点。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -73,7 +80,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：#419 的 0029 已入 main ⇒ 台账按 remove_when 清空，0001..0030 连续、三条不变量成立', () => {
+test('迁移编号/当前仓库：0031 由裁定预留给 #19 ⇒ 台账登记 31（缺号有依据）、末项 0032、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -82,11 +89,11 @@ test('迁移编号/当前仓库：#419 的 0029 已入 main ⇒ 台账按 remove
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [],
-    `#419（0029_media_object_cleanup.sql）已合入 ⇒ 树上不应再有缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [31],
+    `0031 由裁定预留给 #19、本片只许用 0032 ⇒ 树上应有且只有 31 这一个缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [], '#419 落盘后 29 号保留条目必须按 remove_when 删除（保留项不许躺平）');
-  assert.deepEqual(reservations, [], '保留台账必须回到空数组：没有任何「有意缺号」');
+  assert.deepEqual(numbering.reserved, [31], '缺号必须**登记**在台账里（否则与「漏片」无法区分）');
+  assert.deepEqual(reservations.map((item) => item.version), [31], '保留台账当前只应有 31 这一条');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -114,7 +121,16 @@ test('迁移编号/当前仓库：#419 的 0029 已入 main ⇒ 台账按 remove
   );
   assert.ok(
     files.includes('0030_community_author_ref.sql'),
-    '本片（F13 行级作者注销引用）必须落在 0030，⛔ 不许占用 0028/0029',
+    'F13（#483）落在 0030，⛔ 不许占用 0028/0029',
+  );
+  assert.ok(
+    files.includes('0032_community_report_reporter_ref.sql'),
+    'R32（#15 去身份残留）必须落在 0032（31 由裁定锁给 #19），⛔ 不许占用 0030/0031',
+  );
+  assert.equal(
+    files.includes('0031_i19_online_purge_evidence.sql'),
+    false,
+    '#19 的 0031 尚未落盘；一旦落盘，台账里的 31 条目必须删（reservedButPresent 会判红）',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

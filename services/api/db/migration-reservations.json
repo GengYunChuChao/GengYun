@@ -18,7 +18,20 @@
     "【2026-10-22 F13 行级作者注销引用切片 / 迁移 0030 · 已按 remove_when 清空】落 0030 时 #419 的",
     "0029_media_object_cleanup.sql 还在分支上 ⇒ 本台账登记过 29（owner #419）。**#419 已合入 origin/main",
     "（056cf424）**、0029 已真实落盘 ⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
-    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。"
+    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。",
+    "【2026-10-23 R32 / #15 去身份残留切片 · 迁移 0032 · 新增 31 号保留条目】本片只许用 0032",
+    "（裁定 .pg17/ruling-r32-migration-0031-allocation.md 把 0031 锁给 #19），于是树上出现 0031 缺号：",
+    "31 个文件 + 1 保留 === max 32。⛔ 不能靠「清空台账 + 在 README 写一句」蒙过去 —— 那会让",
+    "undeclaredGaps 判红（未声明缺号 = 发现器漏项的形态），而本台账正是把「有意缺号」与「漏片」",
+    "分开的唯一机器判据。该条目的 remove_when 与上面 29 号同一条纪律：0031 一落盘就删。"
   ],
-  "reservations": []
+  "reservations": [
+    {
+      "version": 31,
+      "filename": "0031_i19_online_purge_evidence.sql",
+      "owner": "#19（GY-I19）在线证据落地 + 注销回执可见片",
+      "reason": "0031 由裁定 ruling-r32-migration-0031-allocation.md 预留给 #19；本片（#15 去身份残留）按同一条裁定只许用 0032，因此树上缺 31。文件名以 #19 实际落地时为准，本条只声明号段归属。",
+      "remove_when": "#19 的 0031 迁移真实落盘（合入 main 或本分支）那一刻：留条目会让 count+保留数 > max，判据会立刻判红。"
+    }
+  ]
 }

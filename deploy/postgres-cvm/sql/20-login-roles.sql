@@ -518,15 +518,20 @@ GRANT INSERT (target_type,target_id,user_id)
 -- 取消点赞必须物理删除：唯一键 (user_id,target_type,target_id) 是集合语义的载体。
 GRANT DELETE ON public.community_likes TO gengyun_api_runtime;
 
--- 举报（迁移 0022）：:662 的 INSERT、:666 的 ON CONFLICT (id) DO UPDATE。
-GRANT SELECT (id,revision,reporter_id,target_type,target_id,target_revision,
+-- 举报（迁移 0022）：:662 的 INSERT、:666 的 ON CONFLICT (id) DO UPDATE、:803 的按 id 读。
+-- 迁移 0032（#15 去身份残留 · 举报者行级注销引用）新增行内列 `anonymized_author_ref`：
+--   · 读路径（`REPORT_COLUMNS`）要按行投影注销引用 ⇒ SELECT 面补该列；
+--   · 注销清理在**同一事务**里 `SET reporter_id = NULL, anonymized_author_ref = $2`
+--     ⇒ UPDATE 面补该列（`reporter_id` 本来就在 UPDATE 清单里：ON CONFLICT 重放会改写它）。
+-- ⛔ INSERT 列表不动：新举报的举报者恒为活账户，新列创建时恒为 NULL（0032 的 exactly_one 靠它）。
+GRANT SELECT (id,revision,reporter_id,anonymized_author_ref,target_type,target_id,target_revision,
               state,reason_code,detail,created_at)
   ON public.community_reports TO gengyun_api_runtime;
 GRANT INSERT (id,revision,reporter_id,target_type,target_id,target_revision,
               state,reason_code,detail,created_at)
   ON public.community_reports TO gengyun_api_runtime;
 -- 唯一键是 id ⇒ ON CONFLICT 的重放会改写除 id 外的全部列。
-GRANT UPDATE (revision,reporter_id,target_type,target_id,target_revision,
+GRANT UPDATE (revision,reporter_id,anonymized_author_ref,target_type,target_id,target_revision,
               state,reason_code,detail,created_at)
   ON public.community_reports TO gengyun_api_runtime;
 

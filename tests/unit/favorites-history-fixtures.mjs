@@ -80,12 +80,19 @@ export const PG_MIGRATIONS_WITH_MESSAGES = [
  * 该模块折叠成 blocked 并让"点赞物理删/保留读数"全部失真。**这一条是运行时依赖，不是可选项**：
  * 加/删列清单时必须同步这里（与 `20-login-roles.sql` 的列级授权是同一批列）。
  *
+ * R32（迁移 `0032`，#15 在 #483 之后的去身份残留）再追加：注销清理现在也把举报的
+ * `reporter_id` 置 NULL 并写入行内 `anonymized_author_ref`，剩余读数还要 `count(*)` 第三张表。
+ * 缺 0032 就是 `42703`（`undefined_column`）一类，同理会把该模块折叠成 blocked —— 这不是
+ * "清理完成"。**这一条仍是运行时依赖，不是可选项**：0032 与 `20-login-roles.sql` 的举报表
+ * 列清单是同一批列。
+ *
  * 同样单独一个常量而不是改上面两个迁移集：既有收藏/历史/消息/会话用例的迁移集**逐字不动**。
  */
 export const PG_MIGRATIONS_WITH_COMMUNITY = [
   ...PG_MIGRATIONS_WITH_MESSAGES,
   '0022_community_persistence',
   '0030_community_author_ref',
+  '0032_community_report_reporter_ref',
 ];
 
 export function migrationSql(name) {

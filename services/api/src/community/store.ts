@@ -90,13 +90,29 @@ export type ReportState = 'received' | 'isolated' | 'closed';
 export interface ReportRecord {
   id: string;
   revision: number;
-  reporter_id: string;
+  /**
+   * 举报者账户 id；`null` = 该主体已注销、举报者身份换成了 {@link anonymized_author_ref}。
+   *
+   * 迁移 `0032_community_report_reporter_ref.sql` 起可空，且与 `anonymized_author_ref`
+   * **恰好一个非空**（与帖/评的 0030 同一条不变量）。
+   *
+   * 为什么必须可空而不是"清理时删行"：举报是审核域留痕（`state`/`reason_code`/`target_ref`
+   * 与处置轨迹都要保留），注销只允许断开关联，不允许把「有人报过」这件事一起抹掉。
+   */
+  reporter_id: string | null;
   target_ref: ReportTarget;
   state: ReportState;
   reason_code: string;
   /** 请求体里的 detail（契约 `Report` **没有**这个字段，因此不入响应，只留审计）。 */
   detail: string | null;
   created_at: string;
+  /**
+   * 行内注销引用（迁移 0032）：`reporter_id` 被注销清理置空时写入，形状
+   * `^gy-anon-[0-9a-f]{16}$`。未注销的举报恒为 `null`。
+   *
+   * 与帖/评**共用同一串**（由注销端口按主体生成一次）⇒ 同一主体在社区域只有一个注销身份。
+   */
+  anonymized_author_ref: string | null;
 }
 
 /** 幂等结果引用（不含任何凭据；重放时按引用重新读取并重新鉴权）。 */
@@ -211,7 +227,17 @@ export interface CommunityOwnerPurgeCounts {
   hiddenMedia: number;
   /** 行级作者指针替换行数（迁移 0030；0 = 没有需要替换的行或已是匿名行）。 */
   authorRefsReplaced: number;
-  /** 写入后仍以原 `author_id` 关联本主体的行数（帖 + 评，含软删行）；0 = 账号映射已清干净。 */
+  /**
+   * 写入后仍以原账户 id 关联本主体的行数（帖 + 评 + **举报**，含软删行）；
+   * 0 = 账号映射已从本主体在社区域的全部行上删除。
+   *
+   * ⚠️ 口径（R32 / 迁移 0032 起扩展）：**举报也算**。`community_reports.reporter_id` 是
+   * 「已注销账户 ↔ 谁举报了什么」的最后一条直接关联面；上一版只数帖评 ⇒ 只剩举报的主体
+   * 读数恒为 0，端口于是报 completed（fail-open）。本片把举报并入**同一条**读数，⛔ 不新增
+   * 第二套判据（两套读数会让"哪个说了算"变成可歧义的事实）。
+   *
+   * 名称保留 `authorRefs*` 是历史原因（帖评先落地）；语义是「本主体在社区域的行级账户引用」。
+   */
   authorRefsRemaining: number;
 }
 
@@ -393,18 +419,19 @@ export interface CommunityStore {
    *   - **个人信息清除**：正文命中联系方式/精确门牌等片段时替换为占位符，并推进 revision
    *     （旧审核摘要失效 ⇒ 退出公开面、等重审；行仍在库）；
    *   - **不能可靠脱敏的媒体移除**：`media_ids` 清空（正文保留）；
-   *   - 举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**、
-   *     本域幂等台账按主体清空；
+   *   - 举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、举报者指针换成注销引用
+   *     （迁移 0032：`reporter_id` 置 NULL + 行内 `anonymized_author_ref`，与帖/评同一串）、
+   *     点赞**物理删除**、本域幂等台账按主体清空；
    *   - **作者主动删除（`visibility='deleted'`）的行：内容与可见性原样保留**（注销路径不复活、
    *     不脱敏、不推进版本、不更新 `updated_at`），但**作者关联照样清除**——「保留作者自己的
    *     删除语义」与「删除账号映射」不冲突（P2 返修，见 `store-pg.ts` 同名实现）；
-   *   - **行级作者指针替换**（迁移 0030）：`author_id` 置 NULL、写入随机注销引用
-   *     `anonymized_author_ref`（全行共用同一串；计数进 `authorRefsReplaced`）。
-   *     命中集 = 该主体名下的**全部**行，**含** `visibility='deleted'` 行：只替换作者指针会让
+   *   - **行级作者指针替换**（迁移 0030 / 举报表 0032）：`author_id`/`reporter_id` 置 NULL、
+   *     写入随机注销引用 `anonymized_author_ref`（全行共用同一串；计数进 `authorRefsReplaced`）。
+   *     命中集 = 该主体名下的**全部**行，**含** `visibility='deleted'` 行与举报行：只替换作者指针会让
    *     「普通行 + 已软删行」的主体在 `authorRefsReplaced > 0` 时看起来完成，而软删行仍直接
-   *     关联账户（监工 PR #483 [P2]）。
-   *   - **剩余读数**：`authorRefsRemaining` 在写入完成后**重新测量**「仍以原 `author_id` 关联
-   *     本主体的行数」（帖 + 评，**含**软删行）。端口只认这个数判 blocked，⛔ 不以
+   *     关联账户（监工 PR #483 [P2]）；举报行则是 #483 之后剩下的那股残留。
+   *   - **剩余读数**：`authorRefsRemaining` 在写入完成后**重新测量**「仍以原账户 id 关联
+   *     本主体的行数」（帖 + 评 + 举报，**含**软删行）。端口只认这个数判 blocked，⛔ 不以
    *     `authorRefsReplaced` 冒充完成。读数必须是可信的非负安全整数；测量不可读时返回
    *     {@link AUTHOR_REFS_REMAINING_UNKNOWN}（端口据此 fail-closed 判 `blocked`），
    *     ⛔ 不得用 0 顶替"没读到"。
@@ -682,7 +709,10 @@ export function createMemoryCommunityStore(
     },
 
     async insertReport(record) {
-      reports.set(record.id, cloneReport(record));
+      // 与 PG 实现同口径：**新**举报行的行内注销引用恒为 NULL（迁移 0032 的 `exactly_one`
+      // 要求 `reporter_id` 非空）。这里显式归一成 `null` 而不是留着 `undefined`：
+      // `getReport` 的返回形状必须与 PG 读回逐字段一致，否则"两侧同口径"会在断言里露出差异。
+      reports.set(record.id, cloneReport({ ...record, anonymized_author_ref: record.anonymized_author_ref ?? null }));
     },
     async getReport(id) {
       const record = reports.get(id);
@@ -710,9 +740,10 @@ export function createMemoryCommunityStore(
       //   2. 媒体引用一律移除（社区没有"媒体已可靠脱敏"的证据面）；
       //   3. 作者主动删除（visibility='deleted'）的行：内容与可见性原样不动（不复活、不脱敏），
       //      但**作者关联照清**（P2 返修：删除账号映射不受"作者的删除语义"豁免）；
-      //   4. 行级作者指针替换（迁移 0030）：author_id=null + 行内注销引用（不计入 records）；
-      //   5. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空；
-      //   6. 写入后重新测量 `authorRefsRemaining`（仍指向本主体的行数，含软删行）。
+      //   4. 行级作者指针替换（迁移 0030 / 举报表 0032）：author_id/reporter_id=null +
+      //      行内注销引用（不计入 records）；
+      //   5. 举报清自由文本、举报者指针换注销引用、点赞物理删除、本域幂等台账按主体清空；
+      //   6. 写入后重新测量 `authorRefsRemaining`（仍指向本主体的行数：帖 + 评 + 举报，含软删行）。
       let records = 0;
       let retained = 0;
       let redacted = 0;
@@ -820,9 +851,22 @@ export function createMemoryCommunityStore(
         if (replacedAuthor) authorRefsReplaced += 1;
       }
       for (const [id, report] of [...reports]) {
-        if (report.reporter_id !== ownerId || report.detail === null) continue;
-        reports.set(id, cloneReport({ ...report, detail: null, revision: report.revision + 1 }));
-        records += 1;
+        if (report.reporter_id !== ownerId) continue;
+        // 两件事**分开计数**（与 PG 侧两条语句逐条对应）：
+        //   ① 清自由文本 `detail`：这是"改写正文"，计入 `records` 并推进 revision（既有口径不动）；
+        //   ② 举报者指针换成注销引用（迁移 0032）：**不**计入 `records`、**不**推进 revision ——
+        //      与帖/评"替换作者指针不算改动正文"同一条纪律（混算会让证据读成"改了一行举报"）。
+        let next = report;
+        if (report.detail !== null) {
+          next = { ...next, detail: null, revision: report.revision + 1 };
+          records += 1;
+        }
+        if (replaceAuthorRefs) {
+          next = { ...next, reporter_id: null, anonymized_author_ref: refForRows() };
+        }
+        if (next !== report) reports.set(id, cloneReport(next));
+        // 计数放在写入之后：只有真的替换了才有行数（`replaceAuthorRefs === false` 时一行都不算）。
+        if (replaceAuthorRefs) authorRefsReplaced += 1;
       }
       for (const [key, bucket] of [...likes]) {
         if (!bucket.delete(ownerId)) continue;
@@ -839,15 +883,20 @@ export function createMemoryCommunityStore(
         idempotency.delete(key);
         idempotencyRows += 1;
       }
-      // 写入完成后**重新测量**「还剩多少行仍指向本主体」（帖 + 评、**含**软删行）。
+      // 写入完成后**重新测量**「还剩多少行仍指向本主体」（帖 + 评 + 举报，**含**软删行）。
       // 这是结果读数，不是从 `authorRefsReplaced` 倒推出来的：端口只认它判 blocked，
       // 所以它必须反映此刻表里真实剩下的东西（P2 返修，见 `CommunityOwnerPurgeCounts`）。
+      // ⚠️ 举报必须计入（迁移 0032）：上一版只数帖评 ⇒ 「只有举报」的主体读数恒为 0，
+      // 端口据此报 completed，而 `reporter_id` 仍直连已注销账户（#483 之后的残留 fail-open）。
       let remainingCount = 0;
       for (const post of posts.values()) {
         if (post.author_id === ownerId) remainingCount += 1;
       }
       for (const comment of comments.values()) {
         if (comment.author_id === ownerId) remainingCount += 1;
+      }
+      for (const report of reports.values()) {
+        if (report.reporter_id === ownerId) remainingCount += 1;
       }
       // 与 PG 实现、端口共用**同一个**校验函数（`readAuthorRefsRemaining`）：内存实现按构造
       // 恒为非负安全整数，仍走校验是为了让"两侧同口径"落在代码上，且未来改计数时不会静默

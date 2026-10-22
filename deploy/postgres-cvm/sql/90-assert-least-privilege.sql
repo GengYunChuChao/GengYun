@@ -169,7 +169,7 @@ SELECT target_type, target_id, user_id
 ROLLBACK TO SAVEPOINT r28_probe;
 
 SAVEPOINT r28_probe;
-SELECT id, revision, reporter_id, target_type, target_id, target_revision,
+SELECT id, revision, reporter_id, anonymized_author_ref, target_type, target_id, target_revision,
        state, reason_code, detail, created_at
   FROM public.community_reports LIMIT 0;
 \set r28_probe_sel_community_reports :ERROR
@@ -1202,11 +1202,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY[]::text[],
      true),
     ('community_reports',
-     ARRAY['id','revision','reporter_id','target_type','target_id','target_revision',
+     ARRAY['id','revision','reporter_id','anonymized_author_ref','target_type','target_id','target_revision',
            'state','reason_code','detail','created_at'],
      ARRAY['id','revision','reporter_id','target_type','target_id','target_revision',
            'state','reason_code','detail','created_at'],
-     ARRAY['revision','reporter_id','target_type','target_id','target_revision',
+     ARRAY['revision','reporter_id','anonymized_author_ref','target_type','target_id','target_revision',
            'state','reason_code','detail','created_at'],
      false),
     ('community_moderation_decisions',

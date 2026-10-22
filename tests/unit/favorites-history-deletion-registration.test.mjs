@@ -308,12 +308,26 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(mineCommentRow?.revision, 1);
   // 点赞：物理删（集合语义、没有历史价值，留着等于保留"点过哪些帖"的痕迹）。
   assert.equal(await communityRowCount('community_likes', 'user_id', mine.id), 0, '本主体点赞必须物理删');
-  // 举报：行与 `state` 保留（处置依据/轨迹要留痕），只清自由文本 `detail`。
+  // 举报：行与 `state` 保留（处置依据/轨迹要留痕），只清自由文本 `detail`；
+  // 迁移 0032（R32 · #15 残留）起，举报者指针也必须断开并把注销引用写在行上。
   const mineReportRow = (
-    await db.query('SELECT state, detail FROM community_reports WHERE id = $1::uuid', [communityIds.mineReport])
+    await db.query(
+      'SELECT state, detail, reporter_id, anonymized_author_ref FROM community_reports WHERE id = $1::uuid',
+      [communityIds.mineReport],
+    )
   ).rows[0];
   assert.equal(mineReportRow?.state, 'received', '举报行不得物理删：state 轨迹要留');
   assert.equal(mineReportRow?.detail, null, '举报自由文本 detail 必须清空（该行唯一的 PII 面）');
+  assert.equal(
+    mineReportRow?.reporter_id,
+    null,
+    '迁移 0032：举报者指针必须置空（否则已注销账户与「谁举报了什么」之间仍有一条直接关联）',
+  );
+  assert.match(
+    String(mineReportRow?.anonymized_author_ref),
+    /^gy-anon-[0-9a-f]{16}$/,
+    '举报行必须落形状合法的注销引用（与帖/评同一串）',
+  );
   // 他人：一行不动、形态不变（清空不得越界）。
   assert.equal(await communityRowCount('community_posts', 'author_id', others.id), 1, '他人帖子不动');
   assert.equal(
@@ -345,7 +359,11 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(communityAudit.redacted, 0);
   assert.equal(communityAudit.hiddenMedia, 0);
   assert.equal(communityAudit.blocked, undefined, '迁移 0030 后正常路径不再有未完成项（行级替换 + 行内持久化都已落地）');
-  assert.equal(communityAudit.authorRefsReplaced, 2, '本主体的 1 帖 + 1 评论的作者指针各替换 1 行');
+  assert.equal(
+    communityAudit.authorRefsReplaced,
+    3,
+    '本主体的 1 帖 + 1 评论 + 1 举报的行级账户引用各替换 1 行（迁移 0032 起举报计入）',
+  );
   assert.deepEqual(
     audit.map((entry) => entry.userId),
     [mine.id, mine.id, mine.id, mine.id, mine.id],
@@ -377,9 +395,10 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.ok(
     evidence.community.startsWith(
       'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;'
-        + 'community:media-hidden:0;community:author-refs-replaced:2',
+        // 迁移 0032：举报的举报者指针也计入行级替换 ⇒ 1 帖 + 1 评论 + 1 举报 = 3。
+        + 'community:media-hidden:0;community:author-refs-replaced:3',
     ),
-    `社区证据串必须分开报改动/保留/媒体/作者指针替换：${evidence.community}`,
+    `社区证据串必须分开报改动/保留/媒体/行级账户引用替换：${evidence.community}`,
   );
   assert.equal(
     evidence.community.includes('community:blocked'),
