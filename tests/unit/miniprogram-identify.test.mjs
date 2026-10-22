@@ -864,6 +864,13 @@ test('GY-I09 跨端一致性：小程序的规则版本/条件字段/六类分�
     assert.equal(client.errorCode, server.errorCode, `${branch} 错误码漂移`);
     assert.equal(client.retryable, retry.retryable, `${branch} 可重试语义漂移`);
     assert.equal(client.retryAction, retry.retryAction, `${branch} 重试动作漂移`);
+    // R31-S-retryable：人工介入轴也必须跨端一致（`retryable:true` + `requiresHumanAction:true`
+    // 表示"有恢复入口但必须先由人操作"，页面/客户端不得自动重试）。
+    assert.equal(
+      client.requiresHumanAction,
+      retry.requiresHumanAction,
+      `${branch} 人工介入语义漂移`,
+    );
     assert.equal(client.reason, server.reason, `${branch} 如实原因漂移`);
     assert.equal(client.createsJob, branches.branchCreatesJob(branch));
   }

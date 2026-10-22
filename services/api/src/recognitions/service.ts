@@ -694,6 +694,8 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
   /**
    * 六类分支的**如实指引**（`branches.ts` 闭集的稳定投影）。
    * 逐分支给出：契约内落点（state / error_code）、是否可重试、唯一重试动作、如实原因。
+   * `requires_human_action` 与 `retryable` 分开给出：前者为 `true` 时恢复必须先由人介入，
+   * ⛔ 调用方不得据此自动重试（口径见 `branches.ts` 的 `BranchDescriptor.retryable` 注释）。
    */
   function branchGuide(): {
     branch: string;
@@ -702,6 +704,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
     error_code: string | null;
     retryable: boolean;
     retry_action: string | null;
+    requires_human_action: boolean;
     reason: string | null;
     creates_job: boolean;
   }[] {
@@ -715,6 +718,7 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
         error_code: descriptor.errorCode,
         retryable: retry.retryable,
         retry_action: retry.retryAction,
+        requires_human_action: retry.requiresHumanAction,
         reason: descriptor.reason,
         creates_job: branchCreatesJob(branch),
       };
