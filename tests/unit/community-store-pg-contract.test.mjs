@@ -726,3 +726,137 @@ test('行映射：知识关联三列同空/同有、媒体引用还原为数组'
     linked_knowledge_revision: null,
   })), /知识关联/);
 });
+
+// ---------------------------------------------------------------------------
+// 8. SQL 参数化（K15 · 通用守卫）：请求值一律不得出现在 SQL 文本里
+// ---------------------------------------------------------------------------
+
+/**
+ * 记录型「宽容」假池：只记录语句文本与绑定值，**不求行形状**——一律回空行。
+ *
+ * 与上面 `fakePool` 的分工：`fakePool` 用脚本 1:1 核对答案（多查一次就炸），适合断言语句形状；
+ * 本守卫只关心「请求值有没有漏进 SQL 文本」，行内容与它无关，因此不设脚本、也不会因行数不符误红。
+ */
+function recordingPool() {
+  const calls = [];
+  const handle = async (text, values) => {
+    calls.push({ text: String(text), values: values ?? [] });
+    return { rows: [] };
+  };
+  return {
+    calls,
+    query: handle,
+    async connect() {
+      return { query: handle, release() {} };
+    },
+    statements: () => calls.map((call) => call.text.replace(/\s+/g, ' ').trim()),
+  };
+}
+
+/**
+ * 唯一标记：`7f3a` 是合法十六进制，既能塞进 UUID，也能塞进字符串筛选值——
+ * 只要有一处从绑定参数退化成拼接，SQL 文本里就会留下它。
+ * 数字与时间戳各给独立标记，覆盖 `LIMIT`／`revision` 与 keyset 时间这三类别名。
+ */
+const MARK = '7f3a';
+const MARK_ID = '7f3a0000-1111-4111-8111-111111111111';
+const MARK_USER = '7f3a0000-2222-4222-8222-222222222222';
+const MARK_POST = '7f3a0000-3333-4333-8333-333333333333';
+const MARK_LIMIT = 987654321;
+const MARK_REVISION = 987654322;
+const MARK_TS = '2026-07-31T07:31:07.000Z';
+const MARKS = [MARK, String(MARK_LIMIT), String(MARK_REVISION), MARK_TS];
+
+test('K15 通用守卫：筛选/分页/标识符绑定的请求值一律不出现在 SQL 文本（只允许走绑定参数）', async () => {
+  const pool = recordingPool();
+  const store = storeWith(pool);
+
+  // ① 列表筛选：`listPosts` 的三个面（公开 / 本人 / 全量）。
+  await store.listPosts({
+    scope: 'public',
+    cropId: `crop-${MARK}`,
+    regionCode: `${MARK}00`,
+    after: { createdAt: MARK_TS, id: MARK_ID },
+    limit: MARK_LIMIT,
+  });
+  await store.listPosts({ scope: 'mine', authorId: MARK_USER, limit: MARK_LIMIT });
+  await store.listPosts({ scope: 'all', limit: MARK_LIMIT });
+
+  // ② 列表（评论）与按 id 读（帖子 / 评论 / 举报 / 审核结论）。
+  await store.listComments(MARK_POST);
+  await store.getPost(MARK_ID);
+  await store.getComment(MARK_ID);
+  await store.getReport(MARK_ID);
+  await store.getModeration('post', MARK_ID, MARK_REVISION);
+
+  // ③ 点赞族的标识符绑定。
+  await store.addLike('post', MARK_ID, MARK_USER);
+  await store.removeLike('post', MARK_ID, MARK_USER);
+  await store.countLikes('post', MARK_ID);
+
+  // ④ 幂等台账的键：`scope` 是请求侧拼出来的串，最容易被顺手拼进 SQL。
+  await store.findIdempotency(`PUT /posts/${MARK_ID}/like`, 'ab'.repeat(32));
+
+  // ⑤ 写入面：内容字段同样是请求值；把值直接拼进字面量（`'${title}'`）会在这里翻车。
+  await store.insertPost(
+    postRecord({
+      id: MARK_ID,
+      author_id: MARK_USER,
+      title: MARK,
+      body: MARK,
+      crop_id: `crop-${MARK}`,
+      region_code: `${MARK}00`,
+    }),
+    moderationRecord(),
+  );
+  await store.insertComment(
+    commentRecord({ id: MARK_ID, post_id: MARK_POST, author_id: MARK_USER, body: MARK }),
+    moderationRecord(),
+  );
+
+  const statements = pool.statements();
+  // 覆盖广度自检：这些表/语句没被真的发出来，下面的「SQL 里没有 sentinel」就是空转。
+  for (const expected of [
+    'FROM community_posts',
+    'FROM community_comments',
+    'FROM community_reports',
+    'FROM community_moderation_decisions',
+    'INSERT INTO community_posts',
+    'INSERT INTO community_comments',
+    'INSERT INTO community_likes',
+    'DELETE FROM community_likes',
+    'community_idempotency',
+  ]) {
+    assert.equal(
+      statements.some((sql) => sql.includes(expected)),
+      true,
+      `守卫应覆盖到含「${expected}」的语句（否则这一段是空转）`,
+    );
+  }
+
+  for (const sql of statements) {
+    for (const mark of MARKS) {
+      assert.equal(
+        sql.includes(mark),
+        false,
+        `请求值 ${mark} 出现在 SQL 文本里（被拼接，而不是绑定参数）：${sql}`,
+      );
+    }
+  }
+
+  // 正控制：绑定参数必须真的带上这些值——否则「SQL 里没有」也可能只是「根本没把值传下去」。
+  const bound = pool.calls.flatMap((call) => call.values).map((value) => String(value)).join(' ');
+  assert.equal(bound.includes(MARK), true, '绑定参数里必须出现 sentinel（筛选值 / 标识符），否则守卫测的是空转');
+  assert.equal(bound.includes(String(MARK_LIMIT)), true, '`LIMIT` 必须作为绑定参数出现，而不是被内联成数字');
+});
+
+/*
+ * 覆盖边界（如实登记，避免被读成「全仓 SQL 都守住了」）：
+ *   - 本守卫**动态**覆盖 `services/api/src/community/store-pg.ts` 的列表/筛选/分页/keyset/标识符绑定
+ *     与内容写入语句；抓到的是「这些语句把请求值拼进了 SQL 文本」这一类回归。
+ *   - **不含** `purgeOwnerData` / `claimIdempotency` / `completeIdempotency` / `releaseIdempotency` /
+ *     `awaitIdempotencySettled` 与三个 `commit*IfCurrent`：它们的 SQL 只由固定字面量与 `$N` 组成，
+ *     没有可变列名或排序字段，插值面为零，形状由本文件第 1–6 节的既有断言守。
+ *   - **不含**其他域（messages / favorites / knowledge / ocr / speech / tts / media / consents 等）：
+ *     那些域的点状证据各自留在本域测试里；本守卫不外推成全仓结论。
+ */

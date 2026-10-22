@@ -1,6 +1,7 @@
 # GY-R31（#22 / GY-I22）失败矩阵复盘与缺口矩阵（只读）
 
-- 基线：`origin/main` `d4d48088`（worktree `E:\GengYunCommander\wt-r31-i22`，分支 `feat/gy-r31-i22-recon`）
+- 基线（**本页初稿时点**）：`origin/main` `d4d48088`（worktree `E:\GengYunCommander\wt-r31-i22`，分支 `feat/gy-r31-i22-recon`）
+- **本页时点：`origin/main` `1fbe7572`**（2026-10-22，分支 `docs/gy-r31-i22-evidence-sync`）。§0.3、§1、§2.6、§2.8、§4.1、§4.2、§4.3 的条数与状态以本时点的回写为准（改动逐条列在文末「2026-10-22 回写记录」）；§2 其余表格与 §5/§7 仍是初稿时点的读码结论，未重算。
 - 性质：**只读复盘**。本页不改业务代码、不改 `docs/architecture/contract-status.json`、不跑全量单测。
 - 证据口径：**每一格都给可定位的 `文件:行`**（`tests/...` 或 `services/api/src/...`）。
   本页区分两类事实，不混写：
@@ -41,9 +42,10 @@
 
 - `packages/contracts/operations.json` 共 **113** 个 operation（`docs/architecture/contract-status.json` 的 `operations` 数组同数：partial 96 / implemented 13 / planned 4）。
 - 既有可执行骨架：`tests/failmatrix/`（`cases.mjs` / `seams.mjs` / `world.mjs` / `run.mjs` / `mutations.mjs`），
-  由 `tests/unit/gy-i22-failmatrix.test.mjs:28` 钉住 **`MIN_CASES = 168`**，族条数在
-  `tests/unit/gy-i22-failmatrix.test.mjs:30`：`C1:37 C2:24 C3:27 C4:18 C5:10 C6:10 C7:16 D1:11 D2:4 D3:2 D4:3 E1:3 E2:3`；
-  批次条数 `:32`：`B1:106 B2:36 B3:17 B4:9`。包装器用 `app.inject`（`execution_mode=stub`）真跑 `tests/failmatrix/run.mjs`（`:34-49`）。
+  由 `tests/unit/gy-i22-failmatrix.test.mjs:35` 钉住 **`MIN_CASES = 230`**（初稿时点是 168；230 是 #449 把异步 AI 域
+  C10/C11 拉进矩阵后的下限，只增不减，`168 + 23 + 39 = 230`），族条数在
+  `tests/unit/gy-i22-failmatrix.test.mjs:37`：`C1:37 C2:24 C3:27 C4:18 C5:10 C6:10 C7:16 D1:11 D2:4 D3:2 D4:3 E1:3 E2:3 C10:23 C11:39`；
+  批次条数 `:39`：`B1:106 B2:36 B3:17 B4:9 B5:62`。包装器用 `app.inject`（`execution_mode=stub`）真跑 `tests/failmatrix/run.mjs`（`:41-56`）。
 - 本页的 8 列与 failmatrix 的族**不是一一对应**：C1≈401、C2≈归属 404、C3≈后台 403/503、C4≈会话、C6≈幂等 409、C7≈校验 400、D 族≈受信 seam、E1/E2≈注入与媒体凭据。
 
 ---
@@ -54,14 +56,14 @@
 
 | 判定项 | 可判定表述 | 本页对应章节 | 现状 |
 | --- | --- | --- | --- |
-| A1 | 游客访问每一个需要登录的 operation，一律 401 `SESSION_REQUIRED`（不得是 403/404/500） | §2 各表首列 | **基本齐**：failmatrix C1 有 37 条；异步 AI 域与 `/jobs` 无 failmatrix 覆盖，但域内单测/集成有 401 |
+| A1 | 游客访问每一个需要登录的 operation，一律 401 `SESSION_REQUIRED`（不得是 403/404/500） | §2 各表首列 | **基本齐**：failmatrix C1 有 37 条，C10 另有 23 条（异步 AI 域与 `/jobs` 的游客面，`cases.mjs:303-333`，#449）；域内单测/集成另有 401 |
 | A2 | A 用户不得读写 B 用户的对象，且「不是你的」与「不存在」**同形 404** | §3.1 | **齐**（9 个域有负控制断言，2 个域结构性不适用） |
 | A3 | 所有 `/admin/*` 端点都必须过角色（admin）与 scope 校验 | §3.2 | **齐**（24+N 条路由逐一有守卫；见 3.2 的两处例外说明） |
 | A4 | 注销后旧 token 立即失效（401 `SESSION_EXPIRED`），且重放原 code/key 不得再签发可用凭据 | §3.3 | **齐** |
-| A5 | 写面幂等：缺键 400、同键同体重放同一结果、同键异体 409 | §2（409/400 列） | **基本齐**；`/ocr`、`/speech/*`、`/recognitions` 有域内断言但不在 failmatrix |
+| A5 | 写面幂等：缺键 400、同键同体重放同一结果、同键异体 409 | §2（409/400 列） | **基本齐**；`/ocr`、`/speech/*`、`/recognitions` 有域内断言；#449 之后 failmatrix 的 C10/C11 另覆盖它们的 401 与归属 404 两列，其余列仍只在域内 |
 | A6 | 上游不可用必须 fail-closed 503，不得把「能力未接线」说成 404/200 | §2（503 列） | **齐**（各域都有 fail-closed 断言；见 3.1 的例外） |
-| A7 | 超时必须是可区分的终态（`timed_out` + `PROVIDER_TIMEOUT`），不得与 `failed` 同形 | §2（超时列）、§4.1 #4 | **异步域齐，同步面零覆盖** |
-| A8 | 限流 429 必须有断言（至少登录被限流） | §2（429 列） | **不齐**：API 面 0 条断言（详见 §4.1 #1） |
+| A7 | 超时必须是可区分的终态（`timed_out` + `PROVIDER_TIMEOUT`），不得与 `failed` 同形 | §2（超时列）、§4.1 #2/#4 | **齐**：异步终态 `timed_out` 与同步面 504 均有断言（§4.1 #2，2026-10-22 回写） |
+| A8 | 限流 429 必须有断言（至少登录被限流） | §2（429 列） | **齐**：429 的 HTTP 面断言已补（`tests/unit/gy-i22-rate-and-timeout.test.mjs:77`，#442／#450；详见 §4.1 #1） |
 | A9 | 「任何处方混配换算、伪来源或未审内容公开均阻止发布」 | 非失败族，见 §4.1 #9 的相邻风险 | 越界，本页只列不判 |
 
 ---
@@ -165,10 +167,10 @@
 | `createRecognition` POST /recognitions | ● `recognitions-api.test.mjs:114` | ● `miniprogram-identify.test.mjs:1400,1401`（`CONSENT_REQUIRED` 403，客户端侧断言） | ○ | ● `recognitions-api.test.mjs:156`、`:394`（`[202,409]` 并发）、`recognitions-http.mjs:188` | ● `recognitions-api.test.mjs:686`；`recognitions-candidates-selection.test.mjs:693` | ● `recognitions-api.test.mjs:298-305`（`state=timed_out` + `PROVIDER_TIMEOUT`） | ● `recognitions-api.test.mjs:124,130,133,146` | ○ |
 | `getRecognition` GET /recognitions/:id | ● `recognitions-api.test.mjs:115` | ○ | ● `recognitions-api.test.mjs:293`；`recognitions-http.mjs:120`（他人）、`:143`（已删）；`recognition-chain-e2e.mjs:452` | — | ○ | ○ 未取得（原引 `recognitions-api.test.mjs:116` 实为 `GET /jobs/{id}` 的 401，非本 operation、非超时；见下注） | ○ | ○ 未取得（原引 `:592,597,650` 实为 PATCH selection 的 400 ×2 与非 UUID 的 400\|404 二择，均不证明 GET 识别 429；见下注） |
 | `deleteRecognition` DELETE /recognitions/:id | ○ | ○ | ● `recognition-chain-e2e.mjs:459`（他人历史不可删） | ● `recognitions-http.mjs:224`（取消终态 409） | ○ | ○ | ○ | ○ |
-| `selectSpecies` PATCH /recognitions/:id/selection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| `selectSpecies` PATCH /recognitions/:id/selection | ● `C10-03@313`（游客 PATCH ⇒ 401 `SESSION_REQUIRED`；C10 由 #449 引入） | ○ | ● `recognitions-api.test.mjs:542`（他人选择 ⇒ 404 `NOT_FOUND`，在 `:540-549` 循环内） | ● `recognitions-api.test.mjs:587`（`If-Match: "9"` ⇒ `REVISION_CONFLICT`） | ○ | ○ | ● `recognitions-api.test.mjs:592,597`（非法 `If-Match`／多带 `rank` ⇒ `INVALID_REQUEST`） | ○ |
 
-注：**该域 4 行全部不在 failmatrix 表内**（`cases.mjs` / `seams.mjs` 无 `recognitions` 字样）；证据全在 `tests/unit/recognitions-api.test.mjs` 与 `tests/integration/recognitions-http.mjs`（后者在 `test:integration:http` 名单内）。
-`selectSpecies` 是**整行 8 列零断言**的两个 operation 之一（另一个是 `verifyRegistration`，其因由是未装配）。
+注：**该域 4 行原记「全部不在 failmatrix 表内」**——**2026-10-22 回写**：#449 之后 `cases.mjs` 的 C10-01..04（游客 401）与 C11-05..10（归属 404）已覆盖本域 4 个 operation 的这两列（`cases.mjs:311-314`、`:347-352`）；本表的逐格判定仍以域内文件为主，证据在 `tests/unit/recognitions-api.test.mjs` 与 `tests/integration/recognitions-http.mjs`（后者在 `test:integration:http` 名单内）。
+`selectSpecies` 原记「**整行 8 列零断言**」的两个 operation 之一——**2026-10-22 回写（B2）：该结论不成立**。本行 401／404／409／400 四列本来就有断言（`C10-03@313`；`:542`；`:587`；`:592,597`），428 另见 `:582`（不在 8 列内）；是初稿漏收，不是本轮新增用例。仍未取得的是 403／503／超时／429 四列。另一个「整行为空」的 `verifyRegistration` 仍不适用（未装配）。
 
 **P2 订正（2026-10-22，监工批复 `supervisor-1022-0541-pr438`）：第 166 行 429 / 超时两格原引文实读**
 
@@ -200,10 +202,10 @@
 | `createTranscription` POST /speech/transcriptions | ● `speech-http.mjs:263`（多方法循环） | ○ | ○ | ● `speech-http.mjs:325` | ● `speech-http.mjs:472` | ● `speech-http.mjs:626`（`hangState.error_code = PROVIDER_TIMEOUT`）、`:648`（终态含 `timed_out`） | ● `speech-http.mjs:411,422,739` | ○ |
 | `getTranscription` GET /speech/transcriptions/:id | ○ | ○ | ● `speech-http.mjs:210,214,217,225,226` | — | ○ | ○ | ● `speech-http.mjs:415` | ○ |
 | `deleteTranscription` DELETE /speech/transcriptions/:id | ○ | ○ | ● `speech-http.mjs:237,238` | ● `speech-http.mjs:289,300` | ○ | ○ | ● `speech-http.mjs:285,298` | ○ |
-| `confirmTranscription` PATCH /speech/transcriptions/:id/confirmation | ○ | ○ | ○ | ● `speech-http.mjs:784,791` | ○ | ○ | ○ | ○ |
+| `confirmTranscription` PATCH /speech/transcriptions/:id/confirmation | ● `speech-http.mjs:260`（在 `:256-265` 无会话循环内 ⇒ 401 `SESSION_REQUIRED`） | ○ | ● `speech-http.mjs:241-249`（他人／不存在 ⇒ 404 且 `error` 逐字段同形） | ● `speech-http.mjs:288-290`（`If-Match: "99"` ⇒ `REVISION_CONFLICT`） | ○ | ○ | ● `speech-http.mjs:283-287`（非法 `If-Match`）、`:425-431`（body 校验） | ○ |
 
 注：`speech-service.test.mjs:1118` 断言「失败或已删除都不得让同键重放变成 404」——这是**幂等与 404 的负交叉**，很关键但不属任一单格。
-`confirmTranscription` 无 401/404 断言（该端点未在 `:263` 循环里）。
+**2026-10-22 回写（B2）**：`confirmTranscription` **有** 401/404 断言——该端点已在无会话循环里（`speech-http.mjs:256-265`，PATCH 在 `:260`），他人／不存在的确认请求在 `:241-249` 成对断言 404 同形；缺 `If-Match` 的 428 见 `:280-282`（不在 8 列内）。原记「该端点未在 `:263` 循环里」与实读不符；理由同上，是初稿漏收，不是本轮新增用例。原 409 格引的 `:784,791` 实为 `/jobs/{id}/cancel` 的两条取消断言，本行已改引 `:288-290`。
 
 ### 2.9 tts（1 个 operation）
 
@@ -237,11 +239,11 @@
 | 域 | 断言密度（来自 `tests/**` 状态码出现次数，粗筛） | 代表证据 | 结论 |
 | --- | --- | --- | --- |
 | media（5 ops） | 401:5 403:12 404:37 409:21 503:54 | `media-http-upload.test.mjs:116`（401）；`media-http-access.test.mjs:168`（他人 404）、`:404,427,433,439,445`（无内容/未发布/未过审/版本不符同形 404）；failmatrix `C1-09..13`、`C2-11..13`、`C5-01..03`、`C5-10` | **齐**（唯一把「未过审」写成 404 的域） |
-| jobs（2 ops） | 401:3 404:30 409:18 503:43 | `jobs-http.mjs:217-237`（他人/不存在/未接线 kind **三类同形 404**）、`:266`（他人取消 404）、`:278`（无会话 401） | **齐**；但 failmatrix 无 `/jobs/*` |
+| jobs（2 ops） | 401:3 404:30 409:18 503:43 | `jobs-http.mjs:217-237`（他人/不存在/未接线 kind **三类同形 404**）、`:266`（他人取消 404）、`:278`（无会话 401） | **齐**；failmatrix 侧由 C10-15/16（游客面）与 C11-01..04（归属面）覆盖 401/404 两列（#449 之前是零覆盖） |
 | conversations（7 ops） | 400:20 404:37 409:11 503:10 | `conversation-http.test.mjs:281,282,288,292`（他人读/删/轮次 404）、`:294`（往他人会话写 404）、`:239`（方法不符 404） | **齐**（归属最完整的一域） |
 | deletion / exports（3 ops） | 401:58 403:14 404:17 409:8 503:17 | `account-deletion-http.mjs:202,316,321,326`（四类 401）、`:354`（换发后旧 bearer 立即失效）、failmatrix `C4-10..15` | **齐** |
 | catalog / public / profile（7 ops） | 400:13 401:6 404:5 503:4 | `C1-25..26,32`（游客 401）；`C2-22` | **基本齐**，无写面冲突 |
-| admin 内容面（24 ops：sources/knowledge/registrations/restrictions） | 401:82 403:78 404:79 409:87 503:135 504:16 | 守卫 `routes/admin.ts:166-167`（`readGuards`/`writeGuards`）；`C3-01..03,09..11`（403）、`C3-14..17`（200 对照）、`C3-22`（404） | **齐**；唯 504 只在 PG 锁通道 |
+| admin 内容面（24 ops：sources/knowledge/registrations/restrictions） | 401:82 403:78 404:79 409:87 503:135 504:16 | 守卫 `routes/admin.ts:166-167`（`readGuards`/`writeGuards`）；`C3-01..03,09..11`（403）、`C3-14..17`（200 对照）、`C3-22`（404） | **齐**；本域 504 只在 PG 锁通道；用户面同步读路径的 504 由 §4.1 #2 回写补上（#442／#447） |
 | admin 运维面（10 ops：accounts/jobs/flags/audit/categories/hide） | 同上 | `admin.ts:257,269,275,290,296,313,319,334,340,354,367` 每条均 `guards.requireAdmin` | **齐** |
 | admin auth（3 ops） | — | `routes/admin-auth.ts:47,89,104` | **齐** |
 | community media（2 ops） | — | 见 §2.2 末两行 | **齐** |
@@ -326,14 +328,14 @@
 
 | # | 风险 | 证据（现状） | 严重度 |
 | --- | --- | --- | --- |
-| 1 | **限流 429 全族零 API 断言**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），但没有任何用例断言它；`RATE_LIMITED` 仅出现在后台 UI 状态映射测试（`admin-ui-api.test.mjs:134-137,259`、`admin-ui-contract.test.mjs:46`、`ui-unified-states.test.mjs:109`） | 见左 | **高**（登录可被无限爆破，回归无感） |
-| 2 | **同步面 504 `PROVIDER_TIMEOUT` 零断言**：504 断言只在后台 PG 锁通道（`admin-flags-pg.mjs:513-515`、`admin-flags-pg.test.mjs:373-382`、`account-authority-pg.test.mjs:120-121`、`admin-accounts-directory.test.mjs:263`、`db-error-retryable-classification.test.mjs:130`）；用户面所有同步端点无 504 用例 | 见左 | **高**（超时易被折叠成 500/503 而无人知） |
-| 3 | **`selectSpecies` 整行 8 列零断言**（`PATCH /recognitions/:id/selection`） | §2.6 第 4 行 | **高**（选种是识别链路终点，写面全裸） |
-| 4 | **failmatrix 完全不覆盖异步 AI 域与 `/jobs`**：`cases.mjs` + `seams.mjs` 对 `recognitions`/`/ocr`/`speech/`/`/jobs/`/`conversations`/`me/exports`/`privacy-policy`/`public/home`/`registrations/verify` **零引用** | grep 空结果 | **高**（168 条矩阵看起来"全绿"，但 40+ 个 operation 不在其中——**假绿风险最高的结构缺口**） |
+| 1 | **限流 429 全族零 API 断言** → **已关闭（#442＋#450，2026-10-22）**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），现在「收到上游 45011 之后的对外行为」有 HTTP 面断言（429 `RATE_LIMITED`＋`Retry-After` 正整数秒＋`retryable`＋封套完整＋失败不落幂等台账） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:77`（`:113` 状态码、`:139-141` `Retry-After` 必须正整数秒、`:147` 同键重试仍 429；#442 建文件、#450 把该头断言从「无该头」改为「必须整数秒」）；实现侧 `services/api/src/errors.ts:82-86`＋`app.ts:1917-1918`（#450 统一出口单一取值） | **已关闭**（原：高；「连打真实触发限流」的窗口仍未取得，见 §5.4） |
+| 2 | **同步面 504 `PROVIDER_TIMEOUT` 零断言** → **已关闭（#442＋#447，2026-10-22）**：用户面同步读路径在超时族 SQLSTATE 下折叠成 504 + `PROVIDER_TIMEOUT` 已有用例（初稿时点 504 只在后台 PG 锁通道：`admin-flags-pg.mjs:513-515`、`admin-flags-pg.test.mjs:373-382`、`account-authority-pg.test.mjs:120-121`、`admin-accounts-directory.test.mjs:263`、`db-error-retryable-classification.test.mjs:130`） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:218-273`（`:247` 504、`:251` 错误码，注入 `57014`／`55P03`，`:235` 先证明合成登录 200）；`tests/unit/knowledge-herbicides-http.test.mjs:436-439`（#447 把 57014/55P03 ⇒ 504 且 `retryable:true` 落进 `services/api/src/knowledge/service.ts:125-129`） | **已关闭**（原：高；真实锁竞争的触发条件仍未取得，见 §5.5） |
+| 3 | **`selectSpecies` 整行 8 列零断言**（`PATCH /recognitions/:id/selection`） → **已关闭（页面过期，不是本轮新增用例）**：本行的 401/404/409/400 四列在**初稿时点就已经有断言**，是漏收 | §2.6 第 4 行（`recognitions-api.test.mjs:542` 他人 404／`:587` 409／`:592,597` 400；游客 401 由 `C10-03@313` 承担，C10 由 #449 引入）；428 另见 `:582` | **已关闭**（原：高；403/503/超时/429 四列仍 ○） |
+| 4 | **failmatrix 完全不覆盖异步 AI 域与 `/jobs`** → **已关闭（#449，2026-10-22）**：`cases.mjs` 新增 C10 游客面 23 条 + C11 归属面 39 条，矩阵 168 → **230** 条，`MIN_CASES` 同步到 230（只增不减） | `tests/failmatrix/cases.mjs:303-333`（C10）、`:335-384`（C11，含 5 条属主正控制）、`tests/unit/gy-i22-failmatrix.test.mjs:35`；CI 读数 `Failmatrix regression` run `39778342989`（headSha `1fbe7572`）success。**仍未进矩阵的域**：`me/exports`、`public/home`、`privacy-policy`、`registrations/verify`（grep 空结果） | **已关闭**（原：高；剩余 4 类域仍无 failmatrix 覆盖，见 §4.2 备注） |
 | 5 | **OCR 403 全族 ○**（5 个 operation 无任何 scope/授权断言） | §2.7 | 中高 |
 | 6 | **点赞族 `like/unlike` 只有 1 条游客 401**，锁/并发/重复点赞语义零覆盖 | `C1-22@73` 是唯一一条 | 中高 |
 | 7 | **community「同形」弱于其他域**：多数只断言 404，未成对比对封套（对比 `messages-pg.mjs:299`、`speech-http.mjs:222`） | §3.1 | 中 |
-| 8 | **`confirmTranscription` 无 401/404 断言**（未进 `speech-http.mjs:263` 的循环） | §2.8 第 4 行 | 中 |
+| 8 | **`confirmTranscription` 无 401/404 断言**（未进 `speech-http.mjs:263` 的循环） → **已关闭（页面过期，不是本轮新增用例）**：该端点早就在无会话循环里，404 也成对断言 | §2.8 第 4 行（`speech-http.mjs:260` 在 `:256-265` 循环内；`:241-249` 他人／不存在同形 404；`:288-290` 409；428 见 `:280-282`） | **已关闭**（原：中） |
 | 9 | **`verifyRegistration` 整行不适用**（`planned`，HTTP 未装配）且 failmatrix 无「未装配即 404/不泄露」的形态断言 | `contract-status.json` blocker | 中（是"没做"，不是"做错"，但会被误读成已覆盖） |
 | 10 | **`loginAdmin` 的 403/404/409/503/超时/429 全 ○**：凭据错误沿用 401 `SESSION_REQUIRED`，但**没有一条断言钉住这个"故意不合契约直觉"的选择** | `contract-status.json` loginAdmin blocker；§2.1 | 中（后台入口，回归后可能变成 500） |
 
@@ -344,22 +346,28 @@
 ### 4.2 最短可关闭 #22 的 3 件事
 
 > 三件都**不需要真实设备**；只有第 2 件需要真库。
+>
+> **2026-10-22 回写（B2）**：下列三件**均已落地**（第 1 件 #442／#450／#447；第 2 件 #449；第 3 件更准确地说——两处本来就有断言，见下）。
+> 但**「三件做完」不等于 #22 可关闭**：11 张验收前置（#5 #8 #9 #10 #12 #14 #15 #16 #17 #18 #19）仍全部 OPEN，且 §5 的真实微信侧限流／真实供应商超时／真机读数仍未取得。
 
-1. **把 429 与「同步面 504」补成可执行断言（1 个文件，无 PG、无真机）**
+1. **把 429 与「同步面 504」补成可执行断言（1 个文件，无 PG、无真机）** —— **已完成（#442 建 `tests/unit/gy-i22-rate-and-timeout.test.mjs`；#450 补 `Retry-After` 整数秒；#447 把 57014/55P03 的 504 分档落进 `knowledge/service.ts`）**
    - 位置：`tests/failmatrix/cases.mjs` 新增 F 族两批（`C8` 限流、`C9` 超时），或最小改动——在 `tests/unit/gy-i22-failmatrix.test.mjs` 旁新增 `tests/unit/gy-i22-rate-and-timeout.test.mjs`。
    - 断言对象：`services/api/src/auth/wechat.ts:121`（429 `RATE_LIMITED`，`retryable` 与 `Retry-After`/`retryable` 字段）；同步面任一走 DB 的 GET 在锁超时下 504 `PROVIDER_TIMEOUT`（可复用 `tests/unit/admin-flags-pg.test.mjs:373` 的映射入口，但**不要**改成用户面锁，改为对一个注入 `57014` 的桩池断言封套）。
    - 成本：单文件；**不需真库**（57014/55P03 可在映射层注入，参考 `db-error-retryable-classification.test.mjs:130` 已建立的注入范式）。
    - 是否需要真实设备/真库：**都不需要**。
+   - **落地读数**：`gy-i22-rate-and-timeout.test.mjs:77`（429）、`:218-273`（504）；`knowledge-herbicides-http.test.mjs:436-439`（504 + `retryable:true`）。
 
-2. **把异步 AI 域与 `/jobs` 拉进 failmatrix（解决「假绿」结构缺口）**
+2. **把异步 AI 域与 `/jobs` 拉进 failmatrix（解决「假绿」结构缺口）** —— **已完成（#449：C10 23 条 + C11 39 条，`MIN_CASES` 168 → 230）**
    - 位置：`tests/failmatrix/cases.mjs`（新增 `C10` 游客面 + `C11` 归属面）与 `tests/failmatrix/world.mjs`（需要 stub 世界的 OCR/转写/识别/合成资源种子）；参照 `tests/integration/ocr-http.mjs:1500,1337,1501-1560`、`speech-http.mjs:263,225`、`recognitions-api.test.mjs:114,293`、`tts-jobs-http.test.mjs:218,225` 的既有断言，**照抄读数而不是重写期望**。
-   - 收益：一次补齐 12 个 operation（recognitions 4 + ocr 5 + speech 4 + tts 1 + jobs 2）的 401/404 两列，且 `MIN_CASES` 会从 168 单调上升（`gy-i22-failmatrix.test.mjs:28` 只准加）。
+   - 收益：一次补齐 12 个 operation（recognitions 4 + ocr 5 + speech 4 + tts 1 + jobs 2）的 401/404 两列，且 `MIN_CASES` 已从 168 单调升到 **230**（`gy-i22-failmatrix.test.mjs:35` 只准加）。
    - 是否需要真实设备/真库：**都不需要**（failmatrix 走 `app.inject` + stub，仓库已如此）。
+   - **仍未进矩阵的域（如实登记）**：`me/exports`、`public/home`、`privacy-policy`、`registrations/verify`（grep 空结果）——本轮不扩写。
 
-3. **给 `selectSpecies` 与 `confirmTranscription` 补归属/未登录断言（覆盖「整行裸奔」）**
+3. **给 `selectSpecies` 与 `confirmTranscription` 补归属/未登录断言（覆盖「整行裸奔」）** —— **已完成／更准确地说：这两处本来就有断言，§4.1 #3、#8 是页面过期**
    - 位置：`tests/unit/recognitions-api.test.mjs`（追加 `PATCH /recognitions/:id/selection` 的他人 404 与游客 401，范式照 `:114-116`、`:293`）；`tests/integration/speech-http.mjs:263` 的循环里加上 `PATCH .../confirmation`（范式照 `:285,784`）。
    - 收益：消掉 §4.1 #3 与 #8；两处都在既有文件内追加，不新增 harness。
    - 是否需要真实设备/真库：**都不需要**。
+   - **实读**：他人 `PATCH .../selection` 的 404 在 `recognitions-api.test.mjs:540-549`（含 `:542`），409／400 在 `:584-598`；`PATCH .../confirmation` 早就在无会话循环 `speech-http.mjs:256-265`（`:260`）里，404 同形在 `:241-249`。
 
 **不建议**在本轮做的事（会被上述 3 件反噬）：把 `verifyRegistration` 装配进 HTTP（`planned`，属功能开发，不是失败回归）；补齐 community 全部同形断言（收益低于 1–3，且 `C2` 族已覆盖主体）。
 
@@ -373,11 +381,11 @@
 | `listFavorites` / `createFavorite` / `deleteFavorite` | partial | 「real 模式整域 503 `PROVIDER_UNAVAILABLE`」 | **印证** §2.3 的 503 列（`favorites-http.test.mjs:318`） |
 | `listHistory` / `deleteHistory` | partial | 「内存存储 + real 模式关闭」 | **印证** §2.3 的 503 列（`history-http.test.mjs:548,751`） |
 | `listMessages` / `getUnreadCount` / `markMessageRead` | partial | 「`real` 且无连接池 ⇒ 整域 503」 | **印证** §2.4 的 503 列（`messages-http.test.mjs:189-198`） |
-| `createRecognition` / `getRecognition` / `deleteRecognition` / `selectSpecies` | partial | 「HTTP 与内存任务/结果/选种/删除闭环已装配；…真实供应商…尚待验收」 | **与 #3 冲突**：blocker 说"选种闭环已装配"，但矩阵里 `selectSpecies` **8 列全 ○**（装配≠有断言） |
+| `createRecognition` / `getRecognition` / `deleteRecognition` / `selectSpecies` | partial | 「HTTP 与内存任务/结果/选种/删除闭环已装配；…真实供应商…尚待验收」 | ~~与 #3 冲突~~ **已消解（2026-10-22）**：`selectSpecies` 的 401/404/409/400 均有断言（§2.6 第 4 行），blocker 的"已装配"与断言一致 |
 | `createOCR`…`verifyOCR`（5 条） | partial | 「OCR 五端点…已装配；real 提供者、媒体、登记源未接线时拒绝」 | **与 #5 呼应**：装配完整但 403 全族无断言 |
-| `createTranscription`…`confirmTranscription`（4 条） | partial | 「取消已于 GY-R27（#321）接线」 | **与 #8 冲突**：`confirmTranscription` 无 401/404 断言 |
+| `createTranscription`…`confirmTranscription`（4 条） | partial | 「取消已于 GY-R27（#321）接线」 | ~~与 #8 冲突~~ **已消解（2026-10-22）**：`confirmTranscription` 的 401/404/409/400 均有断言（§2.8 第 4 行），初稿漏收 |
 | `createSynthesis` | partial | 「取消已于 …接线」；「真实提供者、核对内容与产物端口未在产品装配接线」 | **印证** §2.9 的 503 列（`tts-jobs-http.test.mjs:510,570`） |
-| `loginWechat` | implemented | 「stub/preset_demo 用合成身份，不代表真实微信身份」 | **与本页 #1 冲突**：`implemented` 但 429 零断言 |
+| `loginWechat` | implemented | 「stub/preset_demo 用合成身份，不代表真实微信身份」 | ~~与本页 #1 冲突~~ **已消解（2026-10-22，#442／#450）**：429 的 HTTP 面断言在 `gy-i22-rate-and-timeout.test.mjs:77` |
 | `loginAdmin` | implemented | 「凭据错误沿用 401 `SESSION_REQUIRED`（契约无专用码）」 | **与本页 #10 冲突**：该"故意选择"无断言钉住 |
 | `grantCommunityMediaAccess` / `readCommunityMediaContent` | partial | 「公开内容来源默认**关闭**（统一 404，不误放行）」 | **印证** §2.2 末两行（`C5-05@196`、`E2-02@279`） |
 | `listPosts`…`getOwnReport`（16 条社区） | partial | 统一 blocker：「HTTP 路由已装配（`services/api/src/routes/community.ts`；真实回环回归 `tests/unit/community-http.test.mjs`）」 | **部分冲突**：`community-http.test.mjs` 里状态码断言只有 `:790`（422）一条，blocker 暗示的"回环回归"并不覆盖失败族（失败族断言实际散在 `community-service/atomic/moderation-*` 等服务层文件） |
@@ -390,11 +398,11 @@
 
 ## 5 未取得 / 未验证（一律不许当成绿）
 
-1. **本次没有成功跑过任何用例**：唯一尝试的定向文件 `tests/unit/gy-i22-failmatrix.test.mjs` 因本 worktree 未装依赖直接失败（`ERR_MODULE_NOT_FOUND: Cannot find package 'fastify'`，原始报错与复现方式见 §7）。因此上表所有 ● 与 ○ 都是**读码定位**，不是本轮实测读数。
+1. **（初稿时点）本次没有成功跑过任何用例**：唯一尝试的定向文件 `tests/unit/gy-i22-failmatrix.test.mjs` 因本 worktree 未装依赖直接失败（`ERR_MODULE_NOT_FOUND: Cannot find package 'fastify'`，原始报错与复现方式见 §7）。因此上表所有 ● 与 ○ 都是**读码定位**，不是本轮实测读数。
 2. **未跑全量单测**（按派单禁止）、**未起真库**、**未起真机/微信开发者工具**、**未发真实外网**。
 3. `tests/integration/*-pg.mjs` 类证据（`messages-pg.mjs:284`、`favorites-history-pg.mjs:11-12`、`recognitions-pg.mjs:889`、`ocr-jobs-pg.mjs:744`、`admin-flags-pg.mjs:513`）需隔离 PG，本轮**未执行**；它们在 `real-pg-integration.yml` 等流水线跑，不在 `test:integration:http` 名单内。
-4. **限流 429 的真实行为**（窗口、键、`Retry-After`）完全未验证——只有 `services/api/src/auth/wechat.ts:121` 一行实现。
-5. **同步面 504 的真实触发条件**未验证（映射存在，但用户面没有可触发的锁路径）。
+4. **限流 429 的「真实触发」仍未取得**（窗口、键、连打多少次触发）：真实微信侧的 45011 由注入 `fetchImpl` 模拟（`gy-i22-rate-and-timeout.test.mjs:86-105` 自述），能证的只是「收到 45011 之后的对外行为」（`:113`／`:139-141`／`:147`）。
+5. **同步面 504 的真实触发条件仍未取得**：注入 `57014`／`55P03` 已能断言 504（`:218-273`），但用户面没有可稳定复现的锁竞争路径。
 6. 真实 AI 供应商的超时/配额/结果不确定，**一律未取得**（stub 世界的 `timed_out` 不代表真实供应商行为）。
 7. `docs/architecture/contract-status.json` 只读交叉核对，**未改动**（在飞 PR 占用）。
 8. 本页的"断言密度"数字是 `tests/**` 内状态码字面量出现次数的**粗筛**（按域正则聚合），不是断言条数；只用于排序，不作为判定依据。
@@ -455,3 +463,25 @@ Node.js v24.16.0
 ---
 
 **2026-10-22 订正记录**：按监工 P2 批复（`supervisor-1022-0541-pr438`），本次只订正了第 166 行（`getRecognition`）的 **429** 与**超时**两格（两格 ● → ○ 未取得，原引文实读见 §2.6 订正注）；未补齐全矩阵测试、未新增未证事实、未改动其他行。
+
+**2026-10-22 回写记录（B2 · 本页时点 `1fbe7572`；只改事实，不改 AC、不改结论口径）**：
+
+1. 首部：基线补注「本页初稿时点」，并新增「本页时点 `origin/main 1fbe7572`」一行（原页只写 `d4d48088`，与 main 漂移）。
+2. §0.3：`MIN_CASES` **168 → 230**（`gy-i22-failmatrix.test.mjs:35`），族条数补 `C10:23` / `C11:39`，批次条数补 `B5:62`，包装器行号 `:34-49` → `:41-56`。
+3. §1 A1／A7／A8 的「现状」格：A1 补 C10 的 23 条游客面断言；A7 由「异步域齐、同步面零覆盖」改为「齐」（同步 504 已断言）；A8 由「不齐、API 面 0 条」改为「齐」（429 HTTP 面已断言）。
+4. §2.6 第 4 行 `selectSpecies`：由 8 列全 ○ 改为 401／404／409／400 四列 ●（`C10-03@313`、`:542`、`:587`、`:592,597`），并改写了该行下方的「整行零断言」注。
+   - **与 `supervisor-1022-0541-pr438` 的关系**：该批复已认定 `:592` / `:597` **属 selectSpecies 的 400 列**，只是当轮「未搬入」；本次按同一归属把它落进 400 格，判定口径未变。
+5. §2.8 第 4 行 `confirmTranscription`：由「401/404 全 ○、409 引 `:784,791`」改为 401／404／400 三列 ●，409 改引 `:288-290`（原引 `:784,791` 实为 `/jobs/{id}/cancel` 的两条取消断言），并改写了该行下方的「未进循环」注。
+6. §4.1：#1（429）、#2（同步 504）、#3（`selectSpecies`）、#4（failmatrix 异步 AI 域）、#8（`confirmTranscription`）五行由「零断言风险」改为「已关闭」并给出关闭证据行；#3／#8 明确标注「页面过期，不是本轮新增用例」；#1／#2／#4 标注对应 PR（#442／#450／#447／#449）与仍未取得的部分。
+7. §4.2：三件事全部标注落地状态，并新增一条前置说明——**三件做完不等于 #22 可关闭**（11 张前置 OPEN、§5 的真实限流／真实供应商超时／真机读数仍未取得）。
+8. §4.3：`selectSpecies`、`confirmTranscription`、`loginWechat` 三行的「与 #N 冲突」改为「已消解」，其余行未动。
+9. §5.4／§5.5：把「限流 429 的真实行为完全未验证」「同步面 504 未验证」改写为「真实触发仍未取得」，并分别指出已断言的那一半。
+
+未做的事（避免过度声称）：未跑全量单测、未起真库/真机、未重算 §2 其余表格的逐格判定、未扩写 §2.12 之外的域行、未改 `docs/architecture/contract-status.json`。
+
+**本轮（2026-10-22 回写）的定向读数**（worktree `E:\GengYunCommander\wt-i22-evidence`，`1fbe7572` + 本页/注释/一条测试的改动）：
+
+- `node tests/failmatrix/run.mjs --list` ⇒ 末行原文 `合计 230 条用例（HTTP 210 + seam 20）。`
+- `node --test tests/unit/gy-i22-failmatrix.test.mjs` ⇒ 3/3 pass，其中「全量真跑 230 条全绿，且每条都有真实读数」通过。
+- `node --test tests/unit/gy-i22-*.test.mjs`（9 个文件）⇒ 47/47 pass。
+- 这些读数只覆盖矩阵与 i22 单测；**真实微信侧限流、真实 AI 供应商超时、真机/微信开发者工具仍未取得**（§5）。

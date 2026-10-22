@@ -2,8 +2,10 @@ name: Failmatrix regression
 
 # GY-I22（#22）失败回归矩阵的**独立、可单独重跑**的门禁。
 #
-# 跑的是什么：`npm run test:failmatrix` = `node tests/failmatrix/run.mjs`，168 条表驱动用例
-# （HTTP 148 + 受信 seam 20），进程内 `app.inject`，零端口、零外呼、零 PG、零密钥。
+# 跑的是什么：`npm run test:failmatrix` = `node tests/failmatrix/run.mjs`，230 条表驱动用例
+# （HTTP 210 + 受信 seam 20；`--list` 末行原文「合计 230 条用例（HTTP 210 + seam 20）」。168 条
+# 是 #449 之前的读数 —— 那时 HTTP 148 + seam 20，C10 游客面 23 条与 C11 归属面 39 条还没进来），
+# 进程内 `app.inject`，零端口、零外呼、零 PG、零密钥。
 # 一条用例的判定 = 状态码/错误码逐字 + 四条拒绝不变量（`Cache-Control: no-store`、
 # `error{code,message,retryable,details}` 封套、`meta.contract_version === '1.0.0'`、
 # `meta.execution_mode === 'stub'`、**失败不得带 `data`**）+ 成功侧 `data`/强 ETag +
@@ -46,7 +48,7 @@ jobs:
       # `return fail === 0 ? 0 : 1`），步骤红 ⇒ job 红。一次跑完约 1 秒（实测 1.13s）。
       - run: npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"
       # 二次判定：万一将来有人把 runner 改成「打完成绩也退 0」，这一条仍然会红。
-      # （同时把 PASS/FAIL 计数打到日志首行，省得翻 168 行。）
+      # （同时把 PASS/FAIL 计数打到日志首行，省得翻 230 行。）
       - name: 机读结果必须 PASS == 总数、FAIL == 0
         if: always()
         run: |
