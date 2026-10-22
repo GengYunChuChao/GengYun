@@ -68,16 +68,13 @@
 
 **另一条已记录偏差（202/200）**：契约 `packages/contracts/openapi.json` 的 `/history/{id}` → `delete` 的 `responses` **只声明 202**（`description: "受理异步任务，尚未完成"`，body `AckEnvelope`），**没有 200**。实现原先返回 200，属契约里不存在的响应；裁决是**改实现、不改契约**（202 + `X-GY-Cascade: unwired` 才是诚实的「已受理、异步部分未接」）。
 
-**应改成（A 版：202 修复已合流，推荐）**：
+**应改成（A 版，唯一版本）**：
 ```
 持久化口径同 listFavorites（迁移 0018 + real 走 PG，无库如实 503）。删除按契约返回 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409；同键重放回放首次结果），并以非契约披露头 X-GY-Cascade 如实区分 initiated / unwired / failed。契约描述的"同时启动关联识别/OCR 私有结果/媒体和外发删除"仍未接线（属 GY-I19／跨线）：只删历史行本身，不谎称级联已完成，也不回滚已完成的删除。
 ```
 
-**应改成（B 版：202 修复尚未合流时用）**：在 A 版基础上，把第一句换成「删除已按 CAS 物理删除历史行（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409），**但响应状态仍是 200，与契约声明的 202 不一致（已记录偏差，修复在途）**」。
+> **合流记录（2026-10-22）**：202 修复已经**合入 main** —— PR #431（分支 `feat/gy-r29-i16-delete-202`，实现提交 `a7278a8e`）squash 为 `7f5461c1`。落地内容：`services/api/src/routes/history.ts` 的 `reply.code(202)`（main 上 `:97`）、小程序消费层逐操作白名单 `200|202`（`miniprogram/utils/history-api.js`，main 上 `:178`）、四处集成断言与「202 成功 / 201 仍失败」两条客户端用例。**本节只保留 A 版；原先的 B 版（未合流时用）已作废，不再保留**。
 
-> **落地记录**：202 修复已在 **PR #431**（分支 `feat/gy-r29-i16-delete-202`，commit `a7278a8e`）交付——`services/api/src/routes/history.ts` 加 `.code(202)`，小程序消费层同步改为逐操作白名单 `200|202`，四处集成断言与两条客户端用例同步。合流后本节只用 A 版，B 版可删。
-
-> 执行前核对：`git log --oneline -3 -- services/api/src/routes/history.ts` 能看到「按契约返回 202」那条 commit 就用 A 版，否则用 B 版。
 
 ## 3. 落位表
 
@@ -87,7 +84,7 @@
 | `createFavorite` | partial | **implemented** | 同上；201 + ETag + 幂等 + 闭集校验有专测 |
 | `deleteFavorite` | partial | **implemented** | 同上；428/400/409/404 与物理删除有专测 |
 | `listHistory` | partial | **implemented** | 同上；列表/游标/可见性降级/任务状态端口/终态写入均有专测 |
-| `deleteHistory` | partial | **partial（保持）** | 缺的是**实现层**：级联端口未接；另有已记录契约偏差（202/200）。不是缺 CI，也不是缺真库 |
+| `deleteHistory` | partial | **partial（保持）** | 缺的是**实现层**：级联端口未接（属 GY-I19）。契约偏差 202/200 **已在 #431 修复并合入 main（`7f5461c1`）**；不是缺 CI，也不是缺真库 |
 
 **口径提醒（必须写进交付说明）**：账本 `implemented` 只表示「服务端契约面有可复核证据」，**不代表 #16 验收全绿**；真机/开发者工具层账本不覆盖（那层在 `docs/verification/*`），所以 #16 仍保持 OPEN。
 
@@ -100,7 +97,7 @@ node tools/verify-contract-status.mjs               # 期望 PASS；红了说明
 
 # 1) 只改 docs/architecture/contract-status.json 的两类字段
 #    a. status：listFavorites / createFavorite / deleteFavorite / listHistory 由 partial 改 implemented
-#    b. blocker：§2 的「应改成」全文替换（deleteHistory 保持 partial，用 A 版或 B 版）
+#    b. blocker：§2 的「应改成」全文替换（deleteHistory 保持 partial，用 A 版）
 #    —— path / method / scope / version_required / evidence 一律不动；不要改测试标题
 
 # 2) 重生成中文对照表（唯一允许的改法，手改必被 CI 判漂移）
