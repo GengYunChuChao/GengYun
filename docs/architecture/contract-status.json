@@ -1358,7 +1358,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listPosts",
-          "lines": "768-773"
+          "lines": "834-900"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1385,7 +1385,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createPost",
-          "lines": "840-845"
+          "lines": "909-1020"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1396,7 +1396,7 @@
           "name": "F. submissions_enabled 关闭 ⇒ createPost 拒绝且**一条内容都没落库**；开启 ⇒ 正常发布"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getPost",
@@ -1416,7 +1416,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "928-933"
+          "lines": "1023-1027"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1443,14 +1443,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editPost",
-          "lines": "935-940"
+          "lines": "1030-1157"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "editPost / deletePost / 点赞 的响应形状与契约一致（Post / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**未取得**：真实持久存储未交付（real 模式整域 503 PROVIDER_UNAVAILABLE）；**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联真实读取口未接线（默认 fail-closed）；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "deletePost",
@@ -1470,7 +1470,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deletePost",
-          "lines": "1048-1053"
+          "lines": "1160-1192"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1497,7 +1497,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listComments",
-          "lines": "1083-1088"
+          "lines": "1195-1245"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1524,7 +1524,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createComment",
-          "lines": "1136-1141"
+          "lines": "1248-1350"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1551,7 +1551,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "getComment",
-          "lines": "1241-1246"
+          "lines": "1353-1357"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1578,7 +1578,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editComment",
-          "lines": "1248-1253"
+          "lines": "1360-1437"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1605,7 +1605,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deleteComment",
-          "lines": "1328-1333"
+          "lines": "1440-1471"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1632,7 +1632,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "likePosts",
-          "lines": "1362-1367"
+          "lines": "1474-1476"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1659,7 +1659,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "unlikePosts",
-          "lines": "1366-1371"
+          "lines": "1478-1480"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1686,7 +1686,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "likeComments",
-          "lines": "1370-1375"
+          "lines": "1482-1484"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1713,7 +1713,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "unlikeComments",
-          "lines": "1374-1379"
+          "lines": "1486-1488"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1740,7 +1740,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createReport",
-          "lines": "1379-1384"
+          "lines": "1491-1528"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1767,7 +1767,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "getOwnReport",
-          "lines": "1419-1424"
+          "lines": "1531-1537"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -3237,7 +3237,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "845-851"
+          "lines": "857-871"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",

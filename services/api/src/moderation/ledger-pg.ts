@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 审核判定台账的 **PostgreSQL 持久实现**（迁移 `0028_moderation_persistence.sql`）。
  *
  * 在此之前 `services/api/src/moderation/decisions.ts` 只有内存实现（`createModerationLedger()`）：
@@ -36,6 +36,14 @@
  * 旧任务按历史行（`superseded = TRUE`）插入且**不**退位任何人；退位语句自身也排除本 `job_id`
  * （`job_id <> $6`）。建行走 `ON CONFLICT (job_id) DO NOTHING`（命中已有行时什么也没写），
  * 所以写完**必须读回** `superseded` 确认状态与意图一致，不一致就抛错（flush 继续拒绝）。
+ *
+ * ## 更新也必须按"实际行变更"确认（#434 复审 §6）
+ * `UPDATE … WHERE job_id = $1` 命中 0 行时 PostgreSQL **不报错**：目标行不存在（这条建行还没落过库）
+ * 或已被并发改动时都如此。若把"没抛错"当成落库，这条更新会被记成 confirmed，而重放只取未
+ * confirmed 的项 ⇒ 它**永远不会再被重试**：库停在建行快照（`state`/`decision` 是旧值），内存已推进
+ * 到回调结论，`isDurable()` 却仍答 `true`。因此更新语句带 `RETURNING job_id`，按**实际返回行数**
+ * 判定：不是恰好 1 行 ⇒ 抛错（`flush()` 折成既有 `PROVIDER_UNAVAILABLE`），失败项留在日志里等
+ * 下一次重放把这一行补上。
  *
  * ## 不做 hydrate
  * 存量行"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
@@ -123,13 +131,17 @@ ON CONFLICT (job_id) DO NOTHING`;
 /**
  * 更新语句：只动**可变列**（状态推进/回调落定）。目标身份列（`target_*`、`content_kind`、
  * `job_revision`、`created_at`）一律不可变——审核任务的"审的是哪一版"不许被后续写入改写。
+ *
+ * 命中行数由 `RETURNING job_id` 的返回行数判（`confirmUpdatedRow`）：真库上 `WHERE job_id = $1`
+ * 匹配 0 行时**不报错**，所以这条语句的"落库确认"不能靠"没抛错"。
  */
 const UPDATE_SQL = `UPDATE public.moderation_decisions SET
   state = $2, lease_token = $3, decision = $4, reason_codes = $5::jsonb, hard_rule_passed = $6,
   rule_version = $7, model_version = $8, prompt_version = $9, contract_value = $10::jsonb,
   gate_holder = $11::jsonb, error_code = $12, evidence = $13::jsonb, superseded = $14,
   updated_at = $15::timestamptz
-WHERE job_id = $1`;
+WHERE job_id = $1
+RETURNING job_id`;
 
 /**
  * 建行之后的**读回**：`ON CONFLICT (job_id) DO NOTHING` 命中已有行时什么也没写，
@@ -161,6 +173,27 @@ function ledgerFailure(error: unknown, action: string): ApiError {
 
 function jsonOrNull(value: unknown): string | null {
   return value === null || value === undefined ? null : JSON.stringify(value);
+}
+
+/**
+ * `UPDATE … WHERE job_id = $1 RETURNING job_id` 的**落库确认**（#434 复审 §6：`update` 写面没有落库确认）。
+ *
+ * PostgreSQL 对"匹配 0 行"的 `UPDATE` **不报错**，因此"语句没抛错"**不等于**"这一行真的被改了"：
+ * 目标行不存在（这条建行还没落过库）或已被并发改动时都会命中 0 行。这里用 `RETURNING` 的
+ * **实际返回行数**判定（与 `messages/store-pg.ts`、`favorites/store-pg.ts`、`conversations/store-pg.ts`
+ * 同口径——它们的 `SqlRunner` 同样只有 `rows`），`rows.length !== 1` 即抛错（由 `flush()` 折成
+ * 既有 `PROVIDER_UNAVAILABLE`），失败项留在日志里供下一次重放。
+ *
+ * 否则这条更新会被 `settle()` 记成 confirmed：重放只取未 confirmed 的项 ⇒ 它再也不会被重试，
+ * 库停在建行快照（`state`/`decision` 是旧值）、内存已推进，而 `isDurable()` 仍答 `true`。
+ *
+ * 只 `RETURNING job_id`（主键列，已在 `20-login-roles.sql` 的列级 SELECT 授权清单内）：
+ * 不新增授权面、不新增 SQL 字面量。
+ */
+function confirmUpdatedRow(jobId: string, result: { rows: Array<Record<string, unknown>> }): void {
+  const row = result.rows[0];
+  if (result.rows.length === 1 && row !== undefined && row.job_id === jobId) return;
+  throw new Error(`审核台账更新未命中目标行：job ${jobId} 期望影响 1 行，实际返回 ${result.rows.length} 行`);
 }
 
 export function createPostgresModerationLedger(options: { pool: SqlRunner; now?: () => Date }): PostgresModerationLedger {
@@ -310,7 +343,7 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
       // 内层先判"任务是否存在"，保持与内存实现逐字一致的同步抛错。
       const stored = inner.update(record);
       enqueue({ job_id: stored.job_id, creates: false }, async () => {
-        await options.pool.query(UPDATE_SQL, [
+        const result = await options.pool.query(UPDATE_SQL, [
           stored.job_id,
           stored.state,
           stored.lease_token,
@@ -327,6 +360,9 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
           stored.superseded,
           stamp(stored.updated_at),
         ]);
+        // 命中 0 行（目标行不存在／已被并发改动）真库**不报错**：必须按实际行变更确认，
+        // 否则这条更新会被记成已落库、再也不会被重放（#434 复审 §6）。
+        confirmUpdatedRow(stored.job_id, result);
       });
       return stored;
     },
