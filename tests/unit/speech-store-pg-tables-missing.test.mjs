@@ -205,7 +205,12 @@ test('[三态-2] 探测应答形状读不懂（空行 / 无 ready 字段）：�
         assert.equal(error instanceof SpeechTablesMissingError, false, '形状未知不得当作缺表');
         assert.equal(error instanceof ApiError, true);
         assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
-        assert.equal(error.retryable, true);
+        // R31-S-retryable：形状读不懂是驱动/查询形状类确定性缺陷，同一请求重试永远不会变好 ⇒ 不可重试。
+        assert.equal(error.retryable, false);
+        assert.ok(
+          Array.isArray(error.details) && error.details.some((entry) => entry.code === 'PROBE_SHAPE_UNKNOWN'),
+          '原因必须分类进 details（不得只改布尔值而丢掉原因）',
+        );
         assert.match(error.message, /未知/, '错文案必须能看出是"探测结果未知"');
         return true;
       },
