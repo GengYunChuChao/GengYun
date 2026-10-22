@@ -276,11 +276,11 @@ function forwardMergeNumbering() {
       '0027 一出现就必须被认成"保留项躺平"（否则 #428 合入后没人清理台账）',
     );
     assert.deepEqual(numbering.undeclaredGaps.map(formatMigrationVersion), [], '0027 补齐后不应再有任何缺号');
-    assert.equal(numbering.maxVersion, 28, '合流后最大版本仍是 0028');
+    assert.equal(numbering.maxVersion, 29, '合流后最大版本是 0029（#419 的 media_object_cleanup）');
     assert.equal(
       numbering.countMatchesMax,
       false,
-      'count(28) + 保留(1) = 29 ≠ max(28) ⇒ 第二条不变量必须同时判红',
+      'count(29) + 保留(1) = 30 ≠ max(29) ⇒ 第二条不变量必须同时判红',
     );
     const order = merged.map((migration) => migration.filename);
     const at27 = order.indexOf(RESERVED_FILENAME);
