@@ -131,6 +131,63 @@ export interface LinkConclusion {
   model_layer: LinkModelLayer;
 }
 
+/**
+ * **图片审核能力位**（GY-R31 · #14 缺口 G3）：社区在**放行带媒体内容之前**必须读到的那个事实。
+ *
+ * 语义照既有文本审核的样子（与审核域 `ModerationPortCapability` 同源）：
+ *   - `wired`：有实际图片端口可求值 ⇒ 才可能 `ready: true`；
+ *   - `substitute`：只有本片替身（恒 `unsure`）⇒ **不可当真**，`ready: false`；
+ *   - `none`：没有图片端口（`real` 未接线）；
+ *   - `unknown`：联动端口读不出能力位（未提供该方法 / 形状不可读 / 抛错）⇒ 一律按**未就绪**。
+ *
+ * `ready === false` 的读法只有一种：**带媒体内容不得进入发布链路**（fail-closed）。
+ */
+export interface LinkImageReadiness {
+  readonly ready: boolean;
+  readonly state: 'wired' | 'substitute' | 'none' | 'unknown';
+  readonly origin: string | null;
+  /** 如实说明这一读数是怎么来的（`capability` / `no-link` / `unavailable` …），供证据页引用。 */
+  readonly source: string;
+}
+
+const UNREADY: LinkImageReadiness = Object.freeze({
+  ready: false,
+  state: 'unknown' as const,
+  origin: null,
+  source: 'unavailable',
+});
+
+/**
+ * 从联动端口读"图片审核能力位"（**唯一的读法**，社区侧不再自己推断端口是否存在）。
+ *
+ * 任何不确定都归 `ready: false`：没有联动端口、端口没提供 `imageReadiness`、返回值形状不对、
+ * 读的过程抛错 —— 全部禁止放行带媒体内容（fail-closed，绝不当成"没查到 ⇒ 可以发"）。
+ */
+export function readImageModerationReadiness(link: unknown): LinkImageReadiness {
+  if (link === null || link === undefined) return { ...UNREADY, source: 'no-link' };
+  if (typeof link !== 'object') return { ...UNREADY, source: 'no-link' };
+  const reader = (link as { imageReadiness?: unknown }).imageReadiness;
+  if (typeof reader !== 'function') return { ...UNREADY, source: 'no-reader' };
+  let raw: unknown;
+  try {
+    raw = (reader as () => unknown).call(link);
+  } catch {
+    return { ...UNREADY, source: 'threw' };
+  }
+  if (!isPlainObject(raw)) return { ...UNREADY, source: 'shape' };
+  const state = raw['state'];
+  const origin = raw['origin'];
+  const declared = state === 'wired' || state === 'substitute' || state === 'none' ? state : 'unknown';
+  // 双重 fail-closed：`state === 'wired'` 与 `ready === true` **都**成立才算就绪。
+  const ready = declared === 'wired' && raw['ready'] === true;
+  return {
+    ready,
+    state: declared,
+    origin: typeof origin === 'string' ? origin : null,
+    source: typeof raw['source'] === 'string' ? raw['source'] : 'capability',
+  };
+}
+
 export interface LinkWithdrawResult {
   target_ref: LinkTargetRef;
   withdrawn: boolean;
@@ -172,6 +229,13 @@ export interface ModerationDomainPort {
   readView(input: unknown): Promise<unknown>;
   tasks(target_ref: unknown): unknown;
   counts?(): unknown;
+  /**
+   * **端口能力位**（可选；`capabilities()` 返回文本/图片两类内容的 `wired/ready` 声明）。
+   *
+   * 可选是为了让"只声明社区用到的子集"的既有实现（测试里的手写端口）继续成立；
+   * 缺失时 `readImageModerationReadiness` 一律读成**未就绪**（fail-closed）。
+   */
+  capabilities?(): unknown;
 }
 
 /** 审核域台账的**只读**计数（供证据页/用例断言；不参与任何业务判定）。 */
@@ -203,6 +267,12 @@ export interface CommunityModerationLink {
   readView(input: { actor: LinkActor; target_ref: LinkTargetRef }): Promise<LinkReadResult>;
   /** 台账当前结论（同步；供读取路径做"明确驳回即不可见"的加严判定）。 */
   conclusionFor(target_ref: LinkTargetRef): LinkConclusion;
+  /**
+   * **图片审核能力位**（同步；供社区在放行带媒体内容前做与门之一）。
+   *
+   * 只如实转述审核域声明的能力位；读不出 ⇒ `ready: false`（fail-closed）。
+   */
+  imageReadiness(): LinkImageReadiness;
   counts(): LinkCounts;
 }
 
@@ -515,6 +585,35 @@ export function createCommunityModerationLink(options: {
     };
   }
 
+  /**
+   * 图片审核能力位：**只**读审核域 `capabilities()` 声明，不自己推断"端口看起来存在"。
+   *
+   * `capabilities()` 是审核域的可选子集方法（见 `ModerationDomainPort`）：缺失 / 抛错 /
+   * 形状不可读 ⇒ `unknown` + `ready:false`。这里**不**缓存，避免"能力位变化后仍按旧读数放行"。
+   */
+  function imageReadiness(): LinkImageReadiness {
+    if (typeof moderation.capabilities !== 'function') {
+      return { ready: false, state: 'unknown', origin: null, source: 'no-capabilities' };
+    }
+    let raw: unknown;
+    try {
+      raw = moderation.capabilities();
+    } catch {
+      return { ready: false, state: 'unknown', origin: null, source: 'capabilities-threw' };
+    }
+    const caps = isPlainObject(raw) ? raw : null;
+    const image = caps !== null && isPlainObject(caps['image']) ? (caps['image'] as Record<string, unknown>) : null;
+    if (image === null) {
+      return { ready: false, state: 'unknown', origin: null, source: 'capabilities-shape' };
+    }
+    const declared = image['state'];
+    const state = declared === 'wired' || declared === 'substitute' || declared === 'none' ? declared : 'unknown';
+    const origin = typeof image['origin'] === 'string' ? image['origin'] : null;
+    // 双重 fail-closed：审核域必须**同时**声明 `state === 'wired'` 与 `ready === true`。
+    const ready = state === 'wired' && image['ready'] === true;
+    return { ready, state, origin, source: 'capabilities' };
+  }
+
   return {
     wired: true,
     note:
@@ -525,6 +624,7 @@ export function createCommunityModerationLink(options: {
     withdraw,
     readView,
     conclusionFor,
+    imageReadiness,
     counts,
   };
 }
