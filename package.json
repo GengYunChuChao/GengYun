@@ -32,7 +32,8 @@
     "purge:backup-copies": "node tools/purge-expired-backup-copies.mjs",
     "purge:online-data": "node tools/purge-expired-online-data.mjs",
     "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs",
-    "test:integration:online-purge-pg": "node tests/integration/online-purge-pg.mjs"
+    "test:integration:online-purge-pg": "node tests/integration/online-purge-pg.mjs",
+    "verify:purge-schedule": "node tools/verify-purge-schedule.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

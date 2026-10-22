@@ -1,0 +1,32 @@
+# GY-R32 · #19 · 调度层的 **crontab 等价形态**（与 deploy/purge-schedule/*.timer 二选一）。
+#
+# ⛔ 不要与 systemd timer 同时安装：两条通路都调用**同一条命令**，同时装会让每一轮跑两遍。
+#    （命令本身幂等 —— 第二轮是 0 行 / already_purged —— 但白耗库与 IO，且两轮并发时日志会互相
+#     插不进因果。选一条就只留那一条的 enable 状态。）
+#
+# 装法（Debian/Ubuntu）：把下面两行放进 /etc/cron.d/gengyun-purge（root:root 0644；⛔ 不要写进
+# 任何用户的 crontab，那个形态没有第 6 列的用户字段，会以写表的那个用户身份跑）。
+#
+#   sudo install -m 0644 -o root -g root crontab.example /etc/cron.d/gengyun-purge
+#   sudo systemctl disable --now gengyun-purge-online-data.timer gengyun-purge-backup-copies.timer
+#
+# 与 .timer 的逐项对应（缺一条就不再等价）：
+#   ① 入口文件：与 package.json 的 purge:online-data / purge:backup-copies 同一个文件；
+#   ② 凭据：用 `. <env 文件>` 读入，等价于 systemd 的 EnvironmentFile= ——
+#      ⛔ 不把连接串写进 crontab（crontab 是 0644、会被 `crontab -l` 与备份带出去）；
+#   ③ 游标：--cursor-file 给**绝对路径**（相对路径会随 cron 的 cwd 漂移、丢进度）；
+#   ④ 防重叠：systemd 靠 oneshot 单实例语义，cron 没有 ⇒ 用 flock -n 等价实现
+#      （拿不到锁就**立刻退出**，不排队堆积）；
+#   ⑤ 周期：*/10 与 5-59/15（Vixie cron 的区间步长），都与 .timer 的 OnCalendar 同周期且 ≤ 60 分钟。
+#
+# 一个环境文件只服务一条命令（与 /etc/gengyun/*.env 一一对应）：在线清理用**属主/运维角色**的
+# 连接串，备份清理用**运行时角色**的（角色差异见两个 .service 的头注释）。
+#
+# 分钟 小时 日 月 周  用户         命令
+*/10 * * * *          gengyun-ops  flock -n /run/gengyun-purge-online-data.lock sh -c '. /etc/gengyun/purge-online-data.env; cd /opt/gengyun/app && exec /usr/bin/node /opt/gengyun/app/tools/purge-expired-online-data.mjs --cursor-file=/var/lib/gengyun-purge-online-data/online-purge-cursor.json' >> /var/log/gengyun/purge-online-data.log 2>&1
+5-59/15 * * * *       gengyun-app  flock -n /run/gengyun-purge-backup-copies.lock sh -c '. /etc/gengyun/purge-backup-copies.env; cd /opt/gengyun/app && exec /usr/bin/node /opt/gengyun/app/tools/purge-expired-backup-copies.mjs' >> /var/log/gengyun/purge-backup-copies.log 2>&1
+#
+# 判读（cron 没有 systemd 的 failed 单元状态，只能看日志尾部与退出码）：
+#   tail -n 5 /var/log/gengyun/purge-online-data.log
+#   grep -c 'EXITCODE=1' /var/log/gengyun/purge-online-data.log   # >0 ⇒ 有人要来看
+# 退出码语义：0 干净 / 1 有失败行（需要人看）/ 2 参数或配置错。

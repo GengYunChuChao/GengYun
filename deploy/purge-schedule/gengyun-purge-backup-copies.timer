@@ -1,0 +1,26 @@
+# GY-R32 · #19 · 备份副本到期清除的**调度**（配对 gengyun-purge-backup-copies.service）。
+#
+# GY-SCHEDULE: npm-script=purge:backup-copies
+#
+# ## 周期口径
+# OnCalendar 每 15 分钟一次（:05 / :20 / :35 / :50），≤ 60 分钟上限（判据 [calendar] 展开日历
+# 算最大间隔）。刻意与在线清理那条（:00 / :10 / :20 …）**错开 5 分钟**：两条命令连的是同一个
+# 库，错开可避免每个 10 分钟点上都出现两个并发长事务抢 IO。
+#
+# ## 防重叠
+# 同在线清理那条：oneshot 单实例语义 + 服务侧 TimeoutStartSec=900。
+#
+# 与 crontab.example 二选一：⛔ 不要两条一起装。
+
+[Unit]
+Description=耕云 备份副本 30 日到期清除 · 每 15 分钟
+
+[Timer]
+OnCalendar=*-*-* *:05/15:00
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=gengyun-purge-backup-copies.service
+
+[Install]
+WantedBy=timers.target

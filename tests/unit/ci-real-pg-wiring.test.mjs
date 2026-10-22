@@ -104,6 +104,10 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 「筛选未下推 SQL」的语句读数与 `community_posts_feed_idx` 的 EXPLAIN 读数；另有举报 `state`
  * 恒 `received` 的**缺口登记**）。它要求空库、只走 env `COMMUNITY_FILTER_PG_TEST_URL`（库 owner），
  * 缺 env 时 exit 77 ⇒ 与第 2 条同一形态；见 `docs/verification/gy-r29-i15-community-filter-20261022.md`。
+ * 第 17 条是 R32 接的（`online-purge-pg.mjs`／`#19` 的**在线数据 7 日到期执行者**）：与第 13/14 条同类的
+ * 自起集群脚本（`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 无 `CREATE DATABASE`）。它此前**不在任何 workflow** ——
+ * 驱动 `services/api/src/privacy/online-purge-driver.ts` 与运维命令 `tools/purge-expired-online-data.mjs`
+ * 早在 main，但「7 日到期」这条保证在 CI 上从未被真库验证过；这正是本片要补的那条缺口（与第 1 条同族）。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -127,6 +131,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
+  'tests/integration/online-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -152,6 +157,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
+  'tests/integration/online-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -274,6 +280,16 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
   //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
   'tests/integration/messages-purge-pg.mjs',
+  // 15b. `online-purge-pg`（R32 接入，`#19` 在线数据 7 日到期**执行者**——它的驱动
+  //    `services/api/src/privacy/online-purge-driver.ts` 与运维命令 `tools/purge-expired-online-data.mjs`
+  //    早已在 main，但此前**不在任何 workflow**：`#19` 的在线侧「7 日到期」在 CI 上从未被真库验证过）：
+  //    与第 13/14 条**同类**的自起集群脚本（自己 `initdb` 出临时 17 集群、端口 55600+randomInt(0,300)
+  //    且**先探活再起**、自建 `gy_w6_online_purge`、跑完 `pg_ctl stop` 并删数据目录），**不连** service
+  //    里的库、**不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    它的数据根目录键是 **`GY_I19_PG_ROOT`**（脚本取值点 `process.env.GY_I19_PG_ROOT ?? tmpdir()`），
+  //    与第 13/14 条同键（⛔ 与第 15 条的 `GY_W11_PG_ROOT` 不同）；守卫按脚本源码交叉核对。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
+  'tests/integration/online-purge-pg.mjs',
   // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
   //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
@@ -315,6 +331,9 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // 跑完 `pg_ctl stop` 并删数据目录）。⚠️ 它读的数据根键是 `GY_W11_PG_ROOT`（脚本 `:92`），
   // 与上面两条的 `GY_I19_PG_ROOT` **不同** ⇒ 键名必须按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   'tests/integration/messages-purge-pg.mjs',
+  // R32：`online-purge-pg.mjs`（`#19` 在线数据 7 日到期执行者）同上（自起集群、自建 `gy_w6_online_purge`、
+  // 跑完 `pg_ctl stop` 并删数据目录）。它读的数据根键是 `GY_I19_PG_ROOT`（与第 13/14 条同键）。
+  'tests/integration/online-purge-pg.mjs',
 ]);
 
 /**
@@ -334,6 +353,9 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   'tests/integration/backup-purge-pg.mjs': 'GY_I19_PG_ROOT',
   'tests/integration/backup-copies-purge-pg.mjs': 'GY_I19_PG_ROOT',
   'tests/integration/messages-purge-pg.mjs': 'GY_W11_PG_ROOT',
+  // R32：`online-purge-pg.mjs`（`#19`）读 `GY_I19_PG_ROOT`（源码取值点
+  // `process.env.GY_I19_PG_ROOT ?? tmpdir()`）⇒ 与第 13/14 条同键。
+  'tests/integration/online-purge-pg.mjs': 'GY_I19_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */

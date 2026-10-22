@@ -1,0 +1,58 @@
+# GY-R32 · #19 · 备份副本「30 日到期」清除的 **systemd 单元**
+# （驱动者 = tools/purge-expired-backup-copies.mjs，npm script = purge:backup-copies）。
+#
+# GY-SCHEDULE: npm-script=purge:backup-copies
+# GY-SCHEDULE: role=runtime
+#
+# ## 这个单元为什么存在
+# 与在线清理那条单元同族：到期是日历事实（public.user_backup_copies.retention_until），
+# 不是进程存活时长。backup-purge-driver.ts 文件头「为什么是运维命令而不是进程内定时器」
+# 写着同一口径 —— 仓内**故意**零 setInterval（判据 [setinterval] 机器化守住），
+# 由外部调度反复调用同一个运维命令；退出码是唯一判据
+# （0 干净 / 1 有失败组或待显式重排的 failed 行 / 2 参数或配置错）。
+# 这里同样⛔ 不吞错：不写 SuccessExitStatus=、不写 Restart=always。
+#
+# ## 角色差异（与在线清理那条单元不同）：本单元用**运行时角色**即可
+# 依据：services/api/src/privacy/backup-purge-driver.ts 文件头「权限口径（⛔ 本片不加任何授权）」——
+#   本命令用到的列全在 gengyun_api_runtime 的列级授权里
+#   （deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-i19-backup-copies-grant 段：
+#    读 request_id / user_id / module / state / retention_until，写 state / updated_at）
+#   ⇒ 真库臂 tests/integration/backup-copies-purge-pg.mjs 就是用运行时角色实测的。
+# 对照项：在线清理那条单元（gengyun-purge-online-data.service）**必须**用属主/运维角色 ——
+#   它要读 public.deletion_requests，而运行时角色对该表零表级零列级权限
+#   （deploy/postgres-cvm/sql/90-assert-least-privilege.sql 第 48 项），用运行时角色跑必然 42501
+#   （online-purge-driver.ts 文件头「需要的数据库角色」）。
+# 本单元仍然**不**降级为 root：OS 侧与 DB 侧各自按最小权限收敛，两层不互相替代。
+#
+# ## 凭据：只从 EnvironmentFile 来
+# 运行时角色的连接串放进 /etc/gengyun/purge-backup-copies.env（root:root 0600），
+# systemd 以 root 读入后再降权执行；单元里不写连接串、不写口令（判据 [secrets] 硬红）。
+#
+# ## 这个命令为什么没有 --cursor-file
+# 它不需要跨轮进度：成功组在库里被置成 state='purged'，下一次枚举（state <> 'purged'）
+# 天然跳过 ⇒ 幂等由数据库裁决，进度不落在命令侧（见 backup-purge-driver.ts 文件头
+# 「幂等」一节）。在线清理那条不同：它不写请求 state，进度只能放游标文件。
+# 判据 [cursor] 因此只对在线那条要求绝对路径。
+
+[Unit]
+Description=耕云 备份副本 30 日到期清除（tools/purge-expired-backup-copies.mjs）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 非 root（DB 侧用运行时角色，OS 侧也不给 root）。
+User=gengyun-app
+Group=gengyun-app
+# 凭据只从这里进（见上「凭据」一节）。
+EnvironmentFile=/etc/gengyun/purge-backup-copies.env
+# 运维契约要求每个单元都有属主状态目录：本命令当前不写文件，但保留它给将来的
+# 日志/临时产物一个**非 root 可写**的落点，避免将来有人为了写文件而把 User= 改回 root。
+StateDirectory=gengyun-purge-backup-copies
+StateDirectoryMode=0700
+WorkingDirectory=/opt/gengyun/app
+# 入口文件必须与 package.json 的 purge:backup-copies **同一个文件**（判据 [execstart] 核对）。
+ExecStart=/usr/bin/node /opt/gengyun/app/tools/purge-expired-backup-copies.mjs
+# 防重叠：同在线清理那条（oneshot 单实例 + 单次运行上界）。
+TimeoutStartSec=900
+Nice=10
