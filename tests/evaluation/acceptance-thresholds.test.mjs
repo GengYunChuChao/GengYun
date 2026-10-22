@@ -2,7 +2,7 @@
 //
 // 目的：把 `docs/evaluation/acceptance-thresholds-summary.md`（首版验收门槛汇总）钉在**机器事实源**上，
 // 防止数值/清单漂移回人工抄写。任一不符即失败：
-//   1) 17 个样本桶、14 条指标门禁 ↔ `packages/evaluation/src/targets.mjs` 的 `SAMPLE_TARGETS` / `METRIC_GATES`（桶名/任务/数量/阈值/方向/口径）；
+//   1) 17 个样本桶、18 条指标门禁 ↔ `packages/evaluation/src/targets.mjs` 的 `SAMPLE_TARGETS` / `METRIC_GATES`（桶名/任务/数量/阈值/方向/口径）；
 //   2) 样本现状计数 ↔ `docs/evaluation/sample-gap-register.md` 的真实计数（不得自估）；
 //   3) 6.2 检查项与 6.3 交付物清单 ↔ `docs/implementation-requirements.md` 原文（逐字）；
 //   4) 6.3 AC 清单 ↔ 同文件 `:489`，无首版接口 AC ↔ `docs/architecture/acceptance-map.md`，「设计覆盖≠运行通过」口径不冲突；
@@ -115,7 +115,7 @@ test('[防漂移] 每张清单都带「现状三态」列，取值仅限 未取�
       checked += 1;
     }
   }
-  assert.equal(checked, 17 + 14 + 9 + 9 + 29 + 6, '「现状三态」格子总数应为 84');
+  assert.equal(checked, 17 + 18 + 9 + 9 + 29 + 6, '「现状三态」格子总数应为 88');
   assert.ok(summary.includes('不含任何实测成绩'), '汇总应显式声明不含任何实测成绩');
 });
 
@@ -165,7 +165,7 @@ test('[6.1 样本] 现状计数逐桶等于 sample-gap-register.md 的「实际�
 });
 
 // —— 3. 6.1 指标门禁 ↔ METRIC_GATES ——
-test('[6.1 门禁] 14 条与 METRIC_GATES 逐项一致（指标／任务／阈值／方向／口径）', () => {
+test('[6.1 门禁] 18 条与 METRIC_GATES 逐项一致（指标／任务／阈值／方向／口径）', () => {
   const table = tableWithHeader('direction');
   const iMetric = column(table, 'metric');
   const iTask = column(table, 'task');
@@ -173,7 +173,7 @@ test('[6.1 门禁] 14 条与 METRIC_GATES 逐项一致（指标／任务／阈�
   const iDirection = column(table, 'direction');
   const iNote = column(table, '需求口径');
   assert.equal(table.rows.length, METRIC_GATES.length, `门禁行数应等于 METRIC_GATES 长度 ${METRIC_GATES.length}`);
-  assert.equal(METRIC_GATES.length, 14, 'METRIC_GATES 应为 14 条');
+  assert.equal(METRIC_GATES.length, 18, 'METRIC_GATES 应为 18 条');
   table.rows.forEach((row, i) => {
     const source = METRIC_GATES[i];
     assert.equal(stripCode(row[iMetric]), source.metric, `第 ${i + 1} 行指标不符`);

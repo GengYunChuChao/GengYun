@@ -479,7 +479,22 @@ function requireLogin(callback) {
   })
 }
 
-function cancelLogin() { intentEpoch += 1; clearSession() }
+/**
+ * 取消**本页在途的那次登录**（不是退出登录）。
+ * - 默认：推进意图世代并清会话（游客取消、无既有会话的场景）。
+ * - `preserveVerifiedSession=true`：只推进意图世代让在途登录结果作废；若取消前已有
+ *   **经服务端核实**且本地预检通过的会话，则保留它。页面隐藏/返回不该销毁仍然有效的登录，
+ *   真正的撤销只走 logout()。
+ */
+function cancelLogin(preserveVerifiedSession) {
+  intentEpoch += 1
+  if (preserveVerifiedSession && serverVerified && getSession() !== null) {
+    // 只作废本页在途登录与这次一次性返回意图；仍然有效的会话本身保留（撤销只走 logout）。
+    navigation.clearReturnTo()
+    return
+  }
+  clearSession()
+}
 function resumeAfterLogin(id, callback) {
   if (!navigation.isCurrent(id) || !isLoggedIn()) return false
   const target = navigation.consumeReturnTo(id)
