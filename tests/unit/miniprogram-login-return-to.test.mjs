@@ -252,6 +252,55 @@ test('home confirm → login → verified synthetic server result → original q
   b.requests.at(-1).success({ statusCode: 200, data: { data: { access_token: 'synthetic-token', audience: 'user', expires_at: future() }, meta: { execution_mode: 'stub' } } });
   assert.equal(b.routes.at(-1).url, REF); login.onHide(); login.onUnload(); assert.equal(b.auth.isLoggedIn(), true);
 });
+// 登录页的 onHide/onUnload 只取消**本页在途的那次登录**，不是「退出登录」。
+// 改前：已核实会话下离开登录页（返回／切后台）会调 auth.cancelLogin() 清掉会话，
+// 用户被静默登出（qa 验收轮观测到「页面栈只剩登录页且会话变空」的成因）。
+test('leaving the login page without an in-flight login keeps the verified session', () => {
+  const b = fixture(); b.login();
+  const token = b.auth.getSession().accessToken;
+  const page = b.page('login'); page.onShow();
+  assert.equal(page.data.loggedIn, true, '已核实会话在登录页可见');
+  page.onHide(); page.onUnload();
+  assert.equal(b.auth.isLoggedIn(), true, '普通离页不得撤销已核实会话');
+  assert.equal(b.auth.getSession()?.accessToken, token);
+  assert.ok(b.requests.every((r) => !/\/auth\/logout/.test(r.url)), '离页不得调用服务端撤销');
+  assert.equal(b.storage.has('gengyun.session'), true, '本地会话不得被离页清掉');
+  page.onShow(); assert.equal(page.data.loggedIn, true, '返回登录页仍显示已登录');
+});
+test('explicit logout on the login page still clears the session and reports server revocation', () => {
+  const b = fixture(); b.login();
+  const page = b.page('login'); page.onShow(); page.logout();
+  const logout = b.requests.at(-1);
+  assert.equal(logout.method, 'POST'); assert.ok(logout.url.endsWith('/auth/logout'));
+  logout.success({ statusCode: 200, data: { data: { accepted: true } } });
+  assert.equal(b.auth.isLoggedIn(), false, '显式退出仍清会话');
+  assert.equal(page.data.loggedIn, false);
+  assert.match(page.data.status, /服务端会话已撤销/);
+});
+test('leaving with a second login in flight keeps the already-verified session and drops only the late result', () => {
+  const b = fixture(); b.login();
+  const page = b.page('login'); page.onShow(); page.login();
+  assert.equal(page.data.busy, true, '第二次登录在途');
+  const late = b.wxLogins.at(-1);
+  page.onHide();
+  assert.equal(page.data.busy, false);
+  assert.equal(b.auth.isLoggedIn(), true, '在途重登被取消，但原有效会话保留');
+  late.success({ code: 'synthetic-late' });           // 被取消那次登录的迟到结果
+  assert.equal(b.auth.isLoggedIn(), true, '迟到结果不得清掉原会话');
+  assert.equal(b.auth.getSession().accessToken, 'synthetic-token');
+  assert.equal(b.requests.filter((r) => /\/auth\/wechat/.test(r.url)).length, 1, '迟到结果不得再发交换请求');
+});
+test('guest cancellation still clears its own pending login and writes no session', () => {
+  const b = fixture(); b.nav.beginReturnTo(REF);
+  const page = b.page('login'); page.onShow(); page.login();
+  const pending = b.wxLogins.at(-1);
+  page.onHide();
+  pending.success({ code: 'synthetic-code' });       // 被取消登录的迟到结果
+  assert.equal(b.auth.isLoggedIn(), false, '无既有会话时取消仍必须保持未登录');
+  assert.equal(b.storage.has('gengyun.session'), false, '取消不得写入会话');
+  assert.equal(b.nav.peekReturnTo(), null, '取消清除本次登录意图');
+  assert.equal(b.routes.length, 0, '离页取消不自行导航');
+});
 test('old home modal confirm/cancel/failure cannot overwrite or clear a later target', () => {
   for (const outcome of ['confirm', 'cancel', 'fail']) {
     const b = fixture(), home = b.page('home'); home.onShow(); home.goReference(); home.goReferenceSeed();
