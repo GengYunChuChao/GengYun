@@ -118,6 +118,15 @@ export function createCommunityOwnerPurgePort(options: {
     // ⛔ 不要写成 `anonymizedRef === null ? undefined : {...}`：`undefined` 的语义是
     // "调用方没表态，请兜底生成"，那会把"能力缺失"悄悄变成"看起来完成了"。
     const counts = await purge.call(store, ownerId, { anonymizedAuthorRef: anonymizedRef });
+    // ⚠️ 口径变化（0030）：`blocked` **不再以"有保留内容"为前提**。
+    // 本片之前只有在 `retained + redacted > 0` 时才判作者引用这一项（没有内容就没有"换行级作者"的要求）；
+    // 现在 `ROW_REFERENCE` 是"存储层没把行替换掉"的防御性判据，而**能力缺失/生成失败**
+    // （`anonymize` 不在或抛错）是**无论有没有内容都不该判 completed** 的事实 —— 那意味着这一路
+    // 装配根本没有去身份能力。因此无内容 + 能力缺失也会 `blocked = 1`（原因码只有
+    // `author-reference-unavailable` / `-failed`，不会出现 `ROW_REFERENCE`：那个仍以"有内容"为前提）。
+    // 生产可达性：`app.ts` 只有**一处**装配（`createCommunityOwnerPurgePort({ store, authors })`，
+    // 传入的是本地假名目录，恒有 `anonymize`）⇒ 无内容主体不会因此变 blocked；测试替身缺能力时才可达，
+    // 而这正是我们想让它如实报出来的形态（反向控制见 retention 用例 c2/c3）。
     const hasRetainedContent = counts.retained + counts.redacted > 0;
     if (hasRetainedContent) {
       // 有需要保留/去身份的内容 ⇒ 作者引用这条要求才真正被触发。

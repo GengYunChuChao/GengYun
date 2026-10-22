@@ -614,7 +614,8 @@ async function main() {
         [authorId],
       )).rows[0].n,
       0,
-      '该主体名下不得再有任何 author_id 命中的行（含 deleted 行为空）',
+      '该主体名下不得再有任何 author_id 命中的行（**本夹具没有 deleted 行**；deleted 行按既定语义跳过、'
+        + '不参与作者指针替换 —— 别把这句话读成"deleted 行也已清零"）',
     );
     const purgedPost = await store.getPost(post2);
     assert.equal(purgedPost.visibility, 'published', 'F13：安全帖子保留公开，不得软删');
