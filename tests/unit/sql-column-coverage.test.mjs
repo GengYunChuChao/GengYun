@@ -388,22 +388,32 @@ const OPAQUE_ALLOWLIST = [
  *      `id`/`author_id`/`anonymized_author_ref` ⇒ 再 +6。
  * 合计：字面量 153→**155**、UPDATE 26→**28**、RETURNING 59→**61**、columnRequirements 1222→**1234**；
  * SELECT/DELETE/INSERT、引用表数、`SELECT *` 处数**不变**（两张表早已在清单里，两列均已授权）。
+ *
+ * R31-F13 P2 返修（PR #483 `[P2]`「软删行仍保留原 author_id」）：`purgeOwnerData` 的命中集不再
+ * 按 `visibility` 过滤（软删行也要清作者关联），并在写入后**重新测量**剩余 owner 引用：
+ *   1. 两条按主体的 `SELECT … FOR UPDATE` 去掉 `visibility <> 'deleted'` 谓词、列清单加 `visibility`
+ *      —— `visibility` 原本就在同一条 WHERE 里被引用，**列要求不增**（4 处变 4 处仍各 1 条）；
+ *   2. 新增一条只读语句 `SELECT count(*) … community_posts … UNION ALL … community_comments …`
+ *      （+字面量 1、+SELECT 1；两表 `author_id` 各 +1 列要求 ⇒ 2 条）。
+ * 实测合计：字面量 155→**156**、SELECT 71→**72**、columnRequirements 1234→**1236**（已覆盖同增，
+ * 缺口仍 0）、逐文件 `community` 40→**41**；UPDATE/DELETE/INSERT/RETURNING/引用表数/`SELECT *`/
+ * 无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 155,
-  statements: { INSERT: 27, UPDATE: 28, SELECT: 71, DELETE: 29 },
+  sqlLiterals: 156,
+  statements: { INSERT: 27, UPDATE: 28, SELECT: 72, DELETE: 29 },
   returningClauses: 61,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1234,
+  columnRequirements: 1236,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 40,
+  community: 41,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -489,14 +499,23 @@ const TABLE_WIDE_COLUMN = '*';
  *   `20-login-roles.sql` 与 `90-assert-least-privilege.sql` **成对**授权）、逐文件 `community` 38 → **40**；
  *   INSERT/SELECT/DELETE、引用表 **44 张**、行锁 25、onConflict 26 全部不变（新语句只碰已登记的两张表）。
  *   合流树实测：19 文件 / **264** 条字面量 / 44 张表；列要求 **1713**、已覆盖 **1659**、缺 0。
+ * ⑧ 2026-10-22 R31-F13 P2 返修（PR #483 `[P2]`「软删行仍保留原 author_id」）：
+ *   ① 两条 `SELECT … FROM community_posts/comments … FOR UPDATE` 去掉 `visibility <> 'deleted'` 谓词、
+ *      列清单加 `visibility` —— 该列本就在同一条 WHERE 里被引用 ⇒ **列要求不增**；
+ *   ② 新增一条只读测量语句 `SELECT count(*)::int … community_posts … UNION ALL … community_comments …`
+ *      （写入完成后重新测量「还剩几行仍指向该主体」）⇒ +字面量 1、+SELECT 1、两表 `author_id` 各 +1 列要求。
+ *   ⇒ 字面量 264 → **265**、SELECT 140 → **141**、列要求 1713 → **1715**、已覆盖 1659 → **1661**（缺口仍 0：
+ *   `author_id` 的 SELECT 面早已授权）、逐文件 `community` 40 → **41**；UPDATE/DELETE/INSERT/RETURNING/
+ *   引用表 44 张/行锁/onConflict/无顶层 FROM 全部不变。
+ *   合流树实测：19 文件 / **265** 条字面量 / 44 张表；列要求 **1715**、已覆盖 **1661**、缺 0。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 264,
-  statements: { INSERT: 42, UPDATE: 46, SELECT: 140, DELETE: 36 },
+  sqlLiterals: 265,
+  statements: { INSERT: 42, UPDATE: 46, SELECT: 141, DELETE: 36 },
   returningClauses: 81,
   onConflictClauses: 26,
   selectStar: 15,
@@ -505,8 +524,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 44,
-  columnRequirements: 1713,
-  coveredRequirements: 1659,
+  columnRequirements: 1715,
+  coveredRequirements: 1661,
   ledgerExemptions: 33,
   rowLockRequirements: 25,
   rowLockExemptions: 1,
@@ -518,7 +537,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 40,
+  'community': 41,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

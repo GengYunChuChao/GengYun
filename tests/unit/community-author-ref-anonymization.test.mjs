@@ -9,7 +9,7 @@
  *   2. **不再依赖进程内 Map**：换一个全新的作者目录实例（= 重启）读同一行，仍显示同一注销引用；
  *   3. 多副本：两个独立服务实例读同一行 ⇒ 同一个 `display_id`；
  *   4. `scope='mine'` 不把匿名行算作原用户（否则注销后还能"看到自己的帖子"）；
- *   5. 旧 `visibility='deleted'` 行跳过（不复活、不改作者指针）；
+ *   5. 旧 `visibility='deleted'` 行：内容与可见性不复活，但**作者关联照样清掉**（P2 返修）；
  *   6. 幂等：并发/重放不分裂引用、不重复替换。
  *
  * 真库（CHECK 约束、42501 授权负控制、真 PG 17 上的 forward/rollback）见
@@ -151,25 +151,35 @@ test("4. scope='mine' 不把匿名行算作原用户（注销后 @me 里不得�
   assert.equal(bMine.items.some((item) => item.id === other.id), true);
 });
 
-test('5. 旧 visibility=deleted 行跳过：不复活、不改作者指针、不计入替换行数', async () => {
+test('5. 旧 visibility=deleted 行：内容不复活，但作者关联照样清掉（P2 返修，监工 PR #483）', async () => {
   const h = makeHarness();
   const post = await publishPost(h.service, USER_A, {}, idem(440));
   const kept = await publishPost(h.service, USER_A, {}, idem(441));
   await h.service.deletePost(USER_A, post.id, { idempotencyKey: idem(442), ifMatch: `"${post.revision}"` });
 
   const counts = await purge(h, USER_A.userId);
-  assert.equal(counts.authorRefsReplaced, 1, '只有未删除的 1 行被替换');
-  assert.equal(counts.retained, 1);
+  assert.equal(counts.authorRefsReplaced, 2, '未删除 1 行 + 已软删 1 行 = 2 行作者指针都被替换');
+  assert.equal(counts.authorRefsRemaining, 0, '清理后不得再有行以原 author_id 关联该主体（含软删行）');
+  assert.equal(counts.blocked, 0, '两侧都清干净 ⇒ 端口不报未完成项');
+  assert.equal(counts.retained, 1, '保留读数仍只算未删除的那一行（软删行既不算保留也不算删除）');
 
   const deletedRow = await h.store.getPost(post.id);
   assert.equal(deletedRow.visibility, 'deleted', '不得复活已删除内容');
-  // 如实残留（待裁口径未覆盖）：作者自己删掉的行沿用"原样跳过"，不替换作者指针。
-  assert.equal(deletedRow.author_id, USER_A.userId);
-  assert.equal(deletedRow.anonymized_author_ref, null);
+  assert.equal(deletedRow.revision, post.revision, '清作者关联不得推进版本');
+  assert.equal(deletedRow.body, CLEAN_BODY, '作者自行删除的正文一字不动');
+  // P2 返修：作者主动删除的行沿用「可见性/正文原样」，但**作者关联必须清掉** ——
+  // 「保留作者的删除语义」与「删除账号映射」不冲突（监工 PR #483）。
+  assert.equal(deletedRow.author_id, null, '软删行同样不得再直接关联账户');
+  assert.match(String(deletedRow.anonymized_author_ref), REF_PATTERN, '软删行同样要落行内注销引用');
 
   const keptRow = await h.store.getPost(kept.id);
   assert.equal(keptRow.author_id, null);
   assert.match(String(keptRow.anonymized_author_ref), REF_PATTERN);
+  assert.equal(
+    keptRow.anonymized_author_ref,
+    deletedRow.anonymized_author_ref,
+    '同一主体的普通行与软删行共用同一个注销引用（不分裂）',
+  );
 });
 
 test('6. 引用不可反查：不含原 id 的任何片段，且与"主体 id 无关的随机值"同分布', async () => {

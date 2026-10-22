@@ -436,27 +436,34 @@ test('d. 注销引用：随机（不是原 ID 的摘要）、逐作者独立、�
 // ---------------------------------------------------------------------------
 // 边界：作者主动删除的旧路径不得被改写/复活
 // ---------------------------------------------------------------------------
-test('边界：作者主动删除（visibility=deleted）的内容，注销后仍是 deleted，不复活、不重复计数', async () => {
+test('边界：作者主动删除（visibility=deleted）的内容，注销后仍是 deleted；不复活、作者关联照样清除', async () => {
   const h = makeHarness();
   const post = await publishPost(h.service, USER_A, {}, idem(340));
   await h.service.deletePost(USER_A, post.id, { idempotencyKey: idem(341), ifMatch: `"${post.revision}"` });
   const deleted = await h.store.getPost(post.id);
   assert.equal(deleted.visibility, 'deleted');
 
-  const { deletion } = await purgeOwner(h, USER_A.userId);
+  const { deletion, request } = await purgeOwner(h, USER_A.userId);
 
   const after = await h.store.getPost(post.id);
   assert.equal(after.visibility, 'deleted', '注销不得复活作者已删除的内容');
   assert.equal(after.revision, deleted.revision, '注销不得改写作者删除路径的版本');
-  // 本片的**如实残留**（不是遗漏）：`visibility='deleted'` 的行沿用"作者主动删除的行原样跳过"
-  // 的既有语义，作者指针**不被替换**。是否清零属待裁口径（设计 §5 待裁①），本片不做、
-  // 也不谎称全表清零；公众面读不到这些行（`visibility='deleted'` 一律 404）。
-  assert.equal(after.author_id, USER_A.userId, '已删除行的 author_id 按既定语义保留（待裁口径未覆盖）');
-  assert.equal(after.anonymized_author_ref, null);
+  // P2 返修（监工 PR #483）：可见性与正文原样保留，但**作者关联必须清掉** ——
+  // 「作者主动删除」只豁免"内容/可见性"，不豁免「删除账号映射」。旧实现整行跳过 ⇒
+  // 该行仍以原 author_id 直接关联账户，回执却已 completed。
+  assert.equal(after.author_id, null, '已删除行同样不得再以原 author_id 关联账户');
+  assert.match(
+    String(after.anonymized_author_ref),
+    /^gy-anon-[0-9a-f]{16}$/,
+    '已删除行同样要落行内注销引用（迁移 0030 的「恰好一个非空」）',
+  );
+  assert.equal(after.body, deleted.body, '正文一字不动');
   const audit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.equal(audit.retained, 0, '已删除行不计入保留');
   assert.equal(audit.redacted, 0);
-  assert.equal(audit.authorRefsReplaced, 0, '已删除行不参与作者指针替换');
+  assert.equal(audit.authorRefsReplaced, 1, '已删除行参与作者指针替换（1 行）');
+  assert.equal(audit.blocked, undefined, '已清干净 ⇒ 不留未完成项');
+  assert.equal(communityRow(deletion, request.id).online_state, 'completed', '去身份已覆盖软删行 ⇒ completed 诚实');
 });
 
 // ---------------------------------------------------------------------------

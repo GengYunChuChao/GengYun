@@ -191,6 +191,11 @@ export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>
  *     写 `anonymized_author_ref`）。⚠️ 不并入 `records`（那不是"删除/改写正文"），也不并入
  *     `retained`（保留读数说的是正文是否原样）—— 三者是不同的账，混算会让证据串把
  *     "替换了几行作者"读成"保留了几行"。
+ *   - `authorRefsRemaining`：**写入完成后重新测量**的「仍以原 `author_id` 关联本主体」行数
+ *     （帖子 + 评论，**含** `visibility='deleted'` 行）。0 = 账号映射已从本主体的全部内容行上
+ *     删除；>0 = 仍有行指向该账户，注销端口必须据此如实 `blocked`（⛔ 不得用
+ *     `authorRefsReplaced > 0` 冒充完成）。这是 P2 返修新增的**结果**读数：不是"做了几步"，
+ *     而是"还剩多少没做"。
  */
 export interface CommunityOwnerPurgeCounts {
   records: number;
@@ -200,6 +205,8 @@ export interface CommunityOwnerPurgeCounts {
   hiddenMedia: number;
   /** 行级作者指针替换行数（迁移 0030；0 = 没有需要替换的行或已是匿名行）。 */
   authorRefsReplaced: number;
+  /** 写入后仍以原 `author_id` 关联本主体的行数（帖 + 评，含软删行）；0 = 账号映射已清干净。 */
+  authorRefsRemaining: number;
 }
 
 /**
@@ -352,12 +359,17 @@ export interface CommunityStore {
    *   - **不能可靠脱敏的媒体移除**：`media_ids` 清空（正文保留）；
    *   - 举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**、
    *     本域幂等台账按主体清空；
-   *   - **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销路径不复活、不改写
-   *     作者自己的删除语义；
+   *   - **作者主动删除（`visibility='deleted'`）的行：内容与可见性原样保留**（注销路径不复活、
+   *     不脱敏、不推进版本、不更新 `updated_at`），但**作者关联照样清除**——「保留作者自己的
+   *     删除语义」与「删除账号映射」不冲突（P2 返修，见 `store-pg.ts` 同名实现）；
    *   - **行级作者指针替换**（迁移 0030）：`author_id` 置 NULL、写入随机注销引用
    *     `anonymized_author_ref`（全行共用同一串；计数进 `authorRefsReplaced`）。
-   *     这一条与上面"跳过 `visibility='deleted'` 行"共用同一个筛选：作者自己删掉的行**不**改作者指针
-   *     （见 `store-pg.ts` 同名实现的"残留"说明）。
+   *     命中集 = 该主体名下的**全部**行，**含** `visibility='deleted'` 行：只替换作者指针会让
+   *     「普通行 + 已软删行」的主体在 `authorRefsReplaced > 0` 时看起来完成，而软删行仍直接
+   *     关联账户（监工 PR #483 [P2]）。
+   *   - **剩余读数**：`authorRefsRemaining` 在写入完成后**重新测量**「仍以原 `author_id` 关联
+   *     本主体的行数」（帖 + 评，**含**软删行）。端口只认这个数判 blocked，⛔ 不以
+   *     `authorRefsReplaced` 冒充完成。
    *
    * **可选方法**：与 `snapshotCounts` 同一条纪律——不把已有的测试替身一次性改红。装配处
    * （`app.ts`）在缺失时按「该域没有清理能力」处理并**如实降级**（调用即抛 ⇒ blocked），
@@ -658,9 +670,11 @@ export function createMemoryCommunityStore(
       // 口径与 `store-pg.ts` 同名实现逐条对齐（F13 保留规则，**不是**无条件软删）：
       //   1. 帖子/评论保留可见性；正文命中个人信息才改写（改写 ⇒ 旧审核摘要失效 ⇒ 待重审）；
       //   2. 媒体引用一律移除（社区没有"媒体已可靠脱敏"的证据面）；
-      //   3. 作者主动删除（visibility='deleted'）的行原样跳过；
+      //   3. 作者主动删除（visibility='deleted'）的行：内容与可见性原样不动（不复活、不脱敏），
+      //      但**作者关联照清**（P2 返修：删除账号映射不受"作者的删除语义"豁免）；
       //   4. 行级作者指针替换（迁移 0030）：author_id=null + 行内注销引用（不计入 records）；
-      //   5. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空。
+      //   5. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空；
+      //   6. 写入后重新测量 `authorRefsRemaining`（仍指向本主体的行数，含软删行）。
       let records = 0;
       let retained = 0;
       let redacted = 0;
@@ -690,7 +704,16 @@ export function createMemoryCommunityStore(
       };
       const stamp = new Date(clockMs()).toISOString();
       for (const [id, post] of [...posts]) {
-        if (post.author_id !== ownerId || post.visibility === 'deleted') continue;
+        if (post.author_id !== ownerId) continue;
+        // 作者主动删除的行：**内容/可见性/版本/updated_at 一律不动**（不复活、不脱敏、
+        // 不计 retained/records），但作者指针必须清 —— 两者不冲突（P2 返修）。
+        if (post.visibility === 'deleted') {
+          if (replaceAuthorRefs) {
+            posts.set(id, clonePost({ ...post, author_id: null, anonymized_author_ref: refForRows() }));
+            authorRefsReplaced += 1;
+          }
+          continue;
+        }
         const title = redactPersonalInfo(post.title);
         const body = redactPersonalInfo(post.body);
         const media = [...post.media_ids];
@@ -731,7 +754,15 @@ export function createMemoryCommunityStore(
         if (replacedAuthor) authorRefsReplaced += 1;
       }
       for (const [id, comment] of [...comments]) {
-        if (comment.author_id !== ownerId || comment.visibility === 'deleted') continue;
+        if (comment.author_id !== ownerId) continue;
+        // 同帖子口径：软删评论的内容/可见性不动，作者指针照清（P2 返修）。
+        if (comment.visibility === 'deleted') {
+          if (replaceAuthorRefs) {
+            comments.set(id, cloneComment({ ...comment, author_id: null, anonymized_author_ref: refForRows() }));
+            authorRefsReplaced += 1;
+          }
+          continue;
+        }
         const body = redactPersonalInfo(comment.body);
         const replacedAuthor = replaceAuthorRefs && comment.author_id !== null;
         const authorFields = replacedAuthor
@@ -770,7 +801,25 @@ export function createMemoryCommunityStore(
         idempotency.delete(key);
         idempotencyRows += 1;
       }
-      return { records, idempotency: idempotencyRows, retained, redacted, hiddenMedia, authorRefsReplaced };
+      // 写入完成后**重新测量**「还剩多少行仍指向本主体」（帖 + 评、**含**软删行）。
+      // 这是结果读数，不是从 `authorRefsReplaced` 倒推出来的：端口只认它判 blocked，
+      // 所以它必须反映此刻表里真实剩下的东西（P2 返修，见 `CommunityOwnerPurgeCounts`）。
+      let authorRefsRemaining = 0;
+      for (const post of posts.values()) {
+        if (post.author_id === ownerId) authorRefsRemaining += 1;
+      }
+      for (const comment of comments.values()) {
+        if (comment.author_id === ownerId) authorRefsRemaining += 1;
+      }
+      return {
+        records,
+        idempotency: idempotencyRows,
+        retained,
+        redacted,
+        hiddenMedia,
+        authorRefsReplaced,
+        authorRefsRemaining,
+      };
     },
 
     async findIdempotency(scope, keyHash) {

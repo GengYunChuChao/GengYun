@@ -824,19 +824,27 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
      * 3. **不能可靠脱敏的媒体 ⇒ 移除引用**（`media_ids='{}'`）。社区存储没有媒体去标识的证据面
      *    （媒体投影未接线），按 F13"不能可靠脱敏的媒体隐藏／移除"处理；正文照旧保留。
      *    仅移除媒体时**不推进 revision**（正文摘要未变 ⇒ 旧审核结论仍有效、内容继续可见）。
-     * 4. **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销不复活、不改写作者自己的
-     *    删除语义（旧路径语义一行未动）。
+     * 4. **作者主动删除（`visibility='deleted'`）的行：内容与可见性原样保留**（不复活、不脱敏、
+     *    不推进 revision、不改 `updated_at`），但**作者关联照样清除**——「保留作者的删除语义」
+     *    与「删除账号映射」不冲突（P2 返修：监工 PR #483 指出旧实现把这类行整行跳过，
+     *    导致同主体「普通行 + 已软删行」时普通行替换成功、软删行仍以原 `author_id` 关联账户，
+     *    而回执已报 completed）。
      * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 只清 `detail`**（行与 state 保留，
      *    处置轨迹是审核域留痕）；**本域幂等台账**按 `scope` 前缀清空。
      * 6. **行级作者指针替换（迁移 0030）**：同一事务内把命中行的 `author_id` 置 NULL、写入随机
      *    注销引用 `anonymized_author_ref`（全行共用一串，逐主体独立）。这是 F13「内部作者换
      *    不可反查的注销引用、删除账号映射」的落地点：引用**落在行上** ⇒ 重启/多副本读同一行得
      *    同一串（不再依赖 `authors.ts` 的进程内 Map），也不再有"删账号级联删内容"的风险
-     *    （`author_id = NULL` 不参与 `ON DELETE CASCADE`）。
+     *    （`author_id = NULL` 不参与 `ON DELETE CASCADE`）。命中集 = 该主体名下**全部**行，
+     *    **含** `visibility='deleted'` 行（见第 4 条）。
+     * 7. **剩余读数**：写入完成后用一条只读查询**重新测量**「仍以原 `author_id` 关联本主体的
+     *    行数」（帖 + 评、含软删行）⇒ `authorRefsRemaining`。端口（`purge.ts`）只认这个数判
+     *    blocked：⛔ 不再以 `authorRefsReplaced > 0` 冒充"账号映射已清干净"。
      *
      * 计数（见 `CommunityOwnerPurgeCounts`）：`records` 是**真实改动/删除**的行数，
      * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，`authorRefsReplaced` 单列"作者指针
-     * 替换了几行"（⛔ 三者不混算，也不用一个合计数字冒充"保留也完成了"）。
+     * 替换了几行"（⛔ 三者不混算，也不用一个合计数字冒充"保留也完成了"），`authorRefsRemaining`
+     * 单列"还剩几行仍指向该账户"。
      */
     async purgeOwnerData(ownerId, options = {}) {
       return withTransaction<CommunityOwnerPurgeCounts>(pool, async (sql) => {
@@ -861,10 +869,12 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         }
         // 先锁住本主体的内容行再逐行判定：清除规则在 JS 里（纯函数），
         // 同一事务内完成"读 → 判 → 写"，不产生检查-写入窗口。
+        // ⚠️ 命中集**不**排除 `visibility='deleted'`：软删行的内容不动，但作者关联也要清
+        // （P2 返修；见方法注释第 4 条）。因此 SELECT 也把 `visibility` 读出来。
         const posts = (await sql.query(
-          `SELECT id, revision, title, body, media_ids
+          `SELECT id, revision, title, body, media_ids, visibility
              FROM community_posts
-            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            WHERE author_id = $1::uuid
             FOR UPDATE`,
           [ownerId],
         )).rows;
@@ -873,6 +883,8 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         for (const row of posts) {
           const id = String(row.id);
           postIds.push(id);
+          // 作者主动删除的行：正文/媒体/版本/updated_at 一律不动，作者指针由末尾那条统一替换。
+          if (row.visibility === 'deleted') continue;
           const title = redactPersonalInfo(String(row.title));
           const body = redactPersonalInfo(String(row.body));
           const media = asTextArray(row.media_ids);
@@ -902,9 +914,9 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
           }
         }
         const comments = (await sql.query(
-          `SELECT id, revision, body
+          `SELECT id, revision, body, visibility
              FROM community_comments
-            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            WHERE author_id = $1::uuid
             FOR UPDATE`,
           [ownerId],
         )).rows;
@@ -912,6 +924,8 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         for (const row of comments) {
           const id = String(row.id);
           commentIds.push(id);
+          // 同帖子口径：软删评论的内容不动，作者指针由末尾那条统一替换。
+          if (row.visibility === 'deleted') continue;
           const body = redactPersonalInfo(String(row.body));
           if (body.removed > 0) {
             await sql.query(
@@ -933,9 +947,10 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         //   · 引用只生成一次、全行共用 ⇒ 同一主体绝不分叉成两个引用（F13「不混为一个账号」的镜像要求）；
         //   · 幂等：`WHERE author_id = <主体>` 命中 0 行 ⇒ 重放不会把新生成的引用写进去。
         // ⚠️ 不进 `records`：替换作者指针不是"改动/删除正文"，单列 `authorRefsReplaced`。
-        // ⚠️ `visibility='deleted'` 的行**不在**这两条 SELECT 里 ⇒ 它们的 `author_id` 保持原样
-        //    （"作者主动删除的行原样跳过"这一既有语义一行未动）。这是本片**如实登记的残留**：
-        //    已删除行仍持有原账户 id，清零属待裁口径，本片不做、也不谎称全表清零。
+        // ⚠️ `postIds`/`commentIds` **含** `visibility='deleted'` 的行（上面两个 SELECT 不再按
+        //    可见性过滤）：软删行只是**内容**不动，作者关联必须一起清 —— 否则同主体
+        //    「普通行 + 已软删行」时普通行替换成功、`authorRefsReplaced > 0`，回执就误判 completed，
+        //    而软删行仍以原 `author_id` 直接关联账户（监工 PR #483 [P2] 的缺陷面）。
         if (replaceAuthorRefs && (postIds.length > 0 || commentIds.length > 0)) {
           const ref = providedRef ?? createAnonymizedAuthorRef();
           if (postIds.length > 0) {
@@ -978,7 +993,32 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
           `DELETE FROM community_idempotency WHERE scope LIKE $1::text RETURNING scope`,
           [`${ownerId}\n%`],
         )).rows;
-        return { records, idempotency: idempotency.length, retained, redacted, hiddenMedia, authorRefsReplaced };
+        // ---- 剩余 owner 引用：写入完成后**重新测量**（P2 返修）----
+        //
+        // 为什么不用 `authorRefsReplaced` 倒推：那个数只说"写了几行"，说不出"还剩几行"。
+        // 同主体「普通行 + 已软删行」的缺陷正是"`authorRefsReplaced > 0`"掩盖了"软删行仍指向
+        // 该账户"。这里按**结果**量：两表里仍以该主体的 `author_id` 关联的行数（**含**软删行）。
+        // 只读查询，且与上面的写入同一事务 ⇒ 读到的是本次清理之后的事实。
+        const remainingRows = (await sql.query(
+          `SELECT count(*)::int AS remaining
+             FROM community_posts
+            WHERE author_id = $1::uuid
+           UNION ALL
+           SELECT count(*)::int AS remaining
+             FROM community_comments
+            WHERE author_id = $1::uuid`,
+          [ownerId],
+        )).rows;
+        const authorRefsRemaining = remainingRows.reduce((sum, row) => sum + Number(row.remaining ?? 0), 0);
+        return {
+          records,
+          idempotency: idempotency.length,
+          retained,
+          redacted,
+          hiddenMedia,
+          authorRefsReplaced,
+          authorRefsRemaining,
+        };
       });
     },
 

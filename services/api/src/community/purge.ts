@@ -32,13 +32,16 @@
  *   - `author-reference-failed`：`anonymize` 抛错，或返回的引用**形状不合法**
  *     （`^gy-anon-[0-9a-f]{16}$`，与库侧 CHECK 同源）。同上，不替换、如实 blocked。
  *
- * 另有一条**防御性**判据（只在存储层实际没替换时才可能触发）：
- * `author-row-reference-not-replaced`。它不是"本片没做"，而是"这一路存储实现没有把行替换掉"
- * —— 这种"返回了计数却没写"的静默谎报，正是 F13 要抓的东西，所以码保留、正常路径恒不触发。
+ * 另有一条**结果判据**：`author-row-reference-not-replaced`。它不再只是"防御性"的：
+ * P2 返修（监工 PR #483）前，这里只检查"换了几行"（`authorRefsReplaced === 0`）⇒ 同主体
+ * 「普通行 + 已软删行」时普通行替换成功（>0）、平台判 completed，而软删行仍以原 `author_id`
+ * 直接关联账户。现在判据改为**清理后重新测量的剩余 owner 引用**（`authorRefsRemaining`，
+ * 含软删行）：只要还剩一行指向该账户，就去身份未完成 ⇒ `blocked` + 本原因码。
  *
  * 计数口径：`blocked` 是**未完成的处理项数**（不是行数）。一个主体的作者引用问题算 1 项，
- * 具体缺什么写在 `blockedReasons` 里；行级读数（retained/redacted/hiddenMedia/authorRefsReplaced）
- * 另列，⛔ 不把"保留了多少行"混算成"完成了多少"。
+ * 具体缺什么写在 `blockedReasons` 里；行级读数（retained/redacted/hiddenMedia/authorRefsReplaced/
+ * authorRefsRemaining）另列，⛔ 不把"保留了多少行"混算成"完成了多少"，也不把"换了几行"
+ * 混算成"还剩几行"。
  */
 import type { AuthorDirectory } from './types.ts';
 import type { CommunityOwnerPurgeCounts, CommunityStore } from './store.ts';
@@ -60,10 +63,11 @@ export interface CommunityOwnerPurgePort {
 
 export const AUTHOR_REFERENCE_BLOCKED_REASONS = Object.freeze({
   /**
-   * 行级 `author_id` **仍是原账户 id**。
+   * **仍有行以原 `author_id` 关联本账户**（去身份未完成）。
    *
-   * 迁移 0030 之后这是**防御性**判据：只有"存储层返回了计数却没真的替换行"才会触发
-   * （正常路径由 `authorRefsReplaced` 与存储自身的同一事务写入保证）。
+   * 判据口径（P2 返修）：以存储清理后**重新测量**的 `authorRefsRemaining` 为准，**含**
+   * `visibility='deleted'` 的行；⛔ 不再以"换了几行 > 0"推断完成 —— 那正是 PR #483 [P2]
+   * 「普通行替换成功、软删行仍关联账户，回执 completed」的成因。
    */
   ROW_REFERENCE: 'author-row-reference-not-replaced',
   /**
@@ -118,25 +122,29 @@ export function createCommunityOwnerPurgePort(options: {
     // ⛔ 不要写成 `anonymizedRef === null ? undefined : {...}`：`undefined` 的语义是
     // "调用方没表态，请兜底生成"，那会把"能力缺失"悄悄变成"看起来完成了"。
     const counts = await purge.call(store, ownerId, { anonymizedAuthorRef: anonymizedRef });
-    // ⚠️ 口径变化（0030）：`blocked` **不再以"有保留内容"为前提**。
-    // 本片之前只有在 `retained + redacted > 0` 时才判作者引用这一项（没有内容就没有"换行级作者"的要求）；
-    // 现在 `ROW_REFERENCE` 是"存储层没把行替换掉"的防御性判据，而**能力缺失/生成失败**
-    // （`anonymize` 不在或抛错）是**无论有没有内容都不该判 completed** 的事实 —— 那意味着这一路
-    // 装配根本没有去身份能力。因此无内容 + 能力缺失也会 `blocked = 1`（原因码只有
-    // `author-reference-unavailable` / `-failed`，不会出现 `ROW_REFERENCE`：那个仍以"有内容"为前提）。
-    // 生产可达性：`app.ts` 只有**一处**装配（`createCommunityOwnerPurgePort({ store, authors })`，
-    // 传入的是本地假名目录，恒有 `anonymize`）⇒ 无内容主体不会因此变 blocked；测试替身缺能力时才可达，
-    // 而这正是我们想让它如实报出来的形态（反向控制见 retention 用例 c2/c3）。
-    const hasRetainedContent = counts.retained + counts.redacted > 0;
-    if (hasRetainedContent) {
-      // 有需要保留/去身份的内容 ⇒ 作者引用这条要求才真正被触发。
-      if (counts.authorRefsReplaced === 0) {
-        // 内容还在该主体名下：要么本次没传引用（上面已记 UNAVAILABLE/FAILED），
-        // 要么存储实现声称清完了却没写行。两种都**不得**判 completed。
-        // ⚠️ 这里**不再**追加 `NOT_DURABLE`：迁移 0030 之后"引用不持久"不再是独立事实
-        // （引用要么写进行里、要么根本没写），再报一次只会把"生成不出来"这唯一真因埋进三条码里。
-        blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
-      }
+    // ⚠️ 判据升级（P2 返修，监工 PR #483）：**只看"换了几行"会漏掉"部分行没换"**。
+    // 同主体「普通行 + 已软删行」时普通行替换成功（`authorRefsReplaced > 0`），而软删行仍以原
+    // `author_id` 直接关联账户 ⇒ 旧判据 `blocked = 0`、回执 `completed`（缺陷）。
+    // 现在以存储**清理后重新测量**的 `authorRefsRemaining` 为准：只要还剩一行指向该账户，
+    // 去身份就没完成，如实 blocked（原因码 ROW_REFERENCE）。
+    const remainingRaw = counts.authorRefsRemaining;
+    const authorRefsRemaining = typeof remainingRaw === 'number'
+      && Number.isSafeInteger(remainingRaw)
+      && remainingRaw >= 0
+      ? remainingRaw
+      : null;
+    if (authorRefsRemaining !== null && authorRefsRemaining > 0) {
+      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
+    }
+    // 防御性保底（只在存储实现**不报告** `authorRefsRemaining` 时生效）：它声称换了 0 行、
+    // 却仍有保留/脱敏内容 ⇒ 同样不得判完成。新实现（内存 / PG）恒报该读数，正常路径由上面
+    // 那条**结果**判据承担；⛔ 不要反过来把这条当成主判据（它看不见"部分行没换"）。
+    if (
+      authorRefsRemaining === null
+      && counts.retained + counts.redacted > 0
+      && counts.authorRefsReplaced === 0
+    ) {
+      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
     }
     // 去重（同一原因不重复计数）：blocked 是"处理项数"，不是"命中的判据条数"。
     const uniqueReasons = [...new Set(blockedReasons)];

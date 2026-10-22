@@ -587,10 +587,20 @@ async function main() {
     const purged = await store.purgeOwnerData(authorId);
     assert.deepEqual(
       purged,
-      { records: 3, idempotency: 1, retained: 1, redacted: 1, hiddenMedia: 3, authorRefsReplaced: 2 },
+      {
+        records: 3,
+        idempotency: 1,
+        retained: 1,
+        redacted: 1,
+        hiddenMedia: 3,
+        authorRefsReplaced: 2,
+        authorRefsRemaining: 0,
+      },
       'F13：安全帖保留（仅媒体移除）+ PII 帖脱敏 + 点赞物理删；'
         + '媒体引用：安全帖 2 + PII 帖 1；评论与举报本主体此时没有；'
-        + '**作者指针替换 2 行**（post2 + piiPost，同一事务内 author_id 置 NULL + 写行内匿名引用）',
+        + '**作者指针替换 2 行**（post2 + piiPost，同一事务内 author_id 置 NULL + 写行内匿名引用）；'
+        + '**剩余 owner 引用 0**（写入后重新测量；含软删行 —— 本夹具没有 deleted 行，'
+        + '软删行覆盖见 tests/unit/community-author-ref-softdeleted.test.mjs 的 A/B/D 组）',
     );
     // 迁移 0030：行级作者指针必须真的换掉（真库行值，不是投影层的假象）。
     const anonRows = (await owner.query(
@@ -614,8 +624,9 @@ async function main() {
         [authorId],
       )).rows[0].n,
       0,
-      '该主体名下不得再有任何 author_id 命中的行（**本夹具没有 deleted 行**；deleted 行按既定语义跳过、'
-        + '不参与作者指针替换 —— 别把这句话读成"deleted 行也已清零"）',
+      '该主体名下不得再有任何 author_id 命中的行（**含** visibility=deleted 的行 —— PR #483 [P2] 之后'
+        + '软删行的作者关联同样清除；本夹具没有 deleted 行，软删行的真库/内核举证见 '
+        + 'tests/unit/community-author-ref-softdeleted.test.mjs 的 D1/D2）',
     );
     const purgedPost = await store.getPost(post2);
     assert.equal(purgedPost.visibility, 'published', 'F13：安全帖子保留公开，不得软删');
@@ -651,9 +662,18 @@ async function main() {
 
     assert.deepEqual(
       await store.purgeOwnerData(authorId),
-      { records: 0, idempotency: 0, retained: 0, redacted: 0, hiddenMedia: 0, authorRefsReplaced: 0 },
+      {
+        records: 0,
+        idempotency: 0,
+        retained: 0,
+        redacted: 0,
+        hiddenMedia: 0,
+        authorRefsReplaced: 0,
+        authorRefsRemaining: 0,
+      },
       '重跑：改动/删除为 0，作者指针也不再替换（author_id 已置空 ⇒ 该主体名下已无行）；'
-        + 'retained 因此如实为 0 —— 保留结果记录在首轮的 retained:1 与 author-refs-replaced:2 上',
+        + 'retained 因此如实为 0 —— 保留结果记录在首轮的 retained:1 与 author-refs-replaced:2 上；'
+        + '剩余 owner 引用仍为 0（重放不产生新的未完成项）',
     );
     say('注销清理可重跑：第二次改动/替换全 0；主体名下已无行（author_id 已置空）⇒ retained 如实为 0，不重复抹也不报错');
 
