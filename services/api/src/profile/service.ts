@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { PoolClient } from 'pg';
-import type { PgPool } from '../db/pool.ts';
+import { isTransientDatabaseError, type PgPool } from '../db/pool.ts';
 import type { AuthenticatedIdentity } from '../auth/types.ts';
 import { hashToken } from '../auth/tokens.ts';
 import { IDEMPOTENCY_TTL_SECONDS, idempotencyScope, idempotencyKeyHashHex, idempotencyRequestHash } from '../auth/idempotency.ts';
@@ -50,7 +50,11 @@ export function createProfileService(pool: PgPool, key: string) {
       if (client) await client.query('ROLLBACK').catch(() => {});
       if (error instanceof ApiError) throw error;
       const code = (error as {code?: string}).code;
-      throw new ApiError(code === '57014' || code === '55P03' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', '档案数据库暂不可用');
+      // 状态码口径不变：`57014`/`55P03` 仍是 504 `PROVIDER_TIMEOUT`，其余仍是 503 `PROVIDER_UNAVAILABLE`。
+      // `retryable` 是**另一个轴**（口径见 `services/api/src/errors.ts` 的 `ApiError` 注释）：瞬时态 ⇒ true。
+      // 判据唯一出处是 `services/api/src/db/pool.ts` 的 `isTransientDatabaseError()`，本文件不另写码表。
+      throw new ApiError(code === '57014' || code === '55P03' ? 'PROVIDER_TIMEOUT' : 'PROVIDER_UNAVAILABLE', '档案数据库暂不可用',
+        { retryable: isTransientDatabaseError(error) });
     } finally { client?.release(); }
   }
   async function directory(client: PoolClient, kind: 'crops' | 'regions'): Promise<CatalogItem[]> {

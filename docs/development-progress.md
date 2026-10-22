@@ -216,6 +216,18 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 本节只重跑了 `node tools/verify-contract-status.mjs` 一条门禁并核对了仓内文件与行号，未重跑业务测试、PG 集成、微信工具或真实供应商调用；`gh`／`git` 计数与在飞清单为 2026-10-21T14:47:52Z 同一次读数，后续合入会变，更新时另起快照、不改本节。
 
 
+## 2026-10-22 迁移读数订正（局部快照）
+
+核对日期 2026-10-22（UTC+8）。基线 `origin/main` = `d4d48088532377adb54c278b24ba90be42cb5aaf`（`#404` 的 squash 提交）。本节只订正**迁移读数**一项，未重跑 `gh` 计数、业务测试、PG 集成或真实供应商调用，故不是完整快照，也不改任何整项 AC 判定。
+
+| 口径 | 读数 | 命令 |
+| --- | --- | --- |
+| 迁移文件数／最大号 | **27**／`0027_admin_audit_observability.sql`（含 `0026_speech_persistence.sql`、`0025_recognitions_persistence.sql`） | `git ls-tree -r --name-only origin/main -- services/api/db/migrations`：顶层 `0001..0027` 共 27 个、最大号 `0027`；`rollback/` 下 `0002..0027` 共 26 个 down |
+
+**订正对象与「不改 10-21 那行」的理由**：上面「2026-10-21 快照」第 166 行记的 **26**／`0026_speech_persistence.sql` 是 `2026-10-21T14:56:42Z` 的实测，当时 `0027` 尚未合入；`0027_admin_audit_observability.sql` 随 `#428`（`fab7a617`，提交时间 2026-10-22 10:20:58 +08:00）才进 `main`，晚于该快照。按该节边界「更新时另起快照、不改本节」，该行**原样保留**（改它等于伪造一次没发生的测量），现行读数以本节为准。
+
+`0027` 之后 `main` 未再出新号，最大号仍是 `0027`；未合入 PR 的迁移号一律不记作既成事实。down 脚本目录是 `services/api/db/migrations/rollback`（`services/api/db/rollback` 不存在，实测 0 个文件），「down 数 = 迁移数 − 1、且无 `0001`」这条不变量在 27／26 下仍成立（`0001` 的永久豁免登记见 `tests/unit/migrations-rollback-pairing.test.mjs` 的 `EXEMPT`）。
+
 ## 本轮合并与返修状态
 
 | PR | 已确认合并提交 | 当前含义 |

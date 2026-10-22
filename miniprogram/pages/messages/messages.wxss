@@ -3,7 +3,8 @@
  * 页面形态走 styles/components.wxss 的 demo 组件层（info-row／info-list／panel／pill／
  * demo-caption）。demo 的 .message-list／.message-row／.message-icon／.message-copy／
  * .unread-dot 已落入样式层，本页按 GY-I17（#17）接入真实消息数据后直接复用，
- * 不新增第二套列表样式；本文件只补两处与样式层默认值不同的声明。
+ * 不新增第二套列表样式；本文件只补少量与样式层默认值不同、或样式层尚没有的声明
+ * （行内图标基准、行内按钮对齐，以及 #17 新增的「查看详情」提示、可点 pill 与按压反馈）。
  */
 
 /* 消息行图标：沿用样式层 .message-icon 的 36px 底框，图标取 21px 基准
@@ -16,4 +17,25 @@
 .message-row .row-actions {
   justify-content: flex-start;
   margin-top: 10px;
+}
+
+/* 可跳转的行（#17 G1）：只在服务端判定 available 时出现。行本身没有专属样式层类，
+ * 用 hover-class 给按压缩按反馈（不可点的行 hover-class 取 none，即无反馈、也不像链接）。 */
+.message-row--pressed {
+  background: var(--green-soft);
+}
+
+/* 可跳转的行内提示（#17 G1）：配色取主色，字号比时间行略小，仍然是本行正文的一部分。 */
+.message-copy__action {
+  display: block;
+  margin-top: 6px;
+  color: var(--green);
+  font-size: calc(15px * var(--font-scale, 1));
+}
+
+/* 未读数取不到时的可点重试 pill（#17 G3）：沿用样式层 .pill 的形状，只换警示配色；
+ * 「点此重试」写在文案里（messages.js 的 refreshUnread），不新增图标或第二个按钮。 */
+.pill--retry {
+  color: var(--tone-warn-ink);
+  background: var(--tone-warn-bg);
 }

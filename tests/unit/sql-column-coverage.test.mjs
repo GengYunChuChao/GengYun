@@ -139,17 +139,90 @@ const LEDGER_COVERAGE_EXEMPT = [
   { ref: 'public.exports.user_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
 ];
 
+/* ============================================================================
+ * 〇、语句站点**按源码实时定位**，不写死 `文件:行号`（R31）
+ * ========================================================================== */
+
+/**
+ * 为什么改成「算出来的行号」：2026-10-22 同一天两次 CI 红都是同一族 —— 代码一改行、测试就红。
+ * ① `tools/verify-contract-status.mjs` 的证据锚点区间（另一片用 `--reanchor` 处理）；
+ * ② 本文件 NC6 写死的 `profile/service.ts:61`：往 `put()` 上面加两行，61 就变 65，红的是
+ *    「测试过期」而不是「行为回退」—— 噪音把真红埋了。行号本来就能算，算出来的不会过期。
+ *
+ * 判据强度**不降**：`siteLine` 要求锚点在文件里恰好出现一次；找不到 / 出现多次都当场判红，
+ * 并点名文件与锚点原文。也就是说「语句被删 / 被改写 / 被复制成两份」仍然会红，
+ * 只是「同一语句上下挪了几行」不再红。
+ */
+
+/**
+ * 定位锚点所在行（1-based）。
+ * @param {string} file 仓库相对路径
+ * @param {string} needle 必须在文件里**唯一**出现的原文片段
+ * @returns {number}
+ */
+function siteLine(file, needle) {
+  const text = readFileSync(resolve(root, file), 'utf8');
+  const first = text.indexOf(needle);
+  assert.notEqual(
+    first,
+    -1,
+    `R31 语句站点定位失败：${file} 里已找不到锚点「${needle}」`
+      + '——语句被删/改名就必须重新登记豁免，不能靠写死行号蒙过去',
+  );
+  assert.equal(
+    text.indexOf(needle, first + 1),
+    -1,
+    `R31 语句站点定位不唯一：${file} 里「${needle}」出现了多次，请把锚点写长一点（必须是唯一站点）`,
+  );
+  return lineOf(text, first);
+}
+
+/** @returns {string} `文件:行号`，行号是**现在**算出来的。 */
+function siteRef(file, needle) {
+  return `${file}:${siteLine(file, needle)}`;
+}
+
+/**
+ * 定位锚点原文。同一份原文也用于负控制的「变异替换」，一处定义两处引用：
+ * 业务代码里的 SQL 改了 ⇒ 定位与变异一起失效、一起报红，不会出现「定位还在、变异悄悄没生效」。
+ */
+const NEEDLE = {
+  profileUserLock: 'SELECT state,auth_epoch FROM public.users WHERE id=$1::uuid FOR UPDATE',
+  profileRegions: 'FROM public.regions WHERE supported',
+  consentUserLock: 'SELECT id,state,auth_epoch,revision FROM public.users WHERE id=$1::uuid FOR UPDATE',
+  ledgerExportsLock: 'SELECT * FROM public.exports WHERE id=$1::uuid FOR UPDATE',
+  ledgerExpectsTextKey: '${expectsTextKey ?',
+  ledgerByKey: '${byKey ?',
+  ledgerScoped: '${scoped ?',
+  conversationsWhere: 'WHERE owner_id = $1::uuid${where}',
+  turnsWhere: 'WHERE conversation_id = $1::uuid AND owner_id = $2::uuid${where}',
+};
+
+/** 九个「语句站点」的 `文件:行号`，全部实时算。 */
+const SITE = {
+  profileUserLock: siteRef('services/api/src/profile/service.ts', NEEDLE.profileUserLock),
+  profileRegions: siteRef('services/api/src/profile/service.ts', NEEDLE.profileRegions),
+  consentUserLock: siteRef('services/api/src/privacy/consent-pg.ts', NEEDLE.consentUserLock),
+  ledgerExportsLock: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerExportsLock),
+  ledgerExpectsTextKey: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerExpectsTextKey),
+  ledgerByKey: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerByKey),
+  ledgerScoped: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerScoped),
+  conversationsWhere: siteRef('services/api/src/conversations/store-pg.ts', NEEDLE.conversationsWhere),
+  turnsWhere: siteRef('services/api/src/conversations/store-pg.ts', NEEDLE.turnsWhere),
+};
+
 /**
  * R28-S66：行锁的显式豁免表（派单 §2.5 + §1.3）。元素形状比列级豁免多一个 ref：
  *   { table, privilege, ref: 'file:line', reason, owner }
  * 行锁要求没有列名，只按表豁免会把同表上的**新**语句一起放行（躺平），所以必须精确到语句站点。
  * 反向核对：evaluateRowLocks 的 staleExemptions（登记了却对不上任何行锁要求 ⇒ 红）。
  *
- * 当前唯一一条：privacy/ledger-pg.ts:244 的 SELECT * FROM public.exports … FOR UPDATE，
+ * 当前唯一一条：privacy/ledger-pg.ts 里 «SELECT * FROM public.exports … FOR UPDATE» 那条语句
+ * （行号由 SITE.ledgerExportsLock 实时算，不写死），
  * 与同文件 33 条列级缺口同属「egress_ledger 未接线」这一个已知范畴。
  */
 const ROW_LOCK_EXEMPT = [
-  { table: 'public.exports', privilege: 'UPDATE', ref: 'services/api/src/privacy/ledger-pg.ts:244', reason: '同 33 条列级缺口的同一范畴：exports 对运行时角色无任何 UPDATE 授权', owner: 'R28-S66/接线待裁定' },
+  { table: 'public.exports', privilege: 'UPDATE', ref: SITE.ledgerExportsLock, reason: '同 33 条列级缺口的同一范畴：exports 对运行时角色无任何 UPDATE 授权', owner: 'R28-S66/接线待裁定' },
 ];
 
 /**
@@ -158,15 +231,15 @@ const ROW_LOCK_EXEMPT = [
  */
 const LEDGER_OPAQUE_ALLOWLIST = [
   {
-    ref: 'services/api/src/privacy/ledger-pg.ts:399',
+    ref: SITE.ledgerExpectsTextKey,
     reason: '三元选择 object_key=$3 / object_id=$3::uuid —— 两列都只出现在 exports 的列面里（已按 ledger 范畴登记），不引入新表新列。',
   },
   {
-    ref: 'services/api/src/privacy/ledger-pg.ts:549',
+    ref: SITE.ledgerByKey,
     reason: '同上：byKey 决定锁 object_key 还是 object_id。',
   },
   {
-    ref: 'services/api/src/privacy/ledger-pg.ts:550',
+    ref: SITE.ledgerScoped,
     reason: 'scoped 时追加 AND user_id=$4::uuid；user_id 已在 exports 的列面里（同范畴登记）。',
   },
 ];
@@ -262,12 +335,12 @@ const UNAUDITED_SQL_HOSTS = [
  */
 const OPAQUE_ALLOWLIST = [
   {
-    ref: 'services/api/src/conversations/store-pg.ts:248',
+    ref: SITE.conversationsWhere,
     reason: '`${where}` = listWhere(\'conversations\', …) 拼出的 keyset 分页谓词（` AND (conversations.created_at < $n …)`）；'
       + '它引用的 created_at / id 已在 CONVERSATION_COLUMNS 里被 SELECT 授权，故不影响判定，但仍按不可静态求值登记。',
   },
   {
-    ref: 'services/api/src/conversations/store-pg.ts:326',
+    ref: SITE.turnsWhere,
     reason: '同上，`${where}` 用于 conversation_turns 的列表分页；引用的 created_at / id 已在 TURN_COLUMNS 里。',
   },
 ];
@@ -2043,8 +2116,8 @@ test('sql-column-coverage/扩展 16 文件读数与列覆盖（R28-S66）', () =
     [],
     'ledger 之外出现了真实缺口：本片不许自定豁免，必须停下来交指挥裁定',
   );
-  assert.equal(raw.rowLocks.problems.length, 1, `零豁免时行锁缺口必须恰 1 条（ledger:244），实际：\n${raw.rowLocks.problems.join('\n')}`);
-  assert.ok(raw.rowLocks.problems[0].startsWith('services/api/src/privacy/ledger-pg.ts:244 → public.exports'), `行锁缺口必须点名 ledger:244：${raw.rowLocks.problems[0]}`);
+  assert.equal(raw.rowLocks.problems.length, 1, `零豁免时行锁缺口必须恰 1 条（ledger 的 exports 行锁），实际：\n${raw.rowLocks.problems.join('\n')}`);
+  assert.ok(raw.rowLocks.problems[0].startsWith(`${SITE.ledgerExportsLock} → public.exports`), `行锁缺口必须点名 ${SITE.ledgerExportsLock}：${raw.rowLocks.problems[0]}`);
   assert.equal(extended.coverage.missing.length, 0, `扩展审计的缺口必须全被 33 条豁免压住（实际还剩 ${extended.coverage.missing.length} 条）`);
   assert.deepEqual(extended.coverage.problems, [], `扩展审计仍有多余缺口：\n${extended.coverage.problems.join('\n')}`);
   assert.deepEqual(extended.rowLocks.problems, [], `扩展审计仍有多余行锁缺口：\n${extended.rowLocks.problems.join('\n')}`);
@@ -2114,7 +2187,7 @@ test('sql-column-coverage/parser_negative_controls NC5：新纳管文件里改�
   const marker = 'SELECT state,auth_epoch,email FROM public.users WHERE id=$1::uuid FOR UPDATE';
   const mutated = auditedSources.map((source) =>
     source.file.endsWith('/profile/service.ts')
-      ? { ...source, text: source.text.replace('SELECT state,auth_epoch FROM public.users WHERE id=$1::uuid FOR UPDATE', marker) }
+      ? { ...source, text: source.text.replace(NEEDLE.profileUserLock, marker) }
       : source,
   );
   const target = mutated.find((source) => source.file.endsWith('/profile/service.ts'));
@@ -2129,7 +2202,7 @@ test('sql-column-coverage/parser_negative_controls NC5：新纳管文件里改�
   const hit = broken.coverage.problems.filter((problem) => problem.includes('public.users.email'));
   assert.equal(hit.length, 1, `新文件的一列改名成未授权列后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 守卫对新文件恒绿！）'}`);
   assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
-  assert.ok(hit[0].includes('profile/service.ts:35'), `红字必须点名语句站点：${hit[0]}`);
+  assert.ok(hit[0].includes(SITE.profileUserLock), `红字必须点名语句站点 ${SITE.profileUserLock}：${hit[0]}`);
   assert.equal(broken.coverage.problems.length, 1, `除 email 外不许有别的红字：\n${broken.coverage.problems.join('\n')}`);
   console.log(`[sql-column-coverage] NC5 红字（新文件里多一列）：${hit[0]}`);
 });
@@ -2155,7 +2228,20 @@ test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少�
   const hit = broken.coverage.problems.filter((problem) => problem.includes('public.regions.name'));
   assert.equal(hit.length, 1, `少授 regions.name 的 SELECT 后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 列级核对没在看新文件！）'}`);
   assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
-  assert.ok(hit[0].includes('profile/service.ts:61'), `红字必须点名 profile/service.ts:61：${hit[0]}`);
+  // 两侧意图都留：main 侧（#451）把站点行号改成「按源码实时定位」，本片（#462）把站点做成注册表引用
+  // `SITE.profileRegions`（与下面的负控制变异共用同一处 needle）。两种做法都拒绝写死行号，取注册表
+  // 这一种：它与变异替换同源，业务 SQL 一改就一起失效、一起报红，不会出现「定位还在、变异悄悄没生效」。
+  assert.ok(hit[0].includes(SITE.profileRegions), `红字必须点名语句站点 ${SITE.profileRegions}：${hit[0]}`);
+  // 两侧意图都留（`#462` × `#451` 的真实冲突）：`#451` 要求行号由源码实时定位算出，本片要求红字点名注
+  // 册表里的站点名。两条断言各测一件事：前者防「定位漂移没人发现」，后者防「变异悄悄没生效」。行号
+  // 不写死在测试里 —— 写死就恰好犯了本片要禁的那件事。
+  const regionsSource = readFileSync(resolve(root, 'services/api/src/profile/service.ts'), 'utf8').split('\n');
+  const locatedLine = regionsSource.findIndex((line) => line.includes('FROM public.regions')) + 1;
+  assert.ok(locatedLine > 0, '动态定位没在 profile/service.ts 里找到 regions 语句：源文件结构变了？');
+  assert.ok(
+    hit[0].includes(`services/api/src/profile/service.ts:${locatedLine}`),
+    `红字必须给出实时定位出来的源坐标 services/api/src/profile/service.ts:${locatedLine}：${hit[0]}`,
+  );
 
   const restored = auditAll({
     storeSources: auditedSources,
@@ -2229,10 +2315,10 @@ test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉
     rowLockExemptions: ROW_LOCK_EXEMPT,
   });
   assert.deepEqual(broken.coverage.problems, [], '行锁不占用列面：删掉 users 的 UPDATE(updated_at) 不应产生列级缺口');
-  assert.equal(broken.rowLocks.problems.length, 2, `users 上有两处 FOR UPDATE（profile/service.ts:35、privacy/consent-pg.ts:75），必须恰红 2 条，实际：\n${broken.rowLocks.problems.join('\n') || '（没有变红 —— 行锁规则没生效！）'}`);
+  assert.equal(broken.rowLocks.problems.length, 2, `users 上有两处 FOR UPDATE（${SITE.profileUserLock}、${SITE.consentUserLock}），必须恰红 2 条，实际：\n${broken.rowLocks.problems.join('\n') || '（没有变红 —— 行锁规则没生效！）'}`);
   assert.deepEqual(
     broken.rowLocks.problems.map((problem) => problem.split(' → ')[0]).sort(),
-    ['services/api/src/privacy/consent-pg.ts:75', 'services/api/src/profile/service.ts:35'],
+    [SITE.consentUserLock, SITE.profileUserLock].sort(),
     '红字必须点名这两处行锁站点',
   );
   for (const problem of broken.rowLocks.problems) {
@@ -2247,8 +2333,8 @@ test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉
     opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
     rowLockExemptions: [
       ...ROW_LOCK_EXEMPT,
-      { table: 'public.users', privilege: 'UPDATE', ref: 'services/api/src/profile/service.ts:35', reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
-      { table: 'public.users', privilege: 'UPDATE', ref: 'services/api/src/privacy/consent-pg.ts:75', reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
+      { table: 'public.users', privilege: 'UPDATE', ref: SITE.profileUserLock, reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
+      { table: 'public.users', privilege: 'UPDATE', ref: SITE.consentUserLock, reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
     ],
   });
   assert.deepEqual(healed.rowLocks.problems, [], `登记两条行锁豁免后必须回绿：\n${healed.rowLocks.problems.join('\n')}`);

@@ -67,6 +67,12 @@ const GATE_VALUE = {
   keyFieldExact: (m) => m.keyFieldExact?.p,
   answerableCorrectWithSource: (m) => m.answerableCorrectWithSource?.p,
   expectedBehaviorPass: (m) => m.expectedBehaviorPass?.p,
+  // 逐类／逐形态／逐分组底线（第6.1节"不得被好类掩盖"）：观测值=最差一档的比例，
+  // 取值计算在 metrics.mjs 的 worstRate；无任何有样本的档 ⇒ null ⇒ not_evaluated（不写通过）。
+  perClassMinTop1: (m) => m.perClassMinTop1?.p,
+  registrationMatchPerForm: (m) => m.registrationMatchPerForm?.p,
+  hardRulePass: (m) => m.hardRulePass?.p,
+  qaExpectedBehaviorPerClass: (m) => m.qaExpectedBehaviorPerClass?.p,
 };
 
 /** 由目标定义构造某 task 的门禁列表。claimable=false 时一律 not_evaluated，不写通过。 */
@@ -124,6 +130,9 @@ export function evaluateRun(records, predictions, options = {}) {
     digestLedger = null,
     labels = null,
     seed = 20261004,
+    // 报告时间戳：一律**参数注入**（CLI 的 `--generated-at` 透传到这里），取墙钟只是缺省值。
+    // 取墙钟时报告不含确定性（同输入两次运行字节不同），因此默认值**不是**契约；
+    //   可复现证据只能由显式注入的时间点提供（见 tools/evaluation/run-evaluation.mjs 的 --generated-at）。
     generatedAt = new Date().toISOString(),
   } = options;
   const warnings = [];

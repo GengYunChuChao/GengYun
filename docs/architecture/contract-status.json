@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1816-1824"
+          "lines": "1850-1858"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -1178,7 +1178,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "681-699",
+          "lines": "726-744",
           "symbol": "async function listConversations("
         },
         {
@@ -1205,7 +1205,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "701-706",
+          "lines": "746-751",
           "symbol": "async function getConversation(actor: ConversationActor"
         },
         {
@@ -1299,7 +1299,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "822-841",
+          "lines": "867-886",
           "symbol": "async function listTurns("
         },
         {
@@ -3213,8 +3213,8 @@
         },
         {
           "path": "services/api/src/profile/service.ts",
-          "symbol": "cropItems",
-          "lines": "86-87"
+          "symbol": "async put(input: Identity, body: ProfileInput, ifMatch: string, idempotencyKey: string)",
+          "lines": "75-106"
         },
         {
           "test": "tests/unit/profile-api.test.mjs",
@@ -3237,7 +3237,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "834-840"
+          "lines": "845-851"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -3334,7 +3334,7 @@
         {
           "path": "services/api/src/config.ts",
           "symbol": "loadConfig",
-          "lines": "155-283"
+          "lines": "361-519"
         },
         {
           "path": "services/api/src/auth/wechat.ts",

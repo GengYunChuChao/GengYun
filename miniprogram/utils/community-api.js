@@ -232,6 +232,21 @@ function getPost(id) {
     .then(function (r) { return { post: validPost(r.data), mode: r.mode } })
 }
 
+/**
+ * 读取单条评论（契约 `GET /comments/{id}`，服务端 `routes/community.ts` 已实现）。
+ *
+ * 为什么需要它：消息的 `target_ref` 可能指向**评论**（`like_created` 赞了评论、评论的审核结果），
+ * 而此时只有评论 id；社区详情页只接**帖子** uuid（`pages/communitydetail/communitydetail.js`
+ * 把 `?id=` 当帖子 id 用），所以要按契约取回 `comment.post_id` 再跳转，不把评论 id 当帖子 id。
+ * 作者可读自己的评论（含待审），他人仅可读公开版本 —— 服务端 `readableComment` 判定，本模块不猜。
+ * 只读、不缓存、不落盘。
+ */
+function getComment(id) {
+  if (!uuid(id)) return Promise.reject(failure('INVALID_INPUT'))
+  return send('GET', '/comments/' + encodeURIComponent(id))
+    .then(function (r) { return { comment: validComment(r.data), mode: r.mode } })
+}
+
 function editPost(id, input, revision) {
   if (!uuid(id) || !Number.isSafeInteger(revision) || revision < 1) return Promise.reject(failure('INVALID_INPUT'))
   return send('PATCH', '/posts/' + encodeURIComponent(id), {
@@ -387,6 +402,7 @@ module.exports = {
   listPosts: listPosts,
   createPost: createPost,
   getPost: getPost,
+  getComment: getComment,
   editPost: editPost,
   deletePost: deletePost,
   listComments: listComments,

@@ -53,6 +53,17 @@ export const RISK_BLOCK_TEXT =
 /** 资料条目被风险/注入筛查剔除时，记入 `rejected_citations` 的前缀（与守卫的既有原因区分）。 */
 export const RISK_SOURCE_REJECTION_PREFIX = 'source_risk:';
 
+/**
+ * 回答被风险/注入筛查拦下时的**固定话术**（与问题侧 `RISK_BLOCK_TEXT` 区分开：
+ * 用户能看出"拦的是回答内容"而不是"问题本身"，也不会看到被拦正文的任何片段）。
+ *
+ * 为什么回答侧还要再筛一遍：自由正文（尤其是语言模型生成的那一段）不能绕过既有的用药安全
+ * 边界 —— 引用已经同源、结构已经合法，也不等于正文本身没有危险用法/注入特征。
+ */
+export const ANSWER_RISK_BLOCK_TEXT =
+  '本回答已被输出侧风险筛查阻断：候选回答正文含危险用法或提示注入特征（或筛查无法判定），' +
+  '因此不展示该回答，也不提供任何结论、用量或混配建议。请改为查阅资料页的核准用法。';
+
 /** 规则层决策（`pending` 只作防御性保留：规则层不会产出它，出现即按 fail-closed 处理）。 */
 export type RiskDecision = 'approved' | 'rejected' | 'quarantined' | 'pending';
 
@@ -91,6 +102,13 @@ export interface RiskScreen {
   screenQuestion(input: { turnId: string; text: string }): RiskVerdict;
   /** 来源侧筛查：命中的条目从集合中剔除（调用方只用返回的 `items` 继续生成）。 */
   screenSources(input: { turnId: string; items: readonly RetrievalItem[] }): RiskSourceScreenResult;
+  /**
+   * 回答侧筛查（第三道）：自由正文在交付用户**之前**过同一规则层。
+   *
+   * 命中/未能判定 ⇒ `blocked === true`（调用方整条降级为阻断话术）。空正文由调用方跳过
+   * （空正文走守卫的"资料不足"路径，不该被当成"命中"）。
+   */
+  screenAnswer(input: { turnId: string; text: string }): RiskVerdict;
 }
 
 export interface RiskScreenDeps {
@@ -237,6 +255,10 @@ export function createModerationRiskScreen(deps: RiskScreenDeps = {}): RiskScree
         pushUnique(reasonCodes, verdict.reason_codes);
       }
       return { items: kept, rejected_citations: rejectedCitations, reason_codes: reasonCodes, rule_version: ruleVersion };
+    },
+    screenAnswer({ turnId, text }) {
+      // 与问题侧/来源侧同一条规则层、同一预算、同一 fail-closed 口径；只有被扫的文本不同。
+      return screen(text, turnId);
     },
   };
 }
