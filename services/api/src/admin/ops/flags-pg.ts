@@ -39,8 +39,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { ApiError } from '../../errors.ts';
-import type { PgPool } from '../../db/pool.ts';
+import { ApiError, type FieldError } from '../../errors.ts';
+import { isTransientDatabaseError, type PgPool } from '../../db/pool.ts';
 import { CONTRACT_FLAG_KEYS } from './flags.ts';
 import type { FlagKey } from './flags.ts';
 import type { AuditResult, TargetRefValue } from '../types.ts';
@@ -302,7 +302,37 @@ function toFlagAuditRow(raw: unknown): FlagAuditRow {
   };
 }
 
-/** 读面错误映射：权限/缺表/缺函数如实「不可用」，超时如实「可重试」。 */
+/**
+ * 读面失败的 `retryable` + `details` 唯一来源（R31-S-retryable）。
+ *
+ * 口径见 `services/api/src/errors.ts` 的 `ApiError` 注释：`retryable` **只认证据**，不按「读面幂等」推断 ——
+ * 判据统一走 `db/pool.ts` 的 `isTransientDatabaseError`（同一请求在无人工介入下稍后重试可能成功）：
+ * 连接层 08xxx / 管理员干预 53xxx / 重启 57P0x / 串行化 40001 / 死锁 40P01 ⇒ true；
+ * **无 `code` 的无法归类错误、其余 SQLSTATE**（驱动缺陷、代理返回怪码、权限缺口等）⇒ 重试永远不会好 ⇒ `false`
+ * （⛔ 恒 true 会把确定性失败伪装成下游抖动，被客户端/调度器无限重试）。
+ * 原始 `code` 仍在 `details` 里保留（`FieldError` 只有 `{field, code}`，不新增契约字段）。
+ */
+export function flagReadFailure(error: unknown): { retryable: boolean; details: FieldError[] } {
+  const code = (error as { code?: unknown } | null)?.code;
+  const sqlState = typeof code === 'string' ? code : '';
+  return {
+    retryable: isTransientDatabaseError(error),
+    details:
+      sqlState === ''
+        ? [{ field: 'flags', code: 'FLAG_READ_FAILED' }]
+        : [
+            { field: 'flags', code: 'FLAG_READ_FAILED' },
+            { field: 'db_error_code', code: sqlState },
+          ],
+  };
+}
+
+/**
+ * 读面错误映射：权限/缺表/缺函数如实「不可用」，超时如实「可重试」。
+ *
+ * `retryable` 口径见 `services/api/src/errors.ts` 的 `ApiError` 注释；**兜底分支必须 fail-closed**
+ * （无法归类 ⇒ `false`），否则权限缺失/驱动缺陷会被当作抖动而被无限重试。
+ */
 function mapFlagReadError(error: unknown): never {
   if (error instanceof ApiError) throw error;
   const code = (error as { code?: unknown })?.code;
@@ -313,8 +343,8 @@ function mapFlagReadError(error: unknown): never {
   if (sqlState === '42501' || sqlState === '42883' || sqlState === '42P01' || sqlState === '3D000') {
     throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', { retryable: false });
   }
-  // 连接被掐/网络抖动等 ⇒ 可重试（读面幂等，重试无害）。
-  throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', { retryable: true });
+  // 兜底（R31-S-retryable）：不按「读面幂等」推断可重试 —— 判据与原始 code 见 `flagReadFailure`。
+  throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', flagReadFailure(error));
 }
 
 /** 写面错误映射：G0002/G0003 是**业务结果**（返回 ok:false），其余一律抛既有契约错误码。 */

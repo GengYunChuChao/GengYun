@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ApiError } from '../errors.ts';
-import type { PgPool } from './pool.ts';
+import { isTransientDatabaseError, type PgPool } from './pool.ts';
 import { validateSourceDatabaseUrl } from './source-lifecycle.ts';
 
 const ROOT=fileURLToPath(new URL('../../../../',import.meta.url));
@@ -135,8 +135,10 @@ async function execute(pool:PgPool,text:string,values:unknown[],id:string,action
     if(['G0001','22P02','22023','23514','23502'].includes(String(code)))throw invalid();
     if(code==='G0004')throw new ApiError('SOURCE_CONFLICT','暂存批次归属、内容或世代不匹配');
     if(code==='G0005'||code==='23505')throw new ApiError('IDEMPOTENCY_CONFLICT','操作编号或批次已被其他请求使用');
-    if(code==='57014')throw new ApiError('PROVIDER_TIMEOUT','暂存操作超时');
-    throw new ApiError('PROVIDER_OUTCOME_UNKNOWN','暂存结果未确认，请保持同一操作编号核对');
+    if(code==='57014'||code==='55P03')throw new ApiError('PROVIDER_TIMEOUT','暂存操作超时',{retryable:true});
+    // 瞬时判据唯一出处：`db/pool.ts` 的 `isTransientDatabaseError()`（57014/55P03/08xxx/53xxx/57P0x/40001/40P01/驱动码）。
+    // 状态码口径不变：504 仍是 `PROVIDER_TIMEOUT`，其余仍是 503 `PROVIDER_OUTCOME_UNKNOWN`；只把 `retryable` 对齐到瞬时态。
+    throw new ApiError('PROVIDER_OUTCOME_UNKNOWN','暂存结果未确认，请保持同一操作编号核对',{retryable:isTransientDatabaseError(e)});
   }
 }
 export async function importIntake(pool:PgPool,id:string,payload:unknown,previous?:string):Promise<IntakeReceipt> {

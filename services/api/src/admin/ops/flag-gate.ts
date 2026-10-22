@@ -65,12 +65,15 @@ export interface FlagRecordLike {
  * `ApiError` 注释）。四类失败原先被折叠成同一个 `null` ⇒ 无法为 `retryable: true` 给出具体机制，
  * 故这里把原因显式建模出来（**additive**：不新增契约词表，`details.code` 仍是 `FLAG_UNRECOGNIZED`）。
  *
- * - `read_error`：开关存储的**读取本身抛错**（连接抖动 / 超时 / 存储短暂不可用）—— 没有任何人
- *   改过配置，同一请求稍后重试**可能**成功 ⇒ `retryable: true`（真瞬时，机制可命名）。
+ * - `read_error`：开关存储的**读取本身抛错**且该错误自述可重试（连接抖动 / 超时 / 存储短暂不可用）
+ *   —— 没有任何人改过配置，同一请求稍后重试**可能**成功 ⇒ `retryable: true`（真瞬时，机制可命名）。
+ * - `read_unretryable`：读取抛错，但错误**自己声明不可重试**（`ApiError.retryable === false`：
+ *   权限缺口 `42501`、表/列缺失 `42703`/`42P01`、函数缺失 `42883`、库不存在 `3D000`）——
+ *   同一请求重试**永远不会成功**，需运维修复 ⇒ `retryable: false`（R31-S-retryable）。
  * - `unrecognized`：读到的东西**形状不合法**（整行缺失 / `enabled` 非布尔 / `key` 不在契约闭集 /
  *   `revision` 非法）—— 这是配置或数据事故，**需运维修复**后同一请求才会成功 ⇒ `retryable: false`。
  */
-export type FlagGateFailCause = 'read_error' | 'unrecognized';
+export type FlagGateFailCause = 'read_error' | 'read_unretryable' | 'unrecognized';
 
 /** 带原因的读取结果：`ok` ⇒ 记录；`fail` ⇒ 原因（**不丢原因**，供 `retryable` 判定）。 */
 export type FlagReadOutcome =
@@ -112,14 +115,31 @@ function recognizeOutcome(raw: unknown): FlagReadOutcome {
   return { kind: 'ok', record: { key: record.key, enabled: record.enabled, revision: record.revision as number } };
 }
 
+/**
+ * 读取抛错 ⇒ fail-closed 原因（R31-S-retryable）。
+ *
+ * 只认错误**自己声明的**可重试性：端口/存储契约要求把底层故障映射成 `ApiError`
+ * （`flags-pg.ts` 的 `mapFlagReadError` 用 `db/pool.ts` 的 `isTransientDatabaseError` 判定）。
+ * 此前这里无条件把任何抛错记成 `read_error`（⇒ `retryable: true`），于是 `42501`（权限缺口）、
+ * `42703`（列缺失）、未迁移这类**确定性**失败也被标注"稍后重试可能成功"，客户端/调度器会无限重试。
+ *
+ * 非 `ApiError`（端口实现自造错误，属违约）读不出可重试性 ⇒ 维持既有 `read_error` 口径：
+ * 把违约端口的一次抖动永久化成 503 是另一种误判；真实端口 `createPostgresFeatureFlags`
+ * 与真实存储永远抛 `ApiError`，不会走到这一支。
+ */
+function readFailureCause(error: unknown): FlagGateFailCause {
+  if (error instanceof ApiError) return error.retryable ? 'read_error' : 'read_unretryable';
+  return 'read_error';
+}
+
 /** 由后台开关存储构造读取口（只依赖 `getFlag` 一个方法，便于测试注入畸形实现）。 */
 export function createStoreFlagReader(source: { getFlag(key: FlagKey): unknown }): FlagReader {
   const readWithCause = (key: FlagKey): FlagReadOutcome => {
     try {
       return recognizeOutcome(source.getFlag(key));
-    } catch {
-      // 读取抛错 = 存储层**瞬时**故障（连接抖动/超时），fail-closed 但可重试：**不**当成开启。
-      return { kind: 'fail', cause: 'read_error' };
+    } catch (error) {
+      // 读取抛错：fail-closed，原因按错误自述的可重试性拆分（**不**当成开启，也不把确定性失败当抖动）。
+      return { kind: 'fail', cause: readFailureCause(error) };
     }
   };
   const read = (key: FlagKey): FlagRecordLike | null => {
@@ -146,7 +166,8 @@ export function createStoreFlagReader(source: { getFlag(key: FlagKey): unknown }
  *
  * ## fail-closed 口径（与内存读取口逐字同源）
  * - 从未成功预取 ⇒ `unrecognized`（装配 bug，需修）；
- * - 预取抛错 ⇒ `read_error`（瞬时，可重试），且**丢掉旧快照**：库不可用时不拿过期的「开」放行；
+ * - 预取抛错且错误自述可重试 ⇒ `read_error`（瞬时，可重试），且**丢掉旧快照**：库不可用时不拿过期的「开」放行；
+ * - 预取抛错且错误自述**不可**重试（权限/表结构/迁移类）⇒ `read_unretryable`（`retryable: false`）；
  * - 行缺失 ⇒ `unrecognized`（缺行不是关，更不是开）；
  * - 形状非法（key 越界/非布尔/revision 非法）⇒ `unrecognized`；重复 key 同理。
  */
@@ -194,10 +215,11 @@ export function createPortFlagReader(port: {
       snapshot = next;
       lastFailure = 'unrecognized';
       refreshed = true;
-    } catch {
-      // 读取抛错 = 瞬时故障 ⇒ 可重试；同时**丢弃**旧快照（不拿过期状态放行）。
+    } catch (error) {
+      // 读取抛错 ⇒ fail-closed；按错误自述的可重试性拆原因（`read_error` / `read_unretryable`），
+      // 同时**丢弃**旧快照（不拿过期状态放行）。
       snapshot = null;
-      lastFailure = 'read_error';
+      lastFailure = readFailureCause(error);
       refreshed = true;
     }
   }
@@ -376,7 +398,9 @@ export interface FeatureFlagGate {
 //   · 503 `PROVIDER_UNAVAILABLE`（`failClosedError`）= "**当前读不出来**"：消息逐字含"**当前**取值
 //     不可识别"，与"能力未装配／未接线"不同类，故不受四域统一为 false 的影响；但**四类失败不都是
 //     瞬时的**，故按 `FlagGateFailCause` 拆分（扩展派单要求"真瞬时必须给出具体机制"）：
-//       - `read_error`（读取抛错：存储抖动/超时）⇒ 真瞬时 ⇒ `retryable: true`；
+//       - `read_error`（读取抛错且错误自述可重试：存储抖动/超时）⇒ 真瞬时 ⇒ `retryable: true`；
+//       - `read_unretryable`（读取抛错但错误自述不可重试：权限缺口/表或列缺失/未迁移）⇒
+//         同一请求重试**永远不会成功** ⇒ `retryable: false`（R31-S-retryable）；
 //       - `unrecognized`（行缺失/`enabled` 非布尔/`key` 越界/`revision` 非法）= 配置或数据事故，
 //         **需运维修复**后同一请求才会成功 ⇒ `retryable: false`。
 function closedError(surface: string, key: FlagKey): ApiError {
@@ -390,7 +414,9 @@ function failClosedError(surface: string, key: FlagKey, cause: FlagGateFailCause
   const hint =
     cause === 'read_error'
       ? '（开关存储读取失败：连接抖动/超时，稍后重试可能成功）'
-      : '（开关配置或数据形状非法，需运维修复后重试才会成功）';
+      : cause === 'read_unretryable'
+        ? '（开关存储读取失败且该错误本身不可重试：权限/表结构/迁移类，需运维修复后重试才会成功）'
+        : '（开关配置或数据形状非法，需运维修复后重试才会成功）';
   return new ApiError(
     'PROVIDER_UNAVAILABLE',
     `全局开关 ${key} 的当前取值不可识别（缺失/非布尔/越界）${hint}，「${surface}」按 fail-closed 拒绝产出`,
@@ -475,7 +501,7 @@ export function createFeatureFlagGate(options: FeatureFlagGateOptions): FeatureF
    * - `ready` / `missing` 是确定结论，缓存后不再重探（表要么由迁移建好、要么不该本进程反复探）；
    * - `unknown` **不缓存**：探测异常（连接/权限/超时）是瞬时的，下一次判前必须重探，
    *   ⛔ 不得像旧实现那样把一次异常变成永久的 `armed = false`（那等于永久放行受控面）。
-   * 预取本来就必须逐次重试 —— 存储抖动是瞬时的，缓存一次 `read_error` 会让门永久 503。
+   * 预取本来就必须逐次重试 —— 缓存一次读取失败（`read_error`/`read_unretryable`）会让门永久 503。
    */
   async function ensureReady(): Promise<void> {
     if (armingProbe !== undefined && (armingState === 'unprobed' || armingState === 'unknown')) {

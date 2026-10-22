@@ -107,9 +107,27 @@ export interface IdempotencyStore {
   purgeExpired(now: Date): Promise<number>;
 }
 
+/**
+ * `scope` 的三段分隔符（换行，0x0A）。**唯一定义处**——生产端一律从这里取，不再自拼字面量。
+ *
+ * ⚠️ 与共享台账的「按主体前缀删」是一对承重关系：`scope` 的**首段恒为主体 uuid**，因此
+ * `public.idempotency_keys`（`0008_auth_session.sql:46-58`）的注销清理可以只按
+ * `left(scope, char_length(主体) + 1) = 主体 || chr(10)` 精确前缀删（`messages/store-pg.ts:234-237`）。
+ * 两个前提都是必须的，缺一就会**跨主体**误删：
+ *   ① 首段是主体本体（一旦改成域标签 `msg:` / `ocr:` 之类，前缀删就不再表达"本主体的行"）；
+ *   ② 主体里不含分隔符（`users.id` 是 `uuid`，见 `0001` 迁移 ⇒ 恒不含 `\n`）。
+ * 任一前提被破坏，`tests/unit/idempotency-scope-grammar.test.mjs` 的负控制会红。
+ */
+export const IDEMPOTENCY_SCOPE_SEPARATOR = '\n';
+
+/** `scope` 的首段（主体）+ 分隔符：共享台账按主体清理时**唯一**合法的前缀来源。 */
+export function idempotencySubjectPrefix(subject: string): string {
+  return `${subject}${IDEMPOTENCY_SCOPE_SEPARATOR}`;
+}
+
 /** 键域：主体 + 方法 + 路径。 */
 export function idempotencyScope(subject: string, method: string, routePath: string): string {
-  return `${subject}\n${method.toUpperCase()}\n${routePath}`;
+  return `${subject}${IDEMPOTENCY_SCOPE_SEPARATOR}${method.toUpperCase()}${IDEMPOTENCY_SCOPE_SEPARATOR}${routePath}`;
 }
 
 /** 键摘要：SHA-256(scope || '\n' || 原始键)，hex（32 字节）。 */

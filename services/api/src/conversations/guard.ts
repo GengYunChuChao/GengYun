@@ -159,6 +159,16 @@ export interface CandidateAnswer {
   text: string;
   citations: readonly SourceRef[];
   dose_cards: readonly DoseCardCandidate[];
+  /**
+   * 生成侧在**正文层面**发现的越界（GY-R28 W7 返修）。
+   *
+   * 为什么正文也要有这条通道：只核对结构化 `citations` 时，生成侧可以「先把越界引用从结构体里
+   * 悄悄丢掉、再把原正文交上来」——结构上一切合法，正文里的集合外编号/虚构链接却直接出给用户。
+   * 因此**凡是会给正文加编号/链接语义的回答器**（目前的真实模型适配器）必须先按本次检索集合
+   * 自检正文，把越界项写进这里；守卫见到非空即**整条阻断**（不产出该正文），不把它当成
+   * "结构已经干净了"。
+   */
+  text_violations?: readonly string[];
 }
 
 /** 守卫结论（守卫**唯一**允许的输出：正文 + 状态 + 检查态 + 通过与拒绝两份清单）。 */
@@ -172,6 +182,39 @@ export interface GuardedAnswer {
   accepted_citations: number;
   rejected_citations: string[];
   rejected_dose_cards: string[];
+  /** 正文层面的拒绝清单（集合外编号/未检索链接等；供披露与回归断言，**不进响应**）。 */
+  rejected_text: string[];
+}
+
+/**
+ * 正文里的 URL（「正文链接与结构化引用同源」判据的机器实现）。
+ *
+ * 与 `citations` 的逐字段核对是**同一条纪律**：正文里出现的每个链接都必须能在本次检索集合里
+ * 找到出处 —— 要么就是某条来源自带的 `url`，要么逐字出现在某条来源的正文里（确定性回答器
+ * 原样搬资料原文时属于后者）。找不到出处的链接一律视为「未检索来源」，不得出给用户。
+ */
+const TEXT_URL_PATTERN = /https?:\/\/[^\s<>"'`，。；：！？、（）【】《》「」]+/gu;
+/** URL 末尾的 ASCII 标点通常是正文标点，不是链接的一部分。 */
+const URL_TRAILING_PUNCTUATION = /[.,;:!?)\]}]+$/u;
+
+/** 提取正文里的 URL（去重、去尾部标点、保持出现顺序）。 */
+export function urlsInText(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(TEXT_URL_PATTERN)) {
+    const url = match[0].replace(URL_TRAILING_PUNCTUATION, '');
+    if (url.length > 'https://'.length && !found.includes(url)) found.push(url);
+  }
+  return found;
+}
+
+/** 本次检索集合**能背书**的 URL 集合（来源自带 url + 正文里原样出现的 url）。 */
+export function groundedUrlsOf(items: readonly RetrievalItem[]): Set<string> {
+  const grounded = new Set<string>();
+  for (const item of items) {
+    grounded.add(item.source.url);
+    for (const url of urlsInText(item.body ?? '')) grounded.add(url);
+  }
+  return grounded;
 }
 
 export const MAX_CITATIONS = 20;
@@ -253,6 +296,11 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
     check({ candidate, set, question, conditions }) {
       const rejectedCitations: string[] = [];
       const rejectedDoseCards: string[] = [];
+      // 正文层面的拒绝清单：生成侧自报的越界（编号/链接）先收进来，下面再独立复核正文里的链接。
+      const rejectedText: string[] = [];
+      for (const violation of candidate.text_violations ?? []) {
+        if (!rejectedText.includes(violation)) rejectedText.push(violation);
+      }
 
       if (set === null) {
         // 没有检索集合 ⇒ 不存在"集合内引用"这一概念。候选内容一律不接受，
@@ -268,6 +316,7 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
           accepted_citations: 0,
           rejected_citations: rejectedCitations,
           rejected_dose_cards: rejectedDoseCards,
+          rejected_text: rejectedText,
         };
       }
 
@@ -314,22 +363,36 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
         acceptedCards.push(structuredClone(card));
       }
 
+      // ---- 正文链接：必须与结构化引用同源（未检索来源不得随正文出给用户）----
+      // 生成侧自报之外再独立复核一遍：**不**依赖上游的自检（自检被绕过/漏报时这里仍然拦得住）。
+      const grounded = groundedUrlsOf(set.items);
+      for (const url of urlsInText(candidate.text)) {
+        if (!grounded.has(url)) rejectedText.push(`unattributed_url:${url}`);
+      }
+
       const boundedCitations = clipCandidates(accepted, MAX_CITATIONS, rejectedCitations, 'citation');
       const boundedCards = clipCandidates(acceptedCards, MAX_DOSE_CARDS, rejectedDoseCards, 'dose_card');
 
-      const blocked = rejectedCitations.length > 0 || rejectedDoseCards.length > 0;
+      // 正文越界同样致阻断：只丢结构化引用、把原正文盖章通过，正是返修要堵的那条路。
+      const blocked = rejectedCitations.length > 0 || rejectedDoseCards.length > 0 || rejectedText.length > 0;
       if (blocked) {
+        // 正文层面越界 ⇒ **整条不交付**：连同一条候选里"看起来合法"的引用/用量卡也不放出，
+        // 否则等于用一份合法 citation 给被拒正文背书（"洗白"）。结构化越界（本分支的既有语义）
+        // 仍保留已通过核对的那部分 —— 那是既有契约，不在本次返修范围。
+        const deliverCitations = rejectedText.length > 0 ? [] : boundedCitations;
+        const deliverCards = rejectedText.length > 0 ? [] : boundedCards;
         return {
           status: 'blocked',
           check_state: 'blocked',
           checked_text:
-            '本回答已被输出守卫阻断：候选内容含有超出本次检索集合的引用或未经确定性判定的用量数据，' +
+            '本回答已被输出守卫阻断：候选内容含有超出本次检索集合的引用、来源链接或未经确定性判定的用量数据，' +
             '因此不产出该部分内容。请以资料页的核准来源为准。',
-          citations: boundedCitations,
-          dose_cards: boundedCards,
-          accepted_citations: boundedCitations.length,
+          citations: deliverCitations,
+          dose_cards: deliverCards,
+          accepted_citations: deliverCitations.length,
           rejected_citations: rejectedCitations,
           rejected_dose_cards: rejectedDoseCards,
+          rejected_text: rejectedText,
         };
       }
 
@@ -343,6 +406,7 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
           accepted_citations: 0,
           rejected_citations: [],
           rejected_dose_cards: [],
+          rejected_text: [],
         };
       }
 
@@ -359,6 +423,7 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
         accepted_citations: boundedCitations.length,
         rejected_citations: [],
         rejected_dose_cards: [],
+        rejected_text: [],
       };
     },
   };

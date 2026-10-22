@@ -16,10 +16,27 @@
  *   8. 进程重连（关掉连接池再新建）后数据仍在；
  *   9. 注销清空覆盖**幂等台账**（监工 P1 返修）：A 的四张表残留均 0（含未完成 claim、未过期行），
  *      B 的四张表逐表与删除前相等，证据里可见两张台账各清了几行。
+ *  10. **收藏域真 HTTP + 真 SQL 对账**（R31-I16 补，2026-10-22）：新增 ⇒ 201 且 `count(*)` 0→1 且库里那行
+ *      的 `id` 就是 HTTP 回给客户端的 `id`；同幂等键 + 同体重放 ⇒ 读数（`id`/`revision`/`created_at`）与
+ *      行数都不变、台账恰好 1 行且 `outcome` 指向同一行；同键不同体 ⇒ 409 `IDEMPOTENCY_CONFLICT` 且**不建行**；
+ *      `limit=2` 逐页翻到 `next_cursor=null`，id 序列与 `ORDER BY created_at DESC, id DESC` 的 SQL 结果
+ *      **逐项相等**；删除 ⇒ 行数 −1，再用**新键**删同一 id ⇒ 404 且与"从未存在"逐字同形。
+ *  11. **历史域真 HTTP + 真 SQL 对账**：`appendHistory` 内部口追加 ⇒ `created=true` 且 `count(*)` +1、
+ *      HTTP 列表里出现同一 `id`；同 `(owner,event_key)` 重复（**换一个目标**）⇒ `created=false`、行数不变、
+ *      第二目标未落库（证明是 event_key 这道键裁决）；游标翻页无重复无遗漏、末页 `next_cursor=null`、
+ *      与 SQL 逐项相等；`DELETE /history/{id}` ⇒ 202 + `X-GY-Cascade` 披露，再删同一 id 与"从未存在"同形 404，
+ *      他人 id 也同形（不泄露存在性）。
+ *  12. **迁移旁证（0008）**：`0018` 回滚后本片 4 张表消失，而 `users`（0001）与 `idempotency_keys`（0008）
+ *      的列定义与行内容**逐字仍在**；删掉台账行后 **REPLAY** `0018` ⇒ 4 张表再出现，两张旁证表仍逐字不变。
+ *  13. **非空证明开关**（`GY_I16_FORCE_MEMORY=1`，默认关闭，⛔ 不得接门禁）：把装配换成一张"自称
+ *      `persistent: true`"的**内存** store 再跑本文件 ⇒ 第 10 组「HTTP 新增后真库行数 0→1」必红
+ *      （点名的是读数本身，不是夹具装配失败）。反向控制的原始输出见
+ *      `docs/verification/gy-r31-i16-pg-arm-20261022.md`。
  *
- * 运行：`FAVORITES_HISTORY_PG_TEST_URL=postgres://…/gengyun_favorites_history_test \
- *        node tests/integration/favorites-history-pg.mjs`
- * 未配置该变量 ⇒ 打印 `SKIP` 并以 **77** 退出（POSIX「skipped」）：本次运行**没有**验证真库（不是通过）。
+ * 运行（两种入口等价，**argv 优先**，env 兜底）：
+ *   `node tests/integration/favorites-history-pg.mjs postgres://postgres@127.0.0.1:55724/gengyun_favorites_history_test`
+ *   `FAVORITES_HISTORY_PG_TEST_URL=postgres://…/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs`
+ * 两个入口都没给 ⇒ 打印 `SKIP` 并以 **77** 退出（POSIX「skipped」）：本次运行**没有**验证真库（不是通过）。
  *   本机明知无真库、只想看跳过原因时可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
  * `npm run test:integration:http` 不包含本文件（它需要真库），需显式运行。
  */
@@ -34,19 +51,33 @@ import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
+import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
+import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const ENV = 'FAVORITES_HISTORY_PG_TEST_URL';
-const raw = process.env[ENV] ?? '';
+// 连接串：**argv 优先**（第一个不以 `-` 开头的参数），env 兜底（`real-pg-integration.yml` 现状走 env）。
+const ARGV_URL = process.argv.slice(2).find((arg) => !arg.startsWith('-')) ?? '';
+const raw = ARGV_URL !== '' ? ARGV_URL : (process.env[ENV] ?? '');
+const URL_SOURCE = ARGV_URL !== '' ? 'argv[1]' : `env ${ENV}`;
 // 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
 const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
+/**
+ * **非空证明**开关（反向控制；默认关闭）。
+ *
+ * 打开后只用**内存** store 冒充持久装配（并把 `persistent` 改成 `true` 以便绕开 `real` 模式的服务门禁），
+ * 本文件的"真库行数"读数随即不成立 ⇒ 必须变红。这是"0 失败不是空跑"的自证手段，
+ * ⛔ 不得写进任何 workflow / 门禁脚本（它与 `real-pg-integration.yml` 的绿是互斥的）。
+ */
+const FORCE_MEMORY = process.env.GY_I16_FORCE_MEMORY === '1';
 if (raw === '') {
   // 显式跳过并打印：**不得**被当成"真库已验证"（绿），也不静默失败。
-  console.log(`SKIP real PG17: ${ENV} 未设置 —— 本次运行没有验证真库持久化（不是通过，也不是失败）。`);
-  console.log(`     运行方式：${ENV}=postgres://postgres@127.0.0.1:5432/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs`);
+  console.log(`SKIP real PG17: 未给连接串（argv[1] 与 ${ENV} 皆空）—— 本次运行没有验证真库持久化（不是通过，也不是失败）。`);
+  console.log('     运行方式：node tests/integration/favorites-history-pg.mjs postgres://postgres@127.0.0.1:55724/gengyun_favorites_history_test');
+  console.log(`     或：${ENV}=postgres://postgres@127.0.0.1:55724/gengyun_favorites_history_test node tests/integration/favorites-history-pg.mjs`);
   if (ALLOW_SKIP) {
     console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
     process.exit(0);
@@ -60,6 +91,10 @@ assert.ok(['postgres:', 'postgresql:'].includes(url.protocol), 'postgres URL onl
 assert.equal(url.search, '', '不要把参数塞进连接串（测试库校验只认 pathname）');
 assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'loopback only');
 assert.equal(url.pathname, '/gengyun_favorites_history_test', 'dedicated test DB only');
+console.log(`Real PostgreSQL URL source: ${URL_SOURCE} ⇒ ${url.host}${url.pathname}（库名硬钉、回环 only、不带参数）`);
+if (FORCE_MEMORY) {
+  console.log('REVERSE CONTROL: GY_I16_FORCE_MEMORY=1 ⇒ 装配改用内存 store（本轮的"真库行数"读数必须变红）。');
+}
 
 const sqlFile = (path) => readFileSync(new URL(`../../services/api/db/${path}`, import.meta.url), 'utf8');
 let passed = 0;
@@ -83,9 +118,15 @@ try {
   );
 
   // ---- 1. 迁移应用 / 重复应用 / 回滚 -------------------------------------
-  const migrations = discoverMigrations().filter((m) => ['0001', '0018'].includes(m.version));
-  assert.deepEqual(migrations.map((m) => m.version), ['0001', '0018'], '0001（users）+ 0018（本片新表）');
-  assert.deepEqual((await applyMigrations(owner, migrations)).applied, ['0001', '0018']);
+  // 0008 是为了给"回滚 0018 不得波及旁人"一个**真实旁证**：它只新增 `idempotency_keys`，
+  // 且不引用 0003–0007（见 `services/api/db/migrations/0008_auth_session.sql`）⇒ 可以单独与本片同库。
+  const migrations = discoverMigrations().filter((m) => ['0001', '0008', '0018'].includes(m.version));
+  assert.deepEqual(
+    migrations.map((m) => m.version),
+    ['0001', '0008', '0018'],
+    '0001（users）+ 0008（idempotency_keys 旁证）+ 0018（本片新表）',
+  );
+  assert.deepEqual((await applyMigrations(owner, migrations)).applied, ['0001', '0008', '0018']);
   assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重复应用必须 no-op');
   const tables = ['favorites', 'history', 'favorites_idempotency', 'history_idempotency'];
   const present = await owner.query(
@@ -93,7 +134,18 @@ try {
     [tables],
   );
   assert.deepEqual(present.rows.map((row) => row.tablename), [...tables].sort());
-  say('0018 在真库应用成功（4 张表）、重复应用 no-op');
+  const sideTables = ['idempotency_keys', 'users'];
+  assert.deepEqual(
+    (
+      await owner.query(
+        "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename = ANY($1) ORDER BY tablename",
+        [sideTables],
+      )
+    ).rows.map((row) => row.tablename),
+    sideTables,
+    '0001 的 users 与 0008 的 idempotency_keys 同时在库（回滚断言的旁证基线）',
+  );
+  say('0018 在真库应用成功（4 张表）、重复应用 no-op；0001/0008 的两张旁证表同时在库');
 
   const ownerA = (await owner.query('INSERT INTO users DEFAULT VALUES RETURNING id')).rows[0].id;
   const ownerB = (await owner.query('INSERT INTO users DEFAULT VALUES RETURNING id')).rows[0].id;
@@ -288,7 +340,20 @@ try {
     executionMode: 'real',
     requiresRealCredentials: true,
   };
-  app = buildApp({ config, store: auth, pool, now: () => new Date() });
+  // 反向控制（默认关闭，见文件头第 13 条）：把装配换成一张**自称 `persistent: true`** 的内存 store。
+  // 只改本文件的装配入参，不改 `app.ts`；`persistent` 拔高是为了让 `real` 模式的服务门禁放行，
+  // 这样红的是"真库行数"读数本身，而不是"服务被关掉"这种夹具级失败。
+  const injection = FORCE_MEMORY
+    ? {
+        favoritesInjection: {
+          store: Object.assign(createMemoryFavoritesStore({ now: () => Date.now() }), { persistent: true }),
+        },
+        historyInjection: {
+          store: Object.assign(createMemoryHistoryStore({ now: () => Date.now() }), { persistent: true }),
+        },
+      }
+    : {};
+  app = buildApp({ config, store: auth, pool, ...injection, now: () => new Date() });
   assert.notEqual(app.favoritesService, null, 'real + 真库 pool ⇒ 服务必须开启');
   assert.notEqual(app.historyService, null);
   await app.listen({ host: '127.0.0.1', port: 0 });
@@ -303,7 +368,8 @@ try {
       },
       ...(extra.payload === undefined ? {} : { body: JSON.stringify(extra.payload) }),
     });
-    return { status: response.status, body: await response.json() };
+    // 响应头一并带回：`X-GY-Cascade`（非契约披露）、`Cache-Control: no-store` 的读数要用。
+    return { status: response.status, body: await response.json(), headers: response.headers };
   };
   const created = await call('POST', '/api/v1/favorites', a, {
     payload: { target_ref: { type: 'species', id: 'spc-http-pg', revision: 1 } },
@@ -329,8 +395,294 @@ try {
     Object.keys(foreign.body.error).sort(),
     Object.keys(missing.body.error).sort(),
     '错误体键集同形（不泄露存在性）',
-  );  assert.deepEqual((await call('GET', '/api/v1/favorites', b)).body.data, { items: [], next_cursor: null });
+  );
+  assert.deepEqual((await call('GET', '/api/v1/favorites', b)).body.data, { items: [], next_cursor: null });
   say('HTTP 面：real+pool 真的 201/200 落库；他人 id 与不存在同形 404');
+
+  // =======================================================================
+  // 10. 收藏域：真 HTTP + 真 SQL 对账（R31-I16 补，2026-10-22）
+  // =======================================================================
+  // 每条读数都同时取「HTTP 响应」与「同库 SELECT」，两边相等才算成立；只看 HTTP 脸色会漏掉
+  // "回了 201 但没落库"这类假绿 —— 文件头的 `GY_I16_FORCE_MEMORY=1` 反向控制专打这一点。
+  const c = await account('c');
+  const scopePrefixSql = 'left(scope, char_length($1::text) + 1) = $1::text || chr(10)';
+  const favRows = async (ownerId) =>
+    (
+      await owner.query(
+        'SELECT id, revision, created_at FROM favorites WHERE owner_id = $1 ORDER BY created_at DESC, id DESC',
+        [ownerId],
+      )
+    ).rows;
+  const favCount = async (ownerId) =>
+    (await owner.query('SELECT count(*)::int n FROM favorites WHERE owner_id = $1', [ownerId])).rows[0].n;
+  const postFavorite = (actor, key, payload) =>
+    call('POST', '/api/v1/favorites', actor, { payload, headers: { 'idempotency-key': key } });
+
+  const firstBody = { target_ref: { type: 'species', id: 'spc-pg-c-1', revision: 4 } };
+  assert.equal(await favCount(c.user.id), 0, '新主体起点必须是 0 行（否则下面的 0→1 不成立）');
+  const cFirst = await postFavorite(c, 'fav-pg-c-0001', firstBody);
+  assert.equal(cFirst.status, 201, JSON.stringify(cFirst.body));
+  assert.equal(await favCount(c.user.id), 1, 'HTTP 新增收藏后真库 count(*) 必须 0 → 1');
+  assert.deepEqual(
+    (await favRows(c.user.id)).map((row) => ({ id: row.id, revision: row.revision })),
+    [{ id: cFirst.body.data.id, revision: 1 }],
+    '真库那一行的 id 必须就是 HTTP 回给客户端的 id（不是两条平行世界）',
+  );
+  say('收藏新增：HTTP 201，真库 count(*)=0→1，且库里 id 与响应 id 逐字相等');
+
+  const cReplay = await postFavorite(c, 'fav-pg-c-0001', firstBody);
+  assert.equal(cReplay.status, 201, '同键同体重放回同一状态码');
+  assert.deepEqual(cReplay.body.data, cFirst.body.data, '重放必须回放同一份读数（id/revision/created_at 全等）');
+  assert.equal(await favCount(c.user.id), 1, '重放不得多建行');
+  assert.deepEqual(
+    (await favRows(c.user.id)).map((row) => ({ id: row.id, revision: row.revision })),
+    [{ id: cFirst.body.data.id, revision: 1 }],
+    '重放后行集仍钉在同一行（revision 不推进）',
+  );
+  assert.deepEqual(
+    (
+      await owner.query(
+        `SELECT response_status, outcome FROM favorites_idempotency WHERE ${scopePrefixSql} ORDER BY response_status`,
+        [c.user.id],
+      )
+    ).rows,
+    [{ response_status: 201, outcome: { kind: 'favorite', id: cFirst.body.data.id, revision: 1 } }],
+    '同键只留 1 行台账，outcome 指向那一条收藏',
+  );
+  say('收藏同幂等键重放：HTTP 读数不变、真库行数不变、台账恰好 1 行且 outcome 指向同一行');
+
+  const cConflict = await postFavorite(c, 'fav-pg-c-0001', {
+    target_ref: { type: 'species', id: 'spc-pg-c-diff', revision: 4 },
+  });
+  assert.equal(cConflict.status, 409, JSON.stringify(cConflict.body));
+  assert.equal(cConflict.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  assert.equal(await favCount(c.user.id), 1, '同键异体被拒后不得建行');
+  assert.equal(
+    (
+      await owner.query('SELECT count(*)::int n FROM favorites WHERE owner_id=$1 AND target_id=$2', [
+        c.user.id,
+        'spc-pg-c-diff',
+      ])
+    ).rows[0].n,
+    0,
+    '差异体那条目标从未落库',
+  );
+  assert.equal(
+    (await owner.query(`SELECT count(*)::int n FROM favorites_idempotency WHERE ${scopePrefixSql}`, [c.user.id]))
+      .rows[0].n,
+    1,
+    '409 不得留下第二行台账（也不得覆盖原结果）',
+  );
+  say('收藏同键不同体：HTTP 409 IDEMPOTENCY_CONFLICT，真库未建行、台账仍是 1 行');
+
+  // 分页读数：5 行、limit=2 ⇒ 三页（2/2/1），末页 `next_cursor` 必须为 null（不是靠"空页"收尾）。
+  for (const index of [2, 3, 4, 5]) {
+    const more = await postFavorite(c, `fav-pg-c-000${index}`, {
+      target_ref: { type: 'species', id: `spc-pg-c-${index}`, revision: 1 },
+    });
+    assert.equal(more.status, 201, JSON.stringify(more.body));
+  }
+  assert.equal(await favCount(c.user.id), 5, '总共 5 行（1 条 + 4 条）');
+
+  const sqlFavoriteIds = (await favRows(c.user.id)).map((row) => row.id);
+  const httpFavoriteIds = [];
+  const favPageSizes = [];
+  let cursor = null;
+  for (let page = 0; page < 10; page += 1) {
+    const listedPage = await call(
+      'GET',
+      `/api/v1/favorites?limit=2${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`,
+      c,
+    );
+    assert.equal(listedPage.status, 200, JSON.stringify(listedPage.body));
+    assert.equal(listedPage.headers.get('cache-control'), 'no-store', '私有列表一律 no-store');
+    favPageSizes.push(listedPage.body.data.items.length);
+    httpFavoriteIds.push(...listedPage.body.data.items.map((row) => row.id));
+    cursor = listedPage.body.data.next_cursor;
+    if (cursor === null) break;
+  }
+  assert.deepEqual(favPageSizes, [2, 2, 1], '每页条数读数：2/2/1');
+  assert.equal(cursor, null, '末页 next_cursor 必须为 null');
+  assert.deepEqual(
+    httpFavoriteIds,
+    sqlFavoriteIds,
+    'HTTP 逐页拼接的 id 序列必须与 SQL `ORDER BY created_at DESC, id DESC` 逐项相等',
+  );
+  assert.equal(new Set(httpFavoriteIds).size, 5, '翻页无重复');
+  say('收藏列表分页：limit=2 三页 2/2/1，末页 next_cursor=null，id 序列与 SQL 逐项相等（无重复无遗漏）');
+
+  const deletedFav = cFirst.body.data.id;
+  const delOk = await call('DELETE', `/api/v1/favorites/${deletedFav}`, c, {
+    headers: { 'idempotency-key': 'fav-pg-c-del-01', 'if-match': '"1"' },
+  });
+  assert.equal(delOk.status, 200, JSON.stringify(delOk.body));
+  assert.deepEqual(delOk.body.data, { accepted: true });
+  assert.equal(await favCount(c.user.id), 4, '删除后真库行数 5 → 4');
+  assert.deepEqual(
+    (await favRows(c.user.id)).map((row) => row.id),
+    sqlFavoriteIds.filter((id) => id !== deletedFav),
+    '被删行从 SQL 列表消失，其余行原序',
+  );
+
+  // 再用**新键**删同一 id：scope 里含 id、键不同 ⇒ 不是重放，必须走"不存在"路径。
+  const delAgain = await call('DELETE', `/api/v1/favorites/${deletedFav}`, c, {
+    headers: { 'idempotency-key': 'fav-pg-c-del-02', 'if-match': '"1"' },
+  });
+  const delNever = await call('DELETE', `/api/v1/favorites/${absent}`, c, {
+    headers: { 'idempotency-key': 'fav-pg-c-del-03', 'if-match': '"1"' },
+  });
+  assert.equal(delAgain.status, 404, JSON.stringify(delAgain.body));
+  assert.equal(delNever.status, 404, JSON.stringify(delNever.body));
+  assert.equal(delAgain.body.error.code, 'NOT_FOUND');
+  assert.equal(delAgain.body.error.message, delNever.body.error.message, '已删除的 id 与从未存在的 id 必须同一句式');
+  assert.deepEqual(
+    Object.keys(delAgain.body.error).sort(),
+    Object.keys(delNever.body.error).sort(),
+    '错误体键集同形（不含"它曾经存在过"的痕迹）',
+  );
+  assert.deepEqual(delAgain.body.error.details ?? [], delNever.body.error.details ?? [], 'details 也必须同形');
+  assert.equal(await favCount(c.user.id), 4, '两次 404 都不得改行数');
+  say('收藏删除：HTTP 200 accepted ⇒ 真库 5→4；再删同 id 与从未存在的 id 404 逐字同形、行数不变');
+
+  // =======================================================================
+  // 11. 历史域：真 HTTP + 真 SQL 对账
+  // =======================================================================
+  // 历史**没有** POST 路由（契约 `/history` 只有 GET／`/history/{id}` 只有 DELETE），写入走内部口
+  // `appendHistory`（`services/api/src/history/service.ts:426-450`）；因此本轮读数 = 内部口写 + 真 HTTP 读 + 真 SQL 数。
+  const histRows = async (ownerId) =>
+    (
+      await owner.query(
+        'SELECT id, event_key, target_id FROM history WHERE owner_id = $1 ORDER BY created_at DESC, id DESC',
+        [ownerId],
+      )
+    ).rows;
+  const histCount = async (ownerId) =>
+    (await owner.query('SELECT count(*)::int n FROM history WHERE owner_id = $1', [ownerId])).rows[0].n;
+  const append = (ownerId, index) =>
+    app.historyService.appendHistory({
+      owner_id: ownerId,
+      kind: 'recognition',
+      target_ref: { type: 'recognition', id: `rec-pg-c-${index}`, revision: 1 },
+      job_id: `job-pg-c-${index}`,
+      job_state: 'succeeded',
+      event_key: `evt-pg-c-${index}`,
+    });
+
+  assert.equal(await histCount(c.user.id), 0, '历史域新主体起点必须是 0 行');
+  const h1 = await append(c.user.id, 1);
+  assert.equal(h1.created, true);
+  assert.equal(await histCount(c.user.id), 1, '内部口追加后真库 count(*) 必须 0 → 1');
+  assert.deepEqual(
+    (await histRows(c.user.id)).map((row) => ({ id: row.id, event_key: row.event_key })),
+    [{ id: h1.history.id, event_key: 'evt-pg-c-1' }],
+    '真库那一行就是内部口返回的那条（id/event_key 逐字相等）',
+  );
+  const histListed = await call('GET', '/api/v1/history', c);
+  assert.equal(histListed.status, 200, JSON.stringify(histListed.body));
+  assert.deepEqual(
+    histListed.body.data.items.map((row) => row.id),
+    [h1.history.id],
+    'HTTP 列表读到的就是刚追加的那条',
+  );
+  say('历史追加：appendHistory created=true，真库 count(*)=0→1，HTTP 列表读回同一 id');
+
+  // 同 `(owner,event_key)`、**换一个目标** ⇒ 仍必须判 duplicate：证明是 event_key 那道唯一索引裁决，
+  // 不是"目标恰好相同"的巧合；且既有行的终态不被"重放的新体"改写。
+  const h1Dup = await app.historyService.appendHistory({
+    owner_id: c.user.id,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: 'rec-pg-c-99', revision: 1 },
+    job_id: 'job-pg-c-99',
+    job_state: 'failed',
+    event_key: 'evt-pg-c-1',
+  });
+  assert.equal(h1Dup.created, false, '同 (owner,event_key) ⇒ duplicate');
+  assert.equal(h1Dup.history.id, h1.history.id, 'duplicate 必须回既有那条，而不是新建一条');
+  assert.equal(h1Dup.history.job_state, 'succeeded', '既有行的终态不被"重放的新体"改写');
+  assert.equal(await histCount(c.user.id), 1, 'duplicate 不得加行');
+  assert.equal(
+    (
+      await owner.query("SELECT count(*)::int n FROM history WHERE owner_id=$1 AND target_id='rec-pg-c-99'", [
+        c.user.id,
+      ])
+    ).rows[0].n,
+    0,
+    'duplicate 的新目标从未落库',
+  );
+  assert.equal(
+    (await owner.query('SELECT count(*)::int n FROM history WHERE owner_id=$1 AND event_key=$2', [
+      c.user.id,
+      'evt-pg-c-1',
+    ])).rows[0].n,
+    1,
+    'history_owner_event_key 唯一索引下只留 1 行',
+  );
+  say('历史同 (owner,event_key) 重复：created=false、行数不变、第二目标未落库、既有终态不被改写');
+
+  for (const index of [2, 3, 4, 5]) {
+    const appended = await append(c.user.id, index);
+    assert.equal(appended.created, true, `第 ${index} 条必须新增`);
+  }
+  assert.equal(await histCount(c.user.id), 5);
+
+  const sqlHistoryIds = (await histRows(c.user.id)).map((row) => row.id);
+  const httpHistoryIds = [];
+  const histPageSizes = [];
+  cursor = null;
+  for (let page = 0; page < 10; page += 1) {
+    const listedPage = await call(
+      'GET',
+      `/api/v1/history?limit=2${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`,
+      c,
+    );
+    assert.equal(listedPage.status, 200, JSON.stringify(listedPage.body));
+    assert.equal(listedPage.headers.get('cache-control'), 'no-store');
+    histPageSizes.push(listedPage.body.data.items.length);
+    httpHistoryIds.push(...listedPage.body.data.items.map((row) => row.id));
+    cursor = listedPage.body.data.next_cursor;
+    if (cursor === null) break;
+  }
+  assert.deepEqual(histPageSizes, [2, 2, 1], '每页条数读数：2/2/1');
+  assert.equal(cursor, null, '末页 next_cursor 必须为 null');
+  assert.deepEqual(
+    httpHistoryIds,
+    sqlHistoryIds,
+    'HTTP 拼接序列必须与 SQL `ORDER BY created_at DESC, id DESC` 逐项相等',
+  );
+  assert.equal(new Set(httpHistoryIds).size, 5, '翻页无重复');
+  say('历史列表分页：limit=2 三页 2/2/1，末页 next_cursor=null，序列与 SQL 逐项相等（无重复无遗漏）');
+
+  const delHistOk = await call('DELETE', `/api/v1/history/${h1.history.id}`, c, {
+    headers: { 'idempotency-key': 'hist-pg-c-del-01', 'if-match': '"1"' },
+  });
+  assert.equal(delHistOk.status, 202, JSON.stringify(delHistOk.body));
+  assert.deepEqual(delHistOk.body.data, { accepted: true });
+  assert.ok(
+    ['initiated', 'unwired', 'failed'].includes(delHistOk.headers.get('x-gy-cascade')),
+    'DELETE 必须披露级联状态（非契约头 X-GY-Cascade）',
+  );
+  assert.equal(await histCount(c.user.id), 4, '删除后真库行数 5 → 4');
+
+  const delHistAgain = await call('DELETE', `/api/v1/history/${h1.history.id}`, c, {
+    headers: { 'idempotency-key': 'hist-pg-c-del-02', 'if-match': '"1"' },
+  });
+  const delHistNever = await call('DELETE', `/api/v1/history/${absent}`, c, {
+    headers: { 'idempotency-key': 'hist-pg-c-del-03', 'if-match': '"1"' },
+  });
+  const delHistForeign = await call('DELETE', `/api/v1/history/${sqlHistoryIds[1]}`, b, {
+    headers: { 'idempotency-key': 'hist-pg-b-del-01', 'if-match': '"1"' },
+  });
+  assert.equal(delHistAgain.status, 404, JSON.stringify(delHistAgain.body));
+  assert.equal(delHistNever.status, 404, JSON.stringify(delHistNever.body));
+  assert.equal(delHistForeign.status, 404, '他人历史 id 与不存在同形（不泄露存在性）');
+  for (const other of [delHistNever, delHistForeign]) {
+    assert.equal(delHistAgain.body.error.code, other.body.error.code);
+    assert.equal(delHistAgain.body.error.message, other.body.error.message);
+    assert.deepEqual(Object.keys(delHistAgain.body.error).sort(), Object.keys(other.body.error).sort());
+    assert.deepEqual(delHistAgain.body.error.details ?? [], other.body.error.details ?? []);
+  }
+  assert.equal(await histCount(c.user.id), 4, '404 不得改行数');
+  say('历史删除：HTTP 202 accepted + X-GY-Cascade；再删同 id / 从未存在 / 他人 id 三者 404 逐字同形');
 
   await app.close();
   app = null;
@@ -368,7 +720,13 @@ try {
   assert.equal(await history2.deleteAllByOwner(ownerA), historyRows, '返回真实删除行数（不是估算）');
   assert.equal(await history2.deleteAllByOwner(ownerA), 0, '再清一次 ⇒ 0（幂等）');
   assert.equal(await favorites2.deleteAllByOwner(ownerB), 1, '收藏域同样返回真实行数');
-  assert.equal((await owner.query('SELECT count(*)::int n FROM history')).rows[0].n, 0);
+  // ⚠️ R31-I16 起本文件 §10/§11 会为另一个主体（`c`）留下真实的收藏/历史行，且那些行**不该**被本组清掉，
+  // 因此这里把"历史表归零"钉在**被清主体**上（原断言是全表为空，等价且更精确）。
+  assert.equal(
+    (await owner.query('SELECT count(*)::int n FROM history WHERE owner_id = ANY($1)', [[ownerA, ownerB]])).rows[0].n,
+    0,
+    '被清主体的历史行归零',
+  );
   say('注销清空 deleteAllByOwner 返回真实删除行数（两域各一次，他人行不受影响）');
 
   // ---- 9. 注销清空必须覆盖幂等台账（监工 P1 返修） ------------------------
@@ -453,7 +811,7 @@ try {
   assert.equal(beforeA.favorites_idempotency.length, 2);
   assert.equal(beforeA.history_idempotency.length, 1);
 
-  // #17 消息域（C1b 起进闭集）：**本 arm 只应用 0001+0018 两个迁移**（见上方 `applyMigrations`
+  // #17 消息域（C1b 起进闭集）：**本 arm 只应用 0001/0008/0018 三个迁移**（见上方 `applyMigrations`
   // 的断言），没有 `public.messages` 表；因此这里给内存实现，只用来证明「闭集里的第三项也被
   // 驱动且如实报 online_state」。消息域的**真库**清理证据在
   // `tests/unit/favorites-history-deletion-registration.test.mjs`（PGlite 真表）与
@@ -504,14 +862,64 @@ try {
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
   say('注销清空覆盖幂等台账：A 四表残留 0、B 逐表相等、证据可见台账行数');
 
-  // ---- 1（续）. 回滚脚本 -------------------------------------------------
+  // ---- 1（续）. 回滚脚本 + 旁证表 + REPLAY -------------------------------
+  // 旁证：`users`（0001）与 `idempotency_keys`（0008）在回滚前后必须**逐字**不变（列定义 + 行内容）。
+  // 为了不让"行内容相等"退化成"空表比空表"，先塞一条合法的 `idempotency_keys` 行（列见 0008:46-57）。
+  await owner.query(
+    `INSERT INTO idempotency_keys (scope, key_hash, request_hash, response_status, outcome, expires_at)
+     VALUES ($1, decode(repeat('ab', 32), 'hex'), repeat('c', 64), 201,
+             '{"kind":"auth","sessionId":"i16-pg-witness"}'::jsonb, now() + interval '1 hour')`,
+    ['i16-pg-rollback-witness'],
+  );
+  const witnessOf = async () => ({
+    columns: (
+      await owner.query(
+        `SELECT table_name, ordinal_position, column_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = ANY($1)
+          ORDER BY table_name, ordinal_position`,
+        [sideTables],
+      )
+    ).rows,
+    usersRows: (await owner.query('SELECT * FROM users ORDER BY id')).rows,
+    idempotencyRows: (
+      await owner.query(
+        'SELECT scope, key_hash, request_hash, response_status, outcome, expires_at FROM idempotency_keys ORDER BY scope',
+      )
+    ).rows,
+  });
+  const witnessBefore = await witnessOf();
+  assert.equal(witnessBefore.idempotencyRows.length, 1, '旁证行确实在（不是空表比空表）');
+  assert.equal(
+    witnessBefore.columns.filter((row) => row.table_name === 'idempotency_keys').length,
+    8,
+    '0008 的 idempotency_keys 8 列都在',
+  );
+
   await owner.query(sqlFile('migrations/rollback/0018_favorites_history.down.sql'));
   const gone = await owner.query(
     "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename = ANY($1)",
     [tables],
   );
   assert.equal(gone.rows.length, 0, '回滚后 4 张表全部消失');
-  say('回滚脚本 0018_favorites_history.down.sql 整表拆干净');
+  assert.deepEqual(
+    await witnessOf(),
+    witnessBefore,
+    '回滚 0018 不得动 users（0001）与 idempotency_keys（0008）：列与行必须逐字仍在',
+  );
+  say('回滚 0018：本片 4 张表消失，而 users（0001）/ idempotency_keys（0008）的列与行逐字仍在');
+
+  // REPLAY：删掉台账里的 0018 行后再走迁移器（等价于"回滚后又重放同一版本"）⇒ 4 张表再出现，
+  // 两张旁证表仍逐字不变（`down.sql` 本身不清 `schema_migrations`，见 rollback/0018_favorites_history.down.sql）。
+  await owner.query("DELETE FROM schema_migrations WHERE version = '0018'");
+  assert.deepEqual((await applyMigrations(owner, migrations)).applied, ['0018'], 'REPLAY 只重放 0018 一个版本');
+  const replayed = await owner.query(
+    "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename = ANY($1) ORDER BY tablename",
+    [tables],
+  );
+  assert.deepEqual(replayed.rows.map((row) => row.tablename), [...tables].sort(), 'REPLAY 后 4 张表全部再出现');
+  assert.deepEqual(await witnessOf(), witnessBefore, 'REPLAY 同样不得动两张旁证表');
+  say('REPLAY 0018（删台账行后重跑迁移器）：4 张表再出现，users / idempotency_keys 仍逐字不变');
 
   console.log(`\nALL PASS (${passed} groups) — real PG17 ${version}`);
 } finally {
