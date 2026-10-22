@@ -25,7 +25,8 @@ import { createPostgresCommunityStore } from '../../services/api/src/community/s
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
-import { hashToken } from '../../services/api/src/auth/tokens.ts';
+import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
+import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
 // GY-R28 W10：投稿面 `public_posting` 闸的合成授权账本（与单元夹具同一份，避免两套口径）。
 // 说明：本脚本验证的是**社区内容真落库**，不是 PG 授权读取口（那条由 `consent-pg` 的既有脚本覆盖）；
@@ -137,14 +138,15 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0022', '0028'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0022', '0028'],
-      '0001（users/枚举底座）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）',
+      ['0001', '0019', '0022', '0028'],
+      '0001（users/枚举底座）+ 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
+        + '该判据经消息域读取时重查，因此需要真消息表）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0022`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
@@ -720,6 +722,186 @@ async function main() {
     assert.equal((await closedResponse.json()).error.code, 'PROVIDER_UNAVAILABLE');
     await orphanApp.close();
     say('real 门禁：有真库 ⇒ 开启；无连接池 ⇒ 503（不静默退回内存 store）');
+
+    // ---- 13. 后台 real 下架（GY-I18 / #18 的 admin 臂） -------------------
+    // 本段是"real 模式下后台写面真的改到真库"的**唯一**证据：
+    //   能力门 = `communityPostPortForAdmin.persistent === true`（PG 社区 store，迁移 0022），
+    //   real + pool ⇒ `createPostgresAccountAuthority({ pool })` 已接 ⇒ 进入能力外壳，
+    //   `hidePostWired` 因此为 true；写本身不新增迁移（`20-login-roles.sql` 已有
+    //   `GRANT UPDATE (…, visibility, audit_state, updated_at) ON public.community_posts`）。
+    // ⛔ 本段**不**证明库内审计：`appendAudit` 仍落内存 ops store（`persistent:false`）——
+    //   "库内审计未取得"在 PR 正文如实登记；下面只顺带断言该能力位确实是 false（不得被读成已落库）。
+    const adminToken = mintOpaqueToken();
+    const hideAdminId = await auth.createAdmin({
+      loginName: 'synthetic-i18-hide-admin',
+      credentialHash: 'synthetic-not-a-real-credential-hash',
+      scopes: ['sources:write'], // = OPS_SCOPES.hidePost（admin/ops/service.ts）
+    });
+    await auth.createSession({
+      userId: hideAdminId,
+      tokenHashHex: hashToken(adminToken),
+      authEpoch: 1,
+      expiresAt: new Date(Date.now() + 3600_000),
+      audience: 'admin',
+    });
+    const b = await account('q'); // 他人（非作者）：读列表/详情用
+    const adminApp = buildApp({ config: realConfig, store: auth, pool, now: () => new Date() });
+    assert.notEqual(adminApp.adminOpsService, null, 'real + pool ⇒ 后台运营服务必须存在（能力外壳）');
+    assert.equal(adminApp.adminOpsService.store.persistent, false,
+      '如实标注：后台审计 store 仍是内存实现（persistent:false）⇒ 本段**不**构成"审计已落库"');
+    const call2 = async (token, method, path, extra = {}) => {
+      const response = await adminApp.inject({
+        method,
+        url: path,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(extra.payload === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(extra.headers ?? {}),
+        },
+        ...(extra.payload === undefined ? {} : { payload: extra.payload }),
+      });
+      return { status: response.statusCode, headers: response.headers, body: response.json() };
+    };
+    const hideOf = (id, { token = adminToken, ifMatch = '"1"', key } = {}) => call2(
+      token,
+      'POST',
+      `/api/v1/admin/posts/${id}/hide`,
+      { payload: { reason: '示例：管理员下架违规帖子（结构性文本）' }, headers: { 'if-match': ifMatch, 'idempotency-key': key } },
+    );
+
+    // 13.1 选一条**经产品写路径**产生的真库帖子（作者 = a，revision 取自 201 响应）。
+    // 为什么不用 `store.insertPost(...)` 直接造：`effectiveState` 会在**读取时**核对审核结论的
+    // `rule_version`（内容派生）与 `text_digest`，手造结论的摘要对不上 ⇒ 该帖本来就不公开可见，
+    // 那"下架前可见"的对照臂就会变成恒真/恒假。HTTP 写路径写的是**真结论**，对照才成立。
+    const hiddenPostId = httpPostId;
+    const hiddenPostRevision = created.body.data.revision;
+    assert.equal(hiddenPostRevision, 1, '本节假定该帖仍是首版（未被编辑过）');
+    // 一条指向它的真库消息：下架前应 available、下架后应 unavailable（同一行）。
+    const messagesStore = createPostgresMessagesStore({ pool });
+    const probeMessageId = randomUUID();
+    assert.equal(
+      await messagesStore.insertMessage({
+        id: probeMessageId,
+        revision: 1,
+        owner_id: a.user.id,
+        type: 'system',
+        target_ref: { type: 'post', id: hiddenPostId, revision: hiddenPostRevision },
+        read_at: null,
+        created_at: new Date().toISOString(),
+        event_key: `gy-i18-hide:${probeMessageId}`,
+      }),
+      'inserted',
+    );
+
+    // 13.2 下架前：他人可读详情、列表里有、消息目标 available（三处都读**真库**）。
+    const beforeDetail = await call2(b.token, 'GET', `/api/v1/posts/${hiddenPostId}`);
+    assert.equal(beforeDetail.status, 200, JSON.stringify(beforeDetail.body));
+    const beforeFeed = await call2(b.token, 'GET', '/api/v1/posts');
+    assert.equal(beforeFeed.status, 200, JSON.stringify(beforeFeed.body));
+    assert.ok(beforeFeed.body.data.items.some((item) => item.id === hiddenPostId), '下架前必须出现在公开列表里');
+    const beforeMessages = await call2(a.token, 'GET', '/api/v1/messages');
+    assert.equal(beforeMessages.status, 200, JSON.stringify(beforeMessages.body));
+    const beforeRow = beforeMessages.body.data.items.find((item) => item.target_ref?.id === hiddenPostId);
+    assert.notEqual(beforeRow, undefined, '作者必须有一条指向该帖的消息');
+    assert.equal(beforeRow.reference_state, 'available', '下架前消息跳转目标必须可用');
+
+    // 13.3 后台下架（real 模式、真库 CAS）⇒ 200 Ack + ETag 为新 revision。
+    const hidden = await hideOf(hiddenPostId, { ifMatch: `"${hiddenPostRevision}"`, key: 'gy-i18-hide-pg-1' });
+    assert.equal(hidden.status, 200, JSON.stringify(hidden.body));
+    assert.equal(hidden.body.data.accepted, true);
+    assert.equal(hidden.headers.etag, '"2"', '下架把 revision 1→2 并回写 ETag');
+    const storedRow = (await owner.query(
+      'SELECT visibility, revision FROM community_posts WHERE id = $1::uuid',
+      [hiddenPostId],
+    )).rows[0];
+    assert.deepEqual(storedRow, { visibility: 'hidden', revision: 2 }, '可见性与版本必须真落库（不是只改返回值）');
+    say('real admin 臂：hidePost 经能力门放行 ⇒ 200 Ack，community_posts 行 visibility=hidden、revision 1→2 真落库');
+
+    // 13.4 下架后：他人详情 404（同形不泄露）、列表剔除、作者仍 200（#15 既有口径）。
+    const afterDetail = await call2(b.token, 'GET', `/api/v1/posts/${hiddenPostId}`);
+    assert.equal(afterDetail.status, 404, JSON.stringify(afterDetail.body));
+    assert.equal(afterDetail.body.error.code, 'NOT_FOUND');
+    const afterFeed = await call2(b.token, 'GET', '/api/v1/posts');
+    assert.equal(afterFeed.status, 200, JSON.stringify(afterFeed.body));
+    assert.equal(afterFeed.body.data.items.some((item) => item.id === hiddenPostId), false, '下架的帖子必须退出公开列表');
+    const authorView = await call2(a.token, 'GET', `/api/v1/posts/${hiddenPostId}`);
+    assert.equal(authorView.status, 200, JSON.stringify(authorView.body));
+    assert.equal(authorView.body.data.visibility, 'hidden', '作者读自己的内容仍可见，且如实显示 hidden');
+    say('读时权限：下架后他人详情 404、公开列表剔除、作者仍 200 且 visibility=hidden（无缓存可让内容复活）');
+
+    // 13.5 消息跳转目标：同一条消息、同一个 id，下架后读取即 unavailable（每页重查，不清缓存）。
+    const afterMessages = await call2(a.token, 'GET', '/api/v1/messages');
+    assert.equal(afterMessages.status, 200, JSON.stringify(afterMessages.body));
+    const rowsForTarget = afterMessages.body.data.items.filter((item) => item.target_ref?.id === hiddenPostId);
+    assert.ok(rowsForTarget.length >= 1, '同一目标的消息行必须仍在（不得因下架消失）');
+    for (const row of rowsForTarget) {
+      assert.equal(row.reference_state, 'unavailable', `目标已下架：消息 ${row.id} 必须 unavailable`);
+      assert.equal(Object.hasOwn(row, 'reference_state'), true);
+    }
+    assert.equal(
+      rowsForTarget.some((row) => row.id === probeMessageId),
+      true,
+      '下架前可用、下架后不可用的必须是**同一行**（钉住"读取时重算"而非投递时快照）',
+    );
+    say('消息目标：同一行 target_ref 由 available → unavailable（读取时重查社区公开判据，不清缓存/不重建行）');
+
+    // 13.6 幂等与错误映射（同一批能力门，逐条如实）。
+    const replay = await hideOf(hiddenPostId, { key: 'gy-i18-hide-pg-1' });
+    assert.equal(replay.status, 200, JSON.stringify(replay.body));
+    assert.equal(replay.body.data.accepted, true, '同 key 同体重放必须回放首次结果');
+    assert.equal(
+      (await owner.query('SELECT revision FROM community_posts WHERE id = $1::uuid', [hiddenPostId])).rows[0].revision,
+      2,
+      '重放不得再推进 revision',
+    );
+    const hideAgain = await hideOf(hiddenPostId, { ifMatch: '"2"', key: 'gy-i18-hide-pg-2' });
+    assert.equal(hideAgain.status, 200, JSON.stringify(hideAgain.body));
+    assert.equal(hideAgain.body.data.accepted, true, '已隐藏再下架是幂等成功（changed:false）');
+    const conflict = await hideOf(hiddenPostId, { ifMatch: '"9"', key: 'gy-i18-hide-pg-3' });
+    assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
+    assert.equal(conflict.body.error.code, 'REVISION_CONFLICT', 'If-Match 与服务端版本不符必须是 409（写之前比对）');
+    const unknownPost = await hideOf(randomUUID(), { key: 'gy-i18-hide-pg-4' });
+    assert.equal(unknownPost.status, 404, JSON.stringify(unknownPost.body));
+    assert.equal(unknownPost.body.error.code, 'NOT_FOUND');
+    const deletedPostId = randomUUID();
+    assert.equal(
+      await store.insertPost(
+        postRecord(deletedPostId, a.user.id, { visibility: 'deleted', audit_state: 'approved' }),
+        verdict('post', deletedPostId, 1),
+      ),
+      true,
+    );
+    const deleted = await hideOf(deletedPostId, { key: 'gy-i18-hide-pg-5' });
+    assert.equal(deleted.status, 409, JSON.stringify(deleted.body));
+    assert.equal(deleted.body.error.code, 'OBJECT_UNAVAILABLE', '已删除是不可复活的单向门（不得谎报成功）');
+    assert.deepEqual(
+      (await owner.query('SELECT visibility, revision FROM community_posts WHERE id = $1::uuid', [deletedPostId])).rows[0],
+      { visibility: 'deleted', revision: 1 },
+      '被拒的路径不得改行',
+    );
+    say('错误映射与幂等：同键重放回放首次结果、已隐藏再下架 200(changed:false)、版本不符 409、未知 404、已删除 409 且不改行');
+    await adminApp.close();
+
+    // 13.7 能力门的反例（同一真库、同一装配，只换模式）：real 但无池 ⇒ 行为回到 503。
+    //     与单测 `admin-hide-post-gate.test.mjs` 的"persistent:false ⇒ 503"互补：
+    //     那里是能力位的注入臂，这里是**真实装配**下"没有真库就没有下架"的同一结论。
+    const noPoolApp = buildApp({ config: realConfig, store: auth, pool: null, now: () => new Date() });
+    const noPool = await noPoolApp.inject({
+      method: 'POST',
+      url: `/api/v1/admin/posts/${randomUUID()}/hide`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'content-type': 'application/json',
+        'if-match': '"1"',
+        'idempotency-key': 'gy-i18-hide-pg-nopool',
+      },
+      payload: { reason: '示例' },
+    });
+    assert.equal(noPool.statusCode, 503, noPool.body);
+    assert.equal(noPool.json().error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(noPool.json().error.retryable, false);
+    await noPoolApp.close();
+    say('负控制：real + 无连接池（内存社区 store ⇒ persistent:false）⇒ hidePost 仍 503 PROVIDER_UNAVAILABLE(retryable:false)');
   } finally {
     if (app !== null) await app.close().catch(() => {});
     if (pool !== null) await pool.end().catch(() => {});

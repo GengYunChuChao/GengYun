@@ -1234,9 +1234,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 1. **GY-I22（#22）账号停用**：迁移 0017 的 `public.suspend_account()`（`users.state` +
     //    `auth_epoch` + 撤会话 + 审计**同一事务**）；
     // 2. **GY-I18（#18）开关读写**：迁移 0020 的 `public.feature_flags` + `public.set_feature_flag()`
-    //    （`listFlags` 读、`setFlag` 单事务 CAS + 审计）。
+    //    （`listFlags` 读、`setFlag` 单事务 CAS + 审计）；
+    // 3. **GY-I18 放行表第 4 条：帖子下架**（本片新增）：判据是**社区帖子端口的能力位**
+    //    `communityPostPortForAdmin.persistent === true` —— 即迁移 0022 的 PG 社区 store
+    //    （`community/store-pg.ts` 自述 `persistent: true`）。内存实现恒 `false`，
+    //    因此 real 默认装配（`pool === null`）下 `hidePost` 仍 503（35 条反例一条不改仍绿）。
+    //    写本身不新增迁移：`deploy/postgres-cvm/sql/20-login-roles.sql` 已有
+    //    `GRANT UPDATE (…, visibility, audit_state, updated_at) ON public.community_posts`。
+    //    ⛔ 不在 real 分支挂 `withModerationTakedownLink`：real 未注入审核权威时，
+    //    替身权威对未登记目标 `setVisibility` 会抛 `OBJECT_UNAVAILABLE`，
+    //    把一次**已生效**的社区下架折成 503（下架成功却报失败）。
+    //    ⛔ 库内审计**未取得**：`appendAudit` 仍落内存 ops store（`persistent: false`），
+    //    重启即丢且 real 下无读面 —— 如实登记，不得声称"审计已落库"。
     // 放行条件只有"拿到真实库池 / 显式注入权威/端口"，**不看**任何自述持久化标志；
-    // 其余后台路由（含账号读面 `listAdminUsers`、分类、作业、下架）仍逐条 503
+    // 其余后台路由（含账号读面 `listAdminUsers`、分类、作业）仍逐条 503
     // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
     // **GY-I17（#17）系统事件接线**（裁定 `.pg17/ruling-r31-i17-system-events-20261022.md`）：
     // 账号停用/恢复在**事务已提交**之后追加一条 `system` 消息（`target_ref=null`，契约
@@ -1275,21 +1286,34 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
-          // GY-I15 接线同上：`hidePost` 在 real 下不放行，但端口仍按同一份社区 store 装配。
+          // GY-I15 接线同上：端口仍按**同一份**社区 store 装配；`hidePost` 是否放行由上面的
+          // `hidePostWired`（= `persistent === true`）决定，本行不改变判据。
           community: communityPostPortForAdmin,
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
         // 判据是**能力对象存在**：目录构造成功才放行读面；否则 `listAdminUsers` 仍逐条 503。
-        { accountsReadWired: realAccountsDirectory !== null, flagsWired },
+        {
+          accountsReadWired: realAccountsDirectory !== null,
+          flagsWired,
+          // 下架面的判据同理，且更严：**只有真实持久的社区帖子端口**才放行（内存实现恒 false）。
+          hidePostWired: communityPostPortForAdmin.persistent === true,
+        },
       );
       const released: string[] = [];
       if (realAccountAuthority !== null) released.push('账号停用');
       if (realAccountsDirectory !== null) released.push('账号读面');
       if (flagsWired) released.push('开关读写');
+      // 只在**真的**放行时才把这个能力计入读数：未持久化时它仍属"逐条 503"的一员。
+      if (communityPostPortForAdmin.persistent === true) released.push('帖子下架');
       app.log.warn(
-        { executionMode: config.executionMode, accountsReadWired: realAccountsDirectory !== null, flagsWired },
-        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021）；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        {
+          executionMode: config.executionMode,
+          accountsReadWired: realAccountsDirectory !== null,
+          flagsWired,
+          hidePostWired: communityPostPortForAdmin.persistent === true,
+        },
+        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022）；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
