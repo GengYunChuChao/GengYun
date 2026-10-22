@@ -1575,7 +1575,8 @@ try {
     assert.ok(ocrRegistrationLine !== undefined, 'app.ts 必须有 registerOcrRoutes 装配行');
     // 只允许 `guards`（鉴权守卫，本行必填）与两个**隐私域**端口（consent/egress），
     // 以及 `#181`（`b6f8c1b`）新增的 `history` 槽位；
-    // 不得出现 provider/store/media/reference/service 等**适配器**端口注入。
+    // 不得出现 provider/store/reference/service 等**实现层**适配器端口注入
+    // （`media` 自 GY-R31 起为可选**端口槽位**，见下一条口径登记）。
     // ⚠ 2026-10-16（GY-I10 作业读面接线片）**既有断言修复**：本断言在基线 `cf9c3c8` 上**本就失败**
     //   （实测原始输出见交接文档）——它写于该行还是简写 `{ guards, … }` 的时代，`guards` 无冒号故不被
     //   正则计入；此后该行改为 `guards: gatedGuards`（全局开关门），`guards` 才被计入。原意（"不得塞入
@@ -1586,10 +1587,14 @@ try {
     //   `consent`/`egress`"变为"隐私域 + 识别历史域写入端口"。本注释**不**主张"零端口注入仍成立"。
     //   下方另补**值断言**：钉住 `guards` 槽位装的确实是 `gatedGuards`（旗标门包装）。
     const ocrInjectedKeys = [...ocrRegistrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
+    // ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径再次如实登记**：四键 → 五键，新增 `media`
+    //   （`OcrRouteDeps['media']`，值来自 `BuildAppOptions.ocrMedia`，缺省 undefined ⇒ 域内自建）。
+    //   与 `history` 同性质：它是**端口槽位**，不是实现层适配器；下面 ② 的 import 禁项
+    //   （provider/store/media/reference）**逐字保留**，`app.ts` 仍不得引用任何 OCR 适配器模块。
     assert.deepEqual(
       ocrInjectedKeys,
-      ['consent', 'egress', 'guards', 'history'].sort(),
-      `装配行只允许 guards 槽位、隐私域 consent/egress 端口与识别历史域 history 写入端口；若失败说明装配点被塞入了 provider/store/端口：${ocrRegistrationLine.trim()}`,
+      ['consent', 'egress', 'guards', 'history', 'media'].sort(),
+      `装配行只允许 guards 槽位、隐私域 consent/egress 端口、识别历史域 history 写入端口与媒体引用槽位 media；若失败说明装配点被塞入了 provider/store/reference 等实现层端口：${ocrRegistrationLine.trim()}`,
     );
     // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，不是裸 `guards`
     //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。
