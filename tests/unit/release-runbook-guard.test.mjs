@@ -293,3 +293,82 @@ test('反例5：把某个命令块掏空成只剩注释 ⇒ 命令块里没有�
   expectRunbookRed(run, ['命令块里没有可执行行']);
   t.diagnostic(`反例5: ${failLines(run.stdout)[0]}`);
 });
+
+// =========================================================================== 内容面守卫（2026-10-22 监工 P2）
+// 上面五条证明的是「判据真会红」，但它们全都**不检查命令能不能跑**：一块标着 `bash` 的围栏里
+// 写 `$env:GY_BASH=…`（PowerShell 赋值）照样全绿，因为 `bash -n` 只校验 `deploy/**/*.sh`。
+// 监工在 #473 的 P2 上点到两个真实缺口，这里各钉一条（外加 shell 标注），只钉**可执行性**，
+// 不重复门禁已有的「必备小节／命令块数／占位符」三条判据。
+//
+// ⚠️ 这些守卫读的是**仓内真文件**（不是镜像里那份夹具），所以它们直接对交付物断言。
+
+const RUNBOOK_TEXT = readFileSync(join(ROOT, RUNBOOK), 'utf8');
+const RUNBOOK_LINES = RUNBOOK_TEXT.split('\n');
+
+/** 所有围栏按出现顺序成对切块；落单的围栏会被算成闭围栏 ⇒ 守卫3 先用数量自证解析成立。 */
+const RUNBOOK_BLOCKS = fenceBlocks(RUNBOOK_LINES);
+
+test('守卫1：凡标 bash 的块不得出现 PowerShell 专有写法（$env: / $PSVersionTable）', () => {
+  const bashBlocks = RUNBOOK_BLOCKS.filter((block) => block.lang === 'bash');
+  assert.ok(bashBlocks.length > 0, '前提：runbook 应有 bash 块（本次 P2 修的正是 §1.1 那块）');
+
+  const offenders = [];
+  for (const block of bashBlocks) {
+    for (let i = block.openIndex + 1; i < block.closeIndex; i += 1) {
+      // `$env:X` / `$PSVersionTable` 在 bash 里都不是合法取值，而是「像命令的字符串」：
+      // 粘进 bash 要么被当成普通赋值静默失效，要么让 `bash -n` 之前就红。两者都不可接受。
+      if (/\$env:|\$PSVersionTable/i.test(RUNBOOK_LINES[i])) {
+        offenders.push(`${RUNBOOK}:${i + 1}: ${RUNBOOK_LINES[i].trim()}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `bash 块里出现 PowerShell 写法（bash 不能执行，用户会以为「照着做了」）：
+${offenders.join('\n')}`);
+});
+
+test('守卫2：探针命令/URL 不得硬编码保留域（.invalid / example.）', () => {
+  const offenders = [];
+  for (const block of RUNBOOK_BLOCKS) {
+    for (let i = block.openIndex + 1; i < block.closeIndex; i += 1) {
+      const line = RUNBOOK_LINES[i];
+      const urls = line.match(/https?:\/\/[^\s'"`<>()]+/g) ?? [];
+      // 只看「真发请求的行」：有 curl，或写了绝对 URL。`*.invalid` 这种 case 模式不是请求。
+      if (!/\bcurl\b/.test(line) && urls.length === 0) continue;
+      for (const url of urls) {
+        const host = url.replace(/^https?:\/\//, '').split('/')[0].split(':')[0].toLowerCase();
+        const reserved = host.endsWith('.invalid') || host === 'invalid'
+          || host.startsWith('example.') || host.includes('.example.');
+        if (reserved) offenders.push(`${RUNBOOK}:${i + 1}: ${host}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [],
+    `探针/请求里写死了保留域（RFC 2606 的 .invalid / example. 永远不会是真实部署，探针必然失败）：
+${offenders.join('\n')}`);
+});
+
+test('守卫3：每个含命令的代码块必须有 shell 标注（裸围栏一律红）', () => {
+  // 三条守卫共用同一份配对解析，所以先把「围栏成对」这条前提自证掉：
+  // 有未闭合围栏时，闭围栏会被当成开围栏，后面的语言标记全会错位一格。
+  const fenceLines = RUNBOOK_LINES.filter((line) => /^\s*(?:```|~~~)/.test(line)).length;
+  assert.ok(fenceLines > 0, '前提：runbook 里必须有代码围栏');
+  assert.equal(fenceLines % 2, 0, `围栏必须成对：共 ${fenceLines} 个（奇数说明有未闭合块）`);
+  assert.equal(RUNBOOK_BLOCKS.length, fenceLines / 2, '配对切块数必须等于围栏数的一半');
+
+  const unlabeled = RUNBOOK_BLOCKS
+    .filter((block) => block.lang === '')
+    .filter((block) => {
+      for (let i = block.openIndex + 1; i < block.closeIndex; i += 1) {
+        const line = RUNBOOK_LINES[i].trim();
+        if (line !== '' && !line.startsWith('#')) return true;   // 有可执行行 ⇒ 是命令块
+      }
+      return false;
+    })
+    .map((block) => `${RUNBOOK}:${block.openIndex + 1}`);
+
+  assert.deepEqual(unlabeled, [],
+    `以下裸围栏（无语言标注）里有命令：执行者无法判断该贴进哪个 shell（bash / powershell）：
+${unlabeled.join('\n')}`);
+});
+
