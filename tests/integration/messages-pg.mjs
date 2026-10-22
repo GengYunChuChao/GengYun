@@ -16,9 +16,13 @@
 //       `revision`/`read_at` 逐字不变；同幂等键重放 ⇒ 200 且读数不变（台账复用 0008）。
 //   [N] 归属与同形：他人 token 读同一条 ⇒ 404；不存在的 id ⇒ 404；两者 `error.code`/`message` 逐字相同。
 //   [C] 并发 20 条 PUT 同时标记同一未读消息 ⇒ 恰好 1 条 200、19 条 409；最终 `SELECT revision = 2`。
-//   [U] `countUnread` 与逐行统计一致（HTTP 读数 = SQL 派生读数 = 列表内 `read_at IS NULL` 行数）。
+//   [U] `countUnread` 与逐行统计一致（HTTP 读数 = SQL 派生读数 = 列表内 `read_at IS NULL` 行数）；
+//       并**在一条连接、一个 REPEATABLE READ 事务里**再读一遍（同快照口径一致，不是两次读恰好相等的运气）。
 //   [P] 分页：`limit=3` 游标翻页，id 序列与 SQL `ORDER BY created_at DESC, id DESC` 逐项相等，
 //       无重复、无遗漏，末页 `next_cursor = null`。
+//   [X] 注销即删消息（`#445` 复盘的 G4）：A 有 9 条消息 + 收藏/历史行 ⇒ 走**线上装配**的注销路径
+//       （`app.userDataDeletion` → `messagesDeletionStore` → 同一 `messagesStore`）⇒ A 的 messages
+//       **0 行**（硬删、无软删列）、收藏/历史同批清空、**B 的三域行逐 id 原样**，且证据串的行数等于清理前读数。
 
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -29,6 +33,8 @@ import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
+import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
+import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 
 const API = '/api/v1';
@@ -349,7 +355,44 @@ try {
     perRowUnread,
     '列表内 read_at IS NULL 的行数必须与未读数一致',
   );
+  // 上面的三条读数全部走同一条连接（`owner` 是单个 `pg.Client`），但它们不是同一快照。
+  // 把「聚合数」与「逐行数」放进**同一个 REPEATABLE READ 事务**再读一遍：口径一致必须是
+  // 数据库快照给的，不能靠「两次读恰好相等」这种运气。计数列是**零个**——`count` 是现算的派生量。
+  await owner.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+  let inTxAggregate;
+  let inTxRows;
+  try {
+    inTxAggregate = (
+      await q(
+        `SELECT count(*)::int AS rows,
+                count(*) FILTER (WHERE read_at IS NULL)::int AS unread
+           FROM public.messages WHERE owner_id = $1`,
+        [userA.id],
+      )
+    )[0];
+    inTxRows = await q('SELECT read_at FROM public.messages WHERE owner_id = $1', [userA.id]);
+  } finally {
+    await owner.query('COMMIT');
+  }
+  assert.equal(Number(inTxAggregate.rows), inTxRows.length, '同一事务内聚合行数与逐行行数必须相等');
+  assert.equal(
+    Number(inTxAggregate.unread),
+    perRowUnread,
+    '同一事务内 `count(*) FILTER (WHERE read_at IS NULL)` 必须等于同一事务内的逐行统计',
+  );
+  assert.equal(
+    Number(inTxAggregate.unread),
+    unreadCount.body.data.count,
+    '同一事务内的派生未读数必须等于 HTTP 未读数',
+  );
+  const counterColumns = await q(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'messages'
+        AND (column_name ILIKE '%unread%' OR column_name ILIKE '%count%')`,
+  );
+  assert.equal(counterColumns.length, 0, '不得存在未读计数器列：未读数只能由 read_at IS NULL 现算');
   note(`[U] countUnread=${unreadCount.body.data.count} = 逐行统计=${perRowUnread} = 列表未读行数，三处一致`);
+  note(`[U] 同一连接同一 REPEATABLE READ 事务内：rows=${inTxAggregate.rows}、unread=${inTxAggregate.unread}，与事务外读数逐项相等；计数器列 0 个`);
 
   // ---- [P] 分页：无重复、无遗漏、顺序与 SQL 一致 ----
   const expectedIds = (
@@ -374,7 +417,179 @@ try {
   assert.equal(cursor, null, '末页 next_cursor 必须是 null');
   note(`[P] limit=3 翻 ${pages} 页，id 序列与 SQL (created_at DESC, id DESC) 逐项相等，无重复无遗漏`);
 
-  note('[√] ALL PASS：消息域 PostgreSQL 持久化端到端（迁移/重复/已读/归属/并发/派生计数/分页）');
+  // ---------------------------------------------------------------------------
+  // [X] 注销即删消息（`#445` 复盘缺口 G4：真 PG 的注销行数读数此前未取得）
+  // ---------------------------------------------------------------------------
+  // 走的是**线上装配的那一条**路，本脚本不自己拼 DELETE：
+  //   `buildApp` 里 `messagesDeletionStore`（`services/api/src/app.ts:1499-1521`）包住的，
+  //   就是 `:755-760` 建、`:765-781` 交给 `messagesService` 的**同一个** `messagesStore`；
+  //   协调器（`:1518-1551` 的 `createUserDataDeletion`）按模块闭集调用它。
+  // 收藏/历史在这份装配里也是**真库 store**（`app.ts:1337-1346`，有池即 PG 实现）⇒
+  //   「A 有收藏/历史引用」是真行，不是替身（`messages-purge-pg.mjs` 那两条用的是内存版）。
+  // 口径如实说明：收藏闭集只有 `species|herbicide|scheme`、历史来自识别/OCR 任务，所以三个域的
+  //   行**不指向同一个对象**（A 的消息指向 `post`）。本节量的是「同主体跨域共存时，注销只删本主体、
+  //   消息行真被硬删、行数进证据」——不是「收藏能引用消息」。
+  // 顺序约束：`requestDeletionFor` 的持久化受理会撤掉 A 的全部会话并推进 `auth_epoch`
+  //   ⇒ 本节是最后一节，之后**不得**再用 tokenA 发 HTTP（B 的会话不受影响，故仍用 tokenB 做反证）。
+
+  // 先给 B 造 2 条消息（此前的 [N] 断言过 B 的列表是 0 条）。
+  const bFirst = await service.appendMessage({
+    owner_id: userB.id,
+    type: 'comment',
+    target_ref: { type: 'post', id: 'post-9', revision: 1 },
+    event_key: 'comment:post-9',
+  });
+  assert.equal(bFirst.created, true, 'B 的第一条消息必须真的落库');
+  const bSecond = await service.appendMessage({
+    owner_id: userB.id,
+    type: 'like',
+    target_ref: { type: 'post', id: 'post-9', revision: 1 },
+    event_key: 'like:post-9',
+  });
+  assert.equal(bSecond.created, true, 'B 的第二条消息必须真的落库');
+
+  // 收藏/历史：直接用各自**唯一的写入口**（HTTP 层校验后调的就是它）造真库行。
+  const favoritesStore = createPostgresFavoritesStore(ownerPool);
+  const historyStore = createPostgresHistoryStore(ownerPool);
+  const seedFavorites = async (ownerId, tag, types) => {
+    const ids = [];
+    for (const [index, type] of types.entries()) {
+      const id = randomUUID();
+      const written = await favoritesStore.insertFavorite({
+        id,
+        revision: 1,
+        owner_id: ownerId,
+        target_ref: { type, id: `${type}-${tag}-${index}`, revision: 1 },
+        created_at: new Date(Date.now() - index * 1000).toISOString(),
+      });
+      assert.equal(written, 'inserted', `收藏行必须经唯一写入口落库（现场 ${written}）`);
+      ids.push(id);
+    }
+    return ids;
+  };
+  const seedHistory = async (ownerId, tag, count) => {
+    const ids = [];
+    for (let index = 0; index < count; index += 1) {
+      const id = randomUUID();
+      const written = await historyStore.insertHistory({
+        id,
+        revision: 1,
+        owner_id: ownerId,
+        kind: 'recognition',
+        target_ref: { type: 'species', id: `spc-${tag}-${index}`, revision: 1 },
+        job_id: `job-${tag}-${index}`,
+        job_state: 'succeeded',
+        created_at: new Date(Date.now() - index * 1000).toISOString(),
+        event_key: `recognition:${tag}:${index}`,
+      });
+      assert.equal(written, 'inserted', `历史行必须经唯一写入口落库（现场 ${written}）`);
+      ids.push(id);
+    }
+    return ids;
+  };
+  const favoritesA = await seedFavorites(userA.id, 'a', ['species', 'scheme']);
+  const favoritesB = await seedFavorites(userB.id, 'b', ['species']);
+  const historyA = await seedHistory(userA.id, 'a', 2);
+  const historyB = await seedHistory(userB.id, 'b', 2);
+
+  // 清理前基线（证据串里的两个计数必须等于这两个数）。
+  const idsOf = async (table, ownerId) =>
+    (await q(`SELECT id FROM public.${table} WHERE owner_id = $1 ORDER BY id`, [ownerId])).map((row) => row.id);
+  const messagesBeforeA = await idsOf('messages', userA.id);
+  const messagesBeforeB = await idsOf('messages', userB.id);
+  assert.equal(messagesBeforeA.length, 9, `A 注销前应有 9 条消息（现场 ${messagesBeforeA.length}）`);
+  assert.equal(messagesBeforeB.length, 2, `B 应有 2 条消息（现场 ${messagesBeforeB.length}）`);
+  // 台账判据与 `purgeOwnerData` 同口径：`<主体 uuid>` + 换行开头的前缀行（`left(...)` 精确比较）。
+  const ledgerOf = (ownerId) =>
+    countOf(
+      "SELECT count(*)::int AS v FROM public.idempotency_keys WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)",
+      [ownerId],
+    );
+  const ledgerBeforeA = await ledgerOf(userA.id);
+  const ledgerBeforeB = await ledgerOf(userB.id);
+  assert.ok(ledgerBeforeA > 0, 'A 的读请求走过幂等台账，注销前该主体的台账行数必须为正（否则本节量不到台账清理）');
+  note(
+    `[X] 注销前：A messages=${messagesBeforeA.length} / favorites=${favoritesA.length} / history=${historyA.length} / 台账=${ledgerBeforeA}；`
+      + `B messages=${messagesBeforeB.length} / favorites=${favoritesB.length} / history=${historyB.length} / 台账=${ledgerBeforeB}`,
+  );
+
+  const deletion = app.userDataDeletion;
+  assert.notEqual(deletion, undefined, '真库装配下 `app.userDataDeletion` 必须在岗（否则注销路径无从触发）');
+  assert.ok(deletion.requiredModules().includes('messages'), '注销模块闭集必须含 messages（#17 的接线点）');
+  const requestA = deletion.requestDeletionFor(userA.id);
+  assert.equal(typeof requestA.id, 'string', '受理必须返回请求 id');
+  await deletion.executeHandlers(requestA.id);
+
+  const evidenceA = deletion.evidenceOf(requestA.id);
+  const messagesEvidence = String(evidenceA['messages'] ?? '');
+  const matched = /^messages:online-purged:(\d+);messages:idempotency-purged:(\d+)$/.exec(messagesEvidence);
+  assert.notEqual(matched, null, `注销证据必须是 messages:online-purged:N;messages:idempotency-purged:M（现场 ${JSON.stringify(messagesEvidence)}）`);
+  assert.equal(Number(matched[1]), 9, `证据里的已清消息行数必须等于清理前的读数（${messagesBeforeA.length}）`);
+  assert.equal(Number(matched[2]), ledgerBeforeA, '证据里的已清台账行数必须等于清理前的读数');
+
+  // 断言 1：A 的消息行真的没了（物理删除，不是软删）。
+  const messagesAfterA = await countOf('SELECT count(*)::int AS v FROM public.messages WHERE owner_id = $1', [userA.id]);
+  assert.equal(messagesAfterA, 0, `A 的消息行必须被硬删（现场 ${messagesAfterA} 行）`);
+  // 断言 2：B 的消息行逐 id 原样（不误删他人）。
+  assert.deepEqual(await idsOf('messages', userB.id), messagesBeforeB, 'B 的消息行必须逐 id 原样（不误删他人）');
+  // 断言 3：同主体的收藏/历史同批清空，他人的原样。
+  assert.equal(await countOf('SELECT count(*)::int AS v FROM public.favorites WHERE owner_id = $1', [userA.id]), 0, 'A 的收藏行必须清空');
+  assert.equal(await countOf('SELECT count(*)::int AS v FROM public.history WHERE owner_id = $1', [userA.id]), 0, 'A 的历史行必须清空');
+  assert.deepEqual(await idsOf('favorites', userB.id), [...favoritesB].sort(), 'B 的收藏行必须逐 id 原样');
+  assert.deepEqual(await idsOf('history', userB.id), [...historyB].sort(), 'B 的历史行必须逐 id 原样');
+  assert.ok(favoritesA.length > 0 && historyA.length > 0, '前置：A 确实有收藏/历史行可清');
+  // 断言 4：台账按主体前缀清，不碰他人。
+  assert.equal(await ledgerOf(userA.id), 0, 'A 的幂等台账行必须清空');
+  assert.equal(await ledgerOf(userB.id), ledgerBeforeB, 'B 的台账行不得被 A 的注销带走');
+  // 断言 5：注销是物理删除——`messages` 仍是 8 列，且没有任何软删列。
+  const messageColumns = (
+    await q(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'messages' ORDER BY ordinal_position`,
+    )
+  ).map((row) => row.column_name);
+  assert.equal(messageColumns.length, 8, `注销后 messages 仍必须是 8 列（现场 ${messageColumns.join(',')}）`);
+  assert.deepEqual(
+    messageColumns.filter((name) => /deleted|is_deleted|state|status/i.test(name)),
+    [],
+    '注销是硬删：messages 不得出现软删列/状态列',
+  );
+  // 断言 6：清理只清域数据，`users` 行仍在（账号状态由受理事务改，不由清空删行）。
+  assert.equal(await countOf('SELECT count(*)::int AS v FROM public.users WHERE id = $1', [userA.id]), 1, 'A 的 users 行必须仍在');
+
+  // 断言 7：回执里 messages 的在线态是 completed（不是 pending/blocked），证据串就是上面那两个计数。
+  const receiptA = deletion.receipt(requestA.id);
+  assert.notEqual(receiptA, null, '注销必须签发回执');
+  const handlerMessages = receiptA.handlers.find((row) => row.module === 'messages');
+  assert.notEqual(handlerMessages, undefined, '回执里必须有 messages 模块行');
+  assert.equal(handlerMessages.online_state, 'completed', `messages 在线清理必须 completed（现场 ${handlerMessages.online_state}）`);
+  assert.deepEqual(
+    Object.keys(evidenceA).includes('messages'),
+    true,
+    '证据表里必须有 messages 域的键',
+  );
+  const backupState = String(handlerMessages.backup_state);
+  assert.ok(
+    ['pending', 'completed', 'blocked'].includes(backupState),
+    `备份态必须在闭集内（现场 ${backupState}）`,
+  );
+
+  // 断言 8：HTTP 面上的反向控制——B 的会话不受 A 的注销影响，且 B 的列表里 B 的 2 条都在。
+  const listBAfter = await call(`${API}/messages`, { token: tokenB });
+  assert.equal(listBAfter.status, 200, `B 的列表必须仍 200（现场 ${listBAfter.status}）`);
+  assert.equal(listBAfter.body.data.items.length, 2, 'B 的列表必须仍是自己的 2 条');
+
+  const completion = deletion.completionStatus(requestA.id);
+  note(
+    `[X] 注销：A messages ${messagesBeforeA.length}→${messagesAfterA} / favorites ${favoritesA.length}→0 / history ${historyA.length}→0 / 台账 ${ledgerBeforeA}→0；`
+      + `B messages=${messagesBeforeB.length} 原样 / favorites=${favoritesB.length} 原样 / history=${historyB.length} 原样 / 台账=${ledgerBeforeB} 原样`,
+  );
+  note(
+    `[X] 证据串 ${messagesEvidence}；回执 messages.online_state=${handlerMessages.online_state}、backup_state=${backupState}；`
+      + `整体 ${completion.state} / completed=${completion.completed} / 缺 ${JSON.stringify([...completion.missingModules])}`,
+  );
+
+  note('[√] ALL PASS：消息域 PostgreSQL 持久化端到端（迁移/重复/已读/归属/并发/派生计数/分页/注销即删）');
 } finally {
   for (const instance of registeredApps) await instance.close().catch(() => {});
   await ownerPool.end().catch(() => {});
