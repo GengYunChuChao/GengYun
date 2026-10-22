@@ -1099,7 +1099,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 注意 community_media_grants / content_media_refs 不在此列：前者被本文件判
     -- forbidden（运行时零权限），后者媒体仓储当前不写（社区取图授权显式未接线）。
     ('media',                          'granted',          true),
-    ('media_derivatives',              'granted',          true)
+    ('media_derivatives',              'granted',          true),
+    -- 迁移 0029（R28-W12 返修，监工 1022-0659 轮 P1）：待清理对象台账。
+    -- 它存在的意义就是「父行已经没了引用 / 甚至整行被物理删掉，也要能清掉那个对象」，
+    -- 所以既进 granted 分类，也在下面的 expected 里做一次独立列清单复述。
+    ('media_object_cleanup',           'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1306,6 +1310,17 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','media_id','derivative_kind','object_ref_cipher','hash','state'],
      ARRAY['media_id','derivative_kind','object_ref_cipher','hash','state'],
      ARRAY['object_ref_cipher','state'],
+     true),
+    -- R28-W12 返修（迁移 0029，监工 1022-0659 轮 P1）：待清理对象台账。
+    -- 与 20-login-roles.sql 段 M2 的 GRANT 是同一事实的两次写法，改动必须成对做。
+    -- sel 六列 = store-pg.ts 的真实读面（扫描投影 + ORDER BY + ON CONFLICT 判定列
+    -- object_ref_digest + ON CONFLICT DO UPDATE 读到的旧值列 media_id/reason/attempts）
+    -- 与 `DELETE … RETURNING object_ref_digest` 的返回列；
+    -- del=true 是「确认清完就删行」的直接后果（PG 无列级 DELETE ⇒ 表级授予）。
+    ('media_object_cleanup',
+     ARRAY['media_id','object_ref_cipher','object_ref_digest','reason','attempts','created_at'],
+     ARRAY['media_id','object_ref_cipher','object_ref_digest','reason','attempts','created_at','updated_at'],
+     ARRAY['media_id','reason','attempts','updated_at'],
      true)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -1344,7 +1359,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 只能表级授予。media 本体仍然完全不授 DELETE（状态机删除），
     -- 若这里判红先查是不是有人给 media 加了表级写权。
     -- 本片新增后，表级写授权白名单为 15 个三元组。
-    ('public', 'media_derivatives',     'DELETE')
+    ('public', 'media_derivatives',     'DELETE'),
+    -- R28-W12 返修（迁移 0029，监工 1022-0659 轮 P1）：待清理对象台账的**唯一**删除路径是
+    -- 「桶删除被确认成功 ⇒ 删掉那一行」，且按对象键摘要整行删（PG 无列级 DELETE）。
+    -- 若这里判红（即有人给别的表加了表级写权），先查是不是把清理台账改成了只增不删。
+    -- 本片新增后，表级写授权白名单为 16 个三元组。
+    ('public', 'media_object_cleanup',  'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件

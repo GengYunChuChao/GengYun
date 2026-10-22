@@ -1008,7 +1008,46 @@ GRANT UPDATE (object_ref_cipher, state)
   ON public.media_derivatives TO gengyun_api_runtime;
 GRANT DELETE ON public.media_derivatives TO gengyun_api_runtime;
 
+-- M2. 待清理对象台账（迁移 0029，监工 1022-0659 轮 P1）：public.media_object_cleanup
+--
+-- 为什么要有这张表：媒体域的红线是「桶删除未确认 ⇒ 保留引用以便重试」，而这条红线的唯一
+-- 落点原来是**父行**。CAS=0 的迟到 `complete` 一个字节都不写库（条件写 0 行），并发 `delete`
+-- 又把真行的 rawRef/derivativeRef 清空 ⇒ 清理器枚举真行时根本看不到那个未确认删除的对象。
+-- 台账行**先**写、**再**删桶；只有桶删除被确认成功才删这行，父行被删不级联（不建外键）。
+--
+-- 列清单同样逐列反推自 services/api/src/media/store-pg.ts 的真实语句：
+--   * 登记（saveObjectCleanup）：INSERT :… (media_id, object_ref_cipher, object_ref_digest,
+--     reason, attempts, created_at, updated_at) + `ON CONFLICT (object_ref_digest) DO UPDATE`
+--     ⇒ 冲突判定列与 SET 读到的旧值列（media_id/reason/attempts）都要 SELECT；
+--   * 扫描（listObjectCleanup）：SELECT media_id, object_ref_cipher, reason, attempts
+--     ORDER BY created_at, object_ref_digest；
+--   * 删行（deleteObjectCleanup）：`DELETE … WHERE object_ref_digest = $1 RETURNING
+--     object_ref_digest` —— PG 没有列级 DELETE，只能表级授予（与 media_derivatives 同理）；
+--     RETURNING 的那一列也要 SELECT。
+-- 与 media 本体不同，这里的行是**可物理删的**：删掉它就是「已确认清完」的唯一表达。
+-- 若这里的授权判红，先查是不是有人把「清理台账」当成了又一个只增不删的日志表。
+--
+-- 前置：表必须已存在（迁移 0029）。顺序是 迁移（migrate.ts up）⇒ 本脚本；缺失即显式失败，
+-- 绝不留一个「看似已收敛、实际记不下清理线索」的运行态。
+DO $$
+BEGIN
+  IF to_regclass('public.media_object_cleanup') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.media_object_cleanup：迁移 0029 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON TABLE public.media_object_cleanup FROM PUBLIC;
+GRANT SELECT (media_id, object_ref_cipher, object_ref_digest, reason, attempts, created_at)
+  ON public.media_object_cleanup TO gengyun_api_runtime;
+GRANT INSERT (media_id, object_ref_cipher, object_ref_digest, reason, attempts, created_at, updated_at)
+  ON public.media_object_cleanup TO gengyun_api_runtime;
+GRANT UPDATE (media_id, reason, attempts, updated_at)
+  ON public.media_object_cleanup TO gengyun_api_runtime;
+GRANT DELETE ON public.media_object_cleanup TO gengyun_api_runtime;
+
 \echo '20-login-roles.sql：已授予 public.media 的列级 SELECT/INSERT/UPDATE（14/14/12 列，逐列反推自 media/store-pg.ts；无表级 INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER）。'
 \echo '20-login-roles.sql：media 故意不授 DELETE —— 删除是状态机（deleting→deleted，UPDATE state），媒体行是审计与计费事实，不物理删。'
 \echo '20-login-roles.sql：已授予 public.media_derivatives 的列级 SELECT/INSERT/UPDATE 与**表级** DELETE（PG 无列级 DELETE；衍生物按 media_id 整行重建，见 store-pg.ts 的 ON CONFLICT 与 delete 语句）。'
+\echo '20-login-roles.sql：已授予 public.media_object_cleanup 的列级 SELECT/INSERT/UPDATE 与**表级** DELETE（PG 无列级 DELETE；删行 = 已确认清完，见 media/store-pg.ts 的 deleteObjectCleanup）。'
 \echo '20-login-roles.sql：public.idempotency_keys 的媒体幂等台账授权沿用 auth_privacy 组既有面（表级 SELECT/INSERT/DELETE + 列级 response_status/outcome UPDATE），本段未新增。'

@@ -4,7 +4,10 @@
 // （旧 `records`/`grants`/`idempotency` + `inflight`）——进程一退，上传句柄、幂等回执、社区授权
 // 全部消失。现在它们经 `MediaStore` 端口落库（`services/api/src/media/store.ts` /
 // `store-pg.ts`），幂等台账复用 0008 的 `public.idempotency_keys`（先例：
-// `services/api/db/migrations/0019_messages_persistence.sql:28-29`）——**本片不占新迁移号**。
+// `services/api/db/migrations/0019_messages_persistence.sql:28-29`）。
+// **迁移号如实登记**：登记册/幂等台账原本不占新号；返修（监工 1022-0659 轮 P1「CAS=0 失利者的
+// 清理线索丢失」）新增了 `0029_media_object_cleanup.sql`（清理台账）。`media` / `media_derivatives`
+// 两张表的 DDL **仍然只出自 0001**，下面第 [1] 段的判据逐条核这件事，不看迁移号。
 //
 // 运行（本机隔离集群，库名不硬钉，但**必须是空库/专用库**）：
 //   $env:DATABASE_URL='postgres://gengyun@127.0.0.1:55683/gengyun'
@@ -184,10 +187,11 @@ try {
   ).catch(() => [{ v: -1 }]))[0].v;
   note(
     `[1] schema_migrations 行数=${migrationCount}；迁移文件 ${migrations.length} 个`
-      + `（最大号 ${migrations.at(-1)?.filename}，属别的片；本片**不新增**迁移，判据见下）`,
+      + `（最大号 ${migrations.at(-1)?.filename}；本片返修只新增 0029 的清理台账，`
+      + `media／media_derivatives 的 DDL 仍只出自 0001，判据见下）`,
   );
   assert.equal(migrationCount, migrations.length, 'schema_migrations 行数应等于迁移文件数');
-  // 本片不新增迁移。⛔ 旧判据钉的是「不存在 `/^0027_/` 的文件」——它其实想说「本片没占新迁移号」，但写法
+  // ⛔ 旧判据钉的是「不存在 `/^0027_/` 的文件」——它其实想说「本片没占别人的迁移号」，但写法
   // 把**别人的迁移号**当成了自己的不变量：main 上 #428 合入 `0027_admin_audit_observability.sql` 后它恒红，
   // 且下一张 PR 拿 0028 会再红一次（同一个坑，只能靠反复改断言过活）。
   // 新判据看**迁移内容**，不看迁移号：media 域两张表（media／media_derivatives）的 DDL **只能出自 0001**。
@@ -195,6 +199,7 @@ try {
   //   · 真有片往 media 域叠迁移（`CREATE/ALTER/DROP TABLE|INDEX`，不管文件名里有没有 `media`）⇒ 立刻红，
   //     那时必须在本行显式登记文件名并写明是哪个片在改——这是「刻意留 diff」，不是靠号段猜。
   //   · 只认 DDL 的**作用对象**：别的表里带 `media_id` 外键／列的迁移（如 0018 的 favorites/history）不算。
+  //   · 0029_media_object_cleanup.sql 建的是一张**新表**（清理台账），不碰这两张表 ⇒ 本判据照旧放行。
   const ddlTargetOf = (statement) => {
     if (/^create\s+(?:unique\s+)?index\b/i.test(statement)) {
       const on = /\bon\s+(?:only\s+)?(?:public\.)?([a-z_]+)/i.exec(statement);
@@ -215,7 +220,7 @@ try {
   assert.deepEqual(
     mediaDdlOwners,
     ['0001_initial_schema.sql'],
-    '本片不新增迁移：media／media_derivatives 的 DDL 必须只出自 0001（0027 起属别的片，如 #428 的后台审计观测）。'
+    'media 域 DDL 归属：media／media_derivatives 的 DDL 必须只出自 0001（本片返修只新增 0029 的清理台账，不动这两张表）。'
       + '这里多出文件名 ⇒ 有片在改 media 域：请在本断言显式登记该文件名并写明理由，⛔ 不要改回按迁移号判断。',
   );
 
@@ -595,6 +600,140 @@ try {
   note(`[9] 迟到 complete（真库）：窗口内 delete ⇒ HTTP ${raceDeleted.status}（库内 state=${inWindow.state} rev=${inWindow.revision}）；`
     + `放行后 ⇒ ${raceOutcome.code}「${raceOutcome.message}」；`
     + `最终库内 state=${afterRace.state} rev=${afterRace.revision}，media_derivatives 行数=0，衍生件已回收`);
+
+  // -------------------------------------------------------------------------
+  // [10] 监工 1022-0203 / 1022-0541 / 1022-0659 三轮 P1（同一阻塞项）：
+  //      CAS=0 失利者的衍生件**桶侧删不掉**（端口返回 false）时，可重试的清理依据必须**真的落库**。
+  //  判据（全部打在真表的字节上，不靠内存实现）：
+  //    ① `media_object_cleanup` 出现且只有一行，解出的对象键 = 本次落下的衍生键，reason 为 CAS 冲突、
+  //       attempts ≥ 1；
+  //    ② 父行已是 deleted/rev2 且两个对象键都清空（= 线索在父行上已经无处可依）——行仍在；
+  //    ③ **物理删掉父行**（模拟注销清理）后清理行**仍然在** ⇒ 证明没有外键级联（这是本表的存在理由）；
+  //    ④ 桶恢复后 `cleanupOrphans()` 收敛：对象真的没了、清理行也被删掉；
+  //    ⑤ 再扫一次幂等：不多删、不新造行。
+  // -------------------------------------------------------------------------
+  const failBucketInner = createSubstituteObjectStore();
+  const unfailableKeys = new Set();
+  let raceGate = null;
+  const failBucket = {
+    ...failBucketInner,
+    async putObject(key, bytes, contentType) {
+      const held = raceGate;
+      if (held !== null) {
+        raceGate = null;
+        held.entered(key);
+        await held.released;
+      }
+      return failBucketInner.putObject(key, bytes, contentType);
+    },
+    async deleteObject(key) {
+      // 桶侧「未能确认删除」：端口契约里 false ≠ 成功。
+      if (unfailableKeys.has(key)) return false;
+      return failBucketInner.deleteObject(key);
+    },
+  };
+  const failService = createAppMediaService({
+    executionMode: 'stub',
+    objectStore: failBucket,
+    tokenSecret,
+    persistence: pgStore,
+    now: () => new Date(),
+  });
+  const failInitiated = await failService.initiateUpload({
+    actor: ownerActor,
+    input: declared,
+    idempotencyKey: KEY('cleanup-initiate'),
+  });
+  const failMediaId = failInitiated.media.id;
+  const failKeys = await failService.serverObjectKeys(failMediaId);
+  await failBucketInner.putObject(failKeys.rawRef, jpeg, 'image/jpeg');
+
+  let failEntered;
+  const failEnteredPromise = new Promise((resolve) => { failEntered = resolve; });
+  let failRelease;
+  const failReleased = new Promise((resolve) => { failRelease = resolve; });
+  raceGate = { entered: failEntered, released: failReleased };
+  const failComplete = failService.completeUpload({
+    actor: ownerActor,
+    mediaId: failMediaId,
+    ifMatch: '"1"',
+    input: { sha256: declared.sha256, bytes: declared.bytes },
+    idempotencyKey: KEY('cleanup-complete'),
+  });
+  const orphanKey = await failEnteredPromise;
+  const failDeleted = await failService.deleteMedia({
+    actor: ownerActor,
+    mediaId: failMediaId,
+    ifMatch: '"1"',
+    idempotencyKey: KEY('cleanup-delete'),
+  });
+  assert.equal(failDeleted.status, 202, JSON.stringify(failDeleted));
+  // 让「删掉衍生键」这件事无法确认，再放行迟到的 complete。
+  unfailableKeys.add(orphanKey);
+  failRelease();
+  const failOutcome = await failComplete.then(
+    () => ({ ok: true, code: null }),
+    (error) => ({ ok: false, code: error.code }),
+  );
+  assert.equal(failOutcome.ok, false, 'CAS=0 的迟到 complete 不得返回成功');
+  assert.equal(failOutcome.code, 'OBJECT_UNAVAILABLE');
+
+  const cleanupRows = await q(
+    `SELECT media_id, object_ref_cipher, reason, attempts
+       FROM public.media_object_cleanup ORDER BY created_at`,
+  );
+  assert.equal(cleanupRows.length, 1, `清理台账应有且只有一行（实际 ${cleanupRows.length} 行）`);
+  const cleanupRow = cleanupRows[0];
+  assert.equal(cipher.decryptObjectRef(cleanupRow.object_ref_cipher), orphanKey, '台账里必须能解回那个未确认删除的对象键');
+  assert.equal(cleanupRow.media_id, failMediaId);
+  assert.equal(cleanupRow.reason, 'cas_conflict_complete');
+  assert.ok(Number(cleanupRow.attempts) >= 1, `attempts 应 ≥1（实际 ${cleanupRow.attempts}）`);
+
+  const tombstoneRow = await one(
+    `SELECT state, revision, object_ref_cipher FROM media WHERE id=$1`,
+    [failMediaId],
+  );
+  assert.equal(tombstoneRow.state, 'deleted');
+  assert.equal(tombstoneRow.revision, 2);
+  assert.equal(cipher.decryptObjectRef(tombstoneRow.object_ref_cipher), null, '父行原图键已清空（线索无处可依）');
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM media_derivatives WHERE media_id=$1', [failMediaId]),
+    0,
+    '父行衍生物行也已清空（线索无处可依）',
+  );
+  assert.notEqual(await failBucketInner.getObject(orphanKey), null, '此刻该对象确实还在桶里（复现前提）');
+
+  // ③ 物理删父行（= 注销清理的等价动作）：清理行**不得**被级联删掉。
+  await q('DELETE FROM public.media WHERE id=$1', [failMediaId]);
+  assert.equal(await countOf('SELECT count(*)::int AS v FROM media WHERE id=$1', [failMediaId]), 0);
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup WHERE media_id=$1', [failMediaId]),
+    1,
+    '父行被物理删除后，待清理行必须仍在（本表刻意不建外键、不级联）',
+  );
+
+  // ④ 桶恢复 ⇒ 重试收敛。
+  unfailableKeys.clear();
+  const healed = await failService.cleanupOrphans();
+  assert.equal(healed.removedObjects, 1, `坏桶恢复后应回收 1 个对象（实际 ${healed.removedObjects}）`);
+  assert.equal(healed.pendingObjects, 0);
+  assert.equal(await failBucketInner.getObject(orphanKey), null, '重试后对象必须已从桶里消失');
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup'),
+    0,
+    '确认删除成功后清理行必须被删掉',
+  );
+
+  // ⑤ 幂等：再扫一次不得重复计数、也不得新造行。
+  const healedAgain = await failService.cleanupOrphans();
+  assert.equal(healedAgain.removedObjects, 0);
+  assert.equal(healedAgain.pendingObjects, 0);
+  assert.equal(await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup'), 0);
+
+  note(`[10] 清理台账（真库）：CAS=0 落下的衍生件桶删返回 false ⇒ media_object_cleanup 1 行`
+    + `（reason=${cleanupRow.reason} attempts=${cleanupRow.attempts}）；父行 deleted/rev2 且引用清空、`
+    + `物理删父行后该行仍在（无级联）；桶恢复后 cleanupOrphans ⇒ removed=${healed.removedObjects}`
+    + ` pending=${healed.pendingObjects}、对象已删、台账 0 行；复扫 removed=${healedAgain.removedObjects}（幂等）`);
 
   console.log(`\n${notes.length} 条读数，全部断言通过。`);
 } finally {

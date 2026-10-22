@@ -512,7 +512,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "initiateUpload",
-          "lines": "837-907"
+          "lines": "936-1006"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -539,7 +539,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "completeUpload",
-          "lines": "909-995"
+          "lines": "1008-1108"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -566,7 +566,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "getMedia",
-          "lines": "1078-1081"
+          "lines": "1135-1138"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -593,7 +593,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "deleteMedia",
-          "lines": "1083-1133"
+          "lines": "1140-1190"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -620,7 +620,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "grantMediaAccess",
-          "lines": "1137-1168"
+          "lines": "1194-1225"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3088,7 +3088,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "grantCommunityMediaAccess",
-          "lines": "1095-1213"
+          "lines": "1229-1347"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3115,7 +3115,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "readCommunityMediaContent",
-          "lines": "1292-1338"
+          "lines": "1349-1395"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",

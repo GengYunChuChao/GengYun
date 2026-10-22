@@ -9,7 +9,8 @@
  * 二分选实现（与 `favorites`/`history`/`messages` 同一范式）：
  * - `createMemoryMediaStore`：进程内，**仅供 stub 模式与单元测试**，`persistent: false`；
  * - `createPostgresMediaStore`（同目录 `store-pg.ts`）：落 0001 的 `media` / `media_derivatives` /
- *   `community_media_grants`，幂等台账复用 0008 的 `public.idempotency_keys`，`persistent: true`。
+ *   `community_media_grants`，幂等台账复用 0008 的 `public.idempotency_keys`，**待清理对象台账**
+ *   落 0029 的 `public.media_object_cleanup`，`persistent: true`。
  *
  * ## 不变量（两个实现必须一致，不然「内存绿、真库红」）
  * - **返回的是快照，不是共享引用**：调用方改动返回值不会自动生效，必须 `saveMedia` 显式落库。
@@ -71,6 +72,34 @@ export interface CommunityGrantRecord {
 export interface MediaIdempotencyEntry {
   requestHash: string;
   mediaId: string | null;
+}
+
+/**
+ * 一条「**待清理对象**」意图（迁移 `0029_media_object_cleanup` 的
+ * `public.media_object_cleanup` 行）的服务层视图。
+ *
+ * ## 为什么需要它（监工 1022-0203 / 1022-0541 / 1022-0659 三轮 P1）
+ * 「桶删除返回 `false` ⇒ 端口**未确认**删除 ⇒ 必须保留引用以便重试」这条隐私红线原来只有
+ * **父行**一个落点。而父行随时可能被并发的 `delete` 清空引用（`deleted` 是软删，行还在、
+ * `rawRef`/`derivativeRef` 都成了 `null`），也可能被注销清理物理删掉。于是一旦「桶这次删不掉」
+ * 撞上「父行同时没了引用」，`cleanupOrphans` 只能枚举真行 ⇒ **永远找不到那个对象**，
+ * 一次失败的尽力删除就把可重试的清理依据永久丢掉。
+ *
+ * ⇒ 意图必须**先**落到一个不依赖父行存活的台账里，再尝试桶删除；只有**确认**删除成功
+ * （端口返回 `true`，含幂等删除「对象本就不存在」）才删该行。父行被删**不**级联删除本表。
+ *
+ * 字段口径：`objectRef` 是端口层**明文**对象键（真库落在密文列 `object_ref_cipher`，
+ * 另有 `object_ref_digest`=sha256 明文键，供去重与按对象删行）；`attempts` 是**尝试次数**
+ * （首次登记 = 1，每次重新登记 +1），用来看「这个对象重试了几轮还没清掉」。
+ */
+export interface MediaObjectCleanupEntry {
+  /** 产生该对象的媒体行 id。**只做定位**，不建外键（父行可能已被物理删除）。 */
+  mediaId: string;
+  /** 待清理的对象键（明文；真库为密文列 + 摘要列）。 */
+  objectRef: string;
+  /** 为什么需要清（闭集 slug：`cas_conflict` / `owner_delete` / `reject_<failure_code>`）。 */
+  reason: string;
+  attempts: number;
 }
 
 /** 幂等回执保留时长（与 0008 台账 24h 同口径，见 `auth/idempotency.ts:33`）。 */
@@ -153,6 +182,22 @@ export interface MediaStore {
   ): Promise<boolean>;
   /** 放弃占位（produce 失败）；只删占位中的条目。 */
   releaseIdempotency(scope: string, keyHashHex: string): Promise<void>;
+
+  /**
+   * **登记一条「待清理对象」意图**（幂等 upsert）：同一 `objectRef` 已存在 ⇒ 只累计 `attempts`
+   * 并刷新 `reason`/`updatedAt`，不新增第二行（重试器按行扫描，不能越重试越多）。
+   *
+   * 调用时序是硬要求（见 {@link MediaObjectCleanupEntry}）：**先**登记，**再**尝试桶删除；
+   * 只有桶删除被确认成功才调 {@link deleteObjectCleanup}。
+   */
+  saveObjectCleanup(intent: { mediaId: string; objectRef: string; reason: string }, atMs: number): Promise<void>;
+  /** 枚举全部待清理意图（重试器扫描面；不含已确认删除的对象——那些行已被删掉）。 */
+  listObjectCleanup(): Promise<MediaObjectCleanupEntry[]>;
+  /**
+   * 删掉某对象键的待清理行（**只允许在桶删除被确认成功后调用**）；返回删除行数。
+   * 重复调用返回 0（幂等）。
+   */
+  deleteObjectCleanup(objectRef: string): Promise<number>;
 }
 
 /** 幂等键域：主体（owner） + 方法 + 路由模板。与 `auth/idempotency.ts:111-113` 同一格式。 */
@@ -195,6 +240,8 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
   const media = new Map<string, MediaRecord>();
   const grants = new Map<string, CommunityGrantRecord>();
   const idempotency = new Map<string, { requestHash: string; mediaId: string | null; expiresAt: number }>();
+  // 清理台账：**键就是对象键本身**（内存实现没有密文列，也不必模拟摘要列）。
+  const cleanup = new Map<string, MediaObjectCleanupEntry>();
 
   const liveEntry = (scope: string, keyHashHex: string) => {
     const entry = idempotency.get(`${scope}\u0000${keyHashHex}`);
@@ -305,6 +352,23 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
       const entry = liveEntry(scope, keyHashHex);
       if (entry === null || entry.mediaId !== null) return;
       idempotency.delete(`${scope}\u0000${keyHashHex}`);
+    },
+
+    async saveObjectCleanup(intent) {
+      const existing = cleanup.get(intent.objectRef);
+      // 与真库的 `INSERT … ON CONFLICT (object_ref_digest) DO UPDATE` 同语义：一行、次数累加。
+      cleanup.set(intent.objectRef, {
+        mediaId: intent.mediaId,
+        objectRef: intent.objectRef,
+        reason: intent.reason,
+        attempts: existing === undefined ? 1 : existing.attempts + 1,
+      });
+    },
+    async listObjectCleanup() {
+      return [...cleanup.values()].map((entry) => ({ ...entry }));
+    },
+    async deleteObjectCleanup(objectRef) {
+      return cleanup.delete(objectRef) ? 1 : 0;
     },
   };
 }

@@ -226,6 +226,11 @@ export interface AppMediaService {
   /**
    * `rejected` / `deleted` 记录的对象与已失效句柄统一清理。
    *
+   * 两段扫描（监工 1022-0659 轮 P1 之后）：
+   * 1. **真行**：`rejected`/`deleted` 行上仍挂着的 `rawRef`/`derivativeRef`；
+   * 2. **清理台账**：`media_object_cleanup` 里的待清理行（这些行独立于父行存活，专门承载
+   *    「父行已经没有引用」的未确认删除对象，例如 CAS=0 的迟到 `complete` 落下的衍生件）。
+   *
    * `pendingObjects` = 端口抛错或返回 `false`（**未能确认删除**）而被保留引用的对象数 ⇒ 仍可重试；
    * `remainingObjects` = 清扫一次后对象存储中仍然存在的对象数（诊断用）。
    */
@@ -706,31 +711,81 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    * 端口契约（`MediaObjectStore.deleteObject`）因此被明确为：`true` = 已确认删除
    * （含幂等删除「对象本就不存在」，与 S3 `DeleteObject` 的 204 语义一致）；
    * `false` = **未能确认**；抛出 = 暂时失败。后两者都保留引用。
+   *
+   * **清理线索的落点（监工 1022-0659 轮 P1）**：光靠「保留引用」不够 —— 这个 `record` 可能
+   * 只是一份**进程内快照**（`completeUpload` 的 CAS=0 分支一个字节都不写库），而真行也可能
+   * 已被并发 `delete` 清空引用，甚至被注销清理物理删除。所以每个对象**先**把意图登记进
+   * 不依赖父行存活的清理台账（`store.saveObjectCleanup`），**再**尝试桶删除；只有桶删除
+   * 被确认成功才删掉那条台账行。登记失败时仍尝试删除（能删掉就万事大吉），删不掉则按
+   * `pending` 计入 —— 这一路只剩「库与桶同时失败」才可能丢线索，落不了库时本也无处可写。
    */
-  async function dropObjects(record: MediaRecord): Promise<{ removed: number; pending: number }> {
+  async function dropObjects(
+    record: MediaRecord,
+    reason: string,
+    attempted?: Set<string>,
+  ): Promise<{ removed: number; pending: number }> {
     let removed = 0;
     let pending = 0;
     for (const field of ['rawRef', 'derivativeRef'] as const) {
       const ref = record[field];
       if (ref === null) continue;
+      attempted?.add(ref);
+      // ① 意图先落库：从此这条线索与父行的存亡无关。
+      const recorded = await recordCleanupIntent(record.id, ref, reason);
       try {
         if (await objectStore.deleteObject(ref)) {
           record[field] = null;
           removed += 1;
+          // ② 只有**确认**删除成功才允许删掉台账行（未确认就删行 = 永久丢线索）。
+          if (recorded) await forgetCleanupIntent(ref);
         } else {
-          // 未确认删除：**保留引用**，留给 cleanupOrphans / 下次删除重试。
+          // 未确认删除：**保留引用与台账行**，留给 cleanupOrphans / 下次删除重试。
           pending += 1;
         }
       } catch {
-        // 暂时失败同样不得清空引用，否则永久丢失清理依据。
+        // 暂时失败同样不得清空引用或台账行，否则永久丢失清理依据。
         pending += 1;
       }
     }
     return { removed, pending };
   }
 
+  /** 登记一条待清理意图；**不**向外抛（登记失败不能把删除/完成路径整条打死）。 */
+  async function recordCleanupIntent(mediaId: string, objectRef: string, reason: string): Promise<boolean> {
+    try {
+      await store.saveObjectCleanup({ mediaId, objectRef, reason }, at());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 删掉待清理行（**只**在桶删除被确认成功后调用）；删除失败留待下一轮清扫收敛。 */
+  async function forgetCleanupIntent(objectRef: string): Promise<void> {
+    try {
+      await store.deleteObjectCleanup(objectRef);
+    } catch {
+      // 留残行是可接受的：下一轮清扫会再删一次（端口删除是幂等的），收敛后行自会消失。
+    }
+  }
+
   function revokeGrantsForMedia(mediaId: string, timestamp: number): Promise<number> {
     return store.revokeGrantsForMedia(mediaId, timestamp);
+  }
+
+  /**
+   * 把 `reject` 的失败码规整成清理台账的 `reason` slug。
+   *
+   * 列上有 CHECK `^[a-z][a-z0-9_]{0,63}$`：**不能**因为将来新增了一个带大写/连字符的失败码
+   * 就让意图登记整条失败（那等于悄悄退回到「线索只在进程内」的老问题）。因此这里做一次
+   * 归一化，并把结果截到列宽内。
+   */
+  function cleanupReasonForReject(failureCode: string): string {
+    const slug = failureCode
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return `reject_${slug === '' ? 'unknown' : slug}`.slice(0, 64);
   }
 
   /**
@@ -1040,7 +1095,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       if ((await store.saveMediaIfCurrent(record, expected)) === 0) {
         // 刚落下的衍生件没有任何登记册行承载它（父行已删除或已终态）⇒ 先回收，避免孤儿对象
         // 逃出 cleanupOrphans 的扫描范围（那一轮只扫 rejected/deleted 行）。
-        await dropObjects(record);
+        // 回收之前清理台账**已经**记下这次意图（见 dropObjects）：即便桶这次删不掉、即便
+        // 父行的引用已被并发的 delete 清空，下一轮 cleanupOrphans 仍能按台账把这个对象删掉。
+        await dropObjects(record, 'cas_conflict_complete');
         await staleWriteFailure(record, expected, '完成上传');
       }
       await slot.settle(record.id);
@@ -1068,7 +1125,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       record.updatedAt = timestamp;
     }
     record.failure_code = failureCode;
-    await dropObjects(record);
+    await dropObjects(record, cleanupReasonForReject(failureCode));
     await revokeGrantsForMedia(record.id, timestamp);
     // 回收结果（对象键被清空 / 状态与 failure_code）必须落库：否则重启后
     // 会看到 `rawRef` 仍在的 rejected 行，cleanupOrphans 也会重复尝试删同一个键。
@@ -1110,7 +1167,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       }
       // **即使记录已是 `deleted`**（上一次未确认删除）也重试回收：不得因状态已终态而丢掉重试依据。
       // 未确认删除时 `rawRef` / `derivativeRef` 会被保留（见 dropObjects）；对外语义仍是 202 已删除。
-      await dropObjects(record);
+      await dropObjects(record, 'owner_delete');
       record.state = 'deleted';
       record.updatedAt = timestamp;
       await revokeGrantsForMedia(record.id, timestamp);
@@ -1369,8 +1426,15 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       let removedObjects = 0;
       let pendingObjects = 0;
       let revokedGrants = 0;
+      // 本轮已经试过的对象键：台账扫描**跳过**它们，避免同一个对象在一轮里被删两次、
+      // 也避免 pending 被重复计数（否则「一次清扫重试了几次」这个读数就没意义了）。
+      const attemptedThisSweep = new Set<string>();
       for (const record of await store.listMediaByState(['rejected', 'deleted'])) {
-        const outcome = await dropObjects(record);
+        const outcome = await dropObjects(
+          record,
+          record.state === 'deleted' ? 'owner_delete' : 'reject_cleanup',
+          attemptedThisSweep,
+        );
         removedObjects += outcome.removed;
         pendingObjects += outcome.pending;
         revokedGrants += await revokeGrantsForMedia(record.id, timestamp);
@@ -1378,6 +1442,27 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         // 但清理器读到的也是快照，所以仍是条件写：期间被并发删除/推进（revision 变了）时
         // 0 行即放弃落库——对象回收本身已发生且可重入，下一轮按真行继续收敛。
         await store.saveMediaIfCurrent(record, snapshotOf(record));
+      }
+      // **清理台账扫描**（监工 1022-0659 轮 P1）：上面那一轮只认「还挂在真行上的引用」，
+      // 而本 P1 丢的恰恰是**没有父行可挂**的对象（CAS=0 失利者刚生成、桶又没删掉的衍生件）。
+      // 台账行独立于父行存活，因此这里按行重试即可收敛：确认删除成功 ⇒ 删行；仍未确认 ⇒
+      // 保留行并累加 `attempts`（下一轮再来）。重复执行天然幂等（对象删除本身幂等）。
+      for (const entry of await store.listObjectCleanup()) {
+        if (attemptedThisSweep.has(entry.objectRef)) continue;
+        let confirmed = false;
+        try {
+          confirmed = await objectStore.deleteObject(entry.objectRef);
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed) {
+          pendingObjects += 1;
+          // 记一次尝试：`attempts` 只用于「这个对象试了几轮还清不掉」的可观测性。
+          await recordCleanupIntent(entry.mediaId, entry.objectRef, entry.reason);
+          continue;
+        }
+        removedObjects += 1;
+        await forgetCleanupIntent(entry.objectRef);
       }
       // 过期或已撤销的授权不再需要：从台账删除（`community_media_grants` 的 TTL 上限只有 300s）。
       for (const grant of await store.listStaleGrants(timestamp)) {

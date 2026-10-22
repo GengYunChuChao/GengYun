@@ -1,9 +1,10 @@
 /**
  * 媒体域的 **PostgreSQL 实现**（`media` / `media_derivatives` / `community_media_grants` 全在
  * `services/api/db/migrations/0001_initial_schema.sql`，幂等台账复用 0008 的
- * `public.idempotency_keys`）—— **本片不需要新迁移号**。
+ * `public.idempotency_keys`；**待清理对象台账**在 `0029_media_object_cleanup.sql` 的
+ * `public.media_object_cleanup`）。
  *
- * ## 逐列事实（不是猜的，见 0001）
+ * ## 逐列事实（不是猜的，见 0001 与 0029）
  * - `public.media`（:171-190）：`id/owner_id/purpose/mime/bytes/duration_ms/sha256/state/failure_code/
  *   object_ref_cipher/revision/consent_epoch/expires_at/created_at/updated_at`。**没有** `metadata_removed`；
  *   **没有**幂等键列（幂等走共享台账）；`purpose`/`state` 是枚举，读取时 `::text`、写入时显式 cast。
@@ -109,6 +110,18 @@ function asOptionalNumber(value: unknown): number | null {
 }
 
 function derivativeHash(objectRef: string): string {
+  return createHash('sha256').update(objectRef, 'utf8').digest('hex');
+}
+
+/**
+ * 对象键摘要（明文键的 sha256，hex）。
+ *
+ * 为什么清理台账除了密文列还要这一列：`object_ref_cipher` 是 AES-256-GCM（每次加密都换 nonce），
+ * 同一个明文键两次加密得到**不同**密文 ⇒ 靠密文去重/按对象删行是不可能的。摘要列承担两件事：
+ * ① 唯一索引 `(object_ref_digest)` 让「同一对象重复登记」收敛成一行；
+ * ② `deleteObjectCleanup` 按摘要定位要删的那一行。摘要不可逆，不泄露对象键。
+ */
+function objectRefDigest(objectRef: string): string {
   return createHash('sha256').update(objectRef, 'utf8').digest('hex');
 }
 
@@ -450,6 +463,73 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
             WHERE scope = $1 AND key_hash = decode($2, 'hex') AND outcome IS NULL`,
           [scope, keyHashHex],
         );
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    /**
+     * 待清理意图的落库（迁移 0029 的 `public.media_object_cleanup`）。
+     *
+     * `ON CONFLICT (object_ref_digest) DO UPDATE` 而不是 `DO NOTHING`：重试器要能从 `attempts`
+     * 看出「这个对象已经试过几轮还清不掉」。注意 PostgreSQL 对 `ON CONFLICT DO UPDATE`
+     * 要求被读到的列（arbiter 列与 SET 右侧的旧值）也有 SELECT 权 —— 授权面因此在
+     * `deploy/postgres-cvm/sql/20-login-roles.sql` 段 M 里是整表列级 SELECT。
+     */
+    async saveObjectCleanup(intent, atMs) {
+      try {
+        await pool.query(
+          `INSERT INTO public.media_object_cleanup
+             (media_id, object_ref_cipher, object_ref_digest, reason, attempts, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 1, to_timestamp($5::bigint / 1000.0), to_timestamp($5::bigint / 1000.0))
+           ON CONFLICT (object_ref_digest) DO UPDATE SET
+             media_id = EXCLUDED.media_id,
+             reason = EXCLUDED.reason,
+             attempts = public.media_object_cleanup.attempts + 1,
+             updated_at = EXCLUDED.updated_at`,
+          [
+            intent.mediaId,
+            cipher.encryptObjectRef(intent.objectRef),
+            objectRefDigest(intent.objectRef),
+            intent.reason,
+            atMs,
+          ],
+        );
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    async listObjectCleanup() {
+      try {
+        const result = await pool.query(
+          `SELECT media_id, object_ref_cipher, reason, attempts
+             FROM public.media_object_cleanup ORDER BY created_at, object_ref_digest`,
+        );
+        return result.rows.map((row) => {
+          const objectRef = cipher.decryptObjectRef(asText(row.object_ref_cipher));
+          // 空明文只可能来自「写了一条没有键的行」——那是数据损坏，不能静默跳过（跳过等于丢线索）。
+          if (objectRef === null || objectRef === '') shapeError();
+          return {
+            mediaId: asText(row.media_id),
+            objectRef,
+            reason: asText(row.reason),
+            attempts: asNumber(row.attempts),
+          };
+        });
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    async deleteObjectCleanup(objectRef) {
+      try {
+        const deleted = await pool.query(
+          `DELETE FROM public.media_object_cleanup
+            WHERE object_ref_digest = $1 RETURNING object_ref_digest`,
+          [objectRefDigest(objectRef)],
+        );
+        return deleted.rows.length;
       } catch (error) {
         return classifyMediaDatabaseError(error);
       }

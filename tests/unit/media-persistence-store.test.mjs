@@ -64,10 +64,14 @@ function countingObjectStore() {
  *
  * 这是监工 1927 轮 P1 复现的最小工具——不挂起就必然靠 `setTimeout` 抢时序，那是脆的。
  * `arm()` 只拦**下一次** `putObject`；拦到后立刻解除，避免把后续回收路径也挂住。
+ *
+ * 监工 1022-0203 轮 P1 追加 `failDelete(key)`：把**指定键**的 `deleteObject` 钉成返回 `false`
+ * （端口契约里 `false` = 未能确认删除），用来复现「桶侧暂时删不掉」。`unfailDelete()` 恢复。
  */
 function gatedObjectStore() {
   const inner = createSubstituteObjectStore();
-  const calls = { puts: [], deletes: [] };
+  const calls = { puts: [], deletes: [], failedDeletes: [] };
+  const failing = new Set();
   let armed = null;
   const store = {
     ...inner,
@@ -83,6 +87,10 @@ function gatedObjectStore() {
     },
     async deleteObject(key) {
       calls.deletes.push(key);
+      if (failing.has(key)) {
+        calls.failedDeletes.push(key);
+        return false;
+      }
       return inner.deleteObject(key);
     },
   };
@@ -97,6 +105,8 @@ function gatedObjectStore() {
       armed = { entered, released };
       return { enteredPromise, release: () => { release(); } };
     },
+    failDelete(key) { failing.add(key); },
+    unfailDelete() { failing.clear(); },
   };
 }
 
@@ -468,4 +478,127 @@ test('GY-R28 W12 竞态（监工 1927 轮 P1）：已删除的媒体不得被迟
   t.diagnostic(`迟到的 complete ⇒ ${outcome.error.code}「${outcome.error.message}」；`
     + `库内 state=${after.state}/rev=${after.revision}；衍生件 ${derivativeKey.slice(0, 18)}… 已回收`
     + `（put=${bucket.calls.puts.length} delete=${bucket.calls.deletes.length}）`);
+});
+
+// ---------------------------------------------------------------------------
+// 监工 1022-0203 / 1022-0541 / 1022-0659 三轮 P1（同一阻塞项）：
+//
+//   「CAS=0 失利者清理派生物时桶删除返回 false，随后父记录并发删除清空引用，
+//     仍会丢失可恢复清理的持久线索。」
+//
+// 场景与上一测同源（挂起衍生件 putObject → 窗口内 delete 成功），差别只在于**桶侧删不掉**：
+// `deleteObject(衍生键)` 返回 `false`（= 未能确认删除，不是成功）。此时：
+//   - CAS=0 那一侧只剩一份进程内快照，它**没有任何持久化落点**（条件写 0 行 ⇒ 一个字节都不写）；
+//   - 真行已被并发 delete 清空 `rawRef`/`derivativeRef`（`deleted` 是软删，行还在，但引用没了）；
+//   ⇒ `cleanupOrphans` 只能枚举真行，永远找不到这个刚落下、且**未确认删除**的衍生对象。
+//   一次失败的尽力删除就把「可重试的清理依据」永久丢掉了。
+//
+// 修法（不复活媒体、不覆盖新版本）：把「待清理」意图**先**落到独立于父行存活的清理台账
+// （`public.media_object_cleanup`，迁移 0029 ⇒ 端口 `saveObjectCleanup`/`listObjectCleanup`/
+// `deleteObjectCleanup`），**再**尝试桶删除；只有桶删除确认成功才删该行，父行被删也不级联。
+// 重试器（`cleanupOrphans`）按清理行扫描，天然幂等。
+// ---------------------------------------------------------------------------
+test('GY-R28 W12 竞态（监工 1022-0659 轮 P1）：CAS=0 失利者删不掉衍生件时，清理线索不得丢', async (t) => {
+  const mediaStore = createMemoryMediaStore({ now: () => NOW_MS });
+  const bucket = gatedObjectStore();
+  const jpeg = jpegWithExif();
+  const declare = { purpose: 'weed_recognition', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
+  const app = makeApp({ mediaStore, objectStore: bucket.store });
+  t.after(async () => { await app.close(); });
+  const token = await login(app, 'orphan-owner');
+
+  // ① 正常建行 + 客户端直传原图。
+  const created = await call(app, 'POST', '/api/v1/media/uploads', token, {
+    payload: declare,
+    headers: { 'idempotency-key': KEY('orphan-create') },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const mediaId = created.body.data.media.id;
+  const keys = await app.mediaService.serverObjectKeys(mediaId);
+  await bucket.store.putObject(keys.rawRef, jpeg, 'image/jpeg');
+
+  const record = await mediaStore.getMedia(mediaId);
+  const actor = { ownerId: record.ownerId, authEpoch: 1, sessionRef: '34343434-3434-4434-8434-343434343434' };
+
+  // ② 挂住衍生件 putObject：complete 此刻已读过快照（rev 1 / initiated），还没写回。
+  const gate = bucket.arm();
+  const lateComplete = app.mediaService.completeUpload({
+    actor,
+    mediaId,
+    ifMatch: '"1"',
+    input: { sha256: declare.sha256, bytes: declare.bytes },
+    idempotencyKey: KEY('orphan-complete'),
+  });
+  const derivativeKey = await gate.enteredPromise;
+
+  // ③ 窗口内 delete 成功落库：真行 deleted / rev 2 / 两个对象键都清空。
+  const deleted = await call(app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+    headers: { 'idempotency-key': KEY('orphan-delete'), 'if-match': '"1"' },
+  });
+  assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
+
+  // ④ 让「删掉衍生键」这件事**无法确认**（端口返回 false），再放行迟到的 complete。
+  bucket.failDelete(derivativeKey);
+  gate.release();
+  const outcome = await lateComplete.then(
+    (value) => ({ ok: true, value }),
+    (error) => ({ ok: false, error }),
+  );
+  assert.equal(outcome.ok, false, 'CAS=0 的迟到 complete 不得返回成功');
+  assert.equal(outcome.error.code, 'OBJECT_UNAVAILABLE');
+  assert.ok(bucket.calls.failedDeletes.includes(derivativeKey), '本次复现要求桶删除确实返回了 false');
+
+  // ⑤ 线索无处可依：父行已被并发删除清空引用（这是本 P1 的「丢线索」成因，不是断言对象）。
+  const tombstone = await mediaStore.getMedia(mediaId);
+  assert.equal(tombstone.state, 'deleted');
+  assert.equal(tombstone.rawRef, null);
+  assert.equal(tombstone.derivativeRef, null);
+
+  // ⑥ 桶侧仍删不掉时清扫一次：本次不收敛是**允许**的，但「可重试的清理线索」必须留存。
+  //    改前这里 pendingObjects=0 / removedObjects=0 / remainingObjects=1 —— 线索已经丢了。
+  const blocked = await app.mediaService.cleanupOrphans();
+  t.diagnostic(`桶删除不可用时清扫读数：removed=${blocked.removedObjects} `
+    + `pending=${blocked.pendingObjects} remaining=${blocked.remainingObjects}`);
+  assert.equal(blocked.removedObjects, 0, '桶侧删不掉时不得报告已回收');
+  assert.equal(
+    blocked.pendingObjects,
+    1,
+    '未确认删除的衍生对象必须留下可重试的清理线索（pendingObjects 不得为 0）',
+  );
+  assert.equal(blocked.remainingObjects, 1, '对象此刻确实还在桶里（复现前提）');
+  assert.notEqual(await bucket.store.getObject(derivativeKey), null, '对象此刻确实未被删掉（复现前提）');
+
+  // ⑦ 恢复桶删除能力后重试：必须收敛到「对象真的没了、清理行也清空」。
+  bucket.unfailDelete();
+  const healed = await app.mediaService.cleanupOrphans();
+  t.diagnostic(`恢复后清扫读数：removed=${healed.removedObjects} pending=${healed.pendingObjects} `
+    + `remaining=${healed.remainingObjects}`);
+  assert.equal(healed.removedObjects, 1, '恢复桶删除能力后，重试必须真的把这个对象删掉');
+  assert.equal(healed.pendingObjects, 0);
+  assert.equal(await bucket.store.getObject(derivativeKey), null, '重试后衍生对象必须已从桶里消失');
+  assert.deepEqual(await mediaStore.listObjectCleanup(), [], '确认删除成功后清理行必须被清掉（不留残行）');
+
+  // ⑧ 再扫一次：幂等（没有可删行时不做任何重复删除，也不新造行）。
+  const again = await app.mediaService.cleanupOrphans();
+  assert.equal(again.removedObjects, 0, '重复清扫不得重复计数');
+  assert.equal(again.pendingObjects, 0);
+  assert.deepEqual(await mediaStore.listObjectCleanup(), []);
+});
+
+test('GY-R28 W12 清理台账：成功删除不留行；同一对象重复登记只留一行且尝试次数递增（幂等）', async () => {
+  const store = createMemoryMediaStore({ now: () => NOW_MS });
+  const mediaId = '91919191-9191-4191-8191-919191919191';
+
+  await store.saveObjectCleanup({ mediaId, objectRef: 'obj_cleanup_a', reason: 'cas_mismatch' }, NOW_MS);
+  await store.saveObjectCleanup({ mediaId, objectRef: 'obj_cleanup_a', reason: 'cas_mismatch' }, NOW_MS + 1);
+  const rows = await store.listObjectCleanup();
+  assert.equal(rows.length, 1, '同一对象键只允许一行（重试器按行扫描，不能越重试越多）');
+  assert.equal(rows[0].objectRef, 'obj_cleanup_a');
+  assert.equal(rows[0].mediaId, mediaId);
+  assert.equal(rows[0].reason, 'cas_mismatch', '原因要持久化，供人判断为何要清');
+  assert.equal(rows[0].attempts, 2, '每次重新登记即一次尝试，次数要累计');
+
+  assert.equal(await store.deleteObjectCleanup('obj_cleanup_a'), 1);
+  assert.equal(await store.deleteObjectCleanup('obj_cleanup_a'), 0, '重复删除返回 0（幂等）');
+  assert.deepEqual(await store.listObjectCleanup(), []);
 });
