@@ -30,9 +30,15 @@ const JOB_2 = '22222222-2222-4222-8222-222222222222';
 const TARGET = Object.freeze({ type: 'post', id: POST_ID, revision: 1 });
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 
-/** 记录型假池：把每次 `query()` 的 SQL 与参数原样留下；`fail` 可在第 N 次调用时抛错。 */
+/**
+ * 记录型假池：把每次 `query()` 的 SQL 与参数原样留下；`fail` 可在第 N 次调用时抛错。
+ *
+ * 同时是一张**极小的表**（`rows`）：建行会落进来，退位会改 `superseded`，读回会答出真实状态——
+ * 否则"写完读回确认"这条路径在假池上只能答"缺行"，测出来的就不是真行为。
+ */
 function makeRecordingPool(options = {}) {
   const calls = [];
+  const rows = new Map();
   const pool = {
     async query(text, values) {
       calls.push({ text, values: values ?? [] });
@@ -41,10 +47,46 @@ function makeRecordingPool(options = {}) {
         const error = fail(calls.length);
         if (error !== null && error !== undefined) throw error;
       }
+      const sql = String(text);
+      const label = sql.trim().split(/\s+/u)[0];
+      if (label === 'SELECT') {
+        const row = rows.get(values[0]);
+        return { rows: row === undefined ? [] : [{ superseded: row.superseded }] };
+      }
+      if (label === 'INSERT') {
+        if (!rows.has(values[0])) {
+          rows.set(values[0], {
+            job_id: values[0],
+            target_type: values[1],
+            target_id: values[2],
+            target_revision: values[3],
+            content_kind: values[4],
+            superseded: values[23] === true,
+          });
+        }
+        return { rows: [] };
+      }
+      if (label === 'UPDATE') {
+        if (!sql.includes('SET superseded = TRUE')) return { rows: [] }; // 状态推进语句不碰 superseded
+        const exclude = values.length > 5 ? values[5] : null;
+        for (const row of rows.values()) {
+          if (
+            row.target_type === values[0] &&
+            row.target_id === values[1] &&
+            row.target_revision === values[2] &&
+            row.content_kind === values[3] &&
+            row.superseded === false &&
+            row.job_id !== exclude
+          ) {
+            row.superseded = true;
+          }
+        }
+        return { rows: [] };
+      }
       return { rows: [] };
     },
   };
-  return { pool, calls };
+  return { pool, calls, rows };
 }
 
 /** 一条形状完整的任务记录（字段取自 `moderation/types.ts:177-212` 的必填面）。 */
@@ -78,14 +120,14 @@ function record(overrides = {}) {
   };
 }
 
-test('LP1. 建行 = 退位语句 + 插入语句（真池上包在同一事务），参数 5 + 26', async () => {
+test('LP1. 建行 = 退位语句 + 插入语句 + 读回确认（真池上包在同一事务），参数 6 + 26', async () => {
   const { pool, calls } = makeRecordingPool();
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
   assert.equal(ledger.persistent, true, '持久台账必须如实声明 persistent');
 
   ledger.create(record());
   await ledger.flush();
-  assert.equal(calls.length, 2, '建行必须发两条语句：先把旧的当前行置 superseded，再插入新行');
+  assert.equal(calls.length, 3, '建行必须发三条语句：退位 → 插入 → 读回确认（`ON CONFLICT DO NOTHING` 之后不得假设成功）');
 
   const supersede = calls[0];
   assert.ok(supersede.text.includes('UPDATE public.moderation_decisions'), '第一条必须是退位语句');
@@ -95,7 +137,15 @@ test('LP1. 建行 = 退位语句 + 插入语句（真池上包在同一事务）
     /AND content_kind = \$4 AND superseded = FALSE/u.test(supersede.text),
     '只退位同一目标版本上仍现任的行',
   );
-  assert.deepEqual(supersede.values, ['post', POST_ID, 1, 'text', TS], '退位按目标版本定位，updated_at 与插入同戳');
+  assert.ok(
+    /AND job_id <> \$6/u.test(supersede.text),
+    '退位必须排除本 job（`$6`）：重放时不得把这个任务自己退位（#434 监工 P2）',
+  );
+  assert.deepEqual(
+    supersede.values,
+    ['post', POST_ID, 1, 'text', TS, JOB_1],
+    '退位按目标版本定位，updated_at 与插入同戳，末位是"排除自己"的 job_id',
+  );
 
   const insert = calls[1];
   assert.ok(insert.text.includes('INSERT INTO public.moderation_decisions'), '第二条必须写入台账表');
@@ -110,6 +160,10 @@ test('LP1. 建行 = 退位语句 + 插入语句（真池上包在同一事务）
   assert.equal(typeof values[22], 'string', 'evidence 以 jsonb 字符串落库');
   assert.equal(values[23], false, '新行 superseded=false');
   assert.equal(values[25], TS, 'updated_at 与退位语句同戳');
+
+  const read = calls[2];
+  assert.ok(read.text.includes('SELECT superseded FROM public.moderation_decisions'), '第三条必须是读回确认');
+  assert.deepEqual(read.values, [JOB_1], '读回按主键定位（只读 superseded 一列，在列级 SELECT 授权内）');
 });
 
 test('LP2. 重复 job_id：同步抛错且**不入队**（绝不先写库再报错）', async () => {
@@ -119,7 +173,7 @@ test('LP2. 重复 job_id：同步抛错且**不入队**（绝不先写库再报�
   await ledger.flush();
   assert.throws(() => ledger.create(record()), /审核任务 job_id 重复/u);
   await ledger.flush();
-  assert.equal(calls.length, 2, '重复的那次不得再发语句（第一次 create 的两条是上限）');
+  assert.equal(calls.length, 3, '重复的那次不得再发语句（第一次 create 的退位+插入+读回是上限）');
 });
 
 test('LP3. supersede 语义与内存台账逐字一致：current 前进、history 保留两行、旧行 superseded=true', async () => {
@@ -133,7 +187,11 @@ test('LP3. supersede 语义与内存台账逐字一致：current 前进、histor
   assert.equal(ledger.history(TARGET).length, 2, '旧任务进历史，不删');
   assert.equal(ledger.byJobId(JOB_1)?.superseded, true, '旧行 superseded=true');
   assert.equal(ledger.snapshotCounts().current, 1, '每个目标版本每个内容类别至多一条当前任务');
-  assert.equal(calls.length, 4, '两次 create 各两条语句');
+  // 两条 create 在同一批里登记：执行到 JOB_1 时内存现任已是 JOB_2 ⇒ 它按**历史行**落库
+  // （只 INSERT + 读回，不跑退位）；JOB_2 才是现任（退位 + INSERT + 读回）⇒ 5 条语句。
+  assert.equal(calls.length, 5, '历史行 2 条语句（INSERT+读回）+ 现任行 3 条语句（退位+INSERT+读回）');
+  assert.equal(calls[0].values[23], true, 'JOB_1 落库时已是历史行：superseded=true');
+  assert.equal(calls[3].values[23], false, 'JOB_2 是现任行：superseded=false');
 });
 
 test('LP4. 未知 job_id 的更新：同步抛错且不入队（调用方必须先 create）', async () => {
@@ -151,16 +209,17 @@ test('LP5. 更新语句只动可变列：目标身份列（target_*/content_kind
   ledger.update(record({ state: 'succeeded', decision: 'approved' }));
   await ledger.flush();
 
-  assert.equal(calls.length, 3, 'create 两条 + update 一条');
-  const sql = calls[2].text;
-  assert.ok(sql.includes('UPDATE public.moderation_decisions SET'), '状态推进走 UPDATE');
+  assert.equal(calls.length, 4, 'create 三条（退位+插入+读回）+ update 一条');
+  const updateCall = calls.find((call) => call.text.includes('UPDATE public.moderation_decisions SET'));
+  assert.equal(updateCall, calls[3], '更新排在 create 的三条之后（写入严格按登记顺序）');
+  const sql = updateCall.text;
   assert.ok(sql.includes('WHERE job_id = $1'), '按主键定位');
   for (const column of ['target_type', 'target_id', 'target_revision', 'content_kind', 'job_revision', 'created_at']) {
     assert.ok(!sql.includes(`  ${column} = `), `身份列 ${column} 不得被更新语句改写`);
   }
-  assert.equal(calls[2].values[0], JOB_1);
-  assert.equal(calls[2].values[1], 'succeeded');
-  assert.equal(calls[2].values[3], 'approved');
+  assert.equal(updateCall.values[0], JOB_1);
+  assert.equal(updateCall.values[1], 'succeeded');
+  assert.equal(updateCall.values[3], 'approved');
 });
 
 test('LP6. 下架标记幂等：重放不新增行，内存 isWithdrawn 与落库语句一致', async () => {
@@ -308,6 +367,8 @@ function makeTransactionalPool(options = {}) {
       if (failOn !== null && label === failOn) {
         throw Object.assign(new Error('insert failed'), { code: '23505' });
       }
+      // 读回：行刚在同一个事务里插入，`superseded=false`（现任行）。
+      if (label === 'SELECT') return { rows: [{ superseded: false }] };
       return { rows: [] };
     },
     release() {
@@ -327,13 +388,17 @@ function makeTransactionalPool(options = {}) {
   };
 }
 
-test('LP11. 真池路径（有 connect）：退位与插入包在同一个事务里，顺序 BEGIN → 退位 → 插入 → COMMIT → release', async () => {
+test('LP11. 真池路径（有 connect）：退位/插入/读回包在同一个事务里，顺序 BEGIN → 退位 → 插入 → 读回 → COMMIT → release', async () => {
   const { pool, seen } = makeTransactionalPool();
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
   ledger.create(record());
   await ledger.flush();
 
-  assert.deepEqual(seen, ['BEGIN', 'UPDATE', 'INSERT', 'COMMIT', 'RELEASE'], '退位与插入必须原子成对，连接必须归还');
+  assert.deepEqual(
+    seen,
+    ['BEGIN', 'UPDATE', 'INSERT', 'SELECT', 'COMMIT', 'RELEASE'],
+    '退位、插入与读回确认必须在同一事务里（读回看不到自己刚写的行就等于没确认），连接必须归还',
+  );
 });
 
 test('LP12. 事务内失败 ⇒ ROLLBACK 后抛 PROVIDER_UNAVAILABLE，且连接一定 release（不留悬挂事务）', async () => {

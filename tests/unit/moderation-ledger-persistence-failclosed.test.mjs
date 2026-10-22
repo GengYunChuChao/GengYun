@@ -12,6 +12,11 @@
  *   - 持久层：假池按真实 `pg.Pool` 形状（`connect()` 事务）记录行，`db.rows` 就是"库里有哪些行"；
  *   - 目标可见性：真实 `createCommunityContentAuthority` + 内存社区存储，读 `store.getPost()`。
  *
+ * FC5／FC6 收口监工 P2（`supervisor-1022-0932-pr434`）：**同目标同 content_kind 的 A、B 两条记录**
+ * 在 A 落库失败后重放时，不得把 B（内存里的现任任务）一起退位。断言打在**库表状态**上：
+ * 恢复后必须**恰好一条** `superseded = FALSE` 的行（＝B），A 为历史行（`superseded = TRUE`）；
+ * 旧实现的读数正是反过来——A、B 两行都 `superseded = TRUE`、当前行 0 条（当前审核记录丢失）。
+ *
  * 声明：只用**记录型假池**（合成 SQL 故障注入）+ 内存社区存储 + 替身审核端口；
  * 不连真库、不发网络请求、不调用真实模型。真库臂见 `tests/integration/moderation-ledger-pg.mjs`。
  */
@@ -44,21 +49,50 @@ function makeFakePool() {
     insert_attempts: 0,
     rows: new Map(),
     statements: [],
+    /** 事务快照：`BEGIN` 时留底、`ROLLBACK` 时整体还原（真库语义；否则失败语句的副作用会留在表里）。 */
+    snapshot: null,
   };
   const client = {
     async query(text, values) {
-      const label = String(text).trim().split(/\s+/u)[0];
+      const sql = String(text);
+      const label = sql.trim().split(/\s+/u)[0];
       db.statements.push(label);
-      if (label === 'BEGIN' || label === 'COMMIT' || label === 'ROLLBACK') return { rows: [] };
+      if (label === 'BEGIN') {
+        db.snapshot = new Map([...db.rows].map(([key, row]) => [key, { ...row }]));
+        return { rows: [] };
+      }
+      if (label === 'COMMIT') {
+        db.snapshot = null;
+        return { rows: [] };
+      }
+      if (label === 'ROLLBACK') {
+        if (db.snapshot !== null) db.rows = db.snapshot;
+        db.snapshot = null;
+        return { rows: [] };
+      }
+      if (label === 'SELECT') {
+        // 读回确认：`SELECT superseded … WHERE job_id = $1`（行不存在 ⇒ 0 行，由台账判失败）。
+        const row = db.rows.get(values[0]);
+        return { rows: row === undefined ? [] : [{ superseded: row.superseded }] };
+      }
       if (label === 'UPDATE') {
+        if (sql.includes('SET superseded = $2')) {
+          // 最小纠正：只改 superseded（真库上由授权列清单兜底）。
+          const row = db.rows.get(values[0]);
+          if (row !== undefined) row.superseded = values[1] === true;
+          return { rows: [] };
+        }
         // 退位语句：同一目标版本上仍现任的行置 superseded（与真库语义一致）。
+        // `job_id <> $6` 是真库的部分：语句带了这个约束才排除自己，否则（旧实现）连自己一起退位。
+        const exclude = values.length > 5 ? values[5] : null;
         for (const row of db.rows.values()) {
           if (
             row.target_type === values[0] &&
             row.target_id === values[1] &&
             row.target_revision === values[2] &&
             row.content_kind === values[3] &&
-            row.superseded === false
+            row.superseded === false &&
+            row.job_id !== exclude
           ) {
             row.superseded = true;
           }
@@ -220,6 +254,44 @@ test('FC3. 失败后对空队列 flush ⇒ 必须继续拒绝，且内存记录�
   assert.equal((await store.getPost(POST_ID)).visibility, 'private');
 });
 
+/** 一条形状完整的任务记录（字段取自 `moderation/types.ts` 的必填面）。 */
+function taskRecord(jobId) {
+  return {
+    job_id: jobId,
+    target_ref: TARGET,
+    content_kind: 'text',
+    port_kind: 'tms',
+    prompt_id: 'text_moderation',
+    job_revision: 1,
+    state: 'succeeded',
+    lease_token: null,
+    authorization_epoch: 3,
+    submitted_by: USER_A.userId,
+    deadline_at: null,
+    decision: 'approved',
+    reason_codes: [],
+    hard_rule_passed: true,
+    rule_version: 'mr1+sha256:b4309f21',
+    model_version: 'synthetic-tms-model@1.0',
+    prompt_version: 'mp1+sha256:e24f2f6a',
+    contract_value: null,
+    gate_holder: null,
+    error_code: null,
+    evidence: { execution_mode: 'stub', reasons: [], text_length: 12 },
+    superseded: false,
+    created_at: TS,
+    updated_at: TS,
+  };
+}
+
+const JOB_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const JOB_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+/** 表里仍现任的行（真库口径：`superseded = FALSE` 的行；部分唯一索引保证至多一条）。 */
+function currentRows(db) {
+  return [...db.rows.values()].filter((row) => row.superseded === false);
+}
+
 test('FC4. 存储恢复后再次 publish ⇒ 持久化成功才允许发布（正向对照）', async () => {
   const { db, pool } = makeFakePool();
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
@@ -242,4 +314,70 @@ test('FC4. 存储恢复后再次 publish ⇒ 持久化成功才允许发布（�
   assert.equal(db.rows.get(inMemory.job_id)?.decision, 'approved', '落库内容就是那条 approved 结论');
   assert.ok(db.insert_attempts >= 2, `建行必须被真正重试过（实际尝试 ${db.insert_attempts} 次）`);
   assert.equal(ledger.isDurable(inMemory), true, '落库确认后记录才是"已持久化"');
+});
+
+test('FC5. 同目标同 content_kind 的 A、B：重放不得把 B 一起退位（监工 P2 场景，恢复后恰好一条 current）', async () => {
+  const { db, pool } = makeFakePool();
+  const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
+
+  // ① A 建行被 42501 拒（整事务回滚）⇒ flush 拒绝，A 未落定。
+  const recordA = ledger.create(taskRecord(JOB_A));
+  await assert.rejects(
+    () => ledger.flush(),
+    (error) => error.code === 'PROVIDER_UNAVAILABLE',
+    'A 的建行落不了库 ⇒ flush 必须拒绝',
+  );
+  assert.equal(db.rows.size, 0, '失败事务必须整笔回滚：库中 0 行');
+  assert.equal(ledger.isDurable(recordA), false);
+
+  // ② 存储恢复后建 B（同目标、同 content_kind ⇒ 内存里 A 被 B 接任）。
+  //    B 的建行成功，但 **A 尚未落定** ⇒ 本次 flush 仍必须拒绝。
+  db.fail_insert = false;
+  const recordB = ledger.create(taskRecord(JOB_B));
+  assert.equal(ledger.current(TARGET, 'text')?.job_id, JOB_B, '内存 current 前进到 B');
+  await assert.rejects(
+    () => ledger.flush(),
+    (error) => error.code === 'PROVIDER_UNAVAILABLE',
+    'A 尚未落定 ⇒ 即便 B 这一笔成功，本次 flush 也必须拒绝（不得只报成功的那一笔）',
+  );
+  assert.equal(db.rows.get(JOB_B)?.superseded, false, '此时库里 B 是现任行');
+  assert.equal(db.rows.has(JOB_A), false, 'A 仍未落库');
+
+  // ③ 第三次 flush：重放 A（此时 A 已是历史任务）⇒ 必须收敛到「B 为 current、A 为 superseded」。
+  await ledger.flush();
+
+  assert.equal(db.rows.size, 2, 'A、B 各一行（重放不得产生第三行）');
+  const live = currentRows(db);
+  assert.equal(live.length, 1, `恢复后库中必须**恰好一条** current 行（实际 ${live.length} 条；0 条＝当前审核记录丢失）`);
+  assert.equal(live[0]?.job_id, JOB_B, 'current 行必须是 B');
+  assert.equal(db.rows.get(JOB_A)?.superseded, true, 'A 是历史行：必须被退位');
+  assert.equal(db.rows.get(JOB_B)?.superseded, false, 'B 是现任行：重放**不得**把 B 自己退位');
+  assert.equal(ledger.isDurable(recordB), true, 'B 落定后才是"已持久化"');
+  assert.equal(ledger.current(TARGET, 'text')?.job_id, JOB_B, '内存与库对"当前结论"的口径必须一致');
+});
+
+test('FC6. A、B 两笔都失败后再恢复：重放顺序必须收敛到「A 退位、B 现任」', async () => {
+  const { db, pool } = makeFakePool();
+  const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
+
+  const recordA = ledger.create(taskRecord(JOB_A));
+  await assert.rejects(() => ledger.flush(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
+  const recordB = ledger.create(taskRecord(JOB_B));
+  await assert.rejects(
+    () => ledger.flush(),
+    (error) => error.code === 'PROVIDER_UNAVAILABLE',
+    'A 未落定 ⇒ flush 拒绝（B 自己也刚刚失败）',
+  );
+  assert.equal(db.rows.size, 0, '两笔都失败（各自整笔回滚）时库里仍是 0 行');
+
+  // 存储恢复：一次 flush 重放两笔（按登记顺序 A → B）。
+  db.fail_insert = false;
+  await ledger.flush();
+
+  assert.equal(db.rows.size, 2);
+  assert.equal(db.rows.get(JOB_A)?.superseded, true, '先登记的 A 必须作为历史行落库');
+  assert.equal(db.rows.get(JOB_B)?.superseded, false, '后登记的 B 才是现任行');
+  assert.equal(currentRows(db).length, 1, '库中当前行恰好一条（部分唯一索引口径）');
+  assert.equal(ledger.isDurable(recordA), true, 'A 的历史行也确实落库了');
+  assert.equal(ledger.isDurable(recordB), true);
 });

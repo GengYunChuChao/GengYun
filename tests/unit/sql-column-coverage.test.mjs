@@ -409,8 +409,11 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 18,
-  sqlLiterals: 234,
-  statements: { INSERT: 38, UPDATE: 37, SELECT: 129, DELETE: 30 },
+  // 2026-10-22（#434 监工 P2）：`moderation/ledger-pg.ts` 建行后新增**读回确认**
+  // （`SELECT superseded … WHERE job_id = $1`）⇒ 字面量 234 → 235、SELECT 129 → 130、
+  // 列要求 1552 → 1553（public.moderation_decisions.superseded 的 SELECT 面，已在列级授权清单内）。
+  sqlLiterals: 235,
+  statements: { INSERT: 38, UPDATE: 37, SELECT: 130, DELETE: 30 },
   returningClauses: 71,
   onConflictClauses: 23,
   selectStar: 15,
@@ -419,8 +422,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 41,
-  columnRequirements: 1552,
-  coveredRequirements: 1498,
+  columnRequirements: 1553,
+  coveredRequirements: 1499,
   ledgerExemptions: 33,
   rowLockRequirements: 22,
   rowLockExemptions: 1,
@@ -438,7 +441,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'history': 16,
   'knowledge/service.ts': 4,
   'messages': 15,
-  'moderation/ledger-pg.ts': 4,
+  'moderation/ledger-pg.ts': 5,
   'ocr': 16,
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,
