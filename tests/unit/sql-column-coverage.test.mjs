@@ -433,7 +433,11 @@ const EXPECTED_EXTENDED_READINGS = {
   // 列要求 1552 → 1553（public.moderation_decisions.superseded 的 SELECT 面，已在列级授权清单内）。
   sqlLiterals: 235,
   statements: { INSERT: 38, UPDATE: 37, SELECT: 130, DELETE: 30 },
-  returningClauses: 71,
+  // 2026-10-22（#434 复审 §6）：同文件的**更新语句**补 `RETURNING job_id` 以确认"命中了几行"
+  // （真库匹配 0 行不报错）⇒ RETURNING 处 71 → 72、列要求 1553 → 1554、已覆盖 1499 → 1500
+  // （public.moderation_decisions.job_id 的 SELECT 面，已在 `20-login-roles.sql:994` 的列级授权清单内，
+  // 未改任何 GRANT、未新增 SQL 字面量）。
+  returningClauses: 72,
   onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
@@ -441,8 +445,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 41,
-  columnRequirements: 1553,
-  coveredRequirements: 1499,
+  columnRequirements: 1554,
+  coveredRequirements: 1500,
   ledgerExemptions: 33,
   rowLockRequirements: 22,
   rowLockExemptions: 1,
