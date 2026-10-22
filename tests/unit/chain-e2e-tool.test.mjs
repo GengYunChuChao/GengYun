@@ -143,7 +143,7 @@ test('CLI 上限为 0 臂立刻拒绝且退出码非 0，且不写证据', t => 
 // 值是 synthetic-not-a-real-*，不会命中任何真实账号；本臂只构造、不 synthesize，故零外呼零扣费。
 // 它证明的不是「供应商能通」，而是「配置→providerFor→resolveTc3Credentials→createLiveTtsProvider
 // 这条链在本 harness 里真的走得通」，从而阶段二的失败不会与 harness 自身的接线错误混为一谈。
-function syntheticFixtures(t) {
+function syntheticFixtures(t, credentialsOverride = {}) {
   const dir = outDir(t);
   const config = {
     env: 'dev',
@@ -181,6 +181,7 @@ function syntheticFixtures(t) {
     tencentSecretKey: 'synthetic-not-a-real-secret-key',
     tokenhubApiKey: 'synthetic-not-a-real-tokenhub-key',
     databaseUrl: 'postgres://synthetic-not-a-real-database',
+    ...credentialsOverride,
   };
   const configPath = join(dir, 'config.local.json');
   const credentialsPath = join(dir, 'credentials.local.json');
@@ -227,6 +228,31 @@ test('正控制：合成配置 + 合成凭据下 TTS 构造路径真的走到 wi
     if (value === credentials.appid) continue; // appid 是公开的微信 AppID，不是密钥
     assert.equal(raw.includes(value), false, '证据文件泄漏了凭据值');
   }
+});
+
+// —— 监工 1021-1806 [P2]：最终 CLI/JSON 必须保留**真实**命中数 ——
+// 回归面：入口曾无条件 `evidence.value_hits = 0`，把 live 臂的检查结果改写成常量。
+// 正控制做法：把合成凭据值设成「某条 say 行里必然出现的一段文字」（≥8 字符才参与扫描），
+// 于是 countCredentialLeaks 在 live 臂自己的日志里真的会命中 ⇒ 最终证据必须保留该非零值。
+// 值仍是 synthetic（'live provider 构造完成' 是日志文案，不是密钥），不命中任何真实账号。
+test('CLI live 臂保留非零凭据命中数：入口不得把 value_hits 无条件清零', t => {
+  const canary = 'live provider 构造完成';
+  const { dir, configPath, credentialsPath } = syntheticFixtures(t, { tencentSecretKey: canary });
+  const result = spawnSync(process.execPath, [
+    TOOL, '--approve-real-chain', '--tts', `--config=${configPath}`, `--private-env=${credentialsPath}`, `--out-dir=${dir}`,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  // 最终读数里看得见（不是 0），且证据 JSON 与它一致。
+  assert.match(result.stdout, /value_hits=1\b/);
+  const outFile = join(dir, 'chain-e2e-r29-phase2-live.json');
+  const evidence = JSON.parse(readFileSync(outFile, 'utf8'));
+  assert.equal(evidence.phase, 'phase2-live');
+  assert.equal(evidence.value_hits, 1, 'live 臂的真实命中数必须原样落进证据，不得被入口清零');
+  // TTS 构造路径确实走通了 ⇒ 这条日志真的被产出过（不是空跑出来的哨兵）。
+  assert.equal(evidence.chains.find(chain => chain.chain === 'tts').wired, true);
+  // 证据文件本身仍只留计数：连这个合成长串也不许落盘。
+  const raw = readFileSync(outFile, 'utf8');
+  assert.equal(raw.includes(canary), false, '证据文件只许出现命中数，不许出现被扫描的值');
 });
 
 // —— 逐次记账（指挥 m00277-A「任一次之外的外呼算超出，不得隐瞒」）——

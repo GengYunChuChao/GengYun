@@ -22,7 +22,9 @@
  * `globalThis.fetch` 换成计数器；任一链路真的想发包都会让 `outboundSends` 从 0 变 1，
  * 脚本末尾把它写进证据 JSON 的 `outboundSends` 字段并与 `calls` 一起断言。
  *
- * 只读：本脚本不写产品代码、不改配置、**不打印任何凭据值**（只打印 `value_hits=0`）。
+ * 只读：本脚本不写产品代码、不改配置、**不打印任何凭据值**（只打印 `value_hits=<n>`：
+ * plan-only 臂从不读凭据文件 ⇒ 恒 0；`--approve-real-chain` 臂读所选凭据文件 ⇒ 该字段是
+ * 对「本臂已产出的日志」的真实值命中数，不得在入口被清零）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -457,6 +459,9 @@ export async function dryRun({ args, limits, ledger, outbound }) {
     reservedCny: ledger.reservedCny,
     notices,
     calls_detail: ledger.entries,
+    // plan-only 臂根本不接 `privateEnvPath`（不读任何凭据文件）⇒ 值命中数必然为 0。
+    // 仅这一支允许显式写 0；real-chain 臂的命中数由 liveRun 自己给出（监工 1021-1806 [P2]）。
+    value_hits: 0,
   };
 }
 
@@ -515,6 +520,8 @@ export async function liveRun({ args, limits, ledger, outbound, say, privateEnvP
     outboundSends: outbound.outboundSends,
     reservedCny: ledger.reservedCny,
     calls_detail: ledger.entries,
+    // 真实命中数：扫的是**本臂自己**产出过的每一行 say（本回合 live 臂只构造、不发包，
+    // 但已读取所选凭据文件 ⇒ 该字段是有效检查，不是常量）。入口处不得再覆盖它。
     value_hits: countCredentialLeaks(sayLines, env ?? {}),
   };
 }
@@ -639,7 +646,17 @@ export async function main(argv = process.argv.slice(2)) {
   evidence.generatedAt = new Date().toISOString();
   evidence.repoHead = readHead();
   evidence.hardLimits = HARD_LIMITS;
-  evidence.value_hits = 0; // 阶段一不读凭据文件，值命中必然为 0
+  // 凭据值命中数由**各臂自己**给出（监工 1021-1806 [P2]）：plan-only 在 dryRun 里显式写 0，
+  // `--approve-real-chain` 由 liveRun 扫它自己的 say 行给出真实命中数。
+  // 这里**不得**再无条件清零 —— 那会把任何非零检查结果改写成「value_hits=0」，
+  // 与 `--approve-real-chain` 构造路径（tools/verify-chain-e2e-r29.mjs:487 确实读取所选凭据文件）不符。
+  // 缺字段即 fail-closed：新增的臂若忘了填，宁可拒绝也不静默计 0。
+  if (!Number.isInteger(evidence.value_hits)) {
+    throw new ChainGateRefusedError(
+      'VALUE_HITS_MISSING',
+      '证据缺少 value_hits：每个臂都必须显式给出凭据命中数，入口不得统一清零',
+    );
+  }
   evidence.accounting = summarizeAccounting({ snapshotBefore, snapshotAfter: ledger.snapshot(), entries: ledger.entries });
 
   if (!existsSync(args.outDir)) mkdirSync(args.outDir, { recursive: true });
