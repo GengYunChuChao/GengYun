@@ -293,7 +293,9 @@ const SERVICE_SOURCE = readFileSync(new URL('../../services/api/src/media/servic
 
 /** 按唯一锚点切出 `attachmentLimitFor` 的函数体（去掉空白与纯注释行）。 */
 function attachmentLimitBody(source) {
-  const anchor = 'function attachmentLimitFor(actor: MediaActor, purpose: unknown): number {';
+  // W12：`liveCommunityImageCount` 改成从持久化台账读（async），函数签名随之变成
+  // `async … : Promise<number>`。锚点机械跟随签名，下面 1)~4) 的判据一条未改。
+  const anchor = 'async function attachmentLimitFor(actor: MediaActor, purpose: unknown): Promise<number> {';
   const occurrences = source.split(anchor).length - 1;
   assert.equal(occurrences, 1, `锚点必须唯一出现，实际 ${occurrences} 次：${anchor}`);
   const start = source.indexOf(anchor) + anchor.length;

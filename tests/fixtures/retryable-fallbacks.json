@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 196
+      "files": 201
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 36,
-    "has": 35,
+    "total": 38,
+    "has": 37,
     "none": 1
   },
   "entries": [
@@ -61,14 +61,14 @@
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 90,
+      "line": 91,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 97,
+      "line": 98,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -166,8 +166,22 @@
     },
     {
       "file": "services/api/src/media/service.ts",
-      "line": 361,
+      "line": 364,
       "function": "rethrowMediaError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/media/store-pg.ts",
+      "line": 81,
+      "function": "classifyMediaDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/media/store-pg.ts",
+      "line": 84,
+      "function": "classifyMediaDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
@@ -187,14 +201,14 @@
     },
     {
       "file": "services/api/src/ocr/store-pg.ts",
-      "line": 131,
+      "line": 132,
       "function": "classifyOcrDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/ocr/store-pg.ts",
-      "line": 137,
+      "line": 138,
       "function": "classifyOcrDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -243,14 +257,14 @@
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 144,
+      "line": 145,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 150,
+      "line": 151,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"

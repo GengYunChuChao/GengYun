@@ -172,6 +172,24 @@
   `deploy/` 在册 **31** 个 ⇒ 读数由 26／25／31 变为 **27／26／31**。本片改动的 deploy 文件是
   `deploy/postgres-cvm/sql/20-login-roles.sql`（新增独立 region：审计读函数 EXECUTE），
   ⛔ 未动 media 系四张表。§2 表行与 §4 第 8 项的「当前读数」已按本树同步。
+- **返修复核（2026-10-22，PR #419／监工 1022-0659 轮 P1）**：本片返修新增
+  `0029_media_object_cleanup.sql` 与其 `rollback/0029_media_object_cleanup.down.sql`（媒体域「待清理对象台账」：
+  桶删除未确认时保留可重试的清理依据，独立于 `media` 行存活）。迁移号按开工前实测分配：`upstream/main`
+  最大号 `0027`，`0028` 已被在途 `#434`（`feat/gy-r29-moderation-ledger` 的
+  `0028_moderation_persistence.sql`）占用 ⇒ 本片取 **`0029`**，**未改号、未造占位迁移**。
+  按本树实测（`git ls-files`）：迁移 **28** 个（`0001..0027` ＋ `0029`；`0028` 是**在途缺号**、不是本片跳号）、
+  `rollback/` **27** 个（`0002..0027` ＋ `0029`，仍无 `0001`）、`deploy/` 在册仍 **31** 个
+  ⇒ 读数由 27／26／31 变为 **28／27／31**。⚠️ 断号期会让「`1..max` 连续无缺号」判据转红（缺 `0028`）：
+  `tests/integration/migrations-negative-pg.mjs`、`ocr-jobs-pg.mjs`、`recognitions-pg.mjs`、`speech-pg.mjs`
+  四份脚本各有一条同形判据；本 PR 的 CI 上实测 **`real-pg-17.11`** 与 **`auth-privacy-postgres-17.11`**
+  两条 job 因此判红，原始错误为
+  `AssertionError [ERR_ASSERTION]: 迁移版本号必须在 1..29 上连续无缺号（缺号＝发现器静默漏项：0028）`。
+  这是**并行 PR 的临时缺号**（`0028` 属在途 `#434`），不是发现器漏项、也不是本片代码缺陷；已按
+  `.pg17/ruling-r31-migration-gap-0028-20261022.md` 的裁定**接受为跨 PR 已知缺口并如实登记**：
+  ⛔ 不改那 4 条共享守卫、⛔ 不加断号 allowlist、⛔ 不给本片改号。
+  **复跑计划**：`#434` 合入 main 后，本分支 `git merge --no-ff origin/main`（⛔ 不 rebase、不 force）
+  ⇒ `0028` 随 main 进树、断号消失 ⇒ 复跑 `real-pg-17.11`／`auth-privacy-postgres-17.11` 两条 job
+  与上述 4 份脚本，期望全绿；在此之前 PR #419 维持 OPEN、不请求合并。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -235,7 +253,7 @@
 | [`../../docs/verification/database-run-handoff.md`](../../docs/verification/database-run-handoff.md) | 数据库组件运行交接：已合组件、运行前置、迁移与重放入口、回滚/停止/未交付项 | ✅ 在册 |
 | [`../../docs/release/runbook-20261022.md`](../../docs/release/runbook-20261022.md) | **一次发版**的端到端操作清单（GY-R31 · #24）：门禁 → 备份 → 恢复演练 → 迁移 → 启动 → 发布后验证 → 灰度放量判据 → 回滚（含 7 条量化触发条件）→ 值班分诊 → 演练记录 | ✅ 在册（门禁第 16 项按「10 个必备小节＋命令块下限＋无占位符」判据：`16/16 项通过`）；§9 的备份/删库/恢复读数为 2026-10-22 本机 PG 17.11 实跑，**CVM 与云托管侧未取得**，不代表已验收 |
 | [`../../docs/verification/gy-r31-i24-release-20261022.md`](../../docs/verification/gy-r31-i24-release-20261022.md) | **#24 交付证据页**（GY-R31）：材料盘点含 8 项空缺、runbook 内容摘要、备份→删库→恢复演练读数（PG 17.11 / 端口 55728）、门禁第 16 项改前红改后绿、5 条负控制、6 项未取得 | ✅ 在册；演练读数为 2026-10-22 本机实跑，**真实 CVM 发版未取得** |
-| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **28** 个：`0001..0028`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0028`（27 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。2026-10-21 `feat/gy-r28-speech-persist`（S20，#20 语音持久化）新增 `0026_speech_persistence.sql` 与其 down 脚本 ⇒ **26／25／31**。2026-10-22 合流 `origin/main` = `d4d48088` 后 `0027_admin_audit_observability.sql`（PR #428）与本片 `0028_moderation_persistence.sql`（PR #434）**并存**于同一棵树 ⇒ **28／27／31**。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
+| [`../../services/api/db/migrations/`](../../services/api/db/migrations/) | 迁移本体（当前 **29** 个：`0001..0029`，**连续无缺号**） | ✅ down 脚本覆盖 `0002..0029`（28 个）、无 `0001`（门禁第 8 项）；本行按**本片树**实测刷新：2026-10-20 `feat/gy-r28-recognitions-persist`（S13，#9 识别域持久化）新增 `0025_recognitions_persistence.sql` 与其 down 脚本 ⇒ **25／24／31**（`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy`；deploy 侧由 R28-S24 新增 `evidence/probe-runtime-grants.sql`，30 → 31）。2026-10-21 `feat/gy-r28-speech-persist`（S20，#20 语音持久化）新增 `0026_speech_persistence.sql` 与其 down 脚本 ⇒ **26／25／31**。2026-10-22 合流 `origin/main` = `1aa310fa` 后 `0027_admin_audit_observability.sql`（PR #428）、`0028_moderation_persistence.sql`（PR #434，已入 main）与本 PR 的 `0029_media_object_cleanup.sql`（#419）**三者在同一棵树** ⇒ **29／28／35**（deploy 侧 31 → 35 系 `origin/main` 新增材料带入；`git ls-files services/api/db/migrations` ∪ `…/rollback` ∪ `git ls-files deploy` 实测）。⇒ 本 PR 原先「1..29 缺 0028」的读数**已随 #434 入 main 自愈**，不再是缺号状态。此前的读数（并列历史，按原样保留）：2026-10-20 S10（#10 OCR 持久化）新增 `0024_ocr_persistence.sql` 与其 down 后为 **24／23／30**；再合流 `upstream/main` = `ff1b39d`（含 #295 的 `0023_user_backup_copies.sql` 及其 down 脚本）后为 **23／22／30**；合流前本树（`280054b`）为 **22／21／30**（PR #304 自身 **0 迁移**，`git diff --name-status upstream/main...HEAD -- services/api/db/migrations` 为空），main `df043a7` 侧同为 22／21 ⇒ `0023` 系上游 `#295` 原样带入、合并后仅一份、无改号；#295 侧叠在 #296 新 head（`71eda51`）之上时 23／22／30。 |
 | [`../../services/api/db/migrations/rollback/`](../../services/api/db/migrations/rollback/) | 结构 down 脚本（**不是**常规回滚工具；有审计数据时会拒绝并保留对象） | ✅ 覆盖性已核验；runbook §5.4 的「0002–0010」读数过期，见 §5-F1 |
 | [`../../services/api/src/db/migrate.ts`](../../services/api/src/db/migrate.ts) | 迁移入口：命令闭集 `up \| status \| list`（**无 down**） | ✅ 闭集报错文本在册（门禁第 8 项） |
 

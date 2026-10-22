@@ -9,8 +9,9 @@
  *   **结构性端口** `MessageAppendPort`，由装配层把真实的 `MessagesService` 传进来。
  * - 事件类型只用契约 `Message.type` 闭集 `comment|like|moderation|system`，且**按事件来源取值**：
  *   审核结果与下架属于平台对内容的处置 ⇒ `moderation`；他人评论 ⇒ `comment`；他人点赞 ⇒ `like`。
- *   `system` **首版无真实触发源**（见 `communityEventMessageType` 的注释与守卫用例
- *   `tests/unit/community-message-notifications.test.mjs`）：宁可没有系统消息，也不虚构一条。
+ *   **社区域不产 `system`**（见 `communityEventMessageType` 的注释与守卫用例
+ *   `tests/unit/community-message-notifications.test.mjs`）：宁可没有系统消息，也不虚构一条；
+ *   账号级系统事件（停用/恢复）由 `admin/ops/account-events.ts` 产出（#17 的 S1/S2），属另一个域。
  * - `event_key` = 「事件身份 + 版本」的去重键（`messages/types.ts` 的约定，
  *   例如 `comment:<comment_id>:r3`）。重复调度**不产生第二条消息**，且不重置读状态。
  * - `target_ref` 只用契约 `TargetRef` 闭集里的 `post` / `comment`，`revision` 取
@@ -116,7 +117,7 @@ export function communityEventKey(event: CommunityEvent): string {
   return `${head}:${event.reason.slice(0, 80)}`;
 }
 
-/** 契约 `Message.type` 的社区子集（本域只产出这三个值，**永不**产出 `system`）。 */
+/** 契约 `Message.type` 的社区子集（**本域 = 社区域**：只产出这三个值，永不产出 `system`）。 */
 export type CommunityMessageType = 'comment' | 'like' | 'moderation';
 
 /**
@@ -125,11 +126,12 @@ export type CommunityMessageType = 'comment' | 'like' | 'moderation';
  * 为什么不是"一律 moderation"：`Message.type` 是**给用户看的事件类别**，
  * 把"别人评论了你"记成审核处置会让收件箱语义错误、也没法按类型过滤。
  *
- * 为什么**不产** `system`：首版除 takedown 外没有任何系统事件生产点，而 takedown
- * 本质是平台对内容的处置结论（语义上就是 `moderation`）。凭空造一条 `system`
- * 通知 = 虚构事件，违反 issue #17 验收第 3 条「不虚构真人互动消息」。
+ * 为什么**社区域不产** `system`：takedown 本质是平台对内容的处置结论（语义上就是
+ * `moderation`），凭空造一条 `system` 通知 = 虚构事件，违反 issue #17 验收第 3 条
+ * 「不虚构真人互动消息」。**账号级**系统事件（停用/恢复）由 admin 端口
+ * `admin/ops/account-events.ts` 产出（#17 的 S1/S2），不属本域。
  * 守卫用例 `tests/unit/community-message-notifications.test.mjs` 把这条钉成断言：
- * 一旦有人新增 `system` 生产点，它会红，提醒同时补验收。
+ * `system` 生产点只允许出现在该白名单文件里，社区域仍须零命中；新增时必须补验收。
  */
 export function communityEventMessageType(event: CommunityEvent): CommunityMessageType {
   if (event.event === 'comment_created') return 'comment';

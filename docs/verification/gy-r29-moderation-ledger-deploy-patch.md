@@ -82,9 +82,9 @@
 
 ---
 
-## 3 运行时授权：`20-login-roles.sql` 段 M ＋ `90-assert` 清单与真执行探针
+## 3 运行时授权：`20-login-roles.sql` 段 M3 ＋ `90-assert` 清单与真执行探针
 
-### 3.1 段 M（`deploy/postgres-cvm/sql/20-login-roles.sql` 末尾）
+### 3.1 段 M3（`deploy/postgres-cvm/sql/20-login-roles.sql` 末尾；合流 W12 时段 M 与媒体域撞号，本段重编号为 M3，段 M／M2 归媒体域）
 
 `-- #region gy-r29-moderation-ledger-grant`：先 `DO $$ … $$` 用 `to_regclass` 点名缺表
 （`RAISE EXCEPTION '缺少审核判定台账表：%…'`），再 `REVOKE ALL ON TABLE … FROM PUBLIC`，

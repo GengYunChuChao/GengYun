@@ -54,6 +54,8 @@ import { createPostgresFavoritesStore } from '../../services/api/src/favorites/s
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryRecognitionStore } from '../../services/api/src/recognitions/store.ts';
+import { createSubstituteMediaPort } from '../../services/api/src/recognitions/media.ts';
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
@@ -683,6 +685,146 @@ try {
   }
   assert.equal(await histCount(c.user.id), 4, '404 不得改行数');
   say('历史删除：HTTP 202 accepted + X-GY-Cascade；再删同 id / 从未存在 / 他人 id 三者 404 逐字同形');
+
+  // =======================================================================
+  // 14. real 终态端口 → appendHistory（R31-I16 本片新增；监工拒关 #16 的缺口）
+  // =======================================================================
+  // 修正前：`services/api/src/app.ts` 的端口选择只看 `config.executionMode === 'real'` ⇒ `real` + 真库
+  // 也拿 `createUnwiredRecognitionTerminalHistoryPort`（`recordTerminal()` 空实现）⇒ **生产终态不
+  // `appendHistory`**（上一节的读数全部来自脚本**直调**内部口，覆盖不到这条链路）。本节把修正后的
+  // 链路在**真 PG** 上走通并逐项对账：
+  //   服务层受理 → 异步执行 → `store.commitTerminal` 成功 → 终态端口 `recordTerminal`
+  //   → `recordHistoryTerminal` → `historyService.appendHistory({…, event_key: 'recognition:<job_id>'})`
+  //   → 真表 `history` 一行。
+  //
+  // **装配口径（如实登记，不得读成"全量生产装配"）**：
+  //   1. 本节只应用 0001/0008/0018，没有外发账本（0011）与授权策略（0003/0009）所需的表。若把**完整**
+  //      连接池交给 app，`app.ts` 会按 `real` 的既有逻辑装配外发账本与授权门，于是每次派发都在
+  //      "受理/执行前" fail-closed，根本走不到终态 ⇒ 本节什么也证明不了。故交给 app 的是**只有
+  //      query 面**的池 —— 这正是 `app.ts` 已实现的降级装配路径（`egressPoolUsable` 只看
+  //      `connect()/query()` 形状，缺 `connect()` 即"不装配账本并告警"，不抛、不静默降级为替身）。
+  //   2. 识别提供者/媒体端口是**显式标注的合成替身**（零外呼）；识别 store 用内存实现（识别域的
+  //      PG 持久化由 `tests/integration/recognitions-pg.mjs` 负责，不是本节的对象）。
+  //   3. **历史 store 仍是真 PG**（`createPostgresHistoryStore`，与生产同一实现），行落进本节的真库。
+  const syntheticRecognition = {
+    executionMode: 'stub',
+    modelVersion: 'synthetic-history-pg-v1',
+    available: true,
+    unavailableReason: null,
+    async recognize() {
+      return {
+        kind: 'completed',
+        candidates: [
+          { species_id: 'synthetic_pg_weed_a', rank: 1, model_score: 0.83 },
+          { species_id: 'synthetic_pg_weed_b', rank: 2, model_score: 0.41 },
+          { species_id: 'synthetic_pg_weed_c', rank: 3, model_score: 0.12 },
+        ],
+        uncertainty_reasons: [],
+      };
+    },
+  };
+  const d = await account('d');
+  const terminalApp = buildApp({
+    config,
+    store: auth,
+    pool: { query: (text, values) => pool.query(text, values) },
+    recognitionStore: createMemoryRecognitionStore(),
+    recognitionProvider: syntheticRecognition,
+    recognitionMedia: createSubstituteMediaPort(),
+    now: () => new Date(),
+  });
+  let terminalAppOpen = false;
+  try {
+    assert.equal(terminalApp.historyService !== null, true, 'real + 真库 ⇒ 历史服务必须开启');
+    assert.equal(
+      terminalApp.recognitionService.describe().historyPort,
+      'wired',
+      'real + 真库 ⇒ 识别终态端口必须 wired（修正前这里恒 unwired ⇒ 本断言即红/绿分界）',
+    );
+    assert.equal(
+      terminalApp.ocrService.describe().historyPort,
+      'wired',
+      'OCR 终态端口与识别端口共用同一判据（real + 真库 ⇒ wired）',
+    );
+    say('real + 真库：识别/OCR 终态端口均为 wired（修正前 real 分支恒 unwired）');
+
+    const createdJob = await terminalApp.recognitionService.createRecognition({
+      userId: d.user.id,
+      body: { media_id: randomUUID(), media_revision: 1 },
+      idempotencyKey: 'real-term-pg-0001',
+    });
+    await terminalApp.recognitionService.settle();
+    const terminalJob = await terminalApp.recognitionService.getJob({
+      userId: d.user.id,
+      jobId: createdJob.job.id,
+    });
+    assert.equal(terminalJob.state, 'succeeded', '合成提供者必然给出成功终态');
+
+    const termRows = (
+      await owner.query(
+        `SELECT owner_id, kind, target_type, target_id, target_revision, job_id, job_state, event_key
+           FROM history WHERE owner_id = $1 ORDER BY created_at DESC, id DESC`,
+        [d.user.id],
+      )
+    ).rows;
+    assert.equal(termRows.length, 1, '终态必须落 1 行（修正前 real 分支 ⇒ 0 行：本节就是那条红/绿分界）');
+    const termRow = termRows[0];
+    assert.equal(termRow.owner_id, d.user.id, '归属只来自服务端会话');
+    assert.equal(termRow.kind, 'recognition');
+    assert.equal(termRow.job_id, createdJob.job.id);
+    assert.equal(termRow.job_state, 'succeeded', '终态原样入库，不被折叠/改写');
+    assert.equal(termRow.event_key, `recognition:${createdJob.job.id}`, 'event_key 确定性：<kind>:<job_id>');
+    assert.equal(termRow.target_type, 'recognition');
+    assert.equal(termRow.target_id, terminalJob.target_ref.id, 'target_ref 指向真实识别记录');
+    say('real 终态端口 → appendHistory：真库 history 恰 1 行，owner/kind/job_id/job_state/target_ref/event_key 逐项对账');
+
+    // 同任务**重复投递** ⇒ no-op（端口重投的形状就是同一份入参再来一次）。
+    const replay = await terminalApp.historyService.appendHistory({
+      owner_id: d.user.id,
+      kind: 'recognition',
+      target_ref: terminalJob.target_ref,
+      job_id: createdJob.job.id,
+      job_state: 'succeeded',
+      event_key: `recognition:${createdJob.job.id}`,
+    });
+    assert.equal(replay.created, false, '同 (owner,event_key) 重投必须 created:false');
+    assert.equal(await histCount(d.user.id), 1, '重投不得加行');
+    assert.equal(
+      (await owner.query('SELECT count(*)::int n FROM history WHERE owner_id = $1 AND event_key = $2', [
+        d.user.id,
+        `recognition:${createdJob.job.id}`,
+      ])).rows[0].n,
+      1,
+      'history_owner_event_key 唯一索引下只留 1 行',
+    );
+    say('real 接线：同任务重复投递 no-op（created=false、真库行数不变、唯一索引下只留 1 行）');
+
+    // 归属/权限：他人（b）读不到这一行（HTTP 面同形；不泄露存在性）。
+    await terminalApp.listen({ host: '127.0.0.1', port: 0 });
+    terminalAppOpen = true;
+    const terminalBase = `http://127.0.0.1:${terminalApp.server.address().port}`;
+    const terminalGet = async (path, actor) => {
+      const response = await fetch(terminalBase + path, { headers: { authorization: `Bearer ${actor.token}` } });
+      return { status: response.status, body: await response.json() };
+    };
+    const mine = await terminalGet('/api/v1/history', d);
+    assert.equal(mine.status, 200, JSON.stringify(mine.body));
+    assert.deepEqual(
+      mine.body.data.items.map((row) => ({ kind: row.kind, job_state: row.job_state, id: row.id })),
+      [
+        {
+          kind: 'recognition',
+          job_state: 'succeeded',
+          id: (await owner.query('SELECT id FROM history WHERE owner_id = $1', [d.user.id])).rows[0].id,
+        },
+      ],
+      'HTTP 列表读到的就是终态端口刚落的那一行（不是脚本直调的）',
+    );
+    assert.deepEqual((await terminalGet('/api/v1/history', b)).body.data, { items: [], next_cursor: null }, '他人历史必须为空');
+    say('real 接线：写进去的那一行经 GET /history 读回（本人可见、他人为空）');
+  } finally {
+    if (terminalAppOpen) await terminalApp.close().catch(() => {});
+  }
 
   await app.close();
   app = null;

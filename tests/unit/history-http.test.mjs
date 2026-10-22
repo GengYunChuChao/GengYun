@@ -763,6 +763,9 @@ test('历史HTTP·接线：real 有 pool ⇒ 接 PG store，历史行真的落�
     await db.query('INSERT INTO users (id) VALUES ($1::uuid)', [account.user.id]);
   }
   assert.notEqual(h.app.historyService, null, 'real + 真实持久 store ⇒ 服务必须开启（有 pool 的分支）');
+  // 同一条判据也决定两个终态端口：real + PG store ⇒ 必须 wired（修正前只看执行模式 ⇒ 恒 unwired）。
+  assert.equal(h.app.recognitionService.describe().historyPort, 'wired');
+  assert.equal(h.app.ocrService.describe().historyPort, 'wired');
 
   const appended = await append(h.app, { owner_id: h.a.user.id, job_state: 'failed' });
   assert.equal(appended.created, true);
@@ -934,4 +937,130 @@ test('历史HTTP·接线·F4：入库 event_key 必须确定性，且幂等不�
   assert.equal(attemptedKeys.length, 1, '重放必须由 event_key 索引挡下，不得动用第二道目标去重');
   assert.deepEqual(attemptedKeys, [key], '全程只允许这一个确定性键进入 store');
   assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// R31-I16（#16）· **real 判据修正**的接线锁（本片新增，2026-10-22）
+//
+// 监工拒关 #16 的缺口：`app.ts` 的端口选择只看 `config.executionMode === 'real'` ⇒ `real` + 真库时
+// 终态端口仍是 unwired（`recordTerminal()` 空实现）⇒ **生产终态不 `appendHistory`**；
+// 真库臂里那条 `appendHistory` 是脚本**直调**内部口，不覆盖 `recordTerminal → appendHistory`。
+//
+// 修正后的判据＝「历史域是否真的开启」，与 `historyService` 的装配门禁**同一表达式**
+// （`real && !historyStore.persistent ⇒ null`）。下面两条用例锁死它的两侧取值，且都打
+// **生产装配**（`buildApp` 建的应用）——不是自己 new 一个端口再自证。
+// ---------------------------------------------------------------------------
+
+/**
+ * 旁路：把内存 store 标成**持久**（`persistent: true`），并记录**每次真正进入 store 的插入尝试**。
+ *
+ * 为什么可以这样标：`persistent` 是装配层唯一的「有没有真实持久化落点」信号（PG store 恒 `true`，
+ * 见 `history/store-pg.ts`）。本用例验证的是**判据与接线**（端口选择 + `recordTerminal → appendHistory`
+ * 这段调用链），不是 PG 本身 —— PG 那一层由本文件「real 有 pool」用例与真库臂
+ * `tests/integration/favorites-history-pg.mjs` 覆盖。
+ */
+function persistentHistoryStoreSpy() {
+  const inner = createMemoryHistoryStore();
+  const attempts = [];
+  const store = Object.create(inner);
+  store.persistent = true;
+  store.insertHistory = async (record) => {
+    attempts.push(record.event_key);
+    return inner.insertHistory(record);
+  };
+  return { store, attempts };
+}
+
+test('历史HTTP·real 判据：real + 持久 historyStore ⇒ 识别终态端口 wired，终态真的走 appendHistory（确定性 event_key、重投 no-op）', async (t) => {
+  const { store, attempts } = persistentHistoryStoreSpy();
+  const h = await fixture(t, {
+    real: true,
+    historyInjection: { store },
+    // 识别提供者/媒体端口显式注入替身：**不触外部网络**；被测的是 `app.ts` 的 real 判据与终态端口。
+    recognitionProvider: createStubRecognitionProvider(),
+    recognitionMedia: createSubstituteMediaPort(),
+  });
+
+  // ① 判据：real + 持久落点 ⇒ 服务开启、两个终态端口都 wired。
+  //    （修正前这里恒为 unwired ⇒ 本条断言就是红/绿分界，撤下接线即失败。）
+  assert.notEqual(h.app.historyService, null, 'real + 持久 store ⇒ 历史服务必须开启');
+  assert.equal(h.app.recognitionService.describe().historyPort, 'wired');
+  assert.equal(h.app.ocrService.describe().historyPort, 'wired', 'OCR 端口与识别端口共用同一判据');
+  assert.match(h.app.recognitionService.describe().historyNote, /appendHistory/);
+
+  // ② 旁路记录 `appendHistory` 的**真实入参**（端口的唯一副作用就是这一次调用）。
+  const calls = [];
+  const original = h.app.historyService.appendHistory.bind(h.app.historyService);
+  h.app.historyService.appendHistory = async (input) => {
+    calls.push(structuredClone(input));
+    return original(input);
+  };
+
+  // 归属者用夹具自建的会话（real 模式下微信登录面要求持久会话 store ⇒ 503，与本片无关：
+  // 这里只要一个**真实鉴权守卫放行**的主体，`h.a` 就是认证 store 里真建的用户 + 真会话）。
+  const actor = h.a;
+  const created = await createRecognition(h.base, actor, mediaIdForStubBucket(0), 'real-wire-000001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const job = created.body.data;
+  const terminal = await waitForTerminal(h.base, actor, job.id);
+  assert.equal(terminal.state, 'succeeded');
+
+  // ③ `recordTerminal` 真的调到了内部创建口：**一次**，入参逐字段正确。
+  assert.equal(calls.length, 1, '一次成功终态只允许一次 appendHistory（修正前 real 分支 ⇒ 0 次）');
+  const [payload] = calls;
+  assert.equal(payload.owner_id, actor.user.id, 'owner 只来自服务端会话，绝不来自客户端');
+  assert.equal(payload.kind, 'recognition');
+  assert.equal(payload.job_id, job.id);
+  assert.equal(payload.job_state, 'succeeded');
+  assert.deepEqual(payload.target_ref, terminal.target_ref);
+  // ④ `event_key` **确定性**：恰 `<kind>:<job_id>`（不含时间戳/随机数/序号）。
+  assert.equal(payload.event_key, `recognition:${job.id}`);
+  assert.match(payload.event_key, /^recognition:[0-9a-f-]{36}$/);
+  // ⑤ store 层只发生一次插入尝试，键就是那一把。
+  assert.deepEqual(attempts, [`recognition:${job.id}`]);
+
+  const page = await h.call('GET', HISTORY, actor);
+  assert.equal(page.status, 200);
+  assert.equal(page.body.data.items.length, 1, '终态写入后 GET /history 必须能读到（撤下接线 ⇒ 0 条）');
+  const item = page.body.data.items[0];
+  assert.deepEqual(Object.keys(item).sort(), [...HISTORY_KEYS].sort());
+  assert.equal(item.job_state, 'succeeded');
+  // ⑥ 不产生任何「已使用」事实（F18：识别/收藏不自动形成实际用药）。
+  for (const forbidden of ['used', 'usage', 'used_at', 'selected_species_id']) {
+    assert.equal(Object.hasOwn(item, forbidden), false, `历史不得含 ${forbidden}`);
+  }
+
+  // ⑦ 同任务重复投递 ⇒ **no-op**：拿捕获到的**同一份入参**再投一次（这正是端口重投的形状）。
+  const replay = await original(payload);
+  assert.equal(replay.created, false, '同 (owner,event_key) 重投必须 created:false');
+  assert.equal(replay.history.id, item.id, '重投必须回放同一条既有历史行');
+  assert.equal(attempts.length, 1, '重投必须由 (owner,event_key) 唯一索引挡下，不得再插一次');
+  assert.equal((await h.call('GET', HISTORY, actor)).body.data.items.length, 1, '重投不得追加第二条');
+});
+
+test('历史HTTP·real 判据：real + 注入内存 historyStore（persistent:false）⇒ 端口仍 unwired、路由仍 503、终态零行', async (t) => {
+  const memoryStore = createMemoryHistoryStore();
+  const h = await fixture(t, {
+    real: true,
+    historyInjection: { store: memoryStore },
+    recognitionProvider: createStubRecognitionProvider(),
+    recognitionMedia: createSubstituteMediaPort(),
+  });
+
+  // 判据看的是 `store.persistent`，不是「有没有注入 store」：注入的内存 store 在 real 下**不得**绕过门禁。
+  assert.equal(h.app.historyService, null);
+  assert.equal(h.app.recognitionService.describe().historyPort, 'unwired');
+  assert.equal(h.app.ocrService.describe().historyPort, 'unwired');
+  const page = await h.call('GET', HISTORY, h.a);
+  assert.equal(page.status, 503, 'real + 不持久 ⇒ 5 条历史路由仍整域 503（不放宽守卫）');
+  assert.equal(page.body.error.code, 'PROVIDER_UNAVAILABLE');
+
+  // 任务照常执行（未接线 ≠ 任务失败），但**不产生**任何历史行（不伪造一片可用历史）。
+  const actor = h.a;
+  const created = await createRecognition(h.base, actor, mediaIdForStubBucket(0), 'real-unwired-0001');
+  assert.equal(created.status, 202, JSON.stringify(created.body));
+  const terminal = await waitForTerminal(h.base, actor, created.body.data.id);
+  assert.equal(terminal.state, 'succeeded');
+  assert.deepEqual(await memoryStore.listHistoryByOwner(actor.user.id), [], 'real 无持久落点 ⇒ 终态零历史行');
+  assert.equal(await memoryStore.findByEventKey(actor.user.id, `recognition:${created.body.data.id}`), null);
 });

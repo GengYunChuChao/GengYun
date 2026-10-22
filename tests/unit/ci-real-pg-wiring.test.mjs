@@ -66,7 +66,13 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * UP／ROLLBACK／REPLAY，故也顺带守住迁移清单不变量）。
  * 另起 17.11 集群（CI 里只有容器内的 17.11）。见证据页
  * `docs/verification/gy-r28-real-pg-wiring-3-20261020.md` 的「不接的两条」。
- * 第 12 条是 R28-S49 接的（备份副本域 GY-I19／迁移 0023 的 apply→rollback→replay 三连 + 注销受理在**同一事务**
+ * 第 12 条是 R28-W12 接的（媒体持久化 `media-persistence-pg.mjs`／#6／#16：媒体域从进程内登记册
+ * 切到 PG 仓储 + `object_ref_cipher` 键接线 + 幂等落库）。它要求**空库**（硬钉 `gengyun_media_test`）、
+ * 判据同第 11 条：自己 `applyMigrations(discoverMigrations())` 跑**全链 26 个迁移**，然后跑
+ * 三段式上传／owner 逐字节读／非 owner `NOT_FOUND`／同键重复 complete 行数不变／**子进程真重启**后
+ * 同一 uploadId 仍可读／缺 `MEDIA_OBJECT_REF_KEY` 时媒体域整域 503（fail-closed）／空仓储负控制，
+ * 全程库 owner 连接、不建组角色 ⇒ 对前后脚本零耦合。
+ * 第 13 条是 R28-S49 接的（备份副本域 GY-I19／迁移 0023 的 apply→rollback→replay 三连 + 注销受理在**同一事务**
  * 里写清单 + 30 天保留窗口到期清除）：它是清单里**唯一**的「自起集群」脚本——只连自己 `initdb` 出来的临时
  * 17 集群（脚本 `:89` 端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录），**不**连
  * `services.postgres` 的那个库，因此它的 step **没有** `CREATE DATABASE`。判据⑦⑧ 对这类脚本换成
@@ -75,17 +81,22 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 早先 R28-S14 判它接不了，是因为 runner 上取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只在容器内）；
  * R28-S49 改成先一步用 PGDG apt 装 `postgresql-17` 再跑，见
  * `docs/verification/gy-r28-backup-purge-ci-20261021.md` 与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`。
- * 第 13 条是 R28-S65 接的（识别**端到端链路** `recognition-chain-e2e.mjs`／迁移 0001+0018 的**子集**）：
+ * 第 14 条是 R28-E5 接的（备份副本 30 日到期**清除驱动** `backup-copies-purge-pg.mjs`，`#398` 合入的脚本）：
+ * 它与第 13 条**同类**（自起集群、只连自己 `initdb` 出来的临时 17 集群、跑完 `pg_ctl stop` 并删数据目录），
+ * 因此判据⑦⑧ 走同一套 `SELF_CLUSTERED_SCRIPTS` 等价判据（必须给 `GY_PG_BIN`／**它自己读的**根键、
+ * ⛔ 不得出现 `CREATE DATABASE`）；**装包 step 不重复**——它复用第 13 条那一步装的
+ * `/usr/lib/postgresql/17/bin`。缺 `GY_PG_BIN` 时脚本 exit 77 ⇒ 装包/路径没弄好必红，⛔ 不是通过。
+ * 见 `docs/verification/gy-r28-e5-backup-driver-ci-20261021.md`。
+ * 第 15 条是 R29-W13 接的（`messages-purge-pg.mjs`，`#405`／W11 的注销**行数**脚本）：与第 13/14 条同类的
+ * 自起集群脚本，唯一差别是它读的数据根目录键是 `GY_W11_PG_ROOT`（不是 `GY_I19_PG_ROOT`；键名按脚本映射，
+ * 见 `SELF_CLUSTERED_ROOT_KEY`，给错键只会多一条装饰性 env 而脚本照样落 `os.tmpdir()`）。
+ * 第 16 条是 R28-S65 接的（识别**端到端链路** `recognition-chain-e2e.mjs`／迁移 0001+0018 的**子集**）：
  * 它是清单里**唯一**文件名不叫 `-pg.mjs` 的脚本（`-e2e.mjs`），因此 `scriptsRunByWorkflow()` 的识别口径
  * 从「只认 `-pg.mjs`」放宽到「`-pg.mjs` 或 `-e2e.mjs`」——这不是放宽**断言**，而是放宽**被识别的脚本口径**，
  * 判据⑨的双向相等一个字没动（少了它这条脚本永远进不了判据⑨，加进清单只会变成永久假红）。
  * 它要求**空库**、只走 env `RECOGNITION_CHAIN_PG_TEST_URL`（库 owner），内部起 loopback 真 HTTP，
  * 且缺 env 时 exit 77 ⇒ step 里必须把 77 显式升级成硬失败（见 workflow 该 step 与
  * `docs/verification/gy-r28-recognition-chain-ci-20261021.md`）。
- * 第 14 条是 R28-E5 接的（备份副本 30 日到期**清除驱动** `backup-copies-purge-pg.mjs`，`#398` 合入的脚本）：
- * 它与第 12 条**同类**（自起集群、只连自己 `initdb` 出来的临时 17 集群、跑完 `pg_ctl stop` 并删数据目录），
- * 因此判据⑦⑧ 走同一套 `SELF_CLUSTERED_SCRIPTS` 等价判据（必须给 `GY_PG_BIN`／**它自己读的**根键、
- * ⛔ 不得出现 `CREATE DATABASE`）；**装包 step 不重复**——它复用第 12 条那一步装的
  * `/usr/lib/postgresql/17/bin`。缺 `GY_PG_BIN` 时脚本 exit 77 ⇒ 装包/路径没弄好必红，⛔ 不是通过。
  * 见 `docs/verification/gy-r28-e5-backup-driver-ci-20261021.md`。
  * 第 15 条是 R29-S13 接的（`community-filter-pg.mjs`／#15 的**筛选**真库读数：`GET /posts` 的
@@ -111,6 +122,8 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/moderation-ledger-pg.mjs',
+  'tests/integration/media-persistence-pg.mjs',
+  'tests/integration/media-concurrency-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -134,6 +147,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
   'tests/integration/moderation-ledger-pg.mjs',
+  'tests/integration/media-persistence-pg.mjs',
+  'tests/integration/media-concurrency-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
@@ -216,13 +231,32 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    ⛔ 不要把它挪到那条装包 step 之后：它不需要 `initdb`/`pg_ctl`，混进自起集群那批会让两类失败读数纠缠。
   //    它的顺序同时是「0027 缺号」的机器化自证：缺号时本步红，⛔ 不靠等 #428 把红的说成绿。
   'tests/integration/moderation-ledger-pg.mjs',
-  // 12. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
+  // 12. `media-persistence-pg`（R28-W12 接入，#6／#16 的媒体持久化）：与第 11 条**同型**——自建专用空库
+  //    （硬钉 `gengyun_media_test`）、自己 `applyMigrations(discoverMigrations())` 跑**全链 26 个迁移**
+  //    （与 `npm run db:migrate` 同一条代码路径，因此判据⑦⑧ 的「空库 + 先建库」对它同样成立）、
+  //    再做三段式上传／owner 逐字节读／非 owner `NOT_FOUND`／同键重复 complete 行数不变／子进程真重启后
+  //    同 uploadId 仍可读／缺 `MEDIA_OBJECT_REF_KEY` 时整域 503／空仓储负控制，全程**库 owner** 连接、
+  //    不建组角色、不复用别人的运行时角色 ⇒ 对前后脚本零耦合。
+  //    它排在语音域之后、自起集群那两条之前：本步只碰自己库内的表，唯一的新增前提是「库还不存在」，
+  //    而 `CREATE DATABASE` 就在它自己的 step 里（判据⑦⑧）。
+  'tests/integration/media-persistence-pg.mjs',
+  // 12b. `media-concurrency-pg`（R28-W12 的**并发面**读数，`#6`／`#16`）：与第 12 条**同型**——自建专用空库
+  //    （硬钉 `gengyun_media_concurrency_test`）、自己 `applyMigrations(discoverMigrations())` 空库自举
+  //    （因此判据⑦⑧ 的「空库 + 先建库」对它同样成立）、全程**库 owner** 连接、不建组角色、不复用别人的
+  //    运行时角色 ⇒ 对前后脚本零耦合。跑的是同一媒体对象的两次**并发** `complete`（恰好一个 202、一个 409）、
+  //    同一 `Idempotency-Key` **跨主体**的 scope 判定（不回放他人回执）、`reject()` 的条件写布尔语义。
+  //    ⛔ 必须**独立库**、⛔ 不要并进第 12 条那一步：第 12 条的读数里有**全库** `count(*)`
+  //    （`media-persistence-pg.mjs:273-275`、`:289-291`、`:426`，证「同一幂等键重复 complete 行数不变」），
+  //    共库会让两边的行数互相污染 ⇒ 两条臂都变成假读数。
+  //    它紧跟第 12 条：同一脚本族并排读，且它的唯一前提也是「库还不存在」（`CREATE DATABASE` 在它自己的 step 里）。
+  'tests/integration/media-concurrency-pg.mjs',
+  // 13. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
-  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_PG_BIN_ENV`）。它紧跟那条装包 step（装包只做一次，见第 13 条），
+  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_PG_BIN_ENV`）。它紧跟那条装包 step（装包只做一次，见第 14 条），
   //    本步也不依赖 service 口令 ⇒ 位置只受「装包在它之前」约束。
   'tests/integration/backup-purge-pg.mjs',
-  // 13. `backup-copies-purge-pg`（R28-E5 接入，`#398`／GY-I19 的 P0-4 执行者）：与第 12 条**同类**的自起集群
+  // 14. `backup-copies-purge-pg`（R28-E5 接入，`#398`／GY-I19 的 P0-4 执行者）：与第 13 条**同类**的自起集群
   //    脚本（自己 `initdb` 出临时 17 集群、端口 55600+randomInt(0,300) 且先探活、自建
   //    `gengyun_backup_purge_driver_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合；`GY_PG_BIN` 同样必须指到 `/usr/lib/postgresql/17/bin`。
@@ -230,17 +264,17 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    它排在 `backup-purge` 之后而不是之前，是因为它复用同一次装包的结果、且与本步一样只在临时目录里活动；
   //    两步共用 `GY_I19_PG_ROOT` 也安全（数据目录名各带随机后缀、前一步收尾已删干净）。
   'tests/integration/backup-copies-purge-pg.mjs',
-  // 14. `messages-purge-pg`（R29-W13 接入，`#405`／W11 合入的脚本，`#17` 消息域注销**行数**）：与第 12/13 条
+  // 15. `messages-purge-pg`（R29-W13 接入，`#405`／W11 合入的脚本，`#17` 消息域注销**行数**）：与第 13/14 条
   //    **同类**的自起集群脚本（自己 `initdb` 出临时 17 集群、端口 55700–55999 且**先探活**、自建
   //    `gengyun_messages_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
-  //    ⚠️ 它与第 12/13 条有一处关键差异：它读的数据根目录键是 **`GY_W11_PG_ROOT`**（脚本 `:92`），
+  //    ⚠️ 它与第 13/14 条有一处关键差异：它读的数据根目录键是 **`GY_W11_PG_ROOT`**（脚本 `:92`），
   //    ⛔ 不是 `GY_I19_PG_ROOT`。键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`；给错键只会多一条
   //    装饰性 env（守卫绿、脚本照样落 `os.tmpdir()`）——这正是本片修掉的假绿。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
   //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
   'tests/integration/messages-purge-pg.mjs',
-  // 15. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
+  // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
   //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
   //    `public` 下的表，非 0 直接断言失败）；② 只 apply 它需要的两段迁移（0001 身份 + 0018 历史）并断言

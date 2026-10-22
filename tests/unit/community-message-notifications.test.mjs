@@ -1,5 +1,5 @@
 /**
- * GY-I17（#17）第 7 片 · **他人评论 / 他人点赞**通知 + 「系统事件首版不虚构」守卫。
+ * GY-I17（#17）第 7 片 · **他人评论 / 他人点赞**通知 + 「系统事件生产点白名单」守卫。
  *
  * 覆盖（issue #17 验收第 1、2、3、4 条）：
  *   N1 他人评论 ⇒ 被评论帖子的作者收到**恰好一条** `comment` 消息（跳转目标 = 该帖子、
@@ -11,8 +11,8 @@
  *   N6 被下架的对象：评论/点赞在落库前就 404，作者的消息数不变（不给不可见对象新增消息）；
  *   N7 端到端（HTTP）：`GET /messages` 里 comment/like 与审核消息并存、`unread-count` 可复核、
  *      标读幂等且单调、他人无权读 404；
- *   N8 守卫：`type: 'system'` 首版**无真实触发源**，本域**永不**产出 `system`（今天全仓
- *      零生产赋值；将来有人加了会红，提醒同时补验收）。
+ *   N8 守卫：`system` 生产点只允许一处**白名单**（`admin/ops/account-events.ts`，#17 的 S1/S2）；
+ *      **社区域**（本域）**永不**产出 `system`，其余新增生产点会红，提醒同时补验收。
  *
  * 声明：模型端口是**合成替身**（`passingPort`），不发起任何真实模型/付费调用。
  * 跳转可用性（`reference_state`）本片**仍为未接线**（`app.ts` 端口未接，属下一片 G4），
@@ -271,13 +271,29 @@ test('N7. 端到端：GET /messages 含 comment+like+moderation，unread-count �
 // N8 守卫：系统事件首版不虚构
 // ---------------------------------------------------------------------------
 
-test('N8. 守卫：`type: system` 首版无生产赋值；社区事件类型映射永不产出 system', () => {
-  // (a) 代码级：全仓 `services/api/src/**` 没有任何 `type: 'system'` 赋值。
-  const offenders = sourceFiles(SRC_ROOT)
-    .flatMap((path) => readFileSync(path, 'utf8').split('\n').map((line, index) => ({ path, line, no: index + 1 })))
-    .filter((hit) => /type:\s*['"]system['"]/.test(hit.line))
-    .map((hit) => `${hit.path}:${hit.no}`);
-  assert.deepEqual(offenders, [], '首版无真实系统事件触发源；新增时必须先补 #17 验收与证据');
+test('N8. 守卫：`system` 生产点只允许白名单文件（admin/ops/account-events.ts）；社区事件类型映射永不产出 system', () => {
+  // (a) 代码级：全仓 `services/api/src/**` 的 `system` 生产赋值只允许出现在**白名单**里——
+  //     #17 的账号级系统事件生产者 `admin/ops/account-events.ts`（裁定
+  //     `.pg17/ruling-r31-i17-system-events-20261022.md`）；**社区域仍须零命中**。
+  const hits = sourceFiles(SRC_ROOT)
+    .flatMap((path) => readFileSync(path, 'utf8').split('\n').map((line, index) => ({
+      path: path.slice(SRC_ROOT.length).split(/[\\/]/).join('/'),
+      line,
+      no: index + 1,
+    })))
+    .filter((hit) => /type:\s*['"]system['"]/.test(hit.line));
+  const allowed = new Set(['admin/ops/account-events.ts']);
+  const label = (hit) => `${hit.path}:${hit.no}`;
+  assert.deepEqual(
+    hits.filter((hit) => !allowed.has(hit.path)).map(label),
+    [],
+    '系统事件只允许由 admin/ops/account-events.ts（#17 S1/S2）生产；新增时必须先补 #17 验收与证据',
+  );
+  assert.deepEqual(
+    hits.filter((hit) => hit.path.startsWith('community/')).map(label),
+    [],
+    '本域（社区域）仍不得产出 system：平台对内容的处置是 moderation，账号级处置才是 system',
+  );
 
   // (b) 语义级：社区事件的四个成员都映射到闭集内、且**都不**是 system。
   const events = [

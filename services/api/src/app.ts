@@ -74,6 +74,8 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+// GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
+import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
@@ -100,7 +102,12 @@ import {
 import { createHumanReviewDirectory, type HumanReviewDirectory } from './admin/human-review.ts';
 // GY-I06 私有媒体域（#6）：存储适配器 + 服务层 + 7 条 HTTP 路由的单一注册点。
 import { registerMediaRoutes } from './routes/media.ts';
-import { createAppMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
+import { createAppMediaService, createFailClosedMediaService, type AppMediaService, type CommunityAttachmentCounter, type RealMediaWiringApproval } from './media/service.ts';
+// GY-I06/W12 媒体持久化（#6）：登记册/授权/幂等台账的事实源从进程内 `Map` 换成端口；
+// `object_ref_cipher` 的键由配置注入（`MEDIA_OBJECT_REF_KEY`），缺键则**不接 PG**。
+import { createMemoryMediaStore, type MediaStore } from './media/store.ts';
+import { createPostgresMediaStore } from './media/store-pg.ts';
+import { createObjectRefCipher } from './media/object-ref-cipher.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
 import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
@@ -399,6 +406,13 @@ export interface BuildAppOptions {
   mediaContentSource?: PublishedContentSource;
   /** 测试注入：替换「每帖 ≤3 图」槽位计数器（默认 real=未接线拒绝，其余=保守替身）。 */
   mediaAttachmentCounter?: CommunityAttachmentCounter;
+  /**
+   * 测试注入：替换媒体的**持久化端口**（登记册 / 短效授权 / 幂等台账三者的事实源）。
+   *
+   * 不传时按 `executionMode` 二分：`real` + 连接池 + `MEDIA_OBJECT_REF_KEY` ⇒ PG 实现
+   * （重启后上传链路不断），其余 ⇒ 内存实现（stub/演示/无库夹具，语义与 W12 之前等价）。
+   */
+  mediaStore?: MediaStore;
   // GY-I27 接线单（用途授权接线）：隐私域端口。
   // **全部可选**：不传时——
   //   * 授权中间件仍会在**配置了数据库**时按 PG 读取口挂到 4 个 AI 执行入口
@@ -672,7 +686,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -936,12 +950,28 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //   2. **确定性 `event_key`**：`<kind>:<job_id>` —— 只由**服务端分配**的作业 id 派生，
   //      **不含**时间戳/随机数；同一次任务重复投递 ⇒ 历史域按 `(owner_id, event_key)` 去重 ⇒ **no-op**。
   //      （历史 store 另有 `(owner_id, kind, target_ref.id)` 唯一约束作第二道去重。）
-  //   3. **未接线 = 什么都不做**（不伪造历史、不声称成功）：`real` 模式下历史域整域关闭
-  //      （`historyService === null`，本文件下方装配）⇒ 端口落到未接线实现，识别/OCR 任务照常执行。
+  //   3. **未接线 = 什么都不做**（不伪造历史、不声称成功）：只有「`real` 且历史域**无**持久化落点」
+  //      （`historyService === null`，见下方装配门禁与上方 `historyDomainEnabled`）才落到未接线实现；
+  //      `real` + 持久化落点、以及全部非 `real` 分支都走 wired（识别/OCR 任务照常执行）。
   //
   // `app.historyService` 在本文件**下方**才被装配（其任务状态端口要读 `recognitionService.getJob`／
   // `app.ocrService.getJob`，故本端口**不捕获历史服务实例、只捕获 `app`，请求期才解析**）——
   // 与同一装配块里历史任务状态端口的既有做法同源（那里只捕获闭包、请求期才解析 `app.ocrService`）。
+  //
+  // **store 提前构造**（只提前「构造」，不提前「判定」）：下面两个端口要不要接线，判据是
+  // `historyStore.persistent`（与下方 `historyService` 的门禁表达式**同一口径**），因此 store 必须在
+  // 端口之前就位。选型规则与别处逐字相同（原注释块见下方「历史/收藏 store 选择」）：
+  //   - 注入的 store 优先（测试/装配覆盖项）；
+  //   - `real` + 有池 ⇒ PostgreSQL store（`persistent: true`，迁移 0018）；
+  //   - 其余（非 real，或 real 无池）⇒ 内存 store（`persistent: false`）。
+  // store 是 **store 级、非 nullable**：注销清空（`createUserDataDeletion`）拿到的是 store 而不是
+  // service；`real` 无池时仍需一个可调用对象，但下方服务层门禁会把它判成"不持久" ⇒ 服务为 `null`
+  // ⇒ 该 store **不接收本域任何写入**（注销清空只会得到 0 行，不会凭空产生"已清空 N 行"的证据）。
+  const historyStore: HistoryStore =
+    historyInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
+      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   const recordHistoryTerminal = async (input: {
     owner_id: string;
     kind: 'recognition' | 'ocr';
@@ -958,22 +988,33 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // （未知字段一律 400，因此这里不做任何预转换、也不吞掉它的拒绝）。
     await history.appendHistory({ ...input, event_key: `${input.kind}:${input.job_id}` });
   };
-  const recognitionTerminalHistory: RecognitionTerminalHistoryPort =
-    config.executionMode === 'real'
-      ? createUnwiredRecognitionTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
-      : {
-          kind: 'wired',
-          note: '识别终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
-          recordTerminal: (input: RecognitionTerminalHistoryInput) => recordHistoryTerminal(input),
-        };
-  const ocrTerminalHistory: OcrTerminalHistoryPort =
-    config.executionMode === 'real'
-      ? createUnwiredOcrTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
-      : {
-          kind: 'wired',
-          note: 'OCR 终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
-          recordTerminal: (input: OcrTerminalHistoryInput) => recordHistoryTerminal(input),
-        };
+  // **real 模式的判据（本片修正点）**：不是「执行模式是不是 real」，而是「历史域是否真的开启」——
+  // 与下方 `historyService` 的**同一**门禁表达式（`real && !historyStore.persistent ⇒ null`）逐字同源：
+  //   - 非 real（stub/演示）⇒ 开启（内存 store，既有行为不变）⇒ 端口 **wired**；
+  //   - real + 持久化落点（`DATABASE_URL` 的 PG store，或注入的持久 store）⇒ 服务**开启**
+  //     ⇒ 端口 **wired**：识别/OCR 终态**真的**落一行 history（修正前这里被误判成"整域关闭"，
+  //     于是 real + PG 的生产路径写不出 history 行）；
+  //   - real + 无落点（没配 `DATABASE_URL` 的内存 store / 注入的内存 store）⇒ 服务为 `null`
+  //     ⇒ 端口 **unwired**：任务照常执行、**不伪造**历史，5 条历史路由仍如实 503（不放宽守卫）。
+  const historyDomainEnabled = config.executionMode !== 'real' || historyStore.persistent;
+  const recognitionTerminalHistory: RecognitionTerminalHistoryPort = historyDomainEnabled
+    ? {
+        kind: 'wired',
+        note: '识别终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+        recordTerminal: (input: RecognitionTerminalHistoryInput) => recordHistoryTerminal(input),
+      }
+    : createUnwiredRecognitionTerminalHistoryPort(
+        'real 模式且历史域无持久化落点（无 DATABASE_URL / 注入的内存 store）：终态不写历史，不放宽守卫',
+      );
+  const ocrTerminalHistory: OcrTerminalHistoryPort = historyDomainEnabled
+    ? {
+        kind: 'wired',
+        note: 'OCR 终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+        recordTerminal: (input: OcrTerminalHistoryInput) => recordHistoryTerminal(input),
+      }
+    : createUnwiredOcrTerminalHistoryPort(
+        'real 模式且历史域无持久化落点（无 DATABASE_URL / 注入的内存 store）：终态不写历史，不放宽守卫',
+      );
   const recognitionProviderResolved =
     recognitionProvider ??
     createRecognitionProvider({
@@ -1197,9 +1238,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 放行条件只有"拿到真实库池 / 显式注入权威/端口"，**不看**任何自述持久化标志；
     // 其余后台路由（含账号读面 `listAdminUsers`、分类、作业、下架）仍逐条 503
     // —— 见 `admin/ops/accounts-only.ts` 与 `admin/fail-closed-services.ts` 的"接线点"要求。
-    const realAccountAuthority =
+    // **GY-I17（#17）系统事件接线**（裁定 `.pg17/ruling-r31-i17-system-events-20261022.md`）：
+    // 账号停用/恢复在**事务已提交**之后追加一条 `system` 消息（`target_ref=null`，契约
+    // `TargetRef` 闭集无 account 型，⛔ 不臆造）。装饰器只**追加**通知：不改写入参/返回、
+    // 不改错误映射；消息写入失败**不回滚**已提交的停用/恢复（fail-open，口径同
+    // `community/events.ts`），但留 `delivered:false` + 计数 + `warn` 日志，绝不谎报成功。
+    // 幂等分支（`outcome.changed === false`）**不投递**：重放不产生第二条消息、不重置读状态。
+    // 消息服务在 real 下仅拿到库池时才非 null ⇒ 否则端口如实 `wired:false`（不伪造投递）。
+    const accountEvents: AccountEventsPort =
+      messagesService === null
+        ? createUnwiredAccountEventsPort('消息服务未接线（real 模式）：账号停用/恢复的系统事件无法投递')
+        : createMessagesAccountEventsPort({ messages: messagesService });
+    const accountAuthorityBase =
       adminInjection?.accountAuthority ??
       (pool === null ? null : createPostgresAccountAuthority({ pool }));
+    const realAccountAuthority =
+      accountAuthorityBase === null
+        ? null
+        : withAccountSystemEvents(accountAuthorityBase, { events: accountEvents, log: app.log });
     // **GY-I18/T-R12-03 第三个显式放行（读面）**：真实账号目录只在**确实拿到库池**时构造；
     // `pool === null` ⇒ 目录为 null ⇒ 读面保持 503（⛔ 不拿内存种子冒充真实账号，也⛔ 不返回空页）。
     // 读的是迁移 0021 的窄口径函数 `public.list_admin_accounts()`（运行时角色只有 EXECUTE）。
@@ -1308,18 +1364,45 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
   // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
-  const mediaService = createAppMediaService({
-    executionMode: config.executionMode,
-    objectStore: mediaObjectStore,
-    tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-    contentSource: mediaContentSource ?? createClosedContentSource(),
-    ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
-    // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
-    ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
-    // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
-    ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
-    now: clock,
-  });
+  // **持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
+  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
+  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
+  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
+  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
+  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
+  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
+  const mediaObjectRefKeyMaterial: string | null =
+    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
+      ? config.mediaObjectRefKey
+      : null;
+  const mediaStore: MediaStore = mediaStoreOption
+    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
+      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
+      : createMemoryMediaStore({ now: () => clock().getTime() }));
+  // `real` + 有数据库池 + **缺** `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域整域 fail-closed（503），
+  // **不是**降级：拿不到键就无法如实写 `object_ref_cipher`，用进程内 `Map` 顶替等于向客户端
+  // 谎报「已持久化」——这正是 W12 要消灭的那种假持久化。
+  const mediaPersistenceRefusal: string | null =
+    config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial === null
+      ? 'real 模式的媒体持久化缺少 MEDIA_OBJECT_REF_KEY：object_ref_cipher 无法加密，拒绝以进程内状态承载媒体事实'
+      : null;
+  const mediaService: AppMediaService = mediaPersistenceRefusal === null
+    ? createAppMediaService({
+        executionMode: config.executionMode,
+        objectStore: mediaObjectStore,
+        tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
+        contentSource: mediaContentSource ?? createClosedContentSource(),
+        ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
+        // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
+        ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
+        // 未配置 ⇒ **不带该属性**（缺省行为 = 服务层占位域），配置即生效（句柄 host 跟随部署值）。
+        ...(config.mediaAccessGrantOrigin === null ? {} : { accessGrantOrigin: config.mediaAccessGrantOrigin }),
+        // 持久化端口：**唯一**的事实源（登记册/授权/台账），缺省时服务内部会退到内存实现，
+        // 装配层在这里显式给出按模式二分的实现，避免「进程内 Map 仍是事实源」的假持久化。
+        persistence: mediaStore,
+        now: clock,
+      })
+    : createFailClosedMediaService(mediaPersistenceRefusal);
 
   // GY-I16 收藏与可浏览的识别历史（#16）：本片两个子域的唯一装配点。
   //
@@ -1353,20 +1436,19 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
   // store 选择：**real 且有 `pool` 才接 PG**（`persistent: true`），否则内存实现。
   //
-  // 这两个变量是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
+  // 这两个 store 都是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
   // store 而不是 service。`real` 且无 `pool` 时仍需一个可调用对象 ⇒ 选内存实现，但下方
   // 服务层门禁会把它判成"不持久" ⇒ 服务为 `null` ⇒ 该 store **不接收本域任何写入**，
   // 注销清空只会得到 0 行（不会凭空产生"已清空 N 行"的证据）。
+  //
+  // ⚠ `historyStore` 的**构造**在**上方**（GY-I16 终态端口处）：终态端口要不要接线，判据是
+  // `store.persistent`（与下面 `historyService` 的门禁表达式同一口径），所以必须先于端口就位。
+  // 本处不再重复构造，避免出现"两个 store、两套判据"。
   const favoritesStore: FavoritesStore =
     favoritesInjection?.store ??
     (config.executionMode === 'real' && pool !== null
       ? createPostgresFavoritesStore(pool, { now: () => clock().getTime() })
       : createMemoryFavoritesStore({ now: () => clock().getTime() }));
-  const historyStore: HistoryStore =
-    historyInjection?.store ??
-    (config.executionMode === 'real' && pool !== null
-      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
-      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   /** 浙江首批投影面（与 `/knowledge` 同源同过滤同开关）；开关关闭时它恒为空集合。 */
   const publicKnowledgeSeedFace = createReferenceQueryService({
     includeUnverifiedSeed:

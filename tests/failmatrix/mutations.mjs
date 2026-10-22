@@ -124,8 +124,11 @@ export const MUTATIONS = [
     id: 'NC-09',
     title: '删掉媒体归属校验：能读/删别人的媒体元数据',
     file: 'services/api/src/media/service.ts',
-    find: '    if (record === undefined || record.ownerId !== actor.ownerId) {',
-    replace: '    if (record === undefined) { // 负控制：跨主体媒体也放行',
+    // [R28-W12 订正] 守卫已从 `record === undefined || …` 改为 `record === null || …`（媒体 store 端口
+    // 自 R28-W12 起返回 `MediaRecord | null`，不再返回 undefined）。负控制语义不变：仍只删掉
+    // 「归属比对」这一条判断，跨主体媒体于是只过存在性检查 —— 读/删别人的媒体元数据照样会放行。
+    find: '    if (record === null || record.ownerId !== actor.ownerId) {',
+    replace: '    if (record === null) { // 负控制：跨主体媒体也放行',
     watch: ['C2-01', 'C2-02'],
   },
   {
