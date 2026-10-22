@@ -117,7 +117,7 @@
 | A5 | 归属：非本人与不存在同形 404 | `messages/service.ts:382`／`:402`（`record.owner_id !== user.userId` ⇒ `notFound()`）；存储层 `messages/store-pg.ts:312`（`OWNER_CHANGED`） |
 | A6 | 401 与 403 分档 | `miniprogram/utils/auth.js:95-109`；消息侧 `miniprogram/utils/messages-api.js:123-124`；契约 403 闭集 `packages/contracts/openapi.json:16831-16835` |
 | A7 | 注销时点硬删消息域（正文＋共享幂等台账，同一事务） | `messages/store-pg.ts:220-241`（`DELETE FROM public.messages … RETURNING id` ＋ `DELETE FROM public.idempotency_keys … RETURNING scope`）；闭集 `privacy/user-data-deletion.ts:71`、`:93-98`、注册 `:449` |
-| A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:186`（消息行必须真删）、`:188`（他人行不动）、`:225`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:252-261`（0 行同形） |
+| A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:277`（消息行必须真删）、`:279`（他人行不动）、`:373`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:419-427`（0 行同形） |
 | A9 | 不接外部推送、不虚构真人消息 | `services/api/src/messages/**` 与 `routes/messages.ts` 对 `subscribeMessage`／`webhook`／模板消息／`openid` **0 命中**（本片 grep 实跑）；`push` 命中均为数组 `push`（`messages/service.ts:345`、`:390`）；台账 blocker 逐字「…不虚构真人消息」（`docs/architecture/contract-status.json:1934`） |
 | A10 | 备份副本 scope 已登记 `message`，注销后 30 日链有对象可清 | `packages/privacy/backup-copies.mjs:38-43`（`messages: 'message'`）；清单源 `privacy/user-data-deletion.ts:321-325` |
 
@@ -140,7 +140,7 @@
 | --- | --- | --- |
 | (a) 闭集内并被驱动 | 满足 | `privacy/user-data-deletion.ts:71`、`:93-98`、`:449` |
 | (b) 按主体 `DELETE … RETURNING` 原语 | 满足 | `messages/store-pg.ts:228-238` |
-| (c) 证据串含 `<module>:online-purged:<n>`，n 取 `RETURNING` 行数 | 满足 | `privacy/user-data-deletion.ts:100-103`；断言 `tests/unit/favorites-history-deletion-registration.test.mjs:225` |
+| (c) 证据串含 `<module>:online-purged:<n>`，n 取 `RETURNING` 行数 | 满足 | `privacy/user-data-deletion.ts:100-103`；断言 `tests/unit/favorites-history-deletion-registration.test.mjs:373` |
 | (d) 执行读数证明「n 行消失、他人行不动」 | **部分** | PGlite 真表满足（`…deletion-registration.test.mjs:186-188`）；真 PG 服务器 arm 缺（§2.3 B3） |
 | (e) `real` 装配下链路可达 | 未满足 | `services/api/src/app.ts:1579` |
 

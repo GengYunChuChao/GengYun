@@ -163,7 +163,7 @@ CI 读数**不在仓库内** ✗；下表登记本会话可见的**逐 PR head**
 
 - **真机**：`platform=android`／model `RMX3706`／Android 15／微信 `8.0.78`／基础库 `3.17.4`（`project.config.json` 的目标值是 `3.17.3`，**两者不同值，属"目标 vs 实际"，本索引不做判定** ✗）。
 - **本机服务**：API 于 `0.0.0.0:3100`、本地库 `127.0.0.1:55436`（自带 PostgreSQL 17.11，`E:\GengYunCommander\.pg17\pgsql\bin`）。
-- **收藏／历史是进程内内存 store** ⇒ **换进程即清空** ✓：默认装配点 `services/api/src/app.ts:819`（`favoritesInjection?.store ?? createMemoryFavoritesStore(...)`；历史见 `:820`）；**PG 无 favorites 表** ✓（`git grep -I "favorite" upstream/main -- services/api/src/db` **0 命中**；`services/api/db/migrations/**` 无相关 DDL）。
+- **收藏／历史是进程内内存 store** ⇒ **换进程即清空** ✓：默认装配点 `services/api/src/app.ts:1361-1364`（`favoritesInjection?.store ?? createPostgresFavoritesStore(...)`：`real` + 池走 PG，否则内存；历史见 `:1366`）；**PG 无 favorites 表** ✓（`git grep -I "favorite" upstream/main -- services/api/src/db` **0 命中**；`services/api/db/migrations/**` 无相关 DDL）。
 - **非 real 模式下 `/api/v1/public/home` 按设计 503** ✓：`services/api/src/db/catalog.ts:14-16`（`if (mode !== 'real' || pool === null) throw new ApiError('PROVIDER_UNAVAILABLE', …)`）。
 - **空体写请求的 400 及其修法**（#175）：`services/api/src/app.ts:464-477`（成因注释：微信 `wx.request` 默认注入 `content-type: application/json`，Fastify 对 DELETE/POST/PUT/PATCH/OPTIONS 只凭该头就进 JSON 解析器 ⇒ 空体 `FST_ERR_CTP_EMPTY_JSON_BODY` ⇒ 被映射为 400）；**该 400 发生在路由、鉴权与 schema 校验之前** ⇒ 真机上取消收藏 100% 失败。
 

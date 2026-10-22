@@ -202,7 +202,7 @@ Select-String -Path "services\api\db\migrations\*.sql" -Pattern "create table[^;
 | `services/api/src/app.ts:451` | `userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore \| null }` |
 | `services/api/src/app.ts:1305-1307` | 仅在显式注入时把 `backupPurge` 传进 `userDataDeletion`（`...backupPurge === undefined ? {} : { backupPurge }`） |
 | `tests/unit/user-data-deletion.test.mjs:108-137` | 已有「接线备份清除端口后…即可判完成」的**替身**用例 |
-| `tests/unit/user-data-deletion.test.mjs:88`、`tests/unit/account-deletion-receipts.test.mjs:128`、`tests/integration/account-deletion-http.mjs:278` | 断言「未接线 ⇒ 如实 pending」（本片**未动**） |
+| `tests/unit/user-data-deletion.test.mjs:88`、`tests/unit/account-deletion-receipts.test.mjs:128`、`tests/integration/account-deletion-http.mjs:281` | 断言「未接线 ⇒ 如实 pending」（本片**未动**） |
 
 判读：协议侧（端口形状、证据要求、注入点、失败折叠）已就位并有替身用例覆盖；
 **缺的是真实被清对象**。所以本片只补「对象不存在」的证据，不补一个假端口。
@@ -497,7 +497,7 @@ node tools/verify-contract-status.mjs
 | `user-data-deletion.ts` 端口锚点 | `:66`（`export interface BackupPurgePort`）、`:72`（`createUnwiredBackupPurgePort`） | 裸 `8205cfc`：`:82`、`:88`；分支 HEAD：`:91`、`:97` | 上游 #272 numstat `37 3`（+37/−3）使行号下移；本片注释再 +9 行 |
 | `user-data-deletion.ts` handler 判定锚点 | `:216`（`let backupState = 'pending'`）…`:234`（`return { onlineState…`） | 裸 `8205cfc`：`:244`…`:267`；分支 HEAD：`:253`…`:276` | 同上；两套行号差 9 行＝本片新增注释 |
 | `app.ts` 注入点 | `:422`（`userDataDeletionInjection?`）、`:1276`（`backupPurge === undefined`） | 裸 `8205cfc` ＝ 分支 HEAD：`:425`、`:1305` | 上游在 app.ts 增行；本片未改 app.ts，两棵树同值 |
-| 测试锚点 | `user-data-deletion.test.mjs:88`、`:108-137`；`account-deletion-receipts.test.mjs:128`；`account-deletion-http.mjs:278` | **不变** | 这几个测试文件上游未改（`git diff --stat` 为空） |
+| 测试锚点 | `user-data-deletion.test.mjs:88`、`:108-137`；`account-deletion-receipts.test.mjs:128`；`account-deletion-http.mjs:281` | **不变** | 这几个测试文件上游未改（`git diff --stat` 为空） |
 
 **锚点取数树说明**（审查 P2 修正）：「改前」列一律取自**裸 `53922eb` 树**；「改后」列同时给出
 **裸 `8205cfc` 树**与**本提交（分支 HEAD）树**两套行号——`user-data-deletion.ts` 两套相差 **9 行**，

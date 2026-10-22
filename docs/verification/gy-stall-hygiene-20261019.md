@@ -69,7 +69,7 @@ model_layer=not_wired），一律不得发布","retryable":false,"details":[{"fi
 
 | 层 | 位置 | 说明 |
 | --- | --- | --- |
-| 报错文案 | `services/api/src/community/service.ts:393` | `422 INPUT_UNCERTAIN`「内容未获审核域放行…」 |
+| 报错文案 | `services/api/src/community/service.ts:452-454` | `422 INPUT_UNCERTAIN`「内容未获审核域放行…」 |
 | 判定处 | `services/api/src/community/moderation-link.ts:272` | `model_layer=not_wired`（本片未接线真模型，属事实陈述） |
 | 原因码来源 | `services/api/src/community/moderation-link.ts:284` | `tasks.flatMap(task => task.reason_codes)` ⇒ 即**审核域**任务的原因码 |
 | 预算判定 | `packages/moderation/engine.mjs:373-375` | `if (now - started > budgetMs) failClosed.push('RULE_TIMEOUT')` |
