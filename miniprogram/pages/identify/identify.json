@@ -1,5 +1,6 @@
 {
   "usingComponents": {
-    "state-view": "/components/state-view/state-view"
+    "state-view": "/components/state-view/state-view",
+    "fav-entry": "/components/fav-entry/fav-entry"
   }
 }
