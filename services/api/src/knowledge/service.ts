@@ -116,7 +116,17 @@ export function createKnowledgeService(pool: PgPool, key: string, options: Knowl
     } catch (error) {
       if (client) await client.query('ROLLBACK').catch(()=>{});
       if (error instanceof ApiError) throw error;
-      throw new ApiError(['57014','55P03'].includes((error as {code?: string}).code ?? '') ? 'PROVIDER_TIMEOUT':'PROVIDER_UNAVAILABLE','资料数据库暂不可用');
+      // `retryable` 按 `errors.ts` 的唯一口径逐支判定，**不整条 catch 一律置 true**：
+      //   57014 statement_timeout / 55P03 lock_not_available 是**瞬时**的数据库竞争态
+      //   （本函数 `:63` 设的 `lock_timeout='4s'` 正是 55P03 的来源）⇒ 同一请求稍后重试
+      //   可能成功 ⇒ 504 `PROVIDER_TIMEOUT` + `retryable: true`；
+      //   其余（连接串坏、库不可达、凭据/权限不足等）是**装配或运维**问题，时间不会让它自愈
+      //   ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable: false`（沿用默认值）。
+      const pgCode = (error as {code?: string}).code ?? '';
+      if (['57014','55P03'].includes(pgCode)) {
+        throw new ApiError('PROVIDER_TIMEOUT','资料数据库暂不可用',{ retryable: true });
+      }
+      throw new ApiError('PROVIDER_UNAVAILABLE','资料数据库暂不可用');
     } finally {client?.release();}
   }
   return {list: (input: Identity, query: KnowledgeQuery) => read(input,query), get: (input: Identity,id: string,query: KnowledgeQuery) => read(input,query,id)};
