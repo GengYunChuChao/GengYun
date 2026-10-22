@@ -463,13 +463,42 @@ test('audit events: 只有有下一页才允许继续加载', () => {
   assert.equal(canLoadMoreAudit(initialAuditState()), false)
 })
 
-test('audit events: 行视图只做展示映射，不虚构主体字段', () => {
+test('audit events: 行视图只映射契约真有的字段（actor／前后值是 R29-S5 新增的可选字段）', () => {
   const row = auditRowView(event({ target_ref: { type: 'post', id: 'p1', revision: 2 } }))
   assert.equal(row.resultLabel, '已接受')
   assert.equal(row.resultTone, 'ok')
   assert.equal(row.targetLabel, 'post:p1 · r2')
   assert.equal(row.shortId, UUID.slice(0, 8))
-  assert.equal('actor' in row, false, '契约没有主体字段，展示层也不许造')
+  // 契约里没有 actor 时展示层不许造：直接显示"未提供"。
+  assert.equal(row.actor, null)
+  assert.equal(row.actorLabel, '未提供（历史行/服务端未记主体）')
+  assert.equal(row.changeLabel, null, '非开关行不得编造前后值')
+  // 契约真给了 actor / 前后值时，原样展示（只翻译，不改含义）。
+  const flagged = auditRowView(
+    event({
+      action: 'set_flag',
+      actor: UUID,
+      target_hint: 'flag:ai_enabled',
+      before_value: { enabled: true, revision: 3 },
+      after_value: { enabled: false, revision: 4 },
+    }),
+  )
+  assert.equal(flagged.actorLabel, UUID)
+  assert.equal(flagged.changeLabel, '开 → 关（r4）')
+  assert.equal(flagged.changeTone, 'ok')
+  assert.equal(flagged.targetHint, 'flag:ai_enabled')
+  // 反向（关 → 开）是「放宽」，语气必须是 warn——两个方向都钉，否则只钉住了收紧那半边。
+  const opened = auditRowView(
+    event({
+      action: 'set_flag',
+      actor: UUID,
+      target_hint: 'flag:submissions_enabled',
+      before_value: { enabled: false, revision: 4 },
+      after_value: { enabled: true, revision: 5 },
+    }),
+  )
+  assert.equal(opened.changeLabel, '关 → 开（r5）')
+  assert.equal(opened.changeTone, 'warn')
   assert.equal(auditRowView(event()).targetLabel, '无目标（target_ref = null）')
 })
 

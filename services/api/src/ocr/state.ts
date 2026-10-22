@@ -1121,3 +1121,532 @@ export function gateDoseCards(input: {
   }
   return { dose_cards: doseCards, rejections };
 }
+
+// ---------------------------------------------------------------------------
+// GY-I10（#10）· 用户校正台账（原 `ocr/correction.ts`，为不新增 OCR 域运行时装载边而并入本模块）
+// ---------------------------------------------------------------------------
+/**
+ * 用户校正台账：**append-only** 的「谁改的、改了什么、改前原文」。
+ *
+ * 契约（openapi `correctOCR`）只规定三件事：`raw_fields` 必须保留、校正写进 `corrected_fields`、
+ * `revision` 递增。它**没有**规定「谁改的 / 改了什么」落在哪里。本模块补这条审计面，
+ * 并把三条硬约束写成可执行断言：
+ *
+ *   1) **不可覆盖**：台账只追加，任何 entry 的 `raw_fields` 都是校正时点的模型原始输出快照，
+ *      `assertRawPreserved` 要求它与 `OcrRow.rawFields` 逐字段相等 —— 校正不得回写原文。
+ *   2) **不计准确率**：`correctedFields !== rawFields` 的行是**人工改写**样本，
+ *      `ocrAccuracyDenominator` 把它们从分母里剔除并单列（`human_edited_rows`），
+ *      且返回前由 `assertAccuracySample` 断言「分母 = 纳入行数」「纳入 ∩ 剔除 = ∅」。
+ *   3) **不新增列**：台账挂在 `ocr_records.verification` 这个**已获列级授权**的 jsonb 文档的
+ *      `correction_log` 键上（见 `services/api/db/migrations/0024_ocr_persistence.sql:68` 与
+ *      `deploy/postgres-cvm/sql/20-login-roles.sql` 对 `ocr_records.verification` 的 UPDATE 面）。
+ *      读路径 `store-pg.readVerification` 与契约投影 `service.toOcr` 都把台账键剥掉，
+ *      对外契约面仍严格是五字段 `Verification`。为什么不建新表/新列：runtime 的列级授权只落在
+ *      `deploy/postgres-cvm/sql/20-login-roles.sql`（本片硬规则禁改），另加一张表或一列却没有
+ *      对应列级授权，会让 least-privilege 断言变成假绿（表级 GRANT 会吞掉列级面）。
+ */
+
+/** 台账版本：形状一变就改这里，读路径按版本 fail-closed。 */
+export const CORRECTION_LEDGER_VERSION = 'gy-i10-correction/1.0.0';
+
+/** 单条记录的校正次数上限：超过即拒绝（不静默截断历史）。 */
+export const MAX_CORRECTION_ENTRIES = 200;
+
+/** 单个成分三元组内的分隔符（`name|content_text|unit_text`）。 */
+export const INGREDIENT_RENDER_DELIMITER = '|';
+
+/** 成分之间的分隔符（排序后拼接）。 */
+export const INGREDIENT_RENDER_SEPARATOR = ' ; ';
+
+/**
+ * 单个字段**渲染串**的契约上限 —— 由 `LabelFields` 契约直接推出，不是经验值：
+ *
+ *     MAX_INGREDIENTS × (3 × MAX_LABEL_TEXT_LENGTH + 2 × 1) + (MAX_INGREDIENTS − 1) × 3
+ *   = 20 × (3 × 80 + 2) + 19 × 3 = 4897
+ *
+ * **写回侧与读回侧只认这一个常量**（`appendCorrection` 的落库闸门 / `parseCorrectionLedger` 的
+ * 读回上限）。监工 `1927` 轮 [P2]：此前读回侧写死 `> 2000` 拒绝、写回侧不限长，而契约允许
+ * 20 项 × 每字段 80 字的成分表（最小复现 9 项就 2202 字符）—— 一次**合法**校正能让台账
+ * 「写得进去、读不回来」，`store-pg.readVerification` 每次读该行都抛
+ * 「校正台账字段非法：changes[0].after」。
+ *
+ * 为什么是「把读回上限抬到契约真实上界」而不是截断/分片：
+ *   - 截断 ⇒ 台账不再是「改了什么」的无损证据（且要让 before/after 仍可比较，截断点还得可解析）；
+ *   - 分片 ⇒ 改台账形状，要升 `CORRECTION_LEDGER_VERSION` 并兼容老行，收益仅是省几百字节；
+ *   - 契约上界本来就由 `MAX_INGREDIENTS` × `MAX_LABEL_TEXT_LENGTH` 决定，推导出来即可自洽，
+ *     将来契约放宽时两个常量会一起变（读回上限跟着走，不会再出现「写进去读不出来」）。
+ */
+export const MAX_RENDERED_FIELD_LENGTH =
+  MAX_INGREDIENTS * (3 * MAX_LABEL_TEXT_LENGTH + 2 * INGREDIENT_RENDER_DELIMITER.length) +
+  (MAX_INGREDIENTS - 1) * INGREDIENT_RENDER_SEPARATOR.length;
+
+/**
+ * 台账里**单字段**（`raw_fields` / `corrected_fields` 的文本字段）的读回上限。
+ * 契约上限是 {@link MAX_LABEL_TEXT_LENGTH}=80；这里保留原先的 2000 是「读回形状闸门」的
+ * 宽松上界（拒绝明显不是单行文本的垃圾），不参与与写回侧的等号 —— 真正的等号只对
+ * `changes[].before/after` 成立，见 {@link MAX_RENDERED_FIELD_LENGTH}。
+ */
+const MAX_LABEL_FIELD_LINE_LENGTH = 2000;
+
+/** 参与「改了什么」比对的可校正字段（顺序即展示顺序）。 */
+export const CORRECTED_FIELD_NAMES = ['registration_number', 'name', 'ingredients', 'dosage_form'] as const;
+export type CorrectedFieldName = (typeof CORRECTED_FIELD_NAMES)[number];
+
+/** 一个字段的一次改写：改前 / 改后都保留（`null` = 该字段原本/改后为空）。 */
+export interface CorrectionChange {
+  field: CorrectedFieldName;
+  before: string | null;
+  after: string | null;
+}
+
+/** 一版校正：**谁**（actor_user_id）在**哪一版**（revision）改了**什么**（changes）。 */
+export interface CorrectionEntry {
+  /** 台账内递增版本号（1..N），与 `revision` 分开：revision 是记录版本，version 是校正序号。 */
+  version: number;
+  /** 本次校正落库后的 `OcrRow.revision`。 */
+  revision: number;
+  /** 谁改的（契约主体 id；不落手机号/姓名等任何 PII）。 */
+  actor_user_id: string;
+  /** 改的时间（ISO 8601，服务端时钟）。 */
+  corrected_at: string;
+  /** 逐字段 diff（空 diff 不允许入库）。 */
+  changes: CorrectionChange[];
+  /** 校正时点的模型原始输出快照 —— **不可覆盖**证据。 */
+  raw_fields: LabelFields;
+  /** 校正后另存的这一版字段。 */
+  corrected_fields: LabelFields;
+}
+
+export interface CorrectionLedger {
+  version: string;
+  entries: CorrectionEntry[];
+}
+
+/** 台账相关的硬失败（形状非法 / 次数超限 / 断言被违反）。 */
+export class CorrectionLedgerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CorrectionLedgerError';
+  }
+}
+
+/** 深拷贝字段（台账与调用方之间不共享可变结构）。 */
+export function cloneLabelFields(fields: LabelFields): LabelFields {
+  return {
+    registration_number: fields.registration_number,
+    name: fields.name,
+    ingredients: fields.ingredients.map((item) => ({ ...item })),
+    dosage_form: fields.dosage_form,
+  };
+}
+
+/**
+ * 字段的可比较渲染串（用于 diff 与「是否人工改写过」）。
+ * 成分按 `name|content_text|unit_text` 三元组**排序**后拼接：单纯顺序变化不算改写。
+ * 长度上界见 {@link MAX_RENDERED_FIELD_LENGTH}（读回上限由同一个常量给出）。
+ */
+export function renderFieldValue(fields: LabelFields, field: CorrectedFieldName): string | null {
+  if (field === 'ingredients') {
+    if (fields.ingredients.length === 0) return null;
+    return fields.ingredients
+      .map((item) => [item.name, item.content_text, item.unit_text].join(INGREDIENT_RENDER_DELIMITER))
+      .slice()
+      .sort()
+      .join(INGREDIENT_RENDER_SEPARATOR);
+  }
+  return fields[field];
+}
+
+/** 逐字段 diff（只返回真的变了的字段，顺序由 `CORRECTED_FIELD_NAMES` 决定）。 */
+export function diffLabelFields(before: LabelFields, after: LabelFields): CorrectionChange[] {
+  const changes: CorrectionChange[] = [];
+  for (const field of CORRECTED_FIELD_NAMES) {
+    const from = renderFieldValue(before, field);
+    const to = renderFieldValue(after, field);
+    if (from !== to) changes.push({ field, before: from, after: to });
+  }
+  return changes;
+}
+
+/** 该记录是否被**人工改写**过（任一字段变化即算）。 */
+export function isHumanEdited(row: { rawFields: LabelFields; correctedFields: LabelFields }): boolean {
+  return diffLabelFields(row.rawFields, row.correctedFields).length > 0;
+}
+
+function ledgerRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function singleLineOrNull(value: unknown, where: string, maxLength: number): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
+    throw new CorrectionLedgerError(`校正台账字段非法：${where}`);
+  }
+  return value;
+}
+
+function readLabelFields(value: unknown, where: string): LabelFields {
+  const record = ledgerRecord(value);
+  if (record === null) throw new CorrectionLedgerError(`校正台账字段非法：${where}`);
+  const ingredientsValue = record['ingredients'];
+  if (!Array.isArray(ingredientsValue)) throw new CorrectionLedgerError(`校正台账字段非法：${where}.ingredients`);
+  const ingredients = ingredientsValue.map((item, index) => {
+    const row = ledgerRecord(item);
+    if (row === null) throw new CorrectionLedgerError(`校正台账字段非法：${where}.ingredients[${index}]`);
+    const name = row['name'];
+    const contentText = row['content_text'];
+    const unitText = row['unit_text'];
+    if (typeof name !== 'string' || typeof contentText !== 'string' || typeof unitText !== 'string') {
+      throw new CorrectionLedgerError(`校正台账字段非法：${where}.ingredients[${index}]`);
+    }
+    return { name, content_text: contentText, unit_text: unitText };
+  });
+  return {
+    registration_number: singleLineOrNull(record['registration_number'], `${where}.registration_number`, MAX_LABEL_FIELD_LINE_LENGTH),
+    name: singleLineOrNull(record['name'], `${where}.name`, MAX_LABEL_FIELD_LINE_LENGTH),
+    ingredients,
+    dosage_form: singleLineOrNull(record['dosage_form'], `${where}.dosage_form`, MAX_LABEL_FIELD_LINE_LENGTH),
+  };
+}
+
+/**
+ * 从 jsonb 里读回台账（形状不合法 ⇒ 抛错，绝不「尽力解析」出半个台账）。
+ * 键不存在（`undefined`/`null`）⇒ `undefined`：老记录没有台账是合法状态。
+ */
+export function parseCorrectionLedger(value: unknown): CorrectionLedger | undefined {
+  if (value === undefined || value === null) return undefined;
+  const record = ledgerRecord(value);
+  if (record === null) throw new CorrectionLedgerError('校正台账形状非法');
+  if (record['version'] !== CORRECTION_LEDGER_VERSION) {
+    throw new CorrectionLedgerError(`校正台账版本不受支持：${String(record['version'])}`);
+  }
+  const rawEntries = record['entries'];
+  if (!Array.isArray(rawEntries)) throw new CorrectionLedgerError('校正台账 entries 非法');
+  if (rawEntries.length > MAX_CORRECTION_ENTRIES) throw new CorrectionLedgerError('校正台账条目超过上限');
+  const entries: CorrectionEntry[] = rawEntries.map((item, index) => {
+    const row = ledgerRecord(item);
+    if (row === null) throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条非法`);
+    const version = row['version'];
+    const revision = row['revision'];
+    const actor = row['actor_user_id'];
+    const correctedAt = row['corrected_at'];
+    if (version !== index + 1) throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条版本号不连续`);
+    if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+      throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条 revision 非法`);
+    }
+    if (typeof actor !== 'string' || actor.length === 0 || actor.length > 120) {
+      throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条 actor 非法`);
+    }
+    if (typeof correctedAt !== 'string' || Number.isNaN(Date.parse(correctedAt))) {
+      throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条时间非法`);
+    }
+    const rawChanges = row['changes'];
+    if (!Array.isArray(rawChanges) || rawChanges.length === 0) {
+      throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条 changes 非法`);
+    }
+    const changes: CorrectionChange[] = rawChanges.map((change, changeIndex) => {
+      const changeRow = ledgerRecord(change);
+      if (changeRow === null) throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条 changes[${changeIndex}] 非法`);
+      const field = changeRow['field'];
+      if (typeof field !== 'string' || !(CORRECTED_FIELD_NAMES as readonly string[]).includes(field)) {
+        throw new CorrectionLedgerError(`校正台账第 ${index + 1} 条 changes[${changeIndex}].field 非法`);
+      }
+      return {
+        field: field as CorrectedFieldName,
+        before: singleLineOrNull(changeRow['before'], `changes[${changeIndex}].before`, MAX_RENDERED_FIELD_LENGTH),
+        after: singleLineOrNull(changeRow['after'], `changes[${changeIndex}].after`, MAX_RENDERED_FIELD_LENGTH),
+      };
+    });
+    return {
+      version,
+      revision,
+      actor_user_id: actor,
+      corrected_at: correctedAt,
+      changes,
+      raw_fields: readLabelFields(row['raw_fields'], `entries[${index}].raw_fields`),
+      corrected_fields: readLabelFields(row['corrected_fields'], `entries[${index}].corrected_fields`),
+    };
+  });
+  return { version: CORRECTION_LEDGER_VERSION, entries };
+}
+
+/**
+ * 落库闸门：`changes[].before/after` 必须落在**读回上限**内。
+ *
+ * 与 `parseCorrectionLedger` 共用 {@link MAX_RENDERED_FIELD_LENGTH}：读回侧能拒的，写回侧先拒；
+ * 读回侧会放行的，写回侧一定写得进。任何人再往两侧各写一个魔数，这条断言就会在
+ * 「合法输入」上直接红（`tests/unit/ocr-correction-ledger.test.mjs` 的最大形状往返即此闸门的正控制）。
+ */
+function assertReadableChanges(changes: CorrectionChange[]): void {
+  for (const change of changes) {
+    for (const [side, value] of [['before', change.before], ['after', change.after]] as const) {
+      if (value !== null && value.length > MAX_RENDERED_FIELD_LENGTH) {
+        throw new CorrectionLedgerError(
+          `校正台账 ${change.field}.${side} 渲染串 ${value.length} 字符超过可读回上限 ${MAX_RENDERED_FIELD_LENGTH}`
+            + '（写回侧与读回侧上限必须一致，拒绝写入读不回来的台账）',
+        );
+      }
+    }
+  }
+}
+
+/**
+ * 追加一版校正，返回**新**台账（不就地改入参）。
+ * 空 diff（用户提交了与当前完全相同的字段）不产生版本 —— 那不是一个「改写」。
+ */
+export function appendCorrection(
+  ledger: CorrectionLedger | undefined,
+  input: {
+    actorUserId: string;
+    at: Date;
+    revision: number;
+    /** 本次校正前的生效字段（上一版 corrected_fields，首版即 raw_fields）。 */
+    before: LabelFields;
+    after: LabelFields;
+    /** 模型原始输出（校正时点快照；永不覆盖）。 */
+    raw: LabelFields;
+  },
+): CorrectionLedger {
+  const previous = ledger?.entries ?? [];
+  if (previous.length >= MAX_CORRECTION_ENTRIES) {
+    throw new CorrectionLedgerError(`单条记录最多 ${MAX_CORRECTION_ENTRIES} 次校正，已拒绝新的改写`);
+  }
+  const changes = diffLabelFields(input.before, input.after);
+  if (changes.length === 0) throw new CorrectionLedgerError('校正未改变任何字段，不产生新版本');
+  assertReadableChanges(changes);
+  const entry: CorrectionEntry = {
+    version: previous.length + 1,
+    revision: input.revision,
+    actor_user_id: input.actorUserId,
+    corrected_at: input.at.toISOString(),
+    changes,
+    raw_fields: cloneLabelFields(input.raw),
+    corrected_fields: cloneLabelFields(input.after),
+  };
+  return { version: CORRECTION_LEDGER_VERSION, entries: [...previous, entry] };
+}
+
+/**
+ * 断言：台账里每一版的 `raw_fields` 都等于该记录当前的 `rawFields`。
+ * 任何人把校正写回原文（或反过来把原文当校正留档）都会在这里被抓住。
+ */
+export function assertRawPreserved(ledger: CorrectionLedger, raw: LabelFields): void {
+  const expected = JSON.stringify(readLabelFields(raw, 'raw'));
+  for (const entry of ledger.entries) {
+    const actual = JSON.stringify(entry.raw_fields);
+    if (actual !== expected) {
+      throw new CorrectionLedgerError(`第 ${entry.version} 版校正的 raw_fields 与模型原始输出不一致（原文被覆盖）`);
+    }
+  }
+}
+
+/** 台账摘要（对外只给计数与最后改写时间，不给 PII）。 */
+export function summarizeCorrections(ledger: CorrectionLedger | undefined): {
+  version: string | null;
+  count: number;
+  last_corrected_at: string | null;
+} {
+  const entries = ledger?.entries ?? [];
+  const last = entries.length === 0 ? null : (entries.at(-1) ?? null);
+  return {
+    version: ledger === undefined ? null : ledger.version,
+    count: entries.length,
+    last_corrected_at: last === null ? null : last.corrected_at,
+  };
+}
+
+/** 准确率统计口径（手工改写**不计入**分母）。 */
+export interface OcrAccuracySample {
+  /** 参与统计的记录总数（含被剔除项）。 */
+  rows: number;
+  /** 被剔除的人工改写行数。 */
+  human_edited_rows: number;
+  /** 真正进分母的模型输出样本数。 */
+  denominator: number;
+  included: string[];
+  excluded: string[];
+}
+
+/**
+ * 口径断言：分母只能等于「纳入行数」，且纳入集合与剔除集合不得有交集。
+ * 任何把人工改写样本算进模型准确率的改动都会在这里抛错。
+ */
+export function assertAccuracySample(sample: OcrAccuracySample): void {
+  const overlap = sample.included.filter((id) => sample.excluded.includes(id));
+  if (overlap.length > 0) throw new CorrectionLedgerError(`人工改写样本混入准确率分母：${overlap.join(',')}`);
+  if (sample.denominator !== sample.included.length) {
+    throw new CorrectionLedgerError('准确率分母与纳入行数不一致');
+  }
+  if (sample.denominator + sample.human_edited_rows !== sample.rows) {
+    throw new CorrectionLedgerError('准确率分母 + 剔除行数必须等于记录总数');
+  }
+}
+
+/**
+ * 计算 OCR 准确率分母：`correctedFields !== rawFields` 的行（人工改写）一律剔除并单列。
+ * 调用方拿到的 `denominator` 就是「模型原始输出」的样本数，不允许再自己加回去。
+ */
+export function ocrAccuracyDenominator(
+  rows: ReadonlyArray<{ id: string; rawFields: LabelFields; correctedFields: LabelFields }>,
+): OcrAccuracySample {
+  const included: string[] = [];
+  const excluded: string[] = [];
+  for (const row of rows) {
+    if (isHumanEdited(row)) excluded.push(row.id);
+    else included.push(row.id);
+  }
+  const sample: OcrAccuracySample = {
+    rows: rows.length,
+    human_edited_rows: excluded.length,
+    denominator: included.length,
+    included,
+    excluded,
+  };
+  assertAccuracySample(sample);
+  return sample;
+}
+
+// ---------------------------------------------------------------------------
+// GY-I10（#10）· 登记核对的稳定状态码（原 `ocr/verdict.ts`，同上为装载边而并入）
+// ---------------------------------------------------------------------------
+/**
+ * 登记核对的**稳定状态码**与「冲突必须阻断用量」的守卫。
+ *
+ * 契约 `Verification.match_state` 是 7 值闭集（`matched|no_match|ambiguous|conflict|insufficient|unavailable`），
+ * 但产品验收要的是**四类明确状态**：冲突 / 无匹配 / 多结果 / 已失效。其中「已失效」在契约里
+ * 没有独立值——`state.ts` 把它表达成 `match_state='conflict'` + `conflict_fields` 含
+ * `source.validity`（登记资料过期/撤消/冲突）。本模块把那层表达映射成**稳定码**，
+ * 客户端/测试只需要认码，不必再解析 `conflict_fields` 的字符串约定：
+ *
+ *   REGISTRATION_MATCHED     唯一精确命中且逐字段无冲突 → 允许产出用量
+ *   REGISTRATION_NOT_FOUND   登记库里没有这个证号 → 阻断用量
+ *   REGISTRATION_AMBIGUOUS   同名多结果且无法按证号收敛 → 阻断用量（同名不同制剂不得静默匹配）
+ *   REGISTRATION_CONFLICT    命中但字段/来源状态冲突 → 阻断用量
+ *   REGISTRATION_EXPIRED     conflict 的子类：来源已失效/撤消/未知 → 阻断用量
+ *   LABEL_FIELDS_INSUFFICIENT 必要条件（证号/名称）未采集 → 阻断用量
+ *   REGISTRY_UNAVAILABLE     登记库不可用 → 阻断用量（不得降级成无匹配）
+ *
+ * `deriveOcrVerdict` 是纯函数；`assertDoseNotProduced` 是守卫生效点：任何「已阻断却仍带出
+ * 用量卡」的组合都会抛错，供服务层与测试双向钉死。
+ */
+
+export const OCR_VERDICT_CODES = {
+  matched: 'REGISTRATION_MATCHED',
+  no_match: 'REGISTRATION_NOT_FOUND',
+  ambiguous: 'REGISTRATION_AMBIGUOUS',
+  conflict: 'REGISTRATION_CONFLICT',
+  expired: 'REGISTRATION_EXPIRED',
+  insufficient: 'LABEL_FIELDS_INSUFFICIENT',
+  unavailable: 'REGISTRY_UNAVAILABLE',
+} as const;
+
+export type OcrVerdictCode = (typeof OCR_VERDICT_CODES)[keyof typeof OCR_VERDICT_CODES];
+
+/** 阻断理由（稳定码；客户端可直接映射文案，不必解析中文）。 */
+export const DOSE_BLOCK_REASONS = {
+  REGISTRATION_MATCHED: null,
+  REGISTRATION_NOT_FOUND: 'REGISTRATION_NOT_FOUND',
+  REGISTRATION_AMBIGUOUS: 'SAME_NAME_MULTIPLE_REGISTRATIONS',
+  REGISTRATION_CONFLICT: 'REGISTRATION_FIELD_CONFLICT',
+  REGISTRATION_EXPIRED: 'REGISTRATION_EXPIRED',
+  LABEL_FIELDS_INSUFFICIENT: 'NECESSARY_FIELDS_MISSING',
+  REGISTRY_UNAVAILABLE: 'REGISTRY_UNAVAILABLE',
+} as const satisfies Record<OcrVerdictCode, string | null>;
+
+export interface OcrVerdict {
+  /** 稳定状态码（四类明确状态在此收敛）。 */
+  code: OcrVerdictCode;
+  /** 原始契约 match_state（保留，不得改写）。 */
+  match_state: MatchState;
+  /** true = **禁止**产出用量卡片；false = 仅「精确命中且无冲突」时。 */
+  dose_blocked: boolean;
+  /** 阻断理由稳定码（`dose_blocked=false` 时为 null）。 */
+  block_reason: string | null;
+  /** 造成冲突的字段（`conflict_fields` 原样带出，便于 UI 逐字段提示）。 */
+  conflict_fields: string[];
+}
+
+/** 该 match_state 是否**必须**阻断用量（除 matched 外全阻断）。 */
+export function doseBlockedForMatchState(matchState: MatchState): boolean {
+  return matchState !== 'matched';
+}
+
+/**
+ * 由（match_state + conflict_fields）推导稳定状态码。
+ * 「已失效」判定复用 `state.ts` 的字段约定常量，避免两处字符串字面量漂移。
+ */
+export function deriveOcrVerdict(input: {
+  match_state: MatchState;
+  conflict_fields: readonly string[];
+}): OcrVerdict {
+  const conflictFields = [...input.conflict_fields];
+  const isExpired = input.match_state === 'conflict' && conflictFields.includes(CONFLICT_FIELD_SOURCE_VALIDITY);
+  let code: OcrVerdictCode;
+  if (input.match_state === 'conflict') {
+    code = isExpired ? OCR_VERDICT_CODES.expired : OCR_VERDICT_CODES.conflict;
+  } else {
+    code = OCR_VERDICT_CODES[input.match_state];
+  }
+  const doseBlocked = doseBlockedForMatchState(input.match_state);
+  return {
+    code,
+    match_state: input.match_state,
+    dose_blocked: doseBlocked,
+    block_reason: doseBlocked ? DOSE_BLOCK_REASONS[code] : null,
+    conflict_fields: conflictFields,
+  };
+}
+
+/**
+ * 守卫生效点：已阻断却带出用量卡 ⇒ 抛错（不是「顺手清空」——静默清空会掩盖上游门的丢失）。
+ * 返回值仍是同一份卡片数组，便于在服务层直接 `const cards = assertDoseNotProduced(verdict, cards)`。
+ */
+export function assertDoseNotProduced<T>(verdict: OcrVerdict, doseCards: readonly T[]): readonly T[] {
+  if (verdict.dose_blocked && doseCards.length > 0) {
+    throw new Error(`违反用量阻断：${verdict.code} 不得带出 ${doseCards.length} 张用量卡片`);
+  }
+  return doseCards;
+}
+
+// ---------------------------------------------------------------------------
+// GY-I10（#10）· 契约 Verification 投影（原 `ocr/store.ts`，同因装载边而并入）
+// ---------------------------------------------------------------------------
+
+/** 契约 Verification 投影（五字段全必填）。 */
+export interface OcrVerification {
+  match_state: MatchState;
+  registration: RegistryHerbicide | null;
+  conflict_fields: string[];
+  missing_fields: string[];
+  dose_cards: DoseCard[];
+}
+
+/**
+ * 落在 `ocr_records.verification` 这个 jsonb 文档里的**存储形状**：
+ * 契约五字段 + 可选的用户校正台账（`correction_log`）。
+ *
+ * 为什么台账挂在这里而不是新表/新列：runtime 的列级授权只落在
+ * `deploy/postgres-cvm/sql/20-login-roles.sql`（本片硬规则禁改），新增表/列会让
+ * least-privilege 断言变假绿。台账键在**读路径**（`store-pg.readVerification`）与
+ * **契约投影**（`toVerificationProjection`）两处都被剥掉，对外 HTTP 面仍是五字段。
+ */
+export interface OcrVerificationDocument extends OcrVerification {
+  /** 用户校正台账（append-only；从未校正过的老记录没有这个键）。 */
+  correction_log?: CorrectionLedger;
+}
+
+/**
+ * 存储形状 → 契约 `Verification` 投影（五字段全必填）。
+ * 台账键在这里被剥掉：HTTP 200 的 `VerificationEnvelope` 不能多一个字段
+ * （契约 `Verification` 是 `additionalProperties:false`）。
+ */
+export function toVerificationProjection(verification: OcrVerificationDocument): OcrVerification {
+  return {
+    match_state: verification.match_state,
+    registration: verification.registration === null ? null : structuredClone(verification.registration),
+    conflict_fields: [...verification.conflict_fields],
+    missing_fields: [...verification.missing_fields],
+    dose_cards: verification.dose_cards.map((card) => structuredClone(card)),
+  };
+}

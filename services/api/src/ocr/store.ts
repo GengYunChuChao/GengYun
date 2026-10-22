@@ -12,21 +12,24 @@
 import type { ErrorCode } from '../contract.ts';
 import {
   canTransitionJob,
-  type DoseCard,
+  cloneLabelFields,
+  toVerificationProjection,
   type JobState,
   type LabelFields,
-  type MatchState,
-  type RegistryHerbicide,
+  type OcrVerification,
+  type OcrVerificationDocument,
 } from './state.ts';
 
-/** 契约 Verification 投影（五字段全必填）。 */
-export interface OcrVerification {
-  match_state: MatchState;
-  registration: RegistryHerbicide | null;
-  conflict_fields: string[];
-  missing_fields: string[];
-  dose_cards: DoseCard[];
-}
+/**
+ * `OcrVerification` / `OcrVerificationDocument` / `toVerificationProjection` 定义在
+ * `state.ts`（本模块 `export … from` 转出，保持既有导入路径可用）。
+ * ⚠ 为什么搬过去：`ocr-http.mjs` 有一条**冻结的 OCR 域装载边基线**（11 条），
+ * `service.ts` 原本只 `import type` 本模块（无运行时边），一旦从本模块取**值**
+ * （`toVerificationProjection`）就多出一条基线之外的运行时边 ⇒ 判红。
+ * 搬到两者都已装载的 `state.ts` 后，运行时装载边一条不增（判据未放宽）。
+ */
+export { toVerificationProjection };
+export type { OcrVerification, OcrVerificationDocument };
 
 export interface OcrJobRow {
   id: string;
@@ -53,7 +56,8 @@ export interface OcrRow {
   rawFields: LabelFields;
   /** 用户校正后的字段：与 rawFields 严格分离，**不计入模型准确率**。 */
   correctedFields: LabelFields;
-  verification: OcrVerification;
+  /** 契约五字段 + 校正台账（见 `OcrVerificationDocument`）。 */
+  verification: OcrVerificationDocument;
   modelVersion: string;
   createdAt: Date;
   updatedAt: Date;
@@ -122,22 +126,24 @@ export interface OcrStore {
   purgeIdempotent(now: Date): Promise<number>;
 }
 
-function cloneVerification(verification: OcrVerification): OcrVerification {
+function cloneVerification(verification: OcrVerificationDocument): OcrVerificationDocument {
+  const projection = toVerificationProjection(verification);
+  const ledger = verification.correction_log;
+  if (ledger === undefined) return projection;
   return {
-    match_state: verification.match_state,
-    registration: verification.registration === null ? null : structuredClone(verification.registration),
-    conflict_fields: [...verification.conflict_fields],
-    missing_fields: [...verification.missing_fields],
-    dose_cards: verification.dose_cards.map((card) => structuredClone(card)),
-  };
-}
-
-function cloneLabelFields(fields: LabelFields): LabelFields {
-  return {
-    registration_number: fields.registration_number,
-    name: fields.name,
-    ingredients: fields.ingredients.map((item) => ({ ...item })),
-    dosage_form: fields.dosage_form,
+    ...projection,
+    correction_log: {
+      version: ledger.version,
+      entries: ledger.entries.map((entry) => ({
+        version: entry.version,
+        revision: entry.revision,
+        actor_user_id: entry.actor_user_id,
+        corrected_at: entry.corrected_at,
+        changes: entry.changes.map((change) => ({ ...change })),
+        raw_fields: cloneLabelFields(entry.raw_fields),
+        corrected_fields: cloneLabelFields(entry.corrected_fields),
+      })),
+    },
   };
 }
 

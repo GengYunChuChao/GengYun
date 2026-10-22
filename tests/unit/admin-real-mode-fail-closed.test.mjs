@@ -7,7 +7,7 @@
  * 声称成功、重启即丢。**不能**用 `contract-status=partial` 之类文档披露替代运行时拒绝。
  *
  * 本文件钉住两件事：
- * 1. **real 默认装配反例 ⇒ 34 条后台路由一律 fail-closed（503 `PROVIDER_UNAVAILABLE`）**，
+ * 1. **real 默认装配反例 ⇒ 35 条后台路由一律 fail-closed（503 `PROVIDER_UNAVAILABLE`）**，
  *    且**不产生任何内存副作用**（审计台账为空）、**路由保持注册**（契约面不缩水）；
  * 2. **stub 默认装配行为不变**（内存实现仍可用，且确会写内存）—— 说明改动只对外拒绝 real。
  *
@@ -118,6 +118,7 @@ function adminRequests() {
   rows.push({ op: 'cancelAdminJob', method: 'POST', url: `${API}/admin/jobs/${UNKNOWN_UUID}/cancel`, body: { reason: 'r' }, ifMatch: '"1"' });
   rows.push({ op: 'listFlags', method: 'GET', url: `${API}/admin/feature-flags` });
   rows.push({ op: 'setFlag', method: 'PUT', url: `${API}/admin/feature-flags/ai_enabled`, body: { enabled: true, reason: 'r' }, ifMatch: '"1"' });
+  rows.push({ op: 'listFlagAuditEvents', method: 'GET', url: `${API}/admin/flag-audit-events` });
   rows.push({ op: 'hidePost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/hide`, body: { reason: 'r' }, ifMatch: '"1"' });
   return rows;
 }
@@ -150,13 +151,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：35 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 34, '反例必须覆盖全部 34 个 operationId');
+    assert.equal(rows.length, 35, '反例必须覆盖全部 35 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -170,8 +171,8 @@ test('real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：34 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 34);
+    // 契约面不缩水：35 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 35);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');
@@ -184,7 +185,7 @@ test('real 默认装配反例：34 条后台路由一律 fail-closed（503 PROVI
     assert.equal(app.adminContentService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminOpsService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminContentService.operationIds.length, 25);
-    assert.equal(app.adminOpsService.operationIds.length, 9);
+    assert.equal(app.adminOpsService.operationIds.length, 10);
   } finally {
     await app.close();
   }
