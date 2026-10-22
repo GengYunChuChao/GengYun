@@ -98,12 +98,15 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
   'tests/integration/community-filter-pg.mjs',
+  'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
@@ -118,12 +121,15 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
   'tests/integration/community-filter-pg.mjs',
+  'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
+  'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
   'tests/integration/account-suspend-pg.mjs',
   'tests/integration/speech-pg.mjs',
@@ -164,14 +170,31 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本零耦合；紧跟 `community-pg` 便于两条社区臂
   //    并排读（两者**不共享库/角色**，重排也不会互相污染，但顺序判据要求与 workflow 逐条一致）。
   'tests/integration/community-filter-pg.mjs',
+  // R31-a. `qa-citations-pg`（R31 接入，#12 问答引用可溯源）：自建专用空库（硬钉 `gengyun_qa_citations_test`）、
+  //    只 apply 迁移**子集** 0001/0002/0005/0008/0010/0012/0013 七段（⛔ 不是全链 `discoverMigrations()`）、
+  //    全程只用库 owner 连接 ⇒ 不建组角色、也不复用别人的运行时角色，对前后脚本零耦合；紧跟社区域便于
+  //    「库 owner + 只 apply 需要的迁移 + 断言空库」这一类并排读。缺 env 时脚本 exit 77 ⇒ workflow 把 77 升级成硬失败。
+  'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  // R31-b. `admin-jobs-pg`（R31 接入，#9 作业台：开关生效／作业与错误可见／变更留痕 A→B／最小权限）：
+  //    **要求集群里没有 `gengyun_api_runtime`**——只给 argv[2] 时它走 `provisionRoles()` 自己 `CREATE ROLE`
+  //    并把随机口令写进自己的运行时 URL（`admin-jobs-pg.mjs:276-298`），给了 argv[3] 反而要求角色**已存在**
+  //    （`:252-274`，存在且非本轮创建即「拒绝接管」）。它前面正是「收尾按 `pg_roles` 快照差集 DROP 并复核为空」的
+  //    `account-deletion-pg` ⇒ 排在两者之间；它自己收尾同样按快照差集 DROP（`:859-871`），故后面的
+  //    `admin-accounts-read-pg` 又能从「不存在」开始（本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」）。
+  'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36 之后它不再是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
+  // R31-c. `ocr-corrections-pg`（R31 接入，#10 OCR 校正台账）：自建专用空库 `gengyun_ocr_corrections_test`、
+  //    自己 `applyMigrations` 全链后落夹具、全程库 owner 连接、只走 env `OCR_PG_TEST_URL`（与上一条同名，
+  //    但两步各用自己的库、不共享 step env）⇒ 不建组角色、不复用运行时角色，对前后脚本零耦合；
+  //    紧跟同域的 OCR 作业臂便于「作业面 + 台账面」并排读。缺 env 时脚本 exit 77 ⇒ workflow 把 77 升级成硬失败。
+  'tests/integration/ocr-corrections-pg.mjs',
   // 9. `recognitions-pg`（`#349` 接入）：自建专用空库 `gengyun_recognitions_test`、自己 apply
   //    0001..0025 全链（含 0025_recognitions_persistence.sql）、全程只用库 owner 连接，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本无耦合。

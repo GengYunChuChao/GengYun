@@ -24,7 +24,7 @@ const OTHER = USER_B.userId;
 /** 幂等键哈希：形状只要求是字符串，这里用两个可区分的长串。 */
 const KEY_HASH = 'a'.repeat(64);
 
-/** 与 `auth/idempotency.ts:111-113` 的 `idempotencyScope` 逐字同形：`<主体>\n<METHOD>\n<路径>`。 */
+/** 与 `auth/idempotency.ts:129-131` 的 `idempotencyScope` 逐字同形：`<主体>\n<METHOD>\n<路径>`。 */
 function scopeFor(subject, method, path) {
   return `${subject}\n${method}\n${path}`;
 }
