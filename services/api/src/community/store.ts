@@ -203,12 +203,12 @@ export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>
  *     自动失效 ⇒ 该行退出公开面、等重审；这是保留 + 去 PII，不是删除。
  *   - `hiddenMedia`：被移除的媒体引用条数。社区存储没有"媒体已可靠脱敏"的证据面
  *     （媒体投影未接线），因此按 F13 的"不能可靠脱敏 ⇒ 移除"处理；正文照旧保留。
- *   - `authorRefsReplaced`：**行级作者指针被换成注销引用的行数**（迁移 0030：`author_id` 置 NULL +
- *     写 `anonymized_author_ref`）。⚠️ 不并入 `records`（那不是"删除/改写正文"），也不并入
- *     `retained`（保留读数说的是正文是否原样）—— 三者是不同的账，混算会让证据串把
- *     "替换了几行作者"读成"保留了几行"。
+ *   - `authorRefsReplaced`：**行级作者指针被换成注销引用的行数**（迁移 0030 帖/评：`author_id` 置 NULL +
+ *     写 `anonymized_author_ref`；**迁移 0032 起举报也计入**：`reporter_id` 置 NULL + 写同一串引用）。
+ *     ⚠️ 不并入 `records`（那不是"删除/改写正文"），也不并入 `retained`（保留读数说的是正文是否
+ *     原样）—— 三者是不同的账，混算会让证据串把"替换了几行作者"读成"保留了几行"。
  *   - `authorRefsRemaining`：**写入完成后重新测量**的「仍以原 `author_id` 关联本主体」行数
- *     （帖子 + 评论，**含** `visibility='deleted'` 行）。0 = 账号映射已从本主体的全部内容行上
+ *     （帖 + 评 + **举报**，**含** `visibility='deleted'` 行）。0 = 账号映射已从本主体的全部内容行上
  *     删除；>0 = 仍有行指向该账户，注销端口必须据此如实 `blocked`（⛔ 不得用
  *     `authorRefsReplaced > 0` 冒充完成）。这是 P2 返修新增的**结果**读数：不是"做了几步"，
  *     而是"还剩多少没做"。
@@ -225,7 +225,7 @@ export interface CommunityOwnerPurgeCounts {
   retained: number;
   redacted: number;
   hiddenMedia: number;
-  /** 行级作者指针替换行数（迁移 0030；0 = 没有需要替换的行或已是匿名行）。 */
+  /** 行级作者指针替换行数（0030 帖/评；0032 起含举报；0 = 没有需要替换的行或已是匿名行）。 */
   authorRefsReplaced: number;
   /**
    * 写入后仍以原账户 id 关联本主体的行数（帖 + 评 + **举报**，含软删行）；
