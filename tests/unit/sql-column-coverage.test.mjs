@@ -326,14 +326,20 @@ const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 const TABLE_WIDE_COLUMN = '*';
 
 /**
- * R28-S66 扩展读数钉死值（2026-10-22 重测，17 文件 = 8 store ＋ 9 新纳管；R28-W12 把 media/store-pg.ts\n * 从 UNAUDITED_SQL_HOSTS 移入真审计，加了 media／media_derivatives 两张表与 13 条字面量）。
+ * R28-S66 扩展读数钉死值（2026-10-22 重测，17 文件 = 8 store ＋ 9 新纳管；R28-W12 把 media/store-pg.ts
+ * 从 UNAUDITED_SQL_HOSTS 移入真审计，加了 media／media_derivatives 两张表与 13 条字面量）。
+ * **R28-W12 返修追加 1 条**（监工 1027-1927 轮 P1）：`services/api/src/media/store-pg.ts` 的
+ * `writeMediaRow` 新增「带前置 revision/state 的原子条件 UPDATE」——
+ * `UPDATE … WHERE id = $1 AND revision = $14 AND state = $15::media_state RETURNING id`，
+ * 让迟到的 complete 在已删除的媒体上影响 0 行、从而可判定地失败；因此 sqlLiterals 230→231、
+ * statements.UPDATE 33→34（同一函数的无条件 UPDATE 仍在，作端口原语保留，条数不变）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 17,
-  sqlLiterals: 230,
-  statements: { INSERT: 39, UPDATE: 33, SELECT: 125, DELETE: 33 },
-  returningClauses: 70,
+  sqlLiterals: 231,
+  statements: { INSERT: 39, UPDATE: 34, SELECT: 125, DELETE: 33 },
+  returningClauses: 71,
   onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
@@ -341,8 +347,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 1,
   noTargetTable: 10,
   referencedTables: 41,
-  columnRequirements: 1489,
-  coveredRequirements: 1435,
+  columnRequirements: 1502,
+  coveredRequirements: 1448,
   ledgerExemptions: 33,
   rowLockRequirements: 19,
   rowLockExemptions: 1,
@@ -358,7 +364,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
-  'media': 13,
+  'media': 14,
   'messages': 15,
   'ocr': 16,
   'privacy/backup-copies-pg.ts': 4,

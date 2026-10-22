@@ -175,7 +175,9 @@ export async function uploadReadyMedia(world, actor, key, options = {}) {
   });
   if (created.status !== 201) throw new Error(`建上传失败 ${created.status}：${created.text}`);
   const mediaId = created.body.data.media.id;
-  const keys = world.app.mediaService.serverObjectKeys(mediaId);
+  // [R28-W12 合流订正] 媒体端口的 `serverObjectKeys` 自 W12 起改为查持久化台账 ⇒ 返回 Promise；
+  // 本文件在 main 上按同步签名调用，会拿到 Promise 再取 `.rawRef` ⇒ undefined ⇒ 往桶里写 null 键。
+  const keys = await world.app.mediaService.serverObjectKeys(mediaId);
   if (keys === null) throw new Error('服务端未给出对象键');
   await world.objectStore.putObject(keys.rawRef, bytes, 'application/octet-stream');
   const completed = await inject(world.app, {

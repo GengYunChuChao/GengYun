@@ -429,7 +429,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "accountDeletionWired",
-          "lines": "1810-1818"
+          "lines": "1824-1832"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -566,7 +566,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "getMedia",
-          "lines": "1012-1015"
+          "lines": "1078-1081"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -593,7 +593,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "deleteMedia",
-          "lines": "1017-1056"
+          "lines": "1083-1133"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -620,7 +620,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "grantMediaAccess",
-          "lines": "1060-1091"
+          "lines": "1137-1168"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3088,7 +3088,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "readCommunityMediaContent",
-          "lines": "1215-1261"
+          "lines": "1292-1338"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",

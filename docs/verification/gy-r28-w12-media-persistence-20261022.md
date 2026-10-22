@@ -392,3 +392,46 @@ node --test --test-concurrency=1 tests/unit/media-*.test.mjs
 npm run lint
 node tools/verify-contract-status.mjs
 ```
+
+## 12. [P1] 返修（监工 1027-1927 轮）：条件更新、连带读数与合流订正
+
+**新增的那一条 SQL 与为什么要新增**：`services/api/src/media/store-pg.ts` 的 `writeMediaRow` 里，除原有的
+无条件 `UPDATE public.media … WHERE id = $1 RETURNING id`（端口原语 `saveMedia` 仍保留）之外，新增
+`UPDATE public.media … WHERE id = $1 AND revision = $14 AND state = $15::media_state RETURNING id`，
+即 `saveMediaIfCurrent(record, expected)` 的原子前置条件写。**为什么必须新增**：`complete` 与 `delete`
+的幂等 scope 不同（`/complete` 的快照可能早于一次成功删除），只靠 `WHERE id = $1` 会让迟到的 complete
+把 `deleted` 墓碑覆盖回 `ready`——改前真库读数就是 `{"ok":true,…,"state":"ready","revision":2}` 且衍生件
+留在桶里（§5 的同一 interleave 复跑见 §12 末尾读数）。加上 revision/state 前置条件后影响行数为 0，
+服务层据此给出可判定失败（已删除 ⇒ 409 `OBJECT_UNAVAILABLE`「媒体已被删除，迟到的完成上传未生效」；
+被别的写入抢先 ⇒ 409 `REVISION_CONFLICT`），并回收这次多写的衍生件。
+
+**连带读数（同一条 SQL 引起的、按实测更新的钉死值，都在 `tests/unit/sql-column-coverage.test.mjs`）**：
+
+| 读数 | 改前 | 改后 | 原因 |
+| --- | --- | --- | --- |
+| `sqlLiterals` | 230 | 231 | 多一条字面量（条件 UPDATE） |
+| `statements.UPDATE` | 33 | 34 | 同上 |
+| `returningClauses` | 70 | 71 | 条件 UPDATE 自带 `RETURNING id` |
+| `EXPECTED_EXTENDED_PER_FILE['media']` | 13 | 14 | 逐文件口径与总数一致 |
+| `columnRequirements` / `coveredRequirements` | 1489 / 1435 | 1502 / 1448 | 新语句重复要求 media 的 13 个 SET 列，全部已被既有列级授权覆盖 |
+
+**合流订正（不属于本片代码，但不改就跑不动 main 的失败矩阵）**：`tests/failmatrix/world.mjs:178` 在 main
+上按**同步**签名调用 `mediaService.serverObjectKeys(mediaId)`；本片把该端口改成查持久化台账、返回
+`Promise` 之后，那里拿到的是 Promise，`keys.rawRef` 为 `undefined`，于是往替身桶里写了 `null` 键，
+`complete` 一律 409「上传对象不存在或已被回收」（真跑：`完成上传失败 409`，`bucket.putObject null`）。
+补一个 `await` 即恢复；负控制语义未动。
+
+**锚点与负控制同步**：`services/api/src/media/service.ts` 新增 `snapshotOf`/`staleWriteFailure` 后行号整体下移，
+台账 5 条引用（app.ts 的 `accountDeletionWired`、service.ts 的 `getMedia`/`deleteMedia`/`grantMediaAccess`/
+`readCommunityMediaContent`）用 `node tools/verify-contract-status.mjs --write-doc` 重新同步，锚点都落在真实
+函数体内（`getMedia` 1078-1081、`deleteMedia` 1083-1133、`grantMediaAccess` 1137-1168、
+`readCommunityMediaContent` 1292-1338、`accountDeletionWired` 1824-1832）。`tests/failmatrix/mutations.mjs`
+的 NC-09 `find` 从 `record === undefined || …` 改为重构后的真实守卫 `record === null || record.ownerId !== actor.ownerId`
+（store 端口自本片起返回 `MediaRecord | null`，不再返回 `undefined`），仍是同一条「删掉归属比对」负控制；
+`node tools/i22-failmatrix-negative-control.mjs --only=NC-09` 实跑：`watch C2-01,C2-02 → 变红：C2-01(200) C2-02(202)`
+（跨主体 GET 拿到 200 + 别人元数据、DELETE 拿到 202），恢复字节后复跑 `C2-01=PASS C2-02=PASS`。
+
+**§12 复跑读数（真库 :55691，与 §5 同一 interleave）**：窗口内 delete ⇒ 202（库内 `state=deleted rev=2`）；
+放行迟到 complete ⇒ `OBJECT_UNAVAILABLE`；最终库内 `state=deleted rev=2`、`media_derivatives` 0 行、桶内衍生件
+已回收。定向套件：`node --test tests/unit/*contract-status*.test.mjs tests/unit/*i22*.test.mjs
+tests/unit/*sql-column*.test.mjs` ⇒ 89 pass / 0 fail；`node tools/verify-contract-status.mjs` 退出码 0。
