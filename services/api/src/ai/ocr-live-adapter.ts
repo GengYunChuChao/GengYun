@@ -115,6 +115,14 @@ const DOSAGE_FORMS = [
   '饵剂',
 ] as const;
 
+/**
+ * 匹配顺序：**长名优先**。短名不得吞掉包含它的完整剂型——
+ * 「悬浮剂」是「微囊悬浮剂／种子处理悬浮剂／油悬浮剂」的子串、「粉剂」是「可湿性粉剂」的子串，
+ * 若按 `DOSAGE_FORMS` 的字面顺序用 `includes` 首命中即返回，独立剂型会被改写成短名
+ * （监工 1021-1703 / 1021-1806 [P2]）。长度降序只是第一道保险，真正的消歧见 `dosageFormFromText`。
+ */
+const DOSAGE_FORMS_LONGEST_FIRST: readonly string[] = [...DOSAGE_FORMS].sort((a, b) => b.length - a.length);
+
 const REGISTRATION_WITH_MARKER = /(?:农药登记证号|农药登记证|登记证号|登记号)\s*[:：]?\s*(PD\d{8}[A-Z]?)/;
 const REGISTRATION_BARE = /\b(PD\d{8}[A-Z]?)\b/;
 const NAME_WITH_MARKER = /(?:农药名称|商品名称|产品名称)\s*[:：]\s*(.+)/;
@@ -127,6 +135,30 @@ function nullableText(value: string | undefined | null): string | null {
   const trimmed = value.replace(/\s+/g, ' ').trim();
   if (trimmed.length === 0 || trimmed.length > MAX_LABEL_TEXT) return null;
   return trimmed;
+}
+
+/**
+ * 从识别文本里取剂型：**只认闭集里的完整名**，认不出就 `null`。
+ *
+ * 消歧规则（**不改写成另一个剂型**）：
+ *   1. 收集闭集里每个名字的全部命中（允许同一名字多次出现）；
+ *   2. 丢掉被**更长命中完整覆盖**的短名命中——「微囊悬浮剂」里的「悬浮剂」不是独立剂型；
+ *   3. 剩下的命中若只指向一个名字，就取它；指向两个以上互不覆盖的独立剂型 ⇒ 判为不确定，保留缺项。
+ */
+function dosageFormFromText(text: string): string | null {
+  const hits: Array<{ form: string; start: number; end: number }> = [];
+  for (const form of DOSAGE_FORMS_LONGEST_FIRST) {
+    for (let at = text.indexOf(form); at !== -1; at = text.indexOf(form, at + 1)) {
+      hits.push({ form, start: at, end: at + form.length });
+    }
+  }
+  const standalone = hits.filter(
+    (hit) => !hits.some((other) => other.form.length > hit.form.length && other.start <= hit.start && other.end >= hit.end),
+  );
+  const distinct = [...new Set(standalone.map((hit) => hit.form))];
+  if (distinct.length !== 1) return null;
+  const [only] = distinct;
+  return only ?? null;
 }
 
 /**
@@ -171,13 +203,8 @@ export function labelFieldsFromDetections(detections: readonly string[]): {
     }
   }
 
-  let dosageForm: string | null = null;
-  for (const form of DOSAGE_FORMS) {
-    if (text.includes(form)) {
-      dosageForm = form;
-      break;
-    }
-  }
+  // 剂型：长名优先 + 覆盖消歧（短名不得吞掉「微囊悬浮剂」这类完整剂型，监工 1021-1806 [P2]）。
+  const dosageForm = dosageFormFromText(text);
 
   return { registration_number: registration, name, ingredients, dosage_form: dosageForm };
 }

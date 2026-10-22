@@ -332,6 +332,38 @@ test('OCR 适配器·正控制：build→reserve→sign→send(恰好一次)→s
   );
 });
 
+test('OCR 适配器·剂型闭集：长名优先，短名不得吞掉完整剂型（监工 1021-1806 [P2] 回归）', () => {
+  // 回归边界：「悬浮剂」是这三个独立剂型的子串、「粉剂」是「可湿性粉剂」的子串。
+  // 按字面顺序 `includes` 首命中会把它们改写成短名（reviewed_sha=5633cd1c / d5f4c2aa 的实测）。
+  for (const form of ['微囊悬浮剂', '种子处理悬浮剂', '油悬浮剂', '可湿性粉剂']) {
+    assert.equal(labelFieldsFromDetections([`剂型：${form}`]).dosage_form, form, `${form} 不得被改写成短名`);
+    assert.equal(labelFieldsFromDetections([`剂型：${form}`, `剂型：${form}`]).dosage_form, form, `${form} 重复出现仍取完整名`);
+  }
+  // 正常提取：短名自身仍能取到。
+  for (const form of ['悬浮剂', '粉剂', '水剂', '乳油', '悬乳剂']) {
+    assert.equal(labelFieldsFromDetections([`剂型：${form}`]).dosage_form, form, `${form} 应原样取到`);
+  }
+  // 与其它字段同批出现时，剂型取完整名、其余字段不受影响。
+  assert.deepEqual(
+    labelFieldsFromDetections([
+      '农药登记证号：PD20210002',
+      '农药名称：合成示例微囊悬浮剂',
+      '有效成分：高效氯氟氰菊酯 25%',
+      '剂型：微囊悬浮剂',
+    ]),
+    {
+      registration_number: 'PD20210002',
+      name: '合成示例微囊悬浮剂',
+      ingredients: [{ name: '高效氯氟氰菊酯', content_text: '25', unit_text: '%' }],
+      dosage_form: '微囊悬浮剂',
+    },
+  );
+  // 不确定就留空：两个互不覆盖的独立剂型 ⇒ 保留缺项，不改写成其中任一个。
+  assert.equal(labelFieldsFromDetections(['剂型：悬浮剂', '备注：原为微囊悬浮剂']).dosage_form, null);
+  // 闭集外不猜（与修复前一致）。
+  assert.equal(labelFieldsFromDetections(['与剂型无关的一行字']).dosage_form, null);
+});
+
 test('OCR 适配器·本地拒绝先于预留：取不到字节 / 图片超上限 / 头部非法 ⇒ 未发包、不占预算', async () => {
   for (const [label, source] of [
     ['未接线来源（null）', createUnwiredImageSource('synthetic')],

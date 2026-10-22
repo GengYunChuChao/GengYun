@@ -219,3 +219,38 @@ node tools/verify-provider-live-r28.mjs --live --capability tts \
    产品侧不读这些键；本片按「参数剖面逐项对齐」落实，并在
    `tests/unit/ai-provider-config.test.mjs` 用「把产品配置映射回 `configurationIssues()` 输入并断言零 issue」
    反向核对（三域各零 issue）。
+
+## 7. 返修：剂型短名吞掉完整剂型（监工 1021-1703 / 1021-1806 [P2]）
+
+**缺陷**：`labelFieldsFromDetections` 的剂型闭集按字面顺序 `text.includes(form)` 首命中即返回，
+「悬浮剂」排在「微囊悬浮剂／种子处理悬浮剂／油悬浮剂」之前 ⇒ 独立剂型被改写成短名。
+闭集里只有两族包含关系：「悬浮剂 ⊂ 微囊悬浮剂／种子处理悬浮剂／油悬浮剂」、「粉剂 ⊂ 可湿性粉剂」
+（后者因字面顺序碰巧未暴露，属同一缺陷）。
+
+**改法**（`services/api/src/ai/ocr-live-adapter.ts:118-162` 新增 `dosageFormFromText`，调用点 `:206-207`）：
+闭集命中按**长名优先**收集 → 丢弃被**更长命中完整覆盖**的短名命中 → 仅当剩下的命中只指向一个剂型名时
+返回该名；指向两个以上互不覆盖的独立剂型 ⇒ 返回 `null`（保留缺项，**不改写成另一剂型**）。
+
+**读数**（本机，直接调用 `labelFieldsFromDetections`）：
+
+| 输入 | 修复前 | 修复后 |
+|---|---|---|
+| `['剂型：微囊悬浮剂']` | `悬浮剂`（错） | `微囊悬浮剂` |
+| `['剂型：种子处理悬浮剂']` | `悬浮剂`（错） | `种子处理悬浮剂` |
+| `['剂型：油悬浮剂']` | `悬浮剂`（错） | `油悬浮剂` |
+| `['剂型：可湿性粉剂']` | `可湿性粉剂` | `可湿性粉剂` |
+| `['剂型：悬浮剂']`／`['剂型：粉剂']`／`['剂型：水剂']`／`['剂型：悬乳剂']` | 原样 | 原样（正常提取不变） |
+| `['剂型：悬浮剂','备注：原为微囊悬浮剂']` | `悬浮剂` | `null`（不确定即缺项） |
+| `['与标签无关的一行字']` | `null` | `null` |
+
+回归用例：`tests/unit/ai-live-provider-wiring.test.mjs:335`（新增 1 条，未删改任何既有断言）。
+
+| 命令 | 读数 |
+|---|---|
+| `node --test tests/unit/ai-live-provider-wiring.test.mjs` | `tests 16 / pass 16 / fail 0` |
+| `node --test tests/unit/{ocr-service,ocr-state,miniprogram-ocr-correction}.test.mjs` | `tests 131 / pass 131 / fail 0` |
+| `npm run test:contract` | `tests 6 / pass 6 / fail 0` |
+| `npm run typecheck --workspace @gengyun/api` | `tsc -p tsconfig.json --noEmit` 无输出（通过） |
+| `npm run lint` | `PASS tsc --noEmit services/api/tsconfig.json`／`PASS apps/admin`／`PASS 仓库卫生扫描`／`lint 通过` |
+
+**本轮未做**：无真实标签/供应商重测、无新增付费调用、无数据库与 HTTP 三域验收（本轮只闭该字段边界）。
