@@ -62,7 +62,13 @@ import type { MediaObjectStore, PresignedHandle } from './object-store.ts';
 import { createUnwiredObjectStore } from './object-store.ts';
 import type { PublishedContentRef, PublishedContentSource } from './content-source.ts';
 import { createClosedContentSource } from './content-source.ts';
-import type { CommunityGrantRecord, MediaIdempotencyEntry, MediaRecord, MediaStore } from './store.ts';
+import type {
+  CommunityGrantRecord,
+  MediaIdempotencyEntry,
+  MediaRecord,
+  MediaStore,
+  MediaWritePrecondition,
+} from './store.ts';
 import {
   MEDIA_IDEMPOTENCY_CLAIM_TTL_MS,
   MEDIA_IDEMPOTENCY_PATHS,
@@ -654,6 +660,43 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   }
 
   /**
+   * 一份**快照**的写入前置条件：读它那一刻的 `revision` 与 `state`。
+   *
+   * **为什么服务层的写一律要带它**（监工 1927 轮 P1）：`complete` 与 `delete` 的幂等 scope
+   * 不同（`POST /media`, `POST /media/:id/complete`, `DELETE /media/:id` 三把键互不排斥），
+   * 于是「A 读完快照、正在生成衍生件」与「B 删除成功」可以交错。窗口内的任何整行覆写
+   * （`WHERE id = $1`）都会把 B 写好的 `deleted` 盖回 `ready`，把删除结论作废。
+   * 把读到的快照作为条件交给端口，0 行即判定「我的快照过期了」，写入不落库。
+   */
+  function snapshotOf(record: MediaRecord): MediaWritePrecondition {
+    return { revision: record.revision, state: record.state };
+  }
+
+  /**
+   * 条件写 0 行 ⇒ 重读真行，给出**可判定**的失败（两条路径都不许静默成功）。
+   *
+   * - 行已被删除（并发 `delete` 赢）：`OBJECT_UNAVAILABLE` + 明说「已删除」。与 `complete`
+   *   自己面对 `state='deleted'` 时的错误码一致（同一个入参、同一个结论），客户端据此
+   *   停止重试，而不是拿一个假 `ready`。
+   * - 行被推进到别的状态/版本：`REVISION_CONFLICT`（`contract.ts` 里 409），提示刷新后重取
+   *   `revision` 再重试。
+   */
+  async function staleWriteFailure(
+    record: MediaRecord,
+    expected: MediaWritePrecondition,
+    what: string,
+  ): Promise<never> {
+    const current = await store.getMedia(record.id);
+    if (current === null || current.state === 'deleted') {
+      throw new ApiError('OBJECT_UNAVAILABLE', `媒体已被删除，迟到的${what}未生效`);
+    }
+    throw new ApiError(
+      'REVISION_CONFLICT',
+      `媒体版本已变化（rev ${expected.revision}/${expected.state} → rev ${current.revision}/${current.state}），${what}未生效`,
+    );
+  }
+
+  /**
    * 回收记录持有的私有对象。
    *
    * **隐私红线（监工批复 P1 返修）**：只有**确认删除成功**（端口返回 `true`）才清空该引用。
@@ -930,6 +973,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       const record = await ownedRecord(actor, mediaId);
 
       requireIfMatch(ifMatch, record.revision);
+      // 读到的这一份即本次写入的前置条件：之后任何一次 delete/expire 落地都会让它过期，
+      // 末尾的条件写据此判定「我的快照还能不能生效」（见 snapshotOf / staleWriteFailure）。
+      const expected = snapshotOf(record);
 
       const declared = attempt(() => validateCompleteInput(input));
       if (declared.sha256 !== record.sha256 || declared.bytes !== record.bytes) {
@@ -946,7 +992,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       // 契约 UploadCompleteInput **不含**媒体字节：字节必须由服务端从对象存储取回。
       const stored = record.rawRef === null ? null : await attemptAsync(() => objectStore.getObject(record.rawRef as string));
       if (stored === null) {
-        await reject(record, 'upload_missing');
+        await reject(record, 'upload_missing', expected);
         throw new ApiError('OBJECT_UNAVAILABLE', '上传对象不存在或已被回收');
       }
 
@@ -967,7 +1013,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         if (kindOf(record.purpose) === 'image') {
           const stripped = stripImageMetadata(stored.bytes, detected.mime);
           if (!stripped.ok) {
-            await reject(record, 'decode_failed');
+            await reject(record, 'decode_failed', expected);
             throw new MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据');
           }
           transition(record, 'processing', timestamp);
@@ -982,12 +1028,21 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         transition(record, 'ready', timestamp);
       } catch (error) {
         // 失败即回收对象（不留孤立对象），再按契约错误码抛出。
-        if (!isRejectedRecord(record)) await reject(record, 'validation_failed');
+        if (!isRejectedRecord(record)) await reject(record, 'validation_failed', expected);
         rethrowMediaError(error);
       }
 
       record.revision += 1;
-      await store.saveMedia(record);
+      // **条件写**（监工 1927 轮 P1）：`complete` 与 `delete` 的幂等 scope 不同、可以并发；
+      // 上面这段「取回字节 + 生成衍生件」是异步窗口，窗口内落地的 `delete` 会让这份快照过期。
+      // 无条件整行覆写会把 `deleted` 盖回 `ready`（已删除的媒体复活），所以这里只允许
+      // 「库内仍是读完时的 revision/state」才写；0 行 ⇒ 本次完成不落库，给出可判定失败。
+      if ((await store.saveMediaIfCurrent(record, expected)) === 0) {
+        // 刚落下的衍生件没有任何登记册行承载它（父行已删除或已终态）⇒ 先回收，避免孤儿对象
+        // 逃出 cleanupOrphans 的扫描范围（那一轮只扫 rejected/deleted 行）。
+        await dropObjects(record);
+        await staleWriteFailure(record, expected, '完成上传');
+      }
       await slot.settle(record.id);
       return { status: 202, media: toProjection(record) };
     } finally {
@@ -995,8 +1050,18 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     }
   };
 
-  /** 受控失败：迁移到 `rejected`、记录 failure_code、回收对象（孤立清理）。 */
-  async function reject(record: MediaRecord, failureCode: string): Promise<void> {
+  /**
+   * 受控失败：迁移到 `rejected`、记录 failure_code、回收对象（孤立清理）。
+   *
+   * 返回**是否落库**。落库同样是条件写：如果这条失败结论来自一份已过期的快照
+   * （期间 `delete` 已成功），那就不许把 `rejected` 写回去覆盖 `deleted`——对象的回收
+   * 已经发生且可重入，未落库的部分由 `cleanupOrphans` 下一轮按真行继续收敛。
+   */
+  async function reject(
+    record: MediaRecord,
+    failureCode: string,
+    expected: MediaWritePrecondition,
+  ): Promise<boolean> {
     const timestamp = at();
     if (canTransition(record.state, 'rejected')) {
       record.state = 'rejected';
@@ -1007,7 +1072,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     await revokeGrantsForMedia(record.id, timestamp);
     // 回收结果（对象键被清空 / 状态与 failure_code）必须落库：否则重启后
     // 会看到 `rawRef` 仍在的 rejected 行，cleanupOrphans 也会重复尝试删同一个键。
-    await store.saveMedia(record);
+    return (await store.saveMediaIfCurrent(record, expected)) === 1;
   }
 
   const getMedia: AppMediaService['getMedia'] = async ({ actor, mediaId }) => {
@@ -1036,6 +1101,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     try {
       const record = await ownedRecord(actor, mediaId);
       requireIfMatch(ifMatch, record.revision);
+      // 本次删除的写入前置条件（同上：删除与完成可以并发，见 snapshotOf）。
+      const expected = snapshotOf(record);
       const timestamp = at();
       if (record.state !== 'deleted') {
         if (canTransition(record.state, 'deleting')) record.state = 'deleting';
@@ -1048,7 +1115,16 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       record.updatedAt = timestamp;
       await revokeGrantsForMedia(record.id, timestamp);
       record.revision += 1;
-      await store.saveMedia(record);
+      if ((await store.saveMediaIfCurrent(record, expected)) === 0) {
+        // 删除也只对「读完时的 revision/state」生效：期间若有过一次完成/过期，这一行的
+        // 结论已经由先到者写下，这里不许把 `deleted` 盖回去。
+        const current = await store.getMedia(record.id);
+        if (current === null) throw new ApiError('NOT_FOUND', '媒体不存在');
+        if (current.state !== 'deleted') await staleWriteFailure(record, expected, '删除');
+        // 并发的另一次删除已经落地：删除语义幂等，按库里的真实 revision 回报 202。
+        await slot.settle(current.id);
+        return { status: 202, ack: { accepted: true }, revision: current.revision };
+      }
       await slot.settle(record.id);
       return { status: 202, ack: { accepted: true }, revision: record.revision };
     } finally {
@@ -1281,8 +1357,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       let expired = 0;
       for (const record of await store.listMediaByState(['initiated'])) {
         if (record.state === 'initiated' && record.expiresAt <= timestamp) {
-          await reject(record, 'expired');
-          expired += 1;
+          // 只有真的把 `rejected` 落库才算「过期了一条」：条件写 0 行说明这行已经被并发的
+          // 删除/完成推进过，过期结论不成立，也不许把先到者的终态覆盖回去。
+          if (await reject(record, 'expired', snapshotOf(record))) expired += 1;
         }
       }
       return { expired };
@@ -1298,7 +1375,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         pendingObjects += outcome.pending;
         revokedGrants += await revokeGrantsForMedia(record.id, timestamp);
         // 回收结果落库：否则重启后同一个键会被再次尝试删除（pending 永远不收敛）。
-        await store.saveMedia(record);
+        // 但清理器读到的也是快照，所以仍是条件写：期间被并发删除/推进（revision 变了）时
+        // 0 行即放弃落库——对象回收本身已发生且可重入，下一轮按真行继续收敛。
+        await store.saveMediaIfCurrent(record, snapshotOf(record));
       }
       // 过期或已撤销的授权不再需要：从台账删除（`community_media_grants` 的 TTL 上限只有 300s）。
       for (const grant of await store.listStaleGrants(timestamp)) {

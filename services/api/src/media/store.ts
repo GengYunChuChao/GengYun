@@ -82,6 +82,16 @@ export const MEDIA_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
  */
 export const MEDIA_IDEMPOTENCY_CLAIM_TTL_MS = 60 * 1000;
 
+/**
+ * 条件写的**前置条件**：写入前库内该行的 `revision` 与 `state`，即读快照那一刻的值。
+ * 两者都进 `WHERE`：只比 `revision` 会漏掉「同 revision 但状态已变」的写法，只比 `state`
+ * 会漏掉「状态没变但 generation 已推进」的写法。
+ */
+export interface MediaWritePrecondition {
+  revision: number;
+  state: string;
+}
+
 /** 媒体域持久化端口。全部方法异步：真库实现无法同步返回，端口不能承诺同步性。 */
 export interface MediaStore {
   readonly persistent: boolean;
@@ -89,8 +99,25 @@ export interface MediaStore {
 
   /** 新建登记册行（`id` 冲突即抛错，与主键约束同语义）。 */
   createMedia(record: MediaRecord): Promise<void>;
-  /** 全量覆写一行（状态、revision、对象键、失败码、更新时间都走这一条）。 */
+  /**
+   * **无条件**全量覆写一行（状态、revision、对象键、失败码、更新时间都走这一条）。
+   *
+   * 只给「这一行由调用方独占」的场合用：建库夹具、端口语义测试、离线脚本。**服务层不得使用**——
+   * 服务手里的每一行都是从登记册读出来的**快照**，而 `complete` 与 `delete` 的幂等 scope 不同、
+   * 可以并发；读快照到写回之间随时会有一次 `delete`/`expire` 落地，无条件写会把已经写好的
+   * 终态覆写回去（监工 1927 轮 P1：已成功删除的媒体被迟到的 `complete` 复活成 `ready`）。
+   */
   saveMedia(record: MediaRecord): Promise<void>;
+  /**
+   * **条件**全量覆写：仅当库内该行仍是 `expected` 声明的 `revision` 与 `state` 时写入，
+   * 返回**影响行数**（1 = 已写入；0 = 前置条件不成立，一行都没写，连带衍生件也不写）。
+   *
+   * 0 刻意不区分「行不存在」与「行已被推进」：真库 `UPDATE … WHERE … RETURNING` 两种情况都是
+   * 空行集，内存实现必须同语义，否则两个实现会在竞态下给出不同结论。需要区分时由调用方在
+   * 拿到 0 之后再 `getMedia` 一次，按真实状态决定对外错误码（删除 ⇒ `OBJECT_UNAVAILABLE`，
+   * 其它推进 ⇒ `REVISION_CONFLICT`）。
+   */
+  saveMediaIfCurrent(record: MediaRecord, expected: MediaWritePrecondition): Promise<number>;
   getMedia(id: string): Promise<MediaRecord | null>;
   /**
    * 该 owner 当前仍占据「社区图位」的媒体数（`purpose='community_image'` 且
@@ -190,6 +217,15 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
     async saveMedia(record) {
       if (!media.has(record.id)) throw new Error(`媒体登记册不存在该 id（${record.id}）`);
       media.set(record.id, copyRecord(record));
+    },
+    async saveMediaIfCurrent(record, expected) {
+      const current = media.get(record.id);
+      // 与真库 `UPDATE … WHERE id AND revision AND state … RETURNING id` 同语义：
+      // 行不存在或前置条件不成立都是 0 行，且**不写**（含衍生件）。
+      if (current === undefined) return 0;
+      if (current.revision !== expected.revision || current.state !== expected.state) return 0;
+      media.set(record.id, copyRecord(record));
+      return 1;
     },
     async getMedia(id) {
       const record = media.get(id);

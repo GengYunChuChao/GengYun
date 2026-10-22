@@ -445,6 +445,7 @@ try {
     kind: 'memory',
     async createMedia() {},
     async saveMedia() {},
+    async saveMediaIfCurrent() { return 0; },
     async getMedia() { return null; },
     async liveCommunityImageCount() { return 0; },
     async listMediaByState() { return []; },
@@ -477,6 +478,97 @@ try {
   );
   assert.equal((await hollow.serverObjectKeys(mediaId)), null, '空端口下连对象键都读不到');
   note('[8] 负控制结论：同一 uploadId 在空端口下读不到 ⇒ 上面的 200/逐字节相等确实来自真库');
+
+  // -------------------------------------------------------------------------
+  // [9] 监工 1927 轮 P1：`delete` 已落库之后，迟到的 `complete` 必须是**可判定的失败**（真库读数）
+  //   窗口构造：把 complete 的衍生件 putObject 闸住（此刻它已读到 rev1/initiated 快照，尚未写回），
+  //   在窗口内用同一仓储完成 delete，再放行。判据三条：①迟到写入不落库（0 行）
+  //   ②库里仍是 deleted/rev2，没有被整行覆写回 ready ③窗口里落下的衍生件与衍生行都被回收。
+  // -------------------------------------------------------------------------
+  const gatedBucket = createSubstituteObjectStore();
+  let gate = null;
+  const racingBucket = {
+    ...gatedBucket,
+    async putObject(key, bytes, contentType) {
+      const held = gate;
+      if (held !== null) {
+        gate = null;
+        held.entered(key);
+        await held.released;
+      }
+      return gatedBucket.putObject(key, bytes, contentType);
+    },
+  };
+  const racingService = createAppMediaService({
+    executionMode: 'stub',
+    objectStore: racingBucket,
+    tokenSecret,
+    persistence: pgStore,
+    now: () => new Date(),
+  });
+  const raceInitiated = await racingService.initiateUpload({
+    actor: ownerActor,
+    input: declared,
+    idempotencyKey: KEY('race-initiate'),
+  });
+  const raceId = raceInitiated.media.id;
+  const raceKeys = await racingService.serverObjectKeys(raceId);
+  await gatedBucket.putObject(raceKeys.rawRef, jpeg, 'image/jpeg');
+  const raceRowBefore = await one('SELECT state, revision FROM media WHERE id=$1', [raceId]);
+  assert.equal(raceRowBefore.state, 'initiated');
+  assert.equal(raceRowBefore.revision, 1);
+
+  let entered;
+  const enteredPromise = new Promise((resolve) => { entered = resolve; });
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  gate = { entered, released };
+  const lateComplete = racingService.completeUpload({
+    actor: ownerActor,
+    mediaId: raceId,
+    ifMatch: '"1"',
+    input: { sha256: declared.sha256, bytes: declared.bytes },
+    idempotencyKey: KEY('race-complete'),
+  });
+  const raceDerivativeKey = await enteredPromise;
+  assert.notEqual(raceDerivativeKey, raceKeys.rawRef, '窗口里落下的是衍生件，不是原图键');
+
+  const raceDeleted = await racingService.deleteMedia({
+    actor: ownerActor,
+    mediaId: raceId,
+    ifMatch: '"1"',
+    idempotencyKey: KEY('race-delete'),
+  });
+  assert.equal(raceDeleted.status, 202, JSON.stringify(raceDeleted));
+  const inWindow = await one('SELECT state, revision FROM media WHERE id=$1', [raceId]);
+  assert.equal(inWindow.state, 'deleted');
+  assert.equal(inWindow.revision, 2);
+
+  release();
+  const raceOutcome = await lateComplete.then(
+    (value) => ({ ok: true, code: null, message: null }),
+    (error) => ({ ok: false, code: error.code, message: error.message }),
+  );
+  assert.equal(raceOutcome.ok, false, '迟到的 complete 不得在真库上返回成功');
+  assert.equal(raceOutcome.code, 'OBJECT_UNAVAILABLE');
+
+  const afterRace = await one(
+    `SELECT state, revision, object_ref_cipher FROM media WHERE id=$1`,
+    [raceId],
+  );
+  assert.equal(afterRace.state, 'deleted', '已删除的媒体不得被迟到的 complete 复活');
+  assert.equal(afterRace.revision, 2);
+  // 删除会把原图键清空成墓碑（密文列的 NOT NULL 约束要求写空串的密文，解密回 null）。
+  assert.equal(cipher.decryptObjectRef(afterRace.object_ref_cipher), null, '删除后原图键必须已清空（墓碑）');
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM media_derivatives WHERE media_id=$1', [raceId]),
+    0,
+    '迟到写入不得落衍生行',
+  );
+  assert.equal(await gatedBucket.getObject(raceDerivativeKey), null, '窗口里落下的衍生件必须被回收');
+  note(`[9] 迟到 complete（真库）：窗口内 delete ⇒ HTTP ${raceDeleted.status}（库内 state=${inWindow.state} rev=${inWindow.revision}）；`
+    + `放行后 ⇒ ${raceOutcome.code}「${raceOutcome.message}」；`
+    + `最终库内 state=${afterRace.state} rev=${afterRace.revision}，media_derivatives 行数=0，衍生件已回收`);
 
   console.log(`\n${notes.length} 条读数，全部断言通过。`);
 } finally {

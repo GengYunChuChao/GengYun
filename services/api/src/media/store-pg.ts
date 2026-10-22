@@ -43,7 +43,12 @@ import { createHash } from 'node:crypto';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import type { ObjectRefCipher } from './object-ref-cipher.ts';
-import type { MediaIdempotencyEntry, MediaRecord, MediaStore } from './store.ts';
+import type {
+  MediaIdempotencyEntry,
+  MediaRecord,
+  MediaStore,
+  MediaWritePrecondition,
+} from './store.ts';
 
 /** `pg` 连接池的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；各域自持一份，不跨域 import）。 */
 export interface MediaSqlRunner {
@@ -172,6 +177,52 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
     );
   };
 
+  /**
+   * 媒体行写入：`saveMedia`（无条件）与 `saveMediaIfCurrent`（条件）共用同一条 SET 列表，
+   * 差别只在 `WHERE`。返回 `UPDATE … RETURNING id` 的行数。
+   *
+   * `expected` 给定时把 `revision` 与 `state` 一起放进 `WHERE` —— 这是「快照过期」的判据：
+   * 0 行 ⇒ 这一行在我们读快照之后被推进过（`delete`/`expire`/另一个 `complete`），
+   * 本次写入**没有落库**，调用方据此给出可判定的失败，绝不整行覆写回去。
+   */
+  const writeMediaRow = async (
+    record: MediaRecord,
+    expected?: MediaWritePrecondition,
+  ): Promise<number> => {
+    const updated = await pool.query(
+      expected === undefined
+        ? `UPDATE public.media SET
+             owner_id = $2, purpose = $3::media_purpose, mime = $4, bytes = $5, duration_ms = $6,
+             sha256 = $7, state = $8::media_state, failure_code = $9, object_ref_cipher = $10,
+             revision = $11, expires_at = to_timestamp($12::bigint / 1000.0),
+             updated_at = to_timestamp($13::bigint / 1000.0)
+           WHERE id = $1 RETURNING id`
+        : `UPDATE public.media SET
+             owner_id = $2, purpose = $3::media_purpose, mime = $4, bytes = $5, duration_ms = $6,
+             sha256 = $7, state = $8::media_state, failure_code = $9, object_ref_cipher = $10,
+             revision = $11, expires_at = to_timestamp($12::bigint / 1000.0),
+             updated_at = to_timestamp($13::bigint / 1000.0)
+           WHERE id = $1 AND revision = $14 AND state = $15::media_state RETURNING id`,
+      [
+        record.id,
+        record.ownerId,
+        record.purpose,
+        record.mime,
+        record.bytes,
+        record.duration_ms,
+        record.sha256,
+        record.state,
+        record.failure_code,
+        cipher.encryptObjectRef(record.rawRef ?? ''),
+        record.revision,
+        record.expiresAt,
+        record.updatedAt,
+        ...(expected === undefined ? [] : [expected.revision, expected.state]),
+      ],
+    );
+    return updated.rows.length;
+  };
+
   return {
     persistent: true,
     kind: 'postgres',
@@ -211,33 +262,27 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
 
     async saveMedia(record) {
       try {
-        const updated = await pool.query(
-          `UPDATE public.media SET
-             owner_id = $2, purpose = $3::media_purpose, mime = $4, bytes = $5, duration_ms = $6,
-             sha256 = $7, state = $8::media_state, failure_code = $9, object_ref_cipher = $10,
-             revision = $11, expires_at = to_timestamp($12::bigint / 1000.0),
-             updated_at = to_timestamp($13::bigint / 1000.0)
-           WHERE id = $1 RETURNING id`,
-          [
-            record.id,
-            record.ownerId,
-            record.purpose,
-            record.mime,
-            record.bytes,
-            record.duration_ms,
-            record.sha256,
-            record.state,
-            record.failure_code,
-            cipher.encryptObjectRef(record.rawRef ?? ''),
-            record.revision,
-            record.expiresAt,
-            record.updatedAt,
-          ],
-        );
-        if (updated.rows.length === 0) {
+        if ((await writeMediaRow(record)) === 0) {
           throw new ApiError('NOT_FOUND', `媒体登记册不存在该 id（${record.id}）`);
         }
         await writeDerivative(record);
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    /**
+     * 条件写（监工 1927 轮 P1）：`WHERE id = $1 AND revision = $14 AND state = $15`。
+     *
+     * 之前只有 `WHERE id = $1`，于是「读快照 → 生成衍生件（await）→ 整行写回」这段窗口里
+     * 落地的 `delete` 会被这条 UPDATE 整行盖回 `ready`，已删除的媒体就此复活。
+     * 现在 0 行既不写父行也不写衍生件，把竞态收敛成一次**可判定**的失败。
+     */
+    async saveMediaIfCurrent(record, expected) {
+      try {
+        if ((await writeMediaRow(record, expected)) === 0) return 0;
+        await writeDerivative(record);
+        return 1;
       } catch (error) {
         return classifyMediaDatabaseError(error);
       }

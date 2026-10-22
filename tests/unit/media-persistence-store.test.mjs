@@ -59,6 +59,47 @@ function countingObjectStore() {
   };
 }
 
+/**
+ * 可挂起的替身桶：让 `complete` 精确停在「已读快照、衍生件 putObject 还没落地」的窗口里。
+ *
+ * 这是监工 1927 轮 P1 复现的最小工具——不挂起就必然靠 `setTimeout` 抢时序，那是脆的。
+ * `arm()` 只拦**下一次** `putObject`；拦到后立刻解除，避免把后续回收路径也挂住。
+ */
+function gatedObjectStore() {
+  const inner = createSubstituteObjectStore();
+  const calls = { puts: [], deletes: [] };
+  let armed = null;
+  const store = {
+    ...inner,
+    async putObject(key, bytes, contentType) {
+      calls.puts.push(key);
+      const held = armed;
+      if (held !== null) {
+        armed = null;
+        held.entered(key);
+        await held.released;
+      }
+      return inner.putObject(key, bytes, contentType);
+    },
+    async deleteObject(key) {
+      calls.deletes.push(key);
+      return inner.deleteObject(key);
+    },
+  };
+  return {
+    calls,
+    store,
+    arm() {
+      let entered;
+      const enteredPromise = new Promise((resolve) => { entered = resolve; });
+      let release;
+      const released = new Promise((resolve) => { release = resolve; });
+      armed = { entered, released };
+      return { enteredPromise, release: () => { release(); } };
+    },
+  };
+}
+
 async function login(app, code) {
   const response = await app.inject({
     method: 'POST',
@@ -344,4 +385,87 @@ test('GY-R28 W12 端口语义：台账三段、快照隔离、按状态枚举与
     assert.equal(await store.getGrant(grant.grantId), null);
     assert.equal(await store.countGrants(), 0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// 监工 1927 轮 P1：[P1] `complete` 与 `delete` 的幂等 scope 不同（`POST
+// /media/uploads/{id}/complete` vs `DELETE /media/{id}` 是两把互不排斥的键），所以两者可以并发。
+// `complete` 的窗口是「读快照 → 取回字节 → 生成衍生件 → 写回」，其中生成衍生件是异步的；
+// 改前写回是 `WHERE id = $1` 的整行覆写 ⇒ 窗口内落地的 `delete` 被盖回 `ready`，已删除的媒体复活。
+// 本片把窗口钉死（挂起衍生件 putObject），让 delete 在窗口内成功落库，再放行 complete：
+// 它必须**可判定地失败**，且库里的 `deleted` 原样保留。
+// ---------------------------------------------------------------------------
+test('GY-R28 W12 竞态（监工 1927 轮 P1）：已删除的媒体不得被迟到的 complete 复活', async (t) => {
+  const mediaStore = createMemoryMediaStore({ now: () => NOW_MS });
+  const bucket = gatedObjectStore();
+  const jpeg = jpegWithExif();
+  const declare = { purpose: 'weed_recognition', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
+  const app = makeApp({ mediaStore, objectStore: bucket.store });
+  t.after(async () => { await app.close(); });
+  const token = await login(app, 'race-owner');
+
+  const created = await call(app, 'POST', '/api/v1/media/uploads', token, {
+    payload: declare,
+    headers: { 'idempotency-key': KEY('race-create') },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const mediaId = created.body.data.media.id;
+  const keys = await app.mediaService.serverObjectKeys(mediaId);
+  await bucket.store.putObject(keys.rawRef, jpeg, 'image/jpeg');
+  assert.equal(bucket.calls.puts.length, 1, '客户端直传算一次 put');
+
+  const record = await mediaStore.getMedia(mediaId);
+  const actor = { ownerId: record.ownerId, authEpoch: 1, sessionRef: '12121212-1212-4212-8212-121212121212' };
+
+  // ① 挂住 complete 的衍生件 putObject：此刻它已读过快照（rev 1 / initiated），还没写回库。
+  const gate = bucket.arm();
+  const lateComplete = app.mediaService.completeUpload({
+    actor,
+    mediaId,
+    ifMatch: '"1"',
+    input: { sha256: declare.sha256, bytes: declare.bytes },
+    idempotencyKey: KEY('race-complete'),
+  });
+  const derivativeKey = await gate.enteredPromise;
+  assert.notEqual(derivativeKey, keys.rawRef, '窗口里落下的是衍生件，不是原图键');
+
+  // ② 窗口内：删除成功落库（rev 1 → 2，state=deleted，对象键清空）。
+  const deleted = await call(app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
+    headers: { 'idempotency-key': KEY('race-delete'), 'if-match': '"1"' },
+  });
+  assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
+  const inWindow = await mediaStore.getMedia(mediaId);
+  assert.equal(inWindow.state, 'deleted');
+  assert.equal(inWindow.revision, 2);
+
+  // ③ 放行迟到的 complete：必须失败，失败码可判定（不是 202 + ready）。
+  gate.release();
+  const outcome = await lateComplete.then(
+    (value) => ({ ok: true, value }),
+    (error) => ({ ok: false, error }),
+  );
+  assert.equal(outcome.ok, false, '迟到的 complete 不得返回成功');
+  assert.equal(outcome.error.code, 'OBJECT_UNAVAILABLE');
+  assert.match(outcome.error.message, /已被删除/);
+
+  // ④ 真行仍是 deleted / rev 2：没有被整行覆写回 ready。
+  const after = await mediaStore.getMedia(mediaId);
+  assert.equal(after.state, 'deleted', '已删除的媒体不得被迟到的 complete 复活');
+  assert.equal(after.revision, 2);
+  assert.equal(after.rawRef, null);
+  assert.equal(after.derivativeRef, null);
+
+  // ⑤ 窗口里落下的衍生件已被回收：不留没有登记册行承载的孤儿对象。
+  assert.ok(bucket.calls.deletes.includes(derivativeKey), '迟到的衍生件必须被删掉');
+  assert.equal(await bucket.store.getObject(derivativeKey), null);
+
+  // ⑥ 对外读数一致：GET 仍是 deleted。
+  const projection = await call(app, 'GET', `/api/v1/media/${mediaId}`, token);
+  assert.equal(projection.status, 200, JSON.stringify(projection.body));
+  assert.equal(projection.body.data.state, 'deleted');
+  assert.equal(projection.body.data.revision, 2);
+
+  t.diagnostic(`迟到的 complete ⇒ ${outcome.error.code}「${outcome.error.message}」；`
+    + `库内 state=${after.state}/rev=${after.revision}；衍生件 ${derivativeKey.slice(0, 18)}… 已回收`
+    + `（put=${bucket.calls.puts.length} delete=${bucket.calls.deletes.length}）`);
 });
