@@ -786,39 +786,42 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         });
       }
 
-      const all = await store.listPosts();
-      const visible: PostRecord[] = [];
-      for (const record of all) {
-        if (record.visibility === 'deleted') continue;
-        if (mine) {
-          if (record.author_id === user.userId) visible.push(record);
-          continue;
-        }
-        // 公开列表：只放当前公开可见版本（规则版本变化/重审失败会立即退出列表）。
-        if (await isPubliclyVisible('post', record)) visible.push(record);
-      }
-      const filtered = visible.filter(
-        (record) =>
-          (cropId === null || record.crop_id === cropId) && (regionCode === null || record.region_code === regionCode),
-      );
       const after = decodeCursor(cursor, {
         subject: user.userId,
         route: 'posts',
         filter: { crop_id: cropId, region_code: regionCode, mine },
         sort: 'created_at_desc',
       });
-      const remaining =
-        after === null
-          ? filtered
-          : filtered.filter(
-              (record) =>
-                record.created_at < after.created_at ||
-                (record.created_at === after.created_at && record.id < after.id),
-            );
-      const page = remaining.slice(0, limit);
+      // 分块 keyset（#444 §S5）：筛选下推存储层后 `LIMIT` 才生效，每轮多要 1 行判「还有下一页」；公开复核
+      // 依赖规则层与审核台账（SQL 判不了的谓词），被丢掉的行由游标前进补回，所以页内不缺行、不跳行。
+      const survivors: PostRecord[] = [];
+      let more = false;
+      let cursorPoint: { createdAt: string; id: string } | null =
+        after === null ? null : { createdAt: after.created_at, id: after.id };
+      for (;;) {
+        const batch = await store.listPosts({
+          scope: mine ? 'mine' : 'public',
+          authorId: mine ? user.userId : null,
+          cropId,
+          regionCode,
+          after: cursorPoint,
+          limit: limit + 1 - survivors.length,
+        });
+        const tail = batch.at(-1);
+        if (tail === undefined) break;
+        cursorPoint = { createdAt: tail.created_at, id: tail.id };
+        for (const record of batch) {
+          // `mine` 的归属与「非删除」已在下推谓词里判过；公开列表还要按当前规则重查一次。
+          if (mine || (await isPubliclyVisible('post', record))) survivors.push(record);
+          if (survivors.length > limit) break;
+        }
+        if (survivors.length > limit) more = true;
+        if (more || batch.length < limit + 1 - survivors.length) break;
+      }
+      const page = survivors.slice(0, limit);
       const last = page[page.length - 1];
       const next_cursor =
-        remaining.length > limit && last !== undefined
+        more && last !== undefined
           ? encodeCursor({
               subject: user.userId,
               route: 'posts',
