@@ -44,6 +44,17 @@ const SCOPES = [
   { dir: join(ROOT, 'miniprogram'), exts: ['.js', '.mjs'], under: 'utils', minFiles: 20 },
 ];
 
+/**
+ * 路径分段：**两种分隔符都要切**。
+ * 为什么不是 `.split('\\')`：本文件在 Linux CI（ubuntu-24.04）与 Windows 开发机两端都跑，
+ * `path.relative()` 在 POSIX 上返回 `utils/x.js`、在 Windows 上返回 `utils\x.js`；
+ * 只切反斜杠会让 POSIX 上 `miniprogram/utils` 下 0 个文件命中 `under === 'utils'`，
+ * 于是「清单范围非空」这条守门断言在 CI 上误红（2026-10-22 实测：#465 的 unit-tests 就红在这里）。
+ */
+function segments(value) {
+  return value.split(/[\\/]+/u).filter((part) => part !== '' && part !== '.');
+}
+
 function walk(dir, exts, files = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -63,11 +74,11 @@ function scanRepo() {
   for (const scope of SCOPES) {
     let files = walk(scope.dir, scope.exts);
     if (scope.under !== undefined) {
-      files = files.filter((path) => relative(scope.dir, path).split('\\').includes(scope.under));
+      files = files.filter((path) => segments(relative(scope.dir, path)).includes(scope.under));
     }
-    scanned.push({ dir: relative(ROOT, scope.dir).split('\\').join('/'), files: files.length });
+    scanned.push({ dir: segments(relative(ROOT, scope.dir)).join('/'), files: files.length });
     for (const path of files.sort()) {
-      const file = relative(ROOT, path).split('\\').join('/');
+      const file = segments(relative(ROOT, path)).join('/');
       claims.push(...scanFallbackClaims(file, readFileSync(path, 'utf8')));
     }
   }
@@ -188,4 +199,12 @@ test('清单与实际站点逐条一致（多一处少一处都红）', () => {
     console.log(`[inventory] ${drifted.length} 条行号已漂移（不判红，需要时重跑 UPDATE 模式）：`);
     for (const entry of drifted) console.log(`  ${entry.file} 清单第 ${entry.line} 行`);
   }
+});
+
+test('路径分段跨平台一致（POSIX 与 Windows 分隔符都切）—— 防「清单范围非空」在 Linux CI 误红', () => {
+  assert.deepEqual(segments('utils/messages-api.js'), ['utils', 'messages-api.js'], 'POSIX 相对路径必须切出 utils 段');
+  assert.deepEqual(segments('utils\\messages-api.js'), ['utils', 'messages-api.js'], 'Windows 相对路径必须切出 utils 段');
+  assert.deepEqual(segments('miniprogram/utils'), ['miniprogram', 'utils']);
+  assert.deepEqual(segments('miniprogram\\utils'), ['miniprogram', 'utils']);
+  assert.equal(segments('pages/messages/x.js').includes('utils'), false, '不同目录不得被误判成 utils 子目录');
 });
