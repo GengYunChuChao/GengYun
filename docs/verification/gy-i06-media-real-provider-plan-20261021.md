@@ -49,7 +49,7 @@
 | --- | --- |
 | `services/api/src/config.ts` 里**没有**任何 `OCR_*` / `ASR_*` / `TTS_*` / `MODERATION_*` 键 | `grep OBJECT_STORAGE_`/`OCR_` 在 `services/api/src/config.ts` 零命中（媒体域是唯一在 `REQUIRED_WHEN_REAL` 里登记存储键的域） |
 | 模型的端点白名单不放在 `config.ts`，放在 `tools/ai-config.mjs` 的 `AI_ENDPOINTS`；发送前再断言 host + 全串相等 | 规范 §2.4 |
-| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:948-949`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1331`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:179`） | 逐处 `grep` 实测 |
+| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:969-970`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1331`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:277`） | 逐处 `grep` 实测 |
 
 **媒体域与四域的结构差异（这决定了方案形状）**：
 
@@ -73,7 +73,7 @@
 | 4 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore`：real → `readObjectStorageConfig(NO_STORAGE_ENV)`（null 原型空表）⇒ 必然 `unwired`；非 real → `substitute` |
 | 5 | `services/api/src/app.ts:1269-1280` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
 | 6 | `services/api/src/app.ts:1588` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
-| 7 | `services/api/src/app.ts:1711` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点 |
+| 7 | `services/api/src/app.ts:1817` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点 |
 | 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
 
 ### 3.2 stub 下一次上传的完整走向

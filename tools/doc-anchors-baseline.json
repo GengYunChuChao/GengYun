@@ -251,15 +251,9 @@
     },
     {
       "path": "tests/integration/ocr-jobs-pg.mjs",
-      "reason": "OUT_OF_RANGE",
+      "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/integration/ocr-jobs-pg.mjs:848"
-    },
-    {
-      "path": "tests/integration/recognitions-pg.mjs",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "tests/integration/recognitions-pg.mjs:1010"
     },
     {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",

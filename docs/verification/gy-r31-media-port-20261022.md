@@ -21,7 +21,7 @@ Refs #9 #10 #11。**本片只补「装配层可选注入」**：`real` 下未注
 | 域 | 装配点（基线 `1a333920`） | 端口从哪来 | `real` 零注入拿到什么 | 缺失时的错误码 / 文案（实测原文） |
 | --- | --- | --- | --- | --- |
 | 识别 | `services/api/src/app.ts:975`（服务在 `:968` 构造）`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)` | `BuildAppOptions.recognitionMedia`（`:318`，**已有**） | `createUnwiredMediaPort()`，`kind: 'unwired'` | 供应商闸门在前：503 `PROVIDER_UNAVAILABLE` `缺少真实识别供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
-| 语音 | `services/api/src/app.ts:1711`（基线行号；现 `:1718`）`registerSpeechRoutes(..., { …, media: speechMedia, … }, real ? pool : null)` | `BuildAppOptions.speechMedia`（`:329`，**已有**） | 同上，`kind: 'unwired'`（note 是「录音字节」版本） | 503 `PROVIDER_UNAVAILABLE` `缺少真实 ASR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
+| 语音 | `services/api/src/app.ts:1743`（基线 1711 ⇒ 合流 main 后）`registerSpeechRoutes(..., { …, media: speechMedia, … }, real ? pool : null)` | `BuildAppOptions.speechMedia`（`:329`，**已有**） | 同上，`kind: 'unwired'`（note 是「录音字节」版本） | 503 `PROVIDER_UNAVAILABLE` `缺少真实 ASR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
 | OCR | `services/api/src/app.ts:1730`（基线行号）`registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory }, ocrPersistencePool)` —— **装配行没有 `media` 键；`BuildAppOptions`（`:300-344`）无任何 OCR 媒体字段** | 只能由 `services/api/src/routes/ocr.ts:197` 的 `deps.media ?? createOcrMediaPort(config.executionMode)` 域内自建 | `createUnwiredMediaPort()`，`kind: 'unwired'` | 503 `PROVIDER_UNAVAILABLE` `缺少真实 OCR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
 
 补充（如实记录，避免误判「三域都缺」）：

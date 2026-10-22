@@ -20,7 +20,7 @@
   —— 端口**只因显式注入而生**；生产启动路径从不注入，于是永远走回落分支。
 - `services/api/src/media/object-store.ts:448-451`：`resolveMediaObjectStore` 未收 `env` 时 `config === null` ⇒ `return createUnwiredObjectStore();`。
 - `services/api/src/media/object-store.ts:143`：`createUnwiredObjectStore` 的每个操作抛 `PROVIDER_UNAVAILABLE`（`retryable: false`，口径见同文件 `:10`）。
-- `services/api/src/app.ts:1862`（`setErrorHandler`）：按契约 `x-error-status-map` 映射为 **503 + `ErrorEnvelope`** ⇒ `POST /api/v1/media/uploads` 在 `real` 下必落 503。
+- `services/api/src/app.ts:1864`（`setErrorHandler`）：按契约 `x-error-status-map` 映射为 **503 + `ErrorEnvelope`** ⇒ `POST /api/v1/media/uploads` 在 `real` 下必落 503。
 
 ⇒ 这是**装配面缺失**，不是「配置缺失」：四键配齐也拿不到真实端口。
 

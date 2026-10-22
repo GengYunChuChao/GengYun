@@ -20,7 +20,7 @@
 | # | 问题 | 实测答案 | 证据 |
 | --- | --- | --- | --- |
 | 1 | `db:migrate` 在哪、怎么连库 | `services/api/package.json:17` 定义 `"db:migrate": "node src/db/migrate.ts up"`；CLI 只认环境变量 `DATABASE_URL`，缺省直接抛「缺少 DATABASE_URL：迁移需要真实数据库连接串，未配置时拒绝运行。」；失败以 `process.exitCode = 1` 退出 | `services/api/package.json:17`、`services/api/src/db/migrate.ts:178-187`、`services/api/src/db/migrate.ts:232` |
-| 2 | 是否单迁移单事务 | **是**：每个迁移各自 `BEGIN` → 整段迁移 SQL → 台账 `INSERT` → `COMMIT`；catch 里先 `ROLLBACK` 再抛「迁移 <文件名> 执行失败：…」，因此文件内任何一条语句失败都不会留半截对象 | `services/api/src/db/migrate.ts:150`、`:152`、`:154`、`:157`、`:159`、`:160` |
+| 2 | 是否单迁移单事务 | **是**：每个迁移各自 `BEGIN` → 整段迁移 SQL → 台账 `INSERT` → `COMMIT`；catch 里先 `ROLLBACK` 再抛「迁移 <文件名> 执行失败：…」，因此文件内任何一条语句失败都不会留半截对象 | `services/api/src/db/migrate.ts:248`（`BEGIN`）、`:251-254`（台账 `INSERT`）、`:255`（`COMMIT`）、`:257`（`ROLLBACK`）、`:258`（抛出） |
 | 3 | 有无已应用记录表 | **有**：`schema_migrations (version text PRIMARY KEY, name text NOT NULL, checksum char(64) NOT NULL, applied_at timestamptz)`；按台账跳过已应用版本，磁盘内容与台账校验和不一致时整批拒绝（drift） | `services/api/src/db/migrate.ts:107-114`、`:83-103`、`:145` |
 | 4 | 有无 CI 真跑 rollback | **无**：`.github/workflows/` 的 10 个 workflow 没有任何一个执行 `services/api/db/migrations/rollback/*.down.sql`；仓内只有 `tests/integration/account-deletion-pg.mjs` 与 `tests/integration/egress-object-key-pg.mjs` 用 psql 跑**单个** down 文件做 UP→DOWN→REPLAY，且不经过迁移器的 `up` 命令 | 10 个 workflow 逐一检索；`tests/integration/account-deletion-pg.mjs`、`tests/integration/egress-object-key-pg.mjs` |
 
@@ -73,7 +73,7 @@ SKIP migrations-negative-pg：MIGRATIONS_NEGATIVE_TEST_URL 未设置，三臂 A/
 
 早先做过的一次性变异（把 `BEGIN`／`ROLLBACK`／`COMMIT` 三行一起注释）只让套件红在 stderr 文案正则上：`0016` 自带 `BEGIN`(`:51`)／`COMMIT`(`:176`)、合成 `0099` 又是「单条 Query 多语句」被 PG 隐式事务兜住，因此那次变异**不能**证明测试对迁移器的事务敏感。本页的负控制已换成落在事务性断言上的这一条（临时变异，未入提交）：
 
-1. 只把 `services/api/src/db/migrate.ts:150` 的 `      await client.query('BEGIN');` 换成一行注释，`COMMIT`(`:157`) 与 `ROLLBACK`(`:159`) 原样保留（`git diff --stat` ⇒ `services/api/src/db/migrate.ts | 3 ++-`）。
+1. 只把 `services/api/src/db/migrate.ts:248` 的 `      await client.query('BEGIN');` 换成一行注释，`COMMIT`(`:255`) 与 `ROLLBACK`(`:257`) 原样保留（`git diff --stat` ⇒ `services/api/src/db/migrate.ts | 3 ++-`）。
 2. 复跑同一条命令 ⇒ **转红在 A6 的「表残留」断言上**（A0–A5 仍绿，红点唯一），退出码 1，逐字：
 
 ```text

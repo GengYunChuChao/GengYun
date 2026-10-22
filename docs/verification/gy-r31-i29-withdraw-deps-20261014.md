@@ -83,7 +83,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
 
 ### 2.2 装配必然注入消费者 ⇒ 生产路径走「撤销并放行」
 
-- `services/api/src/app.ts:882`：`egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null`；
+- `services/api/src/app.ts:884`：`egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null`；
 - `services/api/src/app.ts:882-884`：`egressRevoker = privacyInjection?.egressRevoker ?? (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }))`；
 - `services/api/src/app.ts:1684-1687`：`registerConsentRoutes(..., { ...consentGrantTestOptions, ...(egressRevoker === undefined ? {} : { egressRevoker }) })`；
 - 拿到 service 的唯一入口 `services/api/src/routes/consents.ts:14`：`pool === null ? null : createPostgresConsentService(...)`
