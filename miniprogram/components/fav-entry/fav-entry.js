@@ -17,6 +17,14 @@
 //    **不**把 409 吞成「已取消」。
 // 5. 收藏行自身的 revision 与目标资料的 revision 是两个不同的版本号：前者只用于 If-Match
 //    （deleteFavorite），后者只用于 target_ref（createFavorite）。
+// 6. 只在**作业真的成功**（`job.state === 'succeeded'`）时装配（监工 1021-2358）。之前只观察
+//    `jobId`／`enabled`：宿主创建任务时就把 queued 的 job.id 写进来了，之后同一个 id 变成
+//    succeeded 时这两个值都没变，`_key` 短路 ⇒ 第一次读到的「queued + 空候选」被永久记住，
+//    收藏入口在该出现的时候永远不出现。现在两条路一起收口：
+//      a. 宿主把 `job.state` 传进 `job-state`，状态进入 `_key`：queued→succeeded 必然重新装配；
+//      b. 读到的作业还没到终态时不记 `_key`（未完成不是结论），重复触发会重新取，而不是沿用空结果。
+//    非 succeeded（queued/running/uncertain/failed/timed_out/cancelled）一律不装配：候选不可信时
+//    收藏等于把不确定结论固化成目标，宁可不给入口。
 'use strict'
 
 const identifyApi = require('../../utils/identify-api')
@@ -27,6 +35,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TARGET_TYPE = 'species'
 const MAX_ENTRIES = 3
 const OWNED_LIMIT = 50
+/** 唯一允许装配收藏入口的作业状态（与 identify-api 的 `isSuccessState` 同口径）。 */
+const SUCCESS_STATE = 'succeeded'
 
 /**
  * 把错误翻成人话：优先用收藏域自己的码表（它已经把 401/403 的分流委托给 auth.failureFor），
@@ -51,7 +61,10 @@ Component({
     // 识别作业 id（宿主页面已有的 job.id）。空串或非 UUID ⇒ 组件不发任何请求、不渲染。
     jobId: { type: String, value: '' },
     // 显式开关：宿主在游客态/无任务时可传 false 彻底关掉入口。
-    enabled: { type: Boolean, value: true }
+    enabled: { type: Boolean, value: true },
+    // 宿主状态机里的作业状态（`job.state`）。非空且不是 succeeded ⇒ 直接不装配（fail-closed）。
+    // 空串表示宿主未声明状态，此时退回「以服务端作业状态为准」（仍是 succeeded 才装配）。
+    jobState: { type: String, value: '' }
   },
 
   data: {
@@ -64,7 +77,7 @@ Component({
   },
 
   observers: {
-    'jobId, enabled': function (jobId, enabled) { return this.reload(jobId, enabled) }
+    'jobId, enabled, jobState': function (jobId, enabled, jobState) { return this.reload(jobId, enabled, jobState) }
   },
 
   lifetimes: {
@@ -74,12 +87,17 @@ Component({
   methods: {
     /**
      * 重新装配整个入口。返回 Promise 便于测试与宿主 await（宿主不会等它）。
-     * 同一个 (jobId, enabled) 只装配一次；重复设置同一值不重复打网络。
+     *
+     * 一次装配由 `(enabled, jobId, jobState)` 三元组决定：三者都没变才短路。宿主把同一个作业从
+     * queued 走到 succeeded 时 `jobState` 变了 ⇒ 必然重新取，不会被上次的空结果挡住。
+     * 「作业还没完成」不算结论，所以读到非终态时不写 `_key`（见下文）。
      */
-    reload: async function (jobId, enabled) {
+    reload: async function (jobId, enabled, jobState) {
       const on = enabled === undefined ? this.data.enabled !== false : enabled !== false
       const value = typeof jobId === 'string' ? jobId : ''
-      const key = (on ? '1' : '0') + '|' + value
+      const declared = typeof jobState === 'string' ? jobState
+        : (typeof this.data.jobState === 'string' ? this.data.jobState : '')
+      const key = (on ? '1' : '0') + '|' + value + '|' + declared
       if (this._key === key) return
       this._key = key
       const gen = (this._gen = (this._gen || 0) + 1)
@@ -87,12 +105,20 @@ Component({
       // 先清空可见状态：任何一次装配失败都不许残留上一次的收藏按钮。
       this.setData({ visible: false, loading: false, busy: false, note: '', errorText: '', items: [] })
       if (!on || !UUID.test(value)) return
+      // fail-closed 第零道：宿主状态机说这个作业还没成功 ⇒ 直接不给入口，一次请求都不发。
+      if (declared !== '' && declared !== SUCCESS_STATE) return
 
       this.setData({ loading: true })
       let candidates
       try {
         const job = await identifyApi.getJob(value)
         if (gen !== this._gen) return
+        // 服务端状态才是事实来源：宿主声明 succeeded 但服务端仍是 queued/running 时，照样不给入口。
+        if (!job || !job.job || job.job.state !== SUCCESS_STATE) {
+          this._key = ''
+          this.setData({ loading: false })
+          return
+        }
         candidates = (identifyApi.viewModelForJob(job.job).candidates || []).slice(0, MAX_ENTRIES)
       } catch (error) {
         if (gen !== this._gen) return

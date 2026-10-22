@@ -13,6 +13,7 @@ import vm from 'node:vm';
 const root = resolve(import.meta.dirname, '../..');
 const BASE = 'http://127.0.0.1:1234/api/v1';
 const JOB = '22222222-2222-4222-8222-222222222222';
+const JOB_B = '88888888-8888-4888-8888-888888888888';
 const REC = '33333333-3333-4333-8333-333333333333';
 const SPECIES_A = '44444444-4444-4444-8444-444444444444';
 const SPECIES_B = '55555555-5555-4555-8555-555555555555';
@@ -27,18 +28,19 @@ function candidate(rank, speciesId) {
   return { species_id: speciesId, rank: rank, model_score: 0.9 };
 }
 
-function job({ candidates = [candidate(1, SPECIES_A)], state = 'succeeded' } = {}) {
+function job({ candidates = [candidate(1, SPECIES_A)], state = 'succeeded', withResult = true } = {}) {
   return {
     id: JOB, revision: 7, kind: 'recognition',
     target_ref: { type: 'recognition', id: REC, revision: 2 },
     state: state, deadline_at: FUTURE(), created_at: '2026-10-21T00:00:00.000Z', error_code: null,
-    result: {
+    // 未完成的作业带 result 就是响应异常（identify-api.js:327）⇒ queued/running 必须 result=null。
+    result: withResult ? {
       kind: 'recognition',
       value: {
         id: REC, revision: 2, candidates: candidates, uncertainty_reasons: [],
         selected_species_id: null, model_version: 'gy-model-1'
       }
-    }
+    } : null
   };
 }
 
@@ -147,6 +149,14 @@ function observe(def, inst, patch) {
 
 function tap(inst, index) {
   return inst.onToggle({ currentTarget: { dataset: { index: index } } });
+}
+
+/** 计数：作业详情读了几次、收藏读了几次。 */
+function readsOf(f, id = JOB) {
+  return f.requests.filter((r) => String(r.url).endsWith('/jobs/' + id)).length;
+}
+function favOf(f) {
+  return f.requests.filter((r) => String(r.url).includes('/favorites')).length;
 }
 
 test('候选缺失：拿不到候选就不渲染入口，也不发生任何收藏读写', async () => {
@@ -273,12 +283,164 @@ test('正控制：收藏写目标资料 revision，取消写收藏行 revision�
   assert.deepEqual([...f.unhandled], []);
 });
 
-test('接线：identify.json 注册组件、identify.wxml 只有一行标签（页面零逻辑改动）', () => {
+test('状态机收敛：同一作业 queued→running→succeeded 会重新装配（监工 1021-2358 探针）', async () => {
+  let phase = 'queued';
+  const f = mount(({ path }) => {
+    if (path === '/auth/session') return { status: 200, data: { audience: 'user', expires_at: FUTURE() } };
+    if (path === '/jobs/' + JOB) {
+      return { status: 200, data: phase === 'succeeded' ? job() : job({ state: phase, withResult: false }) };
+    }
+    if (path.startsWith('/knowledge/')) return { status: 200, data: knowledge(SPECIES_A) };
+    if (path === '/favorites?limit=50') return { status: 200, data: { items: [], next_cursor: null } };
+    return undefined;
+  });
+  assert.equal(await login(f), true);
+  const inst = instance(f.def);
+
+  // 第一拍：宿主刚创建任务（queued）⇒ 一个请求都不发，更别读收藏。
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'queued' });
+  assert.equal(readsOf(f), 0, 'queued 时不该去取作业详情');
+  assert.equal(favOf(f), 0);
+  assert.equal(inst.data.visible, false);
+  assert.deepEqual([...inst.data.items], []);
+
+  // 中间态：id 与开关都没变，只有状态变了。
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'running' });
+  assert.equal(readsOf(f), 0, 'running 同样没有可收藏的结果');
+
+  // 第二拍：作业成功。修前 _key 只含 (jobId, enabled)，这里被永久短路 ⇒ 入口永不出现。
+  phase = 'succeeded';
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  const reads = readsOf(f);
+  assert.equal(reads, 1, '同一作业成功后必须真的取一次作业详情');
+  assert.equal(inst.data.visible, true, '同一作业成功后收藏入口必须出现');
+  assert.equal(inst.data.items.length, 1);
+  assert.equal(inst.data.items[0].speciesId, SPECIES_A);
+  assert.equal(inst.data.loading, false);
+  assert.deepEqual([...f.unhandled], []);
+
+  // 三元组没变 ⇒ 不重复打网络。
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  assert.equal(readsOf(f), reads, '同参数重复触发不得重复打网络');
+});
+
+test('未声明 job-state 的老宿主：未完成不缓存，同参重放也能拿到新结果（监工探针同参重放）', async () => {
+  let phase = 'queued';
+  const f = mount(({ path }) => {
+    if (path === '/auth/session') return { status: 200, data: { audience: 'user', expires_at: FUTURE() } };
+    if (path === '/jobs/' + JOB) {
+      return { status: 200, data: phase === 'succeeded' ? job() : job({ state: phase, withResult: false }) };
+    }
+    if (path.startsWith('/knowledge/')) return { status: 200, data: knowledge(SPECIES_A) };
+    if (path === '/favorites?limit=50') return { status: 200, data: { items: [], next_cursor: null } };
+    return undefined;
+  });
+  assert.equal(await login(f), true);
+  const inst = instance(f.def);
+
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: '' });
+  assert.equal(readsOf(f), 1, '未声明状态只能问服务端');
+  assert.equal(inst.data.visible, false);
+  assert.equal(favOf(f), 0, '作业没成功时不得读收藏');
+
+  // 与监工最小复现同形：**同一组参数**再触发一次（修前 _key 短路 ⇒ reads 仍 1、visible 仍 false）。
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: '' });
+  assert.equal(readsOf(f), 2, '未完成不是结论，重复触发必须重新取');
+
+  phase = 'succeeded';
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: '' });
+  assert.equal(readsOf(f), 3);
+  assert.equal(inst.data.visible, true, '同一作业成功后收藏入口必须出现');
+  assert.equal(inst.data.items[0].speciesId, SPECIES_A);
+  assert.deepEqual([...f.unhandled], []);
+});
+
+test('宿主声称 succeeded 但服务端仍 queued ⇒ 仍不渲染，服务端状态优先', async () => {
+  let phase = 'queued';
+  const f = mount(({ path }) => {
+    if (path === '/auth/session') return { status: 200, data: { audience: 'user', expires_at: FUTURE() } };
+    if (path === '/jobs/' + JOB) {
+      return { status: 200, data: phase === 'succeeded' ? job() : job({ state: phase, withResult: false }) };
+    }
+    if (path.startsWith('/knowledge/')) return { status: 200, data: knowledge(SPECIES_A) };
+    if (path === '/favorites?limit=50') return { status: 200, data: { items: [], next_cursor: null } };
+    return undefined;
+  });
+  assert.equal(await login(f), true);
+  const inst = instance(f.def);
+
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  assert.equal(readsOf(f), 1);
+  assert.equal(inst.data.visible, false, '服务端状态优先于宿主声明');
+  assert.deepEqual([...inst.data.items], []);
+  assert.equal(favOf(f), 0);
+
+  // 服务端随后也成功：宿主声明没变，但未终态不缓存 ⇒ 再触发能拿到结果。
+  phase = 'succeeded';
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  assert.equal(readsOf(f), 2);
+  assert.equal(inst.data.visible, true);
+  assert.deepEqual([...f.unhandled], []);
+});
+
+test('非成功态与关闭开关：零请求、零残留（游客 / 未完成 / 失败都不给入口）', async () => {
+  const f = mount(({ path }) => {
+    if (path === '/auth/session') return { status: 200, data: { audience: 'user', expires_at: FUTURE() } };
+    return undefined;
+  });
+  assert.equal(await login(f), true);
+  const inst = instance(f.def);
+
+  await observe(f.def, inst, { jobId: JOB, enabled: false, jobState: 'succeeded' });
+  assert.equal(readsOf(f), 0, '关了开关就不该发请求');
+
+  for (const state of ['queued', 'running', 'uncertain', 'failed', 'timed_out', 'cancelled']) {
+    await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: state });
+  }
+  assert.equal(inst.data.visible, false);
+  assert.deepEqual([...inst.data.items], []);
+  assert.equal(readsOf(f), 0, '非 succeeded 状态一次作业详情都不该取');
+  assert.equal(favOf(f), 0);
+  assert.deepEqual([...f.unhandled], []);
+});
+
+test('换任务：旧任务的收藏条目立即清空，不残留可点按钮', async () => {
+  const f = mount(({ path }) => {
+    if (path === '/auth/session') return { status: 200, data: { audience: 'user', expires_at: FUTURE() } };
+    if (path === '/jobs/' + JOB) return { status: 200, data: job() };
+    if (path === '/jobs/' + JOB_B) return { status: 200, data: Object.assign(job({ candidates: [] }), { id: JOB_B }) };
+    if (path.startsWith('/knowledge/')) return { status: 200, data: knowledge(SPECIES_A) };
+    if (path === '/favorites?limit=50') return { status: 200, data: { items: [], next_cursor: null } };
+    return undefined;
+  });
+  assert.equal(await login(f), true);
+  const inst = instance(f.def);
+
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  assert.equal(inst.data.items.length, 1);
+
+  await observe(f.def, inst, { jobId: JOB_B, enabled: true, jobState: 'succeeded' });
+  assert.deepEqual([...inst.data.items], [], '换任务后不得残留上一任务的收藏条目');
+  assert.equal(inst.data.visible, false);
+
+  // 关开关同样立刻清空（用户在页面上不该还能点到旧条目）。
+  await observe(f.def, inst, { jobId: JOB, enabled: true, jobState: 'succeeded' });
+  assert.equal(inst.data.items.length, 1);
+  await observe(f.def, inst, { jobId: JOB, enabled: false, jobState: 'succeeded' });
+  assert.deepEqual([...inst.data.items], []);
+  assert.equal(inst.data.visible, false);
+  assert.deepEqual([...f.unhandled], []);
+});
+
+test('接线：identify.json 注册组件、identify.wxml 按宿主状态机挂载且只一行标签', () => {
   const json = JSON.parse(readFileSync(resolve(root, 'miniprogram/pages/identify/identify.json'), 'utf8'));
   assert.equal(json.usingComponents['fav-entry'], '/components/fav-entry/fav-entry');
   const wxml = readFileSync(resolve(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
   const tags = wxml.match(/<fav-entry\b[^>]*>/g) || [];
   assert.equal(tags.length, 1, '只允许一个 <fav-entry> 标签');
   assert.match(tags[0], /job-id="\{\{job\.id\}\}"/);
+  assert.match(tags[0], /job-state="\{\{job\.state\}\}"/);
   assert.match(tags[0], /enabled="\{\{!guest\}\}"/);
+  // 挂载条件必须跟着宿主的真实状态机：只有 succeeded 才给收藏目标。
+  assert.match(tags[0], /wx:if="\{\{job\.id && job\.state === 'succeeded' && !guest\}\}"/);
 });

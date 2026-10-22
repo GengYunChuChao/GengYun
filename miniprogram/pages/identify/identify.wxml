@@ -215,8 +215,10 @@
     </view>
   </view>
 
-  <!-- 收藏入口（GY-I16）：自包含组件，只吃 jobId；候选 / 目标资料版本 / 已收藏状态由组件自己取 -->
-  <fav-entry job-id="{{job.id}}" enabled="{{!guest}}" />
+  <!-- 收藏入口（GY-I16）：候选 / 目标资料版本 / 已收藏状态由组件自己取。
+       只在宿主状态机判定为 succeeded 时挂载：queued/running 还没结果可收藏，uncertain/failed 的候选不可信。
+       同时把 job.state 传给组件，让「同一作业 queued→succeeded」也能重新装配。 -->
+  <fav-entry wx:if="{{job.id && job.state === 'succeeded' && !guest}}" job-id="{{job.id}}" job-state="{{job.state}}" enabled="{{!guest}}" />
 
   <!-- 关联科普查询（选择之后）；用量恒被 GY-I08 守卫阻断，条件不完整即阻断并列出缺项 -->
   <view class="section" wx:if="{{relatedKnowledge && !guest}}">
