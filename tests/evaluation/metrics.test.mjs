@@ -188,6 +188,58 @@ test('AI 筛查：风险召回与正常误隔离率；unknown/非法枚举不算
   near(tampered.riskRecall.p, 0);
 });
 
+test('AI 筛查：hardRulePass 只比较显式声明硬规则期望的样本（缺失/自相矛盾记未通过）', () => {
+  // 口径来源：packages/moderation 规则层产出 hard_rule_passed（engine.mjs 计算、merge.mjs 回填）。
+  // 但**不能**把 risk 一律要求成 false：模型层可以合法拦下而规则层通过
+  // （tests/unit/community-moderation-fixtures.mjs 的 blockingPort），所以只有样本显式声明
+  // gold.hardRuleExpectation='reject' 时才要求 hard_rule_passed=false（见 hardrule-layer.test.mjs）。
+  const aligned = [
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'blocked', hard_rule_passed: false } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'pending_review', hard_rule_passed: false } },
+    { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: true } },
+  ];
+  near(aiModerationMetrics(aligned).hardRulePass.p, 1);
+
+  // 未显式声明的风险样本（一般模型风险：规则通过 + 模型层拦下）不参与本指标，
+  // 旧口径会把这条合法样本判成 hardRulePass=0；现在只计"不参与"并另报 modelRiskIsolation。
+  const modelLayer = aiModerationMetrics([{ record: { expectation: 'risk', gold: {} }, output: { decision: 'blocked', hard_rule_passed: true } }]);
+  assert.equal(modelLayer.hardRulePass.p, null);
+  assert.equal(modelLayer.hardRulePass.checked, 0);
+  assert.equal(modelLayer.hardRulePass.modelRiskExcluded, 1);
+  near(modelLayer.modelRiskIsolation.rate.p, 1);
+
+  // 字段缺失：不得默认"规则层通过"，一律记未通过（fail-closed）。
+  // 分母里必须有一条显式声明，否则本指标无观测值（P2-1：零声明 ⇒ p=null、门禁 not_evaluated）。
+  const missing = aiModerationMetrics([
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'blocked' } },
+    { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: 'yes' } },
+  ]);
+  near(missing.hardRulePass.p, 0);
+  assert.equal(missing.hardRulePass.missingHardRuleFact, 2);
+
+  // 自相矛盾：approved/published 却说规则层没通过 ⇒ 记未通过（engine.mjs 的不变式 approved ⟺ hard_rule_passed===true）。
+  const contradictory = aiModerationMetrics([
+    { record: { expectation: 'normal' }, output: { decision: 'approved', hard_rule_passed: false } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'published', hard_rule_passed: false } },
+  ]);
+  near(contradictory.hardRulePass.p, 0);
+  assert.equal(contradictory.hardRulePass.selfContradictory, 2);
+
+  // 零声明：normal 的默认期望不能把分母撑成"有样本"⇒ p=null（P2-1）。
+  const zeroDeclared = aiModerationMetrics([
+    { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: true } },
+  ]);
+  assert.equal(zeroDeclared.hardRulePass.p, null);
+  assert.equal(zeroDeclared.hardRulePass.checked, 1);
+  assert.equal(zeroDeclared.hardRulePass.declared, 0);
+
+  // 期望相反（显式声明硬规则拒绝的样本被放行且声称规则层通过）：同样记未通过，不因字段存在就放过。
+  const opposite = aiModerationMetrics([
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'published', hard_rule_passed: true } },
+  ]);
+  near(opposite.hardRulePass.p, 0);
+});
+
 test('TTS：六项全部准确才 allCorrect（缺项记未测，不得默认成功）', () => {
   const ok = {
     numbersCorrect: true,
@@ -236,12 +288,21 @@ test('问答：可答正确且有来源 + 预期行为分组', () => {
 });
 
 test('门禁：claimable=true 时按方向产生 pass/fail', () => {
-  const metrics = { top1: { p: 0.9 }, top3: { p: 0.96 }, outOfCoverageHighConfidenceRate: { p: 0.02 }, lowQualityUncertainRate: { p: 0.97 } };
+  const metrics = {
+    top1: { p: 0.9 },
+    top3: { p: 0.96 },
+    outOfCoverageHighConfidenceRate: { p: 0.02 },
+    lowQualityUncertainRate: { p: 0.97 },
+    perClassMinTop1: { p: 0.88 },
+  };
   const gates = buildGates('weed_photo', metrics, METRIC_GATES, true);
-  assert.equal(gates.length, 4);
+  assert.equal(gates.length, METRIC_GATES.filter((g) => g.task === 'weed_photo').length, 'weed_photo 门禁条数应与 METRIC_GATES 一致（新增门槛不得被这里静默忽略）');
   assert.ok(gates.every((g) => g.status === 'pass'));
   const fail = buildGates('weed_photo', { ...metrics, top1: { p: 0.5 } }, METRIC_GATES, true);
   assert.equal(fail.find((g) => g.metric === 'top1').status, 'fail');
+  // 最差一档：某一类塌陷即 fail，不得被总体 Top1 平均掉。
+  const perClassFail = buildGates('weed_photo', { ...metrics, perClassMinTop1: { p: 0.2 } }, METRIC_GATES, true);
+  assert.equal(perClassFail.find((g) => g.metric === 'perClassMinTop1').status, 'fail');
 });
 
 test('门禁：claimable=false 时一律 not_evaluated，不写通过', () => {

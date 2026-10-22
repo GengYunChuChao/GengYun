@@ -13,6 +13,12 @@ GY-I20 评估程序框架：**指标计算与评分规约先行**，真实样本
 - 模型指标**仅消费原始输出**；手工校正结果单独报告，不缩分母、不补成绩；拒识/不确定查最终 `decision`。
   筛查最终决策与预测结构走**闭集校验**（`unknown`/服务错误/非法枚举不得算正常通过）；TTS 六项判定须明确为布尔值；
   OCR 固定可见字段保留**原始评估分母**（缺原始输出按缺口计，不对子集声明完整准确率）。
+- 筛查是**两层判定**（规则层 `hard_rule_passed` + 模型层 `decision`）：`hardRulePass` 只比较样本
+  **显式声明**的规则层期望（`gold.hardRuleExpectation='reject'|'pass'`，未声明的 `normal` 默认期望放行），
+  未声明的风险样本被视为**一般模型风险**、不参与该指标（另报 `modelRiskIsolation`）——
+  模型层正确隔离（`blocking` 且 `hard_rule_passed=true`）不得被当成硬规则失败。
+  **零声明**（没有任何 `reject`/`pass` 声明）时该指标无观测值（`p=null` ⇒ 门禁 `not_evaluated`），
+  `normal` 的默认放行不得单独把分母撑成"有样本"而报 pass。
 - 原始私有样本与原始媒体**不提交 Git**，只提交脱敏索引与内容 hash。
 - 标准答案必须来自可靠标注或独立核实；`annotation.modelGenerated` 强制为 `false`。
 

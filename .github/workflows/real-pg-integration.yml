@@ -326,6 +326,23 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           SPEECH_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_speech_test
+      # 审核判定台账（R29 / PR #434）：专用空库 `gengyun_moderation_test`，脚本自己跑**整条迁移链**
+      # （0001..0026 ⇒ #428 的 0027 DDL 夹具 ⇒ 0028_moderation_persistence.sql 的 UP／ROLLBACK／REPLAY），
+      # 再用真库判四条写语句（INSERT / UPDATE / supersede / 下架幂等）与「同目标版本至多一条当前任务」的
+      # 并发唯一性，并以 real 模式 fail-closed 收尾（零行落库）。
+      # 顺序自证是这一步的**目的之一**：0027 缺失时这里会红（保留号台账要求"要么有文件、要么有声明"），
+      # #428 合入后自动变成"0027 真文件在前"，⛔ 不靠「等 #428」把红的说成绿的。
+      # 连接串走 **argv[2]**（脚本对 hostname/库名有硬断言）：未设时脚本直接抛错 ⇒ 缺库必红。
+      # 位置：紧跟 speech-pg（同为"自建专用空库 + 自己 apply 迁移"的零耦合脚本），⛔ 不排到装包 step 之后
+      # ——它不需要 `initdb`/`pg_ctl`，混进自起集群那批会让「装包失败」与「台账失败」的读秒纠缠在一起。
+      # 本地取证（PG 17.11 + 空库 + 全链迁移）：exit=0，`[√] ALL PASS`（[F][M][W][S][V][U][X][C][R] 九臂）。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_moderation_test' && node tests/integration/moderation-ledger-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_moderation_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 媒体持久化（#6 / #16，R28-W12）：库名硬钉 `gengyun_media_test`，脚本按**空库**前提跑——
       # 库里没有 `public.media` 时它自己 `applyMigrations(discoverMigrations())`（与 `npm run db:migrate`
       # 同一条代码路径，写 `schema_migrations` 台账与校验和），非空库则原样复用，因此不需要额外准备步骤。

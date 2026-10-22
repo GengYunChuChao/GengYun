@@ -68,6 +68,7 @@ const ADDITIONAL_SQL_HOST_FILES = [
   'admin/ops/jobs-pg.ts',
   'knowledge/service.ts',
   'media/store-pg.ts',
+  'moderation/ledger-pg.ts',
   'privacy/backup-copies-pg.ts',
   'privacy/consent-pg.ts',
   'privacy/grant-pg.ts',
@@ -401,46 +402,45 @@ const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 const TABLE_WIDE_COLUMN = '*';
 
 /**
- * R28-S66 扩展读数钉死值（2026-10-22 合流 origin/main @ d4d48088 后重测：**18 文件 = 8 store ＋ 10 新纳管**）。
- * 两边各加一个宿主、读数因此必须按合流后的真实树重测，而不是二选一：
- * ① R28-W12（本分支）把 `media/store-pg.ts` 从 UNAUDITED_SQL_HOSTS 移入真审计，带来 media／media_derivatives
- *   两张表与 **14 条字面量**（INSERT 3 / UPDATE 2 / SELECT 6 / DELETE 3）。其中 1 条是返修追加的
- *   （监工 1027-1927 轮 P1）：`writeMediaRow` 的「带前置 revision/state 的原子条件 UPDATE」——
- *   `UPDATE … WHERE id = $1 AND revision = $14 AND state = $15::media_state RETURNING id`，
- *   让迟到的 complete 在已删除的媒体上影响 0 行、从而可判定地失败。
- * ② R29-S5（origin/main）把 `admin/ops/jobs-pg.ts` 纳入真审计，带来 **12 条字面量**。
- * ③ 2026-10-22 返修（监工 1022-0659 轮 P1「CAS=0 失利者的清理线索丢失」）给 `media/store-pg.ts`
- *   再加 **3 条字面量**：清理台账的登记（INSERT … ON CONFLICT (object_ref_digest) DO UPDATE）、
- *   扫描（SELECT … ORDER BY）、确认删除后删行（DELETE … RETURNING）。带来新表
- *   `public.media_object_cleanup` 与逐列授权面（20-login-roles.sql 段 M2）。
- * 三项相加是逐项可核的：sqlLiterals 230(main 17 文件)＋14(media)＋3(清理台账)＝**247**；
- * 语句 INSERT 36+3+1＝40、UPDATE 35+2＝37、SELECT 129+6+1＝136、DELETE 30+3+1＝34；
- * RETURNING 71+3+1＝75；ON CONFLICT 21+2+1＝24；引用表 39+2+1＝42；
- * 列权限要求 1502+93+18＝1613、已覆盖 1448+93+18＝1559（media 的两张表与新台账都是逐列授权，
- * 故缺口 0 不变）。
+ * R28-S66 扩展读数钉死值（2026-10-22 合流 `origin/main` @ `1aa310fa` 后按**合流树实测**重钉：**19 文件 = 8 store ＋ 11 新纳管**）。
+ * 两边各加一个 SQL 宿主，读数只能按合流后的真实树重测，⛔ 不照抄任一侧的旧值：
+ * ① R28-W12（本分支）把 `media/store-pg.ts` 从 UNAUDITED_SQL_HOSTS 移入真审计（17 条字面量，
+ *   带来 media／media_derivatives 两表）；其中 `writeMediaRow` 的「带前置 revision/state 的原子条件 UPDATE」
+ *   是返修追加的（监工 1027-1927 轮 P1）：`UPDATE … WHERE id = $1 AND revision = $14 AND state = $15::media_state
+ *   RETURNING id`，让迟到的 complete 在已删除的媒体上影响 0 行、从而可判定地失败。
+ * ② 2026-10-22 返修（监工 1022-0659 轮 P1「CAS=0 失利者的清理线索丢失」）给 `media/store-pg.ts` 再加 3 条：
+ *   清理台账的登记（INSERT … ON CONFLICT (object_ref_digest) DO UPDATE）、扫描（SELECT … ORDER BY）、
+ *   确认删除后删行（DELETE … RETURNING）；带来新表 `public.media_object_cleanup`（20-login-roles.sql 段 M2）。
+ * ③ R29-S5（`origin/main`）把 `admin/ops/jobs-pg.ts` 纳入真审计（12 条字面量）。
+ * ④ R29（`#434`，`origin/main`）把 `moderation/ledger-pg.ts` 纳入真审计（5 条字面量，含建行后读回确认的
+ *   `SELECT superseded … WHERE job_id = $1`），带来 moderation_decisions／moderation_withdrawals 两表（段 M3）。
+ * 合流树实测（`node --test tests/unit/sql-column-coverage.test.mjs` 的 console.log 原文，2026-10-22）：
+ * 19 文件 **252** 条字面量；语句 INSERT 42 / UPDATE 39 / SELECT 137 / DELETE 34；RETURNING 75；
+ * ON CONFLICT 26；引用表 **44** 张；列权限要求 **1664**、已覆盖 **1610**（缺 0：media 两表、清理台账与
+ * 审核台账都是逐列授权；覆盖来源列级 1492 / 表级 118）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 18,
-  sqlLiterals: 247,
-  statements: { INSERT: 40, UPDATE: 37, SELECT: 136, DELETE: 34 },
+  auditedFiles: 19,
+  sqlLiterals: 252,
+  statements: { INSERT: 42, UPDATE: 39, SELECT: 137, DELETE: 34 },
   returningClauses: 75,
-  onConflictClauses: 24,
+  onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 22, SHARE: 16 },
   functionCalls: 2,
   noTargetTable: 11,
-  referencedTables: 42,
-  columnRequirements: 1613,
-  coveredRequirements: 1559,
+  referencedTables: 44,
+  columnRequirements: 1664,
+  coveredRequirements: 1610,
   ledgerExemptions: 33,
   rowLockRequirements: 22,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
 
-/** 逐文件读数（扩展 18 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
+/** 逐文件读数（扩展 19 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
 const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
@@ -452,6 +452,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'knowledge/service.ts': 4,
   'media': 17,
   'messages': 15,
+  'moderation/ledger-pg.ts': 5,
   'ocr': 16,
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,
@@ -462,7 +463,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'speech': 16,
 };
 
-/** 扩展审计引用到的表（42 张；含 catalog_read 视图，迁移期不判权限）。 */
+/** 扩展审计引用到的表（44 张；含 catalog_read 视图，迁移期不判权限）。 */
 const EXPECTED_EXTENDED_TABLES = [
   'catalog_read.current_knowledge',
   'public.community_comments',
@@ -489,6 +490,8 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.media_derivatives',
   'public.media_object_cleanup',
   'public.messages',
+  'public.moderation_decisions',
+  'public.moderation_withdrawals',
   'public.ocr_idempotency',
   'public.ocr_jobs',
   'public.ocr_records',
@@ -2059,7 +2062,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 18 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5）', () => {
+test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);
@@ -2072,7 +2075,7 @@ test('sql-column-coverage/扩展 18 文件读数与列覆盖（R28-S66 / R28-W12
   console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
 
   assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
-  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 18（8 store + 10 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts）');
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 19（8 store + 11 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts）');
   assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
   assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
   assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
@@ -2147,11 +2150,11 @@ test('sql-column-coverage/扩展 18 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 18 已审计 + 7 登记（R28-S66 / R28-E2 / R28-W3 / R28-W12 / R29-S5）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 7 登记（R28-S66 / R28-E2 / R28-W3 / R28-W12 / R29-S5 / R29）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 25, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 26, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2163,6 +2166,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/knowledge/service.ts',
       'services/api/src/media/store-pg.ts',
       'services/api/src/messages/store-pg.ts',
+      'services/api/src/moderation/ledger-pg.ts',
       'services/api/src/ocr/store-pg.ts',
       'services/api/src/privacy/backup-copies-pg.ts',
       'services/api/src/privacy/backup-purge-driver.ts',
