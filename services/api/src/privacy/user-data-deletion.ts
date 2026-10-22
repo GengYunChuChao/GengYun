@@ -626,8 +626,9 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   // 不能可靠脱敏的媒体引用移除，点赞物理删，举报只清 `detail`、保留 `state`，
   // 作者指针换成**行内**随机注销引用（重启/多副本仍匿名）—— 判断依据见
   // `community/store.ts::purgeOwnerData` 与 `community/purge.ts` 的注释。
-  // ⚠️ 该端口仍可能在两种情况下返回 `blocked`（能力缺失 / 引用生成失败），那部分**不会**被
-  // 这里的保留计数洗成 completed；正常路径（能力在、引用写成功）`blocked = 0`。
+  // ⚠️ 该端口在三种情况下返回 `blocked`：能力缺失 / 引用生成失败 / **剩余关联读数不可信**
+  // （`author-refs-remaining-unknown`，fail-closed）。那部分**不会**被这里的保留计数洗成
+  // completed；正常路径（能力在、引用写成功、读数可信为 0）`blocked = 0`。
   if (input.communityStore !== undefined) {
     coordinator.registerModule(
       COMMUNITY_DELETION_MODULE,

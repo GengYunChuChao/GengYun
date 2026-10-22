@@ -38,6 +38,18 @@
  * 直接关联账户。现在判据改为**清理后重新测量的剩余 owner 引用**（`authorRefsRemaining`，
  * 含软删行）：只要还剩一行指向该账户，就去身份未完成 ⇒ `blocked` + 本原因码。
  *
+ * ## fail-closed：证明不了就不算完成（P2 返修残留 fail-open 收口）
+ *
+ * 上一版在该读数**缺失**时回落到旧判据（`authorRefsReplaced === 0` + retained/redacted > 0）。
+ * 对抗性审查探针 P6 实测：替身/实现不报告该读数时仍会静默 `completed`；P6b 还测出
+ * `"3"` / `-1` / `1.5` / `NaN` / `Infinity` 一律回落旧判据 ⇒ `blocked = 0`。监工批语：
+ * 「已软删除帖评仍保留原作者关联，社区去身份回执却可能报告 completed，存在隐私与完成状态
+ * 失真。」因此本端口的口径是：
+ *   - 读数必须是**可信的非负安全整数**（`readAuthorRefsRemaining`）；缺失 / 非数 / 非整数 /
+ *     负数 / 非有限值 ⇒ 一律 `blocked` + `author-refs-remaining-unknown`（"无法证明已清干净"）；
+ *   - 旧判据**整个删除**：它正是 fail-open 的来源，⛔ 不保留为"保底"，⛔ 不得回落到它；
+ *   - `0` 仍是唯一的完成读数；`>0` 仍是 `author-row-reference-not-replaced`。
+ *
  * 计数口径：`blocked` 是**未完成的处理项数**（不是行数）。一个主体的作者引用问题算 1 项，
  * 具体缺什么写在 `blockedReasons` 里；行级读数（retained/redacted/hiddenMedia/authorRefsReplaced/
  * authorRefsRemaining）另列，⛔ 不把"保留了多少行"混算成"完成了多少"，也不把"换了几行"
@@ -45,6 +57,7 @@
  */
 import type { AuthorDirectory } from './types.ts';
 import type { CommunityOwnerPurgeCounts, CommunityStore } from './store.ts';
+import { readAuthorRefsRemaining } from './store.ts';
 import { ANONYMIZED_AUTHOR_REF_PATTERN } from './authors.ts';
 
 /** 端口返回值：存储分表计数 + 注销装配层补的 blocked 读数。 */
@@ -70,6 +83,16 @@ export const AUTHOR_REFERENCE_BLOCKED_REASONS = Object.freeze({
    * 「普通行替换成功、软删行仍关联账户，回执 completed」的成因。
    */
   ROW_REFERENCE: 'author-row-reference-not-replaced',
+  /**
+   * **无法证明已清干净**：存储没有报告可信的 `authorRefsRemaining`（缺失 / 非数 / 非整数 /
+   * 负数 / 非有限值）。
+   *
+   * 为什么不复用 `ROW_REFERENCE`：两者的事实不同 —— 那个是"**已证实**还有行指向账户"，
+   * 这个是"连还剩几行都不知道"。用前者会把"读数缺失"伪装成"已确认残留"，用 `completed`
+   * 会把"未知"伪装成"清干净"；两种都失真。口径是 fail-closed：⛔ 不回落旧判据
+   * （`authorRefsReplaced === 0` 那种"换过几行就算完"的推断正是 fail-open 的来源）。
+   */
+  REMAINING_UNKNOWN: 'author-refs-remaining-unknown',
   /**
    * 注销引用**未持久化**（只有进程内 Map）。
    *
@@ -122,28 +145,20 @@ export function createCommunityOwnerPurgePort(options: {
     // ⛔ 不要写成 `anonymizedRef === null ? undefined : {...}`：`undefined` 的语义是
     // "调用方没表态，请兜底生成"，那会把"能力缺失"悄悄变成"看起来完成了"。
     const counts = await purge.call(store, ownerId, { anonymizedAuthorRef: anonymizedRef });
-    // ⚠️ 判据升级（P2 返修，监工 PR #483）：**只看"换了几行"会漏掉"部分行没换"**。
-    // 同主体「普通行 + 已软删行」时普通行替换成功（`authorRefsReplaced > 0`），而软删行仍以原
-    // `author_id` 直接关联账户 ⇒ 旧判据 `blocked = 0`、回执 `completed`（缺陷）。
-    // 现在以存储**清理后重新测量**的 `authorRefsRemaining` 为准：只要还剩一行指向该账户，
-    // 去身份就没完成，如实 blocked（原因码 ROW_REFERENCE）。
-    const remainingRaw = counts.authorRefsRemaining;
-    const authorRefsRemaining = typeof remainingRaw === 'number'
-      && Number.isSafeInteger(remainingRaw)
-      && remainingRaw >= 0
-      ? remainingRaw
-      : null;
-    if (authorRefsRemaining !== null && authorRefsRemaining > 0) {
-      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
-    }
-    // 防御性保底（只在存储实现**不报告** `authorRefsRemaining` 时生效）：它声称换了 0 行、
-    // 却仍有保留/脱敏内容 ⇒ 同样不得判完成。新实现（内存 / PG）恒报该读数，正常路径由上面
-    // 那条**结果**判据承担；⛔ 不要反过来把这条当成主判据（它看不见"部分行没换"）。
-    if (
-      authorRefsRemaining === null
-      && counts.retained + counts.redacted > 0
-      && counts.authorRefsReplaced === 0
-    ) {
+    // ⚠️ 判据（P2 返修 · 监工 PR #483 的**残留 fail-open** 收口）：只看"换了几行"会漏掉
+    // "部分行没换"；而"读数缺失就回落到旧判据"会漏掉"**根本没证明清干净**"。
+    // 同主体「普通行 + 已软删行」时普通行替换成功（`authorRefsReplaced > 0`），软删行仍以原
+    // `author_id` 直接关联账户 —— 审查探针 P6 实测：替身不报告该读数时，旧实现回落到
+    // `authorRefsReplaced === 0` ⇒ 静默 `completed`；P6b 还测出 `"3"/-1/1.5/NaN/Infinity`
+    // 一律回落。监工批语：「已软删除帖评仍保留原作者关联，社区去身份回执却可能报告 completed，
+    // 存在隐私与完成状态失真。」
+    // 因此只认一个方向：**证明得了 0 才叫完成**；证明不了（缺失/非数/非整数/负数/非有限值）
+    // ⇒ blocked + `author-refs-remaining-unknown`。⛔ 不得回落旧判据（它正是 fail-open 的来源，
+    // 已整个删除），⛔ 不得把"没读到"当成 0。
+    const authorRefsRemaining = readAuthorRefsRemaining(counts.authorRefsRemaining);
+    if (authorRefsRemaining === null) {
+      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.REMAINING_UNKNOWN);
+    } else if (authorRefsRemaining > 0) {
       blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
     }
     // 去重（同一原因不重复计数）：blocked 是"处理项数"，不是"命中的判据条数"。

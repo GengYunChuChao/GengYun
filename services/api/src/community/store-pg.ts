@@ -65,6 +65,7 @@ import type {
   ReportCommitPatch,
   ReportRecord,
 } from './store.ts';
+import { AUTHOR_REFS_REMAINING_UNKNOWN, readAuthorRefsRemaining } from './store.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
 import { redactPersonalInfo } from './personal-info.ts';
 import { ANONYMIZED_AUTHOR_REF_PATTERN, createAnonymizedAuthorRef } from './authors.ts';
@@ -839,7 +840,9 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
      *    **含** `visibility='deleted'` 行（见第 4 条）。
      * 7. **剩余读数**：写入完成后用一条只读查询**重新测量**「仍以原 `author_id` 关联本主体的
      *    行数」（帖 + 评、含软删行）⇒ `authorRefsRemaining`。端口（`purge.ts`）只认这个数判
-     *    blocked：⛔ 不再以 `authorRefsReplaced > 0` 冒充"账号映射已清干净"。
+     *    blocked：⛔ 不再以 `authorRefsReplaced > 0` 冒充"账号映射已清干净"。读数不可读时
+     *    （计数行列数不对 / 值不可信）报 `AUTHOR_REFS_REMAINING_UNKNOWN`，⛔ 不得折成 0 ——
+     *    端口据此 fail-closed 判 `blocked`（监工 PR #483 的残留 fail-open）。
      *
      * 计数（见 `CommunityOwnerPurgeCounts`）：`records` 是**真实改动/删除**的行数，
      * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，`authorRefsReplaced` 单列"作者指针
@@ -999,6 +1002,12 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         // 同主体「普通行 + 已软删行」的缺陷正是"`authorRefsReplaced > 0`"掩盖了"软删行仍指向
         // 该账户"。这里按**结果**量：两表里仍以该主体的 `author_id` 关联的行数（**含**软删行）。
         // 只读查询，且与上面的写入同一事务 ⇒ 读到的是本次清理之后的事实。
+        //
+        // ⚠️ 读数必须**可证明**：这条 UNION 查询恒有两个分支（帖 + 评），因此必须恰好收到 2 行、
+        // 且每行都是可信的非负安全整数；少一行 / `null` / 字符串 / 负数 / 非整数 / 非有限值
+        // ⇒ 报 {@link AUTHOR_REFS_REMAINING_UNKNOWN}（NaN），由端口 fail-closed 判 `blocked`。
+        // ⛔ 不要写回 `Number(row.remaining ?? 0)`：那会把"没读到"折成 0，等于替存储撒谎说
+        // "已清干净"（监工 PR #483 的残留 fail-open 正是从这类兜底长出来的）。
         const remainingRows = (await sql.query(
           `SELECT count(*)::int AS remaining
              FROM community_posts
@@ -1009,7 +1018,13 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
             WHERE author_id = $1::uuid`,
           [ownerId],
         )).rows;
-        const authorRefsRemaining = remainingRows.reduce((sum, row) => sum + Number(row.remaining ?? 0), 0);
+        const readings = remainingRows.map((row) => readAuthorRefsRemaining(row['remaining']));
+        const [postRemaining, commentRemaining] = readings;
+        const authorRefsRemaining = readings.length === 2
+          && typeof postRemaining === 'number'
+          && typeof commentRemaining === 'number'
+          ? postRemaining + commentRemaining
+          : AUTHOR_REFS_REMAINING_UNKNOWN;
         return {
           records,
           idempotency: idempotency.length,
