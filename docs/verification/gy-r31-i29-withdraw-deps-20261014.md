@@ -14,6 +14,16 @@
   （及其人工镜像 `contract-implementation-status.md`）；迁移；`deploy/**`；CI workflow；既有断言。
 - 真库：本片**不新增**真库臂，也不冒充已跑真库（既有真库覆盖见 §4.2）。
 
+### 0.1 基线漂移核对（提交后补记）
+
+本分支基于 `origin/main` @ `d4d48088`。提交 `67b0fe07` 之后 `origin/main` 快进到 `f971e35c`
+（+5：含 `#451` 瞬时态可重试修正、`#455` 确定性失败不再声称可重试、`#453` 台账迁移读数跟随）。
+已核对：这 5 个提交**未触碰** `docs/architecture/state-contract.md`；对
+`contract-status.json` 的唯一改动是把某个 `profile/service.ts` 锚点从 `cropItems`(86-87)
+换成 `async put(...)`(75-106)，**与本页引用的 consent 行无关**；`withdrawConsent` 的 blocker
+在 `f971e35c` 上仍在 `contract-status.json:395`、`contract-implementation-status.md:62`，
+与本页引用一致。本片不 rebase（分支已由指挥推送，禁强推），由合并方按 squash 合并。
+
 ## 1 契约与台账原文对照（逐字）
 
 ### 1.1 冻结契约：撤回必须**推进并协调**，没有「有依赖就拒」这一条
