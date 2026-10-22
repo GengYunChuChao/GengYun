@@ -43,7 +43,7 @@ import { registerJobRoutes } from './jobs/routes.ts';
 import type { SpeechStore } from './speech/store.ts';
 import type { SpeechProvider } from './speech/provider.ts';
 import type { SpeechMediaPort } from './speech/media.ts';
-import { registerOcrRoutes } from './routes/ocr.ts';
+import { registerOcrRoutes, type OcrRouteDeps } from './routes/ocr.ts';
 import { createUnwiredOcrTerminalHistoryPort, type OcrTerminalHistoryInput, type OcrTerminalHistoryPort } from './ocr/service.ts';
 import { createMemoryAuthStore, createPostgresAuthStore, type AuthStore, type SqlExecutor } from './auth/store.ts';
 import { createMemoryIdempotencyStore, createPostgresIdempotencyStore, type IdempotencyStore } from './auth/idempotency.ts';
@@ -344,6 +344,13 @@ export interface BuildAppOptions {
   synthesisContent?: CheckedContentPort;
   /** 合成任务截止时间（毫秒），测试可缩短以真实观测 timed_out。 */
   synthesisJobDeadlineMs?: number;
+  // GY-R31 媒体端口注入（OCR 域；识别/语音域的同形注入项见上方 `recognitionMedia` / `speechMedia`）。
+  // **可选**：不传时与注入前**逐字节同行为**——`real` 下仍是未接线 fail-closed 端口，其余模式仍是
+  // 明确标注的替身；即「默认装配不注入任何端口」这一条不变（槽位缺省 undefined ⇒ 由域内按
+  // `config.executionMode` 自建）。类型取自 `routes/ocr.ts` 的依赖表，装配层**不** import 该域的
+  // 适配器模块（`tests/integration/ocr-http.mjs` 的 import 禁项逐字保持）。
+  /** 测试注入：替换 OCR 域媒体引用端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
+  ocrMedia?: OcrRouteDeps['media'];
   // GY-I18 后台域注入项。**全部可选**：不传时自建空种子内存 store ——
   // 内容/运营存储为空种子；`AdminJobPort` **仍缺省未接线** ⇒ 作业读/取消按服务层 fail-closed
   // 返回 503（不返回空页、不伪造状态）；**社区帖子端口已接线**（下方 `communityPostPortForAdmin`，
@@ -652,7 +659,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -1749,8 +1756,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    「恰四个键（consent/egress/guards/history）＋ app.ts 不得引用 OCR 存储/提供者适配器模块」
   //    钉成结构性质，本接线用位置实参传入**同一个**池、由域内决定实现，因此那两条断言逐字保持
   //    （见证据页「既有断言 前→后」）。
+  // GY-R31（#9/#10/#11 共同缺口）：deps 增 `media` **槽位**（值取注入项，缺省 undefined ⇒ 域内按
+  //    `executionMode` 自建）。这是唯一一处键集变化：四键 → 五键，两条结构断言（本文件同名判据
+  //    在 `tests/unit/ocr-store-pg-wiring.test.mjs` 与 `tests/integration/ocr-http.mjs`）已同步登记，
+  //    只加白名单、不删原有项；`store`/`provider`/`reference` 仍不得成为装配键，import 禁项不变。
   const ocrPersistencePool = config.executionMode === 'real' ? pool : null;
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory }, ocrPersistencePool);
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool);
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
   // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。

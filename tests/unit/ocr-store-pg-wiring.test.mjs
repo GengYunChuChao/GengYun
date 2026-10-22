@@ -83,9 +83,14 @@ test('非 real 不换实现：stub / preset_demo 即使有池也用内存 store'
   }
 });
 
-test('结构钉子：装配行恰四键、app.ts 不引用 OCR 适配器、有池才给池', () => {
-  // ① 装配行仍是「guards + 隐私域 consent/egress + 历史域 history」四个键。
+test('结构钉子：装配行恰五键、app.ts 不引用 OCR 适配器、有池才给池', () => {
+  // ① 装配行是「guards + 隐私域 consent/egress + 历史域 history + 媒体引用槽位 media」五个键。
   //    `tests/integration/ocr-http.mjs` 用同一条判据（本文件只是让它在 unit 层也红得起来）。
+  //    ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径如实登记**：四键 → 五键，新增的是 `media`
+  //      （`OcrRouteDeps['media']`，值来自 `BuildAppOptions.ocrMedia`，缺省 undefined ⇒ 域内自建）。
+  //      原意「不得塞入 store/provider/reference 等**实现层**适配器」不变：下面 ② 的 import 禁项
+  //      逐字保留，`store`/`provider` 仍不得成为装配键。本注释**不**主张「四键已够」或
+  //      「零端口注入仍成立」——它本来就不成立于 `#181` 的 `history`。
   const registrationLine = APP_SOURCE.split(/\r?\n/).find((line) =>
     line.includes('registerOcrRoutes(app, config,'),
   );
@@ -93,8 +98,8 @@ test('结构钉子：装配行恰四键、app.ts 不引用 OCR 适配器、有�
   const keys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     keys,
-    ['consent', 'egress', 'guards', 'history'],
-    `装配行只允许这四个键（不得塞入 store/provider/pool 等适配器端口）：${registrationLine.trim()}`,
+    ['consent', 'egress', 'guards', 'history', 'media'],
+    `装配行只允许这五个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
   );
 
   // ② `app.ts` 不得引用任何 OCR 适配器模块（provider/store/media/reference）。
