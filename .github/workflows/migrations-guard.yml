@@ -30,6 +30,11 @@
 #   [coexist] `rollback/` 只收 `<NNNN>_<name>.down.sql`；同号不得有两份 down；
 #   [rollback] 每条正向迁移要么有同名 down、要么在 `NO_ROLLBACK` 里带理由登记。
 #
+# 判据分两档（2026-10-22 收窄，避免既有仓一上来就全红）：
+#   硬档 `[surface] [runner] [dup]`     ⇒ 不满足即退出码 1，本 job 直接红；
+#   软档 `[coexist] [rollback]` + 缺号 ⇒ 默认只 `WARN`、退出码 0；`--strict` 才升 1。
+#   本 job 跑**非 strict**：撞号（真事故形态）必须拦，回滚/缺号的既有欠账先只告警。
+#
 # ⛔ 本 job 不设 `continue-on-error`、不写 `|| true`、不加 `paths:` 过滤、不加 `if:` 条件：
 #    任一种都会把「这一轮没通过」变成「这一轮没跑」。也**不跑** `npm ci` —— 门禁与它的单测
 #    只用 `node:` 内建模块（单测 spawn 的是 `process.execPath`），没有第三方依赖，
@@ -56,10 +61,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.16.0'
-      # 判据本体：对 `services/api/db/migrations/` 真跑一次。绿 = 5 项判据全部满足；
+      # 判据本体：对 `services/api/db/migrations/` 真跑一次。绿 = 3 条硬判据（surface/runner/dup）
+      # 全部满足（coexist/rollback/缺号只 warn，不加 `--strict` 不会把既有欠账变成红）；
       # 红 = 退出码 1 并逐条列出（`[dup]` 会点名两个撞号文件与运行时会在哪一行炸）。
       - name: 迁移编号唯一（纯静态：不连库、不写文件、不联网）
         run: node tools/verify-migrations-unique.mjs
+      # 机读快照：打进日志即可（不引第三方 action、不传 artifact —— 这条门禁零依赖，别为了留档
+      # 又引入一个会自己漂的版本面）。人看得到「这一轮扫到了哪 27 个号、缺号有没有依据」。
+      - name: 迁移编号快照（--json，仅留档不参与判决）
+        run: node tools/verify-migrations-unique.mjs --json
       # 门禁自己的单测：用 `os.tmpdir()` 造样例（正常/重复号/rollback 形态错/发现器集合不等/
       # 空目录…），断言退出码与关键输出。⛔ 不写 `services/api/db/migrations/` 任何东西。
       # 这一条同时钉住「守卫抄的正则 == migrate.ts:44 的正则」与「默认目录 == 运行器的默认目录」，

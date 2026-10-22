@@ -17,7 +17,9 @@
  *      「同号两条正向文件、各自带一份 down」在它那里是**一个桶里的两份 down**，与
  *      「同一条迁移写了两遍」不可区分；`release-materials-index` 那条数量不变量更是看不出来。
  *
- * 判据（退出码：0 = 全部满足，1 = 有任一不满足，2 = 用法错误）：
+ * 判据与严重度（退出码：0 = 通过，1 = 有硬错，2 = 用法错误）：
+ *
+ *   ── 硬错：任何模式都判红 ───────────────────────────────────────────────────
  *   [surface]  扫描面：`<dir>` 顶层 `.sql` 必须合 `^\d{4}_.*\.sql$`，且**至少 1 条**
  *              （扫到 0 条按红处理 ——「什么都没扫到」也是一种绿，不能放行）；顶层不得出现
  *              `.down.sql`（它既不是正向迁移，也永远不会被当回滚执行）。后缀大小写不是小写
@@ -28,28 +30,44 @@
  *              守卫数与运行器数不一致时，「守卫绿」是没有意义的。
  *   [dup]      同一 4 位号不得被两个及以上**正向**文件占用。这正是案例①的形态：git 看不出冲突，
  *              运行器会抛「迁移版本号重复」，`schema_migrations.version` 主键再补一刀。
+ *
+ *   ── 默认只 warn：`--strict` 才升为退出码 1 ────────────────────────────────
  *   [coexist]  同一号只能在顶层出现一次（[dup] 已覆盖「两份正向」）；`rollback/` **只收**
  *              `<NNNN>_<name>.down.sql` —— 往 `rollback/` 放正向形态的 `.sql`、或给同一号补
  *              第二份 `.down.sql`，都判红。这是把第二条同号迁移「藏起来」的两种典型形态：
  *              放进去的文件既不会被当回滚执行，也不会被运行器发现，两份同号就此共存而无人察觉。
  *   [rollback] 每个正向编号要么有 `rollback/<同名>.down.sql`，要么在 `NO_ROLLBACK` 里显式登记
  *              「允许缺省」（理由 ≥ 20 字）。孤儿回滚、同号 down 与正向名不一致、登记过期
- *              （已有 down / 迁移已不存在 / 理由占位）全判红。
+ *              （已有 down / 迁移已不存在 / 理由占位）都报 warn。
+ *   [gap]      **首尾之间**的缺号（`min+1..max-1`）默认只 warn，但每个缺号都要在迁移目录下的
+ *              `*.md`（README/说明）里找到「故意跳过」的依据（同一行同时出现该号与
+ *              ／跳过｜预留｜skip｜未使用…／字样）。找不到依据 ⇒ `WARN[gap]` 点名，`--strict` 才红。
+ *              低于首号的前缀**不算缺口**（目录从 `0100` 起只是编号空间还没走到那里；把它算成
+ *              100 个缺口只会把真缺口埋掉），只打一行读数。
+ *
+ * 为什么分两档（2026-10-22 收窄口径）：`dup` 是真事故形态（两条 `0028_*` 在 git 里不冲突、
+ *   运行时才炸），必须硬红；而 `rollback/` 目前**不是**全仓普遍约定、缺号在跨 PR 乱序合并时
+ *   （0028 在 #434、0029 在别的片）也是常态 —— 这两档当硬错会让既有 27 条迁移与无关 PR 每次
+ *   全红，红到没人看门禁就等于没有门禁。所以：默认只 warn 并逐条点名，需要收紧的场合加
+ *   `--strict`（CI 里刻意不传，见 `.github/workflows/migrations-guard.yml`）。
  *
  * 刻意**不做**（不冒充能力）：
  *   · 不执行任何 `.sql`、不判断迁移内容能否跑通（真执行由 `tests/integration/*-pg.mjs` 覆盖）；
  *   · 不判断 down 与 up 语义互逆（配对口径见 `tests/unit/migrations-rollback-pairing.test.mjs`）；
  *   · 不查**跨分支的预留号**：`#434` 的 `0028` 不在本分支目录里，静态扫不到。本门禁的价值是
  *     「两条同号一旦进了**同一个目录**就立刻红」，而不是「查谁能占下一个号」；
- *   · 编号**缺号**只报读数、**不判红**：跨 PR 乱序合并时（0028 在 #434、0029 在别的片）缺号是
- *     正常态，判红会在 main 上误伤无关的人。
+ *   · 不查「缺号到底该不该存在」：只要求缺号在迁移目录下的 `*.md` 里有**一行**可核证的
+ *     「故意跳过」依据，不判断那依据是否合理（那是 review 的事）。
  *
  * 用法：
  *   node tools/verify-migrations-unique.mjs                # 扫仓内默认目录（套用 NO_ROLLBACK）
  *   node tools/verify-migrations-unique.mjs --dir <目录>    # 扫指定目录（负控制/夹具用；不套用本仓登记）
+ *   node tools/verify-migrations-unique.mjs --json          # 机读：duplicates[] / gaps[] /
+ *                                                           #   rollbackIssues[] / counts{}（退出码同上）
+ *   node tools/verify-migrations-unique.mjs --strict        # 缺号与回滚问题一并升为退出码 1
  *   node tools/verify-migrations-unique.mjs --help
  */
-import { readdirSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -102,8 +120,22 @@ export const NO_ROLLBACK = new Map([
   ],
 ]);
 
-/** 判据编号（也是报告里 `FAIL[<id>]` 的前缀与证据页判据表的键）。 */
-const CRITERIA = ['surface', 'runner', 'dup', 'coexist', 'rollback'];
+/** 判据编号（也是报告里 `FAIL[<id>]` / `WARN[<id>]` 的前缀与证据页判据表的键）。 */
+export const CRITERIA = ['surface', 'runner', 'dup', 'coexist', 'rollback'];
+
+/** 硬错：任何模式下都判红（扫描面自身坏了 / 守卫与运行器口径不一致 / 同号两份正向文件）。 */
+export const HARD_CRITERIA = new Set(['surface', 'runner', 'dup']);
+
+/** 默认只 warn：`--strict` 才升为退出码 1（回滚配对与 rollback/ 形态，见文件头「为什么分两档」）。 */
+export const SOFT_CRITERIA = new Set(['coexist', 'rollback']);
+
+/**
+ * 「故意跳过」依据的判定词：缺号那一行必须同时出现该号与其中任一词。
+ *
+ * 要求「同一行同时命中」而不是「全文提到该号」：后者太松 —— 一份 README 里列了一长串
+ * `0001..0027` 的目录，任何缺号都会「看起来有依据」。宁可让人多写一行，也不要一个恒真的判据。
+ */
+const SKIP_EVIDENCE_PATTERN = /跳过|预留|预占|未使用|不使用|留空|不占用|空缺|skip|reserved|unused/i;
 
 /** 目录判定：不抛异常，不存在/不是目录都返回 false。 */
 function isDirectory(path) {
@@ -157,6 +189,53 @@ function listSqlEntries(dir) {
 }
 
 /**
+ * 列迁移目录下的说明文件（`*.md`）——「缺号有依据」这条判据只认这里。
+ *
+ * 刻意只扫 `<migrationsDir>/*.md`（不递归、不读仓外）：判据的效力来自「依据和迁移放在一起」，
+ * 一份藏在别处、谁也不会顺路看见的说明等于没有依据。目前仓里一条 `.md` 都没有 ⇒ 缺号会一律
+ * 落在「未登记」，这是对的（现在确实没有任何缺号登记）。
+ *
+ * @param {string} dir
+ * @returns {string[]} 文件名（不含目录），按名升序
+ */
+function listDocSources(dir) {
+  if (!isDirectory(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/**
+ * 在说明文件里找某个缺号的「故意跳过」依据。
+ *
+ * @param {string} dir 迁移目录
+ * @param {string} number 四位号
+ * @param {string[]} sources `listDocSources()` 的结果
+ * @returns {{ file: string, line: number, text: string } | null} 命中的第一行
+ */
+function findGapEvidence(dir, number, sources) {
+  // 边界用「前后不是数字」而不是 `\b`：`0001` 在 `10001`/`00010` 里不该算命中。
+  const token = new RegExp(`(^|[^0-9])${number}([^0-9]|$)`);
+  for (const source of sources) {
+    let text;
+    try {
+      text = readFileSync(join(dir, source), 'utf8');
+    } catch {
+      continue;
+    }
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (token.test(line) && SKIP_EVIDENCE_PATTERN.test(line)) {
+        return { file: source, line: index + 1, text: line.trim() };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 跑全部判据。只读文件系统，不改任何东西。
  *
  * @param {{ migrationsDir?: string, noRollback?: Map<string, string> }} [options]
@@ -164,7 +243,11 @@ function listSqlEntries(dir) {
  *   （扫 `--dir` 指到的别的目录时按空清单判，否则本仓的登记会在那边的树上变成假红）。
  * @returns {{
  *   ok: boolean,
+ *   strict: boolean,
  *   failures: Array<{ id: string, message: string }>,
+ *   errors: Array<{ id: string, message: string }>,
+ *   rollbackIssues: Array<{ id: string, message: string }>,
+ *   undocumentedGaps: string[],
  *   readings: string[],
  *   details: {
  *     migrationsDir: string, rollbackDir: string,
@@ -174,7 +257,13 @@ function listSqlEntries(dir) {
  *     missing: string[], orphan: string[], mismatched: string[],
  *     duplicated: Array<{ number: string, files: string[] }>,
  *     duplicatedRollback: Array<{ number: string, files: string[] }>,
- *     unregistered: string[], numbers: string[], gaps: string[],
+ *     unregistered: string[], numbers: string[],
+ *     gaps: string[],
+ *     docSources: string[],
+ *     gapDocumentation: Array<{
+ *       number: string, documented: boolean,
+ *       evidence: { file: string, line: number, text: string } | null,
+ *     }>,
  *   },
  * }}
  */
@@ -189,6 +278,12 @@ export function verifyMigrations(options = {}) {
    */
   const builtinAllowlistApplies = isSameDirectory(migrationsDir, DEFAULT_MIGRATIONS_DIR);
   const noRollback = options.noRollback ?? (builtinAllowlistApplies ? NO_ROLLBACK : new Map());
+  /**
+   * `--strict`：把「默认只 warn」的三类（[coexist] / [rollback] / 无依据的 [gap]）计入判决。
+   * ⛔ 不要把它设成默认值 —— 既有 27 条迁移里 0001 靠 NO_ROLLBACK 豁免、`rollback/` 也不是
+   * 全仓约定，默认 strict 会让每个无关 PR 都红（见文件头「为什么分两档」）。
+   */
+  const strict = options.strict === true;
 
   /** @type {Array<{ id: string, message: string }>} */
   const failures = [];
@@ -215,8 +310,28 @@ export function verifyMigrations(options = {}) {
     unregistered: [],
     numbers: [],
     gaps: [],
+    docSources: [],
+    gapDocumentation: [],
   };
-  const done = () => ({ ok: failures.length === 0, failures, readings, details });
+  /**
+   * 判决：`failures` 按严重度拆成两档（[surface]/[runner]/[dup] 硬红；[coexist]/[rollback] 只 warn），
+   * 再叠上「缺号但没依据」这一档（缺号从不进 `failures` —— 它不是形态错误，只是「必须有依据」）。
+   *
+   * 非 strict：`ok` 只看硬错 ⇒ 回滚问题与缺号默认不影响退出码。
+   * strict：软错与无依据缺号一并算进来 ⇒ 等价于「五条判据 + 缺号依据全部满足」。
+   */
+  const done = () => {
+    const errors = failures.filter((failure) => HARD_CRITERIA.has(failure.id));
+    const rollbackIssues = failures.filter((failure) => SOFT_CRITERIA.has(failure.id));
+    const undocumentedGaps = details.gapDocumentation
+      .filter((gap) => !gap.documented)
+      .map((gap) => gap.number);
+    const ok = errors.length === 0
+      && (!strict || (rollbackIssues.length === 0 && undocumentedGaps.length === 0));
+    return {
+      ok, strict, failures, errors, rollbackIssues, undocumentedGaps, readings, details,
+    };
+  };
 
   // ── [surface] 前置：目录本身 ─────────────────────────────────────────────────
   if (!isDirectory(migrationsDir)) {
@@ -524,21 +639,43 @@ export function verifyMigrations(options = {}) {
     );
   }
 
-  // ── 读数：编号连续性（**只报不判**） ────────────────────────────────────────
-  const present = new Set(numbers.map(Number));
-  const maxNumber = numbers.length === 0 ? 0 : Math.max(...numbers.map(Number));
-  for (let value = 1; value <= maxNumber; value += 1) {
+  // ── [gap] 编号连续性：默认只 warn，但每个缺号都要有「故意跳过」的依据 ──────────
+  // 口径：只算**首尾之间**的空位（min+1..max-1）。低于首号的前缀不算缺口 —— 目录从 0100 起
+  // 只是编号空间还没走到那里（夹具即如此），把它算成 99 个缺口只会把真缺口埋掉。
+  const sortedValues = numbers.map(Number).sort((left, right) => left - right);
+  const minValue = sortedValues.length === 0 ? 0 : sortedValues[0];
+  const maxValue = sortedValues.length === 0 ? 0 : sortedValues[sortedValues.length - 1];
+  const present = new Set(sortedValues);
+  for (let value = minValue + 1; value < maxValue; value += 1) {
     if (!present.has(value)) details.gaps.push(String(value).padStart(4, '0'));
   }
-  // 缺号可能很长（夹具里从 0001 数到 0100 就是一串）—— 读数只让人看个形状，故只列前 8 个。
-  const gapsText = details.gaps.length === 0
-    ? `${numbers[0]}..${numbers[numbers.length - 1]} 连续`
-    : `缺 ${details.gaps.length} 个：${details.gaps.slice(0, 8).join('、')}`
-      + `${details.gaps.length > 8 ? ' …' : ''}`;
+
+  details.docSources = listDocSources(migrationsDir);
+  details.gapDocumentation = details.gaps.map((number) => {
+    const evidence = findGapEvidence(migrationsDir, number, details.docSources);
+    return { number, documented: evidence !== null, evidence };
+  });
+  const undocumentedGaps = details.gapDocumentation.filter((gap) => !gap.documented);
+
+  const gapsText = numbers.length === 0
+    ? '(无)'
+    : details.gaps.length === 0
+      ? `${numbers[0]}..${numbers[numbers.length - 1]} 连续（首尾之间无缺口）`
+      : `${numbers[0]}..${numbers[numbers.length - 1]} 缺 ${details.gaps.length} 个：`
+        + `${details.gaps.slice(0, 8).join('、')}${details.gaps.length > 8 ? ' …' : ''}`
+        + `（已登记依据 ${details.gaps.length - undocumentedGaps.length} / 未登记 ${undocumentedGaps.length}）`;
   read(
-    `[读数]     编号连续性：${numbers.length === 0 ? '(无)' : gapsText}`
-      + '（仅信息，不判红：跨 PR 乱序合并时缺号是正常态）',
+    `[gap]      编号连续性：${gapsText}`
+      + '（缺号默认只 warn；依据 = 迁移目录下 *.md 里同行的「跳过/预留」说明）',
   );
+  read(
+    `[gap]      「故意跳过」依据扫描面：${details.docSources.length === 0
+      ? '迁移目录下没有任何 .md（README/说明）⇒ 任何缺号都算未登记'
+      : details.docSources.join('、')}`,
+  );
+  if (numbers.length > 0 && minValue !== 1) {
+    read(`[gap]      起始号 ${numbers[0]}（不是 0001）：前缀不计入缺口，只作读数`);
+  }
 
   return done();
 }
@@ -546,6 +683,7 @@ export function verifyMigrations(options = {}) {
 /** 把一次校验渲染成可贴进证据页的文本（读数 + 逐条配对 + 判决）。 */
 export function renderReport(result) {
   const lines = [`迁移编号唯一门禁（R30 · 纯静态）· 目录 ${result.details.migrationsDir}`];
+  if (result.strict) lines.push('[模式]     --strict：回滚问题与无依据缺号一并计入判决');
   lines.push(...result.readings);
 
   const rows = [];
@@ -561,7 +699,29 @@ export function renderReport(result) {
     lines.push(...rows.sort());
   }
 
-  if (result.failures.length === 0) {
+  const documented = result.details.gapDocumentation.filter((gap) => gap.documented);
+  const undocumented = result.details.gapDocumentation.filter((gap) => !gap.documented);
+  if (documented.length > 0) {
+    lines.push(
+      `[gap] 缺号有「故意跳过」依据（${documented.length} 个）：`
+        + documented.map((gap) => `${gap.number} → ${gap.evidence.file}:${gap.evidence.line}`).join('、'),
+    );
+  }
+  if (undocumented.length > 0) {
+    lines.push(
+      `WARN[gap] 缺号但迁移目录下没有「故意跳过」依据（${undocumented.length} 个）：`
+        + `${undocumented.map((gap) => gap.number).join('、')}\n`
+        + '  ⇒ 依据写法：在 services/api/db/migrations/README.md 里写一行，让该缺号与'
+        + '「跳过/预留」字样**出现在同一行**（例：`- 0102 故意跳过：预留给 #434 的审计日志迁移`）。\n'
+        + '    缺号本身不判错（跨 PR 乱序合并时是常态），但没有依据的缺号无法与「删错了一条迁移」'
+        + '区分；`--strict` 下这条会升为退出码 1。',
+    );
+  }
+
+  for (const failure of result.errors) lines.push(`FAIL[${failure.id}] ${failure.message}`);
+  for (const failure of result.rollbackIssues) lines.push(`WARN[${failure.id}] ${failure.message}`);
+
+  if (result.ok && result.failures.length === 0 && undocumented.length === 0) {
     lines.push(
       `PASS：${CRITERIA.length} 项判据全部满足（${CRITERIA.join(' / ')}）；`
         + `${result.details.paired.length} 条配对 + ${result.details.exempted.length} 条登记允许缺省`
@@ -570,31 +730,114 @@ export function renderReport(result) {
     return lines.join('\n');
   }
 
-  for (const failure of result.failures) lines.push(`FAIL[${failure.id}] ${failure.message}`);
-  const ids = [...new Set(result.failures.map((failure) => failure.id))];
-  lines.push(`FAIL：${result.failures.length} 项不满足（${ids.join('、')}）；退出码 1。`);
+  const softIds = [
+    ...new Set([
+      ...result.rollbackIssues.map((failure) => failure.id),
+      ...(undocumented.length > 0 ? ['gap'] : []),
+    ]),
+  ];
+  const softCount = result.rollbackIssues.length + undocumented.length;
+  const strictFailure = result.strict && !result.ok;
+  if (result.errors.length > 0 || strictFailure) {
+    const ids = [...new Set([...result.errors.map((failure) => failure.id), ...(strictFailure ? softIds : [])])];
+    const count = result.errors.length + (strictFailure ? softCount : 0);
+    lines.push(`FAIL：${count} 项不满足（${ids.join('、')}）；退出码 1。`);
+  }
+  if (softCount > 0 && !result.strict) {
+    lines.push(
+      `WARN：${softCount} 项默认不判错（${softIds.join('、')}）；退出码 0；加 --strict 可升为退出码 1。`,
+    );
+  }
   return lines.join('\n');
+}
+
+/**
+ * 把一次校验渲染成机读 JSON（`--json`）。
+ *
+ * 下游（别的门禁、看板、issue 机器人）只认这份形状：`duplicates[]` / `gaps[]` /
+ * `rollbackIssues[]` / `counts{}` 是**稳定契约**，改名要同步改证据页与 workflow。
+ * `readings` 一起带上是为了让人在一条命令里同时拿到「机器读的」和「人读的」。
+ */
+export function buildJsonReport(result) {
+  const { details } = result;
+  const documentedGaps = details.gapDocumentation.filter((gap) => gap.documented);
+  return {
+    tool: 'verify-migrations-unique',
+    schemaVersion: 1,
+    ok: result.ok,
+    exitCode: result.ok ? 0 : 1,
+    strict: result.strict === true,
+    migrationsDir: details.migrationsDir,
+    rollbackDir: details.rollbackDir,
+    criteria: CRITERIA,
+    severity: {
+      hard: [...HARD_CRITERIA],
+      soft: [...SOFT_CRITERIA],
+      gap: 'soft',
+    },
+    counts: {
+      forward: details.forwardFiles.length,
+      rollback: details.rollbackFiles.length,
+      numbers: details.numbers.length,
+      duplicates: details.duplicated.length,
+      duplicateFiles: details.duplicated.reduce((total, item) => total + item.files.length, 0),
+      duplicateRollback: details.duplicatedRollback.length,
+      gaps: details.gaps.length,
+      documentedGaps: documentedGaps.length,
+      undocumentedGaps: result.undocumentedGaps.length,
+      paired: details.paired.length,
+      exempted: details.exempted.length,
+      missingRollback: details.missing.length,
+      orphanRollback: details.orphan.length,
+      rollbackIssues: result.rollbackIssues.length,
+      errors: result.errors.length,
+    },
+    numbers: details.numbers,
+    duplicates: details.duplicated,
+    gaps: details.gapDocumentation,
+    undocumentedGaps: result.undocumentedGaps,
+    rollbackIssues: result.rollbackIssues,
+    errors: result.errors,
+    paired: details.paired,
+    exempted: details.exempted,
+    missingRollback: details.missing,
+    orphanRollback: details.orphan,
+    docSources: details.docSources,
+    readings: result.readings,
+  };
 }
 
 const USAGE = [
   '用法：',
   '  node tools/verify-migrations-unique.mjs               # 扫 services/api/db/migrations/',
   '  node tools/verify-migrations-unique.mjs --dir <目录>  # 扫指定目录（负控制/夹具用）',
+  '  node tools/verify-migrations-unique.mjs --json        # 机读：duplicates[]/gaps[]/rollbackIssues[]/counts{}',
+  '  node tools/verify-migrations-unique.mjs --strict      # 回滚问题与无依据的缺号也判红',
   '',
-  '判据：surface / runner / dup / coexist / rollback（详见文件头注释）。',
-  '退出码：0 = 全部满足；1 = 有判据不满足；2 = 用法错误。',
+  '判据：surface / runner / dup（硬错）+ coexist / rollback / gap（默认只 warn）—— 详见文件头注释。',
+  '退出码：0 = 全部满足（非 --strict 下只看硬错）；1 = 有硬错（--strict 下含 warn 项）；2 = 用法错误。',
 ].join('\n');
 
 /** 命令行入口：返回退出码，方便单测直接调用。 */
 export function main(argv = process.argv) {
   const args = argv.slice(2);
   let migrationsDir = DEFAULT_MIGRATIONS_DIR;
+  let json = false;
+  let strict = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--help' || arg === '-h') {
       console.log(USAGE);
       return 0;
+    }
+    if (arg === '--json') {
+      json = true;
+      continue;
+    }
+    if (arg === '--strict') {
+      strict = true;
+      continue;
     }
     if (arg === '--dir') {
       const value = args[index + 1];
@@ -610,8 +853,9 @@ export function main(argv = process.argv) {
     return 2;
   }
 
-  const result = verifyMigrations({ migrationsDir });
-  console.log(renderReport(result));
+  const result = verifyMigrations({ migrationsDir, strict });
+  // `--json` 时 stdout 必须是**纯 JSON**（不混读数），下游才敢直接 `JSON.parse`。
+  console.log(json ? JSON.stringify(buildJsonReport(result), null, 2) : renderReport(result));
   return result.ok ? 0 : 1;
 }
 
