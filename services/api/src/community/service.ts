@@ -69,6 +69,7 @@ import type {
   PostRecord,
   ReportRecord,
 } from './store.ts';
+import { planReportTransition } from './report-state.ts';
 import {
   UUID_PATTERN,
   parseCursor,
@@ -78,6 +79,7 @@ import {
   requireUserActor,
   validateCommentInput,
   validatePostInput,
+  validateReportDispositionInput,
   validateReportInput,
 } from './validate.ts';
 import type {
@@ -503,6 +505,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         return new ApiError('REVISION_CONFLICT', '目标版本已变化，请刷新后重试');
       case 'VISIBILITY_CHANGED':
       case 'AUDIT_STATE_CHANGED':
+      case 'STATE_CHANGED':
         return new ApiError('REVISION_CONFLICT', '目标当前状态已变化，请刷新后重试');
     }
   }
@@ -1539,6 +1542,48 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     // -----------------------------------------------------------------------
     // 内部操作（**不是**契约 operationId；阶段 2 由巡检任务调用，无 HTTP 入口）
     // -----------------------------------------------------------------------
+
+    /**
+     * **举报状态推进**（GY-I15 · R31-S1）：`received → isolated → closed`。
+     *
+     * ## 为什么落在"内部操作"而不是注册 `PATCH /reports/{id}`
+     *
+     * `packages/contracts/openapi.json` 的举报面只有 `createReport` / `getOwnReport` 两条 op，
+     * 处置动作**没有**任何 schema。本片受「不改契约 paths/schemas」约束，因此只把能力接到
+     * 服务层：行为由单测（内存实现）与 PG 集成臂断言，注册路由属于"补完契约后"的那一片。
+     * 这也意味着**授权面尚未接线**（谁能调这个函数目前由进程内调用方决定，不是 HTTP 层决定的）——
+     * 已登记在证据页的未取得项里，不在这里假装已有权限模型。
+     *
+     * ## 三条语义
+     *
+     * 1. **只允许合法转移**：表在 `community/report-state.ts`。非法转移与"终态后再处置"一律
+     *    `409 REVISION_CONFLICT`（契约 409 闭集里没有 `STATE_CONFLICT`，见证据页「新口径，待裁」）。
+     * 2. **幂等由 CAS 承载**：`expected_revision` 必须等于当前 revision。拿同一个
+     *    `expected_revision` 重复调用 ⇒ 第二次已被第一次推进 ⇒ 409，**不会**静默成功，
+     *    也不会产生第二条记录。这同时是"处置后不可再处置"的实现：终态在状态机层就拒绝。
+     * 3. **不做归属校验**：处置方是运营侧，不是举报者本人；举报者能读自己的举报（
+     *    `getOwnReport`）但**不能**推进它。
+     */
+    async advanceReport(reportId: unknown, input: unknown): Promise<Report> {
+      const id = requireUuidParam(reportId, 'report_id');
+      const body = validateReportDispositionInput(input);
+      const current = await store.getReport(id);
+      if (current === null) throw notFound();
+      const plan = planReportTransition(current.state, body.action);
+      if (!plan.ok) {
+        throw new ApiError(
+          'REVISION_CONFLICT',
+          plan.reason === 'TERMINAL_STATE' ? '举报已处置完毕，不可再次处置' : '举报当前状态不接受该处置动作',
+        );
+      }
+      const committed = await store.commitReportIfCurrent(
+        id,
+        { revision: body.expected_revision, state: current.state },
+        { revision: current.revision + 1, state: plan.to },
+      );
+      if (!committed.ok) throw commitRefusal(committed.reason);
+      return projectReport(committed.record);
+    },
 
     /**
      * 读取某版本的审核结论台账。**仅内容作者**可读（他人/不存在一律 `NOT_FOUND`）。

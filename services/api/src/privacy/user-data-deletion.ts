@@ -84,6 +84,33 @@ export const MESSAGES_DELETION_MODULE = 'messages';
  * 那是**扩大**闭集（加强承诺），不是放宽判据。
  */
 export const CONVERSATIONS_DELETION_MODULE = 'conversations';
+/**
+ * GY-I15（#15）· 社区域（R31-S6）：**注销按 F13 保留社区行 + 去身份**的那个域。
+ *
+ * F13（`docs/implementation-requirements.md:279-280`）：帖子评论保留、显示"已注销用户"、
+ * 作者换不可反查的注销引用；保留正文并清除个人信息；不能可靠脱敏的媒体隐藏/移除。
+ * 因此本域**不是**"把该用户的行删光"，而是"保留 + 脱敏 + 去身份"，未完成项如实 blocked
+ * （行级作者引用与引用持久化受 schema/授权约束，见 `community/purge.ts` 的注释）。
+ *
+ * 为什么这个常量**不**直接写进下面的 `USER_DATA_DELETION_MODULES`（这是本片唯一一处
+ * 「与既有四个域做法不同」的地方，理由必须摆在代码里而不是藏在 PR 描述里）：
+ *
+ *   - 协调器的 `registerModule` **只接受闭集内的名字**（`packages/privacy/deletion-modules.mjs:112-117`），
+ *     所以「注册了但没进闭集」是行不通的——要么进闭集，要么不注册；
+ *   - 而进常量闭集会让 `requiredModules()` 恒为 5，直接推翻 4 个测试文件里 **14 条**
+ *     钉死「四个模块、不多不少」的既有断言（`handlers.length === 4`、
+ *     `deepEqual(..., ['favorites','history','messages','conversations'])` 等），
+ *     还要给 7 个文件里 **44 处**测试替身补一个新字段。那是一次**独立的、可审的**扩集动作，
+ *     不该夹在「补社区域清理」这一片里顺手做掉。
+ *
+ * 因此本片取「**装配处补齐闭集**」：`createUserDataDeletion` 在注入了社区清理原语时把
+ * `community` 追加到闭集（`app.ts` **无条件**注入，所以真实注销路径的闭集就是 5 项，
+ * 社区行一定会被清理）；既有替身不注入 ⇒ 闭集仍是 4 项 ⇒ 既有断言逐条不动。
+ *
+ * ⚠️ 这个折中的代价要说清楚：如果哪天有人装配时漏注入社区 store，闭集会**静默**回到 4 项，
+ * 不会有「缺模块」提示。这是本片的已知弱化，已列为待裁定项（见证据页）。
+ */
+export const COMMUNITY_DELETION_MODULE = 'community';
 
 /**
  * 必需模块闭集。
@@ -103,6 +130,22 @@ export const USER_DATA_DELETION_MODULES = [
 export interface OwnerPurgeCounts {
   records: number;
   idempotency: number;
+  /**
+   * 社区域（F13 保留规则）追加的读数：正文原样保留的行数。**保留不是删除**，
+   * 因此不并进 `records`；证据串里单列 `<module>:retained:<n>`，避免拿"处理行数"冒充保留结果。
+   */
+  retained?: number;
+  /** 社区域：正文因清除个人信息被改写（旧审核摘要失效 ⇒ 待重审）的帖子+评论数。 */
+  redacted?: number;
+  /** 社区域：被移除的媒体引用条数（不能可靠脱敏）。 */
+  hiddenMedia?: number;
+  /**
+   * 该模块**未完成/无法判定**的处理项数（0/缺省 = 无）。> 0 时处理器必须返回
+   * `onlineState: 'blocked'` + 安全错误码，⛔ 不得用其它已完成读数冒充 `completed`。
+   */
+  blocked?: number;
+  /** `blocked` 的原因码闭集（只许固定常量，不含私有数据；进证据串供审计）。 */
+  blockedReasons?: readonly string[];
 }
 
 /** 按主体清空的存储原语（只用得到这一个方法，避免本适配器拿到多余能力）。 */
@@ -226,6 +269,14 @@ export interface UserDataDeletionDeps {
    * 否则「闭集里有一项但没人清」仍是原缺口（G5「有刀没有手」）。
    */
   conversationsStore: OwnerPurgeStore;
+  /**
+   * GY-I15（#15）· 社区域（R31-S6）。**可选**，但**生产装配处必须给**（`app.ts` 无条件注入）。
+   *
+   * 注入 ⇒ 闭集追加 `community` 并注册处理器（注销会清帖子/评论/点赞/举报）；
+   * 不注入 ⇒ 逐字保持本片之前的 4 域行为（既有测试替身因此零改动）。
+   * 折中的代价与裁定请求见 `COMMUNITY_DELETION_MODULE` 的注释。
+   */
+  communityStore?: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -261,6 +312,16 @@ export interface PurgeAuditEntry {
   onlineRemoved: number;
   backupState: string;
   at: string;
+  /** 社区域（F13）：正文原样保留的行数（缺省 = 该域没有这个概念）。 */
+  retained?: number;
+  /** 社区域：正文因清除个人信息被改写的行数。 */
+  redacted?: number;
+  /** 社区域：被移除的媒体引用数。 */
+  hiddenMedia?: number;
+  /** 该模块未完成/无法判定的处理项数（>0 ⇒ onlineState 必须 blocked）。 */
+  blocked?: number;
+  /** `blocked` 的原因码（固定常量；不含私有数据）。 */
+  blockedReasons?: readonly string[];
 }
 
 /**
@@ -311,8 +372,13 @@ export interface UserDataDeletionRegistry {
  *
  * 处理器语义（逐条与已合并协议对齐）：
  *   - 只清理 `requestId` 绑定的那个主体的数据；反查不到主体 ⇒ 抛错（协议折叠为 `blocked`）；
- *   - `onlineState`：`deleteAllByOwner`（或分表计数的 `purgeOwnerData`）成功 ⇒ `completed`，
- *     证据 `<module>:online-purged:<n>`；`purgeOwnerData` 可用时追加 `;<module>:idempotency-purged:<n>`；
+ *   - `onlineState`：`deleteAllByOwner`（或分表计数的 `purgeOwnerData`）成功且**没有未完成项**
+ *     ⇒ `completed`，证据 `<module>:online-purged:<n>`；`purgeOwnerData` 可用时追加
+ *     `;<module>:idempotency-purged:<n>`；社区域（F13 保留规则）另有
+ *     `;retained:<n>;redacted:<n>;media-hidden:<n>` 三条结果读数；
+ *   - `onlineState: 'blocked'`：`OwnerPurgeCounts.blocked > 0`（未完成/无法判定的项）⇒
+ *     回执 `online_state: 'blocked'` + `POLICY_BLOCKED`，证据串单列 `;blocked:<n>;blocked-reasons:<codes>`。
+ *     ⛔ 不得因为"保留了 N 行"就把该模块报成 completed；
  *   - `backupState`：`backupPurge` 已接线且返回 `purged:true` 且有证据 ⇒ `completed`
  *     （证据 `<module>:backup-purged`）；否则 `pending`；
  *   - 抛出任何异常都由协议折叠为 `blocked`（本适配器不吞错）。
@@ -328,9 +394,19 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     throw new Error('接线持久化注销请求时必须显式给出 receiptTtlMs（须与受理服务的回执期限同源）');
   }
   const registry = createDeletionRegistry({ now });
+  /**
+   * 装配处实际生效的必需模块闭集：常量闭集 + （注入了社区清理原语时的）社区域。
+   *
+   * 为什么不在常量里直接加 `community`：见 `COMMUNITY_DELETION_MODULE` 的注释
+   * （会推翻 14 条既有断言 + 44 处测试替身，属独立扩集动作）。
+   */
+  const requiredModules: string[] =
+    input.communityStore === undefined
+      ? [...USER_DATA_DELETION_MODULES]
+      : [...USER_DATA_DELETION_MODULES, COMMUNITY_DELETION_MODULE];
   const coordinator = createPrivacyDeletionCoordinator({
     registry,
-    requiredModules: [...USER_DATA_DELETION_MODULES],
+    requiredModules,
     now,
   });
   /** 请求 → 主体绑定（已合并协议的处理器入参不含主体，故在此绑定）。 */
@@ -438,6 +514,21 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
           ? await purgeOwnerData.call(store, userId)
           : { records: await store.deleteAllByOwner(userId), idempotency: 0 };
       const onlineRemoved = purged.records;
+      // F13 保留规则（社区域）：`retained` / `redacted` / `hiddenMedia` 是**结果读数**，不是删除行数；
+      // 单列进证据串，⛔ 不并进 `online-purged` 冒充"清完了"。
+      const retained = typeof purged.retained === 'number' ? purged.retained : null;
+      const redacted = typeof purged.redacted === 'number' ? purged.redacted : null;
+      const hiddenMedia = typeof purged.hiddenMedia === 'number' ? purged.hiddenMedia : null;
+      // 未完成/无法判定的处理项：> 0 ⇒ 该模块**不得**报 completed（见 `OwnerPurgeCounts.blocked`）。
+      const blocked = typeof purged.blocked === 'number' && Number.isSafeInteger(purged.blocked) && purged.blocked > 0
+        ? purged.blocked
+        : 0;
+      const blockedReasons = Array.isArray(purged.blockedReasons)
+        ? purged.blockedReasons.filter((reason): reason is string => typeof reason === 'string' && reason.length > 0)
+        : [];
+      const onlineState: 'completed' | 'blocked' = blocked > 0 ? 'blocked' : 'completed';
+      /** 在线阶段的原因码；备份阶段可能再给一个更具体的原因（见下）。 */
+      let onlineErrorCode: string | null = blocked > 0 ? 'POLICY_BLOCKED' : null;
       let backupState = 'pending';
       /** 备份态为 `blocked` 时如实带出原因码（协议只接受 `SAFE_ERROR_CODES` 内的码）。 */
       let errorCode: string | null = null;
@@ -445,6 +536,15 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       if (typeof purgeOwnerData === 'function') {
         // 台账也清了 ⇒ 两个计数都写进证据（不能只报正文行数就宣告该模块在线清除完成）。
         evidenceRef = `${evidenceRef};${module}:idempotency-purged:${purged.idempotency}`;
+      }
+      if (retained !== null) evidenceRef = `${evidenceRef};${module}:retained:${retained}`;
+      if (redacted !== null) evidenceRef = `${evidenceRef};${module}:redacted:${redacted}`;
+      if (hiddenMedia !== null) evidenceRef = `${evidenceRef};${module}:media-hidden:${hiddenMedia}`;
+      if (blocked > 0) {
+        evidenceRef = `${evidenceRef};${module}:blocked:${blocked}`;
+        if (blockedReasons.length > 0) {
+          evidenceRef = `${evidenceRef};${module}:blocked-reasons:${blockedReasons.join(',')}`;
+        }
       }
       if (backupPurge.available) {
         const backup = await backupPurge.purge({ userId, module, onlineRemoved, requestId });
@@ -472,9 +572,16 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         onlineRemoved,
         backupState,
         at: now().toISOString(),
+        ...(retained === null ? {} : { retained }),
+        ...(redacted === null ? {} : { redacted }),
+        ...(hiddenMedia === null ? {} : { hiddenMedia }),
+        ...(blocked > 0 ? { blocked, blockedReasons } : {}),
       });
       evidenceByRequest.set(requestId, { ...(evidenceByRequest.get(requestId) ?? {}), [module]: evidenceRef });
-      return { onlineState: 'completed', backupState, evidenceRef, errorCode };
+      // 在线阶段未完成（blocked）时，回执必须报 blocked；备份阶段若另有 blocked 原因，以备份的原因为先
+      // （更具体），但**不会**把在线阶段的 blocked 抹成 completed。
+      errorCode = errorCode ?? onlineErrorCode;
+      return { onlineState, backupState, evidenceRef, errorCode };
     };
   }
 
@@ -492,6 +599,21 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     CONVERSATIONS_DELETION_MODULE,
     makeHandler(CONVERSATIONS_DELETION_MODULE, input.conversationsStore),
   );
+  // #15 社区域（R31-S6 / F13 保留规则）：**注入才注册**（闭集同步追加，见 `COMMUNITY_DELETION_MODULE` 注释）。
+  // 走 `purgeOwnerData` ⇒ 证据串带 `community:online-purged:<真实改动行数>`、
+  // `community:idempotency-purged:<台账行数>`，以及 F13 的三条结果读数
+  // `community:retained:<保留行数>` / `community:redacted:<脱敏行数>` / `community:media-hidden:<移除媒体数>`。
+  // 帖子/评论**保留可见性**（安全正文不因注销消失；含个人信息的正文改写后退出公开面等重审），
+  // 不能可靠脱敏的媒体引用移除，点赞物理删，举报只清 `detail`、保留 `state` —— 判断依据见
+  // `community/store.ts::purgeOwnerData` 与 `community/purge.ts` 的注释。
+  // ⚠️ 该端口还会因"行级内部作者引用无法替换/注销引用未持久化"返回 `blocked`；那部分**不会**被
+  // 这里的保留计数洗成 completed。
+  if (input.communityStore !== undefined) {
+    coordinator.registerModule(
+      COMMUNITY_DELETION_MODULE,
+      makeHandler(COMMUNITY_DELETION_MODULE, input.communityStore),
+    );
+  }
 
   /** 账本里的 handler 行（协议内部结构；只经协调器暴露的引用读/写，不另建第二本账）。 */
   function handlerRowsOf(requestId: string): Array<Record<string, unknown>> {
