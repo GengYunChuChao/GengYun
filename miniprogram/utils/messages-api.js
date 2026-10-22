@@ -25,10 +25,12 @@
 // 未取得（如实标注，不得当作已完成）：
 //   - **real 模式服务端在消息持久存储未接线时整域 503 `PROVIDER_UNAVAILABLE`**（fail-closed）：
 //     页面必须按「服务未接线」如实展示，**绝不显示成「暂无消息」**，也不用本地数据顶替；
-//   - **目标可用性端口未接线** ⇒ 现阶段 `reference_state` 恒为 `unavailable`（服务端另一片）：
-//     本模块**不提供任何跳转**，行内如实说明「目标当前不可查看」，不伪造目标标题或路由；
-//   - 首版**不接**微信外部推送；`comment`/`like` 两类消息在服务端**暂无生产路径**，
-//     本模块不为其造替身消息。
+//   - **目标可用性端口已接线**（`#425`，服务端 `services/api/src/messages/reference-community.ts`）：
+//     只有 `post`／`comment` 两型可能为 `available`，其余 14 型恒为 `unavailable`，
+//     且**不泄露目标是否存在**（未接线类型不因目标有无而改变判定）。本模块只透传 `reference_state`；
+//     跳转入口与目标类型判据在页面侧（`pages/messages`），本模块**不**拼路由、不伪造目标标题；
+//   - 首版**不接**微信外部推送；`comment`／`like` 两类消息自 `#422` 起已有生产路径
+//     （社区事件经消息域端口真落库），本模块仍不为其造任何替身消息。
 const auth = require('./auth')
 const runtime = require('../config/runtime')
 
