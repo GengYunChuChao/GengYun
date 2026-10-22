@@ -171,7 +171,11 @@ function request(method, path, options) {
         if (r.statusCode === 401 || r.statusCode === 403) { reject(auth.failureFor(failure, r.statusCode, r.data)); return }
         try {
           const payload = r.data
-          if (r.statusCode === 200) {
+          // 逐操作白名单，不做「2xx 通吃」：`GET /history` 只回 200，而 `DELETE /history/{id}` 在契约里
+          // **只声明 202**（`packages/contracts/openapi.json:6955-6979`「受理异步任务，尚未完成」）⇒ 200|202。
+          // 201/204/206 等其它 2xx 仍不接受（会静默放过意外响应）；与 identify-api.js 的 `202||200`、
+          // voice-api.js 的 `200||202` 同一口径。
+          if (r.statusCode === 200 || r.statusCode === 202) {
             keys(payload, ['data', 'meta'])
             resolve({
               data: payload.data, mode: validateMeta(payload.meta),

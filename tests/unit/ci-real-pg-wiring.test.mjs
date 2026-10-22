@@ -70,7 +70,8 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 里写清单 + 30 天保留窗口到期清除）：它是清单里**唯一**的「自起集群」脚本——只连自己 `initdb` 出来的临时
  * 17 集群（脚本 `:89` 端口 55500+randomInt(0,500)、只监听 127.0.0.1、跑完自删数据目录），**不**连
  * `services.postgres` 的那个库，因此它的 step **没有** `CREATE DATABASE`。判据⑦⑧ 对这类脚本换成
- * `SELF_CLUSTERED_SCRIPTS` 那组等价判据（必须给 `GY_PG_BIN`／`GY_I19_PG_ROOT`，且⛔ 不得出现 `CREATE DATABASE`）。
+ * `SELF_CLUSTERED_SCRIPTS` 那组等价判据（必须给 `GY_PG_BIN`／**该脚本自己读的** `GY_*_PG_ROOT`，且⛔ 不得
+ * 出现 `CREATE DATABASE`；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`）。
  * 早先 R28-S14 判它接不了，是因为 runner 上取不到 `initdb`/`pg_ctl`（`postgres:17.11` 只在容器内）；
  * R28-S49 改成先一步用 PGDG apt 装 `postgresql-17` 再跑，见
  * `docs/verification/gy-r28-backup-purge-ci-20261021.md` 与 `docs/verification/gy-r28-real-pg-wiring-3-20261020.md`。
@@ -83,14 +84,20 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * `docs/verification/gy-r28-recognition-chain-ci-20261021.md`）。
  * 第 14 条是 R28-E5 接的（备份副本 30 日到期**清除驱动** `backup-copies-purge-pg.mjs`，`#398` 合入的脚本）：
  * 它与第 12 条**同类**（自起集群、只连自己 `initdb` 出来的临时 17 集群、跑完 `pg_ctl stop` 并删数据目录），
- * 因此判据⑦⑧ 走同一套 `SELF_CLUSTERED_SCRIPTS` 等价判据（必须给 `GY_PG_BIN`／`GY_I19_PG_ROOT`、
+ * 因此判据⑦⑧ 走同一套 `SELF_CLUSTERED_SCRIPTS` 等价判据（必须给 `GY_PG_BIN`／**它自己读的**根键、
  * ⛔ 不得出现 `CREATE DATABASE`）；**装包 step 不重复**——它复用第 12 条那一步装的
  * `/usr/lib/postgresql/17/bin`。缺 `GY_PG_BIN` 时脚本 exit 77 ⇒ 装包/路径没弄好必红，⛔ 不是通过。
  * 见 `docs/verification/gy-r28-e5-backup-driver-ci-20261021.md`。
+ * 第 15 条是 R29-S13 接的（`community-filter-pg.mjs`／#15 的**筛选**真库读数：`GET /posts` 的
+ * `crop_id`/`region_code`/`mine` 三类筛选逐条与同条件 SELECT 对照、游标绑定筛选集、参数闭集 400、
+ * 「筛选未下推 SQL」的语句读数与 `community_posts_feed_idx` 的 EXPLAIN 读数；另有举报 `state`
+ * 恒 `received` 的**缺口登记**）。它要求空库、只走 env `COMMUNITY_FILTER_PG_TEST_URL`（库 owner），
+ * 缺 env 时 exit 77 ⇒ 与第 2 条同一形态；见 `docs/verification/gy-r29-i15-community-filter-20261022.md`。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
@@ -102,12 +109,14 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
+  'tests/integration/messages-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
@@ -119,6 +128,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/speech-pg.mjs',
   'tests/integration/backup-purge-pg.mjs',
   'tests/integration/backup-copies-purge-pg.mjs',
+  'tests/integration/messages-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -147,6 +157,11 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
 export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
+  // 2b. `community-filter-pg`（R29-S13 接入，#15 的筛选真库读数 + 举报状态缺口登记）：自建专用空库
+  //    （硬钉 `gengyun_community_filter_test`）、只 apply 0001+0022、全程只用库 owner 连接，
+  //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本零耦合；紧跟 `community-pg` 便于两条社区臂
+  //    并排读（两者**不共享库/角色**，重排也不会互相污染，但顺序判据要求与 workflow 逐条一致）。
+  'tests/integration/community-filter-pg.mjs',
   'tests/integration/messages-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
@@ -173,7 +188,7 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 12. `backup-purge-pg`（R28-S49 接入，#19／GY-I19）：**自起自停独立集群**（`initdb` 出临时 17 集群、只监听
   //    127.0.0.1、自建 `gengyun_backup_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
   //    不改集群级对象 ⇒ 零耦合；`GY_PG_BIN` 必须指到 runner 上的 17 服务端 bin（`/usr/lib/postgresql/17/bin`，
-  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_ENV`）。它紧跟那条装包 step（装包只做一次，见第 13 条），
+  //    缺它只会 SKIP+77，见 `SELF_CLUSTERED_PG_BIN_ENV`）。它紧跟那条装包 step（装包只做一次，见第 13 条），
   //    本步也不依赖 service 口令 ⇒ 位置只受「装包在它之前」约束。
   'tests/integration/backup-purge-pg.mjs',
   // 13. `backup-copies-purge-pg`（R28-E5 接入，`#398`／GY-I19 的 P0-4 执行者）：与第 12 条**同类**的自起集群
@@ -184,7 +199,17 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    它排在 `backup-purge` 之后而不是之前，是因为它复用同一次装包的结果、且与本步一样只在临时目录里活动；
   //    两步共用 `GY_I19_PG_ROOT` 也安全（数据目录名各带随机后缀、前一步收尾已删干净）。
   'tests/integration/backup-copies-purge-pg.mjs',
-  // 14. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
+  // 14. `messages-purge-pg`（R29-W13 接入，`#405`／W11 合入的脚本，`#17` 消息域注销**行数**）：与第 12/13 条
+  //    **同类**的自起集群脚本（自己 `initdb` 出临时 17 集群、端口 55700–55999 且**先探活**、自建
+  //    `gengyun_messages_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
+  //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    ⚠️ 它与第 12/13 条有一处关键差异：它读的数据根目录键是 **`GY_W11_PG_ROOT`**（脚本 `:92`），
+  //    ⛔ 不是 `GY_I19_PG_ROOT`。键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`；给错键只会多一条
+  //    装饰性 env（守卫绿、脚本照样落 `os.tmpdir()`）——这正是本片修掉的假绿。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+  //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+  'tests/integration/messages-purge-pg.mjs',
+  // 15. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
   //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
   //    `public` 下的表，非 0 直接断言失败）；② 只 apply 它需要的两段迁移（0001 身份 + 0018 历史）并断言
@@ -208,7 +233,10 @@ const REQUIRED_POSTGRES_MAJOR = '17';
  * 「自起集群」脚本：**自己** `initdb` 起临时集群、自己建库，CI 里既没有可用的 `CREATE DATABASE`，
  * 也没有可核对的「CI 建出来的库名」。判据⑦⑧ 对这类脚本换成等价（且更强）的判据：
  *   ① step 必须显式给出 `GY_PG_BIN`，指到**含 `initdb`/`pg_ctl` 的服务端 bin 目录**；
- *   ② 必须显式给出 `GY_I19_PG_ROOT`，落在 runner 的临时目录里（⛔ 不落仓库/系统目录）；
+ *   ② 必须显式给出**该脚本自己读的**数据根目录键（`GY_*_PG_ROOT`，按脚本映射、⛔ 不是对全体硬编码
+ *      `GY_I19_PG_ROOT`；R29-W13 前正是硬编码，`messages-purge-pg` 读 `GY_W11_PG_ROOT` ⇒ 守卫绿而脚本
+ *      回落 `os.tmpdir()`，见 `SELF_CLUSTERED_ROOT_KEY`），且落在 runner 的临时目录里（⛔ 不落仓库/系统目录）；
+ *      step 里出现脚本不读的**别的** root 键也判红（装饰性 env 是假绿通道）；
  *   ③ ⛔ step 里**不得**出现 `CREATE DATABASE`——那会造出「CI 建了库、库名判据覆盖到它」的假象，
  *      而脚本连的是自己临时集群里的 `DB_NAME`（脚本 `:67`），跟 CI 建的库毫无关系。
  * 加一条进这里＝把这组判据换成豁免，必须同时更新证据页（刻意留 diff）；它也必须同时在 `MANAGED_SCRIPTS` 里。
@@ -218,25 +246,50 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // R28-E5：`backup-copies-purge-pg.mjs`（`#398`）与上一条同形——自己 `initdb` 出临时 17 集群、自建库、
   // 跑完 `pg_ctl stop` 并删数据目录，故同样没有「CI 建的库」可核对，判据⑦⑧ 换成同一组等价判据。
   'tests/integration/backup-copies-purge-pg.mjs',
+  // R29-W13：`messages-purge-pg.mjs`（`#405`）同上（自起集群、自建 `gengyun_messages_purge_test`、
+  // 跑完 `pg_ctl stop` 并删数据目录）。⚠️ 它读的数据根键是 `GY_W11_PG_ROOT`（脚本 `:92`），
+  // 与上面两条的 `GY_I19_PG_ROOT` **不同** ⇒ 键名必须按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  'tests/integration/messages-purge-pg.mjs',
 ]);
 
 /**
- * 自起集群脚本在 step 里必须给出的 env：键 → 值的形状判据 + 缺失/走形时的话术。
+ * 每条自起集群脚本**自己读的**数据根目录键。键名不是共用契约，是脚本各自的契约：
+ *   - `backup-purge-pg.mjs`／`backup-copies-purge-pg.mjs` 读 `GY_I19_PG_ROOT`；
+ *   - `messages-purge-pg.mjs` 读 **`GY_W11_PG_ROOT`**（脚本 `:92`；它的日志键是 `GY_W11_PG_LOG`，见 `:75`）。
+ * 为什么必须按脚本映射而不是硬编码一个键：给 `messages-purge-pg` 传 `GY_I19_PG_ROOT` 时，step 里只多一条
+ * **装饰性 env**——守卫照样绿，脚本照样回落 `os.tmpdir()`，数据目录落在共享 tmp，与「落在 runner 临时
+ * 目录」的初衷正好相反。本机实测（R29-W13，PG 17.11）：只给 `GY_I19_PG_ROOT=E:\\…\\tmp\\DECOY-i19-root`
+ * 时，`messages-purge-pg.mjs` 仍要往 `C:/Users/MR/AppData/Local/Temp/gy-w11-messages-purge-pg-61a5ae9d`
+ * 建目录（该 decoy 目录从未被创建），并因 tmp 目录 ACL 失败：`initdb: error: could not change permissions
+ * of directory \"…\": Permission denied`（exit 1）。
+ * ⚠️ 这张表**不是**唯一依据：`detectedRootKeys()` 会从脚本源码取它真正读的键并与本表交叉核对——声明漏了、
+ * 声明错了、脚本改了而表没跟上，一律判红；否则「把映射改错」本身就是新的假绿通道。
+ */
+const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
+  'tests/integration/backup-purge-pg.mjs': 'GY_I19_PG_ROOT',
+  'tests/integration/backup-copies-purge-pg.mjs': 'GY_I19_PG_ROOT',
+  'tests/integration/messages-purge-pg.mjs': 'GY_W11_PG_ROOT',
+});
+
+/** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */
+const SELF_CLUSTERED_ROOT_KEY_PATTERN = /^GY_[A-Z0-9_]*_PG_ROOT$/;
+
+/** step 里数据根目录的取值形状：必须是 runner 的临时目录表达式（⛔ 不落仓库/系统目录）。 */
+const SELF_CLUSTERED_ROOT_PATTERN = /\$\{\{\s*runner\.temp\s*\}\}/;
+
+const SELF_CLUSTERED_ROOT_HINT =
+  'runner 的临时目录（CI 里是 `${{ runner.temp }}/<该脚本自己的根>`，⛔ 不落地到仓库）';
+
+/**
+ * 自起集群脚本在 step 里**无条件**必须给出的 env（与服务端 bin 相关）：键 → 值的形状判据 + 缺失/走形话术。
  * 判据不是「有这个键就行」：`GY_PG_BIN` 末尾不是 `/bin` 时脚本 `:52-62` 会直接 SKIP 并 exit 77，
  * 「真跑」就变成了「静默跳过」——那正是这份清单要防的假绿。
  */
-const SELF_CLUSTERED_ENV = Object.freeze([
-  {
-    key: 'GY_PG_BIN',
-    pattern: /\/bin\/?$/,
-    hint: '含 `initdb`/`pg_ctl` 的服务端 bin 目录（CI 里是 `/usr/lib/postgresql/17/bin`）',
-  },
-  {
-    key: 'GY_I19_PG_ROOT',
-    pattern: /\$\{\{\s*runner\.temp\s*\}\}/,
-    hint: 'runner 的临时目录（CI 里是 `${{ runner.temp }}/gy-i19-pg`，⛔ 不落地到仓库）',
-  },
-]);
+const SELF_CLUSTERED_PG_BIN_ENV = Object.freeze({
+  key: 'GY_PG_BIN',
+  pattern: /\/bin\/?$/,
+  hint: '含 `initdb`/`pg_ctl` 的服务端 bin 目录（CI 里是 `/usr/lib/postgresql/17/bin`）',
+});
 
 // ── 纯函数：正向断言与反向控制共用同一份逻辑，避免「红的逻辑」与「绿的条件」各写一套 ──────────────
 
@@ -543,10 +596,56 @@ export function stepDatabaseNames({ script, step, command, scriptSource }) {
 }
 
 /**
+ * 从脚本源码里取它**真正读的**数据根目录键（升序去重）。
+ * 口径只认 `process.env.GY_*_PG_ROOT` 这一种形态：`GY_PG_BIN`／`GY_W11_PG_LOG` 都不匹配，
+ * 因此日志键不会被误当根键；注释里的 `$env:GY_…` 也不会匹配（不是 `process.env.`）。
+ * ⛔ 不靠文件名/字段名猜：读的是脚本文本里真正的取值点。
+ */
+export function detectedRootKeys(scriptSource) {
+  const keys = new Set();
+  for (const match of String(scriptSource).matchAll(/process\.env\.(GY_[A-Z0-9_]+)/g)) {
+    if (SELF_CLUSTERED_ROOT_KEY_PATTERN.test(match[1])) keys.add(match[1]);
+  }
+  return [...keys].sort();
+}
+
+/**
+ * 某条自起集群脚本该给的数据根目录键：**源码真值优先**，其次 `SELF_CLUSTERED_ROOT_KEY` 的声明。
+ * 两者都没有时返回 `null`（由 `selfClusteredProblems` 判红，⛔ 不在这里静默放行）。
+ */
+export function rootKeyOf({ script, scriptSource = null, declaredRootKeys = SELF_CLUSTERED_ROOT_KEY }) {
+  if (typeof scriptSource === 'string') {
+    const sourceKeys = detectedRootKeys(scriptSource);
+    if (sourceKeys.length === 1) return sourceKeys[0];
+  }
+  return declaredRootKeys[script] ?? null;
+}
+
+/** 某条自起集群脚本在 step 里必须给出的 env：`GY_PG_BIN` 在前，**它自己读的**数据根键在后。 */
+export function selfClusteredEnvOf(script, { scriptSource = null, declaredRootKeys = SELF_CLUSTERED_ROOT_KEY } = {}) {
+  const rootKey = rootKeyOf({ script, scriptSource, declaredRootKeys });
+  if (rootKey === null) return [SELF_CLUSTERED_PG_BIN_ENV];
+  return [
+    SELF_CLUSTERED_PG_BIN_ENV,
+    { key: rootKey, pattern: SELF_CLUSTERED_ROOT_PATTERN, hint: SELF_CLUSTERED_ROOT_HINT },
+  ];
+}
+
+/**
  * 自起集群脚本的 step 判据（判据⑦⑧ 的等价替换）：返回问题清单，空数组＝合规。
  * 只在 `SELF_CLUSTERED_SCRIPTS` 里的脚本上生效；其余受管脚本仍走「先 `CREATE DATABASE` 再 `node`」。
+ *
+ * R29-W13 起的四处收紧（此前①只查 `GY_PG_BIN`＋硬编码 `GY_I19_PG_ROOT` 两栏）：
+ *   ① **登记**：脚本在 `SELF_CLUSTERED_SCRIPTS` 里却不在 `SELF_CLUSTERED_ROOT_KEY` ⇒ 红（否则判据退化成
+ *      只剩 `GY_PG_BIN`，root 传丢也不会红）；
+ *   ② **源码真值**：脚本源码里必须恰好读**一个** `GY_*_PG_ROOT`，且与登记一致 ⇒ 否则红（声明错了、脚本
+ *      改了而表没跟上，都不许放过）；
+ *   ③ **该给哪个键**：按②的真值核对 step，⛔ 不再对全体硬编码同一个键；
+ *   ④ **装饰性 env**：step 里出现脚本**不读**的其它 `GY_*_PG_ROOT` ⇒ 红（那正是本片修掉的假绿：
+ *      给 `messages-purge-pg` 传 `GY_I19_PG_ROOT`，守卫绿、脚本回落 `os.tmpdir()`）。
+ * `scriptSource` 可注入（只给反向控制用）；缺省读磁盘真值。
  */
-export function selfClusteredProblems({ jobId, script, step, command }) {
+export function selfClusteredProblems({ jobId, script, step, command, scriptSource = null, declaredRootKeys = SELF_CLUSTERED_ROOT_KEY }) {
   const problems = [];
   if (/CREATE\s+DATABASE/i.test(command)) {
     problems.push(
@@ -554,18 +653,68 @@ export function selfClusteredProblems({ jobId, script, step, command }) {
       + '（它连的库在它自己 initdb 出来的临时集群里，与 CI 建的这个库不是一回事）',
     );
   }
-  for (const { key, pattern, hint } of SELF_CLUSTERED_ENV) {
+
+  let source = scriptSource;
+  if (source === null) {
+    try {
+      source = readFileSync(join(REPO_ROOT, script), 'utf8');
+    } catch {
+      source = null; // 读不到就只按登记表核对，登记缺失那条会红
+    }
+  }
+  const declaredKey = declaredRootKeys[script];
+  const sourceKeys = typeof source === 'string' ? detectedRootKeys(source) : [];
+
+  if (declaredKey === undefined) {
+    problems.push(
+      `\`${script}\` 在 \`SELF_CLUSTERED_SCRIPTS\` 里，却没在 \`SELF_CLUSTERED_ROOT_KEY\` 登记它读的数据根目录键：`
+      + '那样这条判据只会核对 `GY_PG_BIN`，数据根目录传丢/传错都不会红（假绿通道）。',
+    );
+  }
+  if (sourceKeys.length === 0) {
+    problems.push(
+      `\`${script}\` 的源码里没有任何 \`process.env.GY_*_PG_ROOT\` 取值点：无法确认它读哪个数据根目录键`
+      + '（⛔ 不允许凭脚本名/字段名猜，也不允许只信 `SELF_CLUSTERED_ROOT_KEY` 的声明）。',
+    );
+  } else if (sourceKeys.length > 1) {
+    problems.push(
+      `\`${script}\` 的源码里读了多个数据根目录键（${sourceKeys.join(' / ')}）：一份 step env 无法判断该给哪个，`
+      + '判据会变成猜。',
+    );
+  } else if (declaredKey !== undefined && declaredKey !== sourceKeys[0]) {
+    problems.push(
+      `\`SELF_CLUSTERED_ROOT_KEY\` 把 \`${script}\` 的根键登记成 \`${declaredKey}\`，但它自己读的是 `
+      + `\`${sourceKeys[0]}\`（源码真值）⇒ 登记错的那一栏会按错的键核对 env，等于放行一条装饰性 env。`,
+    );
+  }
+
+  for (const { key, pattern, hint } of selfClusteredEnvOf(script, { scriptSource: source, declaredRootKeys })) {
     const match = new RegExp(`^\\s+${key}\\s*:\\s*(\\S.*)$`, 'm').exec(step);
     if (match === null) {
       problems.push(
         `job \`${jobId}\` 里执行自起集群脚本 \`${script}\` 的 step 没有 \`${key}\`（必须给：${hint}）；`
-        + '缺它时脚本只打印 SKIP 并 exit 77，「真跑」等于没跑',
+        + (key === 'GY_PG_BIN'
+          ? '缺它时脚本只打印 SKIP 并 exit 77，「真跑」等于没跑'
+          : '缺它时脚本回落 `os.tmpdir()`，数据目录不在 runner 临时目录里（装饰性 env 的孪生兄弟）'),
       );
       continue;
     }
     const value = match[1].trim().replace(/^['"]|['"]$/g, '');
     if (!pattern.test(value)) {
       problems.push(`job \`${jobId}\` 的 \`${key}\` 取值 \`${value}\` 不是期望形状：${hint}`);
+    }
+  }
+
+  const expectedKey = sourceKeys.length === 1 ? sourceKeys[0] : (declaredKey ?? null);
+  if (expectedKey !== null) {
+    for (const match of step.matchAll(/^\s+(GY_[A-Z0-9_]*_PG_ROOT)\s*:/gm)) {
+      if (match[1] !== expectedKey) {
+        problems.push(
+          `job \`${jobId}\` 里执行自起集群脚本 \`${script}\` 的 step 给了 \`${match[1]}\`，但它读的是 `
+          + `\`${expectedKey}\` ⇒ \`${match[1]}\` 只是一条装饰性 env：守卫看着有 root，脚本照样回落 `
+          + '`os.tmpdir()`（R29-W13 修掉的假绿）。',
+        );
+      }
     }
   }
   return problems;
@@ -586,8 +735,14 @@ export function databaseGuardProblems(source, { scripts = MANAGED_SCRIPTS, scrip
     }
     const { jobId, step, command } = found;
     if (SELF_CLUSTERED_SCRIPTS.includes(script)) {
-      // 自起集群脚本：没有 CI 建的库可核对，换成「必须给 GY_PG_BIN／GY_I19_PG_ROOT 且不得自己建库」。
-      problems.push(...selfClusteredProblems({ jobId, script, step, command }));
+      // 自起集群脚本：没有 CI 建的库可核对，换成「必须给 GY_PG_BIN／该脚本自己读的 root 键，且不得自己建库」。
+      problems.push(...selfClusteredProblems({
+        jobId,
+        script,
+        step,
+        command,
+        scriptSource: scriptSources === null ? null : (scriptSources[script] ?? null),
+      }));
       continue;
     }
     const createIndex = command.search(/CREATE\s+DATABASE/i);
@@ -791,7 +946,8 @@ function assertNoDatabaseGuardProblems(problems) {
       '且 `<库>` 必须与该 step 真正传给脚本的库名一致（env `*_PG_TEST_URL` 的 path／argv URL 的 path／',
       '脚本内部硬钉常量，三种形态都要对上；只对一种会留下「改了 env 但 argv 还是旧库」这类假绿通道）。',
       '`SELF_CLUSTERED_SCRIPTS` 里的脚本例外：它自己 `initdb` 出临时集群，故改判「必须给 `GY_PG_BIN`／',
-      '`GY_I19_PG_ROOT`（后者落在 runner 临时目录）、且 step 里不得出现 `CREATE DATABASE`」。',
+      '它**自己读的那个** `GY_*_PG_ROOT`（按 `SELF_CLUSTERED_ROOT_KEY` 映射并与脚本源码真值交叉核对，',
+      '取值须落在 runner 临时目录；step 里出现脚本不读的其它 root 键也判红）、且 step 里不得出现 `CREATE DATABASE`」。',
     ].join('\n'),
   );
 }
@@ -1729,4 +1885,92 @@ test('反向控制⑨：删掉 `backup-copies-purge-pg` 的整段 step ⇒ 四�
     (error) => error.message.includes(copies),
     '同一断言必须失败',
   );
+});
+
+/**
+ * R29-W13 的负控制：`SELF_CLUSTERED_ROOT_KEY` 的**键名映射**必须是被钉住的判断题，而不是一张能随便改、
+ * 改了也没人管的表——否则「修掉一个假绿」只是把假绿通道从 workflow 挪到这张表里。四种变异一律要红：
+ *   ① **错映射**：把 `messages-purge-pg` 登记成 `GY_I19_PG_ROOT`（本片修掉的原始缺陷形态）；
+ *   ② **丢映射**：删掉它的登记 ⇒ 判据退化成只剩 `GY_PG_BIN`，root 传丢/传错都不红；
+ *   ③ **装饰性 env**：step 里同时给 `GY_W11_PG_ROOT` 与 `GY_I19_PG_ROOT`——看着有 root，脚本只读其中一个；
+ *   ④ **脚本改键**：源码把 `GY_W11_PG_ROOT` 换成别的键而登记表没跟上 ⇒ 证明核的是源码真值，不是表格自说自话。
+ */
+test('反向控制⑩：root 键按脚本映射——错映射／丢映射／装饰性 env／脚本改键，四种变异都必须红', () => {
+  const { source } = readWorkflow(REAL_PG_WORKFLOW);
+  const w11 = 'tests/integration/messages-purge-pg.mjs';
+  const w11Key = 'GY_W11_PG_ROOT';
+
+  // 0) 磁盘真值先绿，且「登记表 ↔ 脚本源码」两边都真的指向 GY_W11_PG_ROOT。
+  assertNoDatabaseGuardProblems(databaseGuardProblems(source));
+  assert.equal(SELF_CLUSTERED_ROOT_KEY[w11], w11Key, '登记表必须把 `messages-purge-pg` 映射到它真正读的键');
+  const w11Source = readFileSync(join(REPO_ROOT, w11), 'utf8');
+  assert.deepEqual(detectedRootKeys(w11Source), [w11Key], '源码真值必须恰好是这一个根键');
+  assert.ok(w11Source.includes('GY_W11_PG_LOG'), '前提：脚本里还有日志键 `GY_W11_PG_LOG`，但它不是根键');
+  assert.deepEqual(
+    detectedRootKeys(readFileSync(join(REPO_ROOT, 'tests/integration/backup-purge-pg.mjs'), 'utf8')),
+    ['GY_I19_PG_ROOT'],
+    '同形脚本（backup-purge）读的是另一个键 ⇒ 对全体硬编码一个键必然错一半（这就是原缺陷）',
+  );
+
+  const { jobId, step, command } = stepRunningScript(source, w11);
+  const problemsOf = (overrides) => selfClusteredProblems({ jobId, script: w11, step, command, ...overrides });
+
+  // ① 错映射 ⇒ 红，消息必须同时点名「登记的键」与「源码真值键」。
+  const wrongMapping = problemsOf({ declaredRootKeys: { ...SELF_CLUSTERED_ROOT_KEY, [w11]: 'GY_I19_PG_ROOT' } });
+  assert.equal(wrongMapping.length, 1, '错映射必须正好报一条问题');
+  assert.ok(
+    wrongMapping[0].includes('GY_I19_PG_ROOT') && wrongMapping[0].includes(w11Key) && wrongMapping[0].includes(w11),
+    '失败消息必须同时点名登记的键、真值键与脚本',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(wrongMapping), /GY_I19_PG_ROOT/, '同一断言必须失败');
+
+  // ② 丢映射 ⇒ 红（否则判据退化成只剩 `GY_PG_BIN`）。
+  const withoutEntry = { ...SELF_CLUSTERED_ROOT_KEY };
+  delete withoutEntry[w11];
+  const missingEntry = problemsOf({ declaredRootKeys: withoutEntry });
+  assert.equal(missingEntry.length, 1, '丢映射必须正好报一条问题');
+  assert.ok(
+    missingEntry[0].includes(w11) && missingEntry[0].includes('SELF_CLUSTERED_ROOT_KEY'),
+    '失败消息必须点名脚本与缺的登记表',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(missingEntry), /SELF_CLUSTERED_ROOT_KEY/, '同一断言必须失败');
+
+  // ③ 装饰性 env：在该 step 里再塞一条脚本不读的 `GY_I19_PG_ROOT` ⇒ 必须点名「装饰性 env」。
+  const decorative = step.replace(
+    /(\n\s+GY_W11_PG_ROOT: )/,
+    '\n          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg$1',
+  );
+  assert.notEqual(decorative, step, '变异必须真的改到 step 文本');
+  const decorativeProblems = problemsOf({ step: decorative });
+  assert.equal(decorativeProblems.length, 1, '多一条装饰性 env 必须正好报一条问题');
+  assert.ok(
+    decorativeProblems[0].includes('GY_I19_PG_ROOT') && decorativeProblems[0].includes('装饰性'),
+    '失败消息必须点名那条多余的键与「装饰性 env」',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(decorativeProblems), /装饰性/, '同一断言必须失败');
+  // 同一条变异也要能从整份 workflow 走到底（证明确实是 `databaseGuardProblems` 这条真实路径在红）。
+  const decorativeSource = replaceWithinStep(
+    source,
+    jobId,
+    w11,
+    /GY_W11_PG_ROOT: \$\{\{ runner\.temp \}\}\/gy-w11-pg/,
+    'GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg',
+  );
+  const decorativeSourceProblems = databaseGuardProblems(decorativeSource);
+  assert.equal(decorativeSourceProblems.length, 2, '把真实键换成错键 ⇒ 缺键 + 装饰性各一条');
+  assert.ok(
+    decorativeSourceProblems.some((problem) => problem.includes('GY_I19_PG_ROOT') && problem.includes('装饰性')),
+    '真实路径的失败消息必须点名「装饰性 env」',
+  );
+
+  // ④ 脚本改键（表没跟上）⇒ 红；证明核的是源码真值。
+  const renamedSource = w11Source.replace('process.env.GY_W11_PG_ROOT', 'process.env.GY_ZZ_PG_ROOT');
+  assert.notEqual(renamedSource, w11Source, '变异必须真的改到脚本源码');
+  const renamedProblems = problemsOf({ scriptSource: renamedSource });
+  assert.ok(renamedProblems.length >= 2, '脚本改键而表没跟上时至少报两条（错映射 + 缺/多键）');
+  assert.ok(
+    renamedProblems.some((problem) => problem.includes('GY_ZZ_PG_ROOT')),
+    '失败消息必须点名脚本里**新**的键（证明读的是源码，不是登记表）',
+  );
+  assert.throws(() => assertNoDatabaseGuardProblems(renamedProblems), /GY_ZZ_PG_ROOT/, '同一断言必须失败');
 });

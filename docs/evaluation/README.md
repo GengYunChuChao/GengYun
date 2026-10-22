@@ -14,6 +14,9 @@
 | **真实拍草样本登记 172 条**（`packages/evaluation/samples/`，`split=test`） | 真实模型/规则版本的实测结果（付费调用未授权） |
 | **拍草独立标准答案键**（物种标签 + 判据要点 + 来源绑定） | 模型侧实际覆盖承诺的冻结（现以 GY-I03 资料范围为绑定依据） |
 | **冻结清单 + 承诺覆盖绑定**（可复算，复算命令退出码 0） | Android/iOS 真机与联网耗时证据（第6.2节） |
+| **逐条摘要台账**（172 条 × 逐字段 sha256，改动即点名到 `sampleId` 与字段） | — |
+| **标准答案键绑定**（冻结清单单向钉住 labels 的 sha256+版本+条数） | — |
+| [threshold-basis.md](threshold-basis.md)：17 桶 + 14 条门槛的逐条依据 | — |
 | 样本缺口逐项清单（对照第6节标准，已用真实计数替换 0 值） | — |
 
 > 评估程序框架与评分规约先交 PR；**实际样本不足列为阻塞，不用生成或重复媒体充数**。
@@ -31,6 +34,7 @@
 | [near-duplicate-policy.md](near-duplicate-policy.md) | 同源裁剪／连拍／近重复排除规则与每类／拒识样本记录 |
 | [real-samples-weeds-docx.md](real-samples-weeds-docx.md) | **真实拍草样本**：来源、抽取与去重计数、标准答案与判据、覆盖口径、冻结与复算、离线评估输出、未取得/未验证项与剩余风险 |
 | [sample-gap-register.md](sample-gap-register.md) | 样本缺口逐项清单（对照第6节标准，含真实计数） |
+| [threshold-basis.md](threshold-basis.md) | **17 桶 + 14 条门槛的逐条依据**（`requirement` 给需求行号 / `provisional` 明标「暂定，待 #21 用真实读数校准」）；表格由代码生成，改阈值不改说明即测试红 |
 | [evaluation-report-template.md](evaluation-report-template.md) | 评估报告模板与预期输出结构 |
 
 代码实现位于 `packages/evaluation/`，命令位于 `tools/evaluation/`，真实样本登记物位于 `packages/evaluation/samples/`，测试位于 `tests/evaluation/`。
@@ -56,14 +60,22 @@ node tools/evaluation/validate-evaluation-samples.mjs --index <index.json>
 node tools/evaluation/run-evaluation.mjs \
   --index <index.json> --predictions <predictions.json> \
   --manifest <frozen-manifest.json> --coverage <coverage-manifest.json> \
+  --digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
   --out <report.json>
 
-# 3b) 冻结清单生成 / 复算核对（--verify 失败即退出码 1）
+# 3a) 冻结清单生成 / 复算核对（--verify 失败即退出码 1）
+#     --digests 写逐条摘要台账；--verify-digests 重算并与既有台账逐字节比对；--labels 钉标准答案键
 node tools/evaluation/freeze-real-samples.mjs \
   --index packages/evaluation/samples/gy-i20-weeds-real-index.json \
   --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
   --index-version gy-i20-weeds-real-2026.10.14 \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --verify-digests packages/evaluation/samples/gy-i20-weeds-frozen-digests.json \
   --verify packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json
+
+# 3b) 门槛依据文档的表格块（代码 → 文档，改完 targets.mjs 后重跑）
+node tools/evaluation/render-threshold-tables.mjs --write
 
 # 4) 单元测试（亦接入工程 CI 的 evaluation-tests 层）
 node --test tests/evaluation/*.test.mjs
@@ -82,3 +94,8 @@ node --test tests/evaluation/*.test.mjs
 9. 原始媒体与令牌不进入仓库；只提交脱敏索引与 hash。
 10. **范围口径统一为规范物种 ID**：`weedPhotoCoveredClasses`/`labelClass`/`gold`/`candidates` 一律用 `catalog/species.json` 的 `id`；
     GY-I03 承诺范围（中文展示组名）须经 `group_name ↔ id` 映射为 ID 再核对，映射依据（`catalog_version`/SHA-256）记入 `coverageBinding.scopeBasis`。
+11. **冻结必须可点名**：冻结清单登记逐条摘要台账（`digestLedger`）后，样本集任何一条被改动都必须报出
+    `sampleId` + 变更字段路径（`frozenVerification.drift.changed[]`），**不接受"整体不一致"这种笼统失败**；
+    显式给 `--digests` 时评估命令以退出码 1 结束。
+12. **标准答案键单向绑定**：冻结清单钉住 `gy-i20-weeds-labels.json` 的 `sha256`+版本+条数，答案键不反向依赖清单（避免环）；
+    显式给 `--labels` 而核对不通过时评估命令退出码 1，且 `isRealEvaluation=false`。
