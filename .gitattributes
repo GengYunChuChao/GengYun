@@ -1,8 +1,10 @@
 # 行尾铁律：文本文件一律 LF（2026-10-22，收口 #469 的副作用）。
 #
 # 背景：`#469` 合入 main 时把 `docs/architecture/contract-implementation-status.md` 整份从 LF
-# 翻成 CRLF（main 侧 0 个 CR、`#469` 侧 200 CR / 200 行），仓库又没有 `.gitattributes`、
-# `core.autocrlf=false` ⇒ 不会自愈。后果是每一张动该台账的 PR 都跟它产生「全文 1 块」的假冲突，
+# 翻成 CRLF（main 侧 0 个 CR、`#469` 侧 200 CR / 200 行），仓库当时没有 `.gitattributes`，
+# 而本机**生效**的 `core.autocrlf` 是 `false`（仓库级 `.git/config` 的 false 覆盖机器级
+# `D:/Git/etc/gitconfig` 的 true；`git config --get core.autocrlf` ⇒ `false`）⇒ 不会自愈。
+# 后果是每一张动该台账的 PR 都跟它产生「全文 1 块」的假冲突，
 # 而 `node tools/verify-contract-status.mjs --write-doc` 按 LF 重写 ⇒ 谁跑一次门禁谁又翻回去，
 # 再产生一次 200 行全红 diff。这里用**声明式**规则把「检出 = 提交 = LF」钉死，不再靠人肉自觉。
 #
@@ -10,6 +12,21 @@
 #   `text=auto` 让 git 自己猜二进制，猜错一次就把资源文件写坏（本仓 `docs/verification/assets/`
 #   下有 148 个 png/jpg、以及 .log/.cjs/.mjs 证据快照）。显式列举扩展名比自动探测安全。
 #   未列出的路径（图片、`.log`、`.cjs` 等）保持 git 默认行为：原样存取，不做任何行尾转换。
+#
+# ⚠ 声明面 ≠ 全仓（2026-10-22 补注）：本文件只钉下面 5 类扩展名，**不是**「全仓强制 LF」。
+#   `.sql` / `.js` / `.cjs` / `.py` / `.wxml` / `.wxss` / `.sh` / `.ps1` 等一律**未声明**
+#   ⇒ git 原样存取、不转换（正因为没有 `text=auto`）。要扩面就在下面加一行，并连带想清楚
+#   `git add --renormalize` 的后果；守卫单测 `tests/unit/eol-normalization.test.mjs` 扫得比这里宽
+#   （按扩展名扫全仓 9 类文本），那是「早发现漂移」，不代表这些类型已经被强制 LF。
+#
+# ⚠ 证据快照的优先级（2026-10-22 补注）：`docs/verification/assets/` 下有两个子目录
+#   （`i07-wechat-main8932ba5-pr80b5a6468/`、`local-knowledge-native-20261011/`）各自带一份
+#   `.gitattributes`（`* -text whitespace=cr-at-eol`）。git 属性**更深目录优先**，所以那里的
+#   `.cjs` / `.mjs` / `.log` 不会被下面的 `*.mjs` 规则转换 —— 实测 `git check-attr` 得
+#   `text: unset`。这两份文件一旦被删，根规则就会重新匹配：`executed-service.mjs`（1 个 CR）
+#   会被静默转换（实测 hash `6ce91fd9` → `7df7c72d`，见证据页 §4.7）；`.log` / `.cjs` 不匹配
+#   任何根规则。图片没有任何声明（`text/eol: unspecified`），不受本文件影响。
+#   守卫单测最后一条把这两份 `.gitattributes` 的存在与 `-text` 一起钉住。
 
 # 文档与台账
 *.md     text eol=lf
