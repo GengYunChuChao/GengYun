@@ -61,6 +61,17 @@ export interface OnlinePurgeEvidenceRecorder {
   readonly kind: 'postgres';
   readonly available: true;
   record(input: OnlinePurgeEvidenceRecordInput): Promise<void>;
+  /**
+   * **只补不覆盖**：该域已有证据 ⇒ `already-present`（一条都不写）；没有证据 ⇒ 补写一条
+   * 「本轮实测为空」的证据（调用方传本轮真实读数，通常是 `removed:0`/`idempotency:0`）。
+   *
+   * 用**唯一读路径** `read_online_purge_evidence(request_id, user_id)` 判断"已有/缺失"——
+   * 因此不需要（也**不得**）给运行时角色补 `deletion_requests` 的任何表级/列级权限。
+   * 读不到行（不存在/不属于该主体）⇒ **不猜**：照常走写函数，由它抛 `G0002` 让调用方记失败。
+   *
+   * 语义边界：补写的条目只记**本轮**读数与本轮时刻；⛔ 不回填首轮删除行数或原始时刻。
+   */
+  recordVerifiedEmpty(input: OnlinePurgeEvidenceRecordInput & { userId: string }): Promise<'recorded' | 'already-present'>;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -146,6 +157,40 @@ export function createPostgresOnlinePurgeEvidenceRecorder({
     }
   }
 
+  /**
+   * 该域是否**已有**证据（走唯一读路径；是"补写前的一次判定"，不是判定完成的依据）。
+   *
+   * 读不到行 ⇒ `null`（不猜"已有"也不猜"没有"）：调用方照常走写函数，由它抛 `G0002` 记失败。
+   */
+  async function moduleEvidencePresence(
+    sql: OnlinePurgeSqlClient,
+    requestId: string,
+    userId: string,
+    module: string,
+  ): Promise<boolean | null> {
+    const result = await sql.query(ONLINE_PURGE_EVIDENCE_READ_SQL, [requestId, userId]);
+    const payload = result.rows?.[0]?.['state'];
+    if (payload === null || payload === undefined) return null;
+    const evidence = (payload as { evidence?: unknown }).evidence;
+    if (!Array.isArray(evidence)) return null;
+    return evidence.some(
+      (entry) =>
+        typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>)['module'] === module,
+    );
+  }
+
+  async function recordVerifiedEmptyWith(
+    sql: OnlinePurgeSqlClient,
+    input: OnlinePurgeEvidenceRecordInput & { userId: string },
+  ): Promise<'recorded' | 'already-present'> {
+    const requestId = assertUuid(input.requestId, 'requestId');
+    const userId = assertUuid(input.userId, 'userId');
+    const module = assertModule(input.module);
+    if ((await moduleEvidencePresence(sql, requestId, userId, module)) === true) return 'already-present';
+    await recordWith(sql, input);
+    return 'recorded';
+  }
+
   return {
     kind: 'postgres',
     available: true,
@@ -160,6 +205,18 @@ export function createPostgresOnlinePurgeEvidenceRecorder({
       const connection = await pool.connect();
       try {
         await recordWith(connection, input);
+      } finally {
+        connection.release?.();
+      }
+    },
+    async recordVerifiedEmpty(input) {
+      if (client !== undefined) return recordVerifiedEmptyWith(client, input);
+      if (pool === undefined || typeof pool.connect !== 'function') {
+        throw new PrivacyError('PROVIDER_UNAVAILABLE', '在线证据落库需要数据库连接：未提供连接池');
+      }
+      const connection = await pool.connect();
+      try {
+        return await recordVerifiedEmptyWith(connection, input);
       } finally {
         connection.release?.();
       }

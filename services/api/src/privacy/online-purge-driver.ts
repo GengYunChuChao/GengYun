@@ -336,6 +336,26 @@ export interface OnlinePurgeEvidenceSink {
     /** 本轮**唯一** cutoff（驱动不各自读时钟：证据时刻必须与到期判定同源）。 */
     purgedAt: Date | string;
   }): Promise<void>;
+  /**
+   * **只补不覆盖**的可选能力：该域已经有证据 ⇒ `already-present`（一条都不写）；
+   * 没有证据 ⇒ 补写一条「本轮实测为空」的证据（`removed`/`idempotency` 用本轮读数、时刻用本轮 cutoff）。
+   *
+   * 为什么需要它（监工 1023 [P2]）：首轮「删除成功 + 证据写失败」之后，真实存储已经空了，
+   * 第二轮四域读数全 0 会被 `already_purged` 分支**在写证据之前**跳过 ⇒ 证据永远补不回来、
+   * 回执在线态永远 blocked。补写的这一条是**当前事实**（本轮实测 0 行），
+   * ⛔ 不回填首轮的删除行数或原始时刻（那没有凭据），⛔ 也不把"补上凭据"说成"当初删了 N 行"。
+   *
+   * 缺省（不实现）⇒ 驱动保持旧行为：`already_purged` 且不写证据。
+   */
+  recordVerifiedEmpty?(input: {
+    requestId: string;
+    module: string;
+    /** 读函数按 (request_id, user_id) 过滤 ⇒ 补写前必须知道主体，否则读不到该行。 */
+    userId: string;
+    removed: number;
+    idempotency: number;
+    purgedAt: Date | string;
+  }): Promise<'recorded' | 'already-present'>;
 }
 
 export interface OnlinePurgeEvidenceRow {
@@ -552,9 +572,55 @@ export async function runOnlinePurgeBatch(input: OnlinePurgeRunInput): Promise<O
       }
     }
 
-    // 请求级结论先定：四域全 0 行且无失败 = 这个主体已经清过（或本来就没有）⇒ 记 skipped、
-    // **一条证据都不写**（⛔ 不谎称本次干了活；重跑第二轮的读数就在这里）。
+    // 请求级结论先定：四域全 0 行且无失败 = 这个主体本轮**没有行可清**（多半已经清过）。
+    // 旧口径：记 skipped、**一条证据都不写**（⛔ 不谎称本次干了活；重跑第二轮的读数就在这里）。
+    //
+    // 监工 1023 [P2] 补口：首轮「删除成功 + 证据写失败」之后，真实存储已经空了 —— 若这里无脑跳过，
+    // 证据永远补不回来（第二轮开始在写证据之前就被跳掉），在线态永久 blocked。
+    // 因此当端口声明了 `recordVerifiedEmpty` 时，**只对缺证据的域**补写一条「本轮实测为空」的证据：
+    //   · `removed`/`idempotency` = **本轮**真实读数（全 0），时刻 = 本轮 cutoff；
+    //   · ⛔ 不伪造首轮的删除行数，也不回填首轮时刻（那没有凭据）；
+    //   · 已有证据 ⇒ `already-present`，一条不写 ⇒ 既有「全 0 不写证据」口径逐字不变；
+    //   · ⛔ 不因此判 completed（completed 只由落库证据在推导层给出）。
     if (failureThisRequest === 0 && rowsThisRequest === 0 && idempotencyThisRequest === 0) {
+      const sink = input.evidence;
+      if (sink?.recordVerifiedEmpty !== undefined && evidenceThisRequest.length > 0) {
+        let recovered = 0;
+        for (const row of evidenceThisRequest) {
+          try {
+            const outcome = await sink.recordVerifiedEmpty({
+              requestId: row.requestId,
+              module: row.module,
+              userId: candidate.userId,
+              removed: row.removed,
+              idempotency: row.idempotency,
+              purgedAt: cutoffIso,
+            });
+            if (outcome === 'recorded') {
+              report.evidence.push(row);
+              recovered += 1;
+            }
+          } catch {
+            // 补不进凭据 ⇒ 如实记失败行（回执不得据此判 completed），同请求其余行不阻塞。
+            failureThisRequest += 1;
+            report.failures.push({
+              requestId: row.requestId,
+              module: row.module,
+              errorCode: ONLINE_PURGE_DRIVER_ERROR_CODES.EVIDENCE_WRITE_FAILED as string,
+              reason: '证据补写失败：本轮实测为空但凭据补不进台账（回执不会据此判 completed）',
+            });
+          }
+        }
+        if (recovered > 0 && failureThisRequest === 0) {
+          // 补上了凭据 ⇒ 这个请求本轮**收口**（0 行可清、在线证据齐），不计 already_purged。
+          report.succeeded += 1;
+          continue;
+        }
+        if (failureThisRequest > 0) {
+          report.failed += 1;
+          continue;
+        }
+      }
       skip(ONLINE_PURGE_SKIP_REASONS.ALREADY_PURGED);
       continue;
     }
