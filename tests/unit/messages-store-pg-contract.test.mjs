@@ -125,6 +125,31 @@ test('insertMessage：同 id 或同 (owner_id,event_key) 冲突（0 行）⇒ du
   assert.equal(pool.calls[1].values[7], EVENT_KEY);
 });
 
+test('insertMessage：type=system + target_ref=null 的形状（$4::jsonb 收 NULL、read_at 恒 NULL）', async () => {
+  // GY-I17（#17）S1/S2：账号级系统事件消息（`target_ref=null`）也必须走**同一条** INSERT，
+  // 不得为"无目标"另开语句、也不得把 null 序列化成 jsonb 的 'null'（那会变成"有目标但空"）。
+  const pool = fakePool([[{ id: MESSAGE_ID }]]);
+  const store = createPostgresMessagesStore({ pool });
+  const systemRecord = record({
+    type: 'system',
+    target_ref: null,
+    event_key: `system:account:suspend:${OWNER}:e2`,
+  });
+
+  assert.equal(await store.insertMessage(systemRecord), 'inserted');
+
+  assert.equal(pool.calls.length, 1, '系统事件同样只有一条 INSERT（重复判定交给唯一约束）');
+  const sql = flat(pool.calls[0].text);
+  assert.equal(sql.startsWith('INSERT INTO public.messages'), true);
+  assert.equal(sql.includes('$4::jsonb'), true, 'target_ref 仍按 jsonb 传参（取值可为 NULL）');
+  assert.equal(sql.includes('ON CONFLICT DO NOTHING RETURNING id'), true);
+  const values = pool.calls[0].values;
+  assert.equal(values[2], 'system', 'type 直接落列（DB CHECK 已放行 system）');
+  assert.equal(values[3], null, 'target_ref=null 必须原样传 NULL，不得 stringify 成 \'null\'');
+  assert.equal(values[4], null, 'read_at 恒 NULL（创建不当已读）');
+  assert.equal(values[7], `system:account:suspend:${OWNER}:e2`);
+});
+
 test('markReadIfUnread：转换成功路径总共只有一条 UPDATE，且 WHERE 内含 read_at IS NULL 与 owner 谓词', async () => {
   const pool = fakePool([[row({ revision: 2, read_at: new Date(READ_AT) })]]);
   const store = createPostgresMessagesStore({ pool });

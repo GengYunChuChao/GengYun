@@ -21,12 +21,15 @@
  * 按第 ③ 条不变量与 `remove_when`，台账里的 27 号条目**已删除**。
  *
  * **本片状态（2026-10-22，F13 行级作者注销引用 / 迁移 `0030_community_author_ref.sql`）**：
- * 迁移最大号变 0030，而 `0029_media_object_cleanup.sql` 仍只在 #419 分支上（未合入 `origin/main`）
- * ⇒ 树上唯一的缺号是**有意保留的 29**，台账因此不再是空表，而是恰好一条 29 号登记
- * （`owner: #419`，`remove_when: #419 合入即删`）。所以「当前仓库」那条用例的快照读数由
- * 「gaps=[] / reserved=[]」改为「gaps=[29] / reserved=[29]」，判据与负控制**一条未删**：
- * 三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）与「躺平判据回归」全部保留；
- * 原「0027 合流预演」只是把台账来源换成夹具，断言逐字不动。
+ * 落 0030 时 `0029_media_object_cleanup.sql` 仍只在 #419 分支上 ⇒ 台账登记过一条 29 号
+ * （`owner: #419`，`remove_when: #419 合入即删`），「当前仓库」用例的快照读数当时是 `gaps=[29] / reserved=[29]`。
+ *
+ * **合流后状态（2026-10-22 最后一轮，`origin/main` = `056cf424`，#419／#484／#485／#486 入 main）**：
+ * `0029_media_object_cleanup.sql` 已真实落盘、`0030` 在其后 ⇒ `0001..0030` **连续无缺号**；
+ * 29 号条目按它自己的 `remove_when` **删除**，台账回到 `reservations: []`，
+ * 快照读数恢复为 `gaps=[] / reserved=[]`。判据与负控制**一条未删**：
+ * 三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）与「躺平判据回归」全部保留
+ * （后者仍用夹具台账把 27 号喂进去，断言逐字不动）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -70,7 +73,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0027 已随 origin/main 落盘；29 因 #419 在途显式保留、0030 落地后三条不变量仍成立', () => {
+test('迁移编号/当前仓库：#419 的 0029 已入 main ⇒ 台账按 remove_when 清空，0001..0030 连续、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -79,13 +82,11 @@ test('迁移编号/当前仓库：0027 已随 origin/main 落盘；29 因 #419 �
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [29],
-    `#419（0029_media_object_cleanup.sql）未合入 ⇒ 树上唯一的缺号是有意保留的 29（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [],
+    `#419（0029_media_object_cleanup.sql）已合入 ⇒ 树上不应再有缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [29], '29 号必须由台账显式声明为「有意空缺」，否则就是发现器静默漏项');
-  assert.equal(reservations.length, 1, '当前台账必须恰好一条：29（#419 合入后按 remove_when 删除）');
-  assert.equal(reservations[0].version, 29);
-  assert.equal(reservations[0].filename, '0029_media_object_cleanup.sql');
+  assert.deepEqual(numbering.reserved, [], '#419 落盘后 29 号保留条目必须按 remove_when 删除（保留项不许躺平）');
+  assert.deepEqual(reservations, [], '保留台账必须回到空数组：没有任何「有意缺号」');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -108,8 +109,8 @@ test('迁移编号/当前仓库：0027 已随 origin/main 落盘；29 因 #419 �
   assert.ok(files.includes('0028_moderation_persistence.sql'), '0028 必须在清单里（迁移号固定，⛔ 不许换号）');
   assert.equal(
     files.includes('0029_media_object_cleanup.sql'),
-    false,
-    '29 号在本分支必须是**空缺**：#419 未合入前若出现该文件，reservedButPresent 会立刻判红',
+    true,
+    '0029 已随 #419 合入 origin/main（056cf424）⇒ 真实文件必须在清单里，且台账不得再登记它',
   );
   assert.ok(
     files.includes('0030_community_author_ref.sql'),

@@ -251,7 +251,7 @@ test('GY-R28 W2 真实端口接线：real 下上传三段式 200、衍生物去 
   const mediaId = created.body.data.media.id;
 
   // ---- ② 客户端 PUT 字节（真的经适配器 HTTP 写路径落到对象存储） ----
-  const keys = app.mediaService.serverObjectKeys(mediaId);
+  const keys = await app.mediaService.serverObjectKeys(mediaId);
   assert.ok(keys !== null && typeof keys.rawRef === 'string', '必须签发原始对象键');
   assert.equal(keys.derivativeRef, null, '未 complete 前不得有衍生物');
   await app.mediaObjectStore.putObject(keys.rawRef, jpeg, 'image/jpeg');
@@ -274,7 +274,7 @@ test('GY-R28 W2 真实端口接线：real 下上传三段式 200、衍生物去 
   assert.equal(completed.body.data.state, 'ready');
   assert.equal(completed.body.meta.execution_mode, 'real');
 
-  const after = app.mediaService.serverObjectKeys(mediaId);
+  const after = await app.mediaService.serverObjectKeys(mediaId);
   assert.equal(typeof after.derivativeRef, 'string', '`derivativeRef` 必须非 null');
   assert.notEqual(after.derivativeRef, after.rawRef, '衍生物必须是独立对象');
   const storedDerivative = bucket.objects.get(after.derivativeRef);

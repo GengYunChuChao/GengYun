@@ -62,6 +62,21 @@ import type { MediaObjectStore, PresignedHandle } from './object-store.ts';
 import { createUnwiredObjectStore } from './object-store.ts';
 import type { PublishedContentRef, PublishedContentSource } from './content-source.ts';
 import { createClosedContentSource } from './content-source.ts';
+import type {
+  CommunityGrantRecord,
+  MediaIdempotencyEntry,
+  MediaRecord,
+  MediaStore,
+  MediaWritePrecondition,
+} from './store.ts';
+import {
+  MEDIA_IDEMPOTENCY_CLAIM_TTL_MS,
+  MEDIA_IDEMPOTENCY_PATHS,
+  MEDIA_IDEMPOTENCY_TTL_MS,
+  createMemoryMediaStore,
+  mediaIdempotencyKeyHash,
+  mediaIdempotencyScope,
+} from './store.ts';
 
 /** 服务端权威身份（客户端**无法**通过 body/query/自定义头声明）。 */
 export interface MediaActor {
@@ -159,41 +174,9 @@ export interface CommunityAttachmentCounter {
   countFor(input: { ownerId: string; liveCommunityImages: number }): number | null;
 }
 
-interface MediaRecord {
-  id: string;
-  ownerId: string;
-  revision: number;
-  purpose: string;
-  mime: string;
-  bytes: number;
-  duration_ms: number | null;
-  sha256: string;
-  state: string;
-  failure_code: string | null;
-  /** 对象存储键：客户端直传的原始对象（`initiated` 时即已签发，可能尚未落盘）。 */
-  rawRef: string | null;
-  /** 去元数据衍生件；音频无衍生件。 */
-  derivativeRef: string | null;
-  metadata_removed: string[];
-  createdAt: number;
-  updatedAt: number;
-  expiresAt: number;
-}
-
-interface CommunityGrantRecord {
-  grantId: string;
-  tokenHash: string;
-  requesterId: string;
-  sessionRef: string;
-  requesterAuthEpoch: number;
-  mediaId: string;
-  mediaRevision: number;
-  contentRef: PublishedContentRef;
-  slot: 'attachment' | 'author_avatar';
-  authorRevision: number | null;
-  expiresAt: number;
-  revokedAt: number | null;
-}
+// `MediaRecord` / `CommunityGrantRecord` 自 W12 起定义在 `./store.ts`（持久化端口的行视图），
+// 本文件只消费端口，不再自持一份「进程内行结构」——否则端口与内存实现会各说一套，
+// 真库的列约束（`metadata_removed` 根本不存在）就永远暴露不出来。
 
 export interface AppMediaService {
   readonly executionMode: string;
@@ -243,6 +226,11 @@ export interface AppMediaService {
   /**
    * `rejected` / `deleted` 记录的对象与已失效句柄统一清理。
    *
+   * 两段扫描（监工 1022-0659 轮 P1 之后）：
+   * 1. **真行**：`rejected`/`deleted` 行上仍挂着的 `rawRef`/`derivativeRef`；
+   * 2. **清理台账**：`media_object_cleanup` 里的待清理行（这些行独立于父行存活，专门承载
+   *    「父行已经没有引用」的未确认删除对象，例如 CAS=0 的迟到 `complete` 落下的衍生件）。
+   *
    * `pendingObjects` = 端口抛错或返回 `false`（**未能确认删除**）而被保留引用的对象数 ⇒ 仍可重试；
    * `remainingObjects` = 清扫一次后对象存储中仍然存在的对象数（诊断用）。
    */
@@ -256,8 +244,11 @@ export interface AppMediaService {
   /**
    * **仅服务端/测试用**：读取某条记录的私有对象键（用于在测试里模拟「客户端直传对象存储」）。
    * 绝不进入任何响应投影、日志或公开列表。
+   *
+   * W12 起是异步的：键来自持久化台账（`media.object_ref_cipher` + `media_derivatives`），
+   * 进程内没有可同步查询的登记册——重启后的新进程也必须能如实回答。
    */
-  serverObjectKeys(mediaId: string): { rawRef: string | null; derivativeRef: string | null } | null;
+  serverObjectKeys(mediaId: string): Promise<{ rawRef: string | null; derivativeRef: string | null } | null>;
 }
 
 export interface AppMediaServiceOptions {
@@ -286,6 +277,23 @@ export interface AppMediaServiceOptions {
    * 注入值非法（http、带路径/查询/凭据）⇒ 构造期抛错，不静默退回占位域。
    */
   accessGrantOrigin?: string;
+  /**
+   * **持久化端口**（W12 新增）：登记册 + 授权 + 幂等台账的落点。
+   *
+   * 由装配层按 `executionMode` 二分注入（照 `favorites`/`history`/`messages` 同一范式）：
+   * `real` 且拿到连接池与 `MEDIA_OBJECT_REF_KEY` ⇒ `createPostgresMediaStore`；
+   * 否则 `createMemoryMediaStore`（stub/测试）。缺省即内存实现——**构造时即可判定**，
+   * 因此 `AppMediaService` 不把「持久化与否」藏成运行期惊喜。
+   *
+   * 端口是 `persistent: false` 而 `executionMode === 'real'` 时，装配层**必须**整域 fail-closed
+   * （见 `app.ts` 的 `mediaPersistenceRefusal`），否则就是「进程内 Map 当事实源、PG 只做旁路」的假持久化。
+   *
+   * 名字叫 `persistence` 而不是 `store`：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 R-B5
+   * 判据把 `createAppMediaService({...})` 里任何 `*store*`/`*storage*`/`bucket` 形状的属性名
+   * 都当作「第二个存储端口」拒绝（防的是有人再塞一个对象存储进来）。本端口**不是**字节存储，
+   * 也绝不替换 `objectStore`，因此用不带歧义的名字，让那条判据保持原样有效。
+   */
+  persistence?: MediaStore;
 }
 
 // --------------------------------------------------------------------- 端口替身
@@ -529,7 +537,7 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
     async stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }> {
       return { mediaCount: 0, objectCount: 0, grantCount: 0 };
     },
-    serverObjectKeys(): { rawRef: string | null; derivativeRef: string | null } | null {
+    async serverObjectKeys(): Promise<{ rawRef: string | null; derivativeRef: string | null } | null> {
       throw fail();
     },
   };
@@ -621,12 +629,15 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   const idFactory = options.idFactory ?? (() => randomUUID());
   const tokenFactory = createAccessTokenFactory(options.tokenSecret);
 
-  const records = new Map<string, MediaRecord>();
-  const grants = new Map<string, CommunityGrantRecord>();
-  /** `${ownerId}:${op}:${key}` → { requestHash, mediaId }；请求 hash **含原 If-Match**（与 B3 口径一致）。 */
-  const idempotency = new Map<string, { requestHash: string; mediaId: string }>();
-  /** 正在处理的同键请求（在任何 `await` 之前同步登记，跨 await 保持）。 */
-  const inflight = new Set<string>();
+  /**
+   * **持久化端口**（W12 起是本域唯一的事实源）。
+   *
+   * 本文件**不再持有任何进程内 `Map`/`Set`**：登记册、授权、幂等台账全部经端口读写。
+   * 缺省仍是内存实现（`createMemoryMediaStore`），但那是**装配层的选择**而不是本文件的隐式默认——
+   * 装配层（`app.ts`）在 `real` 且拿到连接池与 `MEDIA_OBJECT_REF_KEY` 时会注入
+   * `createPostgresMediaStore`，因此重启不再丢上传句柄／幂等回执。
+   */
+  const store = options.persistence ?? createMemoryMediaStore({ now: () => now().getTime() });
 
   const at = (): number => now().getTime();
   const iso = (ms: number): string => new Date(ms).toISOString();
@@ -654,6 +665,43 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   }
 
   /**
+   * 一份**快照**的写入前置条件：读它那一刻的 `revision` 与 `state`。
+   *
+   * **为什么服务层的写一律要带它**（监工 1927 轮 P1）：`complete` 与 `delete` 的幂等 scope
+   * 不同（`POST /media`, `POST /media/:id/complete`, `DELETE /media/:id` 三把键互不排斥），
+   * 于是「A 读完快照、正在生成衍生件」与「B 删除成功」可以交错。窗口内的任何整行覆写
+   * （`WHERE id = $1`）都会把 B 写好的 `deleted` 盖回 `ready`，把删除结论作废。
+   * 把读到的快照作为条件交给端口，0 行即判定「我的快照过期了」，写入不落库。
+   */
+  function snapshotOf(record: MediaRecord): MediaWritePrecondition {
+    return { revision: record.revision, state: record.state };
+  }
+
+  /**
+   * 条件写 0 行 ⇒ 重读真行，给出**可判定**的失败（两条路径都不许静默成功）。
+   *
+   * - 行已被删除（并发 `delete` 赢）：`OBJECT_UNAVAILABLE` + 明说「已删除」。与 `complete`
+   *   自己面对 `state='deleted'` 时的错误码一致（同一个入参、同一个结论），客户端据此
+   *   停止重试，而不是拿一个假 `ready`。
+   * - 行被推进到别的状态/版本：`REVISION_CONFLICT`（`contract.ts` 里 409），提示刷新后重取
+   *   `revision` 再重试。
+   */
+  async function staleWriteFailure(
+    record: MediaRecord,
+    expected: MediaWritePrecondition,
+    what: string,
+  ): Promise<never> {
+    const current = await store.getMedia(record.id);
+    if (current === null || current.state === 'deleted') {
+      throw new ApiError('OBJECT_UNAVAILABLE', `媒体已被删除，迟到的${what}未生效`);
+    }
+    throw new ApiError(
+      'REVISION_CONFLICT',
+      `媒体版本已变化（rev ${expected.revision}/${expected.state} → rev ${current.revision}/${current.state}），${what}未生效`,
+    );
+  }
+
+  /**
    * 回收记录持有的私有对象。
    *
    * **隐私红线（监工批复 P1 返修）**：只有**确认删除成功**（端口返回 `true`）才清空该引用。
@@ -663,38 +711,81 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    * 端口契约（`MediaObjectStore.deleteObject`）因此被明确为：`true` = 已确认删除
    * （含幂等删除「对象本就不存在」，与 S3 `DeleteObject` 的 204 语义一致）；
    * `false` = **未能确认**；抛出 = 暂时失败。后两者都保留引用。
+   *
+   * **清理线索的落点（监工 1022-0659 轮 P1）**：光靠「保留引用」不够 —— 这个 `record` 可能
+   * 只是一份**进程内快照**（`completeUpload` 的 CAS=0 分支一个字节都不写库），而真行也可能
+   * 已被并发 `delete` 清空引用，甚至被注销清理物理删除。所以每个对象**先**把意图登记进
+   * 不依赖父行存活的清理台账（`store.saveObjectCleanup`），**再**尝试桶删除；只有桶删除
+   * 被确认成功才删掉那条台账行。登记失败时仍尝试删除（能删掉就万事大吉），删不掉则按
+   * `pending` 计入 —— 这一路只剩「库与桶同时失败」才可能丢线索，落不了库时本也无处可写。
    */
-  async function dropObjects(record: MediaRecord): Promise<{ removed: number; pending: number }> {
+  async function dropObjects(
+    record: MediaRecord,
+    reason: string,
+    attempted?: Set<string>,
+  ): Promise<{ removed: number; pending: number }> {
     let removed = 0;
     let pending = 0;
     for (const field of ['rawRef', 'derivativeRef'] as const) {
       const ref = record[field];
       if (ref === null) continue;
+      attempted?.add(ref);
+      // ① 意图先落库：从此这条线索与父行的存亡无关。
+      const recorded = await recordCleanupIntent(record.id, ref, reason);
       try {
         if (await objectStore.deleteObject(ref)) {
           record[field] = null;
           removed += 1;
+          // ② 只有**确认**删除成功才允许删掉台账行（未确认就删行 = 永久丢线索）。
+          if (recorded) await forgetCleanupIntent(ref);
         } else {
-          // 未确认删除：**保留引用**，留给 cleanupOrphans / 下次删除重试。
+          // 未确认删除：**保留引用与台账行**，留给 cleanupOrphans / 下次删除重试。
           pending += 1;
         }
       } catch {
-        // 暂时失败同样不得清空引用，否则永久丢失清理依据。
+        // 暂时失败同样不得清空引用或台账行，否则永久丢失清理依据。
         pending += 1;
       }
     }
     return { removed, pending };
   }
 
-  function revokeGrantsForMedia(mediaId: string, timestamp: number): number {
-    let revoked = 0;
-    for (const grant of grants.values()) {
-      if (grant.mediaId === mediaId && grant.revokedAt === null) {
-        grant.revokedAt = timestamp;
-        revoked += 1;
-      }
+  /** 登记一条待清理意图；**不**向外抛（登记失败不能把删除/完成路径整条打死）。 */
+  async function recordCleanupIntent(mediaId: string, objectRef: string, reason: string): Promise<boolean> {
+    try {
+      await store.saveObjectCleanup({ mediaId, objectRef, reason }, at());
+      return true;
+    } catch {
+      return false;
     }
-    return revoked;
+  }
+
+  /** 删掉待清理行（**只**在桶删除被确认成功后调用）；删除失败留待下一轮清扫收敛。 */
+  async function forgetCleanupIntent(objectRef: string): Promise<void> {
+    try {
+      await store.deleteObjectCleanup(objectRef);
+    } catch {
+      // 留残行是可接受的：下一轮清扫会再删一次（端口删除是幂等的），收敛后行自会消失。
+    }
+  }
+
+  function revokeGrantsForMedia(mediaId: string, timestamp: number): Promise<number> {
+    return store.revokeGrantsForMedia(mediaId, timestamp);
+  }
+
+  /**
+   * 把 `reject` 的失败码规整成清理台账的 `reason` slug。
+   *
+   * 列上有 CHECK `^[a-z][a-z0-9_]{0,63}$`：**不能**因为将来新增了一个带大写/连字符的失败码
+   * 就让意图登记整条失败（那等于悄悄退回到「线索只在进程内」的老问题）。因此这里做一次
+   * 归一化，并把结果截到列宽内。
+   */
+  function cleanupReasonForReject(failureCode: string): string {
+    const slug = failureCode
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return `reject_${slug === '' ? 'unknown' : slug}`.slice(0, 64);
   }
 
   /**
@@ -703,20 +794,14 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    * 只作为**已接线**端口的输入（`substitute` 的占位数、`injected` 探针的 `liveCommunityImages`）。
    * `unwired` **不使用**它——见 `attachmentLimitFor` 的 `null` 分支（累计口径会锁死 + TOCTOU）。
    */
-  function liveCommunityImageCount(ownerId: string): number {
-    let count = 0;
-    for (const record of records.values()) {
-      if (record.ownerId === ownerId && record.purpose === 'community_image' && record.state !== 'deleted' && record.state !== 'rejected') {
-        count += 1;
-      }
-    }
-    return count;
+  function liveCommunityImageCount(ownerId: string): Promise<number> {
+    return store.liveCommunityImageCount(ownerId);
   }
 
-  function ownedRecord(actor: MediaActor, mediaId: string): MediaRecord {
-    const record = records.get(mediaId);
+  async function ownedRecord(actor: MediaActor, mediaId: string): Promise<MediaRecord> {
+    const record = await store.getMedia(mediaId);
     // 非本人 / 不存在**同形** 404：不泄露存在性。
-    if (record === undefined || record.ownerId !== actor.ownerId) {
+    if (record === null || record.ownerId !== actor.ownerId) {
       throw new ApiError('NOT_FOUND', '媒体不存在');
     }
     return record;
@@ -752,9 +837,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    *   ⇒ 累计数会让用户传满 3 张后**永久锁死**（只能手删），并且「先数后写」之间存在 TOCTOU
    *   （并发可超发）。**缺清理器／权威计数器时不得放行**。
    */
-  function attachmentLimitFor(actor: MediaActor, purpose: unknown): number {
+  async function attachmentLimitFor(actor: MediaActor, purpose: unknown): Promise<number> {
     if (purpose !== 'community_image') return 0;
-    const liveCommunityImages = liveCommunityImageCount(actor.ownerId);
+    const liveCommunityImages = await liveCommunityImageCount(actor.ownerId);
     const counted = attachmentCounter.countFor({
       ownerId: actor.ownerId,
       liveCommunityImages,
@@ -773,48 +858,96 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   // ------------------------------------------------------------ 生命周期
 
   /**
-   * 同键**并发**占位：在任何 `await` 之前**同步**登记，使同一 Idempotency-Key 的并发请求
-   * 不会各自创建资源（那会产生重复媒体记录，并让先落库对象的键成为孤立对象）。
-   * 仍在处理中 ⇒ 409 `REQUEST_IN_PROGRESS`（`app.ts` 会附带 `Retry-After: 1`，
-   * 与本仓既有幂等口径、契约 error_status_map 一致）。
+   * 一次幂等请求的**台账占位**。
+   *
+   * W12 之前这里是进程内 `Set`（`inflight`）+ `Map`（`idempotency`）：重启即丢，且多实例各判一次。
+   * 现在占位落在持久化台账里（`0008 public.idempotency_keys` 的唯一索引 `(scope, key_hash)`），
+   * 语义逐条保持：同键并发只有一个能占到，其余 409 `REQUEST_IN_PROGRESS`（`app.ts` 附加
+   * `Retry-After: 1`）；请求 hash **含原 If-Match**（与 B3 口径一致）；结果 24h 可回放。
    */
-  async function withKeyClaim<T>(key: string, run: () => Promise<T>): Promise<T> {
-    if (inflight.has(key)) {
-      throw new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中，请稍后重试', {
-        retryable: true,
-      });
-    }
-    inflight.add(key);
-    try {
-      return await run();
-    } finally {
-      inflight.delete(key);
-    }
+  interface IdempotencySlot {
+    settle(mediaId: string): Promise<void>;
+    release(): Promise<void>;
   }
 
-  /** 只有形状合法的幂等键才参与并发占位；非法键交给函数体按契约报 400。 */
-  function claimScope(ownerId: string, op: string, idempotencyKey: string): string | null {
-    if (
-      typeof idempotencyKey !== 'string' ||
-      idempotencyKey.trim().length < 8 ||
-      idempotencyKey.length > 128
-    ) {
-      return null;
+  const claimConflict = (message: string): ApiError =>
+    new ApiError('IDEMPOTENCY_CONFLICT', message);
+  const claimInProgress = (): ApiError =>
+    new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中，请稍后重试', {
+      retryable: true,
+    });
+
+  /**
+   * 打开一次幂等请求：返回**已有回执**（调用方按 `requestHash` 判冲突/回放）或**新占位**。
+   *
+   * 占位是**单语句原子**的（`ON CONFLICT DO NOTHING RETURNING`），因此不存在「先查后写」的窗口，
+   * 也不依赖进程内时序；抢占失败时再读一次台账，区分「异请求体 ⇒ 409 冲突」与「同键仍在处理 ⇒ 409 重试」。
+   */
+  async function openIdempotentRequest(
+    actor: MediaActor,
+    method: string,
+    routePath: string,
+    idempotencyKey: string,
+    requestHash: string,
+    conflictMessage: string,
+  ): Promise<{ prior: MediaIdempotencyEntry } | { slot: IdempotencySlot }> {
+    const scope = mediaIdempotencyScope(actor.ownerId, method, routePath);
+    const keyHashHex = mediaIdempotencyKeyHash(scope, idempotencyKey);
+    const prior = await store.findIdempotency(scope, keyHashHex);
+    if (prior !== null) return { prior };
+
+    const claimed = await store.claimIdempotency(scope, keyHashHex, {
+      requestHash,
+      // 占位短于回执：占位者崩了不会把键钉住 24h。
+      expiresAt: at() + MEDIA_IDEMPOTENCY_CLAIM_TTL_MS,
+    });
+    if (!claimed) {
+      const raced = await store.findIdempotency(scope, keyHashHex);
+      if (raced !== null && raced.requestHash !== requestHash) throw claimConflict(conflictMessage);
+      throw claimInProgress();
     }
-    return `${ownerId}:${op}:${idempotencyKey}`;
+    let settled = false;
+    return {
+      slot: {
+        async settle(mediaId) {
+          settled = true;
+          await store.settleIdempotency(scope, keyHashHex, {
+            requestHash,
+            mediaId,
+            expiresAt: at() + MEDIA_IDEMPOTENCY_TTL_MS,
+          });
+        },
+        async release() {
+          // 已结算就不再删：回执必须留着供重放。
+          if (settled) return;
+          await store.releaseIdempotency(scope, keyHashHex);
+        },
+      },
+    };
   }
 
-  const initiateUploadUnclaimed: AppMediaService['initiateUpload'] = async ({ actor, input, idempotencyKey }) => {
+  /** 回执命中时的统一处理：异请求体 ⇒ 409 冲突；占位中 ⇒ 409 重试；否则交出 mediaId 供回放。 */
+  function replayOrConflict(prior: MediaIdempotencyEntry, requestHash: string, conflictMessage: string): string {
+    if (prior.requestHash !== requestHash) throw claimConflict(conflictMessage);
+    if (prior.mediaId === null) throw claimInProgress();
+    return prior.mediaId;
+  }
+
+  const initiateUpload: AppMediaService['initiateUpload'] = async ({ actor, input, idempotencyKey }) => {
     requireActor(actor);
     requireIdempotencyKey(idempotencyKey);
     const requestHash = hashRequest({ op: 'initiate', input });
-    const key = `${actor.ownerId}:initiate:${idempotencyKey}`;
-    const prior = idempotency.get(key);
-    if (prior !== undefined) {
-      if (prior.requestHash !== requestHash) {
-        throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
-      }
-      const record = ownedRecord(actor, prior.mediaId);
+    const opened = await openIdempotentRequest(
+      actor,
+      'POST',
+      MEDIA_IDEMPOTENCY_PATHS.initiate,
+      idempotencyKey,
+      requestHash,
+      '同一 Idempotency-Key 已被不同请求体使用',
+    );
+    if ('prior' in opened) {
+      const replayId = replayOrConflict(opened.prior, requestHash, '同一 Idempotency-Key 已被不同请求体使用');
+      const record = await ownedRecord(actor, replayId);
       if (record.rawRef === null) {
         // 记录已 rejected / deleted：原上传句柄不再有效，不重新签发。
         throw new ApiError('OBJECT_UNAVAILABLE', '上传句柄已失效');
@@ -829,191 +962,231 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       return { status: 201, media: toProjection(record), upload: uploadGrant(record, handle) };
     }
 
-    const purpose = (input as { purpose?: unknown } | null)?.purpose;
-    const mediaCountForPost = attachmentLimitFor(actor, purpose);
-    const declared = attempt(() => validateUploadInput(input, { mediaCountForPost }));
+    const { slot } = opened;
+    try {
+      const purpose = (input as { purpose?: unknown } | null)?.purpose;
+      const mediaCountForPost = await attachmentLimitFor(actor, purpose);
+      const declared = attempt(() => validateUploadInput(input, { mediaCountForPost }));
 
-    const timestamp = at();
-    const rawRef = newObjectRef();
-    const handle = await attemptAsync(() =>
-      objectStore.presignUpload({
-        key: rawRef,
-        contentType: declared.mime,
-        expiresInSeconds: Math.floor(MEDIA_INITIATED_TTL_MS / 1000),
-      }),
-    );
-    const record: MediaRecord = {
-      id: idFactory(),
-      ownerId: actor.ownerId,
-      revision: 1,
-      purpose: declared.purpose,
-      mime: declared.mime,
-      bytes: declared.bytes,
-      duration_ms: declared.duration_ms,
-      sha256: declared.sha256,
-      state: 'initiated',
-      failure_code: null,
-      rawRef,
-      derivativeRef: null,
-      metadata_removed: [],
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      expiresAt: timestamp + MEDIA_INITIATED_TTL_MS,
-    };
-    records.set(record.id, record);
-    idempotency.set(key, { requestHash, mediaId: record.id });
-    return { status: 201, media: toProjection(record), upload: uploadGrant(record, handle) };
+      const timestamp = at();
+      const rawRef = newObjectRef();
+      const handle = await attemptAsync(() =>
+        objectStore.presignUpload({
+          key: rawRef,
+          contentType: declared.mime,
+          expiresInSeconds: Math.floor(MEDIA_INITIATED_TTL_MS / 1000),
+        }),
+      );
+      const record: MediaRecord = {
+        id: idFactory(),
+        ownerId: actor.ownerId,
+        revision: 1,
+        purpose: declared.purpose,
+        mime: declared.mime,
+        bytes: declared.bytes,
+        duration_ms: declared.duration_ms,
+        sha256: declared.sha256,
+        state: 'initiated',
+        failure_code: null,
+        rawRef,
+        derivativeRef: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        expiresAt: timestamp + MEDIA_INITIATED_TTL_MS,
+      };
+      // 记录先落库再结算台账：崩在两者之间时留下「占位中」+ 可能孤立的 initiated 行，
+      // 由 `expireInitiated` 回收，而不会让客户端拿到一个查不到的 mediaId。
+      await store.createMedia(record);
+      await slot.settle(record.id);
+      return { status: 201, media: toProjection(record), upload: uploadGrant(record, handle) };
+    } finally {
+      // 已结算 ⇒ no-op；未结算（校验失败/存储不可用）⇒ 放开键，允许客户端改正后重试。
+      await slot.release();
+    }
   };
 
-  /** 并发同键保护后的 `createUpload`（占位在任何 await 之前同步取得）。 */
-  const initiateUpload: AppMediaService['initiateUpload'] = (request) => {
-    const key = claimScope(request.actor.ownerId, 'initiate', request.idempotencyKey);
-    return key === null
-      ? initiateUploadUnclaimed(request)
-      : withKeyClaim(key, () => initiateUploadUnclaimed(request));
-  };
-
-  const completeUploadUnclaimed: AppMediaService['completeUpload'] = async ({ actor, mediaId, ifMatch, input, idempotencyKey }) => {
+  const completeUpload: AppMediaService['completeUpload'] = async ({ actor, mediaId, ifMatch, input, idempotencyKey }) => {
     requireActor(actor);
     requireIdempotencyKey(idempotencyKey);
-    const record = ownedRecord(actor, mediaId);
 
     // 幂等（含原 If-Match）：同键同请求回放首次成功结果；同键异请求 → IDEMPOTENCY_CONFLICT。
     const requestHash = hashRequest({ op: 'complete', mediaId, ifMatch: ifMatch ?? null, input });
-    const key = `${actor.ownerId}:complete:${idempotencyKey}`;
-    const prior = idempotency.get(key);
-    if (prior !== undefined) {
-      if (prior.requestHash !== requestHash) {
-        throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同的完成请求使用');
-      }
-      return { status: 202, media: toProjection(ownedRecord(actor, prior.mediaId)) };
+    const opened = await openIdempotentRequest(
+      actor,
+      'POST',
+      MEDIA_IDEMPOTENCY_PATHS.complete,
+      idempotencyKey,
+      requestHash,
+      '同一 Idempotency-Key 已被不同的完成请求使用',
+    );
+    if ('prior' in opened) {
+      const replayId = replayOrConflict(opened.prior, requestHash, '同一 Idempotency-Key 已被不同的完成请求使用');
+      return { status: 202, media: toProjection(await ownedRecord(actor, replayId)) };
     }
-
-    requireIfMatch(ifMatch, record.revision);
-
-    const declared = attempt(() => validateCompleteInput(input));
-    if (declared.sha256 !== record.sha256 || declared.bytes !== record.bytes) {
-      throw new ApiError('INVALID_REQUEST', '完成上传声明与初始化声明不一致');
-    }
-    if (record.state === 'ready') {
-      idempotency.set(key, { requestHash, mediaId: record.id });
-      return { status: 202, media: toProjection(record) };
-    }
-    if (record.state !== 'initiated' && record.state !== 'uploaded') {
-      throw new ApiError('OBJECT_UNAVAILABLE', `当前状态不可完成上传：${record.state}`);
-    }
-
-    // 契约 UploadCompleteInput **不含**媒体字节：字节必须由服务端从对象存储取回。
-    const stored = record.rawRef === null ? null : await attemptAsync(() => objectStore.getObject(record.rawRef as string));
-    if (stored === null) {
-      await reject(record, 'upload_missing');
-      throw new ApiError('OBJECT_UNAVAILABLE', '上传对象不存在或已被回收');
-    }
-
-    const timestamp = at();
+    const { slot } = opened;
     try {
-      transition(record, 'uploaded', timestamp);
-      const detected = assertBytesMatchDeclaration({
-        bytes: stored.bytes,
-        declared: {
-          mime: record.mime,
-          bytes: record.bytes,
-          sha256: record.sha256,
-          purpose: record.purpose,
-          duration_ms: record.duration_ms,
-        },
-      });
+      const record = await ownedRecord(actor, mediaId);
 
-      if (kindOf(record.purpose) === 'image') {
-        const stripped = stripImageMetadata(stored.bytes, detected.mime);
-        if (!stripped.ok) {
-          await reject(record, 'decode_failed');
-          throw new MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据');
-        }
-        transition(record, 'processing', timestamp);
-        const derivativeRef = newObjectRef();
-        await attemptAsync(() => objectStore.putObject(derivativeRef, stripped.data, detected.mime));
-        record.derivativeRef = derivativeRef;
-        record.metadata_removed = stripped.removed;
-      } else {
-        transition(record, 'processing', timestamp);
-        // 音频：以**真实时长**为准覆盖声明值（B2 口径）。
-        if (typeof detected.durationMs === 'number') record.duration_ms = detected.durationMs;
+      requireIfMatch(ifMatch, record.revision);
+      // 读到的这一份即本次写入的前置条件：之后任何一次 delete/expire 落地都会让它过期，
+      // 末尾的条件写据此判定「我的快照还能不能生效」（见 snapshotOf / staleWriteFailure）。
+      const expected = snapshotOf(record);
+
+      const declared = attempt(() => validateCompleteInput(input));
+      if (declared.sha256 !== record.sha256 || declared.bytes !== record.bytes) {
+        throw new ApiError('INVALID_REQUEST', '完成上传声明与初始化声明不一致');
       }
-      transition(record, 'ready', timestamp);
-    } catch (error) {
-      // 失败即回收对象（不留孤立对象），再按契约错误码抛出。
-      if (!isRejectedRecord(record)) await reject(record, 'validation_failed');
-      rethrowMediaError(error);
+      if (record.state === 'ready') {
+        await slot.settle(record.id);
+        return { status: 202, media: toProjection(record) };
+      }
+      if (record.state !== 'initiated' && record.state !== 'uploaded') {
+        throw new ApiError('OBJECT_UNAVAILABLE', `当前状态不可完成上传：${record.state}`);
+      }
+
+      // 契约 UploadCompleteInput **不含**媒体字节：字节必须由服务端从对象存储取回。
+      const stored = record.rawRef === null ? null : await attemptAsync(() => objectStore.getObject(record.rawRef as string));
+      if (stored === null) {
+        await reject(record, 'upload_missing', expected);
+        throw new ApiError('OBJECT_UNAVAILABLE', '上传对象不存在或已被回收');
+      }
+
+      const timestamp = at();
+      try {
+        transition(record, 'uploaded', timestamp);
+        const detected = assertBytesMatchDeclaration({
+          bytes: stored.bytes,
+          declared: {
+            mime: record.mime,
+            bytes: record.bytes,
+            sha256: record.sha256,
+            purpose: record.purpose,
+            duration_ms: record.duration_ms,
+          },
+        });
+
+        if (kindOf(record.purpose) === 'image') {
+          const stripped = stripImageMetadata(stored.bytes, detected.mime);
+          if (!stripped.ok) {
+            await reject(record, 'decode_failed', expected);
+            throw new MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据');
+          }
+          transition(record, 'processing', timestamp);
+          const derivativeRef = newObjectRef();
+          await attemptAsync(() => objectStore.putObject(derivativeRef, stripped.data, detected.mime));
+          record.derivativeRef = derivativeRef;
+        } else {
+          transition(record, 'processing', timestamp);
+          // 音频：以**真实时长**为准覆盖声明值（B2 口径）。
+          if (typeof detected.durationMs === 'number') record.duration_ms = detected.durationMs;
+        }
+        transition(record, 'ready', timestamp);
+      } catch (error) {
+        // 失败即回收对象（不留孤立对象），再按契约错误码抛出。
+        if (!isRejectedRecord(record)) await reject(record, 'validation_failed', expected);
+        rethrowMediaError(error);
+      }
+
+      record.revision += 1;
+      // **条件写**（监工 1927 轮 P1）：`complete` 与 `delete` 的幂等 scope 不同、可以并发；
+      // 上面这段「取回字节 + 生成衍生件」是异步窗口，窗口内落地的 `delete` 会让这份快照过期。
+      // 无条件整行覆写会把 `deleted` 盖回 `ready`（已删除的媒体复活），所以这里只允许
+      // 「库内仍是读完时的 revision/state」才写；0 行 ⇒ 本次完成不落库，给出可判定失败。
+      if ((await store.saveMediaIfCurrent(record, expected)) === 0) {
+        // 刚落下的衍生件没有任何登记册行承载它（父行已删除或已终态）⇒ 先回收，避免孤儿对象
+        // 逃出 cleanupOrphans 的扫描范围（那一轮只扫 rejected/deleted 行）。
+        // 回收之前清理台账**已经**记下这次意图（见 dropObjects）：即便桶这次删不掉、即便
+        // 父行的引用已被并发的 delete 清空，下一轮 cleanupOrphans 仍能按台账把这个对象删掉。
+        await dropObjects(record, 'cas_conflict_complete');
+        await staleWriteFailure(record, expected, '完成上传');
+      }
+      await slot.settle(record.id);
+      return { status: 202, media: toProjection(record) };
+    } finally {
+      await slot.release();
     }
-
-    record.revision += 1;
-    idempotency.set(key, { requestHash, mediaId: record.id });
-    return { status: 202, media: toProjection(record) };
   };
 
-  /** 并发同键保护后的 `completeUpload`（避免同键并发重复自增与重复落衍生件）。 */
-  const completeUpload: AppMediaService['completeUpload'] = (request) => {
-    const key = claimScope(request.actor.ownerId, 'complete', request.idempotencyKey);
-    return key === null
-      ? completeUploadUnclaimed(request)
-      : withKeyClaim(key, () => completeUploadUnclaimed(request));
-  };
-
-  /** 受控失败：迁移到 `rejected`、记录 failure_code、回收对象（孤立清理）。 */
-  async function reject(record: MediaRecord, failureCode: string): Promise<void> {
+  /**
+   * 受控失败：迁移到 `rejected`、记录 failure_code、回收对象（孤立清理）。
+   *
+   * 返回**是否落库**。落库同样是条件写：如果这条失败结论来自一份已过期的快照
+   * （期间 `delete` 已成功），那就不许把 `rejected` 写回去覆盖 `deleted`——对象的回收
+   * 已经发生且可重入，未落库的部分由 `cleanupOrphans` 下一轮按真行继续收敛。
+   */
+  async function reject(
+    record: MediaRecord,
+    failureCode: string,
+    expected: MediaWritePrecondition,
+  ): Promise<boolean> {
     const timestamp = at();
     if (canTransition(record.state, 'rejected')) {
       record.state = 'rejected';
       record.updatedAt = timestamp;
     }
     record.failure_code = failureCode;
-    await dropObjects(record);
-    revokeGrantsForMedia(record.id, timestamp);
+    await dropObjects(record, cleanupReasonForReject(failureCode));
+    await revokeGrantsForMedia(record.id, timestamp);
+    // 回收结果（对象键被清空 / 状态与 failure_code）必须落库：否则重启后
+    // 会看到 `rawRef` 仍在的 rejected 行，cleanupOrphans 也会重复尝试删同一个键。
+    return (await store.saveMediaIfCurrent(record, expected)) === 1;
   }
 
   const getMedia: AppMediaService['getMedia'] = async ({ actor, mediaId }) => {
     requireActor(actor);
-    return { status: 200, media: toProjection(ownedRecord(actor, mediaId)) };
+    return { status: 200, media: toProjection(await ownedRecord(actor, mediaId)) };
   };
 
-  const deleteMediaUnclaimed: AppMediaService['deleteMedia'] = async ({ actor, mediaId, ifMatch, idempotencyKey }) => {
+  const deleteMedia: AppMediaService['deleteMedia'] = async ({ actor, mediaId, ifMatch, idempotencyKey }) => {
     requireActor(actor);
     requireIdempotencyKey(idempotencyKey);
-    const record = ownedRecord(actor, mediaId);
     const requestHash = hashRequest({ op: 'delete', mediaId, ifMatch: ifMatch ?? null });
-    const key = `${actor.ownerId}:delete:${idempotencyKey}`;
-    const prior = idempotency.get(key);
-    if (prior !== undefined) {
-      if (prior.requestHash !== requestHash) {
-        throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同的删除请求使用');
-      }
-      const replay = ownedRecord(actor, prior.mediaId);
+    const opened = await openIdempotentRequest(
+      actor,
+      'DELETE',
+      MEDIA_IDEMPOTENCY_PATHS.remove,
+      idempotencyKey,
+      requestHash,
+      '同一 Idempotency-Key 已被不同的删除请求使用',
+    );
+    if ('prior' in opened) {
+      const replayId = replayOrConflict(opened.prior, requestHash, '同一 Idempotency-Key 已被不同的删除请求使用');
+      const replay = await ownedRecord(actor, replayId);
       return { status: 202, ack: { accepted: true }, revision: replay.revision };
     }
-    requireIfMatch(ifMatch, record.revision);
-    const timestamp = at();
-    if (record.state !== 'deleted') {
-      if (canTransition(record.state, 'deleting')) record.state = 'deleting';
+    const { slot } = opened;
+    try {
+      const record = await ownedRecord(actor, mediaId);
+      requireIfMatch(ifMatch, record.revision);
+      // 本次删除的写入前置条件（同上：删除与完成可以并发，见 snapshotOf）。
+      const expected = snapshotOf(record);
+      const timestamp = at();
+      if (record.state !== 'deleted') {
+        if (canTransition(record.state, 'deleting')) record.state = 'deleting';
+        record.updatedAt = timestamp;
+      }
+      // **即使记录已是 `deleted`**（上一次未确认删除）也重试回收：不得因状态已终态而丢掉重试依据。
+      // 未确认删除时 `rawRef` / `derivativeRef` 会被保留（见 dropObjects）；对外语义仍是 202 已删除。
+      await dropObjects(record, 'owner_delete');
+      record.state = 'deleted';
       record.updatedAt = timestamp;
+      await revokeGrantsForMedia(record.id, timestamp);
+      record.revision += 1;
+      if ((await store.saveMediaIfCurrent(record, expected)) === 0) {
+        // 删除也只对「读完时的 revision/state」生效：期间若有过一次完成/过期，这一行的
+        // 结论已经由先到者写下，这里不许把 `deleted` 盖回去。
+        const current = await store.getMedia(record.id);
+        if (current === null) throw new ApiError('NOT_FOUND', '媒体不存在');
+        if (current.state !== 'deleted') await staleWriteFailure(record, expected, '删除');
+        // 并发的另一次删除已经落地：删除语义幂等，按库里的真实 revision 回报 202。
+        await slot.settle(current.id);
+        return { status: 202, ack: { accepted: true }, revision: current.revision };
+      }
+      await slot.settle(record.id);
+      return { status: 202, ack: { accepted: true }, revision: record.revision };
+    } finally {
+      await slot.release();
     }
-    // **即使记录已是 `deleted`**（上一次未确认删除）也重试回收：不得因状态已终态而丢掉重试依据。
-    // 未确认删除时 `rawRef` / `derivativeRef` 会被保留（见 dropObjects）；对外语义仍是 202 已删除。
-    await dropObjects(record);
-    record.state = 'deleted';
-    record.updatedAt = timestamp;
-    revokeGrantsForMedia(record.id, timestamp);
-    record.revision += 1;
-    idempotency.set(key, { requestHash, mediaId: record.id });
-    return { status: 202, ack: { accepted: true }, revision: record.revision };
-  };
-
-  /** 并发同键保护后的 `deleteMedia`（避免同键并发重复自增 revision）。 */
-  const deleteMedia: AppMediaService['deleteMedia'] = (request) => {
-    const key = claimScope(request.actor.ownerId, 'delete', request.idempotencyKey);
-    return key === null
-      ? deleteMediaUnclaimed(request)
-      : withKeyClaim(key, () => deleteMediaUnclaimed(request));
   };
 
   // ------------------------------------------------------- 私有 owner 访问
@@ -1021,7 +1194,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   const grantMediaAccess: AppMediaService['grantMediaAccess'] = async ({ actor, mediaId, ifMatch, idempotencyKey }) => {
     requireActor(actor);
     requireIdempotencyKey(idempotencyKey);
-    const record = ownedRecord(actor, mediaId);
+    const record = await ownedRecord(actor, mediaId);
     requireIfMatch(ifMatch, record.revision);
     if (record.state !== 'ready') {
       throw new ApiError('OBJECT_UNAVAILABLE', '媒体尚未就绪');
@@ -1102,8 +1275,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     if (content === null || !content.published || !content.approved) {
       throw new ApiError('NOT_FOUND', '公开内容不存在');
     }
-    const record = records.get(mediaRef.media_id);
-    if (record === undefined || record.state !== 'ready' || record.purpose !== 'community_image') {
+    const record = await store.getMedia(mediaRef.media_id);
+    if (record === null || record.state !== 'ready' || record.purpose !== 'community_image') {
       throw new ApiError('NOT_FOUND', '公开内容不存在');
     }
     if (slot === 'attachment') {
@@ -1139,7 +1312,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       authEpoch: actor.authEpoch,
       exp: expiresAt,
     });
-    grants.set(grantId, {
+    await store.createGrant({
       grantId,
       tokenHash: tokenFactory.hash(token),
       requesterId: actor.ownerId,
@@ -1182,8 +1355,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     if (typeof accessToken !== 'string' || accessToken.length === 0 || accessToken.length > 512) {
       throw new ApiError('INVALID_REQUEST', '缺少或非法的 X-Media-Access-Token 头');
     }
-    const grant = grants.get(grantId);
-    if (grant === undefined) throw new ApiError('NOT_FOUND', '授权不存在');
+    const grant = await store.getGrant(grantId);
+    if (grant === null) throw new ApiError('NOT_FOUND', '授权不存在');
     if (grant.tokenHash !== tokenFactory.hash(accessToken)) throw new ApiError('NOT_FOUND', '授权不存在');
     // 契约：「grant 绑定同一登录主体、内容/媒体/头像版本及用途 epoch …… 每次取图复核全部当前条件，
     // **失效统一 404**」。因此主体/会话/epoch 不符一律与「授权不存在」**逐字节同形** 404
@@ -1198,9 +1371,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     if (grant.revokedAt !== null || grant.expiresAt <= at()) {
       throw new ApiError('NOT_FOUND', '授权不存在');
     }
-    const record = records.get(grant.mediaId);
+    const record = await store.getMedia(grant.mediaId);
     if (
-      record === undefined ||
+      record === null ||
       record.state !== 'ready' ||
       record.purpose !== 'community_image' ||
       record.revision !== grant.mediaRevision
@@ -1239,10 +1412,11 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     async expireInitiated() {
       const timestamp = at();
       let expired = 0;
-      for (const record of records.values()) {
+      for (const record of await store.listMediaByState(['initiated'])) {
         if (record.state === 'initiated' && record.expiresAt <= timestamp) {
-          await reject(record, 'expired');
-          expired += 1;
+          // 只有真的把 `rejected` 落库才算「过期了一条」：条件写 0 行说明这行已经被并发的
+          // 删除/完成推进过，过期结论不成立，也不许把先到者的终态覆盖回去。
+          if (await reject(record, 'expired', snapshotOf(record))) expired += 1;
         }
       }
       return { expired };
@@ -1252,16 +1426,47 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       let removedObjects = 0;
       let pendingObjects = 0;
       let revokedGrants = 0;
-      for (const record of records.values()) {
-        if (record.state === 'rejected' || record.state === 'deleted') {
-          const outcome = await dropObjects(record);
-          removedObjects += outcome.removed;
-          pendingObjects += outcome.pending;
-          revokedGrants += revokeGrantsForMedia(record.id, timestamp);
-        }
+      // 本轮已经试过的对象键：台账扫描**跳过**它们，避免同一个对象在一轮里被删两次、
+      // 也避免 pending 被重复计数（否则「一次清扫重试了几次」这个读数就没意义了）。
+      const attemptedThisSweep = new Set<string>();
+      for (const record of await store.listMediaByState(['rejected', 'deleted'])) {
+        const outcome = await dropObjects(
+          record,
+          record.state === 'deleted' ? 'owner_delete' : 'reject_cleanup',
+          attemptedThisSweep,
+        );
+        removedObjects += outcome.removed;
+        pendingObjects += outcome.pending;
+        revokedGrants += await revokeGrantsForMedia(record.id, timestamp);
+        // 回收结果落库：否则重启后同一个键会被再次尝试删除（pending 永远不收敛）。
+        // 但清理器读到的也是快照，所以仍是条件写：期间被并发删除/推进（revision 变了）时
+        // 0 行即放弃落库——对象回收本身已发生且可重入，下一轮按真行继续收敛。
+        await store.saveMediaIfCurrent(record, snapshotOf(record));
       }
-      for (const [grantId, grant] of grants) {
-        if (grant.expiresAt <= timestamp || grant.revokedAt !== null) grants.delete(grantId);
+      // **清理台账扫描**（监工 1022-0659 轮 P1）：上面那一轮只认「还挂在真行上的引用」，
+      // 而本 P1 丢的恰恰是**没有父行可挂**的对象（CAS=0 失利者刚生成、桶又没删掉的衍生件）。
+      // 台账行独立于父行存活，因此这里按行重试即可收敛：确认删除成功 ⇒ 删行；仍未确认 ⇒
+      // 保留行并累加 `attempts`（下一轮再来）。重复执行天然幂等（对象删除本身幂等）。
+      for (const entry of await store.listObjectCleanup()) {
+        if (attemptedThisSweep.has(entry.objectRef)) continue;
+        let confirmed = false;
+        try {
+          confirmed = await objectStore.deleteObject(entry.objectRef);
+        } catch {
+          confirmed = false;
+        }
+        if (!confirmed) {
+          pendingObjects += 1;
+          // 记一次尝试：`attempts` 只用于「这个对象试了几轮还清不掉」的可观测性。
+          await recordCleanupIntent(entry.mediaId, entry.objectRef, entry.reason);
+          continue;
+        }
+        removedObjects += 1;
+        await forgetCleanupIntent(entry.objectRef);
+      }
+      // 过期或已撤销的授权不再需要：从台账删除（`community_media_grants` 的 TTL 上限只有 300s）。
+      for (const grant of await store.listStaleGrants(timestamp)) {
+        await store.deleteGrant(grant.grantId);
       }
       return {
         removedObjects,
@@ -1272,14 +1477,16 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     },
     async stats() {
       return {
-        mediaCount: records.size,
+        mediaCount: await store.countMedia(),
         objectCount: await attemptAsync(() => objectStore.objectCount()),
-        grantCount: grants.size,
+        grantCount: await store.countGrants(),
       };
     },
-    serverObjectKeys(mediaId) {
-      const record = records.get(mediaId);
-      if (record === undefined) return null;
+    async serverObjectKeys(mediaId) {
+      // **必须查持久化台账**：本服务不再持有进程内登记册，重启后的新进程只能从真库回答
+      // 「这条媒体在桶里的原始键/衍生键是什么」——这正是 W12 要接通的那一环。
+      const record = await store.getMedia(mediaId);
+      if (record === null) return null;
       return { rawRef: record.rawRef, derivativeRef: record.derivativeRef };
     },
   };
@@ -1335,7 +1542,7 @@ export async function readOwnerMediaContent(
   if (projection.state !== 'ready') {
     throw new ApiError('OBJECT_UNAVAILABLE', '媒体尚未就绪', { retryable: false });
   }
-  const keys = media.serverObjectKeys(input.mediaId);
+  const keys = await media.serverObjectKeys(input.mediaId);
   const source: OwnerContentOutcome['source'] = keys?.derivativeRef == null ? 'raw' : 'derivative';
   const objectRef = source === 'derivative' ? keys?.derivativeRef : keys?.rawRef;
   const object =

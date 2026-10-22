@@ -116,7 +116,7 @@ async function call(app, method, url, token, { payload, headers } = {}) {
 }
 
 async function clientUpload(app, mediaId, bytes) {
-  const keys = app.mediaService.serverObjectKeys(mediaId);
+  const keys = await app.mediaService.serverObjectKeys(mediaId);
   assert.ok(keys !== null && typeof keys.rawRef === 'string');
   await app.mediaObjectStore.putObject(keys.rawRef, bytes, 'application/octet-stream');
 }
@@ -237,7 +237,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       assert.equal(afterDelete.body.data.state, 'deleted');
 
       // 核心断言（改前会失败）：未确认删除的对象**引用必须还在**，否则重试依据永久丢失。
-      const keysAfterFailure = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keysAfterFailure = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.ok(
         keysAfterFailure.rawRef !== null || keysAfterFailure.derivativeRef !== null,
         `未确认删除必须保留重试依据，实际 rawRef=${keysAfterFailure.rawRef} derivativeRef=${keysAfterFailure.derivativeRef}`,
@@ -250,7 +250,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       assert.equal(swept.pendingObjects, 0);
       assert.equal(swept.remainingObjects, 0, `remainingObjects=${swept.remainingObjects} 应为 0`);
       assert.equal(await inner.objectCount(), 0);
-      const keysFinal = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keysFinal = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.equal(keysFinal.rawRef, null);
       assert.equal(keysFinal.derivativeRef, null);
     } finally {
@@ -269,7 +269,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
         headers: { 'idempotency-key': KEY('retryfalse-delete'), 'if-match': `"${revision}"` },
       });
       assert.equal(deleted.status, 202, JSON.stringify(deleted.body));
-      const keysAfterFailure = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keysAfterFailure = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.equal(typeof keysAfterFailure.rawRef, 'string', 'false（未确认）同样不得清空引用');
       assert.equal(typeof keysAfterFailure.derivativeRef, 'string', 'false（未确认）同样不得清空引用');
       assert.equal(await inner.objectCount(), 2);
@@ -278,7 +278,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       const stillFailing = await scoped.app.mediaService.cleanupOrphans();
       assert.equal(stillFailing.pendingObjects, 1, `pendingObjects=${stillFailing.pendingObjects} 应为 1`);
       assert.equal(stillFailing.remainingObjects, 1);
-      const keysMid = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keysMid = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.equal(typeof keysMid.rawRef, 'string', '清扫失败后重试依据仍在');
 
       // 故障预算耗尽（端口恢复）：重试成功。
@@ -287,7 +287,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       assert.equal(recovered.pendingObjects, 0);
       assert.equal(recovered.remainingObjects, 0);
       assert.equal(await inner.objectCount(), 0);
-      const keysFinal = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keysFinal = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.equal(keysFinal.rawRef, null);
       assert.equal(keysFinal.derivativeRef, null);
     } finally {
@@ -307,7 +307,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       });
       assert.equal(first.status, 202, JSON.stringify(first.body));
       assert.equal(await inner.objectCount(), 2, '两次删除都失败，两个对象仍在');
-      assert.equal(typeof scoped.app.mediaService.serverObjectKeys(mediaId).rawRef, 'string');
+      assert.equal(typeof (await scoped.app.mediaService.serverObjectKeys(mediaId))?.rawRef, 'string');
 
       const second = await call(scoped.app, 'DELETE', `/api/v1/media/${mediaId}`, token, {
         // 第一次删除已把 revision 自增到 revision+1；用新幂等键 + 当前版本强 ETag 触发一次真正的重试。
@@ -315,7 +315,7 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       });
       assert.equal(second.status, 202, JSON.stringify(second.body));
       assert.equal(await inner.objectCount(), 0, '重复删除必须重试并真正回收对象');
-      const keys = scoped.app.mediaService.serverObjectKeys(mediaId);
+      const keys = await scoped.app.mediaService.serverObjectKeys(mediaId);
       assert.equal(keys.rawRef, null);
       assert.equal(keys.derivativeRef, null);
     } finally {
@@ -342,14 +342,14 @@ test('GY-I06 HTTP 访问面：归属同形 404、短效句柄失效、审核上�
       assert.equal(completed.status, 400, JSON.stringify(completed.body));
       const rejected = await call(scoped2.app, 'GET', `/api/v1/media/${mediaId}`, token);
       assert.equal(rejected.body.data.state, 'rejected');
-      assert.equal(typeof scoped2.app.mediaService.serverObjectKeys(mediaId).rawRef, 'string', '回收失败不得丢引用');
+      assert.equal(typeof (await scoped2.app.mediaService.serverObjectKeys(mediaId))?.rawRef, 'string', '回收失败不得丢引用');
       assert.equal(await inner2.objectCount(), 1);
 
       const swept = await scoped2.app.mediaService.cleanupOrphans();
       assert.ok(swept.removedObjects >= 1, `removedObjects=${swept.removedObjects} 应 ≥1`);
       assert.equal(swept.remainingObjects, 0);
       assert.equal(await inner2.objectCount(), 0);
-      assert.equal(scoped2.app.mediaService.serverObjectKeys(mediaId).rawRef, null);
+      assert.equal((await scoped2.app.mediaService.serverObjectKeys(mediaId))?.rawRef, null);
     } finally {
       await scoped2.app.close();
     }

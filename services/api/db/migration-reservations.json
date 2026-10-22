@@ -15,19 +15,10 @@
     "services/api/db/migrations/，与 0028_moderation_persistence.sql 共存 ⇒ 现无任何「有意缺号」。",
     "reservations 保持为空数组而不是删文件：三条不变量改为自然成立（28 个文件 + 0 保留 === max 28），",
     "机制与 DEFAULT_RESERVATIONS_FILE 的落位判据（不许进 migrations/）仍受 tests/unit/migration-reservations.test.mjs 守护。",
-    "【2026-10-22 F13 行级作者注销引用切片 / 迁移 0030】main 末项是 0028；#419（feat/gy-r28-media-object-cleanup）",
-    "持有 0029_media_object_cleanup.sql 且**尚未合入** ⇒ 本片落 0030 时树上必然缺 29。",
-    "按 migrate.ts:160-171 的三条不变量（undeclaredGaps 为空 / count + 保留数 === max / reservedButPresent 为空），",
-    "缺号必须在此显式登记，否则体检判红。29 号条目在 #419 合入 origin/main 后**必须立刻删除**",
-    "（届时 0029 真实落盘 ⇒ reservedButPresent 非空 ⇒ count + 保留数 > max ⇒ 强制删条目）。"
+    "【2026-10-22 F13 行级作者注销引用切片 / 迁移 0030 · 已按 remove_when 清空】落 0030 时 #419 的",
+    "0029_media_object_cleanup.sql 还在分支上 ⇒ 本台账登记过 29（owner #419）。**#419 已合入 origin/main",
+    "（056cf424）**、0029 已真实落盘 ⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
+    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。"
   ],
-  "reservations": [
-    {
-      "version": 29,
-      "filename": "0029_media_object_cleanup.sql",
-      "owner": "#419（feat/gy-r28-media-object-cleanup）",
-      "reason": "媒体对象清理台账迁移在 #419 分支上在途、尚未合入 origin/main；本片（F13 行级作者注销引用，迁移 0030）因此缺 29 号。",
-      "remove_when": "#419 合入 origin/main（0029_media_object_cleanup.sql 真实出现在 services/api/db/migrations/）即删除本条目"
-    }
-  ]
+  "reservations": []
 }
