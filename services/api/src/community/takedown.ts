@@ -76,12 +76,16 @@ export function withTakedownObserver(
       const result = await store.commitPostIfCurrent(id, expected, patch, moderation);
       if (result.ok && patch.visibility === 'hidden' && result.record.visibility === 'hidden') {
         try {
-          await options.events.publish({
-            event: 'takedown',
-            ownerId: result.record.author_id,
-            target: { type: 'post', id: result.record.id, revision: expected.revision },
-            reason,
-          });
+          // 迁移 0030：已注销内容（`author_id = NULL`）**没有可通知的账户主体** ⇒ 不投递。
+          // ⛔ 不要给事件塞 `ownerId: null`：事件端口按契约要求非空主体，那会造一条无人可收的孤儿通知。
+          if (result.record.author_id !== null) {
+            await options.events.publish({
+              event: 'takedown',
+              ownerId: result.record.author_id,
+              target: { type: 'post', id: result.record.id, revision: expected.revision },
+              reason,
+            });
+          }
         } catch {
           // 通知失败不影响已生效的处置；事件端口自身如实标注未投递。
         }

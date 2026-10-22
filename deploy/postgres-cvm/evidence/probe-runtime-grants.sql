@@ -93,14 +93,14 @@ UPDATE public.messages
    SET read_at = now(), revision = revision + 1
  WHERE false;
 
-\echo '-- [community_posts] SELECT 15 列'
-SELECT id, revision, author_id, title, body, crop_id, region_code, media_ids,
+\echo '-- [community_posts] SELECT 16 列（0030：含行内注销引用）'
+SELECT id, revision, author_id, anonymized_author_ref, title, body, crop_id, region_code, media_ids,
        linked_knowledge_type, linked_knowledge_id, linked_knowledge_revision,
        visibility, audit_state, created_at, updated_at
   FROM public.community_posts
  WHERE author_id = '00000000-0000-4000-8000-000000000000';
 
-\echo '-- [community_posts] INSERT 15 列（store-pg.ts:330 起）'
+\echo '-- [community_posts] INSERT 15 列（store-pg.ts 的 insertPost；0030 的新列不进 INSERT 清单）'
 INSERT INTO public.community_posts
        (id, author_id, revision, title, body, crop_id, region_code, media_ids,
         linked_knowledge_type, linked_knowledge_id, linked_knowledge_revision,
@@ -110,29 +110,31 @@ SELECT gen_random_uuid(), NULL, 1, NULL, NULL, NULL, NULL, NULL,
  WHERE false
 ON CONFLICT (id) DO NOTHING;
 
-\echo '-- [community_posts] UPDATE 12 列（store-pg.ts:399）'
+\echo '-- [community_posts] UPDATE 14 列（0030：+ author_id / anonymized_author_ref，注销清理用）'
 UPDATE public.community_posts
    SET revision = revision + 1, title = NULL, body = NULL, crop_id = NULL,
        region_code = NULL, media_ids = NULL, linked_knowledge_type = NULL,
        linked_knowledge_id = NULL, linked_knowledge_revision = NULL,
-       visibility = NULL, audit_state = NULL, updated_at = now()
+       visibility = NULL, audit_state = NULL, updated_at = now(),
+       author_id = NULL, anonymized_author_ref = NULL
  WHERE false;
 
-\echo '-- [community_comments] SELECT 8 列'
-SELECT id, revision, post_id, author_id, body, visibility, audit_state, created_at
+\echo '-- [community_comments] SELECT 9 列（0030：含行内注销引用）'
+SELECT id, revision, post_id, author_id, anonymized_author_ref, body, visibility, audit_state, created_at
   FROM public.community_comments
  WHERE post_id = '00000000-0000-4000-8000-000000000000';
 
-\echo '-- [community_comments] INSERT 8 列（store-pg.ts:531）'
+\echo '-- [community_comments] INSERT 8 列（store-pg.ts 的 insertComment；新列不进 INSERT 清单）'
 INSERT INTO public.community_comments
        (id, revision, post_id, author_id, body, visibility, audit_state, created_at)
 SELECT gen_random_uuid(), 1, NULL, NULL, NULL, NULL, NULL, now()
  WHERE false
 ON CONFLICT (id) DO NOTHING;
 
-\echo '-- [community_comments] UPDATE 4 列（store-pg.ts:452）'
+\echo '-- [community_comments] UPDATE 6 列（0030：+ author_id / anonymized_author_ref，注销清理用）'
 UPDATE public.community_comments
-   SET revision = revision + 1, body = NULL, visibility = NULL, audit_state = NULL
+   SET revision = revision + 1, body = NULL, visibility = NULL, audit_state = NULL,
+       author_id = NULL, anonymized_author_ref = NULL
  WHERE false;
 
 \echo '-- [community_likes] INSERT 3 列（store-pg.ts:575 点赞）'

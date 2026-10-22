@@ -344,15 +344,16 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(communityAudit.retained, 2, 'F13：1 帖 + 1 评论保留（单列读数）');
   assert.equal(communityAudit.redacted, 0);
   assert.equal(communityAudit.hiddenMedia, 0);
-  assert.equal(communityAudit.blocked, 1, '行级作者引用/引用持久化未完成 ⇒ 如实 blocked');
+  assert.equal(communityAudit.blocked, undefined, '迁移 0030 后正常路径不再有未完成项（行级替换 + 行内持久化都已落地）');
+  assert.equal(communityAudit.authorRefsReplaced, 2, '本主体的 1 帖 + 1 评论的作者指针各替换 1 行');
   assert.deepEqual(
     audit.map((entry) => entry.userId),
     [mine.id, mine.id, mine.id, mine.id, mine.id],
     '审计只记目标主体',
   );
 
-  // 回执：四个既有模块在线行如实 `completed`；社区域因"行级作者引用未替换/引用未持久化"
-  // **如实 blocked**（不是 completed）——F13 的保留/脱敏已完成，但作者引用这条要求未完成。
+  // 回执：五个模块的在线行**都**如实 `completed`（社区域的"行级作者引用未替换/引用未持久化"
+  // 两项已由迁移 0030 + 列级授权消除；能力缺失/生成失败仍会 blocked，见 retention 的反向控制）。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
   for (const module of ['favorites', 'history', 'messages', 'conversations']) {
@@ -360,9 +361,10 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     assert.equal(byModule.get(module).backup_state, 'pending');
     assert.equal(byModule.get(module).error_code, null);
   }
-  assert.equal(byModule.get('community').online_state, 'blocked', '未完成项 ⇒ 不得冒充 completed');
-  assert.equal(byModule.get('community').error_code, 'POLICY_BLOCKED');
+  assert.equal(byModule.get('community').online_state, 'completed', '没有未完成项 ⇒ completed');
+  assert.equal(byModule.get('community').error_code, null);
   assert.equal(byModule.get('community').backup_state, 'pending');
+  // 备份阶段未接线 ⇒ 整份请求仍不是 completed（"时钟到期不等于完成"），但**不再**因为社区 blocked。
   assert.equal(app.userDataDeletion.completionStatus(requestId).completed, false);
 
   // 证据里**看得见**台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
@@ -374,14 +376,17 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
   assert.ok(
     evidence.community.startsWith(
-      'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;community:media-hidden:0;community:blocked:1',
+      'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;'
+        + 'community:media-hidden:0;community:author-refs-replaced:2',
     ),
-    `社区证据串必须分开报改动/保留/blocked：${evidence.community}`,
+    `社区证据串必须分开报改动/保留/媒体/作者指针替换：${evidence.community}`,
   );
-  // 装配路径的作者目录必须**真的能去身份**：blocked 只允许来自"行级引用/持久化"两条事实，
-  // 不允许出现"能力缺失/调用失败"（那说明 app 没接上 `anonymize`，或它抛错了）。
-  assert.ok(evidence.community.includes('author-row-reference-not-replaced'), evidence.community);
-  assert.ok(evidence.community.includes('author-reference-not-durable'), evidence.community);
+  assert.equal(
+    evidence.community.includes('community:blocked'),
+    false,
+    `正常路径不得再出现 blocked 段：${evidence.community}`,
+  );
+  // 装配路径的作者目录必须**真的能去身份**，且不得出现"能力缺失/调用失败"。
   assert.equal(evidence.community.includes('author-reference-unavailable'), false, evidence.community);
   assert.equal(evidence.community.includes('author-reference-failed'), false, evidence.community);
 });
@@ -420,10 +425,12 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
-  // 社区：0 行也照实回 0，保留/脱敏/媒体三段同样在（不是"表都没有"折叠成 blocked）。
-  // 无保留内容 ⇒ 没有触发"作者引用"这条要求 ⇒ blocked=0、模块如实 completed。
+  // 社区：0 行也照实回 0，保留/脱敏/媒体/作者指针替换四段同样在（不是"表都没有"折叠成 blocked）。
+  // 注意 `author-refs-replaced:0` 必须**写出来**：0 与"没做/没这一段"是两件事（否则真库缺 0030 时
+  // 会被误读成"替换了 0 行"而不是"语句根本跑不了"）。
   assert.equal(
     evidence.community,
-    'community:online-purged:0;community:idempotency-purged:0;community:retained:0;community:redacted:0;community:media-hidden:0',
+    'community:online-purged:0;community:idempotency-purged:0;community:retained:0;community:redacted:0;'
+      + 'community:media-hidden:0;community:author-refs-replaced:0',
   );
 });

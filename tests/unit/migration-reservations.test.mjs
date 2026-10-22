@@ -18,11 +18,18 @@
  *
  * **合流后状态（2026-10-22，#434 合流 `origin/main` = `d4d48088`）**：`0027_admin_audit_observability.sql`
  * 已随上游（#428）真实落进 `services/api/db/migrations/`，与 `0028_moderation_persistence.sql` 共存。
- * 按第 ③ 条不变量与 `remove_when`，台账里的 27 号条目**已删除**（`reservations: []`），
- * 故「当前仓库」那条用例的**快照读数**由「gaps=[27] / reserved=[27]」改为「gaps=[] / reserved=[]」，
- * 判据与负控制**一条未删**：三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）
- * 与「躺平判据回归」全部保留；其中原「0027 合流预演」只是把台账来源换成夹具（真实台账已按要求清空），
- * 断言逐字不动。
+ * 按第 ③ 条不变量与 `remove_when`，台账里的 27 号条目**已删除**。
+ *
+ * **本片状态（2026-10-22，F13 行级作者注销引用 / 迁移 `0030_community_author_ref.sql`）**：
+ * 落 0030 时 `0029_media_object_cleanup.sql` 仍只在 #419 分支上 ⇒ 台账登记过一条 29 号
+ * （`owner: #419`，`remove_when: #419 合入即删`），「当前仓库」用例的快照读数当时是 `gaps=[29] / reserved=[29]`。
+ *
+ * **合流后状态（2026-10-22 最后一轮，`origin/main` = `056cf424`，#419／#484／#485／#486 入 main）**：
+ * `0029_media_object_cleanup.sql` 已真实落盘、`0030` 在其后 ⇒ `0001..0030` **连续无缺号**；
+ * 29 号条目按它自己的 `remove_when` **删除**，台账回到 `reservations: []`，
+ * 快照读数恢复为 `gaps=[] / reserved=[]`。判据与负控制**一条未删**：
+ * 三条不变量、四组负控制（①未声明缺号 ②躺平登记 ③多登记掩盖漏片 ④台账形状）与「躺平判据回归」全部保留
+ * （后者仍用夹具台账把 27 号喂进去，断言逐字不动）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -66,7 +73,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0027 已随 origin/main 落盘 ⇒ 无缺号且台账已清空，三条不变量全部成立', () => {
+test('迁移编号/当前仓库：#419 的 0029 已入 main ⇒ 台账按 remove_when 清空，0001..0030 连续、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -76,10 +83,10 @@ test('迁移编号/当前仓库：0027 已随 origin/main 落盘 ⇒ 无缺号�
   assert.deepEqual(
     numbering.gaps,
     [],
-    `#434 合流 origin/main @ d4d48088 后树上不应再有缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    `#419（0029_media_object_cleanup.sql）已合入 ⇒ 树上不应再有缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [], '0027 已随上游落盘 ⇒ 台账必须按 remove_when 清空（保留项不许躺平）');
-  assert.deepEqual(reservations, [], '保留台账必须真的是空表：0027 落盘后不许留下任何「已补齐」的登记');
+  assert.deepEqual(numbering.reserved, [], '#419 落盘后 29 号保留条目必须按 remove_when 删除（保留项不许躺平）');
+  assert.deepEqual(reservations, [], '保留台账必须回到空数组：没有任何「有意缺号」');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -97,12 +104,21 @@ test('迁移编号/当前仓库：0027 已随 origin/main 落盘 ⇒ 无缺号�
   assert.equal(
     files.includes('0027_admin_audit_observability.sql'),
     true,
-    '0027 已随 origin/main（#428）落盘：本分支不再缺号，保留条目也已按 remove_when 删除',
+    '0027 已随 origin/main（#428）落盘：保留条目按 remove_when 删除，没有留下「已补齐」的登记',
   );
-  assert.ok(files.includes('0028_moderation_persistence.sql'), '本片的 0028 必须在清单里（迁移号固定，⛔ 不许换号）');
+  assert.ok(files.includes('0028_moderation_persistence.sql'), '0028 必须在清单里（迁移号固定，⛔ 不许换号）');
+  assert.equal(
+    files.includes('0029_media_object_cleanup.sql'),
+    true,
+    '0029 已随 #419 合入 origin/main（056cf424）⇒ 真实文件必须在清单里，且台账不得再登记它',
+  );
+  assert.ok(
+    files.includes('0030_community_author_ref.sql'),
+    '本片（F13 行级作者注销引用）必须落在 0030，⛔ 不许占用 0028/0029',
+  );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
-    '台账的 filename 前缀必须与 version 一致（防止「登记 27 却写成 0028_…」这种自欺）',
+    '台账的 filename 前缀必须与 version 一致（防止「登记 29 却写成 0030_…」这种自欺）',
   );
 });
 
@@ -216,10 +232,16 @@ test('迁移编号/负控制④：台账形状坏了必须抛错（⛔ 不静默
 });
 
 test('迁移编号/躺平判据回归：0027 已在真实目录里 + 台账仍登记 27 ⇒ 立即判红并点名 0027', () => {
-  const realNames = readdirSync(DEFAULT_MIGRATIONS_DIR).filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name));
+  // 本用例模拟 **#434 合流那一时刻**的目录（0028 为末项、1..28 连续）。
+  // 后续片（0030 / F13 行级作者引用）刻意不纳入：它会让 29 成为「有意缺号」，
+  // 而这条用例判的是「补齐后仍登记 ⇒ 判红」的机制，不是当前树的缺号快照
+  // （当前树用 29 号保留台账，由上面「当前仓库」那条守护）。
+  const realNames = readdirSync(DEFAULT_MIGRATIONS_DIR)
+    .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
+    .filter((name) => Number(name.slice(0, 4)) <= 28);
   const dir = makeMigrationsDir([...realNames, '0027_admin_audit_observability.sql']);
-  // 真实台账在 #434 合流后已按要求清空（`reservations: []`），故这里的「仍登记 27」用夹具喂进去：
-  // 断言逐字保留（判的是**机制还咬不咬人**，不是当前台账内容；台账内容由上面「当前仓库」那条守护）。
+  // 真实台账按 #419 在途登记的 29 与这条负控制无关：判的是**机制还咬不咬人**，
+  // 不是当前台账内容（台账内容由上面「当前仓库」那条守护）。
   const ledger = makeReservationsFile([reservation()]);
   try {
     const numbering = inspectMigrationNumbering(discoverMigrations(dir), loadMigrationReservations(ledger));

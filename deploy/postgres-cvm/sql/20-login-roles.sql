@@ -478,7 +478,12 @@ GRANT UPDATE (read_at,revision)
 GRANT DELETE ON public.messages TO gengyun_api_runtime;
 
 -- 社区帖子（迁移 0022）：:470 的 INSERT、:400 的 UPDATE、:379 的 SELECT … FOR UPDATE。
-GRANT SELECT (id,author_id,revision,title,body,crop_id,region_code,media_ids,
+-- 迁移 0030（F13 行级作者注销引用）新增行内列 `anonymized_author_ref`：读路径要按行投影注销引用
+-- ⇒ SELECT 面补该列；注销清理要在**同一事务**里把 `author_id` 置 NULL 并写入匿名引用
+-- ⇒ UPDATE 面补 `author_id, anonymized_author_ref`（这是本表 UPDATE 首次包含 `author_id`：
+-- 只用于"把作者指针换成 NULL"这一条显式语句，不引入任何改作者归属的入口）。
+-- ⛔ INSERT 列表不动（新列创建时恒为 NULL，`author_id` 仍由投稿写入）。
+GRANT SELECT (id,author_id,anonymized_author_ref,revision,title,body,crop_id,region_code,media_ids,
               linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
               visibility,audit_state,created_at,updated_at)
   ON public.community_posts TO gengyun_api_runtime;
@@ -486,18 +491,21 @@ GRANT INSERT (id,author_id,revision,title,body,crop_id,region_code,media_ids,
               linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
               visibility,audit_state,created_at,updated_at)
   ON public.community_posts TO gengyun_api_runtime;
--- 删除/重审只改 visibility/audit_state/updated_at；revision 只在补丁显式携带时写。
+-- 删除/重审只改 visibility/audit_state/updated_at；revision 只在补丁显式携带时写；
+-- 注销清理另需 author_id/anonymized_author_ref（见上）。
 GRANT UPDATE (revision,title,body,crop_id,region_code,media_ids,
               linked_knowledge_type,linked_knowledge_id,linked_knowledge_revision,
-              visibility,audit_state,updated_at)
+              visibility,audit_state,updated_at,author_id,anonymized_author_ref)
   ON public.community_posts TO gengyun_api_runtime;
 
 -- 社区评论（迁移 0022）：:531 的 INSERT、:454 的 UPDATE、:435 的 SELECT … FOR UPDATE。
-GRANT SELECT (id,post_id,author_id,revision,body,visibility,audit_state,created_at)
+-- 迁移 0030：与帖子同口径 —— SELECT 补 `anonymized_author_ref`，UPDATE 补
+-- `author_id, anonymized_author_ref`（注销清理置 NULL + 写匿名引用）；INSERT 列清单不动。
+GRANT SELECT (id,post_id,author_id,anonymized_author_ref,revision,body,visibility,audit_state,created_at)
   ON public.community_comments TO gengyun_api_runtime;
 GRANT INSERT (id,post_id,author_id,revision,body,visibility,audit_state,created_at)
   ON public.community_comments TO gengyun_api_runtime;
-GRANT UPDATE (revision,body,visibility,audit_state)
+GRANT UPDATE (revision,body,visibility,audit_state,author_id,anonymized_author_ref)
   ON public.community_comments TO gengyun_api_runtime;
 
 -- 点赞（迁移 0022）：:575 的 INSERT、:587 的 DELETE（WHERE 读 target_type/target_id/user_id，
