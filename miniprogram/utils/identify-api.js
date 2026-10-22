@@ -132,7 +132,8 @@ const FAILURE_BRANCHES = ['uncertain', 'out_of_coverage_or_low_quality', 'permis
  * 六类分支的呈现与重试语义（镜像 `branches.ts` 的 `BRANCH_DESCRIPTORS`）。
  *
  * `jobState` 为 `null` = **受理前**拦截（权限拒绝），不存在任务；
- * `retryable` 为 false 时页面**不得**给出重试入口。
+ * `retryable` 为 false 时页面**不得**给出重试入口；`retryable` 为 true 只表示页面上有恢复入口，
+ * `requiresHumanAction` 为 true 时（授权/登录类）必须由人点按钮，⛔ 页面不得自动重试。
  */
 const BRANCH_GUIDE = {
   uncertain: {
@@ -142,6 +143,7 @@ const BRANCH_GUIDE = {
     errorCode: null,
     retryable: true,
     retryAction: 'new_task',
+    requiresHumanAction: false,
     reason: null
   },
   out_of_coverage_or_low_quality: {
@@ -151,6 +153,7 @@ const BRANCH_GUIDE = {
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: '拍摄对象不在当前覆盖范围内'
   },
   permission_denied: {
@@ -160,6 +163,7 @@ const BRANCH_GUIDE = {
     errorCode: 'CONSENT_REQUIRED',
     retryable: true,
     retryAction: 'grant_consent',
+    requiresHumanAction: true,
     reason: null
   },
   no_result: {
@@ -169,6 +173,7 @@ const BRANCH_GUIDE = {
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: null
   },
   timeout: {
@@ -178,6 +183,7 @@ const BRANCH_GUIDE = {
     errorCode: 'PROVIDER_TIMEOUT',
     retryable: true,
     retryAction: 'new_task',
+    requiresHumanAction: false,
     reason: null
   },
   reshoot_required: {
@@ -187,6 +193,7 @@ const BRANCH_GUIDE = {
     errorCode: null,
     retryable: true,
     retryAction: 'reshoot',
+    requiresHumanAction: false,
     reason: '拍摄条件不合格，建议重新拍摄'
   }
 }
@@ -839,6 +846,7 @@ function describeBranch(branch) {
   return {
     branch: entry.branch, label: entry.label, jobState: entry.jobState, errorCode: entry.errorCode,
     retryable: entry.retryable, retryAction: entry.retryAction,
+    requiresHumanAction: entry.requiresHumanAction === true,
     retryLabel: entry.retryAction === null ? '' : (RETRY_ACTION_LABELS[entry.retryAction] || '重试'),
     reason: entry.reason,
     createsJob: entry.jobState !== null

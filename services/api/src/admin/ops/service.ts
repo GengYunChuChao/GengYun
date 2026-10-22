@@ -48,7 +48,7 @@ import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
-import type { FeatureFlagsPort, FlagAuditRow } from './flags-pg.ts';
+import { flagReadFailure, type FeatureFlagsPort, type FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
@@ -644,10 +644,10 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 功能开关
   // -------------------------------------------------------------------------
 
-  /** 端口读失败 ⇒ 503。传输/超时类按可重试（读面幂等）；形状不符由 `flagShapeFailure` 判不可重试。 */
-  function flagReadFailure(error: unknown): never {
+  /** 端口读失败 ⇒ 503。可重试性只认 `flags-pg.ts` 的 `flagReadFailure`（无法归类 ⇒ 不可重试，原始 code 进 `details`）。 */
+  function throwFlagReadFailure(error: unknown): never {
     if (error instanceof ApiError) throw error;
-    throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', { retryable: true });
+    throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', flagReadFailure(error));
   }
 
   /** 库内数据与契约闭集不一致 ⇒ **失败关闭**（`unrecognized`），⛔ 不许伪造成「三键全 false」。 */
@@ -687,7 +687,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     try {
       rows = await port.list();
     } catch (error) {
-      flagReadFailure(error);
+      throwFlagReadFailure(error);
     }
     if (!Array.isArray(rows)) flagShapeFailure('全局开关读取返回不是数组');
     const byKey = new Map<string, FlagView>();
@@ -712,7 +712,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     try {
       row = await port.get(key);
     } catch (error) {
-      flagReadFailure(error);
+      throwFlagReadFailure(error);
     }
     if (row === null) return null;
     return acceptFlagRow(row);

@@ -387,6 +387,27 @@ test('GY-I09 六类失败/边界分支：闭集、契约内落点与可重试语
     assert.equal(BRANCH_DESCRIPTORS.permission_denied.jobState, null);
     assert.equal(BRANCH_DESCRIPTORS.permission_denied.errorCode, 'CONSENT_REQUIRED');
     assert.equal(retrySemanticsFor('permission_denied').retryAction, 'grant_consent');
+    // R31-S-retryable：本轮**保留** `retryable`（页面靠它渲染「去授权」入口，见 miniprogram
+    // `pages/identify/identify.wxml`），但把「必须先由人补授权」显式建模成独立字段，
+    // ⛔ 任何自动重试调度都不得据 `retryable:true` 触发（授权不经人工介入永远不会变好）。
+    assert.equal(
+      retrySemanticsFor('permission_denied').retryable,
+      true,
+      '恢复入口仍需保留（否则页面失去「去授权」按钮）',
+    );
+    assert.equal(
+      retrySemanticsFor('permission_denied').requiresHumanAction,
+      true,
+      '授权类分支必须先由人介入，自动重试不可能成功',
+    );
+    for (const branch of FAILURE_BRANCHES) {
+      if (branch === 'permission_denied') continue;
+      assert.equal(
+        retrySemanticsFor(branch).requiresHumanAction,
+        false,
+        `${branch} 的恢复入口不依赖人工前置动作，不得被误标`,
+      );
+    }
   });
 
   await t.test('[反例] 上报非闭集分支 → failed PROVIDER_OUTCOME_UNKNOWN（不静默忽略）', async () => {
@@ -409,6 +430,11 @@ test('GY-I09 六类失败/边界分支：闭集、契约内落点与可重试语
     for (const entry of guide) {
       assert.equal(entry.job_state, BRANCH_DESCRIPTORS[entry.branch].jobState);
       assert.equal(entry.error_code, BRANCH_DESCRIPTORS[entry.branch].errorCode);
+      assert.equal(
+        entry.requires_human_action,
+        retrySemanticsFor(entry.branch).requiresHumanAction,
+        '人工介入轴必须与 branches.ts 同源投影',
+      );
       assert.equal(entry.creates_job, branchCreatesJob(entry.branch));
     }
   });

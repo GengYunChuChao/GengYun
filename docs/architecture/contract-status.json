@@ -3213,8 +3213,8 @@
         },
         {
           "path": "services/api/src/profile/service.ts",
-          "symbol": "cropItems",
-          "lines": "86-87"
+          "symbol": "async put(input: Identity, body: ProfileInput, ifMatch: string, idempotencyKey: string)",
+          "lines": "75-106"
         },
         {
           "test": "tests/unit/profile-api.test.mjs",
