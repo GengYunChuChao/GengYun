@@ -137,7 +137,6 @@ import {
   createUnavailableBackupPurgePort,
   createUserDataDeletion,
   type BackupPurgePort,
-  type OwnerPurgeCounts,
   type OwnerPurgeStore,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
@@ -174,6 +173,8 @@ import { createCommunityService, type CommunityService } from './community/servi
 import { createMemoryCommunityStore, type CommunityStore } from './community/store.ts';
 import { createPostgresCommunityStore } from './community/store-pg.ts';
 import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
+// #15 社区域注销保留/去身份端口：清社区行（F13 保留/脱敏/媒体）＋ 作者换随机注销引用。
+import { createCommunityOwnerPurgePort } from './community/purge.ts';
 import type { AuthorDirectory } from './community/types.ts';
 import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
 import {
@@ -1525,15 +1526,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           ) => messagesPurgeSnapshot(ownerId, client),
         }),
   };
-  // #15 社区域（R31-S6）：社区 store 的按主体清理原语（分表计数）。
-  // 未实现时**调用即抛**（协议折叠 blocked + HANDLER_FAILED），⛔ 不在装配期假装"能清"。
-  const communityPurge = communityStore.purgeOwnerData?.bind(communityStore);
-  const communityPurgeOwner = async (ownerId: string): Promise<OwnerPurgeCounts> => {
-    if (communityPurge === undefined) {
-      throw new Error('社区域存储未实现按主体清理（purgeOwnerData）：拒绝假装清空');
-    }
-    return communityPurge(ownerId);
-  };
+  // #15 社区域（R31-S6 / F13 保留规则）：**同一份**社区 store ＋ **同一个**作者目录 ⇒ 一个端口。
+  // 端口内做两件事并如实分账：清社区行（`purgeOwnerData`：保留/脱敏/媒体）＋ 把作者投影换成
+  // 随机注销引用（`AuthorDirectory.anonymize`）。未完成项（行级 author_id 受 FK/列级授权约束、
+  // 注销引用未持久化）由端口计入 `blocked`，⛔ 不用保留行数冒充 completed。
+  const communityPurgePort = createCommunityOwnerPurgePort({
+    store: communityStore,
+    authors: communityAuthors,
+  });
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1560,18 +1560,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           }
         : {}),
     },
-    // #15 社区域（R31-S6）：**无条件注入** —— 只要社区 store 在装配期存在，注销就一定会清
-    // 该主体的帖子/评论/点赞/举报（这正是 S6 的缺口：删号后社区行留着）。
-    // 社区域只有**分表计数**原语 `purgeOwnerData`（正文行数 + 幂等台账行数），没有"只报正文
-    // 行数"的旧语义；端口上 `deleteAllByOwner` 是必填项，这里让它与 `purgeOwnerData`
-    // 走**同一条路**（`makeHandler` 优先用 `purgeOwnerData`，因此台账行数不会被丢掉）。
-    communityStore: {
-      async deleteAllByOwner(ownerId) {
-        const counts = await communityPurgeOwner(ownerId);
-        return counts.records;
-      },
-      purgeOwnerData: (ownerId) => communityPurgeOwner(ownerId),
-    },
+    // #15 社区域（R31-S6 / F13）：**无条件注入** —— 只要社区 store 在装配期存在，注销就会按
+    // F13 保留/脱敏该主体的帖子与评论、移除不可脱敏媒体、清点赞与举报自由文本，并把作者
+    // 投影换成注销引用；未完成项如实 blocked（见 `community/purge.ts`）。
+    // 端口同时提供 `deleteAllByOwner`（= `records`）与分表计数的 `purgeOwnerData`；
+    // `makeHandler` 优先走后者，因此保留/脱敏/媒体/台账读数都不会丢。
+    communityStore: communityPurgePort,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,

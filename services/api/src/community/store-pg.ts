@@ -66,6 +66,7 @@ import type {
   ReportRecord,
 } from './store.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
+import { redactPersonalInfo } from './personal-info.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
 export interface SqlRunner {
@@ -784,47 +785,97 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
     },
 
     /**
-     * 注销清理（GY-I15 · R31-S6）。
+     * 注销清理（GY-I15 · R31-S6 / **F13 保留规则**，P2 返修）。
      *
-     * ## 为什么帖子/评论是**软删**、点赞是**物理删**、举报是**清自由文本**
+     * 口径逐条对齐 `docs/implementation-requirements.md` F13（第 279–280 行）与内存实现：
      *
-     * 三条口径各自跟着"删了会不会拆到别人"走，与既有代码的先例一致：
+     * 1. **帖子/评论保留**（⛔ 不再无条件 `visibility='deleted'`）。已审核、无个人信息的安全正文
+     *    不因注销改变可见性；作者投影由 `AuthorDirectory.anonymize` 换成注销引用。
+     *    **不推进 revision**：审核结论按 `(type,id,revision)` + 正文摘要绑定（`service.ts`
+     *    的 `effectiveState`），为"标记"升版本会让安全正文因查不到结论而整条消失，
+     *    与 F13「保留正文」相悖。
+     * 2. **个人信息清除**：正文命中联系方式/精确门牌（`redactPersonalInfo`）⇒ 改写正文并
+     *    `revision+1`。旧摘要不再匹配 ⇒ 读取时自动降级为"待重审"（退出公开面、行仍在库），
+     *    与"先审后发"一致。**不**复制旧审核结论去放行新文本（那等于绕过重审）。
+     * 3. **不能可靠脱敏的媒体 ⇒ 移除引用**（`media_ids='{}'`）。社区存储没有媒体去标识的证据面
+     *    （媒体投影未接线），按 F13"不能可靠脱敏的媒体隐藏／移除"处理；正文照旧保留。
+     *    仅移除媒体时**不推进 revision**（正文摘要未变 ⇒ 旧审核结论仍有效、内容继续可见）。
+     * 4. **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销不复活、不改写作者自己的
+     *    删除语义（旧路径语义一行未动）。
+     * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 只清 `detail`**（行与 state 保留，
+     *    处置轨迹是审核域留痕）；**本域幂等台账**按 `scope` 前缀清空。
      *
-     * 1. **帖子/评论 ⇒ 软删（`visibility='deleted'`）**。评论表 `post_id` 是
-     *    `ON DELETE CASCADE`（迁移 `0022` 建表处），硬删一条帖子会把**别人**在下面的评论
-     *    一起带走；而 `community_likes` 的 `(target_type, target_id)` 没有外键，硬删会让
-     *    点赞行变成指向不存在目标的悬挂引用。软删是本仓对"作者删除"的既有语义
-     *    （`deletePost`/`deleteComment` 走的就是 `commitXIfCurrent` 写 `visibility='deleted'`），
-     *    注销对内容一律复用同一条路，不发明第二种"消失"。
-     * 2. **点赞 ⇒ 物理删**。`community_likes` 是集合语义、没有历史价值，且已有表级 DELETE 授权；
-     *    留着它等于保留"该用户点过哪些帖"的行为痕迹，与注销目的相反。
-     * 3. **举报 ⇒ 只清 `detail`（自由文本），行与 `state` 保留**。
-     *    - `detail` 是举报人自己写的叙述，是这一行里唯一的自由文本 PII 面（`reason_code` 是闭集）；
-     *    - 行必须留：运营侧正在处置的举报一旦被物理删除，被举报内容就失去处置依据，且
-     *      `community_reports` 已被 `takedown`/审核链路按 id 引用；
-     *    - 与既有 `messages` 域的注销先例同口径（见 `privacy/user-data-deletion.ts` 顶部注释：
-     *      会话/消息按"清正文、留骨架"处理）。
-     *
-     * 计数是**真实影响行数**（软删只数真正从非 deleted 变成 deleted 的行；举报只数 detail
-     * 非空的行），不是"扫了多少行"。
+     * 计数（见 `CommunityOwnerPurgeCounts`）：`records` 是**真实改动/删除**的行数，
+     * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，⛔ 不用一个合计数字冒充"保留也完成了"。
      */
     async purgeOwnerData(ownerId) {
       return withTransaction<CommunityOwnerPurgeCounts>(pool, async (sql) => {
         const stamp = new Date().toISOString();
+        let records = 0;
+        let retained = 0;
+        let redacted = 0;
+        let hiddenMedia = 0;
+        // 先锁住本主体的内容行再逐行判定：清除规则在 JS 里（纯函数），
+        // 同一事务内完成"读 → 判 → 写"，不产生检查-写入窗口。
         const posts = (await sql.query(
-          `UPDATE community_posts
-              SET visibility = 'deleted'::visibility, revision = revision + 1, updated_at = $2::timestamptz
+          `SELECT id, revision, title, body, media_ids
+             FROM community_posts
             WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
-            RETURNING id`,
-          [ownerId, stamp],
-        )).rows;
-        const comments = (await sql.query(
-          `UPDATE community_comments
-              SET visibility = 'deleted'::visibility, revision = revision + 1
-            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
-            RETURNING id`,
+            FOR UPDATE`,
           [ownerId],
         )).rows;
+        for (const row of posts) {
+          const id = String(row.id);
+          const title = redactPersonalInfo(String(row.title));
+          const body = redactPersonalInfo(String(row.body));
+          const media = asTextArray(row.media_ids);
+          if (title.removed + body.removed > 0) {
+            await sql.query(
+              `UPDATE community_posts
+                  SET title = $2, body = $3, media_ids = '{}'::text[], revision = revision + 1,
+                      updated_at = $4::timestamptz
+                WHERE id = $1::uuid`,
+              [id, title.text, body.text, stamp],
+            );
+            records += 1;
+            redacted += 1;
+            hiddenMedia += media.length;
+          } else if (media.length > 0) {
+            await sql.query(
+              `UPDATE community_posts
+                  SET media_ids = '{}'::text[], updated_at = $2::timestamptz
+                WHERE id = $1::uuid`,
+              [id, stamp],
+            );
+            records += 1;
+            retained += 1;
+            hiddenMedia += media.length;
+          } else {
+            retained += 1;
+          }
+        }
+        const comments = (await sql.query(
+          `SELECT id, revision, body
+             FROM community_comments
+            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            FOR UPDATE`,
+          [ownerId],
+        )).rows;
+        for (const row of comments) {
+          const body = redactPersonalInfo(String(row.body));
+          if (body.removed > 0) {
+            await sql.query(
+              `UPDATE community_comments
+                  SET body = $2, revision = revision + 1
+                WHERE id = $1::uuid`,
+              [String(row.id), body.text],
+            );
+            records += 1;
+            redacted += 1;
+          } else {
+            retained += 1;
+          }
+        }
         const reports = (await sql.query(
           `UPDATE community_reports
               SET detail = NULL, revision = revision + 1
@@ -832,17 +883,19 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
             RETURNING id`,
           [ownerId],
         )).rows;
+        records += reports.length;
         const likes = (await sql.query(
           `DELETE FROM community_likes WHERE user_id = $1::uuid RETURNING target_id`,
           [ownerId],
         )).rows;
+        records += likes.length;
         // `scope` 形如 `<subject>\n<METHOD>\n<path>`（`auth/idempotency.ts:111-113`），
         // 主体是首段 ⇒ 前缀匹配 `ownerId + '\n'`。用 LIKE 而不是 =，因为一条请求不会有多个 scope。
         const idempotency = (await sql.query(
           `DELETE FROM community_idempotency WHERE scope LIKE $1::text RETURNING scope`,
           [`${ownerId}\n%`],
         )).rows;
-        return { records: posts.length + comments.length + reports.length + likes.length, idempotency: idempotency.length };
+        return { records, idempotency: idempotency.length, retained, redacted, hiddenMedia };
       });
     },
 

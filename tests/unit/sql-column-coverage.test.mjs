@@ -345,22 +345,34 @@ const OPAQUE_ALLOWLIST = [
  * 合计：字面量 143→150、UPDATE 21→25、SELECT 68→69、DELETE 27→29、RETURNING 56→61（3/4/5/6/7 五条
  * 都带 RETURNING 计行数）、columnRequirements 1186→1212（这 7 条引用到的列，逐列已覆盖 0 缺）。
  * 引用到的表数与 SELECT * 处数**不变**（新语句只碰已登记的表、没有新增 `*` 面）。
+ *
+ * R32-P2（F13 保留规则返修，`supervisor-1022-0932-pr474`）再重算：注销清理从"两条无条件软删"
+ * 改为"**保留** + 逐行脱敏/媒体移除"，语句形态随之变化（**没有新增表/授权缺口**）：
+ *   - 原 3/4（posts/comments 的软删 UPDATE，各带 RETURNING）删除；
+ *   - 新增 `SELECT … FROM community_posts … FOR UPDATE` 与 `SELECT … FROM community_comments … FOR UPDATE`
+ *     （+SELECT 2、+行锁 2）；
+ *   - 新增 `UPDATE community_posts SET title,body,media_ids,revision,updated_at`（脱敏）与
+ *     `UPDATE community_posts SET media_ids,updated_at`（仅移除媒体）：净 +UPDATE 1；
+ *   - 新增 `UPDATE community_comments SET body,revision`（脱敏）：净 +0（抵掉原软删那条里的 UPDATE 计数）；
+ *   - reports 的 `UPDATE … detail=NULL`、likes/idempotency 的 DELETE 原样保留（RETURNING 3 条不变）。
+ * 合计：字面量 150→153、UPDATE 25→26、SELECT 69→71、DELETE 29（不变）、
+ * RETURNING 61→59（-2，两条软删 UPDATE 的 RETURNING 消失）、columnRequirements 1212→1222。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 150,
-  statements: { INSERT: 27, UPDATE: 25, SELECT: 69, DELETE: 29 },
-  returningClauses: 61,
+  sqlLiterals: 153,
+  statements: { INSERT: 27, UPDATE: 26, SELECT: 71, DELETE: 29 },
+  returningClauses: 59,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1212,
+  columnRequirements: 1222,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 35,
+  community: 38,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -417,23 +429,27 @@ const TABLE_WIDE_COLUMN = '*';
  * R31-S6/S1：社区域 +7 条语句（逐条清单见上面 `EXPECTED_READINGS` 的注释）⇒ 字面量 230→237、
  * UPDATE 35→39、SELECT 129→130、DELETE 30→32、RETURNING 71→76、行锁 FOR UPDATE 22→23、
  * rowLockRequirements 22→23、columnRequirements 1502→1528（covered 1448→1474，缺口仍 0）。
+ * R32-P2（F13 保留规则返修）：社区域注销清理改为"保留 + 逐行脱敏/媒体移除"（清单见上），
+ * 相对上一行再 +3 条语句 ⇒ 字面量 237→240、UPDATE 39→40、SELECT 130→132、RETURNING 76→74、
+ * 行锁 FOR UPDATE 23→25、rowLockRequirements 23→25、columnRequirements 1528→1538
+ * （covered 1474→1484，缺口仍 0；没有新增表，也没有新增授权面）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 17,
-  sqlLiterals: 237,
-  statements: { INSERT: 36, UPDATE: 39, SELECT: 130, DELETE: 32 },
-  returningClauses: 76,
+  sqlLiterals: 240,
+  statements: { INSERT: 36, UPDATE: 40, SELECT: 132, DELETE: 32 },
+  returningClauses: 74,
   onConflictClauses: 21,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 23, SHARE: 16 },
+  rowLocks: { UPDATE: 25, SHARE: 16 },
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 39,
-  columnRequirements: 1528,
-  coveredRequirements: 1474,
+  columnRequirements: 1538,
+  coveredRequirements: 1484,
   ledgerExemptions: 33,
-  rowLockRequirements: 23,
+  rowLockRequirements: 25,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -443,7 +459,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 35,
+  'community': 38,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

@@ -952,9 +952,10 @@ test('C6 模拟与真实交叉：stub 产出的 id 在 real 装配下一律 503�
   const adminStub = await adminAccount(stubWorld, ['sources:read', 'sources:write', 'audit:read']);
   const seeded = await seedB(stubWorld, a);
   const deletion = await requestDeletion(stubWorld, a, 'i22-c6-del-0001');
-  // GY-I15（#15 · R31-S6）起**社区域进了注销闭集**：受理注销即软删该主体的帖子/评论（`revision+1`）。
-  // 因此「注入 store 的行可跨装配读取」这条探针若继续拿 `a` 的帖子当载体，验到的就不再是存储实例
-  // 边界而是注销清理（后者在下面单独断言）。这里另起一位用户放一条，保持探针原意不变。
+  // GY-I15（#15 · R31-S6 / R32-P2）起**社区域进了注销闭集**，但按 F13 **保留**安全帖子/评论
+  // （不再软删，见 `docs/verification/gy-r32-i15-f13-retention-20261022.md`）。
+  // 本探针只关心「注入 store 的行可跨装配读取」这条**存储实例边界**，因此仍另起一位用户放一条，
+  // 避免用例同时承担"注销保留/去身份"的语义（那由社区注销用例单独断言）。
   const keeper = await account(stubWorld, 'c6-keeper');
   const keeperPost = await call(stubWorld.app, 'POST', `${API}/posts`, keeper, {
     payload: { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] },
@@ -994,13 +995,17 @@ test('C6 模拟与真实交叉：stub 产出的 id 在 real 装配下一律 503�
   assert.equal(presetFavorites.status, 200, presetFavorites.text);
   const presetPost = await call(presetApp, 'GET', `${API}/posts/${keeperPostId}`, a);
   assert.equal(presetPost.status, 200, `注入 store 的行（他人帖子）在 preset_demo 必须可读：${presetPost.text}`);
-  // 反向：已受理注销主体的帖子在同一个注入 store 里已是软删态 ⇒ 读不到（社区域清理真的落到了行上，
-  // 而不是只在回执里写一个 «cleaned» 字符串）。
+  // F13（R32-P2）：注销受理后，该主体的**安全帖子保留**（不再软删 ⇒ 不再是 404）；
+  // 正文与公开可见性原样。⚠️ 作者投影是**每个装配实例独立的**本地假名目录，
+  // 注销引用的跨实例持久化尚未取得（见证据页 §4 的 `author-reference-not-durable`），
+  // 因此这里不断言作者状态，只断言"内容确实保留了"。
   const presetPurgedPost = await call(presetApp, 'GET', `${API}/posts/${seeded.postId}`, a);
-  assert.equal(presetPurgedPost.status, 404, `注销受理后该主体的帖子必须读不到：${presetPurgedPost.text}`);
+  assert.equal(presetPurgedPost.status, 200, `F13：注销后安全帖子必须保留可读：${presetPurgedPost.text}`);
+  assert.equal(presetPurgedPost.body.data.visibility, 'published');
+  assert.equal(presetPurgedPost.body.data.body, CLEAN_BODY, '保留正文，不得因注销清空');
   const presetMedia = await call(presetApp, 'GET', `${API}/media/${seeded.media.mediaId}`, a);
   assert.equal(presetMedia.status, 404, `媒体记录属服务实例内部，跨装配应 404：${presetMedia.text}`);
-  note(`C6 preset_demo：注入 store 的 messages/favorites/posts(他人) → ${presetMessages.status}/${presetFavorites.status}/${presetPost.status}；已注销主体的帖子 → ${presetPurgedPost.status}（社区域清理已落到行）；媒体 → ${presetMedia.status}（实例内记录，非模式差异）`);
+  note(`C6 preset_demo：注入 store 的 messages/favorites/posts(他人) → ${presetMessages.status}/${presetFavorites.status}/${presetPost.status}；已注销主体的安全帖子 → ${presetPurgedPost.status}（F13 保留）；媒体 → ${presetMedia.status}（实例内记录，非模式差异）`);
 
   // ---- real 装配：同一批 id 一律 503（可解释的拒绝，不是「假装 404 不存在」） ----
   const realEnv = {

@@ -13,6 +13,7 @@
  * 再按其结果重放（恰好 1 条内容、恰好 1 次审核）。
  */
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
+import { redactPersonalInfo } from './personal-info.ts';
 
 export interface PostRecord {
   id: string;
@@ -164,14 +165,24 @@ export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>
 /**
  * 注销清理的分表计数（`community_reports`/`community_posts`/… 一次事务内的真实行数）。
  *
- * 形状与 `privacy` 的 `OwnerPurgeCounts`（`{ records, idempotency }`）**逐字段一致**，
- * 因此注销协调器可以直接把本值当证据用，不需要在装配处再做一次映射。
+ * 形状与 `privacy` 的 `OwnerPurgeCounts`（`{ records, idempotency }`）**逐字段兼容**，
+ * 并在其上**单列保留/脱敏/媒体**三类读数 —— F13 的注销是「保留正文」而不是「全部软删」，
+ * 一个合计数字无法自证"保留了哪些、隐藏了哪些"，因此这里把三类分开报：
+ *
+ *   - `records`：**真实改动/删除**的行数（正文脱敏的帖评 + 仅移除媒体的帖评 + 清 detail 的举报
+ *     + 物理删除的点赞）。**不含**"原样保留"的行 —— 保留不是一次写操作。
+ *   - `retained`：正文原样保留的帖子 + 评论数（含"只移除了媒体引用"的行）。
+ *   - `redacted`：正文因清除个人信息被改写的帖子 + 评论数。改写后旧审核结论（摘要绑定）
+ *     自动失效 ⇒ 该行退出公开面、等重审；这是保留 + 去 PII，不是删除。
+ *   - `hiddenMedia`：被移除的媒体引用条数。社区存储没有"媒体已可靠脱敏"的证据面
+ *     （媒体投影未接线），因此按 F13 的"不能可靠脱敏 ⇒ 移除"处理；正文照旧保留。
  */
 export interface CommunityOwnerPurgeCounts {
-  /** 被软删/清空的帖子 + 评论 + 举报，加上物理删除的点赞：该主体在社区域被处理的行数合计。 */
   records: number;
-  /** `community_idempotency` 里 `scope` 前缀属于该主体的行数。 */
   idempotency: number;
+  retained: number;
+  redacted: number;
+  hiddenMedia: number;
 }
 
 /**
@@ -290,13 +301,21 @@ export interface CommunityStore {
     patch: ReportCommitPatch,
   ): Promise<CommitResult<ReportRecord>>;
   /**
-   * 注销清理（GY-I15 · R31-S6）：把该用户名下**社区域**的数据按既定口径处理，返回真实处理行数。
+   * 注销清理（GY-I15 · R31-S6 / F13 保留规则）：把该用户名下**社区域**的数据按既定口径处理，
+   * 返回**分表真实行数**（保留/脱敏/媒体/改动/台账分开报）。
    *
-   * 口径（见 `store-pg.ts` 同名实现的注释）：帖子/评论**软删**（`visibility='deleted'` +
-   * revision 自增）、举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**。
+   * 口径（见 `store-pg.ts` 同名实现的注释与 `docs/implementation-requirements.md` F13）：
+   *   - **帖子/评论保留**：已审核、无个人信息的安全正文**不改可见性**（不因注销软删）；
+   *   - **个人信息清除**：正文命中联系方式/精确门牌等片段时替换为占位符，并推进 revision
+   *     （旧审核摘要失效 ⇒ 退出公开面、等重审；行仍在库）；
+   *   - **不能可靠脱敏的媒体移除**：`media_ids` 清空（正文保留）；
+   *   - 举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**、
+   *     本域幂等台账按主体清空；
+   *   - **作者主动删除（`visibility='deleted'`）的行原样跳过**：注销路径不复活、不改写
+   *     作者自己的删除语义。
    *
    * **可选方法**：与 `snapshotCounts` 同一条纪律——不把已有的测试替身一次性改红。装配处
-   * （`app.ts`）在缺失时按「该域没有清理能力」处理并**如实降级**（清单里该项记 `records: 0`），
+   * （`app.ts`）在缺失时按「该域没有清理能力」处理并**如实降级**（调用即抛 ⇒ blocked），
    * 不做静默假装。
    */
   purgeOwnerData?(ownerId: string): Promise<CommunityOwnerPurgeCounts>;
@@ -591,18 +610,57 @@ export function createMemoryCommunityStore(
       return { ok: true, record: cloneReport(next) };
     },
     async purgeOwnerData(ownerId) {
-      // 口径与 `store-pg.ts` 同名实现逐条对齐：帖子/评论软删、举报清自由文本、点赞物理删除。
+      // 口径与 `store-pg.ts` 同名实现逐条对齐（F13 保留规则，**不是**无条件软删）：
+      //   1. 帖子/评论保留可见性；正文命中个人信息才改写（改写 ⇒ 旧审核摘要失效 ⇒ 待重审）；
+      //   2. 媒体引用一律移除（社区没有"媒体已可靠脱敏"的证据面）；
+      //   3. 作者主动删除（visibility='deleted'）的行原样跳过；
+      //   4. 举报清自由文本、点赞物理删除、本域幂等台账按主体清空。
       let records = 0;
+      let retained = 0;
+      let redacted = 0;
+      let hiddenMedia = 0;
       const stamp = new Date(clockMs()).toISOString();
       for (const [id, post] of [...posts]) {
         if (post.author_id !== ownerId || post.visibility === 'deleted') continue;
-        posts.set(id, clonePost({ ...post, visibility: 'deleted', revision: post.revision + 1, updated_at: stamp }));
-        records += 1;
+        const title = redactPersonalInfo(post.title);
+        const body = redactPersonalInfo(post.body);
+        const media = [...post.media_ids];
+        if (title.removed + body.removed > 0) {
+          // 正文改了 ⇒ revision+1（旧 ETag 与旧审核摘要都失效，读取时自动降级为待重审）。
+          posts.set(
+            id,
+            clonePost({
+              ...post,
+              title: title.text,
+              body: body.text,
+              media_ids: [],
+              revision: post.revision + 1,
+              updated_at: stamp,
+            }),
+          );
+          records += 1;
+          redacted += 1;
+          hiddenMedia += media.length;
+        } else if (media.length > 0) {
+          // 正文安全、只隐藏媒体：**不推进 revision**（正文摘要未变，审核结论仍成立 ⇒ 内容继续可见）。
+          posts.set(id, clonePost({ ...post, media_ids: [], updated_at: stamp }));
+          records += 1;
+          retained += 1;
+          hiddenMedia += media.length;
+        } else {
+          retained += 1;
+        }
       }
       for (const [id, comment] of [...comments]) {
         if (comment.author_id !== ownerId || comment.visibility === 'deleted') continue;
-        comments.set(id, cloneComment({ ...comment, visibility: 'deleted', revision: comment.revision + 1 }));
-        records += 1;
+        const body = redactPersonalInfo(comment.body);
+        if (body.removed > 0) {
+          comments.set(id, cloneComment({ ...comment, body: body.text, revision: comment.revision + 1 }));
+          records += 1;
+          redacted += 1;
+        } else {
+          retained += 1;
+        }
       }
       for (const [id, report] of [...reports]) {
         if (report.reporter_id !== ownerId || report.detail === null) continue;
@@ -624,7 +682,7 @@ export function createMemoryCommunityStore(
         idempotency.delete(key);
         idempotencyRows += 1;
       }
-      return { records, idempotency: idempotencyRows };
+      return { records, idempotency: idempotencyRows, retained, redacted, hiddenMedia };
     },
 
     async findIdempotency(scope, keyHash) {

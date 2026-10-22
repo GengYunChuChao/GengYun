@@ -170,11 +170,12 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await sharedLedgerRows(mine.id), 1);
   assert.equal(await sharedLedgerRows(others.id), 1);
 
-  // #15 社区域（R31-S6）：注销必须真清社区五张表上的**该主体**行。这里用真表 INSERT 造行
-  // （不经过内存替身），清空后按真表**行数**与**形态**核对，而不是"调用过就算"：
-  //   帖子/评论 ⇒ 软删（`visibility='deleted'` + `revision+1`，行还在：别人的回复不悬挂）；
-  //   点赞 ⇒ 物理删；举报 ⇒ 行与 `state` 保留、只清自由文本 `detail`。
-  // 每张表都给他人留 1 行：清空**不得越界**。
+  // #15 社区域（R31-S6 / R32-P2）：注销按 F13 处理社区五张表上的**该主体**行。这里用真表 INSERT
+  // 造行（不经过内存替身），处理完按真表**行数**与**形态**核对，而不是"调用过就算"：
+  //   帖子/评论 ⇒ **保留**（`visibility='published'`、`revision` 不动；安全正文不因注销消失）；
+  //   点赞 ⇒ 物理删；举报 ⇒ 行与 `state` 保留、只清自由文本 `detail`；
+  //   本域幂等台账 ⇒ 按主体清空。作者投影去身份与 blocked 读数为单独断言（见下）。
+  // 每张表都给他人留 1 行：处理**不得越界**。
   const communityIds = {
     minePost: randomUUID(),
     mineComment: randomUUID(),
@@ -289,21 +290,22 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   // 社区域（R31-S6）：**本主体清零、他人行保留** —— 形态与行数一起核（不是只看"调用过"）。
   const communityRowCount = async (table, column, ownerId) =>
     (await db.query(`SELECT count(*)::int n FROM ${table} WHERE ${column} = $1::uuid`, [ownerId])).rows[0].n;
-  // 帖子/评论：软删（行还在、`visibility='deleted'`、`revision+1`）——硬删会把别人在下面的评论带走。
+  // 帖子/评论：**F13 保留**（行还在、`visibility='published'`、`revision` 不动）——
+  // 内容安全、无个人信息、无媒体，注销不得把它软删（监工 `supervisor-1022-0932-pr474` P2）。
   const minePostRow = (
-    await db.query('SELECT visibility::text v, revision FROM community_posts WHERE id = $1::uuid', [
+    await db.query('SELECT visibility::text v, revision, body FROM community_posts WHERE id = $1::uuid', [
       communityIds.minePost,
     ])
   ).rows[0];
-  assert.equal(minePostRow?.v, 'deleted', '本主体帖子必须软删（visibility=deleted）');
-  assert.equal(minePostRow?.revision, 2, '软删必须推进 revision（否则读取侧 CAS 拦不住旧副本）');
+  assert.equal(minePostRow?.v, 'published', 'F13：本主体安全帖子必须保留公开，不得软删');
+  assert.equal(minePostRow?.revision, 1, '保留行不得为"标记"推进 revision（否则旧审核结论对不上）');
   const mineCommentRow = (
     await db.query('SELECT visibility::text v, revision FROM community_comments WHERE id = $1::uuid', [
       communityIds.mineComment,
     ])
   ).rows[0];
-  assert.equal(mineCommentRow?.v, 'deleted', '本主体评论必须软删');
-  assert.equal(mineCommentRow?.revision, 2);
+  assert.equal(mineCommentRow?.v, 'published', 'F13：本主体安全评论必须保留公开');
+  assert.equal(mineCommentRow?.revision, 1);
   // 点赞：物理删（集合语义、没有历史价值，留着等于保留"点过哪些帖"的痕迹）。
   assert.equal(await communityRowCount('community_likes', 'user_id', mine.id), 0, '本主体点赞必须物理删');
   // 举报：行与 `state` 保留（处置依据/轨迹要留痕），只清自由文本 `detail`。
@@ -333,25 +335,34 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await communityLedgerRows(others.id), 1, '他人社区台账不动');
 
   // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行、
-  // community 4 行（1 帖 + 1 评论 + 1 举报 + 1 点赞，软删只数真正从非 deleted 变 deleted 的行）。
+  // community **2 行真实改动**（1 举报自述 + 1 点赞；帖子/评论是保留，不是删除，故不进 online-purged）。
   // 会话域本用例没造行，但**必须**照实出现 0 —— 缺项说明该域没被驱动。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
-  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0, community: 4 });
+  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0, community: 2 });
+  const communityAudit = audit.find((entry) => entry.module === 'community');
+  assert.equal(communityAudit.retained, 2, 'F13：1 帖 + 1 评论保留（单列读数）');
+  assert.equal(communityAudit.redacted, 0);
+  assert.equal(communityAudit.hiddenMedia, 0);
+  assert.equal(communityAudit.blocked, 1, '行级作者引用/引用持久化未完成 ⇒ 如实 blocked');
   assert.deepEqual(
     audit.map((entry) => entry.userId),
     [mine.id, mine.id, mine.id, mine.id, mine.id],
     '审计只记目标主体',
   );
 
-  // 回执：五个模块的在线行都如实 `completed`，备份仍如实 `pending`（未接线不谎称完成）。
+  // 回执：四个既有模块在线行如实 `completed`；社区域因"行级作者引用未替换/引用未持久化"
+  // **如实 blocked**（不是 completed）——F13 的保留/脱敏已完成，但作者引用这条要求未完成。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
-  for (const module of ['favorites', 'history', 'messages', 'conversations', 'community']) {
+  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
     assert.equal(byModule.get(module).online_state, 'completed');
     assert.equal(byModule.get(module).backup_state, 'pending');
     assert.equal(byModule.get(module).error_code, null);
   }
+  assert.equal(byModule.get('community').online_state, 'blocked', '未完成项 ⇒ 不得冒充 completed');
+  assert.equal(byModule.get('community').error_code, 'POLICY_BLOCKED');
+  assert.equal(byModule.get('community').backup_state, 'pending');
   assert.equal(app.userDataDeletion.completionStatus(requestId).completed, false);
 
   // 证据里**看得见**台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
@@ -361,7 +372,18 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
   assert.equal(evidence.messages, 'messages:online-purged:1;messages:idempotency-purged:1');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
-  assert.equal(evidence.community, 'community:online-purged:4;community:idempotency-purged:2');
+  assert.ok(
+    evidence.community.startsWith(
+      'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;community:media-hidden:0;community:blocked:1',
+    ),
+    `社区证据串必须分开报改动/保留/blocked：${evidence.community}`,
+  );
+  // 装配路径的作者目录必须**真的能去身份**：blocked 只允许来自"行级引用/持久化"两条事实，
+  // 不允许出现"能力缺失/调用失败"（那说明 app 没接上 `anonymize`，或它抛错了）。
+  assert.ok(evidence.community.includes('author-row-reference-not-replaced'), evidence.community);
+  assert.ok(evidence.community.includes('author-reference-not-durable'), evidence.community);
+  assert.equal(evidence.community.includes('author-reference-unavailable'), false, evidence.community);
+  assert.equal(evidence.community.includes('author-reference-failed'), false, evidence.community);
 });
 
 test('注销清空·再次清空：0 行也如实回 0（不省略、不当作失败）', async (t) => {
@@ -398,6 +420,10 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
-  // 社区：0 行也照实回 0，且台账段同样在（不是"表都没有"折叠成 blocked）。
-  assert.equal(evidence.community, 'community:online-purged:0;community:idempotency-purged:0');
+  // 社区：0 行也照实回 0，保留/脱敏/媒体三段同样在（不是"表都没有"折叠成 blocked）。
+  // 无保留内容 ⇒ 没有触发"作者引用"这条要求 ⇒ blocked=0、模块如实 completed。
+  assert.equal(
+    evidence.community,
+    'community:online-purged:0;community:idempotency-purged:0;community:retained:0;community:redacted:0;community:media-hidden:0',
+  );
 });
