@@ -357,8 +357,18 @@ export interface ModerationLedger {
    * 内存实现没有该成员（`undefined`），调用方一律写 `await ledger.flush?.()`。
    * 持久实现的 `flush` 一旦拒绝，调用方必须按"没落库 ⇒ 不得发布"处理：审核结论不落库时，
    * 公开可见性不许翻成 `published`（写入面 fail-closed）。
+   *
+   * 语义要点：**未落定的写入不会被"队列已空"洗白**——持久实现保留失败项并在下一次 `flush`
+   * 重放，只有真的落库才放行（否则持续拒绝）。详见 `moderation/ledger-pg.ts`。
    */
   flush?(): Promise<void>;
+  /**
+   * 该记录是否**已确认落库**（只有持久实现知道；内存台账没有该成员）。
+   *
+   * 发布路径必须用它：内存里"看起来 approved"不等于账本里 approved。返回 `false` 的记录
+   * 不得被当成"已持久化／已批准"用于翻公开可见性（写面 fail-closed 的第二道闸）。
+   */
+  isDurable?(record: ModerationTaskRecord): boolean;
 }
 
 export function createModerationLedger(): ModerationLedger {

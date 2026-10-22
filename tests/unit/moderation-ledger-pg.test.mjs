@@ -180,10 +180,13 @@ test('LP6. 下架标记幂等：重放不新增行，内存 isWithdrawn 与落�
   }
 });
 
-test('LP7. flush 失败 ⇒ PROVIDER_UNAVAILABLE（且只抛一次，不永久毒化台账）', async () => {
-  const { pool } = makeRecordingPool({ fail: () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+test('LP7. flush 失败 ⇒ PROVIDER_UNAVAILABLE；**空队列不得洗白**，存储恢复后重放成功（不永久毒化台账）', async () => {
+  let armed = true;
+  const { pool, calls } = makeRecordingPool({
+    fail: () => (armed ? Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) : null),
+  });
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
-  ledger.create(record());
+  const stored = ledger.create(record());
 
   await assert.rejects(
     () => ledger.flush(),
@@ -193,7 +196,22 @@ test('LP7. flush 失败 ⇒ PROVIDER_UNAVAILABLE（且只抛一次，不永久�
       return true;
     },
   );
-  await ledger.flush(); // 第二次不再重复抛：调用方已按"未落库"处理，重试走新的业务调用
+  assert.equal(ledger.isDurable(stored), false, '未落库的记录不得被标成"已持久化"');
+
+  // 队列此刻已空：**不得**因为"没有新写入"就返回成功——否则内存里残留的结论会被当成已落库
+  // （#434 监工 P1 的洗白入口：首次建行失败 → 空队列 flush 成功 → 目标被 private→published）。
+  await assert.rejects(() => ledger.flush(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
+  assert.equal(ledger.isDurable(stored), false, '空队列 flush 之后仍不得被标成"已持久化"');
+
+  // 存储恢复 ⇒ 下一次 flush 重放失败项并落定：既不被洗白，也不永久毒化台账。
+  armed = false;
+  await ledger.flush();
+  assert.equal(ledger.isDurable(stored), true, '重放落定之后才是"已持久化"');
+  // 每次建行尝试都以退位语句开头 ⇒ 用它数"这条写入被真正试过几次"（首次 + 两次重放）。
+  assert.ok(
+    calls.filter((call) => call.text.includes('UPDATE public.moderation_decisions')).length >= 3,
+    '失败的建行必须被真正重试过（不是"抛一次就忘"）',
+  );
 });
 
 test('LP8. 语句超时/锁不可得（57014/55P03）⇒ PROVIDER_TIMEOUT，与 messages/store-pg.ts 同口径', async () => {
@@ -321,7 +339,14 @@ test('LP11. 真池路径（有 connect）：退位与插入包在同一个事务
 test('LP12. 事务内失败 ⇒ ROLLBACK 后抛 PROVIDER_UNAVAILABLE，且连接一定 release（不留悬挂事务）', async () => {
   const { pool, seen } = makeTransactionalPool({ failOn: 'INSERT' });
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
-  ledger.create(record());
+  const stored = ledger.create(record());
   await assert.rejects(() => ledger.flush(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
   assert.deepEqual(seen, ['BEGIN', 'UPDATE', 'INSERT', 'ROLLBACK', 'RELEASE'], '失败路径必须回滚并归还连接');
+  assert.equal(ledger.isDurable(stored), false, '回滚过的建行不算落库');
+
+  // 再 flush 一次（队列已空）：必须**重放**那次失败，且同样回滚并归还连接——
+  // 不允许"事务失败后空队列即放行"（#434 监工 P1）。
+  seen.length = 0;
+  await assert.rejects(() => ledger.flush(), (error) => error.code === 'PROVIDER_UNAVAILABLE');
+  assert.deepEqual(seen, ['BEGIN', 'UPDATE', 'INSERT', 'ROLLBACK', 'RELEASE'], '重放同样必须回滚并归还连接（不留悬挂事务）');
 });

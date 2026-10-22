@@ -21,6 +21,13 @@
  * （`service.ts:398-402` → `createFailClosedModerationService()`），因此**即便本表在场**，
  * real 模式也不会因为"有地方落库了"就伪造成功封套——本模块不改变那条边界。
  *
+ * ## 失败**不得**被"空队列"洗白（#434 监工 P1）
+ * 写入意图进一条**顺序日志**：成功落定才从前缀摘掉，失败项留在日志里。`flush()` 只有在
+ * 日志清空时才算落定；日志非空 ⇒ **先重放**（四条语句幂等），重放仍失败 ⇒ 继续抛错。
+ * 于是"第一次 INSERT 失败 → 内存 approved 残留 → 第二次 flush 空队列成功 → 目标被发布"
+ * 这条路径不再存在：失败过的建行不会被当成已落库，`isDurable()` 也不会承认它。
+ * 重放成功（存储恢复）后日志自然清空 ⇒ 调用方可以正常继续（不永久毒化台账）。
+ *
  * ## 不做 hydrate
  * 存量行"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
  * 不改社区契约）。本模块因此**只写不读**：进程启动时不回填内存台账，`byJobId/current/...`
@@ -49,9 +56,31 @@ function isTransactor(pool: SqlRunner): pool is SqlRunner & SqlTransactor {
 
 /** 持久台账：在同步台账之上多出 `flush()` 与不可伪装的 `persistent` 标记。 */
 export interface PostgresModerationLedger extends ModerationLedger {
-  /** 等待已入队写入落定；任何一次落库失败都会在此抛出。 */
+  /** 等待已入队写入落定；只要还有**未确认落库**的写入（含上一次失败留下的）就抛出。 */
   flush(): Promise<void>;
+  /**
+   * 该记录是否**已确认落库**：建行成功过、且名下没有未确认的写入。
+   *
+   * 发布路径必须用它：内存里"看起来 approved"不等于账本里 approved。返回 `false` 的记录
+   * 不得被当成"已持久化／已批准"用于翻公开可见性（#434 监工 P1）。
+   */
+  isDurable(record: ModerationTaskRecord): boolean;
   readonly persistent: true;
+}
+
+/**
+ * 一个"待落定写入"的登记项：`run` 是**幂等**的落库动作（建行 `ON CONFLICT (job_id) DO NOTHING`、
+ * 退位/更新按主键覆盖、下架 `ON CONFLICT (...) DO NOTHING`），因此失败后**重放安全**。
+ */
+interface WriteIntent {
+  /** 归属任务（下架标记没有 `job_id`）。 */
+  job_id: string | null;
+  /** 是否是建行：只有建行落定过，该 `job_id` 才算"库里有行"。 */
+  creates: boolean;
+  run: () => Promise<void>;
+  confirmed: boolean;
+  /** 是否已经被某次 `flush()` 报给调用方。用于区分"本次调用刚失败"与"上一次调用失败留下的"。 */
+  reported: boolean;
 }
 
 /**
@@ -121,15 +150,51 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
   const inner = createModerationLedger();
   const now = options.now ?? (() => new Date());
 
-  /** 串行队列：写入严格按调用顺序落库（同键的 supersede 与 insert 不会乱序）。 */
+  /** 写入严格按登记顺序落库的串行链。 */
   let chain: Promise<void> = Promise.resolve();
-  let pending: unknown = null;
 
-  function enqueue(run: () => Promise<void>): void {
-    chain = chain.then(run).catch((error: unknown) => {
-      // 首个失败即定案：后续写入照旧排队（保持顺序），但 flush 一定抛出。
-      pending ??= error;
-    });
+  /**
+   * 写入意图**顺序日志**：成功落定才从**前缀**摘掉，失败项一律留在日志里。
+   *
+   * 关键不变式：**日志非空 ⇔ 还有未确认落库的写入**。`flush()` 只有把日志清空才放行，
+   * 因此"失败被消费掉 + 空队列"不再等于"已落定"（`#434` 监工 P1 的洗白入口）。
+   */
+  const journal: WriteIntent[] = [];
+  /** 已确认落库的 `job_id`（建行成功过）；`isDurable` 的第一条判据。 */
+  const confirmedCreates = new Set<string>();
+  /** 最近一次失败（只用于 `flush()` 的错误文案；不承担"是否有未落定写入"的判据）。 */
+  let lastFailure: unknown = null;
+
+  /** 只有**前缀全部确认**才前移：中间失败不会让后面的成功把失败"顶掉"。 */
+  function pruneConfirmed(): void {
+    for (let head = journal[0]; head !== undefined && head.confirmed; head = journal[0]) journal.shift();
+  }
+
+  /** 一次成功的收尾（首次执行与重放**共用**同一段，保证两条路径的可信度一致）。 */
+  function settle(intent: WriteIntent): void {
+    intent.confirmed = true;
+    if (intent.creates && intent.job_id !== null) confirmedCreates.add(intent.job_id);
+    pruneConfirmed();
+  }
+
+  /** 把一条意图挂到串行链上（写入严格按登记顺序落库）。 */
+  function schedule(intent: WriteIntent): void {
+    chain = chain
+      .then(async () => {
+        await intent.run();
+        settle(intent);
+      })
+      .catch((error: unknown) => {
+        // 失败即**留在日志里**（不摘除、不清空）：`flush()` 会重放它；
+        // 在它真的落定之前，日志非空 ⇒ 任何 `flush()` 都拒绝。
+        lastFailure = error;
+      });
+  }
+
+  function enqueue(meta: { job_id: string | null; creates: boolean }, run: () => Promise<void>): void {
+    const intent: WriteIntent = { job_id: meta.job_id, creates: meta.creates, run, confirmed: false, reported: false };
+    journal.push(intent);
+    schedule(intent);
   }
 
   function stamp(value: string): string {
@@ -141,7 +206,7 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
     create(record) {
       // 先走内层：重复 job_id 在这里**同步**抛错，绝不会先写库再报错。
       const stored = inner.create(record);
-      enqueue(async () => {
+      enqueue({ job_id: stored.job_id, creates: true }, async () => {
         const insertValues = [
           stored.job_id,
           stored.target_ref.type,
@@ -205,7 +270,7 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
     update(record) {
       // 内层先判"任务是否存在"，保持与内存实现逐字一致的同步抛错。
       const stored = inner.update(record);
-      enqueue(async () => {
+      enqueue({ job_id: stored.job_id, creates: false }, async () => {
         await options.pool.query(UPDATE_SQL, [
           stored.job_id,
           stored.state,
@@ -232,7 +297,7 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
     history: (target) => inner.history(target),
     markWithdrawn(target) {
       inner.markWithdrawn(target);
-      enqueue(async () => {
+      enqueue({ job_id: null, creates: false }, async () => {
         await options.pool.query(WITHDRAW_SQL, [
           target.type,
           target.id,
@@ -243,14 +308,29 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
     },
     isWithdrawn: (target) => inner.isWithdrawn(target),
     snapshotCounts: () => inner.snapshotCounts(),
+    isDurable(record) {
+      // 建行必须真的落定过；且该任务名下不得有**未确认**的写入（含刚失败的那次）。
+      if (!confirmedCreates.has(record.job_id)) return false;
+      return !journal.some((intent) => intent.job_id === record.job_id);
+    },
     async flush() {
       await chain;
-      if (pending === null) return;
-      const error = pending;
-      // 抛过一次就不再重复抛（调用方已按"未落库"处理；重试走新的业务调用）。
-      pending = null;
-      chain = Promise.resolve();
-      throw ledgerFailure(error, '落库');
+      if (journal.length === 0) return;
+      if (journal.some((intent) => !intent.reported)) {
+        // 这些写入是**本次调用自己**刚尝试过的：不再原地重试，先如实拒绝；
+        // 重试发生在下一次业务调用（`flush` 一次调用只打一次库，失败就停）。
+        for (const intent of journal) intent.reported = true;
+        throw ledgerFailure(lastFailure ?? new Error('审核台账写入未落定'), '落库');
+      }
+      // 到这里说明日志里的失败是**上一次调用**留下的：重放它们。
+      // 四条语句都是幂等的（建行/下架 `ON CONFLICT ... DO NOTHING`，退位与更新按主键覆盖），
+      // 所以"失败一次再来一次"不会写坏账本；真实落定后日志自然清空 ⇒ 本次放行。
+      for (const intent of [...journal]) schedule(intent);
+      await chain;
+      if (journal.length === 0) return;
+      // 仍然没落定 ⇒ 继续**拒绝**（沿用既有安全错误码）。失败项留在日志里：
+      // 既不会被"空队列"洗白，也不会永久毒化台账（存储恢复后下一次 flush 重放成功即放行）。
+      throw ledgerFailure(lastFailure ?? new Error('审核台账写入未落定'), '落库');
     },
   };
 }

@@ -420,6 +420,25 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       throw new ApiError('PROVIDER_UNAVAILABLE', '审核台账落库失败：结论未落定，按未落库处理');
     }
   }
+  /**
+   * 发布路径的**第二道闸**（`#434` 监工 P1）：本次发布所依据的每一条台账结论都必须
+   * **已确认落库**。
+   *
+   * 为什么在 `flushLedger()` 之后还要再查一次：`flush` 只证明"台账自己认为写完了"。
+   * 历史上这里出过洞——首次建行失败被流式消费掉之后，空队列的 `flush` 返回成功，
+   * 于是"内存里 approved、账本里 0 行"的结论仍被拿去翻公开可见性。现在两条判据并存：
+   * ① `flush` 只有真正落库才放行；② `isDurable` 直接问"这条记录确认落库了吗"。
+   * 内存台账没有 `isDurable`（无持久层，既有装配行为逐字不变）。
+   */
+  function assertDecisionsDurable(tasks: readonly ModerationTaskRecord[]): void {
+    const isDurable = ledger.isDurable;
+    if (isDurable === undefined) return;
+    for (const task of tasks) {
+      if (isDurable.call(ledger, task) !== true) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '审核结论尚未确认落库：本次发布按未落库拒绝');
+      }
+    }
+  }
   const cache = deps.cache ?? createReadCache();
   const authority = deps.authority ?? createSubstituteContentAuthority();
   const clock = deps.now ?? (() => new Date());
@@ -796,6 +815,8 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       return refuse('INPUT_UNCERTAIN');
     }
 
+    // 本次发布**所依据**的任务：闸门全过的那些（发布前要逐条确认它们真的落库了）。
+    const gateTasks: ModerationTaskRecord[] = [];
     for (const kind of contentKindsFor(mediaCount)) {
       const task = ledger.current(target, kind);
       if (task === null) {
@@ -831,7 +852,9 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
       });
       if (recheck.stale === true || recheck.action !== 'reuse' || recheck.publishable !== true) {
         reasons.push(...recheck.reason_codes.map((code) => `${kind}:${code}`));
+        continue;
       }
+      gateTasks.push(task);
     }
 
     if (reasons.some((reason) => reason.includes('DECISION_NOT_APPROVED') || reason.startsWith('NOT_SCREENED'))) {
@@ -841,7 +864,10 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
 
     // 写入面 fail-closed（本片核心）：翻 `published` **之前**必须确认结论已经落库。
     // 落库失败 ⇒ 本次发布抛错，公开可见性保持写前状态（绝不出现"库里有内容、账本里没结论"）。
+    // `flush` 会重放上一次失败的写入（存储恢复即可落定）；重放仍失败则继续抛既有 503。
     await flushLedger();
+    // 第二道闸：`flush` 放行**不等于**这条结论真的在账本里（空队列曾经能"洗白"失败）。
+    assertDecisionsDurable(gateTasks);
 
     await authority.setVisibility(target, 'published');
     try {
