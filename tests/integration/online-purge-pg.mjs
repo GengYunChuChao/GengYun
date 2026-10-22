@@ -26,6 +26,11 @@
  *   [7] 证据：每个成功 (request, module) 一行 `sha256:` 摘要，可**独立复算**；报告不含 `user_id`
  *   [8] 回执 `backupState`：真受理 → 四域 `pending` →（31 天后）到期未清 ⇒ `blocked`
  *       →（真清副本 + 证据）⇒ 四域 `completed` ⇒ 整体 `completed`
+ *   [9] 在线证据落库 + 回执在线态可推导（迁移 0031）：到期清完 ⇒ `completed` 且落库证据逐条可复算；
+ *       未到期 ⇒ `pending`；到期未清 / 闭区间到期 ⇒ `blocked` + `STORE_REJECTED`；
+ *       重跑 0 行不追加、同 (module,evidence_ref) 幂等；**换新进程**（另起 node + 另开池）仍读回 completed；
+ *       权限面：运行时直读 `deletion_requests`（含两个新列）仍恰好 42501，只多两函数 EXECUTE；
+ *       append-only 触发器（G0005）与成对约束（23514）、写函数四类非法入参（G0001/G0002）。
  */
 
 import assert from 'node:assert/strict';
@@ -43,6 +48,8 @@ import pg from 'pg';
 import { createPostgresBackupPurgePort } from '../../services/api/src/privacy/backup-copies-pg.ts';
 import { createPostgresBackupStateReader } from '../../services/api/src/privacy/backup-state-derivation.ts';
 import { createPostgresDeletionRequestStore } from '../../services/api/src/privacy/deletion-requests-pg.ts';
+import { createPostgresOnlinePurgeEvidenceRecorder } from '../../services/api/src/privacy/online-purge-evidence.ts';
+import { createPostgresOnlineStateReader } from '../../services/api/src/privacy/online-state-derivation.ts';
 import {
   USER_DATA_DELETION_MODULES,
   createUserDataDeletion,
@@ -109,7 +116,18 @@ function portIsFree(candidate) {
 }
 
 async function pickPort() {
-  // 556xx：避开本机 5432 与本仓其它临时臂用的 55436；每次都先探活（同机可能已有别人的集群）。
+  // 缺省 556xx：避开本机 5432 与本仓其它临时臂用的 55436；每次都先探活（同机可能已有别人的集群）。
+  // `GY_I19_PG_PORT`：片 B 的派单要求「独立集群固定 55433」，只影响**本脚本自己**起的临时集群；
+  // 端口被占时仍按失败处理（不静默换口，否则读数与派单对不上）。
+  const pinned = process.env.GY_I19_PG_PORT ?? '';
+  if (pinned !== '') {
+    const candidate = Number(pinned);
+    if (!Number.isSafeInteger(candidate) || candidate < 1024 || candidate > 65535) {
+      throw new Error(`GY_I19_PG_PORT 必须是 1024..65535 的整数（收到 ${pinned}）`);
+    }
+    if (!(await portIsFree(candidate))) throw new Error(`GY_I19_PG_PORT=${candidate} 已被占用（拒绝换口）`);
+    return candidate;
+  }
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const candidate = 55600 + randomInt(0, 300);
     if (await portIsFree(candidate)) return candidate;
@@ -165,7 +183,8 @@ async function startCluster() {
 
 function stopCluster() {
   assert.ok(basename(dataDir).startsWith('gy-w6-online-purge-'), `拒绝删除非本脚本创建的目录：${dataDir}`);
-  if (existsSync(join(dataDir, 'PG_VERSION'))) runTool('pg_ctl', ['-D', dataDir, '-m', 'immediate', '-w', 'stop']);
+  // `-m fast`：等在途语句收尾后停库（片 B 派单要求 fast；immediate 会在证据落库后留下未完成恢复）。
+  if (existsSync(join(dataDir, 'PG_VERSION'))) runTool('pg_ctl', ['-D', dataDir, '-m', 'fast', '-w', 'stop']);
   rmSync(dataDir, { recursive: true, force: true, maxRetries: 10 });
 }
 
@@ -337,7 +356,7 @@ function fourDomainPort(pool) {
  * 缺省 `maxBatches: 1` ⇒ 一页一轮，读数与旧口径的"单批"一致（[2]–[8] 各臂沿用）。
  * `after` 是上一轮落下的游标；`maxBatches: 1` + 游标 = CLI 每次 cron 调用的行为。
  */
-async function driveOnce({ cutoff, limit, dryRun = false, purge, after = null, maxBatches = 1 }) {
+async function driveOnce({ cutoff, limit, dryRun = false, purge, evidence, after = null, maxBatches = 1 }) {
   return drainDueOnlineDeletions({
     cutoff,
     limit,
@@ -345,6 +364,7 @@ async function driveOnce({ cutoff, limit, dryRun = false, purge, after = null, m
     dryRun,
     modules: USER_DATA_DELETION_MODULES,
     purge,
+    ...(evidence === undefined ? {} : { evidence }),
     after,
     fetchPage: (pageInput) => listDueOnlineDeletions(ownerClient, pageInput),
   });
@@ -361,6 +381,47 @@ function runCli(args, extraEnv = {}) {
   });
 }
 
+/**
+ * **换新进程**读回执在线态：另起一个 node 进程、另开一条池，import 同一个推导端口。
+ *
+ * 为什么非要真进程：`refreshOnlineStates` 的进程内账本随重启清空 ⇒「读得到」只可能来自
+ * **落库的证据**。同进程再 new 一个 reader 只能证明"没有对象级缓存"，证明不了「重启后还在」。
+ * 子进程只输出一行 JSON（stdout 末行），其余（pg 的连接日志等）一律不进判定。
+ */
+function readOnlineStateInFreshProcess({ requestId, userId, nowIso }) {
+  const moduleUrl = new URL('../../services/api/src/privacy/online-state-derivation.ts', import.meta.url).href;
+  const code = `
+const { createPostgresOnlineStateReader } = await import(${JSON.stringify(moduleUrl)});
+const pg = (await import('pg')).default;
+const pool = new pg.Pool({ connectionString: process.env.GY_ONLINE_STATE_URL, max: 1 });
+try {
+  const reader = createPostgresOnlineStateReader({ pool, now: () => new Date(process.env.GY_ONLINE_STATE_NOW) });
+  const derived = await reader.derive({
+    requestId: process.env.GY_ONLINE_STATE_REQUEST,
+    userId: process.env.GY_ONLINE_STATE_USER,
+    modules: JSON.parse(process.env.GY_ONLINE_STATE_MODULES),
+  });
+  console.log(JSON.stringify(derived));
+} finally {
+  await pool.end().catch(() => {});
+}
+`;
+  return spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GY_ONLINE_STATE_URL: runtimeUrl,
+      GY_ONLINE_STATE_NOW: nowIso,
+      GY_ONLINE_STATE_REQUEST: requestId,
+      GY_ONLINE_STATE_USER: userId,
+      GY_ONLINE_STATE_MODULES: JSON.stringify([...USER_DATA_DELETION_MODULES]),
+    },
+    timeout: 120_000,
+    windowsHide: true,
+  });
+}
+
 async function expectSqlState(client, label, sql, params, expectedCode) {
   let error;
   try {
@@ -372,11 +433,26 @@ async function expectSqlState(client, label, sql, params, expectedCode) {
   assert.equal(error.code, expectedCode, `${label}：SQLSTATE ${error.code}（期望 ${expectedCode}）— ${error.message}`);
 }
 
+/** `jsonb` 列在 `pg` 里通常是 JS 数组；兼容个别驱动的字符串形态，且**不猜**：不是数组就是空。 */
+function jsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 let owner; // 库属主 client（造数 + 候选枚举 + 迁移）
 let ownerClient = null;
 let runtimePool; // 运行时角色池（真清数据用）
 let ownerPool; // 属主池（受理事务用）
+let runtimeUrl = ''; // 运行时角色连接串（换新进程读证据时传给子进程）
 
 try {
   await startCluster();
@@ -389,7 +465,7 @@ try {
   ownerClient = owner;
   note(`PostgreSQL ${(await owner.query('SHOW server_version')).rows[0].server_version}`);
 
-  // ---- 迁移：全部既有迁移，与出厂顺序一致（**本片不新增迁移**）----
+  // ---- 迁移：加载**全部**迁移，与出厂顺序一致（含本片新增的 0031_online_purge_evidence.sql）----
   const discovered = readdirSync(migrationsDir).filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name)).sort();
   for (const name of discovered) await owner.query(readFileSync(new URL(name, migrationsDir), 'utf8'));
   note(`迁移已应用：${discovered.length} 个（${discovered[0]} … ${discovered.at(-1)}）`);
@@ -410,7 +486,7 @@ try {
     `CREATE ROLE ${runtimeRole} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}'`,
   );
   await owner.query(`GRANT gengyun_auth_privacy TO ${runtimeRole}`);
-  for (const region of ['gy-i19-deletion-grant', 'gy-i19-backup-copies-grant', 'gy-r28-runtime-domain-grants']) {
+  for (const region of ['gy-i19-deletion-grant', 'gy-i19-backup-copies-grant', 'gy-r32-i19-online-evidence-grant', 'gy-r28-runtime-domain-grants']) {
     const matched = deploySqlFile('20-login-roles.sql').match(
       new RegExp(`-- #region ${region}\\r?\\n([\\s\\S]*?)\\r?\\n\\s*-- #endregion ${region}`),
     );
@@ -424,7 +500,8 @@ try {
   for (const statement of domainGrants) await owner.query(statement);
   note(`已执行 20-login-roles.sql 主体里涉及四域的 ${domainGrants.length} 条 GRANT/REVOKE（原文取出，未新增授权）`);
 
-  runtimePool = new pg.Pool({ connectionString: `postgresql://${runtimeRole}:${password}@127.0.0.1:${port}/${DB_NAME}`, max: 4 });
+  runtimeUrl = `postgresql://${runtimeRole}:${password}@127.0.0.1:${port}/${DB_NAME}`;
+  runtimePool = new pg.Pool({ connectionString: runtimeUrl, max: 4 });
   ownerPool = new pg.Pool({ connectionString: targetUrl, max: 2 });
 
   // =========================================================================
@@ -722,6 +799,9 @@ try {
   assert.deepEqual(await domainRowCounts(owner, dryUserId), { favorites: 1, history: 1, messages: 1, conversations: 1 });
   assert.ok((dryRun.skipReasons.dry_run ?? 0) >= 1, 'dry-run 的跳过原因必须如实报出');
   say(`dry-run：rowsPurged=0、证据 0 行、dry_run 跳过 ${dryRun.skipReasons.dry_run} 个请求，四域行原样`);
+  // 本臂的四域行**故意没删**（dry-run 的读数就是"原样"）；为了让 [9] 的到期集合只含它自己的造数，
+  // 这里按既有口径把请求标成 completed（与 [3]/[4]/[5] 的收尾同一做法，⛔ 不是伪造完成判定）。
+  await retire(owner, [dryRequest.requestId]);
 
   // =========================================================================
   // [7] 证据可复算 + 报告不含 user_id
@@ -757,6 +837,9 @@ try {
     conversationsStore: createPostgresConversationStore(runtimePool),
     backupPurge: createPostgresBackupPurgePort({ pool: runtimePool, now: clock }),
     backupStates: createPostgresBackupStateReader({ pool: runtimePool, now: clock }),
+    // 迁移 0031：在线清理的成功行证据落库（运行时可执行唯一写函数）＋ 回执在线态可推导。
+    onlineEvidence: createPostgresOnlinePurgeEvidenceRecorder({ pool: runtimePool, now: clock }),
+    onlineStates: createPostgresOnlineStateReader({ pool: runtimePool, now: clock }),
     requests: createPostgresDeletionRequestStore({ pool: ownerPool }),
     receiptTtlMs: RECEIPT_TTL_MS,
     now: clock,
@@ -772,6 +855,36 @@ try {
   const receiptId = String(accepted.id);
   await deletion.executeHandlers(receiptId);
   assert.equal(deletion.completionStatus(receiptId).completed, false, '刚受理不得算完成');
+
+  // ---- 迁移 0031：处理器清完在线四域后，**每个成功行**都必须留下可复算的落库证据 ----
+  const onlineEvidenceAfterAccept = (
+    await owner.query(
+      'SELECT online_purged_at, online_purge_evidence FROM public.deletion_requests WHERE id = $1::uuid',
+      [receiptId],
+    )
+  ).rows[0];
+  const acceptEntries = onlineEvidenceAfterAccept.online_purge_evidence ?? [];
+  assert.equal(
+    acceptEntries.length,
+    USER_DATA_DELETION_MODULES.length,
+    `受理时的在线清除必须为四域各写一条证据（实际 ${acceptEntries.length}）`,
+  );
+  assert.notEqual(onlineEvidenceAfterAccept.online_purged_at, null, '证据落库必须同时写 online_purged_at');
+  for (const module of USER_DATA_DELETION_MODULES) {
+    const one = acceptEntries.find((entry) => entry.module === module);
+    assert.ok(one !== undefined, `四域证据里必须有 ${module}`);
+    assert.equal(
+      one.evidence_ref,
+      onlinePurgeEvidenceRef({
+        requestId: receiptId,
+        module,
+        removed: one.removed,
+        idempotency: one.idempotency,
+      }),
+      `${module} 的落库证据必须能由 (request_id, module, removed, idempotency) 独立复算`,
+    );
+  }
+  note(`在线证据（受理时）：${acceptEntries.map((entry) => `${entry.module}:${entry.evidence_ref.slice(0, 15)}…`).join('｜')}`);
 
   const copiesAfterAccept = (
     await owner.query(
@@ -797,8 +910,28 @@ try {
   assert.notEqual(receipt1.state, 'completed', '四域备份都还没做 ⇒ 整体不得 completed');
   say('回执（受理后）：四域 online=completed、backup=pending、error_code=null，整体非 completed（四域未齐）');
 
-  // ---- 31 天后：到期但**没清** ⇒ 必须 blocked，⛔ 不是 completed ----
+  // ---- 31 天后：在线证据可复算 ⇒ completed（未到期 ≠ 未清；到期也不会把已清读成 blocked）----
   clockMs += 31 * DAY_MS;
+  const dueOnline = await deletion.refreshOnlineStates(receiptId);
+  assert.ok(dueOnline !== null, '接线了 onlineStates ⇒ 必须给出推导结果');
+  assert.equal(
+    dueOnline.derived.overall,
+    'completed',
+    `受理时已清 + 证据可复算 ⇒ 到期后在线四域必须 completed（实际 ${dueOnline.derived.overall}）`,
+  );
+  for (const module of USER_DATA_DELETION_MODULES) {
+    const one = dueOnline.derived.modules.find((row) => row.module === module);
+    assert.equal(one.state, 'completed', `${module} 在线态必须 completed`);
+    assert.equal(one.errorCode, null, `${module} 完成后不得留错误码`);
+    assert.match(String(one.evidenceRef), /^sha256:[0-9a-f]{64}$/);
+  }
+  const receiptOnline = deletion.receipt(receiptId);
+  for (const module of USER_DATA_DELETION_MODULES) {
+    const handler = receiptOnline.handlers.find((row) => row.module === module);
+    assert.equal(handler.online_state, 'completed', `${module} 回执在线态必须 completed`);
+  }
+
+  // ---- 31 天后：到期但**没清** ⇒ 必须 blocked，⛔ 不是 completed ----
   const dueNotPurged = await deletion.refreshBackupStates(receiptId);
   assert.ok(dueNotPurged !== null, '接线了 backupStates ⇒ 必须给出推导结果');
   assert.equal(dueNotPurged.derived.overall, 'blocked', '30 日已过但仍未清 ⇒ 整体 blocked');
@@ -856,6 +989,270 @@ try {
   }
   note(`回执证据：${JSON.stringify(evidenceOfReceipt)}`);
   say('回执（四域齐备）：refreshBackupStates 后四域 backup=completed、error_code=null、证据带 sha256 摘要，整体与 completionStatus 均为 completed');
+
+  // =========================================================================
+  // [9] 证据落库 + 回执在线态可推导（迁移 0031 / #19 片 B）
+  // =========================================================================
+  // 判据（与派单 §2 逐条对齐）：
+  //   ① 到期清完 ⇒ 四域在线态 completed 且证据可复算（落库的 jsonb 元素逐条复算）；
+  //   ② 未到期 ⇒ pending；
+  //   ③ 到期未清 ⇒ blocked + STORE_REJECTED（⛔ 不得 pending）；
+  //   ④ 重跑 0 行 ⇒ 证据不重复（同 (module, evidence_ref) 幂等，不追加）；
+  //   ⑤ **换新进程**（另起 node + 另开池）仍能读回 completed ⇒ 证据真的在库里。
+  // 权限面：运行时仍读不了 deletion_requests（表级/列级都是 0），只多两个窄口径函数的 EXECUTE。
+  // =========================================================================
+  const runtimeReader = createPostgresOnlineStateReader({ pool: runtimePool, now: () => new Date(shift(CUTOFF, DAY_MS)) });
+  const ownerRecorder = createPostgresOnlinePurgeEvidenceRecorder({ pool: ownerPool, now: () => new Date(CUTOFF) });
+
+  const onlinePrivilege = (
+    await runtimePool.query(
+      `SELECT has_table_privilege(current_user, 'public.deletion_requests', 'SELECT') AS table_select,
+              has_column_privilege(current_user, 'public.deletion_requests', 'online_purge_evidence', 'SELECT') AS evidence_select,
+              has_column_privilege(current_user, 'public.deletion_requests', 'online_purged_at', 'SELECT') AS purged_at_select,
+              has_function_privilege(current_user, 'public.read_online_purge_evidence(uuid,uuid)', 'EXECUTE') AS read_exec,
+              has_function_privilege(current_user,
+                'public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz)', 'EXECUTE') AS record_exec`,
+    )
+  ).rows[0];
+  assert.equal(onlinePrivilege.table_select, false, '运行时仍然读不了 deletion_requests（第 48 项反向控制不动）');
+  assert.equal(onlinePrivilege.evidence_select, false, '运行时不得在新列上拿到任何直接列权限');
+  assert.equal(onlinePrivilege.purged_at_select, false);
+  assert.equal(onlinePrivilege.read_exec, true, '运行时必须能执行只读回执函数');
+  assert.equal(onlinePrivilege.record_exec, true, '运行时必须能执行唯一写证据函数（处理器路径）');
+  await expectSqlState(
+    runtimePool,
+    '运行时直读 online_purge_evidence 列',
+    'SELECT online_purge_evidence FROM public.deletion_requests LIMIT 0',
+    [],
+    '42501',
+  );
+  say('证据权限面：deletion_requests 表级/列级对运行时仍为 0（直读新列恰好 42501），只多两个 SECURITY DEFINER 函数的 EXECUTE');
+
+  // ---- ① 到期清完：证据落库 + 可复算 ----
+  const dueTarget = { userId: await insertUser(owner) };
+  const dueRequest = await insertDeletionRequest(owner, { userId: dueTarget.userId, onlineDueAt: shift(CUTOFF, -DAY_MS) });
+  await seedDomainRows(owner, dueTarget.userId);
+  const recordedRun = await driveOnce({
+    cutoff: CUTOFF,
+    limit: 10,
+    purge: fourDomainPort(runtimePool),
+    evidence: ownerRecorder,
+  });
+  assert.equal(recordedRun.succeeded, 1, `本轮只应处理这一个到期请求（实际 succeeded=${recordedRun.succeeded}）`);
+  assert.equal(recordedRun.failed, 0);
+  const recordedForTarget = recordedRun.evidence.filter((row) => row.requestId === dueRequest.requestId);
+  assert.equal(recordedForTarget.length, USER_DATA_DELETION_MODULES.length, '成功请求的四域证据必须都在本轮报告里');
+
+  const storedEvidence = (
+    await owner.query(
+      'SELECT online_purged_at, online_purge_evidence FROM public.deletion_requests WHERE id = $1::uuid',
+      [dueRequest.requestId],
+    )
+  ).rows[0];
+  assert.notEqual(storedEvidence.online_purged_at, null, '成功行必须落 online_purged_at（不是只进 stdout）');
+  assert.equal(jsonArray(storedEvidence.online_purge_evidence).length, USER_DATA_DELETION_MODULES.length);
+  for (const module of USER_DATA_DELETION_MODULES) {
+    const entry = jsonArray(storedEvidence.online_purge_evidence).find((item) => item.module === module);
+    assert.ok(entry !== undefined, `落库证据必须含 ${module}`);
+    assert.equal(entry.removed, 1, `${module} 的 removed 必须是真实读数`);
+    assert.equal(entry.idempotency, 0);
+    assert.equal(
+      entry.evidence_ref,
+      onlinePurgeEvidenceRef({ requestId: dueRequest.requestId, module, removed: entry.removed, idempotency: entry.idempotency }),
+      `${module} 的落库证据必须能独立复算（逐字相等）`,
+    );
+    assert.match(String(entry.purged_at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  }
+
+  const derivedCompleted = await runtimeReader.derive({
+    requestId: dueRequest.requestId,
+    userId: dueTarget.userId,
+    modules: [...USER_DATA_DELETION_MODULES],
+  });
+  assert.equal(derivedCompleted.overall, 'completed', `到期且证据齐备 ⇒ completed（实际 ${derivedCompleted.overall}）`);
+  for (const module of USER_DATA_DELETION_MODULES) {
+    const one = derivedCompleted.modules.find((item) => item.module === module);
+    assert.equal(one.state, 'completed', `${module} 必须 completed`);
+    assert.equal(one.errorCode, null);
+    assert.match(String(one.evidenceRef), /^sha256:[0-9a-f]{64}$/);
+  }
+  say('证据落库：到期清除的每个成功 (request,module) 行写出 sha256 证据（4 条，逐条可复算）⇒ 在线四域 completed');
+
+  // ---- ④ 重跑 0 行：证据不重复 ----
+  const rerunForEvidence = await driveOnce({
+    cutoff: CUTOFF,
+    limit: 10,
+    purge: fourDomainPort(runtimePool),
+    evidence: ownerRecorder,
+  });
+  assert.equal(rerunForEvidence.rowsPurged, 0);
+  assert.equal(rerunForEvidence.evidence.length, 0, '0 行 ⇒ 报告里也不产证据行');
+  const storedAfterRerun = (
+    await owner.query('SELECT online_purge_evidence FROM public.deletion_requests WHERE id = $1::uuid', [dueRequest.requestId])
+  ).rows[0];
+  assert.equal(jsonArray(storedAfterRerun.online_purge_evidence).length, USER_DATA_DELETION_MODULES.length, '重跑不得追加证据');
+
+  // 同一 (module, evidence_ref) 再写一次：幂等，不重复追加（DB 侧防重，不只靠驱动不调用）。
+  const runtimeRecorder = createPostgresOnlinePurgeEvidenceRecorder({ pool: runtimePool, now: () => new Date(CUTOFF) });
+  await runtimeRecorder.record({
+    requestId: dueRequest.requestId,
+    module: 'favorites',
+    removed: 0,
+    idempotency: 0,
+  });
+  const afterFirstAppend = (
+    await owner.query('SELECT online_purge_evidence FROM public.deletion_requests WHERE id = $1::uuid', [dueRequest.requestId])
+  ).rows[0];
+  assert.equal(
+    jsonArray(afterFirstAppend.online_purge_evidence).length,
+    USER_DATA_DELETION_MODULES.length + 1,
+    '新读数（removed=0）是不同事实 ⇒ 允许追加一条',
+  );
+  await runtimeRecorder.record({
+    requestId: dueRequest.requestId,
+    module: 'favorites',
+    removed: 0,
+    idempotency: 0,
+  });
+  const afterSecondAppend = (
+    await owner.query('SELECT online_purge_evidence FROM public.deletion_requests WHERE id = $1::uuid', [dueRequest.requestId])
+  ).rows[0];
+  assert.equal(
+    jsonArray(afterSecondAppend.online_purge_evidence).length,
+    USER_DATA_DELETION_MODULES.length + 1,
+    '同一 (module, evidence_ref) 重复调用不得重复追加（证据不重复）',
+  );
+  say('证据不重复：重跑 0 行不追加；同一 (module,evidence_ref) 重复写入被库侧幂等挡住（条数不变）');
+
+  // ---- ⑤ 换新进程仍可读 ----
+  const freshProcess = readOnlineStateInFreshProcess({
+    requestId: dueRequest.requestId,
+    userId: dueTarget.userId,
+    nowIso: shift(CUTOFF, DAY_MS),
+  });
+  assert.equal(
+    freshProcess.status,
+    0,
+    `换新进程读在线态必须成功（status=${freshProcess.status}｜stdout=${freshProcess.stdout}｜stderr=${freshProcess.stderr}）`,
+  );
+  const freshDerived = JSON.parse(String(freshProcess.stdout).trim().split(/\r?\n/).at(-1));
+  assert.equal(freshDerived.overall, 'completed', '新进程只能靠落库证据 ⇒ 必须仍读回 completed');
+  // 对照臂在**同一时点**重算（证据条数在上面的幂等臂里变过 4→5，旧读数不能拿来比）。
+  const currentDerived = await runtimeReader.derive({
+    requestId: dueRequest.requestId,
+    userId: dueTarget.userId,
+    modules: [...USER_DATA_DELETION_MODULES],
+  });
+  assert.deepEqual(
+    freshDerived,
+    JSON.parse(JSON.stringify(currentDerived)),
+    '新进程与同进程读到的推导结果必须逐字段一致',
+  );
+  say('换新进程：另起 node 进程 + 另开连接池 ⇒ 仍读回 completed（证据在库里，不在进程内账本）');
+
+  // ---- ② 未到期 ⇒ pending ----
+  const pendingTarget = { userId: await insertUser(owner) };
+  const pendingRequest = await insertDeletionRequest(owner, { userId: pendingTarget.userId, onlineDueAt: shift(CUTOFF, 7 * DAY_MS) });
+  const derivedPending = await runtimeReader.derive({
+    requestId: pendingRequest.requestId,
+    userId: pendingTarget.userId,
+    modules: [...USER_DATA_DELETION_MODULES],
+  });
+  assert.equal(derivedPending.overall, 'pending', `未到期 ⇒ pending（实际 ${derivedPending.overall}）`);
+  for (const one of derivedPending.modules) {
+    assert.equal(one.state, 'pending');
+    assert.equal(one.errorCode, null, 'pending 不得带错误码');
+  }
+  say('未到期：四域证据为空且 online_due_at 未到 ⇒ pending（唯一正当的 pending 语义）');
+
+  // ---- ③ 到期未清 ⇒ blocked（⛔ 不是 pending）----
+  const blockedTarget = { userId: await insertUser(owner) };
+  const blockedRequest = await insertDeletionRequest(owner, { userId: blockedTarget.userId, onlineDueAt: shift(CUTOFF, -2 * DAY_MS) });
+  const derivedBlocked = await runtimeReader.derive({
+    requestId: blockedRequest.requestId,
+    userId: blockedTarget.userId,
+    modules: [...USER_DATA_DELETION_MODULES],
+  });
+  assert.equal(derivedBlocked.overall, 'blocked', `到期未清必须 blocked（实际 ${derivedBlocked.overall}）`);
+  for (const one of derivedBlocked.modules) {
+    assert.equal(one.state, 'blocked', `${one.module} 到期未清 ⇒ blocked，⛔ 不得 pending`);
+    assert.equal(one.reason, 'ONLINE_PURGE_DUE_NOT_EXECUTED');
+    assert.equal(one.errorCode, 'STORE_REJECTED');
+  }
+  // 闭区间：`now === online_due_at` 也算到期（与驱动/候选 SQL 同口径）。
+  const exactDueTarget = { userId: await insertUser(owner) };
+  const exactDueRequest = await insertDeletionRequest(owner, { userId: exactDueTarget.userId, onlineDueAt: CUTOFF });
+  const atDueReader = createPostgresOnlineStateReader({ pool: runtimePool, now: () => new Date(CUTOFF) });
+  const derivedAtDue = await atDueReader.derive({
+    requestId: exactDueRequest.requestId,
+    userId: exactDueTarget.userId,
+    modules: [...USER_DATA_DELETION_MODULES],
+  });
+  assert.equal(derivedAtDue.overall, 'blocked', 'now === online_due_at 也必须是 blocked（闭区间，不判 pending）');
+  say('到期未清：四域 blocked + STORE_REJECTED；now === online_due_at 的闭区间同样 blocked');
+
+  // ---- 证据只可追加：清空/置 NULL/少一项都被触发器挡住 ----
+  await expectSqlState(
+    owner,
+    '证据数组不得被清空',
+    `UPDATE public.deletion_requests SET online_purge_evidence = '[]'::jsonb WHERE id = $1::uuid`,
+    [dueRequest.requestId],
+    'G0005',
+  );
+  await expectSqlState(
+    owner,
+    '证据数组不得被整列置 NULL',
+    'UPDATE public.deletion_requests SET online_purge_evidence = NULL, online_purged_at = NULL WHERE id = $1::uuid',
+    [dueRequest.requestId],
+    'G0005',
+  );
+  await expectSqlState(
+    owner,
+    '证据数组不得丢掉已有条目',
+    `UPDATE public.deletion_requests
+        SET online_purge_evidence = jsonb_build_array(jsonb_array_element(online_purge_evidence, 0))
+      WHERE id = $1::uuid`,
+    [dueRequest.requestId],
+    'G0005',
+  );
+  await expectSqlState(
+    owner,
+    'evidence 与 purged_at 必须成对',
+    'UPDATE public.deletion_requests SET online_purged_at = NULL WHERE id = $1::uuid',
+    [dueRequest.requestId],
+    '23514',
+  );
+  // 唯一写路径的入参自检：模块名/摘要形状/请求存在性都不能靠"库会兜住"。
+  await expectSqlState(
+    owner,
+    '证据模块名形状非法',
+    'SELECT public.record_online_purge_evidence($1::uuid, $2, $3, 1, 0, now())',
+    [dueRequest.requestId, 'Bad Module', `sha256:${'0'.repeat(64)}`],
+    'G0001',
+  );
+  await expectSqlState(
+    owner,
+    '证据摘要形状非法',
+    'SELECT public.record_online_purge_evidence($1::uuid, $2, $3, 1, 0, now())',
+    [dueRequest.requestId, 'favorites', 'not-a-sha256'],
+    'G0001',
+  );
+  const absentRequest = randomUUID();
+  await expectSqlState(
+    owner,
+    '不存在的注销请求不得被写证据',
+    'SELECT public.record_online_purge_evidence($1::uuid, $2, $3, 1, 0, now())',
+    [absentRequest, 'favorites', onlinePurgeEvidenceRef({ requestId: absentRequest, module: 'favorites', removed: 1, idempotency: 0 })],
+    'G0002',
+  );
+  const wrongSubject = await owner.query('SELECT public.read_online_purge_evidence($1::uuid, $2::uuid) AS state', [
+    dueRequest.requestId,
+    randomUUID(),
+  ]);
+  assert.equal(wrongSubject.rows[0].state, null, '读路径必须按 (request_id, user_id) 过滤：错误主体读不到任何行');
+  say('证据只可追加：清空/置 NULL/删条目 = G0005；只清 purged_at = 23514；模块名/摘要/请求/主体四类非法输入均被拒');
+
+  await retire(owner, [dueRequest.requestId, pendingRequest.requestId, blockedRequest.requestId, exactDueRequest.requestId]);
 
   note(`EXITCODE=0（共 ${passed} 组 PASS）`);
   process.exitCode = 0;

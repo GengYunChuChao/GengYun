@@ -302,8 +302,18 @@ const UNAUDITED_SQL_HOSTS = [
       + '列面已由真库臂**实测**：tests/integration/online-purge-pg.mjs 第一臂断言运行时角色对'
       + '`deletion_requests` 连 SELECT 都没有（实跑 `SELECT id` ⇒ 42501）⇒ 本命令必须用属主/运维角色跑'
       + '（与 `db:migrate` 同源），四域 DELETE 则用**既有**授权（零新增授权）。'
+      + 'R32 片B（迁移 0031）起证据落库改走 `online-purge-evidence.ts` 的端口（本文件不再新增 SQL 面）。'
       + '纳入本管线需 R28-S66 重定 auditedFiles 读数，留给该片统一改。',
     owner: 'W6 / R28-W6 online-purge-driver；静态纳管待 R28-S66 重定读数',
+  },
+  {
+    file: 'services/api/src/privacy/online-purge-evidence.ts',
+    reason: 'R32 片B（#19，迁移 0031）新增的在线证据落库端口：两条 `SELECT public.*_online_purge_evidence(...)`'
+      + ' 函数调用（**不碰任何表**）：写走 0031 的唯一写函数，读走唯一读函数。'
+      + '面由**函数级**断言覆盖：90-assert 的 `online_evidence_functions_*` / `function_surface_manifest`，'
+      + '以及真库臂 tests/integration/online-purge-pg.mjs [9] 实测「运行时直读 deletion_requests（含新列）'
+      + '仍恰好 42501、两函数 EXECUTE 可用」。纳入本管线需 R28-S66 重定 auditedFiles 读数。',
+    owner: 'R32 片B / #19；静态纳管待 R28-S66 重定读数',
   },
   {
     file: 'services/api/src/privacy/backup-state-derivation.ts',
@@ -2242,11 +2252,11 @@ test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 9 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 10 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 28, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 29, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2264,6 +2274,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/privacy/backup-purge-driver.ts',
       'services/api/src/privacy/backup-state-derivation.ts',
       'services/api/src/privacy/online-purge-driver.ts',
+      'services/api/src/privacy/online-purge-evidence.ts',
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',
