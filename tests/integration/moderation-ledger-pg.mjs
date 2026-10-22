@@ -264,8 +264,14 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
+    // **只取到 0028**：本臂模拟的是「#434 合流那一刻」的树（0028 为末项、1..28 连续）。
+    // 后续片（0030 / F13 行级作者注销引用）刻意不纳入 —— 它会让 0029 成为「有意缺号」，
+    // 而 29 的保留登记在**真实台账**里（本臂用的是夹具台账，只登记 27）。
+    // 判定机制本身仍由 [M] 臂对**真实**台账（含 29 保留项）逐条核对。
     for (const name of readdirSync(migrationsDir)) {
-      if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) copyFileSync(new URL(name, migrationsDir), join(tmp, name));
+      if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name) && Number(name.slice(0, 4)) <= 28) {
+        copyFileSync(new URL(name, migrationsDir), join(tmp, name));
+      }
     }
     assert.equal(readdirSync(tmp).includes(RESERVED_FILENAME), true, `临时目录必须含真实 ${RESERVED_FILENAME}（否则本臂是空的）`);
     const merged = discoverMigrations(tmp);
