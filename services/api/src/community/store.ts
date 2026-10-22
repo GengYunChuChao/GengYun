@@ -136,7 +136,6 @@ export type PostCommitPatch = Partial<
 
 export type CommentCommitPatch = Partial<Pick<CommentRecord, 'revision' | 'body' | 'visibility' | 'audit_state'>>;
 
-/** CAS 失败原因。**注意：已删除（`DELETED`）永远失败**——不提供"复活已删除内容"的开关。 */
 /**
  * `listPosts` 的**下推筛选**（SQL 实现把每一项都写进 `WHERE`，内存实现逐项等价过滤）。
  *
@@ -162,6 +161,7 @@ export interface ListPostsFilter {
   limit?: number | null;
 }
 
+/** CAS 失败原因。**注意：已删除（`DELETED`）永远失败**——不提供"复活已删除内容"的开关。 */
 export type CommitFailureReason =
   | 'NOT_FOUND'
   | 'DELETED'
