@@ -379,7 +379,10 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
 
   /** 同键请求仍在处理中且等待预算已用尽：契约内如实回报，绝不重复执行副作用。 */
   function inProgress(): ApiError {
-    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中');
+    // `retryable: true`：等待预算用尽**只是"还没好"**，同一请求原样重试仍可能拿到已完成的结果（不重复执行副作用）；
+    // 且 HTTP 出口对 `REQUEST_IN_PROGRESS` 已发 `Retry-After: 1`（`services/api/src/app.ts:1837`）并声明
+    // "等待后可重试原请求" ⇒ 必须可重试，否则与响应头自相矛盾。同族其它 13 处 `REQUEST_IN_PROGRESS` 均已为 true。
+    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中', { retryable: true });
   }
 
   async function getOwnedJob(userId: string, jobId: string): Promise<SynthesisJobRow> {

@@ -375,7 +375,9 @@ export function createOcrService(options: OcrServiceOptions) {
 
   /** 同键请求仍在处理中：契约内如实回报，绝不重复执行副作用。 */
   function inProgress(): ApiError {
-    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中');
+    // `retryable: true`：同键请求仍在跑是**时间能解决的**瞬时态（等待后重放不重复执行副作用）；且 HTTP 出口
+    // 对 `REQUEST_IN_PROGRESS` 已发 `Retry-After: 1`（`services/api/src/app.ts:1837`）并声明"等待后可重试原请求"。
+    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中', { retryable: true });
   }
 
   async function getOwnedOcr(userId: string, ocrId: string, allowDeleted = false): Promise<OcrRow> {
