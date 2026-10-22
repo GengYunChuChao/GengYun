@@ -471,7 +471,7 @@ async function runChain(arm) {
   // === 步骤 9（#10）：删除历史 ===
   const deleteKey = idem('del-own');
   const removed = await deleteHistory(origin, tokenA, historyRow.id, historyRow.revision, deleteKey);
-  assert.equal(removed.status, 200, `删除历史必须 200：${JSON.stringify(removed.body)}`);
+  assert.equal(removed.status, 202, `删除历史必须按契约回 202：${JSON.stringify(removed.body)}`);
   assert.deepEqual(removed.body.data, { accepted: true });
   assert.equal(removed.body.meta.execution_mode, 'stub');
   assert.ok(
@@ -487,28 +487,28 @@ async function runChain(arm) {
   note(
     armName,
     'i10-delete',
-    `history=${historyRow.id} status=200 accepted=true cascade=${removed.cascade}；剩余=${listItems(afterFirstDelete.body).length} 条`,
+    `history=${historyRow.id} status=202 accepted=true cascade=${removed.cascade}；剩余=${listItems(afterFirstDelete.body).length} 条`,
   );
 
   // 删第二条 ⇒ 再读为空。
   const removedSecond = await deleteHistory(origin, tokenA, uncertainRow.id, uncertainRow.revision, idem('del-own-2'));
-  assert.equal(removedSecond.status, 200, JSON.stringify(removedSecond.body));
+  assert.equal(removedSecond.status, 202, JSON.stringify(removedSecond.body));
   const emptyList = await listHistory(origin, tokenA);
   assert.deepEqual(emptyList.body.data, { items: [], next_cursor: null }, '两条都删完后必须为空');
   assert.equal(emptyList.etag, null, '空列表同样无 ETag');
   note(armName, 'i10-empty', `全部删除后 GET ${HISTORY} ⇒ ${JSON.stringify(emptyList.body.data)}`);
 
   // === 步骤 10（#10）：删除后的重放与重复删除语义 ===
-  // (a) **同键重放**：幂等台账回放同一结果 ⇒ 200（不是又删了一次，也不复活数据）。
+  // (a) **同键重放**：幂等台账回放同一结果 ⇒ 202（不是又删了一次，也不复活数据）。
   const replayDelete = await deleteHistory(origin, tokenA, historyRow.id, historyRow.revision, deleteKey);
-  assert.equal(replayDelete.status, 200, '同键重放必须回放首次结果 200');
+  assert.equal(replayDelete.status, 202, '同键重放必须回放首次结果 202');
   assert.deepEqual(replayDelete.body.data, { accepted: true });
   assert.equal(replayDelete.cascade, removed.cascade, '重放必须回放同一份级联披露');
   assert.deepEqual((await listHistory(origin, tokenA)).body.data, { items: [], next_cursor: null }, '重放不得复活历史');
   // (b) **换新键**再删同一条 ⇒ 行已不存在 ⇒ 404，且与「完全不存在 id」的 404 逐字段同形。
   const secondDelete = await deleteHistory(origin, tokenA, historyRow.id, historyRow.revision, idem('del-own-again'));
   const absentDelete = await deleteHistory(origin, tokenA, ABSENT_ID, 1, idem('del-absent'));
-  assert.equal(secondDelete.status, 404, '行已删除时换键再删必须 404（不幂等回放 200）');
+  assert.equal(secondDelete.status, 404, '行已删除时换键再删必须 404（不幂等回放 202）');
   assert.equal(secondDelete.body.error.code, 'NOT_FOUND');
   assert.deepEqual(secondDelete.body.error, absentDelete.body.error, '已删除 id 与不存在 id 必须同形');
   // 对不存在 id 用错版本头仍是 404（不因版本检查泄露存在性）。

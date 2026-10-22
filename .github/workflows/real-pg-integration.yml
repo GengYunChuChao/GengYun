@@ -84,6 +84,18 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           COMMUNITY_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_community_test
+      # 社区域**列表筛选**（#15 的残留缺口，R29-S13）：库名硬钉 `gengyun_community_filter_test`，
+      # 同样要求空库；只 apply 0001+0022（与上一步同一套表），但**不共享库/角色状态**。
+      # 它取的是 `GET /posts` 三类筛选的真库读数 + 「筛选未下推 SQL」的语句读数 + `feed_idx` 的 EXPLAIN 读数；
+      # 缺 `COMMUNITY_FILTER_PG_TEST_URL` 时脚本打印 SKIP 并 exit 77 ⇒ 本 step 必红（⛔ 不传任何放宽开关）。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_community_filter_test' && node tests/integration/community-filter-pg.mjs
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          COMMUNITY_FILTER_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_community_filter_test
       # 消息域（#17，R27-S4）：库名硬钉 `gengyun_messages_test`，脚本同样断言 public 下无表。
       # 该脚本的连接串走**argv**（`node <脚本> <owner url>`）而不是 env——URL 写在命令行末尾，
       # 上面那几个 PG* 环境变量只给 `psql` 建库用（脚本自己从不读它们）。
