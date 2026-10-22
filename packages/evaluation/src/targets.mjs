@@ -286,11 +286,11 @@ export const METRIC_GATES = [
     task: 'ai_moderation',
     target: 1,
     direction: 'eq',
-    note: '禁用硬规则与失败用例全部通过：只对**显式声明**规则层期望的样本比较 hard_rule_passed（gold.hardRuleExpectation=reject⇒false、pass⇒true；未声明的 normal 默认期望 true）；未声明的风险样本属模型层隔离、不参与本指标；该字段缺失/非布尔、声明非法、或 approved 但 hard_rule_passed≠true 一律记未通过',
+    note: '禁用硬规则与失败用例全部通过：只对**显式声明**规则层期望的样本比较 hard_rule_passed（gold.hardRuleExpectation=reject⇒false、pass⇒true；未声明的 normal 默认期望 true）；未声明的风险样本属模型层隔离、不参与本指标；**零声明时本指标无观测值（not_evaluated），不得凭 normal 默认判 pass**；该字段缺失/非布尔、声明非法、或 approved 但 hard_rule_passed≠true 一律记未通过',
     basis: {
       kind: 'provisional',
       ref: 'docs/implementation-requirements.md:464',
-      text: `原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（哪些用例算硬规则/失败用例、规则层事实如何与声明对齐）；本片只比较样本显式声明的 gold.hardRuleExpectation（reject⇒false、pass⇒true），未声明的风险样本属模型层隔离、不参与本指标（另报 modelRiskIsolation），不把"模型层正确隔离"当成硬规则失败，该数值${PROVISIONAL_MARKER}。`,
+      text: `原文要求"禁用硬规则与失败用例全部通过"，未给可测分母口径（哪些用例算硬规则/失败用例、规则层事实如何与声明对齐）；本片只比较样本显式声明的 gold.hardRuleExpectation（reject⇒false、pass⇒true），未声明的风险样本属模型层隔离、不参与本指标（另报 modelRiskIsolation）；零声明（declared=0 且无非法声明）时 p=null、门禁 not_evaluated，不把"模型层正确隔离"当成硬规则失败，也不让 normal 默认把分母撑成假绿，该数值${PROVISIONAL_MARKER}。`,
     },
   },
   {

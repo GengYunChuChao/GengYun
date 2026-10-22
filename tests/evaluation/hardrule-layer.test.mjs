@@ -10,8 +10,12 @@
 //   · `gold.hardRuleExpectation='reject'` 的子集才要求 `hard_rule_passed === false`；
 //   · `gold.hardRuleExpectation='pass'` 要求 `true`；
 //   · 未声明的 normal 默认要求 `true`（硬规则不得误伤正常内容）；
-//   · 未声明的 risk 不参与 `hardRulePass`，另报独立指标 `modelRiskIsolation`。
-// 三条回归（a/b/c）分别覆盖：模型层合法隔离不再判负 / 显式硬规则失败仍红 / normal 照旧通过。
+//   · 未声明的 risk 不参与 `hardRulePass`，另报独立指标 `modelRiskIsolation`；
+//   · **零声明**（`declared===0` 且 `invalidDeclaration===0`）⇒ `p=null`、门禁 `not_evaluated`：
+//     normal 默认不能把分母撑成 200 条并判 pass（监工复审 P2-1，评论 6337162713）；
+//     有非法声明时仍 `p=0` / 门禁红（fail-closed）。
+// 回归：a 模型层合法隔离不再判负 / b 显式硬规则失败仍红 / c 有声明时 normal 照旧通过 /
+//   P2-1 零声明不得 pass（含端到端全量夹具）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { aiModerationMetrics, buildGates, evaluateRun, METRIC_GATES } from '../../packages/evaluation/index.mjs';
@@ -79,17 +83,39 @@ test('[回归b] 显式声明硬规则拒绝、规则层却放行 ⇒ hardRulePas
   assert.equal(hardRuleGate(ok).status, 'pass');
 });
 
-// —— 回归 c：normal 样本 hard_rule_passed=true 照旧通过（默认放行期望未放宽） ——
-test('[回归c] normal 样本 hard_rule_passed=true 照旧通过；被硬规则误伤仍红', () => {
-  const m = aiModerationMetrics([normalPassed(), normalPassed()]);
-  assert.equal(m.hardRulePass.checked, 2, 'normal 未显式声明时按默认放行期望进入分母');
+// —— 回归 c：有显式硬规则用例时 normal 样本 hard_rule_passed=true 照旧通过 ——
+test('[回归c] 有显式硬规则用例时 normal 照旧通过；被硬规则误伤仍红', () => {
+  const m = aiModerationMetrics([declaredHardRuleRejectedRisk(), normalPassed(), normalPassed()]);
+  assert.equal(m.hardRulePass.checked, 3, 'normal 未显式声明时按默认放行期望进入分母');
   assert.equal(m.hardRulePass.normalDefault, 2);
   near(m.hardRulePass.p, 1);
   assert.equal(hardRuleGate(m).status, 'pass');
 
-  const hurt = aiModerationMetrics([normalHitByHardRule()]);
-  near(hurt.hardRulePass.p, 0, '正常内容被硬规则命中 ⇒ 规则层误隔离，必须判负');
+  const hurt = aiModerationMetrics([declaredHardRuleRejectedRisk(), normalHitByHardRule()]);
+  near(hurt.hardRulePass.p, 0.5, '正常内容被硬规则命中 ⇒ 规则层误隔离，必须判负');
   assert.equal(hardRuleGate(hurt).status, 'fail');
+});
+
+// —— P2-1（监工复审 6337162713）：零声明不得被 normal 默认撑成 pass ——
+test('[P2-1] 零声明（#21 未到，只有 normal）：p=null、门禁 not_evaluated，不得 pass', () => {
+  const m = aiModerationMetrics(Array.from({ length: 200 }, () => normalPassed()));
+  assert.equal(m.hardRulePass.declared, 0);
+  assert.equal(m.hardRulePass.normalDefault, 200);
+  assert.equal(m.hardRulePass.checked, 200, '计数照报，不隐藏分母');
+  assert.equal(m.hardRulePass.p, null, '一条显式硬规则用例都没有 ⇒ 无观测值，不得判 pass');
+  const gate = hardRuleGate(m);
+  assert.equal(gate.observed, null);
+  assert.equal(gate.status, 'not_evaluated');
+
+  // 例外：有非法声明时仍必须判负（fail-closed），不能被 normal 默认稀释成 pass。
+  const mixed = aiModerationMetrics([
+    ...Array.from({ length: 200 }, () => normalPassed()),
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'maybe' } }, output: { decision: 'blocked', hard_rule_passed: true } },
+  ]);
+  assert.equal(mixed.hardRulePass.declared, 0);
+  assert.equal(mixed.hardRulePass.invalidDeclaration, 1);
+  near(mixed.hardRulePass.p, 0);
+  assert.equal(hardRuleGate(mixed).status, 'fail');
 });
 
 // —— 显式声明非法值：fail-closed，不静默放过 ——
@@ -133,4 +159,29 @@ test('[端到端b] 把一条显式硬规则用例改成规则层放行 ⇒ 门�
   near(m.hardRulePass.p, 399 / 400);
   assert.equal(report.tasks.ai_moderation.gateStatus, 'fail');
   assert.equal(hardRuleGate(m, true).status, 'fail');
+});
+
+test('[P2-1 端到端] 全量夹具删掉全部硬规则声明（预测完整）⇒ 门禁 not_evaluated，不得 pass', () => {
+  const { records, predictions } = buildValidationSet();
+  let removed = 0;
+  for (const r of records) {
+    if (r.task === 'ai_moderation' && r.gold && 'hardRuleExpectation' in r.gold) {
+      delete r.gold.hardRuleExpectation;
+      removed += 1;
+    }
+  }
+  assert.equal(removed, 200, '全量夹具里 200 条风险样本原本显式声明硬规则拒绝');
+
+  const report = runReport(records, predictions);
+  assert.equal(report.isRealEvaluation, true, '夹具本身应可主张（否则门禁状态无意义）');
+  const m = report.tasks.ai_moderation.metrics;
+  assert.equal(m.hardRulePass.declared, 0);
+  assert.equal(m.hardRulePass.invalidDeclaration, 0);
+  assert.equal(m.hardRulePass.checked, 200);
+  assert.equal(m.hardRulePass.normalDefault, 200);
+  assert.equal(m.hardRulePass.modelRiskExcluded, 200, '计数照报：200 条一般模型风险样本被排除');
+  assert.equal(m.hardRulePass.p, null, '零声明 ⇒ 无观测值，不得凭 normal 默认判 pass');
+  near(m.riskRecall.p, 1, '风险拦截能力本身仍是满分（只是不归硬规则指标）');
+  assert.equal(hardRuleGate(m, true).status, 'not_evaluated');
+  assert.equal(report.tasks.ai_moderation.gateStatus, 'not_evaluated');
 });

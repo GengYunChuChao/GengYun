@@ -209,8 +209,9 @@ test('AI 筛查：hardRulePass 只比较显式声明硬规则期望的样本（�
   near(modelLayer.modelRiskIsolation.rate.p, 1);
 
   // 字段缺失：不得默认"规则层通过"，一律记未通过（fail-closed）。
+  // 分母里必须有一条显式声明，否则本指标无观测值（P2-1：零声明 ⇒ p=null、门禁 not_evaluated）。
   const missing = aiModerationMetrics([
-    { record: { expectation: 'normal' }, output: { decision: 'published' } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'blocked' } },
     { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: 'yes' } },
   ]);
   near(missing.hardRulePass.p, 0);
@@ -219,10 +220,18 @@ test('AI 筛查：hardRulePass 只比较显式声明硬规则期望的样本（�
   // 自相矛盾：approved/published 却说规则层没通过 ⇒ 记未通过（engine.mjs 的不变式 approved ⟺ hard_rule_passed===true）。
   const contradictory = aiModerationMetrics([
     { record: { expectation: 'normal' }, output: { decision: 'approved', hard_rule_passed: false } },
-    { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: false } },
+    { record: { expectation: 'risk', gold: { hardRuleExpectation: 'reject' } }, output: { decision: 'published', hard_rule_passed: false } },
   ]);
   near(contradictory.hardRulePass.p, 0);
   assert.equal(contradictory.hardRulePass.selfContradictory, 2);
+
+  // 零声明：normal 的默认期望不能把分母撑成"有样本"⇒ p=null（P2-1）。
+  const zeroDeclared = aiModerationMetrics([
+    { record: { expectation: 'normal' }, output: { decision: 'published', hard_rule_passed: true } },
+  ]);
+  assert.equal(zeroDeclared.hardRulePass.p, null);
+  assert.equal(zeroDeclared.hardRulePass.checked, 1);
+  assert.equal(zeroDeclared.hardRulePass.declared, 0);
 
   // 期望相反（显式声明硬规则拒绝的样本被放行且声称规则层通过）：同样记未通过，不因字段存在就放过。
   const opposite = aiModerationMetrics([

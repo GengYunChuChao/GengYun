@@ -307,6 +307,14 @@ export function aiModerationMetrics(pairs) {
   // 模型层隔离读数（不进门禁）：这批风险样本规则层可以合法通过，只看模型层是否拦下。
   const modelRiskHeld = modelRiskPairs.filter((p) => isModerationHeld(p.output)).length;
 
+  // 分母口径（监工复审 P2-1，评论 6337162713）：只有样本**显式声明**过硬规则期望，本指标才有可比观测值。
+  // 未声明的 normal 只是"默认放行期望"；它单独把分母撑到 ≥200（样本门槛要求 normal≥200）并判 pass，
+  // 等于"硬规则/失败用例一条都没进分母却报通过"。所以零声明一律不给观测值：
+  //   · declared>0              ⇒ 正常比例（非法声明/缺字段/自相矛盾按未通过计）；
+  //   · declared=0 且有非法声明 ⇒ p=0（fail-closed：有声明但不可用，不得 pass）；
+  //   · declared=0 且无任何声明 ⇒ p=null（门禁回落 not_evaluated）；checked/normalDefault/modelRiskExcluded 照报。
+  const hardRate = hardDeclared > 0 ? rate(hardOk, hardChecked) : hardInvalidDeclaration > 0 ? rate(0, hardChecked) : rate(0, 0);
+
   return {
     decisionSet: MODERATION_DECISIONS,
     riskCount: risk.length,
@@ -314,7 +322,7 @@ export function aiModerationMetrics(pairs) {
     riskRecall: rate(riskHeld, risk.length),
     normalFalseIsolationRate: rate(normalIsolated, normal.length),
     hardRulePass: {
-      ...rate(hardOk, hardChecked),
+      ...hardRate,
       checked: hardChecked,
       declared: hardDeclared,
       normalDefault: hardNormalDefault,
