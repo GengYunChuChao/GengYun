@@ -936,12 +936,28 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //   2. **确定性 `event_key`**：`<kind>:<job_id>` —— 只由**服务端分配**的作业 id 派生，
   //      **不含**时间戳/随机数；同一次任务重复投递 ⇒ 历史域按 `(owner_id, event_key)` 去重 ⇒ **no-op**。
   //      （历史 store 另有 `(owner_id, kind, target_ref.id)` 唯一约束作第二道去重。）
-  //   3. **未接线 = 什么都不做**（不伪造历史、不声称成功）：`real` 模式下历史域整域关闭
-  //      （`historyService === null`，本文件下方装配）⇒ 端口落到未接线实现，识别/OCR 任务照常执行。
+  //   3. **未接线 = 什么都不做**（不伪造历史、不声称成功）：只有「`real` 且历史域**无**持久化落点」
+  //      （`historyService === null`，见下方装配门禁与上方 `historyDomainEnabled`）才落到未接线实现；
+  //      `real` + 持久化落点、以及全部非 `real` 分支都走 wired（识别/OCR 任务照常执行）。
   //
   // `app.historyService` 在本文件**下方**才被装配（其任务状态端口要读 `recognitionService.getJob`／
   // `app.ocrService.getJob`，故本端口**不捕获历史服务实例、只捕获 `app`，请求期才解析**）——
   // 与同一装配块里历史任务状态端口的既有做法同源（那里只捕获闭包、请求期才解析 `app.ocrService`）。
+  //
+  // **store 提前构造**（只提前「构造」，不提前「判定」）：下面两个端口要不要接线，判据是
+  // `historyStore.persistent`（与下方 `historyService` 的门禁表达式**同一口径**），因此 store 必须在
+  // 端口之前就位。选型规则与别处逐字相同（原注释块见下方「历史/收藏 store 选择」）：
+  //   - 注入的 store 优先（测试/装配覆盖项）；
+  //   - `real` + 有池 ⇒ PostgreSQL store（`persistent: true`，迁移 0018）；
+  //   - 其余（非 real，或 real 无池）⇒ 内存 store（`persistent: false`）。
+  // store 是 **store 级、非 nullable**：注销清空（`createUserDataDeletion`）拿到的是 store 而不是
+  // service；`real` 无池时仍需一个可调用对象，但下方服务层门禁会把它判成"不持久" ⇒ 服务为 `null`
+  // ⇒ 该 store **不接收本域任何写入**（注销清空只会得到 0 行，不会凭空产生"已清空 N 行"的证据）。
+  const historyStore: HistoryStore =
+    historyInjection?.store ??
+    (config.executionMode === 'real' && pool !== null
+      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
+      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   const recordHistoryTerminal = async (input: {
     owner_id: string;
     kind: 'recognition' | 'ocr';
@@ -958,22 +974,33 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // （未知字段一律 400，因此这里不做任何预转换、也不吞掉它的拒绝）。
     await history.appendHistory({ ...input, event_key: `${input.kind}:${input.job_id}` });
   };
-  const recognitionTerminalHistory: RecognitionTerminalHistoryPort =
-    config.executionMode === 'real'
-      ? createUnwiredRecognitionTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
-      : {
-          kind: 'wired',
-          note: '识别终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
-          recordTerminal: (input: RecognitionTerminalHistoryInput) => recordHistoryTerminal(input),
-        };
-  const ocrTerminalHistory: OcrTerminalHistoryPort =
-    config.executionMode === 'real'
-      ? createUnwiredOcrTerminalHistoryPort('real 模式：历史域为内存 store 整域关闭（不放宽守卫）')
-      : {
-          kind: 'wired',
-          note: 'OCR 终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
-          recordTerminal: (input: OcrTerminalHistoryInput) => recordHistoryTerminal(input),
-        };
+  // **real 模式的判据（本片修正点）**：不是「执行模式是不是 real」，而是「历史域是否真的开启」——
+  // 与下方 `historyService` 的**同一**门禁表达式（`real && !historyStore.persistent ⇒ null`）逐字同源：
+  //   - 非 real（stub/演示）⇒ 开启（内存 store，既有行为不变）⇒ 端口 **wired**；
+  //   - real + 持久化落点（`DATABASE_URL` 的 PG store，或注入的持久 store）⇒ 服务**开启**
+  //     ⇒ 端口 **wired**：识别/OCR 终态**真的**落一行 history（修正前这里被误判成"整域关闭"，
+  //     于是 real + PG 的生产路径写不出 history 行）；
+  //   - real + 无落点（没配 `DATABASE_URL` 的内存 store / 注入的内存 store）⇒ 服务为 `null`
+  //     ⇒ 端口 **unwired**：任务照常执行、**不伪造**历史，5 条历史路由仍如实 503（不放宽守卫）。
+  const historyDomainEnabled = config.executionMode !== 'real' || historyStore.persistent;
+  const recognitionTerminalHistory: RecognitionTerminalHistoryPort = historyDomainEnabled
+    ? {
+        kind: 'wired',
+        note: '识别终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+        recordTerminal: (input: RecognitionTerminalHistoryInput) => recordHistoryTerminal(input),
+      }
+    : createUnwiredRecognitionTerminalHistoryPort(
+        'real 模式且历史域无持久化落点（无 DATABASE_URL / 注入的内存 store）：终态不写历史，不放宽守卫',
+      );
+  const ocrTerminalHistory: OcrTerminalHistoryPort = historyDomainEnabled
+    ? {
+        kind: 'wired',
+        note: 'OCR 终态已接线到历史域内部创建口（appendHistory；确定性 event_key、同任务重复投递为 no-op）',
+        recordTerminal: (input: OcrTerminalHistoryInput) => recordHistoryTerminal(input),
+      }
+    : createUnwiredOcrTerminalHistoryPort(
+        'real 模式且历史域无持久化落点（无 DATABASE_URL / 注入的内存 store）：终态不写历史，不放宽守卫',
+      );
   const recognitionProviderResolved =
     recognitionProvider ??
     createRecognitionProvider({
@@ -1353,20 +1380,19 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // `ocrService` 在下方 `registerOcrRoutes` 时才被装饰，这里只捕获闭包、请求期才解析。
   // store 选择：**real 且有 `pool` 才接 PG**（`persistent: true`），否则内存实现。
   //
-  // 这两个变量是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
+  // 这两个 store 都是 **store 级**（非 nullable），因为注销清空（`createUserDataDeletion`）拿到的是
   // store 而不是 service。`real` 且无 `pool` 时仍需一个可调用对象 ⇒ 选内存实现，但下方
   // 服务层门禁会把它判成"不持久" ⇒ 服务为 `null` ⇒ 该 store **不接收本域任何写入**，
   // 注销清空只会得到 0 行（不会凭空产生"已清空 N 行"的证据）。
+  //
+  // ⚠ `historyStore` 的**构造**在**上方**（GY-I16 终态端口处）：终态端口要不要接线，判据是
+  // `store.persistent`（与下面 `historyService` 的门禁表达式同一口径），所以必须先于端口就位。
+  // 本处不再重复构造，避免出现"两个 store、两套判据"。
   const favoritesStore: FavoritesStore =
     favoritesInjection?.store ??
     (config.executionMode === 'real' && pool !== null
       ? createPostgresFavoritesStore(pool, { now: () => clock().getTime() })
       : createMemoryFavoritesStore({ now: () => clock().getTime() }));
-  const historyStore: HistoryStore =
-    historyInjection?.store ??
-    (config.executionMode === 'real' && pool !== null
-      ? createPostgresHistoryStore(pool, { now: () => clock().getTime() })
-      : createMemoryHistoryStore({ now: () => clock().getTime() }));
   /** 浙江首批投影面（与 `/knowledge` 同源同过滤同开关）；开关关闭时它恒为空集合。 */
   const publicKnowledgeSeedFace = createReferenceQueryService({
     includeUnverifiedSeed:
