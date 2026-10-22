@@ -58,6 +58,8 @@ import type {
   DeletionRequestStore,
 } from './deletion-requests-pg.ts';
 import type { BackupCopySeedSource, BackupCopySqlClient } from './backup-copies-pg.ts';
+import type { BackupStateDerivationPort, DerivedBackupStates } from './backup-state-derivation.ts';
+import { unreadableBackupStates } from './backup-state-derivation.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -289,6 +291,16 @@ export interface UserDataDeletionDeps {
    * 这里不接受第二套默认值（那会变成两套期限各自漂移）。
    */
   receiptTtlMs?: number;
+  /**
+   * GY-R28 W6（G5/G11）· 回执备份态的**只读推导端口**。不传即保持既有行为
+   * （回执的 `backupState` 只反映处理器那次推进的结果，不做读路径刷新）。
+   *
+   * 接线后 `refreshBackupStates()` 从 `public.user_backup_copies` 的真实行推导四域齐备与否：
+   * 四域全 `purged` 且证据可复算 ⇒ `completed`；还有未到期行 ⇒ `pending`；到期未清/缺清单/
+   * 有 `failed` 行 ⇒ `blocked` + 原因码。⛔ 不把「副本已清」本身读成 `completed`
+   * （判定见 `services/api/src/privacy/backup-state-derivation.ts`）。
+   */
+  backupStates?: BackupStateDerivationPort;
   now?: () => Date;
 }
 
@@ -312,6 +324,24 @@ export interface PurgeAuditEntry {
   blockedReasons?: readonly string[];
 }
 
+/**
+ * 一次「回执备份态刷新」的结果（诊断用；不出契约）。
+ *
+ * 只陈述**这次读取到的事实与改写了哪些模块**；整体完成与否仍由协调器
+ * （`packages/privacy/deletion.mjs::completionStatus`）判定，本片不另立判据。
+ */
+export interface BackupStateRefresh {
+  requestId: string;
+  /** 推导出的四域备份态（`overall` 表示四域聚合）。 */
+  derived: DerivedBackupStates;
+  /** 真正被改写的模块名（未改写＝结论与账本一致，或该模块在线侧还没完成）。 */
+  changed: readonly string[];
+  /** 在线侧未完成因而**不接受**备份判定的模块（不会因为备份清了就把它们算完成）。 */
+  skipped: readonly string[];
+  /** 账本里过期的 `blocked` 是否被复位成 `processing`（复位后由协调器重新判定整体状态）。 */
+  stateReset: boolean;
+}
+
 export interface UserDataDeletionRegistry {
   readonly coordinator: DeletionCoordinator;
   /** 必需模块闭集。 */
@@ -324,6 +354,13 @@ export interface UserDataDeletionRegistry {
   executeHandlers(requestId: string): Promise<Record<string, unknown>>;
   completionStatus(requestId: string): { state: string; completed: boolean; missingModules: readonly string[] };
   receipt(requestId: string): Record<string, unknown> | null;
+  /**
+   * GY-R28 W6（G5/G11）· 按 `public.user_backup_copies` 的真实行刷新**备份**列。
+   *
+   * 只读库、只改进程内账本的备份列（在线列与在线证据一字不动）；整体完成仍由 `completionStatus()`
+   * 判定。未接线推导端口、反查不到主体或请求 ⇒ 返回 `null`（保持既有行为，不假装刷新过）。
+   */
+  refreshBackupStates?(requestId: string): Promise<BackupStateRefresh | null>;
   /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
   evidenceOf(requestId: string): Record<string, string>;
   /** 诊断审计（内部；只含模块名/行数/状态，不含任何私有正文或凭据）。 */
@@ -578,6 +615,190 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     );
   }
 
+  /** 账本里的 handler 行（协议内部结构；只经协调器暴露的引用读/写，不另建第二本账）。 */
+  function handlerRowsOf(requestId: string): Array<Record<string, unknown>> {
+    const rows = (registry as unknown as { _handlerRows?: unknown })._handlerRows;
+    if (!Array.isArray(rows)) return [];
+    return rows.filter(
+      (row): row is Record<string, unknown> =>
+        typeof row === 'object' && row !== null && (row as Record<string, unknown>)['requestId'] === requestId,
+    );
+  }
+
+  function thirdPartyRowsOf(requestId: string): Array<Record<string, unknown>> {
+    const rows = (registry as unknown as { _thirdPartyRows?: unknown })._thirdPartyRows;
+    if (!Array.isArray(rows)) return [];
+    return rows.filter(
+      (row): row is Record<string, unknown> =>
+        typeof row === 'object' && row !== null && (row as Record<string, unknown>)['requestId'] === requestId,
+    );
+  }
+
+  function evidenceSegments(evidenceRef: unknown): string[] {
+    return typeof evidenceRef === 'string' && evidenceRef.trim() !== ''
+      ? evidenceRef.split(';').filter((part) => part !== '')
+      : [];
+  }
+
+  /**
+   * 只替换 `<module>:backup-*` 段：在线侧证据（`online-purged` / `idempotency-purged`）**一字不动**。
+   * 证据串是 `;` 分段的事实清单，任何"整串覆盖"都会把在线删除的真实行数抹掉。
+   */
+  function withBackupSegment(evidenceRef: unknown, module: string, segment: string | null): string | null {
+    const parts = evidenceSegments(evidenceRef).filter((part) => !part.startsWith(`${module}:backup-`));
+    if (segment !== null) parts.push(segment);
+    return parts.length === 0 ? null : parts.join(';');
+  }
+
+  /**
+   * 单行状态复算（与 `packages/privacy/deletion.mjs:172-187` 同形：只复算，不改判据）。
+   * 整体完成与否仍只由协调器的 `completionStatus()` 判定。
+   */
+  function recomputeRowStatus(row: Record<string, unknown>): void {
+    const online = String(row['onlineState'] ?? '');
+    const backup = String(row['backupState'] ?? '');
+    if (online === 'blocked' || backup === 'blocked') {
+      row['status'] = 'blocked';
+      return;
+    }
+    if (online === 'completed' && backup === 'completed') {
+      const evidence = typeof row['evidenceRef'] === 'string' ? row['evidenceRef'].trim() : '';
+      if (evidence === '') {
+        row['status'] = 'blocked';
+        row['errorCode'] = 'EVIDENCE_REQUIRED';
+        return;
+      }
+      row['status'] = 'completed';
+      return;
+    }
+    row['status'] = 'running';
+  }
+
+  /**
+   * 回执备份态的**读路径刷新**（G5/G11）。
+   *
+   * 为什么需要它：`backupState` 原先只在 `executeHandlers()` 的推进路径里被改写；回到读路径
+   * （`GET /account/deletions/:id`）时，回执只是把进程内账本原样投影 ⇒ 30 日已到期且副本**已清**
+   * 的请求仍显示 `pending`。这里按 `public.user_backup_copies` 的**真实行**重新推导（只读）。
+   *
+   * 三条硬约束（⛔ 都不是"顺手放宽"的）：
+   * 1. **不写库**：没有 UPDATE/INSERT/DELETE，也没有 `BEGIN`；改的只是进程内账本的备份列。
+   * 2. **不越过在线侧**：某模块 `onlineState !== 'completed'` ⇒ 不接受备份判定（否则"备份清了"
+   *    可能被读成"这个模块完成了"，而在线数据其实还在）。
+   * 3. **不自己宣布完成**：写入完毕后交给协调器 `completionStatus()` 判定整体状态；
+   *    本函数只把"上一次执行看到的过期 `blocked`"复位成 `processing` 让协议有机会重新判定。
+   */
+  async function refreshBackupStates(requestId: string): Promise<BackupStateRefresh | null> {
+    const derivation = input.backupStates ?? null;
+    if (derivation === null || !derivation.available) return null;
+    const userId = subjectByRequest.get(requestId);
+    if (userId === undefined) return null;
+    const requestsById = (registry as unknown as { _requests?: unknown })._requests;
+    if (!(requestsById instanceof Map)) return null;
+    const request = requestsById.get(requestId) as Record<string, unknown> | undefined;
+    if (request === undefined) return null;
+
+    const modules = [...USER_DATA_DELETION_MODULES];
+    let derived: DerivedBackupStates;
+    try {
+      derived = await derivation.derive({ requestId, userId, modules });
+    } catch {
+      // 读不到 ≠ 清完了（也 ≠ 还没轮到）：如实折叠成 blocked，⛔ 不返回 pending。
+      derived = unreadableBackupStates({ requestId, modules });
+    }
+
+    const changed: string[] = [];
+    const skipped: string[] = [];
+    for (const one of derived.modules) {
+      const row = handlerRowsOf(requestId).find((candidate) => candidate['module'] === one.module);
+      if (row === undefined) {
+        skipped.push(one.module);
+        continue;
+      }
+      if (row['onlineState'] !== 'completed') {
+        skipped.push(one.module);
+        continue;
+      }
+      const before = {
+        backupState: row['backupState'],
+        evidenceRef: row['evidenceRef'],
+        errorCode: row['errorCode'],
+        status: row['status'],
+      };
+      if (one.state === 'completed') {
+        row['backupState'] = 'completed';
+        row['errorCode'] = null;
+        row['evidenceRef'] = withBackupSegment(
+          before.evidenceRef,
+          one.module,
+          `${one.module}:backup-purged:${one.evidenceRef as string}`,
+        );
+      } else if (one.state === 'pending') {
+        // 「还没到期」是唯一正当的 pending：清掉旧的备份证据段，但保留在线证据。
+        row['backupState'] = 'pending';
+        row['errorCode'] = null;
+        row['evidenceRef'] = withBackupSegment(before.evidenceRef, one.module, null);
+      } else {
+        const code = one.errorCode ?? 'EVIDENCE_REQUIRED';
+        row['backupState'] = 'blocked';
+        row['errorCode'] = code;
+        row['evidenceRef'] = withBackupSegment(
+          before.evidenceRef,
+          one.module,
+          `${one.module}:backup-blocked:${code}`,
+        );
+      }
+      recomputeRowStatus(row);
+      row['updatedAt'] = now();
+      if (
+        before.backupState !== row['backupState'] ||
+        before.evidenceRef !== row['evidenceRef'] ||
+        before.errorCode !== row['errorCode'] ||
+        before.status !== row['status']
+      ) {
+        changed.push(one.module);
+      }
+    }
+
+    // 证据账本同步：回执本身不展示证据，但 `evidenceOf()` 必须与账本行说同一件事——
+    // 否则「备份已清」的摘要只活在 handler 行里，审计侧读不到（也就等于没写证据）。
+    if (changed.length > 0) {
+      const ledger = evidenceByRequest.get(requestId) ?? {};
+      for (const module of changed) {
+        const row = handlerRowsOf(requestId).find((candidate) => candidate['module'] === module);
+        const value = row === undefined ? '' : String(row['evidenceRef'] ?? '');
+        if (value === '') delete ledger[module];
+        else ledger[module] = value;
+      }
+      evidenceByRequest.set(requestId, ledger);
+    }
+
+    let stateReset = false;
+    if (request['state'] === 'blocked') {
+      const handlerBlocked = handlerRowsOf(requestId).some(
+        (row) => row['onlineState'] === 'blocked' || row['backupState'] === 'blocked',
+      );
+      const thirdPartyBlocked = thirdPartyRowsOf(requestId).some(
+        (row) =>
+          row['onlineStatus'] === 'failed' ||
+          row['backupStatus'] === 'failed' ||
+          row['onlineStatus'] === 'unsupported' ||
+          row['backupStatus'] === 'unsupported',
+      );
+      // `deletion.mjs:311` 要求 `request.state !== 'blocked'` 才可能升为 completed；旧 blocked 是
+      // 「上一次执行看到的事实」，不是永久判决 —— 读完新事实后无人再 blocked ⇒ 复位，交给协议重判。
+      if (!handlerBlocked && !thirdPartyBlocked) {
+        request['state'] = 'processing';
+        request['revision'] = Number(request['revision'] ?? 0) + 1;
+        stateReset = true;
+      }
+    }
+
+    // 整体完成判定仍只由协议做（并负责写 `state`/`completedAt`/`revision`）。
+    coordinator.completionStatus(requestId);
+    return { requestId, derived, changed, skipped, stateReset };
+  }
+
   return {
     coordinator,
     requiredModules: () => coordinator.requiredModules(),
@@ -601,6 +822,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     },
     completionStatus: (requestId) => coordinator.completionStatus(requestId),
     receipt: (requestId) => coordinator.receipt(requestId),
+    refreshBackupStates,
     evidenceOf: (requestId) => ({ ...(evidenceByRequest.get(requestId) ?? {}) }),
     audit: () => auditLog.map((entry) => ({ ...entry })),
   };

@@ -294,6 +294,25 @@ const UNAUDITED_SQL_HOSTS = [
     owner: 'E2 / R28-E2 backup-purge-driver；静态纳管待 R28-S66 重定读数',
   },
   {
+    file: 'services/api/src/privacy/online-purge-driver.ts',
+    reason: 'R28-W6（#19）新增的「在线数据 7 日到期」运维驱动的 SQL：`deletion_requests` 上一条'
+      + '按 `online_due_at` 闭区间取候选的 SELECT（带 `LIMIT`）与一条同 WHERE 的 `count(*)`。'
+      + '列面已由真库臂**实测**：tests/integration/online-purge-pg.mjs 第一臂断言运行时角色对'
+      + '`deletion_requests` 连 SELECT 都没有（实跑 `SELECT id` ⇒ 42501）⇒ 本命令必须用属主/运维角色跑'
+      + '（与 `db:migrate` 同源），四域 DELETE 则用**既有**授权（零新增授权）。'
+      + '纳入本管线需 R28-S66 重定 auditedFiles 读数，留给该片统一改。',
+    owner: 'W6 / R28-W6 online-purge-driver；静态纳管待 R28-S66 重定读数',
+  },
+  {
+    file: 'services/api/src/privacy/backup-state-derivation.ts',
+    reason: 'R28-W6（#19）新增的「回执 backupState 由真行推导」只读 SELECT：按'
+      + '`(request_id, user_id)` 读 `user_backup_copies` 的 module/scope/state/retention_until/'
+      + 'payload_digest/evidence_ref（全部落在 `20-login-roles.sql` 的'
+      + '`gy-i19-backup-copies-grant` 列级 SELECT 里，未新增授权）。刻意不读 `payload`：'
+      + '真库臂断言该列不可读。纳入本管线需 R28-S66 重定 auditedFiles 读数，留给该片统一改。',
+    owner: 'W6 / R28-W6 backup-state-derivation；静态纳管待 R28-S66 重定读数',
+  },
+  {
     file: 'services/api/src/ai/checked-content-live-adapter.ts',
     reason: 'R28-W3 新增的 TTS「已核对内容」端口真实现，两条只读语句：'
       + '(a) `select revision, check_state, owner_id, checked_text from public.conversation_answers where id = $1::uuid limit 1`；'
@@ -440,6 +459,10 @@ const TABLE_WIDE_COLUMN = '*';
  *   · 两侧增量落在**不同文件**（`community` 38 条只由本片贡献；`moderation/ledger-pg.ts` 5 条只由
  *     上游贡献）⇒ 并集恰好 245 = 235 ＋ 10 = 240 ＋ 5；行锁 FOR UPDATE／rowLockRequirements 仍 25
  *     （`ledger-pg.ts` 5 条语句零行锁、零 RETURNING，实测如此）。
+ *   · 第二次合流（上游 `f75e1a1b`，#482／#434 复审 §6）：`ledger-pg.ts` 的**更新语句**补
+ *     `RETURNING job_id`（真库匹配 0 行不报错，故读回命中行数）⇒ **不新增 SQL 字面量**、不改语句条数，
+ *     只把 RETURNING 74→**75**、列要求 1589→**1590**（`public.moderation_decisions.job_id` 的 SELECT
+ *     面，已在 `20-login-roles.sql` 列级授权清单内）、covered 1535→**1536**，缺口仍 0。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
@@ -448,7 +471,7 @@ const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 18,
   sqlLiterals: 245,
   statements: { INSERT: 38, UPDATE: 42, SELECT: 133, DELETE: 32 },
-  returningClauses: 74,
+  returningClauses: 75,
   onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
@@ -456,8 +479,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 41,
-  columnRequirements: 1589,
-  coveredRequirements: 1535,
+  columnRequirements: 1590,
+  coveredRequirements: 1536,
   ledgerExemptions: 33,
   rowLockRequirements: 25,
   rowLockExemptions: 1,
@@ -2170,11 +2193,11 @@ test('sql-column-coverage/扩展 18 文件读数与列覆盖（R28-S66／R28-W6�
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 18 已审计 + 7 登记（R28-S66 / R28-E2 / R28-W3 / R29-S5 / R29）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 18 已审计 + 9 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R29-S5 / R29）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 25, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 27, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2189,6 +2212,8 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/ocr/store-pg.ts',
       'services/api/src/privacy/backup-copies-pg.ts',
       'services/api/src/privacy/backup-purge-driver.ts',
+      'services/api/src/privacy/backup-state-derivation.ts',
+      'services/api/src/privacy/online-purge-driver.ts',
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',

@@ -35,6 +35,8 @@ const USER_ID = '33333333-3333-4333-8333-333333333333';
  *
  * 同时是一张**极小的表**（`rows`）：建行会落进来，退位会改 `superseded`，读回会答出真实状态——
  * 否则"写完读回确认"这条路径在假池上只能答"缺行"，测出来的就不是真行为。
+ * 状态推进语句按 `RETURNING job_id` 的**实际命中行**返回（真库命中 0 行不报错），
+ * 台账必须靠这个返回行确认落行（#434 复审 §6）。
  */
 function makeRecordingPool(options = {}) {
   const calls = [];
@@ -54,20 +56,29 @@ function makeRecordingPool(options = {}) {
         return { rows: row === undefined ? [] : [{ superseded: row.superseded }] };
       }
       if (label === 'INSERT') {
-        if (!rows.has(values[0])) {
-          rows.set(values[0], {
-            job_id: values[0],
-            target_type: values[1],
-            target_id: values[2],
-            target_revision: values[3],
-            content_kind: values[4],
-            superseded: values[23] === true,
-          });
-        }
+        if (rows.has(values[0])) return { rows: [] }; // ON CONFLICT (job_id) DO NOTHING
+        rows.set(values[0], {
+          job_id: values[0],
+          target_type: values[1],
+          target_id: values[2],
+          target_revision: values[3],
+          content_kind: values[4],
+          state: values[8],
+          decision: values[13],
+          superseded: values[23] === true,
+        });
         return { rows: [] };
       }
       if (label === 'UPDATE') {
-        if (!sql.includes('SET superseded = TRUE')) return { rows: [] }; // 状态推进语句不碰 superseded
+        if (!sql.includes('SET superseded = TRUE')) {
+          // 状态推进语句：只改可变列，并按 `RETURNING job_id` 报告**实际命中行**（真库语义）。
+          const row = rows.get(values[0]);
+          if (row === undefined) return { rows: [] };
+          row.state = values[1];
+          row.decision = values[3];
+          row.superseded = values[13] === true;
+          return { rows: [{ job_id: values[0] }] };
+        }
         const exclude = values.length > 5 ? values[5] : null;
         for (const row of rows.values()) {
           if (
@@ -203,7 +214,7 @@ test('LP4. 未知 job_id 的更新：同步抛错且不入队（调用方必须�
 });
 
 test('LP5. 更新语句只动可变列：目标身份列（target_*/content_kind/job_revision）不得出现在 SET 里', async () => {
-  const { pool, calls } = makeRecordingPool();
+  const { pool, calls, rows } = makeRecordingPool();
   const ledger = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
   ledger.create(record({ state: 'queued', decision: 'pending' }));
   ledger.update(record({ state: 'succeeded', decision: 'approved' }));
@@ -220,6 +231,9 @@ test('LP5. 更新语句只动可变列：目标身份列（target_*/content_kind
   assert.equal(updateCall.values[0], JOB_1);
   assert.equal(updateCall.values[1], 'succeeded');
   assert.equal(updateCall.values[3], 'approved');
+  // 更新必须**真的落到那一行**上（命中 1 行）：库表读数与内存一致，才算确认落库（#434 复审 §6）。
+  assert.equal(rows.get(JOB_1)?.state, 'succeeded', '更新命中 1 行 ⇒ 库里的 state 必须前进');
+  assert.equal(rows.get(JOB_1)?.decision, 'approved', '更新命中 1 行 ⇒ 库里的 decision 必须前进');
 });
 
 test('LP6. 下架标记幂等：重放不新增行，内存 isWithdrawn 与落库语句一致', async () => {

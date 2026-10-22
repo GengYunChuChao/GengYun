@@ -29,7 +29,9 @@
     "test:docs": "node tools/run-python.mjs tools/validate_development_docs.py && node tools/verify-research-records.mjs",
     "db:migrate": "npm run db:migrate --workspace @gengyun/api",
     "purge:backup-copies": "node tools/purge-expired-backup-copies.mjs",
-    "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs"
+    "purge:online-data": "node tools/purge-expired-online-data.mjs",
+    "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs",
+    "test:integration:online-purge-pg": "node tests/integration/online-purge-pg.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

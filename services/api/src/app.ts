@@ -142,6 +142,8 @@ import {
 } from './privacy/user-data-deletion.ts';
 // GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
 import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
+import type { BackupStateDerivationPort } from './privacy/backup-state-derivation.ts';
+import { createPostgresBackupStateReader } from './privacy/backup-state-derivation.ts';
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
@@ -451,7 +453,15 @@ export interface BuildAppOptions {
    * 显式传入用于**故障注入**——例如让第 ③ 步 INSERT 撞回执摘要唯一索引，
    * 以实测「同一事务整体回滚、旧 token 不复活」这条安全性质）。
    */
-  userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore | null };
+  userDataDeletionInjection?: {
+    backupPurge?: BackupPurgePort;
+    requests?: DeletionRequestStore | null;
+    /**
+     * GY-R28 W6（G5/G11）：回执备份态的**只读推导端口**注入（测试与故障注入用）。
+     * 缺省按「真库 + 受理已接线」自动装配，见下方 `backupStatesWiring`。
+     */
+    backupStates?: BackupStateDerivationPort;
+  };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
   //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
@@ -1494,6 +1504,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         : durableDeletionRequests !== null && config.executionMode === 'real'
           ? { backupPurge: createUnavailableBackupPurgePort() }
           : {};
+  // GY-R28 W6（G5/G11）：回执 `backupState` 的**只读推导**装配（门与 `backupPurgeWiring` 严格同门）。
+  //   - 有真库且**受理已接线**（存在清单行）⇒ 真实只读端口：回执的备份态由 `user_backup_copies` 的
+  //     真实行推导（四域全 `purged` 且证据可复算 ⇒ `completed`；未到期 ⇒ `pending`；到期未清 /
+  //     缺清单行 / 有 `failed` 行 ⇒ `blocked` + 原因码）；
+  //   - 受理**未接线**（`requests: null` 或内存模式）⇒ **不接线**：没有清单行就无法判定，
+  //     「回执照抄上次执行结论」才是如实状态（既有反向控制用例锁这条：`requests: null` 时
+  //     `backup_state` 必须仍是 pending）；
+  //   - 显式注入优先（测试与故障注入），与 `backupPurge` 的覆盖顺序一致。
+  const backupStatesWiring: { backupStates?: BackupStateDerivationPort } =
+    userDataDeletionInjection?.backupStates !== undefined
+      ? { backupStates: userDataDeletionInjection.backupStates }
+      : durableDeletionRequests !== null && pool !== null
+        ? { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }
+        : {};
   // #12 会话域存储（**提前声明**）：注销清理把会话域并进同一本账，而备份清单是「全有或全无」
   // —— `backupCopySources()` 需要在**装配期**就知道该 store 有没有 `snapshotOwner`，因此这份
   // store 必须先于注销装配就位；后面的问答子域装配**复用**同一实例（不再重复创建）。
@@ -1572,6 +1596,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
     ...backupPurgeWiring,
+    ...backupStatesWiring,
     ...(durableDeletionRequests === null
       ? {}
       : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),

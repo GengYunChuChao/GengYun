@@ -44,3 +44,7 @@ project.private.config.json
 /.local/
 /config/*.local.json
 !/config/*.local.json.example
+
+# Online-purge cross-run cursor: machine-local progress state, never committed
+/.gengyun-online-purge-cursor.json
+/.gengyun-online-purge-cursor.json.tmp-*
