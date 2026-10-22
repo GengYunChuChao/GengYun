@@ -290,11 +290,18 @@ test('[C] 探测抛错 ⇒ unknown 不入缓存：下一次调用会重新探测
   assert.equal(db2.probes.length, 2, 'unknown 绝不入缓存（负控制②按 missing 处理 ⇒ 第二次不会探测）');
 });
 
-test('[C] 探测形状读不懂（无 ready 列）⇒ unknown ⇒ 同样 fail-closed', async () => {
+test('[C] 探测形状读不懂（无 ready 列）⇒ unknown ⇒ 同样 fail-closed（确定性缺陷 ⇒ retryable:false）', async () => {
   const db = makeDb({ probe: 'unknown' });
   await assert.rejects(
     () => db.store.getOcr(randomUUID()),
-    (error) => error instanceof ApiError && error.code === 'PROVIDER_UNAVAILABLE' && error.retryable === true,
+    (error) =>
+      error instanceof ApiError &&
+      error.code === 'PROVIDER_UNAVAILABLE' &&
+      // R31-S-retryable：应答形状读不懂 = 驱动/查询形状类确定性缺陷，没有任何人工介入以外的办法
+      // 让它变好 ⇒ 必须 fail-closed 且**不可重试**（此前标 true，会被客户端无限重试）。
+      error.retryable === false &&
+      Array.isArray(error.details) &&
+      error.details.some((entry) => entry.code === 'PROBE_SHAPE_UNKNOWN'),
   );
 });
 

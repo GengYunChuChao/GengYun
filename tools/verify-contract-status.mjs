@@ -6,6 +6,7 @@ import {
   operationKey, scanMountedRoutes, mountedMismatches, runtimeMountedRoutes,
   evidenceWithinRepository, replaceStatusTables,
   routeDeclarations, declarationSegments, assertionArgumentRanges, operationMentions,
+  enclosingBlock, isDeclarationLine,
 } from './contract-status-core.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -13,8 +14,8 @@ const STATUS_FILE = join(ROOT, 'docs/architecture/contract-status.json');
 const DOCUMENT_FILE = join(ROOT, 'docs/architecture/contract-implementation-status.md');
 const OPERATIONS_FILE = join(ROOT, 'packages/contracts/operations.json');
 const flags = new Set(process.argv.slice(2));
-if ([...flags].some(flag => !['--runtime', '--write-doc'].includes(flag))) {
-  console.error('用法：node tools/verify-contract-status.mjs [--runtime] [--write-doc]');
+if ([...flags].some(flag => !['--runtime', '--write-doc', '--reanchor'].includes(flag))) {
+  console.error('用法：node tools/verify-contract-status.mjs [--runtime] [--write-doc] [--reanchor]');
   process.exit(1);
 }
 const errors = [];
@@ -75,6 +76,129 @@ const anchorLineNumbers = (text, value) => {
   }
   return hits;
 };
+// ── 锚点自动重定位（--reanchor）────────────────────────────────────────────────
+// 只重写 evidence 的 `lines` 字符串值：默认 dry-run 只报不改，`--reanchor --write-doc` 才落盘。
+// 存在任一拒绝项就整体 exit 1 且不写盘（写盘前先把全部候选算完）：
+//   MISSING   锚点文本在文件里出现 0 次——无从定位，不许猜；
+//   AMBIGUOUS 锚点落在多个不同归属块里——不猜，列出全部候选行号；
+//   UNSAFE    算出的区间会被校验器自己判红（区间等于整个文件），或写盘前的字节保真自检不通过。
+// 「已漂移」的判据与 checkAnchors 同口径：锚点命中行全部落在 lines ±容差之外（或 lines 越界/不成形）。
+// 归属块的求法在 contract-status-core.mjs 的 enclosingBlock，口径写在那里，报告里 FALLBACK 可见。
+const ledgerEntries = ledger => [
+  ...(ledger.operations ?? []).map(entry => ({ entry, owner: entry.id ?? operationKey(entry.method, entry.path), operation: true })),
+  ...(ledger.dimensions ?? []).map(entry => ({ entry, owner: `dimension ${entry.key}`, operation: false })),
+];
+// 台账文本里 "lines" 字符串值的出现次序：先 operations 再 dimensions，各自按 evidence 顺序。
+const ledgerLinesOrder = ledger => {
+  const order = new Map();
+  let index = 0;
+  for (const { entry } of ledgerEntries(ledger)) {
+    for (const item of entry.evidence ?? []) {
+      if (typeof item.lines !== 'string') continue;
+      order.set(item, index);
+      index += 1;
+    }
+  }
+  return order;
+};
+const ledgerLinesValues = ledger => ledgerEntries(ledger)
+  .flatMap(({ entry }) => (entry.evidence ?? []).filter(item => typeof item.lines === 'string').map(item => item.lines));
+function planReanchors(ledger) {
+  const order = ledgerLinesOrder(ledger);
+  const plan = { candidates: [], MISSING: [], AMBIGUOUS: [], UNSAFE: [], scanned: 0, consistent: 0, unreadable: 0 };
+  for (const { entry, owner, operation } of ledgerEntries(ledger)) {
+    for (const item of entry.evidence ?? []) {
+      const anchor = anchorSpec(item);
+      const path = [item.path, item.test].find(value => typeof value === 'string');
+      // 只处理「有锚点文本 + 有行号」的引用：没有行号就没有可重写的东西，锚点冲突/非法已由形状校验报告。
+      if (anchor.kind !== 'value' || typeof item.lines !== 'string') continue;
+      plan.scanned += 1;
+      const reference = `${path}:${item.lines}`;
+      if (path === undefined || !evidenceWithinRepository(ROOT, path)) { plan.unreadable += 1; continue; }
+      const absolute = resolve(ROOT, path);
+      if (!isRegularFile(absolute)) { plan.unreadable += 1; continue; }
+      const text = readEvidence(absolute);
+      const hits = anchorLineNumbers(text, anchor.value);
+      if (hits.length === 0) { plan.MISSING.push({ owner, reference, value: anchor.value }); continue; }
+      const totalLines = text.split('\n').length;
+      const match = /^(\d+)-(\d+)$/.exec(item.lines);
+      const from = match === null ? 0 : Number(match[1]);
+      const to = match === null ? 0 : Number(match[2]);
+      const valid = match !== null && from >= 1 && to >= from && to <= totalLines;
+      if (valid && hits.some(line => from - ANCHOR_TOLERANCE <= line && line <= to + ANCHOR_TOLERANCE)) { plan.consistent += 1; continue; }
+      const blocks = [];
+      for (const line of hits) {
+        const block = enclosingBlock(text, line);
+        if (!blocks.some(other => other.start === block.start && other.end === block.end)) blocks.push(block);
+      }
+      if (blocks.length > 1) { plan.AMBIGUOUS.push({ owner, reference, value: anchor.value, hits, blocks }); continue; }
+      const [block] = blocks;
+      if (operation && block.start === 1 && block.end >= totalLines - 1) { plan.UNSAFE.push({ owner, reference, value: anchor.value, block }); continue; }
+      plan.candidates.push({ owner, path, value: anchor.value, hits, block, oldLines: item.lines, newLines: `${block.start}-${block.end}`, order: order.get(item) });
+    }
+  }
+  return plan;
+}
+// 按字符偏移只替换 `"lines"` 的字符串值：键顺序、缩进、EOL、中文都不经过再序列化，天然逐字节保留。
+// 先按出现次序把文本里的 "lines" 值与解析后的条目一一对上；数量或取值对不上就拒绝写盘。
+function rewriteLineValues(ledger, raw, candidates) {
+  const spans = [...raw.matchAll(/"lines"\s*:\s*"([^"\\]*)"/g)].map(match => ({
+    value: match[1],
+    start: match.index + match[0].length - 1 - match[1].length,
+  }));
+  const expected = ledgerLinesValues(ledger);
+  if (spans.length !== expected.length || spans.some((span, index) => span.value !== expected[index])) {
+    return { error: `台账文本里的 "lines" 值（${spans.length} 处）与解析后的条目（${expected.length} 处）对不上，拒绝写盘（宁可不改，也不猜哪一处属于哪一条）` };
+  }
+  const ordered = [...candidates].sort((left, right) => right.order - left.order);
+  let updated = raw;
+  for (const candidate of ordered) {
+    const span = spans[candidate.order];
+    updated = updated.slice(0, span.start) + candidate.newLines + updated.slice(span.start + span.value.length);
+  }
+  // 字节保真自检：把新值逐个换回旧值必须逐字节还原原文，否则说明动到了 lines 以外的字节。
+  let restored = updated;
+  for (const candidate of ordered) {
+    const span = spans[candidate.order];
+    restored = restored.slice(0, span.start) + span.value + restored.slice(span.start + candidate.newLines.length);
+  }
+  if (restored !== raw) return { error: '写盘前字节保真自检失败：除 lines 值以外的字节没有原样保留' };
+  try { JSON.parse(updated); } catch (error) { return { error: `写盘前自检失败：改写后不是合法 JSON（${error.message}）` }; }
+  return { text: updated };
+}
+if (flags.has('--reanchor')) {
+  const raw = readFileSync(STATUS_FILE, 'utf8');
+  let ledger;
+  try { ledger = JSON.parse(raw); } catch (error) {
+    console.error(`ERROR: 形状错误 · 台账 JSON 无法解析，锚点重定位跳过：${error.message}`);
+    process.exit(1);
+  }
+  const plan = planReanchors(ledger);
+  for (const item of plan.MISSING) console.error(`ERROR: 重定位错误 · ${item.owner} ${item.reference} 的锚点「${item.value}」在文件里出现 0 次（MISSING）`);
+  for (const item of plan.AMBIGUOUS) console.error(`ERROR: 重定位错误 · ${item.owner} ${item.reference} 的锚点「${item.value}」落在 ${item.blocks.length} 个不同归属块（候选行号第 ${item.hits.join('、')} 行；归属块 ${item.blocks.map(block => `${block.start}-${block.end}`).join('、')}）（AMBIGUOUS）`);
+  for (const item of plan.UNSAFE) console.error(`ERROR: 重定位错误 · ${item.owner} ${item.reference} 算出的区间 ${item.block.start}-${item.block.end} 等于整个文件，校验器会判红（UNSAFE）`);
+  if (plan.MISSING.length + plan.AMBIGUOUS.length + plan.UNSAFE.length > 0) {
+    console.error(`FAIL: 锚点重定位被拒绝（MISSING ${plan.MISSING.length} / AMBIGUOUS ${plan.AMBIGUOUS.length} / UNSAFE ${plan.UNSAFE.length}），未写盘`);
+    process.exit(1);
+  }
+  for (const candidate of plan.candidates) {
+    console.log(`REANCHOR: ${candidate.owner} ${candidate.path} 旧 lines ${candidate.oldLines} → 新 lines ${candidate.newLines}（锚点「${candidate.value}」命中第 ${candidate.hits.join('、')} 行；归属块 ${candidate.block.start}-${candidate.block.end}${candidate.block.fallback ? '，FALLBACK 上方找不到声明行，退化为命中行单行' : ''}）`);
+  }
+  if (plan.candidates.length === 0) {
+    console.log(`REANCHOR: 无可重定位项（带锚点且带行号的引用 ${plan.scanned} 条，锚点都在 ±${ANCHOR_TOLERANCE} 行容差内）`);
+  } else if (!flags.has('--write-doc')) {
+    console.log(`REANCHOR: 只报不改（dry-run）；${plan.candidates.length} 条候选，加 --write-doc 才会写盘。`);
+  } else {
+    const outcome = rewriteLineValues(ledger, raw, plan.candidates);
+    if (outcome.error !== undefined) {
+      console.error(`ERROR: 重定位错误 · ${outcome.error}（UNSAFE）`);
+      console.error('FAIL: 锚点重定位被拒绝（UNSAFE 1），未写盘');
+      process.exit(1);
+    }
+    writeFileSync(STATUS_FILE, outcome.text);
+    console.log(`REANCHOR: 已重写 ${plan.candidates.length} 条 lines 值（只动这些字符串值，其余字节与改写前一致）。`);
+  }
+}
 const status = JSON.parse(readFileSync(STATUS_FILE, 'utf8'));
 const operations = JSON.parse(readFileSync(OPERATIONS_FILE, 'utf8'));
 const statuses = new Set(['implemented', 'partial', 'planned']);

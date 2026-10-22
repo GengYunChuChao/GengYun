@@ -56,7 +56,12 @@ import {
   type TurnRecord,
   type TurnView,
 } from './types.ts';
-import { createModerationRiskScreen, RISK_BLOCK_TEXT, type RiskScreen } from './screen.ts';
+import {
+  ANSWER_RISK_BLOCK_TEXT,
+  createModerationRiskScreen,
+  RISK_BLOCK_TEXT,
+  type RiskScreen,
+} from './screen.ts';
 import { parseListQuery, validateConversationInput, validateTurnInput } from './validate.ts';
 import { answerViewOf, conversationViewOf, turnViewOf } from './view.ts';
 import type { AnswerInsert, ConversationStore, ListPosition, TurnInsert } from './store.ts';
@@ -168,11 +173,38 @@ export interface ComposedCandidate {
   text: string;
   citations: readonly SourceRef[];
   dose_cards: readonly DoseCardCandidate[];
+  /**
+   * 生成侧在**正文层面**自检出的越界（集合外编号/未检索链接）。非空 ⇒ 守卫整条阻断。
+   * 见 `guard.ts#CandidateAnswer.text_violations` 的说明：这条通道专治"洗掉结构化引用、
+   * 把原正文盖章通过"。
+   */
+  text_violations?: readonly string[];
 }
 
-/** 回答生成端口。本片**只有确定性实现**：正文由守卫结论决定，没有语言模型。 */
+/**
+ * 外发记账上下文（GY-R28 W7 / #12）。
+ *
+ * 只有**真实模型**回答器会读它：拿到这四个值才能做 `reserve-then-send`（预留 → 执行前重查 →
+ * `markSent` → 外发 → 保存前重查）。确定性回答器**完全忽略**它（不读、不外发、不记账）。
+ *
+ * 为什么放在生成端口上而不是让生成侧自己去查：外发对象 = 「这一次回答」，其 id/revision/归属
+ * 只在服务层的已受理轮次里权威，生成侧无权（也不应）另建一套。`objectId` 是轮次 id（uuid），
+ * `objectRevision` 是轮次 revision（外发预留时冻结的版本号）。
+ */
+export interface AnswerEgressContext {
+  userId: string;
+  authEpoch: number;
+  objectId: string;
+  objectRevision: number;
+}
+
+/** 回答生成端口。实现可确定性（基线）或真实模型（`services/api/src/ai/chat-live-adapter.ts`）。 */
 export interface AnswerComposer {
-  readonly kind: 'deterministic_guard_only';
+  /**
+   * `deterministic_guard_only`：正文由守卫结论决定，没有语言模型（基线）；
+   * `live_model`：真实模型产出候选正文与编号引用，守卫仍是唯一降级/阻断点。
+   */
+  readonly kind: 'deterministic_guard_only' | 'live_model';
   readonly note: string;
   compose(input: {
     question: string;
@@ -184,7 +216,9 @@ export interface AnswerComposer {
      * **不得**用它扩大引用集合 —— 引用仍只按本问取自本次检索集合。
      */
     history?: readonly ContextTurn[];
-  }): ComposedCandidate;
+    /** 外发记账上下文；确定性回答器忽略，真实模型回答器缺它即拒绝外发。 */
+    egress?: AnswerEgressContext;
+  }): ComposedCandidate | Promise<ComposedCandidate>;
 }
 
 type RetrievalSetLike = Awaited<ReturnType<RetrievalPort['read']>>;
@@ -346,6 +380,15 @@ export interface ConversationServiceDeps {
   guard: AnswerGuard;
   composer: AnswerComposer;
   /**
+   * 回答行的 `model_version` / `prompt_version`（**装配层**拥有，回答器无权决定）。
+   *
+   * 缺省 ⇒ 用基线常量（两串都带 `unimplemented:no-real-` 前缀）。只有装配层确实接了真实模型
+   * （`services/api/src/app.ts` 的 `chatProvider` + 可用外发账本）时才传这里的两个串；
+   * 传进来的串由装配层从适配器模块的常量/helper 生成 —— 回答器（可被测试注入任意实现）**结构上
+   * 拿不到这条通路，因此无法把自己标成真实模型**（NC2 性质保持）。
+   */
+  answerVersions?: { model: string; prompt: string };
+  /**
    * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
    * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
    */
@@ -450,6 +493,8 @@ export function createConversationService(deps: ConversationServiceDeps) {
   const retrieval = deps.retrieval;
   const guard = deps.guard;
   const composer = deps.composer;
+  // 版本串由**装配层**拥有（回答器无权决定）：缺省 ⇒ 基线常量（全部带 `unimplemented:no-real-`）。
+  const answerVersions = deps.answerVersions;
   const riskScreen = deps.riskScreen ?? createModerationRiskScreen();
   const ledger = deps.ledger ?? createMemoryConversationIdempotencyLedger();
   const transcription = deps.transcription ?? createUnwiredTranscriptionPort();
@@ -921,7 +966,12 @@ export function createConversationService(deps: ConversationServiceDeps) {
 
   /**
    * 回答行（`AnswerInsert`）的**唯一**构造点：正文/状态一律来自守卫或筛查结论，
-   * 本函数不做任何判定；三个版本串**全部**带 `unimplemented:no-real-` 前缀（红线②，机器可判据）。
+   * 本函数不做任何判定。
+   *
+   * 版本串：缺省三个串**全部**带 `unimplemented:no-real-` 前缀（红线②，机器可判据）；
+   * 只有**装配层**显式给了 `deps.answerVersions`（仅真实模型接线时给）才换 model/prompt 两串 ——
+   * 回答器本身**无权**决定版本串（NC2）。`rule_version` **永远**不含模型成分（它描述的是
+   * 引用/用量判定规则，不是模型）。
    */
   function answerRowOf(
     target: { turnId: string; ownerId: string },
@@ -942,9 +992,9 @@ export function createConversationService(deps: ConversationServiceDeps) {
       check_state: verdict.check_state,
       citations: [...verdict.citations],
       dose_cards: [...verdict.dose_cards],
-      // 红线②：三个版本串**全部**带 `unimplemented:no-real-` 前缀（机器可判据）。
-      model_version: ANSWER_MODEL_VERSION,
-      prompt_version: ANSWER_PROMPT_VERSION,
+      // 红线②：确定性路径三个版本串**全部**带 `unimplemented:no-real-` 前缀（机器可判据）。
+      model_version: answerVersions?.model ?? ANSWER_MODEL_VERSION,
+      prompt_version: answerVersions?.prompt ?? ANSWER_PROMPT_VERSION,
       rule_version: answerRuleVersion(doseRuleVersionOf(guard.dose)),
       created_at: now(),
     };
@@ -1038,12 +1088,46 @@ export function createConversationService(deps: ConversationServiceDeps) {
           excludeTurnId: claimed.id,
         });
         // 上下文**只**进回答器做追问标注，不进检索、不扩引用集合。
-        const candidate = composer.compose({
+        //
+        // 生成端口是**异步可等待**的（GY-R28 W7 / #12）：真实模型路径需要一次网络外发，
+        // 且外发前必须经 `ChatEgress.send` 做 reserve-then-send。因此这里 `await` ——
+        // 本函数所在的任务本来就是 `async` IIFE（下方 `drain()` 亦按 Promise 等待），
+        // **没有**引入"假同步"包装：确定性回答器返回普通值，`await` 它是一次零成本微任务。
+        const candidate = await composer.compose({
           question: claimed.input_text,
           conditions,
           set: safeSet,
           history: priorContext.turns,
+          // 外发记账上下文：真实模型路径的唯一外发对象 = 本轮（id + revision）。
+          egress: {
+            userId: actor.userId,
+            authEpoch: actor.authEpoch,
+            objectId: claimed.id,
+            objectRevision: claimed.revision,
+          },
         });
+        // ---- 风险/注入筛查（回答侧）：**自由正文在交付用户之前**过同一规则层 ----
+        // 守卫只核对"依据是否同源"（引用/用量卡），不核对正文措辞；真实模型生成的正文同样
+        // 不能绕过既有的用药安全边界。命中/无法判定 ⇒ 整条降级为固定阻断话术（不含正文片段）。
+        // 空正文跳过：那是生成侧的"没东西可发"，交给守卫的既有「资料不足」路径，不改写成"命中"。
+        if (candidate.text.trim().length > 0) {
+          const answerScreen = riskScreen.screenAnswer({ turnId: claimed.id, text: candidate.text });
+          if (answerScreen.blocked) {
+            await settleAnswer(
+              answerRowOf(
+                { turnId: claimed.id, ownerId: actor.userId },
+                {
+                  status: 'blocked',
+                  check_state: 'blocked',
+                  checked_text: ANSWER_RISK_BLOCK_TEXT,
+                  citations: [],
+                  dose_cards: [],
+                },
+              ),
+            );
+            return;
+          }
+        }
         const verdict = guard.check({
           candidate,
           set: safeSet,

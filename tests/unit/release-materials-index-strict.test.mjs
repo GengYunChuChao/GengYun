@@ -23,11 +23,31 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, test } from 'node:test';
+import { resolveGateBash } from './bash-resolver.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = 'tools/verify-release-materials.mjs';
 const INDEX = 'docs/verification/gy-i24-release-materials-index-20261017.md';
 const MIGRATIONS = 'services/api/db/migrations';
+
+/**
+ * 门禁里的 `bash -n` 由**子进程的 PATH** 解析 `bash`。本机 `bash` 是 WSL 存根（只打印
+ * 「wsl: 检测到 localhost 代理配置…」并返回 1），于是本文件 6 条全红——红的不是覆盖判据，
+ * 是「bash 是哪一个」。这里显式解析真 bash（`GY_BASH` 优先）并把它的目录前置进子进程 PATH；
+ * 一个真 bash 都没有时**显式 skip 并打印指路**，⛔ 不静默 pass、⛔ 不改判据。
+ */
+const BASH = resolveGateBash();
+
+/** 没有可用 bash ⇒ skip（带可操作提示）。返回 false 时调用方必须 return，不能继续断言。 */
+function requireBash(t) {
+  if (BASH.available) {
+    t.diagnostic(`门禁用 bash = ${BASH.path}`);
+    return true;
+  }
+  t.diagnostic(BASH.hint);
+  t.skip(`无可用 bash，跳过门禁实跑：${BASH.attempts.map((a) => `${a.candidate}（${a.reason}）`).join('；')}`);
+  return false;
+}
 
 /** 覆盖判据要覆盖的在册文件数（镜像会断言与真实仓库一致）。 */
 const DEPLOY_FILES = git(ROOT, ['ls-files', 'deploy'])
@@ -72,7 +92,7 @@ const GATE_NAME = /^FAIL 索引覆盖 deploy\/ 全部在册文件/;
 
 // --------------------------------------------------------------------------- 镜像
 const runGate = (cwd) => {
-  const run = spawnSync(process.execPath, [TOOL], { cwd, encoding: 'utf8', windowsHide: true, timeout: 180000 });
+  const run = spawnSync(process.execPath, [TOOL], { cwd, encoding: 'utf8', windowsHide: true, timeout: 180000, env: BASH.env });
   assert.equal(run.error, undefined, `镜像内门禁未能启动：${run.error?.message ?? ''}`);
   return { status: run.status, stdout: run.stdout ?? '', stderr: run.stderr ?? '' };
 };
@@ -175,6 +195,7 @@ after(() => {
 
 // --------------------------------------------------------------------------- 正控制
 test('正控制：镜像一字不改 ⇒ 门禁全绿，且计数确实被读到', (t) => {
+  if (!requireBash(t)) return;
   const run = runGate(mirror);
   assert.equal(run.status, 0, `对照组必须全绿（红了说明镜像没铺全，后面的反例都无效）：\n${run.stdout}\n${run.stderr}`);
   assert.equal(failLines(run.stdout).length, 0, `对照组不得有 FAIL 行：\n${run.stdout}`);
@@ -193,6 +214,7 @@ test('正控制：镜像一字不改 ⇒ 门禁全绿，且计数确实被读到
 
 // --------------------------------------------------------------------------- 反例 1
 test('反例1：删掉表格专用行（§4 正文/交叉引用仍写着该路径）⇒ 未索引 点名', (t) => {
+  if (!requireBash(t)) return;
   // 选这个文件是因为它除了自己那行之外，还被 §1 的 service-settings 行交叉引用（且带 ✅）。
   const target = `deploy/cloudrun/env.placeholder.json`;
   const rows = ownRows(ORIGINAL, target);
@@ -220,6 +242,7 @@ test('反例1：删掉表格专用行（§4 正文/交叉引用仍写着该路�
 
 // --------------------------------------------------------------------------- 反例 2
 test('反例2：覆盖计数被改（29/30、28/28）⇒ 计数不符', (t) => {
+  if (!requireBash(t)) return;
   // 旧工具根本不读这处数字（审查实测 30/30、30/31 全绿），所以这里没有「旧判据」可回放：
   // 本条证明的是新增的计数一致性判据本身有牙。
   const countLine = ORIGINAL.split('\n').find((line) =>
@@ -240,6 +263,7 @@ test('反例2：覆盖计数被改（29/30、28/28）⇒ 计数不符', (t) => {
 
 // --------------------------------------------------------------------------- 反例 3
 test('反例3：行内去掉 ✅ ⇒ 未索引 点名', (t) => {
+  if (!requireBash(t)) return;
   const target = 'deploy/postgres-cvm/runbook.md';
   const rows = ownRows(ORIGINAL, target);
   assert.equal(rows.length, 1, `夹具前提：${target} 必须恰好有一行专用表格行；实际 ${rows.length}`);
@@ -255,6 +279,7 @@ test('反例3：行内去掉 ✅ ⇒ 未索引 点名', (t) => {
 
 // --------------------------------------------------------------------------- 反例 4
 test('反例4：把路径写成另一个在册文件 ⇒ 缺行 点名原路径', (t) => {
+  if (!requireBash(t)) return;
   const missingPath = 'deploy/cloudrun/local-check.ps1';
   const otherPath = 'deploy/cloudrun/Dockerfile';
   const rows = ownRows(ORIGINAL, missingPath);
@@ -275,6 +300,7 @@ test('反例4：把路径写成另一个在册文件 ⇒ 缺行 点名原路径'
 
 // --------------------------------------------------------------------------- 反例 5
 test('反例5：✅ 挪到该行中间列、核验列写 ❌ 未核验 ⇒ 未索引 点名', (t) => {
+  if (!requireBash(t)) return;
   // 2026-10-18 复审实测的第三个洞：判据若只查 `row.line.includes('✅')`，把该行的 ✅ 挪到第 2 列、
   // 末列（核验列）改写成 `❌ 未核验`，门禁仍 exit 0 / 15/15 —— 等于「行内标过 ✅ 就算核验过」。
   const target = 'deploy/postgres-cvm/runbook.md';

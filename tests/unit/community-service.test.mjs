@@ -523,6 +523,57 @@ test('正控制 + 反例 20：举报只给本人读；detail 不入响应（契�
   assert.equal(typeof stored.reporter_id, 'string');
 });
 
+test('S8 负控制：他人的点赞/举报不串到本人名下（跨用户隔离；同目标双举报互不可读）', async () => {
+  const h = makeHarness();
+  const post = await publishPost(h.service, USER_A, {}, idem(220));
+  const other = await publishPost(h.service, USER_A, {}, idem(221));
+  const ifMatch = `"${post.revision}"`;
+
+  // 1) 他人行为不改我的内容：revision / updated_at / visibility 一个都不动。
+  await h.service.likePosts(USER_B, post.id, { idempotencyKey: idem(222), ifMatch });
+  const afterLike = await h.service.getPost(USER_A, post.id);
+  assert.equal(afterLike.revision, post.revision, '他人点赞不是内容编辑');
+  assert.equal(afterLike.updated_at, post.updated_at);
+  assert.equal(afterLike.visibility, 'published');
+
+  // 2) 计数是"目标维度"的：只涨被点的那个目标，不串到我的其他内容上。
+  assert.equal(await h.service.countLikes('post', post.id), 1);
+  assert.equal(await h.service.countLikes('post', other.id), 0, '他人点赞不得串到我的其他内容上');
+
+  // 3) 取消点赞按 user 作用域：B 撤赞不得替 A 撤（否则等于"他人能改我的行为账本"）。
+  await h.service.likePosts(USER_A, post.id, { idempotencyKey: idem(223), ifMatch });
+  assert.equal(await h.service.countLikes('post', post.id), 2);
+  await h.service.unlikePosts(USER_B, post.id, { idempotencyKey: idem(224), ifMatch });
+  assert.equal(await h.service.countLikes('post', post.id), 1, 'B 撤赞只能撤掉 B 自己那条');
+
+  // 4) 举报：同一目标两账号各报一次 ⇒ 两条独立记录，且各自只能读自己的。
+  const reportA = await h.service.createReport(
+    USER_A,
+    { target_ref: { type: 'post', id: post.id, revision: post.revision }, reason_code: 'other' },
+    { idempotencyKey: idem(225) },
+  );
+  const reportB = await h.service.createReport(
+    USER_B,
+    { target_ref: { type: 'post', id: post.id, revision: post.revision }, reason_code: 'privacy' },
+    { idempotencyKey: idem(226) },
+  );
+  assert.notEqual(reportA.id, reportB.id, '同一目标的双举报是两条独立记录');
+  await assert.rejects(
+    h.service.getOwnReport(USER_A, reportB.id),
+    assertApiError('NOT_FOUND', 404),
+    '不得读到他人的举报',
+  );
+  await assert.rejects(h.service.getOwnReport(USER_B, reportA.id), assertApiError('NOT_FOUND', 404));
+  assert.equal((await h.service.getOwnReport(USER_A, reportA.id)).reason_code, 'other');
+  assert.equal((await h.service.getOwnReport(USER_B, reportB.id)).reason_code, 'privacy');
+  assert.equal((await h.store.getReport(reportA.id)).reporter_id, USER_A.userId);
+  assert.equal((await h.store.getReport(reportB.id)).reporter_id, USER_B.userId);
+
+  // 5) 他人的点赞/举报不改我的列表：条数与 id 集稳定。
+  const mine = await h.service.listPosts(USER_A, { mine: true });
+  assert.deepEqual(mine.items.map((item) => item.id), [other.id, post.id]);
+});
+
 // ---------------------------------------------------------------------------
 // 评论
 // ---------------------------------------------------------------------------
@@ -745,6 +796,95 @@ test('反例 28 + 正控制：分页 items+next_cursor 稳定；limit 超上限/
     assertApiError('INVALID_CURSOR', 400),
     '游标绑定过滤条件，不得跨过滤复用',
   );
+});
+
+test('反例 28b（#444 §S5 回归）：下推的 LIMIT 落在发布口径复核之后 —— 被降级的新行不截短整页', async () => {
+  const h = makeHarness();
+  const posts = [];
+  for (let i = 0; i < 3; i += 1) {
+    posts.push(await publishPost(h.service, USER_A, { body: `${CLEAN_BODY}（下推算例第 ${i} 条）` }, idem(200 + i)));
+  }
+  // 人为制造"更新的、但版本级审核结论缺失"的内容行：内容行是 published，台账行没有。
+  // 读取时复核（effectiveState）必须把它们降级为不可公开，而它们占着最新的排序窗口 ——
+  // 所以"先按 LIMIT 截一页、再在应用层过滤"会直接掉行；下推 + 复核后补齐才不会。
+  const orphanAt = '2026-10-12T05:00:00.000Z';
+  for (const id of ['00000000-0000-4000-8500-0000000a0001', '00000000-0000-4000-8500-0000000a0002']) {
+    assert.equal(
+      await h.rawStore.insertPost(
+        {
+          id,
+          revision: 1,
+          author_id: USER_A.userId,
+          title: CLEAN_TITLE,
+          body: CLEAN_BODY,
+          crop_id: null,
+          region_code: null,
+          media_ids: [],
+          linked_knowledge_ref: null,
+          visibility: 'published',
+          audit_state: 'approved',
+          created_at: orphanAt,
+          updated_at: orphanAt,
+        },
+        null,
+      ),
+      true,
+    );
+  }
+  const page1 = await h.service.listPosts(USER_A, { limit: 2 });
+  assert.deepEqual(
+    page1.items.map((item) => item.id),
+    [posts[2].id, posts[1].id],
+    '前两个页位被降级行占掉时必须继续下取补齐，不得返回残页',
+  );
+  assert.equal(typeof page1.next_cursor, 'string');
+  const page2 = await h.service.listPosts(USER_A, { limit: 2, cursor: page1.next_cursor });
+  assert.deepEqual(page2.items.map((item) => item.id), [posts[0].id]);
+  assert.equal(page2.next_cursor, null);
+  const ids = [...page1.items, ...page2.items].map((item) => item.id);
+  assert.equal(new Set(ids).size, 3, '翻页既不重复也不漏项');
+  assert.equal(
+    ids.some((id) => id.startsWith('00000000-0000-4000-8500-0000000a00')),
+    false,
+    '复核降级的行不得出现在公开列表',
+  );
+});
+
+test('正控制：作物/地区筛选在存储层生效（下推谓词与逐条比较等价，且不与分页互相干扰）', async () => {
+  const h = makeHarness();
+  const wheatHz = await publishPost(h.service, USER_A, { crop_id: 'crop-wheat', region_code: '330100' }, idem(210));
+  const riceHz = await publishPost(h.service, USER_A, { crop_id: 'crop-rice', region_code: '330100' }, idem(211));
+  const wheatBj = await publishPost(h.service, USER_B, { crop_id: 'crop-wheat', region_code: '330200' }, idem(212));
+  const full = await h.service.listPosts(USER_A, {});
+  assert.deepEqual(full.items.map((item) => item.id), [wheatBj.id, riceHz.id, wheatHz.id]);
+
+  const cases = [
+    [{ crop_id: 'crop-wheat' }, [wheatBj.id, wheatHz.id]],
+    [{ region_code: '330100' }, [riceHz.id, wheatHz.id]],
+    [{ crop_id: 'crop-wheat', region_code: '330200' }, [wheatBj.id]],
+    [{ crop_id: 'crop-rice', region_code: '330200' }, []],
+  ];
+  for (const [filter, expected] of cases) {
+    const page = await h.service.listPosts(USER_A, filter);
+    assert.deepEqual(page.items.map((item) => item.id), expected, `筛选 ${JSON.stringify(filter)} 的结果集`);
+    // 与"全量取回再逐条比较"的参照实现比对：下推不得改变语义。
+    const reference = full.items
+      .filter((item) => (filter.crop_id === undefined || item.crop_id === filter.crop_id))
+      .filter((item) => (filter.region_code === undefined || item.region_code === filter.region_code))
+      .map((item) => item.id);
+    assert.deepEqual(page.items.map((item) => item.id), reference);
+  }
+
+  // 筛选 + 分页：同一过滤集内按 keyset 前进，取尽后不再给游标。
+  const firstPage = await h.service.listPosts(USER_A, { crop_id: 'crop-wheat', limit: 1 });
+  assert.deepEqual(firstPage.items.map((item) => item.id), [wheatBj.id]);
+  const secondPage = await h.service.listPosts(USER_A, {
+    crop_id: 'crop-wheat',
+    limit: 1,
+    cursor: firstPage.next_cursor,
+  });
+  assert.deepEqual(secondPage.items.map((item) => item.id), [wheatHz.id]);
+  assert.equal(secondPage.next_cursor, null);
 });
 
 test('反例 29：游标过期（>15 分钟）⇒ INVALID_CURSOR', async () => {  let epoch = Date.UTC(2026, 9, 12, 3, 0, 0);

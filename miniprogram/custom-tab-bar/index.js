@@ -10,7 +10,9 @@
 // 未读角标（GY-I17 #17）：**只读展示**契约 operation `getUnreadCount` 的派生未读数，
 // 显示在「消息」Tab 上，不改变 tabBar 配置语义（app.json 的 tabBar.list/text/图标不变）。
 //   - 未登录 ⇒ 一次请求都不发（会话缺失时 messages-api 直接拒绝），也不显示数字；
-//   - 取不到（网络/服务未接线/权限）⇒ **不显示任何数字**：既不显示 0，也不保留过期值；
+//   - 取不到（网络/服务未接线/权限）⇒ **不动角标**（`#17` G6）：保留上一次已知读数
+//     （从未读到过就仍是空），既不显示 0，也不把它清成空串（清空等于把失败渲染成「没有未读」）；
+//     并留一条结构化告警（只含 `event`/`code`，见 utils/messages-api.js 的 warnUnreadFailure）；
 //   - >99 显示 `99+`（口径见 utils/messages-api.js 的 unreadText）。
 const auth = require('../utils/auth')
 const messagesApi = require('../utils/messages-api')
@@ -50,9 +52,11 @@ Component({
       messagesApi.getUnreadCount().then(function (result) {
         if (epoch !== self._unreadEpoch) return
         self.setData({ unreadText: messagesApi.unreadText(result.count) })
-      }).catch(function () {
+      }).catch(function (error) {
         if (epoch !== self._unreadEpoch) return
-        self.setData({ unreadText: '' })
+        // G6（#17）：失败时一个 setData 都不发——原实现清成 `''`，等于把「读取失败」渲染成
+        // 「没有未读」。角标停在最后一次已知读数上，失败也不被吞掉（留一条 event/code 告警）。
+        messagesApi.warnUnreadFailure(error)
       })
     },
     switchTab: function (event) {
