@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 32,
-    "has": 31,
+    "total": 36,
+    "has": 35,
     "none": 1
   },
   "entries": [
@@ -116,6 +116,20 @@
       "owner": "GY-I22"
     },
     {
+      "file": "services/api/src/db/staging-intake.ts",
+      "line": 138,
+      "function": "execute",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/db/staging-intake.ts",
+      "line": 141,
+      "function": "execute",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
       "file": "services/api/src/favorites/store-pg.ts",
       "line": 60,
       "function": "classifyFavoritesDatabaseError",
@@ -140,6 +154,13 @@
       "file": "services/api/src/history/store-pg.ts",
       "line": 62,
       "function": "classifyHistoryDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/knowledge/service.ts",
+      "line": 127,
+      "function": "read",
       "judgement": "has",
       "owner": "GY-I22"
     },
@@ -210,6 +231,13 @@
       "file": "services/api/src/privacy/ledger-pg.ts",
       "line": 90,
       "function": "mapPgError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/profile/service.ts",
+      "line": 57,
+      "function": "transaction",
       "judgement": "has",
       "owner": "GY-I22"
     },
