@@ -16,6 +16,9 @@ import {
   CORRECTION_LEDGER_VERSION,
   CorrectionLedgerError,
   MAX_CORRECTION_ENTRIES,
+  MAX_INGREDIENTS,
+  MAX_LABEL_TEXT_LENGTH,
+  MAX_RENDERED_FIELD_LENGTH,
   appendCorrection,
   assertAccuracySample,
   assertDoseNotProduced,
@@ -23,8 +26,10 @@ import {
   deriveOcrVerdict,
   diffLabelFields,
   isHumanEdited,
+  normalizeLabelFields,
   ocrAccuracyDenominator,
   parseCorrectionLedger,
+  renderFieldValue,
   summarizeCorrections,
 } from '../../services/api/src/ocr/state.ts';
 
@@ -247,4 +252,105 @@ test('四类状态码·负控制：已阻断状态带出用量卡 ⇒ assertDose
   assert.throws(() => assertDoseNotProduced(conflict, [{ id: 'card' }]), /违反用量阻断/);
   const matched = deriveOcrVerdict({ match_state: 'matched', conflict_fields: [] });
   assert.doesNotThrow(() => assertDoseNotProduced(matched, [{ id: 'card' }]));
+});
+
+// ---------------------------------------------------------------------------
+// 监工 1927 轮 [P2]：合法校正写出的台账必须能被自己读回
+//   —— 「写回侧聚合长度」与「读回侧上限」由**同一个契约推导常量**给出，
+//      而不是写回侧不限长、读回侧写死 2000。
+// ---------------------------------------------------------------------------
+
+/** 造一个**契约允许**的最坏成分项：name/content_text/unit_text 各占满 80 字。 */
+function saturatedIngredient(index) {
+  const fill = (prefix) => prefix + 'x'.repeat(MAX_LABEL_TEXT_LENGTH - prefix.length);
+  return {
+    name: fill(`名${index}-`),
+    content_text: fill(`${index}`),
+    unit_text: fill(`单${index}`),
+  };
+}
+
+test('校正台账·最大合法形状（20 项 × 每字段 80 字）能 append ⇒ JSON 往返 ⇒ 逐字读回', () => {
+  const before = RAW;
+  const after = {
+    ...RAW,
+    ingredients: Array.from({ length: MAX_INGREDIENTS }, (_, index) => saturatedIngredient(index)),
+  };
+  const rendered = renderFieldValue(normalizeLabelFields(after), 'ingredients');
+  // 上界自洽：读回上限必须**恰好**是契约能渲染出的最长串（不是拍脑袋的 2000）。
+  assert.equal(rendered.length, MAX_RENDERED_FIELD_LENGTH, '读回上限必须等于契约最坏形状的渲染长度');
+  assert.equal(MAX_LABEL_TEXT_LENGTH * 3 * MAX_INGREDIENTS < rendered.length, true, '最坏形状必须真的超过单字段 80 字上限');
+
+  const ledger = appendCorrection(undefined, {
+    actorUserId: USER,
+    at: AT,
+    revision: 2,
+    before,
+    after,
+    raw: before,
+  });
+  const change = ledger.entries[0].changes.find((item) => item.field === 'ingredients');
+  assert.equal(change.after.length, MAX_RENDERED_FIELD_LENGTH, '写回侧不得截断（台账是「改了什么」的无损证据）');
+  const wire = JSON.stringify(ledger);
+  const roundTrip = parseCorrectionLedger(JSON.parse(wire));
+  assert.equal(JSON.stringify(roundTrip), wire, '最大合法形状必须逐字往返（读回 == 写回）');
+  assert.deepEqual(roundTrip.entries[0].changes, ledger.entries[0].changes);
+  assert.deepEqual(roundTrip.entries[0].raw_fields, before);
+  assert.deepEqual(roundTrip.entries[0].corrected_fields, after);
+});
+
+test('校正台账·监工复现形状（9 项 × 每字段 80 字 = 2202 字符）必须读得回来', () => {
+  const after = {
+    ...RAW,
+    ingredients: Array.from({ length: 9 }, (_, index) => saturatedIngredient(index)),
+  };
+  const ledger = appendCorrection(undefined, {
+    actorUserId: USER,
+    at: AT,
+    revision: 2,
+    before: RAW,
+    after,
+    raw: RAW,
+  });
+  const change = ledger.entries[0].changes.find((item) => item.field === 'ingredients');
+  assert.equal(change.after.length, 2202, '监工 1927 轮复现读数：9 项聚合 2202 字符');
+  assert.equal(change.after.length > 2000, true, '该形状必须真的越过旧的 2000 字符上限（否则本用例失去意义）');
+  assert.doesNotThrow(() => parseCorrectionLedger(JSON.parse(JSON.stringify(ledger))));
+});
+
+test('校正台账·读回闸门仍然 fail-closed：超出契约上界 1 字 ⇒ 读回必抛错', () => {
+  const ledger = appendCorrection(undefined, {
+    actorUserId: USER,
+    at: AT,
+    revision: 2,
+    before: RAW,
+    after: { ...RAW, dosage_form: '乳油' },
+    raw: RAW,
+  });
+  const tampered = JSON.parse(JSON.stringify(ledger));
+  tampered.entries[0].changes[0].after = 'y'.repeat(MAX_RENDERED_FIELD_LENGTH + 1);
+  assert.throws(() => parseCorrectionLedger(tampered), /changes\[0\]\.after/, '超上界必须被读回侧拒绝');
+  const atBoundary = JSON.parse(JSON.stringify(ledger));
+  atBoundary.entries[0].changes[0].after = 'y'.repeat(MAX_RENDERED_FIELD_LENGTH);
+  assert.doesNotThrow(() => parseCorrectionLedger(atBoundary), '恰好等于上界必须放行（读回上限含等号）');
+});
+
+test('校正台账·写回闸门负控制：越出契约上界的形状必须写在门口被拒，不得落库', () => {
+  const overContract = {
+    ...RAW,
+    ingredients: Array.from({ length: MAX_INGREDIENTS + 1 }, (_, index) => saturatedIngredient(index)),
+  };
+  assert.equal(renderFieldValue(overContract, 'ingredients').length > MAX_RENDERED_FIELD_LENGTH, true);
+  assert.throws(
+    () => appendCorrection(undefined, {
+      actorUserId: USER,
+      at: AT,
+      revision: 2,
+      before: RAW,
+      after: overContract,
+      raw: RAW,
+    }),
+    /超过可读回上限/,
+    '写回侧必须拒绝会读不回来的台账（而不是写进去再说）',
+  );
 });

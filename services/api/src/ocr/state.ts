@@ -1152,6 +1152,42 @@ export const CORRECTION_LEDGER_VERSION = 'gy-i10-correction/1.0.0';
 /** 单条记录的校正次数上限：超过即拒绝（不静默截断历史）。 */
 export const MAX_CORRECTION_ENTRIES = 200;
 
+/** 单个成分三元组内的分隔符（`name|content_text|unit_text`）。 */
+export const INGREDIENT_RENDER_DELIMITER = '|';
+
+/** 成分之间的分隔符（排序后拼接）。 */
+export const INGREDIENT_RENDER_SEPARATOR = ' ; ';
+
+/**
+ * 单个字段**渲染串**的契约上限 —— 由 `LabelFields` 契约直接推出，不是经验值：
+ *
+ *     MAX_INGREDIENTS × (3 × MAX_LABEL_TEXT_LENGTH + 2 × 1) + (MAX_INGREDIENTS − 1) × 3
+ *   = 20 × (3 × 80 + 2) + 19 × 3 = 4897
+ *
+ * **写回侧与读回侧只认这一个常量**（`appendCorrection` 的落库闸门 / `parseCorrectionLedger` 的
+ * 读回上限）。监工 `1927` 轮 [P2]：此前读回侧写死 `> 2000` 拒绝、写回侧不限长，而契约允许
+ * 20 项 × 每字段 80 字的成分表（最小复现 9 项就 2202 字符）—— 一次**合法**校正能让台账
+ * 「写得进去、读不回来」，`store-pg.readVerification` 每次读该行都抛
+ * 「校正台账字段非法：changes[0].after」。
+ *
+ * 为什么是「把读回上限抬到契约真实上界」而不是截断/分片：
+ *   - 截断 ⇒ 台账不再是「改了什么」的无损证据（且要让 before/after 仍可比较，截断点还得可解析）；
+ *   - 分片 ⇒ 改台账形状，要升 `CORRECTION_LEDGER_VERSION` 并兼容老行，收益仅是省几百字节；
+ *   - 契约上界本来就由 `MAX_INGREDIENTS` × `MAX_LABEL_TEXT_LENGTH` 决定，推导出来即可自洽，
+ *     将来契约放宽时两个常量会一起变（读回上限跟着走，不会再出现「写进去读不出来」）。
+ */
+export const MAX_RENDERED_FIELD_LENGTH =
+  MAX_INGREDIENTS * (3 * MAX_LABEL_TEXT_LENGTH + 2 * INGREDIENT_RENDER_DELIMITER.length) +
+  (MAX_INGREDIENTS - 1) * INGREDIENT_RENDER_SEPARATOR.length;
+
+/**
+ * 台账里**单字段**（`raw_fields` / `corrected_fields` 的文本字段）的读回上限。
+ * 契约上限是 {@link MAX_LABEL_TEXT_LENGTH}=80；这里保留原先的 2000 是「读回形状闸门」的
+ * 宽松上界（拒绝明显不是单行文本的垃圾），不参与与写回侧的等号 —— 真正的等号只对
+ * `changes[].before/after` 成立，见 {@link MAX_RENDERED_FIELD_LENGTH}。
+ */
+const MAX_LABEL_FIELD_LINE_LENGTH = 2000;
+
 /** 参与「改了什么」比对的可校正字段（顺序即展示顺序）。 */
 export const CORRECTED_FIELD_NAMES = ['registration_number', 'name', 'ingredients', 'dosage_form'] as const;
 export type CorrectedFieldName = (typeof CORRECTED_FIELD_NAMES)[number];
@@ -1207,15 +1243,16 @@ export function cloneLabelFields(fields: LabelFields): LabelFields {
 /**
  * 字段的可比较渲染串（用于 diff 与「是否人工改写过」）。
  * 成分按 `name|content_text|unit_text` 三元组**排序**后拼接：单纯顺序变化不算改写。
+ * 长度上界见 {@link MAX_RENDERED_FIELD_LENGTH}（读回上限由同一个常量给出）。
  */
 export function renderFieldValue(fields: LabelFields, field: CorrectedFieldName): string | null {
   if (field === 'ingredients') {
     if (fields.ingredients.length === 0) return null;
     return fields.ingredients
-      .map((item) => `${item.name}|${item.content_text}|${item.unit_text}`)
+      .map((item) => [item.name, item.content_text, item.unit_text].join(INGREDIENT_RENDER_DELIMITER))
       .slice()
       .sort()
-      .join(' ; ');
+      .join(INGREDIENT_RENDER_SEPARATOR);
   }
   return fields[field];
 }
@@ -1241,9 +1278,9 @@ function ledgerRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function singleLineOrNull(value: unknown, where: string): string | null {
+function singleLineOrNull(value: unknown, where: string, maxLength: number): string | null {
   if (value === null) return null;
-  if (typeof value !== 'string' || value.length === 0 || value.length > 2000) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
     throw new CorrectionLedgerError(`校正台账字段非法：${where}`);
   }
   return value;
@@ -1266,10 +1303,10 @@ function readLabelFields(value: unknown, where: string): LabelFields {
     return { name, content_text: contentText, unit_text: unitText };
   });
   return {
-    registration_number: singleLineOrNull(record['registration_number'], `${where}.registration_number`),
-    name: singleLineOrNull(record['name'], `${where}.name`),
+    registration_number: singleLineOrNull(record['registration_number'], `${where}.registration_number`, MAX_LABEL_FIELD_LINE_LENGTH),
+    name: singleLineOrNull(record['name'], `${where}.name`, MAX_LABEL_FIELD_LINE_LENGTH),
     ingredients,
-    dosage_form: singleLineOrNull(record['dosage_form'], `${where}.dosage_form`),
+    dosage_form: singleLineOrNull(record['dosage_form'], `${where}.dosage_form`, MAX_LABEL_FIELD_LINE_LENGTH),
   };
 }
 
@@ -1317,8 +1354,8 @@ export function parseCorrectionLedger(value: unknown): CorrectionLedger | undefi
       }
       return {
         field: field as CorrectedFieldName,
-        before: singleLineOrNull(changeRow['before'], `changes[${changeIndex}].before`),
-        after: singleLineOrNull(changeRow['after'], `changes[${changeIndex}].after`),
+        before: singleLineOrNull(changeRow['before'], `changes[${changeIndex}].before`, MAX_RENDERED_FIELD_LENGTH),
+        after: singleLineOrNull(changeRow['after'], `changes[${changeIndex}].after`, MAX_RENDERED_FIELD_LENGTH),
       };
     });
     return {
@@ -1332,6 +1369,26 @@ export function parseCorrectionLedger(value: unknown): CorrectionLedger | undefi
     };
   });
   return { version: CORRECTION_LEDGER_VERSION, entries };
+}
+
+/**
+ * 落库闸门：`changes[].before/after` 必须落在**读回上限**内。
+ *
+ * 与 `parseCorrectionLedger` 共用 {@link MAX_RENDERED_FIELD_LENGTH}：读回侧能拒的，写回侧先拒；
+ * 读回侧会放行的，写回侧一定写得进。任何人再往两侧各写一个魔数，这条断言就会在
+ * 「合法输入」上直接红（`tests/unit/ocr-correction-ledger.test.mjs` 的最大形状往返即此闸门的正控制）。
+ */
+function assertReadableChanges(changes: CorrectionChange[]): void {
+  for (const change of changes) {
+    for (const [side, value] of [['before', change.before], ['after', change.after]] as const) {
+      if (value !== null && value.length > MAX_RENDERED_FIELD_LENGTH) {
+        throw new CorrectionLedgerError(
+          `校正台账 ${change.field}.${side} 渲染串 ${value.length} 字符超过可读回上限 ${MAX_RENDERED_FIELD_LENGTH}`
+            + '（写回侧与读回侧上限必须一致，拒绝写入读不回来的台账）',
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -1357,6 +1414,7 @@ export function appendCorrection(
   }
   const changes = diffLabelFields(input.before, input.after);
   if (changes.length === 0) throw new CorrectionLedgerError('校正未改变任何字段，不产生新版本');
+  assertReadableChanges(changes);
   const entry: CorrectionEntry = {
     version: previous.length + 1,
     revision: input.revision,

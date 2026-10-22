@@ -31,7 +31,7 @@ import {
 } from '../../services/api/src/ocr/reference.ts';
 import { createOcrService } from '../../services/api/src/ocr/service.ts';
 import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
-import { assertRawPreserved } from '../../services/api/src/ocr/state.ts';
+import { assertRawPreserved, MAX_INGREDIENTS, MAX_LABEL_TEXT_LENGTH, MAX_RENDERED_FIELD_LENGTH } from '../../services/api/src/ocr/state.ts';
 
 const ENV = 'OCR_PG_TEST_URL';
 const DB = 'gengyun_ocr_corrections_test';
@@ -198,6 +198,57 @@ try {
     const restored = await store2.getOcr(row.id);
     assert.doesNotThrow(() => assertRawPreserved(restored.verification.correction_log, restored.rawFields));
     say('[4] 负控制真红：库侧改写 raw_fields ⇒ 「原文被覆盖」；原样写回后复绿');
+
+    // [5] 监工 1927 轮 [P2] 的真库面：**最大合法**校正（20 项 × 每字段 80 字）落库后
+    //     必须能被读路径读回（`store-pg.readVerification` 每次都调 `parseCorrectionLedger`）。
+    //     旧行为：写回侧不限长、读回侧硬拒 >2000 ⇒ 这条合法校正写进去就再也读不出来。
+    const saturated = Array.from({ length: MAX_INGREDIENTS }, (_, index) => {
+      const fill = (prefix) => prefix + 'x'.repeat(MAX_LABEL_TEXT_LENGTH - prefix.length);
+      return { name: fill(`名${index}-`), content_text: fill(`${index}`), unit_text: fill(`单${index}`) };
+    });
+    const maxRow = makeOcrRow(user.id);
+    await store2.insertOcr(maxRow);
+    const maxCorrected = await newService(pool2).correctOcr({
+      userId: user.id,
+      ocrId: maxRow.id,
+      body: { corrected_fields: { ...RAW, ingredients: saturated } },
+      ifMatch: '"1"',
+      idempotencyKey: nextKey(),
+    });
+    assert.deepEqual(Object.keys(maxCorrected.verification).sort(), VERIFICATION_KEYS, '[5] HTTP 投影仍是严格五字段');
+
+    const pool3 = new pg.Pool({ connectionString: rawUrl });
+    try {
+      // 新 Pool ⇒ 只能从 jsonb 读回，读路径必须解析整份台账（含 4897 字符的成分聚合）。
+      const store3 = createPostgresOcrStore({ pool: pool3 });
+      const backMax = await store3.getOcr(maxRow.id);
+      const maxChange = backMax.verification.correction_log.entries[0].changes
+        .find((item) => item.field === 'ingredients');
+      assert.equal(maxChange.after.length, MAX_RENDERED_FIELD_LENGTH, '[5] 真库读回的聚合串必须与契约上界等长（未截断）');
+      assert.equal(maxChange.after.length > 2000, true, '[5] 该形状必须真的越过旧的 2000 字符读回上限');
+      assert.deepEqual(backMax.correctedFields.ingredients, saturated, '[5] 校正后的成分必须逐字保留');
+      assert.deepEqual(backMax.rawFields, RAW, '[5] raw_fields 列仍不得被校正改写');
+      const maxDb = await (await pool3.query(
+        `SELECT length(verification->'correction_log'->'entries'->0->'changes'->0->>'after') AS after_len
+           FROM public.ocr_records WHERE id = $1`,
+        [maxRow.id],
+      )).rows[0];
+      assert.equal(maxDb.after_len, MAX_RENDERED_FIELD_LENGTH, '[5] 库里存的 after 长度必须与读回一致（没有写侧截断）');
+      // 再校正一次 ⇒ 读路径必须仍然可用（一次合法校正不得让该记录「以后都读不了」）。
+      const again = await newService(pool3).correctOcr({
+        userId: user.id,
+        ocrId: maxRow.id,
+        body: { corrected_fields: { ...RAW, ingredients: [...saturated].reverse(), dosage_form: '微乳剂' } },
+        ifMatch: `"${maxCorrected.revision}"`,
+        idempotencyKey: nextKey(),
+      });
+      assert.equal(again.revision, maxCorrected.revision + 1, '[5] 最大形状落库后仍能做第二次校正');
+      const afterAgain = await store3.getOcr(maxRow.id);
+      assert.equal(afterAgain.verification.correction_log.entries.length, 2, '[5] 第二版仍落地（纯顺序变化不算改写，dosage_form 才算）');
+      say(`[5] 真库：最大合法校正（after=${MAX_RENDERED_FIELD_LENGTH} 字符）写得进也读得回，且能再校正（entries=2）`);
+    } finally {
+      await pool3.end();
+    }
   } finally {
     await pool2.end();
   }
