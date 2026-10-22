@@ -1,0 +1,64 @@
+# GY-R32 · #19 · 在线数据「7 日到期」清除的 **systemd 单元**
+# （驱动者 = tools/purge-expired-online-data.mjs，npm script = purge:online-data）。
+#
+# GY-SCHEDULE: npm-script=purge:online-data
+# GY-SCHEDULE: role=owner
+#
+# ## 这个单元为什么存在
+# 到期是**日历事实**（public.deletion_requests.online_due_at），不是「进程活了多久」。
+# 仓内**故意**没有任何进程内定时器（services/api/src 至今零 setInterval，由
+# tools/verify-purge-schedule.mjs 的 [setinterval] 判据机器化守住）⇒ 到期清除只能由
+# **外部调度**反复调用同一个运维命令。本单元 + 同名 .timer 就是那根时钟，且是**唯一受支持**
+# 的路线（R32 返修按指挥裁定删除了 cron 路线文件；理由见 README「为什么不再提供 cron 等价路线」）。
+# 驱动模块的文件头写着同一口径（services/api/src/privacy/online-purge-driver.ts）：
+# 退出码是本命令对外的**唯一**判据 —— 0 干净 / 1 有失败行 / 2 参数或配置错。
+# 所以这里不设任何重启或吞错策略：Type=oneshot + 非 0 退出 ⇒ 该次运行在 systemd 里记
+# failed，运维看 journal 就知道；⛔ 不写 SuccessExitStatus=、⛔ 不写 Restart=always。
+#
+# ## 角色差异（与备份副本那条单元不同）：本单元必须用**属主/运维角色**
+# 依据：services/api/src/privacy/online-purge-driver.ts 文件头「需要的数据库角色」——
+#   候选查询要读 public.deletion_requests，而运行时角色 gengyun_api_runtime 对该表
+#   **零表级零列级**权限（deploy/postgres-cvm/sql/90-assert-least-privilege.sql 第 48 项）
+#   ⇒ 用运行时角色跑必然 42501。
+# 这条差异有真库臂：tests/integration/online-purge-pg.mjs 的 [1] 项专门测该权限形状
+# （运行时角色读 deletion_requests 必须 42501，故命令必须走 owner）。
+# 对照项：备份副本那条单元（gengyun-purge-backup-copies.service）用**运行时角色**即可 ——
+#   它要的列级 SELECT/UPDATE 由 deploy/postgres-cvm/sql/20-login-roles.sql 的
+#   gy-i19-backup-copies-grant 段给（见 backup-purge-driver.ts 文件头「权限口径」）。
+#
+# ## 凭据：只从 EnvironmentFile 来
+# 单元里**不写**连接串、也不写任何口令：运维把 owner 角色的连接串放进
+# /etc/gengyun/purge-online-data.env（root:root 0600），systemd 以 root 读入后再降权执行。
+# 命令侧也只认环境变量（工具不接受 argv 明文连接串，也不回显它）。
+# 判据 [secrets] 会对 .service/.timer 里出现连接串或口令键做硬红。
+#
+# ## 游标为什么必须是**绝对路径**
+# services/api/src/privacy/online-purge-cursor.ts 的缺省游标是**相对当前工作目录**的
+# （DEFAULT_ONLINE_PURGE_CURSOR_FILE，该文件自陈「cron 里 cwd 是谁就写谁下面」）⇒
+# 在 systemd 下 cwd 由调度器决定，相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失
+# （批次饿死的另一半）。所以 ExecStart 显式给绝对路径，且它落在 StateDirectory= 建出来
+# 的目录里；该目录与路径必须一致，由判据 [cursor] 核对。
+
+[Unit]
+Description=耕云 在线数据 7 日到期清除（tools/purge-expired-online-data.mjs）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 非 root：DB 侧已按最小权限收敛，OS 侧不再给 root。
+User=gengyun-ops
+Group=gengyun-ops
+# 凭据只从这里进（见上「凭据」一节）。
+EnvironmentFile=/etc/gengyun/purge-online-data.env
+# 游标文件的属主目录（systemd 自动创建并 chown 给 User=）。
+StateDirectory=gengyun-purge-online-data
+StateDirectoryMode=0700
+WorkingDirectory=/opt/gengyun/app
+# 入口文件必须与 package.json 的 purge:online-data **同一个文件**（判据 [execstart] 核对）；
+# --cursor-file 必须是绝对路径（判据 [cursor] 核对）。
+ExecStart=/usr/bin/node /opt/gengyun/app/tools/purge-expired-online-data.mjs --cursor-file=/var/lib/gengyun-purge-online-data/online-purge-cursor.json
+# 防重叠：oneshot 单元在跑时 systemd 不会为同一单元起第二个实例；这条再给「卡住的连接」
+# 一个上界 —— 超时即杀并把该次运行记 failed（不重试、不吞错）。
+TimeoutStartSec=900
+Nice=10
