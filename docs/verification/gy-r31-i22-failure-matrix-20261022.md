@@ -163,7 +163,7 @@
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `createRecognition` POST /recognitions | ● `recognitions-api.test.mjs:114` | ● `miniprogram-identify.test.mjs:1400,1401`（`CONSENT_REQUIRED` 403，客户端侧断言） | ○ | ● `recognitions-api.test.mjs:156`、`:394`（`[202,409]` 并发）、`recognitions-http.mjs:188` | ● `recognitions-api.test.mjs:686`；`recognitions-candidates-selection.test.mjs:693` | ● `recognitions-api.test.mjs:298-305`（`state=timed_out` + `PROVIDER_TIMEOUT`） | ● `recognitions-api.test.mjs:124,130,133,146` | ○ |
-| `getRecognition` GET /recognitions/:id | ● `recognitions-api.test.mjs:115` | ○ | ● `recognitions-api.test.mjs:293`；`recognitions-http.mjs:120`（他人）、`:143`（已删）；`recognition-chain-e2e.mjs:452` | — | ○ | ●（同域 `GET /jobs/{id}`：`recognitions-api.test.mjs:116` 401 有断言） | ○ | ● `recognitions-api.test.mjs:592,597,650` | ○ |
+| `getRecognition` GET /recognitions/:id | ● `recognitions-api.test.mjs:115` | ○ | ● `recognitions-api.test.mjs:293`；`recognitions-http.mjs:120`（他人）、`:143`（已删）；`recognition-chain-e2e.mjs:452` | — | ○ | ●（同域 `GET /jobs/{id}`：`recognitions-api.test.mjs:116` 401 有断言） | ○ | ● `recognitions-api.test.mjs:592,597,650` |
 | `deleteRecognition` DELETE /recognitions/:id | ○ | ○ | ● `recognition-chain-e2e.mjs:459`（他人历史不可删） | ● `recognitions-http.mjs:224`（取消终态 409） | ○ | ○ | ○ | ○ |
 | `selectSpecies` PATCH /recognitions/:id/selection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
@@ -175,7 +175,7 @@
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `createOCR` POST /ocr | ● `ocr-http.mjs:1500` | ○ | ○ | ● `ocr-http.mjs:1431` | ● `ocr-http.mjs:1545,1560`（real 缺凭据受理前 503） | ● `ocr-http.mjs:2058`（`timed_out` + `PROVIDER_TIMEOUT`） | ● `ocr-http.mjs:1468,1475,1482` | ○ |
-| `getOCR` GET /ocr/:id | ○ | ○ | ● `ocr-http.mjs:1337`（他人）、`:1338`（不存在）、`:1033`（等待期 404 语义） | — | ● `ocr-store-pg-tables-missing.test.mjs:159`（表未迁移走 503 通道） | ● `ocr-http.mjs:1057`（`GET /jobs/{id}` 200 读面） | ○ | ○ | ○ |
+| `getOCR` GET /ocr/:id | ○ | ○ | ● `ocr-http.mjs:1337`（他人）、`:1338`（不存在）、`:1033`（等待期 404 语义） | — | ● `ocr-store-pg-tables-missing.test.mjs:159`（表未迁移走 503 通道） | ● `ocr-http.mjs:1057`（`GET /jobs/{id}` 200 读面） | ○ | ○ |
 | `deleteOCR` DELETE /ocr/:id | ○ | ○ | ● `ocr-http.mjs:1355`（他人删） | ● `ocr-http.mjs:1399`（If-Match 不符）、`:1996`（终态再取消） | ○ | ○ | ● `ocr-http.mjs:1395` | ○ |
 | `correctOCR` PATCH /ocr/:id/correction | ○ | ○ | ● `ocr-http.mjs:1351`（他人改） | ● `ocr-http.mjs:1385` | ○ | ○ | ● `ocr-http.mjs:1378` | ○ |
 | `verifyOCR` POST /ocr/:id/verify | ○ | ○ | ●（同族归属由 `:1337-1358` 覆盖 GET/PATCH/DELETE，未单列 verify） | ● 同 `:1431` | ○ | ○ | ● `ocr-http.mjs:1371`（**428** 缺 If-Match） | ○ |
@@ -274,7 +274,7 @@
 | `admin.ts:172` | GET `/admin/sources` | `sources.readGuards` |
 | `admin.ts:175` | POST `/admin/sources` | `sources.writeGuards` |
 | `admin.ts:178/181` | GET/PATCH `/admin/sources/:id` | `readGuards` / `writeGuards` + `uuidIdParams` |
-| `admin.ts:184/187` | POST `/admin/sources/:id/publish|withdraw` | `writeGuards` |
+| `admin.ts:184/187` | POST `/admin/sources/:id/publish\|withdraw` | `writeGuards` |
 | `admin.ts:192-207` | `/admin/knowledge` 6 条 | 同构（`knowledge.readGuards/writeGuards`） |
 | `admin.ts:212-227` | `/admin/registrations` 6 条 | 同构 |
 | `admin.ts:232-247` | `/admin/restrictions` 6 条 | 同构 |
