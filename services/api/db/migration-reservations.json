@@ -14,7 +14,11 @@
     "remove_when 删除：0027_admin_audit_observability.sql 已随 origin/main（#428）真实落进",
     "services/api/db/migrations/，与 0028_moderation_persistence.sql 共存 ⇒ 现无任何「有意缺号」。",
     "reservations 保持为空数组而不是删文件：三条不变量改为自然成立（28 个文件 + 0 保留 === max 28），",
-    "机制与 DEFAULT_RESERVATIONS_FILE 的落位判据（不许进 migrations/）仍受 tests/unit/migration-reservations.test.mjs 守护。"
+    "机制与 DEFAULT_RESERVATIONS_FILE 的落位判据（不许进 migrations/）仍受 tests/unit/migration-reservations.test.mjs 守护。",
+    "【2026-10-22 F13 行级作者注销引用切片 / 迁移 0030 · 已按 remove_when 清空】落 0030 时 #419 的",
+    "0029_media_object_cleanup.sql 还在分支上 ⇒ 本台账登记过 29（owner #419）。**#419 已合入 origin/main",
+    "（056cf424）**、0029 已真实落盘 ⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
+    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。"
   ],
   "reservations": []
 }

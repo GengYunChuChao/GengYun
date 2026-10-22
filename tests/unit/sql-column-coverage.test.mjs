@@ -385,22 +385,41 @@ const OPAQUE_ALLOWLIST = [
  *   - reports 的 `UPDATE … detail=NULL`、likes/idempotency 的 DELETE 原样保留（RETURNING 3 条不变）。
  * 合计：字面量 150→153、UPDATE 25→26、SELECT 69→71、DELETE 29（不变）、
  * RETURNING 61→59（-2，两条软删 UPDATE 的 RETURNING 消失）、columnRequirements 1212→1222。
+ *
+ * R31-F13（**行级作者注销引用**，迁移 0030，2026-10-22 四合流后重算）：`purgeOwnerData` 在**同一事务**里
+ * 多了"把作者指针换成行内匿名引用"这一步，另有两张表的列常量各多一列 `anonymized_author_ref`：
+ *   1. `UPDATE community_posts SET author_id = NULL, anonymized_author_ref = $2 … RETURNING id`
+ *   2. `UPDATE community_comments` 同形
+ *   3. 两条列常量各 +1 列（各被 3 条语句引用）⇒ 列要求再 +6；两条新语句自身引用
+ *      `id`/`author_id`/`anonymized_author_ref` ⇒ 再 +6。
+ * 合计：字面量 153→**155**、UPDATE 26→**28**、RETURNING 59→**61**、columnRequirements 1222→**1234**；
+ * SELECT/DELETE/INSERT、引用表数、`SELECT *` 处数**不变**（两张表早已在清单里，两列均已授权）。
+ *
+ * R31-F13 P2 返修（PR #483 `[P2]`「软删行仍保留原 author_id」）：`purgeOwnerData` 的命中集不再
+ * 按 `visibility` 过滤（软删行也要清作者关联），并在写入后**重新测量**剩余 owner 引用：
+ *   1. 两条按主体的 `SELECT … FOR UPDATE` 去掉 `visibility <> 'deleted'` 谓词、列清单加 `visibility`
+ *      —— `visibility` 原本就在同一条 WHERE 里被引用，**列要求不增**（4 处变 4 处仍各 1 条）；
+ *   2. 新增一条只读语句 `SELECT count(*) … community_posts … UNION ALL … community_comments …`
+ *      （+字面量 1、+SELECT 1；两表 `author_id` 各 +1 列要求 ⇒ 2 条）。
+ * 实测合计：字面量 155→**156**、SELECT 71→**72**、columnRequirements 1234→**1236**（已覆盖同增，
+ * 缺口仍 0）、逐文件 `community` 40→**41**；UPDATE/DELETE/INSERT/RETURNING/引用表数/`SELECT *`/
+ * 无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 153,
-  statements: { INSERT: 27, UPDATE: 26, SELECT: 71, DELETE: 29 },
-  returningClauses: 59,
+  sqlLiterals: 156,
+  statements: { INSERT: 27, UPDATE: 28, SELECT: 72, DELETE: 29 },
+  returningClauses: 61,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1222,
+  columnRequirements: 1236,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 38,
+  community: 41,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -476,11 +495,31 @@ const TABLE_WIDE_COLUMN = '*';
  *   列要求 1665 → **1701**、已覆盖 1611 → **1647**（缺口仍 0）、引用表 **44 张不变**（社区域没有新增表、也没有新增授权面）；
  *   与 #474 自述的增量（UPDATE +5／SELECT +3／DELETE +2／RETURNING +3／列要求 +36）逐项对齐。
  *   合流树实测：19 文件 / **262** 条字面量 / 44 张表；列要求 **1701**、已覆盖 **1647**、缺 0。
- * ⑦ 2026-10-22（`#379` 遗留修复，`4de2af7d`）：行锁口径按 PG 17 文档 SELECT → Description 改正 ——
+ * ⑦ 2026-10-22 四合流（最后一轮）`origin/main` = `056cf424`（#419 媒体清理并入／本片 R31-F13 行级作者注销引用）：
+ *   **#419 不动本审计面**（`media/store-pg.ts` 早已在 19 文件内，见 ①/②；它的清理台账行属既有 17 条）；
+ *   本片在 `community/store-pg.ts::purgeOwnerData` 新增两条
+ *   `UPDATE … SET author_id = NULL, anonymized_author_ref = $2 WHERE id = ANY(…) RETURNING id`，
+ *   并把 `POST_COLUMNS`/`COMMENT_COLUMNS` 各加一列 `anonymized_author_ref`（两条常量各被 3 条语句引用）。
+ *   ⇒ 字面量 262 → **264**、UPDATE 44 → **46**、RETURNING 79 → **81**、列要求 1701 → **1713**
+ *   （= +2×5 条新语句引用 + 2 列 × 3 语句）、已覆盖 1647 → **1659**（缺口仍 0：两列已在
+ *   `20-login-roles.sql` 与 `90-assert-least-privilege.sql` **成对**授权）、逐文件 `community` 38 → **40**；
+ *   INSERT/SELECT/DELETE、引用表 **44 张**、行锁 25、onConflict 26 全部不变（新语句只碰已登记的两张表）。
+ *   合流树实测：19 文件 / **264** 条字面量 / 44 张表；列要求 **1713**、已覆盖 **1659**、缺 0。
+ * ⑧ 2026-10-22 R31-F13 P2 返修（PR #483 `[P2]`「软删行仍保留原 author_id」）：
+ *   ① 两条 `SELECT … FROM community_posts/comments … FOR UPDATE` 去掉 `visibility <> 'deleted'` 谓词、
+ *      列清单加 `visibility` —— 该列本就在同一条 WHERE 里被引用 ⇒ **列要求不增**；
+ *   ② 新增一条只读测量语句 `SELECT count(*)::int … community_posts … UNION ALL … community_comments …`
+ *      （写入完成后重新测量「还剩几行仍指向该主体」）⇒ +字面量 1、+SELECT 1、两表 `author_id` 各 +1 列要求。
+ *   ⇒ 字面量 264 → **265**、SELECT 140 → **141**、列要求 1713 → **1715**、已覆盖 1659 → **1661**（缺口仍 0：
+ *   `author_id` 的 SELECT 面早已授权）、逐文件 `community` 40 → **41**；UPDATE/DELETE/INSERT/RETURNING/
+ *   引用表 44 张/行锁/onConflict/无顶层 FROM 全部不变。
+ *   合流树实测：19 文件 / **265** 条字面量 / 44 张表；列要求 **1715**、已覆盖 **1661**、缺 0。
+ * ⑨ 2026-10-22（`#379` 遗留修复，`4de2af7d`）：行锁口径按 PG 17 文档 SELECT → Description 改正 ——
  *   `FOR SHARE` / `FOR KEY SHARE` 与 `FOR UPDATE` / `FOR NO KEY UPDATE` 一样要「至少一列 UPDATE」。
  *   口径变了，只有一项计数变：**rowLockRequirements 25 → 41**（原树 16 处共享锁语句此前一条要求都不产生，
  *   现在逐条计入；25 + 16 = 41）。`rowLocks` 分桶读数**不变**（25 FOR UPDATE／16 FOR SHARE —— 分桶只
- *   影响统计，四种强度照旧分两桶），列要求／已覆盖／引用表也不变（行锁不占列面）。真实授权面本来就给
+ *   影响统计，四种强度照旧分两桶），列要求／已覆盖／引用表也不变（行锁不占列面；合流树上的
+ *   1715／1661 是 `#483` 的增量，与本片无关）。真实授权面本来就给
  *   这些表授了 UPDATE（含 `profile_runtime.sql:19` 的「FOR SHARE 要 UPDATE，故只授 name」注释），
  *   所以改口径后真实基线仍 0 条行锁缺口 —— 变的只是「以后谁把 UPDATE 收回去，现在会被看见」。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
@@ -489,9 +528,9 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 262,
-  statements: { INSERT: 42, UPDATE: 44, SELECT: 140, DELETE: 36 },
-  returningClauses: 79,
+  sqlLiterals: 265,
+  statements: { INSERT: 42, UPDATE: 46, SELECT: 141, DELETE: 36 },
+  returningClauses: 81,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
@@ -499,8 +538,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 44,
-  columnRequirements: 1701,
-  coveredRequirements: 1647,
+  columnRequirements: 1715,
+  coveredRequirements: 1661,
   ledgerExemptions: 33,
   rowLockRequirements: 41,
   rowLockExemptions: 1,
@@ -512,7 +551,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 38,
+  'community': 41,
   'conversations': 17,
   'favorites': 15,
   'history': 16,
