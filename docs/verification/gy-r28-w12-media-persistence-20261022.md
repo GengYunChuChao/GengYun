@@ -210,7 +210,7 @@ $ node --experimental-strip-types tests/integration/media-persistence-pg.mjs \
 加注入 `pool`，新字段 `mediaObjectRefKey` 在字面量里是 `undefined`，而装配层判据写的是 `!== null`
 ⇒ 走了 `createObjectRefCipher(undefined)` ⇒ **构造期**抛
 `Error [MediaObjectRefKeyError]: MEDIA_OBJECT_REF_KEY 缺失：媒体对象引用加密键未配置`
-（栈顶 `services/api/src/media/object-ref-cipher.ts:86` ← `:109` ← `app.ts:1293`），`buildApp` 直接失败。
+（栈顶 `services/api/src/media/object-ref-cipher.ts:86` ← `:109` ← `app.ts:1380`：`createPostgresMediaStore` 的 `cipher:` 实参处；本行随合流 main 从 `:1293` 移到 `:1380`，按符号重取而非平移），`buildApp` 直接失败。
 修法：装配层先归一化 `config.mediaObjectRefKey`（非空字符串才算配置，否则按「未配置」），
 `tests/unit/api-health.test.mjs` ⇒ tests 6 / pass 6。
 

@@ -20,7 +20,7 @@
   —— 端口**只因显式注入而生**；生产启动路径从不注入，于是永远走回落分支。
 - `services/api/src/media/object-store.ts:448-451`：`resolveMediaObjectStore` 未收 `env` 时 `config === null` ⇒ `return createUnwiredObjectStore();`。
 - `services/api/src/media/object-store.ts:143`：`createUnwiredObjectStore` 的每个操作抛 `PROVIDER_UNAVAILABLE`（`retryable: false`，口径见同文件 `:10`）。
-- `services/api/src/app.ts:1864`（`setErrorHandler`）：按契约 `x-error-status-map` 映射为 **503 + `ErrorEnvelope`** ⇒ `POST /api/v1/media/uploads` 在 `real` 下必落 503。
+- `services/api/src/app.ts:1987`（`setErrorHandler`；本片测量时在 `:1864`，合流当前 main 后按符号重取）：按契约 `x-error-status-map` 映射为 **503 + `ErrorEnvelope`** ⇒ `POST /api/v1/media/uploads` 在 `real` 下必落 503。
 
 ⇒ 这是**装配面缺失**，不是「配置缺失」：四键配齐也拿不到真实端口。
 
@@ -32,7 +32,7 @@
   - `services/api/src/server.ts:51`：`const app = buildApp({ config, pool, ...(mediaAssembly ?? {}) });`
   - 为什么不在 `app.ts`：那里的媒体段被 `tests/unit/media-real-mode-fail-closed.test.mjs` 判死——`resolveMediaObjectStore` 只允许 `buildApp` 以 `{ executionMode }` 一种形状调 1 次；若在 `app.ts` 用 `config.objectStorage` 造真实端口会立刻判红。
 - **`--approve-real-media-wiring`**（`services/api/src/media/real-ports.ts:44`）是唯一显式决定点；选启动参数而非 env 的理由同文件 `:40-42`（env 会被容器顺手带上且长期生效；启动参数可被部署清单与进程列表审出来，且不扩张 `config.ts` 的 ambient env 面）。
-- 批准能力 `approveRealMediaWiring`（`services/api/src/media/service.ts:465`；non-defaultable 品牌 WeakSet 在 `service.ts:595` 的 `createAppMediaService` 内）**只在 `resolveMediaRealPorts` 内铸造一次**，不从 env／选项／原型链／结构化克隆派生。
+- 批准能力 `approveRealMediaWiring`（`services/api/src/media/service.ts:473`；non-defaultable 品牌 WeakSet 在 `service.ts:603` 的 `createAppMediaService` 内；两处均为合流当前 main 后的行号）**只在 `resolveMediaRealPorts` 内铸造一次**，不从 env／选项／原型链／结构化克隆派生。
 - 配置搬运：`services/api/src/config.ts:51` 暴露 `objectStorage`（由 `readObjectStorageConfig` 解析，`:284-290`）、`config.ts:42` 暴露 `mediaAccessGrantOrigin`；两处都**复用媒体域既有判据**，不重写。
 - 刻意**没有**给 `MediaObjectStore` 接口加 `probe()`：那会平移 `contract-status.json` 里 `media/object-store.ts` 的锚点。
 - ⚠️ **订正**：草稿曾写「临时密钥 `X-Amz-Security-Token` 走 `OBJECT_STORAGE_SESSION_TOKEN` 进适配器」——**不成立**。`readObjectStorageConfig` 只读 `OBJECT_STORAGE_{ENDPOINT,BUCKET,ACCESS_KEY,SECRET_KEY,REGION,FORCE_PATH_STYLE}`（`services/api/src/media/object-store.ts:209-243`），**没有 session token 字段**。本片未接临时密钥，见 §7-1。

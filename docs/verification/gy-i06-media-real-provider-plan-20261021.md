@@ -14,7 +14,7 @@
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
 | 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1308` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:595` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:465`）铸造的 `WeakSet` 品牌（`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1276`）；生产入口 `services/api/src/server.ts:27` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:485` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1380`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1409`（批准能力不可伪造/不可派生/不可默认化） |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1397`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -242,7 +242,7 @@
 | # | 决策 | 选项 | 建议 |
 | --- | --- | --- | --- |
 | D1 | **配置从哪进装配层** | (a) `app.ts` 传 `process.env`（**禁止**，命中 PR #193 P1）；(b) `config.ts` 产出结构化 `objectStorage` 字段，`app.ts` 显式传派生 env；(c) 让 `resolveMediaObjectStore` 自己读 env（**禁止**，同上测试有 AST 断言） | **(b)**：唯一同时满足「配置即门控」禁令与「媒体域不读 env」约束的形状 |
-| D2 | **`realMediaApproval` 由谁铸造** | (a) 保持现状 ⇒ 永不放行，方案等于无效；(b) 由 `config.ts` 凭一个 env（如 `MEDIA_REAL_WIRING_APPROVED=true`）在装配层铸造 ⇒ 与「配置即门控」冲突；(c) 由**生产入口**（`services/api/src/server.ts`）在显式运维动作下铸造（启动参数或一次性令牌与代码内常量比对），并保留 `s3_compatible` 第二道校验 | **(c)**：门由「显式运维动作」打开，而不是「环境里恰好有值」；铸造点唯一、可审计（reason + approvedAt 已由 `approveRealMediaWiring` 记录，`services/api/src/media/service.ts:465`） |
+| D2 | **`realMediaApproval` 由谁铸造** | (a) 保持现状 ⇒ 永不放行，方案等于无效；(b) 由 `config.ts` 凭一个 env（如 `MEDIA_REAL_WIRING_APPROVED=true`）在装配层铸造 ⇒ 与「配置即门控」冲突；(c) 由**生产入口**（`services/api/src/server.ts`）在显式运维动作下铸造（启动参数或一次性令牌与代码内常量比对），并保留 `s3_compatible` 第二道校验 | **(c)**：门由「显式运维动作」打开，而不是「环境里恰好有值」；铸造点唯一、可审计（reason + approvedAt 已由 `approveRealMediaWiring` 记录，`services/api/src/media/service.ts:473`） |
 | D3 | **句柄消费网关归属** | (a) 仓内最小参考实现（`deploy/media-gateway/`）；(b) 纯部署件，仓内只留契约文档；(c) 推迟到有真实网关域名后再做 | 建议 **(b) + 立即写契约**：本仓没有该 operation，仓内实现会制造「契约外接口」；但契约（token 头、归属校验、只回 derivative、no-store）必须现在定死，否则实现方各写一套 |
 | D4 | **供应商与临时密钥** | (a) 长期 AK/SK，不改签名代码；(b) 临时密钥，先扩 `presignS3Url`（`services/api/src/media/object-store.ts:283`） | 建议先 **(a)** 打通端到端（改动最小、可快速验证「桶策略 + 预签名 + 去 EXIF + 删除链」），再按需演进到 (b) |
 

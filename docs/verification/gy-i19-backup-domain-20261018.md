@@ -199,8 +199,8 @@ Select-String -Path "services\api\db\migrations\*.sql" -Pattern "create table[^;
 | --- | --- |
 | `services/api/src/privacy/user-data-deletion.ts:91-95` | `export interface BackupPurgePort { kind: 'wired'\|'unwired'; available: boolean; purge(input): Promise<{purged, evidenceRef?}> }`（`createUnwiredBackupPurgePort()` 在 `:97`，默认 `available:false`） |
 | `services/api/src/privacy/user-data-deletion.ts:253-276` | `backupState` 默认 `'pending'`；`if (backupPurge.available)` 且 `purged===true` 且证据非空 ⇒ 才 `'completed'` 并追加 `:backup-purged:` 证据 |
-| `services/api/src/app.ts:451` | `userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore \| null }` |
-| `services/api/src/app.ts:1305-1307` | 仅在显式注入时把 `backupPurge` 传进 `userDataDeletion`（`...backupPurge === undefined ? {} : { backupPurge }`） |
+| `services/api/src/app.ts:470-472` | `userDataDeletionInjection?: { backupPurge?: BackupPurgePort; requests?: DeletionRequestStore \| null }`（合流当前 main 后行号；本片测量时在 `:451`） |
+| `services/api/src/app.ts:1581-1588` | `backupPurgeWiring`：显式注入优先（`userDataDeletionInjection?.backupPurge !== undefined` ⇒ 原样传入）；未显式注入时按「受理已接线 ＋ 真库」装配 PG 端口、`real` 无库则用显式不可用端口，否则退回缺省 unwired（本片测量时是 `:1305-1307` 的两行三元式） |
 | `tests/unit/user-data-deletion.test.mjs:108-137` | 已有「接线备份清除端口后…即可判完成」的**替身**用例 |
 | `tests/unit/user-data-deletion.test.mjs:88`、`tests/unit/account-deletion-receipts.test.mjs:128`、`tests/integration/account-deletion-http.mjs:281` | 断言「未接线 ⇒ 如实 pending」（本片**未动**） |
 

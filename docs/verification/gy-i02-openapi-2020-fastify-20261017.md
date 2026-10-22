@@ -42,7 +42,7 @@ module.exports = Object.freeze({
 
 ### 改后
 
-新增 `services/api/src/schema-validator.ts`；`buildApp` 在**任何路由注册之前**把编译器装到实例上（`services/api/src/app.ts:698`，函数 `buildApp`，本片新增行）：
+新增 `services/api/src/schema-validator.ts`；`buildApp` 在**任何路由注册之前**把编译器装到实例上（`services/api/src/app.ts:714`，函数 `buildApp`，本片新增行；本片测量时在 `:698`，合流当前 main 后按符号重取）：
 
 ```ts
   app.setValidatorCompiler(createJsonSchema2020ValidatorCompiler());

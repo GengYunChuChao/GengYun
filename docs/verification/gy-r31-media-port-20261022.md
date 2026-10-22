@@ -20,14 +20,14 @@ Refs #9 #10 #11。**本片只补「装配层可选注入」**：`real` 下未注
 
 | 域 | 装配点（基线 `1a333920`） | 端口从哪来 | `real` 零注入拿到什么 | 缺失时的错误码 / 文案（实测原文） |
 | --- | --- | --- | --- | --- |
-| 识别 | `services/api/src/app.ts:975`（服务在 `:968` 构造）`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)` | `BuildAppOptions.recognitionMedia`（`:318`，**已有**） | `createUnwiredMediaPort()`，`kind: 'unwired'` | 供应商闸门在前：503 `PROVIDER_UNAVAILABLE` `缺少真实识别供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
-| 语音 | `services/api/src/app.ts:1743`（基线 1711 ⇒ 合流 main 后）`registerSpeechRoutes(..., { …, media: speechMedia, … }, real ? pool : null)` | `BuildAppOptions.speechMedia`（`:329`，**已有**） | 同上，`kind: 'unwired'`（note 是「录音字节」版本） | 503 `PROVIDER_UNAVAILABLE` `缺少真实 ASR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
-| OCR | `services/api/src/app.ts:1791`（基线 1730 ⇒ 合流 main 后）`registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory }, ocrPersistencePool)` —— **装配行没有 `media` 键；`BuildAppOptions`（`:300-344`）无任何 OCR 媒体字段** | 只能由 `services/api/src/routes/ocr.ts:197` 的 `deps.media ?? createOcrMediaPort(config.executionMode)` 域内自建 | `createUnwiredMediaPort()`，`kind: 'unwired'` | 503 `PROVIDER_UNAVAILABLE` `缺少真实 OCR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
+| 识别 | `services/api/src/app.ts:1032`（服务在 `:1025` 构造）`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)` | `BuildAppOptions.recognitionMedia`（`:332`，**已有**） | `createUnwiredMediaPort()`，`kind: 'unwired'` | 供应商闸门在前：503 `PROVIDER_UNAVAILABLE` `缺少真实识别供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
+| 语音 | `services/api/src/app.ts:1866`（基线 1711 ⇒ 合流 main 后）`registerSpeechRoutes(..., { …, media: speechMedia, … }, real ? pool : null)` | `BuildAppOptions.speechMedia`（`:343`，**已有**） | 同上，`kind: 'unwired'`（note 是「录音字节」版本） | 503 `PROVIDER_UNAVAILABLE` `缺少真实 ASR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
+| OCR | `services/api/src/app.ts:1889`（基线 `1a333920` 时为 `:1730`；合流当前 main 后 `:1889`，行号按符号重取）`registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool)` —— **改前（基线）装配行没有 `media` 键；`BuildAppOptions`（基线 `:300-344`）无任何 OCR 媒体字段。本片补上后：`:365` 是 `ocrMedia?: OcrRouteDeps['media']`，装配行已传 `media: ocrMedia`** | 只能由 `services/api/src/routes/ocr.ts:197` 的 `deps.media ?? createOcrMediaPort(config.executionMode)` 域内自建 | `createUnwiredMediaPort()`，`kind: 'unwired'` | 503 `PROVIDER_UNAVAILABLE` `缺少真实 OCR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
 
 补充（如实记录，避免误判「三域都缺」）：
 
 - 三域**路由层**早已支持注入：`routes/ocr.ts:72 media?: OcrMediaPort`、`routes/speech.ts:99 media?: SpeechMediaPort`、
-  识别域直接构造服务（`app.ts:975`）。缺的只是 OCR 的**装配层**传值。
+  识别域直接构造服务（`app.ts:1032`）。缺的只是 OCR 的**装配层**传值。
 - 三域 `describe()` 都暴露 `mediaPort: media.kind` / `mediaNote: media.note`
   （`services/api/src/ocr/service.ts:961-962`、`services/api/src/recognitions/service.ts:835-836`、
   `services/api/src/speech/service.ts:815-816`）⇒ 端口形态可被断言直接读到，不需要跑真实任务。

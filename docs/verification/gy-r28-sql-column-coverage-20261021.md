@@ -125,7 +125,7 @@ gengyun_knowledge_runtime, gengyun_preview_reader, gengyun_profile_runtime
 
 无顶层 `FROM` 的 4 处是真实存在、且不产生列要求的语句：
 
-- `community/store-pg.ts:786`：4 个标量子查询 `SELECT count(*) …`
+- `community/store-pg.ts:991-994`：4 个标量子查询 `SELECT count(*) …`（合流当前 main 后行号；本片测量时在 `:786`）
 - `ocr/store-pg.ts:154`、`recognitions/store-pg.ts:169`、`speech/store-pg.ts:142`：`SELECT (to_regclass('public.<table>') IS NOT NULL) AS ready` 就绪探针
 
 这 4 条不计入「表」也不计入「列」，因此不影响 25 张表的读数 —— 它们只证明解析器确实把每条语句都过了一遍。

@@ -406,24 +406,6 @@
       "reference": "packages/evaluation/samples/README.md:27"
     },
     {
-      "path": "services/api/src/community/events.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/community/events.ts:121"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:786"
-    },
-    {
-      "path": "services/api/src/config.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "config.ts:190"
-    },
-    {
       "path": "services/api/src/conversations/screen.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
@@ -470,12 +452,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/media/service.ts:1108"
-    },
-    {
-      "path": "services/api/src/media/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/media/service.ts:645"
     },
     {
       "path": "services/api/src/ocr/service.ts",
