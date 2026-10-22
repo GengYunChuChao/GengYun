@@ -264,12 +264,11 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // **只取到 0028**：本臂模拟的是「#434 合流那一刻」的树（0028 为末项、1..28 连续）。
-    // 后续片（0030 / F13 行级作者注销引用）刻意不纳入 —— 它会让 0029 成为「有意缺号」，
-    // 而 29 的保留登记在**真实台账**里（本臂用的是夹具台账，只登记 27）。
-    // 判定机制本身仍由 [M] 臂对**真实**台账（含 29 保留项）逐条核对。
+    // 末项取树上的真实最大号：`origin/main = 056cf424` 之后 0029（#419 media_object_cleanup）与
+    // 0030（本片 F13 行级作者注销引用）都已在树上 ⇒ 目录 `0001..0030` 连续、无缺号。
+    // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
-      if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name) && Number(name.slice(0, 4)) <= 28) {
+      if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
         copyFileSync(new URL(name, migrationsDir), join(tmp, name));
       }
     }
@@ -281,12 +280,25 @@ function forwardMergeNumbering() {
       ['0027'],
       '0027 一出现就必须被认成"保留项躺平"（否则 #428 合入后没人清理台账）',
     );
-    assert.deepEqual(numbering.undeclaredGaps.map(formatMigrationVersion), [], '0027 补齐后不应再有任何缺号');
-    assert.equal(numbering.maxVersion, 29, '合流后最大版本是 0029（#419 的 media_object_cleanup）');
+    assert.deepEqual(
+      numbering.undeclaredGaps.map(formatMigrationVersion),
+      [],
+      '0027 补齐后不应再有任何缺号（0029/#419 与 0030/本片都已在树上）',
+    );
+    assert.equal(
+      numbering.maxVersion,
+      Math.max(...merged.map((migration) => Number(migration.version))),
+      'maxVersion 必须等于树上真实最大版本号（不写死，避免随下一支迁移过期）',
+    );
+    assert.equal(
+      formatMigrationVersion(numbering.maxVersion),
+      '0030',
+      '合流树末项是 0030（F13 行级作者注销引用）；若这里变了，说明又落了新迁移，请复核本臂',
+    );
     assert.equal(
       numbering.countMatchesMax,
       false,
-      'count(29) + 保留(1) = 30 ≠ max(29) ⇒ 第二条不变量必须同时判红',
+      `count(${numbering.count}) + 保留(1) = ${numbering.count + 1} ≠ max(${numbering.maxVersion}) ⇒ 第二条不变量必须同时判红`,
     );
     const order = merged.map((migration) => migration.filename);
     const at27 = order.indexOf(RESERVED_FILENAME);
