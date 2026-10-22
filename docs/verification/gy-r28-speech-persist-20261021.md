@@ -14,7 +14,7 @@
 | 重启语义 | 进程重启 ⇒ 任务与转写记录全丢（内存 Map） | 真库脚本 `[N2]` 负控制可复现 |
 | 迁移链 | `0001..0025` 连续；`0026` 空号；rollback 目录 `0002..0025` 有 down、无 `0001` | `discoverMigrations()` 计数 |
 | `app.ts` 行数 | 1821 行（LF，末尾换行）；末行是上一片追加的 `recognitions/store-pg.ts` 值导入 | `[IO.File]::ReadAllText` + LF 计数（PowerShell 5.1 `Get-Content` 对 UTF-8 中文会少数并乱码，**不可用**） |
-| 装配行 | `app.ts:1641` `registerSpeechRoutes(app, config, { guards, store: speechStore, provider, media, jobDeadlineMs, consent, egress })` | 源码 |
+| 装配行 | `services/api/src/app.ts:1711` `registerSpeechRoutes(app, config, { guards, store: speechStore, provider, media, jobDeadlineMs, consent, egress })` | 源码 |
 | 基线门禁 | `node tests/integration/speech-http.mjs` ⇒ exit 0（含 `[9]` 结构性证据组） | 改前实跑 |
 
 ## 2. 改后交付
@@ -73,7 +73,7 @@
 - 派单 §2.3 的字面要求：**`app.ts` 自己**做三态选型（`real`+池 ⇒ `createPostgresSpeechStore`，否则内存），并"import 追加在文件末尾"。
 - 实测被既有资产挡住：`tests/integration/speech-http.mjs:530-540` 把「`app.ts` 里所有含 `speech/store`、`speech/provider`、`speech/media` 的行只能是 `import type { … } from './speech/…'`」钉成结构性质。在 `app.ts` 追加**值**导入会直接打红这条既有断言；而红线要求"不削弱断言"。
 - 采用 OCR 同形范式（2026-10-20 的 `0024` 接线就是这么接的）：**选型下沉到域内** `services/api/src/routes/speech.ts`，`app.ts` 只在装配行原位置多传一个**位置实参**池：
-  - `app.ts:1641` → `registerSpeechRoutes(app, config, { …原有的 7 个键… }, config.executionMode === 'real' ? pool : null);`
+  - `services/api/src/app.ts:1711` → `registerSpeechRoutes(app, config, { …原有的 7 个键… }, config.executionMode === 'real' ? pool : null);`
   - `routes/speech.ts`：`const store = deps.store ?? (config.executionMode === 'real' && persistencePool !== null ? createPostgresSpeechStore({ pool: persistencePool }) : createMemorySpeechStore());`
   - 池不是 `deps` 的键 ⇒ 注册行键集判据（`guards/store/provider/media/jobDeadlineMs/consent/egress`）逐字不变。
 - 因此：**既没改那条断言，也没削弱它**；`speech-http.mjs` 原样跑 ⇒ exit 0（读数见 §6）。代价是"三态选型"证据落在 `tests/unit/speech-store-pg-wiring.test.mjs`（路由层四条），而不是 app.ts 结构断言；"为什么测这里"即本节。

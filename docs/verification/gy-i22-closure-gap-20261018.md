@@ -81,7 +81,7 @@
 
 ## 3 #22 三条验收：逐条（逐字引用审核表 → 证据 → 复现 → 判定）
 
-审核表原文见 `.pg17\audit-issue-closure-20261018.md:320-330`。
+审核表原文见 本机 `.pg17` 笔记 `audit-issue-closure-20261018.md`（仓外，不入库；第 320–330 行，行号不再维护）。
 
 ### C1（逐字）`NEEDS-FEATURE` 有限关键安全及权限用例全过，**未解决严重安全/权限缺陷 0**。
 
@@ -115,7 +115,7 @@
 
 - **证据路径＋符号锚**（绑定 `5250520`，本页未改）：
   - 剂量边界：`packages/reference/deterministic.mjs:511` `export function evaluateDoseBoundary(item, context = {}, opts = {})`；
-    小程序侧同源实现 `miniprogram/utils/reference.js:1006` `function evaluateDoseBoundary(item, context, opts)`。
+    小程序侧同源实现 `miniprogram/utils/reference.js:1079` `function evaluateDoseBoundary(item, context, opts)`。
   - 公开可见性/未审内容：`services/api/src/knowledge/public-invalidation.ts:81`
     `export function decidePublicVisibility(query: PublicVisibilityQuery): PublicVisibilityDecision`；
     `services/api/src/moderation/visibility.ts:17` `export const VISIBILITY_REASON_CODES = Object.freeze([`、

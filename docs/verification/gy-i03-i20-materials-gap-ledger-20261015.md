@@ -313,7 +313,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | G11 | **合成 / 演示样本冒充真实评估** | `docs/evaluation/README.md:81`；`docs/evaluation/sample-gap-register.md:54`（风险400/ASR50/问答120/TTS30及两类图片**均不可用演示样本替代**） |
 | G12 | **暂存行被标成 valid / verified / card_ready** | `workbook-staging-design.md:50`（CHECK 禁止） |
 | G13 | **暂存资料进 `v_active_source_version` / 用量卡 / 给 LLM** | `workbook-staging-design.md:39,56` |
-| G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:76`；`docs/implementation-requirements.md:456` |
+| G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:12`；`docs/implementation-requirements.md:456` |
 | G15 | **付费 / 真实模型调用（未单独授权）** | `coverage-report.json:108-110`；`docs/evaluation/real-samples-weeds-docx.md:243`；`docs/pr-review-policy.md:42` |
 
 > **本台账相对侦察报告的勘误与修订（如实标注；`G8` 行依据已按第 2 条同步修正）**
@@ -450,7 +450,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | U3 | **许可状态** | **未确立** | `licensed=false`、`license_survey_status=not_established`（`gy-i03-public-label-index-20261011.json:41-42`）；`permission_status` 明示不构成再利用 / 训练许可（`gy-i03-label-evidence-increment-20261011.json:37`）；许可调查按用户要求暂缓 |
 | U4 | **真实已核对资料存量** | **未确立** | 现有资料 `review_status=unverified`（`coverage-report.json:64`）、`authority=none_asserted_by_source`（`packages/knowledge/zhejiang/README.md:97`）；无逐条权威出处（`gy-i03-zhejiang-materials.md:300`） |
 | U5 | **真实样本存量（除拍草域）** | **六域为 0** | `sample-gap-register.md:22-34`、`:43` |
-| U6 | **覆盖内真实手机照片** | **未取得** | 只有文档配图 7 张（每类 1 张，短边中位 540 px）；无不同角度 / 背景（`real-samples-weeds-docx.md:249`） |
+| U6 | **覆盖内真实手机照片** | **未取得** | 只有文档配图 7 张（每类 1 张，短边中位 540 px）；无不同角度 / 背景（`real-samples-weeds-docx.md:258`） |
 | U7 | **低质量样本 100 张与人工质量分级** | **未取得 / 未做** | `sample-gap-register.md:21`、`:48-49` |
 | U8 | **docx 图片的目视内容核对与像素尺寸复核** | **未做 / 未复核** | 未解出任何图片；只测字节体量与短边登记值（`real-samples-weeds-docx.md:83` 记短边 317–697 px，侦察未复核） |
 | U9 | **训练 / 测试隔离的外部证明** | **无法证明** | `real-samples-weeds-docx.md:254-255`；`packages/evaluation/samples/README.md:76-77` |

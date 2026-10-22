@@ -94,7 +94,7 @@ GitHub runner 实跑。
 
 | # | 探针标签（原文） | 改前读数 |
 | --- | --- | --- |
-| 1 | favorites — SELECT 7 列（`FAVORITE_COLUMNS`, `favorites/store-pg.ts:68`） | `42501 permission denied for table favorites` |
+| 1 | favorites — SELECT 7 列（`FAVORITE_COLUMNS`, `favorites/store-pg.ts:73`） | `42501 permission denied for table favorites` |
 | 2 | favorites — INSERT 7 列 … `ON CONFLICT DO NOTHING RETURNING id`（`store-pg.ts:187-190`） | 同上 |
 | 3 | favorites — `DELETE … RETURNING id`（`store-pg.ts:167` / `:248`） | 同上 |
 | 4 | favorites — `SELECT … FOR UPDATE`（`store-pg.ts:233`） | 同上 |
@@ -110,7 +110,7 @@ GitHub runner 实跑。
 | 14 | history_idempotency — `INSERT … ON CONFLICT DO UPDATE RETURNING scope`（`store-pg.ts:315-323`） | 同上 |
 | 15 | history_idempotency — `UPDATE … RETURNING scope`（`store-pg.ts:342-345`） | 同上 |
 | 16 | history_idempotency — `DELETE …`（`store-pg.ts:159-161` / `:295` / `:353`） | 同上 |
-| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:87`） | `42501 … for table conversations` |
+| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:88`） | `42501 … for table conversations` |
 | 18 | conversations — INSERT 6 列 `RETURNING` 6 列（`store-pg.ts:222-224`） | 同上 |
 | 19 | conversations — `DELETE … RETURNING id`（`store-pg.ts:269` / `:432`） | 同上 |
 | 20 | conversations — `SELECT … FOR UPDATE`（`store-pg.ts:260`） | 同上 |
@@ -184,7 +184,7 @@ FAIL: runtime_domain_tables_classified (运行时域的每张表必须进分类�
 - **读面按列**，且 `DELETE`/`UPDATE` 的 `WHERE`、`RETURNING` 引用列也必须有 `SELECT` 权。
   两张幂等台账的 `SELECT` 必须是**全部 6 列**：`ON CONFLICT (scope, key_hash) … WHERE … RETURNING scope`
   在只有 `SELECT(request_hash, response_status, outcome, expires_at)` 时直接 `42501`
-  （`experiment-locking.sql:67`，实测）。
+  （一次性实验脚本 `experiment-locking.sql`，仓外 `.pg17/` 下不入库；行号不再维护，实测）。
 - **写面按列**：`INSERT`/`UPDATE` 只给真实语句出现过的列；`conversation_turns` 的 `INSERT`
   一个 `answer_id` 都不写，所以不给。
 - **`DELETE` 在 PG 里没有列级形式** ⇒ 六张表只能表级给（§4.4）。

@@ -234,7 +234,7 @@ node --test tests/unit/favorites-history-visibility.test.mjs
 | --- | --- | --- |
 | **C1** | **可判真** | `services/api/src/messages/store.ts:11` 注释「`insertMessage`：同 id 或同 `(owner_id, event_key)` 已存在 ⇒ 不写入、返回 'duplicate'」；`tests/unit/messages-http.test.mjs` 用例「消息列表实际HTTP：整链固定15min，读状态不改变水位，每页重查引用」 |
 | **C2** | **可判真** | `services/api/src/messages/store.ts:12` 注释「`markReadIfUnread`：读状态的唯一写入口，**比较并写入（CAS）**＋**单调**」；`:131` 起存储实现 |
-| **C3** | **可判真** | `docs/architecture/contract-status.json:1771` blocker 逐字「…真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息」 |
+| **C3** | **可判真** | `docs/architecture/contract-status.json:1934` blocker 逐字「…真实事件/目标端口、PG/注销及页面/Android仍待验收，不虚构真人消息」 |
 | **C4** | **可判真** | `services/api/src/messages/store.ts:4` 注释「本片交付**内存实现**…不宣称消息系统已端到端可用」；`services/api/src/favorites/service.ts:16` 读取时重查口径 |
 
 **复现命令**

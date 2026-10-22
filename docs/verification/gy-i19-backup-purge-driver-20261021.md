@@ -99,7 +99,7 @@ tools/purge-expired-backup-copies.mjs            # 薄 CLI：参数 / 连接 / �
 
 ## 4. 权限口径：**零新增授权**（这是本片最容易被改坏的地方）
 
-运行时角色 `gengyun_api_runtime` 对 `user_backup_copies` 拿的是**列级**权限（`services/api/src/db/roles/auth_privacy.sql:59-66` 与 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-i19-backup-copies-grant` 区域各一份）。本驱动用到的列**全在授权清单内**：
+运行时角色 `gengyun_api_runtime` 对 `user_backup_copies` 拿的是**列级**权限（`services/api/db/roles/auth_privacy.sql:59-66` 与 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-i19-backup-copies-grant` 区域各一份）。本驱动用到的列**全在授权清单内**：
 
 - 读：`request_id`、`user_id`、`module`、`state`、`retention_until`（`auth_privacy.sql:59` 的 SELECT 列表里都有）；
 - 写：`state`、`updated_at`（`:65` 的 UPDATE 列表里都有）。

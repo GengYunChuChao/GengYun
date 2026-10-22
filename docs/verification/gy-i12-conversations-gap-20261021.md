@@ -316,7 +316,7 @@ services/api/src/conversations/screen.ts:152       createModerationRiskScreen
 services/api/src/conversations/store-pg.ts:181     createPostgresConversationStore
 services/api/src/conversations/store-pg.ts:215     persistent: true
 services/api/src/conversations/store.ts:90         interface ConversationStore
-services/api/src/conversations/store.ts:156        createMemoryConversationStore（:174 persistent:false）
+services/api/src/conversations/store.ts:185        createMemoryConversationStore（:174 persistent:false）
 services/api/src/conversations/context.ts:29       CONTEXT_MAX_TURNS = 5
 services/api/src/app.ts:944-950                    createRecognitionProvider（env 取法样板；:948/:949 是 env）
 services/api/src/app.ts:1346-1350                  knowledgeQueryFace（与 /knowledge 同一实例）

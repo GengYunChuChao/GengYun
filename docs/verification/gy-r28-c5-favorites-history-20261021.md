@@ -32,7 +32,7 @@
   - `:233` `project(record, userId)` 每次读取重新 `deriveVisibility`（不入库、不缓存）
   - `:306`/`:359`/`:426` `listFavorites` / `createFavorite` / `deleteFavorite`
   - `:57`/`:59` `CURSOR_TTL_MS` / `IDEMPOTENCY_TTL_MS`
-- 落库（不是内存 Map）：`services/api/src/app.ts:1412` `favoritesService = config.executionMode === 'real' && !favoritesStore.persistent ? null : createFavoritesService(...)`；store 选择见同文件 store 装配处（`pool !== null ? createPostgresFavoritesStore(pool, { now }) : createMemoryFavoritesStore({ now })`），迁移 `services/api/db/migrations/0018_favorites_history.sql`。
+- 落库（不是内存 Map）：`services/api/src/app.ts:1431` `favoritesService = config.executionMode === 'real' && !favoritesStore.persistent ? null : createFavoritesService(...)`；store 选择见同文件 store 装配处（`pool !== null ? createPostgresFavoritesStore(pool, { now }) : createMemoryFavoritesStore({ now })`），迁移 `services/api/db/migrations/0018_favorites_history.sql`。
 - 已知运维缺口（上一片修好、本片未复验）：运行时角色对 `favorites`/`history` 等七张表曾整张零授权（`42501`），由 `deploy/postgres-cvm/sql/20-login-roles.sql` I 段修复，见 `docs/verification/gy-r28-favorites-history-grants-20261020.md`。
 
 ### 2.2 历史

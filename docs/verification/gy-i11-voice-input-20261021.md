@@ -39,7 +39,7 @@
 
 - 契约 operation（`packages/contracts/openapi.json`，只读）：`POST /speech/transcriptions` `createTranscription` 202、`GET /speech/transcriptions/{id}` `getTranscription` 200、`PATCH /speech/transcriptions/{id}/confirmation` `confirmTranscription` 200、`DELETE /speech/transcriptions/{id}` `deleteTranscription` 202。**没有**「取消转写任务」的 operation（DELETE 删的是记录）。
 - 客户端消费层：`miniprogram/utils/speech-transcript.js:320-332`（受理，202 + `Job[kind=transcription]`）、`:341-347`（读取，404＝正常中间态）、`:355-372`（确认）、`:381-392`（删除/取消）、`:395-402`（会话）、`:413-432`（语音轮次 202 + `Job[kind=answer]`）。
-- 轮询与**必然结算**：`voice.js:1026-1048`（每秒一拍；`ticks > POLL_MAX_TICKS || (deadlineMs>0 && Date.now() >= deadlineMs)` ⇒ 停表 + `:1038-1044` 落 `transcriptErrorCode:'TRANSCRIPT_NOT_PRODUCED'`）；边界取自 202 回传的 `deadline_at`（`voice.js:1009`）。`refreshTranscript`（`:1062-1102`）对 404 **不当作故障**，且 `revision` 只进不退（`:1083`）。
+- 轮询与**必然结算**：`voice.js:1026-1048`（每秒一拍；`ticks > POLL_MAX_TICKS || (deadlineMs>0 && Date.now() >= deadlineMs)` ⇒ 停表 + `:1038-1044` 落 `transcriptErrorCode:'TRANSCRIPT_NOT_PRODUCED'`）；边界取自 202 回传的 `deadline_at`（`voice.js:1090`）。`refreshTranscript`（`:1062-1102`）对 404 **不当作故障**，且 `revision` 只进不退（`:1083`）。
 - 「超时永不结算」在这条链上**不成立**：双边界（拍数 + 截止时间）任一到达即结算，页面不会停在 `pending`。**但**超时/失败后**不**发 `DELETE /speech/transcriptions/{id}`（UI 已结算，服务端任务留给其自身过期）——见 §8 待裁决 5。
 - 服务端：`services/api/src/speech/service.ts`（状态机）+ `services/api/src/speech/media.ts:29-81`（媒体引用端口：`substitute` 仅 stub/preset_demo；`unwired` 在 real 下一律 `OBJECT_UNAVAILABLE`）。real 下 `provider.available` 判定先于 `media.resolve` ⇒ 缺真实 ASR 时先得 503。
 
@@ -168,6 +168,6 @@ tests 6 / pass 6 / fail 0
 | 文件 | 旧引用 | 现状 |
 | --- | --- | --- |
 | `docs/verification/gy-i02-stale-claims-20261016.md:62` | `miniprogram/pages/voice/voice.js:770`（「真实对象存储未接线」） | 现为 `voice.js:859` |
-| `docs/verification/gy-i13-tts-http-20261012.md:223` | `miniprogram/pages/voice/voice.js:392`（自动播放失败出口） | 已随 +40 行漂移（该断言内容仍成立，仅行号需重取） |
+| `docs/verification/gy-i13-tts-http-20261012.md:223` | `miniprogram/pages/voice/voice.js:491`（自动播放失败出口） | 已重取 `:491`（原 `:392` 已漂移；该断言内容仍成立） |
 
 其余同族证据页（`gy-i11-speech-http-20261012.md`、`gy-i11-transcript-confirm-20261016.md`、`gy-r27-speech-cancel-20261020.md`、`gy-r28-speech-*.md`）引用的是**服务端**文件与契约，本片未触碰，行号不受影响。

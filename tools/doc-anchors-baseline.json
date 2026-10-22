@@ -10,82 +10,10 @@
       "reference": ".../auth_privacy.sql:5"
     },
     {
-      "path": ".pg17/handoff/device-fullchain-a4-2044.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-fullchain-a4-2044.md:308-361"
-    },
-    {
-      "path": ".pg17/handoff/device-retest-final-2156.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-retest-final-2156.md:6"
-    },
-    {
-      "path": ".pg17/handoff/device-smoke-round3-1937.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-smoke-round3-1937.md:18"
-    },
-    {
-      "path": ".pg17/handoff/device-smoke-round3-1937.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-smoke-round3-1937.md:39-48"
-    },
-    {
-      "path": ".pg17/handoff/recon-issue1-2-close-readiness.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/recon-issue1-2-close-readiness.md:235"
-    },
-    {
-      "path": ".pg17/note-issue168-achieved-2026-10-15.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/note-issue168-achieved-2026-10-15.md:5-22"
-    },
-    {
-      "path": ".pg17/note-issue171-user-confirmed.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/note-issue171-user-confirmed.md:7-13"
-    },
-    {
-      "path": ".pg17/STATE-current.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/STATE-current.md:17"
-    },
-    {
-      "path": "audit-demo-parity-20261018.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "audit-demo-parity-20261018.md:63"
-    },
-    {
-      "path": "audit-issue-closure-20261018.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "audit-issue-closure-20261018.md:320-330"
-    },
-    {
       "path": "deletion-registration.test.mjs",
       "reason": "BROKEN",
       "owner": "repo",
       "reference": "deletion-registration.test.mjs:186-188"
-    },
-    {
-      "path": "dist/styles.css",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "dist/styles.css:1"
-    },
-    {
-      "path": "experiment-locking.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "experiment-locking.sql:67"
     },
     {
       "path": "online-purge-pg.mjs",
@@ -142,18 +70,6 @@
       "reference": "sasl.js:67"
     },
     {
-      "path": "services/api/db/seeds/seed_reference.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "services/api/db/seeds/seed_reference.sql:5-11"
-    },
-    {
-      "path": "services/api/src/db/roles/auth_privacy.sql",
-      "reason": "BROKEN",
-      "owner": "api-server",
-      "reference": "services/api/src/db/roles/auth_privacy.sql:59-66"
-    },
-    {
       "path": "services/api/src/media/media.ts",
       "reason": "BROKEN",
       "owner": "api-server",
@@ -190,24 +106,6 @@
       "reference": "deploy/postgres-cvm/backup-postgres.sh:268"
     },
     {
-      "path": "README.md",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "README.md:440"
-    },
-    {
-      "path": "README.md",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "README.md:459"
-    },
-    {
-      "path": "services/api/db/migrations/0010_knowledge_read_views.sql",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "services/api/db/migrations/0010_knowledge_read_views.sql:3-34"
-    },
-    {
       "path": "services/api/src/messages/store-pg.ts",
       "reason": "OUT_OF_RANGE",
       "owner": "api-server",
@@ -241,55 +139,7 @@
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
-      "reference": "verify-cvm-postgres.sh:186"
-    },
-    {
-      "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
-      "reason": "SUSPECT",
-      "owner": "deploy",
       "reference": "verify-cvm-postgres.sh:326"
-    },
-    {
-      "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
-      "reason": "SUSPECT",
-      "owner": "deploy",
-      "reference": "verify-cvm-postgres.sh:352"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "contract-status.json:370"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:370"
-    },
-    {
-      "path": "docs/evaluation/README.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/evaluation/README.md:76"
-    },
-    {
-      "path": "docs/evaluation/real-samples-weeds-docx.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "real-samples-weeds-docx.md:249"
     },
     {
       "path": "docs/moderation/http-layer.md",
@@ -310,30 +160,6 @@
       "reference": "gy-i09-identify-loop-20261011.md:334"
     },
     {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/pages/voice/voice.js:392"
-    },
-    {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/pages/voice/voice.js:392"
-    },
-    {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "voice.js:1009"
-    },
-    {
-      "path": "miniprogram/utils/auth.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "utils/auth.js:205"
-    },
-    {
       "path": "miniprogram/utils/history-api.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
@@ -343,25 +169,7 @@
       "path": "miniprogram/utils/history-api.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
-      "reference": "miniprogram/utils/history-api.js:193"
-    },
-    {
-      "path": "miniprogram/utils/history-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
       "reference": "miniprogram/utils/history-api.js:274"
-    },
-    {
-      "path": "miniprogram/utils/reference.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/reference.js:1006"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:13268"
     },
     {
       "path": "packages/evaluation/samples/README.md",
@@ -373,109 +181,13 @@
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "app.ts:1641"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "services/api/src/app.ts:1244"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:1412"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:834"
-    },
-    {
-      "path": "services/api/src/community/events.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/community/events.ts:121"
-    },
-    {
-      "path": "services/api/src/community/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/community/service.ts:1530"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:587"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:703"
-    },
-    {
-      "path": "services/api/src/community/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "community/store-pg.ts:786"
-    },
-    {
-      "path": "services/api/src/conversations/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/service.ts:990"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "conversations/store-pg.ts:87"
-    },
-    {
-      "path": "services/api/src/conversations/store.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store.ts:156"
-    },
-    {
-      "path": "services/api/src/favorites/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "favorites/store-pg.ts:68"
     },
     {
       "path": "services/api/src/media/object-store.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/media/object-store.ts:132"
-    },
-    {
-      "path": "services/api/src/media/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/media/service.ts:1108"
-    },
-    {
-      "path": "services/api/src/media/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/media/service.ts:645"
-    },
-    {
-      "path": "services/api/src/ocr/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/service.ts:295"
-    },
-    {
-      "path": "services/api/src/ocr/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:545"
     },
     {
       "path": "services/api/src/routes/community.ts",
@@ -508,48 +220,6 @@
       "reference": "services/api/src/routes/community.ts:240-240"
     },
     {
-      "path": "services/api/src/routes/favorites.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/favorites.ts:87"
-    },
-    {
-      "path": "services/api/src/routes/messages.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "routes/messages.ts:42"
-    },
-    {
-      "path": "services/api/src/routes/messages.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/messages.ts:42"
-    },
-    {
-      "path": "services/api/src/tts/provider.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/provider.ts:301"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:383"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:399"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:535"
-    },
-    {
       "path": "tests/integration/account-suspend-pg.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
@@ -566,12 +236,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/integration/catalog-pg.mjs:125"
-    },
-    {
-      "path": "tests/integration/migrations-negative-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "migrations-negative-pg.mjs:198"
     },
     {
       "path": "tests/integration/recognition-chain-e2e.mjs",

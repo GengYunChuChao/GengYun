@@ -68,12 +68,12 @@
 | 10 | `install-postgres.sh:645` | A | `_final_ping="$(runuser … -tAc 'SELECT 1' \|\| true)"` | 不等于 `1` ⇒ `fail` | `:653` |
 | 11 | `provision-db.sh:117` | A | `RUNTIME_PASSWORD="$(read_secret_from_file … \|\| true)"` | 空 ⇒ 下一行 `[[ -n ]] \|\| fail` | `:118` |
 | 12 | `verify-cvm-postgres.sh:116` | A | `as_runtime`: `… 2>&1 \|\| true` | 保留 psql 的 stderr 供调用方判定：`report_denied` 只有见 `42501` 才 PASS、`report_num_runtime` 只有末行是非负整数才 PASS ⇒ 失败文本一律 FAIL | `:116` |
-| 13 | `verify-cvm-postgres.sh:186` | A | VPC IP 探测 `\| sort -u \| head -1 \|\| true` | 空 ⇒ `skip`（退出码 2），且 `listen_addresses` 的期望值变 `127.0.0.1,?` ⇒ 不可能 PASS | `:186` |
+| 13 | `deploy/postgres-cvm/verify-cvm-postgres.sh:188` | A | VPC IP 探测 `\| sort -u \| head -1 \|\| true` | 空 ⇒ `skip`（退出码 2），且 `listen_addresses` 的期望值变 `127.0.0.1,?` ⇒ 不可能 PASS | `:188` |
 | 14 | `verify-cvm-postgres.sh:208` | **B** | `wild_count="$(ss … \| awk … \| grep -cE '^(0.0.0.0\|*\|\[::\]):' \|\| true)"` | `ss`/`awk` 失败 ⇒ `grep -c` 输出 **`0`** ⇒ `report_eq 'no_wildcard_listener' '0'` **PASS（假绿）** | 已修（§3.1） |
 | 15 | `verify-cvm-postgres.sh:308` | A | `… -c 'SELECT current_user' 2>&1 \| tr -d '\r' \| tail -n1 \|\| true` | 与角色名精确比较；失败文本/空 ⇒ 不相等 ⇒ FAIL | `:318` |
 | 16 | `verify-cvm-postgres.sh:326` | **B** | `applied_joined="$(qs "SELECT COALESCE(string_agg(…), '') FROM schema_migrations" \|\| true)"` | 失败落空串/错误文本直接成为报告里的「实际值」；期望值在「磁盘侧也读不到」时也是空串 ⇒ **两者相等 ⇒ PASS（假绿）** | 已修（§3.2） |
 | 17 | `verify-cvm-postgres.sh:327` | **B** | `checksum_nulls="$(qs 'SELECT count(*) … WHERE checksum IS NULL' \|\| true)"` | 失败落空串 ⇒ 实际值没有失败态，与「0 个 NULL」不可分 | 已修（§3.2） |
-| 18 | `verify-cvm-postgres.sh:352` | A | `newest_dump="$(find … \| sort -nr \| …)" \|\| true` | 空 ⇒ `backup_artifact` 记 `skip`（退出码 2），既不当「有备份」也不当 PASS | `:368` |
+| 18 | `deploy/postgres-cvm/verify-cvm-postgres.sh:369-370` | A | `newest_dump="$(find … \| sort -nr \| …)" \|\| true` | 空 ⇒ `backup_artifact` 记 `skip`（退出码 2），既不当「有备份」也不当 PASS | `:369-370` |
 | 19 | `verify-cvm-postgres.sh:378` | A | `read -r DATA_SRC DATA_MNT <<<"$(df -P … \|\| true)"` | 空 ⇒ `_fail pgdata_separate_filesystem` | `:395` |
 | 20 | `backup-postgres.sh:201` | **B** | `TOCOBJ="$(runuser … --list "$DUMP" \| grep -c ';' \|\| true)"` | 失败 ⇒ `0` **写进备份清单** `restore_toc_entries`，与「真的 0 个 TOC 条目」不可分；下游 `restore-drill.sh` 还拿它当判据 | 已修（§3.3） |
 | 21 | `backup-postgres.sh:237` | A | `old="$(list_old_backups \|\| true)"` | 枚举失败 ⇒ 视为无旧备份 ⇒ **不删任何文件**（安全方向）；代价是保留期清理静默未执行（已知残留，§6） | `:245` |

@@ -257,7 +257,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 > 行号为 `git show upstream/main:<path>` 的 1-based 行号；只登记事实与口径，不写修法。
 
 1. **「每帖 ≤3 张」的权威计数器在 `real` 路径上不可得 ⇒ 该用途恒 503（既不是 201，也不是 400）**。
-   槽位判定点是 `services/api/src/media/service.ts:645` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
+   槽位判定点是 `services/api/src/media/service.ts:755` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
    `null` 时，`services/api/src/media/service.ts:652` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
    （`:653-654` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
    （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
@@ -273,7 +273,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    （`:296`／`:652`）**（按输出行计数为 2；`:296` 即上文 `:264` 已自引的那条 fail-closed 自述）。
 2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
    `services/api/src/app.ts:1041-1042`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
-   `services/api/src/app.ts:834`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
+   `services/api/src/app.ts:968`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
    合成域在 `services/api/src/app.ts:873`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
    两处都只**按执行模式新建**，不接收也不引用媒体域的服务或对象存储。
    `services/api/src/recognitions/media.ts:16` 文件头逐字自述：「本文件这套**按域**媒体引用端口并未改接媒体域：
@@ -297,7 +297,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
      `setTimeout` 共 16 处，全是请求级超时／重试等待（如 `services/api/src/auth/wechat.ts:95`、
      `services/api/src/ocr/service.ts:610`、`services/api/src/recognitions/service.ts:533`），**无周期调度器**。
 
-   `services/api/src/media/service.ts:1108` 的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
+   `services/api/src/media/service.ts:1224` 的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
 
 **与 §10 所记裁定的口径差异（不追改历史）**：§10 记的「2026-10-14 监工对 #121 的 P1 裁定」要求
 `retryable: true`；现行代码按 `services/api/src/errors.ts:32`／`:35` 收敛为 `false`，断言见

@@ -109,7 +109,7 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 - 只过滤**已加载**的消息（服务端游标分页，本地不重排、不补数据）；未命中时沿用 `state-view` 的 `empty`
   （`messages.wxml:66-70`），标题/说明带当前档位名（`filterLabel`），并说明这不是「服务端没有消息」。
 - 「加载更多」只在「全部」档出现；其余档给一行说明（`messages.wxml:100`）。
-- 已知**未取得**：`互动`／`系统` 两档在当前服务端没有生产路径（`services/api/src/community/events.ts:121`
+- 已知**未取得**：`互动`／`系统` 两档在当前服务端没有生产路径（`services/api/src/community/events.ts:128`
   只发 `type: 'moderation'`），因此这两档今天只会命中审核结果或为空——**筛选本身是真实的**，但没有可演示的互动类消息。
 
 ---
@@ -177,7 +177,7 @@ c664435 fix(GY-I28): demo 对齐门禁补盲 —— video/chat 改为显式的�
 2. **真机渲染与截图**：无设备、无开发者工具 ⇒ 未取得。`npm run test:mini` 自身也只声明
    `PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. Not a WeChat compiler or device test.`
    `node tools/demo-align.mjs` 末行同样写 `未覆盖：微信开发者工具／模拟器／真机渲染与截图（本片未取得）。`
-3. **`互动`／`系统` 两档的演示数据**：服务端只发 `type: 'moderation'`（`services/api/src/community/events.ts:121`），
+3. **`互动`／`系统` 两档的演示数据**：服务端只发 `type: 'moderation'`（`services/api/src/community/events.ts:128`），
    这两档今天只会筛到审核结果或为空；未伪造消息填充。
 4. **「重置演示数据」**：小程序无演示模式、无本地演示数据可清（`demoMode|DEMO_MODE|isDemo|demo 模式` 在 `miniprogram` 零命中），按「不存在则不加」未实现。
 5. **「问答自动朗读」开关**：无「回答就绪即自动朗读」的既有触发点，按「只有既有能力才接」未实现。
@@ -188,11 +188,11 @@ c664435 fix(GY-I28): demo 对齐门禁补盲 —— video/chat 改为显式的�
    `<span class="pill gray">示例记录</span>` + `.mini-timeline` 三条写死文案「完成一次田间观察」「读懂标签上的信息」
    「看见二十年后的想象」）：**未实现**，按派单「无数据源则不做、不做假时间线」。边界与依据：
    - **小程序没有这个数据源**：`git grep -l 探索记录 upstream/main -- miniprogram` = **0 个文件**；
-     历史接口是 `miniprogram/utils/history-api.js:193` 的 `listHistory(cursor, limit)`（`GET /history`，
+     历史接口是 `miniprogram/utils/history-api.js:204` 的 `listHistory(cursor, limit)`（`GET /history`，
      `PAGE_LIMIT_MAX = 50` 见 `:35`），只有游标与条数两个参数，**没有「今天」或任何日期区间的查询语义**，
      返回字段见 `history-api.js:29` `['id','revision','kind','target_ref','job_state','reference_state','created_at']`。
      照 demo 渲染这条时间线，只能由前端从历史流里自造「今天」口径、再补三条叙事文案 —— 属伪造数据源，红线禁止。
-   - **audit 同样记为卡点**：`audit-demo-parity-20261018.md:63`（H1「无该块；`mini-timeline` 类仅在
+   - **audit 同样记为卡点**：`.pg17` 分析依据 `audit-demo-parity-20261018.md` 的第 63 行（H1「无该块；`mini-timeline` 类仅在
      `components.wxss`」，判「结构性」）与 `:160`（`git grep -l 探索记录 upstream/main -- miniprogram` = 0
      →「需先定数据源，再补 Demo 示例口径」）。
    - **样式已在、无消费方**：`.mini-timeline` 定义于 `miniprogram/styles/components.wxss:608`（注释见 `:607`

@@ -215,7 +215,7 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 | 4 | `services/api/src/conversations/store-pg.ts:342` | `public.conversation_turns` | `FOR UPDATE` | 列级 `UPDATE (answer_id, job_error_code, job_state, revision, updated_at)` |
 | 5 | `services/api/src/favorites/store-pg.ts:238` | `public.favorites` | `FOR UPDATE` | 列级 `UPDATE (revision)` |
 | 6 | `services/api/src/history/store-pg.ts:242` | `public.history` | `FOR UPDATE` | 列级 `UPDATE (revision)` |
-| 7 | `services/api/src/ocr/store-pg.ts:545` | `public.ocr_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
+| 7 | `services/api/src/ocr/store-pg.ts:556` | `public.ocr_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
 | 8 | `services/api/src/recognitions/store-pg.ts:618` | `public.recognition_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
 | 9 | `services/api/src/recognitions/store-pg.ts:713` | `public.recognition_records` | `FOR UPDATE` | 列级 `UPDATE (candidates, deleted, model_version, revision, selected_species_id, uncertainty_reasons, updated_at)` |
 | 10 | `services/api/src/speech/store-pg.ts:502` | `public.speech_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |

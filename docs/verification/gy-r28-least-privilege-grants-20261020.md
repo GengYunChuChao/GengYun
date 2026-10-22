@@ -165,8 +165,8 @@ PostgreSQL **没有列级 `DELETE`**，而这三处是**物理删除**（集合�
 
 | 表 | 出处 | 语义 |
 | --- | --- | --- |
-| `community_likes` | `community/store-pg.ts:587` | 取消点赞：唯一键 `(user_id,target_type,target_id)` 就是「点过没点过」 |
-| `community_idempotency` | `community/store-pg.ts:703/732/761` | 过期占位清理、放弃认领 |
+| `community_likes` | `community/store-pg.ts:592` | 取消点赞：唯一键 `(user_id,target_type,target_id)` 就是「点过没点过」 |
+| `community_idempotency` | `community/store-pg.ts:708/732/761` | 过期占位清理、放弃认领 |
 | `ocr_idempotency` | `ocr/store-pg.ts:686/693` | 释放认领、过期清理 |
 
 因此 `90-assert` 第 7 条从「按表名豁免（该表全部写类型放开）」收紧成
