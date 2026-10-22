@@ -24,8 +24,14 @@
 import type { CommunityEventsPort } from './events.ts';
 import type { CommitResult, CommunityStore, PostCommitExpectation, PostCommitPatch, PostRecord } from './store.ts';
 
-/** 后台侧需要的社区帖子端口形状（= `admin/ops/types.ts` 的 `CommunityPostPort`）。 */
-export type CommunityPostStorePort = Pick<CommunityStore, 'getPost' | 'commitPostIfCurrent'>;
+/**
+ * 后台侧需要的社区帖子端口形状（= `admin/ops/types.ts` 的 `CommunityPostPort`）。
+ *
+ * 含 `persistent`：它**只被转发、不被本文件解释**——观察器不改「能不能放行 real 下架」的判定，
+ * 那个判据在下游 `admin/ops/accounts-only.ts`（`hidePostWired`）。若这里吞掉能力位，
+ * `app.ts` 读到的就是 `undefined`，real 下的下架会**永远**停在 fail-closed（静默不生效）。
+ */
+export type CommunityPostStorePort = Pick<CommunityStore, 'persistent' | 'getPost' | 'commitPostIfCurrent'>;
 
 export interface TakedownObserverOptions {
   events: CommunityEventsPort;
@@ -55,6 +61,9 @@ export function withTakedownObserver(
 ): CommunityPostStorePort {
   const reason = options.reason ?? 'admin_hide';
   return {
+    // 能力位**原样转发**：真实持久端口（PG store）⇒ `true`；内存实现 ⇒ `false`。
+    // 本观察器不改变这个值，也不据此做任何本地判断。
+    persistent: store.persistent,
     getPost(id: string): Promise<PostRecord | null> {
       return store.getPost(id);
     },
