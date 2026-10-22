@@ -1261,3 +1261,62 @@ test('替身提供者·确定性分桶逐桶给出可观测的契约行为（不
   assert.equal(real.modelVersion, 'real-unconfigured');
   assert.notEqual(real.modelVersion, 'stub-v1');
 });
+
+// ---------------------------------------------------------------- 可重试口径（GY-R31 / #7）
+
+/** **负臂**（独立成例，改动前后都必须绿）：确定性请求错误仍是 400 `INVALID_REQUEST` 且 `retryable:false`。 */
+test('可重试口径·负臂：非法请求体 ⇒ 400 INVALID_REQUEST 仍 retryable:false（两种状态下都必须绿）', async () => {
+  const { service } = boot('stub');
+  await assert.rejects(
+    () => service.createTranscription({
+      userId: USER,
+      body: { media_id: mediaIdForBucket(STUB_BUCKETS.normal), media_revision: 1, extra_field: true },
+      idempotencyKey: nextKey(),
+    }),
+    error => {
+      assert.equal(error.code, 'INVALID_REQUEST');
+      assert.equal(error.status, 400, '状态码口径不变：仍为 400');
+      assert.equal(error.retryable, false, '请求体不合契约是确定性拒绝，不得谎称可重试');
+      return true;
+    },
+  );
+});
+
+/**
+ * 「同一 Idempotency-Key 的请求仍在处理中」是**时间能解决的瞬时态**（等待后重放不会重复执行副作用），
+ * 且 HTTP 出口已为该码发 `Retry-After: 1`（`services/api/src/app.ts:1836-1837`）⇒ 必须 `retryable: true`。
+ * 状态码仍是 409（**不变**）。
+ *
+ * 确定性构造：占位者已落定（`pending:false`）但其结果引用的 `job_id` 从未落库 ⇒ `createTranscription`
+ * 落到 `inProgress()`。不依赖墙钟或并发，故 `code`/`status`/`retryable` 三个读数都可钉。
+ */
+test('可重试口径·同键占位未落定 ⇒ 409 REQUEST_IN_PROGRESS 且 retryable:true（状态码不变）', async () => {
+  const base = createMemorySpeechStore();
+  let claimed = null;
+  const occupied = {
+    ...base,
+    async claimIdempotent(scope, keyHashHex, row) {
+      claimed = { scope, keyHashHex, row };
+      return 'exists';
+    },
+    async findIdempotent(scope, keyHashHex) {
+      if (claimed === null || claimed.scope !== scope || claimed.keyHashHex !== keyHashHex) return null;
+      return { ...claimed.row, pending: false };
+    },
+  };
+  const { service } = boot('stub', { store: occupied });
+  await assert.rejects(
+    () => service.createTranscription({
+      userId: USER,
+      body: { media_id: mediaIdForBucket(STUB_BUCKETS.normal), media_revision: 1 },
+      idempotencyKey: nextKey(),
+    }),
+    error => {
+      assert.equal(error.name, 'ApiError');
+      assert.equal(error.code, 'REQUEST_IN_PROGRESS');
+      assert.equal(error.status, 409, '状态码口径不变：仍为 409');
+      assert.equal(error.retryable, true, 'REQUEST_IN_PROGRESS 必须可重试（与 Retry-After: 1 一致）');
+      return true;
+    },
+  );
+});

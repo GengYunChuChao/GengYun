@@ -403,3 +403,86 @@ test('GY-I05: profile/catalog 端点只返回契约闭集内的错误码，且�
   assert.equal((await app.inject({url:route,headers:headers(a)})).json().data.revision,2,'被拒请求不得改写档案');
   assert.equal((await db.query('SELECT count(*)::int AS n FROM single_profiles')).rows[0].n,1);
 });
+
+// ---------------------------------------------------------------- 可重试口径（GY-R31 / #7）
+
+/**
+ * **负臂**（独立成例，便于证明"改动前后都绿"）：确定性数据库错误不随正臂一起放开，
+ * 即便同一断言表在"改前"状态下会先撞正臂失败，这一例仍必须单独通过。
+ */
+test('可重试口径·负臂：权限/表缺失/库不存在/凭据/未知码/无 code ⇒ retryable:false（两种状态下都必须绿）', async () => {
+  const serviceFor = code => createProfileService({
+    async connect() {
+      throw code === undefined ? new Error('synthetic profile failure') : Object.assign(new Error('synthetic profile failure'), { code });
+    },
+  }, 'synthetic-profile-hmac-key');
+  const identity = {
+    identity: {
+      role: 'user',
+      userId: '00000000-0000-4000-8000-000000000001',
+      authEpoch: 1,
+      sessionId: '00000000-0000-4000-8000-000000000002',
+    },
+    token: 'synthetic-token',
+  };
+  for (const code of ['42501', '42P01', '3D000', '28P01', 'XX000', undefined]) {
+    const label = String(code);
+    await assert.rejects(serviceFor(code).get(identity), error => {
+      assert.equal(error.code, 'PROVIDER_UNAVAILABLE', label);
+      assert.equal(error.status, 503, `${label} 必须保持既有状态码口径`);
+      assert.equal(error.retryable, false, `${label} 是确定性故障，不得谎称可重试`);
+      return true;
+    });
+  }
+});
+
+/**
+ * 档案库故障的 `retryable` 分档 —— **状态码口径不变**。
+ *
+ * 判据唯一出处是 `services/api/src/db/pool.ts` 的 `isTransientDatabaseError()`；状态码仍由 `contract.ts` 决定。
+ * 正臂（瞬时，时间能解决）：`57014`/`55P03` ⇒ 504 `PROVIDER_TIMEOUT` 且可重试；
+ * `08xxx`/`40001`/`40P01`/驱动码 `ECONNREFUSED` ⇒ 503 `PROVIDER_UNAVAILABLE` 且可重试。
+ * 负臂（确定性，需运维介入）：`42501`/`42P01`/`3D000`/`28P01`/`XX000`/无 `code` ⇒ 503 且 **不可重试**。
+ *
+ * 用「连接池直接抛码」构造：`transaction()` 的 catch-all 只读 `error.code`，不需要真库。
+ */
+test('档案库瞬时故障 ⇒ retryable:true；权限/表缺失/库不存在/凭据/未知码 ⇒ false（状态码不变）', async () => {
+  const serviceFor = code => createProfileService({
+    async connect() {
+      throw code === undefined ? new Error('synthetic profile failure') : Object.assign(new Error('synthetic profile failure'), { code });
+    },
+  }, 'synthetic-profile-hmac-key');
+  const identity = {
+    identity: {
+      role: 'user',
+      userId: '00000000-0000-4000-8000-000000000001',
+      authEpoch: 1,
+      sessionId: '00000000-0000-4000-8000-000000000002',
+    },
+    token: 'synthetic-token',
+  };
+  const cases = [
+    ['57014', 'PROVIDER_TIMEOUT', 504, true],
+    ['55P03', 'PROVIDER_TIMEOUT', 504, true],
+    ['08006', 'PROVIDER_UNAVAILABLE', 503, true],
+    ['40001', 'PROVIDER_UNAVAILABLE', 503, true],
+    ['40P01', 'PROVIDER_UNAVAILABLE', 503, true],
+    ['ECONNREFUSED', 'PROVIDER_UNAVAILABLE', 503, true],
+    ['42501', 'PROVIDER_UNAVAILABLE', 503, false],
+    ['42P01', 'PROVIDER_UNAVAILABLE', 503, false],
+    ['3D000', 'PROVIDER_UNAVAILABLE', 503, false],
+    ['28P01', 'PROVIDER_UNAVAILABLE', 503, false],
+    ['XX000', 'PROVIDER_UNAVAILABLE', 503, false],
+    [undefined, 'PROVIDER_UNAVAILABLE', 503, false],
+  ];
+  for (const [code, expectedCode, expectedStatus, retryable] of cases) {
+    const label = String(code);
+    await assert.rejects(serviceFor(code).get(identity), error => {
+      assert.equal(error.name, 'ApiError', label);
+      assert.equal(error.code, expectedCode, label);
+      assert.equal(error.status, expectedStatus, `${label} 必须保持既有状态码口径`);
+      assert.equal(error.retryable, retryable, `${label} 的 retryable 必须由瞬时判定给出`);
+      return true;
+    });
+  }
+});

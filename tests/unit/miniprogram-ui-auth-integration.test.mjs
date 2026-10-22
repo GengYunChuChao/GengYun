@@ -360,6 +360,9 @@ test('消息页：real 未接线 503 ⇒ 提示「服务未接线」，绝不显
   assert.equal(page.data.items.length, 0);
   assert.doesNotMatch(JSON.stringify(page.data), /暂无消息/, '不可用不得被渲染成「暂无消息」');
   assert.match(page.data.unreadNote, /未读数未取得/);
+  // 旧断言只锁了文案，等于把「未读数挂了就没有任何可点重试」固化成现状（#17 G3）。
+  // 文案断言保留，另加一条：此时 pill 必须真的可点重试。
+  assert.equal(page.data.unreadRetryable, true, '未读数取不到时必须留下可点重试入口：pill 自身可点');
   assert.equal(bar.data.unreadText, '', '未读数取不到 ⇒ 不显示数字（不显示 0）');
   // 结构护栏：「暂无消息」只允许出现在 empty 分支；error 分支不得复用空态文案。
   const wxml = readFileSync(resolve(root, 'miniprogram/pages/messages/messages.wxml'), 'utf8');
@@ -367,6 +370,129 @@ test('消息页：real 未接线 503 ⇒ 提示「服务未接线」，绝不显
   const emptyBranch = wxml.indexOf('status === \'empty\'');
   assert.ok(errorBranch !== -1 && emptyBranch !== -1 && errorBranch < emptyBranch, '错误分支必须先于空态分支判定');
   assert.ok(wxml.slice(errorBranch, emptyBranch).includes('暂无消息') === false, '错误分支不得出现「暂无消息」');
+});
+
+// ---------------------------------------------------------------------------
+// GY-I17（#17）G1 跳转入口 / G3 未读数重试：真实页面 + 真实 utils/navigation + 真实 community-api。
+// 合成 wx 只记录请求与跳转，由用例逐条应答后核对；**不是**微信工具或真机证据。
+// ---------------------------------------------------------------------------
+const POST_ID = '7c7c7c7c-7c7c-4c7c-8c7c-7c7c7c7c7c7c';
+const COMMENT_ID = '8d8d8d8d-8d8d-4d8d-8d8d-8d8d8d8d8d8d';
+const commentAuthor = () => ({
+  display_name: '王秀兰', display_id: 'grower-0042', state: 'active',
+  avatar_media_id: null, avatar_media: null, revision: 1,
+});
+const commentEnvelope = (postId = POST_ID) => messageEnvelope({
+  id: COMMENT_ID, revision: 1, post_id: postId, author: commentAuthor(), body: '这季墒情看着不错',
+  visibility: 'published', audit_state: 'approved', created_at: '2026-10-16T04:30:00.000Z',
+});
+
+test('消息页：列表成功 + 未读数失败 ⇒ pill 可点重试，点一下只重拉未读数', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page, bar } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [message()], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 503, data: messageError('PROVIDER_UNAVAILABLE') });
+  await flush();
+  assert.equal(page.data.status, 'ready', '列表成功就不得落错误态（onRetry 分支因此不可达）');
+  assert.equal(page.data.unreadRetryable, true, '未读数失败必须留下可点重试入口');
+  assert.match(page.data.unreadNote, /未读数未取得/);
+  assert.match(page.data.unreadNote, /点此重试/, '可点态必须在文案里说清楚，不靠颜色猜');
+
+  const before = h.requests.length;
+  page.onRetryUnread();
+  assert.equal(h.requests.length, before + 1, '点一次重试只补一条请求');
+  const retry = h.requests.at(-1);
+  assert.equal(pathOf(retry), '/messages/unread-count', '只重读未读数，不重载整个列表');
+  retry.success({ statusCode: 200, data: messageEnvelope({ count: 2 }) });
+  await flush();
+  assert.equal(page.data.unreadNote, '未读 2 条');
+  assert.equal(page.data.unreadRetryable, false, '取到读数即收起可点态（不常驻一个无意义的可点 pill）');
+  assert.equal(bar.data.unreadText, '2', '重试成功后角标同步');
+});
+
+test('消息页：available + post ⇒ 行可点，按既有 navigation 口径跳社区详情页', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [
+    message({ target_ref: { type: 'post', id: POST_ID, revision: 3 }, reference_state: 'available' }),
+  ], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  const row = page.data.items[0];
+  assert.equal(row.canOpen, true, '服务端判 available 且目标是 post ⇒ 可点');
+  assert.equal(row.targetType, 'post');
+  assert.match(row.referenceNote, /可查看/, '可点行如实说明可查看');
+  assert.match(row.referenceNote, /点这一条进入社区详情/, '入口要写在行内，不另造第二个页面元素');
+  page.onOpenTarget({ currentTarget: { dataset: { id: MESSAGE } } });
+  assert.deepEqual(h.navigates, ['/pages/communitydetail/communitydetail?id=' + POST_ID],
+    '详情页只接 ?id=<帖子 uuid>（app.json 的 pages + utils/navigation ID_PAGES 同一事实）');
+  // 结构护栏（冒泡在合成 wx 里无法模拟，故钉在模板上）：行上有且只有一处跳转入口，
+  // 行内「标记已读」必须用 catchtap —— 否则点它会一并冒泡到 onOpenTarget 把详情页打开。
+  const wxml = readFileSync(resolve(root, 'miniprogram/pages/messages/messages.wxml'), 'utf8');
+  assert.equal(wxml.split('bindtap="onOpenTarget"').length - 1, 1, '跳转入口只有行上这一处');
+  assert.match(wxml, /catchtap="onMarkRead"/, '「标记已读」用 catchtap，不冒泡到行上的跳转');
+  assert.doesNotMatch(wxml, /bindtap="onMarkRead"/, '不得退回 bindtap（会同时触发跳转）');
+});
+
+test('消息页：available + comment ⇒ 先按契约取评论的 post_id，再跳详情页（不把评论 id 当帖子 id）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [
+    message({ target_ref: { type: 'comment', id: COMMENT_ID, revision: 1 }, reference_state: 'available' }),
+  ], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  const row = page.data.items[0];
+  assert.equal(row.canOpen, true, '评论目标同样可点（服务端会判 available）');
+  assert.equal(row.targetType, 'comment');
+  page.onOpenTarget({ currentTarget: { dataset: { id: MESSAGE } } });
+  const lookup = h.requests.at(-1);
+  assert.equal(lookup.method, 'GET');
+  assert.equal(pathOf(lookup), '/comments/' + COMMENT_ID, '按契约 GET /comments/{id} 取所属帖子');
+  assert.equal(h.navigates.length, 0, '帖子 id 还没拿到，不得先跳');
+  lookup.success({ statusCode: 200, data: commentEnvelope(POST_ID) });
+  await flush();
+  assert.deepEqual(h.navigates, ['/pages/communitydetail/communitydetail?id=' + POST_ID],
+    '跳的是评论所属的帖子，不是评论 id 本身');
+});
+
+test('消息页：目标不可用或评论取不到 ⇒ 不跳转、不猜（提示不暗示对方是否删除）', async () => {
+  const h = harness();
+  h.login();
+  h.requests.length = 0;
+  const { page } = await openedMessagesPage(h);
+  h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [
+    // 1) 服务端判不可用（unavailable 是 14 型未接线目标的恒态，客户端不按类型猜语义）
+    message({ target_ref: { type: 'species', id: 'species-1', revision: 1 }, reference_state: 'unavailable' }),
+    // 2) 服务端判可查看，但评论已被取不到（下架/无权/不存在在服务端折叠成同一结果）
+    message({ id: READ_MESSAGE, revision: 1, target_ref: { type: 'comment', id: COMMENT_ID, revision: 1 },
+      reference_state: 'available' }),
+  ], next_cursor: null }) });
+  h.requests[2].success({ statusCode: 200, data: messageEnvelope({ count: 0 }) });
+  await flush();
+  const unavailable = page.data.items[0];
+  assert.equal(unavailable.canOpen, false, '不可用的行不可点（保持现状文案）');
+  assert.equal(unavailable.referenceNote, '关联内容当前不可查看，本条不提供跳转入口。');
+  assert.doesNotMatch(unavailable.referenceNote, /删除|下架|不存在/, '只说打不开，不暗示对方是否删除');
+
+  const before = h.requests.length;
+  page.onOpenTarget({ currentTarget: { dataset: { id: MESSAGE } } });
+  assert.equal(h.requests.length, before, '不可点的行连请求都不发');
+  assert.equal(h.navigates.length, 0);
+
+  page.onOpenTarget({ currentTarget: { dataset: { id: READ_MESSAGE } } });
+  const lookup = h.requests.at(-1);
+  assert.equal(pathOf(lookup), '/comments/' + COMMENT_ID);
+  lookup.success({ statusCode: 404, data: messageError('NOT_FOUND') });
+  await flush();
+  assert.equal(h.navigates.length, 0, '取不到所属帖子就不跳（不退回首页、不跳错页）');
+  assert.deepEqual(h.toasts, ['关联内容当前不可查看'], '失败只提示一句，不解释目标为何打不开');
 });
 
 test('消息页：服务端返回 0 条 ⇒ 空态（与「服务未接线」可分辨）', async () => {

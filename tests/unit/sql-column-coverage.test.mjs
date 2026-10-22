@@ -2207,6 +2207,9 @@ test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少�
   const hit = broken.coverage.problems.filter((problem) => problem.includes('public.regions.name'));
   assert.equal(hit.length, 1, `少授 regions.name 的 SELECT 后必须恰红 1 条，实际：\n${broken.coverage.problems.join('\n') || '（没有变红 —— 列级核对没在看新文件！）'}`);
   assert.ok(hit[0].includes('缺 SELECT'), `红字必须点名权限：${hit[0]}`);
+  // 两侧意图都留：main 侧（#451）把站点行号改成「按源码实时定位」，本片（#462）把站点做成注册表引用
+  // `SITE.profileRegions`（与下面的负控制变异共用同一处 needle）。两种做法都拒绝写死行号，取注册表
+  // 这一种：它与变异替换同源，业务 SQL 一改就一起失效、一起报红，不会出现「定位还在、变异悄悄没生效」。
   assert.ok(hit[0].includes(SITE.profileRegions), `红字必须点名语句站点 ${SITE.profileRegions}：${hit[0]}`);
 
   const restored = auditAll({

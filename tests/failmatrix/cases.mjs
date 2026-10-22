@@ -28,11 +28,21 @@ const COMMUNITY_MEDIA_BODY = {
   author_revision: 1,
 };
 
+/** OCR 标签字段的最小合法形状（四个字段都允许空；用来把「未鉴权」与「body 非法」分开）。 */
+const LABEL_FIELDS = { registration_number: null, name: null, ingredients: [], dosage_form: null };
+/** 会话轮次请求体（会话域的 body schema 只要求是对象，input_type/text 是产品侧约定）。 */
+const TURN_BODY = { input_type: 'text', text: '合成提问（矩阵）：稻田稗草三到五叶期该用什么药？' };
+/** 语音合成请求体（内容引用指向不存在的 id 也合法：未鉴权时先撞 401）。 */
+const SYNTHESIS_BODY = { checked_content_ref: { type: 'answer', id: ABSENT, revision: 1 }, locale: 'zh-CN' };
+/** 转写确认请求体（confirmed_text 1..8000，confirmation 固定枚举）。 */
+const CONFIRMATION_BODY = { confirmed_text: '合成确认文本（矩阵），非真实录音内容。', confirmation: 'checked_and_sendable' };
+
 export const BATCHES = [
   { id: 'B1', title: '批次 1：身份与权限面（游客 / 越权 / 后台 / 会话与注销）', families: ['C1', 'C2', 'C3', 'C4'] },
   { id: 'B2', title: '批次 2：媒体归属、重复请求与无效输入', families: ['C5', 'C6', 'C7'] },
   { id: 'B3', title: '批次 3：审核回调 / AI 失败 / 下架缓存（受信 seam）', families: ['D1', 'D2', 'D3'] },
   { id: 'B4', title: '批次 4：版本回写、提示注入与媒体访问凭据', families: ['D4', 'E1', 'E2'] },
+  { id: 'B5', title: '批次 5：异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话）的游客面与归属面', families: ['C10', 'C11'] },
 ];
 
 export const FAMILIES = {
@@ -45,6 +55,8 @@ export const FAMILIES = {
   C7: '无效输入：坏 uuid / 坏游标 / 越界分页 / 多余字段一律 400（含 INVALID_CURSOR）',
   E1: '提示注入：内容里的指令只作数据，命中 PROMPT_INJECTION 就拒绝，绝不改写审核结论或角色',
   E2: '媒体访问凭据：篡改/越权的 token 一律 404（与「不存在」同形，不泄露对象存在性）',
+  C10: '异步 AI 域游客面：识别 / OCR / 转写 / 合成 / 作业 / 会话共 23 个 operation 在无凭据时一律 401 SESSION_REQUIRED',
+  C11: '异步 AI 域归属面：A 碰 B 的作业 / 识别 / OCR / 转写 / 会话（含轮次）一律 404 且与「不存在」同形；越权写不得改动 B 的行',
 };
 
 export const CASES = [
@@ -287,4 +299,87 @@ export const CASES = [
     else if (expires <= ctx.world.clock.ms) problems.push(`data.expires_at 必须在未来：${data.expires_at}`);
     return problems;
   } },
+
+  // ------------------------------ C10 异步 AI 域：游客面（无凭据一律 401，不是 403/404/500）
+  // 期望值来源（逐条照抄既有实现行为，未自行发明状态码）：
+  // - tests/integration/ocr-http.mjs:1500-1501（无会话 GET /ocr/:id ⇒ 401 SESSION_REQUIRED）
+  // - tests/integration/speech-http.mjs:263-264（转写四条无会话 ⇒ 401 SESSION_REQUIRED）
+  // - tests/unit/recognitions-api.test.mjs:114-116（未登录 POST /recognitions、GET /recognitions/:id、GET /jobs/:id ⇒ 401）
+  // - tests/unit/tts-jobs-http.test.mjs:225-226（无会话 GET /jobs/:id ⇒ 401 SESSION_REQUIRED）
+  // - tests/unit/conversation-http.test.mjs:236（无 token GET /conversations ⇒ SESSION_REQUIRED）
+  // body 必须 schema 合法：fastify 的 schema 校验先于 preHandler，非法 body 会先给 400 而不是 401。
+  { id: 'C10-01', family: 'C10', title: '游客创建识别作业', method: 'POST', path: `${API}/recognitions`, body: { media_id: ABSENT, media_revision: 1 }, headers: key('i22-c10-01-rec'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-02', family: 'C10', title: '游客读识别记录', method: 'GET', path: `${API}/recognitions/${ABSENT}`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-03', family: 'C10', title: '游客改识别选择', method: 'PATCH', path: `${API}/recognitions/${ABSENT}/selection`, body: { selected_species_id: SPECIES_ID }, headers: wkey('i22-c10-03-sel', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-04', family: 'C10', title: '游客删识别记录', method: 'DELETE', path: `${API}/recognitions/${ABSENT}`, headers: wkey('i22-c10-04-recd', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-05', family: 'C10', title: '游客创建 OCR 作业', method: 'POST', path: `${API}/ocr`, body: { media_id: ABSENT, media_revision: 1 }, headers: key('i22-c10-05-ocr'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-06', family: 'C10', title: '游客读 OCR 记录', method: 'GET', path: `${API}/ocr/${ABSENT}`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-07', family: 'C10', title: '游客改 OCR 校正字段', method: 'PATCH', path: `${API}/ocr/${ABSENT}/correction`, body: { corrected_fields: LABEL_FIELDS }, headers: wkey('i22-c10-07-ocrc', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-08', family: 'C10', title: '游客确认 OCR 结果', method: 'POST', path: `${API}/ocr/${ABSENT}/verify`, body: { fields: LABEL_FIELDS }, headers: wkey('i22-c10-08-ocrv', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-09', family: 'C10', title: '游客删 OCR 记录', method: 'DELETE', path: `${API}/ocr/${ABSENT}`, headers: wkey('i22-c10-09-ocrd', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-10', family: 'C10', title: '游客创建转写作业', method: 'POST', path: `${API}/speech/transcriptions`, body: { media_id: ABSENT, media_revision: 1 }, headers: key('i22-c10-10-sp'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-11', family: 'C10', title: '游客读转写记录', method: 'GET', path: `${API}/speech/transcriptions/${ABSENT}`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-12', family: 'C10', title: '游客确认转写文本', method: 'PATCH', path: `${API}/speech/transcriptions/${ABSENT}/confirmation`, body: CONFIRMATION_BODY, headers: wkey('i22-c10-12-spc', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-13', family: 'C10', title: '游客删转写记录', method: 'DELETE', path: `${API}/speech/transcriptions/${ABSENT}`, headers: wkey('i22-c10-13-spd', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-14', family: 'C10', title: '游客请求语音合成', method: 'POST', path: `${API}/speech/synthesis`, body: SYNTHESIS_BODY, headers: key('i22-c10-14-syn'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-15', family: 'C10', title: '游客读作业', method: 'GET', path: `${API}/jobs/${ABSENT}`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-16', family: 'C10', title: '游客取消作业', method: 'POST', path: `${API}/jobs/${ABSENT}/cancel`, headers: wkey('i22-c10-16-jobc', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-17', family: 'C10', title: '游客读会话列表', method: 'GET', path: `${API}/conversations`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-18', family: 'C10', title: '游客建会话', method: 'POST', path: `${API}/conversations`, body: {}, headers: key('i22-c10-18-conv'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-19', family: 'C10', title: '游客读会话', method: 'GET', path: `${API}/conversations/${ABSENT}`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-20', family: 'C10', title: '游客删会话', method: 'DELETE', path: `${API}/conversations/${ABSENT}`, headers: wkey('i22-c10-20-cnvd', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-21', family: 'C10', title: '游客给会话加一轮', method: 'POST', path: `${API}/conversations/${ABSENT}/turns`, body: TURN_BODY, headers: wkey('i22-c10-21-turn', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-22', family: 'C10', title: '游客读会话轮次', method: 'GET', path: `${API}/conversations/${ABSENT}/turns`, expect: { status: 401, code: 'SESSION_REQUIRED' } },
+  { id: 'C10-23', family: 'C10', title: '游客删会话轮次', method: 'DELETE', path: `${API}/conversations/${ABSENT}/turns/${ABSENT}`, headers: wkey('i22-c10-23-turn', '"1"'), expect: { status: 401, code: 'SESSION_REQUIRED' } },
+
+  // ---------------------------- C11 异步 AI 域：归属面（他人资源 404，且与「不存在」逐字段同形）
+  // 期望值来源：
+  // - tests/unit/gy-i22-job-inflight-guard-and-ownership.test.mjs:249-287（A 读 / 取消 B 的作业、读 / 改 B 的识别记录 ⇒ 404）
+  // - tests/integration/ocr-http.mjs:1329-1358、:2025-2037（他人 OCR 记录 / 作业 ⇒ 404，与不存在同形）
+  // - tests/integration/speech-http.mjs:225-249（他人转写 GET / DELETE / 确认 ⇒ 404 同形）
+  // - tests/unit/conversation-http.test.mjs:272-294（他人会话 / 轮次 ⇒ 404，绝不 403 泄露存在性）
+  // 每条 foreign 用例都有一条 `sameShapeAs` 的「不存在」对照，且**对照真跑**（不是 note）：
+  // 只有对照同时跑过，404 才能被证明为「同形」，而不是「碰巧都是 404 文案不同」。
+  { id: 'C11-01', family: 'C11', title: 'A 读 B 的作业', actor: 'a', method: 'GET', path: (ctx) => `${API}/jobs/${ctx.seeded.jobId}`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-02' },
+  { id: 'C11-02', family: 'C11', title: 'A 读不存在的作业（对照：同形基准）', actor: 'a', method: 'GET', path: `${API}/jobs/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-03', family: 'C11', title: 'A 取消 B 的作业', actor: 'a', method: 'POST', path: (ctx) => `${API}/jobs/${ctx.seeded.jobId}/cancel`, headers: wkey('i22-c11-03-jobc', '"2"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-04', note: '归属判定先于版本判定：If-Match 用的是属主侧 revision，越权者拿不到 409/428 这类版本提示' },
+  { id: 'C11-04', family: 'C11', title: 'A 取消不存在的作业（对照）', actor: 'a', method: 'POST', path: `${API}/jobs/${ABSENT}/cancel`, headers: wkey('i22-c11-04-jobc', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-05', family: 'C11', title: 'A 读 B 的识别记录', actor: 'a', method: 'GET', path: (ctx) => `${API}/recognitions/${ctx.seeded.recognitionId}`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-06' },
+  { id: 'C11-06', family: 'C11', title: 'A 读不存在的识别记录（对照）', actor: 'a', method: 'GET', path: `${API}/recognitions/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-07', family: 'C11', title: 'A 改 B 的识别选择', actor: 'a', method: 'PATCH', path: (ctx) => `${API}/recognitions/${ctx.seeded.recognitionId}/selection`, body: { selected_species_id: SPECIES_ID }, headers: wkey('i22-c11-07-sel', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-08' },
+  { id: 'C11-08', family: 'C11', title: 'A 改不存在识别记录的选择（对照）', actor: 'a', method: 'PATCH', path: `${API}/recognitions/${ABSENT}/selection`, body: { selected_species_id: SPECIES_ID }, headers: wkey('i22-c11-08-sel', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-09', family: 'C11', title: 'A 删 B 的识别记录', actor: 'a', method: 'DELETE', path: (ctx) => `${API}/recognitions/${ctx.seeded.recognitionId}`, headers: wkey('i22-c11-09-recd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-10' },
+  { id: 'C11-10', family: 'C11', title: 'A 删不存在的识别记录（对照）', actor: 'a', method: 'DELETE', path: `${API}/recognitions/${ABSENT}`, headers: wkey('i22-c11-10-recd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-11', family: 'C11', title: 'A 读 B 的 OCR 记录', actor: 'a', method: 'GET', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-12' },
+  { id: 'C11-12', family: 'C11', title: 'A 读不存在的 OCR 记录（对照）', actor: 'a', method: 'GET', path: `${API}/ocr/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-13', family: 'C11', title: 'A 改 B 的 OCR 校正字段', actor: 'a', method: 'PATCH', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}/correction`, body: { corrected_fields: LABEL_FIELDS }, headers: wkey('i22-c11-13-ocrc', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-14' },
+  { id: 'C11-14', family: 'C11', title: 'A 改不存在 OCR 记录的校正字段（对照）', actor: 'a', method: 'PATCH', path: `${API}/ocr/${ABSENT}/correction`, body: { corrected_fields: LABEL_FIELDS }, headers: wkey('i22-c11-14-ocrc', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-15', family: 'C11', title: 'A 确认 B 的 OCR 结果', actor: 'a', method: 'POST', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}/verify`, body: { fields: LABEL_FIELDS }, headers: wkey('i22-c11-15-ocrv', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-16' },
+  { id: 'C11-16', family: 'C11', title: 'A 确认不存在 OCR 记录的结果（对照）', actor: 'a', method: 'POST', path: `${API}/ocr/${ABSENT}/verify`, body: { fields: LABEL_FIELDS }, headers: wkey('i22-c11-16-ocrv', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-17', family: 'C11', title: 'A 删 B 的 OCR 记录', actor: 'a', method: 'DELETE', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}`, headers: wkey('i22-c11-17-ocrd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-18' },
+  { id: 'C11-18', family: 'C11', title: 'A 删不存在的 OCR 记录（对照）', actor: 'a', method: 'DELETE', path: `${API}/ocr/${ABSENT}`, headers: wkey('i22-c11-18-ocrd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-19', family: 'C11', title: 'A 读 B 的转写记录', actor: 'a', method: 'GET', path: (ctx) => `${API}/speech/transcriptions/${ctx.seeded.transcriptionId}`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-20' },
+  { id: 'C11-20', family: 'C11', title: 'A 读不存在的转写记录（对照）', actor: 'a', method: 'GET', path: `${API}/speech/transcriptions/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-21', family: 'C11', title: 'A 确认 B 的转写文本', actor: 'a', method: 'PATCH', path: (ctx) => `${API}/speech/transcriptions/${ctx.seeded.transcriptionId}/confirmation`, body: CONFIRMATION_BODY, headers: wkey('i22-c11-21-spc', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-22' },
+  { id: 'C11-22', family: 'C11', title: 'A 确认不存在转写记录的文本（对照）', actor: 'a', method: 'PATCH', path: `${API}/speech/transcriptions/${ABSENT}/confirmation`, body: CONFIRMATION_BODY, headers: wkey('i22-c11-22-spc', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-23', family: 'C11', title: 'A 删 B 的转写记录', actor: 'a', method: 'DELETE', path: (ctx) => `${API}/speech/transcriptions/${ctx.seeded.transcriptionId}`, headers: wkey('i22-c11-23-spd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-24' },
+  { id: 'C11-24', family: 'C11', title: 'A 删不存在的转写记录（对照）', actor: 'a', method: 'DELETE', path: `${API}/speech/transcriptions/${ABSENT}`, headers: wkey('i22-c11-24-spd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-25', family: 'C11', title: 'A 读 B 的会话', actor: 'a', method: 'GET', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-26' },
+  { id: 'C11-26', family: 'C11', title: 'A 读不存在的会话（对照）', actor: 'a', method: 'GET', path: `${API}/conversations/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-27', family: 'C11', title: 'A 读 B 的会话轮次', actor: 'a', method: 'GET', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}/turns`, expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-28' },
+  { id: 'C11-28', family: 'C11', title: 'A 读不存在会话的轮次（对照）', actor: 'a', method: 'GET', path: `${API}/conversations/${ABSENT}/turns`, expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-29', family: 'C11', title: 'A 往 B 的会话里加一轮', actor: 'a', method: 'POST', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}/turns`, body: TURN_BODY, headers: wkey('i22-c11-29-turn', '"1"'), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-30' },
+  { id: 'C11-30', family: 'C11', title: 'A 往不存在的会话里加一轮（对照）', actor: 'a', method: 'POST', path: `${API}/conversations/${ABSENT}/turns`, body: TURN_BODY, headers: wkey('i22-c11-30-turn', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-31', family: 'C11', title: 'A 删 B 的会话', actor: 'a', method: 'DELETE', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}`, headers: (ctx) => wkey('i22-c11-31-cnvd', ctx.seeded.conversationEtag), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-32' },
+  { id: 'C11-32', family: 'C11', title: 'A 删不存在的会话（对照）', actor: 'a', method: 'DELETE', path: `${API}/conversations/${ABSENT}`, headers: wkey('i22-c11-32-cnvd', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+  { id: 'C11-33', family: 'C11', title: 'A 删 B 的会话轮次', actor: 'a', method: 'DELETE', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}/turns/${ctx.seeded.turnId}`, headers: (ctx) => wkey('i22-c11-33-trn', ctx.seeded.conversationEtag), expect: { status: 404, code: 'NOT_FOUND' }, sameShapeAs: 'C11-34' },
+  { id: 'C11-34', family: 'C11', title: 'A 删不存在会话的轮次（对照）', actor: 'a', method: 'DELETE', path: `${API}/conversations/${ABSENT}/turns/${ABSENT}`, headers: wkey('i22-c11-34-trn', '"1"'), expect: { status: 404, code: 'NOT_FOUND' } },
+
+  // 正控制（必须排在所有越权写之后）：证明上面那些 404 打的确实是**存在**的行，
+  // 并且越权写没有把属主的行改掉 / 删掉——否则「404」可能只是「本来就没有」。
+  { id: 'C11-35', family: 'C11', title: '正控制：B 仍能读自己的作业（A 的 404 不是把行删了）', actor: 'b', method: 'GET', path: (ctx) => `${API}/jobs/${ctx.seeded.jobId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.jobId ? [] : [`data.id 期望 ${ctx.seeded.jobId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
+  { id: 'C11-36', family: 'C11', title: '正控制：B 仍能读自己的识别记录', actor: 'b', method: 'GET', path: (ctx) => `${API}/recognitions/${ctx.seeded.recognitionId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.recognitionId ? [] : [`data.id 期望 ${ctx.seeded.recognitionId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
+  { id: 'C11-37', family: 'C11', title: '正控制：B 仍能读自己的 OCR 记录', actor: 'b', method: 'GET', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.ocrId ? [] : [`data.id 期望 ${ctx.seeded.ocrId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
+  { id: 'C11-38', family: 'C11', title: '正控制：B 仍能读自己的转写记录', actor: 'b', method: 'GET', path: (ctx) => `${API}/speech/transcriptions/${ctx.seeded.transcriptionId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.transcriptionId ? [] : [`data.id 期望 ${ctx.seeded.transcriptionId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
+  { id: 'C11-39', family: 'C11', title: '正控制：B 仍能读自己的会话', actor: 'b', method: 'GET', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.conversationId ? [] : [`data.id 期望 ${ctx.seeded.conversationId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
 ];
