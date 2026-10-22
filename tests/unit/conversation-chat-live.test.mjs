@@ -6,10 +6,11 @@
 //   2) **NC2 不破**：版本串由**装配层**填，回答器（可被任意注入）结构上拿不到这条通路 ——
 //      注入的"真实模型"回答器也不能把自己标成真实模型；
 //   3) **适配器的外发行为**：请求形状、引用只按 `[n]` 回填、无依据不外发、缺记账上下文拒绝外发、
-//      失败映射到契约既有错误码、超时**不**重试（可能已计费）；
+//      失败映射到契约既有错误码、超时**不**重试（可能已计费）；正文里的越界编号/未检索链接
+//      **整条不交付**（只丢结构化引用、正文照发 = 监工 1021-1806 [P1] 的那条泄漏路）；
 //   4) **reserve-then-send 顺序**：预留 → 执行前重查 → `markSent` → 外发 → 保存前重查，失败只置终态；
 //   5) **端到端**：注入一个异步真实模型回答器后，`composer.compose` 的 `await` 生效、引用由守卫复核，
-//      越界引用一律降级（守卫仍是唯一降级点）。
+//      越界（结构化或正文层面）一律阻断（守卫仍是唯一降级点）。
 //
 // 全部使用合成替身：**没有**真实模型调用、**没有**真实资料、**没有**真实外发。
 import { test } from 'node:test';
@@ -247,11 +248,13 @@ test('适配器：请求形状正确（POST + Bearer + 温度 0 + 非流式）�
   assert.match(dumped, /prompt_tokens/u, '日志必须留下可核对的 token 读数');
 });
 
-test('适配器：引用只认本次送出的编号（越界忽略、重复去重）', async () => {
+test('适配器：引用只认本次送出的编号；正文越界（[9]/[0]）⇒ 正文不交付、越界项可判据', async () => {
+  const log = logs();
   const composer = createLiveChatComposer({
     profile: profile(),
     egress: fakeEgress(),
     fetchImpl: scriptedFetch([completion('先看[1]，再看[2]，重复[1]，越界[9]，还有[0]。')]),
+    log,
   });
   const candidate = await composer.compose({
     question: QUESTION,
@@ -259,7 +262,23 @@ test('适配器：引用只认本次送出的编号（越界忽略、重复去�
     set: retrievalSet('user-1', [ITEM_A, ITEM_B]),
     egress: EGRESS_CONTEXT,
   });
+  // 结构侧：合法编号仍按 [n] 回填、重复去重（这一条是既有契约，不因返修改动）。
   assert.deepEqual(candidate.citations.map((citation) => citation.id), [ITEM_A.id, ITEM_B.id]);
+  // 正文侧：越界编号 ⇒ **整条正文不交付**（只把结构丢掉、正文照发 = 把集合外引用展示给用户）。
+  assert.equal(candidate.text, '', '正文含越界编号时不得交付正文');
+  assert.deepEqual(
+    candidate.text_violations,
+    ['citation_marker_out_of_range:[9]', 'citation_marker_out_of_range:[0]'],
+    '越界项必须可判据地报出来（不是静默 continue）',
+  );
+  const dumped = JSON.stringify(log.payloads);
+  assert.equal(dumped.includes('越界[9]'), false, '日志不得回显模型正文');
+  assert.equal(dumped.includes('先看'), false, '日志不得回显模型正文');
+  assert.equal(
+    log.payloads.some((entry) => entry.payload.text_violations === 2),
+    true,
+    '日志必须留下越界条数读数',
+  );
 });
 
 test('适配器：检索集合为空 ⇒ 根本不外发（不让模型去说"不知道"），读数记为 no_sources', async () => {
@@ -642,7 +661,44 @@ test('注入真实模型回答器（异步）：await 生效，引用按 [n] 绑
   assert.equal(answer.prompt_version, ANSWER_PROMPT_VERSION);
 });
 
-test('注入真实模型回答器：只引越界编号 ⇒ 引用为空 ⇒ insufficient（守卫仍是唯一降级点）', async (t) => {
+test('适配器：正文里的链接必须能在本次检索集合里找到出处（虚构链接 ⇒ 不交付）', async () => {
+  const composeWith = (content, items) => {
+    const composer = createLiveChatComposer({
+      profile: profile(),
+      egress: fakeEgress(),
+      fetchImpl: scriptedFetch([completion(content)]),
+    });
+    return composer.compose({
+      question: QUESTION,
+      conditions: null,
+      set: retrievalSet('user-1', items),
+      egress: EGRESS_CONTEXT,
+    });
+  };
+
+  // ① 集合外链接（监工复现里的 fabricated.invalid）⇒ 正文不交付，违规项可判据。
+  const fabricated = await composeWith('来源[1] https://fabricated.invalid/not-in-retrieval；另见[1]。', [ITEM_A]);
+  assert.equal(fabricated.text, '', '正文含未检索链接时不得交付正文');
+  assert.deepEqual(fabricated.text_violations, ['unattributed_url:https://fabricated.invalid/not-in-retrieval']);
+
+  // ② 正控制：链接就是本次来源自带的 url ⇒ 不算违规（不得为堵漏而误杀合法引用）。
+  const grounded = await composeWith('依据[1]，来源页 https://example.invalid/gengyun/synthetic-source 。', [ITEM_A]);
+  assert.equal(grounded.text_violations, undefined, '有出处的链接不得被当成越界');
+  assert.match(grounded.text, /https:\/\/example\.invalid\/gengyun\/synthetic-source/u);
+
+  // ③ 正控制：链接逐字出现在某条来源**正文**里 ⇒ 同样算有出处（确定性回答器会原样搬资料原文）。
+  const ITEM_C = retrievalItem({
+    id: '9f0a1b2c-3d4e-4f50-8a6b-7c8d9e0f1a2b',
+    title: '合成资料丙：带链接的识别要点（测试替身）',
+    body: '识别要点：合成正文见 https://docs.invalid/synthetic-note 。',
+  });
+  const fromBody = await composeWith('识别要点见 https://docs.invalid/synthetic-note [1]。', [ITEM_C]);
+  assert.equal(fromBody.text_violations, undefined, '资料原文里出现过的链接有出处');
+});
+
+test('注入真实模型回答器：只引越界编号 ⇒ 正文不展示、回答阻断（守卫仍是唯一降级点）', async (t) => {
+  // 期望从 `insufficient` 收紧为 `blocked`：返修后"只有越界编号"不再只是"没有引用 ⇒ 资料不足"，
+  // 而是**越界即阻断**——这正是监工 [P1] 要求的方向（越界内容一律不得到达用户）。
   const composer = createLiveChatComposer({
     profile: profile(),
     egress: fakeEgress(),
@@ -652,7 +708,51 @@ test('注入真实模型回答器：只引越界编号 ⇒ 引用为空 ⇒ insu
   const answer = await askAndReadAnswer(fixture, 'w7-oob');
 
   assert.deepEqual(answer.citations, [], '越界编号不得变成引用');
-  assert.equal(answer.status, 'insufficient', '没有合法引用就必须如实说资料不足，而不是照抄模型正文');
+  assert.equal(answer.status, 'blocked', '越界正文必须整条阻断，不得把模型正文当成回答展示');
+  assert.equal(answer.check_state, 'blocked');
+  assert.equal(answer.checked_text.includes('[9]'), false, '用户可见正文不得含越界编号');
+  assert.equal(answer.checked_text.includes('混配'), false, '模型正文（含危险措辞）一个片段都不得外露');
+  assert.match(answer.checked_text, /输出守卫阻断/u);
+});
+
+test('监工 1021-1806 [P1]：正文里的集合外编号 + 虚构链接 ⇒ 整条阻断（不洗白、不原样展示）', async (t) => {
+  // 监工复现场景逐字复刻：检索集合只有 1 条合法合成来源，模型正文同时含 [99]（不存在编号）、
+  // 集合外 URL 与一个合法 [1]。返修前的行为：只把 [1] 回填成 citations，正文（含 [99] 与
+  // fabricated.invalid）原样落 `answered/passed`。
+  const composer = createLiveChatComposer({
+    profile: profile(),
+    egress: fakeEgress(),
+    fetchImpl: scriptedFetch([completion('来源[99] https://fabricated.invalid/not-in-retrieval；另见[1]。')]),
+  });
+  const fixture = await conversationFixture(t, { injection: { composer, ...retrievalWith([ITEM_A]) } });
+  const answer = await askAndReadAnswer(fixture, 'w7-oob-99');
+
+  assert.equal(answer.status, 'blocked', `越界正文必须被阻断，不得 answered：${JSON.stringify(answer)}`);
+  assert.equal(answer.check_state, 'blocked');
+  assert.deepEqual(answer.citations, [], '被拒正文不得再挂一份"看起来合法"的引用（否则等于洗白）');
+  assert.deepEqual(answer.dose_cards, [], '被拒正文不得带用量卡');
+  assert.equal(answer.checked_text.includes('[99]'), false, '用户可见正文不得含集合外编号');
+  assert.equal(answer.checked_text.includes('fabricated.invalid'), false, '用户可见正文不得含虚构链接');
+  assert.equal(answer.checked_text.includes('另见'), false, '被拒正文一个片段都不得泄漏');
+  assert.match(answer.checked_text, /输出守卫阻断/u);
+  // 持久层同样不得留下越界正文/虚构链接（"展示层过滤"不算修好）。
+  const stored = JSON.stringify(fixture.conversationStore.snapshot().answers[0]);
+  assert.equal(stored.includes('fabricated.invalid'), false, '持久层不得留下虚构链接');
+  assert.equal(stored.includes('[99]'), false, '持久层不得留下集合外编号');
+});
+
+test('正控制：正文链接有出处时照常交付（不因返修而误杀合法回答）', async (t) => {
+  const composer = createLiveChatComposer({
+    profile: profile(),
+    egress: fakeEgress(),
+    fetchImpl: scriptedFetch([completion('稗草叶片光滑无毛，识别要点见[1] https://example.invalid/gengyun/synthetic-source 。')]),
+  });
+  const fixture = await conversationFixture(t, { injection: { composer, ...retrievalWith([ITEM_A]) } });
+  const answer = await askAndReadAnswer(fixture, 'w7-grounded-url');
+
+  assert.equal(answer.status, 'answered', `有出处的链接不得被阻断：${JSON.stringify(answer)}`);
+  assert.match(answer.checked_text, /https:\/\/example\.invalid\/gengyun\/synthetic-source/u);
+  assert.deepEqual(answer.citations.map((citation) => citation.id), [ITEM_A.id]);
 });
 
 test('回归：既有精简 config（未走 loadConfig、缺 aiProviders）⇒ 按未配置处理，装配不崩', async () => {

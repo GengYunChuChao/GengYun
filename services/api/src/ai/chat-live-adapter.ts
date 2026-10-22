@@ -11,6 +11,8 @@
  * 1. **引用只能取自本次检索集合**：模型只能按提示里的编号 `[n]` 指认来源；本适配器把 `[n]`
  *    再映射回 `set.items[n-1].source` **原对象**。模型正文里出现的其他任何来源表述都不进
  *    `citations`；守卫（`AnswerGuard`）仍会逐字段复核，越界即 `blocked`。
+ *    正文本身同样受约束（`bodyViolationsOf`）：正文里出现越界编号或未被检索集合背书的链接时，
+ *    **整条正文不交付**（回空正文 + `text_violations` ⇒ 守卫阻断），而不是「丢掉结构、正文照发」。
  * 2. **用量卡不来自模型**：`dose_cards` 恒为 `[]` —— 用量只能来自域库确定性权威路径，
  *    语言模型的数字没有判定资格。
  * 3. **无依据不外发**：检索集合为空/null 时**根本不调用模型**（省掉一次无意义的付费外发），
@@ -27,7 +29,7 @@
  */
 import type { AnswerComposer, AnswerEgressContext, ComposedCandidate } from '../conversations/service.ts';
 import type { ContextTurn } from '../conversations/context.ts';
-import type { RetrievalItem } from '../conversations/guard.ts';
+import { groundedUrlsOf, urlsInText, type RetrievalItem } from '../conversations/guard.ts';
 import type { SourceRef } from '../conversations/types.ts';
 import type { ChatProviderConfig } from '../config.ts';
 import type { ChatEgress } from '../privacy/task-egress.ts';
@@ -106,6 +108,31 @@ export function renderSources(items: readonly RetrievalItem[]): { block: string;
     })
     .join('\n\n');
   return { block, used };
+}
+
+/**
+ * 正文层面的越界自检（**输出前**的硬判据；返回空数组才算正文可用）。
+ *
+ * 两条判据，与守卫核对结构化 `citations` 是同一纪律，只是作用在正文文本上：
+ * 1. 正文里每个 `[n]` 都必须落在本次送出的条目范围 `1..used.length` 内（`[0]`/`[99]` 一律越界）；
+ * 2. 正文里每个 URL 都必须被本次检索集合背书（来源自带 `url`，或逐字出现在某条来源正文里）。
+ *
+ * 违规项只带回**结构性标识**（编号/URL 本身，用于日志与断言），不回传正文。
+ */
+export function bodyViolationsOf(input: { content: string; used: readonly RetrievalItem[] }): string[] {
+  const violations: string[] = [];
+  const push = (value: string): void => {
+    if (!violations.includes(value)) violations.push(value);
+  };
+  for (const match of input.content.matchAll(/\[(\d{1,4})\]/g)) {
+    const index = Number(match[1]);
+    if (index < 1 || index > input.used.length) push(`citation_marker_out_of_range:[${match[1]}]`);
+  }
+  const grounded = groundedUrlsOf(input.used);
+  for (const url of urlsInText(input.content)) {
+    if (!grounded.has(url)) push(`unattributed_url:${url}`);
+  }
+  return violations;
 }
 
 const SYSTEM_PROMPT = [
@@ -296,6 +323,10 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
       const prompt_tokens = typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null;
       const completion_tokens = typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null;
 
+      // 正文自检（**先**做，早于结构化引用回填）：正文里越界的编号/未检索链接一律记违规。
+      // 只把违规从 citations 里丢掉、正文照发，等于让集合外引用/虚构链接直接出给用户 —— 返修要点。
+      const violations = bodyViolationsOf({ content, used });
+
       // 引用回填：只认 [n] 编号，且 n 必须在本次送出的条目范围内。
       const citations: SourceRef[] = [];
       const seen = new Set<string>();
@@ -326,10 +357,21 @@ export function createLiveChatComposer(deps: LiveChatComposerDeps): AnswerCompos
           attempts,
           sources: used.length,
           citations: citations.length,
+          text_violations: violations.length,
           model: profile.model,
         },
         '问答真实模型外发完成（只记结构读数，不含正文/密钥）',
       );
+
+      if (violations.length > 0) {
+        // 正文含集合外编号/未检索链接 ⇒ **不交付正文**（空正文交守卫按"越界"整条阻断）。
+        // 注意顺序：这里不产出"洗掉结构、正文照发"的候选 —— 那正是监工 [P1] 指出的路。
+        deps.log?.warn(
+          { violations: violations.length, model: profile.model },
+          '问答正文含超出检索集合的编号或链接：正文不交付，交守卫阻断（只记条数，不含正文）',
+        );
+        return { text: '', citations, dose_cards: [], text_violations: violations };
+      }
 
       const text = clip(content, CHAT_ANSWER_CHARS);
       return { text, citations, dose_cards: [] };

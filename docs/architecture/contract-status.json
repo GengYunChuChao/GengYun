@@ -1205,7 +1205,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "735-740",
+          "lines": "746-751",
           "symbol": "async function getConversation(actor: ConversationActor"
         },
         {

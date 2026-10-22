@@ -56,7 +56,12 @@ import {
   type TurnRecord,
   type TurnView,
 } from './types.ts';
-import { createModerationRiskScreen, RISK_BLOCK_TEXT, type RiskScreen } from './screen.ts';
+import {
+  ANSWER_RISK_BLOCK_TEXT,
+  createModerationRiskScreen,
+  RISK_BLOCK_TEXT,
+  type RiskScreen,
+} from './screen.ts';
 import { parseListQuery, validateConversationInput, validateTurnInput } from './validate.ts';
 import { answerViewOf, conversationViewOf, turnViewOf } from './view.ts';
 import type { AnswerInsert, ConversationStore, ListPosition, TurnInsert } from './store.ts';
@@ -168,6 +173,12 @@ export interface ComposedCandidate {
   text: string;
   citations: readonly SourceRef[];
   dose_cards: readonly DoseCardCandidate[];
+  /**
+   * 生成侧在**正文层面**自检出的越界（集合外编号/未检索链接）。非空 ⇒ 守卫整条阻断。
+   * 见 `guard.ts#CandidateAnswer.text_violations` 的说明：这条通道专治"洗掉结构化引用、
+   * 把原正文盖章通过"。
+   */
+  text_violations?: readonly string[];
 }
 
 /**
@@ -1095,6 +1106,28 @@ export function createConversationService(deps: ConversationServiceDeps) {
             objectRevision: claimed.revision,
           },
         });
+        // ---- 风险/注入筛查（回答侧）：**自由正文在交付用户之前**过同一规则层 ----
+        // 守卫只核对"依据是否同源"（引用/用量卡），不核对正文措辞；真实模型生成的正文同样
+        // 不能绕过既有的用药安全边界。命中/无法判定 ⇒ 整条降级为固定阻断话术（不含正文片段）。
+        // 空正文跳过：那是生成侧的"没东西可发"，交给守卫的既有「资料不足」路径，不改写成"命中"。
+        if (candidate.text.trim().length > 0) {
+          const answerScreen = riskScreen.screenAnswer({ turnId: claimed.id, text: candidate.text });
+          if (answerScreen.blocked) {
+            await settleAnswer(
+              answerRowOf(
+                { turnId: claimed.id, ownerId: actor.userId },
+                {
+                  status: 'blocked',
+                  check_state: 'blocked',
+                  checked_text: ANSWER_RISK_BLOCK_TEXT,
+                  citations: [],
+                  dose_cards: [],
+                },
+              ),
+            );
+            return;
+          }
+        }
         const verdict = guard.check({
           candidate,
           set: safeSet,
