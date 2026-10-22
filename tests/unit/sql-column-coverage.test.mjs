@@ -22,7 +22,8 @@
 // 覆盖面从 8 个 store-pg 扩到 18 个 SQL 宿主文件（另 10 个见 ADDITIONAL_SQL_HOST_FILES），
 // 并新增三条独立断言：①文件集不变量（新增 SQL 宿主却忘了登记 ⇒ 红）；②函数调用不是表访问
 // （`FROM public.list_admin_accounts()` 只要求 EXECUTE，不产生列要求）；③行锁规则
-// （`FOR UPDATE` / `FOR NO KEY UPDATE` 除 SELECT 外还要 UPDATE 权限；`FOR SHARE` / `FOR KEY SHARE` 不要）。
+// （`FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE` 四条子句除 SELECT 外
+//   **都**要 UPDATE 权限 —— PG 17 文档 SELECT → Description 原文；#379 遗留缺陷前这里漏了后两条）。
 // `privacy/ledger-pg.ts` 在默认部署下不可达（egress_ledger.sql 从未被执行）⇒ 其缺口进
 // LEDGER_COVERAGE_EXEMPT（条数钉死 + staleExemptions 反查），不静默跳过。
 // 新增负控制 NC5–NC9（见文件末尾）；C1b-1 合流时补 NC10：注释掉真实的
@@ -193,6 +194,9 @@ const NEEDLE = {
   profileUserLock: 'SELECT state,auth_epoch FROM public.users WHERE id=$1::uuid FOR UPDATE',
   profileRegions: 'FROM public.regions WHERE supported',
   consentUserLock: 'SELECT id,state,auth_epoch,revision FROM public.users WHERE id=$1::uuid FOR UPDATE',
+  // #379 遗留修复：users 上还有两处**共享锁**站点，同样要 UPDATE 权限（此前不计要求，故未登记站点）。
+  knowledgeUserShareLock: 'SELECT state,auth_epoch FROM public.users WHERE id=$1::uuid FOR SHARE',
+  ledgerUserShareLock: 'SELECT id,state,auth_epoch FROM public.users WHERE id=$1::uuid FOR SHARE',
   ledgerExportsLock: 'SELECT * FROM public.exports WHERE id=$1::uuid FOR UPDATE',
   ledgerExpectsTextKey: '${expectsTextKey ?',
   ledgerByKey: '${byKey ?',
@@ -201,11 +205,13 @@ const NEEDLE = {
   turnsWhere: 'WHERE conversation_id = $1::uuid AND owner_id = $2::uuid${where}',
 };
 
-/** 九个「语句站点」的 `文件:行号`，全部实时算。 */
+/** 十一个「语句站点」的 `文件:行号`，全部实时算。 */
 const SITE = {
   profileUserLock: siteRef('services/api/src/profile/service.ts', NEEDLE.profileUserLock),
   profileRegions: siteRef('services/api/src/profile/service.ts', NEEDLE.profileRegions),
   consentUserLock: siteRef('services/api/src/privacy/consent-pg.ts', NEEDLE.consentUserLock),
+  knowledgeUserShareLock: siteRef('services/api/src/knowledge/service.ts', NEEDLE.knowledgeUserShareLock),
+  ledgerUserShareLock: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerUserShareLock),
   ledgerExportsLock: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerExportsLock),
   ledgerExpectsTextKey: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerExpectsTextKey),
   ledgerByKey: siteRef('services/api/src/privacy/ledger-pg.ts', NEEDLE.ledgerByKey),
@@ -508,6 +514,14 @@ const TABLE_WIDE_COLUMN = '*';
  *   `author_id` 的 SELECT 面早已授权）、逐文件 `community` 40 → **41**；UPDATE/DELETE/INSERT/RETURNING/
  *   引用表 44 张/行锁/onConflict/无顶层 FROM 全部不变。
  *   合流树实测：19 文件 / **265** 条字面量 / 44 张表；列要求 **1715**、已覆盖 **1661**、缺 0。
+ * ⑨ 2026-10-22（`#379` 遗留修复，`4de2af7d`）：行锁口径按 PG 17 文档 SELECT → Description 改正 ——
+ *   `FOR SHARE` / `FOR KEY SHARE` 与 `FOR UPDATE` / `FOR NO KEY UPDATE` 一样要「至少一列 UPDATE」。
+ *   口径变了，只有一项计数变：**rowLockRequirements 25 → 41**（原树 16 处共享锁语句此前一条要求都不产生，
+ *   现在逐条计入；25 + 16 = 41）。`rowLocks` 分桶读数**不变**（25 FOR UPDATE／16 FOR SHARE —— 分桶只
+ *   影响统计，四种强度照旧分两桶），列要求／已覆盖／引用表也不变（行锁不占列面；合流树上的
+ *   1715／1661 是 `#483` 的增量，与本片无关）。真实授权面本来就给
+ *   这些表授了 UPDATE（含 `profile_runtime.sql:19` 的「FOR SHARE 要 UPDATE，故只授 name」注释），
+ *   所以改口径后真实基线仍 0 条行锁缺口 —— 变的只是「以后谁把 UPDATE 收回去，现在会被看见」。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
@@ -527,7 +541,7 @@ const EXPECTED_EXTENDED_READINGS = {
   columnRequirements: 1715,
   coveredRequirements: 1661,
   ledgerExemptions: 33,
-  rowLockRequirements: 25,
+  rowLockRequirements: 41,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -1170,23 +1184,38 @@ function hostKey(file) {
 }
 
 /**
- * 行锁口径（派单 §2.5）：`FOR UPDATE` / `FOR NO KEY UPDATE` 除 SELECT 外**还要** UPDATE 权限；
- * `FOR SHARE` / `FOR KEY SHARE` 不要求额外权限（PG 文档 SELECT 的 locking clause 段落）。
+ * 行锁口径（PG 17 文档 SELECT → Description 原文）：
+ *   "You must have `SELECT` privilege on each column used in a `SELECT` command.
+ *    The use of `FOR NO KEY UPDATE`, `FOR UPDATE`, `FOR SHARE` or `FOR KEY SHARE`
+ *    requires `UPDATE` privilege as well (for at least one column of each table so selected)."
+ * 即**四种强度一律**要「至少一列 UPDATE」，FOR SHARE / FOR KEY SHARE 不例外（#379 遗留：
+ * 本文件此前只把 FOR UPDATE / FOR NO KEY UPDATE 记成要求，共享锁被整段丢掉，
+ * 于是「只有 SELECT」的角色写 `SELECT … FOR SHARE` 会被判成权限齐全）。
  * 注意这是**静态模型**：本仓已在 S26 用「列级 `UPDATE (revision)` 作行锁载体」实测过
  * 42501（见证据页），所以这里按「表级或任一列 UPDATE 即可」判定（PG 允许列级 UPDATE 满足行锁）。
  * @param {{word: string, index: number}[]} tokens
- * @returns {'UPDATE' | 'SHARE' | null}
+ * @returns {'UPDATE' | 'NO KEY UPDATE' | 'SHARE' | 'KEY SHARE' | null}
  */
 function readRowLock(tokens) {
   const index = tokens.findIndex((token, i) => token.word === 'FOR'
     && ['UPDATE', 'SHARE', 'NO', 'KEY'].includes(tokens[i + 1]?.word ?? ''));
   if (index === -1) return null;
   const words = tokens.slice(index + 1, index + 5).map((token) => token.word);
-  if (words[0] === 'NO' && words[1] === 'KEY' && words[2] === 'UPDATE') return 'UPDATE';
-  if (words[0] === 'KEY' && words[1] === 'SHARE') return 'SHARE';
+  if (words[0] === 'NO' && words[1] === 'KEY' && words[2] === 'UPDATE') return 'NO KEY UPDATE';
+  if (words[0] === 'KEY' && words[1] === 'SHARE') return 'KEY SHARE';
   if (words[0] === 'UPDATE') return 'UPDATE';
   if (words[0] === 'SHARE') return 'SHARE';
   return null;
+}
+
+/**
+ * 行锁读数分桶：只影响**统计口径**（既有读数 `rowLocks: {UPDATE, SHARE}` 原样保留），
+ * 不影响要求收集 —— 四种强度全都要求 UPDATE（见 readRowLock 的文档原文）。
+ * @param {'UPDATE' | 'NO KEY UPDATE' | 'SHARE' | 'KEY SHARE'} strength
+ * @returns {'UPDATE' | 'SHARE'}
+ */
+function rowLockBucket(strength) {
+  return strength.endsWith('SHARE') ? 'SHARE' : 'UPDATE';
 }
 
 /**
@@ -1204,6 +1233,8 @@ function extractRuntimeSql(sources) {
     onConflictClauses: 0,
     selectStar: 0,
     qualifiedStar: 0,
+    // 两个**分桶**（不是两种子句）：UPDATE = FOR UPDATE / FOR NO KEY UPDATE，SHARE = FOR SHARE /
+    // FOR KEY SHARE。四种强度都产出行锁要求（见 readRowLock），分桶只服务于统计读数。
     rowLocks: { UPDATE: 0, SHARE: 0 },
     functionCalls: 0,
     noTargetTable: 0,
@@ -1257,7 +1288,7 @@ function extractRuntimeSql(sources) {
         if (statement.conflict !== null) stats.onConflictClauses += 1;
         if (statement.selectStar) stats.selectStar += 1;
         if (statement.qualifiedStar) stats.qualifiedStar += 1;
-        if (statement.rowLock !== null) stats.rowLocks[statement.rowLock] += 1;
+        if (statement.rowLock !== null) stats.rowLocks[rowLockBucket(statement.rowLock)] += 1;
         if (statement.functionCall !== null) stats.functionCalls += 1;
         if (statement.table === null) stats.noTargetTable += 1;
         statements.push(statement);
@@ -1516,20 +1547,21 @@ function collectRequirements(statements) {
 }
 
 /**
- * 行锁要求（派单 §2.5）：每条 `SELECT … FOR UPDATE` / `FOR NO KEY UPDATE` 额外要一条
- * **表级** UPDATE 要求（列面不可知 —— PG 允许「任一列 UPDATE」满足行锁，故按「表级或任列」判定，
- * 见 evaluateRowLocks）。`FOR SHARE` / `FOR KEY SHARE` **不产生**要求，但会单独计数钉死（防止漏解析）。
+ * 行锁要求（PG 17 文档 SELECT → Description）：`FOR UPDATE` / `FOR NO KEY UPDATE` /
+ * `FOR SHARE` / `FOR KEY SHARE` **四条子句一律**额外要一条 UPDATE 要求
+ * （列面不可知 —— PG 允许「任一列 UPDATE」满足行锁，故按「表级或任列」判定，
+ * 见 evaluateRowLocks）。`clause` 保留具体强度，判红时能直接读出是哪条子句。
  * @param {object[]} statements
  * @returns {object[]}
  */
 function collectRowLockRequirements(statements) {
   const requirements = [];
   for (const statement of statements) {
-    if (statement.rowLock !== 'UPDATE' || statement.table === null) continue;
+    if (statement.rowLock === null || statement.table === null) continue;
     requirements.push({
       table: statement.table,
       privilege: 'UPDATE',
-      clause: '行锁 FOR UPDATE',
+      clause: `行锁 FOR ${statement.rowLock}`,
       ref: `${statement.file}:${statement.line}`,
     });
   }
@@ -1555,8 +1587,8 @@ function evaluateRowLocks(requirements, model, exemptions = []) {
   for (const requirement of requirements) {
     const granted = lookupPrivilege(model, requirement.table, requirement.privilege);
     // 本仓口径（证据页 §3 写明）：表级 UPDATE，或该表**任一列**有 UPDATE，即可满足行锁
-    // （PG 文档 SELECT 页：FOR UPDATE 除 SELECT 外还要 UPDATE，「for at least one column of
-    // each table so selected」）。
+    // （PG 17 文档 SELECT 页：四种锁定子句除 SELECT 外都要 UPDATE，
+    //  "for at least one column of each table so selected"）。
     const ok = granted.kind === 'table' || (granted.kind === 'columns' && granted.columns.size > 0);
     if (ok) continue;
     const hit = exemptions.findIndex((item) => item.table === requirement.table
@@ -1569,7 +1601,8 @@ function evaluateRowLocks(requirements, model, exemptions = []) {
     }
     problems.push(
       `${requirement.ref} → ${requirement.table} 缺 ${requirement.privilege}（${requirement.clause}，`
-      + 'PG 对 FOR UPDATE/FOR NO KEY UPDATE 除 SELECT 外还要求 UPDATE 权限）；'
+      + 'PG 对 FOR UPDATE/FOR NO KEY UPDATE/FOR SHARE/FOR KEY SHARE 除 SELECT 外还要求 UPDATE 权限'
+      + '（至少一列））；'
       + `授权面现状：${granted.kind === 'none' ? '该表该权限未授任何列' : '（不可达分支）'}`,
     );
   }
@@ -2399,7 +2432,7 @@ test('sql-column-coverage/parser_negative_controls NC8：豁免表登记源码�
   console.log(`[sql-column-coverage] NC8 红字（陈旧行锁豁免）：${staleLock.rowLocks.staleExemptions[0]}`);
 });
 
-test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉 UPDATE 授权 ⇒ 行锁规则必须点名（R28-S66）', () => {
+test('sql-column-coverage/parser_negative_controls NC9：撤掉 users 的 UPDATE 授权 ⇒ 四处行锁（2×FOR UPDATE + 2×FOR SHARE）必须点名（R28-S66 / #379）', () => {
   const original = 'GRANT UPDATE (updated_at) ON users TO gengyun_auth_privacy;';
   const mutatedGrants = loadGrantSources().map((source) =>
     source.file.endsWith('/auth_privacy.sql') ? { ...source, text: source.text.replace(original, '') } : source,
@@ -2415,16 +2448,32 @@ test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉
     rowLockExemptions: ROW_LOCK_EXEMPT,
   });
   assert.deepEqual(broken.coverage.problems, [], '行锁不占用列面：删掉 users 的 UPDATE(updated_at) 不应产生列级缺口');
-  assert.equal(broken.rowLocks.problems.length, 2, `users 上有两处 FOR UPDATE（${SITE.profileUserLock}、${SITE.consentUserLock}），必须恰红 2 条，实际：\n${broken.rowLocks.problems.join('\n') || '（没有变红 —— 行锁规则没生效！）'}`);
+  // #379 遗留修复后，users 上的行锁站点从 2 处（FOR UPDATE）变成 4 处：
+  // 另有 knowledge/service.ts 与 privacy/ledger-pg.ts 各一处 `FOR SHARE`（PG 17 同样要 UPDATE）。
+  const expectedSites = [
+    SITE.profileUserLock,
+    SITE.consentUserLock,
+    SITE.knowledgeUserShareLock,
+    SITE.ledgerUserShareLock,
+  ].sort();
+  assert.equal(broken.rowLocks.problems.length, 4, `users 上有四处行锁（两处 FOR UPDATE + 两处 FOR SHARE），必须恰红 4 条，实际：\n${broken.rowLocks.problems.join('\n') || '（没有变红 —— 行锁规则没生效！）'}`);
   assert.deepEqual(
     broken.rowLocks.problems.map((problem) => problem.split(' → ')[0]).sort(),
-    [SITE.consentUserLock, SITE.profileUserLock].sort(),
-    '红字必须点名这两处行锁站点',
+    expectedSites,
+    '红字必须点名这四处行锁站点',
   );
   for (const problem of broken.rowLocks.problems) {
     assert.ok(problem.includes('public.users 缺 UPDATE'), `红字必须点名表与权限：${problem}`);
-    assert.ok(problem.includes('行锁 FOR UPDATE'), `红字必须说明是行锁要求：${problem}`);
+    assert.ok(problem.includes('行锁 FOR '), `红字必须说明是行锁要求：${problem}`);
   }
+  // 共享锁站点必须自报 FOR SHARE（不能被并进 FOR UPDATE 文案）。
+  assert.deepEqual(
+    broken.rowLocks.problems
+      .filter((problem) => problem.startsWith(`${SITE.knowledgeUserShareLock} `) || problem.startsWith(`${SITE.ledgerUserShareLock} `))
+      .map((problem) => (problem.includes('行锁 FOR SHARE') ? 'SHARE' : problem)),
+    ['SHARE', 'SHARE'],
+    `两处共享锁站点必须各自标成「行锁 FOR SHARE」，实际：\n${broken.rowLocks.problems.join('\n')}`,
+  );
 
   const healed = auditAll({
     grantSources: mutatedGrants,
@@ -2433,14 +2482,15 @@ test('sql-column-coverage/parser_negative_controls NC9：FOR UPDATE 的表撤掉
     opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST,
     rowLockExemptions: [
       ...ROW_LOCK_EXEMPT,
-      { table: 'public.users', privilege: 'UPDATE', ref: SITE.profileUserLock, reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
-      { table: 'public.users', privilege: 'UPDATE', ref: SITE.consentUserLock, reason: '负控制：证明行锁豁免按语句站点生效', owner: 'NC9' },
+      ...[SITE.profileUserLock, SITE.consentUserLock, SITE.knowledgeUserShareLock, SITE.ledgerUserShareLock].map((ref) => ({
+        table: 'public.users', privilege: 'UPDATE', ref, reason: '负控制：证明行锁豁免按语句站点生效（含共享锁站点）', owner: 'NC9',
+      })),
     ],
   });
-  assert.deepEqual(healed.rowLocks.problems, [], `登记两条行锁豁免后必须回绿：\n${healed.rowLocks.problems.join('\n')}`);
-  assert.deepEqual(healed.rowLocks.staleExemptions, [], '两条豁免都应命中真实站点');
-  console.log(`[sql-column-coverage] NC9 红字（撤掉 FOR UPDATE 需要的 UPDATE 授权）：${broken.rowLocks.problems.join(' | ')}`);
-  console.log(`[sql-column-coverage] NC9 登记两条行锁豁免后 problems ${healed.rowLocks.problems.length} / staleExemptions ${healed.rowLocks.staleExemptions.length}`);
+  assert.deepEqual(healed.rowLocks.problems, [], `登记四条行锁豁免后必须回绿：\n${healed.rowLocks.problems.join('\n')}`);
+  assert.deepEqual(healed.rowLocks.staleExemptions, [], '四条豁免都应命中真实站点');
+  console.log(`[sql-column-coverage] NC9 红字（撤掉 FOR UPDATE/FOR SHARE 需要的 UPDATE 授权）：${broken.rowLocks.problems.join(' | ')}`);
+  console.log(`[sql-column-coverage] NC9 登记四条行锁豁免后 problems ${healed.rowLocks.problems.length} / staleExemptions ${healed.rowLocks.staleExemptions.length}`);
 });
 
 test('sql-column-coverage/parser_negative_controls NC10：注释掉真实的 GRANT DELETE ⇒ 必须红并点名整表缺 DELETE（C1b-1）', () => {
@@ -2503,4 +2553,100 @@ test('sql-column-coverage/parser_negative_controls NC10：注释掉真实的 GRA
 
   console.log(`[sql-column-coverage] NC10 红字（注释掉真实 GRANT DELETE）：${hit[0]}`);
   console.log(`[sql-column-coverage] NC10 红字（只给了列级 DELETE）：${columnHit[0]}`);
+});
+
+/* ============================================================================
+ * 九、NC11：`FOR SHARE` / `FOR KEY SHARE` 同样要 UPDATE 权限（#379 遗留缺口）
+ *
+ * 依据（PostgreSQL 17.11 文档 SELECT → Description，原文；本仓部署目标为 PG 17）：
+ *   "You must have `SELECT` privilege on each column used in a `SELECT` command.
+ *    The use of `FOR NO KEY UPDATE`, `FOR UPDATE`, `FOR SHARE` or `FOR KEY SHARE`
+ *    requires `UPDATE` privilege as well (for at least one column of each table so selected)."
+ * 四种锁定强度一律要「至少一列 UPDATE」。此前本文件只把 FOR UPDATE / FOR NO KEY UPDATE
+ * 记成要求，把 FOR SHARE / FOR KEY SHARE 当成「不要求额外权限」⇒ 只授 SELECT 的角色
+ * 写 `SELECT … FOR SHARE` 会被判成「权限齐全」。
+ *
+ * 三段负控制（同一份假 store，三份假授权面）：
+ *   ① 只授 SELECT            ⇒ 两处共享锁都必须判红；
+ *   ② crops 补任一列 UPDATE   ⇒ 只剩 regions 一条（证「至少一列」口径 + 不误报）；
+ *   ③ regions 也补上          ⇒ 0 条（有权限时不得误报）。
+ * ========================================================================== */
+test('sql-column-coverage/parser_negative_controls NC11：FOR SHARE / FOR KEY SHARE 只授 SELECT ⇒ 必须按缺 UPDATE 判红（#379）', () => {
+  const fakeStore = {
+    file: 'tests/unit/fixtures/sql-column-coverage/nc11-share-lock-pg.ts',
+    text: [
+      'export function fake(pool, cropId, regionCode) {',
+      '  return Promise.all([',
+      "    pool.query('SELECT id, name FROM public.crops WHERE id = $1 FOR SHARE', [cropId]),",
+      "    pool.query('SELECT code, name FROM public.regions WHERE code = $1 FOR KEY SHARE', [regionCode]),",
+      '  ]);',
+      '}',
+    ].join('\n'),
+  };
+  const grantText = (extra) => [
+    'GRANT SELECT (id, name) ON public.crops TO gengyun_api_runtime;',
+    'GRANT SELECT (code, name) ON public.regions TO gengyun_api_runtime;',
+    ...extra,
+  ].join('\n');
+  const grants = (file, extra) => [{ file: `services/api/db/roles/${file}.sql`, text: grantText(extra) }];
+
+  // ① 只有 SELECT：两处共享锁都必须计入「缺 UPDATE」。
+  const selectOnly = auditAll({
+    storeSources: [fakeStore],
+    grantSources: grants('nc11-select-only', []),
+    opaqueAllowlist: [],
+  });
+  console.log(`[sql-column-coverage] NC11 基线读数（只授 SELECT）：行锁要求 ${selectOnly.rowLockRequirements.length} 条 / 行锁缺口 ${selectOnly.rowLocks.problems.length} 条 / 总缺口 ${selectOnly.problems.length} 条`);
+  assert.deepEqual(selectOnly.model.problems, [], `假授权面本身必须解析干净：\n${selectOnly.model.problems.join('\n')}`);
+  assert.equal(
+    selectOnly.rowLockRequirements.length,
+    2,
+    `两处共享锁语句都必须产出行锁要求，实际 ${selectOnly.rowLockRequirements.length} 条`
+    + `（clause：${JSON.stringify(selectOnly.rowLockRequirements.map((item) => item.clause))}）`
+    + ' —— 0 条说明 FOR SHARE / FOR KEY SHARE 被整段丢掉了',
+  );
+  assert.deepEqual(
+    selectOnly.rowLockRequirements.map((item) => item.clause).sort(),
+    ['行锁 FOR KEY SHARE', '行锁 FOR SHARE'],
+    '行锁要求必须区分四种锁定强度：共享锁不能并进 FOR UPDATE，也不能不记',
+  );
+  assert.equal(
+    selectOnly.rowLocks.problems.length,
+    2,
+    `只授 SELECT 时两处共享锁必须恰红 2 条，实际：\n${
+      selectOnly.rowLocks.problems.join('\n') || '（没有变红 —— 只授 SELECT 却被判定权限齐全！）'}`,
+  );
+  const cropHit = selectOnly.rowLocks.problems.filter((message) => message.includes('public.crops 缺 UPDATE') && message.includes('行锁 FOR SHARE'));
+  const regionHit = selectOnly.rowLocks.problems.filter((message) => message.includes('public.regions 缺 UPDATE') && message.includes('行锁 FOR KEY SHARE'));
+  assert.equal(cropHit.length, 1, `必须点名 public.crops 的 FOR SHARE 缺 UPDATE，实际：\n${selectOnly.rowLocks.problems.join('\n')}`);
+  assert.equal(regionHit.length, 1, `必须点名 public.regions 的 FOR KEY SHARE 缺 UPDATE，实际：\n${selectOnly.rowLocks.problems.join('\n')}`);
+  assert.deepEqual(selectOnly.coverage.problems, [], '共享锁不占列面：本段只应有行锁缺口，不应出现列级缺口');
+
+  // ② 只给 crops 一列 UPDATE（`revision` 不在该语句的 SELECT 列面里，专证「任一列即可」）。
+  const cropsLocked = auditAll({
+    storeSources: [fakeStore],
+    grantSources: grants('nc11-crops-locked', ['GRANT UPDATE (revision) ON public.crops TO gengyun_api_runtime;']),
+    opaqueAllowlist: [],
+  });
+  assert.equal(
+    cropsLocked.rowLocks.problems.length,
+    1,
+    `crops 有任一列 UPDATE 后只应剩 regions 一条，实际：\n${cropsLocked.rowLocks.problems.join('\n') || '（0 条 —— 这不该发生）'}`,
+  );
+  assert.ok(cropsLocked.rowLocks.problems[0].includes('public.regions 缺 UPDATE'), `剩下的必须是 regions：${cropsLocked.rowLocks.problems[0]}`);
+  assert.deepEqual(cropsLocked.rowLocks.staleExemptions, [], '本段没有行锁豁免，不应出现陈旧登记');
+
+  // ③ 两表都补上 ⇒ 0 条（有权限时不得误报）。
+  const bothLocked = auditAll({
+    storeSources: [fakeStore],
+    grantSources: grants('nc11-both-locked', [
+      'GRANT UPDATE (revision) ON public.crops TO gengyun_api_runtime;',
+      'GRANT UPDATE (name) ON public.regions TO gengyun_api_runtime;',
+    ]),
+    opaqueAllowlist: [],
+  });
+  assert.deepEqual(bothLocked.rowLocks.problems, [], `两表都有一列 UPDATE 后必须回绿，实际：\n${bothLocked.rowLocks.problems.join('\n')}`);
+
+  console.log(`[sql-column-coverage] NC11 红字（只授 SELECT 时的共享锁）：${selectOnly.rowLocks.problems.join(' | ')}`);
+  console.log(`[sql-column-coverage] NC11 读数：clause ${JSON.stringify(selectOnly.rowLockRequirements.map((item) => item.clause))} / 只补 crops ${cropsLocked.rowLocks.problems.length} 条 / 两表补齐 ${bothLocked.rowLocks.problems.length} 条`);
 });
