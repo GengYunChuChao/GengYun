@@ -338,3 +338,28 @@ node --test --test-concurrency=1 tests/unit/sql-column-coverage.test.mjs
 ```
 
 测试输出逐行打印 §2 的全部读数（含逐文件字面量）、§5.2 的豁免条数、§7 五条负控制的红字原文。
+
+## 11. 更正注记（`#379` 遗留修复后追加，2026-10-22）
+
+**本页 §2「行锁要求」与 §5.2 里「`FOR SHARE` / `FOR KEY SHARE` 不需要额外权限」的旧口径已作废，请勿据此改守卫。**
+
+旧表述的来源是当时的派单 §2.5，并据此把 16 处共享锁语句排除在行锁要求之外。**该口径与 PostgreSQL 17 手册不符。**PG 17 手册 SELECT 语句的 Description 一节对锁定子句写明：除 `SELECT` 之外，还需要目标表**至少一列**的 `UPDATE` 特权，且这句话同时适用于 `FOR NO KEY UPDATE`、`FOR UPDATE`、`FOR SHARE`、`FOR KEY SHARE` 四种强度。出处：<https://www.postgresql.org/docs/17/sql-select.html>（SELECT → Description，锁定子句那一段）。
+
+更正后的判定：
+
+| 行锁强度 | 除 `SELECT` 外是否要求 `UPDATE`（至少一列） |
+| --- | --- |
+| `FOR UPDATE` | **是** |
+| `FOR NO KEY UPDATE` | **是** |
+| `FOR SHARE` | **是**（原文写「否」，作废） |
+| `FOR KEY SHARE` | **是**（原文写「否」，作废） |
+
+影响面（合流树实测）：行锁要求 25 → **41**（+16 ＝ 树内 `FOR SHARE` 16 条、`FOR KEY SHARE` 0 条，落在 9 张表上）；`rowLocks` 分桶统计（25 `FOR UPDATE` / 16 `FOR SHARE`）与**列面读数不变**（行锁不占用列面）。真实授权面本来就给这 9 张表授了 `UPDATE`，所以真实基线的行锁缺口仍为 **0**。
+
+要强调的是：这里改的是**判据变严**，不是读数变松 —— 旧口径下谁把 `UPDATE` 收回去，守卫看不见；现在会被逐条点名。不得为了让计数回到 25 而删除断言、放宽成「大于等于」或加豁免。
+
+真库实证：本机 PostgreSQL 17.11 临时集群上，只授 `SELECT` 时 `FOR UPDATE` / `FOR SHARE` / `FOR KEY SHARE` 三种语句全部报 `42501`（`permission denied`）；补一条列级 `GRANT UPDATE (revision)` 后三种全部通过。
+
+**当前口径以 `tests/unit/sql-column-coverage.test.mjs` 的行锁判定与 PG 17 官方文档为准**：本页 §2 的「行锁要求 19 条（另 16 处 `FOR SHARE` 按派单 §2.5 不要求额外权限）」以及 §5.2 表格中两行「否」，均不再代表现行守卫行为。
+
+本注记只作追加更正，**未改动本页既有正文的任何一行**（避免漂动其他文档对它的行号引用）。
