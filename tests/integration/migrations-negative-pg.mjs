@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { applyMigrations, discoverMigrations } from '../../services/api/src/db/migrate.ts';
+import { applyMigrations, discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
 
 const rawUrl = (process.env.MIGRATIONS_NEGATIVE_TEST_URL ?? '').trim();
 // 缺真库时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
@@ -56,23 +56,36 @@ assert.ok(
  *  漏掉」恒真——只剩 0001..0019 时序列照样连续、count 照样等于 max，脚本照绿。故在 ①② 之后另加两条
  *  **下限钉**（`MIN_EXPECTED_LAST_VERSION`，见常量处的注释）：它挡的是「尾部整段丢失」这一类漏项，
  *  ⛔ 不是「必须等于某个数」，具体理由与实测见 docs/verification/gy-r28-migrations-negative-floor-20261021.md。 */
+/** 编号体检（缺号 / 总数 / 保留号躺平）交给产品代码 `inspectMigrationNumbering()`：
+ *
+ *  为什么 ①② 需要「保留号台账」（2026-10-22 实测）：缺号有两种且**在已发现集合上完全同形**——
+ *    ②′ 发现器静默漏项（必须红，这是 ①② 存在的唯一理由）；
+ *    ②″ 该迁移在另一条在飞分支上（本分支带 0028，0027 属 #428）：不是漏项，但 ①② 判不出来。
+ *  台账（`services/api/db/migration-reservations.json`）只放行**登记过**的缺号，未声明缺号照旧红；
+ *  而 `count + 保留数 === max` 让「登记」不能被用来掩盖漏片；登记过的号一旦在目录里出现
+ *  （上游合入）⇒ `reservedButPresent` 非空 ⇒ 判红，条目必须删，不许躺平。 */
 const MIGRATIONS = discoverMigrations();
 const MIGRATION_COUNT = MIGRATIONS.length;
-const VERSION_NUMBER_SET = new Set(MIGRATIONS.map((migration) => Number(migration.version)));
-const LAST_VERSION_NUMBER = Math.max(...VERSION_NUMBER_SET);
-const MISSING_VERSIONS = [];
-for (let expected = 1; expected <= LAST_VERSION_NUMBER; expected += 1) {
-  if (!VERSION_NUMBER_SET.has(expected)) MISSING_VERSIONS.push(String(expected).padStart(4, '0'));
-}
+const NUMBERING = inspectMigrationNumbering(MIGRATIONS);
+const RESERVED_VERSIONS = new Set(NUMBERING.reserved);
+const LAST_VERSION_NUMBER = NUMBERING.maxVersion;
+const MISSING_VERSIONS = NUMBERING.undeclaredGaps.map(formatMigrationVersion);
 assert.deepEqual(
   MISSING_VERSIONS,
   [],
-  `迁移版本号必须在 1..${LAST_VERSION_NUMBER} 上连续无缺号（缺号＝发现器静默漏项：${MISSING_VERSIONS.join(', ')}）`,
+  `迁移版本号必须在 1..${LAST_VERSION_NUMBER} 上连续无缺号，且每个缺号都必须在保留台账里声明`
+    + `（未声明＝发现器静默漏项：${MISSING_VERSIONS.join(', ')}）`,
+);
+assert.deepEqual(
+  NUMBERING.reservedButPresent.map(formatMigrationVersion),
+  [],
+  '保留台账里的号必须仍然缺位：文件已出现 ⇒ 删掉那条登记（保留项不许躺平）',
 );
 assert.equal(
-  MIGRATION_COUNT,
-  LAST_VERSION_NUMBER,
-  `迁移总数必须等于最大版本号（编号自 0001 起、无错位；实测 count=${MIGRATION_COUNT}，max=${LAST_VERSION_NUMBER}）`,
+  NUMBERING.countMatchesMax,
+  true,
+  `迁移总数 + 已声明保留数必须等于最大版本号（编号自 0001 起、无错位；实测 count=${MIGRATION_COUNT}，`
+    + `reserved=${RESERVED_VERSIONS.size}，max=${LAST_VERSION_NUMBER}）`,
 );
 
 /** 最大号下限钉：**有意的人工步骤** —— 新增迁移时**须**把这里抬到新的最大版本号（与 0001 起的编号同号）。
@@ -88,8 +101,10 @@ const MIN_EXPECTED_LAST_VERSION = 25;
 
 /** 结构不变量读数：负控制里这一行必须出现（证明旧两条仍绿），紧随其后才是下限钉的判决。 */
 console.log(
-  `STRUCT 旧的两条结构不变量已通过：${MIGRATION_COUNT} 个迁移，版本 0001..` +
-    `${String(LAST_VERSION_NUMBER).padStart(4, '0')} 连续无缺号，count === max（不写死总数）。`,
+  `STRUCT 结构不变量已通过：${MIGRATION_COUNT} 个迁移，版本 0001..` +
+    `${String(LAST_VERSION_NUMBER).padStart(4, '0')} 上无未声明的缺号（保留号 ${RESERVED_VERSIONS.size} 个：` +
+    `${[...RESERVED_VERSIONS].map((version) => String(version).padStart(4, '0')).join(', ') || '无'}），` +
+    'count + 保留数 === max（不写死总数）。',
 );
 assert.ok(
   LAST_VERSION_NUMBER >= MIN_EXPECTED_LAST_VERSION,

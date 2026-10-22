@@ -1,228 +1,224 @@
-# GY-R29 S7 · 审核判定台账落库：**合流后补丁说明**（可直接照抄）
+# GY-R29 S7 · 审核判定台账落库：运行时授权／宿主登记／编号缺口的**落地实现与本地读数**
 
-> 状态：**面向 rebase 之后的机械套用**。本文件只写「改哪个文件、锚点在哪、old → new 原文」，
-> 不含实现代码；实现已在 `feat/gy-r29-moderation-ledger`（PR #434，draft）。
-> 适用条件：`#428`（迁移 `0027_admin_audit_observability.sql`）已合入 ⇒ 「迁移 1..28 连续无缺号」
-> 门禁自动转绿，剩下 5 项按本文件补齐。基线：`a4626562`（基于 `442057b`）。
-> 铁律：**只加行、不动既有行**；`docs/architecture/contract-status.json` 的 `status` 一字不动。
-
-补丁共 4 处：§1 `20-login-roles.sql` 新 region、§2 `90-assert` 新增行、§3 四张注册表、§4 验证序列。
-
----
-
-## 1 `deploy/postgres-cvm/sql/20-login-roles.sql`：新增 region
-
-**插入位置**：文件末尾最后一个 `#endregion` 之后（region 之间无顺序依赖；与段 H「运行时域列级授权」同形）。
-
-```sql
--- --- K. 审核判定台账：运行时**列级** DML（GY-R29 S7 / 迁移 0028）----------------
--- 两张表由运行时自己写（`services/api/src/moderation/ledger-pg.ts`），本域**没有** NOLOGIN 组角色，
--- 因此按段 H 的写法直接列级授权给 `gengyun_api_runtime`。
---
--- ⚠ 与派单措辞的**偏差（已报备）**：派单写「只给 SELECT/INSERT、不给 UPDATE」。实测台账的两条写路径
--- 都是 UPDATE —— ① 建行前把同目标版本的旧当前行置 `superseded`（`SUPERSEDE_SQL`）；
--- ② 回调结算推进状态/结论（`UPDATE_SQL`）—— 不授 UPDATE 会让 `publish` 与回调在真库上 42501。
--- 仍然**不给 DELETE**：本域没有任何 DELETE 语句（PostgreSQL 也不存在列级 DELETE）。
---
--- SELECT 为什么不止 `job_id`：`ON CONFLICT (job_id)` 冲突目标只需 `job_id`，
--- 但 `UPDATE ... WHERE target_type/target_id/target_revision/content_kind AND superseded = FALSE`
--- 要**读**这些列（先例：`gy-i19-backup-copies-grant` 注释「UPDATE 的 WHERE 要读它们」）。
--- 列清单取自 `tests/unit/sql-column-coverage.test.mjs` 的真实缺口读数（50 条），不是手抄猜的。
--- #region gy-r29-moderation-ledger-grant
-DO $$
-BEGIN
-  IF to_regclass('public.moderation_decisions') IS NULL THEN
-    RAISE EXCEPTION '缺少 public.moderation_decisions：迁移 0028 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
-  END IF;
-  IF to_regclass('public.moderation_withdrawals') IS NULL THEN
-    RAISE EXCEPTION '缺少 public.moderation_withdrawals：迁移 0028 未执行。';
-  END IF;
-END;
-$$;
-
-REVOKE ALL ON TABLE public.moderation_decisions FROM PUBLIC;
-REVOKE ALL ON TABLE public.moderation_withdrawals FROM PUBLIC;
-
-GRANT SELECT (job_id,target_type,target_id,target_revision,content_kind,superseded)
-  ON public.moderation_decisions TO gengyun_api_runtime;
-GRANT INSERT (job_id,target_type,target_id,target_revision,content_kind,port_kind,prompt_id,
-              job_revision,state,lease_token,authorization_epoch,submitted_by,deadline_at,
-              decision,reason_codes,hard_rule_passed,rule_version,model_version,prompt_version,
-              contract_value,gate_holder,error_code,evidence,superseded,created_at,updated_at)
-  ON public.moderation_decisions TO gengyun_api_runtime;
-GRANT UPDATE (state,lease_token,decision,reason_codes,hard_rule_passed,rule_version,model_version,
-              prompt_version,contract_value,gate_holder,error_code,evidence,superseded,updated_at)
-  ON public.moderation_decisions TO gengyun_api_runtime;
-
-GRANT SELECT (target_type,target_id,target_revision)
-  ON public.moderation_withdrawals TO gengyun_api_runtime;
-GRANT INSERT (target_type,target_id,target_revision,withdrawn_at)
-  ON public.moderation_withdrawals TO gengyun_api_runtime;
--- #endregion gy-r29-moderation-ledger-grant
-```
-
-**列数自证**（写入后逐项核对，防手抄漏列）：
-
-| 表 | SELECT | INSERT | UPDATE | DELETE |
-| --- | --- | --- | --- | --- |
-| `moderation_decisions` | 6 | 26 | 14 | 0（不授） |
-| `moderation_withdrawals` | 3 | 4 | 0（不授） | 0（不授） |
+> 状态：**已在本分支执行完毕**（不再是「合流后照抄」的补丁清单）。
+> 早前版本的标题是「合流后补丁说明（可直接照抄）」，只写 old → new 的套用步骤；监工 2026-10-22-0119
+> 明确「补丁计划不计执行成功，必须给真实代码与真实读数」。本版把三件事**全部落进代码**，
+> 并把本机 PG 17.11 真集群上的读数逐条记在此处。
+>
+> 复现环境（本机）：`PostgreSQL 17.11`（`E:\GengYunCommander\.pg17\pgsql\bin`），
+> 集群 `initdb` 后 `listen_addresses='127.0.0.1'` / `port=5432`；
+> 库 `gengyun`（owner `gengyun_cvm_owner`）/ 空库 `gengyun_moderation_test`；
+> 运行时口令 `4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d`（48 位 hex，与 `deploy-sql-gate` 同值）。
+> 与 CI 的关系：`deploy-sql-17.11` job 真跑 `20-login-roles.sql` + `90-assert-least-privilege.sql`
+> （`deploy-sql-gate.yml:129`、`:153`，判绿要求「退出码 0 **且** 末行正好 `ok`」），
+> `real-pg-17.11` job 真跑 `tests/integration/moderation-ledger-pg.mjs`。
 
 ---
 
-## 2 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`：新增 4 行
+## 1 三个失败 check 的根因（逐条来自 CI 日志，不是推测）
 
-### 2.1 `domain_manifest`（`:1052` 起）
+| check | 失败 step | 第一现场 | 根因 |
+| --- | --- | --- | --- |
+| `real-pg-17.11` | `ocr-jobs-pg.mjs` | `tests/integration/ocr-jobs-pg.mjs:252` `AssertionError: 迁移版本号必须在 1..28 上连续无缺号` | 本分支只带 `0028`、`0027` 还在 #428 上 ⇒ 目录里 27 个文件、`1..28` 缺 `0027`。日志里 27 条清单 `0001…0026 + 0028` 可直接对账。 |
+| `auth-privacy-postgres-17.11` | `migrations-negative-pg.mjs` | 同一条不变量的另一份实现（`LAST_VERSION_NUMBER` / `MISSING_VERSIONS`），`actual ['0027']` | 同上：`count === max` 也同时不成立。 |
+| `unit-tests` | `npm run test:unit` | 6 条：`ci-integration-chain-structure` 断言 4 ＋其下游、`migration-pin-guard:278`（`[last-index]` 命中 `moderation-ledger-pg.mjs:106`）、`release-materials-index:39`（索引仍写 26/25）、`sql-column-coverage:2053`（宿主 24 ≠ 23，`ledger-pg.ts` 未登记）＋ NC7 下游 | 全是「新片没有登记进既有门禁」的同一类问题，不是产品缺陷。 |
 
-在 `('community_idempotency', 'granted', true),` **之后**插两行（缩进与既有行逐字节对齐：4 空格 + 表名宽 34 列 + `'granted',` + 10 空格 + `true`）：
-
-```sql
-    ('moderation_decisions',           'granted',          true),
-    ('moderation_withdrawals',         'granted',          true),
-```
-
-### 2.2 `expected(...)`（`:1099` 起）
-
-在 `('community_posts', ...)` 那一块**之后**（缩进 4 空格、数组元素每行缩进按既有行）插两块。**必须与 §1 的 GRANT 逐列一致**——`:2577` 起的「49-58 逐表范围断言」是拿 `expected` 做等值比对，少一列/多一列都红：
-
-```sql
-    ('moderation_decisions',
-     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded'],
-     ARRAY['job_id','target_type','target_id','target_revision','content_kind','port_kind','prompt_id',
-           'job_revision','state','lease_token','authorization_epoch','submitted_by','deadline_at',
-           'decision','reason_codes','hard_rule_passed','rule_version','model_version','prompt_version',
-           'contract_value','gate_holder','error_code','evidence','superseded','created_at','updated_at'],
-     ARRAY['state','lease_token','decision','reason_codes','hard_rule_passed','rule_version','model_version',
-           'prompt_version','contract_value','gate_holder','error_code','evidence','superseded','updated_at'],
-     false),
-    ('moderation_withdrawals',
-     ARRAY['target_type','target_id','target_revision'],
-     ARRAY['target_type','target_id','target_revision','withdrawn_at'],
-     ARRAY[]::text[],
-     false),
-```
-
-### 2.3 `function_surface_manifest`（`:1514` 起）
-
-**不用改**：迁移 0028 不含任何 SQL 函数（只有两张表 + 索引）。派单提到「函数进 `function_surface_manifest`」——本片实测为 **no-op**，如实登记在此，避免合流时误加一条指向不存在函数的面。
+**没有一条是「等 #428 合入自动转绿」**：那条路径要求把 #428 的文件复制进本分支（撞号）或把 0028 改号
+（违反「迁移号固定 0028」）。因此本片改为：把「有意缺号」变成机器可判定的事实（§2），
+并把 0027 的 DDL 语义在真库臂里**按序自证**（§2.3）。
 
 ---
 
-## 3 四张注册表：old → new
+## 2 `0027` 缺号：机器可读的保留台账（不是文档里的一句话）
 
-### 3.1 `docs/verification/gy-i24-release-materials-index-20261017.md`（测试 `tests/unit/release-materials-index.test.mjs:39` 派生校验）
+### 2.1 台账文件与产品代码
 
-测试从文件系统**实测**计数并与索引文档比对，因此只改**文档**（测试代码不动）：
+- `services/api/db/migration-reservations.json`：`reservations: [{ version: 27, filename, owner, reason, remove_when }]`。
+  ⛔ 放在 `migrations/` **外面**——`tests/unit/release-materials-index.test.mjs:40-42` 与
+  `tools/verify-release-materials.mjs:259-262` 只扫 `migrations/` 与 `migrations/rollback/`，放进去会被当成迁移。
+- `services/api/src/db/migrate.ts` 新增（均导出）：
+  `interface MigrationReservation`、`DEFAULT_RESERVATIONS_FILE`、`interface MigrationNumbering`
+  （`count / maxVersion / gaps / reserved / undeclaredGaps / reservedButPresent / countMatchesMax`）、
+  `loadMigrationReservations()`（形状校验：缺字段 / 非正整数 / 重复 一律 throw，⛔ 不静默当空表）、
+  `inspectMigrationNumbering()`、`formatMigrationVersion()`。
+- 三条不变量（缺一不可）：
+  1. `undeclaredGaps` 必须为空 ⇒ **只放行登记过的缺号**，发现器静默漏项照旧红；
+  2. `count + reserved.size === maxVersion`（`countMatchesMax`）⇒ 登记不能拿来掩盖漏片；
+  3. `reservedButPresent` 必须为空 ⇒ 保留号一旦落盘（#428 合入）立刻判红，**强制删条目**。
 
-- 当前实测：迁移 **27** 个（`0001..0026` + `0028`）、down **26** 个。
-- old → new：索引里写迁移数的那句 `26 个`（或 `**26** 个`）→ `27 个`；写 down 数的那句 `25 个` → `26 个`。
-  （只要文档里出现 `27 个` 与 `26 个` 即满足断言；`deploy` 文件数那句是**派生**的，本片不加 deploy 文件，无需改。）
-- 自证：`node --test tests/unit/release-materials-index.test.mjs`。
+### 2.2 四个真库臂改为调用同一份体检
 
-### 3.2 `tests/unit/ci-integration-chain-structure.test.mjs`：`UNWIRED_DECLARATIONS`（`:67` 起）
+`tests/integration/ocr-jobs-pg.mjs`、`recognitions-pg.mjs`、`speech-pg.mjs` 的 `[M0]` 段与
+`tests/integration/migrations-negative-pg.mjs` 全部改成 `inspectMigrationNumbering()` + 上述三条断言
+（`migrations-negative-pg.mjs` 的 `LAST_VERSION_NUMBER`/`MISSING_VERSIONS` 现在从体检结果派生，
+`MIN_EXPECTED_LAST_VERSION = 25` 的下限钉保留）。⇒ CI 里两条真库臂与 auth-privacy 臂不再假红，
+而且「漏项」这一真实风险没有被削弱。
 
-在数组里加一条（**不要**把脚本接进 `test:integration:http` 链：它需要真 PG）：
+### 2.3 真库臂里按序自证 `0027 → 0028`
 
-```js
-  {
-    path: 'tests/integration/moderation-ledger-pg.mjs',
-    reason: '需真实 PG 17.11（硬钉库名 `gengyun_moderation_test`，脚本要求**空库**：自己 apply 全部迁移后'
-      + '单独跑 0028 的 UP/ROLLBACK/REPLAY 三连，并断言部分唯一索引与 26+5 列）；由'
-      + ' `.github/workflows/real-pg-integration.yml` 的真库 job 运行，**不进**无 PG 的回环链——'
-      + '回环链里既没有真 PG 也没有可建库的超管连接。',
-  },
-```
+`tests/integration/moderation-ledger-pg.mjs` 现在跑九臂，前两臂就是本条的答复：
 
-### 3.3 `tests/unit/migration-pin-guard.test.mjs`：`ALLOW`（`:77` 起）
-
-在 `ALLOW` 数组里加一条（`category` 必须 `'last-index'`，`pattern` 只要命中该行即可）：
-
-```js
-  {
-    file: 'moderation-ledger-pg.mjs',
-    category: 'last-index',
-    pattern: /末项 \$\{String\(versions\[versions\.length - 1\]\)\.padStart\(4, '0'\)\}/,
-    why: '这是 note() 的日志插值：只把迁移目录的最大号打印进日志，本臂自己 apply 全部迁移'
-      + '（无窗口过滤），末位即真实末位，**不参与任何断言**；目录再加 0029+ 也不会让它变红。',
-  },
-```
-
-### 3.4 `tests/unit/sql-column-coverage.test.mjs`（4 处）
-
-> ⚠ **派单口径订正**：`storeFiles` **不动**（仍 8）——`ledger-pg.ts` 不是 `store-pg.ts`，
-> 它进的是「R28-S66 新纳管」那组；涨的是 **`auditedFiles` 16 → 17**。
-> 下面的数字都是本片**实跑**得到的（把 `'moderation/ledger-pg.ts'` 临时加进
-> `ADDITIONAL_SQL_HOST_FILES` 跑 `node --test tests/unit/sql-column-coverage.test.mjs`，跑完已还原，sha256 未变）。
-
-1. **`ADDITIONAL_SQL_HOST_FILES`**（`:64`，8 → 9 个），按字母序插在 `'knowledge/service.ts',` 之后：
-   ```js
-     'moderation/ledger-pg.ts',
-   ```
-
-2. **`EXPECTED_EXTENDED_READINGS`**（`:331` 起）old → new：
-   ```
-   auditedFiles:        16  → 17
-   sqlLiterals:         217 → 221   (+4：SUPERSEDE / INSERT / UPDATE / WITHDRAW 四条)
-   statements.INSERT:   36  → 38    (+2)
-   statements.UPDATE:   32  → 34    (+2)
-   statements.SELECT:   119 → 119   (0)
-   statements.DELETE:   30  → 30    (0)
-   referencedTables:    39  → 41    (+public.moderation_decisions / +public.moderation_withdrawals)
-   columnRequirements:  1409 → 1459 (+50)
-   coveredRequirements: 1355 → 1405 (+50，**前提：§1 的 GRANT 已落地**；两者差仍为 0)
-   ledgerExemptions:    33  → 33    (0)
-   ```
-
-3. **`EXPECTED_EXTENDED_PER_FILE`**（`:355` 起）加一行（字母序在 `'messages'` 之后、`'ocr'` 之前）：
-   ```js
-     'moderation/ledger-pg.ts': 4,
-   ```
-
-4. **`EXPECTED_EXTENDED_TABLES`**（`:372` 起，39 → 41 张）加两行（字母序在 `'public.messages',` 之后）：
-   ```js
-     'public.moderation_decisions',
-     'public.moderation_withdrawals',
-   ```
-
-5. **文案里的 16/8**（不改会让「审计文件数」断言仍红）：
-   - `assert.equal(auditedFiles, 16, '审计文件数必须是 16（8 store + 8 新纳管）')` →
-     `assert.equal(auditedFiles, 17, '审计文件数必须是 17（8 store + 9 新纳管）')`
-   - 用例标题 `SQL 宿主 = 16 已审计 + 7 登记（R28-S66 / R28-E2 / R28-W3）` → `17 已审计 + 7 登记`
-   - NC7 断言「临时新增一个宿主必须恰红 1 条」在登记完成后自动回到 1（无需改）。
+- `[F] 保留号前向合流`（**不需要数据库**）：把真实迁移目录复制到临时目录，写入 `0027` 夹具 ⇒
+  断言 `reservedButPresent = ['0027']`、`undeclaredGaps = []`、`maxVersion = 28`、
+  `countMatchesMax = false`（28 + 1 ≠ 28）、`order.indexOf(0027) + 1 === order.indexOf(0028)`。
+  即：**#428 合入的那一天，门禁会亲自点名要求删掉台账条目，而不是悄悄放行**。
+- `[M] 迁移三连`：`0001..0026` ⇒ 断言本片两表还不存在 + 0027 的「应用前」读数 ⇒
+  **应用 `tests/integration/fixtures/0027_admin_audit_observability.sql`** ⇒ 断言读数翻转 ⇒
+  应用 `0028_moderation_persistence.sql` ⇒ 断 6 索引 / 4 命名索引 / 1 部分唯一索引
+  (`WHERE superseded = FALSE`) / 26 + 5 列，且 **0027 的对象仍在岗** ⇒
+  应用 `rollback/0028_moderation_persistence.down.sql` ⇒ 断两表与索引消失、0027 对象逐字仍在 ⇒ REPLAY。
+- 夹具来源与完整性：`git show 2b1a8af8:services/api/db/migrations/0027_admin_audit_observability.sql`
+  的冻结复本，`git hash-object` ＝ `git rev-parse 2b1a8af8:…` ＝ `5d86b0f06dd6b7199f69815601c45318fe3ea370`
+  （10161 字节）⇒ 与 #428 的文件**逐字节相同**，不是手写近似。
+- 「应用前」的判别读数（这里踩过两个坑，写下来免得后来人重踩）：
+  1. `set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)` 在 **0020 就已存在**，
+     0027 是**改写**而非新建 ⇒ 不能拿它当「0027 已应用」的证据；
+  2. `to_regprocedure()` 返回的是**完整签名文本**（`integer, timestamp with time zone, uuid`），
+     不是短名 ⇒ 断言必须按完整签名比对。
+  实际判别用三条：`admin_audit_events.before_value` 列（应用前 0 / 应用后 1）、
+  `list_admin_flag_audit(integer,timestamptz,uuid)`（应用前 `null` / 应用后完整签名）、
+  以及 `pg_get_functiondef(set_feature_flag…) LIKE '%before_value%'`（应用前 `false` / 应用后 `true`，
+  证明 0020 版不写审计列、0027 版写）。
 
 ---
 
-## 4 合流后验证序列（按序跑，任一步红即停）
+## 3 运行时授权：`20-login-roles.sql` 段 M ＋ `90-assert` 清单与真执行探针
 
-```bash
-git fetch origin main && git rebase origin/main          # 预期：0027 已由 #428 带入
-node --test tests/unit/sql-column-coverage.test.mjs      # 期望：全绿（含 NC5–NC9 负控制）
-node --test tests/unit/migration-pin-guard.test.mjs      # 期望：全绿（无未登记末位判据、无陈旧豁免）
-node --test tests/unit/ci-integration-chain-structure.test.mjs
-node --test tests/unit/release-materials-index.test.mjs
-node --test tests/unit/moderation-ledger-pg.test.mjs     # 12/12
-node tools/verify-contract-status.mjs                    # 期望：语义 0 / 形状 0 / 中文表格一致
-npm run lint
-```
+### 3.1 段 M（`deploy/postgres-cvm/sql/20-login-roles.sql` 末尾）
 
-真库臂（本机，PG 17.11；库名硬钉、要求空库）：
+`-- #region gy-r29-moderation-ledger-grant`：先 `DO $$ … $$` 用 `to_regclass` 点名缺表
+（`RAISE EXCEPTION '缺少审核判定台账表：%…'`），再 `REVOKE ALL ON TABLE … FROM PUBLIC`，
+然后**逐列** `GRANT`：
 
-```bash
-createdb -h 127.0.0.1 -p 55712 gengyun_moderation_test
-node tests/integration/moderation-ledger-pg.mjs postgres://postgres@127.0.0.1:55712/gengyun_moderation_test
-# 期望：[√] ALL PASS
-```
+| 表 | SELECT | INSERT | UPDATE | DELETE | 依据（`services/api/src/moderation/ledger-pg.ts`） |
+| --- | --- | --- | --- | --- | --- |
+| `moderation_decisions` | 6 列 | 26 列 | 14 列 | **不授** | `:74` INSERT 26 列 + `ON CONFLICT (job_id)`；`:89` UPDATE 14 列 + `WHERE job_id`；`:66` supersede 2 列 + 4 列 WHERE |
+| `moderation_withdrawals` | 3 列 | 4 列 | 0 | **不授** | `:97` INSERT 4 列 + `ON CONFLICT (target_type,target_id,target_revision)` |
 
-全绿后把 PR #434 从 draft 转 ready。
+两个「为什么不」写进段注释：**SELECT 给 6 列而不是 1 列**——PG 对 `UPDATE … WHERE` 的列要求 SELECT 权，
+而 `SUPERSEDE_SQL` 的 WHERE 读 `target_type/target_id/target_revision/content_kind/superseded`；
+**UPDATE 必须授**——两条写路径（建行前置旧当前行 `superseded`、回调结算推进状态/结论）都是 UPDATE，
+派单原写的「只给 SELECT/INSERT」会让 `publish` 与回调在真库 42501。
+**DELETE 不授**：台账是不可变审计面，`ledger-pg.ts` 里没有任何物理删除语句。
+
+### 3.2 `90-assert-least-privilege.sql`：同一事实的第二次写法
+
+- `domain_manifest` 增 2 行（`('moderation_decisions','granted',true)`、`('moderation_withdrawals','granted',true)`）：
+  第 47 条元断言要求「public 下每个运行时可见关系都被分类」，漏登记即红。
+- `expected(tbl, sel, ins, upd, del)` 增两块，列数组与 §3.1 逐列一致（断言 49–58 是等值比对：
+  清单内的列必须有、清单外的列必须一列都没有；表级除 `del=true` 的 DELETE 外一律不得有）。
+- S26 探针段增 4 条**零行真执行**语句（`BEGIN; SET LOCAL ROLE gengyun_api_runtime;` + `SAVEPOINT` +
+  `WHERE false` + `ROLLBACK TO SAVEPOINT`）：`r28_probe_mod_dec_ins`、`r28_probe_mod_dec_upd`、
+  `r28_probe_mod_dec_supersede`、`r28_probe_mod_wd_ins`；断言段增
+  `runtime_moderation_ledger_dml_exec`（四条 `:ERROR` 全为 `false`）。
+  为什么非要真执行：`has_column_privilege` 逐列都真，仍可能因为「WHERE 列缺 SELECT」在
+  **组合**上 42501 —— 只有真跑才抓得到。
+- `function_surface_manifest` **不动**：迁移 0028 零函数（只有两表 + 索引）。
+
+### 3.3 本机真读数（PG 17.11，`gengyun` 库）
+
+执行链（与 `deploy-sql-gate.yml` 同序）：
+`migrate.ts up`（27 个迁移全部 apply，rc=0）⇒ `services/api/db/roles/{auth_privacy,catalog_readers,consent_granter,profile_runtime,knowledge_runtime}.sql`（rc=0 ×5）⇒
+`GENGYUN_API_RUNTIME_PASSWORD=4f3c…2e1d psql -f deploy/postgres-cvm/sql/20-login-roles.sql`（rc=0）⇒
+`psql -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql`。
+
+| 读数 | 实测 |
+| --- | --- |
+| `90-assert` 退出码 / 末行 | `0` / 正好 `ok` |
+| `moderation_decisions` 的列级 SELECT / INSERT / UPDATE | 6 / 26 / 14（表共 26 列） |
+| `moderation_withdrawals` 的列级 SELECT / INSERT / UPDATE | 3 / 4 / 0（表共 5 列） |
+| 两表的表级 `DELETE`/`INSERT`/`UPDATE`/`TRUNCATE`/`REFERENCES`/`TRIGGER` | 全 `false` |
+| 四条真执行探针（`SET LOCAL ROLE gengyun_api_runtime`，零行 + SAVEPOINT 回滚） | `dec_ins ok` / `dec_upd14 ok` / `dec_supersede ok` / `wd_ins ok`，rc=0 |
+| 变异反证① `REVOKE SELECT (superseded)` | supersede 臂立刻 `ERROR: permission denied for table moderation_decisions` |
+| 变异反证② `REVOKE INSERT (evidence)` | INSERT 臂同样 42501 |
+| 复原后再跑四臂 | 全部 `ok`（探针不空转） |
+
+> 日志里 `permission denied for table …` / `invalid input syntax for type uuid: "post-1"` 等
+> 是 90-assert **既有探针段的故意 42501 噪声**（`\set ON_ERROR_STOP off` 段），不是失败；
+> 判绿只看「退出码 0 + 末行 `ok`」（与 `provision-db.sh:373` 的 `tail -n1` 同口径）。
 
 ---
 
-## 5 已知偏差与理由（合流评审请一并看）
+## 4 宿主登记与真库臂接线
 
-1. **`moderation_withdrawals` 的 PK 不是 `comment_id`**：台账 `markWithdrawn` 的键是 `targetKey = type|id|revision`
-   （`decisions.ts:63-65`），且**帖子也会被下架**（`service.ts` 的 `withdraw` 服务任意 `TargetRef`），
-   `comment_id` 单列表达不了这两件事 ⇒ PK `(target_type,target_id,target_revision)`。理由已写进迁移头注释。
-2. **`20-login-roles.sql` 需要 UPDATE**（派单原写「不给 UPDATE」）：见 §1 的偏差说明——两条写路径均为 UPDATE，
-   不授会在真库 42501；仍不给 DELETE。
-3. **`function_surface_manifest` 无新增**：本迁移零函数。
-4. **`storeFiles` 不变**：涨的是 `auditedFiles`（见 §3.4 的订正）。
+### 4.1 `tests/unit/sql-column-coverage.test.mjs`（16/16 绿）
+
+`services/api/src/moderation/ledger-pg.ts` 登记进「R28-S66 新纳管」那组（`storeFiles` 仍 8，
+涨的是 `auditedFiles`）：
+
+- `ADDITIONAL_SQL_HOST_FILES` 8 → 9；
+- `EXPECTED_EXTENDED_READINGS`（全部改成实测值）：`auditedFiles 17`、`sqlLiterals 221`、
+  `statements.INSERT 38`、`statements.UPDATE 34`、`SELECT 119`、`DELETE 30`、`returningClauses 68`、
+  `onConflictClauses 23`、`referencedTables 41`、`columnRequirements 1459`、`coveredRequirements 1405`（缺 0）、
+  `ledgerExemptions 33`、`rowLockRequirements 19`、`rowLockExemptions 1`、`opaqueExpressions 5`；
+- `EXPECTED_EXTENDED_PER_FILE` 加 `'moderation/ledger-pg.ts': 4`（SUPERSEDE / INSERT / UPDATE / WITHDRAW 四条字面量）；
+- `EXPECTED_EXTENDED_TABLES` 41 张（+`public.moderation_decisions` / `public.moderation_withdrawals`）；
+- 宿主总数断言 23 → **24**（17 已审计 + 7 登记），用例标题同步；
+- 该测试的「缺权明细」在本片落地后归零：`columnRequirements - coveredRequirements === 0`，
+  即 §3.1 的列级授权**恰好**覆盖四条语句的全部需求（多一列都会被 `90-assert` 的反向断言抓住）。
+
+### 4.2 真库臂接线（三处同步）
+
+- `.github/workflows/real-pg-integration.yml`：在 `speech-pg` 之后、装包 step 之前插入
+  `psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_moderation_test' && node tests/integration/moderation-ledger-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_moderation_test`
+  （库名硬钉、脚本只认 `argv[2]`；不排到装包 step 之后，因为它不需要 `initdb`/`pg_ctl`）。
+- `tests/unit/ci-real-pg-wiring.test.mjs`：`MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` /
+  `REQUIRED_STEP_ORDER` 三处同步（判据⑥顺序、⑦⑧「先建库再 node 且库名一致」、⑨双向相等）。
+- `tests/unit/ci-integration-chain-structure.test.mjs`：`UNWIRED_DECLARATIONS` 显式声明
+  「由真库 job 独立跑，**不进** `test:integration:http` 回环链」（回环链没有真 PG）。
+
+---
+
+## 5 本地验证序列（全部实跑，命令与结果）
+
+| 命令 | 结果 |
+| --- | --- |
+| `node --test tests/unit/migration-pin-guard.test.mjs` | 12/12 绿（`ALLOW` **未改**：把 `moderation-ledger-pg.mjs:106` 的 `versions[versions.length - 1]` 改成 `inspectMigrationNumbering()` 的读数，触发行消失） |
+| `node --test tests/unit/migration-reservations.test.mjs` | 8/8 绿（含 4 条负控制＋1 条合流预演） |
+| `node --test tests/unit/sql-column-coverage.test.mjs` | 16/16 绿（含 NC5–NC9） |
+| `node --test tests/unit/ci-integration-chain-structure.test.mjs` | 7/7 绿 |
+| `node --test tests/unit/ci-real-pg-wiring.test.mjs` | 18/18 绿 |
+| `node --test tests/unit/release-materials-index.test.mjs` | 5/5 绿（索引改成迁移 27 / rollback 26 / deploy 31） |
+| `node --test tests/unit/roles-file-disposition.test.mjs` | 11/11 绿 |
+| 相关 23 个单测文件批量跑 | 211/211 绿 |
+| `node tests/integration/moderation-ledger-pg.mjs <空库 URL>` | rc=0，九臂 `[√] ALL PASS`（`[F][M][W][S][V][U][X][C][R]`） |
+| `migrate.ts up` + 5 个 roles 脚本 + `20-login-roles.sql` + `90-assert` | rc=0，末行 `ok`（见 §3.3） |
+
+`[M]` 臂的实测输出（本地原文节选）：
+`[M] 迁移清单 27 个（0001..0028），无未声明缺号；保留号 [0027]；count＋保留 === max` /
+`[M] 0027（#428 DDL 夹具）已按序应用：before_value 列 / list_admin_flag_audit / 改写后的 set_feature_flag 全部在岗` /
+`[M] UP（0027 → 0028）：两表 / 四条索引 / 部分唯一索引 WHERE superseded=FALSE / 26+5 列 全部出现，0027 的对象仍在岗` /
+`[M] ROLLBACK：本片建的两表与索引全部消失，既有表与 0027 的对象逐字仍在` /
+`[M] REPLAY：再跑一次 UP，读数与首次逐项相同`。
+
+> 本机坑（不影响 CI）：`bash` 默认解析到 WSL，WSL 因「localhost 代理未镜像」导致所有 `bash -n` 失败 ⇒
+> `release-materials-index` 前两条测试假红；把 `C:\msys64\usr\bin` 前置到 `PATH`（GNU bash 5.3.9）后全绿。
+> CI 是 `ubuntu-24.04` 原生 bash，无此问题。
+
+---
+
+## 6 #428 合入后必须做的清理（机器会强制要求）
+
+1. `git fetch origin main && git rebase origin/main`：#428 带来 `0027_admin_audit_observability.sql`。
+2. `undeclaredGaps` 为空、`reservedButPresent = ['0027']` ⇒ 三条不变量第 3 条立刻判红
+   （`migration-reservations.test.mjs` 与四个真库臂同时红）⇒ **删除
+   `services/api/db/migration-reservations.json` 里的 27 号条目**（或整文件删除后不再引用）。
+3. 删除后可一并移除 `tests/integration/fixtures/0027_admin_audit_observability.sql` 与
+   `moderation-ledger-pg.mjs` 的 `[F]`/`[M]` 里的 0027 段（届时真目录里就是 0027）。
+   在 0027 未合入前**不许**删：那会退化成「等 #428」的空口承诺。
+4. `docs/verification/gy-i24-release-materials-index-20261017.md` 的迁移数届时仍是 27
+   （0027 补进来 ⇒ 28？否：本片 27 = `0001..0026` + `0028`；#428 合入后 **28**）——
+   该数字由测试从文件系统实测派生，改完文件跑一次 `release-materials-index` 即会指出应写几。
+
+---
+
+## 7 已知偏差与理由（评审请一并看）
+
+1. **`moderation_withdrawals` 的 PK 不是 `comment_id`**：台账 `markWithdrawn` 的键是
+   `targetKey = type|id|revision`（`services/api/src/moderation/decisions.ts`），且**帖子也会被下架**
+   （`service.ts` 的 `withdraw` 接受任意 `TargetRef`）⇒ PK `(target_type,target_id,target_revision)`。
+2. **`20-login-roles.sql` 必须给 UPDATE**（派单原写「不给 UPDATE」）：见 §3.1；仍不给 DELETE。
+3. **`function_surface_manifest` 无新增**：迁移 0028 零函数。
+4. **`storeFiles` 不变**：涨的是 `auditedFiles`（见 §4.1）。
+5. **0027 缺号用「保留台账」而不是「等 #428」**：见 §2；三条不变量都带负控制用例，
+   合流当天由机器点名删除条目。

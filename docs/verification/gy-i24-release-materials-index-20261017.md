@@ -147,6 +147,19 @@
   `rollback/` 25 个（`0002..0026`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 25／24／31 变为 **26／25／31**。
   §2 表行与 §4 第 8 项的「当前读数」已按本树同步。该迁移头部如实登记了本片**未**给三张语音表加
   `GRANT`（`deploy/postgres-cvm/**` 一字未改）⇒ 运行时角色直连会 `42501`，授权属后续授权片。
+- **本片新增迁移（2026-10-22，GY-R29，#29 审核判定台账持久化 / PR #434）**：`feat/gy-r29-moderation-ledger`
+  （基线 `origin/main` = `9f26f003`）新增 `0028_moderation_persistence.sql` 与其
+  `rollback/0028_moderation_persistence.down.sql`（迁移号按派单分配，**未改号、未造占位迁移**）⇒ 按本树实测：
+  迁移 **27** 个（`0001..0026` ＋ `0028`；`0027` 由 PR #428 持有，见下条）、`rollback/` 26 个
+  （`0002..0026` ＋ `0028`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 26／25／31 变为 **27／26／31**。
+  ⚠️ 与历次「连续无缺号」不同，本次是**有意缺号且已机器化登记**：`services/api/db/migration-reservations.json`
+  声明 `0027` 归 #428（`feat/gy-r28-admin-audit-observability`），`services/api/src/db/migrate.ts` 的
+  `inspectMigrationNumbering()` 把「1..max 上每个号要么有文件、要么已在台账声明」变成真库臂的硬断言
+  （`undeclaredGaps` 空、`reservedButPresent` 空、`count + 保留数 === max`）⇒ 未声明的缺号照样红，
+  登记后又被真实文件补齐也照样红（防躺平）。
+  该迁移头部如实登记两件**未**做的事：零 `GRANT`（授权由 `deploy/postgres-cvm/sql/20-login-roles.sql` 的
+  `#region gy-r29-moderation-ledger-grant` 段给，列级 SELECT/INSERT/UPDATE，⛔ 无 DELETE），零函数
+  （不新增函数面，故 `function_surface_manifest` 不动）。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。

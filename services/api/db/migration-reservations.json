@@ -1,0 +1,23 @@
+{
+  "$comment": [
+    "迁移号保留台账（机器可读）：显式声明「某个版本号是**有意空缺**」，因为它在另一条在飞分支上。",
+    "为什么需要它：迁移发现器（services/api/src/db/migrate.ts discoverMigrations）只校验文件名与重复，",
+    "不校验连续；而真库臂与 auth-privacy 臂各有一条结构不变量要求「1..max 连续无缺号」。",
+    "两条并存时，任何「本片带 0028、0027 还在 #428 上」的组合都会把 0027 判成发现器静默漏项。",
+    "保留台账把「有意缺号」变成可判定的机器事实，而不是文档里的一句说明：",
+    "  ① 缺号只有在**此处声明过**才放行；未声明的缺号照旧判红（发现器漏项仍会被抓）；",
+    "  ② 总数不变量改成 count + 已声明保留数 === max（防止有人靠新增保留项掩盖漏片）；",
+    "  ③ 保留号一旦在 migrations 目录里出现（上游合入）⇒ count + 保留数 > max ⇒ 立刻判红，",
+    "     强制删除本条 —— 保留项不许躺平。",
+    "维护规则：只许在「该迁移确实在另一条已开 PR 的分支上」时登记；上游合入后必须删除对应条目。"
+  ],
+  "reservations": [
+    {
+      "version": 27,
+      "filename": "0027_admin_audit_observability.sql",
+      "owner": "PR #428（feat/gy-r28-admin-audit-observability）",
+      "reason": "0028_moderation_persistence.sql 必须先于 0027 合并时，1..28 上会短暂缺 0027；本片不含也不得复制该迁移（会与 #428 撞号）。",
+      "remove_when": "0027_admin_audit_observability.sql 出现在 services/api/db/migrations/ 后立刻删除本条"
+    }
+  ]
+}

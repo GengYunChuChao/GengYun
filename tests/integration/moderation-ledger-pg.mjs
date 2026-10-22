@@ -11,8 +11,12 @@
 //   - 下架是终态靠 `moderation_withdrawals` 主键 + `ON CONFLICT DO NOTHING`（重放不新增行）。
 //
 // 覆盖的读数：
-//   [M] 迁移三连：清单结构不变量 ⇒ UP（两表/四条索引/部分唯一索引出现，列数 26 与 5）⇒
-//       ROLLBACK（本片对象消失，`users` 与社区/消息表逐字仍在）⇒ REPLAY（再出现）。
+//   [M] 迁移三连：编号体检（未声明缺号 / 保留号躺平 / count＋保留 === max）⇒ 0001..0026 ⇒
+//       **0027（#428 的 DDL 夹具，按序先于 0028）** ⇒ UP（两表/四条索引/部分唯一索引出现，
+//       列数 26 与 5，且 0027 的函数仍在岗）⇒ ROLLBACK（本片对象消失，`users` 与社区/消息表
+//       逐字仍在，0027 的对象不被连带拆掉）⇒ REPLAY（再出现）。
+//   [F] 保留号前向合流（无数据库）：临时目录里放入 0027 ⇒ 台账条目被判"必须删除"、
+//       `count＋保留 !== max` 同时判红、计划顺序为 0027 → 0028。
 //   [W] 写穿透：`create` + `flush` ⇒ 台账行真的在库里（列值与内存台账逐字段相等）；
 //       同 `job_id` 再 `create` ⇒ 同步抛错且库里仍是 1 行。
 //   [S] supersede：同目标版本再建任务 ⇒ 旧行 `superseded=true`、新行 `false`，当前行恒 1 条。
@@ -25,8 +29,12 @@
 
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import pg from 'pg';
+
+import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering } from '../../services/api/src/db/migrate.ts';
 
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
@@ -92,18 +100,46 @@ function record(overrides = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// [M] 迁移三连
+// [M] 迁移三连（含 0027 → 0028 的**前向合流**自证）
 // ---------------------------------------------------------------------------
+// 为什么这条臂里要塞 0027：#428（feat/gy-r28-admin-audit-observability）会带来迁移 0027，
+// 本分支只带 0028。缺号被 `services/api/db/migration-reservations.json` 显式登记为「有意缺号」，
+// 而"登记"只是记账 —— 真正要证明的是**两条迁移按序落到同一个库上不打架**。因此这里把 #428 的
+// 0027 DDL 面冻结成夹具（`tests/integration/fixtures/0027_admin_audit_observability.sql`，
+// 逐字取自 PR #428 的 ref），在真库上按 `0027 → 0028` 的顺序应用一遍：#428 合入后若两片互相
+// 冲突（重名对象 / 依赖倒挂 / 列冲突），这条臂先红，而不是等 main 上的部署 job 红。
+// ⚠ 夹具只用于**顺序自证**，不进 `services/api/db/migrations/`（进那里就等于抢了 #428 的号）。
+const RESERVED_FILENAME = '0027_admin_audit_observability.sql';
+const FIXTURE_0027 = new URL('./fixtures/0027_admin_audit_observability.sql', import.meta.url);
+
 async function migrationTriple() {
-  const discovered = readdirSync(migrationsDir)
-    .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
-    .sort();
-  assert.ok(discovered.includes(MIGRATION), `迁移清单必须含 ${MIGRATION}`);
-  const versions = discovered.map((name) => Number(name.slice(0, 4)));
-  for (let index = 1; index < versions.length; index += 1) {
-    assert.ok(versions[index - 1] < versions[index], `版本号必须严格递增（现场：${versions.join(',')}）`);
-  }
-  note(`[M] 迁移清单 ${discovered.length} 个，版本号严格递增，末项 ${String(versions[versions.length - 1]).padStart(4, '0')}`);
+  // 编号体检交给产品代码 `inspectMigrationNumbering()`（与 4 条真库臂同一口径）：
+  // 未声明缺号必须为空、保留台账里的号必须仍然缺位、`count + 保留数 === max`。
+  const discovered = discoverMigrations();
+  const numbering = inspectMigrationNumbering(discovered);
+  assert.ok(
+    discovered.some((migration) => migration.filename === MIGRATION),
+    `迁移清单必须含 ${MIGRATION}`,
+  );
+  assert.deepEqual(
+    numbering.undeclaredGaps.map(formatMigrationVersion),
+    [],
+    `迁移版本必须连续无缺号，且缺号必须在保留台账里声明（未声明：${numbering.undeclaredGaps.join(',')}）`,
+  );
+  assert.deepEqual(
+    numbering.reservedButPresent.map(formatMigrationVersion),
+    [],
+    '保留台账里的号必须仍然缺位：文件已出现 ⇒ 删掉那条登记（保留项不许躺平）',
+  );
+  assert.equal(
+    numbering.countMatchesMax,
+    true,
+    `迁移总数 + 已声明保留数必须等于最大版本号（count=${numbering.count}，reserved=${numbering.reserved.length}，max=${numbering.maxVersion}）`,
+  );
+  note(
+    `[M] 迁移清单 ${numbering.count} 个（0001..${formatMigrationVersion(numbering.maxVersion)}），无未声明缺号；`
+      + `保留号 [${numbering.reserved.map(formatMigrationVersion).join(',') || '无'}]；count＋保留 === max`,
+  );
 
   const objects = async () => ({
     decisions: (await one("SELECT to_regclass('public.moderation_decisions') AS v")).v,
@@ -126,17 +162,52 @@ async function migrationTriple() {
     users: (await one("SELECT to_regclass('public.users') AS v")).v,
     community: (await one("SELECT to_regclass('public.community_posts') AS v")).v,
     messages: (await one("SELECT to_regclass('public.messages') AS v")).v,
+    // #428 的 0027 在 0001..0026 之上"改写"了既有的 set_feature_flag（0020 已建同签名 8 参数函数），
+    // 并给 admin_audit_events 补 before_value/after_value 两列 ⇒ 用这两处读数判"0027 真的落地了"。
+    adminFlagWriter: (await one("SELECT to_regprocedure('public.set_feature_flag(text, integer, boolean, uuid, uuid, uuid, text, text)') AS v")).v,
+    adminFlagReader: (await one("SELECT to_regprocedure('public.list_admin_flag_audit(integer, timestamptz, uuid)') AS v")).v,
+    writerWritesBeforeValue: (await one(
+      `SELECT (pg_get_functiondef('public.set_feature_flag(text, integer, boolean, uuid, uuid, uuid, text, text)'::regprocedure) LIKE '%before_value%') AS v`,
+    )).v,
+    auditBefore: await countOf(
+      "SELECT count(*)::int AS v FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'admin_audit_events' AND column_name = 'before_value'",
+    ),
   });
 
-  for (const name of discovered) {
-    if (name === MIGRATION) continue;
-    await owner.query(readSql(`migrations/${name}`));
+  // ① 0001..0026（即"本片之前的一切"），⛔ 不含 0028。
+  for (const migration of discovered) {
+    if (migration.filename === MIGRATION) continue;
+    await owner.query(readSql(`migrations/${migration.filename}`));
   }
   let state = await objects();
   assert.equal(state.decisions, null, '应用其它迁移后本片建的表必须还不存在（证明 UP 才是它出现的唯一原因）');
   assert.equal(state.withdrawals, null, '下架表同理');
+  assert.equal(state.auditBefore, 0, '0027 夹具尚未应用时，它补的 before_value 列必须还不存在（顺序自证的另一半）');
+  assert.equal(state.adminFlagReader, null, '0027 新建的读函数 list_admin_flag_audit 在应用前必须不存在');
+  assert.equal(
+    state.adminFlagWriter,
+    'set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)',
+    '0020 已经建过同签名的 set_feature_flag ⇒ 0027 是"改写"而不是"新建"，应用前它就该在岗',
+  );
+  assert.equal(state.writerWritesBeforeValue, false, '0020 版 set_feature_flag 不写 before_value（0027 才改写它）');
 
-  // UP
+  // ② 0027（#428 的 DDL 面，按数字序先于 0028）⇒ ③ 0028。这就是"前向合流"的真库读数。
+  await owner.query(readFileSync(FIXTURE_0027, 'utf8'));
+  state = await objects();
+  assert.equal(state.auditBefore, 1, '0027 给 admin_audit_events 补的 before_value 列必须在岗');
+  assert.equal(
+    state.adminFlagReader,
+    'list_admin_flag_audit(integer,timestamp with time zone,uuid)',
+    `0027 的读函数必须在 0001..0026 之上独立建出来（实测 to_regprocedure=${String(state.adminFlagReader)}）`,
+  );
+  assert.equal(
+    state.writerWritesBeforeValue,
+    true,
+    '0027 必须真的改写了 set_feature_flag（函数体出现 before_value）；否则这条臂就只是跑了个寂寞',
+  );
+  note('[M] 0027（#428 DDL 夹具）已按序应用：before_value 列 / list_admin_flag_audit / 改写后的 set_feature_flag 全部在岗');
+
+  // ④ UP（0028 落在 0027 之后，与 #428 合入后的真实数字序一致）
   await owner.query(readSql(`migrations/${MIGRATION}`));
   state = await objects();
   assert.equal(state.decisions, 'moderation_decisions', 'UP 后台账表必须在岗');
@@ -147,7 +218,9 @@ async function migrationTriple() {
   assert.equal(state.columns, 26, `台账列数锁定 26，现场 ${state.columns}`);
   assert.equal(state.withdrawalColumns, 5, `下架列数锁定 5，现场 ${state.withdrawalColumns}`);
   assert.ok(state.users && state.community && state.messages, 'UP 不得影响既有表（users/community_posts/messages 逐字仍在）');
-  note('[M] UP：两表 / 四条索引 / 部分唯一索引 WHERE superseded=FALSE / 26+5 列 全部出现');
+  assert.equal(state.auditBefore, 1, '0028 不得覆盖/清理 0027 的对象（两片共存）');
+  assert.equal(state.writerWritesBeforeValue, true, '0028 不得让 0027 改写的函数回退');
+  note('[M] UP（0027 → 0028）：两表 / 四条索引 / 部分唯一索引 WHERE superseded=FALSE / 26+5 列 全部出现，0027 的对象仍在岗');
 
   // ROLLBACK
   await owner.query(readSql(DOWN));
@@ -156,7 +229,9 @@ async function migrationTriple() {
   assert.equal(state.withdrawals, null, '回滚后下架表必须消失');
   assert.ok(state.users && state.community && state.messages, '回滚不得动既有表');
   assert.equal(state.named, 0, '回滚后四条显式索引必须全部消失');
-  note('[M] ROLLBACK：本片建的两表与索引全部消失，既有表逐字仍在');
+  assert.equal(state.auditBefore, 1, '0028 的回滚脚本不得连带拆掉 0027 的对象（回滚面只覆盖自己）');
+  assert.equal(state.writerWritesBeforeValue, true, '0028 的回滚脚本不得让 0027 的函数回退');
+  note('[M] ROLLBACK：本片建的两表与索引全部消失，既有表与 0027 的对象逐字仍在');
 
   // REPLAY
   await owner.query(readSql(`migrations/${MIGRATION}`));
@@ -165,6 +240,44 @@ async function migrationTriple() {
   assert.equal(state.indexes, 6, '重放后索引计数一致');
   assert.equal(state.named, 4, '重放后四条显式索引仍在岗');
   note('[M] REPLAY：再跑一次 UP，读数与首次逐项相同');
+}
+
+// ---------------------------------------------------------------------------
+// [F] 保留号台账的前向合流读数（不动真目录：在临时目录里把 0027 放进去）
+// ---------------------------------------------------------------------------
+// 这条臂回答的是"#428 合入那天会发生什么"，不需要数据库：
+//   1. 0027 一出现，`reservedButPresent` 立刻非空 ⇒ 保留条目必须删（防躺平）；
+//   2. `count + 保留数 === max` 随之变假 ⇒ 第二条不变量同时变红（双保险，不靠单一判据）；
+//   3. 计划顺序里 0027 紧邻 0028 之前 ⇒ 与 #428 合入后的真实数字序一致。
+function forwardMergeNumbering() {
+  const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
+  try {
+    for (const name of readdirSync(migrationsDir)) {
+      if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) copyFileSync(new URL(name, migrationsDir), join(tmp, name));
+    }
+    copyFileSync(FIXTURE_0027, join(tmp, RESERVED_FILENAME));
+    const merged = discoverMigrations(tmp);
+    const numbering = inspectMigrationNumbering(merged);
+    assert.deepEqual(
+      numbering.reservedButPresent.map(formatMigrationVersion),
+      ['0027'],
+      '0027 一出现就必须被认成"保留项躺平"（否则 #428 合入后没人清理台账）',
+    );
+    assert.deepEqual(numbering.undeclaredGaps.map(formatMigrationVersion), [], '0027 补齐后不应再有任何缺号');
+    assert.equal(numbering.maxVersion, 28, '合流后最大版本仍是 0028');
+    assert.equal(
+      numbering.countMatchesMax,
+      false,
+      'count(28) + 保留(1) = 29 ≠ max(28) ⇒ 第二条不变量必须同时判红',
+    );
+    const order = merged.map((migration) => migration.filename);
+    const at27 = order.indexOf(RESERVED_FILENAME);
+    const at28 = order.indexOf(MIGRATION);
+    assert.ok(at27 >= 0 && at28 === at27 + 1, `0027 必须紧邻 0028 之前（现场 at27=${at27} at28=${at28}）`);
+    note('[F] 保留号前向合流：#428 的 0027 一旦落库，台账条目即被判定为必须删除（reservedButPresent=[0027]，count＋保留≠max），且计划顺序为 0027 → 0028');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +431,7 @@ async function realModeFailClosed() {
 }
 
 // ---------------------------------------------------------------------------
+forwardMergeNumbering();
 await migrationTriple();
 await writeThrough();
 await concurrent();

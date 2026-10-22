@@ -432,6 +432,58 @@ RETURNING id;
 \set r28_probe_ans_ins :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
+-- moderation_decisions / moderation_withdrawals（0028 / R29 段 M）：台账只写不读，
+-- 所以三条探针全是**写**语句，形状逐字对着 ledger-pg.ts 抄：
+--   * :74 的 INSERT_SQL 26 列 + `ON CONFLICT (job_id) DO NOTHING`；
+--   * :89 的 UPDATE_SQL 14 列 + `WHERE job_id`（WHERE 里的 job_id 也吃 SELECT 权）；
+--   * :66 的 SUPERSEDE_SQL 2 列 + 4 列 WHERE（target_type/target_id/target_revision/content_kind
+--     与 superseded 都要读权——这条探针是"只授 INSERT/UPDATE 不授 SELECT 会 42501"的反证）；
+--   * :97 的 WITHDRAW_SQL 4 列 + 三列 ON CONFLICT 冲突目标。
+-- `WHERE false` ⇒ 零行、随后 SAVEPOINT 回滚，失败只留 :ERROR（不污染台账、不留探针行）。
+SAVEPOINT r28_probe;
+INSERT INTO public.moderation_decisions (job_id, target_type, target_id, target_revision,
+                                         content_kind, port_kind, prompt_id, prompt_version,
+                                         job_revision, state, lease_token, authorization_epoch,
+                                         submitted_by, deadline_at, error_code, decision,
+                                         reason_codes, hard_rule_passed, rule_version,
+                                         model_version, contract_value, gate_holder, evidence,
+                                         superseded, created_at, updated_at)
+SELECT '00000000-0000-0000-0000-000000000000'::uuid, 'post', 'probe', 1, 'text', 'tms',
+       'probe', NULL, 1, 'queued'::job_state, NULL, 1,
+       '00000000-0000-0000-0000-000000000000'::uuid, NULL, NULL, 'pending',
+       '[]'::jsonb, true, NULL, NULL, NULL, NULL, '{}'::jsonb, false, now(), now()
+ WHERE false
+ON CONFLICT (job_id) DO NOTHING;
+\set r28_probe_mod_dec_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.moderation_decisions
+   SET state = 'succeeded'::job_state, lease_token = NULL, decision = 'approved',
+       reason_codes = '[]'::jsonb, hard_rule_passed = true, rule_version = NULL,
+       model_version = NULL, prompt_version = NULL, contract_value = NULL,
+       gate_holder = NULL, error_code = NULL, evidence = '{}'::jsonb,
+       superseded = false, updated_at = now()
+ WHERE false AND job_id = '00000000-0000-0000-0000-000000000000'::uuid;
+\set r28_probe_mod_dec_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.moderation_decisions
+   SET superseded = TRUE, updated_at = now()
+ WHERE false
+   AND target_type = 'post' AND target_id = 'probe' AND target_revision = 1
+   AND content_kind = 'text' AND superseded = FALSE;
+\set r28_probe_mod_dec_supersede :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.moderation_withdrawals (target_type, target_id, target_revision, withdrawn_at)
+SELECT 'post', 'probe', 1, now() WHERE false
+ON CONFLICT (target_type, target_id, target_revision) DO NOTHING;
+\set r28_probe_mod_wd_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S26 探针结束 ----------------------------------------------------------
@@ -1091,7 +1143,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- transcriptions 不带 speech_ 前缀，所以第 47 条的正则要同时加 speech_ 与 transcriptions$。
     ('speech_jobs',                    'granted',          true),
     ('transcriptions',                 'granted',          true),
-    ('speech_idempotency',             'granted',          true)
+    ('speech_idempotency',             'granted',          true),
+    -- 迁移 0028 的审核判定台账（R29 段 M）：0028 只建表、零 GRANT ⇒ 原文运行时对这两张表一列都
+    -- 碰不了。段 M 补列级授权，同时把两行登记进本清单：第 47 条元断言要求"public 下每个运行时
+    -- 可见关系都被分类"，漏登记即判红；required=true 表示缺表（0028 未执行）直接失败。
+    ('moderation_decisions',           'granted',          true),
+    ('moderation_withdrawals',         'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1274,7 +1331,31 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['payload','pending'],
-     true)
+     true),
+    -- R29（迁移 0028）：审核判定台账两表。列清单与 20-login-roles.sql 段 M 的 GRANT 是同一事实的
+    -- 两次写法（少一列/多一列都会被断言 49-58 抓住：清单内必须有、清单外必须没有）。
+    -- SELECT 面不是"全列"：台账只写不读（byJobId/current/forRevision/history 全读内存），
+    -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；
+    -- 名单来源 ledger-pg.ts:66 的 SUPERSEDE_SQL（target_type/target_id/target_revision/
+    -- content_kind/superseded）与 :74 的 INSERT_SQL + :89 的 UPDATE_SQL（WHERE job_id）。
+    ('moderation_decisions',
+     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded'],
+     ARRAY['job_id','target_type','target_id','target_revision','content_kind','port_kind',
+           'prompt_id','prompt_version','job_revision','state','lease_token','authorization_epoch',
+           'submitted_by','deadline_at','error_code','decision','reason_codes','hard_rule_passed',
+           'rule_version','model_version','contract_value','gate_holder','evidence','superseded',
+           'created_at','updated_at'],
+     ARRAY['state','lease_token','decision','reason_codes','hard_rule_passed','rule_version',
+           'model_version','prompt_version','contract_value','gate_holder','error_code','evidence',
+           'superseded','updated_at'],
+     false),
+    -- 下架台账：只有 INSERT（:97 的 WITHDRAW_SQL 4 列，带 ON CONFLICT DO NOTHING）；
+    -- 三列主键是冲突目标（读权），没有任何 UPDATE/DELETE 语句 ⇒ upd 空、del=false。
+    ('moderation_withdrawals',
+     ARRAY['target_type','target_id','target_revision'],
+     ARRAY['target_type','target_id','target_revision','withdrawn_at'],
+     ARRAY[]::text[],
+     false)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
   -- 这样以后再加表只需改这一处，不会再出现「清单扩了、提示文本还只列旧表」的谎报
@@ -2666,6 +2747,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_ans_sel' = 'false'
          AND :'r28_probe_ans_ins' = 'false',
          'SET LOCAL ROLE gengyun_api_runtime 后，conversations / conversation_turns / conversation_answers 的十二种真实语句形状（含两次 UPDATE 与 FOR UPDATE）必须全部成功；任一 42501 即失败'
+
+  UNION ALL
+  -- R29 / 迁移 0028：审核判定台账的真实写路径（ledger-pg.ts 的 INSERT→UPDATE→supersede 与
+  -- withdrawals 的 INSERT … ON CONFLICT DO NOTHING）。只断言 has_column_privilege 还不够：
+  -- UPDATE 的 WHERE 列读权这类**跨权限组合**只有真执行才会 42501，所以这里跑零行真语句。
+  SELECT 'runtime_moderation_ledger_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_mod_dec_ins' = 'false'
+         AND :'r28_probe_mod_dec_upd' = 'false'
+         AND :'r28_probe_mod_dec_supersede' = 'false'
+         AND :'r28_probe_mod_wd_ins' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE，以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M 的列级授权不足）'
 
   UNION ALL
   -- 62. R28-S26 反向控制（PUBLIC 面）：七张表的表级与列级 ACL 里都不许出现 grantee = 0。
