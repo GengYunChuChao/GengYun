@@ -1,5 +1,6 @@
 /**
- * GY-I15（#15）残留缺口 · 社区域**列表筛选**的真库读数 + **举报状态推进通道**的缺口登记（PostgreSQL 17）。
+ * GY-I15（#15）/ #444 §S5 残留缺口 · 社区域**列表筛选下推 + 分页确定性**的真库读数 +
+ * **举报状态推进通道**的缺口登记（PostgreSQL 17）。
  *
  * 为什么需要这一条（既有脚本的分工，逐条点名）：
  *   - `tests/integration/community-pg.mjs` 只发过 `POST /api/v1/posts`（:517），**没有任何
@@ -23,11 +24,16 @@
  *      复用 ⇒ 400 `INVALID_CURSOR`（不串页）；篡改签名 ⇒ 也是 400；
  *   5. 查询参数闭集：多余参数（`additionalProperties:false`）、`mine=maybe`、`region_code=999999`、
  *      `limit=0/51`、空 `crop_id` 全部 400 —— 没有被静默忽略的"宽松过滤"；
- *   6. **语句读数**：捕获 `GET /posts?crop_id=…&region_code=…` 这条请求真正下发给 PG 的 SQL，
- *      断言它**没有 `WHERE`** ⇒ 筛选是在内存里做的（服务层 `service.ts:797-800`），不是下推；
- *   7. **索引读数**：`EXPLAIN` 同一条语句（全表读 + 排序）与一条"下推等价式"（有 `crop_id`/
- *      `region_code` 谓词）对照：前者 `Seq Scan` + `Sort`、**用不上** `community_posts_feed_idx`；
- *      后者真的走 `Index Scan using community_posts_feed_idx` ⇒ 索引没坏，是**没人用它**。
+ *   6. **语句读数**：捕获 `GET /posts?crop_id=…&region_code=…&limit=…` 这条请求真正下发给 PG 的
+ *      SQL **与绑定参数**，断言 SQL 含 `WHERE`、`LIMIT` 是参数、占位符 `$1..$n` 不跳号且
+ *      `crop_id=$1 / region_code=$2 / LIMIT $3` 位序与 `values` 下标一一对应；同时断言公开列表
+ *      **没有** `author_id` 谓词、`mine=true` 列表的 `author_id=$1` 绑定的是会话主体；
+ *   7. **索引读数**：直接 `EXPLAIN` 服务层真的下发的那条语句（连同它的真实参数）⇒ 计划里
+ *      **不再**出现 `Seq Scan on community_posts`，而是 `Index Scan using community_posts_feed_idx`
+ *      + `Limit`；空结果的同类谓词同样不走全表扫；
+ *   8. **分页确定性**：40 行同一 `created_at` 的夹具，`limit=9` 逐页遍历 ⇒ 40 行全覆盖、无重复、
+ *      顺序与库内 `created_at DESC, id DESC` 逐位相等；游标严格前进（第二页从全序第 10 行开始）；
+ *      B 拿 `mine=true&crop_id=crop-tie` 看不到 A 的同刻行（越权负控制，库里 B 本来也没有）。
  *
  * 本脚本**不**证明什么（必须如实登记，不许被引用成功能证据）：
  *   - 举报 `state` 的推进：`POST /reports` 落库的 `state` 恒为 `received`（服务层 `service.ts:1402`
@@ -142,15 +148,18 @@ const verdictFor = (type, record, revision = record.revision) => ({
 });
 
 /**
- * 记录型连接池包装：把**真正下发给 PG 的语句**原样收下来（只读、不改语义）。
+ * 记录型连接池包装：把**真正下发给 PG 的语句与绑定参数**原样收下来（只读、不改语义）。
  *
- * 为什么必须这样做：本脚本要证明"筛选没有下推 SQL"，而"看源码认为它没写 WHERE"是**静态断言**；
- * 捕获运行期实际语句才算读数——服务层将来若改成下推，这里立刻能看到 `WHERE`。
+ * 为什么必须这样做：本脚本要证明"筛选真的写进了 WHERE、参数按占位符位序下发"，而"看源码认为它写了"是
+ * **静态断言**；捕获运行期实际语句 + 实际参数才算读数——服务层将来若退回内存过滤，这里立刻看不到 `WHERE`。
  */
 function tapPool(realPool, statements) {
   return {
     query(text, values) {
-      statements.push(typeof text === 'string' ? text : String(text?.text ?? ''));
+      statements.push({
+        text: typeof text === 'string' ? text : String(text?.text ?? ''),
+        values: Array.isArray(values) ? [...values] : [],
+      });
       return realPool.query(text, values);
     },
     connect() {
@@ -390,16 +399,58 @@ async function main() {
     }
     say('参数闭集：多余参数 / mine=maybe / region_code 越界·形态 / limit 0·51 / 空 crop_id 全部 400（additionalProperties:false 真生效）');
 
-    // ---- 11. 语句读数：这条请求下发的 SQL 里没有 WHERE -------------------
-    const listStatements = statements.filter((text) => text.includes('FROM community_posts'));
+    // ---- 11. 语句读数：筛选写进了 WHERE，参数按占位符位序下发 -------------
+    const listStatements = statements.filter((entry) => entry.text.includes('FROM community_posts'));
     assert.ok(listStatements.length >= 1, '列表读取必须真的下发过一条 community_posts 查询（否则上面的读数不是从库来的）');
-    for (const text of listStatements) {
-      assert.equal(/\bWHERE\b/i.test(text), false, `列表语句不得含 WHERE（筛选未下推），实际：${text}`);
+    for (const entry of listStatements) {
+      assert.match(entry.text, /\bWHERE\b/, `列表语句必须带 WHERE（筛选项已下推），实际：${entry.text}`);
+      assert.match(entry.text, /LIMIT \$\d+::int/, `LIMIT 必须是绑定参数（分页在过滤之后），实际：${entry.text}`);
+      const indexes = [...entry.text.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
+      const largest = Math.max(0, ...indexes);
+      assert.equal(entry.values.length, largest, `占位符 $1..$${largest} 必须与下发参数个数相等，实际 ${entry.values.length}`);
+      for (let index = 1; index <= largest; index += 1) {
+        assert.ok(indexes.includes(index), `占位符不得跳号：缺 $${index}（${entry.text}）`);
+      }
     }
-    const emitted = listStatements[0];
-    assert.match(emitted, /ORDER BY created_at DESC, id DESC/i, '列表语句的排序必须与内存实现同义');
-    note(`实际下发语句（节选）：${emitted.replace(/\s+/g, ' ').slice(0, 160)}…`);
-    say(`语句读数：${listStatements.length} 条列表查询全部**没有 WHERE** ⇒ crop_id/region_code/mine 的过滤在内存里做（未下推 SQL）`);
+
+    // 逐位核对「crop_id → region_code → limit」的绑定顺序：占位符位序与 values 下标必须一一对应，
+    // 否则"同一条 SQL 换个参数顺序"这种回归在真库上只会表现为"结果怪"，不会红。
+    // 只取**这一次请求**新下发的语句（前面各节的语句已经混在同一个捕获数组里）。
+    const beforeOrdered = statements.length;
+    const orderedRequest = await call('GET', '/api/v1/posts?crop_id=crop-wheat&region_code=330100&limit=2');
+    assert.equal(orderedRequest.status, 200, JSON.stringify(orderedRequest.body));
+    const orderedStatements = statements
+      .slice(beforeOrdered)
+      .filter((entry) => entry.text.includes('FROM community_posts'));
+    assert.ok(orderedStatements.length >= 1, '带 crop+region 的列表请求必须真的下发列表 SQL');
+    const pushedStatement = orderedStatements[0];
+    assert.match(pushedStatement.text, /crop_id = \$1\b/, `crop_id 必须是 $1，实际：${pushedStatement.text}`);
+    assert.match(pushedStatement.text, /region_code = \$2\b/, `region_code 必须是 $2，实际：${pushedStatement.text}`);
+    assert.match(pushedStatement.text, /LIMIT \$3::int/, `LIMIT 必须是 $3，实际：${pushedStatement.text}`);
+    assert.deepEqual(pushedStatement.values.slice(0, 2), ['crop-wheat', '330100'], '值位序必须是 [crop_id, region_code]');
+    assert.equal(pushedStatement.values.at(-1), 3, '服务层多要 1 行判「还有下一页」⇒ limit=2 的页下发 LIMIT 3');
+
+    // 公开列表不得带 author 谓词（归属只由服务层按会话判；客户端拿不到 author 参数），
+    // `mine` 列表必须把 author_id 写进 SQL 且绑定的是**会话主体**——这是 S8(b) 的第二道防线。
+    const publicStatements = listStatements.filter((entry) => !/author_id = \$/.test(entry.text));
+    assert.ok(publicStatements.length >= 1, '公开列表必须有下标：至少一条不带 author 谓词的列表语句');
+    for (const entry of publicStatements) {
+      assert.match(entry.text, /visibility = 'published'/, `公开列表的候选集必须是 published，实际：${entry.text}`);
+    }
+    const beforeMine = statements.length;
+    await expectPublic('/api/v1/posts?mine=true&crop_id=crop-rice', [p2.id]);
+    const mineStatement = statements
+      .slice(beforeMine)
+      .filter((entry) => entry.text.includes('FROM community_posts'))
+      .at(0);
+    assert.ok(mineStatement !== undefined, 'mine 请求必须真的下发列表 SQL');
+    assert.match(mineStatement.text, /author_id = \$1::uuid/, `mine 列表必须把 author_id 下推，实际：${mineStatement.text}`);
+    assert.match(mineStatement.text, /visibility <> 'deleted'/, 'mine 列表的 deleted 排除必须下推');
+    assert.equal(mineStatement.values[0], a.user.id, 'author_id 绑定的必须是会话主体（不是客户端可传的参数）');
+    note(`实际下发语句（节选）：${pushedStatement.text.replace(/\s+/g, ' ').slice(0, 180)}…`);
+    note(`实际下发参数：${JSON.stringify(pushedStatement.values)}`);
+    say(`语句读数：${listStatements.length} 条列表查询全部含 WHERE 与绑定 LIMIT；crop_id=$1 / region_code=$2 / LIMIT $3 位序正确，`
+      + '公开列表无 author 谓词、mine 列表 author_id=$1 绑定会话主体');
 
     // ---- 12. 举报：state 恒 received（缺口登记，不是功能验证） -----------
     const reported = await call('POST', '/api/v1/reports', {
@@ -472,7 +523,7 @@ async function main() {
       + '真库闭集 3 值，可达 1 值。');
     say('举报缺口登记：真库 state=received 落库可读、他人读 404；推进通道在 HTTP/store/契约三处都不存在（B 片待补）');
 
-    // ---- 13. EXPLAIN：实际语句（全表+排序） vs 下推等价式（走索引） ------
+    // ---- 13. EXPLAIN：下推后的真实语句不再全表扫 -------------------------
     // 灌 1200 行合成数据，让规划器对"全表读 + 排序" vs "高选择性谓词"做出真实选择（不是 3 行时的小表假象）。
     await owner.query(
       `INSERT INTO community_posts
@@ -493,28 +544,85 @@ async function main() {
       .rows.map((row) => String(Object.values(row)[0]));
     const planText = (lines) => lines.join('\n');
 
-    const emittedPlan = await planOf(emitted);
-    note(`实际语句计划：${planText(emittedPlan).replace(/\s+/g, ' ')}`);
-    assert.match(planText(emittedPlan), /Seq Scan on community_posts/, '无谓词的列表语句只能全表扫');
-    assert.match(planText(emittedPlan), /Sort/, '排序必须在库里做（内存实现同义）');
-    assert.equal(/community_posts_feed_idx/.test(planText(emittedPlan)), false,
-      '实际语句用不上 community_posts_feed_idx：它的前导列 crop_id/region_code 没有出现在谓词里');
+    // 直接 EXPLAIN **服务层真的下发的那条语句**（含它的真实参数），不是另写一条"等价式"。
+    const emittedPlan = await planOf(pushedStatement.text, pushedStatement.values);
+    note(`下推语句计划：${planText(emittedPlan).replace(/\s+/g, ' ')}`);
+    assert.equal(/\bSeq Scan on community_posts\b/.test(planText(emittedPlan)), false,
+      '筛选下推后不得再退化成 community_posts 全表扫');
+    assert.match(planText(emittedPlan), /community_posts_feed_idx/,
+      'crop_id/region_code 前导列的索引必须被选中（筛选下推才有意义）');
+    assert.match(planText(emittedPlan), /Limit/, 'LIMIT 必须在计划里（分页在过滤之后）');
 
-    const pushdownPlan = await planOf(
-      `SELECT * FROM community_posts
-        WHERE crop_id = $1 AND region_code = $2 AND visibility = 'published'
-        ORDER BY created_at DESC, id DESC LIMIT 20`,
-      ['crop-wheat', '330100'],
-    );
-    note(`下推等价式计划：${planText(pushdownPlan).replace(/\s+/g, ' ')}`);
-    assert.match(planText(pushdownPlan), /community_posts_feed_idx/,
-      '同一条索引在有谓词时是能被选中的（索引没坏）');
-    assert.equal(/Seq Scan on community_posts/.test(planText(pushdownPlan)), false,
+    // 同一条件的两条查询：一条真 key（命中 2 行）、一条高位区（命中 0 行），都必须非 Seq Scan。
+    const emptyKeyPlan = await planOf(pushedStatement.text, ['crop-explain-999', '330100', 3]);
+    note(`空结果计划：${planText(emptyKeyPlan).replace(/\s+/g, ' ')}`);
+    assert.equal(/\bSeq Scan on community_posts\b/.test(planText(emptyKeyPlan)), false,
       '高选择性谓词下不应退化成全表扫');
 
-    note('索引读数：community_posts_feed_idx 存在且可用（下推等价式真的 Index Scan），'
-      + '但当前实现在内存过滤 ⇒ 该索引在日常列表路径上**空转**。');
-    say('EXPLAIN 读数：实际语句 = Seq Scan + Sort（不用 feed_idx）；下推等价式 = Index Scan using community_posts_feed_idx');
+    say('EXPLAIN 读数：服务层下发的真实语句 = Index Scan using community_posts_feed_idx + LIMIT（不再 Seq Scan）');
+
+    // ---- 14. 分页确定性：同 created_at 的行靠 id 做 tie-breaker，翻页不重不漏 ----
+    // 40 行**同一时刻**创建：没有 `ORDER BY created_at DESC, id DESC` 的 tie-breaker 时，
+    // `LIMIT/OFFSET` 或 keyset 都会因为行序不稳定而重复/漏行。
+    const tieIds = (await owner.query(
+      `INSERT INTO community_posts
+         (id, author_id, revision, title, body, crop_id, region_code, media_ids, visibility, audit_state, created_at, updated_at)
+       SELECT gen_random_uuid(), $1::uuid, 1, '同刻 ' || g, '同刻正文 ' || g, 'crop-tie', '330101', '{}'::text[],
+              'published', 'approved', timestamptz '2026-08-01 00:00:00+00', timestamptz '2026-08-01 00:00:00+00'
+         FROM generate_series(1, 40) g
+       RETURNING id`,
+      [a.user.id],
+    )).rows.map((row) => row.id);
+    assert.equal(tieIds.length, 40, '同刻夹具必须灌满 40 行');
+    await owner.query('ANALYZE community_posts');
+
+    const walk = async (path, pageSize) => {
+      const seen = [];
+      let cursor = null;
+      for (let guard = 0; guard < 50; guard += 1) {
+        const suffix = cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`;
+        const response = await call('GET', `${path}${suffix}&limit=${pageSize}`);
+        assert.equal(response.status, 200, JSON.stringify(response.body));
+        seen.push(...response.body.data.items.map((item) => item.id));
+        cursor = response.body.data.next_cursor;
+        if (cursor === null) break;
+      }
+      assert.equal(cursor, null, '游标遍历必须在 50 页内收口（否则是空转）');
+      return seen;
+    };
+    const tieWalk = await walk('/api/v1/posts?mine=true&crop_id=crop-tie', 7);
+    assert.equal(tieWalk.length, 40, `同刻 40 行必须被页遍历完整覆盖，实际 ${tieWalk.length}`);
+    assert.equal(new Set(tieWalk).size, 40, '翻页不得重复行（tie-breaker 缺失时同刻行会在页边界重复）');
+    const tieOrder = (await owner.query(
+      `SELECT id FROM community_posts WHERE crop_id = 'crop-tie' ORDER BY created_at DESC, id DESC`,
+    )).rows.map((row) => row.id);
+    assert.deepEqual(tieWalk, tieOrder, '翻页顺序必须与库内 `created_at DESC, id DESC` 逐位相等');
+
+    // 同刻行的 keyset 边界：游标必须严格按 (created_at, id) 前进——第二页从第 10 行开始，不包含游标行本身。
+    const tiePage1 = await call('GET', '/api/v1/posts?mine=true&crop_id=crop-tie&limit=9');
+    assert.equal(tiePage1.status, 200, JSON.stringify(tiePage1.body));
+    assert.equal(tiePage1.body.data.items.length, 9, '第一页必须满 9 行');
+    assert.equal(tiePage1.body.data.items.at(-1).id, tieOrder[8], '第一页最后一行必须是全序第 9 行');
+    const tieCursor = tiePage1.body.data.next_cursor;
+    assert.equal(typeof tieCursor, 'string', '40 行 + limit=9 ⇒ 必须给 next_cursor');
+    const tiePage2 = await call(
+      'GET',
+      `/api/v1/posts?mine=true&crop_id=crop-tie&limit=9&cursor=${encodeURIComponent(tieCursor)}`,
+    );
+    assert.equal(tiePage2.status, 200, JSON.stringify(tiePage2.body));
+    assert.equal(tiePage2.body.data.items[0].id, tieOrder[9], '第二页必须从全序第 10 行开始（keyset 严格小于游标行）');
+
+    // 越权负控制（S8 的同一族）：同一条 `mine=true` 换个主体 ⇒ 看不到对方的同刻行。
+    const foreignTie = await call('GET', '/api/v1/posts?mine=true&crop_id=crop-tie&limit=50', { token: b.token });
+    assert.equal(foreignTie.status, 200, JSON.stringify(foreignTie.body));
+    assert.deepEqual(foreignTie.body.data.items, [], 'B 的 mine 列表不得出现 A 的同刻 40 行（author 谓词由服务层按会话给）');
+    const foreignCount = (await owner.query(
+      "SELECT count(*)::int AS n FROM community_posts WHERE author_id = $1::uuid AND crop_id = 'crop-tie'",
+      [b.user.id],
+    )).rows[0].n;
+    assert.equal(foreignCount, 0, '库里 B 本来就没有同刻行 ⇒ 上面空列表不是"过滤把有变无"');
+    note(`分页确定性：40 条同刻行、pageSize=7 ⇒ 翻页 ${tieWalk.length} 条、无重复、顺序与库内一致`);
+    say('分页确定性：同 created_at 的 40 行走 id tie-breaker 翻页不重不漏、顺序与库内一致；B 看不到 A 的同刻行（越权负控制）');
   } finally {
     if (app !== null) await app.close().catch(() => {});
     if (pool !== null) await pool.end().catch(() => {});

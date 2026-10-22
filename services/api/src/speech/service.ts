@@ -363,7 +363,8 @@ export function createSpeechService(options: SpeechServiceOptions) {
 
   /** 同键请求仍在处理中且等待预算已用尽：契约内如实回报，绝不重复执行副作用。 */
   function inProgress(): ApiError {
-    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中');
+    // `retryable: true`：与 tts/ocr 同族（等待预算用尽只是"还没好"），且 `app.ts:1837` 已为该码发 `Retry-After: 1`。
+    return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中', { retryable: true });
   }
 
   /**

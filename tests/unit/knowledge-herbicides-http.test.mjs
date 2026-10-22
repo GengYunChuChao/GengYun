@@ -386,6 +386,79 @@ test('/knowledge real 执行模式硬拒：即使开关打开也不并入未发�
   } finally { await app.close(); }
 });
 
+// ---------------------------------------------------------------------------
+// C. 读路径故障 ⇒ `retryable` 按 `errors.ts:28-40` 的口径**逐码**分档，不整条 catch 一律置位。
+//
+//   瞬时（同一请求稍后重试可能成功）：`57014`（statement_timeout）/ `55P03`
+//   （lock_not_available）⇒ **504** `PROVIDER_TIMEOUT` 且 `retryable === true`；
+//   其余数据库故障（权限 42501 / 缺表 42P01 / 库不存在 3D000 / 凭据 28P01 / 无法归类）
+//   需运维介入，时间不会让它自愈 ⇒ **503** `PROVIDER_UNAVAILABLE` 且 `retryable === false`。
+//
+//   改前：catch 分支未传 `retryable`（`ApiError` 默认 `false`）⇒ 504 也报"不可重试"，
+//   客户端会把一次 4 秒锁超时当成永久故障而不再重试。
+// ---------------------------------------------------------------------------
+
+/** 在 `catalog_read.current_knowledge` 处抛指定驱动错误；只回答会话校验的那两条 SQL，不连真库。 */
+function failingPool({ store, error }) {
+  const client = {
+    async query(text, values) {
+      const sql = String(text);
+      if (sql.includes('FROM public.users')) {
+        const user = await store.getUser(String(values?.[0] ?? ''));
+        return { rows: user ? [{ state: user.state, auth_epoch: user.authEpoch }] : [] };
+      }
+      if (sql.includes('public.sessions')) return { rows: [{ id: 'synthetic-session' }] };
+      if (sql.includes('catalog_read.current_knowledge')) throw error;
+      return { rows: [] };
+    },
+    release() {},
+  };
+  return { async connect() { return client; }, async query() { return { rows: [] }; } };
+}
+
+/** 驱动错误替身：`code` 为 SQLSTATE，消息里带连接串原文供"不得泄露"断言使用。 */
+const driverError = (code) => Object.assign(new Error('PRIVATE_DSN postgres://u:p@10.0.0.9/db'), { code });
+
+async function readWithFailingPool(code) {
+  const store = createMemoryAuthStore();
+  const app = buildApp({
+    config: stubConfig(),
+    store,
+    idempotency: createMemoryIdempotencyStore(),
+    pool: failingPool({ store, error: driverError(code) }),
+  });
+  try {
+    const token = await login(app);
+    return await get(app, '/api/v1/knowledge', token);
+  } finally { await app.close(); }
+}
+
+test('/knowledge 读路径：57014 与 55P03 是瞬时竞争态 ⇒ 504 PROVIDER_TIMEOUT 且 retryable:true', async () => {
+  for (const code of ['57014', '55P03']) {
+    const res = await readWithFailingPool(code);
+    assert.equal(res.statusCode, 504, `${code} 应映射 504`);
+    const body = res.json();
+    assert.equal(body.error.code, 'PROVIDER_TIMEOUT');
+    assert.equal(body.error.retryable, true, `${code} 同一请求稍后重试可能成功 ⇒ retryable 必须为 true`);
+    assert.equal(res.headers['cache-control'], 'no-store');
+    assert.equal(JSON.stringify(body).includes('PRIVATE_DSN'), false, '不得把驱动原文/连接串带进封套');
+    // 封套形状仍守契约闭集（不因本片新增/丢失字段）。
+    assert.deepEqual(Object.keys(body.error).sort(), ['code', 'details', 'message', 'retryable']);
+  }
+});
+
+test('/knowledge 读路径：其余数据库故障需运维介入 ⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false（负控制）', async () => {
+  for (const code of ['42501', '42P01', '3D000', '28P01', 'XX000', undefined]) {
+    const res = await readWithFailingPool(code);
+    assert.equal(res.statusCode, 503, `${String(code)} 应映射 503`);
+    const body = res.json();
+    assert.equal(body.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(body.error.retryable, false, `${String(code)} 重试不会成功 ⇒ 不得劝客户端重试`);
+    assert.equal(JSON.stringify(body).includes('PRIVATE_DSN'), false);
+    assert.deepEqual(Object.keys(body.error).sort(), ['code', 'details', 'message', 'retryable']);
+  }
+});
+
 test('负例·失效(expired/withdrawn/conflicting/unknown)与下架(hidden/deleted)条目退出有效查询', () => {
   const items = loadZhejiangKnowledge().items;
   assert.equal(toSeedRows(items).length, 159);

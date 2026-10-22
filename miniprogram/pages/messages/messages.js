@@ -10,12 +10,26 @@
 //   - 其它失败 ⇒ 错误态 + 契约错误码对应文案（沿用社区页的 `state-view` 收口口径）。
 //
 // 契约事实：`Message` **没有** title/body/actor 字段 ⇒ 本页只按 `type` 给出固定标签，
-// 不伪造标题与正文；`reference_state` 为 `unavailable` 时行内如实说明「目标当前不可查看」
-// 并**不提供跳转**（目标可用性端口与跳转表属另一片）。
+// 不伪造标题与正文。
+//
+// 跳转入口（#17 G1）：目标可用性端口接线后（#425），`reference_state` 可以为 `available`。
+// 本页据此提供**唯一**跳转入口，且只在服务端说「可查看」时出现：
+//   - `target_ref.type === 'post'`   ⇒ 直接进社区详情页（`?id=<帖子 uuid>`）；
+//   - `target_ref.type === 'comment'` ⇒ 先按契约 `GET /comments/{id}` 取 `comment.post_id` 再进详情页
+//     （详情页只接帖子 uuid；评论 id 不是帖子 id，塞错会打开错内容）；
+//   - 其余情况（`unavailable`、无目标、类型不由社区详情页承接）⇒ **不可点**，行内如实说明，
+//     且说明里**不**暗示对方是否删除（与服务端「未接线目标不泄露存在性」同口径）。
 const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
+const navigation = require('../../utils/navigation')
+const communityApi = require('../../utils/community-api')
 const api = require('../../utils/messages-api')
+
+/** 社区详情页的真实路由（`app.json` 的 pages + `utils/navigation.js` 的 ID_PAGES／UUID_ID_PAGES 同一份事实）。 */
+const COMMUNITY_DETAIL_PATH = '/pages/communitydetail/communitydetail'
+/** 社区详情页能承接的目标类型（服务端 `reference-community.ts` 只给这两型判 `available`）。 */
+const DETAIL_TARGET_TYPES = ['post', 'comment']
 
 /** `Message.type` 闭集（契约 comment|like|moderation|system）⇒ 页面固定标签与图标。 */
 const TYPE_LABELS = {
@@ -24,11 +38,17 @@ const TYPE_LABELS = {
   moderation: { label: '内容审核结果', icon: 'shield' },
   system: { label: '系统通知', icon: 'tab-bell' }
 }
-/** 目标可跳转性的如实说明：端口未接线时**不**假装可跳。 */
+/**
+ * 目标跳转性的如实说明。措辞纪律（与服务端 `reference-community.ts` 同一口径）：
+ * 「不可查看」只描述**当前这条消息打不开目标**，不区分目标是不存在、已下架还是无权查看
+ * —— 服务端对未接线类型恒判 `unavailable`，本页也不得据此推测对方内容是否被删除。
+ */
 const REFERENCE_NOTES = {
-  available: '关联内容当前可查看；本页只列出消息，不提供跳转入口。',
-  unavailable: '关联内容当前不可查看，本页只列出消息，不提供跳转入口。'
+  available: '关联内容当前可查看，点这一条进入社区详情。',
+  unavailable: '关联内容当前不可查看，本条不提供跳转入口。'
 }
+/** 兜底：服务端判 `available` 但目标类型不由社区详情页承接（当前不可能发生，只为不骗人而不给「点这里」）。 */
+const UNSUPPORTED_TARGET_NOTE = '本条关联目标暂不在消息页提供跳转入口。'
 const NO_TARGET_NOTE = '本条不带关联目标（服务端只给事件类型与对象引用，不给正文）。'
 /**
  * 筛选 chips（demo messages 页 `.chips > .chip`／`.chip.active`，docs/ui-demo/demo.html:73）。
@@ -76,7 +96,10 @@ Page({
     markingId: '',
     markingAll: false,
     unreadText: '',
-    unreadNote: '未读数尚未读取'
+    unreadNote: '未读数尚未读取',
+    // #17 G3：未读数取不到时，pill 自身成为可点重试入口（`onRetry` 只在 status==='error' 分支可达，
+    // 「列表成功 + 未读数失败」时原本没有任何可点重试）。取到即收起，避免出现无意义的可点 pill。
+    unreadRetryable: false
   },
 
   onShow: function () {
@@ -174,7 +197,9 @@ Page({
 
   /**
    * 未读数是**派生量**：每次都向服务端重新读取，本地不维护计数器。
-   * 取不到时**不显示任何数字**（既不显示 0，也不保留过期值），并如实说明未取得。
+   * 取不到时**不动角标**（`#17` G6）：保留上一次已知读数——从来没读到过就还是空，但**绝不**
+   * 把它写成 `''`／`0`，那等于把「读取失败」渲染成「没有未读」。同时如实说明未取得，
+   * 并留一条结构化告警（只含 `event`/`code`，见 `utils/messages-api.js` 的 `warnUnreadFailure`）。
    *
    * 并发保护（世代号）：进入页面时的读取、标记单条后的读取、全部已读结束后的读取会同时在飞，
    * 响应次序**不由请求次序决定**。若不设世代号，先发后到的**旧**读数会覆盖刚拿到的新读数
@@ -184,16 +209,89 @@ Page({
   refreshUnread: function () {
     const that = this
     const epoch = (this._unreadEpoch = (this._unreadEpoch || 0) + 1)
-    if (!auth.isLoggedIn()) { this._applyUnread(''); this.setData({ unreadNote: '未读数尚未读取' }); return }
+    if (!auth.isLoggedIn()) {
+      this._applyUnread('')
+      this.setData({ unreadNote: '未读数尚未读取', unreadRetryable: false })
+      return
+    }
     api.getUnreadCount().then(function (result) {
       if (epoch !== that._unreadEpoch) return
       that._applyUnread(api.unreadText(result.count))
-      that.setData({ unreadNote: result.count > 0 ? '未读 ' + result.count + ' 条' : '暂无未读' })
+      that.setData({
+        unreadNote: result.count > 0 ? '未读 ' + result.count + ' 条' : '暂无未读',
+        unreadRetryable: false
+      })
     }).catch(function (error) {
       if (epoch !== that._unreadEpoch) return
-      that._applyUnread('')
-      that.setData({ unreadNote: api.unwired(error) ? '未读数未取得：服务端未接线' : '未读数未取得：' + api.message(error) })
+      // G6（#17）：失败分支**不进 `_applyUnread`**——一次 setData 都不发给角标，
+      // 角标停在最后一次已知读数上（从未成功读到过就仍是空），失败不再被清成「0 条未读」。
+      api.warnUnreadFailure(error)
+      that.setData({
+        unreadNote: (api.unwired(error) ? '未读数未取得：服务端未接线' : '未读数未取得：' + api.message(error)) +
+          '（点此重试）',
+        unreadRetryable: true
+      })
     })
+  },
+
+  /**
+   * 未读数重试（#17 G3，`messages.wxml` 的 pill `bindtap`）。
+   *
+   * 为什么单独一个入口：`onRetry` 只挂在 `status === 'error'` 的 state-view 上，
+   * 「列表成功 + 未读数失败」时该分支不可达 ⇒ 用户只能退出重进。这里**只重读未读数**
+   * （列表本来就成功，不重载列表、不打断已渲染内容），并发保护沿用 `refreshUnread` 的世代号。
+   */
+  onRetryUnread: function () {
+    if (!this.data.unreadRetryable) return
+    this.setData({ unreadRetryable: false })
+    this.refreshUnread()
+  },
+
+  /**
+   * 打开消息行关联的社区内容（#17 G1，`messages.wxml` 行上的 `bindtap`）。
+   *
+   * 只做一件事：把**服务端判定可查看**的目标送到社区详情页。三层判定，缺一不跳：
+   *   1. 该行 `canOpen`（`reference_state === 'available'` 且 `type ∈ {post, comment}`）；
+   *   2. `post` 直接用 `target_ref.id`（帖子 uuid）；`comment` 先按契约 `GET /comments/{id}`
+   *      取 `comment.post_id`（详情页只接帖子 uuid，评论 id 当帖子 id 会打开错内容）；
+   *   3. 路由与参数交给 `utils/navigation.openTarget` 统一校验（只认 `?id=<uuid>`，不认任意串）。
+   * 任何一步失败都**不猜**：不跳转、只提示一句，且提示里不说目标是否存在／是否被删。
+   */
+  onOpenTarget: function (event) {
+    const that = this
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+      ? event.currentTarget.dataset
+      : {}
+    const id = dataset.id
+    if (!id || this._openingTarget) return
+    const item = this.data.items.filter(function (entry) { return entry.id === id })[0]
+    // 不可用的行**不跳转**（行内已有如实说明）；这是唯一闸门，不按类型猜目标。
+    if (!item || item.canOpen !== true) return
+    // 双击保护：从这次点击到「跳转已发起」之间只放行一次（评论目标是异步的，期间再点不重复取数）。
+    // 释放点就在发跳转的那一刻，任何分支都不会把标记留在页面上（导航本身由 router 兜底）。
+    this._openingTarget = id
+    const open = function (postId) {
+      that._openingTarget = ''
+      that._openDetail(postId)
+    }
+    if (item.targetType === 'post') { open(item.targetId); return }
+    communityApi.getComment(item.targetId).then(function (result) {
+      return result.comment.post_id
+    }).then(open).catch(function () {
+      that._openingTarget = ''
+      // 与行内文案同口径：只说这次打不开，不暗示对方内容是否被删除。
+      wx.showToast({ title: '关联内容当前不可查看', icon: 'none' })
+    })
+  },
+
+  /** 社区详情页的统一出口：先校验 uuid，再交给 `navigation.openTarget` 判路由与跳法。 */
+  _openDetail: function (postId) {
+    if (!communityApi.validId(postId)) {
+      wx.showToast({ title: '关联内容当前不可查看', icon: 'none' })
+      return
+    }
+    navigation.openTarget(COMMUNITY_DETAIL_PATH + '?id=' + encodeURIComponent(postId), false,
+      function (errorText) { if (errorText) wx.showToast({ title: errorText, icon: 'none' }) })
   },
 
   /** 角标只读展示在既有 custom-tab-bar 上；不改变 tabBar 配置语义。 */
@@ -203,10 +301,20 @@ Page({
     if (bar && typeof bar.setData === 'function') bar.setData({ unreadText: textValue })
   },
 
-  /** 列表项展示字段：只做**展示**派生（类型标签 + 目标可跳转性说明），不改契约语义。 */
+  /** 列表项展示字段：只做**展示**派生（类型标签 + 目标可跳转性说明 + 可跳转判定），不改契约语义。 */
   _decorate: function (items) {
     return items.map(function (message) {
       const meta = TYPE_LABELS[message.type] || { label: '通知', icon: 'tab-bell' }
+      const target = message.target_ref
+      // 唯一的可点判据：服务端说可查看，且目标类型由社区详情页承接。
+      const canOpen = message.reference_state === 'available' && target !== null &&
+        DETAIL_TARGET_TYPES.indexOf(target.type) !== -1
+      let referenceNote = NO_TARGET_NOTE
+      if (target !== null) {
+        if (canOpen) referenceNote = REFERENCE_NOTES.available
+        else if (message.reference_state === 'available') referenceNote = UNSUPPORTED_TARGET_NOTE
+        else referenceNote = REFERENCE_NOTES.unavailable
+      }
       return {
         id: message.id,
         revision: message.revision,
@@ -216,7 +324,11 @@ Page({
         unread: message.read_at === null,
         readAt: message.read_at || '',
         time: message.created_at,
-        referenceNote: message.target_ref === null ? NO_TARGET_NOTE : REFERENCE_NOTES[message.reference_state]
+        // `target_ref` 只用于跳转定位（帖子 uuid／评论 uuid），不渲染成正文，也不拼进任何文案。
+        targetType: target === null ? '' : target.type,
+        targetId: target === null ? '' : target.id,
+        canOpen: canOpen,
+        referenceNote: referenceNote
       }
     })
   },

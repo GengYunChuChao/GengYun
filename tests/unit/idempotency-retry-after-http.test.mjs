@@ -86,7 +86,10 @@ test('真实产品登录 HTTP：同键请求仍在处理返回 409 和 Retry-Aft
   assert.equal(denied.headers.get('retry-after'), null);
 });
 
-test('统一错误出口仅为 REQUEST_IN_PROGRESS 加等待头，保持错误码/封套/重试标记与其他错误行为', async t => {
+// 2026-10-22 依 `docs/architecture/state-contract.md:27`（429 带 Retry-After）与 `:34`（处理中 409
+// `REQUEST_IN_PROGRESS` 带 Retry-After）补齐：等待头由统一出口对这两类下发，其余错误码（含 503/504）
+// 不带。原用例只覆盖 `REQUEST_IN_PROGRESS`，这里补上 429 的两个错误码，并把「仅」的范围写准。
+test('统一错误出口只为 REQUEST_IN_PROGRESS 与 429 加等待头，保持错误码/封套/重试标记与其他错误行为', async t => {
   const app = buildApp({ config: stubConfig() });
   t.after(() => app.close());
   app.get('/test-error/:code', async request => {
@@ -95,10 +98,11 @@ test('统一错误出口仅为 REQUEST_IN_PROGRESS 加等待头，保持错误�
   for (const [code, status] of [
     ['REQUEST_IN_PROGRESS', 409], ['IDEMPOTENCY_CONFLICT', 409], ['REVISION_CONFLICT', 409],
     ['OBJECT_UNAVAILABLE', 409], ['PROVIDER_UNAVAILABLE', 503], ['PROVIDER_TIMEOUT', 504],
+    ['RATE_LIMITED', 429], ['PROVIDER_QUOTA_EXCEEDED', 429],
   ]) {
     const response = await app.inject({ method: 'GET', url: '/test-error/' + code });
     assert.equal(response.statusCode, status, code);
-    assert.equal(response.headers['retry-after'], code === 'REQUEST_IN_PROGRESS' ? '1' : undefined, code);
+    assert.equal(response.headers['retry-after'], code === 'REQUEST_IN_PROGRESS' || status === 429 ? '1' : undefined, code);
     const body = response.json();
     assert.equal(body.error.code, code);
     assert.equal(body.error.message, 'synthetic error');

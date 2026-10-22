@@ -46,6 +46,7 @@ import {
   createPortFlagReader,
 } from '../../services/api/src/admin/ops/flag-gate.ts';
 import { buildApp } from '../../services/api/src/app.ts';
+import { ApiError } from '../../services/api/src/errors.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
@@ -76,12 +77,18 @@ function fakePort(initialRows = seedRows()) {
     forceConflict: false,
     /** 为真时，`list()` 抛错（模拟库暂时不可用）。 */
     failList: false,
+    /** `failList` 为真时抛出的错误所带 SQLSTATE/驱动码；缺省 `null` = 无 code 的「无法归类」错误。 */
+    failCode: null,
   };
   const port = {
     persistent: true,
     async list() {
       state.listCalls += 1;
-      if (state.failList) throw new Error('connection reset');
+      if (state.failList) {
+        const failure = new Error('connection reset');
+        if (state.failCode !== null) failure.code = state.failCode;
+        throw failure;
+      }
       return state.rows.map((row) => ({ ...row }));
     },
     async get(key) {
@@ -261,14 +268,51 @@ test('端口缺键 ⇒ 503 PROVIDER_UNAVAILABLE（FLAG_UNRECOGNIZED），不伪�
   });
 });
 
-test('端口读取抛错 ⇒ 503 PROVIDER_UNAVAILABLE（可重试，读面幂等）', async () => {
+test('端口读取抛 ECONNRESET（连接层抖动）⇒ 503 PROVIDER_UNAVAILABLE（可重试，读面幂等）', async () => {
+  const { state, port } = fakePort();
+  state.failList = true;
+  state.failCode = 'ECONNRESET';
+  const { service } = harness(port);
+
+  await assert.rejects(service.listFlags(opsContext()), (error) => {
+    assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(error.status, 503);
+    assert.equal(error.retryable, true, '连接被掐是同一请求重试可能成功的瞬时故障');
+    assert.deepEqual(error.details, [
+      { field: 'flags', code: 'FLAG_READ_FAILED' },
+      { field: 'db_error_code', code: 'ECONNRESET' },
+    ]);
+    return true;
+  });
+});
+
+test('端口读取抛无 code 的无法归类错误 ⇒ 503 但 retryable:false（fail-closed）', async () => {
   const { state, port } = fakePort();
   state.failList = true;
   const { service } = harness(port);
 
   await assert.rejects(service.listFlags(opsContext()), (error) => {
     assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(error.retryable, true);
+    assert.equal(error.status, 503);
+    assert.equal(error.retryable, false, '无法归类 ⇒ 默认不可重试；缺 code 不等于瞬时态');
+    assert.deepEqual(error.details, [{ field: 'flags', code: 'FLAG_READ_FAILED' }]);
+    return true;
+  });
+});
+
+test('端口读取抛 42703（列缺失）⇒ 503 且 retryable:false，原始 SQLSTATE 留在 details', async () => {
+  const { state, port } = fakePort();
+  state.failList = true;
+  state.failCode = '42703';
+  const { service } = harness(port);
+
+  await assert.rejects(service.listFlags(opsContext()), (error) => {
+    assert.equal(error.status, 503);
+    assert.equal(error.retryable, false, '库结构与代码不一致，重试永远不会成功');
+    assert.deepEqual(error.details, [
+      { field: 'flags', code: 'FLAG_READ_FAILED' },
+      { field: 'db_error_code', code: '42703' },
+    ]);
     return true;
   });
 });
@@ -400,6 +444,46 @@ test('42501（权限不足）仍映射 503 PROVIDER_UNAVAILABLE(retryable:false)
   assert.equal(error.code, 'PROVIDER_UNAVAILABLE', '权限不足是「不可用」而不是「超时」');
   assert.equal(error.status, 503, '42501 必须是 503');
   assert.equal(error.retryable, false, '缺权限重试也不会成功，必须标不可重试');
+});
+
+test('读面兜底（mapFlagReadError）：无 code/未知 SQLSTATE ⇒ retryable:false，ECONNRESET ⇒ true', async () => {
+  const readFailure = async (code) => {
+    const pool = {
+      async query() {
+        const failure = new Error('read failed');
+        if (code !== null) failure.code = code;
+        throw failure;
+      },
+    };
+    const port = createPostgresFeatureFlags({ pool });
+    const error = await port.list().then(() => null, (thrown) => thrown);
+    assert.notEqual(error, null, '读失败必须抛出，不得返回空快照');
+    return error;
+  };
+
+  const unclassified = await readFailure(null);
+  assert.equal(unclassified.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(unclassified.status, 503);
+  assert.equal(
+    unclassified.retryable,
+    false,
+    '无法归类的错误必须 fail-closed（与 db/pool.ts 的 isTransientDatabaseError 同口径：无 code ⇒ false）',
+  );
+  assert.deepEqual(unclassified.details, [{ field: 'flags', code: 'FLAG_READ_FAILED' }]);
+
+  const schemaDrift = await readFailure('42703');
+  assert.equal(schemaDrift.retryable, false, '42703（列缺失）是确定性缺陷，重试永远失败');
+  assert.deepEqual(schemaDrift.details, [
+    { field: 'flags', code: 'FLAG_READ_FAILED' },
+    { field: 'db_error_code', code: '42703' },
+  ]);
+
+  const transient = await readFailure('ECONNRESET');
+  assert.equal(transient.retryable, true, '连接层抖动仍应可重试（不得把瞬时面一起打死）');
+  assert.deepEqual(transient.details, [
+    { field: 'flags', code: 'FLAG_READ_FAILED' },
+    { field: 'db_error_code', code: 'ECONNRESET' },
+  ]);
 });
 
 // ---------------------------------------------------------------- 就绪探测与武装降级（T-R12-08R）
@@ -551,6 +635,44 @@ test('armingProbe 抛错且库也读不出来 ⇒ 503 PROVIDER_UNAVAILABLE（fai
       assert.equal(error.status, 503);
       assert.equal(error.retryable, true);
       assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }]);
+      return true;
+    },
+  );
+});
+
+test('createPortFlagReader 预取抛「自述不可重试」的 ApiError（权限/结构类）⇒ fail-closed 且 retryable:false', async () => {
+  const reader = createPortFlagReader({
+    async list() {
+      // flags-pg 的 mapFlagReadError 对 42501/42703/42P01/42883/3D000 就是抛这个（retryable:false）。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '全局开关读取暂不可用', { retryable: false });
+    },
+  });
+  const gate = createFeatureFlagGate({
+    reader,
+    armed: true,
+    prepare: async () => {
+      await reader.refresh();
+    },
+  });
+
+  await gate.prepare();
+  assert.equal(gate.armed, true, '读不出来 ≠ 缺表：门不得降级');
+  const verdict = gate.verdictFor('ai_enabled', 'POST /api/v1/recognitions');
+  assert.equal(verdict.state, 'fail_closed');
+  assert.equal(
+    verdict.cause,
+    'read_unretryable',
+    '权限/结构类读错必须与存储抖动（read_error）分开，不得让确定性失败继承「可重试」',
+  );
+
+  assert.throws(
+    () => gate.assertSurfaceOpen('POST', '/api/v1/recognitions'),
+    (error) => {
+      assert.equal(error.code, 'PROVIDER_UNAVAILABLE');
+      assert.equal(error.status, 503, '仍是 503（契约不变）');
+      assert.equal(error.retryable, false, '同一请求重试永远不会成功 ⇒ 不得标可重试');
+      assert.deepEqual(error.details, [{ field: 'feature_flag', code: 'FLAG_UNRECOGNIZED' }]);
+      assert.match(error.message, /读取失败/, '消息仍须给出具体机制（读取失败 + 需运维修复）');
       return true;
     },
   );

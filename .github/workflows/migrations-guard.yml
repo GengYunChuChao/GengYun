@@ -1,0 +1,78 @@
+# 迁移编号唯一门禁（R30）· 把「两条分支各写一个 0028_*.sql」这件事从**运行时**提前到 CI。
+#
+# 缺口（本片立项时的两个真实案例）：
+#   ① `main` 最大号是 `0027_admin_audit_observability.sql`；`#434` 带着
+#      `0028_governance_audit_log.sql`；更早一次未完成的 i18 工作树上还躺着一个未提交的
+#      `0028_admin_scope_authority.sql`（含同名 down）。两条 `0028_*` 落进同一个目录时：
+#        · 文件路径不同 ⇒ git **无文本冲突**，GitHub 判 `MERGEABLE`；
+#        · `services/api/src/db/migrate.ts:44` 的 `MIGRATION_PATTERN` 会把两条都发现出来，
+#          `:72` 确定性抛「迁移版本号重复：0028 同时出现在 <a> 与 <b>」；
+#        · `schema_migrations.version` 是 `PRIMARY KEY` ⇒ 真库一跑就红。
+#      ⇒ 红在**运行时**。此前只有起真库的那几个 workflow 能发现它，而那些 workflow 是分片跑的
+#      （`real-pg-integration.yml` 等），一个只在迁移目录里加文件的 PR 完全可能先合并、
+#      在别人下一次起库时才炸。
+#   ② 既有静态守卫各管一段，都不管「同号」：`tests/unit/migrations-rollback-pairing.test.mjs`
+#      按**前缀分组**配对（同号两条正向文件在它那里是「一个桶里的两份 down」），
+#      `release-materials-index` 那条数量不变量更看不出来。本片补齐这一层。
+#
+# 为什么**新建一个 workflow** 而不是往 `real-pg-integration.yml` 里加一步：
+#   · 那是当前最热的冲突面（多个在飞 PR 都在改它），往里加 step 等于给每条 PR 制造一次文本冲突；
+#   · 本门禁是**纯静态**的（不连库、不跑迁移、不写文件、不联网、无第三方依赖），与真库链的
+#     资源模型、超时、service 容器都无关，混在一起只会让两边互相拖慢；
+#   · 独立文件 ⇒ 独立 check name（`migrations-unique`），可以被分支保护单独引用，红了也能一眼
+#     看出是「静态口径」还是「真库执行」的问题。
+#
+# 判据（详见 `tools/verify-migrations-unique.mjs` 文件头与
+# `docs/verification/gy-r30-migration-guard-20261022.md`）：
+#   [surface] 顶层 `.sql` 合 `^\d{4}_.*\.sql$` 且至少 1 条；顶层不得出现 `.down.sql`；
+#   [runner]  守卫扫描面 == 产品发现器扫描面（正则逐字抄自 `migrate.ts:44`）；
+#   [dup]     同一 4 位号不得被两条及以上正向文件占用（← 案例①的形态）；
+#   [coexist] `rollback/` 只收 `<NNNN>_<name>.down.sql`；同号不得有两份 down；
+#   [rollback] 每条正向迁移要么有同名 down、要么在 `NO_ROLLBACK` 里带理由登记。
+#
+# 判据分两档（2026-10-22 收窄，避免既有仓一上来就全红）：
+#   硬档 `[surface] [runner] [dup]`     ⇒ 不满足即退出码 1，本 job 直接红；
+#   软档 `[coexist] [rollback]` + 缺号 ⇒ 默认只 `WARN`、退出码 0；`--strict` 才升 1。
+#   本 job 跑**非 strict**：撞号（真事故形态）必须拦，回滚/缺号的既有欠账先只告警。
+#
+# ⛔ 本 job 不设 `continue-on-error`、不写 `|| true`、不加 `paths:` 过滤、不加 `if:` 条件：
+#    任一种都会把「这一轮没通过」变成「这一轮没跑」。也**不跑** `npm ci` —— 门禁与它的单测
+#    只用 `node:` 内建模块（单测 spawn 的是 `process.execPath`），没有第三方依赖，
+#    于是这条 check 不会被 lockfile 漂移或 registry 抖动弄红/弄绿。
+#
+# 触发范围：每个 PR + main 的每次 push。刻意不加 `paths:` 过滤 —— 迁移目录是最容易在
+#   「看起来无关」的 PR 里被改到的地方（改号、补 down、挪文件），过滤掉就等于给它开后门。
+name: Migrations guard
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  migrations-unique:
+    name: migrations-unique
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+      # 判据本体：对 `services/api/db/migrations/` 真跑一次。绿 = 3 条硬判据（surface/runner/dup）
+      # 全部满足（coexist/rollback/缺号只 warn，不加 `--strict` 不会把既有欠账变成红）；
+      # 红 = 退出码 1 并逐条列出（`[dup]` 会点名两个撞号文件与运行时会在哪一行炸）。
+      - name: 迁移编号唯一（纯静态：不连库、不写文件、不联网）
+        run: node tools/verify-migrations-unique.mjs
+      # 机读快照：打进日志即可（不引第三方 action、不传 artifact —— 这条门禁零依赖，别为了留档
+      # 又引入一个会自己漂的版本面）。人看得到「这一轮扫到了哪 27 个号、缺号有没有依据」。
+      - name: 迁移编号快照（--json，仅留档不参与判决）
+        run: node tools/verify-migrations-unique.mjs --json
+      # 门禁自己的单测：用 `os.tmpdir()` 造样例（正常/重复号/rollback 形态错/发现器集合不等/
+      # 空目录…），断言退出码与关键输出。⛔ 不写 `services/api/db/migrations/` 任何东西。
+      # 这一条同时钉住「守卫抄的正则 == migrate.ts:44 的正则」与「默认目录 == 运行器的默认目录」，
+      # 防的是守卫与运行器悄悄看向两个口径（那样绿也没有意义）。
+      - name: 门禁自身单测（临时目录夹具 + 口径同源）
+        run: node --test tests/unit/verify-migrations-unique.test.mjs

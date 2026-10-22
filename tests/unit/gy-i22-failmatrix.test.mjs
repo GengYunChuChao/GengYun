@@ -24,12 +24,19 @@ import { SEAM_CASES, SEAM_FAMILIES } from '../failmatrix/seams.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
 
-/** 本片交付的用例条数下限：只准加、不准在没人注意时被删。 */
-const MIN_CASES = 168;
+/**
+ * 本片交付的用例条数下限：只准加、不准在没人注意时被删。
+ *
+ * 168 → 230：本轮把异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话共 23 个 operation）
+ * 拉进矩阵——C10 游客面 23 条（每个 operation 无凭据必须 401 SESSION_REQUIRED）、
+ * C11 归属面 39 条（17 对「他人资源 404 / 不存在 404 同形」+ 5 条越权写之后的属主正控制）。
+ * 168 + 23 + 39 = 230；只增不减。
+ */
+const MIN_CASES = 230;
 /** 每族条数（本片实跑快照：C/E 族走 HTTP，D 族走受信 seam）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3 };
-/** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据）。 */
-const BATCH_COUNTS = { B1: 106, B2: 36, B3: 17, B4: 9 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39 };
+/** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面）。 */
+const BATCH_COUNTS = { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62 };
 
 function runMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-unit-'));
@@ -48,7 +55,7 @@ function runMatrix() {
   }
 }
 
-test('GY-I22 失败矩阵：全量真跑 159 条全绿，且每条都有真实读数', () => {
+test('GY-I22 失败矩阵：全量真跑 230 条全绿，且每条都有真实读数', () => {
   const payload = runMatrix();
 
   assert.equal(payload.execution_mode, 'stub');
@@ -99,7 +106,8 @@ test('GY-I22 失败矩阵：全量真跑 159 条全绿，且每条都有真实�
 test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、expect 齐备）', () => {
   const ids = new Set();
   for (const one of CASES) {
-    assert.match(one.id, /^C[1-7]-\d{2}$|^E[12]-\d{2}$/, `用例 id 形状不对：${one.id}`);
+    // C1..C7 + C10/C11（异步 AI 域 2026-10 纳入：游客面与归属面）+ E1/E2。
+    assert.match(one.id, /^C(?:[1-7]|1[01])-\d{2}$|^E[12]-\d{2}$/, `用例 id 形状不对：${one.id}`);
     assert.ok(!ids.has(one.id), `用例 id 重复：${one.id}`);
     ids.add(one.id);
     assert.ok(FAMILIES[one.family] !== undefined, `${one.id} 的族 ${one.family} 没有说明`);
