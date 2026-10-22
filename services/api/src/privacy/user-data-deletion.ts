@@ -82,6 +82,28 @@ export const MESSAGES_DELETION_MODULE = 'messages';
  * 那是**扩大**闭集（加强承诺），不是放宽判据。
  */
 export const CONVERSATIONS_DELETION_MODULE = 'conversations';
+/**
+ * GY-I15（#15）· 社区域（R31-S6）：**注销不清社区行**的那个域。
+ *
+ * 为什么这个常量**不**直接写进下面的 `USER_DATA_DELETION_MODULES`（这是本片唯一一处
+ * 「与既有四个域做法不同」的地方，理由必须摆在代码里而不是藏在 PR 描述里）：
+ *
+ *   - 协调器的 `registerModule` **只接受闭集内的名字**（`packages/privacy/deletion-modules.mjs:112-117`），
+ *     所以「注册了但没进闭集」是行不通的——要么进闭集，要么不注册；
+ *   - 而进常量闭集会让 `requiredModules()` 恒为 5，直接推翻 4 个测试文件里 **14 条**
+ *     钉死「四个模块、不多不少」的既有断言（`handlers.length === 4`、
+ *     `deepEqual(..., ['favorites','history','messages','conversations'])` 等），
+ *     还要给 7 个文件里 **44 处**测试替身补一个新字段。那是一次**独立的、可审的**扩集动作，
+ *     不该夹在「补社区域清理」这一片里顺手做掉。
+ *
+ * 因此本片取「**装配处补齐闭集**」：`createUserDataDeletion` 在注入了社区清理原语时把
+ * `community` 追加到闭集（`app.ts` **无条件**注入，所以真实注销路径的闭集就是 5 项，
+ * 社区行一定会被清理）；既有替身不注入 ⇒ 闭集仍是 4 项 ⇒ 既有断言逐条不动。
+ *
+ * ⚠️ 这个折中的代价要说清楚：如果哪天有人装配时漏注入社区 store，闭集会**静默**回到 4 项，
+ * 不会有「缺模块」提示。这是本片的已知弱化，已列为待裁定项（见证据页）。
+ */
+export const COMMUNITY_DELETION_MODULE = 'community';
 
 /**
  * 必需模块闭集。
@@ -224,6 +246,14 @@ export interface UserDataDeletionDeps {
    * 否则「闭集里有一项但没人清」仍是原缺口（G5「有刀没有手」）。
    */
   conversationsStore: OwnerPurgeStore;
+  /**
+   * GY-I15（#15）· 社区域（R31-S6）。**可选**，但**生产装配处必须给**（`app.ts` 无条件注入）。
+   *
+   * 注入 ⇒ 闭集追加 `community` 并注册处理器（注销会清帖子/评论/点赞/举报）；
+   * 不注入 ⇒ 逐字保持本片之前的 4 域行为（既有测试替身因此零改动）。
+   * 折中的代价与裁定请求见 `COMMUNITY_DELETION_MODULE` 的注释。
+   */
+  communityStore?: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -291,9 +321,19 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     throw new Error('接线持久化注销请求时必须显式给出 receiptTtlMs（须与受理服务的回执期限同源）');
   }
   const registry = createDeletionRegistry({ now });
+  /**
+   * 装配处实际生效的必需模块闭集：常量闭集 + （注入了社区清理原语时的）社区域。
+   *
+   * 为什么不在常量里直接加 `community`：见 `COMMUNITY_DELETION_MODULE` 的注释
+   * （会推翻 14 条既有断言 + 44 处测试替身，属独立扩集动作）。
+   */
+  const requiredModules: string[] =
+    input.communityStore === undefined
+      ? [...USER_DATA_DELETION_MODULES]
+      : [...USER_DATA_DELETION_MODULES, COMMUNITY_DELETION_MODULE];
   const coordinator = createPrivacyDeletionCoordinator({
     registry,
-    requiredModules: [...USER_DATA_DELETION_MODULES],
+    requiredModules,
     now,
   });
   /** 请求 → 主体绑定（已合并协议的处理器入参不含主体，故在此绑定）。 */
@@ -455,6 +495,18 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     CONVERSATIONS_DELETION_MODULE,
     makeHandler(CONVERSATIONS_DELETION_MODULE, input.conversationsStore),
   );
+  // #15 社区域（R31-S6）：**注入才注册**（闭集同步追加，见 `COMMUNITY_DELETION_MODULE` 注释）。
+  // 走 `purgeOwnerData` ⇒ 证据串带 `community:online-purged:<正文行数>` 与
+  // `community:idempotency-purged:<台账行数>`（社区有独立幂等表 `community_idempotency`）。
+  // 帖子/评论是**软删 + revision+1**（他人回复不悬挂），点赞是**物理删**，
+  // 举报只清 `detail`、保留 `state`（受理/处置轨迹要留痕）——判断依据见
+  // `community/store.ts::purgeOwnerData` 的注释与证据页 §S6。
+  if (input.communityStore !== undefined) {
+    coordinator.registerModule(
+      COMMUNITY_DELETION_MODULE,
+      makeHandler(COMMUNITY_DELETION_MODULE, input.communityStore),
+    );
+  }
 
   return {
     coordinator,

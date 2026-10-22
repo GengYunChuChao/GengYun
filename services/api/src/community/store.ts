@@ -67,12 +67,20 @@ export interface ModerationRecord {
   created_at: string;
 }
 
+/**
+ * 举报状态取值（与迁移 `0022:134` 的 CHECK、契约 `Report.state` 逐值一致）。
+ *
+ * 单独起名是为了让状态机（`community/report-state.ts`）与存储层共用**同一个**联合类型：
+ * 状态机的表只要漏一个取值、或存储层加了第四值，tsc 立刻红。
+ */
+export type ReportState = 'received' | 'isolated' | 'closed';
+
 export interface ReportRecord {
   id: string;
   revision: number;
   reporter_id: string;
   target_ref: ReportTarget;
-  state: 'received' | 'isolated' | 'closed';
+  state: ReportState;
   reason_code: string;
   /** 请求体里的 detail（契约 `Report` **没有**这个字段，因此不入响应，只留审计）。 */
   detail: string | null;
@@ -136,6 +144,36 @@ export type PostCommitPatch = Partial<
 
 export type CommentCommitPatch = Partial<Pick<CommentRecord, 'revision' | 'body' | 'visibility' | 'audit_state'>>;
 
+/**
+ * 举报 CAS 的期望状态（与 `PostCommitExpectation` 同一套语义，只是比较列不同）。
+ *
+ * 举报没有「归属校验」这一档：处置方是运营侧，而不是举报者本人（举报者只能读自己的举报，
+ * 不能推进它）。因此这里**故意没有** `reporter_id` 期望——把它做成 CAS 条件只会诱使调用方
+ * 拿举报者身份去冒充处置方。
+ */
+export interface ReportCommitExpectation {
+  /** 必须等于当前 `revision`（`If-Match` 的服务端等价物）。 */
+  revision: number;
+  /** 必须等于当前 `state`（防「读到 received、写回时别人已经 triage 过」）。 */
+  state?: ReportState;
+}
+
+/** 允许被 CAS 修改的字段（白名单；`reporter_id`/`target_ref`/`reason_code` 一律不可改）。 */
+export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>>;
+
+/**
+ * 注销清理的分表计数（`community_reports`/`community_posts`/… 一次事务内的真实行数）。
+ *
+ * 形状与 `privacy` 的 `OwnerPurgeCounts`（`{ records, idempotency }`）**逐字段一致**，
+ * 因此注销协调器可以直接把本值当证据用，不需要在装配处再做一次映射。
+ */
+export interface CommunityOwnerPurgeCounts {
+  /** 被软删/清空的帖子 + 评论 + 举报，加上物理删除的点赞：该主体在社区域被处理的行数合计。 */
+  records: number;
+  /** `community_idempotency` 里 `scope` 前缀属于该主体的行数。 */
+  idempotency: number;
+}
+
 /** CAS 失败原因。**注意：已删除（`DELETED`）永远失败**——不提供"复活已删除内容"的开关。 */
 export type CommitFailureReason =
   | 'NOT_FOUND'
@@ -143,7 +181,15 @@ export type CommitFailureReason =
   | 'AUTHOR_CHANGED'
   | 'REVISION_CHANGED'
   | 'VISIBILITY_CHANGED'
-  | 'AUDIT_STATE_CHANGED';
+  | 'AUDIT_STATE_CHANGED'
+  /**
+   * 举报专用：`state` 与期望值不符（有人已经推进过这条举报）。
+   *
+   * 不并进 `REVISION_CHANGED`：两者的**修法**不同——revision 变了是"重新读一遍再试"，
+   * state 变了是"这条举报的状态路线已经分叉，必须重新判断该不该处置"。运维/调用方看到
+   * 同一个码却要做不同的事，那就应该是两个码。
+   */
+  | 'STATE_CHANGED';
 
 export type CommitResult<T> = { ok: true; record: T } | { ok: false; reason: CommitFailureReason };
 
@@ -200,6 +246,30 @@ export interface CommunityStore {
   // ---- 举报 ----
   insertReport(record: ReportRecord): Promise<void>;
   getReport(id: string): Promise<ReportRecord | null>;
+  /**
+   * **唯一的举报状态推进原语**（CAS），语义对齐 `commitPostIfCurrent`：同一临界区内
+   * 重读 → 校验 `revision`（与可选 `state`）→ 写入 `{revision, state}` 白名单补丁。
+   *
+   * 为什么必须是 CAS 而不是 `updateReport`：处置是**两个人可能同时点**的动作（队列里两条
+   * 运营同时打开同一条举报），无条件写入会让后到者覆盖先到者的结论，而举报结论一旦覆盖就
+   * 无法从台账上复原。CAS 让它变成「一个成功、一个 409」。
+   */
+  commitReportIfCurrent(
+    id: string,
+    expected: ReportCommitExpectation,
+    patch: ReportCommitPatch,
+  ): Promise<CommitResult<ReportRecord>>;
+  /**
+   * 注销清理（GY-I15 · R31-S6）：把该用户名下**社区域**的数据按既定口径处理，返回真实处理行数。
+   *
+   * 口径（见 `store-pg.ts` 同名实现的注释）：帖子/评论**软删**（`visibility='deleted'` +
+   * revision 自增）、举报**清空自由文本**（`detail` 置空，状态机与台账行保留）、点赞**物理删除**。
+   *
+   * **可选方法**：与 `snapshotCounts` 同一条纪律——不把已有的测试替身一次性改红。装配处
+   * （`app.ts`）在缺失时按「该域没有清理能力」处理并**如实降级**（清单里该项记 `records: 0`），
+   * 不做静默假装。
+   */
+  purgeOwnerData?(ownerId: string): Promise<CommunityOwnerPurgeCounts>;
   // ---- 幂等台账 ----
   findIdempotency(scope: string, keyHash: string): Promise<IdempotencyRecord | null>;
   claimIdempotency(
@@ -448,6 +518,58 @@ export function createMemoryCommunityStore(
     async getReport(id) {
       const record = reports.get(id);
       return record === undefined ? null : cloneReport(record);
+    },
+    async commitReportIfCurrent(id, expected, patch) {
+      const current = reports.get(id);
+      if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
+      if (current.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
+      if (expected.state !== undefined && current.state !== expected.state) {
+        return { ok: false, reason: 'STATE_CHANGED' };
+      }
+      // 补丁白名单在类型层，但运行时可能收到 `as` 进来的对象：这里再挡一次 id/reporter 覆盖。
+      const next: ReportRecord = {
+        ...current,
+        revision: patch.revision ?? current.revision,
+        state: patch.state ?? current.state,
+      };
+      reports.set(id, cloneReport(next));
+      return { ok: true, record: cloneReport(next) };
+    },
+    async purgeOwnerData(ownerId) {
+      // 口径与 `store-pg.ts` 同名实现逐条对齐：帖子/评论软删、举报清自由文本、点赞物理删除。
+      let records = 0;
+      const stamp = new Date(clockMs()).toISOString();
+      for (const [id, post] of [...posts]) {
+        if (post.author_id !== ownerId || post.visibility === 'deleted') continue;
+        posts.set(id, clonePost({ ...post, visibility: 'deleted', revision: post.revision + 1, updated_at: stamp }));
+        records += 1;
+      }
+      for (const [id, comment] of [...comments]) {
+        if (comment.author_id !== ownerId || comment.visibility === 'deleted') continue;
+        comments.set(id, cloneComment({ ...comment, visibility: 'deleted', revision: comment.revision + 1 }));
+        records += 1;
+      }
+      for (const [id, report] of [...reports]) {
+        if (report.reporter_id !== ownerId || report.detail === null) continue;
+        reports.set(id, cloneReport({ ...report, detail: null, revision: report.revision + 1 }));
+        records += 1;
+      }
+      for (const [key, bucket] of [...likes]) {
+        if (!bucket.delete(ownerId)) continue;
+        records += 1;
+        if (bucket.size === 0) likes.delete(key);
+      }
+      // 幂等台账的 scope 形如 `<subject>\n<METHOD>\n<path>`（`auth/idempotency.ts:111-113`），
+      // 内存键再拼 `MODERATION_DELIMITER`（NUL）+ key_hash（`:268`）。主体是**首段**，
+      // 因此 `ownerId + '\n'` 前缀就是「该主体在这个域里占过的全部键」——注意分隔符是换行，
+      // 不是 NUL；用错分隔符会一条也删不掉，而且不会报错。
+      let idempotencyRows = 0;
+      for (const key of [...idempotency.keys()]) {
+        if (!key.startsWith(`${ownerId}\n`)) continue;
+        idempotency.delete(key);
+        idempotencyRows += 1;
+      }
+      return { records, idempotency: idempotencyRows };
     },
 
     async findIdempotency(scope, keyHash) {

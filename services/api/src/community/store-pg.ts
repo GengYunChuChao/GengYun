@@ -52,6 +52,7 @@ import type {
   CommentCommitPatch,
   CommentRecord,
   CommitResult,
+  CommunityOwnerPurgeCounts,
   CommunityStore,
   IdempotencyOutcome,
   IdempotencyRecord,
@@ -59,6 +60,8 @@ import type {
   PostCommitExpectation,
   PostCommitPatch,
   PostRecord,
+  ReportCommitExpectation,
+  ReportCommitPatch,
   ReportRecord,
 } from './store.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
@@ -465,6 +468,44 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
     });
   }
 
+  /**
+   * 举报状态推进（CAS）。
+   *
+   * 只写 `revision`/`state` 两列：`20-login-roles.sql:521-523` 对 `community_reports` 的
+   * UPDATE 是列级的，这里用到的两列都在授权清单里，不需要新增 GRANT。
+   */
+  async function commitReport(
+    id: string,
+    expected: ReportCommitExpectation,
+    patch: ReportCommitPatch,
+  ): Promise<CommitResult<ReportRecord>> {
+    return withTransaction<CommitResult<ReportRecord>>(pool, async (sql) => {
+      const current = (await sql.query(
+        `SELECT ${REPORT_COLUMNS} FROM community_reports WHERE id = $1::uuid FOR UPDATE`,
+        [id],
+      )).rows[0];
+      if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
+      const before = reportRecordFromRow(current);
+      // 判定顺序与内存实现逐条一致：先版本、再状态（版本是"重读再试"，状态是"路线分叉"）。
+      if (before.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };
+      if (expected.state !== undefined && before.state !== expected.state) {
+        return { ok: false, reason: 'STATE_CHANGED' };
+      }
+      const next: ReportRecord = {
+        ...before,
+        revision: patch.revision ?? before.revision,
+        state: patch.state ?? before.state,
+      };
+      await sql.query(
+        `UPDATE community_reports
+            SET revision = $2, state = $3::text
+          WHERE id = $1::uuid`,
+        [id, next.revision, next.state],
+      );
+      return { ok: true, record: next };
+    });
+  }
+
   return {
     persistent: true,
 
@@ -697,6 +738,73 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       const rows = await run(`SELECT ${REPORT_COLUMNS} FROM community_reports WHERE id = $1::uuid`, [id]);
       const row = rows[0];
       return row === undefined ? null : reportRecordFromRow(row);
+    },
+
+    async commitReportIfCurrent(id, expected, patch) {
+      return commitReport(id, expected, patch);
+    },
+
+    /**
+     * 注销清理（GY-I15 · R31-S6）。
+     *
+     * ## 为什么帖子/评论是**软删**、点赞是**物理删**、举报是**清自由文本**
+     *
+     * 三条口径各自跟着"删了会不会拆到别人"走，与既有代码的先例一致：
+     *
+     * 1. **帖子/评论 ⇒ 软删（`visibility='deleted'`）**。评论表 `post_id` 是
+     *    `ON DELETE CASCADE`（迁移 `0022` 建表处），硬删一条帖子会把**别人**在下面的评论
+     *    一起带走；而 `community_likes` 的 `(target_type, target_id)` 没有外键，硬删会让
+     *    点赞行变成指向不存在目标的悬挂引用。软删是本仓对"作者删除"的既有语义
+     *    （`deletePost`/`deleteComment` 走的就是 `commitXIfCurrent` 写 `visibility='deleted'`），
+     *    注销对内容一律复用同一条路，不发明第二种"消失"。
+     * 2. **点赞 ⇒ 物理删**。`community_likes` 是集合语义、没有历史价值，且已有表级 DELETE 授权；
+     *    留着它等于保留"该用户点过哪些帖"的行为痕迹，与注销目的相反。
+     * 3. **举报 ⇒ 只清 `detail`（自由文本），行与 `state` 保留**。
+     *    - `detail` 是举报人自己写的叙述，是这一行里唯一的自由文本 PII 面（`reason_code` 是闭集）；
+     *    - 行必须留：运营侧正在处置的举报一旦被物理删除，被举报内容就失去处置依据，且
+     *      `community_reports` 已被 `takedown`/审核链路按 id 引用；
+     *    - 与既有 `messages` 域的注销先例同口径（见 `privacy/user-data-deletion.ts` 顶部注释：
+     *      会话/消息按"清正文、留骨架"处理）。
+     *
+     * 计数是**真实影响行数**（软删只数真正从非 deleted 变成 deleted 的行；举报只数 detail
+     * 非空的行），不是"扫了多少行"。
+     */
+    async purgeOwnerData(ownerId) {
+      return withTransaction<CommunityOwnerPurgeCounts>(pool, async (sql) => {
+        const stamp = new Date().toISOString();
+        const posts = (await sql.query(
+          `UPDATE community_posts
+              SET visibility = 'deleted'::visibility, revision = revision + 1, updated_at = $2::timestamptz
+            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            RETURNING id`,
+          [ownerId, stamp],
+        )).rows;
+        const comments = (await sql.query(
+          `UPDATE community_comments
+              SET visibility = 'deleted'::visibility, revision = revision + 1
+            WHERE author_id = $1::uuid AND visibility <> 'deleted'::visibility
+            RETURNING id`,
+          [ownerId],
+        )).rows;
+        const reports = (await sql.query(
+          `UPDATE community_reports
+              SET detail = NULL, revision = revision + 1
+            WHERE reporter_id = $1::uuid AND detail IS NOT NULL
+            RETURNING id`,
+          [ownerId],
+        )).rows;
+        const likes = (await sql.query(
+          `DELETE FROM community_likes WHERE user_id = $1::uuid RETURNING target_id`,
+          [ownerId],
+        )).rows;
+        // `scope` 形如 `<subject>\n<METHOD>\n<path>`（`auth/idempotency.ts:111-113`），
+        // 主体是首段 ⇒ 前缀匹配 `ownerId + '\n'`。用 LIKE 而不是 =，因为一条请求不会有多个 scope。
+        const idempotency = (await sql.query(
+          `DELETE FROM community_idempotency WHERE scope LIKE $1::text RETURNING scope`,
+          [`${ownerId}\n%`],
+        )).rows;
+        return { records: posts.length + comments.length + reports.length + likes.length, idempotency: idempotency.length };
+      });
     },
 
     // ---- 幂等台账（`community_idempotency`；`scope` 已编码主体） ----

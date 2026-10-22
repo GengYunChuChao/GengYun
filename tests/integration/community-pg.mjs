@@ -430,6 +430,106 @@ async function main() {
     });
     say('snapshotCounts 与真库计数逐项一致');
 
+    // ---- 10b. 举报状态推进（R31-S1 的 PG 臂） ----------------------------
+    // 语义对齐 `commitPostIfCurrent`：先版本、再状态；三种失败都不许改行。
+    assert.deepEqual(
+      await store.commitReportIfCurrent(reportId, { revision: 9 }, { revision: 2 }),
+      { ok: false, reason: 'REVISION_CHANGED' },
+      '版本不符必须是 REVISION_CHANGED（不能静默成功）',
+    );
+    assert.deepEqual(
+      await store.commitReportIfCurrent(
+        reportId,
+        { revision: 1, state: 'isolated' },
+        { revision: 2, state: 'closed' },
+      ),
+      { ok: false, reason: 'STATE_CHANGED' },
+      '状态与预期不符必须是 STATE_CHANGED（路线分叉，重读也没用）',
+    );
+    assert.deepEqual(
+      await store.commitReportIfCurrent(randomUUID(), { revision: 1 }, { revision: 2 }),
+      { ok: false, reason: 'NOT_FOUND' },
+    );
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT state, revision FROM community_reports WHERE id = $1::uuid',
+        [reportId],
+      )).rows[0],
+      { state: 'received', revision: 1 },
+      '失败路径不得改状态、不得升版本',
+    );
+    const advanced = await store.commitReportIfCurrent(
+      reportId,
+      { revision: 1, state: 'received' },
+      { revision: 2, state: 'isolated' },
+    );
+    assert.equal(advanced.ok, true);
+    assert.equal(advanced.record.state, 'isolated');
+    assert.equal(advanced.record.revision, 2);
+    assert.equal(advanced.record.detail, '改过说明', '推进状态不得顺手清掉举报人自述');
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT state, revision FROM community_reports WHERE id = $1::uuid',
+        [reportId],
+      )).rows[0],
+      { state: 'isolated', revision: 2 },
+      '状态与版本必须真落库（不是只改了返回值）',
+    );
+    say('举报状态推进：版本/状态/存在性三种失败逐条报因且不改行；成功后 state+revision 真落库');
+
+    // ---- 10c. 注销清理（R31-S6 的 PG 臂） ---------------------------------
+    // 先给 authorId 造一条自己的幂等台账行，再把他人名下的既有台账行数记成对比组。
+    const authorScope = `${authorId}\nPOST\n/api/v1/reports`;
+    const authorKeyHash = digest('community-pg-purge-key-1');
+    assert.equal(await store.claimIdempotency(authorScope, authorKeyHash, {
+      request_hash: digest('purge-request-1'),
+      response_status: 201,
+      expires_at: Date.now() + 60_000,
+    }), true);
+    const otherIdempotencyBefore = (await owner.query(
+      'SELECT count(*)::int AS n FROM community_idempotency WHERE scope LIKE $1::text',
+      [`${otherId}\n%`],
+    )).rows[0].n;
+    assert.ok(otherIdempotencyBefore >= 1, '对比组：他人名下必须有既有台账行');
+
+    const purged = await store.purgeOwnerData(authorId);
+    assert.deepEqual(
+      purged,
+      { records: 2, idempotency: 1 },
+      '真实处理行数：1 条帖子（软删）+ 1 条点赞（物理删）+ 1 条本主体台账；'
+        + '评论与举报本主体此时没有（评论已在第 6b 节随父帖级联清掉）',
+    );
+    const purgedPost = await store.getPost(post2);
+    assert.equal(purgedPost.visibility, 'deleted', '帖子是软删（visibility=deleted），不是物理删');
+    assert.equal(purgedPost.revision, 2, '软删必须升版本（旧 ETag 一律 409）');
+    assert.notEqual(purgedPost.updated_at, CREATED, '软删要留处理时间戳（不是静默改状态）');
+    assert.equal(await store.countLikes('post', post2), 0, '点赞是物理删（行为痕迹不留）');
+    assert.deepEqual(
+      (await owner.query(
+        'SELECT detail FROM community_reports WHERE reporter_id = $1::uuid',
+        [otherId],
+      )).rows.map((row) => row.detail).sort(),
+      ['改过说明', '剂量写错了'].sort(),
+      '他人的举报行与其自述一字不动（注销只清本主体）',
+    );
+    assert.equal(await store.findIdempotency(authorScope, authorKeyHash), null, '本主体台账行被清');
+    assert.equal(
+      (await owner.query(
+        'SELECT count(*)::int AS n FROM community_idempotency WHERE scope LIKE $1::text',
+        [`${otherId}\n%`],
+      )).rows[0].n,
+      otherIdempotencyBefore,
+      '他人台账行一行不少（LIKE 前缀没串到别人）',
+    );
+    say('注销清理：帖子软删（升版本）/ 点赞物理删 / 台账只清本主体，他人举报与台账一字不动');
+
+    assert.deepEqual(
+      await store.purgeOwnerData(authorId),
+      { records: 0, idempotency: 0 },
+      '重跑必须是 0：已软删的行不再计数，点赞与台账已经不在了',
+    );
+    say('注销清理可重跑：第二次调用逐项 0，不重复抹也不报错');
+
     // ---- 11. rollback → 再 apply ----------------------------------------
     const OUR_TABLES = [
       'community_comments',
