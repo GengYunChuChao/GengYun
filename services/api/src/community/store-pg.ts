@@ -55,6 +55,7 @@ import type {
   CommunityStore,
   IdempotencyOutcome,
   IdempotencyRecord,
+  ListPostsFilter,
   ModerationRecord,
   PostCommitExpectation,
   PostCommitPatch,
@@ -512,11 +513,49 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       return commitPost(id, expected, patch, moderation);
     },
 
-    async listPosts() {
-      // 排序与内存实现的 `compareCreatedAtDescending` 同义：created_at DESC, id DESC。
-      const rows = await run(
-        `SELECT ${POST_COLUMNS} FROM community_posts ORDER BY created_at DESC, id DESC`,
-      );
+    async listPosts(filter = { scope: 'all' }) {
+      // 筛选**下推**（#444 §S5）：crop_id / region_code / author / 可见性候选集 / keyset / LIMIT
+      // 全部写进 SQL。旧实现是 `SELECT … ORDER BY …` 全表读回内存再筛，数据量一上来就是
+      // 全表 Seq Scan，且 `LIMIT` 落在过滤之前 ⇒ 页内缺行、游标跳行。
+      const values: unknown[] = [];
+      const bind = (value: unknown): string => {
+        values.push(value);
+        return `$${values.length}`;
+      };
+      const conditions: string[] = [];
+      const authorId = filter.authorId ?? null;
+      if (filter.scope === 'mine' && authorId === null) {
+        throw new Error('listPosts: scope=mine 必须给出 authorId（存储层不接受隐式主体）');
+      }
+      if (filter.scope === 'public') {
+        // 公开列表的**候选集**：`effectiveState()` 只有在行本身是 published 时才可能报 published，
+        // 所以「非 published 一律不可能公开」是等价收窄，不是口径改动；规则版本/摘要复核仍在服务层。
+        conditions.push("visibility = 'published'");
+      } else if (filter.scope === 'mine') {
+        conditions.push("visibility <> 'deleted'");
+        conditions.push(`author_id = ${bind(authorId)}::uuid`);
+      }
+      const cropId = filter.cropId ?? null;
+      if (cropId !== null) conditions.push(`crop_id = ${bind(cropId)}`);
+      const regionCode = filter.regionCode ?? null;
+      if (regionCode !== null) conditions.push(`region_code = ${bind(regionCode)}`);
+      const after = filter.after ?? null;
+      if (after !== null) {
+        // keyset：与 `ORDER BY created_at DESC, id DESC` 同序；行比较在
+        // `community_posts_feed_idx` / `community_posts_visibility_created_idx` /
+        // `community_posts_author_created_idx` 的排序列上可以直接作为索引边界。
+        conditions.push(`(created_at, id) < (${bind(after.createdAt)}::timestamptz, ${bind(after.id)}::uuid)`);
+      }
+      const limit = filter.limit ?? null;
+      // 排序与内存实现的 `compareCreatedAtDescending` 同义：created_at DESC, id DESC
+      // （`id` 是确定性 tie-breaker，缺了它同秒内容翻页会重复/漏行）。
+      const sql = [
+        `SELECT ${POST_COLUMNS} FROM community_posts`,
+        conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`,
+        'ORDER BY created_at DESC, id DESC',
+        limit === null ? '' : `LIMIT ${bind(limit)}::int`,
+      ].filter((part) => part !== '').join(' ');
+      const rows = await run(sql, values);
       return rows.map(postRecordFromRow);
     },
 

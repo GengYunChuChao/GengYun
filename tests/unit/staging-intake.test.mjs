@@ -27,6 +27,41 @@ test('staging uses fixed SQL and whitelist receipt; driver error never leaks SQL
   for(const code of ['G0001','G0004','G0005','ECONNRESET'])await assert.rejects(importIntake({async query(){throw Object.assign(new Error('DO_NOT_PRINT raw SQL postgres://private'),{code});}},id,p),e=>!e.message.includes('DO_NOT_PRINT'));
   await assert.rejects(rollbackIntake({query(){assert.fail('invalid rollback reached SQL');}},id,p.batch_id,id,'bad'),{code:'INVALID_REQUEST'});
 });
+// ---------------------------------------------------------------- 可重试口径（GY-R31 / #7）
+// 负臂（独立成例）：确定性错误不随正臂一起放开 ⇒ 在"改前/改后"两种状态下都必须绿。
+test('staging 故障折叠·负臂：42501/42P01/3D000/28P01/XX000/无 code ⇒ retryable:false（两种状态下都必须绿）',async()=>{
+  const p=fixture(),id=randomUUID();
+  for(const code of ['42501','42P01','3D000','28P01','XX000',undefined]){
+    const label=String(code);
+    await assert.rejects(importIntake({async query(){throw code===undefined?new Error('synthetic intake failure'):Object.assign(new Error('synthetic intake failure'),{code});}},id,p),e=>{
+      assert.equal(e.code,'PROVIDER_OUTCOME_UNKNOWN',label);
+      assert.equal(e.status,503,`${label} 必须保持既有状态码口径`);
+      assert.equal(e.retryable,false,`${label} 是确定性故障，不得谎称可重试`);
+      return true;
+    });
+  }
+});
+// 判据唯一出处是 `services/api/src/db/pool.ts` 的 `isTransientDatabaseError()`；状态码口径**不变**。
+// 正臂：57014 仍是 504 `PROVIDER_TIMEOUT`（可重试），55P03/08xxx/40001/40P01/ECONNREFUSED ⇒ 503 可重试。
+// 负臂：42501/42P01/3D000/28P01/XX000/无 code ⇒ 503 且不可重试（不是时间能解决的）。
+test('staging 故障折叠：瞬时态 ⇒ retryable:true；确定性错误 ⇒ false（状态码不变）',async()=>{
+  const p=fixture(),id=randomUUID();
+  for(const [code,expectCode,status,retryable] of [
+    ['57014','PROVIDER_TIMEOUT',504,true],['55P03','PROVIDER_TIMEOUT',504,true],
+    ['08006','PROVIDER_OUTCOME_UNKNOWN',503,true],['40001','PROVIDER_OUTCOME_UNKNOWN',503,true],
+    ['40P01','PROVIDER_OUTCOME_UNKNOWN',503,true],['ECONNREFUSED','PROVIDER_OUTCOME_UNKNOWN',503,true],
+    ['42501','PROVIDER_OUTCOME_UNKNOWN',503,false],['42P01','PROVIDER_OUTCOME_UNKNOWN',503,false],
+    ['3D000','PROVIDER_OUTCOME_UNKNOWN',503,false],['28P01','PROVIDER_OUTCOME_UNKNOWN',503,false],
+    ['XX000','PROVIDER_OUTCOME_UNKNOWN',503,false],[undefined,'PROVIDER_OUTCOME_UNKNOWN',503,false]]){
+    const label=String(code);
+    await assert.rejects(importIntake({async query(){throw code===undefined?new Error('synthetic intake failure'):Object.assign(new Error('synthetic intake failure'),{code});}},id,p),e=>{
+      assert.equal(e.code,expectCode,label);
+      assert.equal(e.status,status,`${label} 必须保持既有状态码口径`);
+      assert.equal(e.retryable,retryable,`${label} 的 retryable 必须由瞬时判定给出`);
+      return true;
+    });
+  }
+});
 test('staging own database profile rejects source DB and any pg URL options before sockets',()=>{
   const base='postgres://synthetic:DO_NOT_PRINT@127.0.0.1:55431/gengyun_staging_intake_test';
   const client=new pg.Client({connectionString:validateStagingDatabaseUrl(base)});

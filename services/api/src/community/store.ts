@@ -136,6 +136,31 @@ export type PostCommitPatch = Partial<
 
 export type CommentCommitPatch = Partial<Pick<CommentRecord, 'revision' | 'body' | 'visibility' | 'audit_state'>>;
 
+/**
+ * `listPosts` 的**下推筛选**（SQL 实现把每一项都写进 `WHERE`，内存实现逐项等价过滤）。
+ *
+ * 口径与 `GET /posts` 的既有参数一一对应，**没有新增契约参数**：
+ *   - `scope: 'public'` ⇒ 公开列表的**候选集**（`visibility = 'published'`）。规则版本/正文摘要
+ *     复核仍由服务层 `isPubliclyVisible()` 逐行确认——那部分取决于规则层与审核域台账，不是 SQL
+ *     能判定的谓词，所以只把「结构上不可能公开」的行（`private`/`hidden`/`deleted`）挡在库外。
+ *   - `scope: 'mine'` ⇒ 「我的发布」：`visibility <> 'deleted'` + `author_id = authorId`（含未公开版本）。
+ *   - `scope: 'all'` ⇒ **不做任何可见性过滤**，只为测试夹具/诊断保留；生产调用方不得使用。
+ *
+ * 分页是 keyset：`after` 是上一页最后一行（`created_at` + `id`），排序用确定性的
+ * `created_at DESC, id DESC`（`id` 是 tie-breaker，否则同秒内容翻页会重复/漏行）。
+ * `limit` 在 `WHERE` **之后**生效——不存在「先取一页再过滤」那种页内缺行/跳行的读数。
+ */
+export interface ListPostsFilter {
+  scope: 'public' | 'mine' | 'all';
+  /** `scope: 'mine'` 必填（主体自己的 id）；其余 scope 忽略。 */
+  authorId?: string | null;
+  cropId?: string | null;
+  regionCode?: string | null;
+  after?: { createdAt: string; id: string } | null;
+  /** `null` ⇒ 不限制（仅测试夹具/诊断用）。 */
+  limit?: number | null;
+}
+
 /** CAS 失败原因。**注意：已删除（`DELETED`）永远失败**——不提供"复活已删除内容"的开关。 */
 export type CommitFailureReason =
   | 'NOT_FOUND'
@@ -164,7 +189,12 @@ export interface CommunityStore {
     patch: PostCommitPatch,
     moderation: ModerationRecord | null,
   ): Promise<CommitResult<PostRecord>>;
-  listPosts(): Promise<PostRecord[]>;
+  /**
+   * 列表读取。`filter` 的每一项都必须由**存储层**执行（SQL 实现写进 `WHERE`，内存实现等价过滤），
+   * 服务层不得再拿全表结果在内存里筛——那是「筛选未下推」的原始缺陷（#444 §S5）。
+   * 省略参数 = `scope: 'all'`（无可见性过滤、不限制行数），仅供测试夹具/诊断，生产调用方必须显式给筛选。
+   */
+  listPosts(filter?: ListPostsFilter): Promise<PostRecord[]>;
   // ---- 评论 ----
   /**
    * 创建评论：同 id 已存在则不写入；`requireParent` 给定时，还在**同一临界区**内校验父帖
@@ -367,8 +397,33 @@ export function createMemoryCommunityStore(
     async commitPostIfCurrent(id, expected, patch, moderationRecord) {
       return commitPost(id, expected, patch, moderationRecord);
     },
-    async listPosts() {
-      return [...posts.values()].map(clonePost).sort(compareCreatedAtDescending);
+    async listPosts(filter = { scope: 'all' }) {
+      const scope = filter.scope;
+      const authorId = filter.authorId ?? null;
+      const cropId = filter.cropId ?? null;
+      const regionCode = filter.regionCode ?? null;
+      const after = filter.after ?? null;
+      const limit = filter.limit ?? null;
+      if (scope === 'mine' && authorId === null) {
+        throw new Error('listPosts: scope=mine 必须给出 authorId（存储层不接受隐式主体）');
+      }
+      const matched = [...posts.values()]
+        .filter((record) => {
+          if (scope !== 'all') {
+            if (record.visibility === 'deleted') return false;
+            if (scope === 'public' && record.visibility !== 'published') return false;
+            if (scope === 'mine' && record.author_id !== authorId) return false;
+          }
+          if (cropId !== null && record.crop_id !== cropId) return false;
+          if (regionCode !== null && record.region_code !== regionCode) return false;
+          if (after === null) return true;
+          // 与 SQL 的 `(created_at, id) < ($n, $m)` 同义：created_at DESC 上的 keyset。
+          return record.created_at < after.createdAt
+            || (record.created_at === after.createdAt && record.id < after.id);
+        })
+        .sort(compareCreatedAtDescending)
+        .map(clonePost);
+      return limit === null ? matched : matched.slice(0, limit);
     },
 
     async insertComment(record, moderationRecord, requireParent) {
