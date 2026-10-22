@@ -377,22 +377,33 @@ const OPAQUE_ALLOWLIST = [
  *   - reports 的 `UPDATE … detail=NULL`、likes/idempotency 的 DELETE 原样保留（RETURNING 3 条不变）。
  * 合计：字面量 150→153、UPDATE 25→26、SELECT 69→71、DELETE 29（不变）、
  * RETURNING 61→59（-2，两条软删 UPDATE 的 RETURNING 消失）、columnRequirements 1212→1222。
+ *
+ * R31-F13（**行级作者注销引用**，迁移 0030，2026-10-22）第三次重算：注销清理在**同一事务**里
+ * 多了"把作者指针换成行内匿名引用"这一步（`store-pg.ts::purgeOwnerData`），另有两张表的列清单
+ * 各多一列 `anonymized_author_ref`。逐条核对，**没有新增表、没有新增授权缺口**：
+ *   1. `UPDATE community_posts SET author_id = NULL, anonymized_author_ref = $2 … RETURNING id`（+UPDATE 1、+RETURNING 1）
+ *   2. `UPDATE community_comments` 同形（+UPDATE 1、+RETURNING 1）
+ *   3. `POST_COLUMNS` / `COMMENT_COLUMNS` 各 +1 列（`anonymized_author_ref`）：两条常量各被 3 条语句引用
+ *      ⇒ 列要求 +6；新语句自身引用 `id`/`author_id`/`anonymized_author_ref` ⇒ 再 +6。
+ * 合计：字面量 153→155、UPDATE 26→28、RETURNING 59→61、columnRequirements 1222→**1234**
+ * （= 1222 + 6 + 6）、逐文件 `community` 38→**40**；SELECT/DELETE/INSERT 与引用表数**不变**
+ * （两张表早已在清单里，且两列都已按 0030 授权 —— 缺一列 `sql-column-coverage` 会立刻判红）。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 153,
-  statements: { INSERT: 27, UPDATE: 26, SELECT: 71, DELETE: 29 },
-  returningClauses: 59,
+  sqlLiterals: 155,
+  statements: { INSERT: 27, UPDATE: 28, SELECT: 71, DELETE: 29 },
+  returningClauses: 61,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1222,
+  columnRequirements: 1234,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 38,
+  community: 40,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -463,15 +474,21 @@ const TABLE_WIDE_COLUMN = '*';
  *     `RETURNING job_id`（真库匹配 0 行不报错，故读回命中行数）⇒ **不新增 SQL 字面量**、不改语句条数，
  *     只把 RETURNING 74→**75**、列要求 1589→**1590**（`public.moderation_decisions.job_id` 的 SELECT
  *     面，已在 `20-login-roles.sql` 列级授权清单内）、covered 1535→**1536**，缺口仍 0。
+ *   · 第三次变化（R31-F13 行级作者注销引用 / 迁移 0030）：社区域注销清理新增两条
+ *     `UPDATE … SET author_id = NULL, anonymized_author_ref = $2 … RETURNING id`，两张表的列常量
+ *     各多一列。⇒ 字面量 245→**247**、UPDATE 42→**44**、RETURNING 75→**77**、
+ *     列要求 1590→**1602**、covered 1536→**1548**（缺口仍 0：两列已在 `20-login-roles.sql` 与
+ *     `90-assert` 成对授权）、逐文件 `community` 38→**40**；INSERT/SELECT/DELETE、引用表 41、
+ *     行锁 25 全部不变（新语句只碰已登记的两张表，没有新增 `*` 面、没有行锁）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 18,
-  sqlLiterals: 245,
-  statements: { INSERT: 38, UPDATE: 42, SELECT: 133, DELETE: 32 },
-  returningClauses: 75,
+  sqlLiterals: 247,
+  statements: { INSERT: 38, UPDATE: 44, SELECT: 133, DELETE: 32 },
+  returningClauses: 77,
   onConflictClauses: 23,
   selectStar: 15,
   qualifiedStar: 4,
@@ -479,8 +496,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 41,
-  columnRequirements: 1590,
-  coveredRequirements: 1536,
+  columnRequirements: 1602,
+  coveredRequirements: 1548,
   ledgerExemptions: 33,
   rowLockRequirements: 25,
   rowLockExemptions: 1,
@@ -492,7 +509,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 38,
+  'community': 40,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

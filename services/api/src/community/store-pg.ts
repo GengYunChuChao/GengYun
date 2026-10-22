@@ -67,6 +67,7 @@ import type {
 } from './store.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
 import { redactPersonalInfo } from './personal-info.ts';
+import { ANONYMIZED_AUTHOR_REF_PATTERN, createAnonymizedAuthorRef } from './authors.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
 export interface SqlRunner {
@@ -105,10 +106,14 @@ export function classifyCommunityDatabaseError(error: unknown): never {
 /** `awaitIdempotencySettled` 的轮询间隔（与内存实现的有界等待同口径：25ms、不忙等）。 */
 const SETTLE_POLL_INTERVAL_MS = 25;
 
+// `anonymized_author_ref` 属迁移 0030：读路径要用它投影注销作者（`author_id ?? anonymized_author_ref`），
+// 因此必须在列清单里（列级 SELECT 授权同步在 `20-login-roles.sql` / `90-assert-least-privilege.sql`）。
 const POST_COLUMNS =
-  'id, revision, author_id, title, body, crop_id, region_code, media_ids, linked_knowledge_type,'
-  + ' linked_knowledge_id, linked_knowledge_revision, visibility, audit_state, created_at, updated_at';
-const COMMENT_COLUMNS = 'id, revision, post_id, author_id, body, visibility, audit_state, created_at';
+  'id, revision, author_id, anonymized_author_ref, title, body, crop_id, region_code, media_ids,'
+  + ' linked_knowledge_type, linked_knowledge_id, linked_knowledge_revision, visibility, audit_state,'
+  + ' created_at, updated_at';
+const COMMENT_COLUMNS =
+  'id, revision, post_id, author_id, anonymized_author_ref, body, visibility, audit_state, created_at';
 const REPORT_COLUMNS =
   'id, revision, reporter_id, target_type, target_id, target_revision, state, reason_code, detail, created_at';
 const MODERATION_COLUMNS =
@@ -151,12 +156,30 @@ function asLinkedKnowledge(row: Record<string, unknown>): KnowledgeTarget | null
   return { type: closedValue(type, KNOWLEDGE_TYPE_VALUES, '知识关联类型'), id, revision };
 }
 
+/**
+ * 可空的内部作者指针。
+ *
+ * **这是 0030 之前的一个真坑**：旧写法 `String(row.author_id)` 把 SQL NULL 变成字符串 `'null'`，
+ * 于是 `service.ts` 会拿 `'null'` 去 `authors.resolve()` 投影出一个"耕云用户xxxx"的活跃假名 ——
+ * 已注销内容看起来仍有作者，且 `scope='mine'` 的 `record.author_id === user.userId` 恒为 false
+ * （这部分"碰巧正确"）。现在显式保留 NULL，让"没有作者 id"与"作者 id 恰好叫 null"不可能混淆。
+ */
+function nullableUuid(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+/** 行内注销引用（迁移 0030）；NULL = 未注销行。形状由库侧 CHECK 保证，这里只做类型归一。 */
+function nullableAnonRef(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
 /** 数据库行 → 帖子记录（字段名与记录一致；未知闭集值按内部不变式违反处理）。 */
 export function postRecordFromRow(row: Record<string, unknown>): PostRecord {
   return {
     id: String(row.id),
     revision: Number(row.revision),
-    author_id: String(row.author_id),
+    author_id: nullableUuid(row.author_id),
+    anonymized_author_ref: nullableAnonRef(row.anonymized_author_ref),
     title: String(row.title),
     body: String(row.body),
     crop_id: row.crop_id === null || row.crop_id === undefined ? null : String(row.crop_id),
@@ -175,7 +198,8 @@ export function commentRecordFromRow(row: Record<string, unknown>): CommentRecor
     id: String(row.id),
     revision: Number(row.revision),
     post_id: String(row.post_id),
-    author_id: String(row.author_id),
+    author_id: nullableUuid(row.author_id),
+    anonymized_author_ref: nullableAnonRef(row.anonymized_author_ref),
     body: String(row.body),
     visibility: closedValue(row.visibility, VISIBILITY_VALUES, '可见性'),
     audit_state: closedValue(row.audit_state, AUDIT_STATE_VALUES, '审核状态'),
@@ -804,17 +828,37 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
      *    删除语义（旧路径语义一行未动）。
      * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 只清 `detail`**（行与 state 保留，
      *    处置轨迹是审核域留痕）；**本域幂等台账**按 `scope` 前缀清空。
+     * 6. **行级作者指针替换（迁移 0030）**：同一事务内把命中行的 `author_id` 置 NULL、写入随机
+     *    注销引用 `anonymized_author_ref`（全行共用一串，逐主体独立）。这是 F13「内部作者换
+     *    不可反查的注销引用、删除账号映射」的落地点：引用**落在行上** ⇒ 重启/多副本读同一行得
+     *    同一串（不再依赖 `authors.ts` 的进程内 Map），也不再有"删账号级联删内容"的风险
+     *    （`author_id = NULL` 不参与 `ON DELETE CASCADE`）。
      *
      * 计数（见 `CommunityOwnerPurgeCounts`）：`records` 是**真实改动/删除**的行数，
-     * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，⛔ 不用一个合计数字冒充"保留也完成了"。
+     * `retained`/`redacted`/`hiddenMedia` 分列保留与隐藏，`authorRefsReplaced` 单列"作者指针
+     * 替换了几行"（⛔ 三者不混算，也不用一个合计数字冒充"保留也完成了"）。
      */
-    async purgeOwnerData(ownerId) {
+    async purgeOwnerData(ownerId, options = {}) {
       return withTransaction<CommunityOwnerPurgeCounts>(pool, async (sql) => {
         const stamp = new Date().toISOString();
         let records = 0;
         let retained = 0;
         let redacted = 0;
         let hiddenMedia = 0;
+        let authorRefsReplaced = 0;
+        /**
+         * 注销引用（全行共用）。三态见 `CommunityOwnerPurgeOptions`：
+         *   · `undefined`（调用方没表态）⇒ 兜底生成（同一个纯函数）—— 只要要写
+         *     `author_id = NULL`，就**必须**同时写入合法引用，否则撞迁移 0030 的
+         *     `num_nonnulls(author_id, anonymized_author_ref) = 1`；
+         *   · `null`（调用方明确说拿不到引用）⇒ **不替换**行级作者，由端口如实 blocked；
+         *   · 字符串 ⇒ 必须形状合法，否则直接抛错（不静默换串：那会让引用分叉）。
+         */
+        const providedRef = options.anonymizedAuthorRef;
+        const replaceAuthorRefs = providedRef !== null;
+        if (typeof providedRef === 'string' && !ANONYMIZED_AUTHOR_REF_PATTERN.test(providedRef)) {
+          throw new Error('注销引用形状不合约定（拒绝写入：迁移 0030 的 CHECK 会拒绝它）');
+        }
         // 先锁住本主体的内容行再逐行判定：清除规则在 JS 里（纯函数），
         // 同一事务内完成"读 → 判 → 写"，不产生检查-写入窗口。
         const posts = (await sql.query(
@@ -824,8 +868,11 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
             FOR UPDATE`,
           [ownerId],
         )).rows;
+        // 命中行 id：事务末尾**一条** UPDATE 统一换作者指针（见下方 `author_ids` 段）。
+        const postIds: string[] = [];
         for (const row of posts) {
           const id = String(row.id);
+          postIds.push(id);
           const title = redactPersonalInfo(String(row.title));
           const body = redactPersonalInfo(String(row.body));
           const media = asTextArray(row.media_ids);
@@ -861,19 +908,55 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
             FOR UPDATE`,
           [ownerId],
         )).rows;
+        const commentIds: string[] = [];
         for (const row of comments) {
+          const id = String(row.id);
+          commentIds.push(id);
           const body = redactPersonalInfo(String(row.body));
           if (body.removed > 0) {
             await sql.query(
               `UPDATE community_comments
                   SET body = $2, revision = revision + 1
                 WHERE id = $1::uuid`,
-              [String(row.id), body.text],
+              [id, body.text],
             );
             records += 1;
             redacted += 1;
           } else {
             retained += 1;
+          }
+        }
+        // ---- 行级作者指针替换（迁移 0030 / F13「内部作者换注销引用、删除账号映射」）----
+        //
+        // 与上面"逐行脱敏"分开成**每表一条**语句，理由（设计 §3）：
+        //   · 一条 `WHERE id = ANY($1)` 就走一次索引扫描，比"每行再发一条 UPDATE"便宜；
+        //   · 引用只生成一次、全行共用 ⇒ 同一主体绝不分叉成两个引用（F13「不混为一个账号」的镜像要求）；
+        //   · 幂等：`WHERE author_id = <主体>` 命中 0 行 ⇒ 重放不会把新生成的引用写进去。
+        // ⚠️ 不进 `records`：替换作者指针不是"改动/删除正文"，单列 `authorRefsReplaced`。
+        // ⚠️ `visibility='deleted'` 的行**不在**这两条 SELECT 里 ⇒ 它们的 `author_id` 保持原样
+        //    （"作者主动删除的行原样跳过"这一既有语义一行未动）。这是本片**如实登记的残留**：
+        //    已删除行仍持有原账户 id，清零属待裁口径，本片不做、也不谎称全表清零。
+        if (replaceAuthorRefs && (postIds.length > 0 || commentIds.length > 0)) {
+          const ref = providedRef ?? createAnonymizedAuthorRef();
+          if (postIds.length > 0) {
+            const replacedPosts = (await sql.query(
+              `UPDATE community_posts
+                  SET author_id = NULL, anonymized_author_ref = $2
+                WHERE id = ANY($1::uuid[])
+                RETURNING id`,
+              [postIds, ref],
+            )).rows;
+            authorRefsReplaced += replacedPosts.length;
+          }
+          if (commentIds.length > 0) {
+            const replacedComments = (await sql.query(
+              `UPDATE community_comments
+                  SET author_id = NULL, anonymized_author_ref = $2
+                WHERE id = ANY($1::uuid[])
+                RETURNING id`,
+              [commentIds, ref],
+            )).rows;
+            authorRefsReplaced += replacedComments.length;
           }
         }
         const reports = (await sql.query(
@@ -895,7 +978,7 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
           `DELETE FROM community_idempotency WHERE scope LIKE $1::text RETURNING scope`,
           [`${ownerId}\n%`],
         )).rows;
-        return { records, idempotency: idempotency.length, retained, redacted, hiddenMedia };
+        return { records, idempotency: idempotency.length, retained, redacted, hiddenMedia, authorRefsReplaced };
       });
     },
 

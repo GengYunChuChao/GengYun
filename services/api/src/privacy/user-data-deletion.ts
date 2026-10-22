@@ -140,6 +140,14 @@ export interface OwnerPurgeCounts {
   /** 社区域：被移除的媒体引用条数（不能可靠脱敏）。 */
   hiddenMedia?: number;
   /**
+   * 社区域（迁移 0030 / F13 行级注销引用）：**行级作者指针被换成注销引用的行数**。
+   *
+   * 与其它读数分开的理由：它既不是"删了几行"（不并进 `records`），也不是"保留了几行正文"
+   * （不并进 `retained`）；证据串单列 `<module>:author-refs-replaced:<n>`，否则审计看不出
+   * "账号映射到底替换了没有、替换了几行"——那正是上一版 blocked 的那一项。
+   */
+  authorRefsReplaced?: number;
+  /**
    * 该模块**未完成/无法判定**的处理项数（0/缺省 = 无）。> 0 时处理器必须返回
    * `onlineState: 'blocked'` + 安全错误码，⛔ 不得用其它已完成读数冒充 `completed`。
    */
@@ -519,6 +527,11 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const retained = typeof purged.retained === 'number' ? purged.retained : null;
       const redacted = typeof purged.redacted === 'number' ? purged.redacted : null;
       const hiddenMedia = typeof purged.hiddenMedia === 'number' ? purged.hiddenMedia : null;
+      const authorRefsReplaced = typeof purged.authorRefsReplaced === 'number'
+        && Number.isSafeInteger(purged.authorRefsReplaced)
+        && purged.authorRefsReplaced >= 0
+        ? purged.authorRefsReplaced
+        : null;
       // 未完成/无法判定的处理项：> 0 ⇒ 该模块**不得**报 completed（见 `OwnerPurgeCounts.blocked`）。
       const blocked = typeof purged.blocked === 'number' && Number.isSafeInteger(purged.blocked) && purged.blocked > 0
         ? purged.blocked
@@ -540,6 +553,10 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       if (retained !== null) evidenceRef = `${evidenceRef};${module}:retained:${retained}`;
       if (redacted !== null) evidenceRef = `${evidenceRef};${module}:redacted:${redacted}`;
       if (hiddenMedia !== null) evidenceRef = `${evidenceRef};${module}:media-hidden:${hiddenMedia}`;
+      // 迁移 0030：行级作者指针替换读数（0 也要写 —— "替换了 0 行"是可与"没做"区分的读数）。
+      if (authorRefsReplaced !== null) {
+        evidenceRef = `${evidenceRef};${module}:author-refs-replaced:${authorRefsReplaced}`;
+      }
       if (blocked > 0) {
         evidenceRef = `${evidenceRef};${module}:blocked:${blocked}`;
         if (blockedReasons.length > 0) {
@@ -575,6 +592,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         ...(retained === null ? {} : { retained }),
         ...(redacted === null ? {} : { redacted }),
         ...(hiddenMedia === null ? {} : { hiddenMedia }),
+        ...(authorRefsReplaced === null ? {} : { authorRefsReplaced }),
         ...(blocked > 0 ? { blocked, blockedReasons } : {}),
       });
       evidenceByRequest.set(requestId, { ...(evidenceByRequest.get(requestId) ?? {}), [module]: evidenceRef });
@@ -601,13 +619,15 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   );
   // #15 社区域（R31-S6 / F13 保留规则）：**注入才注册**（闭集同步追加，见 `COMMUNITY_DELETION_MODULE` 注释）。
   // 走 `purgeOwnerData` ⇒ 证据串带 `community:online-purged:<真实改动行数>`、
-  // `community:idempotency-purged:<台账行数>`，以及 F13 的三条结果读数
-  // `community:retained:<保留行数>` / `community:redacted:<脱敏行数>` / `community:media-hidden:<移除媒体数>`。
+  // `community:idempotency-purged:<台账行数>`，以及 F13 的四条结果读数
+  // `community:retained:<保留行数>` / `community:redacted:<脱敏行数>` / `community:media-hidden:<移除媒体数>`
+  // / `community:author-refs-replaced:<行级作者指针替换行数>`（迁移 0030）。
   // 帖子/评论**保留可见性**（安全正文不因注销消失；含个人信息的正文改写后退出公开面等重审），
-  // 不能可靠脱敏的媒体引用移除，点赞物理删，举报只清 `detail`、保留 `state` —— 判断依据见
+  // 不能可靠脱敏的媒体引用移除，点赞物理删，举报只清 `detail`、保留 `state`，
+  // 作者指针换成**行内**随机注销引用（重启/多副本仍匿名）—— 判断依据见
   // `community/store.ts::purgeOwnerData` 与 `community/purge.ts` 的注释。
-  // ⚠️ 该端口还会因"行级内部作者引用无法替换/注销引用未持久化"返回 `blocked`；那部分**不会**被
-  // 这里的保留计数洗成 completed。
+  // ⚠️ 该端口仍可能在两种情况下返回 `blocked`（能力缺失 / 引用生成失败），那部分**不会**被
+  // 这里的保留计数洗成 completed；正常路径（能力在、引用写成功）`blocked = 0`。
   if (input.communityStore !== undefined) {
     coordinator.registerModule(
       COMMUNITY_DELETION_MODULE,

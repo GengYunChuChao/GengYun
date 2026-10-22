@@ -1416,7 +1416,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "1023-1027"
+          "lines": "1047-1051"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1550,8 +1550,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "getComment",
-          "lines": "1353-1357"
+          "symbol": "async getComment(actor: unknown, id: unknown): Promise<Comment> {",
+          "lines": "1381-1385"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1631,8 +1631,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "likePosts",
-          "lines": "1474-1476"
+          "symbol": "async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1502-1502"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1658,8 +1658,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "unlikePosts",
-          "lines": "1478-1480"
+          "symbol": "async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1506-1506"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1685,8 +1685,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "likeComments",
-          "lines": "1482-1484"
+          "symbol": "async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1510-1510"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1712,8 +1712,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "unlikeComments",
-          "lines": "1486-1488"
+          "symbol": "async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1514-1514"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1766,8 +1766,8 @@
        },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "getOwnReport",
-          "lines": "1531-1537"
+          "symbol": "async getOwnReport(actor: unknown, id: unknown): Promise<Report> {",
+          "lines": "1559-1565"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",

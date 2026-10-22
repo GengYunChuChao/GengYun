@@ -1553,9 +1553,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         }),
   };
   // #15 社区域（R31-S6 / F13 保留规则）：**同一份**社区 store ＋ **同一个**作者目录 ⇒ 一个端口。
-  // 端口内做两件事并如实分账：清社区行（`purgeOwnerData`：保留/脱敏/媒体）＋ 把作者投影换成
-  // 随机注销引用（`AuthorDirectory.anonymize`）。未完成项（行级 author_id 受 FK/列级授权约束、
-  // 注销引用未持久化）由端口计入 `blocked`，⛔ 不用保留行数冒充 completed。
+  // 端口内做三件事并如实分账：清社区行（`purgeOwnerData`：保留/脱敏/媒体）＋ 把作者投影换成
+  // 随机注销引用（`AuthorDirectory.anonymize`）＋ 把**行级** `author_id` 换成行内匿名引用
+  // （迁移 0030：`anonymized_author_ref`，与存储清理同一事务）。两条旧原因码
+  // （`author-row-reference-not-replaced` / `author-reference-not-durable`）因此不再出现；
+  // 只在**能力缺失/生成失败**（`author-reference-unavailable` / `-failed`）时仍如实 blocked，
+  // ⛔ 不用保留行数冒充 completed。
   const communityPurgePort = createCommunityOwnerPurgePort({
     store: communityStore,
     authors: communityAuthors,

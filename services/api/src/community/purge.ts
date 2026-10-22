@@ -8,26 +8,41 @@
  *   - 装配（`app.ts`）与测试必须走**同一条路**，否则测的就不是生产路径；
  *   - `blocked` 的判定要基于**两者的真实结果**，集中在这里才不会在各处漂移。
  *
- * ## blocked：哪些算"未完成"（如实计数，不计入 completed）
+ * ## 落地点（R31-F13 后续切片，迁移 0030）
  *
- * 1. `author-row-reference-not-replaced`：行级内部作者列（`community_posts.author_id` /
- *    `community_comments.author_id`）仍是**原账户 id**。这不是实现偷懒，而是 schema/授权约束：
- *    两列都是 `uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE`（迁移 `0022`），
- *    且运行时角色对两表的 `UPDATE` 列级授权**不含 `author_id`**（`deploy/postgres-cvm/sql/
- *    20-login-roles.sql`）；本片**不新增迁移、不改授权** ⇒ 无法把行级作者改成随机引用。
- *    投影层已经换成随机注销引用（`AuthorDirectory.anonymize`），但这不等于 F13 的
- *    「内部作者换注销引用、删除账号映射」全部完成 ⇒ 如实记 blocked。
- * 2. `author-reference-not-durable`：注销引用只存在进程内（阶段 1 本地假名投影），
- *    重启即丢。author_links/public_authors 未接线、本片不新增迁移 ⇒ 未持久化。
- * 3. `author-reference-unavailable` / `author-reference-failed`：注入的作者目录没有
- *    `anonymize` 能力，或调用失败 ⇒ 投影也没换成注销引用（更严重，但仍如实 blocked）。
+ * 上一版（PR #474）如实 blocked 了两项，因为当时没有落点：
+ *   1. `author-row-reference-not-replaced`：`community_posts/comments.author_id` 是
+ *      `uuid NOT NULL REFERENCES users ON DELETE CASCADE`，且运行时的 `UPDATE` 列级授权不含
+ *      `author_id` ⇒ 无法把行级作者换成注销引用；
+ *   2. `author-reference-not-durable`：注销引用只在 `authors.ts` 的进程内 Map 里，重启即丢。
+ *
+ * 本片把两者**同时**解决，因此两个原因码在正常路径上**不再出现**：
+ *   - 迁移 0030：`author_id` 可空 + 行内列 `anonymized_author_ref`（CHECK：恰好一个非空）；
+ *   - 授权：`20-login-roles.sql` 的两表 `SELECT`/`UPDATE` 列清单补上这两列；
+ *   - 写路径：`store.purgeOwnerData(ownerId, { anonymizedAuthorRef })` 在同一事务里
+ *     `author_id = NULL, anonymized_author_ref = <ref>`；
+ *   - 读路径：`service.ts` 用 `author_id ?? anonymized_author_ref` 投影，`authors.resolve()`
+ *     对**行内引用**直接投影 ⇒ 不依赖任何进程内状态。
+ *
+ * ## 仍然如实 blocked 的两项（能力缺失/调用失败，不谎称完成）
+ *
+ *   - `author-reference-unavailable`：注入的作者目录**没有** `anonymize` 能力 ⇒ 生成不出
+ *     注销引用（也就无法安全地把 `author_id` 置空：那会写出"两个作者字段都空"的行，
+ *     撞 0030 的 CHECK）。此时**不替换**行级作者，如实 blocked。
+ *   - `author-reference-failed`：`anonymize` 抛错，或返回的引用**形状不合法**
+ *     （`^gy-anon-[0-9a-f]{16}$`，与库侧 CHECK 同源）。同上，不替换、如实 blocked。
+ *
+ * 另有一条**防御性**判据（只在存储层实际没替换时才可能触发）：
+ * `author-row-reference-not-replaced`。它不是"本片没做"，而是"这一路存储实现没有把行替换掉"
+ * —— 这种"返回了计数却没写"的静默谎报，正是 F13 要抓的东西，所以码保留、正常路径恒不触发。
  *
  * 计数口径：`blocked` 是**未完成的处理项数**（不是行数）。一个主体的作者引用问题算 1 项，
- * 具体缺什么写在 `blockedReasons` 里；行级读数（retained/redacted/hiddenMedia）另列，
- * ⛔ 不把"保留了多少行"混算成"完成了多少"。
+ * 具体缺什么写在 `blockedReasons` 里；行级读数（retained/redacted/hiddenMedia/authorRefsReplaced）
+ * 另列，⛔ 不把"保留了多少行"混算成"完成了多少"。
  */
 import type { AuthorDirectory } from './types.ts';
 import type { CommunityOwnerPurgeCounts, CommunityStore } from './store.ts';
+import { ANONYMIZED_AUTHOR_REF_PATTERN } from './authors.ts';
 
 /** 端口返回值：存储分表计数 + 注销装配层补的 blocked 读数。 */
 export interface CommunityOwnerPurgeResult extends CommunityOwnerPurgeCounts {
@@ -44,9 +59,23 @@ export interface CommunityOwnerPurgePort {
 }
 
 export const AUTHOR_REFERENCE_BLOCKED_REASONS = Object.freeze({
+  /**
+   * 行级 `author_id` **仍是原账户 id**。
+   *
+   * 迁移 0030 之后这是**防御性**判据：只有"存储层返回了计数却没真的替换行"才会触发
+   * （正常路径由 `authorRefsReplaced` 与存储自身的同一事务写入保证）。
+   */
   ROW_REFERENCE: 'author-row-reference-not-replaced',
+  /**
+   * 注销引用**未持久化**（只有进程内 Map）。
+   *
+   * 0030 之后引用落在行上 ⇒ 正常路径不再出现；保留码位是为了让"某个存储实现把引用只放进内存"
+   * 这种回退仍可被如实上报（届时它必然同时命中 `ROW_REFERENCE`）。
+   */
   NOT_DURABLE: 'author-reference-not-durable',
+  /** 作者目录没有 `anonymize` 能力 ⇒ 生成不出注销引用（能力缺失，如实 blocked）。 */
   UNAVAILABLE: 'author-reference-unavailable',
+  /** `anonymize` 抛错或返回形状不合法的引用（调用失败，如实 blocked）。 */
   FAILED: 'author-reference-failed',
 });
 
@@ -63,28 +92,47 @@ export function createCommunityOwnerPurgePort(options: {
       // ⛔ 不在装配期假装"能清"，也不静默返回 0 行。
       throw new Error('社区域存储未实现按主体清理（purgeOwnerData）：拒绝假装清空');
     }
-    const counts = await purge.call(store, ownerId);
     const blockedReasons: string[] = [];
-    let blocked = 0;
+    // ---- 先拿注销引用（顺序重要：引用要随同一次存储事务写进行里）----
+    let anonymizedRef: string | null = null;
+    const anonymize = authors.anonymize;
+    if (typeof anonymize !== 'function') {
+      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.UNAVAILABLE);
+    } else {
+      try {
+        const author = await anonymize.call(authors, ownerId);
+        const candidate = typeof author?.display_id === 'string' ? author.display_id : '';
+        if (ANONYMIZED_AUTHOR_REF_PATTERN.test(candidate)) {
+          anonymizedRef = candidate;
+        } else {
+          // 形状不合约定 ⇒ 写进库里必然撞 0030 的 CHECK；这里就判失败，不带着坏值去写。
+          blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.FAILED);
+        }
+      } catch {
+        // 不把异常上抛：存储侧尚未执行，没有半成品；但"生成不出引用"必须如实进 blocked。
+        blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.FAILED);
+      }
+    }
+    // 拿不到引用就传 `null`（**明确**表态，不是"没传"）：存储侧因此完全不替换行级作者 ——
+    // 否则会写出"两个作者字段都空"的行，撞迁移 0030 的 CHECK。
+    // ⛔ 不要写成 `anonymizedRef === null ? undefined : {...}`：`undefined` 的语义是
+    // "调用方没表态，请兜底生成"，那会把"能力缺失"悄悄变成"看起来完成了"。
+    const counts = await purge.call(store, ownerId, { anonymizedAuthorRef: anonymizedRef });
     const hasRetainedContent = counts.retained + counts.redacted > 0;
     if (hasRetainedContent) {
       // 有需要保留/去身份的内容 ⇒ 作者引用这条要求才真正被触发。
-      blocked += 1;
-      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
-      blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.NOT_DURABLE);
-      const anonymize = authors.anonymize;
-      if (typeof anonymize !== 'function') {
-        blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.UNAVAILABLE);
-      } else {
-        try {
-          await anonymize.call(authors, ownerId);
-        } catch {
-          // 不把异常上抛：存储侧已提交的保留/脱敏结果必须如实带出；失败项计入 blocked。
-          blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.FAILED);
-        }
+      if (counts.authorRefsReplaced === 0) {
+        // 内容还在该主体名下：要么本次没传引用（上面已记 UNAVAILABLE/FAILED），
+        // 要么存储实现声称清完了却没写行。两种都**不得**判 completed。
+        // ⚠️ 这里**不再**追加 `NOT_DURABLE`：迁移 0030 之后"引用不持久"不再是独立事实
+        // （引用要么写进行里、要么根本没写），再报一次只会把"生成不出来"这唯一真因埋进三条码里。
+        blockedReasons.push(AUTHOR_REFERENCE_BLOCKED_REASONS.ROW_REFERENCE);
       }
     }
-    return { ...counts, blocked, blockedReasons };
+    // 去重（同一原因不重复计数）：blocked 是"处理项数"，不是"命中的判据条数"。
+    const uniqueReasons = [...new Set(blockedReasons)];
+    const blocked = uniqueReasons.length > 0 ? 1 : 0;
+    return { ...counts, blocked, blockedReasons: uniqueReasons };
   }
 
   return {
