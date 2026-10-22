@@ -161,10 +161,17 @@
   `0028_moderation_persistence.sql`）占用 ⇒ 本片取 **`0029`**，**未改号、未造占位迁移**。
   按本树实测（`git ls-files`）：迁移 **28** 个（`0001..0027` ＋ `0029`；`0028` 是**在途缺号**、不是本片跳号）、
   `rollback/` **27** 个（`0002..0027` ＋ `0029`，仍无 `0001`）、`deploy/` 在册仍 **31** 个
-  ⇒ 读数由 27／26／31 变为 **28／27／31**。⚠️ 断号期会让
-  `tests/integration/migrations-negative-pg.mjs` 的「1..max 连续无缺号」真库臂转红（缺 `0028`，实测
-  `AssertionError: 迁移版本号必须在 1..29 上连续无缺号`），属**跨 PR 结构性缺口**、不是本片缺陷，
-  已在 PR #419 评论里如实登记；`#434` 合入 main 后自愈。⛔ 未为了过门禁改号或造占位迁移。
+  ⇒ 读数由 27／26／31 变为 **28／27／31**。⚠️ 断号期会让「`1..max` 连续无缺号」判据转红（缺 `0028`）：
+  `tests/integration/migrations-negative-pg.mjs`、`ocr-jobs-pg.mjs`、`recognitions-pg.mjs`、`speech-pg.mjs`
+  四份脚本各有一条同形判据；本 PR 的 CI 上实测 **`real-pg-17.11`** 与 **`auth-privacy-postgres-17.11`**
+  两条 job 因此判红，原始错误为
+  `AssertionError [ERR_ASSERTION]: 迁移版本号必须在 1..29 上连续无缺号（缺号＝发现器静默漏项：0028）`。
+  这是**并行 PR 的临时缺号**（`0028` 属在途 `#434`），不是发现器漏项、也不是本片代码缺陷；已按
+  `.pg17/ruling-r31-migration-gap-0028-20261022.md` 的裁定**接受为跨 PR 已知缺口并如实登记**：
+  ⛔ 不改那 4 条共享守卫、⛔ 不加断号 allowlist、⛔ 不给本片改号。
+  **复跑计划**：`#434` 合入 main 后，本分支 `git merge --no-ff origin/main`（⛔ 不 rebase、不 force）
+  ⇒ `0028` 随 main 进树、断号消失 ⇒ 复跑 `real-pg-17.11`／`auth-privacy-postgres-17.11` 两条 job
+  与上述 4 份脚本，期望全绿；在此之前 PR #419 维持 OPEN、不请求合并。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
