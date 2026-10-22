@@ -278,9 +278,9 @@ export async function conversationFixture(t, options = {}) {
   const config = {
     ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: options.logLevel ?? 'silent' }),
     ...(options.real === true ? { executionMode: 'real', requiresRealCredentials: true } : {}),
-    // GY-R28 W7（#12）：显式覆盖 `aiProviders`（负控制用：验证"配了模型但未接账本/非 real ⇒ 仍走确定性
+    // GY-R28 W7（#12）：显式覆盖 `chatProvider`（负控制用：验证"配了模型但未接账本/非 real ⇒ 仍走确定性
     // 回答器"这条 fail-closed 分支）。不传时保持 `loadConfig` 的解析结果（默认 `chat: null`）。
-    ...(options.chat === undefined ? {} : { aiProviders: { chat: options.chat } }),
+    ...(options.chat === undefined ? {} : { chatProvider: options.chat }),
   };
   const app = buildApp({
     config,

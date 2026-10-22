@@ -145,6 +145,65 @@ declare module '*packages/reference/index.mjs' {
     state: Record<string, unknown>;
   }
 
+  /** GY-I08 阻断类别码列表（`deterministic.mjs` 的 `BLOCK_CODE_LIST`，顺序与域库一致）。 */
+  export const BLOCK_CODE_LIST: readonly string[];
+
+  /** GY-I08 匹配终态闭集（`deterministic.mjs` 的 `MATCH_STATES`，与契约 MatchState 同集）。 */
+  export const MATCH_STATES: readonly string[];
+
+  /** `evaluateExecutableAdvice` 的返回形状（`deterministic.mjs`）。 */
+  export interface ExecutableAdvice {
+    executable: boolean;
+    applicable: boolean;
+    blocked: readonly string[];
+    block_codes: readonly string[];
+    reasons: readonly string[];
+    rule_version: string;
+    feature_switch: Record<string, unknown>;
+  }
+
+  /** `evaluateDoseBoundary` 的返回形状（`deterministic.mjs`）：用量卡与建议同一次判定产出。 */
+  export interface DoseBoundary {
+    executable: boolean;
+    renderable: boolean;
+    dose_count: number;
+    block_codes: readonly string[];
+    reasons: readonly string[];
+    rule_version: string;
+    dose_card: Record<string, unknown>;
+    advice: ExecutableAdvice;
+    feature_switch: Record<string, unknown>;
+  }
+
+  /** `evaluateRegistrationMatch` 的返回形状：非 `matched` 时 `matched` 恒为 `null`。 */
+  export interface RegistrationMatch {
+    state: string;
+    matched: Record<string, unknown> | null;
+    block_codes: readonly string[];
+    reasons: readonly string[];
+    rule_version: string;
+  }
+
+  export function evaluateExecutableAdvice(
+    item: unknown,
+    context?: Record<string, unknown>,
+    opts?: Record<string, unknown>,
+  ): ExecutableAdvice;
+
+  export function evaluateDoseBoundary(
+    item: unknown,
+    context?: Record<string, unknown>,
+    opts?: Record<string, unknown>,
+  ): DoseBoundary;
+
+  export function evaluateRegistrationMatch(
+    candidates: readonly Record<string, unknown>[],
+    query: Record<string, unknown>,
+    opts?: Record<string, unknown>,
+  ): RegistrationMatch;
+
+  export function loadHerbicideRecords(): { items: readonly Record<string, unknown>[] };
+
   export function loadZhejiangKnowledge(): ZhejiangKnowledge;
   export function queryZhejiangKnowledge(
     items: readonly ZhejiangKnowledgeItem[],

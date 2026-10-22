@@ -77,6 +77,7 @@ import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
+import { createPostgresAdminJobPort } from './admin/ops/jobs-pg.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
@@ -994,7 +995,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 账本/在途守卫未装配（未配置数据库或连接池不可用）⇒ 返回 `undefined` ⇒ 路由与包装逐字不变。
   const synthesisContentResolved =
     synthesisContent ?? createCheckedContentPortFromConfig({ executionMode: config.executionMode, entries: SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT, pool });
-  const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode });
+  const synthesisProviderResolved: TtsProvider = synthesisProvider ?? createTtsProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.tts ?? null });
   const synthesisEgress: SynthesisEgress | undefined =
     egressLedger === null || privacyInFlight === null
       ? undefined
@@ -1103,6 +1104,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     adminInjection?.flagsPort ??
     (adminRealUnwired && pool !== null ? createPostgresFeatureFlags({ pool }) : null);
   const flagsWired = flagsPort !== null;
+  // **GY-I18 第一批：平台级作业真库端口**。与 `flagsPort` 同一门：显式注入优先（测试钉住接线点），
+  // 否则 `real` + 有池才建；`pool === null` 或非 real ⇒ 不建端口 ⇒ 服务层走未接线分支（读/取消 503）。
+  const adminJobPort =
+    adminInjection?.jobPort ??
+    (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);
   // **武装的前置条件（T-R12-08R）**：`real` + 有池 + **表确认可用**，三者缺一不可。
   // 只应用迁移子集的库（例如 `egress-ledger-pg.mjs` 只跑 0001/0003/0008/0009/0011）里没有
   // 0020 的 `public.feature_flags`；那种库上不能武装：否则首个受控面请求预取失败 ⇒ 503，
@@ -1191,7 +1197,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           accountsDirectory: realAccountsDirectory,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
-          jobPort: adminInjection?.jobPort,
+          jobPort: adminJobPort,
           // GY-I15 接线同上：`hidePost` 在 real 下不放行，但端口仍按同一份社区 store 装配。
           community: communityPostPortForAdmin,
           flagEffects: adminInjection?.flagEffects,
@@ -1226,7 +1232,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       accountAuthority: adminInjection?.accountAuthority,
       // GY-I18：stub 域**只**经显式注入接真实开关端口（默认仍是内存 store；不因"有 pool"自动接库）。
       ...(flagsPort === null ? {} : { flagsPort }),
-      jobPort: adminInjection?.jobPort,
+      jobPort: adminJobPort,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
       flagEffects: adminInjection?.flagEffects,
@@ -1600,16 +1606,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 5) 输出守卫（引用只能取自本次检索集合 + 用量卡只能取自确定性权威路径）。
   const conversationGuard: AnswerGuard = conversationInjection?.guard ?? createConversationGuard({ dose: conversationDose });
   // 5a) 回答生成器（GY-R28 W7 / #12）：**只有**四件事同时成立才接真实模型 ——
-  //     ① 配置里给了 `aiProviders.chat`（https 端点 + 模型名 + 密钥齐备）；
+  //     ① 配置里给了 `chatProvider`（https 端点 + 模型名 + 密钥齐备）；
   //     ② 外发账本可用（`DATABASE_URL` + 带 `connect()` 的池 ⇒ `egressLedger`/`privacyInFlight` 非 null）；
   //     ③ 执行模式为 `real`（`ChatEgress.engaged`）；④ 未被测试/装配注入覆盖。
   //     任一不成立 ⇒ 沿用基线确定性回答器（版本串仍带 `unimplemented:no-real-`），
   //     **行为与 main 逐字节一致**。决策本身是纯函数（`ai/chat-wiring.ts`），四条与门逐条有单测。
   const conversationChatPlan = planConversationChat({
     ...(conversationInjection?.composer === undefined ? {} : { injectedComposer: conversationInjection.composer }),
-    // 少数既有测试直接构造精简 config（未走 `loadConfig`）；缺 `aiProviders` 时一律按「未配置」处理
+    // 少数既有测试直接构造精简 config（未走 `loadConfig`）；缺 `chatProvider` 时一律按「未配置」处理
     // （fail-closed：不做任何真实外发，版本串仍是带 `unimplemented:no-real-` 的那条路径）。
-    chat: config.aiProviders?.chat ?? null,
+    chat: config.chatProvider ?? null,
     executionMode: config.executionMode,
     egressLedger,
     privacyInFlight,

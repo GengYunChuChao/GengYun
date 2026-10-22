@@ -512,11 +512,11 @@ test('外发口：外发失败 ⇒ markFailed（不写回写表）并原样重�
 // D. 配置搬运：密钥只从 env 读、缺省 null、半配置即启动失败
 // ---------------------------------------------------------------------------
 
-test('配置：未配置 ⇒ aiProviders.chat === null（不猜端点、不猜模型）', () => {
-  // 用 `stub` 模式：本用例只关心 `aiProviders` 的解析，不重复验证 `real` 模式的必需凭据清单
+test('配置：未配置 ⇒ chatProvider === null（不猜端点、不猜模型）', () => {
+  // 用 `stub` 模式：本用例只关心 `chatProvider` 的解析，不重复验证 `real` 模式的必需凭据清单
   // （那由 config 既有套件覆盖）；问答配置的解析与执行模式无关。
   const config = loadConfig({ APP_EXECUTION_MODE: 'stub' });
-  assert.equal(config.aiProviders.chat, null);
+  assert.equal(config.chatProvider, null);
 });
 
 test('配置：齐备 ⇒ 解析出 chat；端点规范化去尾斜杠；密钥只在内存字段里', () => {
@@ -528,11 +528,11 @@ test('配置：齐备 ⇒ 解析出 chat；端点规范化去尾斜杠；密钥�
     CHAT_LLM_TIMEOUT_MS: '15000',
     CHAT_LLM_MAX_RETRIES: '1',
   });
-  assert.equal(config.aiProviders.chat.endpoint, 'https://chat.invalid/v1/chat/completions');
-  assert.equal(config.aiProviders.chat.model, MODEL);
-  assert.equal(config.aiProviders.chat.timeoutMs, 15000);
-  assert.equal(config.aiProviders.chat.maxRetries, 1);
-  assert.equal(config.aiProviders.chat.apiKey, FAKE_KEY);
+  assert.equal(config.chatProvider.endpoint, 'https://chat.invalid/v1/chat/completions');
+  assert.equal(config.chatProvider.model, MODEL);
+  assert.equal(config.chatProvider.timeoutMs, 15000);
+  assert.equal(config.chatProvider.maxRetries, 1);
+  assert.equal(config.chatProvider.apiKey, FAKE_KEY);
 });
 
 test('配置：`DEEPSEEK_API_KEY` 作为密钥替代口径（与既有取证脚本一致）', () => {
@@ -542,7 +542,7 @@ test('配置：`DEEPSEEK_API_KEY` 作为密钥替代口径（与既有取证脚�
     CHAT_LLM_MODEL: MODEL,
     DEEPSEEK_API_KEY: FAKE_KEY,
   });
-  assert.equal(config.aiProviders.chat.apiKey, FAKE_KEY);
+  assert.equal(config.chatProvider.apiKey, FAKE_KEY);
 });
 
 test('配置：半配置 / 非法端点 / 越界数值 ⇒ 启动即失败（不静默降级到无模型）', () => {
@@ -755,10 +755,10 @@ test('正控制：正文链接有出处时照常交付（不因返修而误杀�
   assert.deepEqual(answer.citations.map((citation) => citation.id), [ITEM_A.id]);
 });
 
-test('回归：既有精简 config（未走 loadConfig、缺 aiProviders）⇒ 按未配置处理，装配不崩', async () => {
-  // 既有测试（如 tests/unit/api-health.test.mjs）直接构造精简 config 对象，缺 `aiProviders`。
+test('回归：既有精简 config（未走 loadConfig、缺 chatProvider）⇒ 按未配置处理，装配不崩', async () => {
+  // 既有测试（如 tests/unit/api-health.test.mjs）直接构造精简 config 对象，缺 `chatProvider`。
   // 问答接线不得因此抛错：缺它必须等价于「未配置」⇒ 不接真实模型、不崩溃。
-  const { aiProviders: _ignored, ...lean } = loadConfig({ APP_EXECUTION_MODE: 'stub' });
+  const { chatProvider: _ignored, ...lean } = loadConfig({ APP_EXECUTION_MODE: 'stub' });
   const app = buildApp({ config: { ...lean, executionMode: 'real', databaseUrl: null } });
   try {
     // 装配不崩即为本测试的主判据；再用一条问答路由证明路由表已建好（未登录 ⇒ 401）。

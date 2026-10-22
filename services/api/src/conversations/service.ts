@@ -383,7 +383,7 @@ export interface ConversationServiceDeps {
    * 回答行的 `model_version` / `prompt_version`（**装配层**拥有，回答器无权决定）。
    *
    * 缺省 ⇒ 用基线常量（两串都带 `unimplemented:no-real-` 前缀）。只有装配层确实接了真实模型
-   * （`services/api/src/app.ts` 的 `aiProviders.chat` + 可用外发账本）时才传这里的两个串；
+   * （`services/api/src/app.ts` 的 `chatProvider` + 可用外发账本）时才传这里的两个串；
    * 传进来的串由装配层从适配器模块的常量/helper 生成 —— 回答器（可被测试注入任意实现）**结构上
    * 拿不到这条通路，因此无法把自己标成真实模型**（NC2 性质保持）。
    */

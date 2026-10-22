@@ -34,7 +34,7 @@ export const ALL_OPS_SCOPES = Object.freeze([
   'flags:write',
 ]);
 
-/** 本片 9 个 operationId（与派单一致）。 */
+/** 本片 10 个 operationId（9 个既有 + 本片新增的开关留痕读面）。 */
 export const OPS_IDS = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -44,6 +44,7 @@ export const OPS_IDS = Object.freeze([
   'cancelAdminJob',
   'listFlags',
   'setFlag',
+  'listFlagAuditEvents',
   'hidePost',
 ]);
 

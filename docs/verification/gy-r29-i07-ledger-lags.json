@@ -28,8 +28,8 @@
     {
       "ledger_file": "docs/architecture/contract-status.json",
       "pointer": "dimensions.pagination.blocker",
-      "ledger_line": 3164,
-      "status_field_line": 3133,
+      "ledger_line": 3191,
+      "status_field_line": 3160,
       "status_value": "partial",
       "kind": "台账滞后（代码已更新）",
       "claimed_sort_absent_from_code": "id_asc",

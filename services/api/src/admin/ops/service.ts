@@ -1,5 +1,6 @@
 /**
- * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 9 个 operationId**）。
+ * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 10 个 operationId**）。
+ * 第 10 个是本片新增的 `listFlagAuditEvents`（开关变更留痕 A→B，迁移 0027 提供读函数）。
  *
  * 本文件**只做服务端**：不注册路由、不改 `app.ts`、不改 `apps/admin/**`、不改小程序、
  * 不改 `services/api/src/community/**`（只读依赖）。
@@ -47,7 +48,7 @@ import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
-import type { FeatureFlagsPort } from './flags-pg.ts';
+import type { FeatureFlagsPort, FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
@@ -149,9 +150,15 @@ export interface AdminOpsService {
   setFlag(ctx: AdminCallContext, key: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<{ key: string; enabled: boolean; revision: number }>>>;
 
   hidePost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<{ accepted: boolean }>>>;
+
+  /**
+   * 开关变更留痕（GY-I18 第一批 + 迁移 0027）：`GET /admin/flag-audit-events`。
+   * 未接线 ⇒ 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），**不返回空页**。
+   */
+  listFlagAuditEvents(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<FlagAuditRow>>>;
 }
 
-/** 本片 9 个 operationId（机读形式，供测试断言"恰好 9 个、不越界"）。 */
+/** 本片 operationId（机读形式，供测试断言"恰好 10 个、不越界"）。 */
 export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -161,6 +168,7 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'cancelAdminJob',
   'listFlags',
   'setFlag',
+  'listFlagAuditEvents',
   'hidePost',
 ]);
 
@@ -174,6 +182,7 @@ export const OPS_SCOPES = Object.freeze({
   cancelAdminJob: 'jobs:cancel',
   listFlags: 'flags:read',
   setFlag: 'flags:write',
+  listFlagAuditEvents: 'flags:read',
   hidePost: 'sources:write',
 });
 
@@ -183,6 +192,33 @@ interface Identified {
 
 /** 分页游标位置：分类/账号/作业用 `id`，开关用 `key`（契约里开关没有 id）。 */
 type CursorKeyOf<T> = (item: T) => string;
+
+/**
+ * 开关变更留痕的键集游标参数。
+ *
+ * - `family` 固定 `flag_audit`，与内容审计流（`listWithCursor` 的 `audit` 家族）分开：
+ *   两个读面的分页位置**没有可比性**，混用会让"下一页"指向另一条流；
+ * - `watermark` 取常量而不是"当前集合指纹"：键集位置 `(created_at, id)` 本身是全序，
+ *   新行插在最前面不会让位置失效（这正是键集分页相对 offset 的意义）；
+ *   填常量是为了让 `CursorPayload` 的必填位有真实值，而不是伪造一个会漂移的指纹。
+ */
+const FLAG_AUDIT_FAMILY = 'flag_audit';
+const FLAG_AUDIT_WATERMARK = 'flag_audit:keyset';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `created_at|id` 复合位置解析；不可解析一律 `INVALID_CURSOR`（不把脏串传给 SQL 的 cast）。 */
+function decodeFlagAuditPosition(after: string | null): { createdAt: string; id: string } {
+  if (after === null) throw new ApiError('INVALID_CURSOR', '游标缺少位置');
+  const separator = after.lastIndexOf('|');
+  if (separator <= 0) throw new ApiError('INVALID_CURSOR', '游标位置不可解析');
+  const createdAt = after.slice(0, separator);
+  const id = after.slice(separator + 1);
+  if (!UUID_PATTERN.test(id) || Number.isNaN(Date.parse(createdAt))) {
+    throw new ApiError('INVALID_CURSOR', '游标位置不可解析');
+  }
+  return { createdAt, id };
+}
 
 export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOpsService {
   // 构造期自检：语义分类表里不得存在任何"放宽 fail-closed"的条目（fail-closed at wiring time）。
@@ -779,6 +815,78 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   }
 
   // -------------------------------------------------------------------------
+  // 开关变更留痕（审计 A→B 可查；迁移 0027）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 读面：`GET /admin/flag-audit-events`。
+   *
+   * 为什么单独一个 operationId（而不是复用 `listAuditEvents`）：
+   * - `listAuditEvents` 属于阶段 1，读的是**内容内存 store 的审计流**（`app.ts` 已写明这条边界），
+   *   本片不能把它改成"有时读库、有时读内存"的双源分页——那会让分页位置失去单一含义；
+   * - 开关审计是库内同事务写入的（`set_feature_flag` + 迁移 0027 的 `before_value/after_value`），
+   *   库才是唯一权威；用独立读面保持"谁是权威"这件事在 URL 上一目了然。
+   *
+   * 分页：键集 `(created_at DESC, id DESC)`，游标里存 `created_at|id`，
+   * 不返回 `COUNT(*)`（快照统计会让翻页结果与总数互相打脸）。
+   */
+  async function listFlagAuditEvents(ctx: AdminCallContext, query: PageQuery = {}) {
+    const context = resolveContext(ctx, OPS_SCOPES.listFlagAuditEvents);
+    const port = flagsPort;
+    if (port === null || typeof port.listAudit !== 'function') {
+      // 未接线 ≠ 没有变更历史：空页会被读成「平台从未改过开关」，那是无法确认的结论（伪造）。
+      throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕读取尚未接线', { retryable: false });
+    }
+    const limit = parseLimit(query.limit);
+    const rawCursor = parseCursorParam(query.cursor);
+    let before: { createdAt: string; id: string } | null = null;
+    if (rawCursor !== null) {
+      const payload = cursors.decode(rawCursor);
+      if (
+        payload.kind !== 'audit' ||
+        payload.family !== FLAG_AUDIT_FAMILY ||
+        payload.subject !== context.identity.userId
+      ) {
+        throw new ApiError('INVALID_CURSOR', '游标不属于当前查询');
+      }
+      if (payload.expires <= now().getTime()) throw new ApiError('INVALID_CURSOR', '游标已过期');
+      before = decodeFlagAuditPosition(payload.after);
+    }
+    const page = await port.listAudit({ limit, before });
+    const items = page.items.map((row) => {
+      // 出口必须过契约镜像：库里的行不是"信任边界内"的数据（jsonb 可能被手工改过）。
+      const issues = opsValidator.collectIssues('AuditEvent', row);
+      if (issues.length > 0) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '开关变更留痕返回不符合契约 AuditEvent', {
+          retryable: false,
+          details: issues.slice(0, 5),
+        });
+      }
+      return row;
+    });
+    const last = page.items[page.items.length - 1];
+    const nextCursor =
+      page.hasMore && last !== undefined
+        ? cursors.encode({
+            kind: 'audit',
+            subject: context.identity.userId,
+            family: FLAG_AUDIT_FAMILY,
+            after: `${last.created_at}|${last.id}`,
+            watermark: FLAG_AUDIT_WATERMARK,
+            expires: now().getTime() + 15 * 60 * 1000,
+          })
+        : null;
+    return {
+      status: 200,
+      headers: { 'Cache-Control': 'no-store' },
+      body: {
+        data: { items: cloneDeep(items) as FlagAuditRow[], next_cursor: nextCursor },
+        meta: metaFor(context, executionMode),
+      },
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // 隐藏帖子（复用社区可见性语义）
   // -------------------------------------------------------------------------
 
@@ -843,6 +951,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     cancelAdminJob,
     listFlags,
     setFlag,
+    listFlagAuditEvents,
     hidePost,
   };
 }

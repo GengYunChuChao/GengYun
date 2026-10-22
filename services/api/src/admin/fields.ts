@@ -296,6 +296,24 @@ export const OUTPUT_SPECS = {
       request_id: uuid(),
       result: enumOf('accepted', 'denied', 'failed'),
       created_at: datetime(),
+      // GY-I18 第一批（审计 A→B 可查）：以下四个字段在 `admin_audit_events` 里**一直存在**或于迁移 0027 补齐，
+      // 但在此之前投影层把它们丢掉了。全部为「可选 + 可空」——
+      // 存量内容审计行没有 actor/before/after，把它们变成必填等于伪造读数。
+      actor: { ...uuid(), nullable: true },
+      target_hint: { type: 'string', minLength: 1, maxLength: 200, nullable: true },
+      before_value: { ref: 'FlagReading', nullable: true },
+      after_value: { ref: 'FlagReading', nullable: true },
+    },
+  },
+
+  /** 开关读数的历史快照（审计 A→B 里的 A 与 B）：开关 key 由 `target_hint` 指认。 */
+  FlagReading: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['enabled', 'revision'],
+    properties: {
+      enabled: { type: 'boolean' },
+      revision: { type: 'integer', minimum: 1 },
     },
   },
 } as const satisfies Readonly<Record<string, FieldSpec>>;

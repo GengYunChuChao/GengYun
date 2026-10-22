@@ -83,8 +83,8 @@ async function main() {
 
   // 配置解析：与线上同一份 `loadConfig`（真实模式下的其余必需项由部署环境提供）。
   const config = loadConfig({ ...env, APP_EXECUTION_MODE: env.APP_EXECUTION_MODE ?? 'stub' });
-  if (config.aiProviders.chat === null) {
-    console.log(JSON.stringify({ mode: 'approved', ready: false, reason: 'aiProviders.chat 解析为 null', sent: 0 }, null, 2));
+  if (config.chatProvider === null) {
+    console.log(JSON.stringify({ mode: 'approved', ready: false, reason: 'chatProvider 解析为 null', sent: 0 }, null, 2));
     process.exitCode = 2;
     return;
   }
@@ -96,7 +96,7 @@ async function main() {
   const inFlight = createInFlightGuard({ ledger, account: ports.account, consentStore: ports.consentStore });
   const egress = createChatEgress({ ledger, inFlight, executionMode: 'real', dataType: 'checked_content', capability: 'llm' });
 
-  const composer = createLiveChatComposer({ profile: config.aiProviders.chat, egress });
+  const composer = createLiveChatComposer({ profile: config.chatProvider, egress });
   const readings = [];
   for (let call = 1; call <= MAX_PAID_CALLS; call += 1) {
     const started = Date.now();
@@ -132,7 +132,7 @@ async function main() {
     }
   }
   await pool.end();
-  console.log(JSON.stringify({ mode: 'approved', endpoint_configured: true, model: config.aiProviders.chat.model, readings }, null, 2));
+  console.log(JSON.stringify({ mode: 'approved', endpoint_configured: true, model: config.chatProvider.model, readings }, null, 2));
 }
 
 main().catch(() => {

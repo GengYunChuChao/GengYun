@@ -1,0 +1,99 @@
+/* GY-I16 收藏入口：与识别页已有的区块保持同一套视觉密度（细线卡片 + 小号按钮）。 */
+.fav {
+  margin: 24rpx 0 8rpx;
+  padding: 24rpx;
+  border: 1rpx solid #e6e8eb;
+  border-radius: 12rpx;
+  background: #ffffff;
+}
+
+.fav__head {
+  display: flex;
+  flex-direction: column;
+}
+
+.fav__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1f2329;
+}
+
+.fav__hint {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  color: #646a73;
+}
+
+.fav__list {
+  margin-top: 16rpx;
+}
+
+.fav__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-top: 1rpx solid #f0f1f2;
+}
+
+.fav__meta {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding-right: 16rpx;
+}
+
+.fav__name {
+  font-size: 26rpx;
+  color: #1f2329;
+  word-break: break-all;
+}
+
+.fav__badge {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #00a870;
+}
+
+.fav__warn {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #d83931;
+}
+
+.fav__btn {
+  flex: none;
+  margin: 0;
+  font-size: 24rpx;
+  color: #1f6feb;
+  border: 1rpx solid #1f6feb;
+  background: #ffffff;
+}
+
+.fav__btn--on {
+  color: #646a73;
+  border-color: #d0d3d6;
+  background: #f7f8fa;
+}
+
+.fav__note {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  color: #00a870;
+}
+
+.fav__error {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  color: #d83931;
+}
+
+.fav--error {
+  border-color: #f5c2c0;
+}

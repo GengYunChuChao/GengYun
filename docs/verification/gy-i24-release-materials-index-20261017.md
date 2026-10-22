@@ -147,6 +147,13 @@
   `rollback/` 25 个（`0002..0026`，仍无 `0001`）、`deploy/` 在册 **31** 个 ⇒ 读数由 25／24／31 变为 **26／25／31**。
   §2 表行与 §4 第 8 项的「当前读数」已按本树同步。该迁移头部如实登记了本片**未**给三张语音表加
   `GRANT`（`deploy/postgres-cvm/**` 一字未改）⇒ 运行时角色直连会 `42501`，授权属后续授权片。
+- **合流复核十（2026-10-22，R29-S5／GY-I18 第一批，`feat/gy-r29-i18-admin-switch`）**：本片新增
+  `0027_admin_audit_observability.sql` 与其 `rollback/0027_admin_audit_observability.down.sql`（迁移号按派单分配：
+  合流前 `origin/main` 最大号为 `0026`，且不与在途 #419 的 media 授权片撞号；**未改号、未造占位迁移**）⇒
+  按本树实测：迁移 **27** 个（`0001..0027`，**连续无缺号**）、`rollback/` 26 个（`0002..0027`，仍无 `0001`）、
+  `deploy/` 在册 **31** 个 ⇒ 读数由 26／25／31 变为 **27／26／31**。本片改动的 deploy 文件是
+  `deploy/postgres-cvm/sql/20-login-roles.sql`（新增独立 region：审计读函数 EXECUTE），
+  ⛔ 未动 media 系四张表。§2 表行与 §4 第 8 项的「当前读数」已按本树同步。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
