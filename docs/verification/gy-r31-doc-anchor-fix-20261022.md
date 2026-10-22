@@ -147,6 +147,13 @@ node tools/verify-doc-anchors.mjs --write-baseline  # 重写基线（本轮由 1
 
 基线文件由工具重写，**未手改 JSON**：`--write-baseline` 写的是「当前全量 findings」，陈旧条目会被自动清掉，所以「修好一条就必须删一行」这条不变量由工具保证，人不需要（也不应该）去删条目。
 
-## 8 边界
+## 8 与 #464 的边界
+
+本片与 `#464`（文档手写行号闸门的常驻维护）分工两点，写死免得下一片踩：
+
+- **(a) 本片只处置基线里已登记的 108 条，不负责该 baseline 的 stale 重生成。** `tools/doc-anchors-baseline.json` 里那 108 条是已登记的历史硬伤，本片逐条实读后烧掉 56 条、判 52 条「不得改」，处置结果交回工具重写。**基线的日常 stale 重生成、以及「新出现的锚点问题要不要登记」属于 `#464`**，不在本片范围：本片没有、也不应该替后续改动预生成基线。
+- **(b) 谁改了文档锚点，谁就必须重跑 baseline 生成器，否则 `doc-anchors-guard` 判 stale。** `tests/unit/doc-anchors-guard.test.mjs` 的「基线 stale 反查」要求基线的每一条都仍然命中——修好一条就要求删一行。所以顺序固定为「改文档 → `node tools/verify-doc-anchors.mjs` 看 STALE 读数 → `node tools/verify-doc-anchors.mjs --write-baseline` 落盘 → `--strict` 复跑」，⛔ 不手改 JSON（手改只会把基线写成免罚名单）。本片 108 → 52 就是这么落盘的：56 条 stale 全部由工具自动清除。
+
+## 9 边界
 
 本片只动 `docs/**` 与 `tools/doc-anchors-baseline.json`：没有改任何 `services/**`、`apps/**`、`miniprogram/**`、`tests/**`、`package.json`、`.github/**`。基线剩下的 52 条里，E 组（20 条）是**下一轮可以继续做**的部分——需要的是「按符号名 + 相邻语义」逐条实读，而不是批量加偏移。
