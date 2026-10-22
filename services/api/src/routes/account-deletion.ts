@@ -158,6 +158,8 @@ export function registerAccountDeletionRoutes(
         },
         replay: async (record) => {
           const deletionId = readOutcomeDeletionId(record.outcome);
+          // 幂等重放同样按真实副本行刷新（否则重放会把「已清的 pending」原样再发一次）。
+          if (deletionId !== null) await wired.deletion.refreshBackupStates?.(deletionId);
           const receipt = deletionId === null ? null : wired.deletion.receipt(deletionId);
           const projected = projectReceipt(receipt);
           if (deletionId === null || projected === null) {
@@ -196,6 +198,9 @@ export function registerAccountDeletionRoutes(
       const boundId = wired.receipts.resolveRequestId(token);
       // 未知 / 已过期 / 已换发 / 跨请求使用：一律按「凭据不可用」如实拒绝，不泄露该 id 是否存在（防探测）。
       if (boundId === null || boundId !== id) throw new ApiError('SESSION_EXPIRED', '注销回执凭据已失效');
+      // GY-R28 W6（G5/G11）：回执的备份态由**真实副本行**推导（只读），不照抄上次执行结论。
+      // 放在 `receipt()` 之前：`receipt()` 内部会按最新备份列做整体完成判定并写 revision。
+      await wired.deletion.refreshBackupStates?.(id);
       const receipt = wired.deletion.receipt(id);
       const projected = projectReceipt(receipt);
       if (projected === null) throw new ApiError('NOT_FOUND', '注销删除请求不存在');

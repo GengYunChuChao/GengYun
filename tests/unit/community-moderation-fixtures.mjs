@@ -183,6 +183,8 @@ export function observeLink(inner) {
       calls.conclusionFor.push({ target, result });
       return result;
     },
+    // GY-R31：图片审核能力位（**只转述**审核域的读数，不在这里改变行为）。
+    imageReadiness: () => inner.imageReadiness(),
     counts: () => inner.counts(),
   };
   return { link, calls };
