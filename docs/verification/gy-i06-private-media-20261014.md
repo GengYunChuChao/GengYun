@@ -255,11 +255,15 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 > **测量基线**：`upstream/main` = `95b8e7cf67106391a61e88090d3c7cb6f820a99b`（`%cI` = `2026-10-16T22:16:13Z`）。
 > **测量时间**：`2026-10-17T12:14+08:00`（本地）。本节每条 `file:line` 均在该 blob 上逐文件复算，
 > 行号为 `git show upstream/main:<path>` 的 1-based 行号；只登记事实与口径，不写修法。
+> **校准补记（2026-10-23）**：第 1 条的 `media/service.ts` 三处行号已按当时 `upstream/main`（`791b34a8`）重算——
+> `attachmentLimitFor` 现记第 840 行（原记 645，该行已是 `toProjection`）、
+> `throw` 现记第 848 行（原记 652）、`retryable: false` 现记第 851 行（原记 653-654）。
+> 本节其余 `file:line` 仍按上列 `95b8e7cf` blob，未逐条重算。
 
 1. **「每帖 ≤3 张」的权威计数器在 `real` 路径上不可得 ⇒ 该用途恒 503（既不是 201，也不是 400）**。
-   槽位判定点是 `services/api/src/media/service.ts:645` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
-   `null` 时，`services/api/src/media/service.ts:652` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
-   （`:653-654` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
+   槽位判定点是 `services/api/src/media/service.ts:840` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
+   `null` 时，`services/api/src/media/service.ts:848` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
+   （`:849-852` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
    （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
    （`services/api/src/media/service.ts:293-299`；`:296` 自述「拒绝 community_image 上传（fail-closed）」）。
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
