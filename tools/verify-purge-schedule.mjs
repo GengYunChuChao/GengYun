@@ -38,7 +38,7 @@
  *                  且值是**绝对路径**，⛔ 不得出现 `--no-cursor`。
  *                  依据：`services/api/src/privacy/online-purge-cursor.ts` 的缺省游标是**相对 cwd**
  *                  的（`DEFAULT_ONLINE_PURGE_CURSOR_FILE`，该文件自陈「cron 里 cwd 是谁就写谁下面」）
- *                  ⇒ 在 systemd/cron 下相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失。
+ *                  ⇒ 在 systemd 下相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失。
  *                  另：若同时给了 `StateDirectory=`，游标必须落在 `/var/lib/<StateDirectory>/` 里 ——
  *                  否则 systemd 不会创建/chown 那个目录，写游标会 EACCES（每轮退出码 2）。
  *                  **比对前先做 POSIX 归一化**（折叠 `.`/`..`）：`/var/lib/<state>/../../etc/passwd`
@@ -48,8 +48,8 @@
  *   [secrets]      单元里⛔ 不得出现内联连接串或口令键（`…://`、`DATABASE_URL=`、`PGPASSWORD=`、
  *                  以及任何 `*PASS*` / `*PWD*` / `*SECRET*` / `*TOKEN*` / `*APIKEY*` / `*DSN*` /
  *                  `*URL*` 命名的内联键 —— 含 `Environment=DB_PASS=…` 这种非常见键名），且每个
- *                  `.service` **必须**有 `EnvironmentFile=`。凭据只能经该文件进入（systemd 路线
- *                  root:root 0600；cron 路线 root:<同名组> 0640，见 deploy/purge-schedule/README.md）。
+ *                  `.service` **必须**有 `EnvironmentFile=`。凭据只能经该文件进入（`root:root 0600`，
+ *                  systemd 由 PID 1 以 root 读入后降权执行；见 deploy/purge-schedule/README.md）。
  *                  扫描面含注释行：注释里的真连接串一样会被 `git log`/工单带出去。
  *   [setinterval]  `services/api/src/**` 里的 `setInterval(` **调用**计数必须为 **0**。识别口径不是
  *                  字面子串，而是：① `setInterval(`；② 任意前缀（含 `globalThis.`）后的
@@ -72,13 +72,15 @@
  *
  * ## 刻意**不做**（不冒充能力）
  *   · ⛔ 不证明外部调度真的在跑：单元文件在仓里只说明「装上去应按这个周期跑」。
- *     `systemctl list-timers` 有读数、`/etc/cron.d/*` 存在、日志在长，才算运行侧取得 —— 那是运维动作，
+ *     `systemctl list-timers` 有读数、`journalctl` 里有单次运行日志，才算运行侧取得 —— 那是运维动作，
  *     仓库里没有它的证据（见 `deploy/purge-schedule/README.md` 的「本目录不证明的事」）。
  *   · ⛔ 不执行任何单元、不调 `systemd-analyze`、不校验 `EnvironmentFile=` 指向的文件是否存在
  *     （那是**目标宿主机**上的路径，仓里不存在是正常的）。
  *   · ⛔ 不判断 `OnCalendar=` 的语义是否「合理」（只判间隔上界与可解析性）。
- *   · ⛔ 不查 `crontab.example` 与 `README.md`（判据面就是 `.service` / `.timer`；cron 路线的等价性
- *     靠人读 README 的逐项对应表）。
+ *   · ⛔ 不查 `README.md`（判据面就是 `.service` / `.timer`）。cron 路线文件已按 R32 第 2 轮返修的
+ *     指挥裁定**删除**（两轮审查证明它在真实宿主上跑不起来、本机又验不了；理由与逐条缺陷见
+ *     `deploy/purge-schedule/README.md` 的「为什么不再提供 cron 等价路线」）。README 属说明性文字，
+ *     ⛔ 不构成判据 —— 本门禁不因文档措辞变红或变绿。
  *
  * ## 用法
  *   node tools/verify-purge-schedule.mjs                  # 扫仓内默认目录
@@ -621,7 +623,7 @@ export function verifyPurgeSchedule(options = {}) {
           if (files.length === 0) {
             fail('cursor', fileRel, '在线清理单元缺少 `--cursor-file=`：\n'
               + '  ⇒ 缺省游标（`DEFAULT_ONLINE_PURGE_CURSOR_FILE`）是**相对当前工作目录**的；'
-              + '在 systemd/cron 下 cwd 由调度器决定 ⇒ 每轮从队首重扫、进度丢失。');
+              + '在 systemd 下 cwd 由调度器决定 ⇒ 每轮从队首重扫、进度丢失。');
           }
           for (const cursorPath of files) {
             if (!isAbsolute(cursorPath)) {

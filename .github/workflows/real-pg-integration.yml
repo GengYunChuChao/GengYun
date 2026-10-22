@@ -1,4 +1,4 @@
-# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
+﻿# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
 #   · tests/integration/conversations-pg.mjs（#313 / I12）
 #   · tests/integration/community-pg.mjs（#296 / I15）
 #   · tests/integration/messages-pg.mjs（#17 / I17）；R27-S4 追加

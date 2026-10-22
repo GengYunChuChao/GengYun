@@ -6,8 +6,8 @@
 # OnCalendar 每 10 分钟一次（≤ 60 分钟上限，判据 [calendar] 会**展开日历**算最大间隔，
 # 不是看一眼「有没有写 OnCalendar」就放行）。
 # 为什么是每 10 分钟而不是每小时：到期是日历事实，晚一小时清就是多留一小时不该留的数据；
-# 10 分钟与本仓文档里那条 cron 示例（docs/verification/gy-r28-w6-deletion-clock-20261021.md）
-# 同周期，改周期要同步那条示例与本目录的 crontab.example。
+# 10 分钟与本仓那份历史 cron 示例（docs/verification/gy-r28-w6-deletion-clock-20261021.md ——
+# 它是历史证据、不是可安装的调度件）同周期，改周期要同步那条示例。
 #
 # ## 防重叠（两道）
 # ① Type=oneshot 的服务在**仍在运行**时，timer 触发的下一次启动会被 systemd 跳过
@@ -16,7 +16,6 @@
 # ⛔ 不要靠 RandomizedDelaySec 当互斥（它只是抖动）。
 #
 # Persistent=true 只补「关机期间错过的触发点」一次，不改变周期。
-# 与 crontab.example 二选一：⛔ 两条都装会让同一命令被跑两遍（虽然命令幂等，但白耗库）。
 
 [Unit]
 Description=耕云 在线数据 7 日到期清除 · 每 10 分钟

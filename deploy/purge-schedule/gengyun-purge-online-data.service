@@ -8,8 +8,8 @@
 # 到期是**日历事实**（public.deletion_requests.online_due_at），不是「进程活了多久」。
 # 仓内**故意**没有任何进程内定时器（services/api/src 至今零 setInterval，由
 # tools/verify-purge-schedule.mjs 的 [setinterval] 判据机器化守住）⇒ 到期清除只能由
-# **外部调度**反复调用同一个运维命令。本单元 + 同名 .timer 就是那根时钟；备选形态是
-# 同目录的 crontab.example（二选一，⛔ 不要两条一起装）。
+# **外部调度**反复调用同一个运维命令。本单元 + 同名 .timer 就是那根时钟，且是**唯一受支持**
+# 的路线（R32 返修按指挥裁定删除了 cron 路线文件；理由见 README「为什么不再提供 cron 等价路线」）。
 # 驱动模块的文件头写着同一口径（services/api/src/privacy/online-purge-driver.ts）：
 # 退出码是本命令对外的**唯一**判据 —— 0 干净 / 1 有失败行 / 2 参数或配置错。
 # 所以这里不设任何重启或吞错策略：Type=oneshot + 非 0 退出 ⇒ 该次运行在 systemd 里记
@@ -35,7 +35,7 @@
 # ## 游标为什么必须是**绝对路径**
 # services/api/src/privacy/online-purge-cursor.ts 的缺省游标是**相对当前工作目录**的
 # （DEFAULT_ONLINE_PURGE_CURSOR_FILE，该文件自陈「cron 里 cwd 是谁就写谁下面」）⇒
-# 在 systemd/cron 下 cwd 由调度器决定，相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失
+# 在 systemd 下 cwd 由调度器决定，相对路径会随 cwd 漂移、每轮从队首重扫、进度丢失
 # （批次饿死的另一半）。所以 ExecStart 显式给绝对路径，且它落在 StateDirectory= 建出来
 # 的目录里；该目录与路径必须一致，由判据 [cursor] 核对。
 

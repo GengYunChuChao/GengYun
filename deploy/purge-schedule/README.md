@@ -9,7 +9,6 @@ deploy/purge-schedule/
 ├── gengyun-purge-online-data.timer       # 每 10 分钟
 ├── gengyun-purge-backup-copies.service   # 备份副本 30 日到期清除（运行时角色）
 ├── gengyun-purge-backup-copies.timer     # 每 15 分钟（:05/:20/:35/:50，与上一条错开）
-├── crontab.example                       # 等价 crontab（与上面 4 件二选一；安装前置见「安装 4B」）
 └── README.md
 ```
 
@@ -34,7 +33,7 @@ deploy/purge-schedule/
 
 两条都⛔ **不以 root 运行**：OS 侧与 DB 侧各自按最小权限收敛，两层不互相替代。
 
-## 安装（两条路线共用的准备 ＋ systemd / cron 二选一）
+## 安装（systemd timer 路线；本仓不支持 cron，理由见「为什么不再提供 cron 等价路线」）
 
 > 下面的 `useradd` / `install -d` 是 **Linux（Debian/Ubuntu）** 命令。本片在 Windows 上开发，
 > 这些命令**没有**在目标宿主上实跑过 —— 这一点也写在文末「本目录不证明的事」。
@@ -52,54 +51,51 @@ sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin ge
 起不来）。装完用 `id gengyun-ops` / `id gengyun-app` 复核主组名。⚠️ 本机是 Windows，**无法验证宿主的
 组行为**；`useradd` 是否建同名组以目标宿主的 `login.defs` / `useradd` 默认为准。
 
-### 1) 状态目录（两条路线都要；cron 路线**必须**手工建）
+### 1) 状态目录（游标落点；手工预建与 `StateDirectory=` 效果一致，且幂等）
 
 ```bash
-# systemd 路线：StateDirectory= 会自动创建并 chown；cron 路线不会 ⇒ 统一在这里建，两条路线都成立。
+# systemd 按单元里的 User=/Group= 自动创建并 chown StateDirectory=；这里手工预建同样的属主/权限，
+# 两者结果一致（install -d 对已存在目录幂等，不会清空内容）。
 sudo install -d -m 0700 -o gengyun-ops -g gengyun-ops /var/lib/gengyun-purge-online-data
 sudo install -d -m 0700 -o gengyun-app -g gengyun-app /var/lib/gengyun-purge-backup-copies
 ```
 
-`/var/lib/gengyun-purge-online-data/` 里放**在线游标**与 **cron 的锁文件**；
-`/var/lib/gengyun-purge-backup-copies/` 里放 **cron 的锁文件**。两处都必须是**该用户可写**——
-cron 的 `flock` 由该用户自己创建/打开锁文件，放到 `/run`（root:root 0755）会直接 `Permission denied`，
-`node` 一步都跑不到（锁文件不需要预建，首次运行时由该用户创建）。
+`/var/lib/gengyun-purge-online-data/` 里放**在线游标**（`ExecStart=` 的 `--cursor-file=` 落点）；
+`/var/lib/gengyun-purge-backup-copies/` 是备份单元的状态目录（该命令当前不写文件，保留给将来的
+日志/临时产物一个**非 root 可写**的落点）。两处都必须是**该用户可写**：systemd 会 chown 给 `User=`；
+手工预建时也必须按上面的 `-o <用户> -g <同名组>` 设属主，否则游标写不进去、每轮退出码 2。
+判据 `[cursor]` 会把「`--cursor-file` 归一化后落在 `StateDirectory=` 目录里」钉死。
 
-### 2) 凭据：每条命令一个环境文件
+### 2) 凭据：每条命令一个环境文件（`0600 root:root`）
 
 ```bash
-# 目录必须**可被运行用户穿过**（traverse）：0755 root:root。只暴露文件名，内容由文件权限挡着；
-# 若建成 0750 root:root，cron 路线即使把文件设成 0640 也打不开（目录缺 others 的 x 位）。
+# 目录只给 root 写；systemd 由 PID 1（root）读入 EnvironmentFile= 后再降权执行，
+# 运行用户**不需要**读这个文件（也就不需要组权限/others 权限）。
 sudo install -d -m 0755 -o root -g root /etc/gengyun
 
-# systemd 路线（PID 1 以 root 读入后再降权执行）⇒ root:root 0600 即可：
-sudo install -m 0600 -o root -g root /dev/null /etc/gengyun/purge-online-data.env
-sudo install -m 0600 -o root -g root /dev/null /etc/gengyun/purge-backup-copies.env
-
-# cron 路线（由**该用户自己的 shell** `. <env 文件>` 读入）⇒ 必须让该用户可读：
-sudo install -m 0640 -o root -g gengyun-ops /dev/null /etc/gengyun/purge-online-data.env
-sudo install -m 0640 -o root -g gengyun-app /dev/null /etc/gengyun/purge-backup-copies.env
+# ⚠ 不要用 `install -m 0600 … /dev/null <env>` 建文件：它把 /dev/null 当源，**重复执行会把
+# 已写入的连接串截断清空**。这里用 touch（只更新时间戳、不截断）+ chown + chmod 三步，
+# 对已存在的文件重跑不会改动内容。
+sudo touch /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
+sudo chown root:root /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
+sudo chmod 0600 /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
 ```
 
-> 两条路线**只选一条**，环境文件权限按所选路线设：systemd 的 `EnvironmentFile=` 由 PID 1 读（0600 够）；
-> cron 的 `. <文件>` 是**普通用户进程**在跑（0600 会 EACCES，必须 0640）。
+> 若文件**已存在且已写入连接串**：只复核属主/权限（`ls -l`），⛔ 不要再用任何以 `/dev/null`
+> 为源的 `install` 或 `>` 重定向覆盖它。空文件不会让单元起不来，但命令会以退出码 2（缺 `DATABASE_URL`）
+> 落进 journal —— 那是「凭据还没配」，不是「没有到期数据」。
 > 然后由持钥人把连接串写进对应文件（键名只有一个，命令只认环境变量）：
 >   `purge-online-data.env`   ← owner/运维角色的连接串
 >   `purge-backup-copies.env` ← 运行时角色的连接串
-> ⛔ 不要写进单元、crontab、README、issue 或任何提交物。
+> ⛔ 不要写进单元、README、issue 或任何提交物。
 
-### 3) 日志目录（**只有 cron 路线需要**）
+### 3) 日志：走 journald，不需要日志目录
 
-```bash
-sudo install -d -m 0750 -o gengyun-ops -g gengyun-ops /var/log/gengyun-ops
-sudo install -d -m 0750 -o gengyun-app -g gengyun-app /var/log/gengyun-app
-```
+systemd 把单元的 stdout/stderr 收进 journald（`journalctl -u gengyun-purge-*.service`），
+**不需要** `/var/log/gengyun-*` 目录，也不需要 `logrotate`（journald 自己按 `SystemMaxUse=` 等策略轮转）。
+这是有意的：让「日志落在哪、由谁写、怎么轮转」不再成为部署面的第三个可错点。
 
-cron 的 `>> …` 重定向由**该用户**执行 ⇒ 日志**按用户分目录**、各自 owner 可写（否则第二条备份命令以
-`gengyun-app` 写 `gengyun-ops` 的目录就是 EACCES）。systemd 路线看 journal，不需要这两个目录。
-⚠️ 日志不会自动轮转，长期跑请给这两个目录配 `logrotate`。
-
-### 4A) systemd 路线（推荐）
+### 4) 安装并启用 systemd timer（**唯一受支持路线**）
 
 ```bash
 sudo install -m 0644 gengyun-purge-online-data.service gengyun-purge-online-data.timer \
@@ -108,21 +104,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now gengyun-purge-online-data.timer gengyun-purge-backup-copies.timer
 ```
 
-### 4B) cron 路线（备选；与 4A **二选一**）
-
-前置：上面的 §0 用户、§1 状态目录、§2 的 **cron 版**环境文件（`0640 root:gengyun-*`）、§3 日志目录，
-四样都建好之后再装 crontab：
-
-```bash
-sudo install -m 0644 -o root -g root crontab.example /etc/cron.d/gengyun-purge
-# 若之前装过 timer（二选一，不能同时开）：
-sudo systemctl disable --now gengyun-purge-online-data.timer gengyun-purge-backup-copies.timer
-```
-
-`/etc/cron.d/gengyun-purge` 由 **root** 安装；文件里**第 6 列是用户**，两条命令各自以对应单元的同一个
-`User=` 运行（在线=`gengyun-ops`，备份=`gengyun-app`），⛔ 不是 root。逐项对应与前置条件的完整清单在
-`crontab.example` 的头注释里；判读见下。
-
 `/opt/gengyun/app` 是本目录假设的**应用根**（`ExecStart=` 与 `--cursor-file=` 都按它写死绝对路径）。
 换了部署路径，四处要一起改：两个 `ExecStart=`、一个 `--cursor-file=`、一个 `WorkingDirectory=`，
 改完跑一次 `node tools/verify-purge-schedule.mjs`（它按**后缀**比对 npm script 的入口文件，
@@ -130,23 +111,11 @@ sudo systemctl disable --now gengyun-purge-online-data.timer gengyun-purge-backu
 
 ## 判读
 
-### systemd 路线
-
 ```bash
 systemctl list-timers 'gengyun-purge-*'                  # 下一次触发时间 / 上次触发
 journalctl -u gengyun-purge-online-data.service -n 50    # 单次运行日志
 systemctl status gengyun-purge-online-data.service        # 上次运行的退出状态（failed 要看这里）
 ```
-
-### cron 路线
-
-```bash
-tail -n 5 /var/log/gengyun-ops/purge-online-data.log
-grep -c 'EXITCODE=1' /var/log/gengyun-ops/purge-online-data.log   # >0 ⇒ 有人要来看
-```
-
-cron 没有 systemd 的 failed 单元状态：命令自己把 `EXITCODE=<n>` 写进日志；`flock` 拿不到锁的那一轮
-**不会**打印 `EXITCODE`（它根本没跑，不是失败）。
 
 退出码语义（两条命令一致，也是外部调度的**唯一**判据）：
 
@@ -156,13 +125,32 @@ cron 没有 systemd 的 failed 单元状态：命令自己把 `EXITCODE=<n>` 写
 | `1` | 有失败行/组（某个模块清不掉） | 看日志定位；下一整轮会再试 |
 | `2` | 参数/配置/连接类错误（缺环境变量、`42501`、`42P01` …） | 修配置；**不是**「没有到期数据」 |
 
-## crontab 等价形态（与 systemd timer 二选一）
+## 为什么不再提供 cron 等价路线
 
-`crontab.example` 是同一件事的 `/etc/cron.d/` 写法（带用户列）。逐项对应：入口文件同一个、
-凭据走 `. <env 文件>`（等价 `EnvironmentFile=`，但**权限要求不同**：cron 需要 `root:<同名组> 0640`）、
-游标给绝对路径、`flock -n` 等价 oneshot 单实例（锁文件放在**该用户自己的状态目录**，⛔ 不是 `/run`）、
-`*/10` 与 `5-59/15` 与 `OnCalendar` 同周期。前置目录（状态/日志）与属主、权限见「安装 4B」与
-`crontab.example` 头注释。⛔ 与 systemd timer **二选一**，不要两条一起装。
+R32 曾经给过一份 `deploy/purge-schedule/crontab.example`（`/etc/cron.d/` 写法，带用户列），
+**现已删除**，本仓**不再提供**任何 cron 路线文件。原因不是「cron 不好用」，而是这份文件
+**在真实宿主上跑不起来，而本机又验不了** —— 连续两轮对抗性审查各查出一族缺陷：
+
+1. **第 1 轮：权限面装不上，`node` 一步都跑不到。** 锁文件写在 `/run`（`root:root 0755`），
+   非 root 的运行用户连 `O_CREAT` 都过不了；日志重定向写 `gengyun-ops` 的目录，备份行以
+   `gengyun-app` 写就是 `EACCES`。这一族后来按「锁放各自状态目录 / 日志按用户分目录 /
+   `/etc/gengyun` 可穿过 / 环境文件 `0640 root:<同名组>`」修过，但它只覆盖了权限面。
+2. **第 2 轮：变量根本没进子进程。** 两条命令都是 `sh -c '. /etc/gengyun/purge-*.env; … node …'`，
+   却**没有 `set -a`**。按 systemd `EnvironmentFile=` 格式写成的 `DATABASE_URL=…` 被 `.` 读入后
+   只是**该 shell 的普通变量**，不会导出给子进程 ⇒ `node` 里 `process.env.DATABASE_URL` 为空 ⇒
+   `usageError` ⇒ **退出码 2**（`tools/purge-expired-online-data.mjs`、
+   `tools/purge-expired-backup-copies.mjs` 同族）⇒ 仍然是一条都不清。而正确的
+   `set -a; . <env>; set +a` 只出现在本仓别处的 `fail` 提示文本里（`deploy/postgres-cvm/provision-db.sh`），
+   从未成为这份文件的一部分。
+3. **这整类缺陷在本机无法验证。** 没有 Linux 宿主可跑 `useradd` / `install` / `cron` / `flock`；
+   `bash -n` 在本机沙箱被禁（MSYS 报 `0xC0000022`），只能靠 POSIX 语义静态推演。一个
+   **测不了**、且**两次证明会坏**的可选替代路线，继续写进文档就是埋雷。
+
+⇒ 结论：**systemd timer 路线是唯一受支持路线**。它由门禁 `node tools/verify-purge-schedule.mjs`
+（10 项判据）与单测 `tests/unit/verify-purge-schedule.test.mjs` 覆盖，`.service` / `.timer` 就是本目录
+**全部**的调度产物。**若运维必须用 cron，属自行承担**：本仓不提供等价件、不为它做正确性承诺，
+也不再把「systemd 怎么做、cron 就怎么做」写成对应关系。上面第 1、2 条是**已发生过的真实失败**，
+不是假设；两轮的审查结论都在 `.pg17/adv-verdict-*.md` 里留档。
 
 ## 门禁（本目录的判据是机器化的，不是「写了就行」）
 
@@ -185,9 +173,9 @@ npm run verify:purge-schedule                 # 等价入口
 （`User=` 非 root、`StateDirectory=`、`TimeoutStartSec=`）/ `coverage`（两条必需命令都被某个单元覆盖）。
 
 单测：`node --test tests/unit/verify-purge-schedule.test.mjs`（正臂 + 10 个负控制用例 / 14 条控制臂，
-已随 `npm run test:unit` 进 CI）。
+外加「cron 路线已删除」的仓库回归判据，已随 `npm run test:unit` 进 CI）。
 
-## 授权来源：本片为什么不写 `docs/verification/**` 证据页
+## 授权来源：为什么不写 `docs/verification/**` 证据页（只允许动那张机器判据索引页）
 
 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `SELF_CLUSTERED_SCRIPTS` 注释要求「新增一条时**同时更新证据页**」，
 而本片只更新了发布材料索引页（`docs/verification/gy-i24-release-materials-index-20261017.md` 的 `deploy/**`
@@ -196,17 +184,26 @@ npm run verify:purge-schedule                 # 等价入口
 而本片尚无真库读数（`tests/integration/online-purge-pg.mjs` 本地 exit 77、CI 首次读数未取得），
 故证据页归**后续取得 CI 首次读数的片**。本裁定同时写进提交信息，作为授权来源。
 
+**R32 第 2 轮返修的范围更正（指挥裁定，2026-10-22）**：删除 `crontab.example` 后，上面那张索引页必须
+同步它的在册行与 deploy 计数（否则 `verify-release-materials` 的「路径全部存在」「覆盖全部在册文件」两条
+必然红）。指挥把「不改 `docs/verification/**`」收窄为「**不得新增/改动证据页**」：该页是机器判据索引页、
+不是证据页，且 `contract-status.json` 与 `#464` 对它**零命中**、被引用的手写行号全部在该页改动点之前
+⇒ 允许**仅此一页**做最小必要改动（删 1 行在册记录 + 3 处计数/措辞），文件集合不扩大。本裁定同时写进
+提交信息。
+
 ## 本目录**不**证明的事（如实登记）
 
 - ⛔ **不证明外部调度真的在跑**。单元文件在仓里，只说明「装上去之后应该按这个周期跑」；
-  `systemctl list-timers` 有读数、`/etc/cron.d/gengyun-purge` 存在、日志在长，才算运行侧取得。
-  这三项都是**运维动作**，仓库里没有它们的证据，本片也不声称有。
+  `systemctl list-timers` 有读数、`journalctl` 里有单次运行日志，才算运行侧取得。
+  这两项都是**运维动作**，仓库里没有它们的证据，本片也不声称有。
 - ⛔ 不证明目标宿主机上 `/opt/gengyun/app` 的路径与本文一致、`node` 在 `/usr/bin/node`；也不证明该目录
   对两个运行用户**可读/可穿过**（两条命令都以非 root 运行，`tools/**` 与 `services/api/src/**` 要能被它们
   读到 —— 属主与权限属部署面，本目录不代管）。
 - ⛔ 不证明 README 里的 `useradd` / `install -d` 在目标宿主上真的执行过（本片在 Windows 上开发，只做了
-  静态核对）。`Group=` 依赖 `useradd --user-group` 建同名组；cron 路线还依赖状态目录/日志目录的属主与
-  权限、以及环境文件的 `0640 root:<同名组>` —— 装完请用 `id`、`ls -ld`、`sudo -u <user> cat <env>` 复核。
+  静态核对）。`Group=` 依赖 `useradd --user-group` 建同名组；`StateDirectory=` 的属主由 systemd 按
+  `User=`/`Group=` 设置，环境文件必须是 `0600 root:root` —— 装完请用 `id`、`ls -ld /var/lib/gengyun-purge-*`、
+  `sudo ls -l /etc/gengyun/purge-*.env` 复核（⛔ 运行用户读不到 `0600` 的环境文件是**设计如此**，
+  不要为了「能 cat」把它放宽）。
 - ⛔ 不证明两套角色真的能按上表连上库（那是真库臂 `tests/integration/online-purge-pg.mjs` 与
   `backup-copies-purge-pg.mjs` 的事，它们跑的是**临时集群**，不是生产）。
 - ⛔ 调度层到位 ≠ #19 整项达标：本项还含「7 日到期」的受理/回执/审计落地等其它切片。

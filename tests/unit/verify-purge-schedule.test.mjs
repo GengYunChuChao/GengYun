@@ -240,6 +240,29 @@ test('真岗·单元文件必须是 LF（.NET/PS 默认 CRLF 会让另一条 CI 
   }
 });
 
+test('正臂·cron 路线已按 R32 返修裁定删除（目录只剩 .service/.timer，README 说明原因）', () => {
+  const names = readdirSync(UNIT_DIR).sort();
+  // ① 目录里不得再有任何 cron 路线文件（删除后又被「顺手」加回来 ⇒ 红）。
+  assert.deepEqual(names.filter((name) => /cron/i.test(name)), [],
+    `deploy/purge-schedule 下不得再有 cron 路线文件：${names.join('、')}`);
+  // ② 判据面就是 .service / .timer，目录里只允许这两类 + README（多出别的调度件要显式改判据）。
+  assert.deepEqual(names.filter((name) => !/\.(service|timer)$/.test(name) && name !== 'README.md'), [],
+    `本目录只允许 .service / .timer / README.md：${names.join('、')}`);
+  const readme = readFileSync(join(UNIT_DIR, 'README.md'), 'utf8');
+  // ③ 理由必须留在文档里（删掉一节说明 = 把「为什么没有 cron」重新变成无人知道的空白）。
+  assert.ok(readme.includes('## 为什么不再提供 cron 等价路线'), 'README 必须有「为什么不再提供 cron 等价路线」一节');
+  assert.ok(readme.includes('唯一受支持路线'), 'README 必须写明 systemd timer 是唯一受支持路线');
+  assert.ok(readme.includes('set -a'), 'README 必须写明第 2 轮的 `set -a` 变量导出缺陷');
+  assert.ok(readme.includes('`/run`'), 'README 必须写明第 1 轮的 `/run` 锁文件缺陷');
+  // ④ 不得留下任何可照抄的安装命令或「逐项对应」式承诺（那正是被砍掉的埋雷形态）。
+  assert.equal(readme.includes('crontab.example /etc/cron.d/gengyun-purge'), false,
+    'README 不得再给出安装 cron 文件的命令');
+  assert.equal(readme.includes('/etc/cron.d/gengyun-purge'), false,
+    'README 不得再出现 /etc/cron.d/gengyun-purge 这个安装目标');
+  assert.equal(/逐项等价/.test(readme), false, 'README 不得再写「逐项等价」这类措辞');
+  assert.equal(/逐项对应/.test(readme), false, 'README 不得再写「逐项对应」这类措辞');
+});
+
 // ---------------------------------------------------------------------------
 // §3 夹具对照组：一字不改 ⇒ 绿（否则 §4 的红证明不了任何事）
 // ---------------------------------------------------------------------------

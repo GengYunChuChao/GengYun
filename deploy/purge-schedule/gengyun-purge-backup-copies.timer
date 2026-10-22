@@ -9,8 +9,6 @@
 #
 # ## 防重叠
 # 同在线清理那条：oneshot 单实例语义 + 服务侧 TimeoutStartSec=900。
-#
-# 与 crontab.example 二选一：⛔ 不要两条一起装。
 
 [Unit]
 Description=耕云 备份副本 30 日到期清除 · 每 15 分钟
