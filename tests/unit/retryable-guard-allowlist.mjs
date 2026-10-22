@@ -26,7 +26,8 @@
 // （`flags-pg.ts` 兜底恒 true、`service.ts` 兜底恒 true、`ocr|speech|recognitions` 的 `tablesReady`）
 // 已被 `#455` 修掉：前两处改为委托共享判据 `flagReadFailure()`（`isTransientDatabaseError` 分档），
 // 后三处改为 `retryable: false` + `details: PROBE_SHAPE_UNKNOWN` ⇒ 对应白名单条目已删。
-// 现存 12 条 = 原 6 条（`GY-I22`）+ 扩域新增的 6 条（`R31`），全部是「有判据」的合法放宽；
+// 现存 13 条 = 原 6 条（`GY-I22`）+ 扩域新增的 6 条（`R31`）+ `media/store-pg.ts` 1 条（`GY-I06`，W12 媒体
+// 持久化合流时按同一口径登记），全部是「有判据」的合法放宽；
 // 受控范围内 `judgement: none` 的兜底站点已归零，且由 `tests/unit/retryable-fallback-inventory.test.mjs`
 // 的全仓清单持续把守（清单里仍有 `none` 条目＝本片登记不修的其它域站点）。
 
@@ -159,6 +160,19 @@ export const ALLOWED_RETRYABLE = [
     reason:
       '**有判据**（合法放宽）：与 ocr/recognitions/messages/favorites/history/community/conversations 同一分类器'
       + '（db/pool.ts `isTransientDatabaseError`）与同一条分档注释：瞬时类 true，权限/缺表/缺函数/无法归类 false。',
+  },
+  {
+    file: 'services/api/src/media/store-pg.ts',
+    function: 'classifyMediaDatabaseError',
+    retryable: 'isTransientDatabaseError(error)',
+    message: '媒体数据库暂不可用',
+    owner: 'GY-I06',
+    reason:
+      '**有判据**（合法放宽）：媒体持久化端口（W12 落库，#6）的数据库异常折叠，与 ocr/speech/recognitions/'
+      + 'messages/favorites/history/community/conversations 的 `classify*DatabaseError` 逐条同口径 ——'
+      + '57014/55P03 已在上方折成 `PROVIDER_TIMEOUT`；此处 `isTransientDatabaseError`（db/pool.ts）只放行'
+      + '08xxx/53xxx/57P0x/40001/40P01，42501/3D000/28P01/42P01/42883 与无法归类一律 false'
+      + '（注释原文见 media/store-pg.ts:77）。',
   },
 ];
 

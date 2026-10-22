@@ -511,8 +511,8 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "symbol": "initiateUploadUnclaimed",
-          "lines": "807-874"
+          "symbol": "initiateUpload",
+          "lines": "936-1006"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -538,8 +538,8 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "symbol": "completeUploadUnclaimed",
-          "lines": "876-953"
+          "symbol": "completeUpload",
+          "lines": "1008-1108"
         },
         {
           "test": "tests/unit/media-http-upload.test.mjs",
@@ -566,7 +566,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "getMedia",
-          "lines": "975-978"
+          "lines": "1135-1138"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -592,8 +592,8 @@
         },
         {
           "path": "services/api/src/media/service.ts",
-          "symbol": "deleteMediaUnclaimed",
-          "lines": "980-1009"
+          "symbol": "deleteMedia",
+          "lines": "1140-1190"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -620,7 +620,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "grantMediaAccess",
-          "lines": "1021-1052"
+          "lines": "1194-1225"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3088,7 +3088,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "grantCommunityMediaAccess",
-          "lines": "1056-1174"
+          "lines": "1229-1347"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3115,7 +3115,7 @@
         {
           "path": "services/api/src/media/service.ts",
           "symbol": "readCommunityMediaContent",
-          "lines": "1176-1222"
+          "lines": "1349-1395"
         },
         {
           "test": "tests/unit/media-http-access.test.mjs",
@@ -3237,7 +3237,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "845-851"
+          "lines": "857-871"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",

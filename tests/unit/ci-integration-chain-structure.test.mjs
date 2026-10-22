@@ -214,6 +214,31 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
   },
   {
+    path: 'tests/integration/media-persistence-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_media_test`（脚本只允许回环地址）：脚本要求**空库**，'
+      + '自己 `applyMigrations(discoverMigrations())` 套用 26 个迁移（与 `npm run db:migrate` 同一条代码路径），'
+      + '随后跑三段式上传／owner 逐字节读／非 owner NOT_FOUND／同键重复 complete 行数不变／**子进程真重启**后'
+      + '同 uploadId 仍可读／缺 `MEDIA_OBJECT_REF_KEY` 时整域 503／空仓储负控制。'
+      + 'R28-W12 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
+      + '（`postgres:17.11` service，一个**独立 step** 自带 `CREATE DATABASE gengyun_media_test`），'
+      + '但它**不进**无 PG 的回环链：回环链里既没有真 PG、也没有对象存储替代物以外的任何准备，'
+      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+  },
+  {
+    path: 'tests/integration/media-concurrency-pg.mjs',
+    reason: '需真实 PG 17.11 且库名硬钉 `gengyun_media_concurrency_test`（脚本只允许回环地址，`:64`）：要求**空库**，'
+      + '自己 `applyMigrations(discoverMigrations())` 套用全链迁移，随后跑三条并发读数——同一媒体对象两次**并发**'
+      + ' complete（恰好一个 202、一个 409 `REVISION_CONFLICT`）／同一 `Idempotency-Key` **跨主体**的 scope 判定'
+      + '（各自 201、不回放他人回执、同主体同键异请求体才 409 `IDEMPOTENCY_CONFLICT`）／`reject()` 的条件写布尔语义'
+      + '（落库 1 行 true，行已被 `delete` 推进到 deleted 时 0 行 false 且不覆盖终态）。'
+      + 'R28-W12 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job：与 `media-persistence-pg.mjs`'
+      + ' **同型但不同库**（`postgres:17.11` service，一个自带 `CREATE DATABASE gengyun_media_concurrency_test` 的'
+      + ' 独立 step）——⛔ 不能共库：上一步的读数里有**全库** `count(*)`（`media-persistence-pg.mjs:273-275`、'
+      + '`:289-291`、`:426`），共库会让「同一幂等键重复 complete 行数不变」与并发臂的行数互相污染。'
+      + '但它**不进**无 PG 的回环链：回环链里既没有真 PG、也没有对象存储之外任何准备，'
+      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/messages-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },

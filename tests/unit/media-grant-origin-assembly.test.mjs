@@ -43,7 +43,7 @@ async function ownerGrantUrl(env, tag) {
       idempotencyKey: `assembly-origin-${tag}-create`,
     });
     const mediaId = created.media.id;
-    const keys = service.serverObjectKeys(mediaId);
+    const keys = await service.serverObjectKeys(mediaId);
     assert.ok(keys !== null && typeof keys.rawRef === 'string' && keys.rawRef.length > 0);
     // 模拟客户端直传：替身对象存储里放一份与声明逐字节一致的原始对象。
     await app.mediaObjectStore.putObject(keys.rawRef, PNG, 'image/png');
