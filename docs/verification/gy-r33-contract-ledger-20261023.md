@@ -4,6 +4,8 @@
 > 分支：`fix/gy-r33-contract-ledger`；工作树：`E:\GengYunCommander\wt-r33-ledger`。
 > Refs #7、#16、#17。本页只提供证据与订正记录：**不改任何 `status`**、不产生关闭结论、不代替监工验收。
 
+> **R34 补注（2026-10-23）**：本页对 `services/api/src/app.ts` 的行号读数测量于 `7dd3d699`（本页自述基线）；`#503`／`#505`／`#510`／`#511` 合入后该文件已多次变动，那些行号不再指向原处（例如社区 store 选择块原记 `:831-838`、社区 real 放行判据原记 `:1133`）。现按符号定位：`communityRealUnwired` 在 `buildApp` 内（`git grep -n 'communityRealUnwired' -- services/api/src/app.ts`），社区 store 选择块按 `const communityStore` 检索（`git grep -n 'const communityStore' -- services/api/src/app.ts`）。原读数保留为历史；本补注只订正定位方式，不重新验收各行结论（个别引用处的代码形态亦可能已变）。
+
 ## 0 摘要
 
 1. 只改 `docs/architecture/contract-status.json` 的 **blocker 文本**，共 **22 条**：`listKnowledge`、`dimensions.pagination`、`getMedia`、社区 16 条（`listPosts` … `getOwnReport`）、`#17` 三条（`listMessages` / `getUnreadCount` / `markMessageRead`）。脚本比对 HEAD：`changed blockers=22 / other changes=0`（§5.1）。
@@ -127,6 +129,8 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | `listFavorites` / `createFavorite` / `deleteFavorite` | 迁移 0018 + PG store；仅 `real && !persistent` 才 503 | `services/api/src/app.ts:1482-1486`（favorites store）、`:1571-1579`（服务门禁）；`services/api/src/favorites/store-pg.ts:187` | 保留 |
 | `listHistory` | 识别/OCR 终态写入「已随 R31-I16 接线（real 也写）」 | `services/api/src/app.ts:1010-1028`：判据 `historyDomainEnabled = config.executionMode !== 'real' \|\| historyStore.persistent`；`real` + 持久 store ⇒ `wired`；`#484`（`c728648a`）即此修正 | 保留 |
 | `deleteHistory` | 级联删除仍未接线，`historyCascadePort` 仍是 `createUnwiredHistoryCascadePort()` | `services/api/src/app.ts:1564` 逐字仍是 `historyInjection?.cascade ?? createUnwiredHistoryCascadePort()`；`createWiredHistoryCascadePort` 存在但生产装配未调用 | 保留 |
+
+> **R34 订正（2026-10-23）**：上表 `deleteHistory` 行「逐字仍是 `historyInjection?.cascade ?? createUnwiredHistoryCascadePort()`」是 `7dd3d699` 时点读数；`#503`（squash `869b0358`）合入后该句**已被代码推翻**，属「读数已假」而非行号漂移。现行装配为 `historyCascadePort = historyInjection?.cascade ?? createHistoryCascadePort({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService })`（`createHistoryCascadePort` 在 `services/api/src/history/cascade-wiring.ts` 内包装 `createWiredHistoryCascadePort`），`createUnwiredHistoryCascadePort` 在 `services/api/src/app.ts` 已 **0 命中**。按符号定位：`git grep -n 'createHistoryCascadePort\|createUnwiredHistoryCascadePort' -- services/api/src/app.ts`。`#503` 已把 `partial` 语义写清——识别与 OCR **两类**关联删除已接上，**媒体对象删除与共享引用核对仍属 `#6`／`#19`、外发撤销仍未接**，故 `status` 仍是 `partial`；出处见 `docs/architecture/contract-status.json` 的 `deleteHistory` 条目 blocker 与 `docs/architecture/contract-implementation-status.md` 同文，回归见 `tests/unit/history-cascade-wiring.test.mjs`、`tests/integration/favorites-history-pg.mjs`（第 15 组）。本注只订正事实，**不重新验收 `#16` 的任何 AC、不改任何 `status`**；原句与原读数保留为历史。
 
 补充实测：迁移 `0018` 建 `favorites` / `history` / `favorites_idempotency` / `history_idempotency` 四表（`services/api/db/migrations/0018_favorites_history.sql:46`、`:71`、`:103`、`:118`）；CI job `real-pg-17.11` 的步骤真跑 `tests/integration/favorites-history-pg.mjs`（`.github/workflows/real-pg-integration.yml:48`、`:156`）。
 

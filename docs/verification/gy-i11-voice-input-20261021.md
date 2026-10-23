@@ -5,6 +5,8 @@
 - 说明：本文是**本机静态与合成读数**。真实 WeChat 开发者工具 / 真机 / 真实 ASR 供应商 / 真实对象存储与访问网关 / 真实 PG17 **均未取得**，一律记为「未取得」，不据此放宽任何验收。
 - 口径：四段分别是 (a) 录音权限与 `wx.getRecorderManager` 生命周期、(b) 音频对象存储上传、(c) 转写任务与轮询/超时、(d) 转写文本进入问答的接线与「端侧临时态」在 B7 统一状态层的呈现。
 
+> **R34 补注（2026-10-23）**：本页对 `miniprogram/pages/voice/voice.js` 的行号读数测量于 `ad227751`（该片实现提交，基点 `7d1a429`；它经 squash 合入，并非 `upstream/main` 的祖先）；`#506` 合入后该文件已改动，行号不再对应。现按符号定位：录音启动 `startRecording`、收尾/离页 `releaseRecorder`、本机临时文件回收 `discardRecordFile`（`git grep -n '<符号>' -- miniprogram/pages/voice/voice.js`）。原读数保留为历史。
+
 ## 1. 结论摘要（四段判定）
 
 | 段 | 判定 | 一句话 |

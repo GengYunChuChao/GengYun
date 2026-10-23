@@ -17,6 +17,8 @@
 | HEAD | 本页自身即最后一个提交（`docs(GY-I13): 证据页…`）；其 SHA 会因本页修订而变化 ⇒ **权威 HEAD 以回传为准**。5 个代码/测试提交见 §6 |
 | 依赖 | 直连 `npm install`（**无** junction/symlink 指向别处 `node_modules`） |
 
+> **R34 补注（2026-10-23）**：本页行号读数分别测量于 `e9353b4`、`6c22000` 与本页基线 `ddeb301`（正文各处已就地标注快照 SHA）；`#506` 合入后 `miniprogram/pages/voice/voice.js` 与 `tests/unit/miniprogram-voice-playback.test.mjs` 均已改动，这些行号不再对应（例如 §4.2 注里指向用例标题的那处 `:907`，该行现在落在测试夹具的 `kind: 'synthesis'` 上）。现按符号定位：录音启动 `startRecording`（`git grep -n 'startRecording' -- miniprogram/pages/voice/voice.js`）、用例标题「宿主页·录音控件与播报控件分离」与夹具 `jobFixture`（`git grep -n 'jobFixture\|录音控件与播报控件分离' -- tests/unit/miniprogram-voice-playback.test.mjs`）。原读数保留为历史。
+
 ## 1 变更 1：合成域接入共享作业源（服务端）
 
 ### 1.1 现状核对（以实际路径为准，未新建 `synthesis/**`）
