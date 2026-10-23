@@ -246,16 +246,16 @@ test('门禁·泄漏扫描命中：四条规则都报，且密钥原文不进 st
     const secrets = report.gates[0];
     assert.equal(secrets.status, 'failed');
     const rules = new Set(secrets.details.hits.map((hit) => hit.rule));
-    for (const rule of ['sk-prefixed-key', 'secret-key-assignment', 'private-key-block', 'local-absolute-path']) {
+    for (const rule of ['openai-style-key', 'secret-key-assignment', 'private-key-block', 'local-absolute-path']) {
       assert.ok(rules.has(rule), `缺失规则命中：${rule}，实际 ${[...rules].join(',')}`);
     }
     assert.ok(secrets.details.hits.every((hit) => hit.file === 'leak.txt'));
     assert.ok(secrets.details.scannedLines >= 5, '必须先真的扫到新增行（不是空扫通过）');
     assert.ok(secrets.errorLines.length <= 3, '错误行最多 3 行');
 
-    // 反泄：密钥原文（sk-… 与 AKID…）既不在 stdout，也不在报告文件里。
+    // 反泄：密钥原文（上面的拼装常量，运行期即完整串）既不在 stdout，也不在报告文件里。
     const reportFile = readFileSync(out, 'utf8');
-    for (const raw of ['sk-abcdefgh12345678', 'AKIDzzzzzzzzzzzzzzzz']) {
+    for (const raw of [RAW_SK, 'AKIDzzzzzzzzzzzzzzzz']) {
       assert.equal(run.stdout.includes(raw), false, `stdout 泄漏了密钥原文：${raw}`);
       assert.equal(reportFile.includes(raw), false, `报告文件泄漏了密钥原文：${raw}`);
     }

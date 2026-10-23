@@ -340,7 +340,13 @@ function stripAnsi(text) {
 
 /**
  * 从输出里挑「首条关键错误行」+ 紧随其后至多 2 行上下文（合计 ≤ 3 行）。
- * 优先匹配带错误特征的行走法；匹配不到就取末尾 3 条非空行——**不做语义猜测**，只保证可读且不刷屏。
+ *
+ * 分三档，逐档放宽（**不做语义猜测**，只保证可读且不刷屏）：
+ *   1. 强失败信号（`not ok`/`FAIL`/`Error:`/`error TS…`/`✖` …）——最像「红的那一条」；
+ *   2. 弱信号（出现 error/失败 字样）；
+ *   3. 都没有：取末尾 3 行（静默失败时致命信息通常在尾部，取开头只会捞到进度噪音）。
+ * 前两档都**跳过通过行**（`✔`/`ok`/`PASS` 开头）——测试名里常带 error 字样，
+ * 选到一条「通过」的行就等于把真正的失败藏到后面去了（本脚本自己在真跑时踩过）。
  */
 function extractErrorLines(output) {
   const lines = stripAnsi(output)
@@ -349,11 +355,13 @@ function extractErrorLines(output) {
     .filter((line) => line.trim() !== '');
   if (lines.length === 0) return ['（命令失败但没有输出）'];
 
-  const signal = /(^|\s)(error|Error|ERROR|ERR_[A-Z]+|FAIL|FAILED|not ok|失败|错误|TypeError|Error:)/;
-  const index = lines.findIndex((line) => signal.test(line));
-  // 认不出错误特征时取**末尾** 3 行：命令静默失败（只打进度、最后才吐致命信息）时
-  // 错因在尾部，取开头只会捞到进度噪音——那正是「首条关键错误行」要避免的刷屏。
-  const start = index === -1 ? Math.max(0, lines.length - MAX_ERROR_LINES) : index;
+  const strong = /(^|\s)(not ok|FAIL\b|FAILED|ERR_[A-Z]+|Error:|error TS\d+|✖|AssertionError|失败[:：])/;
+  const weak = /(^|\s)(error|Error|ERROR|失败|错误|TypeError)/;
+  const passing = /^\s*(✔|ok\b|PASS\b)/;
+  const pick = (pattern) => lines.findIndex((line) => !passing.test(line) && pattern.test(line));
+
+  const hit = [pick(strong), pick(weak)].find((index) => index !== -1);
+  const start = hit === undefined ? Math.max(0, lines.length - MAX_ERROR_LINES) : hit;
   return lines.slice(start, start + MAX_ERROR_LINES).map((line) => redactForOutput(truncate(line, MAX_LINE_CHARS)));
 }
 
@@ -368,10 +376,14 @@ function truncate(text, max) {
 /**
  * 规则表。`severity: high` 的命中片段**必须掩码**（密钥/私钥原文永不外泄）；
  * `medium` 是本机绝对路径（本身不是密钥，但要拦在仓库外，故原样展示便于修）。
+ *
+ * ⚠️ 规则 id 自身不能写成会被本表命中的形状：本脚本也在「待发布 diff」里，
+ * 真跑时 id `sk` 后面接一长串连字符词会被自己的第一条规则命中（自指假阳性，踩过一次）。
+ * 因此第一条规则的 id 用「代号」而不是前缀直写；描述写在 `label` 里。
  */
 const SCAN_RULES = [
   {
-    id: 'sk-prefixed-key',
+    id: 'openai-style-key',
     severity: 'high',
     label: '疑似 sk- 前缀 API Key',
     regex: /\bsk-[A-Za-z0-9_-]{8,}/g,

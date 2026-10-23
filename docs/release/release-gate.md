@@ -38,7 +38,7 @@ node tools/release-gate.mjs --list
 | `--base <ref>` | 待发布 diff 的基线 | 泄漏与产物门禁都只看 `<base>...HEAD` |
 | `--out <path>` | 报告落盘路径 | 默认 `release-gate-report.json`；内容与 stdout 逐字节一致 |
 | `--max-file-bytes <n>` | 大文件阈值 | 默认 5242880（5 MiB） |
-| `--binary-allow <.ext>` | 放行某些扩展名的二进制 | 可重复或逗号分隔，如 `--binary-allow .bin,.png` |
+| `--binary-allow <.ext>` | 放行某些扩展名的二进制 | 逗号分隔，如 `--binary-allow .bin,.png`；默认空＝一律算失败 |
 | `--timeout-ms <n>` | 单条命令超时 | 默认 0＝不限；超时记为该门禁失败并写明超时值 |
 | `--pg` | 开启真库臂 | 见 §4 为何默认跳过 |
 | `--plan <json>` | 用计划文件覆盖门禁定义 | 故障注入/自动化测试用；不是日常入口 |
@@ -143,13 +143,17 @@ node tools/release-gate.mjs --only pg --pg
 
 | 规则 id | 严重度 | 认什么 | 输出 |
 | --- | --- | --- | --- |
-| `sk-prefixed-key` | high | `sk-` 前缀且后接 ≥8 位密钥字符 | 掩码（前 4 字符 + 标记） |
+| `openai-style-key` | high | `sk-` 前缀且后接 ≥8 位密钥字符 | 掩码（前 4 字符 + 标记） |
 | `secret-key-assignment` | high | `SecretKey` 这类键名后接 `:`/`=` 与 ≥8 位值 | 掩码 |
 | `private-key-block` | high | `-----BEGIN` 开头、`PRIVATE KEY-----` 结尾的 PEM 块 | 掩码 |
 | `local-absolute-path` | medium | 盘符后接反斜杠开头的本机绝对路径（正则 `[A-Za-z]:\\`） | **原样**给出（不是密钥，需看清才能修） |
 
 **high 命中一律掩码**，密钥原文不进 stdout、不进报告、不进终端；这是硬要求，
 失败信息足够定位到「哪个文件哪一行哪条规则」，但不足以把密钥再抄一遍到日志里。
+
+规则 id 故意不写成会被本表命中的形状（第一条用 `openai-style-key`，不直写前缀）：
+本脚本自己也在「待发布 diff」里，id 命中自己的规则就会变成一次假阳性——
+这条约束是被真跑扫出来后补上的，写新规则时请一起遵守。
 
 ## 7 与 CI 的关系
 
