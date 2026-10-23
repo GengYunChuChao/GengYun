@@ -5,7 +5,8 @@
  *   1. **全过场景** —— 全部通过时退出码 0、`verdict=pass`，报告文件与 stdout 同字节；
  *   2. **注入失败场景** —— 失败时退出码 1，失败项带 `exitCode` 与 ≤3 行「首条关键错误行」，
  *      且**失败后面的步骤不再执行**（首条失败即停）；
- *   3. **`--only` / `--skip` 过滤** —— 只跑点名的项；未知 id、过滤后为空都按**用法错误**退出码 2；
+ *   3. **`--only` / `--skip` 过滤** —— 只跑点名的项；未知 id、过滤后为空、两者同时给（有交集＝矛盾，
+ *      无交集＝必有一个被静默忽略）都按**用法错误**退出码 2；
  *   4. **泄漏扫描命中/未命中** —— 在 `os.tmpdir()` 里铺真 git 夹具，命中时四条规则都报、
  *      密钥原文**不出现在 stdout／报告里**（只给掩码），未命中时判 pass 且确实扫过新增行。
  * 另含：大文件/二进制门禁、真库臂默认跳过且带理由、`--list` 产物契约，
@@ -203,11 +204,14 @@ test('门禁·--only 只跑点名项，--skip 剔除点名项', () => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-test('门禁·用法错误（未知 id／过滤后为空／同一项既 only 又 skip）退出码 2，且不产出报告', () => {
+test('门禁·用法错误（未知 id／过滤后为空／only 与 skip 同给）退出码 2，且不产出报告', () => {
   const scratch = makeScratch();
   const plan = join(scratch, 'plan.json');
   writeJson(plan, {
-    gates: [{ id: 'a', kind: 'command', steps: [{ label: 'a', command: 'node', args: ['-e', 'process.exit(0)'] }] }],
+    gates: [
+      { id: 'a', kind: 'command', steps: [{ label: 'a', command: 'node', args: ['-e', 'process.exit(0)'] }] },
+      { id: 'b', kind: 'command', steps: [{ label: 'b', command: 'node', args: ['-e', 'process.exit(0)'] }] },
+    ],
   });
   const out = join(scratch, 'usage.json');
 
@@ -217,11 +221,21 @@ test('门禁·用法错误（未知 id／过滤后为空／同一项既 only 又
   assert.equal(unknown.stdout, '', 'usage error 时 stdout 不得输出半个 JSON');
   assert.equal(existsSync(out), false);
 
-  const empty = gate(['--root', ROOT, '--plan', plan, '--skip', 'a', '--out', out]);
+  const empty = gate(['--root', ROOT, '--plan', plan, '--skip', 'a,b', '--out', out]);
   assert.equal(empty.status, 2, empty.stderr);
 
+  // ① 有交集：同一项既点名又排除。
   const conflict = gate(['--root', ROOT, '--plan', plan, '--only', 'a', '--skip', 'a', '--out', out]);
   assert.equal(conflict.status, 2, conflict.stderr);
+  assert.match(conflict.stderr, /既 --only 又 --skip/);
+
+  // ② 无交集：`--skip b` 在这里毫无作用，属于「显式参数被静默忽略」，同样拒绝——
+  //    否则「只改文档说它互斥、行为上却放行」就又成了一次言行不一（审查里被点过的那种）。
+  const disjoint = gate(['--root', ROOT, '--plan', plan, '--only', 'a', '--skip', 'b', '--out', out]);
+  assert.equal(disjoint.status, 2, disjoint.stderr);
+  assert.match(disjoint.stderr, /没有交集/);
+  assert.equal(disjoint.stdout, '');
+  assert.equal(existsSync(out), false);
 
   const brokenPlan = join(scratch, 'broken.json');
   writeFileSync(brokenPlan, '{ not json', 'utf8');

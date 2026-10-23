@@ -33,8 +33,8 @@ node tools/release-gate.mjs --list
 
 | 选项 | 作用 | 备注 |
 | --- | --- | --- |
-| `--only <a,b>` | 只跑点名的门禁 | 与 `--skip` 互斥；未知 id 属用法错误 |
-| `--skip <a,b>` | 跑除外点名的门禁 | 过滤后为空属用法错误 |
+| `--only <a,b>` | 只跑点名的门禁 | ⛔ **不能与 `--skip` 同时给**（同给即退出码 2，见 §3.1）；未知 id 属用法错误 |
+| `--skip <a,b>` | 跑除外点名的门禁 | 与 `--only` 同给属用法错误；过滤后为空属用法错误 |
 | `--base <ref>` | 待发布 diff 的基线 | 泄漏与产物门禁都只看 `<base>...HEAD` |
 | `--out <path>` | 报告落盘路径 | 默认 `release-gate-report.json`；内容与 stdout 逐字节一致 |
 | `--max-file-bytes <n>` | 大文件阈值 | 默认 5242880（5 MiB） |
@@ -43,7 +43,7 @@ node tools/release-gate.mjs --list
 | `--pg` | 开启真库臂 | 见 §4 为何默认跳过 |
 | `--plan <json>` | 用计划文件覆盖门禁定义 | 故障注入/自动化测试用；不是日常入口 |
 | `--root <dir>` | 指定仓库根 | 默认取脚本上一级目录 |
-| `--list` / `-h` | 列门禁 id / 帮助 | 两者都写 stderr，stdout 保持可解析 |
+| `--list` / `-h` | 列门禁 id / 帮助 | `--list` 把 `{"gates":[…]}` 写 **stdout**（可直接 `| jq .gates`）；`-h` 写 stderr |
 
 ## 2 各项含义
 
@@ -54,7 +54,7 @@ node tools/release-gate.mjs --list
 | `contract` | 契约测试与契约状态一致性 | 两步：`npm run test:contract`，然后 `node tools/verify-contract-status.mjs` | 两步都退出码 0 | 首个失败步骤的关键行 ≤3 行 | 跑 |
 | `secrets` | 私密信息泄漏扫描 | 进程内扫 `git diff <base>...HEAD` 的**新增行** | 0 条命中 | 命中 `文件:行 规则 ⇒ 掩码/路径`，最多 3 条 | 跑 |
 | `artifacts` | 大文件与二进制检查 | 进程内对 diff 里新增/修改的文件 `stat` + 读前 8 KiB 找 NUL | 无 `too-large`、无未放行 `binary` | 超阈值/二进制的文件名与字节数，最多 3 条 | 跑 |
-| `pg` | 真库集成臂 | 默认不执行；`--pg` 时逐个跑 `test:integration:*-pg`（本仓 3 个：`recognition-chain-pg`、`conversations-pg`、`media-persistence-pg`） | 每个都退出码 0 | 首个失败脚本的关键行 ≤3 行 | **跳过**（见 §4） |
+| `pg` | 真库集成臂 | 默认不执行；`--pg` 时逐个跑 `test:integration:*-pg`（本仓 5 个：`recognition-chain-pg`、`conversations-pg`、`media-persistence-pg`、`backup-copies-purge-pg`、`online-purge-pg`） | 每个都退出码 0 | 首个失败脚本的关键行 ≤3 行 | **跳过**（见 §4） |
 
 三条共性：
 
@@ -72,7 +72,7 @@ node tools/release-gate.mjs --list
 | --- | --- | --- |
 | `0` | 全部通过（跳过项不算失败） | 可以继续提 PR / 合并 |
 | `1` | 有门禁失败 | 看 `gates[].errorLines` 定位；README 里的判定行只做速览 |
-| `2` | 用法错误 | 未知选项、未知门禁 id、`--only` 与 `--skip` 冲突、过滤后为空、计划文件坏、`--root`/`--plan` 不存在 |
+| `2` | 用法错误 | 未知选项、未知门禁 id、`--only` 与 `--skip` 同时给（有交集＝语义矛盾，无交集＝必有一个被静默忽略）、过滤后为空、计划文件坏、`--root`/`--plan` 不存在 |
 
 用法错误时 **stdout 为空、不落盘**——不给下游半份 JSON，避免「看起来跑过了」。
 
@@ -105,9 +105,15 @@ node tools/release-gate.mjs --list
 
 ### 3.3 失败时的「首条关键错误行」
 
-`errorLines` 的取法：先找第一行带错误特征（`error`/`Error:`/`ERR_…`/`FAIL`/`FAILED`/`not ok`/`失败`/`错误`/`TypeError`）的输出，
-取该行与其后至多 2 行；认不出错误特征时取**末尾** 3 行（命令静默失败时致命信息通常在尾部，取开头只会捞到进度噪音）。
-每行截断到 400 字符。目的是「够定位、不刷屏」——完整输出仍在你自己终端里。
+分三档取，先命中先用：
+
+1. **强失败信号**：`not ok`、`FAIL`、`FAILED`、`ERR_…`、`Error:`、`error TS…`、`✖`、`AssertionError`、`失败：`；
+2. **弱信号**：`error`、`Error`、`ERROR`、`失败`、`错误`、`TypeError`；
+3. **兜底**：都没有就取**末尾** 3 行（命令静默失败时致命信息通常在尾部，取开头只会捞到进度噪音）。
+
+前两档都会**跳过 `✔`／`ok`／`PASS` 开头的通过行**——真跑时踩过：测试名里带 `error` 字样的**通过**用例
+（如 `✔ error_status_map 与 states.json 一致`）被弱信号选中，成了「首条错误行」，真正的失败反而没露头。
+命中行再带上其后至多 2 行，每行截断到 400 字符。目的是「够定位、不刷屏」——完整输出仍在你自己终端里。
 
 ## 4 真库臂为什么默认跳过
 
@@ -171,3 +177,7 @@ node tools/release-gate.mjs --only pg --pg
 - `secrets`/`artifacts` 只看 diff：**已存在于仓库里的**历史泄漏不会被本门禁翻出来（那是 `lint-workspaces` 与人工排查的范围）。
 - 泄漏规则是**启发式**：命中即拦截（要求人看清），不保证零漏报；`local-absolute-path` 允许作为 medium 放行修复判断。
 - 报告默认落在仓库根的 `release-gate-report.json`，已在 `.gitignore` 里；不要把它提交进仓库。
+- `contract` 门禁第二步会**真装配一次 app** 清点挂载路由（子进程），单次实测 6.0–13.2s、并发机器上更久。
+  该子进程预算已由 `tools/contract-status-core.mjs` 的 `DEFAULT_RUNTIME_TIMEOUT_MS = 60000` 兜住
+  （可被环境变量 `GY_CONTRACT_STATUS_TIMEOUT_MS` 覆盖；原 15s 会擦线，`spawnSync … ETIMEDOUT` 会冒到调用方测试里，看起来像断言红）。这是本门禁**依赖的外部脚本**参数，
+  不属于 `release-gate.mjs` 的 `--timeout-ms`（后者管的是门禁命令本身）。

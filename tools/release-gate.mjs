@@ -69,7 +69,7 @@ const USAGE = `发布门禁汇总（release gate）
 
 选项：
   --only <id,id>        只跑这些门禁（逗号分隔；未知 id ⇒ 退出码 2）
-  --skip <id,id>        跳过这些门禁
+  --skip <id,id>        跳过这些门禁（⛔ 不能与 --only 同时给，见退出码 2）
   --base <ref>          待发布 diff 的基线（默认按 upstream/main → origin/main → main → HEAD 解析）
   --out <path>          JSON 报告落盘路径（默认 ${DEFAULT_OUT}）
   --root <dir>          仓库根（默认本脚本上一级目录）
@@ -78,7 +78,7 @@ const USAGE = `发布门禁汇总（release gate）
   --binary-allow <.ext,.ext>  允许进入仓库的二进制扩展名（默认空 = 一律算失败）
   --plan <path>         用 JSON 计划覆盖门禁定义（自动化测试／注入用）
   --pg                  启用真库臂（默认跳过并标注）
-  --list                列出全部门禁 id 后退出（stdout 输出 JSON 数组）
+  --list                列出全部门禁 id 后退出（stdout 输出 {"gates":[…]}）
   -h, --help            显示本帮助
 
 门禁 id：${GATE_IDS.join(' / ')}
@@ -155,10 +155,18 @@ function parseArgs(argv) {
     }
   }
 
-  // `--only` 与 `--skip` 同时点名同一项 ⇒ 语义冲突，按用法错误处理（不静默择一）。
+  // `--only` 与 `--skip` **不能同时给**，两种样子都算用法错误（都不静默择一）：
+  //   ① 有交集 ⇒ 语义矛盾（同一项既点名又排除）；
+  //   ② 无交集 ⇒ 必有一个参数被完全忽略（`--only a --skip b` 里 `--skip` 毫无作用），
+  //      静默忽略一个显式参数等于替用户猜意图，宁可让他删掉一个再跑。
   if (opts.only && opts.skip) {
     const both = opts.only.filter((id) => opts.skip.includes(id));
     if (both.length > 0) throw new UsageError(`同一门禁不能既 --only 又 --skip：${both.join(', ')}`);
+    throw new UsageError(
+      '--only 与 --skip 没有交集，不能同时给：'
+      + `--only=${opts.only.join(',')} / --skip=${opts.skip.join(',')}，`
+      + '其中一个会被完全忽略——请只保留一个（要「只跑这些」用 --only，要「除这些」用 --skip）',
+    );
   }
   // id 合法性**留到选择阶段**再判：`--plan` 会替换门禁集合，此时校验必须对着计划里的 id，
   // 而不是对着内置 GATE_IDS（否则注入式测试永远无法用 --only 选自己的门禁）。
