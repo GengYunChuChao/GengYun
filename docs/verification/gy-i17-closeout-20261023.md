@@ -4,9 +4,10 @@
 - 分支：`docs/gy-r33-i17-closeout`（工作树 `E:\GengYunCommander\wt-r33-i17`），从 `upstream/main` 新建；基线＝`7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79`（`git -C E:\GengYunCommander\GengYun_Agent2 rev-parse upstream/main` 实测）。本页所有 `路径:行号` 都是该 SHA 上的**实读值**：工作树 `git status --porcelain` 为空 ⇒ 磁盘内容与 `upstream/main` 是同一棵树。
 - 环境：Windows · node **v24.16.0** · npm **11.13.0**；本树自装依赖 `npm ci --prefer-offline --no-audit --no-fund --ignore-scripts`（`added 103 packages in 5s`，装完 `git status --porcelain` 仍为空 ⇒ lockfile 未变）。**本机无可用真 PostgreSQL**：`127.0.0.1:55727` 探测 `TcpTestSucceeded=False`，仅 `55715` 在听（属其它回合的集群，本片不借用）⇒ 本轮**未跑**真库臂，真库读数只能引既有证据页（§5-U5）。
 - 本页性质：关闭材料（读数页）。只记录「已经取得什么读数、还差什么」，不替代监工裁定，也**不把任何未取得项写成已通过**。
+- **身份归属边界**：本页引用的评论 `6333028693` 是 **`Sek1ro-oka` 于 2026-10-22 发布的「指挥裁定」**（`gh api` 实读 `user.login=Sek1ro-oka`、首行「指挥裁定（GY-I17，2026-10-22）」），属**指挥侧历史裁定/建议**；它**不能替代**用户最新「沿用完整验收、缺口未齐保持开放」的要求，也**不构成**任何「监工已改口径」的暗示。
 - 与既有页面的关系：`#445` 的只读复盘（[gy-r31-i17-recon-20261022.md](gy-r31-i17-recon-20261022.md)）、G2 裁定（[gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)）、G5（[gy-r31-i17-g5-20261022.md](gy-r31-i17-g5-20261022.md)）、G6／G7／G8（[gy-r31-i17-g678-20261022.md](gy-r31-i17-g678-20261022.md)）、真库注销臂（[gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md)）都是**当时时点**的快照；本页按 `7dd3d699` 重新逐条核过，**不复制**它们的结论。
 
-**一行结论**：按监工裁定 `6333028693` 给出的 `Closes #17` 前置（A 跳转入口 ＋ C 里 G3 ＋ **台账重生成**），A 与 G3 已随 #448 落地，**台账重生成未落地**——`docs/architecture/contract-status.json` 里三条消息 operation 仍是 `partial`，`blocker` 仍写「真实事件/目标端口、PG/注销及页面/Android仍待验收」，而其中「真实事件／目标端口／注销」三项已随 #422／#425／#452 落地、**PG 一项只到「代码在位＋契约形状单测」（真库臂本轮未跑）**（§3.3 给出逐字读数）⇒ **#17 不可关**；缺口 ① 属**工程/流程**（台账口径，本页 docs-only 不能改），缺口 ② 属**外部依赖/契约**（真机走查、真 PG `system` 形状、通知重试 outbox、停用期间不可读，§5）。
+**一行结论**：按**指挥裁定** `6333028693`（2026-10-22，作者 `Sek1ro-oka`）给出的 `Closes #17` 前置（A 跳转入口 ＋ C 里 G3 ＋ **台账重生成**），A 与 G3 已随 #448 落地，**台账重生成未落地**——`docs/architecture/contract-status.json` 里三条消息 operation 仍是 `partial`，`blocker` 仍写「真实事件/目标端口、PG/注销及页面/Android仍待验收」，而其中「真实事件／目标端口／注销」三项已随 #422／#425／#452 落地、**PG 一项只到「代码在位＋契约形状单测」（真库臂本轮未跑）**（§3.3 给出逐字读数）⇒ **#17 不可关**；缺口 ① 属**工程/流程**（台账口径，本页 docs-only 不能改），缺口 ② 属**外部依赖/契约**（真机走查、真 PG `system` 形状、通知重试 outbox、停用期间不可读，§5）。
 
 ---
 
@@ -20,7 +21,7 @@
 | 功能侧 | AC1／AC2／AC3 **已具备**；AC4 的消息域子句已具备，「收藏历史」子句属 #16 | 见 §1 |
 | 代码是否落地 | 迁移 0019 ＋ PG 存储 ＋ 未读派生 ＋ 读标记 CAS ＋ 游标 ＋ 跳转端口 ＋ 四类消息事件（`comment`/`like`/`moderation`/`system`）的生产点，全部在 `upstream/main` 且装配在位 | 见 §2 |
 
-**为什么「不可关」不写成「可关但有未取得项」**：裁定原文的措辞是前置（「`Closes #17` 的前置：A（跳转入口）＋C 里的 G3／台账重生成落地后由监工判定」）。前置未落地时，任何「可关」判定都只能由监工改口径——本页不替监工改口径，只把读数摆出来。
+**为什么「不可关」不写成「可关但有未取得项」**：`6333028693` 那句措辞是**指挥侧的历史裁定/建议**（原文：「`Closes #17` 的前置：A（跳转入口）＋C 里的 G3／台账重生成落地后由监工判定」），**不构成对用户「完整验收」要求的豁免**。关单与否由监工依**实际事实与 issue 全部必要 AC／依赖**判断；本页只摆读数、不改口径，也不把「指挥曾建议某前置」读成「监工已认可该口径」。
 
 ---
 
@@ -174,7 +175,7 @@
 
 ---
 
-## 3 PR 与监工裁定（自己核过的读数）
+## 3 PR 与裁定记录（自己核过的读数）
 
 ### 3.1 PR 状态与内容核对
 
@@ -198,7 +199,7 @@
 | #484 | MERGED | `c728648a74ede69181d875d0c7f32ee2ad126a3d` | 0（在） | **`fix(i16)`: real 模式终态历史端口接真库**（Refs #16） | 与 #17 无代码交集；任务书把它列为「#17 相关」，**实读纠正：它属 #16** |
 | #485 | MERGED | `5b4292f2bd7237abe3ff3257f606e90d60487537` | 0（在） | 账号级系统事件（停用/恢复 → `system`，**G9**） | `services/api/src/admin/ops/account-events.ts:68`、`:144`；装配 `services/api/src/app.ts:1270` |
 
-### 3.2 监工裁定 `6333028693`（`gh api repos/GengYunChuChao/GengYun/issues/comments/6333028693` 实读，`bodyLength=773`，`user=Sek1ro-oka`，`created_at=2026-10-22T04:53:20Z`）
+### 3.2 指挥历史记录 `6333028693`（`gh api repos/GengYunChuChao/GengYun/issues/comments/6333028693` 实读：`user.login=Sek1ro-oka`（`type=User`）、首行「指挥裁定（GY-I17，2026-10-22）」、`bodyLength=773`、`created_at=2026-10-22T04:53:20Z`）——属**指挥侧评论**，不是任何形式的批复或判决
 
 原文三段要点与逐条核对：
 
@@ -207,7 +208,7 @@
    - 一处需登记的**口径差额**（只登记，不判缺陷）：裁定点名的「同源判定」是 `services/api/src/targetref/visibility.ts:170` 的 `deriveVisibility`（收藏/历史用的端口形状），而消息域现在用的是 `services/api/src/messages/reference.ts:94` 的 `createWiredReferencePort`（更窄的闭集折叠）。两者都 fail-closed、都不泄露存在性，但**不是同一函数**；若将来扩 16 型，需按裁定复用 `deriveVisibility`，⛔ 不得在消息域另写一套。
 2. **不算缺口、不要改的点**：`DELETE /messages/:id` 契约与实现两侧都不存在 ⇒ 本版不加；`store-pg.ts:430/437` 的 `deleteAllByOwner`／`purgeOwnerData` 是注销内部原语。
    - 我的核对：`packages/contracts/openapi.json` 里消息只有 3 条 operation（§1.3）；实读 `services/api/src/messages/store-pg.ts:430`（`async deleteAllByOwner(ownerId) {`）与 `:437`（`async purgeOwnerData(ownerId) {`）——行号与裁定一致。
-3. **`Closes #17` 的前置**：A（跳转入口）＋C 里的 G3／**台账重生成**落地后由监工判定；单靠 B 不构成关闭。
+3. **`Closes #17` 的前置**：A（跳转入口）＋C 里的 G3／**台账重生成**落地后由监工判定（**该句原文如此**，本页按原文引述，不据此推断任何人已改口径）；单靠 B 不构成关闭。
    - 我的核对：A／G3 已随 #448 落地；**台账重生成未落地**（§3.3）⇒ 前置不全。
 
 ### 3.3 台账现状（`docs/architecture/contract-status.json`，本页只读、不改）
