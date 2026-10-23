@@ -9,7 +9,7 @@
  *    既误导调用方，也让"越权与不存在同形"这条安全口径被污染。
  *    **与 #10/#106 的钉子同一口径**（那两处钉的也是"层级职责不许悄悄换位"）。
  *
- * 2. **34 个 operationId 的方法/路径必须与契约逐条一致**：直接读 `openapi.json`，
+ * 2. **36 个 operationId 的方法/路径必须与契约逐条一致**：直接读 `openapi.json`，
  *    对每个 operationId 取出契约的 `method` 与 `path`（`{id}`/`{key}` → `:id`/`:key`），
  *    断言装配后的 app 上**确实**存在这条路由。任何"少注册/路径写错/方法写错"都会失败。
  */
@@ -101,10 +101,10 @@ test('钉子 1：两层分工 —— 非法 uuid ⇒ 400 INVALID_REQUEST，合�
   }
 });
 
-test('钉子 2：35 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
+test('钉子 2：36 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
   const { app, token } = await makeApp();
   try {
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 35, '本片应恰好暴露 35 个 operationId（34 + listFlagAuditEvents）');
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 36, '本片应恰好暴露 36 个 operationId（34 + listFlagAuditEvents + listAuditLogs）');
 
     // 从契约取出每个 operationId 的 method + path。
     const fromContract = new Map();

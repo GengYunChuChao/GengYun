@@ -29,7 +29,7 @@
 | 6 | 同上 `:1515-1516`（media 移出论证段） | 引文 `GRANT SELECT (owner_id) ON jobs,media` ⇒ `ON media` | 第 3 项改了角色文件后，这段引文会变成**假陈述**；论证本身（auth_privacy.sql 确实给组授过该表的 `owner_id`，故该行不能写成 `'direct'`）按新事实重新成立 |
 | 7 | `deploy/postgres-cvm/sql/20-login-roles.sql:1007` | 同一条旧引文按新事实改写（只改这一行注释，`M` 段其它内容与识别/语音域段落一字未动） | 同上：不改就是假引文 |
 | 8 | `deploy/postgres-cvm/roles-and-migration.md:42`、`:67` | §2.1 表格里 `auth_privacy.sql` 的授权对象去掉 `jobs`；§3.1 摘要「`jobs`、`media` 只授 `owner_id`」⇒「`media` 只授 `owner_id`」 | 这两行陈述的是**当前**授权面（参考文档，不是历史证据页） |
-| 9 | `tests/integration/consent-grant-pg.mjs:170`、`:175`（删）、`:183` | 四表循环去掉 `'jobs'`；删掉 `INSERT INTO jobs(...)` 夹具；消息 `all four … classes` ⇒ `all three … classes` | 端到端臂要证明「每条真实依赖都 409」；删了判定分支后 jobs 夹具断言的语义不复存在。`randomUUID` 仍被 exports 夹具使用，import 未动 |
+| 9 | `tests/integration/consent-grant-pg.mjs:170`、`:175`（删，改后该行不存在）、`:182`（原 :183） | 四表循环去掉 `'jobs'`；删掉 `INSERT INTO jobs(...)` 夹具；消息 `all four … classes` ⇒ `all three … classes` | 端到端臂要证明「每条真实依赖都 409」；删了判定分支后 jobs 夹具断言的语义不复存在。`randomUUID` 仍被 exports 夹具使用，import 未动 |
 | 10 | `tests/unit/consent-withdraw-dependency.test.mjs:5`、`:67` | 头部块锚点 `consent-pg.ts:171-196` ⇒ `:171-195`（删了一行）；桩注释「jobs / media / exports / author_links 四臂」⇒「media / exports / author_links 三臂（R34 下线了 jobs 臂）」 | 两处都是**描述当前代码**的读数，不改就是假读数。该测试按 `sql.includes('AS present')` 认查询，不按臂数认 ⇒ 行为断言不变 |
 
 ## 2 没做什么（以及为什么）
@@ -37,7 +37,7 @@
 - **表仍在库里**：`public.jobs` 及 `jobs_lease_idx`／`jobs_owner_created_idx`（`0001_initial_schema.sql:229-230`）原样保留。本片只让「无人读、无人授、清单不再分类它」成立。
 - **`DROP TABLE` 延后到 0035，本片不新增迁移**，两条实测理由：
   1. **零先例**：`services/api/db/migrations/` 的正向迁移里 `drop table` 命中 **0** 次；64 次全部在 `rollback/*.down.sql`（20 个文件）。正向迁移首次引入 `DROP TABLE` 属于新形态，得单独裁定。
-  2. **撞号**：本树最大迁移号是 **0032**；main／#525／#528 三条在途树已占到 0032/0033/0034，任何 ≤0034 的新号必撞车 ⇒ 等 0033/0034 落定后取 0035。
+  2. **撞号**：开工时本树最大迁移号是 **0032**（片内 `upstream/main` 合入 0033，见 §3.3，现在最大号 **0033**）；#528 仍占 0034，任何 ≤0034 的新号必撞车 ⇒ 等 0034 落定后取 0035。
 - **fail-closed 语义一个字没动**：`dependencies.rows[0]?.present` 判据方向、`if (!serviceOptions.egressRevoker) throw new ApiError('OBJECT_UNAVAILABLE', …)`、`try/catch` 内继续 throw，以及四句中文文案全部原样（`grant-pg.ts` 的两句与 `consent-pg.ts` 的两句仍各不相同）。
 - **没改 `job_state` 枚举**：`0025`/`0026`/`0028` 仍在用。
 - **没动识别/语音/OCR 域**：`ocr_jobs`、`recognition_jobs`、`speech_jobs` 是活表，相关授权面与探针禁止面（`expected_42501` 等）一律未碰。
@@ -48,7 +48,7 @@
 | --- | --- | --- |
 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` | `tests 7 / pass 7 / fail 0` | 0 |
 | `node --test tests/unit/migration-reservations.test.mjs` | `tests 8 / pass 8 / fail 0` | 0 |
-| `node tools/verify-migrations-unique.mjs --strict` | `PASS：5 项判据全部满足（surface / runner / dup / coexist / rollback）；31 条配对 + 1 条登记允许缺省 = 32 条正向迁移逐条有交代。` | 0 |
+| `node tools/verify-migrations-unique.mjs --strict` | `PASS：5 项判据全部满足（surface / runner / dup / coexist / rollback）；32 条配对 + 1 条登记允许缺省 = 33 条正向迁移逐条有交代。`（合入 0033 前的读数：`31 条配对 + 1 条 = 32 条`） | 0 |
 | `node --test tests/unit/deploy-sql-gate-probe.test.mjs` | `tests 7 / pass 7 / fail 0`（含「⑥ expected_42501 必须等于从探针源码数出来的禁止面条数」） | 0 |
 | `node --test tests/unit/sql-column-coverage.test.mjs` | `tests 17 / pass 17 / fail 0` | 0 |
 | `node --test tests/unit/deletion-registration-coverage.test.mjs` | `tests 5 / pass 5 / fail 0` | 0 |
@@ -73,15 +73,18 @@ E:\GengYunCommander\wt-r34-jobs-retire\services\api\src\app.ts
 
 ### 3.2 PG 臂未本地执行
 
-`tests/integration/consent-grant-pg.mjs`（端到端：四类依赖 ⇒ 三类依赖 + 撤回臂）**未在本机执行**（本树无依赖、且按约定不起 PG 集群）⇒ 靠 CI 的 `test:integration` 臂。改动只有 3 处、全在 `:170`／`:175`（删）／`:183`，静态可核。
+`tests/integration/consent-grant-pg.mjs`（端到端：四类依赖 ⇒ 三类依赖 + 撤回臂）**未在本机执行**（本树无依赖、且按约定不起 PG 集群）⇒ 靠 CI 的 `test:integration` 臂。改动只有 3 处：`:170`（循环去 jobs）／`:175`（删 `INSERT INTO jobs` 夹具，改后该行不存在）／`:182`（原 :183，消息改 all three），静态可核。
 
 ### 3.3 提交后复验
 
 `git merge-tree --write-tree upstream/main HEAD`（只在提交后跑，比的是提交树）：
 
 ```
-（读数在提交后补入本节）
+<单行树 OID>
+EXIT=0（无「OID + 冲突文件」行 ⇒ 与 upstream/main 可干净合并）
 ```
+
+另：`git merge --no-ff upstream/main` 也在本片执行成功 —— 开工读数时 `upstream/main` 与 HEAD 同为 `123ee4bd`，片内它推进到 `4b87e1d9`（PR #525 合入），本片随即 `--no-ff` 合并（`EXIT=0`、无冲突），合并只带来 upstream 新文件（`services/api/src/admin/audit/*` 等），未触碰本片改动的 9 个文件；合并后重跑下述门禁，读数不变。
 
 ## 4 判过但不改（附理由）
 
@@ -98,7 +101,7 @@ E:\GengYunCommander\wt-r34-jobs-retire\services\api\src\app.ts
 
 `DROP TABLE public.jobs` 是独立后续片，进入条件与步骤：
 
-1. **前提**：在途的 0033／0034 先在 main 落定（本片提交时 main 最大号 0032）。
+1. **前提**：在途的 0034（#528）先在 main 落定；0033 已随 PR #525 在片内合入 main（本片提交时 main 最大号 0033）。
 2. **取号**：0035（`tools/verify-migrations-unique.mjs --strict` 与 `tests/unit/migration-reservations.test.mjs` 同时改台账）。
 3. **裁定**：正向迁移**首次**出现 `DROP TABLE`（现 0 先例、64 次全在 rollback）⇒ 需要监工先给形态裁定；两种写法都要在派单里定死：①在 0035 里 `DROP TABLE public.jobs;`、0001 不动；②改 0001（不推荐，等于改历史迁移）。
 4. **回滚配套**：`rollback/0035_*.down.sql` 必须建回表结构、两个索引（`jobs_lease_idx`／`jobs_owner_created_idx`）与 `job_state` 依赖关系；`job_state` 枚举本身不删（`0025`/`0026`/`0028` 仍在用）。

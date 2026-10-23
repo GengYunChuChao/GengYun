@@ -57,7 +57,7 @@
 
 ## 五、「来源版本」在响应里到底是什么
 
-契约里**没有** `source_version` 这个字段：来源版本就是 `SourceRef.version`（`packages/contracts/openapi.json:11420` `SourceRef`，`:11477-11488` 的 required 含 `version`、`updated_at`、`validity`、`review_status`）。服务端口径见 `docs/verification/gy-i07-knowledge-consumer-20261011.md:15`：`SourceRef.id` 为 `sources.id`，`version` 为关联当前 `source_versions.version`，`updated_at` 取 `retrieved_at`。
+契约里**没有** `source_version` 这个字段：来源版本就是 `SourceRef.version`（`packages/contracts/openapi.json:11547` `SourceRef`，`:11477-11488` 的 required 含 `version`、`updated_at`、`validity`、`review_status`）。服务端口径见 `docs/verification/gy-i07-knowledge-consumer-20261011.md:15`：`SourceRef.id` 为 `sources.id`，`version` 为关联当前 `source_versions.version`，`updated_at` 取 `retrieved_at`。
 
 页面展示位置：
 

@@ -215,7 +215,7 @@ if (!outcome.publishable && !mediaAccepted) {
 | `wired: false` 是**字面量类型**（不是可翻转的布尔） | `services/api/src/admin/human-review.ts:40`、`:51`、`:70`、`:75` |
 | 唯一入口 `assertNoReviewClaim()` **一律抛** `OBJECT_UNAVAILABLE`，`details: [{ field: 'human_review', code: 'NOT_WIRED' }]` | `services/api/src/admin/human-review.ts:59`、`:83-86` |
 | 人审队列恒空 | `services/api/src/moderation/nonbypass.ts:161-167`（`return { human_review_state: HUMAN_REVIEW_STATE, voting: …, items: [] }`，注释「`items` 恒为空数组——只有真实人审线合并后才会返回非空」） |
-| 装配存在但零路由 | `services/api/src/app.ts:1226`、`:1869`（`app.decorate('humanReviewDirectory', …)`）；`services/api/src/routes/` 20 个文件里没有 `human-review` 路由 |
+| 装配存在但零路由 | `services/api/src/app.ts:1242`、`:1869`（`app.decorate('humanReviewDirectory', …)`）；`services/api/src/routes/` 20 个文件里没有 `human-review` 路由 |
 
 ### 5.2 裁定依据（原文）
 

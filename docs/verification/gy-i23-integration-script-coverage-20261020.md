@@ -26,7 +26,7 @@ Select-String -Path .github/workflows/*.yml -Pattern 'user-chain-e2e'          �
 
 ### 1.2 但它并不是「没人知道」
 
-`tests/unit/ci-integration-chain-structure.test.mjs:148` 已经在白名单里登记了它：
+`tests/unit/ci-integration-chain-structure.test.mjs:163` 已经在白名单里登记了它：
 
 ```
 line=148: path: 'tests/integration/user-chain-e2e.mjs',
