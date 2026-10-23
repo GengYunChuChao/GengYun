@@ -207,6 +207,12 @@
   **复跑计划**：`#434` 合入 main 后，本分支 `git merge --no-ff origin/main`（⛔ 不 rebase、不 force）
   ⇒ `0028` 随 main 进树、断号消失 ⇒ 复跑 `real-pg-17.11`／`auth-privacy-postgres-17.11` 两条 job
   与上述 4 份脚本，期望全绿；在此之前 PR #419 维持 OPEN、不请求合并。
+- **并流刷新（2026-10-23，GY-R34-I19 · #19 注销闭集扩展第 2 片）**：该片新增
+  `services/api/db/migrations/0033_r34_owner_content_purge.sql`（两条 `SECURITY DEFINER` 窄函数
+  `public.purge_owner_recognitions(uuid)` / `public.purge_owner_speech(uuid)`，只授 `EXECUTE`）
+  与其 down ⇒ 按本树实读：迁移数 **33** 个（`0001..0033`，连续无缺号）、`rollback/` **32** 个
+  （`0002..0033`，仍无 `0001`）、`deploy/` 在册仍 **36** 个（该片不改 `deploy/**` 的文件集合）。
+  §4 第 8 项读数已同步；上文历史读数一律按原样保留。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。
@@ -302,7 +308,7 @@
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
 | 6 | Dockerfile Node 版本 ↔ `engines.node` | `FROM node:24.16.0-…` ↔ `>=24.16.0 <25` | ✅ 逐位一致 |
 | 7 | `/health` 路由存在且形状与云托管 README 的最小验收一致 | `routes/health.ts` | ✅ `status`/`checks.database`/`meta.execution_mode`，200/503 |
-| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 32 个（`0001..0032`，连续无缺号）；`rollback/` 31 个（`0002..0032`）；`migrate.ts` 报错文本 | ✅ 一致（**本树**实读，基线 `upstream/main = 7dd3d699` ＋ #492 的 `0032`：`0002..0032` 的 down 全部在册、无 `0001`（`0031` 随 #494 入 main、`0032` 与其 down 由本片 #492 带入）；`0029_media_object_cleanup.sql` 与其 down 由 #419（媒体对象清理台账，2026-10-22 合入 main）新增、`0030_community_author_ref.sql` 与其 down 由 R31-F13（#15 社区域行级作者注销引用，2026-10-22）新增、`0028_moderation_persistence.sql` 与其 down 由 GY-R29（#29 审核判定台账持久化，PR #434，2026-10-22）新增、`0030_community_author_ref.sql` 与其 down 由 R31-F13（#15 社区域行级作者注销引用，2026-10-22）新增、`0028_moderation_persistence.sql` 与其 down 由 GY-R29（#29 审核判定台账持久化，PR #434，2026-10-22）新增、`0027_admin_audit_observability.sql` 与其 down 由 R29-S5／GY-I18（PR #428，2026-10-22）合流带入；`0026_speech_persistence.sql` 与其 down 由 S20（#20 语音持久化，2026-10-21）新增；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-22 合流 `d4d48088` 后为 28／27（`0001..0028`）；2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
+| 8 | down 覆盖 `0002..N`、无 `0001`；`migrate.ts` 命令闭集 | `migrations/` 33 个（`0001..0033`，连续无缺号）；`rollback/` 32 个（`0002..0033`）；`migrate.ts` 报错文本 | ✅ 一致（**本树**实读，基线 `upstream/main = 7dd3d699` ＋ #492 的 `0032`：`0002..0032` 的 down 全部在册、无 `0001`（`0031` 随 #494 入 main、`0032` 与其 down 由本片 #492 带入）；`0029_media_object_cleanup.sql` 与其 down 由 #419（媒体对象清理台账，2026-10-22 合入 main）新增、`0030_community_author_ref.sql` 与其 down 由 R31-F13（#15 社区域行级作者注销引用，2026-10-22）新增、`0028_moderation_persistence.sql` 与其 down 由 GY-R29（#29 审核判定台账持久化，PR #434，2026-10-22）新增、`0030_community_author_ref.sql` 与其 down 由 R31-F13（#15 社区域行级作者注销引用，2026-10-22）新增、`0028_moderation_persistence.sql` 与其 down 由 GY-R29（#29 审核判定台账持久化，PR #434，2026-10-22）新增、`0027_admin_audit_observability.sql` 与其 down 由 R29-S5／GY-I18（PR #428，2026-10-22）合流带入；`0026_speech_persistence.sql` 与其 down 由 S20（#20 语音持久化，2026-10-21）新增；`0025_recognitions_persistence.sql` 与其 down 由 S13（#9 识别域持久化）新增；`0024_ocr_persistence.sql` 与其 down 由 S10（#10 OCR 持久化）新增，`0021`／`0022`／`0023` 已分别随 `#279`／`#296`／`#295` 落在 main）；此前读数（并列历史，按原样保留）：2026-10-22 合流 `d4d48088` 后为 28／27（`0001..0028`）；2026-10-20 S10（#10）后为 24／23（`0001..0024` / `0002..0024`）；再合流 `upstream/main` = `ff1b39d` 后为 23／22（`0001..0023` / `0002..0023`）；合流前本树 22／21（`280054b`，见头部「合流复核六（2026-10-20，main `df043a7`，PR #304）」）；#295 侧叠 #296 新 head `71eda51` 时点＝23／22／30 |
 | 9 | LF 判据必须是 blob 而非工作区 | 本机 `core.autocrlf=true` ⇒ 工作区 5/5 为 CRLF（**假象**） | ✅ 判据已按 blob 实现（见工具文件头） |
 | 10 | 工具自身可重复运行且确定性 | 连续两次运行读数一致 | ✅ |
 | 11 | **发版 runbook 可按步骤执行**（GY-R31 · #24 新增）：10 个必备小节齐全、可复制命令块不少于 14 个且无「只有注释」的空块、全文无占位符（`TODO` 类字样与尖括号占位） | `read('docs/release/runbook-20261022.md')` → `runbookProblems()` | ✅ 通过（`PASS 发版 runbook 可按步骤执行（必备小节＋命令块＋无占位符）`）；**改前读数**：runbook 未落盘时 `FAIL … docs/release/runbook-20261022.md 不在册`、`15/16`、退出码 1；写作中曾因正文残留 `rows:public.<表>` 被本条判红一次（`含占位符：…:179`），改写后转绿 —— 探针确实咬到了自己 |

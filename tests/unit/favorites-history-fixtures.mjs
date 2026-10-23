@@ -112,6 +112,10 @@ export const PG_MIGRATIONS_WITH_DELETION_DOMAINS = [
   ...PG_MIGRATIONS_WITH_COMMUNITY,
   '0025_recognitions_persistence',
   '0026_speech_persistence',
+  // 0033 是本片清理的唯一写路径（两条 SECURITY DEFINER 函数）。PG 存储的 `purgeOwnerData`
+  // 现在调 `public.purge_owner_recognitions(uuid)` / `purge_owner_speech(uuid)`，
+  // 少了它这两域会拿到 42883 并被折叠成 `blocked`（用例会看到 completed → blocked）。
+  '0033_r34_owner_content_purge',
 ];
 
 export function migrationSql(name) {

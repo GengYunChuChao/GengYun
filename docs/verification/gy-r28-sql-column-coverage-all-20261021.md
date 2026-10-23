@@ -217,7 +217,7 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 | 6 | `services/api/src/history/store-pg.ts:242` | `public.history` | `FOR UPDATE` | 列级 `UPDATE (revision)` |
 | 7 | `services/api/src/ocr/store-pg.ts:545` | `public.ocr_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
 | 8 | `services/api/src/recognitions/store-pg.ts:668` | `public.recognition_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
-| 9 | `services/api/src/recognitions/store-pg.ts:763` | `public.recognition_records` | `FOR UPDATE` | 列级 `UPDATE (candidates, deleted, model_version, revision, selected_species_id, uncertainty_reasons, updated_at)` |
+| 9 | `services/api/src/recognitions/store-pg.ts:773` | `public.recognition_records` | `FOR UPDATE` | 列级 `UPDATE (candidates, deleted, model_version, revision, selected_species_id, uncertainty_reasons, updated_at)` |
 | 10 | `services/api/src/speech/store-pg.ts:550` | `public.speech_jobs` | `FOR UPDATE` | 列级 `UPDATE (deadline_at, error_code, revision, state, updated_at)` |
 | 11 | `services/api/src/privacy/consent-pg.ts:75` | `public.users` | `FOR UPDATE` | 列级 `UPDATE (updated_at)` |
 | 12 | `services/api/src/privacy/consent-pg.ts:165` | `public.privacy_epochs` | `FOR UPDATE` | 列级 `UPDATE (current_epoch, revision, state, updated_at)` |

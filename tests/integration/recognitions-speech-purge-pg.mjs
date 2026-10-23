@@ -14,23 +14,27 @@
 // `speech_idempotency`，迁移 0026）接进了注销闭集。此前这两域**既没有按主体清空的存储原语、
 // 也没有运行时角色的表级 DELETE 授权**（`20-login-roles.sql` 的旧注释声称「账号注销经
 // `request_account_deletion()` 的属主级联」，但该函数并不删 `public.users` 行 ⇒ 那条级联永不触发）。
-// 所以本脚本要证的是三段闭环：
-//   [1] 迁移 0025/0026 的七张真实表在岗；
-//   [2] 生产清理身份（`gengyun_api_runtime`）对五张正文/任务表**真的有**表级 DELETE（三张台账
-//       本来就是表级 DELETE），且对 `public.users` **没有** DELETE ⇒ 下面的 0 行不可能来自级联；
-//   [3] 走产品真实路径（`privacy/user-data-deletion.ts` 协调器 → 两个 PG 存储的
-//       `purgeOwnerData`）跑注销，断言：本主体七表按 FK 先子后父**删到 0 行**、他人行**逐字原样**、
-//       证据串两个计数逐项等于清理前读数、重放幂等两个计数都是 0、回执两域 `online_state=completed`
-//       而 `backup_state=pending`（未接线备份端口 ⇒ 不谎称完成）。
+// 所以本脚本要证的是四段闭环：
+//   [1] 迁移 0025/0026/0033 的七张真实表与两条清理函数在岗；
+//   [2] 生产清理身份（`gengyun_api_runtime`）的真实授权面：**两条函数可执行**（EXECUTE=true），
+//       而对五张正文/任务表**一条 DELETE 都没有**（false），对 `public.users` 也没有 DELETE；
+//   [3] 成对的反向控制：以运行时身份**直接** `DELETE FROM public.recognition_records /
+//       speech_jobs …` 必须恰好 `42501` —— 证明 0 行不是靠表权限删出来的，而是函数删的；
+//   [4] 走产品真实路径（`privacy/user-data-deletion.ts` 协调器 → 两个 PG 存储的
+//       `purgeOwnerData` → 迁移 0033 的 definer 函数）跑注销，断言：本主体七表**删到 0 行**、
+//       他人行**逐字原样**、证据串两个计数逐项等于清理前读数、重放幂等两个计数都是 0、
+//       回执两域 `online_state=completed` 而 `backup_state=pending`（未接线备份端口 ⇒ 不谎称完成）。
 //   外加负控制：另立一主体全程**不跑清理**只读 ⇒ 行数非 0（证明上面的 0 行不是恒真断言）。
 //
-// ## 权限口径（本片最容易搞错的地方）
+// ## 权限口径（本片最容易搞错的地方，也是上一版被 gate 打回的原因）
 //
 // 七张表里三张台账（`recognition_idempotency` / 语音 `speech_idempotency`）本来就有表级 DELETE
-// （release / purge 两条路径）；五张正文/任务表是本片**新增**的表级 DELETE 授权
-// （`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r28-runtime-domain-grants` 区域）。
-// 清理**跑在运行时角色上**，并在断言里实测授权：因为「属主能删」不等于「生产身份能删」——
-// 后者正是本片要消掉的缺口。
+// （release / purge 两条路径）；五张正文/任务表**不是**、也不许是 ——
+// `deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 把「运行时直接 DELETE 这五张表」
+// 锁成刻意的禁止面（deploy-sql-gate 逐条断言 42501，18 条 / 9 个对象）。
+// PG 没有列级 DELETE ⇒ 清理只能经 `SECURITY DEFINER` 函数（迁移 0033），
+// 由 `20-login-roles.sql` 的 `gy-r34-i19-owner-content-purge-grant` 区域只授 EXECUTE。
+// 清理**跑在运行时角色上**，并在断言里实测两侧：能执行函数 ≠ 能删表。
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -81,7 +85,10 @@ const note = (line) => console.log(`  - ${line}`);
 // 七张表的名字（顺序 = 断言顺序；正文/任务在前、台账在后）。
 const RECOGNITION_TABLES = ['recognition_selections', 'recognition_jobs', 'recognition_records'];
 const SPEECH_TABLES = ['speech_jobs', 'transcriptions'];
-const NEW_DELETE_GRANTS = [...RECOGNITION_TABLES, ...SPEECH_TABLES];
+// 五张正文/任务表：运行时**不许**有表级 DELETE（禁止面），清理只能经下面的两条函数。
+const OWNER_PURGE_TABLES = [...RECOGNITION_TABLES, ...SPEECH_TABLES];
+// 迁移 0033 的两条窄口径 SECURITY DEFINER 函数：运行时只有 EXECUTE。
+const PURGE_FUNCTIONS = ['purge_owner_recognitions', 'purge_owner_speech'];
 
 // ---------------------------------------------------------------------------
 // 临时集群（数据目录与端口都随机；端口取 55700–55999，避开 55436 的遗留集群与本机 5432）
@@ -313,9 +320,16 @@ async function seedLedger(table, entries) {
   }
 }
 
-/** 运行时角色的授权实测（本片的关键一条：生产身份能不能删这五张表）。 */
+/**
+ * 运行时角色的授权实测 —— 本片最关键的一条：生产身份**能执行清理函数**，
+ * 但对五张正文/任务表**一条 DELETE 都没有**（禁止面），对 `public.users` 也没有。
+ */
 const grantReadingsOfRuntime = async () => {
-  const selected = NEW_DELETE_GRANTS.map((table) => `has_table_privilege(current_user, 'public.${table}', 'DELETE') AS ${table}`)
+  const selected = OWNER_PURGE_TABLES
+    .map((table) => `has_table_privilege(current_user, 'public.${table}', 'DELETE') AS ${table}`)
+    .concat(PURGE_FUNCTIONS.map(
+      (name) => `has_function_privilege(current_user, 'public.${name}(uuid)', 'EXECUTE') AS ${name}_execute`,
+    ))
     .concat("has_table_privilege(current_user, 'public.users', 'DELETE') AS users")
     .join(',\n              ');
   return (await pool.query(`SELECT current_user AS role,\n              ${selected}`)).rows[0];
@@ -334,13 +348,14 @@ const grantReadingsOfRuntime = async () => {
 function deployGrants() {
   const text = deploySqlFile('20-login-roles.sql');
   const startMarker = '-- J. 运行时域（识别）的列级授权';
-  const endMarker = "\\echo '20-login-roles.sql：DELETE 全部为**表级**：public.speech_idempotency";
+  // 结尾锚点用**下一节的节标题**（`L.` 段的注释行），而不是 K 段自己的某条 `\echo` 文案：
+  // `\echo` 是会随复核改写的说明文字，把它当切片边界等于让本臂依赖注释措辞。
+  const endMarker = '-- L. 触发器函数的 PUBLIC EXECUTE 兜底收回';
   const start = text.indexOf(startMarker);
   assert.ok(start > 0, `20-login-roles.sql 必须含识别域授权段（锚点 ${startMarker}）`);
   const endLineStart = text.indexOf(endMarker, start);
-  assert.ok(endLineStart > start, `20-login-roles.sql 必须含语音域授权段结尾（锚点 ${endMarker}）`);
-  const endLineEnd = text.indexOf('\n', endLineStart);
-  const block = text.slice(start, endLineEnd < 0 ? text.length : endLineEnd);
+  assert.ok(endLineStart > start, `20-login-roles.sql 必须含语音域授权段之后的 L 段（锚点 ${endMarker}）`);
+  const block = text.slice(start, endLineStart);
   const withoutEcho = block
     .split(/\r?\n/)
     .filter((line) => !/^\s*\\echo\b/.test(line))
@@ -351,6 +366,36 @@ function deployGrants() {
     '识别域/语音域授权段不得含除 \\echo 之外的 psql 元命令（否则本臂就不是在跑生产语句）',
   );
   return withoutEcho;
+}
+
+/**
+ * 部署脚本里「注销内容清理」的授权段（`20-login-roles.sql` 的
+ * `-- #region gy-r34-i19-owner-content-purge-grant` … `-- #endregion …`）。
+ *
+ * 与上面 J/K 段不同，这一段**本身就是一个具名 `#region`**（纯 SQL，只有 `\echo` 需要丢掉），
+ * 所以按 region 边界原样抽取 —— 取到的就是生产部署真正跑的那些字节。
+ * 段内若出现任何其它 psql 元命令，说明 region 边界被挪动过，直接失败。
+ */
+function purgeGrantBlock() {
+  const text = deploySqlFile('20-login-roles.sql');
+  const startMarker = '-- #region gy-r34-i19-owner-content-purge-grant';
+  const endMarker = '-- #endregion gy-r34-i19-owner-content-purge-grant';
+  const start = text.indexOf(startMarker);
+  assert.ok(start > 0, `20-login-roles.sql 必须含注销内容清理授权区（锚点 ${startMarker}）`);
+  const end = text.indexOf(endMarker, start);
+  assert.ok(end > start, `注销内容清理授权区必须有结尾（锚点 ${endMarker}）`);
+  const block = text.slice(text.indexOf('\n', start) + 1, end)
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*\\echo\b/.test(line))
+    .join('\n');
+  assert.equal(
+    /\\(set|gset|pset|if|endif|getenv|gexec|copytable)/.test(block),
+    false,
+    '注销内容清理授权区不得含 psql 元命令（否则本臂就不是在跑生产语句）',
+  );
+  assert.match(block, /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+public\.purge_owner_recognitions\(uuid\)/i);
+  assert.match(block, /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+public\.purge_owner_speech\(uuid\)/i);
+  return block;
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +413,7 @@ try {
   const version = (await owner.query('SHOW server_version')).rows[0].server_version;
   note(`PostgreSQL ${version}`);
 
-  // ---- [0] 全链迁移：本片要的是 0025（识别域四表）/ 0026（语音域三表）与 0001（users）----
+  // ---- [0] 全链迁移：本片要的是 0025（识别域四表）/ 0026（语音域三表）/ 0033（清理函数）/ 0001（users）----
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
     .sort();
@@ -376,17 +421,27 @@ try {
   const present = (
     await owner.query(
       `SELECT to_regclass('public.users') AS users,
+              to_regprocedure('public.purge_owner_recognitions(uuid)') AS purge_owner_recognitions,
+              to_regprocedure('public.purge_owner_speech(uuid)') AS purge_owner_speech,
               ${['recognition_jobs', 'recognition_records', 'recognition_selections', 'recognition_idempotency', 'speech_jobs', 'transcriptions', 'speech_idempotency']
                 .map((table) => `to_regclass('public.${table}') AS ${table}`)
                 .join(',\n              ')}`,
     )
   ).rows[0];
   assert.equal(present.users, 'users', '迁移后 public.users 必须存在（七张表的外键目标）');
-  for (const table of [...NEW_DELETE_GRANTS, 'recognition_idempotency', 'speech_idempotency']) {
+  for (const table of [...OWNER_PURGE_TABLES, 'recognition_idempotency', 'speech_idempotency']) {
     assert.equal(present[table], table, `迁移后 public.${table} 必须存在（本片要证的域）`);
   }
+  for (const name of PURGE_FUNCTIONS) {
+    assert.equal(
+      present[name],
+      `${name}(uuid)`,
+      `迁移 0033 必须建出 public.${name}(uuid)（清理唯一写路径）`,
+    );
+  }
   say(
-    `[0] 全链迁移 ${discovered.length} 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，全部在岗`,
+    `[0] 全链迁移 ${discovered.length} 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，`
+      + `外加迁移 0033 的两条清理函数 ${PURGE_FUNCTIONS.join(' / ')}，全部在岗`,
   );
 
   // ---- [1] 角色与授权：与出厂 provisioning 同形（5 个 NOLOGIN 域组 → 运行时 LOGIN → 两个区域）----
@@ -405,21 +460,48 @@ try {
   );
   await owner.query(`GRANT gengyun_auth_privacy TO ${RUNTIME_ROLE}`);
   await owner.query(deployGrants());
+  await owner.query(purgeGrantBlock());
 
   pool = new pg.Pool({ connectionString: `postgresql://${RUNTIME_ROLE}:${password}@127.0.0.1:${port}/${DB_NAME}`, max: 6 });
   const grants = await grantReadingsOfRuntime();
   assert.equal(grants.role, RUNTIME_ROLE, '清理必须在**运行时角色**上跑（不是库属主）');
-  for (const table of NEW_DELETE_GRANTS) {
+  for (const table of OWNER_PURGE_TABLES) {
     assert.equal(
       grants[table],
+      false,
+      `运行时角色**不得**能 DELETE public.${table}：它是 probe-runtime-grants.sql 锁定的禁止面`
+        + `（直接 DELETE 必须 42501），清理只能经迁移 0033 的 definer 函数`,
+    );
+  }
+  for (const name of PURGE_FUNCTIONS) {
+    assert.equal(
+      grants[`${name}_execute`],
       true,
-      `运行时角色必须能 DELETE public.${table}（本片新增的表级授权，20-login-roles.sql 的 gy-r28-runtime-domain-grants）`,
+      `运行时角色必须能执行 public.${name}(uuid)（迁移 0033 + 20-login-roles.sql 的 EXECUTE 授权）`,
     );
   }
   assert.equal(grants.users, false, '运行时角色不得能 DELETE public.users（否则下面的 0 行可能是级联带走的）');
   say(
-    `[1] 授权实测（生产身份 ${RUNTIME_ROLE}）：${NEW_DELETE_GRANTS.map((table) => `${table} DELETE=${grants[table]}`).join('、')}；`
-      + 'users DELETE=false',
+    `[1] 授权实测（生产身份 ${RUNTIME_ROLE}）：${PURGE_FUNCTIONS.map((name) => `${name} EXECUTE=${grants[`${name}_execute`]}`).join('、')}；`
+      + `${OWNER_PURGE_TABLES.map((table) => `${table} DELETE=${grants[table]}`).join('、')}；users DELETE=false`,
+  );
+
+  // ---- [1b] 成对的反向控制：运行时直接 DELETE 这五张表必须恰好 42501 ----
+  // 这一条是上一版被 gate 打回的那条不变量的正面复述：**没给表权限**才是设计，
+  // 所以「清了 0 行」只能是函数删的，不可能是表权限删的。
+  for (const table of OWNER_PURGE_TABLES) {
+    let denied = null;
+    try {
+      await pool.query(`DELETE FROM public.${table} WHERE false`);
+    } catch (error) {
+      denied = error;
+    }
+    assert.ok(denied !== null, `运行时直接 DELETE public.${table} 必须失败（禁止面），但居然成功了`);
+    assert.equal(denied.code, '42501', `运行时直接 DELETE public.${table} 必须恰好 42501（permission denied），实际 ${denied.code}`);
+  }
+  say(
+    `[1b] 反向控制（生产身份 ${RUNTIME_ROLE}）：直接 DELETE ${OWNER_PURGE_TABLES.join(' / ')} 全部 42501`
+      + ' ⇒ 清理的 0 行只能来自迁移 0033 的 definer 函数，不是表权限',
   );
 
   // ---- [2] 造数：三主体（A=被注销、B=他人、C=负控制），各若干识别/语音行 + 各若干台账行 ----

@@ -138,11 +138,17 @@ REVOKE SELECT (id) ON public.messages FROM gengyun_api_runtime;
 临时在 `90-assert-least-privilege.sql` 尾部追加 `SELECT 1/0;`（随后 `git checkout --` 还原）：
 
 ```
-退出码=3 末行='psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1813: ERROR:  division by zero'
+退出码=3 末行='psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:89: ERROR:  division by zero'
 ::error::90-assert 的 psql 退出码是 3（要求 0）：断言脚本内部报错或被 ON_ERROR_STOP 截断。
 ---- 退出码 1 ----
 结论：step [7] 失败（退出码 1）——与 GHA 一致，后续 step 不再执行。
 ```
+
+> **行号说明（2026-10-23 R34 补注，读数本身不变）**：上面这条 psql 报错的行号已改指
+> `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:89` —— 那是脚本自带的 `SELECT 1/0;` 兜底语句，
+> 与本次人为破坏产生的是同一条 `division by zero`。原记录里的 `1813` 是 2026-10-21 那次运行把
+> `SELECT 1/0;` 追加到**文件尾部**时的行号，此后文件多次增补，该数字已不指向任何语句；
+> 退出码=3、`::error::` 文案与结论三行保持逐字不变。
 
 退出码分支**先**报出来，`::error::` 说的是「没跑到判决」，与 §4.2 的「跑完了但结论不是 ok」区分开——这就是双保险各自的定位职责。
 

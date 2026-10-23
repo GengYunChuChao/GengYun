@@ -711,37 +711,32 @@ DELETE FROM public.recognition_idempotency
 \set r28_probe_rec_idem_release :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_rec;
 
--- [16] 账号注销清理（GY-R34-I19）：按主体清空三张表的整行 DELETE（recognitions/store-pg.ts
--- ::purgeOwnerRows）。PG 无列级 DELETE ⇒ `20-login-roles.sql` 的 gy-r28-runtime-domain-grants
--- 已表级授 DELETE。谓词与真实语句逐字一致（`owner_user_id = $1::uuid`），这里用不存在的
--- 主体 uuid 只为验权限形状，命中 0 行。
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_selections
- WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
-\set r28_probe_rec_sel_owner_del :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_jobs
- WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
-\set r28_probe_rec_job_owner_del :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_records
- WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
-\set r28_probe_rec_rec_owner_del :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
--- --- 禁止面：这条语句必须**恰好** 42501（R28-S28 不授予）-----------------------
--- recognition_selections 不授 UPDATE ⇒ 行锁载体 `SELECT … FOR UPDATE` 仍拿不到。
--- （GY-R34-I19 之后三张正文表的整行 DELETE 已从禁止面移出、进了上面的 [16]，因为账号注销
---   清理真的要用它；`request_account_deletion()` 不删 public.users 行，那条级联不存在。）
+-- --- 禁止面：这些语句必须**恰好** 42501（R28-S28 不授予）------------------------
+-- selections 不授 UPDATE ⇒ FOR UPDATE（行锁载体）也拿不到；DELETE 四表一个都不授，
+-- 注销清理由 request_account_deletion() 以属主身份级联完成（owner_user_id ON DELETE CASCADE）。
 SAVEPOINT r28_probe_rec;
 SELECT id FROM public.recognition_selections
  WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid
    FOR UPDATE;
 \set r28_probe_rec_sel_lock_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_jobs
+ WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_rec_job_del_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_records
+ WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_rec_rec_del_forbidden :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_selections
+ WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid;
+\set r28_probe_rec_sel_del_forbidden :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_rec;
 
 ROLLBACK;
@@ -961,19 +956,17 @@ RETURNING scope \gset
 \set r28_probe_sp_idem_purge :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
--- [16] 账号注销清理（GY-R34-I19）：按主体清空两张正文表的整行 DELETE（speech/store-pg.ts
--- ::purgeOwnerRows）。PG 无列级 DELETE ⇒ `20-login-roles.sql` 的 gy-r28-runtime-domain-grants
--- 已表级授 DELETE。谓词与真实语句逐字一致（`owner_user_id = $1::uuid`）。
+-- [15] 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须 42501（真行、真 WHERE）。
 SAVEPOINT r28_probe_sp;
 DELETE FROM public.speech_jobs
- WHERE owner_user_id = '38a38a38-00ff-4000-8000-0000000000ff'::uuid;
-\set r28_probe_sp_job_owner_del :ERROR
+ WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid;
+\set r28_probe_sp_job_del :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
 SAVEPOINT r28_probe_sp;
 DELETE FROM public.transcriptions
- WHERE owner_user_id = '38a38a38-00ff-4000-8000-0000000000ff'::uuid;
-\set r28_probe_sp_rc_owner_del :ERROR
+ WHERE id = '38a38a38-0002-4000-8000-000000000002'::uuid;
+\set r28_probe_sp_rc_del :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
 ROLLBACK;
@@ -1300,18 +1293,20 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- R28-S28（迁移 0025）：识别域四表。列清单与 20-login-roles.sql 段 J 逐列一致，
     -- 但这里是**独立复述**（同一事实的第二次写法），任一处漂移都会被下面的逐表断言抓住。
     -- recognition_selections 的 upd 是空数组：store 只 INSERT / SELECT，不 UPDATE；
-    -- GY-R34-I19 起 recognition_jobs / records / selections 的 del 也是 true（连同
-    -- recognition_idempotency 共四张）：账号注销按主体清空
-    -- （`recognitions/store-pg.ts::purgeOwnerRows`）在 PG 上无列级 DELETE 可用，只能表级授。
-    -- 这四行与 20-login-roles.sql 段 J 的 GRANT DELETE 必须成对，由
-    -- tests/unit/least-privilege-expected-parity.test.mjs 双向核对（本片新增的护栏）。
+    -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见
+    -- store-pg.ts:880 releaseIdempotent / :891 purgeIdempotent（release / 过期回收，与注销无关）。
+    -- ⚠️ 本块其余四张表（jobs / records / selections）的 del 必须是 false：运行时对它们**没有**
+    -- 表级 DELETE，注销清理只能经迁移 0033 的 SECURITY DEFINER 函数（本文件断言的
+    -- owner_purge_function_* 五条即为此设）；deploy/postgres-cvm/evidence/probe-runtime-grants.sql
+    -- 把「直接 DELETE 恰好 42501」锁成禁止面，两侧任一漂移都由
+    -- tests/unit/least-privilege-expected-parity.test.mjs 抓住。
     ('recognition_jobs',
      ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     true),
+     false),
     ('recognition_records',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','candidates',
            'uncertainty_reasons','selected_species_id','model_version','created_at','updated_at',
@@ -1321,14 +1316,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'deleted'],
      ARRAY['revision','candidates','uncertainty_reasons','selected_species_id','model_version',
            'updated_at','deleted'],
-     true),
+     false),
     ('recognition_selections',
      ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
            'linkage'],
      ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
            'linkage'],
      ARRAY[]::text[],
-     true),
+     false),
     ('recognition_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -1345,7 +1340,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','revision','kind','owner_user_id','transcription_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     true),
+     false),
     ('transcriptions',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_text','uncertain_spans',
            'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
@@ -1353,7 +1348,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
      ARRAY['revision','raw_text','uncertain_spans','confirmed_text','confirmed_at','model_version',
            'updated_at','deleted'],
-     true),
+     false),
     ('speech_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -1447,35 +1442,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'recognition_idempotency', 'DELETE'),
     -- R28-S38（迁移 0026）：PG 没有列级 DELETE，而语音域幂等台账有两条整行删除
     -- （services/api/src/speech/store-pg.ts:654 release、:660-662 purge），只能表级授予。
-    -- 本片新增后，表级写授权白名单为 14 个三元组。GY-R34-I19 起 speech_jobs / transcriptions
-    -- **也**表级授 DELETE（账号注销按主体清空；见下面那两条），本段那句「仍然完全不授 DELETE」
-    -- 已作废 —— 若断言判红，先查 20-login-roles.sql 的 GRANT DELETE 是不是被收回。
+    -- 本片新增后，表级写授权白名单为 14 个三元组；speech_jobs / transcriptions
+    -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
     ('public', 'speech_idempotency',    'DELETE'),
-    -- GY-R34-I19（#19 延续片，2026-10-23）：识别域四表接进注销闭集，按主体清空需要
-    -- recognition_jobs / recognition_records / recognition_selections 三张表的表级 DELETE
-    -- （唯一调用点 services/api/src/recognitions/store-pg.ts 的 purgeOwnerRows，
-    -- 谓词 `owner_user_id = $1::uuid`；删除顺序按 FK 先子后父：selections → jobs → records）。
-    -- 为什么必须授：`request_account_deletion()` 不删 public.users 行，
-    -- 所以 `owner_user_id … ON DELETE CASCADE` 永不触发，S28 当时的注释是错的。
-    -- 本片新增后，表级写授权白名单为 15 / 16 / 17 个三元组。
-    ('public', 'recognition_jobs',      'DELETE'),
-    ('public', 'recognition_records',   'DELETE'),
-    ('public', 'recognition_selections', 'DELETE'),
-    -- GY-R34-I19：语音域两表同理（唯一调用点 speech/store-pg.ts 的 purgeOwnerRows，
-    -- 顺序 speech_jobs → transcriptions → speech_idempotency）。
-    -- 本片新增后，表级写授权白名单为 18 / 19 个三元组。
-    ('public', 'speech_jobs',           'DELETE'),
-    ('public', 'transcriptions',        'DELETE'),
     -- R28-W12（迁移 0001）：PG 没有列级 DELETE，而 media/store-pg.ts:171 有
     -- `DELETE FROM public.media_derivatives WHERE media_id = $1`（衍生物按媒体整行重建），
     -- 只能表级授予。media 本体仍然完全不授 DELETE（状态机删除），
     -- 若这里判红先查是不是有人给 media 加了表级写权。
-    -- 本片新增后，表级写授权白名单为 20 个三元组。
+    -- 本片新增后，表级写授权白名单为 15 个三元组。
     ('public', 'media_derivatives',     'DELETE'),
     -- R28-W12 返修（迁移 0029，监工 1022-0659 轮 P1）：待清理对象台账的**唯一**删除路径是
     -- 「桶删除被确认成功 ⇒ 删掉那一行」，且按对象键摘要整行删（PG 无列级 DELETE）。
     -- 若这里判红（即有人给别的表加了表级写权），先查是不是把清理台账改成了只增不删。
-    -- 本片新增后，表级写授权白名单为 21 个三元组。
+    -- 本片新增后，表级写授权白名单为 16 个三元组。
     ('public', 'media_object_cleanup',  'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
@@ -1711,6 +1690,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public',         'record_online_purge_evidence',       'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'read_online_purge_evidence',         'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（#19 片2 / 迁移 0033）：注销内容清理**唯一写路径**（识别域 / 语音域各一条窄函数）。
+    -- 运行时对这五张正文表仍然一条 DELETE 都没有（domain_manifest 与表级写授权白名单逐字未动），
+    -- 清理只能经这两条 SECURITY DEFINER 函数；EXECUTE 只授运行时（断言 92 精确比对 grantee 集）。
+    ('public',         'purge_owner_recognitions',           'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'purge_owner_speech',                 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
@@ -2332,6 +2318,86 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
 
          '运行时应能连接业务库'
 
+  UNION ALL
+  -- ---------------------------------------------------------------------------
+  -- GY-R34（#19 片2 / 迁移 0033）追加：注销**内容清理**唯一写路径的函数级契约断言。
+  -- 背景：注销闭集从 5 项扩到 7 项（识别域四表 + 语音域三表），但运行时对这五张正文表
+  -- **一条 DELETE 都没有**，而且这是刻意的禁止面（probe-runtime-grants.sql 逐条探针要求
+  -- 「直接 DELETE 必须恰好 42501」，deploy-sql-gate 的 18 条 / 9 个对象）。PG 没有列级 DELETE
+  -- ⇒ 清理只能经两条窄口径 SECURITY DEFINER 函数完成，因此必须把「函数确实存在、确实是
+  -- SECURITY DEFINER、search_path 确实固定、属主确实能删这五张表、EXECUTE 确实只授予运行时」
+  -- 全部钉死。⛔ 这五条**不**给运行时角色补任何表权限，也**不**放松任何既有断言。
+  -- 反向控制（不在此文件断言，见真库臂）：以 gengyun_api_runtime 直接
+  -- `DELETE FROM public.recognition_records WHERE false` 仍必须 42501。
+  -- ---------------------------------------------------------------------------
+  -- 21. 两条窄函数必须恰各存在一个重载（名字 + 精确签名）
+  SELECT 'owner_purge_function_exists',
+         to_regprocedure('public.purge_owner_recognitions(uuid)') IS NOT NULL
+         AND to_regprocedure('public.purge_owner_speech(uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE pronamespace = 'public'::regnamespace
+                 AND proname IN ('purge_owner_recognitions', 'purge_owner_speech')) = 2,
+         '注销内容清理必须恰为 public.purge_owner_recognitions(uuid) 与 public.purge_owner_speech(uuid) 各一个'
+
+  UNION ALL
+  -- 22. 必须真的是 SECURITY DEFINER（否则以运行时身份执行，DELETE 必然 42501）
+  SELECT 'owner_purge_function_security_definer',
+         (SELECT bool_and(p.prosecdef)
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '注销内容清理函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 23. search_path 固定 pg_catalog + 时区固定 UTC（不做 search_path 劫持的入口）
+  SELECT 'owner_purge_function_search_path',
+         (SELECT bool_and(p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC'])
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '注销内容清理函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 24. 属主正确：必须是这五张正文表的属主/可删角色，且运行时角色不是它、也不能 SET ROLE 成为它
+  SELECT 'owner_purge_function_owner',
+         (SELECT bool_and(
+                   pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                   AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_records', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_selections', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_jobs', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.speech_jobs', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.transcriptions', 'DELETE'))
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '清理函数属主必须能删这五张正文表，且运行时角色无法成为它（否则清不动或可绕过）'
+
+  UNION ALL
+  -- 25. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'owner_purge_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime', 'public.purge_owner_recognitions(uuid)', 'EXECUTE')
+         AND has_function_privilege(
+           'gengyun_api_runtime', 'public.purge_owner_speech(uuid)', 'EXECUTE')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '注销内容清理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
   -- ---------------------------------------------------------------------------
   -- GY-I22（#22）追加：账号停用/恢复**唯一写路径**与审计台账的函数级/表级契约断言。
   -- 背景：运行时角色对 public.users 的 state/auth_epoch/revision 与 public.admin_audit_events
@@ -2869,10 +2935,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   --   反向：清单外的列，任何列级权限（含 REFERENCES）都不许有；
   --   表级：INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER 一律不得有，
   --         DELETE 必须**恰好**等于 del 列声明（del=true 的表见各行声明；本片起含
-  --         recognition_idempotency / speech_idempotency 两本幂等台账，以及
-  --         GY-R34-I19 账号注销按主体清空的 recognition_jobs / records / selections
-  --         与 speech_jobs / transcriptions 五张正文表——它们与 20-login-roles.sql 的
-  --         GRANT DELETE 成对，任一侧漂移都会被 least-privilege-expected-parity 抓住）。
+  --         recognition_idempotency，它与 S24/S26 的三张幂等台账同性质）。
   SELECT 'runtime_grants_' || e.tbl,
          to_regclass('public.'||e.tbl) IS NOT NULL
          AND NOT EXISTS (
@@ -3048,22 +3111,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'SET LOCAL ROLE gengyun_api_runtime 后，识别域四表的十七种真实语句形状必须全部成功：jobs 与 records 各 SELECT 12 列 / INSERT 12 列 / UPDATE（5 列、7 列）/ SELECT … FOR UPDATE 真行，selections SELECT 8 列 / INSERT 8 列，idempotency SELECT 4 列 / 真冲突 claim 与 complete（ON CONFLICT DO UPDATE）/ release 与 purge 两条整行 DELETE；任一 42501 即失败'
 
   UNION ALL
-  -- 65. R28-S28 + GY-R34-I19 账号注销清理的按主体 DELETE（[16]）。
-  SELECT 'runtime_recognition_owner_purge_delete',
-         coalesce(:'r28_probe_rec_sel_owner_del', '') = 'false'
-         AND coalesce(:'r28_probe_rec_job_owner_del', '') = 'false'
-         AND coalesce(:'r28_probe_rec_rec_owner_del', '') = 'false',
-         '账号注销清理（recognitions/store-pg.ts::purgeOwnerRows）对 recognition_selections / recognition_jobs / recognition_records 的整行 DELETE 必须成功；任一 42501 即说明 20-login-roles.sql 的 GRANT DELETE 丢了'
-
-  UNION ALL
-  -- 65b. R28-S28 禁止面：这一条语句必须**恰好** 42501（运行时拿不到 UPDATE）。
-  --     recognition_selections 不授 UPDATE ⇒ 行锁载体 `SELECT … FOR UPDATE` 也拿不到
-  --     （与 S26 三表的性质不同，别照抄那句「UPDATE (revision) 行锁载体」的注释）。
-  --     ⚠️ GY-R34-I19 之后，jobs / records / selections 的整行 DELETE **不再** 属禁止面
-  --     —— 它们是账号注销清理的真实语句，见上一条 65。
+  -- 65. R28-S28 禁止面：这四条语句必须**恰好** 42501（运行时拿不到 UPDATE/DELETE）。
+  --     selections 不授 UPDATE ⇒ FOR UPDATE 也拿不到（与 S26 三表的性质不同，别照抄那句
+  --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授 —— GY-R34-I19 起，
+  --     账号注销的内容清理改由迁移 0033 的两条 SECURITY DEFINER 函数以属主身份执行
+  --     （`public.purge_owner_recognitions(uuid)`；若切成属主级联，`owner_user_id …
+  --     ON DELETE CASCADE` 也永不触发：`request_account_deletion()` 不删 `public.users` 行）。
+  --     本禁止面由 `tests/unit/least-privilege-expected-parity.test.mjs` 正向锁住。
   SELECT 'runtime_recognition_forbidden_surface',
-         :'r28_probe_rec_sel_lock_forbidden' = 'true',
-         'recognition_selections 的 SELECT … FOR UPDATE 必须 42501（无 UPDATE 授权）；成功即越权'
+         :'r28_probe_rec_sel_lock_forbidden' = 'true'
+         AND :'r28_probe_rec_job_del_forbidden' = 'true'
+         AND :'r28_probe_rec_rec_del_forbidden' = 'true'
+         AND :'r28_probe_rec_sel_del_forbidden' = 'true',
+         'recognition_selections 的 SELECT … FOR UPDATE 与 jobs / records / selections 的整行 DELETE 必须全部 42501；任一成功即越权'
 
   UNION ALL
   -- 66. R28-S28 泛化反向控制（PUBLIC 面）：manifest 里所有 granted / granted_external 的表
@@ -3117,23 +3177,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_sp_idem_seed_release' = 'false'
          AND :'r28_probe_sp_idem_release' = 'false'
          AND :'r28_probe_sp_idem_seed_expired' = 'false'
-         AND :'r28_probe_sp_idem_purge' = 'false'
-         AND coalesce(:'r28_probe_sp_job_owner_del', '') = 'false'
-         AND coalesce(:'r28_probe_sp_rc_owner_del', '') = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，语音域三表的真实语句形状必须全部成功：speech_jobs SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / SELECT … FOR UPDATE 真行 / 终态提交 UPDATE / 账号注销按主体整行 DELETE（GY-R34-I19），transcriptions SELECT 13 列 / INSERT 13 列 / UPDATE 8 列 / 账号注销按主体整行 DELETE（GY-R34-I19），speech_idempotency SELECT 6 列 / 占位 INSERT / 真冲突 claim（ON CONFLICT DO NOTHING RETURNING scope）/ finalize 2 列 / release 与 purge 两条整行 DELETE；任一 42501 即失败'
+         AND :'r28_probe_sp_idem_purge' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，语音域三表的十七种真实语句形状必须全部成功：speech_jobs SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / SELECT … FOR UPDATE 真行 / 终态提交 UPDATE，transcriptions SELECT 13 列 / INSERT 13 列 / UPDATE 8 列，speech_idempotency SELECT 6 列 / 占位 INSERT / 真冲突 claim（ON CONFLICT DO NOTHING RETURNING scope）/ finalize 2 列 / release 与 purge 两条整行 DELETE；任一 42501 即失败'
 
   UNION ALL
-  -- 68. R28-S38 禁止面**已撤销**（GY-R34-I19）：原断言是「speech_jobs / transcriptions 的整行
-  --     DELETE 必须恰好 42501，注销清理走 request_account_deletion() 的属主级联」。实测该函数
-  --     （迁移 0016:68-170）不删 public.users 行、全仓也没有 DELETE FROM public.users ⇒ 那条级联
-  --     永不触发，等于语音域的用户数据一条都不会被删。账号注销接进闭集后这两条 DELETE 是**真实
-  --     语句**（speech/store-pg.ts::purgeOwnerRows），已并入上面 67 的成功面。
-  --     表级 INSERT/UPDATE 不授这件事仍由 49-58 的 runtime_grants_* 逐表断言兜住
-  --     （has_table_privilege 逐个 priv 比对）。
-  SELECT 'runtime_speech_forbidden_surface_withdrawn',
-         coalesce(:'r28_probe_sp_job_owner_del', '') = 'false'
-         AND coalesce(:'r28_probe_sp_rc_owner_del', '') = 'false',
-         'R28-S38 的「speech_jobs / transcriptions 整行 DELETE 必须 42501」已被 GY-R34-I19 撤销：这两条 DELETE 现在是账号注销清理的真实语句，必须成功；若又变回 42501 说明 GRANT DELETE 被收回'
+  -- 68. R28-S38 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须恰好 42501。
+  --     这两表不授 DELETE（注销清理走 request_account_deletion() 的属主级联，
+  --     owner_user_id 都是 ON DELETE CASCADE）；表级 INSERT/UPDATE 不授这件事由
+  --     49-58 的 runtime_grants_* 逐表断言兜住（has_table_privilege 逐个 priv 比对）。
+  SELECT 'runtime_speech_forbidden_surface',
+         :'r28_probe_sp_job_del' = 'true'
+         AND :'r28_probe_sp_rc_del' = 'true',
+         'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 
   UNION ALL
   -- 69-86. R28-S43 逐表范围断言（17 张经 NOLOGIN 组继承来的 public 表）：

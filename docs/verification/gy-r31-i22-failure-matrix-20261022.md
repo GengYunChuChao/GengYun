@@ -241,7 +241,7 @@
 | media（5 ops） | 401:5 403:12 404:37 409:21 503:54 | `media-http-upload.test.mjs:116`（401）；`media-http-access.test.mjs:168`（他人 404）、`:404,427,433,439,445`（无内容/未发布/未过审/版本不符同形 404）；failmatrix `C1-09..13`、`C2-11..13`、`C5-01..03`、`C5-10` | **齐**（唯一把「未过审」写成 404 的域） |
 | jobs（2 ops） | 401:3 404:30 409:18 503:43 | `jobs-http.mjs:217-237`（他人/不存在/未接线 kind **三类同形 404**）、`:266`（他人取消 404）、`:278`（无会话 401） | **齐**；failmatrix 侧由 C10-15/16（游客面）与 C11-01..04（归属面）覆盖 401/404 两列（#449 之前是零覆盖） |
 | conversations（7 ops） | 400:20 404:37 409:11 503:10 | `conversation-http.test.mjs:281,282,288,292`（他人读/删/轮次 404）、`:294`（往他人会话写 404）、`:239`（方法不符 404） | **齐**（归属最完整的一域） |
-| deletion / exports（3 ops） | 401:58 403:14 404:17 409:8 503:17 | `account-deletion-http.mjs:202,316,321,326`（四类 401）、`:354`（换发后旧 bearer 立即失效）、failmatrix `C4-10..15` | **齐** |
+| deletion / exports（3 ops） | 401:58 403:14 404:17 409:8 503:17 | `account-deletion-http.mjs:202,316,321,326`（四类 401）、`:359`（换发后旧 bearer 立即失效）、failmatrix `C4-10..15` | **齐** |
 | catalog / public / profile（7 ops） | 400:13 401:6 404:5 503:4 | `C1-25..26,32`（游客 401）；`C2-22` | **基本齐**，无写面冲突 |
 | admin 内容面（24 ops：sources/knowledge/registrations/restrictions） | 401:82 403:78 404:79 409:87 503:135 504:16 | 守卫 `routes/admin.ts:166-167`（`readGuards`/`writeGuards`）；`C3-01..03,09..11`（403）、`C3-14..17`（200 对照）、`C3-22`（404） | **齐**；本域 504 只在 PG 锁通道；用户面同步读路径的 504 由 §4.1 #2 回写补上（#442／#447） |
 | admin 运维面（10 ops：accounts/jobs/flags/audit/categories/hide） | 同上 | `admin.ts:257,269,275,290,296,313,319,334,340,354,367` 每条均 `guards.requireAdmin` | **齐** |
@@ -313,7 +313,7 @@
 | 登出后重放原 code/key | `auth-routes.test.mjs:300-338`（`:332` 401 `SESSION_EXPIRED`、`:337` `activeCount() === 0`） | 不得再签发可用凭据 |
 | 同键重放换发令牌 | `auth-routes.test.mjs:266-297`（`:291` 旧 token 401、`:292` 新 token 200、`:289` 会话数仍 1） | 一会话一活 token（`:364` 另断言 `[200,401]`） |
 | epoch 变更（撤销） | `auth-routes.test.mjs:230-243`（`:240` 403 `ACCOUNT_INACTIVE`） | 撤销走 403 不是 401 |
-| 注销回执 bearer | `account-deletion-http.mjs:354`（`换发后旧 bearer 必须立刻失效`） | 回执专用 bearer 同样失效 |
+| 注销回执 bearer | `account-deletion-http.mjs:359`（`换发后旧 bearer 必须立刻失效`） | 回执专用 bearer 同样失效 |
 | 后台登出 | failmatrix `C3-12@149`（403 对照）、`C3-23@160` | 后台 401 面 |
 
 **判定**：A4 可判「齐」。唯一未覆盖的是**跨进程/跨实例**的撤销传播（会话存内存时，另一个实例的 token 仍有效）——属 `#313`／持久会话范围，本页不外推。

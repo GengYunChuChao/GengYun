@@ -432,6 +432,32 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
     }
   }
 
+  /**
+   * 把 `public.purge_owner_speech(...)` 回的 jsonb 读数收敛成本域计数形状
+   * （`{ records, idempotency }`，字段名与 `packages/privacy` 的 `OwnerPurgeCounts` 逐字一致）。
+   *
+   * 这个读数是回执证据串（`speech:online-purged:<records>;speech:idempotency-purged:<idempotency>`）
+   * 的唯一来源，所以按契约对待：读不懂就抛——⛔ 绝不把「读不到行数」降级成「已清 0 行」。
+   */
+  function purgeCountsFromFunction(
+    row: Record<string, unknown> | undefined,
+    what: string,
+  ): SpeechOwnerPurgeCounts {
+    const raw = row?.['counts'];
+    if (raw === null || typeof raw !== 'object') {
+      throw new Error(`${what} 未返回结构化读数：拒绝把「读不到行数」当成「已清 0 行」`);
+    }
+    const source = raw as Record<string, unknown>;
+    const pick = (key: string): number => {
+      const value = source[key];
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+        throw new Error(`${what} 的 ${key} 读数非法（${String(value)}）：拒绝把「读不懂」当成「已清」`);
+      }
+      return value;
+    };
+    return { records: pick('records'), idempotency: pick('idempotency') };
+  }
+
   /** 事务包裹：`BEGIN` → `SET LOCAL lock_timeout` → 业务 → `COMMIT`；异常折叠为契约错误。 */
   async function withTransaction<T>(work: (sql: SqlRunner) => Promise<T>): Promise<T> {
     let connection: PgConnection | null = null;
@@ -462,41 +488,29 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
   }
 
   /**
-   * 注销闭集（#19 延续片）· 按主体清空语音域三张表，**同一事务**、先父后子（按业务语义）。
+   * 注销闭集（#19 延续片）· 按主体清空语音域三张表。
    *
-   * 顺序与计数口径（`services/api/db/migrations/0026_speech_persistence.sql`）：
-   *   - `:92`（`speech_jobs`）与 `:115`（`transcriptions`）各自 `owner_user_id → users(id) ON DELETE CASCADE`
-   *     ⇒ 两张表**分别**按 `owner_user_id` 删；它们互相**没有**外键（任务产记录是业务关系，不是 FK），
-   *     顺序按语义：任务先于其产物；
-   *   - `speech_idempotency`（`:137`）**没有**主体列 ⇒ 按 `scope` 首段主体前缀删。
-   *     `auth/idempotency.ts` 的 `idempotencyScope` 恒为 `<主体 uuid>\n<METHOD>\n<路径>`，
-   *     因此用 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)` 做**精确**前缀比较
-   *     （不解释通配符、也不是会误伤其他主体的 `LIKE '%…%'`；主体是定长 uuid，前缀唯一）。
+   * 写路径是**迁移 0033 的 SECURITY DEFINER 函数** `public.purge_owner_speech(uuid)`，不是本文件
+   * 里的 DELETE：运行时角色对这五张正文表**没有任何** DELETE 权限，且那是刻意的安全不变量
+   * （`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 逐条探针要求「直接 DELETE 必须
+   * 恰好 42501」，deploy-sql-gate 钉死 18 条 / 9 个对象）。PG 没有列级 DELETE，所以收窄只能
+   * 是「不给表权限、给一条只删一个主体一个域的函数」。
+   * ⛔ 绝不能为了省事改回 `DELETE FROM public.speech_*` —— 那会同时打破禁止面与真库臂的
+   * 成对断言（函数可清 vs 直接 DELETE 仍 42501）。
    *
-   * ⚠️ 表未迁移（`0026` 没跑）⇒ `requireTables()` 明确 fail-closed，⛔ 不静默当"已清 0 行"。
+   * 顺序不再由本文件决定，而是钉在迁移里（`0026_speech_persistence.sql`）：
+   *   `:92`（`speech_jobs`）与 `:115`（`transcriptions`）各自 `owner_user_id`，两者之间
+   *   **没有**外键，按语义「任务先于其产物」；`speech_idempotency`（`:137`）没有主体列
+   *   ⇒ 按 scope 首段主体前缀删（`idempotencyScope` 恒以主体 uuid 开头）。
+   *
+   * 返回值仍是本域计数形状 `{ records, idempotency }`；函数回 jsonb 明细，这里只取这两个与
+   * 端口一致的字段。读数读不懂就抛（⛔ 不把「读不到」当「已清 0 行」）。
+   * ⚠️ 迁移没跑（0026/0033 缺）⇒ `requireTables()` / 函数不存在都会明确 fail-closed。
    */
   async function purgeOwnerRows(ownerId: string): Promise<SpeechOwnerPurgeCounts> {
     await requireTables();
-    return withTransaction(async (sql) => {
-      const jobs = await sql.query(
-        `DELETE FROM public.speech_jobs WHERE owner_user_id = $1::uuid RETURNING id`,
-        [ownerId],
-      );
-      const records = await sql.query(
-        `DELETE FROM public.transcriptions WHERE owner_user_id = $1::uuid RETURNING id`,
-        [ownerId],
-      );
-      const idempotency = await sql.query(
-        `DELETE FROM public.speech_idempotency
-          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
-          RETURNING scope`,
-        [ownerId],
-      );
-      return {
-        records: jobs.rows.length + records.rows.length,
-        idempotency: idempotency.rows.length,
-      };
-    });
+    const rows = await run('SELECT public.purge_owner_speech($1::uuid) AS counts', [ownerId]);
+    return purgeCountsFromFunction(rows[0], '语音域按主体清空（public.purge_owner_speech）');
   }
 
   return {
