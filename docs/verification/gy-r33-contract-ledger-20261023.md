@@ -4,6 +4,8 @@
 > 分支：`fix/gy-r33-contract-ledger`；工作树：`E:\GengYunCommander\wt-r33-ledger`。
 > Refs #7、#16、#17。本页只提供证据与订正记录：**不改任何 `status`**、不产生关闭结论、不代替监工验收。
 
+> **R34 补注（2026-10-23）**：本页对 `services/api/src/app.ts` 的行号读数测量于 `7dd3d699`（本页自述基线）；`#503`／`#505`／`#510`／`#511` 合入后该文件已多次变动，那些行号不再指向原处（例如社区 store 选择块原记 `:831-838`、社区 real 放行判据原记 `:1133`）。现按符号定位：`communityRealUnwired` 在 `buildApp` 内（`git grep -n 'communityRealUnwired' -- services/api/src/app.ts`），社区 store 选择块按 `const communityStore` 检索（`git grep -n 'const communityStore' -- services/api/src/app.ts`）。原读数保留为历史；本补注只订正定位方式，不重新验收各行结论（个别引用处的代码形态亦可能已变）。
+
 ## 0 摘要
 
 1. 只改 `docs/architecture/contract-status.json` 的 **blocker 文本**，共 **22 条**：`listKnowledge`、`dimensions.pagination`、`getMedia`、社区 16 条（`listPosts` … `getOwnReport`）、`#17` 三条（`listMessages` / `getUnreadCount` / `markMessageRead`）。脚本比对 HEAD：`changed blockers=22 / other changes=0`（§5.1）。
