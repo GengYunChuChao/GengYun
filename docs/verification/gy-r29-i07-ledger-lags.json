@@ -4,7 +4,7 @@
   "original_reviewed_at": "2026-10-22",
   "base_commit": "a2ab0d9aff391a199142699038b01eda2f74d497",
   "resolved_base_commit": "7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79",
-  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md",
+  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本（第二次提交再为亚毫秒 tie-break 差异加限定）；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md",
   "frozen_sort": {
     "pointer": "docs/architecture/state-contract.md:32",
     "clause": "created_at DESC, id DESC"
@@ -25,7 +25,7 @@
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",
       "code_sort": "created_at DESC, id DESC",
-      "ledger_blocker_verbatim": "需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）。**排序已对齐冻结口径**：`services/api/src/knowledge/service.ts:33-38` 的 JS 比较器与 `:76` 的 `ORDER BY created_at DESC, id DESC` 同序；迁移 `services/api/db/migrations/0012_knowledge_created_at.sql` 把 `created_at` 落到 `knowledge_versions`（`:39`）、确定性回填存量（`:59-61`）、`NOT NULL` + 默认（`:64`、`:68`）并投影进 `catalog_read.current_knowledge`（`:87`、`:97`）⇒ 台账旧文「当前 id_asc 排序」「实际表/投影无 created_at」「排序及历史数据方案未完成」三句已被 #209 / 迁移 0012 推翻（`id_asc` 仅作历史对照，不是现状）。真库读数（临时 PG 17.11）：SQL 直查 = HTTP 分页 = 服务层归并三面一致，同 `created_at` 不同 `id` 按 `id DESC` 收敛、跨页游标逐页切片、`created_at` 为 NULL/不可解析的行确定性排最后（`docs/verification/gy-r33-contract-ledger-20261023.md` §B）。仍按 `partial` 保留：真实生产 `DATABASE_URL` 与已审来源数据未取得（本片读数为隔离合成夹具），#7 的 `/herbicides` 读面排序口径另待裁定；`status` 改判属监工权限。",
+      "ledger_blocker_verbatim": "需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）。**排序已对齐冻结口径（毫秒对齐夹具；亚毫秒 tie-break 见本条后半）**：`services/api/src/knowledge/service.ts:33-38` 的 JS 比较器与 `:76` 的 `ORDER BY created_at DESC, id DESC` 同序；迁移 `services/api/db/migrations/0012_knowledge_created_at.sql` 把 `created_at` 落到 `knowledge_versions`（`:39`）、确定性回填存量（`:59-61`）、`NOT NULL` + 默认（`:64`、`:68`）并投影进 `catalog_read.current_knowledge`（`:87`、`:97`）⇒ 台账旧文「当前 id_asc 排序」「实际表/投影无 created_at」「排序及历史数据方案未完成」三句已被 #209 / 迁移 0012 推翻（`id_asc` 仅作历史对照，不是现状）。真库读数（临时 PG 17.11，**毫秒对齐夹具**）：SQL 直查 = HTTP 分页 = 服务层归并三面一致，同 `created_at` 不同 `id` 按 `id DESC` 收敛、跨页游标逐页切片、`created_at` 为 NULL/不可解析的行确定性排最后（`docs/verification/gy-r33-contract-ledger-20261023.md` §B）。**亚毫秒（PG 微秒）tie-break 存在跨路径差异（未修）**：JS 侧 `Date` 只有毫秒精度，同毫秒内 SQL 与 HTTP/服务层顺序可不同（复现与根因见同页 §3.6）。仍按 `partial` 保留：真实生产 `DATABASE_URL` 与已审来源数据未取得（本片读数为隔离合成夹具），#7 的 `/herbicides` 读面排序口径另待裁定；`status` 改判属监工权限。",
       "resolved_at": "2026-10-23",
       "resolved_by": "R33 / fix/gy-r33-contract-ledger"
     },
@@ -38,7 +38,7 @@
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",
       "code_sort": "created_at DESC, id DESC",
-      "ledger_blocker_verbatim": "授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识列表的 `id_asc` 旧口径已过时（仅作历史对照）：排序早已是冻结的 `(created_at DESC, id DESC)`，`created_at` 由迁移 `0012` 落到 `knowledge_versions` 并投影进读视图，真库读数见 `docs/verification/gy-r33-contract-ledger-20261023.md` §B；后台/社区/消息分页须按模块验收，不记整维度完成",
+      "ledger_blocker_verbatim": "授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识列表的 `id_asc` 旧口径已过时（仅作历史对照）：排序早已是冻结的 `(created_at DESC, id DESC)`，`created_at` 由迁移 `0012` 落到 `knowledge_versions` 并投影进读视图，真库读数见 `docs/verification/gy-r33-contract-ledger-20261023.md` §B（SQL 侧为冻结口径；JS 归并在亚毫秒 tie-break 上与 SQL 存在跨路径差异，未修，见该页 §3.6）；后台/社区/消息分页须按模块验收，不记整维度完成",
       "resolved_at": "2026-10-23",
       "resolved_by": "R33 / fix/gy-r33-contract-ledger"
     }

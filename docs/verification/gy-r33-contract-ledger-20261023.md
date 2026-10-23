@@ -8,7 +8,7 @@
 
 1. 只改 `docs/architecture/contract-status.json` 的 **blocker 文本**，共 **22 条**：`listKnowledge`、`dimensions.pagination`、`getMedia`、社区 16 条（`listPosts` … `getOwnReport`）、`#17` 三条（`listMessages` / `getUnreadCount` / `markMessageRead`）。脚本比对 HEAD：`changed blockers=22 / other changes=0`（§5.1）。
 2. **保留 5 条**（#16）：`listFavorites` / `createFavorite` / `deleteFavorite` / `listHistory` / `deleteHistory` —— 逐条实测与现行代码一致，0 改动；其中「real 历史仍 unwired」的说法对 `#484` 之前成立、对现行 main 已过时，但**台账现文已经写明 wired**，故不改（§2.5）。
-3. `#7` 真库读数已取得：临时 PostgreSQL **17.11**（仅 `127.0.0.1:55437`）上，SQL 直查 = HTTP 分页 = 服务层归并三面**逐 id 一致**；同 `created_at` 不同 `id` 按 `id DESC`；跨页游标逐页切片；`created_at` 为 NULL/不可解析的行确定性排最后（§3，exit 0）。
+3. `#7` 真库读数已取得：临时 PostgreSQL **17.11**（仅 `127.0.0.1:55437`）上，**毫秒对齐夹具**的 SQL 直查 = HTTP 分页 = 服务层归并三面**逐 id 一致**；同 `created_at` 不同 `id` 按 `id DESC`；跨页游标逐页切片；`created_at` 为 NULL/不可解析的行确定性排最后（§3，exit 0）。**另：亚毫秒（PG 微秒）tie-break 存在跨路径差异（新发现，未修）**——JS 侧用 `Date`（毫秒）比较、PG 按微秒排序，同毫秒内 SQL 与 HTTP/服务层顺序可不同（§3.6）。
 4. 生成的 `docs/architecture/contract-implementation-status.md` 由 `node tools/verify-contract-status.mjs --write-doc` 重写；**生成区之外**的人工摘要另做 3 处一致性订正（§6）。
 
 ## 1 纪律与改动面自证
@@ -36,20 +36,20 @@
 
 | 旧说法 | 实测 | 证据 |
 | --- | --- | --- |
-| 「当前 id_asc 排序」 | 服务端读语句是 `ORDER BY created_at DESC, id DESC`；JS 归并比较器同序（先时间点，再 `id` 逐码元降序） | `services/api/src/knowledge/service.ts:33-38`、`:76` |
+| 「当前 id_asc 排序」 | 服务端读语句是 `ORDER BY created_at DESC, id DESC`；JS 归并比较器同序（先时间点，再 `id` 逐码元降序；**但 JS 时间点只有毫秒精度，亚毫秒 tie-break 见 §3.6**） | `services/api/src/knowledge/service.ts:33-38`、`:76` |
 | 「实际表/投影无 created_at」 | `knowledge_versions.created_at` 已落库、`NOT NULL`、有默认；`catalog_read.current_knowledge` 已投影该列 | `services/api/db/migrations/0012_knowledge_created_at.sql:39`、`:64`、`:68`、`:87`、`:97` |
 | 「排序及历史数据方案未完成」 | 迁移用**冻结批次日期常量** `2026-10-14T00:00:00Z` 确定性回填存量（不含 `now()`/运行期时钟），并建 `(created_at DESC, knowledge_id DESC)` 索引 | `services/api/db/migrations/0012_knowledge_created_at.sql:59-61`、`:73-74` |
 | 冻结口径本身 | 「排序 `(created_at DESC,id DESC)`」 | `docs/architecture/state-contract.md:32` |
 
-**处置：订正（部分过时）。** 旧三句（`id_asc` / 无 `created_at` / 历史方案未完成）已被 #209 与迁移 `0012` 推翻；`status` 仍 `partial`，理由改为：真实生产 `DATABASE_URL` 与已审来源数据未取得（本片 §3 为隔离合成夹具），#7 的 `/herbicides` 读面排序口径另待裁定。**未改 `status`**。
+**处置：订正（部分过时）。** 旧三句（`id_asc` / 无 `created_at` / 历史方案未完成）已被 #209 与迁移 `0012` 推翻；`status` 仍 `partial`，理由改为：真实生产 `DATABASE_URL` 与已审来源数据未取得（本片 §3 为隔离合成夹具），#7 的 `/herbicides` 读面排序口径另待裁定。**未改 `status`**。真库读数只在**毫秒对齐夹具**上三面一致；亚毫秒 tie-break 的跨路径差异见 §3.6（未修）。
 
 **改前 → 改后（差异片段）**
 
 ```
 - 当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留
-+ **排序已对齐冻结口径**：…（比较器与 SQL 同序；0012 补列/回填/NOT NULL/默认/投影）
++ **排序已对齐冻结口径（毫秒对齐夹具；亚毫秒 tie-break 见本条后半）**：…（比较器与 SQL 同序；0012 补列/回填/NOT NULL/默认/投影）
 + ⇒ 台账旧文「当前 id_asc 排序」「实际表/投影无 created_at」「排序及历史数据方案未完成」三句已被 #209 / 迁移 0012 推翻（`id_asc` 仅作历史对照，不是现状）。
-+ 真库读数（临时 PG 17.11）：SQL 直查 = HTTP 分页 = 服务层归并三面一致…（见本页 §3）
++ 真库读数（临时 PG 17.11，毫秒对齐夹具）：SQL 直查 = HTTP 分页 = 服务层归并三面一致…（见本页 §3；亚毫秒 tie-break 差异见 §3.6，未修）
 + 仍按 `partial` 保留：真实生产 `DATABASE_URL` 与已审来源数据未取得…#7 的 `/herbicides` 读面排序口径另待裁定；`status` 改判属监工权限。
 ```
 
@@ -63,9 +63,9 @@
 授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成
 ```
 
-**实测事实**：与 §2.1 同源、同一句化石。`created_at` 已由 `0012` 落到 `knowledge_versions` 并投影进读视图（`services/api/db/migrations/0012_knowledge_created_at.sql:39`、`:87`、`:97`）；真库读数见 §3。后半句「后台/社区/消息分页须按模块验收」**仍属实**，原样保留。
+**实测事实**：与 §2.1 同源、同一句化石。`created_at` 已由 `0012` 落到 `knowledge_versions` 并投影进读视图（`services/api/db/migrations/0012_knowledge_created_at.sql:39`、`:87`、`:97`）；真库读数见 §3（毫秒对齐夹具上三面一致；亚毫秒 tie-break 差异见 §3.6，未修）。后半句「后台/社区/消息分页须按模块验收」**仍属实**，原样保留。
 
-**处置：订正（部分过时）**，`status` 仍 `partial`。
+**处置：订正（部分过时）**：SQL 侧为冻结口径；JS 归并在亚毫秒 tie-break 上与 SQL 存在跨路径差异（未修，§3.6）；`status` 仍 `partial`。
 
 ### 2.3 `getMedia`（媒体域）
 
@@ -276,7 +276,7 @@ node knowledge-sort-readout.mjs <worktree> gy_r33_ledger 55437
 | E（同刻，id 最低） | `5e5e5e5e-0000-4000-8000-000000000005` | `2026-10-20T12:00:00Z` |
 | D（最旧） | `dddddddd-0000-4000-8000-00000000000d` | `2026-10-19T00:00:00Z` |
 
-### 3.3 三面对照
+### 3.3 三面对照（毫秒对齐夹具）
 
 **SQL 直查**（`psql` 等价语句 + 服务实际语句）：
 
@@ -310,6 +310,8 @@ SELECT id, created_at FROM catalog_read.current_knowledge ORDER BY created_at DE
 
 **断言读数**：HTTP order == SQL order（逐 id）；service order == SQL order（逐 id）；三面均为 `[C, B, A, E, D]`。游标 payload 自述 `"sort":"created_at_desc"`，并绑定 `user` / `auth_epoch` / `filter` / `watermark` / `after` / `expires`（固定 15 分钟非滑动；`services/api/src/knowledge/pagination.ts:11`、`:56-58`）。
 
+> 本组夹具的 `created_at` 全是整毫秒（`.000Z`），因此**不能暴露亚毫秒 tie-break**；该差异由 §3.6 的独立探针检出。
+
 ### 3.4 边界数据（同刻 / NULL / 不可解析 / 跨页）
 
 DB 列 `created_at` 已是 `NOT NULL`（`services/api/db/migrations/0012_knowledge_created_at.sql:64`），所以 NULL/不可解析只能从**归并口**（`extraRows`，即浙江种子并入路径）进入。注入 5 行边界数据后，`limit=3` 的合并读数：
@@ -335,14 +337,65 @@ DB 列 `created_at` 已是 `NOT NULL`（`services/api/db/migrations/0012_knowled
 
 ### 3.5 结论
 
-- 未发现排序不一致、游标错位或种子归并次序错误 ⇒ **本片不改任何代码**（无新缺陷可开）。
-- 台账旧文的三句排序化石被**静态代码 + 真库读数**双重推翻；`status` 仍按 `partial` 保留，改判属监工权限。
+- **毫秒对齐夹具上**未发现排序不一致、游标错位或种子归并次序错误；**但亚毫秒（PG 微秒）tie-break 存在 SQL 与 HTTP/服务层的跨路径差异（新发现，未修，§3.6）**。
+- 台账旧文的三句排序化石仍被**静态代码 + 毫秒对齐真库读数**双重推翻（`id_asc` / 无 `created_at` / 历史方案未完成）；但「排序完全一致」的表述必须限定在**毫秒精度**——本片据此修正台账措辞（§2.1/§2.2）。
 - 未取得的仍是「生产 `DATABASE_URL` + 真实已审资料」与 `/herbicides` 口径（§4）。
+
+### 3.6 亚毫秒 tie-break 差异（新发现，未修）
+
+**现象（本片在独立 55437 集群上自行复现，非照抄复审结论）**
+
+两条行仅 `created_at` 的微秒部分不同，且 id 顺序与时间顺序相反：
+
+| 行 | id | `created_at`（SQL 全精度） |
+| --- | --- | --- |
+| X | `11111111-1111-4111-8111-111111111111` | `2026-10-20T12:00:00.000500Z` |
+| Y | `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa` | `2026-10-20T12:00:00.000100Z` |
+
+| 路径 | 实际顺序 | 读数 |
+| --- | --- | --- |
+| SQL 直查（PG 微秒） | **X, Y** | `to_char(created_at,'…US…')` ⇒ `.000500Z` / `.000100Z` |
+| HTTP `GET /api/v1/knowledge?limit=2` | **Y, X** | `200`；items 顺序 Y 前 X 后 |
+| 服务层 `createKnowledgeService.list()` | **Y, X** | items 顺序 Y 前 X 后 |
+| `pg` 驱动交回的 `created_at` | 两行同值 | `Date`；`toISOString=2026-10-20T12:00:00.000Z`、`getTime=1792497600000`（微秒被截断） |
+
+**复现命令（本片实跑，`reproduced=true`，exit 0）**
+
+```powershell
+# 空库 + 迁移 + 角色（同 §3.1）
+E:\GengYunCommander\.pg17\pgsql\bin\initdb.exe -D <tmp>\pg\data -U gy_owner -A trust --encoding=UTF8 --locale=C
+# postgresql.conf: listen_addresses='127.0.0.1'; port=55437
+E:\GengYunCommander\.pg17\pgsql\bin\pg_ctl.exe -D <tmp>\pg\data -l <tmp>\pg\postgres.log -w start
+E:\GengYunCommander\.pg17\pgsql\bin\psql.exe -h 127.0.0.1 -p 55437 -U gy_owner -d postgres -c "CREATE DATABASE gy_r33_ms"
+node subms-readout.mjs <worktree> gy_r33_ms 55437
+# ⇒ SQL [X,Y] / HTTP [Y,X] / service [Y,X]；reproduced=true；exit 0
+```
+
+`subms-readout.mjs` 为一次性探针（未入仓）：两行 `created_at` 分别 `.000500Z` / `.000100Z` → 直查 `SELECT id, to_char(created_at,'…US…') … ORDER BY created_at DESC, id DESC` → `buildApp` + `POST /api/v1/auth/wechat` 登录 → `GET /api/v1/knowledge?limit=2` → 同一 service `.list()`。驱动实测 `pg 8.23.1`。
+
+**根因**
+
+- PG `timestamptz` 是**微秒**精度，SQL `ORDER BY created_at DESC` 按完整精度比较。
+- 应用侧 `pg`（8.23.1）把 `timestamptz` 解成 JS `Date`；`Date` 只有**毫秒**精度（两行的 `toISOString` 都已成为 `.000Z`）。
+- `services/api/src/knowledge/service.ts:28-38` 的 `instantOf` 用 `Date.getTime()` / `Date.parse()`（毫秒）；同毫秒时 `compareKnowledgeRows` 退到 `id DESC`（`:36-37`）。
+- 关键：服务在 `:83-84` 对**整份快照**（`dbResult.rows` + extra）重排，不是只排种子；因此 DB 行也会被 JS 重排，SQL 与 HTTP/服务层可不同序。
+
+**影响面**
+
+- 仅当 `created_at` 存在**亚毫秒差**时触发；§3.3/§3.4 的夹具都是整毫秒，故当时三面一致。
+- 同一毫秒内的两条记录，直查 SQL 与 API 的顺序可不同；分页切片按 JS 顺序计算（`services/api/src/knowledge/pagination.ts:60-66`），以 SQL 直查复核会看到「顺序不一致」。
+- 单一路径内不重复/漏行（同一比较器贯穿各页）；**跨路径一致性**被破坏。
+- 新写入可能触发：`created_at` 默认是 `clock_timestamp()`（`services/api/db/migrations/0012_knowledge_created_at.sql:68`，微秒级）；历史回填是整秒常量（`:59-61`），不会触发。
+
+**修不修**
+
+要不要修属产品/契约裁定，可选方向包括（a）SQL 与 JS 用同一精度（如 SQL `date_trunc('milliseconds', created_at)`），或（b）把 `created_at` 的全精度文本随快照取出、在 JS 侧按字符串/微秒比较。**本片不改代码**，仅登记缺陷与复现；`status` 未动。
 
 ## 4 未取得项（不得读成通过）
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
+| 亚毫秒 tie-break 差异 | **已复现 / 未修** | §3.6：SQL（微秒）与 HTTP/服务层（JS 毫秒）在同毫秒内可不同序；修不修属产品/契约裁定 |
 | 生产 `DATABASE_URL` / 真实已审资料 | 未取得 | §3 为隔离合成夹具（真实 PG 17.11，但不是生产库/生产数据） |
 | `/herbicides` 排序口径 | 未取得裁定 | 现状为登记号升序；是否受 `state-contract.md:32` 第一子句约束待监工裁定 |
 | Android/iOS 真机 | 未取得 | `docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」 |
@@ -353,7 +406,7 @@ DB 列 `created_at` 已是 `NOT NULL`（`services/api/db/migrations/0012_knowled
 
 ### 5.1 只改 blocker 的机器自证
 
-用 `git show HEAD:docs/architecture/contract-status.json` 与工作树 JSON 逐字段比对（除 `blocker` 外所有字段、所有顶层字段）：
+用 `git show 7dd3d699:docs/architecture/contract-status.json`（片前基线）与工作树 JSON 逐字段比对（除 `blocker` 外所有字段、所有顶层字段）：
 
 ```
 changed blockers=22
@@ -368,12 +421,15 @@ other changes=0
 | `node tools/verify-contract-status.mjs`（不带 `--write-doc`） | `0` | `PASS: 中文表格一致`；`PASS: 状态为人工判定…` |
 | `node tools/verify-doc-anchors.mjs --strict` | `0` | `COUNT: BROKEN 33 / OUT_OF_RANGE 6 / SUSPECT 66`；`BASELINE: 登记 105 条；本次命中 105 条、基线外新增 0 条、陈旧 0 条`；`PASS: --strict 下没有基线之外的新增` |
 | `npm run test:docs` | `0` | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables`；研究记录 `5 通过 / 0 失败 / 4 legacy 已钉住` |
+| `node tools/verify-migrations-unique.mjs --strict` | `0` | `PASS：5 项判据全部满足（surface / runner / dup / coexist / rollback）；30 条配对 + 1 条登记允许缺省 = 31 条正向迁移逐条有交代` |
 | `node --test <8 个定向文件>` | `0` | `tests 87 / pass 86 / fail 0 / skipped 1` |
 | `node --test tests/unit/knowledge-ledger-sort-drift.test.mjs` | `0` | `tests 4 / pass 4 / fail 0` |
 
 定向文件：`knowledge-ledger-sort-drift`、`knowledge-api`、`messages-http`、`community-http`、`media-http-access`、`contract-status-tool`、`contract-status-anchors`、`doc-anchors-guard`。
 
-另实测 `--write-doc` **幂等**：同一命令再跑一次，`git hash-object docs/architecture/contract-implementation-status.md` 前/后均为 `80428ab2845d5bdf492ba68d1bf8b6cefe346661`（`BYTE_IDENTICAL=True`），exit `0` ⇒ 生成区字节一致。
+另实测 `--write-doc` **幂等**：同一命令再跑一次，`git hash-object docs/architecture/contract-implementation-status.md` 前/后均为 `56f2d6abfa4e0a194f0b91331802e13b3842aefe`（`BYTE_IDENTICAL=True`），exit `0` ⇒ 生成区字节一致。
+
+第二次提交相对第一次只再改 **2 条** blocker（`operations.listKnowledge`、`dimensions.pagination`，加亚毫秒限定）；其余 20 条订正与 5 条保留未动；`git diff HEAD^` 实测 `blockers=2 / other=0`。
 
 ## 6 生成区、人工摘要与防漂移登记
 
@@ -409,6 +465,7 @@ other changes=0
 | 5432 | 全程未连接、未启动、未探测 |
 | 重解析点 | 删除前整树枚举：目录 reparse point **0**、文件 reparse point **0** |
 | 临时目录 | `Remove-Item -LiteralPath E:\GengYunCommander\.pg17\tmp\r33-ledger -Recurse -Force` ⇒ `Test-Path=False`；端口复测 **0** |
+| 二次复现集群（§3.6） | `E:\GengYunCommander\.pg17\tmp\r33-ledger-repro`：`pg_ctl stop` exit `0`（`server stopped`）、`pg_isready` exit `2`（`no response`）、55437 监听 **0**、删除前 reparse 目录/文件均 **0**、`Test-Path=False` |
 | 仓库删除 | 未删除任何被跟踪文件；提交前 `git status --short` 仅本片 5 个文件，提交后 **0 行**（§8） |
 
 ## 8 改动清单
@@ -421,10 +478,11 @@ other changes=0
 | `tests/unit/knowledge-ledger-sort-drift.test.mjs` | 改（仅注释） | 头部说明改为「曾写/已订正」；断言零改动 |
 | `docs/verification/gy-r33-contract-ledger-20261023.md` | 新增 | 本页 |
 
-提交：`git add` 后单次提交（提交信息含 `Refs #7, #16, #17`）；提交后 `git status --short` 为 **0 行**。本页不自指提交 SHA（自指会与 amend 循环），实测 HEAD 由回报消息给出。
+提交：分两次提交（**未 amend**）：第一次为 22 条 blocker 订正 + 本页；第二次为复审后的亚毫秒 tie-break 登记（§3.6）与 `listKnowledge`/`pagination` 措辞限定。两次提交信息均含 `Refs #7, #16, #17`；提交后 `git status --short` 为 **0 行**。本页不自指提交 SHA（自指会与 amend 循环），实测 HEAD 由回报消息给出。
 
 ## 9 待指挥/监工裁定
 
 1. `listKnowledge`、`getMedia`、社区 16 条、消息 3 条的 `status` 是否离开 `partial`（本片**未动**；`listKnowledge` 的生产读数与 `/herbicides` 口径仍未取得）。
 2. 生成区外的人工摘要 3 处订正是否接受（§6.2；可单独回退，不影响 JSON/生成区）。
 3. `docs/verification/gy-r29-i07-ledger-lags.json` 的「已订正后仍保留 2 条逐字登记」是否接受；若要求清空登记，需同时改 `knowledge-ledger-sort-drift.test.mjs` 的 ②/④ 断言（本片按「不删断言」未做）。
+4. **亚毫秒 tie-break 差异是否修**（§3.6）：属产品/契约裁定；若修，需决定统一精度（SQL `date_trunc('milliseconds', …)`）还是保留微秒（把全精度文本带进快照/比较器）。本片**未改代码**。
