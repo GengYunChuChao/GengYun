@@ -151,7 +151,7 @@ node .local/profile-product-check.cjs ...\.local\wechat-release
 
 ## 6. 自我核对
 
-- [x] 口径 `Refs #5`，全文与提交信息**未出现** `Closes #5`
+- [x] 口径 `Refs #5`，全文与提交信息**未出现**关单字面串 `Closes`＋`#5`
 - [x] 未合并任何 PR、未自评验收通过、未代监工宣布验收
 - [x] 未改 `miniprogram/config/runtime.js`（打包校验仍逐字节要求 `mode: 'disabled', apiBaseUrl: ''`）
 - [x] 未删除／注释／跳过任何既有测试；既有测试文件只做加法（见 §2.3）
