@@ -62,6 +62,8 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
+    // 进入本页即作废上一条读取链：离开/重进后，旧响应不得再写回页面。
+    self._epoch = (self._epoch || 0) + 1
     self.setData({ gatePassed: false, checking: true, message: '', errorText: '', errorCode: '', invalid: false, invalidReason: '' })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
@@ -75,16 +77,30 @@ Page({
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () { pageGate.cancel(this); this._epoch = (this._epoch || 0) + 1 },
+  onUnload: function () { pageGate.cancel(this); this._epoch = (this._epoch || 0) + 1 },
 
   load: function () {
     const self = this
     const id = self._query.id
+    // 每次读取有自己的世代：重复点「重新实时读取」或删除后重试时，旧请求后到的响应不得覆盖新结论
+    // （旧响应可能还带着删除前的 succeeded／available 与可删除入口）。
+    const epoch = (self._epoch = (self._epoch || 0) + 1)
+    const alive = function () { return epoch === self._epoch }
     self.setData({ busy: true, errorText: '', errorCode: '', invalid: false })
     historyApi.locateHistory(id, historyApi.PAGE_LIMIT_MAX).then(function (located) {
+      if (!alive()) return null
       if (!located) {
-        self.setData({ busy: false, invalid: true, invalidReason: '该记录不存在、已删除、或不属于当前账号（服务端与"不存在"同形返回）。' })
+        // 实时未命中且没有快照 ⇒ 记录确实不可用；清空所有旧内容与动作入口（不猜 revision）。
+        self.setData({
+          busy: false, invalid: true,
+          invalidReason: '该记录不存在、已删除、或不属于当前账号（服务端与"不存在"同形返回）。',
+          kindLabel: '', locatedBy: '', stateKnown: false, stateLabel: '', stateDesc: '', stateTone: '',
+          referenceAvailable: false, referenceLabel: '', createdAt: '', historyRevision: null, canDelete: false,
+          recognized: false, modelCandidates: [], modelCandidateNote: '', manualSelection: null,
+          uncertaintyReasons: [], sourceVersion: '', raw: null, corrected: null, correctedDiffers: false,
+          verification: null, doseSafetyNote: ''
+        })
         return null
       }
       const stateKnown = located.jobState !== null
@@ -107,6 +123,7 @@ Page({
       }
       if (located.kind === 'recognition') {
         return identify.getRecognition(located.targetId).then(function (result) {
+          if (!alive()) return
           const detail = historyApi.recognitionDetailView(result.recognition, located.jobState === null ? '' : located.jobState)
           self.setData(Object.assign(base, {
             recognized: detail.recognized,
@@ -120,6 +137,7 @@ Page({
         })
       }
       return historyApi.getOcr(located.targetId).then(function (result) {
+        if (!alive()) return
         const detail = historyApi.ocrDetailView(result.ocr)
         self.setData(Object.assign(base, {
           recognized: false, modelCandidates: [], manualSelection: null, uncertaintyReasons: [],
@@ -129,12 +147,23 @@ Page({
         }))
       })
     }).catch(function (error) {
+      if (!alive()) return
       // 目标详情读取失败（含已删除/不可用）如实说明；**不**用链接里的旧状态顶替。
       // 错误码原样带出：401 仍是"登录失效"，403 是"没有权限"，404 是"记录不可用"。
+      // 同时撤掉上一次成功读取留下的状态面板与删除入口：读不到就不得继续显示旧结论，
+      // 也不得让用户对着一条无法核对版本的记录点「删除」。
       self.setData({
         busy: false,
         errorText: historyApi.messageFor(error),
         errorCode: (error && error.code) || '',
+        stateKnown: false,
+        stateLabel: '',
+        stateDesc: '',
+        stateTone: '',
+        referenceAvailable: false,
+        referenceLabel: '',
+        historyRevision: null,
+        canDelete: false,
         recognized: false,
         modelCandidates: [],
         manualSelection: null,
@@ -161,14 +190,24 @@ Page({
         self.setData({ busy: true, message: '正在删除…' })
         historyApi.deleteHistory(self._query.id, self.data.historyRevision).then(function (result) {
           self.setData({ busy: false, message: '已删除记录。' + historyApi.cascadeNote(result.cascade) })
-          // 删除后不再展示任何记录内容（也不再给删除入口）。
-          self.setData({ invalid: true, invalidReason: '该记录已删除。', canDelete: false, recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null })
+          // 删除后不再展示任何记录内容（也不再给删除入口）；并作废本页带入的定位快照，
+          // 否则再点「重新实时读取」时快照兜底会把刚删掉的记录重新当成"可定位"。
+          historyApi.clearSelection()
+          self.setData({
+            invalid: true, invalidReason: '该记录已删除。', canDelete: false,
+            stateKnown: false, stateLabel: '', stateDesc: '', stateTone: '',
+            referenceAvailable: false, referenceLabel: '', historyRevision: null,
+            recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null
+          })
         }).catch(function (error) {
           // 如实报错；服务端说记录已不存在（含他人记录，二者同形）时按"记录不可用"收口，不再展示内容。
           self.setData({ busy: false, message: historyApi.messageFor(error) })
           if ((error && error.code) === 'NOT_FOUND') {
+            historyApi.clearSelection()
             self.setData({
               invalid: true, invalidReason: '该记录不存在、已删除、或不属于当前账号。', canDelete: false,
+              stateKnown: false, stateLabel: '', stateDesc: '', stateTone: '',
+              referenceAvailable: false, referenceLabel: '', historyRevision: null,
               recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null
             })
           }

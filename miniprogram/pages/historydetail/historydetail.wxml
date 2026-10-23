@@ -36,12 +36,13 @@
 
       <state-view wx:if="{{busy}}" status="loading" title="正在实时读取记录"></state-view>
 
-      <view class="notice notice--warn" wx:elif="{{!stateKnown}}">
+      <view class="notice notice--warn" wx:elif="{{!stateKnown && !errorText}}">
         <text class="notice__icon">⚠️</text>
         <text class="notice__text">任务状态未从实时读取取得（记录可能不在第一页）。为避免展示过期状态，本页不显示任务状态。</text>
       </view>
 
-      <view class="section">
+      <!-- 读失败时只呈现失败态：上一次成功读取留下的「任务状态／目标当前可读」面板不得继续挂在页面上。 -->
+      <view class="section" wx:if="{{!errorText}}">
         <view class="section-head">
           <text class="section-head__title">任务状态</text>
           <text class="section-head__meta">{{locatedBy === 'live' ? '实时读取' : '未取得'}}</text>
