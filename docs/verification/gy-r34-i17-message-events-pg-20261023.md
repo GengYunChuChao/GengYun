@@ -1,14 +1,16 @@
 # GY-I17（#17）· 社区事件 → 消息域 · 真 PostgreSQL 17.11 投递／去重／失败隔离／恢复读数
 
 - 片号：R34 ｜ 分支：`test/gy-r34-i17-message-events-pg`
-- 基线（开工实测）：`upstream/main = 765b6a31d993995e5dacbf6a3227ebcbb97fd8df` —— 本提交的**父提交就是它**
-- 收工复核：`upstream/main` 已由他人 fetch 推进到 `f3a5f24d7427f5c2e40b9c8278312aa4827157ca`
-  （`Reviewed PR #505/#506/#507`，非本片改动）；`git merge-base --is-ancestor 765b6a31 upstream/main` = 0
-  ⇒ 本分支是其严格后代；`git merge-tree --write-tree upstream/main HEAD` **exit=0**（无文本冲突，可干净合流）。
-  ⚠ 该前进**改到了本片同样改过的三个文件**（`real-pg-integration.yml`、`ci-real-pg-wiring.test.mjs`、
-  `ci-integration-chain-structure.test.mjs`）——合流后必须**复跑** `node --test tests/unit/ci-real-pg-wiring.test.mjs`
-  与 `tests/unit/ci-integration-chain-structure.test.mjs` 再验一次（文本都不冲突，但"清单式"文件要防语义叠加）。
-- 新增脚本：`tests/integration/message-events-pg.mjs`（531 行，531 行内自述运行方式）
+- 基线（开工实测）：`upstream/main = 765b6a31d993995e5dacbf6a3227ebcbb97fd8df` —— 本片首个提交的**父提交就是它**
+- **已合流主线**：`upstream/main` 在作业期间推进到 `f3a5f24d7427f5c2e40b9c8278312aa4827157ca`
+  （他人 8 张 PR 合入，含 `#501` 的 `docs/` 关单关键字闸门），本分支已 `git merge --no-ff upstream/main` 合流
+  （**merge commit，无 rebase／无 force**）。合流时三个共享文件被 `ort` **自动合并、零冲突**：
+  `real-pg-integration.yml`、`tests/unit/ci-real-pg-wiring.test.mjs`、`tests/unit/ci-integration-chain-structure.test.mjs`
+  —— 解法即**并集**：本片条目（紧邻 `messages-pg`）与主线改动同时保留，见 §5 的合流后复跑读数。
+- 合流后复验（见 §5）：`ci-real-pg-wiring` 的**双向相等自证** = `EXECUTED=24 / REQUIRED_STEP_ORDER=24`、
+  `managedScriptSetProblems=[]`、`stepOrderProblems=[]`、`databaseGuardProblems=[]`、
+  `EXECUTED_EQ_ORDER_SORTED=true`；真库臂在合流后的树上**重跑仍 exit=0 / TOTAL PASS = 8**。
+- 新增脚本：`tests/integration/message-events-pg.mjs`（**576 行**，脚本头部自述运行方式与四条诚实边界）
   - 运行：`node tests/integration/message-events-pg.mjs postgres://<owner>@127.0.0.1:<port>/gengyun_message_events_test`
   - 连接串走 **argv[2]**（与 `messages-pg.mjs` 同形）；库名硬钉 `gengyun_message_events_test`；只允许回环地址；要求**空库**
 - 接线：`.github/workflows/real-pg-integration.yml` —— 新 step **紧跟在消息域 `messages-pg.mjs` 那一步之后**
@@ -143,28 +145,38 @@ TOTAL PASS = 8
   本片**未**改动；若将来要求「失败可被运维看见」，那是新切片；
 - `reference_state=available` 只证明**端口派生**正确，不证明「跳转真的能打开某个页面」。
 
-## 5. 门禁读数（本机，收工前）
+## 5. 门禁读数（本机；**合流 `upstream/main` 之后**复跑，全部 exit=0）
 
 | 命令 | 读数 |
 | --- | --- |
-| `node --test tests/unit/ci-real-pg-wiring.test.mjs` | **18 tests / 18 pass / 0 fail**，exit=0 |
-| `node --test tests/unit/community-message-notifications.test.mjs` | **8 tests / 8 pass / 0 fail**，exit=0 |
+| `node --test tests/unit/ci-real-pg-wiring.test.mjs tests/unit/ci-integration-chain-structure.test.mjs tests/unit/community-message-notifications.test.mjs tests/unit/doc-closing-keywords.test.mjs` | **38 tests / 38 pass / 0 fail**，exit=0 |
+| ↳ 单跑 `ci-real-pg-wiring` | **18 / 18 pass**，exit=0 |
+| ↳ 单跑 `community-message-notifications` | **8 / 8 pass**，exit=0 |
+| ↳ `doc-closing-keywords`（`#501` 新增的 `docs/` 关单关键字闸门） | 「全扫描面 0 命中」⇒ 本文与仓内文档均无字面关单关键字 |
+| 双向相等自证（直接调 `ci-real-pg-wiring.test.mjs` 的导出函数） | `EXECUTED=24`、`REQUIRED_STEP_ORDER=24`、`EXECUTED_EQ_ORDER_SORTED=true`、`managedScriptSetProblems=[]`、`stepOrderProblems=[]`、`databaseGuardProblems=[]`、`MINE_WIRED=true` |
 | `npx tsc -p services/api/tsconfig.json --noEmit` | 空输出，exit=0 |
 | `node tools/verify-contract-status.mjs` | `PASS: 覆盖 113 条契约操作；已装配 109 条；implemented 17 / partial 92 / planned 4；形状错误 0 项；语义错误 0 项` …，exit=0 |
-| 真库臂（本机临时集群） | **实跑**，exit=0，`TOTAL PASS = 8`（§1） |
+| `node tools/lint-workspaces.mjs` | `lint 通过`（含两个 workspace 的 `tsc --noEmit` 与仓库卫生扫描），exit=0 |
+| `node tools/verify-doc-anchors.mjs --strict` | `BASELINE 登记 103 条；本次命中 103 条、基线外新增 0 条、陈旧 0 条`，exit=0 |
+| 真库臂（本机临时集群，**合流前**与**合流后**各跑一次） | 两次都 **exit=0**、`TOTAL PASS = 8`（§1 为合流前那次的原始输出；合流后同 8 条逐条复现） |
 
 ## 6. 冻结指纹（跨平台可复现：`git` blob 哈希，⛔ 不用工作区字节 sha256）
 
-```
-tests/integration/message-events-pg.mjs       => 62186141e42fde48d3111a61a32e100d427255d1
-.github/workflows/real-pg-integration.yml     => 6e82108556adcea7f9a117bca0de4cdbf550e6fe
-tests/unit/ci-real-pg-wiring.test.mjs         => ba963e7bb0b50546934ea3865639f4632513bbb1
-```
-
-复算命令（在仓库根、任意平台同值）：
+**合流后**的 blob（`git rev-parse HEAD:<path>`，在合流提交上实测）：
 
 ```
-git hash-object --path=<path> -- <path>      # 与提交后 `git rev-parse HEAD:<path>` 同值
+tests/integration/message-events-pg.mjs                       => （见下方复算命令；本片新增文件，内容未再变动）
+.github/workflows/real-pg-integration.yml                     => 主线改动与本片改动合并后的 blob
+tests/unit/ci-real-pg-wiring.test.mjs                         => 同上
+tests/unit/ci-integration-chain-structure.test.mjs            => 同上
+```
+
+⚠ **不写死具体哈希**：合流后这三份文件都被主线改过（`ort` 自动并集），哈希随合流提交变化，
+写死一个值只会在下一次合流时变成假指纹。**以命令复算为准**：
+
+```
+git rev-parse HEAD:<path>                    # 提交后
+git hash-object --path=<path> -- <path>      # 提交前（与上一行同值）
 ```
 
 本文档自身不写自引用指纹（写进去就会改变它自己的哈希）。
@@ -173,7 +185,8 @@ git hash-object --path=<path> -- <path>      # 与提交后 `git rev-parse HEAD:
 
 - 集群：PG **17.11** 便携二进制 `E:\GengYunCommander\.pg17\pgsql\bin`，`initdb -D <tmp> -U postgres -A trust -E UTF8 --locale=C`，
   端口 **55441**（派单要求的 55432–55467 区间内），只监听 `127.0.0.1`；
-- 库：`createdb gengyun_message_events_test`（跑前实测 `public` 下 0 张表，共跑 5 轮，每轮前 `dropdb --force` 重建）；
-- 收尾：`pg_ctl -D <tmp> -m fast -w -t 30 stop` ⇒ **exit=0**、`pg_isready` 报 `no response`；
+- 库：`createdb gengyun_message_events_test`（跑前实测 `public` 下 0 张表；合流前共跑 5 轮、合流后 1 轮，
+  每轮前 `dropdb --force` 重建）；
+- 收尾：两轮都以 `pg_ctl -D <tmp> -m fast -w -t 30 stop` 关闭 ⇒ **exit=0**、`pg_isready` 报 `no response`；
   数据目录按「先枚举重解析点 = **0**、再 `Remove-Item -Recurse`」删除，删后 `Test-Path` = `False`；
 - 依赖：本 worktree 内 `npm ci --prefer-offline --no-audit --no-fund --ignore-scripts`（`git status --porcelain` 跑完仍为 0 行，lockfile 未变；⛔ 未做任何跨 worktree 的 `node_modules` 联接）。
